@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DOOM E1M1 wireframe renderer — BSP front-to-back with per-column clip arrays."""
+"""DOOM E1M1 wireframe renderer — BSP front-to-back with 2D trapezoid clip spans."""
 
 import struct, math, sys, pygame
 
@@ -82,45 +82,55 @@ def player_floor(x, y):
     if sd_idx == 0xFFFF: sd_idx = ld[5]
     return sectors[sidedefs[sd_idx][5]][0]
 
-# ── Per-column clip arrays and trapezoid line clipper ────────────────────────
+# ── Analytical 2D trapezoid clip spans ───────────────────────────────────────
+#
+# The visible region is a list of non-overlapping half-open spans [xlo, xhi).
+# Each span's top and bottom boundaries are linear functions stored as
+# (slope, intercept): y = a*x + b.  This avoids accumulated interpolation
+# error — every evaluation uses the original tighten parameters.
+#
+# Lines are clipped analytically against each span's trapezoid using
+# Cyrus-Beck (4 half-planes).  No per-column iteration.
 
 WIDTH, HEIGHT = 960, 600
 HFOV = math.pi / 2
 FOCAL = (WIDTH / 2) / math.tan(HFOV / 2)
 NEAR = 1.0
 
-def clip_to_trap(x1, y1, x2, y2, xlo, xhi, ytl, ytr, ybl, ybr):
-    """Clip line segment to trapezoid (Cyrus-Beck, 4 half-planes)."""
+ZERO_FN = (0.0, 0.0)                   # y = 0 everywhere
+BOT_FN  = (0.0, float(HEIGHT - 1))     # y = 599 everywhere
+
+
+def _linfn(y1, y2, sx1, sx2):
+    """Convert two-point form to (slope, intercept) where y = slope*x + intercept."""
+    if abs(sx2 - sx1) < 0.5:
+        return (0.0, (y1 + y2) * 0.5)
+    a = (y2 - y1) / (sx2 - sx1)
+    return (a, y1 - a * sx1)
+
+
+def _eval(fn, x):
+    """Evaluate y = a*x + b."""
+    return fn[0] * x + fn[1]
+
+
+def _clip_to_trap(x1, y1, x2, y2, xlo, xhi, tfn, bfn):
+    """Clip line to trapezoid [xlo,xhi) with linear top/bot (slope,intercept).
+
+    Cyrus-Beck: 4 half-planes — left, right, top, bottom.
+    """
     dxs = xhi - xlo
-    if dxs < 0.5:
-        # Degenerate: single-column rect clip
-        dx, dy = x2 - x1, y2 - y1
-        xc = (xlo + xhi) * 0.5
-        yt, yb = min(ytl, ytr), max(ybl, ybr)
-        t0, t1 = 0.0, 1.0
-        for p, q in ((-dx, x1-(xc-0.5)), (dx, (xc+0.5)-x1),
-                     (-dy, y1-yt), (dy, yb-y1)):
-            if abs(p) < 1e-10:
-                if q < -1e-10: return None
-            else:
-                t = q / p
-                if p < 0:
-                    if t > t1: return None
-                    t0 = max(t0, t)
-                else:
-                    if t < t0: return None
-                    t1 = min(t1, t)
-        if t0 > t1: return None
-        return (x1+t0*dx, y1+t0*dy, x1+t1*dx, y1+t1*dy)
+    if dxs < 1:
+        return None
     dx, dy = x2 - x1, y2 - y1
-    mt = (ytr - ytl) / dxs
-    mb = (ybr - ybl) / dxs
+    ta, tb = tfn     # top: y >= ta*x + tb
+    ba, bb = bfn     # bot: y <= ba*x + bb
     t0, t1 = 0.0, 1.0
     for p, q in (
-        (-dx, x1 - xlo),
-        ( dx, xhi - x1),
-        (mt * dx - dy, y1 - ytl - mt * (x1 - xlo)),
-        (dy - mb * dx, ybl + mb * (x1 - xlo) - y1),
+        (-dx, x1 - xlo),                     # x >= xlo
+        ( dx, xhi - x1),                      # x < xhi
+        (ta * dx - dy, y1 - ta * x1 - tb),   # y >= top(x)
+        (dy - ba * dx, ba * x1 + bb - y1),   # y <= bot(x)
     ):
         if abs(p) < 1e-10:
             if q < -1e-10:
@@ -138,106 +148,152 @@ def clip_to_trap(x1, y1, x2, y2, xlo, xhi, ytl, ytr, ybl, ybr):
     return (x1 + t0 * dx, y1 + t0 * dy, x1 + t1 * dx, y1 + t1 * dy)
 
 
-class ClipColumns:
-    """Per-column ceiling/floor clip arrays — DOOM's ceilingclip/floorclip."""
-    __slots__ = ("top", "bot", "alive")
+class ClipSpans:
+    """Visible region as sorted half-open trapezoid spans [xlo, xhi).
+
+    Each span is (xlo, xhi, top_fn, bot_fn) where top_fn/bot_fn are
+    (slope, intercept) pairs.  Splitting a span just changes the x
+    boundaries — the same linear function applies throughout.
+    """
+    __slots__ = ("spans",)
 
     def __init__(self):
-        self.top = [0.0] * WIDTH
-        self.bot = [float(HEIGHT - 1)] * WIDTH
-        self.alive = WIDTH
+        self.spans = [(0, WIDTH, ZERO_FN, BOT_FN)]
 
     def is_full(self):
-        return self.alive <= 0
+        return not self.spans
 
     def has_gap(self, lo, hi):
-        lo = max(0, int(lo))
-        hi = min(WIDTH - 1, int(hi))
-        for x in range(lo, hi + 1):
-            if self.top[x] < self.bot[x]:
-                return True
+        ilo, ihi = max(0, int(lo)), min(WIDTH - 1, int(hi))
+        for xlo, xhi, tfn, bfn in self.spans:
+            if xlo > ihi: break
+            if xhi <= ilo: continue
+            # Check if any column in overlap is alive
+            clo, chi = max(xlo, ilo), min(xhi - 1, ihi)
+            for x in range(clo, chi + 1):
+                if _eval(tfn, x) < _eval(bfn, x):
+                    return True
         return False
 
+    def draw_clipped(self, lines, color, surface):
+        """Clip each line analytically to each overlapping span."""
+        for lx1, ly1, lx2, ly2 in lines:
+            if abs(lx1 - lx2) < 0.5:
+                # Vertical: unique span via half-open lookup
+                ix = max(0, min(WIDTH - 1, int(lx1)))
+                for xlo, xhi, tfn, bfn in self.spans:
+                    if xlo <= ix < xhi:
+                        yt, yb = _eval(tfn, ix), _eval(bfn, ix)
+                        if yt >= yb: break
+                        ya = max(min(ly1, ly2), yt)
+                        ybb = min(max(ly1, ly2), yb)
+                        if ya < ybb:
+                            pygame.draw.line(surface, color,
+                                             (ix, int(ya)), (ix, int(ybb)), 1)
+                        break
+            else:
+                for xlo, xhi, tfn, bfn in self.spans:
+                    c = _clip_to_trap(lx1, ly1, lx2, ly2,
+                                      xlo, xhi, tfn, bfn)
+                    if c:
+                        pygame.draw.line(surface, color,
+                                         (int(c[0]), int(c[1])),
+                                         (int(c[2]), int(c[3])), 1)
+
     def mark_solid(self, lo, hi):
-        lo = max(0, int(lo))
-        hi = min(WIDTH - 1, int(hi))
-        top, bot = self.top, self.bot
-        for x in range(lo, hi + 1):
-            if top[x] < bot[x]:
-                self.alive -= 1
-                top[x] = bot[x]
+        """Remove [ilo, ihi) from spans."""
+        ilo = max(0, int(lo))
+        ihi = min(WIDTH, int(hi) + 1)
+        if ilo >= ihi: return
+        new = []
+        for xlo, xhi, tfn, bfn in self.spans:
+            if xhi <= ilo or xlo >= ihi:
+                new.append((xlo, xhi, tfn, bfn))
+                continue
+            if xlo < ilo:
+                new.append((xlo, ilo, tfn, bfn))
+            if ihi < xhi:
+                new.append((ihi, xhi, tfn, bfn))
+        self.spans = new
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
-        """Tighten top and bottom bounds across [lo, hi].
+        """Tighten top/bottom over [ilo, ihi).
 
-        New bounds are linear: yt1/yb1 at sx1, yt2/yb2 at sx2.
-        Per column: top = max(top, new_top), bot = min(bot, new_bot).
+        New bounds are linear: yt1..yt2 along sx1..sx2, yb1..yb2 along sx1..sx2.
+        Top = pointwise max(old, new).  Bottom = pointwise min(old, new).
+        Spans split at crossover points for exact piecewise-linear result.
         """
-        lo = max(0, int(lo))
-        hi = min(WIDTH - 1, int(hi))
-        top, bot = self.top, self.bot
-        dsx = sx2 - sx1
-        if abs(dsx) < 0.5:
-            yt = (yt1 + yt2) * 0.5
-            yb = (yb1 + yb2) * 0.5
-            for x in range(lo, hi + 1):
-                if top[x] >= bot[x]:
-                    continue
-                if yt > top[x]: top[x] = yt
-                if yb < bot[x]: bot[x] = yb
-                if top[x] >= bot[x]: self.alive -= 1
-        else:
-            inv = 1.0 / dsx
-            dyt = (yt2 - yt1) * inv
-            dyb = (yb2 - yb1) * inv
-            for x in range(lo, hi + 1):
-                if top[x] >= bot[x]:
-                    continue
-                t = x - sx1
-                yt = yt1 + dyt * t
-                yb = yb1 + dyb * t
-                if yt > top[x]: top[x] = yt
-                if yb < bot[x]: bot[x] = yb
-                if top[x] >= bot[x]: self.alive -= 1
+        ilo = max(0, int(lo))
+        ihi = min(WIDTH, int(hi) + 1)
+        if ilo >= ihi: return
+        new_tfn = _linfn(yt1, yt2, sx1, sx2)
+        new_bfn = _linfn(yb1, yb2, sx1, sx2)
+        new = []
+        for xlo, xhi, tfn, bfn in self.spans:
+            if xhi <= ilo or xlo >= ihi:
+                new.append((xlo, xhi, tfn, bfn))
+                continue
+            # Left unchanged [xlo, ilo)
+            if xlo < ilo:
+                new.append((xlo, ilo, tfn, bfn))
+            # Right unchanged [ihi, xhi)
+            right = (ihi, xhi, tfn, bfn) if ihi < xhi else None
+            # Overlap [ox0, ox1)
+            ox0, ox1 = max(xlo, ilo), min(xhi, ihi)
+            # Piecewise max for top × piecewise min for bottom
+            for tx0, tx1, t_fn in _pw_max(tfn, new_tfn, ox0, ox1):
+                for bx0, bx1, b_fn in _pw_min(bfn, new_bfn, tx0, tx1):
+                    if bx1 > bx0:
+                        # Check if any column is alive in this piece
+                        if (_eval(t_fn, bx0) < _eval(b_fn, bx0) or
+                            _eval(t_fn, bx1 - 1) < _eval(b_fn, bx1 - 1)):
+                            new.append((bx0, bx1, t_fn, b_fn))
+            if right:
+                new.append(right)
+        self.spans = new
 
-    def draw_clipped(self, lines, color, surface):
-        """Clip each line per-column, drawing only within alive bounds."""
-        top, bot = self.top, self.bot
-        for lx1, ly1, lx2, ly2 in lines:
-            dx, dy = lx2 - lx1, ly2 - ly1
-            xlo = max(0, int(min(lx1, lx2)))
-            xhi = min(WIDTH - 1, int(max(lx1, lx2)))
-            if abs(dx) < 0.5:
-                # Vertical line — single column, exact clip
-                ix = max(0, min(WIDTH - 1, int(lx1)))
-                yt, yb = top[ix], bot[ix]
-                if yt >= yb:
-                    continue
-                ya, ybb = min(ly1, ly2), max(ly1, ly2)
-                ya = max(ya, yt)
-                ybb = min(ybb, yb)
-                if ya < ybb:
-                    pygame.draw.line(surface, color,
-                                     (ix, int(ya)), (ix, int(ybb)), 1)
-            else:
-                # Walk columns, collect visible segments as runs
-                inv_dx = 1.0 / dx
-                seg_start = None
-                for x in range(xlo, xhi + 2):
-                    if x <= xhi and top[x] < bot[x]:
-                        t = (x - lx1) * inv_dx
-                        y = ly1 + dy * t
-                        if top[x] <= y <= bot[x]:
-                            if seg_start is None:
-                                seg_start = (x, y)
-                            seg_end = (x, y)
-                            continue
-                    # End of a visible run — draw it
-                    if seg_start is not None:
-                        pygame.draw.line(surface, color,
-                                         (seg_start[0], int(seg_start[1])),
-                                         (seg_end[0], int(seg_end[1])), 1)
-                        seg_start = None
+
+def _pw_max(f, g, x0, x1):
+    """Piecewise max of two linear functions over [x0, x1).
+
+    Returns list of (x0, x1, winning_fn).  Crossover rounded to integer.
+    """
+    fv0, gv0 = _eval(f, x0), _eval(g, x0)
+    fv1, gv1 = _eval(f, x1 - 1), _eval(g, x1 - 1)
+    d0, d1 = fv0 - gv0, fv1 - gv1
+    if d0 >= 0 and d1 >= 0: return [(x0, x1, f)]
+    if d0 <= 0 and d1 <= 0: return [(x0, x1, g)]
+    # Find crossover in [x0, x1)
+    fvx1, gvx1 = _eval(f, x1), _eval(g, x1)
+    dx0 = fv0 - gv0
+    dx1 = fvx1 - gvx1
+    if abs(dx0 - dx1) < 1e-10:
+        return [(x0, x1, f if d0 >= 0 else g)]
+    t = dx0 / (dx0 - dx1)
+    cx = int(x0 + t * (x1 - x0) + 0.5)
+    cx = max(x0 + 1, min(x1 - 1, cx))
+    if d0 > 0: return [(x0, cx, f), (cx, x1, g)]
+    return [(x0, cx, g), (cx, x1, f)]
+
+
+def _pw_min(f, g, x0, x1):
+    """Piecewise min of two linear functions over [x0, x1)."""
+    fv0, gv0 = _eval(f, x0), _eval(g, x0)
+    fv1, gv1 = _eval(f, x1 - 1), _eval(g, x1 - 1)
+    d0, d1 = fv0 - gv0, fv1 - gv1
+    if d0 <= 0 and d1 <= 0: return [(x0, x1, f)]
+    if d0 >= 0 and d1 >= 0: return [(x0, x1, g)]
+    fvx1, gvx1 = _eval(f, x1), _eval(g, x1)
+    dx0 = fv0 - gv0
+    dx1 = fvx1 - gvx1
+    if abs(dx0 - dx1) < 1e-10:
+        return [(x0, x1, f if d0 <= 0 else g)]
+    t = dx0 / (dx0 - dx1)
+    cx = int(x0 + t * (x1 - x0) + 0.5)
+    cx = max(x0 + 1, min(x1 - 1, cx))
+    if d0 < 0: return [(x0, cx, f), (cx, x1, g)]
+    return [(x0, cx, g), (cx, x1, f)]
+
 
 # ── View-space transform ────────────────────────────────────────────────────
 
@@ -246,14 +302,11 @@ def to_view(wx, wy, vx, vy, cos_a, sin_a):
     return dx * sin_a - dy * cos_a, dx * cos_a + dy * sin_a
 
 def near_clip(vx1, vy1, vx2, vy2):
-    if vy1 < NEAR and vy2 < NEAR:
-        return None
-    if vy1 >= NEAR and vy2 >= NEAR:
-        return vx1, vy1, vx2, vy2
+    if vy1 < NEAR and vy2 < NEAR: return None
+    if vy1 >= NEAR and vy2 >= NEAR: return vx1, vy1, vx2, vy2
     t = (NEAR - vy1) / (vy2 - vy1)
     cx = vx1 + t * (vx2 - vx1)
-    if vy1 < NEAR:
-        return cx, NEAR, vx2, vy2
+    if vy1 < NEAR: return cx, NEAR, vx2, vy2
     return vx1, vy1, cx, NEAR
 
 def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
@@ -263,10 +316,8 @@ def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
         return 0, WIDTH - 1
     pts = [to_view(wx, wy, vx, vy, cos_a, sin_a)
            for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
-    if all(p[1] < NEAR for p in pts):
-        return None
-    if any(p[1] < NEAR for p in pts):
-        return 0, WIDTH - 1
+    if all(p[1] < NEAR for p in pts): return None
+    if any(p[1] < NEAR for p in pts): return 0, WIDTH - 1
     sxs = [WIDTH * 0.5 + p[0] * FOCAL / p[1] for p in pts]
     return int(min(sxs)), int(max(sxs))
 
@@ -275,8 +326,7 @@ def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
 GREEN = (0, 200, 0)
 
 def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
-    if clips.is_full():
-        return
+    if clips.is_full(): return
     if nid & NF_SUBSECTOR:
         render_subsector(0 if nid == 0xFFFF else nid & 0x7FFF,
                          clips, cos_a, sin_a, vx, vy, vz, surface)
@@ -285,8 +335,7 @@ def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
     side = point_on_side(vx, vy, node)
     ch = (node[12], node[13])
     render_bsp(ch[side], clips, cos_a, sin_a, vx, vy, vz, surface)
-    if clips.is_full():
-        return
+    if clips.is_full(): return
     far = side ^ 1
     br = bbox_visible(node, far, cos_a, sin_a, vx, vy)
     if br is not None and clips.has_gap(br[0], br[1]):
@@ -296,8 +345,7 @@ def render_subsector(idx, clips, cos_a, sin_a, vx, vy, vz, surface):
     ssec = ssectors[idx]
     for si in range(ssec[1], ssec[1] + ssec[0]):
         render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface)
-        if clips.is_full():
-            return
+        if clips.is_full(): return
 
 def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
     s = segs[si]
@@ -307,52 +355,51 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
     lv1, lv2 = vertexes[ld[0]], vertexes[ld[1]]
     ldx, ldy = lv2[0] - lv1[0], lv2[1] - lv1[1]
     dot = ldy * (vx - lv1[0]) - ldx * (vy - lv1[1])
-    if s[4] == 1:
-        dot = -dot
+    if s[4] == 1: dot = -dot
     front_facing = dot > 0
 
     front_idx, back_idx = seg_sectors(s)
     if not front_facing:
-        if back_idx is None:
-            return
+        if back_idx is None: return
         front_idx, back_idx = back_idx, front_idx
 
     nc = near_clip(*to_view(v1[0], v1[1], vx, vy, cos_a, sin_a),
                    *to_view(v2[0], v2[1], vx, vy, cos_a, sin_a))
-    if nc is None:
-        return
+    if nc is None: return
     ex1, ey1, ex2, ey2 = nc
 
     half_w, half_h = WIDTH * 0.5, HEIGHT * 0.5
     f1, f2 = FOCAL / ey1, FOCAL / ey2
     sx1, sx2 = half_w + ex1 * f1, half_w + ex2 * f2
-    x_lo, x_hi = int(min(sx1, sx2)), int(max(sx1, sx2))
-    if not clips.has_gap(x_lo, x_hi):
-        return
+    x_lo, x_hi = min(sx1, sx2), max(sx1, sx2)
+    if not clips.has_gap(x_lo, x_hi): return
 
     front = sectors[front_idx]
     fh, ch = front[0], front[1]
-
     ft1, fb1 = half_h - (ch - vz) * f1, half_h - (fh - vz) * f1
     ft2, fb2 = half_h - (ch - vz) * f2, half_h - (fh - vz) * f2
 
     solid = back_idx is None
     back = sectors[back_idx] if back_idx is not None else None
-    if back and (back[1] <= fh or back[0] >= ch):
-        solid = True
+    if back and (back[1] <= fh or back[0] >= ch): solid = True
 
     if back:
         bt1, bt2 = half_h - (back[1] - vz) * f1, half_h - (back[1] - vz) * f2
         bb1, bb2 = half_h - (back[0] - vz) * f1, half_h - (back[0] - vz) * f2
 
-    # ── Draw ──
+    # ── Two-sided: tighten FIRST, then draw within the aperture.
+    # ── Solid: draw FIRST, then mark solid.
 
     if solid:
         clips.draw_clipped([
             (sx1, ft1, sx2, ft2), (sx1, fb1, sx2, fb2),
             (sx1, ft1, sx1, fb1), (sx2, ft2, sx2, fb2),
         ], GREEN, surface)
+        clips.mark_solid(x_lo, x_hi)
     elif back:
+        clips.tighten(x_lo, x_hi, sx1, sx2,
+                       max(ft1, bt1), max(ft2, bt2),
+                       min(fb1, bb1), min(fb2, bb2))
         if back[1] < ch:
             clips.draw_clipped([
                 (sx1, ft1, sx2, ft2), (sx1, bt1, sx2, bt2),
@@ -367,15 +414,6 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
             ], GREEN, surface)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface)
-
-    # ── Update clip state ──
-
-    if solid:
-        clips.mark_solid(x_lo, x_hi)
-    elif back:
-        clips.tighten(x_lo, x_hi, sx1, sx2,
-                       max(ft1, bt1), max(ft2, bt2),
-                       min(fb1, bb1), min(fb2, bb2))
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
@@ -393,10 +431,8 @@ running = True
 while running:
     dt = clock.tick(60) / 1000.0
     for ev in pygame.event.get():
-        if ev.type == pygame.QUIT:
-            running = False
-        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-            running = False
+        if ev.type == pygame.QUIT: running = False
+        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE: running = False
 
     keys = pygame.key.get_pressed()
     if keys[pygame.K_LEFT]:  angle += turn_speed * dt
@@ -411,7 +447,7 @@ while running:
     screen.fill((0, 0, 0))
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     vz = player_floor(player_x, player_y) + 41.0
-    render_bsp(len(nodes) - 1, ClipColumns(), cos_a, sin_a,
+    render_bsp(len(nodes) - 1, ClipSpans(), cos_a, sin_a,
                player_x, player_y, vz, screen)
     pygame.display.flip()
 
