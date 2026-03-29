@@ -180,7 +180,8 @@ class ClipSpans:
         for lx1, ly1, lx2, ly2 in lines:
             if abs(lx1 - lx2) < 0.5:
                 # Vertical: unique span via half-open lookup
-                ix = max(0, min(WIDTH - 1, int(lx1)))
+                ix = int(lx1)
+                if ix < 0 or ix >= WIDTH: continue
                 for xlo, xhi, tfn, bfn in self.spans:
                     if xlo <= ix < xhi:
                         yt, yb = _eval(tfn, ix), _eval(bfn, ix)
@@ -256,14 +257,15 @@ class ClipSpans:
 def _pw_max(f, g, x0, x1):
     """Piecewise max of two linear functions over [x0, x1).
 
-    Returns list of (x0, x1, winning_fn).  Crossover rounded to integer.
+    Returns list of (x0, x1, winning_fn).  Crossover rounded to integer,
+    then verified: the crossover column is assigned to whichever function
+    is actually larger there.
     """
     fv0, gv0 = _eval(f, x0), _eval(g, x0)
     fv1, gv1 = _eval(f, x1 - 1), _eval(g, x1 - 1)
     d0, d1 = fv0 - gv0, fv1 - gv1
     if d0 >= 0 and d1 >= 0: return [(x0, x1, f)]
     if d0 <= 0 and d1 <= 0: return [(x0, x1, g)]
-    # Find crossover in [x0, x1)
     fvx1, gvx1 = _eval(f, x1), _eval(g, x1)
     dx0 = fv0 - gv0
     dx1 = fvx1 - gvx1
@@ -272,6 +274,13 @@ def _pw_max(f, g, x0, x1):
     t = dx0 / (dx0 - dx1)
     cx = int(x0 + t * (x1 - x0) + 0.5)
     cx = max(x0 + 1, min(x1 - 1, cx))
+    # Verify: which function wins at cx?
+    if _eval(f, cx) >= _eval(g, cx):
+        # f wins at cx — cx belongs to the f-dominant piece
+        cx += 1
+        if cx >= x1: return [(x0, x1, f)]
+    else:
+        if cx <= x0: return [(x0, x1, g)]
     if d0 > 0: return [(x0, cx, f), (cx, x1, g)]
     return [(x0, cx, g), (cx, x1, f)]
 
@@ -291,6 +300,12 @@ def _pw_min(f, g, x0, x1):
     t = dx0 / (dx0 - dx1)
     cx = int(x0 + t * (x1 - x0) + 0.5)
     cx = max(x0 + 1, min(x1 - 1, cx))
+    # Verify: which function wins at cx?
+    if _eval(f, cx) <= _eval(g, cx):
+        cx += 1
+        if cx >= x1: return [(x0, x1, f)]
+    else:
+        if cx <= x0: return [(x0, x1, g)]
     if d0 < 0: return [(x0, cx, f), (cx, x1, g)]
     return [(x0, cx, g), (cx, x1, f)]
 
