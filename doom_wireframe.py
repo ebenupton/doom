@@ -387,8 +387,9 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
         bt1, bt2 = half_h - (back[1] - vz) * f1, half_h - (back[1] - vz) * f2
         bb1, bb2 = half_h - (back[0] - vz) * f1, half_h - (back[0] - vz) * f2
 
-    # ── Two-sided: tighten FIRST, then draw within the aperture.
-    # ── Solid: draw FIRST, then mark solid.
+    # ── Draw first, then update clip state.
+    # The step surface is the visible geometry; the tighten constrains
+    # future geometry behind it.
 
     if solid:
         clips.draw_clipped([
@@ -397,9 +398,6 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
         ], GREEN, surface)
         clips.mark_solid(x_lo, x_hi)
     elif back:
-        clips.tighten(x_lo, x_hi, sx1, sx2,
-                       max(ft1, bt1), max(ft2, bt2),
-                       min(fb1, bb1), min(fb2, bb2))
         if back[1] < ch:
             clips.draw_clipped([
                 (sx1, ft1, sx2, ft2), (sx1, bt1, sx2, bt2),
@@ -414,6 +412,9 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
             ], GREEN, surface)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface)
+        clips.tighten(x_lo, x_hi, sx1, sx2,
+                       max(ft1, bt1), max(ft2, bt2),
+                       min(fb1, bb1), min(fb2, bb2))
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
