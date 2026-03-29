@@ -175,31 +175,59 @@ class ClipSpans:
                     return True
         return False
 
-    def draw_clipped(self, lines, color, surface):
-        """Clip each line analytically to each overlapping span."""
+    def draw_clipped(self, lines, color, surface, stats=None):
+        """Clip each line analytically to each overlapping span.
+
+        stats = [total, unclipped, clipped, trivial_reject, clip_reject]
+        """
         for lx1, ly1, lx2, ly2 in lines:
+            if stats is not None: stats[0] += 1
+            drawn = False
+            was_clipped = False
             if abs(lx1 - lx2) < 0.5:
-                # Vertical: unique span via half-open lookup
                 ix = int(lx1)
-                if ix < 0 or ix >= WIDTH: continue
+                if ix < 0 or ix >= WIDTH:
+                    if stats is not None: stats[3] += 1
+                    continue
+                found_span = False
                 for xlo, xhi, tfn, bfn in self.spans:
                     if xlo <= ix < xhi:
+                        found_span = True
                         yt, yb = _eval(tfn, ix), _eval(bfn, ix)
                         if yt >= yb: break
-                        ya = max(min(ly1, ly2), yt)
-                        ybb = min(max(ly1, ly2), yb)
+                        ya_orig, yb_orig = min(ly1, ly2), max(ly1, ly2)
+                        ya = max(ya_orig, yt)
+                        ybb = min(yb_orig, yb)
                         if ya < ybb:
                             pygame.draw.line(surface, color,
                                              (ix, int(ya)), (ix, int(ybb)), 1)
+                            drawn = True
+                            if ya > ya_orig + 0.5 or ybb < yb_orig - 0.5:
+                                was_clipped = True
                         break
+                if not drawn and stats is not None:
+                    stats[3 if not found_span else 4] += 1
             else:
+                x_min, x_max = min(lx1, lx2), max(lx1, lx2)
+                overlaps_any = False
                 for xlo, xhi, tfn, bfn in self.spans:
+                    if xhi <= x_min or xlo >= x_max:
+                        continue
+                    overlaps_any = True
                     c = _clip_to_trap(lx1, ly1, lx2, ly2,
                                       xlo, xhi, tfn, bfn)
                     if c:
                         pygame.draw.line(surface, color,
                                          (int(c[0]), int(c[1])),
                                          (int(c[2]), int(c[3])), 1)
+                        drawn = True
+                        if (abs(c[0] - lx1) > 0.5 or abs(c[1] - ly1) > 0.5 or
+                            abs(c[2] - lx2) > 0.5 or abs(c[3] - ly2) > 0.5):
+                            was_clipped = True
+                if not drawn and stats is not None:
+                    stats[3 if not overlaps_any else 4] += 1
+            if drawn and stats is not None:
+                stats[2 if was_clipped else 1] += 1
 
     def mark_solid(self, lo, hi):
         """Remove [ilo, ihi) from spans."""
@@ -409,34 +437,38 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
         clips.draw_clipped([
             (sx1, ft1, sx2, ft2), (sx1, fb1, sx2, fb2),
             (sx1, ft1, sx1, fb1), (sx2, ft2, sx2, fb2),
-        ], GREEN, surface)
+        ], GREEN, surface, draw_stats)
         clips.mark_solid(x_lo, x_hi)
     elif back:
         if back[1] < ch:
             clips.draw_clipped([
                 (sx1, ft1, sx2, ft2), (sx1, bt1, sx2, bt2),
                 (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2),
-            ], GREEN, surface)
+            ], GREEN, surface, draw_stats)
         elif back[1] > ch:
-            clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface)
+            clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
         if back[0] > fh:
             clips.draw_clipped([
                 (sx1, bb1, sx2, bb2), (sx1, fb1, sx2, fb2),
                 (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2),
-            ], GREEN, surface)
+            ], GREEN, surface, draw_stats)
         elif back[0] < fh:
-            clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface)
+            clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
         clips.tighten(x_lo, x_hi, sx1, sx2,
                        max(ft1, bt1), max(ft2, bt2),
                        min(fb1, bb1), min(fb2, bb2))
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
+# [total, unclipped, clipped, trivial_reject, clip_reject]
+draw_stats = [0, 0, 0, 0, 0]
+
 sys.setrecursionlimit(10000)
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("DOOM E1M1 — Wireframe BSP")
 clock = pygame.time.Clock()
+hud_font = pygame.font.SysFont("monospace", 14)
 
 angle = math.radians(pangle)
 turn_speed = 2.5
@@ -460,10 +492,16 @@ while running:
         player_y -= math.sin(angle) * move_speed * dt
 
     screen.fill((0, 0, 0))
+    for i in range(5): draw_stats[i] = 0
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     vz = player_floor(player_x, player_y) + 41.0
     render_bsp(len(nodes) - 1, ClipSpans(), cos_a, sin_a,
                player_x, player_y, vz, screen)
+
+    total, unclipped, clipped, trivial, clip_rej = draw_stats
+    fps = clock.get_fps()
+    hud = f"{total} total  {unclipped} pass  {clipped} clip  {trivial} trivial  {clip_rej} reject  {fps:.0f}fps"
+    screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))
     pygame.display.flip()
 
 pygame.quit()
