@@ -373,10 +373,9 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
     if s[4] == 1: dot = -dot
     front_facing = dot > 0
 
+    if not front_facing: return
+
     front_idx, back_idx = seg_sectors(s)
-    if not front_facing:
-        if back_idx is None: return
-        front_idx, back_idx = back_idx, front_idx
 
     nc = near_clip(*to_view(v1[0], v1[1], vx, vy, cos_a, sin_a),
                    *to_view(v2[0], v2[1], vx, vy, cos_a, sin_a))
