@@ -2,11 +2,12 @@
 """DOOM E1M1 wireframe renderer — BSP front-to-back with 2D trapezoid clip spans."""
 
 import struct, math, sys, pygame
-from fp import (fp_mul, fp_div, fp_from_float, fp_to_float, s16,
+from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_recip_x, fp_recip_y, fp_project_x, fp_project_y,
-                fp_linfn, fp_eval, fp_to_view, fp_near_clip,
-                FP6, FP7, FP8, FP12, FP16,
-                HALF_W_6, HALF_H_6, NEAR_FP)
+                fp_linfn, fp_eval, fp_to_view, fp_near_clip, fp_clip_to_trap,
+                FP7, FP8, HALF_W, HALF_H, NEAR_FP,
+                FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
+                MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
 
 # ── WAD parsing ──────────────────────────────────────────────────────────────
 
@@ -52,6 +53,22 @@ for t in things:
     if t[3] == 1:
         player_x, player_y, pangle = float(t[0]), float(t[1]), t[2]
         break
+
+# ── Prescaled data for 8-bit fixed-point path ───────────────────────────
+#
+# Center on map and divide by 8 so all vertex/height values fit in 8 bits.
+# Heights are also divided by 8 (same as XY) so projection is scale-invariant.
+
+fp_vertexes = [
+    ((v[0] - MAP_CENTER_X) // PRESCALE,
+     (v[1] - MAP_CENTER_Y) // PRESCALE)
+    for v in vertexes
+]
+
+fp_sectors = [
+    (s[0] // PRESCALE, s[1] // PRESCALE, *s[2:])
+    for s in sectors
+]
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -374,17 +391,20 @@ def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
     return int(min(sxs)), int(max(sxs))
 
 def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
-    """Bbox visibility for fixed-point mode (256-wide render target)."""
+    """Bbox visibility for fixed-point mode (256-wide render target).
+
+    Uses float arithmetic on un-prescaled node data.
+    Returns screen X range in 8.0 pixels, or None.
+    """
     base = 4 + far_side * 4
     top, bot, left, right = node[base], node[base+1], node[base+2], node[base+3]
     if left <= vx <= right and bot <= vy <= top:
-        return 0, FP_WIDTH - 1
+        return 0, FP_RENDER_W - 1
     pts = [to_view(wx, wy, vx, vy, cos_a, sin_a)
            for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
     if all(p[1] < NEAR for p in pts): return None
-    if any(p[1] < NEAR for p in pts): return 0, FP_WIDTH - 1
-    from fp import FP_FOCAL_X
-    sxs = [FP_WIDTH * 0.5 + p[0] * FP_FOCAL_X / p[1] for p in pts]
+    if any(p[1] < NEAR for p in pts): return 0, FP_RENDER_W - 1
+    sxs = [FP_RENDER_W * 0.5 + p[0] * FP_FOCAL_X / p[1] for p in pts]
     return int(min(sxs)), int(max(sxs))
 
 # ── BSP rendering ────────────────────────────────────────────────────────────
@@ -484,120 +504,47 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
 
 # ── Fixed-point clip spans ────────────────────────────────────────────────────
 #
-# Mirrors ClipSpans but all screen coordinates are 10.6 fixed-point,
-# slopes are 4.12, intercepts are 10.6.
-
-FP_W_6  = FP_WIDTH << FP6               # 256 in 10.6
-FP_HM1_6 = (FP_HEIGHT - 1) << FP6      # 159 in 10.6
+# 8-bit screen coordinates throughout.  Slopes are 0.8, intercepts are 8.0.
+# All multiplies are 8x8.
 
 FP_ZERO_FN = (0, 0)                     # slope=0, intercept=0
-FP_BOT_FN  = (0, FP_HM1_6)             # slope=0, intercept=159 in 10.6
-
-
-def _fp_clip_to_trap(x1_6, y1_6, x2_6, y2_6, xlo_6, xhi_6, tfn, bfn):
-    """Cyrus-Beck clip of a line segment to a fixed-point trapezoid.
-
-    All screen coords are 10.6.  tfn/bfn are (slope_12, intercept_6).
-    Returns clipped (x1,y1,x2,y2) in 10.6, or None.
-    """
-    dxs = xhi_6 - xlo_6
-    if dxs < (1 << FP6):
-        return None
-    dx = x2_6 - x1_6
-    dy = y2_6 - y1_6
-    ta, tb = tfn   # top: y >= ta*x + tb
-    ba, bb = bfn   # bot: y <= ba*x + bb
-
-    # Parametric t in 0.16.  We track t0, t1 as 0.16 integers.
-    T_ONE = 1 << FP16   # 1.0 in 0.16 = 65536
-    t0, t1 = 0, T_ONE
-
-    # Four half-plane constraints: (p, q) pairs, all in 10.6
-    # p = -dx,  q = x1 - xlo    (x >= xlo)
-    # p =  dx,  q = xhi - x1    (x < xhi)
-    # p = ta*dx - dy, q = y1 - ta*x1 - tb  (y >= top(x))
-    # p = dy - ba*dx, q = ba*x1 + bb - y1  (y <= bot(x))
-
-    # ta*dx: slope is 4.12, dx is 10.6.  Product is 14.18, >>12 gives 10.6.
-    ta_dx = fp_mul(ta, dx, FP12)
-    ba_dx = fp_mul(ba, dx, FP12)
-    ta_x1 = fp_mul(ta, x1_6, FP12)
-    ba_x1 = fp_mul(ba, x1_6, FP12)
-
-    constraints = (
-        (-dx,        x1_6 - xlo_6),
-        ( dx,        xhi_6 - x1_6),
-        ( ta_dx - dy, y1_6 - ta_x1 - tb),
-        ( dy - ba_dx, ba_x1 + bb - y1_6),
-    )
-
-    for p, q in constraints:
-        if abs(p) < 1:      # ~zero in 10.6 units (sub-pixel)
-            if q < -1:
-                return None
-        else:
-            # t = q / p as 0.16.  Both p and q are in 10.6 (same units),
-            # so t = q/p is unitless.  To get 0.16: t = (q << 16) // p.
-            if p == 0:
-                continue
-            t = (q << FP16) // p if (q >= 0) == (p > 0) else -(abs(q << FP16) // abs(p))
-            if p < 0:
-                if t > t1:
-                    return None
-                if t > t0:
-                    t0 = t
-            else:
-                if t < t0:
-                    return None
-                if t < t1:
-                    t1 = t
-
-    if t0 > t1:
-        return None
-
-    # Clipped coordinates: x_out = x1 + (t * dx) >> 16, all 10.6
-    cx1 = x1_6 + fp_mul(t0, dx, FP16)
-    cy1 = y1_6 + fp_mul(t0, dy, FP16)
-    cx2 = x1_6 + fp_mul(t1, dx, FP16)
-    cy2 = y1_6 + fp_mul(t1, dy, FP16)
-    return (cx1, cy1, cx2, cy2)
+FP_BOT_FN  = (0, FP_RENDER_H - 1)      # slope=0, intercept=159
 
 
 class FPClipSpans:
-    """Fixed-point version of ClipSpans.
+    """Fixed-point version of ClipSpans — pure 8-bit screen coordinates.
 
-    Spans store xlo/xhi in 10.6, top/bot as (slope_12, intercept_6).
+    Spans store xlo/xhi in 8.0 (pixel coords), top/bot as (slope_8, intercept)
+    where slope_8 is 0.8 signed and intercept is 8.0.
+    All multiplies are 8x8.
     """
     __slots__ = ("spans",)
 
     def __init__(self):
-        self.spans = [(0, FP_W_6, FP_ZERO_FN, FP_BOT_FN)]
+        self.spans = [(0, FP_RENDER_W, FP_ZERO_FN, FP_BOT_FN)]
 
     def is_full(self):
         return not self.spans
 
-    def has_gap(self, lo_6, hi_6):
-        ilo = max(0, lo_6)
-        ihi = min(FP_W_6 - (1 << FP6), hi_6)
+    def has_gap(self, lo, hi):
+        ilo = max(0, lo)
+        ihi = min(FP_RENDER_W - 1, hi)
         for xlo, xhi, tfn, bfn in self.spans:
             if xlo > ihi:
                 break
             if xhi <= ilo:
                 continue
             clo = max(xlo, ilo)
-            chi = min(xhi - (1 << FP6), ihi)
-            # Check a few sample columns in the overlap
-            x = clo
-            while x <= chi:
+            chi = min(xhi - 1, ihi)
+            for x in range(clo, chi + 1):
                 if fp_eval(tfn, x) < fp_eval(bfn, x):
                     return True
-                x += (1 << FP6)
         return False
 
     def draw_clipped(self, lines, color, surface, stats=None):
         """Clip each line analytically to each overlapping span, then draw.
 
-        Lines are in 10.6.  Convert to pixel coords (>>6) for pygame.draw.
+        Lines are in 8.0 screen pixel coordinates — direct to pygame.
         """
         for lx1, ly1, lx2, ly2 in lines:
             if stats is not None:
@@ -605,20 +552,19 @@ class FPClipSpans:
             drawn = False
             was_clipped = False
 
-            # Nearly vertical line (less than 1 pixel wide in 10.6)
-            if abs(lx1 - lx2) < (1 << FP6):
-                ix_6 = lx1
-                ix = ix_6 >> FP6
-                if ix < 0 or ix >= WIDTH:
+            # Nearly vertical line (less than 1 pixel wide)
+            if abs(lx1 - lx2) < 1:
+                ix = lx1
+                if ix < 0 or ix >= FP_RENDER_W:
                     if stats is not None:
                         stats[3] += 1
                     continue
                 found_span = False
                 for xlo, xhi, tfn, bfn in self.spans:
-                    if xlo <= ix_6 < xhi:
+                    if xlo <= ix < xhi:
                         found_span = True
-                        yt = fp_eval(tfn, ix_6)
-                        yb = fp_eval(bfn, ix_6)
+                        yt = fp_eval(tfn, ix)
+                        yb = fp_eval(bfn, ix)
                         if yt >= yb:
                             break
                         ya_orig = min(ly1, ly2)
@@ -627,9 +573,9 @@ class FPClipSpans:
                         ybb = min(yb_orig, yb)
                         if ya < ybb:
                             pygame.draw.line(surface, color,
-                                             (ix, ya >> FP6), (ix, ybb >> FP6), 1)
+                                             (ix, ya), (ix, ybb), 1)
                             drawn = True
-                            if ya > ya_orig + (1 << (FP6 - 1)) or ybb < yb_orig - (1 << (FP6 - 1)):
+                            if ya > ya_orig or ybb < yb_orig:
                                 was_clipped = True
                         break
                 if not drawn and stats is not None:
@@ -642,28 +588,27 @@ class FPClipSpans:
                     if xhi <= x_min or xlo >= x_max:
                         continue
                     overlaps_any = True
-                    c = _fp_clip_to_trap(lx1, ly1, lx2, ly2,
-                                         xlo, xhi, tfn, bfn)
+                    c = fp_clip_to_trap(lx1, ly1, lx2, ly2,
+                                        xlo, xhi, tfn, bfn)
                     if c:
                         pygame.draw.line(surface, color,
-                                         (c[0] >> FP6, c[1] >> FP6),
-                                         (c[2] >> FP6, c[3] >> FP6), 1)
+                                         (c[0], c[1]),
+                                         (c[2], c[3]), 1)
                         drawn = True
-                        threshold = 1 << (FP6 - 1)
-                        if (abs(c[0] - lx1) > threshold or
-                            abs(c[1] - ly1) > threshold or
-                            abs(c[2] - lx2) > threshold or
-                            abs(c[3] - ly2) > threshold):
+                        if (abs(c[0] - lx1) > 0 or
+                            abs(c[1] - ly1) > 0 or
+                            abs(c[2] - lx2) > 0 or
+                            abs(c[3] - ly2) > 0):
                             was_clipped = True
                 if not drawn and stats is not None:
                     stats[3 if not overlaps_any else 4] += 1
             if drawn and stats is not None:
                 stats[2 if was_clipped else 1] += 1
 
-    def mark_solid(self, lo_6, hi_6):
-        """Remove [ilo, ihi) from spans.  All values in 10.6."""
-        ilo = max(0, lo_6)
-        ihi = min(FP_W_6, hi_6 + (1 << FP6))
+    def mark_solid(self, lo, hi):
+        """Remove [ilo, ihi) from spans.  All values in 8.0 pixels."""
+        ilo = max(0, lo)
+        ihi = min(FP_RENDER_W, hi + 1)
         if ilo >= ihi:
             return
         new = []
@@ -677,14 +622,14 @@ class FPClipSpans:
                 new.append((ihi, xhi, tfn, bfn))
         self.spans = new
 
-    def tighten(self, lo_6, hi_6, sx1_6, sx2_6, yt1_6, yt2_6, yb1_6, yb2_6):
-        """Tighten top/bottom over [ilo, ihi).  All values in 10.6."""
-        ilo = max(0, lo_6)
-        ihi = min(FP_W_6, hi_6 + (1 << FP6))
+    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
+        """Tighten top/bottom over [ilo, ihi).  All values in 8.0 pixels."""
+        ilo = max(0, lo)
+        ihi = min(FP_RENDER_W, hi + 1)
         if ilo >= ihi:
             return
-        new_tfn = fp_linfn(yt1_6, yt2_6, sx1_6, sx2_6)
-        new_bfn = fp_linfn(yb1_6, yb2_6, sx1_6, sx2_6)
+        new_tfn = fp_linfn(yt1, yt2, sx1, sx2)
+        new_bfn = fp_linfn(yb1, yb2, sx1, sx2)
         new = []
         for xlo, xhi, tfn, bfn in self.spans:
             if xhi <= ilo or xlo >= ihi:
@@ -698,105 +643,103 @@ class FPClipSpans:
                 for bx0, bx1, b_fn in _fp_pw_min(bfn, new_bfn, tx0, tx1):
                     if bx1 > bx0:
                         if (fp_eval(t_fn, bx0) < fp_eval(b_fn, bx0) or
-                            fp_eval(t_fn, bx1 - (1 << FP6)) < fp_eval(b_fn, bx1 - (1 << FP6))):
+                            fp_eval(t_fn, bx1 - 1) < fp_eval(b_fn, bx1 - 1)):
                             new.append((bx0, bx1, t_fn, b_fn))
             if right:
                 new.append(right)
         self.spans = new
 
 
-def _fp_pw_max(f, g, x0_6, x1_6):
-    """Piecewise max of two fixed-point linear functions over [x0, x1).
+def _fp_pw_max(f, g, x0, x1):
+    """Piecewise max of two 8-bit linear functions over [x0, x1).
 
-    All x values in 10.6.  Functions are (slope_12, intercept_6).
+    All x values in 8.0.  Functions are (slope_8, intercept).
     Returns list of (x0, x1, winning_fn).
     """
-    one_pixel = 1 << FP6
-    fv0 = fp_eval(f, x0_6)
-    gv0 = fp_eval(g, x0_6)
-    fv1 = fp_eval(f, x1_6 - one_pixel)
-    gv1 = fp_eval(g, x1_6 - one_pixel)
+    fv0 = fp_eval(f, x0)
+    gv0 = fp_eval(g, x0)
+    fv1 = fp_eval(f, x1 - 1)
+    gv1 = fp_eval(g, x1 - 1)
     d0, d1 = fv0 - gv0, fv1 - gv1
     if d0 >= 0 and d1 >= 0:
-        return [(x0_6, x1_6, f)]
+        return [(x0, x1, f)]
     if d0 <= 0 and d1 <= 0:
-        return [(x0_6, x1_6, g)]
+        return [(x0, x1, g)]
     # Crossover
-    fvx1 = fp_eval(f, x1_6)
-    gvx1 = fp_eval(g, x1_6)
+    fvx1 = fp_eval(f, x1)
+    gvx1 = fp_eval(g, x1)
     dx0 = fv0 - gv0
     dx1 = fvx1 - gvx1
     denom = dx0 - dx1
     if abs(denom) < 1:
-        return [(x0_6, x1_6, f if d0 >= 0 else g)]
-    # t = dx0 / (dx0 - dx1), crossover x = x0 + t * (x1 - x0)
-    span = x1_6 - x0_6
-    cx = x0_6 + (dx0 * span) // denom
-    # Snap to pixel boundary
-    cx = ((cx + (one_pixel >> 1)) >> FP6) << FP6
-    cx = max(x0_6 + one_pixel, min(x1_6 - one_pixel, cx))
+        return [(x0, x1, f if d0 >= 0 else g)]
+    span = x1 - x0
+    cx = x0 + (dx0 * span) // denom
+    cx = max(x0 + 1, min(x1 - 1, cx))
     if fp_eval(f, cx) >= fp_eval(g, cx):
-        cx += one_pixel
-        if cx >= x1_6:
-            return [(x0_6, x1_6, f)]
+        cx += 1
+        if cx >= x1:
+            return [(x0, x1, f)]
     else:
-        if cx <= x0_6:
-            return [(x0_6, x1_6, g)]
+        if cx <= x0:
+            return [(x0, x1, g)]
     if d0 > 0:
-        return [(x0_6, cx, f), (cx, x1_6, g)]
-    return [(x0_6, cx, g), (cx, x1_6, f)]
+        return [(x0, cx, f), (cx, x1, g)]
+    return [(x0, cx, g), (cx, x1, f)]
 
 
-def _fp_pw_min(f, g, x0_6, x1_6):
-    """Piecewise min of two fixed-point linear functions over [x0, x1)."""
-    one_pixel = 1 << FP6
-    fv0 = fp_eval(f, x0_6)
-    gv0 = fp_eval(g, x0_6)
-    fv1 = fp_eval(f, x1_6 - one_pixel)
-    gv1 = fp_eval(g, x1_6 - one_pixel)
+def _fp_pw_min(f, g, x0, x1):
+    """Piecewise min of two 8-bit linear functions over [x0, x1)."""
+    fv0 = fp_eval(f, x0)
+    gv0 = fp_eval(g, x0)
+    fv1 = fp_eval(f, x1 - 1)
+    gv1 = fp_eval(g, x1 - 1)
     d0, d1 = fv0 - gv0, fv1 - gv1
     if d0 <= 0 and d1 <= 0:
-        return [(x0_6, x1_6, f)]
+        return [(x0, x1, f)]
     if d0 >= 0 and d1 >= 0:
-        return [(x0_6, x1_6, g)]
-    fvx1 = fp_eval(f, x1_6)
-    gvx1 = fp_eval(g, x1_6)
+        return [(x0, x1, g)]
+    fvx1 = fp_eval(f, x1)
+    gvx1 = fp_eval(g, x1)
     dx0 = fv0 - gv0
     dx1 = fvx1 - gvx1
     denom = dx0 - dx1
     if abs(denom) < 1:
-        return [(x0_6, x1_6, f if d0 <= 0 else g)]
-    span = x1_6 - x0_6
-    cx = x0_6 + (dx0 * span) // denom
-    cx = ((cx + (one_pixel >> 1)) >> FP6) << FP6
-    cx = max(x0_6 + one_pixel, min(x1_6 - one_pixel, cx))
+        return [(x0, x1, f if d0 <= 0 else g)]
+    span = x1 - x0
+    cx = x0 + (dx0 * span) // denom
+    cx = max(x0 + 1, min(x1 - 1, cx))
     if fp_eval(f, cx) <= fp_eval(g, cx):
-        cx += one_pixel
-        if cx >= x1_6:
-            return [(x0_6, x1_6, f)]
+        cx += 1
+        if cx >= x1:
+            return [(x0, x1, f)]
     else:
-        if cx <= x0_6:
-            return [(x0_6, x1_6, g)]
+        if cx <= x0:
+            return [(x0, x1, g)]
     if d0 < 0:
-        return [(x0_6, cx, f), (cx, x1_6, g)]
-    return [(x0_6, cx, g), (cx, x1_6, f)]
+        return [(x0, cx, f), (cx, x1, g)]
+    return [(x0, cx, g), (cx, x1, f)]
 
 
-# ── Fixed-point BSP rendering ────────────────────────────────────────────────
+# ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
 
 def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
-    """Render a seg using fixed-point arithmetic.
+    """Render a seg using prescaled 8-bit fixed-point arithmetic.
 
-    sin_a, cos_a: 1.7.  vx, vy, vz: 16.0.
+    sin_a, cos_a: 1.7.
+    vx, vy, vz: 8-bit prescaled coordinates.
+    Uses fp_vertexes and fp_sectors for prescaled geometry.
+    All multiplies are 8x8.
     """
     s = segs[si]
-    v1, v2 = vertexes[s[0]], vertexes[s[1]]
+    v1, v2 = fp_vertexes[s[0]], fp_vertexes[s[1]]
 
-    # Back-face test (integer arithmetic, same as float version)
+    # Back-face test using prescaled linedef vertices (integer part of player pos)
     ld = linedefs[s[3]]
-    lv1, lv2 = vertexes[ld[0]], vertexes[ld[1]]
+    lv1, lv2 = fp_vertexes[ld[0]], fp_vertexes[ld[1]]
     ldx, ldy = lv2[0] - lv1[0], lv2[1] - lv1[1]
-    dot = ldy * (vx - lv1[0]) - ldx * (vy - lv1[1])
+    vx_int, vy_int = vx >> 8, vy >> 8
+    dot = ldy * (vx_int - lv1[0]) - ldx * (vy_int - lv1[1])
     if s[4] == 1:
         dot = -dot
     if dot <= 0:
@@ -804,83 +747,85 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
 
     front_idx, back_idx = seg_sectors(s)
 
-    # View-space transform (16.0 in, 16.0 out)
-    evx1, evy1 = fp_to_view(v1[0], v1[1], vx, vy, sin_a, cos_a)
-    evx2, evy2 = fp_to_view(v2[0], v2[1], vx, vy, sin_a, cos_a)
+    # View-space transform (4 x 8x8 multiplies per vertex)
+    evx1, evy1, fvy1 = fp_to_view(v1[0], v1[1], vx, vy, sin_a, cos_a)
+    evx2, evy2, fvy2 = fp_to_view(v2[0], v2[1], vx, vy, sin_a, cos_a)
 
-    # Near clip
+    # Near clip (8-bit view coords, 0.8 parametric t)
     nc = fp_near_clip(evx1, evy1, evx2, evy2)
     if nc is None:
         return
     ex1, ey1, ex2, ey2 = nc
 
-    # Perspective: reciprocal is 8.8
-    rx1 = fp_recip_x(ey1)
-    rx2 = fp_recip_x(ey2)
-    ry1 = fp_recip_y(ey1)
-    ry2 = fp_recip_y(ey2)
+    # Perspective reciprocal: interpolated by fractional depth
+    fvy1_clip = fvy1 if ey1 == evy1 else 0
+    fvy2_clip = fvy2 if ey2 == evy2 else 0
+    rxh1, rxl1 = fp_recip_x(ey1, fvy1_clip)
+    rxh2, rxl2 = fp_recip_x(ey2, fvy2_clip)
+    ryh1, ryl1 = fp_recip_y(ey1, fvy1_clip)
+    ryh2, ryl2 = fp_recip_y(ey2, fvy2_clip)
 
-    # Project to screen X (10.6)
-    sx1_6 = fp_project_x(ex1, rx1)
-    sx2_6 = fp_project_x(ex2, rx2)
+    # Project to screen X: two 8x8 muls per endpoint
+    sx1 = fp_project_x(ex1, rxh1, rxl1)
+    sx2 = fp_project_x(ex2, rxh2, rxl2)
 
-    x_lo_6 = min(sx1_6, sx2_6)
-    x_hi_6 = max(sx1_6, sx2_6)
+    x_lo = min(sx1, sx2)
+    x_hi = max(sx1, sx2)
 
-    if not clips.has_gap(x_lo_6, x_hi_6):
+    if not clips.has_gap(x_lo, x_hi):
         return
 
-    # Sector heights
-    front = sectors[front_idx]
+    # Sector heights (prescaled by /8)
+    front = fp_sectors[front_idx]
     fh, ch = front[0], front[1]
 
-    # Project top/bottom (10.6)
-    ft1_6 = fp_project_y(ch - vz, ry1)
-    fb1_6 = fp_project_y(fh - vz, ry1)
-    ft2_6 = fp_project_y(ch - vz, ry2)
-    fb2_6 = fp_project_y(fh - vz, ry2)
+    # Project top/bottom: two 8x8 muls per endpoint
+    ft1 = fp_project_y(ch - vz, ryh1, ryl1)
+    fb1 = fp_project_y(fh - vz, ryh1, ryl1)
+    ft2 = fp_project_y(ch - vz, ryh2, ryl2)
+    fb2 = fp_project_y(fh - vz, ryh2, ryl2)
 
     solid = back_idx is None
-    back = sectors[back_idx] if back_idx is not None else None
+    back = fp_sectors[back_idx] if back_idx is not None else None
     if back and (back[1] <= fh or back[0] >= ch):
         solid = True
 
     if back:
-        bt1_6 = fp_project_y(back[1] - vz, ry1)
-        bt2_6 = fp_project_y(back[1] - vz, ry2)
-        bb1_6 = fp_project_y(back[0] - vz, ry1)
-        bb2_6 = fp_project_y(back[0] - vz, ry2)
+        bt1 = fp_project_y(back[1] - vz, ryh1, ryl1)
+        bt2 = fp_project_y(back[1] - vz, ryh2, ryl2)
+        bb1 = fp_project_y(back[0] - vz, ryh1, ryl1)
+        bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
 
     if solid:
         clips.draw_clipped([
-            (sx1_6, ft1_6, sx2_6, ft2_6),
-            (sx1_6, fb1_6, sx2_6, fb2_6),
-            (sx1_6, ft1_6, sx1_6, fb1_6),
-            (sx2_6, ft2_6, sx2_6, fb2_6),
+            (sx1, ft1, sx2, ft2),
+            (sx1, fb1, sx2, fb2),
+            (sx1, ft1, sx1, fb1),
+            (sx2, ft2, sx2, fb2),
         ], GREEN, surface, draw_stats)
-        clips.mark_solid(x_lo_6, x_hi_6)
+        clips.mark_solid(x_lo, x_hi)
     elif back:
         if back[1] < ch:
             clips.draw_clipped([
-                (sx1_6, ft1_6, sx2_6, ft2_6),
-                (sx1_6, bt1_6, sx2_6, bt2_6),
-                (sx1_6, ft1_6, sx1_6, bt1_6),
-                (sx2_6, ft2_6, sx2_6, bt2_6),
+                (sx1, ft1, sx2, ft2),
+                (sx1, bt1, sx2, bt2),
+                (sx1, ft1, sx1, bt1),
+                (sx2, ft2, sx2, bt2),
             ], GREEN, surface, draw_stats)
         elif back[1] > ch:
-            clips.draw_clipped([(sx1_6, ft1_6, sx2_6, ft2_6)], GREEN, surface, draw_stats)
+            clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
         if back[0] > fh:
             clips.draw_clipped([
-                (sx1_6, bb1_6, sx2_6, bb2_6),
-                (sx1_6, fb1_6, sx2_6, fb2_6),
-                (sx1_6, bb1_6, sx1_6, fb1_6),
-                (sx2_6, bb2_6, sx2_6, fb2_6),
+                (sx1, bb1, sx2, bb2),
+                (sx1, fb1, sx2, fb2),
+                (sx1, bb1, sx1, fb1),
+                (sx2, bb2, sx2, fb2),
             ], GREEN, surface, draw_stats)
         elif back[0] < fh:
-            clips.draw_clipped([(sx1_6, fb1_6, sx2_6, fb2_6)], GREEN, surface, draw_stats)
-        clips.tighten(x_lo_6, x_hi_6, sx1_6, sx2_6,
-                       max(ft1_6, bt1_6), max(ft2_6, bt2_6),
-                       min(fb1_6, bb1_6), min(fb2_6, bb2_6))
+            clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+        clips.tighten(x_lo, x_hi, sx1, sx2,
+                       max(ft1, bt1), max(ft2, bt2),
+                       min(fb1, bb1), min(fb2, bb2))
 
 
 def render_subsector_fp(idx, clips, sin_a, cos_a, vx, vy, vz, surface):
@@ -891,7 +836,15 @@ def render_subsector_fp(idx, clips, sin_a, cos_a, vx, vy, vz, surface):
             return
 
 
-def render_bsp_fp(nid, clips, sin_a, cos_a, vx, vy, vz, surface):
+def render_bsp_fp(nid, clips, sin_a, cos_a, vx, vy, vz,
+                   wx_full, wy_full, surface):
+    """BSP traversal for the 8-bit fixed-point path.
+
+    vx, vy, vz: prescaled 8-bit player position (for rendering).
+    wx_full, wy_full: original (un-prescaled) player position (for BSP node
+        traversal and bbox checks, since node data is not prescaled).
+    sin_a, cos_a: 1.7.
+    """
     if clips.is_full():
         return
     if nid & NF_SUBSECTOR:
@@ -899,21 +852,21 @@ def render_bsp_fp(nid, clips, sin_a, cos_a, vx, vy, vz, surface):
                             clips, sin_a, cos_a, vx, vy, vz, surface)
         return
     node = nodes[nid]
-    side = point_on_side(vx, vy, node)
+    side = point_on_side(wx_full, wy_full, node)
     ch = (node[12], node[13])
-    render_bsp_fp(ch[side], clips, sin_a, cos_a, vx, vy, vz, surface)
+    render_bsp_fp(ch[side], clips, sin_a, cos_a, vx, vy, vz,
+                  wx_full, wy_full, surface)
     if clips.is_full():
         return
     far = side ^ 1
-    # Bbox visibility check — reuse the float version with converted sin/cos
-    cos_f = fp_to_float(cos_a, FP7)
-    sin_f = fp_to_float(sin_a, FP7)
-    br = fp_bbox_visible(node, far, cos_f, sin_f, vx, vy)
+    # Bbox visibility check — reuse the float version with un-prescaled coords
+    cos_f = cos_a / 128.0
+    sin_f = sin_a / 128.0
+    br = fp_bbox_visible(node, far, cos_f, sin_f, wx_full, wy_full)
     if br is not None:
-        br_lo_6 = br[0] << FP6
-        br_hi_6 = br[1] << FP6
-        if clips.has_gap(br_lo_6, br_hi_6):
-            render_bsp_fp(ch[far], clips, sin_a, cos_a, vx, vy, vz, surface)
+        if clips.has_gap(br[0], br[1]):
+            render_bsp_fp(ch[far], clips, sin_a, cos_a, vx, vy, vz,
+                          wx_full, wy_full, surface)
 
 
 # ── Angle conversion helpers ─────────────────────────────────────────────────
@@ -1021,13 +974,18 @@ while running:
         # Fixed-point sin/cos (1.7)
         fp_sin_a = fp_sin(angle_byte)
         fp_cos_a = fp_cos(angle_byte)
-        px_int = int(player_x)
-        py_int = int(player_y)
-        vz_int = player_floor(player_x, player_y) + 41
+        # Prescaled player position in 8.8 (sub-unit precision, smooth movement)
+        px_88 = int((player_x - MAP_CENTER_X) * 256 / PRESCALE)
+        py_88 = int((player_y - MAP_CENTER_Y) * 256 / PRESCALE)
+        vz_ps = (player_floor(player_x, player_y) + 41) // PRESCALE
+        # Un-prescaled position for BSP node traversal
+        px_full = int(player_x)
+        py_full = int(player_y)
 
         render_bsp_fp(len(nodes) - 1, FPClipSpans(),
                       fp_sin_a, fp_cos_a,
-                      px_int, py_int, vz_int, fp_surface)
+                      px_88, py_88, vz_ps,
+                      px_full, py_full, fp_surface)
 
         # Nearest-neighbour upscale to display
         screen.fill((0, 0, 0))

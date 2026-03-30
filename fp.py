@@ -1,61 +1,62 @@
 """Fixed-point arithmetic helpers for the DOOM wireframe renderer.
 
-All values fit in 16 bits with case-by-case integer/fractional splits.
-Most multiplies are 8×8 or 16×8.
+Pure 8-bit arithmetic: all multiplies are 8x8 (16-bit product).
+
+Coordinates are prescaled at WAD load time (divide by 8) so that
+view-space values, screen coordinates, and projection factors all
+fit in 8 bits.
 
 Formats:
-  16.0  — world coords, view-space positions, integers
-  1.7   — sin/cos (8-bit signed, 7 fractional bits)
-  8.8   — reciprocal scale (FOCAL/vy), general fixed-point
-  10.6  — screen coordinates (X: 0..960, Y: 0..600)
-  4.12  — clip function slopes (high precision for shallow angles)
-  0.16  — parametric t (Cyrus-Beck, near-clip)
+  8.0   -- prescaled world coords, view-space positions, screen pixels
+  1.7   -- sin/cos (8-bit signed, 7 fractional bits)
+  0.8   -- reciprocal scale (FOCAL/vy), parametric t, slopes
+  8.0   -- screen coordinates (X: 0..255, Y: 0..159)
 """
 
 import math
 
-# ── Shift constants ──────────────────────────────────────────────────────────
+# -- Shift constants ----------------------------------------------------------
 
-FP7  = 7    # 1.7 (sin/cos)
-FP8  = 8    # 8.8 (reciprocal, general)
-FP6  = 6    # 10.6 (screen coords)
-FP12 = 12   # 4.12 (slopes)
-FP16 = 16   # 0.16 (parametric t)
+FP7 = 7   # 1.7 (sin/cos)
+FP8 = 8   # 0.8 (reciprocal, parametric t, slopes)
 
-# ── Core arithmetic ──────────────────────────────────────────────────────────
+# -- Core arithmetic ----------------------------------------------------------
 
-def fp_mul(a, b, shift):
-    """Signed multiply, shift right.  a and b are Python ints."""
-    return (a * b) >> shift
+def fp_mul8(a, b):
+    """8x8 signed multiply, shift right by 8.  Result fits in 8 bits."""
+    return (a * b) >> 8
 
-def fp_div(num, den, shift):
-    """Signed divide: (num << shift) // den.  Returns 0 if den == 0."""
-    if den == 0: return 0
-    # Python's // truncates toward negative infinity; use int division
-    # that truncates toward zero for consistency with C/hardware.
-    r = (num << shift)
+def fp_mul7(a, b):
+    """8x8 signed multiply, shift right by 7.  For sin/cos transforms."""
+    return (a * b) >> 7
+
+def fp_div8(num, den):
+    """Signed divide: (num << 8) // den.  Returns 0 if den == 0.
+    Truncates toward zero for consistency with C/hardware."""
+    if den == 0:
+        return 0
+    r = num << 8
     if (r < 0) != (den < 0):
         return -(abs(r) // abs(den))
     return abs(r) // abs(den)
 
-def fp_from_float(x, shift):
-    """Float → fixed-point."""
-    return int(x * (1 << shift))
+def s8(x):
+    """Clamp/wrap to signed 8-bit range."""
+    x = x & 0xFF
+    return x - 0x100 if x >= 0x80 else x
 
-def fp_to_float(x, shift):
-    """Fixed-point → float."""
-    return x / (1 << shift)
+def clamp(x, lo, hi):
+    """Clamp x to [lo, hi]."""
+    if x < lo:
+        return lo
+    if x > hi:
+        return hi
+    return x
 
-def s16(x):
-    """Clamp/wrap to signed 16-bit range."""
-    x = x & 0xFFFF
-    return x - 0x10000 if x >= 0x8000 else x
-
-# ── Sin/cos table (1.7 signed, 8-bit) ───────────────────────────────────────
+# -- Sin/cos table (1.7 signed, 8-bit) ---------------------------------------
 #
-# 256 entries covering 0..360°.  Each entry is int8: -128..+127.
-# sin(0)=0, sin(64)=+127 (clamp from 128), sin(128)=0, sin(192)=-128.
-# angle_byte: 0=0°, 64=90°, 128=180°, 192=270°.
+# 256 entries covering 0..360deg.  Each entry is int8: -128..+127.
+# angle_byte: 0=0deg, 64=90deg, 128=180deg, 192=270deg.
 
 _SIN_TABLE = []
 for _i in range(256):
@@ -65,127 +66,242 @@ for _i in range(256):
     _SIN_TABLE.append(_val)
 
 def fp_sin(angle_byte):
-    """8-bit angle → 1.7 signed sin value."""
+    """8-bit angle -> 1.7 signed sin value."""
     return _SIN_TABLE[angle_byte & 0xFF]
 
 def fp_cos(angle_byte):
-    """8-bit angle → 1.7 signed cos value."""
+    """8-bit angle -> 1.7 signed cos value."""
     return _SIN_TABLE[(angle_byte + 64) & 0xFF]
 
-# ── Reciprocal (perspective scale) ──────────────────────────────────────────
+# -- Reciprocal tables (perspective scale) ------------------------------------
 #
 # Fixed-point renders at 256x160.
 # FOCAL_X = 128 (256/2), FOCAL_Y = 154 (128 * 1.2, rounded).
+# With prescaled coords (everything / 8), the projection is
+# scale-invariant: focal lengths stay the same.
+#
+# recip_x[vy] = min(128 / vy, 255) for vy in 1..127
+# recip_y[vy] = min(154 / vy, 255) for vy in 1..127
+# Both results are 0.8 unsigned (0..255).
 
 FP_RENDER_W = 256
 FP_RENDER_H = 160
-FP_FOCAL_X = FP_RENDER_W // 2           # 128
+FP_FOCAL_X = FP_RENDER_W // 2              # 128
 FP_FOCAL_Y = int(FP_FOCAL_X * 1.2 + 0.5)  # 154
+HALF_W = FP_RENDER_W // 2   # 128
+HALF_H = FP_RENDER_H // 2   # 80
 
-FOCAL_X_SCALED = FP_FOCAL_X * 256   # 128 * 256 = 32768
-FOCAL_Y_SCALED = FP_FOCAL_Y * 256   # 154 * 256 = 39424
+# Build lookup tables indexed by vy (0..127).  Index 0 = max clamp.
+# recip = FOCAL * 256 / vy, stored as 8.8 (16-bit).
+# Split into hi (integer) and lo (fraction) bytes for two 8x8 muls.
+_RECIP_X_HI = [0] * 128;  _RECIP_X_LO = [0] * 128
+_RECIP_Y_HI = [0] * 128;  _RECIP_Y_LO = [0] * 128
+for _vy in range(1, 128):
+    _rx = min((FP_FOCAL_X << 8) // _vy, 0x7FFF)
+    _ry = min((FP_FOCAL_Y << 8) // _vy, 0x7FFF)
+    _RECIP_X_HI[_vy] = _rx >> 8;  _RECIP_X_LO[_vy] = _rx & 0xFF
+    _RECIP_Y_HI[_vy] = _ry >> 8;  _RECIP_Y_LO[_vy] = _ry & 0xFF
+# vy=0: clamp to max
+_RECIP_X_HI[0] = 0x7F; _RECIP_X_LO[0] = 0xFF
+_RECIP_Y_HI[0] = 0x7F; _RECIP_Y_LO[0] = 0xFF
 
-def fp_recip_x(vy):
-    """16.0 view depth → 8.8 horizontal reciprocal (FOCAL_X/vy * 256)."""
-    if vy <= 0: return 0x7FFF
-    r = FOCAL_X_SCALED // vy
-    return min(r, 0x7FFF)
+def fp_recip_x(vy, vy_frac=0):
+    """Returns (hi, lo) of 8.8 horizontal reciprocal, interpolated by vy_frac."""
+    vy = max(1, min(126, vy))
+    full0 = (_RECIP_X_HI[vy] << 8) | _RECIP_X_LO[vy]
+    full1 = (_RECIP_X_HI[vy + 1] << 8) | _RECIP_X_LO[vy + 1]
+    delta = full1 - full0
+    delta_hi = delta >> 8
+    delta_lo = delta & 0xFF
+    interp = full0 + delta_hi * vy_frac + ((delta_lo * vy_frac) >> 8)
+    return interp >> 8, interp & 0xFF
 
-def fp_recip_y(vy):
-    """16.0 view depth → 8.8 vertical reciprocal (FOCAL_Y/vy * 256)."""
-    if vy <= 0: return 0x7FFF
-    r = FOCAL_Y_SCALED // vy
-    return min(r, 0x7FFF)
+def fp_recip_y(vy, vy_frac=0):
+    """Returns (hi, lo) of 8.8 vertical reciprocal, interpolated."""
+    vy = max(1, min(126, vy))
+    full0 = (_RECIP_Y_HI[vy] << 8) | _RECIP_Y_LO[vy]
+    full1 = (_RECIP_Y_HI[vy + 1] << 8) | _RECIP_Y_LO[vy + 1]
+    delta = full1 - full0
+    delta_hi = delta >> 8
+    delta_lo = delta & 0xFF
+    interp = full0 + delta_hi * vy_frac + ((delta_lo * vy_frac) >> 8)
+    return interp >> 8, interp & 0xFF
 
-# ── Projection helpers ──────────────────────────────────────────────────────
+# -- Projection helpers (two 8x8 multiplies each) ----------------------------
 
-HALF_W = FP_RENDER_W // 2    # 128, in 16.0
-HALF_H = FP_RENDER_H // 2   # 80, in 16.0
-HALF_W_6 = HALF_W << FP6    # in 10.6
-HALF_H_6 = HALF_H << FP6    # in 10.6
+def fp_project_x(vx, recip_hi, recip_lo):
+    """Project view-space X to screen X (integer).
 
-def fp_project_x(vx, recip_x):
-    """Project view-space X to screen X (10.6).
-
-    sx = half_w + vx * recip_x >> 8, then convert to 10.6.
-    vx: 16.0, recip_x: 8.8 (FOCAL_X based).
+    sx = 128 + vx * recip_hi + (vx * recip_lo >> 8)
+    Two 8x8 multiplies.
     """
-    sx_int = HALF_W + ((vx * recip_x) >> FP8)
-    return sx_int << FP6  # 10.6
+    return HALF_W + vx * recip_hi + ((vx * recip_lo) >> 8)
 
-def fp_project_y(height_delta, recip_y):
-    """Project height delta to screen Y (10.6).
+def fp_project_y(height_delta, recip_hi, recip_lo):
+    """Project height delta to screen Y (integer).
 
-    sy = half_h - height_delta * recip_y >> 8, in 10.6.
-    height_delta: 16.0 (ceil - vz or floor - vz).  recip_y: 8.8 (FOCAL_Y based).
+    sy = 80 - (height_delta * recip_hi + (height_delta * recip_lo >> 8))
+    Two 8x8 multiplies.  No sub-pixel needed for Y (heights are integer).
     """
-    proj = (height_delta * recip_y) >> FP8  # 16.0
-    return HALF_H_6 - (proj << FP6)
+    return HALF_H - (height_delta * recip_hi + ((height_delta * recip_lo) >> 8))
 
-# ── Clip function helpers (4.12 slope, 10.6 intercept) ─────────────────────
+# -- Clip function helpers (0.8 slope, 8.0 intercept) -------------------------
 
-def fp_linfn(y1_6, y2_6, sx1_6, sx2_6):
-    """Two-point → (slope_12, intercept_6).
+def fp_linfn(y1, y2, sx1, sx2):
+    """Two-point -> (slope_8, intercept).
 
-    y1_6, y2_6: screen Y in 10.6.
-    sx1_6, sx2_6: screen X in 10.6.
-    slope = (y2 - y1) / (sx2 - sx1) in 4.12 (high precision).
-    intercept = y1 - slope * sx1 in 10.6.
+    y1, y2: screen Y in 8.0.
+    sx1, sx2: screen X in 8.0.
+    slope = (dy << 8) / dx -> 0.8 signed.
+    intercept = y1 - (slope * sx1) >> 8 -> 8.0.
     """
-    dx = sx2_6 - sx1_6
-    if abs(dx) < (1 << FP6):  # less than 1 pixel
-        return (0, (y1_6 + y2_6) >> 1)
-    dy = y2_6 - y1_6
-    # slope in 4.12: (dy << 12) / dx, but dy is 10.6 and dx is 10.6
-    # so dy/dx is dimensionless.  We want 4.12 result.
-    # (dy << 12) / dx: dy is 10.6, <<12 makes it 10.18, /dx(10.6) → 0.12.
-    # That gives 0.12 which is what we want for the slope in "per 10.6-unit" terms.
-    # Actually: slope = dy_real / dx_real.  Both in 10.6.
-    # dy_real = dy / 64, dx_real = dx / 64.  slope_real = dy/dx (unitless).
-    # In 4.12: slope_12 = slope_real * 4096 = (dy * 4096) / dx = (dy << 12) / dx.
-    # But dy and dx are in 10.6, so dy << 12 is 10.18.  Division by 10.6 gives 0.12.
-    # We need 4.12, but the integer part comes from the actual slope magnitude.
-    slope_12 = fp_div(dy, dx, FP12)  # (dy << 12) // dx
-    # intercept in 10.6: y1 - slope * sx1
-    # slope_12 * sx1_6: 4.12 * 10.6 = 14.18, >>12 → 10.6
-    intercept_6 = y1_6 - fp_mul(slope_12, sx1_6, FP12)
-    return (slope_12, intercept_6)
+    dx = sx2 - sx1
+    if abs(dx) < 1:  # less than 1 pixel
+        return (0, (y1 + y2) >> 1)
+    dy = y2 - y1
+    # slope in 0.8: (dy << 8) / dx
+    slope_8 = fp_div8(dy, dx)
+    # intercept in 8.0: y1 - (slope * sx1) >> 8
+    intercept = y1 - fp_mul8(slope_8, sx1)
+    return (slope_8, intercept)
 
-def fp_eval(fn, x_6):
-    """Evaluate slope-intercept at screen X (10.6) → screen Y (10.6).
+def fp_eval(fn, x):
+    """Evaluate slope-intercept at screen X (8.0) -> screen Y (8.0).
 
-    fn = (slope_12, intercept_6).
-    result = slope * x + intercept.
-    slope_12 * x_6: 4.12 * 10.6 = 14.18, >>12 → 10.6.
+    fn = (slope_8, intercept).
+    result = (slope * x) >> 8 + intercept.
+    slope_8(0.8) * x(8.0) = 8x8 -> >>8 -> 8.0, + intercept(8.0).
     """
-    return fp_mul(fn[0], x_6, FP12) + fn[1]
+    return fp_mul8(fn[0], x) + fn[1]
 
-# ── View transform ──────────────────────────────────────────────────────────
+# -- View transform (8x8 multiplies) -----------------------------------------
 
-def fp_to_view(wx, wy, vx, vy, sin_a, cos_a):
-    """World to view space.  All 16.0 except sin/cos (1.7).
+def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
+    """Prescaled world to view space, returning (vx, vy, vy_frac).
 
-    view_x = dx * sin_a - dy * cos_a   (16.0 * 1.7 >> 7 → 16.0)
-    view_y = dx * cos_a + dy * sin_a
+    wx, wy: 8.0 signed prescaled vertex coords.
+    vx_88, vy_88: 8.8 signed prescaled player position.
+    sin_a, cos_a: 1.7.
+
+    Integer and fractional deltas are rotated SEPARATELY (all 8x8 muls),
+    then combined before the final shift.  This preserves sub-pixel
+    precision from the 8.8 player position AND avoids truncation-
+    compounding between rotation terms.
+    8 multiplies total (4 for integer deltas, 4 for fractional deltas).
     """
-    dx = wx - vx
-    dy = wy - vy
-    evx = fp_mul(dx, sin_a, FP7) - fp_mul(dy, cos_a, FP7)
-    evy = fp_mul(dx, cos_a, FP7) + fp_mul(dy, sin_a, FP7)
-    return evx, evy
+    dx_88 = (wx << 8) - vx_88
+    dy_88 = (wy << 8) - vy_88
+    dx_hi = dx_88 >> 8
+    dy_hi = dy_88 >> 8
+    dx_lo = dx_88 & 0xFF
+    dy_lo = dy_88 & 0xFF
+    # Integer-part rotation (4 x 8x8 muls, results in 8.7)
+    raw_vx = dx_hi * sin_a - dy_hi * cos_a
+    raw_vy = dx_hi * cos_a + dy_hi * sin_a
+    # Fractional-part rotation (4 x 8x8 muls, results in 1.15)
+    frac_vx = dx_lo * sin_a - dy_lo * cos_a
+    frac_vy = dx_lo * cos_a + dy_lo * sin_a
+    # Combine: 8.7 << 1 -> 8.8, plus 1.15 >> 7 -> 1.8
+    total_vx = raw_vx * 2 + (frac_vx >> 7)
+    total_vy = raw_vy * 2 + (frac_vy >> 7)
+    evx = total_vx >> 8
+    evy = total_vy >> 8
+    evy_frac = total_vy & 0xFF
+    return evx, evy, evy_frac
 
-# ── Near clip ───────────────────────────────────────────────────────────────
+# -- Near clip (8-bit view coords) -------------------------------------------
 
-NEAR_FP = 1  # 16.0
+NEAR_FP = 1  # 8.0
 
 def fp_near_clip(vx1, vy1, vx2, vy2):
-    """Clip to vy >= NEAR.  All 16.0.  Returns (vx1,vy1,vx2,vy2) or None."""
-    if vy1 < NEAR_FP and vy2 < NEAR_FP: return None
-    if vy1 >= NEAR_FP and vy2 >= NEAR_FP: return (vx1, vy1, vx2, vy2)
-    # t = (NEAR - vy1) / (vy2 - vy1) in 0.16
-    t = fp_div(NEAR_FP - vy1, vy2 - vy1, FP16)
-    # cx = vx1 + t * (vx2 - vx1) >> 16
-    cx = vx1 + fp_mul(t, vx2 - vx1, FP16)
+    """Clip to vy >= NEAR.  All 8.0.  Returns (vx1,vy1,vx2,vy2) or None.
+
+    Parametric t in 0.8: t = ((NEAR - vy1) << 8) / (vy2 - vy1).
+    cx = vx1 + (t * (vx2 - vx1)) >> 8  (8x8 multiply).
+    """
+    if vy1 < NEAR_FP and vy2 < NEAR_FP:
+        return None
+    if vy1 >= NEAR_FP and vy2 >= NEAR_FP:
+        return (vx1, vy1, vx2, vy2)
+    dvy = vy2 - vy1
+    if dvy == 0:
+        return None
+    t = fp_div8(NEAR_FP - vy1, dvy)
+    dvx = vx2 - vx1
+    cx = vx1 + fp_mul8(t, dvx)
     if vy1 < NEAR_FP:
         return (cx, NEAR_FP, vx2, vy2)
     return (vx1, vy1, cx, NEAR_FP)
+
+# -- Cyrus-Beck clipper (8-bit screen coords) ---------------------------------
+
+def fp_clip_to_trap(x1, y1, x2, y2, xlo, xhi, tfn, bfn):
+    """Clip line to trapezoid [xlo, xhi) with linear top/bot.
+
+    All screen coords are 8.0 integers.
+    tfn/bfn are (slope_8, intercept) pairs.
+    Returns clipped (x1, y1, x2, y2) in 8.0, or None.
+
+    Cyrus-Beck with 0.8 parametric t.
+    t = (q << 8) / p: 16/8 division -> 0.8.
+    Clipped coord: x + (dx * t) >> 8, all 8x8.
+    """
+    dxs = xhi - xlo
+    if dxs < 1:
+        return None
+    dx = x2 - x1
+    dy = y2 - y1
+    ta, tb = tfn   # top: y >= ta*x + tb
+    ba, bb = bfn   # bot: y <= ba*x + bb
+
+    T_ONE = 1 << FP8  # 1.0 in 0.8 = 256
+    t0, t1 = 0, T_ONE
+
+    # Half-plane constraints: (p, q) pairs
+    # p and q are in 8.0 screen-coord units
+    # Slope-related terms: ta(0.8) * dx(8.0) >> 8 -> 8.0
+    ta_dx = fp_mul8(ta, dx)
+    ba_dx = fp_mul8(ba, dx)
+    ta_x1 = fp_mul8(ta, x1)
+    ba_x1 = fp_mul8(ba, x1)
+
+    constraints = (
+        (-dx,        x1 - xlo),
+        ( dx,        xhi - x1),
+        ( ta_dx - dy, y1 - ta_x1 - tb),
+        ( dy - ba_dx, ba_x1 + bb - y1),
+    )
+
+    for p, q in constraints:
+        if abs(p) < 1:
+            if q < -1:
+                return None
+        else:
+            # t = (q << 8) / p in 0.8
+            t = fp_div8(q, p)
+            if p < 0:
+                if t > t1:
+                    return None
+                if t > t0:
+                    t0 = t
+            else:
+                if t < t0:
+                    return None
+                if t < t1:
+                    t1 = t
+
+    if t0 > t1:
+        return None
+
+    # Clipped coordinates: x_out = x1 + (t * dx) >> 8
+    cx1 = x1 + fp_mul8(t0, dx)
+    cy1 = y1 + fp_mul8(t0, dy)
+    cx2 = x1 + fp_mul8(t1, dx)
+    cy2 = y1 + fp_mul8(t1, dy)
+    return (cx1, cy1, cx2, cy2)
+
+# -- Prescaling constants (used by doom_wireframe.py at load time) ------------
+
+MAP_CENTER_X = 1200
+MAP_CENTER_Y = -3250
+PRESCALE = 8    # divide everything by 8
