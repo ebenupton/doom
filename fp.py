@@ -109,34 +109,48 @@ FP_FOCAL_Y = int(FP_FOCAL_X * 1.2 + 0.5)  # 154
 HALF_W = FP_RENDER_W // 2   # 128
 HALF_H = FP_RENDER_H // 2   # 80
 
-# Reciprocal tables with 2 extra fractional bits: 512 entries.
-# Indexed by (vy_int << 2 | vy_frac2), giving 4x depth resolution.
-# recip = FOCAL * 256 / (index / 4), stored as 8.8 (hi, lo bytes).
-# Zero extra multiplies vs the 128-entry table — just a finer index.
-RECIP_FRAC_BITS = 2
-RECIP_TABLE_SIZE = 128 << RECIP_FRAC_BITS  # 512
+# Reciprocal tables with 2 fractional bits: 512 entries stored.
+# A 3rd fractional bit is resolved by averaging adjacent entries
+# (add + shift, no multiply), giving 1024 effective resolution from
+# a 512-entry table.
+RECIP_FRAC_BITS = 3   # 3 bits extracted from vy; top 2 index the table, LSB averages
+RECIP_TABLE_BITS = 2   # table indexed by top 2 fractional bits
+RECIP_TABLE_SIZE = 128 << RECIP_TABLE_BITS  # 512 stored entries
 
-_RECIP_X_HI = [0] * RECIP_TABLE_SIZE;  _RECIP_X_LO = [0] * RECIP_TABLE_SIZE
-_RECIP_Y_HI = [0] * RECIP_TABLE_SIZE;  _RECIP_Y_LO = [0] * RECIP_TABLE_SIZE
-for _i in range(1, RECIP_TABLE_SIZE):
-    # _i represents vy in 5.2 fixed-point: real vy = _i / 4
-    _rx = min((FP_FOCAL_X << (8 + RECIP_FRAC_BITS)) // _i, 0x7FFF)
-    _ry = min((FP_FOCAL_Y << (8 + RECIP_FRAC_BITS)) // _i, 0x7FFF)
+_RECIP_X_HI = [0] * (RECIP_TABLE_SIZE + 1)  # +1 for averaging guard
+_RECIP_X_LO = [0] * (RECIP_TABLE_SIZE + 1)
+_RECIP_Y_HI = [0] * (RECIP_TABLE_SIZE + 1)
+_RECIP_Y_LO = [0] * (RECIP_TABLE_SIZE + 1)
+for _i in range(1, RECIP_TABLE_SIZE + 1):
+    _rx = min((FP_FOCAL_X << (8 + RECIP_TABLE_BITS)) // _i, 0x7FFF)
+    _ry = min((FP_FOCAL_Y << (8 + RECIP_TABLE_BITS)) // _i, 0x7FFF)
     _RECIP_X_HI[_i] = _rx >> 8;  _RECIP_X_LO[_i] = _rx & 0xFF
     _RECIP_Y_HI[_i] = _ry >> 8;  _RECIP_Y_LO[_i] = _ry & 0xFF
 _RECIP_X_HI[0] = 0x7F; _RECIP_X_LO[0] = 0xFF
 _RECIP_Y_HI[0] = 0x7F; _RECIP_Y_LO[0] = 0xFF
 
-def fp_recip_x(vy_idx):
+def fp_recip_x(vy_idx_3):
     """Returns (hi, lo) of 8.8 horizontal reciprocal.
-    vy_idx: 5.2 fixed-point depth index (integer vy << 2 | frac bits)."""
-    vy_idx = max(1, min(RECIP_TABLE_SIZE - 1, vy_idx))
-    return _RECIP_X_HI[vy_idx], _RECIP_X_LO[vy_idx]
+    vy_idx_3: 5.3 index (3 fractional bits from vy).
+    Top 2 bits index the 512-entry table.  LSB averages with next entry.
+    """
+    vy_idx_3 = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx_3))
+    i = vy_idx_3 >> 1                        # 5.2 table index
+    if vy_idx_3 & 1:                          # LSB set: average with next
+        hi = (_RECIP_X_HI[i] + _RECIP_X_HI[i + 1]) >> 1
+        lo = (_RECIP_X_LO[i] + _RECIP_X_LO[i + 1]) >> 1
+        return hi, lo
+    return _RECIP_X_HI[i], _RECIP_X_LO[i]
 
-def fp_recip_y(vy_idx):
+def fp_recip_y(vy_idx_3):
     """Returns (hi, lo) of 8.8 vertical reciprocal."""
-    vy_idx = max(1, min(RECIP_TABLE_SIZE - 1, vy_idx))
-    return _RECIP_Y_HI[vy_idx], _RECIP_Y_LO[vy_idx]
+    vy_idx_3 = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx_3))
+    i = vy_idx_3 >> 1
+    if vy_idx_3 & 1:
+        hi = (_RECIP_Y_HI[i] + _RECIP_Y_HI[i + 1]) >> 1
+        lo = (_RECIP_Y_LO[i] + _RECIP_Y_LO[i + 1]) >> 1
+        return hi, lo
+    return _RECIP_Y_HI[i], _RECIP_Y_LO[i]
 
 # -- Projection helpers (two 8x8 multiplies each) ----------------------------
 
@@ -218,8 +232,8 @@ def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
     total_vy = raw_vy * 2 + (frac_vy >> 7)
     evx = (raw_vx * 2 + (frac_vx >> 7)) >> 8
     evy = total_vy >> 8
-    # Extract 5.2 recip index from the 8.8 combined vy
-    evy_idx = max(1, total_vy >> (8 - RECIP_FRAC_BITS))
+    # Extract 5.3 recip index from the 8.8 combined vy
+    evy_idx = max(2, total_vy >> (8 - RECIP_FRAC_BITS))
     return evx, evy, evy_idx
 
 # -- Near clip (8-bit view coords) -------------------------------------------
