@@ -919,6 +919,30 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("DOOM E1M1 — Wireframe BSP")
 clock = pygame.time.Clock()
 hud_font = pygame.font.SysFont("monospace", 14)
+_real_drawline = pygame.draw.line
+
+def _xor_drawline(surface, color, p1, p2, w=1):
+    """Draw a line by XOR-ing each pixel onto the surface."""
+    x0, y0 = int(p1[0]), int(p1[1])
+    x1, y1 = int(p2[0]), int(p2[1])
+    bx, by = min(x0, x1), min(y0, y1)
+    bw = max(abs(x1 - x0), 1) + 1
+    bh = max(abs(y1 - y0), 1) + 1
+    # Clamp to screen
+    if bx < 0: bw += bx; x0 -= bx; x1 -= bx; bx = 0
+    if by < 0: bh += by; y0 -= by; y1 -= by; by = 0
+    if bx + bw > WIDTH: bw = WIDTH - bx
+    if by + bh > HEIGHT: bh = HEIGHT - by
+    if bw <= 0 or bh <= 0: return
+    tmp = pygame.Surface((bw, bh))
+    tmp.fill((0, 0, 0))
+    _real_drawline(tmp, color, (x0 - bx, y0 - by), (x1 - bx, y1 - by), w)
+    # XOR the bounding rect
+    region = surface.subsurface((bx, by, bw, bh))
+    sa = pygame.surfarray.pixels3d(region)
+    ta = pygame.surfarray.pixels3d(tmp)
+    sa ^= ta
+    del sa, ta
 
 angle = math.radians(pangle)              # float radians (used in float mode)
 angle_byte = radians_to_byte(angle)       # 0..255 (used in fixed-point mode)
@@ -967,12 +991,9 @@ while running:
 
         screen.fill((0, 0, 0))
         if use_xor:
-            xor_surface = pygame.Surface((WIDTH, HEIGHT))
-            xor_surface.fill((0, 0, 0))
-            draw_target = xor_surface
+            pygame.draw.line = _xor_drawline
         else:
-            xor_surface = None
-            draw_target = screen
+            pygame.draw.line = _real_drawline
         for i in range(5):
             draw_stats[i] = 0
 
@@ -985,7 +1006,7 @@ while running:
 
         render_bsp_fp(len(nodes) - 1, FPClipSpans(),
                       fp_sin_a, fp_cos_a,
-                      px_int, py_int, vz_int, draw_target)
+                      px_int, py_int, vz_int, screen)
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:
@@ -1001,25 +1022,18 @@ while running:
 
         screen.fill((0, 0, 0))
         if use_xor:
-            xor_surface = pygame.Surface((WIDTH, HEIGHT))
-            xor_surface.fill((0, 0, 0))
-            draw_target = xor_surface
+            pygame.draw.line = _xor_drawline
         else:
-            xor_surface = None
-            draw_target = screen
+            pygame.draw.line = _real_drawline
         for i in range(5):
             draw_stats[i] = 0
         cos_a, sin_a = math.cos(angle), math.sin(angle)
         vz = player_floor(player_x, player_y) + 41.0
         render_bsp(len(nodes) - 1, ClipSpans(), cos_a, sin_a,
-                   player_x, player_y, vz, draw_target)
+                   player_x, player_y, vz, screen)
 
-    # XOR compositing
-    if use_xor and xor_surface is not None:
-        sa = pygame.surfarray.pixels3d(screen)
-        xa = pygame.surfarray.pixels3d(xor_surface)
-        sa ^= xa
-        del sa, xa  # release surface locks
+    # Restore normal draw after frame
+    pygame.draw.line = _real_drawline
 
     # ── HUD (works for both modes) ──
     total, unclipped, clipped, trivial, clip_rej = draw_stats
