@@ -6,7 +6,7 @@ import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_recip_x, fp_recip_y, fp_project_x, fp_project_y,
                 fp_linfn, fp_eval, fp_to_view, fp_near_clip, fp_clip_to_trap,
-                FP7, FP8, HALF_W, HALF_H, NEAR_FP,
+                FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
                 MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
 
@@ -749,8 +749,9 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
     front_idx, back_idx = seg_sectors(s)
 
     # View-space transform (4 x 8x8 multiplies per vertex)
-    evx1, evy1, fvy1 = fp_to_view(v1[0], v1[1], vx, vy, sin_a, cos_a)
-    evx2, evy2, fvy2 = fp_to_view(v2[0], v2[1], vx, vy, sin_a, cos_a)
+    fp_module.mul_cat("view")
+    evx1, evy1, vy_idx1 = fp_to_view(v1[0], v1[1], vx, vy, sin_a, cos_a)
+    evx2, evy2, vy_idx2 = fp_to_view(v2[0], v2[1], vx, vy, sin_a, cos_a)
 
     # Near clip (8-bit view coords, 0.8 parametric t)
     nc = fp_near_clip(evx1, evy1, evx2, evy2)
@@ -758,15 +759,17 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
         return
     ex1, ey1, ex2, ey2 = nc
 
-    # Perspective reciprocal: interpolated by fractional depth
-    fvy1_clip = fvy1 if ey1 == evy1 else 0
-    fvy2_clip = fvy2 if ey2 == evy2 else 0
-    rxh1, rxl1 = fp_recip_x(ey1, fvy1_clip)
-    rxh2, rxl2 = fp_recip_x(ey2, fvy2_clip)
-    ryh1, ryl1 = fp_recip_y(ey1, fvy1_clip)
-    ryh2, ryl2 = fp_recip_y(ey2, fvy2_clip)
+    # Perspective reciprocal: 512-entry table lookup (5.2 index, zero muls)
+    # Use vy_idx from view transform; near-clipped endpoints use integer vy << 2
+    idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
+    idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
+    rxh1, rxl1 = fp_recip_x(idx1)
+    rxh2, rxl2 = fp_recip_x(idx2)
+    ryh1, ryl1 = fp_recip_y(idx1)
+    ryh2, ryl2 = fp_recip_y(idx2)
 
     # Project to screen X: two 8x8 muls per endpoint
+    fp_module.mul_cat("proj")
     sx1 = fp_project_x(ex1, rxh1, rxl1)
     sx2 = fp_project_x(ex2, rxh2, rxl2)
 
@@ -797,6 +800,7 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
         bb1 = fp_project_y(back[0] - vz, ryh1, ryl1)
         bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
 
+    fp_module.mul_cat("clip")
     if solid:
         clips.draw_clipped([
             (sx1, ft1, sx2, ft2),
@@ -973,7 +977,7 @@ while running:
             draw_stats[i] = 0
 
         # Fixed-point sin/cos (1.7)
-        fp_module.mul8_reset()
+        fp_module.mul_reset()
         fp_sin_a = fp_sin(angle_byte)
         fp_cos_a = fp_cos(angle_byte)
         # Prescaled player position in 8.8 (sub-unit precision, smooth movement)
@@ -1025,7 +1029,12 @@ while running:
     fps = clock.get_fps()
     mode_str = f"FP {FP_WIDTH}x{FP_HEIGHT}" if use_fixedpoint else f"FLOAT {SCREEN_W}x{SCREEN_H}"
     xor_str = " XOR" if use_xor else ""
-    mul_str = f"  {fp_module.mul8_count} muls" if use_fixedpoint else ""
+    if use_fixedpoint:
+        mc = fp_module.mul_counts
+        mul_total = sum(mc.values())
+        mul_str = f"  {mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})"
+    else:
+        mul_str = ""
     hud = (f"[{mode_str}{xor_str}]  {total} total  {unclipped} pass  {clipped} clip  "
            f"{trivial} trivial  {clip_rej} reject{mul_str}  {fps:.0f}fps")
     screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))

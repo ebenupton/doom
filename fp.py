@@ -22,25 +22,30 @@ FP8 = 8   # 0.8 (reciprocal, parametric t, slopes)
 
 # -- Core arithmetic ----------------------------------------------------------
 
-mul8_count = 0
+mul_counts = {"view": 0, "proj": 0, "clip": 0, "other": 0}
+_mul_cat = "other"
 
-def mul8_reset():
-    """Reset the 8x8 multiply counter."""
-    global mul8_count; mul8_count = 0
+def mul_reset():
+    """Reset all multiply counters."""
+    for k in mul_counts: mul_counts[k] = 0
+
+def mul_cat(cat):
+    """Set the current multiply category."""
+    global _mul_cat; _mul_cat = cat
 
 def m8(a, b):
     """Count and perform an 8x8 multiply (no shift). Returns a*b."""
-    global mul8_count; mul8_count += 1
+    mul_counts[_mul_cat] += 1
     return a * b
 
 def fp_mul8(a, b):
     """Counted 8x8 signed multiply, shift right by 8."""
-    global mul8_count; mul8_count += 1
+    mul_counts[_mul_cat] += 1
     return (a * b) >> 8
 
 def fp_mul7(a, b):
     """Counted 8x8 signed multiply, shift right by 7."""
-    global mul8_count; mul8_count += 1
+    mul_counts[_mul_cat] += 1
     return (a * b) >> 7
 
 def fp_div8(num, den):
@@ -104,41 +109,34 @@ FP_FOCAL_Y = int(FP_FOCAL_X * 1.2 + 0.5)  # 154
 HALF_W = FP_RENDER_W // 2   # 128
 HALF_H = FP_RENDER_H // 2   # 80
 
-# Build lookup tables indexed by vy (0..127).  Index 0 = max clamp.
-# recip = FOCAL * 256 / vy, stored as 8.8 (16-bit).
-# Split into hi (integer) and lo (fraction) bytes for two 8x8 muls.
-_RECIP_X_HI = [0] * 128;  _RECIP_X_LO = [0] * 128
-_RECIP_Y_HI = [0] * 128;  _RECIP_Y_LO = [0] * 128
-for _vy in range(1, 128):
-    _rx = min((FP_FOCAL_X << 8) // _vy, 0x7FFF)
-    _ry = min((FP_FOCAL_Y << 8) // _vy, 0x7FFF)
-    _RECIP_X_HI[_vy] = _rx >> 8;  _RECIP_X_LO[_vy] = _rx & 0xFF
-    _RECIP_Y_HI[_vy] = _ry >> 8;  _RECIP_Y_LO[_vy] = _ry & 0xFF
-# vy=0: clamp to max
+# Reciprocal tables with 2 extra fractional bits: 512 entries.
+# Indexed by (vy_int << 2 | vy_frac2), giving 4x depth resolution.
+# recip = FOCAL * 256 / (index / 4), stored as 8.8 (hi, lo bytes).
+# Zero extra multiplies vs the 128-entry table — just a finer index.
+RECIP_FRAC_BITS = 2
+RECIP_TABLE_SIZE = 128 << RECIP_FRAC_BITS  # 512
+
+_RECIP_X_HI = [0] * RECIP_TABLE_SIZE;  _RECIP_X_LO = [0] * RECIP_TABLE_SIZE
+_RECIP_Y_HI = [0] * RECIP_TABLE_SIZE;  _RECIP_Y_LO = [0] * RECIP_TABLE_SIZE
+for _i in range(1, RECIP_TABLE_SIZE):
+    # _i represents vy in 5.2 fixed-point: real vy = _i / 4
+    _rx = min((FP_FOCAL_X << (8 + RECIP_FRAC_BITS)) // _i, 0x7FFF)
+    _ry = min((FP_FOCAL_Y << (8 + RECIP_FRAC_BITS)) // _i, 0x7FFF)
+    _RECIP_X_HI[_i] = _rx >> 8;  _RECIP_X_LO[_i] = _rx & 0xFF
+    _RECIP_Y_HI[_i] = _ry >> 8;  _RECIP_Y_LO[_i] = _ry & 0xFF
 _RECIP_X_HI[0] = 0x7F; _RECIP_X_LO[0] = 0xFF
 _RECIP_Y_HI[0] = 0x7F; _RECIP_Y_LO[0] = 0xFF
 
-def fp_recip_x(vy, vy_frac=0):
-    """Returns (hi, lo) of 8.8 horizontal reciprocal, interpolated by vy_frac."""
-    vy = max(1, min(126, vy))
-    full0 = (_RECIP_X_HI[vy] << 8) | _RECIP_X_LO[vy]
-    full1 = (_RECIP_X_HI[vy + 1] << 8) | _RECIP_X_LO[vy + 1]
-    delta = full1 - full0
-    delta_hi = delta >> 8
-    delta_lo = delta & 0xFF
-    interp = full0 + m8(delta_hi, vy_frac) + (m8(delta_lo, vy_frac) >> 8)
-    return interp >> 8, interp & 0xFF
+def fp_recip_x(vy_idx):
+    """Returns (hi, lo) of 8.8 horizontal reciprocal.
+    vy_idx: 5.2 fixed-point depth index (integer vy << 2 | frac bits)."""
+    vy_idx = max(1, min(RECIP_TABLE_SIZE - 1, vy_idx))
+    return _RECIP_X_HI[vy_idx], _RECIP_X_LO[vy_idx]
 
-def fp_recip_y(vy, vy_frac=0):
-    """Returns (hi, lo) of 8.8 vertical reciprocal, interpolated."""
-    vy = max(1, min(126, vy))
-    full0 = (_RECIP_Y_HI[vy] << 8) | _RECIP_Y_LO[vy]
-    full1 = (_RECIP_Y_HI[vy + 1] << 8) | _RECIP_Y_LO[vy + 1]
-    delta = full1 - full0
-    delta_hi = delta >> 8
-    delta_lo = delta & 0xFF
-    interp = full0 + m8(delta_hi, vy_frac) + (m8(delta_lo, vy_frac) >> 8)
-    return interp >> 8, interp & 0xFF
+def fp_recip_y(vy_idx):
+    """Returns (hi, lo) of 8.8 vertical reciprocal."""
+    vy_idx = max(1, min(RECIP_TABLE_SIZE - 1, vy_idx))
+    return _RECIP_Y_HI[vy_idx], _RECIP_Y_LO[vy_idx]
 
 # -- Projection helpers (two 8x8 multiplies each) ----------------------------
 
@@ -200,6 +198,8 @@ def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
     then combined before the final shift.  This preserves sub-pixel
     precision from the 8.8 player position AND avoids truncation-
     compounding between rotation terms.
+    Returns (vx_int, vy_int, vy_idx) where vy_idx is a 5.2 index into
+    the 512-entry reciprocal table (2 extra fractional bits, zero cost).
     8 multiplies total (4 for integer deltas, 4 for fractional deltas).
     """
     dx_88 = (wx << 8) - vx_88
@@ -215,12 +215,12 @@ def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
     frac_vx = m8(dx_lo, sin_a) - m8(dy_lo, cos_a)
     frac_vy = m8(dx_lo, cos_a) + m8(dy_lo, sin_a)
     # Combine: 8.7 << 1 -> 8.8, plus 1.15 >> 7 -> 1.8
-    total_vx = raw_vx * 2 + (frac_vx >> 7)
     total_vy = raw_vy * 2 + (frac_vy >> 7)
-    evx = total_vx >> 8
+    evx = (raw_vx * 2 + (frac_vx >> 7)) >> 8
     evy = total_vy >> 8
-    evy_frac = total_vy & 0xFF
-    return evx, evy, evy_frac
+    # Extract 5.2 recip index from the 8.8 combined vy
+    evy_idx = max(1, total_vy >> (8 - RECIP_FRAC_BITS))
+    return evx, evy, evy_idx
 
 # -- Near clip (8-bit view coords) -------------------------------------------
 
