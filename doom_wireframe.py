@@ -97,10 +97,13 @@ def player_floor(x, y):
 # Lines are clipped analytically against each span's trapezoid using
 # Cyrus-Beck (4 half-planes).  No per-column iteration.
 
-WIDTH, HEIGHT = 960, 600
+SCREEN_W, SCREEN_H = 1024, 640     # display window size
+WIDTH, HEIGHT = SCREEN_W, SCREEN_H  # rendering resolution (float mode)
+FP_WIDTH, FP_HEIGHT = 256, 160      # rendering resolution (fixed-point mode)
+FP_SCALE = SCREEN_W // FP_WIDTH     # = 4, nearest-neighbour upscale factor
 HFOV = math.pi / 2
-FOCAL_X = (WIDTH / 2) / math.tan(HFOV / 2)   # 480 — horizontal projection
-FOCAL_Y = FOCAL_X * 1.2                        # 576 — corrected for DOOM's 1.2:1 pixel aspect
+FOCAL_X = (WIDTH / 2) / math.tan(HFOV / 2)   # 512
+FOCAL_Y = FOCAL_X * 1.2                        # 614.4
 NEAR = 1.0
 
 ZERO_FN = (0.0, 0.0)                   # y = 0 everywhere
@@ -370,6 +373,20 @@ def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
     sxs = [WIDTH * 0.5 + p[0] * FOCAL_X / p[1] for p in pts]
     return int(min(sxs)), int(max(sxs))
 
+def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
+    """Bbox visibility for fixed-point mode (256-wide render target)."""
+    base = 4 + far_side * 4
+    top, bot, left, right = node[base], node[base+1], node[base+2], node[base+3]
+    if left <= vx <= right and bot <= vy <= top:
+        return 0, FP_WIDTH - 1
+    pts = [to_view(wx, wy, vx, vy, cos_a, sin_a)
+           for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
+    if all(p[1] < NEAR for p in pts): return None
+    if any(p[1] < NEAR for p in pts): return 0, FP_WIDTH - 1
+    from fp import FP_FOCAL_X
+    sxs = [FP_WIDTH * 0.5 + p[0] * FP_FOCAL_X / p[1] for p in pts]
+    return int(min(sxs)), int(max(sxs))
+
 # ── BSP rendering ────────────────────────────────────────────────────────────
 
 GREEN = (0, 200, 0)
@@ -470,11 +487,11 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
 # Mirrors ClipSpans but all screen coordinates are 10.6 fixed-point,
 # slopes are 4.12, intercepts are 10.6.
 
-WIDTH_6  = WIDTH << FP6
-HEIGHT_M1_6 = (HEIGHT - 1) << FP6
+FP_W_6  = FP_WIDTH << FP6               # 256 in 10.6
+FP_HM1_6 = (FP_HEIGHT - 1) << FP6      # 159 in 10.6
 
-FP_ZERO_FN = (0, 0)                     # slope=0 (4.12), intercept=0 (10.6)
-FP_BOT_FN  = (0, HEIGHT_M1_6)           # slope=0, intercept=599 in 10.6
+FP_ZERO_FN = (0, 0)                     # slope=0, intercept=0
+FP_BOT_FN  = (0, FP_HM1_6)             # slope=0, intercept=159 in 10.6
 
 
 def _fp_clip_to_trap(x1_6, y1_6, x2_6, y2_6, xlo_6, xhi_6, tfn, bfn):
@@ -554,14 +571,14 @@ class FPClipSpans:
     __slots__ = ("spans",)
 
     def __init__(self):
-        self.spans = [(0, WIDTH_6, FP_ZERO_FN, FP_BOT_FN)]
+        self.spans = [(0, FP_W_6, FP_ZERO_FN, FP_BOT_FN)]
 
     def is_full(self):
         return not self.spans
 
     def has_gap(self, lo_6, hi_6):
         ilo = max(0, lo_6)
-        ihi = min(WIDTH_6 - (1 << FP6), hi_6)
+        ihi = min(FP_W_6 - (1 << FP6), hi_6)
         for xlo, xhi, tfn, bfn in self.spans:
             if xlo > ihi:
                 break
@@ -646,7 +663,7 @@ class FPClipSpans:
     def mark_solid(self, lo_6, hi_6):
         """Remove [ilo, ihi) from spans.  All values in 10.6."""
         ilo = max(0, lo_6)
-        ihi = min(WIDTH_6, hi_6 + (1 << FP6))
+        ihi = min(FP_W_6, hi_6 + (1 << FP6))
         if ilo >= ihi:
             return
         new = []
@@ -663,7 +680,7 @@ class FPClipSpans:
     def tighten(self, lo_6, hi_6, sx1_6, sx2_6, yt1_6, yt2_6, yb1_6, yb2_6):
         """Tighten top/bottom over [ilo, ihi).  All values in 10.6."""
         ilo = max(0, lo_6)
-        ihi = min(WIDTH_6, hi_6 + (1 << FP6))
+        ihi = min(FP_W_6, hi_6 + (1 << FP6))
         if ilo >= ihi:
             return
         new_tfn = fp_linfn(yt1_6, yt2_6, sx1_6, sx2_6)
@@ -891,9 +908,8 @@ def render_bsp_fp(nid, clips, sin_a, cos_a, vx, vy, vz, surface):
     # Bbox visibility check — reuse the float version with converted sin/cos
     cos_f = fp_to_float(cos_a, FP7)
     sin_f = fp_to_float(sin_a, FP7)
-    br = bbox_visible(node, far, cos_f, sin_f, vx, vy)
+    br = fp_bbox_visible(node, far, cos_f, sin_f, vx, vy)
     if br is not None:
-        # Convert pixel range to 10.6 for has_gap
         br_lo_6 = br[0] << FP6
         br_hi_6 = br[1] << FP6
         if clips.has_gap(br_lo_6, br_hi_6):
@@ -919,10 +935,11 @@ draw_stats = [0, 0, 0, 0, 0]
 
 sys.setrecursionlimit(10000)
 pygame.init()
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
 pygame.display.set_caption("DOOM E1M1 — Wireframe BSP")
 clock = pygame.time.Clock()
 hud_font = pygame.font.SysFont("monospace", 14)
+fp_surface = pygame.Surface((FP_WIDTH, FP_HEIGHT))  # small render target for FP mode
 _real_drawline = pygame.draw.line
 
 def _xor_drawline(surface, color, p1, p2, w=1):
@@ -993,7 +1010,7 @@ while running:
             player_x -= math.cos(move_angle) * move_speed * dt
             player_y -= math.sin(move_angle) * move_speed * dt
 
-        screen.fill((0, 0, 0))
+        fp_surface.fill((0, 0, 0))
         if use_xor:
             pygame.draw.line = _xor_drawline
         else:
@@ -1010,7 +1027,11 @@ while running:
 
         render_bsp_fp(len(nodes) - 1, FPClipSpans(),
                       fp_sin_a, fp_cos_a,
-                      px_int, py_int, vz_int, screen)
+                      px_int, py_int, vz_int, fp_surface)
+
+        # Nearest-neighbour upscale to display
+        screen.fill((0, 0, 0))
+        pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H), screen)
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:
@@ -1042,7 +1063,7 @@ while running:
     # ── HUD (works for both modes) ──
     total, unclipped, clipped, trivial, clip_rej = draw_stats
     fps = clock.get_fps()
-    mode_str = "FIXED-POINT" if use_fixedpoint else "FLOAT"
+    mode_str = f"FP {FP_WIDTH}x{FP_HEIGHT}" if use_fixedpoint else f"FLOAT {SCREEN_W}x{SCREEN_H}"
     xor_str = " XOR" if use_xor else ""
     hud = (f"[{mode_str}{xor_str}]  {total} total  {unclipped} pass  {clipped} clip  "
            f"{trivial} trivial  {clip_rej} reject  {fps:.0f}fps  [F/X] toggle")

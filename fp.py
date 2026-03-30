@@ -74,11 +74,16 @@ def fp_cos(angle_byte):
 
 # ── Reciprocal (perspective scale) ──────────────────────────────────────────
 #
-# Separate X and Y reciprocals for DOOM's 1.2:1 pixel aspect correction.
-# FOCAL_X = 480, FOCAL_Y = 576 (= 480 * 1.2).
+# Fixed-point renders at 256x160.
+# FOCAL_X = 128 (256/2), FOCAL_Y = 154 (128 * 1.2, rounded).
 
-FOCAL_X_SCALED = 480 * 256   # = 122880
-FOCAL_Y_SCALED = 576 * 256   # = 147456
+FP_RENDER_W = 256
+FP_RENDER_H = 160
+FP_FOCAL_X = FP_RENDER_W // 2           # 128
+FP_FOCAL_Y = int(FP_FOCAL_X * 1.2 + 0.5)  # 154
+
+FOCAL_X_SCALED = FP_FOCAL_X * 256   # 128 * 256 = 32768
+FOCAL_Y_SCALED = FP_FOCAL_Y * 256   # 154 * 256 = 39424
 
 def fp_recip_x(vy):
     """16.0 view depth → 8.8 horizontal reciprocal (FOCAL_X/vy * 256)."""
@@ -94,10 +99,10 @@ def fp_recip_y(vy):
 
 # ── Projection helpers ──────────────────────────────────────────────────────
 
-HALF_W = 480    # WIDTH // 2, in 16.0
-HALF_H = 300    # HEIGHT // 2, in 16.0
-HALF_W_6 = 480 << FP6   # in 10.6
-HALF_H_6 = 300 << FP6   # in 10.6
+HALF_W = FP_RENDER_W // 2    # 128, in 16.0
+HALF_H = FP_RENDER_H // 2   # 80, in 16.0
+HALF_W_6 = HALF_W << FP6    # in 10.6
+HALF_H_6 = HALF_H << FP6    # in 10.6
 
 def fp_project_x(vx, recip_x):
     """Project view-space X to screen X (10.6).
