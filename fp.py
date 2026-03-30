@@ -74,17 +74,22 @@ def fp_cos(angle_byte):
 
 # ── Reciprocal (perspective scale) ──────────────────────────────────────────
 #
-# recip(vy) = FOCAL * 256 / vy, stored as 8.8.
-# FOCAL = 480.  FOCAL * 256 = 122880.
-# For vy >= 4: result fits in 8.8 (max = 122880/4 = 30720 → 120.0 in 8.8).
-# For vy < 4: clamp to 0x7FFF (max positive 8.8 = 127.996).
+# Separate X and Y reciprocals for DOOM's 1.2:1 pixel aspect correction.
+# FOCAL_X = 480, FOCAL_Y = 576 (= 480 * 1.2).
 
-FOCAL_SCALED = 480 * 256  # = 122880
+FOCAL_X_SCALED = 480 * 256   # = 122880
+FOCAL_Y_SCALED = 576 * 256   # = 147456
 
-def fp_recip(vy):
-    """16.0 view depth → 8.8 reciprocal scale factor (FOCAL/vy * 256)."""
+def fp_recip_x(vy):
+    """16.0 view depth → 8.8 horizontal reciprocal (FOCAL_X/vy * 256)."""
     if vy <= 0: return 0x7FFF
-    r = FOCAL_SCALED // vy
+    r = FOCAL_X_SCALED // vy
+    return min(r, 0x7FFF)
+
+def fp_recip_y(vy):
+    """16.0 view depth → 8.8 vertical reciprocal (FOCAL_Y/vy * 256)."""
+    if vy <= 0: return 0x7FFF
+    r = FOCAL_Y_SCALED // vy
     return min(r, 0x7FFF)
 
 # ── Projection helpers ──────────────────────────────────────────────────────
@@ -94,23 +99,22 @@ HALF_H = 300    # HEIGHT // 2, in 16.0
 HALF_W_6 = 480 << FP6   # in 10.6
 HALF_H_6 = 300 << FP6   # in 10.6
 
-def fp_project_x(vx, recip):
+def fp_project_x(vx, recip_x):
     """Project view-space X to screen X (10.6).
 
-    sx = half_w + vx * recip >> 8, then convert to 10.6.
-    vx: 16.0, recip: 8.8.  Product: 24 bits, >>8 → 16.0 screen X.
-    Shift left 6 for 10.6 output.
+    sx = half_w + vx * recip_x >> 8, then convert to 10.6.
+    vx: 16.0, recip_x: 8.8 (FOCAL_X based).
     """
-    sx_int = HALF_W + ((vx * recip) >> FP8)
+    sx_int = HALF_W + ((vx * recip_x) >> FP8)
     return sx_int << FP6  # 10.6
 
-def fp_project_y(height_delta, recip):
+def fp_project_y(height_delta, recip_y):
     """Project height delta to screen Y (10.6).
 
-    sy = half_h - height_delta * recip >> 8, in 10.6.
-    height_delta: 16.0 (ceil - vz or floor - vz).  recip: 8.8.
+    sy = half_h - height_delta * recip_y >> 8, in 10.6.
+    height_delta: 16.0 (ceil - vz or floor - vz).  recip_y: 8.8 (FOCAL_Y based).
     """
-    proj = (height_delta * recip) >> FP8  # 16.0
+    proj = (height_delta * recip_y) >> FP8  # 16.0
     return HALF_H_6 - (proj << FP6)
 
 # ── Clip function helpers (4.12 slope, 10.6 intercept) ─────────────────────

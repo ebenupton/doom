@@ -3,7 +3,7 @@
 
 import struct, math, sys, pygame
 from fp import (fp_mul, fp_div, fp_from_float, fp_to_float, s16,
-                fp_sin, fp_cos, fp_recip, fp_project_x, fp_project_y,
+                fp_sin, fp_cos, fp_recip_x, fp_recip_y, fp_project_x, fp_project_y,
                 fp_linfn, fp_eval, fp_to_view, fp_near_clip,
                 FP6, FP7, FP8, FP12, FP16,
                 HALF_W_6, HALF_H_6, NEAR_FP)
@@ -99,7 +99,8 @@ def player_floor(x, y):
 
 WIDTH, HEIGHT = 960, 600
 HFOV = math.pi / 2
-FOCAL = (WIDTH / 2) / math.tan(HFOV / 2)
+FOCAL_X = (WIDTH / 2) / math.tan(HFOV / 2)   # 480 — horizontal projection
+FOCAL_Y = FOCAL_X * 1.2                        # 576 — corrected for DOOM's 1.2:1 pixel aspect
 NEAR = 1.0
 
 ZERO_FN = (0.0, 0.0)                   # y = 0 everywhere
@@ -366,7 +367,7 @@ def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
            for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
     if all(p[1] < NEAR for p in pts): return None
     if any(p[1] < NEAR for p in pts): return 0, WIDTH - 1
-    sxs = [WIDTH * 0.5 + p[0] * FOCAL / p[1] for p in pts]
+    sxs = [WIDTH * 0.5 + p[0] * FOCAL_X / p[1] for p in pts]
     return int(min(sxs)), int(max(sxs))
 
 # ── BSP rendering ────────────────────────────────────────────────────────────
@@ -416,23 +417,24 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
     ex1, ey1, ex2, ey2 = nc
 
     half_w, half_h = WIDTH * 0.5, HEIGHT * 0.5
-    f1, f2 = FOCAL / ey1, FOCAL / ey2
-    sx1, sx2 = half_w + ex1 * f1, half_w + ex2 * f2
+    fx1, fx2 = FOCAL_X / ey1, FOCAL_X / ey2
+    fy1, fy2 = FOCAL_Y / ey1, FOCAL_Y / ey2
+    sx1, sx2 = half_w + ex1 * fx1, half_w + ex2 * fx2
     x_lo, x_hi = min(sx1, sx2), max(sx1, sx2)
     if not clips.has_gap(x_lo, x_hi): return
 
     front = sectors[front_idx]
     fh, ch = front[0], front[1]
-    ft1, fb1 = half_h - (ch - vz) * f1, half_h - (fh - vz) * f1
-    ft2, fb2 = half_h - (ch - vz) * f2, half_h - (fh - vz) * f2
+    ft1, fb1 = half_h - (ch - vz) * fy1, half_h - (fh - vz) * fy1
+    ft2, fb2 = half_h - (ch - vz) * fy2, half_h - (fh - vz) * fy2
 
     solid = back_idx is None
     back = sectors[back_idx] if back_idx is not None else None
     if back and (back[1] <= fh or back[0] >= ch): solid = True
 
     if back:
-        bt1, bt2 = half_h - (back[1] - vz) * f1, half_h - (back[1] - vz) * f2
-        bb1, bb2 = half_h - (back[0] - vz) * f1, half_h - (back[0] - vz) * f2
+        bt1, bt2 = half_h - (back[1] - vz) * fy1, half_h - (back[1] - vz) * fy2
+        bb1, bb2 = half_h - (back[0] - vz) * fy1, half_h - (back[0] - vz) * fy2
 
     # ── Draw first, then update clip state.
     # The step surface is the visible geometry; the tighten constrains
@@ -796,12 +798,14 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
     ex1, ey1, ex2, ey2 = nc
 
     # Perspective: reciprocal is 8.8
-    r1 = fp_recip(ey1)
-    r2 = fp_recip(ey2)
+    rx1 = fp_recip_x(ey1)
+    rx2 = fp_recip_x(ey2)
+    ry1 = fp_recip_y(ey1)
+    ry2 = fp_recip_y(ey2)
 
     # Project to screen X (10.6)
-    sx1_6 = fp_project_x(ex1, r1)
-    sx2_6 = fp_project_x(ex2, r2)
+    sx1_6 = fp_project_x(ex1, rx1)
+    sx2_6 = fp_project_x(ex2, rx2)
 
     x_lo_6 = min(sx1_6, sx2_6)
     x_hi_6 = max(sx1_6, sx2_6)
@@ -814,10 +818,10 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
     fh, ch = front[0], front[1]
 
     # Project top/bottom (10.6)
-    ft1_6 = fp_project_y(ch - vz, r1)
-    fb1_6 = fp_project_y(fh - vz, r1)
-    ft2_6 = fp_project_y(ch - vz, r2)
-    fb2_6 = fp_project_y(fh - vz, r2)
+    ft1_6 = fp_project_y(ch - vz, ry1)
+    fb1_6 = fp_project_y(fh - vz, ry1)
+    ft2_6 = fp_project_y(ch - vz, ry2)
+    fb2_6 = fp_project_y(fh - vz, ry2)
 
     solid = back_idx is None
     back = sectors[back_idx] if back_idx is not None else None
@@ -825,10 +829,10 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
         solid = True
 
     if back:
-        bt1_6 = fp_project_y(back[1] - vz, r1)
-        bt2_6 = fp_project_y(back[1] - vz, r2)
-        bb1_6 = fp_project_y(back[0] - vz, r1)
-        bb2_6 = fp_project_y(back[0] - vz, r2)
+        bt1_6 = fp_project_y(back[1] - vz, ry1)
+        bt2_6 = fp_project_y(back[1] - vz, ry2)
+        bb1_6 = fp_project_y(back[0] - vz, ry1)
+        bb2_6 = fp_project_y(back[0] - vz, ry2)
 
     if solid:
         clips.draw_clipped([
