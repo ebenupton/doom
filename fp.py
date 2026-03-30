@@ -109,13 +109,15 @@ FP_FOCAL_Y = int(FP_FOCAL_X * 1.2 + 0.5)  # 154
 HALF_W = FP_RENDER_W // 2   # 128
 HALF_H = FP_RENDER_H // 2   # 80
 
-# Reciprocal tables with 2 fractional bits: 512 entries stored.
-# A 3rd fractional bit is resolved by averaging adjacent entries
-# (add + shift, no multiply), giving 1024 effective resolution from
-# a 512-entry table.
-RECIP_FRAC_BITS = 3   # 3 bits extracted from vy; top 2 index the table, LSB averages
-RECIP_TABLE_BITS = 2   # table indexed by top 2 fractional bits
-RECIP_TABLE_SIZE = 128 << RECIP_TABLE_BITS  # 512 stored entries
+# Reciprocal tables: 512 entries, 1 entry per integer vy (0..512).
+# A fractional bit is resolved by averaging adjacent 16-bit values
+# (add + shift, no multiply), giving 1024 effective resolution.
+# The 16-bit average is reconstructed from hi/lo bytes to avoid the
+# catastrophic error that separate byte averaging produces when the
+# hi byte changes between adjacent entries.
+RECIP_FRAC_BITS = 1   # 1 bit extracted from vy; LSB triggers averaging
+RECIP_TABLE_BITS = 0   # table indexed directly by integer vy
+RECIP_TABLE_SIZE = 512  # covers vy 1..512 (prescaled; 8..4096 world units)
 
 _RECIP_X_HI = [0] * (RECIP_TABLE_SIZE + 1)  # +1 for averaging guard
 _RECIP_X_LO = [0] * (RECIP_TABLE_SIZE + 1)
@@ -129,27 +131,30 @@ for _i in range(1, RECIP_TABLE_SIZE + 1):
 _RECIP_X_HI[0] = 0x7F; _RECIP_X_LO[0] = 0xFF
 _RECIP_Y_HI[0] = 0x7F; _RECIP_Y_LO[0] = 0xFF
 
-def fp_recip_x(vy_idx_3):
+def fp_recip_x(vy_idx):
     """Returns (hi, lo) of 8.8 horizontal reciprocal.
-    vy_idx_3: 5.3 index (3 fractional bits from vy).
-    Top 2 bits index the 512-entry table.  LSB averages with next entry.
+    vy_idx: 9.1 index (1 fractional bit from vy).
+    Integer part indexes the 512-entry table.  LSB averages with next
+    entry using full 16-bit reconstruction (not separate byte averaging).
     """
-    vy_idx_3 = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx_3))
-    i = vy_idx_3 >> 1                        # 5.2 table index
-    if vy_idx_3 & 1:                          # LSB set: average with next
-        hi = (_RECIP_X_HI[i] + _RECIP_X_HI[i + 1]) >> 1
-        lo = (_RECIP_X_LO[i] + _RECIP_X_LO[i + 1]) >> 1
-        return hi, lo
+    vy_idx = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx))
+    i = vy_idx >> 1                           # integer table index
+    if vy_idx & 1:                            # LSB set: average with next
+        val1 = (_RECIP_X_HI[i] << 8) | _RECIP_X_LO[i]
+        val2 = (_RECIP_X_HI[i + 1] << 8) | _RECIP_X_LO[i + 1]
+        avg = (val1 + val2) >> 1
+        return avg >> 8, avg & 0xFF
     return _RECIP_X_HI[i], _RECIP_X_LO[i]
 
-def fp_recip_y(vy_idx_3):
+def fp_recip_y(vy_idx):
     """Returns (hi, lo) of 8.8 vertical reciprocal."""
-    vy_idx_3 = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx_3))
-    i = vy_idx_3 >> 1
-    if vy_idx_3 & 1:
-        hi = (_RECIP_Y_HI[i] + _RECIP_Y_HI[i + 1]) >> 1
-        lo = (_RECIP_Y_LO[i] + _RECIP_Y_LO[i + 1]) >> 1
-        return hi, lo
+    vy_idx = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx))
+    i = vy_idx >> 1
+    if vy_idx & 1:
+        val1 = (_RECIP_Y_HI[i] << 8) | _RECIP_Y_LO[i]
+        val2 = (_RECIP_Y_HI[i + 1] << 8) | _RECIP_Y_LO[i + 1]
+        avg = (val1 + val2) >> 1
+        return avg >> 8, avg & 0xFF
     return _RECIP_Y_HI[i], _RECIP_Y_LO[i]
 
 # -- Projection helpers (two 8x8 multiplies each) ----------------------------
@@ -212,8 +217,8 @@ def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
     then combined before the final shift.  This preserves sub-pixel
     precision from the 8.8 player position AND avoids truncation-
     compounding between rotation terms.
-    Returns (vx_int, vy_int, vy_idx) where vy_idx is a 5.2 index into
-    the 512-entry reciprocal table (2 extra fractional bits, zero cost).
+    Returns (vx_int, vy_int, vy_idx) where vy_idx is a 9.1 index into
+    the 512-entry reciprocal table (1 fractional bit for averaging).
     8 multiplies total (4 for integer deltas, 4 for fractional deltas).
     """
     dx_88 = (wx << 8) - vx_88
@@ -232,7 +237,7 @@ def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
     total_vy = raw_vy * 2 + (frac_vy >> 7)
     evx = (raw_vx * 2 + (frac_vx >> 7)) >> 8
     evy = total_vy >> 8
-    # Extract 5.3 recip index from the 8.8 combined vy
+    # Extract 9.1 recip index from the 8.8 combined vy
     evy_idx = max(2, total_vy >> (8 - RECIP_FRAC_BITS))
     return evx, evy, evy_idx
 
