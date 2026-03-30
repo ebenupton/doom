@@ -2,6 +2,7 @@
 """DOOM E1M1 wireframe renderer — BSP front-to-back with 2D trapezoid clip spans."""
 
 import struct, math, sys, pygame
+import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_recip_x, fp_recip_y, fp_project_x, fp_project_y,
                 fp_linfn, fp_eval, fp_to_view, fp_near_clip, fp_clip_to_trap,
@@ -972,6 +973,7 @@ while running:
             draw_stats[i] = 0
 
         # Fixed-point sin/cos (1.7)
+        fp_module.mul8_reset()
         fp_sin_a = fp_sin(angle_byte)
         fp_cos_a = fp_cos(angle_byte)
         # Prescaled player position in 8.8 (sub-unit precision, smooth movement)
@@ -1023,8 +1025,9 @@ while running:
     fps = clock.get_fps()
     mode_str = f"FP {FP_WIDTH}x{FP_HEIGHT}" if use_fixedpoint else f"FLOAT {SCREEN_W}x{SCREEN_H}"
     xor_str = " XOR" if use_xor else ""
+    mul_str = f"  {fp_module.mul8_count} muls" if use_fixedpoint else ""
     hud = (f"[{mode_str}{xor_str}]  {total} total  {unclipped} pass  {clipped} clip  "
-           f"{trivial} trivial  {clip_rej} reject  {fps:.0f}fps  [F/X] toggle")
+           f"{trivial} trivial  {clip_rej} reject{mul_str}  {fps:.0f}fps")
     screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))
     pygame.display.flip()
 

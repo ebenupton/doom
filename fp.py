@@ -22,12 +22,25 @@ FP8 = 8   # 0.8 (reciprocal, parametric t, slopes)
 
 # -- Core arithmetic ----------------------------------------------------------
 
+mul8_count = 0
+
+def mul8_reset():
+    """Reset the 8x8 multiply counter."""
+    global mul8_count; mul8_count = 0
+
+def m8(a, b):
+    """Count and perform an 8x8 multiply (no shift). Returns a*b."""
+    global mul8_count; mul8_count += 1
+    return a * b
+
 def fp_mul8(a, b):
-    """8x8 signed multiply, shift right by 8.  Result fits in 8 bits."""
+    """Counted 8x8 signed multiply, shift right by 8."""
+    global mul8_count; mul8_count += 1
     return (a * b) >> 8
 
 def fp_mul7(a, b):
-    """8x8 signed multiply, shift right by 7.  For sin/cos transforms."""
+    """Counted 8x8 signed multiply, shift right by 7."""
+    global mul8_count; mul8_count += 1
     return (a * b) >> 7
 
 def fp_div8(num, den):
@@ -113,7 +126,7 @@ def fp_recip_x(vy, vy_frac=0):
     delta = full1 - full0
     delta_hi = delta >> 8
     delta_lo = delta & 0xFF
-    interp = full0 + delta_hi * vy_frac + ((delta_lo * vy_frac) >> 8)
+    interp = full0 + m8(delta_hi, vy_frac) + (m8(delta_lo, vy_frac) >> 8)
     return interp >> 8, interp & 0xFF
 
 def fp_recip_y(vy, vy_frac=0):
@@ -124,7 +137,7 @@ def fp_recip_y(vy, vy_frac=0):
     delta = full1 - full0
     delta_hi = delta >> 8
     delta_lo = delta & 0xFF
-    interp = full0 + delta_hi * vy_frac + ((delta_lo * vy_frac) >> 8)
+    interp = full0 + m8(delta_hi, vy_frac) + (m8(delta_lo, vy_frac) >> 8)
     return interp >> 8, interp & 0xFF
 
 # -- Projection helpers (two 8x8 multiplies each) ----------------------------
@@ -135,7 +148,7 @@ def fp_project_x(vx, recip_hi, recip_lo):
     sx = 128 + vx * recip_hi + (vx * recip_lo >> 8)
     Two 8x8 multiplies.
     """
-    return HALF_W + vx * recip_hi + ((vx * recip_lo) >> 8)
+    return HALF_W + m8(vx, recip_hi) + (m8(vx, recip_lo) >> 8)
 
 def fp_project_y(height_delta, recip_hi, recip_lo):
     """Project height delta to screen Y (integer).
@@ -143,7 +156,7 @@ def fp_project_y(height_delta, recip_hi, recip_lo):
     sy = 80 - (height_delta * recip_hi + (height_delta * recip_lo >> 8))
     Two 8x8 multiplies.  No sub-pixel needed for Y (heights are integer).
     """
-    return HALF_H - (height_delta * recip_hi + ((height_delta * recip_lo) >> 8))
+    return HALF_H - (m8(height_delta, recip_hi) + (m8(height_delta, recip_lo) >> 8))
 
 # -- Clip function helpers (0.8 slope, 8.0 intercept) -------------------------
 
@@ -196,11 +209,11 @@ def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
     dx_lo = dx_88 & 0xFF
     dy_lo = dy_88 & 0xFF
     # Integer-part rotation (4 x 8x8 muls, results in 8.7)
-    raw_vx = dx_hi * sin_a - dy_hi * cos_a
-    raw_vy = dx_hi * cos_a + dy_hi * sin_a
+    raw_vx = m8(dx_hi, sin_a) - m8(dy_hi, cos_a)
+    raw_vy = m8(dx_hi, cos_a) + m8(dy_hi, sin_a)
     # Fractional-part rotation (4 x 8x8 muls, results in 1.15)
-    frac_vx = dx_lo * sin_a - dy_lo * cos_a
-    frac_vy = dx_lo * cos_a + dy_lo * sin_a
+    frac_vx = m8(dx_lo, sin_a) - m8(dy_lo, cos_a)
+    frac_vy = m8(dx_lo, cos_a) + m8(dy_lo, sin_a)
     # Combine: 8.7 << 1 -> 8.8, plus 1.15 >> 7 -> 1.8
     total_vx = raw_vx * 2 + (frac_vx >> 7)
     total_vy = raw_vy * 2 + (frac_vy >> 7)
