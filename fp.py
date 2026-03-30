@@ -71,25 +71,101 @@ def clamp(x, lo, hi):
         return hi
     return x
 
-# -- Sin/cos table (1.7 signed, 8-bit) ---------------------------------------
+# -- Sin/cos: 8-bit unsigned magnitude + sign/unity flags --------------------
 #
-# 256 entries covering 0..360deg.  Each entry is int8: -128..+127.
-# angle_byte: 0=0deg, 64=90deg, 128=180deg, 192=270deg.
+# 64-entry table covering one quadrant (0..90deg exclusive).
+# Each entry is unsigned 0..255, where 255 ~= 1.0 (0.8 format).
+# Cardinal angles (0, 64, 128, 192) are exact unity — the multiply
+# is skipped and the delta used directly.
+#
+# For angle_byte 0..255:
+#   quadrant = angle_byte >> 6           (0..3)
+#   index    = angle_byte & 63           (0..63)
+#   For quadrants 1,3: index = 64 - index (mirror)
+#   sign from quadrant: sin is negative in Q2,Q3; cos in Q1,Q2
 
-_SIN_TABLE = []
+_SIN_QUADRANT = [0] * 65  # 0..64 inclusive
+_SIN_UNITY = [False] * 65  # True where round(sin*256) >= 256
+for _i in range(1, 65):
+    _rad = _i * math.pi / 128.0   # 0..pi/2
+    _raw = round(math.sin(_rad) * 256)
+    if _raw >= 256:
+        _SIN_QUADRANT[_i] = 0  # unused — unity path skips the multiply
+        _SIN_UNITY[_i] = True
+    else:
+        _SIN_QUADRANT[_i] = _raw
+        _SIN_UNITY[_i] = False
+_SIN_QUADRANT[0] = 0
+_SIN_UNITY[0] = False
+
+def fp_sincos(angle_byte):
+    """Returns (sin_mag, sin_neg, sin_unity, cos_mag, cos_neg, cos_unity).
+
+    mag: unsigned 0..255 (0.8 format).
+    neg: True if the value is negative.
+    unity: True if |value| == 1.0 exactly (skip multiply, use delta directly).
+    """
+    a = angle_byte & 0xFF
+    # Sin: magnitude from quadrant index
+    q = a >> 6
+    idx = a & 63
+    if q == 0:
+        s_mag, s_neg, s_unity = (_SIN_QUADRANT[idx], False, idx == 0 and False) if idx != 0 else (0, False, False)
+    elif q == 1:
+        ridx = 64 - idx
+        s_mag, s_neg = (_SIN_QUADRANT[ridx], False) if ridx != 0 else (0, False)
+        s_unity = (ridx == 64) or (idx == 0)  # angle=64: sin=1
+    elif q == 2:
+        s_mag, s_neg = (_SIN_QUADRANT[idx], True) if idx != 0 else (0, False)
+        s_unity = False
+    else:  # q == 3
+        ridx = 64 - idx
+        s_mag, s_neg = (_SIN_QUADRANT[ridx], True) if ridx != 0 else (0, False)
+        s_unity = (ridx == 64) or (idx == 0)  # angle=192: sin=-1
+    # Simplify: use a cleaner approach
+    pass
+
+# Actually, let's simplify this significantly:
+
+def _sin_mag_sign(a):
+    """For angle byte a, return (magnitude 0..255, is_negative, is_unity).
+
+    Unity covers all entries where round(sin*256) >= 256 (angles 62-66
+    and equivalents in each quadrant).  These skip the multiply entirely.
+    """
+    a = a & 0xFF
+    q = a >> 6
+    idx = a & 63
+    if q & 1:  # Q1 or Q3: mirror
+        idx = 64 - idx
+    if idx == 0:
+        return 0, False, False
+    neg = (q >= 2)
+    if _SIN_UNITY[idx]:
+        return 0, neg, True
+    return _SIN_QUADRANT[idx], neg, False
+
+def fp_sincos(angle_byte):
+    """Returns (sin_mag, sin_neg, sin_unity, cos_mag, cos_neg, cos_unity)."""
+    s_mag, s_neg, s_unity = _sin_mag_sign(angle_byte)
+    c_mag, c_neg, c_unity = _sin_mag_sign(angle_byte + 64)
+    return s_mag, s_neg, s_unity, c_mag, c_neg, c_unity
+
+# Keep fp_sin/fp_cos for backward compatibility (back-face test doesn't need this)
+_SIN_TABLE_SIGNED = []
 for _i in range(256):
     _rad = _i * 2.0 * math.pi / 256.0
-    _val = round(math.sin(_rad) * 128)
-    _val = max(-128, min(127, _val))
-    _SIN_TABLE.append(_val)
+    _val = round(math.sin(_rad) * 256)
+    _val = max(-256, min(255, _val))
+    _SIN_TABLE_SIGNED.append(_val)
 
 def fp_sin(angle_byte):
-    """8-bit angle -> 1.7 signed sin value."""
-    return _SIN_TABLE[angle_byte & 0xFF]
+    """8-bit angle -> signed sin (for back-face test only, not for view transform)."""
+    return _SIN_TABLE_SIGNED[angle_byte & 0xFF]
 
 def fp_cos(angle_byte):
-    """8-bit angle -> 1.7 signed cos value."""
-    return _SIN_TABLE[(angle_byte + 64) & 0xFF]
+    """8-bit angle -> signed cos (for back-face test only)."""
+    return _SIN_TABLE_SIGNED[(angle_byte + 64) & 0xFF]
 
 # -- Reciprocal tables (perspective scale) ------------------------------------
 #
@@ -206,20 +282,42 @@ def fp_eval(fn, x):
 
 # -- View transform (8x8 multiplies) -----------------------------------------
 
-def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
-    """Prescaled world to view space, returning (vx, vy, vy_frac).
+def _rot_component(d_hi, d_lo, mag, neg, unity):
+    """Compute one rotation term: d * sin_or_cos.
+
+    d_hi: integer delta (8-bit signed).
+    d_lo: fractional delta (8-bit unsigned).
+    mag: unsigned magnitude 0..255 (0.8).
+    neg: True if the trig value is negative.
+    unity: True if |trig| == 1.0 (skip multiply).
+    Returns result in 8.8 format (16-bit signed).
+    """
+    if unity:
+        # |trig| = 1.0 exactly: result = d in 8.8
+        val = (d_hi << 8) | (d_lo & 0xFF)
+    else:
+        if mag == 0:
+            return 0
+        # Integer part: d_hi(s8) * mag(u8) -> 16-bit, this is 8.8 already
+        # (mag is 0.8, so d_hi * mag is 8.8 — no shift needed)
+        raw = m8(d_hi, mag)
+        # Fractional part: d_lo(u8) * mag(u8) -> 16-bit, >> 8 -> 0.8
+        frac = m8(d_lo, mag) >> 8
+        val = raw + frac
+    return -val if neg else val
+
+def fp_to_view(wx, wy, vx_88, vy_88, sc):
+    """Prescaled world to view space.
 
     wx, wy: 8.0 signed prescaled vertex coords.
     vx_88, vy_88: 8.8 signed prescaled player position.
-    sin_a, cos_a: 1.7.
+    sc: tuple from fp_sincos(angle_byte).
 
-    Integer and fractional deltas are rotated SEPARATELY (all 8x8 muls),
-    then combined before the final shift.  This preserves sub-pixel
-    precision from the 8.8 player position AND avoids truncation-
-    compounding between rotation terms.
-    Returns (vx_int, vy_int, vy_idx) where vy_idx is a 9.1 index into
-    the 512-entry reciprocal table (1 fractional bit for averaging).
-    8 multiplies total (4 for integer deltas, 4 for fractional deltas).
+    Uses 8-bit unsigned magnitude with sign/unity override:
+    - Unity (cardinal angles): exact, zero multiplies
+    - Non-unity: 8x8 unsigned mul with full 0..255 range (vs old 0..127)
+    Returns (vx_int, vy_int, vy_idx).
+    8 multiplies max (4 for integer, 4 for fractional; fewer at cardinal angles).
     """
     dx_88 = (wx << 8) - vx_88
     dy_88 = (wy << 8) - vy_88
@@ -227,17 +325,17 @@ def fp_to_view(wx, wy, vx_88, vy_88, sin_a, cos_a):
     dy_hi = dy_88 >> 8
     dx_lo = dx_88 & 0xFF
     dy_lo = dy_88 & 0xFF
-    # Integer-part rotation (4 x 8x8 muls, results in 8.7)
-    raw_vx = m8(dx_hi, sin_a) - m8(dy_hi, cos_a)
-    raw_vy = m8(dx_hi, cos_a) + m8(dy_hi, sin_a)
-    # Fractional-part rotation (4 x 8x8 muls, results in 1.15)
-    frac_vx = m8(dx_lo, sin_a) - m8(dy_lo, cos_a)
-    frac_vy = m8(dx_lo, cos_a) + m8(dy_lo, sin_a)
-    # Combine: 8.7 << 1 -> 8.8, plus 1.15 >> 7 -> 1.8
-    total_vy = raw_vy * 2 + (frac_vy >> 7)
-    evx = (raw_vx * 2 + (frac_vx >> 7)) >> 8
+    s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
+    # vx = dx * sin - dy * cos  (each term in 8.8)
+    # vy = dx * cos + dy * sin
+    t_dx_sin = _rot_component(dx_hi, dx_lo, s_mag, s_neg, s_unity)
+    t_dy_cos = _rot_component(dy_hi, dy_lo, c_mag, c_neg, c_unity)
+    t_dx_cos = _rot_component(dx_hi, dx_lo, c_mag, c_neg, c_unity)
+    t_dy_sin = _rot_component(dy_hi, dy_lo, s_mag, s_neg, s_unity)
+    total_vx = t_dx_sin - t_dy_cos
+    total_vy = t_dx_cos + t_dy_sin
+    evx = total_vx >> 8
     evy = total_vy >> 8
-    # Extract 9.1 recip index from the 8.8 combined vy
     evy_idx = max(2, total_vy >> (8 - RECIP_FRAC_BITS))
     return evx, evy, evy_idx
 

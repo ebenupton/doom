@@ -4,7 +4,8 @@
 import struct, math, sys, pygame
 import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
-                fp_sin, fp_cos, fp_recip_x, fp_recip_y, fp_project_x, fp_project_y,
+                fp_sin, fp_cos, fp_sincos,
+                fp_recip_x, fp_recip_y, fp_project_x, fp_project_y,
                 fp_linfn, fp_eval, fp_to_view, fp_near_clip, fp_clip_to_trap,
                 FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
@@ -724,13 +725,12 @@ def _fp_pw_min(f, g, x0, x1):
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
 
-def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
+def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
     """Render a seg using prescaled 8-bit fixed-point arithmetic.
 
-    sin_a, cos_a: 1.7.
-    vx, vy, vz: 8-bit prescaled coordinates.
-    Uses fp_vertexes and fp_sectors for prescaled geometry.
-    All multiplies are 8x8.
+    angle_byte: 0..255 player angle.
+    vx, vy: 8.8 prescaled player position.  vz: prescaled eye height.
+    Uses 8-bit unsigned sin/cos with sign/unity override.
     """
     s = segs[si]
     v1, v2 = fp_vertexes[s[0]], fp_vertexes[s[1]]
@@ -750,8 +750,9 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
 
     # View-space transform (4 x 8x8 multiplies per vertex)
     fp_module.mul_cat("view")
-    evx1, evy1, vy_idx1 = fp_to_view(v1[0], v1[1], vx, vy, sin_a, cos_a)
-    evx2, evy2, vy_idx2 = fp_to_view(v2[0], v2[1], vx, vy, sin_a, cos_a)
+    sc = fp_sincos(angle_byte)
+    evx1, evy1, vy_idx1 = fp_to_view(v1[0], v1[1], vx, vy, sc)
+    evx2, evy2, vy_idx2 = fp_to_view(v2[0], v2[1], vx, vy, sc)
 
     # Near clip (8-bit view coords, 0.8 parametric t)
     nc = fp_near_clip(evx1, evy1, evx2, evy2)
@@ -833,44 +834,38 @@ def fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface):
                        min(fb1, bb1), min(fb2, bb2))
 
 
-def render_subsector_fp(idx, clips, sin_a, cos_a, vx, vy, vz, surface):
+def render_subsector_fp(idx, clips, angle_byte, vx, vy, vz, surface):
     ssec = ssectors[idx]
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, sin_a, cos_a, vx, vy, vz, surface)
+        fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface)
         if clips.is_full():
             return
 
 
-def render_bsp_fp(nid, clips, sin_a, cos_a, vx, vy, vz,
+def render_bsp_fp(nid, clips, angle_byte, vx, vy, vz,
                    wx_full, wy_full, surface):
-    """BSP traversal for the 8-bit fixed-point path.
-
-    vx, vy, vz: prescaled 8-bit player position (for rendering).
-    wx_full, wy_full: original (un-prescaled) player position (for BSP node
-        traversal and bbox checks, since node data is not prescaled).
-    sin_a, cos_a: 1.7.
-    """
+    """BSP traversal for the 8-bit fixed-point path."""
     if clips.is_full():
         return
     if nid & NF_SUBSECTOR:
         render_subsector_fp(0 if nid == 0xFFFF else nid & 0x7FFF,
-                            clips, sin_a, cos_a, vx, vy, vz, surface)
+                            clips, angle_byte, vx, vy, vz, surface)
         return
     node = nodes[nid]
     side = point_on_side(wx_full, wy_full, node)
     ch = (node[12], node[13])
-    render_bsp_fp(ch[side], clips, sin_a, cos_a, vx, vy, vz,
+    render_bsp_fp(ch[side], clips, angle_byte, vx, vy, vz,
                   wx_full, wy_full, surface)
     if clips.is_full():
         return
     far = side ^ 1
-    # Bbox visibility check — reuse the float version with un-prescaled coords
-    cos_f = cos_a / 128.0
-    sin_f = sin_a / 128.0
+    ang_rad = angle_byte * 2 * math.pi / 256
+    cos_f = math.cos(ang_rad)
+    sin_f = math.sin(ang_rad)
     br = fp_bbox_visible(node, far, cos_f, sin_f, wx_full, wy_full)
     if br is not None:
         if clips.has_gap(br[0], br[1]):
-            render_bsp_fp(ch[far], clips, sin_a, cos_a, vx, vy, vz,
+            render_bsp_fp(ch[far], clips, angle_byte, vx, vy, vz,
                           wx_full, wy_full, surface)
 
 
@@ -978,8 +973,6 @@ while running:
 
         # Fixed-point sin/cos (1.7)
         fp_module.mul_reset()
-        fp_sin_a = fp_sin(angle_byte)
-        fp_cos_a = fp_cos(angle_byte)
         # Prescaled player position in 8.8 (sub-unit precision, smooth movement)
         px_88 = int((player_x - MAP_CENTER_X) * 256 / PRESCALE)
         py_88 = int((player_y - MAP_CENTER_Y) * 256 / PRESCALE)
@@ -989,7 +982,7 @@ while running:
         py_full = int(player_y)
 
         render_bsp_fp(len(nodes) - 1, FPClipSpans(),
-                      fp_sin_a, fp_cos_a,
+                      angle_byte,
                       px_88, py_88, vz_ps,
                       px_full, py_full, fp_surface)
 
