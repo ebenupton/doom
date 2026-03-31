@@ -5,7 +5,7 @@ import struct, math, sys, pygame
 import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
-                fp_recip_x, fp_recip_y, fp_project_x, fp_project_y,
+                fp_recip_x, fp_recip_y, fp_project_x, fp_project_x_subpx, fp_project_y,
                 fp_linfn, fp_eval, fp_to_view, fp_near_clip, fp_clip_to_trap,
                 FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
@@ -751,8 +751,11 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
     # View-space transform (4 x 8x8 multiplies per vertex)
     fp_module.mul_cat("view")
     sc = fp_sincos(angle_byte)
-    evx1, evy1, vy_idx1 = fp_to_view(v1[0], v1[1], vx, vy, sc)
-    evx2, evy2, vy_idx2 = fp_to_view(v2[0], v2[1], vx, vy, sc)
+    evx1_t, evx1_r, evy1, fvx1, vy_idx1 = fp_to_view(v1[0], v1[1], vx, vy, sc)
+    evx2_t, evx2_r, evy2, fvx2, vy_idx2 = fp_to_view(v2[0], v2[1], vx, vy, sc)
+    # Sub-pixel uses truncated vx (frac compensates); otherwise use rounded
+    evx1 = evx1_t if use_subpixel else evx1_r
+    evx2 = evx2_t if use_subpixel else evx2_r
 
     # Near clip (8-bit view coords, 0.8 parametric t)
     nc = fp_near_clip(evx1, evy1, evx2, evy2)
@@ -769,10 +772,17 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
     ryh1, ryl1 = fp_recip_y(idx1)
     ryh2, ryl2 = fp_recip_y(idx2)
 
-    # Project to screen X: two 8x8 muls per endpoint
+    # Project to screen X
     fp_module.mul_cat("proj")
-    sx1 = fp_project_x(ex1, rxh1, rxl1)
-    sx2 = fp_project_x(ex2, rxh2, rxl2)
+    if use_subpixel:
+        # Near-clipped endpoints have no useful fraction
+        fvx1_c = fvx1 if ey1 == evy1 else 0
+        fvx2_c = fvx2 if ey2 == evy2 else 0
+        sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
+        sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
+    else:
+        sx1 = fp_project_x(ex1, rxh1, rxl1)
+        sx2 = fp_project_x(ex2, rxh2, rxl2)
 
     x_lo = min(sx1, sx2)
     x_hi = max(sx1, sx2)
@@ -795,12 +805,6 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
     if back and (back[1] <= fh or back[0] >= ch):
         solid = True
 
-    if back:
-        bt1 = fp_project_y(back[1] - vz, ryh1, ryl1)
-        bt2 = fp_project_y(back[1] - vz, ryh2, ryl2)
-        bb1 = fp_project_y(back[0] - vz, ryh1, ryl1)
-        bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
-
     fp_module.mul_cat("clip")
     if solid:
         clips.draw_clipped([
@@ -811,7 +815,15 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
         ], GREEN, surface, draw_stats)
         clips.mark_solid(x_lo, x_hi)
     elif back:
-        if back[1] < ch:
+        # Only project back heights when needed (saves up to 8 muls)
+        need_bt = back[1] < ch   # ceiling drops: need bt for upper step + tighten
+        need_bb = back[0] > fh   # floor rises: need bb for lower step + tighten
+
+        if need_bt:
+            fp_module.mul_cat("proj")
+            bt1 = fp_project_y(back[1] - vz, ryh1, ryl1)
+            bt2 = fp_project_y(back[1] - vz, ryh2, ryl2)
+            fp_module.mul_cat("clip")
             clips.draw_clipped([
                 (sx1, ft1, sx2, ft2),
                 (sx1, bt1, sx2, bt2),
@@ -820,7 +832,12 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
             ], GREEN, surface, draw_stats)
         elif back[1] > ch:
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
-        if back[0] > fh:
+
+        if need_bb:
+            fp_module.mul_cat("proj")
+            bb1 = fp_project_y(back[0] - vz, ryh1, ryl1)
+            bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
+            fp_module.mul_cat("clip")
             clips.draw_clipped([
                 (sx1, bb1, sx2, bb2),
                 (sx1, fb1, sx2, fb2),
@@ -829,9 +846,15 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
             ], GREEN, surface, draw_stats)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+
+        # Tighten: use back heights only if computed, otherwise front = tighter
+        tt1 = bt1 if need_bt else ft1
+        tt2 = bt2 if need_bt else ft2
+        tb1 = bb1 if need_bb else fb1
+        tb2 = bb2 if need_bb else fb2
         clips.tighten(x_lo, x_hi, sx1, sx2,
-                       max(ft1, bt1), max(ft2, bt2),
-                       min(fb1, bb1), min(fb2, bb2))
+                       max(ft1, tt1), max(ft2, tt2),
+                       min(fb1, tb1), min(fb2, tb2))
 
 
 def render_subsector_fp(idx, clips, angle_byte, vx, vy, vz, surface):
@@ -922,6 +945,7 @@ angle = math.radians(pangle)              # float radians (used in float mode)
 angle_byte = radians_to_byte(angle)       # 0..255 (used in fixed-point mode)
 use_fixedpoint = False                    # False = float, True = fixed-point
 use_xor = False                           # XOR drawing mode
+use_subpixel = False                      # Sub-pixel X projection (1 extra mul)
 turn_speed = 2.5                          # radians/sec for float mode
 turn_speed_byte = 45                      # byte-units/sec for FP mode (~63 deg/sec)
 move_speed = 300.0
@@ -937,14 +961,15 @@ while running:
                 running = False
             elif ev.key == pygame.K_f:
                 use_fixedpoint = not use_fixedpoint
-            elif ev.key == pygame.K_x:
-                use_xor = not use_xor
+                # Sync angle representations without resetting position
                 if use_fixedpoint:
-                    # Sync byte angle from float angle
                     angle_byte = radians_to_byte(angle)
                 else:
-                    # Sync float angle from byte angle
                     angle = byte_to_radians(angle_byte)
+            elif ev.key == pygame.K_x:
+                use_xor = not use_xor
+            elif ev.key == pygame.K_s:
+                use_subpixel = not use_subpixel
 
     keys = pygame.key.get_pressed()
 
@@ -1022,13 +1047,14 @@ while running:
     fps = clock.get_fps()
     mode_str = f"FP {FP_WIDTH}x{FP_HEIGHT}" if use_fixedpoint else f"FLOAT {SCREEN_W}x{SCREEN_H}"
     xor_str = " XOR" if use_xor else ""
+    subpx_str = " SUBPX" if use_subpixel else ""
     if use_fixedpoint:
         mc = fp_module.mul_counts
         mul_total = sum(mc.values())
         mul_str = f"  {mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})"
     else:
         mul_str = ""
-    hud = (f"[{mode_str}{xor_str}]  {total} total  {unclipped} pass  {clipped} clip  "
+    hud = (f"[{mode_str}{xor_str}{subpx_str}]  {total} total  {unclipped} pass  {clipped} clip  "
            f"{trivial} trivial  {clip_rej} reject{mul_str}  {fps:.0f}fps")
     screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))
     pygame.display.flip()

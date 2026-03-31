@@ -243,6 +243,15 @@ def fp_project_x(vx, recip_hi, recip_lo):
     """
     return HALF_W + m8(vx, recip_hi) + (m8(vx, recip_lo) >> 8)
 
+def fp_project_x_subpx(vx, vx_frac, recip_hi, recip_lo):
+    """Project with sub-pixel correction from fractional view-space X.
+
+    sx = 128 + vx * recip_hi + (vx * recip_lo >> 8) + (vx_frac * recip_hi >> 8)
+    Three 8x8 multiplies.
+    """
+    return (HALF_W + m8(vx, recip_hi) + (m8(vx, recip_lo) >> 8)
+            + (m8(vx_frac, recip_hi) >> 8))
+
 def fp_project_y(height_delta, recip_hi, recip_lo):
     """Project height delta to screen Y (integer).
 
@@ -301,8 +310,8 @@ def _rot_component(d_hi, d_lo, mag, neg, unity):
         # Integer part: d_hi(s8) * mag(u8) -> 16-bit, this is 8.8 already
         # (mag is 0.8, so d_hi * mag is 8.8 — no shift needed)
         raw = m8(d_hi, mag)
-        # Fractional part: d_lo(u8) * mag(u8) -> 16-bit, >> 8 -> 0.8
-        frac = m8(d_lo, mag) >> 8
+        # Fractional part: d_lo(u8) * mag(u8) -> 16-bit, >> 8 -> 0.8 (rounded)
+        frac = (m8(d_lo, mag) + 128) >> 8
         val = raw + frac
     return -val if neg else val
 
@@ -334,10 +343,12 @@ def fp_to_view(wx, wy, vx_88, vy_88, sc):
     t_dy_sin = _rot_component(dy_hi, dy_lo, s_mag, s_neg, s_unity)
     total_vx = t_dx_sin - t_dy_cos
     total_vy = t_dx_cos + t_dy_sin
-    evx = total_vx >> 8
-    evy = total_vy >> 8
+    evx_trunc = total_vx >> 8          # truncated (for sub-pixel mode)
+    evx_round = (total_vx + 128) >> 8 # rounded (for non-sub-pixel mode)
+    evy = (total_vy + 128) >> 8       # always round vy
+    evx_frac = total_vx & 0xFF        # fractional vx (consistent with truncation)
     evy_idx = max(2, total_vy >> (8 - RECIP_FRAC_BITS))
-    return evx, evy, evy_idx
+    return evx_trunc, evx_round, evy, evx_frac, evy_idx
 
 # -- Near clip (8-bit view coords) -------------------------------------------
 
