@@ -751,11 +751,11 @@ def _fp_pw_min(f, g, x0, x1):
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
 
-def fp_render_seg(si, clips, ctx, vz, surface, vcache):
+def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
     """Render a seg from the stripped fp_segs table.
 
-    ctx: view context tuple from fp_view_context.
-    vcache: dict mapping vertex index -> (evx_t, evx_r, evy, fvx, vy_idx).
+    vcache: frame-global vertex transforms.
+    ycache: subsector-local Y projections (ft, fb, ryh, ryl per vertex).
     """
     s = fp_segs[si]
     v1_idx, v2_idx = s[0], s[1]
@@ -787,14 +787,11 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache):
         return
     ex1, ey1, ex2, ey2 = nc
 
-    # Perspective reciprocal: 512-entry table lookup (5.2 index, zero muls)
-    # Use vy_idx from view transform; near-clipped endpoints use integer vy << 2
+    # Reciprocals and front-sector Y projections from caches
     idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
     idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
     rxh1, rxl1 = fp_recip_x(idx1)
     rxh2, rxl2 = fp_recip_x(idx2)
-    ryh1, ryl1 = fp_recip_y(idx1)
-    ryh2, ryl2 = fp_recip_y(idx2)
 
     # Project to screen X
     fp_module.mul_cat("proj")
@@ -814,15 +811,27 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache):
     if not clips.has_gap(x_lo, x_hi):
         return
 
-    # Sector heights (prescaled by /8)
+    # Front-sector Y projections — lazy cache per vertex per subsector.
+    # Near-clipped endpoints need fresh computation (different recip).
     front = fp_sectors[front_idx]
     fh, ch = front[0], front[1]
-
-    # Project top/bottom: two 8x8 muls per endpoint
-    ft1 = fp_project_y(ch - vz, ryh1, ryl1)
-    fb1 = fp_project_y(fh - vz, ryh1, ryl1)
-    ft2 = fp_project_y(ch - vz, ryh2, ryl2)
-    fb2 = fp_project_y(fh - vz, ryh2, ryl2)
+    fp_module.mul_cat("proj")
+    if ey1 == evy1 and v1_idx in ycache:
+        ft1, fb1, ryh1, ryl1 = ycache[v1_idx]
+    else:
+        ryh1, ryl1 = fp_recip_y(idx1)
+        ft1 = fp_project_y(ch - vz, ryh1, ryl1)
+        fb1 = fp_project_y(fh - vz, ryh1, ryl1)
+        if ey1 == evy1:
+            ycache[v1_idx] = (ft1, fb1, ryh1, ryl1)
+    if ey2 == evy2 and v2_idx in ycache:
+        ft2, fb2, ryh2, ryl2 = ycache[v2_idx]
+    else:
+        ryh2, ryl2 = fp_recip_y(idx2)
+        ft2 = fp_project_y(ch - vz, ryh2, ryl2)
+        fb2 = fp_project_y(fh - vz, ryh2, ryl2)
+        if ey2 == evy2:
+            ycache[v2_idx] = (ft2, fb2, ryh2, ryl2)
 
     solid = back_idx is None
     back = fp_sectors[back_idx] if back_idx is not None else None
@@ -902,9 +911,14 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache):
             v = fp_vertexes[vi]
             vcache[vi] = fp_to_view(v[0], v[1], ctx)
 
+    # Y projection cache: lazily populated by fp_render_seg for vertices
+    # that survive culling.  All segs in a subsector share the same front
+    # sector, so ft/fb per vertex only needs computing once.
+    ycache = {}  # vi -> (ft, fb, ryh, ryl)
+
     # Render segs using cached vertex data
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, ctx, vz, surface, vcache)
+        fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache)
         if clips.is_full():
             return
 
