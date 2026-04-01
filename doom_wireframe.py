@@ -6,7 +6,7 @@ import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
                 fp_recip_x, fp_recip_y, fp_project_x, fp_project_x_subpx, fp_project_y,
-                fp_linfn, fp_eval, fp_to_view, fp_near_clip, fp_clip_to_trap,
+                fp_linfn, fp_eval, fp_view_context, fp_to_view, fp_near_clip, fp_clip_to_trap,
                 FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
                 MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
@@ -105,6 +105,32 @@ def player_floor(x, y):
     sd_idx = ld[5] if s[4] == 0 else ld[6]
     if sd_idx == 0xFFFF: sd_idx = ld[5]
     return sectors[sidedefs[sd_idx][5]][0]
+
+# ── Strip invisible segs for fixed-point path ────────────────────────────
+#
+# Two-sided segs with identical floor AND ceiling on both sides are pure
+# lighting/trigger boundaries.  They produce no draws and their tighten is
+# a no-op.  Strip them and rebuild the subsector seg table.
+
+def _is_renderable(s):
+    fi, bi = seg_sectors(s)
+    if bi is None: return True
+    return sectors[fi][0] != sectors[bi][0] or sectors[fi][1] != sectors[bi][1]
+
+_stripped_segs = []
+_stripped_ssectors = []
+_strip_count = 0
+for _ssi, _ss in enumerate(ssectors):
+    _first = len(_stripped_segs)
+    for _si in range(_ss[1], _ss[1] + _ss[0]):
+        if _is_renderable(segs[_si]):
+            _stripped_segs.append(segs[_si])
+        else:
+            _strip_count += 1
+    _stripped_ssectors.append((len(_stripped_segs) - _first, _first))
+
+fp_segs = _stripped_segs
+fp_ssectors = _stripped_ssectors
 
 # ── Analytical 2D trapezoid clip spans ───────────────────────────────────────
 #
@@ -725,22 +751,22 @@ def _fp_pw_min(f, g, x0, x1):
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
 
-def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
-    """Render a seg using prescaled 8-bit fixed-point arithmetic.
+def fp_render_seg(si, clips, ctx, vz, surface, vcache):
+    """Render a seg from the stripped fp_segs table.
 
-    angle_byte: 0..255 player angle.
-    vx, vy: 8.8 prescaled player position.  vz: prescaled eye height.
-    Uses 8-bit unsigned sin/cos with sign/unity override.
+    ctx: view context tuple from fp_view_context.
+    vcache: dict mapping vertex index -> (evx_t, evx_r, evy, fvx, vy_idx).
     """
-    s = segs[si]
-    v1, v2 = fp_vertexes[s[0]], fp_vertexes[s[1]]
+    s = fp_segs[si]
+    v1_idx, v2_idx = s[0], s[1]
 
     # Back-face test using prescaled linedef vertices (integer part of player pos)
     ld = linedefs[s[3]]
     lv1, lv2 = fp_vertexes[ld[0]], fp_vertexes[ld[1]]
     ldx, ldy = lv2[0] - lv1[0], lv2[1] - lv1[1]
-    vx_int, vy_int = vx >> 8, vy >> 8
-    dot = ldy * (vx_int - lv1[0]) - ldx * (vy_int - lv1[1])
+    px_int = ctx[0]
+    py_int = ctx[1]
+    dot = ldy * (px_int - lv1[0]) - ldx * (py_int - lv1[1])
     if s[4] == 1:
         dot = -dot
     if dot <= 0:
@@ -748,11 +774,9 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
 
     front_idx, back_idx = seg_sectors(s)
 
-    # View-space transform (4 x 8x8 multiplies per vertex)
-    fp_module.mul_cat("view")
-    sc = fp_sincos(angle_byte)
-    evx1_t, evx1_r, evy1, fvx1, vy_idx1 = fp_to_view(v1[0], v1[1], vx, vy, sc)
-    evx2_t, evx2_r, evy2, fvx2, vy_idx2 = fp_to_view(v2[0], v2[1], vx, vy, sc)
+    # Look up cached view-space transforms
+    evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vcache[v1_idx]
+    evx2_t, evx2_r, evy2, fvx2, vy_idx2 = vcache[v2_idx]
     # Sub-pixel uses truncated vx (frac compensates); otherwise use rounded
     evx1 = evx1_t if use_subpixel else evx1_r
     evx2 = evx2_t if use_subpixel else evx2_r
@@ -857,39 +881,56 @@ def fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface):
                        min(fb1, tb1), min(fb2, tb2))
 
 
-def render_subsector_fp(idx, clips, angle_byte, vx, vy, vz, surface):
-    ssec = ssectors[idx]
+def render_subsector_fp(idx, clips, ctx, vz, surface, vcache):
+    """Render a subsector with frame-global vertex cache.
+
+    ctx: view context tuple from fp_view_context.
+    """
+    ssec = fp_ssectors[idx]
+
+    # Collect unique vertex indices from this subsector's segs
+    vert_indices = set()
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, angle_byte, vx, vy, vz, surface)
+        s = fp_segs[si]
+        vert_indices.add(s[0])
+        vert_indices.add(s[1])
+
+    # Transform each unique vertex once (frame-global cache)
+    fp_module.mul_cat("view")
+    for vi in vert_indices:
+        if vi not in vcache:
+            v = fp_vertexes[vi]
+            vcache[vi] = fp_to_view(v[0], v[1], ctx)
+
+    # Render segs using cached vertex data
+    for si in range(ssec[1], ssec[1] + ssec[0]):
+        fp_render_seg(si, clips, ctx, vz, surface, vcache)
         if clips.is_full():
             return
 
 
-def render_bsp_fp(nid, clips, angle_byte, vx, vy, vz,
-                   wx_full, wy_full, surface):
+def render_bsp_fp(nid, clips, ctx, vz,
+                   wx_full, wy_full, cos_f, sin_f, surface, vcache):
     """BSP traversal for the 8-bit fixed-point path."""
     if clips.is_full():
         return
     if nid & NF_SUBSECTOR:
         render_subsector_fp(0 if nid == 0xFFFF else nid & 0x7FFF,
-                            clips, angle_byte, vx, vy, vz, surface)
+                            clips, ctx, vz, surface, vcache)
         return
     node = nodes[nid]
     side = point_on_side(wx_full, wy_full, node)
     ch = (node[12], node[13])
-    render_bsp_fp(ch[side], clips, angle_byte, vx, vy, vz,
-                  wx_full, wy_full, surface)
+    render_bsp_fp(ch[side], clips, ctx, vz,
+                  wx_full, wy_full, cos_f, sin_f, surface, vcache)
     if clips.is_full():
         return
     far = side ^ 1
-    ang_rad = angle_byte * 2 * math.pi / 256
-    cos_f = math.cos(ang_rad)
-    sin_f = math.sin(ang_rad)
     br = fp_bbox_visible(node, far, cos_f, sin_f, wx_full, wy_full)
     if br is not None:
         if clips.has_gap(br[0], br[1]):
-            render_bsp_fp(ch[far], clips, angle_byte, vx, vy, vz,
-                          wx_full, wy_full, surface)
+            render_bsp_fp(ch[far], clips, ctx, vz,
+                          wx_full, wy_full, cos_f, sin_f, surface, vcache)
 
 
 # ── Angle conversion helpers ─────────────────────────────────────────────────
@@ -1006,10 +1047,19 @@ while running:
         px_full = int(player_x)
         py_full = int(player_y)
 
+        # Precompute view context once per frame
+        fp_module.mul_cat("view")
+        sc = fp_sincos(angle_byte)
+        ctx = fp_view_context(px_88, py_88, sc)
+
+        # Float sin/cos for bbox visibility (computed once per frame)
+        ang_rad = angle_byte * 2 * math.pi / 256
+        cos_f = math.cos(ang_rad)
+        sin_f = math.sin(ang_rad)
+
         render_bsp_fp(len(nodes) - 1, FPClipSpans(),
-                      angle_byte,
-                      px_88, py_88, vz_ps,
-                      px_full, py_full, fp_surface)
+                      ctx, vz_ps,
+                      px_full, py_full, cos_f, sin_f, fp_surface, {})
 
         # Nearest-neighbour upscale to display
         screen.fill((0, 0, 0))

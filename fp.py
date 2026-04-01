@@ -23,29 +23,44 @@ FP8 = 8   # 0.8 (reciprocal, parametric t, slopes)
 # -- Core arithmetic ----------------------------------------------------------
 
 mul_counts = {"view": 0, "proj": 0, "clip": 0, "other": 0}
+mul_dupes = 0        # count of repeated (a,b) pairs
 _mul_cat = "other"
+_mul_memo = {}       # (a, b, shift) -> result; for dupe detection
 
 def mul_reset():
-    """Reset all multiply counters."""
+    """Reset all multiply counters and memo."""
+    global mul_dupes
     for k in mul_counts: mul_counts[k] = 0
+    mul_dupes = 0
+    _mul_memo.clear()
 
 def mul_cat(cat):
     """Set the current multiply category."""
     global _mul_cat; _mul_cat = cat
 
+def _memo_mul(a, b, shift):
+    """Record a multiply, detect duplicates. Returns a*b >> shift."""
+    global mul_dupes
+    mul_counts[_mul_cat] += 1
+    key = (a, b, shift)
+    result = (a * b) >> shift
+    if key in _mul_memo:
+        mul_dupes += 1
+    else:
+        _mul_memo[key] = result
+    return result
+
 def m8(a, b):
     """Count and perform an 8x8 multiply (no shift). Returns a*b."""
-    mul_counts[_mul_cat] += 1
-    return a * b
+    return _memo_mul(a, b, 0)
 
 def fp_mul8(a, b):
     """Counted 8x8 signed multiply, shift right by 8."""
-    mul_counts[_mul_cat] += 1
-    return (a * b) >> 8
+    return _memo_mul(a, b, 8)
 
 def fp_mul7(a, b):
     """Counted 8x8 signed multiply, shift right by 7."""
-    mul_counts[_mul_cat] += 1
+    return _memo_mul(a, b, 7)
     return (a * b) >> 7
 
 def fp_div8(num, den):
@@ -276,6 +291,8 @@ def fp_linfn(y1, y2, sx1, sx2):
     dy = y2 - y1
     # slope in 0.8: (dy << 8) / dx
     slope_8 = fp_div8(dy, dx)
+    if slope_8 == 0:
+        return (0, y1)
     # intercept in 8.0: y1 - (slope * sx1) >> 8
     intercept = y1 - fp_mul8(slope_8, sx1)
     return (slope_8, intercept)
@@ -284,69 +301,110 @@ def fp_eval(fn, x):
     """Evaluate slope-intercept at screen X (8.0) -> screen Y (8.0).
 
     fn = (slope_8, intercept).
-    result = (slope * x) >> 8 + intercept.
-    slope_8(0.8) * x(8.0) = 8x8 -> >>8 -> 8.0, + intercept(8.0).
+    Short-circuits when slope is 0 (flat spans — very common).
     """
+    if fn[0] == 0: return fn[1]
     return fp_mul8(fn[0], x) + fn[1]
 
 # -- View transform (8x8 multiplies) -----------------------------------------
 
-def _rot_component(d_hi, d_lo, mag, neg, unity):
-    """Compute one rotation term: d * sin_or_cos.
+def _frac_rot_term(lo, mag, neg, unity):
+    """Compute the fractional rotation term: lo * trig_component.
+
+    lo: unsigned 8-bit fractional delta (0.8).
+    mag: unsigned magnitude 0..255 (0.8).
+    neg: True if the trig value is negative.
+    unity: True if |trig| == 1.0 (skip multiply).
+    Returns result in 0.8 format (unsigned, with sign applied).
+    """
+    if unity:
+        val = lo
+    elif mag == 0 or lo == 0:
+        return 0
+    else:
+        val = (m8(lo, mag) + 128) >> 8
+    return -val if neg else val
+
+def fp_view_context(vx_88, vy_88, sc):
+    """Precompute per-frame view context: player integer pos + fractional rotation.
+
+    vx_88, vy_88: 8.8 signed prescaled player position.
+    sc: tuple from fp_sincos(angle_byte).
+
+    Returns (px_int, py_int, sc, frac_vx, frac_vy) where frac_vx/frac_vy
+    are the precomputed fractional rotation contributions in 0.8 format.
+
+    4 multiplies max (fewer when unity/zero). Computed once per frame.
+    """
+    px_int = vx_88 >> 8
+    py_int = vy_88 >> 8
+    s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
+
+    # Vertex fraction is always 0, so frac = -player_frac
+    dx_lo = (-vx_88) & 0xFF
+    dy_lo = (-vy_88) & 0xFF
+
+    # frac_vx = frac(dx_lo, sin) - frac(dy_lo, cos)
+    # frac_vy = frac(dx_lo, cos) + frac(dy_lo, sin)
+    frac_vx = (_frac_rot_term(dx_lo, s_mag, s_neg, s_unity)
+               - _frac_rot_term(dy_lo, c_mag, c_neg, c_unity))
+    frac_vy = (_frac_rot_term(dx_lo, c_mag, c_neg, c_unity)
+               + _frac_rot_term(dy_lo, s_mag, s_neg, s_unity))
+
+    return (px_int, py_int, sc, frac_vx, frac_vy)
+
+def _rot_int(d_hi, mag, neg, unity):
+    """Compute integer-part rotation term: d_hi * trig_component.
 
     d_hi: integer delta (8-bit signed).
-    d_lo: fractional delta (8-bit unsigned).
     mag: unsigned magnitude 0..255 (0.8).
     neg: True if the trig value is negative.
     unity: True if |trig| == 1.0 (skip multiply).
     Returns result in 8.8 format (16-bit signed).
     """
     if unity:
-        # |trig| = 1.0 exactly: result = d in 8.8
-        val = (d_hi << 8) | (d_lo & 0xFF)
+        val = d_hi << 8
     else:
         if mag == 0:
             return 0
-        # Integer part: d_hi(s8) * mag(u8) -> 16-bit, this is 8.8 already
-        # (mag is 0.8, so d_hi * mag is 8.8 — no shift needed)
-        raw = m8(d_hi, mag)
-        # Fractional part: d_lo(u8) * mag(u8) -> 16-bit, >> 8 -> 0.8 (rounded)
-        frac = (m8(d_lo, mag) + 128) >> 8
-        val = raw + frac
+        val = m8(d_hi, mag)
     return -val if neg else val
 
-def fp_to_view(wx, wy, vx_88, vy_88, sc):
-    """Prescaled world to view space.
+def fp_to_view(wx, wy, ctx):
+    """Prescaled world to view space using precomputed context.
 
     wx, wy: 8.0 signed prescaled vertex coords.
-    vx_88, vy_88: 8.8 signed prescaled player position.
-    sc: tuple from fp_sincos(angle_byte).
+    ctx: tuple from fp_view_context(vx_88, vy_88, sc).
 
     Uses 8-bit unsigned magnitude with sign/unity override:
     - Unity (cardinal angles): exact, zero multiplies
     - Non-unity: 8x8 unsigned mul with full 0..255 range (vs old 0..127)
-    Returns (vx_int, vy_int, vy_idx).
-    8 multiplies max (4 for integer, 4 for fractional; fewer at cardinal angles).
+    Returns (vx_trunc, vx_round, vy, vx_frac, vy_idx).
+    4 multiplies max (integer part only; fractional precomputed in context).
     """
-    dx_88 = (wx << 8) - vx_88
-    dy_88 = (wy << 8) - vy_88
-    dx_hi = dx_88 >> 8
-    dy_hi = dy_88 >> 8
-    dx_lo = dx_88 & 0xFF
-    dy_lo = dy_88 & 0xFF
+    px_int, py_int, sc, frac_vx, frac_vy = ctx
+    dx_hi = wx - px_int
+    dy_hi = wy - py_int
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
+
+    # Integer part: 4 x _rot_int calls (4 muls max)
     # vx = dx * sin - dy * cos  (each term in 8.8)
     # vy = dx * cos + dy * sin
-    t_dx_sin = _rot_component(dx_hi, dx_lo, s_mag, s_neg, s_unity)
-    t_dy_cos = _rot_component(dy_hi, dy_lo, c_mag, c_neg, c_unity)
-    t_dx_cos = _rot_component(dx_hi, dx_lo, c_mag, c_neg, c_unity)
-    t_dy_sin = _rot_component(dy_hi, dy_lo, s_mag, s_neg, s_unity)
-    total_vx = t_dx_sin - t_dy_cos
-    total_vy = t_dx_cos + t_dy_sin
+    t_dx_sin = _rot_int(dx_hi, s_mag, s_neg, s_unity)
+    t_dy_cos = _rot_int(dy_hi, c_mag, c_neg, c_unity)
+    t_dx_cos = _rot_int(dx_hi, c_mag, c_neg, c_unity)
+    t_dy_sin = _rot_int(dy_hi, s_mag, s_neg, s_unity)
+    int_vx = t_dx_sin - t_dy_cos
+    int_vy = t_dx_cos + t_dy_sin
+
+    # Add precomputed fractional rotation from context
+    total_vx = int_vx + frac_vx
+    total_vy = int_vy + frac_vy
+
     evx_trunc = total_vx >> 8          # truncated (for sub-pixel mode)
-    evx_round = (total_vx + 128) >> 8 # rounded (for non-sub-pixel mode)
-    evy = (total_vy + 128) >> 8       # always round vy
-    evx_frac = total_vx & 0xFF        # fractional vx (consistent with truncation)
+    evx_round = (total_vx + 128) >> 8  # rounded (for non-sub-pixel mode)
+    evy = (total_vy + 128) >> 8        # always round vy
+    evx_frac = total_vx & 0xFF         # fractional vx (consistent with truncation)
     evy_idx = max(2, total_vy >> (8 - RECIP_FRAC_BITS))
     return evx_trunc, evx_round, evy, evx_frac, evy_idx
 
@@ -399,12 +457,11 @@ def fp_clip_to_trap(x1, y1, x2, y2, xlo, xhi, tfn, bfn):
     t0, t1 = 0, T_ONE
 
     # Half-plane constraints: (p, q) pairs
-    # p and q are in 8.0 screen-coord units
-    # Slope-related terms: ta(0.8) * dx(8.0) >> 8 -> 8.0
-    ta_dx = fp_mul8(ta, dx)
-    ba_dx = fp_mul8(ba, dx)
-    ta_x1 = fp_mul8(ta, x1)
-    ba_x1 = fp_mul8(ba, x1)
+    # Short-circuit slope muls when slope is 0 (flat spans — very common)
+    ta_dx = fp_mul8(ta, dx) if ta else 0
+    ba_dx = fp_mul8(ba, dx) if ba else 0
+    ta_x1 = fp_mul8(ta, x1) if ta else 0
+    ba_x1 = fp_mul8(ba, x1) if ba else 0
 
     constraints = (
         (-dx,        x1 - xlo),
