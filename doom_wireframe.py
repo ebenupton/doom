@@ -774,7 +774,12 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
 
     front_idx, back_idx = seg_sectors(s)
 
-    # Look up cached view-space transforms
+    # Lazily compute + cache view-space transforms (only for segs that pass back-face)
+    fp_module.mul_cat("view")
+    if v1_idx not in vcache:
+        vcache[v1_idx] = fp_to_view(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
+    if v2_idx not in vcache:
+        vcache[v2_idx] = fp_to_view(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
     evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vcache[v1_idx]
     evx2_t, evx2_r, evy2, fvx2, vy_idx2 = vcache[v2_idx]
     # Sub-pixel uses truncated vx (frac compensates); otherwise use rounded
@@ -897,26 +902,10 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache):
     """
     ssec = fp_ssectors[idx]
 
-    # Collect unique vertex indices from this subsector's segs
-    vert_indices = set()
-    for si in range(ssec[1], ssec[1] + ssec[0]):
-        s = fp_segs[si]
-        vert_indices.add(s[0])
-        vert_indices.add(s[1])
-
-    # Transform each unique vertex once (frame-global cache)
-    fp_module.mul_cat("view")
-    for vi in vert_indices:
-        if vi not in vcache:
-            v = fp_vertexes[vi]
-            vcache[vi] = fp_to_view(v[0], v[1], ctx)
-
-    # Y projection cache: lazily populated by fp_render_seg for vertices
-    # that survive culling.  All segs in a subsector share the same front
-    # sector, so ft/fb per vertex only needs computing once.
-    ycache = {}  # vi -> (ft, fb, ryh, ryl)
-
-    # Render segs using cached vertex data
+    # Both caches are lazily populated by fp_render_seg:
+    # vcache (frame-global): view transforms, computed on first access per vertex
+    # ycache (subsector-local): front-sector Y projections per vertex
+    ycache = {}
     for si in range(ssec[1], ssec[1] + ssec[0]):
         fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache)
         if clips.is_full():
