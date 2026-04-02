@@ -272,6 +272,31 @@ def fp_project_y(height_delta, recip_hi, recip_lo):
 
     sy = 80 - (height_delta * recip_hi + (height_delta * recip_lo >> 8))
     Two 8x8 multiplies.  No sub-pixel needed for Y (heights are integer).
+
+    OPTIMISATION OPPORTUNITY — eliminate both muls via shift-add chains:
+
+    height_delta is prescaled (ch-vz or fh-vz), range ±31 (6 bits), and is
+    constant per front sector.  This means h * recip_hi can be expressed as
+    shifts and adds of recip_hi based on the set bits of |h|.  Example for
+    h=11 (0b1011): (recip_hi<<3) + (recip_hi<<1) + recip_hi.  Max cost:
+    5 adds + 4 shifts for h=31, vs ~50-100 cycles for an 8x8 multiply.
+
+    Per-sector setup (once):
+      - Precompute shift-add recipe: list of bit positions in |h_ceil|, |h_floor|
+      - Precompute recip_lo skip threshold: 256 // max(|h|, 1)
+        (skip the fractional correction when |h| * recip_lo < 256, i.e. < 1px)
+      - Special-case h==0 (result=HALF_H), |h|==1 (copy), |h|==pow2 (shift)
+
+    Per-vertex (replaces current 2 muls per call, 4 per vertex):
+      - Apply shift-add chain to recip_hi (0 muls)
+      - If recip_lo > threshold: apply chain to recip_lo, >>8 for correction
+      - Typical savings: 50% of floor projections skip recip_lo (|h|≈2-5)
+
+    Threshold analysis (% of vertices where recip_lo correction < 1px):
+      |h|=2 → 50%,  |h|=5 → 20%,  |h|=11 → 9%,  |h|=16 → 6%
+
+    Net effect: Y projection drops from 4 muls/vertex to 0, leaving only
+    view transform (4) and X projection (2) = 6 muls/vertex total.
     """
     return HALF_H - (m8(height_delta, recip_hi) + (m8(height_delta, recip_lo) >> 8))
 

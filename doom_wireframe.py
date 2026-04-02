@@ -154,6 +154,17 @@ NEAR = 1.0
 ZERO_FN = (0.0, 0.0)                   # y = 0 everywhere
 BOT_FN  = (0.0, float(HEIGHT - 1))     # y = 599 everywhere
 
+# ── Map trace (populated during BSP traversal, drawn in map mode) ─────────
+
+map_trace = {
+    "subsectors": set(),      # indices of traversed subsectors
+    "segs_processed": set(),  # indices of segs that passed back-face test
+    "segs_drawn": set(),      # indices of segs that produced visible lines
+    "vertices": set(),        # vertex indices that were projected
+    "nodes_visited": set(),   # BSP node indices visited
+    "vertex_muls": {},        # vertex_idx -> [v_muls, p_muls]
+}
+
 
 def _linfn(y1, y2, sx1, sx2):
     """Convert two-point form to (slope, intercept) where y = slope*x + intercept."""
@@ -264,6 +275,7 @@ class ClipSpans:
             else:
                 x_min, x_max = min(lx1, lx2), max(lx1, lx2)
                 overlaps_any = False
+                segments = []
                 for xlo, xhi, tfn, bfn in self.spans:
                     if xhi <= x_min or xlo >= x_max:
                         continue
@@ -271,13 +283,24 @@ class ClipSpans:
                     c = _clip_to_trap(lx1, ly1, lx2, ly2,
                                       xlo, xhi, tfn, bfn)
                     if c:
-                        pygame.draw.line(surface, color,
-                                         (int(c[0]), int(c[1])),
-                                         (int(c[2]), int(c[3])), 1)
-                        drawn = True
+                        segments.append(c)
                         if (abs(c[0] - lx1) > 0.5 or abs(c[1] - ly1) > 0.5 or
                             abs(c[2] - lx2) > 0.5 or abs(c[3] - ly2) > 0.5):
                             was_clipped = True
+                if segments:
+                    merged = [list(segments[0])]
+                    for s in segments[1:]:
+                        prev = merged[-1]
+                        if s[0] - prev[2] <= 2:
+                            prev[2] = s[2]
+                            prev[3] = s[3]
+                        else:
+                            merged.append(list(s))
+                    for c in merged:
+                        pygame.draw.line(surface, color,
+                                         (int(c[0]), int(c[1])),
+                                         (int(c[2]), int(c[3])), 1)
+                    drawn = True
                 if not drawn and stats is not None:
                     stats[3 if not overlaps_any else 4] += 1
             if drawn and stats is not None:
@@ -406,6 +429,31 @@ def near_clip(vx1, vy1, vx2, vy2):
     if vy1 < NEAR: return cx, NEAR, vx2, vy2
     return vx1, vy1, cx, NEAR
 
+def _bbox_screen_range(pts, half_w, focal_x):
+    """Project view-space bbox corners to screen X range, clipping edges to near plane.
+
+    pts: list of (vx, vy) in view space (4 corners of the bbox quad).
+    Returns (min_sx, max_sx) or None if entirely behind.
+    """
+    if all(p[1] < NEAR for p in pts):
+        return None
+    # Collect projected X values from all visible corners and near-clipped edge crossings
+    sxs = []
+    n = len(pts)
+    for i in range(n):
+        vx0, vy0 = pts[i]
+        vx1, vy1 = pts[(i + 1) % n]
+        if vy0 >= NEAR:
+            sxs.append(half_w + vx0 * focal_x / vy0)
+        # If this edge crosses the near plane, add the crossing point
+        if (vy0 < NEAR) != (vy1 < NEAR):
+            t = (NEAR - vy0) / (vy1 - vy0)
+            cx = vx0 + t * (vx1 - vx0)
+            sxs.append(half_w + cx * focal_x / NEAR)
+    if not sxs:
+        return None
+    return int(min(sxs)), int(max(sxs))
+
 def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
     base = 4 + far_side * 4
     top, bot, left, right = node[base], node[base+1], node[base+2], node[base+3]
@@ -413,10 +461,7 @@ def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
         return 0, WIDTH - 1
     pts = [to_view(wx, wy, vx, vy, cos_a, sin_a)
            for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
-    if all(p[1] < NEAR for p in pts): return None
-    if any(p[1] < NEAR for p in pts): return 0, WIDTH - 1
-    sxs = [WIDTH * 0.5 + p[0] * FOCAL_X / p[1] for p in pts]
-    return int(min(sxs)), int(max(sxs))
+    return _bbox_screen_range(pts, WIDTH * 0.5, FOCAL_X)
 
 def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
     """Bbox visibility for fixed-point mode (256-wide render target).
@@ -430,10 +475,7 @@ def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
         return 0, FP_RENDER_W - 1
     pts = [to_view(wx, wy, vx, vy, cos_a, sin_a)
            for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
-    if all(p[1] < NEAR for p in pts): return None
-    if any(p[1] < NEAR for p in pts): return 0, FP_RENDER_W - 1
-    sxs = [FP_RENDER_W * 0.5 + p[0] * FP_FOCAL_X / p[1] for p in pts]
-    return int(min(sxs)), int(max(sxs))
+    return _bbox_screen_range(pts, FP_RENDER_W * 0.5, FP_FOCAL_X)
 
 # ── BSP rendering ────────────────────────────────────────────────────────────
 
@@ -442,9 +484,11 @@ GREEN = (0, 200, 0)
 def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
     if clips.is_full(): return
     if nid & NF_SUBSECTOR:
-        render_subsector(0 if nid == 0xFFFF else nid & 0x7FFF,
-                         clips, cos_a, sin_a, vx, vy, vz, surface)
+        ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
+        map_trace["subsectors"].add(ssid)
+        render_subsector(ssid, clips, cos_a, sin_a, vx, vy, vz, surface)
         return
+    map_trace["nodes_visited"].add(nid)
     node = nodes[nid]
     side = point_on_side(vx, vy, node)
     ch = (node[12], node[13])
@@ -474,6 +518,10 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
 
     if not front_facing: return
 
+    map_trace["segs_processed"].add(si)
+    map_trace["vertices"].add(s[0])
+    map_trace["vertices"].add(s[1])
+
     front_idx, back_idx = seg_sectors(s)
 
     nc = near_clip(*to_view(v1[0], v1[1], vx, vy, cos_a, sin_a),
@@ -487,6 +535,8 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
     sx1, sx2 = half_w + ex1 * fx1, half_w + ex2 * fx2
     x_lo, x_hi = min(sx1, sx2), max(sx1, sx2)
     if not clips.has_gap(x_lo, x_hi): return
+
+    map_trace["segs_drawn"].add(si)
 
     front = sectors[front_idx]
     fh, ch = front[0], front[1]
@@ -610,27 +660,90 @@ class FPClipSpans:
                 if not drawn and stats is not None:
                     stats[3 if not found_span else 4] += 1
             else:
-                x_min = min(lx1, lx2)
-                x_max = max(lx1, lx2)
-                overlaps_any = False
-                for xlo, xhi, tfn, bfn in self.spans:
-                    if xhi <= x_min or xlo >= x_max:
-                        continue
-                    overlaps_any = True
-                    c = fp_clip_to_trap(lx1, ly1, lx2, ly2,
-                                        xlo, xhi, tfn, bfn)
-                    if c:
-                        pygame.draw.line(surface, color,
-                                         (c[0], c[1]),
-                                         (c[2], c[3]), 1)
-                        drawn = True
-                        if (abs(c[0] - lx1) > 0 or
-                            abs(c[1] - ly1) > 0 or
-                            abs(c[2] - lx2) > 0 or
-                            abs(c[3] - ly2) > 0):
+                # Order left-to-right for the walk
+                if lx1 <= lx2:
+                    xl, yl, xr, yr = lx1, ly1, lx2, ly2
+                else:
+                    xl, yl, xr, yr = lx2, ly2, lx1, ly1
+                dx = xr - xl
+
+                # Collect overlapping spans
+                active = []
+                for s in self.spans:
+                    if s[1] > xl and s[0] < xr:
+                        active.append(s)
+
+                if not active:
+                    if stats is not None:
+                        stats[3] += 1
+                    continue
+
+                # Walk spans: check if line's Y bounding box passes cleanly
+                # through each span and each portal between adjacent spans.
+                # Uses only min/max of endpoints — zero multiplies.
+                y_lo = min(yl, yr)
+                y_hi = max(yl, yr)
+                needs_clip = False
+
+                # Line must be fully within active X range
+                if xl < active[0][0] or xr > active[-1][1] - 1:
+                    needs_clip = True
+
+                if not needs_clip:
+                    for i, (xlo, xhi, tfn, bfn) in enumerate(active):
+                        # Spans must be contiguous — any gap means occlusion
+                        if i > 0 and active[i - 1][1] != xlo:
+                            needs_clip = True
+                            break
+                        # Check line bbox against span boundaries at entry/exit.
+                        # fp_eval is free (0 muls) when slope == 0.
+                        ex = max(xl, xlo)
+                        xx = min(xr, xhi - 1)
+                        if (y_lo < fp_eval(tfn, ex) or y_hi > fp_eval(bfn, ex) or
+                            y_lo < fp_eval(tfn, xx) or y_hi > fp_eval(bfn, xx)):
+                            needs_clip = True
+                            break
+                        # Portal check: line bbox must fit through the
+                        # intersection of both spans' apertures at boundary.
+                        if i + 1 < len(active):
+                            nx = xhi
+                            n_tfn, n_bfn = active[i + 1][2], active[i + 1][3]
+                            portal_top = max(fp_eval(tfn, nx), fp_eval(n_tfn, nx))
+                            portal_bot = min(fp_eval(bfn, nx), fp_eval(n_bfn, nx))
+                            if y_lo < portal_top or y_hi > portal_bot:
+                                needs_clip = True
+                                break
+
+                if not needs_clip:
+                    # Line bbox fits inside all spans — draw as one line
+                    pygame.draw.line(surface, color,
+                                     (xl, yl), (xr, yr), 1)
+                    drawn = True
+                else:
+                    # Fall back to per-span Cyrus-Beck, merge adjacent
+                    segments = []
+                    for xlo, xhi, tfn, bfn in active:
+                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2,
+                                            xlo, xhi, tfn, bfn)
+                        if c:
+                            segments.append(c)
                             was_clipped = True
+                    if segments:
+                        merged = [list(segments[0])]
+                        for s in segments[1:]:
+                            prev = merged[-1]
+                            if s[0] - prev[2] <= 2:
+                                prev[2] = s[2]
+                                prev[3] = s[3]
+                            else:
+                                merged.append(list(s))
+                        for c in merged:
+                            pygame.draw.line(surface, color,
+                                             (c[0], c[1]),
+                                             (c[2], c[3]), 1)
+                        drawn = True
                 if not drawn and stats is not None:
-                    stats[3 if not overlaps_any else 4] += 1
+                    stats[3 if not active else 4] += 1
             if drawn and stats is not None:
                 stats[2 if was_clipped else 1] += 1
 
@@ -773,14 +886,26 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
     if dot <= 0:
         return
 
+    map_trace["segs_processed"].add(si)
+    map_trace["vertices"].add(v1_idx)
+    map_trace["vertices"].add(v2_idx)
+
     front_idx, back_idx = seg_sectors(s)
 
     # Lazily compute + cache view-space transforms (only for segs that pass back-face)
     fp_module.mul_cat("view")
+    vm = map_trace["vertex_muls"]
+    for vi in (v1_idx, v2_idx):
+        if vi not in vm:
+            vm[vi] = [0, 0]
+    v_before = fp_module.mul_counts["view"]
     if v1_idx not in vcache:
         vcache[v1_idx] = fp_to_view(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
+        vm[v1_idx][0] += fp_module.mul_counts["view"] - v_before
+        v_before = fp_module.mul_counts["view"]
     if v2_idx not in vcache:
         vcache[v2_idx] = fp_to_view(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
+        vm[v2_idx][0] += fp_module.mul_counts["view"] - v_before
     evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vcache[v1_idx]
     evx2_t, evx2_r, evy2, fvx2, vy_idx2 = vcache[v2_idx]
     # Sub-pixel uses truncated vx (frac compensates); otherwise use rounded
@@ -801,15 +926,21 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
 
     # Project to screen X
     fp_module.mul_cat("proj")
+    p_before = fp_module.mul_counts["proj"]
     if use_subpixel:
-        # Near-clipped endpoints have no useful fraction
         fvx1_c = fvx1 if ey1 == evy1 else 0
         fvx2_c = fvx2 if ey2 == evy2 else 0
         sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
+        vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
+        p_before = fp_module.mul_counts["proj"]
         sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
+        vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
     else:
         sx1 = fp_project_x(ex1, rxh1, rxl1)
+        vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
+        p_before = fp_module.mul_counts["proj"]
         sx2 = fp_project_x(ex2, rxh2, rxl2)
+        vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
 
     x_lo = min(sx1, sx2)
     x_hi = max(sx1, sx2)
@@ -817,27 +948,36 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
     if not clips.has_gap(x_lo, x_hi):
         return
 
-    # Front-sector Y projections — lazy cache per vertex per subsector.
+    map_trace["segs_drawn"].add(si)
+
+    # Front-sector Y projections — frame-global cache keyed on (vertex, fh, ch).
+    # Vertices shared across subsectors with the same heights hit the cache.
     # Near-clipped endpoints need fresh computation (different recip).
     front = fp_sectors[front_idx]
     fh, ch = front[0], front[1]
     fp_module.mul_cat("proj")
-    if ey1 == evy1 and v1_idx in ycache:
-        ft1, fb1, ryh1, ryl1 = ycache[v1_idx]
+    p_before = fp_module.mul_counts["proj"]
+    ykey1 = (v1_idx, fh, ch)
+    if ey1 == evy1 and ykey1 in ycache:
+        ft1, fb1, ryh1, ryl1 = ycache[ykey1]
     else:
         ryh1, ryl1 = fp_recip_y(idx1)
         ft1 = fp_project_y(ch - vz, ryh1, ryl1)
         fb1 = fp_project_y(fh - vz, ryh1, ryl1)
         if ey1 == evy1:
-            ycache[v1_idx] = (ft1, fb1, ryh1, ryl1)
-    if ey2 == evy2 and v2_idx in ycache:
-        ft2, fb2, ryh2, ryl2 = ycache[v2_idx]
+            ycache[ykey1] = (ft1, fb1, ryh1, ryl1)
+    vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
+    p_before = fp_module.mul_counts["proj"]
+    ykey2 = (v2_idx, fh, ch)
+    if ey2 == evy2 and ykey2 in ycache:
+        ft2, fb2, ryh2, ryl2 = ycache[ykey2]
     else:
         ryh2, ryl2 = fp_recip_y(idx2)
         ft2 = fp_project_y(ch - vz, ryh2, ryl2)
         fb2 = fp_project_y(fh - vz, ryh2, ryl2)
         if ey2 == evy2:
-            ycache[v2_idx] = (ft2, fb2, ryh2, ryl2)
+            ycache[ykey2] = (ft2, fb2, ryh2, ryl2)
+    vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
 
     solid = back_idx is None
     back = fp_sectors[back_idx] if back_idx is not None else None
@@ -896,7 +1036,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
                        min(fb1, tb1), min(fb2, tb2))
 
 
-def render_subsector_fp(idx, clips, ctx, vz, surface, vcache):
+def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, ycache):
     """Render a subsector with frame-global vertex cache.
 
     ctx: view context tuple from fp_view_context.
@@ -905,8 +1045,7 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache):
 
     # Both caches are lazily populated by fp_render_seg:
     # vcache (frame-global): view transforms, computed on first access per vertex
-    # ycache (subsector-local): front-sector Y projections per vertex
-    ycache = {}
+    # ycache (frame-global): Y projections keyed on (vertex, fh, ch)
     for si in range(ssec[1], ssec[1] + ssec[0]):
         fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache)
         if clips.is_full():
@@ -914,19 +1053,21 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache):
 
 
 def render_bsp_fp(nid, clips, ctx, vz,
-                   wx_full, wy_full, cos_f, sin_f, surface, vcache):
+                   wx_full, wy_full, cos_f, sin_f, surface, vcache, ycache):
     """BSP traversal for the 8-bit fixed-point path."""
     if clips.is_full():
         return
     if nid & NF_SUBSECTOR:
-        render_subsector_fp(0 if nid == 0xFFFF else nid & 0x7FFF,
-                            clips, ctx, vz, surface, vcache)
+        ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
+        map_trace["subsectors"].add(ssid)
+        render_subsector_fp(ssid, clips, ctx, vz, surface, vcache, ycache)
         return
+    map_trace["nodes_visited"].add(nid)
     node = nodes[nid]
     side = point_on_side(wx_full, wy_full, node)
     ch = (node[12], node[13])
     render_bsp_fp(ch[side], clips, ctx, vz,
-                  wx_full, wy_full, cos_f, sin_f, surface, vcache)
+                  wx_full, wy_full, cos_f, sin_f, surface, vcache, ycache)
     if clips.is_full():
         return
     far = side ^ 1
@@ -934,7 +1075,136 @@ def render_bsp_fp(nid, clips, ctx, vz,
     if br is not None:
         if clips.has_gap(br[0], br[1]):
             render_bsp_fp(ch[far], clips, ctx, vz,
-                          wx_full, wy_full, cos_f, sin_f, surface, vcache)
+                          wx_full, wy_full, cos_f, sin_f, surface, vcache, ycache)
+
+
+# ── Top-down map visualisation ────────────────────────────────────────────────
+
+def _fit_scale():
+    """Compute scale to fit the whole map on screen."""
+    xs = [v[0] for v in vertexes]
+    ys = [v[1] for v in vertexes]
+    margin = 40
+    dw = (max(xs) - min(xs)) or 1
+    dh = (max(ys) - min(ys)) or 1
+    return min((SCREEN_W - 2 * margin) / dw, (SCREEN_H - 2 * margin) / dh)
+
+_map_scale = _fit_scale()
+_map_cx = 0.0    # world center X (updated per frame when map shown)
+_map_cy = 0.0    # world center Y
+
+def _m2s(wx, wy):
+    """World coords -> screen pixel (DOOM Y is flipped)."""
+    sx = SCREEN_W / 2 + (wx - _map_cx) * _map_scale
+    sy = SCREEN_H / 2 - (wy - _map_cy) * _map_scale
+    return int(sx), int(sy)
+
+def _ssector_polygon(idx):
+    """Return list of world-space (x,y) forming a subsector's boundary."""
+    ssec = ssectors[idx]
+    pts = []
+    for si in range(ssec[1], ssec[1] + ssec[0]):
+        s = segs[si]
+        pts.append(vertexes[s[0]])
+    last_s = segs[ssec[1] + ssec[0] - 1]
+    pts.append(vertexes[last_s[1]])
+    return [_m2s(p[0], p[1]) for p in pts]
+
+def draw_map(surface, px, py, ang):
+    """Draw top-down map with BSP traversal highlighting."""
+    global _map_cx, _map_cy
+    _map_cx = px
+    _map_cy = py
+    surface.fill((0, 0, 0))
+
+    # 1. Draw traversed subsectors as filled polygons
+    for ssid in map_trace["subsectors"]:
+        poly = _ssector_polygon(ssid)
+        if len(poly) >= 3:
+            pygame.draw.polygon(surface, (25, 25, 40), poly)
+
+    # 2. Draw all linedefs as dark grey base map
+    for ld in linedefs:
+        v1, v2 = vertexes[ld[0]], vertexes[ld[1]]
+        p1 = _m2s(v1[0], v1[1])
+        p2 = _m2s(v2[0], v2[1])
+        two_sided = ld[6] != 0xFFFF
+        color = (40, 40, 40) if two_sided else (60, 60, 60)
+        _real_drawline(surface, color, p1, p2, 1)
+
+    # 3. Draw processed segs (passed back-face test) in dim yellow
+    use_fp = use_fixedpoint
+    seg_list = fp_segs if use_fp else segs
+    for si in map_trace["segs_processed"]:
+        s = seg_list[si]
+        v1 = vertexes[s[0]]
+        v2 = vertexes[s[1]]
+        p1 = _m2s(v1[0], v1[1])
+        p2 = _m2s(v2[0], v2[1])
+        _real_drawline(surface, (100, 100, 0), p1, p2, 1)
+
+    # 4. Draw drawn segs (produced visible lines) in bright green
+    for si in map_trace["segs_drawn"]:
+        s = seg_list[si]
+        v1 = vertexes[s[0]]
+        v2 = vertexes[s[1]]
+        p1 = _m2s(v1[0], v1[1])
+        p2 = _m2s(v2[0], v2[1])
+        _real_drawline(surface, (0, 255, 0), p1, p2, 2)
+
+    # 5. Draw processed vertices with per-vertex mul counts
+    vm = map_trace.get("vertex_muls", {})
+    for vi in map_trace["vertices"]:
+        vx, vy = vertexes[vi]
+        sp = _m2s(vx, vy)
+        pygame.draw.circle(surface, (0, 150, 255), sp, 2)
+        if vi in vm:
+            v_m, p_m = vm[vi]
+            if v_m + p_m > 0:
+                lbl = hud_font.render(f"{v_m}+{p_m}", True, (180, 180, 255))
+                surface.blit(lbl, (sp[0] + 4, sp[1] - 6))
+
+    # 6. Player position + FOV cone
+    pp = _m2s(px, py)
+    pygame.draw.circle(surface, (255, 255, 255), pp, 5)
+    # FOV cone (90 degrees)
+    # Forward in world = (cos(ang), sin(ang)); _m2s flips Y
+    fov_len = 80
+    for da in (-HFOV / 2, 0, HFOV / 2):
+        a = ang + da
+        ex = pp[0] + int(fov_len * math.cos(a))
+        ey = pp[1] - int(fov_len * math.sin(a))
+        _real_drawline(surface, (255, 255, 255) if da == 0 else (128, 128, 128),
+                       pp, (ex, ey), 1)
+
+    # 7. Legend
+    ly = 4
+    for label, color in [("Traversed subsector", (25, 25, 40)),
+                         ("Processed seg", (100, 100, 0)),
+                         ("Drawn seg", (0, 255, 0)),
+                         ("Projected vertex", (0, 150, 255)),
+                         ("Player + FOV", (255, 255, 255))]:
+        pygame.draw.rect(surface, color, (4, ly, 12, 12))
+        surface.blit(hud_font.render(label, True, (200, 200, 200)), (20, ly))
+        ly += 16
+
+    # Stats
+    vm = map_trace.get("vertex_muls", {})
+    sum_v = sum(m[0] for m in vm.values())
+    sum_p = sum(m[1] for m in vm.values())
+    if use_fixedpoint:
+        mc = fp_module.mul_counts
+        v_ok = "=" if sum_v == mc["view"] else "!"
+        p_ok = "=" if sum_p == mc["proj"] else "!"
+        check_str = f"  V:{sum_v}{v_ok}{mc['view']} P:{sum_p}{p_ok}{mc['proj']}"
+    else:
+        check_str = ""
+    stats_str = (f"Subsectors: {len(map_trace['subsectors'])}/{len(ssectors)}  "
+                 f"Segs: {len(map_trace['segs_drawn'])}/{len(map_trace['segs_processed'])} drawn/proc  "
+                 f"Vertices: {len(map_trace['vertices'])}/{len(vertexes)}  "
+                 f"Nodes: {len(map_trace['nodes_visited'])}/{len(nodes)}{check_str}")
+    surface.blit(hud_font.render(stats_str, True, (255, 255, 0)),
+                 (4, SCREEN_H - 20))
 
 
 # ── Angle conversion helpers ─────────────────────────────────────────────────
@@ -991,6 +1261,7 @@ angle_byte = radians_to_byte(angle)       # 0..255 (used in fixed-point mode)
 use_fixedpoint = False                    # False = float, True = fixed-point
 use_xor = False                           # XOR drawing mode
 use_subpixel = False                      # Sub-pixel X projection (1 extra mul)
+show_map = False                          # Top-down map visualisation
 turn_speed = 2.5                          # radians/sec for float mode
 turn_speed_byte = 45                      # byte-units/sec for FP mode (~63 deg/sec)
 move_speed = 300.0
@@ -1015,6 +1286,12 @@ while running:
                 use_xor = not use_xor
             elif ev.key == pygame.K_s:
                 use_subpixel = not use_subpixel
+            elif ev.key == pygame.K_m:
+                show_map = not show_map
+            elif ev.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                _map_scale = _map_scale * 1.5
+            elif ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                _map_scale = _map_scale / 1.5
 
     keys = pygame.key.get_pressed()
 
@@ -1040,6 +1317,8 @@ while running:
             pygame.draw.line = _real_drawline
         for i in range(5):
             draw_stats[i] = 0
+        for k in map_trace:
+            map_trace[k] = {} if k == "vertex_muls" else set()
 
         # Fixed-point sin/cos (1.7)
         fp_module.mul_reset()
@@ -1063,7 +1342,7 @@ while running:
 
         render_bsp_fp(len(nodes) - 1, FPClipSpans(),
                       ctx, vz_ps,
-                      px_full, py_full, cos_f, sin_f, fp_surface, {})
+                      px_full, py_full, cos_f, sin_f, fp_surface, {}, {})
 
         # Nearest-neighbour upscale to display
         screen.fill((0, 0, 0))
@@ -1088,6 +1367,8 @@ while running:
             pygame.draw.line = _real_drawline
         for i in range(5):
             draw_stats[i] = 0
+        for k in map_trace:
+            map_trace[k] = {} if k == "vertex_muls" else set()
         cos_a, sin_a = math.cos(angle), math.sin(angle)
         vz = player_floor(player_x, player_y) + 41.0
         render_bsp(len(nodes) - 1, ClipSpans(), cos_a, sin_a,
@@ -1096,10 +1377,16 @@ while running:
     # Restore normal draw after frame
     pygame.draw.line = _real_drawline
 
+    # ── Map overlay (replaces 3D view when active) ──
+    if show_map:
+        ang_for_map = byte_to_radians(angle_byte) if use_fixedpoint else angle
+        draw_map(screen, player_x, player_y, ang_for_map)
+
     # ── HUD (works for both modes) ──
     total, unclipped, clipped, trivial, clip_rej = draw_stats
     fps = clock.get_fps()
     mode_str = f"FP {FP_WIDTH}x{FP_HEIGHT}" if use_fixedpoint else f"FLOAT {SCREEN_W}x{SCREEN_H}"
+    map_str = " MAP" if show_map else ""
     xor_str = " XOR" if use_xor else ""
     subpx_str = " SUBPX" if use_subpixel else ""
     if use_fixedpoint:
@@ -1108,7 +1395,8 @@ while running:
         mul_str = f"  {mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})"
     else:
         mul_str = ""
-    hud = (f"[{mode_str}{xor_str}{subpx_str}]  ang={angle_byte}  {total} total  {unclipped} pass  {clipped} clip  "
+    ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
+    hud = (f"[{mode_str}{map_str}{xor_str}{subpx_str}]  ({player_x:.0f},{player_y:.0f}) a={ang_display}  {total} total  {unclipped} pass  {clipped} clip  "
            f"{trivial} trivial  {clip_rej} reject{mul_str}  {fps:.0f}fps")
     screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))
     pygame.display.flip()
