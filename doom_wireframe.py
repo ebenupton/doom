@@ -158,6 +158,7 @@ BOT_FN  = (0.0, float(HEIGHT - 1))     # y = 599 everywhere
 
 map_trace = {
     "subsectors": set(),      # indices of traversed subsectors
+    "ss_order": [],           # traversal order of subsectors
     "segs_processed": set(),  # indices of segs that passed back-face test
     "segs_drawn": set(),      # indices of segs that produced visible lines
     "vertices": set(),        # vertex indices that were projected
@@ -486,6 +487,7 @@ def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
     if nid & NF_SUBSECTOR:
         ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
         map_trace["subsectors"].add(ssid)
+        map_trace["ss_order"].append(ssid)
         render_subsector(ssid, clips, cos_a, sin_a, vx, vy, vz, surface)
         return
     map_trace["nodes_visited"].add(nid)
@@ -906,8 +908,10 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
     if v2_idx not in vcache:
         vcache[v2_idx] = fp_to_view(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
         vm[v2_idx][0] += fp_module.mul_counts["view"] - v_before
-    evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vcache[v1_idx]
-    evx2_t, evx2_r, evy2, fvx2, vy_idx2 = vcache[v2_idx]
+    vc1_full = vcache[v1_idx]
+    evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vc1_full[:5]
+    vc2_full = vcache[v2_idx]
+    evx2_t, evx2_r, evy2, fvx2, vy_idx2 = vc2_full[:5]
     # Sub-pixel uses truncated vx (frac compensates); otherwise use rounded
     evx1 = evx1_t if use_subpixel else evx1_r
     evx2 = evx2_t if use_subpixel else evx2_r
@@ -918,33 +922,47 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
         return
     ex1, ey1, ex2, ey2 = nc
 
-    # Reciprocals and front-sector Y projections from caches
+    # Reciprocals and X projection — cached per vertex (non-near-clipped only)
     idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
     idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
     rxh1, rxl1 = fp_recip_x(idx1)
     rxh2, rxl2 = fp_recip_x(idx2)
 
-    # Project to screen X
     fp_module.mul_cat("proj")
     p_before = fp_module.mul_counts["proj"]
-    if use_subpixel:
-        fvx1_c = fvx1 if ey1 == evy1 else 0
-        fvx2_c = fvx2 if ey2 == evy2 else 0
-        sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
-        vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
-        p_before = fp_module.mul_counts["proj"]
-        sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
-        vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
+    # Cache key 'sx' in vcache: (sx, rxh, rxl) appended on first X projection.
+    # Near-clipped endpoints always recompute (different ex/ey).
+    vc1 = vcache[v1_idx]
+    if ey1 == evy1 and len(vc1) > 5:
+        sx1, rxh1, rxl1 = vc1[5], vc1[6], vc1[7]
     else:
-        sx1 = fp_project_x(ex1, rxh1, rxl1)
-        vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
-        p_before = fp_module.mul_counts["proj"]
-        sx2 = fp_project_x(ex2, rxh2, rxl2)
-        vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
+        if use_subpixel:
+            fvx1_c = fvx1 if ey1 == evy1 else 0
+            sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
+        else:
+            sx1 = fp_project_x(ex1, rxh1, rxl1)
+        if ey1 == evy1:
+            vcache[v1_idx] = vc1 + (sx1, rxh1, rxl1)
+    vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
+    p_before = fp_module.mul_counts["proj"]
+
+    vc2 = vcache[v2_idx]
+    if ey2 == evy2 and len(vc2) > 5:
+        sx2, rxh2, rxl2 = vc2[5], vc2[6], vc2[7]
+    else:
+        if use_subpixel:
+            fvx2_c = fvx2 if ey2 == evy2 else 0
+            sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
+        else:
+            sx2 = fp_project_x(ex2, rxh2, rxl2)
+        if ey2 == evy2:
+            vcache[v2_idx] = vc2 + (sx2, rxh2, rxl2)
+    vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
 
     x_lo = min(sx1, sx2)
     x_hi = max(sx1, sx2)
 
+    fp_module.mul_cat("clip")   # has_gap may call fp_eval → don't pollute "proj"
     if not clips.has_gap(x_lo, x_hi):
         return
 
@@ -1060,6 +1078,7 @@ def render_bsp_fp(nid, clips, ctx, vz,
     if nid & NF_SUBSECTOR:
         ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
         map_trace["subsectors"].add(ssid)
+        map_trace["ss_order"].append(ssid)
         render_subsector_fp(ssid, clips, ctx, vz, surface, vcache, ycache)
         return
     map_trace["nodes_visited"].add(nid)
@@ -1099,16 +1118,120 @@ def _m2s(wx, wy):
     sy = SCREEN_H / 2 - (wy - _map_cy) * _map_scale
     return int(sx), int(sy)
 
-def _ssector_polygon(idx):
-    """Return list of world-space (x,y) forming a subsector's boundary."""
+def _ssector_convex_hull(idx):
+    """Return screen-space convex hull of a subsector's vertices."""
     ssec = ssectors[idx]
+    seen = set()
     pts = []
     for si in range(ssec[1], ssec[1] + ssec[0]):
         s = segs[si]
-        pts.append(vertexes[s[0]])
-    last_s = segs[ssec[1] + ssec[0] - 1]
-    pts.append(vertexes[last_s[1]])
+        for vi in (s[0], s[1]):
+            if vi not in seen:
+                seen.add(vi)
+                pts.append(vertexes[vi])
+    if len(pts) < 3:
+        return []
+    # Sort by angle around centroid (subsectors are convex)
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    pts.sort(key=lambda p: math.atan2(p[1] - cy, p[0] - cx))
     return [_m2s(p[0], p[1]) for p in pts]
+
+# Precompute exact subsector polygons by clipping against BSP partition lines.
+# Start with the map bounding box, then clip at each node on the root-to-leaf path.
+
+def _clip_polygon_by_line(poly, lx, ly, ldx, ldy, keep_side):
+    """Sutherland-Hodgman clip: keep vertices on keep_side of the partition line."""
+    if not poly:
+        return []
+    def side(px, py):
+        # Must match point_on_side: node[3]*dx - node[2]*dy > 0 → side 0
+        cross = ldy * (px - lx) - ldx * (py - ly)
+        return 0 if cross > 0 else 1
+    out = []
+    n = len(poly)
+    for i in range(n):
+        cx, cy = poly[i]
+        nx, ny = poly[(i + 1) % n]
+        c_side = side(cx, cy)
+        n_side = side(nx, ny)
+        if c_side == keep_side:
+            out.append((cx, cy))
+        if c_side != n_side:
+            # Edge crosses the line — find intersection
+            dx, dy = nx - cx, ny - cy
+            denom = ldy * dx - ldx * dy
+            if abs(denom) > 1e-10:
+                t = (ldx * (cy - ly) - ldy * (cx - lx)) / denom
+                out.append((cx + t * dx, cy + t * dy))
+    return out
+
+def _clip_polygon_to_bbox(poly, left, right, bot, top):
+    """Clip polygon to axis-aligned bounding box."""
+    # Clip by 4 half-planes: x >= left, x <= right, y >= bot, y <= top
+    # Express each as a partition line (lx, ly, ldx, ldy) with appropriate side
+    poly = _clip_polygon_by_line(poly, left, 0, 0, 1, 0)   # x >= left (keep side 0)
+    poly = _clip_polygon_by_line(poly, right, 0, 0, -1, 0)  # x <= right
+    poly = _clip_polygon_by_line(poly, 0, bot, -1, 0, 0)    # y >= bot
+    poly = _clip_polygon_by_line(poly, 0, top, 1, 0, 0)     # y <= top
+    return poly
+
+_ss_polys = {}
+def _build_ss_polys(nid, poly):
+    if nid & NF_SUBSECTOR:
+        ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
+        _ss_polys[ssid] = poly
+        return
+    node = nodes[nid]
+    lx, ly, ldx, ldy = node[0], node[1], node[2], node[3]
+    for side in (0, 1):
+        clipped = _clip_polygon_by_line(poly, lx, ly, ldx, ldy, side)
+        _build_ss_polys(node[12 + side], clipped)
+
+# Start with a large bounding box around the entire map
+_all_x = [v[0] for v in vertexes]
+_all_y = [v[1] for v in vertexes]
+_margin = 200
+_map_poly = [
+    (min(_all_x) - _margin, min(_all_y) - _margin),
+    (max(_all_x) + _margin, min(_all_y) - _margin),
+    (max(_all_x) + _margin, max(_all_y) + _margin),
+    (min(_all_x) - _margin, max(_all_y) + _margin),
+]
+_build_ss_polys(len(nodes) - 1, _map_poly)
+
+# Trim to map bbox, then verify each polygon contains its subsector's geometry.
+# Degenerate subsectors on BSP partition lines get the wrong polygon — replace
+# with convex hull of seg vertices.
+def _point_in_poly(px, py, poly):
+    inside = False
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        xi, yi = poly[i]; xj, yj = poly[j]
+        if ((yi > py) != (yj > py)) and (px < (xj-xi)*(py-yi)/(yj-yi)+xi):
+            inside = not inside
+        j = i
+    return inside
+
+for _ssid in list(_ss_polys):
+    _ss_polys[_ssid] = _clip_polygon_to_bbox(
+        _ss_polys[_ssid],
+        min(_all_x) - 16, max(_all_x) + 16,
+        min(_all_y) - 16, max(_all_y) + 16)
+    # Verify: does the polygon contain the subsector's first vertex?
+    _ssec = ssectors[_ssid]
+    if _ssec[0] > 0 and len(_ss_polys[_ssid]) >= 3:
+        _sv = vertexes[segs[_ssec[1]][0]]
+        if not _point_in_poly(_sv[0], _sv[1], _ss_polys[_ssid]):
+            _ss_polys[_ssid] = None  # mark for convex hull fallback
+
+def _ss_screen_poly(ssid):
+    """Get screen-space polygon for a subsector."""
+    poly = _ss_polys.get(ssid)
+    if poly and len(poly) >= 3:
+        return [_m2s(p[0], p[1]) for p in poly]
+    # Fallback: convex hull of seg vertices (already screen coords)
+    return _ssector_convex_hull(ssid)
 
 def draw_map(surface, px, py, ang):
     """Draw top-down map with BSP traversal highlighting."""
@@ -1117,13 +1240,7 @@ def draw_map(surface, px, py, ang):
     _map_cy = py
     surface.fill((0, 0, 0))
 
-    # 1. Draw traversed subsectors as filled polygons
-    for ssid in map_trace["subsectors"]:
-        poly = _ssector_polygon(ssid)
-        if len(poly) >= 3:
-            pygame.draw.polygon(surface, (25, 25, 40), poly)
-
-    # 2. Draw all linedefs as dark grey base map
+    # 1. Draw all linedefs as dark grey base map
     for ld in linedefs:
         v1, v2 = vertexes[ld[0]], vertexes[ld[1]]
         p1 = _m2s(v1[0], v1[1])
@@ -1131,6 +1248,28 @@ def draw_map(surface, px, py, ang):
         two_sided = ld[6] != 0xFFFF
         color = (40, 40, 40) if two_sided else (60, 60, 60)
         _real_drawline(surface, color, p1, p2, 1)
+
+    # 2. Draw traversed subsectors — filled polygons + numbered centroid dots.
+    ss_color = (40, 25, 60)
+    ss_order = map_trace.get("ss_order", [])
+    for ssid in map_trace["subsectors"]:
+        screen_pts = _ss_screen_poly(ssid)
+        if len(screen_pts) >= 3:
+            pygame.draw.polygon(surface, ss_color, screen_pts)
+    # Also draw numbered centroid dots to verify polygon placement
+    for idx, ssid in enumerate(ss_order):
+        ssec = ssectors[ssid]
+        xs, ys = [], []
+        for si in range(ssec[1], ssec[1] + ssec[0]):
+            s = segs[si]
+            xs.extend([vertexes[s[0]][0], vertexes[s[1]][0]])
+            ys.extend([vertexes[s[0]][1], vertexes[s[1]][1]])
+        if xs:
+            cx, cy = sum(xs) // len(xs), sum(ys) // len(ys)
+            sp = _m2s(cx, cy)
+            pygame.draw.circle(surface, (255, 100, 100), sp, 4)
+            lbl = hud_font.render(f"{idx}", True, (255, 200, 200))
+            surface.blit(lbl, (sp[0] + 5, sp[1] - 5))
 
     # 3. Draw processed segs (passed back-face test) in dim yellow
     use_fp = use_fixedpoint
@@ -1152,23 +1291,16 @@ def draw_map(surface, px, py, ang):
         p2 = _m2s(v2[0], v2[1])
         _real_drawline(surface, (0, 255, 0), p1, p2, 2)
 
-    # 5. Draw processed vertices with per-vertex mul counts
+    # 5. Draw processed vertices (dots only — labels drawn last)
     vm = map_trace.get("vertex_muls", {})
     for vi in map_trace["vertices"]:
         vx, vy = vertexes[vi]
         sp = _m2s(vx, vy)
         pygame.draw.circle(surface, (0, 150, 255), sp, 2)
-        if vi in vm:
-            v_m, p_m = vm[vi]
-            if v_m + p_m > 0:
-                lbl = hud_font.render(f"{v_m}+{p_m}", True, (180, 180, 255))
-                surface.blit(lbl, (sp[0] + 4, sp[1] - 6))
 
     # 6. Player position + FOV cone
     pp = _m2s(px, py)
     pygame.draw.circle(surface, (255, 255, 255), pp, 5)
-    # FOV cone (90 degrees)
-    # Forward in world = (cos(ang), sin(ang)); _m2s flips Y
     fov_len = 80
     for da in (-HFOV / 2, 0, HFOV / 2):
         a = ang + da
@@ -1177,15 +1309,29 @@ def draw_map(surface, px, py, ang):
         _real_drawline(surface, (255, 255, 255) if da == 0 else (128, 128, 128),
                        pp, (ex, ey), 1)
 
-    # 7. Legend
-    ly = 4
+    # 7. Vertex mul count labels (drawn last, on top of everything)
+    for vi in map_trace["vertices"]:
+        if vi in vm:
+            v_m, p_m = vm[vi]
+            if v_m + p_m > 0:
+                vx, vy = vertexes[vi]
+                sp = _m2s(vx, vy)
+                lbl = hud_font.render(f"v{vi} {v_m}+{p_m}", True, (255, 255, 100))
+                bg = pygame.Surface(lbl.get_size(), pygame.SRCALPHA)
+                bg.fill((0, 0, 0, 192))
+                surface.blit(bg, (sp[0] + 4, sp[1] - 6))
+                surface.blit(lbl, (sp[0] + 4, sp[1] - 6))
+
+    # 8. Legend (bottom right)
+    ly = SCREEN_H - 5 * 16 - 4
+    lx = SCREEN_W - 180
     for label, color in [("Traversed subsector", (25, 25, 40)),
                          ("Processed seg", (100, 100, 0)),
                          ("Drawn seg", (0, 255, 0)),
                          ("Projected vertex", (0, 150, 255)),
                          ("Player + FOV", (255, 255, 255))]:
-        pygame.draw.rect(surface, color, (4, ly, 12, 12))
-        surface.blit(hud_font.render(label, True, (200, 200, 200)), (20, ly))
+        pygame.draw.rect(surface, color, (lx, ly, 12, 12))
+        surface.blit(hud_font.render(label, True, (200, 200, 200)), (lx + 16, ly))
         ly += 16
 
     # Stats
@@ -1318,7 +1464,7 @@ while running:
         for i in range(5):
             draw_stats[i] = 0
         for k in map_trace:
-            map_trace[k] = {} if k == "vertex_muls" else set()
+            map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
 
         # Fixed-point sin/cos (1.7)
         fp_module.mul_reset()
@@ -1368,7 +1514,7 @@ while running:
         for i in range(5):
             draw_stats[i] = 0
         for k in map_trace:
-            map_trace[k] = {} if k == "vertex_muls" else set()
+            map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
         cos_a, sin_a = math.cos(angle), math.sin(angle)
         vz = player_floor(player_x, player_y) + 41.0
         render_bsp(len(nodes) - 1, ClipSpans(), cos_a, sin_a,
