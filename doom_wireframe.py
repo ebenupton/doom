@@ -565,17 +565,23 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
         clips.mark_solid(x_lo, x_hi)
     elif back:
         if back[1] < ch:
-            clips.draw_clipped([
-                (sx1, ft1, sx2, ft2), (sx1, bt1, sx2, bt2),
-                (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2),
-            ], GREEN, surface, draw_stats)
+            lines = [(sx1, bt1, sx2, bt2),
+                     (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
+            if ch <= vz:  # face below eyeline: top edge (ft) always clipped
+                pass      # ft already omitted
+            else:
+                lines.insert(0, (sx1, ft1, sx2, ft2))
+            clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif back[1] > ch:
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
         if back[0] > fh:
-            clips.draw_clipped([
-                (sx1, bb1, sx2, bb2), (sx1, fb1, sx2, fb2),
-                (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2),
-            ], GREEN, surface, draw_stats)
+            lines = [(sx1, bb1, sx2, bb2),
+                     (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
+            if fh >= vz:  # face above eyeline: bottom edge (fb) always clipped
+                pass      # fb already omitted
+            else:
+                lines.insert(1, (sx1, fb1, sx2, fb2))
+            clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
         clips.tighten(x_lo, x_hi, sx1, sx2,
@@ -1021,12 +1027,13 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
             bt1 = fp_project_y(back[1] - vz, ryh1, ryl1)
             bt2 = fp_project_y(back[1] - vz, ryh2, ryl2)
             fp_module.mul_cat("clip")
-            clips.draw_clipped([
-                (sx1, ft1, sx2, ft2),
-                (sx1, bt1, sx2, bt2),
-                (sx1, ft1, sx1, bt1),
-                (sx2, ft2, sx2, bt2),
-            ], GREEN, surface, draw_stats)
+            lines = [(sx1, bt1, sx2, bt2),
+                     (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
+            if ch <= vz:  # face below eyeline: top edge (ft) always clipped
+                pass
+            else:
+                lines.insert(0, (sx1, ft1, sx2, ft2))
+            clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif back[1] > ch:
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
 
@@ -1035,12 +1042,13 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
             bb1 = fp_project_y(back[0] - vz, ryh1, ryl1)
             bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
             fp_module.mul_cat("clip")
-            clips.draw_clipped([
-                (sx1, bb1, sx2, bb2),
-                (sx1, fb1, sx2, fb2),
-                (sx1, bb1, sx1, fb1),
-                (sx2, bb2, sx2, fb2),
-            ], GREEN, surface, draw_stats)
+            lines = [(sx1, bb1, sx2, bb2),
+                     (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
+            if fh >= vz:  # face above eyeline: bottom edge (fb) always clipped
+                pass
+            else:
+                lines.insert(1, (sx1, fb1, sx2, fb2))
+            clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
 
