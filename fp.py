@@ -293,8 +293,12 @@ def fp_linfn(y1, y2, sx1, sx2):
     slope_8 = fp_div8(dy, dx)
     if slope_8 == 0:
         return (0, y1)
-    # intercept in 8.0: y1 - (slope * sx1) >> 8
-    intercept = y1 - fp_mul8(slope_8, sx1)
+    # intercept in 8.0: compute from whichever endpoint has smaller |x|
+    # to minimise slope quantisation error compounding over off-screen distance
+    if abs(sx1) <= abs(sx2):
+        intercept = y1 - fp_mul8(slope_8, sx1)
+    else:
+        intercept = y2 - fp_mul8(slope_8, sx2)
     return (slope_8, intercept)
 
 def fp_eval(fn, x):
@@ -305,6 +309,16 @@ def fp_eval(fn, x):
     """
     if fn[0] == 0: return fn[1]
     return fp_mul8(fn[0], x) + fn[1]
+
+def fp_eval_88(fn, x):
+    """Evaluate slope-intercept at screen X (8.0) -> screen Y (8.8).
+
+    Same as fp_eval but keeps the full 8.8 product instead of truncating.
+    No extra multiplies — the m8() product is 16-bit anyway.
+    Used for precise vertical clipping.
+    """
+    if fn[0] == 0: return fn[1] << 8
+    return m8(fn[0], x) + (fn[1] << 8)
 
 # -- View transform (8x8 multiplies) -----------------------------------------
 
@@ -496,6 +510,27 @@ def fp_clip_to_trap(x1, y1, x2, y2, xlo, xhi, tfn, bfn):
     cy1 = y1 + fp_mul8(t0, dy)
     cx2 = x1 + fp_mul8(t1, dx)
     cy2 = y1 + fp_mul8(t1, dy)
+
+    # Integer division truncation can place endpoints outside the trapezoid.
+    # Clamp X to [xlo, xhi-1].
+    if cx1 < xlo:
+        cx1 = xlo
+    if cx2 >= xhi:
+        cx2 = xhi - 1
+    if cx1 > cx2:
+        return None
+
+    # Clamp Y to top/bot boundaries for vertical lines (dx==0).  The X
+    # coordinate is unchanged, so boundary values at x1 are exact — reuse
+    # ta_x1/ba_x1 already computed above (zero extra multiplies).
+    if dx == 0:
+        top_y = ta_x1 + tb
+        bot_y = ba_x1 + bb
+        cy1 = max(cy1, top_y)
+        cy1 = min(cy1, bot_y)
+        cy2 = max(cy2, top_y)
+        cy2 = min(cy2, bot_y)
+
     return (cx1, cy1, cx2, cy2)
 
 # -- Prescaling constants (used by doom_wireframe.py at load time) ------------

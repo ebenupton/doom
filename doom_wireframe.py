@@ -6,7 +6,7 @@ import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
                 fp_recip_x, fp_recip_y, fp_project_x, fp_project_x_subpx, fp_project_y,
-                fp_linfn, fp_eval, fp_view_context, fp_to_view, fp_near_clip, fp_clip_to_trap,
+                fp_linfn, fp_eval, fp_eval_88, fp_view_context, fp_to_view, fp_near_clip, fp_clip_to_trap,
                 FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
                 MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
@@ -591,19 +591,20 @@ class FPClipSpans:
                 for xlo, xhi, tfn, bfn in self.spans:
                     if xlo <= ix < xhi:
                         found_span = True
-                        yt = fp_eval(tfn, ix)
-                        yb = fp_eval(bfn, ix)
-                        if yt >= yb:
+                        # 8.8 precision clip: compare in 8.8, truncate only at draw
+                        yt_88 = fp_eval_88(tfn, ix)
+                        yb_88 = fp_eval_88(bfn, ix)
+                        if yt_88 >= yb_88:
                             break
-                        ya_orig = min(ly1, ly2)
-                        yb_orig = max(ly1, ly2)
-                        ya = max(ya_orig, yt)
-                        ybb = min(yb_orig, yb)
-                        if ya < ybb:
+                        ya_orig_88 = min(ly1, ly2) << 8
+                        yb_orig_88 = max(ly1, ly2) << 8
+                        ya_88 = max(ya_orig_88, yt_88)
+                        ybb_88 = min(yb_orig_88, yb_88)
+                        if ya_88 < ybb_88:
                             pygame.draw.line(surface, color,
-                                             (ix, ya), (ix, ybb), 1)
+                                             (ix, ya_88 >> 8), (ix, ybb_88 >> 8), 1)
                             drawn = True
-                            if ya > ya_orig or ybb < yb_orig:
+                            if ya_88 > ya_orig_88 or ybb_88 < yb_orig_88:
                                 was_clipped = True
                         break
                 if not drawn and stats is not None:
@@ -1107,7 +1108,7 @@ while running:
         mul_str = f"  {mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})"
     else:
         mul_str = ""
-    hud = (f"[{mode_str}{xor_str}{subpx_str}]  {total} total  {unclipped} pass  {clipped} clip  "
+    hud = (f"[{mode_str}{xor_str}{subpx_str}]  ang={angle_byte}  {total} total  {unclipped} pass  {clipped} clip  "
            f"{trivial} trivial  {clip_rej} reject{mul_str}  {fps:.0f}fps")
     screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))
     pygame.display.flip()
