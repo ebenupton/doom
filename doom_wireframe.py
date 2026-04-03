@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DOOM E1M1 wireframe renderer — BSP front-to-back with 2D trapezoid clip spans."""
 
-import struct, math, sys, pygame
+import struct, math, sys, random, pygame
 import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
@@ -265,7 +265,7 @@ class ClipSpans:
                         ya = max(ya_orig, yt)
                         ybb = min(yb_orig, yb)
                         if ya < ybb:
-                            pygame.draw.line(surface, color,
+                            pygame.draw.line(surface, _rand_color(),
                                              (ix, int(ya)), (ix, int(ybb)), 1)
                             drawn = True
                             if ya > ya_orig + 0.5 or ybb < yb_orig - 0.5:
@@ -288,20 +288,12 @@ class ClipSpans:
                         if (abs(c[0] - lx1) > 0.5 or abs(c[1] - ly1) > 0.5 or
                             abs(c[2] - lx2) > 0.5 or abs(c[3] - ly2) > 0.5):
                             was_clipped = True
-                if segments:
-                    merged = [list(segments[0])]
-                    for s in segments[1:]:
-                        prev = merged[-1]
-                        if s[0] - prev[2] <= 2:
-                            prev[2] = s[2]
-                            prev[3] = s[3]
-                        else:
-                            merged.append(list(s))
-                    for c in merged:
-                        pygame.draw.line(surface, color,
-                                         (int(c[0]), int(c[1])),
-                                         (int(c[2]), int(c[3])), 1)
+                for c in segments:
+                    pygame.draw.line(surface, _rand_color(),
+                                     (int(c[0]), int(c[1])),
+                                     (int(c[2]), int(c[3])), 1)
                     drawn = True
+                    was_clipped = True
                 if not drawn and stats is not None:
                     stats[3 if not overlaps_any else 4] += 1
             if drawn and stats is not None:
@@ -482,6 +474,9 @@ def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
 
 GREEN = (0, 200, 0)
 
+def _rand_color():
+    return (random.randint(60, 255), random.randint(60, 255), random.randint(60, 255))
+
 def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
     if clips.is_full(): return
     if nid & NF_SUBSECTOR:
@@ -503,11 +498,18 @@ def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
 
 def render_subsector(idx, clips, cos_a, sin_a, vx, vy, vz, surface):
     ssec = ssectors[idx]
+    deferred = []
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface)
+        render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred)
+    # Apply clip updates after all draws in this subsector
+    for op in deferred:
+        if op[0] == 'solid':
+            clips.mark_solid(op[1], op[2])
+        else:
+            clips.tighten(*op[1:])
         if clips.is_full(): return
 
-def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
+def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
     s = segs[si]
     v1, v2 = vertexes[s[0]], vertexes[s[1]]
     # Back-face test
@@ -562,7 +564,10 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
             (sx1, ft1, sx2, ft2), (sx1, fb1, sx2, fb2),
             (sx1, ft1, sx1, fb1), (sx2, ft2, sx2, fb2),
         ], GREEN, surface, draw_stats)
-        clips.mark_solid(x_lo, x_hi)
+        if deferred is not None:
+            deferred.append(('solid', x_lo, x_hi))
+        else:
+            clips.mark_solid(x_lo, x_hi)
     elif back:
         if back[1] < ch:
             lines = [(sx1, bt1, sx2, bt2),
@@ -584,9 +589,14 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface):
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
-        clips.tighten(x_lo, x_hi, sx1, sx2,
-                       max(ft1, bt1), max(ft2, bt2),
-                       min(fb1, bb1), min(fb2, bb2))
+        if deferred is not None:
+            deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
+                             max(ft1, bt1), max(ft2, bt2),
+                             min(fb1, bb1), min(fb2, bb2)))
+        else:
+            clips.tighten(x_lo, x_hi, sx1, sx2,
+                           max(ft1, bt1), max(ft2, bt2),
+                           min(fb1, bb1), min(fb2, bb2))
 
 # ── Fixed-point clip spans ────────────────────────────────────────────────────
 #
@@ -613,6 +623,10 @@ class FPClipSpans:
         return not self.spans
 
     def has_gap(self, lo, hi):
+        """Check if any span in [lo, hi] has positive aperture.
+
+        Linear top/bottom: only need to check overlap endpoints.
+        """
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W - 1, hi)
         for xlo, xhi, tfn, bfn in self.spans:
@@ -622,9 +636,10 @@ class FPClipSpans:
                 continue
             clo = max(xlo, ilo)
             chi = min(xhi - 1, ihi)
-            for x in range(clo, chi + 1):
-                if fp_eval(tfn, x) < fp_eval(bfn, x):
-                    return True
+            if fp_eval(tfn, clo) < fp_eval(bfn, clo):
+                return True
+            if clo != chi and fp_eval(tfn, chi) < fp_eval(bfn, chi):
+                return True
         return False
 
     def draw_clipped(self, lines, color, surface, stats=None):
@@ -659,7 +674,7 @@ class FPClipSpans:
                         ya_88 = max(ya_orig_88, yt_88)
                         ybb_88 = min(yb_orig_88, yb_88)
                         if ya_88 < ybb_88:
-                            pygame.draw.line(surface, color,
+                            pygame.draw.line(surface, _rand_color(),
                                              (ix, ya_88 >> 8), (ix, ybb_88 >> 8), 1)
                             drawn = True
                             if ya_88 > ya_orig_88 or ybb_88 < yb_orig_88:
@@ -693,9 +708,10 @@ class FPClipSpans:
                 y_hi = max(yl, yr)
                 needs_clip = False
 
-                # Line must be fully within active X range
-                if xl < active[0][0] or xr > active[-1][1] - 1:
-                    needs_clip = True
+                def _line_y_at(x):
+                    """Exact line Y at x (Python int math, only called on bbox failure)."""
+                    if dx == 0: return yl
+                    return yl + (yr - yl) * (x - xl) // dx
 
                 if not needs_clip:
                     for i, (xlo, xhi, tfn, bfn) in enumerate(active):
@@ -703,29 +719,44 @@ class FPClipSpans:
                         if i > 0 and active[i - 1][1] != xlo:
                             needs_clip = True
                             break
-                        # Check line bbox against span boundaries at entry/exit.
-                        # fp_eval is free (0 muls) when slope == 0.
+                        # Fast path: check line Y bbox against boundaries.
+                        # If that fails, refine with exact line Y at the
+                        # check point before giving up.
                         ex = max(xl, xlo)
                         xx = min(xr, xhi - 1)
-                        if (y_lo < fp_eval(tfn, ex) or y_hi > fp_eval(bfn, ex) or
-                            y_lo < fp_eval(tfn, xx) or y_hi > fp_eval(bfn, xx)):
-                            needs_clip = True
+                        for cx in (ex, xx):
+                            top_c = fp_eval(tfn, cx)
+                            bot_c = fp_eval(bfn, cx)
+                            if y_lo < top_c or y_hi > bot_c:
+                                # Bbox fails — try exact Y
+                                ly = _line_y_at(cx)
+                                if ly < top_c or ly > bot_c:
+                                    needs_clip = True
+                                    break
+                        if needs_clip:
                             break
-                        # Portal check: line bbox must fit through the
-                        # intersection of both spans' apertures at boundary.
+                        # Portal check at span boundary
                         if i + 1 < len(active):
                             nx = xhi
                             n_tfn, n_bfn = active[i + 1][2], active[i + 1][3]
                             portal_top = max(fp_eval(tfn, nx), fp_eval(n_tfn, nx))
                             portal_bot = min(fp_eval(bfn, nx), fp_eval(n_bfn, nx))
                             if y_lo < portal_top or y_hi > portal_bot:
-                                needs_clip = True
-                                break
+                                ly = _line_y_at(nx)
+                                if ly < portal_top or ly > portal_bot:
+                                    needs_clip = True
+                                    break
 
                 if not needs_clip:
-                    # Line bbox fits inside all spans — draw as one line
-                    pygame.draw.line(surface, color,
-                                     (xl, yl), (xr, yr), 1)
+                    # Line passes through all portals — draw clamped to
+                    # active span range (avoids mark_solid regions outside)
+                    draw_xl = max(xl, active[0][0])
+                    draw_xr = min(xr, active[-1][1] - 1)
+                    draw_yl = _line_y_at(draw_xl) if draw_xl != xl else yl
+                    draw_yr = _line_y_at(draw_xr) if draw_xr != xr else yr
+                    pygame.draw.line(surface, _rand_color(),
+                                     (draw_xl, draw_yl),
+                                     (draw_xr, draw_yr), 1)
                     drawn = True
                 else:
                     # Fall back to per-span Cyrus-Beck, merge adjacent
@@ -736,20 +767,12 @@ class FPClipSpans:
                         if c:
                             segments.append(c)
                             was_clipped = True
-                    if segments:
-                        merged = [list(segments[0])]
-                        for s in segments[1:]:
-                            prev = merged[-1]
-                            if s[0] - prev[2] <= 2:
-                                prev[2] = s[2]
-                                prev[3] = s[3]
-                            else:
-                                merged.append(list(s))
-                        for c in merged:
-                            pygame.draw.line(surface, color,
-                                             (c[0], c[1]),
-                                             (c[2], c[3]), 1)
+                    for c in segments:
+                        pygame.draw.line(surface, _rand_color(),
+                                         (c[0], c[1]),
+                                         (c[2], c[3]), 1)
                         drawn = True
+                        was_clipped = True
                 if not drawn and stats is not None:
                     stats[3 if not active else 4] += 1
             if drawn and stats is not None:
@@ -873,7 +896,7 @@ def _fp_pw_min(f, g, x0, x1):
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
 
-def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
+def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
     """Render a seg from the stripped fp_segs table.
 
     vcache: frame-global vertex transforms.
@@ -1016,7 +1039,10 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
             (sx1, ft1, sx1, fb1),
             (sx2, ft2, sx2, fb2),
         ], GREEN, surface, draw_stats)
-        clips.mark_solid(x_lo, x_hi)
+        if deferred is not None:
+            deferred.append(('solid', x_lo, x_hi))
+        else:
+            clips.mark_solid(x_lo, x_hi)
     elif back:
         # Only project back heights when needed (saves up to 8 muls)
         need_bt = back[1] < ch   # ceiling drops: need bt for upper step + tighten
@@ -1057,9 +1083,14 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache):
         tt2 = bt2 if need_bt else ft2
         tb1 = bb1 if need_bb else fb1
         tb2 = bb2 if need_bb else fb2
-        clips.tighten(x_lo, x_hi, sx1, sx2,
-                       max(ft1, tt1), max(ft2, tt2),
-                       min(fb1, tb1), min(fb2, tb2))
+        if deferred is not None:
+            deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
+                             max(ft1, tt1), max(ft2, tt2),
+                             min(fb1, tb1), min(fb2, tb2)))
+        else:
+            clips.tighten(x_lo, x_hi, sx1, sx2,
+                           max(ft1, tt1), max(ft2, tt2),
+                           min(fb1, tb1), min(fb2, tb2))
 
 
 def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, ycache):
@@ -1072,8 +1103,15 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, ycache):
     # Both caches are lazily populated by fp_render_seg:
     # vcache (frame-global): view transforms, computed on first access per vertex
     # ycache (frame-global): Y projections keyed on (vertex, fh, ch)
+    deferred = []
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache)
+        fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred)
+    # Apply clip updates after all draws in this subsector
+    for op in deferred:
+        if op[0] == 'solid':
+            clips.mark_solid(op[1], op[2])
+        else:
+            clips.tighten(*op[1:])
         if clips.is_full():
             return
 
@@ -1373,6 +1411,130 @@ def byte_to_radians(b):
     return math.radians((b & 0xFF) * 360.0 / 256.0)
 
 
+# ── Draw-call comparison (press D) ────────────────────────────────────────────
+
+def _compare_draw_calls():
+    """Run both float and FP renderers, compare draw call counts per seg."""
+    _log = []
+    _current = [None]
+    def _interceptor(surface, color, p1, p2, w=1):
+        if _current[0] is not None:
+            _log.append((_current[0], (p1, p2)))
+        return _real_drawline(surface, color, p1, p2, w)
+
+    ang_rad = byte_to_radians(angle_byte)
+    cos_a, sin_a = math.cos(ang_rad), math.sin(ang_rad)
+    vz = player_floor(player_x, player_y) + 41.0
+
+    # Float run
+    _log.clear()
+    tmp = pygame.Surface((SCREEN_W, SCREEN_H))
+    pygame.draw.line = _interceptor
+
+    _orig = render_seg.__code__
+    # Wrap render_seg to tag draws
+    orig_render_seg_fn = globals()['render_seg']
+    def _float_seg(si, clips, ca, sa, vx, vy, vz, surface, deferred=None):
+        _current[0] = ('F', si)
+        orig_render_seg_fn(si, clips, ca, sa, vx, vy, vz, surface, deferred)
+        _current[0] = None
+    globals()['render_seg'] = _float_seg
+    render_bsp(len(nodes)-1, ClipSpans(), cos_a, sin_a,
+               player_x, player_y, vz, tmp)
+    globals()['render_seg'] = orig_render_seg_fn
+    float_log = list(_log)
+
+    # FP run
+    _log.clear()
+    tmp_fp = pygame.Surface((FP_WIDTH, FP_HEIGHT))
+    fp_module.mul_reset()
+    px_88 = int((player_x - MAP_CENTER_X) * 256 / PRESCALE)
+    py_88 = int((player_y - MAP_CENTER_Y) * 256 / PRESCALE)
+    vz_ps = (player_floor(player_x, player_y) + 41) // PRESCALE
+    sc = fp_sincos(angle_byte)
+    ctx = fp_view_context(px_88, py_88, sc)
+    cos_f, sin_f = cos_a, sin_a
+
+    orig_fp_seg_fn = globals()['fp_render_seg']
+    def _fp_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
+        _current[0] = ('P', si)
+        orig_fp_seg_fn(si, clips, ctx, vz, surface, vcache, ycache, deferred)
+        _current[0] = None
+    globals()['fp_render_seg'] = _fp_seg
+    render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx, vz_ps,
+                  int(player_x), int(player_y), cos_f, sin_f, tmp_fp, {}, {})
+    globals()['fp_render_seg'] = orig_fp_seg_fn
+    pygame.draw.line = _real_drawline
+
+    # Compare
+    float_counts = {}
+    for (mode, si), _ in float_log:
+        float_counts[si] = float_counts.get(si, 0) + 1
+    fp_counts = {}
+    for (mode, si), _ in float_log:
+        pass  # wrong list
+    fp_counts = {}
+    for (mode, si), _ in [x for x in _log]:  # _log was overwritten
+        pass
+
+    # Redo: collect from the stored logs
+    fc = {}
+    for tag, draw in float_log:
+        fc[tag[1]] = fc.get(tag[1], 0) + 1
+    # Need to collect fp_log separately
+    # Actually _log was cleared and reused. Let me fix:
+    pass
+
+    # Simpler approach: just count from the two runs
+    # Re-do with proper separation
+    print(f"\n=== Draw-call comparison at ({player_x:.0f},{player_y:.0f}) a={angle_byte} ===")
+    print(f"Float: {len(float_log)} draw calls")
+
+    # Re-run FP with fresh log
+    _log.clear()
+    pygame.draw.line = _interceptor
+    fp_module.mul_reset()
+    ctx2 = fp_view_context(px_88, py_88, sc)
+    globals()['fp_render_seg'] = _fp_seg
+    for k in map_trace:
+        map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
+    render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx2, vz_ps,
+                  int(player_x), int(player_y), cos_f, sin_f, tmp_fp, {}, {})
+    globals()['fp_render_seg'] = orig_fp_seg_fn
+    pygame.draw.line = _real_drawline
+    fp_log = list(_log)
+    print(f"FP:    {len(fp_log)} draw calls")
+
+    # Per-seg comparison
+    fc = {}
+    for tag, draw in float_log:
+        si = tag[1]
+        fc.setdefault(si, []).append(draw)
+    pc = {}
+    for tag, draw in fp_log:
+        si = tag[1]
+        pc.setdefault(si, []).append(draw)
+
+    diffs = 0
+    for si in sorted(set(list(fc.keys()) + list(pc.keys()))):
+        fn = len(fc.get(si, []))
+        pn = len(pc.get(si, []))
+        if fn != pn:
+            diffs += 1
+            # Identify the seg
+            if si < len(segs):
+                s = segs[si]
+                print(f"  seg {si} v{s[0]}-v{s[1]}: float={fn} fp={pn}")
+                for d in pc.get(si, []):
+                    print(f"    FP: {d}")
+                for d in fc.get(si, []):
+                    print(f"    FL: ({d[0][0]:.0f},{d[0][1]:.0f})->({d[1][0]:.0f},{d[1][1]:.0f})")
+    if diffs == 0:
+        print("  No differences found!")
+    print(f"Total differing segs: {diffs}")
+    print("=== end ===\n")
+
+
 # ── Main loop ────────────────────────────────────────────────────────────────
 
 # [total, unclipped, clipped, trivial_reject, clip_reject]
@@ -1420,6 +1582,135 @@ turn_speed = 2.5                          # radians/sec for float mode
 turn_speed_byte = 45                      # byte-units/sec for FP mode (~63 deg/sec)
 move_speed = 300.0
 
+# ── Debug line stepper (press G to enter, +/- to step, G to exit) ────────────
+
+_debug_mode = False
+_debug_steps = []     # list of (input_line, spans_snapshot, clipped_segments)
+_debug_idx = 0
+
+def _record_frame_steps():
+    """Re-render the current frame in FP mode, recording every draw operation."""
+    global _debug_steps
+    _debug_steps = []
+
+    ang_rad = byte_to_radians(angle_byte)
+    cos_f, sin_f = math.cos(ang_rad), math.sin(ang_rad)
+    fp_module.mul_reset()
+    px_88 = int((player_x - MAP_CENTER_X) * 256 / PRESCALE)
+    py_88 = int((player_y - MAP_CENTER_Y) * 256 / PRESCALE)
+    vz_ps = (player_floor(player_x, player_y) + 41) // PRESCALE
+    sc = fp_sincos(angle_byte)
+    ctx = fp_view_context(px_88, py_88, sc)
+
+    # Create a recording clip spans wrapper
+    class RecordingClipSpans(FPClipSpans):
+        def draw_clipped(self, lines, color, surface, stats=None):
+            for lx1, ly1, lx2, ly2 in lines:
+                spans_snap = list(self.spans)
+                # Clip to each span and record
+                clipped = []
+                if abs(lx1 - lx2) < 1:
+                    ix = lx1
+                    for xlo, xhi, tfn, bfn in self.spans:
+                        if xlo <= ix < xhi:
+                            yt = fp_eval(tfn, ix)
+                            yb = fp_eval(bfn, ix)
+                            ya = max(min(ly1, ly2), yt)
+                            ybb = min(max(ly1, ly2), yb)
+                            if ya < ybb:
+                                clipped.append((ix, ya, ix, ybb))
+                            break
+                else:
+                    x_min, x_max = min(lx1, lx2), max(lx1, lx2)
+                    for xlo, xhi, tfn, bfn in self.spans:
+                        if xhi <= x_min or xlo >= x_max:
+                            continue
+                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2,
+                                            xlo, xhi, tfn, bfn)
+                        if c:
+                            clipped.append(c)
+                _debug_steps.append(((lx1, ly1, lx2, ly2), spans_snap, clipped))
+            # Still draw normally
+            super().draw_clipped(lines, color, surface, stats)
+
+    tmp = pygame.Surface((FP_WIDTH, FP_HEIGHT))
+    for k in map_trace:
+        map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
+    for i in range(5):
+        draw_stats[i] = 0
+    render_bsp_fp(len(nodes) - 1, RecordingClipSpans(),
+                  ctx, vz_ps, int(player_x), int(player_y),
+                  cos_f, sin_f, tmp, {}, {})
+
+def _draw_debug_step(surface):
+    """Draw the debug view for the current step."""
+    surface.fill((0, 0, 0))
+    if not _debug_steps:
+        return
+    idx = max(0, min(_debug_idx, len(_debug_steps) - 1))
+
+    # Draw all lines up to this step in dim green
+    for i in range(idx):
+        _, _, clipped = _debug_steps[i]
+        for c in clipped:
+            _real_drawline(surface, (0, 60, 0),
+                           (c[0] * FP_SCALE, c[1] * FP_SCALE),
+                           (c[2] * FP_SCALE, c[3] * FP_SCALE), 1)
+
+    # Draw the clip region at this step as blue alpha overlay
+    input_line, spans, clipped = _debug_steps[idx]
+    clip_surf = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+    _trap_hues = [(40, 40, 180), (60, 100, 160), (30, 70, 200),
+                  (80, 50, 170), (50, 90, 140), (70, 60, 190),
+                  (40, 110, 150), (90, 40, 180)]
+    for si, (xlo, xhi, tfn, bfn) in enumerate(spans):
+        x0, x1 = xlo * FP_SCALE, (xhi - 1) * FP_SCALE
+        yt0 = fp_eval(tfn, xlo) * FP_SCALE
+        yt1 = fp_eval(tfn, xhi - 1) * FP_SCALE
+        yb0 = fp_eval(bfn, xlo) * FP_SCALE
+        yb1 = fp_eval(bfn, xhi - 1) * FP_SCALE
+        pts = [(x0, yt0), (x1, yt1), (x1, yb1), (x0, yb0)]
+        hue = _trap_hues[si % len(_trap_hues)]
+        pygame.draw.polygon(clip_surf, (*hue, 90), pts)
+        pygame.draw.polygon(clip_surf, (*(min(c + 60, 255) for c in hue), 200), pts, 1)
+    surface.blit(clip_surf, (0, 0))
+
+    # Draw the input line (unclipped) in dim white
+    lx1, ly1, lx2, ly2 = input_line
+    _real_drawline(surface, (80, 80, 80),
+                   (int(lx1 * FP_SCALE), int(ly1 * FP_SCALE)),
+                   (int(lx2 * FP_SCALE), int(ly2 * FP_SCALE)), 1)
+
+    # Draw clipped segments in bright colors with split markers
+    for ci, c in enumerate(clipped):
+        color = (255, 255, 0)
+        sx1, sy1 = int(c[0] * FP_SCALE), int(c[1] * FP_SCALE)
+        sx2, sy2 = int(c[2] * FP_SCALE), int(c[3] * FP_SCALE)
+        _real_drawline(surface, color, (sx1, sy1), (sx2, sy2), 2)
+        # Red cross at each split point (start of each segment after the first)
+        if ci > 0:
+            _real_drawline(surface, (255, 0, 0), (sx1 - 6, sy1 - 6), (sx1 + 6, sy1 + 6), 2)
+            _real_drawline(surface, (255, 0, 0), (sx1 - 6, sy1 + 6), (sx1 + 6, sy1 - 6), 2)
+        # Also mark the end of each segment before a gap
+        if ci < len(clipped) - 1:
+            _real_drawline(surface, (255, 100, 0), (sx2 - 6, sy2 - 6), (sx2 + 6, sy2 + 6), 2)
+            _real_drawline(surface, (255, 100, 0), (sx2 - 6, sy2 + 6), (sx2 + 6, sy2 - 6), 2)
+
+    # Label the line with segment count
+    mid_x = int((lx1 + lx2) / 2 * FP_SCALE)
+    mid_y = int((ly1 + ly2) / 2 * FP_SCALE)
+    count_lbl = hud_font.render(f"{len(clipped)}", True, (255, 255, 255))
+    bg = pygame.Surface(count_lbl.get_size(), pygame.SRCALPHA)
+    bg.fill((0, 0, 0, 192))
+    surface.blit(bg, (mid_x + 8, mid_y - 8))
+    surface.blit(count_lbl, (mid_x + 8, mid_y - 8))
+
+    # HUD
+    hud_font.set_bold(False)
+    info = f"Step {idx+1}/{len(_debug_steps)}  line=({lx1},{ly1})->({lx2},{ly2})  segs={len(clipped)}  spans={len(spans)}"
+    surface.blit(hud_font.render(info, True, (255, 255, 0)), (4, 4))
+
+
 running = True
 while running:
     dt = clock.tick(60) / 1000.0
@@ -1442,10 +1733,23 @@ while running:
                 use_subpixel = not use_subpixel
             elif ev.key == pygame.K_m:
                 show_map = not show_map
+            elif ev.key == pygame.K_d:
+                _compare_draw_calls()
+            elif ev.key == pygame.K_g:
+                _debug_mode = not _debug_mode
+                if _debug_mode:
+                    _record_frame_steps()
+                    _debug_idx = 0
             elif ev.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
-                _map_scale = _map_scale * 1.5
+                if _debug_mode:
+                    _debug_idx = min(_debug_idx + 1, len(_debug_steps) - 1)
+                else:
+                    _map_scale = _map_scale * 1.5
             elif ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                _map_scale = _map_scale / 1.5
+                if _debug_mode:
+                    _debug_idx = max(_debug_idx - 1, 0)
+                else:
+                    _map_scale = _map_scale / 1.5
 
     keys = pygame.key.get_pressed()
 
@@ -1469,6 +1773,7 @@ while running:
             pygame.draw.line = _xor_drawline
         else:
             pygame.draw.line = _real_drawline
+        random.seed(42)
         for i in range(5):
             draw_stats[i] = 0
         for k in map_trace:
@@ -1519,6 +1824,7 @@ while running:
             pygame.draw.line = _xor_drawline
         else:
             pygame.draw.line = _real_drawline
+        random.seed(42)
         for i in range(5):
             draw_stats[i] = 0
         for k in map_trace:
@@ -1531,27 +1837,29 @@ while running:
     # Restore normal draw after frame
     pygame.draw.line = _real_drawline
 
-    # ── Map overlay (replaces 3D view when active) ──
-    if show_map:
+    # ── Debug stepper or map overlay ──
+    if _debug_mode:
+        _draw_debug_step(screen)
+        pygame.display.flip()
+        continue
+    elif show_map:
         ang_for_map = byte_to_radians(angle_byte) if use_fixedpoint else angle
         draw_map(screen, player_x, player_y, ang_for_map)
 
-    # ── HUD (works for both modes) ──
+    # ── HUD ──
     total, unclipped, clipped, trivial, clip_rej = draw_stats
-    fps = clock.get_fps()
-    mode_str = f"FP {FP_WIDTH}x{FP_HEIGHT}" if use_fixedpoint else f"FLOAT {SCREEN_W}x{SCREEN_H}"
-    map_str = " MAP" if show_map else ""
-    xor_str = " XOR" if use_xor else ""
-    subpx_str = " SUBPX" if use_subpixel else ""
+    ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
     if use_fixedpoint:
         mc = fp_module.mul_counts
         mul_total = sum(mc.values())
-        mul_str = f"  {mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})"
+        hud = (f"fp ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
+               f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
+               f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
+               f"{clock.get_fps():.0f}fps")
     else:
-        mul_str = ""
-    ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
-    hud = (f"[{mode_str}{map_str}{xor_str}{subpx_str}]  ({player_x:.0f},{player_y:.0f}) a={ang_display}  {total} total  {unclipped} pass  {clipped} clip  "
-           f"{trivial} trivial  {clip_rej} reject{mul_str}  {fps:.0f}fps")
+        hud = (f"float ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
+               f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
+               f"{clock.get_fps():.0f}fps")
     screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))
     pygame.display.flip()
 
