@@ -274,28 +274,86 @@ class ClipSpans:
                 if not drawn and stats is not None:
                     stats[3 if not found_span else 4] += 1
             else:
-                x_min, x_max = min(lx1, lx2), max(lx1, lx2)
-                overlaps_any = False
-                segments = []
+                # Order left-to-right for portal walk
+                if lx1 <= lx2:
+                    xl, yl_l, xr, yr_l = lx1, ly1, lx2, ly2
+                else:
+                    xl, yl_l, xr, yr_l = lx2, ly2, lx1, ly1
+                f_dx = xr - xl
+                y_lo_f = min(yl_l, yr_l)
+                y_hi_f = max(yl_l, yr_l)
+
+                def _fline_y_at(x):
+                    if abs(f_dx) < 0.5: return yl_l
+                    return yl_l + (yr_l - yl_l) * (x - xl) / f_dx
+
+                # Collect overlapping spans
+                active = []
                 for xlo, xhi, tfn, bfn in self.spans:
-                    if xhi <= x_min or xlo >= x_max:
+                    if xhi > xl and xlo < xr:
+                        active.append((xlo, xhi, tfn, bfn))
+
+                if not active:
+                    if stats is not None:
+                        stats[3] += 1
+                    continue
+
+                # Split into contiguous groups
+                groups = []
+                cur = [active[0]]
+                for i in range(1, len(active)):
+                    if active[i - 1][1] == active[i][0]:
+                        cur.append(active[i])
+                    else:
+                        groups.append(cur)
+                        cur = [active[i]]
+                groups.append(cur)
+
+                def _fportal_ok_range(group, lo, hi):
+                    for i in range(lo, hi):
+                        xhi_g = group[i][1]
+                        tfn_g, bfn_g = group[i][2], group[i][3]
+                        n_tfn, n_bfn = group[i+1][2], group[i+1][3]
+                        pt = max(_eval(tfn_g, xhi_g), _eval(n_tfn, xhi_g))
+                        pb = min(_eval(bfn_g, xhi_g), _eval(n_bfn, xhi_g))
+                        if y_lo_f < pt or y_hi_f > pb:
+                            ly = _fline_y_at(xhi_g)
+                            if ly < pt or ly > pb:
+                                return False
+                    return True
+
+                for group in groups:
+                    c_first, c_last = None, None
+                    fi, li = 0, len(group) - 1
+                    for fi in range(len(group)):
+                        c_first = _clip_to_trap(lx1, ly1, lx2, ly2, *group[fi])
+                        if c_first: break
+                    for li in range(len(group) - 1, fi - 1, -1):
+                        c_last = _clip_to_trap(lx1, ly1, lx2, ly2, *group[li])
+                        if c_last: break
+                    if not c_first:
                         continue
-                    overlaps_any = True
-                    c = _clip_to_trap(lx1, ly1, lx2, ly2,
-                                      xlo, xhi, tfn, bfn)
-                    if c:
-                        segments.append(c)
-                        if (abs(c[0] - lx1) > 0.5 or abs(c[1] - ly1) > 0.5 or
-                            abs(c[2] - lx2) > 0.5 or abs(c[3] - ly2) > 0.5):
-                            was_clipped = True
-                for c in segments:
-                    pygame.draw.line(surface, _rand_color(),
-                                     (int(c[0]), int(c[1])),
-                                     (int(c[2]), int(c[3])), 1)
-                    drawn = True
-                    was_clipped = True
+                    if fi == li:
+                        pygame.draw.line(surface, _rand_color(),
+                                         (int(c_first[0]), int(c_first[1])),
+                                         (int(c_first[2]), int(c_first[3])), 1)
+                        drawn = True
+                    elif _fportal_ok_range(group, fi, li):
+                        pygame.draw.line(surface, _rand_color(),
+                                         (int(c_first[0]), int(c_first[1])),
+                                         (int(c_last[2]), int(c_last[3])), 1)
+                        drawn = True
+                    else:
+                        for si in range(fi, li + 1):
+                            c = _clip_to_trap(lx1, ly1, lx2, ly2, *group[si])
+                            if c:
+                                pygame.draw.line(surface, _rand_color(),
+                                                 (int(c[0]), int(c[1])),
+                                                 (int(c[2]), int(c[3])), 1)
+                                drawn = True
+                                was_clipped = True
                 if not drawn and stats is not None:
-                    stats[3 if not overlaps_any else 4] += 1
+                    stats[3 if not active else 4] += 1
             if drawn and stats is not None:
                 stats[2 if was_clipped else 1] += 1
 
@@ -701,78 +759,78 @@ class FPClipSpans:
                         stats[3] += 1
                     continue
 
-                # Walk spans: check if line's Y bounding box passes cleanly
-                # through each span and each portal between adjacent spans.
-                # Uses only min/max of endpoints — zero multiplies.
+                # Walk spans in contiguous groups.  For each group, run a
+                # portal walk: if the line passes through all portals in
+                # the group, draw that portion as one line.  Otherwise
+                # fall back to per-span Cyrus-Beck for that group only.
                 y_lo = min(yl, yr)
                 y_hi = max(yl, yr)
-                needs_clip = False
 
                 def _line_y_at(x):
                     """Exact line Y at x (Python int math, only called on bbox failure)."""
                     if dx == 0: return yl
                     return yl + (yr - yl) * (x - xl) // dx
 
-                if not needs_clip:
-                    for i, (xlo, xhi, tfn, bfn) in enumerate(active):
-                        # Spans must be contiguous — any gap means occlusion
-                        if i > 0 and active[i - 1][1] != xlo:
-                            needs_clip = True
-                            break
-                        # Fast path: check line Y bbox against boundaries.
-                        # If that fails, refine with exact line Y at the
-                        # check point before giving up.
-                        ex = max(xl, xlo)
-                        xx = min(xr, xhi - 1)
-                        for cx in (ex, xx):
-                            top_c = fp_eval(tfn, cx)
-                            bot_c = fp_eval(bfn, cx)
-                            if y_lo < top_c or y_hi > bot_c:
-                                # Bbox fails — try exact Y
-                                ly = _line_y_at(cx)
-                                if ly < top_c or ly > bot_c:
-                                    needs_clip = True
-                                    break
-                        if needs_clip:
-                            break
-                        # Portal check at span boundary
-                        if i + 1 < len(active):
-                            nx = xhi
-                            n_tfn, n_bfn = active[i + 1][2], active[i + 1][3]
-                            portal_top = max(fp_eval(tfn, nx), fp_eval(n_tfn, nx))
-                            portal_bot = min(fp_eval(bfn, nx), fp_eval(n_bfn, nx))
-                            if y_lo < portal_top or y_hi > portal_bot:
-                                ly = _line_y_at(nx)
-                                if ly < portal_top or ly > portal_bot:
-                                    needs_clip = True
-                                    break
+                def _portal_ok_range(group, lo, hi):
+                    """Check portals between group[lo] and group[hi]."""
+                    for i in range(lo, hi):
+                        xhi = group[i][1]
+                        tfn, bfn = group[i][2], group[i][3]
+                        n_tfn, n_bfn = group[i + 1][2], group[i + 1][3]
+                        portal_top = max(fp_eval(tfn, xhi), fp_eval(n_tfn, xhi))
+                        portal_bot = min(fp_eval(bfn, xhi), fp_eval(n_bfn, xhi))
+                        if y_lo < portal_top or y_hi > portal_bot:
+                            ly = _line_y_at(xhi)
+                            if ly < portal_top or ly > portal_bot:
+                                return False
+                    return True
 
-                if not needs_clip:
-                    # Line passes through all portals — draw clamped to
-                    # active span range (avoids mark_solid regions outside)
-                    draw_xl = max(xl, active[0][0])
-                    draw_xr = min(xr, active[-1][1] - 1)
-                    draw_yl = _line_y_at(draw_xl) if draw_xl != xl else yl
-                    draw_yr = _line_y_at(draw_xr) if draw_xr != xr else yr
-                    pygame.draw.line(surface, _rand_color(),
-                                     (draw_xl, draw_yl),
-                                     (draw_xr, draw_yr), 1)
-                    drawn = True
-                else:
-                    # Fall back to per-span Cyrus-Beck, merge adjacent
-                    segments = []
-                    for xlo, xhi, tfn, bfn in active:
-                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2,
-                                            xlo, xhi, tfn, bfn)
-                        if c:
-                            segments.append(c)
-                            was_clipped = True
-                    for c in segments:
+                # Split active spans into contiguous groups
+                groups = []
+                cur_group = [active[0]]
+                for i in range(1, len(active)):
+                    if active[i - 1][1] == active[i][0]:
+                        cur_group.append(active[i])
+                    else:
+                        groups.append(cur_group)
+                        cur_group = [active[i]]
+                groups.append(cur_group)
+
+                for group in groups:
+                    # Find first and last spans with visible line (CB output).
+                    # Scan inward from both ends.
+                    c_first, c_last = None, None
+                    fi, li = 0, len(group) - 1
+                    for fi in range(len(group)):
+                        c_first = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[fi])
+                        if c_first: break
+                    for li in range(len(group) - 1, fi - 1, -1):
+                        c_last = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[li])
+                        if c_last: break
+                    if not c_first:
+                        continue  # no visible portion in this group
+                    if fi == li:
+                        # Single span — just draw it
                         pygame.draw.line(surface, _rand_color(),
-                                         (c[0], c[1]),
-                                         (c[2], c[3]), 1)
+                                         (c_first[0], c_first[1]),
+                                         (c_first[2], c_first[3]), 1)
                         drawn = True
-                        was_clipped = True
+                    elif _portal_ok_range(group, fi, li):
+                        # Portals pass — draw one line from first to last
+                        pygame.draw.line(surface, _rand_color(),
+                                         (c_first[0], c_first[1]),
+                                         (c_last[2], c_last[3]), 1)
+                        drawn = True
+                    else:
+                        # Portal failed — per-span CB for visible range
+                        for si in range(fi, li + 1):
+                            c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[si])
+                            if c:
+                                pygame.draw.line(surface, _rand_color(),
+                                                 (c[0], c[1]),
+                                                 (c[2], c[3]), 1)
+                                drawn = True
+                                was_clipped = True
                 if not drawn and stats is not None:
                     stats[3 if not active else 4] += 1
             if drawn and stats is not None:
@@ -1602,36 +1660,27 @@ def _record_frame_steps():
     sc = fp_sincos(angle_byte)
     ctx = fp_view_context(px_88, py_88, sc)
 
-    # Create a recording clip spans wrapper
+    # Create a recording clip spans wrapper that captures actual draw calls
+    _rec_current_line = [None]
+    _rec_draws = []
+
     class RecordingClipSpans(FPClipSpans):
         def draw_clipped(self, lines, color, surface, stats=None):
             for lx1, ly1, lx2, ly2 in lines:
                 spans_snap = list(self.spans)
-                # Clip to each span and record
-                clipped = []
-                if abs(lx1 - lx2) < 1:
-                    ix = lx1
-                    for xlo, xhi, tfn, bfn in self.spans:
-                        if xlo <= ix < xhi:
-                            yt = fp_eval(tfn, ix)
-                            yb = fp_eval(bfn, ix)
-                            ya = max(min(ly1, ly2), yt)
-                            ybb = min(max(ly1, ly2), yb)
-                            if ya < ybb:
-                                clipped.append((ix, ya, ix, ybb))
-                            break
-                else:
-                    x_min, x_max = min(lx1, lx2), max(lx1, lx2)
-                    for xlo, xhi, tfn, bfn in self.spans:
-                        if xhi <= x_min or xlo >= x_max:
-                            continue
-                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2,
-                                            xlo, xhi, tfn, bfn)
-                        if c:
-                            clipped.append(c)
-                _debug_steps.append(((lx1, ly1, lx2, ly2), spans_snap, clipped))
-            # Still draw normally
-            super().draw_clipped(lines, color, surface, stats)
+                _rec_current_line[0] = (lx1, ly1, lx2, ly2)
+                _rec_draws.clear()
+                # Run the real draw logic (portal walk + CB fallback)
+                super().draw_clipped([(lx1, ly1, lx2, ly2)], color, surface, stats)
+                _debug_steps.append(((lx1, ly1, lx2, ly2), spans_snap, list(_rec_draws)))
+                _rec_current_line[0] = None
+
+    _orig_drawline = pygame.draw.line
+    def _rec_interceptor(surface, color, p1, p2, w=1):
+        if _rec_current_line[0] is not None:
+            _rec_draws.append((p1[0], p1[1], p2[0], p2[1]))
+        return _orig_drawline(surface, color, p1, p2, w)
+    pygame.draw.line = _rec_interceptor
 
     tmp = pygame.Surface((FP_WIDTH, FP_HEIGHT))
     for k in map_trace:
@@ -1641,6 +1690,65 @@ def _record_frame_steps():
     render_bsp_fp(len(nodes) - 1, RecordingClipSpans(),
                   ctx, vz_ps, int(player_x), int(player_y),
                   cos_f, sin_f, tmp, {}, {})
+    pygame.draw.line = _real_drawline
+
+def _dump_portal_analysis():
+    """Print detailed portal walk analysis for the current debug step."""
+    idx = max(0, min(_debug_idx, len(_debug_steps) - 1))
+    input_line, spans, clipped = _debug_steps[idx]
+    lx1, ly1, lx2, ly2 = input_line
+    print(f"\n=== Portal analysis step {idx+1}/{len(_debug_steps)} ===")
+    print(f"Line: ({lx1},{ly1}) -> ({lx2},{ly2})")
+    print(f"Clipped into {len(clipped)} segments: {clipped}")
+    print(f"Spans ({len(spans)}):")
+
+    if lx1 <= lx2:
+        xl, yl_w, xr, yr_w = lx1, ly1, lx2, ly2
+    else:
+        xl, yl_w, xr, yr_w = lx2, ly2, lx1, ly1
+    dx = xr - xl
+    y_lo = min(yl_w, yr_w)
+    y_hi = max(yl_w, yr_w)
+
+    def ly_at(x):
+        if dx == 0: return yl_w
+        return yl_w + (yr_w - yl_w) * (x - xl) // dx
+
+    active = [(xlo, xhi, tfn, bfn) for xlo, xhi, tfn, bfn in spans
+              if xhi > xl and xlo < xr]
+
+    # Show spans and contiguity
+    for i, (xlo, xhi, tfn, bfn) in enumerate(active):
+        gap = ""
+        if i > 0 and active[i-1][1] != xlo:
+            gap = f"  ** GAP {active[i-1][1]}-{xlo} **"
+        ex = max(xl, xlo)
+        xx = min(xr, xhi - 1)
+        top_ex = fp_eval(tfn, ex)
+        bot_ex = fp_eval(bfn, ex)
+        top_xx = fp_eval(tfn, xx)
+        bot_xx = fp_eval(bfn, xx)
+        ly_ex = ly_at(ex)
+        ly_xx = ly_at(xx)
+        pass_ex = top_ex <= ly_ex <= bot_ex
+        pass_xx = top_xx <= ly_xx <= bot_xx
+        bbox_ex = top_ex <= y_lo and y_hi <= bot_ex
+        bbox_xx = top_xx <= y_lo and y_hi <= bot_xx
+        print(f"  span {i}: [{xlo},{xhi}) tfn={tfn} bfn={bfn}{gap}")
+        print(f"    entry x={ex}: top={top_ex} bot={bot_ex} ly={ly_ex} bbox={'OK' if bbox_ex else 'FAIL'} exact={'OK' if pass_ex else 'FAIL'}")
+        print(f"    exit  x={xx}: top={top_xx} bot={bot_xx} ly={ly_xx} bbox={'OK' if bbox_xx else 'FAIL'} exact={'OK' if pass_xx else 'FAIL'}")
+
+        if i + 1 < len(active) and active[i][1] == active[i+1][0]:
+            nx = xhi
+            n_tfn, n_bfn = active[i+1][2], active[i+1][3]
+            pt = max(fp_eval(tfn, nx), fp_eval(n_tfn, nx))
+            pb = min(fp_eval(bfn, nx), fp_eval(n_bfn, nx))
+            ly_nx = ly_at(nx)
+            pass_p = pt <= ly_nx <= pb
+            bbox_p = pt <= y_lo and y_hi <= pb
+            print(f"    portal x={nx}: top={pt} bot={pb} ly={ly_nx} bbox={'OK' if bbox_p else 'FAIL'} exact={'OK' if pass_p else 'FAIL'}")
+    print("=== end ===\n")
+
 
 def _draw_debug_step(surface):
     """Draw the debug view for the current step."""
@@ -1707,7 +1815,10 @@ def _draw_debug_step(surface):
 
     # HUD
     hud_font.set_bold(False)
-    info = f"Step {idx+1}/{len(_debug_steps)}  line=({lx1},{ly1})->({lx2},{ly2})  segs={len(clipped)}  spans={len(spans)}"
+    ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
+    info = (f"({player_x:.0f},{player_y:.0f},{ang_display})  "
+            f"Step {idx+1}/{len(_debug_steps)}  line=({lx1},{ly1})->({lx2},{ly2})  "
+            f"segs={len(clipped)}  spans={len(spans)}")
     surface.blit(hud_font.render(info, True, (255, 255, 0)), (4, 4))
 
 
@@ -1740,6 +1851,8 @@ while running:
                 if _debug_mode:
                     _record_frame_steps()
                     _debug_idx = 0
+            elif ev.key == pygame.K_p and _debug_mode and _debug_steps:
+                _dump_portal_analysis()
             elif ev.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
                 if _debug_mode:
                     _debug_idx = min(_debug_idx + 1, len(_debug_steps) - 1)
