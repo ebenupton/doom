@@ -681,13 +681,24 @@ class FPClipSpans:
                     xlo, xhi, tfn, bfn = _vs[:4]
                     if xlo <= ix < xhi:
                         found_span = True
-                        # 8.8 precision clip: compare in 8.8, truncate only at draw
+                        y_lo_v = min(ly1, ly2)
+                        y_hi_v = max(ly1, ly2)
+                        # Trivial accept via precomputed inner bbox (0 muls)
+                        if y_lo_v >= _vs[4] and y_hi_v <= _vs[5]:
+                            pygame.draw.line(surface, _rand_color(),
+                                             (ix, y_lo_v), (ix, y_hi_v), 1)
+                            drawn = True
+                            break
+                        # Trivial reject
+                        if y_hi_v < _vs[4] or y_lo_v > _vs[5]:
+                            break
+                        # Precise clip with 8.8 precision
                         yt_88 = fp_eval_88(tfn, ix)
                         yb_88 = fp_eval_88(bfn, ix)
                         if yt_88 >= yb_88:
                             break
-                        ya_orig_88 = min(ly1, ly2) << 8
-                        yb_orig_88 = max(ly1, ly2) << 8
+                        ya_orig_88 = y_lo_v << 8
+                        yb_orig_88 = y_hi_v << 8
                         ya_88 = max(ya_orig_88, yt_88)
                         ybb_88 = min(yb_orig_88, yb_88)
                         if ya_88 < ybb_88:
