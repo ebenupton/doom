@@ -264,7 +264,8 @@ class ClipSpans:
                     if stats is not None: stats[3] += 1
                     continue
                 found_span = False
-                for xlo, xhi, tfn, bfn in self.spans:
+                for _vs in self.spans:
+                    xlo, xhi, tfn, bfn = _vs[:4]
                     if xlo <= ix < xhi:
                         found_span = True
                         yt, yb = _eval(tfn, ix), _eval(bfn, ix)
@@ -619,8 +620,22 @@ class FPClipSpans:
     """
     __slots__ = ("spans",)
 
+    @staticmethod
+    def _make_span(xlo, xhi, tfn, bfn):
+        """Create span tuple with precomputed inner bbox (uses fp_eval)."""
+        if xlo >= xhi:
+            return None
+        # Inner bbox: tightest axis-aligned rect inside the trap
+        top_l = fp_eval(tfn, xlo)
+        top_r = fp_eval(tfn, xhi - 1)
+        bot_l = fp_eval(bfn, xlo)
+        bot_r = fp_eval(bfn, xhi - 1)
+        inner_top = max(top_l, top_r)
+        inner_bot = min(bot_l, bot_r)
+        return (xlo, xhi, tfn, bfn, inner_top, inner_bot)
+
     def __init__(self):
-        self.spans = [(0, FP_RENDER_W, FP_ZERO_FN, FP_BOT_FN)]
+        self.spans = [self._make_span(0, FP_RENDER_W, FP_ZERO_FN, FP_BOT_FN)]
 
     def is_full(self):
         return not self.spans
@@ -632,16 +647,14 @@ class FPClipSpans:
         """
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W - 1, hi)
-        for xlo, xhi, tfn, bfn in self.spans:
+        for s in self.spans:
+            xlo, xhi = s[0], s[1]
             if xlo > ihi:
                 break
             if xhi <= ilo:
                 continue
-            clo = max(xlo, ilo)
-            chi = min(xhi - 1, ihi)
-            if fp_eval(tfn, clo) < fp_eval(bfn, clo):
-                return True
-            if clo != chi and fp_eval(tfn, chi) < fp_eval(bfn, chi):
+            # Quick check via precomputed inner bbox
+            if s[4] < s[5]:  # inner_top < inner_bot → aperture exists
                 return True
         return False
 
@@ -664,7 +677,8 @@ class FPClipSpans:
                         stats[3] += 1
                     continue
                 found_span = False
-                for xlo, xhi, tfn, bfn in self.spans:
+                for _vs in self.spans:
+                    xlo, xhi, tfn, bfn = _vs[:4]
                     if xlo <= ix < xhi:
                         found_span = True
                         # 8.8 precision clip: compare in 8.8, truncate only at draw
@@ -746,35 +760,14 @@ class FPClipSpans:
                 for group in groups:
                     # Single-span: trivial reject/accept cascade (0 muls fast path).
                     if len(group) == 1:
-                        xlo, xhi, tfn, bfn = group[0]
+                        xlo, xhi, tfn, bfn = group[0][:4]
                         ex = max(xl, xlo)
                         xx = min(xr, xhi - 1)
-                        # Conservative inner bbox using slope sign (0 FP muls).
-                        # slope is 0.8: at x=255, boundary ≈ intercept + slope.
-                        # inner = tightest bound; loose = loosest bound.
-                        con_top = tfn[1] + max(0, tfn[0])    # worst-case top
-                        con_bot = bfn[1] + min(0, bfn[0])    # worst-case bot
-                        loose_top = tfn[1] + min(0, tfn[0])   # best-case top
-                        loose_bot = bfn[1] + max(0, bfn[0])   # best-case bot
-                        if y_hi < loose_top or y_lo > loose_bot:
-                            # Line entirely outside even the loosest bound
-                            continue
-                        if y_lo >= con_top and y_hi <= con_bot:
-                            # Line inside conservative inner bbox (0 muls)
-                            trivial = True
-                        elif tfn[0] == 0 and bfn[0] == 0:
-                            # Flat span: conservative == exact, already checked
-                            trivial = False
-                        else:
-                            # Precise check with fp_eval (1-4 muls)
-                            top_ex = tfn[1] if tfn[0] == 0 else fp_eval(tfn, ex)
-                            bot_ex = bfn[1] if bfn[0] == 0 else fp_eval(bfn, ex)
-                            top_xx = tfn[1] if tfn[0] == 0 else fp_eval(tfn, xx)
-                            bot_xx = bfn[1] if bfn[0] == 0 else fp_eval(bfn, xx)
-                            if y_hi < min(top_ex, top_xx) or y_lo > max(bot_ex, bot_xx):
-                                continue
-                            trivial = (y_lo >= top_ex and y_hi <= bot_ex and
-                                       y_lo >= top_xx and y_hi <= bot_xx)
+                        # Check against precomputed inner bbox (0 muls at check time).
+                        inner_top, inner_bot = group[0][4], group[0][5]
+                        if y_hi < inner_top - (inner_bot - inner_top) or y_lo > inner_bot + (inner_bot - inner_top):
+                            continue  # trivial reject (very loose)
+                        trivial = y_lo >= inner_top and y_hi <= inner_bot
                         if trivial:
                             # Fully inside — draw original line clamped to span
                             draw_yl = _line_y_at(ex) if ex != xl else yl
@@ -786,20 +779,16 @@ class FPClipSpans:
                             drawn = True
                             continue
                         # Need CB clipping
-                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[0])
+                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[0][:4])
                         if c:
                             pygame.draw.line(surface, _rand_color(),
                                              (c[0], c[1]), (c[2], c[3]), 1)
                             drawn = True
                         continue
 
-                    # Multi-span: try conservative bbox across all spans first (0 muls).
-                    group_inner_top = max(s[2][1] + max(0, s[2][0]) for s in group)
-                    group_inner_bot = min(s[3][1] + min(0, s[3][0]) for s in group)
-                    group_loose_top = min(s[2][1] + min(0, s[2][0]) for s in group)
-                    group_loose_bot = max(s[3][1] + max(0, s[3][0]) for s in group)
-                    if y_hi < group_loose_top or y_lo > group_loose_bot:
-                        continue  # trivial reject
+                    # Multi-span: use precomputed inner bbox per span (0 muls at check time).
+                    group_inner_top = max(s[4] for s in group)
+                    group_inner_bot = min(s[5] for s in group)
                     if y_lo >= group_inner_top and y_hi <= group_inner_bot:
                         # Trivial accept: line fully inside all spans (0 muls)
                         draw_xl = max(xl, group[0][0])
@@ -818,13 +807,13 @@ class FPClipSpans:
                     c_first, c_last = None, None
                     fi, li = 0, len(group) - 1
                     for fi in range(len(group)):
-                        c_first = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[fi])
+                        c_first = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[fi][:4])
                         if c_first: break
                     if not c_first:
                         continue
                     # Scan from right for last visible span
                     for li in range(len(group) - 1, fi, -1):
-                        c_last = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[li])
+                        c_last = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[li][:4])
                         if c_last: break
                     if not c_last:
                         # Only fi produced output
@@ -842,7 +831,7 @@ class FPClipSpans:
                     else:
                         # Portal failed — per-span CB for visible range
                         for si in range(fi, li + 1):
-                            c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[si])
+                            c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[si][:4])
                             if c:
                                 pygame.draw.line(surface, _rand_color(),
                                                  (c[0], c[1]),
@@ -861,14 +850,16 @@ class FPClipSpans:
         if ilo >= ihi:
             return
         new = []
-        for xlo, xhi, tfn, bfn in self.spans:
+        for s in self.spans:
+            xlo, xhi = s[0], s[1]
             if xhi <= ilo or xlo >= ihi:
-                new.append((xlo, xhi, tfn, bfn))
+                new.append(s)
                 continue
+            # Inherit parent's inner bbox (conservative for narrower spans, 0 muls)
             if xlo < ilo:
-                new.append((xlo, ilo, tfn, bfn))
+                new.append((xlo, ilo, s[2], s[3], s[4], s[5]))
             if ihi < xhi:
-                new.append((ihi, xhi, tfn, bfn))
+                new.append((ihi, xhi, s[2], s[3], s[4], s[5]))
         self.spans = new
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
@@ -880,22 +871,32 @@ class FPClipSpans:
         new_tfn = fp_linfn(yt1, yt2, sx1, sx2)
         new_bfn = fp_linfn(yb1, yb2, sx1, sx2)
         new = []
-        for xlo, xhi, tfn, bfn in self.spans:
+        for s in self.spans:
+            xlo, xhi = s[0], s[1]
+            tfn, bfn = s[2], s[3]
             if xhi <= ilo or xlo >= ihi:
-                new.append((xlo, xhi, tfn, bfn))
+                new.append(s)
                 continue
             if xlo < ilo:
-                new.append((xlo, ilo, tfn, bfn))
-            right = (ihi, xhi, tfn, bfn) if ihi < xhi else None
+                # Inherit parent's inner bbox (conservative, 0 muls)
+                new.append((xlo, ilo, tfn, bfn, s[4], s[5]))
+            right_s = (ihi, xhi, tfn, bfn, s[4], s[5]) if ihi < xhi else None
             ox0, ox1 = max(xlo, ilo), min(xhi, ihi)
             for tx0, tx1, t_fn in _fp_pw_max(tfn, new_tfn, ox0, ox1):
                 for bx0, bx1, b_fn in _fp_pw_min(bfn, new_bfn, tx0, tx1):
                     if bx1 > bx0:
-                        if (fp_eval(t_fn, bx0) < fp_eval(b_fn, bx0) or
-                            fp_eval(t_fn, bx1 - 1) < fp_eval(b_fn, bx1 - 1)):
-                            new.append((bx0, bx1, t_fn, b_fn))
-            if right:
-                new.append(right)
+                        # These fp_evals are already needed for the aperture check;
+                        # capture them for the inner bbox (0 extra muls).
+                        t0 = fp_eval(t_fn, bx0)
+                        b0 = fp_eval(b_fn, bx0)
+                        t1 = fp_eval(t_fn, bx1 - 1)
+                        b1 = fp_eval(b_fn, bx1 - 1)
+                        if t0 < b0 or t1 < b1:
+                            inner_top = max(t0, t1)
+                            inner_bot = min(b0, b1)
+                            new.append((bx0, bx1, t_fn, b_fn, inner_top, inner_bot))
+            if right_s:
+                new.append(right_s)
         self.spans = new
 
 
@@ -1608,7 +1609,7 @@ def _compare_draw_calls():
     if diffs == 0:
         print("  No differences found!")
     print(f"Total differing segs: {diffs}")
-    print("=== end ===\n")
+    print("=== end ===\n", flush=True)
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────
@@ -1714,16 +1715,17 @@ def _record_frame_steps():
     pygame.draw.line = _real_drawline
 
 def _dump_portal_analysis():
-    """Print detailed portal walk analysis for the current debug step."""
+    """Write detailed portal walk analysis to doom_debug.txt."""
+    _df = open("doom_debug.txt", "a")
     idx = max(0, min(_debug_idx, len(_debug_steps) - 1))
     step = _debug_steps[idx]
     input_line, spans, clipped = step[0], step[1], step[2]
     step_muls = step[3] if len(step) > 3 else 0
     lx1, ly1, lx2, ly2 = input_line
-    print(f"\n=== Portal analysis step {idx+1}/{len(_debug_steps)} muls={step_muls} ===")
-    print(f"Line: ({lx1},{ly1}) -> ({lx2},{ly2})")
-    print(f"Clipped into {len(clipped)} segments: {clipped}")
-    print(f"Spans ({len(spans)}):")
+    w = _df.write
+    w(f"Line: ({lx1},{ly1}) -> ({lx2},{ly2})\n")
+    w(f"Clipped into {len(clipped)} segments: {clipped}\n")
+    w(f"Spans ({len(spans)}):\n")
 
     if lx1 <= lx2:
         xl, yl_w, xr, yr_w = lx1, ly1, lx2, ly2
@@ -1737,11 +1739,10 @@ def _dump_portal_analysis():
         if dx == 0: return yl_w
         return yl_w + (yr_w - yl_w) * (x - xl) // dx
 
-    active = [(xlo, xhi, tfn, bfn) for xlo, xhi, tfn, bfn in spans
-              if xhi > xl and xlo < xr]
+    active = [s for s in spans if s[1] > xl and s[0] < xr]
 
-    # Show spans and contiguity
-    for i, (xlo, xhi, tfn, bfn) in enumerate(active):
+    for i, _as in enumerate(active):
+        xlo, xhi, tfn, bfn = _as[:4]
         gap = ""
         if i > 0 and active[i-1][1] != xlo:
             gap = f"  ** GAP {active[i-1][1]}-{xlo} **"
@@ -1757,9 +1758,9 @@ def _dump_portal_analysis():
         pass_xx = top_xx <= ly_xx <= bot_xx
         bbox_ex = top_ex <= y_lo and y_hi <= bot_ex
         bbox_xx = top_xx <= y_lo and y_hi <= bot_xx
-        print(f"  span {i}: [{xlo},{xhi}) tfn={tfn} bfn={bfn}{gap}")
-        print(f"    entry x={ex}: top={top_ex} bot={bot_ex} ly={ly_ex} bbox={'OK' if bbox_ex else 'FAIL'} exact={'OK' if pass_ex else 'FAIL'}")
-        print(f"    exit  x={xx}: top={top_xx} bot={bot_xx} ly={ly_xx} bbox={'OK' if bbox_xx else 'FAIL'} exact={'OK' if pass_xx else 'FAIL'}")
+        w(f"  span {i}: [{xlo},{xhi}) tfn={tfn} bfn={bfn}{gap}\n")
+        w(f"    entry x={ex}: top={top_ex} bot={bot_ex} ly={ly_ex} bbox={'OK' if bbox_ex else 'FAIL'} exact={'OK' if pass_ex else 'FAIL'}\n")
+        w(f"    exit  x={xx}: top={top_xx} bot={bot_xx} ly={ly_xx} bbox={'OK' if bbox_xx else 'FAIL'} exact={'OK' if pass_xx else 'FAIL'}\n")
 
         if i + 1 < len(active) and active[i][1] == active[i+1][0]:
             nx = xhi
@@ -1769,8 +1770,9 @@ def _dump_portal_analysis():
             ly_nx = ly_at(nx)
             pass_p = pt <= ly_nx <= pb
             bbox_p = pt <= y_lo and y_hi <= pb
-            print(f"    portal x={nx}: top={pt} bot={pb} ly={ly_nx} bbox={'OK' if bbox_p else 'FAIL'} exact={'OK' if pass_p else 'FAIL'}")
-    print("=== end ===\n")
+            w(f"    portal x={nx}: top={pt} bot={pb} ly={ly_nx} bbox={'OK' if bbox_p else 'FAIL'} exact={'OK' if pass_p else 'FAIL'}\n")
+    w("=== end ===\n\n")
+    _df.close()
 
 
 def _draw_debug_step(surface):
@@ -1796,7 +1798,8 @@ def _draw_debug_step(surface):
     _trap_hues = [(40, 40, 180), (60, 100, 160), (30, 70, 200),
                   (80, 50, 170), (50, 90, 140), (70, 60, 190),
                   (40, 110, 150), (90, 40, 180)]
-    for si, (xlo, xhi, tfn, bfn) in enumerate(spans):
+    for si, span_s in enumerate(spans):
+        xlo, xhi, tfn, bfn = span_s[:4]
         x0, x1 = xlo * FP_SCALE, (xhi - 1) * FP_SCALE
         yt0 = fp_eval(tfn, xlo) * FP_SCALE
         yt1 = fp_eval(tfn, xhi - 1) * FP_SCALE
@@ -1878,16 +1881,25 @@ while running:
                 if _debug_mode:
                     _record_frame_steps()
                     _debug_idx = 0
+                    # Auto-dump all steps to doom_debug.txt
+                    with open("doom_debug.txt", "w") as _gf:
+                        _gf.write(f"Position: ({player_x:.0f},{player_y:.0f},{angle_byte})\n")
+                        _gf.write(f"Total steps: {len(_debug_steps)}\n\n")
+                        for _gi, _gs in enumerate(_debug_steps):
+                            _m = _gs[3] if len(_gs) > 3 else 0
+                            _gf.write(f"Step {_gi+1}: line={_gs[0]} draws={len(_gs[2])} muls={_m}\n")
             elif ev.key == pygame.K_p and _debug_mode and _debug_steps:
                 _dump_portal_analysis()
             elif ev.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
                 if _debug_mode:
                     _debug_idx = min(_debug_idx + 1, len(_debug_steps) - 1)
+                    _dump_portal_analysis()
                 else:
                     _map_scale = _map_scale * 1.5
             elif ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                 if _debug_mode:
                     _debug_idx = max(_debug_idx - 1, 0)
+                    _dump_portal_analysis()
                 else:
                     _map_scale = _map_scale / 1.5
 
