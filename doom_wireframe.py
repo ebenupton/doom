@@ -855,11 +855,12 @@ class FPClipSpans:
             if xhi <= ilo or xlo >= ihi:
                 new.append(s)
                 continue
-            # Inherit parent's inner bbox (conservative for narrower spans, 0 muls)
             if xlo < ilo:
-                new.append((xlo, ilo, s[2], s[3], s[4], s[5]))
+                ns = self._make_span(xlo, ilo, s[2], s[3])
+                if ns: new.append(ns)
             if ihi < xhi:
-                new.append((ihi, xhi, s[2], s[3], s[4], s[5]))
+                ns = self._make_span(ihi, xhi, s[2], s[3])
+                if ns: new.append(ns)
         self.spans = new
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
@@ -878,9 +879,9 @@ class FPClipSpans:
                 new.append(s)
                 continue
             if xlo < ilo:
-                # Inherit parent's inner bbox (conservative, 0 muls)
-                new.append((xlo, ilo, tfn, bfn, s[4], s[5]))
-            right_s = (ihi, xhi, tfn, bfn, s[4], s[5]) if ihi < xhi else None
+                ns = self._make_span(xlo, ilo, tfn, bfn)
+                if ns: new.append(ns)
+            right_s = self._make_span(ihi, xhi, tfn, bfn) if ihi < xhi else None
             ox0, ox1 = max(xlo, ilo), min(xhi, ihi)
             for tx0, tx1, t_fn in _fp_pw_max(tfn, new_tfn, ox0, ox1):
                 for bx0, bx1, b_fn in _fp_pw_min(bfn, new_bfn, tx0, tx1):
