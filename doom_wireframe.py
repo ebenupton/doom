@@ -5,7 +5,7 @@ import struct, math, sys, random, pygame
 import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
-                fp_recip_x, fp_recip_y, fp_project_x, fp_project_x_subpx, fp_project_y,
+                fp_recip, fp_project_x, fp_project_x_subpx, fp_project_y,
                 fp_linfn, fp_eval, fp_eval_88, fp_view_context, fp_to_view, fp_near_clip, fp_clip_to_trap,
                 FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
@@ -59,7 +59,11 @@ for t in things:
 # ── Prescaled data for 8-bit fixed-point path ───────────────────────────
 #
 # Center on map and divide by 8 so all vertex/height values fit in 8 bits.
-# Heights are also divided by 8 (same as XY) so projection is scale-invariant.
+# Heights are prescaled by (PRESCALE / 1.2) instead of PRESCALE, baking in
+# the 1.2x aspect ratio correction.  This allows a single reciprocal table
+# for both X and Y projection.
+
+from fp import ASPECT_NUM, ASPECT_DEN
 
 fp_vertexes = [
     ((v[0] - MAP_CENTER_X) // PRESCALE,
@@ -67,8 +71,12 @@ fp_vertexes = [
     for v in vertexes
 ]
 
+def _prescale_height(h):
+    """Prescale a height value with 1.2x aspect baked in."""
+    return (h * ASPECT_NUM + ASPECT_DEN // 2) // (PRESCALE * ASPECT_DEN)
+
 fp_sectors = [
-    (s[0] // PRESCALE, s[1] // PRESCALE, *s[2:])
+    (_prescale_height(s[0]), _prescale_height(s[1]), *s[2:])
     for s in sectors
 ]
 
@@ -274,86 +282,23 @@ class ClipSpans:
                 if not drawn and stats is not None:
                     stats[3 if not found_span else 4] += 1
             else:
-                # Order left-to-right for portal walk
-                if lx1 <= lx2:
-                    xl, yl_l, xr, yr_l = lx1, ly1, lx2, ly2
-                else:
-                    xl, yl_l, xr, yr_l = lx2, ly2, lx1, ly1
-                f_dx = xr - xl
-                y_lo_f = min(yl_l, yr_l)
-                y_hi_f = max(yl_l, yr_l)
-
-                def _fline_y_at(x):
-                    if abs(f_dx) < 0.5: return yl_l
-                    return yl_l + (yr_l - yl_l) * (x - xl) / f_dx
-
-                # Collect overlapping spans
-                active = []
+                # Float path: simple per-span Cyrus-Beck (no portal walk).
+                x_min, x_max = min(lx1, lx2), max(lx1, lx2)
+                overlaps_any = False
                 for xlo, xhi, tfn, bfn in self.spans:
-                    if xhi > xl and xlo < xr:
-                        active.append((xlo, xhi, tfn, bfn))
-
-                if not active:
-                    if stats is not None:
-                        stats[3] += 1
-                    continue
-
-                # Split into contiguous groups
-                groups = []
-                cur = [active[0]]
-                for i in range(1, len(active)):
-                    if active[i - 1][1] == active[i][0]:
-                        cur.append(active[i])
-                    else:
-                        groups.append(cur)
-                        cur = [active[i]]
-                groups.append(cur)
-
-                def _fportal_ok_range(group, lo, hi):
-                    for i in range(lo, hi):
-                        xhi_g = group[i][1]
-                        tfn_g, bfn_g = group[i][2], group[i][3]
-                        n_tfn, n_bfn = group[i+1][2], group[i+1][3]
-                        pt = max(_eval(tfn_g, xhi_g), _eval(n_tfn, xhi_g))
-                        pb = min(_eval(bfn_g, xhi_g), _eval(n_bfn, xhi_g))
-                        if y_lo_f < pt or y_hi_f > pb:
-                            ly = _fline_y_at(xhi_g)
-                            if ly < pt or ly > pb:
-                                return False
-                    return True
-
-                for group in groups:
-                    c_first, c_last = None, None
-                    fi, li = 0, len(group) - 1
-                    for fi in range(len(group)):
-                        c_first = _clip_to_trap(lx1, ly1, lx2, ly2, *group[fi])
-                        if c_first: break
-                    for li in range(len(group) - 1, fi - 1, -1):
-                        c_last = _clip_to_trap(lx1, ly1, lx2, ly2, *group[li])
-                        if c_last: break
-                    if not c_first:
+                    if xhi <= x_min or xlo >= x_max:
                         continue
-                    if fi == li:
+                    overlaps_any = True
+                    c = _clip_to_trap(lx1, ly1, lx2, ly2,
+                                      xlo, xhi, tfn, bfn)
+                    if c:
                         pygame.draw.line(surface, _rand_color(),
-                                         (int(c_first[0]), int(c_first[1])),
-                                         (int(c_first[2]), int(c_first[3])), 1)
+                                         (int(c[0]), int(c[1])),
+                                         (int(c[2]), int(c[3])), 1)
                         drawn = True
-                    elif _fportal_ok_range(group, fi, li):
-                        pygame.draw.line(surface, _rand_color(),
-                                         (int(c_first[0]), int(c_first[1])),
-                                         (int(c_last[2]), int(c_last[3])), 1)
-                        drawn = True
-                    else:
-                        for si in range(fi, li + 1):
-                            c = _clip_to_trap(lx1, ly1, lx2, ly2, *group[si])
-                            if c:
-                                pygame.draw.line(surface, _rand_color(),
-                                                 (int(c[0]), int(c[1])),
-                                                 (int(c[2]), int(c[3])), 1)
-                                drawn = True
-                                was_clipped = True
+                        was_clipped = True
                 if not drawn and stats is not None:
-                    stats[3 if not active else 4] += 1
+                    stats[3 if not overlaps_any else 4] += 1
             if drawn and stats is not None:
                 stats[2 if was_clipped else 1] += 1
 
@@ -771,6 +716,8 @@ class FPClipSpans:
                     if dx == 0: return yl
                     return yl + (yr - yl) * (x - xl) // dx
 
+                # No _dev needed — use slope directly as 0.8 deviation
+
                 def _portal_ok_range(group, lo, hi):
                     """Check portals between group[lo] and group[hi]."""
                     for i in range(lo, hi):
@@ -797,25 +744,96 @@ class FPClipSpans:
                 groups.append(cur_group)
 
                 for group in groups:
-                    # Find first and last spans with visible line (CB output).
-                    # Scan inward from both ends.
+                    # Single-span: trivial reject/accept cascade (0 muls fast path).
+                    if len(group) == 1:
+                        xlo, xhi, tfn, bfn = group[0]
+                        ex = max(xl, xlo)
+                        xx = min(xr, xhi - 1)
+                        # Conservative inner bbox using slope sign (0 FP muls).
+                        # slope is 0.8: at x=255, boundary ≈ intercept + slope.
+                        # inner = tightest bound; loose = loosest bound.
+                        con_top = tfn[1] + max(0, tfn[0])    # worst-case top
+                        con_bot = bfn[1] + min(0, bfn[0])    # worst-case bot
+                        loose_top = tfn[1] + min(0, tfn[0])   # best-case top
+                        loose_bot = bfn[1] + max(0, bfn[0])   # best-case bot
+                        if y_hi < loose_top or y_lo > loose_bot:
+                            # Line entirely outside even the loosest bound
+                            continue
+                        if y_lo >= con_top and y_hi <= con_bot:
+                            # Line inside conservative inner bbox (0 muls)
+                            trivial = True
+                        elif tfn[0] == 0 and bfn[0] == 0:
+                            # Flat span: conservative == exact, already checked
+                            trivial = False
+                        else:
+                            # Precise check with fp_eval (1-4 muls)
+                            top_ex = tfn[1] if tfn[0] == 0 else fp_eval(tfn, ex)
+                            bot_ex = bfn[1] if bfn[0] == 0 else fp_eval(bfn, ex)
+                            top_xx = tfn[1] if tfn[0] == 0 else fp_eval(tfn, xx)
+                            bot_xx = bfn[1] if bfn[0] == 0 else fp_eval(bfn, xx)
+                            if y_hi < min(top_ex, top_xx) or y_lo > max(bot_ex, bot_xx):
+                                continue
+                            trivial = (y_lo >= top_ex and y_hi <= bot_ex and
+                                       y_lo >= top_xx and y_hi <= bot_xx)
+                        if trivial:
+                            # Fully inside — draw original line clamped to span
+                            draw_yl = _line_y_at(ex) if ex != xl else yl
+                            draw_yr = _line_y_at(xx) if xx != xr else yr
+                            draw_yl = max(0, min(FP_RENDER_H - 1, draw_yl))
+                            draw_yr = max(0, min(FP_RENDER_H - 1, draw_yr))
+                            pygame.draw.line(surface, _rand_color(),
+                                             (ex, draw_yl), (xx, draw_yr), 1)
+                            drawn = True
+                            continue
+                        # Need CB clipping
+                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[0])
+                        if c:
+                            pygame.draw.line(surface, _rand_color(),
+                                             (c[0], c[1]), (c[2], c[3]), 1)
+                            drawn = True
+                        continue
+
+                    # Multi-span: try conservative bbox across all spans first (0 muls).
+                    group_inner_top = max(s[2][1] + max(0, s[2][0]) for s in group)
+                    group_inner_bot = min(s[3][1] + min(0, s[3][0]) for s in group)
+                    group_loose_top = min(s[2][1] + min(0, s[2][0]) for s in group)
+                    group_loose_bot = max(s[3][1] + max(0, s[3][0]) for s in group)
+                    if y_hi < group_loose_top or y_lo > group_loose_bot:
+                        continue  # trivial reject
+                    if y_lo >= group_inner_top and y_hi <= group_inner_bot:
+                        # Trivial accept: line fully inside all spans (0 muls)
+                        draw_xl = max(xl, group[0][0])
+                        draw_xr = min(xr, group[-1][1] - 1)
+                        draw_yl = _line_y_at(draw_xl) if draw_xl != xl else yl
+                        draw_yr = _line_y_at(draw_xr) if draw_xr != xr else yr
+                        draw_yl = max(0, min(FP_RENDER_H - 1, draw_yl))
+                        draw_yr = max(0, min(FP_RENDER_H - 1, draw_yr))
+                        pygame.draw.line(surface, _rand_color(),
+                                         (draw_xl, draw_yl),
+                                         (draw_xr, draw_yr), 1)
+                        drawn = True
+                        continue
+
+                    # Scan inward for first and last visible spans
                     c_first, c_last = None, None
                     fi, li = 0, len(group) - 1
                     for fi in range(len(group)):
                         c_first = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[fi])
                         if c_first: break
-                    for li in range(len(group) - 1, fi - 1, -1):
+                    if not c_first:
+                        continue
+                    # Scan from right for last visible span
+                    for li in range(len(group) - 1, fi, -1):
                         c_last = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[li])
                         if c_last: break
-                    if not c_first:
-                        continue  # no visible portion in this group
-                    if fi == li:
-                        # Single span — just draw it
+                    if not c_last:
+                        # Only fi produced output
                         pygame.draw.line(surface, _rand_color(),
                                          (c_first[0], c_first[1]),
                                          (c_first[2], c_first[3]), 1)
                         drawn = True
-                    elif _portal_ok_range(group, fi, li):
+                        continue
+                    if _portal_ok_range(group, fi, li):
                         # Portals pass — draw one line from first to last
                         pygame.draw.line(surface, _rand_color(),
                                          (c_first[0], c_first[1]),
@@ -1012,8 +1030,8 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
     # Reciprocals and X projection — cached per vertex (non-near-clipped only)
     idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
     idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
-    rxh1, rxl1 = fp_recip_x(idx1)
-    rxh2, rxl2 = fp_recip_x(idx2)
+    rxh1, rxl1 = fp_recip(idx1)
+    rxh2, rxl2 = fp_recip(idx2)
 
     fp_module.mul_cat("proj")
     p_before = fp_module.mul_counts["proj"]
@@ -1066,7 +1084,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
     if ey1 == evy1 and ykey1 in ycache:
         ft1, fb1, ryh1, ryl1 = ycache[ykey1]
     else:
-        ryh1, ryl1 = fp_recip_y(idx1)
+        ryh1, ryl1 = fp_recip(idx1)
         ft1 = fp_project_y(ch - vz, ryh1, ryl1)
         fb1 = fp_project_y(fh - vz, ryh1, ryl1)
         if ey1 == evy1:
@@ -1077,7 +1095,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
     if ey2 == evy2 and ykey2 in ycache:
         ft2, fb2, ryh2, ryl2 = ycache[ykey2]
     else:
-        ryh2, ryl2 = fp_recip_y(idx2)
+        ryh2, ryl2 = fp_recip(idx2)
         ft2 = fp_project_y(ch - vz, ryh2, ryl2)
         fb2 = fp_project_y(fh - vz, ryh2, ryl2)
         if ey2 == evy2:
@@ -1508,7 +1526,7 @@ def _compare_draw_calls():
     fp_module.mul_reset()
     px_88 = int((player_x - MAP_CENTER_X) * 256 / PRESCALE)
     py_88 = int((player_y - MAP_CENTER_Y) * 256 / PRESCALE)
-    vz_ps = (player_floor(player_x, player_y) + 41) // PRESCALE
+    vz_ps = _prescale_height(player_floor(player_x, player_y) + 41)
     sc = fp_sincos(angle_byte)
     ctx = fp_view_context(px_88, py_88, sc)
     cos_f, sin_f = cos_a, sin_a
@@ -1656,7 +1674,7 @@ def _record_frame_steps():
     fp_module.mul_reset()
     px_88 = int((player_x - MAP_CENTER_X) * 256 / PRESCALE)
     py_88 = int((player_y - MAP_CENTER_Y) * 256 / PRESCALE)
-    vz_ps = (player_floor(player_x, player_y) + 41) // PRESCALE
+    vz_ps = _prescale_height(player_floor(player_x, player_y) + 41)
     sc = fp_sincos(angle_byte)
     ctx = fp_view_context(px_88, py_88, sc)
 
@@ -1670,9 +1688,12 @@ def _record_frame_steps():
                 spans_snap = list(self.spans)
                 _rec_current_line[0] = (lx1, ly1, lx2, ly2)
                 _rec_draws.clear()
+                mul_before = sum(fp_module.mul_counts.values())
                 # Run the real draw logic (portal walk + CB fallback)
                 super().draw_clipped([(lx1, ly1, lx2, ly2)], color, surface, stats)
-                _debug_steps.append(((lx1, ly1, lx2, ly2), spans_snap, list(_rec_draws)))
+                mul_after = sum(fp_module.mul_counts.values())
+                _debug_steps.append(((lx1, ly1, lx2, ly2), spans_snap,
+                                     list(_rec_draws), mul_after - mul_before))
                 _rec_current_line[0] = None
 
     _orig_drawline = pygame.draw.line
@@ -1695,9 +1716,11 @@ def _record_frame_steps():
 def _dump_portal_analysis():
     """Print detailed portal walk analysis for the current debug step."""
     idx = max(0, min(_debug_idx, len(_debug_steps) - 1))
-    input_line, spans, clipped = _debug_steps[idx]
+    step = _debug_steps[idx]
+    input_line, spans, clipped = step[0], step[1], step[2]
+    step_muls = step[3] if len(step) > 3 else 0
     lx1, ly1, lx2, ly2 = input_line
-    print(f"\n=== Portal analysis step {idx+1}/{len(_debug_steps)} ===")
+    print(f"\n=== Portal analysis step {idx+1}/{len(_debug_steps)} muls={step_muls} ===")
     print(f"Line: ({lx1},{ly1}) -> ({lx2},{ly2})")
     print(f"Clipped into {len(clipped)} segments: {clipped}")
     print(f"Spans ({len(spans)}):")
@@ -1759,14 +1782,16 @@ def _draw_debug_step(surface):
 
     # Draw all lines up to this step in dim green
     for i in range(idx):
-        _, _, clipped = _debug_steps[i]
+        clipped = _debug_steps[i][2]
         for c in clipped:
             _real_drawline(surface, (0, 60, 0),
                            (c[0] * FP_SCALE, c[1] * FP_SCALE),
                            (c[2] * FP_SCALE, c[3] * FP_SCALE), 1)
 
     # Draw the clip region at this step as blue alpha overlay
-    input_line, spans, clipped = _debug_steps[idx]
+    step = _debug_steps[idx]
+    input_line, spans, clipped = step[0], step[1], step[2]
+    step_muls = step[3] if len(step) > 3 else 0
     clip_surf = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
     _trap_hues = [(40, 40, 180), (60, 100, 160), (30, 70, 200),
                   (80, 50, 170), (50, 90, 140), (70, 60, 190),
@@ -1816,9 +1841,11 @@ def _draw_debug_step(surface):
     # HUD
     hud_font.set_bold(False)
     ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
+    cum_muls = sum(s[3] if len(s) > 3 else 0 for s in _debug_steps[:idx+1])
     info = (f"({player_x:.0f},{player_y:.0f},{ang_display})  "
             f"Step {idx+1}/{len(_debug_steps)}  line=({lx1},{ly1})->({lx2},{ly2})  "
-            f"segs={len(clipped)}  spans={len(spans)}")
+            f"{len(clipped)} draws  {len(spans)} spans  "
+            f"+{step_muls} muls (total {cum_muls})")
     surface.blit(hud_font.render(info, True, (255, 255, 0)), (4, 4))
 
 
@@ -1897,7 +1924,7 @@ while running:
         # Prescaled player position in 8.8 (sub-unit precision, smooth movement)
         px_88 = int((player_x - MAP_CENTER_X) * 256 / PRESCALE)
         py_88 = int((player_y - MAP_CENTER_Y) * 256 / PRESCALE)
-        vz_ps = (player_floor(player_x, player_y) + 41) // PRESCALE
+        vz_ps = _prescale_height(player_floor(player_x, player_y) + 41)
         # Un-prescaled position for BSP node traversal
         px_full = int(player_x)
         py_full = int(player_y)

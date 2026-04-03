@@ -195,10 +195,13 @@ def fp_cos(angle_byte):
 
 FP_RENDER_W = 256
 FP_RENDER_H = 160
-FP_FOCAL_X = FP_RENDER_W // 2              # 128
-FP_FOCAL_Y = int(FP_FOCAL_X * 1.2 + 0.5)  # 154
-HALF_W = FP_RENDER_W // 2   # 128
-HALF_H = FP_RENDER_H // 2   # 80
+FP_FOCAL_X = FP_RENDER_W // 2   # 128
+HALF_W = FP_RENDER_W // 2       # 128
+HALF_H = FP_RENDER_H // 2       # 80
+# Aspect ratio (1.2x) is baked into height prescaling, not the focal length.
+# This allows a single reciprocal table for both X and Y projection.
+ASPECT_NUM = 6    # 6/5 = 1.2
+ASPECT_DEN = 5
 
 # Reciprocal tables: 512 entries, 1 entry per integer vy (0..512).
 # A fractional bit is resolved by averaging adjacent 16-bit values
@@ -212,18 +215,17 @@ RECIP_TABLE_SIZE = 512  # covers vy 1..512 (prescaled; 8..4096 world units)
 
 _RECIP_X_HI = [0] * (RECIP_TABLE_SIZE + 1)  # +1 for averaging guard
 _RECIP_X_LO = [0] * (RECIP_TABLE_SIZE + 1)
-_RECIP_Y_HI = [0] * (RECIP_TABLE_SIZE + 1)
-_RECIP_Y_LO = [0] * (RECIP_TABLE_SIZE + 1)
 for _i in range(1, RECIP_TABLE_SIZE + 1):
     _rx = min((FP_FOCAL_X << (8 + RECIP_TABLE_BITS)) // _i, 0x7FFF)
-    _ry = min((FP_FOCAL_Y << (8 + RECIP_TABLE_BITS)) // _i, 0x7FFF)
     _RECIP_X_HI[_i] = _rx >> 8;  _RECIP_X_LO[_i] = _rx & 0xFF
-    _RECIP_Y_HI[_i] = _ry >> 8;  _RECIP_Y_LO[_i] = _ry & 0xFF
 _RECIP_X_HI[0] = 0x7F; _RECIP_X_LO[0] = 0xFF
-_RECIP_Y_HI[0] = 0x7F; _RECIP_Y_LO[0] = 0xFF
 
-def fp_recip_x(vy_idx):
-    """Returns (hi, lo) of 8.8 horizontal reciprocal.
+def fp_recip(vy_idx):
+    """Returns (hi, lo) of 8.8 reciprocal (FOCAL_X / vy).
+
+    Single table for both X and Y projection — the 1.2 aspect ratio
+    correction is baked into height prescaling instead.
+
     vy_idx: 9.1 index (1 fractional bit from vy).
     Integer part indexes the 512-entry table.  LSB averages with next
     entry using full 16-bit reconstruction (not separate byte averaging).
@@ -237,16 +239,9 @@ def fp_recip_x(vy_idx):
         return avg >> 8, avg & 0xFF
     return _RECIP_X_HI[i], _RECIP_X_LO[i]
 
-def fp_recip_y(vy_idx):
-    """Returns (hi, lo) of 8.8 vertical reciprocal."""
-    vy_idx = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx))
-    i = vy_idx >> 1
-    if vy_idx & 1:
-        val1 = (_RECIP_Y_HI[i] << 8) | _RECIP_Y_LO[i]
-        val2 = (_RECIP_Y_HI[i + 1] << 8) | _RECIP_Y_LO[i + 1]
-        avg = (val1 + val2) >> 1
-        return avg >> 8, avg & 0xFF
-    return _RECIP_Y_HI[i], _RECIP_Y_LO[i]
+# Backwards-compatible aliases
+fp_recip_x = fp_recip
+fp_recip_y = fp_recip
 
 # -- Projection helpers (two 8x8 multiplies each) ----------------------------
 
