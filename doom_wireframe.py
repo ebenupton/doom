@@ -622,17 +622,18 @@ class FPClipSpans:
 
     @staticmethod
     def _make_span(xlo, xhi, tfn, bfn):
-        """Create span tuple with precomputed inner bbox (uses fp_eval)."""
+        """Create span tuple with precomputed inner and outer bbox."""
         if xlo >= xhi:
             return None
-        # Inner bbox: tightest axis-aligned rect inside the trap
         top_l = fp_eval(tfn, xlo)
         top_r = fp_eval(tfn, xhi - 1)
         bot_l = fp_eval(bfn, xlo)
         bot_r = fp_eval(bfn, xhi - 1)
-        inner_top = max(top_l, top_r)
-        inner_bot = min(bot_l, bot_r)
-        return (xlo, xhi, tfn, bfn, inner_top, inner_bot)
+        inner_top = max(top_l, top_r)  # tightest ceiling (accept threshold)
+        inner_bot = min(bot_l, bot_r)  # tightest floor (accept threshold)
+        outer_top = min(top_l, top_r)  # loosest ceiling (reject threshold)
+        outer_bot = max(bot_l, bot_r)  # loosest floor (reject threshold)
+        return (xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot)
 
     def __init__(self):
         self.spans = [self._make_span(0, FP_RENDER_W, FP_ZERO_FN, FP_BOT_FN)]
@@ -683,14 +684,14 @@ class FPClipSpans:
                         found_span = True
                         y_lo_v = min(ly1, ly2)
                         y_hi_v = max(ly1, ly2)
-                        # Trivial accept via precomputed inner bbox (0 muls)
+                        # Trivial reject via outer bbox (0 muls)
+                        if y_hi_v < _vs[6] or y_lo_v > _vs[7]:
+                            break
+                        # Trivial accept via inner bbox (0 muls)
                         if y_lo_v >= _vs[4] and y_hi_v <= _vs[5]:
                             pygame.draw.line(surface, _rand_color(),
                                              (ix, y_lo_v), (ix, y_hi_v), 1)
                             drawn = True
-                            break
-                        # Trivial reject
-                        if y_hi_v < _vs[4] or y_lo_v > _vs[5]:
                             break
                         # Precise clip with 8.8 precision
                         yt_88 = fp_eval_88(tfn, ix)
@@ -774,11 +775,10 @@ class FPClipSpans:
                         xlo, xhi, tfn, bfn = group[0][:4]
                         ex = max(xl, xlo)
                         xx = min(xr, xhi - 1)
-                        # Check against precomputed inner bbox (0 muls at check time).
-                        inner_top, inner_bot = group[0][4], group[0][5]
-                        if y_hi < inner_top - (inner_bot - inner_top) or y_lo > inner_bot + (inner_bot - inner_top):
-                            continue  # trivial reject (very loose)
-                        trivial = y_lo >= inner_top and y_hi <= inner_bot
+                        # Check against precomputed bboxes (0 muls).
+                        if y_hi < group[0][6] or y_lo > group[0][7]:
+                            continue  # trivial reject via outer bbox
+                        trivial = y_lo >= group[0][4] and y_hi <= group[0][5]
                         if trivial:
                             # Fully inside — draw original line clamped to span
                             draw_yl = _line_y_at(ex) if ex != xl else yl
@@ -798,6 +798,12 @@ class FPClipSpans:
                         continue
 
                     # Multi-span: use precomputed inner bbox per span (0 muls at check time).
+                    # Trivial reject via outer bbox (loosest bounds across group)
+                    group_outer_top = min(s[6] for s in group)
+                    group_outer_bot = max(s[7] for s in group)
+                    if y_hi < group_outer_top or y_lo > group_outer_bot:
+                        continue
+                    # Trivial accept via inner bbox (tightest bounds across group)
                     group_inner_top = max(s[4] for s in group)
                     group_inner_bot = min(s[5] for s in group)
                     if y_lo >= group_inner_top and y_hi <= group_inner_bot:
@@ -904,9 +910,9 @@ class FPClipSpans:
                         t1 = fp_eval(t_fn, bx1 - 1)
                         b1 = fp_eval(b_fn, bx1 - 1)
                         if t0 < b0 or t1 < b1:
-                            inner_top = max(t0, t1)
-                            inner_bot = min(b0, b1)
-                            new.append((bx0, bx1, t_fn, b_fn, inner_top, inner_bot))
+                            new.append((bx0, bx1, t_fn, b_fn,
+                                        max(t0, t1), min(b0, b1),
+                                        min(t0, t1), max(b0, b1)))
             if right_s:
                 new.append(right_s)
         self.spans = new
