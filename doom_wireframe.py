@@ -1,5 +1,66 @@
 #!/usr/bin/env python3
-"""DOOM E1M1 wireframe renderer — BSP front-to-back with 2D trapezoid clip spans."""
+"""DOOM E1M1 wireframe renderer — BSP front-to-back with 2D trapezoid clip spans.
+
+COMMAND LIST ARCHITECTURE (planned)
+====================================
+
+The renderer can be split into front-end (BSP traversal) and back-end
+(clip + rasterise) communicating via a sequential command buffer (~2KB/frame).
+
+Commands:
+  DRAW_LINE      9B   cmd(1) x1(2) y1(2) x2(2) y2(2)
+  MARK_SOLID     5B   cmd(1) x_lo(2) x_hi(2)
+  TIGHTEN       17B   cmd(1) x_lo(2) x_hi(2) sx1(2) sx2(2) yt1(2) yt2(2) yb1(2) yb2(2)
+  END_SUBSECTOR  1B   cmd(1) — barrier: apply deferred clip updates
+
+Front-end (BSP processor):
+  - BSP walk, point_on_side, back-face test
+  - View transform, near-clip, projection (all cached via flat arrays)
+  - Determine seg type, emit DRAW_LINE commands
+  - Emit deferred MARK_SOLID / TIGHTEN after END_SUBSECTOR
+  - Maintain 32-byte coarse column bitmap for has_gap / is_full
+
+Back-end (clip + raster processor):
+  - Maintain precise clip spans (trapezoid list with inner/outer bbox)
+  - Process DRAW_LINE: trivial accept/reject, portal walk, Cyrus-Beck, rasterise
+  - Process MARK_SOLID: remove columns, recompute span inner/outer bbox
+  - Process TIGHTEN: narrow boundaries, detect dominance internally, merge spans
+  - Process END_SUBSECTOR: apply deferred ops from the preceding draw phase
+
+Key design issues resolved:
+
+1. has_gap is a synchronous query — solved by coarse column bitmap (32 bytes)
+   in the front-end.  One bit per screen column.  MARK_SOLID sets bits locally
+   when the command is emitted.  has_gap checks if any bits in [lo,hi] are
+   clear — O(1) byte-level operations.  Conservative: may over-traverse (enter
+   subtrees the precise back-end would reject) but never misses visible geometry.
+
+2. is_full — front-end checks if all 32 bitmap bytes are $FF.  Also
+   detectable by the back-end as a flag after MARK_SOLID/TIGHTEN.
+
+3. line_survives (tighten dominance) — moved entirely to back-end.  When
+   processing TIGHTEN, the back-end checks if new boundaries are more
+   restrictive than all existing span boundaries in the range.  If so, merge.
+   No front-end query needed.  More accurate than the front-end's approximate
+   line_survives check.
+
+4. Deferred draw ordering — END_SUBSECTOR acts as a barrier.  All DRAW_LINEs
+   in a subsector are processed before the clip updates that follow.
+
+5. Bitmap lag — deferred MARK_SOLID means the front-end bitmap updates at
+   subsector boundaries, not per-seg.  Within a subsector, the bitmap is stale.
+   Cost: a few extra segs processed before the bitmap catches up.  Acceptable
+   since within-subsector geometry is typically compact.
+
+6. 16-bit coordinates — off-screen projections (e.g. sy = -4746) require
+   s16 in DRAW_LINE and TIGHTEN.  Back-end clamps to screen at draw time.
+
+Architecture enables:
+  - Front-end and back-end on different processors (or pipelined on one)
+  - Back-end is self-contained FIFO processor, no callbacks
+  - Front-end never accesses clip spans — only its coarse bitmap
+  - Command buffer is small (~2KB) and strictly sequential
+"""
 
 import struct, math, sys, random, pygame
 from line6502 import estimate_line_cycles
