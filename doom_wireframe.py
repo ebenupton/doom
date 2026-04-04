@@ -1097,6 +1097,59 @@ class FPClipSpans:
         self.spans = new
 
 
+class PackedClipSpans(FPClipSpans):
+    """FPClipSpans backed by a RAM byte array.
+
+    Delegates all logic to FPClipSpans but syncs the spans list to/from
+    the packed byte array representation after every mutation.  The byte
+    array is the canonical storage — this class reads it on entry to each
+    method and writes it back after mutations.
+    """
+
+    def __init__(self, ram, spans_base):
+        super().__init__()
+        self._ram = ram
+        self._base = spans_base
+        # Write initial span to RAM
+        self._flush()
+
+    def _load(self):
+        """Load spans from RAM byte array into Python list."""
+        from wad_packed import read_all_spans
+        self.spans = read_all_spans(self._ram, self._base)
+
+    def _flush(self):
+        """Write Python span list back to RAM byte array."""
+        from wad_packed import write_all_spans
+        write_all_spans(self._ram, self._base, self.spans)
+
+    def is_full(self):
+        self._load()
+        return super().is_full()
+
+    def has_gap(self, lo, hi):
+        self._load()
+        return super().has_gap(lo, hi)
+
+    def draw_clipped(self, lines, color, surface, stats=None):
+        self._load()
+        super().draw_clipped(lines, color, surface, stats)
+
+    def mark_solid(self, lo, hi):
+        self._load()
+        super().mark_solid(lo, hi)
+        self._flush()
+
+    def tighten(self, *args, **kwargs):
+        self._load()
+        super().tighten(*args, **kwargs)
+        self._flush()
+
+    def line_survives(self, lx1, ly1, lx2, ly2):
+        self._load()
+        return super().line_survives(lx1, ly1, lx2, ly2)
+
+
 def _fp_pw_max(f, g, x0, x1):
     """Piecewise max of two 8-bit linear functions over [x0, x1).
 
@@ -1905,8 +1958,13 @@ def verify_packed(positions=None):
             for k in map_trace:
                 map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
             tmp.fill((0, 0, 0))
+            from wad_packed import spans_init_full
             p_ram = _packed_ram_new()
-            packed_render_bsp(len(nodes)-1, FPClipSpans(), ctx_p, vz_ps,
+            spans_base = packed_layout['ram_spans']
+            spans_init_full(p_ram, spans_base, FP_RENDER_W, FP_RENDER_H - 1)
+            packed_render_bsp(len(nodes)-1,
+                              PackedClipSpans(p_ram, spans_base),
+                              ctx_p, vz_ps,
                               int(px), int(py), cos_f, sin_f, tmp, p_ram)
             packed_result = list(_packed_draws)
 
@@ -2679,8 +2737,12 @@ def _main():
         sin_f = math.sin(ang_rad)
 
         if use_packed:
+            from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
-            packed_render_bsp(len(nodes) - 1, FPClipSpans(),
+            spans_base = packed_layout['ram_spans']
+            spans_init_full(p_ram, spans_base, FP_RENDER_W, FP_RENDER_H - 1)
+            packed_render_bsp(len(nodes) - 1,
+                              PackedClipSpans(p_ram, spans_base),
                               ctx, vz_ps,
                               px_full, py_full, cos_f, sin_f, fp_surface,
                               p_ram)

@@ -61,6 +61,39 @@ VC_VX = 0; VC_VY = 2; VC_VYIDX = 4; VC_SX = 6  # all s16/u16
 
 VWHCACHE_ENTRY = 2  # s16 screen_y (needs 16-bit for off-screen)
 
+# ── Clip spans (RAM) ───────────────────────────────────────────────────
+#
+# Flat byte array representation of the trapezoid clip span list.
+# Max 32 spans. Each span is 16 bytes (shift 4).
+#
+# Span entry (16 bytes):
+#   +0  u8   xlo
+#   +1  u8   xhi
+#   +2  s8   top_slope    (0.8 format)
+#   +3  s8   bot_slope    (0.8 format)
+#   +4  s16  top_intercept
+#   +6  s16  bot_intercept
+#   +8  s16  inner_top
+#   +10 s16  inner_bot
+#   +12 s16  outer_top
+#   +14 s16  outer_bot
+#
+# Header (2 bytes before span array):
+#   +0  u8   span_count
+#   +1  u8   reserved
+
+MAX_SPANS = 32
+SPAN_SIZE = 16      # shift 4
+SPAN_HDR = 2        # count + pad
+SPAN_TOTAL = SPAN_HDR + MAX_SPANS * SPAN_SIZE  # 514 bytes
+
+# Span field offsets
+SP_XLO = 0; SP_XHI = 1
+SP_TSLOPE = 2; SP_BSLOPE = 3
+SP_TINTERCEPT = 4; SP_BINTERCEPT = 6
+SP_INNER_TOP = 8; SP_INNER_BOT = 10
+SP_OUTER_TOP = 12; SP_OUTER_BOT = 14
+
 
 def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                  fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
@@ -190,7 +223,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     vcache_valid = (n_verts + 7) // 8
     vwh_cache_size = n_vwh * VWHCACHE_ENTRY
     vwh_valid = (n_vwh + 7) // 8
-    ram_size = vcache_size + vcache_valid + vwh_cache_size + vwh_valid
+    spans_offset = vcache_size + vcache_valid + vwh_cache_size + vwh_valid
+    ram_size = spans_offset + SPAN_TOTAL
 
     layout = {
         'n_verts': n_verts, 'n_nodes': n_nodes, 'n_ss': n_ss,
@@ -207,6 +241,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'ram_vcache_valid': vcache_size,
         'ram_vwh_cache': vcache_size + vcache_valid,
         'ram_vwh_valid': vcache_size + vcache_valid + vwh_cache_size,
+        'ram_spans': spans_offset,
         'ram_size': ram_size,
     }
 
@@ -252,6 +287,91 @@ def write_s16(arr, off, val):
 
 
 # ── Packed bitmap valid bits ────────────────────────────────────────────
+
+# ── Span array helpers ──────────────────────────────────────────────────
+
+def spans_init(ram, base):
+    """Initialise span array with one full-screen span."""
+    ram[base] = 1   # count = 1
+    o = base + SPAN_HDR
+    ram[o + SP_XLO] = 0
+    ram[o + SP_XHI] = 255  # FP_RENDER_W - 1... will be overwritten by caller
+    ram[o + SP_TSLOPE] = 0
+    ram[o + SP_BSLOPE] = 0
+    write_s16(ram, o + SP_TINTERCEPT, 0)
+    write_s16(ram, o + SP_BINTERCEPT, 159)
+    write_s16(ram, o + SP_INNER_TOP, 0)
+    write_s16(ram, o + SP_INNER_BOT, 159)
+    write_s16(ram, o + SP_OUTER_TOP, 0)
+    write_s16(ram, o + SP_OUTER_BOT, 159)
+
+def spans_init_full(ram, base, xhi, bot):
+    """Initialise span array: one span [0, xhi) top=0, bot=bot."""
+    ram[base] = 1
+    o = base + SPAN_HDR
+    ram[o + SP_XLO] = 0
+    ram[o + SP_XHI] = xhi & 0xFF
+    ram[o + SP_TSLOPE] = 0; ram[o + SP_BSLOPE] = 0
+    write_s16(ram, o + SP_TINTERCEPT, 0)
+    write_s16(ram, o + SP_BINTERCEPT, bot)
+    write_s16(ram, o + SP_INNER_TOP, 0)
+    write_s16(ram, o + SP_INNER_BOT, bot)
+    write_s16(ram, o + SP_OUTER_TOP, 0)
+    write_s16(ram, o + SP_OUTER_BOT, bot)
+
+def spans_count(ram, base):
+    return ram[base]
+
+def span_offset(base, i):
+    """Byte offset of span i in the array."""
+    return base + SPAN_HDR + i * SPAN_SIZE
+
+def read_span_tuple(ram, base, i):
+    """Read span i as a Python tuple (for compatibility with FPClipSpans code)."""
+    o = span_offset(base, i)
+    xlo = ram[o + SP_XLO]
+    xhi = ram[o + SP_XHI]
+    tfn = (read_s8(ram, o + SP_TSLOPE), read_s16(ram, o + SP_TINTERCEPT))
+    bfn = (read_s8(ram, o + SP_BSLOPE), read_s16(ram, o + SP_BINTERCEPT))
+    inner_top = read_s16(ram, o + SP_INNER_TOP)
+    inner_bot = read_s16(ram, o + SP_INNER_BOT)
+    outer_top = read_s16(ram, o + SP_OUTER_TOP)
+    outer_bot = read_s16(ram, o + SP_OUTER_BOT)
+    return (xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot)
+
+def write_span(ram, base, i, xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot):
+    """Write span i from components."""
+    o = span_offset(base, i)
+    ram[o + SP_XLO] = xlo & 0xFF
+    ram[o + SP_XHI] = xhi & 0xFF
+    ram[o + SP_TSLOPE] = tfn[0] & 0xFF
+    ram[o + SP_BSLOPE] = bfn[0] & 0xFF
+    write_s16(ram, o + SP_TINTERCEPT, tfn[1])
+    write_s16(ram, o + SP_BINTERCEPT, bfn[1])
+    write_s16(ram, o + SP_INNER_TOP, inner_top)
+    write_s16(ram, o + SP_INNER_BOT, inner_bot)
+    write_s16(ram, o + SP_OUTER_TOP, outer_top)
+    write_s16(ram, o + SP_OUTER_BOT, outer_bot)
+
+def write_span_from_tuple(ram, base, i, s):
+    """Write span i from an 8-tuple (as returned by read_span_tuple)."""
+    write_span(ram, base, i, s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7])
+
+def set_spans_count(ram, base, n):
+    ram[base] = n & 0xFF
+
+def read_all_spans(ram, base):
+    """Read all spans as a list of tuples (for FPClipSpans compatibility)."""
+    n = ram[base]
+    return [read_span_tuple(ram, base, i) for i in range(n)]
+
+def write_all_spans(ram, base, spans):
+    """Write a list of span tuples back to the byte array."""
+    n = min(len(spans), MAX_SPANS)
+    ram[base] = n
+    for i in range(n):
+        write_span_from_tuple(ram, base, i, spans[i])
+
 
 def clear_valid(ram, offset, n_bytes):
     for i in range(n_bytes):
