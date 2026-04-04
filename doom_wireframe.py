@@ -248,7 +248,8 @@ vwh_table = _vwh_table
 
 # ── Build packed byte arrays for 8-bit processor simulation ──────────────
 from wad_packed import build_packed
-from engine6502 import render_frame_6502 as _render_6502
+_render_6502 = None  # lazy-loaded on first use
+_6502_result = None  # (lines, muls) from background render
 packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout = build_packed(
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
@@ -2638,7 +2639,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend
+  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _render_6502, _6502_result
   running = True
   while running:
     dt = clock.tick(60) / 1000.0
@@ -2667,10 +2668,26 @@ def _main():
             elif ev.key == pygame.K_n:
                 _show_nj_raster = not _show_nj_raster
             elif ev.key == pygame.K_h:
-                _use_6502_frontend = not _use_6502_frontend
-                if _use_6502_frontend:
-                    print("6502 front-end ON (lines clipped by Python back-end)", flush=True)
+                if not _use_6502_frontend:
+                    # Run 6502 once in background thread, show result when ready
+                    import threading
+                    _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
+                    _px, _py = player_x, player_y
+                    # Capture data refs to avoid importing doom_wireframe from thread
+                    _rm, _rd, _rr, _pl, _nd = packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout, nodes
+                    def _run_6502():
+                        global _6502_result
+                        from engine6502 import Engine6502
+                        eng = Engine6502(_rm, _rd, _rr, _pl, _nd)
+                        lines, muls = eng.render_frame(_px, _py, _ab)
+                        _6502_result = (lines, muls)
+                        print(f"6502 done: {len(lines)} lines, {muls} muls, ~{muls*60//1000}K front-end cycles", flush=True)
+                    _6502_result = None
+                    print("6502 rendering in background...", flush=True)
+                    threading.Thread(target=_run_6502, daemon=True).start()
+                    _use_6502_frontend = True
                 else:
+                    _use_6502_frontend = False
                     print("6502 front-end OFF", flush=True)
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
@@ -2751,9 +2768,9 @@ def _main():
         cos_f = math.cos(ang_rad)
         sin_f = math.sin(ang_rad)
 
-        if _use_6502_frontend:
-            # 6502 front-end: all muls via py65, lines drawn by Python
-            hw_lines, hw_muls = _render_6502(player_x, player_y, angle_byte)
+        if _use_6502_frontend and _6502_result is not None:
+            # 6502 front-end completed: draw its lines
+            hw_lines, hw_muls = _6502_result
             draw_stats[0] = len(hw_lines)
             draw_stats[1] = len(hw_lines)
             for x1, y1, x2, y2 in hw_lines:
@@ -2763,6 +2780,9 @@ def _main():
                 cy2 = max(0, min(FP_RENDER_H - 1, y2))
                 _real_drawline(fp_surface, (0, 200, 0),
                                (cx1, cy1), (cx2, cy2), 1)
+        elif _use_6502_frontend:
+            # Still rendering in background — show waiting message
+            _real_drawline(fp_surface, (0, 200, 0), (0, 80), (255, 80), 1)
         elif use_packed:
             from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
@@ -2851,4 +2871,9 @@ def _main():
   pygame.quit()
 
 if __name__ == '__main__':
-    _main()
+    try:
+        _main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        import sys; sys.exit(1)
