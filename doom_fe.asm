@@ -1855,10 +1855,10 @@ CMD_DONE   = &00
     LDA zp_cos_mag : STA zp_math_b
     LDX zp_cos_neg
     LDY zp_cos_unity
-    ; Save total_vx to $0FE0:$0FE1:$0FE2 (safe from ZP temp conflicts)
-    LDA &70 : STA &0FE0
-    LDA &71 : STA &0FE1
-    LDA &72 : STA &0FE2
+    ; Save total_vx to ZP $7A:$7B:$7C (free during to_view)
+    LDA &70 : STA &7A
+    LDA &71 : STA &7B
+    LDA &72 : STA &7C
     JSR rot_term
     ; rot(dx, cos) in $70:$71:$72 — save to $73:$74:$75
     LDA &70 : STA &73
@@ -1897,10 +1897,10 @@ CMD_DONE   = &00
     ; === Extract vx1, vy1, vi1 ===
 
     ; vx1 = (total_vx + 128) >> 8
-    ; total_vx in $0FE0:$0FE1:$0FE2 (24-bit, lo:mid:hi)
-    LDA &0FE0 : CLC : ADC #128
-    LDA &0FE1 : ADC #0 : STA zp_vx1
-    LDA &0FE2 : ADC #0 : STA zp_vx1+1
+    ; total_vx in $7A:$7B:$7C (24-bit, lo:mid:hi)
+    LDA &7A : CLC : ADC #128
+    LDA &7B : ADC #0 : STA zp_vx1
+    LDA &7C : ADC #0 : STA zp_vx1+1
 
     ; vy1 = (total_vy + 128) >> 8
     ; total_vy in $73:$74:$75 (24-bit)
