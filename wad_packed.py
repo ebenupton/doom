@@ -22,7 +22,7 @@ VERTEX_SIZE  = 4     # shift 2:  s16 x, s16 y
 NODE_SIZE    = 16    # shift 4:  s16 x,y,dx,dy + u16 children + pad
 SSECTOR_SIZE = 4     # shift 2:  u8 count, u8 pad, u16 first_seg
 SEG_HDR_SIZE = 8     # shift 3:  u16 v1, u16 v2, u16 linedef_idx, u8 flags, u8 pad
-SEG_DTL_SIZE = 16    # shift 4:  u16 × 8 VWH indices
+SEG_DTL_SIZE = 24    # ×24 = (idx<<4)+(idx<<3): fh,ch + 8 VWH u16 + back heights + pad
 VWH_SIZE     = 1     # identity: s8 height
 LINEDEF_SIZE = 8     # shift 3:  s16 lv1_x, s16 lv1_y, s8 ldx, s8 ldy, u8 pad×2
 
@@ -33,12 +33,15 @@ SH_LDIDX = 4                     # u16 linedef index
 SH_FLAGS = 6                     # u8 flags
 SH_PAD = 7
 
-# ── Offsets within seg detail ───────────────────────────────────────────
+# ── Offsets within seg detail (24 bytes) ─────────────────────────────────
 
-SD_VWH_FT1 = 0; SD_VWH_FB1 = 2   # u16 front VWH
-SD_VWH_FT2 = 4; SD_VWH_FB2 = 6
-SD_VWH_BT1 = 8; SD_VWH_BB1 = 10  # u16 back VWH ($FFFF if solid)
-SD_VWH_BT2 = 12; SD_VWH_BB2 = 14
+SD_FH = 0; SD_CH = 1             # s8 prescaled front floor/ceil
+SD_BFH = 2; SD_BCH = 3           # s8 prescaled back floor/ceil (0 if solid)
+SD_VWH_FT1 = 4; SD_VWH_FB1 = 6   # u16 front VWH
+SD_VWH_FT2 = 8; SD_VWH_FB2 = 10
+SD_VWH_BT1 = 12; SD_VWH_BB1 = 14 # u16 back VWH ($FFFF if solid)
+SD_VWH_BT2 = 16; SD_VWH_BB2 = 18
+# +20..23 padding
 
 # ── Offsets within linedef ──────────────────────────────────────────────
 
@@ -81,13 +84,21 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     rom_detail = bytearray(n_segs * SEG_DTL_SIZE)
     for i, svwh in enumerate(fp_segs_vwh):
+        fh, ch = svwh[3], svwh[4]
         vft1, vfb1 = svwh[5], svwh[6]
         vft2, vfb2 = svwh[7], svwh[8]
         vbt1, vbb1 = svwh[9], svwh[10]
         vbt2, vbb2 = svwh[11], svwh[12]
+        back_idx = svwh[2]
+        if back_idx is not None:
+            bs = fp_sectors[back_idx]
+            bfh, bch = bs[0], bs[1]
+        else:
+            bfh, bch = 0, 0
         if vbt1 == -1: vbt1 = vbb1 = vbt2 = vbb2 = 0xFFFF
         o = i * SEG_DTL_SIZE
-        struct.pack_into('<HHHHHHHH', rom_detail, o,
+        struct.pack_into('<bbbbHHHHHHHHxxxx', rom_detail, o,
+                         fh, ch, bfh, bch,
                          vft1, vfb1, vft2, vfb2,
                          vbt1, vbb1, vbt2, vbb2)
 
