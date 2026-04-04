@@ -659,6 +659,26 @@ class FPClipSpans:
                 return True
         return False
 
+    def line_survives(self, lx1, ly1, lx2, ly2):
+        """Check if a horizontal-ish line passes through all overlapping spans.
+
+        Returns True if the line's Y bbox is inside every overlapping span's
+        inner bbox — meaning the corresponding tighten boundary would dominate.
+        Zero muls (precomputed bbox comparisons only).
+        """
+        if abs(lx1 - lx2) < 1:
+            return False
+        xl, xr = (lx1, lx2) if lx1 <= lx2 else (lx2, lx1)
+        y_lo, y_hi = min(ly1, ly2), max(ly1, ly2)
+        found = False
+        for s in self.spans:
+            if s[1] <= xl or s[0] >= xr:
+                continue
+            found = True
+            if y_lo < s[4] or y_hi > s[5]:
+                return False
+        return found
+
     def draw_clipped(self, lines, color, surface, stats=None):
         """Clip each line analytically to each overlapping span, then draw.
 
@@ -880,14 +900,56 @@ class FPClipSpans:
                 if ns: new.append(ns)
         self.spans = new
 
-    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
-        """Tighten top/bottom over [ilo, ihi).  All values in 8.0 pixels."""
+    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                top_dom=False, bot_dom=False):
+        """Tighten top/bottom over [ilo, ihi).  All values in 8.0 pixels.
+
+        top_dom/bot_dom: if True, the new top/bot boundary dominates all
+        existing spans (detected by line_survives).  When both dominate,
+        all affected spans collapse into one — skipping piecewise max/min.
+        """
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W, hi + 1)
         if ilo >= ihi:
             return
         new_tfn = fp_linfn(yt1, yt2, sx1, sx2)
         new_bfn = fp_linfn(yb1, yb2, sx1, sx2)
+
+        if top_dom and bot_dom:
+            # Both boundaries dominate — merge all affected spans into one.
+            # Skip piecewise max/min entirely.
+            new = []
+            merge_x0, merge_x1 = ihi, ilo  # will be overwritten
+            for s in self.spans:
+                xlo, xhi = s[0], s[1]
+                if xhi <= ilo or xlo >= ihi:
+                    new.append(s)
+                    continue
+                if xlo < ilo:
+                    ns = self._make_span(xlo, ilo, s[2], s[3])
+                    if ns: new.append(ns)
+                # Track the merged range
+                merge_x0 = min(merge_x0, max(xlo, ilo))
+                merge_x1 = max(merge_x1, min(xhi, ihi))
+                if ihi < xhi:
+                    ns = self._make_span(ihi, xhi, s[2], s[3])
+                    if ns: new.append(ns)
+            # Insert the single merged span
+            if merge_x0 < merge_x1:
+                ns = self._make_span(merge_x0, merge_x1, new_tfn, new_bfn)
+                if ns:
+                    # Insert in sorted X order
+                    inserted = False
+                    for i, s in enumerate(new):
+                        if s[0] >= merge_x0:
+                            new.insert(i, ns)
+                            inserted = True
+                            break
+                    if not inserted:
+                        new.append(ns)
+            self.spans = new
+            return
+
         new = []
         for s in self.spans:
             xlo, xhi = s[0], s[1]
@@ -903,8 +965,6 @@ class FPClipSpans:
             for tx0, tx1, t_fn in _fp_pw_max(tfn, new_tfn, ox0, ox1):
                 for bx0, bx1, b_fn in _fp_pw_min(bfn, new_bfn, tx0, tx1):
                     if bx1 > bx0:
-                        # These fp_evals are already needed for the aperture check;
-                        # capture them for the inner bbox (0 extra muls).
                         t0 = fp_eval(t_fn, bx0)
                         b0 = fp_eval(b_fn, bx0)
                         t1 = fp_eval(t_fn, bx1 - 1)
@@ -1178,14 +1238,19 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
         tt2 = bt2 if need_bt else ft2
         tb1 = bb1 if need_bb else fb1
         tb2 = bb2 if need_bb else fb2
+        yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
+        yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
+        # Detect if tighten edges dominate all existing spans (0 muls).
+        # If the step edge passed through all spans unclipped, the new
+        # boundary dominates and spans can be merged after tighten.
+        top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
+        bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
         if deferred is not None:
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
-                             max(ft1, tt1), max(ft2, tt2),
-                             min(fb1, tb1), min(fb2, tb2)))
+                             yt1, yt2, yb1, yb2, top_dom, bot_dom))
         else:
-            clips.tighten(x_lo, x_hi, sx1, sx2,
-                           max(ft1, tt1), max(ft2, tt2),
-                           min(fb1, tb1), min(fb2, tb2))
+            clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                          top_dom, bot_dom)
 
 
 def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, ycache):
