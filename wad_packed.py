@@ -327,10 +327,13 @@ def span_offset(base, i):
     return base + SPAN_HDR + i * SPAN_SIZE
 
 def read_span_tuple(ram, base, i):
-    """Read span i as a Python tuple (for compatibility with FPClipSpans code)."""
+    """Read span i as a Python tuple (for compatibility with FPClipSpans code).
+    xhi=0 in u8 means 256 (wrap convention for half-open [xlo, 256))."""
     o = span_offset(base, i)
     xlo = ram[o + SP_XLO]
     xhi = ram[o + SP_XHI]
+    if xhi == 0:
+        xhi = 256  # wrap: u8 can't store 256, 0 means full-width
     tfn = (read_s8(ram, o + SP_TSLOPE), read_s16(ram, o + SP_TINTERCEPT))
     bfn = (read_s8(ram, o + SP_BSLOPE), read_s16(ram, o + SP_BINTERCEPT))
     inner_top = read_s16(ram, o + SP_INNER_TOP)

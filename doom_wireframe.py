@@ -2435,7 +2435,8 @@ use_fixedpoint = False                    # False = float, True = fixed-point
 use_xor = False                           # XOR drawing mode
 use_subpixel = False                      # Sub-pixel X projection (1 extra mul)
 show_map = False                          # Top-down map visualisation
-_show_nj_raster = False                   # Show NJ 6502 rasteriser output
+_show_nj_raster = False                   # Show NJ 6502 rasteriser output (FP lines)
+_use_6502_frontend = False                # H key: 6502 front-end + Python clip/draw
 turn_speed = 2.5                          # radians/sec for float mode
 turn_speed_byte = 45                      # byte-units/sec for FP mode (~63 deg/sec)
 move_speed = 300.0
@@ -2636,7 +2637,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster
+  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend
   running = True
   while running:
     dt = clock.tick(60) / 1000.0
@@ -2664,6 +2665,12 @@ def _main():
                 print(f"Packed ROM path: {'ON' if use_packed else 'OFF'}")
             elif ev.key == pygame.K_n:
                 _show_nj_raster = not _show_nj_raster
+            elif ev.key == pygame.K_h:
+                _use_6502_frontend = not _use_6502_frontend
+                if _use_6502_frontend:
+                    print("6502 front-end ON (lines clipped by Python back-end)", flush=True)
+                else:
+                    print("6502 front-end OFF", flush=True)
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
             elif ev.key == pygame.K_g:
@@ -2743,7 +2750,18 @@ def _main():
         cos_f = math.cos(ang_rad)
         sin_f = math.sin(ang_rad)
 
-        if use_packed:
+        if _use_6502_frontend:
+            # 6502 front-end: all muls via py65, lines drawn by Python
+            from engine6502 import render_frame_6502
+            hw_lines, hw_muls = render_frame_6502(player_x, player_y, angle_byte)
+            for x1, y1, x2, y2 in hw_lines:
+                cx1 = max(0, min(FP_RENDER_W - 1, x1))
+                cy1 = max(0, min(FP_RENDER_H - 1, y1))
+                cx2 = max(0, min(FP_RENDER_W - 1, x2))
+                cy2 = max(0, min(FP_RENDER_H - 1, y2))
+                pygame.draw.line(fp_surface, (0, 200, 0),
+                                 (cx1, cy1), (cx2, cy2), 1)
+        elif use_packed:
             from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
             spans_base = packed_layout['ram_spans']
@@ -2797,7 +2815,7 @@ def _main():
     if _show_nj_raster and use_fixedpoint:
         from raster6502 import render_lines_6502
         nj_surf, nj_cyc = render_lines_6502(_frame_nj_lines)
-        pygame.transform.scale(nj_surf, (SCREEN_W, SCREEN_H), screen)
+        screen.blit(pygame.transform.scale(nj_surf, (SCREEN_W, SCREEN_H)), (0, 0))
 
     # ── Debug stepper or map overlay ──
     if _debug_mode:
