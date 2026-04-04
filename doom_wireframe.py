@@ -594,10 +594,13 @@ GREEN = (0, 200, 0)
 def _rand_color():
     return (random.randint(60, 255), random.randint(60, 255), random.randint(60, 255))
 
+_frame_nj_lines = []  # captured line coords for NJ raster mode
+
 def _cycle_drawline(surface, color, p1, p2, w=1):
     """Draw line and accumulate 6502 cycle estimate."""
-    _frame_6502_cycles[0] += estimate_line_cycles(
-        int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+    x1, y1, x2, y2 = int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])
+    _frame_6502_cycles[0] += estimate_line_cycles(x1, y1, x2, y2)
+    _frame_nj_lines.append((x1, y1, x2, y2))
     return _real_drawline(surface, color, p1, p2, w)
 
 def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
@@ -2432,6 +2435,7 @@ use_fixedpoint = False                    # False = float, True = fixed-point
 use_xor = False                           # XOR drawing mode
 use_subpixel = False                      # Sub-pixel X projection (1 extra mul)
 show_map = False                          # Top-down map visualisation
+_show_nj_raster = False                   # Show NJ 6502 rasteriser output
 turn_speed = 2.5                          # radians/sec for float mode
 turn_speed_byte = 45                      # byte-units/sec for FP mode (~63 deg/sec)
 move_speed = 300.0
@@ -2632,7 +2636,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale
+  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster
   running = True
   while running:
     dt = clock.tick(60) / 1000.0
@@ -2658,6 +2662,8 @@ def _main():
             elif ev.key == pygame.K_r:
                 use_packed = not use_packed
                 print(f"Packed ROM path: {'ON' if use_packed else 'OFF'}")
+            elif ev.key == pygame.K_n:
+                _show_nj_raster = not _show_nj_raster
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
             elif ev.key == pygame.K_g:
@@ -2706,6 +2712,7 @@ def _main():
 
         fp_surface.fill((0, 0, 0))
         _frame_6502_cycles[0] = 0
+        _frame_nj_lines.clear()
         if use_xor:
             pygame.draw.line = _xor_drawline
         else:
@@ -2785,6 +2792,12 @@ def _main():
 
     # Restore normal draw after frame
     pygame.draw.line = _real_drawline
+
+    # ── NJ 6502 raster overlay ──
+    if _show_nj_raster and use_fixedpoint:
+        from raster6502 import render_lines_6502
+        nj_surf, nj_cyc = render_lines_6502(_frame_nj_lines)
+        pygame.transform.scale(nj_surf, (SCREEN_W, SCREEN_H), screen)
 
     # ── Debug stepper or map overlay ──
     if _debug_mode:
