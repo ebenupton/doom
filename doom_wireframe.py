@@ -1446,6 +1446,493 @@ def render_bsp_fp(nid, clips, ctx, vz,
                           wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
 
 
+# ── Packed-ROM rendering (reads from byte arrays, writes cache to RAM) ────────
+#
+# Same algorithm as the classic FP pipeline above, but geometry comes from
+# packed_rom_main / packed_rom_detail byte arrays (via read_u8/read_s16 etc.)
+# and cached transforms live in a RAM byte array (via write_s16 / is_valid).
+# The FPClipSpans back-end and all fp.py math helpers are shared.
+
+from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s16,
+                        clear_valid, is_valid, set_valid,
+                        VERTEX_SIZE, NODE_SIZE, SSECTOR_SIZE, SEG_HDR_SIZE, SEG_DTL_SIZE,
+                        VWH_SIZE, VCACHE_ENTRY,
+                        SH_V1, SH_V2, SH_LV1X, SH_LV1Y, SH_LDX, SH_LDY, SH_FLAGS,
+                        SD_FH, SD_CH, SD_BFH, SD_BCH,
+                        SD_VWH_FT1, SD_VWH_FB1, SD_VWH_FT2, SD_VWH_FB2,
+                        SD_VWH_BT1, SD_VWH_BB1, SD_VWH_BT2, SD_VWH_BB2,
+                        SF_DIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB,
+                        VC_VX, VC_VY, VC_VYIDX, VC_SX, VWHCACHE_ENTRY)
+
+use_packed = False   # toggle: when True (and use_fixedpoint), use packed path
+
+# Alias the already-built packed data
+_p_rom_main   = packed_rom_main
+_p_rom_detail = packed_rom_detail
+_p_rom_recip  = packed_rom_recip
+_p_layout     = packed_layout
+_p_ram        = None   # allocated per-frame
+
+
+def _packed_ram_new():
+    """Allocate a fresh RAM byte array and clear valid bitmaps."""
+    ram = bytearray(_p_layout['ram_size'])
+    # valid bitmaps are already 0 in a fresh bytearray
+    return ram
+
+
+def _packed_read_vcache(ram, vi):
+    """Read a vertex cache entry from RAM.  Returns (vx, vy, vy_idx, sx) or None."""
+    if not is_valid(ram, _p_layout['ram_vcache_valid'], vi):
+        return None
+    base = _p_layout['ram_vcache'] + vi * VCACHE_ENTRY
+    vx  = read_s16(ram, base + VC_VX)
+    vy  = read_s16(ram, base + VC_VY)
+    vyi = read_u16(ram, base + VC_VYIDX)
+    sx  = read_s16(ram, base + VC_SX)
+    return (vx, vy, vyi, sx)
+
+
+def _packed_write_vcache(ram, vi, vx, vy, vy_idx, sx):
+    """Write a vertex cache entry to RAM and set its valid bit."""
+    base = _p_layout['ram_vcache'] + vi * VCACHE_ENTRY
+    write_s16(ram, base + VC_VX, vx)
+    write_s16(ram, base + VC_VY, vy)
+    write_u16(ram, base + VC_VYIDX, vy_idx)
+    write_s16(ram, base + VC_SX, sx)
+    set_valid(ram, _p_layout['ram_vcache_valid'], vi)
+
+
+def _packed_read_vwh(ram, wi):
+    """Read a VWH cache entry from RAM.  Returns screen Y (s16) or None."""
+    if not is_valid(ram, _p_layout['ram_vwh_valid'], wi):
+        return None
+    base = _p_layout['ram_vwh_cache'] + wi * VWHCACHE_ENTRY
+    return read_s16(ram, base)
+
+
+def _packed_write_vwh(ram, wi, sy):
+    """Write a VWH cache entry to RAM and set its valid bit."""
+    base = _p_layout['ram_vwh_cache'] + wi * VWHCACHE_ENTRY
+    write_s16(ram, base, sy)
+    set_valid(ram, _p_layout['ram_vwh_valid'], wi)
+
+
+def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
+    """Render seg #si reading geometry from packed ROM, caching in RAM.
+
+    Produces IDENTICAL output to fp_render_seg when data is consistent.
+    """
+    layout = _p_layout
+    rom = _p_rom_main
+    rom_d = _p_rom_detail
+
+    # ── Read seg header from rom_main ──
+    seg_off = layout['off_seg_hdr'] + si * SEG_HDR_SIZE
+    v1_idx = read_u16(rom, seg_off + SH_V1)
+    v2_idx = read_u16(rom, seg_off + SH_V2)
+    lv1_x  = read_s16(rom, seg_off + SH_LV1X)
+    lv1_y  = read_s16(rom, seg_off + SH_LV1Y)
+    ldx    = read_s8(rom,  seg_off + SH_LDX)
+    ldy    = read_s8(rom,  seg_off + SH_LDY)
+    flags  = read_u8(rom,  seg_off + SH_FLAGS)
+
+    # ── Back-face test (same arithmetic as classic path) ──
+    px_int = ctx[0]
+    py_int = ctx[1]
+    dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
+    if flags & SF_DIR:
+        dot = -dot
+    if dot <= 0:
+        return
+
+    # ── Read vertex positions from rom_main ──
+    verts_off = layout['off_verts']
+    wx1 = read_s16(rom, verts_off + v1_idx * VERTEX_SIZE)
+    wy1 = read_s16(rom, verts_off + v1_idx * VERTEX_SIZE + 2)
+    wx2 = read_s16(rom, verts_off + v2_idx * VERTEX_SIZE)
+    wy2 = read_s16(rom, verts_off + v2_idx * VERTEX_SIZE + 2)
+
+    # ── View transform with RAM vcache ──
+    fp_module.mul_cat("view")
+    vc1 = _packed_read_vcache(ram, v1_idx)
+    if vc1 is None:
+        result = fp_to_view(wx1, wy1, ctx)
+        evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
+        # We need to also compute sx to cache it, but sx depends on
+        # whether the vertex is near-clipped.  Cache the view transform
+        # first; sx is computed after near-clip and cached separately.
+        # For the vcache we store: vx_round, vy, vy_idx, sx=0 (placeholder)
+        _packed_write_vcache(ram, v1_idx, evx1_r, evy1, vy_idx1, 0)
+        _vc1_has_sx = False
+    else:
+        evx1_r = vc1[0]
+        evx1_t = evx1_r  # packed path doesn't support sub-pixel in vcache
+        evy1   = vc1[1]
+        vy_idx1 = vc1[2]
+        fvx1 = 0
+        _vc1_has_sx = (vc1[3] != 0)  # sx was stored
+
+    vc2 = _packed_read_vcache(ram, v2_idx)
+    if vc2 is None:
+        result = fp_to_view(wx2, wy2, ctx)
+        evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
+        _packed_write_vcache(ram, v2_idx, evx2_r, evy2, vy_idx2, 0)
+        _vc2_has_sx = False
+    else:
+        evx2_r = vc2[0]
+        evx2_t = evx2_r
+        evy2   = vc2[1]
+        vy_idx2 = vc2[2]
+        fvx2 = 0
+        _vc2_has_sx = (vc2[3] != 0)
+
+    evx1 = evx1_t if use_subpixel else evx1_r
+    evx2 = evx2_t if use_subpixel else evx2_r
+
+    # ── Near clip ──
+    nc = fp_near_clip(evx1, evy1, evx2, evy2)
+    if nc is None:
+        return
+    ex1, ey1, ex2, ey2 = nc
+
+    # ── Reciprocals + X projection ──
+    idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
+    idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
+    rxh1, rxl1 = fp_recip(idx1)
+    rxh2, rxl2 = fp_recip(idx2)
+
+    fp_module.mul_cat("proj")
+
+    # sx1
+    if ey1 == evy1 and _vc1_has_sx:
+        sx1 = _packed_read_vcache(ram, v1_idx)[3]
+    else:
+        if use_subpixel:
+            fvx1_c = fvx1 if ey1 == evy1 else 0
+            sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
+        else:
+            sx1 = fp_project_x(ex1, rxh1, rxl1)
+        if ey1 == evy1:
+            # Update vcache with sx
+            base = _p_layout['ram_vcache'] + v1_idx * VCACHE_ENTRY
+            write_s16(ram, base + VC_SX, sx1)
+
+    # sx2
+    if ey2 == evy2 and _vc2_has_sx:
+        sx2 = _packed_read_vcache(ram, v2_idx)[3]
+    else:
+        if use_subpixel:
+            fvx2_c = fvx2 if ey2 == evy2 else 0
+            sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
+        else:
+            sx2 = fp_project_x(ex2, rxh2, rxl2)
+        if ey2 == evy2:
+            base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
+            write_s16(ram, base + VC_SX, sx2)
+
+    x_lo = min(sx1, sx2)
+    x_hi = max(sx1, sx2)
+
+    fp_module.mul_cat("clip")
+    if not clips.has_gap(x_lo, x_hi):
+        return
+
+    # ── Read seg detail from rom_detail ──
+    dtl_off = si * SEG_DTL_SIZE
+    fh  = read_s8(rom_d, dtl_off + SD_FH)
+    ch  = read_s8(rom_d, dtl_off + SD_CH)
+
+    # ── Front-sector Y projections via VWH cache in RAM ──
+    fp_module.mul_cat("proj")
+    vwh_ft1 = read_u16(rom_d, dtl_off + SD_VWH_FT1)
+    vwh_fb1 = read_u16(rom_d, dtl_off + SD_VWH_FB1)
+    ryh1, ryl1 = fp_recip(idx1)
+
+    cached_ft1 = _packed_read_vwh(ram, vwh_ft1) if ey1 == evy1 else None
+    cached_fb1 = _packed_read_vwh(ram, vwh_fb1) if ey1 == evy1 else None
+    if cached_ft1 is not None and cached_fb1 is not None:
+        ft1 = cached_ft1
+        fb1 = cached_fb1
+    else:
+        ft1 = fp_project_y(ch - vz, ryh1, ryl1)
+        fb1 = fp_project_y(fh - vz, ryh1, ryl1)
+        if ey1 == evy1:
+            _packed_write_vwh(ram, vwh_ft1, ft1)
+            _packed_write_vwh(ram, vwh_fb1, fb1)
+
+    vwh_ft2 = read_u16(rom_d, dtl_off + SD_VWH_FT2)
+    vwh_fb2 = read_u16(rom_d, dtl_off + SD_VWH_FB2)
+    ryh2, ryl2 = fp_recip(idx2)
+
+    cached_ft2 = _packed_read_vwh(ram, vwh_ft2) if ey2 == evy2 else None
+    cached_fb2 = _packed_read_vwh(ram, vwh_fb2) if ey2 == evy2 else None
+    if cached_ft2 is not None and cached_fb2 is not None:
+        ft2 = cached_ft2
+        fb2 = cached_fb2
+    else:
+        ft2 = fp_project_y(ch - vz, ryh2, ryl2)
+        fb2 = fp_project_y(fh - vz, ryh2, ryl2)
+        if ey2 == evy2:
+            _packed_write_vwh(ram, vwh_ft2, ft2)
+            _packed_write_vwh(ram, vwh_fb2, fb2)
+
+    # ── Determine solid / two-sided ──
+    solid = bool(flags & SF_SOLID)
+
+    fp_module.mul_cat("clip")
+    if solid:
+        clips.draw_clipped([
+            (sx1, ft1, sx2, ft2),
+            (sx1, fb1, sx2, fb2),
+            (sx1, ft1, sx1, fb1),
+            (sx2, ft2, sx2, fb2),
+        ], GREEN, surface, draw_stats)
+        if deferred is not None:
+            deferred.append(('solid', x_lo, x_hi))
+        else:
+            clips.mark_solid(x_lo, x_hi)
+    else:
+        # Two-sided: read back heights from seg detail
+        need_bt = bool(flags & SF_NEEDBT)
+        need_bb = bool(flags & SF_NEEDBB)
+        bfh = read_s8(rom_d, dtl_off + SD_BFH)
+        bch = read_s8(rom_d, dtl_off + SD_BCH)
+
+        if need_bt:
+            fp_module.mul_cat("proj")
+            vwh_bt1 = read_u16(rom_d, dtl_off + SD_VWH_BT1)
+            vwh_bt2 = read_u16(rom_d, dtl_off + SD_VWH_BT2)
+            cached_bt1 = _packed_read_vwh(ram, vwh_bt1) if ey1 == evy1 else None
+            if cached_bt1 is not None:
+                bt1 = cached_bt1
+            else:
+                bt1 = fp_project_y(bch - vz, ryh1, ryl1)
+                if ey1 == evy1: _packed_write_vwh(ram, vwh_bt1, bt1)
+            cached_bt2 = _packed_read_vwh(ram, vwh_bt2) if ey2 == evy2 else None
+            if cached_bt2 is not None:
+                bt2 = cached_bt2
+            else:
+                bt2 = fp_project_y(bch - vz, ryh2, ryl2)
+                if ey2 == evy2: _packed_write_vwh(ram, vwh_bt2, bt2)
+            fp_module.mul_cat("clip")
+            lines = [(sx1, bt1, sx2, bt2),
+                     (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
+            if ch <= vz:
+                pass
+            else:
+                lines.insert(0, (sx1, ft1, sx2, ft2))
+            clips.draw_clipped(lines, GREEN, surface, draw_stats)
+        elif bch > ch:
+            clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
+
+        if need_bb:
+            fp_module.mul_cat("proj")
+            vwh_bb1 = read_u16(rom_d, dtl_off + SD_VWH_BB1)
+            vwh_bb2 = read_u16(rom_d, dtl_off + SD_VWH_BB2)
+            cached_bb1 = _packed_read_vwh(ram, vwh_bb1) if ey1 == evy1 else None
+            if cached_bb1 is not None:
+                bb1 = cached_bb1
+            else:
+                bb1 = fp_project_y(bfh - vz, ryh1, ryl1)
+                if ey1 == evy1: _packed_write_vwh(ram, vwh_bb1, bb1)
+            cached_bb2 = _packed_read_vwh(ram, vwh_bb2) if ey2 == evy2 else None
+            if cached_bb2 is not None:
+                bb2 = cached_bb2
+            else:
+                bb2 = fp_project_y(bfh - vz, ryh2, ryl2)
+                if ey2 == evy2: _packed_write_vwh(ram, vwh_bb2, bb2)
+            fp_module.mul_cat("clip")
+            lines = [(sx1, bb1, sx2, bb2),
+                     (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
+            if fh >= vz:
+                pass
+            else:
+                lines.insert(1, (sx1, fb1, sx2, fb2))
+            clips.draw_clipped(lines, GREEN, surface, draw_stats)
+        elif bfh < fh:
+            clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+
+        # Tighten
+        tt1 = bt1 if need_bt else ft1
+        tt2 = bt2 if need_bt else ft2
+        tb1 = bb1 if need_bb else fb1
+        tb2 = bb2 if need_bb else fb2
+        yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
+        yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
+        top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
+        bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
+        if deferred is not None:
+            deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
+                             yt1, yt2, yb1, yb2, top_dom, bot_dom))
+        else:
+            clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                          top_dom, bot_dom)
+
+
+def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
+    """Render a subsector reading from packed ROM arrays."""
+    layout = _p_layout
+    rom = _p_rom_main
+    ss_off = layout['off_ss'] + idx * SSECTOR_SIZE
+    count     = read_u8(rom, ss_off)
+    first_seg = read_u16(rom, ss_off + 2)
+
+    deferred = []
+    for si in range(first_seg, first_seg + count):
+        packed_render_seg(si, clips, ctx, vz, surface, ram, deferred)
+    for op in deferred:
+        if op[0] == 'solid':
+            clips.mark_solid(op[1], op[2])
+        else:
+            clips.tighten(*op[1:])
+        if clips.is_full():
+            return
+
+
+def packed_render_bsp(nid, clips, ctx, vz,
+                      wx_full, wy_full, cos_f, sin_f, surface, ram):
+    """BSP traversal reading nodes from packed ROM.
+
+    Node children are read from rom_main.  point_on_side and bbox visibility
+    use the original un-prescaled Python node data (same as render_bsp_fp)
+    to avoid rounding differences from prescaled partition lines.
+    """
+    if clips.is_full():
+        return
+    if nid & NF_SUBSECTOR:
+        ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
+        packed_render_subsector(ssid, clips, ctx, vz, surface, ram)
+        return
+
+    # Read children from packed ROM
+    layout = _p_layout
+    rom = _p_rom_main
+    node_off = layout['off_nodes'] + nid * NODE_SIZE
+    child_r = read_u16(rom, node_off + 8)
+    child_l = read_u16(rom, node_off + 10)
+
+    # point_on_side uses un-prescaled node data (matches render_bsp_fp exactly)
+    node = nodes[nid]
+    side = point_on_side(wx_full, wy_full, node)
+
+    ch = (child_r, child_l)
+    packed_render_bsp(ch[side], clips, ctx, vz,
+                      wx_full, wy_full, cos_f, sin_f, surface, ram)
+    if clips.is_full():
+        return
+    far = side ^ 1
+    # Bbox visibility also uses un-prescaled node data (same as render_bsp_fp)
+    br = fp_bbox_visible(node, far, cos_f, sin_f, wx_full, wy_full)
+    if br is not None:
+        if clips.has_gap(br[0], br[1]):
+            packed_render_bsp(ch[far], clips, ctx, vz,
+                              wx_full, wy_full, cos_f, sin_f, surface, ram)
+
+
+# ── Verification: compare classic FP vs packed paths ─────────────────────────
+
+def verify_packed(positions=None):
+    """Run both FP paths at multiple positions and compare draw calls.
+
+    Returns (n_tested, n_passed, failures) where failures is a list of
+    (pos, angle, mismatch_details) for any position that produced
+    different output.
+    """
+    if positions is None:
+        # Default: 25 positions around the E1M1 start area
+        positions = []
+        base_x, base_y = player_x, player_y
+        for dx in (-80, -40, 0, 40, 80):
+            for dy in (-80, -40, 0, 40, 80):
+                positions.append((base_x + dx, base_y + dy))
+
+    angles = list(range(0, 256, 10))  # 26 angles covering full circle
+
+    n_tested = 0
+    n_passed = 0
+    failures = []
+
+    # Intercept pygame.draw.line to capture coordinates
+    _classic_draws = []
+    _packed_draws = []
+    _current_list = [None]
+
+    def _intercept(surface, color, p1, p2, w=1):
+        if _current_list[0] is not None:
+            _current_list[0].append(((int(p1[0]), int(p1[1])),
+                                      (int(p2[0]), int(p2[1]))))
+        return _real_drawline(surface, color, p1, p2, w)
+
+    orig_drawline = pygame.draw.line
+    tmp = pygame.Surface((FP_WIDTH, FP_HEIGHT))
+
+    for px, py in positions:
+        for ab in angles:
+            n_tested += 1
+
+            ang_rad = ab * 2 * math.pi / 256
+            cos_f = math.cos(ang_rad)
+            sin_f = math.sin(ang_rad)
+            px_88 = int((px - MAP_CENTER_X) * 256 / PRESCALE)
+            py_88 = int((py - MAP_CENTER_Y) * 256 / PRESCALE)
+            vz_ps = _prescale_height(player_floor(px, py) + 41)
+            sc = fp_sincos(ab)
+
+            # ── Classic FP run ──
+            _classic_draws.clear()
+            _current_list[0] = _classic_draws
+            pygame.draw.line = _intercept
+            fp_module.mul_reset()
+            ctx_c = fp_view_context(px_88, py_88, sc)
+            random.seed(42)
+            for i in range(5): draw_stats[i] = 0
+            for k in map_trace:
+                map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
+            tmp.fill((0, 0, 0))
+            render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx_c, vz_ps,
+                          int(px), int(py), cos_f, sin_f, tmp,
+                          [None]*len(vertexes), [None]*len(vwh_table))
+            classic_result = list(_classic_draws)
+
+            # ── Packed run ──
+            _packed_draws.clear()
+            _current_list[0] = _packed_draws
+            fp_module.mul_reset()
+            ctx_p = fp_view_context(px_88, py_88, sc)
+            random.seed(42)
+            for i in range(5): draw_stats[i] = 0
+            for k in map_trace:
+                map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
+            tmp.fill((0, 0, 0))
+            p_ram = _packed_ram_new()
+            packed_render_bsp(len(nodes)-1, FPClipSpans(), ctx_p, vz_ps,
+                              int(px), int(py), cos_f, sin_f, tmp, p_ram)
+            packed_result = list(_packed_draws)
+
+            _current_list[0] = None
+            pygame.draw.line = orig_drawline
+
+            if classic_result == packed_result:
+                n_passed += 1
+            else:
+                detail = {
+                    'classic_count': len(classic_result),
+                    'packed_count': len(packed_result),
+                    'first_diff': None,
+                }
+                for i in range(max(len(classic_result), len(packed_result))):
+                    c = classic_result[i] if i < len(classic_result) else None
+                    p = packed_result[i] if i < len(packed_result) else None
+                    if c != p:
+                        detail['first_diff'] = (i, c, p)
+                        break
+                failures.append(((px, py), ab, detail))
+
+    pygame.draw.line = _real_drawline
+    return n_tested, n_passed, failures
+
+
 # ── Top-down map visualisation ────────────────────────────────────────────────
 
 def _fit_scale():
@@ -1848,8 +2335,11 @@ _frame_6502_cycles = [0]  # mutable for closure access
 
 sys.setrecursionlimit(10000)
 pygame.init()
-screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-pygame.display.set_caption("DOOM E1M1 — Wireframe BSP")
+if __name__ == '__main__':
+    screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+    pygame.display.set_caption("DOOM E1M1 — Wireframe BSP")
+else:
+    screen = pygame.display.set_mode((1, 1))
 clock = pygame.time.Clock()
 hud_font = pygame.font.SysFont("monospace", 14)
 fp_surface = pygame.Surface((FP_WIDTH, FP_HEIGHT))  # small render target for FP mode
@@ -2082,8 +2572,11 @@ def _draw_debug_step(surface):
     surface.blit(hud_font.render(info, True, (255, 255, 0)), (4, 4))
 
 
-running = True
-while running:
+def _main():
+  global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
+  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale
+  running = True
+  while running:
     dt = clock.tick(60) / 1000.0
     for ev in pygame.event.get():
         if ev.type == pygame.QUIT:
@@ -2104,6 +2597,9 @@ while running:
                 use_subpixel = not use_subpixel
             elif ev.key == pygame.K_m:
                 show_map = not show_map
+            elif ev.key == pygame.K_r:
+                use_packed = not use_packed
+                print(f"Packed ROM path: {'ON' if use_packed else 'OFF'}")
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
             elif ev.key == pygame.K_g:
@@ -2182,10 +2678,17 @@ while running:
         cos_f = math.cos(ang_rad)
         sin_f = math.sin(ang_rad)
 
-        render_bsp_fp(len(nodes) - 1, FPClipSpans(),
-                      ctx, vz_ps,
-                      px_full, py_full, cos_f, sin_f, fp_surface,
-                      [None]*len(vertexes), [None]*len(vwh_table))
+        if use_packed:
+            p_ram = _packed_ram_new()
+            packed_render_bsp(len(nodes) - 1, FPClipSpans(),
+                              ctx, vz_ps,
+                              px_full, py_full, cos_f, sin_f, fp_surface,
+                              p_ram)
+        else:
+            render_bsp_fp(len(nodes) - 1, FPClipSpans(),
+                          ctx, vz_ps,
+                          px_full, py_full, cos_f, sin_f, fp_surface,
+                          [None]*len(vertexes), [None]*len(vwh_table))
 
         # Nearest-neighbour upscale to display
         screen.fill((0, 0, 0))
@@ -2237,7 +2740,8 @@ while running:
         mc = fp_module.mul_counts
         mul_total = sum(mc.values())
         cyc = _frame_6502_cycles[0]
-        hud = (f"fp ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
+        mode_tag = "fp/ROM" if use_packed else "fp"
+        hud = (f"{mode_tag} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
                f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
                f"~{cyc//1000}K cyc  {clock.get_fps():.0f}fps")
@@ -2248,4 +2752,7 @@ while running:
     screen.blit(hud_font.render(hud, True, (255, 255, 0)), (4, 4))
     pygame.display.flip()
 
-pygame.quit()
+  pygame.quit()
+
+if __name__ == '__main__':
+    _main()
