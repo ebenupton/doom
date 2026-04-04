@@ -116,6 +116,10 @@ VC_VY    = 2                ; s16
 VC_VI    = 4                ; u16 (vy_idx)
 VC_PAD   = 6                ; s16 (reserved, matches Python VC_SX slot)
 
+; VWH (vertex-with-height) projected-Y cache: 1216 × 2 bytes = 2432 bytes
+vwh_cache    = &AC00        ; 2432 bytes
+vwh_valid    = &B580        ; 160-byte valid bitmap (covers up to 1280 entries)
+
 ; ======================================================================
 ; ROM base addresses (set by Python loader)
 ; ======================================================================
@@ -180,6 +184,15 @@ SD_FH  = 0                 ; s8
 SD_CH  = 1                 ; s8
 SD_BFH = 2                 ; s8
 SD_BCH = 3                 ; s8
+; VWH (vertex-with-height) indices: u16 each
+SD_VWH_FT1 = 4
+SD_VWH_FB1 = 6
+SD_VWH_FT2 = 8
+SD_VWH_FB2 = 10
+SD_VWH_BT1 = 12
+SD_VWH_BB1 = 14
+SD_VWH_BT2 = 16
+SD_VWH_BB2 = 18
 
 ; Node offsets (within 16-byte record)
 ND_PX  = 0                 ; s16
@@ -214,6 +227,14 @@ CMD_DONE   = &00
     STA vcache_valid,X
     DEX
     BPL clr_vcv
+
+    ; Clear VWH cache valid bitmap (160 bytes, 1280 bits)
+    LDA #0
+    LDX #159
+.clr_vwhv
+    STA vwh_valid,X
+    DEX
+    BPL clr_vwhv
 
     ; Init BSP stack
     STA zp_bsp_sp
@@ -2479,8 +2500,8 @@ CMD_DONE   = &00
 {
     ; Clamp x_lo to [0, 255]
     LDA zp_x_lo_clip+1
-    BMI use_zero_lo       ; negative → 0
-    BNE use_255_lo        ; > 255 → 255
+    BMI use_zero_lo
+    BNE use_255_lo
     LDA zp_x_lo_clip
     JMP got_lo
 .use_zero_lo
@@ -2505,57 +2526,86 @@ CMD_DONE   = &00
 .got_hi
     STA &71               ; clamped x_hi
 
-    ; Iterate from x_lo to x_hi, check each bit
+    ; Guard against x_lo > x_hi
     LDA &70
     CMP &71
-    BEQ check_one         ; x_lo == x_hi: check one pixel
-    BCS no_gap            ; x_lo > x_hi: no gap (shouldn't happen after swap)
+    BEQ single_bit
+    BCS no_gap
 
-.check_one
-    LDX &70
-.check_loop
-    TXA
-    AND #7
-    TAY
-    LDA bit_masks,Y       ; bit mask for bit position
-    PHA                    ; save mask
-    TXA
-    LSR A : LSR A : LSR A  ; byte index
-    TAY
-    PLA                    ; mask
-    AND colbitmap,Y
-    BEQ found_gap          ; bit is 0 → gap exists
+.single_bit
+    ; Compute byte_lo and byte_hi
+    LDA &70 : LSR A : LSR A : LSR A : STA &72  ; byte_lo
+    LDA &71 : LSR A : LSR A : LSR A : STA &73  ; byte_hi
 
-    INX
-    CPX &71
-    BEQ check_last
-    BCC check_loop         ; X < x_hi → continue
-    JMP no_gap
-.check_last
-    ; Check the last pixel too
-    TXA
-    AND #7
-    TAY
-    LDA bit_masks,Y
-    PHA
-    TXA
-    LSR A : LSR A : LSR A
-    TAY
-    PLA
-    AND colbitmap,Y
-    BEQ found_gap
+    ; Compute left mask: bits (x_lo & 7)..7 set
+    LDA &70 : AND #7 : TAY
+    LDA left_mask_tbl,Y
+    STA &74               ; left_mask
 
-.no_gap
-    CLC
+    ; Compute right mask: bits 0..(x_hi & 7) set
+    LDA &71 : AND #7 : TAY
+    LDA right_mask_tbl,Y
+    STA &75               ; right_mask
+
+    ; Single byte?
+    LDA &72 : CMP &73 : BNE multi_byte
+
+    ; Single byte: relevant mask = left_mask AND right_mask
+    LDA &74
+    AND &75
+    STA &74               ; reuse $74 as "expected mask"
+    LDY &72
+    LDA colbitmap,Y
+    AND &74
+    CMP &74
+    BEQ no_gap            ; all expected bits set → no gap
+    SEC
     RTS
+
+.multi_byte
+    ; Check byte_lo against left_mask
+    LDY &72
+    LDA colbitmap,Y
+    AND &74
+    CMP &74
+    BNE found_gap         ; left byte missing some bits → gap
+
+    ; Check middle bytes (byte_lo+1 .. byte_hi-1) for all-set ($FF)
+    INY
+.middle_loop
+    CPY &73
+    BCS middle_done
+    LDA colbitmap,Y
+    CMP #&FF
+    BNE found_gap
+    INY
+    JMP middle_loop
+.middle_done
+    ; Check byte_hi against right_mask
+    LDY &73
+    LDA colbitmap,Y
+    AND &75
+    CMP &75
+    BEQ no_gap
 .found_gap
     SEC
     RTS
+.no_gap
+    CLC
+    RTS
 }
 
-; Bit mask table
+; Bit mask table (single bit)
 .bit_masks
     EQUB &01, &02, &04, &08, &10, &20, &40, &80
+
+; left_mask_tbl[i] = bits i..7 set = $FF << i (for has_gap/mark_solid range masks)
+.left_mask_tbl
+    EQUB &FF, &FE, &FC, &F8, &F0, &E0, &C0, &80
+
+; right_mask_tbl[i] = bits 0..i set = (1 << (i+1)) - 1
+.right_mask_tbl
+    EQUB &01, &03, &07, &0F, &1F, &3F, &7F, &FF
 
 ; ======================================================================
 ; HAS_ANY_GAP: check if ANY column is unset (bitmap not fully filled)
@@ -2611,28 +2661,55 @@ CMD_DONE   = &00
 .ms_got_hi
     STA &71
 
-    LDX &70
-.ms_loop
-    CPX &71
-    BEQ ms_last
-    BCS ms_done
-.ms_last
-    TXA
-    AND #7
-    TAY
-    LDA bit_masks,Y
-    PHA
-    TXA
-    LSR A : LSR A : LSR A
-    TAY
-    PLA
+    ; Guard against x_lo > x_hi
+    LDA &70
+    CMP &71
+    BCC ms_ok
+    BEQ ms_ok
+    RTS
+.ms_ok
+    ; Byte-level marking using range masks
+    LDA &70 : LSR A : LSR A : LSR A : STA &72  ; byte_lo
+    LDA &71 : LSR A : LSR A : LSR A : STA &73  ; byte_hi
+
+    LDA &70 : AND #7 : TAY
+    LDA left_mask_tbl,Y : STA &74
+
+    LDA &71 : AND #7 : TAY
+    LDA right_mask_tbl,Y : STA &75
+
+    LDA &72 : CMP &73 : BNE ms_multi
+
+    ; Single byte: mask = left AND right, OR into colbitmap
+    LDA &74
+    AND &75
+    LDY &72
     ORA colbitmap,Y
     STA colbitmap,Y
-    CPX &71
-    BEQ ms_done
-    INX
-    JMP ms_loop
-.ms_done
+    RTS
+
+.ms_multi
+    ; Byte_lo: OR left_mask
+    LDY &72
+    LDA colbitmap,Y
+    ORA &74
+    STA colbitmap,Y
+    INY
+
+    ; Middle bytes: set to $FF
+.ms_mid
+    CPY &73
+    BCS ms_end
+    LDA #&FF
+    STA colbitmap,Y
+    INY
+    JMP ms_mid
+.ms_end
+    ; Byte_hi: OR right_mask
+    LDY &73
+    LDA colbitmap,Y
+    ORA &75
+    STA colbitmap,Y
     RTS
 }
 
