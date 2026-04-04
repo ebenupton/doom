@@ -1281,7 +1281,57 @@ CMD_DONE   = &00
     ; term2 = ldx * dy_bf (s8 × s16)
     ; dot = term1 - term2
 
-    ; For s8 × s16: use smul8x8 twice (lo and hi bytes of s16)
+    ; Fast path: if BOTH dx_bf and dy_bf fit in s8, skip the high-byte
+    ; multiplies entirely.  Sign-extension of the 16-bit result gives a
+    ; valid s24 without the extra work.
+    LDA zp_tmp2+1
+    BEQ bf_dxhi_zero
+    CMP #&FF
+    BNE bf_wide
+    LDA zp_tmp2
+    BPL bf_wide           ; dxhi=$FF but dxlo bit7 clear → doesn't fit
+    JMP bf_dx_ok
+.bf_dxhi_zero
+    LDA zp_tmp2
+    BMI bf_wide           ; dxhi=0 but dxlo bit7 set → doesn't fit
+.bf_dx_ok
+    LDA zp_tmp3+1
+    BEQ bf_dyhi_zero
+    CMP #&FF
+    BNE bf_wide
+    LDA zp_tmp3
+    BPL bf_wide
+    JMP bf_dy_ok
+.bf_dyhi_zero
+    LDA zp_tmp3
+    BMI bf_wide
+.bf_dy_ok
+    ; Both fit in s8.  Compute 16-bit dot product using 2 smul8x8 calls.
+    LDA zp_tmp2 : STA zp_math_b
+    LDA zp_tmp0 : JSR smul8x8   ; ldy × dx_bf (s8 × s8 → s16)
+    LDA zp_res_lo : STA &74
+    LDA zp_res_hi : STA &75
+    LDA zp_tmp3 : STA zp_math_b
+    LDA zp_tmp1 : JSR smul8x8   ; ldx × dy_bf (s8 × s8 → s16)
+    ; dot (s16) = ($75:$74) - (res_hi:res_lo)
+    LDA &74 : SEC : SBC zp_res_lo : STA &74
+    LDA &75 : SBC zp_res_hi : STA &75
+    ; Sign-extend to 24-bit byte2
+    LDA &75
+    BPL bf_fast_pos
+    LDA #&FF
+    STA &76
+    JMP bf_fast_done
+.bf_fast_pos
+    LDA #0
+    STA &76
+.bf_fast_done
+    ; Zero out byte0 (unused since s16 result is in $74:$75; the dot sign
+    ; check later reads $74:$75:$76 via the read-flags/negate path)
+    JMP bf_after_mul
+
+.bf_wide
+    ; Wide path: dx_bf or dy_bf doesn't fit in s8.
     ; ldy × dx_bf_lo (s8 × u8) + ldy × dx_bf_hi (s8 × s8) * 256
     LDA zp_tmp2           ; dx_bf_lo
     STA zp_math_b
@@ -1370,6 +1420,7 @@ CMD_DONE   = &00
     SBC &7A
     STA &76               ; dot_hi
 
+.bf_after_mul
     ; Read flags
     LDY #SH_FLAGS
     LDA (zp_ptr0),Y
