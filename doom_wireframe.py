@@ -248,6 +248,7 @@ vwh_table = _vwh_table
 
 # ── Build packed byte arrays for 8-bit processor simulation ──────────────
 from wad_packed import build_packed
+from engine6502 import render_frame_6502 as _render_6502
 packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout = build_packed(
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
@@ -2752,15 +2753,17 @@ def _main():
 
         if _use_6502_frontend:
             # 6502 front-end: all muls via py65, lines drawn by Python
-            from engine6502 import render_frame_6502
-            hw_lines, hw_muls = render_frame_6502(player_x, player_y, angle_byte)
+            screen = pygame.display.get_surface()
+            hw_lines, hw_muls = _render_6502(player_x, player_y, angle_byte)
+            draw_stats[0] = len(hw_lines)
+            draw_stats[1] = len(hw_lines)
             for x1, y1, x2, y2 in hw_lines:
                 cx1 = max(0, min(FP_RENDER_W - 1, x1))
                 cy1 = max(0, min(FP_RENDER_H - 1, y1))
                 cx2 = max(0, min(FP_RENDER_W - 1, x2))
                 cy2 = max(0, min(FP_RENDER_H - 1, y2))
-                pygame.draw.line(fp_surface, (0, 200, 0),
-                                 (cx1, cy1), (cx2, cy2), 1)
+                _real_drawline(fp_surface, (0, 200, 0),
+                               (cx1, cy1), (cx2, cy2), 1)
         elif use_packed:
             from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
@@ -2778,8 +2781,9 @@ def _main():
                           [None]*len(vertexes), [None]*len(vwh_table))
 
         # Nearest-neighbour upscale to display
+        screen = pygame.display.get_surface()
         screen.fill((0, 0, 0))
-        pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H), screen)
+        screen.blit(pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H)), (0, 0))
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:
