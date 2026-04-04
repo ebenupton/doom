@@ -138,8 +138,52 @@ for _ssi, _ss in enumerate(ssectors):
             _strip_count += 1
     _stripped_ssectors.append((len(_stripped_segs) - _first, _first))
 
+# ── Vertex With Height (VWH) table ──────────────────────────────────────
+#
+# Each VWH is a unique (vertex_index, prescaled_height) pair.
+# Segs reference VWH indices for cached Y projection.
+
+_vwh_map = {}   # (vertex_idx, height) -> vwh_idx
+_vwh_table = [] # vwh_idx -> (vertex_idx, height)
+
+def _vwh(vertex_idx, height):
+    """Get or create a VWH index for (vertex, height)."""
+    key = (vertex_idx, height)
+    idx = _vwh_map.get(key)
+    if idx is None:
+        idx = len(_vwh_table)
+        _vwh_table.append(key)
+        _vwh_map[key] = idx
+    return idx
+
+# Build VWH-augmented seg table: original seg fields + 4 front VWH indices
+# + 4 back VWH indices (or -1 if one-sided)
+_fp_segs_vwh = []
+for _s in _stripped_segs:
+    _fi, _bi = seg_sectors(_s)
+    _fs = fp_sectors[_fi]
+    _fh, _ch = _fs[0], _fs[1]
+    _v1, _v2 = _s[0], _s[1]
+    _vwh_ft1 = _vwh(_v1, _ch)
+    _vwh_fb1 = _vwh(_v1, _fh)
+    _vwh_ft2 = _vwh(_v2, _ch)
+    _vwh_fb2 = _vwh(_v2, _fh)
+    if _bi is not None:
+        _bs = fp_sectors[_bi]
+        _vwh_bt1 = _vwh(_v1, _bs[1])
+        _vwh_bb1 = _vwh(_v1, _bs[0])
+        _vwh_bt2 = _vwh(_v2, _bs[1])
+        _vwh_bb2 = _vwh(_v2, _bs[0])
+    else:
+        _vwh_bt1 = _vwh_bb1 = _vwh_bt2 = _vwh_bb2 = -1
+    _fp_segs_vwh.append((_s, _fi, _bi, _fh, _ch,
+                         _vwh_ft1, _vwh_fb1, _vwh_ft2, _vwh_fb2,
+                         _vwh_bt1, _vwh_bb1, _vwh_bt2, _vwh_bb2))
+
 fp_segs = _stripped_segs
+fp_segs_vwh = _fp_segs_vwh
 fp_ssectors = _stripped_ssectors
+vwh_table = _vwh_table
 
 # ── Analytical 2D trapezoid clip spans ───────────────────────────────────────
 #
@@ -1058,13 +1102,14 @@ def _fp_pw_min(f, g, x0, x1):
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
 
-def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
+def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
     """Render a seg from the stripped fp_segs table.
 
     vcache: frame-global vertex transforms.
-    ycache: subsector-local Y projections (ft, fb, ryh, ryl per vertex).
+    vwh_cache: frame-global Y projections indexed by VWH.
     """
-    s = fp_segs[si]
+    svwh = fp_segs_vwh[si]
+    s = svwh[0]
     v1_idx, v2_idx = s[0], s[1]
 
     # Back-face test using prescaled linedef vertices (integer part of player pos)
@@ -1083,7 +1128,8 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
     map_trace["vertices"].add(v1_idx)
     map_trace["vertices"].add(v2_idx)
 
-    front_idx, back_idx = seg_sectors(s)
+    front_idx, back_idx = svwh[1], svwh[2]
+    fh, ch = svwh[3], svwh[4]
 
     # Lazily compute + cache view-space transforms (only for segs that pass back-face)
     fp_module.mul_cat("view")
@@ -1092,11 +1138,11 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
         if vi not in vm:
             vm[vi] = [0, 0]
     v_before = fp_module.mul_counts["view"]
-    if v1_idx not in vcache:
+    if vcache[v1_idx] is None:
         vcache[v1_idx] = fp_to_view(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
         vm[v1_idx][0] += fp_module.mul_counts["view"] - v_before
         v_before = fp_module.mul_counts["view"]
-    if v2_idx not in vcache:
+    if vcache[v2_idx] is None:
         vcache[v2_idx] = fp_to_view(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
         vm[v2_idx][0] += fp_module.mul_counts["view"] - v_before
     vc1_full = vcache[v1_idx]
@@ -1159,39 +1205,43 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
 
     map_trace["segs_drawn"].add(si)
 
-    # Front-sector Y projections — frame-global cache keyed on (vertex, fh, ch).
-    # Vertices shared across subsectors with the same heights hit the cache.
-    # Near-clipped endpoints need fresh computation (different recip).
-    front = fp_sectors[front_idx]
-    fh, ch = front[0], front[1]
+    # Front-sector Y projections via VWH cache (flat array, O(1) lookup).
+    # Near-clipped endpoints bypass the cache (different recip).
     fp_module.mul_cat("proj")
     p_before = fp_module.mul_counts["proj"]
-    ykey1 = (v1_idx, fh, ch)
-    if ey1 == evy1 and ykey1 in ycache:
-        ft1, fb1, ryh1, ryl1 = ycache[ykey1]
+    _vft1, _vfb1 = svwh[5], svwh[6]
+    ryh1, ryl1 = fp_recip(idx1)
+    if ey1 == evy1 and vwh_cache[_vft1] is not None and vwh_cache[_vfb1] is not None:
+        ft1 = vwh_cache[_vft1]
+        fb1 = vwh_cache[_vfb1]
     else:
-        ryh1, ryl1 = fp_recip(idx1)
         ft1 = fp_project_y(ch - vz, ryh1, ryl1)
         fb1 = fp_project_y(fh - vz, ryh1, ryl1)
         if ey1 == evy1:
-            ycache[ykey1] = (ft1, fb1, ryh1, ryl1)
+            vwh_cache[_vft1] = ft1
+            vwh_cache[_vfb1] = fb1
     vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
     p_before = fp_module.mul_counts["proj"]
-    ykey2 = (v2_idx, fh, ch)
-    if ey2 == evy2 and ykey2 in ycache:
-        ft2, fb2, ryh2, ryl2 = ycache[ykey2]
+    _vft2, _vfb2 = svwh[7], svwh[8]
+    ryh2, ryl2 = fp_recip(idx2)
+    if ey2 == evy2 and vwh_cache[_vft2] is not None and vwh_cache[_vfb2] is not None:
+        ft2 = vwh_cache[_vft2]
+        fb2 = vwh_cache[_vfb2]
     else:
-        ryh2, ryl2 = fp_recip(idx2)
         ft2 = fp_project_y(ch - vz, ryh2, ryl2)
         fb2 = fp_project_y(fh - vz, ryh2, ryl2)
         if ey2 == evy2:
-            ycache[ykey2] = (ft2, fb2, ryh2, ryl2)
+            vwh_cache[_vft2] = ft2
+            vwh_cache[_vfb2] = fb2
     vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
 
     solid = back_idx is None
-    back = fp_sectors[back_idx] if back_idx is not None else None
-    if back and (back[1] <= fh or back[0] >= ch):
-        solid = True
+    if back_idx is not None:
+        back = fp_sectors[back_idx]
+        if back[1] <= fh or back[0] >= ch:
+            solid = True
+    else:
+        back = None
 
     fp_module.mul_cat("clip")
     if solid:
@@ -1212,8 +1262,17 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
 
         if need_bt:
             fp_module.mul_cat("proj")
-            bt1 = fp_project_y(back[1] - vz, ryh1, ryl1)
-            bt2 = fp_project_y(back[1] - vz, ryh2, ryl2)
+            _vbt1, _vbt2 = svwh[9], svwh[11]  # back ceil VWH at v1, v2
+            if ey1 == evy1 and vwh_cache[_vbt1] is not None:
+                bt1 = vwh_cache[_vbt1]
+            else:
+                bt1 = fp_project_y(back[1] - vz, ryh1, ryl1)
+                if ey1 == evy1: vwh_cache[_vbt1] = bt1
+            if ey2 == evy2 and vwh_cache[_vbt2] is not None:
+                bt2 = vwh_cache[_vbt2]
+            else:
+                bt2 = fp_project_y(back[1] - vz, ryh2, ryl2)
+                if ey2 == evy2: vwh_cache[_vbt2] = bt2
             fp_module.mul_cat("clip")
             lines = [(sx1, bt1, sx2, bt2),
                      (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
@@ -1227,8 +1286,17 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
 
         if need_bb:
             fp_module.mul_cat("proj")
-            bb1 = fp_project_y(back[0] - vz, ryh1, ryl1)
-            bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
+            _vbb1, _vbb2 = svwh[10], svwh[12]  # back floor VWH at v1, v2
+            if ey1 == evy1 and vwh_cache[_vbb1] is not None:
+                bb1 = vwh_cache[_vbb1]
+            else:
+                bb1 = fp_project_y(back[0] - vz, ryh1, ryl1)
+                if ey1 == evy1: vwh_cache[_vbb1] = bb1
+            if ey2 == evy2 and vwh_cache[_vbb2] is not None:
+                bb2 = vwh_cache[_vbb2]
+            else:
+                bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
+                if ey2 == evy2: vwh_cache[_vbb2] = bb2
             fp_module.mul_cat("clip")
             lines = [(sx1, bb1, sx2, bb2),
                      (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
@@ -1260,7 +1328,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
                           top_dom, bot_dom)
 
 
-def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, ycache):
+def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
     """Render a subsector with frame-global vertex cache.
 
     ctx: view context tuple from fp_view_context.
@@ -1269,10 +1337,10 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, ycache):
 
     # Both caches are lazily populated by fp_render_seg:
     # vcache (frame-global): view transforms, computed on first access per vertex
-    # ycache (frame-global): Y projections keyed on (vertex, fh, ch)
+    # vwh_cache (frame-global): Y projections indexed by VWH
     deferred = []
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred)
+        fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred)
     # Apply clip updates after all draws in this subsector
     for op in deferred:
         if op[0] == 'solid':
@@ -1284,7 +1352,7 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, ycache):
 
 
 def render_bsp_fp(nid, clips, ctx, vz,
-                   wx_full, wy_full, cos_f, sin_f, surface, vcache, ycache):
+                   wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache):
     """BSP traversal for the 8-bit fixed-point path."""
     if clips.is_full():
         return
@@ -1292,14 +1360,14 @@ def render_bsp_fp(nid, clips, ctx, vz,
         ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
         map_trace["subsectors"].add(ssid)
         map_trace["ss_order"].append(ssid)
-        render_subsector_fp(ssid, clips, ctx, vz, surface, vcache, ycache)
+        render_subsector_fp(ssid, clips, ctx, vz, surface, vcache, vwh_cache)
         return
     map_trace["nodes_visited"].add(nid)
     node = nodes[nid]
     side = point_on_side(wx_full, wy_full, node)
     ch = (node[12], node[13])
     render_bsp_fp(ch[side], clips, ctx, vz,
-                  wx_full, wy_full, cos_f, sin_f, surface, vcache, ycache)
+                  wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
     if clips.is_full():
         return
     far = side ^ 1
@@ -1307,7 +1375,7 @@ def render_bsp_fp(nid, clips, ctx, vz,
     if br is not None:
         if clips.has_gap(br[0], br[1]):
             render_bsp_fp(ch[far], clips, ctx, vz,
-                          wx_full, wy_full, cos_f, sin_f, surface, vcache, ycache)
+                          wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
 
 
 # ── Top-down map visualisation ────────────────────────────────────────────────
@@ -1623,13 +1691,14 @@ def _compare_draw_calls():
     cos_f, sin_f = cos_a, sin_a
 
     orig_fp_seg_fn = globals()['fp_render_seg']
-    def _fp_seg(si, clips, ctx, vz, surface, vcache, ycache, deferred=None):
+    def _fp_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
         _current[0] = ('P', si)
-        orig_fp_seg_fn(si, clips, ctx, vz, surface, vcache, ycache, deferred)
+        orig_fp_seg_fn(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred)
         _current[0] = None
     globals()['fp_render_seg'] = _fp_seg
     render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx, vz_ps,
-                  int(player_x), int(player_y), cos_f, sin_f, tmp_fp, {}, {})
+                  int(player_x), int(player_y), cos_f, sin_f, tmp_fp,
+                      [None]*len(vertexes), [None]*len(vwh_table))
     globals()['fp_render_seg'] = orig_fp_seg_fn
     pygame.draw.line = _real_drawline
 
@@ -1666,7 +1735,8 @@ def _compare_draw_calls():
     for k in map_trace:
         map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
     render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx2, vz_ps,
-                  int(player_x), int(player_y), cos_f, sin_f, tmp_fp, {}, {})
+                  int(player_x), int(player_y), cos_f, sin_f, tmp_fp,
+                      [None]*len(vertexes), [None]*len(vwh_table))
     globals()['fp_render_seg'] = orig_fp_seg_fn
     pygame.draw.line = _real_drawline
     fp_log = list(_log)
@@ -1802,7 +1872,8 @@ def _record_frame_steps():
         draw_stats[i] = 0
     render_bsp_fp(len(nodes) - 1, RecordingClipSpans(),
                   ctx, vz_ps, int(player_x), int(player_y),
-                  cos_f, sin_f, tmp, {}, {})
+                  cos_f, sin_f, tmp,
+                      [None]*len(vertexes), [None]*len(vwh_table))
     pygame.draw.line = _real_drawline
 
 def _dump_portal_analysis():
@@ -2045,7 +2116,8 @@ while running:
 
         render_bsp_fp(len(nodes) - 1, FPClipSpans(),
                       ctx, vz_ps,
-                      px_full, py_full, cos_f, sin_f, fp_surface, {}, {})
+                      px_full, py_full, cos_f, sin_f, fp_surface,
+                      [None]*len(vertexes), [None]*len(vwh_table))
 
         # Nearest-neighbour upscale to display
         screen.fill((0, 0, 0))
