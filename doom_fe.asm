@@ -1133,36 +1133,29 @@ CMD_DONE   = &00
 
     ; --- Initialise running seg header pointer: rom_main + off_seg_hdr + idx*12 ---
     ; idx * 12 = idx*8 + idx*4
-    LDA zp_seg_idx : STA zp_ptr0
-    LDA zp_seg_idx+1 : STA zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 4
-    LDA zp_ptr0 : STA zp_tmp0
-    LDA zp_ptr0+1 : STA zp_tmp0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 8
-    LDA zp_ptr0 : CLC : ADC zp_tmp0 : STA zp_ptr0
-    LDA zp_ptr0+1 : ADC zp_tmp0+1 : STA zp_ptr0+1   ; × 12
-    LDA zp_ptr0 : CLC : ADC layout_off_seg_hdr : STA zp_seg_hdr_ptr
-    LDA zp_ptr0+1 : ADC layout_off_seg_hdr+1
+    ; Compute idx * 12 in zp_seg_hdr_ptr, then idx * 24 = idx*12 << 1
+    LDA zp_seg_idx : STA zp_seg_hdr_ptr
+    LDA zp_seg_idx+1 : STA zp_seg_hdr_ptr+1
+    ASL zp_seg_hdr_ptr : ROL zp_seg_hdr_ptr+1
+    ASL zp_seg_hdr_ptr : ROL zp_seg_hdr_ptr+1           ; × 4
+    LDA zp_seg_hdr_ptr : STA zp_tmp0
+    LDA zp_seg_hdr_ptr+1 : STA zp_tmp0+1
+    ASL zp_seg_hdr_ptr : ROL zp_seg_hdr_ptr+1           ; × 8
+    LDA zp_seg_hdr_ptr : CLC : ADC zp_tmp0 : STA zp_seg_hdr_ptr
+    LDA zp_seg_hdr_ptr+1 : ADC zp_tmp0+1 : STA zp_seg_hdr_ptr+1   ; × 12
+
+    ; idx * 24 = idx * 12 * 2
+    LDA zp_seg_hdr_ptr   : ASL A : STA zp_seg_det_ptr
+    LDA zp_seg_hdr_ptr+1 : ROL A : STA zp_seg_det_ptr+1
+
+    ; Add base: rom_main + off_seg_hdr → zp_seg_hdr_ptr
+    LDA zp_seg_hdr_ptr   : CLC : ADC layout_off_seg_hdr : STA zp_seg_hdr_ptr
+    LDA zp_seg_hdr_ptr+1 : ADC layout_off_seg_hdr+1
     CLC : ADC #HI(rom_main)
     STA zp_seg_hdr_ptr+1
 
-    ; --- Initialise running seg detail pointer: rom_detail + idx*24 ---
-    ; idx * 24 = idx*16 + idx*8
-    LDA zp_seg_idx : STA zp_ptr0
-    LDA zp_seg_idx+1 : STA zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 8
-    LDA zp_ptr0 : STA zp_tmp0
-    LDA zp_ptr0+1 : STA zp_tmp0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 16
-    LDA zp_ptr0 : CLC : ADC zp_tmp0 : STA zp_ptr0
-    LDA zp_ptr0+1 : ADC zp_tmp0+1 : STA zp_ptr0+1   ; × 24
-    LDA zp_ptr0 : STA zp_seg_det_ptr
-    LDA zp_ptr0+1
-    CLC : ADC #HI(rom_detail)
-    STA zp_seg_det_ptr+1
+    ; Add base: rom_detail → zp_seg_det_ptr (no offset; detail at rom_detail base)
+    LDA zp_seg_det_ptr+1 : CLC : ADC #HI(rom_detail) : STA zp_seg_det_ptr+1
 
     ; Clear deferred mark_solid stack
     LDA #0
