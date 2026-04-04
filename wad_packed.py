@@ -21,17 +21,18 @@ import struct
 VERTEX_SIZE  = 4     # shift 2:  s16 x, s16 y
 NODE_SIZE    = 16    # shift 4:  s16 x,y,dx,dy + u16 children + pad
 SSECTOR_SIZE = 4     # shift 2:  u8 count, u8 pad, u16 first_seg
-SEG_HDR_SIZE = 8     # shift 3:  u16 v1, u16 v2, u16 linedef_idx, u8 flags, u8 pad
+SEG_HDR_SIZE = 12    # (idx<<3)+(idx<<2): v1,v2,lv1_x,lv1_y,ldx,ldy,flags,pad
 SEG_DTL_SIZE = 24    # ×24 = (idx<<4)+(idx<<3): fh,ch + 8 VWH u16 + back heights + pad
 VWH_SIZE     = 1     # identity: s8 height
-LINEDEF_SIZE = 8     # shift 3:  s16 lv1_x, s16 lv1_y, s8 ldx, s8 ldy, u8 pad×2
+# No separate linedef table — data inlined into seg headers
 
 # ── Offsets within seg header ───────────────────────────────────────────
 
 SH_V1 = 0; SH_V2 = 2             # u16 vertex indices
-SH_LDIDX = 4                     # u16 linedef index
-SH_FLAGS = 6                     # u8 flags
-SH_PAD = 7
+SH_LV1X = 4; SH_LV1Y = 6        # s16 linedef v1 (for back-face)
+SH_LDX = 8; SH_LDY = 9          # s8 linedef delta
+SH_FLAGS = 10                    # u8 flags
+SH_PAD = 11
 
 # ── Offsets within seg detail (24 bytes) ─────────────────────────────────
 
@@ -43,10 +44,6 @@ SD_VWH_BT1 = 12; SD_VWH_BB1 = 14 # u16 back VWH ($FFFF if solid)
 SD_VWH_BT2 = 16; SD_VWH_BB2 = 18
 # +20..23 padding
 
-# ── Offsets within linedef ──────────────────────────────────────────────
-
-LD_LV1X = 0; LD_LV1Y = 2         # s16 linedef v1 position
-LD_DX = 4; LD_DY = 5             # s8 linedef delta
 
 # ── Seg flags ───────────────────────────────────────────────────────────
 
@@ -68,9 +65,9 @@ VWHCACHE_ENTRY = 2  # s16 screen_y (needs 16-bit for off-screen)
 def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                  fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
                  prescale, map_center_x, map_center_y):
-    """Build the four byte arrays from parsed WAD data.
+    """Build the byte arrays from parsed WAD data.
 
-    Returns (rom_main, rom_detail, ram_size, layout).
+    Returns (rom_main, rom_detail, rom_recip, layout).
     """
 
     n_verts = len(vertexes)
@@ -108,8 +105,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     off_nodes = off_verts + n_verts * VERTEX_SIZE
     off_ss = off_nodes + n_nodes * NODE_SIZE
     off_seg_hdr = off_ss + n_ss * SSECTOR_SIZE
-    off_ld = off_seg_hdr + n_segs * SEG_HDR_SIZE
-    off_vwh = off_ld + n_ld * LINEDEF_SIZE
+    off_vwh = off_seg_hdr + n_segs * SEG_HDR_SIZE
     rom_main_size = off_vwh + n_vwh * VWH_SIZE
 
     rom_main = bytearray(rom_main_size)
@@ -131,11 +127,18 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     for i, ss in enumerate(fp_ssectors):
         struct.pack_into('<BxH', rom_main, off_ss + i * SSECTOR_SIZE, ss[0], ss[1])
 
-    # Seg headers
+    # Seg headers (with inlined linedef data)
     for i, svwh in enumerate(fp_segs_vwh):
         s = svwh[0]
         front_idx, back_idx = svwh[1], svwh[2]
         fh, ch = svwh[3], svwh[4]
+
+        # Linedef data for back-face test
+        ld = linedefs[s[3]]
+        lv1 = fp_vertexes[ld[0]]
+        lv2 = fp_vertexes[ld[1]]
+        ldx = max(-128, min(127, lv2[0] - lv1[0]))
+        ldy = max(-128, min(127, lv2[1] - lv1[1]))
 
         flags = 0
         if s[4] == 1: flags |= SF_DIR
@@ -150,20 +153,36 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                 if bs[0] > fh: flags |= SF_NEEDBB
 
         o = off_seg_hdr + i * SEG_HDR_SIZE
-        struct.pack_into('<HHHBx', rom_main, o, s[0], s[1], s[3], flags)
-
-    # Linedefs (prescaled v1 + delta)
-    for i, ld in enumerate(linedefs):
-        lv1 = fp_vertexes[ld[0]]
-        lv2 = fp_vertexes[ld[1]]
-        ldx = max(-128, min(127, lv2[0] - lv1[0]))
-        ldy = max(-128, min(127, lv2[1] - lv1[1]))
-        o = off_ld + i * LINEDEF_SIZE
-        struct.pack_into('<hhbbxx', rom_main, o, lv1[0], lv1[1], ldx, ldy)
+        struct.pack_into('<HHhhbbBx', rom_main, o,
+                         s[0], s[1], lv1[0], lv1[1], ldx, ldy, flags)
 
     # VWH heights
     for i, (vi, h) in enumerate(vwh_table):
         rom_main[off_vwh + i] = h & 0xFF
+
+    # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
+
+    from fp import (_SIN_QUADRANT, _SIN_UNITY, _RECIP_X_HI, _RECIP_X_LO,
+                    RECIP_TABLE_SIZE)
+
+    # Layout: sin_mag[64] + sin_unity[64] + recip_hi[513] + recip_lo[513]
+    SINCOS_SIZE = 64 + 64   # magnitude + unity flags, one quadrant
+    RECIP_ENTRIES = RECIP_TABLE_SIZE + 1  # +1 guard for averaging
+    rom_recip_size = SINCOS_SIZE + RECIP_ENTRIES * 2
+
+    rom_recip = bytearray(rom_recip_size)
+    off_sin_mag = 0
+    off_sin_unity = 64
+    off_recip_hi = SINCOS_SIZE
+    off_recip_lo = SINCOS_SIZE + RECIP_ENTRIES
+
+    for j in range(64):
+        rom_recip[off_sin_mag + j] = _SIN_QUADRANT[j] & 0xFF
+        rom_recip[off_sin_unity + j] = 1 if _SIN_UNITY[j] else 0
+
+    for j in range(RECIP_ENTRIES):
+        rom_recip[off_recip_hi + j] = _RECIP_X_HI[j] & 0xFF
+        rom_recip[off_recip_lo + j] = _RECIP_X_LO[j] & 0xFF
 
     # ── RAM sizing ──────────────────────────────────────────────────────
 
@@ -175,12 +194,15 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     layout = {
         'n_verts': n_verts, 'n_nodes': n_nodes, 'n_ss': n_ss,
-        'n_segs': n_segs, 'n_vwh': n_vwh, 'n_ld': n_ld,
+        'n_segs': n_segs, 'n_vwh': n_vwh,
         'off_verts': off_verts, 'off_nodes': off_nodes,
         'off_ss': off_ss, 'off_seg_hdr': off_seg_hdr,
-        'off_ld': off_ld, 'off_vwh': off_vwh,
+        'off_vwh': off_vwh,
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
+        'rom_recip_size': rom_recip_size,
+        'off_sin_mag': off_sin_mag, 'off_sin_unity': off_sin_unity,
+        'off_recip_hi': off_recip_hi, 'off_recip_lo': off_recip_lo,
         'ram_vcache': 0,
         'ram_vcache_valid': vcache_size,
         'ram_vwh_cache': vcache_size + vcache_valid,
@@ -188,18 +210,19 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'ram_size': ram_size,
     }
 
-    print(f"Packed WAD: {rom_main_size} bytes ROM main, "
-          f"{len(rom_detail)} bytes ROM detail, {ram_size} bytes RAM")
+    print(f"Packed WAD: {rom_main_size} ROM main, "
+          f"{len(rom_detail)} ROM detail, {rom_recip_size} ROM recip, "
+          f"{ram_size} RAM")
     print(f"  Vertices:    {n_verts} × {VERTEX_SIZE} = {n_verts * VERTEX_SIZE}")
     print(f"  Nodes:       {n_nodes} × {NODE_SIZE} = {n_nodes * NODE_SIZE}")
     print(f"  Subsectors:  {n_ss} × {SSECTOR_SIZE} = {n_ss * SSECTOR_SIZE}")
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = {n_segs * SEG_HDR_SIZE}")
-    print(f"  Linedefs:    {n_ld} × {LINEDEF_SIZE} = {n_ld * LINEDEF_SIZE}")
     print(f"  VWH heights: {n_vwh} × {VWH_SIZE} = {n_vwh}")
     print(f"  Seg detail:  {n_segs} × {SEG_DTL_SIZE} = {len(rom_detail)}")
+    print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES*2})")
     print(f"  RAM:         {ram_size}")
 
-    return rom_main, rom_detail, layout
+    return rom_main, rom_detail, rom_recip, layout
 
 
 # ── Accessor helpers (simulate 6502 memory reads) ───────────────────────

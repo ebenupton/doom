@@ -187,7 +187,7 @@ vwh_table = _vwh_table
 
 # ── Build packed byte arrays for 8-bit processor simulation ──────────────
 from wad_packed import build_packed
-packed_rom_main, packed_rom_detail, packed_layout = build_packed(
+packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout = build_packed(
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
     PRESCALE, MAP_CENTER_X, MAP_CENTER_Y)
