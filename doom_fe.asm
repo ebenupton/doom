@@ -107,6 +107,14 @@ colbitmap    = &0200        ; 32 bytes
 bsp_stack    = &0220        ; 216 bytes (72 × 3)
 cmd_buffer   = &0300        ; command output (grows upward)
 deferred_stk = &0B00        ; deferred mark_solid pairs (64 × 4 = 256 bytes)
+vcache       = &0C00        ; vertex cache: 512 × 8 bytes = 4096 bytes
+vcache_valid = &1C00        ; vertex cache valid bitmap: 64 bytes (512 bits)
+
+; Vertex cache entry layout (8 bytes each)
+VC_VX    = 0                ; s16
+VC_VY    = 2                ; s16
+VC_VI    = 4                ; u16 (vy_idx)
+VC_PAD   = 6                ; s16 (reserved, matches Python VC_SX slot)
 
 ; ======================================================================
 ; ROM base addresses (set by Python loader)
@@ -198,6 +206,14 @@ CMD_DONE   = &00
     STA colbitmap,X
     DEX
     BPL clr_bm
+
+    ; Clear vertex cache valid bitmap (64 bytes)
+    LDA #0
+    LDX #63
+.clr_vcv
+    STA vcache_valid,X
+    DEX
+    BPL clr_vcv
 
     ; Init BSP stack
     STA zp_bsp_sp
@@ -1379,23 +1395,22 @@ CMD_DONE   = &00
     LDA (zp_ptr0),Y
     STA zp_tmp1+1         ; v2 hi
 
-    ; --- View transform vertex 1 ---
-    JSR load_vertex       ; input: zp_tmp0 = v_idx; output: zp_tmp2 = wx, zp_tmp3 = wy
-    JSR to_view           ; output: zp_vx1, zp_vy1, zp_vi1
+    ; --- View transform vertex 1 (cached) ---
+    JSR xform_vertex_cached  ; input: zp_tmp0 = v_idx; output: zp_vx1, zp_vy1, zp_vi1
 
-    ; Save v1 results (to_view always writes to vx1/vy1/vi1)
+    ; Save v1 results across v2 transform
     LDA zp_vx1 : PHA : LDA zp_vx1+1 : PHA
     LDA zp_vy1 : PHA : LDA zp_vy1+1 : PHA
     LDA zp_vi1 : PHA : LDA zp_vi1+1 : PHA
 
-    ; --- View transform vertex 2 ---
+    ; --- View transform vertex 2 (cached) ---
     LDA zp_tmp1
     STA zp_tmp0
     LDA zp_tmp1+1
     STA zp_tmp0+1
-    JSR load_vertex
-    JSR to_view           ; overwrites vx1/vy1/vi1 with v2 values
-    ; Copy to v2 slots
+    JSR xform_vertex_cached  ; output in zp_vx1/vy1/vi1 again
+
+    ; Copy v2 result to v2 slots
     LDA zp_vx1 : STA zp_vx2
     LDA zp_vx1+1 : STA zp_vx2+1
     LDA zp_vy1 : STA zp_vy2
@@ -1509,6 +1524,107 @@ CMD_DONE   = &00
     INY
     LDA (zp_ptr0),Y
     STA zp_tmp3+1
+    RTS
+}
+
+; ======================================================================
+; VCACHE_ADDR: compute vertex cache entry address and valid-bit location
+; Input: zp_tmp0 = v_idx (u16)
+; Output: zp_ptr1 = vcache entry base + v_idx * 8
+;         X = byte index into vcache_valid (v_idx >> 3)
+;         Y = bit index in that byte (v_idx & 7)
+; Clobbers: A, X, Y, zp_ptr1
+; ======================================================================
+.vcache_addr
+{
+    ; ptr1 = v_idx * 8 + VCACHE
+    LDA zp_tmp0
+    STA zp_ptr1
+    LDA zp_tmp0+1
+    STA zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    LDA zp_ptr1
+    CLC
+    ADC #LO(vcache)
+    STA zp_ptr1
+    LDA zp_ptr1+1
+    ADC #HI(vcache)
+    STA zp_ptr1+1
+
+    ; byte_idx = v_idx >> 3.  v_idx ≤ 511 so byte_idx ≤ 63 (fits in X).
+    ; Compute via: byte_idx = (v_idx_hi << 5) | (v_idx_lo >> 3)
+    LDA zp_tmp0
+    LSR A : LSR A : LSR A     ; v_idx_lo >> 3
+    STA zp_ptr0               ; reuse ptr0 as scratch (OK: we're not using it here)
+    LDA zp_tmp0+1
+    BEQ vca_no_hi
+    ; v_idx_hi contributes 256/8 = 32 per unit (max 1 since v_idx < 512)
+    LDA zp_ptr0
+    CLC
+    ADC #32
+    STA zp_ptr0
+.vca_no_hi
+    LDX zp_ptr0
+
+    ; bit_idx = v_idx_lo & 7
+    LDA zp_tmp0
+    AND #7
+    TAY
+    RTS
+}
+
+; ======================================================================
+; XFORM_VERTEX_CACHED: view-transform a vertex, using the cache
+; Input: zp_tmp0 = v_idx (u16)
+; Output: zp_vx1, zp_vy1, zp_vi1 populated
+; Clobbers: most temps (to_view)
+; ======================================================================
+.xform_vertex_cached
+{
+    ; Check cache valid bit
+    JSR vcache_addr              ; → ptr1, X = byte_idx, Y = bit_idx
+    LDA vcache_valid,X
+    AND bit_masks,Y
+    BEQ xvc_miss
+
+    ; Hit: load vx, vy, vi from (ptr1)
+    LDY #VC_VX
+    LDA (zp_ptr1),Y : STA zp_vx1     : INY
+    LDA (zp_ptr1),Y : STA zp_vx1+1   : INY
+    LDA (zp_ptr1),Y : STA zp_vy1     : INY
+    LDA (zp_ptr1),Y : STA zp_vy1+1   : INY
+    LDA (zp_ptr1),Y : STA zp_vi1     : INY
+    LDA (zp_ptr1),Y : STA zp_vi1+1
+    RTS
+
+.xvc_miss
+    ; Set valid bit now (while X=byte_idx, Y=bit_idx are still live; safe
+    ; because nothing can observe intermediate state).
+    LDA vcache_valid,X
+    ORA bit_masks,Y
+    STA vcache_valid,X
+
+    ; Save ptr1 across load_vertex + to_view
+    LDA zp_ptr1   : PHA
+    LDA zp_ptr1+1 : PHA
+
+    JSR load_vertex              ; reads zp_tmp0 (= v_idx), writes tmp2/tmp3
+    JSR to_view                  ; writes vx1/vy1/vi1
+
+    ; Restore ptr1
+    PLA : STA zp_ptr1+1
+    PLA : STA zp_ptr1
+
+    ; Store to cache
+    LDY #VC_VX
+    LDA zp_vx1     : STA (zp_ptr1),Y : INY
+    LDA zp_vx1+1   : STA (zp_ptr1),Y : INY
+    LDA zp_vy1     : STA (zp_ptr1),Y : INY
+    LDA zp_vy1+1   : STA (zp_ptr1),Y : INY
+    LDA zp_vi1     : STA (zp_ptr1),Y : INY
+    LDA zp_vi1+1   : STA (zp_ptr1),Y
     RTS
 }
 
