@@ -1466,20 +1466,15 @@ CMD_DONE   = &00
     LDA (zp_ptr0),Y
     STA zp_tmp1+1         ; v2 hi
 
-    ; --- View transform vertex 1 (cached) ---
-    JSR xform_vertex_cached  ; input: zp_tmp0 = v_idx; output: zp_vx1, zp_vy1, zp_vi1
-
-    ; Save v1 results across v2 transform
-    LDA zp_vx1 : PHA : LDA zp_vx1+1 : PHA
-    LDA zp_vy1 : PHA : LDA zp_vy1+1 : PHA
-    LDA zp_vi1 : PHA : LDA zp_vi1+1 : PHA
-
-    ; --- View transform vertex 2 (cached) ---
+    ; --- View transform vertex 2 first (writes zp_vx1 slots) ---
+    ; v1 index is in zp_tmp0 — save across v2 transform.
+    LDA zp_tmp0 : STA &46
+    LDA zp_tmp0+1 : STA &47
     LDA zp_tmp1
     STA zp_tmp0
     LDA zp_tmp1+1
     STA zp_tmp0+1
-    JSR xform_vertex_cached  ; output in zp_vx1/vy1/vi1 again
+    JSR xform_vertex_cached  ; writes zp_vx1, zp_vy1, zp_vi1
 
     ; Copy v2 result to v2 slots
     LDA zp_vx1 : STA zp_vx2
@@ -1489,10 +1484,10 @@ CMD_DONE   = &00
     LDA zp_vi1 : STA zp_vi2
     LDA zp_vi1+1 : STA zp_vi2+1
 
-    ; Restore v1 results
-    PLA : STA zp_vi1+1 : PLA : STA zp_vi1
-    PLA : STA zp_vy1+1 : PLA : STA zp_vy1
-    PLA : STA zp_vx1+1 : PLA : STA zp_vx1
+    ; --- View transform vertex 1 (cached) ---
+    LDA &46 : STA zp_tmp0
+    LDA &47 : STA zp_tmp0+1
+    JSR xform_vertex_cached  ; writes zp_vx1, zp_vy1, zp_vi1
 
     ; --- Near clip ---
     JSR near_clip         ; input: vx1,vy1, vx2,vy2
