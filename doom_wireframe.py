@@ -2,6 +2,7 @@
 """DOOM E1M1 wireframe renderer — BSP front-to-back with 2D trapezoid clip spans."""
 
 import struct, math, sys, random, pygame
+from line6502 import estimate_line_cycles
 import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
@@ -480,6 +481,12 @@ GREEN = (0, 200, 0)
 
 def _rand_color():
     return (random.randint(60, 255), random.randint(60, 255), random.randint(60, 255))
+
+def _cycle_drawline(surface, color, p1, p2, w=1):
+    """Draw line and accumulate 6502 cycle estimate."""
+    _frame_6502_cycles[0] += estimate_line_cycles(
+        int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+    return _real_drawline(surface, color, p1, p2, w)
 
 def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
     if clips.is_full(): return
@@ -1699,6 +1706,7 @@ def _compare_draw_calls():
 
 # [total, unclipped, clipped, trivial_reject, clip_reject]
 draw_stats = [0, 0, 0, 0, 0]
+_frame_6502_cycles = [0]  # mutable for closure access
 
 sys.setrecursionlimit(10000)
 pygame.init()
@@ -2004,10 +2012,11 @@ while running:
             player_y -= math.sin(move_angle) * move_speed * dt
 
         fp_surface.fill((0, 0, 0))
+        _frame_6502_cycles[0] = 0
         if use_xor:
             pygame.draw.line = _xor_drawline
         else:
-            pygame.draw.line = _real_drawline
+            pygame.draw.line = _cycle_drawline
         random.seed(42)
         for i in range(5):
             draw_stats[i] = 0
@@ -2087,10 +2096,11 @@ while running:
     if use_fixedpoint:
         mc = fp_module.mul_counts
         mul_total = sum(mc.values())
+        cyc = _frame_6502_cycles[0]
         hud = (f"fp ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
                f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
-               f"{clock.get_fps():.0f}fps")
+               f"~{cyc//1000}K cyc  {clock.get_fps():.0f}fps")
     else:
         hud = (f"float ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
