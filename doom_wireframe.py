@@ -2853,14 +2853,23 @@ def _main():
     total, unclipped, clipped, trivial, clip_rej = draw_stats
     ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
     if use_fixedpoint:
-        mc = fp_module.mul_counts
-        mul_total = sum(mc.values())
-        cyc = _frame_6502_cycles[0]
-        mode_tag = "fp/ROM" if use_packed else "fp"
-        hud = (f"{mode_tag} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
-               f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
-               f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
-               f"~{cyc//1000}K cyc  {clock.get_fps():.0f}fps")
+        if _use_6502_frontend and _6502_result is not None:
+            hw_lines, hw_muls = _6502_result
+            hud = (f"6502 ({player_x:.0f},{player_y:.0f},{ang_display})  "
+                   f"{len(hw_lines)} lines  {hw_muls} muls  "
+                   f"~{hw_muls * 60 // 1000}K front-end cyc  "
+                   f"{clock.get_fps():.0f}fps")
+        elif _use_6502_frontend:
+            hud = f"6502 rendering... ({player_x:.0f},{player_y:.0f},{ang_display})"
+        else:
+            mc = fp_module.mul_counts
+            mul_total = sum(mc.values())
+            cyc = _frame_6502_cycles[0]
+            mode_tag = "fp/ROM" if use_packed else "fp"
+            hud = (f"{mode_tag} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
+                   f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
+                   f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
+                   f"~{cyc//1000}K cyc  {clock.get_fps():.0f}fps")
     else:
         hud = (f"float ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
