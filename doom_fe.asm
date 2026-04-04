@@ -2209,24 +2209,29 @@ CMD_DONE   = &00
 ; ======================================================================
 .mul_s16_u8_s24
 {
-    ; Save b for later correction check
+    ; Save b for correction checks
     LDA zp_math_b
-    STA &7D                   ; $7D = b (for > 127 correction)
+    STA &7D                   ; $7D = b (for sign-correction check)
 
-    ; ex_lo * b (unsigned × unsigned)
+    ; ex_lo * b (unsigned × unsigned) — always needed
     LDA zp_tmp2               ; ex_lo
     JSR umul8x8
     LDA zp_res_lo
-    STA &70                   ; byte0 = lo(ex_lo * b)
+    STA &70                   ; byte0
     LDA zp_res_hi
-    STA &71                   ; temp: hi(ex_lo * b)
+    STA &71                   ; temp byte1
 
-    ; ex_hi * b (signed × unsigned-treated-as-signed)
+    ; Fast paths: if ex_hi is 0 or $FF (ex fits in s8), skip second multiply
+    LDA zp_tmp2+1
+    BEQ m16u8_fast_pos
+    CMP #&FF
+    BEQ m16u8_fast_neg
+
+    ; ---- Wide path: ex doesn't fit in s8 ----
     LDA &7D
     STA zp_math_b
     LDA zp_tmp2+1             ; ex_hi (signed)
     JSR smul8x8
-    ; Add res_lo to $71, res_hi (with carry) to $72
     LDA &71
     CLC
     ADC zp_res_lo
@@ -2235,14 +2240,38 @@ CMD_DONE   = &00
     ADC #0
     STA &72
 
-    ; Correction for b > 127: add ex_hi (signed, as u8) to $72
+    ; Correction for b > 127 (smul8x8 sees b_signed = b - 256)
     LDA &7D
-    BPL m16u8_done             ; b <= 127 → no correction
+    BPL m16u8_done
     LDA &72
     CLC
-    ADC zp_tmp2+1             ; add ex_hi (signed byte)
+    ADC zp_tmp2+1             ; add ex_hi
     STA &72
 .m16u8_done
+    RTS
+
+.m16u8_fast_pos
+    ; ex_hi = 0. For b <= 127, result byte2 = 0.
+    ; For b > 127, smul-correction would add ex_hi * 256 = 0 anyway.
+    ; ex_lo * b is unsigned, high byte of product is already in $71.
+    LDA #0
+    STA &72
+    RTS
+
+.m16u8_fast_neg
+    ; ex_hi = $FF (ex in -256..-1).
+    ; product = (ex_lo * b) - 256*b
+    ;   256*b as s24 = (0, b, 0)
+    ;   byte0 unchanged
+    ;   byte1 = umul_hi - b with borrow
+    ;   byte2 = 0 - 0 - borrow = 0 or $FF
+    LDA &71
+    SEC
+    SBC &7D                    ; byte1 -= b
+    STA &71
+    LDA #0
+    SBC #0                     ; 0 - 0 - (1-C) = 0 or $FF
+    STA &72
     RTS
 }
 
