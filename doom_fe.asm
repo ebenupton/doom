@@ -100,6 +100,11 @@ zp_defer_sp  = &58         ; u8 (byte offset into deferred stack)
 zp_ptr0      = &5A         ; u16 general-purpose pointer
 zp_ptr1      = &5C         ; u16
 
+; --- Running seg pointers (advanced by seg_loop to avoid per-seg
+;     idx*12 and idx*24 multiplies inside render_seg/read_seg_detail) ---
+zp_seg_hdr_ptr = &5E       ; u16 pointer to current seg header (12B stride)
+zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (24B stride)
+
 ; ======================================================================
 ; RAM addresses
 ; ======================================================================
@@ -600,10 +605,8 @@ CMD_DONE   = &00
     LDX zp_bsp_sp
     LDA bsp_stack-3,X   ; nid lo
     STA zp_tmp0
-    STA &0F14            ; debug: last nid lo
     LDA bsp_stack-2,X   ; nid hi
     STA zp_tmp0+1
-    STA &0F15            ; debug: last nid hi
 
     ; Check if subsector (bit 15 set)
     AND #NF_SUBSECTOR
@@ -1128,6 +1131,39 @@ CMD_DONE   = &00
     LDA (zp_ptr0),Y      ; first_seg hi
     STA zp_seg_idx+1
 
+    ; --- Initialise running seg header pointer: rom_main + off_seg_hdr + idx*12 ---
+    ; idx * 12 = idx*8 + idx*4
+    LDA zp_seg_idx : STA zp_ptr0
+    LDA zp_seg_idx+1 : STA zp_ptr0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 4
+    LDA zp_ptr0 : STA zp_tmp0
+    LDA zp_ptr0+1 : STA zp_tmp0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 8
+    LDA zp_ptr0 : CLC : ADC zp_tmp0 : STA zp_ptr0
+    LDA zp_ptr0+1 : ADC zp_tmp0+1 : STA zp_ptr0+1   ; × 12
+    LDA zp_ptr0 : CLC : ADC layout_off_seg_hdr : STA zp_seg_hdr_ptr
+    LDA zp_ptr0+1 : ADC layout_off_seg_hdr+1
+    CLC : ADC #HI(rom_main)
+    STA zp_seg_hdr_ptr+1
+
+    ; --- Initialise running seg detail pointer: rom_detail + idx*24 ---
+    ; idx * 24 = idx*16 + idx*8
+    LDA zp_seg_idx : STA zp_ptr0
+    LDA zp_seg_idx+1 : STA zp_ptr0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 8
+    LDA zp_ptr0 : STA zp_tmp0
+    LDA zp_ptr0+1 : STA zp_tmp0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1            ; × 16
+    LDA zp_ptr0 : CLC : ADC zp_tmp0 : STA zp_ptr0
+    LDA zp_ptr0+1 : ADC zp_tmp0+1 : STA zp_ptr0+1   ; × 24
+    LDA zp_ptr0 : STA zp_seg_det_ptr
+    LDA zp_ptr0+1
+    CLC : ADC #HI(rom_detail)
+    STA zp_seg_det_ptr+1
+
     ; Clear deferred mark_solid stack
     LDA #0
     STA zp_defer_sp
@@ -1138,10 +1174,15 @@ CMD_DONE   = &00
     BEQ segs_done
     DEC zp_seg_count
     JSR render_seg
-    ; Advance seg index
-    INC zp_seg_idx
-    BNE seg_loop
-    INC zp_seg_idx+1
+    ; Advance running seg pointers (header += 12, detail += 24)
+    LDA zp_seg_hdr_ptr : CLC : ADC #12 : STA zp_seg_hdr_ptr
+    BCC sl_no_hdr_carry
+    INC zp_seg_hdr_ptr+1
+.sl_no_hdr_carry
+    LDA zp_seg_det_ptr : CLC : ADC #24 : STA zp_seg_det_ptr
+    BCC sl_no_det_carry
+    INC zp_seg_det_ptr+1
+.sl_no_det_carry
     JMP seg_loop
 
 .segs_done
@@ -1190,42 +1231,9 @@ CMD_DONE   = &00
 ; ======================================================================
 .render_seg
 {
-    INC &0F00 : BNE no_dbg0 : INC &0F01 : .no_dbg0
-
-    ; Compute seg header address: rom_main + off_seg_hdr + idx * 12
-    ; idx * 12 = idx * 8 + idx * 4
-    LDA zp_seg_idx
-    STA zp_ptr0
-    LDA zp_seg_idx+1
-    STA zp_ptr0+1
-    ; × 4
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ; save × 4
-    LDA zp_ptr0
-    STA zp_tmp0
-    LDA zp_ptr0+1
-    STA zp_tmp0+1
-    ; × 8
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ; × 12 = ×8 + ×4
-    LDA zp_ptr0
-    CLC
-    ADC zp_tmp0
-    STA zp_ptr0
-    LDA zp_ptr0+1
-    ADC zp_tmp0+1
-    STA zp_ptr0+1
-    ; Add base
-    LDA zp_ptr0
-    CLC
-    ADC layout_off_seg_hdr
-    STA zp_ptr0
-    LDA zp_ptr0+1
-    ADC layout_off_seg_hdr+1
-    CLC
-    ADC #HI(rom_main)
-    STA zp_ptr0+1
+    ; Copy running seg header pointer into zp_ptr0
+    LDA zp_seg_hdr_ptr   : STA zp_ptr0
+    LDA zp_seg_hdr_ptr+1 : STA zp_ptr0+1
     ; ptr0 → seg header
 
     ; --- Back-face test ---
@@ -1451,8 +1459,6 @@ CMD_DONE   = &00
 .bf_cull
     RTS
 .bf_pass
-    INC &0F02 : BNE no_dbg1 : INC &0F03 : .no_dbg1
-
     ; --- Read vertex indices ---
     LDY #SH_V1
     LDA (zp_ptr0),Y
@@ -1499,7 +1505,6 @@ CMD_DONE   = &00
     JSR near_clip         ; input: vx1,vy1, vx2,vy2
                           ; output: ex1,ey1, ex2,ey2 or carry set = clipped away
     BCS seg_clipped
-    INC &0F04 : BNE no_dbg2 : INC &0F05 : .no_dbg2
 
     ; --- Reciprocal + X projection for endpoint 1 ---
     JSR recip_and_project_x1
@@ -1522,7 +1527,6 @@ CMD_DONE   = &00
     ; --- Has gap? ---
     JSR has_gap           ; input: zp_x_lo_clip, zp_x_hi_clip
     BCC seg_clipped       ; no gap
-    INC &0F06 : BNE no_dbg3 : INC &0F07 : .no_dbg3
 
     ; --- Read seg detail (heights) ---
     JSR read_seg_detail   ; loads fh, ch (and bfh, bch if portal) into temps
@@ -1829,8 +1833,6 @@ CMD_DONE   = &00
     LDA &70 : STA &73
     LDA &71 : STA &74
     LDA &72 : STA &75
-    ; DEBUG: $75 after save
-    LDA &75 : STA &0FE8
 
     ; rot(dy, cos) → $70:$71:$72
     LDA &78 : STA zp_tmp2
@@ -1839,8 +1841,6 @@ CMD_DONE   = &00
     LDX zp_cos_neg
     LDY zp_cos_unity
     JSR rot_term
-    ; DEBUG: $75 after second rot_term
-    LDA &75 : STA &0FE9
 
     ; int_vx = $73:$74:$75 - $70:$71:$72 → $70:$71:$72
     LDA &73 : SEC : SBC &70 : STA &70
@@ -2772,23 +2772,9 @@ CMD_DONE   = &00
 ; ======================================================================
 .read_seg_detail
 {
-    ; addr = rom_detail + seg_idx * 24
-    ; seg_idx * 24 = seg_idx * 16 + seg_idx * 8
-    LDA zp_seg_idx : STA zp_ptr0
-    LDA zp_seg_idx+1 : STA zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1   ; × 8
-    LDA zp_ptr0 : STA zp_tmp0
-    LDA zp_ptr0+1 : STA zp_tmp0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1   ; × 16
-    LDA zp_ptr0
-    CLC : ADC zp_tmp0
-    STA zp_ptr0
-    LDA zp_ptr0+1
-    ADC zp_tmp0+1                 ; × 24
-    CLC : ADC #HI(rom_detail)
-    STA zp_ptr0+1
+    ; Copy running seg detail pointer into zp_ptr0
+    LDA zp_seg_det_ptr   : STA zp_ptr0
+    LDA zp_seg_det_ptr+1 : STA zp_ptr0+1
     ; ptr0 → seg detail record
 
     ; Read fh (s8), ch (s8), bfh (s8), bch (s8)
