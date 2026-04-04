@@ -2774,6 +2774,30 @@ def _main():
                 else:
                     _use_6502_frontend = False
                     print("6502 front-end OFF", flush=True)
+            elif ev.key == pygame.K_p:
+                # Profile: run 6502 with per-function cycle accounting
+                import threading
+                _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
+                _px, _py = player_x, player_y
+                _rm, _rd, _rr, _pl, _nd = packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout, nodes
+                _fz = player_floor(player_x, player_y)
+                _vzps = _prescale_height(_fz + 41)
+                def _profile_6502():
+                    global _6502_result
+                    import time as _time
+                    from fe6502 import Frontend6502, format_profile
+                    fe = Frontend6502(_rm, _rd, _rr, _pl)
+                    _t0 = _time.time()
+                    cmds, cycles, profile = fe.profile_frame(_px, _py, _ab, _fz)
+                    _t1 = _time.time()
+                    _6502_result = (cmds, cycles, _vzps)
+                    print(f"\n=== 6502 profile ({_px:.0f},{_py:.0f},{_ab}) "
+                          f"— {_t1-_t0:.1f}s wall ===", flush=True)
+                    print(format_profile(profile, cycles), flush=True)
+                    print("", flush=True)
+                print("6502 profiling in background...", flush=True)
+                threading.Thread(target=_profile_6502, daemon=True).start()
+                _use_6502_frontend = True
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
             elif ev.key == pygame.K_g:
