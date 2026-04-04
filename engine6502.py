@@ -52,10 +52,47 @@ from fp import (
 from wad_packed import (
     VERTEX_SIZE, NODE_SIZE, SSECTOR_SIZE, SEG_HDR_SIZE, SEG_DTL_SIZE,
     SH_V1, SH_V2, SH_LV1X, SH_LV1Y, SH_LDX, SH_LDY, SH_FLAGS,
-    SD_FH, SD_CH,
+    SD_FH, SD_CH, SD_BFH, SD_BCH,
     SF_DIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB,
     read_u8, read_s8, read_u16, read_s16,
 )
+
+# ---------------------------------------------------------------------------
+# Bbox visibility (inlined to avoid circular import with doom_wireframe)
+# ---------------------------------------------------------------------------
+
+_NEAR = 1.0
+
+def _to_view(wx, wy, vx, vy, cos_a, sin_a):
+    dx, dy = wx - vx, wy - vy
+    return dx * sin_a - dy * cos_a, dx * cos_a + dy * sin_a
+
+def _bbox_screen_range(pts, half_w, focal_x):
+    if all(p[1] < _NEAR for p in pts):
+        return None
+    sxs = []
+    n = len(pts)
+    for i in range(n):
+        vx0, vy0 = pts[i]
+        vx1, vy1 = pts[(i + 1) % n]
+        if vy0 >= _NEAR:
+            sxs.append(half_w + vx0 * focal_x / vy0)
+        if (vy0 < _NEAR) != (vy1 < _NEAR):
+            t = (_NEAR - vy0) / (vy1 - vy0)
+            cx = vx0 + t * (vx1 - vx0)
+            sxs.append(half_w + cx * focal_x / _NEAR)
+    if not sxs:
+        return None
+    return int(min(sxs)), int(max(sxs))
+
+def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
+    base = 4 + far_side * 4
+    top, bot, left, right = node[base], node[base+1], node[base+2], node[base+3]
+    if left <= vx <= right and bot <= vy <= top:
+        return 0, FP_RENDER_W - 1
+    pts = [_to_view(wx, wy, vx, vy, cos_a, sin_a)
+           for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
+    return _bbox_screen_range(pts, FP_RENDER_W * 0.5, FP_FOCAL_X)
 
 # ---------------------------------------------------------------------------
 # Memory map constants
@@ -411,30 +448,27 @@ def _rot_int_6502(d_hi, mag, neg, unity, mul_engine):
 
 
 def _m8_6502(a, b, mul_engine):
-    """Counted 8x8 multiply via 6502 matching fp.py m8() semantics.
+    """Counted signed multiply via 6502, matching fp.py m8() semantics.
 
-    a: signed 8-bit value (-128..127)
-    b: may be unsigned (0..255) -- matching fp.py's m8() which uses
-       Python integer arithmetic where values keep their true sign.
+    a: signed value (may exceed 8-bit range for view-x coordinates)
+    b: unsigned 8-bit (0..255) — recip_hi or recip_lo
 
-    The 6502 smul8x8 treats both operands as signed. When b > 127,
-    the 6502 sees it as (b - 256). We correct for this:
-       a * b = a * (b_signed) + a * 256   (when b > 127)
+    When a fits in [-128, 127], uses a single smul8x8.
+    When a overflows, this would be a 16×8 multiply on the 6502
+    (two smul8x8 calls). We compute exact result in Python and
+    count the appropriate number of multiplies.
     """
-    # Ensure a is in signed range
-    a_s = a if -128 <= a <= 127 else ((a + 128) & 0xFF) - 128
-
-    if 0 <= b <= 127:
-        # Both fit in signed range -- direct smul8x8
-        return mul_engine.mul(a_s, b)
-    elif b > 127:
-        # b is unsigned > 127: smul8x8 sees b as (b - 256)
-        # Correct: result = smul8x8(a, b) + a * 256
-        raw = mul_engine.mul(a_s, b)
-        return raw + (a_s << 8)
+    if -128 <= a <= 127:
+        # Single 8x8 multiply
+        raw = mul_engine.mul(a, b)
+        # smul8x8 treats both as signed. If b > 127, 6502 sees (b-256):
+        if b > 127:
+            return raw + (a << 8)
+        return raw
     else:
-        # b is negative (should not happen in this codebase, but handle it)
-        return mul_engine.mul(a_s, b)
+        # 16×8: would be two 8×8 muls on 6502. Count 2, compute exact.
+        mul_engine.mul_count += 2
+        return a * b
 
 
 def _fp_project_x_6502(vx, recip_hi, recip_lo, mul_engine):
@@ -481,11 +515,12 @@ class Engine6502:
         self.n_nodes = len(nodes_list)
         self.mul_engine = Mul6502()
 
-    def render_frame(self, player_x, player_y, angle_byte):
+    def render_frame(self, player_x, player_y, angle_byte, floor_z=0):
         """Run the rendering engine and return (lines_drawn, mul_count).
 
         player_x, player_y: world coordinates (un-prescaled)
         angle_byte: 0-255 angle
+        floor_z: player floor height (default 0)
 
         Returns:
             lines_drawn: list of (x1, y1, x2, y2) as signed integers
@@ -507,7 +542,7 @@ class Engine6502:
         py_full = int(player_y)
 
         # Eye height
-        vz_raw = 0 + 41  # floor=0 at start, eye offset=41
+        vz_raw = floor_z + 41
         vz_ps = (vz_raw * ASPECT_NUM + ASPECT_DEN // 2) // (PRESCALE * ASPECT_DEN)
 
         # Sin/cos decomposition
@@ -526,8 +561,9 @@ class Engine6502:
         ctx = (px_int, py_int, sc, frac_vx, frac_vy)
 
         NF_SUBSECTOR = 0x8000
-        lines = []
+        commands = []  # seg commands for back-end clipping
         colbitmap = bytearray(32)
+        _deferred_solid = []  # populated by render_seg, flushed by render_subsector
 
         def point_on_side(x, y, node):
             dx, dy = x - node[0], y - node[1]
@@ -538,10 +574,8 @@ class Engine6502:
             x_hi = max(0, min(255, x_hi))
             if x_lo > x_hi:
                 x_lo, x_hi = x_hi, x_lo
-            byte_lo = x_lo >> 3
-            byte_hi = x_hi >> 3
-            for b in range(byte_lo, byte_hi + 1):
-                if colbitmap[b] != 0xFF:
+            for x in range(x_lo, x_hi + 1):
+                if not (colbitmap[x >> 3] & (1 << (x & 7))):
                     return True
             return False
 
@@ -550,10 +584,8 @@ class Engine6502:
             x_hi = max(0, min(255, x_hi))
             if x_lo > x_hi:
                 x_lo, x_hi = x_hi, x_lo
-            byte_lo = x_lo >> 3
-            byte_hi = x_hi >> 3
-            for b in range(byte_lo, byte_hi + 1):
-                colbitmap[b] = 0xFF
+            for x in range(x_lo, x_hi + 1):
+                colbitmap[x >> 3] |= (1 << (x & 7))
 
         def to_view_6502(wx, wy):
             """View transform using 6502 multiply, matching fp_to_view."""
@@ -649,21 +681,45 @@ class Engine6502:
             solid = bool(flags & SF_SOLID)
 
             if solid:
-                lines.append((sx1, ft1, sx2, ft2))  # top
-                lines.append((sx1, fb1, sx2, fb2))  # bottom
-                lines.append((sx1, ft1, sx1, fb1))  # left
-                lines.append((sx2, ft2, sx2, fb2))  # right
-                mark_solid(x_lo, x_hi)
+                commands.append(('S', sx1, sx2, ft1, fb1, ft2, fb2))
+                _deferred_solid.append((x_lo, x_hi))
             else:
-                lines.append((sx1, ft1, sx2, ft2))  # top
-                lines.append((sx1, fb1, sx2, fb2))  # bottom
+                need_bt = bool(flags & SF_NEEDBT)
+                need_bb = bool(flags & SF_NEEDBB)
+                bfh = read_s8(rom_d, dtl_off + SD_BFH)
+                bch = read_s8(rom_d, dtl_off + SD_BCH)
+                bt1 = bt2 = bb1 = bb2 = 0
+                if need_bt:
+                    bt1 = _fp_project_y_6502(bch - vz_ps, ryh1, ryl1, mul)
+                    bt2 = _fp_project_y_6502(bch - vz_ps, ryh2, ryl2, mul)
+                if need_bb:
+                    bb1 = _fp_project_y_6502(bfh - vz_ps, ryh1, ryl1, mul)
+                    bb2 = _fp_project_y_6502(bfh - vz_ps, ryh2, ryl2, mul)
+                commands.append(('P', sx1, sx2, ft1, fb1, ft2, fb2,
+                                 need_bt, need_bb, bt1, bt2, bb1, bb2,
+                                 bch, bfh, ch, fh))
 
         def render_subsector(ss_id):
             ss_off = layout['off_ss'] + ss_id * SSECTOR_SIZE
             count = read_u8(rom, ss_off)
             first_seg = read_u16(rom, ss_off + 2)
+            # Defer mark_solid within subsector (matches Python FP path)
+            _deferred_solid.clear()
             for si in range(first_seg, first_seg + count):
                 render_seg(si)
+            for x_lo, x_hi in _deferred_solid:
+                mark_solid(x_lo, x_hi)
+            commands.append(('E',))  # end of subsector — flush deferred
+
+        # Precompute for bbox visibility
+        import math as _math
+        _ang_rad = angle_byte * 2 * _math.pi / 256
+        _cos_f = _math.cos(_ang_rad)
+        _sin_f = _math.sin(_ang_rad)
+        # fp_bbox_visible is defined at module level
+
+        def bbox_vis(node, far_side):
+            return fp_bbox_visible(node, far_side, _cos_f, _sin_f, px_full, py_full)
 
         def render_bsp(nid):
             if nid & NF_SUBSECTOR:
@@ -680,13 +736,55 @@ class Engine6502:
 
             ch = (child_r, child_l)
             render_bsp(ch[side])
-            # Always visit far side (no bbox check in simplified engine)
-            render_bsp(ch[side ^ 1])
+
+            # Far-side culling: bbox visible + has_gap
+            far = side ^ 1
+            br = bbox_vis(node, far)
+            if br is not None and has_gap(br[0], br[1]):
+                render_bsp(ch[far])
 
         root = self.n_nodes - 1
         render_bsp(root)
 
-        return lines, mul.mul_count
+        return commands, mul.mul_count
+
+
+def commands_to_lines(commands, vz_ps=0):
+    """Convert seg commands to raw line coordinates (no clipping).
+
+    Used for comparison testing against the Python reference renderer.
+    """
+    lines = []
+    for cmd in commands:
+        if cmd[0] == 'E':
+            continue
+        _, sx1, sx2, ft1, fb1, ft2, fb2 = cmd[:7]
+        if cmd[0] == 'S':
+            lines.append((sx1, ft1, sx2, ft2))
+            lines.append((sx1, fb1, sx2, fb2))
+            lines.append((sx1, ft1, sx1, fb1))
+            lines.append((sx2, ft2, sx2, fb2))
+        elif cmd[0] == 'P':
+            need_bt, need_bb = cmd[7], cmd[8]
+            bt1, bt2, bb1, bb2 = cmd[9], cmd[10], cmd[11], cmd[12]
+            bch, bfh, ch, fh = cmd[13], cmd[14], cmd[15], cmd[16]
+            if need_bt:
+                lines.append((sx1, bt1, sx2, bt2))
+                if ch > vz_ps:
+                    lines.append((sx1, ft1, sx2, ft2))
+                lines.append((sx1, ft1, sx1, bt1))
+                lines.append((sx2, ft2, sx2, bt2))
+            elif bch > ch:
+                lines.append((sx1, ft1, sx2, ft2))
+            if need_bb:
+                lines.append((sx1, bb1, sx2, bb2))
+                if fh < vz_ps:
+                    lines.append((sx1, fb1, sx2, fb2))
+                lines.append((sx1, bb1, sx1, fb1))
+                lines.append((sx2, bb2, sx2, fb2))
+            elif bfh < fh:
+                lines.append((sx1, fb1, sx2, fb2))
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +819,8 @@ def render_frame_6502(player_x, player_y, angle_byte):
 # ---------------------------------------------------------------------------
 
 def render_frame_pyref(player_x, player_y, angle_byte, nodes_list,
-                        rom_main, rom_detail, rom_recip, layout):
+                        rom_main, rom_detail, rom_recip, layout,
+                        floor_z=0):
     """Python reference renderer matching the simplified engine logic.
 
     Uses fp.py multiply (Python integer arithmetic) instead of 6502.
@@ -741,7 +840,7 @@ def render_frame_pyref(player_x, player_y, angle_byte, nodes_list,
     px_full = int(player_x)
     py_full = int(player_y)
 
-    vz_raw = 0 + 41
+    vz_raw = floor_z + 41
     vz_ps = (vz_raw * ASPECT_NUM + ASPECT_DEN // 2) // (PRESCALE * ASPECT_DEN)
 
     sc = fp_sincos(angle_byte)
@@ -760,16 +859,17 @@ def render_frame_pyref(player_x, player_y, angle_byte, nodes_list,
         x_lo = max(0, min(255, x_lo))
         x_hi = max(0, min(255, x_hi))
         if x_lo > x_hi: x_lo, x_hi = x_hi, x_lo
-        for b in range(x_lo >> 3, (x_hi >> 3) + 1):
-            if colbitmap[b] != 0xFF: return True
+        for x in range(x_lo, x_hi + 1):
+            if not (colbitmap[x >> 3] & (1 << (x & 7))):
+                return True
         return False
 
     def mark_solid(x_lo, x_hi):
         x_lo = max(0, min(255, x_lo))
         x_hi = max(0, min(255, x_hi))
         if x_lo > x_hi: x_lo, x_hi = x_hi, x_lo
-        for b in range(x_lo >> 3, (x_hi >> 3) + 1):
-            colbitmap[b] = 0xFF
+        for x in range(x_lo, x_hi + 1):
+            colbitmap[x >> 3] |= (1 << (x & 7))
 
     def render_seg(si):
         seg_off = layout['off_seg_hdr'] + si * SEG_HDR_SIZE
@@ -812,13 +912,13 @@ def render_frame_pyref(player_x, player_y, angle_byte, nodes_list,
 
         dtl_off = si * SEG_DTL_SIZE
         fh = read_s8(rom_detail, dtl_off + SD_FH)
-        ch = read_s8(rom_detail, dtl_off + SD_CH)
+        ch_ = read_s8(rom_detail, dtl_off + SD_CH)
 
         ryh1, ryl1 = fp_recip(idx1)
         ryh2, ryl2 = fp_recip(idx2)
-        ft1 = fp_project_y(ch - vz_ps, ryh1, ryl1)
+        ft1 = fp_project_y(ch_ - vz_ps, ryh1, ryl1)
         fb1 = fp_project_y(fh - vz_ps, ryh1, ryl1)
-        ft2 = fp_project_y(ch - vz_ps, ryh2, ryl2)
+        ft2 = fp_project_y(ch_ - vz_ps, ryh2, ryl2)
         fb2 = fp_project_y(fh - vz_ps, ryh2, ryl2)
 
         solid = bool(flags & SF_SOLID)
@@ -827,17 +927,52 @@ def render_frame_pyref(player_x, player_y, angle_byte, nodes_list,
             lines.append((sx1, fb1, sx2, fb2))
             lines.append((sx1, ft1, sx1, fb1))
             lines.append((sx2, ft2, sx2, fb2))
-            mark_solid(x_lo, x_hi)
+            _pyref_deferred.append((x_lo, x_hi))
         else:
-            lines.append((sx1, ft1, sx2, ft2))
-            lines.append((sx1, fb1, sx2, fb2))
+            need_bt = bool(flags & SF_NEEDBT)
+            need_bb = bool(flags & SF_NEEDBB)
+            bfh = read_s8(rom_detail, dtl_off + SD_BFH)
+            bch = read_s8(rom_detail, dtl_off + SD_BCH)
+            if need_bt:
+                bt1 = fp_project_y(bch - vz_ps, ryh1, ryl1)
+                bt2 = fp_project_y(bch - vz_ps, ryh2, ryl2)
+                lines.append((sx1, bt1, sx2, bt2))
+                if ch_ > vz_ps:
+                    lines.append((sx1, ft1, sx2, ft2))
+                lines.append((sx1, ft1, sx1, bt1))
+                lines.append((sx2, ft2, sx2, bt2))
+            elif bch > ch_:
+                lines.append((sx1, ft1, sx2, ft2))
+            if need_bb:
+                bb1 = fp_project_y(bfh - vz_ps, ryh1, ryl1)
+                bb2 = fp_project_y(bfh - vz_ps, ryh2, ryl2)
+                lines.append((sx1, bb1, sx2, bb2))
+                if fh < vz_ps:
+                    lines.append((sx1, fb1, sx2, fb2))
+                lines.append((sx1, bb1, sx1, fb1))
+                lines.append((sx2, bb2, sx2, fb2))
+            elif bfh < fh:
+                lines.append((sx1, fb1, sx2, fb2))
+
+    _pyref_deferred = []
 
     def render_subsector(ss_id):
         ss_off = layout['off_ss'] + ss_id * SSECTOR_SIZE
         count = read_u8(rom_main, ss_off)
         first_seg = read_u16(rom_main, ss_off + 2)
+        _pyref_deferred.clear()
         for si in range(first_seg, first_seg + count):
             render_seg(si)
+        for x_lo, x_hi in _pyref_deferred:
+            mark_solid(x_lo, x_hi)
+
+    import math as _math
+    _ang_rad = angle_byte * 2 * _math.pi / 256
+    _cos_f = _math.cos(_ang_rad)
+    _sin_f = _math.sin(_ang_rad)
+
+    def bbox_vis(node, far_side):
+        return fp_bbox_visible(node, far_side, _cos_f, _sin_f, px_full, py_full)
 
     def render_bsp(nid):
         if nid & NF_SUBSECTOR:
@@ -851,7 +986,10 @@ def render_frame_pyref(player_x, player_y, angle_byte, nodes_list,
         child_l = read_u16(rom_main, node_off + 10)
         ch = (child_r, child_l)
         render_bsp(ch[side])
-        render_bsp(ch[side ^ 1])
+        far = side ^ 1
+        br = bbox_vis(node, far)
+        if br is not None and has_gap(br[0], br[1]):
+            render_bsp(ch[far])
 
     root = len(nodes_list) - 1
     render_bsp(root)
@@ -897,12 +1035,16 @@ def test():
         dw.nodes)
 
     px, py, ab = 1056, -3616, 64
-    print(f"    Position: ({px}, {py}), angle={ab}")
+    fz = dw.player_floor(px, py)
+    print(f"    Position: ({px}, {py}), angle={ab}, floor_z={fz}")
+
+    vz_ps = (fz + 41) * ASPECT_NUM // (PRESCALE * ASPECT_DEN)
 
     t0 = time.time()
-    hw_lines, hw_muls = engine.render_frame(px, py, ab)
+    hw_cmds, hw_muls = engine.render_frame(px, py, ab, fz)
+    hw_lines = commands_to_lines(hw_cmds, vz_ps)
     t1 = time.time()
-    print(f"    6502 engine: {len(hw_lines)} lines, {hw_muls} muls, {t1-t0:.1f}s")
+    print(f"    6502 engine: {len(hw_cmds)} cmds, {len(hw_lines)} lines, {hw_muls} muls, {t1-t0:.1f}s")
 
     # Test 3: Python reference
     print("\n[3] Running Python reference...")
@@ -912,7 +1054,8 @@ def test():
     py_lines, py_muls = render_frame_pyref(
         px, py, ab, dw.nodes,
         dw.packed_rom_main, dw.packed_rom_detail,
-        dw.packed_rom_recip, dw.packed_layout)
+        dw.packed_rom_recip, dw.packed_layout,
+        floor_z=fz)
     t1 = time.time()
     print(f"    Python ref:  {len(py_lines)} lines, {py_muls} muls, {t1-t0:.3f}s")
 
@@ -954,11 +1097,13 @@ def test():
     from fp import mul_reset as mr
     all_perfect = True
     for test_angle, name in [(0, "North"), (128, "South"), (192, "West"), (96, "SE")]:
-        hw2, _ = engine.render_frame(px, py, test_angle)
+        hw2_cmds, _ = engine.render_frame(px, py, test_angle, fz)
+        hw2 = commands_to_lines(hw2_cmds, vz_ps)
         mr()
         py2, _ = render_frame_pyref(px, py, test_angle, dw.nodes,
             dw.packed_rom_main, dw.packed_rom_detail,
-            dw.packed_rom_recip, dw.packed_layout)
+            dw.packed_rom_recip, dw.packed_layout,
+            floor_z=fz)
         if hw2 == py2:
             print(f"    {name} (angle={test_angle}): PERFECT MATCH ({len(hw2)} lines)")
         else:

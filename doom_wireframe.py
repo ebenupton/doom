@@ -2439,6 +2439,85 @@ use_subpixel = False                      # Sub-pixel X projection (1 extra mul)
 show_map = False                          # Top-down map visualisation
 _show_nj_raster = False                   # Show NJ 6502 rasteriser output (FP lines)
 _use_6502_frontend = False                # H key: 6502 front-end + Python clip/draw
+
+def clip_and_draw_6502(commands, surface, vz_ps):
+    """Process 6502 engine seg commands through FPClipSpans with full clipping.
+
+    Commands are in BSP front-to-back order. Within each subsector, clip
+    updates are deferred until the 'E' (end subsector) marker.
+    """
+    fp_module.mul_reset()
+    clips = FPClipSpans()
+    deferred = []
+    drawn = 0
+    for cmd in commands:
+        if cmd[0] == 'E':
+            for op in deferred:
+                if op[0] == 'solid':
+                    clips.mark_solid(op[1], op[2])
+                else:
+                    clips.tighten(*op[1:])
+                if clips.is_full():
+                    return drawn
+            deferred.clear()
+            continue
+
+        _, sx1, sx2, ft1, fb1, ft2, fb2 = cmd[:7]
+        x_lo, x_hi = min(sx1, sx2), max(sx1, sx2)
+
+        if not clips.has_gap(x_lo, x_hi):
+            continue
+
+        if cmd[0] == 'S':
+            clips.draw_clipped([
+                (sx1, ft1, sx2, ft2),
+                (sx1, fb1, sx2, fb2),
+                (sx1, ft1, sx1, fb1),
+                (sx2, ft2, sx2, fb2),
+            ], GREEN, surface, draw_stats)
+            deferred.append(('solid', x_lo, x_hi))
+            drawn += 4
+
+        elif cmd[0] == 'P':
+            need_bt, need_bb = cmd[7], cmd[8]
+            bt1, bt2, bb1, bb2 = cmd[9], cmd[10], cmd[11], cmd[12]
+            bch, bfh, ch, fh = cmd[13], cmd[14], cmd[15], cmd[16]
+
+            if need_bt:
+                lines = [(sx1, bt1, sx2, bt2),
+                         (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
+                if ch > vz_ps:
+                    lines.insert(0, (sx1, ft1, sx2, ft2))
+                clips.draw_clipped(lines, GREEN, surface, draw_stats)
+                drawn += len(lines)
+            elif bch > ch:
+                clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
+                drawn += 1
+
+            if need_bb:
+                lines = [(sx1, bb1, sx2, bb2),
+                         (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
+                if fh < vz_ps:
+                    lines.insert(1, (sx1, fb1, sx2, fb2))
+                clips.draw_clipped(lines, GREEN, surface, draw_stats)
+                drawn += len(lines)
+            elif bfh < fh:
+                clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+                drawn += 1
+
+            # Tighten: compute boundaries
+            tt1 = bt1 if need_bt else ft1
+            tt2 = bt2 if need_bt else ft2
+            tb1 = bb1 if need_bb else fb1
+            tb2 = bb2 if need_bb else fb2
+            yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
+            yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
+            top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
+            bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
+            deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
+                             yt1, yt2, yb1, yb2, top_dom, bot_dom))
+
+    return drawn
 turn_speed = 2.5                          # radians/sec for float mode
 turn_speed_byte = 45                      # byte-units/sec for FP mode (~63 deg/sec)
 move_speed = 300.0
@@ -2675,13 +2754,19 @@ def _main():
                     _px, _py = player_x, player_y
                     # Capture data refs to avoid importing doom_wireframe from thread
                     _rm, _rd, _rr, _pl, _nd = packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout, nodes
+                    _fz = player_floor(player_x, player_y)
+                    _vzps = _prescale_height(_fz + 41)
                     def _run_6502():
                         global _6502_result
-                        from engine6502 import Engine6502
-                        eng = Engine6502(_rm, _rd, _rr, _pl, _nd)
-                        lines, muls = eng.render_frame(_px, _py, _ab)
-                        _6502_result = (lines, muls)
-                        print(f"6502 done: {len(lines)} lines, {muls} muls, ~{muls*60//1000}K front-end cycles", flush=True)
+                        import time as _time
+                        from fe6502 import Frontend6502
+                        fe = Frontend6502(_rm, _rd, _rr, _pl)
+                        _t0 = _time.time()
+                        cmds, cycles = fe.render_frame(_px, _py, _ab, _fz)
+                        _t1 = _time.time()
+                        _6502_result = (cmds, cycles, _vzps)
+                        n_segs = sum(1 for c in cmds if c[0] in ('S', 'P'))
+                        print(f"6502 done: {n_segs} segs, {cycles} fe cycles, {_t1-_t0:.1f}s wall", flush=True)
                     _6502_result = None
                     print("6502 rendering in background...", flush=True)
                     threading.Thread(target=_run_6502, daemon=True).start()
@@ -2769,17 +2854,9 @@ def _main():
         sin_f = math.sin(ang_rad)
 
         if _use_6502_frontend and _6502_result is not None:
-            # 6502 front-end completed: draw its lines
-            hw_lines, hw_muls = _6502_result
-            draw_stats[0] = len(hw_lines)
-            draw_stats[1] = len(hw_lines)
-            for x1, y1, x2, y2 in hw_lines:
-                cx1 = max(0, min(FP_RENDER_W - 1, x1))
-                cy1 = max(0, min(FP_RENDER_H - 1, y1))
-                cx2 = max(0, min(FP_RENDER_W - 1, x2))
-                cy2 = max(0, min(FP_RENDER_H - 1, y2))
-                _real_drawline(fp_surface, (0, 200, 0),
-                               (cx1, cy1), (cx2, cy2), 1)
+            # 6502 front-end completed: clip and draw via FPClipSpans
+            hw_cmds, hw_cyc, hw_vzps = _6502_result
+            clip_and_draw_6502(hw_cmds, fp_surface, hw_vzps)
         elif _use_6502_frontend:
             # Still rendering in background — show waiting message
             _real_drawline(fp_surface, (0, 200, 0), (0, 80), (255, 80), 1)
@@ -2854,10 +2931,10 @@ def _main():
     ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
     if use_fixedpoint:
         if _use_6502_frontend and _6502_result is not None:
-            hw_lines, hw_muls = _6502_result
+            hw_cmds, hw_cyc, hw_vzps = _6502_result
+            n_segs = sum(1 for c in hw_cmds if c[0] in ('S', 'P'))
             hud = (f"6502 ({player_x:.0f},{player_y:.0f},{ang_display})  "
-                   f"{len(hw_lines)} lines  {hw_muls} muls  "
-                   f"~{hw_muls * 60 // 1000}K front-end cyc  "
+                   f"{n_segs} segs  {hw_cyc} fe cyc  "
                    f"{clock.get_fps():.0f}fps")
         elif _use_6502_frontend:
             hud = f"6502 rendering... ({player_x:.0f},{player_y:.0f},{ang_display})"
