@@ -2753,7 +2753,6 @@ def _main():
 
         if _use_6502_frontend:
             # 6502 front-end: all muls via py65, lines drawn by Python
-            screen = pygame.display.get_surface()
             hw_lines, hw_muls = _render_6502(player_x, player_y, angle_byte)
             draw_stats[0] = len(hw_lines)
             draw_stats[1] = len(hw_lines)
@@ -2781,9 +2780,9 @@ def _main():
                           [None]*len(vertexes), [None]*len(vwh_table))
 
         # Nearest-neighbour upscale to display
-        screen = pygame.display.get_surface()
-        screen.fill((0, 0, 0))
-        screen.blit(pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H)), (0, 0))
+        _scr = pygame.display.get_surface()
+        _scr.fill((0, 0, 0))
+        _scr.blit(pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H)), (0, 0))
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:
