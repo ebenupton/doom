@@ -1180,11 +1180,10 @@ CMD_DONE   = &00
     LDA #0
     STA zp_defer_sp
 
-    ; Process each seg
-.seg_loop
+    ; Process each seg (DEC-at-end loop to avoid redundant check+dec)
     LDA zp_seg_count
     BEQ segs_done
-    DEC zp_seg_count
+.seg_loop
     JSR render_seg
     ; Advance running seg pointers (header += 12, detail += 24)
     LDA zp_seg_hdr_ptr : CLC : ADC #12 : STA zp_seg_hdr_ptr
@@ -1195,7 +1194,8 @@ CMD_DONE   = &00
     BCC sl_no_det_carry
     INC zp_seg_det_ptr+1
 .sl_no_det_carry
-    JMP seg_loop
+    DEC zp_seg_count
+    BNE seg_loop
 
 .segs_done
     ; Flush deferred mark_solid
@@ -1216,8 +1216,6 @@ CMD_DONE   = &00
     PHA
     JSR mark_solid       ; input: zp_tmp0 = x_lo, zp_tmp1 = x_hi
     PLA
-    TAX
-    TXA
     CLC
     ADC #4
     TAX
