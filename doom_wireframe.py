@@ -269,6 +269,7 @@ vwh_table = _vwh_table
 
 # ── Build packed byte arrays for 8-bit processor simulation ──────────────
 from wad_packed import build_packed
+print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
 _render_6502 = None  # lazy-loaded on first use
 _6502_result = None  # (lines, muls) from background render
 packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout = build_packed(
@@ -2979,17 +2980,17 @@ def _main():
         if _use_6502_frontend and _6502_result is not None:
             hw_cmds, hw_cyc, hw_vzps = _6502_result
             n_segs = sum(1 for c in hw_cmds if c[0] in ('S', 'P'))
-            hud = (f"6502 ({player_x:.0f},{player_y:.0f},{ang_display})  "
+            hud = (f"6502x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  "
                    f"{n_segs} segs  {hw_cyc} fe cyc  "
                    f"{clock.get_fps():.0f}fps")
         elif _use_6502_frontend:
-            hud = f"6502 rendering... ({player_x:.0f},{player_y:.0f},{ang_display})"
+            hud = f"6502x{PRESCALE} rendering... ({player_x:.0f},{player_y:.0f},{ang_display})"
         else:
             mc = fp_module.mul_counts
             mul_total = sum(mc.values())
             cyc = _frame_6502_cycles[0]
             mode_tag = "fp/ROM" if use_packed else "fp"
-            hud = (f"{mode_tag} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
+            hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                    f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
                    f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
                    f"~{cyc//1000}K cyc  {clock.get_fps():.0f}fps")

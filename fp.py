@@ -557,4 +557,15 @@ def fp_clip_to_trap(x1, y1, x2, y2, xlo, xhi, tfn, bfn):
 
 MAP_CENTER_X = 1200
 MAP_CENTER_Y = -3250
-PRESCALE = 8    # divide everything by 8
+
+# Prescale factor — divides all world coordinates at load time so view
+# deltas fit in s8 arithmetic.  Default is 8; setting the DOOM_PRESCALE
+# environment variable selects a different factor at startup.  A factor
+# of 16 halves all spatial quantities relative to 8 and makes every
+# multiply operand fit strictly in s8 (eliminating the wide-mul paths
+# exercised by the tiny s9 tail under 8×prescale), at the cost of
+# halving world-space precision to 16-unit boundaries.
+import os as _os
+PRESCALE = int(_os.environ.get('DOOM_PRESCALE', '8'))
+if PRESCALE not in (8, 16):
+    raise ValueError(f"DOOM_PRESCALE must be 8 or 16, got {PRESCALE}")
