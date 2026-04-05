@@ -1595,46 +1595,8 @@ CMD_DONE   = &00
 ;         X = byte index into vcache_valid (v_idx >> 3)
 ;         Y = bit index in that byte (v_idx & 7)
 ; Clobbers: A, X, Y, zp_ptr1
-; ======================================================================
-.vcache_addr
-{
-    ; ptr1 = v_idx * 8 + VCACHE
-    LDA zp_tmp0
-    STA zp_ptr1
-    LDA zp_tmp0+1
-    STA zp_ptr1+1
-    ASL zp_ptr1 : ROL zp_ptr1+1
-    ASL zp_ptr1 : ROL zp_ptr1+1
-    ASL zp_ptr1 : ROL zp_ptr1+1
-    LDA zp_ptr1
-    CLC
-    ADC #LO(vcache)
-    STA zp_ptr1
-    LDA zp_ptr1+1
-    ADC #HI(vcache)
-    STA zp_ptr1+1
-
-    ; byte_idx = v_idx >> 3.  v_idx ≤ 511 so byte_idx ≤ 63 (fits in X).
-    ; Compute via: byte_idx = (v_idx_hi << 5) | (v_idx_lo >> 3)
-    LDA zp_tmp0
-    LSR A : LSR A : LSR A     ; v_idx_lo >> 3
-    STA zp_ptr0               ; reuse ptr0 as scratch (OK: we're not using it here)
-    LDA zp_tmp0+1
-    BEQ vca_no_hi
-    ; v_idx_hi contributes 256/8 = 32 per unit (max 1 since v_idx < 512)
-    LDA zp_ptr0
-    CLC
-    ADC #32
-    STA zp_ptr0
-.vca_no_hi
-    LDX zp_ptr0
-
-    ; bit_idx = v_idx_lo & 7
-    LDA zp_tmp0
-    AND #7
-    TAY
-    RTS
-}
+; (vcache_addr is now inlined at each call site — the body appears in
+; xform_vertex_cached and xform_vertex_cached_v2 directly.)
 
 ; ======================================================================
 ; XFORM_VERTEX_CACHED: view-transform a vertex, using the cache (v1 slots)
@@ -1644,8 +1606,24 @@ CMD_DONE   = &00
 ; ======================================================================
 .xform_vertex_cached
 {
-    ; Check cache valid bit
-    JSR vcache_addr              ; → ptr1, X = byte_idx, Y = bit_idx
+    ; Inlined vcache_addr: compute ptr1, byte_idx in X, bit_idx in Y
+    LDA zp_tmp0   : STA zp_ptr1
+    LDA zp_tmp0+1 : STA zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    LDA zp_ptr1   : CLC : ADC #LO(vcache) : STA zp_ptr1
+    LDA zp_ptr1+1 : ADC #HI(vcache) : STA zp_ptr1+1
+    LDA zp_tmp0
+    LSR A : LSR A : LSR A
+    STA zp_ptr0
+    LDA zp_tmp0+1
+    BEQ xvc1_no_hi
+    LDA zp_ptr0 : CLC : ADC #32 : STA zp_ptr0
+.xvc1_no_hi
+    LDX zp_ptr0
+    LDA zp_tmp0 : AND #7 : TAY
+
     LDA vcache_valid,X
     AND bit_masks,Y
     BEQ xvc_miss
@@ -1691,7 +1669,24 @@ CMD_DONE   = &00
 ; ======================================================================
 .xform_vertex_cached_v2
 {
-    JSR vcache_addr
+    ; Inlined vcache_addr (same body as xform_vertex_cached)
+    LDA zp_tmp0   : STA zp_ptr1
+    LDA zp_tmp0+1 : STA zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    ASL zp_ptr1 : ROL zp_ptr1+1
+    LDA zp_ptr1   : CLC : ADC #LO(vcache) : STA zp_ptr1
+    LDA zp_ptr1+1 : ADC #HI(vcache) : STA zp_ptr1+1
+    LDA zp_tmp0
+    LSR A : LSR A : LSR A
+    STA zp_ptr0
+    LDA zp_tmp0+1
+    BEQ xvc2_no_hi
+    LDA zp_ptr0 : CLC : ADC #32 : STA zp_ptr0
+.xvc2_no_hi
+    LDX zp_ptr0
+    LDA zp_tmp0 : AND #7 : TAY
+
     LDA vcache_valid,X
     AND bit_masks,Y
     BEQ xvc2_miss
