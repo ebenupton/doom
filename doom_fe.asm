@@ -112,10 +112,10 @@ zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (24B stride)
 ; ======================================================================
 ; RAM addresses
 ; ======================================================================
-colbitmap    = &0200        ; 32 bytes
-bsp_stack    = &0220        ; 216 bytes (72 × 3)
+; (old colbitmap at &0200 removed — visibility goes through span hooks)
+bsp_stack    = &0200        ; 216 bytes (72 × 3)
 cmd_buffer   = &0300        ; command output (grows upward)
-deferred_stk = &0B00        ; deferred mark_solid pairs (64 × 4 = 256 bytes)
+; (old deferred_stk at &0B00 removed — Python side holds the deferred queue)
 vcache       = &0C00        ; vertex cache: 512 × 8 bytes = 4096 bytes
 vcache_valid = &1C00        ; vertex cache valid bitmap: 64 bytes (512 bits)
 
@@ -252,13 +252,8 @@ CMD_DONE   = &00
 ; ENTRY POINT
 ; ======================================================================
 .entry
-    ; Clear column bitmap
-    LDA #0
-    LDX #31
-.clr_bm
-    STA colbitmap,X
-    DEX
-    BPL clr_bm
+    ; (Visibility span state is initialised by fe6502.py's render_frame
+    ; before it jumps to CODE_BASE — no asm-side init needed.)
 
     ; Clear vertex cache valid bitmap (64 bytes)
     LDA #0
@@ -2633,187 +2628,13 @@ CMD_DONE   = &00
 }
 
 ; ======================================================================
-; HAS_GAP: check column bitmap for any unset bit in [x_lo, x_hi]
-; Input: zp_x_lo_clip (s16), zp_x_hi_clip (s16)
-; Output: carry set = has gap, carry clear = no gap
-; Clamps to [0, 255]
-; ======================================================================
-.has_gap
-{
-    ; Clamp x_lo to [0, 255]
-    LDA zp_x_lo_clip+1
-    BMI use_zero_lo
-    BNE use_255_lo
-    LDA zp_x_lo_clip
-    JMP got_lo
-.use_zero_lo
-    LDA #0
-    JMP got_lo
-.use_255_lo
-    LDA #255
-.got_lo
-    STA &70               ; clamped x_lo
+; (Old column-bitmap has_gap / mark_solid / has_any_gap code removed —
+; visibility now goes through Python FPClipSpans via the span hooks.)
 
-    ; Clamp x_hi
-    LDA zp_x_hi_clip+1
-    BMI use_zero_hi
-    BNE use_255_hi
-    LDA zp_x_hi_clip
-    JMP got_hi
-.use_zero_hi
-    LDA #0
-    JMP got_hi
-.use_255_hi
-    LDA #255
-.got_hi
-    STA &71               ; clamped x_hi
-
-    ; Guard against x_lo > x_hi
-    LDA &70
-    CMP &71
-    BEQ single_bit
-    BCS no_gap
-
-.single_bit
-    ; Compute byte_lo and byte_hi
-    LDA &70 : LSR A : LSR A : LSR A : STA &72  ; byte_lo
-    LDA &71 : LSR A : LSR A : LSR A : STA &73  ; byte_hi
-
-    ; Compute left mask: bits (x_lo & 7)..7 set
-    LDA &70 : AND #7 : TAY
-    LDA left_mask_tbl,Y
-    STA &74               ; left_mask
-
-    ; Compute right mask: bits 0..(x_hi & 7) set
-    LDA &71 : AND #7 : TAY
-    LDA right_mask_tbl,Y
-    STA &75               ; right_mask
-
-    ; Single byte?
-    LDA &72 : CMP &73 : BNE multi_byte
-
-    ; Single byte: relevant mask = left_mask AND right_mask
-    LDA &74
-    AND &75
-    STA &74               ; reuse $74 as "expected mask"
-    LDY &72
-    LDA colbitmap,Y
-    AND &74
-    CMP &74
-    BEQ no_gap            ; all expected bits set → no gap
-    SEC
-    RTS
-
-.multi_byte
-    ; Check byte_lo against left_mask
-    LDY &72
-    LDA colbitmap,Y
-    AND &74
-    CMP &74
-    BNE found_gap         ; left byte missing some bits → gap
-
-    ; Check middle bytes (byte_lo+1 .. byte_hi-1) for all-set ($FF)
-    INY
-.middle_loop
-    CPY &73
-    BCS middle_done
-    LDA colbitmap,Y
-    CMP #&FF
-    BNE found_gap
-    INY
-    JMP middle_loop
-.middle_done
-    ; Check byte_hi against right_mask
-    LDY &73
-    LDA colbitmap,Y
-    AND &75
-    CMP &75
-    BEQ no_gap
-.found_gap
-    SEC
-    RTS
-.no_gap
-    CLC
-    RTS
-}
-
-; Bit mask table (single bit)
+; Bit mask table (single bit) — still used by xform_vertex_cached for
+; the vertex-cache valid bitmap.
 .bit_masks
     EQUB &01, &02, &04, &08, &10, &20, &40, &80
-
-; left_mask_tbl[i] = bits i..7 set = $FF << i (for has_gap/mark_solid range masks)
-.left_mask_tbl
-    EQUB &FF, &FE, &FC, &F8, &F0, &E0, &C0, &80
-
-; right_mask_tbl[i] = bits 0..i set = (1 << (i+1)) - 1
-.right_mask_tbl
-    EQUB &01, &03, &07, &0F, &1F, &3F, &7F, &FF
-
-; ======================================================================
-; HAS_ANY_GAP: check if ANY column is unset (bitmap not fully filled)
-; Output: carry set = has gap, carry clear = full
-; ======================================================================
-.has_any_gap
-{
-    LDX #31
-.loop
-    LDA colbitmap,X
-    CMP #&FF
-    BNE found
-    DEX
-    BPL loop
-    CLC
-    RTS
-.found
-    SEC
-    RTS
-}
-
-; ======================================================================
-; MARK_SOLID: set bits in column bitmap for [x_lo, x_hi]
-; Input: zp_tmp0 = x_lo (s16), zp_tmp1 = x_hi (s16)
-; ======================================================================
-; ======================================================================
-; MARK_SOLID_FAST: OR the pre-computed masks into the column bitmap.
-; Input: $72 = byte_lo, $73 = byte_hi, $74 = left_mask (or combined for
-;        single-byte case), $75 = right_mask.  Matches the layout has_gap
-;        leaves in place when it reports a gap.
-; ======================================================================
-.mark_solid_fast
-{
-    LDA &72 : CMP &73 : BNE ms_multi
-
-    ; Single byte: $74 is already left AND right (set by has_gap), OR in.
-    LDY &72
-    LDA colbitmap,Y
-    ORA &74
-    STA colbitmap,Y
-    RTS
-
-.ms_multi
-    ; Byte_lo: OR left_mask
-    LDY &72
-    LDA colbitmap,Y
-    ORA &74
-    STA colbitmap,Y
-    INY
-
-    ; Middle bytes: set to $FF
-.ms_mid
-    CPY &73
-    BCS ms_end
-    LDA #&FF
-    STA colbitmap,Y
-    INY
-    JMP ms_mid
-.ms_end
-    ; Byte_hi: OR right_mask
-    LDY &73
-    LDA colbitmap,Y
-    ORA &75
-    STA colbitmap,Y
-    RTS
-}
 
 ; ======================================================================
 ; READ SEG DETAIL + PROJECT Y
