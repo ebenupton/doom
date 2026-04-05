@@ -802,13 +802,10 @@ CMD_DONE   = &00
     ; node_x is at ptr0+0 (s16 LE)
     ; But px_int is s8 in our ZP. Extend to s16.
     LDY #ND_PX
-    LDA zp_px_int
-    ; sign-extend px_int to 16 bits
-    PHA
     LDX #0
-    PLA
+    LDA zp_px_int         ; N flag = sign of px_int
     BPL pos_px
-    LDX #&FF
+    DEX                   ; X = $FF
 .pos_px
     SEC
     SBC (zp_ptr0),Y      ; lo byte
@@ -820,12 +817,10 @@ CMD_DONE   = &00
 
     ; dy_to_player = py_int - node_y
     LDY #ND_PY
-    LDA zp_py_int
-    PHA
     LDX #0
-    PLA
+    LDA zp_py_int
     BPL pos_py
-    LDX #&FF
+    DEX
 .pos_py
     SEC
     SBC (zp_ptr0),Y
@@ -1236,12 +1231,10 @@ CMD_DONE   = &00
 
     ; dx_bf = px_int - lv1_x (s8 - s16 → s16)
     LDY #SH_LV1X
-    LDA zp_px_int
-    PHA
     LDX #0
-    PLA
+    LDA zp_px_int         ; N flag set from LDA
     BPL bf_px_pos
-    LDX #&FF
+    DEX                   ; X = $FF
 .bf_px_pos
     SEC
     SBC (zp_ptr0),Y
@@ -1253,12 +1246,10 @@ CMD_DONE   = &00
 
     ; dy_bf = py_int - lv1_y
     LDY #SH_LV1Y
-    LDA zp_py_int
-    PHA
     LDX #0
-    PLA
+    LDA zp_py_int
     BPL bf_py_pos
-    LDX #&FF
+    DEX
 .bf_py_pos
     SEC
     SBC (zp_ptr0),Y
