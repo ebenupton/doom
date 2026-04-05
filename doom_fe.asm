@@ -50,6 +50,8 @@ zp_cos_unity = &1B         ; u8 (0 or 1)
 ; --- Fractional rotation (s16, 8.8 format) ---
 zp_frac_vx   = &1C         ; s16 (lo, hi)
 zp_frac_vy   = &1E         ; s16
+zp_frac_vx_ext = &06       ; u8 sign extension of frac_vx_hi (0 or $FF)
+zp_frac_vy_ext = &07       ; u8 sign extension of frac_vy_hi
 
 ; --- Current seg working area ---
 zp_sx1       = &20         ; s16
@@ -596,6 +598,16 @@ CMD_DONE   = &00
     ADC zp_tmp1+1
     STA zp_frac_vy+1
 
+    ; Pre-compute sign extensions for to_view
+    LDA #0 : STA zp_frac_vx_ext : STA zp_frac_vy_ext
+    LDA zp_frac_vx+1
+    BPL cfr_vx_pos
+    LDA #&FF : STA zp_frac_vx_ext
+.cfr_vx_pos
+    LDA zp_frac_vy+1
+    BPL cfr_vy_pos
+    LDA #&FF : STA zp_frac_vy_ext
+.cfr_vy_pos
     RTS
 }
 
@@ -1806,17 +1818,11 @@ CMD_DONE   = &00
     LDA &74 : SBC &71 : STA &71
     LDA &75 : SBC &72 : STA &72
 
-    ; total_vx = int_vx + frac_vx (s16, sign-extend to 24-bit)
+    ; total_vx = int_vx + frac_vx (s16, sign-extended to 24-bit via
+    ; pre-computed zp_frac_vx_ext)
     LDA &70 : CLC : ADC zp_frac_vx : STA &70
     LDA &71 : ADC zp_frac_vx+1 : STA &71
-    ; sign-extend frac_vx for byte 2
-    LDA zp_frac_vx+1
-    BPL vx_frac_pos
-    LDA &72 : ADC #&FF : STA &72
-    JMP vx_done_frac
-.vx_frac_pos
-    LDA &72 : ADC #0 : STA &72
-.vx_done_frac
+    LDA &72 : ADC zp_frac_vx_ext : STA &72
     ; total_vx is now in $70:$71:$72 (24-bit)
     ; --- VY computation: rot(dx, cos) + rot(dy, sin) ---
 
@@ -1849,16 +1855,10 @@ CMD_DONE   = &00
     LDA &74 : ADC &71 : STA &71
     LDA &75 : ADC &72 : STA &72
 
-    ; total_vy = int_vy + frac_vy (sign-extend to 24-bit)
+    ; total_vy = int_vy + frac_vy (sign-extended via pre-computed ext)
     LDA &70 : CLC : ADC zp_frac_vy : STA &70
     LDA &71 : ADC zp_frac_vy+1 : STA &71
-    LDA zp_frac_vy+1
-    BPL vy_frac_pos
-    LDA &72 : ADC #&FF : STA &72
-    JMP vy_done_frac
-.vy_frac_pos
-    LDA &72 : ADC #0 : STA &72
-.vy_done_frac
+    LDA &72 : ADC zp_frac_vy_ext : STA &72
     ; total_vy in $70:$71:$72 (24-bit)
     ; Save to $73:$74:$75
     LDA &70 : STA &73
