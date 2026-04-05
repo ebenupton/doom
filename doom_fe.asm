@@ -165,6 +165,37 @@ layout_off_ss      = &0BF4  ; u16
 layout_off_seg_hdr = &0BF6  ; u16
 layout_n_nodes     = &0BF8  ; u16
 
+; Visibility-span hook addresses.  These are intercepted by fe6502.py's
+; run loop — control never actually reaches those PCs on the real 6502.
+; All hooks use the same argument-passing convention: args in $A0..$B9.
+spans_has_gap      = &FE02  ; in:  $A0=lo(s16), $A2=hi(s16)  out: C=gap?
+spans_is_full      = &FE04  ; out: C=full?
+spans_queue_solid  = &FE06  ; in:  $A0=lo(s16), $A2=hi(s16)
+spans_queue_tighten = &FE08 ; in:  $A0=lo,$A2=hi,$A4=sx1,$A6=sx2,
+                            ;      $A8=yt1,$AA=yt2,$AC=yb1,$AE=yb2,
+                            ;      $B0=need_bt,$B1=need_bb,
+                            ;      $B2=bt1,$B4=bt2,$B6=bb1,$B8=bb2
+spans_flush        = &FE0A  ; apply deferred queue to span state
+spans_bbox_cull    = &FE0C  ; project node bbox and test has_gap
+                            ; in:  $A0=nid(u16), $A4=far_side(u8)
+                            ; out: C=visible?
+
+; Span hook scratch-arg zero page (reserve $A0..$B9 for arg marshalling).
+zp_hk_lo   = &A0           ; x_lo_clip (s16)
+zp_hk_hi   = &A2           ; x_hi_clip (s16)
+zp_hk_sx1  = &A4           ; sx1       (s16)
+zp_hk_sx2  = &A6           ; sx2       (s16)
+zp_hk_ft1  = &A8           ; ft1       (s16)
+zp_hk_ft2  = &AA           ; ft2       (s16)
+zp_hk_fb1  = &AC           ; fb1       (s16)
+zp_hk_fb2  = &AE           ; fb2       (s16)
+zp_hk_need_bt = &B0        ; u8 (0/non-zero)
+zp_hk_need_bb = &B1        ; u8
+zp_hk_bt1  = &B2           ; bt1       (s16)
+zp_hk_bt2  = &B4           ; bt2       (s16)
+zp_hk_bb1  = &B6           ; bb1       (s16)
+zp_hk_bb2  = &B8           ; bb2       (s16)
+
 ; ======================================================================
 ; Constants
 ; ======================================================================
@@ -710,8 +741,16 @@ CMD_DONE   = &00
     SBC #3
     STA zp_bsp_sp
 
-    ; Check has_any_gap (coarse: is bitmap fully filled?)
-    JSR has_any_gap
+    ; Bbox-projected has_gap cull — dispatches to Python's fp_bbox_visible
+    ; + FPClipSpans.has_gap so the BSP subtree cull matches Python exactly.
+    ; Args: $A0 = nid (u16, currently in zp_tmp0), $A4 (byte) = far_side.
+    LDA zp_tmp0   : STA zp_hk_lo       ; nid lo
+    LDA zp_tmp0+1 : STA zp_hk_lo+1     ; nid hi
+    ; far_side is still on stack; peek without pulling
+    PLA
+    STA zp_hk_sx1                       ; reuse sx1 byte slot for far_side
+    PHA                                 ; restore stack (we still need to pop later)
+    JSR spans_bbox_cull
     BCS has_gap_ok
     PLA                  ; discard far_side before looping back
     JMP pop_check
@@ -1176,10 +1215,6 @@ CMD_DONE   = &00
     ; Add base: rom_detail → zp_seg_det_ptr (no offset; detail at rom_detail base)
     LDA zp_seg_det_ptr+1 : CLC : ADC #HI(rom_detail) : STA zp_seg_det_ptr+1
 
-    ; Clear deferred mark_solid stack
-    LDA #0
-    STA zp_defer_sp
-
     ; Process each seg (DEC-at-end loop to avoid redundant check+dec)
     LDA zp_seg_count
     BEQ segs_done
@@ -1198,25 +1233,8 @@ CMD_DONE   = &00
     BNE seg_loop
 
 .segs_done
-    ; Flush deferred mark_solid — each 4-byte entry holds pre-computed
-    ; byte_lo, byte_hi, left_mask, right_mask from has_gap.
-    LDX #0
-.flush_loop
-    CPX zp_defer_sp
-    BCS flush_done
-    LDA deferred_stk,X   : STA &72   ; byte_lo
-    LDA deferred_stk+1,X : STA &73   ; byte_hi
-    LDA deferred_stk+2,X : STA &74   ; left_mask
-    LDA deferred_stk+3,X : STA &75   ; right_mask
-    TXA
-    PHA
-    JSR mark_solid_fast
-    PLA
-    CLC
-    ADC #4
-    TAX
-    JMP flush_loop
-.flush_done
+    ; Flush deferred span queue (applies mark_solid/tighten in order)
+    JSR spans_flush
 
     ; Emit end-of-subsector command
     LDY #0
@@ -1529,16 +1547,16 @@ CMD_DONE   = &00
 .rs_xr_done
 
     ; --- Has gap? ---
-    JSR has_gap           ; input: zp_x_lo_clip, zp_x_hi_clip
-    BCC seg_clipped       ; no gap
-
-    ; Stash has_gap outputs ($72-$75 = byte_lo/byte_hi/left_mask/right_mask)
-    ; to ZP $08-$0B — project_y_all clobbers $70-$72 via mul_s16_u8_s24
-    ; and we need them later for the deferred mark_solid.
-    LDA &72 : STA &08
-    LDA &73 : STA &09
-    LDA &74 : STA &0A
-    LDA &75 : STA &0B
+    ; Load x_lo/x_hi into hook argument slots and call the Python-side
+    ; FPClipSpans.has_gap via the $FE02 hook.
+    LDA zp_x_lo_clip   : STA zp_hk_lo
+    LDA zp_x_lo_clip+1 : STA zp_hk_lo+1
+    LDA zp_x_hi_clip   : STA zp_hk_hi
+    LDA zp_x_hi_clip+1 : STA zp_hk_hi+1
+    JSR spans_has_gap
+    BCS hg_pass
+    JMP seg_clipped
+.hg_pass
 
     ; --- Read seg detail (heights) ---
     JSR read_seg_detail   ; loads fh, ch (and bfh, bch if portal) into temps
@@ -1551,22 +1569,55 @@ CMD_DONE   = &00
     AND #SF_SOLID
     BNE emit_solid
 
-    ; Portal
+    ; Portal — emit cmd and queue a deferred tighten with raw ft/fb/bt/bb.
+    ; Python computes yt/yb and top_dom/bot_dom.
     JSR emit_portal_cmd
+
+    ; Marshal tighten args for hook.  x_lo/x_hi/sx1/sx2 and the front
+    ; heights are already in ZP.  Back heights are at $84-$87 (bt1/bt2)
+    ; and $90-$93 (bb1/bb2) when need_bt/need_bb flags are set.
+    LDA zp_x_lo_clip   : STA zp_hk_lo
+    LDA zp_x_lo_clip+1 : STA zp_hk_lo+1
+    LDA zp_x_hi_clip   : STA zp_hk_hi
+    LDA zp_x_hi_clip+1 : STA zp_hk_hi+1
+    LDA zp_sx1 : STA zp_hk_sx1
+    LDA zp_sx1+1 : STA zp_hk_sx1+1
+    LDA zp_sx2 : STA zp_hk_sx2
+    LDA zp_sx2+1 : STA zp_hk_sx2+1
+    LDA zp_ft1 : STA zp_hk_ft1
+    LDA zp_ft1+1 : STA zp_hk_ft1+1
+    LDA zp_ft2 : STA zp_hk_ft2
+    LDA zp_ft2+1 : STA zp_hk_ft2+1
+    LDA zp_fb1 : STA zp_hk_fb1
+    LDA zp_fb1+1 : STA zp_hk_fb1+1
+    LDA zp_fb2 : STA zp_hk_fb2
+    LDA zp_fb2+1 : STA zp_hk_fb2+1
+    LDA zp_seg_flags
+    AND #SF_NEEDBT
+    STA zp_hk_need_bt
+    LDA zp_seg_flags
+    AND #SF_NEEDBB
+    STA zp_hk_need_bb
+    LDA &84 : STA zp_hk_bt1
+    LDA &85 : STA zp_hk_bt1+1
+    LDA &86 : STA zp_hk_bt2
+    LDA &87 : STA zp_hk_bt2+1
+    LDA &90 : STA zp_hk_bb1
+    LDA &91 : STA zp_hk_bb1+1
+    LDA &92 : STA zp_hk_bb2
+    LDA &93 : STA zp_hk_bb2+1
+    JSR spans_queue_tighten
     RTS
 
 .emit_solid
     JSR emit_solid_cmd
-    ; Defer mark_solid — push the byte-level masks saved at $08-$0B
-    LDX zp_defer_sp
-    LDA &08 : STA deferred_stk,X    ; byte_lo
-    LDA &09 : STA deferred_stk+1,X  ; byte_hi
-    LDA &0A : STA deferred_stk+2,X  ; left_mask
-    LDA &0B : STA deferred_stk+3,X  ; right_mask
-    TXA
-    CLC
-    ADC #4
-    STA zp_defer_sp
+    ; Queue deferred mark_solid via the span hook.  x_lo_clip/x_hi_clip
+    ; are already in ZP; forward them to the hook arg slots.
+    LDA zp_x_lo_clip   : STA zp_hk_lo
+    LDA zp_x_lo_clip+1 : STA zp_hk_lo+1
+    LDA zp_x_hi_clip   : STA zp_hk_hi
+    LDA zp_x_hi_clip+1 : STA zp_hk_hi+1
+    JSR spans_queue_solid
     RTS
 
 .seg_clipped

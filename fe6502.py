@@ -202,6 +202,12 @@ class Frontend6502:
         mem[0xFFFE] = 0x00  # BRK vector lo
         mem[0xFFFF] = 0xFF  # BRK vector hi
 
+        # Visibility-span hooks: the 6502 front-end JSRs to fixed hook
+        # addresses in $FE00..$FE0F to invoke Python FPClipSpans operations
+        # running on its RAM.  Install the hook table and state.
+        from spans6502 import install_hooks
+        self._span_state, self._span_hooks = install_hooks(self.mpu, mem)
+
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0,
                      map_center_x=1200, map_center_y=-3250, prescale=8,
                      aspect_num=6, aspect_den=5):
@@ -223,6 +229,9 @@ class Frontend6502:
         # Clear command buffer (just the first byte is enough — terminator)
         mem[CMD_BUFFER] = 0
 
+        # Initialise visibility-span state (full-screen span + empty queue)
+        self._span_state.init(self.mpu)
+
         # Run
         self.mpu.pc = CODE_BASE
         self.mpu.sp = 0xFF
@@ -230,10 +239,19 @@ class Frontend6502:
         self.mpu.processorCycles = 0
 
         max_steps = 10_000_000
+        mpu = self.mpu
+        hook_table = self._span_hooks
+        from spans6502 import _do_rts
         for _ in range(max_steps):
-            if self.mpu.pc == 0xFF00:
+            pc = mpu.pc
+            if pc == 0xFF00:
                 break
-            self.mpu.step()
+            hook = hook_table.get(pc)
+            if hook is not None:
+                hook(mpu)
+                _do_rts(mpu)
+                continue
+            mpu.step()
 
         cycles = self.mpu.processorCycles
 
@@ -319,6 +337,9 @@ class Frontend6502:
         mem[ZP_ANGLE] = angle_byte & 0xFF
         mem[CMD_BUFFER] = 0
 
+        # Initialise visibility-span state (full-screen span + empty queue)
+        self._span_state.init(self.mpu)
+
         # Run with PC sampling at every instruction
         mpu = self.mpu
         mpu.pc = CODE_BASE
@@ -329,11 +350,20 @@ class Frontend6502:
         buckets = {}
         step = mpu.step
         prev_cycles = 0
+        hook_table = self._span_hooks
+        from spans6502 import _do_rts
         max_steps = 10_000_000
         for _ in range(max_steps):
             pc = mpu.pc
             if pc == 0xFF00:
                 break
+            hook = hook_table.get(pc)
+            if hook is not None:
+                hook(mpu)
+                _do_rts(mpu)
+                buckets['<span_hook>'] = buckets.get('<span_hook>', 0) + 1
+                prev_cycles = mpu.processorCycles
+                continue
             name = pc_map[pc] or '<unknown>'
             step()
             delta = mpu.processorCycles - prev_cycles
