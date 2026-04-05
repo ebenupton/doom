@@ -1505,9 +1505,27 @@ CMD_DONE   = &00
     LDA zp_rxh : STA &8A
     LDA zp_rxl : STA &8B
 
-    ; --- Compute x_lo, x_hi ---
-    ; x_lo = min(sx1, sx2), x_hi = max(sx1, sx2)
-    JSR compute_x_range   ; output: zp_x_lo_clip, zp_x_hi_clip
+    ; --- Compute x_lo, x_hi inline (x_lo = min(sx1, sx2), x_hi = max) ---
+    LDA zp_sx1
+    CMP zp_sx2
+    LDA zp_sx1+1
+    SBC zp_sx2+1
+    BVC rs_xr_novf
+    EOR #&80
+.rs_xr_novf
+    BMI rs_sx1_less
+    ; sx1 >= sx2: x_lo = sx2, x_hi = sx1
+    LDA zp_sx2   : STA zp_x_lo_clip
+    LDA zp_sx2+1 : STA zp_x_lo_clip+1
+    LDA zp_sx1   : STA zp_x_hi_clip
+    LDA zp_sx1+1 : STA zp_x_hi_clip+1
+    JMP rs_xr_done
+.rs_sx1_less
+    LDA zp_sx1   : STA zp_x_lo_clip
+    LDA zp_sx1+1 : STA zp_x_lo_clip+1
+    LDA zp_sx2   : STA zp_x_hi_clip
+    LDA zp_sx2+1 : STA zp_x_hi_clip+1
+.rs_xr_done
 
     ; --- Has gap? ---
     JSR has_gap           ; input: zp_x_lo_clip, zp_x_hi_clip
