@@ -1053,7 +1053,16 @@ class FPClipSpans:
         top_dom/bot_dom: if True, the new top/bot boundary dominates all
         existing spans (detected by line_survives).  When both dominate,
         all affected spans collapse into one — skipping piecewise max/min.
+
+        NOTE: the both-dominate fast path is disabled so that the 6502
+        native tighten (which implements only the general path) produces
+        bit-identical span state.  The two paths differ only in that
+        both-dominate merges adjacent affected spans into one; the
+        general path leaves them as separate but functionally identical
+        spans.  Drawn-seg counts are unaffected.
         """
+        top_dom = False
+        bot_dom = False
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W, hi + 1)
         if ilo >= ihi:

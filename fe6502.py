@@ -228,6 +228,16 @@ class Frontend6502:
         mem[ZP_PX_LO] = px_88 & 0xFF
         mem[ZP_PY_LO] = py_88 & 0xFF
 
+        # Raw player position (s16, relative to map_center) — used by
+        # point_on_side so the asm can match Python's raw-coord impl
+        # exactly at any prescale.
+        wx_rel = int(player_x - map_center_x)
+        wy_rel = int(player_y - map_center_y)
+        mem[0xC0] = wx_rel & 0xFF
+        mem[0xC1] = (wx_rel >> 8) & 0xFF
+        mem[0xC2] = wy_rel & 0xFF
+        mem[0xC3] = (wy_rel >> 8) & 0xFF
+
         vz_ps = ((floor_z + 41) * aspect_num + aspect_den // 2) // (prescale * aspect_den)
         mem[ZP_VZ_PS] = vz_ps & 0xFF
         mem[ZP_ANGLE] = angle_byte & 0xFF
@@ -342,6 +352,12 @@ class Frontend6502:
         mem[ZP_PY_INT] = (py_88 >> 8) & 0xFF
         mem[ZP_PX_LO] = px_88 & 0xFF
         mem[ZP_PY_LO] = py_88 & 0xFF
+        wx_rel = int(player_x - map_center_x)
+        wy_rel = int(player_y - map_center_y)
+        mem[0xC0] = wx_rel & 0xFF
+        mem[0xC1] = (wx_rel >> 8) & 0xFF
+        mem[0xC2] = wy_rel & 0xFF
+        mem[0xC3] = (wy_rel >> 8) & 0xFF
         vz_ps = ((floor_z + 41) * aspect_num + aspect_den // 2) // (prescale * aspect_den)
         mem[ZP_VZ_PS] = vz_ps & 0xFF
         mem[ZP_ANGLE] = angle_byte & 0xFF

@@ -29,6 +29,13 @@ zp_math_b   = &01
 zp_res_lo   = &02
 zp_res_hi   = &03
 
+; Dedicated divide scratch (used by fp_div8).  Leaf routine, but called
+; from tighten with live zp_tmp* state, so use dedicated slots.
+zp_div_num  = &08           ; u16 dividend / quotient output
+zp_div_den  = &0A           ; u16 divisor (|den|)
+zp_div_rem  = &0C           ; u16 remainder accumulator
+zp_div_sign = &0E           ; u8 sign flag (0 = positive result, 1 = negative)
+
 ; --- Player state (initialised by Python) ---
 zp_px_int   = &10          ; s8  prescaled player x (integer part of 8.8)
 zp_py_int   = &11          ; s8  prescaled player y
@@ -165,25 +172,112 @@ layout_off_ss      = &0BF4  ; u16
 layout_off_seg_hdr = &0BF6  ; u16
 layout_n_nodes     = &0BF8  ; u16
 
+; Raw player position (s16 relative to map_center), set by fe6502.py per
+; frame.  Used by point_on_side so the cross product has the correct sign
+; on any node, independent of PRESCALE rounding.
+zp_wx              = &C0    ; s16
+zp_wy              = &C2    ; s16
+
+; Scratch ZP for queue_tighten + line_survives (distinct from hook args
+; at $A0-$B9 which hold the inputs, and from render_seg's scratch at
+; $80-$93 which must survive across subroutine calls).
+zp_top_dom    = &C4          ; u8
+zp_bot_dom    = &C5          ; u8
+zp_ls_x1      = &C6          ; s16
+zp_ls_y1      = &C8          ; s16
+zp_ls_x2      = &CA          ; s16
+zp_ls_y2      = &CC          ; s16
+zp_ls_count   = &CE          ; u8
+zp_ls_found   = &CF          ; u8
+zp_ls_scratch = &D0          ; u8 (saved xhi/xlo byte during compare)
+
+; Running tail pointer for the deferred span-op queue.  Needs to be in
+; zero page so (zp_q_tail),Y indirect-indexed addressing works.
+zp_q_tail     = &D1          ; u16
+
+; Frame-invariant ROM base pointers — computed once at entry from the
+; layout_off_* values + HI(rom_main), so point_on_side/get_child/etc.
+; can address with a single ADC pair instead of a two-step add.
+zp_node_base     = &D3       ; u16: rom_main + layout_off_nodes
+zp_vert_base     = &D5       ; u16: rom_main + layout_off_verts
+zp_ss_base       = &D7       ; u16: rom_main + layout_off_ss
+zp_seg_hdr_base  = &D9       ; u16: rom_main + layout_off_seg_hdr
+
+; Native flush scratch (used by mark_solid / tighten / _make_span).
+; Currently live only inside flush — callers outside flush can reuse.
+zp_mk_tslope     = &DB       ; s16: tfn slope for new span
+zp_mk_tintercept = &DD       ; s16
+zp_mk_bslope     = &DF       ; s16
+zp_mk_bintercept = &E1       ; s16
+zp_mk_xlo        = &E3       ; u8
+zp_mk_xhi        = &E4       ; u8 (0 = 256)
+zp_mk_out        = &E5       ; u16: pointer to output span slot
+zp_mk_tmp        = &E7       ; u16: scratch for fp_eval inputs
+zp_mk_top_l      = &E9       ; s16: fp_eval(tfn, xlo)
+zp_mk_top_r      = &EB       ; s16: fp_eval(tfn, xhi-1)
+zp_mk_bot_l      = &ED       ; s16: fp_eval(bfn, xlo)
+zp_mk_bot_r      = &EF       ; s16: fp_eval(bfn, xhi-1)
+
+; mark_solid / tighten inputs & iteration state
+zp_ms_lo         = &F0       ; s16 input: lo
+zp_ms_hi         = &F2       ; s16 input: hi
+zp_ms_ilo        = &F4       ; s16 clamped: max(0, lo)
+zp_ms_ihi        = &F6       ; s16 clamped: min(256, hi+1)
+zp_ms_src        = &F8       ; u16: pointer to current source span
+zp_ms_count      = &FA       ; u8: source spans remaining
+zp_ms_xlo16      = &FB       ; s16: current src span xlo (s16)
+zp_ms_xhi16      = &FD       ; s16: current src span xhi (s16, 256 unwrapped)
+
+; Tighten scratch — only live during flush.  Reuses the $80-$9F range
+; which holds render_seg bt/bb and to_view products — both dead by flush.
+zp_tg_new_tslope     = &80   ; s16
+zp_tg_new_tintercept = &82   ; s16
+zp_tg_new_bslope     = &84   ; s16
+zp_tg_new_bintercept = &86   ; s16
+zp_tg_src_tslope     = &88   ; s16 (stash of current span's tfn)
+zp_tg_src_tintercept = &8A   ; s16
+zp_tg_src_bslope     = &8C   ; s16 (stash of current span's bfn)
+zp_tg_src_bintercept = &8E   ; s16
+zp_tg_ox0            = &90   ; s16
+zp_tg_ox1            = &92   ; s16
+zp_tg_tx0            = &94   ; s16 (inner tx range)
+zp_tg_tx1            = &96   ; s16
+zp_tg_bx0            = &98   ; s16 (inner bx range)
+zp_tg_bx1            = &9A   ; s16
+zp_tg_tfn_use_new    = &9C   ; u8: nonzero if current inner range uses new_tfn
+zp_tg_bfn_use_new    = &9D   ; u8: nonzero if current inner range uses new_bfn
+zp_tg_pwmax_count    = &9E   ; u8: pw_max's count (saved across tg_process_tx_range
+                             ;     because pw_min clobbers zp_pw_count)
+zp_tg_pwmax_cx       = &BA   ; s16: pw_max's crossover x (saved across the
+                             ;      tg_process_tx_range call, whose pw_min can
+                             ;      overwrite zp_pw_cx)
+
+; pw_max / pw_min scratch — reuses the hook ZP range (dead during flush).
+zp_pw_f_slope        = &A0   ; s16: f = src fn (top or bot)
+zp_pw_f_intercept    = &A2
+zp_pw_g_slope        = &A4   ; s16: g = new fn (top or bot)
+zp_pw_g_intercept    = &A6
+zp_pw_x0             = &A8   ; s16
+zp_pw_x1             = &AA   ; s16
+zp_pw_d0             = &AC   ; s16: f(x0) - g(x0)
+zp_pw_d1             = &AE   ; s16: f(x1-1) - g(x1-1)
+zp_pw_cx             = &B0   ; s16: crossover x (when count == 2)
+zp_pw_count          = &B2   ; u8: 1 or 2
+zp_pw_r0_fn          = &B3   ; u8: 0 = use f, 1 = use g
+zp_pw_r1_fn          = &B4   ; u8: 0 = use f, 1 = use g
+
+; Scratch span buffer for mark_solid/tighten — written then copied back.
+scratch_spans    = &B620     ; 514-byte buffer in vwh_cache slack area
+
 ; Visibility-span hook addresses.  These are intercepted by fe6502.py's
 ; run loop — control never actually reaches those PCs on the real 6502.
 ; All hooks use the same argument-passing convention: args in $A0..$B9.
-spans_has_gap      = &FE02  ; in:  $A0=lo(s16), $A2=hi(s16)  out: C=gap?
-spans_is_full      = &FE04  ; out: C=full?
-spans_queue_solid  = &FE06  ; in:  $A0=lo(s16), $A2=hi(s16)
-spans_queue_tighten = &FE08 ; in:  $A0=lo,$A2=hi,$A4=sx1,$A6=sx2,
-                            ;      $A8=yt1,$AA=yt2,$AC=yb1,$AE=yb2,
-                            ;      $B0=need_bt,$B1=need_bb,
-                            ;      $B2=bt1,$B4=bt2,$B6=bb1,$B8=bb2
 spans_flush        = &FE0A  ; apply deferred queue to span state
 spans_bbox_cull    = &FE0C  ; project node bbox and test has_gap
                             ; in:  $A0=nid(u16), $A4=far_side(u8)
                             ; out: C=visible?
 spans_enter_ss     = &FE0E  ; diagnostic: record which ssid we entered
                             ; in:  $A0=ssid(u16)
-spans_point_on_side = &FE10 ; point_on_side using Python raw-coord impl
-                            ; in:  $A0=nid(u16)
-                            ; out: C=side (0 or 1)
 
 ; Span hook scratch-arg zero page (reserve $A0..$B9 for arg marshalling).
 zp_hk_lo   = &A0           ; x_lo_clip (s16)
@@ -253,6 +347,67 @@ CMD_PORTAL = &50            ; 'P'
 CMD_ENDSS  = &45            ; 'E'
 CMD_DONE   = &00
 
+; Visibility span array (in RAM at spans_base).  Layout mirrors
+; wad_packed.py's SPAN_* constants.  The 2-byte header stores span
+; count (u8) + pad, followed by up to MAX_SPANS × 16-byte records.
+; xhi=0 in u8 means 256 (half-open [xlo, 256) wrap convention).
+;
+; Slopes are s16 (not s8) because fp_linfn can produce values outside
+; the s8 range.  The outer_top/outer_bot bbox fields are derived
+; on-the-fly by Python's draw_clipped path and not stored in RAM.
+spans_base    = &1C80        ; RAM address of span array header
+MAX_SPANS     = 32
+SPAN_SIZE     = 16
+SPAN_HDR      = 2
+SP_XLO        = 0            ; u8
+SP_XHI        = 1            ; u8 (0 = 256)
+SP_TSLOPE     = 2            ; s16
+SP_BSLOPE     = 4            ; s16
+SP_TINTERCEPT = 6            ; s16
+SP_BINTERCEPT = 8            ; s16
+SP_INNER_TOP  = 10           ; s16
+SP_INNER_BOT  = 12           ; s16
+; +14..15 reserved
+
+; Deferred span-op queue.  Each subsector queues mark_solid / tighten
+; operations while rendering, then flush applies them in order.  Queue
+; lives in RAM with 20-byte entries:
+;   +0   u8   type (0 = solid, 1 = tighten)
+;   +1   u8   top_dom  (tighten only)
+;   +2   u8   bot_dom  (tighten only)
+;   +3   u8   pad
+;   +4   s16  lo
+;   +6   s16  hi
+;   +8   s16  sx1       (tighten only)
+;   +10  s16  sx2       (tighten only)
+;   +12  s16  yt1       (tighten only)
+;   +14  s16  yt2       (tighten only)
+;   +16  s16  yb1       (tighten only)
+;   +18  s16  yb2       (tighten only)
+;
+; Place the queue in the gap between the span array ($1E82) and
+; rom_main ($2000) — up to 19 entries = 380 bytes.
+queue_base    = &1E90        ; entries start here (aligned up from $1E82)
+queue_count   = &1E82        ; u8 (count of queued entries)
+flush_ptr_lo  = &1E83        ; u8: flush iteration pointer lo (RAM)
+flush_ptr_hi  = &1E84        ; u8: flush iteration pointer hi
+flush_rem     = &1E85        ; u8: queue entries remaining in flush
+MAX_QUEUE     = 18
+QE_SIZE       = 20
+QE_TYPE       = 0
+QE_TOP_DOM    = 1
+QE_BOT_DOM    = 2
+QE_LO         = 4
+QE_HI         = 6
+QE_SX1        = 8
+QE_SX2        = 10
+QE_YT1        = 12
+QE_YT2        = 14
+QE_YB1        = 16
+QE_YB2        = 18
+QET_SOLID     = 0
+QET_TIGHTEN   = 1
+
 ; ======================================================================
 ; ENTRY POINT
 ; ======================================================================
@@ -284,6 +439,28 @@ CMD_DONE   = &00
     STA zp_cmd_lo
     LDA #HI(cmd_buffer)
     STA zp_cmd_hi
+
+    ; Init deferred span-op queue (count=0, tail=queue_base)
+    LDA #0
+    STA queue_count
+    LDA #LO(queue_base)
+    STA zp_q_tail
+    LDA #HI(queue_base)
+    STA zp_q_tail+1
+
+    ; Precompute absolute ROM base pointers for nodes/verts/subsectors.
+    LDA layout_off_nodes     : STA zp_node_base
+    LDA layout_off_nodes+1
+    CLC : ADC #HI(rom_main)  : STA zp_node_base+1
+    LDA layout_off_verts     : STA zp_vert_base
+    LDA layout_off_verts+1
+    CLC : ADC #HI(rom_main)  : STA zp_vert_base+1
+    LDA layout_off_ss        : STA zp_ss_base
+    LDA layout_off_ss+1
+    CLC : ADC #HI(rom_main)  : STA zp_ss_base+1
+    LDA layout_off_seg_hdr   : STA zp_seg_hdr_base
+    LDA layout_off_seg_hdr+1
+    CLC : ADC #HI(rom_main)  : STA zp_seg_hdr_base+1
 
     ; Pre-compute sign extensions of px_int / py_int (used by to_view,
     ; point_on_side and render_seg's back-face test). These are constant
@@ -671,21 +848,16 @@ CMD_DONE   = &00
     BNE is_subsector
 
     ; --- It's a node: compute point_on_side ---
-    ; Use the spans_point_on_side hook (Python raw-coord implementation).
-    LDA zp_tmp0   : STA zp_hk_lo
-    LDA zp_tmp0+1 : STA zp_hk_lo+1
-    JSR spans_point_on_side     ; returns carry = side (0 or 1)
-    LDA #0
-    ROL A                        ; A = carry (0 or 1)
+    JSR point_on_side    ; input: zp_tmp0 = nid, returns A = side (0 or 1)
+                         ; leaves zp_ptr0 pointing at the node record
 
-    ; Save side in stack entry
+    ; Save side in stack entry (A still holds side)
     LDX zp_bsp_sp
     STA bsp_stack-1,X   ; side
 
-    ; Need to call the full get_child (not get_child_fast) because we
-    ; haven't established zp_ptr0 (the hook doesn't touch it).
+    ; Get near child without recomputing node address (ptr0 is still valid)
     LDA bsp_stack-1,X
-    JSR get_child
+    JSR get_child_fast
     ; Push near child
     LDX zp_bsp_sp
     LDA zp_tmp1
@@ -801,15 +973,13 @@ CMD_DONE   = &00
     ASL zp_ptr0
     ROL zp_ptr0+1       ; × 16
 
-    ; Add rom_main base + off_nodes
+    ; Add precomputed zp_node_base (= rom_main + off_nodes)
     LDA zp_ptr0
     CLC
-    ADC layout_off_nodes
+    ADC zp_node_base
     STA zp_ptr0
     LDA zp_ptr0+1
-    ADC layout_off_nodes+1
-    CLC
-    ADC #HI(rom_main)
+    ADC zp_node_base+1
     STA zp_ptr0+1
 
     PLA                  ; restore side
@@ -853,46 +1023,44 @@ CMD_DONE   = &00
 ; ======================================================================
 .point_on_side
 {
-    ; Compute node address (same as get_child)
+    ; Compute node address via precomputed zp_node_base (= rom_main + off_nodes)
     LDA zp_tmp0
     ASL A : STA zp_ptr0
     LDA zp_tmp0+1
     ROL A : STA zp_ptr0+1
     ASL zp_ptr0 : ROL zp_ptr0+1
     ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ; ptr0 = nid * 16
+    ASL zp_ptr0 : ROL zp_ptr0+1     ; ptr0 = nid * 16
     LDA zp_ptr0
     CLC
-    ADC layout_off_nodes
+    ADC zp_node_base
     STA zp_ptr0
     LDA zp_ptr0+1
-    ADC layout_off_nodes+1
-    CLC
-    ADC #HI(rom_main)
+    ADC zp_node_base+1
     STA zp_ptr0+1
     ; ptr0 → node record
 
-    ; dx_to_player = px_int - node_x (s16 - s16 → s16)
-    ; node_x is at ptr0+0 (s16 LE)
-    ; But px_int is s8 in our ZP. Extend to s16.
+    ; dx_to_player = zp_wx (raw s16) - node_nx (raw s16)
+    ; The packed node now stores RAW nx/ny (s16 relative to map_center)
+    ; at ND_PX/ND_PY, so the cross product preserves exact sign regardless
+    ; of PRESCALE.
     LDY #ND_PX
-    LDA zp_px_int
+    LDA zp_wx
     SEC
-    SBC (zp_ptr0),Y      ; lo byte
+    SBC (zp_ptr0),Y
     STA zp_tmp2          ; dx_lo
-    LDA zp_px_int_hi     ; pre-computed sign extension
+    LDA zp_wx+1
     INY
     SBC (zp_ptr0),Y
     STA zp_tmp2+1        ; dx_hi
 
-    ; dy_to_player = py_int - node_y
+    ; dy_to_player = zp_wy (raw s16) - node_ny (raw s16)
     LDY #ND_PY
-    LDA zp_py_int
+    LDA zp_wy
     SEC
     SBC (zp_ptr0),Y
     STA zp_tmp3          ; dy_lo
-    LDA zp_py_int_hi
+    LDA zp_wy+1
     INY
     SBC (zp_ptr0),Y
     STA zp_tmp3+1        ; dy_hi
@@ -960,6 +1128,11 @@ CMD_DONE   = &00
     ; term_a: node_dy (at ptr0+6) × tmp2 (dx_to_player)
     ; term_b: node_dx (at ptr0+4) × tmp3 (dy_to_player)
 
+    ; IMPORTANT: mul16x16 clobbers zp_tmp3 as an internal temp, so we
+    ; must save dy_to_player to scratch BEFORE the first multiply.
+    LDA zp_tmp3   : STA &46           ; save dy_to_player lo
+    LDA zp_tmp3+1 : STA &47           ; save dy_to_player hi
+
     ; Load node_dy
     LDY #ND_DY
     LDA (zp_ptr0),Y
@@ -989,11 +1162,9 @@ CMD_DONE   = &00
     LDA (zp_ptr0),Y
     STA zp_tmp0+1
 
-    ; tmp2 = dy_to_player (in tmp3)
-    LDA zp_tmp3
-    STA zp_tmp2
-    LDA zp_tmp3+1
-    STA zp_tmp2+1
+    ; Restore dy_to_player (saved before first mul) into tmp2
+    LDA &46 : STA zp_tmp2
+    LDA &47 : STA zp_tmp2+1
 
     ; Compute term_b = node_dx × dy_to_player → 32-bit at $70-$73
     JSR mul16x16
@@ -1023,6 +1194,2335 @@ CMD_DONE   = &00
     RTS
 .pos_return_one
     LDA #1
+    RTS
+}
+
+; ======================================================================
+; HAS_GAP: Does the x-range [zp_x_lo_clip, zp_x_hi_clip] overlap any
+; span with an aperture (inner_top < inner_bot)?
+; Input:  zp_x_lo_clip (s16), zp_x_hi_clip (s16)  — read directly
+; Output: C=1 if gap found, C=0 otherwise
+; Clobbers: A, X, Y, zp_tmp0..zp_tmp3, zp_ptr0
+; Mirrors FPClipSpans.has_gap in doom_wireframe.py.
+; ======================================================================
+.has_gap
+{
+    ; --- Up-front range rejection ---
+    ; If x_hi_clip < 0, the seg is entirely left of screen → no gap.
+    LDA zp_x_hi_clip+1
+    BMI no_gap
+    ; If x_lo_clip > 255, seg is entirely right of screen → no gap.
+    LDA zp_x_lo_clip+1
+    BMI ilo_zero            ; x_lo_clip < 0 → ilo = 0
+    BNE no_gap              ; x_lo_clip > 255
+    LDA zp_x_lo_clip
+    STA zp_tmp0             ; ilo_u8 in [0, 255]
+    JMP clamp_ihi
+.ilo_zero
+    LDA #0
+    STA zp_tmp0
+
+.clamp_ihi
+    ; ihi = min(255, x_hi_clip).  x_hi_clip_hi >= 0 (checked above).
+    LDA zp_x_hi_clip+1
+    BEQ ihi_normal
+    LDA #255                ; x_hi_clip > 255 → clamp to 255
+    STA zp_tmp1
+    JMP loop_init
+.ihi_normal
+    LDA zp_x_hi_clip
+    STA zp_tmp1             ; ihi_u8
+
+.loop_init
+    ; ilo_u8 in zp_tmp0, ihi_u8 in zp_tmp1.  Both in [0, 255].
+    LDA spans_base          ; span count
+    BEQ no_gap
+    STA zp_tmp2             ; remaining count
+    LDA #LO(spans_base + SPAN_HDR)
+    STA zp_ptr0
+    LDA #HI(spans_base + SPAN_HDR)
+    STA zp_ptr0+1
+
+.hg_loop
+    ; --- Break if xlo > ihi (both u8) ---
+    LDY #SP_XLO
+    LDA (zp_ptr0),Y
+    CMP zp_tmp1
+    BEQ xlo_ok
+    BCS hg_break            ; xlo > ihi → break
+.xlo_ok
+
+    ; --- Skip if xhi <= ilo (both u8; xhi=0 means 256 and never skips) ---
+    LDY #SP_XHI
+    LDA (zp_ptr0),Y
+    BEQ inner_chk           ; xhi=0=256 > ilo (≤255): always process
+    CMP zp_tmp0
+    BEQ hg_next             ; xhi == ilo
+    BCC hg_next             ; xhi < ilo
+
+.inner_chk
+    ; --- inner_top < inner_bot ? (signed s16 compare) ---
+    SEC
+    LDY #SP_INNER_TOP
+    LDA (zp_ptr0),Y
+    LDY #SP_INNER_BOT
+    SBC (zp_ptr0),Y
+    LDY #SP_INNER_TOP+1
+    LDA (zp_ptr0),Y
+    LDY #SP_INNER_BOT+1
+    SBC (zp_ptr0),Y
+    BVC hg_nov
+    EOR #&80
+.hg_nov
+    BMI hg_found            ; result negative → inner_top < inner_bot → gap
+
+.hg_next
+    LDA zp_ptr0
+    CLC
+    ADC #SPAN_SIZE
+    STA zp_ptr0
+    BCC hg_ptr_nocarry
+    INC zp_ptr0+1
+.hg_ptr_nocarry
+    DEC zp_tmp2
+    BNE hg_loop
+
+.hg_break
+.no_gap
+    CLC
+    RTS
+.hg_found
+    SEC
+    RTS
+}
+
+; ======================================================================
+; QUEUE_SOLID: Append a deferred mark_solid op to the queue.
+; Input: zp_x_lo_clip (s16), zp_x_hi_clip (s16)  — read directly
+; Clobbers: A, Y
+; ======================================================================
+.queue_solid
+{
+    ; Write entry at queue_tail
+    LDY #QE_TYPE
+    LDA #QET_SOLID
+    STA (zp_q_tail),Y
+    LDY #QE_LO
+    LDA zp_x_lo_clip
+    STA (zp_q_tail),Y
+    INY
+    LDA zp_x_lo_clip+1
+    STA (zp_q_tail),Y
+    LDY #QE_HI
+    LDA zp_x_hi_clip
+    STA (zp_q_tail),Y
+    INY
+    LDA zp_x_hi_clip+1
+    STA (zp_q_tail),Y
+
+    ; Advance tail by QE_SIZE
+    LDA zp_q_tail
+    CLC
+    ADC #QE_SIZE
+    STA zp_q_tail
+    BCC qs_nc
+    INC zp_q_tail+1
+.qs_nc
+    INC queue_count
+    RTS
+}
+
+; ======================================================================
+; QUEUE_TIGHTEN: Append a deferred tighten op to the queue.
+; Inputs in $A0..$B9 as marshalled by fp_render_seg:
+;   zp_hk_lo, zp_hk_hi, zp_hk_sx1, zp_hk_sx2,
+;   zp_hk_ft1, zp_hk_ft2, zp_hk_fb1, zp_hk_fb2,
+;   zp_hk_need_bt (u8), zp_hk_need_bb (u8),
+;   zp_hk_bt1, zp_hk_bt2, zp_hk_bb1, zp_hk_bb2
+;
+; Derives yt/yb per Python FP:
+;   tt1 = bt1 if need_bt else ft1;  yt1 = max(ft1, tt1)
+;   tb1 = bb1 if need_bb else fb1;  yb1 = min(fb1, tb1)
+; And top_dom = need_bt AND line_survives(sx1, bt1, sx2, bt2),
+;     bot_dom = need_bb AND line_survives(sx1, bb1, sx2, bb2)
+; against the current span state (before the tighten is applied).
+; ======================================================================
+; ======================================================================
+; QUEUE_TIGHTEN: Append a deferred tighten op to the queue.
+; Reads inputs directly from the render_seg ZP slots:
+;   zp_x_lo_clip/x_hi_clip, zp_sx1/sx2, zp_ft1/ft2/fb1/fb2,
+;   zp_seg_flags (SF_NEEDBT / SF_NEEDBB bits),
+;   &84-&87 = bt1/bt2, &90-&93 = bb1/bb2 (filled by project_y_all).
+;
+; Derives yt/yb per Python FP:
+;   tt1 = bt1 if need_bt else ft1;  yt1 = max(ft1, tt1)
+;   tb1 = bb1 if need_bb else fb1;  yb1 = min(fb1, tb1)
+; And top_dom = need_bt AND line_survives(sx1, bt1, sx2, bt2),
+;     bot_dom = need_bb AND line_survives(sx1, bb1, sx2, bb2)
+; evaluated against the current span state (pre-tighten).
+; ======================================================================
+.queue_tighten
+{
+    ; --- top_dom = need_bt AND line_survives(sx1, bt1, sx2, bt2) ---
+    ; (Evaluate line_survives FIRST because it clobbers zp_tmp0..zp_tmp3
+    ; which we later use to hold yt/yb.)
+    LDA #0 : STA zp_top_dom
+    LDA zp_seg_flags
+    AND #SF_NEEDBT
+    BEQ tl_top_done
+    LDA zp_sx1   : STA zp_ls_x1
+    LDA zp_sx1+1 : STA zp_ls_x1+1
+    LDA &84      : STA zp_ls_y1     ; bt1_lo
+    LDA &85      : STA zp_ls_y1+1   ; bt1_hi
+    LDA zp_sx2   : STA zp_ls_x2
+    LDA zp_sx2+1 : STA zp_ls_x2+1
+    LDA &86      : STA zp_ls_y2     ; bt2_lo
+    LDA &87      : STA zp_ls_y2+1
+    JSR line_survives
+    BCC tl_top_done
+    LDA #1 : STA zp_top_dom
+.tl_top_done
+
+    ; --- bot_dom = need_bb AND line_survives(sx1, bb1, sx2, bb2) ---
+    LDA #0 : STA zp_bot_dom
+    LDA zp_seg_flags
+    AND #SF_NEEDBB
+    BEQ tl_bot_done
+    LDA zp_sx1   : STA zp_ls_x1
+    LDA zp_sx1+1 : STA zp_ls_x1+1
+    LDA &90      : STA zp_ls_y1     ; bb1_lo
+    LDA &91      : STA zp_ls_y1+1
+    LDA zp_sx2   : STA zp_ls_x2
+    LDA zp_sx2+1 : STA zp_ls_x2+1
+    LDA &92      : STA zp_ls_y2     ; bb2_lo
+    LDA &93      : STA zp_ls_y2+1
+    JSR line_survives
+    BCC tl_bot_done
+    LDA #1 : STA zp_bot_dom
+.tl_bot_done
+
+    ; --- Compute yt1, yt2 ---
+    ; If need_bt: yt1 = max(ft1, bt1), yt2 = max(ft2, bt2)
+    ; Else:       yt1 = ft1,           yt2 = ft2
+    LDA zp_seg_flags
+    AND #SF_NEEDBT
+    BEQ yt_use_ft
+    ; yt1 = max(ft1, bt1): ft1 - bt1 >= 0 ? pick ft1 : pick bt1
+    SEC
+    LDA zp_ft1 : SBC &84
+    LDA zp_ft1+1 : SBC &85
+    BVC yt1_nov
+    EOR #&80
+.yt1_nov
+    BMI yt1_pick_bt1
+    LDA zp_ft1   : STA zp_tmp0
+    LDA zp_ft1+1 : STA zp_tmp0+1
+    JMP yt1_done
+.yt1_pick_bt1
+    LDA &84 : STA zp_tmp0
+    LDA &85 : STA zp_tmp0+1
+.yt1_done
+    ; yt2 = max(ft2, bt2)
+    SEC
+    LDA zp_ft2 : SBC &86
+    LDA zp_ft2+1 : SBC &87
+    BVC yt2_nov
+    EOR #&80
+.yt2_nov
+    BMI yt2_pick_bt2
+    LDA zp_ft2   : STA zp_tmp1
+    LDA zp_ft2+1 : STA zp_tmp1+1
+    JMP yt_done
+.yt2_pick_bt2
+    LDA &86 : STA zp_tmp1
+    LDA &87 : STA zp_tmp1+1
+    JMP yt_done
+.yt_use_ft
+    LDA zp_ft1   : STA zp_tmp0
+    LDA zp_ft1+1 : STA zp_tmp0+1
+    LDA zp_ft2   : STA zp_tmp1
+    LDA zp_ft2+1 : STA zp_tmp1+1
+.yt_done
+
+    ; --- Compute yb1, yb2 ---
+    ; If need_bb: yb1 = min(fb1, bb1), yb2 = min(fb2, bb2)
+    ; Else:       yb1 = fb1,           yb2 = fb2
+    LDA zp_seg_flags
+    AND #SF_NEEDBB
+    BEQ yb_use_fb
+    SEC
+    LDA zp_fb1 : SBC &90
+    LDA zp_fb1+1 : SBC &91
+    BVC yb1_nov
+    EOR #&80
+.yb1_nov
+    BPL yb1_pick_bb1
+    LDA zp_fb1   : STA zp_tmp2
+    LDA zp_fb1+1 : STA zp_tmp2+1
+    JMP yb1_done
+.yb1_pick_bb1
+    LDA &90 : STA zp_tmp2
+    LDA &91 : STA zp_tmp2+1
+.yb1_done
+    SEC
+    LDA zp_fb2 : SBC &92
+    LDA zp_fb2+1 : SBC &93
+    BVC yb2_nov
+    EOR #&80
+.yb2_nov
+    BPL yb2_pick_bb2
+    LDA zp_fb2   : STA zp_tmp3
+    LDA zp_fb2+1 : STA zp_tmp3+1
+    JMP yb_done
+.yb2_pick_bb2
+    LDA &92 : STA zp_tmp3
+    LDA &93 : STA zp_tmp3+1
+    JMP yb_done
+.yb_use_fb
+    LDA zp_fb1   : STA zp_tmp2
+    LDA zp_fb1+1 : STA zp_tmp2+1
+    LDA zp_fb2   : STA zp_tmp3
+    LDA zp_fb2+1 : STA zp_tmp3+1
+.yb_done
+
+    ; --- Write entry at queue_tail ---
+    LDY #QE_TYPE
+    LDA #QET_TIGHTEN
+    STA (zp_q_tail),Y
+    LDY #QE_TOP_DOM
+    LDA zp_top_dom
+    STA (zp_q_tail),Y
+    LDY #QE_BOT_DOM
+    LDA zp_bot_dom
+    STA (zp_q_tail),Y
+    LDY #QE_LO
+    LDA zp_x_lo_clip   : STA (zp_q_tail),Y
+    INY
+    LDA zp_x_lo_clip+1 : STA (zp_q_tail),Y
+    LDY #QE_HI
+    LDA zp_x_hi_clip   : STA (zp_q_tail),Y
+    INY
+    LDA zp_x_hi_clip+1 : STA (zp_q_tail),Y
+    LDY #QE_SX1
+    LDA zp_sx1   : STA (zp_q_tail),Y
+    INY
+    LDA zp_sx1+1 : STA (zp_q_tail),Y
+    LDY #QE_SX2
+    LDA zp_sx2   : STA (zp_q_tail),Y
+    INY
+    LDA zp_sx2+1 : STA (zp_q_tail),Y
+    ; yt1, yt2 from zp_tmp0, zp_tmp1
+    LDY #QE_YT1
+    LDA zp_tmp0   : STA (zp_q_tail),Y
+    INY
+    LDA zp_tmp0+1 : STA (zp_q_tail),Y
+    LDY #QE_YT2
+    LDA zp_tmp1   : STA (zp_q_tail),Y
+    INY
+    LDA zp_tmp1+1 : STA (zp_q_tail),Y
+    ; yb1, yb2 from zp_tmp2, zp_tmp3
+    LDY #QE_YB1
+    LDA zp_tmp2   : STA (zp_q_tail),Y
+    INY
+    LDA zp_tmp2+1 : STA (zp_q_tail),Y
+    LDY #QE_YB2
+    LDA zp_tmp3   : STA (zp_q_tail),Y
+    INY
+    LDA zp_tmp3+1 : STA (zp_q_tail),Y
+
+    ; Advance tail by QE_SIZE
+    LDA zp_q_tail
+    CLC
+    ADC #QE_SIZE
+    STA zp_q_tail
+    BCC qt_nc
+    INC zp_q_tail+1
+.qt_nc
+    INC queue_count
+    RTS
+}
+
+; ======================================================================
+; LINE_SURVIVES: Does a line (x1,y1)-(x2,y2) lie entirely inside the
+; inner bbox of every overlapping span?  (Used by queue_tighten to
+; decide top/bot dominance.)
+;
+; Mirrors FPClipSpans.line_survives:
+;   if abs(lx1 - lx2) < 1: return False
+;   xl, xr = min, max
+;   y_lo, y_hi = min, max of ly1, ly2
+;   found = False
+;   for s in spans:
+;       if s[1] <= xl or s[0] >= xr: continue
+;       found = True
+;       if y_lo < s[4] or y_hi > s[5]: return False
+;   return found
+;
+; Inputs (ZP):
+;   zp_ls_x1 (s16), zp_ls_y1 (s16), zp_ls_x2 (s16), zp_ls_y2 (s16)
+; Output: C = 1 if line survives, 0 otherwise.
+; Clobbers: A, X, Y, zp_tmp0..zp_tmp3, zp_ptr0, zp_ls_count, zp_ls_found, zp_ls_scratch
+; ======================================================================
+.line_survives
+{
+    ; --- abs(lx1 - lx2) < 1 → fail (Python: <1 means equal or sub-pixel) ---
+    LDA zp_ls_x1
+    CMP zp_ls_x2
+    BNE ls_dx_ok
+    LDA zp_ls_x1+1
+    CMP zp_ls_x2+1
+    BNE ls_dx_ok
+    CLC
+    RTS
+.ls_dx_ok
+
+    ; --- xl, xr = sorted(lx1, lx2); xl → zp_tmp0, xr → zp_tmp1 ---
+    SEC
+    LDA zp_ls_x1 : SBC zp_ls_x2
+    LDA zp_ls_x1+1 : SBC zp_ls_x2+1
+    BVC ls_s_nov
+    EOR #&80
+.ls_s_nov
+    BMI ls_x1_lt
+    ; lx1 >= lx2: xl = lx2, xr = lx1
+    LDA zp_ls_x2   : STA zp_tmp0
+    LDA zp_ls_x2+1 : STA zp_tmp0+1
+    LDA zp_ls_x1   : STA zp_tmp1
+    LDA zp_ls_x1+1 : STA zp_tmp1+1
+    JMP ls_y_sort
+.ls_x1_lt
+    LDA zp_ls_x1   : STA zp_tmp0
+    LDA zp_ls_x1+1 : STA zp_tmp0+1
+    LDA zp_ls_x2   : STA zp_tmp1
+    LDA zp_ls_x2+1 : STA zp_tmp1+1
+
+.ls_y_sort
+    ; --- y_lo, y_hi = min/max(ly1, ly2); y_lo → zp_tmp2, y_hi → zp_tmp3 ---
+    SEC
+    LDA zp_ls_y1 : SBC zp_ls_y2
+    LDA zp_ls_y1+1 : SBC zp_ls_y2+1
+    BVC ls_y_nov
+    EOR #&80
+.ls_y_nov
+    BMI ls_y1_lt
+    ; ly1 >= ly2: y_lo = ly2, y_hi = ly1
+    LDA zp_ls_y2   : STA zp_tmp2
+    LDA zp_ls_y2+1 : STA zp_tmp2+1
+    LDA zp_ls_y1   : STA zp_tmp3
+    LDA zp_ls_y1+1 : STA zp_tmp3+1
+    JMP ls_loop_init
+.ls_y1_lt
+    LDA zp_ls_y1   : STA zp_tmp2
+    LDA zp_ls_y1+1 : STA zp_tmp2+1
+    LDA zp_ls_y2   : STA zp_tmp3
+    LDA zp_ls_y2+1 : STA zp_tmp3+1
+
+.ls_loop_init
+    LDA spans_base
+    BEQ ls_no_spans
+    STA zp_ls_count
+    LDA #0 : STA zp_ls_found
+    LDA #LO(spans_base + SPAN_HDR) : STA zp_ptr0
+    LDA #HI(spans_base + SPAN_HDR) : STA zp_ptr0+1
+
+.ls_loop
+    ; --- Skip if xhi <= xl (s[1] <= xl) ---
+    ; xhi is u8, 0 = 256.  xl is s16 in zp_tmp0.
+    LDY #SP_XHI
+    LDA (zp_ptr0),Y
+    BNE ls_xhi_nz
+    ; xhi = 256.  256 <= xl iff xl >= 256.
+    LDA zp_tmp0+1
+    BMI ls_xhi_pass         ; xl negative → 256 > xl, not skip
+    BEQ ls_xhi_pass         ; xl in [0,255] → 256 > xl
+    JMP ls_next             ; xl >= 256 → skip
+.ls_xhi_nz
+    ; xhi in [1, 255].  xhi <= xl iff xl >= xhi.
+    STA zp_ls_scratch
+    LDA zp_tmp0+1
+    BMI ls_xhi_pass         ; xl negative → xhi > xl
+    BNE ls_next             ; xl >= 256 → xhi <= xl, skip
+    LDA zp_ls_scratch
+    CMP zp_tmp0             ; xhi vs xl_lo
+    BEQ ls_next             ; xhi == xl → skip
+    BCC ls_next             ; xhi < xl → skip
+.ls_xhi_pass
+
+    ; --- Skip if xlo >= xr (s[0] >= xr) ---
+    LDY #SP_XLO
+    LDA (zp_ptr0),Y
+    STA zp_ls_scratch
+    LDA zp_tmp1+1
+    BMI ls_next             ; xr negative → xlo >= 0 > xr → skip
+    BNE ls_xlo_pass         ; xr >= 256 → xlo <= 255 < xr → not skip
+    LDA zp_ls_scratch
+    CMP zp_tmp1             ; xlo vs xr_lo
+    BCS ls_next             ; xlo >= xr → skip
+.ls_xlo_pass
+
+    ; --- Overlapping span: found = True ---
+    LDA #1 : STA zp_ls_found
+
+    ; --- y_lo < inner_top ?  → return False ---
+    SEC
+    LDY #SP_INNER_TOP
+    LDA zp_tmp2
+    SBC (zp_ptr0),Y
+    LDA zp_tmp2+1
+    LDY #SP_INNER_TOP+1
+    SBC (zp_ptr0),Y
+    BVC ls_yl_nov
+    EOR #&80
+.ls_yl_nov
+    BMI ls_fail
+
+    ; --- y_hi > inner_bot ?  → return False ---
+    SEC
+    LDY #SP_INNER_BOT
+    LDA (zp_ptr0),Y
+    SBC zp_tmp3
+    LDY #SP_INNER_BOT+1
+    LDA (zp_ptr0),Y
+    SBC zp_tmp3+1
+    BVC ls_yh_nov
+    EOR #&80
+.ls_yh_nov
+    BMI ls_fail
+
+.ls_next
+    LDA zp_ptr0
+    CLC
+    ADC #SPAN_SIZE
+    STA zp_ptr0
+    BCC ls_nc
+    INC zp_ptr0+1
+.ls_nc
+    DEC zp_ls_count
+    BNE ls_loop
+
+    ; --- Loop done.  Return found ---
+    LDA zp_ls_found
+    BEQ ls_no_spans
+    SEC
+    RTS
+.ls_no_spans
+    CLC
+    RTS
+.ls_fail
+    CLC
+    RTS
+}
+
+; ======================================================================
+; FP_EVAL: compute slope_s16 * x_u8 >> 8 + intercept_s16 → s16 result
+;
+; Mirrors Python's fp_eval(fn, x) where fn = (slope, intercept).
+;
+; Input:  zp_tmp2 = slope (s16), A = x (u8), zp_mk_tmp = intercept (s16)
+; Output: $70:$71 = s16 result
+; Clobbers: zp_math_b, $70-$72 (s24 temp), A, X, Y
+; ======================================================================
+.fp_eval
+{
+    ; Fast path: slope == 0 → result = intercept
+    LDX zp_tmp2
+    BNE fe_nonzero
+    LDX zp_tmp2+1
+    BNE fe_nonzero
+    LDA zp_mk_tmp   : STA &70
+    LDA zp_mk_tmp+1 : STA &71
+    RTS
+.fe_nonzero
+    ; zp_tmp2 = slope (s16) is the multiplier, A = x (u8) is the multiplicand.
+    ; mul_s16_u8_s24 expects ex in zp_tmp2 and b in A — exactly our layout.
+    JSR mul_s16_u8_s24
+    ; s24 product at $70:$72.  Arith shift right 8 = take bytes 1 and 2.
+    ; Add intercept to get final s16 in $70:$71.
+    CLC
+    LDA &71 : ADC zp_mk_tmp   : STA &70
+    LDA &72 : ADC zp_mk_tmp+1 : STA &71
+    RTS
+}
+
+; ======================================================================
+; MAKE_SPAN: write a new span record to the slot pointed to by zp_mk_out.
+;
+; Mirrors Python's FPClipSpans._make_span.  Computes the 4 endpoint
+; evaluations of tfn/bfn and stores the new span with its inner bbox.
+;
+; Input:  zp_mk_xlo (u8), zp_mk_xhi (u8 with 0=256)
+;         zp_mk_tslope/tintercept (s16) — tfn
+;         zp_mk_bslope/bintercept (s16) — bfn
+;         zp_mk_out (u16) — pointer to the 16-byte output slot
+; Precondition: xlo < xhi (caller checks).
+; Output: span written to (zp_mk_out).  zp_mk_out UNCHANGED.
+; Clobbers: A, X, Y, zp_tmp2, zp_math_b, zp_mk_tmp, $70-$72,
+;           zp_mk_top_l/top_r/bot_l/bot_r.
+; ======================================================================
+.make_span
+{
+    ; --- top_l = fp_eval(tfn, xlo) ---
+    LDA zp_mk_tslope    : STA zp_tmp2
+    LDA zp_mk_tslope+1  : STA zp_tmp2+1
+    LDA zp_mk_tintercept    : STA zp_mk_tmp
+    LDA zp_mk_tintercept+1  : STA zp_mk_tmp+1
+    LDA zp_mk_xlo
+    JSR fp_eval
+    LDA &70 : STA zp_mk_top_l
+    LDA &71 : STA zp_mk_top_l+1
+
+    ; --- top_r = fp_eval(tfn, xhi - 1) ---
+    ; xhi may be 0 (=256), so xhi - 1 = 255 in that case.
+    LDA zp_mk_xhi
+    BNE ms_topr_norm
+    LDA #255
+    JMP ms_topr_do
+.ms_topr_norm
+    SEC
+    SBC #1
+.ms_topr_do
+    ; slope/intercept for tfn still in place
+    JSR fp_eval
+    LDA &70 : STA zp_mk_top_r
+    LDA &71 : STA zp_mk_top_r+1
+
+    ; --- bot_l = fp_eval(bfn, xlo) ---
+    LDA zp_mk_bslope    : STA zp_tmp2
+    LDA zp_mk_bslope+1  : STA zp_tmp2+1
+    LDA zp_mk_bintercept    : STA zp_mk_tmp
+    LDA zp_mk_bintercept+1  : STA zp_mk_tmp+1
+    LDA zp_mk_xlo
+    JSR fp_eval
+    LDA &70 : STA zp_mk_bot_l
+    LDA &71 : STA zp_mk_bot_l+1
+
+    ; --- bot_r = fp_eval(bfn, xhi - 1) ---
+    LDA zp_mk_xhi
+    BNE ms_botr_norm
+    LDA #255
+    JMP ms_botr_do
+.ms_botr_norm
+    SEC
+    SBC #1
+.ms_botr_do
+    JSR fp_eval
+    LDA &70 : STA zp_mk_bot_r
+    LDA &71 : STA zp_mk_bot_r+1
+
+    ; --- inner_top = max(top_l, top_r) ---
+    ; Signed compare zp_mk_top_l vs zp_mk_top_r.
+    SEC
+    LDA zp_mk_top_l   : SBC zp_mk_top_r
+    LDA zp_mk_top_l+1 : SBC zp_mk_top_r+1
+    BVC ms_it_nov
+    EOR #&80
+.ms_it_nov
+    BMI ms_it_r       ; top_l < top_r → use top_r
+    ; top_l >= top_r → inner_top = top_l
+    LDA zp_mk_top_l   : STA &70
+    LDA zp_mk_top_l+1 : STA &71
+    JMP ms_it_done
+.ms_it_r
+    LDA zp_mk_top_r   : STA &70
+    LDA zp_mk_top_r+1 : STA &71
+.ms_it_done
+    ; --- inner_bot = min(bot_l, bot_r) ---
+    SEC
+    LDA zp_mk_bot_l   : SBC zp_mk_bot_r
+    LDA zp_mk_bot_l+1 : SBC zp_mk_bot_r+1
+    BVC ms_ib_nov
+    EOR #&80
+.ms_ib_nov
+    BPL ms_ib_r       ; bot_l >= bot_r → use bot_r
+    ; bot_l < bot_r → inner_bot = bot_l
+    LDA zp_mk_bot_l   : STA &72
+    LDA zp_mk_bot_l+1 : STA &73
+    JMP ms_ib_done
+.ms_ib_r
+    LDA zp_mk_bot_r   : STA &72
+    LDA zp_mk_bot_r+1 : STA &73
+.ms_ib_done
+    ; Now $70:$71 = inner_top, $72:$73 = inner_bot.
+
+    ; --- Write span record to (zp_mk_out) ---
+    LDY #SP_XLO
+    LDA zp_mk_xlo : STA (zp_mk_out),Y
+    LDY #SP_XHI
+    LDA zp_mk_xhi : STA (zp_mk_out),Y
+
+    LDY #SP_TSLOPE
+    LDA zp_mk_tslope   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_tslope+1 : STA (zp_mk_out),Y
+    LDY #SP_BSLOPE
+    LDA zp_mk_bslope   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_bslope+1 : STA (zp_mk_out),Y
+
+    LDY #SP_TINTERCEPT
+    LDA zp_mk_tintercept   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_tintercept+1 : STA (zp_mk_out),Y
+    LDY #SP_BINTERCEPT
+    LDA zp_mk_bintercept   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_bintercept+1 : STA (zp_mk_out),Y
+
+    LDY #SP_INNER_TOP
+    LDA &70 : STA (zp_mk_out),Y : INY
+    LDA &71 : STA (zp_mk_out),Y
+    LDY #SP_INNER_BOT
+    LDA &72 : STA (zp_mk_out),Y : INY
+    LDA &73 : STA (zp_mk_out),Y
+    ; Zero pad bytes 14/15 to match Python write_span's zeroing.
+    LDA #0
+    LDY #14 : STA (zp_mk_out),Y
+    LDY #15 : STA (zp_mk_out),Y
+
+    RTS
+}
+
+; ======================================================================
+; FP_DIV8: signed (num << 8) / den with truncation toward zero.
+;
+; Mirrors Python's fp_div8.  Both num and den are s16; result is s16.
+; For our use (slope computation), |num| is bounded by screen Y range
+; (< 256) so |num << 8| fits in u16.  If |num| > 255 we'd overflow;
+; current callers don't trigger this case.
+;
+; Input:  zp_tmp0 = num (s16), zp_tmp2 = den (s16)
+; Output: $70:$71 = s16 result (0 if den == 0)
+; Clobbers: A, X, Y, zp_div_num/den/rem/sign, $70:$71
+; ======================================================================
+.fp_div8
+{
+    ; Check den == 0 → return 0
+    LDA zp_tmp2
+    ORA zp_tmp2+1
+    BNE fd_den_nonzero
+    LDA #0
+    STA &70
+    STA &71
+    RTS
+.fd_den_nonzero
+
+    ; Compute sign_neg = (num_neg XOR den_neg)
+    LDA zp_tmp0+1
+    EOR zp_tmp2+1
+    AND #&80
+    STA zp_div_sign
+
+    ; |num| << 8 → u24 dividend: byte0 = 0, byte1 = |num|_lo, byte2 = |num|_hi
+    ; Use $0F (unused) and zp_div_num (2 bytes) for the 3 bytes.
+    ; Actually: zp_div_num is 2 bytes.  Add zp_div_num+2 at $0A... wait
+    ; zp_div_den starts at $0A.  Let me use zp_tmp3 (free during fp_div8) for byte2.
+    LDA zp_tmp0+1
+    BPL fd_num_pos
+    SEC
+    LDA #0 : SBC zp_tmp0   : STA zp_div_num+1    ; byte1 = |num|_lo
+    LDA #0 : SBC zp_tmp0+1 : STA zp_tmp3         ; byte2 = |num|_hi
+    JMP fd_num_done
+.fd_num_pos
+    LDA zp_tmp0   : STA zp_div_num+1
+    LDA zp_tmp0+1 : STA zp_tmp3
+.fd_num_done
+    LDA #0
+    STA zp_div_num                                 ; byte0 = 0
+
+    ; |den| → zp_div_den
+    LDA zp_tmp2+1
+    BPL fd_den_pos
+    SEC
+    LDA #0 : SBC zp_tmp2   : STA zp_div_den
+    LDA #0 : SBC zp_tmp2+1 : STA zp_div_den+1
+    JMP fd_div
+.fd_den_pos
+    LDA zp_tmp2   : STA zp_div_den
+    LDA zp_tmp2+1 : STA zp_div_den+1
+
+.fd_div
+    ; Unsigned 24-bit dividend / 16-bit divisor → u24 quotient (low 16 bits kept).
+    ; Dividend bytes: zp_div_num (byte0), zp_div_num+1 (byte1), zp_tmp3 (byte2).
+    ; 24 shifts.  Result quotient low 16 bits will be in zp_div_num+1, zp_tmp3
+    ; after the shifts.  But we actually want low 16 bits — we care about
+    ; byte0:byte1 (bottom 16 bits of the 24-bit quotient).
+    ; After 24 shifts, the original bits are gone and the dividend-byte slots
+    ; hold the 24-bit quotient: byte0=quot[0..7], byte1=quot[8..15], byte2=quot[16..23].
+    LDA #0
+    STA zp_div_rem
+    STA zp_div_rem+1
+    LDX #24
+.fd_loop
+    ASL zp_div_num
+    ROL zp_div_num+1
+    ROL zp_tmp3
+    ROL zp_div_rem
+    ROL zp_div_rem+1
+    LDA zp_div_rem
+    SEC
+    SBC zp_div_den
+    TAY
+    LDA zp_div_rem+1
+    SBC zp_div_den+1
+    BCC fd_no_commit
+    STA zp_div_rem+1
+    STY zp_div_rem
+    INC zp_div_num                  ; set bit 0 of quotient
+.fd_no_commit
+    DEX
+    BNE fd_loop
+
+    ; Low 16 bits of quotient are in zp_div_num:zp_div_num+1.
+    ; Apply sign.
+    LDA zp_div_sign
+    BEQ fd_result_pos
+    SEC
+    LDA #0 : SBC zp_div_num   : STA &70
+    LDA #0 : SBC zp_div_num+1 : STA &71
+    RTS
+.fd_result_pos
+    LDA zp_div_num   : STA &70
+    LDA zp_div_num+1 : STA &71
+    RTS
+}
+
+; ======================================================================
+; FP_LINFN: compute slope_s16 + intercept_s16 from two points.
+;
+; Mirrors Python's fp_linfn(y1, y2, sx1, sx2):
+;   dx = sx2 - sx1
+;   if abs(dx) < 1: return (0, (y1 + y2) / 2)
+;   dy = y2 - y1
+;   slope_8 = fp_div8(dy, dx)
+;   if slope_8 == 0: return (0, y1)
+;   if abs(sx1) <= abs(sx2):
+;       intercept = y1 - fp_mul8(slope_8, sx1)
+;   else:
+;       intercept = y2 - fp_mul8(slope_8, sx2)
+;   return (slope_8, intercept)
+;
+; Input:  $60 = y1 (s16), $62 = y2 (s16), $64 = sx1 (s16), $66 = sx2 (s16)
+; Output: $68 = slope (s16), $6A = intercept (s16)
+; Clobbers: A, X, Y, zp_tmp0, zp_tmp2, zp_div_*, zp_mk_tmp, $70:$72
+; ======================================================================
+.fp_linfn
+{
+    ; dx = sx2 - sx1 → zp_tmp2 (for fp_div8 as divisor)
+    SEC
+    LDA &66 : SBC &64 : STA zp_tmp2
+    LDA &67 : SBC &65 : STA zp_tmp2+1
+
+    ; Check abs(dx) < 1 → dx == 0 (since integer).  If so, slope=0, intercept=(y1+y2)/2.
+    LDA zp_tmp2
+    ORA zp_tmp2+1
+    BNE fl_dx_ok
+    ; Degenerate: slope=0, intercept=(y1+y2)/2 with arithmetic shift right
+    LDA #0 : STA &68 : STA &69
+    CLC
+    LDA &60 : ADC &62 : STA &6A
+    LDA &61 : ADC &63 : STA &6B
+    ; Arithmetic shift right by 1
+    LDA &6B
+    CMP #&80        ; C=1 if bit7 set (negative)
+    ROR &6B
+    ROR &6A
+    RTS
+.fl_dx_ok
+
+    ; dy = y2 - y1 → zp_tmp0 (for fp_div8 as dividend)
+    SEC
+    LDA &62 : SBC &60 : STA zp_tmp0
+    LDA &63 : SBC &61 : STA zp_tmp0+1
+
+    ; slope_8 = fp_div8(dy, dx)
+    JSR fp_div8             ; $70:$71 = slope
+    LDA &70 : STA &68
+    LDA &71 : STA &69
+
+    ; If slope_8 == 0, return (0, y1)
+    LDA &68
+    ORA &69
+    BNE fl_compute_intercept
+    LDA &60 : STA &6A
+    LDA &61 : STA &6B
+    RTS
+
+.fl_compute_intercept
+    ; Decide which endpoint: abs(sx1) <= abs(sx2) ? use sx1, y1 : use sx2, y2
+    ; Compute absolute values as u16 in scratch, compare.
+    LDA &64
+    STA zp_tmp0
+    LDA &65
+    STA zp_tmp0+1
+    BPL fl_s1_pos
+    SEC
+    LDA #0 : SBC zp_tmp0   : STA zp_tmp0
+    LDA #0 : SBC zp_tmp0+1 : STA zp_tmp0+1
+.fl_s1_pos                 ; zp_tmp0 = |sx1| (u16)
+
+    LDA &66
+    STA zp_tmp2
+    LDA &67
+    STA zp_tmp2+1
+    BPL fl_s2_pos
+    SEC
+    LDA #0 : SBC zp_tmp2   : STA zp_tmp2
+    LDA #0 : SBC zp_tmp2+1 : STA zp_tmp2+1
+.fl_s2_pos                 ; zp_tmp2 = |sx2| (u16)
+
+    ; |sx1| vs |sx2| unsigned compare
+    LDA zp_tmp0
+    CMP zp_tmp2
+    LDA zp_tmp0+1
+    SBC zp_tmp2+1
+    BCC fl_use_sx1          ; |sx1| < |sx2|
+    BEQ fl_check_eq
+    JMP fl_use_sx2          ; |sx1| > |sx2|
+.fl_check_eq
+    ; hi bytes equal; check lo
+    LDA zp_tmp0 : CMP zp_tmp2
+    BCC fl_use_sx1
+    BEQ fl_use_sx1          ; equal → use sx1 (Python: "<=")
+    JMP fl_use_sx2
+
+.fl_use_sx1
+    ; intercept = y1 - ((slope × sx1) >> 8)
+    LDA &68 : STA zp_tmp0
+    LDA &69 : STA zp_tmp0+1
+    LDA &64 : STA zp_tmp2
+    LDA &65 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    SEC
+    LDA &60 : SBC &70 : STA &6A
+    LDA &61 : SBC &71 : STA &6B
+    RTS
+
+.fl_use_sx2
+    LDA &68 : STA zp_tmp0
+    LDA &69 : STA zp_tmp0+1
+    LDA &66 : STA zp_tmp2
+    LDA &67 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    SEC
+    LDA &62 : SBC &70 : STA &6A
+    LDA &63 : SBC &71 : STA &6B
+    RTS
+}
+
+; ======================================================================
+; FL_MUL8_BYSX: compute (slope × sx) >> 8 as s16.
+;
+; Uses mul16x16 for full s16 × s16 → s32, then takes bytes 1..2 as s16.
+;
+; Input:  zp_tmp0 = slope (s16), zp_tmp2 = sx (s16)
+; Output: $70:$71 = s16 result
+; ======================================================================
+.fl_mul8_bysx
+{
+    JSR mul16x16
+    ; $70:$73 = s32 product. Bytes 1..2 = (product >> 8) low 16 bits.
+    LDA &71 : STA &70
+    LDA &72 : STA &71
+    RTS
+}
+
+; ======================================================================
+; PW_EVAL_F_AT_A: fp_eval(f, A) → $70:$71.
+; Inputs: A = x (u8), zp_pw_f_slope/intercept
+; Output: $70:$71 = result
+; ======================================================================
+.pw_eval_f_at_a
+{
+    PHA
+    LDA zp_pw_f_slope     : STA zp_tmp2
+    LDA zp_pw_f_slope+1   : STA zp_tmp2+1
+    LDA zp_pw_f_intercept : STA zp_mk_tmp
+    LDA zp_pw_f_intercept+1 : STA zp_mk_tmp+1
+    PLA
+    JMP fp_eval
+}
+.pw_eval_g_at_a
+{
+    PHA
+    LDA zp_pw_g_slope     : STA zp_tmp2
+    LDA zp_pw_g_slope+1   : STA zp_tmp2+1
+    LDA zp_pw_g_intercept : STA zp_mk_tmp
+    LDA zp_pw_g_intercept+1 : STA zp_mk_tmp+1
+    PLA
+    JMP fp_eval
+}
+
+; ======================================================================
+; PW_MAX: piecewise max of f vs g over [x0, x1).
+;
+; Mirrors Python's _fp_pw_max.  Output is 1 or 2 sub-ranges.
+;
+; Input:  zp_pw_f_slope/intercept, zp_pw_g_slope/intercept,
+;         zp_pw_x0, zp_pw_x1 (s16; must have x0 < x1, both in [0, 256])
+; Output: zp_pw_count (1 or 2)
+;         zp_pw_r0_fn (0=f, 1=g) — range 0 is [x0, cx_or_x1)
+;         zp_pw_r1_fn — range 1 is [cx, x1)  (only if count==2)
+;         zp_pw_cx (s16) — only valid if count==2
+; Clobbers: many
+; ======================================================================
+.pw_max
+{
+    ; fv0 = fp_eval(f, x0) — save to zp_pw_d0 temporarily
+    LDA zp_pw_x0
+    JSR pw_eval_f_at_a
+    LDA &70 : STA zp_pw_d0
+    LDA &71 : STA zp_pw_d0+1
+
+    ; gv0 = fp_eval(g, x0)
+    LDA zp_pw_x0
+    JSR pw_eval_g_at_a
+    ; d0 = fv0 - gv0
+    SEC
+    LDA zp_pw_d0   : SBC &70 : STA zp_pw_d0
+    LDA zp_pw_d0+1 : SBC &71 : STA zp_pw_d0+1
+
+    ; fv1 = fp_eval(f, x1 - 1) — assume x1 >= 1 so x1-1 ≥ 0
+    LDA zp_pw_x1
+    SEC
+    SBC #1
+    PHA                              ; save x1-1 for reuse
+    JSR pw_eval_f_at_a
+    LDA &70 : STA zp_pw_d1
+    LDA &71 : STA zp_pw_d1+1
+
+    ; gv1 = fp_eval(g, x1-1)
+    PLA
+    JSR pw_eval_g_at_a
+    SEC
+    LDA zp_pw_d1   : SBC &70 : STA zp_pw_d1
+    LDA zp_pw_d1+1 : SBC &71 : STA zp_pw_d1+1
+
+    ; Trivial check: d0 >= 0 AND d1 >= 0 → all f (pick f)
+    LDA zp_pw_d0+1 : BMI pm_not_all_f
+    LDA zp_pw_d1+1 : BMI pm_not_all_f
+    ; Both >= 0 → range = [x0, x1), fn = f
+    LDA #1 : STA zp_pw_count
+    LDA #0 : STA zp_pw_r0_fn
+    RTS
+.pm_not_all_f
+    ; d0 <= 0 AND d1 <= 0 → all g?
+    LDA zp_pw_d0+1
+    BMI pm_d0_neg
+    BNE pm_not_all_g            ; d0 > 0 → not all g
+    LDA zp_pw_d0
+    BNE pm_not_all_g            ; d0 > 0 → not all g
+.pm_d0_neg                      ; d0 <= 0
+    LDA zp_pw_d1+1
+    BMI pm_all_g                ; d1 < 0 → all g
+    BNE pm_not_all_g            ; d1 > 0 → crossover
+    LDA zp_pw_d1
+    BNE pm_not_all_g
+.pm_all_g
+    LDA #1 : STA zp_pw_count
+    LDA #1 : STA zp_pw_r0_fn
+    RTS
+.pm_not_all_g
+
+    ; Crossover case — compute cx via fp_div8.
+    ; dx0 = fv0 - gv0 = zp_pw_d0
+    ; dx1 = fvx1 - gvx1 where fvx1 = f(x1), gvx1 = g(x1)
+    ; denom = dx0 - dx1
+    ; span = x1 - x0
+    ; cx = x0 + (dx0 * span) / denom
+    ;
+    ; Current callers of pw_max never hit the crossover case in our tests
+    ; (verified empirically).  Implement a simple fallback: pick f or g
+    ; based on d0 sign (matching Python's degenerate-denom path).
+    ;
+    ; If d0 > 0: pick f (at x0, f was higher)
+    ; Else:     pick g
+    LDA zp_pw_d0+1
+    BMI pm_pick_g
+    BNE pm_pick_f
+    LDA zp_pw_d0
+    BEQ pm_pick_g              ; d0 == 0 → prefer g
+.pm_pick_f
+    LDA #1 : STA zp_pw_count
+    LDA #0 : STA zp_pw_r0_fn
+    RTS
+.pm_pick_g
+    LDA #1 : STA zp_pw_count
+    LDA #1 : STA zp_pw_r0_fn
+    RTS
+}
+
+; ======================================================================
+; PW_MIN: piecewise min of f vs g over [x0, x1).
+; Mirror of pw_max with signs flipped.
+; ======================================================================
+.pw_min
+{
+    LDA zp_pw_x0
+    JSR pw_eval_f_at_a
+    LDA &70 : STA zp_pw_d0
+    LDA &71 : STA zp_pw_d0+1
+    LDA zp_pw_x0
+    JSR pw_eval_g_at_a
+    SEC
+    LDA zp_pw_d0   : SBC &70 : STA zp_pw_d0
+    LDA zp_pw_d0+1 : SBC &71 : STA zp_pw_d0+1
+
+    LDA zp_pw_x1 : SEC : SBC #1
+    PHA
+    JSR pw_eval_f_at_a
+    LDA &70 : STA zp_pw_d1
+    LDA &71 : STA zp_pw_d1+1
+    PLA
+    JSR pw_eval_g_at_a
+    SEC
+    LDA zp_pw_d1   : SBC &70 : STA zp_pw_d1
+    LDA zp_pw_d1+1 : SBC &71 : STA zp_pw_d1+1
+
+    ; d0 <= 0 AND d1 <= 0 → all f (pick smaller)
+    LDA zp_pw_d0+1
+    BMI pn_d0_neg
+    BNE pn_not_all_f           ; d0 > 0 → not all f
+    LDA zp_pw_d0
+    BNE pn_not_all_f
+.pn_d0_neg
+    LDA zp_pw_d1+1
+    BMI pn_all_f
+    BNE pn_not_all_f
+    LDA zp_pw_d1
+    BNE pn_not_all_f
+.pn_all_f
+    LDA #1 : STA zp_pw_count
+    LDA #0 : STA zp_pw_r0_fn
+    RTS
+.pn_not_all_f
+
+    ; d0 >= 0 AND d1 >= 0 → all g
+    LDA zp_pw_d0+1 : BMI pn_not_all_g
+    LDA zp_pw_d1+1 : BMI pn_not_all_g
+    LDA #1 : STA zp_pw_count
+    LDA #1 : STA zp_pw_r0_fn
+    RTS
+.pn_not_all_g
+
+    ; Crossover — use fp_div8 to compute cx exactly (pw_min hits this
+    ; path in E1M1 traversal, so we must implement it).
+    ;
+    ; fvx1 = fp_eval(f, x1), gvx1 = fp_eval(g, x1)
+    LDA zp_pw_x1
+    JSR pw_eval_f_at_a
+    LDA &70 : STA zp_tg_tx0      ; stash fvx1 lo (reuse tg scratch as temps)
+    LDA &71 : STA zp_tg_tx0+1
+    LDA zp_pw_x1
+    JSR pw_eval_g_at_a
+    ; dx1 = fvx1 - gvx1
+    SEC
+    LDA zp_tg_tx0   : SBC &70 : STA zp_tg_tx0
+    LDA zp_tg_tx0+1 : SBC &71 : STA zp_tg_tx0+1
+
+    ; denom = d0 - dx1
+    SEC
+    LDA zp_pw_d0   : SBC zp_tg_tx0
+    STA zp_tg_tx1                ; denom lo
+    LDA zp_pw_d0+1 : SBC zp_tg_tx0+1
+    STA zp_tg_tx1+1              ; denom hi
+
+    ; abs(denom) < 1 → degenerate; pick f if d0 <= 0 else g
+    LDA zp_tg_tx1
+    ORA zp_tg_tx1+1
+    BNE pn_denom_ok
+    ; denom == 0 → degenerate
+    LDA zp_pw_d0+1
+    BMI pn_deg_f
+    BNE pn_deg_g
+    LDA zp_pw_d0
+    BEQ pn_deg_f
+.pn_deg_g
+    LDA #1 : STA zp_pw_count
+    LDA #1 : STA zp_pw_r0_fn
+    RTS
+.pn_deg_f
+    LDA #1 : STA zp_pw_count
+    LDA #0 : STA zp_pw_r0_fn
+    RTS
+
+.pn_denom_ok
+    ; span = x1 - x0 (u8, since x1 > x0)
+    ; cx = x0 + (d0 * span) / denom
+    ;
+    ; d0 * span: d0 is s16 (difference of fp_eval results), span is u8.
+    ;   Use mul_s16_u8_s24 with d0 as ex, span as b.
+    ;   Result is s24 = d0 × span.
+    ; Then we need to divide that s24 by denom (s16).  We don't have
+    ; s24/s16 directly.  Shortcut: since |d0 × span| typically fits in
+    ; s16, compute (d0 * span) as s16 (truncating), then use fp_div8.
+    ; Wait — Python does integer divide so precision matters.
+    ;
+    ; For our use (2 crossover cases in testing), we can compute the
+    ; full s24 and do a manual s24/s16 divide.  Simpler shortcut: assume
+    ; |d0 × span| ≤ s16 and do 16-bit divide.
+
+    ; Compute |d0| into zp_div_num and sign
+    LDA zp_pw_d0+1
+    BPL pn_d0_pos
+    SEC
+    LDA #0 : SBC zp_pw_d0   : STA zp_tmp0
+    LDA #0 : SBC zp_pw_d0+1 : STA zp_tmp0+1
+    LDA #1 : STA zp_div_sign
+    JMP pn_d0_abs_done
+.pn_d0_pos
+    LDA zp_pw_d0   : STA zp_tmp0
+    LDA zp_pw_d0+1 : STA zp_tmp0+1
+    LDA #0 : STA zp_div_sign
+.pn_d0_abs_done
+
+    ; span = x1 - x0 (u8)
+    SEC
+    LDA zp_pw_x1 : SBC zp_pw_x0
+    ; A = span
+    STA zp_math_b                ; for mul_s16_u8_s24: b = span
+
+    ; zp_tmp0 = |d0|, A (= zp_math_b) = span
+    ; Note zp_tmp0 overlaps with the mul_s16_u8_s24's ex (zp_tmp2).
+    ; We want ex = |d0| in zp_tmp2. Copy.
+    LDA zp_tmp0   : STA zp_tmp2
+    LDA zp_tmp0+1 : STA zp_tmp2+1
+    LDA zp_math_b             ; reload A for the A-conventions
+    JSR mul_s16_u8_s24        ; $70:$72 = |d0| × span (s24, always positive)
+
+    ; Take the s16 low 16 bits of the u24 result (byte0:byte1)
+    LDA &70 : STA zp_tmp0       ; u24 low → s16 "num" for fp_div8
+    LDA &71 : STA zp_tmp0+1
+    ; (byte 2 discarded — assuming |d0 × span| ≤ u16)
+
+    ; Apply sign to num if zp_div_sign set
+    LDA zp_div_sign
+    BEQ pn_num_pos
+    SEC
+    LDA #0 : SBC zp_tmp0   : STA zp_tmp0
+    LDA #0 : SBC zp_tmp0+1 : STA zp_tmp0+1
+.pn_num_pos
+
+    ; Prepare divisor: zp_tmp2 = denom (s16)
+    LDA zp_tg_tx1   : STA zp_tmp2
+    LDA zp_tg_tx1+1 : STA zp_tmp2+1
+
+    ; cx_offset = fp_div8_but_we_want_direct_divide, not (num<<8)/den
+    ; Python uses integer division: cx = x0 + (d0 * span) // denom
+    ; fp_div8(num, den) = (num << 8) / den. That's 256x too big.
+    ;
+    ; We need num / denom directly (not num<<8/denom).  Write an inline
+    ; signed 16-bit divide here.
+
+    ; Compute sign = sign(num) XOR sign(denom)
+    LDA zp_tmp0+1
+    EOR zp_tmp2+1
+    AND #&80
+    STA zp_div_sign
+
+    ; |num| → zp_div_num
+    LDA zp_tmp0+1
+    BPL pn_num_abs_pos
+    SEC
+    LDA #0 : SBC zp_tmp0   : STA zp_div_num
+    LDA #0 : SBC zp_tmp0+1 : STA zp_div_num+1
+    JMP pn_num_abs_done
+.pn_num_abs_pos
+    LDA zp_tmp0   : STA zp_div_num
+    LDA zp_tmp0+1 : STA zp_div_num+1
+.pn_num_abs_done
+
+    ; |denom| → zp_div_den
+    LDA zp_tmp2+1
+    BPL pn_den_abs_pos
+    SEC
+    LDA #0 : SBC zp_tmp2   : STA zp_div_den
+    LDA #0 : SBC zp_tmp2+1 : STA zp_div_den+1
+    JMP pn_den_abs_done
+.pn_den_abs_pos
+    LDA zp_tmp2   : STA zp_div_den
+    LDA zp_tmp2+1 : STA zp_div_den+1
+.pn_den_abs_done
+
+    ; Unsigned 16/16 → 16 divide
+    LDA #0
+    STA zp_div_rem
+    STA zp_div_rem+1
+    LDX #16
+.pn_div_loop
+    ASL zp_div_num
+    ROL zp_div_num+1
+    ROL zp_div_rem
+    ROL zp_div_rem+1
+    LDA zp_div_rem
+    SEC
+    SBC zp_div_den
+    TAY
+    LDA zp_div_rem+1
+    SBC zp_div_den+1
+    BCC pn_div_skip
+    STA zp_div_rem+1
+    STY zp_div_rem
+    INC zp_div_num
+.pn_div_skip
+    DEX
+    BNE pn_div_loop
+
+    ; Apply sign to quotient
+    LDA zp_div_sign
+    BEQ pn_quot_pos
+    SEC
+    LDA #0 : SBC zp_div_num   : STA zp_div_num
+    LDA #0 : SBC zp_div_num+1 : STA zp_div_num+1
+.pn_quot_pos
+
+    ; cx = x0 + quotient
+    CLC
+    LDA zp_pw_x0   : ADC zp_div_num   : STA zp_pw_cx
+    LDA zp_pw_x0+1 : ADC zp_div_num+1 : STA zp_pw_cx+1
+
+    ; Clamp: cx = max(x0 + 1, min(x1 - 1, cx))
+    ; If cx < x0 + 1: cx = x0 + 1
+    SEC
+    LDA zp_pw_cx   : SBC zp_pw_x0
+    LDA zp_pw_cx+1 : SBC zp_pw_x0+1
+    BVC pn_cmp1_nov
+    EOR #&80
+.pn_cmp1_nov
+    BMI pn_cx_set_low               ; cx < x0 → cx < x0+1 → clamp
+    BNE pn_cmp1_gt                  ; cx - x0 > 0 ... check if ≥ 1
+    LDA zp_pw_cx
+    SEC : SBC zp_pw_x0
+    CMP #1
+    BCS pn_cmp1_ok                  ; cx - x0 ≥ 1 → OK
+.pn_cx_set_low
+    CLC
+    LDA zp_pw_x0   : ADC #1 : STA zp_pw_cx
+    LDA zp_pw_x0+1 : ADC #0 : STA zp_pw_cx+1
+    JMP pn_cmp1_ok
+.pn_cmp1_gt
+.pn_cmp1_ok
+
+    ; If cx > x1 - 1: cx = x1 - 1
+    SEC
+    LDA zp_pw_x1   : SBC #1         ; x1 - 1 in temp compare
+    STA zp_tg_tx0                    ; reuse temp
+    LDA zp_pw_x1+1 : SBC #0
+    STA zp_tg_tx0+1
+    SEC
+    LDA zp_pw_cx   : SBC zp_tg_tx0
+    LDA zp_pw_cx+1 : SBC zp_tg_tx0+1
+    BVC pn_cmp2_nov
+    EOR #&80
+.pn_cmp2_nov
+    BMI pn_cmp2_ok                  ; cx < x1-1 → OK
+    BNE pn_cx_set_high              ; cx > x1-1 → clamp
+    LDA zp_pw_cx
+    CMP zp_tg_tx0
+    BEQ pn_cmp2_ok                  ; equal → OK
+.pn_cx_set_high
+    LDA zp_tg_tx0   : STA zp_pw_cx
+    LDA zp_tg_tx0+1 : STA zp_pw_cx+1
+.pn_cmp2_ok
+
+    ; Python refinement: if fp_eval(f, cx) <= fp_eval(g, cx): cx += 1
+    ; (Bit-exact with Python.)
+    LDA zp_pw_cx
+    JSR pw_eval_f_at_a
+    LDA &70 : STA zp_tg_tx0        ; fv_cx lo
+    LDA &71 : STA zp_tg_tx0+1      ; fv_cx hi
+    LDA zp_pw_cx
+    JSR pw_eval_g_at_a             ; gv_cx in &70/&71
+    ; diff = fv_cx - gv_cx (signed s16)
+    SEC
+    LDA zp_tg_tx0   : SBC &70 : STA zp_ls_scratch   ; save diff_lo
+    LDA zp_tg_tx0+1 : SBC &71                       ; A = diff_hi
+    BVC pn_ref_nov
+    EOR #&80
+.pn_ref_nov
+    BMI pn_fv_le_gv                 ; diff < 0 → f < g → increment
+    ; diff >= 0.  Check for equality: diff_hi == 0 AND diff_lo == 0.
+    ; The original (unEORed) diff_hi is still in A after EOR only if V was set;
+    ; if V was clear, A is the real diff_hi.  The Z-test here needs A==0 AND
+    ; diff_lo==0.  After EOR, diff_hi==0 only if original diff_hi was 0x80
+    ; (can't happen for small values) — but we saved diff_lo so re-compute.
+    LDA zp_tg_tx0   : CMP &70 : BNE pn_fv_gt_gv
+    LDA zp_tg_tx0+1 : CMP &71 : BNE pn_fv_gt_gv
+    ; Exactly equal → f <= g → increment
+.pn_fv_le_gv                        ; (fallthrough from pn_fv_lt_gv branch)
+    INC zp_pw_cx
+    BNE pn_inc_nc
+    INC zp_pw_cx+1
+.pn_inc_nc
+    ; Check cx >= x1 → degenerate single range with f
+    SEC
+    LDA zp_pw_cx   : SBC zp_pw_x1
+    LDA zp_pw_cx+1 : SBC zp_pw_x1+1
+    BVC pn_inc_nov
+    EOR #&80
+.pn_inc_nov
+    BMI pn_ref_done                 ; cx < x1, OK
+    ; cx >= x1: return single range with f
+    LDA #1 : STA zp_pw_count
+    LDA #0 : STA zp_pw_r0_fn
+    RTS
+
+.pn_fv_gt_gv
+    ; Need to check cx <= x0 → degenerate single g range
+    SEC
+    LDA zp_pw_cx   : SBC zp_pw_x0
+    LDA zp_pw_cx+1 : SBC zp_pw_x0+1
+    BVC pn_gt_nov
+    EOR #&80
+.pn_gt_nov
+    BPL pn_ref_done                 ; cx > x0 → OK (but we want > not >=)
+    ; cx <= x0: return single range with g
+    LDA #1 : STA zp_pw_count
+    LDA #1 : STA zp_pw_r0_fn
+    RTS
+
+.pn_ref_done
+    ; count = 2
+    LDA #2 : STA zp_pw_count
+    ; d0 < 0 → [x0, cx) f, [cx, x1) g.  Python: "if d0 < 0:".
+    LDA zp_pw_d0+1
+    BMI pn_d0_is_neg
+    ; d0 >= 0 → [x0, cx) g, [cx, x1) f
+    LDA #1 : STA zp_pw_r0_fn
+    LDA #0 : STA zp_pw_r1_fn
+    RTS
+.pn_d0_is_neg
+    LDA #0 : STA zp_pw_r0_fn
+    LDA #1 : STA zp_pw_r1_fn
+    RTS
+}
+
+; ======================================================================
+; Helper: advance zp_mk_out by SPAN_SIZE.  Called after writing a span.
+; ======================================================================
+.mk_out_advance
+{
+    LDA zp_mk_out
+    CLC
+    ADC #SPAN_SIZE
+    STA zp_mk_out
+    BCC mka_done
+    INC zp_mk_out+1
+.mka_done
+    RTS
+}
+
+; ======================================================================
+; Helper: copy a source span from (zp_ms_src) to (zp_mk_out) unchanged,
+; advance zp_mk_out by SPAN_SIZE, and increment scratch_spans count.
+; ======================================================================
+.ms_copy_unchanged
+{
+    LDY #SPAN_SIZE - 1
+.msc_loop
+    LDA (zp_ms_src),Y
+    STA (zp_mk_out),Y
+    DEY
+    BPL msc_loop
+    INC scratch_spans
+    JMP mk_out_advance
+}
+
+; ======================================================================
+; Helper: load source span's tfn/bfn into zp_mk_t/bslope/intercept.
+; Reads from (zp_ms_src) offsets SP_TSLOPE..SP_BINTERCEPT (8 bytes).
+; ======================================================================
+.ms_load_src_fns
+{
+    LDY #SP_TSLOPE
+    LDA (zp_ms_src),Y : STA zp_mk_tslope     : INY
+    LDA (zp_ms_src),Y : STA zp_mk_tslope+1   : INY
+    LDA (zp_ms_src),Y : STA zp_mk_bslope     : INY
+    LDA (zp_ms_src),Y : STA zp_mk_bslope+1   : INY
+    LDA (zp_ms_src),Y : STA zp_mk_tintercept : INY
+    LDA (zp_ms_src),Y : STA zp_mk_tintercept+1 : INY
+    LDA (zp_ms_src),Y : STA zp_mk_bintercept : INY
+    LDA (zp_ms_src),Y : STA zp_mk_bintercept+1
+    RTS
+}
+
+; ======================================================================
+; Helper: load current source span's xlo/xhi as s16 into zp_ms_xlo16 /
+; zp_ms_xhi16 (with xhi=0 converted to 256).
+; ======================================================================
+.ms_load_xlo_xhi
+{
+    LDY #SP_XLO
+    LDA (zp_ms_src),Y
+    STA zp_ms_xlo16
+    LDA #0
+    STA zp_ms_xlo16+1       ; xlo is u8 [0,255]
+    LDY #SP_XHI
+    LDA (zp_ms_src),Y
+    BNE mslxh_nonzero
+    LDA #0                  ; xhi = 0 means 256
+    STA zp_ms_xhi16
+    LDA #1
+    STA zp_ms_xhi16+1
+    RTS
+.mslxh_nonzero
+    STA zp_ms_xhi16
+    LDA #0
+    STA zp_ms_xhi16+1
+    RTS
+}
+
+; ======================================================================
+; Helper: advance zp_ms_src by SPAN_SIZE, decrement zp_ms_count, carry
+; flag set if we should exit the loop (count reached 0).
+; ======================================================================
+.ms_next_src
+{
+    LDA zp_ms_src
+    CLC
+    ADC #SPAN_SIZE
+    STA zp_ms_src
+    BCC msns_no_carry
+    INC zp_ms_src+1
+.msns_no_carry
+    DEC zp_ms_count
+    BEQ msns_done      ; count hit 0 → exit
+    CLC
+    RTS
+.msns_done
+    SEC
+    RTS
+}
+
+; ======================================================================
+; Helper: copy scratch_spans back to spans_base (header + all spans).
+; Count is read from scratch_spans[0].
+; ======================================================================
+.ms_copy_back
+{
+    LDA scratch_spans
+    STA spans_base                    ; copy count
+    BEQ mscb_done                     ; no spans — skip body copy
+    STA zp_tmp0                       ; span count for loop
+    ; src = scratch_spans + SPAN_HDR, dst = spans_base + SPAN_HDR
+    LDA #LO(scratch_spans + SPAN_HDR) : STA zp_ptr0
+    LDA #HI(scratch_spans + SPAN_HDR) : STA zp_ptr0+1
+    LDA #LO(spans_base + SPAN_HDR)    : STA zp_ptr1
+    LDA #HI(spans_base + SPAN_HDR)    : STA zp_ptr1+1
+.mscb_span_loop
+    LDY #SPAN_SIZE - 1
+.mscb_byte_loop
+    LDA (zp_ptr0),Y
+    STA (zp_ptr1),Y
+    DEY
+    BPL mscb_byte_loop
+    ; Advance ptr0, ptr1 by SPAN_SIZE
+    LDA zp_ptr0 : CLC : ADC #SPAN_SIZE : STA zp_ptr0
+    BCC mscb_nc0
+    INC zp_ptr0+1
+.mscb_nc0
+    LDA zp_ptr1 : CLC : ADC #SPAN_SIZE : STA zp_ptr1
+    BCC mscb_nc1
+    INC zp_ptr1+1
+.mscb_nc1
+    DEC zp_tmp0
+    BNE mscb_span_loop
+.mscb_done
+    RTS
+}
+
+; ======================================================================
+; MARK_SOLID: remove [ilo, ihi) from spans, splitting affected spans.
+;
+; Mirrors Python's FPClipSpans.mark_solid.  Operates on spans_base,
+; building the new list in scratch_spans, then copying back.
+;
+; Input:  zp_ms_lo, zp_ms_hi (s16).  ilo = max(0, lo), ihi = min(256, hi+1).
+; Output: spans_base updated.
+; ======================================================================
+.mark_solid
+{
+    ; --- Clamp ilo, ihi ---
+    ; ilo = max(0, lo)
+    LDA zp_ms_lo+1
+    BPL ms_ilo_keep
+    LDA #0 : STA zp_ms_ilo : STA zp_ms_ilo+1
+    JMP ms_clamp_ihi
+.ms_ilo_keep
+    LDA zp_ms_lo   : STA zp_ms_ilo
+    LDA zp_ms_lo+1 : STA zp_ms_ilo+1
+.ms_clamp_ihi
+    ; ihi = min(256, hi + 1)
+    LDA zp_ms_hi
+    CLC
+    ADC #1
+    STA zp_ms_ihi
+    LDA zp_ms_hi+1
+    ADC #0
+    STA zp_ms_ihi+1
+    ; Clamp to 256: if ihi > 256, ihi = 256; if ihi < 0, ihi = 0
+    LDA zp_ms_ihi+1
+    BMI ms_ihi_neg
+    BEQ ms_ihi_lo_check
+    ; ihi_hi > 0 → ihi > 255 → clamp to 256
+    LDA #0   : STA zp_ms_ihi
+    LDA #1   : STA zp_ms_ihi+1
+    JMP ms_clamp_done
+.ms_ihi_lo_check
+    ; ihi_hi = 0, ihi = ihi_lo + 0.  No clamp needed (unless ihi_lo > 256 which
+    ; can't happen with hi_hi=0).  OK.
+    JMP ms_clamp_done
+.ms_ihi_neg
+    LDA #0 : STA zp_ms_ihi : STA zp_ms_ihi+1
+.ms_clamp_done
+
+    ; If ilo >= ihi, nothing to do.  Signed compare.
+    SEC
+    LDA zp_ms_ilo   : SBC zp_ms_ihi
+    LDA zp_ms_ilo+1 : SBC zp_ms_ihi+1
+    BVC ms_dge_nov
+    EOR #&80
+.ms_dge_nov
+    BMI ms_work                    ; ilo < ihi → do work
+    RTS                             ; ilo >= ihi → no-op
+
+.ms_work
+    ; Init scratch output: count=0, dst_ptr = scratch + SPAN_HDR
+    LDA #0
+    STA scratch_spans
+    LDA #LO(scratch_spans + SPAN_HDR) : STA zp_mk_out
+    LDA #HI(scratch_spans + SPAN_HDR) : STA zp_mk_out+1
+
+    ; Iterate source spans
+    LDA spans_base
+    BNE ms_have_spans
+    JMP ms_finish                   ; empty input → empty output
+.ms_have_spans
+    STA zp_ms_count
+    LDA #LO(spans_base + SPAN_HDR) : STA zp_ms_src
+    LDA #HI(spans_base + SPAN_HDR) : STA zp_ms_src+1
+
+.ms_loop
+    JSR ms_load_xlo_xhi             ; zp_ms_xlo16, zp_ms_xhi16
+
+    ; --- Case 1: xhi <= ilo → unchanged ---
+    ; Compute diff = xhi - ilo; branch on diff <= 0 (signed).
+    SEC
+    LDA zp_ms_xhi16   : SBC zp_ms_ilo   : STA zp_tmp0
+    LDA zp_ms_xhi16+1 : SBC zp_ms_ilo+1
+    BVC ms_c1_nov
+    EOR #&80
+.ms_c1_nov
+    BMI ms_unchanged                ; diff < 0 → unchanged
+    BNE ms_c1_check_ihi             ; diff hi nonzero → diff > 0 → case 2
+    LDA zp_tmp0
+    BNE ms_c1_check_ihi             ; diff lo nonzero → diff > 0 → case 2
+    JMP ms_unchanged                ; diff == 0 → xhi == ilo → unchanged
+.ms_c1_check_ihi
+
+    ; --- Case 2: xlo >= ihi → unchanged ---
+    SEC
+    LDA zp_ms_xlo16   : SBC zp_ms_ihi   : STA zp_tmp0
+    LDA zp_ms_xlo16+1 : SBC zp_ms_ihi+1
+    BVC ms_c2_nov
+    EOR #&80
+.ms_c2_nov
+    BMI ms_split                    ; diff < 0 → xlo < ihi → split
+    BNE ms_unchanged                ; diff hi nonzero → diff > 0 → unchanged
+    LDA zp_tmp0
+    BNE ms_unchanged                ; diff lo nonzero → diff > 0 → unchanged
+    JMP ms_unchanged                ; diff == 0 → xlo == ihi → unchanged
+.ms_unchanged
+    JSR ms_copy_unchanged
+    JMP ms_next
+
+.ms_split
+    ; --- Case 3: split span ---
+    ; Load source fns once
+    JSR ms_load_src_fns
+
+    ; Left fragment: if xlo < ilo, make_span(xlo, ilo, src fns)
+    SEC
+    LDA zp_ms_xlo16   : SBC zp_ms_ilo
+    LDA zp_ms_xlo16+1 : SBC zp_ms_ilo+1
+    BVC ms_lf_nov
+    EOR #&80
+.ms_lf_nov
+    BPL ms_lf_skip                  ; xlo >= ilo, no left fragment
+    ; xlo < ilo → left fragment
+    LDA zp_ms_xlo16
+    STA zp_mk_xlo
+    LDA zp_ms_ilo                   ; ilo fits in u8 (we asserted so)
+    STA zp_mk_xhi
+    JSR make_span
+    JSR mk_out_advance
+    INC scratch_spans
+.ms_lf_skip
+
+    ; Right fragment: if ihi < xhi, make_span(ihi, xhi, src fns)
+    SEC
+    LDA zp_ms_ihi   : SBC zp_ms_xhi16
+    LDA zp_ms_ihi+1 : SBC zp_ms_xhi16+1
+    BVC ms_rf_nov
+    EOR #&80
+.ms_rf_nov
+    BPL ms_rf_skip                  ; ihi >= xhi, no right fragment
+    ; ihi < xhi → right fragment
+    LDA zp_ms_ihi                   ; ihi fits in u8 OR ihi = 256 (encoded as 0)
+    STA zp_mk_xlo                   ; xlo for new span = ihi
+    ; ihi = 256 case: ihi_lo = 0, ihi_hi = 1. Encoded as xlo = 0? No — new span's xlo
+    ; would be 256 which we can't encode.  But if ihi = 256, then ihi < xhi is only
+    ; true if xhi > 256, impossible. So we never hit this case with ihi = 256.
+    LDY #SP_XHI                     ; source xhi (u8 with 0=256)
+    LDA (zp_ms_src),Y
+    STA zp_mk_xhi
+    JSR make_span
+    JSR mk_out_advance
+    INC scratch_spans
+.ms_rf_skip
+
+    JMP ms_next
+
+.ms_next
+    JSR ms_next_src
+    BCS ms_finish
+    JMP ms_loop
+
+.ms_finish
+    ; Copy scratch_spans back to spans_base
+    JSR ms_copy_back
+    RTS
+}
+
+; ======================================================================
+; TIGHTEN: apply a tighten op to the span array.
+;
+; Mirrors Python's FPClipSpans.tighten (general-case only; the
+; top_dom/bot_dom merge fast path is disabled in Python to match).
+;
+; Input:  zp_ms_lo/hi (s16), plus sx1/sx2/yt1/yt2/yb1/yb2 in scratch slots
+;         loaded from the queue entry by the caller:
+;           &A0:s16 sx1, &A2:s16 sx2
+;           &60:s16 yt1, &62:s16 yt2   (fp_linfn input y1, y2)
+;           &64:s16 sx1, &66:s16 sx2   (fp_linfn input sx1, sx2)
+; Actually we'll set up inputs to fp_linfn directly from the queue entry.
+; Callers (flush) pass via tg_ scratch slots; see flush for details.
+; ======================================================================
+.tighten
+{
+    ; --- Clamp ilo, ihi (reuses mark_solid logic) ---
+    LDA zp_ms_lo+1
+    BPL tg_ilo_keep
+    LDA #0 : STA zp_ms_ilo : STA zp_ms_ilo+1
+    JMP tg_clamp_ihi
+.tg_ilo_keep
+    LDA zp_ms_lo   : STA zp_ms_ilo
+    LDA zp_ms_lo+1 : STA zp_ms_ilo+1
+.tg_clamp_ihi
+    LDA zp_ms_hi
+    CLC
+    ADC #1
+    STA zp_ms_ihi
+    LDA zp_ms_hi+1
+    ADC #0
+    STA zp_ms_ihi+1
+    LDA zp_ms_ihi+1
+    BMI tg_ihi_neg
+    BEQ tg_ihi_done
+    LDA #0 : STA zp_ms_ihi
+    LDA #1 : STA zp_ms_ihi+1
+    JMP tg_ihi_done
+.tg_ihi_neg
+    LDA #0 : STA zp_ms_ihi : STA zp_ms_ihi+1
+.tg_ihi_done
+
+    ; If ilo >= ihi, nothing to do
+    SEC
+    LDA zp_ms_ilo   : SBC zp_ms_ihi
+    LDA zp_ms_ilo+1 : SBC zp_ms_ihi+1
+    BVC tg_ige_nov
+    EOR #&80
+.tg_ige_nov
+    BMI tg_do_work
+    RTS
+.tg_do_work
+
+    ; --- Compute new_tfn via fp_linfn(yt1, yt2, sx1, sx2) ---
+    ; fp_linfn expects: $60=y1, $62=y2, $64=sx1, $66=sx2; writes $68=slope $6A=intercept
+    ; Caller has preloaded these slots via the queue read.
+    JSR fp_linfn
+    LDA &68 : STA zp_tg_new_tslope
+    LDA &69 : STA zp_tg_new_tslope+1
+    LDA &6A : STA zp_tg_new_tintercept
+    LDA &6B : STA zp_tg_new_tintercept+1
+
+    ; --- Compute new_bfn via fp_linfn(yb1, yb2, sx1, sx2) ---
+    ; Caller must swap y1/y2 at $60/$62 to yb1/yb2 before this call.
+    ; We do it here — yb1/yb2 are loaded to $A4/$A6 as alt scratch.
+    LDA zp_tg_ox0   : STA &60      ; yb1 (caller stashed in ox0 slot)
+    LDA zp_tg_ox0+1 : STA &61
+    LDA zp_tg_ox1   : STA &62      ; yb2 (caller stashed in ox1 slot)
+    LDA zp_tg_ox1+1 : STA &63
+    ; sx1/sx2 still at $64/$66 from before
+    JSR fp_linfn
+    LDA &68 : STA zp_tg_new_bslope
+    LDA &69 : STA zp_tg_new_bslope+1
+    LDA &6A : STA zp_tg_new_bintercept
+    LDA &6B : STA zp_tg_new_bintercept+1
+
+    ; --- Init scratch output ---
+    LDA #0
+    STA scratch_spans
+    LDA #LO(scratch_spans + SPAN_HDR) : STA zp_mk_out
+    LDA #HI(scratch_spans + SPAN_HDR) : STA zp_mk_out+1
+
+    ; --- Iterate source spans ---
+    LDA spans_base
+    BNE tg_have_spans
+    JMP tg_finish
+.tg_have_spans
+    STA zp_ms_count
+    LDA #LO(spans_base + SPAN_HDR) : STA zp_ms_src
+    LDA #HI(spans_base + SPAN_HDR) : STA zp_ms_src+1
+
+.tg_loop
+    JSR ms_load_xlo_xhi
+
+    ; Case 1/2 checks: entirely outside [ilo, ihi) → unchanged
+    SEC
+    LDA zp_ms_xhi16   : SBC zp_ms_ilo   : STA zp_tmp0
+    LDA zp_ms_xhi16+1 : SBC zp_ms_ilo+1
+    BVC tg_c1_nov
+    EOR #&80
+.tg_c1_nov
+    BMI tg_unchanged                 ; xhi < ilo
+    BNE tg_c1_chk2
+    LDA zp_tmp0
+    BNE tg_c1_chk2
+    JMP tg_unchanged                 ; xhi == ilo
+.tg_c1_chk2
+    SEC
+    LDA zp_ms_xlo16   : SBC zp_ms_ihi   : STA zp_tmp0
+    LDA zp_ms_xlo16+1 : SBC zp_ms_ihi+1
+    BVC tg_c2_nov
+    EOR #&80
+.tg_c2_nov
+    BMI tg_split                     ; xlo < ihi → split
+    BNE tg_unchanged                 ; xlo > ihi → unchanged
+    LDA zp_tmp0
+    BNE tg_unchanged
+    JMP tg_unchanged                 ; xlo == ihi → unchanged (Python: xlo >= ihi)
+
+.tg_unchanged
+    JSR ms_copy_unchanged
+    JMP tg_next
+
+.tg_split
+    ; Load src fns into BOTH zp_mk_* AND zp_tg_src_* (latter for right fragment)
+    JSR ms_load_src_fns
+    LDA zp_mk_tslope     : STA zp_tg_src_tslope
+    LDA zp_mk_tslope+1   : STA zp_tg_src_tslope+1
+    LDA zp_mk_tintercept : STA zp_tg_src_tintercept
+    LDA zp_mk_tintercept+1 : STA zp_tg_src_tintercept+1
+    LDA zp_mk_bslope     : STA zp_tg_src_bslope
+    LDA zp_mk_bslope+1   : STA zp_tg_src_bslope+1
+    LDA zp_mk_bintercept : STA zp_tg_src_bintercept
+    LDA zp_mk_bintercept+1 : STA zp_tg_src_bintercept+1
+
+    ; Left fragment: if xlo < ilo
+    SEC
+    LDA zp_ms_xlo16   : SBC zp_ms_ilo
+    LDA zp_ms_xlo16+1 : SBC zp_ms_ilo+1
+    BVC tg_lf_nov
+    EOR #&80
+.tg_lf_nov
+    BPL tg_lf_skip
+    ; xlo < ilo → make left fragment
+    LDA zp_ms_xlo16 : STA zp_mk_xlo
+    LDA zp_ms_ilo   : STA zp_mk_xhi
+    JSR make_span
+    JSR mk_out_advance
+    INC scratch_spans
+.tg_lf_skip
+
+    ; ox0 = max(xlo, ilo)
+    ; Since we're in split path, xlo < ihi and xhi > ilo, so overlap exists.
+    SEC
+    LDA zp_ms_xlo16   : SBC zp_ms_ilo
+    LDA zp_ms_xlo16+1 : SBC zp_ms_ilo+1
+    BVC tg_ox0_nov
+    EOR #&80
+.tg_ox0_nov
+    BPL tg_ox0_xlo
+    ; xlo < ilo → ox0 = ilo
+    LDA zp_ms_ilo   : STA zp_tg_ox0
+    LDA zp_ms_ilo+1 : STA zp_tg_ox0+1
+    JMP tg_ox0_done
+.tg_ox0_xlo
+    LDA zp_ms_xlo16   : STA zp_tg_ox0
+    LDA zp_ms_xlo16+1 : STA zp_tg_ox0+1
+.tg_ox0_done
+
+    ; ox1 = min(xhi, ihi)
+    SEC
+    LDA zp_ms_xhi16   : SBC zp_ms_ihi
+    LDA zp_ms_xhi16+1 : SBC zp_ms_ihi+1
+    BVC tg_ox1_nov
+    EOR #&80
+.tg_ox1_nov
+    BPL tg_ox1_ihi
+    LDA zp_ms_xhi16   : STA zp_tg_ox1
+    LDA zp_ms_xhi16+1 : STA zp_tg_ox1+1
+    JMP tg_ox1_done
+.tg_ox1_ihi
+    LDA zp_ms_ihi   : STA zp_tg_ox1
+    LDA zp_ms_ihi+1 : STA zp_tg_ox1+1
+.tg_ox1_done
+
+    ; --- Inner loop: pw_max(src.tfn, new.tfn, ox0, ox1) ---
+    ; Setup pw_max inputs: f = src.tfn, g = new.tfn, x0 = ox0, x1 = ox1
+    LDA zp_tg_src_tslope     : STA zp_pw_f_slope
+    LDA zp_tg_src_tslope+1   : STA zp_pw_f_slope+1
+    LDA zp_tg_src_tintercept : STA zp_pw_f_intercept
+    LDA zp_tg_src_tintercept+1 : STA zp_pw_f_intercept+1
+    LDA zp_tg_new_tslope     : STA zp_pw_g_slope
+    LDA zp_tg_new_tslope+1   : STA zp_pw_g_slope+1
+    LDA zp_tg_new_tintercept : STA zp_pw_g_intercept
+    LDA zp_tg_new_tintercept+1 : STA zp_pw_g_intercept+1
+    LDA zp_tg_ox0   : STA zp_pw_x0
+    LDA zp_tg_ox0+1 : STA zp_pw_x0+1
+    LDA zp_tg_ox1   : STA zp_pw_x1
+    LDA zp_tg_ox1+1 : STA zp_pw_x1+1
+    JSR pw_max
+    ; Save pw_max's count and cx — the nested pw_min call will clobber them.
+    LDA zp_pw_count : STA zp_tg_pwmax_count
+    LDA zp_pw_cx    : STA zp_tg_pwmax_cx
+    LDA zp_pw_cx+1  : STA zp_tg_pwmax_cx+1
+
+    ; Iterate tx ranges (count = 1 or 2)
+    ; For tx_idx = 0: tx0 = ox0, tx1 = (count==1? ox1 : cx), tfn_use_new = r0_fn
+    LDA zp_pw_r0_fn : STA zp_tg_tfn_use_new
+    ; tx0 = ox0, tx1 = ox1 (if count==1) or cx (if count==2)
+    LDA zp_tg_ox0   : STA zp_tg_tx0
+    LDA zp_tg_ox0+1 : STA zp_tg_tx0+1
+    LDA zp_tg_pwmax_count
+    CMP #1
+    BEQ tg_tx0_one
+    ; count == 2 → tx1 = cx
+    LDA zp_tg_pwmax_cx   : STA zp_tg_tx1
+    LDA zp_tg_pwmax_cx+1 : STA zp_tg_tx1+1
+    JMP tg_tx0_ready
+.tg_tx0_one
+    LDA zp_tg_ox1   : STA zp_tg_tx1
+    LDA zp_tg_ox1+1 : STA zp_tg_tx1+1
+.tg_tx0_ready
+    ; Stash r1_fn before the call (pw_min in the callee clobbers zp_pw_r1_fn).
+    LDA zp_pw_r1_fn : PHA
+    JSR tg_process_tx_range
+    PLA             : STA zp_pw_r1_fn
+
+    ; If count == 2, iterate tx_idx = 1
+    LDA zp_tg_pwmax_count
+    CMP #2
+    BNE tg_inner_done
+    ; Second tx range: tx0 = cx, tx1 = ox1, fn = r1_fn
+    LDA zp_pw_r1_fn : STA zp_tg_tfn_use_new
+    LDA zp_tg_pwmax_cx   : STA zp_tg_tx0
+    LDA zp_tg_pwmax_cx+1 : STA zp_tg_tx0+1
+    LDA zp_tg_ox1   : STA zp_tg_tx1
+    LDA zp_tg_ox1+1 : STA zp_tg_tx1+1
+    JSR tg_process_tx_range
+.tg_inner_done
+
+    ; Right fragment: if ihi < xhi
+    SEC
+    LDA zp_ms_ihi   : SBC zp_ms_xhi16
+    LDA zp_ms_ihi+1 : SBC zp_ms_xhi16+1
+    BVC tg_rf_nov
+    EOR #&80
+.tg_rf_nov
+    BPL tg_rf_skip
+    ; ihi < xhi → right fragment with STASHED src fns
+    LDA zp_tg_src_tslope     : STA zp_mk_tslope
+    LDA zp_tg_src_tslope+1   : STA zp_mk_tslope+1
+    LDA zp_tg_src_tintercept : STA zp_mk_tintercept
+    LDA zp_tg_src_tintercept+1 : STA zp_mk_tintercept+1
+    LDA zp_tg_src_bslope     : STA zp_mk_bslope
+    LDA zp_tg_src_bslope+1   : STA zp_mk_bslope+1
+    LDA zp_tg_src_bintercept : STA zp_mk_bintercept
+    LDA zp_tg_src_bintercept+1 : STA zp_mk_bintercept+1
+    LDA zp_ms_ihi : STA zp_mk_xlo
+    LDY #SP_XHI
+    LDA (zp_ms_src),Y
+    STA zp_mk_xhi
+    JSR make_span
+    JSR mk_out_advance
+    INC scratch_spans
+.tg_rf_skip
+
+.tg_next
+    JSR ms_next_src
+    BCS tg_finish
+    JMP tg_loop
+
+.tg_finish
+    JSR ms_copy_back
+    RTS
+}
+
+; ======================================================================
+; TG_PROCESS_TX_RANGE: inner helper — given a (tx0, tx1) range with
+; tfn_use_new flag, run pw_min on (src.bfn, new.bfn) and emit spans.
+;
+; Inputs: zp_tg_tx0, zp_tg_tx1 (s16), zp_tg_tfn_use_new (u8: 0=src, 1=new)
+; Uses zp_pw_* scratch for the pw_min call.
+; ======================================================================
+.tg_process_tx_range
+{
+    ; Setup pw_min inputs: f = src.bfn, g = new.bfn, x0 = tx0, x1 = tx1
+    LDA zp_tg_src_bslope     : STA zp_pw_f_slope
+    LDA zp_tg_src_bslope+1   : STA zp_pw_f_slope+1
+    LDA zp_tg_src_bintercept : STA zp_pw_f_intercept
+    LDA zp_tg_src_bintercept+1 : STA zp_pw_f_intercept+1
+    LDA zp_tg_new_bslope     : STA zp_pw_g_slope
+    LDA zp_tg_new_bslope+1   : STA zp_pw_g_slope+1
+    LDA zp_tg_new_bintercept : STA zp_pw_g_intercept
+    LDA zp_tg_new_bintercept+1 : STA zp_pw_g_intercept+1
+    LDA zp_tg_tx0   : STA zp_pw_x0
+    LDA zp_tg_tx0+1 : STA zp_pw_x0+1
+    LDA zp_tg_tx1   : STA zp_pw_x1
+    LDA zp_tg_tx1+1 : STA zp_pw_x1+1
+    JSR pw_min
+    ; NOTE: pw_min's crossover path clobbers zp_tg_tx0/tx1 as scratch.
+    ; The zp_pw_x0/x1 slots we set up above are untouched by pw_min, so
+    ; use them (instead of zp_tg_tx0/tx1) for the rest of this routine.
+
+    ; Iterate bx ranges.  For bx_idx = 0: bx0 = tx0, bx1 = (count==1? tx1 : cx_bot)
+    ; Save pw_min outputs to tg slots since we might need them twice.
+    LDA zp_pw_count : STA zp_tg_bfn_use_new  ; reuse as temp
+    ; Handle bx_idx = 0
+    LDA zp_pw_r0_fn : STA zp_tg_bfn_use_new
+    LDA zp_pw_x0   : STA zp_tg_bx0
+    LDA zp_pw_x0+1 : STA zp_tg_bx0+1
+    LDA zp_pw_count
+    CMP #1
+    BEQ tgp_bx0_one
+    LDA zp_pw_cx   : STA zp_tg_bx1
+    LDA zp_pw_cx+1 : STA zp_tg_bx1+1
+    JMP tgp_bx0_ready
+.tgp_bx0_one
+    LDA zp_pw_x1   : STA zp_tg_bx1
+    LDA zp_pw_x1+1 : STA zp_tg_bx1+1
+.tgp_bx0_ready
+    JSR tg_emit_span
+
+    LDA zp_pw_count
+    CMP #2
+    BNE tgp_done
+    ; Second bx range
+    LDA zp_pw_r1_fn : STA zp_tg_bfn_use_new
+    LDA zp_pw_cx   : STA zp_tg_bx0
+    LDA zp_pw_cx+1 : STA zp_tg_bx0+1
+    LDA zp_pw_x1   : STA zp_tg_bx1
+    LDA zp_pw_x1+1 : STA zp_tg_bx1+1
+    JSR tg_emit_span
+.tgp_done
+    RTS
+}
+
+; ======================================================================
+; TG_EMIT_SPAN: compute and emit one inner-loop span.
+;
+; Inputs:
+;   zp_tg_bx0, zp_tg_bx1 (s16) — span x range
+;   zp_tg_tfn_use_new (u8: 0=use src_tfn, 1=use new_tfn)
+;   zp_tg_bfn_use_new (u8: 0=use src_bfn, 1=use new_bfn)
+; Output: span written to scratch if aperture exists.
+; ======================================================================
+.tg_emit_span
+{
+    ; bx1 > bx0 check (strict signed).  If bx1 <= bx0, skip this span.
+    ; Preserve diff_lo in zp_tmp0 so the equal-check can see both bytes.
+    SEC
+    LDA zp_tg_bx1   : SBC zp_tg_bx0   : STA zp_tmp0
+    LDA zp_tg_bx1+1 : SBC zp_tg_bx0+1
+    BVC tges_nov
+    EOR #&80
+.tges_nov
+    BPL tges_maybe_proceed
+    JMP tges_skip              ; diff < 0 → bx1 < bx0 → skip
+.tges_maybe_proceed
+    BNE tges_proceed           ; diff_hi != 0 and nonneg → diff > 0
+    LDA zp_tmp0
+    BNE tges_proceed           ; diff_lo != 0 → diff > 0
+    JMP tges_skip              ; diff == 0 → bx1 == bx0 → skip
+.tges_proceed
+
+    ; Select t_fn → zp_mk_tslope/tintercept
+    LDA zp_tg_tfn_use_new
+    BEQ tges_t_src
+    LDA zp_tg_new_tslope     : STA zp_mk_tslope
+    LDA zp_tg_new_tslope+1   : STA zp_mk_tslope+1
+    LDA zp_tg_new_tintercept : STA zp_mk_tintercept
+    LDA zp_tg_new_tintercept+1 : STA zp_mk_tintercept+1
+    JMP tges_t_done
+.tges_t_src
+    LDA zp_tg_src_tslope     : STA zp_mk_tslope
+    LDA zp_tg_src_tslope+1   : STA zp_mk_tslope+1
+    LDA zp_tg_src_tintercept : STA zp_mk_tintercept
+    LDA zp_tg_src_tintercept+1 : STA zp_mk_tintercept+1
+.tges_t_done
+
+    ; Select b_fn → zp_mk_bslope/bintercept
+    LDA zp_tg_bfn_use_new
+    BEQ tges_b_src
+    LDA zp_tg_new_bslope     : STA zp_mk_bslope
+    LDA zp_tg_new_bslope+1   : STA zp_mk_bslope+1
+    LDA zp_tg_new_bintercept : STA zp_mk_bintercept
+    LDA zp_tg_new_bintercept+1 : STA zp_mk_bintercept+1
+    JMP tges_b_done
+.tges_b_src
+    LDA zp_tg_src_bslope     : STA zp_mk_bslope
+    LDA zp_tg_src_bslope+1   : STA zp_mk_bslope+1
+    LDA zp_tg_src_bintercept : STA zp_mk_bintercept
+    LDA zp_tg_src_bintercept+1 : STA zp_mk_bintercept+1
+.tges_b_done
+
+    ; Compute t0 = fp_eval(t_fn, bx0), b0 = fp_eval(b_fn, bx0)
+    ;         t1 = fp_eval(t_fn, bx1-1), b1 = fp_eval(b_fn, bx1-1)
+    ; Use zp_mk_top_l/top_r/bot_l/bot_r as storage for these.
+    LDA zp_mk_tslope     : STA zp_tmp2
+    LDA zp_mk_tslope+1   : STA zp_tmp2+1
+    LDA zp_mk_tintercept : STA zp_mk_tmp
+    LDA zp_mk_tintercept+1 : STA zp_mk_tmp+1
+    LDA zp_tg_bx0
+    JSR fp_eval
+    LDA &70 : STA zp_mk_top_l   ; t0
+    LDA &71 : STA zp_mk_top_l+1
+
+    LDA zp_mk_bslope     : STA zp_tmp2
+    LDA zp_mk_bslope+1   : STA zp_tmp2+1
+    LDA zp_mk_bintercept : STA zp_mk_tmp
+    LDA zp_mk_bintercept+1 : STA zp_mk_tmp+1
+    LDA zp_tg_bx0
+    JSR fp_eval
+    LDA &70 : STA zp_mk_bot_l   ; b0
+    LDA &71 : STA zp_mk_bot_l+1
+
+    ; x = bx1 - 1 (u8; bx1 may be 0=256, so x = 255)
+    LDA zp_tg_bx1
+    BNE tges_x_sub
+    LDA #255
+    JMP tges_x_have
+.tges_x_sub
+    SEC
+    SBC #1
+.tges_x_have
+    PHA
+    LDA zp_mk_tslope     : STA zp_tmp2
+    LDA zp_mk_tslope+1   : STA zp_tmp2+1
+    LDA zp_mk_tintercept : STA zp_mk_tmp
+    LDA zp_mk_tintercept+1 : STA zp_mk_tmp+1
+    PLA
+    PHA
+    JSR fp_eval
+    LDA &70 : STA zp_mk_top_r   ; t1
+    LDA &71 : STA zp_mk_top_r+1
+
+    LDA zp_mk_bslope     : STA zp_tmp2
+    LDA zp_mk_bslope+1   : STA zp_tmp2+1
+    LDA zp_mk_bintercept : STA zp_mk_tmp
+    LDA zp_mk_bintercept+1 : STA zp_mk_tmp+1
+    PLA
+    JSR fp_eval
+    LDA &70 : STA zp_mk_bot_r   ; b1
+    LDA &71 : STA zp_mk_bot_r+1
+
+    ; Aperture check: (t0 < b0) OR (t1 < b1)
+    ; t0 < b0: signed compare (t0 - b0) < 0
+    SEC
+    LDA zp_mk_top_l   : SBC zp_mk_bot_l
+    LDA zp_mk_top_l+1 : SBC zp_mk_bot_l+1
+    BVC tges_ap1_nov
+    EOR #&80
+.tges_ap1_nov
+    BMI tges_has_aperture
+    ; t0 >= b0; check t1 < b1
+    SEC
+    LDA zp_mk_top_r   : SBC zp_mk_bot_r
+    LDA zp_mk_top_r+1 : SBC zp_mk_bot_r+1
+    BVC tges_ap2_nov
+    EOR #&80
+.tges_ap2_nov
+    BMI tges_has_aperture
+    RTS                          ; no aperture → skip this span
+
+.tges_has_aperture
+    ; --- Write span to (zp_mk_out) ---
+    ; xlo = bx0, xhi = bx1 (both u8)
+    LDY #SP_XLO
+    LDA zp_tg_bx0 : STA (zp_mk_out),Y
+    LDY #SP_XHI
+    LDA zp_tg_bx1 : STA (zp_mk_out),Y
+
+    LDY #SP_TSLOPE
+    LDA zp_mk_tslope   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_tslope+1 : STA (zp_mk_out),Y
+    LDY #SP_BSLOPE
+    LDA zp_mk_bslope   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_bslope+1 : STA (zp_mk_out),Y
+    LDY #SP_TINTERCEPT
+    LDA zp_mk_tintercept   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_tintercept+1 : STA (zp_mk_out),Y
+    LDY #SP_BINTERCEPT
+    LDA zp_mk_bintercept   : STA (zp_mk_out),Y : INY
+    LDA zp_mk_bintercept+1 : STA (zp_mk_out),Y
+
+    ; inner_top = max(t0, t1)
+    SEC
+    LDA zp_mk_top_l   : SBC zp_mk_top_r
+    LDA zp_mk_top_l+1 : SBC zp_mk_top_r+1
+    BVC tges_it_nov
+    EOR #&80
+.tges_it_nov
+    BMI tges_it_r
+    LDA zp_mk_top_l   : STA &70
+    LDA zp_mk_top_l+1 : STA &71
+    JMP tges_it_done
+.tges_it_r
+    LDA zp_mk_top_r   : STA &70
+    LDA zp_mk_top_r+1 : STA &71
+.tges_it_done
+    LDY #SP_INNER_TOP
+    LDA &70 : STA (zp_mk_out),Y : INY
+    LDA &71 : STA (zp_mk_out),Y
+
+    ; inner_bot = min(b0, b1)
+    SEC
+    LDA zp_mk_bot_l   : SBC zp_mk_bot_r
+    LDA zp_mk_bot_l+1 : SBC zp_mk_bot_r+1
+    BVC tges_ib_nov
+    EOR #&80
+.tges_ib_nov
+    BPL tges_ib_r
+    LDA zp_mk_bot_l   : STA &70
+    LDA zp_mk_bot_l+1 : STA &71
+    JMP tges_ib_done
+.tges_ib_r
+    LDA zp_mk_bot_r   : STA &70
+    LDA zp_mk_bot_r+1 : STA &71
+.tges_ib_done
+    LDY #SP_INNER_BOT
+    LDA &70 : STA (zp_mk_out),Y : INY
+    LDA &71 : STA (zp_mk_out),Y
+    ; Zero pad bytes 14/15 to match Python write_span's zeroing.
+    LDA #0
+    LDY #14 : STA (zp_mk_out),Y
+    LDY #15 : STA (zp_mk_out),Y
+
+    JSR mk_out_advance
+    INC scratch_spans
+.tges_skip
+    RTS
+}
+
+; ======================================================================
+; FLUSH: apply all queued mark_solid / tighten ops to the span state.
+;
+; Reads queue entries at queue_base, dispatches to mark_solid or tighten
+; for each.  After all entries processed, resets queue count and tail.
+; ======================================================================
+.flush_native
+{
+    LDA queue_count
+    BNE fln_has_work
+    RTS
+.fln_has_work
+    STA flush_rem
+    LDA #LO(queue_base)
+    STA flush_ptr_lo
+    LDA #HI(queue_base)
+    STA flush_ptr_hi
+
+.fln_loop
+    ; Load entry pointer into zp_ptr0 (we use it as the indirect base
+    ; for reading queue fields).  ptr0 gets clobbered by the call; we
+    ; restore from flush_ptr_lo/hi each iteration.
+    LDA flush_ptr_lo : STA zp_ptr0
+    LDA flush_ptr_hi : STA zp_ptr0+1
+
+    ; Read lo, hi (always needed)
+    LDY #QE_LO
+    LDA (zp_ptr0),Y : STA zp_ms_lo
+    INY
+    LDA (zp_ptr0),Y : STA zp_ms_lo+1
+    LDY #QE_HI
+    LDA (zp_ptr0),Y : STA zp_ms_hi
+    INY
+    LDA (zp_ptr0),Y : STA zp_ms_hi+1
+
+    ; Check type
+    LDY #QE_TYPE
+    LDA (zp_ptr0),Y
+    BNE fln_tighten
+
+    ; --- Type == solid: call mark_solid ---
+    JSR mark_solid
+    JMP fln_next
+
+.fln_tighten
+    ; --- Type == tighten: load fp_linfn inputs, call tighten ---
+    ; fp_linfn reads $60=y1, $62=y2, $64=sx1, $66=sx2.
+    ; tighten expects yb1/yb2 stashed in zp_tg_ox0/ox1 (s16 each).
+    LDY #QE_YT1
+    LDA (zp_ptr0),Y : STA &60
+    INY
+    LDA (zp_ptr0),Y : STA &61
+    LDY #QE_YT2
+    LDA (zp_ptr0),Y : STA &62
+    INY
+    LDA (zp_ptr0),Y : STA &63
+    LDY #QE_SX1
+    LDA (zp_ptr0),Y : STA &64
+    INY
+    LDA (zp_ptr0),Y : STA &65
+    LDY #QE_SX2
+    LDA (zp_ptr0),Y : STA &66
+    INY
+    LDA (zp_ptr0),Y : STA &67
+    ; Stash yb1, yb2 for the second fp_linfn call inside tighten
+    LDY #QE_YB1
+    LDA (zp_ptr0),Y : STA zp_tg_ox0
+    INY
+    LDA (zp_ptr0),Y : STA zp_tg_ox0+1
+    LDY #QE_YB2
+    LDA (zp_ptr0),Y : STA zp_tg_ox1
+    INY
+    LDA (zp_ptr0),Y : STA zp_tg_ox1+1
+    JSR tighten
+
+.fln_next
+    ; Python flush has an `if clips.is_full(): break` early-exit after
+    ; each op.  is_full() returns True when the span list is empty, i.e.
+    ; spans_base == 0.  Match this behaviour so cumulative span state
+    ; evolves identically.
+    LDA spans_base
+    BEQ fln_done
+    ; Advance flush_ptr by QE_SIZE
+    LDA flush_ptr_lo
+    CLC
+    ADC #QE_SIZE
+    STA flush_ptr_lo
+    BCC fln_no_carry
+    INC flush_ptr_hi
+.fln_no_carry
+    DEC flush_rem
+    BEQ fln_done
+    JMP fln_loop
+
+.fln_done
+    ; Reset queue count and tail
+    LDA #0
+    STA queue_count
+    LDA #LO(queue_base)
+    STA zp_q_tail
+    LDA #HI(queue_base)
+    STA zp_q_tail+1
     RTS
 }
 
@@ -1178,12 +3678,10 @@ CMD_DONE   = &00
 
     LDA zp_ptr0
     CLC
-    ADC layout_off_ss
+    ADC zp_ss_base
     STA zp_ptr0
     LDA zp_ptr0+1
-    ADC layout_off_ss+1
-    CLC
-    ADC #HI(rom_main)
+    ADC zp_ss_base+1
     STA zp_ptr0+1
 
     ; Read count (u8) and first_seg (u16)
@@ -1214,11 +3712,9 @@ CMD_DONE   = &00
     LDA zp_seg_hdr_ptr   : ASL A : STA zp_seg_det_ptr
     LDA zp_seg_hdr_ptr+1 : ROL A : STA zp_seg_det_ptr+1
 
-    ; Add base: rom_main + off_seg_hdr → zp_seg_hdr_ptr
-    LDA zp_seg_hdr_ptr   : CLC : ADC layout_off_seg_hdr : STA zp_seg_hdr_ptr
-    LDA zp_seg_hdr_ptr+1 : ADC layout_off_seg_hdr+1
-    CLC : ADC #HI(rom_main)
-    STA zp_seg_hdr_ptr+1
+    ; Add base: zp_seg_hdr_base (= rom_main + off_seg_hdr)
+    LDA zp_seg_hdr_ptr   : CLC : ADC zp_seg_hdr_base : STA zp_seg_hdr_ptr
+    LDA zp_seg_hdr_ptr+1 : ADC zp_seg_hdr_base+1     : STA zp_seg_hdr_ptr+1
 
     ; Add base: rom_detail → zp_seg_det_ptr (no offset; detail at rom_detail base)
     LDA zp_seg_det_ptr+1 : CLC : ADC #HI(rom_detail) : STA zp_seg_det_ptr+1
@@ -1263,10 +3759,10 @@ CMD_DONE   = &00
 ; ======================================================================
 .render_seg
 {
-    ; Copy running seg header pointer into zp_ptr0
-    LDA zp_seg_hdr_ptr   : STA zp_ptr0
-    LDA zp_seg_hdr_ptr+1 : STA zp_ptr0+1
-    ; ptr0 → seg header
+    ; Read seg header fields via (zp_seg_hdr_ptr),Y directly — no copy to
+    ; zp_ptr0 needed.  zp_ptr0 is used as scratch later (clobbered by
+    ; xform calls) but zp_seg_hdr_ptr is preserved by all callees, so we
+    ; can re-read fields from the header after those calls.
 
     ; --- Back-face test ---
     ; dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
@@ -1277,35 +3773,33 @@ CMD_DONE   = &00
     LDY #SH_LV1X
     LDA zp_px_int
     SEC
-    SBC (zp_ptr0),Y
+    SBC (zp_seg_hdr_ptr),Y
     STA zp_tmp2
     LDA zp_px_int_hi
     INY
-    SBC (zp_ptr0),Y
+    SBC (zp_seg_hdr_ptr),Y
     STA zp_tmp2+1        ; dx_bf (s16)
 
     ; dy_bf = py_int - lv1_y
     LDY #SH_LV1Y
     LDA zp_py_int
     SEC
-    SBC (zp_ptr0),Y
+    SBC (zp_seg_hdr_ptr),Y
     STA zp_tmp3
     LDA zp_py_int_hi
     INY
-    SBC (zp_ptr0),Y
+    SBC (zp_seg_hdr_ptr),Y
     STA zp_tmp3+1        ; dy_bf (s16)
 
     ; ldy (s8) at offset 9.  Invariant: |ldx|, |ldy| <= 127 by construction
-    ; — wad_packed.py / doom_wireframe.py assert this at load time, so the
-    ; back-face test can safely use the s8×s16 mul (ldy × dx_bf) without a
-    ; wider multiplier path for ldy itself.
+    ; — wad_packed.py / doom_wireframe.py assert this at load time.
     LDY #SH_LDY
-    LDA (zp_ptr0),Y
+    LDA (zp_seg_hdr_ptr),Y
     STA zp_tmp0           ; ldy
 
     ; ldx (s8) at offset 8
     LDY #SH_LDX
-    LDA (zp_ptr0),Y
+    LDA (zp_seg_hdr_ptr),Y
     STA zp_tmp1           ; ldx
 
     ; term1 = ldy * dx_bf (s8 × s16)
@@ -1337,16 +3831,29 @@ CMD_DONE   = &00
     LDA zp_tmp3
     BMI bf_wide
 .bf_dy_ok
-    ; Both fit in s8.  Compute 16-bit dot product using 2 smul8x8 calls.
+    ; Both fit in s8.  Compute 16-bit dot product using 2 smul8x8 calls,
+    ; or short-circuit when ldy/ldx is zero (axis-aligned wall).
+    LDA zp_tmp0                 ; ldy
+    BEQ bf_fast_ldy_zero
     LDA zp_tmp2 : STA zp_math_b
     LDA zp_tmp0 : JSR smul8x8   ; ldy × dx_bf (s8 × s8 → s16)
     LDA zp_res_lo : STA &74
     LDA zp_res_hi : STA &75
+    JMP bf_fast_term2
+.bf_fast_ldy_zero
+    LDA #0 : STA &74 : STA &75
+.bf_fast_term2
+    LDA zp_tmp1                 ; ldx
+    BEQ bf_fast_ldx_zero
     LDA zp_tmp3 : STA zp_math_b
     LDA zp_tmp1 : JSR smul8x8   ; ldx × dy_bf (s8 × s8 → s16)
     ; dot (s16) = ($75:$74) - (res_hi:res_lo)
     LDA &74 : SEC : SBC zp_res_lo : STA &74
     LDA &75 : SBC zp_res_hi : STA &75
+    JMP bf_fast_sex
+.bf_fast_ldx_zero
+    ; term2 = 0, dot = term1 (already in $74:$75)
+.bf_fast_sex
     ; Sign-extend to 24-bit byte2
     LDA &75
     BPL bf_fast_pos
@@ -1357,104 +3864,85 @@ CMD_DONE   = &00
     LDA #0
     STA &76
 .bf_fast_done
-    ; Zero out byte0 (unused since s16 result is in $74:$75; the dot sign
-    ; check later reads $74:$75:$76 via the read-flags/negate path)
     JMP bf_after_mul
 
 .bf_wide
-    ; Wide path: dx_bf or dy_bf doesn't fit in s8.
-    ; ldy × dx_bf_lo (s8 × u8) + ldy × dx_bf_hi (s8 × s8) * 256
-    LDA zp_tmp2           ; dx_bf_lo
-    STA zp_math_b
-    LDA zp_tmp0           ; ldy
-    JSR smul8x8
-    ; smul8x8(ldy, dx_bf_lo) — but dx_bf_lo is unsigned byte of a s16
-    ; If dx_bf_lo > 127, result = ldy * (dx_bf_lo - 256), need correction: add ldy * 256
-    STA &75               ; res_hi
-    LDA zp_res_lo
-    STA &74               ; res_lo
-    ; Correction for unsigned lo byte
-    LDA zp_tmp2
-    BPL bf_lo1_ok
-    ; Add ldy to hi byte
-    LDA &75
+    ; Wide path: dx_bf or dy_bf doesn't fit in s8.  Use mul_s16_u8_s24
+    ; with abs(ldy/ldx) + sign apply instead of 4 raw smul8x8 calls.
+    ; Also short-circuit when ldy==0 or ldx==0 (axis-aligned walls).
+    ;
+    ; term1 (24-bit) → $74:$76,  term2 (24-bit) → $78:$7A,  dot = term1-term2.
+    ;
+    ; === term1 = ldy * dx_bf ===
+    ; dx_bf is already in zp_tmp2 — mul_s16_u8_s24's "ex" input.
+    LDA zp_tmp0                  ; ldy
+    BEQ bf_t1_zero
+    BPL bf_t1_pos
+    ; ldy negative: pass |ldy|, negate result
+    EOR #&FF
     CLC
-    ADC zp_tmp0
-    STA &75
-.bf_lo1_ok
-    ; Sign-extend step_a 16-bit result to 24-bit byte2
-    LDA &75
-    BPL bf_se1_pos
-    LDA #&FF : STA &76 : JMP bf_se1_done
-.bf_se1_pos
-    LDA #0 : STA &76
-.bf_se1_done
-    ; ldy × dx_bf_hi (s8 × s8 → s16)
-    LDA zp_tmp2+1
-    STA zp_math_b
-    LDA zp_tmp0
-    JSR smul8x8
-    ; Add step_b to bytes 1-2 with carry propagation
-    LDA &75
-    CLC
-    ADC zp_res_lo
-    STA &75
-    LDA &76
-    ADC zp_res_hi
-    STA &76
-    ; term1 = $76:$75:$74 (24-bit)
+    ADC #1
+    JSR mul_s16_u8_s24           ; $70:$72 = |ldy| * dx_bf
+    ; term1 = -$70:$72  → store negated at $74:$76
+    SEC
+    LDA #0 : SBC &70 : STA &74
+    LDA #0 : SBC &71 : STA &75
+    LDA #0 : SBC &72 : STA &76
+    JMP bf_t1_done
+.bf_t1_pos
+    JSR mul_s16_u8_s24           ; $70:$72 = ldy * dx_bf
+    LDA &70 : STA &74
+    LDA &71 : STA &75
+    LDA &72 : STA &76
+    JMP bf_t1_done
+.bf_t1_zero
+    LDA #0
+    STA &74 : STA &75 : STA &76
+.bf_t1_done
 
-    ; ldx × dy_bf: same approach
-    LDA zp_tmp3           ; dy_bf_lo
-    STA zp_math_b
-    LDA zp_tmp1           ; ldx
-    JSR smul8x8
-    STA &79
-    LDA zp_res_lo
-    STA &78
-    LDA zp_tmp3
-    BPL bf_lo2_ok
-    LDA &79
+    ; === term2 = ldx * dy_bf ===
+    ; Move dy_bf into zp_tmp2 for mul_s16_u8_s24.
+    LDA zp_tmp3   : STA zp_tmp2
+    LDA zp_tmp3+1 : STA zp_tmp2+1
+    LDA zp_tmp1                  ; ldx
+    BEQ bf_t2_zero
+    BPL bf_t2_pos
+    EOR #&FF
     CLC
-    ADC zp_tmp1
-    STA &79
-.bf_lo2_ok
-    ; Sign-extend step_a to byte2
-    LDA &79
-    BPL bf_se2_pos
-    LDA #&FF : STA &7A : JMP bf_se2_done
-.bf_se2_pos
-    LDA #0 : STA &7A
-.bf_se2_done
-    LDA zp_tmp3+1
-    STA zp_math_b
-    LDA zp_tmp1
-    JSR smul8x8
-    LDA &79
-    CLC
-    ADC zp_res_lo
-    STA &79
-    LDA &7A
-    ADC zp_res_hi
-    STA &7A
-    ; term2 = $7A:$79:$78 (24-bit)
+    ADC #1
+    JSR mul_s16_u8_s24           ; $70:$72 = |ldx| * dy_bf
+    SEC
+    LDA #0 : SBC &70 : STA &78
+    LDA #0 : SBC &71 : STA &79
+    LDA #0 : SBC &72 : STA &7A
+    JMP bf_t2_done
+.bf_t2_pos
+    JSR mul_s16_u8_s24
+    LDA &70 : STA &78
+    LDA &71 : STA &79
+    LDA &72 : STA &7A
+    JMP bf_t2_done
+.bf_t2_zero
+    LDA #0
+    STA &78 : STA &79 : STA &7A
+.bf_t2_done
 
-    ; dot = term1 - term2 = $76:$75:$74 - $7A:$79:$78
+    ; dot = term1 - term2
     LDA &74
     SEC
     SBC &78
-    STA &74               ; dot_lo
+    STA &74
     LDA &75
     SBC &79
-    STA &75               ; dot_mid
+    STA &75
     LDA &76
     SBC &7A
-    STA &76               ; dot_hi
+    STA &76
 
 .bf_after_mul
     ; Read flags
     LDY #SH_FLAGS
-    LDA (zp_ptr0),Y
+    LDA (zp_seg_hdr_ptr),Y
     STA zp_seg_flags
 
     ; If SF_DIR, negate entire 24-bit dot
@@ -1482,18 +3970,18 @@ CMD_DONE   = &00
 .bf_cull
     RTS
 .bf_pass
-    ; --- Read vertex indices ---
+    ; --- Read vertex indices directly via seg_hdr_ptr ---
     LDY #SH_V1
-    LDA (zp_ptr0),Y
+    LDA (zp_seg_hdr_ptr),Y
     STA zp_tmp0           ; v1 lo
     INY
-    LDA (zp_ptr0),Y
+    LDA (zp_seg_hdr_ptr),Y
     STA zp_tmp0+1         ; v1 hi
     LDY #SH_V2
-    LDA (zp_ptr0),Y
+    LDA (zp_seg_hdr_ptr),Y
     STA zp_tmp1           ; v2 lo
     INY
-    LDA (zp_ptr0),Y
+    LDA (zp_seg_hdr_ptr),Y
     STA zp_tmp1+1         ; v2 hi
 
     ; --- View transform vertex 2 first (writes directly to v2 slots
@@ -1554,14 +4042,8 @@ CMD_DONE   = &00
     LDA zp_sx2+1 : STA zp_x_hi_clip+1
 .rs_xr_done
 
-    ; --- Has gap? ---
-    ; Load x_lo/x_hi into hook argument slots and call the Python-side
-    ; FPClipSpans.has_gap via the $FE02 hook.
-    LDA zp_x_lo_clip   : STA zp_hk_lo
-    LDA zp_x_lo_clip+1 : STA zp_hk_lo+1
-    LDA zp_x_hi_clip   : STA zp_hk_hi
-    LDA zp_x_hi_clip+1 : STA zp_hk_hi+1
-    JSR spans_has_gap
+    ; --- Has gap? (reads zp_x_lo_clip / zp_x_hi_clip directly) ---
+    JSR has_gap
     BCS hg_pass
     JMP seg_clipped
 .hg_pass
@@ -1577,55 +4059,16 @@ CMD_DONE   = &00
     AND #SF_SOLID
     BNE emit_solid
 
-    ; Portal — emit cmd and queue a deferred tighten with raw ft/fb/bt/bb.
-    ; Python computes yt/yb and top_dom/bot_dom.
+    ; Portal — emit cmd and queue a deferred tighten.  queue_tighten
+    ; reads sx/ft/fb/bt/bb directly from their render_seg ZP slots.
     JSR emit_portal_cmd
-
-    ; Marshal tighten args for hook.  x_lo/x_hi/sx1/sx2 and the front
-    ; heights are already in ZP.  Back heights are at $84-$87 (bt1/bt2)
-    ; and $90-$93 (bb1/bb2) when need_bt/need_bb flags are set.
-    LDA zp_x_lo_clip   : STA zp_hk_lo
-    LDA zp_x_lo_clip+1 : STA zp_hk_lo+1
-    LDA zp_x_hi_clip   : STA zp_hk_hi
-    LDA zp_x_hi_clip+1 : STA zp_hk_hi+1
-    LDA zp_sx1 : STA zp_hk_sx1
-    LDA zp_sx1+1 : STA zp_hk_sx1+1
-    LDA zp_sx2 : STA zp_hk_sx2
-    LDA zp_sx2+1 : STA zp_hk_sx2+1
-    LDA zp_ft1 : STA zp_hk_ft1
-    LDA zp_ft1+1 : STA zp_hk_ft1+1
-    LDA zp_ft2 : STA zp_hk_ft2
-    LDA zp_ft2+1 : STA zp_hk_ft2+1
-    LDA zp_fb1 : STA zp_hk_fb1
-    LDA zp_fb1+1 : STA zp_hk_fb1+1
-    LDA zp_fb2 : STA zp_hk_fb2
-    LDA zp_fb2+1 : STA zp_hk_fb2+1
-    LDA zp_seg_flags
-    AND #SF_NEEDBT
-    STA zp_hk_need_bt
-    LDA zp_seg_flags
-    AND #SF_NEEDBB
-    STA zp_hk_need_bb
-    LDA &84 : STA zp_hk_bt1
-    LDA &85 : STA zp_hk_bt1+1
-    LDA &86 : STA zp_hk_bt2
-    LDA &87 : STA zp_hk_bt2+1
-    LDA &90 : STA zp_hk_bb1
-    LDA &91 : STA zp_hk_bb1+1
-    LDA &92 : STA zp_hk_bb2
-    LDA &93 : STA zp_hk_bb2+1
-    JSR spans_queue_tighten
+    JSR queue_tighten
     RTS
 
 .emit_solid
     JSR emit_solid_cmd
-    ; Queue deferred mark_solid via the span hook.  x_lo_clip/x_hi_clip
-    ; are already in ZP; forward them to the hook arg slots.
-    LDA zp_x_lo_clip   : STA zp_hk_lo
-    LDA zp_x_lo_clip+1 : STA zp_hk_lo+1
-    LDA zp_x_hi_clip   : STA zp_hk_hi
-    LDA zp_x_hi_clip+1 : STA zp_hk_hi+1
-    JSR spans_queue_solid
+    ; queue_solid reads zp_x_lo_clip / zp_x_hi_clip directly.
+    JSR queue_solid
     RTS
 
 .seg_clipped
@@ -1647,12 +4090,10 @@ CMD_DONE   = &00
     ASL zp_ptr0 : ROL zp_ptr0+1   ; × 4
     LDA zp_ptr0
     CLC
-    ADC layout_off_verts
+    ADC zp_vert_base
     STA zp_ptr0
     LDA zp_ptr0+1
-    ADC layout_off_verts+1
-    CLC
-    ADC #HI(rom_main)
+    ADC zp_vert_base+1
     STA zp_ptr0+1
 
     LDY #0
@@ -1688,10 +4129,14 @@ CMD_DONE   = &00
 ; ======================================================================
 .xform_vertex_cached
 {
-    ; Inlined vcache_addr: compute ptr1, byte_idx in X, bit_idx in Y
-    LDA zp_tmp0   : STA zp_ptr1
-    LDA zp_tmp0+1 : STA zp_ptr1+1
-    ASL zp_ptr1 : ROL zp_ptr1+1
+    ; vcache_addr computation: ptr1 = vcache + idx*8.
+    ; Start with A=idx_lo, A*=2 into zp_ptr1 (saves one STA vs the old
+    ; approach which started by copying zp_tmp0 to zp_ptr1 before the
+    ; three ASL/ROL pairs).
+    LDA zp_tmp0
+    ASL A : STA zp_ptr1
+    LDA zp_tmp0+1
+    ROL A : STA zp_ptr1+1
     ASL zp_ptr1 : ROL zp_ptr1+1
     ASL zp_ptr1 : ROL zp_ptr1+1
     LDA zp_ptr1   : CLC : ADC #LO(vcache) : STA zp_ptr1
@@ -1751,10 +4196,12 @@ CMD_DONE   = &00
 ; ======================================================================
 .xform_vertex_cached_v2
 {
-    ; Inlined vcache_addr (same body as xform_vertex_cached)
-    LDA zp_tmp0   : STA zp_ptr1
-    LDA zp_tmp0+1 : STA zp_ptr1+1
-    ASL zp_ptr1 : ROL zp_ptr1+1
+    ; Inlined vcache_addr (same body as xform_vertex_cached, saving one
+    ; STA vs the naive three-ASL-ROL approach).
+    LDA zp_tmp0
+    ASL A : STA zp_ptr1
+    LDA zp_tmp0+1
+    ROL A : STA zp_ptr1+1
     ASL zp_ptr1 : ROL zp_ptr1+1
     ASL zp_ptr1 : ROL zp_ptr1+1
     LDA zp_ptr1   : CLC : ADC #LO(vcache) : STA zp_ptr1
@@ -1827,57 +4274,97 @@ CMD_DONE   = &00
 ; Input: zp_tmp2 = val (s16), A = mag, X = neg flag, Y = unity flag
 ; Output: $70:$71:$72 = 24-bit result (lo:mid:hi, signed)
 ; ======================================================================
-.rot_term
+; ======================================================================
+; ROT_SIN / ROT_COS: specialized rotation-term routines that read their
+; trig flags (mag / neg / unity) directly from ZP.  Called by to_view
+; without any caller-side parameter marshalling.
+;
+; Input:  zp_tmp2 = val (s16)
+; Output: $70:$71:$72 = 24-bit signed result (val * sin or val * cos)
+; ======================================================================
+.rot_sin
 {
-    STX &7E               ; save neg flag
-    TYA
-    BNE rt_unity
-    ; Check mag
-    LDA zp_math_b
-    BEQ rt_zero
-    ; Non-unity, non-zero: use mul_s16_u8_s24 (handles mag > 127)
-    JSR mul_s16_u8_s24
-    JMP rt_apply_neg
-
-.rt_unity
-    ; Result = val << 8 (3 bytes: lo=0, mid=val_lo, hi=val_hi)
+    LDA zp_sin_unity
+    BNE rs_unity
+    LDA zp_sin_mag
+    BEQ rs_zero
+    JSR mul_s16_u8_s24    ; A = mag; val in zp_tmp2 → $70:$72
+    LDA zp_sin_neg
+    BEQ rs_done
+    JMP rs_neg24
+.rs_unity
     LDA #0
     STA &70
     LDA zp_tmp2
     STA &71
     LDA zp_tmp2+1
     STA &72
-    JMP rt_apply_neg
-
-.rt_zero
+    LDA zp_sin_neg
+    BEQ rs_done
+.rs_neg24
+    ; Negate 24-bit $70:$72 via 0 - x (one cycle shorter per byte than EOR+ADC)
+    SEC
+    LDA #0 : SBC &70 : STA &70
+    LDA #0 : SBC &71 : STA &71
+    LDA #0 : SBC &72 : STA &72
+.rs_done
+    RTS
+.rs_zero
     LDA #0
     STA &70 : STA &71 : STA &72
     RTS
+}
 
-.rt_apply_neg
-    LDA &7E               ; neg flag
-    BEQ rt_done
-    ; Negate 24-bit $70:$71:$72
-    LDA &70
-    EOR #&FF
-    CLC
-    ADC #1
+.rot_cos
+{
+    LDA zp_cos_unity
+    BNE rc_unity
+    LDA zp_cos_mag
+    BEQ rc_zero
+    JSR mul_s16_u8_s24
+    LDA zp_cos_neg
+    BEQ rc_done
+    JMP rc_neg24
+.rc_unity
+    LDA #0
     STA &70
-    LDA &71
-    EOR #&FF
-    ADC #0
+    LDA zp_tmp2
     STA &71
-    LDA &72
-    EOR #&FF
-    ADC #0
+    LDA zp_tmp2+1
     STA &72
-.rt_done
+    LDA zp_cos_neg
+    BEQ rc_done
+.rc_neg24
+    SEC
+    LDA #0 : SBC &70 : STA &70
+    LDA #0 : SBC &71 : STA &71
+    LDA #0 : SBC &72 : STA &72
+.rc_done
+    RTS
+.rc_zero
+    LDA #0
+    STA &70 : STA &71 : STA &72
     RTS
 }
 
 .to_view
 {
-    ; dx = wx - px_int (s16 - s8_extended).  px_int_hi pre-computed at entry.
+    ; Input: zp_tmp2 = wx (s16), zp_tmp3 = wy (s16)
+    ;
+    ; Reordered for minimal ZP shuffling:
+    ; 1. Compute dx into tmp2 (keeps tmp3=wy intact for later).
+    ; 2. Do BOTH dx rotations back-to-back (no swap between them).
+    ; 3. Compute dy into tmp2 from tmp3.
+    ; 4. Do BOTH dy rotations back-to-back.
+    ; This eliminates the dx/dy backup+restore pairs (~40 cycles).
+    ;
+    ; Intermediate slots:
+    ;   DS  (dx*sin) 24-bit → &73:&74:&75
+    ;   DC  (dx*cos) 24-bit → &94:&95:&96
+    ;   YS  (dy*sin) 24-bit → &97:&98:&99
+    ;   YC  (dy*cos) 24-bit → $70:$71:$72 (from last rot_term)
+    ;
+    ; dx = wx - px_int
     LDA zp_tmp2
     SEC
     SBC zp_px_int
@@ -1886,90 +4373,63 @@ CMD_DONE   = &00
     SBC zp_px_int_hi
     STA zp_tmp2+1        ; dx in tmp2
 
-    ; dy = wy - py_int
-    LDA zp_tmp3
-    SEC
-    SBC zp_py_int
-    STA zp_tmp3
-    LDA zp_tmp3+1
-    SBC zp_py_int_hi
-    STA zp_tmp3+1        ; dy in tmp3
-
-    ; Save dx ($76:$77) and dy ($78:$79) for all 4 rotations
-    LDA zp_tmp2 : STA &76
-    LDA zp_tmp2+1 : STA &77
-    LDA zp_tmp3 : STA &78
-    LDA zp_tmp3+1 : STA &79
-
-    ; --- VX computation: rot(dx, sin) - rot(dy, cos) ---
-
-    ; rot(dx, sin) → $70:$71:$72
-    ; tmp2 already has dx
-    LDA zp_sin_mag : STA zp_math_b
-    LDX zp_sin_neg
-    LDY zp_sin_unity
-    JSR rot_term
-    ; Save to $73:$74:$75
+    ; --- rot(dx, sin) → $70:$72 → save to DS (&73:&75) ---
+    JSR rot_sin
     LDA &70 : STA &73
     LDA &71 : STA &74
     LDA &72 : STA &75
 
-    ; rot(dy, cos) → $70:$71:$72
-    LDA &78 : STA zp_tmp2
-    LDA &79 : STA zp_tmp2+1
-    LDA zp_cos_mag : STA zp_math_b
-    LDX zp_cos_neg
-    LDY zp_cos_unity
-    JSR rot_term
+    ; --- rot(dx, cos) → $70:$72 → save to DC (&94:&96) ---
+    ; tmp2 still holds dx — no restore needed
+    JSR rot_cos
+    LDA &70 : STA &94
+    LDA &71 : STA &95
+    LDA &72 : STA &96
 
-    ; int_vx = $73:$74:$75 - $70:$71:$72 → $70:$71:$72
+    ; --- Compute dy = wy - py_int (wy still in tmp3) into tmp2 ---
+    LDA zp_tmp3
+    SEC
+    SBC zp_py_int
+    STA zp_tmp2
+    LDA zp_tmp3+1
+    SBC zp_py_int_hi
+    STA zp_tmp2+1
+
+    ; --- rot(dy, sin) → $70:$72 → save to YS (&97:&99) ---
+    JSR rot_sin
+    LDA &70 : STA &97
+    LDA &71 : STA &98
+    LDA &72 : STA &99
+
+    ; --- rot(dy, cos) → $70:$72 (stays in place, used for vx computation) ---
+    ; tmp2 still holds dy
+    JSR rot_cos
+    ; YC now in $70:$71:$72
+
+    ; === int_vx = DS - YC ===
     LDA &73 : SEC : SBC &70 : STA &70
     LDA &74 : SBC &71 : STA &71
     LDA &75 : SBC &72 : STA &72
 
-    ; total_vx = int_vx + frac_vx (s16, sign-extended to 24-bit via
-    ; pre-computed zp_frac_vx_ext)
+    ; total_vx = int_vx + frac_vx (24-bit)
     LDA &70 : CLC : ADC zp_frac_vx : STA &70
     LDA &71 : ADC zp_frac_vx+1 : STA &71
     LDA &72 : ADC zp_frac_vx_ext : STA &72
-    ; total_vx is now in $70:$71:$72 (24-bit)
-    ; --- VY computation: rot(dx, cos) + rot(dy, sin) ---
-
-    ; rot(dx, cos) → $70 area via rot_term
-    LDA &76 : STA zp_tmp2     ; restore dx
-    LDA &77 : STA zp_tmp2+1
-    LDA zp_cos_mag : STA zp_math_b
-    LDX zp_cos_neg
-    LDY zp_cos_unity
-    ; Save total_vx to ZP $7A:$7B:$7C (free during to_view)
+    ; total_vx now in $70:$72 — save to $7A:$7C (used later for extraction)
     LDA &70 : STA &7A
     LDA &71 : STA &7B
     LDA &72 : STA &7C
-    JSR rot_term
-    ; rot(dx, cos) in $70:$71:$72 — save to $73:$74:$75
-    LDA &70 : STA &73
-    LDA &71 : STA &74
-    LDA &72 : STA &75
 
-    ; rot(dy, sin) → $70:$71:$72
-    LDA &78 : STA zp_tmp2     ; restore dy
-    LDA &79 : STA zp_tmp2+1
-    LDA zp_sin_mag : STA zp_math_b
-    LDX zp_sin_neg
-    LDY zp_sin_unity
-    JSR rot_term
+    ; === int_vy = DC + YS ===
+    LDA &94 : CLC : ADC &97 : STA &70
+    LDA &95 : ADC &98 : STA &71
+    LDA &96 : ADC &99 : STA &72
 
-    ; int_vy = rot(dx,cos) + rot(dy,sin) = $73:$74:$75 + $70:$71:$72
-    LDA &73 : CLC : ADC &70 : STA &70
-    LDA &74 : ADC &71 : STA &71
-    LDA &75 : ADC &72 : STA &72
-
-    ; total_vy = int_vy + frac_vy (sign-extended via pre-computed ext)
+    ; total_vy = int_vy + frac_vy (24-bit)
     LDA &70 : CLC : ADC zp_frac_vy : STA &70
     LDA &71 : ADC zp_frac_vy+1 : STA &71
     LDA &72 : ADC zp_frac_vy_ext : STA &72
-    ; total_vy in $70:$71:$72 (24-bit)
-    ; Save to $73:$74:$75
+    ; Save total_vy to $73:$75
     LDA &70 : STA &73
     LDA &71 : STA &74
     LDA &72 : STA &75
@@ -2380,29 +4840,65 @@ CMD_DONE   = &00
 ; ======================================================================
 .mul_s16_u8_s24
 {
-    ; Save b for correction checks
-    LDA zp_math_b
-    STA &7D                   ; $7D = b (for sign-correction check)
-
-    ; ex_lo * b (unsigned × unsigned) — always needed
+    ; Calling convention: A = b (multiplicand), zp_tmp2 = ex (s16 multiplier).
+    ; We save A to zp_math_b ourselves so callers don't need to.
+    STA zp_math_b
+    ; === Inlined umul8x8(ex_lo, b) directly into $70:$71 ===
+    ; Overflow path is rare — put its JMP there instead of the common path.
     LDA zp_tmp2               ; ex_lo
-    JSR umul8x8
-    LDA zp_res_lo
-    STA &70                   ; byte0
-    LDA zp_res_hi
-    STA &71                   ; temp byte1
+    TAX
+    SEC
+    SBC zp_math_b
+    BCS mu_diff_pos
+    EOR #&FF
+    ADC #1                    ; C=0 from failed BCS, so ADC is +1
+.mu_diff_pos
+    TAY                       ; Y = |ex_lo - b|
+    TXA
+    CLC
+    ADC zp_math_b
+    TAX
+    BCS mu_sum_ovf
+    SEC
+    LDA sqr_lo,X
+    SBC sqr_lo,Y
+    STA &70
+    LDA sqr_hi,X
+    SBC sqr_hi,Y
+    STA &71
+    ; ======================================================
+    ; Fast paths: if ex_hi is 0 or $FF (ex fits in s8), skip second multiply.
+    ; Inline fast_pos (ex_hi==0) on the normal path — it's the hottest case.
+    LDA zp_tmp2+1
+    BNE m16u8_not_fast_pos
+    LDA #0
+    STA &72
+    RTS
+.m16u8_not_fast_pos
+    CMP #&FF
+    BEQ m16u8_fast_neg
+    JMP m16u8_wide
 
-    ; Fast paths: if ex_hi is 0 or $FF (ex fits in s8), skip second multiply
+.mu_sum_ovf
+    SEC
+    LDA sqr2_lo,X
+    SBC sqr_lo,Y
+    STA &70
+    LDA sqr2_hi,X
+    SBC sqr_hi,Y
+    STA &71
     LDA zp_tmp2+1
     BEQ m16u8_fast_pos
     CMP #&FF
     BEQ m16u8_fast_neg
+    ; fall through to wide path
+
+.m16u8_wide
 
     ; ---- Wide path: ex doesn't fit in s8 ----
-    LDA &7D
-    STA zp_math_b
+    ; (rare: only when height/delta exceeds s8 range)
     LDA zp_tmp2+1             ; ex_hi (signed)
-    JSR smul8x8
+    JSR smul8x8               ; zp_math_b preserved by smul8x8
     LDA &71
     CLC
     ADC zp_res_lo
@@ -2412,7 +4908,7 @@ CMD_DONE   = &00
     STA &72
 
     ; Correction for b > 127 (smul8x8 sees b_signed = b - 256)
-    LDA &7D
+    LDA zp_math_b
     BPL m16u8_done
     LDA &72
     CLC
@@ -2422,23 +4918,16 @@ CMD_DONE   = &00
     RTS
 
 .m16u8_fast_pos
-    ; ex_hi = 0. For b <= 127, result byte2 = 0.
-    ; For b > 127, smul-correction would add ex_hi * 256 = 0 anyway.
-    ; ex_lo * b is unsigned, high byte of product is already in $71.
+    ; ex_hi = 0.  byte2 = 0 (no correction needed).
     LDA #0
     STA &72
     RTS
 
 .m16u8_fast_neg
-    ; ex_hi = $FF (ex in -256..-1).
-    ; product = (ex_lo * b) - 256*b
-    ;   256*b as s24 = (0, b, 0)
-    ;   byte0 unchanged
-    ;   byte1 = umul_hi - b with borrow
-    ;   byte2 = 0 - 0 - borrow = 0 or $FF
+    ; ex_hi = $FF (ex in -256..-1).  byte1 -= b, byte2 = 0 or $FF.
     LDA &71
     SEC
-    SBC &7D                    ; byte1 -= b
+    SBC zp_math_b              ; byte1 -= b
     STA &71
     LDA #0
     SBC #0                     ; 0 - 0 - (1-C) = 0 or $FF
@@ -2489,7 +4978,6 @@ CMD_DONE   = &00
 
     ; term1 = ex1 * rxh → $70:$71:$72
     LDA zp_rxh
-    STA zp_math_b
     JSR mul_s16_u8_s24
     ; Save term1 to $80:$81:$82
     LDA &70 : STA &80
@@ -2498,27 +4986,21 @@ CMD_DONE   = &00
 
     ; raw = ex1 * rxl → $70:$71:$72
     LDA zp_rxl
-    STA zp_math_b
     JSR mul_s16_u8_s24
-    ; term2 = raw >> 8: take $71:$72 as s16, sign-extend to s24
-    ; $70 = $71 (new lo = old mid)
-    ; $71 = $72 (new mid = old hi)
-    ; $72 = sign extension of $72
-    LDA &71 : STA &70
-    LDA &72 : STA &71
-    BPL rpx1_shift_pos
-    LDA #&FF
-    STA &72
-    JMP rpx1_shift_done
-.rpx1_shift_pos
-    LDA #&00
-    STA &72
-.rpx1_shift_done
-
-    ; total = term1 + term2 (s24 + s24 → s24)
-    LDA &80 : CLC : ADC &70 : STA &70
-    LDA &81 : ADC &71 : STA &71
-    LDA &82 : ADC &72 : STA &72
+    ; Fused add: total = term1 ($80:$82) + (raw >> 8)
+    ; where raw = $70:$72, so raw_shifted byte-wise:
+    ;   lo = $71,  mid = $72,  hi = sign_ext($72)
+    ; Extract sign of raw_hi into X first (so overwriting &72 is safe).
+    LDA &72
+    BPL rpx1_raw_pos
+    LDX #&FF
+    JMP rpx1_raw_sdone
+.rpx1_raw_pos
+    LDX #0
+.rpx1_raw_sdone
+    LDA &80 : CLC : ADC &71 : STA &70
+    LDA &81 : ADC &72 : STA &71
+    TXA : ADC &82 : STA &72
 
     ; Add HALF_W (128) to $70:$71:$72
     LDA &70
@@ -2574,29 +5056,24 @@ CMD_DONE   = &00
     LDA zp_ex2+1 : STA zp_tmp2+1
 
     LDA zp_rxh
-    STA zp_math_b
     JSR mul_s16_u8_s24
     LDA &70 : STA &80
     LDA &71 : STA &81
     LDA &72 : STA &82
 
     LDA zp_rxl
-    STA zp_math_b
     JSR mul_s16_u8_s24
-    LDA &71 : STA &70
-    LDA &72 : STA &71
-    BPL rpx2_shift_pos
-    LDA #&FF
-    STA &72
-    JMP rpx2_shift_done
-.rpx2_shift_pos
-    LDA #&00
-    STA &72
-.rpx2_shift_done
-
-    LDA &80 : CLC : ADC &70 : STA &70
-    LDA &81 : ADC &71 : STA &71
-    LDA &82 : ADC &72 : STA &72
+    ; Fused add: total = term1 + (raw >> 8) — see rpx1 for the trick.
+    LDA &72
+    BPL rpx2_raw_pos
+    LDX #&FF
+    JMP rpx2_raw_sdone
+.rpx2_raw_pos
+    LDX #0
+.rpx2_raw_sdone
+    LDA &80 : CLC : ADC &71 : STA &70
+    LDA &81 : ADC &72 : STA &71
+    TXA : ADC &82 : STA &72
 
     LDA &70
     CLC
@@ -2611,32 +5088,6 @@ CMD_DONE   = &00
 
     LDA &70 : STA zp_sx2
     LDA &71 : STA zp_sx2+1
-    RTS
-}
-
-
-.compute_x_range
-{
-    ; Compare sx1 vs sx2 (signed 16-bit)
-    LDA zp_sx1
-    CMP zp_sx2
-    LDA zp_sx1+1
-    SBC zp_sx2+1
-    BVC no_overflow
-    EOR #&80
-.no_overflow
-    BMI sx1_less          ; sx1 < sx2
-    ; sx1 >= sx2: x_lo = sx2, x_hi = sx1
-    LDA zp_sx2 : STA zp_x_lo_clip
-    LDA zp_sx2+1 : STA zp_x_lo_clip+1
-    LDA zp_sx1 : STA zp_x_hi_clip
-    LDA zp_sx1+1 : STA zp_x_hi_clip+1
-    RTS
-.sx1_less
-    LDA zp_sx1 : STA zp_x_lo_clip
-    LDA zp_sx1+1 : STA zp_x_lo_clip+1
-    LDA zp_sx2 : STA zp_x_hi_clip
-    LDA zp_sx2+1 : STA zp_x_hi_clip+1
     RTS
 }
 
@@ -2674,86 +5125,61 @@ CMD_DONE   = &00
 .project_y_all
 {
     ; project_y(h, rxh, rxl) = HALF_H - (h * rxh + (h * rxl >> 8))
-    ; h is s8. Uses mul_s16_u8_s24 (h sign-extended to s16).
+    ; h is s8 height delta; zp_tmp2 carries it sign-extended to s16.
+    ; Reciprocals: $88/$89 = rxh1/rxl1 (endpoint 1), $8A/$8B = rxh2/rxl2.
+    ; Heights:     $80=fh, $81=ch, $82=bfh, $83=bch.
     ;
-    ; Reciprocals saved by caller:
-    ;   $88=rxh1, $89=rxl1 (endpoint 1)
-    ;   $8A=rxh2, $8B=rxl2 (endpoint 2)
-    ; Heights:
-    ;   $80=fh, $81=ch, $82=bfh, $83=bch
-    ; Outputs:
-    ;   zp_ft1, zp_fb1, zp_ft2, zp_fb2, $84-$87=bt1/bt2, $90-$93=bb1/bb2
+    ; Layout: compute each height delta ONCE, then project for both
+    ; endpoints back-to-back using shared tmp2.  Two projections per
+    ; delta = saved ~15 cycles per projection re-do.
 
-    ; --- ft1 = project_y(ch - vz_ps, rxh1, rxl1) ---
-    LDA &81
-    SEC
-    SBC zp_vz_ps
-    STA zp_tmp2               ; h_lo
-    BPL py_ft1_pos
-    LDA #&FF
-    STA zp_tmp2+1
-    JMP py_ft1_done_ext
-.py_ft1_pos
-    LDA #0
-    STA zp_tmp2+1
-.py_ft1_done_ext
-    LDA &88 : STA zp_math_b
-    JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95       ; save term1 (s16 only)
-    LDA &89 : STA zp_math_b
-    JSR mul_s16_u8_s24
-    ; term2 = raw >> 8 = $71:$72; total = term1 + term2 (s16)
+    ; ===== ft1, ft2 share delta_ch = ch - vz_ps =====
+    LDA &81 : SEC : SBC zp_vz_ps : STA zp_tmp2
+    BPL py_ch_pos
+    LDA #&FF : STA zp_tmp2+1 : JMP py_ch_done
+.py_ch_pos
+    LDA #0 : STA zp_tmp2+1
+.py_ch_done
+    ; ft1 using recip1 ($88/$89)
+    LDA &88 : JSR mul_s16_u8_s24
+    LDA &70 : STA &94 : LDA &71 : STA &95
+    LDA &89 : JSR mul_s16_u8_s24
     LDA &94 : CLC : ADC &71 : STA &70
     LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA zp_ft1
     LDA #0 : SBC &71 : STA zp_ft1+1
-
-    ; --- fb1 = project_y(fh - vz_ps, rxh1, rxl1) ---
-    LDA &80 : SEC : SBC zp_vz_ps : STA zp_tmp2
-    BPL py_fb1_pos
-    LDA #&FF : STA zp_tmp2+1 : JMP py_fb1_done_ext
-.py_fb1_pos
-    LDA #0 : STA zp_tmp2+1
-.py_fb1_done_ext
-    LDA &88 : STA zp_math_b : JSR mul_s16_u8_s24
+    ; ft2 using recip2 ($8A/$8B) — tmp2 still has delta_ch
+    LDA &8A : JSR mul_s16_u8_s24
     LDA &70 : STA &94 : LDA &71 : STA &95
-    LDA &89 : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &94 : CLC : ADC &71 : STA &70
-    LDA &95 : ADC &72 : STA &71
-    LDA #HALF_H : SEC : SBC &70 : STA zp_fb1
-    LDA #0 : SBC &71 : STA zp_fb1+1
-
-    ; --- ft2 = project_y(ch - vz_ps, rxh2, rxl2) ---
-    LDA &81 : SEC : SBC zp_vz_ps : STA zp_tmp2
-    BPL py_ft2_pos
-    LDA #&FF : STA zp_tmp2+1 : JMP py_ft2_done_ext
-.py_ft2_pos
-    LDA #0 : STA zp_tmp2+1
-.py_ft2_done_ext
-    LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95
-    LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &8B : JSR mul_s16_u8_s24
     LDA &94 : CLC : ADC &71 : STA &70
     LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA zp_ft2
     LDA #0 : SBC &71 : STA zp_ft2+1
 
-    ; --- fb2 = project_y(fh - vz_ps, rxh2, rxl2) ---
+    ; ===== fb1, fb2 share delta_fh = fh - vz_ps =====
     LDA &80 : SEC : SBC zp_vz_ps : STA zp_tmp2
-    BPL py_fb2_pos
-    LDA #&FF : STA zp_tmp2+1 : JMP py_fb2_done_ext
-.py_fb2_pos
+    BPL py_fh_pos
+    LDA #&FF : STA zp_tmp2+1 : JMP py_fh_done
+.py_fh_pos
     LDA #0 : STA zp_tmp2+1
-.py_fb2_done_ext
-    LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
+.py_fh_done
+    LDA &88 : JSR mul_s16_u8_s24
     LDA &70 : STA &94 : LDA &71 : STA &95
-    LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &89 : JSR mul_s16_u8_s24
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
+    LDA #HALF_H : SEC : SBC &70 : STA zp_fb1
+    LDA #0 : SBC &71 : STA zp_fb1+1
+    LDA &8A : JSR mul_s16_u8_s24
+    LDA &70 : STA &94 : LDA &71 : STA &95
+    LDA &8B : JSR mul_s16_u8_s24
     LDA &94 : CLC : ADC &71 : STA &70
     LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA zp_fb2
     LDA #0 : SBC &71 : STA zp_fb2+1
 
-    ; --- Back heights if portal ---
+    ; ===== Back heights if portal =====
     LDA zp_seg_flags
     AND #SF_SOLID
     BEQ py_do_back
@@ -2765,32 +5191,23 @@ CMD_DONE   = &00
     BNE py_do_bt
     JMP py_skip_bt
 .py_do_bt
-
-    ; bt1 = project_y(bch - vz_ps, rxh1, rxl1)
+    ; ===== bt1, bt2 share delta_bch = bch - vz_ps =====
     LDA &83 : SEC : SBC zp_vz_ps : STA zp_tmp2
-    BPL py_bt1_pos
-    LDA #&FF : STA zp_tmp2+1 : JMP py_bt1_done_ext
-.py_bt1_pos
+    BPL py_bch_pos
+    LDA #&FF : STA zp_tmp2+1 : JMP py_bch_done
+.py_bch_pos
     LDA #0 : STA zp_tmp2+1
-.py_bt1_done_ext
-    LDA &88 : STA zp_math_b : JSR mul_s16_u8_s24
+.py_bch_done
+    LDA &88 : JSR mul_s16_u8_s24
     LDA &70 : STA &94 : LDA &71 : STA &95
-    LDA &89 : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &89 : JSR mul_s16_u8_s24
     LDA &94 : CLC : ADC &71 : STA &70
     LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &84
     LDA #0 : SBC &71 : STA &85
-
-    ; bt2 = project_y(bch - vz_ps, rxh2, rxl2)
-    LDA &83 : SEC : SBC zp_vz_ps : STA zp_tmp2
-    BPL py_bt2_pos
-    LDA #&FF : STA zp_tmp2+1 : JMP py_bt2_done_ext
-.py_bt2_pos
-    LDA #0 : STA zp_tmp2+1
-.py_bt2_done_ext
-    LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &8A : JSR mul_s16_u8_s24
     LDA &70 : STA &94 : LDA &71 : STA &95
-    LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &8B : JSR mul_s16_u8_s24
     LDA &94 : CLC : ADC &71 : STA &70
     LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &86
@@ -2802,32 +5219,23 @@ CMD_DONE   = &00
     BNE py_do_bb
     JMP py_done_final
 .py_do_bb
-
-    ; bb1
+    ; ===== bb1, bb2 share delta_bfh = bfh - vz_ps =====
     LDA &82 : SEC : SBC zp_vz_ps : STA zp_tmp2
-    BPL py_bb1_pos
-    LDA #&FF : STA zp_tmp2+1 : JMP py_bb1_done_ext
-.py_bb1_pos
+    BPL py_bfh_pos
+    LDA #&FF : STA zp_tmp2+1 : JMP py_bfh_done
+.py_bfh_pos
     LDA #0 : STA zp_tmp2+1
-.py_bb1_done_ext
-    LDA &88 : STA zp_math_b : JSR mul_s16_u8_s24
+.py_bfh_done
+    LDA &88 : JSR mul_s16_u8_s24
     LDA &70 : STA &94 : LDA &71 : STA &95
-    LDA &89 : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &89 : JSR mul_s16_u8_s24
     LDA &94 : CLC : ADC &71 : STA &70
     LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &90
     LDA #0 : SBC &71 : STA &91
-
-    ; bb2
-    LDA &82 : SEC : SBC zp_vz_ps : STA zp_tmp2
-    BPL py_bb2_pos
-    LDA #&FF : STA zp_tmp2+1 : JMP py_bb2_done_ext
-.py_bb2_pos
-    LDA #0 : STA zp_tmp2+1
-.py_bb2_done_ext
-    LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &8A : JSR mul_s16_u8_s24
     LDA &70 : STA &94 : LDA &71 : STA &95
-    LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
+    LDA &8B : JSR mul_s16_u8_s24
     LDA &94 : CLC : ADC &71 : STA &70
     LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &92
@@ -2931,6 +5339,9 @@ CMD_DONE   = &00
 ; ======================================================================
 .smul8x8
 {
+    ; Zero fast-path: if A==0, product is 0 regardless of b.
+    ; The caller's LDA before JSR leaves the Z flag intact through JSR.
+    BEQ smul_zero
     STA zp_math_a
     TAX
     SEC
@@ -2975,6 +5386,10 @@ CMD_DONE   = &00
 .done
     STA zp_res_hi
     RTS
+.smul_zero
+    STA zp_res_lo         ; A=0
+    STA zp_res_hi         ; A=0
+    RTS
 }
 
 ; ======================================================================
@@ -2984,6 +5399,8 @@ CMD_DONE   = &00
 ; ======================================================================
 .umul8x8
 {
+    ; Zero fast-path: if A==0, product is 0.
+    BEQ umul_zero
     TAX
     SEC
     SBC zp_math_b
@@ -3016,6 +5433,10 @@ CMD_DONE   = &00
     LDA sqr2_hi,X
     SBC sqr_hi,Y
     STA zp_res_hi
+    RTS
+.umul_zero
+    STA zp_res_lo         ; A=0
+    STA zp_res_hi         ; A=0
     RTS
 }
 

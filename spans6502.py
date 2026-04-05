@@ -41,14 +41,29 @@ from wad_packed import (SPAN_HDR, SPAN_SIZE, MAX_SPANS, SPAN_TOTAL,
 # Hook addresses (in unused high memory — never executed as real 6502 code)
 HOOK_BASE           = 0xFE00
 HK_INIT             = 0xFE00  # spans_init
-HK_HAS_GAP          = 0xFE02  # spans_has_gap
-HK_IS_FULL          = 0xFE04  # spans_is_full
-HK_QUEUE_SOLID      = 0xFE06  # queue a deferred mark_solid
-HK_QUEUE_TIGHTEN    = 0xFE08  # queue a deferred tighten (9 args)
 HK_FLUSH            = 0xFE0A  # flush deferred queue into span state
 HK_BBOX_CULL        = 0xFE0C  # project node bbox and test has_gap
 HK_ENTER_SS         = 0xFE0E  # diagnostic: note which subsector we entered
-HK_POINT_ON_SIDE    = 0xFE10  # point_on_side using raw (non-prescaled) node data
+
+# 6502-side deferred span-op queue (populated natively by queue_solid /
+# queue_tighten in doom_fe.asm).  The Python flush hook reads entries
+# from this queue and applies them to the span state.
+QUEUE_COUNT_ADDR = 0x1E82
+QUEUE_BASE       = 0x1E90
+QE_SIZE          = 20
+QE_TYPE          = 0
+QE_TOP_DOM       = 1
+QE_BOT_DOM       = 2
+QE_LO            = 4
+QE_HI            = 6
+QE_SX1           = 8
+QE_SX2           = 10
+QE_YT1           = 12
+QE_YT2           = 14
+QE_YB1           = 16
+QE_YB2           = 18
+QET_SOLID        = 0
+QET_TIGHTEN      = 1
 
 # Span state lives in 6502 RAM at this address.  Choose a region that
 # doesn't collide with existing allocations: cmd_buffer ($0300..$0EFF),
@@ -102,7 +117,6 @@ class SpanState:
 
     def __init__(self, mem):
         self.mem = mem  # reference to mpu.memory (bytearray-like)
-        self.deferred = []  # list of deferred ops
         self._clips = None  # lazily constructed FPClipSpans view
 
     def _get_clips(self):
@@ -120,91 +134,12 @@ class SpanState:
     # ── Hook handlers ──────────────────────────────────────────────────
 
     def init(self, mpu):
-        """spans_init: reset span array to one full-screen span + clear deferred."""
+        """spans_init: reset span array to one full-screen span.
+        The 6502-side queue is cleared by the asm entry point."""
         from fp import FP_RENDER_W, FP_RENDER_H
         spans_init_full(self.mem, SPANS_BASE, FP_RENDER_W, FP_RENDER_H - 1)
         # xhi=FP_RENDER_W=256 stored as 0 (wrap)
         self.mem[SPANS_BASE + SPAN_HDR + 1] = FP_RENDER_W & 0xFF
-        self.deferred.clear()
-
-    def has_gap(self, mpu):
-        """spans_has_gap: read lo/hi from $A0/$A2, set carry iff gap."""
-        lo = _rs16(self.mem, ZP_LO)
-        hi = _rs16(self.mem, ZP_HI)
-        clips = self._get_clips()
-        _set_carry(mpu, clips.has_gap(lo, hi))
-
-    def is_full(self, mpu):
-        """spans_is_full: set carry iff no spans remain (fully occluded)."""
-        clips = self._get_clips()
-        _set_carry(mpu, clips.is_full())
-
-    def queue_solid(self, mpu):
-        """Queue a deferred mark_solid. Args: $A0=lo, $A2=hi."""
-        lo = _rs16(self.mem, ZP_LO)
-        hi = _rs16(self.mem, ZP_HI)
-        self.deferred.append(('solid', lo, hi))
-
-    def queue_tighten(self, mpu):
-        """Queue a deferred tighten.  Compute yt/yb from raw ft/fb/bt/bb
-        here so the 6502 side only has to marshal the raw values."""
-        lo = _rs16(self.mem, ZP_LO)
-        hi = _rs16(self.mem, ZP_HI)
-        sx1 = _rs16(self.mem, ZP_SX1)
-        sx2 = _rs16(self.mem, ZP_SX2)
-        ft1 = _rs16(self.mem, ZP_FT1)
-        ft2 = _rs16(self.mem, ZP_FT2)
-        fb1 = _rs16(self.mem, ZP_FB1)
-        fb2 = _rs16(self.mem, ZP_FB2)
-        need_bt = bool(self.mem[ZP_NEED_BT])
-        need_bb = bool(self.mem[ZP_NEED_BB])
-        bt1 = _rs16(self.mem, ZP_BT1)
-        bt2 = _rs16(self.mem, ZP_BT2)
-        bb1 = _rs16(self.mem, ZP_BB1)
-        bb2 = _rs16(self.mem, ZP_BB2)
-
-        # Mirror Python FP's tighten-arg derivation:
-        #   tt1 = bt1 if need_bt else ft1;  yt1 = max(ft1, tt1)
-        #   tb1 = bb1 if need_bb else fb1;  yb1 = min(fb1, tb1)
-        tt1 = bt1 if need_bt else ft1
-        tt2 = bt2 if need_bt else ft2
-        tb1 = bb1 if need_bb else fb1
-        tb2 = bb2 if need_bb else fb2
-        yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
-        yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
-
-        # line_survives has to be evaluated on the CURRENT state (before
-        # the tighten itself is applied) to match Python FP exactly.
-        clips = self._get_clips()
-        top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
-        bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
-
-        self.deferred.append(
-            ('tighten', lo, hi, sx1, sx2, yt1, yt2, yb1, yb2, top_dom, bot_dom))
-
-    def point_on_side(self, mpu):
-        """spans_point_on_side: compute side using Python's raw-coord
-        implementation. Reads nid from $A0-$A1, player ZP state from
-        $10-$15.  Returns side (0 or 1) in carry flag:
-        carry clear = side 0, carry set = side 1.
-        """
-        from doom_wireframe import nodes, point_on_side
-        from fp import PRESCALE, MAP_CENTER_X, MAP_CENTER_Y
-        nid = self.mem[ZP_LO] | (self.mem[ZP_LO + 1] << 8)
-        # Reconstruct wx_full, wy_full from prescaled ZP state
-        px_int = self.mem[0x10]
-        if px_int >= 128: px_int -= 256
-        py_int = self.mem[0x11]
-        if py_int >= 128: py_int -= 256
-        px_88 = (px_int << 8) | self.mem[0x12]
-        if px_88 >= 32768: px_88 -= 65536
-        py_88 = (py_int << 8) | self.mem[0x13]
-        if py_88 >= 32768: py_88 -= 65536
-        wx_full = (px_88 * PRESCALE) // 256 + MAP_CENTER_X
-        wy_full = (py_88 * PRESCALE) // 256 + MAP_CENTER_Y
-        node = nodes[nid]
-        side = point_on_side(wx_full, wy_full, node)
-        _set_carry(mpu, side)  # carry = 1 if side = 1
 
     def enter_ss(self, mpu):
         """Diagnostic hook: note which subsector is being entered.
@@ -257,20 +192,38 @@ class SpanState:
         _set_carry(mpu, clips.has_gap(br[0], br[1]))
 
     def flush(self, mpu):
-        """Apply all queued operations to the span state, in order."""
-        if not self.deferred:
+        """Apply the 6502-side deferred queue (populated by native
+        queue_solid / queue_tighten) to the span state, in order.
+        Also clears the queue count and resets the tail pointer."""
+        count = self.mem[QUEUE_COUNT_ADDR]
+        if count == 0:
             return
         clips = self._get_clips()
-        for op in self.deferred:
-            if op[0] == 'solid':
-                clips.mark_solid(op[1], op[2])
+        for i in range(count):
+            eb = QUEUE_BASE + i * QE_SIZE
+            qtype = self.mem[eb + QE_TYPE]
+            lo = _rs16(self.mem, eb + QE_LO)
+            hi = _rs16(self.mem, eb + QE_HI)
+            if qtype == QET_SOLID:
+                clips.mark_solid(lo, hi)
             else:
-                # tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2, top_dom, bot_dom)
-                clips.tighten(*op[1:])
+                sx1 = _rs16(self.mem, eb + QE_SX1)
+                sx2 = _rs16(self.mem, eb + QE_SX2)
+                yt1 = _rs16(self.mem, eb + QE_YT1)
+                yt2 = _rs16(self.mem, eb + QE_YT2)
+                yb1 = _rs16(self.mem, eb + QE_YB1)
+                yb2 = _rs16(self.mem, eb + QE_YB2)
+                top_dom = bool(self.mem[eb + QE_TOP_DOM])
+                bot_dom = bool(self.mem[eb + QE_BOT_DOM])
+                clips.tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                              top_dom, bot_dom)
             if clips.is_full():
                 break
-        self.deferred.clear()
         self._flush_clips(clips)
+        # Reset the 6502-side queue
+        self.mem[QUEUE_COUNT_ADDR] = 0
+        self.mem[0xD1] = QUEUE_BASE & 0xFF
+        self.mem[0xD2] = (QUEUE_BASE >> 8) & 0xFF
 
 
 def install_hooks(mpu, mem):
@@ -278,13 +231,8 @@ def install_hooks(mpu, mem):
     state = SpanState(mem)
     table = {
         HK_INIT:          state.init,
-        HK_HAS_GAP:       state.has_gap,
-        HK_IS_FULL:       state.is_full,
-        HK_QUEUE_SOLID:   state.queue_solid,
-        HK_QUEUE_TIGHTEN: state.queue_tighten,
         HK_FLUSH:         state.flush,
         HK_BBOX_CULL:     state.bbox_cull,
         HK_ENTER_SS:      state.enter_ss,
-        HK_POINT_ON_SIDE: state.point_on_side,
     }
     return state, table

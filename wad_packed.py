@@ -87,12 +87,25 @@ SPAN_SIZE = 16      # shift 4
 SPAN_HDR = 2        # count + pad
 SPAN_TOTAL = SPAN_HDR + MAX_SPANS * SPAN_SIZE  # 514 bytes
 
-# Span field offsets
-SP_XLO = 0; SP_XHI = 1
-SP_TSLOPE = 2; SP_BSLOPE = 3
-SP_TINTERCEPT = 4; SP_BINTERCEPT = 6
-SP_INNER_TOP = 8; SP_INNER_BOT = 10
-SP_OUTER_TOP = 12; SP_OUTER_BOT = 14
+# Span field offsets.
+#
+# Slopes are stored as s16 (not s8) because fp_linfn can legitimately
+# produce slopes outside s8 range (seen up to ±358 in E1M1 traversal).
+# Truncating to s8 would cause bit-exactness drift.
+#
+# The outer_top/outer_bot bbox fields are NOT stored in RAM anymore —
+# they're only used by Python's draw_clipped path and can be derived
+# cheaply from tfn/bfn/xlo/xhi via 4 fp_evals.  Dropping them frees
+# 4 bytes per span, which pays for the wider slope fields.
+SP_XLO        = 0    # u8
+SP_XHI        = 1    # u8 (0 = 256)
+SP_TSLOPE     = 2    # s16
+SP_BSLOPE     = 4    # s16
+SP_TINTERCEPT = 6    # s16
+SP_BINTERCEPT = 8    # s16
+SP_INNER_TOP  = 10   # s16
+SP_INNER_BOT  = 12   # s16
+# +14..15 reserved for future use
 
 
 def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
@@ -147,14 +160,22 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     for i, v in enumerate(fp_vertexes):
         struct.pack_into('<hh', rom_main, off_verts + i * VERTEX_SIZE, v[0], v[1])
 
-    # BSP nodes (prescaled partition)
+    # BSP nodes — point_on_side uses raw s16 values so the prescale rounding
+    # doesn't lose a weak axis (nodes where, e.g., raw dx=0 dy=8 would
+    # otherwise both truncate to 0).  nx/ny are stored relative to
+    # map_center so they stay in s16 range.
     for i, n in enumerate(nodes):
         o = off_nodes + i * NODE_SIZE
-        px = (n[0] - map_center_x) // prescale
-        py = (n[1] - map_center_y) // prescale
-        pdx = n[2] // prescale
-        pdy = n[3] // prescale
-        struct.pack_into('<hhhhHH', rom_main, o, px, py, pdx, pdy, n[12], n[13])
+        raw_nx = n[0] - map_center_x
+        raw_ny = n[1] - map_center_y
+        raw_dx = n[2]
+        raw_dy = n[3]
+        assert -32768 <= raw_nx <= 32767 and -32768 <= raw_ny <= 32767, \
+            f"node {i} nx/ny out of s16 range"
+        assert -32768 <= raw_dx <= 32767 and -32768 <= raw_dy <= 32767, \
+            f"node {i} dx/dy out of s16 range"
+        struct.pack_into('<hhhhHH', rom_main, o, raw_nx, raw_ny, raw_dx, raw_dy,
+                         n[12], n[13])
 
     # Subsectors
     for i, ss in enumerate(fp_ssectors):
@@ -299,14 +320,12 @@ def spans_init(ram, base):
     o = base + SPAN_HDR
     ram[o + SP_XLO] = 0
     ram[o + SP_XHI] = 255  # FP_RENDER_W - 1... will be overwritten by caller
-    ram[o + SP_TSLOPE] = 0
-    ram[o + SP_BSLOPE] = 0
+    write_s16(ram, o + SP_TSLOPE, 0)
+    write_s16(ram, o + SP_BSLOPE, 0)
     write_s16(ram, o + SP_TINTERCEPT, 0)
     write_s16(ram, o + SP_BINTERCEPT, 159)
     write_s16(ram, o + SP_INNER_TOP, 0)
     write_s16(ram, o + SP_INNER_BOT, 159)
-    write_s16(ram, o + SP_OUTER_TOP, 0)
-    write_s16(ram, o + SP_OUTER_BOT, 159)
 
 def spans_init_full(ram, base, xhi, bot):
     """Initialise span array: one span [0, xhi) top=0, bot=bot."""
@@ -314,13 +333,12 @@ def spans_init_full(ram, base, xhi, bot):
     o = base + SPAN_HDR
     ram[o + SP_XLO] = 0
     ram[o + SP_XHI] = xhi & 0xFF
-    ram[o + SP_TSLOPE] = 0; ram[o + SP_BSLOPE] = 0
+    write_s16(ram, o + SP_TSLOPE, 0)
+    write_s16(ram, o + SP_BSLOPE, 0)
     write_s16(ram, o + SP_TINTERCEPT, 0)
     write_s16(ram, o + SP_BINTERCEPT, bot)
     write_s16(ram, o + SP_INNER_TOP, 0)
     write_s16(ram, o + SP_INNER_BOT, bot)
-    write_s16(ram, o + SP_OUTER_TOP, 0)
-    write_s16(ram, o + SP_OUTER_BOT, bot)
 
 def spans_count(ram, base):
     return ram[base]
@@ -331,33 +349,47 @@ def span_offset(base, i):
 
 def read_span_tuple(ram, base, i):
     """Read span i as a Python tuple (for compatibility with FPClipSpans code).
-    xhi=0 in u8 means 256 (wrap convention for half-open [xlo, 256))."""
+    xhi=0 in u8 means 256 (wrap convention for half-open [xlo, 256)).
+
+    outer_top/outer_bot are NOT stored in RAM — they're recomputed from
+    tfn/bfn/xlo/xhi via fp_eval (4 multiplies per read).  Only Python's
+    draw_clipped path needs them; the 6502 visibility path doesn't.
+    """
+    from fp import fp_eval
     o = span_offset(base, i)
     xlo = ram[o + SP_XLO]
     xhi = ram[o + SP_XHI]
     if xhi == 0:
-        xhi = 256  # wrap: u8 can't store 256, 0 means full-width
-    tfn = (read_s8(ram, o + SP_TSLOPE), read_s16(ram, o + SP_TINTERCEPT))
-    bfn = (read_s8(ram, o + SP_BSLOPE), read_s16(ram, o + SP_BINTERCEPT))
+        xhi = 256
+    tfn = (read_s16(ram, o + SP_TSLOPE), read_s16(ram, o + SP_TINTERCEPT))
+    bfn = (read_s16(ram, o + SP_BSLOPE), read_s16(ram, o + SP_BINTERCEPT))
     inner_top = read_s16(ram, o + SP_INNER_TOP)
     inner_bot = read_s16(ram, o + SP_INNER_BOT)
-    outer_top = read_s16(ram, o + SP_OUTER_TOP)
-    outer_bot = read_s16(ram, o + SP_OUTER_BOT)
+    # Recompute outer_top / outer_bot on the fly
+    top_l = fp_eval(tfn, xlo)
+    top_r = fp_eval(tfn, xhi - 1)
+    bot_l = fp_eval(bfn, xlo)
+    bot_r = fp_eval(bfn, xhi - 1)
+    outer_top = min(top_l, top_r)
+    outer_bot = max(bot_l, bot_r)
     return (xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot)
 
 def write_span(ram, base, i, xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot):
-    """Write span i from components."""
+    """Write span i from components.  outer_top/outer_bot are ignored
+    (derivable from tfn/bfn/xlo/xhi).  Bytes 14/15 of the slot are
+    zeroed so Python and 6502 native flush produce bit-identical RAM
+    contents (the 6502 ms_copy_back copies full 16-byte spans)."""
     o = span_offset(base, i)
     ram[o + SP_XLO] = xlo & 0xFF
     ram[o + SP_XHI] = xhi & 0xFF
-    ram[o + SP_TSLOPE] = tfn[0] & 0xFF
-    ram[o + SP_BSLOPE] = bfn[0] & 0xFF
+    write_s16(ram, o + SP_TSLOPE, tfn[0])
+    write_s16(ram, o + SP_BSLOPE, bfn[0])
     write_s16(ram, o + SP_TINTERCEPT, tfn[1])
     write_s16(ram, o + SP_BINTERCEPT, bfn[1])
     write_s16(ram, o + SP_INNER_TOP, inner_top)
     write_s16(ram, o + SP_INNER_BOT, inner_bot)
-    write_s16(ram, o + SP_OUTER_TOP, outer_top)
-    write_s16(ram, o + SP_OUTER_BOT, outer_bot)
+    ram[o + 14] = 0
+    ram[o + 15] = 0
 
 def write_span_from_tuple(ram, base, i, s):
     """Write span i from an 8-tuple (as returned by read_span_tuple)."""
