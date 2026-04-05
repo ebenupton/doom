@@ -2816,21 +2816,12 @@ CMD_DONE   = &00
 .py_ft1_done_ext
     LDA &88 : STA zp_math_b
     JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95       ; save term1 (s16 only)
     LDA &89 : STA zp_math_b
     JSR mul_s16_u8_s24
-    ; term2 = (raw >> 8)
-    LDA &71 : STA &70
-    LDA &72 : STA &71
-    BPL py_ft1_shp
-    LDA #&FF : STA &72 : JMP py_ft1_shd
-.py_ft1_shp
-    LDA #0 : STA &72
-.py_ft1_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
-    ; HALF_H - total (s24 subtract)
+    ; term2 = raw >> 8 = $71:$72; total = term1 + term2 (s16)
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA zp_ft1
     LDA #0 : SBC &71 : STA zp_ft1+1
 
@@ -2842,17 +2833,10 @@ CMD_DONE   = &00
     LDA #0 : STA zp_tmp2+1
 .py_fb1_done_ext
     LDA &88 : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95
     LDA &89 : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &71 : STA &70 : LDA &72 : STA &71
-    BPL py_fb1_shp
-    LDA #&FF : STA &72 : JMP py_fb1_shd
-.py_fb1_shp
-    LDA #0 : STA &72
-.py_fb1_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA zp_fb1
     LDA #0 : SBC &71 : STA zp_fb1+1
 
@@ -2864,17 +2848,10 @@ CMD_DONE   = &00
     LDA #0 : STA zp_tmp2+1
 .py_ft2_done_ext
     LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95
     LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &71 : STA &70 : LDA &72 : STA &71
-    BPL py_ft2_shp
-    LDA #&FF : STA &72 : JMP py_ft2_shd
-.py_ft2_shp
-    LDA #0 : STA &72
-.py_ft2_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA zp_ft2
     LDA #0 : SBC &71 : STA zp_ft2+1
 
@@ -2886,17 +2863,10 @@ CMD_DONE   = &00
     LDA #0 : STA zp_tmp2+1
 .py_fb2_done_ext
     LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95
     LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &71 : STA &70 : LDA &72 : STA &71
-    BPL py_fb2_shp
-    LDA #&FF : STA &72 : JMP py_fb2_shd
-.py_fb2_shp
-    LDA #0 : STA &72
-.py_fb2_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA zp_fb2
     LDA #0 : SBC &71 : STA zp_fb2+1
 
@@ -2921,17 +2891,10 @@ CMD_DONE   = &00
     LDA #0 : STA zp_tmp2+1
 .py_bt1_done_ext
     LDA &88 : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95
     LDA &89 : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &71 : STA &70 : LDA &72 : STA &71
-    BPL py_bt1_shp
-    LDA #&FF : STA &72 : JMP py_bt1_shd
-.py_bt1_shp
-    LDA #0 : STA &72
-.py_bt1_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &84
     LDA #0 : SBC &71 : STA &85
 
@@ -2943,17 +2906,10 @@ CMD_DONE   = &00
     LDA #0 : STA zp_tmp2+1
 .py_bt2_done_ext
     LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95
     LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &71 : STA &70 : LDA &72 : STA &71
-    BPL py_bt2_shp
-    LDA #&FF : STA &72 : JMP py_bt2_shd
-.py_bt2_shp
-    LDA #0 : STA &72
-.py_bt2_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &86
     LDA #0 : SBC &71 : STA &87
 
@@ -2972,17 +2928,10 @@ CMD_DONE   = &00
     LDA #0 : STA zp_tmp2+1
 .py_bb1_done_ext
     LDA &88 : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95
     LDA &89 : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &71 : STA &70 : LDA &72 : STA &71
-    BPL py_bb1_shp
-    LDA #&FF : STA &72 : JMP py_bb1_shd
-.py_bb1_shp
-    LDA #0 : STA &72
-.py_bb1_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &90
     LDA #0 : SBC &71 : STA &91
 
@@ -2994,17 +2943,10 @@ CMD_DONE   = &00
     LDA #0 : STA zp_tmp2+1
 .py_bb2_done_ext
     LDA &8A : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &70 : STA &94 : LDA &71 : STA &95 : LDA &72 : STA &96
+    LDA &70 : STA &94 : LDA &71 : STA &95
     LDA &8B : STA zp_math_b : JSR mul_s16_u8_s24
-    LDA &71 : STA &70 : LDA &72 : STA &71
-    BPL py_bb2_shp
-    LDA #&FF : STA &72 : JMP py_bb2_shd
-.py_bb2_shp
-    LDA #0 : STA &72
-.py_bb2_shd
-    LDA &94 : CLC : ADC &70 : STA &70
-    LDA &95 : ADC &71 : STA &71
-    LDA &96 : ADC &72 : STA &72
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
     LDA #HALF_H : SEC : SBC &70 : STA &92
     LDA #0 : SBC &71 : STA &93
 
