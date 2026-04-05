@@ -209,10 +209,16 @@ class Frontend6502:
         self._span_state, self._span_hooks = install_hooks(self.mpu, mem)
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0,
-                     map_center_x=1200, map_center_y=-3250, prescale=8,
+                     map_center_x=1200, map_center_y=-3250, prescale=None,
                      aspect_num=6, aspect_den=5):
         """Run one frame of the front-end and return (commands, cycles)."""
         mem = self.mpu.memory
+
+        # The current prescale must match whatever the ROM was packed with,
+        # which in turn is driven by fp.PRESCALE.
+        if prescale is None:
+            import fp
+            prescale = fp.PRESCALE
 
         # Set player state
         px_88 = int((player_x - map_center_x) * 256 / prescale)
@@ -314,7 +320,7 @@ class Frontend6502:
         Frontend6502._label_pairs = pairs
 
     def profile_frame(self, player_x, player_y, angle_byte, floor_z=0,
-                      map_center_x=1200, map_center_y=-3250, prescale=8,
+                      map_center_x=1200, map_center_y=-3250, prescale=None,
                       aspect_num=6, aspect_den=5):
         """Run one frame with per-function cycle profiling.
 
@@ -324,6 +330,10 @@ class Frontend6502:
         self._ensure_profile_map()
         pc_map = Frontend6502._pc_map
         mem = self.mpu.memory
+
+        if prescale is None:
+            import fp
+            prescale = fp.PRESCALE
 
         # Set player state (same as render_frame)
         px_88 = int((player_x - map_center_x) * 256 / prescale)

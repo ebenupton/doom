@@ -47,6 +47,8 @@ HK_QUEUE_SOLID      = 0xFE06  # queue a deferred mark_solid
 HK_QUEUE_TIGHTEN    = 0xFE08  # queue a deferred tighten (9 args)
 HK_FLUSH            = 0xFE0A  # flush deferred queue into span state
 HK_BBOX_CULL        = 0xFE0C  # project node bbox and test has_gap
+HK_ENTER_SS         = 0xFE0E  # diagnostic: note which subsector we entered
+HK_POINT_ON_SIDE    = 0xFE10  # point_on_side using raw (non-prescaled) node data
 
 # Span state lives in 6502 RAM at this address.  Choose a region that
 # doesn't collide with existing allocations: cmd_buffer ($0300..$0EFF),
@@ -180,6 +182,39 @@ class SpanState:
         self.deferred.append(
             ('tighten', lo, hi, sx1, sx2, yt1, yt2, yb1, yb2, top_dom, bot_dom))
 
+    def point_on_side(self, mpu):
+        """spans_point_on_side: compute side using Python's raw-coord
+        implementation. Reads nid from $A0-$A1, player ZP state from
+        $10-$15.  Returns side (0 or 1) in carry flag:
+        carry clear = side 0, carry set = side 1.
+        """
+        from doom_wireframe import nodes, point_on_side
+        from fp import PRESCALE, MAP_CENTER_X, MAP_CENTER_Y
+        nid = self.mem[ZP_LO] | (self.mem[ZP_LO + 1] << 8)
+        # Reconstruct wx_full, wy_full from prescaled ZP state
+        px_int = self.mem[0x10]
+        if px_int >= 128: px_int -= 256
+        py_int = self.mem[0x11]
+        if py_int >= 128: py_int -= 256
+        px_88 = (px_int << 8) | self.mem[0x12]
+        if px_88 >= 32768: px_88 -= 65536
+        py_88 = (py_int << 8) | self.mem[0x13]
+        if py_88 >= 32768: py_88 -= 65536
+        wx_full = (px_88 * PRESCALE) // 256 + MAP_CENTER_X
+        wy_full = (py_88 * PRESCALE) // 256 + MAP_CENTER_Y
+        node = nodes[nid]
+        side = point_on_side(wx_full, wy_full, node)
+        _set_carry(mpu, side)  # carry = 1 if side = 1
+
+    def enter_ss(self, mpu):
+        """Diagnostic hook: note which subsector is being entered.
+        Arg: $A0-$A1 = ssid (u16)."""
+        ssid = self.mem[ZP_LO] | (self.mem[ZP_LO + 1] << 8)
+        # Append to a history list for diagnostic scripts to inspect.
+        if not hasattr(self, 'ss_history'):
+            self.ss_history = []
+        self.ss_history.append(ssid)
+
     def bbox_cull(self, mpu):
         """spans_bbox_cull: project a node's far-side bbox and test has_gap.
         Input: $A0 = node index (u16), $A2 = far_side (u8 0/1).
@@ -249,5 +284,7 @@ def install_hooks(mpu, mem):
         HK_QUEUE_TIGHTEN: state.queue_tighten,
         HK_FLUSH:         state.flush,
         HK_BBOX_CULL:     state.bbox_cull,
+        HK_ENTER_SS:      state.enter_ss,
+        HK_POINT_ON_SIDE: state.point_on_side,
     }
     return state, table

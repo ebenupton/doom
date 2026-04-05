@@ -179,6 +179,11 @@ spans_flush        = &FE0A  ; apply deferred queue to span state
 spans_bbox_cull    = &FE0C  ; project node bbox and test has_gap
                             ; in:  $A0=nid(u16), $A4=far_side(u8)
                             ; out: C=visible?
+spans_enter_ss     = &FE0E  ; diagnostic: record which ssid we entered
+                            ; in:  $A0=ssid(u16)
+spans_point_on_side = &FE10 ; point_on_side using Python raw-coord impl
+                            ; in:  $A0=nid(u16)
+                            ; out: C=side (0 or 1)
 
 ; Span hook scratch-arg zero page (reserve $A0..$B9 for arg marshalling).
 zp_hk_lo   = &A0           ; x_lo_clip (s16)
@@ -666,17 +671,21 @@ CMD_DONE   = &00
     BNE is_subsector
 
     ; --- It's a node: compute point_on_side ---
-    JSR point_on_side    ; input: zp_tmp0 = nid, returns A = side (0 or 1)
-                         ; leaves zp_ptr0 pointing at the node record
+    ; Use the spans_point_on_side hook (Python raw-coord implementation).
+    LDA zp_tmp0   : STA zp_hk_lo
+    LDA zp_tmp0+1 : STA zp_hk_lo+1
+    JSR spans_point_on_side     ; returns carry = side (0 or 1)
+    LDA #0
+    ROL A                        ; A = carry (0 or 1)
 
-    ; Save side in stack entry (A still holds side)
+    ; Save side in stack entry
     LDX zp_bsp_sp
     STA bsp_stack-1,X   ; side
 
-    ; Get near child without recomputing node address (ptr0 is still valid)
-    ; A still holds side from point_on_side → get_child_fast reads that.
-    LDA bsp_stack-1,X   ; reload side (STA doesn't affect A; defensive reload)
-    JSR get_child_fast
+    ; Need to call the full get_child (not get_child_fast) because we
+    ; haven't established zp_ptr0 (the hook doesn't touch it).
+    LDA bsp_stack-1,X
+    JSR get_child
     ; Push near child
     LDX zp_bsp_sp
     LDA zp_tmp1
@@ -1155,6 +1164,10 @@ CMD_DONE   = &00
 ; ======================================================================
 .render_subsector
 {
+    ; Diagnostic hook: note which ssid we entered
+    LDA zp_tmp0   : STA zp_hk_lo
+    LDA zp_tmp0+1 : STA zp_hk_lo+1
+    JSR spans_enter_ss
 
     ; Address = rom_main + off_ss + ssid * 4
     LDA zp_tmp0
