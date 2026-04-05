@@ -34,6 +34,8 @@ zp_px_int   = &10          ; s8  prescaled player x (integer part of 8.8)
 zp_py_int   = &11          ; s8  prescaled player y
 zp_px_lo    = &12          ; u8  fractional x (low byte of 8.8)
 zp_py_lo    = &13          ; u8  fractional y
+zp_px_int_hi = &04         ; u8  sign extension of px_int (0 or $FF), set at entry
+zp_py_int_hi = &05         ; u8  sign extension of py_int
 zp_vz_ps    = &14          ; s8  prescaled eye height
 zp_angle    = &15          ; u8  angle byte (0..255)
 
@@ -249,6 +251,19 @@ CMD_DONE   = &00
     STA zp_cmd_lo
     LDA #HI(cmd_buffer)
     STA zp_cmd_hi
+
+    ; Pre-compute sign extensions of px_int / py_int (used by to_view,
+    ; point_on_side and render_seg's back-face test). These are constant
+    ; per frame.
+    LDA #0 : STA zp_px_int_hi : STA zp_py_int_hi
+    LDA zp_px_int
+    BPL fe_px_pos
+    LDA #&FF : STA zp_px_int_hi
+.fe_px_pos
+    LDA zp_py_int
+    BPL fe_py_pos
+    LDA #&FF : STA zp_py_int_hi
+.fe_py_pos
 
     ; Decompose angle into sin/cos
     JSR decompose_angle
@@ -802,30 +817,22 @@ CMD_DONE   = &00
     ; node_x is at ptr0+0 (s16 LE)
     ; But px_int is s8 in our ZP. Extend to s16.
     LDY #ND_PX
-    LDX #0
-    LDA zp_px_int         ; N flag = sign of px_int
-    BPL pos_px
-    DEX                   ; X = $FF
-.pos_px
+    LDA zp_px_int
     SEC
     SBC (zp_ptr0),Y      ; lo byte
     STA zp_tmp2          ; dx_lo
-    TXA                  ; hi byte of px_int
+    LDA zp_px_int_hi     ; pre-computed sign extension
     INY
     SBC (zp_ptr0),Y
     STA zp_tmp2+1        ; dx_hi
 
     ; dy_to_player = py_int - node_y
     LDY #ND_PY
-    LDX #0
     LDA zp_py_int
-    BPL pos_py
-    DEX
-.pos_py
     SEC
     SBC (zp_ptr0),Y
     STA zp_tmp3          ; dy_lo
-    TXA
+    LDA zp_py_int_hi
     INY
     SBC (zp_ptr0),Y
     STA zp_tmp3+1        ; dy_hi
@@ -1231,30 +1238,22 @@ CMD_DONE   = &00
 
     ; dx_bf = px_int - lv1_x (s8 - s16 → s16)
     LDY #SH_LV1X
-    LDX #0
-    LDA zp_px_int         ; N flag set from LDA
-    BPL bf_px_pos
-    DEX                   ; X = $FF
-.bf_px_pos
+    LDA zp_px_int
     SEC
     SBC (zp_ptr0),Y
     STA zp_tmp2
-    TXA
+    LDA zp_px_int_hi
     INY
     SBC (zp_ptr0),Y
     STA zp_tmp2+1        ; dx_bf (s16)
 
     ; dy_bf = py_int - lv1_y
     LDY #SH_LV1Y
-    LDX #0
     LDA zp_py_int
-    BPL bf_py_pos
-    DEX
-.bf_py_pos
     SEC
     SBC (zp_ptr0),Y
     STA zp_tmp3
-    TXA
+    LDA zp_py_int_hi
     INY
     SBC (zp_ptr0),Y
     STA zp_tmp3+1        ; dy_bf (s16)
@@ -1752,46 +1751,22 @@ CMD_DONE   = &00
 
 .to_view
 {
-    ; dx = wx - px_int (s16 - s8_extended)
-    LDA zp_px_int
-    BPL px_pos
-    ; Negative: sign-extend to $FF
-    STA zp_tmp0
-    LDA #&FF
-    STA zp_tmp0+1
-    JMP px_done
-.px_pos
-    STA zp_tmp0
-    LDA #0
-    STA zp_tmp0+1
-.px_done
-    ; dx = tmp2 - tmp0
+    ; dx = wx - px_int (s16 - s8_extended).  px_int_hi pre-computed at entry.
     LDA zp_tmp2
     SEC
-    SBC zp_tmp0
+    SBC zp_px_int
     STA zp_tmp2
     LDA zp_tmp2+1
-    SBC zp_tmp0+1
+    SBC zp_px_int_hi
     STA zp_tmp2+1        ; dx in tmp2
 
     ; dy = wy - py_int
-    LDA zp_py_int
-    BPL py_pos
-    STA zp_tmp0
-    LDA #&FF
-    STA zp_tmp0+1
-    JMP py_done
-.py_pos
-    STA zp_tmp0
-    LDA #0
-    STA zp_tmp0+1
-.py_done
     LDA zp_tmp3
     SEC
-    SBC zp_tmp0
+    SBC zp_py_int
     STA zp_tmp3
     LDA zp_tmp3+1
-    SBC zp_tmp0+1
+    SBC zp_py_int_hi
     STA zp_tmp3+1        ; dy in tmp3
 
     ; Save dx ($76:$77) and dy ($78:$79) for all 4 rotations
@@ -2050,13 +2025,13 @@ CMD_DONE   = &00
     ADC #128
     LDA &78
     ADC #0
-    ; sign-extend
-    PHA
+    ; sign-extend A into X: test N flag from ADC before LDX clobbers it
+    BMI nc_dvx_neg
     LDX #0
-    PLA
-    BPL nc_dvx_pos
+    JMP nc_dvx_sedone
+.nc_dvx_neg
     LDX #&FF
-.nc_dvx_pos
+.nc_dvx_sedone
     ; ex2 = vx2 + A:X(extended)
     CLC
     ADC zp_vx2
@@ -2116,7 +2091,11 @@ CMD_DONE   = &00
     LDA &78 : CLC : ADC zp_res_lo : STA &78
     LDA &77 : CLC : ADC #128
     LDA &78 : ADC #0
-    PHA : LDX #0 : PLA : BPL nc2_pos : LDX #&FF
+    BMI nc2_neg
+    LDX #0
+    JMP nc2_pos
+.nc2_neg
+    LDX #&FF
 .nc2_pos
     CLC
     ADC zp_vx1
