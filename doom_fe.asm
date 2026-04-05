@@ -629,20 +629,16 @@ CMD_DONE   = &00
 
     ; --- It's a node: compute point_on_side ---
     JSR point_on_side    ; input: zp_tmp0 = nid, returns A = side (0 or 1)
+                         ; leaves zp_ptr0 pointing at the node record
 
-    ; Save side in stack entry
+    ; Save side in stack entry (A still holds side)
     LDX zp_bsp_sp
     STA bsp_stack-1,X   ; side
 
-    ; Restore nid from stack (point_on_side clobbers zp_tmp0)
-    LDA bsp_stack-3,X
-    STA zp_tmp0
-    LDA bsp_stack-2,X
-    STA zp_tmp0+1
-
-    ; Get near child
-    LDA bsp_stack-1,X   ; reload side into A
-    JSR get_child        ; input: zp_tmp0 = nid, A = side; output: zp_tmp1 = child
+    ; Get near child without recomputing node address (ptr0 is still valid)
+    ; A still holds side from point_on_side → get_child_fast reads that.
+    LDA bsp_stack-1,X   ; reload side (STA doesn't affect A; defensive reload)
+    JSR get_child_fast
     ; Push near child
     LDX zp_bsp_sp
     LDA zp_tmp1
@@ -761,8 +757,17 @@ CMD_DONE   = &00
     ADC #HI(rom_main)
     STA zp_ptr0+1
 
-    ; Read child: side 0 = offset 8 (right), side 1 = offset 10 (left)
-    PLA
+    PLA                  ; restore side
+    ; Fall through into get_child_fast (zp_ptr0 now set)
+}
+
+; ======================================================================
+; GET_CHILD_FAST: read child from a node whose address is already in zp_ptr0
+; Input: zp_ptr0 = node address, A = side (0 or 1)
+; Output: zp_tmp1 = child ID
+; ======================================================================
+.get_child_fast
+{
     BEQ read_right
     ; Left child at offset 10
     LDY #ND_CHL
