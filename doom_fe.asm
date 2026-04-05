@@ -1198,23 +1198,19 @@ CMD_DONE   = &00
     BNE seg_loop
 
 .segs_done
-    ; Flush deferred mark_solid
+    ; Flush deferred mark_solid — each 4-byte entry holds pre-computed
+    ; byte_lo, byte_hi, left_mask, right_mask from has_gap.
     LDX #0
 .flush_loop
     CPX zp_defer_sp
     BCS flush_done
-    ; Read x_lo, x_hi from deferred stack
-    LDA deferred_stk,X
-    STA zp_tmp0          ; x_lo lo
-    LDA deferred_stk+1,X
-    STA zp_tmp0+1        ; x_lo hi
-    LDA deferred_stk+2,X
-    STA zp_tmp1          ; x_hi lo
-    LDA deferred_stk+3,X
-    STA zp_tmp1+1        ; x_hi hi
+    LDA deferred_stk,X   : STA &72   ; byte_lo
+    LDA deferred_stk+1,X : STA &73   ; byte_hi
+    LDA deferred_stk+2,X : STA &74   ; left_mask
+    LDA deferred_stk+3,X : STA &75   ; right_mask
     TXA
     PHA
-    JSR mark_solid       ; input: zp_tmp0 = x_lo, zp_tmp1 = x_hi
+    JSR mark_solid_fast
     PLA
     CLC
     ADC #4
@@ -1489,7 +1485,9 @@ CMD_DONE   = &00
     ; --- Near clip ---
     JSR near_clip         ; input: vx1,vy1, vx2,vy2
                           ; output: ex1,ey1, ex2,ey2 or carry set = clipped away
-    BCS seg_clipped
+    BCC nc_passed
+    JMP seg_clipped
+.nc_passed
 
     ; --- Reciprocal + X projection for endpoint 1 ---
     JSR recip_and_project_x1
@@ -1531,6 +1529,14 @@ CMD_DONE   = &00
     JSR has_gap           ; input: zp_x_lo_clip, zp_x_hi_clip
     BCC seg_clipped       ; no gap
 
+    ; Stash has_gap outputs ($72-$75 = byte_lo/byte_hi/left_mask/right_mask)
+    ; to ZP $08-$0B — project_y_all clobbers $70-$72 via mul_s16_u8_s24
+    ; and we need them later for the deferred mark_solid.
+    LDA &72 : STA &08
+    LDA &73 : STA &09
+    LDA &74 : STA &0A
+    LDA &75 : STA &0B
+
     ; --- Read seg detail (heights) ---
     JSR read_seg_detail   ; loads fh, ch (and bfh, bch if portal) into temps
 
@@ -1548,16 +1554,12 @@ CMD_DONE   = &00
 
 .emit_solid
     JSR emit_solid_cmd
-    ; Defer mark_solid
+    ; Defer mark_solid — push the byte-level masks saved at $08-$0B
     LDX zp_defer_sp
-    LDA zp_x_lo_clip
-    STA deferred_stk,X
-    LDA zp_x_lo_clip+1
-    STA deferred_stk+1,X
-    LDA zp_x_hi_clip
-    STA deferred_stk+2,X
-    LDA zp_x_hi_clip+1
-    STA deferred_stk+3,X
+    LDA &08 : STA deferred_stk,X    ; byte_lo
+    LDA &09 : STA deferred_stk+1,X  ; byte_hi
+    LDA &0A : STA deferred_stk+2,X  ; left_mask
+    LDA &0B : STA deferred_stk+3,X  ; right_mask
     TXA
     CLC
     ADC #4
@@ -2717,60 +2719,20 @@ CMD_DONE   = &00
 ; MARK_SOLID: set bits in column bitmap for [x_lo, x_hi]
 ; Input: zp_tmp0 = x_lo (s16), zp_tmp1 = x_hi (s16)
 ; ======================================================================
-.mark_solid
+; ======================================================================
+; MARK_SOLID_FAST: OR the pre-computed masks into the column bitmap.
+; Input: $72 = byte_lo, $73 = byte_hi, $74 = left_mask (or combined for
+;        single-byte case), $75 = right_mask.  Matches the layout has_gap
+;        leaves in place when it reports a gap.
+; ======================================================================
+.mark_solid_fast
 {
-    ; Clamp x_lo to [0, 255]
-    LDA zp_tmp0+1
-    BMI ms_zero_lo
-    BNE ms_255_lo
-    LDA zp_tmp0
-    JMP ms_got_lo
-.ms_zero_lo
-    LDA #0
-    JMP ms_got_lo
-.ms_255_lo
-    LDA #255
-.ms_got_lo
-    STA &70
-
-    ; Clamp x_hi
-    LDA zp_tmp1+1
-    BMI ms_zero_hi
-    BNE ms_255_hi
-    LDA zp_tmp1
-    JMP ms_got_hi
-.ms_zero_hi
-    LDA #0
-    JMP ms_got_hi
-.ms_255_hi
-    LDA #255
-.ms_got_hi
-    STA &71
-
-    ; Guard against x_lo > x_hi
-    LDA &70
-    CMP &71
-    BCC ms_ok
-    BEQ ms_ok
-    RTS
-.ms_ok
-    ; Byte-level marking using range masks
-    LDA &70 : LSR A : LSR A : LSR A : STA &72  ; byte_lo
-    LDA &71 : LSR A : LSR A : LSR A : STA &73  ; byte_hi
-
-    LDA &70 : AND #7 : TAY
-    LDA left_mask_tbl,Y : STA &74
-
-    LDA &71 : AND #7 : TAY
-    LDA right_mask_tbl,Y : STA &75
-
     LDA &72 : CMP &73 : BNE ms_multi
 
-    ; Single byte: mask = left AND right, OR into colbitmap
-    LDA &74
-    AND &75
+    ; Single byte: $74 is already left AND right (set by has_gap), OR in.
     LDY &72
-    ORA colbitmap,Y
+    LDA colbitmap,Y
+    ORA &74
     STA colbitmap,Y
     RTS
 
