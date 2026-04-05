@@ -2191,6 +2191,33 @@ CMD_DONE   = &00
 .recip_lookup
 {
     PHA                       ; save averaging flag
+
+    ; --- Fast path for i < 256 (common case): use absolute-indexed addressing ---
+    LDA &71
+    BNE rl_slow_body          ; i >= 256 → slow path
+    LDX &70
+    LDA recip_hi_tbl,X : STA zp_rxh
+    LDA recip_lo_tbl,X : STA zp_rxl
+    PLA                        ; avg flag
+    BEQ rl_fast_done
+    ; Fast-path averaging: need entry (i+1). If i=255, i+1=256 which is out
+    ; of the fast-path range (would wrap X). Fall back to slow path for that.
+    CPX #255
+    BEQ rl_slow_avg_restore
+    INX
+    LDA recip_hi_tbl,X : STA &83
+    LDA recip_lo_tbl,X : STA &84
+    LDA zp_rxl : CLC : ADC &84 : STA zp_rxl
+    LDA zp_rxh : ADC &83 : STA zp_rxh
+    ROR zp_rxh : ROR zp_rxl
+.rl_fast_done
+    RTS
+
+.rl_slow_avg_restore
+    LDA #1 : PHA              ; re-push avg flag for slow path
+
+.rl_slow_body
+    ; --- Slow path: pointer setup + indirect lookups (handles i >= 256) ---
     ; Read rxh[i]
     LDA &70
     CLC
