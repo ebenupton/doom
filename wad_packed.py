@@ -166,12 +166,15 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         front_idx, back_idx = svwh[1], svwh[2]
         fh, ch = svwh[3], svwh[4]
 
-        # Linedef data for back-face test
+        # Linedef data for back-face test.  ldx/ldy are pre-computed and
+        # asserted s8 by doom_wireframe at load time — read them from the
+        # svwh tuple directly rather than silently clamping here.
         ld = linedefs[s[3]]
         lv1 = fp_vertexes[ld[0]]
-        lv2 = fp_vertexes[ld[1]]
-        ldx = max(-128, min(127, lv2[0] - lv1[0]))
-        ldy = max(-128, min(127, lv2[1] - lv1[1]))
+        ldx = svwh[13]
+        ldy = svwh[14]
+        assert -128 <= ldx <= 127 and -128 <= ldy <= 127, \
+            f"seg {i}: ldx/ldy not s8 — caller should have asserted earlier"
 
         flags = 0
         if s[4] == 1: flags |= SF_DIR

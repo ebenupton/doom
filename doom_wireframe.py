@@ -218,9 +218,17 @@ def _vwh(vertex_idx, height):
     return idx
 
 # Build VWH-augmented seg table: original seg fields + 4 front VWH indices
-# + 4 back VWH indices (or -1 if one-sided)
+# + 4 back VWH indices (or -1 if one-sided) + linedef deltas (ldx, ldy).
+#
+# Invariant: ldx and ldy must fit in s8.  The 6502 back-face test reads
+# them as single-byte signed values and uses an s8×s16 multiply.  The
+# Python FP renderer uses the same values so the two paths agree.
+# A linedef exceeding this bound would require a wider multiply primitive
+# on the 6502 and would silently diverge from the reference — assert here
+# so the failure is loud at load time instead of a subtle rendering bug
+# on some other map.
 _fp_segs_vwh = []
-for _s in _stripped_segs:
+for _i, _s in enumerate(_stripped_segs):
     _fi, _bi = seg_sectors(_s)
     _fs = fp_sectors[_fi]
     _fh, _ch = _fs[0], _fs[1]
@@ -237,9 +245,22 @@ for _s in _stripped_segs:
         _vwh_bb2 = _vwh(_v2, _bs[0])
     else:
         _vwh_bt1 = _vwh_bb1 = _vwh_bt2 = _vwh_bb2 = -1
+    # Linedef delta (for back-face test), asserted s8 — matches 6502 packing.
+    _ld = linedefs[_s[3]]
+    _lv1 = fp_vertexes[_ld[0]]
+    _lv2 = fp_vertexes[_ld[1]]
+    _ldx = _lv2[0] - _lv1[0]
+    _ldy = _lv2[1] - _lv1[1]
+    assert -128 <= _ldx <= 127, (
+        f"seg {_i} linedef {_s[3]}: prescaled ldx={_ldx} exceeds s8; "
+        f"raw linedef longer than {PRESCALE * 127} units on this axis")
+    assert -128 <= _ldy <= 127, (
+        f"seg {_i} linedef {_s[3]}: prescaled ldy={_ldy} exceeds s8; "
+        f"raw linedef longer than {PRESCALE * 127} units on this axis")
     _fp_segs_vwh.append((_s, _fi, _bi, _fh, _ch,
                          _vwh_ft1, _vwh_fb1, _vwh_ft2, _vwh_fb2,
-                         _vwh_bt1, _vwh_bb1, _vwh_bt2, _vwh_bb2))
+                         _vwh_bt1, _vwh_bb1, _vwh_bt2, _vwh_bb2,
+                         _ldx, _ldy))
 
 fp_segs = _stripped_segs
 fp_segs_vwh = _fp_segs_vwh
@@ -1238,10 +1259,11 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     s = svwh[0]
     v1_idx, v2_idx = s[0], s[1]
 
-    # Back-face test using prescaled linedef vertices (integer part of player pos)
+    # Back-face test using prescaled linedef vertices.  ldx/ldy are taken
+    # from the precomputed s8-asserted table (matches 6502 packed format).
     ld = linedefs[s[3]]
-    lv1, lv2 = fp_vertexes[ld[0]], fp_vertexes[ld[1]]
-    ldx, ldy = lv2[0] - lv1[0], lv2[1] - lv1[1]
+    lv1 = fp_vertexes[ld[0]]
+    ldx, ldy = svwh[13], svwh[14]
     px_int = ctx[0]
     py_int = ctx[1]
     dot = ldy * (px_int - lv1[0]) - ldx * (py_int - lv1[1])

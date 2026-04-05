@@ -1269,7 +1269,10 @@ CMD_DONE   = &00
     SBC (zp_ptr0),Y
     STA zp_tmp3+1        ; dy_bf (s16)
 
-    ; ldy (s8) at offset 9
+    ; ldy (s8) at offset 9.  Invariant: |ldx|, |ldy| <= 127 by construction
+    ; — wad_packed.py / doom_wireframe.py assert this at load time, so the
+    ; back-face test can safely use the s8×s16 mul (ldy × dx_bf) without a
+    ; wider multiplier path for ldy itself.
     LDY #SH_LDY
     LDA (zp_ptr0),Y
     STA zp_tmp0           ; ldy
