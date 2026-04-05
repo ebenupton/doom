@@ -2807,25 +2807,11 @@ CMD_DONE   = &00
 ; ======================================================================
 .read_seg_detail
 {
-    ; Copy running seg detail pointer into zp_ptr0
-    LDA zp_seg_det_ptr   : STA zp_ptr0
-    LDA zp_seg_det_ptr+1 : STA zp_ptr0+1
-    ; ptr0 → seg detail record
-
-    ; Read fh (s8), ch (s8), bfh (s8), bch (s8)
-    LDY #SD_FH
-    LDA (zp_ptr0),Y
-    STA &80                       ; fh
-    LDY #SD_CH
-    LDA (zp_ptr0),Y
-    STA &81                       ; ch
-    LDY #SD_BFH
-    LDA (zp_ptr0),Y
-    STA &82                       ; bfh
-    LDY #SD_BCH
-    LDA (zp_ptr0),Y
-    STA &83                       ; bch
-
+    ; Read fh/ch/bfh/bch directly via zp_seg_det_ptr (saves the copy to ptr0)
+    LDY #SD_FH  : LDA (zp_seg_det_ptr),Y : STA &80
+    LDY #SD_CH  : LDA (zp_seg_det_ptr),Y : STA &81
+    LDY #SD_BFH : LDA (zp_seg_det_ptr),Y : STA &82
+    LDY #SD_BCH : LDA (zp_seg_det_ptr),Y : STA &83
     RTS
 }
 
