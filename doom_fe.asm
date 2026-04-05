@@ -1473,28 +1473,20 @@ CMD_DONE   = &00
     LDA (zp_ptr0),Y
     STA zp_tmp1+1         ; v2 hi
 
-    ; --- View transform vertex 2 first (writes zp_vx1 slots) ---
-    ; v1 index is in zp_tmp0 — save across v2 transform.
+    ; --- View transform vertex 2 first (writes directly to v2 slots
+    ; on cache hit) — v1 index stays in zp_tmp0 saved to scratch. ---
     LDA zp_tmp0 : STA &46
     LDA zp_tmp0+1 : STA &47
     LDA zp_tmp1
     STA zp_tmp0
     LDA zp_tmp1+1
     STA zp_tmp0+1
-    JSR xform_vertex_cached  ; writes zp_vx1, zp_vy1, zp_vi1
-
-    ; Copy v2 result to v2 slots
-    LDA zp_vx1 : STA zp_vx2
-    LDA zp_vx1+1 : STA zp_vx2+1
-    LDA zp_vy1 : STA zp_vy2
-    LDA zp_vy1+1 : STA zp_vy2+1
-    LDA zp_vi1 : STA zp_vi2
-    LDA zp_vi1+1 : STA zp_vi2+1
+    JSR xform_vertex_cached_v2   ; writes zp_vx2/vy2/vi2 directly
 
     ; --- View transform vertex 1 (cached) ---
     LDA &46 : STA zp_tmp0
     LDA &47 : STA zp_tmp0+1
-    JSR xform_vertex_cached  ; writes zp_vx1, zp_vy1, zp_vi1
+    JSR xform_vertex_cached      ; writes zp_vx1/vy1/vi1
 
     ; --- Near clip ---
     JSR near_clip         ; input: vx1,vy1, vx2,vy2
@@ -1647,7 +1639,7 @@ CMD_DONE   = &00
 }
 
 ; ======================================================================
-; XFORM_VERTEX_CACHED: view-transform a vertex, using the cache
+; XFORM_VERTEX_CACHED: view-transform a vertex, using the cache (v1 slots)
 ; Input: zp_tmp0 = v_idx (u16)
 ; Output: zp_vx1, zp_vy1, zp_vi1 populated
 ; Clobbers: most temps (to_view)
@@ -1660,7 +1652,7 @@ CMD_DONE   = &00
     AND bit_masks,Y
     BEQ xvc_miss
 
-    ; Hit: load vx, vy, vi from (ptr1)
+    ; Hit: load vx, vy, vi from (ptr1) into v1 slots
     LDY #VC_VX
     LDA (zp_ptr1),Y : STA zp_vx1     : INY
     LDA (zp_ptr1),Y : STA zp_vx1+1   : INY
@@ -1671,24 +1663,19 @@ CMD_DONE   = &00
     RTS
 
 .xvc_miss
-    ; Set valid bit now (while X=byte_idx, Y=bit_idx are still live; safe
-    ; because nothing can observe intermediate state).
     LDA vcache_valid,X
     ORA bit_masks,Y
     STA vcache_valid,X
 
-    ; Save ptr1 across load_vertex + to_view
     LDA zp_ptr1   : PHA
     LDA zp_ptr1+1 : PHA
 
     JSR load_vertex              ; reads zp_tmp0 (= v_idx), writes tmp2/tmp3
     JSR to_view                  ; writes vx1/vy1/vi1
 
-    ; Restore ptr1
     PLA : STA zp_ptr1+1
     PLA : STA zp_ptr1
 
-    ; Store to cache
     LDY #VC_VX
     LDA zp_vx1     : STA (zp_ptr1),Y : INY
     LDA zp_vx1+1   : STA (zp_ptr1),Y : INY
@@ -1696,6 +1683,53 @@ CMD_DONE   = &00
     LDA zp_vy1+1   : STA (zp_ptr1),Y : INY
     LDA zp_vi1     : STA (zp_ptr1),Y : INY
     LDA zp_vi1+1   : STA (zp_ptr1),Y
+    RTS
+}
+
+; ======================================================================
+; XFORM_VERTEX_CACHED_V2: same as xform_vertex_cached but writes directly
+; to zp_vx2/zp_vy2/zp_vi2 slots on cache hit (miss path still goes via
+; to_view → v1 slots then copies to v2 slots, since to_view writes v1).
+; ======================================================================
+.xform_vertex_cached_v2
+{
+    JSR vcache_addr
+    LDA vcache_valid,X
+    AND bit_masks,Y
+    BEQ xvc2_miss
+
+    ; Hit: load directly into v2 slots
+    LDY #VC_VX
+    LDA (zp_ptr1),Y : STA zp_vx2     : INY
+    LDA (zp_ptr1),Y : STA zp_vx2+1   : INY
+    LDA (zp_ptr1),Y : STA zp_vy2     : INY
+    LDA (zp_ptr1),Y : STA zp_vy2+1   : INY
+    LDA (zp_ptr1),Y : STA zp_vi2     : INY
+    LDA (zp_ptr1),Y : STA zp_vi2+1
+    RTS
+
+.xvc2_miss
+    LDA vcache_valid,X
+    ORA bit_masks,Y
+    STA vcache_valid,X
+
+    LDA zp_ptr1   : PHA
+    LDA zp_ptr1+1 : PHA
+
+    JSR load_vertex
+    JSR to_view                  ; writes v1 slots
+
+    PLA : STA zp_ptr1+1
+    PLA : STA zp_ptr1
+
+    ; Store cache entry from v1 slots and simultaneously copy to v2 slots
+    LDY #VC_VX
+    LDA zp_vx1     : STA (zp_ptr1),Y : STA zp_vx2     : INY
+    LDA zp_vx1+1   : STA (zp_ptr1),Y : STA zp_vx2+1   : INY
+    LDA zp_vy1     : STA (zp_ptr1),Y : STA zp_vy2     : INY
+    LDA zp_vy1+1   : STA (zp_ptr1),Y : STA zp_vy2+1   : INY
+    LDA zp_vi1     : STA (zp_ptr1),Y : STA zp_vi2     : INY
+    LDA zp_vi1+1   : STA (zp_ptr1),Y : STA zp_vi2+1
     RTS
 }
 
