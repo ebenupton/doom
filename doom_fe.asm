@@ -466,11 +466,10 @@ QET_TIGHTEN   = 1
 .entry
     ; ── Per-frame init (self-contained, no Python) ──
 
-    ; Clear screen buffer ($5800-$6BFF = 5120 bytes)
-    LDA #0 : TAY : STA &74 : LDA #&58 : STA &75
-.clr_scr
-    LDA #0 : STA (&74),Y : INY : BNE clr_scr
-    INC &75 : LDA &75 : CMP #&6C : BNE clr_scr
+    ; Clear screen (fast unrolled in bank 2)
+    LDA #2 : STA &FE30
+    JSR clear_screen
+    LDA #0 : STA &FE30
 
     ; Init spans: 1 full-screen span at spans_base ($20D0)
     LDA #1 : STA spans_base
@@ -2001,6 +2000,17 @@ QET_TIGHTEN   = 1
     ; byte0:byte1 (bottom 16 bits of the 24-bit quotient).
     ; After 24 shifts, the original bits are gone and the dividend-byte slots
     ; hold the 24-bit quotient: byte0=quot[0..7], byte1=quot[8..15], byte2=quot[16..23].
+    ; Fast path: if |num| < 256 (byte2=0), pre-shift and do 16 iters.
+    ; byte0 ($08) is already 0 from fd_num_done.
+    LDY zp_tmp3
+    BNE fd_full
+    LDA zp_div_num+1       ; byte1 = |num_lo|
+    STA zp_tmp3            ; byte2 = |num_lo| (pre-shifted)
+    STY zp_div_num+1       ; byte1 = 0 (Y=0)
+    STY zp_div_rem         ; rem_lo = 0
+    STY zp_div_rem+1       ; rem_hi = 0
+    LDX #16 : BNE fd_loop
+.fd_full
     LDA #0
     STA zp_div_rem
     STA zp_div_rem+1
@@ -7476,32 +7486,18 @@ ORG &9B20
 }
 
 ; ======================================================================
-; CLEAR_BACK_BUFFER — fast unrolled screen clear (20 × STA abs,X)
-; Reads ZP $70: $58 = buffer 0, $6C = buffer 1
+; CLEAR_SCREEN — fast unrolled screen clear: 20 × STA abs,X ($5800-$6BFF)
 ; ======================================================================
-.clear_back_buffer
+.clear_screen
 {
-    LDA &70 : CMP #&6C : BEQ clear_buf1
-    ; Buffer 0: $5800-$6BFF (20 pages)
     LDA #0 : TAX
-.cb0
+.clr
     STA &5800,X : STA &5900,X : STA &5A00,X : STA &5B00,X
     STA &5C00,X : STA &5D00,X : STA &5E00,X : STA &5F00,X
     STA &6000,X : STA &6100,X : STA &6200,X : STA &6300,X
     STA &6400,X : STA &6500,X : STA &6600,X : STA &6700,X
     STA &6800,X : STA &6900,X : STA &6A00,X : STA &6B00,X
-    INX : BNE cb0
-    RTS
-.clear_buf1
-    ; Buffer 1: $6C00-$7FFF (20 pages)
-    LDA #0 : TAX
-.cb1
-    STA &6C00,X : STA &6D00,X : STA &6E00,X : STA &6F00,X
-    STA &7000,X : STA &7100,X : STA &7200,X : STA &7300,X
-    STA &7400,X : STA &7500,X : STA &7600,X : STA &7700,X
-    STA &7800,X : STA &7900,X : STA &7A00,X : STA &7B00,X
-    STA &7C00,X : STA &7D00,X : STA &7E00,X : STA &7F00,X
-    INX : BNE cb1
+    INX : BNE clr
     RTS
 }
 
