@@ -7197,6 +7197,14 @@ ORG &9B20
 ; ======================================================================
 .compute_clipped_endpoints
 {
+    ; cx1/cy1: skip multiply if t0=0 (line starts inside span)
+    LDA zp_cl_t0 : ORA zp_cl_t0+1
+    BNE cce_t0_nonzero
+    ; t0=0: cx1=x1, cy1=y1 (no multiply needed)
+    LDA zp_cl_x1 : STA zp_cl_cx1 : LDA zp_cl_x1+1 : STA zp_cl_cx1+1
+    LDA zp_cl_y1 : STA zp_cl_cy1 : LDA zp_cl_y1+1 : STA zp_cl_cy1+1
+    JMP cce_do_t1
+.cce_t0_nonzero
     ; cx1 = x1 + fp_mul8(t0, dx)
     LDA zp_cl_t0   : STA zp_tmp0
     LDA zp_cl_t0+1 : STA zp_tmp0+1
@@ -7206,7 +7214,6 @@ ORG &9B20
     CLC
     LDA zp_cl_x1   : ADC &70 : STA zp_cl_cx1
     LDA zp_cl_x1+1 : ADC &71 : STA zp_cl_cx1+1
-
     ; cy1 = y1 + fp_mul8(t0, dy)
     LDA zp_cl_t0   : STA zp_tmp0
     LDA zp_cl_t0+1 : STA zp_tmp0+1
@@ -7217,6 +7224,15 @@ ORG &9B20
     LDA zp_cl_y1   : ADC &70 : STA zp_cl_cy1
     LDA zp_cl_y1+1 : ADC &71 : STA zp_cl_cy1+1
 
+.cce_do_t1
+    ; cx2/cy2: skip if t1=$0100 (=256=T_ONE, line ends inside span)
+    LDA zp_cl_t1 : BNE cce_t1_nonone
+    LDA zp_cl_t1+1 : CMP #1 : BNE cce_t1_nonone
+    ; t1=256: cx2=x2, cy2=y2
+    LDA zp_cl_x2 : STA zp_cl_cx2 : LDA zp_cl_x2+1 : STA zp_cl_cx2+1
+    LDA zp_cl_y2 : STA zp_cl_cy2 : LDA zp_cl_y2+1 : STA zp_cl_cy2+1
+    JMP cce_clamp
+.cce_t1_nonone
     ; cx2 = x1 + fp_mul8(t1, dx)
     LDA zp_cl_t1   : STA zp_tmp0
     LDA zp_cl_t1+1 : STA zp_tmp0+1
@@ -7226,7 +7242,6 @@ ORG &9B20
     CLC
     LDA zp_cl_x1   : ADC &70 : STA zp_cl_cx2
     LDA zp_cl_x1+1 : ADC &71 : STA zp_cl_cx2+1
-
     ; cy2 = y1 + fp_mul8(t1, dy)
     LDA zp_cl_t1   : STA zp_tmp0
     LDA zp_cl_t1+1 : STA zp_tmp0+1
@@ -7237,6 +7252,7 @@ ORG &9B20
     LDA zp_cl_y1   : ADC &70 : STA zp_cl_cy2
     LDA zp_cl_y1+1 : ADC &71 : STA zp_cl_cy2+1
 
+.cce_clamp
     ; === Clamp cx1 >= xlo ===
     LDA zp_cl_cx1+1
     BMI ct_clamp_x1       ; cx1 negative → clamp
