@@ -3738,7 +3738,7 @@ QET_TIGHTEN   = 1
 
 .segs_done
     ; Flush deferred span queue (applies mark_solid/tighten in order)
-    JSR spans_flush
+    JSR flush_native
 
     ; Emit end-of-subsector command
     LDY #0
