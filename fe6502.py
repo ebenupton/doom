@@ -12,7 +12,6 @@ ROM_WINDOW      = 0x8000
 QSQ_BASE        = 0x5400
 ROM_RECIP_BASE  = 0x4F7E
 CODE_BASE       = 0x2640
-CMD_BUFFER      = 0x0300
 SPANS_BASE      = 0x20D0
 ROMSEL          = 0xFE30
 
@@ -145,63 +144,25 @@ PROFILE_CATEGORIES = [
 ]
 
 
+SCREEN_BASE = 0x5800
+
 class PagedMemory(list):
-    """64KB memory with BBC Micro sideways ROM banking at $8000-$BFFF
-    and a magic line-draw peripheral at $FE20-$FE27.
-
-    Write 8 bytes (x0_lo, x0_hi, y0_lo, y0_hi, x1_lo, x1_hi, y1_lo, y1_hi).
-    The write to $FE27 (y1_hi) triggers a clipped line draw: the peripheral
-    reads the current span state from RAM at SPANS_BASE, clips the line
-    against every overlapping span (same Cyrus-Beck as Python draw_clipped),
-    and records the output segments.
-    """
-
-    LINEDRAW_BASE = 0xFE20
+    """64KB memory with BBC Micro sideways ROM banking at $8000-$BFFF.
+    Intercepts writes to $FE30 (ROMSEL) to switch the 16KB window."""
 
     def __init__(self, rom_banks=None):
         super().__init__([0] * 65536)
         self.rom_banks = rom_banks or []
         self.current_bank = -1
-        self._line_latch = [0] * 8   # x0_lo, x0_hi, y0_lo, y0_hi, ...
-        self.drawn_lines = []         # list of (x0,y0,x1,y1) after clipping
-        self._clips = None            # lazy FPClipSpans for clipping
 
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
-        if not isinstance(key, int):
-            return
-        if key == 0xFE30:
+        if isinstance(key, int) and key == 0xFE30:
             bank = value & 0x0F
             if bank != self.current_bank and bank < len(self.rom_banks):
                 self.current_bank = bank
                 src = self.rom_banks[bank]
                 super().__setitem__(slice(0x8000, 0x8000 + len(src)), list(src))
-        elif 0xFE20 <= key <= 0xFE27:
-            self._line_latch[key - 0xFE20] = value
-            if key == 0xFE27:
-                self._draw_clipped_line()
-
-    def _s16(self, lo, hi):
-        v = lo | (hi << 8)
-        return v - 65536 if v >= 32768 else v
-
-    def _draw_clipped_line(self):
-        """Triggered on write to $FE27.  Read latched coords, clip against
-        current span state in RAM, record output lines."""
-        L = self._line_latch
-        x0 = self._s16(L[0], L[1])
-        y0 = self._s16(L[2], L[3])
-        x1 = self._s16(L[4], L[5])
-        y1 = self._s16(L[6], L[7])
-
-        # Lazy-build a FPClipSpans from current RAM span state
-        from wad_packed import read_all_spans
-        from doom_wireframe import FPClipSpans
-        clips = FPClipSpans()
-        clips.spans = read_all_spans(self, SPANS_BASE)
-
-        # Clip and collect output lines (same algorithm as draw_clipped)
-        clips._clip_and_record(x0, y0, x1, y1, self.drawn_lines)
 
 
 class Frontend6502:
@@ -264,11 +225,8 @@ class Frontend6502:
         mem[0xFFFE] = 0x00  # BRK vector lo
         mem[0xFFFF] = 0xFF  # BRK vector hi
 
-        # Visibility-span hooks: the 6502 front-end JSRs to fixed hook
-        # addresses in $FE00..$FE0F to invoke Python FPClipSpans operations
-        # running on its RAM.  Install the hook table and state.
-        from spans6502 import install_hooks
-        self._span_state, self._span_hooks = install_hooks(self.mpu, mem)
+        # No Python hooks — all visibility, span management, and line
+        # drawing runs as native 6502 code.
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0,
                      map_center_x=1200, map_center_y=-3250, prescale=None,
@@ -304,40 +262,23 @@ class Frontend6502:
         mem[ZP_VZ_PS] = vz_ps & 0xFF
         mem[ZP_ANGLE] = angle_byte & 0xFF
 
-        # Initialise visibility-span state inline (no Python hook needed).
-        # One full-screen span: count=1, xlo=0, xhi=0(=256), flat top=0, flat bot=159.
-        from wad_packed import spans_init_full, SPAN_HDR
-        spans_init_full(mem, SPANS_BASE, 256, 159)
-        mem[SPANS_BASE + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
+        # All per-frame init (spans, screen clear) is done by the 6502
+        # frame loop at $0900.  We just set player state and run.
 
-        # Clear the line-draw peripheral's output buffer
-        mem.drawn_lines = []
-
-        # Run
         self.mpu.pc = CODE_BASE
         self.mpu.sp = 0xFF
         self.mpu.p = 0x30
         self.mpu.processorCycles = 0
 
-        max_steps = 10_000_000
+        # Pure 6502 execution — no Python hooks in the loop.
+        # The NJ rasteriser in bank 2 executes natively via JSR $8EC0.
         mpu = self.mpu
-        hook_table = self._span_hooks
-        from spans6502 import _do_rts
-        for _ in range(max_steps):
-            pc = mpu.pc
-            if pc == 0xFF00:
+        for _ in range(20_000_000):
+            if mpu.pc == 0xFF00:
                 break
-            hook = hook_table.get(pc)
-            if hook is not None:
-                hook(mpu)
-                _do_rts(mpu)
-                continue
             mpu.step()
 
-        cycles = self.mpu.processorCycles
-
-        # Return the clipped lines drawn via the peripheral
-        return mem.drawn_lines, cycles
+        return self.mpu.processorCycles
 
     def _ensure_profile_map(self, asm_path=None):
         """Lazily build the PC → function name map from the asm source/listing."""

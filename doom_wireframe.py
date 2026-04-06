@@ -286,7 +286,7 @@ packed_rom_banks = [
 packed_rom_banks[0][:len(packed_rom_main)] = packed_rom_main
 packed_rom_banks[1][:len(packed_rom_detail)] = packed_rom_detail
 packed_rom_banks[2][:len(packed_bbox_table)] = packed_bbox_table
-_rast_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or.bin')
+_rast_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_bank2.bin')
 if os.path.exists(_rast_path):
     with open(_rast_path, 'rb') as _f:
         _rast_bin = _f.read()

@@ -358,14 +358,14 @@ ND_CHL = 10                ; u16 left child
 ; CMD_DONE   = &00
 
 ; Line-drawing peripheral registers
-LINE_X0_LO = &FE20
-LINE_X0_HI = &FE21
-LINE_Y0_LO = &FE22
-LINE_Y0_HI = &FE23
-LINE_X1_LO = &FE24
-LINE_X1_HI = &FE25
-LINE_Y1_LO = &FE26
-LINE_Y1_HI = &FE27         ; write here triggers the draw
+LINE_X0_LO = &02F0
+LINE_X0_HI = &02F1
+LINE_Y0_LO = &02F2
+LINE_Y0_HI = &02F3
+LINE_X1_LO = &02F4
+LINE_X1_HI = &02F5
+LINE_Y1_LO = &02F6
+LINE_Y1_HI = &02F7         ; write here triggers the draw
 
 ; Visibility span array (in RAM at spans_base).  Layout mirrors
 ; wad_packed.py's SPAN_* constants.  The 2-byte header stores span
@@ -432,8 +432,27 @@ QET_TIGHTEN   = 1
 ; ENTRY POINT
 ; ======================================================================
 .entry
-    ; (Visibility span state is initialised by fe6502.py's render_frame
-    ; before it jumps to CODE_BASE — no asm-side init needed.)
+    ; ── Per-frame init (self-contained, no Python) ──
+
+    ; Clear screen buffer ($5800-$6BFF = 5120 bytes)
+    LDA #0 : TAY : STA &74 : LDA #&58 : STA &75
+.clr_scr
+    LDA #0 : STA (&74),Y : INY : BNE clr_scr
+    INC &75 : LDA &75 : CMP #&6C : BNE clr_scr
+
+    ; Init spans: 1 full-screen span at spans_base ($20D0)
+    LDA #1 : STA spans_base
+    LDA #0 : STA spans_base+1
+    STA spans_base+SPAN_HDR : STA spans_base+SPAN_HDR+1  ; xlo=0, xhi=0(=256)
+    STA spans_base+SPAN_HDR+2 : STA spans_base+SPAN_HDR+3  ; tslope=0
+    STA spans_base+SPAN_HDR+4 : STA spans_base+SPAN_HDR+5  ; bslope=0
+    STA spans_base+SPAN_HDR+6 : STA spans_base+SPAN_HDR+7  ; tintercept=0
+    LDA #159 : STA spans_base+SPAN_HDR+8
+    LDA #0   : STA spans_base+SPAN_HDR+9  ; bintercept=159
+    STA spans_base+SPAN_HDR+10 : STA spans_base+SPAN_HDR+11  ; inner_top=0
+    LDA #159 : STA spans_base+SPAN_HDR+12
+    LDA #0   : STA spans_base+SPAN_HDR+13  ; inner_bot=159
+    STA spans_base+SPAN_HDR+14 : STA spans_base+SPAN_HDR+15  ; pad
 
     ; Clear vertex cache valid bitmap (64 bytes)
     LDA #0
@@ -5257,7 +5276,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_ft2   : STA LINE_Y1_LO
-    LDA zp_ft2+1 : STA LINE_Y1_HI  ; triggers draw
+    LDA zp_ft2+1 : STA LINE_Y1_HI : JSR rasterise_line
 
     ; Line 2: bottom edge  sx1,fb1 -> sx2,fb2
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5267,7 +5286,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI  ; triggers draw
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
 
     ; Line 3: left edge  sx1,ft1 -> sx1,fb1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5277,7 +5296,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA zp_fb1   : STA LINE_Y1_LO
-    LDA zp_fb1+1 : STA LINE_Y1_HI  ; triggers draw
+    LDA zp_fb1+1 : STA LINE_Y1_HI : JSR rasterise_line
 
     ; Line 4: right edge  sx2,ft2 -> sx2,fb2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5287,7 +5306,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI  ; triggers draw
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
 
     RTS
 }
@@ -5324,7 +5343,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA &86      : STA LINE_Y1_LO      ; bt2 lo
-    LDA &87      : STA LINE_Y1_HI      ; bt2 hi — triggers draw
+    LDA &87      : STA LINE_Y1_HI : JSR rasterise_line
 
     ; draw left edge: sx1,ft1 -> sx1,bt1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5334,7 +5353,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA &84      : STA LINE_Y1_LO      ; bt1 lo
-    LDA &85      : STA LINE_Y1_HI      ; bt1 hi — triggers draw
+    LDA &85      : STA LINE_Y1_HI : JSR rasterise_line
 
     ; draw right edge: sx2,ft2 -> sx2,bt2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5344,7 +5363,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA &86      : STA LINE_Y1_LO      ; bt2 lo
-    LDA &87      : STA LINE_Y1_HI      ; bt2 hi — triggers draw
+    LDA &87      : STA LINE_Y1_HI : JSR rasterise_line
 
     ; if ch > vz_ps: also draw ft1->ft2 (front ceiling line)
     LDA &81             ; ch (s8)
@@ -5382,7 +5401,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA &92      : STA LINE_Y1_LO      ; bb2 lo
-    LDA &93      : STA LINE_Y1_HI      ; bb2 hi — triggers draw
+    LDA &93      : STA LINE_Y1_HI : JSR rasterise_line
 
     ; draw left edge: sx1,bb1 -> sx1,fb1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5392,7 +5411,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA zp_fb1   : STA LINE_Y1_LO
-    LDA zp_fb1+1 : STA LINE_Y1_HI      ; triggers draw
+    LDA zp_fb1+1 : STA LINE_Y1_HI : JSR rasterise_line
 
     ; draw right edge: sx2,bb2 -> sx2,fb2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5402,7 +5421,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI      ; triggers draw
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
 
     ; if fh < vz_ps: also draw fb1->fb2 (front floor line)
     LDA &80             ; fh (s8)
@@ -5435,7 +5454,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_ft2   : STA LINE_Y1_LO
-    LDA zp_ft2+1 : STA LINE_Y1_HI  ; triggers draw
+    LDA zp_ft2+1 : STA LINE_Y1_HI : JSR rasterise_line
     RTS
 
 ; Helper: draw floor line fb1->fb2
@@ -5447,7 +5466,59 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI  ; triggers draw
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
+    RTS
+}
+
+; ======================================================================
+; RASTERISE_LINE: read s16 coords from $02F0-$02F7, reject off-screen,
+; call NJ rasteriser in bank 2 to plot pixels in the screen buffer.
+; On py65 the write to $02F7 already triggers the Python rasteriser via
+; the PagedMemory intercept; this routine is for the real BBC / jsbeeb.
+; ======================================================================
+.rasterise_line
+{
+    ; Clamp each s16 coordinate to u8 range:
+    ;   if hi < 0 ($80+) → 0
+    ;   if hi > 0 → 255
+    ;   if hi == 0 → use lo byte
+    ; Then clamp Y to 0-159.
+
+    ; x0
+    LDA &02F1 : BEQ rl_x0_ok : BPL rl_x0_max
+    LDA #0 : JMP rl_x0_set
+.rl_x0_max LDA #255
+.rl_x0_set STA &82 : JMP rl_y0
+.rl_x0_ok  LDA &02F0 : STA &82
+
+.rl_y0
+    LDA &02F3 : BEQ rl_y0_ok : BPL rl_y0_max
+    LDA #0 : JMP rl_y0_set
+.rl_y0_max LDA #159
+.rl_y0_set STA &83 : JMP rl_x1
+.rl_y0_ok  LDA &02F2 : CMP #160 : BCC rl_y0_keep : LDA #159
+.rl_y0_keep STA &83
+
+.rl_x1
+    LDA &02F5 : BEQ rl_x1_ok : BPL rl_x1_max
+    LDA #0 : JMP rl_x1_set
+.rl_x1_max LDA #255
+.rl_x1_set STA &84 : JMP rl_y1
+.rl_x1_ok  LDA &02F4 : STA &84
+
+.rl_y1
+    LDA &02F7 : BEQ rl_y1_ok : BPL rl_y1_max
+    LDA #0 : JMP rl_y1_set
+.rl_y1_max LDA #159
+.rl_y1_set STA &85 : JMP rl_draw
+.rl_y1_ok  LDA &02F6 : CMP #160 : BCC rl_y1_keep : LDA #159
+.rl_y1_keep STA &85
+
+.rl_draw
+    LDA #&58 : STA &70
+    LDA #2 : STA &FE30
+    JSR &8EC0
+    LDA #0 : STA &FE30
     RTS
 }
 
