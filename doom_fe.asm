@@ -112,9 +112,9 @@ zp_seg_idx   = &51         ; u16 current seg index
 zp_seg_count = &53         ; u8 segs remaining in subsector
 zp_seg_flags = &54         ; u8 seg flags
 
-; --- Command buffer ---
-zp_cmd_lo    = &56         ; u16 pointer to next command byte
-zp_cmd_hi    = &57
+; --- Command buffer (REMOVED — now using direct line peripheral) ---
+; zp_cmd_lo    = &56       ; (removed)
+; zp_cmd_hi    = &57       ; (removed)
 
 ; --- Deferred mark_solid stack (within subsector) ---
 zp_defer_sp  = &58         ; u8 (byte offset into deferred stack)
@@ -133,7 +133,7 @@ zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (24B stride)
 ; ======================================================================
 ; (old colbitmap at &0200 removed — visibility goes through span hooks)
 bsp_stack    = &0200        ; 216 bytes (72 × 3)
-cmd_buffer   = &0300        ; command output (grows upward, 880B)
+; cmd_buffer removed — using direct line peripheral at $FE20-$FE27
 vcache       = &0670        ; vertex cache: 512 × 8 bytes = 4096 bytes
 vcache_valid = &1670        ; vertex cache valid bitmap: 64 bytes (512 bits)
 
@@ -170,7 +170,7 @@ recip_lo_tbl = rom_recip + 641  ; 513 bytes
 ; ======================================================================
 zp_off_verts    = &60       ; u16
 zp_off_nodes    = &62       ; u16
-zp_off_ss       = &64       ; u16  (WAIT — conflicts with zp_cmd_lo!)
+zp_off_ss       = &64       ; u16  (was conflicting with old zp_cmd_lo, now free)
 
 ; Hmm, running out of ZP space. Let me use a different region.
 ; Actually let me use fixed addresses for the ROM layout offsets
@@ -351,11 +351,21 @@ ND_DY  = 6                 ; s16
 ND_CHR = 8                 ; u16 right child
 ND_CHL = 10                ; u16 left child
 
-; Command types
-CMD_SOLID  = &53            ; 'S'
-CMD_PORTAL = &50            ; 'P'
-CMD_ENDSS  = &45            ; 'E'
-CMD_DONE   = &00
+; Command types (REMOVED — direct line drawing via peripheral)
+; CMD_SOLID  = &53
+; CMD_PORTAL = &50
+; CMD_ENDSS  = &45
+; CMD_DONE   = &00
+
+; Line-drawing peripheral registers
+LINE_X0_LO = &FE20
+LINE_X0_HI = &FE21
+LINE_Y0_LO = &FE22
+LINE_Y0_HI = &FE23
+LINE_X1_LO = &FE24
+LINE_X1_HI = &FE25
+LINE_Y1_LO = &FE26
+LINE_Y1_HI = &FE27         ; write here triggers the draw
 
 ; Visibility span array (in RAM at spans_base).  Layout mirrors
 ; wad_packed.py's SPAN_* constants.  The 2-byte header stores span
@@ -444,11 +454,7 @@ QET_TIGHTEN   = 1
     ; Init BSP stack
     STA zp_bsp_sp
 
-    ; Init command buffer pointer
-    LDA #LO(cmd_buffer)
-    STA zp_cmd_lo
-    LDA #HI(cmd_buffer)
-    STA zp_cmd_hi
+    ; (Command buffer init removed — using direct line peripheral)
 
     ; Init deferred span-op queue (count=0, tail=queue_base)
     LDA #0
@@ -501,11 +507,6 @@ QET_TIGHTEN   = 1
     SBC #0
     STA zp_tmp0+1
     JSR bsp_traverse
-
-    ; Write terminator
-    LDY #0
-    LDA #CMD_DONE
-    STA (zp_cmd_lo),Y
 
     ; Done — return to Python
     BRK
@@ -3740,15 +3741,7 @@ QET_TIGHTEN   = 1
     ; Flush deferred span queue (applies mark_solid/tighten in order)
     JSR flush_native
 
-    ; Emit end-of-subsector command
-    LDY #0
-    LDA #CMD_ENDSS
-    STA (zp_cmd_lo),Y
-    ; Advance cmd pointer by 1
-    INC zp_cmd_lo
-    BNE no_cmd_wrap
-    INC zp_cmd_hi
-.no_cmd_wrap
+    ; (CMD_ENDSS removed — no command buffer)
 
     RTS
 }
@@ -4061,14 +4054,14 @@ QET_TIGHTEN   = 1
     AND #SF_SOLID
     BNE emit_solid
 
-    ; Portal — emit cmd and queue a deferred tighten.  queue_tighten
+    ; Portal — draw lines and queue a deferred tighten.  queue_tighten
     ; reads sx/ft/fb/bt/bb directly from their render_seg ZP slots.
-    JSR emit_portal_cmd
+    JSR draw_portal_lines
     JSR queue_tighten
     RTS
 
 .emit_solid
-    JSR emit_solid_cmd
+    JSR draw_solid_lines
     ; queue_solid reads zp_x_lo_clip / zp_x_hi_clip directly.
     JSR queue_solid
     RTS
@@ -5248,89 +5241,213 @@ QET_TIGHTEN   = 1
 }
 
 ; ======================================================================
-; EMIT SOLID COMMAND
-; Writes: type(1) + sx1(2) + sx2(2) + ft1(2) + fb1(2) + ft2(2) + fb2(2) = 13 bytes
+; DRAW SOLID LINES — write 4 edges to line peripheral at $FE20-$FE27
+; Line 1 (top):    sx1,ft1 -> sx2,ft2
+; Line 2 (bottom): sx1,fb1 -> sx2,fb2
+; Line 3 (left):   sx1,ft1 -> sx1,fb1
+; Line 4 (right):  sx2,ft2 -> sx2,fb2
 ; ======================================================================
-.emit_solid_cmd
+.draw_solid_lines
 {
-    LDY #0
-    LDA #CMD_SOLID
-    STA (zp_cmd_lo),Y : INY
-    LDA zp_sx1   : STA (zp_cmd_lo),Y : INY
-    LDA zp_sx1+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_sx2   : STA (zp_cmd_lo),Y : INY
-    LDA zp_sx2+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft1   : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft1+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb1   : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb1+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft2   : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft2+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb2   : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb2+1 : STA (zp_cmd_lo),Y
+    ; Line 1: top edge  sx1,ft1 -> sx2,ft2
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA zp_ft1   : STA LINE_Y0_LO
+    LDA zp_ft1+1 : STA LINE_Y0_HI
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA zp_ft2   : STA LINE_Y1_LO
+    LDA zp_ft2+1 : STA LINE_Y1_HI  ; triggers draw
 
-    ; Advance cmd pointer by 13
-    LDA zp_cmd_lo
-    CLC : ADC #13
-    STA zp_cmd_lo
-    LDA zp_cmd_hi
-    ADC #0
-    STA zp_cmd_hi
+    ; Line 2: bottom edge  sx1,fb1 -> sx2,fb2
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA zp_fb1   : STA LINE_Y0_LO
+    LDA zp_fb1+1 : STA LINE_Y0_HI
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA zp_fb2   : STA LINE_Y1_LO
+    LDA zp_fb2+1 : STA LINE_Y1_HI  ; triggers draw
+
+    ; Line 3: left edge  sx1,ft1 -> sx1,fb1
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA zp_ft1   : STA LINE_Y0_LO
+    LDA zp_ft1+1 : STA LINE_Y0_HI
+    LDA zp_sx1   : STA LINE_X1_LO
+    LDA zp_sx1+1 : STA LINE_X1_HI
+    LDA zp_fb1   : STA LINE_Y1_LO
+    LDA zp_fb1+1 : STA LINE_Y1_HI  ; triggers draw
+
+    ; Line 4: right edge  sx2,ft2 -> sx2,fb2
+    LDA zp_sx2   : STA LINE_X0_LO
+    LDA zp_sx2+1 : STA LINE_X0_HI
+    LDA zp_ft2   : STA LINE_Y0_LO
+    LDA zp_ft2+1 : STA LINE_Y0_HI
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA zp_fb2   : STA LINE_Y1_LO
+    LDA zp_fb2+1 : STA LINE_Y1_HI  ; triggers draw
+
     RTS
 }
 
 ; ======================================================================
-; EMIT PORTAL COMMAND
-; type(1) + sx1(2) + sx2(2) + ft1(2) + fb1(2) + ft2(2) + fb2(2) +
-; flags(1) + bt1(2) + bt2(2) + bb1(2) + bb2(2) + bch(1) + bfh(1) + ch(1) + fh(1)
-; = 26 bytes
+; DRAW PORTAL LINES — conditional edge drawing via line peripheral
+; Implements the same logic as the Python back-end:
+;   if need_bt: draw ceiling portal edges (bt1->bt2, ft1->bt1, ft2->bt2,
+;               and ft1->ft2 if ch > vz_ps)
+;   elif bch > ch: draw ft1->ft2 only
+;   if need_bb: draw floor portal edges (bb1->bb2, bb1->fb1, bb2->fb2,
+;               and fb1->fb2 if fh < vz_ps)
+;   elif bfh < fh: draw fb1->fb2 only
+;
+; ZP: sx1=$20, sx2=$22, ft1=$24, fb1=$26, ft2=$28, fb2=$2A
+; Scratch: bt1=$84/$85, bt2=$86/$87, bb1=$90/$91, bb2=$92/$93
+;          bch=$83, bfh=$82, ch=$81, fh=$80, vz_ps=$14
+;          seg_flags=$54, SF_NEEDBT=$04, SF_NEEDBB=$08
 ; ======================================================================
-.emit_portal_cmd
+.draw_portal_lines
 {
-    LDY #0
-    LDA #CMD_PORTAL
-    STA (zp_cmd_lo),Y : INY
-    LDA zp_sx1   : STA (zp_cmd_lo),Y : INY
-    LDA zp_sx1+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_sx2   : STA (zp_cmd_lo),Y : INY
-    LDA zp_sx2+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft1   : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft1+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb1   : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb1+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft2   : STA (zp_cmd_lo),Y : INY
-    LDA zp_ft2+1 : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb2   : STA (zp_cmd_lo),Y : INY
-    LDA zp_fb2+1 : STA (zp_cmd_lo),Y : INY
-    ; flags: need_bt | need_bb
+    ; --- Ceiling logic ---
     LDA zp_seg_flags
-    AND #(SF_NEEDBT OR SF_NEEDBB)
-    STA (zp_cmd_lo),Y : INY
-    ; bt1
-    LDA &84 : STA (zp_cmd_lo),Y : INY
-    LDA &85 : STA (zp_cmd_lo),Y : INY
-    ; bt2
-    LDA &86 : STA (zp_cmd_lo),Y : INY
-    LDA &87 : STA (zp_cmd_lo),Y : INY
-    ; bb1
-    LDA &90 : STA (zp_cmd_lo),Y : INY
-    LDA &91 : STA (zp_cmd_lo),Y : INY
-    ; bb2
-    LDA &92 : STA (zp_cmd_lo),Y : INY
-    LDA &93 : STA (zp_cmd_lo),Y : INY
-    ; bch, bfh, ch, fh
-    LDA &83 : STA (zp_cmd_lo),Y : INY  ; bch
-    LDA &82 : STA (zp_cmd_lo),Y : INY  ; bfh
-    LDA &81 : STA (zp_cmd_lo),Y : INY  ; ch
-    LDA &80 : STA (zp_cmd_lo),Y        ; fh
+    AND #SF_NEEDBT
+    BNE has_need_bt
+    JMP no_need_bt
+.has_need_bt
 
-    ; Advance by 26
-    LDA zp_cmd_lo
-    CLC : ADC #26
-    STA zp_cmd_lo
-    LDA zp_cmd_hi
-    ADC #0
-    STA zp_cmd_hi
+    ; need_bt: draw bt1->bt2 (back-ceiling top line)
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA &84      : STA LINE_Y0_LO      ; bt1 lo
+    LDA &85      : STA LINE_Y0_HI      ; bt1 hi
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA &86      : STA LINE_Y1_LO      ; bt2 lo
+    LDA &87      : STA LINE_Y1_HI      ; bt2 hi — triggers draw
+
+    ; draw left edge: sx1,ft1 -> sx1,bt1
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA zp_ft1   : STA LINE_Y0_LO
+    LDA zp_ft1+1 : STA LINE_Y0_HI
+    LDA zp_sx1   : STA LINE_X1_LO
+    LDA zp_sx1+1 : STA LINE_X1_HI
+    LDA &84      : STA LINE_Y1_LO      ; bt1 lo
+    LDA &85      : STA LINE_Y1_HI      ; bt1 hi — triggers draw
+
+    ; draw right edge: sx2,ft2 -> sx2,bt2
+    LDA zp_sx2   : STA LINE_X0_LO
+    LDA zp_sx2+1 : STA LINE_X0_HI
+    LDA zp_ft2   : STA LINE_Y0_LO
+    LDA zp_ft2+1 : STA LINE_Y0_HI
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA &86      : STA LINE_Y1_LO      ; bt2 lo
+    LDA &87      : STA LINE_Y1_HI      ; bt2 hi — triggers draw
+
+    ; if ch > vz_ps: also draw ft1->ft2 (front ceiling line)
+    LDA &81             ; ch (s8)
+    CMP zp_vz_ps        ; compare ch - vz_ps
+    BEQ skip_ceil_front  ; ch == vz_ps -> skip
+    BMI skip_ceil_front  ; ch < vz_ps -> skip (signed: N set means less)
+    ; ch > vz_ps — draw front ceiling line
+    JSR draw_ceil_line
+.skip_ceil_front
+    JMP ceil_done
+
+.no_need_bt
+    ; elif bch > ch: draw ft1->ft2 only
+    LDA &83             ; bch (s8)
+    CMP &81             ; ch (s8)
+    BEQ ceil_done
+    BMI ceil_done        ; bch <= ch -> skip
+    ; bch > ch — draw ceiling line
+    JSR draw_ceil_line
+
+.ceil_done
+
+    ; --- Floor logic ---
+    LDA zp_seg_flags
+    AND #SF_NEEDBB
+    BNE has_need_bb
+    JMP no_need_bb
+.has_need_bb
+
+    ; need_bb: draw bb1->bb2 (back-floor bottom line)
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA &90      : STA LINE_Y0_LO      ; bb1 lo
+    LDA &91      : STA LINE_Y0_HI      ; bb1 hi
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA &92      : STA LINE_Y1_LO      ; bb2 lo
+    LDA &93      : STA LINE_Y1_HI      ; bb2 hi — triggers draw
+
+    ; draw left edge: sx1,bb1 -> sx1,fb1
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA &90      : STA LINE_Y0_LO      ; bb1 lo
+    LDA &91      : STA LINE_Y0_HI      ; bb1 hi
+    LDA zp_sx1   : STA LINE_X1_LO
+    LDA zp_sx1+1 : STA LINE_X1_HI
+    LDA zp_fb1   : STA LINE_Y1_LO
+    LDA zp_fb1+1 : STA LINE_Y1_HI      ; triggers draw
+
+    ; draw right edge: sx2,bb2 -> sx2,fb2
+    LDA zp_sx2   : STA LINE_X0_LO
+    LDA zp_sx2+1 : STA LINE_X0_HI
+    LDA &92      : STA LINE_Y0_LO      ; bb2 lo
+    LDA &93      : STA LINE_Y0_HI      ; bb2 hi
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA zp_fb2   : STA LINE_Y1_LO
+    LDA zp_fb2+1 : STA LINE_Y1_HI      ; triggers draw
+
+    ; if fh < vz_ps: also draw fb1->fb2 (front floor line)
+    LDA &80             ; fh (s8)
+    CMP zp_vz_ps        ; compare fh - vz_ps
+    BEQ skip_floor_front ; fh == vz_ps -> skip
+    BPL skip_floor_front ; fh >= vz_ps -> skip (signed: N clear means >=)
+    ; fh < vz_ps — draw front floor line
+    JSR draw_floor_line
+.skip_floor_front
+    JMP floor_done
+
+.no_need_bb
+    ; elif bfh < fh: draw fb1->fb2 only
+    LDA &82             ; bfh (s8)
+    CMP &80             ; fh (s8)
+    BEQ floor_done
+    BPL floor_done       ; bfh >= fh -> skip
+    ; bfh < fh — draw floor line
+    JSR draw_floor_line
+
+.floor_done
+    RTS
+
+; Helper: draw ceiling line ft1->ft2
+.draw_ceil_line
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA zp_ft1   : STA LINE_Y0_LO
+    LDA zp_ft1+1 : STA LINE_Y0_HI
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA zp_ft2   : STA LINE_Y1_LO
+    LDA zp_ft2+1 : STA LINE_Y1_HI  ; triggers draw
+    RTS
+
+; Helper: draw floor line fb1->fb2
+.draw_floor_line
+    LDA zp_sx1   : STA LINE_X0_LO
+    LDA zp_sx1+1 : STA LINE_X0_HI
+    LDA zp_fb1   : STA LINE_Y0_LO
+    LDA zp_fb1+1 : STA LINE_Y0_HI
+    LDA zp_sx2   : STA LINE_X1_LO
+    LDA zp_sx2+1 : STA LINE_X1_HI
+    LDA zp_fb2   : STA LINE_Y1_LO
+    LDA zp_fb2+1 : STA LINE_Y1_HI  ; triggers draw
     RTS
 }
 

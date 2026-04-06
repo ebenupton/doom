@@ -146,20 +146,62 @@ PROFILE_CATEGORIES = [
 
 
 class PagedMemory(list):
-    """64KB memory with BBC Micro sideways ROM banking at $8000-$BFFF."""
+    """64KB memory with BBC Micro sideways ROM banking at $8000-$BFFF
+    and a magic line-draw peripheral at $FE20-$FE27.
+
+    Write 8 bytes (x0_lo, x0_hi, y0_lo, y0_hi, x1_lo, x1_hi, y1_lo, y1_hi).
+    The write to $FE27 (y1_hi) triggers a clipped line draw: the peripheral
+    reads the current span state from RAM at SPANS_BASE, clips the line
+    against every overlapping span (same Cyrus-Beck as Python draw_clipped),
+    and records the output segments.
+    """
+
+    LINEDRAW_BASE = 0xFE20
+
     def __init__(self, rom_banks=None):
         super().__init__([0] * 65536)
         self.rom_banks = rom_banks or []
         self.current_bank = -1
+        self._line_latch = [0] * 8   # x0_lo, x0_hi, y0_lo, y0_hi, ...
+        self.drawn_lines = []         # list of (x0,y0,x1,y1) after clipping
+        self._clips = None            # lazy FPClipSpans for clipping
 
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
-        if isinstance(key, int) and key == 0xFE30:
+        if not isinstance(key, int):
+            return
+        if key == 0xFE30:
             bank = value & 0x0F
             if bank != self.current_bank and bank < len(self.rom_banks):
                 self.current_bank = bank
                 src = self.rom_banks[bank]
                 super().__setitem__(slice(0x8000, 0x8000 + len(src)), list(src))
+        elif 0xFE20 <= key <= 0xFE27:
+            self._line_latch[key - 0xFE20] = value
+            if key == 0xFE27:
+                self._draw_clipped_line()
+
+    def _s16(self, lo, hi):
+        v = lo | (hi << 8)
+        return v - 65536 if v >= 32768 else v
+
+    def _draw_clipped_line(self):
+        """Triggered on write to $FE27.  Read latched coords, clip against
+        current span state in RAM, record output lines."""
+        L = self._line_latch
+        x0 = self._s16(L[0], L[1])
+        y0 = self._s16(L[2], L[3])
+        x1 = self._s16(L[4], L[5])
+        y1 = self._s16(L[6], L[7])
+
+        # Lazy-build a FPClipSpans from current RAM span state
+        from wad_packed import read_all_spans
+        from doom_wireframe import FPClipSpans
+        clips = FPClipSpans()
+        clips.spans = read_all_spans(self, SPANS_BASE)
+
+        # Clip and collect output lines (same algorithm as draw_clipped)
+        clips._clip_and_record(x0, y0, x1, y1, self.drawn_lines)
 
 
 class Frontend6502:
@@ -262,14 +304,14 @@ class Frontend6502:
         mem[ZP_VZ_PS] = vz_ps & 0xFF
         mem[ZP_ANGLE] = angle_byte & 0xFF
 
-        # Clear command buffer (just the first byte is enough — terminator)
-        mem[CMD_BUFFER] = 0
-
         # Initialise visibility-span state inline (no Python hook needed).
         # One full-screen span: count=1, xlo=0, xhi=0(=256), flat top=0, flat bot=159.
         from wad_packed import spans_init_full, SPAN_HDR
         spans_init_full(mem, SPANS_BASE, 256, 159)
         mem[SPANS_BASE + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
+
+        # Clear the line-draw peripheral's output buffer
+        mem.drawn_lines = []
 
         # Run
         self.mpu.pc = CODE_BASE
@@ -294,52 +336,8 @@ class Frontend6502:
 
         cycles = self.mpu.processorCycles
 
-        # Parse commands
-        commands = []
-        addr = CMD_BUFFER
-        cmd_limit = CMD_BUFFER + 880
-        while addr < cmd_limit:
-            t = mem[addr]
-            if t == CMD_DONE:
-                break
-            elif t == CMD_ENDSS:
-                commands.append(('E',))
-                addr += 1
-            elif t == CMD_SOLID:
-                commands.append(('S',
-                    _rd16(mem, addr + 1),  # sx1
-                    _rd16(mem, addr + 3),  # sx2
-                    _rd16(mem, addr + 5),  # ft1
-                    _rd16(mem, addr + 7),  # fb1
-                    _rd16(mem, addr + 9),  # ft2
-                    _rd16(mem, addr + 11), # fb2
-                ))
-                addr += 13
-            elif t == CMD_PORTAL:
-                flags = mem[addr + 13]
-                commands.append(('P',
-                    _rd16(mem, addr + 1),
-                    _rd16(mem, addr + 3),
-                    _rd16(mem, addr + 5),
-                    _rd16(mem, addr + 7),
-                    _rd16(mem, addr + 9),
-                    _rd16(mem, addr + 11),
-                    bool(flags & 0x04),  # need_bt
-                    bool(flags & 0x08),  # need_bb
-                    _rd16(mem, addr + 14),  # bt1
-                    _rd16(mem, addr + 16),  # bt2
-                    _rd16(mem, addr + 18),  # bb1
-                    _rd16(mem, addr + 20),  # bb2
-                    _rs8(mem, addr + 22),   # bch
-                    _rs8(mem, addr + 23),   # bfh
-                    _rs8(mem, addr + 24),   # ch
-                    _rs8(mem, addr + 25),   # fh
-                ))
-                addr += 26
-            else:
-                break
-
-        return commands, cycles
+        # Return the clipped lines drawn via the peripheral
+        return mem.drawn_lines, cycles
 
     def _ensure_profile_map(self, asm_path=None):
         """Lazily build the PC → function name map from the asm source/listing."""

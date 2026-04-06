@@ -1113,6 +1113,132 @@ class FPClipSpans:
             if drawn and stats is not None:
                 stats[2 if was_clipped else 1] += 1
 
+    def _clip_and_record(self, lx1, ly1, lx2, ly2, output):
+        """Clip one line against all overlapping spans and append clipped
+        segments to output as (x0, y0, x1, y1) tuples.  Same algorithm as
+        draw_clipped but records coordinates instead of drawing."""
+        if abs(lx1 - lx2) < 1:
+            # Vertical line
+            ix = lx1
+            if ix < 0 or ix >= FP_RENDER_W:
+                return
+            for _vs in self.spans:
+                xlo, xhi, tfn, bfn = _vs[:4]
+                if xlo <= ix < xhi:
+                    y_lo_v = min(ly1, ly2)
+                    y_hi_v = max(ly1, ly2)
+                    if y_hi_v < _vs[6] or y_lo_v > _vs[7]:
+                        break
+                    if y_lo_v >= _vs[4] and y_hi_v <= _vs[5]:
+                        output.append((ix, y_lo_v, ix, y_hi_v))
+                        break
+                    yt_88 = fp_eval_88(tfn, ix)
+                    yb_88 = fp_eval_88(bfn, ix)
+                    if yt_88 >= yb_88:
+                        break
+                    ya_88 = max(y_lo_v << 8, yt_88)
+                    ybb_88 = min(y_hi_v << 8, yb_88)
+                    if ya_88 < ybb_88:
+                        output.append((ix, ya_88 >> 8, ix, ybb_88 >> 8))
+                    break
+        else:
+            if lx1 <= lx2:
+                xl, yl, xr, yr = lx1, ly1, lx2, ly2
+            else:
+                xl, yl, xr, yr = lx2, ly2, lx1, ly1
+            dx = xr - xl
+
+            active = [s for s in self.spans if s[1] > xl and s[0] < xr]
+            if not active:
+                return
+
+            y_lo = min(yl, yr)
+            y_hi = max(yl, yr)
+
+            def _line_y_at(x):
+                if dx == 0: return yl
+                return yl + (yr - yl) * (x - xl) // dx
+
+            def _portal_ok_range(group, lo, hi):
+                for i in range(lo, hi):
+                    xhi = group[i][1]
+                    tfn, bfn = group[i][2], group[i][3]
+                    n_tfn, n_bfn = group[i + 1][2], group[i + 1][3]
+                    portal_top = max(fp_eval(tfn, xhi), fp_eval(n_tfn, xhi))
+                    portal_bot = min(fp_eval(bfn, xhi), fp_eval(n_bfn, xhi))
+                    if y_lo < portal_top or y_hi > portal_bot:
+                        ly = _line_y_at(xhi)
+                        if ly < portal_top or ly > portal_bot:
+                            return False
+                return True
+
+            groups = []
+            cur_group = [active[0]]
+            for i in range(1, len(active)):
+                if active[i - 1][1] == active[i][0]:
+                    cur_group.append(active[i])
+                else:
+                    groups.append(cur_group)
+                    cur_group = [active[i]]
+            groups.append(cur_group)
+
+            for group in groups:
+                if len(group) == 1:
+                    xlo, xhi, tfn, bfn = group[0][:4]
+                    ex = max(xl, xlo)
+                    xx = min(xr, xhi - 1)
+                    if y_hi < group[0][6] or y_lo > group[0][7]:
+                        continue
+                    trivial = y_lo >= group[0][4] and y_hi <= group[0][5]
+                    if trivial:
+                        draw_yl = _line_y_at(ex) if ex != xl else yl
+                        draw_yr = _line_y_at(xx) if xx != xr else yr
+                        draw_yl = max(0, min(FP_RENDER_H - 1, draw_yl))
+                        draw_yr = max(0, min(FP_RENDER_H - 1, draw_yr))
+                        output.append((ex, draw_yl, xx, draw_yr))
+                        continue
+                    c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[0][:4])
+                    if c:
+                        output.append(c)
+                    continue
+
+                group_outer_top = min(s[6] for s in group)
+                group_outer_bot = max(s[7] for s in group)
+                if y_hi < group_outer_top or y_lo > group_outer_bot:
+                    continue
+                group_inner_top = max(s[4] for s in group)
+                group_inner_bot = min(s[5] for s in group)
+                if y_lo >= group_inner_top and y_hi <= group_inner_bot:
+                    draw_xl = max(xl, group[0][0])
+                    draw_xr = min(xr, group[-1][1] - 1)
+                    draw_yl = _line_y_at(draw_xl) if draw_xl != xl else yl
+                    draw_yr = _line_y_at(draw_xr) if draw_xr != xr else yr
+                    draw_yl = max(0, min(FP_RENDER_H - 1, draw_yl))
+                    draw_yr = max(0, min(FP_RENDER_H - 1, draw_yr))
+                    output.append((draw_xl, draw_yl, draw_xr, draw_yr))
+                    continue
+
+                c_first, c_last = None, None
+                fi, li = 0, len(group) - 1
+                for fi in range(len(group)):
+                    c_first = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[fi][:4])
+                    if c_first: break
+                if not c_first:
+                    continue
+                for li in range(len(group) - 1, fi, -1):
+                    c_last = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[li][:4])
+                    if c_last: break
+                if not c_last:
+                    output.append(c_first)
+                    continue
+                if _portal_ok_range(group, fi, li):
+                    output.append((c_first[0], c_first[1], c_last[2], c_last[3]))
+                else:
+                    for si in range(fi, li + 1):
+                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[si][:4])
+                        if c:
+                            output.append(c)
+
     def mark_solid(self, lo, hi):
         """Remove [ilo, ihi) from spans.  All values in 8.0 pixels."""
         ilo = max(0, lo)
