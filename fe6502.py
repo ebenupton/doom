@@ -9,11 +9,11 @@ from py65.devices.mpu6502 import MPU
 
 # Memory map (must match doom_fe.asm)
 ROM_WINDOW      = 0x8000
-QSQ_BASE        = 0x0300
-ROM_RECIP_BASE  = 0x0700
-CODE_BASE       = 0x2F00
-CMD_BUFFER      = 0x0B90
-SPANS_BASE      = 0x2960
+QSQ_BASE        = 0x5400
+ROM_RECIP_BASE  = 0x4F7E
+CODE_BASE       = 0x2640
+CMD_BUFFER      = 0x0300
+SPANS_BASE      = 0x20D0
 ROMSEL          = 0xFE30
 
 # ZP addresses

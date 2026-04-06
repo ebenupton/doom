@@ -8,18 +8,28 @@
 ; Memory map (set up by Python before execution):
 ;   $0000-$00FF  Zero page
 ;   $0100-$01FF  Hardware stack
+;   BSS (zero-initialized, $0200-$263D):
 ;   $0200-$02D7  BSP node stack (72 entries × 3 bytes = 216 bytes)
-;   $02D8-$02FF  Layout offsets + padding
-;   $0300-$06FF  Quarter-square tables (4 × 256)
-;   $0700+       ROM recip (sin/cos 128B + reciprocal tables)
-;   $0B90-$0EFF  Command output buffer
-;   $0F00-$1EFF  Vertex cache (512 × 8 bytes = 4096 bytes)
-;   $1F00-$1F3F  Vertex cache valid bitmap (64 bytes)
-;   $1F40+       VWH cache, span state, queue
-;   $2F00+       Code (this file)
+;   $02D8-$02EF  Layout offsets (24B)
+;   $02F0-$02FF  [pad] (16B)
+;   $0300-$066F  Command buffer (880B)
+;   $0670-$166F  Vertex cache (4096B)
+;   $1670-$16AF  Vcache valid bitmap (64B)
+;   $16B0-$202F  VWH cache (2432B)
+;   $2030-$20CF  VWH valid bitmap (160B)
+;   $20D0-$22D1  Spans array (514B)
+;   $22D2-$243B  Deferred queue (362B)
+;   $243C-$263D  Scratch spans (514B)
+;   Code ($2640-$4F7D):
+;   $2640+       Code (this file)
+;   Tables ($4F7E-$57FF, loaded from ROM, not zeroed):
+;   $4F7E-$537F  Reciprocal tables (1026B)
+;   $5380-$53FF  Sin/cos tables (128B)
+;   $5400-$57FF  Quarter-square tables (4 × 256)
+;   $5800+       Framebuffers
 ;   $8000-$BFFF  Sideways ROM window (bank-switched via $FE30)
 
-ORG &2F00
+ORG &2640
 
 ; ======================================================================
 ; Zero page assignments
@@ -123,10 +133,9 @@ zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (24B stride)
 ; ======================================================================
 ; (old colbitmap at &0200 removed — visibility goes through span hooks)
 bsp_stack    = &0200        ; 216 bytes (72 × 3)
-cmd_buffer   = &0B90        ; command output (grows upward)
-; (old deferred_stk at &0B00 removed — Python side holds the deferred queue)
-vcache       = &0F00        ; vertex cache: 512 × 8 bytes = 4096 bytes
-vcache_valid = &1F00        ; vertex cache valid bitmap: 64 bytes (512 bits)
+cmd_buffer   = &0300        ; command output (grows upward, 880B)
+vcache       = &0670        ; vertex cache: 512 × 8 bytes = 4096 bytes
+vcache_valid = &1670        ; vertex cache valid bitmap: 64 bytes (512 bits)
 
 ; Vertex cache entry layout (8 bytes each)
 VC_VX    = 0                ; s16
@@ -135,22 +144,22 @@ VC_VI    = 4                ; u16 (vy_idx)
 VC_PAD   = 6                ; s16 (reserved, matches Python VC_SX slot)
 
 ; VWH (vertex-with-height) projected-Y cache: 1216 × 2 bytes = 2432 bytes
-vwh_cache    = &1F40        ; 2432 bytes
-vwh_valid    = &28C0        ; 160-byte valid bitmap (covers up to 1280 entries)
+vwh_cache    = &16B0        ; 2432 bytes
+vwh_valid    = &2030        ; 160-byte valid bitmap (covers up to 1280 entries)
 
 ; ======================================================================
 ; ROM base addresses (sideways ROM window)
 ; ======================================================================
 rom_window   = &8000
 
-; Quarter-square tables
-sqr_lo       = &0300
-sqr_hi       = &0400
-sqr2_lo      = &0500
-sqr2_hi      = &0600
+; Quarter-square tables (page-aligned, just before framebuffer)
+sqr_lo       = &5400
+sqr_hi       = &5500
+sqr2_lo      = &5600
+sqr2_hi      = &5700
 
-; Sin/cos + reciprocal tables
-rom_recip    = &0700
+; Sin/cos + reciprocal tables (just before quarter-square tables)
+rom_recip    = &4F7E
 sin_mag_tbl  = rom_recip        ; 64 bytes
 sin_unity_tbl = rom_recip + 64  ; 64 bytes
 recip_hi_tbl = rom_recip + 128  ; 513 bytes
@@ -268,7 +277,7 @@ zp_pw_r0_fn          = &B3   ; u8: 0 = use f, 1 = use g
 zp_pw_r1_fn          = &B4   ; u8: 0 = use f, 1 = use g
 
 ; Scratch span buffer for mark_solid/tighten — written then copied back.
-scratch_spans    = &2CF0     ; 514-byte buffer
+scratch_spans    = &243C     ; 514-byte buffer
 
 ; Visibility-span hook addresses.  These are intercepted by fe6502.py's
 ; run loop — control never actually reaches those PCs on the real 6502.
@@ -356,7 +365,7 @@ CMD_DONE   = &00
 ; Slopes are s16 (not s8) because fp_linfn can produce values outside
 ; the s8 range.  The outer_top/outer_bot bbox fields are derived
 ; on-the-fly by Python's draw_clipped path and not stored in RAM.
-spans_base    = &2960        ; RAM address of span array header
+spans_base    = &20D0        ; RAM address of span array header
 MAX_SPANS     = 32
 SPAN_SIZE     = 16
 SPAN_HDR      = 2
@@ -386,13 +395,13 @@ SP_INNER_BOT  = 12           ; s16
 ;   +16  s16  yb1       (tighten only)
 ;   +18  s16  yb2       (tighten only)
 ;
-queue_count   = &2B62        ; u8 (count of queued entries)
-flush_ptr_lo  = &2B63        ; u8: flush iteration pointer lo (RAM)
-flush_ptr_hi  = &2B64        ; u8: flush iteration pointer hi
-flush_rem     = &2B65        ; u8: queue entries remaining in flush
-bb_log_ptr    = &2B66        ; u8: bbox_cull log write pointer (DIAG)
+queue_count   = &22D2        ; u8 (count of queued entries)
+flush_ptr_lo  = &22D3        ; u8: flush iteration pointer lo (RAM)
+flush_ptr_hi  = &22D4        ; u8: flush iteration pointer hi
+flush_rem     = &22D5        ; u8: queue entries remaining in flush
+bb_log_ptr    = &22D6        ; u8: bbox_cull log write pointer (DIAG)
 bb_log_base   = &0F00        ; 8 bytes per entry (DIAG)
-queue_base    = &2B70        ; entries start here
+queue_base    = &22E0        ; entries start here
 MAX_QUEUE     = 18
 QE_SIZE       = 20
 QE_TYPE       = 0
@@ -6303,4 +6312,4 @@ bb_far_side = &BE         ; saved far_side
 
 .end_of_code
 
-SAVE "doom_fe.bin", &2F00, end_of_code
+SAVE "doom_fe.bin", &2640, end_of_code

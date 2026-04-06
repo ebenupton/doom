@@ -26,7 +26,7 @@ for i, line in enumerate(r.stdout.split('\n')):
         addrs[s[1:]] = int(nl.split()[0], 16)
 print(f"tighten at ${addrs['tighten']:04X}")
 
-SPANS_BASE = 0x2960
+SPANS_BASE = 0x20D0
 ZP_MS_LO = 0xF0
 ZP_MS_HI = 0xF2
 # tighten expects sx/y values at $60-$67 + zp_tg_ox0 ($90) / ox1 ($92)

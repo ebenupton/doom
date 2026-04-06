@@ -25,7 +25,7 @@ for i, line in enumerate(r.stdout.split('\n')):
         break
 print(f"line_survives at ${ls_addr:04X}")
 
-SPANS_BASE = 0x2960
+SPANS_BASE = 0x20D0
 SPAN_HDR = 2
 SPAN_SIZE = 16
 

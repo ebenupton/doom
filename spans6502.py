@@ -48,8 +48,8 @@ HK_ENTER_SS         = 0xFE0E  # diagnostic: note which subsector we entered
 # 6502-side deferred span-op queue (populated natively by queue_solid /
 # queue_tighten in doom_fe.asm).  The Python flush hook reads entries
 # from this queue and applies them to the span state.
-QUEUE_COUNT_ADDR = 0x2B62
-QUEUE_BASE       = 0x2B70
+QUEUE_COUNT_ADDR = 0x22D2
+QUEUE_BASE       = 0x22E0
 QE_SIZE          = 20
 QE_TYPE          = 0
 QE_TOP_DOM       = 1
@@ -66,7 +66,7 @@ QET_SOLID        = 0
 QET_TIGHTEN      = 1
 
 # Span state lives in 6502 RAM at this address.
-SPANS_BASE = 0x2960
+SPANS_BASE = 0x20D0
 
 
 # Zero-page argument slots
