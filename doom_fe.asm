@@ -7367,7 +7367,16 @@ ORG &9B20
     RTS
 
 .pc_p_nonzero
-    ; t = fp_div8(q, p) — inputs already in zp_tmp0, zp_tmp2
+    ; Sign-based skip: if p>0 and q<0, t<0 → reject immediately.
+    ; If p<0 and q>=0, t<=0 → skip (can't tighten t0 above 0).
+    LDA zp_tmp2+1 : BMI pc_p_is_neg
+    ; p > 0 (leaving): if q < 0, t < 0 < t0 → reject
+    LDA zp_tmp0+1 : BMI pc_reject
+    JMP pc_do_div
+.pc_p_is_neg
+    ; p < 0 (entering): if q >= 0, t <= 0 → no update to t0, skip
+    LDA zp_tmp0+1 : BPL pc_done
+.pc_do_div
     JSR fp_div8             ; result in $70:$71 (s16)
 
     ; Check sign of p to determine entering vs leaving
