@@ -2503,6 +2503,11 @@ _frame_6502_cycles = [0]  # mutable for closure access
 sys.setrecursionlimit(10000)
 pygame.init()
 if __name__ == '__main__':
+    # Register under the canonical module name so that deferred imports like
+    # `from doom_wireframe import ...` in background threads find this module
+    # instance instead of re-importing the file (which would call
+    # pygame.display.set_mode from a non-main thread and crash on macOS).
+    sys.modules['doom_wireframe'] = sys.modules['__main__']
     screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
     pygame.display.set_caption("DOOM E1M1 — Wireframe BSP")
 else:
