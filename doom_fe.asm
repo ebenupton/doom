@@ -128,6 +128,38 @@ zp_ptr1      = &5C         ; u16
 zp_seg_hdr_ptr = &5E       ; u16 pointer to current seg header (12B stride)
 zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (24B stride)
 
+; --- Clipper state (used during line drawing, after BSP traversal) ---
+; These overlap with zp_vx1..zp_vx2 ($30-$36) and zp_ls_* ($C4-$CE),
+; which are only live during BSP traversal.
+zp_cl_x1       = &A0    ; s16 line start X
+zp_cl_y1       = &A2    ; s16 line start Y
+zp_cl_x2       = &A4    ; s16 line end X
+zp_cl_y2       = &A6    ; s16 line end Y
+zp_cl_dx       = &A8    ; s16 dx = x2 - x1
+zp_cl_dy       = &AA    ; s16 dy = y2 - y1
+zp_cl_t0       = &AC    ; s16 parametric start (0.8 format)
+zp_cl_t1       = &AE    ; s16 parametric end (0.8 format)
+zp_cl_ta_dx    = &B0    ; s16 fp_mul8(ta, dx)
+zp_cl_ta_x1    = &B2    ; s16 fp_mul8(ta, x1)
+zp_cl_ba_dx    = &B4    ; s16 fp_mul8(ba, dx)
+zp_cl_ba_x1    = &B6    ; s16 fp_mul8(ba, x1)
+zp_cl_span_ptr = &B8    ; u16 pointer to current span record
+zp_cl_count    = &C4    ; u8 remaining span count
+zp_cl_xlo      = &C5    ; u8 current span xlo
+zp_cl_xhi      = &C6    ; u8 current span xhi (0 = 256)
+zp_cl_ta       = &C7    ; s16 current span top slope
+zp_cl_tb       = &C9    ; s16 current span top intercept
+zp_cl_ba       = &CB    ; s16 current span bottom slope
+zp_cl_bb       = &CD    ; s16 current span bottom intercept
+zp_cl_cx1      = &30    ; s16 clipped x1 output
+zp_cl_cy1      = &32    ; s16 clipped y1 output
+zp_cl_cx2      = &34    ; s16 clipped x2 output
+zp_cl_cy2      = &36    ; s16 clipped y2 output
+zp_cl_x_min    = &38    ; s16 min(x1,x2) — line X range
+zp_cl_x_max    = &3A    ; s16 max(x1,x2)
+zp_cl_y_min    = &3C    ; s16 min(y1,y2) — line Y range
+zp_cl_y_max    = &3E    ; s16 max(y1,y2)
+
 ; ======================================================================
 ; RAM addresses
 ; ======================================================================
@@ -527,8 +559,8 @@ QET_TIGHTEN   = 1
     STA zp_tmp0+1
     JSR bsp_traverse
 
-    ; Done — return to Python
-    BRK
+    ; Done — return to caller (loader frame loop or py65 halt)
+    RTS
 
 ; ======================================================================
 ; DECOMPOSE ANGLE → sin/cos magnitude, sign, unity flags
@@ -1992,6 +2024,21 @@ QET_TIGHTEN   = 1
 .fd_no_commit
     DEX
     BNE fd_loop
+
+    ; Check for 24-bit quotient overflow (byte2 nonzero → |result| > 65535).
+    ; Clamp to max-magnitude s16 to ensure correct reject in Cyrus-Beck.
+    LDA zp_tmp3
+    BEQ fd_result_fits
+    LDA zp_div_sign
+    BNE fd_ovf_neg
+    LDA #&FF : STA &70
+    LDA #&7F : STA &71       ; +32767
+    RTS
+.fd_ovf_neg
+    LDA #&01 : STA &70
+    LDA #&80 : STA &71       ; -32767
+    RTS
+.fd_result_fits
 
     ; Low 16 bits of quotient are in zp_div_num:zp_div_num+1.
     ; Apply sign.
@@ -5276,7 +5323,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_ft2   : STA LINE_Y1_LO
-    LDA zp_ft2+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_ft2+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; Line 2: bottom edge  sx1,fb1 -> sx2,fb2
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5286,7 +5333,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; Line 3: left edge  sx1,ft1 -> sx1,fb1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5296,7 +5343,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA zp_fb1   : STA LINE_Y1_LO
-    LDA zp_fb1+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_fb1+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; Line 4: right edge  sx2,ft2 -> sx2,fb2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5306,7 +5353,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
     RTS
 }
@@ -5343,7 +5390,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA &86      : STA LINE_Y1_LO      ; bt2 lo
-    LDA &87      : STA LINE_Y1_HI : JSR rasterise_line
+    LDA &87      : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw left edge: sx1,ft1 -> sx1,bt1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5353,7 +5400,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA &84      : STA LINE_Y1_LO      ; bt1 lo
-    LDA &85      : STA LINE_Y1_HI : JSR rasterise_line
+    LDA &85      : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw right edge: sx2,ft2 -> sx2,bt2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5363,7 +5410,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA &86      : STA LINE_Y1_LO      ; bt2 lo
-    LDA &87      : STA LINE_Y1_HI : JSR rasterise_line
+    LDA &87      : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; if ch > vz_ps: also draw ft1->ft2 (front ceiling line)
     LDA &81             ; ch (s8)
@@ -5401,7 +5448,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA &92      : STA LINE_Y1_LO      ; bb2 lo
-    LDA &93      : STA LINE_Y1_HI : JSR rasterise_line
+    LDA &93      : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw left edge: sx1,bb1 -> sx1,fb1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5411,7 +5458,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA zp_fb1   : STA LINE_Y1_LO
-    LDA zp_fb1+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_fb1+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw right edge: sx2,bb2 -> sx2,fb2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5421,7 +5468,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; if fh < vz_ps: also draw fb1->fb2 (front floor line)
     LDA &80             ; fh (s8)
@@ -5454,7 +5501,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_ft2   : STA LINE_Y1_LO
-    LDA zp_ft2+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_ft2+1 : STA LINE_Y1_HI : JSR clip_rasterise
     RTS
 
 ; Helper: draw floor line fb1->fb2
@@ -5466,7 +5513,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
-    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR rasterise_line
+    LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
     RTS
 }
 
@@ -5474,52 +5521,83 @@ QET_TIGHTEN   = 1
 ; RASTERISE_LINE: read s16 coords from $02F0-$02F7, reject off-screen,
 ; call NJ rasteriser in bank 2 to plot pixels in the screen buffer.
 ; On py65 the write to $02F7 already triggers the Python rasteriser via
-; the PagedMemory intercept; this routine is for the real BBC / jsbeeb.
-; ======================================================================
-.rasterise_line
+; (rasterise_line removed — replaced by clip_rasterise + bank 2 clipper)
+
+KEY_Z = &61 : KEY_X = &42 : KEY_K = &46 : KEY_M = &65 : TURN_SPEED = 4
+
+.game_loop
+    JSR entry               ; render to back buffer (screen start in ZP $70)
+
+    ; (double buffering disabled for debugging)
+
+    ; --- Keyboard: direct VIA scan ---
+    ; bit 7 = 0 = pressed, 1 = not pressed
+    LDA #KEY_Z : JSR scan_key : BMI gl_no_z
+    LDA zp_angle : SEC : SBC #TURN_SPEED : STA zp_angle
+.gl_no_z
+    LDA #KEY_X : JSR scan_key : BMI gl_no_x
+    LDA zp_angle : CLC : ADC #TURN_SPEED : STA zp_angle
+.gl_no_x
+    LDA #KEY_K : JSR scan_key : BMI gl_no_k
+    JSR gl_move_fwd
+.gl_no_k
+    LDA #KEY_M : JSR scan_key : BMI gl_no_m
+    JSR gl_move_back
+.gl_no_m
+
+    JMP game_loop
+
+; Key scan helper: A=key code → flags reflect bit 7 (BMI = not pressed)
+.scan_key
+    STA &FE4F : LDA &FE4F : RTS
+
+; --- Movement: unified fwd/back via direction flag at &40 ---
+; &40 = 0 for forward, 1 for backward
+.gl_move_fwd
+    LDA #1 : STA &40 : JMP gl_move
+.gl_move_back
+    LDA #0 : STA &40
+.gl_move
 {
-    ; Clamp each s16 coordinate to u8 range:
-    ;   if hi < 0 ($80+) → 0
-    ;   if hi > 0 → 255
-    ;   if hi == 0 → use lo byte
-    ; Then clamp Y to 0-159.
+    ; dx (wx) from cos, dy (wy) from sin — DOOM: angle 0=North(+Y), 64=East(+X)
+    LDA zp_cos_unity : BEQ mv_cos_normal
+    LDA #128 : JMP mv_cos_got
+.mv_cos_normal
+    LDA zp_cos_mag
+.mv_cos_got
+    LSR A : TAX : BEQ mv_skip_x
+    LDA zp_cos_neg : EOR &40 : BNE mv_sub_x
+    TXA : CLC : ADC zp_wx : STA zp_wx : LDA zp_wx+1 : ADC #0 : STA zp_wx+1 : JMP mv_skip_x
+.mv_sub_x
+    STX &41 : LDA zp_wx : SEC : SBC &41 : STA zp_wx : LDA zp_wx+1 : SBC #0 : STA zp_wx+1
+.mv_skip_x
+    LDA zp_sin_unity : BEQ mv_sin_normal
+    LDA #128 : JMP mv_sin_got
+.mv_sin_normal
+    LDA zp_sin_mag
+.mv_sin_got
+    LSR A : TAX : BEQ mv_skip_y
+    LDA zp_sin_neg : EOR &40 : BNE mv_sub_y
+    TXA : CLC : ADC zp_wy : STA zp_wy : LDA zp_wy+1 : ADC #0 : STA zp_wy+1 : JMP mv_skip_y
+.mv_sub_y
+    STX &41 : LDA zp_wy : SEC : SBC &41 : STA zp_wy : LDA zp_wy+1 : SBC #0 : STA zp_wy+1
+.mv_skip_y
+}
 
-    ; x0
-    LDA &02F1 : BEQ rl_x0_ok : BPL rl_x0_max
-    LDA #0 : JMP rl_x0_set
-.rl_x0_max LDA #255
-.rl_x0_set STA &82 : JMP rl_y0
-.rl_x0_ok  LDA &02F0 : STA &82
-
-.rl_y0
-    LDA &02F3 : BEQ rl_y0_ok : BPL rl_y0_max
-    LDA #0 : JMP rl_y0_set
-.rl_y0_max LDA #159
-.rl_y0_set STA &83 : JMP rl_x1
-.rl_y0_ok  LDA &02F2 : CMP #160 : BCC rl_y0_keep : LDA #159
-.rl_y0_keep STA &83
-
-.rl_x1
-    LDA &02F5 : BEQ rl_x1_ok : BPL rl_x1_max
-    LDA #0 : JMP rl_x1_set
-.rl_x1_max LDA #255
-.rl_x1_set STA &84 : JMP rl_y1
-.rl_x1_ok  LDA &02F4 : STA &84
-
-.rl_y1
-    LDA &02F7 : BEQ rl_y1_ok : BPL rl_y1_max
-    LDA #0 : JMP rl_y1_set
-.rl_y1_max LDA #159
-.rl_y1_set STA &85 : JMP rl_draw
-.rl_y1_ok  LDA &02F6 : CMP #160 : BCC rl_y1_keep : LDA #159
-.rl_y1_keep STA &85
-
-.rl_draw
-    LDA #&58 : STA &70
-    LDA #2 : STA &FE30
-    JSR &8EC0
-    LDA #0 : STA &FE30
-    RTS
+; Recompute px/py from wx/wy: px_88 = wx << 5 (prescale=8)
+.gl_recompute
+{
+    LDA zp_wx : STA &40 : LDA zp_wx+1 : STA &41
+    ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41
+    LDA &40 : STA zp_px_lo : LDA &41 : STA zp_px_int
+    BPL rp_px_pos : LDA #&FF : STA zp_px_int_hi : JMP rp_py
+.rp_px_pos LDA #0 : STA zp_px_int_hi
+.rp_py
+    LDA zp_wy : STA &40 : LDA zp_wy+1 : STA &41
+    ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41
+    LDA &40 : STA zp_py_lo : LDA &41 : STA zp_py_int
+    BPL rp_py_pos : LDA #&FF : STA zp_py_int_hi : RTS
+.rp_py_pos LDA #0 : STA zp_py_int_hi : RTS
 }
 
 ; ======================================================================
@@ -6498,6 +6576,965 @@ bb_far_side = &BE         ; saved far_side
 .select_bank_2
     LDA #2 : STA &FE30 : RTS
 
+; ======================================================================
+; CLIP AND RASTERISE TRAMPOLINE
+; Switches to bank 2 where the Cyrus-Beck clipper lives, calls it,
+; then switches back to bank 0.
+; ======================================================================
+.clip_rasterise
+    LDA #2 : STA &FE30         ; select bank 2 (clipper + NJ rasteriser)
+    JSR clip_and_rasterise      ; in bank 2 at $9B20
+    LDA #0 : STA &FE30         ; back to bank 0
+    RTS
+
 .end_of_code
 
 SAVE "doom_fe.bin", &2640, end_of_code
+
+; ######################################################################
+; CLIPPER CODE — assembled into ROM bank 2 at $9B20
+; (lives after bbox table at $8000 and NJ rasteriser at $8EC0)
+;
+; Optimization tiers (matching the Python FPClipSpans.draw_clipped):
+; 1. X overlap check — skip spans with no X overlap (0 muls)
+; 2. Flat-span Y bbox reject — skip if line Y range outside span (0 muls)
+; 3. Vertical line fast path — clamp Y to span top/bot (0-2 muls)
+; 4. Inner bbox trivial accept — skip CB if line fits inside (0 muls)
+; 5. Cyrus-Beck fallback — full parametric clip (4-12 muls)
+; ######################################################################
+ORG &9B20
+
+; ======================================================================
+; CLIP_AND_RASTERISE
+; ======================================================================
+.clip_and_rasterise
+{
+    ; Copy LINE registers to ZP
+    LDA LINE_X0_LO : STA zp_cl_x1
+    LDA LINE_X0_HI : STA zp_cl_x1+1
+    LDA LINE_Y0_LO : STA zp_cl_y1
+    LDA LINE_Y0_HI : STA zp_cl_y1+1
+    LDA LINE_X1_LO : STA zp_cl_x2
+    LDA LINE_X1_HI : STA zp_cl_x2+1
+    LDA LINE_Y1_LO : STA zp_cl_y2
+    LDA LINE_Y1_HI : STA zp_cl_y2+1
+
+    ; dx = x2 - x1, dy = y2 - y1
+    SEC
+    LDA zp_cl_x2   : SBC zp_cl_x1   : STA zp_cl_dx
+    LDA zp_cl_x2+1 : SBC zp_cl_x1+1 : STA zp_cl_dx+1
+    SEC
+    LDA zp_cl_y2   : SBC zp_cl_y1   : STA zp_cl_dy
+    LDA zp_cl_y2+1 : SBC zp_cl_y1+1 : STA zp_cl_dy+1
+
+    ; --- Pre-compute line bounding box (s16) ---
+    ; x_min = min(x1, x2), x_max = max(x1, x2)
+    ; Signed compare: x1 < x2?
+    SEC
+    LDA zp_cl_x1   : SBC zp_cl_x2
+    LDA zp_cl_x1+1 : SBC zp_cl_x2+1
+    BVC car_xv : EOR #&80
+.car_xv
+    BMI car_x1_lt       ; x1 < x2
+    ; x1 >= x2: min=x2, max=x1
+    LDA zp_cl_x2   : STA zp_cl_x_min
+    LDA zp_cl_x2+1 : STA zp_cl_x_min+1
+    LDA zp_cl_x1   : STA zp_cl_x_max
+    LDA zp_cl_x1+1 : STA zp_cl_x_max+1
+    JMP car_ybbox
+.car_x1_lt
+    ; x1 < x2: min=x1, max=x2
+    LDA zp_cl_x1   : STA zp_cl_x_min
+    LDA zp_cl_x1+1 : STA zp_cl_x_min+1
+    LDA zp_cl_x2   : STA zp_cl_x_max
+    LDA zp_cl_x2+1 : STA zp_cl_x_max+1
+
+.car_ybbox
+    ; y_min = min(y1, y2), y_max = max(y1, y2)
+    SEC
+    LDA zp_cl_y1   : SBC zp_cl_y2
+    LDA zp_cl_y1+1 : SBC zp_cl_y2+1
+    BVC car_yv : EOR #&80
+.car_yv
+    BMI car_y1_lt
+    LDA zp_cl_y2   : STA zp_cl_y_min
+    LDA zp_cl_y2+1 : STA zp_cl_y_min+1
+    LDA zp_cl_y1   : STA zp_cl_y_max
+    LDA zp_cl_y1+1 : STA zp_cl_y_max+1
+    JMP car_spans
+.car_y1_lt
+    LDA zp_cl_y1   : STA zp_cl_y_min
+    LDA zp_cl_y1+1 : STA zp_cl_y_min+1
+    LDA zp_cl_y2   : STA zp_cl_y_max
+    LDA zp_cl_y2+1 : STA zp_cl_y_max+1
+
+.car_spans
+    ; Load span count
+    LDA spans_base
+    BNE car_has_spans
+    RTS
+.car_has_spans
+    STA zp_cl_count
+    LDA #LO(spans_base + SPAN_HDR) : STA zp_cl_span_ptr
+    LDA #HI(spans_base + SPAN_HDR) : STA zp_cl_span_ptr+1
+
+.car_span_loop
+    LDY #SP_XLO
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xlo
+    LDY #SP_XHI
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
+
+    ; === OPT 1: X overlap check ===
+    ; Skip if x_max < xlo (s16 vs u8)
+    LDA zp_cl_x_max+1
+    BMI car_skip_span       ; x_max < 0 < xlo → skip
+    BNE car_x_left_ok       ; x_max >= 256 > any xlo → ok
+    LDA zp_cl_x_max : CMP zp_cl_xlo
+    BCC car_skip_span       ; x_max < xlo → skip
+.car_x_left_ok
+    ; Skip if x_min >= xhi (s16 vs u8, xhi=0 means 256)
+    LDA zp_cl_xhi : BEQ car_xhi256
+    ; xhi is normal u8
+    LDA zp_cl_x_min+1
+    BMI car_x_right_ok      ; x_min < 0 < xhi → ok
+    BNE car_skip_span       ; x_min >= 256 > xhi → skip
+    LDA zp_cl_x_min : CMP zp_cl_xhi
+    BCS car_skip_span       ; x_min >= xhi → skip
+    JMP car_x_right_ok
+.car_skip_span
+    JMP car_next_span       ; trampoline for out-of-range branches
+.car_xhi256
+    ; xhi = 256: skip if x_min >= 256
+    LDA zp_cl_x_min+1
+    BMI car_x_right_ok      ; negative → ok
+    BEQ car_x_right_ok      ; hi=0 → x_min < 256 → ok
+    JMP car_next_span       ; x_min >= 256 → skip
+.car_x_right_ok
+
+    ; === OPT 2: Flat-span Y bbox reject ===
+    ; For flat spans (tslope=0, bslope=0), inner bbox = outer bbox.
+    ; Reject if y_max < inner_top or y_min > inner_bot.
+    LDY #SP_TSLOPE
+    LDA (zp_cl_span_ptr),Y : INY : ORA (zp_cl_span_ptr),Y
+    BNE car_not_flat
+    LDY #SP_BSLOPE
+    LDA (zp_cl_span_ptr),Y : INY : ORA (zp_cl_span_ptr),Y
+    BNE car_not_flat
+    ; Span is flat — check Y bbox
+    ; y_max < inner_top? (signed: inner_top - y_max > 0 iff y_max < inner_top)
+    LDY #SP_INNER_TOP
+    SEC
+    LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max
+    INY
+    LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max+1
+    BVC car_fv1 : EOR #&80
+.car_fv1
+    BPL car_next_span       ; inner_top > y_max → reject (y_max < inner_top)
+    ; y_min > inner_bot? (signed: y_min - inner_bot > 0)
+    LDY #SP_INNER_BOT
+    SEC
+    LDA zp_cl_y_min   : SBC (zp_cl_span_ptr),Y
+    INY
+    LDA zp_cl_y_min+1 : SBC (zp_cl_span_ptr),Y
+    BVC car_fv2 : EOR #&80
+.car_fv2
+    BPL car_next_span       ; y_min > inner_bot → reject
+.car_not_flat
+
+    ; === OPT 3: Vertical line fast path ===
+    LDA zp_cl_dx : ORA zp_cl_dx+1
+    BNE car_do_cb
+
+    ; dx == 0: vertical line at x = x1
+    JSR clip_vertical
+    BCS car_next_span
+    JSR rasterise_clipped
+    JMP car_next_span
+
+.car_do_cb
+    ; === OPT 4: Inner bbox trivial accept (non-vertical) ===
+    ; If y_min >= inner_top AND y_max <= inner_bot, line is fully inside.
+    ; Skip full CB, just clamp X to [xlo, xhi-1] via left/right constraints only.
+    LDY #SP_INNER_TOP
+    SEC
+    LDA zp_cl_y_min   : SBC (zp_cl_span_ptr),Y
+    INY
+    LDA zp_cl_y_min+1 : SBC (zp_cl_span_ptr),Y
+    BVC car_iv1 : EOR #&80
+.car_iv1
+    BMI car_full_cb         ; y_min < inner_top → need full CB
+    LDY #SP_INNER_BOT
+    SEC
+    LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max
+    INY
+    LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max+1
+    BVC car_iv2 : EOR #&80
+.car_iv2
+    BMI car_full_cb         ; inner_bot < y_max → need full CB
+
+    ; Trivial accept: skip constraints 3 & 4 (top/bot)
+    JSR clip_lr_only
+    BCS car_next_span
+    JSR rasterise_clipped
+    JMP car_next_span
+
+.car_full_cb
+    ; === OPT 5: Full Cyrus-Beck ===
+    JSR clip_to_trap
+    BCS car_next_span
+    JSR rasterise_clipped
+
+.car_next_span
+    CLC
+    LDA zp_cl_span_ptr   : ADC #SPAN_SIZE : STA zp_cl_span_ptr
+    BCC car_no_carry
+    INC zp_cl_span_ptr+1
+.car_no_carry
+    DEC zp_cl_count
+    BEQ car_done
+    JMP car_span_loop
+
+.car_done
+    RTS
+}
+
+; ======================================================================
+; CLIP_VERTICAL — fast path for vertical lines (dx == 0)
+; Evaluates span top/bot at the line's X and clamps Y range.
+; Uses fp_eval (0-2 muls) instead of full CB (4-12 muls).
+;
+; Input:  zp_cl_x1 (= x2 since dx=0), zp_cl_y_min, zp_cl_y_max
+;         span at (zp_cl_span_ptr)
+; Output: C=0 visible (zp_cl_cx1..cy2 set), C=1 rejected
+; ======================================================================
+.clip_vertical
+{
+    ; x = x1.  Check xlo <= x < xhi.
+    ; x < xlo → reject
+    LDA zp_cl_x1+1
+    BMI cv_rej              ; x < 0 < xlo → reject
+    BNE cv_x_ge_xlo        ; x >= 256 → might still be < xhi
+    LDA zp_cl_x1 : CMP zp_cl_xlo
+    BCC cv_rej              ; x < xlo → reject
+.cv_x_ge_xlo
+    ; x >= xhi → reject (xhi=0 means 256)
+    LDA zp_cl_xhi : BEQ cv_xhi256
+    LDA zp_cl_x1+1
+    BNE cv_rej              ; x >= 256 > xhi → reject (xhi < 256)
+    LDA zp_cl_x1 : CMP zp_cl_xhi
+    BCS cv_rej              ; x >= xhi → reject
+    JMP cv_x_ok
+.cv_xhi256
+    LDA zp_cl_x1+1
+    BNE cv_rej              ; x >= 256 = xhi → reject
+    BEQ cv_x_ok             ; always taken (A=0), skip trampoline
+.cv_rej
+    JMP cv_reject
+.cv_x_ok
+
+    ; Compute top_y and bot_y at x.
+    ; For flat spans (slope=0): top_y = tintercept, bot_y = bintercept
+    ; For non-flat: top_y = fp_mul8(ta, x) + tb (up to 2 muls)
+
+    ; Check ta == 0
+    LDY #SP_TSLOPE
+    LDA (zp_cl_span_ptr),Y : INY : ORA (zp_cl_span_ptr),Y
+    BNE cv_ta_nonzero
+    ; ta = 0: top_y = tb
+    LDY #SP_TINTERCEPT
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp0
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp0+1
+    JMP cv_do_bot
+.cv_ta_nonzero
+    ; top_y = fp_mul8(ta, x1) + tb
+    LDY #SP_TSLOPE
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp0
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp0+1
+    LDA zp_cl_x1   : STA zp_tmp2
+    LDA zp_cl_x1+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx        ; $70:$71 = fp_mul8(ta, x)
+    LDY #SP_TINTERCEPT
+    CLC
+    LDA &70 : ADC (zp_cl_span_ptr),Y : STA zp_tmp0
+    INY
+    LDA &71 : ADC (zp_cl_span_ptr),Y : STA zp_tmp0+1
+
+.cv_do_bot
+    ; Check ba == 0
+    LDY #SP_BSLOPE
+    LDA (zp_cl_span_ptr),Y : INY : ORA (zp_cl_span_ptr),Y
+    BNE cv_ba_nonzero
+    ; ba = 0: bot_y = bb
+    LDY #SP_BINTERCEPT
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp2
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp2+1
+    JMP cv_clamp
+.cv_ba_nonzero
+    LDY #SP_BSLOPE
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp0+2  ; abuse zp_tmp1 for ba temp
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp0+3
+    ; Save top_y (in zp_tmp0) on stack temporarily
+    LDA zp_tmp0 : PHA
+    LDA zp_tmp0+1 : PHA
+    LDA zp_tmp0+2 : STA zp_tmp0
+    LDA zp_tmp0+3 : STA zp_tmp0+1
+    LDA zp_cl_x1   : STA zp_tmp2
+    LDA zp_cl_x1+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx        ; $70:$71 = fp_mul8(ba, x)
+    LDY #SP_BINTERCEPT
+    CLC
+    LDA &70 : ADC (zp_cl_span_ptr),Y : STA zp_tmp2
+    INY
+    LDA &71 : ADC (zp_cl_span_ptr),Y : STA zp_tmp2+1
+    ; Restore top_y
+    PLA : STA zp_tmp0+1
+    PLA : STA zp_tmp0
+
+.cv_clamp
+    ; zp_tmp0 = top_y (s16), zp_tmp2 = bot_y (s16)
+    ; Check top_y >= bot_y → no aperture → reject
+    SEC
+    LDA zp_tmp2   : SBC zp_tmp0
+    LDA zp_tmp2+1 : SBC zp_tmp0+1
+    BVC cv_av : EOR #&80
+.cv_av
+    BMI cv_reject           ; bot_y < top_y → no aperture
+
+    ; Clamp y_min/y_max to [top_y, bot_y] into cx/cy output slots.
+    ; cy1 = max(y_min, top_y)
+    LDA zp_cl_y_min   : STA zp_cl_cy1
+    LDA zp_cl_y_min+1 : STA zp_cl_cy1+1
+    SEC
+    LDA zp_cl_cy1   : SBC zp_tmp0
+    LDA zp_cl_cy1+1 : SBC zp_tmp0+1
+    BVC cv_v1 : EOR #&80
+.cv_v1
+    BPL cv_cy1_ok           ; y_min >= top_y
+    LDA zp_tmp0   : STA zp_cl_cy1
+    LDA zp_tmp0+1 : STA zp_cl_cy1+1
+.cv_cy1_ok
+    ; cy2 = min(y_max, bot_y)
+    LDA zp_cl_y_max   : STA zp_cl_cy2
+    LDA zp_cl_y_max+1 : STA zp_cl_cy2+1
+    SEC
+    LDA zp_tmp2   : SBC zp_cl_cy2
+    LDA zp_tmp2+1 : SBC zp_cl_cy2+1
+    BVC cv_v2 : EOR #&80
+.cv_v2
+    BPL cv_cy2_ok           ; bot_y >= y_max
+    LDA zp_tmp2   : STA zp_cl_cy2
+    LDA zp_tmp2+1 : STA zp_cl_cy2+1
+.cv_cy2_ok
+    ; Check cy1 > cy2 (after clamping) → reject
+    SEC
+    LDA zp_cl_cy2   : SBC zp_cl_cy1
+    LDA zp_cl_cy2+1 : SBC zp_cl_cy1+1
+    BVC cv_v3 : EOR #&80
+.cv_v3
+    BMI cv_reject           ; cy2 < cy1 → empty
+
+    ; Output: vertical line at (x1, cy1) → (x1, cy2)
+    LDA zp_cl_x1   : STA zp_cl_cx1 : STA zp_cl_cx2
+    LDA zp_cl_x1+1 : STA zp_cl_cx1+1 : STA zp_cl_cx2+1
+    CLC
+    RTS
+
+.cv_reject
+    SEC
+    RTS
+}
+
+; ======================================================================
+; CLIP_LR_ONLY — trivial-accept path: only apply left/right constraints.
+; Used when inner bbox confirms line Y range fits inside span.
+; Skips the expensive top/bot constraints (saves 4 muls + 2 divs).
+;
+; Input:  zp_cl_x1..y2, zp_cl_dx/dy precomputed
+;         zp_cl_xlo, zp_cl_xhi
+; Output: C=0 visible (zp_cl_cx1..cy2 set), C=1 rejected
+; ======================================================================
+.clip_lr_only
+{
+    ; Init t0 = 0, t1 = $0100
+    LDA #0
+    STA zp_cl_t0 : STA zp_cl_t0+1
+    STA zp_cl_t1
+    LDA #1 : STA zp_cl_t1+1
+
+    ; Constraint 1: LEFT  p = -dx, q = x1 - xlo
+    SEC
+    LDA #0         : SBC zp_cl_dx   : STA zp_tmp2
+    LDA #0         : SBC zp_cl_dx+1 : STA zp_tmp2+1
+    SEC
+    LDA zp_cl_x1   : SBC zp_cl_xlo  : STA zp_tmp0
+    LDA zp_cl_x1+1 : SBC #0         : STA zp_tmp0+1
+    JSR process_constraint
+    BCS lr_reject
+
+    ; Constraint 2: RIGHT  p = dx, q = xhi - x1
+    LDA zp_cl_dx   : STA zp_tmp2
+    LDA zp_cl_dx+1 : STA zp_tmp2+1
+    LDA zp_cl_xhi
+    BNE lr_xhi_normal
+    SEC
+    LDA #0         : SBC zp_cl_x1   : STA zp_tmp0
+    LDA #1         : SBC zp_cl_x1+1 : STA zp_tmp0+1
+    JMP lr_con2
+.lr_xhi_normal
+    SEC
+    LDA zp_cl_xhi  : SBC zp_cl_x1   : STA zp_tmp0
+    LDA #0         : SBC zp_cl_x1+1 : STA zp_tmp0+1
+.lr_con2
+    JSR process_constraint
+    BCS lr_reject
+
+    ; Check t0 > t1
+    SEC
+    LDA zp_cl_t1   : SBC zp_cl_t0
+    LDA zp_cl_t1+1 : SBC zp_cl_t0+1
+    BVC lr_cv1 : EOR #&80
+.lr_cv1
+    BMI lr_reject
+
+    ; Compute clipped endpoints (same as full CB)
+    JMP compute_clipped_endpoints
+
+.lr_reject
+    SEC
+    RTS
+}
+
+; ======================================================================
+; CLIP_TO_TRAP — Cyrus-Beck line clipper (full, 4 constraints)
+; Clips line against trapezoid span: [xlo, xhi) with linear top/bot.
+;
+; Input:  zp_cl_x1..y2, zp_cl_dx/dy precomputed
+;         span at (zp_cl_span_ptr)
+; Output: C=0 visible (zp_cl_cx1..cy2 set), C=1 rejected
+; ======================================================================
+.clip_to_trap
+{
+    ; Init t0 = 0, t1 = $0100 (= 256 = 1.0 in 0.8 format)
+    LDA #0
+    STA zp_cl_t0 : STA zp_cl_t0+1
+    STA zp_cl_t1
+    LDA #1 : STA zp_cl_t1+1
+
+    ; --- Read span slopes and intercepts ---
+    LDY #SP_TSLOPE
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_ta
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_ta+1
+
+    LDY #SP_BSLOPE
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_ba
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_ba+1
+
+    LDY #SP_TINTERCEPT
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_tb
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_tb+1
+
+    LDY #SP_BINTERCEPT
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_bb
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_bb+1
+
+    ; --- Compute slope products (skip if slope == 0, very common) ---
+
+    ; ta_dx = fp_mul8(ta, dx), ta_x1 = fp_mul8(ta, x1)
+    LDA zp_cl_ta : ORA zp_cl_ta+1
+    BNE ct_ta_nonzero
+    LDA #0
+    STA zp_cl_ta_dx : STA zp_cl_ta_dx+1
+    STA zp_cl_ta_x1 : STA zp_cl_ta_x1+1
+    JMP ct_compute_ba
+.ct_ta_nonzero
+    LDA zp_cl_ta   : STA zp_tmp0
+    LDA zp_cl_ta+1 : STA zp_tmp0+1
+    LDA zp_cl_dx   : STA zp_tmp2
+    LDA zp_cl_dx+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    LDA &70 : STA zp_cl_ta_dx
+    LDA &71 : STA zp_cl_ta_dx+1
+    LDA zp_cl_ta   : STA zp_tmp0
+    LDA zp_cl_ta+1 : STA zp_tmp0+1
+    LDA zp_cl_x1   : STA zp_tmp2
+    LDA zp_cl_x1+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    LDA &70 : STA zp_cl_ta_x1
+    LDA &71 : STA zp_cl_ta_x1+1
+
+.ct_compute_ba
+    ; ba_dx = fp_mul8(ba, dx), ba_x1 = fp_mul8(ba, x1)
+    LDA zp_cl_ba : ORA zp_cl_ba+1
+    BNE ct_ba_nonzero
+    LDA #0
+    STA zp_cl_ba_dx : STA zp_cl_ba_dx+1
+    STA zp_cl_ba_x1 : STA zp_cl_ba_x1+1
+    JMP ct_constraints
+.ct_ba_nonzero
+    LDA zp_cl_ba   : STA zp_tmp0
+    LDA zp_cl_ba+1 : STA zp_tmp0+1
+    LDA zp_cl_dx   : STA zp_tmp2
+    LDA zp_cl_dx+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    LDA &70 : STA zp_cl_ba_dx
+    LDA &71 : STA zp_cl_ba_dx+1
+    LDA zp_cl_ba   : STA zp_tmp0
+    LDA zp_cl_ba+1 : STA zp_tmp0+1
+    LDA zp_cl_x1   : STA zp_tmp2
+    LDA zp_cl_x1+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    LDA &70 : STA zp_cl_ba_x1
+    LDA &71 : STA zp_cl_ba_x1+1
+
+.ct_constraints
+    ; === Constraint 1: LEFT — x >= xlo ===
+    ; p = -dx, q = x1 - xlo
+    SEC
+    LDA #0         : SBC zp_cl_dx   : STA zp_tmp2
+    LDA #0         : SBC zp_cl_dx+1 : STA zp_tmp2+1
+    SEC
+    LDA zp_cl_x1   : SBC zp_cl_xlo  : STA zp_tmp0
+    LDA zp_cl_x1+1 : SBC #0         : STA zp_tmp0+1
+    JSR process_constraint
+    BCC ct_con1_ok : JMP ct_reject
+.ct_con1_ok
+
+    ; === Constraint 2: RIGHT — x < xhi ===
+    ; p = dx, q = xhi - x1
+    LDA zp_cl_dx   : STA zp_tmp2
+    LDA zp_cl_dx+1 : STA zp_tmp2+1
+    LDA zp_cl_xhi
+    BNE ct_xhi_normal
+    ; xhi = 0 means 256 = $0100
+    SEC
+    LDA #0         : SBC zp_cl_x1   : STA zp_tmp0
+    LDA #1         : SBC zp_cl_x1+1 : STA zp_tmp0+1
+    JMP ct_con2_go
+.ct_xhi_normal
+    SEC
+    LDA zp_cl_xhi  : SBC zp_cl_x1   : STA zp_tmp0
+    LDA #0         : SBC zp_cl_x1+1 : STA zp_tmp0+1
+.ct_con2_go
+    JSR process_constraint
+    BCC ct_con2_ok : JMP ct_reject
+.ct_con2_ok
+
+    ; === Constraint 3: TOP — y >= ta*x + tb ===
+    ; p = ta_dx - dy, q = y1 - ta_x1 - tb
+    SEC
+    LDA zp_cl_ta_dx   : SBC zp_cl_dy     : STA zp_tmp2
+    LDA zp_cl_ta_dx+1 : SBC zp_cl_dy+1   : STA zp_tmp2+1
+    SEC
+    LDA zp_cl_y1      : SBC zp_cl_ta_x1   : STA zp_tmp0
+    LDA zp_cl_y1+1    : SBC zp_cl_ta_x1+1 : STA zp_tmp0+1
+    SEC
+    LDA zp_tmp0        : SBC zp_cl_tb      : STA zp_tmp0
+    LDA zp_tmp0+1      : SBC zp_cl_tb+1    : STA zp_tmp0+1
+    JSR process_constraint
+    BCC ct_con3_ok : JMP ct_reject
+.ct_con3_ok
+
+    ; === Constraint 4: BOTTOM — y <= ba*x + bb ===
+    ; p = dy - ba_dx, q = ba_x1 + bb - y1
+    SEC
+    LDA zp_cl_dy      : SBC zp_cl_ba_dx   : STA zp_tmp2
+    LDA zp_cl_dy+1    : SBC zp_cl_ba_dx+1 : STA zp_tmp2+1
+    CLC
+    LDA zp_cl_ba_x1   : ADC zp_cl_bb      : STA zp_tmp0
+    LDA zp_cl_ba_x1+1 : ADC zp_cl_bb+1    : STA zp_tmp0+1
+    SEC
+    LDA zp_tmp0        : SBC zp_cl_y1      : STA zp_tmp0
+    LDA zp_tmp0+1      : SBC zp_cl_y1+1    : STA zp_tmp0+1
+    JSR process_constraint
+    BCC ct_con4_ok : JMP ct_reject
+.ct_con4_ok
+
+    ; === Check t0 > t1 → reject ===
+    ; Signed: is t1 < t0?
+    SEC
+    LDA zp_cl_t1   : SBC zp_cl_t0
+    LDA zp_cl_t1+1 : SBC zp_cl_t0+1
+    BVC ct_cmpv1 : EOR #&80
+.ct_cmpv1
+    BPL ct_t_ok : JMP ct_reject
+.ct_t_ok
+
+    ; Shared endpoint computation + X clamp + vertical Y clamp
+    JMP compute_clipped_endpoints
+
+.ct_reject
+    SEC
+    RTS
+}
+
+; ======================================================================
+; COMPUTE_CLIPPED_ENDPOINTS — shared by clip_to_trap and clip_lr_only.
+; Converts parametric t0/t1 to screen coordinates with X clamping
+; and vertical-line Y clamping.
+; Input: zp_cl_t0, zp_cl_t1 set; zp_cl_x1..y2, dx, dy valid
+; Output: C=0 visible (zp_cl_cx1..cy2 set), C=1 rejected
+; ======================================================================
+.compute_clipped_endpoints
+{
+    ; cx1 = x1 + fp_mul8(t0, dx)
+    LDA zp_cl_t0   : STA zp_tmp0
+    LDA zp_cl_t0+1 : STA zp_tmp0+1
+    LDA zp_cl_dx   : STA zp_tmp2
+    LDA zp_cl_dx+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    CLC
+    LDA zp_cl_x1   : ADC &70 : STA zp_cl_cx1
+    LDA zp_cl_x1+1 : ADC &71 : STA zp_cl_cx1+1
+
+    ; cy1 = y1 + fp_mul8(t0, dy)
+    LDA zp_cl_t0   : STA zp_tmp0
+    LDA zp_cl_t0+1 : STA zp_tmp0+1
+    LDA zp_cl_dy   : STA zp_tmp2
+    LDA zp_cl_dy+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    CLC
+    LDA zp_cl_y1   : ADC &70 : STA zp_cl_cy1
+    LDA zp_cl_y1+1 : ADC &71 : STA zp_cl_cy1+1
+
+    ; cx2 = x1 + fp_mul8(t1, dx)
+    LDA zp_cl_t1   : STA zp_tmp0
+    LDA zp_cl_t1+1 : STA zp_tmp0+1
+    LDA zp_cl_dx   : STA zp_tmp2
+    LDA zp_cl_dx+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    CLC
+    LDA zp_cl_x1   : ADC &70 : STA zp_cl_cx2
+    LDA zp_cl_x1+1 : ADC &71 : STA zp_cl_cx2+1
+
+    ; cy2 = y1 + fp_mul8(t1, dy)
+    LDA zp_cl_t1   : STA zp_tmp0
+    LDA zp_cl_t1+1 : STA zp_tmp0+1
+    LDA zp_cl_dy   : STA zp_tmp2
+    LDA zp_cl_dy+1 : STA zp_tmp2+1
+    JSR fl_mul8_bysx
+    CLC
+    LDA zp_cl_y1   : ADC &70 : STA zp_cl_cy2
+    LDA zp_cl_y1+1 : ADC &71 : STA zp_cl_cy2+1
+
+    ; === Clamp cx1 >= xlo ===
+    LDA zp_cl_cx1+1
+    BMI ct_clamp_x1       ; cx1 negative → clamp
+    BNE ct_x1_done        ; cx1 >= 256 → no clamp needed
+    LDA zp_cl_cx1 : CMP zp_cl_xlo
+    BCS ct_x1_done
+.ct_clamp_x1
+    LDA zp_cl_xlo : STA zp_cl_cx1
+    LDA #0 : STA zp_cl_cx1+1
+.ct_x1_done
+
+    ; === Clamp cx2 < xhi (i.e., cx2 <= xhi-1) ===
+    LDA zp_cl_xhi
+    BEQ ct_xhi256         ; xhi = 256
+    ; Normal xhi
+    LDA zp_cl_cx2+1
+    BMI ct_x2_done        ; cx2 negative → no clamp
+    BNE ct_clamp_x2       ; cx2 >= 256 → clamp
+    LDA zp_cl_cx2 : CMP zp_cl_xhi
+    BCC ct_x2_done        ; cx2 < xhi → ok
+.ct_clamp_x2
+    LDA zp_cl_xhi : SEC : SBC #1 : STA zp_cl_cx2
+    LDA #0 : STA zp_cl_cx2+1
+    JMP ct_x2_done
+.ct_xhi256
+    ; xhi = 256: clamp if cx2 >= 256
+    LDA zp_cl_cx2+1
+    BMI ct_x2_done        ; negative → ok
+    BEQ ct_x2_done        ; hi=0 → cx2 < 256 → ok
+    LDA #255 : STA zp_cl_cx2
+    LDA #0 : STA zp_cl_cx2+1
+.ct_x2_done
+
+    ; === Check cx1 > cx2 → reject ===
+    SEC
+    LDA zp_cl_cx2   : SBC zp_cl_cx1
+    LDA zp_cl_cx2+1 : SBC zp_cl_cx1+1
+    BVC ct_cmpv2 : EOR #&80
+.ct_cmpv2
+    BPL ct_cx_ok : JMP ct_reject
+.ct_cx_ok
+
+    ; === Vertical line: clamp Y to [top_y, bot_y] ===
+    LDA zp_cl_dx : ORA zp_cl_dx+1
+    BNE ct_accept
+
+    ; top_y = ta_x1 + tb
+    CLC
+    LDA zp_cl_ta_x1   : ADC zp_cl_tb   : STA zp_tmp0
+    LDA zp_cl_ta_x1+1 : ADC zp_cl_tb+1 : STA zp_tmp0+1
+    ; bot_y = ba_x1 + bb
+    CLC
+    LDA zp_cl_ba_x1   : ADC zp_cl_bb   : STA zp_tmp2
+    LDA zp_cl_ba_x1+1 : ADC zp_cl_bb+1 : STA zp_tmp2+1
+
+    ; cy1 = max(cy1, top_y)
+    SEC
+    LDA zp_cl_cy1   : SBC zp_tmp0
+    LDA zp_cl_cy1+1 : SBC zp_tmp0+1
+    BVC ct_v3 : EOR #&80
+.ct_v3
+    BPL ct_cy1_max_ok
+    LDA zp_tmp0   : STA zp_cl_cy1
+    LDA zp_tmp0+1 : STA zp_cl_cy1+1
+.ct_cy1_max_ok
+    ; cy1 = min(cy1, bot_y)
+    SEC
+    LDA zp_tmp2   : SBC zp_cl_cy1
+    LDA zp_tmp2+1 : SBC zp_cl_cy1+1
+    BVC ct_v4 : EOR #&80
+.ct_v4
+    BPL ct_cy1_min_ok
+    LDA zp_tmp2   : STA zp_cl_cy1
+    LDA zp_tmp2+1 : STA zp_cl_cy1+1
+.ct_cy1_min_ok
+    ; cy2 = max(cy2, top_y)
+    SEC
+    LDA zp_cl_cy2   : SBC zp_tmp0
+    LDA zp_cl_cy2+1 : SBC zp_tmp0+1
+    BVC ct_v5 : EOR #&80
+.ct_v5
+    BPL ct_cy2_max_ok
+    LDA zp_tmp0   : STA zp_cl_cy2
+    LDA zp_tmp0+1 : STA zp_cl_cy2+1
+.ct_cy2_max_ok
+    ; cy2 = min(cy2, bot_y)
+    SEC
+    LDA zp_tmp2   : SBC zp_cl_cy2
+    LDA zp_tmp2+1 : SBC zp_cl_cy2+1
+    BVC ct_v6 : EOR #&80
+.ct_v6
+    BPL ct_cy2_min_ok
+    LDA zp_tmp2   : STA zp_cl_cy2
+    LDA zp_tmp2+1 : STA zp_cl_cy2+1
+.ct_cy2_min_ok
+
+.ct_accept
+    CLC
+    RTS
+
+.ct_reject
+    SEC
+    RTS
+}
+
+; ======================================================================
+; PROCESS_CONSTRAINT — update t0/t1 for one Cyrus-Beck half-plane
+;
+; Input:  zp_tmp0 = q (s16), zp_tmp2 = p (s16)
+; Updates: zp_cl_t0 / zp_cl_t1
+; Output: C=1 reject, C=0 continue
+; Clobbers: A, X, Y, zp_div_*, zp_tmp3, $70:$71
+; ======================================================================
+.process_constraint
+{
+    ; Check p == 0 (line parallel to this boundary)
+    LDA zp_tmp2 : ORA zp_tmp2+1
+    BNE pc_p_nonzero
+
+    ; p == 0: reject if q < -1 (i.e., q <= -2, point is outside)
+    LDA zp_tmp0+1
+    BPL pc_p0_ok              ; q >= 0 → inside
+    CMP #&FF : BNE pc_reject  ; q_hi != $FF → q <= -256 → outside
+    LDA zp_tmp0
+    CMP #&FF : BEQ pc_p0_ok   ; q == -1 → on boundary → ok
+.pc_reject
+    SEC
+    RTS
+.pc_p0_ok
+    CLC
+    RTS
+
+.pc_p_nonzero
+    ; t = fp_div8(q, p) — inputs already in zp_tmp0, zp_tmp2
+    JSR fp_div8             ; result in $70:$71 (s16)
+
+    ; Check sign of p to determine entering vs leaving
+    LDA zp_tmp2+1
+    BMI pc_p_neg
+
+    ; --- p > 0 (leaving constraint) ---
+    ; if t < t0: reject
+    SEC
+    LDA &70 : SBC zp_cl_t0
+    LDA &71 : SBC zp_cl_t0+1
+    BVC pc_pv1 : EOR #&80
+.pc_pv1
+    BMI pc_reject           ; t < t0 → reject
+
+    ; if t < t1: t1 = t
+    SEC
+    LDA &70 : SBC zp_cl_t1
+    LDA &71 : SBC zp_cl_t1+1
+    BVC pc_pv2 : EOR #&80
+.pc_pv2
+    BPL pc_done             ; t >= t1 → no update
+    LDA &70 : STA zp_cl_t1
+    LDA &71 : STA zp_cl_t1+1
+    CLC
+    RTS
+
+.pc_p_neg
+    ; --- p < 0 (entering constraint) ---
+    ; if t > t1: reject (t1 < t)
+    SEC
+    LDA zp_cl_t1   : SBC &70
+    LDA zp_cl_t1+1 : SBC &71
+    BVC pc_pv3 : EOR #&80
+.pc_pv3
+    BMI pc_reject           ; t1 < t → reject
+
+    ; if t > t0: t0 = t (t0 < t)
+    SEC
+    LDA zp_cl_t0   : SBC &70
+    LDA zp_cl_t0+1 : SBC &71
+    BVC pc_pv4 : EOR #&80
+.pc_pv4
+    BPL pc_done             ; t0 >= t → no update
+    LDA &70 : STA zp_cl_t0
+    LDA &71 : STA zp_cl_t0+1
+
+.pc_done
+    CLC
+    RTS
+}
+
+; ======================================================================
+; RASTERISE_CLIPPED — clamp s16 coords to u8 and call NJ rasteriser
+; Input:  zp_cl_cx1..cy2 (s16 clipped coordinates)
+; Called from bank 2 — NJ rasteriser at $8EC0 is in same bank.
+; ======================================================================
+.rasterise_clipped
+{
+    ; Clamp cx1 X: s16 → u8 [0,255]
+    LDA zp_cl_cx1+1
+    BEQ rc_x0_ok
+    BPL rc_x0_max
+    LDA #0 : JMP rc_x0_set
+.rc_x0_max
+    LDA #255
+.rc_x0_set
+    STA &82 : JMP rc_y0
+.rc_x0_ok
+    LDA zp_cl_cx1 : STA &82
+
+.rc_y0
+    LDA zp_cl_cy1+1
+    BEQ rc_y0_ok
+    BPL rc_y0_max
+    LDA #0 : JMP rc_y0_set
+.rc_y0_max
+    LDA #159
+.rc_y0_set
+    STA &83 : JMP rc_x1
+.rc_y0_ok
+    LDA zp_cl_cy1 : CMP #160 : BCC rc_y0_keep : LDA #159
+.rc_y0_keep
+    STA &83
+
+.rc_x1
+    LDA zp_cl_cx2+1
+    BEQ rc_x1_ok
+    BPL rc_x1_max
+    LDA #0 : JMP rc_x1_set
+.rc_x1_max
+    LDA #255
+.rc_x1_set
+    STA &84 : JMP rc_y1
+.rc_x1_ok
+    LDA zp_cl_cx2 : STA &84
+
+.rc_y1
+    LDA zp_cl_cy2+1
+    BEQ rc_y1_ok
+    BPL rc_y1_max
+    LDA #0 : JMP rc_y1_set
+.rc_y1_max
+    LDA #159
+.rc_y1_set
+    STA &85 : JMP rc_draw
+.rc_y1_ok
+    LDA zp_cl_cy2 : CMP #160 : BCC rc_y1_keep : LDA #159
+.rc_y1_keep
+    STA &85
+
+.rc_draw
+    LDA #&58 : STA &70          ; screen buffer 0 high byte
+    JSR &8EC0                    ; NJ rasteriser (same bank 2)
+    RTS
+}
+
+; ======================================================================
+; CLEAR_BACK_BUFFER — fast unrolled screen clear (20 × STA abs,X)
+; Reads ZP $70: $58 = buffer 0, $6C = buffer 1
+; ======================================================================
+.clear_back_buffer
+{
+    LDA &70 : CMP #&6C : BEQ clear_buf1
+    ; Buffer 0: $5800-$6BFF (20 pages)
+    LDA #0 : TAX
+.cb0
+    STA &5800,X : STA &5900,X : STA &5A00,X : STA &5B00,X
+    STA &5C00,X : STA &5D00,X : STA &5E00,X : STA &5F00,X
+    STA &6000,X : STA &6100,X : STA &6200,X : STA &6300,X
+    STA &6400,X : STA &6500,X : STA &6600,X : STA &6700,X
+    STA &6800,X : STA &6900,X : STA &6A00,X : STA &6B00,X
+    INX : BNE cb0
+    RTS
+.clear_buf1
+    ; Buffer 1: $6C00-$7FFF (20 pages)
+    LDA #0 : TAX
+.cb1
+    STA &6C00,X : STA &6D00,X : STA &6E00,X : STA &6F00,X
+    STA &7000,X : STA &7100,X : STA &7200,X : STA &7300,X
+    STA &7400,X : STA &7500,X : STA &7600,X : STA &7700,X
+    STA &7800,X : STA &7900,X : STA &7A00,X : STA &7B00,X
+    STA &7C00,X : STA &7D00,X : STA &7E00,X : STA &7F00,X
+    INX : BNE cb1
+    RTS
+}
+
+; ======================================================================
+; VSYNC_AND_FLIP — wait for vsync, present back buffer, swap
+; ZP $70 = current back buffer hi ($58 or $6C). Updated on return.
+; ======================================================================
+.vsync_and_flip
+{
+    ; Wait for vsync: poll System VIA IFR bit 1 (CA1)
+    LDA #2
+.wv BIT &FE4D : BEQ wv
+    STA &FE4D               ; clear vsync flag
+
+    ; Set CRTC R12:R13 to display the just-rendered back buffer
+    ; Buffer 0 ($5800): R12:R13 = $5800/8 = $0B00
+    ; Buffer 1 ($6C00): R12:R13 = $6C00/8 = $0D80
+    LDA #12 : STA &FE00
+    LDA &70 : CMP #&6C : BEQ vf_buf1
+    LDA #&0B : STA &FE01    ; R12 for buffer 0
+    LDA #13 : STA &FE00
+    LDA #&00 : STA &FE01    ; R13 for buffer 0
+    JMP vf_swap
+.vf_buf1
+    LDA #&0D : STA &FE01    ; R12 for buffer 1
+    LDA #13 : STA &FE00
+    LDA #&80 : STA &FE01    ; R13 for buffer 1
+
+.vf_swap
+    ; Swap back buffer: toggle $70 between $58 and $6C
+    LDA &70 : EOR #(&58 EOR &6C) : STA &70
+    RTS
+}
+
+.end_of_clipper
+SAVE "clipper_bank2.bin", &9B20, end_of_clipper

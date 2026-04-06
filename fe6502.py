@@ -230,8 +230,13 @@ class Frontend6502:
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0,
                      map_center_x=1200, map_center_y=-3250, prescale=None,
-                     aspect_num=6, aspect_den=5):
-        """Run one frame of the front-end and return (commands, cycles)."""
+                     aspect_num=6, aspect_den=5, capture_lines=False):
+        """Run one frame of the front-end.
+
+        Returns cycles (int), or (drawn_lines, cycles) if capture_lines=True.
+        drawn_lines is a list of (x0, y0, x1, y1) u8 tuples captured at the
+        NJ rasteriser entry point ($8EC0).
+        """
         mem = self.mpu.memory
 
         # The current prescale must match whatever the ROM was packed with,
@@ -265,20 +270,35 @@ class Frontend6502:
         # All per-frame init (spans, screen clear) is done by the 6502
         # frame loop at $0900.  We just set player state and run.
 
+        # Set up a return-to-halt trampoline: push address of a BRK at $FF00
+        # so when the entry point does RTS, it lands on $FF00 and we detect it.
+        mem[0xFF00] = 0x00  # BRK
         self.mpu.pc = CODE_BASE
         self.mpu.sp = 0xFF
         self.mpu.p = 0x30
+        # Push return address for the top-level JSR→RTS pattern:
+        # RTS pops address and adds 1, so push $FEFF to land on $FF00.
+        self.mpu.sp = 0xFD
+        mem[0x01FF] = 0xFE  # high byte
+        mem[0x01FE] = 0xFF  # low byte
         self.mpu.processorCycles = 0
 
         # Pure 6502 execution — no Python hooks in the loop.
         # The NJ rasteriser in bank 2 executes natively via JSR $8EC0.
+        NJ_ENTRY = 0x8EC0
         mpu = self.mpu
+        drawn_lines = [] if capture_lines else None
         for _ in range(20_000_000):
             if mpu.pc == 0xFF00:
                 break
+            if drawn_lines is not None and mpu.pc == NJ_ENTRY:
+                drawn_lines.append((mem[0x82], mem[0x83], mem[0x84], mem[0x85]))
             mpu.step()
 
-        return self.mpu.processorCycles
+        cyc = self.mpu.processorCycles
+        if capture_lines:
+            return drawn_lines, cyc
+        return cyc
 
     def _ensure_profile_map(self, asm_path=None):
         """Lazily build the PC → function name map from the asm source/listing."""
