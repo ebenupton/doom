@@ -2198,7 +2198,6 @@ QET_TIGHTEN   = 1
 .fl_mul8_bysx
 {
     JSR mul16x16
-    ; $70:$73 = s32 product. Bytes 1..2 = (product >> 8) low 16 bits.
     LDA &71 : STA &70
     LDA &72 : STA &71
     RTS
@@ -5597,14 +5596,18 @@ KEY_Z = &61 : KEY_X = &42 : KEY_K = &46 : KEY_M = &65 : TURN_SPEED = 4
 ; Recompute px/py from wx/wy: px_88 = wx << 5 (prescale=8)
 .gl_recompute
 {
+    ; px_88 = wx << 5
     LDA zp_wx : STA &40 : LDA zp_wx+1 : STA &41
-    ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41
+    LDX #5
+.sh_px ASL &40 : ROL &41 : DEX : BNE sh_px
     LDA &40 : STA zp_px_lo : LDA &41 : STA zp_px_int
     BPL rp_px_pos : LDA #&FF : STA zp_px_int_hi : JMP rp_py
 .rp_px_pos LDA #0 : STA zp_px_int_hi
 .rp_py
+    ; py_88 = wy << 5
     LDA zp_wy : STA &40 : LDA zp_wy+1 : STA &41
-    ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41 : ASL &40 : ROL &41
+    LDX #5
+.sh_py ASL &40 : ROL &41 : DEX : BNE sh_py
     LDA &40 : STA zp_py_lo : LDA &41 : STA zp_py_int
     BPL rp_py_pos : LDA #&FF : STA zp_py_int_hi : RTS
 .rp_py_pos LDA #0 : STA zp_py_int_hi : RTS
@@ -6864,7 +6867,7 @@ ORG &9B20
     LDA (zp_cl_span_ptr),Y : STA zp_tmp0+1
     LDA zp_cl_x1   : STA zp_tmp2
     LDA zp_cl_x1+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx        ; $70:$71 = fp_mul8(ta, x)
+    JSR fl_mul8_fast        ; $70:$71 = fp_mul8(ta, x)
     LDY #SP_TINTERCEPT
     CLC
     LDA &70 : ADC (zp_cl_span_ptr),Y : STA zp_tmp0
@@ -6894,7 +6897,7 @@ ORG &9B20
     LDA zp_tmp0+3 : STA zp_tmp0+1
     LDA zp_cl_x1   : STA zp_tmp2
     LDA zp_cl_x1+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx        ; $70:$71 = fp_mul8(ba, x)
+    JSR fl_mul8_fast        ; $70:$71 = fp_mul8(ba, x)
     LDY #SP_BINTERCEPT
     CLC
     LDA &70 : ADC (zp_cl_span_ptr),Y : STA zp_tmp2
@@ -7069,14 +7072,14 @@ ORG &9B20
     LDA zp_cl_ta+1 : STA zp_tmp0+1
     LDA zp_cl_dx   : STA zp_tmp2
     LDA zp_cl_dx+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     LDA &70 : STA zp_cl_ta_dx
     LDA &71 : STA zp_cl_ta_dx+1
     LDA zp_cl_ta   : STA zp_tmp0
     LDA zp_cl_ta+1 : STA zp_tmp0+1
     LDA zp_cl_x1   : STA zp_tmp2
     LDA zp_cl_x1+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     LDA &70 : STA zp_cl_ta_x1
     LDA &71 : STA zp_cl_ta_x1+1
 
@@ -7093,14 +7096,14 @@ ORG &9B20
     LDA zp_cl_ba+1 : STA zp_tmp0+1
     LDA zp_cl_dx   : STA zp_tmp2
     LDA zp_cl_dx+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     LDA &70 : STA zp_cl_ba_dx
     LDA &71 : STA zp_cl_ba_dx+1
     LDA zp_cl_ba   : STA zp_tmp0
     LDA zp_cl_ba+1 : STA zp_tmp0+1
     LDA zp_cl_x1   : STA zp_tmp2
     LDA zp_cl_x1+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     LDA &70 : STA zp_cl_ba_x1
     LDA &71 : STA zp_cl_ba_x1+1
 
@@ -7199,7 +7202,7 @@ ORG &9B20
     LDA zp_cl_t0+1 : STA zp_tmp0+1
     LDA zp_cl_dx   : STA zp_tmp2
     LDA zp_cl_dx+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     CLC
     LDA zp_cl_x1   : ADC &70 : STA zp_cl_cx1
     LDA zp_cl_x1+1 : ADC &71 : STA zp_cl_cx1+1
@@ -7209,7 +7212,7 @@ ORG &9B20
     LDA zp_cl_t0+1 : STA zp_tmp0+1
     LDA zp_cl_dy   : STA zp_tmp2
     LDA zp_cl_dy+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     CLC
     LDA zp_cl_y1   : ADC &70 : STA zp_cl_cy1
     LDA zp_cl_y1+1 : ADC &71 : STA zp_cl_cy1+1
@@ -7219,7 +7222,7 @@ ORG &9B20
     LDA zp_cl_t1+1 : STA zp_tmp0+1
     LDA zp_cl_dx   : STA zp_tmp2
     LDA zp_cl_dx+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     CLC
     LDA zp_cl_x1   : ADC &70 : STA zp_cl_cx2
     LDA zp_cl_x1+1 : ADC &71 : STA zp_cl_cx2+1
@@ -7229,7 +7232,7 @@ ORG &9B20
     LDA zp_cl_t1+1 : STA zp_tmp0+1
     LDA zp_cl_dy   : STA zp_tmp2
     LDA zp_cl_dy+1 : STA zp_tmp2+1
-    JSR fl_mul8_bysx
+    JSR fl_mul8_fast
     CLC
     LDA zp_cl_y1   : ADC &70 : STA zp_cl_cy2
     LDA zp_cl_y1+1 : ADC &71 : STA zp_cl_cy2+1
@@ -7492,6 +7495,31 @@ ORG &9B20
     LDA #&58 : STA &70          ; screen buffer 0 high byte
     JSR &8EC0                    ; NJ rasteriser (same bank 2)
     RTS
+}
+
+; ======================================================================
+; FL_MUL8_FAST — s8×s8 fast path for clipper multiply.
+; Same interface as fl_mul8_bysx: inputs in zp_tmp0/zp_tmp2, result in $70:$71.
+; When both operands fit in s8 (~60 cycles), avoids mul16x16 (~200 cycles).
+; Falls back to fl_mul8_bysx for wider operands.
+; ======================================================================
+.fl_mul8_fast
+{
+    ; Check both operands fit in s8 [-128, 127]: (val+128) < 256
+    CLC : LDA zp_tmp0 : ADC #128 : LDA zp_tmp0+1 : ADC #0
+    BNE fmf_wide
+    CLC : LDA zp_tmp2 : ADC #128 : LDA zp_tmp2+1 : ADC #0
+    BNE fmf_wide
+    ; Both s8 — single smul8x8 (~60 cyc vs ~200 for mul16x16)
+    LDA zp_tmp0 : STA zp_math_b
+    LDA zp_tmp2 : JSR smul8x8
+    LDA zp_res_hi : STA &70
+    BPL fmf_pos
+    LDA #&FF : STA &71 : RTS
+.fmf_pos
+    LDA #0 : STA &71 : RTS
+.fmf_wide
+    JMP fl_mul8_bysx
 }
 
 ; ======================================================================
