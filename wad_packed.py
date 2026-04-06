@@ -19,7 +19,7 @@ import struct
 # ── Struct sizes (all powers of 2) ──────────────────────────────────────
 
 VERTEX_SIZE  = 4     # shift 2:  s16 x, s16 y
-NODE_SIZE    = 32    # shift 5:  s16 x,y,dx,dy + u16 children + 2×4×s16 bbox
+NODE_SIZE    = 16    # shift 4:  s16 x,y,dx,dy + u16 children + 4B pad
 SSECTOR_SIZE = 4     # shift 2:  u8 count, u8 pad, u16 first_seg
 SEG_HDR_SIZE = 12    # (idx<<3)+(idx<<2): v1,v2,lv1_x,lv1_y,ldx,ldy,flags,pad
 SEG_DTL_SIZE = 24    # ×24 = (idx<<4)+(idx<<3): fh,ch + 8 VWH u16 + back heights + pad
@@ -176,22 +176,6 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"node {i} dx/dy out of s16 range"
         struct.pack_into('<hhhhHH', rom_main, o, raw_nx, raw_ny, raw_dx, raw_dy,
                          n[12], n[13])
-        # Prescaled bboxes at offset +12 (right side) and +20 (left side).
-        # Python node tuple: n[4..7] = rt, rb, rl, rr;  n[8..11] = lt, lb, ll, lr.
-        # Each stored as (top, bot, left, right) × s16 in the prescaled frame
-        # (relative to map_center, divided by prescale).
-        for side_base in (4, 8):
-            raw_top = n[side_base]
-            raw_bot = n[side_base + 1]
-            raw_left = n[side_base + 2]
-            raw_right = n[side_base + 3]
-            p_top = (raw_top - map_center_y) // prescale
-            p_bot = (raw_bot - map_center_y) // prescale
-            p_left = (raw_left - map_center_x) // prescale
-            p_right = (raw_right - map_center_x) // prescale
-            rom_off = o + 12 + (side_base - 4) * 2  # +12 for side 0, +20 for side 1
-            struct.pack_into('<hhhh', rom_main, rom_off,
-                             p_top, p_bot, p_left, p_right)
 
     # Subsectors
     for i, ss in enumerate(fp_ssectors):
@@ -297,7 +281,26 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES*2})")
     print(f"  RAM:         {ram_size}")
 
-    return rom_main, rom_detail, rom_recip, layout
+    # Build prescaled bbox table (separate from rom_main so NODE_SIZE stays 16).
+    # 16 bytes per node: right side (top,bot,left,right as s16) then left side.
+    bbox_table = bytearray(n_nodes * 16)
+    for i, n in enumerate(nodes):
+        o = i * 16
+        for side_base in (4, 8):  # right bbox, left bbox
+            raw_top   = n[side_base]
+            raw_bot   = n[side_base + 1]
+            raw_left  = n[side_base + 2]
+            raw_right = n[side_base + 3]
+            p_top   = (raw_top   - map_center_y) // prescale
+            p_bot   = (raw_bot   - map_center_y) // prescale
+            p_left  = (raw_left  - map_center_x) // prescale
+            p_right = (raw_right - map_center_x) // prescale
+            side_off = o + (side_base - 4) * 2  # +0 for right, +8 for left
+            struct.pack_into('<hhhh', bbox_table, side_off,
+                             p_top, p_bot, p_left, p_right)
+    layout['bbox_table_size'] = len(bbox_table)
+
+    return rom_main, rom_detail, rom_recip, bbox_table, layout
 
 
 # ── Accessor helpers (simulate 6502 memory reads) ───────────────────────

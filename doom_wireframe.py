@@ -272,7 +272,7 @@ from wad_packed import build_packed
 print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
 _render_6502 = None  # lazy-loaded on first use
 _6502_result = None  # (lines, muls) from background render
-packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout = build_packed(
+packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_layout = build_packed(
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
     PRESCALE, MAP_CENTER_X, MAP_CENTER_Y)
