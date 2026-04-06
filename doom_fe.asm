@@ -3664,11 +3664,6 @@ QET_TIGHTEN   = 1
 ; ======================================================================
 .render_subsector
 {
-    ; Diagnostic hook: note which ssid we entered
-    LDA zp_tmp0   : STA zp_hk_lo
-    LDA zp_tmp0+1 : STA zp_hk_lo+1
-    JSR spans_enter_ss
-
     ; Address = rom_main + off_ss + ssid * 4
     LDA zp_tmp0
     ASL A : STA zp_ptr0

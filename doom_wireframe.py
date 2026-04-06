@@ -2548,6 +2548,7 @@ use_subpixel = False                      # Sub-pixel X projection (1 extra mul)
 show_map = False                          # Top-down map visualisation
 _show_nj_raster = False                   # Show NJ 6502 rasteriser output (FP lines)
 _use_6502_frontend = False                # H key: 6502 front-end + Python clip/draw
+_use_6502_full = False                    # J key: 6502 front-end + clip + NJ rasteriser
 
 def clip_and_draw_6502(commands, surface, vz_ps):
     """Process 6502 engine seg commands through FPClipSpans with full clipping.
@@ -2627,6 +2628,24 @@ def clip_and_draw_6502(commands, surface, vz_ps):
                              yt1, yt2, yb1, yb2, top_dom, bot_dom))
 
     return drawn
+
+
+def clip_and_draw_6502_lines(commands, vz_ps):
+    """Like clip_and_draw_6502 but returns a list of (x1,y1,x2,y2) line coords
+    instead of drawing to a surface.  Used by render_frame_full to feed the
+    NJ rasteriser."""
+    captured = []
+    def _capture(surface, color, p1, p2, w=1):
+        captured.append((int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])))
+    # Temporarily redirect draw.line to our capture function
+    saved = pygame.draw.line
+    pygame.draw.line = _capture
+    dummy = pygame.Surface((FP_RENDER_W, FP_RENDER_H))
+    clip_and_draw_6502(commands, dummy, vz_ps)
+    pygame.draw.line = saved
+    return captured
+
+
 turn_speed = 2.5                          # radians/sec for float mode
 turn_speed_byte = 45                      # byte-units/sec for FP mode (~63 deg/sec)
 move_speed = 300.0
@@ -2827,7 +2846,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _render_6502, _6502_result
+  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result
   running = True
   while running:
     dt = clock.tick(60) / 1000.0
@@ -2867,6 +2886,18 @@ def _main():
                     print("6502 front-end ON (inline)", flush=True)
                 else:
                     print("6502 front-end OFF", flush=True)
+            elif ev.key == pygame.K_j:
+                _use_6502_full = not _use_6502_full
+                if _use_6502_full:
+                    _use_6502_frontend = False  # J supersedes H
+                    if _render_6502 is None:
+                        from fe6502 import Frontend6502
+                        _render_6502 = Frontend6502(
+                            packed_rom_main, packed_rom_detail,
+                            packed_rom_recip, packed_layout)
+                    print("6502 full pipeline ON (front-end + clip + NJ raster)", flush=True)
+                else:
+                    print("6502 full pipeline OFF", flush=True)
             elif ev.key == pygame.K_p:
                 # Profile: run 6502 with per-function cycle accounting
                 import threading
@@ -2970,7 +3001,18 @@ def _main():
         cos_f = math.cos(ang_rad)
         sin_f = math.sin(ang_rad)
 
-        if _use_6502_frontend and _render_6502 is not None:
+        if _use_6502_full and _render_6502 is not None:
+            # Full 6502 pipeline: front-end + clip + NJ rasteriser
+            import time as _time
+            _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
+            _fz = player_floor(player_x, player_y)
+            _t0 = _time.perf_counter()
+            nj_surf, fe_cyc, rast_cyc = _render_6502.render_frame_full(
+                player_x, player_y, _ab, _fz)
+            _t1 = _time.perf_counter()
+            # Blit the NJ rasterised output onto fp_surface
+            fp_surface.blit(nj_surf, (0, 0))
+        elif _use_6502_frontend and _render_6502 is not None:
             # Run 6502 front-end inline every frame
             import time as _time
             _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)

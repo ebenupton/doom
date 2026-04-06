@@ -245,8 +245,11 @@ class Frontend6502:
         # Clear command buffer (just the first byte is enough — terminator)
         mem[CMD_BUFFER] = 0
 
-        # Initialise visibility-span state (full-screen span + empty queue)
-        self._span_state.init(self.mpu)
+        # Initialise visibility-span state inline (no Python hook needed).
+        # One full-screen span: count=1, xlo=0, xhi=0(=256), flat top=0, flat bot=159.
+        from wad_packed import spans_init_full, SPAN_HDR
+        spans_init_full(mem, 0x1C80, 256, 159)
+        mem[0x1C80 + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
 
         # Run
         self.mpu.pc = CODE_BASE
@@ -363,8 +366,11 @@ class Frontend6502:
         mem[ZP_ANGLE] = angle_byte & 0xFF
         mem[CMD_BUFFER] = 0
 
-        # Initialise visibility-span state (full-screen span + empty queue)
-        self._span_state.init(self.mpu)
+        # Initialise visibility-span state inline (no Python hook needed).
+        # One full-screen span: count=1, xlo=0, xhi=0(=256), flat top=0, flat bot=159.
+        from wad_packed import spans_init_full, SPAN_HDR
+        spans_init_full(mem, 0x1C80, 256, 159)
+        mem[0x1C80 + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
 
         # Run with PC sampling at every instruction
         mpu = self.mpu
@@ -431,6 +437,24 @@ class Frontend6502:
 
         profile = sorted(buckets.items(), key=lambda kv: -kv[1])
         return commands, total_cycles, profile
+
+    def render_frame_full(self, player_x, player_y, angle_byte, floor_z=0,
+                          **kwargs):
+        """Run the 6502 front-end, clip lines via Python, then rasterise
+        through the NJ+Hamiltonian 6502 line-draw routine.
+
+        Returns (surface, fe_cycles, raster_cycles) where surface is a
+        256×160 pygame Surface with the fully-rendered wireframe.
+        """
+        from raster6502 import render_lines_6502
+        from doom_wireframe import clip_and_draw_6502_lines, _prescale_height
+
+        cmds, fe_cyc = self.render_frame(player_x, player_y, angle_byte,
+                                         floor_z, **kwargs)
+        vz_ps = _prescale_height(floor_z + 41)
+        lines = clip_and_draw_6502_lines(cmds, vz_ps)
+        surf, rast_cyc = render_lines_6502(lines)
+        return surf, fe_cyc, rast_cyc
 
 
 def format_profile(profile, total_cycles, categories=None):
