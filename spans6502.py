@@ -152,18 +152,17 @@ class SpanState:
 
     def bbox_cull(self, mpu):
         """spans_bbox_cull: project a node's far-side bbox and test has_gap.
-        Input: $A0 = node index (u16), $A2 = far_side (u8 0/1).
-        Reads player position/angle from standard ZP ($10-$13, $15).
+        Input: $A0 = node index (u16), $A4 = far_side (u8 0/1).
+        Reads player position/angle from standard ZP.
         Returns carry = visible.
         """
-        import math
-        from doom_wireframe import nodes, fp_bbox_visible, byte_to_radians
+        from doom_wireframe import nodes, fp_bbox_visible_fixed
+        from fp import fp_sincos, fp_view_context
         # Read node index from hook args
         nid = self.mem[ZP_LO] | (self.mem[ZP_LO + 1] << 8)
         far_side = self.mem[ZP_SX1]  # reusing ZP_SX1 byte for far side
 
-        # Recompute world-space player position and angle from ZP state
-        from fp import PRESCALE, MAP_CENTER_X, MAP_CENTER_Y
+        # Reconstruct prescaled 8.8 player position and sincos context from ZP.
         px_int = self.mem[0x10]
         if px_int >= 128: px_int -= 256
         py_int = self.mem[0x11]
@@ -174,17 +173,13 @@ class SpanState:
         if px_88 >= 32768: px_88 -= 65536
         py_88 = (py_int << 8) | py_lo
         if py_88 >= 32768: py_88 -= 65536
-        # reconstitute raw world coords from prescaled 8.8
-        wx_full = (px_88 * PRESCALE) // 256 + MAP_CENTER_X
-        wy_full = (py_88 * PRESCALE) // 256 + MAP_CENTER_Y
 
         angle_byte = self.mem[0x15]
-        ang_rad = byte_to_radians(angle_byte)
-        cos_f = math.cos(ang_rad)
-        sin_f = math.sin(ang_rad)
+        sc = fp_sincos(angle_byte)
+        ctx = fp_view_context(px_88, py_88, sc)
 
         node = nodes[nid]
-        br = fp_bbox_visible(node, far_side, cos_f, sin_f, wx_full, wy_full)
+        br = fp_bbox_visible_fixed(node, far_side, ctx)
         if br is None:
             _set_carry(mpu, False)  # not visible
             return

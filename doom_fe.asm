@@ -392,6 +392,8 @@ queue_count   = &1E82        ; u8 (count of queued entries)
 flush_ptr_lo  = &1E83        ; u8: flush iteration pointer lo (RAM)
 flush_ptr_hi  = &1E84        ; u8: flush iteration pointer hi
 flush_rem     = &1E85        ; u8: queue entries remaining in flush
+bb_log_ptr    = &1E86        ; u8: bbox_cull log write pointer (DIAG)
+bb_log_base   = &0F00        ; 8 bytes per entry (DIAG)
 MAX_QUEUE     = 18
 QE_SIZE       = 20
 QE_TYPE       = 0
@@ -917,16 +919,11 @@ QET_TIGHTEN   = 1
     SBC #3
     STA zp_bsp_sp
 
-    ; Bbox-projected has_gap cull — dispatches to Python's fp_bbox_visible
-    ; + FPClipSpans.has_gap so the BSP subtree cull matches Python exactly.
-    ; Args: $A0 = nid (u16, currently in zp_tmp0), $A4 (byte) = far_side.
-    LDA zp_tmp0   : STA zp_hk_lo       ; nid lo
-    LDA zp_tmp0+1 : STA zp_hk_lo+1     ; nid hi
-    ; far_side is still on stack; peek without pulling
-    PLA
-    STA zp_hk_sx1                       ; reuse sx1 byte slot for far_side
-    PHA                                 ; restore stack (we still need to pop later)
-    JSR spans_bbox_cull
+    ; Bbox-projected has_gap cull — native fixed-point bbox visibility.
+    ; Input: A = far_side, zp_tmp0 = nid (preserved across call).
+    PLA                                 ; far_side from stack
+    PHA                                 ; push back for get_child later
+    JSR bbox_cull_native
     BCS has_gap_ok
     PLA                  ; discard far_side before looping back
     JMP pop_check
@@ -958,8 +955,8 @@ QET_TIGHTEN   = 1
 .get_child
 {
     PHA                  ; save side
-    ; Compute node address: rom_main + off_nodes + nid * 16
-    ; nid * 16 = nid << 4
+    ; Compute node address: rom_main + off_nodes + nid * 32
+    ; nid * 32 = nid << 5
     LDA zp_tmp0
     ASL A
     STA zp_ptr0
@@ -972,6 +969,8 @@ QET_TIGHTEN   = 1
     ROL zp_ptr0+1       ; × 8
     ASL zp_ptr0
     ROL zp_ptr0+1       ; × 16
+    ASL zp_ptr0
+    ROL zp_ptr0+1       ; × 32
 
     ; Add precomputed zp_node_base (= rom_main + off_nodes)
     LDA zp_ptr0
@@ -1030,7 +1029,8 @@ QET_TIGHTEN   = 1
     ROL A : STA zp_ptr0+1
     ASL zp_ptr0 : ROL zp_ptr0+1
     ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1     ; ptr0 = nid * 16
+    ASL zp_ptr0 : ROL zp_ptr0+1
+    ASL zp_ptr0 : ROL zp_ptr0+1     ; ptr0 = nid * 32
     LDA zp_ptr0
     CLC
     ADC zp_node_base
@@ -5439,6 +5439,860 @@ QET_TIGHTEN   = 1
     STA zp_res_hi         ; A=0
     RTS
 }
+
+; ======================================================================
+; BBOX_CULL_NATIVE: Project a node's far-side bbox to screen X range
+; and test has_gap.  Replaces the Python spans_bbox_cull hook.
+;
+; Input:  A = far_side (0 or 1), zp_tmp0 = nid (u16)
+; Output: C=1 if visible (has_gap), C=0 if not visible
+; Must preserve: zp_tmp0 (caller needs nid for get_child)
+;
+; Scratch ZP used:
+;   $80-$87: bbox data (top, bot, left, right as s16)
+;   $A0-$B7: corner view-space data (4 corners × 6 bytes)
+;   $B8:$B9: saved nid
+;   $BA:$BB: min_sx (s16)
+;   $BC:$BD: max_sx (s16)
+;   $BE:     saved far_side
+; ======================================================================
+
+; Node bbox offsets within packed 32-byte record
+ND_BBOX_R = 12            ; right-side bbox at +12
+ND_BBOX_L = 20            ; left-side bbox at +20
+
+; Corner storage layout in ZP
+bb_c0_vx = &A0            ; corner 0: (left, top)
+bb_c0_vy = &A2
+bb_c0_vi = &A4
+bb_c1_vx = &A6            ; corner 1: (right, top)
+bb_c1_vy = &A8
+bb_c1_vi = &AA
+bb_c2_vx = &AC            ; corner 2: (right, bot)
+bb_c2_vy = &AE
+bb_c2_vi = &B0
+bb_c3_vx = &B2            ; corner 3: (left, bot)
+bb_c3_vy = &B4
+bb_c3_vi = &B6
+
+bb_save_nid = &B8         ; saved nid (2 bytes)
+bb_min_sx   = &BA         ; min screen x (s16)
+bb_max_sx   = &BC         ; max screen x (s16)
+bb_far_side = &BE         ; saved far_side
+
+.bbox_cull_native
+{
+    ; ---- Save far_side and nid ----
+    STA bb_far_side
+    LDA zp_tmp0   : STA bb_save_nid
+    LDA zp_tmp0+1 : STA bb_save_nid+1
+
+    ; ---- Compute node address: zp_node_base + nid * 32 ----
+    ; nid * 32 = nid << 5
+    LDA zp_tmp0
+    ASL A
+    STA zp_ptr0
+    LDA zp_tmp0+1
+    ROL A
+    STA zp_ptr0+1            ; × 2
+    ASL zp_ptr0
+    ROL zp_ptr0+1            ; × 4
+    ASL zp_ptr0
+    ROL zp_ptr0+1            ; × 8
+    ASL zp_ptr0
+    ROL zp_ptr0+1            ; × 16
+    ASL zp_ptr0
+    ROL zp_ptr0+1            ; × 32
+    ; Add zp_node_base
+    LDA zp_ptr0
+    CLC
+    ADC zp_node_base
+    STA zp_ptr0
+    LDA zp_ptr0+1
+    ADC zp_node_base+1
+    STA zp_ptr0+1
+    ; zp_ptr0 now points to the start of this node
+
+    ; ---- Compute bbox offset: far_side==0 → +12, far_side==1 → +20 ----
+    LDA bb_far_side
+    BEQ bb_side_right
+    LDY #ND_BBOX_L            ; left bbox at offset 20
+    JMP bb_read_bbox
+.bb_side_right
+    LDY #ND_BBOX_R            ; right bbox at offset 12
+
+.bb_read_bbox
+    ; Read 8 bytes (top, bot, left, right as s16) into $80-$87
+    LDA (zp_ptr0),Y : STA &80 : INY   ; top lo
+    LDA (zp_ptr0),Y : STA &81 : INY   ; top hi
+    LDA (zp_ptr0),Y : STA &82 : INY   ; bot lo
+    LDA (zp_ptr0),Y : STA &83 : INY   ; bot hi
+    LDA (zp_ptr0),Y : STA &84 : INY   ; left lo
+    LDA (zp_ptr0),Y : STA &85 : INY   ; left hi
+    LDA (zp_ptr0),Y : STA &86 : INY   ; right lo
+    LDA (zp_ptr0),Y : STA &87         ; right hi
+
+    ; ================================================================
+    ; Trivial inside test: left <= px_int <= right AND bot <= py_int <= top
+    ; Player position: zp_px_int ($10) s8, zp_px_int_hi ($04) sign ext
+    ; Bbox values: s16 prescaled
+    ; ================================================================
+
+    ; --- Test: left ($84:$85) <= px_int ($10:$04) ---
+    ; px_int - left >= 0 ?
+    SEC
+    LDA zp_px_int
+    SBC &84
+    LDA zp_px_int_hi
+    SBC &85
+    BVC bb_nov1
+    EOR #&80
+.bb_nov1
+    BMI bb_not_inside          ; px_int < left
+
+    ; --- Test: px_int ($10:$04) <= right ($86:$87) ---
+    ; right - px_int >= 0 ?
+    SEC
+    LDA &86
+    SBC zp_px_int
+    LDA &87
+    SBC zp_px_int_hi
+    BVC bb_nov2
+    EOR #&80
+.bb_nov2
+    BMI bb_not_inside          ; px_int > right
+
+    ; --- Test: bot ($82:$83) <= py_int ($11:$05) ---
+    ; py_int - bot >= 0 ?
+    SEC
+    LDA zp_py_int
+    SBC &82
+    LDA zp_py_int_hi
+    SBC &83
+    BVC bb_nov3
+    EOR #&80
+.bb_nov3
+    BMI bb_not_inside          ; py_int < bot
+
+    ; --- Test: py_int ($11:$05) <= top ($80:$81) ---
+    ; top - py_int >= 0 ?
+    SEC
+    LDA &80
+    SBC zp_py_int
+    LDA &81
+    SBC zp_py_int_hi
+    BVC bb_nov4
+    EOR #&80
+.bb_nov4
+    BMI bb_not_inside          ; py_int > top
+
+    ; Player is inside bbox → visible, full screen range
+    LDA #0
+    STA zp_x_lo_clip
+    STA zp_x_lo_clip+1
+    LDA #255
+    STA zp_x_hi_clip
+    LDA #0
+    STA zp_x_hi_clip+1
+    JMP bb_call_has_gap
+
+.bb_not_inside
+
+    ; ================================================================
+    ; Transform 4 bbox corners to view space via to_view
+    ; Corners: (left,top), (right,top), (right,bot), (left,bot)
+    ; to_view input: zp_tmp2 = wx (s16), zp_tmp3 = wy (s16)
+    ; to_view output: zp_vx1 ($30:$31), zp_vy1 ($32:$33), zp_vi1 ($34:$35)
+    ; to_view clobbers: $70-$7C, $94-$99, zp_tmp2, zp_tmp3
+    ; ================================================================
+
+    ; ---- Corner 0: (left, top) ----
+    LDA &84 : STA zp_tmp2       ; wx = left lo
+    LDA &85 : STA zp_tmp2+1     ; wx = left hi
+    LDA &80 : STA zp_tmp3       ; wy = top lo
+    LDA &81 : STA zp_tmp3+1     ; wy = top hi
+    JSR to_view
+    LDA zp_vx1   : STA bb_c0_vx
+    LDA zp_vx1+1 : STA bb_c0_vx+1
+    LDA zp_vy1   : STA bb_c0_vy
+    LDA zp_vy1+1 : STA bb_c0_vy+1
+    LDA zp_vi1   : STA bb_c0_vi
+    LDA zp_vi1+1 : STA bb_c0_vi+1
+
+    ; ---- Corner 1: (right, top) ----
+    LDA &86 : STA zp_tmp2       ; wx = right lo
+    LDA &87 : STA zp_tmp2+1     ; wx = right hi
+    LDA &80 : STA zp_tmp3       ; wy = top lo
+    LDA &81 : STA zp_tmp3+1     ; wy = top hi
+    JSR to_view
+    LDA zp_vx1   : STA bb_c1_vx
+    LDA zp_vx1+1 : STA bb_c1_vx+1
+    LDA zp_vy1   : STA bb_c1_vy
+    LDA zp_vy1+1 : STA bb_c1_vy+1
+    LDA zp_vi1   : STA bb_c1_vi
+    LDA zp_vi1+1 : STA bb_c1_vi+1
+
+    ; ---- Corner 2: (right, bot) ----
+    LDA &86 : STA zp_tmp2       ; wx = right lo
+    LDA &87 : STA zp_tmp2+1     ; wx = right hi
+    LDA &82 : STA zp_tmp3       ; wy = bot lo
+    LDA &83 : STA zp_tmp3+1     ; wy = bot hi
+    JSR to_view
+    LDA zp_vx1   : STA bb_c2_vx
+    LDA zp_vx1+1 : STA bb_c2_vx+1
+    LDA zp_vy1   : STA bb_c2_vy
+    LDA zp_vy1+1 : STA bb_c2_vy+1
+    LDA zp_vi1   : STA bb_c2_vi
+    LDA zp_vi1+1 : STA bb_c2_vi+1
+
+    ; ---- Corner 3: (left, bot) ----
+    LDA &84 : STA zp_tmp2       ; wx = left lo
+    LDA &85 : STA zp_tmp2+1     ; wx = left hi
+    LDA &82 : STA zp_tmp3       ; wy = bot lo
+    LDA &83 : STA zp_tmp3+1     ; wy = bot hi
+    JSR to_view
+    LDA zp_vx1   : STA bb_c3_vx
+    LDA zp_vx1+1 : STA bb_c3_vx+1
+    LDA zp_vy1   : STA bb_c3_vy
+    LDA zp_vy1+1 : STA bb_c3_vy+1
+    LDA zp_vi1   : STA bb_c3_vi
+    LDA zp_vi1+1 : STA bb_c3_vi+1
+
+    ; ================================================================
+    ; All-behind check: if all 4 vy < NEAR_FP (=1), not visible
+    ; vy is s16.  vy < 1 means vy_hi < 0, OR (vy_hi == 0 AND vy_lo == 0)
+    ; i.e. vy <= 0 in integer terms.  Actually NEAR_FP=1 so vy < 1 means vy <= 0.
+    ; For s16: vy < 1 iff vy_hi < 0 (negative) OR (vy_hi == 0 AND vy_lo == 0).
+    ; ================================================================
+
+    ; Check corner 0 vy
+    LDA bb_c0_vy+1
+    BMI bb_c0_behind           ; vy_hi < 0 → behind
+    BNE bb_not_all_behind      ; vy_hi > 0 → vy >= 256, in front
+    LDA bb_c0_vy
+    BNE bb_not_all_behind      ; vy_lo > 0, vy_hi == 0 → vy >= 1
+.bb_c0_behind
+
+    ; Check corner 1 vy
+    LDA bb_c1_vy+1
+    BMI bb_c1_behind
+    BNE bb_not_all_behind
+    LDA bb_c1_vy
+    BNE bb_not_all_behind
+.bb_c1_behind
+
+    ; Check corner 2 vy
+    LDA bb_c2_vy+1
+    BMI bb_c2_behind
+    BNE bb_not_all_behind
+    LDA bb_c2_vy
+    BNE bb_not_all_behind
+.bb_c2_behind
+
+    ; Check corner 3 vy
+    LDA bb_c3_vy+1
+    BMI bb_c3_behind
+    BNE bb_not_all_behind
+    LDA bb_c3_vy
+    BNE bb_not_all_behind
+.bb_c3_behind
+    ; All 4 corners are behind → not visible
+    JMP bb_not_visible
+
+.bb_not_all_behind
+
+    ; ================================================================
+    ; Project visible corners and near-clip edge crossings
+    ; Track min_sx and max_sx
+    ; ================================================================
+
+    ; Init min_sx = +32767 ($7FFF), max_sx = -32768 ($8000)
+    LDA #&FF : STA bb_min_sx
+    LDA #&7F : STA bb_min_sx+1
+    LDA #&00 : STA bb_max_sx
+    LDA #&80 : STA bb_max_sx+1
+
+    ; ================================================================
+    ; CORNER 0: project if vy >= NEAR
+    ; ================================================================
+    LDA bb_c0_vy+1
+    BMI bb_c0_skip_proj        ; vy < 0, behind
+    BNE bb_c0_do_proj          ; vy >= 256, in front
+    LDA bb_c0_vy
+    BEQ bb_c0_skip_proj        ; vy == 0, behind (< NEAR=1)
+.bb_c0_do_proj
+    ; Set up recip_and_project_x1 inputs:
+    ; ex1 = vx, ey1 = vy (same as vy1, triggers vi1 path), vi1 = vi
+    LDA bb_c0_vx   : STA zp_ex1
+    LDA bb_c0_vx+1 : STA zp_ex1+1
+    LDA bb_c0_vy   : STA zp_ey1   : STA zp_vy1
+    LDA bb_c0_vy+1 : STA zp_ey1+1 : STA zp_vy1+1
+    LDA bb_c0_vi   : STA zp_vi1
+    LDA bb_c0_vi+1 : STA zp_vi1+1
+    JSR recip_and_project_x1
+    ; sx1 now in zp_sx1 ($20:$21)
+    JSR bb_update_minmax
+.bb_c0_skip_proj
+
+    ; ---- Edge 0→1: check near crossing ----
+    JSR bb_edge_0_1
+
+    ; ================================================================
+    ; CORNER 1: project if vy >= NEAR
+    ; ================================================================
+    LDA bb_c1_vy+1
+    BMI bb_c1_skip_proj
+    BNE bb_c1_do_proj
+    LDA bb_c1_vy
+    BEQ bb_c1_skip_proj
+.bb_c1_do_proj
+    LDA bb_c1_vx   : STA zp_ex1
+    LDA bb_c1_vx+1 : STA zp_ex1+1
+    LDA bb_c1_vy   : STA zp_ey1   : STA zp_vy1
+    LDA bb_c1_vy+1 : STA zp_ey1+1 : STA zp_vy1+1
+    LDA bb_c1_vi   : STA zp_vi1
+    LDA bb_c1_vi+1 : STA zp_vi1+1
+    JSR recip_and_project_x1
+    JSR bb_update_minmax
+.bb_c1_skip_proj
+
+    ; ---- Edge 1→2: check near crossing ----
+    JSR bb_edge_1_2
+
+    ; ================================================================
+    ; CORNER 2: project if vy >= NEAR
+    ; ================================================================
+    LDA bb_c2_vy+1
+    BMI bb_c2_skip_proj
+    BNE bb_c2_do_proj
+    LDA bb_c2_vy
+    BEQ bb_c2_skip_proj
+.bb_c2_do_proj
+    LDA bb_c2_vx   : STA zp_ex1
+    LDA bb_c2_vx+1 : STA zp_ex1+1
+    LDA bb_c2_vy   : STA zp_ey1   : STA zp_vy1
+    LDA bb_c2_vy+1 : STA zp_ey1+1 : STA zp_vy1+1
+    LDA bb_c2_vi   : STA zp_vi1
+    LDA bb_c2_vi+1 : STA zp_vi1+1
+    JSR recip_and_project_x1
+    JSR bb_update_minmax
+.bb_c2_skip_proj
+
+    ; ---- Edge 2→3: check near crossing ----
+    JSR bb_edge_2_3
+
+    ; ================================================================
+    ; CORNER 3: project if vy >= NEAR
+    ; ================================================================
+    LDA bb_c3_vy+1
+    BMI bb_c3_skip_proj
+    BNE bb_c3_do_proj
+    LDA bb_c3_vy
+    BEQ bb_c3_skip_proj
+.bb_c3_do_proj
+    LDA bb_c3_vx   : STA zp_ex1
+    LDA bb_c3_vx+1 : STA zp_ex1+1
+    LDA bb_c3_vy   : STA zp_ey1   : STA zp_vy1
+    LDA bb_c3_vy+1 : STA zp_ey1+1 : STA zp_vy1+1
+    LDA bb_c3_vi   : STA zp_vi1
+    LDA bb_c3_vi+1 : STA zp_vi1+1
+    JSR recip_and_project_x1
+    JSR bb_update_minmax
+.bb_c3_skip_proj
+
+    ; ---- Edge 3→0: check near crossing ----
+    JSR bb_edge_3_0
+
+    ; ================================================================
+    ; Check if any points were projected (min_sx <= max_sx)
+    ; If min_sx > max_sx, no projections happened → not visible
+    ; ================================================================
+    ; Compare max_sx - min_sx: if result < 0, no valid range
+    SEC
+    LDA bb_max_sx
+    SBC bb_min_sx
+    LDA bb_max_sx+1
+    SBC bb_min_sx+1
+    BVC bb_cmp_nov
+    EOR #&80
+.bb_cmp_nov
+    BMI bb_not_visible         ; max < min → no projections
+
+    ; ---- Set up has_gap inputs ----
+    LDA bb_min_sx   : STA zp_x_lo_clip
+    LDA bb_min_sx+1 : STA zp_x_lo_clip+1
+    LDA bb_max_sx   : STA zp_x_hi_clip
+    LDA bb_max_sx+1 : STA zp_x_hi_clip+1
+
+.bb_call_has_gap
+    JSR has_gap
+    ; Restore zp_tmp0 AFTER has_gap (has_gap clobbers tmp0/tmp1 internally).
+    ; LDA/STA don't affect carry, so the has_gap result propagates to caller.
+    LDA bb_save_nid   : STA zp_tmp0
+    LDA bb_save_nid+1 : STA zp_tmp0+1
+    RTS
+
+.bb_not_visible
+    ; Restore zp_tmp0 and return not-visible
+    LDA bb_save_nid   : STA zp_tmp0
+    LDA bb_save_nid+1 : STA zp_tmp0+1
+    CLC
+    RTS
+
+; ======================================================================
+; BB_UPDATE_MINMAX: update min_sx / max_sx from zp_sx1
+; Input:  zp_sx1 ($20:$21) = projected screen X (s16)
+; Output: updates bb_min_sx, bb_max_sx
+; Clobbers: A
+; ======================================================================
+.bb_update_minmax
+    ; --- Update min: if sx1 < min_sx, min_sx = sx1 ---
+    ; Compute sx1 - min_sx
+    SEC
+    LDA zp_sx1
+    SBC bb_min_sx
+    LDA zp_sx1+1
+    SBC bb_min_sx+1
+    BVC bb_min_nov
+    EOR #&80
+.bb_min_nov
+    BPL bb_min_skip            ; sx1 >= min, don't update
+    LDA zp_sx1   : STA bb_min_sx
+    LDA zp_sx1+1 : STA bb_min_sx+1
+.bb_min_skip
+    ; --- Update max: if sx1 > max_sx, max_sx = sx1 ---
+    ; Compute max_sx - sx1
+    SEC
+    LDA bb_max_sx
+    SBC zp_sx1
+    LDA bb_max_sx+1
+    SBC zp_sx1+1
+    BVC bb_max_nov
+    EOR #&80
+.bb_max_nov
+    BPL bb_max_skip            ; max >= sx1, don't update
+    LDA zp_sx1   : STA bb_max_sx
+    LDA zp_sx1+1 : STA bb_max_sx+1
+.bb_max_skip
+    RTS
+
+; ======================================================================
+; BB_CLIP_EDGE: compute near-plane crossing for an edge and project it.
+;
+; Called with:
+;   zp_tmp2 = vx_behind (s16)   [the corner that is behind]
+;   zp_tmp3 = vy_behind (s16)
+;   $80 = vx_front_lo, $81 = vx_front_hi (the corner that is in front)
+;   $82 = vy_front_lo, $83 = vy_front_hi
+;
+; Computes:
+;   t = ((NEAR - vy_behind) << 8) / (vy_front - vy_behind)   [u8, 0..255]
+;   dvx = vx_front - vx_behind                                [s16]
+;   cx = vx_behind + (dvx * t + 128) >> 8                     [s16]
+;   Projects cx at vy=NEAR, updates min/max.
+;
+; Clobbers: A, X, Y, $70-$7F, zp_tmp2, zp_tmp3, zp_ex1, zp_ey1,
+;           zp_vy1, zp_vi1, zp_sx1, zp_rxh, zp_rxl, $80-$85
+; ======================================================================
+.bb_clip_edge
+    ; --- Compute dvy = vy_front - vy_behind (s16) ---
+    ; Also compute numerator = (NEAR - vy_behind) << 8
+    ; Since NEAR=1, numerator = (1 - vy_behind) << 8
+    ; vy_behind is negative or zero (behind near plane), so 1 - vy_behind > 0.
+    ;
+    ; For div16_8: $71:$70 = dividend (u16), $73:$72 = divisor (u16)
+    ; Output: A = quotient (u8)
+    ;
+    ; numerator = (1 - vy_behind) << 8
+    ; Since vy_behind <= 0, 1 - vy_behind >= 1, which is positive.
+    ; <<8 means: lo byte = 0, hi byte = (1 - vy_behind)_lo
+    ; But wait, (1 - vy_behind) can be up to 1+32768 = 32769 which exceeds s16.
+    ; For a bbox in a typical DOOM level this should be reasonable.
+    ;
+    ; Actually, let's compute this properly.
+    ; NEAR - vy_behind = 1 - vy_behind (where vy_behind < 1)
+    ; << 8: multiply by 256
+    ; divisor = vy_front - vy_behind (always positive since front >= NEAR > behind)
+    ;
+    ; We want t = ((1 - vy_behind) * 256) / (vy_front - vy_behind)
+    ; where 0 < t < 256 (u8).
+    ;
+    ; Since vy_behind is s16 and could be moderately negative, (1-vy_behind)
+    ; fits in u16 (max ~32769).  << 8 would overflow u16.  But the quotient
+    ; is u8 (0..255), so we use the 16-bit / 16-bit → 8-bit division.
+    ;
+    ; Numerator = (NEAR_FP - vy_behind_lo) : carry into hi
+    ; Then shift left 8 = swap bytes, lo byte becomes 0.
+    ;
+    ; Let me compute: num16 = NEAR_FP - vy_behind (u16 result since positive)
+    ; Then dividend for div16_8 = num16 << 8.
+    ; But num16 << 8 can be up to 24 bits — too big for 16-bit dividend.
+    ;
+    ; Alternative: use the fact that we only need 8 bits of quotient.
+    ; t = (num16 << 8) / dvy.  Equivalently, t = (num16 / dvy) << 8, but
+    ; that loses precision.  Better: treat it as t = num16 * 256 / dvy.
+    ;
+    ; Since t must be in [0,255], and num16 < dvy always (because the behind
+    ; corner is closer to NEAR than the full edge span), we have num16 < dvy.
+    ; So num16 * 256 / dvy < 256 → fits in u8.
+    ;
+    ; For div16_8 with 16-bit dividend: the dividend is num16 * 256.
+    ; num16 fits in u16 (at most ~32769).  num16 * 256 is up to ~24 bits.
+    ;
+    ; However, div16_8 uses a 16-bit dividend.  We can decompose:
+    ; num16 * 256 = num16_hi * 65536 + num16_lo * 256
+    ; = (num16_hi * 256 + num16_lo) << 8
+    ; The 16-bit dividend register gets num16_lo : 0 (lo:hi = 0 : num16_lo).
+    ; But num16_hi acts as initial remainder.
+    ;
+    ; Actually, let's just set up div16_8 differently.  div16_8 shifts
+    ; the 16-bit dividend left through a 16-bit remainder.  If we pre-load
+    ; the remainder with num16_hi, and the dividend with (num16_lo << 8),
+    ; that's equivalent to dividing (num16 << 8) by dvy.
+    ;
+    ; dividend = num16_lo * 256 = $70=0, $71=num16_lo
+    ; pre-set remainder $7E=0, $7F=0... no, that doesn't capture num16_hi.
+    ;
+    ; Let's think again.  div16_8 divides $71:$70 by $73:$72 → A = quotient.
+    ; It processes 16 bits from the dividend.  Our effective dividend is 24 bits.
+    ;
+    ; Simplest: pre-load the remainder ($7E:$7F) with num16_hi, and set
+    ; $71:$70 = num16_lo << 8 (i.e., $70=0, $71=num16_lo).
+    ; Then div16_8 will shift through 16 bits of this plus the preloaded
+    ; remainder, effectively dividing (num16_hi * 65536 + num16_lo * 256)
+    ; by dvy.  That's exactly num16 * 256 / dvy.
+
+    ; Step 1: Compute num16 = NEAR_FP - vy_behind  (positive u16)
+    ; vy_behind is in zp_tmp3
+    LDA #NEAR_FP
+    SEC
+    SBC zp_tmp3
+    STA &88                    ; num16_lo
+    LDA #0
+    SBC zp_tmp3+1
+    STA &89                    ; num16_hi
+
+    ; Step 2: Compute dvy = vy_front - vy_behind  (positive s16, treat as u16)
+    LDA &82
+    SEC
+    SBC zp_tmp3
+    STA &72                    ; divisor lo for div16_8
+    LDA &83
+    SBC zp_tmp3+1
+    STA &73                    ; divisor hi
+
+    ; Step 3: Set up div16_8 with pre-loaded remainder
+    ; dividend $71:$70 = num16_lo << 8
+    LDA #0   : STA &70        ; dividend lo = 0
+    LDA &88  : STA &71        ; dividend hi = num16_lo
+
+    ; Pre-load remainder with num16_hi (effectively adding num16_hi * 65536
+    ; to the value being divided)
+    LDA #0   : STA &7E        ; remainder lo = 0
+    LDA &89  : STA &7F        ; remainder hi = num16_hi
+
+    ; We need a modified div16_8 that doesn't zero the remainder.
+    ; Since div16_8 zeroes $7E:$7F at entry, we'll inline the loop here.
+    LDX #16
+.bb_div_loop
+    ASL &70
+    ROL &71
+    ROL &7E
+    ROL &7F
+    LDA &7E
+    CMP &72
+    LDA &7F
+    SBC &73
+    BCC bb_div_no_sub
+    LDA &7E
+    SEC
+    SBC &72
+    STA &7E
+    LDA &7F
+    SBC &73
+    STA &7F
+    INC &70
+.bb_div_no_sub
+    DEX
+    BNE bb_div_loop
+    ; t = quotient in $70 (u8)
+    LDA &70
+    STA &88                    ; save t in $88
+
+    ; Step 4: Compute dvx = vx_front - vx_behind (s16)
+    ; vx_front in $80:$81, vx_behind in zp_tmp2
+    LDA &80
+    SEC
+    SBC zp_tmp2
+    STA zp_tmp2                ; dvx_lo → reuse zp_tmp2 for mul input
+    LDA &81
+    SBC zp_tmp2+1
+    STA zp_tmp2+1              ; dvx_hi
+
+    ; Step 5: Compute dvx * t → s24 in $70:$71:$72 via mul_s16_u8_s24
+    ; Input: zp_tmp2 = dvx (s16), A = t (u8)
+    LDA &88                    ; t
+    JSR mul_s16_u8_s24
+    ; Result in $70:$71:$72 (lo:mid:hi)
+
+    ; Step 6: cx = vx_behind + (dvx * t + 128) >> 8
+    ; (dvx * t + 128) >> 8:
+    ;   add 128 to $70 (rounding), then take $71:$72 as the s16 result
+    LDA &70
+    CLC
+    ADC #128
+    ; We only care about the carry into $71
+    LDA &71
+    ADC #0
+    STA &88                    ; cx_lo (offset_lo + carry)
+    LDA &72
+    ADC #0
+    STA &89                    ; cx_hi
+
+    ; cx = vx_behind + offset
+    ; Need original vx_behind — but we overwrote zp_tmp2 with dvx!
+    ; We need to recover vx_behind.
+    ; vx_behind = vx_front - dvx, but dvx is also gone (overwritten by mul).
+    ; Actually, let's rethink: we need to save vx_behind before computing dvx.
+    ; I'll restructure: the edge handlers save vx_behind before calling.
+    ; For now, the edge handlers will push vx_behind into $8A:$8B before calling.
+    ; Let's use those.
+    LDA &8A                    ; saved vx_behind_lo
+    CLC
+    ADC &88
+    STA &88                    ; cx_lo
+    LDA &8B                    ; saved vx_behind_hi
+    ADC &89
+    STA &89                    ; cx_hi
+
+    ; Step 7: Project cx at vy=NEAR
+    ; Set up recip_and_project_x1 for the use_ey1 path:
+    ;   zp_ex1 = cx
+    ;   zp_ey1 = NEAR_FP (=1)
+    ;   zp_vy1 = 0 (differs from ey1, triggering use_ey1 path)
+    LDA &88    : STA zp_ex1
+    LDA &89    : STA zp_ex1+1
+    LDA #NEAR_FP : STA zp_ey1
+    LDA #0     : STA zp_ey1+1
+    LDA #0     : STA zp_vy1     ; vy1 != ey1 → use_ey1 path
+    LDA #0     : STA zp_vy1+1
+    JSR recip_and_project_x1
+    ; sx1 now in zp_sx1
+    JSR bb_update_minmax
+    RTS
+
+; ======================================================================
+; EDGE CROSSING HELPERS
+; Each checks if the two endpoints straddle the near plane (one behind,
+; one in front).  If so, computes the crossing and projects it.
+;
+; "Behind" means vy < NEAR_FP (=1), i.e. vy <= 0 in integer terms.
+; "In front" means vy >= 1.
+;
+; For bb_clip_edge, we set up:
+;   zp_tmp2 = vx_behind, zp_tmp3 = vy_behind
+;   $80:$81 = vx_front, $82:$83 = vy_front
+;   $8A:$8B = vx_behind (saved copy for cx computation)
+; ======================================================================
+
+; Helper: test if a corner's vy < NEAR (=1), i.e. vy <= 0.
+; Returns C=1 if in front (vy >= 1), C=0 if behind (vy < 1).
+; Input: A = vy_hi already loaded.
+; This is inlined in each edge handler.
+
+; ---- Edge 0→1 ----
+.bb_edge_0_1
+    ; Determine: corner 0 behind, corner 1 in front (or vice versa)?
+    ; Corner 0 vy status
+    LDA bb_c0_vy+1
+    BMI bb_e01_0behind         ; vy0 < 0 → behind
+    BNE bb_e01_0front          ; vy0_hi > 0 → in front
+    LDA bb_c0_vy
+    BEQ bb_e01_0behind         ; vy0 == 0 → behind
+.bb_e01_0front
+    ; Corner 0 is in front.  Check corner 1.
+    LDA bb_c1_vy+1
+    BMI bb_e01_cross_1behind   ; vy1 < 0 → behind, crossing!
+    BNE bb_e01_no_cross        ; both in front
+    LDA bb_c1_vy
+    BEQ bb_e01_cross_1behind   ; vy1 == 0 → behind
+    RTS                        ; both in front, no crossing
+.bb_e01_0behind
+    ; Corner 0 is behind.  Check corner 1.
+    LDA bb_c1_vy+1
+    BMI bb_e01_no_cross        ; both behind
+    BNE bb_e01_cross_0behind   ; vy1 > 0, crossing!
+    LDA bb_c1_vy
+    BNE bb_e01_cross_0behind   ; vy1 >= 1, crossing!
+.bb_e01_no_cross
+    RTS                        ; no crossing (both same side)
+
+.bb_e01_cross_0behind
+    ; Corner 0 behind, corner 1 in front
+    LDA bb_c0_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c0_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c0_vy   : STA zp_tmp3
+    LDA bb_c0_vy+1 : STA zp_tmp3+1
+    LDA bb_c1_vx   : STA &80
+    LDA bb_c1_vx+1 : STA &81
+    LDA bb_c1_vy   : STA &82
+    LDA bb_c1_vy+1 : STA &83
+    JMP bb_clip_edge
+
+.bb_e01_cross_1behind
+    ; Corner 1 behind, corner 0 in front
+    LDA bb_c1_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c1_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c1_vy   : STA zp_tmp3
+    LDA bb_c1_vy+1 : STA zp_tmp3+1
+    LDA bb_c0_vx   : STA &80
+    LDA bb_c0_vx+1 : STA &81
+    LDA bb_c0_vy   : STA &82
+    LDA bb_c0_vy+1 : STA &83
+    JMP bb_clip_edge
+
+; ---- Edge 1→2 ----
+.bb_edge_1_2
+    LDA bb_c1_vy+1
+    BMI bb_e12_0behind
+    BNE bb_e12_0front
+    LDA bb_c1_vy
+    BEQ bb_e12_0behind
+.bb_e12_0front
+    LDA bb_c2_vy+1
+    BMI bb_e12_cross_1behind
+    BNE bb_e12_no_cross
+    LDA bb_c2_vy
+    BEQ bb_e12_cross_1behind
+    RTS
+.bb_e12_0behind
+    LDA bb_c2_vy+1
+    BMI bb_e12_no_cross
+    BNE bb_e12_cross_0behind
+    LDA bb_c2_vy
+    BNE bb_e12_cross_0behind
+.bb_e12_no_cross
+    RTS
+
+.bb_e12_cross_0behind
+    ; Corner 1 behind, corner 2 in front
+    LDA bb_c1_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c1_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c1_vy   : STA zp_tmp3
+    LDA bb_c1_vy+1 : STA zp_tmp3+1
+    LDA bb_c2_vx   : STA &80
+    LDA bb_c2_vx+1 : STA &81
+    LDA bb_c2_vy   : STA &82
+    LDA bb_c2_vy+1 : STA &83
+    JMP bb_clip_edge
+
+.bb_e12_cross_1behind
+    ; Corner 2 behind, corner 1 in front
+    LDA bb_c2_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c2_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c2_vy   : STA zp_tmp3
+    LDA bb_c2_vy+1 : STA zp_tmp3+1
+    LDA bb_c1_vx   : STA &80
+    LDA bb_c1_vx+1 : STA &81
+    LDA bb_c1_vy   : STA &82
+    LDA bb_c1_vy+1 : STA &83
+    JMP bb_clip_edge
+
+; ---- Edge 2→3 ----
+.bb_edge_2_3
+    LDA bb_c2_vy+1
+    BMI bb_e23_0behind
+    BNE bb_e23_0front
+    LDA bb_c2_vy
+    BEQ bb_e23_0behind
+.bb_e23_0front
+    LDA bb_c3_vy+1
+    BMI bb_e23_cross_1behind
+    BNE bb_e23_no_cross
+    LDA bb_c3_vy
+    BEQ bb_e23_cross_1behind
+    RTS
+.bb_e23_0behind
+    LDA bb_c3_vy+1
+    BMI bb_e23_no_cross
+    BNE bb_e23_cross_0behind
+    LDA bb_c3_vy
+    BNE bb_e23_cross_0behind
+.bb_e23_no_cross
+    RTS
+
+.bb_e23_cross_0behind
+    ; Corner 2 behind, corner 3 in front
+    LDA bb_c2_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c2_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c2_vy   : STA zp_tmp3
+    LDA bb_c2_vy+1 : STA zp_tmp3+1
+    LDA bb_c3_vx   : STA &80
+    LDA bb_c3_vx+1 : STA &81
+    LDA bb_c3_vy   : STA &82
+    LDA bb_c3_vy+1 : STA &83
+    JMP bb_clip_edge
+
+.bb_e23_cross_1behind
+    ; Corner 3 behind, corner 2 in front
+    LDA bb_c3_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c3_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c3_vy   : STA zp_tmp3
+    LDA bb_c3_vy+1 : STA zp_tmp3+1
+    LDA bb_c2_vx   : STA &80
+    LDA bb_c2_vx+1 : STA &81
+    LDA bb_c2_vy   : STA &82
+    LDA bb_c2_vy+1 : STA &83
+    JMP bb_clip_edge
+
+; ---- Edge 3→0 ----
+.bb_edge_3_0
+    LDA bb_c3_vy+1
+    BMI bb_e30_0behind
+    BNE bb_e30_0front
+    LDA bb_c3_vy
+    BEQ bb_e30_0behind
+.bb_e30_0front
+    LDA bb_c0_vy+1
+    BMI bb_e30_cross_1behind
+    BNE bb_e30_no_cross
+    LDA bb_c0_vy
+    BEQ bb_e30_cross_1behind
+    RTS
+.bb_e30_0behind
+    LDA bb_c0_vy+1
+    BMI bb_e30_no_cross
+    BNE bb_e30_cross_0behind
+    LDA bb_c0_vy
+    BNE bb_e30_cross_0behind
+.bb_e30_no_cross
+    RTS
+
+.bb_e30_cross_0behind
+    ; Corner 3 behind, corner 0 in front
+    LDA bb_c3_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c3_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c3_vy   : STA zp_tmp3
+    LDA bb_c3_vy+1 : STA zp_tmp3+1
+    LDA bb_c0_vx   : STA &80
+    LDA bb_c0_vx+1 : STA &81
+    LDA bb_c0_vy   : STA &82
+    LDA bb_c0_vy+1 : STA &83
+    JMP bb_clip_edge
+
+.bb_e30_cross_1behind
+    ; Corner 0 behind, corner 3 in front
+    LDA bb_c0_vx   : STA zp_tmp2   : STA &8A
+    LDA bb_c0_vx+1 : STA zp_tmp2+1 : STA &8B
+    LDA bb_c0_vy   : STA zp_tmp3
+    LDA bb_c0_vy+1 : STA zp_tmp3+1
+    LDA bb_c3_vx   : STA &80
+    LDA bb_c3_vx+1 : STA &81
+    LDA bb_c3_vy   : STA &82
+    LDA bb_c3_vy+1 : STA &83
+    JMP bb_clip_edge
+
+}  ; end bbox_cull_native
 
 .end_of_code
 

@@ -611,6 +611,77 @@ def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
            for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
     return _bbox_screen_range(pts, FP_RENDER_W * 0.5, FP_FOCAL_X)
 
+
+def fp_bbox_visible_fixed(node, far_side, ctx):
+    """Fixed-point bbox visibility — matches the 6502 native implementation.
+
+    Prescales the raw bbox corners, runs them through fp_to_view / fp_recip /
+    fp_project_x with the same precision the 6502 pipeline uses, and returns
+    (min_sx, max_sx) or None.  Both Python and 6502 call into this routine,
+    so verify_exact stays bit-exact.
+
+    Args:
+        node: Python node tuple (raw WAD coords at node[4..11])
+        far_side: 0 (right) or 1 (left)
+        ctx: fp_view_context result (prescaled player + rotated frac)
+    """
+    from fp import (PRESCALE as _PRESCALE, MAP_CENTER_X as _MCX,
+                     MAP_CENTER_Y as _MCY, FP_RENDER_W as _FPW,
+                     NEAR_FP as _NEAR, fp_to_view as _fp_to_view,
+                     fp_recip as _fp_recip, fp_project_x as _fp_project_x,
+                     m8 as _m8)
+    base = 4 + far_side * 4
+    rt_raw, rb_raw, rl_raw, rr_raw = (
+        node[base], node[base + 1], node[base + 2], node[base + 3])
+    # Prescale bbox corners into the same 8.0 frame as the player in ctx.
+    top = (rt_raw - _MCY) // _PRESCALE
+    bot = (rb_raw - _MCY) // _PRESCALE
+    left = (rl_raw - _MCX) // _PRESCALE
+    right = (rr_raw - _MCX) // _PRESCALE
+
+    px_int, py_int = ctx[0], ctx[1]
+
+    # Trivial inside test (prescaled).
+    if left <= px_int <= right and bot <= py_int <= top:
+        return 0, _FPW - 1
+
+    # Transform the 4 bbox corners to view space using the shared prescaled
+    # fp_to_view routine (same precision as fp_render_seg).
+    corners = ((left, top), (right, top), (right, bot), (left, bot))
+    pts = []
+    for wx, wy in corners:
+        _, evx, evy, _, evy_idx = _fp_to_view(wx, wy, ctx)
+        pts.append((evx, evy, evy_idx))
+
+    # Entirely behind near plane → not visible.
+    if all(p[1] < _NEAR for p in pts):
+        return None
+
+    sxs = []
+    for i in range(4):
+        vx0, vy0, vy_idx0 = pts[i]
+        vx1, vy1, _ = pts[(i + 1) % 4]
+        if vy0 >= _NEAR:
+            rxh, rxl = _fp_recip(vy_idx0)
+            sxs.append(_fp_project_x(vx0, rxh, rxl))
+        # Edge crossing NEAR plane → project the crossing point at NEAR.
+        if (vy0 < _NEAR) != (vy1 < _NEAR):
+            dvy = vy1 - vy0
+            if dvy != 0:
+                # Parametric t in 0.8: (NEAR - vy0) << 8 / dvy
+                t = ((_NEAR - vy0) << 8) // dvy
+                dvx = vx1 - vx0
+                cx = vx0 + _m8(t, dvx)
+                # 6502's use_ey1 path passes ey1 (=NEAR_FP) directly as a
+                # raw integer index with averaging flag = 0.  In fp_recip's
+                # 9.1 convention that's NEAR_FP << 1 (even → no averaging).
+                rxh, rxl = _fp_recip(_NEAR << 1)
+                sxs.append(_fp_project_x(cx, rxh, rxl))
+
+    if not sxs:
+        return None
+    return min(sxs), max(sxs)
+
 # ── BSP rendering ────────────────────────────────────────────────────────────
 
 GREEN = (0, 200, 0)
@@ -1529,7 +1600,7 @@ def render_bsp_fp(nid, clips, ctx, vz,
     if clips.is_full():
         return
     far = side ^ 1
-    br = fp_bbox_visible(node, far, cos_f, sin_f, wx_full, wy_full)
+    br = fp_bbox_visible_fixed(node, far, ctx)
     if br is not None:
         if clips.has_gap(br[0], br[1]):
             render_bsp_fp(ch[far], clips, ctx, vz,
@@ -1912,8 +1983,9 @@ def packed_render_bsp(nid, clips, ctx, vz,
     if clips.is_full():
         return
     far = side ^ 1
-    # Bbox visibility also uses un-prescaled node data (same as render_bsp_fp)
-    br = fp_bbox_visible(node, far, cos_f, sin_f, wx_full, wy_full)
+    # Bbox visibility uses the fixed-point path so Python, packed-Python,
+    # and the 6502 native bbox_cull all agree bit-exact.
+    br = fp_bbox_visible_fixed(node, far, ctx)
     if br is not None:
         if clips.has_gap(br[0], br[1]):
             packed_render_bsp(ch[far], clips, ctx, vz,
