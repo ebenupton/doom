@@ -2856,32 +2856,16 @@ def _main():
             elif ev.key == pygame.K_n:
                 _show_nj_raster = not _show_nj_raster
             elif ev.key == pygame.K_h:
-                if not _use_6502_frontend:
-                    # Run 6502 once in background thread, show result when ready
-                    import threading
-                    _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
-                    _px, _py = player_x, player_y
-                    # Capture data refs to avoid importing doom_wireframe from thread
-                    _rm, _rd, _rr, _pl, _nd = packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout, nodes
-                    _fz = player_floor(player_x, player_y)
-                    _vzps = _prescale_height(_fz + 41)
-                    def _run_6502():
-                        global _6502_result
-                        import time as _time
+                _use_6502_frontend = not _use_6502_frontend
+                if _use_6502_frontend:
+                    # Lazy-init the persistent Frontend6502 instance
+                    if _render_6502 is None:
                         from fe6502 import Frontend6502
-                        fe = Frontend6502(_rm, _rd, _rr, _pl)
-                        _t0 = _time.time()
-                        cmds, cycles = fe.render_frame(_px, _py, _ab, _fz)
-                        _t1 = _time.time()
-                        _6502_result = (cmds, cycles, _vzps)
-                        n_segs = sum(1 for c in cmds if c[0] in ('S', 'P'))
-                        print(f"6502 done: {n_segs} segs, {cycles} fe cycles, {_t1-_t0:.1f}s wall", flush=True)
-                    _6502_result = None
-                    print("6502 rendering in background...", flush=True)
-                    threading.Thread(target=_run_6502, daemon=True).start()
-                    _use_6502_frontend = True
+                        _render_6502 = Frontend6502(
+                            packed_rom_main, packed_rom_detail,
+                            packed_rom_recip, packed_layout)
+                    print("6502 front-end ON (inline)", flush=True)
                 else:
-                    _use_6502_frontend = False
                     print("6502 front-end OFF", flush=True)
             elif ev.key == pygame.K_p:
                 # Profile: run 6502 with per-function cycle accounting
@@ -2986,13 +2970,17 @@ def _main():
         cos_f = math.cos(ang_rad)
         sin_f = math.sin(ang_rad)
 
-        if _use_6502_frontend and _6502_result is not None:
-            # 6502 front-end completed: clip and draw via FPClipSpans
-            hw_cmds, hw_cyc, hw_vzps = _6502_result
+        if _use_6502_frontend and _render_6502 is not None:
+            # Run 6502 front-end inline every frame
+            import time as _time
+            _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
+            _fz = player_floor(player_x, player_y)
+            _t0 = _time.perf_counter()
+            hw_cmds, hw_cyc = _render_6502.render_frame(
+                player_x, player_y, _ab, _fz)
+            _t1 = _time.perf_counter()
+            hw_vzps = _prescale_height(_fz + 41)
             clip_and_draw_6502(hw_cmds, fp_surface, hw_vzps)
-        elif _use_6502_frontend:
-            # Still rendering in background — show waiting message
-            _real_drawline(fp_surface, (0, 200, 0), (0, 80), (255, 80), 1)
         elif use_packed:
             from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
