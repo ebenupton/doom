@@ -15,8 +15,8 @@ SCRIPT = textwrap.dedent("""
     import pygame; pygame.init(); pygame.display.set_mode((1,1))
     import doom_wireframe as dw
     from fe6502 import Frontend6502
-    fe = Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                      dw.packed_rom_recip, dw.packed_layout)
+    fe = Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                      dw.packed_bbox_table, dw.packed_layout)
     POSITIONS = [
         (1056, -3616, 64), (1056, -3616, 0), (1056, -3616, 32),
         (1056, -3616, 96), (1200, -3300, 64),

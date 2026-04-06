@@ -36,8 +36,8 @@ def _tracked(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
         py_seg_order.append(si)
 dw.fp_render_seg = _tracked
 
-fe = Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                  dw.packed_rom_recip, dw.packed_layout)
+fe = Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                  dw.packed_bbox_table, dw.packed_layout)
 
 print(f"=== PRESCALE={dw.PRESCALE} ===")
 all_pass = True

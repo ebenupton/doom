@@ -9,8 +9,8 @@ import doom_wireframe as dw
 import fe6502
 import subprocess
 
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 mpu = fe.mpu
 mem = mpu.memory
 
@@ -25,7 +25,7 @@ for i, line in enumerate(r.stdout.split('\n')):
         break
 print(f"line_survives at ${ls_addr:04X}")
 
-SPANS_BASE = 0x1C80
+SPANS_BASE = 0x2960
 SPAN_HDR = 2
 SPAN_SIZE = 16
 

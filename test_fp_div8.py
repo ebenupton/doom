@@ -10,8 +10,8 @@ import fe6502
 import subprocess
 from fp import fp_div8 as py_fp_div8, fp_linfn as py_fp_linfn
 
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 mpu = fe.mpu
 mem = mpu.memory
 

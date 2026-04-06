@@ -8,16 +8,18 @@
 ; Memory map (set up by Python before execution):
 ;   $0000-$00FF  Zero page
 ;   $0100-$01FF  Hardware stack
-;   $0200-$021F  Column bitmap (32 bytes)
-;   $0220-$02FF  BSP node stack (72 entries × 3 bytes = 216 bytes)
-;   $0300-$0FFF  Command output buffer (~3KB)
-;   $2000+       ROM main (vertices, nodes, subsectors, seg headers)
-;   $6000+       ROM detail (seg detail: heights)
-;   $A000-$A3FF  Quarter-square tables (4 × 256)
-;   $A400+       ROM recip (sin/cos 128B + reciprocal tables)
-;   $C000+       Code (this file)
+;   $0200-$02D7  BSP node stack (72 entries × 3 bytes = 216 bytes)
+;   $02D8-$02FF  Layout offsets + padding
+;   $0300-$06FF  Quarter-square tables (4 × 256)
+;   $0700+       ROM recip (sin/cos 128B + reciprocal tables)
+;   $0B90-$0EFF  Command output buffer
+;   $0F00-$1EFF  Vertex cache (512 × 8 bytes = 4096 bytes)
+;   $1F00-$1F3F  Vertex cache valid bitmap (64 bytes)
+;   $1F40+       VWH cache, span state, queue
+;   $2F00+       Code (this file)
+;   $8000-$BFFF  Sideways ROM window (bank-switched via $FE30)
 
-ORG &C000
+ORG &2F00
 
 ; ======================================================================
 ; Zero page assignments
@@ -121,10 +123,10 @@ zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (24B stride)
 ; ======================================================================
 ; (old colbitmap at &0200 removed — visibility goes through span hooks)
 bsp_stack    = &0200        ; 216 bytes (72 × 3)
-cmd_buffer   = &0300        ; command output (grows upward)
+cmd_buffer   = &0B90        ; command output (grows upward)
 ; (old deferred_stk at &0B00 removed — Python side holds the deferred queue)
-vcache       = &0C00        ; vertex cache: 512 × 8 bytes = 4096 bytes
-vcache_valid = &1C00        ; vertex cache valid bitmap: 64 bytes (512 bits)
+vcache       = &0F00        ; vertex cache: 512 × 8 bytes = 4096 bytes
+vcache_valid = &1F00        ; vertex cache valid bitmap: 64 bytes (512 bits)
 
 ; Vertex cache entry layout (8 bytes each)
 VC_VX    = 0                ; s16
@@ -133,30 +135,29 @@ VC_VI    = 4                ; u16 (vy_idx)
 VC_PAD   = 6                ; s16 (reserved, matches Python VC_SX slot)
 
 ; VWH (vertex-with-height) projected-Y cache: 1216 × 2 bytes = 2432 bytes
-vwh_cache    = &AC00        ; 2432 bytes
-vwh_valid    = &B580        ; 160-byte valid bitmap (covers up to 1280 entries)
+vwh_cache    = &1F40        ; 2432 bytes
+vwh_valid    = &28C0        ; 160-byte valid bitmap (covers up to 1280 entries)
 
 ; ======================================================================
-; ROM base addresses (set by Python loader)
+; ROM base addresses (sideways ROM window)
 ; ======================================================================
-rom_main     = &2000
-rom_detail   = &6000
+rom_window   = &8000
 
 ; Quarter-square tables
-sqr_lo       = &A000
-sqr_hi       = &A100
-sqr2_lo      = &A200
-sqr2_hi      = &A300
+sqr_lo       = &0300
+sqr_hi       = &0400
+sqr2_lo      = &0500
+sqr2_hi      = &0600
 
 ; Sin/cos + reciprocal tables
-rom_recip    = &A400
+rom_recip    = &0700
 sin_mag_tbl  = rom_recip        ; 64 bytes
 sin_unity_tbl = rom_recip + 64  ; 64 bytes
 recip_hi_tbl = rom_recip + 128  ; 513 bytes
 recip_lo_tbl = rom_recip + 641  ; 513 bytes
 
 ; ======================================================================
-; Layout offsets within rom_main (set by Python into these ZP locations)
+; Layout offsets within rom_window (set by Python into these RAM locations)
 ; ======================================================================
 zp_off_verts    = &60       ; u16
 zp_off_nodes    = &62       ; u16
@@ -166,11 +167,11 @@ zp_off_ss       = &64       ; u16  (WAIT — conflicts with zp_cmd_lo!)
 ; Actually let me use fixed addresses for the ROM layout offsets
 ; since they don't change during execution.  Store them in RAM.
 
-layout_off_verts   = &0BF0  ; u16
-layout_off_nodes   = &0BF2  ; u16
-layout_off_ss      = &0BF4  ; u16
-layout_off_seg_hdr = &0BF6  ; u16
-layout_n_nodes     = &0BF8  ; u16
+layout_off_verts   = &02D8  ; u16
+layout_off_nodes   = &02DA  ; u16
+layout_off_ss      = &02DC  ; u16
+layout_off_seg_hdr = &02DE  ; u16
+layout_n_nodes     = &02E0  ; u16
 
 ; Raw player position (s16 relative to map_center), set by fe6502.py per
 ; frame.  Used by point_on_side so the cross product has the correct sign
@@ -196,12 +197,12 @@ zp_ls_scratch = &D0          ; u8 (saved xhi/xlo byte during compare)
 zp_q_tail     = &D1          ; u16
 
 ; Frame-invariant ROM base pointers — computed once at entry from the
-; layout_off_* values + HI(rom_main), so point_on_side/get_child/etc.
+; layout_off_* values + HI(rom_window), so point_on_side/get_child/etc.
 ; can address with a single ADC pair instead of a two-step add.
-zp_node_base     = &D3       ; u16: rom_main + layout_off_nodes
-zp_vert_base     = &D5       ; u16: rom_main + layout_off_verts
-zp_ss_base       = &D7       ; u16: rom_main + layout_off_ss
-zp_seg_hdr_base  = &D9       ; u16: rom_main + layout_off_seg_hdr
+zp_node_base     = &D3       ; u16: rom_window + layout_off_nodes
+zp_vert_base     = &D5       ; u16: rom_window + layout_off_verts
+zp_ss_base       = &D7       ; u16: rom_window + layout_off_ss
+zp_seg_hdr_base  = &D9       ; u16: rom_window + layout_off_seg_hdr
 
 ; Native flush scratch (used by mark_solid / tighten / _make_span).
 ; Currently live only inside flush — callers outside flush can reuse.
@@ -267,7 +268,7 @@ zp_pw_r0_fn          = &B3   ; u8: 0 = use f, 1 = use g
 zp_pw_r1_fn          = &B4   ; u8: 0 = use f, 1 = use g
 
 ; Scratch span buffer for mark_solid/tighten — written then copied back.
-scratch_spans    = &B620     ; 514-byte buffer in vwh_cache slack area
+scratch_spans    = &2CF0     ; 514-byte buffer
 
 ; Visibility-span hook addresses.  These are intercepted by fe6502.py's
 ; run loop — control never actually reaches those PCs on the real 6502.
@@ -355,7 +356,7 @@ CMD_DONE   = &00
 ; Slopes are s16 (not s8) because fp_linfn can produce values outside
 ; the s8 range.  The outer_top/outer_bot bbox fields are derived
 ; on-the-fly by Python's draw_clipped path and not stored in RAM.
-spans_base    = &1C80        ; RAM address of span array header
+spans_base    = &2960        ; RAM address of span array header
 MAX_SPANS     = 32
 SPAN_SIZE     = 16
 SPAN_HDR      = 2
@@ -385,15 +386,13 @@ SP_INNER_BOT  = 12           ; s16
 ;   +16  s16  yb1       (tighten only)
 ;   +18  s16  yb2       (tighten only)
 ;
-; Place the queue in the gap between the span array ($1E82) and
-; rom_main ($2000) — up to 19 entries = 380 bytes.
-queue_base    = &1E90        ; entries start here (aligned up from $1E82)
-queue_count   = &1E82        ; u8 (count of queued entries)
-flush_ptr_lo  = &1E83        ; u8: flush iteration pointer lo (RAM)
-flush_ptr_hi  = &1E84        ; u8: flush iteration pointer hi
-flush_rem     = &1E85        ; u8: queue entries remaining in flush
-bb_log_ptr    = &1E86        ; u8: bbox_cull log write pointer (DIAG)
+queue_count   = &2B62        ; u8 (count of queued entries)
+flush_ptr_lo  = &2B63        ; u8: flush iteration pointer lo (RAM)
+flush_ptr_hi  = &2B64        ; u8: flush iteration pointer hi
+flush_rem     = &2B65        ; u8: queue entries remaining in flush
+bb_log_ptr    = &2B66        ; u8: bbox_cull log write pointer (DIAG)
 bb_log_base   = &0F00        ; 8 bytes per entry (DIAG)
+queue_base    = &2B70        ; entries start here
 MAX_QUEUE     = 18
 QE_SIZE       = 20
 QE_TYPE       = 0
@@ -453,16 +452,16 @@ QET_TIGHTEN   = 1
     ; Precompute absolute ROM base pointers for nodes/verts/subsectors.
     LDA layout_off_nodes     : STA zp_node_base
     LDA layout_off_nodes+1
-    CLC : ADC #HI(rom_main)  : STA zp_node_base+1
+    CLC : ADC #HI(rom_window)  : STA zp_node_base+1
     LDA layout_off_verts     : STA zp_vert_base
     LDA layout_off_verts+1
-    CLC : ADC #HI(rom_main)  : STA zp_vert_base+1
+    CLC : ADC #HI(rom_window)  : STA zp_vert_base+1
     LDA layout_off_ss        : STA zp_ss_base
     LDA layout_off_ss+1
-    CLC : ADC #HI(rom_main)  : STA zp_ss_base+1
+    CLC : ADC #HI(rom_window)  : STA zp_ss_base+1
     LDA layout_off_seg_hdr   : STA zp_seg_hdr_base
     LDA layout_off_seg_hdr+1
-    CLC : ADC #HI(rom_main)  : STA zp_seg_hdr_base+1
+    CLC : ADC #HI(rom_window)  : STA zp_seg_hdr_base+1
 
     ; Pre-compute sign extensions of px_int / py_int (used by to_view,
     ; point_on_side and render_seg's back-face test). These are constant
@@ -955,8 +954,8 @@ QET_TIGHTEN   = 1
 .get_child
 {
     PHA                  ; save side
-    ; Compute node address: rom_main + off_nodes + nid * 32
-    ; nid * 32 = nid << 5
+    ; Compute node address: rom_window + off_nodes + nid * 16
+    ; nid * 16 = nid << 4
     LDA zp_tmp0
     ASL A
     STA zp_ptr0
@@ -969,10 +968,8 @@ QET_TIGHTEN   = 1
     ROL zp_ptr0+1       ; × 8
     ASL zp_ptr0
     ROL zp_ptr0+1       ; × 16
-    ASL zp_ptr0
-    ROL zp_ptr0+1       ; × 32
 
-    ; Add precomputed zp_node_base (= rom_main + off_nodes)
+    ; Add precomputed zp_node_base (= rom_window + off_nodes)
     LDA zp_ptr0
     CLC
     ADC zp_node_base
@@ -1022,15 +1019,14 @@ QET_TIGHTEN   = 1
 ; ======================================================================
 .point_on_side
 {
-    ; Compute node address via precomputed zp_node_base (= rom_main + off_nodes)
+    ; Compute node address via precomputed zp_node_base (= rom_window + off_nodes)
     LDA zp_tmp0
     ASL A : STA zp_ptr0
     LDA zp_tmp0+1
     ROL A : STA zp_ptr0+1
     ASL zp_ptr0 : ROL zp_ptr0+1
     ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1
-    ASL zp_ptr0 : ROL zp_ptr0+1     ; ptr0 = nid * 32
+    ASL zp_ptr0 : ROL zp_ptr0+1     ; ptr0 = nid * 16
     LDA zp_ptr0
     CLC
     ADC zp_node_base
@@ -3664,7 +3660,7 @@ QET_TIGHTEN   = 1
 ; ======================================================================
 .render_subsector
 {
-    ; Address = rom_main + off_ss + ssid * 4
+    ; Address = rom_window + off_ss + ssid * 4
     LDA zp_tmp0
     ASL A : STA zp_ptr0
     LDA zp_tmp0+1
@@ -3690,7 +3686,7 @@ QET_TIGHTEN   = 1
     LDA (zp_ptr0),Y      ; first_seg hi
     STA zp_seg_idx+1
 
-    ; --- Initialise running seg header pointer: rom_main + off_seg_hdr + idx*12 ---
+    ; --- Initialise running seg header pointer: rom_window + off_seg_hdr + idx*12 ---
     ; idx * 12 = idx*8 + idx*4
     ; Compute idx * 12 in zp_seg_hdr_ptr, then idx * 24 = idx*12 << 1
     LDA zp_seg_idx : STA zp_seg_hdr_ptr
@@ -3707,12 +3703,12 @@ QET_TIGHTEN   = 1
     LDA zp_seg_hdr_ptr   : ASL A : STA zp_seg_det_ptr
     LDA zp_seg_hdr_ptr+1 : ROL A : STA zp_seg_det_ptr+1
 
-    ; Add base: zp_seg_hdr_base (= rom_main + off_seg_hdr)
+    ; Add base: zp_seg_hdr_base (= rom_window + off_seg_hdr)
     LDA zp_seg_hdr_ptr   : CLC : ADC zp_seg_hdr_base : STA zp_seg_hdr_ptr
     LDA zp_seg_hdr_ptr+1 : ADC zp_seg_hdr_base+1     : STA zp_seg_hdr_ptr+1
 
-    ; Add base: rom_detail → zp_seg_det_ptr (no offset; detail at rom_detail base)
-    LDA zp_seg_det_ptr+1 : CLC : ADC #HI(rom_detail) : STA zp_seg_det_ptr+1
+    ; Add base: rom_window (bank 1) → zp_seg_det_ptr (no offset; detail at rom_window base)
+    LDA zp_seg_det_ptr+1 : CLC : ADC #HI(rom_window) : STA zp_seg_det_ptr+1
 
     ; Process each seg (DEC-at-end loop to avoid redundant check+dec)
     LDA zp_seg_count
@@ -4043,8 +4039,10 @@ QET_TIGHTEN   = 1
     JMP seg_clipped
 .hg_pass
 
-    ; --- Read seg detail (heights) ---
+    ; --- Read seg detail (heights) — in ROM bank 1 ---
+    JSR select_bank_1
     JSR read_seg_detail   ; loads fh, ch (and bfh, bch if portal) into temps
+    JSR select_bank_0
 
     ; --- Y projection ---
     JSR project_y_all     ; projects ft1, fb1, ft2, fb2 (and bt/bb if needed)
@@ -4077,7 +4075,7 @@ QET_TIGHTEN   = 1
 ; ======================================================================
 .load_vertex
 {
-    ; addr = rom_main + off_verts + idx * 4
+    ; addr = rom_window + off_verts + idx * 4
     LDA zp_tmp0
     ASL A : STA zp_ptr0
     LDA zp_tmp0+1
@@ -5097,7 +5095,7 @@ QET_TIGHTEN   = 1
 
 ; ======================================================================
 ; READ SEG DETAIL + PROJECT Y
-; Reads heights from rom_detail and projects Y coordinates
+; Reads heights from rom_window (bank 1) and projects Y coordinates
 ; Input: zp_seg_idx, zp_seg_flags, reciprocals already computed
 ; Output: ft1, fb1, ft2, fb2 (and bt/bb if portal)
 ; ======================================================================
@@ -5452,9 +5450,9 @@ QET_TIGHTEN   = 1
 ;   $BE:     saved far_side
 ; ======================================================================
 
-; Node bbox offsets within packed 32-byte record
-ND_BBOX_R = 12            ; right-side bbox at +12
-ND_BBOX_L = 20            ; left-side bbox at +20
+; Bbox table offsets within 16-byte bbox record (in ROM bank 2)
+BB_BBOX_R = 0             ; right-side bbox at +0
+BB_BBOX_L = 8             ; left-side bbox at +8
 
 ; Corner storage layout in ZP
 bb_c0_vx = &A0            ; corner 0: (left, top)
@@ -5482,8 +5480,11 @@ bb_far_side = &BE         ; saved far_side
     LDA zp_tmp0   : STA bb_save_nid
     LDA zp_tmp0+1 : STA bb_save_nid+1
 
-    ; ---- Compute node address: zp_node_base + nid * 32 ----
-    ; nid * 32 = nid << 5
+    ; ---- Switch to ROM bank 2 (bbox table) ----
+    JSR select_bank_2
+
+    ; ---- Compute bbox address: rom_window + nid * 16 ----
+    ; nid * 16 = nid << 4
     LDA zp_tmp0
     ASL A
     STA zp_ptr0
@@ -5496,25 +5497,23 @@ bb_far_side = &BE         ; saved far_side
     ROL zp_ptr0+1            ; × 8
     ASL zp_ptr0
     ROL zp_ptr0+1            ; × 16
-    ASL zp_ptr0
-    ROL zp_ptr0+1            ; × 32
-    ; Add zp_node_base
+    ; Add rom_window base
     LDA zp_ptr0
     CLC
-    ADC zp_node_base
+    ADC #LO(rom_window)
     STA zp_ptr0
     LDA zp_ptr0+1
-    ADC zp_node_base+1
+    ADC #HI(rom_window)
     STA zp_ptr0+1
-    ; zp_ptr0 now points to the start of this node
+    ; zp_ptr0 now points to the bbox record for this node in bank 2
 
-    ; ---- Compute bbox offset: far_side==0 → +12, far_side==1 → +20 ----
+    ; ---- Compute bbox offset: far_side==0 → +0, far_side==1 → +8 ----
     LDA bb_far_side
     BEQ bb_side_right
-    LDY #ND_BBOX_L            ; left bbox at offset 20
+    LDY #BB_BBOX_L            ; left bbox at offset 8
     JMP bb_read_bbox
 .bb_side_right
-    LDY #ND_BBOX_R            ; right bbox at offset 12
+    LDY #BB_BBOX_R            ; right bbox at offset 0
 
 .bb_read_bbox
     ; Read 8 bytes (top, bot, left, right as s16) into $80-$87
@@ -5526,6 +5525,9 @@ bb_far_side = &BE         ; saved far_side
     LDA (zp_ptr0),Y : STA &85 : INY   ; left hi
     LDA (zp_ptr0),Y : STA &86 : INY   ; right lo
     LDA (zp_ptr0),Y : STA &87         ; right hi
+
+    ; ---- Switch back to ROM bank 0 ----
+    JSR select_bank_0
 
     ; ================================================================
     ; Trivial inside test: left <= px_int <= right AND bot <= py_int <= top
@@ -6289,6 +6291,16 @@ bb_far_side = &BE         ; saved far_side
 
 }  ; end bbox_cull_native
 
+; ======================================================================
+; BANK SWITCH ROUTINES
+; ======================================================================
+.select_bank_0
+    LDA #0 : STA &FE30 : RTS
+.select_bank_1
+    LDA #1 : STA &FE30 : RTS
+.select_bank_2
+    LDA #2 : STA &FE30 : RTS
+
 .end_of_code
 
-SAVE "doom_fe.bin", &C000, end_of_code
+SAVE "doom_fe.bin", &2F00, end_of_code

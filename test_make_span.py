@@ -10,8 +10,8 @@ import fe6502
 import subprocess
 from fp import fp_eval as py_fp_eval
 
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 mpu = fe.mpu
 mem = mpu.memory
 
@@ -93,7 +93,7 @@ for slope, x, intercept in test_vals:
 print(f"  fp_eval: {n_ok} OK, {n_fail} FAIL")
 
 # Test make_span
-SCRATCH_OUT = 0xB620  # write output here
+SCRATCH_OUT = 0x2CF0  # write output here
 print("\nTesting make_span...")
 n_ok, n_fail = 0, 0
 

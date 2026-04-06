@@ -9,8 +9,8 @@ import doom_wireframe as dw
 from fe6502 import Frontend6502
 import math
 
-fe = Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                  dw.packed_rom_recip, dw.packed_layout)
+fe = Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                  dw.packed_bbox_table, dw.packed_layout)
 
 POSITIONS = [
     (1056, -3616, 64, "spawn East"),

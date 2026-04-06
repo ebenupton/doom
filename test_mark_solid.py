@@ -16,8 +16,8 @@ from wad_packed import (SPAN_HDR, SPAN_SIZE, MAX_SPANS,
                         read_all_spans, write_all_spans)
 from fp import fp_eval
 
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 mpu = fe.mpu
 mem = mpu.memory
 
@@ -32,7 +32,7 @@ for i, line in enumerate(r.stdout.split('\n')):
         addrs[s[1:]] = int(nl.split()[0], 16)
 print(f"mark_solid at ${addrs['mark_solid']:04X}")
 
-SPANS_BASE = 0x1C80
+SPANS_BASE = 0x2960
 ZP_MS_LO = 0xF0
 ZP_MS_HI = 0xF2
 

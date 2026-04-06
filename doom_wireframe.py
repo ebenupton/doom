@@ -62,7 +62,7 @@ Architecture enables:
   - Command buffer is small (~2KB) and strictly sequential
 """
 
-import struct, math, sys, random, pygame
+import os, struct, math, sys, random, pygame
 from line6502 import estimate_line_cycles
 import fp as fp_module
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
@@ -276,6 +276,22 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
     PRESCALE, MAP_CENTER_X, MAP_CENTER_Y)
+
+# Build ROM banks for sideways ROM paging
+packed_rom_banks = [
+    bytearray(16384),  # bank 0: rom_main
+    bytearray(16384),  # bank 1: rom_detail
+    bytearray(16384),  # bank 2: bbox_table + rasteriser
+]
+packed_rom_banks[0][:len(packed_rom_main)] = packed_rom_main
+packed_rom_banks[1][:len(packed_rom_detail)] = packed_rom_detail
+packed_rom_banks[2][:len(packed_bbox_table)] = packed_bbox_table
+_rast_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or.bin')
+if os.path.exists(_rast_path):
+    with open(_rast_path, 'rb') as _f:
+        _rast_bin = _f.read()
+    _rast_offset = len(packed_bbox_table)
+    packed_rom_banks[2][_rast_offset:_rast_offset + len(_rast_bin)] = _rast_bin
 
 # ── Analytical 2D trapezoid clip spans ───────────────────────────────────────
 #
@@ -2881,8 +2897,8 @@ def _main():
                     if _render_6502 is None:
                         from fe6502 import Frontend6502
                         _render_6502 = Frontend6502(
-                            packed_rom_main, packed_rom_detail,
-                            packed_rom_recip, packed_layout)
+                            packed_rom_banks, packed_rom_recip,
+                            packed_bbox_table, packed_layout)
                     print("6502 front-end ON (inline)", flush=True)
                 else:
                     print("6502 front-end OFF", flush=True)
@@ -2893,8 +2909,8 @@ def _main():
                     if _render_6502 is None:
                         from fe6502 import Frontend6502
                         _render_6502 = Frontend6502(
-                            packed_rom_main, packed_rom_detail,
-                            packed_rom_recip, packed_layout)
+                            packed_rom_banks, packed_rom_recip,
+                            packed_bbox_table, packed_layout)
                     print("6502 full pipeline ON (front-end + clip + NJ raster)", flush=True)
                 else:
                     print("6502 full pipeline OFF", flush=True)
@@ -2903,14 +2919,14 @@ def _main():
                 import threading
                 _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
                 _px, _py = player_x, player_y
-                _rm, _rd, _rr, _pl, _nd = packed_rom_main, packed_rom_detail, packed_rom_recip, packed_layout, nodes
+                _rb, _rr, _bt, _pl, _nd = packed_rom_banks, packed_rom_recip, packed_bbox_table, packed_layout, nodes
                 _fz = player_floor(player_x, player_y)
                 _vzps = _prescale_height(_fz + 41)
                 def _profile_6502():
                     global _6502_result
                     import time as _time
                     from fe6502 import Frontend6502, format_profile
-                    fe = Frontend6502(_rm, _rd, _rr, _pl)
+                    fe = Frontend6502(_rb, _rr, _bt, _pl)
                     _t0 = _time.time()
                     cmds, cycles, profile = fe.profile_frame(_px, _py, _ab, _fz)
                     _t1 = _time.time()

@@ -22,8 +22,8 @@ POSITIONS = [
 ]
 
 def main():
-    fe = Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                       dw.packed_rom_recip, dw.packed_layout)
+    fe = Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                       dw.packed_bbox_table, dw.packed_layout)
 
     total_cycles = 0
     for px, py, ab, name in POSITIONS:

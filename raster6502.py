@@ -27,7 +27,8 @@ SCREEN_H = 160
 CHAR_ROWS = SCREEN_H // 8  # 20
 BYTES_PER_CHAR_ROW = 256    # 32 columns × 8 scanlines
 SCREEN_SIZE = CHAR_ROWS * BYTES_PER_CHAR_ROW  # 5120 bytes
-SCREEN_START = 0x5800       # BBC Micro Mode 4 default
+SCREEN_START = 0x5800       # BBC Micro Mode 4 default (buffer 0)
+SCREEN_START_1 = 0x6C00     # BBC Micro Mode 4 buffer 1
 SCREEN_START_HI = SCREEN_START >> 8
 
 # ZP locations for the rasteriser
@@ -74,7 +75,7 @@ def _draw_one_line(mpu, x0, y0, x1, y1):
     return mpu.processorCycles
 
 
-def _screen_to_surface(mem):
+def _screen_to_surface(mem, screen_start=SCREEN_START):
     """Convert BBC Micro screen buffer to a pygame Surface."""
     surf = pygame.Surface((SCREEN_W, SCREEN_H))
     surf.fill((0, 0, 0))
@@ -84,7 +85,7 @@ def _screen_to_surface(mem):
         char_row = py >> 3
         scanline = py & 7
         for byte_col in range(32):
-            addr = SCREEN_START + char_row * 256 + byte_col * 8 + scanline
+            addr = screen_start + char_row * 256 + byte_col * 8 + scanline
             byte = mem[addr]
             if byte == 0:
                 continue
@@ -97,17 +98,21 @@ def _screen_to_surface(mem):
     return surf
 
 
-def render_lines_6502(lines):
+def render_lines_6502(lines, buffer=0):
     """Render a list of (x1, y1, x2, y2) lines through the NJ rasteriser.
 
     Returns (surface, total_cycles) where surface is 256×160 pygame Surface.
     Lines with coordinates outside 0-255 / 0-159 are clipped to screen bounds.
+    buffer: 0 = SCREEN_START ($5800), 1 = SCREEN_START_1 ($6C00).
     """
+    scr_start = SCREEN_START_1 if buffer else SCREEN_START
+    scr_start_hi = scr_start >> 8
+
     mpu = _mpu
     mpu.memory[:] = _TEMPLATE
     # Clear screen buffer
     for i in range(SCREEN_SIZE):
-        mpu.memory[SCREEN_START + i] = 0
+        mpu.memory[scr_start + i] = 0
 
     total_cycles = 0
     for x1, y1, x2, y2 in lines:
@@ -118,6 +123,7 @@ def render_lines_6502(lines):
         y2 = max(0, min(SCREEN_H - 1, int(y2)))
         if x1 == x2 and y1 == y2:
             continue
+        mpu.memory[_ZP_SCRSTRT] = scr_start_hi
         total_cycles += _draw_one_line(mpu, x1, y1, x2, y2)
 
-    return _screen_to_surface(mpu.memory), total_cycles
+    return _screen_to_surface(mpu.memory, scr_start), total_cycles

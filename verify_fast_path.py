@@ -25,8 +25,8 @@ def capture_cmds():
             del sys.modules[m]
     import doom_wireframe as dw
     from fe6502 import Frontend6502
-    fe = Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                      dw.packed_rom_recip, dw.packed_layout)
+    fe = Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                      dw.packed_bbox_table, dw.packed_layout)
     out = []
     for px, py, ab in POSITIONS:
         fz = dw.player_floor(px, py)

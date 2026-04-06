@@ -8,12 +8,13 @@ from py65.devices.mpu6502 import MPU
 
 
 # Memory map (must match doom_fe.asm)
-ROM_MAIN_BASE   = 0x2000
-ROM_DETAIL_BASE = 0x6000
-QSQ_BASE        = 0xA000
-ROM_RECIP_BASE  = 0xA400
-CODE_BASE       = 0xC000
-CMD_BUFFER      = 0x0300
+ROM_WINDOW      = 0x8000
+QSQ_BASE        = 0x0300
+ROM_RECIP_BASE  = 0x0700
+CODE_BASE       = 0x2F00
+CMD_BUFFER      = 0x0B90
+SPANS_BASE      = 0x2960
+ROMSEL          = 0xFE30
 
 # ZP addresses
 ZP_PX_INT = 0x10
@@ -24,11 +25,11 @@ ZP_VZ_PS  = 0x14
 ZP_ANGLE  = 0x15
 
 # Layout offsets (stored in RAM, accessed from 6502 code)
-LAYOUT_OFF_VERTS   = 0x0BF0
-LAYOUT_OFF_NODES   = 0x0BF2
-LAYOUT_OFF_SS      = 0x0BF4
-LAYOUT_OFF_SEG_HDR = 0x0BF6
-LAYOUT_N_NODES     = 0x0BF8
+LAYOUT_OFF_VERTS   = 0x02D8
+LAYOUT_OFF_NODES   = 0x02DA
+LAYOUT_OFF_SS      = 0x02DC
+LAYOUT_OFF_SEG_HDR = 0x02DE
+LAYOUT_N_NODES     = 0x02E0
 
 # Command types
 CMD_DONE  = 0x00
@@ -144,13 +145,30 @@ PROFILE_CATEGORIES = [
 ]
 
 
+class PagedMemory(list):
+    """64KB memory with BBC Micro sideways ROM banking at $8000-$BFFF."""
+    def __init__(self, rom_banks=None):
+        super().__init__([0] * 65536)
+        self.rom_banks = rom_banks or []
+        self.current_bank = -1
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if isinstance(key, int) and key == 0xFE30:
+            bank = value & 0x0F
+            if bank != self.current_bank and bank < len(self.rom_banks):
+                self.current_bank = bank
+                src = self.rom_banks[bank]
+                super().__setitem__(slice(0x8000, 0x8000 + len(src)), list(src))
+
+
 class Frontend6502:
     """Loads doom_fe.bin and WAD data into py65 for repeated execution."""
 
-    def __init__(self, rom_main, rom_detail, rom_recip, layout, binary_path=None):
-        self.rom_main = rom_main
-        self.rom_detail = rom_detail
+    def __init__(self, rom_banks, rom_recip, bbox_table, layout, binary_path=None):
+        self.rom_banks = rom_banks
         self.rom_recip = rom_recip
+        self.bbox_table = bbox_table
         self.layout = layout
 
         if binary_path is None:
@@ -159,13 +177,19 @@ class Frontend6502:
             self.code = f.read()
 
         self.mpu = MPU()
+        # Replace mpu.memory with PagedMemory
+        paged = PagedMemory(rom_banks)
+        self.mpu.memory = paged
         mem = self.mpu.memory
+
+        # Load bank 0 initially
+        mem[ROMSEL] = 0
 
         # Load code
         for i, b in enumerate(self.code):
             mem[CODE_BASE + i] = b
 
-        # Load quarter-square tables
+        # Load quarter-square tables at $0300-$06FF (page-aligned)
         sqr_lo, sqr_hi, sqr2_lo, sqr2_hi = _gen_quarter_square()
         for i in range(256):
             mem[QSQ_BASE + i] = sqr_lo[i]
@@ -173,11 +197,7 @@ class Frontend6502:
             mem[QSQ_BASE + 0x200 + i] = sqr2_lo[i]
             mem[QSQ_BASE + 0x300 + i] = sqr2_hi[i]
 
-        # Load ROM data
-        for i, b in enumerate(rom_main):
-            mem[ROM_MAIN_BASE + i] = b
-        for i, b in enumerate(rom_detail):
-            mem[ROM_DETAIL_BASE + i] = b
+        # Load recip/trig at $0700+
         for i, b in enumerate(rom_recip):
             mem[ROM_RECIP_BASE + i] = b
 
@@ -248,8 +268,8 @@ class Frontend6502:
         # Initialise visibility-span state inline (no Python hook needed).
         # One full-screen span: count=1, xlo=0, xhi=0(=256), flat top=0, flat bot=159.
         from wad_packed import spans_init_full, SPAN_HDR
-        spans_init_full(mem, 0x1C80, 256, 159)
-        mem[0x1C80 + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
+        spans_init_full(mem, SPANS_BASE, 256, 159)
+        mem[SPANS_BASE + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
 
         # Run
         self.mpu.pc = CODE_BASE
@@ -277,7 +297,8 @@ class Frontend6502:
         # Parse commands
         commands = []
         addr = CMD_BUFFER
-        while addr < 0x0F00:
+        cmd_limit = CMD_BUFFER + 880
+        while addr < cmd_limit:
             t = mem[addr]
             if t == CMD_DONE:
                 break
@@ -369,8 +390,8 @@ class Frontend6502:
         # Initialise visibility-span state inline (no Python hook needed).
         # One full-screen span: count=1, xlo=0, xhi=0(=256), flat top=0, flat bot=159.
         from wad_packed import spans_init_full, SPAN_HDR
-        spans_init_full(mem, 0x1C80, 256, 159)
-        mem[0x1C80 + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
+        spans_init_full(mem, SPANS_BASE, 256, 159)
+        mem[SPANS_BASE + SPAN_HDR + 1] = 0  # xhi=256 stored as 0 (wrap)
 
         # Run with PC sampling at every instruction
         mpu = self.mpu
@@ -407,7 +428,8 @@ class Frontend6502:
         # Parse commands (same as render_frame)
         commands = []
         addr = CMD_BUFFER
-        while addr < 0x0F00:
+        cmd_limit = CMD_BUFFER + 880
+        while addr < cmd_limit:
             t = mem[addr]
             if t == CMD_DONE:
                 break
