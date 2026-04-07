@@ -5384,6 +5384,10 @@ QET_TIGHTEN   = 1
 ; ======================================================================
 .draw_portal_lines
 {
+    ; Save bt1/bt2 ($84-$87→$94-$97) — NJ rasteriser clobbers $82-$87.
+    LDX #3
+.sbt LDA &84,X : STA &94,X : DEX : BPL sbt
+
     ; --- Ceiling logic ---
     LDA zp_seg_flags
     AND #SF_NEEDBT
@@ -5394,12 +5398,12 @@ QET_TIGHTEN   = 1
     ; need_bt: draw bt1->bt2 (back-ceiling top line)
     LDA zp_sx1   : STA LINE_X0_LO
     LDA zp_sx1+1 : STA LINE_X0_HI
-    LDA &84      : STA LINE_Y0_LO      ; bt1 lo
-    LDA &85      : STA LINE_Y0_HI      ; bt1 hi
+    LDA &94    : STA LINE_Y0_LO      ; bt1 lo (saved)
+    LDA &95    : STA LINE_Y0_HI      ; bt1 hi
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
-    LDA &86      : STA LINE_Y1_LO      ; bt2 lo
-    LDA &87      : STA LINE_Y1_HI : JSR clip_rasterise
+    LDA &96    : STA LINE_Y1_LO      ; bt2 lo
+    LDA &97    : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw left edge: sx1,ft1 -> sx1,bt1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5408,8 +5412,8 @@ QET_TIGHTEN   = 1
     LDA zp_ft1+1 : STA LINE_Y0_HI
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
-    LDA &84      : STA LINE_Y1_LO      ; bt1 lo
-    LDA &85      : STA LINE_Y1_HI : JSR clip_rasterise
+    LDA &94    : STA LINE_Y1_LO      ; bt1 lo (saved)
+    LDA &95    : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw right edge: sx2,ft2 -> sx2,bt2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5418,8 +5422,8 @@ QET_TIGHTEN   = 1
     LDA zp_ft2+1 : STA LINE_Y0_HI
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
-    LDA &86      : STA LINE_Y1_LO      ; bt2 lo
-    LDA &87      : STA LINE_Y1_HI : JSR clip_rasterise
+    LDA &96    : STA LINE_Y1_LO      ; bt2 lo (saved)
+    LDA &97    : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; if ch > vz_ps: also draw ft1->ft2 (front ceiling line)
     LDA &81             ; ch (s8)
@@ -5452,18 +5456,18 @@ QET_TIGHTEN   = 1
     ; need_bb: draw bb1->bb2 (back-floor bottom line)
     LDA zp_sx1   : STA LINE_X0_LO
     LDA zp_sx1+1 : STA LINE_X0_HI
-    LDA &90      : STA LINE_Y0_LO      ; bb1 lo
-    LDA &91      : STA LINE_Y0_HI      ; bb1 hi
+    LDA &90    : STA LINE_Y0_LO      ; bb1 lo (saved)
+    LDA &91    : STA LINE_Y0_HI
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
-    LDA &92      : STA LINE_Y1_LO      ; bb2 lo
-    LDA &93      : STA LINE_Y1_HI : JSR clip_rasterise
+    LDA &92    : STA LINE_Y1_LO      ; bb2 lo (saved)
+    LDA &93    : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw left edge: sx1,bb1 -> sx1,fb1
     LDA zp_sx1   : STA LINE_X0_LO
     LDA zp_sx1+1 : STA LINE_X0_HI
-    LDA &90      : STA LINE_Y0_LO      ; bb1 lo
-    LDA &91      : STA LINE_Y0_HI      ; bb1 hi
+    LDA &90    : STA LINE_Y0_LO      ; bb1 lo (saved)
+    LDA &91    : STA LINE_Y0_HI
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA zp_fb1   : STA LINE_Y1_LO
@@ -5472,8 +5476,8 @@ QET_TIGHTEN   = 1
     ; draw right edge: sx2,bb2 -> sx2,fb2
     LDA zp_sx2   : STA LINE_X0_LO
     LDA zp_sx2+1 : STA LINE_X0_HI
-    LDA &92      : STA LINE_Y0_LO      ; bb2 lo
-    LDA &93      : STA LINE_Y0_HI      ; bb2 hi
+    LDA &92    : STA LINE_Y0_LO      ; bb2 lo (saved)
+    LDA &93    : STA LINE_Y0_HI
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
