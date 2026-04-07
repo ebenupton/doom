@@ -2262,20 +2262,11 @@ QET_TIGHTEN   = 1
     LDA #0 : SBC zp_tmp2+1 : STA zp_tmp2+1
 .fl_s2_pos                 ; zp_tmp2 = |sx2| (u16)
 
-    ; |sx1| vs |sx2| unsigned compare
-    LDA zp_tmp0
-    CMP zp_tmp2
-    LDA zp_tmp0+1
-    SBC zp_tmp2+1
-    BCC fl_use_sx1          ; |sx1| < |sx2|
-    BEQ fl_check_eq
-    JMP fl_use_sx2          ; |sx1| > |sx2|
-.fl_check_eq
-    ; hi bytes equal; check lo
-    LDA zp_tmp0 : CMP zp_tmp2
-    BCC fl_use_sx1
-    BEQ fl_use_sx1          ; equal → use sx1 (Python: "<=")
-    JMP fl_use_sx2
+    ; |sx1| vs |sx2| unsigned 16-bit compare (standard CMP/SBC pattern)
+    LDA zp_tmp0   : CMP zp_tmp2
+    LDA zp_tmp0+1 : SBC zp_tmp2+1
+    BCS fl_use_sx2          ; |sx1| >= |sx2| → use sx2 (closer to origin)
+    ; fall through: |sx1| < |sx2| → use sx1
 
 .fl_use_sx1
     ; intercept = y1 - ((slope × sx1) >> 8)
@@ -2414,32 +2405,145 @@ QET_TIGHTEN   = 1
     RTS
 .pm_not_all_g
 
-    ; Crossover case — compute cx via fp_div8.
-    ; dx0 = fv0 - gv0 = zp_pw_d0
-    ; dx1 = fvx1 - gvx1 where fvx1 = f(x1), gvx1 = g(x1)
-    ; denom = dx0 - dx1
-    ; span = x1 - x0
-    ; cx = x0 + (dx0 * span) / denom
-    ;
-    ; Current callers of pw_max never hit the crossover case in our tests
-    ; (verified empirically).  Implement a simple fallback: pick f or g
-    ; based on d0 sign (matching Python's degenerate-denom path).
-    ;
-    ; If d0 > 0: pick f (at x0, f was higher)
-    ; Else:     pick g
-    LDA zp_pw_d0+1
-    BMI pm_pick_g
-    BNE pm_pick_f
-    LDA zp_pw_d0
-    BEQ pm_pick_g              ; d0 == 0 → prefer g
-.pm_pick_f
-    LDA #1 : STA zp_pw_count
-    LDA #0 : STA zp_pw_r0_fn
-    RTS
+    ; Crossover case — full computation (mirrors Python _fp_pw_max crossover).
+    ; fvx1 = fp_eval(f, x1), gvx1 = fp_eval(g, x1)
+    LDA zp_pw_x1
+    JSR pw_eval_f_at_a
+    LDA &70 : STA zp_tg_tx0      ; stash fvx1 lo
+    LDA &71 : STA zp_tg_tx0+1
+    LDA zp_pw_x1
+    JSR pw_eval_g_at_a
+    ; dx1 = fvx1 - gvx1
+    SEC
+    LDA zp_tg_tx0   : SBC &70 : STA zp_tg_tx0
+    LDA zp_tg_tx0+1 : SBC &71 : STA zp_tg_tx0+1
+    ; denom = d0 - dx1
+    SEC
+    LDA zp_pw_d0   : SBC zp_tg_tx0   : STA zp_tg_tx1
+    LDA zp_pw_d0+1 : SBC zp_tg_tx0+1 : STA zp_tg_tx1+1
+    ; abs(denom) < 1 → degenerate
+    LDA zp_tg_tx1 : ORA zp_tg_tx1+1
+    BNE pm_denom_ok
+    LDA zp_pw_d0+1 : BMI pm_pick_g : BNE pm_pick_f
+    LDA zp_pw_d0   : BNE pm_pick_f
 .pm_pick_g
-    LDA #1 : STA zp_pw_count
-    LDA #1 : STA zp_pw_r0_fn
-    RTS
+    LDA #1 : STA zp_pw_count : LDA #1 : STA zp_pw_r0_fn : RTS
+.pm_pick_f
+    LDA #1 : STA zp_pw_count : LDA #0 : STA zp_pw_r0_fn : RTS
+.pm_denom_ok
+    ; |d0| → zp_tmp0, sign into zp_div_sign
+    LDA zp_pw_d0+1
+    BPL pm_d0_pos
+    SEC : LDA #0 : SBC zp_pw_d0 : STA zp_tmp0
+    LDA #0 : SBC zp_pw_d0+1 : STA zp_tmp0+1
+    LDA #&80 : STA zp_div_sign : JMP pm_d0_abs_done
+.pm_d0_pos
+    LDA zp_pw_d0 : STA zp_tmp0 : LDA zp_pw_d0+1 : STA zp_tmp0+1
+    LDA #0 : STA zp_div_sign
+.pm_d0_abs_done
+    ; span = x1 - x0 (u8)
+    SEC : LDA zp_pw_x1 : SBC zp_pw_x0 : STA zp_math_b
+    ; |d0| → zp_tmp2 for mul_s16_u8_s24
+    LDA zp_tmp0 : STA zp_tmp2 : LDA zp_tmp0+1 : STA zp_tmp2+1
+    LDA zp_math_b
+    JSR mul_s16_u8_s24
+    ; Full s24/s16 divide: product($70:$72) / denom(zp_tg_tx1)
+    ; zp_div_sign has sign of |d0|; XOR with sign of denom
+    LDA zp_div_sign : EOR zp_tg_tx1+1 : AND #&80 : STA zp_div_sign
+    ; Set up dividend bytes: byte0=$70, byte1=$71, byte2=$72 (all unsigned)
+    LDA &70 : STA zp_div_num
+    LDA &71 : STA zp_div_num+1
+    LDA &72 : STA zp_tmp3
+    ; |denom| → zp_div_den
+    LDA zp_tg_tx1+1 : BPL pm_da_pos
+    SEC : LDA #0 : SBC zp_tg_tx1 : STA zp_div_den
+    LDA #0 : SBC zp_tg_tx1+1 : STA zp_div_den+1 : JMP pm_da_done
+.pm_da_pos
+    LDA zp_tg_tx1 : STA zp_div_den : LDA zp_tg_tx1+1 : STA zp_div_den+1
+.pm_da_done
+    ; 24/16 unsigned divide (same loop as fp_div8)
+    LDA #0 : STA zp_div_rem : STA zp_div_rem+1
+    LDX #24
+.pm_div_loop
+    ASL zp_div_num : ROL zp_div_num+1 : ROL zp_tmp3
+    ROL zp_div_rem : ROL zp_div_rem+1
+    LDA zp_div_rem : SEC : SBC zp_div_den : TAY
+    LDA zp_div_rem+1 : SBC zp_div_den+1
+    BCC pm_div_skip
+    STA zp_div_rem+1 : STY zp_div_rem : INC zp_div_num
+.pm_div_skip
+    DEX : BNE pm_div_loop
+    ; Apply sign to quotient (low 16 bits in zp_div_num)
+    ; Floor division: if negative and remainder != 0, increment abs quotient
+    LDA zp_div_sign : BEQ pm_quot_pos
+    LDA zp_div_rem : ORA zp_div_rem+1 : BEQ pm_no_floor
+    INC zp_div_num : BNE pm_no_floor : INC zp_div_num+1
+.pm_no_floor
+    SEC : LDA #0 : SBC zp_div_num : STA zp_div_num
+    LDA #0 : SBC zp_div_num+1 : STA zp_div_num+1
+.pm_quot_pos
+    ; cx = x0 + quotient
+    CLC : LDA zp_pw_x0 : ADC zp_div_num : STA zp_pw_cx
+    LDA zp_pw_x0+1 : ADC zp_div_num+1 : STA zp_pw_cx+1
+    ; Clamp: cx = max(x0+1, min(x1-1, cx))
+    SEC : LDA zp_pw_cx : SBC zp_pw_x0 : LDA zp_pw_cx+1 : SBC zp_pw_x0+1
+    BVC pm_cmp1_nov : EOR #&80
+.pm_cmp1_nov
+    BMI pm_cx_low
+    BNE pm_cmp1_ok
+    LDA zp_pw_cx : SEC : SBC zp_pw_x0 : CMP #1 : BCS pm_cmp1_ok
+.pm_cx_low
+    CLC : LDA zp_pw_x0 : ADC #1 : STA zp_pw_cx
+    LDA zp_pw_x0+1 : ADC #0 : STA zp_pw_cx+1
+.pm_cmp1_ok
+    SEC : LDA zp_pw_x1 : SBC #1 : STA zp_tg_tx0
+    LDA zp_pw_x1+1 : SBC #0 : STA zp_tg_tx0+1
+    SEC : LDA zp_pw_cx : SBC zp_tg_tx0 : LDA zp_pw_cx+1 : SBC zp_tg_tx0+1
+    BVC pm_cmp2_nov : EOR #&80
+.pm_cmp2_nov
+    BMI pm_cmp2_ok
+    BNE pm_cx_high
+    LDA zp_pw_cx : CMP zp_tg_tx0 : BEQ pm_cmp2_ok
+.pm_cx_high
+    LDA zp_tg_tx0 : STA zp_pw_cx : LDA zp_tg_tx0+1 : STA zp_pw_cx+1
+.pm_cmp2_ok
+    ; Refinement: if f(cx) >= g(cx): cx += 1  (pw_max uses >=)
+    LDA zp_pw_cx : JSR pw_eval_f_at_a
+    LDA &70 : STA zp_tg_tx0 : LDA &71 : STA zp_tg_tx0+1
+    LDA zp_pw_cx : JSR pw_eval_g_at_a
+    SEC : LDA zp_tg_tx0 : SBC &70 : STA zp_ls_scratch
+    LDA zp_tg_tx0+1 : SBC &71
+    BVC pm_ref_nov : EOR #&80
+.pm_ref_nov
+    BMI pm_fv_lt_gv             ; f < g → no increment
+    ; f >= g (check equality too)
+    LDA zp_tg_tx0 : CMP &70 : BNE pm_fv_ge_gv
+    LDA zp_tg_tx0+1 : CMP &71 : BNE pm_fv_ge_gv
+.pm_fv_ge_gv                    ; f >= g → increment cx
+    INC zp_pw_cx : BNE pm_inc_nc : INC zp_pw_cx+1
+.pm_inc_nc
+    ; Check cx >= x1 → single range with f
+    SEC : LDA zp_pw_cx : SBC zp_pw_x1 : LDA zp_pw_cx+1 : SBC zp_pw_x1+1
+    BVC pm_inc_nov : EOR #&80
+.pm_inc_nov
+    BMI pm_ref_done
+    LDA #1 : STA zp_pw_count : LDA #0 : STA zp_pw_r0_fn : RTS
+.pm_fv_lt_gv
+    ; Check cx <= x0 → single range with g
+    SEC : LDA zp_pw_cx : SBC zp_pw_x0 : LDA zp_pw_cx+1 : SBC zp_pw_x0+1
+    BVC pm_gt_nov : EOR #&80
+.pm_gt_nov
+    BPL pm_ref_done
+    LDA #1 : STA zp_pw_count : LDA #1 : STA zp_pw_r0_fn : RTS
+.pm_ref_done
+    ; count = 2, split based on d0 sign
+    LDA #2 : STA zp_pw_count
+    ; pw_max: d0 > 0 → [x0,cx) f, [cx,x1) g
+    LDA zp_pw_d0+1 : BPL pm_d0_positive
+    ; d0 < 0 → [x0,cx) g, [cx,x1) f
+    LDA #1 : STA zp_pw_r0_fn : LDA #0 : STA zp_pw_r1_fn : RTS
+.pm_d0_positive
+    LDA #0 : STA zp_pw_r0_fn : LDA #1 : STA zp_pw_r1_fn : RTS
 }
 
 ; ======================================================================
@@ -2558,7 +2662,7 @@ QET_TIGHTEN   = 1
     SEC
     LDA #0 : SBC zp_pw_d0   : STA zp_tmp0
     LDA #0 : SBC zp_pw_d0+1 : STA zp_tmp0+1
-    LDA #1 : STA zp_div_sign
+    LDA #&80 : STA zp_div_sign
     JMP pn_d0_abs_done
 .pn_d0_pos
     LDA zp_pw_d0   : STA zp_tmp0
@@ -2578,91 +2682,41 @@ QET_TIGHTEN   = 1
     LDA zp_tmp0   : STA zp_tmp2
     LDA zp_tmp0+1 : STA zp_tmp2+1
     LDA zp_math_b             ; reload A for the A-conventions
-    JSR mul_s16_u8_s24        ; $70:$72 = |d0| × span (s24, always positive)
+    JSR mul_s16_u8_s24        ; $70:$72 = |d0| × span (u24, always positive)
 
-    ; Take the s16 low 16 bits of the u24 result (byte0:byte1)
-    LDA &70 : STA zp_tmp0       ; u24 low → s16 "num" for fp_div8
-    LDA &71 : STA zp_tmp0+1
-    ; (byte 2 discarded — assuming |d0 × span| ≤ u16)
-
-    ; Apply sign to num if zp_div_sign set
-    LDA zp_div_sign
-    BEQ pn_num_pos
-    SEC
-    LDA #0 : SBC zp_tmp0   : STA zp_tmp0
-    LDA #0 : SBC zp_tmp0+1 : STA zp_tmp0+1
-.pn_num_pos
-
-    ; Prepare divisor: zp_tmp2 = denom (s16)
-    LDA zp_tg_tx1   : STA zp_tmp2
-    LDA zp_tg_tx1+1 : STA zp_tmp2+1
-
-    ; cx_offset = fp_div8_but_we_want_direct_divide, not (num<<8)/den
-    ; Python uses integer division: cx = x0 + (d0 * span) // denom
-    ; fp_div8(num, den) = (num << 8) / den. That's 256x too big.
-    ;
-    ; We need num / denom directly (not num<<8/denom).  Write an inline
-    ; signed 16-bit divide here.
-
-    ; Compute sign = sign(num) XOR sign(denom)
-    LDA zp_tmp0+1
-    EOR zp_tmp2+1
-    AND #&80
-    STA zp_div_sign
-
-    ; |num| → zp_div_num
-    LDA zp_tmp0+1
-    BPL pn_num_abs_pos
-    SEC
-    LDA #0 : SBC zp_tmp0   : STA zp_div_num
-    LDA #0 : SBC zp_tmp0+1 : STA zp_div_num+1
-    JMP pn_num_abs_done
-.pn_num_abs_pos
-    LDA zp_tmp0   : STA zp_div_num
-    LDA zp_tmp0+1 : STA zp_div_num+1
-.pn_num_abs_done
-
+    ; Full s24/s16 divide: product($70:$72) / denom(zp_tg_tx1)
+    ; zp_div_sign has sign of |d0|; XOR with sign of denom
+    LDA zp_div_sign : EOR zp_tg_tx1+1 : AND #&80 : STA zp_div_sign
+    ; Set up dividend bytes
+    LDA &70 : STA zp_div_num
+    LDA &71 : STA zp_div_num+1
+    LDA &72 : STA zp_tmp3
     ; |denom| → zp_div_den
-    LDA zp_tmp2+1
-    BPL pn_den_abs_pos
-    SEC
-    LDA #0 : SBC zp_tmp2   : STA zp_div_den
-    LDA #0 : SBC zp_tmp2+1 : STA zp_div_den+1
-    JMP pn_den_abs_done
+    LDA zp_tg_tx1+1 : BPL pn_den_abs_pos
+    SEC : LDA #0 : SBC zp_tg_tx1 : STA zp_div_den
+    LDA #0 : SBC zp_tg_tx1+1 : STA zp_div_den+1 : JMP pn_den_abs_done
 .pn_den_abs_pos
-    LDA zp_tmp2   : STA zp_div_den
-    LDA zp_tmp2+1 : STA zp_div_den+1
+    LDA zp_tg_tx1 : STA zp_div_den : LDA zp_tg_tx1+1 : STA zp_div_den+1
 .pn_den_abs_done
-
-    ; Unsigned 16/16 → 16 divide
-    LDA #0
-    STA zp_div_rem
-    STA zp_div_rem+1
-    LDX #16
+    ; 24/16 unsigned divide
+    LDA #0 : STA zp_div_rem : STA zp_div_rem+1
+    LDX #24
 .pn_div_loop
-    ASL zp_div_num
-    ROL zp_div_num+1
-    ROL zp_div_rem
-    ROL zp_div_rem+1
-    LDA zp_div_rem
-    SEC
-    SBC zp_div_den
-    TAY
-    LDA zp_div_rem+1
-    SBC zp_div_den+1
+    ASL zp_div_num : ROL zp_div_num+1 : ROL zp_tmp3
+    ROL zp_div_rem : ROL zp_div_rem+1
+    LDA zp_div_rem : SEC : SBC zp_div_den : TAY
+    LDA zp_div_rem+1 : SBC zp_div_den+1
     BCC pn_div_skip
-    STA zp_div_rem+1
-    STY zp_div_rem
-    INC zp_div_num
+    STA zp_div_rem+1 : STY zp_div_rem : INC zp_div_num
 .pn_div_skip
-    DEX
-    BNE pn_div_loop
-
-    ; Apply sign to quotient
-    LDA zp_div_sign
-    BEQ pn_quot_pos
-    SEC
-    LDA #0 : SBC zp_div_num   : STA zp_div_num
+    DEX : BNE pn_div_loop
+    ; Apply sign to quotient (low 16 bits in zp_div_num)
+    ; Floor division: if negative and remainder != 0, increment abs quotient
+    LDA zp_div_sign : BEQ pn_quot_pos
+    LDA zp_div_rem : ORA zp_div_rem+1 : BEQ pn_no_floor
+    INC zp_div_num : BNE pn_no_floor : INC zp_div_num+1
+.pn_no_floor
+    SEC : LDA #0 : SBC zp_div_num : STA zp_div_num
     LDA #0 : SBC zp_div_num+1 : STA zp_div_num+1
 .pn_quot_pos
 
@@ -6980,7 +7034,12 @@ ORG &9B20
     BEQ car_add_to_group
 
     ; Not contiguous → process current group, start new one
+    ; Save span_ptr (process_group clobbers it for span data reads)
+    LDA zp_cl_span_ptr   : PHA
+    LDA zp_cl_span_ptr+1 : PHA
     JSR process_group
+    PLA : STA zp_cl_span_ptr+1
+    PLA : STA zp_cl_span_ptr
     ; Fall through to start new group
 
 .car_start_group

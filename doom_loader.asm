@@ -124,7 +124,7 @@ TURN_SPEED = 4
 
     ; Jump to game loop in doom_fe code region (safe from vcache overwrites)
     ; game_loop address from doom_fe.asm assembly listing
-    JMP &44DB
+    JMP &4799
 
 ; (Movement routines moved to doom_fe.asm game_loop)
 

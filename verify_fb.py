@@ -8,10 +8,10 @@ import doom_wireframe as dw
 from fe6502 import Frontend6502
 
 BASELINE = {
-    'E':     '022d96c37f3a6bf5',
+    'E':     '60cc712c989b5c88',
     'N':     '47164d1347592b35',
-    'NE':     '9c4eb330aacb4ec7',
-    'SE':     '4805da77ddbae33a',
+    'NE':     '7b0bc8aa7203daae',
+    'SE':     '800f86170c4397ab',
     'moved':     'a9ec70083bdb2455',
 }
 POSITIONS = [(1056,-3616,64,'E'), (1056,-3616,0,'N'), (1056,-3616,32,'NE'),
