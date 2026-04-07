@@ -5535,9 +5535,13 @@ QET_TIGHTEN   = 1
 KEY_Z = &61 : KEY_X = &42 : KEY_K = &46 : KEY_M = &65 : TURN_SPEED = 4
 
 .game_loop
-    JSR entry               ; render to back buffer (screen start in ZP $70)
+    LDA &70 : STA &02F8    ; save back buffer hi (mul16x16 clobbers $70)
+    JSR entry               ; render to back buffer
 
-    ; (double buffering disabled for debugging)
+    ; Wait for vsync, present back buffer, swap $70 for next frame
+    LDA #2 : STA &FE30
+    JSR vsync_and_flip
+    LDA #0 : STA &FE30
 
     ; --- Keyboard: direct VIA scan ---
     ; bit 7 = 0 = pressed, 1 = not pressed
@@ -7508,7 +7512,7 @@ ORG &9B20
     STA &85
 
 .rc_draw
-    LDA #&58 : STA &70          ; screen buffer 0 high byte
+    LDA &02F8 : STA &70          ; restore back buffer hi (clobbered by mul16x16)
     JSR &8EC0                    ; NJ rasteriser (same bank 2)
     RTS
 }
@@ -7543,14 +7547,27 @@ ORG &9B20
 ; ======================================================================
 .clear_screen
 {
+    LDA &70 : CMP #&6C : BEQ clear_buf1
+    ; Buffer 0: $5800-$6BFF
     LDA #0 : TAX
-.clr
+.cb0
     STA &5800,X : STA &5900,X : STA &5A00,X : STA &5B00,X
     STA &5C00,X : STA &5D00,X : STA &5E00,X : STA &5F00,X
     STA &6000,X : STA &6100,X : STA &6200,X : STA &6300,X
     STA &6400,X : STA &6500,X : STA &6600,X : STA &6700,X
     STA &6800,X : STA &6900,X : STA &6A00,X : STA &6B00,X
-    INX : BNE clr
+    INX : BNE cb0
+    RTS
+.clear_buf1
+    ; Buffer 1: $6C00-$7FFF
+    LDA #0 : TAX
+.cb1
+    STA &6C00,X : STA &6D00,X : STA &6E00,X : STA &6F00,X
+    STA &7000,X : STA &7100,X : STA &7200,X : STA &7300,X
+    STA &7400,X : STA &7500,X : STA &7600,X : STA &7700,X
+    STA &7800,X : STA &7900,X : STA &7A00,X : STA &7B00,X
+    STA &7C00,X : STA &7D00,X : STA &7E00,X : STA &7F00,X
+    INX : BNE cb1
     RTS
 }
 
@@ -7566,10 +7583,9 @@ ORG &9B20
     STA &FE4D               ; clear vsync flag
 
     ; Set CRTC R12:R13 to display the just-rendered back buffer
-    ; Buffer 0 ($5800): R12:R13 = $5800/8 = $0B00
-    ; Buffer 1 ($6C00): R12:R13 = $6C00/8 = $0D80
+    ; Read saved back buffer hi from $02F8 (ZP $70 clobbered by mul16x16)
     LDA #12 : STA &FE00
-    LDA &70 : CMP #&6C : BEQ vf_buf1
+    LDA &02F8 : CMP #&6C : BEQ vf_buf1
     LDA #&0B : STA &FE01    ; R12 for buffer 0
     LDA #13 : STA &FE00
     LDA #&00 : STA &FE01    ; R13 for buffer 0
@@ -7580,8 +7596,8 @@ ORG &9B20
     LDA #&80 : STA &FE01    ; R13 for buffer 1
 
 .vf_swap
-    ; Swap back buffer: toggle $70 between $58 and $6C
-    LDA &70 : EOR #(&58 EOR &6C) : STA &70
+    ; Swap back buffer: toggle between $58 and $6C
+    LDA &02F8 : EOR #(&58 EOR &6C) : STA &70 : STA &02F8
     RTS
 }
 

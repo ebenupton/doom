@@ -108,7 +108,7 @@ TURN_SPEED = 4
     LDA #&FE : STA ZP_WY+1
     LDA #6   : STA ZP_VZ_PS
     LDA #64  : STA ZP_ANGLE
-    LDA #&58 : STA &70         ; single buffer for now (TODO: $6C for double buffer)
+    LDA #&6C : STA &70         ; first back buffer = $6C00 (display shows $5800)
 
     ; --- Layout offsets (hardcoded for E1M1) ---
     ; off_verts=0, off_nodes=$074C, off_ss=$160C, off_seg_hdr=$19C0, n_nodes=236
@@ -124,7 +124,7 @@ TURN_SPEED = 4
 
     ; Jump to game loop in doom_fe code region (safe from vcache overwrites)
     ; game_loop address from doom_fe.asm assembly listing
-    JMP &48A4
+    JMP &48AB
 
 ; (Movement routines moved to doom_fe.asm game_loop)
 
