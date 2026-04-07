@@ -167,19 +167,37 @@ zp_cl_x_max    = &3A    ; s16 max(x1,x2)
 zp_cl_y_min    = &3C    ; s16 min(y1,y2) — line Y range
 zp_cl_y_max    = &3E    ; s16 max(y1,y2)
 
-; --- Group-based clipper state (reserved for future optimization) ---
-; Overlaps tighten scratch $80-$9F, dead during clipper operation.
-; zp_cg_xl      = &80  ; s16 left X (ordered)
-; zp_cg_yl      = &82  ; s16 left Y
-; zp_cg_xr      = &84  ; s16 right X
-; zp_cg_yr      = &86  ; s16 right Y
-; zp_cg_y_lo    = &88  ; s16 min(yl, yr)
-; zp_cg_y_hi    = &8A  ; s16 max(yl, yr)
-; zp_cg_dx      = &8C  ; s16 dx = xr - xl (positive)
-; zp_cg_dy      = &8E  ; s16 dy = yr - yl
-; zp_cg_grp_ptr = &90  ; u16 ptr to first span in current group
-; zp_cg_grp_cnt = &92  ; u8 number of spans in current group
-; zp_cg_prev_xhi= &93  ; u8 prev span's xhi (for contiguity)
+; --- Portal walk / group-based clipper state ---
+; Line ordering (left-to-right).
+; These values are set fresh at the start of each clip_and_rasterise
+; call and only need to survive within that call.  fp_linfn writes to
+; $60-$6B during flush, but flush only runs AFTER all segs in a
+; subsector are done, so these are safe during individual clipper calls.
+zp_pw_xl      = &62  ; s16
+zp_pw_yl      = &64  ; s16
+zp_pw_xr      = &66  ; s16
+zp_pw_yr      = &68  ; s16
+zp_pw_y_lo    = &6A  ; s16 min(yl, yr)
+zp_pw_y_hi    = &6C  ; s16 max(yl, yr)
+zp_pw_dx      = &6E  ; s16 xr - xl
+
+; Group tracking — in reciprocal/projection scratch ($44-$47), dead during clipper
+zp_pw_grp_ptr = &44  ; u16 pointer to first span of current group
+zp_pw_grp_cnt = &46  ; u8 span count in group
+zp_pw_prev_xhi = &47 ; u8
+
+; Clip results for portal merge — tighten scratch range, dead during clipper
+zp_pw_cf_x1   = &88  ; s16 c_first start X
+zp_pw_cf_y1   = &8A  ; s16 c_first start Y
+zp_pw_cf_x2   = &8C  ; s16 c_last end X
+zp_pw_cf_y2   = &8E  ; s16 c_last end Y
+
+; Portal walk iteration scratch
+zp_pw_fi       = &90  ; u8 first visible span index within group
+zp_pw_li       = &91  ; u8 last visible span index within group
+; zp_ptr0/ptr1 are dead during clipper (only used for ROM access in BSP)
+zp_pw_iter     = &5C  ; u8 iteration counter
+zp_pw_iter_ptr = &5A  ; u16 iteration pointer into span array
 
 ; ======================================================================
 ; RAM addresses
@@ -6835,108 +6853,891 @@ ORG &9B20
     LDA zp_cspan : CLC : ADC #SPAN_HDR : STA zp_cl_span_ptr
     LDA zp_cspan+1 : ADC #0 : STA zp_cl_span_ptr+1
 
-.car_span_loop
+    ; === Check vertical (dx == 0) ===
+    LDA zp_cl_dx : ORA zp_cl_dx+1
+    BNE car_nonvertical
+
+    ; --- Vertical path: per-span clip_vertical (unchanged) ---
+.car_vert_loop
+    LDY #SP_XLO
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xlo
+    LDY #SP_XHI
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
+    ; Outer Y reject
+    LDY #SP_OUTER_TOP
+    LDA (zp_cl_span_ptr),Y : STA &74
+    LDY #SP_OUTER_BOT
+    LDA (zp_cl_span_ptr),Y : STA &75
+    LDA zp_cl_y_max+1
+    BMI car_vert_next
+    BNE car_vot_ok
+    LDA zp_cl_y_max : CMP &74
+    BCC car_vert_next
+.car_vot_ok
+    LDA zp_cl_y_min+1
+    BMI car_vob_ok
+    BNE car_vert_next
+    LDA &75 : CMP zp_cl_y_min
+    BCC car_vert_next
+.car_vob_ok
+    JSR clip_vertical
+    BCS car_vert_next
+    JSR rasterise_clipped
+.car_vert_next
+    CLC
+    LDA zp_cl_span_ptr   : ADC #SPAN_SIZE : STA zp_cl_span_ptr
+    BCC car_vnc
+    INC zp_cl_span_ptr+1
+.car_vnc
+    DEC zp_cl_count
+    BNE car_vert_loop
+    RTS
+
+.car_nonvertical
+    ; --- Non-vertical path: portal walk with contiguous groups ---
+
+    ; Step 1: Order left-to-right.  If x1 > x2 (i.e. dx < 0), swap.
+    LDA zp_cl_dx+1
+    BPL car_lr_ok           ; dx >= 0 → already left-to-right
+    ; Swap: xl=x2, yl=y2, xr=x1, yr=y1
+    LDA zp_cl_x2   : STA zp_pw_xl
+    LDA zp_cl_x2+1 : STA zp_pw_xl+1
+    LDA zp_cl_y2   : STA zp_pw_yl
+    LDA zp_cl_y2+1 : STA zp_pw_yl+1
+    LDA zp_cl_x1   : STA zp_pw_xr
+    LDA zp_cl_x1+1 : STA zp_pw_xr+1
+    LDA zp_cl_y1   : STA zp_pw_yr
+    LDA zp_cl_y1+1 : STA zp_pw_yr+1
+    JMP car_lr_comp
+.car_lr_ok
+    LDA zp_cl_x1   : STA zp_pw_xl
+    LDA zp_cl_x1+1 : STA zp_pw_xl+1
+    LDA zp_cl_y1   : STA zp_pw_yl
+    LDA zp_cl_y1+1 : STA zp_pw_yl+1
+    LDA zp_cl_x2   : STA zp_pw_xr
+    LDA zp_cl_x2+1 : STA zp_pw_xr+1
+    LDA zp_cl_y2   : STA zp_pw_yr
+    LDA zp_cl_y2+1 : STA zp_pw_yr+1
+
+.car_lr_comp
+    ; Compute dx = xr - xl (positive)
+    SEC
+    LDA zp_pw_xr   : SBC zp_pw_xl   : STA zp_pw_dx
+    LDA zp_pw_xr+1 : SBC zp_pw_xl+1 : STA zp_pw_dx+1
+
+    ; y_lo = min(yl, yr), y_hi = max(yl, yr)
+    LDA zp_cl_y_min   : STA zp_pw_y_lo
+    LDA zp_cl_y_min+1 : STA zp_pw_y_lo+1
+    LDA zp_cl_y_max   : STA zp_pw_y_hi
+    LDA zp_cl_y_max+1 : STA zp_pw_y_hi+1
+
+    ; Step 2: Walk spans, detecting contiguous groups
+    LDA #0 : STA zp_pw_grp_cnt     ; group count = 0
+
+.car_grp_loop
     LDY #SP_XLO
     LDA (zp_cl_span_ptr),Y : STA zp_cl_xlo
     LDY #SP_XHI
     LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
 
-    ; === OPT 1: X overlap check ===
-    LDA zp_cl_x_max+1
-    BPL car_xmax_nonneg
-    JMP car_done
-.car_xmax_nonneg
-    BNE car_x_left_ok
-    LDA zp_cl_x_max : CMP zp_cl_xlo
-    BCS car_x_left_ok
-    JMP car_done
-.car_x_left_ok
-    LDA zp_cl_xhi : BEQ car_xhi256
-    LDA zp_cl_x_min+1
-    BMI car_x_right_ok
-    BNE car_skip_span
-    LDA zp_cl_x_min : CMP zp_cl_xhi
-    BCS car_skip_span
-    JMP car_x_right_ok
-.car_skip_span
-    JMP car_next_span
-.car_xhi256
-    LDA zp_cl_x_min+1
-    BMI car_x_right_ok
-    BEQ car_x_right_ok
-    JMP car_next_span
-.car_x_right_ok
+    ; Early exit: xr < xlo?  (xr is s16, xlo is u8)
+    ; (Match original: x_max < xlo → done)
+    ; If xr_hi < 0: done (xr negative)
+    ; If xr_hi > 0: xr >= 256 > xlo, so not done
+    ; If xr_hi == 0: compare xr_lo < xlo
+    LDA zp_pw_xr+1
+    BMI car_grp_flush_done      ; xr < 0 → done
+    BNE car_chk_skip            ; xr >= 256 → not done
+    LDA zp_pw_xr : CMP zp_cl_xlo
+    BCS car_chk_skip            ; xr >= xlo → not done
+    JMP car_grp_flush_done      ; xr < xlo → done
 
-    ; === OPT 2: Outer bbox Y reject (0 muls) ===
+.car_chk_skip
+    ; Skip: xl >= xhi?  (xl is s16, xhi is u8 where 0=256)
+    LDA zp_cl_xhi : BEQ car_chk_xhi256
+    ; Normal xhi (1..255)
+    LDA zp_pw_xl+1
+    BMI car_chk_contiguous      ; xl < 0 < xhi → overlap
+    BNE car_chk_skip_yes        ; xl >= 256 > xhi → skip
+    LDA zp_pw_xl : CMP zp_cl_xhi
+    BCC car_chk_contiguous      ; xl < xhi → overlap
+.car_chk_skip_yes
+    JMP car_grp_next
+.car_chk_xhi256
+    ; xhi = 256
+    LDA zp_pw_xl+1
+    BMI car_chk_contiguous      ; xl < 0 → overlap
+    BEQ car_chk_contiguous      ; xl < 256 → overlap
+    JMP car_grp_next            ; xl >= 256 → skip
+
+.car_chk_contiguous
+    ; This span overlaps the line.  Check contiguity with group.
+    LDA zp_pw_grp_cnt
+    BEQ car_start_group         ; no group yet → start one
+
+    ; Check: xlo == prev_xhi?  (contiguous)
+    LDA zp_cl_xlo : CMP zp_pw_prev_xhi
+    BEQ car_add_to_group
+
+    ; Not contiguous → process current group, start new one
+    JSR process_group
+    ; Fall through to start new group
+
+.car_start_group
+    LDA zp_cl_span_ptr   : STA zp_pw_grp_ptr
+    LDA zp_cl_span_ptr+1 : STA zp_pw_grp_ptr+1
+    LDA #0 : STA zp_pw_grp_cnt
+
+.car_add_to_group
+    INC zp_pw_grp_cnt
+    LDA zp_cl_xhi : STA zp_pw_prev_xhi
+
+.car_grp_next
+    CLC
+    LDA zp_cl_span_ptr   : ADC #SPAN_SIZE : STA zp_cl_span_ptr
+    BCC car_gnc
+    INC zp_cl_span_ptr+1
+.car_gnc
+    DEC zp_cl_count
+    BNE car_grp_loop
+
+.car_grp_flush_done
+    ; Process final group if any
+    LDA zp_pw_grp_cnt
+    BEQ car_done
+    JSR process_group
+
+.car_done
+    RTS
+
+}
+
+; ======================================================================
+; PROCESS_GROUP — dispatch single or multi span group
+; Input: zp_pw_grp_ptr, zp_pw_grp_cnt, line params in zp_cl_* and zp_pw_*
+; ======================================================================
+.process_group
+{
+    LDA zp_pw_grp_cnt
+    CMP #1
+    BNE pg_multi
+
+    ; --- Single-span: existing cascade (outer reject, inner accept, CB) ---
+    ; Set span pointer to group[0]
+    LDA zp_pw_grp_ptr   : STA zp_cl_span_ptr
+    LDA zp_pw_grp_ptr+1 : STA zp_cl_span_ptr+1
+    LDY #SP_XLO
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xlo
+    LDY #SP_XHI
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
+
+    ; Outer bbox Y reject
     LDY #SP_OUTER_TOP
     LDA (zp_cl_span_ptr),Y : STA &74
     LDY #SP_OUTER_BOT
     LDA (zp_cl_span_ptr),Y : STA &75
-    ; y_max < outer_top?
+    ; y_hi_lo < outer_top?  (y_hi is the max Y of the line's Y range)
+    ; Actually: use y_max and y_min from the line's original bbox
     LDA zp_cl_y_max+1
-    BMI car_next_span
-    BNE car_ot_ok
+    BMI pg_done
+    BNE pg_ot_ok
     LDA zp_cl_y_max : CMP &74
-    BCC car_next_span
-.car_ot_ok
-    ; y_min > outer_bot?
+    BCC pg_done
+.pg_ot_ok
     LDA zp_cl_y_min+1
-    BMI car_ob_ok
-    BNE car_next_span
+    BMI pg_ob_ok
+    BNE pg_done
     LDA &75 : CMP zp_cl_y_min
-    BCC car_next_span
-.car_ob_ok
+    BCC pg_done
+.pg_ob_ok
 
-    ; === OPT 3: Vertical line fast path ===
-    LDA zp_cl_dx : ORA zp_cl_dx+1
-    BNE car_do_cb
-    JSR clip_vertical
-    BCS car_next_span
-    JSR rasterise_clipped
-    JMP car_next_span
-
-.car_do_cb
-    ; === OPT 4: Inner bbox trivial accept (non-vertical) ===
+    ; Inner bbox trivial accept
     LDY #SP_INNER_TOP
     SEC
     LDA zp_cl_y_min   : SBC (zp_cl_span_ptr),Y
     INY
     LDA zp_cl_y_min+1 : SBC (zp_cl_span_ptr),Y
-    BVC car_iv1 : EOR #&80
-.car_iv1
-    BMI car_full_cb
+    BVC pg_iv1 : EOR #&80
+.pg_iv1
+    BMI pg_full_cb
     LDY #SP_INNER_BOT
     SEC
     LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max
     INY
     LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max+1
-    BVC car_iv2 : EOR #&80
-.car_iv2
-    BMI car_full_cb
+    BVC pg_iv2 : EOR #&80
+.pg_iv2
+    BMI pg_full_cb
     JSR clip_lr_only
-    BCS car_next_span
+    BCS pg_done
     JSR rasterise_clipped
-    JMP car_next_span
-
-.car_full_cb
-    ; === OPT 5: Full Cyrus-Beck ===
-    JSR clip_to_trap
-    BCS car_next_span
-    JSR rasterise_clipped
-
-.car_next_span
-    CLC
-    LDA zp_cl_span_ptr   : ADC #SPAN_SIZE : STA zp_cl_span_ptr
-    BCC car_no_carry
-    INC zp_cl_span_ptr+1
-.car_no_carry
-    DEC zp_cl_count
-    BEQ car_done
-    JMP car_span_loop
-
-.car_done
     RTS
 
+.pg_full_cb
+    JSR clip_to_trap
+    BCS pg_done
+    JSR rasterise_clipped
+.pg_done
+    RTS
+
+.pg_multi
+    JMP multi_span_clip
+}
+
+; ======================================================================
+; MULTI_SPAN_CLIP — handle contiguous multi-span group
+; Input: zp_pw_grp_ptr, zp_pw_grp_cnt, line at zp_cl_*/zp_pw_*
+; ======================================================================
+.multi_span_clip
+{
+    ; Step 1: Compute group_outer_top = min(SP_OUTER_TOP) across group
+    ;         Compute group_outer_bot = max(SP_OUTER_BOT) across group
+    LDA zp_pw_grp_ptr   : STA zp_pw_iter_ptr
+    LDA zp_pw_grp_ptr+1 : STA zp_pw_iter_ptr+1
+    LDA zp_pw_grp_cnt   : STA zp_pw_iter
+    LDA #255 : STA &74         ; group_outer_top = 255 (min accumulator)
+    LDA #0   : STA &75         ; group_outer_bot = 0 (max accumulator)
+
+.msc_bbox_loop
+    LDY #SP_OUTER_TOP
+    LDA (zp_pw_iter_ptr),Y
+    CMP &74
+    BCS msc_ot_ok
+    STA &74                     ; new min
+.msc_ot_ok
+    LDY #SP_OUTER_BOT
+    LDA (zp_pw_iter_ptr),Y
+    CMP &75
+    BCC msc_ob_ok
+    STA &75                     ; new max
+.msc_ob_ok
+    CLC
+    LDA zp_pw_iter_ptr   : ADC #SPAN_SIZE : STA zp_pw_iter_ptr
+    BCC msc_bnc
+    INC zp_pw_iter_ptr+1
+.msc_bnc
+    DEC zp_pw_iter
+    BNE msc_bbox_loop
+
+    ; Step 2: Outer reject
+    ; y_max < group_outer_top?
+    LDA zp_cl_y_max+1
+    BMI msc_reject          ; y_max < 0 < outer_top
+    BNE msc_ot_pass
+    LDA zp_cl_y_max : CMP &74
+    BCC msc_reject
+.msc_ot_pass
+    ; y_min > group_outer_bot?
+    LDA zp_cl_y_min+1
+    BMI msc_ob_pass         ; y_min < 0 <= outer_bot → pass
+    BNE msc_reject          ; y_min >= 256 > outer_bot → reject
+    LDA &75 : CMP zp_cl_y_min
+    BCC msc_reject
+    JMP msc_ob_pass
+.msc_reject
+    JMP msc_done
+.msc_ob_pass
+
+    ; Step 3: Compute group_inner_top = max(SP_INNER_TOP low byte) across group
+    ;         Compute group_inner_bot = min(SP_INNER_BOT low byte) across group
+    LDA zp_pw_grp_ptr   : STA zp_pw_iter_ptr
+    LDA zp_pw_grp_ptr+1 : STA zp_pw_iter_ptr+1
+    LDA zp_pw_grp_cnt   : STA zp_pw_iter
+    LDA #0   : STA &76         ; group_inner_top = 0 (max accumulator)
+    LDA #255 : STA &77         ; group_inner_bot = 255 (min accumulator)
+
+.msc_inner_loop
+    LDY #SP_INNER_TOP
+    LDA (zp_pw_iter_ptr),Y     ; low byte of inner_top (s16)
+    CMP &76
+    BCC msc_it_ok
+    STA &76                     ; new max
+.msc_it_ok
+    LDY #SP_INNER_BOT
+    LDA (zp_pw_iter_ptr),Y     ; low byte of inner_bot (s16)
+    CMP &77
+    BCS msc_ib_ok
+    STA &77                     ; new min
+.msc_ib_ok
+    CLC
+    LDA zp_pw_iter_ptr   : ADC #SPAN_SIZE : STA zp_pw_iter_ptr
+    BCC msc_inc
+    INC zp_pw_iter_ptr+1
+.msc_inc
+    DEC zp_pw_iter
+    BNE msc_inner_loop
+
+    ; Step 4: Inner accept: y_lo >= inner_top AND y_hi <= inner_bot
+    ; y_lo = zp_pw_y_lo (s16), inner_top = &76 (u8 treated as s16 with hi=0)
+    ; Compare: y_lo >= inner_top
+    LDA zp_pw_y_lo+1
+    BMI msc_no_inner          ; y_lo < 0 < inner_top → fail
+    BNE msc_check_inner_hi   ; y_lo >= 256 → y_lo >= inner_top
+    LDA zp_pw_y_lo : CMP &76
+    BCC msc_no_inner
+.msc_check_inner_hi
+    ; y_hi <= inner_bot
+    LDA zp_pw_y_hi+1
+    BMI msc_inner_accept      ; y_hi < 0 → y_hi <= inner_bot
+    BNE msc_no_inner          ; y_hi >= 256 > inner_bot → fail
+    LDA &77 : CMP zp_pw_y_hi
+    BCC msc_no_inner          ; inner_bot < y_hi → fail
+
+.msc_inner_accept
+    ; Trivial accept: draw one line from max(xl, first_xlo) to min(xr, last_xhi-1)
+    JSR inner_accept_draw
+    RTS
+
+.msc_no_inner
+    ; Step 5: Scan from left for first visible span (CB clip each)
+    LDA zp_pw_grp_ptr   : STA zp_pw_iter_ptr
+    LDA zp_pw_grp_ptr+1 : STA zp_pw_iter_ptr+1
+    LDA zp_pw_grp_cnt   : STA zp_pw_iter
+    LDA #0 : STA zp_pw_fi      ; fi = 0 (index of first visible)
+
+.msc_fwd_scan
+    ; Set span pointer and load span params
+    LDA zp_pw_iter_ptr   : STA zp_cl_span_ptr
+    LDA zp_pw_iter_ptr+1 : STA zp_cl_span_ptr+1
+    LDY #SP_XLO
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xlo
+    LDY #SP_XHI
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
+    JSR clip_to_trap
+    BCC msc_fwd_found
+
+    ; Not visible — advance to next span
+    INC zp_pw_fi
+    CLC
+    LDA zp_pw_iter_ptr   : ADC #SPAN_SIZE : STA zp_pw_iter_ptr
+    BCC msc_fwd_nc
+    INC zp_pw_iter_ptr+1
+.msc_fwd_nc
+    DEC zp_pw_iter
+    BNE msc_fwd_scan
+    ; No visible span at all
+.msc_done
+    RTS
+
+.msc_fwd_found
+    ; Save c_first result from zp_cl_cx1..cy2
+    LDA zp_cl_cx1   : STA zp_pw_cf_x1
+    LDA zp_cl_cx1+1 : STA zp_pw_cf_x1+1
+    LDA zp_cl_cy1   : STA zp_pw_cf_y1
+    LDA zp_cl_cy1+1 : STA zp_pw_cf_y1+1
+    LDA zp_cl_cx2   : STA zp_pw_cf_x2
+    LDA zp_cl_cx2+1 : STA zp_pw_cf_x2+1
+    LDA zp_cl_cy2   : STA zp_pw_cf_y2
+    LDA zp_cl_cy2+1 : STA zp_pw_cf_y2+1
+
+    ; Step 7: If fi is the last span, draw c_first and done
+    LDA zp_pw_fi
+    CLC : ADC #1
+    CMP zp_pw_grp_cnt
+    BCS msc_draw_first_only
+
+    ; Step 8: Scan from right for last visible span
+    ; Compute pointer to last span: grp_ptr + (grp_cnt - 1) * SPAN_SIZE
+    LDA zp_pw_grp_cnt : SEC : SBC #1 : STA zp_pw_li
+    ; Count of spans to scan backward = li - fi
+    LDA zp_pw_li : SEC : SBC zp_pw_fi
+    BEQ msc_draw_first_only     ; only one span after fi
+    STA zp_pw_iter
+
+    ; Compute pointer to group[li]
+    ; grp_ptr + li * SPAN_SIZE
+    LDA zp_pw_li
+    JSR grp_idx_to_ptr          ; zp_pw_iter_ptr = grp_ptr + A*16
+
+.msc_rev_scan
+    LDA zp_pw_iter_ptr   : STA zp_cl_span_ptr
+    LDA zp_pw_iter_ptr+1 : STA zp_cl_span_ptr+1
+    LDY #SP_XLO
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xlo
+    LDY #SP_XHI
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
+    JSR clip_to_trap
+    BCC msc_rev_found
+
+    ; Not visible — move backward
+    DEC zp_pw_li
+    SEC
+    LDA zp_pw_iter_ptr   : SBC #SPAN_SIZE : STA zp_pw_iter_ptr
+    BCS msc_rev_nc
+    DEC zp_pw_iter_ptr+1
+.msc_rev_nc
+    DEC zp_pw_iter
+    BNE msc_rev_scan
+
+    ; No last visible → draw first only
+.msc_draw_first_only
+    LDA zp_pw_cf_x1   : STA zp_cl_cx1
+    LDA zp_pw_cf_x1+1 : STA zp_cl_cx1+1
+    LDA zp_pw_cf_y1   : STA zp_cl_cy1
+    LDA zp_pw_cf_y1+1 : STA zp_cl_cy1+1
+    LDA zp_pw_cf_x2   : STA zp_cl_cx2
+    LDA zp_pw_cf_x2+1 : STA zp_cl_cx2+1
+    LDA zp_pw_cf_y2   : STA zp_cl_cy2
+    LDA zp_pw_cf_y2+1 : STA zp_cl_cy2+1
+    JSR rasterise_clipped
+    RTS
+
+.msc_rev_found
+    ; c_last endpoints: cx2, cy2 from this clip
+    ; Store c_last end point (we keep c_first start from cf_x1/y1)
+    LDA zp_cl_cx2   : STA zp_pw_cf_x2
+    LDA zp_cl_cx2+1 : STA zp_pw_cf_x2+1
+    LDA zp_cl_cy2   : STA zp_pw_cf_y2
+    LDA zp_cl_cy2+1 : STA zp_pw_cf_y2+1
+
+    ; Step 10: Portal walk between fi and li
+    JSR portal_walk
+    BCS msc_portal_fail
+
+    ; All portals pass — draw ONE line from c_first start to c_last end
+    LDA zp_pw_cf_x1   : STA zp_cl_cx1
+    LDA zp_pw_cf_x1+1 : STA zp_cl_cx1+1
+    LDA zp_pw_cf_y1   : STA zp_cl_cy1
+    LDA zp_pw_cf_y1+1 : STA zp_cl_cy1+1
+    LDA zp_pw_cf_x2   : STA zp_cl_cx2
+    LDA zp_pw_cf_x2+1 : STA zp_cl_cx2+1
+    LDA zp_pw_cf_y2   : STA zp_cl_cy2
+    LDA zp_pw_cf_y2+1 : STA zp_cl_cy2+1
+    JSR rasterise_clipped
+    RTS
+
+.msc_portal_fail
+    ; Per-span CB from fi to li
+    LDA zp_pw_fi
+    JSR grp_idx_to_ptr
+    LDA zp_pw_li : SEC : SBC zp_pw_fi : CLC : ADC #1 : STA zp_pw_iter
+
+.msc_fallback_loop
+    LDA zp_pw_iter_ptr   : STA zp_cl_span_ptr
+    LDA zp_pw_iter_ptr+1 : STA zp_cl_span_ptr+1
+    LDY #SP_XLO
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xlo
+    LDY #SP_XHI
+    LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
+    JSR clip_to_trap
+    BCS msc_fb_next
+    JSR rasterise_clipped
+.msc_fb_next
+    CLC
+    LDA zp_pw_iter_ptr   : ADC #SPAN_SIZE : STA zp_pw_iter_ptr
+    BCC msc_fb_nc
+    INC zp_pw_iter_ptr+1
+.msc_fb_nc
+    DEC zp_pw_iter
+    BNE msc_fallback_loop
+    RTS
+}
+
+; ======================================================================
+; GRP_IDX_TO_PTR — compute pointer to group[A]
+; Input: A = index, zp_pw_grp_ptr = base
+; Output: zp_pw_iter_ptr = grp_ptr + A * SPAN_SIZE
+; ======================================================================
+.grp_idx_to_ptr
+{
+    ; A * 16 = (A << 4).  A is small (< 32).
+    ASL A : ASL A : ASL A : ASL A  ; A * 16, carry may be set
+    CLC
+    ADC zp_pw_grp_ptr   : STA zp_pw_iter_ptr
+    LDA #0
+    ADC zp_pw_grp_ptr+1 : STA zp_pw_iter_ptr+1
+    RTS
+}
+
+; ======================================================================
+; INNER_ACCEPT_DRAW — trivial accept for multi-span group
+; Draws one line from max(xl, first_xlo) to min(xr, last_xhi-1)
+; with Y computed via line_y_at at the clamped X endpoints.
+; ======================================================================
+.inner_accept_draw
+{
+    ; draw_xl = max(xl, group[0].xlo)
+    LDY #SP_XLO
+    LDA (zp_pw_grp_ptr),Y : STA &74    ; first_xlo
+    ; xl (s16) vs xlo (u8): if xl < xlo, use xlo
+    LDA zp_pw_xl+1
+    BMI iad_use_xlo             ; xl < 0 → use xlo
+    BNE iad_use_xl              ; xl >= 256 → use xl (will be clamped later)
+    LDA zp_pw_xl : CMP &74
+    BCS iad_use_xl
+.iad_use_xlo
+    LDA &74 : STA zp_cl_cx1
+    LDA #0  : STA zp_cl_cx1+1
+    JMP iad_right
+.iad_use_xl
+    LDA zp_pw_xl   : STA zp_cl_cx1
+    LDA zp_pw_xl+1 : STA zp_cl_cx1+1
+
+.iad_right
+    ; draw_xr = min(xr, last_xhi - 1)
+    ; Compute pointer to last span: grp_ptr + (grp_cnt-1)*16
+    LDA zp_pw_grp_cnt : SEC : SBC #1
+    ASL A : ASL A : ASL A : ASL A
+    CLC : ADC zp_pw_grp_ptr   : STA zp_pw_iter_ptr
+    LDA #0 : ADC zp_pw_grp_ptr+1 : STA zp_pw_iter_ptr+1
+    LDY #SP_XHI
+    LDA (zp_pw_iter_ptr),Y     ; last_xhi (u8, 0=256)
+    BEQ iad_xhi256
+    SEC : SBC #1 : STA &75     ; last_xhi - 1
+    ; xr (s16) vs last_xhi-1 (u8)
+    LDA zp_pw_xr+1
+    BMI iad_use_xr              ; xr < 0 → use xr
+    BNE iad_use_last            ; xr >= 256 → use last_xhi-1
+    LDA zp_pw_xr : CMP &75
+    BCC iad_use_xr              ; xr < last_xhi-1
+    BEQ iad_use_xr              ; xr == last_xhi-1
+.iad_use_last
+    LDA &75 : STA zp_cl_cx2
+    LDA #0  : STA zp_cl_cx2+1
+    JMP iad_compute_y
+.iad_xhi256
+    ; last_xhi = 256, last_xhi - 1 = 255
+    LDA zp_pw_xr+1
+    BMI iad_use_xr
+    BNE iad_use_255
+    LDA zp_pw_xr : CMP #255
+    BCC iad_use_xr
+.iad_use_255
+    LDA #255 : STA zp_cl_cx2
+    LDA #0   : STA zp_cl_cx2+1
+    JMP iad_compute_y
+.iad_use_xr
+    LDA zp_pw_xr   : STA zp_cl_cx2
+    LDA zp_pw_xr+1 : STA zp_cl_cx2+1
+
+.iad_compute_y
+    ; cy1 = line_y_at(cx1), cy2 = line_y_at(cx2)
+    ; But if cx1 == xl, cy1 = yl; if cx2 == xr, cy2 = yr
+    LDA zp_cl_cx1 : CMP zp_pw_xl
+    BNE iad_y1_calc
+    LDA zp_cl_cx1+1 : CMP zp_pw_xl+1
+    BNE iad_y1_calc
+    ; cx1 == xl → cy1 = yl
+    LDA zp_pw_yl   : STA zp_cl_cy1
+    LDA zp_pw_yl+1 : STA zp_cl_cy1+1
+    JMP iad_y2
+.iad_y1_calc
+    LDA zp_cl_cx1   : STA zp_tmp0
+    LDA zp_cl_cx1+1 : STA zp_tmp0+1
+    JSR line_y_at
+    LDA &70 : STA zp_cl_cy1
+    LDA &71 : STA zp_cl_cy1+1
+
+.iad_y2
+    LDA zp_cl_cx2 : CMP zp_pw_xr
+    BNE iad_y2_calc
+    LDA zp_cl_cx2+1 : CMP zp_pw_xr+1
+    BNE iad_y2_calc
+    ; cx2 == xr → cy2 = yr
+    LDA zp_pw_yr   : STA zp_cl_cy2
+    LDA zp_pw_yr+1 : STA zp_cl_cy2+1
+    JMP iad_draw
+.iad_y2_calc
+    LDA zp_cl_cx2   : STA zp_tmp0
+    LDA zp_cl_cx2+1 : STA zp_tmp0+1
+    JSR line_y_at
+    LDA &70 : STA zp_cl_cy2
+    LDA &71 : STA zp_cl_cy2+1
+
+.iad_draw
+    JSR rasterise_clipped
+    RTS
+}
+
+; ======================================================================
+; PORTAL_WALK — check all portals between group[fi] and group[li]
+; Input: zp_pw_fi, zp_pw_li, zp_pw_grp_ptr, zp_pw_y_lo/y_hi, zp_pw_*
+; Output: C=0 all portals pass, C=1 portal fails
+; Uses &74 = boundary_x, &75 = spare
+;       &76:&77 = portal_top (s16), &78:&79 = portal_bot (s16)
+; ======================================================================
+.portal_walk
+{
+    LDA zp_pw_fi : CMP zp_pw_li
+    BCC pw_has_portals
+    JMP pw_pass                 ; fi >= li → no portals to check, pass
+.pw_has_portals
+
+    ; Start at group[fi]
+    LDA zp_pw_fi
+    JSR grp_idx_to_ptr          ; zp_pw_iter_ptr = group[fi]
+
+    LDA zp_pw_li : SEC : SBC zp_pw_fi : STA zp_pw_iter  ; count = li - fi
+
+.pw_loop
+    ; boundary_x = span[i].xhi
+    LDY #SP_XHI
+    LDA (zp_pw_iter_ptr),Y
+    STA &74                     ; boundary_x (u8)
+
+    ; Compute span[i+1] pointer into zp_cl_span_ptr (reused as temp)
+    CLC
+    LDA zp_pw_iter_ptr   : ADC #SPAN_SIZE : STA zp_cl_span_ptr
+    LDA zp_pw_iter_ptr+1 : ADC #0         : STA zp_cl_span_ptr+1
+
+    ; top_left = fp_eval(span[i].tfn, boundary_x)
+    LDY #SP_TSLOPE
+    LDA (zp_pw_iter_ptr),Y : STA zp_tmp2
+    INY
+    LDA (zp_pw_iter_ptr),Y : STA zp_tmp2+1
+    LDY #SP_TINTERCEPT
+    LDA (zp_pw_iter_ptr),Y : STA zp_mk_tmp
+    INY
+    LDA (zp_pw_iter_ptr),Y : STA zp_mk_tmp+1
+    LDA &74
+    JSR fp_eval                 ; $70:$71 = top_left
+    LDA &70 : STA &76          ; portal_top = top_left (will be max'd)
+    LDA &71 : STA &77
+
+    ; top_right = fp_eval(span[i+1].tfn, boundary_x)
+    LDY #SP_TSLOPE
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp2
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp2+1
+    LDY #SP_TINTERCEPT
+    LDA (zp_cl_span_ptr),Y : STA zp_mk_tmp
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_mk_tmp+1
+    LDA &74
+    JSR fp_eval                 ; $70:$71 = top_right
+
+    ; portal_top = max(top_left, top_right)
+    ; &76:&77 = top_left, $70:$71 = top_right
+    SEC
+    LDA &76 : SBC &70
+    LDA &77 : SBC &71
+    BVC pw_tv1 : EOR #&80
+.pw_tv1
+    BPL pw_tl_done              ; top_left >= top_right → keep &76:&77
+    LDA &70 : STA &76           ; top_right is bigger
+    LDA &71 : STA &77
+.pw_tl_done
+    ; &76:&77 = portal_top
+
+    ; bot_left = fp_eval(span[i].bfn, boundary_x)
+    LDY #SP_BSLOPE
+    LDA (zp_pw_iter_ptr),Y : STA zp_tmp2
+    INY
+    LDA (zp_pw_iter_ptr),Y : STA zp_tmp2+1
+    LDY #SP_BINTERCEPT
+    LDA (zp_pw_iter_ptr),Y : STA zp_mk_tmp
+    INY
+    LDA (zp_pw_iter_ptr),Y : STA zp_mk_tmp+1
+    LDA &74
+    JSR fp_eval                 ; $70:$71 = bot_left
+    LDA &70 : STA &78          ; portal_bot = bot_left (will be min'd)
+    LDA &71 : STA &79
+
+    ; bot_right = fp_eval(span[i+1].bfn, boundary_x)
+    LDY #SP_BSLOPE
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp2
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_tmp2+1
+    LDY #SP_BINTERCEPT
+    LDA (zp_cl_span_ptr),Y : STA zp_mk_tmp
+    INY
+    LDA (zp_cl_span_ptr),Y : STA zp_mk_tmp+1
+    LDA &74
+    JSR fp_eval                 ; $70:$71 = bot_right
+
+    ; portal_bot = min(bot_left, bot_right)
+    ; &78:&79 = bot_left, $70:$71 = bot_right
+    SEC
+    LDA &78 : SBC &70
+    LDA &79 : SBC &71
+    BVC pw_bv1 : EOR #&80
+.pw_bv1
+    BMI pw_bl_done              ; bot_left < bot_right → keep &78:&79 (min)
+    LDA &70 : STA &78           ; bot_right is smaller
+    LDA &71 : STA &79
+.pw_bl_done
+    ; &78:&79 = portal_bot
+    ; &76:&77 = portal_top
+
+    ; Check: y_lo < portal_top OR y_hi > portal_bot?
+    ; If neither, portal is OK.
+
+    ; Check y_lo < portal_top?
+    SEC
+    LDA zp_pw_y_lo   : SBC &76
+    LDA zp_pw_y_lo+1 : SBC &77
+    BVC pw_cv1 : EOR #&80
+.pw_cv1
+    BMI pw_check_line           ; y_lo < portal_top → might fail
+
+    ; Check y_hi > portal_bot?
+    SEC
+    LDA &78   : SBC zp_pw_y_hi
+    LDA &79   : SBC zp_pw_y_hi+1
+    BVC pw_cv2 : EOR #&80
+.pw_cv2
+    BMI pw_check_line           ; portal_bot < y_hi → might fail
+
+    ; Both checks pass → portal OK, advance to next
+    JMP pw_next
+
+.pw_check_line
+    ; Bbox failed — compute actual line Y at boundary_x
+    ; line_y_at needs x in zp_tmp0 (s16)
+    LDA &74 : STA zp_tmp0
+    LDA #0  : STA zp_tmp0+1
+    JSR line_y_at               ; $70:$71 = line_y
+    ; &76:&77 and &78:&79 survive line_y_at (it clobbers zp_tmp0-3, $70-$73,
+    ; zp_div_*, but not &74-&79)
+
+    ; Check line_y < portal_top?
+    SEC
+    LDA &70 : SBC &76
+    LDA &71 : SBC &77
+    BVC pw_lv1 : EOR #&80
+.pw_lv1
+    BMI pw_fail                 ; line_y < portal_top → portal fails
+
+    ; Check line_y > portal_bot?
+    SEC
+    LDA &78 : SBC &70
+    LDA &79 : SBC &71
+    BVC pw_lv2 : EOR #&80
+.pw_lv2
+    BMI pw_fail                 ; portal_bot < line_y → portal fails
+
+    ; Line passes through this portal
+
+.pw_next
+    CLC
+    LDA zp_pw_iter_ptr   : ADC #SPAN_SIZE : STA zp_pw_iter_ptr
+    BCC pw_nnc
+    INC zp_pw_iter_ptr+1
+.pw_nnc
+    DEC zp_pw_iter
+    BEQ pw_pass
+    JMP pw_loop
+
+.pw_pass
+    CLC
+    RTS
+
+.pw_fail
+    SEC
+    RTS
+}
+
+; ======================================================================
+; LINE_Y_AT — compute line Y at given X
+; Computes: yl + (yr - yl) * (x - xl) / dx
+; Input: zp_tmp0 = x (s16), zp_pw_xl/yl/xr/yr/dx set
+; Output: $70:$71 = y (s16)
+; Clobbers: zp_tmp0-3, zp_div_*, $70-$73
+; ======================================================================
+.line_y_at
+{
+    ; numerator_a = yr - yl
+    SEC
+    LDA zp_pw_yr   : SBC zp_pw_yl   : STA zp_tmp2
+    LDA zp_pw_yr+1 : SBC zp_pw_yl+1 : STA zp_tmp2+1
+
+    ; numerator_b = x - xl
+    SEC
+    LDA zp_tmp0   : SBC zp_pw_xl   : STA zp_tmp0
+    LDA zp_tmp0+1 : SBC zp_pw_xl+1 : STA zp_tmp0+1
+
+    ; product = (yr-yl) * (x-xl): s16 * s16 → s32 (we need middle 16 bits for /dx)
+    ; Use mul16x16: inputs in zp_tmp0, zp_tmp2. Output in $70:$71:$72:$73.
+    JSR mul16x16
+    ; $70:$71:$72:$73 = product (s32)
+    ; We need product / dx (integer division, truncation toward zero).
+    ; product is a full 32-bit value, dx is 16-bit.
+    ; For int_div16 we need 16-bit / 16-bit.
+    ; But the product can exceed 16 bits!  For lines spanning the full screen
+    ; (dy up to ~160, x-xl up to ~256), product can be ~40960 which fits s16.
+    ; Actually: dy can be up to ~320 (s16), x-xl up to ~512, product up to ~160K.
+    ; That DOESN'T fit in s16!
+    ;
+    ; Use 32/16 division for correctness.
+    ; Actually, Python uses: yl + (yr - yl) * (x - xl) // dx
+    ; where // is floor division.  For now, use truncation toward zero.
+    ;
+    ; 32-bit product in $70:$71:$72:$73, divisor = pw_dx in s16.
+    ; Let's implement a 32/16 → 16 signed division.
+    ; Save product to stack, set up division.
+
+    ; Sign of result = sign of product XOR sign of dx.
+    ; Since dx > 0 always (xr > xl, left-to-right ordering), sign = sign of product.
+    ; |product|: if product negative, negate $70:$71:$72:$73
+
+    ; Check product sign (bit 7 of $73)
+    LDA &73
+    STA zp_div_sign             ; 0 or $8x = product sign
+    BPL lya_prod_pos
+    ; Negate 32-bit product
+    SEC
+    LDA #0 : SBC &70 : STA &70
+    LDA #0 : SBC &71 : STA &71
+    LDA #0 : SBC &72 : STA &72
+    LDA #0 : SBC &73 : STA &73
+.lya_prod_pos
+
+    ; Divisor = pw_dx (always positive since xr > xl)
+    LDA zp_pw_dx   : STA zp_div_den
+    LDA zp_pw_dx+1 : STA zp_div_den+1
+
+    ; Unsigned 32-bit / 16-bit → quotient in $70:$71 (low 16 bits)
+    ; Use shift-and-subtract: 32 iterations
+    LDA #0 : STA zp_div_rem : STA zp_div_rem+1
+    LDX #32
+.lya_div_loop
+    ; Shift dividend left (rotate through $70:$71:$72:$73)
+    ASL &70
+    ROL &71
+    ROL &72
+    ROL &73
+    ROL zp_div_rem
+    ROL zp_div_rem+1
+    ; Try subtract
+    LDA zp_div_rem
+    SEC
+    SBC zp_div_den
+    TAY
+    LDA zp_div_rem+1
+    SBC zp_div_den+1
+    BCC lya_no_sub
+    STA zp_div_rem+1
+    STY zp_div_rem
+    INC &70                     ; set bit 0 of quotient
+.lya_no_sub
+    DEX
+    BNE lya_div_loop
+
+    ; Quotient in $70:$71 (unsigned, low 16 bits of 32-bit quotient)
+    ; Apply sign with Python-style floor division:
+    ; For negative results with nonzero remainder, quotient += 1 before negate.
+    ; This gives floor(a/b) instead of trunc(a/b).
+    LDA zp_div_sign
+    BPL lya_add_yl
+    ; Result is negative.  Check remainder for floor correction.
+    LDA zp_div_rem : ORA zp_div_rem+1
+    BEQ lya_exact_neg
+    ; Nonzero remainder: floor = -(quotient + 1)
+    CLC
+    LDA &70 : ADC #1 : STA &70
+    LDA &71 : ADC #0 : STA &71
+.lya_exact_neg
+    ; Negate quotient
+    SEC
+    LDA #0 : SBC &70 : STA &70
+    LDA #0 : SBC &71 : STA &71
+
+.lya_add_yl
+    ; result = yl + quotient
+    CLC
+    LDA &70 : ADC zp_pw_yl   : STA &70
+    LDA &71 : ADC zp_pw_yl+1 : STA &71
+    RTS
 }
 
 ; ======================================================================
