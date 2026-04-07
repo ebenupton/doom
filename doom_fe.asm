@@ -5384,9 +5384,10 @@ QET_TIGHTEN   = 1
 ; ======================================================================
 .draw_portal_lines
 {
-    ; Save bt1/bt2 ($84-$87→$94-$97) — NJ rasteriser clobbers $82-$87.
-    LDX #3
-.sbt LDA &84,X : STA &94,X : DEX : BPL sbt
+    ; Save $80-$87 → $94-$9B. NJ rasteriser clobbers $80-$87 entirely.
+    ; After save: $94=fh, $95=ch, $96=bfh, $97=bch, $98/$99=bt1, $9A/$9B=bt2.
+    LDX #7
+.spt LDA &80,X : STA &94,X : DEX : BPL spt
 
     ; --- Ceiling logic ---
     LDA zp_seg_flags
@@ -5398,12 +5399,12 @@ QET_TIGHTEN   = 1
     ; need_bt: draw bt1->bt2 (back-ceiling top line)
     LDA zp_sx1   : STA LINE_X0_LO
     LDA zp_sx1+1 : STA LINE_X0_HI
-    LDA &94    : STA LINE_Y0_LO      ; bt1 lo (saved)
-    LDA &95    : STA LINE_Y0_HI      ; bt1 hi
+    LDA &98    : STA LINE_Y0_LO      ; bt1 lo (saved)
+    LDA &99    : STA LINE_Y0_HI      ; bt1 hi
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
-    LDA &96    : STA LINE_Y1_LO      ; bt2 lo
-    LDA &97    : STA LINE_Y1_HI : JSR clip_rasterise
+    LDA &9A    : STA LINE_Y1_LO      ; bt2 lo
+    LDA &9B    : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw left edge: sx1,ft1 -> sx1,bt1
     LDA zp_sx1   : STA LINE_X0_LO
@@ -5412,8 +5413,8 @@ QET_TIGHTEN   = 1
     LDA zp_ft1+1 : STA LINE_Y0_HI
     LDA zp_sx1   : STA LINE_X1_LO
     LDA zp_sx1+1 : STA LINE_X1_HI
-    LDA &94    : STA LINE_Y1_LO      ; bt1 lo (saved)
-    LDA &95    : STA LINE_Y1_HI : JSR clip_rasterise
+    LDA &98    : STA LINE_Y1_LO      ; bt1 lo (saved)
+    LDA &99    : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; draw right edge: sx2,ft2 -> sx2,bt2
     LDA zp_sx2   : STA LINE_X0_LO
@@ -5422,11 +5423,11 @@ QET_TIGHTEN   = 1
     LDA zp_ft2+1 : STA LINE_Y0_HI
     LDA zp_sx2   : STA LINE_X1_LO
     LDA zp_sx2+1 : STA LINE_X1_HI
-    LDA &96    : STA LINE_Y1_LO      ; bt2 lo (saved)
-    LDA &97    : STA LINE_Y1_HI : JSR clip_rasterise
+    LDA &9A    : STA LINE_Y1_LO      ; bt2 lo (saved)
+    LDA &9B    : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; if ch > vz_ps: also draw ft1->ft2 (front ceiling line)
-    LDA &81             ; ch (s8)
+    LDA &95             ; ch (s8)
     CMP zp_vz_ps        ; compare ch - vz_ps
     BEQ skip_ceil_front  ; ch == vz_ps -> skip
     BMI skip_ceil_front  ; ch < vz_ps -> skip (signed: N set means less)
@@ -5437,8 +5438,8 @@ QET_TIGHTEN   = 1
 
 .no_need_bt
     ; elif bch > ch: draw ft1->ft2 only
-    LDA &83             ; bch (s8)
-    CMP &81             ; ch (s8)
+    LDA &97             ; bch (s8)
+    CMP &95             ; ch (s8)
     BEQ ceil_done
     BMI ceil_done        ; bch <= ch -> skip
     ; bch > ch — draw ceiling line
@@ -5484,7 +5485,7 @@ QET_TIGHTEN   = 1
     LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
     ; if fh < vz_ps: also draw fb1->fb2 (front floor line)
-    LDA &80             ; fh (s8)
+    LDA &94             ; fh (s8)
     CMP zp_vz_ps        ; compare fh - vz_ps
     BEQ skip_floor_front ; fh == vz_ps -> skip
     BPL skip_floor_front ; fh >= vz_ps -> skip (signed: N clear means >=)
@@ -5495,8 +5496,8 @@ QET_TIGHTEN   = 1
 
 .no_need_bb
     ; elif bfh < fh: draw fb1->fb2 only
-    LDA &82             ; bfh (s8)
-    CMP &80             ; fh (s8)
+    LDA &96             ; bfh (s8)
+    CMP &94             ; fh (s8)
     BEQ floor_done
     BPL floor_done       ; bfh >= fh -> skip
     ; bfh < fh — draw floor line
