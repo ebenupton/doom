@@ -6709,12 +6709,15 @@ ORG &9B20
     LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
 
     ; === OPT 1: X overlap check ===
-    ; Skip if x_max < xlo (s16 vs u8)
+    ; If x_max < xlo, ALL remaining spans are past the line (sorted) → done.
     LDA zp_cl_x_max+1
-    BMI car_skip_span       ; x_max < 0 < xlo → skip
+    BPL car_xmax_nonneg     ; x_max >= 0 → check further
+    JMP car_done            ; x_max < 0 → done
+.car_xmax_nonneg
     BNE car_x_left_ok       ; x_max >= 256 > any xlo → ok
     LDA zp_cl_x_max : CMP zp_cl_xlo
-    BCC car_skip_span       ; x_max < xlo → skip
+    BCS car_x_left_ok       ; x_max >= xlo → ok
+    JMP car_done            ; x_max < xlo → done (sorted)
 .car_x_left_ok
     ; Skip if x_min >= xhi (s16 vs u8, xhi=0 means 256)
     LDA zp_cl_xhi : BEQ car_xhi256
