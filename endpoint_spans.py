@@ -111,20 +111,87 @@ class EndpointClipSpans:
         # Convert new boundary pixel Y to 8.8
         yt1_88 = _y(yt1); yt2_88 = _y(yt2)
         yb1_88 = _y(yb1); yb2_88 = _y(yb2)
-        new = []
+        # First pass: check if new boundary dominates ALL overlapping spans.
+        # If so, merge them into one span with the new boundary.
+        all_new_dom = True
+        merge_x0 = ihi; merge_x1 = ilo
         for s in self.spans:
             xlo, xhi = s[0], s[1]
             if xhi <= ilo or xlo >= ihi:
-                new.append(s); continue
-            if xlo < ilo:
-                ns = _make_sub(s, xlo, ilo)
-                if ns: new.append(ns)
-            right_s = _make_sub(s, ihi, xhi) if ihi < xhi else None
+                continue
             ox0 = max(xlo, ilo); ox1 = min(xhi, ihi)
-            if ox0 < ox1:
-                _tighten_span(s, ox0, ox1, sx1, sx2, yt1_88, yt2_88,
-                              yb1_88, yb2_88, new)
-            if right_s: new.append(right_s)
+            if ox0 >= ox1:
+                continue
+            old_tl = _interp(ox0, xlo, s[2], xhi, s[4])
+            old_tr = _interp(ox1, xlo, s[2], xhi, s[4])
+            old_bl = _interp(ox0, xlo, s[3], xhi, s[5])
+            old_br = _interp(ox1, xlo, s[3], xhi, s[5])
+            new_tl = _interp(ox0, sx1, yt1_88, sx2, yt2_88)
+            new_tr = _interp(ox1, sx1, yt1_88, sx2, yt2_88)
+            new_bl = _interp(ox0, sx1, yb1_88, sx2, yb2_88)
+            new_br = _interp(ox1, sx1, yb1_88, sx2, yb2_88)
+            if not (new_tl >= old_tl and new_tr >= old_tr and
+                    new_bl <= old_bl and new_br <= old_br):
+                all_new_dom = False
+                break
+            merge_x0 = min(merge_x0, ox0)
+            merge_x1 = max(merge_x1, ox1)
+
+        new = []
+        if all_new_dom and merge_x0 < merge_x1:
+            # New dominates: replace all overlapping spans with one merged span
+            for s in self.spans:
+                xlo, xhi = s[0], s[1]
+                if xhi <= ilo or xlo >= ihi:
+                    new.append(s); continue
+                # Left fragment outside tighten range
+                if xlo < ilo:
+                    ns = _make_sub(s, xlo, ilo)
+                    if ns: new.append(ns)
+                # Right fragment outside tighten range
+                if ihi < xhi:
+                    ns = _make_sub(s, ihi, xhi)
+                    if ns: new.append(ns)
+            # Insert the single merged span
+            nt_l = _interp(merge_x0, sx1, yt1_88, sx2, yt2_88)
+            nt_r = _interp(merge_x1, sx1, yt1_88, sx2, yt2_88)
+            nb_l = _interp(merge_x0, sx1, yb1_88, sx2, yb2_88)
+            nb_r = _interp(merge_x1, sx1, yb1_88, sx2, yb2_88)
+            if nt_l < nb_l or nt_r < nb_r:
+                merged = (merge_x0, merge_x1, nt_l, nb_l, nt_r, nb_r)
+                # Insert in sorted position
+                ins = 0
+                while ins < len(new) and new[ins][0] < merge_x0:
+                    ins += 1
+                new.insert(ins, merged)
+        else:
+            # General path: per-span tighten
+            for s in self.spans:
+                xlo, xhi = s[0], s[1]
+                if xhi <= ilo or xlo >= ihi:
+                    new.append(s); continue
+                ox0 = max(xlo, ilo); ox1 = min(xhi, ihi)
+                # Old dominates: new boundary less restrictive → skip
+                if ox0 < ox1:
+                    old_tl = _interp(ox0, xlo, s[2], xhi, s[4])
+                    old_tr = _interp(ox1, xlo, s[2], xhi, s[4])
+                    old_bl = _interp(ox0, xlo, s[3], xhi, s[5])
+                    old_br = _interp(ox1, xlo, s[3], xhi, s[5])
+                    new_tl = _interp(ox0, sx1, yt1_88, sx2, yt2_88)
+                    new_tr = _interp(ox1, sx1, yt1_88, sx2, yt2_88)
+                    new_bl = _interp(ox0, sx1, yb1_88, sx2, yb2_88)
+                    new_br = _interp(ox1, sx1, yb1_88, sx2, yb2_88)
+                    if (new_tl <= old_tl and new_tr <= old_tr and
+                            new_bl >= old_bl and new_br >= old_br):
+                        new.append(s); continue
+                if xlo < ilo:
+                    ns = _make_sub(s, xlo, ilo)
+                    if ns: new.append(ns)
+                right_s = _make_sub(s, ihi, xhi) if ihi < xhi else None
+                if ox0 < ox1:
+                    _tighten_span(s, ox0, ox1, sx1, sx2, yt1_88, yt2_88,
+                                  yb1_88, yb2_88, new)
+                if right_s: new.append(right_s)
         self.spans = new
 
     # -- Clipping --------------------------------------------------------------
@@ -152,17 +219,27 @@ class EndpointClipSpans:
                             drawn = True
                         break
             else:
+                # Pre-clip line X to [0, 255] (wide math, once per line)
+                from clip_math import preclip_line_x, frac08, line_y_narrow
+                pc = preclip_line_x(lx1, ly1, lx2, ly2)
+                if pc is None:
+                    if stats is not None: stats[3] += 1
+                    continue
+                lx1, ly1, lx2, ly2 = pc
+
                 if lx1 <= lx2:
                     xl, yl, xr, yr = lx1, ly1, lx2, ly2
                 else:
                     xl, yl, xr, yr = lx2, ly2, lx1, ly1
                 dx_line = xr - xl
+                dy_line = yr - yl
                 y_lo = min(yl, yr)
                 y_hi = max(yl, yr)
 
                 def _line_y_at(x):
                     if dx_line == 0: return yl
-                    return yl + (yr - yl) * (x - xl) // dx_line
+                    f = frac08(x - xl, dx_line)
+                    return line_y_narrow(yl, dy_line, f)
 
                 active = [s for s in self.spans if s[1] > xl and s[0] < xr]
                 if not active:
@@ -302,79 +379,108 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
 
 
 def _clip_to_span(lx1, ly1, lx2, ly2, s):
-    """Cyrus-Beck clip using cross-product form. Span Y in 8.8."""
+    """Clip line to span. All multiplies are 8x8 (via clip_math primitives).
+
+    Line coords are pixels (pre-clipped to X [0,255]).
+    Span Y values are 8.8 fixed point (s16).
+    """
+    from clip_math import (frac08, eval_boundary_88, line_y_narrow,
+                           compare_y_vs_boundary, boundary_ix)
     xlo, xhi, tl, bl, tr, br = s
-    # Convert span Y to pixel for constraint computation
-    # (line coords are in pixels; span coords in 8.8)
-    # Scale line coords to 8.8 for uniform math
-    lx1_88 = lx1; ly1_88 = _y(ly1)
-    lx2_88 = lx2; ly2_88 = _y(ly2)
-    dx = lx2_88 - lx1_88  # still pixel-scale X
-    dy = ly2_88 - ly1_88  # 8.8 scale Y
-    T_ONE = 256
-    t0, t1 = 0, T_ONE
+    dx = lx2 - lx1
+    dy = ly2 - ly1
+    ex = xhi - xlo
+    if ex <= 0:
+        return None
 
-    # LEFT/RIGHT: pixel-scale X constraints (unchanged)
-    r = _cb_update(-dx, lx1 - xlo, t0, t1)
-    if r is None: return None
-    t0, t1 = r
-    r = _cb_update(dx, xhi - lx1, t0, t1)
-    if r is None: return None
-    t0, t1 = r
+    cx1, cy1, cx2, cy2 = lx1, ly1, lx2, ly2
 
-    # TOP: cross product in mixed coords (X pixel, Y 8.8)
-    ex = xhi - xlo        # pixel
-    ey_t = tr - tl         # 8.8
-    p = ey_t * dx - ex * dy
-    q = ex * (ly1_88 - tl) - ey_t * (lx1 - xlo)
-    r = _cb_update(p, q, t0, t1)
-    if r is None: return None
-    t0, t1 = r
-
-    # BOT
-    ey_b = br - bl
-    p = ex * dy - ey_b * dx
-    q = ey_b * (lx1 - xlo) - ex * (ly1_88 - bl)
-    r = _cb_update(p, q, t0, t1)
-    if r is None: return None
-    t0, t1 = r
-
-    if t0 > t1: return None
-
-    # Compute clipped endpoints in pixel coords
-    px_dx = lx2 - lx1; px_dy = ly2 - ly1
-    if t0 == 0:
-        cx1, cy1 = lx1, ly1
+    # -- Clip to X range [xlo, xhi-1] --
+    if dx == 0:
+        if lx1 < xlo or lx1 >= xhi:
+            return None
     else:
-        cx1 = lx1 + (t0 * px_dx) // T_ONE
-        cy1 = ly1 + (t0 * px_dy) // T_ONE
-    if t1 == T_ONE:
-        cx2, cy2 = lx2, ly2
-    else:
-        cx2 = lx1 + (t1 * px_dx) // T_ONE
-        cy2 = ly1 + (t1 * px_dy) // T_ONE
+        abs_dx = abs(dx)
+        if (dx > 0 and cx1 < xlo) or (dx < 0 and cx2 < xlo):
+            f = frac08(abs(xlo - lx1), abs_dx)
+            y_at = line_y_narrow(ly1, dy, f)
+            if dx > 0:
+                cx1, cy1 = xlo, y_at
+            else:
+                cx2, cy2 = xlo, y_at
+        xhi_clip = xhi - 1
+        if (dx > 0 and cx2 > xhi_clip) or (dx < 0 and cx1 > xhi_clip):
+            f = frac08(abs(xhi_clip - lx1), abs_dx)
+            y_at = line_y_narrow(ly1, dy, f)
+            if dx > 0:
+                cx2, cy2 = xhi_clip, y_at
+            else:
+                cx1, cy1 = xhi_clip, y_at
+        if min(cx1, cx2) >= xhi or max(cx1, cx2) < xlo:
+            return None
 
-    if cx1 < xlo: cx1 = xlo
-    if cx2 >= xhi: cx2 = xhi - 1
-    if cx1 > cx2: return None
+    # -- Evaluate boundaries at clipped X endpoints --
+    f1 = frac08(abs(cx1 - xlo), ex)
+    f2 = frac08(abs(cx2 - xlo), ex)
+    top1 = eval_boundary_88(tl, tr, f1)
+    top2 = eval_boundary_88(tl, tr, f2)
+    bot1 = eval_boundary_88(bl, br, f1)
+    bot2 = eval_boundary_88(bl, br, f2)
+
+    # -- Clip to top boundary (cy >= top) --
+    above1 = compare_y_vs_boundary(cy1, top1) < 0
+    above2 = compare_y_vs_boundary(cy2, top2) < 0
+    if above1 and above2:
+        return None
+    if above1 or above2:
+        d1 = _y(cy1) - top1
+        d2 = _y(cy2) - top2
+        ix = boundary_ix(cx1, cx2, d1, d2)
+        if ix is None:
+            return None
+        if dx != 0:
+            f = frac08(abs(ix - lx1), abs(dx))
+            iy = line_y_narrow(ly1, dy, f)
+        else:
+            iy = ly1
+        if above1:
+            cx1, cy1 = ix, iy
+        else:
+            cx2, cy2 = ix, iy
+        # Recompute boundary at new endpoint for bot clip
+        fnew = frac08(abs(ix - xlo), ex)
+        if above1:
+            bot1 = eval_boundary_88(bl, br, fnew)
+        else:
+            bot2 = eval_boundary_88(bl, br, fnew)
+
+    # -- Clip to bottom boundary (cy <= bot) --
+    below1 = compare_y_vs_boundary(cy1, bot1) > 0
+    below2 = compare_y_vs_boundary(cy2, bot2) > 0
+    if below1 and below2:
+        return None
+    if below1 or below2:
+        d1 = _y(cy1) - bot1
+        d2 = _y(cy2) - bot2
+        ix = boundary_ix(cx1, cx2, d1, d2)
+        if ix is None:
+            return None
+        if dx != 0:
+            f = frac08(abs(ix - lx1), abs(dx))
+            iy = line_y_narrow(ly1, dy, f)
+        else:
+            iy = ly1
+        if below1:
+            cx1, cy1 = ix, iy
+        else:
+            cx2, cy2 = ix, iy
+
+    # -- Final validation --
+    if dx >= 0:
+        if cx1 > cx2: return None
+    else:
+        if cx1 < cx2: return None
+
     cy1 = max(0, min(FP_RENDER_H - 1, cy1))
     cy2 = max(0, min(FP_RENDER_H - 1, cy2))
     return (cx1, cy1, cx2, cy2)
-
-
-def _cb_update(p, q, t0, t1):
-    if abs(p) < 1:
-        if q < -1: return None
-        return (t0, t1)
-    r = q * 256
-    if (r < 0) != (p < 0):
-        t = -(abs(r) // abs(p))
-    else:
-        t = abs(r) // abs(p)
-    if p < 0:
-        if t > t1: return None
-        if t > t0: t0 = t
-    else:
-        if t < t0: return None
-        if t < t1: t1 = t
-    return (t0, t1)

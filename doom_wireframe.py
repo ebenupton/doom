@@ -903,8 +903,8 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     vc2_full = vcache[v2_idx]
     evx2_t, evx2_r, evy2, fvx2, vy_idx2 = vc2_full[:5]
     # Sub-pixel uses truncated vx (frac compensates); otherwise use rounded
-    evx1 = evx1_t if use_subpixel else evx1_r
-    evx2 = evx2_t if use_subpixel else evx2_r
+    evx1 = evx1_t
+    evx2 = evx2_t
 
     # Near clip (8-bit view coords, 0.8 parametric t)
     nc = fp_near_clip(evx1, evy1, evx2, evy2)
@@ -926,11 +926,8 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     if ey1 == evy1 and len(vc1) > 5:
         sx1, rxh1, rxl1 = vc1[5], vc1[6], vc1[7]
     else:
-        if use_subpixel:
-            fvx1_c = fvx1 if ey1 == evy1 else 0
-            sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
-        else:
-            sx1 = fp_project_x(ex1, rxh1, rxl1)
+        fvx1_c = fvx1 if ey1 == evy1 else 0
+        sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
         if ey1 == evy1:
             vcache[v1_idx] = vc1 + (sx1, rxh1, rxl1)
     vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
@@ -940,11 +937,8 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     if ey2 == evy2 and len(vc2) > 5:
         sx2, rxh2, rxl2 = vc2[5], vc2[6], vc2[7]
     else:
-        if use_subpixel:
-            fvx2_c = fvx2 if ey2 == evy2 else 0
-            sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
-        else:
-            sx2 = fp_project_x(ex2, rxh2, rxl2)
+        fvx2_c = fvx2 if ey2 == evy2 else 0
+        sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
         if ey2 == evy2:
             vcache[v2_idx] = vc2 + (sx2, rxh2, rxl2)
     vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
@@ -1272,8 +1266,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         fvx2 = 0
         _vc2_has_sx = (vc2[3] != 0)
 
-    evx1 = evx1_t if use_subpixel else evx1_r
-    evx2 = evx2_t if use_subpixel else evx2_r
+    evx1 = evx1_t
+    evx2 = evx2_t
 
     # ── Near clip ──
     nc = fp_near_clip(evx1, evy1, evx2, evy2)
@@ -1293,11 +1287,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     if ey1 == evy1 and _vc1_has_sx:
         sx1 = _packed_read_vcache(ram, v1_idx)[3]
     else:
-        if use_subpixel:
-            fvx1_c = fvx1 if ey1 == evy1 else 0
-            sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
-        else:
-            sx1 = fp_project_x(ex1, rxh1, rxl1)
+        fvx1_c = fvx1 if ey1 == evy1 else 0
+        sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
         if ey1 == evy1:
             # Update vcache with sx
             base = _p_layout['ram_vcache'] + v1_idx * VCACHE_ENTRY
@@ -1307,11 +1298,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     if ey2 == evy2 and _vc2_has_sx:
         sx2 = _packed_read_vcache(ram, v2_idx)[3]
     else:
-        if use_subpixel:
-            fvx2_c = fvx2 if ey2 == evy2 else 0
-            sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
-        else:
-            sx2 = fp_project_x(ex2, rxh2, rxl2)
+        fvx2_c = fvx2 if ey2 == evy2 else 0
+        sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
         if ey2 == evy2:
             base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
             write_s16(ram, base + VC_SX, sx2)
@@ -2068,7 +2056,6 @@ angle = math.radians(pangle)              # float radians (used in float mode)
 angle_byte = radians_to_byte(angle)       # 0..255 (used in fixed-point mode)
 use_fixedpoint = False                    # False = float, True = fixed-point
 use_xor = False                           # XOR drawing mode
-use_subpixel = False                      # Sub-pixel X projection (1 extra mul)
 show_map = False                          # Top-down map visualisation
 _show_nj_raster = False                   # Show NJ 6502 rasteriser output (FP lines)
 _use_6502_frontend = False                # H key: 6502 front-end + Python clip/draw
@@ -2320,13 +2307,14 @@ def _draw_debug_step(surface):
     _trap_hues = [(40, 40, 180), (60, 100, 160), (30, 70, 200),
                   (80, 50, 170), (50, 90, 140), (70, 60, 190),
                   (40, 110, 150), (90, 40, 180)]
-    # spans is a list of (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) tuples
+    # spans is a list of (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) with Y in 8.8
+    from endpoint_spans import _px
     for si, span_s in enumerate(spans):
         xlo, xhi, tl, bl, tr, br = span_s[:6]
-        pts = [(xlo * FP_SCALE, tl * FP_SCALE),
-               ((xhi - 1) * FP_SCALE, tr * FP_SCALE),
-               ((xhi - 1) * FP_SCALE, br * FP_SCALE),
-               (xlo * FP_SCALE, bl * FP_SCALE)]
+        pts = [(xlo * FP_SCALE, _px(tl) * FP_SCALE),
+               ((xhi - 1) * FP_SCALE, _px(tr) * FP_SCALE),
+               ((xhi - 1) * FP_SCALE, _px(br) * FP_SCALE),
+               (xlo * FP_SCALE, _px(bl) * FP_SCALE)]
         hue = _trap_hues[si % len(_trap_hues)]
         pygame.draw.polygon(clip_surf, (*hue, 90), pts)
         pygame.draw.polygon(clip_surf, (*(min(c + 60, 255) for c in hue), 200), pts, 1)
@@ -2375,7 +2363,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global use_subpixel, show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result
+  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result
   running = True
   while running:
     dt = clock.tick(60) / 1000.0
@@ -2394,8 +2382,6 @@ def _main():
                     angle = byte_to_radians(angle_byte)
             elif ev.key == pygame.K_x:
                 use_xor = not use_xor
-            elif ev.key == pygame.K_s:
-                use_subpixel = not use_subpixel
             elif ev.key == pygame.K_m:
                 show_map = not show_map
             elif ev.key == pygame.K_r:
