@@ -7512,8 +7512,14 @@ ORG &9B20
     STA &85
 
 .rc_draw
-    LDA &02F8 : STA &70          ; restore back buffer hi (clobbered by mul16x16)
-    JSR &8EC0                    ; NJ rasteriser (same bank 2)
+    ; Write coords to magic peripheral $FE20-$FE23 (py65 captures if enabled)
+    LDA &82 : STA &FE20
+    LDA &83 : STA &FE21
+    LDA &84 : STA &FE22
+    LDA &85 : STA &FE23
+    ; Then always call NJ rasteriser for jsbeeb / J-mode
+    LDA &02F8 : STA &70
+    JSR &8EC0
     RTS
 }
 

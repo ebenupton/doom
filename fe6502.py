@@ -148,21 +148,34 @@ SCREEN_BASE = 0x5800
 
 class PagedMemory(list):
     """64KB memory with BBC Micro sideways ROM banking at $8000-$BFFF.
-    Intercepts writes to $FE30 (ROMSEL) to switch the 16KB window."""
+    Intercepts writes to $FE30 (ROMSEL) to switch the 16KB window.
+    Optionally intercepts $FE20-$FE23 (magic line peripheral) for Python rasterisation."""
 
     def __init__(self, rom_banks=None):
         super().__init__([0] * 65536)
         self.rom_banks = rom_banks or []
         self.current_bank = -1
+        self.drawn_lines = None  # set to a list to enable peripheral capture
 
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
-        if isinstance(key, int) and key == 0xFE30:
+        if not isinstance(key, int):
+            return
+        if key == 0xFE30:
             bank = value & 0x0F
             if bank != self.current_bank and bank < len(self.rom_banks):
                 self.current_bank = bank
                 src = self.rom_banks[bank]
                 super().__setitem__(slice(0x8000, 0x8000 + len(src)), list(src))
+        elif key == 0xFE23 and self.drawn_lines is not None:
+            # Magic peripheral: writing $FE23 triggers line capture
+            x0 = super().__getitem__(0xFE20)
+            y0 = super().__getitem__(0xFE21)
+            x1 = super().__getitem__(0xFE22)
+            y1 = value
+            self.drawn_lines.append((x0, y0, x1, y1))
+        elif 0xFE20 <= key <= 0xFE22:
+            pass  # just store the byte (already done by super().__setitem__)
 
 
 class Frontend6502:
@@ -230,12 +243,15 @@ class Frontend6502:
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0,
                      map_center_x=1200, map_center_y=-3250, prescale=None,
-                     aspect_num=6, aspect_den=5, capture_lines=False):
+                     aspect_num=6, aspect_den=5, capture_lines=False,
+                     use_peripheral=False):
         """Run one frame of the front-end.
 
-        Returns cycles (int), or (drawn_lines, cycles) if capture_lines=True.
-        drawn_lines is a list of (x0, y0, x1, y1) u8 tuples captured at the
-        NJ rasteriser entry point ($8EC0).
+        Returns cycles (int), or (drawn_lines, cycles) if capture_lines=True
+        or use_peripheral=True.  With use_peripheral, the 6502 writes line
+        coords to $FE20-$FE23 (magic peripheral) instead of calling the NJ
+        rasteriser; the lines are captured and returned for Python rasterisation.
+        drawn_lines is a list of (x0, y0, x1, y1) u8 tuples.
         """
         mem = self.mpu.memory
 
@@ -270,6 +286,12 @@ class Frontend6502:
         # All per-frame init (spans, screen clear) is done by the 6502
         # frame loop at $0900.  We just set player state and run.
 
+        # Set screen start for double-buffered entry point
+        # (game_loop normally sets these; py65 calls entry directly)
+        mem[0x70] = 0x58        # screen buffer 0 high byte
+        mem[0x02F8] = 0x58      # saved copy (mul16x16 clobbers $70)
+        # Peripheral always writes to $FE20-$FE23; PagedMemory captures when enabled
+
         # Set up a return-to-halt trampoline: push address of a BRK at $FF00
         # so when the entry point does RTS, it lands on $FF00 and we detect it.
         mem[0xFF00] = 0x00  # BRK
@@ -284,9 +306,18 @@ class Frontend6502:
         self.mpu.processorCycles = 0
 
         # Pure 6502 execution — no Python hooks in the loop.
-        # The NJ rasteriser in bank 2 executes natively via JSR $8EC0.
         NJ_ENTRY = 0x8EC0
         mpu = self.mpu
+        paged = self.mpu.memory
+
+        # Set up line capture
+        if use_peripheral:
+            paged.drawn_lines = []  # enable peripheral capture in PagedMemory
+        elif capture_lines:
+            paged.drawn_lines = None  # disable peripheral, use PC-based capture
+        else:
+            paged.drawn_lines = None
+
         drawn_lines = [] if capture_lines else None
         for _ in range(20_000_000):
             if mpu.pc == 0xFF00:
@@ -296,6 +327,11 @@ class Frontend6502:
             mpu.step()
 
         cyc = self.mpu.processorCycles
+
+        if use_peripheral:
+            result_lines = paged.drawn_lines
+            paged.drawn_lines = None
+            return result_lines, cyc
         if capture_lines:
             return drawn_lines, cyc
         return cyc

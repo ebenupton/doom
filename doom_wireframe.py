@@ -3035,27 +3035,42 @@ def _main():
         sin_f = math.sin(ang_rad)
 
         if _use_6502_full and _render_6502 is not None:
-            # Full 6502 pipeline: front-end + clip + NJ rasteriser
+            # J mode: full 6502 pipeline with NJ rasteriser → extract framebuffer
             import time as _time
             _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
             _fz = player_floor(player_x, player_y)
             _t0 = _time.perf_counter()
-            nj_surf, fe_cyc, rast_cyc = _render_6502.render_frame_full(
+            hw_cyc = _render_6502.render_frame(
                 player_x, player_y, _ab, _fz)
             _t1 = _time.perf_counter()
-            # Blit the NJ rasterised output onto fp_surface
-            fp_surface.blit(nj_surf, (0, 0))
+            # Extract framebuffer from py65 memory at $5800 (256×160, Mode 4)
+            _mem = _render_6502.mpu.memory
+            fp_surface.fill((0, 0, 0))
+            _pix = pygame.PixelArray(fp_surface)
+            for _cy in range(20):
+                for _col in range(32):
+                    for _pr in range(8):
+                        _y = _cy * 8 + _pr
+                        if _y >= 160: break
+                        _byte = _mem[0x5800 + _cy * 256 + _col * 8 + _pr]
+                        for _bit in range(8):
+                            if _byte & (1 << (7 - _bit)):
+                                _pix[_col * 8 + _bit, _y] = (255, 255, 255)
+            del _pix
         elif _use_6502_frontend and _render_6502 is not None:
-            # Run 6502 front-end inline every frame
+            # H mode: 6502 BSP + clip, but Python rasterisation via peripheral
             import time as _time
             _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
             _fz = player_floor(player_x, player_y)
             _t0 = _time.perf_counter()
-            hw_cmds, hw_cyc = _render_6502.render_frame(
-                player_x, player_y, _ab, _fz)
+            hw_lines, hw_cyc = _render_6502.render_frame(
+                player_x, player_y, _ab, _fz, use_peripheral=True)
             _t1 = _time.perf_counter()
-            hw_vzps = _prescale_height(_fz + 41)
-            clip_and_draw_6502(hw_cmds, fp_surface, hw_vzps)
+            # Draw captured lines with pygame (identical to Python rasterisation)
+            fp_surface.fill((0, 0, 0))
+            _c = (255, 255, 255)
+            for _x0, _y0, _x1, _y1 in hw_lines:
+                pygame.draw.line(fp_surface, _c, (_x0, _y0), (_x1, _y1))
         elif use_packed:
             from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
