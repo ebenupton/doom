@@ -2707,17 +2707,19 @@ def _record_frame_steps():
     _rec_current_line = [None]
     _rec_draws = []
 
-    class RecordingClipSpans(FPClipSpans):
+    from endpoint_spans import EndpointClipSpans
+    import copy
+
+    class RecordingClipSpans(EndpointClipSpans):
         def draw_clipped(self, lines, color, surface, stats=None):
             for lx1, ly1, lx2, ly2 in lines:
-                spans_snap = list(self.spans)
+                groups_snap = copy.deepcopy(self.spans)
                 _rec_current_line[0] = (lx1, ly1, lx2, ly2)
                 _rec_draws.clear()
                 mul_before = sum(fp_module.mul_counts.values())
-                # Run the real draw logic (portal walk + CB fallback)
                 super().draw_clipped([(lx1, ly1, lx2, ly2)], color, surface, stats)
                 mul_after = sum(fp_module.mul_counts.values())
-                _debug_steps.append(((lx1, ly1, lx2, ly2), spans_snap,
+                _debug_steps.append(((lx1, ly1, lx2, ly2), groups_snap,
                                      list(_rec_draws), mul_after - mul_before))
                 _rec_current_line[0] = None
 
@@ -2764,34 +2766,39 @@ def _dump_portal_analysis():
         if dx == 0: return yl_w
         return yl_w + (yr_w - yl_w) * (x - xl) // dx
 
-    active = [s for s in spans if s[1] > xl and s[0] < xr]
+    from endpoint_spans import _interp
+    intervals = []
+    for span_s in spans:
+        xlo, xhi, tl, bl, tr, br = span_s[:6]
+        if xhi > xl and xlo < xr:
+            intervals.append((xlo, xhi, tl, bl, tr, br))
 
-    for i, _as in enumerate(active):
-        xlo, xhi, tfn, bfn = _as[:4]
+    for i, iv in enumerate(intervals):
+        xlo, xhi, yt0, yb0, yt1, yb1 = iv
         gap = ""
-        if i > 0 and active[i-1][1] != xlo:
-            gap = f"  ** GAP {active[i-1][1]}-{xlo} **"
+        if i > 0 and intervals[i-1][1] != xlo:
+            gap = f"  ** GAP {intervals[i-1][1]}-{xlo} **"
         ex = max(xl, xlo)
         xx = min(xr, xhi - 1)
-        top_ex = fp_eval(tfn, ex)
-        bot_ex = fp_eval(bfn, ex)
-        top_xx = fp_eval(tfn, xx)
-        bot_xx = fp_eval(bfn, xx)
+        top_ex = _interp(ex, xlo, yt0, xhi, yt1)
+        bot_ex = _interp(ex, xlo, yb0, xhi, yb1)
+        top_xx = _interp(xx, xlo, yt0, xhi, yt1)
+        bot_xx = _interp(xx, xlo, yb0, xhi, yb1)
         ly_ex = ly_at(ex)
         ly_xx = ly_at(xx)
         pass_ex = top_ex <= ly_ex <= bot_ex
         pass_xx = top_xx <= ly_xx <= bot_xx
         bbox_ex = top_ex <= y_lo and y_hi <= bot_ex
         bbox_xx = top_xx <= y_lo and y_hi <= bot_xx
-        w(f"  span {i}: [{xlo},{xhi}) tfn={tfn} bfn={bfn}{gap}\n")
+        w(f"  interval {i}: [{xlo},{xhi}) top=[{yt0},{yt1}] bot=[{yb0},{yb1}]{gap}\n")
         w(f"    entry x={ex}: top={top_ex} bot={bot_ex} ly={ly_ex} bbox={'OK' if bbox_ex else 'FAIL'} exact={'OK' if pass_ex else 'FAIL'}\n")
         w(f"    exit  x={xx}: top={top_xx} bot={bot_xx} ly={ly_xx} bbox={'OK' if bbox_xx else 'FAIL'} exact={'OK' if pass_xx else 'FAIL'}\n")
 
-        if i + 1 < len(active) and active[i][1] == active[i+1][0]:
+        if i + 1 < len(intervals) and iv[1] == intervals[i+1][0]:
             nx = xhi
-            n_tfn, n_bfn = active[i+1][2], active[i+1][3]
-            pt = max(fp_eval(tfn, nx), fp_eval(n_tfn, nx))
-            pb = min(fp_eval(bfn, nx), fp_eval(n_bfn, nx))
+            niv = intervals[i+1]
+            pt = max(yt1, niv[2])
+            pb = min(yb1, niv[3])
             ly_nx = ly_at(nx)
             pass_p = pt <= ly_nx <= pb
             bbox_p = pt <= y_lo and y_hi <= pb
@@ -2823,14 +2830,13 @@ def _draw_debug_step(surface):
     _trap_hues = [(40, 40, 180), (60, 100, 160), (30, 70, 200),
                   (80, 50, 170), (50, 90, 140), (70, 60, 190),
                   (40, 110, 150), (90, 40, 180)]
+    # spans is a list of (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) tuples
     for si, span_s in enumerate(spans):
-        xlo, xhi, tfn, bfn = span_s[:4]
-        x0, x1 = xlo * FP_SCALE, (xhi - 1) * FP_SCALE
-        yt0 = fp_eval(tfn, xlo) * FP_SCALE
-        yt1 = fp_eval(tfn, xhi - 1) * FP_SCALE
-        yb0 = fp_eval(bfn, xlo) * FP_SCALE
-        yb1 = fp_eval(bfn, xhi - 1) * FP_SCALE
-        pts = [(x0, yt0), (x1, yt1), (x1, yb1), (x0, yb0)]
+        xlo, xhi, tl, bl, tr, br = span_s[:6]
+        pts = [(xlo * FP_SCALE, tl * FP_SCALE),
+               ((xhi - 1) * FP_SCALE, tr * FP_SCALE),
+               ((xhi - 1) * FP_SCALE, br * FP_SCALE),
+               (xlo * FP_SCALE, bl * FP_SCALE)]
         hue = _trap_hues[si % len(_trap_hues)]
         pygame.draw.polygon(clip_surf, (*hue, 90), pts)
         pygame.draw.polygon(clip_surf, (*(min(c + 60, 255) for c in hue), 200), pts, 1)
@@ -3082,7 +3088,8 @@ def _main():
                               px_full, py_full, cos_f, sin_f, fp_surface,
                               p_ram)
         else:
-            render_bsp_fp(len(nodes) - 1, FPClipSpans(),
+            from endpoint_spans import EndpointClipSpans
+            render_bsp_fp(len(nodes) - 1, EndpointClipSpans(),
                           ctx, vz_ps,
                           px_full, py_full, cos_f, sin_f, fp_surface,
                           [None]*len(vertexes), [None]*len(vwh_table))
