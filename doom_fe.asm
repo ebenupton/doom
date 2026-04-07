@@ -167,6 +167,20 @@ zp_cl_x_max    = &3A    ; s16 max(x1,x2)
 zp_cl_y_min    = &3C    ; s16 min(y1,y2) — line Y range
 zp_cl_y_max    = &3E    ; s16 max(y1,y2)
 
+; --- Group-based clipper state (reserved for future optimization) ---
+; Overlaps tighten scratch $80-$9F, dead during clipper operation.
+; zp_cg_xl      = &80  ; s16 left X (ordered)
+; zp_cg_yl      = &82  ; s16 left Y
+; zp_cg_xr      = &84  ; s16 right X
+; zp_cg_yr      = &86  ; s16 right Y
+; zp_cg_y_lo    = &88  ; s16 min(yl, yr)
+; zp_cg_y_hi    = &8A  ; s16 max(yl, yr)
+; zp_cg_dx      = &8C  ; s16 dx = xr - xl (positive)
+; zp_cg_dy      = &8E  ; s16 dy = yr - yl
+; zp_cg_grp_ptr = &90  ; u16 ptr to first span in current group
+; zp_cg_grp_cnt = &92  ; u8 number of spans in current group
+; zp_cg_prev_xhi= &93  ; u8 prev span's xhi (for contiguity)
+
 ; ======================================================================
 ; RAM addresses
 ; ======================================================================
@@ -426,7 +440,8 @@ SP_TINTERCEPT = 6            ; s16
 SP_BINTERCEPT = 8            ; s16
 SP_INNER_TOP  = 10           ; s16
 SP_INNER_BOT  = 12           ; s16
-; +14..15 reserved
+SP_OUTER_TOP  = 14           ; u8 outer top (min of top_l, top_r), clamped [0,159]
+SP_OUTER_BOT  = 15           ; u8 outer bot (max of bot_l, bot_r), clamped [0,159]
 
 ; Deferred span-op queue.  Each subsector queues mark_solid / tighten
 ; operations while rendering, then flush applies them in order.  Queue
@@ -490,7 +505,8 @@ QET_TIGHTEN   = 1
     STA spans_base+SPAN_HDR+10 : STA spans_base+SPAN_HDR+11  ; inner_top=0
     LDA #159 : STA spans_base+SPAN_HDR+12
     LDA #0   : STA spans_base+SPAN_HDR+13  ; inner_bot=159
-    STA spans_base+SPAN_HDR+14 : STA spans_base+SPAN_HDR+15  ; pad
+    STA spans_base+SPAN_HDR+SP_OUTER_TOP   ; outer_top=0
+    LDA #159 : STA spans_base+SPAN_HDR+SP_OUTER_BOT  ; outer_bot=159
 
     ; Init zp_cspan to point at spans_base (double-buffer current pointer)
     LDA #LO(spans_base) : STA zp_cspan
@@ -1939,10 +1955,77 @@ QET_TIGHTEN   = 1
     LDY #SP_INNER_BOT
     LDA &72 : STA (zp_mk_out),Y : INY
     LDA &73 : STA (zp_mk_out),Y
-    ; Zero pad bytes 14/15 to match Python write_span's zeroing.
+
+    ; --- outer_top = min(top_l, top_r), clamped to [0, 159] as u8 ---
+    ; (Already have inner_top = max in $70:$71)
+    ; outer_top = top_l + top_r - inner_top (since min + max = a + b)
+    ; But simpler: compare top_l vs top_r, take the smaller.
+    SEC
+    LDA zp_mk_top_l   : SBC zp_mk_top_r
+    LDA zp_mk_top_l+1 : SBC zp_mk_top_r+1
+    BVC ms_ot_nov
+    EOR #&80
+.ms_ot_nov
+    BPL ms_ot_r       ; top_l >= top_r → outer = top_r
+    ; top_l < top_r → outer = top_l
+    LDA zp_mk_top_l   : STA &74
+    LDA zp_mk_top_l+1 : STA &75
+    JMP ms_ot_clamp
+.ms_ot_r
+    LDA zp_mk_top_r   : STA &74
+    LDA zp_mk_top_r+1 : STA &75
+.ms_ot_clamp
+    ; Clamp s16 in $74:$75 to u8 [0, 159]
+    LDA &75
+    BMI ms_ot_zero     ; negative → 0
+    BNE ms_ot_159      ; >= 256 → 159
+    LDA &74
+    CMP #160
+    BCC ms_ot_store
+    LDA #159
+    JMP ms_ot_store
+.ms_ot_zero
     LDA #0
-    LDY #14 : STA (zp_mk_out),Y
-    LDY #15 : STA (zp_mk_out),Y
+    JMP ms_ot_store
+.ms_ot_159
+    LDA #159
+.ms_ot_store
+    LDY #SP_OUTER_TOP
+    STA (zp_mk_out),Y
+
+    ; --- outer_bot = max(bot_l, bot_r), clamped to [0, 159] as u8 ---
+    SEC
+    LDA zp_mk_bot_l   : SBC zp_mk_bot_r
+    LDA zp_mk_bot_l+1 : SBC zp_mk_bot_r+1
+    BVC ms_ob_nov
+    EOR #&80
+.ms_ob_nov
+    BMI ms_ob_r       ; bot_l < bot_r → outer = bot_r
+    ; bot_l >= bot_r → outer = bot_l
+    LDA zp_mk_bot_l   : STA &74
+    LDA zp_mk_bot_l+1 : STA &75
+    JMP ms_ob_clamp
+.ms_ob_r
+    LDA zp_mk_bot_r   : STA &74
+    LDA zp_mk_bot_r+1 : STA &75
+.ms_ob_clamp
+    ; Clamp s16 in $74:$75 to u8 [0, 159]
+    LDA &75
+    BMI ms_ob_zero     ; negative → 0
+    BNE ms_ob_159      ; >= 256 → 159
+    LDA &74
+    CMP #160
+    BCC ms_ob_store
+    LDA #159
+    JMP ms_ob_store
+.ms_ob_zero
+    LDA #0
+    JMP ms_ob_store
+.ms_ob_159
+    LDA #159
+.ms_ob_store
+    LDY #SP_OUTER_BOT
+    STA (zp_mk_out),Y
 
     RTS
 }
@@ -3494,10 +3577,70 @@ QET_TIGHTEN   = 1
     LDY #SP_INNER_BOT
     LDA &70 : STA (zp_mk_out),Y : INY
     LDA &71 : STA (zp_mk_out),Y
-    ; Zero pad bytes 14/15 to match Python write_span's zeroing.
+
+    ; --- outer_top = min(top_l, top_r), clamped to [0, 159] as u8 ---
+    SEC
+    LDA zp_mk_top_l   : SBC zp_mk_top_r
+    LDA zp_mk_top_l+1 : SBC zp_mk_top_r+1
+    BVC tges_ot_nov
+    EOR #&80
+.tges_ot_nov
+    BPL tges_ot_r       ; top_l >= top_r → outer = top_r
+    LDA zp_mk_top_l   : STA &74
+    LDA zp_mk_top_l+1 : STA &75
+    JMP tges_ot_clamp
+.tges_ot_r
+    LDA zp_mk_top_r   : STA &74
+    LDA zp_mk_top_r+1 : STA &75
+.tges_ot_clamp
+    LDA &75
+    BMI tges_ot_zero
+    BNE tges_ot_159
+    LDA &74
+    CMP #160
+    BCC tges_ot_store
+    LDA #159
+    JMP tges_ot_store
+.tges_ot_zero
     LDA #0
-    LDY #14 : STA (zp_mk_out),Y
-    LDY #15 : STA (zp_mk_out),Y
+    JMP tges_ot_store
+.tges_ot_159
+    LDA #159
+.tges_ot_store
+    LDY #SP_OUTER_TOP
+    STA (zp_mk_out),Y
+
+    ; --- outer_bot = max(bot_l, bot_r), clamped to [0, 159] as u8 ---
+    SEC
+    LDA zp_mk_bot_l   : SBC zp_mk_bot_r
+    LDA zp_mk_bot_l+1 : SBC zp_mk_bot_r+1
+    BVC tges_ob_nov
+    EOR #&80
+.tges_ob_nov
+    BMI tges_ob_r       ; bot_l < bot_r → outer = bot_r
+    LDA zp_mk_bot_l   : STA &74
+    LDA zp_mk_bot_l+1 : STA &75
+    JMP tges_ob_clamp
+.tges_ob_r
+    LDA zp_mk_bot_r   : STA &74
+    LDA zp_mk_bot_r+1 : STA &75
+.tges_ob_clamp
+    LDA &75
+    BMI tges_ob_zero
+    BNE tges_ob_159
+    LDA &74
+    CMP #160
+    BCC tges_ob_store
+    LDA #159
+    JMP tges_ob_store
+.tges_ob_zero
+    LDA #0
+    JMP tges_ob_store
+.tges_ob_159
+    LDA #159
+.tges_ob_store
+    LDY #SP_OUTER_BOT
+    STA (zp_mk_out),Y
 
     JSR mk_out_advance
     JSR inc_dest_count
@@ -6636,7 +6779,7 @@ ORG &9B20
 ; ======================================================================
 .clip_and_rasterise
 {
-    ; LINE registers are now at ZP $A0-$A7 = zp_cl_x1..zp_cl_y2, no copy needed
+    ; LINE registers at ZP $A0-$A7 = zp_cl_x1..zp_cl_y2, no copy needed
 
     ; dx = x2 - x1, dy = y2 - y1
     SEC
@@ -6647,29 +6790,24 @@ ORG &9B20
     LDA zp_cl_y2+1 : SBC zp_cl_y1+1 : STA zp_cl_dy+1
 
     ; --- Pre-compute line bounding box (s16) ---
-    ; x_min = min(x1, x2), x_max = max(x1, x2)
-    ; Signed compare: x1 < x2?
     SEC
     LDA zp_cl_x1   : SBC zp_cl_x2
     LDA zp_cl_x1+1 : SBC zp_cl_x2+1
     BVC car_xv : EOR #&80
 .car_xv
-    BMI car_x1_lt       ; x1 < x2
-    ; x1 >= x2: min=x2, max=x1
+    BMI car_x1_lt
     LDA zp_cl_x2   : STA zp_cl_x_min
     LDA zp_cl_x2+1 : STA zp_cl_x_min+1
     LDA zp_cl_x1   : STA zp_cl_x_max
     LDA zp_cl_x1+1 : STA zp_cl_x_max+1
     JMP car_ybbox
 .car_x1_lt
-    ; x1 < x2: min=x1, max=x2
     LDA zp_cl_x1   : STA zp_cl_x_min
     LDA zp_cl_x1+1 : STA zp_cl_x_min+1
     LDA zp_cl_x2   : STA zp_cl_x_max
     LDA zp_cl_x2+1 : STA zp_cl_x_max+1
 
 .car_ybbox
-    ; y_min = min(y1, y2), y_max = max(y1, y2)
     SEC
     LDA zp_cl_y1   : SBC zp_cl_y2
     LDA zp_cl_y1+1 : SBC zp_cl_y2+1
@@ -6704,70 +6842,54 @@ ORG &9B20
     LDA (zp_cl_span_ptr),Y : STA zp_cl_xhi
 
     ; === OPT 1: X overlap check ===
-    ; If x_max < xlo, ALL remaining spans are past the line (sorted) → done.
     LDA zp_cl_x_max+1
-    BPL car_xmax_nonneg     ; x_max >= 0 → check further
-    JMP car_done            ; x_max < 0 → done
+    BPL car_xmax_nonneg
+    JMP car_done
 .car_xmax_nonneg
-    BNE car_x_left_ok       ; x_max >= 256 > any xlo → ok
+    BNE car_x_left_ok
     LDA zp_cl_x_max : CMP zp_cl_xlo
-    BCS car_x_left_ok       ; x_max >= xlo → ok
-    JMP car_done            ; x_max < xlo → done (sorted)
+    BCS car_x_left_ok
+    JMP car_done
 .car_x_left_ok
-    ; Skip if x_min >= xhi (s16 vs u8, xhi=0 means 256)
     LDA zp_cl_xhi : BEQ car_xhi256
-    ; xhi is normal u8
     LDA zp_cl_x_min+1
-    BMI car_x_right_ok      ; x_min < 0 < xhi → ok
-    BNE car_skip_span       ; x_min >= 256 > xhi → skip
+    BMI car_x_right_ok
+    BNE car_skip_span
     LDA zp_cl_x_min : CMP zp_cl_xhi
-    BCS car_skip_span       ; x_min >= xhi → skip
+    BCS car_skip_span
     JMP car_x_right_ok
 .car_skip_span
-    JMP car_next_span       ; trampoline for out-of-range branches
+    JMP car_next_span
 .car_xhi256
-    ; xhi = 256: skip if x_min >= 256
     LDA zp_cl_x_min+1
-    BMI car_x_right_ok      ; negative → ok
-    BEQ car_x_right_ok      ; hi=0 → x_min < 256 → ok
-    JMP car_next_span       ; x_min >= 256 → skip
+    BMI car_x_right_ok
+    BEQ car_x_right_ok
+    JMP car_next_span
 .car_x_right_ok
 
-    ; === OPT 2: Flat-span Y bbox reject ===
-    ; For flat spans (tslope=0, bslope=0), inner bbox = outer bbox.
-    ; Reject if y_max < inner_top or y_min > inner_bot.
-    LDY #SP_TSLOPE
-    LDA (zp_cl_span_ptr),Y : INY : ORA (zp_cl_span_ptr),Y
-    BNE car_not_flat
-    LDY #SP_BSLOPE
-    LDA (zp_cl_span_ptr),Y : INY : ORA (zp_cl_span_ptr),Y
-    BNE car_not_flat
-    ; Span is flat — check Y bbox
-    ; y_max < inner_top? (signed: inner_top - y_max > 0 iff y_max < inner_top)
-    LDY #SP_INNER_TOP
-    SEC
-    LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max
-    INY
-    LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max+1
-    BVC car_fv1 : EOR #&80
-.car_fv1
-    BPL car_next_span       ; inner_top > y_max → reject (y_max < inner_top)
-    ; y_min > inner_bot? (signed: y_min - inner_bot > 0)
-    LDY #SP_INNER_BOT
-    SEC
-    LDA zp_cl_y_min   : SBC (zp_cl_span_ptr),Y
-    INY
-    LDA zp_cl_y_min+1 : SBC (zp_cl_span_ptr),Y
-    BVC car_fv2 : EOR #&80
-.car_fv2
-    BPL car_next_span       ; y_min > inner_bot → reject
-.car_not_flat
+    ; === OPT 2: Outer bbox Y reject (0 muls) ===
+    LDY #SP_OUTER_TOP
+    LDA (zp_cl_span_ptr),Y : STA &74
+    LDY #SP_OUTER_BOT
+    LDA (zp_cl_span_ptr),Y : STA &75
+    ; y_max < outer_top?
+    LDA zp_cl_y_max+1
+    BMI car_next_span
+    BNE car_ot_ok
+    LDA zp_cl_y_max : CMP &74
+    BCC car_next_span
+.car_ot_ok
+    ; y_min > outer_bot?
+    LDA zp_cl_y_min+1
+    BMI car_ob_ok
+    BNE car_next_span
+    LDA &75 : CMP zp_cl_y_min
+    BCC car_next_span
+.car_ob_ok
 
     ; === OPT 3: Vertical line fast path ===
     LDA zp_cl_dx : ORA zp_cl_dx+1
     BNE car_do_cb
-
-    ; dx == 0: vertical line at x = x1
     JSR clip_vertical
     BCS car_next_span
     JSR rasterise_clipped
@@ -6775,8 +6897,6 @@ ORG &9B20
 
 .car_do_cb
     ; === OPT 4: Inner bbox trivial accept (non-vertical) ===
-    ; If y_min >= inner_top AND y_max <= inner_bot, line is fully inside.
-    ; Skip full CB, just clamp X to [xlo, xhi-1] via left/right constraints only.
     LDY #SP_INNER_TOP
     SEC
     LDA zp_cl_y_min   : SBC (zp_cl_span_ptr),Y
@@ -6784,7 +6904,7 @@ ORG &9B20
     LDA zp_cl_y_min+1 : SBC (zp_cl_span_ptr),Y
     BVC car_iv1 : EOR #&80
 .car_iv1
-    BMI car_full_cb         ; y_min < inner_top → need full CB
+    BMI car_full_cb
     LDY #SP_INNER_BOT
     SEC
     LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max
@@ -6792,9 +6912,7 @@ ORG &9B20
     LDA (zp_cl_span_ptr),Y : SBC zp_cl_y_max+1
     BVC car_iv2 : EOR #&80
 .car_iv2
-    BMI car_full_cb         ; inner_bot < y_max → need full CB
-
-    ; Trivial accept: skip constraints 3 & 4 (top/bot)
+    BMI car_full_cb
     JSR clip_lr_only
     BCS car_next_span
     JSR rasterise_clipped
@@ -6818,6 +6936,7 @@ ORG &9B20
 
 .car_done
     RTS
+
 }
 
 ; ======================================================================

@@ -394,10 +394,8 @@ def read_span_tuple(ram, base, i):
     return (xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot)
 
 def write_span(ram, base, i, xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot):
-    """Write span i from components.  outer_top/outer_bot are ignored
-    (derivable from tfn/bfn/xlo/xhi).  Bytes 14/15 of the slot are
-    zeroed so Python and 6502 native flush produce bit-identical RAM
-    contents (the 6502 ms_copy_back copies full 16-byte spans)."""
+    """Write span i from components.  Bytes 14/15 store outer_top/outer_bot
+    as u8 clamped to [0, 159] for the 6502 clipper's fast reject/accept."""
     o = span_offset(base, i)
     ram[o + SP_XLO] = xlo & 0xFF
     ram[o + SP_XHI] = xhi & 0xFF
@@ -407,8 +405,8 @@ def write_span(ram, base, i, xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top
     write_s16(ram, o + SP_BINTERCEPT, bfn[1])
     write_s16(ram, o + SP_INNER_TOP, inner_top)
     write_s16(ram, o + SP_INNER_BOT, inner_bot)
-    ram[o + 14] = 0
-    ram[o + 15] = 0
+    ram[o + 14] = max(0, min(159, outer_top))
+    ram[o + 15] = max(0, min(159, outer_bot))
 
 def write_span_from_tuple(ram, base, i, s):
     """Write span i from an 8-tuple (as returned by read_span_tuple)."""
