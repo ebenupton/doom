@@ -96,6 +96,13 @@ zp_ey1       = &3E         ; s16
 zp_ex2       = &40         ; s16
 zp_ey2       = &42         ; s16
 
+; --- Span double-buffer pointers ---
+zp_cspan     = &56         ; u16: pointer to current span base (count byte)
+; After each mark_solid/tighten, swapped with scratch buffer.
+; Eliminates the 44K-cycle copy-back.
+; (Reuses removed zp_cmd_lo/hi slots; must survive entire frame.)
+; zp_dspan removed — dest count managed via self-modifying INC in inc_dest_count
+
 ; --- Reciprocal / projection temps ---
 zp_rxh       = &44         ; u8 recip hi
 zp_rxl       = &45         ; u8 recip lo
@@ -113,8 +120,8 @@ zp_seg_count = &53         ; u8 segs remaining in subsector
 zp_seg_flags = &54         ; u8 seg flags
 
 ; --- Command buffer (REMOVED — now using direct line peripheral) ---
-; zp_cmd_lo    = &56       ; (removed)
-; zp_cmd_hi    = &57       ; (removed)
+; zp_cmd_lo    = &56       ; (removed — now reused as zp_cspan)
+; zp_cmd_hi    = &57       ; (removed — now reused as zp_cspan+1)
 
 ; --- Deferred mark_solid stack (within subsector) ---
 zp_defer_sp  = &58         ; u8 (byte offset into deferred stack)
@@ -484,6 +491,10 @@ QET_TIGHTEN   = 1
     LDA #159 : STA spans_base+SPAN_HDR+12
     LDA #0   : STA spans_base+SPAN_HDR+13  ; inner_bot=159
     STA spans_base+SPAN_HDR+14 : STA spans_base+SPAN_HDR+15  ; pad
+
+    ; Init zp_cspan to point at spans_base (double-buffer current pointer)
+    LDA #LO(spans_base) : STA zp_cspan
+    LDA #HI(spans_base) : STA zp_cspan+1
 
     ; Clear vertex cache valid bitmap (64 bytes)
     LDA #0
@@ -1291,12 +1302,12 @@ QET_TIGHTEN   = 1
 
 .loop_init
     ; ilo_u8 in zp_tmp0, ihi_u8 in zp_tmp1.  Both in [0, 255].
-    LDA spans_base          ; span count
+    LDY #0 : LDA (zp_cspan),Y  ; span count from current buffer
     BEQ no_gap
     STA zp_tmp2             ; remaining count
-    LDA #LO(spans_base + SPAN_HDR)
+    LDA zp_cspan : CLC : ADC #SPAN_HDR
     STA zp_ptr0
-    LDA #HI(spans_base + SPAN_HDR)
+    LDA zp_cspan+1 : ADC #0
     STA zp_ptr0+1
 
 .hg_loop
@@ -1674,12 +1685,14 @@ QET_TIGHTEN   = 1
     LDA zp_ls_y2+1 : STA zp_tmp3+1
 
 .ls_loop_init
-    LDA spans_base
-    BEQ ls_no_spans
+    LDY #0 : LDA (zp_cspan),Y  ; span count from current buffer
+    BNE ls_have_spans
+    JMP ls_no_spans
+.ls_have_spans
     STA zp_ls_count
     LDA #0 : STA zp_ls_found
-    LDA #LO(spans_base + SPAN_HDR) : STA zp_ptr0
-    LDA #HI(spans_base + SPAN_HDR) : STA zp_ptr0+1
+    LDA zp_cspan : CLC : ADC #SPAN_HDR : STA zp_ptr0
+    LDA zp_cspan+1 : ADC #0 : STA zp_ptr0+1
 
 .ls_loop
     ; --- Skip if xhi <= xl (s[1] <= xl) ---
@@ -2689,8 +2702,55 @@ QET_TIGHTEN   = 1
 }
 
 ; ======================================================================
+; Helper: increment the dest buffer's span count (self-modifying).
+; The INC address is patched by setup_dest_buffer.
+; ======================================================================
+.inc_dest_count
+    INC &FFFF             ; address patched at runtime (inc_dest_count+1)
+    RTS
+
+; ======================================================================
+; SETUP_DEST_BUFFER: shared init for mark_solid / tighten.
+; Computes dest=other buffer via EOR on zp_cspan, patches inc_dest_count,
+; zeros dest count, sets zp_mk_out, reads source span count, sets zp_ms_src.
+; Output: A = source span count (or 0 if empty), Z flag set accordingly.
+; ======================================================================
+.setup_dest_buffer
+{
+    ; Compute dest lo via EOR, patch INC and zero-store addresses
+    LDA zp_cspan   : EOR #(LO(spans_base) EOR LO(scratch_spans))
+    STA inc_dest_count + 1
+    STA sdb_zero+1
+    CLC : ADC #SPAN_HDR : STA zp_mk_out
+    ; Compute dest hi via EOR
+    LDA zp_cspan+1 : EOR #(HI(spans_base) EOR HI(scratch_spans))
+    STA inc_dest_count + 2
+    STA sdb_zero+2
+    ADC #0 : STA zp_mk_out+1
+    ; Zero the dest count
+    LDA #0
+.sdb_zero
+    STA &FFFF
+    ; Read source span count and set up src pointer
+    LDY #0 : LDA (zp_cspan),Y : PHA
+    LDA zp_cspan : CLC : ADC #SPAN_HDR : STA zp_ms_src
+    LDA zp_cspan+1 : ADC #0 : STA zp_ms_src+1
+    PLA                     ; restore count to A, sets Z flag
+    RTS
+}
+
+; ======================================================================
+; SWAP_CSPAN: swap zp_cspan between spans_base and scratch_spans.
+; Called at the end of mark_solid / tighten via JMP (tail call).
+; ======================================================================
+.swap_cspan
+    LDA zp_cspan   : EOR #(LO(spans_base) EOR LO(scratch_spans)) : STA zp_cspan
+    LDA zp_cspan+1 : EOR #(HI(spans_base) EOR HI(scratch_spans)) : STA zp_cspan+1
+    RTS
+
+; ======================================================================
 ; Helper: copy a source span from (zp_ms_src) to (zp_mk_out) unchanged,
-; advance zp_mk_out by SPAN_SIZE, and increment scratch_spans count.
+; advance zp_mk_out by SPAN_SIZE, and increment dest span count.
 ; ======================================================================
 .ms_copy_unchanged
 {
@@ -2700,7 +2760,7 @@ QET_TIGHTEN   = 1
     STA (zp_mk_out),Y
     DEY
     BPL msc_loop
-    INC scratch_spans
+    JSR inc_dest_count
     JMP mk_out_advance
 }
 
@@ -2771,50 +2831,13 @@ QET_TIGHTEN   = 1
 }
 
 ; ======================================================================
-; Helper: copy scratch_spans back to spans_base (header + all spans).
-; Count is read from scratch_spans[0].
-; ======================================================================
-.ms_copy_back
-{
-    LDA scratch_spans
-    STA spans_base                    ; copy count
-    BEQ mscb_done                     ; no spans — skip body copy
-    STA zp_tmp0                       ; span count for loop
-    ; src = scratch_spans + SPAN_HDR, dst = spans_base + SPAN_HDR
-    LDA #LO(scratch_spans + SPAN_HDR) : STA zp_ptr0
-    LDA #HI(scratch_spans + SPAN_HDR) : STA zp_ptr0+1
-    LDA #LO(spans_base + SPAN_HDR)    : STA zp_ptr1
-    LDA #HI(spans_base + SPAN_HDR)    : STA zp_ptr1+1
-.mscb_span_loop
-    LDY #SPAN_SIZE - 1
-.mscb_byte_loop
-    LDA (zp_ptr0),Y
-    STA (zp_ptr1),Y
-    DEY
-    BPL mscb_byte_loop
-    ; Advance ptr0, ptr1 by SPAN_SIZE
-    LDA zp_ptr0 : CLC : ADC #SPAN_SIZE : STA zp_ptr0
-    BCC mscb_nc0
-    INC zp_ptr0+1
-.mscb_nc0
-    LDA zp_ptr1 : CLC : ADC #SPAN_SIZE : STA zp_ptr1
-    BCC mscb_nc1
-    INC zp_ptr1+1
-.mscb_nc1
-    DEC zp_tmp0
-    BNE mscb_span_loop
-.mscb_done
-    RTS
-}
-
-; ======================================================================
 ; MARK_SOLID: remove [ilo, ihi) from spans, splitting affected spans.
 ;
-; Mirrors Python's FPClipSpans.mark_solid.  Operates on spans_base,
-; building the new list in scratch_spans, then copying back.
+; Mirrors Python's FPClipSpans.mark_solid.  Uses double-buffered spans:
+; reads from zp_cspan (current), writes to other buffer, then swaps.
 ;
 ; Input:  zp_ms_lo, zp_ms_hi (s16).  ilo = max(0, lo), ihi = min(256, hi+1).
-; Output: spans_base updated.
+; Output: zp_cspan swapped to point at the new span list.
 ; ======================================================================
 .mark_solid
 {
@@ -2863,20 +2886,11 @@ QET_TIGHTEN   = 1
     RTS                             ; ilo >= ihi → no-op
 
 .ms_work
-    ; Init scratch output: count=0, dst_ptr = scratch + SPAN_HDR
-    LDA #0
-    STA scratch_spans
-    LDA #LO(scratch_spans + SPAN_HDR) : STA zp_mk_out
-    LDA #HI(scratch_spans + SPAN_HDR) : STA zp_mk_out+1
-
-    ; Iterate source spans
-    LDA spans_base
+    JSR setup_dest_buffer
     BNE ms_have_spans
     JMP ms_finish                   ; empty input → empty output
 .ms_have_spans
     STA zp_ms_count
-    LDA #LO(spans_base + SPAN_HDR) : STA zp_ms_src
-    LDA #HI(spans_base + SPAN_HDR) : STA zp_ms_src+1
 
 .ms_loop
     JSR ms_load_xlo_xhi             ; zp_ms_xlo16, zp_ms_xhi16
@@ -2932,7 +2946,7 @@ QET_TIGHTEN   = 1
     STA zp_mk_xhi
     JSR make_span
     JSR mk_out_advance
-    INC scratch_spans
+    JSR inc_dest_count
 .ms_lf_skip
 
     ; Right fragment: if ihi < xhi, make_span(ihi, xhi, src fns)
@@ -2954,7 +2968,7 @@ QET_TIGHTEN   = 1
     STA zp_mk_xhi
     JSR make_span
     JSR mk_out_advance
-    INC scratch_spans
+    JSR inc_dest_count
 .ms_rf_skip
 
     JMP ms_next
@@ -2965,9 +2979,7 @@ QET_TIGHTEN   = 1
     JMP ms_loop
 
 .ms_finish
-    ; Copy scratch_spans back to spans_base
-    JSR ms_copy_back
-    RTS
+    JMP swap_cspan
 }
 
 ; ======================================================================
@@ -3046,20 +3058,12 @@ QET_TIGHTEN   = 1
     LDA &6A : STA zp_tg_new_bintercept
     LDA &6B : STA zp_tg_new_bintercept+1
 
-    ; --- Init scratch output ---
-    LDA #0
-    STA scratch_spans
-    LDA #LO(scratch_spans + SPAN_HDR) : STA zp_mk_out
-    LDA #HI(scratch_spans + SPAN_HDR) : STA zp_mk_out+1
-
-    ; --- Iterate source spans ---
-    LDA spans_base
+    ; --- Init dest output (other buffer via EOR) ---
+    JSR setup_dest_buffer
     BNE tg_have_spans
     JMP tg_finish
 .tg_have_spans
     STA zp_ms_count
-    LDA #LO(spans_base + SPAN_HDR) : STA zp_ms_src
-    LDA #HI(spans_base + SPAN_HDR) : STA zp_ms_src+1
 
 .tg_loop
     JSR ms_load_xlo_xhi
@@ -3118,7 +3122,7 @@ QET_TIGHTEN   = 1
     LDA zp_ms_ilo   : STA zp_mk_xhi
     JSR make_span
     JSR mk_out_advance
-    INC scratch_spans
+    JSR inc_dest_count
 .tg_lf_skip
 
     ; ox0 = max(xlo, ilo)
@@ -3233,7 +3237,7 @@ QET_TIGHTEN   = 1
     STA zp_mk_xhi
     JSR make_span
     JSR mk_out_advance
-    INC scratch_spans
+    JSR inc_dest_count
 .tg_rf_skip
 
 .tg_next
@@ -3242,8 +3246,7 @@ QET_TIGHTEN   = 1
     JMP tg_loop
 
 .tg_finish
-    JSR ms_copy_back
-    RTS
+    JMP swap_cspan
 }
 
 ; ======================================================================
@@ -3497,7 +3500,7 @@ QET_TIGHTEN   = 1
     LDY #15 : STA (zp_mk_out),Y
 
     JSR mk_out_advance
-    INC scratch_spans
+    JSR inc_dest_count
 .tges_skip
     RTS
 }
@@ -3580,9 +3583,9 @@ QET_TIGHTEN   = 1
 .fln_next
     ; Python flush has an `if clips.is_full(): break` early-exit after
     ; each op.  is_full() returns True when the span list is empty, i.e.
-    ; spans_base == 0.  Match this behaviour so cumulative span state
+    ; span count == 0.  Match this behaviour so cumulative span state
     ; evolves identically.
-    LDA spans_base
+    LDY #0 : LDA (zp_cspan),Y
     BEQ fln_done
     ; Advance flush_ptr by QE_SIZE
     LDA flush_ptr_lo
@@ -6693,14 +6696,14 @@ ORG &9B20
     LDA zp_cl_y2+1 : STA zp_cl_y_max+1
 
 .car_spans
-    ; Load span count
-    LDA spans_base
+    ; Load span count from current buffer (zp_cspan)
+    LDY #0 : LDA (zp_cspan),Y
     BNE car_has_spans
     RTS
 .car_has_spans
     STA zp_cl_count
-    LDA #LO(spans_base + SPAN_HDR) : STA zp_cl_span_ptr
-    LDA #HI(spans_base + SPAN_HDR) : STA zp_cl_span_ptr+1
+    LDA zp_cspan : CLC : ADC #SPAN_HDR : STA zp_cl_span_ptr
+    LDA zp_cspan+1 : ADC #0 : STA zp_cl_span_ptr+1
 
 .car_span_loop
     LDY #SP_XLO
