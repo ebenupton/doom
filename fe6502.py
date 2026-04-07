@@ -11,7 +11,7 @@ from py65.devices.mpu6502 import MPU
 ROM_WINDOW      = 0x8000
 QSQ_BASE        = 0x5400
 ROM_RECIP_BASE  = 0x4F7E
-CODE_BASE       = 0x2640
+CODE_BASE       = 0x22D2
 SPANS_BASE      = 0x20D0
 ROMSEL          = 0xFE30
 

@@ -8,20 +8,20 @@
 ; Memory map (set up by Python before execution):
 ;   $0000-$00FF  Zero page
 ;   $0100-$01FF  Hardware stack
-;   BSS (zero-initialized, $0200-$263D):
+;   BSS (zero-initialized, $0200-$22D1):
 ;   $0200-$02D7  BSP node stack (72 entries × 3 bytes = 216 bytes)
 ;   $02D8-$02EF  Layout offsets (24B)
-;   $02F0-$02FF  [pad] (16B)
-;   $0300-$066F  Command buffer (880B)
+;   $02F0-$02FF  [pad / saved screen byte at $02F8] (16B)
+;   $0300-$0469  Deferred queue (362B)
+;   $046A-$066B  Scratch spans (514B)
+;   $066C-$066F  [pad]
 ;   $0670-$166F  Vertex cache (4096B)
 ;   $1670-$16AF  Vcache valid bitmap (64B)
 ;   $16B0-$202F  VWH cache (2432B)
 ;   $2030-$20CF  VWH valid bitmap (160B)
 ;   $20D0-$22D1  Spans array (514B)
-;   $22D2-$243B  Deferred queue (362B)
-;   $243C-$263D  Scratch spans (514B)
-;   Code ($2640-$4F7D):
-;   $2640+       Code (this file)
+;   Code ($22D2-$4F7D):
+;   $22D2+       Code (this file)
 ;   Tables ($4F7E-$57FF, loaded from ROM, not zeroed):
 ;   $4F7E-$537F  Reciprocal tables (1026B)
 ;   $5380-$53FF  Sin/cos tables (128B)
@@ -29,7 +29,7 @@
 ;   $5800+       Framebuffers
 ;   $8000-$BFFF  Sideways ROM window (bank-switched via $FE30)
 
-ORG &2640
+ORG &22D2
 
 ; ======================================================================
 ; Zero page assignments
@@ -316,7 +316,7 @@ zp_pw_r0_fn          = &B3   ; u8: 0 = use f, 1 = use g
 zp_pw_r1_fn          = &B4   ; u8: 0 = use f, 1 = use g
 
 ; Scratch span buffer for mark_solid/tighten — written then copied back.
-scratch_spans    = &243C     ; 514-byte buffer
+scratch_spans    = &046A     ; 514-byte buffer
 
 ; Visibility-span hook addresses.  These are intercepted by fe6502.py's
 ; run loop — control never actually reaches those PCs on the real 6502.
@@ -397,14 +397,14 @@ ND_CHL = 10                ; u16 left child
 ; CMD_DONE   = &00
 
 ; Line-drawing peripheral registers
-LINE_X0_LO = &02F0
-LINE_X0_HI = &02F1
-LINE_Y0_LO = &02F2
-LINE_Y0_HI = &02F3
-LINE_X1_LO = &02F4
-LINE_X1_HI = &02F5
-LINE_Y1_LO = &02F6
-LINE_Y1_HI = &02F7         ; write here triggers the draw
+LINE_X0_LO = &A0            ; = zp_cl_x1
+LINE_X0_HI = &A1
+LINE_Y0_LO = &A2            ; = zp_cl_y1
+LINE_Y0_HI = &A3
+LINE_X1_LO = &A4            ; = zp_cl_x2
+LINE_X1_HI = &A5
+LINE_Y1_LO = &A6            ; = zp_cl_y2
+LINE_Y1_HI = &A7
 
 ; Visibility span array (in RAM at spans_base).  Layout mirrors
 ; wad_packed.py's SPAN_* constants.  The 2-byte header stores span
@@ -444,13 +444,13 @@ SP_INNER_BOT  = 12           ; s16
 ;   +16  s16  yb1       (tighten only)
 ;   +18  s16  yb2       (tighten only)
 ;
-queue_count   = &22D2        ; u8 (count of queued entries)
-flush_ptr_lo  = &22D3        ; u8: flush iteration pointer lo (RAM)
-flush_ptr_hi  = &22D4        ; u8: flush iteration pointer hi
-flush_rem     = &22D5        ; u8: queue entries remaining in flush
-bb_log_ptr    = &22D6        ; u8: bbox_cull log write pointer (DIAG)
+queue_count   = &0300        ; u8 (count of queued entries)
+flush_ptr_lo  = &0301        ; u8: flush iteration pointer lo (RAM)
+flush_ptr_hi  = &0302        ; u8: flush iteration pointer hi
+flush_rem     = &0303        ; u8: queue entries remaining in flush
+bb_log_ptr    = &0304        ; u8: bbox_cull log write pointer (DIAG)
 bb_log_base   = &0F00        ; 8 bytes per entry (DIAG)
-queue_base    = &22E0        ; entries start here
+queue_base    = &030E        ; entries start here
 MAX_QUEUE     = 18
 QE_SIZE       = 20
 QE_TYPE       = 0
@@ -5537,9 +5537,9 @@ QET_TIGHTEN   = 1
 }
 
 ; ======================================================================
-; RASTERISE_LINE: read s16 coords from $02F0-$02F7, reject off-screen,
+; RASTERISE_LINE: read s16 coords from ZP $A0-$A7, reject off-screen,
 ; call NJ rasteriser in bank 2 to plot pixels in the screen buffer.
-; On py65 the write to $02F7 already triggers the Python rasteriser via
+; On py65 the write to $A7 already triggers the Python rasteriser via
 ; (rasterise_line removed — replaced by clip_rasterise + bank 2 clipper)
 
 KEY_Z = &61 : KEY_X = &42 : KEY_K = &46 : KEY_M = &65 : TURN_SPEED = 4
@@ -6616,7 +6616,7 @@ bb_far_side = &BE         ; saved far_side
 
 .end_of_code
 
-SAVE "doom_fe.bin", &2640, end_of_code
+SAVE "doom_fe.bin", &22D2, end_of_code
 
 ; ######################################################################
 ; CLIPPER CODE — assembled into ROM bank 2 at $9B20
@@ -6636,15 +6636,7 @@ ORG &9B20
 ; ======================================================================
 .clip_and_rasterise
 {
-    ; Copy LINE registers to ZP
-    LDA LINE_X0_LO : STA zp_cl_x1
-    LDA LINE_X0_HI : STA zp_cl_x1+1
-    LDA LINE_Y0_LO : STA zp_cl_y1
-    LDA LINE_Y0_HI : STA zp_cl_y1+1
-    LDA LINE_X1_LO : STA zp_cl_x2
-    LDA LINE_X1_HI : STA zp_cl_x2+1
-    LDA LINE_Y1_LO : STA zp_cl_y2
-    LDA LINE_Y1_HI : STA zp_cl_y2+1
+    ; LINE registers are now at ZP $A0-$A7 = zp_cl_x1..zp_cl_y2, no copy needed
 
     ; dx = x2 - x1, dy = y2 - y1
     SEC

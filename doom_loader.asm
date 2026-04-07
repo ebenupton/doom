@@ -124,7 +124,7 @@ TURN_SPEED = 4
 
     ; Jump to game loop in doom_fe code region (safe from vcache overwrites)
     ; game_loop address from doom_fe.asm assembly listing
-    JMP &48AB
+    JMP &44DB
 
 ; (Movement routines moved to doom_fe.asm game_loop)
 
@@ -162,7 +162,7 @@ TURN_SPEED = 4
 .cmd_bank0  EQUS "LOAD BANK0 3000" : EQUB 13
 .cmd_bank1  EQUS "LOAD BANK1 3000" : EQUB 13
 .cmd_bank2  EQUS "LOAD BANK2 3000" : EQUB 13
-.cmd_code   EQUS "LOAD CODE 2640"  : EQUB 13
+.cmd_code   EQUS "LOAD CODE 22D2"  : EQUB 13
 .cmd_recip  EQUS "LOAD RECIP 4F7E" : EQUB 13
 .cmd_qsq    EQUS "LOAD QSQ 5400"   : EQUB 13
 
