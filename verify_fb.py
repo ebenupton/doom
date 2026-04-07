@@ -8,7 +8,7 @@ import doom_wireframe as dw
 from fe6502 import Frontend6502
 
 BASELINE = {
-    'E':     '986f7d6caf0dbca1',
+    'E':     'c8b9b1522506ac25',
     'N':     '47164d1347592b35',
     'NE':     '666460ff40ab6058',
     'SE':     '6648ba5f4e68e586',

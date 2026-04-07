@@ -1428,12 +1428,12 @@ QET_TIGHTEN   = 1
     BEQ tl_top_done
     LDA zp_sx1   : STA zp_ls_x1
     LDA zp_sx1+1 : STA zp_ls_x1+1
-    LDA &84      : STA zp_ls_y1     ; bt1_lo
-    LDA &85      : STA zp_ls_y1+1   ; bt1_hi
+    LDA &98      : STA zp_ls_y1     ; bt1_lo
+    LDA &99      : STA zp_ls_y1+1   ; bt1_hi
     LDA zp_sx2   : STA zp_ls_x2
     LDA zp_sx2+1 : STA zp_ls_x2+1
-    LDA &86      : STA zp_ls_y2     ; bt2_lo
-    LDA &87      : STA zp_ls_y2+1
+    LDA &9A      : STA zp_ls_y2     ; bt2_lo
+    LDA &9B      : STA zp_ls_y2+1
     JSR line_survives
     BCC tl_top_done
     LDA #1 : STA zp_top_dom
@@ -1465,8 +1465,8 @@ QET_TIGHTEN   = 1
     BEQ yt_use_ft
     ; yt1 = max(ft1, bt1): ft1 - bt1 >= 0 ? pick ft1 : pick bt1
     SEC
-    LDA zp_ft1 : SBC &84
-    LDA zp_ft1+1 : SBC &85
+    LDA zp_ft1 : SBC &98
+    LDA zp_ft1+1 : SBC &99
     BVC yt1_nov
     EOR #&80
 .yt1_nov
@@ -1475,13 +1475,13 @@ QET_TIGHTEN   = 1
     LDA zp_ft1+1 : STA zp_tmp0+1
     JMP yt1_done
 .yt1_pick_bt1
-    LDA &84 : STA zp_tmp0
-    LDA &85 : STA zp_tmp0+1
+    LDA &98 : STA zp_tmp0
+    LDA &99 : STA zp_tmp0+1
 .yt1_done
     ; yt2 = max(ft2, bt2)
     SEC
-    LDA zp_ft2 : SBC &86
-    LDA zp_ft2+1 : SBC &87
+    LDA zp_ft2 : SBC &9A
+    LDA zp_ft2+1 : SBC &9B
     BVC yt2_nov
     EOR #&80
 .yt2_nov
@@ -1490,8 +1490,8 @@ QET_TIGHTEN   = 1
     LDA zp_ft2+1 : STA zp_tmp1+1
     JMP yt_done
 .yt2_pick_bt2
-    LDA &86 : STA zp_tmp1
-    LDA &87 : STA zp_tmp1+1
+    LDA &9A : STA zp_tmp1
+    LDA &9B : STA zp_tmp1+1
     JMP yt_done
 .yt_use_ft
     LDA zp_ft1   : STA zp_tmp0
@@ -4132,6 +4132,8 @@ QET_TIGHTEN   = 1
     ; Portal — draw lines and queue a deferred tighten.  queue_tighten
     ; reads sx/ft/fb/bt/bb directly from their render_seg ZP slots.
     JSR draw_portal_lines
+    ; NB: rasteriser clobbered $80-$87 during drawing. queue_tighten
+    ; reads bt1/bt2 from $98-$9B (saved by draw_portal_lines) instead.
     JSR queue_tighten
     RTS
 
