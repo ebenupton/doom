@@ -93,7 +93,7 @@ for slope, x, intercept in test_vals:
 print(f"  fp_eval: {n_ok} OK, {n_fail} FAIL")
 
 # Test make_span
-SCRATCH_OUT = 0x243C  # write output here
+SCRATCH_OUT = 0x046A  # write output here
 print("\nTesting make_span...")
 n_ok, n_fail = 0, 0
 

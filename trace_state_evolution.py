@@ -26,8 +26,8 @@ dw.render_subsector_fp = _py_render_ss
 
 # ── Trace 6502: capture spans at each flush hook call ──
 hw_states = []
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 # Also capture which subsector the 6502 just flushed.  We need to read
 # zp_seg_hdr_ptr AT ENTRY to render_subsector; simplest proxy is the value
 # of zp_tmp0 seen by render_subsector, which is the ssid.  Since

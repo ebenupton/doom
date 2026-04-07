@@ -62,8 +62,8 @@ else:
 
 # ── Capture 6502's values for seg 672 ──
 captured = {}
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 _orig_hg = spans6502.SpanState.has_gap
 def _hw_hg(self, mpu):
     ptr = self.mem[0x5E] | (self.mem[0x5F] << 8)

@@ -1,130 +1,82 @@
 #!/usr/bin/env python3
-"""Unit test for native 6502 tighten against Python FPClipSpans.tighten."""
-import os
+"""Unit test: call 6502 tighten with the exact inputs from the failing case."""
+import os, sys, subprocess
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 
 import doom_wireframe as dw
-import fe6502
-import subprocess
-from wad_packed import SPAN_HDR, SPAN_SIZE, read_all_spans, write_all_spans
-from fp import fp_eval
+from fe6502 import Frontend6502, CODE_BASE, SPANS_BASE
 
-fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
-                          dw.packed_bbox_table, dw.packed_layout)
-mpu = fe.mpu
-mem = mpu.memory
+SPAN_SIZE = 16; SPAN_HDR = 2
+SP_XLO=0; SP_XHI=1; SP_TSLOPE=2; SP_BSLOPE=4
+SP_TINTERCEPT=6; SP_BINTERCEPT=8; SP_INNER_TOP=10; SP_INNER_BOT=12
+SP_OUTER_TOP=14; SP_OUTER_BOT=15
 
-r = subprocess.run(['./beebasm', '-i', 'doom_fe.asm', '-v'],
-                    capture_output=True, text=True)
-addrs = {}
-for i, line in enumerate(r.stdout.split('\n')):
-    s = line.strip()
-    if s in ('.tighten',):
-        nl = r.stdout.split('\n')[i+1].strip()
-        addrs[s[1:]] = int(nl.split()[0], 16)
-print(f"tighten at ${addrs['tighten']:04X}")
+result = subprocess.run(['./beebasm', '-i', 'doom_fe.asm', '-v'], capture_output=True, text=True)
+ADDR_TIGHTEN = None
+for i, line in enumerate(result.stdout.split('\n')):
+    if line.strip() == '.tighten':
+        ADDR_TIGHTEN = int(result.stdout.split('\n')[i+1].strip().split()[0], 16)
+        break
+print(f"tighten: ${ADDR_TIGHTEN:04X}")
 
-SPANS_BASE = 0x20D0
-ZP_MS_LO = 0xF0
-ZP_MS_HI = 0xF2
-# tighten expects sx/y values at $60-$67 + zp_tg_ox0 ($90) / ox1 ($92)
-ZP_Y1 = 0x60  # yt1 (fp_linfn)
-ZP_Y2 = 0x62  # yt2
-ZP_SX1 = 0x64  # sx1
-ZP_SX2 = 0x66  # sx2
-ZP_TG_OX0 = 0x90  # stash for yb1
-ZP_TG_OX1 = 0x92  # stash for yb2
+def write_s16(mem, addr, val):
+    v = val & 0xFFFF
+    mem[addr] = v & 0xFF; mem[addr+1] = (v >> 8) & 0xFF
 
-def ws16(a, v):
-    mem[a] = v & 0xFF
-    mem[a+1] = (v >> 8) & 0xFF
+def read_s16(mem, addr):
+    v = mem[addr] | (mem[addr+1] << 8)
+    return v - 65536 if v >= 32768 else v
 
-def call(addr):
-    mpu.sp = 0xFD
-    mem[0x01FF] = 0xFE
-    mem[0x01FE] = 0xFF
-    mpu.pc = addr
-    for _ in range(200000):
-        pc = mpu.pc
-        if pc == 0xFF00 or pc == 0x0000:
-            break
-        mpu.step()
+fe = Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                  dw.packed_bbox_table, dw.packed_layout)
+mem = fe.mpu.memory; mpu = fe.mpu
 
-def setup_spans(span_list):
-    """Write list of (xlo, xhi, tfn, bfn) to SPANS_BASE."""
-    mem[SPANS_BASE] = len(span_list)
-    mem[SPANS_BASE + 1] = 0
-    for i, (xlo, xhi, tfn, bfn) in enumerate(span_list):
-        o = SPANS_BASE + SPAN_HDR + i * SPAN_SIZE
-        mem[o + 0] = xlo & 0xFF
-        mem[o + 1] = xhi & 0xFF
-        ws16(o + 2, tfn[0])
-        ws16(o + 4, bfn[0])
-        ws16(o + 6, tfn[1])
-        ws16(o + 8, bfn[1])
-        xhi_s = 256 if xhi == 0 else xhi
-        ws16(o + 10, max(fp_eval(tfn, xlo), fp_eval(tfn, xhi_s - 1)))
-        ws16(o + 12, min(fp_eval(bfn, xlo), fp_eval(bfn, xhi_s - 1)))
+# Initial span: [0,256) with top=(0,0), bot=(0,159)
+spans_buf = SPANS_BASE
+mem[0x56] = spans_buf & 0xFF; mem[0x57] = (spans_buf >> 8) & 0xFF
+mem[spans_buf] = 1; mem[spans_buf + 1] = 0
+s = spans_buf + SPAN_HDR
+mem[s + SP_XLO] = 0; mem[s + SP_XHI] = 0  # 0=256
+write_s16(mem, s + SP_TSLOPE, 0); write_s16(mem, s + SP_BSLOPE, 0)
+write_s16(mem, s + SP_TINTERCEPT, 0); write_s16(mem, s + SP_BINTERCEPT, 159)
+write_s16(mem, s + SP_INNER_TOP, 0); write_s16(mem, s + SP_INNER_BOT, 159)
+mem[s + SP_OUTER_TOP] = 0; mem[s + SP_OUTER_BOT] = 159
 
-def read_spans():
-    return read_all_spans(mem, SPANS_BASE)
+alt_buf = 0x046A
+mem[alt_buf] = 0; mem[alt_buf + 1] = 0
 
-def py_tighten(span_list, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
-    clip = dw.FPClipSpans()
-    clip.spans = []
-    for xlo, xhi, tfn, bfn in span_list:
-        xhi_s = 256 if xhi == 0 else xhi
-        it = max(fp_eval(tfn, xlo), fp_eval(tfn, xhi_s - 1))
-        ib = min(fp_eval(bfn, xlo), fp_eval(bfn, xhi_s - 1))
-        ot = min(fp_eval(tfn, xlo), fp_eval(tfn, xhi_s - 1))
-        ob = max(fp_eval(bfn, xlo), fp_eval(bfn, xhi_s - 1))
-        clip.spans.append((xlo, xhi_s, tfn, bfn, it, ib, ot, ob))
-    clip.tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2, False, False)
-    return clip.spans
+# Tighten inputs: lo=-78, hi=470, yt1=12, yt2=12, sx1=-78, sx2=470, yb1=183, yb2=183
+write_s16(mem, 0xF0, -78); write_s16(mem, 0xF2, 470)
+write_s16(mem, 0x60, 12); write_s16(mem, 0x62, 12)
+write_s16(mem, 0x64, -78); write_s16(mem, 0x66, 470)
+write_s16(mem, 0x90, 183); write_s16(mem, 0x92, 183)
 
-tests = [
-    # Single full-screen span, tighten middle with a sloped top
-    ([(0, 0, (0, 0), (0, 159))], 64, 192, 64, 192, 20, 30, 100, 100),
-    # Tighten with slopes that match source (no change)
-    ([(0, 0, (0, 0), (0, 159))], 0, 255, 0, 255, 0, 0, 159, 159),
-    # Tighten a portion with new bounds both tighter
-    ([(0, 0, (0, 0), (0, 159))], 50, 200, 50, 200, 40, 60, 110, 110),
-    # Multiple spans
-    ([(0, 64, (0, 0), (0, 159)), (64, 128, (5, 20), (-5, 130)),
-      (128, 192, (0, 30), (0, 100)), (192, 0, (10, 10), (-10, 140))],
-     70, 180, 70, 180, 50, 50, 100, 100),
-    # Tighten with top dominating throughout
-    ([(0, 0, (0, 0), (0, 159))], 0, 255, 0, 255, 50, 50, 150, 150),
-]
+mem[0xFF00] = 0x00
+mpu.pc = ADDR_TIGHTEN; mpu.sp = 0xFD; mpu.p = 0x30
+mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF; mpu.processorCycles = 0
 
-n_ok, n_fail = 0, 0
-for spans_in, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2 in tests:
-    setup_spans(spans_in)
-    ws16(ZP_MS_LO, lo)
-    ws16(ZP_MS_HI, hi)
-    ws16(ZP_Y1, yt1)
-    ws16(ZP_Y2, yt2)
-    ws16(ZP_SX1, sx1)
-    ws16(ZP_SX2, sx2)
-    ws16(ZP_TG_OX0, yb1)
-    ws16(ZP_TG_OX1, yb2)
-    call(addrs['tighten'])
-    got = read_spans()
-    py_result = py_tighten(spans_in, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)
-    # Compare ignoring outer_top/outer_bot (asm doesn't store them)
-    got_simple = [(s[0], s[1], s[2], s[3], s[4], s[5]) for s in got]
-    py_simple = [(s[0], s[1], s[2], s[3], s[4], s[5]) for s in py_result]
-    if got_simple == py_simple:
-        n_ok += 1
-    else:
-        n_fail += 1
-        print(f"  FAIL: lo={lo} hi={hi} sx=({sx1},{sx2}) yt=({yt1},{yt2}) yb=({yb1},{yb2})")
-        print(f"    in: {spans_in}")
-        print(f"    expected ({len(py_simple)}):")
-        for s in py_simple: print(f"      {s}")
-        print(f"    got ({len(got_simple)}):")
-        for s in got_simple: print(f"      {s}")
+for _ in range(500000):
+    if mpu.pc == 0xFF00: break
+    mpu.step()
 
-print(f"\n{n_ok} OK, {n_fail} FAIL")
+cspan = mem[0x56] | (mem[0x57] << 8)
+print(f"cspan after: ${cspan:04X}")
+count = mem[cspan]
+print(f"Count: {count}")
+base = cspan + SPAN_HDR
+for i in range(count):
+    a = base + i * SPAN_SIZE
+    xlo = mem[a]; xhi_raw = mem[a+1]; xhi = xhi_raw if xhi_raw else 256
+    ta = read_s16(mem, a + SP_TSLOPE); ba = read_s16(mem, a + SP_BSLOPE)
+    tb = read_s16(mem, a + SP_TINTERCEPT); bb = read_s16(mem, a + SP_BINTERCEPT)
+    it = read_s16(mem, a + SP_INNER_TOP); ib = read_s16(mem, a + SP_INNER_BOT)
+    ot = mem[a + SP_OUTER_TOP]; ob = mem[a + SP_OUTER_BOT]
+    print(f"  [{i}] xlo={xlo} xhi={xhi} ta={ta} ba={ba} tb={tb} bb={bb} inner=[{it},{ib}] outer=[{ot},{ob}]")
+print(f"\nExpected: tb=12 bb=159")
+if count >= 1:
+    tb = read_s16(mem, base + SP_TINTERCEPT)
+    bb = read_s16(mem, base + SP_BINTERCEPT)
+    print(f"Got:      tb={tb} bb={bb}")
+    print("CORRECT!" if tb == 12 and bb == 159 else f"BUG: tb={tb} (expected 12)")

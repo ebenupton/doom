@@ -65,10 +65,11 @@ Architecture enables:
 import os, struct, math, sys, random, pygame
 from line6502 import estimate_line_cycles
 import fp as fp_module
+from endpoint_spans import EndpointClipSpans
 from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
                 fp_recip, fp_project_x, fp_project_x_subpx, fp_project_y,
-                fp_linfn, fp_eval, fp_eval_88, fp_view_context, fp_to_view, fp_near_clip, fp_clip_to_trap,
+                fp_linfn, fp_eval, fp_eval_88, fp_view_context, fp_to_view, fp_near_clip,
                 FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
                 MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
@@ -649,10 +650,10 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
         ctx: fp_view_context result (prescaled player + rotated frac)
     """
     from fp import (PRESCALE as _PRESCALE, MAP_CENTER_X as _MCX,
-                     MAP_CENTER_Y as _MCY, FP_RENDER_W as _FPW,
-                     NEAR_FP as _NEAR, fp_to_view as _fp_to_view,
-                     fp_recip as _fp_recip, fp_project_x as _fp_project_x,
-                     m8 as _m8)
+                         MAP_CENTER_Y as _MCY, FP_RENDER_W as _FPW,
+                         NEAR_FP as _NEAR, fp_to_view as _fp_to_view,
+                         fp_recip as _fp_recip, fp_project_x as _fp_project_x,
+                         m8 as _m8)
     base = 4 + far_side * 4
     rt_raw, rb_raw, rl_raw, rr_raw = (
         node[base], node[base + 1], node[base + 2], node[base + 3])
@@ -847,518 +848,8 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
 # 8-bit screen coordinates throughout.  Slopes are 0.8, intercepts are 8.0.
 # All multiplies are 8x8.
 
-FP_ZERO_FN = (0, 0)                     # slope=0, intercept=0
-FP_BOT_FN  = (0, FP_RENDER_H - 1)      # slope=0, intercept=159
 
 
-class FPClipSpans:
-    """Fixed-point version of ClipSpans — pure 8-bit screen coordinates.
-
-    Spans store xlo/xhi in 8.0 (pixel coords), top/bot as (slope_8, intercept)
-    where slope_8 is 0.8 signed and intercept is 8.0.
-    All multiplies are 8x8.
-    """
-    __slots__ = ("spans",)
-
-    @staticmethod
-    def _make_span(xlo, xhi, tfn, bfn):
-        """Create span tuple with precomputed inner and outer bbox."""
-        if xlo >= xhi:
-            return None
-        top_l = fp_eval(tfn, xlo)
-        top_r = fp_eval(tfn, xhi - 1)
-        bot_l = fp_eval(bfn, xlo)
-        bot_r = fp_eval(bfn, xhi - 1)
-        inner_top = max(top_l, top_r)  # tightest ceiling (accept threshold)
-        inner_bot = min(bot_l, bot_r)  # tightest floor (accept threshold)
-        outer_top = min(top_l, top_r)  # loosest ceiling (reject threshold)
-        outer_bot = max(bot_l, bot_r)  # loosest floor (reject threshold)
-        return (xlo, xhi, tfn, bfn, inner_top, inner_bot, outer_top, outer_bot)
-
-    def __init__(self):
-        self.spans = [self._make_span(0, FP_RENDER_W, FP_ZERO_FN, FP_BOT_FN)]
-
-    def is_full(self):
-        return not self.spans
-
-    def has_gap(self, lo, hi):
-        """Check if any span in [lo, hi] has positive aperture.
-
-        Linear top/bottom: only need to check overlap endpoints.
-        """
-        ilo = max(0, lo)
-        ihi = min(FP_RENDER_W - 1, hi)
-        for s in self.spans:
-            xlo, xhi = s[0], s[1]
-            if xlo > ihi:
-                break
-            if xhi <= ilo:
-                continue
-            # Quick check via precomputed inner bbox
-            if s[4] < s[5]:  # inner_top < inner_bot → aperture exists
-                return True
-        return False
-
-    def line_survives(self, lx1, ly1, lx2, ly2):
-        """Check if a horizontal-ish line passes through all overlapping spans.
-
-        Returns True if the line's Y bbox is inside every overlapping span's
-        inner bbox — meaning the corresponding tighten boundary would dominate.
-        Zero muls (precomputed bbox comparisons only).
-        """
-        if abs(lx1 - lx2) < 1:
-            return False
-        xl, xr = (lx1, lx2) if lx1 <= lx2 else (lx2, lx1)
-        y_lo, y_hi = min(ly1, ly2), max(ly1, ly2)
-        found = False
-        for s in self.spans:
-            if s[1] <= xl or s[0] >= xr:
-                continue
-            found = True
-            if y_lo < s[4] or y_hi > s[5]:
-                return False
-        return found
-
-    def draw_clipped(self, lines, color, surface, stats=None):
-        """Clip each line analytically to each overlapping span, then draw.
-
-        Lines are in 8.0 screen pixel coordinates — direct to pygame.
-        """
-        for lx1, ly1, lx2, ly2 in lines:
-            if stats is not None:
-                stats[0] += 1
-            drawn = False
-            was_clipped = False
-
-            # Nearly vertical line (less than 1 pixel wide)
-            if abs(lx1 - lx2) < 1:
-                ix = lx1
-                if ix < 0 or ix >= FP_RENDER_W:
-                    if stats is not None:
-                        stats[3] += 1
-                    continue
-                found_span = False
-                for _vs in self.spans:
-                    xlo, xhi, tfn, bfn = _vs[:4]
-                    if xlo <= ix < xhi:
-                        found_span = True
-                        y_lo_v = min(ly1, ly2)
-                        y_hi_v = max(ly1, ly2)
-                        # Trivial reject via outer bbox (0 muls)
-                        if y_hi_v < _vs[6] or y_lo_v > _vs[7]:
-                            break
-                        # Trivial accept via inner bbox (0 muls)
-                        if y_lo_v >= _vs[4] and y_hi_v <= _vs[5]:
-                            pygame.draw.line(surface, _rand_color(),
-                                             (ix, y_lo_v), (ix, y_hi_v), 1)
-                            drawn = True
-                            break
-                        # Precise clip with 8.8 precision
-                        yt_88 = fp_eval_88(tfn, ix)
-                        yb_88 = fp_eval_88(bfn, ix)
-                        if yt_88 >= yb_88:
-                            break
-                        ya_orig_88 = y_lo_v << 8
-                        yb_orig_88 = y_hi_v << 8
-                        ya_88 = max(ya_orig_88, yt_88)
-                        ybb_88 = min(yb_orig_88, yb_88)
-                        if ya_88 < ybb_88:
-                            pygame.draw.line(surface, _rand_color(),
-                                             (ix, ya_88 >> 8), (ix, ybb_88 >> 8), 1)
-                            drawn = True
-                            if ya_88 > ya_orig_88 or ybb_88 < yb_orig_88:
-                                was_clipped = True
-                        break
-                if not drawn and stats is not None:
-                    stats[3 if not found_span else 4] += 1
-            else:
-                # Order left-to-right for the walk
-                if lx1 <= lx2:
-                    xl, yl, xr, yr = lx1, ly1, lx2, ly2
-                else:
-                    xl, yl, xr, yr = lx2, ly2, lx1, ly1
-                dx = xr - xl
-
-                # Collect overlapping spans
-                active = []
-                for s in self.spans:
-                    if s[1] > xl and s[0] < xr:
-                        active.append(s)
-
-                if not active:
-                    if stats is not None:
-                        stats[3] += 1
-                    continue
-
-                # Walk spans in contiguous groups.  For each group, run a
-                # portal walk: if the line passes through all portals in
-                # the group, draw that portion as one line.  Otherwise
-                # fall back to per-span Cyrus-Beck for that group only.
-                y_lo = min(yl, yr)
-                y_hi = max(yl, yr)
-
-                def _line_y_at(x):
-                    """Exact line Y at x (Python int math, only called on bbox failure)."""
-                    if dx == 0: return yl
-                    return yl + (yr - yl) * (x - xl) // dx
-
-                # No _dev needed — use slope directly as 0.8 deviation
-
-                def _portal_ok_range(group, lo, hi):
-                    """Check portals between group[lo] and group[hi]."""
-                    for i in range(lo, hi):
-                        xhi = group[i][1]
-                        tfn, bfn = group[i][2], group[i][3]
-                        n_tfn, n_bfn = group[i + 1][2], group[i + 1][3]
-                        portal_top = max(fp_eval(tfn, xhi), fp_eval(n_tfn, xhi))
-                        portal_bot = min(fp_eval(bfn, xhi), fp_eval(n_bfn, xhi))
-                        if y_lo < portal_top or y_hi > portal_bot:
-                            ly = _line_y_at(xhi)
-                            if ly < portal_top or ly > portal_bot:
-                                return False
-                    return True
-
-                # Split active spans into contiguous groups
-                groups = []
-                cur_group = [active[0]]
-                for i in range(1, len(active)):
-                    if active[i - 1][1] == active[i][0]:
-                        cur_group.append(active[i])
-                    else:
-                        groups.append(cur_group)
-                        cur_group = [active[i]]
-                groups.append(cur_group)
-
-                for group in groups:
-                    # Single-span: trivial reject/accept cascade (0 muls fast path).
-                    if len(group) == 1:
-                        xlo, xhi, tfn, bfn = group[0][:4]
-                        ex = max(xl, xlo)
-                        xx = min(xr, xhi - 1)
-                        # Check against precomputed bboxes (0 muls).
-                        if y_hi < group[0][6] or y_lo > group[0][7]:
-                            continue  # trivial reject via outer bbox
-                        trivial = y_lo >= group[0][4] and y_hi <= group[0][5]
-                        if trivial:
-                            # Fully inside — draw original line clamped to span
-                            draw_yl = _line_y_at(ex) if ex != xl else yl
-                            draw_yr = _line_y_at(xx) if xx != xr else yr
-                            draw_yl = max(0, min(FP_RENDER_H - 1, draw_yl))
-                            draw_yr = max(0, min(FP_RENDER_H - 1, draw_yr))
-                            pygame.draw.line(surface, _rand_color(),
-                                             (ex, draw_yl), (xx, draw_yr), 1)
-                            drawn = True
-                            continue
-                        # Need CB clipping
-                        c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[0][:4])
-                        if c:
-                            pygame.draw.line(surface, _rand_color(),
-                                             (c[0], c[1]), (c[2], c[3]), 1)
-                            drawn = True
-                        continue
-
-                    # Multi-span: use precomputed inner bbox per span (0 muls at check time).
-                    # Trivial reject via outer bbox (loosest bounds across group)
-                    group_outer_top = min(s[6] for s in group)
-                    group_outer_bot = max(s[7] for s in group)
-                    if y_hi < group_outer_top or y_lo > group_outer_bot:
-                        continue
-                    # Trivial accept via inner bbox (tightest bounds across group)
-                    group_inner_top = max(s[4] for s in group)
-                    group_inner_bot = min(s[5] for s in group)
-                    if y_lo >= group_inner_top and y_hi <= group_inner_bot:
-                        # Trivial accept: line fully inside all spans (0 muls)
-                        draw_xl = max(xl, group[0][0])
-                        draw_xr = min(xr, group[-1][1] - 1)
-                        draw_yl = _line_y_at(draw_xl) if draw_xl != xl else yl
-                        draw_yr = _line_y_at(draw_xr) if draw_xr != xr else yr
-                        draw_yl = max(0, min(FP_RENDER_H - 1, draw_yl))
-                        draw_yr = max(0, min(FP_RENDER_H - 1, draw_yr))
-                        pygame.draw.line(surface, _rand_color(),
-                                         (draw_xl, draw_yl),
-                                         (draw_xr, draw_yr), 1)
-                        drawn = True
-                        continue
-
-                    # Scan inward for first and last visible spans
-                    c_first, c_last = None, None
-                    fi, li = 0, len(group) - 1
-                    for fi in range(len(group)):
-                        c_first = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[fi][:4])
-                        if c_first: break
-                    if not c_first:
-                        continue
-                    # Scan from right for last visible span
-                    for li in range(len(group) - 1, fi, -1):
-                        c_last = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[li][:4])
-                        if c_last: break
-                    if not c_last:
-                        # Only fi produced output
-                        pygame.draw.line(surface, _rand_color(),
-                                         (c_first[0], c_first[1]),
-                                         (c_first[2], c_first[3]), 1)
-                        drawn = True
-                        continue
-                    if _portal_ok_range(group, fi, li):
-                        # Portals pass — draw one line from first to last
-                        pygame.draw.line(surface, _rand_color(),
-                                         (c_first[0], c_first[1]),
-                                         (c_last[2], c_last[3]), 1)
-                        drawn = True
-                    else:
-                        # Portal failed — per-span CB for visible range
-                        for si in range(fi, li + 1):
-                            c = fp_clip_to_trap(lx1, ly1, lx2, ly2, *group[si][:4])
-                            if c:
-                                pygame.draw.line(surface, _rand_color(),
-                                                 (c[0], c[1]),
-                                                 (c[2], c[3]), 1)
-                                drawn = True
-                                was_clipped = True
-                if not drawn and stats is not None:
-                    stats[3 if not active else 4] += 1
-            if drawn and stats is not None:
-                stats[2 if was_clipped else 1] += 1
-
-    def _clip_and_record(self, lx1, ly1, lx2, ly2, output):
-        """Clip one line against all spans using per-span Cyrus-Beck.
-
-        Uses fp_clip_to_trap for every span — same algorithm as the 6502
-        clipper so verification produces exact match."""
-        for s in self.spans:
-            c = fp_clip_to_trap(lx1, ly1, lx2, ly2, s[0], s[1], s[2], s[3])
-            if c:
-                output.append(c)
-
-    def mark_solid(self, lo, hi):
-        """Remove [ilo, ihi) from spans.  All values in 8.0 pixels."""
-        ilo = max(0, lo)
-        ihi = min(FP_RENDER_W, hi + 1)
-        if ilo >= ihi:
-            return
-        new = []
-        for s in self.spans:
-            xlo, xhi = s[0], s[1]
-            if xhi <= ilo or xlo >= ihi:
-                new.append(s)
-                continue
-            if xlo < ilo:
-                ns = self._make_span(xlo, ilo, s[2], s[3])
-                if ns: new.append(ns)
-            if ihi < xhi:
-                ns = self._make_span(ihi, xhi, s[2], s[3])
-                if ns: new.append(ns)
-        self.spans = new
-
-    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                top_dom=False, bot_dom=False):
-        """Tighten top/bottom over [ilo, ihi).  All values in 8.0 pixels.
-
-        top_dom/bot_dom: if True, the new top/bot boundary dominates all
-        existing spans (detected by line_survives).  When both dominate,
-        all affected spans collapse into one — skipping piecewise max/min.
-
-        NOTE: the both-dominate fast path is disabled so that the 6502
-        native tighten (which implements only the general path) produces
-        bit-identical span state.  The two paths differ only in that
-        both-dominate merges adjacent affected spans into one; the
-        general path leaves them as separate but functionally identical
-        spans.  Drawn-seg counts are unaffected.
-        """
-        top_dom = False
-        bot_dom = False
-        ilo = max(0, lo)
-        ihi = min(FP_RENDER_W, hi + 1)
-        if ilo >= ihi:
-            return
-        new_tfn = fp_linfn(yt1, yt2, sx1, sx2)
-        new_bfn = fp_linfn(yb1, yb2, sx1, sx2)
-
-        if top_dom and bot_dom:
-            # Both boundaries dominate — merge all affected spans into one.
-            # Skip piecewise max/min entirely.
-            new = []
-            merge_x0, merge_x1 = ihi, ilo  # will be overwritten
-            for s in self.spans:
-                xlo, xhi = s[0], s[1]
-                if xhi <= ilo or xlo >= ihi:
-                    new.append(s)
-                    continue
-                if xlo < ilo:
-                    ns = self._make_span(xlo, ilo, s[2], s[3])
-                    if ns: new.append(ns)
-                # Track the merged range
-                merge_x0 = min(merge_x0, max(xlo, ilo))
-                merge_x1 = max(merge_x1, min(xhi, ihi))
-                if ihi < xhi:
-                    ns = self._make_span(ihi, xhi, s[2], s[3])
-                    if ns: new.append(ns)
-            # Insert the single merged span
-            if merge_x0 < merge_x1:
-                ns = self._make_span(merge_x0, merge_x1, new_tfn, new_bfn)
-                if ns:
-                    # Insert in sorted X order
-                    inserted = False
-                    for i, s in enumerate(new):
-                        if s[0] >= merge_x0:
-                            new.insert(i, ns)
-                            inserted = True
-                            break
-                    if not inserted:
-                        new.append(ns)
-            self.spans = new
-            return
-
-        new = []
-        for s in self.spans:
-            xlo, xhi = s[0], s[1]
-            tfn, bfn = s[2], s[3]
-            if xhi <= ilo or xlo >= ihi:
-                new.append(s)
-                continue
-            if xlo < ilo:
-                ns = self._make_span(xlo, ilo, tfn, bfn)
-                if ns: new.append(ns)
-            right_s = self._make_span(ihi, xhi, tfn, bfn) if ihi < xhi else None
-            ox0, ox1 = max(xlo, ilo), min(xhi, ihi)
-            for tx0, tx1, t_fn in _fp_pw_max(tfn, new_tfn, ox0, ox1):
-                for bx0, bx1, b_fn in _fp_pw_min(bfn, new_bfn, tx0, tx1):
-                    if bx1 > bx0:
-                        t0 = fp_eval(t_fn, bx0)
-                        b0 = fp_eval(b_fn, bx0)
-                        t1 = fp_eval(t_fn, bx1 - 1)
-                        b1 = fp_eval(b_fn, bx1 - 1)
-                        if t0 < b0 or t1 < b1:
-                            new.append((bx0, bx1, t_fn, b_fn,
-                                        max(t0, t1), min(b0, b1),
-                                        min(t0, t1), max(b0, b1)))
-            if right_s:
-                new.append(right_s)
-        self.spans = new
-
-
-class PackedClipSpans(FPClipSpans):
-    """FPClipSpans backed by a RAM byte array.
-
-    Delegates all logic to FPClipSpans but syncs the spans list to/from
-    the packed byte array representation after every mutation.  The byte
-    array is the canonical storage — this class reads it on entry to each
-    method and writes it back after mutations.
-    """
-
-    def __init__(self, ram, spans_base):
-        super().__init__()
-        self._ram = ram
-        self._base = spans_base
-        # Write initial span to RAM
-        self._flush()
-
-    def _load(self):
-        """Load spans from RAM byte array into Python list."""
-        from wad_packed import read_all_spans
-        self.spans = read_all_spans(self._ram, self._base)
-
-    def _flush(self):
-        """Write Python span list back to RAM byte array."""
-        from wad_packed import write_all_spans
-        write_all_spans(self._ram, self._base, self.spans)
-
-    def is_full(self):
-        self._load()
-        return super().is_full()
-
-    def has_gap(self, lo, hi):
-        self._load()
-        return super().has_gap(lo, hi)
-
-    def draw_clipped(self, lines, color, surface, stats=None):
-        self._load()
-        super().draw_clipped(lines, color, surface, stats)
-
-    def mark_solid(self, lo, hi):
-        self._load()
-        super().mark_solid(lo, hi)
-        self._flush()
-
-    def tighten(self, *args, **kwargs):
-        self._load()
-        super().tighten(*args, **kwargs)
-        self._flush()
-
-    def line_survives(self, lx1, ly1, lx2, ly2):
-        self._load()
-        return super().line_survives(lx1, ly1, lx2, ly2)
-
-
-def _fp_pw_max(f, g, x0, x1):
-    """Piecewise max of two 8-bit linear functions over [x0, x1).
-
-    All x values in 8.0.  Functions are (slope_8, intercept).
-    Returns list of (x0, x1, winning_fn).
-    """
-    fv0 = fp_eval(f, x0)
-    gv0 = fp_eval(g, x0)
-    fv1 = fp_eval(f, x1 - 1)
-    gv1 = fp_eval(g, x1 - 1)
-    d0, d1 = fv0 - gv0, fv1 - gv1
-    if d0 >= 0 and d1 >= 0:
-        return [(x0, x1, f)]
-    if d0 <= 0 and d1 <= 0:
-        return [(x0, x1, g)]
-    # Crossover
-    fvx1 = fp_eval(f, x1)
-    gvx1 = fp_eval(g, x1)
-    dx0 = fv0 - gv0
-    dx1 = fvx1 - gvx1
-    denom = dx0 - dx1
-    if abs(denom) < 1:
-        return [(x0, x1, f if d0 >= 0 else g)]
-    span = x1 - x0
-    cx = x0 + (dx0 * span) // denom
-    cx = max(x0 + 1, min(x1 - 1, cx))
-    if fp_eval(f, cx) >= fp_eval(g, cx):
-        cx += 1
-        if cx >= x1:
-            return [(x0, x1, f)]
-    else:
-        if cx <= x0:
-            return [(x0, x1, g)]
-    if d0 > 0:
-        return [(x0, cx, f), (cx, x1, g)]
-    return [(x0, cx, g), (cx, x1, f)]
-
-
-def _fp_pw_min(f, g, x0, x1):
-    """Piecewise min of two 8-bit linear functions over [x0, x1)."""
-    fv0 = fp_eval(f, x0)
-    gv0 = fp_eval(g, x0)
-    fv1 = fp_eval(f, x1 - 1)
-    gv1 = fp_eval(g, x1 - 1)
-    d0, d1 = fv0 - gv0, fv1 - gv1
-    if d0 <= 0 and d1 <= 0:
-        return [(x0, x1, f)]
-    if d0 >= 0 and d1 >= 0:
-        return [(x0, x1, g)]
-    fvx1 = fp_eval(f, x1)
-    gvx1 = fp_eval(g, x1)
-    dx0 = fv0 - gv0
-    dx1 = fvx1 - gvx1
-    denom = dx0 - dx1
-    if abs(denom) < 1:
-        return [(x0, x1, f if d0 <= 0 else g)]
-    span = x1 - x0
-    cx = x0 + (dx0 * span) // denom
-    cx = max(x0 + 1, min(x1 - 1, cx))
-    if fp_eval(f, cx) <= fp_eval(g, cx):
-        cx += 1
-        if cx >= x1:
-            return [(x0, x1, f)]
-    else:
-        if cx <= x0:
-            return [(x0, x1, g)]
-    if d0 < 0:
-        return [(x0, cx, f), (cx, x1, g)]
-    return [(x0, cx, g), (cx, x1, f)]
 
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
@@ -1645,7 +1136,7 @@ def render_bsp_fp(nid, clips, ctx, vz,
 # Same algorithm as the classic FP pipeline above, but geometry comes from
 # packed_rom_main / packed_rom_detail byte arrays (via read_u8/read_s16 etc.)
 # and cached transforms live in a RAM byte array (via write_s16 / is_valid).
-# The FPClipSpans back-end and all fp.py math helpers are shared.
+# The EndpointClipSpans back-end and all fp.py math helpers are shared.
 
 from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s16,
                         clear_valid, is_valid, set_valid,
@@ -2085,7 +1576,7 @@ def verify_packed(positions=None):
             for k in map_trace:
                 map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
             tmp.fill((0, 0, 0))
-            render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx_c, vz_ps,
+            render_bsp_fp(len(nodes)-1, EndpointClipSpans(), ctx_c, vz_ps,
                           int(px), int(py), cos_f, sin_f, tmp,
                           [None]*len(vertexes), [None]*len(vwh_table))
             classic_result = list(_classic_draws)
@@ -2105,7 +1596,7 @@ def verify_packed(positions=None):
             spans_base = packed_layout['ram_spans']
             spans_init_full(p_ram, spans_base, FP_RENDER_W, FP_RENDER_H - 1)
             packed_render_bsp(len(nodes)-1,
-                              PackedClipSpans(p_ram, spans_base),
+                              EndpointClipSpans(),
                               ctx_p, vz_ps,
                               int(px), int(py), cos_f, sin_f, tmp, p_ram)
             packed_result = list(_packed_draws)
@@ -2451,7 +1942,7 @@ def _compare_draw_calls():
         orig_fp_seg_fn(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred)
         _current[0] = None
     globals()['fp_render_seg'] = _fp_seg
-    render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx, vz_ps,
+    render_bsp_fp(len(nodes)-1, EndpointClipSpans(), ctx, vz_ps,
                   int(player_x), int(player_y), cos_f, sin_f, tmp_fp,
                       [None]*len(vertexes), [None]*len(vwh_table))
     globals()['fp_render_seg'] = orig_fp_seg_fn
@@ -2489,7 +1980,7 @@ def _compare_draw_calls():
     globals()['fp_render_seg'] = _fp_seg
     for k in map_trace:
         map_trace[k] = {} if k == "vertex_muls" else ([] if k == "ss_order" else set())
-    render_bsp_fp(len(nodes)-1, FPClipSpans(), ctx2, vz_ps,
+    render_bsp_fp(len(nodes)-1, EndpointClipSpans(), ctx2, vz_ps,
                   int(player_x), int(player_y), cos_f, sin_f, tmp_fp,
                       [None]*len(vertexes), [None]*len(vwh_table))
     globals()['fp_render_seg'] = orig_fp_seg_fn
@@ -2584,13 +2075,13 @@ _use_6502_frontend = False                # H key: 6502 front-end + Python clip/
 _use_6502_full = False                    # J key: 6502 front-end + clip + NJ rasteriser
 
 def clip_and_draw_6502(commands, surface, vz_ps):
-    """Process 6502 engine seg commands through FPClipSpans with full clipping.
+    """Process 6502 engine seg commands through EndpointClipSpans with full clipping.
 
     Commands are in BSP front-to-back order. Within each subsector, clip
     updates are deferred until the 'E' (end subsector) marker.
     """
     fp_module.mul_reset()
-    clips = FPClipSpans()
+    clips = EndpointClipSpans()
     deferred = []
     drawn = 0
     for cmd in commands:
@@ -2707,7 +2198,6 @@ def _record_frame_steps():
     _rec_current_line = [None]
     _rec_draws = []
 
-    from endpoint_spans import EndpointClipSpans
     import copy
 
     class RecordingClipSpans(EndpointClipSpans):
@@ -3083,12 +2573,11 @@ def _main():
             spans_base = packed_layout['ram_spans']
             spans_init_full(p_ram, spans_base, FP_RENDER_W, FP_RENDER_H - 1)
             packed_render_bsp(len(nodes) - 1,
-                              PackedClipSpans(p_ram, spans_base),
+                              EndpointClipSpans(),
                               ctx, vz_ps,
                               px_full, py_full, cos_f, sin_f, fp_surface,
                               p_ram)
         else:
-            from endpoint_spans import EndpointClipSpans
             render_bsp_fp(len(nodes) - 1, EndpointClipSpans(),
                           ctx, vz_ps,
                           px_full, py_full, cos_f, sin_f, fp_surface,

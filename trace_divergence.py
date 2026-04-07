@@ -70,8 +70,8 @@ py_calls = list(calls)
 
 # ── Run 6502 ─────────────────────────────────────────────────────────────────
 calls.clear()
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 cmds, cyc = fe.render_frame(px, py, ab, fz)
 hw_drawn = sum(1 for c in cmds if c[0] in 'SP')
 hw_calls = list(calls)

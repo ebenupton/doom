@@ -10,8 +10,8 @@ import fe6502
 import spans6502
 
 SEG = 27
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 
 def _capture_all(self):
     def rs16(a):

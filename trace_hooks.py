@@ -57,8 +57,8 @@ py_drawn = len(dw.map_trace['segs_drawn'])
 
 # 6502
 hw_calls.clear()
-fe = Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                  dw.packed_rom_recip, dw.packed_layout)
+fe = Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                  dw.packed_bbox_table, dw.packed_layout)
 cmds, cyc = fe.render_frame(px, py, ab, fz)
 hw_drawn = sum(1 for c in cmds if c[0] in 'SP')
 

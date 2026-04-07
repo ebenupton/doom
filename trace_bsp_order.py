@@ -21,8 +21,8 @@ dw.render_subsector_fp = _py_render_ss
 
 # 6502: track enter_ss hook calls
 hw_order = []
-fe = fe6502.Frontend6502(dw.packed_rom_main, dw.packed_rom_detail,
-                          dw.packed_rom_recip, dw.packed_layout)
+fe = fe6502.Frontend6502(dw.packed_rom_banks, dw.packed_rom_recip,
+                          dw.packed_bbox_table, dw.packed_layout)
 _orig_enter_ss = spans6502.SpanState.enter_ss
 def _hw_enter_ss(self, mpu):
     _orig_enter_ss(self, mpu)
