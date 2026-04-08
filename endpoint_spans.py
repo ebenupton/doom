@@ -205,13 +205,7 @@ class EndpointClipSpans:
                             drawn = True
                         break
             else:
-                # Pre-clip line X to [0, 255] (wide math, once per line)
-                from clip_math import preclip_line_x, frac08, line_y_narrow
-                pc = preclip_line_x(lx1, ly1, lx2, ly2)
-                if pc is None:
-                    if stats is not None: stats[3] += 1
-                    continue
-                lx1, ly1, lx2, ly2 = pc
+                from clip_math import div_round
 
                 if lx1 <= lx2:
                     xl, yl, xr, yr = lx1, ly1, lx2, ly2
@@ -223,9 +217,10 @@ class EndpointClipSpans:
                 y_hi = max(yl, yr)
 
                 def _line_y_at(x):
+                    """Real division: ly + dy*(x-lx)/dx, round-to-nearest.
+                    For short lines (common case) this collapses to 8x8 mul + 16/8 div."""
                     if dx_line == 0: return yl
-                    f = frac08(x - xl, dx_line)
-                    return line_y_narrow(yl, dy_line, f)
+                    return yl + div_round(dy_line * (x - xl), dx_line)
 
                 # Walk spans left-to-right.  The portal walk IS the clip:
                 # enter first span, walk through portals, only clip when
@@ -370,14 +365,24 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
             out.append((sx_lo, sx_hi, rt_l, rb_l, rt_r, rb_r))
 
 
-def _clip_to_span(lx1, ly1, lx2, ly2, s):
-    """Clip line to span. All multiplies are 8x8 (via clip_math primitives).
+def _line_y(ly1, dy, dx, x, lx1):
+    """Compute line Y at x using real division with round-to-nearest.
+    For short lines (common): 8x8 mul + 16/8 div.
+    For long lines (rare): 16x16 mul + 32/16 div."""
+    from clip_math import div_round
+    if dx == 0:
+        return ly1
+    return ly1 + div_round(dy * (x - lx1), dx)
 
-    Line coords are pixels (pre-clipped to X [0,255]).
-    Span Y values are 8.8 fixed point (s16).
+
+def _clip_to_span(lx1, ly1, lx2, ly2, s):
+    """Clip line to span using real division. No pre-clip needed.
+
+    Line coords are pixels (any range). Span Y in 8.8 fixed point.
+    Boundary evaluation uses _interp (8.8 space, u8 denominator).
+    Line Y uses real division (adaptive width: 8x8 for short lines).
     """
-    from clip_math import (frac08, eval_boundary_88, line_y_narrow,
-                           compare_y_vs_boundary, boundary_ix)
+    from clip_math import compare_y_vs_boundary, boundary_ix
     xlo, xhi, tl, bl, tr, br = s
     dx = lx2 - lx1
     dy = ly2 - ly1
@@ -392,18 +397,15 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
         if lx1 < xlo or lx1 >= xhi:
             return None
     else:
-        abs_dx = abs(dx)
         if (dx > 0 and cx1 < xlo) or (dx < 0 and cx2 < xlo):
-            f = frac08(abs(xlo - lx1), abs_dx)
-            y_at = line_y_narrow(ly1, dy, f)
+            y_at = _line_y(ly1, dy, dx, xlo, lx1)
             if dx > 0:
                 cx1, cy1 = xlo, y_at
             else:
                 cx2, cy2 = xlo, y_at
         xhi_clip = xhi - 1
         if (dx > 0 and cx2 > xhi_clip) or (dx < 0 and cx1 > xhi_clip):
-            f = frac08(abs(xhi_clip - lx1), abs_dx)
-            y_at = line_y_narrow(ly1, dy, f)
+            y_at = _line_y(ly1, dy, dx, xhi_clip, lx1)
             if dx > 0:
                 cx2, cy2 = xhi_clip, y_at
             else:
@@ -411,13 +413,11 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
         if min(cx1, cx2) >= xhi or max(cx1, cx2) < xlo:
             return None
 
-    # -- Evaluate boundaries at clipped X endpoints --
-    f1 = frac08(abs(cx1 - xlo), ex)
-    f2 = frac08(abs(cx2 - xlo), ex)
-    top1 = eval_boundary_88(tl, tr, f1)
-    top2 = eval_boundary_88(tl, tr, f2)
-    bot1 = eval_boundary_88(bl, br, f1)
-    bot2 = eval_boundary_88(bl, br, f2)
+    # -- Evaluate boundaries at clipped X endpoints (8.8, u8 denominator) --
+    top1 = _interp(cx1, xlo, tl, xhi, tr)
+    top2 = _interp(cx2, xlo, tl, xhi, tr)
+    bot1 = _interp(cx1, xlo, bl, xhi, br)
+    bot2 = _interp(cx2, xlo, bl, xhi, br)
 
     # -- Clip to top boundary (cy >= top) --
     above1 = compare_y_vs_boundary(cy1, top1) < 0
@@ -430,21 +430,16 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
         ix = boundary_ix(cx1, cx2, d1, d2, above1)
         if ix is None:
             return None
-        if dx != 0:
-            f = frac08(abs(ix - lx1), abs(dx))
-            iy = line_y_narrow(ly1, dy, f)
-        else:
-            iy = ly1
+        iy = _line_y(ly1, dy, dx, ix, lx1)
         if above1:
             cx1, cy1 = ix, iy
         else:
             cx2, cy2 = ix, iy
         # Recompute boundary at new endpoint for bot clip
-        fnew = frac08(abs(ix - xlo), ex)
         if above1:
-            bot1 = eval_boundary_88(bl, br, fnew)
+            bot1 = _interp(ix, xlo, bl, xhi, br)
         else:
-            bot2 = eval_boundary_88(bl, br, fnew)
+            bot2 = _interp(ix, xlo, bl, xhi, br)
 
     # -- Clip to bottom boundary (cy <= bot) --
     below1 = compare_y_vs_boundary(cy1, bot1) > 0
@@ -457,11 +452,7 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
         ix = boundary_ix(cx1, cx2, d1, d2, below1)
         if ix is None:
             return None
-        if dx != 0:
-            f = frac08(abs(ix - lx1), abs(dx))
-            iy = line_y_narrow(ly1, dy, f)
-        else:
-            iy = ly1
+        iy = _line_y(ly1, dy, dx, ix, lx1)
         if below1:
             cx1, cy1 = ix, iy
         else:
