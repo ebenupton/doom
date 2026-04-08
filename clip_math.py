@@ -77,8 +77,8 @@ def eval_boundary_88(y0, y1, f):
     f: u8 (0.8 fraction, 0=y0, 255≈y1).
     Returns 8.8.
     On 6502: 2 × 8x8 multiply + 16-bit add."""
-    assert -2560 <= y0 <= 43520, f"eval_boundary y0={y0}"
-    assert -2560 <= y1 <= 43520, f"eval_boundary y1={y1}"
+    assert -8192 <= y0 <= 51200, f"eval_boundary y0={y0}"
+    assert -8192 <= y1 <= 51200, f"eval_boundary y1={y1}"
     assert 0 <= f <= 255, f"eval_boundary f={f}"
     dt = y1 - y0
     dt_hi = dt >> 8          # s9, but |dt_hi| <= 160 for screen coords
