@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 340" font-family="monospace" font-size="12">
+  <rect width="600" height="340" fill="white"/>
+
+  <!-- Axes -->
+  <line x1="40" y1="280" x2="560" y2="280" stroke="black" stroke-width="1.5"/>
+  <line x1="40" y1="280" x2="40" y2="20" stroke="black" stroke-width="1.5"/>
+  <text x="300" y="310" text-anchor="middle" font-size="13">X</text>
+  <text x="15" y="150" text-anchor="middle" font-size="13" transform="rotate(-90,15,150)">Y</text>
+
+  <!-- Span 0 -->
+  <polygon points="80,60 220,70 220,210 80,180" fill="#CCE5FF" stroke="#336699" stroke-width="1.5"/>
+  <text x="150" y="130" text-anchor="middle" font-size="11" fill="#336699">span 0</text>
+  <text x="80" y="275" text-anchor="middle" font-size="10">x0</text>
+  <text x="220" y="275" text-anchor="middle" font-size="10">x1</text>
+
+  <!-- Span 1 -->
+  <polygon points="220,70 380,55 380,230 220,210" fill="#CCE5FF" stroke="#336699" stroke-width="1.5"/>
+  <text x="300" y="140" text-anchor="middle" font-size="11" fill="#336699">span 1</text>
+  <text x="380" y="275" text-anchor="middle" font-size="10">x2</text>
+
+  <!-- Span 2 -->
+  <polygon points="380,55 520,80 520,250 380,230" fill="#CCE5FF" stroke="#336699" stroke-width="1.5"/>
+  <text x="450" y="150" text-anchor="middle" font-size="11" fill="#336699">span 2</text>
+  <text x="520" y="275" text-anchor="middle" font-size="10">x3</text>
+
+  <!-- Portal boundaries (vertical dashed lines) -->
+  <line x1="220" y1="50" x2="220" y2="265" stroke="#336699" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="220" y="45" text-anchor="middle" font-size="10" fill="#336699">portal A</text>
+  <line x1="380" y1="50" x2="380" y2="265" stroke="#336699" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="380" y="45" text-anchor="middle" font-size="10" fill="#336699">portal B</text>
+
+  <!-- Line through all three spans -->
+  <!-- Per-span clips (dashed red, shown behind) -->
+
+  <!-- Full merged line (solid red) -->
+  <line x1="100" y1="100" x2="500" y2="200" stroke="#FF3333" stroke-width="2.5"/>
+
+  <!-- Clip endpoints in first and last span -->
+  <circle cx="100" cy="100" r="5" fill="black"/>
+  <text x="60" y="95" font-size="10">c_first P1</text>
+  <circle cx="500" cy="200" r="5" fill="black"/>
+  <text x="505" y="195" font-size="10">c_last P2</text>
+
+  <!-- Portal check points -->
+  <circle cx="220" cy="130" r="4" fill="#336699"/>
+  <text x="230" y="128" font-size="10" fill="#336699">ly &lt; pb?</text>
+  <circle cx="380" cy="170" r="4" fill="#336699"/>
+  <text x="390" y="168" font-size="10" fill="#336699">ly &lt; pb?</text>
+
+  <!-- Merged output label -->
+  <rect x="150" y="230" width="320" height="28" fill="#f0f0f0" stroke="black" rx="3"/>
+  <text x="310" y="248" text-anchor="middle" font-size="11" font-weight="bold">merged output: (c_first.P1) -> (c_last.P2)</text>
+
+  <!-- Portal check annotations -->
+  <text x="160" y="320" font-size="10">portals_ok: at each shared boundary, check line_y is within</text>
+  <text x="160" y="332" font-size="10">max(top_left, top_right) .. min(bot_left, bot_right)</text>
+</svg>

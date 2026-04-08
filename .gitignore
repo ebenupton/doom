@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Screenshot *.png
+cmp_h_mode.png
+doom_frame.png
+doom_frame_2x.png
+hw_frame.png
+doom_debug.txt
+doom95.zip
+
+# Diagnostic scripts (not part of the core)
+diag_*.py
+trace_*.py
+test_pw_max.py
+test_tighten*.py
