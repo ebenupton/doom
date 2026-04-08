@@ -2189,15 +2189,20 @@ def _record_frame_steps():
 
     class RecordingClipSpans(EndpointClipSpans):
         def draw_clipped(self, lines, color, surface, stats=None):
+            import endpoint_spans as _es
             for lx1, ly1, lx2, ly2 in lines:
                 groups_snap = copy.deepcopy(self.spans)
                 _rec_current_line[0] = (lx1, ly1, lx2, ly2)
                 _rec_draws.clear()
                 mul_before = sum(fp_module.mul_counts.values())
+                _es._line_cost = {}  # enable cost tracking
                 super().draw_clipped([(lx1, ly1, lx2, ly2)], color, surface, stats)
+                cost_snap = dict(_es._line_cost) if _es._line_cost else {}
+                _es._line_cost = None  # disable
                 mul_after = sum(fp_module.mul_counts.values())
                 _debug_steps.append(((lx1, ly1, lx2, ly2), groups_snap,
-                                     list(_rec_draws), mul_after - mul_before))
+                                     list(_rec_draws), mul_after - mul_before,
+                                     cost_snap))
                 _rec_current_line[0] = None
 
     _orig_drawline = pygame.draw.line
@@ -2332,19 +2337,44 @@ def _draw_debug_step(surface):
         sx1, sy1 = int(c[0] * FP_SCALE), int(c[1] * FP_SCALE)
         sx2, sy2 = int(c[2] * FP_SCALE), int(c[3] * FP_SCALE)
         _real_drawline(surface, color, (sx1, sy1), (sx2, sy2), 2)
-        # Red cross at each split point (start of each segment after the first)
         if ci > 0:
             _real_drawline(surface, (255, 0, 0), (sx1 - 6, sy1 - 6), (sx1 + 6, sy1 + 6), 2)
             _real_drawline(surface, (255, 0, 0), (sx1 - 6, sy1 + 6), (sx1 + 6, sy1 - 6), 2)
-        # Also mark the end of each segment before a gap
         if ci < len(clipped) - 1:
             _real_drawline(surface, (255, 100, 0), (sx2 - 6, sy2 - 6), (sx2 + 6, sy2 + 6), 2)
             _real_drawline(surface, (255, 100, 0), (sx2 - 6, sy2 + 6), (sx2 + 6, sy2 - 6), 2)
 
-    # Label the line with segment count
+    # Cost annotation next to the line
+    cost = step[4] if len(step) > 4 else {}
     mid_x = int((lx1 + lx2) / 2 * FP_SCALE)
     mid_y = int((ly1 + ly2) / 2 * FP_SCALE)
-    count_lbl = hud_font.render(f"{len(clipped)}", True, (255, 255, 255))
+    if cost:
+        # Build compact label
+        parts = []
+        if cost.get('bbox_rej'):     parts.append('Brej')
+        if cost.get('outer_rej'):    parts.append(f"Or{cost['outer_rej']}")
+        if cost.get('inner_acc'):    parts.append(f"Ia{cost['inner_acc']}")
+        if cost.get('cb_entry'):     parts.append(f"Ce{cost['cb_entry']}")
+        if cost.get('cb_rej'):       parts.append(f"Cr{cost['cb_rej']}")
+        if cost.get('portal_cheap'): parts.append(f"Pc{cost['portal_cheap']}")
+        if cost.get('portal_exact'): parts.append(f"Px{cost['portal_exact']}")
+        if cost.get('portal_exact_fail'): parts.append(f"Pf{cost['portal_exact_fail']}")
+        if cost.get('portal_bbox_fail'):  parts.append(f"Pb{cost['portal_bbox_fail']}")
+        if cost.get('cb_exit'):      parts.append(f"Cx{cost['cb_exit']}")
+        cost_str = ' '.join(parts) if parts else '?'
+        # Color: green if all cheap, yellow if some exact, red if CB clips
+        has_cb = cost.get('cb_entry',0) + cost.get('cb_exit',0) + cost.get('cb_rej',0)
+        has_exact = cost.get('portal_exact',0)
+        if has_cb:
+            lbl_color = (255, 100, 100)
+        elif has_exact:
+            lbl_color = (255, 255, 100)
+        else:
+            lbl_color = (100, 255, 100)
+    else:
+        cost_str = f"{len(clipped)}"
+        lbl_color = (255, 255, 255)
+    count_lbl = hud_font.render(cost_str, True, lbl_color)
     bg = pygame.Surface(count_lbl.get_size(), pygame.SRCALPHA)
     bg.fill((0, 0, 0, 192))
     surface.blit(bg, (mid_x + 8, mid_y - 8))

@@ -38,6 +38,10 @@ def _interp(x, x0, y0, x1, y1):
     return y0 + (y1 - y0) * (x - x0) // (x1 - x0)
 
 
+# Cost tracking for debug mode (portal walk annotates these per-line)
+_line_cost = None  # set to a dict by recording wrapper, else None
+
+
 class EndpointClipSpans:
     """Visibility spans with 8.8 fixed-point Y boundaries.
 
@@ -162,12 +166,21 @@ class EndpointClipSpans:
             if stats is not None: stats[0] += 1
             drawn = False
 
+            # Cost tracking (populated if debug mode active)
+            if _line_cost is not None:
+                _line_cost.clear()
+                for k in ('bbox_rej','outer_rej','inner_acc','cb_entry','cb_rej',
+                          'portal_cheap','portal_exact','portal_exact_fail',
+                          'portal_bbox_fail','cb_exit','vert_clip'):
+                    _line_cost[k] = 0
+
             # Fast reject against global bounding box (no per-span work)
             if self.bbox:
                 bx0, bx1, bt, bb = self.bbox
                 x_lo = min(lx1, lx2); x_hi = max(lx1, lx2)
                 y_lo = min(ly1, ly2); y_hi = max(ly1, ly2)
                 if x_hi < bx0 or x_lo >= bx1 or y_hi < bt or y_lo > bb:
+                    if _line_cost is not None: _line_cost['bbox_rej'] += 1
                     if stats is not None: stats[3] += 1
                     continue
             elif not self.spans:
@@ -217,42 +230,33 @@ class EndpointClipSpans:
                 # Walk spans left-to-right.  The portal walk IS the clip:
                 # enter first span, walk through portals, only clip when
                 # a portal fails or we hit the edge.
-                seg_start = None  # (sx, sy) of current segment start, or None
+                cost = _line_cost  # may be None if not recording
+                seg_start = None
                 for si, s in enumerate(self.spans):
                     if s[1] <= xl or s[0] >= xr:
                         continue
 
-                    # -- Can we enter/continue through this span? --
                     ot = min(_px(s[2]), _px(s[4]))
                     ob = max(_px(s[3]), _px(s[5]))
 
                     if seg_start is None:
-                        # Not inside any segment yet — try to enter this span
                         if y_hi < ot or y_lo > ob:
-                            continue  # outer reject
-
-                        # Inner bbox accept?
+                            if cost is not None: cost['outer_rej'] += 1
+                            continue
                         it = max(_px(s[2]), _px(s[4]))
                         ib = min(_px(s[3]), _px(s[5]))
                         if y_lo >= it and y_hi <= ib:
-                            # Trivially inside — enter at left edge of overlap
                             ex = max(xl, s[0])
                             seg_start = (ex, _line_y_at(ex) if ex != xl else yl)
+                            if cost is not None: cost['inner_acc'] += 1
                         else:
-                            # Need CB clip to find entry
                             c = _clip_to_span(lx1, ly1, lx2, ly2, s)
                             if c is None:
+                                if cost is not None: cost['cb_rej'] += 1
                                 continue
                             seg_start = (c[0], c[1])
-                    else:
-                        # We're continuing from the previous span.
-                        # seg_start already set; check if we're still inside.
-                        # (The portal check below already confirmed we pass
-                        # into this span, so we're inside at the left edge.)
-                        pass
+                            if cost is not None: cost['cb_entry'] += 1
 
-                    # -- Check exit: do we reach the portal to the next span? --
-                    # Find the next contiguous span (if any)
                     next_s = None
                     if si + 1 < len(self.spans) and self.spans[si + 1][0] == s[1]:
                         ns = self.spans[si + 1]
@@ -260,28 +264,24 @@ class EndpointClipSpans:
                             next_s = ns
 
                     if next_s is not None:
-                        # Portal at s[1] (shared boundary X)
                         px = s[1]
-                        pt = _px(max(s[4], next_s[2]))  # max of tops
-                        pb = _px(min(s[5], next_s[3]))  # min of bots
+                        pt = _px(max(s[4], next_s[2]))
+                        pb = _px(min(s[5], next_s[3]))
                         if pt < pb:
-                            # Cheap check: line Y bbox vs portal aperture
                             if pt <= y_lo and y_hi <= pb:
-                                # Entire Y range fits — pass without computing ly
+                                if cost is not None: cost['portal_cheap'] += 1
                                 continue
                             if y_hi < pt or y_lo > pb:
-                                pass  # miss — fall through to clip
+                                if cost is not None: cost['portal_bbox_fail'] += 1
                             else:
-                                # Ambiguous — compute exact line Y at portal
                                 ly = _line_y_at(px)
+                                if cost is not None: cost['portal_exact'] += 1
                                 if pt <= ly <= pb:
-                                    # Narrow the Y bbox for future portals
                                     y_lo = min(y_lo, ly)
                                     y_hi = max(y_hi, ly)
                                     continue
+                                if cost is not None: cost['portal_exact_fail'] += 1
 
-                        # Portal failed or closed — clip against this span,
-                        # output the segment, and reset.
                         c = _clip_to_span(lx1, ly1, lx2, ly2, s)
                         if c:
                             sx, sy = seg_start
@@ -291,11 +291,9 @@ class EndpointClipSpans:
                             pygame.draw.line(surface, _rand_color(),
                                              (sx, sy), (ex, ey), 1)
                             drawn = True
+                            if cost is not None: cost['cb_exit'] += 1
                         seg_start = None
                     else:
-                        # Last span (or gap after this one) — CB clip
-                        # to find proper exit (line may leave aperture
-                        # before the right edge).
                         c = _clip_to_span(lx1, ly1, lx2, ly2, s)
                         if c:
                             sx, sy = seg_start
@@ -305,6 +303,7 @@ class EndpointClipSpans:
                             pygame.draw.line(surface, _rand_color(),
                                              (sx, sy), (ex, ey), 1)
                             drawn = True
+                            if cost is not None: cost['cb_exit'] += 1
                         seg_start = None
 
             if not drawn and stats is not None:
