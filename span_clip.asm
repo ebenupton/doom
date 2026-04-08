@@ -48,6 +48,7 @@ zp_tmp0  = $D7 : zp_tmp1  = $D8 : zp_tmp2  = $D9
 zp_tmp3  = $DA : zp_prev  = $DB
 zp_buf   = $DC  ; u16 pointer
 zp_save0 = $DE  ; safe scratch (not clobbered by interp)
+zp_save1 = $DF  ; safe scratch #2
 
 ; ======================================================================
 ; SPAN_INIT
@@ -431,10 +432,253 @@ zp_save0 = $DE  ; safe scratch (not clobbered by interp)
 }
 
 ; ======================================================================
-; TIGHTEN: placeholder
+; TIGHTEN: narrow top/bot boundaries over [zp_ilo, zp_ihi)
+; Inputs: zp_ilo, zp_ihi, zp_sx1, zp_sx2, zp_yt1, zp_yt2, zp_yb1, zp_yb2
+; Walks old list, builds new list.
 ; ======================================================================
+; Extra ZP for tighten
+zp_new_tail = $E0     ; offset of last span in new list (or $FF for head)
+zp_old_cur  = $E1     ; current span in old list walk
+zp_ox0      = $E2     ; overlap X range
+zp_ox1      = $E3
+zp_ot_l     = $E4     ; old boundary at overlap endpoints
+zp_ot_r     = $E5
+zp_ob_l     = $E6
+zp_ob_r     = $E7
+zp_nt_l     = $E8     ; new boundary at overlap endpoints
+zp_nt_r     = $E9
+zp_nb_l     = $EA
+zp_nb_r     = $EB
+
 .span_tighten
-    RTS
+    LDA zp_ihi : CMP zp_ilo : BEQ tg_rts : BCC tg_rts : JMP tg_start
+.tg_rts RTS
+.tg_start
+    ; Save old head, then start building new list
+    LDA zp_head : STA zp_old_cur
+    LDA #$FF : STA zp_new_tail
+    LDA #0 : STA zp_head
+
+.tg_walk
+    LDX zp_old_cur
+    BNE tg_process
+    RTS                            ; done walking
+.tg_process
+    ; Save next before we potentially free this span
+    LDA POOL_NEXT,X : STA zp_save0  ; next in old list
+
+    ; Check overlap
+    LDA POOL_XHI,X : BEQ tg_xhi256a
+    CMP zp_ilo : BEQ tg_no_overlap : BCC tg_no_overlap
+    JMP tg_chk2
+.tg_xhi256a
+    JMP tg_chk2
+.tg_no_overlap
+    ; Before [ilo,ihi): move to new list
+    JSR tg_append_x
+    LDA zp_save0 : STA zp_old_cur
+    JMP tg_walk
+
+.tg_chk2
+    LDA POOL_XLO,X : CMP zp_ihi : BCC tg_overlaps
+    ; After [ilo,ihi): move to new list (and all remaining too)
+    JSR tg_append_x
+    LDA zp_save0 : STA zp_old_cur
+    JMP tg_walk
+
+.tg_overlaps
+    ; Compute overlap range
+    LDA POOL_XLO,X : CMP zp_ilo : BCS tg_ox0_xlo
+    LDA zp_ilo : JMP tg_ox0_set
+.tg_ox0_xlo LDA POOL_XLO,X
+.tg_ox0_set STA zp_ox0
+
+    LDA POOL_XHI,X : BEQ tg_ox1_256
+    CMP zp_ihi : BCC tg_ox1_xhi : BEQ tg_ox1_xhi
+    LDA zp_ihi : JMP tg_ox1_set
+.tg_ox1_xhi LDA POOL_XHI,X : JMP tg_ox1_set
+.tg_ox1_256 LDA zp_ihi
+.tg_ox1_set STA zp_ox1
+
+    ; --- Dominance check: is new boundary <= old at both overlap endpoints? ---
+    ; (old dominates = new is less restrictive → keep span unchanged)
+    ; Evaluate old and new at ox0 and ox1 using interp (floor for comparison)
+    ; Old top at ox0
+    LDA zp_ox0 : STA zp_i_x
+    LDA POOL_XLO,X : STA zp_i_x0 : LDA POOL_XHI,X : STA zp_i_x1
+    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1
+    STX zp_save1           ; save span offset (we'll clobber X)
+    JSR interp_floor : LDA zp_i_res : STA zp_ot_l
+    ; Old top at ox1
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_floor : LDA zp_i_res : STA zp_ot_r
+    ; Old bot at ox0
+    LDX zp_save1
+    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_ox0 : STA zp_i_x
+    JSR interp_floor : LDA zp_i_res : STA zp_ob_l
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_floor : LDA zp_i_res : STA zp_ob_r
+    ; New top at ox0, ox1
+    LDA zp_sx1 : STA zp_i_x0 : LDA zp_sx2 : STA zp_i_x1
+    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt2 : STA zp_i_y1
+    LDA zp_ox0 : STA zp_i_x
+    JSR interp_floor : LDA zp_i_res : STA zp_nt_l
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_floor : LDA zp_i_res : STA zp_nt_r
+    ; New bot at ox0, ox1
+    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb2 : STA zp_i_y1
+    LDA zp_ox0 : STA zp_i_x
+    JSR interp_floor : LDA zp_i_res : STA zp_nb_l
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_floor : LDA zp_i_res : STA zp_nb_r
+
+    ; Check: new_tl <= old_tl AND new_tr <= old_tr AND new_bl >= old_bl AND new_br >= old_br?
+    ; Clamp new values to [0,159] first so unsigned CMP works.
+    ; (new top < 0 → clamp to 0 = most generous ceiling)
+    ; (new bot > 159 → clamp to 159 = most generous floor)
+    LDA zp_nt_l : BPL tg_cn1 : LDA #0 : STA zp_nt_l
+.tg_cn1 LDA zp_nt_r : BPL tg_cn2 : LDA #0 : STA zp_nt_r
+.tg_cn2 LDA zp_nb_l : CMP #160 : BCC tg_cn3 : LDA #159 : STA zp_nb_l
+.tg_cn3 LDA zp_nb_r : CMP #160 : BCC tg_cn4 : LDA #159 : STA zp_nb_r
+.tg_cn4
+    ; Now unsigned comparison is safe (all values in [0,159])
+    LDA zp_nt_l : CMP zp_ot_l : BEQ tg_d1 : BCS tg_not_old_dom
+.tg_d1 LDA zp_nt_r : CMP zp_ot_r : BEQ tg_d2 : BCS tg_not_old_dom
+.tg_d2 LDA zp_ob_l : CMP zp_nb_l : BEQ tg_d3 : BCS tg_not_old_dom
+.tg_d3 LDA zp_ob_r : CMP zp_nb_r : BEQ tg_d4 : BCS tg_not_old_dom
+.tg_d4 ; Old dominates: keep span unchanged
+    LDX zp_save1
+    JSR tg_append_x
+    LDA zp_save0 : STA zp_old_cur
+    JMP tg_walk
+
+.tg_not_old_dom
+    ; --- General path: DON'T modify original span. Alloc new spans for ---
+    ; --- left/right fragments and tightened overlap. Free original last. ---
+    LDX zp_save1    ; X = original span offset (preserved throughout)
+
+    ; --- Left fragment: if xlo < ilo ---
+    LDA POOL_XLO,X : CMP zp_ilo : BCS tg_no_left
+    ; Alloc new span for [xlo, ilo)
+    STX zp_save1 : JSR alloc_span : BEQ tg_no_left_alloc
+    ; Copy original span, then modify endpoints
+    LDY zp_save1                 ; Y = original
+    LDA POOL_XLO,Y : STA POOL_XLO,X
+    LDA POOL_TL,Y  : STA POOL_TL,X
+    LDA POOL_BL,Y  : STA POOL_BL,X
+    LDA zp_ilo : STA POOL_XHI,X ; xhi = ilo
+    ; Interp Y at ilo from ORIGINAL span (Y still = original offset)
+    LDA zp_ilo : STA zp_i_x
+    LDA POOL_XLO,Y : STA zp_i_x0 : LDA POOL_XHI,Y : STA zp_i_x1
+    LDA POOL_TL,Y : STA zp_i_y0 : LDA POOL_TR,Y : STA zp_i_y1
+    STX zp_tmp3 : JSR interp_store
+    LDX zp_tmp3 : LDA zp_i_res : STA POOL_TR,X  ; tr at ilo
+    LDY zp_save1
+    LDA POOL_BL,Y : STA zp_i_y0 : LDA POOL_BR,Y : STA zp_i_y1
+    STX zp_tmp3 : JSR interp_store
+    LDX zp_tmp3 : LDA zp_i_res : STA POOL_BR,X  ; br at ilo
+    JSR tg_append_x
+.tg_no_left_alloc
+.tg_no_left
+
+    ; --- Tighten the overlap [ox0, ox1) from ORIGINAL span (unmodified) ---
+    LDX zp_save1
+    LDA POOL_XLO,X : STA zp_i_x0 : LDA POOL_XHI,X : STA zp_i_x1
+    ; Old top at ox0, ox1
+    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1
+    LDA zp_ox0 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_ot_l
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_ot_r
+    ; Old bot at ox0, ox1
+    LDX zp_save1
+    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_ox0 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_ob_l
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_ob_r
+    ; New top/bot at ox0, ox1
+    LDA zp_sx1 : STA zp_i_x0 : LDA zp_sx2 : STA zp_i_x1
+    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt2 : STA zp_i_y1
+    LDA zp_ox0 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_nt_l
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_nt_r
+    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb2 : STA zp_i_y1
+    LDA zp_ox0 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_nb_l
+    LDA zp_ox1 : STA zp_i_x
+    JSR interp_store : LDA zp_i_res : STA zp_nb_r
+
+    ; max top, min bot
+    LDA zp_ot_l : CMP zp_nt_l : BCS tg_tl_ok : LDA zp_nt_l
+.tg_tl_ok STA zp_ot_l
+    LDA zp_ot_r : CMP zp_nt_r : BCS tg_tr_ok : LDA zp_nt_r
+.tg_tr_ok STA zp_ot_r
+    LDA zp_ob_l : CMP zp_nb_l : BCC tg_bl_ok : LDA zp_nb_l
+.tg_bl_ok STA zp_ob_l
+    LDA zp_ob_r : CMP zp_nb_r : BCC tg_br_ok : LDA zp_nb_r
+.tg_br_ok STA zp_ob_r
+
+    ; Check aperture: tl < bl OR tr < br
+    LDA zp_ot_l : CMP zp_ob_l : BCC tg_has_ap
+    LDA zp_ot_r : CMP zp_ob_r : BCS tg_no_ap
+.tg_has_ap
+    JSR alloc_span : BEQ tg_no_ap
+    LDA zp_ox0 : STA POOL_XLO,X : LDA zp_ox1 : STA POOL_XHI,X
+    LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X
+    LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X
+    JSR tg_append_x
+.tg_no_ap
+
+    ; --- Right fragment: if original xhi > ihi ---
+    LDX zp_save1                 ; original span (still unmodified!)
+    LDA POOL_XHI,X : BEQ tg_rhi256
+    CMP zp_ihi : BCC tg_no_right : BEQ tg_no_right
+    JMP tg_make_right
+.tg_rhi256
+    LDA zp_ihi : BEQ tg_no_right
+.tg_make_right
+    ; Alloc right fragment [ihi, original_xhi)
+    STX zp_save1 : JSR alloc_span : BEQ tg_no_right
+    LDY zp_save1                 ; Y = original
+    ; Copy right-side data from original
+    LDA POOL_XHI,Y : STA POOL_XHI,X
+    LDA POOL_TR,Y  : STA POOL_TR,X
+    LDA POOL_BR,Y  : STA POOL_BR,X
+    LDA zp_ihi : STA POOL_XLO,X ; xlo = ihi
+    ; Interp Y at ihi from ORIGINAL span
+    LDA zp_ihi : STA zp_i_x
+    LDA POOL_XLO,Y : STA zp_i_x0 : LDA POOL_XHI,Y : STA zp_i_x1
+    LDA POOL_TL,Y : STA zp_i_y0 : LDA POOL_TR,Y : STA zp_i_y1
+    STX zp_tmp3 : JSR interp_store
+    LDX zp_tmp3 : LDA zp_i_res : STA POOL_TL,X
+    LDY zp_save1
+    LDA POOL_BL,Y : STA zp_i_y0 : LDA POOL_BR,Y : STA zp_i_y1
+    STX zp_tmp3 : JSR interp_store
+    LDX zp_tmp3 : LDA zp_i_res : STA POOL_BL,X
+    JSR tg_append_x
+.tg_no_right
+
+    ; Free the original span (never reused — we always alloc new)
+    LDX zp_save1 : JSR free_span
+
+    LDA zp_save0 : STA zp_old_cur
+    JMP tg_walk
+
+; --- Helper: append span X to new list ---
+.tg_append_x
+{
+    LDA #0 : STA POOL_NEXT,X   ; new span is at end
+    LDA zp_new_tail : CMP #$FF : BNE ta_link
+    ; First span: set head
+    STX zp_head : STX zp_new_tail : RTS
+.ta_link
+    LDY zp_new_tail
+    TXA : STA POOL_NEXT,Y
+    STX zp_new_tail : RTS
+}
 
 .end_code
 SAVE "span_clip.bin", $2000, end_code, $2000

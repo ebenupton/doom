@@ -261,6 +261,110 @@ def test_mark_solid():
         print(f'    asm: {asm_spans}')
 
 
+def test_tighten():
+    """Test tighten against Python EndpointClipSpans."""
+    from endpoint_spans import EndpointClipSpans
+    sc = SpanClip6502()
+
+    # Test 1: simple tighten
+    sc.init(); py = EndpointClipSpans()
+    args = (50, 200, 50, 200, 30, 40, 120, 110)
+    sc.tighten(*args); py.tighten(*args)
+    asm = sc.read_spans(); pys = py.spans
+    print(f'  tighten test 1: {"MATCH" if asm==pys else "MISMATCH"}')
+    if asm != pys: print(f'    py:  {pys}\n    asm: {asm}')
+
+    # Test 2: tighten after mark_solid
+    sc.init(); py = EndpointClipSpans()
+    sc.mark_solid(100, 150); py.mark_solid(100, 150)
+    args = (50, 200, 50, 200, 20, 50, 130, 100)
+    sc.tighten(*args); py.tighten(*args)
+    asm = sc.read_spans(); pys = py.spans
+    print(f'  tighten test 2: {"MATCH" if asm==pys else "MISMATCH"}')
+    if asm != pys: print(f'    py:  {pys}\n    asm: {asm}')
+
+    # Test 3: dominated tighten (should be no-op)
+    sc.init(); py = EndpointClipSpans()
+    args = (50, 200, 50, 200, 30, 40, 120, 110)
+    sc.tighten(*args); py.tighten(*args)
+    args2 = (50, 200, 50, 200, -10, -5, 170, 160)  # much wider → dominated
+    sc.tighten(*args2); py.tighten(*args2)
+    asm = sc.read_spans(); pys = py.spans
+    print(f'  tighten test 3 (dominated): {"MATCH" if asm==pys else "MISMATCH"}')
+    if asm != pys: print(f'    py:  {pys}\n    asm: {asm}')
+
+
+def test_frame():
+    """Run a full frame and compare span state after every mutation."""
+    import os, math
+    os.environ['SDL_VIDEODRIVER'] = 'dummy'
+    os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+    import pygame; pygame.init(); pygame.display.set_mode((1, 1))
+    import doom_wireframe as dw
+    from endpoint_spans import EndpointClipSpans
+    import fp as fpmod
+
+    PX, PY, ANGLE = 1056, -3616, 64
+    FZ = dw.player_floor(PX, PY)
+
+    sc = SpanClip6502()
+    sc.init()
+    total_cyc = [0]
+    mismatches = [0]
+
+    _orig_ms = EndpointClipSpans.mark_solid
+    _orig_tg = EndpointClipSpans.tighten
+    op_num = [0]
+
+    def _hook_ms(self, lo, hi):
+        _orig_ms(self, lo, hi)
+        op_num[0] += 1
+        c = sc.mpu.processorCycles
+        sc.mark_solid(lo, hi)
+        total_cyc[0] += sc.mpu.processorCycles
+        asm = sc.read_spans()
+        if asm != self.spans:
+            mismatches[0] += 1
+            if mismatches[0] <= 3:
+                print(f'  mark_solid #{op_num[0]} [{lo},{hi}] MISMATCH')
+                print(f'    py:  {self.spans[:3]}...')
+                print(f'    asm: {asm[:3]}...')
+
+    def _hook_tg(self, *args, **kw):
+        _orig_tg(self, *args, **kw)
+        lo, hi, sx1, sx2, yt1, yt2, yb1, yb2 = args[:8]
+        op_num[0] += 1
+        sc.tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)
+        total_cyc[0] += sc.mpu.processorCycles
+        asm = sc.read_spans()
+        if asm != self.spans:
+            mismatches[0] += 1
+            if mismatches[0] <= 3:
+                print(f'  tighten #{op_num[0]} [{lo},{hi}] MISMATCH')
+                print(f'    py:  {self.spans[:3]}...')
+                print(f'    asm: {asm[:3]}...')
+
+    EndpointClipSpans.mark_solid = _hook_ms
+    EndpointClipSpans.tighten = _hook_tg
+
+    pygame.draw.line = lambda s, c, p1, p2, w=1: None
+    fpmod.mul_reset()
+    px_88 = int((PX - dw.MAP_CENTER_X) * 256 / dw.PRESCALE)
+    py_88 = int((PY - dw.MAP_CENTER_Y) * 256 / dw.PRESCALE)
+    vz_ps = dw._prescale_height(FZ + 41)
+    sc2 = dw.fp_sincos(ANGLE)
+    ctx = dw.fp_view_context(px_88, py_88, sc2)
+    cos_f, sin_f = math.cos(dw.byte_to_radians(ANGLE)), math.sin(dw.byte_to_radians(ANGLE))
+    dw.render_bsp_fp(len(dw.nodes) - 1, EndpointClipSpans(), ctx, vz_ps,
+                     int(PX), int(PY), cos_f, sin_f,
+                     pygame.Surface((256, 160)),
+                     [None] * len(dw.vertexes), [None] * len(dw.vwh_table))
+
+    EndpointClipSpans.mark_solid = _orig_ms
+    EndpointClipSpans.tighten = _orig_tg
+    print(f'  Full frame: {op_num[0]} ops, {mismatches[0]} mismatches, {total_cyc[0]} 6502 cycles')
+
+
 if __name__ == '__main__':
     print('Testing 6502 span clipper...')
     print()
@@ -269,3 +373,9 @@ if __name__ == '__main__':
     print()
     print('mark_solid tests:')
     test_mark_solid()
+    print()
+    print('tighten tests:')
+    test_tighten()
+    print()
+    print('Full frame comparison:')
+    test_frame()
