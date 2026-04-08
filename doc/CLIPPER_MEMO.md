@@ -59,6 +59,25 @@ The `tighten` min/max ratchet (which takes the more-restrictive of old vs new
 at each endpoint) uses a **dual rounding strategy** to prevent systematic
 drift -- see Section 5.3.5 for details.
 
+### 1.3 Arithmetic Primitives
+
+All arithmetic in the clipper flows through exactly six named primitive
+functions. No raw Python `*` or `//` remains outside these primitives.
+
+| Primitive | Purpose | Operand widths | 6502 cost |
+|-----------|---------|---------------|-----------|
+| `_interp(x, x0, y0, x1, y1)` | Boundary evaluation for clipping | s8 x u8 / u8 | 8x8 mul + 8-bit div |
+| `_interp_store(x, x0, y0, x1, y1)` | Boundary storage (round-to-nearest) | s8 x u8 / u8 | 8x8 mul + 8-bit div + 1 ADD |
+| `_crossover_x(x0, x1, d0, d1)` | Tighten crossover point | s8 x u8 / s9 | 8x8 mul + 8-bit div |
+| `_line_y(ly1, dy, dx, x, lx1)` | Line Y at X (real division) | adaptive: 8x8 or 16x16 | 8x8 + 16/8 (common) or 16x16 + 32/16 (rare) |
+| `boundary_ix(cx1, cx2, d1, d2, clip_p1)` | Intersection X with directed rounding | s9 x s8 / s9 | 8x8 mul + 8-bit div |
+| `div_round(num, den)` | Round-to-nearest division | adaptive | used by `_line_y` |
+
+**Vertical lines** are the simplest clip path. They do not need `_line_y` at
+all -- boundary evaluation uses `_interp` and Y clamping is integer min/max.
+If the span boundary is flat, this path requires 0 multiplies (the `_interp`
+delta is zero and short-circuits).
+
 ---
 
 ## 2. Span Operations
@@ -145,8 +164,8 @@ For each span `s` overlapping `[ilo, ihi)`:
    boundaries may cross. For each of top and bottom:
    - Compute `dt0 = old - new` at `ox0` and `dt1 = old - new` at `ox1`.
    - If the signs differ, the boundaries cross inside the span.
-   - The crossover X is: `cx = ox0 + dt0 * (ox1 - ox0) // (dt0 - dt1)`.
-   - Split the overlap region at `cx`.
+   - The crossover X is found by `_crossover_x(ox0, ox1, dt0, dt1)`.
+   - Split the overlap region at the returned X.
 
 5. For each sub-interval after splitting, take the **more restrictive**
    boundary at each endpoint:
@@ -1207,6 +1226,18 @@ function INTERP_STORE(x: u8, x0: u8, y0: u8, x1: u9, y1: u8) -> u8
     if den > 0:
         return y0 + (num + den / 2) / den
     return y0 + (-num + (-den) / 2) / (-den)
+end
+
+
+function CROSSOVER_X(x0: u8, x1: u8, d0: s8, d1: s8) -> u8 or NULL
+    // Find X where two boundary lines cross, given their differences d0,d1
+    // at x0,x1. Returns X in (x0,x1) or NULL if no crossover.
+    // On 6502: s8 x u8 / s9 -- one 8x8 mul + one 8-bit div.
+    denom: s9 = d0 - d1
+    if denom == 0: return NULL
+    cx = x0 + d0 * (x1 - x0) / denom    // floor division
+    if x0 < cx < x1: return cx
+    return NULL
 end
 
 
