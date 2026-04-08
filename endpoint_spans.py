@@ -24,23 +24,16 @@ def _interp(x, x0, y0, x1, y1):
     return y0 + (y1 - y0) * (x - x0) // (x1 - x0)
 
 
-def _interp_top(x, x0, y0, x1, y1):
-    """Interpolate top boundary Y: round DOWN (generous ceiling).
-    Same as _interp — floor is already the generous direction for top."""
-    return _interp(x, x0, y0, x1, y1)
-
-
-def _interp_bot(x, x0, y0, x1, y1):
-    """Interpolate bottom boundary Y: round UP (generous floor).
-    Counteracts the min-ratchet that makes bottoms drift upward."""
+def _interp_store(x, x0, y0, x1, y1):
+    """Interpolate Y for span storage: round-to-nearest (no systematic bias).
+    Prevents the min/max ratchet from accumulating in one direction."""
     if x1 == x0:
         return y0
     num = (y1 - y0) * (x - x0)
     den = x1 - x0
-    # Ceiling division: round toward +inf (higher Y = lower on screen = generous)
-    if (num >= 0) == (den > 0):
-        return y0 + (abs(num) + abs(den) - 1) // abs(den)
-    return y0 + -(abs(num) // abs(den))
+    if den > 0:
+        return y0 + (num + den // 2) // den
+    return y0 + (-num + (-den) // 2) // (-den)
 
 
 # Cost tracking for debug mode
@@ -301,14 +294,14 @@ class EndpointClipSpans:
 
 def _make_sub(s, new_xlo, new_xhi):
     """Extract sub-span [new_xlo, new_xhi) from span s.
-    Top rounds down (generous ceiling), bottom rounds up (generous floor)."""
+    Uses round-to-nearest for boundary Y (no systematic bias)."""
     if new_xlo >= new_xhi: return None
     xlo, xhi, tl, bl, tr, br = s
     return (new_xlo, new_xhi,
-            _interp_top(new_xlo, xlo, tl, xhi, tr),
-            _interp_bot(new_xlo, xlo, bl, xhi, br),
-            _interp_top(new_xhi, xlo, tl, xhi, tr),
-            _interp_bot(new_xhi, xlo, bl, xhi, br))
+            _interp_store(new_xlo, xlo, tl, xhi, tr),
+            _interp_store(new_xlo, xlo, bl, xhi, br),
+            _interp_store(new_xhi, xlo, tl, xhi, tr),
+            _interp_store(new_xhi, xlo, bl, xhi, br))
 
 
 def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
@@ -342,14 +335,14 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
     for i in range(len(splits) - 1):
         sx_lo, sx_hi = splits[i], splits[i + 1]
         if sx_lo >= sx_hi: continue
-        ot_l = _interp_top(sx_lo, xlo, tl, xhi, tr)
-        ob_l = _interp_bot(sx_lo, xlo, bl, xhi, br)
-        ot_r = _interp_top(sx_hi, xlo, tl, xhi, tr)
-        ob_r = _interp_bot(sx_hi, xlo, bl, xhi, br)
-        nt_l = _interp_top(sx_lo, sx1, yt1, sx2, yt2)
-        nb_l = _interp_bot(sx_lo, sx1, yb1, sx2, yb2)
-        nt_r = _interp_top(sx_hi, sx1, yt1, sx2, yt2)
-        nb_r = _interp_bot(sx_hi, sx1, yb1, sx2, yb2)
+        ot_l = _interp_store(sx_lo, xlo, tl, xhi, tr)
+        ob_l = _interp_store(sx_lo, xlo, bl, xhi, br)
+        ot_r = _interp_store(sx_hi, xlo, tl, xhi, tr)
+        ob_r = _interp_store(sx_hi, xlo, bl, xhi, br)
+        nt_l = _interp_store(sx_lo, sx1, yt1, sx2, yt2)
+        nb_l = _interp_store(sx_lo, sx1, yb1, sx2, yb2)
+        nt_r = _interp_store(sx_hi, sx1, yt1, sx2, yt2)
+        nb_r = _interp_store(sx_hi, sx1, yb1, sx2, yb2)
         rt_l = max(ot_l, nt_l); rb_l = min(ob_l, nb_l)
         rt_r = max(ot_r, nt_r); rb_r = min(ob_r, nb_r)
         if rt_l < rb_l or rt_r < rb_r:
