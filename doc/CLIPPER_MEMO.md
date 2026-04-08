@@ -172,16 +172,26 @@ if x_hi < bx0 or x_lo >= bx1 or y_hi < bt or y_lo > bb:
 This is 4 comparisons, zero multiplies. It rejects lines that are completely
 off-screen or outside the remaining visibility region.
 
-### 3.2 Pre-clip
+### 3.2 Orient and Compute Deltas
 
-```python
-pc = preclip_line_x(lx1, ly1, lx2, ly2)
-```
+The line is oriented left-to-right: `(xl, yl, xr, yr)` with
+`dx_line = xr - xl >= 0`. The line's Y bounding box is computed:
+`y_lo = min(yl, yr)`, `y_hi = max(yl, yr)`.
 
-One wide-math division per clipped endpoint. After pre-clip, the line is
-oriented left-to-right: `(xl, yl, xr, yr)` with `dx_line = xr - xl >= 0`.
-The line's Y bounding box is computed: `y_lo = min(yl, yr)`,
-`y_hi = max(yl, yr)`.
+There is **no separate pre-clip step**. Line Y is computed on demand by real
+division: `ly1 + dy * (ix - lx1) / dx`. The division adapts to operand
+width automatically:
+
+- **Common case (both endpoints on-screen):** `dx` is u8, `(ix - lx1)` is
+  u8, `dy` is s8-s9. The multiply `dy * (ix - lx1)` is s8 x u8 = s16,
+  and the division is s16 / u8 = s8. This costs one 8x8 multiply plus a
+  16/8 division (~120 cycles on 6502).
+
+- **Rare case (one or both endpoints off-screen):** `dx` is s16,
+  `(ix - lx1)` is s16. The multiply is s16 x s16 = s32, and the
+  division is s32 / s16 = s16. This costs a 16x16 multiply plus a 32/16
+  division (~360 cycles on 6502). This is the same cost as the old
+  pre-clip, but happens in-line rather than as a separate pass.
 
 ### 3.3 Forward Walk
 
@@ -243,7 +253,9 @@ The portal is open if `pt < pb`. The line is tested against it with a
 2. **Cheap bbox reject (0 muls).** If `y_hi < pt` or `y_lo > pb`, the
    line's entire Y range is outside the portal. The portal is missed.
 
-3. **Exact check (2 muls).** Compute `ly = line_y_at(px)`. If
+3. **Exact check (1 mul + 1 div).** Compute `ly = line_y_at(px)` via
+   real division: `ly1 + dy * (px - lx1) / dx`. For on-screen lines
+   this is one 8x8 multiply and one 16/8 division (~120 cycles). If
    `pt <= ly <= pb`, the line passes through. **Narrow the Y bbox** for
    future portal checks: `y_lo = min(y_lo, ly)`, `y_hi = max(y_hi, ly)`.
    This tightening makes subsequent cheap accepts more likely. Continue to
@@ -333,9 +345,9 @@ pb=min(270,270)=270. Cheap check: `pt=55 <= y_lo=90` -- yes;
 narrowed aperture at the actual boundary is tighter (e.g., pt=85, pb=120
 after tighten). Then: `pt=85 <= y_lo=90` -- yes, but `y_hi=140 > 120=pb` --
 fails cheap accept. `y_hi=140 > pb` but `y_lo=90 < pb` -- ambiguous.
-**Exact check**: compute `ly = line_y_at(240)`. At x=240: fraction along line
-is (240-60)/660 = 0.273, so ly = 90 + 50*0.273 = 104 (approximately, via
-`frac08` and `line_y_narrow`). `pt=85 <= 104 <= 120=pb` -- passes. **Narrow
+**Exact check**: compute `ly = line_y_at(240)`. At x=240:
+`ly = 90 + 50*(240-60)/660 = 104` (approximately, via real division).
+`pt=85 <= 104 <= 120=pb` -- passes. **Narrow
 Y bbox**: `y_lo = min(90, 104) = 90`... but actually the narrowing uses the
 exact value at the portal to replace the running bounds:
 `y_lo = min(y_lo, ly) = min(90, 104) = 90`,
@@ -343,7 +355,8 @@ exact value at the portal to replace the running bounds:
 where the line is steeper, the narrowing is significant. For this example,
 assume the narrowed values become **y_lo=103, y_hi=117** (reflecting that the
 line's Y range over the remaining X extent is tighter than the original
-endpoint-to-endpoint range). Cost: **2 muls** (one `line_y_narrow` call).
+endpoint-to-endpoint range). Cost: **1 mul + 1 div** (one real division via
+`LINE_Y_AT`).
 
 **Portal 3** (x=350, between spans 2 and 3). Aperture: pt=100, pb=250.
 After Y narrowing: y_lo=103, y_hi=117. Cheap check: `pt=100 <= y_lo=103` --
@@ -384,15 +397,15 @@ Cost: **8-16 muls** (CB clip).
 
 **Total cost breakdown:**
 
-| Stage | Muls | Notes |
+| Stage | Cost | Notes |
 |-------|------|-------|
-| Entry (span 0, inner bbox) | 0 | Free |
-| Portal 1 (cheap accept) | 0 | Free |
-| Portal 2 (exact check) | 2 | One `line_y_narrow` |
-| Portal 3 (fail + CB clip) | 8-16 | Full CB clip on span 2 |
-| Span 4 (outer reject) | 0 | Free |
-| Span 5 (CB clip entry/exit) | 8-16 | Full CB clip on span 5 |
-| **Total** | **18-34** | vs. 48-96 for 6 independent CB clips |
+| Entry (span 0, inner bbox) | 0 muls | Free |
+| Portal 1 (cheap accept) | 0 muls | Free |
+| Portal 2 (exact check) | 1 mul + 1 div | Real division via `LINE_Y_AT` |
+| Portal 3 (fail + CB clip) | 8 muls + divs | Full CB clip on span 2 |
+| Span 4 (outer reject) | 0 muls | Free |
+| Span 5 (CB clip entry/exit) | 8 muls + divs | Full CB clip on span 5 |
+| **Total** | **~17 muls + divs** | vs. 48+ for 6 independent CB clips |
 
 ---
 
@@ -421,93 +434,63 @@ X `[0, 255]`) and a span, and returns a clipped line or `None`.
 The clipping proceeds in three stages: X clip, top boundary clip, bottom
 boundary clip.
 
-![X clipping with frac08 parametric fraction](x_clip.svg)
+![X clipping with real division](x_clip.svg)
 
-### 4.1 Pre-clip (`preclip_line_x`)
+### 4.1 X Clipping (with Real Division)
 
-**Why needed:** The per-span arithmetic uses `frac08` to compute parametric
-fractions, which requires the offset to fit in the range `[0, span]` with
-`span <= 256`. If a line extends far off-screen (e.g., `lx1 = -500`), the
-offset `|x - lx1|` would overflow the u8 range.
-
-Pre-clipping restricts both X endpoints to `[0, 255]`, guaranteeing that all
-subsequent `dx` values are u8 (at most 255).
-
-**Wide math:** This is the only place wider-than-8x8 arithmetic is used. The Y
-at a clip boundary is computed as:
-
-```python
-y_at = ly1 + div_round(dy * (x - lx1), dx)
-```
-
-where `dy * (x - lx1)` can be up to ~16 bits x ~16 bits. On the 6502 this
-would be a 16x16 restoring division, but it only executes once per line (not
-once per span), so the cost is amortised.
-
-**Stability:** The Y is always computed from the _original_ line parameters
-`(lx1, ly1, dx, dy)`, never from previously-clipped coordinates. This avoids
-cascading rounding errors.
-
-### 4.2 X Clipping
-
-After pre-clip, the line has `dx` in the range `[-255, 255]`. The span has X
-range `[xlo, xhi)` with `ex = xhi - xlo` in `[1, 256]`.
-
+The span has X range `[xlo, xhi)` with `ex = xhi - xlo` in `[1, 256]`.
 The X clip narrows the line to the span's X range:
 
 1. If `dx > 0` and the left endpoint `cx1 < xlo`: compute Y at `xlo`.
 2. If `dx > 0` and the right endpoint `cx2 > xhi - 1`: compute Y at `xhi - 1`.
 3. (Symmetric for `dx < 0`.)
 
-**The `frac08` parametric fraction:**
+**There is no separate pre-clip step.** Line Y at any X is computed by real
+division:
 
 ```python
-f = frac08(|x_clip - lx1|, |dx|)
+y_at = ly1 + dy * (x - lx1) / dx
 ```
 
-This computes the parametric position along the line as a **0.8 fixed-point
-fraction** (u8, range 0-255 representing 0.0 to ~1.0):
+**Adaptive-width division:** The division width depends on the original line's
+`dx`:
 
-```python
-def frac08(offset, span):
-    if span == 256: return min(offset, 255)
-    return min((offset * 256 + span // 2) // span, 255)
-```
+- **Common case (on-screen line, `dx` fits in u8):** `dy * (ix - lx1)` is
+  s8 x u8 = s16. Division s16 / u8 yields s8. This is one 8x8 multiply
+  plus a 16/8 restoring division (~120 cycles on 6502).
 
-The `+ span // 2` provides round-to-nearest. On the 6502, when `span < 256`,
-this uses a 256-entry reciprocal table: `result = (offset * recip[span]) >> 8`
-with appropriate rounding.
+- **Rare case (off-screen endpoint, `dx` is s16):** `dy * (ix - lx1)` is
+  s16 x s16 = s32. Division s32 / s16 yields s16. This is a 16x16
+  multiply plus a 32/16 restoring division (~360 cycles on 6502). This
+  matches the old pre-clip cost, but occurs in-line rather than as a
+  separate pass.
 
-**The `line_y_narrow` Y computation:**
+The key insight is that most lines have both endpoints on-screen (dx fits in
+8 bits), so the common-case cost is very low. Off-screen lines pay more per
+evaluation, but these are rare and the total cost is no worse than the
+previous pre-clip approach.
 
-Given the parametric fraction `f`, the clipped Y is:
+**Stability:** The Y is always computed from the _original_ line parameters
+`(lx1, ly1, dx, dy)`, never from previously-clipped coordinates. This avoids
+cascading rounding errors.
 
-```python
-def line_y_narrow(ly1, dy, f):
-    dy_hi = dy >> 8       # high byte of dy
-    dy_lo = dy & 0xFF     # low byte of dy
-    hi_part = smul8(dy_hi, f)    # s8 x u8 -> s16
-    lo_part = (umul8(dy_lo, f) + 128) >> 8  # u8 x u8 -> u16, take high byte
-    return ly1 + hi_part + lo_part
-```
-
-This splits the wide `dy * f` into two 8x8 multiplies:
-- `hi_part = dy_hi * f` contributes whole pixels.
-- `lo_part = (dy_lo * f + 128) >> 8` contributes the sub-pixel portion, rounded
-  to nearest by the `+ 128`.
-
-The total cost is **2 quarter-square lookups** per Y evaluation.
-
-### 4.3 Top/Bottom Boundary Clipping
+### 4.2 Top/Bottom Boundary Clipping
 
 After X clipping, we evaluate the span boundaries at the two clipped X
 endpoints and check whether each line endpoint is inside or outside.
 
 ![Boundary clipping with intersection and ceiling rounding](boundary_clip.svg)
 
-#### 4.3.1 Boundary evaluation (`eval_boundary_88`)
+#### 4.2.1 Boundary evaluation (`eval_boundary_88`)
+
+Boundary Y values are interpolated within the span using `frac08` (a span-local
+parametric fraction) and `eval_boundary_88`. This is unchanged from the
+previous design: the span's `ex` (u8) denominator means the division is always
+cheap (16/8 or 24/8).
 
 ```python
+f = frac08(|cx - xlo|, ex)          # division: offset/span as 0.8 u8
+
 def eval_boundary_88(y0, y1, f):
     dt = y1 - y0              # s16 difference in 8.8
     dt_hi = dt >> 8           # s8-ish (clamped, |dt_hi| <= 160)
@@ -517,13 +500,13 @@ def eval_boundary_88(y0, y1, f):
     return y0 + hi_part + lo_part
 ```
 
-Same split-byte multiply pattern as `line_y_narrow`, but operating on 8.8
-boundary values. Cost: **2 quarter-square lookups** per boundary evaluation.
+This uses the split-byte multiply pattern operating on 8.8 boundary values.
+Cost: **2 quarter-square lookups** per boundary evaluation.
 
 There are 4 boundary evaluations per span (top and bottom at each endpoint), so
 **8 multiplies** per span for boundary evaluation.
 
-#### 4.3.2 Comparison (`compare_y_vs_boundary`)
+#### 4.2.2 Comparison (`compare_y_vs_boundary`)
 
 ```python
 def compare_y_vs_boundary(cy_pixel, boundary_88):
@@ -543,7 +526,7 @@ boundary (the boundary is 0.62 sub-pixels further down).
 On 6502: compare high bytes, then optionally check low byte for non-zero. Two
 byte comparisons, no multiply.
 
-#### 4.3.3 Intersection X (`boundary_ix`)
+#### 4.2.3 Intersection X (`boundary_ix`)
 
 When one endpoint is inside and the other outside, we must find the X where the
 line crosses the boundary.
@@ -588,7 +571,7 @@ knows which boundary is being clipped and passes the appropriate flag.
 On 6502, this is a 16-bit division (the `d` values are up to 16 bits), but it
 only executes when a boundary clip actually occurs (0-2 times per span).
 
-### 4.4 Worked Example
+### 4.3 Worked Example
 
 **Line:** (131, 114) to (134, 101)
 **Span:** `[87, 256)` with `yt_lo=0, yb_lo=28013, yt_hi=0, yb_hi=29184`
@@ -604,18 +587,16 @@ dy = 101 - 114 = -13
 ex = 256 - 87  = 169
 ```
 
-#### Step 1: Pre-clip
-
-Both endpoints have X in `[0, 255]`. No pre-clip adjustment needed.
-
-#### Step 2: X clip to [87, 255]
+#### Step 1: X clip to [87, 255]
 
 - `dx > 0`, `cx1 = 131 >= xlo = 87`: no left clip.
 - `dx > 0`, `cx2 = 134 <= xhi - 1 = 255`: no right clip.
 
+Both endpoints have X in `[87, 255]`. No X clip adjustment needed.
+
 After X clip: `(cx1, cy1) = (131, 114)`, `(cx2, cy2) = (134, 101)`.
 
-#### Step 3: Boundary evaluation
+#### Step 2: Boundary evaluation
 
 **Parametric fractions at clipped endpoints:**
 
@@ -670,7 +651,7 @@ bot2 = eval_boundary_88(28013, 29184, 71)
      (pixel: 28338 >> 8 = 110, frac: 28338 & 255 = 178)
 ```
 
-#### Step 4: Top boundary clip
+#### Step 3: Top boundary clip
 
 ```
 compare_y_vs_boundary(114, 0):  114 > 0 (pixel)  -> +1 (below)
@@ -679,7 +660,7 @@ compare_y_vs_boundary(101, 0):  101 > 0 (pixel)  -> +1 (below)
 
 Both endpoints are below the top boundary. No top clip needed.
 
-#### Step 5: Bottom boundary clip
+#### Step 4: Bottom boundary clip
 
 ```
 compare_y_vs_boundary(114, 28319):
@@ -717,29 +698,23 @@ boundary_ix(131, 134, 865, -2482, clip_p1=True)
        = 132
 ```
 
-**Y at intersection (from original line parameters):**
+**Y at intersection (from original line parameters, real division):**
 
 ```
-f = frac08(|132 - 131|, |3|) = frac08(1, 3)
-  = (1 * 256 + 1) // 3
-  = 257 // 3
-  = 85
+iy = ly1 + dy * (ix - lx1) / dx
+   = 114 + (-13) * (132 - 131) / 3
+   = 114 + (-13) * 1 / 3
+   = 114 + (-13) / 3
 
-iy = line_y_narrow(114, -13, 85)
-    dy_hi = -13 >> 8 = -1       (Python floor: -13/256 rounds down to -1)
-    dy_lo = -13 & 0xFF = 243    (-1*256 + 243 = -13 check)
-    abs_dy_hi = 1
-    hi_part = -(umul8(1, 85)) = -85
-    lo_part = (umul8(243, 85) + 128) >> 8
-            = (20655 + 128) >> 8
-            = 20783 >> 8
-            = 81
-    iy = 114 + (-85) + 81 = 110
+dx=3 fits in u8, (ix-lx1)=1 fits in u8, dy=-13 fits in s8.
+This is the COMMON CASE: s8 x u8 = s16 multiply, s16 / u8 division.
+    numerator = -13 * 1 = -13   (s8 x u8 = s16, one 8x8 multiply)
+    iy = 114 + round(-13 / 3) = 114 + (-4) = 110
 ```
 
 **Result:** Replace endpoint 1 with `(132, 110)`.
 
-#### Step 6: Final validation
+#### Step 5: Final validation
 
 ```
 dx >= 0, cx1=132 <= cx2=134: OK
@@ -753,12 +728,12 @@ endpoint at (131, 114) was below the boundary at that column (boundary pixel
 110.62, line pixel 114), so it was moved inward to (132, 110), where the line
 meets the boundary.
 
-**Multiply budget for this example:**
+**Cost budget for this example:**
 - Boundary evaluation: 4 calls to `eval_boundary_88` x 2 multiplies = **8 multiplies** (8x8)
-- `frac08`: 4 calls (f1, f2, intersection f, intersection frac) -- division, no multiply
-- `line_y_narrow`: 1 call x 2 multiplies = **2 multiplies** (8x8)
+- `frac08` for boundary eval: 2 calls (f1, f2) -- division, no multiply
+- Line Y at intersection: 1 real division = **1 multiply** (8x8) + **1 division** (16/8, common case)
 - `boundary_ix`: 1 call -- division only, no multiply
-- **Total: 10 multiplies** (all 8x8), **2 divisions** (one wide for `boundary_ix`)
+- **Total: 9 multiplies** (all 8x8), **3 divisions** (two frac08 + one 16/8 line Y), **1 wide division** (boundary_ix)
 
 ---
 
@@ -766,69 +741,74 @@ meets the boundary.
 
 ### 5.1 Format Table
 
-| Value | Format | Type | Range | Bit Width | Multiply |
-|-------|--------|------|-------|-----------|----------|
+| Value | Format | Type | Range | Bit Width | Notes |
+|-------|--------|------|-------|-----------|-------|
 | Screen X (pixel) | 8.0 | u8 | [0, 255] | 8 | -- |
 | Screen Y (pixel) | 8.0 | s9 | [-256, 255] | 9 | -- |
 | Span xlo, xhi | 8.0 | u8 | [0, 256] | 9* | -- |
 | Span yt/yb (8.8) | 8.8 | s16 | [-2560, 43520] | 16 | -- |
-| dx (post-preclip) | 8.0 | u8 | [0, 255] | 8 | -- |
-| dy (post-preclip) | 8.0 | s14 | [-16383, 16383] | 14 | -- |
+| dx (line) | -- | s16 | [-32768, 32767] | 16 | u8 common case |
+| dy (line) | 8.0 | s14 | [-16383, 16383] | 14 | -- |
 | ex (span width) | 8.0 | u9 | [1, 256] | 9 | -- |
-| frac08 (f) | 0.8 | u8 | [0, 255] | 8 | div only |
+| frac08 (f) -- boundary only | 0.8 | u8 | [0, 255] | 8 | div only |
 | dt_hi (boundary delta high) | 8.0 | s8 | [-160, 160] | 8 | 8x8 |
 | dt_lo (boundary delta low) | 0.8 | u8 | [0, 255] | 8 | 8x8 |
-| dy_hi (line delta high) | 8.0 | s8 | [-128, 127] | 8 | 8x8 |
-| dy_lo (line delta low) | 0.8 | u8 | [0, 255] | 8 | 8x8 |
 | hi_part (boundary) | 8.8 | s16 | [-32768, 32767] | 16 | result of 8x8 |
 | lo_part (boundary) | 8.0 | u8 | [0, 255] | 8 | result of 8x8 >> 8 |
 | eval_boundary result | 8.8 | s16 | [-2560, 43520] | 16 | -- |
-| line_y_narrow result | 8.0 | s16 | [-256, 416] | 10 | -- |
+| **line Y numerator (common)** | -- | s16 | -- | 16 | s8 x u8 mul |
+| **line Y numerator (rare)** | -- | s32 | -- | 32 | s16 x s16 mul |
+| **line Y division (common)** | -- | s8 | -- | 8 | s16 / u8 div |
+| **line Y division (rare)** | -- | s16 | -- | 16 | s32 / s16 div |
 | d1, d2 (distances) | 8.8 | s16 | [-43520, 43520] | 16 | -- |
 | boundary_ix denom | -- | s17 | -- | 17 | wide div |
 | boundary_ix num | -- | s25 | -- | 25 | wide mul |
-| preclip numerator | -- | s28 | -- | 28 | wide mul+div |
 
 (*) `xhi` can be 256 (for a span spanning the full screen width).
 
-### 5.2 Multiply Budget
+### 5.2 Cost Budget
 
-**Per-span operations (all 8x8):**
+**Per-span operations (boundary evaluation, all 8x8):**
 
-| Operation | Count | Multiplies | Type |
-|-----------|-------|------------|------|
-| frac08 (at cx1, cx2 within span) | 2 | 0 | division only |
-| eval_boundary_88 (top at cx1, cx2) | 2 | 4 | 8x8 |
-| eval_boundary_88 (bot at cx1, cx2) | 2 | 4 | 8x8 |
-| line_y_narrow (X clip endpoints) | 0-2 | 0-4 | 8x8 |
-| line_y_narrow (boundary intersection) | 0-2 | 0-4 | 8x8 |
-| **Typical total per span** | | **8-16** | **8x8** |
+| Operation | Count | 8x8 Muls | Divisions | Type |
+|-----------|-------|----------|-----------|------|
+| frac08 (boundary at cx1, cx2) | 2 | 0 | 2 (8-bit) | div only |
+| eval_boundary_88 (top at cx1, cx2) | 2 | 4 | 0 | 8x8 |
+| eval_boundary_88 (bot at cx1, cx2) | 2 | 4 | 0 | 8x8 |
+| **Boundary subtotal** | | **8** | **2** | |
 
-On a 6502 with quarter-square multiply, each 8x8 unsigned multiply takes
-approximately 28-36 cycles (table lookup, subtract, indexing). Signed multiply
-adds a negate-if-negative wrapper: approximately 40-50 cycles. So 8-16
-multiplies costs roughly 300-650 cycles per span.
+**Per-span operations (line Y via real division):**
 
-**Per-line operations (wide math):**
+| Operation | Count | 8x8 Muls | Divisions | Type |
+|-----------|-------|----------|-----------|------|
+| Line Y at X clip endpoint (common) | 0-2 | 0-2 | 0-2 (16/8) | s8 x u8 + div |
+| Line Y at X clip endpoint (rare) | 0-2 | 0-8* | 0-2 (32/16) | s16 x s16 + div |
+| Line Y at boundary intersection | 0-2 | 0-2 | 0-2 (16/8) | s8 x u8 + div |
+| **Line Y subtotal (common case)** | | **0-4** | **0-4** | |
 
-| Operation | Count | Type | Cost |
-|-----------|-------|------|------|
-| preclip Y at X=0 or X=255 | 0-2 | 16x16 div | ~200-400 cycles each |
-| boundary_ix | 0-2 | 16-bit div | ~200-300 cycles each |
+(*) 16x16 multiply decomposes into four 8x8 multiplies.
 
-The per-line wide division is amortised across all spans the line touches.
-For a typical line crossing 2-3 spans, the amortised cost per span is
-approximately 100-200 cycles.
+**Typical total per span (common case):** 8-12 multiplies (8x8) + 2-6 divisions.
+
+On a 6502, each 8x8 multiply costs ~28-50 cycles (quarter-square table
+lookup). Each 16/8 division costs ~120 cycles (restoring division loop).
+So 8-12 multiplies + 2-6 divisions costs roughly 500-1100 cycles per span.
+
+**Rare case (off-screen lines):** When dx is wider than 8 bits, the line Y
+computation uses s16 x s16 multiply (~4 x 8x8 = 120-200 cycles) plus 32/16
+division (~360 cycles). This is ~480-560 cycles per line Y evaluation, but
+only occurs for lines with an endpoint off-screen -- the same cost as the
+old pre-clip, just paid in-line.
 
 **Portal walk savings:** When the walk passes through portals via cheap bbox
 accept (tier 1), it skips the full CB clip for intermediate spans entirely.
 For a line crossing 3 contiguous spans where all portals cheaply accept, the
 walk performs only 2 CB clips (entry into the first span, exit from the last)
 instead of 3, and the portal checks cost 0 multiplies each. The exact portal
-check (tier 3) costs only 2 multiplies (one `line_y_narrow` call), compared
-to 8-16 multiplies for a full CB clip.
+check (tier 3) costs only 1 multiply + 1 division (one `LINE_Y_AT` call via
+real division), compared to 8-12 multiplies + divisions for a full CB clip.
 
-**Total estimated per-span cost:** ~500-900 cycles for the clipping math,
+**Total estimated per-span cost:** ~500-1100 cycles for the clipping math,
 excluding span traversal overhead.
 
 ### 5.3 Rounding Analysis
