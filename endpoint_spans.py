@@ -37,13 +37,9 @@ def _interp_ceil(x, x0, y0, x1, y1):
         return y0
     num = (y1 - y0) * (x - x0)
     den = x1 - x0
-    # Ceiling = floor + 1 when there's a remainder
     q = num // den
     if q * den != num:
-        # Has remainder: ceiling is floor + 1 for positive quotient,
-        # floor for negative (Python // already floors toward -inf)
-        if (num > 0) == (den > 0):
-            q += 1
+        q += 1  # ceiling: always round toward +inf when there's a remainder
     return y0 + q
 
 
