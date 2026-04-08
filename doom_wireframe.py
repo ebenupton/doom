@@ -2312,14 +2312,13 @@ def _draw_debug_step(surface):
     _trap_hues = [(40, 40, 180), (60, 100, 160), (30, 70, 200),
                   (80, 50, 170), (50, 90, 140), (70, 60, 190),
                   (40, 110, 150), (90, 40, 180)]
-    # spans is a list of (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) with Y in 8.8
-    from endpoint_spans import _px
+    # spans is a list of (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) — all pixels
     for si, span_s in enumerate(spans):
         xlo, xhi, tl, bl, tr, br = span_s[:6]
-        pts = [(xlo * FP_SCALE, _px(tl) * FP_SCALE),
-               ((xhi - 1) * FP_SCALE, _px(tr) * FP_SCALE),
-               ((xhi - 1) * FP_SCALE, _px(br) * FP_SCALE),
-               (xlo * FP_SCALE, _px(bl) * FP_SCALE)]
+        pts = [(xlo * FP_SCALE, tl * FP_SCALE),
+               ((xhi - 1) * FP_SCALE, tr * FP_SCALE),
+               ((xhi - 1) * FP_SCALE, br * FP_SCALE),
+               (xlo * FP_SCALE, bl * FP_SCALE)]
         hue = _trap_hues[si % len(_trap_hues)]
         pygame.draw.polygon(clip_surf, (*hue, 90), pts)
         pygame.draw.polygon(clip_surf, (*(min(c + 60, 255) for c in hue), 200), pts, 1)

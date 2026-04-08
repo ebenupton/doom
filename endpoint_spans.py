@@ -1,72 +1,55 @@
 """Integer-endpoint flat-span visibility for the DOOM wireframe renderer.
 
-Each span is (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) where X values are
-u8 pixels and Y values are s16 in 8.8 fixed point (256 = 1 pixel).
-This eliminates cumulative rounding drift from tighten's min/max ratchet
-by pushing quantisation to sub-pixel level.
+Each span is (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) — six bytes.
+All values are integer pixels: X in [0,256], Y in [0,159].
+Boundary between endpoints is a straight line.
 
-Drop-in replacement for FPClipSpans.
+6502-friendly: all span arithmetic is 8-bit.  Boundary interpolation
+is u8*s8/u8 (one 8x8 multiply + one 8-bit division).
 """
 
 import random
 import pygame
 from fp import FP_RENDER_W, FP_RENDER_H
 
-# 8.8 fixed point: 256 units = 1 pixel
-Y_SHIFT = 8
-Y_ONE = 1 << Y_SHIFT  # 256
-
 
 def _rand_color():
     return (random.randint(60, 255), random.randint(60, 255), random.randint(60, 255))
 
 
-def _y(pixel):
-    """Convert pixel Y to 8.8 fixed point."""
-    return pixel << Y_SHIFT
-
-
-def _px(y88):
-    """Convert 8.8 Y to pixel (round to nearest)."""
-    return (y88 + (Y_ONE >> 1)) >> Y_SHIFT
-
-
 def _interp(x, x0, y0, x1, y1):
-    """Interpolate 8.8 Y values at integer X. No rounding loss for Y."""
+    """Interpolate pixel Y values at integer X. Floor division."""
     if x1 == x0:
         return y0
     return y0 + (y1 - y0) * (x - x0) // (x1 - x0)
 
 
-# Cost tracking for debug mode (portal walk annotates these per-line)
-_line_cost = None  # set to a dict by recording wrapper, else None
+# Cost tracking for debug mode
+_line_cost = None
 
 
 class EndpointClipSpans:
-    """Visibility spans with 8.8 fixed-point Y boundaries.
+    """Visibility spans with integer pixel Y boundaries.
 
     self.spans: list of (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi)
       xlo, xhi: u8 pixel X coords, interval [xlo, xhi)
-      yt_*, yb_*: s16 in 8.8 format (256 = 1 pixel)
+      yt_*, yb_*: pixel Y coords
     """
 
     __slots__ = ("spans", "bbox")
 
     def __init__(self):
-        self.spans = [(0, FP_RENDER_W, _y(0), _y(FP_RENDER_H - 1),
-                       _y(0), _y(FP_RENDER_H - 1))]
+        self.spans = [(0, FP_RENDER_W, 0, FP_RENDER_H - 1, 0, FP_RENDER_H - 1)]
         self._update_bbox()
 
     def _update_bbox(self):
-        """Recompute bounding box of all spans: (x_min, x_max, yt_min, yb_max).
-        All in pixel space for fast reject. x_max is exclusive."""
         if not self.spans:
             self.bbox = None
             return
         x_min = self.spans[0][0]
-        x_max = self.spans[-1][1]  # spans are sorted by xlo
-        yt_min = min(min(_px(s[2]), _px(s[4])) for s in self.spans)
-        yb_max = max(max(_px(s[3]), _px(s[5])) for s in self.spans)
+        x_max = self.spans[-1][1]
+        yt_min = min(min(s[2], s[4]) for s in self.spans)
+        yb_max = max(max(s[3], s[5]) for s in self.spans)
         self.bbox = (x_min, x_max, yt_min, yb_max)
 
     # -- Queries ---------------------------------------------------------------
@@ -90,7 +73,8 @@ class EndpointClipSpans:
         if abs(lx1 - lx2) < 1:
             return False
         xl, xr = min(lx1, lx2), max(lx1, lx2)
-        y_lo, y_hi = _y(min(ly1, ly2)), _y(max(ly1, ly2))
+        y_lo = min(ly1, ly2)
+        y_hi = max(ly1, ly2)
         found = False
         for s in self.spans:
             if s[1] <= xl or s[0] >= xr: continue
@@ -126,25 +110,21 @@ class EndpointClipSpans:
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W, hi + 1)
         if ilo >= ihi: return
-        # Convert new boundary pixel Y to 8.8
-        yt1_88 = _y(yt1); yt2_88 = _y(yt2)
-        yb1_88 = _y(yb1); yb2_88 = _y(yb2)
         new = []
         for s in self.spans:
             xlo, xhi = s[0], s[1]
             if xhi <= ilo or xlo >= ihi:
                 new.append(s); continue
             ox0 = max(xlo, ilo); ox1 = min(xhi, ihi)
-            # Old dominates: new boundary less restrictive → skip
             if ox0 < ox1:
                 old_tl = _interp(ox0, xlo, s[2], xhi, s[4])
                 old_tr = _interp(ox1, xlo, s[2], xhi, s[4])
                 old_bl = _interp(ox0, xlo, s[3], xhi, s[5])
                 old_br = _interp(ox1, xlo, s[3], xhi, s[5])
-                new_tl = _interp(ox0, sx1, yt1_88, sx2, yt2_88)
-                new_tr = _interp(ox1, sx1, yt1_88, sx2, yt2_88)
-                new_bl = _interp(ox0, sx1, yb1_88, sx2, yb2_88)
-                new_br = _interp(ox1, sx1, yb1_88, sx2, yb2_88)
+                new_tl = _interp(ox0, sx1, yt1, sx2, yt2)
+                new_tr = _interp(ox1, sx1, yt1, sx2, yt2)
+                new_bl = _interp(ox0, sx1, yb1, sx2, yb2)
+                new_br = _interp(ox1, sx1, yb1, sx2, yb2)
                 if (new_tl <= old_tl and new_tr <= old_tr and
                         new_bl >= old_bl and new_br >= old_br):
                     new.append(s); continue
@@ -153,8 +133,8 @@ class EndpointClipSpans:
                 if ns: new.append(ns)
             right_s = _make_sub(s, ihi, xhi) if ihi < xhi else None
             if ox0 < ox1:
-                _tighten_span(s, ox0, ox1, sx1, sx2, yt1_88, yt2_88,
-                              yb1_88, yb2_88, new)
+                _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
+                              yb1, yb2, new)
             if right_s: new.append(right_s)
         self.spans = new
         self._update_bbox()
@@ -166,7 +146,7 @@ class EndpointClipSpans:
             if stats is not None: stats[0] += 1
             drawn = False
 
-            # Cost tracking (populated if debug mode active)
+            # Cost tracking
             if _line_cost is not None:
                 _line_cost.clear()
                 for k in ('bbox_rej','outer_rej','inner_acc','cb_entry','cb_rej',
@@ -174,7 +154,7 @@ class EndpointClipSpans:
                           'portal_bbox_fail','cb_exit','vert_clip'):
                     _line_cost[k] = 0
 
-            # Fast reject against global bounding box (no per-span work)
+            # Global bbox reject
             if self.bbox:
                 bx0, bx1, bt, bb = self.bbox
                 x_lo = min(lx1, lx2); x_hi = max(lx1, lx2)
@@ -192,10 +172,8 @@ class EndpointClipSpans:
                 for s in self.spans:
                     xlo, xhi = s[0], s[1]
                     if xlo <= ix < xhi:
-                        top_88 = _interp(ix, xlo, s[2], xhi, s[4])
-                        bot_88 = _interp(ix, xlo, s[3], xhi, s[5])
-                        top_y = _px(top_88)
-                        bot_y = _px(bot_88)
+                        top_y = _interp(ix, xlo, s[2], xhi, s[4])
+                        bot_y = _interp(ix, xlo, s[3], xhi, s[5])
                         if top_y >= bot_y: break
                         cy1 = max(min(ly1, ly2), top_y)
                         cy2 = min(max(ly1, ly2), bot_y)
@@ -217,29 +195,24 @@ class EndpointClipSpans:
                 y_hi = max(yl, yr)
 
                 def _line_y_at(x):
-                    """Real division: ly + dy*(x-lx)/dx, round-to-nearest.
-                    For short lines (common case) this collapses to 8x8 mul + 16/8 div."""
                     if dx_line == 0: return yl
                     return yl + div_round(dy_line * (x - xl), dx_line)
 
-                # Walk spans left-to-right.  The portal walk IS the clip:
-                # enter first span, walk through portals, only clip when
-                # a portal fails or we hit the edge.
-                cost = _line_cost  # may be None if not recording
+                cost = _line_cost
                 seg_start = None
                 for si, s in enumerate(self.spans):
                     if s[1] <= xl or s[0] >= xr:
                         continue
 
-                    ot = min(_px(s[2]), _px(s[4]))
-                    ob = max(_px(s[3]), _px(s[5]))
+                    ot = min(s[2], s[4])
+                    ob = max(s[3], s[5])
 
                     if seg_start is None:
                         if y_hi < ot or y_lo > ob:
                             if cost is not None: cost['outer_rej'] += 1
                             continue
-                        it = max(_px(s[2]), _px(s[4]))
-                        ib = min(_px(s[3]), _px(s[5]))
+                        it = max(s[2], s[4])
+                        ib = min(s[3], s[5])
                         if y_lo >= it and y_hi <= ib:
                             ex = max(xl, s[0])
                             seg_start = (ex, _line_y_at(ex) if ex != xl else yl)
@@ -260,8 +233,8 @@ class EndpointClipSpans:
 
                     if next_s is not None:
                         px = s[1]
-                        pt = _px(max(s[4], next_s[2]))
-                        pb = _px(min(s[5], next_s[3]))
+                        pt = max(s[4], next_s[2])
+                        pb = min(s[5], next_s[3])
                         if pt < pb:
                             if pt <= y_lo and y_hi <= pb:
                                 if cost is not None: cost['portal_cheap'] += 1
@@ -308,7 +281,7 @@ class EndpointClipSpans:
 # -- Helpers -------------------------------------------------------------------
 
 def _make_sub(s, new_xlo, new_xhi):
-    """Extract sub-span [new_xlo, new_xhi) from span s. Y in 8.8."""
+    """Extract sub-span [new_xlo, new_xhi) from span s by interpolation."""
     if new_xlo >= new_xhi: return None
     xlo, xhi, tl, bl, tr, br = s
     return (new_xlo, new_xhi,
@@ -319,7 +292,7 @@ def _make_sub(s, new_xlo, new_xhi):
 
 
 def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
-    """Tighten span s over [ox0, ox1). All Y values in 8.8."""
+    """Tighten span s over [ox0, ox1). All Y values are pixels."""
     xlo, xhi, tl, bl, tr, br = s
     old_tl = _interp(ox0, xlo, tl, xhi, tr)
     old_bl = _interp(ox0, xlo, bl, xhi, br)
@@ -331,14 +304,12 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
     new_br = _interp(ox1, sx1, yb1, sx2, yb2)
 
     splits = [ox0]
-    # Top crossover
     dt0 = old_tl - new_tl; dt1 = old_tr - new_tr
     if dt0 != dt1 and ((dt0 >= 0) != (dt1 >= 0)):
         denom = dt0 - dt1
         if denom != 0:
             cx = ox0 + dt0 * (ox1 - ox0) // denom
             if ox0 < cx < ox1: splits.append(cx)
-    # Bot crossover
     db0 = old_bl - new_bl; db1 = old_br - new_br
     if db0 != db1 and ((db0 >= 0) != (db1 >= 0)):
         denom = db0 - db1
@@ -366,9 +337,7 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
 
 
 def _line_y(ly1, dy, dx, x, lx1):
-    """Compute line Y at x using real division with round-to-nearest.
-    For short lines (common): 8x8 mul + 16/8 div.
-    For long lines (rare): 16x16 mul + 32/16 div."""
+    """Compute line Y at x using real division with round-to-nearest."""
     from clip_math import div_round
     if dx == 0:
         return ly1
@@ -376,13 +345,8 @@ def _line_y(ly1, dy, dx, x, lx1):
 
 
 def _clip_to_span(lx1, ly1, lx2, ly2, s):
-    """Clip line to span using real division. No pre-clip needed.
-
-    Line coords are pixels (any range). Span Y in 8.8 fixed point.
-    Boundary evaluation uses _interp (8.8 space, u8 denominator).
-    Line Y uses real division (adaptive width: 8x8 for short lines).
-    """
-    from clip_math import compare_y_vs_boundary, boundary_ix
+    """Clip line to span. Span Y in pixels. Line Y via real division."""
+    from clip_math import boundary_ix
     xlo, xhi, tl, bl, tr, br = s
     dx = lx2 - lx1
     dy = ly2 - ly1
@@ -413,20 +377,20 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
         if min(cx1, cx2) >= xhi or max(cx1, cx2) < xlo:
             return None
 
-    # -- Evaluate boundaries at clipped X endpoints (8.8, u8 denominator) --
+    # -- Evaluate boundaries at clipped X endpoints (pixel Y) --
     top1 = _interp(cx1, xlo, tl, xhi, tr)
     top2 = _interp(cx2, xlo, tl, xhi, tr)
     bot1 = _interp(cx1, xlo, bl, xhi, br)
     bot2 = _interp(cx2, xlo, bl, xhi, br)
 
     # -- Clip to top boundary (cy >= top) --
-    above1 = compare_y_vs_boundary(cy1, top1) < 0
-    above2 = compare_y_vs_boundary(cy2, top2) < 0
+    above1 = cy1 < top1
+    above2 = cy2 < top2
     if above1 and above2:
         return None
     if above1 or above2:
-        d1 = _y(cy1) - top1
-        d2 = _y(cy2) - top2
+        d1 = cy1 - top1
+        d2 = cy2 - top2
         ix = boundary_ix(cx1, cx2, d1, d2, above1)
         if ix is None:
             return None
@@ -435,20 +399,19 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
             cx1, cy1 = ix, iy
         else:
             cx2, cy2 = ix, iy
-        # Recompute boundary at new endpoint for bot clip
         if above1:
             bot1 = _interp(ix, xlo, bl, xhi, br)
         else:
             bot2 = _interp(ix, xlo, bl, xhi, br)
 
     # -- Clip to bottom boundary (cy <= bot) --
-    below1 = compare_y_vs_boundary(cy1, bot1) > 0
-    below2 = compare_y_vs_boundary(cy2, bot2) > 0
+    below1 = cy1 > bot1
+    below2 = cy2 > bot2
     if below1 and below2:
         return None
     if below1 or below2:
-        d1 = _y(cy1) - bot1
-        d2 = _y(cy2) - bot2
+        d1 = cy1 - bot1
+        d2 = cy2 - bot2
         ix = boundary_ix(cx1, cx2, d1, d2, below1)
         if ix is None:
             return None
