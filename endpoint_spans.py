@@ -293,15 +293,18 @@ class EndpointClipSpans:
                             drawn = True
                         seg_start = None
                     else:
-                        # Last span (or gap after this one) — clip right edge
-                        xx = min(xr, s[1] - 1)
-                        eyr = _line_y_at(xx) if xx != xr else yr
-                        sx, sy = seg_start
-                        sy = max(0, min(FP_RENDER_H-1, sy))
-                        eyr = max(0, min(FP_RENDER_H-1, eyr))
-                        pygame.draw.line(surface, _rand_color(),
-                                         (sx, sy), (xx, eyr), 1)
-                        drawn = True
+                        # Last span (or gap after this one) — CB clip
+                        # to find proper exit (line may leave aperture
+                        # before the right edge).
+                        c = _clip_to_span(lx1, ly1, lx2, ly2, s)
+                        if c:
+                            sx, sy = seg_start
+                            ex, ey = c[2], c[3]
+                            sy = max(0, min(FP_RENDER_H-1, sy))
+                            ey = max(0, min(FP_RENDER_H-1, ey))
+                            pygame.draw.line(surface, _rand_color(),
+                                             (sx, sy), (ex, ey), 1)
+                            drawn = True
                         seg_start = None
 
             if not drawn and stats is not None:
