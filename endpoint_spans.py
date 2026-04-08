@@ -214,78 +214,95 @@ class EndpointClipSpans:
                     f = frac08(x - xl, dx_line)
                     return line_y_narrow(yl, dy_line, f)
 
-                active = [s for s in self.spans if s[1] > xl and s[0] < xr]
-                if not active:
-                    if stats is not None: stats[3] += 1
-                    continue
+                # Walk spans left-to-right.  The portal walk IS the clip:
+                # enter first span, walk through portals, only clip when
+                # a portal fails or we hit the edge.
+                seg_start = None  # (sx, sy) of current segment start, or None
+                for si, s in enumerate(self.spans):
+                    if s[1] <= xl or s[0] >= xr:
+                        continue
 
-                groups = [[active[0]]]
-                for i in range(1, len(active)):
-                    if active[i-1][1] == active[i][0]:
-                        groups[-1].append(active[i])
-                    else:
-                        groups.append([active[i]])
+                    # -- Can we enter/continue through this span? --
+                    ot = min(_px(s[2]), _px(s[4]))
+                    ob = max(_px(s[3]), _px(s[5]))
 
-                for group in groups:
-                    if len(group) == 1:
-                        s = group[0]
-                        ot = min(_px(s[2]), _px(s[4]))
-                        ob = max(_px(s[3]), _px(s[5]))
-                        if y_hi < ot or y_lo > ob: continue
+                    if seg_start is None:
+                        # Not inside any segment yet — try to enter this span
+                        if y_hi < ot or y_lo > ob:
+                            continue  # outer reject
+
+                        # Inner bbox accept?
                         it = max(_px(s[2]), _px(s[4]))
                         ib = min(_px(s[3]), _px(s[5]))
                         if y_lo >= it and y_hi <= ib:
+                            # Trivially inside — enter at left edge of overlap
                             ex = max(xl, s[0])
-                            xx = min(xr, s[1] - 1)
-                            eyl = _line_y_at(ex) if ex != xl else yl
-                            eyr = _line_y_at(xx) if xx != xr else yr
-                            eyl = max(0, min(FP_RENDER_H-1, eyl))
-                            eyr = max(0, min(FP_RENDER_H-1, eyr))
-                            pygame.draw.line(surface, _rand_color(),
-                                             (ex, eyl), (xx, eyr), 1)
-                            drawn = True; continue
-                        c = _clip_to_span(lx1, ly1, lx2, ly2, s)
-                        if c:
-                            pygame.draw.line(surface, _rand_color(),
-                                             (c[0], c[1]), (c[2], c[3]), 1)
-                            drawn = True
-                        continue
-
-                    c_first = c_last = None; fi = li = -1
-                    for i, s in enumerate(group):
-                        c = _clip_to_span(lx1, ly1, lx2, ly2, s)
-                        if c:
-                            if fi < 0: fi = i; c_first = c
-                            li = i; c_last = c
-                    if fi < 0: continue
-                    if fi == li:
-                        pygame.draw.line(surface, _rand_color(),
-                                         (c_first[0], c_first[1]),
-                                         (c_first[2], c_first[3]), 1)
-                        drawn = True; continue
-
-                    portals_ok = True
-                    for i in range(fi, li):
-                        s_cur, s_nxt = group[i], group[i+1]
-                        px = s_cur[1]
-                        pt = _px(max(s_cur[4], s_nxt[2]))
-                        pb = _px(min(s_cur[5], s_nxt[3]))
-                        if pt >= pb: portals_ok = False; break
-                        ly = _line_y_at(px)
-                        if ly < pt or ly > pb: portals_ok = False; break
-
-                    if portals_ok:
-                        pygame.draw.line(surface, _rand_color(),
-                                         (c_first[0], c_first[1]),
-                                         (c_last[2], c_last[3]), 1)
-                        drawn = True
+                            seg_start = (ex, _line_y_at(ex) if ex != xl else yl)
+                        else:
+                            # Need CB clip to find entry
+                            c = _clip_to_span(lx1, ly1, lx2, ly2, s)
+                            if c is None:
+                                continue
+                            seg_start = (c[0], c[1])
                     else:
-                        for i in range(fi, li + 1):
-                            c = _clip_to_span(lx1, ly1, lx2, ly2, group[i])
-                            if c:
-                                pygame.draw.line(surface, _rand_color(),
-                                                 (c[0], c[1]), (c[2], c[3]), 1)
-                                drawn = True
+                        # We're continuing from the previous span.
+                        # seg_start already set; check if we're still inside.
+                        # (The portal check below already confirmed we pass
+                        # into this span, so we're inside at the left edge.)
+                        pass
+
+                    # -- Check exit: do we reach the portal to the next span? --
+                    # Find the next contiguous span (if any)
+                    next_s = None
+                    if si + 1 < len(self.spans) and self.spans[si + 1][0] == s[1]:
+                        ns = self.spans[si + 1]
+                        if ns[0] < xr:
+                            next_s = ns
+
+                    if next_s is not None:
+                        # Portal at s[1] (shared boundary X)
+                        px = s[1]
+                        pt = _px(max(s[4], next_s[2]))  # max of tops
+                        pb = _px(min(s[5], next_s[3]))  # min of bots
+                        if pt < pb:
+                            # Cheap check: line Y bbox vs portal aperture
+                            if pt <= y_lo and y_hi <= pb:
+                                # Entire Y range fits — pass without computing ly
+                                continue
+                            if y_hi < pt or y_lo > pb:
+                                pass  # miss — fall through to clip
+                            else:
+                                # Ambiguous — compute exact line Y at portal
+                                ly = _line_y_at(px)
+                                if pt <= ly <= pb:
+                                    # Narrow the Y bbox for future portals
+                                    y_lo = min(y_lo, ly)
+                                    y_hi = max(y_hi, ly)
+                                    continue
+
+                        # Portal failed or closed — clip against this span,
+                        # output the segment, and reset.
+                        c = _clip_to_span(lx1, ly1, lx2, ly2, s)
+                        if c:
+                            sx, sy = seg_start
+                            ex, ey = c[2], c[3]
+                            sy = max(0, min(FP_RENDER_H-1, sy))
+                            ey = max(0, min(FP_RENDER_H-1, ey))
+                            pygame.draw.line(surface, _rand_color(),
+                                             (sx, sy), (ex, ey), 1)
+                            drawn = True
+                        seg_start = None
+                    else:
+                        # Last span (or gap after this one) — clip right edge
+                        xx = min(xr, s[1] - 1)
+                        eyr = _line_y_at(xx) if xx != xr else yr
+                        sx, sy = seg_start
+                        sy = max(0, min(FP_RENDER_H-1, sy))
+                        eyr = max(0, min(FP_RENDER_H-1, eyr))
+                        pygame.draw.line(surface, _rand_color(),
+                                         (sx, sy), (xx, eyr), 1)
+                        drawn = True
+                        seg_start = None
 
             if not drawn and stats is not None:
                 stats[3] += 1
