@@ -319,16 +319,12 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
     splits = [ox0]
     dt0 = old_tl - new_tl; dt1 = old_tr - new_tr
     if dt0 != dt1 and ((dt0 >= 0) != (dt1 >= 0)):
-        denom = dt0 - dt1
-        if denom != 0:
-            cx = ox0 + dt0 * (ox1 - ox0) // denom
-            if ox0 < cx < ox1: splits.append(cx)
+        cx = _crossover_x(ox0, ox1, dt0, dt1)
+        if cx is not None: splits.append(cx)
     db0 = old_bl - new_bl; db1 = old_br - new_br
     if db0 != db1 and ((db0 >= 0) != (db1 >= 0)):
-        denom = db0 - db1
-        if denom != 0:
-            cx = ox0 + db0 * (ox1 - ox0) // denom
-            if ox0 < cx < ox1: splits.append(cx)
+        cx = _crossover_x(ox0, ox1, db0, db1)
+        if cx is not None: splits.append(cx)
     splits.append(ox1)
     splits.sort()
 
@@ -347,6 +343,19 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out):
         rt_r = max(ot_r, nt_r); rb_r = min(ob_r, nb_r)
         if rt_l < rb_l or rt_r < rb_r:
             out.append((sx_lo, sx_hi, rt_l, rb_l, rt_r, rb_r))
+
+
+def _crossover_x(x0, x1, d0, d1):
+    """Find X where two boundary lines cross, given their differences d0,d1
+    at x0,x1. Returns X in (x0,x1) or None. Floor division.
+    On 6502: s8 * u8 / s9 — one 8x8 mul + one 8-bit div."""
+    denom = d0 - d1
+    if denom == 0:
+        return None
+    cx = x0 + d0 * (x1 - x0) // denom
+    if x0 < cx < x1:
+        return cx
+    return None
 
 
 def _line_y(ly1, dy, dx, x, lx1):
