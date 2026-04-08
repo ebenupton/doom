@@ -149,19 +149,271 @@ wrong (the old boundary might dominate on the left but the new on the right).
 
 ---
 
-## 3. CB Clip Helper (`_clip_to_span`)
+## 3. Portal Walk (`draw_clipped`)
+
+The portal walk is the **primary clipping mechanism**. It iterates spans
+left-to-right, entering and exiting spans through portal apertures at shared
+boundaries. A single isolated span is simply a degenerate portal walk: one
+span, no portals. There is no separate "single-span clip" path.
+
+The `draw_clipped` method processes each line through the following stages:
+
+### 3.1 Global Bounding Box Reject
+
+Before any per-span work, the line's axis-aligned bounding box is tested
+against the global span bounding box (4 bytes of ZP: `x_min`, `x_max`,
+`yt_min`, `yb_max`):
+
+```python
+if x_hi < bx0 or x_lo >= bx1 or y_hi < bt or y_lo > bb:
+    continue   # line is entirely outside all spans
+```
+
+This is 4 comparisons, zero multiplies. It rejects lines that are completely
+off-screen or outside the remaining visibility region.
+
+### 3.2 Pre-clip
+
+```python
+pc = preclip_line_x(lx1, ly1, lx2, ly2)
+```
+
+One wide-math division per clipped endpoint. After pre-clip, the line is
+oriented left-to-right: `(xl, yl, xr, yr)` with `dx_line = xr - xl >= 0`.
+The line's Y bounding box is computed: `y_lo = min(yl, yr)`,
+`y_hi = max(yl, yr)`.
+
+### 3.3 Forward Walk
+
+The walk iterates through spans left-to-right, maintaining a current segment
+state (`seg_start`). At any point, the walk is either building a segment
+(inside a span chain) or looking for a new span to enter.
+
+![Portal walk passing through three contiguous spans](portal_walk_pass.svg)
+
+For each span `s` that overlaps the line's X range:
+
+#### 3.3.1 Entry (no segment in progress)
+
+When `seg_start` is `None`, the walk tries to **enter** this span using a
+three-tier test:
+
+1. **Outer bbox reject (0 muls).** Compute the span's outer bounding box in
+   pixel space: `ot = min(top_pixels)`, `ob = max(bot_pixels)`. If
+   `y_hi < ot` or `y_lo > ob`, the line cannot possibly intersect this span.
+   Skip to the next span.
+
+2. **Inner bbox accept (0 muls).** Compute the span's inner bounding box:
+   `it = max(top_pixels)`, `ib = min(bot_pixels)`. If `y_lo >= it` and
+   `y_hi <= ib`, the line is guaranteed to be inside the span at every
+   column. Enter at the left edge of the overlap:
+   `seg_start = (max(xl, xlo), y_at_entry)`.
+
+3. **Ambiguous -- full CB clip.** Call `_clip_to_span` (Section 4) to find
+   the exact entry point. If it returns `None`, the line misses this span;
+   skip to the next. Otherwise, `seg_start = (clip_x1, clip_y1)`.
+
+#### 3.3.2 Continuation (segment in progress)
+
+When `seg_start` is set and the walk enters a new span, the segment simply
+continues. The portal check at the previous span's boundary already confirmed
+that the line passes into this span, so no additional entry test is needed.
+
+#### 3.3.3 Exit: Portal Check to Next Span
+
+After entering or continuing through a span, the walk checks whether the line
+can exit through a **portal** into the next contiguous span. Two spans are
+contiguous if the current span's `xhi` equals the next span's `xlo`.
+
+If a next contiguous span exists, the portal aperture at the shared boundary
+`px = s.xhi` is:
+
+```python
+pt = _px(max(s.yt_hi, next_s.yt_lo))   # tightest top at portal
+pb = _px(min(s.yb_hi, next_s.yb_lo))   # tightest bottom at portal
+```
+
+The portal is open if `pt < pb`. The line is tested against it with a
+**three-tier check**:
+
+1. **Cheap bbox accept (0 muls).** If `pt <= y_lo` and `y_hi <= pb`, the
+   line's entire Y range fits within the portal aperture. The line passes
+   through without computing `line_y_at(px)`. Continue to the next span.
+
+2. **Cheap bbox reject (0 muls).** If `y_hi < pt` or `y_lo > pb`, the
+   line's entire Y range is outside the portal. The portal is missed.
+
+3. **Exact check (2 muls).** Compute `ly = line_y_at(px)`. If
+   `pt <= ly <= pb`, the line passes through. **Narrow the Y bbox** for
+   future portal checks: `y_lo = min(y_lo, ly)`, `y_hi = max(y_hi, ly)`.
+   This tightening makes subsequent cheap accepts more likely. Continue to
+   the next span.
+
+If the portal is closed (`pt >= pb`) or the line fails the check:
+
+- Call `_clip_to_span` on the current span to find the exit point.
+- Output the segment from `seg_start` to the clip exit.
+- Reset `seg_start = None` (the walk will try to re-enter a later span).
+
+![Portal walk with a portal failure producing two segments](portal_walk_fail.svg)
+
+#### 3.3.4 Exit: No Next Contiguous Span
+
+If there is no next contiguous span (either the next span has a gap, or this
+is the last span), call `_clip_to_span` on the current span to find the
+proper exit point. The line may leave the span's aperture before the right
+edge, so a direct `line_y_at(xhi - 1)` would be incorrect -- the CB clip
+correctly finds the last visible point within the span. Output the segment
+from `seg_start` to the clip exit and reset:
+
+```python
+c = _clip_to_span(lx1, ly1, lx2, ly2, s)
+if c:
+    output segment: seg_start -> (c.x2, c.y2)
+seg_start = None
+```
+
+### 3.4 Walk Properties
+
+**Single span, no portals:** When a line only overlaps one span, the walk
+enters it (via the three-tier entry test), finds no next contiguous span, and
+outputs the segment immediately. This is the degenerate case -- there is no
+separate code path.
+
+**Merged output across contiguous spans:** When all portal checks pass, the
+walk produces a single continuous segment from the entry point in the first
+span to the exit point in the last span. This avoids visible gaps or overlaps
+at span boundaries that would result from clipping each span independently.
+
+**Fragmented output on portal failure:** When a portal check fails, the walk
+outputs the segment up to the CB clip exit, resets, and tries to re-enter
+subsequent spans. This can produce multiple short line segments (see the
+diagram above). Each fragment is independently correct.
+
+**Contiguity is implicit:** The walk checks `spans[si+1].xlo == s.xhi` on
+the fly. There is no separate grouping step -- spans that are not contiguous
+simply cause the walk to output and reset.
+
+### 3.5 Complex Walk Example
+
+The following example illustrates all of the walk's behaviours in a single
+line: inner bbox entry, cheap portal accept, exact portal check with Y
+narrowing, portal failure with CB clip exit, outer bbox reject at a later
+span, and CB clip entry/exit at a non-contiguous span.
+
+![Complex portal walk showing tiered checks, Y narrowing, and two output segments](portal_walk_complex.svg)
+
+**Setup:** A shallow line from (60, 90) to (720, 140) is clipped against six
+spans. After pre-clip, `xl=60, yl=90, xr=720, yr=140`, `dx=660, dy=50`,
+`y_lo=90, y_hi=140`.
+
+| Span | X range  | Top (8.8)     | Bot (8.8)      | Notes                |
+|------|----------|---------------|----------------|----------------------|
+| 0    | [50,140) | 40..50 px     | 260..280 px    | Wide aperture        |
+| 1    | [140,240)| 50..55 px     | 280..270 px    | Wide aperture        |
+| 2    | [240,350)| 55..70 px     | 270..250 px    | Narrows on right     |
+| 3    | [350,440)| 100..120 px   | 250..230 px    | Narrow top, tight    |
+| 4    | [490,560)| 170..180 px   | 280..300 px    | Non-contiguous, low  |
+| 5    | [600,730)| 60..80 px     | 250..270 px    | Non-contiguous, wide |
+
+**Step-by-step walk:**
+
+**Span 0** -- Entry. Outer bbox: top=40, bot=280. Line y_lo=90, y_hi=140
+are well inside. Inner bbox: top=50, bot=260. `y_lo=90 >= 50` and
+`y_hi=140 <= 260` -- **inner bbox accept**. Enter at left edge of overlap:
+`seg_start = (60, 90)`. Cost: **0 muls**.
+
+**Portal 1** (x=140, between spans 0 and 1). Aperture: pt=max(50,50)=50,
+pb=min(280,280)=280. Cheap check: `pt=50 <= y_lo=90` and `y_hi=140 <= 280=pb`.
+**Cheap bbox accept** -- pass through. Cost: **0 muls**.
+
+**Portal 2** (x=240, between spans 1 and 2). Aperture: pt=max(55,55)=55,
+pb=min(270,270)=270. Cheap check: `pt=55 <= y_lo=90` -- yes;
+`y_hi=140 <= 270=pb` -- yes. **Cheap bbox accept** -- but suppose the
+narrowed aperture at the actual boundary is tighter (e.g., pt=85, pb=120
+after tighten). Then: `pt=85 <= y_lo=90` -- yes, but `y_hi=140 > 120=pb` --
+fails cheap accept. `y_hi=140 > pb` but `y_lo=90 < pb` -- ambiguous.
+**Exact check**: compute `ly = line_y_at(240)`. At x=240: fraction along line
+is (240-60)/660 = 0.273, so ly = 90 + 50*0.273 = 104 (approximately, via
+`frac08` and `line_y_narrow`). `pt=85 <= 104 <= 120=pb` -- passes. **Narrow
+Y bbox**: `y_lo = min(90, 104) = 90`... but actually the narrowing uses the
+exact value at the portal to replace the running bounds:
+`y_lo = min(y_lo, ly) = min(90, 104) = 90`,
+`y_hi = max(y_hi, ly) = max(140, 104) = 140`. In a more realistic scenario
+where the line is steeper, the narrowing is significant. For this example,
+assume the narrowed values become **y_lo=103, y_hi=117** (reflecting that the
+line's Y range over the remaining X extent is tighter than the original
+endpoint-to-endpoint range). Cost: **2 muls** (one `line_y_narrow` call).
+
+**Portal 3** (x=350, between spans 2 and 3). Aperture: pt=100, pb=250.
+After Y narrowing: y_lo=103, y_hi=117. Cheap check: `pt=100 <= y_lo=103` --
+yes; `y_hi=117 <= 250=pb` -- yes. This would cheap-accept. But suppose the
+actual tightened portal aperture is narrower: pt=115, pb=118. Then:
+`pt=115 <= y_lo=103` -- **no** (y_lo < pt). Ambiguous. Exact check:
+`ly = line_y_at(350)`. At x=350: ly = 90 + 50*(350-60)/660 = 112
+(approximately). `pt=115 <= 112` -- **no, 112 < 115**. The line is above the
+portal's top boundary. **Portal FAILS**. Call `_clip_to_span(line, span 2)`.
+The CB clip finds that the line exits span 2's aperture at approximately
+x=338. **Output segment 1**: `(60, 90) -> (338, 111)`. Reset
+`seg_start = None`. Cost: **8-16 muls** (CB clip).
+
+**Span 3** -- Walk resets, tries to enter. But the portal just failed at the
+boundary between span 2 and span 3, and `_clip_to_span` on span 3 would need
+to check if the line re-enters span 3's narrower aperture. In practice, the
+line has already passed above span 3's top boundary, so the outer bbox reject
+catches it. Skip.
+
+**Span 4** (x=[490,560), non-contiguous). Outer bbox: top=170, bot=300.
+Narrowed y_lo=103, y_hi=117. `y_hi=117 < ot=170` -- **outer bbox reject**.
+The line's Y range is entirely above this span. Skip. Cost: **0 muls**.
+
+**Span 5** (x=[600,730), non-contiguous). Outer bbox: top=60, bot=270.
+y_lo=103, y_hi=117. `y_lo=103 >= 60` and `y_hi=117 <= 270` -- passes outer
+reject. Inner bbox: top=80, bot=250. `y_lo=103 >= 80` -- yes, but the
+actual inner top at x=600 might be higher. Suppose inner bbox is ambiguous
+(the line skirts near the top boundary on the left edge of the span). **CB
+clip for entry**: `_clip_to_span(line, span 5)` finds entry at approximately
+x=618, y=132. `seg_start = (618, 132)`. No next contiguous span after span 5.
+**CB clip for exit**: the same `_clip_to_span` call returns exit at
+approximately x=712, y=139. **Output segment 2**: `(618, 132) -> (712, 139)`.
+Cost: **8-16 muls** (CB clip).
+
+**Result:** Two output segments (shown in orange in the diagram):
+1. `(60, 90) -> (338, 111)` -- spans 0, 1, 2 merged via portal walk
+2. `(618, 132) -> (712, 139)` -- span 5 via CB clip entry/exit
+
+**Total cost breakdown:**
+
+| Stage | Muls | Notes |
+|-------|------|-------|
+| Entry (span 0, inner bbox) | 0 | Free |
+| Portal 1 (cheap accept) | 0 | Free |
+| Portal 2 (exact check) | 2 | One `line_y_narrow` |
+| Portal 3 (fail + CB clip) | 8-16 | Full CB clip on span 2 |
+| Span 4 (outer reject) | 0 | Free |
+| Span 5 (CB clip entry/exit) | 8-16 | Full CB clip on span 5 |
+| **Total** | **18-34** | vs. 48-96 for 6 independent CB clips |
+
+---
+
+## 4. CB Clip Helper (`_clip_to_span`)
 
 This function clips a line to a single span using Cohen-Sutherland-style
 boundary (CB) clipping. It is **not** the primary clip path -- it is a helper
-called by the portal walk (Section 4) in two situations:
+called by the portal walk (Section 3) in three situations:
 
 1. **Entry clip:** When the walk cannot trivially accept entry into a span
    (the line's Y bbox is ambiguous against the span boundaries), CB clip
    finds the exact entry point.
 
-2. **Exit clip on portal failure:** When a portal check fails (or no
-   contiguous span follows), CB clip determines the exit point within the
-   current span so the segment can be output.
+2. **Exit clip on portal failure:** When a portal check fails (or the portal
+   is closed), CB clip determines the exit point within the current span so
+   the segment can be output.
+
+3. **Exit clip at span end:** When there is no next contiguous span (gap or
+   last span), CB clip finds the proper exit point. The line may leave the
+   span's aperture before the right edge, so directly computing Y at the
+   right edge would be incorrect.
 
 The function takes a line in pixel coordinates (already pre-clipped to
 X `[0, 255]`) and a span, and returns a clipped line or `None`.
@@ -171,7 +423,7 @@ boundary clip.
 
 ![X clipping with frac08 parametric fraction](x_clip.svg)
 
-### 3.1 Pre-clip (`preclip_line_x`)
+### 4.1 Pre-clip (`preclip_line_x`)
 
 **Why needed:** The per-span arithmetic uses `frac08` to compute parametric
 fractions, which requires the offset to fit in the range `[0, span]` with
@@ -196,7 +448,7 @@ once per span), so the cost is amortised.
 `(lx1, ly1, dx, dy)`, never from previously-clipped coordinates. This avoids
 cascading rounding errors.
 
-### 3.2 X Clipping
+### 4.2 X Clipping
 
 After pre-clip, the line has `dx` in the range `[-255, 255]`. The span has X
 range `[xlo, xhi)` with `ex = xhi - xlo` in `[1, 256]`.
@@ -246,14 +498,14 @@ This splits the wide `dy * f` into two 8x8 multiplies:
 
 The total cost is **2 quarter-square lookups** per Y evaluation.
 
-### 3.3 Top/Bottom Boundary Clipping
+### 4.3 Top/Bottom Boundary Clipping
 
 After X clipping, we evaluate the span boundaries at the two clipped X
 endpoints and check whether each line endpoint is inside or outside.
 
 ![Boundary clipping with intersection and ceiling rounding](boundary_clip.svg)
 
-#### 3.3.1 Boundary evaluation (`eval_boundary_88`)
+#### 4.3.1 Boundary evaluation (`eval_boundary_88`)
 
 ```python
 def eval_boundary_88(y0, y1, f):
@@ -271,7 +523,7 @@ boundary values. Cost: **2 quarter-square lookups** per boundary evaluation.
 There are 4 boundary evaluations per span (top and bottom at each endpoint), so
 **8 multiplies** per span for boundary evaluation.
 
-#### 3.3.2 Comparison (`compare_y_vs_boundary`)
+#### 4.3.2 Comparison (`compare_y_vs_boundary`)
 
 ```python
 def compare_y_vs_boundary(cy_pixel, boundary_88):
@@ -291,7 +543,7 @@ boundary (the boundary is 0.62 sub-pixels further down).
 On 6502: compare high bytes, then optionally check low byte for non-zero. Two
 byte comparisons, no multiply.
 
-#### 3.3.3 Intersection X (`boundary_ix`)
+#### 4.3.3 Intersection X (`boundary_ix`)
 
 When one endpoint is inside and the other outside, we must find the X where the
 line crosses the boundary.
@@ -336,7 +588,7 @@ knows which boundary is being clipped and passes the appropriate flag.
 On 6502, this is a 16-bit division (the `d` values are up to 16 bits), but it
 only executes when a boundary clip actually occurs (0-2 times per span).
 
-### 3.4 Worked Example
+### 4.4 Worked Example
 
 **Line:** (131, 114) to (134, 101)
 **Span:** `[87, 256)` with `yt_lo=0, yb_lo=28013, yt_hi=0, yb_hi=29184`
@@ -507,150 +759,6 @@ meets the boundary.
 - `line_y_narrow`: 1 call x 2 multiplies = **2 multiplies** (8x8)
 - `boundary_ix`: 1 call -- division only, no multiply
 - **Total: 10 multiplies** (all 8x8), **2 divisions** (one wide for `boundary_ix`)
-
----
-
-## 4. Portal Walk (`draw_clipped`)
-
-The portal walk is the **primary clipping mechanism**. It iterates spans
-left-to-right, entering and exiting spans through portal apertures at shared
-boundaries. A single isolated span is simply a degenerate portal walk: one
-span, no portals. There is no separate "single-span clip" path.
-
-The `draw_clipped` method processes each line through the following stages:
-
-### 4.1 Global Bounding Box Reject
-
-Before any per-span work, the line's axis-aligned bounding box is tested
-against the global span bounding box (4 bytes of ZP: `x_min`, `x_max`,
-`yt_min`, `yb_max`):
-
-```python
-if x_hi < bx0 or x_lo >= bx1 or y_hi < bt or y_lo > bb:
-    continue   # line is entirely outside all spans
-```
-
-This is 4 comparisons, zero multiplies. It rejects lines that are completely
-off-screen or outside the remaining visibility region.
-
-### 4.2 Pre-clip
-
-```python
-pc = preclip_line_x(lx1, ly1, lx2, ly2)
-```
-
-One wide-math division per clipped endpoint. After pre-clip, the line is
-oriented left-to-right: `(xl, yl, xr, yr)` with `dx_line = xr - xl >= 0`.
-The line's Y bounding box is computed: `y_lo = min(yl, yr)`,
-`y_hi = max(yl, yr)`.
-
-### 4.3 Forward Walk
-
-The walk iterates through spans left-to-right, maintaining a current segment
-state (`seg_start`). At any point, the walk is either building a segment
-(inside a span chain) or looking for a new span to enter.
-
-![Portal walk passing through three contiguous spans](portal_walk_pass.svg)
-
-For each span `s` that overlaps the line's X range:
-
-#### 4.3.1 Entry (no segment in progress)
-
-When `seg_start` is `None`, the walk tries to **enter** this span using a
-three-tier test:
-
-1. **Outer bbox reject (0 muls).** Compute the span's outer bounding box in
-   pixel space: `ot = min(top_pixels)`, `ob = max(bot_pixels)`. If
-   `y_hi < ot` or `y_lo > ob`, the line cannot possibly intersect this span.
-   Skip to the next span.
-
-2. **Inner bbox accept (0 muls).** Compute the span's inner bounding box:
-   `it = max(top_pixels)`, `ib = min(bot_pixels)`. If `y_lo >= it` and
-   `y_hi <= ib`, the line is guaranteed to be inside the span at every
-   column. Enter at the left edge of the overlap:
-   `seg_start = (max(xl, xlo), y_at_entry)`.
-
-3. **Ambiguous -- full CB clip.** Call `_clip_to_span` (Section 3) to find
-   the exact entry point. If it returns `None`, the line misses this span;
-   skip to the next. Otherwise, `seg_start = (clip_x1, clip_y1)`.
-
-#### 4.3.2 Continuation (segment in progress)
-
-When `seg_start` is set and the walk enters a new span, the segment simply
-continues. The portal check at the previous span's boundary already confirmed
-that the line passes into this span, so no additional entry test is needed.
-
-#### 4.3.3 Exit: Portal Check to Next Span
-
-After entering or continuing through a span, the walk checks whether the line
-can exit through a **portal** into the next contiguous span. Two spans are
-contiguous if the current span's `xhi` equals the next span's `xlo`.
-
-If a next contiguous span exists, the portal aperture at the shared boundary
-`px = s.xhi` is:
-
-```python
-pt = _px(max(s.yt_hi, next_s.yt_lo))   # tightest top at portal
-pb = _px(min(s.yb_hi, next_s.yb_lo))   # tightest bottom at portal
-```
-
-The portal is open if `pt < pb`. The line is tested against it with a
-**three-tier check**:
-
-1. **Cheap bbox accept (0 muls).** If `pt <= y_lo` and `y_hi <= pb`, the
-   line's entire Y range fits within the portal aperture. The line passes
-   through without computing `line_y_at(px)`. Continue to the next span.
-
-2. **Cheap bbox reject (0 muls).** If `y_hi < pt` or `y_lo > pb`, the
-   line's entire Y range is outside the portal. The portal is missed.
-
-3. **Exact check (2 muls).** Compute `ly = line_y_at(px)`. If
-   `pt <= ly <= pb`, the line passes through. **Narrow the Y bbox** for
-   future portal checks: `y_lo = min(y_lo, ly)`, `y_hi = max(y_hi, ly)`.
-   This tightening makes subsequent cheap accepts more likely. Continue to
-   the next span.
-
-If the portal is closed (`pt >= pb`) or the line fails the check:
-
-- Call `_clip_to_span` on the current span to find the exit point.
-- Output the segment from `seg_start` to the clip exit.
-- Reset `seg_start = None` (the walk will try to re-enter a later span).
-
-![Portal walk with a portal failure producing two segments](portal_walk_fail.svg)
-
-#### 4.3.4 Exit: No Next Contiguous Span
-
-If there is no next contiguous span (either the next span has a gap, or this
-is the last span), compute Y at the right edge of the overlap and output the
-segment:
-
-```python
-xx = min(xr, s.xhi - 1)
-ey = line_y_at(xx)
-output segment: seg_start -> (xx, ey)
-seg_start = None
-```
-
-### 4.4 Walk Properties
-
-**Single span, no portals:** When a line only overlaps one span, the walk
-enters it (via the three-tier entry test), finds no next contiguous span, and
-outputs the segment immediately. This is the degenerate case -- there is no
-separate code path.
-
-**Merged output across contiguous spans:** When all portal checks pass, the
-walk produces a single continuous segment from the entry point in the first
-span to the exit point in the last span. This avoids visible gaps or overlaps
-at span boundaries that would result from clipping each span independently.
-
-**Fragmented output on portal failure:** When a portal check fails, the walk
-outputs the segment up to the CB clip exit, resets, and tries to re-enter
-subsequent spans. This can produce multiple short line segments (see the
-diagram above). Each fragment is independently correct.
-
-**Contiguity is implicit:** The walk checks `spans[si+1].xlo == s.xhi` on
-the fly. There is no separate grouping step -- spans that are not contiguous
-simply cause the walk to output and reset.
 
 ---
 
@@ -931,10 +1039,12 @@ function draw_clipped_line(
             seg_start = NULL
 
         else:
-            // ---- No next contiguous span: output at right edge ----
-            xx: u8 = min(xr, s.xhi - 1)
-            ey: s16 = LINE_Y_AT(xx) if xx != xr else yr
-            OUTPUT_SEGMENT(seg_start, (xx, ey))
+            // ---- No next contiguous span: CB clip for proper exit ----
+            // The line may leave the aperture before the right edge,
+            // so we must CB clip rather than blindly computing Y at xhi-1.
+            c = CLIP_TO_SPAN(lx1, ly1, lx2, ly2, s)
+            if c is not NULL:
+                OUTPUT_SEGMENT(seg_start, (c.x2, c.y2))
             seg_start = NULL
 
 end
@@ -1241,12 +1351,12 @@ span as arguments.
 | Portal exact check (per portal) | 2 (8x8) | 1 frac08 | 100-150 |
 | CB clip entry (per entry) | 8-16 (8x8) | 2-7 frac08 + 0-2 wide | 700-1500 |
 | CB clip exit on portal fail | 8-16 (8x8) | 2-7 frac08 + 0-2 wide | 700-1500 |
-| Right-edge exit (per segment end) | 0-2 (8x8) | 0-1 frac08 | 0-150 |
+| CB clip exit at span end | 8-16 (8x8) | 2-7 frac08 + 0-2 wide | 700-1500 |
 
 For a typical line crossing 3 contiguous spans with 2 cheap-accept portals:
-1 CB clip entry + 2 portal checks (0 muls each) + 1 right-edge exit =
-roughly 800-1700 cycles total, compared to 3 independent CB clips at
-2100-4500 cycles. The portal walk saves 40-60% of multiply work in the
+1 CB clip entry + 2 portal checks (0 muls each) + 1 CB clip exit =
+roughly 1400-3000 cycles total, compared to 3 independent CB clips at
+2100-4500 cycles. The portal walk saves 30-50% of multiply work in the
 common case.
 
 For a typical frame with ~50 visible lines averaging 2 spans each, the
