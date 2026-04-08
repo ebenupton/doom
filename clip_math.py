@@ -125,37 +125,35 @@ def line_y_narrow(ly1, dy, f):
 
 def preclip_line_x(lx1, ly1, lx2, ly2):
     """Clip line X endpoints to [0, 255]. Uses wide math (per-line, not per-span).
-    Returns (lx1, ly1, lx2, ly2) with lx1,lx2 in [0,255], or None if invisible."""
+    Returns (lx1, ly1, lx2, ly2) with lx1,lx2 in [0,255], or None if invisible.
+    Always uses ORIGINAL line parameters for Y computation (no cascading error)."""
     dx = lx2 - lx1
     dy = ly2 - ly1
     if dx == 0:
         if lx1 < 0 or lx1 > 255:
             return None
         return (lx1, ly1, lx2, ly2)
-    # Clip left side (x < 0)
-    if lx1 < 0 and dx > 0:
-        ly1 = ly1 + div_round(dy * (0 - lx1), dx)
-        lx1 = 0
-    elif lx2 < 0 and dx < 0:
-        ly2 = ly2 + div_round((-dy) * (0 - lx2), -dx)
-        lx2 = 0
-    # Clip right side (x > 255)
-    dx = lx2 - lx1
-    if dx == 0:
-        if lx1 < 0 or lx1 > 255:
-            return None
-        return (lx1, ly1, lx2, ly2)
-    if lx2 > 255 and dx > 0:
-        ly2 = ly1 + div_round(dy * (255 - lx1), dx)
-        lx2 = 255
-    elif lx1 > 255 and dx < 0:
-        ly1 = ly2 + div_round((-dy) * (255 - lx2), -dx)
-        lx1 = 255
-    if min(lx1, lx2) > 255 or max(lx1, lx2) < 0:
+
+    # Compute Y at any X using original line (wide math)
+    def _y_at(x):
+        return ly1 + div_round(dy * (x - lx1), dx)
+
+    cx1, cy1, cx2, cy2 = lx1, ly1, lx2, ly2
+    if dx > 0:
+        if cx1 < 0:
+            cy1 = _y_at(0); cx1 = 0
+        if cx2 > 255:
+            cy2 = _y_at(255); cx2 = 255
+    else:
+        if cx2 < 0:
+            cy2 = _y_at(0); cx2 = 0
+        if cx1 > 255:
+            cy1 = _y_at(255); cx1 = 255
+    if min(cx1, cx2) > 255 or max(cx1, cx2) < 0:
         return None
-    assert 0 <= lx1 <= 255, f"preclip lx1={lx1}"
-    assert 0 <= lx2 <= 255, f"preclip lx2={lx2}"
-    return (lx1, ly1, lx2, ly2)
+    assert 0 <= cx1 <= 255, f"preclip cx1={cx1}"
+    assert 0 <= cx2 <= 255, f"preclip cx2={cx2}"
+    return (cx1, cy1, cx2, cy2)
 
 
 def compare_y_vs_boundary(cy_pixel, boundary_88):
