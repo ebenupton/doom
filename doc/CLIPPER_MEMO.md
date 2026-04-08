@@ -26,13 +26,13 @@ Each span is a 6-tuple:
 |--------|------|------------------------------------------|
 | xlo    | u8   | Left X of the half-open interval [xlo, xhi) |
 | xhi    | u8   | Right X (exclusive)                      |
-| yt_lo  | s16  | Top boundary Y at xlo, 8.8 fixed point  |
-| yb_lo  | s16  | Bottom boundary Y at xlo, 8.8 fixed point |
-| yt_hi  | s16  | Top boundary Y at xhi, 8.8 fixed point  |
-| yb_hi  | s16  | Bottom boundary Y at xhi, 8.8 fixed point |
+| yt_lo  | u8   | Top boundary pixel Y at xlo              |
+| yb_lo  | u8   | Bottom boundary pixel Y at xlo           |
+| yt_hi  | u8   | Top boundary pixel Y at xhi              |
+| yb_hi  | u8   | Bottom boundary pixel Y at xhi           |
 
-The Y values are in **8.8 fixed point**: 256 units = 1 pixel. The integer part
-is a signed pixel coordinate; the fractional part has 1/256 pixel resolution.
+All six fields are integer pixel values -- the span is **6 bytes total**.
+X values are in [0, 256], Y values are in [0, 159].
 
 ![Span layout showing the 6-field trapezoid](span_layout.svg)
 
@@ -50,15 +50,14 @@ accumulated them column-by-column. That approach suffered from two problems:
    requires dividing the difference of two nearly-equal slopes, amplifying
    rounding errors.
 
-The endpoint representation stores the exact (within 8.8) Y values at the two
-X endpoints. Interpolation within the span uses `_interp`, which is a single
-integer lerp with floor division. The worst-case error is 1/256 pixel at any
-interior point -- it does not accumulate across the span.
+The endpoint representation stores exact pixel Y values at the two X
+endpoints. Interpolation within the span uses `_interp`, which is a single
+integer lerp with floor division. The worst-case error is less than 1 pixel
+at any interior point -- it does not accumulate across the span.
 
 The `tighten` min/max ratchet (which takes the more-restrictive of old vs new
-at each endpoint) can only ever move a boundary by an integer number of 8.8
-units. Because the storage is 8.8, there is no further quantisation loss from
-the ratchet itself.
+at each endpoint) uses a **dual rounding strategy** to prevent systematic
+drift -- see Section 5.3.5 for details.
 
 ---
 
@@ -80,28 +79,43 @@ a solid (non-portal) wall seg is processed.
    - The overlapping portion is discarded.
 
 **Sub-span creation (`_make_sub`):** Extracts `[new_xlo, new_xhi)` from an
-existing span by interpolating the four Y boundaries at the new X endpoints:
+existing span by interpolating the four Y boundaries at the new X endpoints.
+Uses `_interp_store` (round-to-nearest) to prevent systematic bias:
 
 ```python
 def _make_sub(s, new_xlo, new_xhi):
     xlo, xhi, tl, bl, tr, br = s
     return (new_xlo, new_xhi,
-            _interp(new_xlo, xlo, tl, xhi, tr),   # yt at new_xlo
-            _interp(new_xlo, xlo, bl, xhi, br),   # yb at new_xlo
-            _interp(new_xhi, xlo, tl, xhi, tr),   # yt at new_xhi
-            _interp(new_xhi, xlo, bl, xhi, br))   # yb at new_xhi
+            _interp_store(new_xlo, xlo, tl, xhi, tr),   # yt at new_xlo
+            _interp_store(new_xlo, xlo, bl, xhi, br),   # yb at new_xlo
+            _interp_store(new_xhi, xlo, tl, xhi, tr),   # yt at new_xhi
+            _interp_store(new_xhi, xlo, bl, xhi, br))   # yb at new_xhi
 ```
 
-The `_interp` function performs integer linear interpolation in 8.8 space:
+There are two interpolation functions for pixel Y values:
 
 ```python
 def _interp(x, x0, y0, x1, y1):
+    """Floor division -- used for EVALUATION (clipper boundary checks,
+    portal walk).  Conservative: rejects marginal pixels."""
     if x1 == x0: return y0
     return y0 + (y1 - y0) * (x - x0) // (x1 - x0)
+
+def _interp_store(x, x0, y0, x1, y1):
+    """Round-to-nearest -- used for STORAGE (_make_sub, _tighten_span).
+    Errors of +/-0.5px cancel over multiple operations, preventing
+    the min/max ratchet from drifting."""
+    if x1 == x0: return y0
+    num = (y1 - y0) * (x - x0)
+    den = x1 - x0
+    if den > 0:
+        return y0 + (num + den // 2) // den
+    return y0 + (-num + (-den) // 2) // (-den)
 ```
 
-This is floor division, so the maximum interpolation error is +0 to +(1/256)
-pixel downward (toward higher Y). The error is bounded and non-cumulative.
+`_interp` uses floor division with a maximum error of <1 pixel downward.
+`_interp_store` uses round-to-nearest with a maximum error of +/-0.5 pixel
+in either direction. See Section 5.3 for why both are needed.
 
 ### 2.2 tighten
 
@@ -111,7 +125,7 @@ renderer progressively restricts visibility through portal chains.
 
 **Inputs:** X range `[lo, hi]`, the portal seg's screen-space X range
 `[sx1, sx2]`, and its boundary Y values `(yt1, yt2, yb1, yb2)` in pixel
-coordinates (converted internally to 8.8).
+coordinates.
 
 **Algorithm:**
 
@@ -238,8 +252,8 @@ If a next contiguous span exists, the portal aperture at the shared boundary
 `px = s.xhi` is:
 
 ```python
-pt = _px(max(s.yt_hi, next_s.yt_lo))   # tightest top at portal
-pb = _px(min(s.yb_hi, next_s.yb_lo))   # tightest bottom at portal
+pt = max(s.yt_hi, next_s.yt_lo)   # tightest top at portal
+pb = min(s.yb_hi, next_s.yb_lo)   # tightest bottom at portal
 ```
 
 The portal is open if `pt < pb`. The line is tested against it with a
@@ -318,14 +332,14 @@ span, and CB clip entry/exit at a non-contiguous span.
 spans. Oriented left-to-right: `xl=60, yl=90, xr=720, yr=140`, `dx=660,
 dy=50`, `y_lo=90, y_hi=140`.
 
-| Span | X range  | Top (8.8)     | Bot (8.8)      | Notes                |
+| Span | X range  | Top (px)      | Bot (px)       | Notes                |
 |------|----------|---------------|----------------|----------------------|
-| 0    | [50,140) | 40..50 px     | 260..280 px    | Wide aperture        |
-| 1    | [140,240)| 50..55 px     | 280..270 px    | Wide aperture        |
-| 2    | [240,350)| 55..70 px     | 270..250 px    | Narrows on right     |
-| 3    | [350,440)| 100..120 px   | 250..230 px    | Narrow top, tight    |
-| 4    | [490,560)| 170..180 px   | 280..300 px    | Non-contiguous, low  |
-| 5    | [600,730)| 60..80 px     | 250..270 px    | Non-contiguous, wide |
+| 0    | [50,140) | 40..50        | 260..280       | Wide aperture        |
+| 1    | [140,240)| 50..55        | 280..270       | Wide aperture        |
+| 2    | [240,350)| 55..70        | 270..250       | Narrows on right     |
+| 3    | [350,440)| 100..120      | 250..230       | Narrow top, tight    |
+| 4    | [490,560)| 170..180      | 280..300       | Non-contiguous, low  |
+| 5    | [600,730)| 60..80        | 250..270       | Non-contiguous, wide |
 
 **Step-by-step walk:**
 
@@ -480,7 +494,7 @@ endpoints and check whether each line endpoint is inside or outside.
 #### 4.2.1 Boundary evaluation (`_interp`)
 
 Boundary Y values are interpolated within the span using `_interp` -- direct
-interpolation in 8.8 space with u8 denominator:
+integer interpolation with floor division:
 
 ```python
 def _interp(cx, xlo, tl, xhi, tr):
@@ -489,30 +503,21 @@ def _interp(cx, xlo, tl, xhi, tr):
 ```
 
 The span width `ex = xhi - xlo` is at most 256 (u9), and `cx - xlo` fits in
-u8, so the numerator `(tr - tl) * (cx - xlo)` is s16 x u8 = s24 and the
-division is s24 / u9. On 6502 this is a single multiply-and-divide step.
+u8, so the numerator `(tr - tl) * (cx - xlo)` is s8 x u8 = s16 and the
+division is s16 / u9. On 6502 this is a single multiply-and-divide step.
 
 There are 4 boundary evaluations per span (top and bottom at each endpoint).
 
-#### 4.2.2 Comparison (`compare_y_vs_boundary`)
+#### 4.2.2 Comparison (plain integer)
+
+Since span Y and line Y are both pixel integers, comparison is trivial:
 
 ```python
-def compare_y_vs_boundary(cy_pixel, boundary_88):
-    boundary_pixel = boundary_88 >> 8
-    boundary_frac = boundary_88 & 0xFF
-    if cy_pixel < boundary_pixel: return -1   # above
-    if cy_pixel > boundary_pixel: return +1   # below
-    if boundary_frac > 0:        return -1   # at pixel, boundary past it
-    return 0                                  # exactly equal
+above1 = cy1 < top1    # line endpoint above top boundary
+below1 = cy1 > bot1    # line endpoint below bottom boundary
 ```
 
-This compares a pixel-resolution line Y against an 8.8-resolution boundary.
-The fractional part matters at the boundary: if the boundary is at pixel 110
-with fraction 0.62 (=159/256), then a line point at pixel 110 is _above_ the
-boundary (the boundary is 0.62 sub-pixels further down).
-
-On 6502: compare high bytes, then optionally check low byte for non-zero. Two
-byte comparisons, no multiply.
+No fractional tiebreak is needed. On 6502: a single byte comparison.
 
 #### 4.2.3 Intersection X (`boundary_ix`)
 
@@ -521,8 +526,9 @@ line crosses the boundary.
 
 **Inputs:**
 - `cx1, cx2`: the two X endpoints (u8).
-- `d1, d2`: signed distances from the line to the boundary at each endpoint.
-  `d1 = _y(cy1) - boundary_at_cx1` (positive = below boundary, negative = above).
+- `d1, d2`: signed pixel distances from the line to the boundary at each
+  endpoint. `d1 = cy1 - top1` or `d1 = cy1 - bot1` (positive = below
+  boundary, negative = above). These are s8/s9 values (pixel-scale).
 - `clip_p1`: `True` if endpoint 1 (cx1) is the outside point being clipped.
 
 **Formula:**
@@ -556,16 +562,18 @@ direction depends on whether we are clipping against the top boundary (outside
 = above, `d < 0`) or bottom boundary (outside = below, `d > 0`). The caller
 knows which boundary is being clipped and passes the appropriate flag.
 
-On 6502, this is a 16-bit division (the `d` values are up to 16 bits), but it
-only executes when a boundary clip actually occurs (0-2 times per span).
+On 6502, this is a narrower operation than it was with 8.8 Y: the `d` values
+are pixel-scale (s8/s9, not s16), so `denom` is at most s10 and `num` is
+u8 x s9 = s17. The division is s17 / s10, which only executes when a boundary
+clip actually occurs (0-2 times per span).
 
 ### 4.3 Worked Example
 
 **Line:** (131, 114) to (134, 101)
-**Span:** `[87, 256)` with `yt_lo=0, yb_lo=28013, yt_hi=0, yb_hi=29184`
+**Span:** `[87, 256)` with `yt_lo=0, yb_lo=110, yt_hi=0, yb_hi=114`
 
 This span has a flat top boundary at Y=0 and a bottom boundary that slopes from
-roughly pixel 109.4 on the left to pixel 114.0 on the right.
+pixel 110 on the left to pixel 114 on the right.
 
 #### Step 0: Setup
 
@@ -586,7 +594,7 @@ After X clip: `(cx1, cy1) = (131, 114)`, `(cx2, cy2) = (134, 101)`.
 
 #### Step 2: Boundary evaluation
 
-**Boundary at clipped endpoints via `_interp`:**
+**Boundary at clipped endpoints via `_interp` (pixel Y, floor division):**
 
 ```
 top1 = _interp(131, 87, 0, 256, 0)
@@ -594,29 +602,25 @@ top1 = _interp(131, 87, 0, 256, 0)
 
 top2 = _interp(134, 87, 0, 256, 0) = 0
 
-bot1 = _interp(131, 87, 28013, 256, 29184)
-     = 28013 + (29184 - 28013) * (131 - 87) // (256 - 87)
-     = 28013 + 1171 * 44 // 169
-     = 28013 + 51524 // 169
-     = 28013 + 304
-     = 28317
+bot1 = _interp(131, 87, 110, 256, 114)
+     = 110 + (114 - 110) * (131 - 87) // (256 - 87)
+     = 110 + 4 * 44 // 169
+     = 110 + 176 // 169
+     = 110 + 1
+     = 111
 
-     (pixel: 28317 >> 8 = 110, frac: 28317 & 255 = 157)
-
-bot2 = _interp(134, 87, 28013, 256, 29184)
-     = 28013 + 1171 * 47 // 169
-     = 28013 + 55037 // 169
-     = 28013 + 325
-     = 28338
-
-     (pixel: 28338 >> 8 = 110, frac: 28338 & 255 = 178)
+bot2 = _interp(134, 87, 110, 256, 114)
+     = 110 + 4 * 47 // 169
+     = 110 + 188 // 169
+     = 110 + 1
+     = 111
 ```
 
 #### Step 3: Top boundary clip
 
 ```
-compare_y_vs_boundary(114, 0):  114 > 0 (pixel)  -> +1 (below)
-compare_y_vs_boundary(101, 0):  101 > 0 (pixel)  -> +1 (below)
+above1 = (114 < 0) = False
+above2 = (101 < 0) = False
 ```
 
 Both endpoints are below the top boundary. No top clip needed.
@@ -624,40 +628,35 @@ Both endpoints are below the top boundary. No top clip needed.
 #### Step 4: Bottom boundary clip
 
 ```
-compare_y_vs_boundary(114, 28319):
-    boundary_pixel = 110, boundary_frac = 159
-    114 > 110  ->  +1 (below)
-    below1 = True  (endpoint 1 is OUTSIDE, below the bottom boundary)
-
-compare_y_vs_boundary(101, 28338):
-    boundary_pixel = 110, boundary_frac = 178
-    101 < 110  ->  -1 (above)
-    below2 = False (endpoint 2 is INSIDE)
+below1 = (114 > 111) = True   (endpoint 1 is OUTSIDE, below bottom boundary)
+below2 = (101 > 111) = False  (endpoint 2 is INSIDE)
 ```
 
 Endpoint 1 is below the bottom boundary; endpoint 2 is inside. We need to clip
 endpoint 1.
 
-**Distance computation (in 8.8 space):**
+**Distance computation (pixel-scale):**
 
 ```
-d1 = _y(114) - bot1 = 29184 - 28319 = 865    (positive: below boundary)
-d2 = _y(101) - bot2 = 25856 - 28338 = -2482  (negative: above boundary)
+d1 = cy1 - bot1 = 114 - 111 = 3     (positive: below boundary, s8)
+d2 = cy2 - bot2 = 101 - 111 = -10   (negative: above boundary, s8)
 ```
 
 **Intersection X:**
 
 ```
-boundary_ix(131, 134, 865, -2482, clip_p1=True)
-    denom = 865 - (-2482) = 3347
-    num   = (134 - 131) * 865 = 3 * 865 = 2595
+boundary_ix(131, 134, 3, -10, clip_p1=True)
+    denom = 3 - (-10) = 13
+    num   = (134 - 131) * 3 = 3 * 3 = 9
     clip_p1=True, cx1=131 < cx2=134  ->  round_up = True (round toward P2)
-    ix = 131 + -((-2595) // 3347)
-       = 131 + -((-2595) // 3347)
+    ix = 131 + -((-9) // 13)
        = 131 + -(-1)
        = 131 + 1
        = 132
 ```
+
+Note: with pixel-scale d values, the operands are much smaller than the old
+8.8-scale computation (denom=13 vs denom=3347, num=9 vs num=2595).
 
 **Y at intersection (from original line parameters, real division):**
 
@@ -685,15 +684,15 @@ Clamp: cy1=110 in [0,159], cy2=101 in [0,159]: no change
 **Output line: (132, 110) -> (134, 101)**
 
 The line has been clipped from below by the bottom boundary. The original
-endpoint at (131, 114) was below the boundary at that column (boundary pixel
-110.62, line pixel 114), so it was moved inward to (132, 110), where the line
-meets the boundary.
+endpoint at (131, 114) was below the boundary at that column (boundary at
+pixel 111, line at pixel 114), so it was moved inward to (132, 110), where the
+line meets the boundary.
 
 **Cost budget for this example:**
-- Boundary evaluation: 4 calls to `_interp` -- each is one multiply + one division (s16 x u8 / u9)
+- Boundary evaluation: 4 calls to `_interp` -- each is one multiply + one division (s8 x u8 / u9)
 - Line Y at intersection: 1 call to `_line_y` = **1 multiply** (8x8) + **1 division** (16/8, common case)
-- `boundary_ix`: 1 call -- division only, no multiply
-- **Total: 5 multiplies + 5 divisions** (4 boundary interp + 1 line Y), **1 wide division** (boundary_ix)
+- `boundary_ix`: 1 call -- division only, no multiply (operands are now s8/s9, not s16)
+- **Total: 5 multiplies + 5 divisions** (4 boundary interp + 1 line Y), **1 narrow division** (boundary_ix)
 
 ---
 
@@ -706,19 +705,19 @@ meets the boundary.
 | Screen X (pixel) | 8.0 | u8 | [0, 255] | 8 | -- |
 | Screen Y (pixel) | 8.0 | s9 | [-256, 255] | 9 | -- |
 | Span xlo, xhi | 8.0 | u8 | [0, 256] | 9* | -- |
-| Span yt/yb (8.8) | 8.8 | s16 | [-2560, 43520] | 16 | -- |
+| Span yt/yb (pixel) | 8.0 | u8 | [0, 159] | 8 | -- |
 | dx (line) | -- | s16 | [-32768, 32767] | 16 | u8 common case |
 | dy (line) | 8.0 | s14 | [-16383, 16383] | 14 | -- |
 | ex (span width) | 8.0 | u9 | [1, 256] | 9 | -- |
-| _interp numerator | -- | s24 | -- | 24 | s16 x u8 mul |
-| _interp result (boundary) | 8.8 | s16 | [-2560, 43520] | 16 | s24 / u9 div |
+| _interp numerator | -- | s16 | -- | 16 | s8 x u8 mul |
+| _interp result (boundary) | 8.0 | u8 | [0, 159] | 8 | s16 / u9 div |
 | **line Y numerator (common)** | -- | s16 | -- | 16 | s8 x u8 mul |
 | **line Y numerator (rare)** | -- | s32 | -- | 32 | s16 x s16 mul |
 | **line Y division (common)** | -- | s8 | -- | 8 | s16 / u8 div |
 | **line Y division (rare)** | -- | s16 | -- | 16 | s32 / s16 div |
-| d1, d2 (distances) | 8.8 | s16 | [-43520, 43520] | 16 | -- |
-| boundary_ix denom | -- | s17 | -- | 17 | wide div |
-| boundary_ix num | -- | s25 | -- | 25 | wide mul |
+| d1, d2 (distances) | 8.0 | s8/s9 | [-159, 159] | 9 | pixel-scale |
+| boundary_ix denom | -- | s10 | -- | 10 | narrow div |
+| boundary_ix num | -- | s17 | -- | 17 | u8 x s9 mul |
 
 (*) `xhi` can be 256 (for a span spanning the full screen width).
 
@@ -728,8 +727,8 @@ meets the boundary.
 
 | Operation | Count | Muls | Divisions | Type |
 |-----------|-------|------|-----------|------|
-| _interp (top at cx1, cx2) | 2 | 2 | 2 (s24/u9) | s16 x u8 + div |
-| _interp (bot at cx1, cx2) | 2 | 2 | 2 (s24/u9) | s16 x u8 + div |
+| _interp (top at cx1, cx2) | 2 | 2 | 2 (s16/u9) | s8 x u8 + div |
+| _interp (bot at cx1, cx2) | 2 | 2 | 2 (s16/u9) | s8 x u8 + div |
 | **Boundary subtotal** | | **4** | **4** | |
 
 **Per-span operations (line Y via `_line_y`, adaptive width):**
@@ -771,21 +770,38 @@ excluding span traversal overhead.
 
 ### 5.3 Rounding Analysis
 
-There are four distinct points where rounding occurs in the pipeline:
+There are four distinct points where rounding occurs in the pipeline. The
+key design choice is a **dual rounding strategy**: floor division for
+evaluation (boundary checks), round-to-nearest for storage (span boundaries).
 
-#### 5.3.1 `_interp` floor-division residual
+#### 5.3.1 `_interp` floor-division residual (evaluation)
 
 ```python
 y0 + (y1 - y0) * (x - x0) // (x1 - x0)
 ```
 
-Python's `//` floors toward negative infinity. The maximum error is 1 LSB of
-the 8.8 format, which is **1/256 pixel**. This is sub-pixel and not visually
-detectable.
+Python's `//` floors toward negative infinity. With pixel Y values, the
+maximum error is less than **1 pixel**. This is used for all boundary
+_evaluation_ during clipping and portal checks.
 
-This affects: `_make_sub`, `tighten` boundary evaluation, crossover detection.
+This affects: CB clip boundary evaluation, `tighten` old-dominates check,
+crossover detection.
 
-#### 5.3.2 `_line_y` / `div_round` round-to-nearest
+#### 5.3.2 `_interp_store` round-to-nearest (storage)
+
+```python
+num = (y1 - y0) * (x - x0)
+den = x1 - x0
+y0 + (num + den // 2) // den    # for positive den
+```
+
+Round-to-nearest is used when _storing_ span boundaries (`_make_sub`,
+`_tighten_span`). Maximum error: **+/-0.5 pixels**. On 6502 this is one
+extra ADD (of `den//2`) before the division.
+
+This is the key to eliminating 16-bit Y storage -- see Section 5.3.5.
+
+#### 5.3.3 `_line_y` / `div_round` round-to-nearest
 
 ```python
 div_round(num, den) = (num + den // 2) // den   # for positive den
@@ -797,15 +813,6 @@ visible rounding in the clipper.
 
 However, the line rasteriser itself has pixel-level granularity, so a 0.5-pixel
 error in the clip point is at most 1 pixel of visible deviation.
-
-#### 5.3.3 `_interp` boundary evaluation
-
-```python
-tl + (tr - tl) * (cx - xlo) // (xhi - xlo)
-```
-
-Floor division, same as Section 5.3.1. Maximum error: **1/256 pixel**
-(1 LSB of the 8.8 result). Sub-pixel and visually negligible.
 
 #### 5.3.4 `boundary_ix` ceiling-toward-inside
 
@@ -819,17 +826,45 @@ endpoint** (the one that survives). This is a conservative choice: it may
 reject one extra pixel at the boundary, but it never draws a pixel that is
 genuinely outside the span. Maximum deviation: **1 pixel** in X.
 
-#### 5.3.5 `tighten` min/max ratchet
+With pixel-scale d values, the operands are much narrower than the old 8.8
+computation (s9 distances vs s16), so the division is cheaper on 6502.
 
-The ratchet takes `max(old_top, new_top)` and `min(old_bot, new_bot)` at each
-endpoint. Because both values are stored in 8.8 with the same quantisation
-grid, the ratchet itself introduces **no additional error**. The only error is
-what was already present from the `_interp` evaluations (1/256 pixel each).
+#### 5.3.5 `tighten` min/max ratchet and the dual rounding strategy
 
-Over multiple tighten passes, the boundaries can only move inward (more
-restrictive). The error does not accumulate across passes because each pass
-stores exact 8.8 values at the endpoints -- it is the _interpolated interior_
-that has the 1/256 error, and that error is recomputed fresh each time.
+**The problem.** The ratchet takes `max(old_top, new_top)` and
+`min(old_bot, new_bot)` at each endpoint. With floor division, bottom
+boundary values are biased downward (toward higher Y). Repeatedly taking
+`min()` on floor-rounded bottom values causes the bottom boundary to drift
+downward over multiple tighten/split operations. Similarly, `max()` on
+floor-rounded top values drifts the top boundary upward. This "min/max
+ratchet drift" causes the visible aperture to grow over time -- a slow leak
+that accumulates across portal chains.
+
+With 8.8 fixed-point Y, the drift was only 1/256 pixel per operation and
+took many passes to become visible. With integer pixel Y, the same
+floor-division bias is up to 1 pixel per operation, which is immediately
+visible.
+
+**The solution.** Use **round-to-nearest** when _storing_ span boundaries
+(`_interp_store` in `_make_sub` and `_tighten_span`), and **floor division**
+when _evaluating_ boundaries for clipping (`_interp` in `_clip_to_span` and
+portal walk checks).
+
+- Round-to-nearest errors are +/-0.5px with no systematic bias. Over many
+  operations, the errors cancel rather than accumulate in one direction. This
+  prevents the min/max ratchet from drifting.
+
+- Floor division for evaluation is conservative: it biases boundary positions
+  in the "reject" direction (top boundary moves down, bottom moves up),
+  meaning marginal pixels are rejected rather than accepted. This prevents
+  drawing outside the true visible region.
+
+**On 6502:** round-to-nearest is `(num + den // 2) // den` -- one extra ADD
+of `den//2` before the division. Since `den` (the span width) is already in a
+register, this costs about 8 extra cycles per interpolation.
+
+This dual strategy eliminates the need for 16-bit Y storage while keeping
+span boundaries accurate over arbitrary portal chain depths.
 
 ---
 
@@ -887,16 +922,16 @@ function draw_clipped_line(
     // STAGE 2: FORWARD WALK
     // ================================================================
 
-    seg_start: (u8, s16) or NULL = NULL    // (sx, sy) of current segment
+    seg_start: (u8, u8) or NULL = NULL    // (sx, sy) of current segment
 
     for si = 0 to len(spans) - 1:
         s = spans[si]
         if s.xhi <= xl: continue           // span entirely left of line
         if s.xlo >= xr: continue           // span entirely right of line
 
-        // ---- Compute span outer bbox (pixel space) ----
-        ot: s16 = min(_PX(s.yt_lo), _PX(s.yt_hi))   // outer top
-        ob: s16 = max(_PX(s.yb_lo), _PX(s.yb_hi))   // outer bottom
+        // ---- Compute span outer bbox (pixel Y) ----
+        ot: u8 = min(s.yt_lo, s.yt_hi)   // outer top
+        ob: u8 = max(s.yb_lo, s.yb_hi)   // outer bottom
 
         // ============================================================
         // ENTRY: try to enter this span (only if seg_start is NULL)
@@ -908,8 +943,8 @@ function draw_clipped_line(
                 continue
 
             // Tier 2: inner bbox accept (0 muls)
-            it: s16 = max(_PX(s.yt_lo), _PX(s.yt_hi))   // inner top
-            ib: s16 = min(_PX(s.yb_lo), _PX(s.yb_hi))   // inner bottom
+            it: u8 = max(s.yt_lo, s.yt_hi)   // inner top
+            ib: u8 = min(s.yb_lo, s.yb_hi)   // inner bottom
             if y_lo >= it and y_hi <= ib:
                 ex: u8 = max(xl, s.xlo)
                 seg_start = (ex, LINE_Y_AT(yl, dy_line, dx_line, ex, xl) if ex != xl else yl)
@@ -935,8 +970,8 @@ function draw_clipped_line(
         if next_s is not NULL:
             // Portal at shared boundary X
             px: u8 = s.xhi
-            pt: s16 = _PX(max(s.yt_hi, next_s.yt_lo))   // tightest top
-            pb: s16 = _PX(min(s.yb_hi, next_s.yb_lo))   // tightest bot
+            pt: u8 = max(s.yt_hi, next_s.yt_lo)   // tightest top
+            pb: u8 = min(s.yb_hi, next_s.yb_lo)   // tightest bot
 
             if pt < pb:       // portal is open
                 // Tier 1: cheap bbox accept (0 muls)
@@ -984,16 +1019,16 @@ function clip_to_span(
     ly1: s16,   // original line endpoint 1 Y
     lx2: s16,   // original line endpoint 2 X
     ly2: s16,   // original line endpoint 2 Y
-    span: Span   // (xlo:u8, xhi:u9, tl:s16, bl:s16, tr:s16, br:s16)
-) -> (cx1:u8, cy1:s16, cx2:u8, cy2:s16) or NULL
+    span: Span   // (xlo:u8, xhi:u9, tl:u8, bl:u8, tr:u8, br:u8)
+) -> (cx1:u8, cy1:u8, cx2:u8, cy2:u8) or NULL
 
     // ---- Unpack span ----
     xlo: u8  = span.xlo
     xhi: u9  = span.xhi          // can be 256
-    tl:  s16 = span.yt_lo        // 8.8 top at xlo
-    bl:  s16 = span.yb_lo        // 8.8 bot at xlo
-    tr:  s16 = span.yt_hi        // 8.8 top at xhi
-    br:  s16 = span.yb_hi        // 8.8 bot at xhi
+    tl:  u8  = span.yt_lo        // pixel top at xlo
+    bl:  u8  = span.yb_lo        // pixel bot at xlo
+    tr:  u8  = span.yt_hi        // pixel top at xhi
+    br:  u8  = span.yb_hi        // pixel bot at xhi
     ex:  u9  = xhi - xlo         // span width, [1, 256]
     if ex <= 0: return NULL
 
@@ -1046,33 +1081,33 @@ function clip_to_span(
     // STAGE 2: EVALUATE BOUNDARIES AT CLIPPED ENDPOINTS
     // ================================================================
 
-    // Direct interpolation in 8.8 space (u8 denominator)
+    // Direct interpolation in pixel space (floor division)
 
     // Top boundary at endpoints                   // _interp: 1 mul + 1 div each
-    top1: s16 = INTERP(cx1, xlo, tl, xhi, tr)
-    top2: s16 = INTERP(cx2, xlo, tl, xhi, tr)
+    top1: u8 = INTERP(cx1, xlo, tl, xhi, tr)
+    top2: u8 = INTERP(cx2, xlo, tl, xhi, tr)
 
     // Bottom boundary at endpoints                // _interp: 1 mul + 1 div each
-    bot1: s16 = INTERP(cx1, xlo, bl, xhi, br)
-    bot2: s16 = INTERP(cx2, xlo, bl, xhi, br)
+    bot1: u8 = INTERP(cx1, xlo, bl, xhi, br)
+    bot2: u8 = INTERP(cx2, xlo, bl, xhi, br)
 
     // ================================================================
     // STAGE 3: TOP BOUNDARY CLIP (cy >= top)
     // ================================================================
 
-    above1: bool = COMPARE_Y_VS_BOUNDARY(cy1, top1) < 0
-    above2: bool = COMPARE_Y_VS_BOUNDARY(cy2, top2) < 0
+    above1: bool = cy1 < top1                      // plain integer compare
+    above2: bool = cy2 < top2
 
     if above1 and above2:
         return NULL                                // entirely above
 
     if above1 or above2:
-        // Distance from line to top boundary (in 8.8 space)
-        d1: s16 = (cy1 << 8) - top1               // shift + subtract
-        d2: s16 = (cy2 << 8) - top2
+        // Distance from line to top boundary (pixel-scale, s8/s9)
+        d1: s9 = cy1 - top1
+        d2: s9 = cy2 - top2
 
         // Intersection X with directed rounding
-        ix: u8 = BOUNDARY_IX(cx1, cx2, d1, d2, above1)  // wide division
+        ix: u8 = BOUNDARY_IX(cx1, cx2, d1, d2, above1)  // narrow division
         if ix is NULL: return NULL
 
         // Y at intersection (from original line, real division)
@@ -1091,17 +1126,17 @@ function clip_to_span(
     // STAGE 4: BOTTOM BOUNDARY CLIP (cy <= bot)
     // ================================================================
 
-    below1: bool = COMPARE_Y_VS_BOUNDARY(cy1, bot1) > 0
-    below2: bool = COMPARE_Y_VS_BOUNDARY(cy2, bot2) > 0
+    below1: bool = cy1 > bot1                      // plain integer compare
+    below2: bool = cy2 > bot2
 
     if below1 and below2:
         return NULL                                // entirely below
 
     if below1 or below2:
-        d1: s16 = (cy1 << 8) - bot1               // shift + subtract
-        d2: s16 = (cy2 << 8) - bot2
+        d1: s9 = cy1 - bot1                        // pixel-scale
+        d2: s9 = cy2 - bot2
 
-        ix: u8 = BOUNDARY_IX(cx1, cx2, d1, d2, below1)  // wide division
+        ix: u8 = BOUNDARY_IX(cx1, cx2, d1, d2, below1)  // narrow division
         if ix is NULL: return NULL
 
         iy: s16 = LINE_Y_AT(ly1, dy, dx, ix, lx1)         // 1 mul + 1 div
@@ -1153,31 +1188,34 @@ function ROUND_DIV(num: s32, den: s16) -> s16
 end
 
 
-function INTERP(x: u8, x0: u8, y0: s16, x1: u9, y1: s16) -> s16
-    // Direct interpolation in 8.8 space, u8/u9 denominator.
-    // On 6502: s16 x u8 multiply + s24 / u9 division.
+function INTERP(x: u8, x0: u8, y0: u8, x1: u9, y1: u8) -> u8
+    // Direct interpolation in pixel space, floor division.
+    // Used for EVALUATION (boundary checks, portal walk).
+    // On 6502: s8 x u8 multiply + s16 / u9 division.
     if x1 == x0: return y0
     return y0 + (y1 - y0) * (x - x0) / (x1 - x0)    // floor division
 end
 
 
-function COMPARE_Y_VS_BOUNDARY(cy_pixel: s16, boundary_88: s16) -> s8
-    // No multiply -- byte comparisons only
-    bpx: s8 = boundary_88 >> 8       // integer pixel part
-    bfr: u8 = boundary_88 & 0xFF     // fractional part
-    if cy_pixel < bpx: return -1     // above
-    if cy_pixel > bpx: return +1     // below
-    if bfr > 0:        return -1     // at pixel, boundary past it
-    return 0
+function INTERP_STORE(x: u8, x0: u8, y0: u8, x1: u9, y1: u8) -> u8
+    // Interpolation with round-to-nearest (no systematic bias).
+    // Used for STORAGE (_make_sub, _tighten_span).
+    // On 6502: same as INTERP + one extra ADD of den//2 before division.
+    if x1 == x0: return y0
+    num = (y1 - y0) * (x - x0)
+    den = x1 - x0
+    if den > 0:
+        return y0 + (num + den / 2) / den
+    return y0 + (-num + (-den) / 2) / (-den)
 end
 
 
-function BOUNDARY_IX(cx1: u8, cx2: u8, d1: s16, d2: s16, clip_p1: bool) -> u8 or NULL
-    // Wide division (16-bit numerator / 16-bit denominator)
-    denom: s17 = d1 - d2
+function BOUNDARY_IX(cx1: u8, cx2: u8, d1: s9, d2: s9, clip_p1: bool) -> u8 or NULL
+    // Narrower than old 8.8 version: pixel-scale d values (s9 not s16).
+    denom: s10 = d1 - d2
     if denom == 0: return NULL
 
-    num: s25 = (cx2 - cx1) * d1      // wide multiply
+    num: s17 = (cx2 - cx1) * d1      // u8 x s9 multiply
 
     if clip_p1:
         round_up: bool = (cx1 < cx2) // round toward P2 (the inside point)
@@ -1206,28 +1244,28 @@ The key working values during the forward walk and their suggested storage:
 
 | Value | Width | Storage |
 |-------|-------|---------|
-| seg_start (sx, sy) | u8 + s16 | Zero page (3 bytes) |
-| y_lo, y_hi | s16 | Zero page (4 bytes) |
-| xl, yl, xr, yr | u8 + s16 (x2) | Zero page (6 bytes) |
+| seg_start (sx, sy) | u8 + u8 | Zero page (2 bytes) |
+| y_lo, y_hi | u8 | Zero page (2 bytes) |
+| xl, yl, xr, yr | u8 (x4) | Zero page (4 bytes) |
 | dx_line, dy_line | s16 + s16 | Zero page (4 bytes) |
 | span index (si) | u8 | Zero page |
-| **Walk state total** | | **~18 bytes** |
+| **Walk state total** | | **~13 bytes** |
 
 Additional values during `_clip_to_span`:
 
 | Value | Width | Storage |
 |-------|-------|---------|
 | cx1, cx2 | u8 | Zero page |
-| cy1, cy2 | s16 | Zero page (2 bytes each) |
+| cy1, cy2 | u8 | Zero page (1 byte each) |
 | dx | s16 | Zero page (2 bytes) |
 | dy | s16 | Zero page (2 bytes) |
 | xlo, xhi | u8/u9 | Zero page |
 | ex | u9 | Zero page (2 bytes) |
-| tl, bl, tr, br | s16 | Zero page (8 bytes) |
-| interp temps | s24 | A register / temp |
-| top1, top2, bot1, bot2 | s16 | Zero page (8 bytes) |
-| d1, d2 | s16 | Zero page (4 bytes) |
-| **CB clip total** | | **~34 bytes** |
+| tl, bl, tr, br | u8 | Zero page (4 bytes) |
+| interp temps | s16 | A register / temp |
+| top1, top2, bot1, bot2 | u8 | Zero page (4 bytes) |
+| d1, d2 | s9 | Zero page (4 bytes) |
+| **CB clip total** | | **~23 bytes** |
 
 The walk state and CB clip state share the ZP region `$A0-$CF` reserved for
 clipper hooks. The CB clip temporaries overlay the walk's line/span values
