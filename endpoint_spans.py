@@ -111,87 +111,33 @@ class EndpointClipSpans:
         # Convert new boundary pixel Y to 8.8
         yt1_88 = _y(yt1); yt2_88 = _y(yt2)
         yb1_88 = _y(yb1); yb2_88 = _y(yb2)
-        # First pass: check if new boundary dominates ALL overlapping spans.
-        # If so, merge them into one span with the new boundary.
-        all_new_dom = True
-        merge_x0 = ihi; merge_x1 = ilo
+        new = []
         for s in self.spans:
             xlo, xhi = s[0], s[1]
             if xhi <= ilo or xlo >= ihi:
-                continue
+                new.append(s); continue
             ox0 = max(xlo, ilo); ox1 = min(xhi, ihi)
-            if ox0 >= ox1:
-                continue
-            old_tl = _interp(ox0, xlo, s[2], xhi, s[4])
-            old_tr = _interp(ox1, xlo, s[2], xhi, s[4])
-            old_bl = _interp(ox0, xlo, s[3], xhi, s[5])
-            old_br = _interp(ox1, xlo, s[3], xhi, s[5])
-            new_tl = _interp(ox0, sx1, yt1_88, sx2, yt2_88)
-            new_tr = _interp(ox1, sx1, yt1_88, sx2, yt2_88)
-            new_bl = _interp(ox0, sx1, yb1_88, sx2, yb2_88)
-            new_br = _interp(ox1, sx1, yb1_88, sx2, yb2_88)
-            if not (new_tl >= old_tl and new_tr >= old_tr and
-                    new_bl <= old_bl and new_br <= old_br):
-                all_new_dom = False
-                break
-            merge_x0 = min(merge_x0, ox0)
-            merge_x1 = max(merge_x1, ox1)
-
-        new = []
-        if all_new_dom and merge_x0 < merge_x1:
-            # New dominates: replace all overlapping spans with one merged span
-            for s in self.spans:
-                xlo, xhi = s[0], s[1]
-                if xhi <= ilo or xlo >= ihi:
+            # Old dominates: new boundary less restrictive → skip
+            if ox0 < ox1:
+                old_tl = _interp(ox0, xlo, s[2], xhi, s[4])
+                old_tr = _interp(ox1, xlo, s[2], xhi, s[4])
+                old_bl = _interp(ox0, xlo, s[3], xhi, s[5])
+                old_br = _interp(ox1, xlo, s[3], xhi, s[5])
+                new_tl = _interp(ox0, sx1, yt1_88, sx2, yt2_88)
+                new_tr = _interp(ox1, sx1, yt1_88, sx2, yt2_88)
+                new_bl = _interp(ox0, sx1, yb1_88, sx2, yb2_88)
+                new_br = _interp(ox1, sx1, yb1_88, sx2, yb2_88)
+                if (new_tl <= old_tl and new_tr <= old_tr and
+                        new_bl >= old_bl and new_br >= old_br):
                     new.append(s); continue
-                # Left fragment outside tighten range
-                if xlo < ilo:
-                    ns = _make_sub(s, xlo, ilo)
-                    if ns: new.append(ns)
-                # Right fragment outside tighten range
-                if ihi < xhi:
-                    ns = _make_sub(s, ihi, xhi)
-                    if ns: new.append(ns)
-            # Insert the single merged span
-            nt_l = _interp(merge_x0, sx1, yt1_88, sx2, yt2_88)
-            nt_r = _interp(merge_x1, sx1, yt1_88, sx2, yt2_88)
-            nb_l = _interp(merge_x0, sx1, yb1_88, sx2, yb2_88)
-            nb_r = _interp(merge_x1, sx1, yb1_88, sx2, yb2_88)
-            if nt_l < nb_l or nt_r < nb_r:
-                merged = (merge_x0, merge_x1, nt_l, nb_l, nt_r, nb_r)
-                # Insert in sorted position
-                ins = 0
-                while ins < len(new) and new[ins][0] < merge_x0:
-                    ins += 1
-                new.insert(ins, merged)
-        else:
-            # General path: per-span tighten
-            for s in self.spans:
-                xlo, xhi = s[0], s[1]
-                if xhi <= ilo or xlo >= ihi:
-                    new.append(s); continue
-                ox0 = max(xlo, ilo); ox1 = min(xhi, ihi)
-                # Old dominates: new boundary less restrictive → skip
-                if ox0 < ox1:
-                    old_tl = _interp(ox0, xlo, s[2], xhi, s[4])
-                    old_tr = _interp(ox1, xlo, s[2], xhi, s[4])
-                    old_bl = _interp(ox0, xlo, s[3], xhi, s[5])
-                    old_br = _interp(ox1, xlo, s[3], xhi, s[5])
-                    new_tl = _interp(ox0, sx1, yt1_88, sx2, yt2_88)
-                    new_tr = _interp(ox1, sx1, yt1_88, sx2, yt2_88)
-                    new_bl = _interp(ox0, sx1, yb1_88, sx2, yb2_88)
-                    new_br = _interp(ox1, sx1, yb1_88, sx2, yb2_88)
-                    if (new_tl <= old_tl and new_tr <= old_tr and
-                            new_bl >= old_bl and new_br >= old_br):
-                        new.append(s); continue
-                if xlo < ilo:
-                    ns = _make_sub(s, xlo, ilo)
-                    if ns: new.append(ns)
-                right_s = _make_sub(s, ihi, xhi) if ihi < xhi else None
-                if ox0 < ox1:
-                    _tighten_span(s, ox0, ox1, sx1, sx2, yt1_88, yt2_88,
-                                  yb1_88, yb2_88, new)
-                if right_s: new.append(right_s)
+            if xlo < ilo:
+                ns = _make_sub(s, xlo, ilo)
+                if ns: new.append(ns)
+            right_s = _make_sub(s, ihi, xhi) if ihi < xhi else None
+            if ox0 < ox1:
+                _tighten_span(s, ox0, ox1, sx1, sx2, yt1_88, yt2_88,
+                              yb1_88, yb2_88, new)
+            if right_s: new.append(right_s)
         self.spans = new
 
     # -- Clipping --------------------------------------------------------------
