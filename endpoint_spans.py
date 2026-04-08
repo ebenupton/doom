@@ -381,7 +381,7 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
     if above1 or above2:
         d1 = _y(cy1) - top1
         d2 = _y(cy2) - top2
-        ix = boundary_ix(cx1, cx2, d1, d2)
+        ix = boundary_ix(cx1, cx2, d1, d2, above1)
         if ix is None:
             return None
         if dx != 0:
@@ -408,7 +408,7 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
     if below1 or below2:
         d1 = _y(cy1) - bot1
         d2 = _y(cy2) - bot2
-        ix = boundary_ix(cx1, cx2, d1, d2)
+        ix = boundary_ix(cx1, cx2, d1, d2, below1)
         if ix is None:
             return None
         if dx != 0:

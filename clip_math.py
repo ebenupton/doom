@@ -171,21 +171,19 @@ def compare_y_vs_boundary(cy_pixel, boundary_88):
     return 0  # exactly equal
 
 
-def boundary_ix(cx1, cx2, d1, d2):
+def boundary_ix(cx1, cx2, d1, d2, clip_p1):
     """Compute intersection X from distance values d1,d2 (any width).
     Rounds toward the inside endpoint.
-    cx1,cx2: u8. d1: distance at cx1 (outside if >0 for bot, <0 for top).
+    clip_p1: True if P1 (cx1) is the outside point to be clipped.
     Returns u8 X coordinate, or None if degenerate."""
     denom = d1 - d2
     if denom == 0:
         return None
     num = (cx2 - cx1) * d1
-    # Determine which endpoint is outside (d1 has larger absolute distance)
-    clip_p1 = abs(d1) >= abs(d2)
     if clip_p1:
-        round_up = cx1 < cx2
+        round_up = cx1 < cx2   # P1 outside, round toward P2
     else:
-        round_up = cx2 < cx1
+        round_up = cx2 < cx1   # P2 outside, round toward P1
     if round_up:
         ix = cx1 + -((-num) // denom)
     else:
