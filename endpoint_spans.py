@@ -18,10 +18,33 @@ def _rand_color():
 
 
 def _interp(x, x0, y0, x1, y1):
-    """Interpolate pixel Y values at integer X. Floor division."""
+    """Interpolate pixel Y values at integer X. Floor division.
+    On 6502: s8 * u8 / u8.  When denominator is 256 (full-screen span),
+    the division is just a right-shift by 8 (take high byte of multiply).
+    Otherwise use restoring division loop (8 iterations, ~80 cycles).
+    A 256-byte reciprocal table is NOT used — direct division gives
+    better precision for the same cycle cost."""
     if x1 == x0:
         return y0
     return y0 + (y1 - y0) * (x - x0) // (x1 - x0)
+
+
+def _interp_ceil(x, x0, y0, x1, y1):
+    """Interpolate pixel Y, rounding UP (ceiling).  Used for TOP boundary
+    evaluation so lines never start above the true boundary.
+    On 6502: negate-interp-negate, or floor + conditional +1."""
+    if x1 == x0:
+        return y0
+    num = (y1 - y0) * (x - x0)
+    den = x1 - x0
+    # Ceiling = floor + 1 when there's a remainder
+    q = num // den
+    if q * den != num:
+        # Has remainder: ceiling is floor + 1 for positive quotient,
+        # floor for negative (Python // already floors toward -inf)
+        if (num > 0) == (den > 0):
+            q += 1
+    return y0 + q
 
 
 def _interp_store(x, x0, y0, x1, y1):
@@ -184,8 +207,8 @@ class EndpointClipSpans:
                 for s in self.spans:
                     xlo, xhi = s[0], s[1]
                     if xlo <= ix < xhi:
-                        top_y = _interp(ix, xlo, s[2], xhi, s[4])
-                        bot_y = _interp(ix, xlo, s[3], xhi, s[5])
+                        top_y = _interp_ceil(ix, xlo, s[2], xhi, s[4])  # ceil: never above boundary
+                        bot_y = _interp(ix, xlo, s[3], xhi, s[5])       # floor: never below boundary
                         if top_y >= bot_y: break
                         cy1 = max(min(ly1, ly2), top_y)
                         cy2 = min(max(ly1, ly2), bot_y)
@@ -399,9 +422,10 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
         if min(cx1, cx2) >= xhi or max(cx1, cx2) < xlo:
             return None
 
-    # -- Evaluate boundaries at clipped X endpoints (pixel Y) --
-    top1 = _interp(cx1, xlo, tl, xhi, tr)
-    top2 = _interp(cx2, xlo, tl, xhi, tr)
+    # -- Evaluate boundaries at clipped X endpoints --
+    # Top: ceiling (never above boundary).  Bot: floor (never below).
+    top1 = _interp_ceil(cx1, xlo, tl, xhi, tr)
+    top2 = _interp_ceil(cx2, xlo, tl, xhi, tr)
     bot1 = _interp(cx1, xlo, bl, xhi, br)
     bot2 = _interp(cx2, xlo, bl, xhi, br)
 
