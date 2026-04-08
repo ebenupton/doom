@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" font-family="monospace" font-size="12">
+  <rect width="640" height="400" fill="white"/>
+
+  <!-- Axes -->
+  <line x1="40" y1="310" x2="600" y2="310" stroke="black" stroke-width="1.5"/>
+  <line x1="40" y1="310" x2="40" y2="20" stroke="black" stroke-width="1.5"/>
+  <text x="320" y="338" text-anchor="middle" font-size="13">X</text>
+  <text x="15" y="165" text-anchor="middle" font-size="13" transform="rotate(-90,15,165)">Y</text>
+
+  <!-- Span 0 (leftmost) -->
+  <polygon points="80,55 210,65 210,230 80,200" fill="#CCE5FF" stroke="#336699" stroke-width="1.5"/>
+  <text x="145" y="125" text-anchor="middle" font-size="11" fill="#336699">span 0</text>
+  <text x="80" y="305" text-anchor="middle" font-size="10">x0</text>
+  <text x="210" y="305" text-anchor="middle" font-size="10">x1</text>
+
+  <!-- Span 1 (middle) -->
+  <polygon points="210,65 370,50 370,250 210,230" fill="#CCE5FF" stroke="#336699" stroke-width="1.5"/>
+  <text x="290" y="140" text-anchor="middle" font-size="11" fill="#336699">span 1</text>
+  <text x="370" y="305" text-anchor="middle" font-size="10">x2</text>
+
+  <!-- Span 2 (rightmost) -->
+  <polygon points="370,50 530,70 530,270 370,250" fill="#CCE5FF" stroke="#336699" stroke-width="1.5"/>
+  <text x="450" y="150" text-anchor="middle" font-size="11" fill="#336699">span 2</text>
+  <text x="530" y="305" text-anchor="middle" font-size="10">x3</text>
+
+  <!-- Portal apertures (vertical green bars at shared boundaries) -->
+  <!-- Portal 1 at x1 (between span 0 and span 1) -->
+  <line x1="210" y1="65" x2="210" y2="230" stroke="#33AA33" stroke-width="4" opacity="0.7"/>
+  <text x="210" y="42" text-anchor="middle" font-size="10" fill="#33AA33">portal 1</text>
+  <text x="196" y="62" text-anchor="end" font-size="9" fill="#33AA33">pt</text>
+  <text x="196" y="234" text-anchor="end" font-size="9" fill="#33AA33">pb</text>
+
+  <!-- Portal 2 at x2 (between span 1 and span 2) -->
+  <line x1="370" y1="50" x2="370" y2="250" stroke="#33AA33" stroke-width="4" opacity="0.7"/>
+  <text x="370" y="38" text-anchor="middle" font-size="10" fill="#33AA33">portal 2</text>
+  <text x="356" y="48" text-anchor="end" font-size="9" fill="#33AA33">pt</text>
+  <text x="356" y="254" text-anchor="end" font-size="9" fill="#33AA33">pb</text>
+
+  <!-- Y bbox band (horizontal, showing initial y_lo/y_hi range) -->
+  <rect x="80" y="105" width="450" height="95" fill="#FF3333" opacity="0.06" stroke="#FF3333" stroke-width="0.5" stroke-dasharray="4,3"/>
+  <text x="78" y="103" text-anchor="end" font-size="9" fill="#FF3333">y_lo</text>
+  <text x="78" y="204" text-anchor="end" font-size="9" fill="#FF3333">y_hi</text>
+
+  <!-- Narrowed Y bbox after portal 1 (tighter band from portal 1 onward) -->
+  <rect x="210" y="119" width="320" height="67" fill="#FF9900" opacity="0.08" stroke="#FF9900" stroke-width="0.5" stroke-dasharray="4,3"/>
+  <text x="260" y="116" font-size="9" fill="#FF9900">narrowed y range</text>
+
+  <!-- The line (red, entering left edge of span 0, exiting right edge of span 2) -->
+  <line x1="95" y1="110" x2="515" y2="185" stroke="#FF3333" stroke-width="2.5"/>
+
+  <!-- Entry point (left edge of span 0 overlap) -->
+  <circle cx="95" cy="110" r="5" fill="black"/>
+  <text x="55" y="107" font-size="10">enter</text>
+
+  <!-- Exit point (right edge of span 2) -->
+  <circle cx="515" cy="185" r="5" fill="black"/>
+  <text x="520" y="182" font-size="10">exit</text>
+
+  <!-- Portal check point 1 -->
+  <circle cx="210" cy="131" r="4" fill="#33AA33"/>
+  <text x="220" y="128" font-size="9" fill="#33AA33">cheap accept</text>
+  <text x="220" y="139" font-size="9" fill="#33AA33">(bbox inside)</text>
+
+  <!-- Portal check point 2 -->
+  <circle cx="370" cy="161" r="4" fill="#33AA33"/>
+  <text x="380" y="158" font-size="9" fill="#33AA33">exact check</text>
+  <text x="380" y="169" font-size="9" fill="#33AA33">narrow y range</text>
+
+  <!-- Output label -->
+  <rect x="130" y="262" width="380" height="28" fill="#f0f0f0" stroke="black" rx="3"/>
+  <text x="320" y="280" text-anchor="middle" font-size="11" font-weight="bold">output: one merged segment (enter -> exit)</text>
+
+  <!-- Annotation: tiered portal checks -->
+  <text x="100" y="355" font-size="10">portal 1: y_lo,y_hi both inside aperture -> cheap accept (0 muls)</text>
+  <text x="100" y="368" font-size="10">portal 2: ambiguous -> compute exact Y, passes, narrow y_lo/y_hi</text>
+  <text x="100" y="381" font-size="10">no more spans -> compute Y at right edge, output single segment</text>
+</svg>
