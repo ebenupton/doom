@@ -46,11 +46,24 @@ class EndpointClipSpans:
       yt_*, yb_*: s16 in 8.8 format (256 = 1 pixel)
     """
 
-    __slots__ = ("spans",)
+    __slots__ = ("spans", "bbox")
 
     def __init__(self):
         self.spans = [(0, FP_RENDER_W, _y(0), _y(FP_RENDER_H - 1),
                        _y(0), _y(FP_RENDER_H - 1))]
+        self._update_bbox()
+
+    def _update_bbox(self):
+        """Recompute bounding box of all spans: (x_min, x_max, yt_min, yb_max).
+        All in pixel space for fast reject. x_max is exclusive."""
+        if not self.spans:
+            self.bbox = None
+            return
+        x_min = self.spans[0][0]
+        x_max = self.spans[-1][1]  # spans are sorted by xlo
+        yt_min = min(min(_px(s[2]), _px(s[4])) for s in self.spans)
+        yb_max = max(max(_px(s[3]), _px(s[5])) for s in self.spans)
+        self.bbox = (x_min, x_max, yt_min, yb_max)
 
     # -- Queries ---------------------------------------------------------------
 
@@ -102,6 +115,7 @@ class EndpointClipSpans:
                 ns = _make_sub(s, ihi, xhi)
                 if ns: new.append(ns)
         self.spans = new
+        self._update_bbox()
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                 top_dom=False, bot_dom=False):
@@ -139,6 +153,7 @@ class EndpointClipSpans:
                               yb1_88, yb2_88, new)
             if right_s: new.append(right_s)
         self.spans = new
+        self._update_bbox()
 
     # -- Clipping --------------------------------------------------------------
 
@@ -146,6 +161,18 @@ class EndpointClipSpans:
         for lx1, ly1, lx2, ly2 in lines:
             if stats is not None: stats[0] += 1
             drawn = False
+
+            # Fast reject against global bounding box (no per-span work)
+            if self.bbox:
+                bx0, bx1, bt, bb = self.bbox
+                x_lo = min(lx1, lx2); x_hi = max(lx1, lx2)
+                y_lo = min(ly1, ly2); y_hi = max(ly1, ly2)
+                if x_hi < bx0 or x_lo >= bx1 or y_hi < bt or y_lo > bb:
+                    if stats is not None: stats[3] += 1
+                    continue
+            elif not self.spans:
+                if stats is not None: stats[3] += 1
+                continue
 
             if abs(lx1 - lx2) < 1:
                 ix = lx1
