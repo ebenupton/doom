@@ -516,6 +516,35 @@ def _has_colinear_solid_joint(seg_idx, vidx):
             return True       # portal suppressed (aperture edge drawn if we have steps)
     return False
 
+# Per-seg aperture edge info for solid segs suppressed by Rule 2.
+# Maps (seg_idx, 1_or_2) → (bch, bfh) from the colinear portal's back
+# sector.  The solid seg draws this aperture edge itself, so it's
+# visible regardless of BSP subsector ordering (the solid's draw phase
+# runs before its own mark_solid).
+_seg_novt_aperture = {}
+
+def _find_portal_back_heights(seg_idx, vidx):
+    """For a solid seg suppressed by Rule 2 at vidx, find the colinear
+    portal-with-steps and return its back sector (bch, bfh)."""
+    s_i = fp_segs_vwh[seg_idx]
+    front_i = s_i[1]
+    ldx_i, ldy_i = s_i[13], s_i[14]
+    for j in _vert_to_segs.get(vidx, ()):
+        if j == seg_idx:
+            continue
+        s_j = fp_segs_vwh[j]
+        if s_j[1] != front_i:
+            continue
+        if _seg_is_solid_svwh(s_j):
+            continue
+        ldx_j, ldy_j = s_j[13], s_j[14]
+        if ldx_i * ldy_j - ldy_i * ldx_j != 0:
+            continue
+        if _portal_has_steps(s_j):
+            bs = fp_sectors[s_j[2]]
+            return (bs[1], bs[0])  # (bch, bfh)
+    return None
+
 _seg_novt_flags = []
 for _i, _svwh in enumerate(fp_segs_vwh):
     _s = _svwh[0]
@@ -528,9 +557,51 @@ for _i, _svwh in enumerate(fp_segs_vwh):
     # Rule 2: colinear same-front joint where at least one side is solid.
     if not (_f & _SF_NOVT1) and _has_colinear_solid_joint(_i, _s[0]):
         _f |= _SF_NOVT1
+        # If this is a solid seg, record the aperture heights so it can
+        # draw the aperture edge itself (immune to cross-subsector clipping).
+        if _seg_is_solid_svwh(_svwh):
+            _bh = _find_portal_back_heights(_i, _s[0])
+            if _bh:
+                _seg_novt_aperture[(_i, 1)] = _bh
     if not (_f & _SF_NOVT2) and _has_colinear_solid_joint(_i, _s[1]):
         _f |= _SF_NOVT2
+        if _seg_is_solid_svwh(_svwh):
+            _bh = _find_portal_back_heights(_i, _s[1])
+            if _bh:
+                _seg_novt_aperture[(_i, 2)] = _bh
     _seg_novt_flags.append(_f)
+
+# Rule 3 (second pass): suppress a solid seg's vertical at a vertex
+# where a portal-with-steps from the other side has its NOVT set
+# (meaning the portal draws the aperture edge bt→bb there).  Without
+# this, the perpendicular solid seg's full vertical duplicates the
+# aperture edge range.  Rule 3 only fires when the portal's NOVT is
+# already set — at regular corners (portal not NOVT), the solid's
+# vertical is needed because no aperture edge is drawn.
+for _i, _svwh in enumerate(fp_segs_vwh):
+    if not _seg_is_solid_svwh(_svwh):
+        continue
+    _s = _svwh[0]
+    _front_i = _svwh[1]
+    for _bit, _vidx in ((_SF_NOVT1, _s[0]), (_SF_NOVT2, _s[1])):
+        if _seg_novt_flags[_i] & _bit:
+            continue  # already suppressed
+        for _j in _vert_to_segs.get(_vidx, ()):
+            if _j == _i:
+                continue
+            _sj = fp_segs_vwh[_j]
+            if _sj[2] != _front_i:  # portal's back != our front
+                continue
+            if not _portal_has_steps(_sj):
+                continue
+            # Check portal's NOVT is set at this vertex
+            _sj_s = _sj[0]
+            if _sj_s[0] == _vidx and (_seg_novt_flags[_j] & _SF_NOVT1):
+                _seg_novt_flags[_i] |= _bit
+                break
+            if _sj_s[1] == _vidx and (_seg_novt_flags[_j] & _SF_NOVT2):
+                _seg_novt_flags[_i] |= _bit
+                break
 
 _n_novt1 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT1)
 _n_novt2 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT2)
@@ -1297,6 +1368,20 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             lines.append((sx1, ft1, sx1, fb1))
         if not no_vt2:
             lines.append((sx2, ft2, sx2, fb2))
+        # Solid seg draws aperture edge at NOVT endpoints where a
+        # colinear portal-with-steps exists.  Drawn HERE (in the solid's
+        # draw phase, before mark_solid) so it survives even when the
+        # portal is in a different subsector rendered later.
+        _ap = _seg_novt_aperture.get((si, 1))
+        if _ap and no_vt1:
+            _bch1 = fp_project_y(_ap[0] - vz, ryh1, ryl1)
+            _bfh1 = fp_project_y(_ap[1] - vz, ryh1, ryl1)
+            lines.append((sx1, _bch1, sx1, _bfh1))
+        _ap = _seg_novt_aperture.get((si, 2))
+        if _ap and no_vt2:
+            _bch2 = fp_project_y(_ap[0] - vz, ryh2, ryl2)
+            _bfh2 = fp_project_y(_ap[1] - vz, ryh2, ryl2)
+            lines.append((sx2, _bch2, sx2, _bfh2))
         clips.draw_clipped(lines, GREEN, surface, draw_stats)
         # Annotation: show suppressed solid verticals in red
         if _novt_annotate:
@@ -1380,10 +1465,8 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
 
         # Aperture edge at NOVT endpoints: when step extensions are
-        # suppressed, draw the aperture boundary (bt→bb) instead.
-        # This is the only way the opening edge is visible from the
-        # front side — the back-sector seg that covers this range
-        # gets clipped away by mark_solid from the colinear solid wall.
+        # suppressed at a colinear solid joint, draw the aperture
+        # boundary (bt→bb) so the opening edge remains visible.
         if need_bt or need_bb:
             _ap_top1 = bt1 if need_bt else ft1
             _ap_top2 = bt2 if need_bt else ft2
@@ -1707,6 +1790,17 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             lines.append((sx1, ft1, sx1, fb1))
         if not no_vt2:
             lines.append((sx2, ft2, sx2, fb2))
+        # Solid seg draws aperture edge at NOVT endpoints (see fp_render_seg)
+        _ap = _seg_novt_aperture.get((si, 1))
+        if _ap and no_vt1:
+            _bch1 = fp_project_y(_ap[0] - vz, ryh1, ryl1)
+            _bfh1 = fp_project_y(_ap[1] - vz, ryh1, ryl1)
+            lines.append((sx1, _bch1, sx1, _bfh1))
+        _ap = _seg_novt_aperture.get((si, 2))
+        if _ap and no_vt2:
+            _bch2 = fp_project_y(_ap[0] - vz, ryh2, ryl2)
+            _bfh2 = fp_project_y(_ap[1] - vz, ryh2, ryl2)
+            lines.append((sx2, _bch2, sx2, _bfh2))
         clips.draw_clipped(lines, GREEN, surface, draw_stats)
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi))
