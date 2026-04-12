@@ -115,11 +115,13 @@ constant-line merge optimisation landed.
 
 | 2026-04-13 |       2842 B  |  3699 (19)    |  32908 (12)| 6656 (127) | 2372 (148) | **45635**    | −300   | **162563**   | −1593  | **Eliminate zp_save0 in tighten walk loop.** Store POOL_NEXT directly to `zp_old_cur` at the top of `tg_process`, instead of going through `zp_save0` as an intermediary. Since no subroutine during tighten processing modifies `zp_old_cur`, this eliminates 4 `LDA zp_save0 : STA zp_old_cur` epilogues (6 cycles each), saving ~6 cyc per span visited in the walk loop. S1 tighten −300, S2 tighten −1593. ROM −16 B. |
 
-Per-call averages (S1): `mark_solid` 195, `tighten` 2742, `has_gap` 52, `is_full` 16.
-Per-call averages (S2): `mark_solid` 236, `tighten` 3171, `has_gap`  66, `is_full` 16.
+| 2026-04-13 |       2836 B  |  3699 (19)    |  32854 (12)| 6656 (127) | 2372 (148) | **45581**    | −54    | **162326**   | −237   | **Overlap computation: avoid redundant POOL_XSTART reload.** The `ox0 = max(xstart, ilo)` code was reloading POOL_XSTART,X after BCS even though CMP doesn't modify A. Removed the reload and the JMP by restructuring: `LDA XSTART : CMP ilo : BCS set : LDA ilo : .set STA ox0`. Saves 3-4 cycles per overlapping span. S1 tighten −54, S2 tighten −237. ROM −6 B. |
 
-Cumulative vs baseline (S1 127 389 cyc → 45 635): **−81 754 cyc, −64.2%**.
-ROM size: 2701 → 2842 bytes, **+141 bytes**.
+Per-call averages (S1): `mark_solid` 195, `tighten` 2738, `has_gap` 52, `is_full` 16.
+Per-call averages (S2): `mark_solid` 236, `tighten` 3166, `has_gap`  66, `is_full` 16.
+
+Cumulative vs baseline (S1 127 389 cyc → 45 581): **−81 808 cyc, −64.2%**.
+ROM size: 2701 → 2836 bytes, **+135 bytes**.
 
 ## Notes on this round
 

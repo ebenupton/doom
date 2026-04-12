@@ -577,12 +577,12 @@ zp_cc_den_hi = $FE
     JMP tg_walk                                                         ; |
 
 .tg_overlaps
-    ; ox0 = max(xstart, ilo)
-    LDA POOL_XSTART,X : CMP zp_ilo : BCS tg_ox0_xlo                     ; |
-    LDA zp_ilo : JMP tg_ox0_set                                         ; |
-.tg_ox0_xlo LDA POOL_XSTART,X                                           ; |
+    ; ox0 = max(xstart, ilo).  CMP doesn't modify A, so BCS uses the
+    ; already-loaded XSTART value directly (avoids redundant reload).
+    LDA POOL_XSTART,X : CMP zp_ilo : BCS tg_ox0_set                     ; |
+    LDA zp_ilo                                                          ; |
 .tg_ox0_set STA zp_ox0                                                  ; |
-    ; ox1 = min(xend, ihi)
+    ; ox1 = min(xend, ihi).  Same trick: BCC/BEQ uses the loaded XEND.
     LDA POOL_XEND,X : CMP zp_ihi : BCC tg_ox1_set : BEQ tg_ox1_set      ; |
     LDA zp_ihi                                                          ; |
 .tg_ox1_set STA zp_ox1                                                  ; |
