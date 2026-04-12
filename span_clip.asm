@@ -755,10 +755,17 @@ zp_cc_den_hi = $FE
 .tg_cc_done
 
     ; --- Clamp new s16 values to [0,159] u8 for dominance check ---
+    ; Fast path: if all 4 hi bytes are 0 and all lo bytes < 160, no clamp needed.
+    LDA zp_nt_lh : ORA zp_nt_rh : ORA zp_nb_lh : ORA zp_nb_rh           ; |
+    BNE tg_clamp_slow                                                    ; |
+    LDA zp_nt_l : CMP #160 : BCS tg_clamp_slow                          ; |
+    LDA zp_nt_r : CMP #160 : BCS tg_clamp_slow                          ; |
+    LDA zp_nb_l : CMP #160 : BCS tg_clamp_slow                          ; |
+    LDA zp_nb_r : CMP #160 : BCS tg_clamp_slow                          ; |
+    JMP tg_clamp_done                                                    ; |
+.tg_clamp_slow
     ; High byte: negative→0, positive overflow (hi>0)→159, 0→check low
-    ; byte (in [0,255], clamp [160,255] to 159). The previous version
-    ; missed the [160,255]/hi=0 case, leaving bogus values for shallow-
-    ; off-screen segs and breaking dominance at e.g. (697,-3155,54).
+    ; byte (in [0,255], clamp [160,255] to 159).
     LDA zp_nt_lh : BMI tg_cn1z : BNE tg_cn1f                            ; |
     LDA zp_nt_l : CMP #160 : BCC tg_cn1s                                ; |
 .tg_cn1f LDA #159 : BNE tg_cn1s
@@ -779,6 +786,7 @@ zp_cc_den_hi = $FE
 .tg_cn4f LDA #159 : BNE tg_cn4s
 .tg_cn4z LDA #0
 .tg_cn4s STA zp_nb_r                                                    ; |
+.tg_clamp_done
     ; Unsigned dominance: new_tl <= old_tl AND new_tr <= old_tr AND ...
     LDA zp_nt_l : CMP zp_ot_l : BEQ tg_d1 : BCS tg_not_old_dom          ; |
 .tg_d1 LDA zp_nt_r : CMP zp_ot_r : BEQ tg_d2 : BCS tg_not_old_dom       ; |

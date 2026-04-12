@@ -109,11 +109,13 @@ constant-line merge optimisation landed.
 | 2026-04-13 |       2795 B  |  3659 (19)    |  34019 (12)| 6656 (127) | 2376 (148) | **46710**    | −298   | **166021**   | −610   | **Crossover detection: ORA fast path for hi==0 case.** When both `nt_lh/nt_rh` (or `nb_lh/nb_rh`) are 0 — the common case for on-screen seg values — the sign-of-difference computation skips the individual per-byte BMI/BNE checks and does two simple `CMP` + `ROL` + `EOR`. Saves ~12 cycles per boundary (top/bot) per overlapping span in the common case. S1 tighten −298, S2 tighten −610. ROM +61 B. |
 | 2026-04-13 |       2784 B  |  3699 (19)    |  33695 (12)| 6656 (127) | 2372 (148) | **46422**    | −288   | **164800**   | −1221  | **smul8: avoid double negate via unsigned interpretation.** When A < 0, the old smul8 negated the input, called umul8, then negated the 16-bit output (24 extra cycles). New approach: call umul8 with the raw negative byte (unsigned interpretation = A+256), then correct with `prod_hi -= mul_b`. This exploits `A_s8 * B = A_u8 * B - 256*B`. Saves 13 cycles per negative-dy multiply. S1 tighten −324, S2 tighten −1255. ROM −11 B. |
 
-Per-call averages (S1): `mark_solid` 195, `tighten` 2808, `has_gap` 52, `is_full` 16.
-Per-call averages (S2): `mark_solid` 236, `tighten` 3221, `has_gap`  66, `is_full` 16.
+| 2026-04-13 |       2821 B  |  3699 (19)    |  33262 (12)| 6656 (127) | 2372 (148) | **45989**    | −433   | **164168**   | −632   | **Clamp fast path: skip clamping when all s16 values already in [0,159].** Added a quick check before the 4-block clamping: ORA all 4 hi bytes; if all zero, check each lo byte < 160. When all pass (the common case for on-screen segs), skip clamping entirely. Saves ~27 cycles per overlapping span vs the full 4-block clamp. S1 tighten −433, S2 tighten −632. ROM +37 B. |
 
-Cumulative vs baseline (S1 127 389 cyc → 46 422): **−80 967 cyc, −63.6%**.
-ROM size: 2701 → 2784 bytes, **+83 bytes**.
+Per-call averages (S1): `mark_solid` 195, `tighten` 2772, `has_gap` 52, `is_full` 16.
+Per-call averages (S2): `mark_solid` 236, `tighten` 3207, `has_gap`  66, `is_full` 16.
+
+Cumulative vs baseline (S1 127 389 cyc → 45 989): **−81 400 cyc, −63.9%**.
+ROM size: 2701 → 2821 bytes, **+120 bytes**.
 
 ## Notes on this round
 
