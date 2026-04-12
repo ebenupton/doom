@@ -980,7 +980,15 @@ zp_cc_den_hi = $FE
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; |
 .tos_new_done
     ; Clamp s16 new values to [0,159] for unsigned max/min.
-    ; Same [160,255] / hi=0 bug as the tighten prelude — fixed here too.
+    ; Fast path: if all hi bytes are 0 and all lo bytes < 160, skip.
+    LDA zp_nt_lh : ORA zp_nt_rh : ORA zp_nb_lh : ORA zp_nb_rh           ; |
+    BNE tos_clamp_slow                                                   ; |
+    LDA zp_nt_l : CMP #160 : BCS tos_clamp_slow                         ; |
+    LDA zp_nt_r : CMP #160 : BCS tos_clamp_slow                         ; |
+    LDA zp_nb_l : CMP #160 : BCS tos_clamp_slow                         ; |
+    LDA zp_nb_r : CMP #160 : BCS tos_clamp_slow                         ; |
+    JMP tos_clamp_done                                                   ; |
+.tos_clamp_slow
     LDA zp_nt_lh : BMI cn1z : BNE cn1f                                  ; |
     LDA zp_nt_l : CMP #160 : BCC cn1s                                   ; |
 .cn1f LDA #159 : BNE cn1s
@@ -1001,6 +1009,7 @@ zp_cc_den_hi = $FE
 .cn4f LDA #159 : BNE cn4s
 .cn4z LDA #0
 .cn4s STA zp_nb_r                                                       ; |
+.tos_clamp_done
     ; Opt 2: if OLD wins top and bot at BOTH sub-interval endpoints, we can
     ; preserve the old span's line verbatim and just set xstart/xend. This
     ; typically fires on one side of a crossover-split sub-interval where
