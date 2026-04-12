@@ -220,11 +220,33 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 ; ======================================================================
 .udiv16_8
 {
-    LDA zp_div_hi : CMP zp_div_den : BCS d16                            ; |||
-    ; FAST PATH: rem = div_hi, div_hi = div_lo, div_lo = 0, 8 iters.
-    STA zp_div_rem                                                      ; |
-    LDA zp_div_lo : STA zp_div_hi                                       ; ||
-    LDA #0 : STA zp_div_lo : LDX #8 : BNE dl   ; always taken           ; |||
+    LDA zp_div_hi : CMP zp_div_den : BCS d16
+    ; FAST PATH: quotient fits in 8 bits.  Setup: rem = div_hi,
+    ; div_hi = div_lo, div_lo = 0.  Then skip leading zero-bit
+    ; iterations: shift rem:div_hi left, checking rem vs den each
+    ; time.  Each skip iteration (~19 cyc) is cheaper than the main
+    ; loop iteration (~33 cyc when the trial subtract fails), saving
+    ; ~14 cyc per skipped iteration.
+    STA zp_div_rem
+    LDA zp_div_lo : STA zp_div_hi
+    LDA #0 : STA zp_div_lo
+    ; --- Skip loop: consume leading zero quotient bits ---
+    LDA zp_div_rem : LDX #8
+.dskip
+    ASL zp_div_hi          ; shift next numerator bit out
+    ROL A                  ; shift into running remainder
+    BCS dskip_commit       ; 9-bit overflow → subtract guaranteed
+    CMP zp_div_den
+    BCS dskip_commit       ; rem >= den → first productive bit
+    DEX : BNE dskip
+    ; All 8 iterations zero → quotient = 0
+    STA zp_div_rem : LDA #0 : RTS
+.dskip_commit
+    SBC zp_div_den         ; carry already set (from BCS)
+    STA zp_div_rem
+    INC zp_div_lo          ; set this quotient bit
+    DEX : BNE dl           ; remaining iterations via main loop
+    LDA zp_div_lo : RTS
 .d16 LDA #0 : STA zp_div_rem
     LDX #16
 .dl ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; ||||||||||||||||||||||||||||||||||||||||
