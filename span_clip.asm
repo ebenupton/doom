@@ -592,12 +592,20 @@ zp_cc_den_hi = $FE
     ; ---------- OLD span: fast path when (ox0,ox1) == (xlo,xhi) ----------
     ; If the overlap endpoints exactly match the span's LINE anchors, the
     ; stored tl/bl/tr/br are already the y values at those endpoints.
-    LDA zp_ox0 : CMP POOL_XLO,X : BNE old_slow                          ; |
-    LDA zp_ox1 : CMP POOL_XHI,X : BNE old_slow                          ; |
+    LDA zp_ox0 : CMP POOL_XLO,X : BNE old_not_anchor                     ; |
+    LDA zp_ox1 : CMP POOL_XHI,X : BNE old_not_anchor                    ; |
     LDA POOL_TL,X : STA zp_ot_l                                         ; |
     LDA POOL_TR,X : STA zp_ot_r                                         ; |
     LDA POOL_BL,X : STA zp_ob_l                                         ; |
     LDA POOL_BR,X : STA zp_ob_r                                         ; |
+    JMP old_done                                                        ; |
+.old_not_anchor
+    ; --- Constant-line fast path: tl==tr AND bl==br ---
+    ; Saves 4 interp_store calls when the OLD span has no slope.
+    LDA POOL_TL,X : CMP POOL_TR,X : BNE old_slow                        ; |
+    STA zp_ot_l : STA zp_ot_r                                           ; |
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE old_slow                        ; |
+    STA zp_ob_l : STA zp_ob_r                                           ; |
     JMP old_done                                                        ; |
 .old_slow
     ; Hoisted den setup: den = POOL_XHI - POOL_XLO, shared by all 4 calls.

@@ -103,12 +103,13 @@ constant-line merge optimisation landed.
 | 2026-04-12 |       2576 B  |  3659 (19)    |  37671 (12)| 6680 (127) | 2656 (148) | **50666**    | −920   | **172716**   | −2677  | **has_gap: check xend before xstart.** The inner loop now checks `POOL_XEND,X >= ilo` first, skipping spans before the query range in one comparison instead of two. Since the list is sorted by xstart, once `xend >= ilo` is found, a single `xstart <= ihi` check determines overlap vs. past. Saves ~11 cycles per "before" span iteration (the common case). is_full regresses +1 cyc/call from code shift across a page boundary. S1 has_gap −1064, S2 has_gap −2891. ROM +3 B. |
 | 2026-04-12 |       2576 B  |  3659 (19)    |  37671 (12)| 6656 (127) | 2376 (148) | **50362**    | −304   | **172290**   | −426   | **is_full: swap branch sense to avoid page-crossing BNE.** The `BNE snf` in is_full was crossing from page $22 to $23 on every call (+1 cyc). Replaced with `BEQ sif_yes` so the common (non-full) path falls through without crossing a page. Rare full case pays the +1 page-cross penalty instead. Also gained ~2 cyc/call from avoiding the page-crossing path. S1 is_full −280, S2 is_full −414. ROM unchanged. |
 | 2026-04-12 |       2578 B  |  3659 (19)    |  37607 (12)| 6656 (127) | 2376 (148) | **50298**    | −64    | **172193**   | −97    | **Division loop: CMP before SBC to save SEC on no-commit iterations.** The restoring division main loop and compute_crossover fast_loop both used `SEC : SBC den : BCC skip` for the trial subtract, paying 2 cycles for SEC on every iteration even when the subtract fails. Replaced with `CMP den : BCC skip : SBC den` — the CMP doesn't modify A, and on the commit path carry is already set from the successful CMP. Saves 2 cycles per no-commit iteration, costs 1 extra cycle per commit iteration. Net win since most quotient bits are 0. S1 tighten −64, S2 tighten −97. ROM +2 B. |
+| 2026-04-12 |       2605 B  |  3659 (19)    |  35536 (12)| 6656 (127) | 2376 (148) | **48227**    | −2071  | **167462**   | −4731  | **Dominance prelude: constant-line OLD span fast path.** When the OLD span is constant-line (`tl==tr` AND `bl==br`), the interp values at any X are just `tl` and `bl` — no interpolation needed. Added a check after the anchor fast path: 2 byte-compares (tl vs tr, bl vs br), and on match, copy tl/bl directly to all 4 output slots, skipping 4 `interp_store` calls. Fires on all constant-line spans that don't also trigger the anchor fast path (i.e. when the overlap doesn't exactly cover [xlo, xhi]). In S2, constant-line spans are the majority. S1 tighten −2071, S2 tighten −4731. ROM +27 B. |
 
-Per-call averages (S1): `mark_solid` 193, `tighten` 3134, `has_gap` 52, `is_full` 16.
-Per-call averages (S2): `mark_solid` 234, `tighten` 3386, `has_gap`  66, `is_full` 16.
+Per-call averages (S1): `mark_solid` 193, `tighten` 2961, `has_gap` 52, `is_full` 16.
+Per-call averages (S2): `mark_solid` 234, `tighten` 3281, `has_gap`  66, `is_full` 16.
 
-Cumulative vs baseline (S1 127 389 cyc → 50 298): **−77 091 cyc, −60.5%**.
-ROM size: 2701 → 2578 bytes, **−123 bytes**.
+Cumulative vs baseline (S1 127 389 cyc → 48 227): **−79 162 cyc, −62.1%**.
+ROM size: 2701 → 2605 bytes, **−96 bytes**.
 
 ## Notes on this round
 
