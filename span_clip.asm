@@ -561,20 +561,19 @@ zp_cc_den_hi = $FE
     BNE tg_process                                                      ; |
     RTS                            ; done walking                       ; |
 .tg_process
-    ; Save next before we potentially free this span
-    LDA POOL_NEXT,X : STA zp_save0  ; next in old list                  ; ||
+    ; Store next span offset directly in old_cur (saves reload later).
+    ; zp_old_cur is not modified by any subroutine during tighten processing.
+    LDA POOL_NEXT,X : STA zp_old_cur                                    ; ||
 
     ; Check overlap of seg [ilo,ihi] against this span's ACTIVE range.
     ; Skip if xend < ilo (span ends before seg)
     LDA POOL_XEND,X : CMP zp_ilo : BCS tg_chk2                          ; |||
     JSR tg_append_x                                                     ; |
-    LDA zp_save0 : STA zp_old_cur                                       ; |
     JMP tg_walk                                                         ; |
 .tg_chk2
     ; Skip if xstart > ihi (span starts after seg)
     LDA POOL_XSTART,X : CMP zp_ihi : BEQ tg_overlaps : BCC tg_overlaps  ; |||
     JSR tg_append_x                                                     ; |
-    LDA zp_save0 : STA zp_old_cur                                       ; |
     JMP tg_walk                                                         ; |
 
 .tg_overlaps
@@ -795,7 +794,6 @@ zp_cc_den_hi = $FE
 .tg_d4 ; Old dominates: keep span unchanged
     LDX zp_save1                                                        ; |
     JSR tg_append_x                                                     ; |
-    LDA zp_save0 : STA zp_old_cur                                       ; |
     JMP tg_walk                                                         ; |
 
 .tg_not_old_dom
@@ -894,7 +892,6 @@ zp_cc_den_hi = $FE
     JSR tg_append_x                                                     ; |
 .tg_no_right
     LDX zp_save1 : JSR free_span                                        ; |
-    LDA zp_save0 : STA zp_old_cur                                       ; |
     JMP tg_walk                                                         ; |
 
 ; --- TG_APPEND_X: append span X to the new list, with merge optimization ---
