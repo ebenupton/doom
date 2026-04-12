@@ -227,18 +227,21 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; time.  Each skip iteration (~19 cyc) is cheaper than the main
     ; loop iteration (~33 cyc when the trial subtract fails), saving
     ; ~14 cyc per skipped iteration.
-    STA zp_div_rem
-    LDA zp_div_lo : STA zp_div_hi
-    LDA #0 : STA zp_div_lo
-    ; --- Skip loop: consume leading zero quotient bits ---
-    LDA zp_div_rem : LDX #8
-.dskip
-    ASL zp_div_hi          ; shift next numerator bit out
-    ROL A                  ; shift into running remainder
-    BCS dskip_commit       ; 9-bit overflow → subtract guaranteed
-    CMP zp_div_den
-    BCS dskip_commit       ; rem >= den → first productive bit
-    DEX : BNE dskip
+    LDX zp_div_lo : STX zp_div_hi
+    LDX #0 : STX zp_div_lo
+    ; --- Unrolled skip: consume leading zero quotient bits ---
+    ; 8 copies of (ASL div_hi, ROL A, BCS commit, CMP den, BCS commit,
+    ; DEX).  Eliminates the BNE loop branch (~3 cyc per skipped iter).
+    ; Each copy is 12 bytes; total ~96 bytes ROM for ~4350 cyc/frame saving.
+    LDX #8
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
+    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit
     ; All 8 iterations zero → quotient = 0
     STA zp_div_rem : LDA #0 : RTS
 .dskip_commit
