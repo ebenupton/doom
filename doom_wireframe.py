@@ -471,25 +471,68 @@ def _portal_has_steps(svwh):
     fh, ch = svwh[3], svwh[4]
     return bs[1] < ch or bs[0] > fh
 
-def _has_colinear_solid_joint(seg_idx, vidx):
+def _should_suppress_vertical(seg_idx, vidx):
     """Rule 2: should this seg's vertical at vidx be suppressed?
 
-    Fires at continuation vertices (no perpendicular same-front segs)
-    when a colinear same-front neighbour exists such that:
-      - neighbour is solid (covers any vertical we draw), OR
-      - this seg is solid AND neighbour is a portal WITH steps
-        (the step verticals will frame the aperture; our full-height
-        vertical through the aperture is redundant).
+    Two cases, both requiring a colinear same-front neighbour at a
+    continuation vertex (no perpendicular same-front walls):
 
-    A solid seg is NOT suppressed when the only colinear neighbour is
-    a portal with no steps — that would leave no vertical at all.
+      A. solid+solid: identical verticals, suppress both.
+      B. portal + solid (colinear): suppress both; the portal draws
+         an aperture edge (bt→bb) at NOVT endpoints.  Portal-without-
+         steps + solid: only suppress the portal (solid is sole framing).
+
+    Plus one case that does NOT require colinearity:
+
+      C. solid + portal-with-steps (any angle, same front): suppress
+         the solid.  Its full-height vertical punches through the
+         portal's aperture.  The back-sector's perpendicular solid
+         seg provides the aperture edge naturally (its full vertical
+         covers exactly bfh→bch).
     """
     s_i = fp_segs_vwh[seg_idx]
     front_i = s_i[1]
+    this_solid = _seg_is_solid_svwh(s_i)
+
+    # C-perp: solid at a perpendicular junction where the same-front
+    # portal has a continuous ceiling (need_bt=False, only floor step).
+    # The opening extends to the coplanar ceiling, making the solid's
+    # vertical above the back floor unnecessary.  Additional guard:
+    # the solid must have a colinear continuation at the vertex (any
+    # sector) confirming it's a mid-wall point, not a real corner.
+    if this_solid:
+        fh_i, ch_i = s_i[3], s_i[4]
+        ldx_i, ldy_i = s_i[13], s_i[14]
+        # Check colinear continuation (any sector)
+        _has_continuation = False
+        for k in _vert_to_segs.get(vidx, ()):
+            if k == seg_idx:
+                continue
+            ldx_k, ldy_k = fp_segs_vwh[k][13], fp_segs_vwh[k][14]
+            if ldx_i * ldy_k - ldy_i * ldx_k == 0:
+                _has_continuation = True
+                break
+        if _has_continuation:
+            for j in _vert_to_segs.get(vidx, ()):
+                if j == seg_idx:
+                    continue
+                s_j = fp_segs_vwh[j]
+                if s_j[1] != front_i:
+                    continue
+                if _seg_is_solid_svwh(s_j):
+                    continue
+                bi = s_j[2]
+                if bi is None:
+                    continue
+                bs = fp_sectors[bi]
+                # Only floor step (ceiling same) — opening extends to ceiling.
+                if bs[1] >= ch_i and bs[0] > fh_i:
+                    return True
+
+    # All remaining cases require a colinear continuation vertex.
     if not _is_continuation_vertex(vidx, front_i):
         return False
     ldx_i, ldy_i = s_i[13], s_i[14]
-    this_solid = _seg_is_solid_svwh(s_i)
     for j in _vert_to_segs.get(vidx, ()):
         if j == seg_idx:
             continue
@@ -499,21 +542,18 @@ def _has_colinear_solid_joint(seg_idx, vidx):
         ldx_j, ldy_j = s_j[13], s_j[14]
         if ldx_i * ldy_j - ldy_i * ldx_j != 0:
             continue
-        # Colinear, same front, continuation vertex.
         neigh_solid = _seg_is_solid_svwh(s_j)
-        # solid+solid: identical verticals, suppress.
+        # A: solid+solid — identical verticals, suppress.
         if this_solid and neigh_solid:
             return True
-        # portal + solid (either direction): suppress both, but only
-        # when a portal-with-steps exists so the aperture edge (bt→bb)
-        # can be drawn at NOVT endpoints.  If the portal has no steps,
-        # only suppress the portal (the solid is the sole framing).
-        if this_solid and not neigh_solid:
-            if _portal_has_steps(s_j):
-                return True   # solid suppressed; portal's aperture edge replaces it
-            continue          # portal has no steps → keep the solid
+        # B: portal + solid — portal suppressed; aperture edge drawn
+        #    at NOVT endpoints.
         if not this_solid and neigh_solid:
-            return True       # portal suppressed (aperture edge drawn if we have steps)
+            return True
+        # C: solid + portal-with-steps — solid's full vertical punches
+        #    through the aperture; portal's steps frame the opening.
+        if this_solid and not neigh_solid and _portal_has_steps(s_j):
+            return True
     return False
 
 # Per-seg aperture edge info for solid segs suppressed by Rule 2.
@@ -523,12 +563,15 @@ def _has_colinear_solid_joint(seg_idx, vidx):
 # runs before its own mark_solid).
 _seg_novt_aperture = {}
 
-def _find_portal_back_heights(seg_idx, vidx):
-    """For a solid seg suppressed by Rule 2 at vidx, find the colinear
-    portal-with-steps and return its back sector (bch, bfh)."""
+def _find_portal_back_heights(seg_idx, vidx, novt_flags):
+    """For a solid seg suppressed at vidx, find a same-front portal-
+    with-steps whose NOVT is set.  Returns the aperture range as
+    (top_height, bot_height): bch if need_bt else ch for top,
+    bfh if need_bb else fh for bottom.  This matches what the portal's
+    own aperture-edge code would draw."""
     s_i = fp_segs_vwh[seg_idx]
     front_i = s_i[1]
-    ldx_i, ldy_i = s_i[13], s_i[14]
+    fh_i, ch_i = s_i[3], s_i[4]
     for j in _vert_to_segs.get(vidx, ()):
         if j == seg_idx:
             continue
@@ -537,12 +580,24 @@ def _find_portal_back_heights(seg_idx, vidx):
             continue
         if _seg_is_solid_svwh(s_j):
             continue
-        ldx_j, ldy_j = s_j[13], s_j[14]
-        if ldx_i * ldy_j - ldy_i * ldx_j != 0:
+        if not _portal_has_steps(s_j):
             continue
-        if _portal_has_steps(s_j):
-            bs = fp_sectors[s_j[2]]
-            return (bs[1], bs[0])  # (bch, bfh)
+        bi = s_j[2]
+        if bi is None:
+            continue
+        bs = fp_sectors[bi]
+        need_bt = bs[1] < ch_i
+        need_bb = bs[0] > fh_i
+        ap_top = bs[1] if need_bt else ch_i
+        ap_bot = bs[0] if need_bb else fh_i
+        # Check portal's NOVT at this vertex (may not be computed yet
+        # if the portal has a higher seg index than us in the first pass)
+        sj_s = s_j[0]
+        if j < len(novt_flags):
+            if sj_s[0] == vidx and (novt_flags[j] & _SF_NOVT1):
+                return (ap_top, ap_bot)
+            if sj_s[1] == vidx and (novt_flags[j] & _SF_NOVT2):
+                return (ap_top, ap_bot)
     return None
 
 _seg_novt_flags = []
@@ -555,21 +610,70 @@ for _i, _svwh in enumerate(fp_segs_vwh):
     if _s[1] not in _ld_endpoint_verts:
         _f |= _SF_NOVT2
     # Rule 2: colinear same-front joint where at least one side is solid.
-    if not (_f & _SF_NOVT1) and _has_colinear_solid_joint(_i, _s[0]):
+    if not (_f & _SF_NOVT1) and _should_suppress_vertical(_i, _s[0]):
         _f |= _SF_NOVT1
         # If this is a solid seg, record the aperture heights so it can
         # draw the aperture edge itself (immune to cross-subsector clipping).
         if _seg_is_solid_svwh(_svwh):
-            _bh = _find_portal_back_heights(_i, _s[0])
+            _bh = _find_portal_back_heights(_i, _s[0], _seg_novt_flags)
             if _bh:
                 _seg_novt_aperture[(_i, 1)] = _bh
-    if not (_f & _SF_NOVT2) and _has_colinear_solid_joint(_i, _s[1]):
+    if not (_f & _SF_NOVT2) and _should_suppress_vertical(_i, _s[1]):
         _f |= _SF_NOVT2
         if _seg_is_solid_svwh(_svwh):
-            _bh = _find_portal_back_heights(_i, _s[1])
+            _bh = _find_portal_back_heights(_i, _s[1], _seg_novt_flags)
             if _bh:
                 _seg_novt_aperture[(_i, 2)] = _bh
     _seg_novt_flags.append(_f)
+
+# Rule 3 (second pass): suppress a perpendicular back-sector solid's
+# vertical at a vertex where a portal-with-steps has its steps VISIBLE
+# (NOT NOVT).  The visible step verticals already frame the aperture, so
+# the back-sector solid's full vertical through the opening is redundant.
+# When the portal IS NOVT (steps suppressed), the perpendicular solid is
+# kept — it's the only framing from the back side.
+for _i, _svwh in enumerate(fp_segs_vwh):
+    if not _seg_is_solid_svwh(_svwh):
+        continue
+    _s = _svwh[0]
+    _front_i = _svwh[1]
+    for _bit, _vidx in ((_SF_NOVT1, _s[0]), (_SF_NOVT2, _s[1])):
+        if _seg_novt_flags[_i] & _bit:
+            continue
+        for _j in _vert_to_segs.get(_vidx, ()):
+            if _j == _i:
+                continue
+            _sj = fp_segs_vwh[_j]
+            if _sj[2] != _front_i:  # portal's back != our front
+                continue
+            if not _portal_has_steps(_sj):
+                continue
+            # Check portal's NOVT is NOT set (steps are visible)
+            _sj_s = _sj[0]
+            _portal_novt = False
+            if _sj_s[0] == _vidx:
+                _portal_novt = bool(_seg_novt_flags[_j] & _SF_NOVT1)
+            elif _sj_s[1] == _vidx:
+                _portal_novt = bool(_seg_novt_flags[_j] & _SF_NOVT2)
+            if _portal_novt:
+                continue
+            # Verify the portal's colinear solid is actually suppressed
+            # (Case C fired), confirming the portal's steps are the
+            # primary framing at this vertex.
+            _portal_front = _sj[1]
+            _solid_suppressed = False
+            for _k in _vert_to_segs.get(_vidx, ()):
+                _sk = fp_segs_vwh[_k]
+                if _sk[1] != _portal_front or not _seg_is_solid_svwh(_sk):
+                    continue
+                _sk_s = _sk[0]
+                if _sk_s[0] == _vidx and (_seg_novt_flags[_k] & _SF_NOVT1):
+                    _solid_suppressed = True; break
+                if _sk_s[1] == _vidx and (_seg_novt_flags[_k] & _SF_NOVT2):
+                    _solid_suppressed = True; break
+            if _solid_suppressed:
+                _seg_novt_flags[_i] |= _bit
+                break
 
 _n_novt1 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT1)
 _n_novt2 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT2)
@@ -1432,18 +1536,27 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
 
-        # Aperture edge at NOVT endpoints: when step extensions are
-        # suppressed at a colinear solid joint, draw the aperture
+        # Aperture edge at Rule 2 NOVT endpoints: when step extensions
+        # are suppressed at a colinear solid joint, draw the aperture
         # boundary (bt→bb) so the opening edge remains visible.
+        # NOT drawn at Rule 1 (BSP-internal) endpoints — the aperture
+        # is continuous through the split point, no real boundary.
+        # Aperture edge at Rule 2 NOVT endpoints: when step extensions
+        # are suppressed at a colinear solid joint, draw the aperture
+        # boundary (bt→bb) so the opening edge remains visible.
+        # NOT drawn at Rule 1 (BSP-internal) endpoints.
         if need_bt or need_bb:
             _ap_top1 = bt1 if need_bt else ft1
             _ap_top2 = bt2 if need_bt else ft2
             _ap_bot1 = bb1 if need_bb else fb1
             _ap_bot2 = bb2 if need_bb else fb2
+            s = svwh[0]
             _ap_lines = []
-            if no_vt1:
+            _need_ap1 = no_vt1 and s[0] in _ld_endpoint_verts
+            _need_ap2 = no_vt2 and s[1] in _ld_endpoint_verts
+            if _need_ap1:
                 _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
-            if no_vt2:
+            if _need_ap2:
                 _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
             if _ap_lines:
                 clips.draw_clipped(_ap_lines, GREEN, surface, draw_stats)
@@ -1841,16 +1954,18 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         elif bfh < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
 
-        # Aperture edge at NOVT endpoints (see fp_render_seg for rationale)
+        # Aperture edge (see fp_render_seg for rationale)
         if need_bt or need_bb:
             _ap_top1 = bt1 if need_bt else ft1
             _ap_top2 = bt2 if need_bt else ft2
             _ap_bot1 = bb1 if need_bb else fb1
             _ap_bot2 = bb2 if need_bb else fb2
             _ap_lines = []
-            if no_vt1:
+            _need_ap1 = no_vt1 and v1_idx in _ld_endpoint_verts
+            _need_ap2 = no_vt2 and v2_idx in _ld_endpoint_verts
+            if _need_ap1:
                 _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
-            if no_vt2:
+            if _need_ap2:
                 _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
             if _ap_lines:
                 clips.draw_clipped(_ap_lines, GREEN, surface, draw_stats)
