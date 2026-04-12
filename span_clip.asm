@@ -193,14 +193,15 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 
 ; --- SMUL8: signed 8-bit x unsigned 8-bit multiply ---
 ; If A >= 0, falls through to umul8.  If A < 0, negates, calls umul8,
-; then negates the u16 product.  Result: zp_prod_lo:zp_prod_hi (s16).
+; correction.  Result: zp_prod_lo:zp_prod_hi (s16).
 ; s8 × u8: A(s8) × zp_mul_b(u8) → zp_prod_lo:zp_prod_hi(s16)
 .smul8
 {
     BPL umul8                                                           ; |
-    EOR #$FF : CLC : ADC #1 : JSR umul8                                 ; ||
-    SEC : LDA #0 : SBC zp_prod_lo : STA zp_prod_lo                      ; ||
-    LDA #0 : SBC zp_prod_hi : STA zp_prod_hi : RTS                      ; |||
+    ; A is negative (s8). Compute using unsigned interpretation:
+    ; A_s8 * B = A_u8 * B - 256 * B. So: umul8(A_u8, B), then prod_hi -= B.
+    JSR umul8                                                           ; |
+    LDA zp_prod_hi : SEC : SBC zp_mul_b : STA zp_prod_hi : RTS          ; |
 }
 
 ; ======================================================================
