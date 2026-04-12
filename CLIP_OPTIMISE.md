@@ -100,12 +100,13 @@ constant-line merge optimisation landed.
 
 | 2026-04-12 |       2573 B  |  3631 (19)    |  37875 (12)| 7744 (127) | 2512 (148) | **51790**    | −903   | **176325**   | −4162  | **Unrolled skip loop.** The 8-iteration skip pre-scan is unrolled: 8 copies of `ASL div_hi : ROL A : BCS commit : CMP den : BCS commit : DEX` eliminate the `BNE dskip` branch (3 cyc per skipped iter). Last copy omits the final DEX since quotient=0 falls through to RTS. S1 tighten −931, S2 tighten −4215. ROM +63 B. |
 | 2026-04-12 |       2573 B  |  3659 (19)    |  37671 (12)| 7744 (127) | 2512 (148) | **51586**    | −204   | **175393**   | −932   | **umul8: replace PHP/PLP with CPX for carry detection.** The quarter-square multiply saved/restored the carry flag from the `ADC zp_mul_b` sum via PHP (3 cyc) + PLP (4 cyc) = 7 cycles. Replaced with `CPX zp_tmp0` (3 cyc) after computing |a-b|: if `(a+b) & 0xFF < a`, the sum overflowed. Net saving: 4 cycles per umul8 call. S1 tighten −204, S2 tighten −932. ROM unchanged. |
+| 2026-04-12 |       2576 B  |  3659 (19)    |  37671 (12)| 6680 (127) | 2656 (148) | **50666**    | −920   | **172716**   | −2677  | **has_gap: check xend before xstart.** The inner loop now checks `POOL_XEND,X >= ilo` first, skipping spans before the query range in one comparison instead of two. Since the list is sorted by xstart, once `xend >= ilo` is found, a single `xstart <= ihi` check determines overlap vs. past. Saves ~11 cycles per "before" span iteration (the common case). is_full regresses +1 cyc/call from code shift across a page boundary. S1 has_gap −1064, S2 has_gap −2891. ROM +3 B. |
 
-Per-call averages (S1): `mark_solid` 193, `tighten` 3139, `has_gap` 61, `is_full` 17.
-Per-call averages (S2): `mark_solid` 234, `tighten` 3388, `has_gap`  82, `is_full` 17.
+Per-call averages (S1): `mark_solid` 193, `tighten` 3139, `has_gap` 53, `is_full` 18.
+Per-call averages (S2): `mark_solid` 234, `tighten` 3388, `has_gap`  66, `is_full` 18.
 
-Cumulative vs baseline (S1 127 389 cyc → 51 586): **−75 803 cyc, −59.5%**.
-ROM size: 2701 → 2573 bytes, **−128 bytes**.
+Cumulative vs baseline (S1 127 389 cyc → 50 666): **−76 723 cyc, −60.2%**.
+ROM size: 2701 → 2576 bytes, **−125 bytes**.
 
 ## Notes on this round
 

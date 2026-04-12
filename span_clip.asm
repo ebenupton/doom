@@ -456,14 +456,15 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .span_has_gap
 {
     ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
-    ; range, 0 otherwise. Every span in the active list represents a region
-    ; with at least *some* aperture (possibly partial near boundaries — that's
-    ; fine, we treat it as "yes, gap"). No per-column aperture test.
+    ; range, 0 otherwise. Spans are sorted by xstart.
+    ; Fast loop: skip spans where xend < ilo (fully before query). Once we
+    ; find xend >= ilo, one xstart check determines overlap vs. past.
     LDX zp_head : BEQ hgn                                               ; |||||
-.hgl LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_yes : BCS hgn  ; xstart > ihi → past  ; ||||||||||||||||||||
-    LDA POOL_XEND,X : CMP zp_ilo : BCS hg_yes               ; xend >= ilo → overlap  ; ||||||||||||||||
-    LDA POOL_NEXT,X : TAX : BNE hgl                                     ; |||||||
+.hgl LDA POOL_XEND,X : CMP zp_ilo : BCS hg_chk   ; xend >= ilo → check xstart  ; ||||||||||||||||||||
+    LDA POOL_NEXT,X : TAX : BNE hgl                ; xend < ilo → advance        ; |||||||
 .hgn LDA #0 : RTS                                                       ; |
+.hg_chk LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_yes : BCC hg_yes       ; ||
+.hgn2 LDA #0 : RTS                ; xstart > ihi → no overlap possible  ; |
 .hg_yes LDA #1 : RTS                                                    ; |||||||
 }
 
