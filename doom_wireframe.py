@@ -1108,6 +1108,16 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
     if all(p[1] < _NEAR for p in pts):
         return None
 
+    # View-space frustum reject (pre-projection).
+    # Left frustum plane:  evx + evy < 0  (all corners to the left)
+    # Right frustum plane: evx > evy      (all corners to the right)
+    # These work correctly for behind-the-viewer points too: a point
+    # behind-and-left is on the left side of the left plane's extension.
+    if all(p[0] + p[1] < 0 for p in pts):
+        return None
+    if all(p[0] > p[1] for p in pts):
+        return None
+
     sxs = []
     for i in range(4):
         vx0, vy0, vy_idx0 = pts[i]
