@@ -1677,7 +1677,7 @@ from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s
                         SF_DIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB, SF_NOVT1, SF_NOVT2,
                         VC_VX, VC_VY, VC_VYIDX, VC_SX, VWHCACHE_ENTRY)
 
-use_packed = False   # toggle: when True (and use_fixedpoint), use packed path
+use_packed = True    # packed ROM path is now the sole FP renderer
 
 # Alias the already-built packed data
 _p_rom_main   = packed_rom_main
@@ -3054,8 +3054,7 @@ def _main():
             elif ev.key == pygame.K_m:
                 show_map = not show_map
             elif ev.key == pygame.K_r:
-                use_packed = not use_packed
-                print(f"Packed ROM path: {'ON' if use_packed else 'OFF'}")
+                pass  # packed path is now the sole renderer
             elif ev.key == pygame.K_n:
                 _show_nj_raster = not _show_nj_raster
             elif ev.key == pygame.K_h:
@@ -3228,7 +3227,7 @@ def _main():
             _c = (255, 255, 255)
             for _x0, _y0, _x1, _y1 in hw_lines:
                 pygame.draw.line(fp_surface, _c, (_x0, _y0), (_x1, _y1))
-        elif use_packed:
+        else:
             from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
             spans_base = packed_layout['ram_spans']
@@ -3238,17 +3237,6 @@ def _main():
                               ctx, vz_ps,
                               px_full, py_full, cos_f, sin_f, fp_surface,
                               p_ram)
-            _frame_clip_cycles[0] = _span_clip_6502.total_cycles if _span_clip_6502 else 0
-            if not _frame_clip_match[0]:
-                key = (int(player_x), int(player_y), ang_display)
-                if key not in _clip_mismatch_reported:
-                    _clip_mismatch_reported.add(key)
-                    print(f'CLIP MISMATCH at {key[0]},{key[1]},{key[2]}')
-        else:
-            render_bsp_fp(len(nodes) - 1, Instrumented6502Spans(),
-                          ctx, vz_ps,
-                          px_full, py_full, cos_f, sin_f, fp_surface,
-                          [None]*len(vertexes), [None]*len(vwh_table))
             _frame_clip_cycles[0] = _span_clip_6502.total_cycles if _span_clip_6502 else 0
             if not _frame_clip_match[0]:
                 key = (int(player_x), int(player_y), ang_display)
@@ -3345,7 +3333,7 @@ def _main():
             mul_total = sum(mc.values())
             cyc = _frame_6502_cycles[0]
             ccyc = _frame_clip_cycles[0]
-            mode_tag = "fp/ROM" if use_packed else "fp"
+            mode_tag = "fp/ROM"
             clip_tag = "MATCH" if _frame_clip_match[0] else "FAIL"
             hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                    f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
