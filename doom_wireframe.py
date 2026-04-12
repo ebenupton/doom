@@ -74,6 +74,52 @@ from fp import (fp_mul8, fp_mul7, fp_div8, s8,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
                 MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
 
+# ── 6502 span clipper shadow (cycle counting) ────────────────────────────────
+
+_span_clip_6502 = None  # lazy-loaded SpanClip6502 instance
+_frame_clip_cycles = [0]
+_frame_clip_match = [True]  # set False on any py/6502 span divergence
+_clip_mismatch_reported = set()  # (x,y,a) tuples already printed
+
+class Instrumented6502Spans(EndpointClipSpans):
+    """EndpointClipSpans that shadows mutations to a 6502 span clipper for cycle counting."""
+
+    def __init__(self):
+        super().__init__()
+        global _span_clip_6502
+        if _span_clip_6502 is None:
+            from span_clip_6502 import SpanClip6502
+            _span_clip_6502 = SpanClip6502()
+        _span_clip_6502.init()
+        _frame_clip_match[0] = True
+
+    def _check(self):
+        if _span_clip_6502.read_spans() != self.spans:
+            _frame_clip_match[0] = False
+
+    def mark_solid(self, lo, hi):
+        super().mark_solid(lo, hi)
+        _span_clip_6502.mark_solid(lo, hi)
+        self._check()
+
+    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                top_dom=False, bot_dom=False):
+        super().tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                        top_dom=top_dom, bot_dom=bot_dom)
+        _span_clip_6502.tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)
+        self._check()
+
+    def has_gap(self, lo, hi):
+        result = super().has_gap(lo, hi)
+        _span_clip_6502.has_gap(lo, hi)
+        return result
+
+    def is_full(self):
+        result = super().is_full()
+        _span_clip_6502.is_full()
+        return result
+
+
 # ── WAD parsing ──────────────────────────────────────────────────────────────
 
 def load_wad(path):
@@ -268,6 +314,235 @@ fp_segs_vwh = _fp_segs_vwh
 fp_ssectors = _stripped_ssectors
 vwh_table = _vwh_table
 
+# ── Colinear seg merge pass ─────────────────────────────────────────────
+#
+# Some maps have adjacent linedefs that are colinear (a long wall built
+# as multiple linedefs in the editor). Within a subsector, if two
+# consecutive segs (a, b) lie on the same infinite line (cross product
+# zero), are contiguous (a.v2 == b.v1), and share the same front/back
+# sectors (so identical heights, flags, VWH indices at the shared
+# vertex), they can be merged into a single seg spanning v1_a → v2_b.
+# This saves one seg header + detail record in ROM and one run through
+# render_seg / tighten at runtime per merged pair in a visible frame.
+#
+# Safe because:
+#  - Convex subsector + single colinear line → no geometric issue.
+#  - The back-face test uses linedef direction sign, which is preserved
+#    when we pick either original linedef's (lv1, ldx, ldy).
+#  - VWH indices at v1/v2 come from the original segs at those vertices;
+#    the intermediate vertex's VWH entries stay in the table (still
+#    referenced by other segs in other subsectors).
+
+def _colinear(v1, v2, v3):
+    # True if v3 lies on the line through v1, v2 (cross product zero).
+    return (v2[0] - v1[0]) * (v3[1] - v1[1]) == (v2[1] - v1[1]) * (v3[0] - v1[0])
+
+def _try_merge_svwh(a, b):
+    """Merge two seg-with-vwh tuples if they're colinear/contiguous with
+    matching sectors. Returns merged tuple, or None if not mergeable."""
+    sa, ba_front, ba_back = a[0], a[1], a[2]
+    sb, bb_front, bb_back = b[0], b[1], b[2]
+    # Same front/back sectors
+    if ba_front != bb_front or ba_back != bb_back:
+        return None
+    # Contiguous: a.v2 == b.v1
+    if sa[1] != sb[0]:
+        return None
+    # Colinear: does b.v2 lie on the line (a.v1, a.v2)?
+    av1 = fp_vertexes[sa[0]]
+    av2 = fp_vertexes[sa[1]]
+    bv2 = fp_vertexes[sb[1]]
+    if not _colinear(av1, av2, bv2):
+        return None
+    # Build merged seg tuple: v1 from a, v2 from b, other fields from a.
+    # (angle/linedef/side come from a — the back-face test uses a's
+    # lv1/ldx/ldy, which describe the same line as b's since colinear.)
+    merged_s = (sa[0], sb[1]) + sa[2:]
+    # VWH: front/back top/bot at new v1 (from a) and new v2 (from b).
+    # Layout: (seg, front_sector, back_sector, fh, ch,
+    #          vwh_ft1, vwh_fb1, vwh_ft2, vwh_fb2,
+    #          vwh_bt1, vwh_bb1, vwh_bt2, vwh_bb2,
+    #          ldx, ldy)
+    return (merged_s, a[1], a[2], a[3], a[4],
+            a[5], a[6], b[7], b[8],           # front VWH: v1 from a, v2 from b
+            a[9], a[10], b[11], b[12],        # back VWH: same
+            a[13], a[14])                      # ldx, ldy from a (same line as b)
+
+_merged_segs = []
+_merged_ssectors = []
+_merge_count = 0
+for _ssi, (_count, _first) in enumerate(fp_ssectors):
+    _out_first = len(_merged_segs)
+    # Copy segs for this subsector, attempting to merge consecutive pairs.
+    _pending = list(fp_segs_vwh[_first:_first + _count])
+    _out = []
+    for _seg in _pending:
+        if _out:
+            _merged = _try_merge_svwh(_out[-1], _seg)
+            if _merged is not None:
+                _out[-1] = _merged
+                _merge_count += 1
+                continue
+        _out.append(_seg)
+    _merged_segs.extend(_out)
+    _merged_ssectors.append((len(_out), _out_first))
+
+fp_segs_vwh = _merged_segs
+fp_segs = [svwh[0] for svwh in _merged_segs]
+fp_ssectors = _merged_ssectors
+print(f"Merged {_merge_count} colinear seg pair(s) "
+      f"({len(_stripped_segs)} → {len(_merged_segs)} segs)")
+
+# ── Suppressed-vertical bookkeeping ────────────────────────────────────
+#
+# Two complementary rules decide whether a seg's vertical line at one
+# endpoint corresponds to a real wall edge or is a phantom seam:
+#
+# RULE 1 — BSP-internal vertex.  A sub-seg of a single linedef shares a
+# BSP-inserted vertex with the linedef's other sub-seg(s).  Both have
+# identical front and back sectors, so the wall is continuous through
+# the split point and the vertical there is fake.  Detected via
+# `_ld_endpoint_verts`: vertices NOT in this set are BSP-internal.
+#
+# RULE 2 — Colinear solid neighbour.  At a real linedef-end vertex, two
+# distinct linedefs may meet end-to-end with the same front sector and
+# parallel direction vectors.  If at least one of them is solid, the
+# solid wall's full (fh, ch) Y range covers any vertical the other seg
+# would draw at the joint, so the vertical is fake.  This applies both
+# to two-sided segs (the upper/lower step verticals frame an aperture
+# whose edges fall inside a continuous solid wall) and to solid segs
+# meeting another colinear solid wall.
+#
+# The two rules are independent — neither subsumes the other.
+_ld_endpoint_verts = set()
+for _ld in linedefs:
+    _ld_endpoint_verts.add(_ld[0])
+    _ld_endpoint_verts.add(_ld[1])
+
+_SF_NOVT1 = 0x10
+_SF_NOVT2 = 0x20
+
+# Vertex → list of seg indices that have a vertex at that point.
+_vert_to_segs = {}
+for _i, _svwh in enumerate(fp_segs_vwh):
+    _s = _svwh[0]
+    for _vidx in (_s[0], _s[1]):
+        _vert_to_segs.setdefault(_vidx, []).append(_i)
+
+def _seg_is_solid_svwh(svwh):
+    """True iff a seg svwh has no aperture (solid wall)."""
+    bi = svwh[2]
+    if bi is None:
+        return True
+    bs = fp_sectors[bi]
+    fh, ch = svwh[3], svwh[4]
+    return bs[1] <= fh or bs[0] >= ch
+
+def _is_continuation_vertex(vidx, front_idx):
+    """True if all same-front segs at vidx are colinear (single direction).
+
+    At a continuation vertex the wall passes straight through — no
+    junction, no corner.  Returns False when same-front segs go in two
+    or more distinct directions (a junction/corner where verticals are
+    real).  Segs from other front sectors are ignored — a perpendicular
+    wall facing a different sector doesn't create a corner visible from
+    this sector.
+    """
+    segs_at_v = _vert_to_segs.get(vidx, ())
+    ref_dx = ref_dy = None
+    for j in segs_at_v:
+        s_j = fp_segs_vwh[j]
+        if s_j[1] != front_idx:
+            continue
+        ldx_j, ldy_j = s_j[13], s_j[14]
+        if ref_dx is None:
+            ref_dx, ref_dy = ldx_j, ldy_j
+        else:
+            if ref_dx * ldy_j - ref_dy * ldx_j != 0:
+                return False  # second distinct direction → junction
+    return ref_dx is not None
+
+def _portal_has_steps(svwh):
+    """True if a two-sided seg has need_bt or need_bb (visible aperture step)."""
+    bi = svwh[2]
+    if bi is None:
+        return False
+    bs = fp_sectors[bi]
+    fh, ch = svwh[3], svwh[4]
+    return bs[1] < ch or bs[0] > fh
+
+def _has_colinear_solid_joint(seg_idx, vidx):
+    """Rule 2: should this seg's vertical at vidx be suppressed?
+
+    Fires at continuation vertices (no perpendicular same-front segs)
+    when a colinear same-front neighbour exists such that:
+      - neighbour is solid (covers any vertical we draw), OR
+      - this seg is solid AND neighbour is a portal WITH steps
+        (the step verticals will frame the aperture; our full-height
+        vertical through the aperture is redundant).
+
+    A solid seg is NOT suppressed when the only colinear neighbour is
+    a portal with no steps — that would leave no vertical at all.
+    """
+    s_i = fp_segs_vwh[seg_idx]
+    front_i = s_i[1]
+    if not _is_continuation_vertex(vidx, front_i):
+        return False
+    ldx_i, ldy_i = s_i[13], s_i[14]
+    this_solid = _seg_is_solid_svwh(s_i)
+    for j in _vert_to_segs.get(vidx, ()):
+        if j == seg_idx:
+            continue
+        s_j = fp_segs_vwh[j]
+        if s_j[1] != front_i:
+            continue
+        ldx_j, ldy_j = s_j[13], s_j[14]
+        if ldx_i * ldy_j - ldy_i * ldx_j != 0:
+            continue
+        # Colinear, same front, continuation vertex.
+        neigh_solid = _seg_is_solid_svwh(s_j)
+        # solid+solid: identical verticals, suppress.
+        if this_solid and neigh_solid:
+            return True
+        # portal + solid (either direction): suppress both, but only
+        # when a portal-with-steps exists so the aperture edge (bt→bb)
+        # can be drawn at NOVT endpoints.  If the portal has no steps,
+        # only suppress the portal (the solid is the sole framing).
+        if this_solid and not neigh_solid:
+            if _portal_has_steps(s_j):
+                return True   # solid suppressed; portal's aperture edge replaces it
+            continue          # portal has no steps → keep the solid
+        if not this_solid and neigh_solid:
+            return True       # portal suppressed (aperture edge drawn if we have steps)
+    return False
+
+_seg_novt_flags = []
+for _i, _svwh in enumerate(fp_segs_vwh):
+    _s = _svwh[0]
+    _f = 0
+    # Rule 1: BSP-internal vertex.
+    if _s[0] not in _ld_endpoint_verts:
+        _f |= _SF_NOVT1
+    if _s[1] not in _ld_endpoint_verts:
+        _f |= _SF_NOVT2
+    # Rule 2: colinear same-front joint where at least one side is solid.
+    if not (_f & _SF_NOVT1) and _has_colinear_solid_joint(_i, _s[0]):
+        _f |= _SF_NOVT1
+    if not (_f & _SF_NOVT2) and _has_colinear_solid_joint(_i, _s[1]):
+        _f |= _SF_NOVT2
+    _seg_novt_flags.append(_f)
+
+_n_novt1 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT1)
+_n_novt2 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT2)
+print(f"NOVT flags: {_n_novt1} v1 + {_n_novt2} v2 "
+      f"= {_n_novt1 + _n_novt2} verticals suppressed")
+
+# Annotation mode: when True, suppressed verticals are drawn in RED and
+# labelled with seg/vertex/rule info so problem cases can be identified.
+# Toggle with 'V' key in the interactive viewer.
+_novt_annotate = False
+_novt_annotations = []  # populated per frame: [(sx, sy, label), ...]
+
 # ── Build packed byte arrays for 8-bit processor simulation ──────────────
 from wad_packed import build_packed
 print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
@@ -276,7 +551,8 @@ _6502_result = None  # (lines, muls) from background render
 packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_layout = build_packed(
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
-    PRESCALE, MAP_CENTER_X, MAP_CENTER_Y)
+    PRESCALE, MAP_CENTER_X, MAP_CENTER_Y,
+    seg_novt_flags=_seg_novt_flags)
 
 # Build ROM banks for sideways ROM paging
 packed_rom_banks = [
@@ -990,14 +1266,44 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     else:
         back = None
 
+    # Suppress verticals where the wall is continuous through the
+    # endpoint — see _seg_novt_flags above for the two rules.
+    _novt = _seg_novt_flags[si]
+    no_vt1 = bool(_novt & _SF_NOVT1)
+    no_vt2 = bool(_novt & _SF_NOVT2)
+
+    # Annotation mode: record ALL verticals for overlay.
+    if _novt_annotate:
+        s = svwh[0]
+        r1_v1 = s[0] not in _ld_endpoint_verts
+        r1_v2 = s[1] not in _ld_endpoint_verts
+        def _vt_rule(suppressed, is_r1):
+            if not suppressed: return ""
+            return "R1" if is_r1 else "R2"
+        _novt_annotations.append((sx1, ft1, fb1,
+            f"s{si} v{s[0]}", _vt_rule(no_vt1, r1_v1), solid, no_vt1))
+        _novt_annotations.append((sx2, ft2, fb2,
+            f"s{si} v{s[1]}", _vt_rule(no_vt2, r1_v2), solid, no_vt2))
+
+    _RED = (255, 0, 0)
+
     fp_module.mul_cat("clip")
     if solid:
-        clips.draw_clipped([
+        lines = [
             (sx1, ft1, sx2, ft2),
             (sx1, fb1, sx2, fb2),
-            (sx1, ft1, sx1, fb1),
-            (sx2, ft2, sx2, fb2),
-        ], GREEN, surface, draw_stats)
+        ]
+        if not no_vt1:
+            lines.append((sx1, ft1, sx1, fb1))
+        if not no_vt2:
+            lines.append((sx2, ft2, sx2, fb2))
+        clips.draw_clipped(lines, GREEN, surface, draw_stats)
+        # Annotation: show suppressed solid verticals in red
+        if _novt_annotate:
+            if no_vt1:
+                _real_drawline(surface, _RED, (sx1, ft1), (sx1, fb1))
+            if no_vt2:
+                _real_drawline(surface, _RED, (sx2, ft2), (sx2, fb2))
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi))
         else:
@@ -1021,13 +1327,22 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                 bt2 = fp_project_y(back[1] - vz, ryh2, ryl2)
                 if ey2 == evy2: vwh_cache[_vbt2] = bt2
             fp_module.mul_cat("clip")
-            lines = [(sx1, bt1, sx2, bt2),
-                     (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
+            lines = [(sx1, bt1, sx2, bt2)]
+            if not no_vt1:
+                lines.append((sx1, ft1, sx1, bt1))
+            if not no_vt2:
+                lines.append((sx2, ft2, sx2, bt2))
             if ch <= vz:  # face below eyeline: top edge (ft) always clipped
                 pass
             else:
                 lines.insert(0, (sx1, ft1, sx2, ft2))
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
+            # Annotation: show suppressed step verticals in red
+            if _novt_annotate:
+                if no_vt1:
+                    _real_drawline(surface, _RED, (sx1, ft1), (sx1, bt1))
+                if no_vt2:
+                    _real_drawline(surface, _RED, (sx2, ft2), (sx2, bt2))
         elif back[1] > ch:
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
 
@@ -1045,15 +1360,42 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                 bb2 = fp_project_y(back[0] - vz, ryh2, ryl2)
                 if ey2 == evy2: vwh_cache[_vbb2] = bb2
             fp_module.mul_cat("clip")
-            lines = [(sx1, bb1, sx2, bb2),
-                     (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
+            lines = [(sx1, bb1, sx2, bb2)]
+            if not no_vt1:
+                lines.append((sx1, bb1, sx1, fb1))
+            if not no_vt2:
+                lines.append((sx2, bb2, sx2, fb2))
             if fh >= vz:  # face above eyeline: bottom edge (fb) always clipped
                 pass
             else:
                 lines.insert(1, (sx1, fb1, sx2, fb2))
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
+            # Annotation: show suppressed step verticals in red
+            if _novt_annotate:
+                if no_vt1:
+                    _real_drawline(surface, _RED, (sx1, bb1), (sx1, fb1))
+                if no_vt2:
+                    _real_drawline(surface, _RED, (sx2, bb2), (sx2, fb2))
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+
+        # Aperture edge at NOVT endpoints: when step extensions are
+        # suppressed, draw the aperture boundary (bt→bb) instead.
+        # This is the only way the opening edge is visible from the
+        # front side — the back-sector seg that covers this range
+        # gets clipped away by mark_solid from the colinear solid wall.
+        if need_bt or need_bb:
+            _ap_top1 = bt1 if need_bt else ft1
+            _ap_top2 = bt2 if need_bt else ft2
+            _ap_bot1 = bb1 if need_bb else fb1
+            _ap_bot2 = bb2 if need_bb else fb2
+            _ap_lines = []
+            if no_vt1:
+                _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
+            if no_vt2:
+                _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
+            if _ap_lines:
+                clips.draw_clipped(_ap_lines, GREEN, surface, draw_stats)
 
         # Tighten: use back heights only if computed, otherwise front = tighter
         tt1 = bt1 if need_bt else ft1
@@ -1140,7 +1482,7 @@ from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s
                         SD_FH, SD_CH, SD_BFH, SD_BCH,
                         SD_VWH_FT1, SD_VWH_FB1, SD_VWH_FT2, SD_VWH_FB2,
                         SD_VWH_BT1, SD_VWH_BB1, SD_VWH_BT2, SD_VWH_BB2,
-                        SF_DIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB,
+                        SF_DIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB, SF_NOVT1, SF_NOVT2,
                         VC_VX, VC_VY, VC_VYIDX, VC_SX, VWHCACHE_ENTRY)
 
 use_packed = False   # toggle: when True (and use_fixedpoint), use packed path
@@ -1352,15 +1694,20 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
     # ── Determine solid / two-sided ──
     solid = bool(flags & SF_SOLID)
+    no_vt1 = bool(flags & SF_NOVT1)
+    no_vt2 = bool(flags & SF_NOVT2)
 
     fp_module.mul_cat("clip")
     if solid:
-        clips.draw_clipped([
+        lines = [
             (sx1, ft1, sx2, ft2),
             (sx1, fb1, sx2, fb2),
-            (sx1, ft1, sx1, fb1),
-            (sx2, ft2, sx2, fb2),
-        ], GREEN, surface, draw_stats)
+        ]
+        if not no_vt1:
+            lines.append((sx1, ft1, sx1, fb1))
+        if not no_vt2:
+            lines.append((sx2, ft2, sx2, fb2))
+        clips.draw_clipped(lines, GREEN, surface, draw_stats)
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi))
         else:
@@ -1389,8 +1736,11 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 bt2 = fp_project_y(bch - vz, ryh2, ryl2)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bt2, bt2)
             fp_module.mul_cat("clip")
-            lines = [(sx1, bt1, sx2, bt2),
-                     (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
+            lines = [(sx1, bt1, sx2, bt2)]
+            if not no_vt1:
+                lines.append((sx1, ft1, sx1, bt1))
+            if not no_vt2:
+                lines.append((sx2, ft2, sx2, bt2))
             if ch <= vz:
                 pass
             else:
@@ -1416,8 +1766,11 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 bb2 = fp_project_y(bfh - vz, ryh2, ryl2)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bb2, bb2)
             fp_module.mul_cat("clip")
-            lines = [(sx1, bb1, sx2, bb2),
-                     (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
+            lines = [(sx1, bb1, sx2, bb2)]
+            if not no_vt1:
+                lines.append((sx1, bb1, sx1, fb1))
+            if not no_vt2:
+                lines.append((sx2, bb2, sx2, fb2))
             if fh >= vz:
                 pass
             else:
@@ -1425,6 +1778,20 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif bfh < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+
+        # Aperture edge at NOVT endpoints (see fp_render_seg for rationale)
+        if need_bt or need_bb:
+            _ap_top1 = bt1 if need_bt else ft1
+            _ap_top2 = bt2 if need_bt else ft2
+            _ap_bot1 = bb1 if need_bb else fb1
+            _ap_bot2 = bb2 if need_bb else fb2
+            _ap_lines = []
+            if no_vt1:
+                _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
+            if no_vt2:
+                _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
+            if _ap_lines:
+                clips.draw_clipped(_ap_lines, GREEN, surface, draw_stats)
 
         # Tighten
         tt1 = bt1 if need_bt else ft1
@@ -2184,16 +2551,27 @@ def _record_frame_steps():
     # Create a recording clip spans wrapper that captures actual draw calls
     _rec_current_line = [None]
     _rec_draws = []
+    _rec_mutations = []  # span mutations since last draw step
 
     import copy
 
     class RecordingClipSpans(EndpointClipSpans):
+        def mark_solid(self, lo, hi):
+            nb = len(self.spans)
+            super().mark_solid(lo, hi)
+            _rec_mutations.append(('MS', lo, hi, nb, len(self.spans)))
+        def tighten(self, *a, **k):
+            nb = len(self.spans)
+            super().tighten(*a, **k)
+            _rec_mutations.append(('TG', a[0], a[1], nb, len(self.spans)))
         def draw_clipped(self, lines, color, surface, stats=None):
             import endpoint_spans as _es
             for lx1, ly1, lx2, ly2 in lines:
                 groups_snap = copy.deepcopy(self.spans)
                 _rec_current_line[0] = (lx1, ly1, lx2, ly2)
                 _rec_draws.clear()
+                muts_snap = list(_rec_mutations)
+                _rec_mutations.clear()
                 mul_before = sum(fp_module.mul_counts.values())
                 _es._line_cost = {}  # enable cost tracking
                 super().draw_clipped([(lx1, ly1, lx2, ly2)], color, surface, stats)
@@ -2202,7 +2580,7 @@ def _record_frame_steps():
                 mul_after = sum(fp_module.mul_counts.values())
                 _debug_steps.append(((lx1, ly1, lx2, ly2), groups_snap,
                                      list(_rec_draws), mul_after - mul_before,
-                                     cost_snap))
+                                     cost_snap, muts_snap))
                 _rec_current_line[0] = None
 
     _orig_drawline = pygame.draw.line
@@ -2248,20 +2626,26 @@ def _dump_portal_analysis():
         if dx == 0: return yl_w
         return yl_w + (yr_w - yl_w) * (x - xl) // dx
 
-    from endpoint_spans import _interp
+    from endpoint_spans import _interp, _span_top, _span_bot
     intervals = []
     for span_s in spans:
-        xlo, xhi, tl, bl, tr, br = span_s[:6]
-        if xhi > xl and xlo < xr:
-            intervals.append((xlo, xhi, tl, bl, tr, br))
+        # New 8-tuple: xstart, xend, xlo, xhi, tl, bl, tr, br
+        xstart, xend = span_s[0], span_s[1]
+        # For diagnostic display, project the span's line onto the active range
+        if xend >= xl and xstart <= xr:
+            tl = _span_top(span_s, xstart)
+            bl = _span_bot(span_s, xstart)
+            tr = _span_top(span_s, xend)
+            br = _span_bot(span_s, xend)
+            intervals.append((xstart, xend, tl, bl, tr, br))
 
     for i, iv in enumerate(intervals):
         xlo, xhi, yt0, yb0, yt1, yb1 = iv
         gap = ""
-        if i > 0 and intervals[i-1][1] != xlo:
-            gap = f"  ** GAP {intervals[i-1][1]}-{xlo} **"
+        if i > 0 and intervals[i-1][1] + 1 != xlo:
+            gap = f"  ** GAP {intervals[i-1][1]+1}-{xlo-1} **"
         ex = max(xl, xlo)
-        xx = min(xr, xhi - 1)
+        xx = min(xr, xhi)
         top_ex = _interp(ex, xlo, yt0, xhi, yt1)
         bot_ex = _interp(ex, xlo, yb0, xhi, yb1)
         top_xx = _interp(xx, xlo, yt0, xhi, yt1)
@@ -2272,13 +2656,13 @@ def _dump_portal_analysis():
         pass_xx = top_xx <= ly_xx <= bot_xx
         bbox_ex = top_ex <= y_lo and y_hi <= bot_ex
         bbox_xx = top_xx <= y_lo and y_hi <= bot_xx
-        w(f"  interval {i}: [{xlo},{xhi}) top=[{yt0},{yt1}] bot=[{yb0},{yb1}]{gap}\n")
+        w(f"  interval {i}: [{xlo},{xhi}] top=[{yt0},{yt1}] bot=[{yb0},{yb1}]{gap}\n")
         w(f"    entry x={ex}: top={top_ex} bot={bot_ex} ly={ly_ex} bbox={'OK' if bbox_ex else 'FAIL'} exact={'OK' if pass_ex else 'FAIL'}\n")
         w(f"    exit  x={xx}: top={top_xx} bot={bot_xx} ly={ly_xx} bbox={'OK' if bbox_xx else 'FAIL'} exact={'OK' if pass_xx else 'FAIL'}\n")
 
-        if i + 1 < len(intervals) and iv[1] == intervals[i+1][0]:
-            nx = xhi
+        if i + 1 < len(intervals) and iv[1] + 1 == intervals[i+1][0]:
             niv = intervals[i+1]
+            nx = niv[0]
             pt = max(yt1, niv[2])
             pb = min(yb1, niv[3])
             ly_nx = ly_at(nx)
@@ -2312,13 +2696,19 @@ def _draw_debug_step(surface):
     _trap_hues = [(40, 40, 180), (60, 100, 160), (30, 70, 200),
                   (80, 50, 170), (50, 90, 140), (70, 60, 190),
                   (40, 110, 150), (90, 40, 180)]
-    # spans is a list of (xlo, xhi, yt_lo, yb_lo, yt_hi, yb_hi) — all pixels
+    # spans is a list of 8-tuples (xstart, xend, xlo, xhi, tl, bl, tr, br).
+    # For the debug overlay, evaluate the span's line at the active range.
+    from endpoint_spans import _span_top, _span_bot
     for si, span_s in enumerate(spans):
-        xlo, xhi, tl, bl, tr, br = span_s[:6]
-        pts = [(xlo * FP_SCALE, tl * FP_SCALE),
-               ((xhi - 1) * FP_SCALE, tr * FP_SCALE),
-               ((xhi - 1) * FP_SCALE, br * FP_SCALE),
-               (xlo * FP_SCALE, bl * FP_SCALE)]
+        xstart, xend = span_s[0], span_s[1]
+        tl_a = _span_top(span_s, xstart)
+        bl_a = _span_bot(span_s, xstart)
+        tr_a = _span_top(span_s, xend)
+        br_a = _span_bot(span_s, xend)
+        pts = [(xstart * FP_SCALE, tl_a * FP_SCALE),
+               (xend * FP_SCALE, tr_a * FP_SCALE),
+               (xend * FP_SCALE, br_a * FP_SCALE),
+               (xstart * FP_SCALE, bl_a * FP_SCALE)]
         hue = _trap_hues[si % len(_trap_hues)]
         pygame.draw.polygon(clip_surf, (*hue, 90), pts)
         pygame.draw.polygon(clip_surf, (*(min(c + 60, 255) for c in hue), 200), pts, 1)
@@ -2343,12 +2733,11 @@ def _draw_debug_step(surface):
             _real_drawline(surface, (255, 100, 0), (sx2 - 6, sy2 - 6), (sx2 + 6, sy2 + 6), 2)
             _real_drawline(surface, (255, 100, 0), (sx2 - 6, sy2 + 6), (sx2 + 6, sy2 - 6), 2)
 
-    # Cost annotation next to the line
+    # Cost annotation next to the line (clamped to screen bounds)
     cost = step[4] if len(step) > 4 else {}
     mid_x = int((lx1 + lx2) / 2 * FP_SCALE)
     mid_y = int((ly1 + ly2) / 2 * FP_SCALE)
     if cost:
-        # Build compact label
         parts = []
         if cost.get('bbox_rej'):     parts.append('Brej')
         if cost.get('outer_rej'):    parts.append(f"Or{cost['outer_rej']}")
@@ -2360,8 +2749,10 @@ def _draw_debug_step(surface):
         if cost.get('portal_exact_fail'): parts.append(f"Pf{cost['portal_exact_fail']}")
         if cost.get('portal_bbox_fail'):  parts.append(f"Pb{cost['portal_bbox_fail']}")
         if cost.get('cb_exit'):      parts.append(f"Cx{cost['cb_exit']}")
+        if cost.get('vert_acc'):    parts.append('Va')
+        if cost.get('vert_clip'):  parts.append('Vc')
+        if cost.get('vert_rej'):    parts.append('Vr')
         cost_str = ' '.join(parts) if parts else '?'
-        # Color: green if all cheap, yellow if some exact, red if CB clips
         has_cb = cost.get('cb_entry',0) + cost.get('cb_exit',0) + cost.get('cb_rej',0)
         has_exact = cost.get('portal_exact',0)
         if has_cb:
@@ -2376,10 +2767,32 @@ def _draw_debug_step(surface):
     count_lbl = hud_font.render(cost_str, True, lbl_color)
     bg = pygame.Surface(count_lbl.get_size(), pygame.SRCALPHA)
     bg.fill((0, 0, 0, 192))
-    surface.blit(bg, (mid_x + 8, mid_y - 8))
-    surface.blit(count_lbl, (mid_x + 8, mid_y - 8))
+    lw, lh = count_lbl.get_size()
+    # Offset label away from the line to avoid obscuring it
+    lbl_x = max(4, min(mid_x + 12, SCREEN_W - lw - 4))
+    lbl_y = max(36, min(mid_y - lh - 4, SCREEN_H - lh - 4))
+    surface.blit(bg, (lbl_x, lbl_y))
+    surface.blit(count_lbl, (lbl_x, lbl_y))
 
-    # HUD
+    # Key legend (bottom-right, same font as HUD)
+    key_lines = ["Ia = trivial accept",
+                 "Ce = CB clip entry",
+                 "Cx = CB clip exit",
+                 "Pc = portal cheap",
+                 "Px = portal exact",
+                 "Or = outer reject",
+                 "Cr = CB reject",
+                 "Brej = bbox reject",
+                 "Va = vert accept",
+                 "Vc = vert clip",
+                 "Vr = vert reject"]
+    line_h = hud_font.get_linesize()
+    for ki, kl in enumerate(key_lines):
+        ks = hud_font.render(kl, True, (140, 140, 140))
+        surface.blit(ks, (SCREEN_W - ks.get_width() - 4,
+                          SCREEN_H - (len(key_lines) - ki) * line_h - 2))
+
+    # HUD line 1: step info
     hud_font.set_bold(False)
     ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
     cum_muls = sum(s[3] if len(s) > 3 else 0 for s in _debug_steps[:idx+1])
@@ -2389,10 +2802,24 @@ def _draw_debug_step(surface):
             f"+{step_muls} muls (total {cum_muls})")
     surface.blit(hud_font.render(info, True, (255, 255, 0)), (4, 4))
 
+    # HUD line 2: preceding span mutation(s), if any
+    muts = step[5] if len(step) > 5 else []
+    if muts:
+        mut_parts = []
+        for m in muts:
+            op, lo, hi, nb, na = m
+            if op == 'MS':
+                mut_parts.append(f"mark_solid[{lo},{hi}] {nb}->{na} spans")
+            else:
+                mut_parts.append(f"tighten[{lo},{hi}] {nb}->{na} spans")
+        mut_str = '  '.join(mut_parts)
+        surface.blit(hud_font.render(mut_str, True, (100, 200, 255)), (4, 20))
+
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
   global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result
+  global _novt_annotate
   running = True
   while running:
     dt = clock.tick(60) / 1000.0
@@ -2466,6 +2893,9 @@ def _main():
                 print("6502 profiling in background...", flush=True)
                 threading.Thread(target=_profile_6502, daemon=True).start()
                 _use_6502_frontend = True
+            elif ev.key == pygame.K_v:
+                _novt_annotate = not _novt_annotate
+                print(f"NOVT annotation: {'ON' if _novt_annotate else 'OFF'}")
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
             elif ev.key == pygame.K_g:
@@ -2514,6 +2944,7 @@ def _main():
 
         fp_surface.fill((0, 0, 0))
         _frame_6502_cycles[0] = 0
+        _frame_clip_cycles[0] = 0
         _frame_nj_lines.clear()
         if use_xor:
             pygame.draw.line = _xor_drawline
@@ -2544,6 +2975,8 @@ def _main():
         ang_rad = angle_byte * 2 * math.pi / 256
         cos_f = math.cos(ang_rad)
         sin_f = math.sin(ang_rad)
+
+        _novt_annotations.clear()
 
         if _use_6502_full and _render_6502 is not None:
             # J mode: full 6502 pipeline with NJ rasteriser → extract framebuffer
@@ -2588,20 +3021,54 @@ def _main():
             spans_base = packed_layout['ram_spans']
             spans_init_full(p_ram, spans_base, FP_RENDER_W, FP_RENDER_H - 1)
             packed_render_bsp(len(nodes) - 1,
-                              EndpointClipSpans(),
+                              Instrumented6502Spans(),
                               ctx, vz_ps,
                               px_full, py_full, cos_f, sin_f, fp_surface,
                               p_ram)
+            _frame_clip_cycles[0] = _span_clip_6502.total_cycles if _span_clip_6502 else 0
+            if not _frame_clip_match[0]:
+                key = (int(player_x), int(player_y), ang_display)
+                if key not in _clip_mismatch_reported:
+                    _clip_mismatch_reported.add(key)
+                    print(f'CLIP MISMATCH at {key[0]},{key[1]},{key[2]}')
         else:
-            render_bsp_fp(len(nodes) - 1, EndpointClipSpans(),
+            render_bsp_fp(len(nodes) - 1, Instrumented6502Spans(),
                           ctx, vz_ps,
                           px_full, py_full, cos_f, sin_f, fp_surface,
                           [None]*len(vertexes), [None]*len(vwh_table))
+            _frame_clip_cycles[0] = _span_clip_6502.total_cycles if _span_clip_6502 else 0
+            if not _frame_clip_match[0]:
+                key = (int(player_x), int(player_y), ang_display)
+                if key not in _clip_mismatch_reported:
+                    _clip_mismatch_reported.add(key)
+                    print(f'CLIP MISMATCH at {key[0]},{key[1]},{key[2]}')
 
         # Nearest-neighbour upscale to display
         _scr = pygame.display.get_surface()
         _scr.fill((0, 0, 0))
         _scr.blit(pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H)), (0, 0))
+
+        # NOVT annotation overlay: render labels on the upscaled display.
+        # Red = suppressed, cyan = drawn.
+        if _novt_annotate and _novt_annotations:
+            _sx = SCREEN_W / FP_WIDTH
+            _sy = SCREEN_H / FP_HEIGHT
+            _lh = hud_font.get_linesize()
+            for _entry in _novt_annotations:
+                _ax, _aft, _afb, _tag, _rule, _is_solid, _suppressed = _entry
+                _dx = int(_ax * _sx) + 3
+                _dy = int((_aft + _afb) / 2 * _sy)
+                _kind = "W" if _is_solid else "P"
+                if _suppressed:
+                    _col = (255, 80, 80)
+                    _line2 = f"{_rule} {_kind}"
+                else:
+                    _col = (80, 255, 255)
+                    _line2 = _kind
+                _s1 = hud_font.render(_tag, True, _col)
+                _s2 = hud_font.render(_line2, True, _col)
+                _scr.blit(_s1, (_dx, _dy - _lh))
+                _scr.blit(_s2, (_dx, _dy))
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:
@@ -2664,11 +3131,13 @@ def _main():
             mc = fp_module.mul_counts
             mul_total = sum(mc.values())
             cyc = _frame_6502_cycles[0]
+            ccyc = _frame_clip_cycles[0]
             mode_tag = "fp/ROM" if use_packed else "fp"
+            clip_tag = "MATCH" if _frame_clip_match[0] else "FAIL"
             hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                    f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
                    f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
-                   f"~{cyc//1000}K cyc  {clock.get_fps():.0f}fps")
+                   f"{cyc//1000}K rast  {ccyc//1000}K clip  [{clip_tag}]  {clock.get_fps():.0f}fps")
     else:
         hud = (f"float ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "

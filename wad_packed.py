@@ -51,6 +51,8 @@ SF_DIR    = 0x01   # direction (flip back-face sign)
 SF_SOLID  = 0x02   # one-sided wall
 SF_NEEDBT = 0x04   # back ceiling < front ceiling
 SF_NEEDBB = 0x08   # back floor > front floor
+SF_NOVT1  = 0x10   # suppress vertical at v1 (BSP-internal split point)
+SF_NOVT2  = 0x20   # suppress vertical at v2 (BSP-internal split point)
 
 # ── Vertex cache (RAM) ─────────────────────────────────────────────────
 
@@ -110,10 +112,15 @@ SP_INNER_BOT  = 12   # s16
 
 def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                  fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
-                 prescale, map_center_x, map_center_y):
+                 prescale, map_center_x, map_center_y,
+                 seg_novt_flags=None):
     """Build the byte arrays from parsed WAD data.
 
     Returns (rom_main, rom_detail, rom_recip, layout).
+
+    seg_novt_flags: optional list of pre-computed SF_NOVT1/SF_NOVT2 bits
+    per seg.  When supplied, these are OR'd into the seg header flags;
+    when None, only the BSP-internal-vertex rule is applied here.
     """
 
     n_verts = len(vertexes)
@@ -181,6 +188,18 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     for i, ss in enumerate(fp_ssectors):
         struct.pack_into('<BxH', rom_main, off_ss + i * SSECTOR_SIZE, ss[0], ss[1])
 
+    # Build the set of "linedef-endpoint" vertices. Any vertex not in this
+    # set is a BSP-inserted split point; segs whose v1 or v2 is such a
+    # vertex lie in the middle of a longer continuous wall, and the
+    # verticals at those endpoints are geometrically fake (no real wall
+    # edge, just a seam from BSP splitting).  This handles RULE 1 of the
+    # NOVT scheme; RULE 2 (colinear solid neighbour) is computed by the
+    # caller and passed in via `seg_novt_flags`.
+    ld_endpoint_verts = set()
+    for ld in linedefs:
+        ld_endpoint_verts.add(ld[0])
+        ld_endpoint_verts.add(ld[1])
+
     # Seg headers (with inlined linedef data)
     for i, svwh in enumerate(fp_segs_vwh):
         s = svwh[0]
@@ -208,6 +227,14 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             else:
                 if bs[1] < ch: flags |= SF_NEEDBT
                 if bs[0] > fh: flags |= SF_NEEDBB
+        # Suppress verticals at BSP-internal split points (RULE 1).
+        if s[0] not in ld_endpoint_verts:
+            flags |= SF_NOVT1
+        if s[1] not in ld_endpoint_verts:
+            flags |= SF_NOVT2
+        # RULE 2 contributions from the caller (colinear solid neighbour).
+        if seg_novt_flags is not None:
+            flags |= seg_novt_flags[i] & (SF_NOVT1 | SF_NOVT2)
 
         o = off_seg_hdr + i * SEG_HDR_SIZE
         struct.pack_into('<HHhhbbBx', rom_main, o,
