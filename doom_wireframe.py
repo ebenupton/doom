@@ -174,9 +174,17 @@ for t in things:
 
 from fp import ASPECT_NUM, ASPECT_DEN
 
+def _prescale_round(val, ps):
+    """Divide by ps with round-to-nearest (reduces max quantization error
+    from ~0.875 to 0.500 prescaled units vs floor division)."""
+    if val >= 0:
+        return (val + ps // 2) // ps
+    else:
+        return -((-val + ps // 2) // ps)
+
 fp_vertexes = [
-    ((v[0] - MAP_CENTER_X) // PRESCALE,
-     (v[1] - MAP_CENTER_Y) // PRESCALE)
+    (_prescale_round(v[0] - MAP_CENTER_X, PRESCALE),
+     _prescale_round(v[1] - MAP_CENTER_Y, PRESCALE))
     for v in vertexes
 ]
 
@@ -1123,7 +1131,11 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
 
     if not sxs:
         return None
-    return min(sxs), max(sxs)
+    sx_lo = max(0, min(sxs))
+    sx_hi = min(_FPW - 1, max(sxs))
+    if sx_lo > sx_hi:
+        return None
+    return sx_lo, sx_hi
 
 # ── BSP rendering ────────────────────────────────────────────────────────────
 
@@ -1619,8 +1631,14 @@ def render_bsp_fp(nid, clips, ctx, vz,
     node = nodes[nid]
     side = point_on_side(wx_full, wy_full, node)
     ch = (node[12], node[13])
-    render_bsp_fp(ch[side], clips, ctx, vz,
-                  wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+    # Near child: bbox check before visiting (optimisation over DOOM's
+    # unconditional near-child visit — safe because if the bbox is
+    # entirely outside the frustum, nothing in the subtree is visible).
+    br = fp_bbox_visible_fixed(node, side, ctx)
+    if br is not None:
+        if clips.has_gap(br[0], br[1]):
+            render_bsp_fp(ch[side], clips, ctx, vz,
+                          wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
     if clips.is_full():
         return
     far = side ^ 1
@@ -2034,13 +2052,15 @@ def packed_render_bsp(nid, clips, ctx, vz,
     side = point_on_side(wx_full, wy_full, node)
 
     ch = (child_r, child_l)
-    packed_render_bsp(ch[side], clips, ctx, vz,
-                      wx_full, wy_full, cos_f, sin_f, surface, ram)
+    # Near child: bbox check (see render_bsp_fp)
+    br = fp_bbox_visible_fixed(node, side, ctx)
+    if br is not None:
+        if clips.has_gap(br[0], br[1]):
+            packed_render_bsp(ch[side], clips, ctx, vz,
+                              wx_full, wy_full, cos_f, sin_f, surface, ram)
     if clips.is_full():
         return
     far = side ^ 1
-    # Bbox visibility uses the fixed-point path so Python, packed-Python,
-    # and the 6502 native bbox_cull all agree bit-exact.
     br = fp_bbox_visible_fixed(node, far, ctx)
     if br is not None:
         if clips.has_gap(br[0], br[1]):
