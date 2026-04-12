@@ -1695,21 +1695,31 @@ def _packed_ram_new():
 
 
 def _packed_read_vcache(ram, vi):
-    """Read a vertex cache entry from RAM.  Returns (vx, vy, vy_idx, sx) or None."""
+    """Read a vertex cache entry from RAM.
+
+    Returns (evx_t, evy, vy_idx, sx, fvx) or None.
+    VC_VX stores the 8.8 view-x as (evx_t << 8) | fvx.
+    """
     if not is_valid(ram, _p_layout['ram_vcache_valid'], vi):
         return None
     base = _p_layout['ram_vcache'] + vi * VCACHE_ENTRY
-    vx  = read_s16(ram, base + VC_VX)
-    vy  = read_s16(ram, base + VC_VY)
-    vyi = read_u16(ram, base + VC_VYIDX)
-    sx  = read_s16(ram, base + VC_SX)
-    return (vx, vy, vyi, sx)
+    vx88 = read_s16(ram, base + VC_VX)
+    vy   = read_s16(ram, base + VC_VY)
+    vyi  = read_u16(ram, base + VC_VYIDX)
+    sx   = read_s16(ram, base + VC_SX)
+    evx_t = vx88 >> 8                    # signed high byte
+    fvx   = vx88 & 0xFF                  # unsigned low byte
+    return (evx_t, vy, vyi, sx, fvx)
 
 
-def _packed_write_vcache(ram, vi, vx, vy, vy_idx, sx):
-    """Write a vertex cache entry to RAM and set its valid bit."""
+def _packed_write_vcache(ram, vi, evx_t, fvx, vy, vy_idx, sx):
+    """Write a vertex cache entry to RAM and set its valid bit.
+
+    VC_VX stores the 8.8 view-x: (evx_t << 8) | fvx.
+    """
     base = _p_layout['ram_vcache'] + vi * VCACHE_ENTRY
-    write_s16(ram, base + VC_VX, vx)
+    vx88 = ((evx_t & 0xFF) << 8) | (fvx & 0xFF)
+    write_s16(ram, base + VC_VX, vx88 if vx88 < 0x8000 else vx88 - 0x10000)
     write_s16(ram, base + VC_VY, vy)
     write_u16(ram, base + VC_VYIDX, vy_idx)
     write_s16(ram, base + VC_SX, sx)
@@ -1772,32 +1782,28 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     if vc1 is None:
         result = fp_to_view(wx1, wy1, ctx)
         evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
-        # We need to also compute sx to cache it, but sx depends on
-        # whether the vertex is near-clipped.  Cache the view transform
-        # first; sx is computed after near-clip and cached separately.
-        # For the vcache we store: vx_round, vy, vy_idx, sx=0 (placeholder)
-        _packed_write_vcache(ram, v1_idx, evx1_r, evy1, vy_idx1, 0)
+        _packed_write_vcache(ram, v1_idx, evx1_t, fvx1, evy1, vy_idx1, 0)
         _vc1_has_sx = False
     else:
-        evx1_r = vc1[0]
-        evx1_t = evx1_r  # packed path doesn't support sub-pixel in vcache
+        evx1_t = vc1[0]
         evy1   = vc1[1]
         vy_idx1 = vc1[2]
-        fvx1 = 0
-        _vc1_has_sx = (vc1[3] != 0)  # sx was stored
+        fvx1   = vc1[4]
+        evx1_r = evx1_t  # not used for projection, but set for consistency
+        _vc1_has_sx = (vc1[3] != 0)
 
     vc2 = _packed_read_vcache(ram, v2_idx)
     if vc2 is None:
         result = fp_to_view(wx2, wy2, ctx)
         evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
-        _packed_write_vcache(ram, v2_idx, evx2_r, evy2, vy_idx2, 0)
+        _packed_write_vcache(ram, v2_idx, evx2_t, fvx2, evy2, vy_idx2, 0)
         _vc2_has_sx = False
     else:
-        evx2_r = vc2[0]
-        evx2_t = evx2_r
+        evx2_t = vc2[0]
         evy2   = vc2[1]
         vy_idx2 = vc2[2]
-        fvx2 = 0
+        fvx2   = vc2[4]
+        evx2_r = evx2_t
         _vc2_has_sx = (vc2[3] != 0)
 
     evx1 = evx1_t
