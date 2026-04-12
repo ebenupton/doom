@@ -94,8 +94,10 @@ class Instrumented6502Spans(EndpointClipSpans):
         _frame_clip_match[0] = True
 
     def _check(self):
+        saved = _span_clip_6502.total_cycles
         if _span_clip_6502.read_spans() != self.spans:
             _frame_clip_match[0] = False
+        _span_clip_6502.total_cycles = saved  # don't count read_spans in HUD
 
     def mark_solid(self, lo, hi):
         super().mark_solid(lo, hi)

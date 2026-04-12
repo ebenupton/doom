@@ -14,28 +14,27 @@ ENTRY_TIGHTEN    = 0x2006
 ENTRY_HAS_GAP    = 0x2009
 ENTRY_IS_FULL    = 0x200C
 ENTRY_READ       = 0x200F
-ENTRY_INTERP_FL  = 0x2012
-ENTRY_INTERP_CE  = 0x2015
-ENTRY_INTERP_ST  = 0x2018
+ENTRY_INTERP_ST  = 0x2012
 
 # ZP addresses (must match span_clip.asm)
 ZP_HEAD  = 0xC0
 ZP_FREE  = 0xC1
 ZP_ILO   = 0xC2
 ZP_IHI   = 0xC3
-ZP_SX1   = 0xC4
-ZP_SX2   = 0xC5
-ZP_YT1   = 0xC6
-ZP_YT2   = 0xC7
-ZP_YB1   = 0xC8
-ZP_YB2   = 0xC9
-ZP_I_X   = 0xCA
-ZP_I_X0  = 0xCB
-ZP_I_Y0  = 0xCC
-ZP_I_X1  = 0xCD
-ZP_I_Y1  = 0xCE
-ZP_I_RES = 0xCF
-ZP_BUF   = 0xDC
+ZP_SX1   = 0xC4  # s16 (lo/hi at C4/C5)
+ZP_SX2   = 0xC6  # s16 (lo/hi at C6/C7)
+ZP_YT1   = 0xC8  # s16 (lo/hi at C8/C9)
+ZP_YT2   = 0xCA  # s16 (lo/hi at CA/CB)
+ZP_YB1   = 0xCC  # s16 (lo/hi at CC/CD)
+ZP_YB2   = 0xCE  # s16 (lo/hi at CE/CF)
+ZP_I_X   = 0xD0
+ZP_I_X0  = 0xD1
+ZP_I_Y0  = 0xD2
+ZP_I_X1  = 0xD4
+ZP_I_Y1  = 0xD5
+ZP_I_RES = 0xD7
+ZP_DIV_DEN = 0xDC
+ZP_BUF   = 0xE3
 
 # Pool
 POOL_BASE = 0x0400
@@ -66,6 +65,8 @@ class SpanClip6502:
 
     def __init__(self):
         self.mpu = MPU()
+        self.total_cycles = 0
+        self.last_cycles = 0
         mem = self.mpu.memory
 
         # Load quarter-square tables
@@ -106,41 +107,75 @@ class SpanClip6502:
             if mpu.pc == 0xFF00:
                 break
             mpu.step()
-        return mpu.processorCycles
+        self.last_cycles = mpu.processorCycles
+        self.total_cycles += self.last_cycles
+        return self.last_cycles
 
     def init(self):
         """Initialize: one full-screen span."""
         self._run(ENTRY_INIT)
+        self.total_cycles = 0  # init cost doesn't count toward frame
 
     def mark_solid(self, lo, hi):
-        """mark_solid(lo, hi)."""
+        """mark_solid(lo, hi). Inclusive right edge (solid wall covers last column).
+        Closed-interval: ilo, ihi are both inclusive column indices in [0,255]."""
         mem = self.mpu.memory
         ilo = max(0, lo)
-        ihi = min(256, hi + 1)
+        ihi = min(255, hi)
+        if ihi < ilo:
+            return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
         self._run(ENTRY_MARK_SOLID)
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
-        """tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)."""
+        """tighten with 16-bit seg parameters.
+
+        Closed-interval: ilo, ihi are both inclusive column indices in [0,255].
+
+        Wraps the call in _remap_seg_for_8bit so the 6502 8-bit interp pipeline
+        always operates with ex≤255, offset≤255, |dy|≤127 — i.e., always the
+        s8 fast path. The slow path (s16-overflow-prone) is never triggered.
+        """
         mem = self.mpu.memory
         ilo = max(0, lo)
-        ihi = min(256, hi + 1)
+        ihi = min(255, hi)
+        if ihi < ilo:
+            return
+
+        # Swap inverted segs (sx1 > sx2) — 6502 can't handle negative ex
+        if sx1 > sx2:
+            sx1, sx2 = sx2, sx1
+            yt1, yt2 = yt2, yt1
+            yb1, yb2 = yb2, yb1
+
+        from endpoint_spans import _remap_seg_for_8bit
+        sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
+            ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2)
+
+        def _w16(addr, val):
+            mem[addr] = val & 0xFF
+            mem[addr + 1] = (val >> 8) & 0xFF
+
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
-        mem[ZP_SX1] = sx1 & 0xFF
-        mem[ZP_SX2] = sx2 & 0xFF
-        mem[ZP_YT1] = yt1 & 0xFF
-        mem[ZP_YT2] = yt2 & 0xFF
-        mem[ZP_YB1] = yb1 & 0xFF
-        mem[ZP_YB2] = yb2 & 0xFF
+        _w16(ZP_SX1, sx1)
+        _w16(ZP_SX2, sx2)
+        _w16(ZP_YT1, yt1)
+        _w16(ZP_YT2, yt2)
+        _w16(ZP_YB1, yb1)
+        _w16(ZP_YB2, yb2)
         self._run(ENTRY_TIGHTEN)
 
     def has_gap(self, lo, hi):
-        """has_gap(lo, hi) → bool."""
+        """has_gap(lo, hi) → bool. Closed interval [lo, hi]."""
         mem = self.mpu.memory
-        mem[ZP_ILO] = max(0, lo) & 0xFF
-        mem[ZP_IHI] = min(255, hi) & 0xFF
+        ilo = max(0, lo)
+        ihi = min(255, hi)
+        if ihi < ilo:
+            return False
+        mem[ZP_ILO] = ilo & 0xFF
+        mem[ZP_IHI] = ihi & 0xFF
         self._run(ENTRY_HAS_GAP)
         return self.mpu.a != 0
 
@@ -150,7 +185,11 @@ class SpanClip6502:
         return self.mpu.a != 0
 
     def read_spans(self):
-        """Read span list → list of (xlo, xhi, tl, bl, tr, br) tuples."""
+        """Read span list. Returns list of 8-tuples in the new format:
+        (xstart, xend, xlo, xhi, tl, bl, tr, br)
+        where (xlo, xhi, tl, bl, tr, br) is the line definition (immutable
+        once a span is created) and (xstart, xend) is the active range.
+        """
         mem = self.mpu.memory
         mem[ZP_BUF] = READ_BUF & 0xFF
         mem[ZP_BUF + 1] = (READ_BUF >> 8) & 0xFF
@@ -159,34 +198,37 @@ class SpanClip6502:
         spans = []
         off = READ_BUF + 1
         for i in range(count):
-            xlo = mem[off]; xhi = mem[off+1]
-            tl = mem[off+2]; bl = mem[off+3]
-            tr = mem[off+4]; br = mem[off+5]
-            if xhi == 0: xhi = 256
-            spans.append((xlo, xhi, tl, bl, tr, br))
-            off += 6
+            xstart = mem[off];   xend = mem[off+1]
+            xlo    = mem[off+2]; xhi  = mem[off+3]
+            tl     = mem[off+4]; bl   = mem[off+5]
+            tr     = mem[off+6]; br   = mem[off+7]
+            spans.append((xstart, xend, xlo, xhi, tl, bl, tr, br))
+            off += 8
         return spans
 
-    def interp(self, mode, x, x0, y0, x1, y1):
-        """Call one of the interp variants.
-        mode: 'floor', 'ceil', 'store'."""
+    def interp_store(self, x, x0, y0, x1, y1):
+        """Call the round-to-nearest interp (span boundary values).
+
+        New interface (post-hoist): x passed in A register, den pre-set
+        in zp_div_den, result returned in A. Caller (this wrapper)
+        computes den = x1 - x0 before invoking.
+        """
         mem = self.mpu.memory
-        mem[ZP_I_X] = x & 0xFF
         mem[ZP_I_X0] = x0 & 0xFF
         mem[ZP_I_Y0] = y0 & 0xFF
-        mem[ZP_I_X1] = x1 & 0xFF
         mem[ZP_I_Y1] = y1 & 0xFF
-        entry = {'floor': ENTRY_INTERP_FL, 'ceil': ENTRY_INTERP_CE,
-                 'store': ENTRY_INTERP_ST}[mode]
-        self._run(entry)
-        # Result is signed — return as s8
-        r = mem[ZP_I_RES]
+        mem[ZP_DIV_DEN] = (x1 - x0) & 0xFF
+        self.mpu.a = x & 0xFF
+        self._run(ENTRY_INTERP_ST)
+        r = self.mpu.a
         return r if r < 128 else r - 256
 
 
 def test_interp():
-    """Test all three interp variants against Python."""
-    from endpoint_spans import _interp, _interp_ceil, _interp_store
+    """Test interp_store against Python _interp_store.
+    (floor/ceil variants were deleted — only interp_store/seg_interp_store
+    are needed by the span-clipper hot path.)"""
+    from endpoint_spans import _interp_store
     sc = SpanClip6502()
     sc.init()
     errors = 0
@@ -194,20 +236,13 @@ def test_interp():
         for x1 in range(x0+1, min(x0+100, 256), 17):
             for y0 in range(0, 160, 40):
                 for y1 in range(0, 160, 40):
-                    for x in range(x0, x1, max(1, (x1-x0)//5)):
-                        py_f = _interp(x, x0, y0, x1, y1)
-                        py_c = _interp_ceil(x, x0, y0, x1, y1)
+                    for x in range(x0, x1+1, max(1, (x1-x0)//5)):
                         py_s = _interp_store(x, x0, y0, x1, y1)
-                        asm_f = sc.interp('floor', x, x0, y0, x1, y1)
-                        asm_c = sc.interp('ceil', x, x0, y0, x1, y1)
-                        asm_s = sc.interp('store', x, x0, y0, x1, y1)
-                        for name, py, asm in [('floor',py_f,asm_f),
-                                               ('ceil',py_c,asm_c),
-                                               ('store',py_s,asm_s)]:
-                            if py != asm:
-                                errors += 1
-                                if errors <= 5:
-                                    print(f'  {name} MISMATCH: x={x} [{x0},{x1}) y=[{y0},{y1}] py={py} asm={asm}')
+                        asm_s = sc.interp_store(x, x0, y0, x1, y1)
+                        if py_s != asm_s:
+                            errors += 1
+                            if errors <= 5:
+                                print(f'  store MISMATCH: x={x} [{x0},{x1}) y=[{y0},{y1}] py={py_s} asm={asm_s}')
     print(f'Interp test: {errors} errors')
     return errors == 0
 
