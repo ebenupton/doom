@@ -473,8 +473,8 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 ; Returns A=1 if head==0 (all columns solid), A=0 otherwise.
 ; ======================================================================
 .span_is_full
-    LDA zp_head : BNE snf : LDA #1 : RTS
-.snf LDA #0 : RTS
+    LDA zp_head : BEQ sif_yes : LDA #0 : RTS
+.sif_yes LDA #1 : RTS
 
 ; ======================================================================
 ; SPAN_READ: serialize active span list to buffer at (zp_buf)
