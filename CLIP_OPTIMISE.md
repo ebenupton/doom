@@ -106,12 +106,13 @@ constant-line merge optimisation landed.
 | 2026-04-12 |       2605 B  |  3659 (19)    |  35536 (12)| 6656 (127) | 2376 (148) | **48227**    | −2071  | **167462**   | −4731  | **Dominance prelude: constant-line OLD span fast path.** When the OLD span is constant-line (`tl==tr` AND `bl==br`), the interp values at any X are just `tl` and `bl` — no interpolation needed. Added a check after the anchor fast path: 2 byte-compares (tl vs tr, bl vs br), and on match, copy tl/bl directly to all 4 output slots, skipping 4 `interp_store` calls. Fires on all constant-line spans that don't also trigger the anchor fast path (i.e. when the overlap doesn't exactly cover [xlo, xhi]). In S2, constant-line spans are the majority. S1 tighten −2071, S2 tighten −4731. ROM +27 B. |
 | 2026-04-12 |       2656 B  |  3659 (19)    |  34650 (12)| 6656 (127) | 2376 (148) | **47341**    | −886   | **166965**   | −497   | **Dominance prelude: constant-line NEW seg fast path.** Symmetric to the OLD constant-line check. When the NEW seg has `yt1==yt2` AND `yb1==yb2` (s16 equality, 4 byte compares), copy the anchor s16 values directly to all 8 output slots, skipping 4 `seg_interp_store` calls. Fires when the seg boundary is flat (parallel to the view plane), common for horizontal wall sections. S1 tighten −886, S2 tighten −497. ROM +51 B. |
 | 2026-04-13 |       2734 B  |  3659 (19)    |  34317 (12)| 6656 (127) | 2376 (148) | **47008**    | −333   | **166631**   | −334   | **tg_overlap_sub: constant-line fast paths for OLD and NEW.** Applied the same constant-line checks to the crossover sub-interval processing. When OLD span has tl==tr/bl==br or NEW seg has yt1==yt2/yb1==yb2, skip the 4 interp calls and copy values directly. Less impactful than the dominance prelude paths because crossover splits are rarer. S1 tighten −333, S2 tighten −334. ROM +78 B. |
+| 2026-04-13 |       2795 B  |  3659 (19)    |  34019 (12)| 6656 (127) | 2376 (148) | **46710**    | −298   | **166021**   | −610   | **Crossover detection: ORA fast path for hi==0 case.** When both `nt_lh/nt_rh` (or `nb_lh/nb_rh`) are 0 — the common case for on-screen seg values — the sign-of-difference computation skips the individual per-byte BMI/BNE checks and does two simple `CMP` + `ROL` + `EOR`. Saves ~12 cycles per boundary (top/bot) per overlapping span in the common case. S1 tighten −298, S2 tighten −610. ROM +61 B. |
 
-Per-call averages (S1): `mark_solid` 193, `tighten` 2860, `has_gap` 52, `is_full` 16.
-Per-call averages (S2): `mark_solid` 234, `tighten` 3263, `has_gap`  66, `is_full` 16.
+Per-call averages (S1): `mark_solid` 193, `tighten` 2835, `has_gap` 52, `is_full` 16.
+Per-call averages (S2): `mark_solid` 234, `tighten` 3249, `has_gap`  66, `is_full` 16.
 
-Cumulative vs baseline (S1 127 389 cyc → 47 008): **−80 381 cyc, −63.1%**.
-ROM size: 2701 → 2734 bytes, **+33 bytes**.
+Cumulative vs baseline (S1 127 389 cyc → 46 710): **−80 679 cyc, −63.3%**.
+ROM size: 2701 → 2795 bytes, **+94 bytes**.
 
 ## Notes on this round
 

@@ -663,12 +663,17 @@ zp_cc_den_hi = $FE
 .new_done
 
     ; --- Crossover detection BEFORE clamping (needs unclamped nt/nb values) ---
-    ; Sign of (old - new): if new >= 160 (negative via two's complement),
-    ; Sign of (old - new) using high byte of s16 new value:
-    ; resh < 0 ($FF): new is negative → sign positive (old ≥ 0 > new)
-    ; resh > 0: new > 255 → sign negative (old ≤ 159 < new)
-    ; resh = 0: new in [0,255] → unsigned CMP valid
-    ; Top crossover:
+    ; Top crossover: fast path when both hi bytes are 0 (common case).
+    LDA zp_nt_lh : ORA zp_nt_rh : BNE tg_cc_t_slow                      ; |
+    ; Both hi bytes 0: simple unsigned CMP for sign of (old - new)
+    LDA zp_ot_l : CMP zp_nt_l : LDA #0 : ROL A : STA zp_tmp1           ; |
+    LDA zp_ot_r : CMP zp_nt_r : LDA #0 : ROL A                         ; |
+    EOR zp_tmp1 : BNE tg_cc_t_fast_has_cx                                ; |
+    JMP tg_cc_no_top                                                    ; |
+.tg_cc_t_fast_has_cx
+    JMP tg_cc_t_check_dt                                                ; |
+.tg_cc_t_slow
+    ; Slow path: per-byte sign detection (handles hi < 0 and hi > 0)
     LDA zp_nt_lh : BMI tg_cc_t0p : BNE tg_cc_t0n                        ; |
     LDA zp_ot_l : CMP zp_nt_l                                           ; |
     LDA #0 : ROL A : JMP tg_cc_t0d                                      ; |
@@ -682,6 +687,7 @@ zp_cc_den_hi = $FE
 .tg_cc_t1n LDA #0
 .tg_cc_t1d EOR zp_tmp1                                                  ; |
     BEQ tg_cc_no_top                                                    ; |
+.tg_cc_t_check_dt
     ; Check dt != 0 at each endpoint (avoid calling compute_crossover for
     ; degenerate touch-at-edge cases). The previous `ORA hi,lo : CMP ot`
     ; shortcut was buggy — it gave false positives when `hi | lo` ≡ ot
@@ -713,7 +719,13 @@ zp_cc_den_hi = $FE
 .tg_cc_no_top
     LDA #0 : STA zp_cx_top                                              ; |
 .tg_cc_chk_bot
-    ; Bot crossover (same pattern with high bytes):
+    ; Bot crossover: fast path when both hi bytes are 0 (common case).
+    LDA zp_nb_lh : ORA zp_nb_rh : BNE tg_cc_b_slow                      ; |
+    LDA zp_ob_l : CMP zp_nb_l : LDA #0 : ROL A : STA zp_tmp1           ; |
+    LDA zp_ob_r : CMP zp_nb_r : LDA #0 : ROL A                         ; |
+    EOR zp_tmp1 : BEQ tg_cc_no_bot                                      ; |
+    JMP tg_cc_b_check_dt                                                ; |
+.tg_cc_b_slow
     LDA zp_nb_lh : BMI tg_cc_b0p : BNE tg_cc_b0n                        ; |
     LDA zp_ob_l : CMP zp_nb_l                                           ; |
     LDA #0 : ROL A : JMP tg_cc_b0d                                      ; |
@@ -727,6 +739,7 @@ zp_cc_den_hi = $FE
 .tg_cc_b1n LDA #0
 .tg_cc_b1d EOR zp_tmp1                                                  ; |
     BEQ tg_cc_no_bot                                                    ; |
+.tg_cc_b_check_dt
     ; Same dt != 0 pre-check as top (see tg_cc_t_ne_l comment).
     LDA zp_nb_lh : BNE tg_cc_b_ne_l                                     ; |
     LDA zp_nb_l : CMP zp_ob_l : BEQ tg_cc_no_bot                        ; |
