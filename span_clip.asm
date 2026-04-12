@@ -1,683 +1,1082 @@
-; span_clip.asm — Standalone 6502 span clipper subsystem
+; span_clip.asm -- Standalone 6502 span-clipper for a DOOM-style BSP renderer
 ;
-; Pool at POOL ($0400), 32 × 8-byte slots.  Slot 0 = null.
-; Slot layout: next(u8), xlo(u8), xhi(u8), tl(u8), bl(u8), tr(u8), br(u8), pad
+; This module manages a linked list of 'spans' representing the visible
+; aperture on each horizontal column of the screen (0-255).  Each span stores
+; a line definition (top/bot Y at two anchor X's) and an active column range.
+; The BSP front-to-back traversal calls three main operations:
+;   has_gap    -- quick check whether any column in [lo,hi] is still open
+;   tighten    -- narrow the aperture top/bot using a new wall segment
+;   mark_solid -- remove a column range entirely (wall fully occludes)
+;
+; All arithmetic uses 8-bit fixed point with quarter-square lookup tables
+; for multiply and restoring division loops for divide.  The span pool is
+; 28 nine-byte slots at $0400; slot 0 is the null sentinel.
+;
+; Pool at POOL ($0400), 28 x 9-byte slots.  Slot 0 = null.
+; Slot layout: next(u8), xlo(u8), xhi(u8), tl(u8), bl(u8), tr(u8), br(u8),
+;              xstart(u8), xend(u8)
 ; Access: LDX span_offset; LDA POOL_XLO,X  (fast absolute indexed)
 ;
 ; Division by 256 (ex=0): just take high byte of multiply (shift, no loop).
 ; Otherwise: restoring division loop, 8 iterations.
 
+; --- Code origin: $2000 in BBC Micro memory map ---
 ORG $2000
 
-; Jump table
-JMP span_init       ; $2000
-JMP span_mark_solid ; $2003
-JMP span_tighten    ; $2006
-JMP span_has_gap    ; $2009
+; --- Jump table: fixed entry points for each public operation ---
+; Callers (Python harness, game engine) JSR to $2000 + 3*N.
+; JMP is 3 bytes, so entries are evenly spaced.
+JMP span_init       ; $2000                                             ; |
+JMP span_mark_solid ; $2003                                             ; |
+JMP span_tighten    ; $2006                                             ; |
+JMP span_has_gap    ; $2009                                             ; |||
 JMP span_is_full    ; $200C
 JMP span_read       ; $200F
-JMP interp_floor    ; $2012
-JMP interp_ceil     ; $2015
-JMP interp_store    ; $2018
+JMP interp_store    ; $2012  (kept for test_interp verification)
 
-; === Constants ===
-POOL      = $0400
-POOL_NEXT = $0400
-POOL_XLO  = $0401
-POOL_XHI  = $0402
-POOL_TL   = $0403
-POOL_BL   = $0404
-POOL_TR   = $0405
-POOL_BR   = $0406
+; === Pool constants and field offsets ===
+; The span pool is a flat array at $0400.  Each slot is 9 bytes, so slot N
+; lives at byte offset N*9.  Absolute indexed addressing (LDA POOL_TL,X
+; where X = slot offset) gives O(1) field access.  The linked list is
+; threaded through the NEXT byte (+0) of each slot.
+; Span pool — 9-byte slots, 28 slots total ($400-$4FB).
+; Slot 0 is the null sentinel; slot 1 (offset 9) is the initial active span;
+; slots 2..27 (offsets 18, 27, ..., 243) start on the free list.
+;
+; Field layout per slot:
+;   +0 NEXT   linked-list next (byte offset, 0 = end)
+;   +1 XLO    line anchor x left  (immutable after span creation)
+;   +2 XHI    line anchor x right (immutable)
+;   +3 TL     top y at XLO
+;   +4 BL     bot y at XLO
+;   +5 TR     top y at XHI
+;   +6 BR     bot y at XHI
+;   +7 XSTART active range start (mutable: shrunk by mark_solid / tighten fragments)
+;   +8 XEND   active range end   (mutable)
+;
+; Spans interpolate y at any column x ∈ [XSTART, XEND] using the line through
+; (XLO, TL/BL) — (XHI, TR/BR). XLO/XHI need not equal XSTART/XEND once a span
+; has been narrowed: the line is preserved across mark_solid splits and across
+; left/right-fragment creation in tighten, so no interp_store is needed for
+; those operations.
+POOL        = $0400
+POOL_NEXT   = $0400
+POOL_XLO    = $0401
+POOL_XHI    = $0402
+POOL_TL     = $0403
+POOL_BL     = $0404
+POOL_TR     = $0405
+POOL_BR     = $0406
+POOL_XSTART = $0407
+POOL_XEND   = $0408
+SLOT_SIZE   = 9
+SLOT_END    = 28*SLOT_SIZE   ; one past the last byte offset (= 252)
 
+; Quarter-square multiply tables (pre-loaded by the Python harness).
+; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
+; used when a+b overflows u8.
 sqr_lo  = $5400 : sqr_hi  = $5500
 sqr2_lo = $5600 : sqr2_hi = $5700
 
-; === ZP ($C0-$EF) ===
+; === Zero-page workspace ($C0-$FF) ===
+; Layout: list management (head, free), input params (seg coords s16),
+; interpolation temps (i_x, i_y0, mul_b, prod, div), scratch (tmp0-3),
+; and tighten state (overlap bounds, crossover X, boundary values).
+; Note: prod_lo aliases div_lo -- multiply output feeds directly into
+; division input, saving two loads per interp call.
 zp_head  = $C0 : zp_free  = $C1
 zp_ilo   = $C2 : zp_ihi   = $C3
-zp_sx1   = $C4 : zp_sx2   = $C5
-zp_yt1   = $C6 : zp_yt2   = $C7
-zp_yb1   = $C8 : zp_yb2   = $C9
-zp_i_x   = $CA : zp_i_x0  = $CB : zp_i_y0 = $CC
-zp_i_x1  = $CD : zp_i_y1  = $CE : zp_i_res = $CF
-zp_mul_b = $D0 : zp_prod_lo = $D1 : zp_prod_hi = $D2
-zp_div_lo = $D3 : zp_div_hi = $D4
-zp_div_den = $D5 : zp_div_rem = $D6
-zp_tmp0  = $D7 : zp_tmp1  = $D8 : zp_tmp2  = $D9
-zp_tmp3  = $DA : zp_prev  = $DB
-zp_buf   = $DC  ; u16 pointer
-zp_save0 = $DE  ; safe scratch (not clobbered by interp)
-zp_save1 = $DF  ; safe scratch #2
+; Seg parameters: 16-bit (lo/hi pairs). Values can be outside [0,255].
+zp_sx1   = $C4   ; s16: seg left X  (lo, hi)
+zp_sx1h  = $C5
+zp_sx2   = $C6   ; s16: seg right X
+zp_sx2h  = $C7
+zp_yt1   = $C8   ; s16: top Y at sx1
+zp_yt1h  = $C9
+zp_yt2   = $CA   ; s16: top Y at sx2
+zp_yt2h  = $CB
+zp_yb1   = $CC   ; s16: bot Y at sx1
+zp_yb1h  = $CD
+zp_yb2   = $CE   ; s16: bot Y at sx2
+zp_yb2h  = $CF
+zp_i_x   = $D0 : zp_i_x0  = $D1
+zp_i_y0  = $D2 : zp_i_y0h = $D3   ; s16 Y for seg interp
+zp_i_x1  = $D4 : zp_i_y1  = $D5 : zp_i_y1h = $D6
+zp_i_res = $D7 : zp_i_resh = $D8
+zp_mul_b = $D9
+zp_prod_lo = $DA : zp_div_lo = $DA   ; shared: mul output = div input
+zp_prod_hi = $DB : zp_div_hi = $DB
+zp_div_den = $DC : zp_div_rem = $DD
+zp_tmp0  = $DE : zp_tmp1  = $DF : zp_tmp2  = $E0
+zp_tmp3  = $E1 : zp_prev  = $E2
+zp_buf   = $E3  ; u16 pointer ($E3/$E4)
+zp_save0 = $E5  ; safe scratch (not clobbered by interp)
+zp_save1 = $E6  ; safe scratch #2
+zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid only)
 
 ; ======================================================================
-; SPAN_INIT
+; SPAN_INIT: reset the clipper to one full-screen span
+;
+; Builds two structures:
+;   FREE LIST -- singly-linked chain of unused slots 2..27
+;   ACTIVE LIST -- single span (slot 1) covering [0,255] x [0,159]
+;
+; Called once per frame. Runtime is negligible (< 0.5% of total).
 ; ======================================================================
 .span_init
 {
-    ; Free list: slots 2..31
-    LDX #16              ; slot 2
-    STX zp_free
-.il  TXA : CLC : ADC #8
-    BEQ id               ; wrapped to 0 → done
-    STA POOL_NEXT,X : TAX
-    JMP il
-.id  LDA #0 : STA POOL_NEXT,X
-    ; Active list: slot 1 = [0, 256) top=0 bot=159
-    LDX #8 : STX zp_head
-    LDA #0
-    STA POOL_NEXT,X : STA POOL_XLO,X : STA POOL_XHI,X
-    STA POOL_TL,X : STA POOL_TR,X
-    LDA #159
-    STA POOL_BL,X : STA POOL_BR,X
-    RTS
+    ; Free list: slots 2..27 (byte offsets 18..243).
+    LDX #2*SLOT_SIZE       ; slot 2                                     ; |
+    STX zp_free                                                         ; |
+.il  TXA : CLC : ADC #SLOT_SIZE                                         ; ||
+    CMP #SLOT_END          ; reached end? (= 252)                       ; |
+    BCS id                                                              ; |
+    STA POOL_NEXT,X : TAX                                               ; ||
+    BNE il                 ; always taken                               ; |
+.id  LDA #0 : STA POOL_NEXT,X                                           ; |
+    ; Active list: slot 1 = full screen, line and active range both [0, 255].
+    LDX #SLOT_SIZE         ; slot 1 (offset 9)                          ; |
+    STX zp_head                                                         ; |
+    STA POOL_NEXT,X : STA POOL_XLO,X : STA POOL_XSTART,X                ; |
+    STA POOL_TL,X : STA POOL_TR,X                                       ; |
+    LDA #255 : STA POOL_XHI,X : STA POOL_XEND,X                         ; |
+    LDA #159                                                            ; |
+    STA POOL_BL,X : STA POOL_BR,X                                       ; |
+    RTS                                                                 ; |
 }
 
 ; ======================================================================
-; ALLOC / FREE
+; ALLOC_SPAN / FREE_SPAN: O(1) pool allocator via free-list push/pop
+;
+; alloc_span: pops free list head into X.  Z=0 on success, Z=1 if empty.
+; free_span:  pushes slot X back onto free list.  Tail-callable (JMP).
 ; ======================================================================
 .alloc_span
     ; Returns X = new span offset.  Z=1 if failed (X=0), Z=0 if success.
-    LDX zp_free : BEQ af
-    LDA POOL_NEXT,X : STA zp_free
-    LDA #0 : STA POOL_NEXT,X
-    TXA                     ; A=X, sets Z=0 since X≠0
-.af RTS
+    ; Caller is responsible for setting POOL_NEXT (tg_append_x or mark_solid linking).
+    LDX zp_free : BEQ af                                                ; |
+    LDA POOL_NEXT,X : STA zp_free                                       ; |
+    TXA                     ; A=X≠0, sets Z=0                           ; |
+.af RTS                                                                 ; |
 
 .free_span
-    LDA zp_free : STA POOL_NEXT,X : STX zp_free : RTS
+    LDA zp_free : STA POOL_NEXT,X : STX zp_free : RTS                   ; |||
 
 ; ======================================================================
-; UNSIGNED 8×8 MULTIPLY: A × zp_mul_b → zp_prod_lo:zp_prod_hi
+; UMUL8: unsigned 8x8 multiply via quarter-square identity
+;
+; Computes A * zp_mul_b using: a*b = sqr(a+b) - sqr(a-b)
+; where sqr(n) = floor(n^2/4).  Two table sets handle a+b < 256 vs
+; a+b >= 256.  |a-b| is always < 256 so uses sqr_lo/hi in both cases.
+; Result: zp_prod_lo:zp_prod_hi (u16).
+;
+; This is the hottest subroutine -- called by every interpolation.
 ; ======================================================================
 .umul8
 {
-    ; a*b = sqr(a+b) - sqr(|a-b|)
-    ; sqr_lo/hi for index [0,255], sqr2_lo/hi for index [256,511]
-    STA zp_tmp0
-    CLC : ADC zp_mul_b : BCS uo
-    ; sum < 256: use sqr for sum
-    TAX
-    SEC : LDA zp_tmp0 : SBC zp_mul_b : BCS up
-    EOR #$FF : ADC #1   ; |diff| (carry was clear so ADC adds 1 extra — fix:)
-.up TAY                  ; Y = |diff|, always use sqr (not sqr2) for diff
-    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
-    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
-.uo ; sum >= 256: use sqr2 for sum
-    TAX                  ; X = (a+b) & 0xFF
-    SEC : LDA zp_tmp0 : SBC zp_mul_b : BCS uop
-    EOR #$FF : ADC #1   ; |diff|
-.uop TAY                 ; Y = |diff|, use sqr (not sqr2) for diff
+    STA zp_tmp0                                                         ; |
+    CLC : ADC zp_mul_b                                                  ; ||
+    TAX                  ; X = (a+b) & 0xFF                             ; |
+    PHP                  ; save carry (set if sum >= 256)               ; |
+    SEC : LDA zp_tmp0 : SBC zp_mul_b : BCS pos                          ; ||||
+    EOR #$FF : ADC #1    ; |diff| (C was 0 from SBC, so ADC adds +0+1)  ; |
+.pos TAY                  ; Y = |diff|                                  ; |
+    PLP : BCS uo                                                        ; ||
+    ; sum < 256: sqr tables for sum
+    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo                  ; |||||
+    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS                  ; |||||||
+.uo ; sum >= 256: sqr2 tables for sum
     LDA sqr2_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
     LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
 }
 
+; (interp_core removed — inlined into interp_store below.)
+
+; --- SMUL8: signed 8-bit x unsigned 8-bit multiply ---
+; If A >= 0, falls through to umul8.  If A < 0, negates, calls umul8,
+; then negates the u16 product.  Result: zp_prod_lo:zp_prod_hi (s16).
 ; s8 × u8: A(s8) × zp_mul_b(u8) → zp_prod_lo:zp_prod_hi(s16)
 .smul8
 {
-    BPL umul8
-    EOR #$FF : CLC : ADC #1 : JSR umul8
-    SEC : LDA #0 : SBC zp_prod_lo : STA zp_prod_lo
-    LDA #0 : SBC zp_prod_hi : STA zp_prod_hi : RTS
+    BPL umul8                                                           ; |
+    EOR #$FF : CLC : ADC #1 : JSR umul8                                 ; ||
+    SEC : LDA #0 : SBC zp_prod_lo : STA zp_prod_lo                      ; ||
+    LDA #0 : SBC zp_prod_hi : STA zp_prod_hi : RTS                      ; |||
 }
 
 ; ======================================================================
-; UNSIGNED 16/8 DIVISION: zp_div_lo:hi / zp_div_den → A(quot) rem in zp_div_rem
-; Special: den=0 → divide by 256 → A=zp_div_hi
+; UDIV16_8: unsigned 16/8 restoring division
+;
+; Divides zp_div_lo:hi by zp_div_den, quotient returned in A.
+; FAST PATH (most common): div_hi < den => quot fits u8, 8 iterations.
+; SLOW PATH: div_hi >= den (seg extrapolation), 16 iterations.
+;
+; Uses the INC-shift trick: as bits ASL out of div_lo, quotient bits
+; accumulate via INC in the vacated positions.  After N iterations,
+; div_lo == quotient.
+;
+; *** HOTTEST LOOP *** -- the 3-instruction shift chain (ASL/ROL/ROL)
+; plus trial subtraction account for ~20% of all clipper cycles.
 ; ======================================================================
 .udiv16_8
 {
-    ; u16 / u8 → u8 quotient (in A), u8 remainder (in zp_div_rem)
-    ; 16-iteration restoring division.
-    ; Special: den=0 → divide by 256 → A = zp_div_hi
-    LDA zp_div_den : BNE dn
-    LDA zp_div_hi : LDX #0 : STX zp_div_rem : RTS
-.dn LDA #0 : STA zp_div_rem : LDX #16
-.dl ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem
-    LDA zp_div_rem : SEC : SBC zp_div_den : BCC ds
-    STA zp_div_rem : INC zp_div_lo
-.ds DEX : BNE dl
-    LDA zp_div_lo : RTS   ; quotient in low byte
+    LDA zp_div_hi : CMP zp_div_den : BCS d16                            ; |||
+    ; FAST PATH: rem = div_hi, div_hi = div_lo, div_lo = 0, 8 iters.
+    STA zp_div_rem                                                      ; |
+    LDA zp_div_lo : STA zp_div_hi                                       ; ||
+    LDA #0 : STA zp_div_lo : LDX #8 : BNE dl   ; always taken           ; |||
+.d16 LDA #0 : STA zp_div_rem
+    LDX #16
+.dl ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; ||||||||||||||||||||||||||||||||||||||||
+    BCS dl_over                                                         ; |||||
+    LDA zp_div_rem : SEC : SBC zp_div_den : BCC ds                      ; |||||||||||||||||||||||||||||
+.dl_commit
+    STA zp_div_rem : INC zp_div_lo                                      ; |||||
+.ds DEX : BNE dl                                                        ; |||||||||||||
+    LDA zp_div_lo : RTS                                                 ; |||
+.dl_over
+    LDA zp_div_rem : SEC : SBC zp_div_den
+    JMP dl_commit
 }
 
 ; ======================================================================
-; INTERP CORE: compute product and divide
-; Shared by floor/ceil/store.  On entry, zp_i_* set up.
-; Returns with product in zp_prod_lo:hi, den in zp_div_den.
+; SEG_INTERP_STORE: interpolate seg Y at column X (s16 result)
+;
+; Evaluates: y0 + round_nearest(dy * offset / ex)
+;   dy = y1 - y0 (s8), offset = x - sx1 (u8), ex = sx2 - sx1 (u8)
+;
+; Seg Y values are s16 (may be off-screen).  The remap step guarantees
+; |dy| <= 127 and ex <= 255, keeping the s8*u8 multiply and u16/u8
+; divide within range.  Short-circuits on dy==0 and prod==0.
+; Returns: A = lo byte, Y = hi byte of s16 result.
 ; ======================================================================
-.interp_core
+.seg_interp_store
 {
-    ; Check true x0==x1 (not 0==0 which means ex=256)
-    LDA zp_i_x0 : CMP zp_i_x1 : BNE ic_ok
-    ; x0==x1: degenerate (zero-width span)
-    LDA #0 : STA zp_prod_lo : STA zp_prod_hi : RTS
-.ic_ok
-    LDA zp_i_x1 : SEC : SBC zp_i_x0  ; ex (0 means 256)
-    STA zp_div_den
-    LDA zp_i_y1 : SEC : SBC zp_i_y0 : STA zp_tmp0  ; dy
-    LDA zp_i_x : SEC : SBC zp_i_x0 : STA zp_mul_b   ; offset
-    LDA zp_tmp0 : JMP smul8   ; product in zp_prod_lo:hi
+    ; offset = x - sx1 (A holds x on entry)
+    SEC : SBC zp_sx1 : STA zp_mul_b                                     ; ||||
+    ; dy = y1 - y0 (BEQ sis_y0 catches dy==0 constant-line shortcut)
+    LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ sis_y0                        ; |||||
+    JSR smul8                                                           ; ||
+    ; Short-circuit when prod = 0 (e.g. offset = 0) — saves the divide.
+    LDA zp_prod_lo : ORA zp_prod_hi : BNE sis_nz                        ; |||
+.sis_y0
+    LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
+    LDA zp_i_y0 : RTS                                                   ; ||
+.sis_nz
+    ; ex always in [1,255] post-remap; bias = ex/2 for round-to-nearest
+    LDA zp_div_den : LSR A                                              ; |
+    CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; ||
+    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi                            ; ||
+    BMI sis_neg                                                         ; |
+    ; Positive: result = y0 + quot (s16). Returns A=lo, Y=hi.
+    JSR udiv16_8                                                        ; |
+    CLC : ADC zp_i_y0 : TAX     ; X = result_lo (udiv leaves X=0, safe to clobber)  ; |
+    LDA zp_div_hi : ADC zp_i_y0h : TAY                                  ; |
+    TXA : RTS                                                           ; |
+.sis_neg
+    ; Negate the biased product, divide, then result = y0 - quot (s16)
+    SEC : LDA zp_div_den : SBC #1 : SBC zp_prod_lo : STA zp_div_lo      ; ||
+    LDA #0 : SBC zp_prod_hi : STA zp_div_hi                             ; |
+    JSR udiv16_8                                                        ; |
+    SEC : LDA zp_i_y0 : SBC zp_div_lo : TAX                             ; |
+    LDA zp_i_y0h : SBC zp_div_hi : TAY                                  ; |
+    TXA : RTS                                                           ; |
 }
 
-; ======================================================================
-; INTERP_FLOOR: y0 + floor(dy*offset/ex)
-; ======================================================================
-.interp_floor
-{
-    JSR interp_core
-    ; Check if product is 0
-    LDA zp_prod_lo : ORA zp_prod_hi
-    BNE if_nz
-    LDA zp_i_y0 : STA zp_i_res : RTS
-.if_nz
-    LDA zp_prod_hi : BMI if_neg
-    ; Positive: floor = unsigned divide
-    LDA zp_prod_lo : STA zp_div_lo
-    LDA zp_prod_hi : STA zp_div_hi
-    JSR udiv16_8
-    CLC : ADC zp_i_y0 : STA zp_i_res : RTS
-.if_neg
-    ; Negative: floor = -((-prod + den - 1) / den)
-    SEC : LDA #0 : SBC zp_prod_lo : STA zp_div_lo
-    LDA #0 : SBC zp_prod_hi : STA zp_div_hi
-    ; Add den-1
-    LDA zp_div_lo : CLC : ADC zp_div_den : STA zp_div_lo
-    LDA zp_div_hi : ADC #0 : STA zp_div_hi
-    LDA zp_div_lo : SEC : SBC #1 : STA zp_div_lo
-    LDA zp_div_hi : SBC #0 : STA zp_div_hi
-    JSR udiv16_8
-    EOR #$FF : CLC : ADC #1  ; negate
-    CLC : ADC zp_i_y0 : STA zp_i_res : RTS
-}
+; (seg_interp_core removed — inlined into seg_interp_store above.)
 
 ; ======================================================================
-; INTERP_CEIL: y0 + ceil(dy*offset/ex)
-; ======================================================================
-.interp_ceil
-{
-    JSR interp_core
-    LDA zp_prod_lo : ORA zp_prod_hi
-    BNE ic_nz
-    LDA zp_i_y0 : STA zp_i_res : RTS
-.ic_nz
-    LDA zp_prod_hi : BMI ic_neg
-    ; Positive: ceil = (prod + den - 1) / den
-    LDA zp_prod_lo : CLC : ADC zp_div_den : STA zp_div_lo
-    LDA zp_prod_hi : ADC #0 : STA zp_div_hi
-    LDA zp_div_lo : SEC : SBC #1 : STA zp_div_lo
-    LDA zp_div_hi : SBC #0 : STA zp_div_hi
-    JSR udiv16_8
-    CLC : ADC zp_i_y0 : STA zp_i_res : RTS
-.ic_neg
-    ; Negative: ceil = -((-prod) / den) (truncate toward zero)
-    SEC : LDA #0 : SBC zp_prod_lo : STA zp_div_lo
-    LDA #0 : SBC zp_prod_hi : STA zp_div_hi
-    JSR udiv16_8
-    EOR #$FF : CLC : ADC #1
-    CLC : ADC zp_i_y0 : STA zp_i_res : RTS
-}
-
-; ======================================================================
-; INTERP_STORE: y0 + round_nearest(dy*offset/ex)
+; INTERP_STORE: interpolate old span Y at column X (u8 result)
+;
+; Same formula as seg_interp_store but for spans whose boundaries are
+; always u8 in [0,159].  Simpler tail: u8 add/sub instead of s16.
+; Caller pre-computes den = xhi - xlo once per span and reuses it
+; for all 4 boundary interps (tl, tr, bl, br).
+;
+; Input: A = x (eval point), zp_i_x0, zp_i_y0, zp_i_y1, zp_div_den
+; Output: A = interpolated Y (u8)
 ; ======================================================================
 .interp_store
 {
-    JSR interp_core
-    ; Add ex/2 to product
-    LDA zp_div_den : LSR A : CLC : ADC zp_prod_lo : STA zp_prod_lo
-    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi
-    ; Now floor-divide
-    LDA zp_prod_hi : BMI is_neg
-    LDA zp_prod_lo : STA zp_div_lo
-    LDA zp_prod_hi : STA zp_div_hi
-    JSR udiv16_8
-    CLC : ADC zp_i_y0 : STA zp_i_res : RTS
+    ; offset = x - x0 (A holds x on entry)
+    SEC : SBC zp_i_x0 : STA zp_mul_b                                    ; ||||
+    ; dy = y1 - y0 (BEQ is_y0 catches constant-line short-circuit)
+    LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ is_y0                         ; |||||
+    JSR smul8                                                           ; |
+    LDA zp_prod_lo : ORA zp_prod_hi : BNE is_nz                         ; |
+.is_y0
+    LDA zp_i_y0 : RTS                                                   ; ||||
+.is_nz
+    ; Add ex/2 to product for round-to-nearest. ex always in [1,255].
+    LDA zp_div_den : LSR A                                              ; |
+    CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; |
+    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi                            ; |
+    BMI is_neg                                                          ; |
+    ; Positive: result = y0 + quot (u8)
+    JSR udiv16_8                                                        ; |
+    CLC : ADC zp_i_y0 : RTS                                             ; |
 .is_neg
-    SEC : LDA #0 : SBC zp_prod_lo : STA zp_div_lo
-    LDA #0 : SBC zp_prod_hi : STA zp_div_hi
-    LDA zp_div_lo : CLC : ADC zp_div_den : STA zp_div_lo
-    LDA zp_div_hi : ADC #0 : STA zp_div_hi
-    LDA zp_div_lo : SEC : SBC #1 : STA zp_div_lo
-    LDA zp_div_hi : SBC #0 : STA zp_div_hi
-    JSR udiv16_8
-    EOR #$FF : CLC : ADC #1
-    CLC : ADC zp_i_y0 : STA zp_i_res : RTS
+    ; Negate the biased product, divide, then result = y0 - quot (u8)
+    SEC : LDA zp_div_den : SBC #1 : SBC zp_prod_lo : STA zp_div_lo      ; |
+    LDA #0 : SBC zp_prod_hi : STA zp_div_hi                             ; |
+    JSR udiv16_8                                                        ; |
+    EOR #$FF : SEC : ADC zp_i_y0 : RTS                                  ; |
 }
 
-; ======================================================================
-; INTERP_SPAN: interpolate top+bot of span X at zp_tmp0=x using _store
-; Input: X=span offset, zp_tmp0=x. Output: zp_tmp1=top, zp_tmp2=bot
-; Preserves: nothing (uses zp_i_*)
-; ======================================================================
-.interp_span
-{
-    LDA zp_tmp0 : STA zp_i_x
-    LDA POOL_XLO,X : STA zp_i_x0 : LDA POOL_XHI,X : STA zp_i_x1
-    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1
-    STX zp_tmp3 : JSR interp_store
-    LDA zp_i_res : STA zp_tmp1  ; top
-    LDX zp_tmp3
-    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1
-    JSR interp_store
-    LDA zp_i_res : STA zp_tmp2  ; bot
-    RTS
-}
+; (interp_span removed — mark_solid no longer interpolates)
 
 ; ======================================================================
-; MARK_SOLID: remove [zp_ilo, zp_ihi) from spans
+; MARK_SOLID: punch out [ilo, ihi] from the span list (solid wall)
+;
+; LAZY operation: only adjusts XSTART/XEND on affected spans.
+; Line params (XLO/XHI/TL/BL/TR/BR) are NEVER modified -- zero interp
+; calls needed.  When a solid range splits a span in the middle, a
+; sibling slot is allocated and the 6 line bytes are copied verbatim.
+;
+; Three cases per span:
+;   1. No left frag (xstart >= ilo): shrink xstart or free entirely
+;   2. Left only (xend <= ihi): truncate xend = ilo - 1
+;   3. Middle split: alloc sibling for right frag, truncate original
 ; ======================================================================
 .span_mark_solid
 {
-    LDA zp_ihi : CMP zp_ilo : BEQ msd : BCC msd : JMP mss
-.msd RTS
+    ; mark_solid is now LAZY: it only updates the active range (XSTART/XEND)
+    ; on existing spans. The line params (XLO/XHI/TL/BL/TR/BR) never change,
+    ; so no interp_store calls happen here. Splitting a span in the middle
+    ; just allocates a sibling and copies the 6 line bytes verbatim.
+    LDA zp_ihi : CMP zp_ilo : BCS mss                                   ; |
+    RTS
 .mss
-    ; Walk list.  zp_prev = offset of previous span (or $FF = head)
-    LDA #$FF : STA zp_prev
-    LDA zp_head : TAX : BNE msl : RTS
+    LDA #$FF : STA zp_prev                                              ; |
+    LDA zp_head : TAX : BNE msl : RTS                                   ; |
 
 .msl ; X = current span
-    ; Skip if xhi <= ilo
-    LDA POOL_XHI,X : BEQ ms_xhi256a   ; xhi=256 > any ilo
-    CMP zp_ilo : BEQ ms_skip : BCC ms_skip
-    JMP ms_chk_after
-.ms_xhi256a
-    JMP ms_chk_after
-.ms_skip
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS
+    ; Skip if xend < ilo (span ends before solid range)
+    LDA POOL_XEND,X : CMP zp_ilo : BCS ms_chk_after                     ; ||||
+    STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                 ; ||
 
 .ms_chk_after
-    ; Done if xlo >= ihi
-    LDA POOL_XLO,X : CMP zp_ihi : BCC ms_overlap : RTS
+    ; Done if xstart > ihi (span starts after solid range)
+    LDA POOL_XSTART,X : CMP zp_ihi : BEQ ms_overlap : BCC ms_overlap    ; |||
+    RTS                                                                 ; |
 
 .ms_overlap
-    ; Check left fragment: xlo < ilo?
-    LDA POOL_XLO,X : CMP zp_ilo : BCC ms_has_left : JMP ms_no_left
+    ; xstart < ilo  → keep a left fragment   (xend may need clip too)
+    ; xstart >= ilo → no left fragment       (this span is entirely in or right of [ilo,ihi])
+    LDA POOL_XSTART,X : CMP zp_ilo : BCC ms_has_left                    ; ||
+    ; --- No left fragment ---
+    ; xend > ihi  → shrink in place: xstart = ihi+1
+    ; xend <= ihi → fully covered → free (via trampoline; ms_free is far)
+    LDA POOL_XEND,X : CMP zp_ihi : BEQ ms_jmp_free : BCC ms_jmp_free    ; |
+    LDA zp_ihi : CLC : ADC #1 : STA POOL_XSTART,X                       ; |
+    STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts1 : JMP msl         ; |
+.ms_rts1 RTS                                                            ; |
+.ms_jmp_free JMP ms_free                                                ; |
+
 .ms_has_left
+    ; xstart < ilo. Has right fragment? xend > ihi?
+    LDA POOL_XEND,X : CMP zp_ihi : BEQ ms_left_only : BCC ms_left_only  ; |
+    ; --- Middle split: allocate sibling for the right fragment ---
+    STX zp_prev                                                         ; |
+    JSR alloc_span : BEQ ms_left_only_after_fail                        ; |
+    LDY zp_prev   ; Y = original span (the left fragment)               ; |
+    ; Copy line params from Y to X (sibling shares the same line)
+    LDA POOL_XLO,Y  : STA POOL_XLO,X                                    ; |
+    LDA POOL_XHI,Y  : STA POOL_XHI,X                                    ; |
+    LDA POOL_TL,Y   : STA POOL_TL,X                                     ; |
+    LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
+    LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
+    LDA POOL_BR,Y   : STA POOL_BR,X                                     ; |
+    ; Sibling's active range = [ihi+1, original xend]
+    LDA zp_ihi : CLC : ADC #1 : STA POOL_XSTART,X                       ; |
+    LDA POOL_XEND,Y : STA POOL_XEND,X                                   ; |
+    ; Insert sibling after original
+    LDA POOL_NEXT,Y : STA POOL_NEXT,X                                   ; |
+    TXA : STA POOL_NEXT,Y                                               ; |
+    ; Original (Y) now becomes the left fragment: xend = ilo - 1
+    LDA zp_ilo : SEC : SBC #1 : STA POOL_XEND,Y                         ; |
+    ; Continue from the span AFTER the new sibling
+    LDA POOL_NEXT,X : TAX : BEQ ms_rts2 : JMP msl                       ; |
+.ms_rts2 RTS                                                            ; |
 
-    ; --- Left fragment: truncate span to [xlo, ilo) ---
-    ; Save original right-side data (all on stack — interp clobbers ZP temps)
-    LDA POOL_XHI,X : PHA            ; save xhi_orig
-    LDA POOL_TR,X : PHA             ; save tr_orig
-    LDA POOL_BR,X : PHA             ; save br_orig
-    ; Interpolate Y at ilo
-    LDA zp_ilo : STA zp_tmp0
-    JSR interp_span              ; zp_tmp1=top, zp_tmp2=bot at ilo
-    ; Modify span: xhi=ilo, tr=top, br=bot
-    LDX zp_tmp3                  ; restore span offset (interp_span saved it)
-    LDA zp_ilo : STA POOL_XHI,X
-    LDA zp_tmp1 : STA POOL_TR,X
-    LDA zp_tmp2 : STA POOL_BR,X
-    ; Check right fragment: xhi_orig > ihi?
-    PLA : STA zp_tmp2            ; br_orig
-    PLA : STA zp_tmp1            ; tr_orig
-    PLA : STA zp_save0            ; xhi_orig (PLA sets Z if 0)
-    BEQ ms_xhi_orig_256
-    CMP zp_ihi : BCC ms_left_adv : BEQ ms_left_adv
-    JMP ms_right_frag
-.ms_xhi_orig_256
-    LDA zp_ihi : BEQ ms_left_adv  ; ihi=256 too → no right fragment
-.ms_right_frag
-    ; Allocate right fragment [ihi, xhi_orig)
-    STX zp_prev                  ; prev = current (left fragment)
-    JSR alloc_span : BEQ ms_left_adv  ; out of spans
-    ; X = new span.  Interpolate Y at ihi from ORIGINAL span line.
-    ; Original line: (orig_xlo, tl) → (xhi_orig, tr_orig)
-    ; orig_xlo is still in POOL_XLO of current span
-    LDY zp_prev                  ; Y = original span
-    LDA POOL_XLO,Y : STA zp_i_x0
-    LDA zp_save0 : STA zp_i_x1  ; xhi_orig
-    LDA POOL_TL,Y : STA zp_i_y0
-    LDA zp_tmp1 : STA zp_i_y1    ; tr_orig
-    LDA zp_ihi : STA zp_i_x
-    STX zp_tmp3 : JSR interp_store
-    LDX zp_tmp3 : LDA zp_i_res : STA POOL_TL,X
-    ; Bot at ihi
-    LDY zp_prev
-    LDA POOL_BL,Y : STA zp_i_y0
-    LDA zp_tmp2 : STA zp_i_y1    ; br_orig
-    STX zp_tmp3 : JSR interp_store
-    LDX zp_tmp3 : LDA zp_i_res : STA POOL_BL,X
-    ; Fill rest of new span
-    LDA zp_ihi : STA POOL_XLO,X
-    LDA zp_save0 : STA POOL_XHI,X
-    LDA zp_tmp1 : STA POOL_TR,X
-    LDA zp_tmp2 : STA POOL_BR,X
-    ; Link: curr.next → new → old_next
-    LDY zp_prev
-    LDA POOL_NEXT,Y : STA POOL_NEXT,X
-    TXA : STA POOL_NEXT,Y
-    ; Advance past new span
-    LDA POOL_NEXT,X : TAX : BEQ ms_rts_340 : JMP msl
-.ms_rts_340 RTS
-
-.ms_left_adv
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts_343 : JMP msl
-.ms_rts_343 RTS
-
-.ms_no_left
-    ; No left fragment.  Right fragment: xhi > ihi?
-    LDA POOL_XHI,X : BEQ ms_xhi256_r
-    CMP zp_ihi : BCC ms_free : BEQ ms_free
-    JMP ms_right_only
-.ms_xhi256_r
-    LDA zp_ihi : BEQ ms_free
-.ms_right_only
-    ; Modify to [ihi, xhi)
-    LDA zp_ihi : STA zp_tmp0
-    JSR interp_span
-    LDX zp_tmp3
-    LDA zp_ihi : STA POOL_XLO,X
-    LDA zp_tmp1 : STA POOL_TL,X
-    LDA zp_tmp2 : STA POOL_BL,X
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts_360 : JMP msl
-.ms_rts_360 RTS
+.ms_left_only_after_fail
+    ; alloc failed → fall through and just truncate left fragment
+    LDX zp_prev
+.ms_left_only
+    ; xend = ilo - 1 (truncate to left fragment only)
+    LDA zp_ilo : SEC : SBC #1 : STA POOL_XEND,X                         ; |
+    STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts3 : JMP msl         ; |
+.ms_rts3 RTS                                                            ; |
 
 .ms_free
-    ; Entirely within [ilo, ihi): unlink and free
-    LDA POOL_NEXT,X : STA zp_tmp0  ; save next
-    JSR free_span
-    ; Unlink
-    LDA zp_prev : CMP #$FF : BNE ms_unlink_span
-    LDA zp_tmp0 : STA zp_head : JMP ms_free_next
+    LDA POOL_NEXT,X : STA zp_tmp0                                       ; |
+    JSR free_span                                                       ; |
+    LDA zp_prev : CMP #$FF : BNE ms_unlink_span                         ; |
+    LDA zp_tmp0 : STA zp_head : JMP ms_free_next                        ; |
 .ms_unlink_span
-    LDY zp_prev : LDA zp_tmp0 : STA POOL_NEXT,Y
+    LDY zp_prev : LDA zp_tmp0 : STA POOL_NEXT,Y                         ; |
 .ms_free_next
-    LDA zp_tmp0 : TAX : BEQ ms_rts_372 : JMP msl
-.ms_rts_372 RTS
+    LDA zp_tmp0 : TAX : BEQ ms_rts4 : JMP msl                           ; |
+.ms_rts4 RTS                                                            ; |
 }
 
 ; ======================================================================
-; HAS_GAP
+; HAS_GAP: fast visibility check for column range [ilo, ihi]
+;
+; Returns A=1 if ANY active span overlaps the query range, A=0 otherwise.
+; Most-called entry point (~174 calls/frame).  The inner loop is just
+; 3 compares + linked-list chase, so it's very fast per iteration.
+; Profile: ~14% of all clipper cycles despite trivial per-call cost,
+; due to sheer call frequency.
 ; ======================================================================
 .span_has_gap
 {
-    LDX zp_head : BEQ hgn
-.hgl LDA POOL_XLO,X : CMP zp_ihi : BCS hgn
-    LDA POOL_XHI,X : BEQ hgx : CMP zp_ilo : BCC hgk : BEQ hgk
-    JMP hgc
-.hgx ; xhi=256: overlaps
-.hgc ; Check aperture: max(tl,tr) < min(bl,br)?
-    LDA POOL_TL,X : CMP POOL_TR,X : BCS hg1 : LDA POOL_TR,X
-.hg1 STA zp_tmp0
-    LDA POOL_BL,X : CMP POOL_BR,X : BCC hg2 : LDA POOL_BR,X
-.hg2 CMP zp_tmp0 : BCC hgk : BEQ hgk
-    LDA #1 : RTS
-.hgk LDA POOL_NEXT,X : TAX : BNE hgl
-.hgn LDA #0 : RTS
+    ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
+    ; range, 0 otherwise. Every span in the active list represents a region
+    ; with at least *some* aperture (possibly partial near boundaries — that's
+    ; fine, we treat it as "yes, gap"). No per-column aperture test.
+    LDX zp_head : BEQ hgn                                               ; |||||
+.hgl LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_yes : BCS hgn  ; xstart > ihi → past  ; ||||||||||||||||||||
+    LDA POOL_XEND,X : CMP zp_ilo : BCS hg_yes               ; xend >= ilo → overlap  ; ||||||||||||||||
+    LDA POOL_NEXT,X : TAX : BNE hgl                                     ; |||||||
+.hgn LDA #0 : RTS                                                       ; |
+.hg_yes LDA #1 : RTS                                                    ; |||||||
 }
 
 ; ======================================================================
-; IS_FULL
+; IS_FULL: check if screen is completely occluded (active list empty)
+; Returns A=1 if head==0 (all columns solid), A=0 otherwise.
 ; ======================================================================
 .span_is_full
     LDA zp_head : BNE snf : LDA #1 : RTS
 .snf LDA #0 : RTS
 
 ; ======================================================================
-; SPAN_READ: dump spans to (zp_buf)
+; SPAN_READ: serialize active span list to buffer at (zp_buf)
+; Output: byte 0 = count, then 8 bytes per span (xstart, xend, xlo,
+; xhi, tl, bl, tr, br).  Used by test harness for state comparison.
 ; ======================================================================
 .span_read
 {
+    ; Output: 1 byte count, then 8 bytes per span:
+    ;   xstart, xend, xlo, xhi, tl, bl, tr, br
     LDY #1 : LDA #0 : STA zp_tmp0
     LDX zp_head : BEQ srd
 .srl INC zp_tmp0
-    LDA POOL_XLO,X : STA (zp_buf),Y : INY
-    LDA POOL_XHI,X : STA (zp_buf),Y : INY
-    LDA POOL_TL,X  : STA (zp_buf),Y : INY
-    LDA POOL_BL,X  : STA (zp_buf),Y : INY
-    LDA POOL_TR,X  : STA (zp_buf),Y : INY
-    LDA POOL_BR,X  : STA (zp_buf),Y : INY
+    LDA POOL_XSTART,X : STA (zp_buf),Y : INY
+    LDA POOL_XEND,X   : STA (zp_buf),Y : INY
+    LDA POOL_XLO,X    : STA (zp_buf),Y : INY
+    LDA POOL_XHI,X    : STA (zp_buf),Y : INY
+    LDA POOL_TL,X     : STA (zp_buf),Y : INY
+    LDA POOL_BL,X     : STA (zp_buf),Y : INY
+    LDA POOL_TR,X     : STA (zp_buf),Y : INY
+    LDA POOL_BR,X     : STA (zp_buf),Y : INY
     LDA POOL_NEXT,X : TAX : BNE srl
 .srd LDA zp_tmp0 : LDY #0 : STA (zp_buf),Y : RTS
 }
 
 ; ======================================================================
-; TIGHTEN: narrow top/bot boundaries over [zp_ilo, zp_ihi)
-; Inputs: zp_ilo, zp_ihi, zp_sx1, zp_sx2, zp_yt1, zp_yt2, zp_yb1, zp_yb2
-; Walks old list, builds new list.
+; TIGHTEN: the core visibility-narrowing operation
+;
+; Given a new wall segment [ilo,ihi] x [yt1..yt2, yb1..yb2], walks the
+; old active list and builds a new list with narrowed apertures.
+;
+; Algorithm per overlapping span:
+;   1. Compute overlap [ox0, ox1] = intersection of span and seg ranges
+;   2. Interpolate old top/bot at overlap endpoints (fast if anchors match)
+;   3. Interpolate new seg top/bot at overlap endpoints (fast if anchors match)
+;   4. Detect crossovers (columns where old and new boundaries swap)
+;   5. If old dominates everywhere: keep span unchanged (common fast path)
+;   6. Split at crossovers, take max(top) and min(bot) per sub-interval
+;   7. Emit only sub-intervals with positive aperture (top < bot)
+;   8. Preserve left/right fragments outside the seg's column range
+;
+; This is the most complex and cycle-expensive operation.
 ; ======================================================================
-; Extra ZP for tighten
-zp_new_tail = $E0     ; offset of last span in new list (or $FF for head)
-zp_old_cur  = $E1     ; current span in old list walk
-zp_ox0      = $E2     ; overlap X range
-zp_ox1      = $E3
-zp_ot_l     = $E4     ; old boundary at overlap endpoints
-zp_ot_r     = $E5
-zp_ob_l     = $E6
-zp_ob_r     = $E7
-zp_nt_l     = $E8     ; new boundary at overlap endpoints
-zp_nt_r     = $E9
-zp_nb_l     = $EA
-zp_nb_r     = $EB
+; Extra ZP for tighten (zp_new_tail aliases zp_save2 — tighten doesn't use mark_solid scratch)
+zp_new_tail = $E7     ; offset of last span in new list (0 = no tail yet)
+zp_old_cur  = $E8     ; current span in old list walk
+zp_ox0      = $E9     ; overlap X range
+zp_ox1      = $EA
+zp_ot_l     = $EB     ; old boundary at overlap endpoints (u8)
+zp_ot_r     = $EC
+zp_ob_l     = $ED
+zp_ob_r     = $EE
+zp_nt_l     = $EF     ; new boundary at overlap endpoints (s16)
+zp_nt_lh    = $F0
+zp_nt_r     = $F1
+zp_nt_rh    = $F2
+zp_nb_l     = $F3
+zp_nb_lh    = $F4
+zp_nb_r     = $F5
+zp_nb_rh    = $F6
+zp_cx_top   = $F7     ; crossover X for top boundary (0=none)
+zp_cx_bot   = $F8     ; crossover X for bot boundary (0=none)
+zp_final_ox1 = $F9    ; saved ox1 for multi-interval processing
+; Crossover divide working set ($FA-$FF)
+zp_cc_num_lo = $FA
+zp_cc_num_mid = $FB
+zp_cc_num_hi = $FC
+zp_cc_den_lo = $FD
+zp_cc_den_hi = $FE
 
 .span_tighten
-    LDA zp_ihi : CMP zp_ilo : BEQ tg_rts : BCC tg_rts : JMP tg_start
-.tg_rts RTS
-.tg_start
+    LDA zp_ihi : CMP zp_ilo : BCS tg_go    ; ihi >= ilo: valid range    ; |
+    RTS
+.tg_go
     ; Save old head, then start building new list
-    LDA zp_head : STA zp_old_cur
-    LDA #$FF : STA zp_new_tail
-    LDA #0 : STA zp_head
+    LDA zp_head : STA zp_old_cur                                        ; |
+    LDA #0 : STA zp_new_tail                                            ; |
+    LDA #0 : STA zp_head                                                ; |
 
 .tg_walk
-    LDX zp_old_cur
-    BNE tg_process
-    RTS                            ; done walking
+    LDX zp_old_cur                                                      ; |
+    BNE tg_process                                                      ; |
+    RTS                            ; done walking                       ; |
 .tg_process
     ; Save next before we potentially free this span
-    LDA POOL_NEXT,X : STA zp_save0  ; next in old list
+    LDA POOL_NEXT,X : STA zp_save0  ; next in old list                  ; ||
 
-    ; Check overlap
-    LDA POOL_XHI,X : BEQ tg_xhi256a
-    CMP zp_ilo : BEQ tg_no_overlap : BCC tg_no_overlap
-    JMP tg_chk2
-.tg_xhi256a
-    JMP tg_chk2
-.tg_no_overlap
-    ; Before [ilo,ihi): move to new list
-    JSR tg_append_x
-    LDA zp_save0 : STA zp_old_cur
-    JMP tg_walk
-
+    ; Check overlap of seg [ilo,ihi] against this span's ACTIVE range.
+    ; Skip if xend < ilo (span ends before seg)
+    LDA POOL_XEND,X : CMP zp_ilo : BCS tg_chk2                          ; |||
+    JSR tg_append_x                                                     ; |
+    LDA zp_save0 : STA zp_old_cur                                       ; |
+    JMP tg_walk                                                         ; |
 .tg_chk2
-    LDA POOL_XLO,X : CMP zp_ihi : BCC tg_overlaps
-    ; After [ilo,ihi): move to new list (and all remaining too)
-    JSR tg_append_x
-    LDA zp_save0 : STA zp_old_cur
-    JMP tg_walk
+    ; Skip if xstart > ihi (span starts after seg)
+    LDA POOL_XSTART,X : CMP zp_ihi : BEQ tg_overlaps : BCC tg_overlaps  ; |||
+    JSR tg_append_x                                                     ; |
+    LDA zp_save0 : STA zp_old_cur                                       ; |
+    JMP tg_walk                                                         ; |
 
 .tg_overlaps
-    ; Compute overlap range
-    LDA POOL_XLO,X : CMP zp_ilo : BCS tg_ox0_xlo
-    LDA zp_ilo : JMP tg_ox0_set
-.tg_ox0_xlo LDA POOL_XLO,X
-.tg_ox0_set STA zp_ox0
-
-    LDA POOL_XHI,X : BEQ tg_ox1_256
-    CMP zp_ihi : BCC tg_ox1_xhi : BEQ tg_ox1_xhi
-    LDA zp_ihi : JMP tg_ox1_set
-.tg_ox1_xhi LDA POOL_XHI,X : JMP tg_ox1_set
-.tg_ox1_256 LDA zp_ihi
-.tg_ox1_set STA zp_ox1
+    ; ox0 = max(xstart, ilo)
+    LDA POOL_XSTART,X : CMP zp_ilo : BCS tg_ox0_xlo                     ; |
+    LDA zp_ilo : JMP tg_ox0_set                                         ; |
+.tg_ox0_xlo LDA POOL_XSTART,X                                           ; |
+.tg_ox0_set STA zp_ox0                                                  ; |
+    ; ox1 = min(xend, ihi)
+    LDA POOL_XEND,X : CMP zp_ihi : BCC tg_ox1_set : BEQ tg_ox1_set      ; |
+    LDA zp_ihi                                                          ; |
+.tg_ox1_set STA zp_ox1                                                  ; |
 
     ; --- Dominance check: is new boundary <= old at both overlap endpoints? ---
-    ; (old dominates = new is less restrictive → keep span unchanged)
-    ; Evaluate old and new at ox0 and ox1 using interp (floor for comparison)
-    ; Old top at ox0
-    LDA zp_ox0 : STA zp_i_x
-    LDA POOL_XLO,X : STA zp_i_x0 : LDA POOL_XHI,X : STA zp_i_x1
-    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1
-    STX zp_save1           ; save span offset (we'll clobber X)
-    JSR interp_floor : LDA zp_i_res : STA zp_ot_l
-    ; Old top at ox1
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_floor : LDA zp_i_res : STA zp_ot_r
-    ; Old bot at ox0
-    LDX zp_save1
-    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1
-    LDA zp_ox0 : STA zp_i_x
-    JSR interp_floor : LDA zp_i_res : STA zp_ob_l
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_floor : LDA zp_i_res : STA zp_ob_r
-    ; New top at ox0, ox1
-    LDA zp_sx1 : STA zp_i_x0 : LDA zp_sx2 : STA zp_i_x1
-    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt2 : STA zp_i_y1
-    LDA zp_ox0 : STA zp_i_x
-    JSR interp_floor : LDA zp_i_res : STA zp_nt_l
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_floor : LDA zp_i_res : STA zp_nt_r
-    ; New bot at ox0, ox1
-    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb2 : STA zp_i_y1
-    LDA zp_ox0 : STA zp_i_x
-    JSR interp_floor : LDA zp_i_res : STA zp_nb_l
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_floor : LDA zp_i_res : STA zp_nb_r
+    STX zp_save1           ; save span offset early (interp calls clobber X)  ; |
+    ; ---------- OLD span: fast path when (ox0,ox1) == (xlo,xhi) ----------
+    ; If the overlap endpoints exactly match the span's LINE anchors, the
+    ; stored tl/bl/tr/br are already the y values at those endpoints.
+    LDA zp_ox0 : CMP POOL_XLO,X : BNE old_slow                          ; |
+    LDA zp_ox1 : CMP POOL_XHI,X : BNE old_slow                          ; |
+    LDA POOL_TL,X : STA zp_ot_l                                         ; |
+    LDA POOL_TR,X : STA zp_ot_r                                         ; |
+    LDA POOL_BL,X : STA zp_ob_l                                         ; |
+    LDA POOL_BR,X : STA zp_ob_r                                         ; |
+    JMP old_done                                                        ; |
+.old_slow
+    ; Hoisted den setup: den = POOL_XHI - POOL_XLO, shared by all 4 calls.
+    ; (The anchor fast path above guards 1-pixel spans, so den > 0.)
+    LDA POOL_XLO,X : STA zp_i_x0                                        ; |
+    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den                 ; |
+    ; Top: y0 = tl, y1 = tr
+    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1           ; ||
+    LDA zp_ox0 : JSR interp_store : STA zp_ot_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_ot_r                         ; |
+    ; Bot: y0 = bl, y1 = br. Reload X (udiv16_8 in interp_store clobbers X).
+    LDX zp_save1                                                        ; |
+    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1           ; ||
+    LDA zp_ox0 : JSR interp_store : STA zp_ob_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
+.old_done
+    ; ---------- NEW seg: fast path when (ox0,ox1) == (sx1,sx2) -----------
+    LDA zp_ox0 : CMP zp_sx1 : BNE new_slow                              ; |
+    LDA zp_ox1 : CMP zp_sx2 : BNE new_slow                              ; |
+    ; Copy seg's s16 anchor values verbatim
+    LDA zp_yt1  : STA zp_nt_l                                           ; |
+    LDA zp_yt1h : STA zp_nt_lh                                          ; |
+    LDA zp_yt2  : STA zp_nt_r                                           ; |
+    LDA zp_yt2h : STA zp_nt_rh                                          ; |
+    LDA zp_yb1  : STA zp_nb_l                                           ; |
+    LDA zp_yb1h : STA zp_nb_lh                                          ; |
+    LDA zp_yb2  : STA zp_nb_r                                           ; |
+    LDA zp_yb2h : STA zp_nb_rh                                          ; |
+    JMP new_done                                                        ; |
+.new_slow
+    ; Hoisted den setup: den = sx2 - sx1. Guaranteed > 0 by remap.
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
+    ; Top: y0 = yt1 (s16), y1 = yt2 low
+    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
+    LDA zp_yt2 : STA zp_i_y1                                            ; |
+    LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; ||
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; ||
+    ; Bot: y0 = yb1 (s16), y1 = yb2 low
+    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
+    LDA zp_yb2 : STA zp_i_y1                                            ; |
+    LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; ||
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; ||
+.new_done
 
-    ; Check: new_tl <= old_tl AND new_tr <= old_tr AND new_bl >= old_bl AND new_br >= old_br?
-    ; Clamp new values to [0,159] first so unsigned CMP works.
-    ; (new top < 0 → clamp to 0 = most generous ceiling)
-    ; (new bot > 159 → clamp to 159 = most generous floor)
-    LDA zp_nt_l : BPL tg_cn1 : LDA #0 : STA zp_nt_l
-.tg_cn1 LDA zp_nt_r : BPL tg_cn2 : LDA #0 : STA zp_nt_r
-.tg_cn2 LDA zp_nb_l : CMP #160 : BCC tg_cn3 : LDA #159 : STA zp_nb_l
-.tg_cn3 LDA zp_nb_r : CMP #160 : BCC tg_cn4 : LDA #159 : STA zp_nb_r
-.tg_cn4
-    ; Now unsigned comparison is safe (all values in [0,159])
-    LDA zp_nt_l : CMP zp_ot_l : BEQ tg_d1 : BCS tg_not_old_dom
-.tg_d1 LDA zp_nt_r : CMP zp_ot_r : BEQ tg_d2 : BCS tg_not_old_dom
-.tg_d2 LDA zp_ob_l : CMP zp_nb_l : BEQ tg_d3 : BCS tg_not_old_dom
-.tg_d3 LDA zp_ob_r : CMP zp_nb_r : BEQ tg_d4 : BCS tg_not_old_dom
+    ; --- Crossover detection BEFORE clamping (needs unclamped nt/nb values) ---
+    ; Sign of (old - new): if new >= 160 (negative via two's complement),
+    ; Sign of (old - new) using high byte of s16 new value:
+    ; resh < 0 ($FF): new is negative → sign positive (old ≥ 0 > new)
+    ; resh > 0: new > 255 → sign negative (old ≤ 159 < new)
+    ; resh = 0: new in [0,255] → unsigned CMP valid
+    ; Top crossover:
+    LDA zp_nt_lh : BMI tg_cc_t0p : BNE tg_cc_t0n                        ; |
+    LDA zp_ot_l : CMP zp_nt_l                                           ; |
+    LDA #0 : ROL A : JMP tg_cc_t0d                                      ; |
+.tg_cc_t0p LDA #1 : JMP tg_cc_t0d  ; negative new → positive sign
+.tg_cc_t0n LDA #0                   ; overflow new → negative sign
+.tg_cc_t0d STA zp_tmp1                                                  ; |
+    LDA zp_nt_rh : BMI tg_cc_t1p : BNE tg_cc_t1n                        ; |
+    LDA zp_ot_r : CMP zp_nt_r                                           ; |
+    LDA #0 : ROL A : JMP tg_cc_t1d                                      ; |
+.tg_cc_t1p LDA #1 : JMP tg_cc_t1d
+.tg_cc_t1n LDA #0
+.tg_cc_t1d EOR zp_tmp1                                                  ; |
+    BEQ tg_cc_no_top                                                    ; |
+    ; Check dt != 0 at each endpoint (avoid calling compute_crossover for
+    ; degenerate touch-at-edge cases). The previous `ORA hi,lo : CMP ot`
+    ; shortcut was buggy — it gave false positives when `hi | lo` ≡ ot
+    ; in u8 (e.g. hi=1, lo=0x9E, OR=0x9F=159). Correct form: if hi ≠ 0
+    ; the s16 value can't equal a u8 ot; else compare low bytes.
+    LDA zp_nt_lh : BNE tg_cc_t_ne_l
+    LDA zp_nt_l : CMP zp_ot_l : BEQ tg_cc_no_top
+.tg_cc_t_ne_l
+    LDA zp_nt_rh : BNE tg_cc_t_ne_r
+    LDA zp_nt_r : CMP zp_ot_r : BEQ tg_cc_no_top
+.tg_cc_t_ne_r
+    ; Inlined tg_cc_calc_top: compute |d0|, |d1| as u16, then JSR
+    ; compute_crossover. (Formerly a standalone function with tail-call
+    ; JMP compute_crossover; inlined for -3 bytes since it had 1 caller.)
+    LDA zp_ot_l : SEC : SBC zp_nt_l : STA zp_tmp0
+    LDA #0      : SBC zp_nt_lh      : STA zp_tmp1
+    BPL ict0p
+    SEC : LDA #0 : SBC zp_tmp0 : STA zp_tmp0
+    LDA #0       : SBC zp_tmp1 : STA zp_tmp1
+.ict0p
+    LDA zp_ot_r : SEC : SBC zp_nt_r : STA zp_tmp2
+    LDA #0      : SBC zp_nt_rh      : STA zp_tmp3
+    BPL ict1p
+    SEC : LDA #0 : SBC zp_tmp2 : STA zp_tmp2
+    LDA #0       : SBC zp_tmp3 : STA zp_tmp3
+.ict1p
+    JSR compute_crossover : STA zp_cx_top
+    JMP tg_cc_chk_bot
+.tg_cc_no_top
+    LDA #0 : STA zp_cx_top                                              ; |
+.tg_cc_chk_bot
+    ; Bot crossover (same pattern with high bytes):
+    LDA zp_nb_lh : BMI tg_cc_b0p : BNE tg_cc_b0n                        ; |
+    LDA zp_ob_l : CMP zp_nb_l                                           ; |
+    LDA #0 : ROL A : JMP tg_cc_b0d                                      ; |
+.tg_cc_b0p LDA #1 : JMP tg_cc_b0d
+.tg_cc_b0n LDA #0
+.tg_cc_b0d STA zp_tmp1                                                  ; |
+    LDA zp_nb_rh : BMI tg_cc_b1p : BNE tg_cc_b1n                        ; |
+    LDA zp_ob_r : CMP zp_nb_r                                           ; |
+    LDA #0 : ROL A : JMP tg_cc_b1d                                      ; |
+.tg_cc_b1p LDA #1 : JMP tg_cc_b1d
+.tg_cc_b1n LDA #0
+.tg_cc_b1d EOR zp_tmp1                                                  ; |
+    BEQ tg_cc_no_bot                                                    ; |
+    ; Same dt != 0 pre-check as top (see tg_cc_t_ne_l comment).
+    LDA zp_nb_lh : BNE tg_cc_b_ne_l                                     ; |
+    LDA zp_nb_l : CMP zp_ob_l : BEQ tg_cc_no_bot                        ; |
+.tg_cc_b_ne_l
+    LDA zp_nb_rh : BNE tg_cc_b_ne_r                                     ; |
+    LDA zp_nb_r : CMP zp_ob_r : BEQ tg_cc_no_bot                        ; |
+.tg_cc_b_ne_r
+    JSR tg_cc_calc_bot : STA zp_cx_bot                                  ; |
+    JMP tg_cc_done                                                      ; |
+.tg_cc_no_bot
+    LDA #0 : STA zp_cx_bot                                              ; |
+.tg_cc_done
+
+    ; --- Clamp new s16 values to [0,159] u8 for dominance check ---
+    ; High byte: negative→0, positive overflow (hi>0)→159, 0→check low
+    ; byte (in [0,255], clamp [160,255] to 159). The previous version
+    ; missed the [160,255]/hi=0 case, leaving bogus values for shallow-
+    ; off-screen segs and breaking dominance at e.g. (697,-3155,54).
+    LDA zp_nt_lh : BMI tg_cn1z : BNE tg_cn1f                            ; |
+    LDA zp_nt_l : CMP #160 : BCC tg_cn1s                                ; |
+.tg_cn1f LDA #159 : BNE tg_cn1s
+.tg_cn1z LDA #0
+.tg_cn1s STA zp_nt_l                                                    ; |
+    LDA zp_nt_rh : BMI tg_cn2z : BNE tg_cn2f                            ; |
+    LDA zp_nt_r : CMP #160 : BCC tg_cn2s                                ; |
+.tg_cn2f LDA #159 : BNE tg_cn2s
+.tg_cn2z LDA #0
+.tg_cn2s STA zp_nt_r                                                    ; |
+    LDA zp_nb_lh : BMI tg_cn3z : BNE tg_cn3f                            ; |
+    LDA zp_nb_l : CMP #160 : BCC tg_cn3s                                ; |
+.tg_cn3f LDA #159 : BNE tg_cn3s
+.tg_cn3z LDA #0
+.tg_cn3s STA zp_nb_l                                                    ; |
+    LDA zp_nb_rh : BMI tg_cn4z : BNE tg_cn4f                            ; |
+    LDA zp_nb_r : CMP #160 : BCC tg_cn4s                                ; |
+.tg_cn4f LDA #159 : BNE tg_cn4s
+.tg_cn4z LDA #0
+.tg_cn4s STA zp_nb_r                                                    ; |
+    ; Unsigned dominance: new_tl <= old_tl AND new_tr <= old_tr AND ...
+    LDA zp_nt_l : CMP zp_ot_l : BEQ tg_d1 : BCS tg_not_old_dom          ; |
+.tg_d1 LDA zp_nt_r : CMP zp_ot_r : BEQ tg_d2 : BCS tg_not_old_dom       ; |
+.tg_d2 LDA zp_ob_l : CMP zp_nb_l : BEQ tg_d3 : BCS tg_not_old_dom       ; |
+.tg_d3 LDA zp_ob_r : CMP zp_nb_r : BEQ tg_d4 : BCS tg_not_old_dom       ; |
 .tg_d4 ; Old dominates: keep span unchanged
-    LDX zp_save1
-    JSR tg_append_x
-    LDA zp_save0 : STA zp_old_cur
-    JMP tg_walk
+    LDX zp_save1                                                        ; |
+    JSR tg_append_x                                                     ; |
+    LDA zp_save0 : STA zp_old_cur                                       ; |
+    JMP tg_walk                                                         ; |
 
 .tg_not_old_dom
-    ; --- General path: DON'T modify original span. Alloc new spans for ---
-    ; --- left/right fragments and tightened overlap. Free original last. ---
-    LDX zp_save1    ; X = original span offset (preserved throughout)
-
-    ; --- Left fragment: if xlo < ilo ---
-    LDA POOL_XLO,X : CMP zp_ilo : BCS tg_no_left
-    ; Alloc new span for [xlo, ilo)
-    STX zp_save1 : JSR alloc_span : BEQ tg_no_left_alloc
-    ; Copy original span, then modify endpoints
-    LDY zp_save1                 ; Y = original
-    LDA POOL_XLO,Y : STA POOL_XLO,X
-    LDA POOL_TL,Y  : STA POOL_TL,X
-    LDA POOL_BL,Y  : STA POOL_BL,X
-    LDA zp_ilo : STA POOL_XHI,X ; xhi = ilo
-    ; Interp Y at ilo from ORIGINAL span (Y still = original offset)
-    LDA zp_ilo : STA zp_i_x
-    LDA POOL_XLO,Y : STA zp_i_x0 : LDA POOL_XHI,Y : STA zp_i_x1
-    LDA POOL_TL,Y : STA zp_i_y0 : LDA POOL_TR,Y : STA zp_i_y1
-    STX zp_tmp3 : JSR interp_store
-    LDX zp_tmp3 : LDA zp_i_res : STA POOL_TR,X  ; tr at ilo
-    LDY zp_save1
-    LDA POOL_BL,Y : STA zp_i_y0 : LDA POOL_BR,Y : STA zp_i_y1
-    STX zp_tmp3 : JSR interp_store
-    LDX zp_tmp3 : LDA zp_i_res : STA POOL_BR,X  ; br at ilo
-    JSR tg_append_x
-.tg_no_left_alloc
+    ; --- Left fragment: if xstart < ilo (active range extends left of seg) ---
+    ; Allocate sibling, copy line params verbatim, set its active range to
+    ; [original xstart, ilo-1]. NO interp_store calls — line is preserved.
+    LDX zp_save1                                                        ; |
+    LDA POOL_XSTART,X : CMP zp_ilo : BCS tg_no_left                     ; |
+    JSR alloc_span : BEQ tg_no_left                                     ; |
+    LDY zp_save1                                                        ; |
+    LDA POOL_XLO,Y    : STA POOL_XLO,X                                  ; |
+    LDA POOL_XHI,Y    : STA POOL_XHI,X                                  ; |
+    LDA POOL_TL,Y     : STA POOL_TL,X                                   ; |
+    LDA POOL_BL,Y     : STA POOL_BL,X                                   ; |
+    LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
+    LDA POOL_BR,Y     : STA POOL_BR,X                                   ; |
+    LDA POOL_XSTART,Y : STA POOL_XSTART,X                               ; |
+    LDA zp_ilo : SEC : SBC #1 : STA POOL_XEND,X                         ; |
+    JSR tg_append_x                                                     ; |
 .tg_no_left
 
-    ; --- Tighten the overlap [ox0, ox1) from ORIGINAL span (unmodified) ---
-    LDX zp_save1
-    LDA POOL_XLO,X : STA zp_i_x0 : LDA POOL_XHI,X : STA zp_i_x1
-    ; Old top at ox0, ox1
-    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1
-    LDA zp_ox0 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_ot_l
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_ot_r
-    ; Old bot at ox0, ox1
-    LDX zp_save1
-    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1
-    LDA zp_ox0 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_ob_l
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_ob_r
-    ; New top/bot at ox0, ox1
-    LDA zp_sx1 : STA zp_i_x0 : LDA zp_sx2 : STA zp_i_x1
-    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt2 : STA zp_i_y1
-    LDA zp_ox0 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_nt_l
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_nt_r
-    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb2 : STA zp_i_y1
-    LDA zp_ox0 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_nb_l
-    LDA zp_ox1 : STA zp_i_x
-    JSR interp_store : LDA zp_i_res : STA zp_nb_r
+    ; --- Process overlap with crossover splits ---
+    LDA zp_ox1 : STA zp_final_ox1                                       ; |
+    LDA zp_cx_top : ORA zp_cx_bot : BNE tg_has_splits                   ; |
+    ; --- No crossover fast path ---
+    ; The dominance check already computed ot_l/ot_r/ob_l/ob_r (u8 via
+    ; interp_store) and nt_l/nt_r/nb_l/nb_r (clamped u8) at (ox0, ox1).
+    ; Do max/min + aperture + store inline without re-interpolating.
+    LDA zp_ot_l : CMP zp_nt_l : BCS ncf_tl_ok : LDA zp_nt_l             ; |
+.ncf_tl_ok STA zp_ot_l                                                  ; |
+    LDA zp_ot_r : CMP zp_nt_r : BCS ncf_tr_ok : LDA zp_nt_r             ; |
+.ncf_tr_ok STA zp_ot_r                                                  ; |
+    LDA zp_ob_l : CMP zp_nb_l : BCC ncf_bl_ok : LDA zp_nb_l             ; |
+.ncf_bl_ok STA zp_ob_l                                                  ; |
+    LDA zp_ob_r : CMP zp_nb_r : BCC ncf_br_ok : LDA zp_nb_r             ; |
+.ncf_br_ok STA zp_ob_r                                                  ; |
+    ; Aperture check
+    LDA zp_ot_l : CMP zp_ob_l : BCC ncf_has_ap                          ; |
+    LDA zp_ot_r : CMP zp_ob_r : BCS ncf_no_ap
+.ncf_has_ap
+    JSR alloc_span : BEQ ncf_no_ap                                      ; |
+    ; Dense-anchored result span (line == active range)
+    LDA zp_ox0 : STA POOL_XLO,X : STA POOL_XSTART,X                     ; |
+    LDA zp_ox1 : STA POOL_XHI,X : STA POOL_XEND,X                       ; |
+    LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X           ; |
+    LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X           ; |
+    JSR tg_append_x                                                     ; |
+.ncf_no_ap
+    JMP tg_right_frag                                                   ; |
+.tg_has_splits
+    LDA zp_cx_top : BEQ tg_split_bot                                    ; |
+    LDA zp_cx_bot : BEQ tg_split_top
+    ; Both crossovers. Sort: ensure cx_top <= cx_bot.
+    LDA zp_cx_top : CMP zp_cx_bot : BCC tg_2sorted : BEQ tg_split_top
+    LDY zp_cx_bot : STA zp_cx_bot : STY zp_cx_top
+.tg_2sorted
+    ; 3 closed intervals: [ox0, cx_top-1], [cx_top, cx_bot-1], [cx_bot, final_ox1]
+    LDA zp_cx_top : SEC : SBC #1 : STA zp_ox1
+    JSR tg_overlap_sub
+    LDA zp_cx_top : STA zp_ox0
+    LDA zp_cx_bot : SEC : SBC #1 : STA zp_ox1
+    JSR tg_overlap_sub
+    LDA zp_cx_bot : STA zp_ox0
+    LDA zp_final_ox1 : STA zp_ox1
+    JSR tg_overlap_sub : JMP tg_right_frag
+.tg_split_top
+    LDA zp_cx_top : JMP tg_split_one
+.tg_split_bot
+    LDA zp_cx_bot                                                       ; |
+.tg_split_one
+    ; A = single crossover X. 2 closed intervals: [ox0, cx-1], [cx, final_ox1]
+    STA zp_tmp3                    ; save cx (tmp3 free between tg_overlap_sub calls)  ; |
+    SEC : SBC #1 : STA zp_ox1                                           ; |
+    JSR tg_overlap_sub                                                  ; |
+    LDA zp_tmp3 : STA zp_ox0                                            ; |
+    LDA zp_final_ox1 : STA zp_ox1                                       ; |
+    JSR tg_overlap_sub                                                  ; |
 
-    ; max top, min bot
-    LDA zp_ot_l : CMP zp_nt_l : BCS tg_tl_ok : LDA zp_nt_l
-.tg_tl_ok STA zp_ot_l
-    LDA zp_ot_r : CMP zp_nt_r : BCS tg_tr_ok : LDA zp_nt_r
-.tg_tr_ok STA zp_ot_r
-    LDA zp_ob_l : CMP zp_nb_l : BCC tg_bl_ok : LDA zp_nb_l
-.tg_bl_ok STA zp_ob_l
-    LDA zp_ob_r : CMP zp_nb_r : BCC tg_br_ok : LDA zp_nb_r
-.tg_br_ok STA zp_ob_r
-
-    ; Check aperture: tl < bl OR tr < br
-    LDA zp_ot_l : CMP zp_ob_l : BCC tg_has_ap
-    LDA zp_ot_r : CMP zp_ob_r : BCS tg_no_ap
-.tg_has_ap
-    JSR alloc_span : BEQ tg_no_ap
-    LDA zp_ox0 : STA POOL_XLO,X : LDA zp_ox1 : STA POOL_XHI,X
-    LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X
-    LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X
-    JSR tg_append_x
-.tg_no_ap
-
-    ; --- Right fragment: if original xhi > ihi ---
-    LDX zp_save1                 ; original span (still unmodified!)
-    LDA POOL_XHI,X : BEQ tg_rhi256
-    CMP zp_ihi : BCC tg_no_right : BEQ tg_no_right
-    JMP tg_make_right
-.tg_rhi256
-    LDA zp_ihi : BEQ tg_no_right
+.tg_right_frag
+    ; --- Right fragment: if xend > ihi (active range extends right of seg) ---
+    ; Allocate sibling, copy line params verbatim, set its active range to
+    ; [ihi+1, original xend]. NO interp_store calls.
+    LDX zp_save1                                                        ; |
+    LDA POOL_XEND,X : CMP zp_ihi : BEQ tg_no_right : BCC tg_no_right    ; |
 .tg_make_right
-    ; Alloc right fragment [ihi, original_xhi)
-    STX zp_save1 : JSR alloc_span : BEQ tg_no_right
-    LDY zp_save1                 ; Y = original
-    ; Copy right-side data from original
-    LDA POOL_XHI,Y : STA POOL_XHI,X
-    LDA POOL_TR,Y  : STA POOL_TR,X
-    LDA POOL_BR,Y  : STA POOL_BR,X
-    LDA zp_ihi : STA POOL_XLO,X ; xlo = ihi
-    ; Interp Y at ihi from ORIGINAL span
-    LDA zp_ihi : STA zp_i_x
-    LDA POOL_XLO,Y : STA zp_i_x0 : LDA POOL_XHI,Y : STA zp_i_x1
-    LDA POOL_TL,Y : STA zp_i_y0 : LDA POOL_TR,Y : STA zp_i_y1
-    STX zp_tmp3 : JSR interp_store
-    LDX zp_tmp3 : LDA zp_i_res : STA POOL_TL,X
-    LDY zp_save1
-    LDA POOL_BL,Y : STA zp_i_y0 : LDA POOL_BR,Y : STA zp_i_y1
-    STX zp_tmp3 : JSR interp_store
-    LDX zp_tmp3 : LDA zp_i_res : STA POOL_BL,X
-    JSR tg_append_x
+    JSR alloc_span : BEQ tg_no_right                                    ; |
+    LDY zp_save1                                                        ; |
+    LDA POOL_XLO,Y  : STA POOL_XLO,X                                    ; |
+    LDA POOL_XHI,Y  : STA POOL_XHI,X                                    ; |
+    LDA POOL_TL,Y   : STA POOL_TL,X                                     ; |
+    LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
+    LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
+    LDA POOL_BR,Y   : STA POOL_BR,X                                     ; |
+    LDA zp_ihi : CLC : ADC #1 : STA POOL_XSTART,X                       ; |
+    LDA POOL_XEND,Y : STA POOL_XEND,X                                   ; |
+    JSR tg_append_x                                                     ; |
 .tg_no_right
+    LDX zp_save1 : JSR free_span                                        ; |
+    LDA zp_save0 : STA zp_old_cur                                       ; |
+    JMP tg_walk                                                         ; |
 
-    ; Free the original span (never reused — we always alloc new)
-    LDX zp_save1 : JSR free_span
-
-    LDA zp_save0 : STA zp_old_cur
-    JMP tg_walk
-
-; --- Helper: append span X to new list ---
+; --- TG_APPEND_X: append span X to the new list, with merge optimization ---
+;
+; Tries to merge X into the tail when both are constant-line spans
+; (tl==tr, bl==br) with matching Y values and contiguous X ranges.
+; This prevents span-count explosion from crossover splits; ~96% of
+; merge candidates are constant-line, so the 6-compare fast path
+; resolves quickly.
 .tg_append_x
 {
-    LDA #0 : STA POOL_NEXT,X   ; new span is at end
-    LDA zp_new_tail : CMP #$FF : BNE ta_link
+    LDA #0 : STA POOL_NEXT,X   ; new span is at end                     ; |||
+    LDA zp_new_tail : BNE ta_try_merge                                  ; ||
     ; First span: set head
-    STX zp_head : STX zp_new_tail : RTS
+    STX zp_head : STX zp_new_tail : RTS                                 ; |
+.ta_try_merge
+    LDY zp_new_tail                                                     ; |
+    ; Fail fast: tail Y must be a constant-line span (tl==tr AND bl==br).
+    LDA POOL_TL,Y : CMP POOL_TR,Y : BNE ta_link                         ; |||
+    LDA POOL_BL,Y : CMP POOL_BR,Y : BNE ta_link                         ; ||
+    ; New X must also be a constant-line span.
+    LDA POOL_TL,X : CMP POOL_TR,X : BNE ta_link                         ; ||
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE ta_link                         ; |
+    ; Matching constants?
+    LDA POOL_TL,Y : CMP POOL_TL,X : BNE ta_link                         ; |
+    LDA POOL_BL,Y : CMP POOL_BL,X : BNE ta_link                         ; |
+    ; Contiguous active ranges? (tail.xend + 1 == new.xstart)
+    LDA POOL_XEND,Y : CLC : ADC #1 : CMP POOL_XSTART,X : BNE ta_link    ; |
+    ; Merge: extend tail's xend to cover new, then free X.
+    LDA POOL_XEND,X : STA POOL_XEND,Y
+    JMP free_span   ; frees X (via tail-call), returns
 .ta_link
-    LDY zp_new_tail
-    TXA : STA POOL_NEXT,Y
-    STX zp_new_tail : RTS
+    TXA : STA POOL_NEXT,Y                                               ; ||
+    STX zp_new_tail : RTS                                               ; |||
+}
+
+; ======================================================================
+; TG_OVERLAP_SUB: process one sub-interval of the tighten overlap
+;
+; Called 1-3 times per overlapping span (once per crossover sub-interval).
+; Interpolates 4 old + 4 new boundary values, clamps new to [0,159],
+; checks old-dominance shortcut, then does max/min + aperture check.
+; ======================================================================
+.tg_overlap_sub
+{
+    ; --- Old span: 4 interp_store calls with shared den = xhi - xlo ---
+    LDX zp_save1                                                        ; |
+    LDA POOL_XLO,X : STA zp_i_x0                                        ; |
+    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den                 ; |
+    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1           ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_ot_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_ot_r                         ; |
+    LDX zp_save1                                                        ; |
+    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1           ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_ob_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
+    ; --- New seg: 4 seg_interp_store calls with den = sx2 - sx1 ---
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
+    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
+    LDA zp_yt2 : STA zp_i_y1                                            ; |
+    LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; |
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; |
+    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
+    LDA zp_yb2 : STA zp_i_y1                                            ; |
+    LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; |
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; |
+    ; Clamp s16 new values to [0,159] for unsigned max/min.
+    ; Same [160,255] / hi=0 bug as the tighten prelude — fixed here too.
+    LDA zp_nt_lh : BMI cn1z : BNE cn1f                                  ; |
+    LDA zp_nt_l : CMP #160 : BCC cn1s                                   ; |
+.cn1f LDA #159 : BNE cn1s
+.cn1z LDA #0
+.cn1s STA zp_nt_l                                                       ; |
+    LDA zp_nt_rh : BMI cn2z : BNE cn2f                                  ; |
+    LDA zp_nt_r : CMP #160 : BCC cn2s                                   ; |
+.cn2f LDA #159 : BNE cn2s
+.cn2z LDA #0
+.cn2s STA zp_nt_r                                                       ; |
+    LDA zp_nb_lh : BMI cn3z : BNE cn3f                                  ; |
+    LDA zp_nb_l : CMP #160 : BCC cn3s                                   ; |
+.cn3f LDA #159 : BNE cn3s
+.cn3z LDA #0
+.cn3s STA zp_nb_l                                                       ; |
+    LDA zp_nb_rh : BMI cn4z : BNE cn4f                                  ; |
+    LDA zp_nb_r : CMP #160 : BCC cn4s                                   ; |
+.cn4f LDA #159 : BNE cn4s
+.cn4z LDA #0
+.cn4s STA zp_nb_r                                                       ; |
+    ; Opt 2: if OLD wins top and bot at BOTH sub-interval endpoints, we can
+    ; preserve the old span's line verbatim and just set xstart/xend. This
+    ; typically fires on one side of a crossover-split sub-interval where
+    ; the old span dominates the new seg.
+    LDA zp_ot_l : CMP zp_nt_l : BCC skip_opt2   ; ot_l < nt_l → new wins top-l  ; |
+    LDA zp_ot_r : CMP zp_nt_r : BCC skip_opt2                           ; |
+    LDA zp_nb_l : CMP zp_ob_l : BCC skip_opt2   ; nb_l < ob_l → new wins bot-l  ; |
+    LDA zp_nb_r : CMP zp_ob_r : BCC skip_opt2                           ; |
+    ; Old wins all four comparisons → copy line verbatim
+    JSR alloc_span : BEQ opt2_no_ap                                     ; |
+    LDY zp_save1                                                        ; |
+    LDA POOL_XLO,Y    : STA POOL_XLO,X                                  ; |
+    LDA POOL_XHI,Y    : STA POOL_XHI,X                                  ; |
+    LDA POOL_TL,Y     : STA POOL_TL,X                                   ; |
+    LDA POOL_BL,Y     : STA POOL_BL,X                                   ; |
+    LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
+    LDA POOL_BR,Y     : STA POOL_BR,X                                   ; |
+    LDA zp_ox0 : STA POOL_XSTART,X                                      ; |
+    LDA zp_ox1 : STA POOL_XEND,X                                        ; |
+    JSR tg_append_x                                                     ; |
+.opt2_no_ap
+    RTS                                                                 ; |
+.skip_opt2
+    ; max top, min bot
+    LDA zp_ot_l : CMP zp_nt_l : BCS tl_ok : LDA zp_nt_l                 ; |
+.tl_ok STA zp_ot_l                                                      ; |
+    LDA zp_ot_r : CMP zp_nt_r : BCS tr_ok : LDA zp_nt_r                 ; |
+.tr_ok STA zp_ot_r                                                      ; |
+    LDA zp_ob_l : CMP zp_nb_l : BCC bl_ok : LDA zp_nb_l                 ; |
+.bl_ok STA zp_ob_l                                                      ; |
+    LDA zp_ob_r : CMP zp_nb_r : BCC br_ok : LDA zp_nb_r                 ; |
+.br_ok STA zp_ob_r                                                      ; |
+    ; Check aperture
+    LDA zp_ot_l : CMP zp_ob_l : BCC has_ap                              ; |
+    LDA zp_ot_r : CMP zp_ob_r : BCS no_ap
+.has_ap
+    JSR alloc_span : BEQ no_ap                                          ; |
+    ; Result span is dense-anchored: line endpoints == active range endpoints
+    LDA zp_ox0 : STA POOL_XLO,X : STA POOL_XSTART,X                     ; |
+    LDA zp_ox1 : STA POOL_XHI,X : STA POOL_XEND,X                       ; |
+    LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X           ; |
+    LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X           ; |
+    JSR tg_append_x                                                     ; |
+.no_ap
+    RTS                                                                 ; |
+}
+
+; ======================================================================
+; CROSSOVER COMPUTATION SECTION
+;
+; tg_cc_calc_bot computes |d0|, |d1| as u16 absolute differences of
+; (old_bot - new_bot) at each overlap endpoint, then falls through
+; to compute_crossover.
+;
+; compute_crossover finds the column X where the boundary difference
+; crosses zero using: cx = ox0 + |d0| * ex / (|d0| + |d1|)
+;
+; FAST PATH (den fits u8): 8-iter u16/u8 restoring divide (~200 cyc).
+; SLOW PATH (den > 255, rare): 8-iter u24/u16 restoring divide.
+; Returns 0 if crossover is at edge or outside interval.
+; ======================================================================
+.tg_cc_calc_bot
+{
+    LDA zp_ob_l : SEC : SBC zp_nb_l : STA zp_tmp0                       ; |
+    LDA #0      : SBC zp_nb_lh      : STA zp_tmp1                       ; |
+    BPL db0p                                                            ; |
+    SEC : LDA #0 : SBC zp_tmp0 : STA zp_tmp0                            ; |
+    LDA #0       : SBC zp_tmp1 : STA zp_tmp1                            ; |
+.db0p
+    LDA zp_ob_r : SEC : SBC zp_nb_r : STA zp_tmp2                       ; |
+    LDA #0      : SBC zp_nb_rh      : STA zp_tmp3                       ; |
+    BPL db1p                                                            ; |
+    SEC : LDA #0 : SBC zp_tmp2 : STA zp_tmp2
+    LDA #0       : SBC zp_tmp3 : STA zp_tmp3
+.db1p
+    ; Fall through to compute_crossover
+}
+
+.compute_crossover
+{
+    ; den = |d0| + |d1| (u16; sufficient since post-wrapper |d| ≤ ~32800)
+    LDA zp_tmp0 : CLC : ADC zp_tmp2 : STA zp_cc_den_lo                  ; |
+    LDA zp_tmp1 :       ADC zp_tmp3 : STA zp_cc_den_hi                  ; |
+    ORA zp_cc_den_lo : BEQ early_none                                   ; |
+    ; ex = ox1 - ox0 (always ≥ 1 since ox0 < ox1 in tighten)
+    LDA zp_ox1 : SEC : SBC zp_ox0 : BNE ex_ok                           ; |
+.early_none
+    LDA #0 : RTS
+.ex_ok
+    STA zp_mul_b                                                        ; |
+    ; Low u16 of num = |d0|_lo * ex (one umul8 call).
+    ; zp_prod_lo:hi aliases zp_div_lo:hi.
+    LDA zp_tmp0 : JSR umul8                                             ; |
+    ; Fast path: if den fits u8 (cc_den_hi == 0), then |d0|+|d1| ≤ 255
+    ; so both |d0| and |d1| fit u8 → num fits u16. Quot fits u8
+    ; (bounded by ex), so num_hi < den, letting us run the 8-iter
+    ; restoring divide directly.
+    LDA zp_cc_den_hi : BNE slow_setup                                   ; |
+    LDA zp_cc_den_lo : STA zp_div_den                                   ; |
+    ; Setup for 8-iter u16/u8 divide: rem = num_hi, shift source = num_lo,
+    ; quot accumulator = zp_div_lo (via INC trick — same as udiv16_8).
+    LDA zp_div_hi : STA zp_div_rem                                      ; |
+    LDA zp_div_lo : STA zp_div_hi                                       ; |
+    LDA #0 : STA zp_div_lo                                              ; |
+    LDX #8                                                              ; |
+.fast_loop
+    ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; |
+    BCS fast_over                                                       ; |
+    LDA zp_div_rem : SEC : SBC zp_div_den : BCC fast_next               ; |
+.fast_commit
+    STA zp_div_rem : INC zp_div_lo                                      ; |
+.fast_next
+    DEX : BNE fast_loop                                                 ; |
+    LDA zp_div_lo                ; A = quot                             ; |
+    JMP cx_from_quot                                                    ; |
+.fast_over
+    LDA zp_div_rem : SEC : SBC zp_div_den
+    JMP fast_commit
+
+.slow_setup
+    ; Slow path: build the u24 num and run the u24/u16 restoring divide.
+    ; The first umul8 result gets copied to cc_num_lo:mid (needed because
+    ; the second umul8 below clobbers zp_prod_*).
+    LDA zp_prod_lo : STA zp_cc_num_lo
+    LDA zp_prod_hi : STA zp_cc_num_mid
+    LDA #0 : STA zp_cc_num_hi
+    LDA zp_tmp1 : BEQ num_done    ; |d0|_hi == 0 → num is already u16
+    ; Add |d0|_hi * ex, shifted up one byte into mid:hi.
+    JSR umul8
+    LDA zp_prod_lo : CLC : ADC zp_cc_num_mid : STA zp_cc_num_mid
+    LDA zp_prod_hi : ADC zp_cc_num_hi : STA zp_cc_num_hi
+.num_done
+    ; 8-iter restoring u24/u16 divide. Uses the same INC-the-shift-source
+    ; trick: quot bits accumulate in cc_num_lo as the original bits get
+    ; ASL'd out, so cc_num_lo == quot after 8 iterations.
+    LDY #8
+.slow_loop
+    ASL zp_cc_num_lo
+    ROL zp_cc_num_mid
+    ROL zp_cc_num_hi
+    BCS slow_force_commit        ; rem overflowed u16 → must subtract
+    ; Compare rem (num_hi:num_mid) with den (cc_den_hi:cc_den_lo).
+    LDA zp_cc_num_hi : CMP zp_cc_den_hi : BCC slow_skip
+    BNE slow_do_commit
+    LDA zp_cc_num_mid : CMP zp_cc_den_lo : BCC slow_skip
+.slow_do_commit
+.slow_force_commit
+    LDA zp_cc_num_mid : SEC : SBC zp_cc_den_lo : STA zp_cc_num_mid
+    LDA zp_cc_num_hi :       SBC zp_cc_den_hi : STA zp_cc_num_hi
+    INC zp_cc_num_lo             ; set current quot bit (bit 0 after ASL)
+.slow_skip
+    DEY : BNE slow_loop
+    LDA zp_cc_num_lo             ; A = quot
+
+.cx_from_quot
+    CLC : ADC zp_ox0                                                    ; |
+    BEQ none                                                            ; |
+    CMP zp_ox0 : BEQ none        ; cx at left edge: not strictly inside ; |
+    TAY                                                                 ; |
+    CPY zp_ox1 : BCS none        ; cx >= ox1: not strictly inside       ; |
+    TYA : RTS                                                           ; |
+.none LDA #0 : RTS
 }
 
 .end_code
