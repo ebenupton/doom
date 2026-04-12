@@ -99,7 +99,7 @@ zp_yb1   = $CC   ; s16: bot Y at sx1
 zp_yb1h  = $CD
 zp_yb2   = $CE   ; s16: bot Y at sx2
 zp_yb2h  = $CF
-zp_i_x   = $D0 : zp_i_x0  = $D1
+zp_i_x0  = $D1
 zp_i_y0  = $D2 : zp_i_y0h = $D3   ; s16 Y for seg interp
 zp_i_x1  = $D4 : zp_i_y1  = $D5 : zp_i_y1h = $D6
 zp_i_res = $D7 : zp_i_resh = $D8
@@ -253,7 +253,8 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDX #16
 .dl ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; ||||||||||||||||||||||||||||||||||||||||
     BCS dl_over                                                         ; |||||
-    LDA zp_div_rem : SEC : SBC zp_div_den : BCC ds                      ; |||||||||||||||||||||||||||||
+    LDA zp_div_rem : CMP zp_div_den : BCC ds                            ; |||||||||||||||||||||||||||||
+    SBC zp_div_den                                                      ; |
 .dl_commit
     STA zp_div_rem : INC zp_div_lo                                      ; |||||
 .ds DEX : BNE dl                                                        ; |||||||||||||
@@ -1048,7 +1049,8 @@ zp_cc_den_hi = $FE
 .fast_loop
     ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; |
     BCS fast_over                                                       ; |
-    LDA zp_div_rem : SEC : SBC zp_div_den : BCC fast_next               ; |
+    LDA zp_div_rem : CMP zp_div_den : BCC fast_next                     ; |
+    SBC zp_div_den                                                      ; |
 .fast_commit
     STA zp_div_rem : INC zp_div_lo                                      ; |
 .fast_next
