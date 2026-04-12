@@ -571,38 +571,6 @@ for _i, _svwh in enumerate(fp_segs_vwh):
                 _seg_novt_aperture[(_i, 2)] = _bh
     _seg_novt_flags.append(_f)
 
-# Rule 3 (second pass): suppress a solid seg's vertical at a vertex
-# where a portal-with-steps from the other side has its NOVT set
-# (meaning the portal draws the aperture edge bt→bb there).  Without
-# this, the perpendicular solid seg's full vertical duplicates the
-# aperture edge range.  Rule 3 only fires when the portal's NOVT is
-# already set — at regular corners (portal not NOVT), the solid's
-# vertical is needed because no aperture edge is drawn.
-for _i, _svwh in enumerate(fp_segs_vwh):
-    if not _seg_is_solid_svwh(_svwh):
-        continue
-    _s = _svwh[0]
-    _front_i = _svwh[1]
-    for _bit, _vidx in ((_SF_NOVT1, _s[0]), (_SF_NOVT2, _s[1])):
-        if _seg_novt_flags[_i] & _bit:
-            continue  # already suppressed
-        for _j in _vert_to_segs.get(_vidx, ()):
-            if _j == _i:
-                continue
-            _sj = fp_segs_vwh[_j]
-            if _sj[2] != _front_i:  # portal's back != our front
-                continue
-            if not _portal_has_steps(_sj):
-                continue
-            # Check portal's NOVT is set at this vertex
-            _sj_s = _sj[0]
-            if _sj_s[0] == _vidx and (_seg_novt_flags[_j] & _SF_NOVT1):
-                _seg_novt_flags[_i] |= _bit
-                break
-            if _sj_s[1] == _vidx and (_seg_novt_flags[_j] & _SF_NOVT2):
-                _seg_novt_flags[_i] |= _bit
-                break
-
 _n_novt1 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT1)
 _n_novt2 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT2)
 print(f"NOVT flags: {_n_novt1} v1 + {_n_novt2} v2 "
