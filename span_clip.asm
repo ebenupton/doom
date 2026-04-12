@@ -177,11 +177,10 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     STA zp_tmp0                                                         ; |
     CLC : ADC zp_mul_b                                                  ; ||
     TAX                  ; X = (a+b) & 0xFF                             ; |
-    PHP                  ; save carry (set if sum >= 256)               ; |
     SEC : LDA zp_tmp0 : SBC zp_mul_b : BCS pos                          ; ||||
     EOR #$FF : ADC #1    ; |diff| (C was 0 from SBC, so ADC adds +0+1)  ; |
 .pos TAY                  ; Y = |diff|                                  ; |
-    PLP : BCS uo                                                        ; ||
+    CPX zp_tmp0 : BCC uo  ; overflow if (a+b)&0xFF < a (sum >= 256)     ; ||
     ; sum < 256: sqr tables for sum
     LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo                  ; |||||
     LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS                  ; |||||||

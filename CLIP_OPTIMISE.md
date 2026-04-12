@@ -99,11 +99,12 @@ constant-line merge optimisation landed.
 | 2026-04-12 |       2510 B  |  3631 (19)    |  38806 (12)| 7744 (127) | 2512 (148) | **52693**    | −3537  | **180487**   | −16715 | **udiv16_8 skip loop for leading zero quotient bits.** The 8-iteration restoring division loop now pre-scans: shift rem:div_hi left one bit at a time, checking rem vs den. Each skip iteration (~19 cyc) replaces a wasted main-loop iteration (~33 cyc for a trial-subtract-that-fails), saving ~14 cyc per skipped bit. When the quotient is small (common for tighten interpolations near span edges), 3-4 leading iterations produce zero bits and are skipped. Falls through to the main loop once the first productive bit is found. Quotient=0 case returns immediately without entering the main loop at all. Note: S1/S2 call counts differ from previous row due to BSP traversal changes (round-to-nearest prescaling, near-child bbox check, frustum reject) — the clipper code is unchanged except for this udiv16_8 optimisation. S1 tighten −3531, S2 tighten −16708. ROM +29 B. |
 
 | 2026-04-12 |       2573 B  |  3631 (19)    |  37875 (12)| 7744 (127) | 2512 (148) | **51790**    | −903   | **176325**   | −4162  | **Unrolled skip loop.** The 8-iteration skip pre-scan is unrolled: 8 copies of `ASL div_hi : ROL A : BCS commit : CMP den : BCS commit : DEX` eliminate the `BNE dskip` branch (3 cyc per skipped iter). Last copy omits the final DEX since quotient=0 falls through to RTS. S1 tighten −931, S2 tighten −4215. ROM +63 B. |
+| 2026-04-12 |       2573 B  |  3659 (19)    |  37671 (12)| 7744 (127) | 2512 (148) | **51586**    | −204   | **175393**   | −932   | **umul8: replace PHP/PLP with CPX for carry detection.** The quarter-square multiply saved/restored the carry flag from the `ADC zp_mul_b` sum via PHP (3 cyc) + PLP (4 cyc) = 7 cycles. Replaced with `CPX zp_tmp0` (3 cyc) after computing |a-b|: if `(a+b) & 0xFF < a`, the sum overflowed. Net saving: 4 cycles per umul8 call. S1 tighten −204, S2 tighten −932. ROM unchanged. |
 
-Per-call averages (S1): `mark_solid` 191, `tighten` 3156, `has_gap` 61, `is_full` 17.
-Per-call averages (S2): `mark_solid` 231, `tighten` 3409, `has_gap`  82, `is_full` 17.
+Per-call averages (S1): `mark_solid` 193, `tighten` 3139, `has_gap` 61, `is_full` 17.
+Per-call averages (S2): `mark_solid` 234, `tighten` 3388, `has_gap`  82, `is_full` 17.
 
-Cumulative vs baseline (S1 127 389 cyc → 51 790): **−75 599 cyc, −59.3%**.
+Cumulative vs baseline (S1 127 389 cyc → 51 586): **−75 803 cyc, −59.5%**.
 ROM size: 2701 → 2573 bytes, **−128 bytes**.
 
 ## Notes on this round
