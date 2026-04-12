@@ -105,12 +105,13 @@ constant-line merge optimisation landed.
 | 2026-04-12 |       2578 B  |  3659 (19)    |  37607 (12)| 6656 (127) | 2376 (148) | **50298**    | −64    | **172193**   | −97    | **Division loop: CMP before SBC to save SEC on no-commit iterations.** The restoring division main loop and compute_crossover fast_loop both used `SEC : SBC den : BCC skip` for the trial subtract, paying 2 cycles for SEC on every iteration even when the subtract fails. Replaced with `CMP den : BCC skip : SBC den` — the CMP doesn't modify A, and on the commit path carry is already set from the successful CMP. Saves 2 cycles per no-commit iteration, costs 1 extra cycle per commit iteration. Net win since most quotient bits are 0. S1 tighten −64, S2 tighten −97. ROM +2 B. |
 | 2026-04-12 |       2605 B  |  3659 (19)    |  35536 (12)| 6656 (127) | 2376 (148) | **48227**    | −2071  | **167462**   | −4731  | **Dominance prelude: constant-line OLD span fast path.** When the OLD span is constant-line (`tl==tr` AND `bl==br`), the interp values at any X are just `tl` and `bl` — no interpolation needed. Added a check after the anchor fast path: 2 byte-compares (tl vs tr, bl vs br), and on match, copy tl/bl directly to all 4 output slots, skipping 4 `interp_store` calls. Fires on all constant-line spans that don't also trigger the anchor fast path (i.e. when the overlap doesn't exactly cover [xlo, xhi]). In S2, constant-line spans are the majority. S1 tighten −2071, S2 tighten −4731. ROM +27 B. |
 | 2026-04-12 |       2656 B  |  3659 (19)    |  34650 (12)| 6656 (127) | 2376 (148) | **47341**    | −886   | **166965**   | −497   | **Dominance prelude: constant-line NEW seg fast path.** Symmetric to the OLD constant-line check. When the NEW seg has `yt1==yt2` AND `yb1==yb2` (s16 equality, 4 byte compares), copy the anchor s16 values directly to all 8 output slots, skipping 4 `seg_interp_store` calls. Fires when the seg boundary is flat (parallel to the view plane), common for horizontal wall sections. S1 tighten −886, S2 tighten −497. ROM +51 B. |
+| 2026-04-13 |       2734 B  |  3659 (19)    |  34317 (12)| 6656 (127) | 2376 (148) | **47008**    | −333   | **166631**   | −334   | **tg_overlap_sub: constant-line fast paths for OLD and NEW.** Applied the same constant-line checks to the crossover sub-interval processing. When OLD span has tl==tr/bl==br or NEW seg has yt1==yt2/yb1==yb2, skip the 4 interp calls and copy values directly. Less impactful than the dominance prelude paths because crossover splits are rarer. S1 tighten −333, S2 tighten −334. ROM +78 B. |
 
-Per-call averages (S1): `mark_solid` 193, `tighten` 2887, `has_gap` 52, `is_full` 16.
-Per-call averages (S2): `mark_solid` 234, `tighten` 3270, `has_gap`  66, `is_full` 16.
+Per-call averages (S1): `mark_solid` 193, `tighten` 2860, `has_gap` 52, `is_full` 16.
+Per-call averages (S2): `mark_solid` 234, `tighten` 3263, `has_gap`  66, `is_full` 16.
 
-Cumulative vs baseline (S1 127 389 cyc → 47 341): **−80 048 cyc, −62.8%**.
-ROM size: 2701 → 2656 bytes, **−45 bytes**.
+Cumulative vs baseline (S1 127 389 cyc → 47 008): **−80 381 cyc, −63.1%**.
+ROM size: 2701 → 2734 bytes, **+33 bytes**.
 
 ## Notes on this round
 

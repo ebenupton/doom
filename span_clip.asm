@@ -918,8 +918,14 @@ zp_cc_den_hi = $FE
 ; ======================================================================
 .tg_overlap_sub
 {
-    ; --- Old span: 4 interp_store calls with shared den = xhi - xlo ---
+    ; --- Old span: constant-line fast path or 4 interp_store calls ---
     LDX zp_save1                                                        ; |
+    LDA POOL_TL,X : CMP POOL_TR,X : BNE tos_old_slow                    ; |
+    STA zp_ot_l : STA zp_ot_r                                           ; |
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE tos_old_slow                    ; |
+    STA zp_ob_l : STA zp_ob_r                                           ; |
+    JMP tos_old_done                                                    ; |
+.tos_old_slow
     LDA POOL_XLO,X : STA zp_i_x0                                        ; |
     LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den                 ; |
     LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1           ; |
@@ -929,7 +935,18 @@ zp_cc_den_hi = $FE
     LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1           ; |
     LDA zp_ox0 : JSR interp_store : STA zp_ob_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
-    ; --- New seg: 4 seg_interp_store calls with den = sx2 - sx1 ---
+.tos_old_done
+    ; --- New seg: constant-line fast path or 4 seg_interp_store calls ---
+    LDA zp_yt1 : CMP zp_yt2 : BNE tos_new_slow                          ; |
+    LDA zp_yt1h : CMP zp_yt2h : BNE tos_new_slow                        ; |
+    LDA zp_yb1 : CMP zp_yb2 : BNE tos_new_slow                          ; |
+    LDA zp_yb1h : CMP zp_yb2h : BNE tos_new_slow                        ; |
+    LDA zp_yt1  : STA zp_nt_l  : STA zp_nt_r                            ; |
+    LDA zp_yt1h : STA zp_nt_lh : STA zp_nt_rh                           ; |
+    LDA zp_yb1  : STA zp_nb_l  : STA zp_nb_r                            ; |
+    LDA zp_yb1h : STA zp_nb_lh : STA zp_nb_rh                           ; |
+    JMP tos_new_done                                                    ; |
+.tos_new_slow
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
     LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
     LDA zp_yt2 : STA zp_i_y1                                            ; |
@@ -939,6 +956,7 @@ zp_cc_den_hi = $FE
     LDA zp_yb2 : STA zp_i_y1                                            ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; |
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; |
+.tos_new_done
     ; Clamp s16 new values to [0,159] for unsigned max/min.
     ; Same [160,255] / hi=0 bug as the tighten prelude — fixed here too.
     LDA zp_nt_lh : BMI cn1z : BNE cn1f                                  ; |
