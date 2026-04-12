@@ -623,8 +623,8 @@ zp_cc_den_hi = $FE
     LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
 .old_done
     ; ---------- NEW seg: fast path when (ox0,ox1) == (sx1,sx2) -----------
-    LDA zp_ox0 : CMP zp_sx1 : BNE new_slow                              ; |
-    LDA zp_ox1 : CMP zp_sx2 : BNE new_slow                              ; |
+    LDA zp_ox0 : CMP zp_sx1 : BNE new_not_anchor                        ; |
+    LDA zp_ox1 : CMP zp_sx2 : BNE new_not_anchor                        ; |
     ; Copy seg's s16 anchor values verbatim
     LDA zp_yt1  : STA zp_nt_l                                           ; |
     LDA zp_yt1h : STA zp_nt_lh                                          ; |
@@ -634,6 +634,18 @@ zp_cc_den_hi = $FE
     LDA zp_yb1h : STA zp_nb_lh                                          ; |
     LDA zp_yb2  : STA zp_nb_r                                           ; |
     LDA zp_yb2h : STA zp_nb_rh                                          ; |
+    JMP new_done                                                        ; |
+.new_not_anchor
+    ; --- Constant-line NEW seg fast path: yt1==yt2 AND yb1==yb2 (s16) ---
+    LDA zp_yt1 : CMP zp_yt2 : BNE new_slow                              ; |
+    LDA zp_yt1h : CMP zp_yt2h : BNE new_slow                            ; |
+    LDA zp_yb1 : CMP zp_yb2 : BNE new_slow                              ; |
+    LDA zp_yb1h : CMP zp_yb2h : BNE new_slow                            ; |
+    ; Constant line: both endpoints are identical s16 values.
+    LDA zp_yt1  : STA zp_nt_l  : STA zp_nt_r                            ; |
+    LDA zp_yt1h : STA zp_nt_lh : STA zp_nt_rh                           ; |
+    LDA zp_yb1  : STA zp_nb_l  : STA zp_nb_r                            ; |
+    LDA zp_yb1h : STA zp_nb_lh : STA zp_nb_rh                           ; |
     JMP new_done                                                        ; |
 .new_slow
     ; Hoisted den setup: den = sx2 - sx1. Guaranteed > 0 by remap.
