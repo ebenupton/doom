@@ -45,8 +45,11 @@ The near subtree contains:
 The far subtree contains:
 - **ss222** -- s609 (the far portion of linedef 256)
 
-### Diagram 4: BSP Tree Structure
+### BSP Tree Structure
 
+<img src="bsp_crack_tree.svg" alt="BSP Tree Structure">
+
+<!--
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 340" font-family="monospace" font-size="13">
   <defs>
     <marker id="arrow-tree" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
@@ -104,6 +107,7 @@ The far subtree contains:
   <text x="495" y="240" text-anchor="middle" font-size="10" fill="#444">Far subtree visited last (step 4)</text>
   <text x="495" y="254" text-anchor="middle" font-size="10" fill="#aa3333">Columns 170-173 already solid!</text>
 </svg>
+-->
 
 ---
 
@@ -131,6 +135,9 @@ accordingly.
 
 ## 4. Top-Down Map View
 
+<img src="bsp_crack_map.svg" alt="Top-Down Map View">
+
+<!--
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 520" font-family="monospace" font-size="12">
   <defs>
     <marker id="arrow-map" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
@@ -256,6 +263,8 @@ accordingly.
   <text x="488" y="484" font-size="10" fill="#333">Viewer position</text>
 </svg>
 
+-->
+
 The critical geometry: s510 and s522 are far-field walls that happen to
 fall in the **near** subtree (they are north of y = -3968). They are
 visited in steps 2 and 3, long before the far subtree's s609 at step 4.
@@ -267,6 +276,9 @@ does not guarantee depth ordering across subtree boundaries.
 
 ## 5. Screen-Space Column Diagram
 
+<img src="bsp_crack_columns.svg" alt="Screen-Space Column Coverage">
+
+<!--
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 310" font-family="monospace" font-size="12">
   <!-- Title -->
   <text x="350" y="22" text-anchor="middle" font-size="15" font-weight="bold" fill="#333">Screen-Space Column Coverage</text>
@@ -363,6 +375,7 @@ does not guarantee depth ordering across subtree boundaries.
   <text x="500" y="237" font-size="10" fill="#555">Columns 170-173 marked solid by steps 2-3</text>
   <text x="500" y="250" font-size="10" fill="#555">before s609 gets a chance to draw at step 4</text>
 </svg>
+-->
 
 ---
 
@@ -371,6 +384,9 @@ does not guarantee depth ordering across subtree boundaries.
 This diagram shows why DOOM's per-column clip approach avoids the crack,
 while our span-based `mark_solid` causes it.
 
+<img src="bsp_crack_crosssection.svg" alt="Cross-Section at Column x=170">
+
+<!--
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 440" font-family="monospace" font-size="12">
   <!-- Title -->
   <text x="350" y="22" text-anchor="middle" font-size="15" font-weight="bold" fill="#333">Cross-Section at Screen Column x = 170</text>
@@ -482,6 +498,7 @@ while our span-based `mark_solid` causes it.
   <!-- Dividing line between panels -->
   <line x1="355" y1="55" x2="355" y2="430" stroke="#ccc" stroke-width="1" stroke-dasharray="6,4"/>
 </svg>
+-->
 
 **The key insight:** At column 170, s510 (the far wall at depth 80)
 projects to a narrow vertical range (roughly y = 75 to y = 125). The near

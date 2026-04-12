@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 520" font-family="monospace" font-size="12">
+  <defs>
+    <marker id="arrow-map" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#333" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="350" y="22" text-anchor="middle" font-size="15" font-weight="bold" fill="#333">Top-Down Map View</text>
+
+  <!-- Coordinate note -->
+  <text x="350" y="42" text-anchor="middle" font-size="10" fill="#888">World coords: x right, y up. Scale: ~3.4 px per world unit. Origin offset for framing.</text>
+
+  <!-- Half-space fills -->
+  <!-- Near side (north, y > -3968) = light blue -->
+  <rect x="40" y="50" width="620" height="218" fill="#ddeeff" opacity="0.5"/>
+  <!-- Far side (south, y < -3968) = light red -->
+  <rect x="40" y="268" width="620" height="220" fill="#ffdddd" opacity="0.5"/>
+
+  <!-- Side labels -->
+  <text x="60" y="75" font-size="11" fill="#3366aa" font-weight="bold">NEAR SIDE (side 0)</text>
+  <text x="60" y="88" font-size="10" fill="#3366aa">viewer is here (y > -3968)</text>
+  <text x="60" y="476" font-size="11" fill="#aa3333" font-weight="bold">FAR SIDE (side 1)</text>
+  <text x="60" y="489" font-size="10" fill="#aa3333">(y &lt; -3968)</text>
+
+  <!-- Partition line at y=-3968 (maps to svg y=268) -->
+  <line x1="40" y1="268" x2="660" y2="268" stroke="#888" stroke-width="2" stroke-dasharray="8,4"/>
+  <text x="665" y="272" font-size="11" fill="#888" text-anchor="start">y = -3968</text>
+  <text x="665" y="286" font-size="10" fill="#888" text-anchor="start">(partition)</text>
+
+  <!--
+    Coordinate mapping (approximate):
+    World x: 2300..3600 -> SVG x: 70..630  (scale: ~0.43 px/unit ... let's use 0.43)
+    World y: -4100..-3600 -> SVG y: 488..50  (y inverted, scale: ~0.876 px/unit)
+
+    Actually let me define a simpler mapping:
+    SVG_x = (world_x - 2200) * 0.45 + 40
+    SVG_y = (-3600 - world_y) * 0.876 + 50
+
+    Viewer (2397,-3964): SVG (128.65, 369.0-... )
+    Let me recalculate with a cleaner mapping:
+
+    SVG_x = (world_x - 2200) * 0.43 + 60
+    SVG_y = (world_y + 3600) * (-0.85) + 50
+    Hmm, let me just place things manually for clarity.
+
+    Key points:
+    Viewer:     (2397, -3964)
+    v432:       (2589, -3968)
+    ld256 north end: (2672, -3920)
+    ld256 south end: (2368, -4096)
+    s510 start: (3072, -3648)
+    s510 end:   (3072, -3968)
+    s522 start: (3520, -3904)
+    s522 end:   (3328, -3968)
+
+    Manual placement (SVG coords):
+    Viewer:         (130, 255)
+    v432:           (213, 268)
+    ld256 north:    (249, 248)
+    ld256 south:    (118, 323)
+    s510 top:       (420, 130)
+    s510 bottom:    (420, 268)
+    s522 start:     (613, 218)
+    s522 end:       (530, 268)
+  -->
+
+  <!-- Viewer position -->
+  <circle cx="130" cy="255" r="7" fill="#3366dd" stroke="#1a1a88" stroke-width="2"/>
+  <text x="118" y="245" font-size="11" fill="#1a1a88" font-weight="bold">Viewer</text>
+  <text x="80" y="232" font-size="10" fill="#555">(2397,-3964)</text>
+
+  <!-- FOV cone (approximate 90-degree cone facing east/right) -->
+  <polygon points="130,255 580,90 580,420" fill="#3366dd" opacity="0.06" stroke="#3366dd" stroke-width="0.5" stroke-dasharray="4,3"/>
+
+  <!-- Linedef 256: (2672,-3920) through v432=(2589,-3968) to (2368,-4096) -->
+  <!-- s382: (2672,-3920) to v432=(2589,-3968) — NEAR side, green -->
+  <line x1="249" y1="248" x2="213" y2="268" stroke="#33aa33" stroke-width="3.5"/>
+  <text x="248" y="240" font-size="10" fill="#227722" font-weight="bold">s382</text>
+  <text x="264" y="252" font-size="9" fill="#555">(2672,-3920)</text>
+
+  <!-- s609: v432=(2589,-3968) to (2368,-4096) — FAR side, green/blue -->
+  <line x1="213" y1="268" x2="118" y2="323" stroke="#33aa33" stroke-width="3.5" stroke-dasharray="6,3"/>
+  <text x="140" y="310" font-size="10" fill="#227722" font-weight="bold">s609</text>
+  <text x="70" y="338" font-size="9" fill="#555">(2368,-4096)</text>
+
+  <!-- v432 vertex marker -->
+  <circle cx="213" cy="268" r="5" fill="#ff4444" stroke="#aa0000" stroke-width="2"/>
+  <text x="218" y="290" font-size="11" fill="#aa0000" font-weight="bold">v432</text>
+  <text x="218" y="302" font-size="9" fill="#aa0000">(2589,-3968)</text>
+
+  <!-- s510: (3072,-3648) to (3072,-3968) — vertical wall, red -->
+  <line x1="420" y1="130" x2="420" y2="268" stroke="#dd3333" stroke-width="3"/>
+  <text x="428" y="165" font-size="10" fill="#aa2222" font-weight="bold">s510</text>
+  <text x="428" y="178" font-size="9" fill="#aa2222">ld 190</text>
+  <text x="428" y="125" font-size="9" fill="#555">(3072,-3648)</text>
+  <text x="428" y="282" font-size="9" fill="#555">(3072,-3968)</text>
+
+  <!-- s522: (3520,-3904) to (3328,-3968) — diagonal wall, orange -->
+  <line x1="613" y1="218" x2="530" y2="268" stroke="#dd8822" stroke-width="3"/>
+  <text x="575" y="212" font-size="10" fill="#aa6600" font-weight="bold">s522</text>
+  <text x="575" y="225" font-size="9" fill="#aa6600">ld 428</text>
+  <text x="618" y="212" font-size="9" fill="#555">(3520,-3904)</text>
+  <text x="534" y="282" font-size="9" fill="#555">(3328,-3968)</text>
+
+  <!-- Sight lines from viewer to key points -->
+  <line x1="130" y1="255" x2="213" y2="268" stroke="#3366dd" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.5"/>
+  <line x1="130" y1="255" x2="420" y2="200" stroke="#dd3333" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.4"/>
+  <line x1="130" y1="255" x2="570" y2="240" stroke="#dd8822" stroke-width="0.8" stroke-dasharray="3,3" opacity="0.4"/>
+
+  <!-- Legend -->
+  <rect x="440" y="370" width="210" height="120" rx="5" fill="white" stroke="#ccc" stroke-width="1"/>
+  <text x="455" y="388" font-size="11" font-weight="bold" fill="#333">Legend</text>
+  <line x1="455" y1="403" x2="480" y2="403" stroke="#33aa33" stroke-width="3"/>
+  <text x="488" y="407" font-size="10" fill="#333">Linedef 256 (s382/s609)</text>
+  <line x1="455" y1="423" x2="480" y2="423" stroke="#dd3333" stroke-width="3"/>
+  <text x="488" y="427" font-size="10" fill="#333">s510 (ld 190, far wall)</text>
+  <line x1="455" y1="443" x2="480" y2="443" stroke="#dd8822" stroke-width="3"/>
+  <text x="488" y="447" font-size="10" fill="#333">s522 (ld 428, far wall)</text>
+  <circle cx="467" cy="463" r="4" fill="#ff4444" stroke="#aa0000" stroke-width="1.5"/>
+  <text x="488" y="467" font-size="10" fill="#333">v432 (shared vertex)</text>
+  <circle cx="467" cy="480" r="4" fill="#3366dd" stroke="#1a1a88" stroke-width="1.5"/>
+  <text x="488" y="484" font-size="10" fill="#333">Viewer position</text>
+</svg>

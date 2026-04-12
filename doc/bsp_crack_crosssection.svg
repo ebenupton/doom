@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 440" font-family="monospace" font-size="12">
+  <!-- Title -->
+  <text x="350" y="22" text-anchor="middle" font-size="15" font-weight="bold" fill="#333">Cross-Section at Screen Column x = 170</text>
+  <text x="350" y="40" text-anchor="middle" font-size="11" fill="#888">Vertical axis = screen Y (0=top, 199=bottom)</text>
+
+  <!-- ==================== LEFT PANEL: Our span-based approach ==================== -->
+  <text x="185" y="68" text-anchor="middle" font-size="13" font-weight="bold" fill="#333">Our Renderer (span-based)</text>
+
+  <!-- Vertical axis for left panel -->
+  <line x1="80" y1="85" x2="80" y2="390" stroke="#333" stroke-width="1.5"/>
+  <text x="70" y="95" text-anchor="end" font-size="10" fill="#555">y=0</text>
+  <text x="70" y="238" text-anchor="end" font-size="10" fill="#555">y=100</text>
+  <text x="70" y="390" text-anchor="end" font-size="10" fill="#555">y=199</text>
+
+  <!-- Tick marks -->
+  <line x1="76" y1="90" x2="80" y2="90" stroke="#333" stroke-width="1"/>
+  <line x1="76" y1="238" x2="80" y2="238" stroke="#333" stroke-width="1"/>
+  <line x1="76" y1="385" x2="80" y2="385" stroke="#333" stroke-width="1"/>
+
+  <!-- Full open span initially: y 0-199 (SVG 90-385) -->
+  <rect x="90" y="90" width="50" height="295" rx="0" fill="#f0f0f0" stroke="#ccc" stroke-width="1"/>
+  <text x="115" y="240" text-anchor="middle" font-size="9" fill="#999" transform="rotate(-90,115,240)">open span</text>
+
+  <!-- Step 1: s382 draws, mark_solid. Show the near wall covering a LARGE range -->
+  <!-- s382 at depth 23: ceiling ~y=30, floor ~y=170 => SVG roughly 135, 347 -->
+  <rect x="155" y="115" width="50" height="230" rx="0" fill="#44bb44" opacity="0.7" stroke="#338833" stroke-width="1.5"/>
+  <text x="180" y="240" text-anchor="middle" font-size="10" fill="#225522" transform="rotate(-90,180,240)">s382 (depth 23)</text>
+  <text x="180" y="108" text-anchor="middle" font-size="9" fill="#338833">ceil y=30</text>
+  <text x="180" y="360" text-anchor="middle" font-size="9" fill="#338833">floor y=170</text>
+
+  <!-- After s382 mark_solid at [149,170], this column is now in the solid set -->
+  <!-- Entire column marked solid (span approach) -->
+  <rect x="155" y="90" width="50" height="295" rx="0" fill="none" stroke="#ff0000" stroke-width="2"/>
+  <text x="180" y="400" text-anchor="middle" font-size="10" fill="#ff0000" font-weight="bold">ENTIRE SPAN</text>
+  <text x="180" y="413" text-anchor="middle" font-size="10" fill="#ff0000" font-weight="bold">MARKED SOLID</text>
+
+  <!-- Step 2: s510 also marks solid (redundant here, but extends the solid range) -->
+  <!-- s510 at depth 80-94: much narrower projected range, say ceil y=75, floor y=125 => SVG 200, 270 -->
+  <rect x="220" y="200" width="50" height="70" rx="0" fill="#dd4444" opacity="0.6" stroke="#aa3333" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="245" y="240" text-anchor="middle" font-size="10" fill="#aa3333" transform="rotate(-90,245,240)">s510 (depth 80)</text>
+  <text x="245" y="193" text-anchor="middle" font-size="9" fill="#aa3333">ceil y=75</text>
+  <text x="245" y="283" text-anchor="middle" font-size="9" fill="#aa3333">floor y=125</text>
+
+  <!-- Arrow showing that s510's mark_solid kills the entire span too -->
+  <line x1="270" y1="200" x2="300" y2="150" stroke="#aa3333" stroke-width="1" marker-end="url(#arrow-xsec)"/>
+  <text x="303" y="145" font-size="9" fill="#aa3333">Also marks full</text>
+  <text x="303" y="157" font-size="9" fill="#aa3333">span solid</text>
+
+  <!-- Step 4 annotation: s609 BLOCKED -->
+  <text x="180" y="80" text-anchor="middle" font-size="11" fill="#ff0000" font-weight="bold">s609 BLOCKED</text>
+
+  <!-- ==================== RIGHT PANEL: DOOM's per-column approach ==================== -->
+  <text x="530" y="68" text-anchor="middle" font-size="13" font-weight="bold" fill="#333">DOOM (per-column clip)</text>
+
+  <defs>
+    <marker id="arrow-xsec" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#aa3333" stroke-width="1"/>
+    </marker>
+    <marker id="arrow-ok" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#3366dd" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <!-- Vertical axis for right panel -->
+  <line x1="420" y1="85" x2="420" y2="390" stroke="#333" stroke-width="1.5"/>
+  <text x="410" y="95" text-anchor="end" font-size="10" fill="#555">y=0</text>
+  <text x="410" y="238" text-anchor="end" font-size="10" fill="#555">y=100</text>
+  <text x="410" y="390" text-anchor="end" font-size="10" fill="#555">y=199</text>
+
+  <line x1="416" y1="90" x2="420" y2="90" stroke="#333" stroke-width="1"/>
+  <line x1="416" y1="238" x2="420" y2="238" stroke="#333" stroke-width="1"/>
+  <line x1="416" y1="385" x2="420" y2="385" stroke="#333" stroke-width="1"/>
+
+  <!-- Full open span initially -->
+  <rect x="430" y="90" width="50" height="295" rx="0" fill="#f0f0f0" stroke="#ccc" stroke-width="1"/>
+
+  <!-- Step 1: s382 draws its wall portion and updates clip arrays -->
+  <rect x="495" y="115" width="50" height="230" rx="0" fill="#44bb44" opacity="0.7" stroke="#338833" stroke-width="1.5"/>
+  <text x="520" y="240" text-anchor="middle" font-size="10" fill="#225522" transform="rotate(-90,520,240)">s382 (depth 23)</text>
+  <text x="520" y="108" text-anchor="middle" font-size="9" fill="#338833">ceilingclip=30</text>
+  <text x="520" y="360" text-anchor="middle" font-size="9" fill="#338833">floorclip=170</text>
+
+  <!-- Per-column: only the drawn range is clipped. Open above ceil and below floor -->
+  <!-- Open range above: y 0-30 -->
+  <rect x="495" y="90" width="50" height="25" rx="0" fill="#ddeeff" opacity="0.6" stroke="#4488bb" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="520" y="101" text-anchor="middle" font-size="8" fill="#4488bb">open</text>
+
+  <!-- Open range below: y 170-199 -->
+  <rect x="495" y="345" width="50" height="40" rx="0" fill="#ddeeff" opacity="0.6" stroke="#4488bb" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="520" y="368" text-anchor="middle" font-size="8" fill="#4488bb">open</text>
+
+  <!-- Step 2: s510 draws its narrow range and updates clip arrays -->
+  <rect x="560" y="200" width="50" height="70" rx="0" fill="#dd4444" opacity="0.6" stroke="#aa3333" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <text x="585" y="240" text-anchor="middle" font-size="10" fill="#aa3333" transform="rotate(-90,585,240)">s510 (depth 80)</text>
+
+  <!-- Per-column: s510 does NOT cover the full range [30..170] -->
+  <!-- It only covers [75..125]. So it does NOT mark column as fully solid -->
+  <text x="610" y="193" font-size="9" fill="#aa3333">s510 covers</text>
+  <text x="610" y="205" font-size="9" fill="#aa3333">y=[75,125]</text>
+  <text x="610" y="220" font-size="9" fill="#2266aa">Does NOT fill</text>
+  <text x="610" y="232" font-size="9" fill="#2266aa">[30..170]</text>
+  <text x="610" y="247" font-size="9" fill="#2266aa">Column stays</text>
+  <text x="610" y="259" font-size="9" fill="#2266aa" font-weight="bold">OPEN</text>
+
+  <!-- Step 4: s609 CAN draw here in DOOM -->
+  <line x1="565" y1="310" x2="545" y2="350" stroke="#3366dd" stroke-width="1" marker-end="url(#arrow-ok)"/>
+  <text x="530" y="390" text-anchor="middle" font-size="11" fill="#3366dd" font-weight="bold">s609 DRAWS OK</text>
+
+  <!-- Dividing line between panels -->
+  <line x1="355" y1="55" x2="355" y2="430" stroke="#ccc" stroke-width="1" stroke-dasharray="6,4"/>
+</svg>
