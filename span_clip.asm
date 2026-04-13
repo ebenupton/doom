@@ -1314,25 +1314,27 @@ zp_cc_den_hi = $FE
     ; restoring divide directly.
     LDA zp_cc_den_hi : BNE slow_setup                                   ; |
     LDA zp_cc_den_lo : STA zp_div_den                                   ; |
-    ; Setup for 8-iter u16/u8 divide: rem = num_hi, shift source = num_lo,
+    ; Setup for 8-iter u16/u8 divide: rem in A, shift source = div_hi,
     ; quot accumulator = zp_div_lo (via INC trick — same as udiv16_8).
-    LDA zp_div_hi : STA zp_div_rem                                      ; |
-    LDA zp_div_lo : STA zp_div_hi                                       ; |
-    LDA #0 : STA zp_div_lo                                              ; |
+    ; A-register loop: same optimization as udiv16_8 fast path.
+    LDA zp_div_hi                                                       ; |
+    LDX zp_div_lo : STX zp_div_hi                                       ; |
+    LDX #0 : STX zp_div_lo                                              ; |
     LDX #8                                                              ; |
 .fast_loop
-    ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; |
+    ASL zp_div_lo : ROL zp_div_hi                                       ; |
+    ROL A                                                                ; |
     BCS fast_over                                                       ; |
-    LDA zp_div_rem : CMP zp_div_den : BCC fast_next                     ; |
+    CMP zp_div_den : BCC fast_next                                      ; |
     SBC zp_div_den                                                      ; |
 .fast_commit
-    STA zp_div_rem : INC zp_div_lo                                      ; |
+    INC zp_div_lo                                                        ; |
 .fast_next
     DEX : BNE fast_loop                                                 ; |
     LDA zp_div_lo                ; A = quot                             ; |
     JMP cx_from_quot                                                    ; |
 .fast_over
-    LDA zp_div_rem : SEC : SBC zp_div_den
+    SBC zp_div_den               ; carry already set from ROL overflow
     JMP fast_commit
 
 .slow_setup
