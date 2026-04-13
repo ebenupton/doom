@@ -460,7 +460,7 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 .ms_rts4 RTS                                                            ; |
 }
 
-EQUW 0   ; 2-byte pad: preserve page alignment after CLC removals in mark_solid
+EQUD 0   ; 4-byte pad: preserve page alignment after carry propagation opts
 
 ; ======================================================================
 ; HAS_GAP: fast visibility check for column range [ilo, ihi]
@@ -896,7 +896,9 @@ zp_cc_den_hi = $FE
     LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
     LDA POOL_BR,Y     : STA POOL_BR,X                                   ; |
     LDA POOL_XSTART,Y : STA POOL_XSTART,X                               ; |
-    LDA zp_ilo : SEC : SBC #1 : STA POOL_XEND,X                         ; |
+    ; carry is clear (BCS tg_no_left fell through, alloc_span preserves C)
+    ; so SBC #0 with C=0 computes ilo - 0 - 1 = ilo - 1, same as SEC:SBC #1
+    LDA zp_ilo : SBC #0 : STA POOL_XEND,X                               ; |
     JSR tg_append_x                                                     ; |
 .tg_no_left
 
@@ -972,7 +974,8 @@ zp_cc_den_hi = $FE
     LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
     LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
     LDA POOL_BR,Y   : STA POOL_BR,X                                     ; |
-    LDA zp_ihi : CLC : ADC #1 : STA POOL_XSTART,X                       ; |
+    ; carry already clear: BCS tg_no_right fell through (C=0) and alloc_span/STAs don't change C
+    LDA zp_ihi : ADC #1 : STA POOL_XSTART,X                             ; |
     LDA POOL_XEND,Y : STA POOL_XEND,X                                   ; |
     JSR tg_append_x                                                     ; |
 .tg_no_right
