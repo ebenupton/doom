@@ -459,15 +459,22 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 {
     ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
     ; range, 0 otherwise. Spans are sorted by xstart.
-    ; Fast loop: skip spans where xend < ilo (fully before query). Once we
-    ; find xend >= ilo, one xstart check determines overlap vs. past.
-    LDX zp_head : BEQ hgn                                               ; |||||
-.hgl LDA POOL_XEND,X : CMP zp_ilo : BCS hg_chk   ; xend >= ilo → check xstart  ; ||||||||||||||||||||
-    LDA POOL_NEXT,X : TAX : BNE hgl                ; xend < ilo → advance        ; |||||||
-.hgn LDA #0 : RTS                                                       ; |
-.hg_chk LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_yes : BCC hg_yes       ; ||
-.hgn2 LDA #0 : RTS                ; xstart > ihi → no overlap possible  ; |
-.hg_yes LDA #1 : RTS                                                    ; |||||||
+    ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
+    ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
+    LDX zp_head : BEQ hgn
+    ; --- X iteration: current span in X ---
+.hgl_x LDA POOL_XEND,X : CMP zp_ilo : BCS hg_chk_x  ; xend >= ilo → hit
+    LDY POOL_NEXT,X : BEQ hgn                         ; advance via Y
+    ; --- Y iteration: current span in Y ---
+.hgl_y LDA POOL_XEND,Y : CMP zp_ilo : BCS hg_chk_y  ; xend >= ilo → hit
+    LDX POOL_NEXT,Y : BNE hgl_x                       ; advance via X
+.hgn LDA #0 : RTS
+    ; --- Hit checks (one copy per register, avoids TYX which doesn't exist) ---
+.hg_chk_x LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_yes : BCC hg_yes
+    LDA #0 : RTS
+.hg_chk_y LDA POOL_XSTART,Y : CMP zp_ihi : BEQ hg_yes : BCC hg_yes
+    LDA #0 : RTS
+.hg_yes LDA #1 : RTS
 }
 
 ; ======================================================================
