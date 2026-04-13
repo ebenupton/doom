@@ -613,7 +613,15 @@ zp_cc_den_hi = $FE
     LDA zp_yt1h : AND zp_yt2h : BPL tg_bb_not_negyt
     ; Old top auto-dominates.  Check bot: yb must be on-screen (hi = 0).
     LDA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip_a
-    JMP tg_bb_check_bot  ; top is settled, just check bot
+    ; Check bot for old-dom: max(bl,br) ≤ min(yb1,yb2)
+    LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_a_bmax
+    LDA POOL_BR,X
+.tg_bb_a_bmax
+    STA zp_tmp0
+    LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_a_bmin
+    LDA zp_yb2
+.tg_bb_a_bmin
+    CMP zp_tmp0 : BCS tg_bb_old_dom  ; old bot dominates → old wins all
 .tg_bb_skip_a JMP tg_bb_skip
 
 .tg_bb_not_negyt
@@ -632,8 +640,6 @@ zp_cc_den_hi = $FE
     CMP zp_tmp0 : BEQ tg_bb_top_ok : BCC tg_bb_top_ok
     JMP tg_bb_try_newdom   ; old top doesn't dominate → try new-dom
 .tg_bb_top_ok
-
-.tg_bb_check_bot
     ; Check bot: max(bl,br) ≤ min(yb1,yb2)  [old bot dominance]
     LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok
     LDA POOL_BR,X
@@ -643,6 +649,7 @@ zp_cc_den_hi = $FE
     LDA zp_yb2
 .tg_bb_bmin_ok
     CMP zp_tmp0 : BCC tg_bb_try_newdom  ; old bot doesn't dominate → try new-dom
+.tg_bb_old_dom
     ; Old dominates by bounding range — skip all interpolation.
     JSR tg_append_x
     JMP tg_walk
