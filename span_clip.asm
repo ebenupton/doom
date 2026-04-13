@@ -888,7 +888,19 @@ zp_cc_den_hi = $FE
 .tg_cc_done
 
     ; --- Clamp new s16 values to [0,159] u8 for dominance check ---
-    ; Fast path: if all 4 hi bytes are 0 and all lo bytes < 160, no clamp needed.
+    ; Neg-yt fast path: when yt is negative, nt values clamp to 0; only check nb.
+    LDA zp_yt1h : AND zp_yt2h : BPL tg_clamp_full
+    LDA #0 : STA zp_nt_l : STA zp_nt_r
+    ; nb: check hi bytes then lo bytes
+    LDA zp_nb_lh : ORA zp_nb_rh : BNE tg_clamp_nb_only
+    LDA zp_nb_l : CMP #160 : BCS tg_clamp_nb_only
+    LDA zp_nb_r : CMP #160 : BCS tg_clamp_nb_only
+    JMP tg_clamp_done
+.tg_clamp_nb_only
+    ; Clamp only nb_l and nb_r (nt already set to 0) — jump into slow path
+    JMP tg_clamp_nb_entry
+.tg_clamp_full
+    ; Full fast path: if all 4 hi bytes are 0 and all lo bytes < 160, no clamp needed.
     LDA zp_nt_lh : ORA zp_nt_rh : ORA zp_nb_lh : ORA zp_nb_rh           ; |
     BNE tg_clamp_slow                                                    ; |
     LDA zp_nt_l : CMP #160 : BCS tg_clamp_slow                          ; |
@@ -909,6 +921,7 @@ zp_cc_den_hi = $FE
 .tg_cn2f LDA #159 : BNE tg_cn2s
 .tg_cn2z LDA #0
 .tg_cn2s STA zp_nt_r                                                    ; |
+.tg_clamp_nb_entry
     LDA zp_nb_lh : BMI tg_cn3z : BNE tg_cn3f                            ; |
     LDA zp_nb_l : CMP #160 : BCC tg_cn3s                                ; |
 .tg_cn3f LDA #159 : BNE tg_cn3s
