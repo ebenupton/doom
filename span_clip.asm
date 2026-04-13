@@ -434,7 +434,8 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
     LDA POOL_NEXT,Y : STA POOL_NEXT,X                                   ; |
     TXA : STA POOL_NEXT,Y                                               ; |
     ; Original (Y) now becomes the left fragment: xend = ilo - 1
-    LDA zp_ilo : SEC : SBC #1 : STA POOL_XEND,Y                         ; |
+    ; carry is clear: C=0 propagated from BCS fall-through, through alloc+copies+ADC(no overflow)
+    LDA zp_ilo : SBC #0 : STA POOL_XEND,Y                               ; |
     ; Continue from the span AFTER the new sibling
     LDA POOL_NEXT,X : TAX : BEQ ms_rts2 : JMP msl                       ; |
 .ms_rts2 RTS                                                            ; |
@@ -460,7 +461,7 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 .ms_rts4 RTS                                                            ; |
 }
 
-EQUD 0   ; 4-byte pad: preserve page alignment after carry propagation opts
+EQUD 0 : EQUB 0  ; 5-byte pad: preserve page alignment after carry propagation opts
 
 ; ======================================================================
 ; HAS_GAP: fast visibility check for column range [ilo, ihi]
