@@ -133,13 +133,13 @@ constant-line merge optimisation landed.
 
 | 2026-04-13 |       3325 B  |  3631 (19)    |  27922 (12)| 6452 (127) | 2372 (148) | **40377**    | −553   | **98903**    | −4239  | **Pre-seg bulk-link in tighten walk.** Pre-scan old list at tighten start to find first span with xend >= ilo. All prior spans are bulk-linked as new list head (~14 cyc/span vs ~53). If ALL spans are pre-seg, link entire old list and return immediately. S1 tighten −553, S2 tighten −4239. ROM +282 B. |
 
-| 2026-04-14 |       3328 B  |  3513 (19)    |  26918 (12)| 5359 (127) | 2372 (148) | **38162**    | −2215  | **94655**    | −4248  | **Micro-optimisation batch: reversed CMP, A-register division, dead prod check removal.** (1) Reversed CMP operands in dominance checks and range comparisons across has_gap, mark_solid, and tighten — eliminates redundant BEQ+BCS/BCC pairs, saving 2 cyc per check site. Applied to 10 sites total. (2) udiv16_8 fast-path main loop keeps remainder in A register: ROL A (2 cyc) replaces ROL zp (5) + LDA zp (3), STA after SBC eliminated. Saves 6-9 cyc per main-loop iteration. Same optimisation applied to compute_crossover fast path. (3) Removed dead `prod == 0` check from both interp_store and seg_interp_store: when offset > 0 AND |dy| > 0 (guaranteed by prior BEQ checks), quarter-square multiply always produces nonzero result. Saves 9 cyc per full-path interp call. S1 tighten −1004, S2 tighten −853. S1 has_gap −1093, S2 has_gap −686. S1 mark_solid −118, S2 mark_solid −136. ROM +3 B. |
+| 2026-04-14 |       3372 B  |  3519 (19)    |  26419 (12)| 5359 (127) | 2372 (148) | **37669**    | −2708  | **93409**    | −5494  | **Micro-optimisation batch.** (1) Reversed CMP operands in dominance checks and range comparisons across has_gap, mark_solid, and tighten — eliminates redundant BEQ+BCS/BCC pairs, saving 2 cyc per check. Applied to 10 sites. (2) udiv16_8 fast-path main loop keeps remainder in A register: ROL A (2 cyc) replaces ROL zp (5) + LDA zp (3), STA after SBC eliminated. Saves 6-9 cyc per main-loop iteration. Same optimisation applied to compute_crossover fast path. (3) Removed dead `prod == 0` check from both interp_store and seg_interp_store: when offset > 0 AND |dy| > 0 (guaranteed by prior BEQ checks), quarter-square multiply always produces nonzero result. Saves 9 cyc per full-path interp call. (4) Per-copy commit handlers in unrolled skip loop: each of the 8 copies branches to its own handler (dsc7..dsc0) that hardcodes the remaining count via LDX #N, eliminating the 2-cyc DEX from every non-commit skip iteration. (5) Moved interp_store is_y0/is_y1 before entry point to avoid page-crossing BEQ branches. S1 total −2708, S2 total −5494. ROM +47 B. |
 
-Per-call averages (S1): `mark_solid` 185, `tighten` 2243, `has_gap` 42, `is_full` 16.
-Per-call averages (S2): `mark_solid` 224, `tighten` 1738, `has_gap`  48, `is_full` 16.
+Per-call averages (S1): `mark_solid` 185, `tighten` 2202, `has_gap` 42, `is_full` 16.
+Per-call averages (S2): `mark_solid` 225, `tighten` 1710, `has_gap`  48, `is_full` 16.
 
-Cumulative vs baseline (S1 127 389 cyc → 38 162): **−89 227 cyc, −70.0%**.
-ROM size: 2701 → 3328 bytes, **+627 bytes**.
+Cumulative vs baseline (S1 127 389 cyc → 37 669): **−89 720 cyc, −70.4%**.
+ROM size: 2701 → 3372 bytes, **+671 bytes**.
 
 ## Notes on this round
 
