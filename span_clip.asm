@@ -270,9 +270,10 @@ EQUB 0   ; 1-byte pad: keep code after umul8 page-aligned with pre-opt layout
 .ds DEX : BNE dl                                                        ; |||||||||||||
     LDA zp_div_lo : RTS                                                 ; |||
 .dl_over
-    SEC : SBC zp_div_den
+    SBC zp_div_den          ; carry already set from BCS dl_over
     JMP dl_commit
 }
+EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 
 ; ======================================================================
 ; SEG_INTERP_STORE: interpolate seg Y at column X (s16 result)
