@@ -1208,8 +1208,9 @@ zp_cc_den_hi = $FE
     LDA zp_div_lo                ; A = quot                             ; |
     JMP cx_from_quot                                                    ; |
 .fast_over
-    SEC : SBC zp_div_den
+    SBC zp_div_den          ; carry already set from BCS fast_over
     JMP fast_commit
+EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal
 
 .slow_setup
     ; Slow path: build the u24 num and run the u24/u16 restoring divide.
