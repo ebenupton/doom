@@ -427,7 +427,8 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
     LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
     LDA POOL_BR,Y   : STA POOL_BR,X                                     ; |
     ; Sibling's active range = [ihi+1, original xend]
-    LDA zp_ihi : CLC : ADC #1 : STA POOL_XSTART,X                       ; |
+    ; carry already clear: BCS ms_left_only fell through (C=0) and alloc_span/STAs don't change C
+    LDA zp_ihi : ADC #1 : STA POOL_XSTART,X                             ; |
     LDA POOL_XEND,Y : STA POOL_XEND,X                                   ; |
     ; Insert sibling after original
     LDA POOL_NEXT,Y : STA POOL_NEXT,X                                   ; |
@@ -459,7 +460,7 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 .ms_rts4 RTS                                                            ; |
 }
 
-EQUB 0   ; 1-byte pad: preserve page alignment after CLC removal in mark_solid
+EQUW 0   ; 2-byte pad: preserve page alignment after CLC removals in mark_solid
 
 ; ======================================================================
 ; HAS_GAP: fast visibility check for column range [ilo, ihi]
