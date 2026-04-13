@@ -304,15 +304,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; dy = y1 - y0 (BEQ sis_y0 catches dy==0 constant-line shortcut)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ sis_y0                        ; |||||
     JSR smul8                                                           ; ||
-    ; Short-circuit when prod = 0 — saves the divide.
-    LDA zp_prod_lo : ORA zp_prod_hi : BNE sis_nz                        ; |||
-.sis_y0
-    LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
-    LDA zp_i_y0 : RTS                                                   ; ||
-.sis_y1
-    LDY zp_i_y1h                ; Y = y1 high, A = y1 low               ; |
-    LDA zp_i_y1 : RTS                                                   ; ||
-.sis_nz
+    ; prod != 0 guaranteed: offset > 0 AND |dy| > 0 → quarter-square product > 0.
     ; ex always in [1,255] post-remap; bias = ex/2 for round-to-nearest
     LDA zp_div_den : LSR A                                              ; |
     CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; ||
@@ -331,6 +323,12 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     SEC : LDA zp_i_y0 : SBC zp_div_lo : TAX                             ; |
     LDA zp_i_y0h : SBC zp_div_hi : TAY                                  ; |
     TXA : RTS                                                           ; |
+.sis_y0
+    LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
+    LDA zp_i_y0 : RTS                                                   ; ||
+.sis_y1
+    LDY zp_i_y1h                ; Y = y1 high, A = y1 low               ; |
+    LDA zp_i_y1 : RTS                                                   ; ||
 }
 
 ; (seg_interp_core removed — inlined into seg_interp_store above.)
@@ -355,12 +353,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; dy = y1 - y0 (BEQ is_y0 catches constant-line short-circuit)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ is_y0                         ; |||||
     JSR smul8                                                           ; |
-    LDA zp_prod_lo : ORA zp_prod_hi : BNE is_nz                         ; |
-.is_y0
-    LDA zp_i_y0 : RTS                                                   ; ||||
-.is_y1
-    LDA zp_i_y1 : RTS                                                   ; ||
-.is_nz
+    ; prod != 0 guaranteed: offset > 0 AND |dy| > 0 → quarter-square product > 0.
     ; Add ex/2 to product for round-to-nearest. ex always in [1,255].
     LDA zp_div_den : LSR A                                              ; |
     CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; |
@@ -375,6 +368,10 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDA #0 : SBC zp_prod_hi : STA zp_div_hi                             ; |
     JSR udiv16_8                                                        ; |
     EOR #$FF : SEC : ADC zp_i_y0 : RTS                                  ; |
+.is_y0
+    LDA zp_i_y0 : RTS                                                   ; ||||
+.is_y1
+    LDA zp_i_y1 : RTS                                                   ; ||
 }
 
 ; (interp_span removed — mark_solid no longer interpolates)
