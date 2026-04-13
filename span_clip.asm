@@ -979,12 +979,13 @@ zp_cc_den_hi = $FE
 .tg_cn4z LDA #0
 .tg_cn4s STA zp_nb_r                                                    ; |
 .tg_clamp_done
-    ; Unsigned dominance: new_tl <= old_tl AND new_tr <= old_tr AND ...
-    LDA zp_nt_l : CMP zp_ot_l : BEQ tg_d1 : BCS tg_not_old_dom          ; |
-.tg_d1 LDA zp_nt_r : CMP zp_ot_r : BEQ tg_d2 : BCS tg_not_old_dom       ; |
-.tg_d2 LDA zp_ob_l : CMP zp_nb_l : BEQ tg_d3 : BCS tg_not_old_dom       ; |
-.tg_d3 LDA zp_ob_r : CMP zp_nb_r : BEQ tg_d4 : BCS tg_not_old_dom       ; |
-.tg_d4 ; Old dominates: keep span unchanged
+    ; Unsigned dominance: nt_l <= ot_l AND nt_r <= ot_r AND ob_l <= nb_l AND ob_r <= nb_r
+    ; Reversed CMP operands: CMP sets C when A >= operand, so BCC fires on failure.
+    LDA zp_ot_l : CMP zp_nt_l : BCC tg_not_old_dom                        ; |
+    LDA zp_ot_r : CMP zp_nt_r : BCC tg_not_old_dom                        ; |
+    LDA zp_nb_l : CMP zp_ob_l : BCC tg_not_old_dom                        ; |
+    LDA zp_nb_r : CMP zp_ob_r : BCC tg_not_old_dom                        ; |
+    ; Old dominates: keep span unchanged
     LDX zp_save1                                                        ; |
     JSR tg_append_x                                                     ; |
     JMP tg_walk                                                         ; |
