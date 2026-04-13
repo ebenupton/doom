@@ -325,13 +325,17 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .interp_store
 {
     ; offset = x - x0 (A holds x on entry)
-    SEC : SBC zp_i_x0 : BEQ is_y0 : STA zp_mul_b                        ; ||||
+    SEC : SBC zp_i_x0 : BEQ is_y0                                       ; |||
+    CMP zp_div_den : BEQ is_y1                                          ; ||
+    STA zp_mul_b                                                        ; |
     ; dy = y1 - y0 (BEQ is_y0 catches constant-line short-circuit)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ is_y0                         ; |||||
     JSR smul8                                                           ; |
     LDA zp_prod_lo : ORA zp_prod_hi : BNE is_nz                         ; |
 .is_y0
     LDA zp_i_y0 : RTS                                                   ; ||||
+.is_y1
+    LDA zp_i_y1 : RTS                                                   ; ||
 .is_nz
     ; Add ex/2 to product for round-to-nearest. ex always in [1,255].
     LDA zp_div_den : LSR A                                              ; |
