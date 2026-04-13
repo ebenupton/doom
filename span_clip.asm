@@ -880,10 +880,10 @@ zp_cc_den_hi = $FE
     ; --- Left fragment: if xstart < ilo (active range extends left of seg) ---
     ; Allocate sibling, copy line params verbatim, set its active range to
     ; [original xstart, ilo-1]. NO interp_store calls — line is preserved.
-    LDX zp_save1                                                        ; |
-    LDA POOL_XSTART,X : CMP zp_ilo : BCS tg_no_left                     ; |
-    JSR alloc_span : BEQ tg_no_left                                     ; |
+    ; Load old span into Y (preserved across alloc_span, saves a reload).
     LDY zp_save1                                                        ; |
+    LDA POOL_XSTART,Y : CMP zp_ilo : BCS tg_no_left                     ; |
+    JSR alloc_span : BEQ tg_no_left                                     ; |
     LDA POOL_XLO,Y    : STA POOL_XLO,X                                  ; |
     LDA POOL_XHI,Y    : STA POOL_XHI,X                                  ; |
     LDA POOL_TL,Y     : STA POOL_TL,X                                   ; |
