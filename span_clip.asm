@@ -612,13 +612,16 @@ zp_cc_den_hi = $FE
     ; Path A: both yt negative → old top auto-dominates
     LDA zp_yt1h : AND zp_yt2h : BPL tg_bb_not_negyt
     ; Old top auto-dominates.  Check bot: yb must be on-screen (hi = 0).
-    LDA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip
+    LDA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip_a
     JMP tg_bb_check_bot  ; top is settled, just check bot
+.tg_bb_skip_a JMP tg_bb_skip
 
 .tg_bb_not_negyt
-    ; Path B: all 4 seg values on-screen [0,159]
-    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip
-    ; Check top: min(tl,tr) ≥ max(yt1,yt2)
+    ; Path B: all 4 seg values on-screen (hi bytes = 0)
+    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BEQ tg_bb_path_b
+    JMP tg_bb_skip
+.tg_bb_path_b
+    ; Check top: min(tl,tr) ≥ max(yt1,yt2)  [old top dominance]
     LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok
     LDA POOL_TR,X
 .tg_bb_tmin_ok
@@ -627,11 +630,11 @@ zp_cc_den_hi = $FE
     LDA zp_yt2
 .tg_bb_tmax_ok
     CMP zp_tmp0 : BEQ tg_bb_top_ok : BCC tg_bb_top_ok
-    JMP tg_bb_skip
+    JMP tg_bb_try_newdom   ; old top doesn't dominate → try new-dom
 .tg_bb_top_ok
 
 .tg_bb_check_bot
-    ; Check bot: max(bl,br) ≤ min(yb1,yb2)
+    ; Check bot: max(bl,br) ≤ min(yb1,yb2)  [old bot dominance]
     LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok
     LDA POOL_BR,X
 .tg_bb_bmax_ok
@@ -639,10 +642,71 @@ zp_cc_den_hi = $FE
     LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_bmin_ok
     LDA zp_yb2
 .tg_bb_bmin_ok
-    CMP zp_tmp0 : BCC tg_bb_skip
+    CMP zp_tmp0 : BCC tg_bb_try_newdom  ; old bot doesn't dominate → try new-dom
     ; Old dominates by bounding range — skip all interpolation.
     JSR tg_append_x
     JMP tg_walk
+
+.tg_bb_try_newdom
+    ; --- New-dominance BB check (all seg values on-screen, hi=0) ---
+    ; Check that all 4 seg lo bytes are in [0,159] so interpolated results
+    ; need no clamping.
+    LDA zp_yt1 : CMP #160 : BCS tg_nd_fail
+    LDA zp_yt2 : CMP #160 : BCS tg_nd_fail
+    LDA zp_yb1 : CMP #160 : BCS tg_nd_fail
+    LDA zp_yb2 : CMP #160 : BCS tg_nd_fail
+    ; New-dom top: max(tl,tr) ≤ min(yt1,yt2)
+    LDA POOL_TL,X : CMP POOL_TR,X : BCS tg_nd_tmax_ok
+    LDA POOL_TR,X
+.tg_nd_tmax_ok
+    STA zp_tmp0                     ; tmp0 = max(tl,tr)
+    LDA zp_yt1 : CMP zp_yt2 : BCC tg_nd_tmin_ok
+    LDA zp_yt2
+.tg_nd_tmin_ok                      ; A = min(yt1,yt2)
+    CMP zp_tmp0 : BCC tg_nd_fail   ; min(yt) < max(tl,tr) → no new-dom
+    ; New-dom bot: min(bl,br) ≥ max(yb1,yb2)
+    LDA POOL_BL,X : CMP POOL_BR,X : BCC tg_nd_bmin_ok
+    LDA POOL_BR,X
+.tg_nd_bmin_ok
+    STA zp_tmp0                     ; tmp0 = min(bl,br)
+    LDA zp_yb1 : CMP zp_yb2 : BCS tg_nd_bmax_ok
+    LDA zp_yb2
+.tg_nd_bmax_ok                      ; A = max(yb1,yb2)
+    CMP zp_tmp0 : BEQ tg_bb_newdom_top : BCC tg_bb_newdom_top
+.tg_nd_fail JMP tg_bb_skip
+.tg_bb_newdom_top
+    ; --- New dominates by BB! Skip OLD interp + crossover detection. ---
+    ; Set dummy old values so the no-crossover inline path produces new values:
+    ;   max(0, nt) = nt for top;  min(159, nb) = nb for bot.
+    STX zp_save1
+    LDA #0 : STA zp_ot_l : STA zp_ot_r : STA zp_cx_top : STA zp_cx_bot
+    LDA #159 : STA zp_ob_l : STA zp_ob_r
+    ; --- NEW seg interpolation (values in [0,159], no clamping needed) ---
+    ; Anchor fast path: (ox0,ox1) == (sx1,sx2)
+    LDA zp_ox0 : CMP zp_sx1 : BNE tg_nd_not_anchor
+    LDA zp_ox1 : CMP zp_sx2 : BNE tg_nd_not_anchor
+    LDA zp_yt1  : STA zp_nt_l  : LDA zp_yt2  : STA zp_nt_r
+    LDA zp_yb1  : STA zp_nb_l  : LDA zp_yb2  : STA zp_nb_r
+    JMP tg_not_old_dom
+.tg_nd_not_anchor
+    ; Constant-line fast path: yt1==yt2 AND yb1==yb2 (hi bytes are 0, just check lo)
+    LDA zp_yt1 : CMP zp_yt2 : BNE tg_nd_slow
+    LDA zp_yb1 : CMP zp_yb2 : BNE tg_nd_slow
+    LDA zp_yt1 : STA zp_nt_l : STA zp_nt_r
+    LDA zp_yb1 : STA zp_nb_l : STA zp_nb_r
+    JMP tg_not_old_dom
+.tg_nd_slow
+    ; Full seg interpolation (4 calls)
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
+    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h
+    LDA zp_yt2 : STA zp_i_y1
+    LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r
+    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h
+    LDA zp_yb2 : STA zp_i_y1
+    LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r
+    JMP tg_not_old_dom
 .tg_bb_skip
 
     ; --- Dominance check: is new boundary <= old at both overlap endpoints? ---
