@@ -300,15 +300,73 @@ location to preserve alignment.
 **Final**: S1=36,822 S2=110,479 Grand=**147,301** ROM=2,949 bytes
 Delta from micro-opt round: **−104 cycles (−0.07%)**
 
+## Page-alignment round
+
+**Starting point**: S1=36,822 S2=110,479 Grand=**147,301** ROM=2,949 bytes
+
+Comprehensive SEC/CLC audit and JMP audit found all remaining SEC/CLC
+instructions are needed (carry state genuinely unknown or wrong at each
+site). JMP audit found most are either out of branch range or lack a
+known flag state for conditional replacement.
+
+The main win came from page-crossing branch analysis. Enumerated all 33
+page-crossing conditional branches in the binary and tested padding
+adjustments at code section boundaries.
+
+1. **3-byte pad before mark_solid + reduce post-mark_solid pad 5→2**
+   (−81 cyc): Added 3 bytes of padding before `span_mark_solid` to push
+   the `msl` loop start past `$2200`, fixing the `BCS ms_chk_after`
+   page crossing ($21FD→$2208 → $2200→$220B, same page $22). Reduced
+   the 5-byte pad after mark_solid to 2 bytes (net 0 byte change) to
+   avoid introducing a has_gap page crossing from the +3 shift.
+   mark_solid −148 S1, −47 S2. ROM unchanged.
+
+2. **tg_overlap_sub clamp JMP→BCC** (0 cyc): Converted `JMP
+   tos_clamp_done` to `BCC tos_clamp_done` with 1-byte compensating
+   pad. Carry is guaranteed clear from preceding `BCS tos_clamp_slow`
+   fall-through. Cycle-neutral (BCC same page = 3 cyc = JMP), code
+   cleanup only.
+
+**Attempted but not applied:**
+- Moving `span_init` (61 bytes) after the hot code would fix all 17
+  udiv16_8 skip-loop BCS crossings, but the main loop `dl` straddles
+  the $2100 page boundary, adding 3 crossings in the hottest inner loop
+  (4-8 hits per divide). Padding to push dl to $2100 causes
+  dskip_commit BNE dl to cross pages. Net: zero improvement for
+  udiv16_8, plus unpredictable effects on downstream code.
+- Pad=8/11/25 before mark_solid: fixes more mark_solid crossings but
+  introduces 4+ has_gap crossings ($22E2 BEQ, $22E9 BCS, $22EE BEQ,
+  $22FA BNE) that fire on every has_gap call (~127/scene), outweighing
+  the gains.
+- Removing line 193/276 pads (umul8, udiv16_8): both protect the
+  mark_solid BCS fix; removing either un-fixes $2200 BCS→$220B.
+
+**SEC/CLC audit results:** All 26 SEC and 10 CLC instructions verified
+needed. One SEC in compute_crossover slow path (line 1251) is provably
+redundant (carry set from all entry paths: BCS, BCC-not-taken+BNE, and
+CMP-fall-through), but the slow path fires 0 times in both benchmark
+scenes, making the saving unmeasurable.
+
+**JMP audit results:** 48 JMPs total (7 jump table, 41 code). 30 are
+within branch range. Of those, most either lack a known flag state after
+the preceding instruction (STX/STA don't set flags on 6502) or would
+cross pages if converted. The slow-path crossover sign-detection JMPs
+(8 total, all within range) were previously attempted and reverted due
+to 4-byte alignment shift cost.
+
+**Final**: S1=36,782 S2=110,438 Grand=**147,220** ROM=2,949 bytes
+Delta from carry round: **−81 cycles (−0.06%)**
+
 ## Optimisation ideas (not yet attempted)
 
 - `interp_store`/`seg_interp_store` could short-circuit the small-positive
   case too, but the round-to-nearest bias makes the check more involved
   (need to compare `prod` to `den/2`, with care around odd `den`).
-- Page-alignment padding was tested for mark_solid (msl at $2200) but the
-  8-byte SKIP that fixes mark_solid's 162-cycle penalty creates a new
-  128-cycle penalty in has_gap (loop straddles the new page boundary).
-  Net gain was only 13 cycles — not worth the ROM cost.
+- The 17 udiv16_8 skip-loop BCS page crossings ($20xx→$21xx) are the
+  largest remaining target, but all restructuring approaches introduce
+  crossing in the main loop or dskip_commit paths. A clean fix would
+  require ~61 bytes of code relocation (moving span_init) plus ~14-28
+  bytes of alignment padding, with unpredictable net effect.
 - Further JMP→branch conversions are limited: most remaining JMPs in
   mark_solid and tighten exceed the 128-byte branch range. Flag-state
   analysis must be rigorous (STX/STA do NOT set flags on 6502).
