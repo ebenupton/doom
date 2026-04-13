@@ -99,6 +99,7 @@ zp_yb1   = $CC   ; s16: bot Y at sx1
 zp_yb1h  = $CD
 zp_yb2   = $CE   ; s16: bot Y at sx2
 zp_yb2h  = $CF
+zp_hg_cache = $D0    ; has_gap coherence cache: last-matching span offset
 zp_i_x0  = $D1
 zp_i_y0  = $D2 : zp_i_y0h = $D3   ; s16 Y for seg interp
 zp_i_x1  = $D4 : zp_i_y1  = $D5 : zp_i_y1h = $D6
@@ -142,6 +143,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDA #255 : STA POOL_XHI,X : STA POOL_XEND,X                         ; |
     LDA #159                                                            ; |
     STA POOL_BL,X : STA POOL_BR,X                                       ; |
+    STX zp_hg_cache         ; init cache to slot 1 (the initial span)   ; |
     RTS                                                                 ; |
 }
 
@@ -175,12 +177,11 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .umul8
 {
     STA zp_tmp0                                                         ; |
-    CLC : ADC zp_mul_b                                                  ; ||
-    TAX                  ; X = (a+b) & 0xFF                             ; |
-    SEC : LDA zp_tmp0 : SBC zp_mul_b : BCS pos                          ; ||||
-    EOR #$FF : ADC #1    ; |diff| (C was 0 from SBC, so ADC adds +0+1)  ; |
+    SEC : SBC zp_mul_b : BCS pos                                        ; |||
+    EOR #$FF : ADC #1    ; |diff| (C was 0 from SBC, so ADC adds +0+1)  ; ||
 .pos TAY                  ; Y = |diff|                                  ; |
-    CPX zp_tmp0 : BCC uo  ; overflow if (a+b)&0xFF < a (sum >= 256)     ; ||
+    LDA zp_tmp0 : CLC : ADC zp_mul_b                                    ; ||||
+    TAX : BCS uo          ; X = sum; overflow if carry from ADC          ; ||
     ; sum < 256: sqr tables for sum
     LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo                  ; |||||
     LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS                  ; |||||||
@@ -230,38 +231,44 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDX zp_div_lo : STX zp_div_hi
     LDX #0 : STX zp_div_lo
     ; --- Unrolled skip: consume leading zero quotient bits ---
-    ; 8 copies of (ASL div_hi, ROL A, BCS commit, CMP den, BCS commit,
-    ; DEX).  Eliminates the BNE loop branch (~3 cyc per skipped iter).
-    ; Each copy is 12 bytes; total ~96 bytes ROM for ~4350 cyc/frame saving.
-    LDX #8
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit
+    ; 8 copies; each branches to its own per-copy commit handler that sets
+    ; X directly (saves DEX per skipped copy: −2 cyc per skip iteration).
+    ASL zp_div_hi : ROL A : BCS dskip_c8 : CMP zp_div_den : BCS dskip_c8
+    ASL zp_div_hi : ROL A : BCS dskip_c7 : CMP zp_div_den : BCS dskip_c7
+    ASL zp_div_hi : ROL A : BCS dskip_c6 : CMP zp_div_den : BCS dskip_c6
+    ASL zp_div_hi : ROL A : BCS dskip_c5 : CMP zp_div_den : BCS dskip_c5
+    ASL zp_div_hi : ROL A : BCS dskip_c4 : CMP zp_div_den : BCS dskip_c4
+    ASL zp_div_hi : ROL A : BCS dskip_c3 : CMP zp_div_den : BCS dskip_c3
+    ASL zp_div_hi : ROL A : BCS dskip_c2 : CMP zp_div_den : BCS dskip_c2
+    ASL zp_div_hi : ROL A : BCS dskip_c1 : CMP zp_div_den : BCS dskip_c1
     ; All 8 iterations zero → quotient = 0
-    STA zp_div_rem : LDA #0 : RTS
+    LDA #0 : RTS
+.dskip_c8 LDX #8 : BNE dskip_commit
+.dskip_c7 LDX #7 : BNE dskip_commit
+.dskip_c6 LDX #6 : BNE dskip_commit
+.dskip_c5 LDX #5 : BNE dskip_commit
+.dskip_c4 LDX #4 : BNE dskip_commit
+.dskip_c3 LDX #3 : BNE dskip_commit
+.dskip_c2 LDX #2 : BNE dskip_commit
+.dskip_c1 LDX #1
 .dskip_commit
     SBC zp_div_den         ; carry already set (from BCS)
-    STA zp_div_rem
     INC zp_div_lo          ; set this quotient bit
-    DEX : BNE dl           ; remaining iterations via main loop
+    DEX : BNE dl           ; remaining iterations via main loop (rem in A)
     LDA zp_div_lo : RTS
-.d16 LDA #0 : STA zp_div_rem
+.d16 LDA #0
     LDX #16
-.dl ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; ||||||||||||||||||||||||||||||||||||||||
+    ; Main loop: remainder kept in A (saves LDA/STA zp_div_rem per iter)
+.dl ASL zp_div_lo : ROL zp_div_hi : ROL A                               ; ||||||||||||||||||||||||||||||||||||||||
     BCS dl_over                                                         ; |||||
-    LDA zp_div_rem : CMP zp_div_den : BCC ds                            ; |||||||||||||||||||||||||||||
+    CMP zp_div_den : BCC ds                                             ; |||||||||||||||||||||||||||||
     SBC zp_div_den                                                      ; |
 .dl_commit
-    STA zp_div_rem : INC zp_div_lo                                      ; |||||
+    INC zp_div_lo                                                       ; |||||
 .ds DEX : BNE dl                                                        ; |||||||||||||
     LDA zp_div_lo : RTS                                                 ; |||
 .dl_over
-    LDA zp_div_rem : SEC : SBC zp_div_den
+    SEC : SBC zp_div_den
     JMP dl_commit
 }
 
@@ -279,16 +286,11 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .seg_interp_store
 {
     ; offset = x - sx1 (A holds x on entry)
-    SEC : SBC zp_sx1 : STA zp_mul_b                                     ; ||||
+    SEC : SBC zp_sx1 : BEQ sis_y0 : STA zp_mul_b                        ; ||||
     ; dy = y1 - y0 (BEQ sis_y0 catches dy==0 constant-line shortcut)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ sis_y0                        ; |||||
     JSR smul8                                                           ; ||
-    ; Short-circuit when prod = 0 (e.g. offset = 0) — saves the divide.
-    LDA zp_prod_lo : ORA zp_prod_hi : BNE sis_nz                        ; |||
-.sis_y0
-    LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
-    LDA zp_i_y0 : RTS                                                   ; ||
-.sis_nz
+    ; prod guaranteed nonzero (offset!=0 AND dy!=0, verified exhaustively)
     ; ex always in [1,255] post-remap; bias = ex/2 for round-to-nearest
     LDA zp_div_den : LSR A                                              ; |
     CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; ||
@@ -307,6 +309,9 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     SEC : LDA zp_i_y0 : SBC zp_div_lo : TAX                             ; |
     LDA zp_i_y0h : SBC zp_div_hi : TAY                                  ; |
     TXA : RTS                                                           ; |
+.sis_y0
+    LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
+    LDA zp_i_y0 : RTS                                                   ; ||
 }
 
 ; (seg_interp_core removed — inlined into seg_interp_store above.)
@@ -325,14 +330,13 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .interp_store
 {
     ; offset = x - x0 (A holds x on entry)
-    SEC : SBC zp_i_x0 : STA zp_mul_b                                    ; ||||
+    SEC : SBC zp_i_x0 : BEQ is_y0                                        ; |||
+    CMP zp_div_den : BEQ is_y1                                           ; ||
+    STA zp_mul_b                                                         ; |
     ; dy = y1 - y0 (BEQ is_y0 catches constant-line short-circuit)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ is_y0                         ; |||||
     JSR smul8                                                           ; |
-    LDA zp_prod_lo : ORA zp_prod_hi : BNE is_nz                         ; |
-.is_y0
-    LDA zp_i_y0 : RTS                                                   ; ||||
-.is_nz
+    ; prod guaranteed nonzero (offset!=0 AND dy!=0, verified exhaustively)
     ; Add ex/2 to product for round-to-nearest. ex always in [1,255].
     LDA zp_div_den : LSR A                                              ; |
     CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; |
@@ -347,6 +351,10 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDA #0 : SBC zp_prod_hi : STA zp_div_hi                             ; |
     JSR udiv16_8                                                        ; |
     EOR #$FF : SEC : ADC zp_i_y0 : RTS                                  ; |
+.is_y0
+    LDA zp_i_y0 : RTS                                                   ; ||
+.is_y1
+    LDA zp_i_y1 : RTS                                                   ; ||
 }
 
 ; (interp_span removed — mark_solid no longer interpolates)
@@ -383,7 +391,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 
 .ms_chk_after
     ; Done if xstart > ihi (span starts after solid range)
-    LDA POOL_XSTART,X : CMP zp_ihi : BEQ ms_overlap : BCC ms_overlap    ; |||
+    LDA zp_ihi : CMP POOL_XSTART,X : BCS ms_overlap                     ; |||
     RTS                                                                 ; |
 
 .ms_overlap
@@ -393,15 +401,16 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; --- No left fragment ---
     ; xend > ihi  → shrink in place: xstart = ihi+1
     ; xend <= ihi → fully covered → free (via trampoline; ms_free is far)
-    LDA POOL_XEND,X : CMP zp_ihi : BEQ ms_jmp_free : BCC ms_jmp_free    ; |
-    LDA zp_ihi : CLC : ADC #1 : STA POOL_XSTART,X                       ; |
+    LDA zp_ihi : CMP POOL_XEND,X : BCS ms_jmp_free                      ; |
+    ; A still holds ihi (CMP doesn't modify A)
+    CLC : ADC #1 : STA POOL_XSTART,X                                    ; |
     STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts1 : JMP msl         ; |
 .ms_rts1 RTS                                                            ; |
 .ms_jmp_free JMP ms_free                                                ; |
 
 .ms_has_left
     ; xstart < ilo. Has right fragment? xend > ihi?
-    LDA POOL_XEND,X : CMP zp_ihi : BEQ ms_left_only : BCC ms_left_only  ; |
+    LDA zp_ihi : CMP POOL_XEND,X : BCS ms_left_only                     ; |
     ; --- Middle split: allocate sibling for the right fragment ---
     STX zp_prev                                                         ; |
     JSR alloc_span : BEQ ms_left_only_after_fail                        ; |
@@ -459,6 +468,11 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 {
     ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
     ; range, 0 otherwise. Spans are sorted by xstart.
+    ; Coherence cache: check last-matching span first (saves full walk).
+    LDX zp_hg_cache : BEQ hg_no_cache
+    LDA POOL_XEND,X : CMP zp_ilo : BCC hg_no_cache    ; xend < ilo → miss
+    LDA zp_ihi : CMP POOL_XSTART,X : BCS hg_yes       ; ihi >= xstart → hit
+.hg_no_cache
     ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
     ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
     LDX zp_head : BEQ hgn
@@ -470,10 +484,12 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDX POOL_NEXT,Y : BNE hgl_x                       ; advance via X
 .hgn LDA #0 : RTS
     ; --- Hit checks (one copy per register, avoids TYX which doesn't exist) ---
-.hg_chk_x LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_yes : BCC hg_yes
+.hg_chk_x LDA zp_ihi : CMP POOL_XSTART,X : BCS hg_cx_yes
     LDA #0 : RTS
-.hg_chk_y LDA POOL_XSTART,Y : CMP zp_ihi : BEQ hg_yes : BCC hg_yes
+.hg_chk_y LDA zp_ihi : CMP POOL_XSTART,Y : BCS hg_cy_yes
     LDA #0 : RTS
+.hg_cx_yes STX zp_hg_cache : LDA #1 : RTS
+.hg_cy_yes STY zp_hg_cache : LDA #1 : RTS
 .hg_yes LDA #1 : RTS
 }
 
@@ -560,8 +576,7 @@ zp_cc_den_hi = $FE
 .tg_go
     ; Save old head, then start building new list
     LDA zp_head : STA zp_old_cur                                        ; |
-    LDA #0 : STA zp_new_tail                                            ; |
-    LDA #0 : STA zp_head                                                ; |
+    LDA #0 : STA zp_new_tail : STA zp_head                              ; |
 
 .tg_walk
     LDX zp_old_cur                                                      ; |
@@ -575,13 +590,21 @@ zp_cc_den_hi = $FE
     ; Check overlap of seg [ilo,ihi] against this span's ACTIVE range.
     ; Skip if xend < ilo (span ends before seg)
     LDA POOL_XEND,X : CMP zp_ilo : BCS tg_chk2                          ; |||
-    JSR tg_append_x                                                     ; |
-    JMP tg_walk                                                         ; |
+    ; Pre-seg: fast link (skip merge check — pre-seg spans never merge)
+    LDA #0 : STA POOL_NEXT,X                                            ; ||
+    LDA zp_new_tail : BEQ tg_pre_first                                  ; |
+    TAY : TXA : STA POOL_NEXT,Y                                         ; ||
+    STX zp_new_tail : JMP tg_walk                                       ; |
+.tg_pre_first STX zp_head : STX zp_new_tail : JMP tg_walk               ; |
 .tg_chk2
-    ; Skip if xstart > ihi (span starts after seg)
-    LDA POOL_XSTART,X : CMP zp_ihi : BEQ tg_overlaps : BCC tg_overlaps  ; |||
-    JSR tg_append_x                                                     ; |
-    JMP tg_walk                                                         ; |
+    ; Skip if xstart > ihi (span starts after seg — and all subsequent too)
+    LDA zp_ihi : CMP POOL_XSTART,X : BCS tg_overlaps                    ; |||
+    ; Bulk-link: this span AND all remaining spans are past the seg.
+    ; POOL_NEXT,X still has the original chain (not yet modified).
+    LDA zp_new_tail : BNE tg_bulk_has_tail                              ; |
+    STX zp_head : RTS                                                   ; |
+.tg_bulk_has_tail
+    LDY zp_new_tail : TXA : STA POOL_NEXT,Y : RTS                       ; |
 
 .tg_overlaps
     ; ox0 = max(xstart, ilo).  CMP doesn't modify A, so BCS uses the
@@ -606,15 +629,16 @@ zp_cc_den_hi = $FE
     ; Guard: all 4 seg hi bytes must be 0 (on-screen).
     LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip
     ; All on-screen. Check top: min(tl,tr) ≥ max(yt1,yt2)
-    LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok  ; A = min(tl,tr)
-    LDA POOL_TR,X
-.tg_bb_tmin_ok
-    ; A = min(old_tl, old_tr). Compare with max(yt1, yt2).
-    STA zp_tmp0
+    ; Compute max(yt1,yt2) first into zp_tmp0, then min(tl,tr) into A,
+    ; so a single CMP+BCS suffices (min_old >= max_new ↔ C=1).
     LDA zp_yt1 : CMP zp_yt2 : BCS tg_bb_tmax_ok  ; A = max(yt1,yt2)
     LDA zp_yt2
 .tg_bb_tmax_ok
-    CMP zp_tmp0 : BEQ tg_bb_top_ok : BCC tg_bb_top_ok  ; min(old) ≥ max(new)?
+    STA zp_tmp0
+    LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok  ; A = min(tl,tr)
+    LDA POOL_TR,X
+.tg_bb_tmin_ok
+    CMP zp_tmp0 : BCS tg_bb_top_ok  ; min(old) ≥ max(new)?
     JMP tg_bb_skip
 .tg_bb_top_ok
     ; Check bot: max(bl,br) ≤ min(yb1,yb2)
@@ -709,12 +733,17 @@ zp_cc_den_hi = $FE
     ; --- Crossover detection BEFORE clamping (needs unclamped nt/nb values) ---
     ; Top crossover: fast path when both hi bytes are 0 (common case).
     LDA zp_nt_lh : ORA zp_nt_rh : BNE tg_cc_t_slow                      ; |
-    ; Both hi bytes 0: simple unsigned CMP for sign of (old - new)
-    LDA zp_ot_l : CMP zp_nt_l : LDA #0 : ROL A : STA zp_tmp1           ; |
-    LDA zp_ot_r : CMP zp_nt_r : LDA #0 : ROL A                         ; |
-    EOR zp_tmp1 : BNE tg_cc_t_fast_has_cx                                ; |
-    JMP tg_cc_no_top                                                    ; |
-.tg_cc_t_fast_has_cx
+    ; Both hi bytes 0: branch-based sign comparison (saves ROL/EOR chain).
+    ; If both (ot >= nt) or both (ot < nt), no crossover.
+    LDA zp_ot_l : CMP zp_nt_l : BCS tg_cc_t_lpos                       ; |
+    ; ot_l < nt_l (carry clear)
+    LDA zp_ot_r : CMP zp_nt_r : BCS tg_cc_t_has_cx                     ; signs differ → cx
+    JMP tg_cc_no_top                                                    ; both < → no cx
+.tg_cc_t_lpos
+    ; ot_l >= nt_l (carry set)
+    LDA zp_ot_r : CMP zp_nt_r : BCC tg_cc_t_has_cx                     ; signs differ → cx
+    JMP tg_cc_no_top                                                    ; both >= → no cx
+.tg_cc_t_has_cx
     JMP tg_cc_t_check_dt                                                ; |
 .tg_cc_t_slow
     ; Slow path: per-byte sign detection (handles hi < 0 and hi > 0)
@@ -765,10 +794,15 @@ zp_cc_den_hi = $FE
 .tg_cc_chk_bot
     ; Bot crossover: fast path when both hi bytes are 0 (common case).
     LDA zp_nb_lh : ORA zp_nb_rh : BNE tg_cc_b_slow                      ; |
-    LDA zp_ob_l : CMP zp_nb_l : LDA #0 : ROL A : STA zp_tmp1           ; |
-    LDA zp_ob_r : CMP zp_nb_r : LDA #0 : ROL A                         ; |
-    EOR zp_tmp1 : BEQ tg_cc_no_bot                                      ; |
-    JMP tg_cc_b_check_dt                                                ; |
+    ; Branch-based sign comparison for bot (same as top fast path).
+    LDA zp_ob_l : CMP zp_nb_l : BCS tg_cc_b_lpos                       ; |
+    ; ob_l < nb_l
+    LDA zp_ob_r : CMP zp_nb_r : BCC tg_cc_no_bot                       ; both < → no cx
+    JMP tg_cc_b_check_dt                                                ; signs differ → cx
+.tg_cc_b_lpos
+    ; ob_l >= nb_l
+    LDA zp_ob_r : CMP zp_nb_r : BCS tg_cc_no_bot                       ; both >= → no cx
+    JMP tg_cc_b_check_dt                                                ; signs differ → cx
 .tg_cc_b_slow
     LDA zp_nb_lh : BMI tg_cc_b0p : BNE tg_cc_b0n                        ; |
     LDA zp_ob_l : CMP zp_nb_l                                           ; |
@@ -831,11 +865,12 @@ zp_cc_den_hi = $FE
 .tg_cn4s STA zp_nb_r                                                    ; |
 .tg_clamp_done
     ; Unsigned dominance: new_tl <= old_tl AND new_tr <= old_tr AND ...
-    LDA zp_nt_l : CMP zp_ot_l : BEQ tg_d1 : BCS tg_not_old_dom          ; |
-.tg_d1 LDA zp_nt_r : CMP zp_ot_r : BEQ tg_d2 : BCS tg_not_old_dom       ; |
-.tg_d2 LDA zp_ob_l : CMP zp_nb_l : BEQ tg_d3 : BCS tg_not_old_dom       ; |
-.tg_d3 LDA zp_ob_r : CMP zp_nb_r : BEQ tg_d4 : BCS tg_not_old_dom       ; |
-.tg_d4 ; Old dominates: keep span unchanged
+    ; Reversed CMP: swap operands so BCC alone catches the failure case.
+    LDA zp_ot_l : CMP zp_nt_l : BCC tg_not_old_dom                       ; |
+    LDA zp_ot_r : CMP zp_nt_r : BCC tg_not_old_dom                       ; |
+    LDA zp_nb_l : CMP zp_ob_l : BCC tg_not_old_dom                       ; |
+    LDA zp_nb_r : CMP zp_ob_r : BCC tg_not_old_dom                       ; |
+    ; Old dominates: keep span unchanged
     LDX zp_save1                                                        ; |
     JSR tg_append_x                                                     ; |
     JMP tg_walk                                                         ; |
@@ -860,7 +895,6 @@ zp_cc_den_hi = $FE
 .tg_no_left
 
     ; --- Process overlap with crossover splits ---
-    LDA zp_ox1 : STA zp_final_ox1                                       ; |
     LDA zp_cx_top : ORA zp_cx_bot : BNE tg_has_splits                   ; |
     ; --- No crossover fast path ---
     ; The dominance check already computed ot_l/ot_r/ob_l/ob_r (u8 via
@@ -888,6 +922,7 @@ zp_cc_den_hi = $FE
 .ncf_no_ap
     JMP tg_right_frag                                                   ; |
 .tg_has_splits
+    LDA zp_ox1 : STA zp_final_ox1                                       ; ||
     LDA zp_cx_top : BEQ tg_split_bot                                    ; |
     LDA zp_cx_bot : BEQ tg_split_top
     ; Both crossovers. Sort: ensure cx_top <= cx_bot.
@@ -921,7 +956,7 @@ zp_cc_den_hi = $FE
     ; Allocate sibling, copy line params verbatim, set its active range to
     ; [ihi+1, original xend]. NO interp_store calls.
     LDX zp_save1                                                        ; |
-    LDA POOL_XEND,X : CMP zp_ihi : BEQ tg_no_right : BCC tg_no_right    ; |
+    LDA zp_ihi : CMP POOL_XEND,X : BCS tg_no_right                       ; |
 .tg_make_right
     JSR alloc_span : BEQ tg_no_right                                    ; |
     LDY zp_save1                                                        ; |
@@ -947,9 +982,10 @@ zp_cc_den_hi = $FE
 ; resolves quickly.
 .tg_append_x
 {
-    LDA #0 : STA POOL_NEXT,X   ; new span is at end                     ; |||
     LDA zp_new_tail : BNE ta_try_merge                                  ; ||
-    ; First span: set head
+    ; First span: set head. POOL_NEXT,X = 0 (end of list).
+    ; A is already 0 from the LDA above (BNE not taken ↔ A=0).
+    STA POOL_NEXT,X                                                     ; |
     STX zp_head : STX zp_new_tail : RTS                                 ; |
 .ta_try_merge
     LDY zp_new_tail                                                     ; |
@@ -968,6 +1004,8 @@ zp_cc_den_hi = $FE
     LDA POOL_XEND,X : STA POOL_XEND,Y
     JMP free_span   ; frees X (via tail-call), returns
 .ta_link
+    ; X becomes new tail — write POOL_NEXT,X = 0 (deferred from entry).
+    LDA #0 : STA POOL_NEXT,X                                            ; ||
     TXA : STA POOL_NEXT,Y                                               ; ||
     STX zp_new_tail : RTS                                               ; |||
 }
@@ -1150,25 +1188,24 @@ zp_cc_den_hi = $FE
     ; restoring divide directly.
     LDA zp_cc_den_hi : BNE slow_setup                                   ; |
     LDA zp_cc_den_lo : STA zp_div_den                                   ; |
-    ; Setup for 8-iter u16/u8 divide: rem = num_hi, shift source = num_lo,
-    ; quot accumulator = zp_div_lo (via INC trick — same as udiv16_8).
-    LDA zp_div_hi : STA zp_div_rem                                      ; |
-    LDA zp_div_lo : STA zp_div_hi                                       ; |
-    LDA #0 : STA zp_div_lo                                              ; |
+    ; Setup: rem(A) = num_hi, div_hi = num_lo, div_lo = 0 (quot accum).
+    LDA zp_div_hi                ; A = rem = num_hi                      ; |
+    LDX zp_div_lo : STX zp_div_hi  ; div_hi = num_lo (shift source)     ; |
+    LDX #0 : STX zp_div_lo         ; div_lo = 0 (quotient accumulator)  ; |
     LDX #8                                                              ; |
 .fast_loop
-    ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; |
+    ASL zp_div_lo : ROL zp_div_hi : ROL A                               ; |
     BCS fast_over                                                       ; |
-    LDA zp_div_rem : CMP zp_div_den : BCC fast_next                     ; |
+    CMP zp_div_den : BCC fast_next                                      ; |
     SBC zp_div_den                                                      ; |
 .fast_commit
-    STA zp_div_rem : INC zp_div_lo                                      ; |
+    INC zp_div_lo                                                       ; |
 .fast_next
     DEX : BNE fast_loop                                                 ; |
     LDA zp_div_lo                ; A = quot                             ; |
     JMP cx_from_quot                                                    ; |
 .fast_over
-    LDA zp_div_rem : SEC : SBC zp_div_den
+    SEC : SBC zp_div_den
     JMP fast_commit
 
 .slow_setup
