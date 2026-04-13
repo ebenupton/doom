@@ -117,11 +117,27 @@ constant-line merge optimisation landed.
 
 | 2026-04-13 |       2836 B  |  3699 (19)    |  32854 (12)| 6656 (127) | 2372 (148) | **45581**    | −54    | **162326**   | −237   | **Overlap computation: avoid redundant POOL_XSTART reload.** The `ox0 = max(xstart, ilo)` code was reloading POOL_XSTART,X after BCS even though CMP doesn't modify A. Removed the reload and the JMP by restructuring: `LDA XSTART : CMP ilo : BCS set : LDA ilo : .set STA ox0`. Saves 3-4 cycles per overlapping span. S1 tighten −54, S2 tighten −237. ROM −6 B. |
 
-Per-call averages (S1): `mark_solid` 195, `tighten` 2738, `has_gap` 52, `is_full` 16.
-Per-call averages (S2): `mark_solid` 236, `tighten` 3166, `has_gap`  66, `is_full` 16.
+| 2026-04-13 |       2961 B  |  3699 (19)    |  30945 (12)| 6392 (127) | 2372 (148) | **43408**    | −2173  | **129533**   | −32793 | **New-dominance BB fast path + Path A/B bugfix.** Symmetric to the existing old-dom BB check: when all seg values are on-screen [0,159] and `max(tl,tr) <= min(yt1,yt2)` AND `min(bl,br) >= max(yb1,yb2)`, new dominates everywhere. Skip OLD interpolation + crossover detection; set dummy old values (0/159) so the no-crossover inline path produces new boundary values. Also fixed Path A/B shared `tg_bb_check_bot` bug where Path A's neg-yt failure path could incorrectly fall through to new-dom check with off-screen yt values. Path A bot check now inlined. S1 tighten −1909, S2 tighten −2965. ROM +125 B. |
 
-Cumulative vs baseline (S1 127 389 cyc → 45 581): **−81 808 cyc, −64.2%**.
-ROM size: 2701 → 2836 bytes, **+135 bytes**.
+| 2026-04-13 |       2966 B  |  3699 (19)    |  30990 (12)| 6392 (127) | 2372 (148) | **43453**    | +45    | **129001**   | −532   | **Skip top crossover detection when yt is negative.** When both yt hi bytes have bit 7 set (Path A neg yt), old top auto-dominates → dt always positive → no top crossover. Jump directly to `tg_cc_no_top`, saving ~50 cycles of slow-path sign detection per firing. Fires on 23/35 full-interp overlaps in S2. S1 tighten +45, S2 tighten −532. ROM +5 B. |
+
+| 2026-04-13 |       2990 B  |  3699 (19)    |  31010 (12)| 6392 (127) | 2372 (148) | **43473**    | +20    | **128360**   | −641   | **Fast-path clamping for neg-yt overlaps.** When yt is negative, nt values always clamp to 0 — write immediately, then only clamp bot values (sharing the existing slow-path code via `tg_clamp_nb_entry`). S1 tighten +20, S2 tighten −641. ROM +24 B. |
+
+| 2026-04-13 |       2988 B  |  3659 (19)    |  30396 (12)| 6392 (127) | 2372 (148) | **42859**    | −614   | **125275**   | −3085  | **Offset-zero shortcut in interp_store and seg_interp_store.** When offset (x−x0) is 0, the result is y0 regardless of dy. Check `BEQ` immediately after the SBC that computes offset, before the STA to mul_b, skipping dy computation, smul8, and divide. S1 tighten −614, S2 tighten −3084. ROM −2 B. |
+
+| 2026-04-13 |       2995 B  |  3631 (19)    |  29187 (12)| 6452 (127) | 2372 (148) | **41608**    | −1251  | **121922**   | −3353  | **Offset-max shortcut in u8 interp_store.** When offset equals div_den (x at right anchor), result is y1. Check `CMP zp_div_den : BEQ is_y1` after offset-zero, returning y1 directly. S1 tighten −1209, S2 tighten −3267. ROM +7 B. |
+
+| 2026-04-13 |       3031 B  |  3631 (19)    |  29430 (12)| 6452 (127) | 2372 (148) | **41885**    | +277   | **112893**   | −9029  | **Offset-max shortcut in s16 seg_interp_store.** Same check as u8 version, returning y1 lo/hi from zp_i_y1/zp_i_y1h. The 6 caller sites now store the y1 hi byte (+6 LDA/STA pairs). S1 tighten +243, S2 tighten −9082. ROM +36 B. |
+
+| 2026-04-13 |       3043 B  |  3631 (19)    |  28475 (12)| 6452 (127) | 2372 (148) | **40930**    | −955   | **103142**   | −9751  | **Post-seg bulk-link in tighten walk.** When xstart > ihi, all remaining spans are past the seg. Append the first via tg_append_x (merge check), then bulk-link the rest by writing one POOL_NEXT pointer. Saves ~40 cyc/span for all post-seg spans. S1 tighten −955, S2 tighten −9751. ROM +12 B. |
+
+| 2026-04-13 |       3325 B  |  3631 (19)    |  27922 (12)| 6452 (127) | 2372 (148) | **40377**    | −553   | **98903**    | −4239  | **Pre-seg bulk-link in tighten walk.** Pre-scan old list at tighten start to find first span with xend >= ilo. All prior spans are bulk-linked as new list head (~14 cyc/span vs ~53). If ALL spans are pre-seg, link entire old list and return immediately. S1 tighten −553, S2 tighten −4239. ROM +282 B. |
+
+Per-call averages (S1): `mark_solid` 191, `tighten` 2327, `has_gap` 51, `is_full` 16.
+Per-call averages (S2): `mark_solid` 231, `tighten` 1771, `has_gap`  63, `is_full` 16.
+
+Cumulative vs baseline (S1 127 389 cyc → 40 377): **−87 012 cyc, −68.3%**.
+ROM size: 2701 → 3325 bytes, **+624 bytes**.
 
 ## Notes on this round
 
