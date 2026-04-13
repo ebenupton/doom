@@ -589,8 +589,15 @@ zp_cc_den_hi = $FE
 .tg_chk2
     ; Skip if xstart > ihi (span starts after seg)
     LDA POOL_XSTART,X : CMP zp_ihi : BEQ tg_overlaps : BCC tg_overlaps  ; |||
-    JSR tg_append_x                                                     ; |
-    JMP tg_walk                                                         ; |
+    ; All remaining spans are past the seg — append first (for merge check),
+    ; then bulk-link the rest.
+    JSR tg_append_x
+    ; Bulk-link: remaining chain from old_cur onwards
+    LDA zp_old_cur : BEQ tg_bulk_done
+    LDY zp_new_tail
+    STA POOL_NEXT,Y
+.tg_bulk_done
+    RTS
 
 .tg_overlaps
     ; ox0 = max(xstart, ilo).  CMP doesn't modify A, so BCS uses the
