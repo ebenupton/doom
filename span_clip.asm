@@ -391,11 +391,6 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
     LDA #$FF : STA zp_prev                                              ; |
     LDA zp_head : TAX : BNE msl : RTS                                   ; |
 
-.msl ; X = current span
-    ; Skip if xend < ilo (span ends before solid range)
-    LDA POOL_XEND,X : CMP zp_ilo : BCS ms_chk_after                     ; ||||
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                 ; ||
-
 .ms_chk_after
     ; Done if xstart > ihi (span starts after solid range)
     LDA zp_ihi : CMP POOL_XSTART,X : BCS ms_overlap                     ; |||
@@ -407,23 +402,25 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
     LDA POOL_XSTART,X : CMP zp_ilo : BCC ms_has_left                    ; ||
     ; --- No left fragment ---
     ; xend > ihi  → shrink in place: xstart = ihi+1
-    ; xend <= ihi → fully covered → free (via trampoline; ms_free is far)
+    ; xend <= ihi → fully covered → free
     LDA zp_ihi : CMP POOL_XEND,X : BCS ms_free                           ; |
     ; A still holds ihi; carry already clear from BCS not taken
     ADC #1 : STA POOL_XSTART,X                                          ; |
     STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                   ; |
 
-    ; ms_free moved here (was below ms_left_only) to bring it within
-    ; BCS branch range from the "fully covered" check above.
+.msl ; X = current span — positioned here for branch reach from all callers
+    ; Skip if xend < ilo (span ends before solid range)
+    LDA POOL_XEND,X : CMP zp_ilo : BCS ms_chk_after                     ; ||||
+    STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                 ; ||
+
 .ms_free
     LDA POOL_NEXT,X : STA zp_tmp0                                       ; |
     JSR free_span                                                       ; |
     LDA zp_prev : CMP #$FF : BNE ms_unlink_span                         ; |
-    LDA zp_tmp0 : STA zp_head : JMP ms_free_next                        ; |
+    LDA zp_tmp0 : STA zp_head : TAX : BNE msl : RTS                     ; |
 .ms_unlink_span
-    LDY zp_prev : LDA zp_tmp0 : STA POOL_NEXT,Y                         ; |
-.ms_free_next
-    LDA zp_tmp0 : TAX : BNE msl : RTS                                   ; |
+    LDY zp_prev : LDA zp_tmp0 : STA POOL_NEXT,Y
+    TAX : BNE msl : RTS                                                 ; |
 
 .ms_has_left
     ; xstart < ilo. Has right fragment? xend > ihi?
@@ -450,7 +447,7 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
     ; carry is clear: C=0 propagated from BCS fall-through, through alloc+copies+ADC(no overflow)
     LDA zp_ilo : SBC #0 : STA POOL_XEND,Y                               ; |
     ; Continue from the span AFTER the new sibling
-    LDA POOL_NEXT,X : TAX : BEQ ms_rts2 : JMP msl                       ; |
+    LDA POOL_NEXT,X : TAX : BEQ ms_rts2 : JMP msl                        ; |
 .ms_rts2 RTS                                                            ; |
 
 .ms_left_only_after_fail
