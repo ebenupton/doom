@@ -595,37 +595,51 @@ zp_cc_den_hi = $FE
 .tg_ox1_set STA zp_ox1                                                  ; |
 
     ; --- Bounding-range pre-check for old dominance ---
-    ; If all 4 seg values are on-screen (hi bytes = 0, lo ≤ 159), we can
-    ; compare the span's tl/tr/bl/br extremes against the seg's yt/yb
-    ; extremes.  Since both are linear, min/max over endpoints bounds the
-    ; entire range.  Old dominates when:
-    ;   min(old_tl, old_tr) ≥ max(yt1, yt2)   (old top always ≥ new top)
-    ;   max(old_bl, old_br) ≤ min(yb1, yb2)   (old bot always ≤ new bot)
-    ; This is conservative (uses full span range, not just overlap), but
-    ; when it fires it skips ALL interpolation (~2400 cyc).
-    ; Guard: all 4 seg hi bytes must be 0 (on-screen).
+    ; Avoid ALL interpolation when the span's stored extremes prove old
+    ; dominates.  Two paths:
+    ;
+    ; Path A (negative yt): both yt1h and yt2h have bit 7 set → new top
+    ; clamps to 0, and old top (u8, always ≥ 0) automatically dominates.
+    ; Only the bot side needs checking.  Catches 41% of overlaps in S2
+    ; (many segs have ceiling projections above screen).
+    ;
+    ; Path B (all on-screen): all 4 seg hi bytes = 0 and lo ≤ 159.
+    ; Full min/max bounding check on both top and bot.
+    ;
+    ; Both paths check bot the same way: max(bl,br) ≤ min(yb1,yb2) with
+    ; yb hi bytes = 0.
+
+    ; Path A: both yt negative → old top auto-dominates
+    LDA zp_yt1h : AND zp_yt2h : BPL tg_bb_not_negyt
+    ; Old top auto-dominates.  Check bot: yb must be on-screen (hi = 0).
+    LDA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip
+    JMP tg_bb_check_bot  ; top is settled, just check bot
+
+.tg_bb_not_negyt
+    ; Path B: all 4 seg values on-screen [0,159]
     LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip
-    ; All on-screen. Check top: min(tl,tr) ≥ max(yt1,yt2)
-    LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok  ; A = min(tl,tr)
+    ; Check top: min(tl,tr) ≥ max(yt1,yt2)
+    LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok
     LDA POOL_TR,X
 .tg_bb_tmin_ok
-    ; A = min(old_tl, old_tr). Compare with max(yt1, yt2).
     STA zp_tmp0
-    LDA zp_yt1 : CMP zp_yt2 : BCS tg_bb_tmax_ok  ; A = max(yt1,yt2)
+    LDA zp_yt1 : CMP zp_yt2 : BCS tg_bb_tmax_ok
     LDA zp_yt2
 .tg_bb_tmax_ok
-    CMP zp_tmp0 : BEQ tg_bb_top_ok : BCC tg_bb_top_ok  ; min(old) ≥ max(new)?
+    CMP zp_tmp0 : BEQ tg_bb_top_ok : BCC tg_bb_top_ok
     JMP tg_bb_skip
 .tg_bb_top_ok
+
+.tg_bb_check_bot
     ; Check bot: max(bl,br) ≤ min(yb1,yb2)
-    LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok  ; A = max(bl,br)
+    LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok
     LDA POOL_BR,X
 .tg_bb_bmax_ok
     STA zp_tmp0
-    LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_bmin_ok  ; A = min(yb1,yb2)
+    LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_bmin_ok
     LDA zp_yb2
 .tg_bb_bmin_ok
-    CMP zp_tmp0 : BCC tg_bb_skip  ; max(old) ≤ min(new)?
+    CMP zp_tmp0 : BCC tg_bb_skip
     ; Old dominates by bounding range — skip all interpolation.
     JSR tg_append_x
     JMP tg_walk
