@@ -234,25 +234,28 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDX zp_div_lo : STX zp_div_hi
     LDX #0 : STX zp_div_lo
     ; --- Unrolled skip: consume leading zero quotient bits ---
-    ; 8 copies of (ASL div_hi, ROL A, BCS commit, CMP den, BCS commit,
-    ; DEX).  Eliminates the BNE loop branch (~3 cyc per skipped iter).
-    ; Each copy is 12 bytes; total ~96 bytes ROM for ~4350 cyc/frame saving.
-    LDX #8
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
-    ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit
+    ; 8 copies of (ASL div_hi, ROL A, BCS dscN, CMP den, BCS dscN) with
+    ; per-copy commit targets that hardcode the remaining iteration count.
+    ; Eliminates both the BNE loop branch and the per-iteration DEX.
+    ASL zp_div_hi : ROL A : BCS dsc7 : CMP zp_div_den : BCS dsc7
+    ASL zp_div_hi : ROL A : BCS dsc6 : CMP zp_div_den : BCS dsc6
+    ASL zp_div_hi : ROL A : BCS dsc5 : CMP zp_div_den : BCS dsc5
+    ASL zp_div_hi : ROL A : BCS dsc4 : CMP zp_div_den : BCS dsc4
+    ASL zp_div_hi : ROL A : BCS dsc3 : CMP zp_div_den : BCS dsc3
+    ASL zp_div_hi : ROL A : BCS dsc2 : CMP zp_div_den : BCS dsc2
+    ASL zp_div_hi : ROL A : BCS dsc1 : CMP zp_div_den : BCS dsc1
+    ASL zp_div_hi : ROL A : BCS dsc0 : CMP zp_div_den : BCS dsc0
     ; All 8 iterations zero → quotient = 0
     LDA #0 : RTS
-.dskip_commit
-    SBC zp_div_den         ; carry already set (from BCS)
-    INC zp_div_lo          ; set this quotient bit
-    DEX : BNE dl_a         ; remaining iterations via A-register main loop
-    LDA zp_div_lo : RTS
+    ; --- Per-copy commit handlers: SBC + INC + enter main loop with known X ---
+.dsc7 SBC zp_div_den : INC zp_div_lo : LDX #7 : BNE dl_a  ; always taken
+.dsc6 SBC zp_div_den : INC zp_div_lo : LDX #6 : BNE dl_a
+.dsc5 SBC zp_div_den : INC zp_div_lo : LDX #5 : BNE dl_a
+.dsc4 SBC zp_div_den : INC zp_div_lo : LDX #4 : BNE dl_a
+.dsc3 SBC zp_div_den : INC zp_div_lo : LDX #3 : BNE dl_a
+.dsc2 SBC zp_div_den : INC zp_div_lo : LDX #2 : BNE dl_a
+.dsc1 SBC zp_div_den : INC zp_div_lo : LDX #1 : BNE dl_a
+.dsc0 SBC zp_div_den : INC zp_div_lo : LDA zp_div_lo : RTS
     ; --- Fast-path main loop: remainder stays in A register ---
     ; Saves 6 cyc/iter vs ZP: ROL A (2) replaces ROL zp (5) + LDA zp (3),
     ; and STA zp_div_rem after SBC is eliminated.
