@@ -956,11 +956,11 @@ zp_cc_den_hi = $FE
     ; --- Right fragment: if xend > ihi (active range extends right of seg) ---
     ; Allocate sibling, copy line params verbatim, set its active range to
     ; [ihi+1, original xend]. NO interp_store calls.
-    LDX zp_save1                                                        ; |
-    LDA zp_ihi : CMP POOL_XEND,X : BCS tg_no_right                       ; |
+    ; Load old span into Y (preserved across alloc_span, saves a reload).
+    LDY zp_save1                                                        ; |
+    LDA zp_ihi : CMP POOL_XEND,Y : BCS tg_no_right                       ; |
 .tg_make_right
     JSR alloc_span : BEQ tg_no_right                                    ; |
-    LDY zp_save1                                                        ; |
     LDA POOL_XLO,Y  : STA POOL_XLO,X                                    ; |
     LDA POOL_XHI,Y  : STA POOL_XHI,X                                    ; |
     LDA POOL_TL,Y   : STA POOL_TL,X                                     ; |

@@ -141,12 +141,14 @@ constant-line merge optimisation landed.
 
 | 2026-04-14 |       2959 B  |  3546 (19)    |  25639 (12)| 5531 (127) | 2372 (148) | **37096**    | −8     | **110959**   | −64    | **Remove redundant BEQ in ox1 min computation.** `min(xend, ihi)` used `BCC : BEQ` (unsigned ≤ check). Since the BEQ case (xend == ihi) loads ihi which equals xend — same result either way — the BEQ is dead. Removing it saves 2 cyc per overlap where xend ≥ ihi. S1 tighten −8, S2 tighten −64. ROM −2 B. |
 
-Per-call averages (S1): `mark_solid` 187, `tighten` 2137, `has_gap` 44, `is_full` 16.
-Per-call averages (S2): `mark_solid` 227, `tighten` 2093, `has_gap`  49, `is_full` 16.
+| 2026-04-14 |       2956 B  |  3546 (19)    |  25636 (12)| 5531 (127) | 2372 (148) | **37093**    | −3     | **110926**   | −33    | **Right frag: pre-load old span into Y, skip reload after alloc.** Load old span offset into Y before the xend check; since alloc_span preserves Y, the 6-byte line copy can use Y directly without `LDY zp_save1` reload. Saves 3 cyc per right fragment allocation. S1 tighten −3, S2 tighten −33. ROM −3 B. |
 
-From clean baseline (GRAND 190 102 → 148 055): **−42 047 cyc, −22.1%**.
-Cumulative vs original baseline (S1 127 389 → 37 096): **−90 293 cyc, −70.9%**.
-ROM size: 2701 → 2959 bytes, **+258 bytes**.
+Per-call averages (S1): `mark_solid` 187, `tighten` 2136, `has_gap` 44, `is_full` 16.
+Per-call averages (S2): `mark_solid` 227, `tighten` 2092, `has_gap`  49, `is_full` 16.
+
+From clean baseline (GRAND 190 102 → 148 019): **−42 083 cyc, −22.1%**.
+Cumulative vs original baseline (S1 127 389 → 37 093): **−90 296 cyc, −70.9%**.
+ROM size: 2701 → 2956 bytes, **+255 bytes**.
 
 ## Notes on this round
 
