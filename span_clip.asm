@@ -394,7 +394,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 
 .ms_chk_after
     ; Done if xstart > ihi (span starts after solid range)
-    LDA POOL_XSTART,X : CMP zp_ihi : BEQ ms_overlap : BCC ms_overlap    ; |||
+    LDA zp_ihi : CMP POOL_XSTART,X : BCS ms_overlap                     ; ||
     RTS                                                                 ; |
 
 .ms_overlap
@@ -404,7 +404,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; --- No left fragment ---
     ; xend > ihi  → shrink in place: xstart = ihi+1
     ; xend <= ihi → fully covered → free (via trampoline; ms_free is far)
-    LDA POOL_XEND,X : CMP zp_ihi : BEQ ms_jmp_free : BCC ms_jmp_free    ; |
+    LDA zp_ihi : CMP POOL_XEND,X : BCS ms_jmp_free                      ; |
     LDA zp_ihi : CLC : ADC #1 : STA POOL_XSTART,X                       ; |
     STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts1 : JMP msl         ; |
 .ms_rts1 RTS                                                            ; |
@@ -412,7 +412,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 
 .ms_has_left
     ; xstart < ilo. Has right fragment? xend > ihi?
-    LDA POOL_XEND,X : CMP zp_ihi : BEQ ms_left_only : BCC ms_left_only  ; |
+    LDA zp_ihi : CMP POOL_XEND,X : BCS ms_left_only                     ; |
     ; --- Middle split: allocate sibling for the right fragment ---
     STX zp_prev                                                         ; |
     JSR alloc_span : BEQ ms_left_only_after_fail                        ; |
@@ -614,7 +614,7 @@ zp_cc_den_hi = $FE
     JMP tg_walk                                                         ; |
 .tg_chk2
     ; Skip if xstart > ihi (span starts after seg)
-    LDA POOL_XSTART,X : CMP zp_ihi : BEQ tg_overlaps : BCC tg_overlaps  ; |||
+    LDA zp_ihi : CMP POOL_XSTART,X : BCS tg_overlaps                     ; ||
     ; All remaining spans are past the seg — append first (for merge check),
     ; then bulk-link the rest.
     JSR tg_append_x
@@ -1067,7 +1067,7 @@ zp_cc_den_hi = $FE
     ; Allocate sibling, copy line params verbatim, set its active range to
     ; [ihi+1, original xend]. NO interp_store calls.
     LDX zp_save1                                                        ; |
-    LDA POOL_XEND,X : CMP zp_ihi : BEQ tg_no_right : BCC tg_no_right    ; |
+    LDA zp_ihi : CMP POOL_XEND,X : BCS tg_no_right                      ; |
 .tg_make_right
     JSR alloc_span : BEQ tg_no_right                                    ; |
     LDY zp_save1                                                        ; |
