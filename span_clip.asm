@@ -347,6 +347,12 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 ; Input: A = x (eval point), zp_i_x0, zp_i_y0, zp_i_y1, zp_div_den
 ; Output: A = interpolated Y (u8)
 ; ======================================================================
+; Early-exit labels placed before entry point to ensure backward branches
+; stay on the same page as the BEQ instructions, avoiding +1 cycle penalty.
+.is_y0
+    LDA zp_i_y0 : RTS                                                   ; ||||
+.is_y1
+    LDA zp_i_y1 : RTS                                                   ; ||
 .interp_store
 {
     ; offset = x - x0 (A holds x on entry)
@@ -371,10 +377,6 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDA #0 : SBC zp_prod_hi : STA zp_div_hi                             ; |
     JSR udiv16_8                                                        ; |
     EOR #$FF : SEC : ADC zp_i_y0 : RTS                                  ; |
-.is_y0
-    LDA zp_i_y0 : RTS                                                   ; ||||
-.is_y1
-    LDA zp_i_y1 : RTS                                                   ; ||
 }
 
 ; (interp_span removed — mark_solid no longer interpolates)
