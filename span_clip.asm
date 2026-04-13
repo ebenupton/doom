@@ -612,8 +612,9 @@ zp_cc_den_hi = $FE
     LDA POOL_XSTART,X : CMP zp_ilo : BCS tg_ox0_set                     ; |
     LDA zp_ilo                                                          ; |
 .tg_ox0_set STA zp_ox0                                                  ; |
-    ; ox1 = min(xend, ihi).  Same trick: BCC/BEQ uses the loaded XEND.
-    LDA POOL_XEND,X : CMP zp_ihi : BCC tg_ox1_set : BEQ tg_ox1_set      ; |
+    ; ox1 = min(xend, ihi).  BCC alone suffices: when xend == ihi, the
+    ; fall-through loads ihi which equals xend — result is the same.
+    LDA POOL_XEND,X : CMP zp_ihi : BCC tg_ox1_set                        ; |
     LDA zp_ihi                                                          ; |
 .tg_ox1_set STA zp_ox1                                                  ; |
 

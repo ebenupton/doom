@@ -139,12 +139,14 @@ constant-line merge optimisation landed.
 
 | 2026-04-14 |       2961 B  |  3554 (19)    |  25647 (12)| 5531 (127) | 2372 (148) | **37104**    | −419   | **111023**   | −1411  | **Micro-optimisation batch #2.** (1) BB top check: reorder to compute max(yt1,yt2) into zp_tmp0 first, then min(tl,tr) into A, enabling single `CMP+BCS` instead of `CMP+BEQ+BCC` (−26 S1, −66 S2). (2) Pre-seg fast-link: replace `LDY zp_new_tail` with `TAY` since A already holds the value from the preceding LDA (−6 S1, −54 S2). (3) Defer `zp_final_ox1` save into `tg_has_splits` — the no-crossover path (common) skips the dead store entirely (−72 S1, −234 S2). (4) Defer `POOL_NEXT,X = 0` write in `tg_append_x`: merge path doesn't need it, first-span path reuses A=0 from preceding LDA, link path writes it just before linking (−4 S1, −71 S2). (5) Remove redundant `LDA zp_ihi` in mark_solid no-left-fragment path: CMP doesn't modify A (−27 S1, −30 S2). (6) Branch-based crossover detection: replace ROL+STA+ROL+EOR sign-bit chain with direct BCS/BCC branching on the CMP carry flag for both top and bot fast paths — saves ~12 cyc per boundary per overlap in the common no-crossover case (−284 S1, −956 S2). S1 total −419, S2 total −1411. ROM unchanged. |
 
-Per-call averages (S1): `mark_solid` 187, `tighten` 2137, `has_gap` 44, `is_full` 16.
-Per-call averages (S2): `mark_solid` 227, `tighten` 2094, `has_gap`  49, `is_full` 16.
+| 2026-04-14 |       2959 B  |  3546 (19)    |  25639 (12)| 5531 (127) | 2372 (148) | **37096**    | −8     | **110959**   | −64    | **Remove redundant BEQ in ox1 min computation.** `min(xend, ihi)` used `BCC : BEQ` (unsigned ≤ check). Since the BEQ case (xend == ihi) loads ihi which equals xend — same result either way — the BEQ is dead. Removing it saves 2 cyc per overlap where xend ≥ ihi. S1 tighten −8, S2 tighten −64. ROM −2 B. |
 
-From clean baseline (GRAND 190 102 → 148 127): **−41 975 cyc, −22.1%**.
-Cumulative vs original baseline (S1 127 389 → 37 104): **−90 285 cyc, −70.9%**.
-ROM size: 2701 → 2961 bytes, **+260 bytes**.
+Per-call averages (S1): `mark_solid` 187, `tighten` 2137, `has_gap` 44, `is_full` 16.
+Per-call averages (S2): `mark_solid` 227, `tighten` 2093, `has_gap`  49, `is_full` 16.
+
+From clean baseline (GRAND 190 102 → 148 055): **−42 047 cyc, −22.1%**.
+Cumulative vs original baseline (S1 127 389 → 37 096): **−90 293 cyc, −70.9%**.
+ROM size: 2701 → 2959 bytes, **+258 bytes**.
 
 ## Notes on this round
 
