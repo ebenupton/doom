@@ -185,10 +185,12 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; sum < 256: sqr tables for sum
     LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo                  ; |||||
     LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS                  ; |||||||
-.uo ; sum >= 256: sqr2 tables for sum
-    LDA sqr2_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
+.uo ; sum >= 256: sqr2 tables for sum (carry already set from BCS)
+    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
     LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
 }
+
+EQUB 0   ; 1-byte pad: keep code after umul8 page-aligned with pre-opt layout
 
 ; (interp_core removed — inlined into interp_store below.)
 
@@ -359,6 +361,8 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 
 ; (interp_span removed — mark_solid no longer interpolates)
 
+; (interp_span removed — padding removed to preserve page alignment of later code)
+
 ; ======================================================================
 ; MARK_SOLID: punch out [ilo, ihi] from the span list (solid wall)
 ;
@@ -404,8 +408,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDA zp_ihi : CMP POOL_XEND,X : BCS ms_jmp_free                      ; |
     ; A still holds ihi (CMP doesn't modify A)
     CLC : ADC #1 : STA POOL_XSTART,X                                    ; |
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts1 : JMP msl         ; |
-.ms_rts1 RTS                                                            ; |
+    STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                   ; |
 .ms_jmp_free JMP ms_free                                                ; |
 
 .ms_has_left
@@ -471,7 +474,8 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; Coherence cache: check last-matching span first (saves full walk).
     LDX zp_hg_cache : BEQ hg_no_cache
     LDA POOL_XEND,X : CMP zp_ilo : BCC hg_no_cache    ; xend < ilo → miss
-    LDA zp_ihi : CMP POOL_XSTART,X : BCS hg_yes       ; ihi >= xstart → hit
+    LDA zp_ihi : CMP POOL_XSTART,X : BCC hg_no_cache  ; ihi < xstart → miss
+    LDA #1 : RTS                                        ; cache hit → return 1 (avoids page-cross)
 .hg_no_cache
     ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
     ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
@@ -490,7 +494,6 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDA #0 : RTS
 .hg_cx_yes STX zp_hg_cache : LDA #1 : RTS
 .hg_cy_yes STY zp_hg_cache : LDA #1 : RTS
-.hg_yes LDA #1 : RTS
 }
 
 ; ======================================================================
@@ -639,9 +642,7 @@ zp_cc_den_hi = $FE
     LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok  ; A = min(tl,tr)
     LDA POOL_TR,X
 .tg_bb_tmin_ok
-    CMP zp_tmp0 : BCS tg_bb_top_ok  ; min(old) ≥ max(new)?
-    JMP tg_bb_skip
-.tg_bb_top_ok
+    CMP zp_tmp0 : BCC tg_bb_skip    ; min(old) < max(new)?  skip
     ; Check bot: max(bl,br) ≤ min(yb1,yb2)
     LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok  ; A = max(bl,br)
     LDA POOL_BR,X
@@ -1109,7 +1110,7 @@ zp_cc_den_hi = $FE
     LDA POOL_BR,Y     : STA POOL_BR,X                                   ; |
     LDA zp_ox0 : STA POOL_XSTART,X                                      ; |
     LDA zp_ox1 : STA POOL_XEND,X                                        ; |
-    JSR tg_append_x                                                     ; |
+    JMP tg_append_x                                                     ; | tail-call (saves 3 cyc)
 .opt2_no_ap
     RTS                                                                 ; |
 .skip_opt2
@@ -1132,7 +1133,7 @@ zp_cc_den_hi = $FE
     LDA zp_ox1 : STA POOL_XHI,X : STA POOL_XEND,X                       ; |
     LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X           ; |
     LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X           ; |
-    JSR tg_append_x                                                     ; |
+    JMP tg_append_x                                                     ; | tail-call (saves 3 cyc)
 .no_ap
     RTS                                                                 ; |
 }
