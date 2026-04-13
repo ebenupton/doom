@@ -476,9 +476,8 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; 68-84% hit rate with zero maintenance cost.
     LDX zp_hg_cache : BEQ hg_full  ; cache empty → full walk
     LDA POOL_XEND,X : CMP zp_ilo : BCC hg_full  ; cached span ends before query
-    LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_yes : BCC hg_yes
-    ; Cache miss (span starts after query) — fall through to full walk.
-    ; Don't invalidate — the cached span may still be valid for the next query.
+    LDA zp_ihi : CMP POOL_XSTART,X : BCC hg_full  ; xstart > ihi → miss
+.hg_yes LDA #1 : RTS  ; cache hit (xend >= ilo AND xstart <= ihi)
 .hg_full
     LDX zp_head : BEQ hgn
     ; --- Unrolled 2× ping-pong walk ---
@@ -487,14 +486,11 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .hgl_y LDA POOL_XEND,Y : CMP zp_ilo : BCS hg_chk_y
     LDX POOL_NEXT,Y : BNE hgl_x
 .hgn LDA #0 : RTS
-    ; --- Hit checks ---
-.hg_chk_x LDA POOL_XSTART,X : CMP zp_ihi : BEQ hg_hit_x : BCC hg_hit_x
-    LDA #0 : RTS
-.hg_chk_y LDA POOL_XSTART,Y : CMP zp_ihi : BEQ hg_hit_y : BCC hg_hit_y
-    LDA #0 : RTS
-.hg_hit_x STX zp_hg_cache : LDA #1 : RTS
-.hg_hit_y STY zp_hg_cache : LDA #1 : RTS
-.hg_yes LDA #1 : RTS  ; cache hit path (already cached)
+    ; --- Hit checks (reversed CMP: BCC on miss saves 1-3 cyc) ---
+.hg_chk_x LDA zp_ihi : CMP POOL_XSTART,X : BCC hgn
+    STX zp_hg_cache : LDA #1 : RTS
+.hg_chk_y LDA zp_ihi : CMP POOL_XSTART,Y : BCC hgn
+    STY zp_hg_cache : LDA #1 : RTS
 }
 
 ; ======================================================================
