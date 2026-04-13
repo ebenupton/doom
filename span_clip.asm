@@ -792,6 +792,11 @@ zp_cc_den_hi = $FE
 .new_done
 
     ; --- Crossover detection BEFORE clamping (needs unclamped nt/nb values) ---
+    ; Skip top crossover when both yt values are negative (Path A neg yt):
+    ; old top auto-dominates → dt0, dt1 always positive → same sign → no cx.
+    LDA zp_yt1h : AND zp_yt2h : BPL tg_cc_t_normal
+    JMP tg_cc_no_top
+.tg_cc_t_normal
     ; Top crossover: fast path when both hi bytes are 0 (common case).
     LDA zp_nt_lh : ORA zp_nt_rh : BNE tg_cc_t_slow                      ; |
     ; Both hi bytes 0: simple unsigned CMP for sign of (old - new)
