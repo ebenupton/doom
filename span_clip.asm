@@ -222,7 +222,9 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 ; ======================================================================
 .udiv16_8
 {
-    LDA zp_div_hi : CMP zp_div_den : BCS d16
+    LDA zp_div_hi : CMP zp_div_den : BCC d8
+    JMP d16
+.d8
     ; FAST PATH: quotient fits in 8 bits.  Setup: rem = div_hi,
     ; div_hi = div_lo, div_lo = 0.  Then skip leading zero-bit
     ; iterations: shift rem:div_hi left, checking rem vs den each
@@ -245,13 +247,28 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit : DEX
     ASL zp_div_hi : ROL A : BCS dskip_commit : CMP zp_div_den : BCS dskip_commit
     ; All 8 iterations zero → quotient = 0
-    STA zp_div_rem : LDA #0 : RTS
+    LDA #0 : RTS
 .dskip_commit
     SBC zp_div_den         ; carry already set (from BCS)
-    STA zp_div_rem
     INC zp_div_lo          ; set this quotient bit
-    DEX : BNE dl           ; remaining iterations via main loop
+    DEX : BNE dl_a         ; remaining iterations via A-register main loop
     LDA zp_div_lo : RTS
+    ; --- Fast-path main loop: remainder stays in A register ---
+    ; Saves 6 cyc/iter vs ZP: ROL A (2) replaces ROL zp (5) + LDA zp (3),
+    ; and STA zp_div_rem after SBC is eliminated.
+.dl_a ASL zp_div_lo : ROL zp_div_hi                                     ; ||||||||||||||||||||||||||||||||||||||||
+    ROL A                                                                ; ||||||||||||||||||||||
+    BCS dl_a_over                                                        ; ||||
+    CMP zp_div_den : BCC dl_as                                           ; ||||||||||||||||||||||||||||
+    SBC zp_div_den                                                       ; ||
+.dl_a_commit
+    INC zp_div_lo                                                        ; ||||
+.dl_as DEX : BNE dl_a                                                    ; ||||||||||||
+    LDA zp_div_lo : RTS                                                  ; ||
+.dl_a_over
+    SBC zp_div_den          ; carry already set from ROL overflow
+    JMP dl_a_commit
+    ; --- Slow path (16-iter): remainder in ZP (needed for wide quotients) ---
 .d16 LDA #0 : STA zp_div_rem
     LDX #16
 .dl ASL zp_div_lo : ROL zp_div_hi : ROL zp_div_rem                      ; ||||||||||||||||||||||||||||||||||||||||
