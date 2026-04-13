@@ -594,6 +594,43 @@ zp_cc_den_hi = $FE
     LDA zp_ihi                                                          ; |
 .tg_ox1_set STA zp_ox1                                                  ; |
 
+    ; --- Bounding-range pre-check for old dominance ---
+    ; If all 4 seg values are on-screen (hi bytes = 0, lo ≤ 159), we can
+    ; compare the span's tl/tr/bl/br extremes against the seg's yt/yb
+    ; extremes.  Since both are linear, min/max over endpoints bounds the
+    ; entire range.  Old dominates when:
+    ;   min(old_tl, old_tr) ≥ max(yt1, yt2)   (old top always ≥ new top)
+    ;   max(old_bl, old_br) ≤ min(yb1, yb2)   (old bot always ≤ new bot)
+    ; This is conservative (uses full span range, not just overlap), but
+    ; when it fires it skips ALL interpolation (~2400 cyc).
+    ; Guard: all 4 seg hi bytes must be 0 (on-screen).
+    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip
+    ; All on-screen. Check top: min(tl,tr) ≥ max(yt1,yt2)
+    LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok  ; A = min(tl,tr)
+    LDA POOL_TR,X
+.tg_bb_tmin_ok
+    ; A = min(old_tl, old_tr). Compare with max(yt1, yt2).
+    STA zp_tmp0
+    LDA zp_yt1 : CMP zp_yt2 : BCS tg_bb_tmax_ok  ; A = max(yt1,yt2)
+    LDA zp_yt2
+.tg_bb_tmax_ok
+    CMP zp_tmp0 : BEQ tg_bb_top_ok : BCC tg_bb_top_ok  ; min(old) ≥ max(new)?
+    JMP tg_bb_skip
+.tg_bb_top_ok
+    ; Check bot: max(bl,br) ≤ min(yb1,yb2)
+    LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok  ; A = max(bl,br)
+    LDA POOL_BR,X
+.tg_bb_bmax_ok
+    STA zp_tmp0
+    LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_bmin_ok  ; A = min(yb1,yb2)
+    LDA zp_yb2
+.tg_bb_bmin_ok
+    CMP zp_tmp0 : BCC tg_bb_skip  ; max(old) ≤ min(new)?
+    ; Old dominates by bounding range — skip all interpolation.
+    JSR tg_append_x
+    JMP tg_walk
+.tg_bb_skip
+
     ; --- Dominance check: is new boundary <= old at both overlap endpoints? ---
     STX zp_save1           ; save span offset early (interp calls clobber X)  ; |
     ; ---------- OLD span: fast path when (ox0,ox1) == (xlo,xhi) ----------
