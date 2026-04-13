@@ -463,7 +463,7 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
 .ms_rts4 RTS                                                            ; |
 }
 
-EQUD 0 : EQUB 0  ; 5-byte pad: preserve page alignment after carry propagation opts
+EQUW 0  ; 2-byte pad: reduced from 5 to absorb mark_solid alignment shift
 
 ; ======================================================================
 ; HAS_GAP: fast visibility check for column range [ilo, ihi]
