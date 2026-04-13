@@ -407,8 +407,8 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
     ; xend > ihi  → shrink in place: xstart = ihi+1
     ; xend <= ihi → fully covered → free (via trampoline; ms_free is far)
     LDA zp_ihi : CMP POOL_XEND,X : BCS ms_jmp_free                      ; |
-    ; A still holds ihi (CMP doesn't modify A)
-    CLC : ADC #1 : STA POOL_XSTART,X                                    ; |
+    ; A still holds ihi; carry already clear from BCS not taken
+    ADC #1 : STA POOL_XSTART,X                                          ; |
     STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                   ; |
 .ms_jmp_free JMP ms_free                                                ; |
 
@@ -458,6 +458,8 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
     LDA zp_tmp0 : TAX : BEQ ms_rts4 : JMP msl                           ; |
 .ms_rts4 RTS                                                            ; |
 }
+
+EQUB 0   ; 1-byte pad: preserve page alignment after CLC removal in mark_solid
 
 ; ======================================================================
 ; HAS_GAP: fast visibility check for column range [ilo, ihi]
