@@ -364,6 +364,8 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 
 ; (interp_span removed — padding removed to preserve page alignment of later code)
 
+EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
+
 ; ======================================================================
 ; MARK_SOLID: punch out [ilo, ihi] from the span list (solid wall)
 ;
@@ -846,7 +848,8 @@ zp_cc_den_hi = $FE
     LDA zp_nt_r : CMP #160 : BCS tg_clamp_slow                          ; |
     LDA zp_nb_l : CMP #160 : BCS tg_clamp_slow                          ; |
     LDA zp_nb_r : CMP #160 : BCS tg_clamp_slow                          ; |
-    JMP tg_clamp_done                                                    ; |
+    BCC tg_clamp_done                                                    ; | C=0 from BCS not taken
+EQUB 0  ; 1-byte pad: preserve alignment after JMP→BCC
 .tg_clamp_slow
     ; High byte: negative→0, positive overflow (hi>0)→159, 0→check low
     ; byte (in [0,255], clamp [160,255] to 159).
@@ -1076,7 +1079,8 @@ zp_cc_den_hi = $FE
     LDA zp_nt_r : CMP #160 : BCS tos_clamp_slow                         ; |
     LDA zp_nb_l : CMP #160 : BCS tos_clamp_slow                         ; |
     LDA zp_nb_r : CMP #160 : BCS tos_clamp_slow                         ; |
-    JMP tos_clamp_done                                                   ; |
+    BCC tos_clamp_done                                                    ; | C=0 from BCS not taken
+EQUB 0  ; 1-byte pad: preserve alignment after JMP→BCC
 .tos_clamp_slow
     LDA zp_nt_lh : BMI cn1z : BNE cn1f                                  ; |
     LDA zp_nt_l : CMP #160 : BCC cn1s                                   ; |
