@@ -849,7 +849,7 @@ zp_cc_den_hi = $FE
     LDA zp_nb_l : CMP #160 : BCS tg_clamp_slow                          ; |
     LDA zp_nb_r : CMP #160 : BCS tg_clamp_slow                          ; |
     BCC tg_clamp_done                                                    ; | C=0 from BCS not taken
-EQUB 0  ; 1-byte pad: preserve alignment after JMP→BCC
+EQUW 0  ; 2-byte pad: +1 byte fixes clamp ($26FF) and tos_clamp ($29FF) page crossings
 .tg_clamp_slow
     ; High byte: negative→0, positive overflow (hi>0)→159, 0→check low
     ; byte (in [0,255], clamp [160,255] to 159).
