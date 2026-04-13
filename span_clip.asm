@@ -569,9 +569,28 @@ zp_cc_den_hi = $FE
 .tg_go
     ; Save old head, then start building new list
     LDA zp_head : STA zp_old_cur                                        ; |
-    LDA #0 : STA zp_new_tail                                            ; |
-    LDA #0 : STA zp_head                                                ; |
+    LDA #0 : STA zp_new_tail : STA zp_head                              ; |
+    ; --- Pre-seg bulk-link: skip spans entirely before the seg (xend < ilo) ---
+    LDX zp_old_cur : BEQ tg_walk_entry                                  ; |
+.tg_prescan
+    LDA POOL_XEND,X : CMP zp_ilo : BCS tg_prescan_done                  ; |
+    STX zp_new_tail                ; track last pre-seg span             ; |
+    LDA POOL_NEXT,X : TAX : BNE tg_prescan                              ; |
+    ; All spans are pre-seg — entire old list becomes new list.
+    LDA zp_old_cur : STA zp_head                                        ; |
+    RTS                                                                 ; |
+.tg_prescan_done
+    ; X = first span with xend >= ilo. new_tail = last pre-seg span (or 0).
+    LDA zp_new_tail : BEQ tg_prescan_no_pre                             ; |
+    ; Pre-seg spans exist: head = old_cur, new_tail already set.
+    LDA zp_old_cur : STA zp_head                                        ; |
+    ; Terminate pre-seg chain: set NEXT of last pre-seg span to 0.
+    LDY zp_new_tail : LDA #0 : STA POOL_NEXT,Y                          ; |
+.tg_prescan_no_pre
+    ; Set old_cur to X (first potential overlapper)
+    STX zp_old_cur                                                      ; |
 
+.tg_walk_entry
 .tg_walk
     LDX zp_old_cur                                                      ; |
     BNE tg_process                                                      ; |
