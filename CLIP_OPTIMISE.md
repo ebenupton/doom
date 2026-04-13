@@ -354,7 +354,13 @@ cross pages if converted. The slow-path crossover sign-detection JMPs
 (8 total, all within range) were previously attempted and reverted due
 to 4-byte alignment shift cost.
 
-**Final**: S1=36,782 S2=110,438 Grand=**147,220** ROM=2,949 bytes
+3. **Clamp slow-path pad increase** (0 cyc in benchmark): Increased the
+   dead-code pad between `BCC tg_clamp_done` and `tg_clamp_slow` from
+   1 to 2 bytes. Fixes 2 page crossings ($26FF BEQ and $29FF BCC) that
+   fire when new seg values need clamping from off-screen. Zero new
+   crossings. +1 byte ROM.
+
+**Final**: S1=36,782 S2=110,438 Grand=**147,220** ROM=2,950 bytes
 Delta from carry round: **−81 cycles (−0.06%)**
 
 ## Optimisation ideas (not yet attempted)
