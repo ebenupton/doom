@@ -279,11 +279,11 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .seg_interp_store
 {
     ; offset = x - sx1 (A holds x on entry)
-    SEC : SBC zp_sx1 : STA zp_mul_b                                     ; ||||
+    SEC : SBC zp_sx1 : BEQ sis_y0 : STA zp_mul_b                        ; ||||
     ; dy = y1 - y0 (BEQ sis_y0 catches dy==0 constant-line shortcut)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ sis_y0                        ; |||||
     JSR smul8                                                           ; ||
-    ; Short-circuit when prod = 0 (e.g. offset = 0) — saves the divide.
+    ; Short-circuit when prod = 0 — saves the divide.
     LDA zp_prod_lo : ORA zp_prod_hi : BNE sis_nz                        ; |||
 .sis_y0
     LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
@@ -325,7 +325,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .interp_store
 {
     ; offset = x - x0 (A holds x on entry)
-    SEC : SBC zp_i_x0 : STA zp_mul_b                                    ; ||||
+    SEC : SBC zp_i_x0 : BEQ is_y0 : STA zp_mul_b                        ; ||||
     ; dy = y1 - y0 (BEQ is_y0 catches constant-line short-circuit)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ is_y0                         ; |||||
     JSR smul8                                                           ; |
