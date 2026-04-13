@@ -215,11 +215,100 @@ values are small enough that the quotient fits u8, the divide drops from
 the small-prod fast path that skips the divide entirely when `prod < den`,
 the seg interp pipeline is much closer to "average case ≈ best case".
 
+## Micro-optimisation round (profiler-guided)
+
+**Starting point**: S1=37,078 S2=110,893 Grand=147,971 ROM=2,953 bytes
+
+Per-instruction profiling (py65 cycle counting per PC) identified hotspots
+and page-crossing branch penalties. Changes applied:
+
+1. **has_gap cache-hit page-crossing elimination** (−371 cyc): The cache-hit
+   BCS from page $22 to $23 (hg_yes label) was inverted to BCC hg_no_cache
+   with inline `LDA #1 : RTS`, keeping the taken branch on the same page.
+   Removed the now-unreferenced `hg_yes` label (−3 bytes ROM).
+
+2. **Bounding-box BCS+JMP → BCC** (−46 cyc): In the tighten bounding-box
+   precheck, `CMP tmp0 : BCS top_ok` followed by `JMP bb_skip` was replaced
+   with `CMP tmp0 : BCC bb_skip` (direct branch on failure). Saves 1 cycle
+   when the check passes and 2 cycles when it fails, plus 3 bytes ROM.
+
+3. **mark_solid BEQ+JMP → BNE+RTS** (−113 cyc): The no-left-fragment loop
+   continuation `TAX : BEQ ms_rts1 : JMP msl` / `ms_rts1 RTS` was rewritten
+   as `TAX : BNE msl : RTS` since msl is within branch range. Saves 2 cycles
+   per continuation (14 hits) and 1 byte ROM.
+
+4. **tg_overlap_sub tail-call JSR→JMP** (−36 cyc): Two `JSR tg_append_x` +
+   `RTS` pairs at the end of tg_overlap_sub were converted to `JMP tg_append_x`,
+   eliminating 3 cycles per call (JSR overhead avoided since tg_append_x's RTS
+   returns directly to the caller).
+
+**Final**: S1=36,868 S2=110,537 Grand=**147,405** ROM=2,949 bytes
+Delta: **−566 cycles (−0.38%)**, −4 bytes ROM
+
+## Carry propagation round
+
+**Starting point**: S1=36,868 S2=110,537 Grand=**147,405** ROM=2,949 bytes
+
+Systematic analysis of every SEC/CLC instruction to find cases where the
+carry flag is already in the required state from a prior instruction.
+Key constraint: any code-size change shifts downstream code, potentially
+introducing page-crossing branch penalties that wipe out the savings.
+Each byte saved requires a dead-code padding byte at a carefully chosen
+location to preserve alignment.
+
+1. **umul8 overflow path: redundant SEC** (−60 cyc): After `BCS uo`,
+   carry is guaranteed set. The SEC before the first SBC in the overflow
+   path is redundant. Saves 2 cycles per overflow-path multiply. 1-byte
+   pad after umul8 RTS preserves alignment.
+
+2. **udiv16_8 dl_over: redundant SEC** (unmeasurable): Same pattern --
+   `BCS dl_over` guarantees carry set. SEC before SBC is redundant.
+   Overflow path is too rare to measure but correctness verified.
+
+3. **compute_crossover fast_over: redundant SEC** (unmeasurable): Same
+   pattern for the crossover divider's overflow path.
+
+4. **mark_solid shrink path: redundant CLC** (−38 cyc): After `BCS
+   ms_jmp_free` falls through, carry is guaranteed clear. The CLC before
+   `ADC #1` (computing ihi+1 for new xstart) is redundant.
+
+5. **mark_solid middle-split: CLC for ADC #1** (−2 cyc): Same carry-clear
+   propagation from BCS fall-through through alloc_span (which preserves
+   carry) and LDA/STA copy chain.
+
+6. **mark_solid middle-split: SEC:SBC #1 → SBC #0** (−2 cyc): Carry is
+   clear from same propagation chain. With C=0, `SBC #0` computes
+   `A - 0 - 1 = A - 1`, equivalent to `SEC : SBC #1`. Saves SEC (1 byte,
+   2 cycles).
+
+7. **tighten left frag: SEC:SBC #1 → SBC #0** (−2 cyc): BCS tg_no_left
+   falling through guarantees C=0. Same trick as #6.
+
+8. **tighten right frag: redundant CLC** (tiny): BCS tg_no_right falling
+   through guarantees C=0.
+
+**Attempted but reverted:**
+- seg_interp_store SEC before dy SBC: carry analysis was wrong -- when
+  sx1 is negative (post-remap), the 8-bit low byte of sx1 > ox0, causing
+  a borrow that clears carry. SEC is needed.
+- tg_append_x CLC→ADC#0: net regression due to has_gap page alignment
+  shift (+22 cycles from page-crossing penalties).
+- 4x JMP→BNE in slow crossover sign detection: 4-byte pad at any location
+  shifts too much code, causing page-crossing regressions that exceed the
+  savings.
+
+**Final**: S1=36,822 S2=110,479 Grand=**147,301** ROM=2,949 bytes
+Delta from micro-opt round: **−104 cycles (−0.07%)**
+
 ## Optimisation ideas (not yet attempted)
 
 - `interp_store`/`seg_interp_store` could short-circuit the small-positive
   case too, but the round-to-nearest bias makes the check more involved
   (need to compare `prod` to `den/2`, with care around odd `den`).
-- A page-aligned `span_has_gap` would save ~2 cycles per call by avoiding
-  the page-cross BNE on the loop back-edge. Would cost up to 46 padding
-  bytes of ROM.
+- Page-alignment padding was tested for mark_solid (msl at $2200) but the
+  8-byte SKIP that fixes mark_solid's 162-cycle penalty creates a new
+  128-cycle penalty in has_gap (loop straddles the new page boundary).
+  Net gain was only 13 cycles — not worth the ROM cost.
+- Further JMP→branch conversions are limited: most remaining JMPs in
+  mark_solid and tighten exceed the 128-byte branch range. Flag-state
+  analysis must be rigorous (STX/STA do NOT set flags on 6502).
