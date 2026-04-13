@@ -279,7 +279,9 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .seg_interp_store
 {
     ; offset = x - sx1 (A holds x on entry)
-    SEC : SBC zp_sx1 : BEQ sis_y0 : STA zp_mul_b                        ; ||||
+    SEC : SBC zp_sx1 : BEQ sis_y0                                       ; |||
+    CMP zp_div_den : BEQ sis_y1                                         ; ||
+    STA zp_mul_b                                                        ; |
     ; dy = y1 - y0 (BEQ sis_y0 catches dy==0 constant-line shortcut)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ sis_y0                        ; |||||
     JSR smul8                                                           ; ||
@@ -288,6 +290,9 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 .sis_y0
     LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
     LDA zp_i_y0 : RTS                                                   ; ||
+.sis_y1
+    LDY zp_i_y1h                ; Y = y1 high, A = y1 low               ; |
+    LDA zp_i_y1 : RTS                                                   ; ||
 .sis_nz
     ; ex always in [1,255] post-remap; bias = ex/2 for round-to-nearest
     LDA zp_div_den : LSR A                                              ; |
@@ -710,11 +715,11 @@ zp_cc_den_hi = $FE
     ; Full seg interpolation (4 calls)
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
     LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h
-    LDA zp_yt2 : STA zp_i_y1
+    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r
     LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h
-    LDA zp_yb2 : STA zp_i_y1
+    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r
     JMP tg_not_old_dom
@@ -783,14 +788,14 @@ zp_cc_den_hi = $FE
 .new_slow
     ; Hoisted den setup: den = sx2 - sx1. Guaranteed > 0 by remap.
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
-    ; Top: y0 = yt1 (s16), y1 = yt2 low
+    ; Top: y0 = yt1 (s16), y1 = yt2 (s16)
     LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
-    LDA zp_yt2 : STA zp_i_y1                                            ; |
+    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; ||
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; ||
-    ; Bot: y0 = yb1 (s16), y1 = yb2 low
+    ; Bot: y0 = yb1 (s16), y1 = yb2 (s16)
     LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
-    LDA zp_yb2 : STA zp_i_y1                                            ; |
+    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; ||
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; ||
 .new_done
@@ -1119,11 +1124,11 @@ zp_cc_den_hi = $FE
 .tos_new_slow
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
     LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
-    LDA zp_yt2 : STA zp_i_y1                                            ; |
+    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; |
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; |
     LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
-    LDA zp_yb2 : STA zp_i_y1                                            ; |
+    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; |
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; |
 .tos_new_done
