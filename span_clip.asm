@@ -86,6 +86,12 @@ zp_cache_nt   = $A1    ; cached nt_r (seg top lo)
 zp_cache_nt_h = $A2    ; cached nt_rh (seg top hi)
 zp_cache_nb   = $A3    ; cached nb_r (seg bot lo)
 zp_cache_nb_h = $A4    ; cached nb_rh (seg bot hi)
+; === Narrowed BB bounds ($A5-$A8) — progressively tighter seg extremes ===
+; Initialized at tg_go to max(yt1,yt2) and min(yb1,yb2); narrowed after each
+; overlapping span using cached seg values. Only valid when all-on-screen.
+zp_bb_yt_max  = $A5    ; max(seg top) over remaining overlap range
+zp_bb_yb_min  = $A6    ; min(seg bot) over remaining overlap range
+zp_bb_flags   = $A7    ; bit 7: 1=narrowed bounds valid (all seg vals on-screen)
 
 ; === Zero-page workspace ($C0-$FF) ===
 ; Layout: list management (head, free), input params (seg coords s16),
@@ -199,7 +205,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
 }
 
-EQUB 0   ; 1-byte pad: keep code after umul8 page-aligned with pre-opt layout
+EQUB 0   ; 1-byte pad: optimal alignment for umul8
 
 ; (interp_core removed — inlined into interp_store below.)
 
@@ -377,7 +383,7 @@ EQUB 0   ; 1-byte pad: keep code after umul8 page-aligned with pre-opt layout
 
 ; (interp_span removed — padding removed to preserve page alignment of later code)
 
-EQUW 0 : EQUW 0  ; 4-byte pad: optimal page alignment for tighten hot paths
+; 0-byte pad: optimal alignment for narrowed-BB layout
 
 ; ======================================================================
 ; MARK_SOLID: punch out [ilo, ihi] from the span list (solid wall)
@@ -604,6 +610,27 @@ zp_cc_den_hi = $FE
     LDA zp_head : STA zp_old_cur                                        ; |
     LDA #0 : STA zp_new_tail : STA zp_head                              ; |
     LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
+    ; Initialize narrowed BB bounds: max(yt1,yt2) and min(yb1,yb2)
+    ; Flag: $80 = both-yt-negative (bot-only BB), $40 = all-on-screen (full BB)
+    ; $FF = fallthrough to extended BB with stale yb_min (safe: old bot <= 159)
+    STA zp_bb_flags                                                      ; |
+    LDA zp_yt1h : AND zp_yt2h : BPL tg_go_not_neg                       ; |
+    ; Both yt hi negative — init bot bound, set flag bit 7
+    LDA zp_yb1h : ORA zp_yb2h : BNE tg_go_bb_done                       ; |
+    LDA zp_yb1 : CMP zp_yb2 : BCC tg_go_bmin1 : LDA zp_yb2              ; |
+.tg_go_bmin1 STA zp_bb_yb_min                                           ; |
+    LDA #$80 : STA zp_bb_flags                                          ; |
+    JMP tg_go_bb_done                                                    ; |
+.tg_go_not_neg
+    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h               ; |
+    BNE tg_go_bb_done                                                    ; |
+    ; All on-screen: compute max(yt1,yt2) and min(yb1,yb2)
+    LDA zp_yt1 : CMP zp_yt2 : BCS tg_go_tmax1 : LDA zp_yt2              ; |
+.tg_go_tmax1 STA zp_bb_yt_max                                           ; |
+    LDA zp_yb1 : CMP zp_yb2 : BCC tg_go_bmin2 : LDA zp_yb2              ; |
+.tg_go_bmin2 STA zp_bb_yb_min                                           ; |
+    LDA #$40 : STA zp_bb_flags   ; bit 6 = all on-screen valid           ; |
+.tg_go_bb_done
 
 .tg_walk
     LDX zp_old_cur                                                      ; |
@@ -648,32 +675,19 @@ zp_cc_den_hi = $FE
 .tg_ox1_set STA zp_ox1                                                  ; |
 
     ; --- Bounding-range pre-check for old dominance ---
-    ; If all 4 seg values are on-screen (hi bytes = 0, lo ≤ 159), we can
-    ; compare the span's tl/tr/bl/br extremes against the seg's yt/yb
-    ; extremes.  Since both are linear, min/max over endpoints bounds the
-    ; entire range.  Old dominates when:
-    ;   min(old_tl, old_tr) ≥ max(yt1, yt2)   (old top always ≥ new top)
-    ;   max(old_bl, old_br) ≤ min(yb1, yb2)   (old bot always ≤ new bot)
-    ; This is conservative (uses full span range, not just overlap), but
-    ; when it fires it skips ALL interpolation (~2400 cyc).
-    ; Guard: check if both yt hi negative first (common in S2: off-screen top).
-    ; If so, skip straight to extended bot-only check.
-    LDA zp_yt1h : AND zp_yt2h : BMI tg_bb_ext_entry
-    ; Not both negative. Try the standard all-hi=0 check.
-    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BEQ tg_bb_hi_ok
+    ; Uses precomputed narrowed BB bounds (zp_bb_yt_max/yb_min) that get
+    ; progressively tighter as the seg cache advances left-to-right.
+    ; Flag dispatch: bit 7 = both-yt-negative (extended), bit 6 = all-on-screen.
+    LDA zp_bb_flags : BMI tg_bb_ext_entry : AND #$40 : BNE tg_bb_hi_ok
     JMP tg_bb_fail
 .tg_bb_ext_entry
-    ; Both yt negative. Check yb hi bytes are zero (bot on-screen).
-    LDA zp_yb1h : ORA zp_yb2h : BNE tg_bb_fail
     ; Extended path: top trivially passes (both yt negative, old top >= 0).
-    ; Bot check with on-screen yb values:
+    ; Bot check using narrowed min(yb1,yb2) bound:
     LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_ext_bmax  ; A = max(bl,br)
     LDA POOL_BR,X
 .tg_bb_ext_bmax
     STA zp_tmp0
-    LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_ext_bmin  ; A = min(yb1,yb2)
-    LDA zp_yb2
-.tg_bb_ext_bmin
+    LDA zp_bb_yb_min                 ; narrowed min(seg bot)
     CMP zp_tmp0 : BCC tg_bb_fail  ; max(old) > min(new)?  old-dom failed
     ; Old dominates (top trivial + bot passed) — skip all interpolation.
     JSR tg_append_x
@@ -681,26 +695,18 @@ zp_cc_den_hi = $FE
 .tg_bb_fail
     JMP tg_bb_skip
 .tg_bb_hi_ok
-    ; All on-screen. Check top: min(tl,tr) ≥ max(yt1,yt2)
-    ; Compute max(yt1,yt2) first into zp_tmp0, then min(tl,tr) into A,
-    ; so a single CMP+BCS suffices (min_old >= max_new ↔ C=1).
-    LDA zp_yt1 : CMP zp_yt2 : BCS tg_bb_tmax_ok  ; A = max(yt1,yt2)
-    LDA zp_yt2
-.tg_bb_tmax_ok
-    STA zp_tmp0
+    ; All on-screen. Check top: min(tl,tr) >= narrowed max(yt1,yt2)
     LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok  ; A = min(tl,tr)
     LDA POOL_TR,X
 .tg_bb_tmin_ok
-    CMP zp_tmp0 : BCC tg_try_newdom ; min(old) < max(new)?  old-dom failed
-    ; Check bot: max(bl,br) ≤ min(yb1,yb2)
+    CMP zp_bb_yt_max : BCC tg_try_newdom ; min(old) < max(new)?  old-dom failed
+    ; Check bot: narrowed min(yb1,yb2) >= max(bl,br)
     LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok  ; A = max(bl,br)
     LDA POOL_BR,X
 .tg_bb_bmax_ok
     STA zp_tmp0
-    LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_bmin_ok  ; A = min(yb1,yb2)
-    LDA zp_yb2
-.tg_bb_bmin_ok
-    CMP zp_tmp0 : BCC tg_try_newdom  ; max(old) > min(new)?  old-dom failed
+    LDA zp_bb_yb_min                 ; narrowed min(seg bot)
+    CMP zp_tmp0 : BCC tg_try_newdom  ; min(new) < max(old)?  old-dom failed
     ; Old dominates by bounding range — skip all interpolation.
     JSR tg_append_x
     JMP tg_walk
@@ -778,6 +784,17 @@ zp_cc_den_hi = $FE
     LDA zp_ox0 : JSR interp_store : STA zp_ob_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
 .old_done
+    ; --- Post-old-interp dominance shortcut using narrowed BB bounds ---
+    ; If the interpolated old values dominate the seg's BB bounds, we can
+    ; skip new seg interp entirely. Only valid when BB bounds are on-screen.
+    LDA zp_bb_flags : AND #$40 : BEQ tg_pod_skip  ; only when all-on-screen
+    LDA zp_ot_l : CMP zp_bb_yt_max : BCC tg_pod_skip  ; old top < seg max top
+    LDA zp_ot_r : CMP zp_bb_yt_max : BCC tg_pod_skip
+    LDA zp_bb_yb_min : CMP zp_ob_l : BCC tg_pod_skip  ; seg min bot < old bot
+    CMP zp_ob_r : BCC tg_pod_skip  ; A still holds bb_yb_min (CMP preserves A)
+    ; Old dominates seg's bounding box — skip new seg interp entirely.
+    LDX zp_save1 : JSR tg_append_x : JMP tg_walk
+.tg_pod_skip
     ; ---------- NEW seg: cache check for left-endpoint reuse -----------
     LDA zp_ox0 : CMP zp_cache_ox1 : BNE new_no_cache
     ; Cache hit: reuse left-endpoint seg values from previous span
@@ -838,6 +855,29 @@ zp_cc_den_hi = $FE
     LDA zp_nt_r : STA zp_cache_nt : LDA zp_nt_rh : STA zp_cache_nt_h
     LDA zp_nb_r : STA zp_cache_nb : LDA zp_nb_rh : STA zp_cache_nb_h
     LDA zp_ox1 : STA zp_cache_ox1
+    ; --- Narrow BB bounds using cached right-edge seg values ---
+    ; For both-negative-top path (flag bit 7): narrow yb_min only.
+    ; For all-on-screen path (flag bit 6): narrow both yt_max and yb_min.
+    ; Only narrow when cached value is on-screen (hi==0, lo<160).
+    LDA zp_bb_flags : BEQ tg_nd_skip   ; $00/$FF-uninitialized = skip
+    CMP #$FF : BEQ tg_nd_skip          ; $FF = stale/uninitialized
+    BMI tg_nd_bot_only                  ; $80 = extended (bot only)
+    ; All-on-screen: narrow top. cached_nt is the seg top at right edge.
+    ; New yt_max = max(cached_nt, yt2) — but only if cached is on-screen.
+    LDA zp_cache_nt_h : BNE tg_nd_top_skip  ; off-screen hi → skip
+    LDA zp_cache_nt : CMP #160 : BCS tg_nd_top_skip  ; off-screen lo → skip
+    ; A = cached_nt (on-screen). New bound = max(A, yt2).
+    CMP zp_yt2 : BCS tg_nd_top_ok : LDA zp_yt2
+.tg_nd_top_ok STA zp_bb_yt_max
+.tg_nd_top_skip
+.tg_nd_bot_only
+    ; Narrow bot. cached_nb is the seg bot at right edge.
+    LDA zp_cache_nb_h : BNE tg_nd_skip  ; off-screen hi → skip
+    LDA zp_cache_nb : CMP #160 : BCS tg_nd_skip  ; off-screen lo → skip
+    ; A = cached_nb (on-screen). New bound = min(A, yb2).
+    CMP zp_yb2 : BCC tg_nd_bot_ok : LDA zp_yb2
+.tg_nd_bot_ok STA zp_bb_yb_min
+.tg_nd_skip
 
     ; --- Crossover detection BEFORE clamping (needs unclamped nt/nb values) ---
     ; Top crossover: fast path when both hi bytes are 0 (common case).
