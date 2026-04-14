@@ -210,7 +210,7 @@ def _append_merge(new, span):
         if (tail[4] == tail[6] and tail[5] == tail[7] and
                 span[4] == span[6] and span[5] == span[7] and
                 tail[4] == span[4] and tail[5] == span[5] and
-                tail[1] + 1 == span[0]):
+                tail[1] == span[0]):
             new[-1] = (tail[0], span[1],
                        tail[2], tail[3], tail[4], tail[5], tail[6], tail[7])
             return
@@ -323,7 +323,7 @@ class EndpointClipSpans:
         new = []
         for s in self.spans:
             xs, xe = s[0], s[1]
-            if xe < ilo or xs > ihi:
+            if xe <= ilo or xs >= ihi:  # pixel-center: endpoint-only ≠ overlap
                 _append_merge(new, s); continue
             ox0 = max(xs, ilo); ox1 = min(xe, ihi)
             # Dominance/crossover prelude
@@ -368,17 +368,18 @@ class EndpointClipSpans:
             if (c_tl <= old_tl and c_tr <= old_tr and
                     c_bl >= old_bl and c_br >= old_br):
                 _append_merge(new, s); continue
-            # Left fragment (line preserved)
+            # Left fragment (line preserved, abutting: includes ilo)
             if xs < ilo:
-                _append_merge(new, (xs, ilo - 1,
+                _append_merge(new, (xs, ilo,
                                     s[2], s[3], s[4], s[5], s[6], s[7]))
-            right_s = ((ihi + 1, xe, s[2], s[3], s[4], s[5], s[6], s[7])
+            # Right fragment (abutting: includes ihi)
+            right_s = ((ihi, xe, s[2], s[3], s[4], s[5], s[6], s[7])
                        if ihi < xe else None)
 
             if not has_top_cx and not has_bot_cx:
                 rt_l = max(old_tl, c_tl); rb_l = min(old_bl, c_bl)
                 rt_r = max(old_tr, c_tr); rb_r = min(old_br, c_br)
-                if rt_l < rb_l or rt_r < rb_r:
+                if rt_l < rb_l or rt_r < rb_r:  # ox0 < ox1 guaranteed by strict overlap
                     old_top_wins = (rt_l == old_tl and rt_r == old_tr)
                     old_bot_wins = (rb_l == old_bl and rb_r == old_br)
                     if old_top_wins and old_bot_wins:

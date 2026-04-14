@@ -78,6 +78,15 @@ SLOT_END    = 28*SLOT_SIZE   ; one past the last byte offset (= 252)
 sqr_lo  = $5400 : sqr_hi  = $5500
 sqr2_lo = $5600 : sqr2_hi = $5700
 
+; === Seg value cache ($A0-$A4) — separate from crossover working set ===
+; Caches the right-endpoint new-seg values from the previous overlapping span
+; for reuse when the next span shares the boundary column (abutting model).
+zp_cache_ox1  = $A0    ; cached ox1 ($FF = invalid)
+zp_cache_nt   = $A1    ; cached nt_r (seg top lo)
+zp_cache_nt_h = $A2    ; cached nt_rh (seg top hi)
+zp_cache_nb   = $A3    ; cached nb_r (seg bot lo)
+zp_cache_nb_h = $A4    ; cached nb_rh (seg bot hi)
+
 ; === Zero-page workspace ($C0-$FF) ===
 ; Layout: list management (head, free), input params (seg coords s16),
 ; interpolation temps (i_x, i_y0, mul_b, prod, div), scratch (tmp0-3),
@@ -594,6 +603,7 @@ zp_cc_den_hi = $FE
     ; Save old head, then start building new list
     LDA zp_head : STA zp_old_cur                                        ; |
     LDA #0 : STA zp_new_tail : STA zp_head                              ; |
+    LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
 
 .tg_walk
     LDX zp_old_cur                                                      ; |
@@ -605,17 +615,19 @@ zp_cc_den_hi = $FE
     LDA POOL_NEXT,X : STA zp_old_cur                                    ; ||
 
     ; Check overlap of seg [ilo,ihi] against this span's ACTIVE range.
-    ; Skip if xend < ilo (span ends before seg)
-    LDA POOL_XEND,X : CMP zp_ilo : BCS tg_chk2                          ; |||
+    ; Pixel-center model: endpoint-only contact is NOT overlap.
+    ; Pre-seg if xend <= ilo (reversed CMP: ilo >= xend → pre-seg)
+    LDA zp_ilo : CMP POOL_XEND,X : BCC tg_chk2                           ; ilo < xend → might overlap
     ; Pre-seg: fast link (skip merge check — pre-seg spans never merge)
+.tg_pre_link
     LDA #0 : STA POOL_NEXT,X                                            ; ||
     LDY zp_new_tail : BEQ tg_pre_first                                  ; |
     TXA : STA POOL_NEXT,Y                                               ; ||
     STX zp_new_tail : JMP tg_walk                                       ; |
 .tg_pre_first STX zp_head : STX zp_new_tail : JMP tg_walk               ; |
 .tg_chk2
-    ; Skip if xstart > ihi (span starts after seg — and all subsequent too)
-    LDA zp_ihi : CMP POOL_XSTART,X : BCS tg_overlaps                    ; |||
+    ; Post-seg if xstart >= ihi (reversed CMP: xstart >= ihi → post-seg)
+    LDA POOL_XSTART,X : CMP zp_ihi : BCC tg_overlaps                    ; |||
     ; Bulk-link: this span AND all remaining spans are past the seg.
     ; POOL_NEXT,X still has the original chain (not yet modified).
     LDY zp_new_tail : BNE tg_bulk_has_tail                              ; |
@@ -766,6 +778,13 @@ zp_cc_den_hi = $FE
     LDA zp_ox0 : JSR interp_store : STA zp_ob_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
 .old_done
+    ; ---------- NEW seg: cache check for left-endpoint reuse -----------
+    LDA zp_ox0 : CMP zp_cache_ox1 : BNE new_no_cache
+    ; Cache hit: reuse left-endpoint seg values from previous span
+    LDA zp_cache_nt : STA zp_nt_l : LDA zp_cache_nt_h : STA zp_nt_lh
+    LDA zp_cache_nb : STA zp_nb_l : LDA zp_cache_nb_h : STA zp_nb_lh
+    JMP new_right_only
+.new_no_cache
     ; ---------- NEW seg: fast path when (ox0,ox1) == (sx1,sx2) -----------
     LDA zp_ox0 : CMP zp_sx1 : BNE new_not_anchor                        ; |
     LDA zp_ox1 : CMP zp_sx2 : BNE new_not_anchor                        ; |
@@ -804,7 +823,21 @@ zp_cc_den_hi = $FE
     LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; ||
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; ||
+    JMP new_done                                                         ; |
+.new_right_only
+    ; Cache hit: left-endpoint seg values already set. Compute right only.
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
+    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
+    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; ||
+    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
+    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
+    LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; ||
 .new_done
+    ; Cache right-endpoint seg values for reuse by next contiguous span
+    LDA zp_nt_r : STA zp_cache_nt : LDA zp_nt_rh : STA zp_cache_nt_h
+    LDA zp_nb_r : STA zp_cache_nb : LDA zp_nb_rh : STA zp_cache_nb_h
+    LDA zp_ox1 : STA zp_cache_ox1
 
     ; --- Crossover detection BEFORE clamping (needs unclamped nt/nb values) ---
     ; Top crossover: fast path when both hi bytes are 0 (common case).
@@ -979,9 +1012,8 @@ zp_cc_den_hi = $FE
     LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
     LDA POOL_BR,Y     : STA POOL_BR,X                                   ; |
     LDA POOL_XSTART,Y : STA POOL_XSTART,X                               ; |
-    ; carry is clear (BCS tg_no_left fell through, alloc_span preserves C)
-    ; so SBC #0 with C=0 computes ilo - 0 - 1 = ilo - 1, same as SEC:SBC #1
-    LDA zp_ilo : SBC #0 : STA POOL_XEND,X                               ; |
+    ; Abutting model: left fragment includes ilo (shared boundary)
+    LDA zp_ilo : STA POOL_XEND,X                                        ; |
     JSR tg_append_x                                                     ; |
 .tg_no_left
 
@@ -999,7 +1031,7 @@ zp_cc_den_hi = $FE
 .ncf_bl_ok STA zp_ob_l                                                  ; |
     LDA zp_ob_r : CMP zp_nb_r : BCC ncf_br_ok : LDA zp_nb_r             ; |
 .ncf_br_ok STA zp_ob_r                                                  ; |
-    ; Aperture check
+    ; Aperture check (ox0 < ox1 guaranteed by strict overlap test)
     LDA zp_ot_l : CMP zp_ob_l : BCC ncf_has_ap                          ; |
     LDA zp_ot_r : CMP zp_ob_r : BCS ncf_no_ap
 .ncf_has_ap
@@ -1057,8 +1089,8 @@ zp_cc_den_hi = $FE
     LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
     LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
     LDA POOL_BR,Y   : STA POOL_BR,X                                     ; |
-    ; carry already clear: BCS tg_no_right fell through (C=0) and alloc_span/STAs don't change C
-    LDA zp_ihi : ADC #1 : STA POOL_XSTART,X                             ; |
+    ; Abutting model: right fragment includes ihi (shared boundary)
+    LDA zp_ihi : STA POOL_XSTART,X                                      ; |
     LDA POOL_XEND,Y : STA POOL_XEND,X                                   ; |
     JSR tg_append_x                                                     ; |
 .tg_no_right
@@ -1090,8 +1122,8 @@ zp_cc_den_hi = $FE
     ; Matching constants?
     LDA POOL_TL,Y : CMP POOL_TL,X : BNE ta_link                         ; |
     LDA POOL_BL,Y : CMP POOL_BL,X : BNE ta_link                         ; |
-    ; Contiguous active ranges? (tail.xend + 1 == new.xstart)
-    LDA POOL_XEND,Y : CLC : ADC #1 : CMP POOL_XSTART,X : BNE ta_link    ; |
+    ; Contiguous active ranges? (abutting: tail.xend == new.xstart)
+    LDA POOL_XEND,Y : CMP POOL_XSTART,X : BNE ta_link                    ; |
     ; Merge: extend tail's xend to cover new, then free X.
     LDA POOL_XEND,X : STA POOL_XEND,Y
     JMP free_span   ; frees X (via tail-call), returns
