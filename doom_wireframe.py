@@ -106,10 +106,11 @@ class Instrumented6502Spans(EndpointClipSpans):
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                 top_dom=False, bot_dom=False):
-        super().tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                        top_dom=top_dom, bot_dom=bot_dom)
-        _span_clip_6502.tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)
-        self._check()
+        from endpoint_spans import _compute_tighten_splits
+        for params in _compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
+            super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
+            _span_clip_6502.tighten(*params)
+            self._check()
 
     def has_gap(self, lo, hi):
         result = super().has_gap(lo, hi)

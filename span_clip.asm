@@ -273,7 +273,7 @@ EQUB 0   ; 1-byte pad: keep code after umul8 page-aligned with pre-opt layout
     SBC zp_div_den          ; carry already set from BCS dl_over
     JMP dl_commit
 }
-EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
+; (pad removed after udiv16_8)
 
 ; ======================================================================
 ; SEG_INTERP_STORE: interpolate seg Y at column X (s16 result)
@@ -289,7 +289,8 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 .seg_interp_store
 {
     ; offset = x - sx1 (A holds x on entry)
-    SEC : SBC zp_sx1 : BEQ sis_y0 : STA zp_mul_b                        ; ||||
+    SEC : SBC zp_sx1 : BEQ sis_y0 : CMP zp_div_den : BEQ sis_y1         ; |||||
+    STA zp_mul_b                                                         ; |
     ; dy = y1 - y0 (BEQ sis_y0 catches dy==0 constant-line shortcut)
     LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ sis_y0                        ; |||||
     JSR smul8                                                           ; ||
@@ -315,6 +316,9 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 .sis_y0
     LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
     LDA zp_i_y0 : RTS                                                   ; ||
+.sis_y1
+    LDY zp_i_y1h                ; Y = y1 high, A = y1 low (offset==den) ; |
+    LDA zp_i_y1 : RTS                                                   ; ||
 }
 
 ; (seg_interp_core removed — inlined into seg_interp_store above.)
@@ -364,7 +368,7 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal in udiv16_8
 
 ; (interp_span removed — padding removed to preserve page alignment of later code)
 
-EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
+EQUW 0 : EQUW 0  ; 4-byte pad: optimal page alignment for tighten hot paths
 
 ; ======================================================================
 ; MARK_SOLID: punch out [ilo, ihi] from the span list (solid wall)
@@ -391,28 +395,22 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
     LDA #$FF : STA zp_prev                                              ; |
     LDA zp_head : TAX : BNE msl : RTS                                   ; |
 
+.ms_chk_after_y
+    TYA : TAX                                                            ; Y→X for overlap code
 .ms_chk_after
     ; Done if xstart > ihi (span starts after solid range)
-    LDA zp_ihi : CMP POOL_XSTART,X : BCS ms_overlap                     ; |||
-    RTS                                                                 ; |
-
+    LDA zp_ihi : CMP POOL_XSTART,X : BCC ms_rts_x                       ; |||
+    ; Fall through to ms_overlap (ihi >= xstart: overlap confirmed)
 .ms_overlap
     ; xstart < ilo  → keep a left fragment   (xend may need clip too)
     ; xstart >= ilo → no left fragment       (this span is entirely in or right of [ilo,ihi])
     LDA POOL_XSTART,X : CMP zp_ilo : BCC ms_has_left                    ; ||
     ; --- No left fragment ---
-    ; xend > ihi  → shrink in place: xstart = ihi+1
-    ; xend <= ihi → fully covered → free
-    LDA zp_ihi : CMP POOL_XEND,X : BCS ms_free                           ; |
-    ; A still holds ihi; carry already clear from BCS not taken
-    ADC #1 : STA POOL_XSTART,X                                          ; |
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                   ; |
+    ; xend > ihi  → shrink in place (BCC past ms_free)
+    ; xend <= ihi → fully covered → fall through to ms_free
+    LDA zp_ihi : CMP POOL_XEND,X : BCC ms_shrink                        ; |
 
-.msl ; X = current span — positioned here for branch reach from all callers
-    ; Skip if xend < ilo (span ends before solid range)
-    LDA POOL_XEND,X : CMP zp_ilo : BCS ms_chk_after                     ; ||||
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BNE msl : RTS                 ; ||
-
+    ; --- Fully covered: free this span (fall-through, no JMP) ---
 .ms_free
     LDA POOL_NEXT,X : STA zp_tmp0                                       ; |
     JSR free_span                                                       ; |
@@ -421,6 +419,21 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
 .ms_unlink_span
     LDY zp_prev : LDA zp_tmp0 : STA POOL_NEXT,Y
     TAX : BNE msl : RTS                                                 ; |
+
+.ms_shrink
+    ; A holds ihi; carry clear from BCC
+    ADC #1 : STA POOL_XSTART,X                                          ; |
+    STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts_x
+    ; Fall through to msl (common: continue scanning)
+
+.msl ; X = current span — fall-through from shrink, branch target from free
+.msl_x
+    LDA POOL_XEND,X : CMP zp_ilo : BCS ms_chk_after                     ; ||||
+    STX zp_prev : LDY POOL_NEXT,X : BEQ ms_rts_x                        ; ||
+.msl_y
+    LDA POOL_XEND,Y : CMP zp_ilo : BCS ms_chk_after_y                   ; ||||
+    STY zp_prev : LDX POOL_NEXT,Y : BNE msl_x                           ; ||
+.ms_rts_x RTS
 
 .ms_has_left
     ; xstart < ilo. Has right fragment? xend > ihi?
@@ -447,8 +460,7 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
     ; carry is clear: C=0 propagated from BCS fall-through, through alloc+copies+ADC(no overflow)
     LDA zp_ilo : SBC #0 : STA POOL_XEND,Y                               ; |
     ; Continue from the span AFTER the new sibling
-    LDA POOL_NEXT,X : TAX : BEQ ms_rts2 : JMP msl                        ; |
-.ms_rts2 RTS                                                            ; |
+    STX zp_prev : LDY POOL_NEXT,X : BNE msl_y : RTS                      ; |
 
 .ms_left_only_after_fail
     ; alloc failed → fall through and just truncate left fragment
@@ -456,8 +468,7 @@ EQUW 0 : EQUB 0  ; 3-byte pad: align mark_solid loop to fix BCS page crossing
 .ms_left_only
     ; xend = ilo - 1 (truncate to left fragment only)
     LDA zp_ilo : SEC : SBC #1 : STA POOL_XEND,X                         ; |
-    STX zp_prev : LDA POOL_NEXT,X : TAX : BEQ ms_rts3 : JMP msl         ; |
-.ms_rts3 RTS                                                            ; |
+    STX zp_prev : LDY POOL_NEXT,X : BNE msl_y : RTS                     ; |
 
 }
 
@@ -598,8 +609,8 @@ zp_cc_den_hi = $FE
     LDA POOL_XEND,X : CMP zp_ilo : BCS tg_chk2                          ; |||
     ; Pre-seg: fast link (skip merge check — pre-seg spans never merge)
     LDA #0 : STA POOL_NEXT,X                                            ; ||
-    LDA zp_new_tail : BEQ tg_pre_first                                  ; |
-    TAY : TXA : STA POOL_NEXT,Y                                         ; ||
+    LDY zp_new_tail : BEQ tg_pre_first                                  ; |
+    TXA : STA POOL_NEXT,Y                                               ; ||
     STX zp_new_tail : JMP tg_walk                                       ; |
 .tg_pre_first STX zp_head : STX zp_new_tail : JMP tg_walk               ; |
 .tg_chk2
@@ -607,10 +618,10 @@ zp_cc_den_hi = $FE
     LDA zp_ihi : CMP POOL_XSTART,X : BCS tg_overlaps                    ; |||
     ; Bulk-link: this span AND all remaining spans are past the seg.
     ; POOL_NEXT,X still has the original chain (not yet modified).
-    LDA zp_new_tail : BNE tg_bulk_has_tail                              ; |
+    LDY zp_new_tail : BNE tg_bulk_has_tail                              ; |
     STX zp_head : RTS                                                   ; |
 .tg_bulk_has_tail
-    LDY zp_new_tail : TXA : STA POOL_NEXT,Y : RTS                       ; |
+    TXA : STA POOL_NEXT,Y : RTS                                         ; |
 
 .tg_overlaps
     ; ox0 = max(xstart, ilo).  CMP doesn't modify A, so BCS uses the
@@ -633,8 +644,31 @@ zp_cc_den_hi = $FE
     ;   max(old_bl, old_br) ≤ min(yb1, yb2)   (old bot always ≤ new bot)
     ; This is conservative (uses full span range, not just overlap), but
     ; when it fires it skips ALL interpolation (~2400 cyc).
-    ; Guard: all 4 seg hi bytes must be 0 (on-screen).
-    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BNE tg_bb_skip
+    ; Guard: check if both yt hi negative first (common in S2: off-screen top).
+    ; If so, skip straight to extended bot-only check.
+    LDA zp_yt1h : AND zp_yt2h : BMI tg_bb_ext_entry
+    ; Not both negative. Try the standard all-hi=0 check.
+    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h : BEQ tg_bb_hi_ok
+    JMP tg_bb_fail
+.tg_bb_ext_entry
+    ; Both yt negative. Check yb hi bytes are zero (bot on-screen).
+    LDA zp_yb1h : ORA zp_yb2h : BNE tg_bb_fail
+    ; Extended path: top trivially passes (both yt negative, old top >= 0).
+    ; Bot check with on-screen yb values:
+    LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_ext_bmax  ; A = max(bl,br)
+    LDA POOL_BR,X
+.tg_bb_ext_bmax
+    STA zp_tmp0
+    LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_ext_bmin  ; A = min(yb1,yb2)
+    LDA zp_yb2
+.tg_bb_ext_bmin
+    CMP zp_tmp0 : BCC tg_bb_fail  ; max(old) > min(new)?  old-dom failed
+    ; Old dominates (top trivial + bot passed) — skip all interpolation.
+    JSR tg_append_x
+    JMP tg_walk
+.tg_bb_fail
+    JMP tg_bb_skip
+.tg_bb_hi_ok
     ; All on-screen. Check top: min(tl,tr) ≥ max(yt1,yt2)
     ; Compute max(yt1,yt2) first into zp_tmp0, then min(tl,tr) into A,
     ; so a single CMP+BCS suffices (min_old >= max_new ↔ C=1).
@@ -645,7 +679,7 @@ zp_cc_den_hi = $FE
     LDA POOL_TL,X : CMP POOL_TR,X : BCC tg_bb_tmin_ok  ; A = min(tl,tr)
     LDA POOL_TR,X
 .tg_bb_tmin_ok
-    CMP zp_tmp0 : BCC tg_bb_skip    ; min(old) < max(new)?  skip
+    CMP zp_tmp0 : BCC tg_try_newdom ; min(old) < max(new)?  old-dom failed
     ; Check bot: max(bl,br) ≤ min(yb1,yb2)
     LDA POOL_BL,X : CMP POOL_BR,X : BCS tg_bb_bmax_ok  ; A = max(bl,br)
     LDA POOL_BR,X
@@ -654,10 +688,47 @@ zp_cc_den_hi = $FE
     LDA zp_yb1 : CMP zp_yb2 : BCC tg_bb_bmin_ok  ; A = min(yb1,yb2)
     LDA zp_yb2
 .tg_bb_bmin_ok
-    CMP zp_tmp0 : BCC tg_bb_skip  ; max(old) ≤ min(new)?
+    CMP zp_tmp0 : BCC tg_try_newdom  ; max(old) > min(new)?  old-dom failed
     ; Old dominates by bounding range — skip all interpolation.
     JSR tg_append_x
     JMP tg_walk
+.tg_try_newdom
+    ; --- New-dominance bounding-box fast path ---
+    ; Only valid when the overlap covers the entire span, so max(tl,tr)
+    ; represents max(old_top) over the overlap, not over a wider range.
+    ; Guard: xstart >= ilo AND xend <= ihi.
+    LDA zp_ilo : CMP POOL_XSTART,X : BEQ tg_nd_lo_ok : BCS tg_bb_skip
+.tg_nd_lo_ok
+    LDA POOL_XEND,X : CMP zp_ihi : BEQ tg_nd_hi_ok : BCS tg_bb_skip
+.tg_nd_hi_ok
+    ; Only reachable when all 4 seg hi bytes are zero AND overlap == full span.
+    ; Check: max(tl,tr) <= min(yt1,yt2) (old top always <= new top)
+    ; AND:   min(bl,br) >= max(yb1,yb2) (old bot always >= new bot)
+    ; If both hold, new dominates everywhere.
+    ; Top: max(tl,tr) <= min(yt1,yt2)
+    LDA POOL_TL,X : CMP POOL_TR,X : BCS tg_nd_tmax_ok  ; A = max(tl,tr)
+    LDA POOL_TR,X
+.tg_nd_tmax_ok
+    STA zp_tmp0
+    LDA zp_yt1 : CMP zp_yt2 : BCC tg_nd_tmin_ok  ; A = min(yt1,yt2)
+    LDA zp_yt2
+.tg_nd_tmin_ok
+    CMP zp_tmp0 : BCC tg_bb_skip : BEQ tg_bb_skip  ; min(new) <= max(old) → need strict >
+    ; Bot: min(bl,br) >= max(yb1,yb2), i.e., min(bl,br) in A, max(yb) in mem
+    LDA zp_yb1 : CMP zp_yb2 : BCS tg_nd_bmax_ok  ; A = max(yb1,yb2)
+    LDA zp_yb2
+.tg_nd_bmax_ok
+    STA zp_tmp0
+    LDA POOL_BL,X : CMP POOL_BR,X : BCC tg_nd_bmin_ok  ; A = min(bl,br)
+    LDA POOL_BR,X
+.tg_nd_bmin_ok
+    CMP zp_tmp0 : BCC tg_bb_skip : BEQ tg_bb_skip  ; min(old) <= max(new) → need strict >
+    ; New dominates everywhere. Set dummy old values so the no-crossover
+    ; path produces the new seg's boundary values in the result span.
+    LDA #0 : STA zp_ot_l : STA zp_ot_r
+    LDA #159 : STA zp_ob_l : STA zp_ob_r
+    STX zp_save1   ; save span offset (needed by later code)
+    JMP old_done   ; skip old interp; new interp + crossover + clamp handle the rest
 .tg_bb_skip
 
     ; --- Dominance check: is new boundary <= old at both overlap endpoints? ---
@@ -723,14 +794,14 @@ zp_cc_den_hi = $FE
 .new_slow
     ; Hoisted den setup: den = sx2 - sx1. Guaranteed > 0 by remap.
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
-    ; Top: y0 = yt1 (s16), y1 = yt2 low
+    ; Top: y0 = yt1 (s16), y1 = yt2 (s16)
     LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
-    LDA zp_yt2 : STA zp_i_y1                                            ; |
+    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; ||
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; ||
-    ; Bot: y0 = yb1 (s16), y1 = yb2 low
+    ; Bot: y0 = yb1 (s16), y1 = yb2 (s16)
     LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
-    LDA zp_yb2 : STA zp_i_y1                                            ; |
+    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; ||
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; ||
 .new_done
@@ -742,26 +813,29 @@ zp_cc_den_hi = $FE
     ; If both (ot >= nt) or both (ot < nt), no crossover.
     LDA zp_ot_l : CMP zp_nt_l : BCS tg_cc_t_lpos                       ; |
     ; ot_l < nt_l (carry clear)
-    LDA zp_ot_r : CMP zp_nt_r : BCS tg_cc_t_has_cx                     ; signs differ → cx
+    LDA zp_ot_r : CMP zp_nt_r : BCS tg_cc_t_check_dt                    ; signs differ → cx
     JMP tg_cc_no_top                                                    ; both < → no cx
 .tg_cc_t_lpos
     ; ot_l >= nt_l (carry set)
-    LDA zp_ot_r : CMP zp_nt_r : BCC tg_cc_t_has_cx                     ; signs differ → cx
+    LDA zp_ot_r : CMP zp_nt_r : BCC tg_cc_t_check_dt                   ; signs differ → cx
     JMP tg_cc_no_top                                                    ; both >= → no cx
-.tg_cc_t_has_cx
-    JMP tg_cc_t_check_dt                                                ; |
 .tg_cc_t_slow
+    ; If both nt hi bytes are negative, new top < 0 everywhere.
+    ; Since old top >= 0, dt = ot - nt > 0 always → no top crossover.
+    LDA zp_nt_lh : AND zp_nt_rh : BPL tg_cc_t_slowentry
+    JMP tg_cc_no_top
+.tg_cc_t_slowentry
     ; Slow path: per-byte sign detection (handles hi < 0 and hi > 0)
     LDA zp_nt_lh : BMI tg_cc_t0p : BNE tg_cc_t0n                        ; |
     LDA zp_ot_l : CMP zp_nt_l                                           ; |
-    LDA #0 : ROL A : JMP tg_cc_t0d                                      ; |
-.tg_cc_t0p LDA #1 : JMP tg_cc_t0d  ; negative new → positive sign
+    LDA #0 : ROL A : BCC tg_cc_t0d                                      ; |
+.tg_cc_t0p LDA #1 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cc_t0n LDA #0                   ; overflow new → negative sign
 .tg_cc_t0d STA zp_tmp1                                                  ; |
     LDA zp_nt_rh : BMI tg_cc_t1p : BNE tg_cc_t1n                        ; |
     LDA zp_ot_r : CMP zp_nt_r                                           ; |
-    LDA #0 : ROL A : JMP tg_cc_t1d                                      ; |
-.tg_cc_t1p LDA #1 : JMP tg_cc_t1d
+    LDA #0 : ROL A : BCC tg_cc_t1d                                      ; |
+.tg_cc_t1p LDA #1 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cc_t1n LDA #0
 .tg_cc_t1d EOR zp_tmp1                                                  ; |
     BEQ tg_cc_no_top                                                    ; |
@@ -792,10 +866,11 @@ zp_cc_den_hi = $FE
     SEC : LDA #0 : SBC zp_tmp2 : STA zp_tmp2
     LDA #0       : SBC zp_tmp3 : STA zp_tmp3
 .ict1p
-    JSR compute_crossover : STA zp_cx_top
-    JMP tg_cc_chk_bot
+    JSR compute_crossover                                                ; A = cx column
+    EQUB $2C                                                             ; BIT abs: skip LDA #0
 .tg_cc_no_top
-    LDA #0 : STA zp_cx_top                                              ; |
+    LDA #0                                                               ; |
+    STA zp_cx_top                                                        ; shared store
 .tg_cc_chk_bot
     ; Bot crossover: fast path when both hi bytes are 0 (common case).
     LDA zp_nb_lh : ORA zp_nb_rh : BNE tg_cc_b_slow                      ; |
@@ -803,22 +878,22 @@ zp_cc_den_hi = $FE
     LDA zp_ob_l : CMP zp_nb_l : BCS tg_cc_b_lpos                       ; |
     ; ob_l < nb_l
     LDA zp_ob_r : CMP zp_nb_r : BCC tg_cc_no_bot                       ; both < → no cx
-    JMP tg_cc_b_check_dt                                                ; signs differ → cx
+    BCS tg_cc_b_check_dt                                                ; signs differ → cx
 .tg_cc_b_lpos
     ; ob_l >= nb_l
     LDA zp_ob_r : CMP zp_nb_r : BCS tg_cc_no_bot                       ; both >= → no cx
-    JMP tg_cc_b_check_dt                                                ; signs differ → cx
+    BCC tg_cc_b_check_dt                                                ; signs differ → cx
 .tg_cc_b_slow
     LDA zp_nb_lh : BMI tg_cc_b0p : BNE tg_cc_b0n                        ; |
     LDA zp_ob_l : CMP zp_nb_l                                           ; |
-    LDA #0 : ROL A : JMP tg_cc_b0d                                      ; |
-.tg_cc_b0p LDA #1 : JMP tg_cc_b0d
+    LDA #0 : ROL A : BCC tg_cc_b0d                                      ; |
+.tg_cc_b0p LDA #1 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cc_b0n LDA #0
 .tg_cc_b0d STA zp_tmp1                                                  ; |
     LDA zp_nb_rh : BMI tg_cc_b1p : BNE tg_cc_b1n                        ; |
     LDA zp_ob_r : CMP zp_nb_r                                           ; |
-    LDA #0 : ROL A : JMP tg_cc_b1d                                      ; |
-.tg_cc_b1p LDA #1 : JMP tg_cc_b1d
+    LDA #0 : ROL A : BCC tg_cc_b1d                                      ; |
+.tg_cc_b1p LDA #1 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cc_b1n LDA #0
 .tg_cc_b1d EOR zp_tmp1                                                  ; |
     BEQ tg_cc_no_bot                                                    ; |
@@ -830,10 +905,11 @@ zp_cc_den_hi = $FE
     LDA zp_nb_rh : BNE tg_cc_b_ne_r                                     ; |
     LDA zp_nb_r : CMP zp_ob_r : BEQ tg_cc_no_bot                        ; |
 .tg_cc_b_ne_r
-    JSR tg_cc_calc_bot : STA zp_cx_bot                                  ; |
-    JMP tg_cc_done                                                      ; |
+    JSR tg_cc_calc_bot                                                   ; A = cx column
+    EQUB $2C                                                             ; BIT abs: skip LDA #0
 .tg_cc_no_bot
-    LDA #0 : STA zp_cx_bot                                              ; |
+    LDA #0                                                               ; |
+    STA zp_cx_bot                                                        ; shared store
 .tg_cc_done
 
     ; --- Clamp new s16 values to [0,159] u8 for dominance check ---
@@ -845,28 +921,35 @@ zp_cc_den_hi = $FE
     LDA zp_nb_l : CMP #160 : BCS tg_clamp_slow                          ; |
     LDA zp_nb_r : CMP #160 : BCS tg_clamp_slow                          ; |
     BCC tg_clamp_done                                                    ; | C=0 from BCS not taken
-EQUW 0  ; 2-byte pad: +1 byte fixes clamp ($26FF) and tos_clamp ($29FF) page crossings
+; (2-byte clamp pad removed)
 .tg_clamp_slow
+    ; Fast path: if both top hi bytes are negative, clamp tops to 0 and skip
+    ; to clamping only the bot values.
+    LDA zp_nt_lh : AND zp_nt_rh : BPL tg_clamp_full
+    LDA #0 : STA zp_nt_l : STA zp_nt_r
+    JMP tg_clamp_nb
+.tg_clamp_full
     ; High byte: negative→0, positive overflow (hi>0)→159, 0→check low
     ; byte (in [0,255], clamp [160,255] to 159).
     LDA zp_nt_lh : BMI tg_cn1z : BNE tg_cn1f                            ; |
     LDA zp_nt_l : CMP #160 : BCC tg_cn1s                                ; |
-.tg_cn1f LDA #159 : BNE tg_cn1s
+.tg_cn1f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn1z LDA #0
 .tg_cn1s STA zp_nt_l                                                    ; |
     LDA zp_nt_rh : BMI tg_cn2z : BNE tg_cn2f                            ; |
     LDA zp_nt_r : CMP #160 : BCC tg_cn2s                                ; |
-.tg_cn2f LDA #159 : BNE tg_cn2s
+.tg_cn2f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn2z LDA #0
 .tg_cn2s STA zp_nt_r                                                    ; |
+.tg_clamp_nb
     LDA zp_nb_lh : BMI tg_cn3z : BNE tg_cn3f                            ; |
     LDA zp_nb_l : CMP #160 : BCC tg_cn3s                                ; |
-.tg_cn3f LDA #159 : BNE tg_cn3s
+.tg_cn3f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn3z LDA #0
 .tg_cn3s STA zp_nb_l                                                    ; |
     LDA zp_nb_rh : BMI tg_cn4z : BNE tg_cn4f                            ; |
     LDA zp_nb_r : CMP #160 : BCC tg_cn4s                                ; |
-.tg_cn4f LDA #159 : BNE tg_cn4s
+.tg_cn4f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn4z LDA #0
 .tg_cn4s STA zp_nb_r                                                    ; |
 .tg_clamp_done
@@ -1059,11 +1142,11 @@ EQUW 0  ; 2-byte pad: +1 byte fixes clamp ($26FF) and tos_clamp ($29FF) page cro
 .tos_new_slow
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
     LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
-    LDA zp_yt2 : STA zp_i_y1                                            ; |
+    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; |
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; |
     LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
-    LDA zp_yb2 : STA zp_i_y1                                            ; |
+    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
     LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; |
     LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; |
 .tos_new_done
@@ -1076,26 +1159,26 @@ EQUW 0  ; 2-byte pad: +1 byte fixes clamp ($26FF) and tos_clamp ($29FF) page cro
     LDA zp_nb_l : CMP #160 : BCS tos_clamp_slow                         ; |
     LDA zp_nb_r : CMP #160 : BCS tos_clamp_slow                         ; |
     BCC tos_clamp_done                                                    ; | C=0 from BCS not taken
-EQUB 0  ; 1-byte pad: preserve alignment after JMP→BCC
+; (1-byte tos_clamp pad removed)
 .tos_clamp_slow
     LDA zp_nt_lh : BMI cn1z : BNE cn1f                                  ; |
     LDA zp_nt_l : CMP #160 : BCC cn1s                                   ; |
-.cn1f LDA #159 : BNE cn1s
+.cn1f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn1z LDA #0
 .cn1s STA zp_nt_l                                                       ; |
     LDA zp_nt_rh : BMI cn2z : BNE cn2f                                  ; |
     LDA zp_nt_r : CMP #160 : BCC cn2s                                   ; |
-.cn2f LDA #159 : BNE cn2s
+.cn2f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn2z LDA #0
 .cn2s STA zp_nt_r                                                       ; |
     LDA zp_nb_lh : BMI cn3z : BNE cn3f                                  ; |
     LDA zp_nb_l : CMP #160 : BCC cn3s                                   ; |
-.cn3f LDA #159 : BNE cn3s
+.cn3f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn3z LDA #0
 .cn3s STA zp_nb_l                                                       ; |
     LDA zp_nb_rh : BMI cn4z : BNE cn4f                                  ; |
     LDA zp_nb_r : CMP #160 : BCC cn4s                                   ; |
-.cn4f LDA #159 : BNE cn4s
+.cn4f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn4z LDA #0
 .cn4s STA zp_nb_r                                                       ; |
 .tos_clamp_done
@@ -1217,7 +1300,7 @@ EQUB 0  ; 1-byte pad: preserve alignment after JMP→BCC
 .fast_over
     SBC zp_div_den          ; carry already set from BCS fast_over
     JMP fast_commit
-EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal
+; (1-byte cx fast pad removed)
 
 .slow_setup
     ; Slow path: build the u24 num and run the u24/u16 restoring divide.
@@ -1258,9 +1341,8 @@ EQUB 0   ; 1-byte pad: preserve page alignment after SEC removal
     CLC : ADC zp_ox0                                                    ; |
     BEQ none                                                            ; |
     CMP zp_ox0 : BEQ none        ; cx at left edge: not strictly inside ; |
-    TAY                                                                 ; |
-    CPY zp_ox1 : BCS none        ; cx >= ox1: not strictly inside       ; |
-    TYA : RTS                                                           ; |
+    CMP zp_ox1 : BCS none        ; cx >= ox1: not strictly inside       ; |
+    RTS                                                                 ; |
 .none LDA #0 : RTS
 }
 

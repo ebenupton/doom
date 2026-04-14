@@ -1323,3 +1323,218 @@ common case.
 For a typical frame with ~50 visible lines averaging 2 spans each, the
 clipper's total cost is approximately 70,000-150,000 cycles, well within the
 budget of a 2 MHz 6502 rendering at low frame rates.
+
+---
+
+## 7. 6502 Implementation (`span_clip.asm`)
+
+The span clipper has a standalone 6502 implementation in `span_clip.asm`,
+assembled by BeebASM and tested via py65 emulation. This section describes its
+architecture and differences from the Python reference.
+
+### 7.1 Memory Layout
+
+| Region | Address | Size | Purpose |
+|--------|---------|------|---------|
+| Jump table | $2000-$2017 | 24B | 9 entry points (3-byte JMP each) |
+| Code | $2018-$284C | 2.1KB | All span operations + math |
+| ZP workspace | $C0-$EE | 47B | Span state, interp args, tighten/crossover temps |
+| Span pool | $0400-$04FF | 256B | 32 × 8-byte linked-list slots |
+| Quarter-square tables | $5400-$57FF | 1KB | sqr\_lo, sqr\_hi, sqr2\_lo, sqr2\_hi |
+| Read buffer | $0300-$03BF | ~192B | Output area for span\_read |
+
+### 7.2 Linked-List Span Pool
+
+Unlike Python's flat list, the 6502 uses a **linked-list pool** at $0400.
+Each slot is 8 bytes:
+
+```
+offset 0: next_ptr (pool offset of next span, or 0 = end)
+offset 1: xlo
+offset 2: xhi (0 = 256)
+offset 3: tl (top-left Y)
+offset 4: bl (bot-left Y)
+offset 5: tr (top-right Y)
+offset 6: br (bot-right Y)
+offset 7: (pad)
+```
+
+Slots are accessed with `LDX slot_offset; LDA POOL_XLO,X` -- page-aligned
+absolute indexed addressing. Slot 0 is reserved as null; slot 1 (offset 8) is
+the initial full-screen span; slots 2-31 form the free list.
+
+A simple free-list allocator (`alloc_span` / `free_span`) manages slot
+recycling. `alloc_span` pops from the free list; `free_span` pushes.
+
+### 7.3 Entry Points
+
+| Address | Name | ZP inputs | Notes |
+|---------|------|-----------|-------|
+| $2000 | span\_init | (none) | Reset to one full-screen span |
+| $2003 | span\_mark\_solid | ilo, ihi | Remove [ilo,ihi) from spans |
+| $2006 | span\_tighten | ilo, ihi, sx1..yb2 | Narrow top/bot boundaries |
+| $2009 | span\_has\_gap | ilo, ihi | A=1 if visible gap exists |
+| $200C | span\_is\_full | (none) | A=1 if all spans removed |
+| $200F | span\_read | zp\_buf (ptr) | Dump spans to buffer |
+| $2012 | interp\_floor | i\_x, i\_x0..i\_y1 | Floor interpolation |
+| $2015 | interp\_ceil | (same) | Ceiling interpolation |
+| $2018 | interp\_store | (same) | Round-to-nearest interpolation |
+
+### 7.4 Arithmetic Primitives
+
+**Quarter-square multiply (umul8):** `a × b = sqr(a+b) − sqr(|a−b|)` using
+four 256-byte lookup tables. Two cases: sum < 256 uses sqr tables; sum ≥ 256
+uses sqr2 tables for the sum term. ~30 cycles.
+
+**Signed multiply (smul8):** Checks sign of A; if negative, negates, calls
+umul8, negates the product. ~40 cycles.
+
+**Restoring division (udiv16\_8):** Shifting the u16 numerator into a u8
+remainder, trial-subtracting the u8 denominator. Uses **adaptive iteration
+count**: 8 iterations when the numerator high byte is zero (product fits in
+u8, common for narrow spans), 16 iterations otherwise. Handles remainder
+overflow (carry from ROL) by always accepting the subtraction when the 9th
+bit is set. Special case: denominator 0 means divide by 256 (return high
+byte). ~300 cycles (8-iter) to ~600 cycles (16-iter).
+
+### 7.5 Interpolation
+
+All three interp variants share `interp_core`, which computes:
+
+```
+dy = y1 − y0           (s8)
+offset = x − x0        (u8)
+ex = x1 − x0           (u8, 0 = 256)
+product = smul8(dy, offset)  → s16
+```
+
+Then:
+- **interp\_floor:** floor(product / ex) + y0. Negative products use the
+  identity floor(−n/d) = −ceil(n/d) = −((n+d−1)/d).
+- **interp\_ceil:** ceil(product / ex) + y0. Positive: (prod+den−1)/den.
+  Negative: truncate toward zero.
+- **interp\_store:** Round-to-nearest: add ex/2 to the product before floor
+  division. This prevents min/max ratchet drift.
+
+### 7.6 mark\_solid
+
+Walks the linked list. For each span overlapping [ilo, ihi):
+- **Left fragment** (xlo < ilo): Truncate span's right edge to ilo.
+  Interpolate Y at ilo using `interp_store`. If original xhi > ihi, allocate a
+  right fragment too.
+- **No left fragment** (xlo ≥ ilo): If xhi > ihi, modify span to [ihi, xhi).
+  Otherwise free the span entirely.
+
+### 7.7 tighten
+
+Uses a **build-new-list** approach -- never modifies the original span
+in-place. Walks the old list, allocating new spans for each fragment:
+
+1. **Non-overlapping spans:** Move to new list unchanged.
+2. **Overlapping spans:**
+   a. Evaluate old and new boundaries at both overlap endpoints using
+      `interp_floor` (for dominance check) and `interp_store` (for storage).
+   b. **Dominance check:** If new boundaries are everywhere ≤ old top and
+      ≥ old bot (after clamping to [0,159] for unsigned comparison), the old
+      span dominates -- keep it unchanged.
+   c. **Crossover detection:** When the dominance check fails, compute the
+      difference between old and new boundaries at both overlap endpoints
+      (dt0 = old−new at left, dt1 = old−new at right). If dt0 and dt1 have
+      opposite signs, the boundaries cross within the span. The crossover X
+      is computed as `cx = ox0 + |d0| × ex / (|d0| + |d1|)` using a single
+      8×8 multiply and one 16/8 division. When the denominator exceeds 255
+      (both differences are large), both numerator and denominator are halved
+      before division (at most 1 pixel of crossover-X imprecision). Up to two
+      crossover points are found (one for top, one for bottom), splitting the
+      overlap into 2-3 sub-intervals. Each sub-interval is processed
+      independently with its own max/min evaluation.
+   d. For each sub-interval: allocate separate spans for left fragment,
+      tightened overlap, and right fragment. The tightened overlap uses
+      max(old,new) for top and min(old,new) for bottom.
+
+### 7.8 The 0-Means-256 Convention
+
+Both xhi and ihi use 0 to represent 256 (since the screen is 256 pixels wide
+and 256 doesn't fit in u8). This requires special handling at every comparison
+site:
+- Range validity (`ihi > ilo`): skip check when ihi=0
+- Overlap detection (`xlo < ihi`): always overlaps when ihi=0
+- ox1 computation (`min(xhi, ihi)`): when ihi=0 and xhi≠0, use xhi
+- Right fragment (`xhi > ihi`): never when ihi=0
+
+### 7.9 Seg Parameter Clamping
+
+The tighten parameters `(sx1, sx2, yt1, yt2, yb1, yb2)` come from the
+projection pipeline and can be far outside u8 range (e.g. sx1=−1152 for a
+segment that extends well past the left screen edge). The 6502 clipper works
+with u8 values and s8 deltas, so these parameters must be clamped before
+being passed to the back-end.
+
+The `SpanClip6502.tighten()` wrapper remaps the seg line to the overlap range
+`[ilo, min(ihi,255)]`: it evaluates the original seg's Y boundaries at the
+clamped X endpoints using full-precision Python interp, then clamps the
+resulting Y values to [0,159]. This preserves the seg line's slope within the
+visible region while ensuring all values fit in u8.
+
+On real hardware, this clamping would be performed by the front-end when
+writing tighten commands to the command buffer. The clamped values are a
+conservative approximation: the reparametrized seg line may differ by ±1 pixel
+at evaluation points due to integer rounding with different endpoint spacing.
+
+### 7.10 Measured Performance
+
+
+For a typical E1M1 frame at the spawn point (1056, −3616, angle 64), the
+6502 span clipper processes 31 span operations (mark\_solid + tighten) in
+**145-157K cycles** at the spawn point (measured by py65 simulation). The NJ
+line rasteriser accounts for an additional **56K cycles**. Combined back-end
+cost: **200-213K cycles**, or roughly 100ms at 2 MHz.
+
+Clip cost varies moderately with scene complexity. At position (2678,−2586)
+scanning through angles 190-230, span clip cost ranges from **134K** to
+**167K** — a 1.25× ratio, corresponding to different numbers of overlapping
+spans per tighten at different viewing angles.
+
+The dominant cost per interp call is the restoring division loop. The
+`udiv16_8` routine uses an adaptive iteration count: 8 iterations when the
+numerator fits in u8 (common for narrow spans), 16 iterations otherwise.
+This saves ~250 cycles per small-product division, yielding a 22% overall
+reduction on complex frames.
+
+### 7.11 Test Framework
+
+`span_clip_6502.py` provides a Python wrapper (`SpanClip6502`) that loads the
+assembled binary into py65 and exposes methods matching the entry points. The
+test suite includes:
+- **interp:** Exhaustive comparison of all three variants against Python
+- **mark\_solid:** 3 targeted tests (middle, left edge, multiple)
+- **tighten:** 3 targeted tests (simple, after mark\_solid, dominated)
+- **Full frame:** Shadows every span mutation during a complete BSP render,
+  comparing the 6502 span state against Python after each operation. Currently
+  achieves **0 mismatches** across all 31 operations.
+
+The interactive renderer (`doom_wireframe.py`) shadows every span operation
+to the 6502 emulator in real time, displaying the accumulated clip cycle count
+in the HUD alongside the rasterisation cycle count. Both figures are from
+actual py65 simulation — no analytical estimates.
+
+### 7.12 Binary Size
+
+| Component | Bytes |
+|-----------|-------|
+| Jump table (9 entries) | 27 |
+| Math (umul8, smul8, udiv16\_8) | 112 |
+| Interpolation (core, floor, ceil, store, span, shared tails) | 239 |
+| mark\_solid | 305 |
+| tighten (walk, dominance, crossover, overlap\_sub, fragments) | 676 |
+| Crossover detection (compute\_crossover) | 80 |
+| Utility (init, has\_gap, is\_full, read, alloc, free, append) | 162 |
+| **Total** | **2117** |
+
+Key optimizations: shared interp tails (`div_add_y0` / `neg_div_add_y0`)
+factor out the common divide-and-add-y0 epilogue from all three interp
+variants, saving 31 bytes. The `umul8` routine shares its |a−b| computation
+across both sum-paths via PHP/PLP, saving 11 bytes at the cost of 7 cycles
+per multiply (~0.4% frame budget). The `interp_core → smul8` fall-through
+eliminates a 3-byte JMP. The `udiv16_8` adaptive loop (8 or 16 iterations
+based on numerator magnitude) saves ~250 cycles per small-product division.
