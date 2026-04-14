@@ -612,8 +612,8 @@ zp_cc_den_hi = $FE
     LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
     ; Initialize narrowed BB bounds: max(yt1,yt2) and min(yb1,yb2)
     ; Flag: $80 = both-yt-negative (bot-only BB), $40 = all-on-screen (full BB)
-    ; $FF = fallthrough to extended BB with stale yb_min (safe: old bot <= 159)
-    STA zp_bb_flags                                                      ; |
+    ; $00 = bounds invalid (mixed-sign yt or other fallthrough)
+    LDA #0 : STA zp_bb_flags                                             ; |
     LDA zp_yt1h : AND zp_yt2h : BPL tg_go_not_neg                       ; |
     ; Both yt hi negative — init bot bound, set flag bit 7
     LDA zp_yb1h : ORA zp_yb2h : BNE tg_go_bb_done                       ; |
