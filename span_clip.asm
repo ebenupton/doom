@@ -1079,6 +1079,8 @@ zp_cc_den_hi = $FE
     ; interp_store) and nt_l/nt_r/nb_l/nb_r (clamped u8) at (ox0, ox1).
     ;
     ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
+    ; Guard: skip emission for 1-column overlaps (degenerate point, not a line)
+    LDA zp_ox0 : CMP zp_ox1 : BCS ncf_no_bot_edge                       ; ox0 >= ox1 → skip all emission
     ; Top edge visible where nt > ot (new ceiling more restrictive).
     ; No crossover → check left endpoint only (same sign at both).
     LDA zp_nt_l : CMP zp_ot_l : BCC ncf_no_top_edge : BEQ ncf_no_top_edge
