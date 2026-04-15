@@ -663,6 +663,209 @@ def _crossover_x(x0, x1, d0, d1):
     return None
 
 
+def _crossover_x_6502(ox0, ox1, d0, d1):
+    """Find crossover X using the same formula as the 6502 compute_crossover.
+
+    Uses |d0| * ex / (|d0| + |d1|), unsigned truncating division.
+    Returns X in (ox0, ox1) exclusive, or None if at boundary or outside.
+    """
+    ex = ox1 - ox0
+    if ex <= 0:
+        return None
+    abs_d0 = abs(d0)
+    abs_d1 = abs(d1)
+    den = abs_d0 + abs_d1
+    if den == 0:
+        return None
+    quot = (abs_d0 * ex) // den
+    cx = ox0 + quot
+    if cx <= ox0 or cx >= ox1:
+        return None
+    return cx
+
+
+def _clamp8(v):
+    """Clamp a signed value to [0, 159] matching the 6502's clamping."""
+    if v < 0:
+        return 0
+    if v > 159:
+        return 159
+    return v
+
+
+def compute_expected_tighten_lines(spans, ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2):
+    """Compute the lines the 6502 would emit during a tighten call.
+
+    Matches the 6502's two emission sites:
+    1. No-crossover path: emits top edge when nt_l > ot_l, bot edge when
+       nb_l < ob_l. Guarded by ox0 < ox1.
+    2. Crossover sub-interval path (tg_overlap_sub): same checks per
+       sub-interval, but no ox0 < ox1 guard (the 6502 doesn't have one).
+
+    Args:
+        spans: list of 8-tuples (xstart, xend, xlo, xhi, tl, bl, tr, br)
+        ilo, ihi: seg column range (pre-clamped to [0,255])
+        sx1, sx2, yt1, yt2, yb1, yb2: seg parameters (already remapped)
+
+    Returns:
+        list of (x1, y1, x2, y2) tuples matching what the 6502 emits.
+    """
+    lines = []
+
+    for s in spans:
+        xs, xe = s[0], s[1]
+        # Pixel-center overlap: endpoint-only contact is NOT overlap
+        if xe <= ilo or xs >= ihi:
+            continue
+        ox0 = max(xs, ilo)
+        ox1 = min(xe, ihi)
+
+        # --- Evaluate old span boundaries at overlap endpoints ---
+        xlo, xhi, tl, bl, tr, br = s[2], s[3], s[4], s[5], s[6], s[7]
+        if ox0 == xlo and ox1 == xhi:
+            old_tl, old_tr = tl, tr
+            old_bl, old_br = bl, br
+        elif tl == tr and bl == br:
+            old_tl = old_tr = tl
+            old_bl = old_br = bl
+        else:
+            old_tl = _interp_store(ox0, xlo, tl, xhi, tr)
+            old_tr = _interp_store(ox1, xlo, tl, xhi, tr)
+            old_bl = _interp_store(ox0, xlo, bl, xhi, br)
+            old_br = _interp_store(ox1, xlo, bl, xhi, br)
+
+        # --- Evaluate new seg boundaries at overlap endpoints ---
+        if ox0 == sx1 and ox1 == sx2:
+            new_tl, new_tr = yt1, yt2
+            new_bl, new_br = yb1, yb2
+        elif yt1 == yt2 and yt1 >> 8 == yt2 >> 8 and yb1 == yb2 and yb1 >> 8 == yb2 >> 8:
+            new_tl = new_tr = yt1
+            new_bl = new_br = yb1
+        else:
+            new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
+            new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
+            new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
+            new_br = _interp_store(ox1, sx1, yb1, sx2, yb2)
+
+        # --- Crossover detection (on unclamped values) ---
+        dt0 = old_tl - new_tl
+        dt1 = old_tr - new_tr
+        db0 = old_bl - new_bl
+        db1 = old_br - new_br
+        has_top_cx = (dt0 != dt1 and ((dt0 >= 0) != (dt1 >= 0)))
+        has_bot_cx = (db0 != db1 and ((db0 >= 0) != (db1 >= 0)))
+
+        # Also check dt != 0 at each endpoint (matching 6502 tg_cc_t_ne_l/r)
+        if has_top_cx:
+            if dt0 == 0 or dt1 == 0:
+                has_top_cx = False
+        if has_bot_cx:
+            if db0 == 0 or db1 == 0:
+                has_bot_cx = False
+
+        # If both nt hi bytes negative, no top crossover (6502 fast path)
+        if has_top_cx:
+            nt_lh = (new_tl >> 8) & 0xFF if new_tl < 0 or new_tl > 255 else 0
+            nt_rh = (new_tr >> 8) & 0xFF if new_tr < 0 or new_tr > 255 else 0
+            if new_tl < 0 and new_tr < 0:
+                has_top_cx = False
+
+        # --- Clamp new values for dominance check ---
+        c_tl = _clamp8(new_tl)
+        c_tr = _clamp8(new_tr)
+        c_bl = _clamp8(new_bl)
+        c_br = _clamp8(new_br)
+
+        # Old dominates: skip
+        if (c_tl <= old_tl and c_tr <= old_tr and
+                c_bl >= old_bl and c_br >= old_br):
+            continue
+
+        if not has_top_cx and not has_bot_cx:
+            # --- No-crossover path ---
+            # Guard: ox0 < ox1 (skip emission for degenerate 1-column overlap)
+            if ox0 >= ox1:
+                continue
+            # Top edge: nt_l > ot_l (new ceiling more restrictive)
+            if c_tl > old_tl:
+                lines.append((ox0, c_tl, ox1, c_tr))
+            # Bot edge: nb_l < ob_l (new floor more restrictive)
+            if c_bl < old_bl:
+                lines.append((ox0, c_bl, ox1, c_br))
+        else:
+            # --- Crossover sub-interval path ---
+            # Compute crossover points using 6502-matching formula
+            cx_top = None
+            cx_bot = None
+            if has_top_cx:
+                cx_top = _crossover_x_6502(ox0, ox1, dt0, dt1)
+            if has_bot_cx:
+                cx_bot = _crossover_x_6502(ox0, ox1, db0, db1)
+
+            # Build split points
+            splits_x = [ox0]
+            if cx_top is not None:
+                splits_x.append(cx_top)
+            if cx_bot is not None:
+                splits_x.append(cx_bot)
+            splits_x.sort()
+            # Deduplicate
+            splits_x = sorted(set(splits_x))
+
+            # Process each sub-interval
+            for si in range(len(splits_x)):
+                sub_lo = splits_x[si]
+                if si + 1 < len(splits_x):
+                    sub_hi = splits_x[si + 1] - 1
+                else:
+                    sub_hi = ox1
+
+                if sub_hi < sub_lo:
+                    continue
+
+                # Re-interpolate old and new at sub-interval endpoints
+                if tl == tr and bl == br:
+                    s_ot_l = s_ot_r = tl
+                    s_ob_l = s_ob_r = bl
+                else:
+                    s_ot_l = _interp_store(sub_lo, xlo, tl, xhi, tr)
+                    s_ot_r = _interp_store(sub_hi, xlo, tl, xhi, tr)
+                    s_ob_l = _interp_store(sub_lo, xlo, bl, xhi, br)
+                    s_ob_r = _interp_store(sub_hi, xlo, bl, xhi, br)
+
+                if yt1 == yt2 and yb1 == yb2:
+                    s_nt_l = s_nt_r = yt1
+                    s_nb_l = s_nb_r = yb1
+                else:
+                    s_nt_l = _interp_store(sub_lo, sx1, yt1, sx2, yt2)
+                    s_nt_r = _interp_store(sub_hi, sx1, yt1, sx2, yt2)
+                    s_nb_l = _interp_store(sub_lo, sx1, yb1, sx2, yb2)
+                    s_nb_r = _interp_store(sub_hi, sx1, yb1, sx2, yb2)
+
+                # Clamp new values
+                s_nt_l = _clamp8(s_nt_l)
+                s_nt_r = _clamp8(s_nt_r)
+                s_nb_l = _clamp8(s_nb_l)
+                s_nb_r = _clamp8(s_nb_r)
+
+                # Opt 2: if old wins all 4 comparisons, skip emission
+                if (s_ot_l >= s_nt_l and s_ot_r >= s_nt_r and
+                        s_nb_l >= s_ob_l and s_nb_r >= s_ob_r):
+                    continue
+
+                # Guard: skip emission for degenerate 1-column sub-intervals
+                if sub_lo >= sub_hi:
+                    continue
+                # Emit top edge: nt_l > ot_l
+                if s_nt_l > s_ot_l:
+                    lines.append((sub_lo, s_nt_l, sub_hi, s_nt_r))
+                # Emit bot edge: nb_l < ob_l
+                if s_nb_l < s_ob_l:
+                    lines.append((sub_lo, s_nb_l, sub_hi, s_nb_r))
+
+    return lines
+
+
 def _line_y(ly1, dy, dx, x, lx1):
     """Compute line Y at x using real division with round-to-nearest."""
     from clip_math import div_round

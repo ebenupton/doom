@@ -1318,6 +1318,8 @@ zp_cc_den_hi = $FE
     RTS                                                                 ; |
 .skip_opt2
     ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
+    ; Guard: skip emission for degenerate 1-column sub-intervals (ox0 >= ox1)
+    LDA zp_ox0 : CMP zp_ox1 : BCS tos_no_bot_edge
     ; Top edge visible where nt > ot (new ceiling more restrictive).
     ; Within a crossover sub-interval, sign is consistent at both endpoints.
     LDA zp_nt_l : CMP zp_ot_l : BCC tos_no_top_edge : BEQ tos_no_top_edge
