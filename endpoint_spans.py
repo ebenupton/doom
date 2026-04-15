@@ -275,7 +275,7 @@ class EndpointClipSpans:
         y_hi = max(ly1, ly2)
         found = False
         for s in self.spans:
-            if s[1] < xl or s[0] > xr: continue
+            if s[1] <= xl or s[0] >= xr: continue  # pixel-center overlap
             found = True
             # Aperture at the active range endpoints (interp from line).
             ts = _span_top(s, s[0]); te = _span_top(s, s[1])
@@ -474,7 +474,7 @@ class EndpointClipSpans:
                 seg_start = None
                 trivial_entry = False
                 for si, s in enumerate(self.spans):
-                    if s[1] < xl or s[0] > xr:
+                    if s[1] <= xl or s[0] >= xr:  # pixel-center overlap
                         continue
 
                     # Aperture top/bot at the active range endpoints
@@ -510,7 +510,7 @@ class EndpointClipSpans:
                             if cost is not None: cost['cb_entry'] += 1
 
                     next_s = None
-                    if si + 1 < len(self.spans) and self.spans[si + 1][0] == s[1] + 1:
+                    if si + 1 < len(self.spans) and self.spans[si + 1][0] == s[1]:  # abutting contiguity
                         ns = self.spans[si + 1]
                         if ns[0] <= xr:
                             next_s = ns
@@ -816,7 +816,7 @@ def compute_expected_tighten_lines(spans, ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2
             for si in range(len(splits_x)):
                 sub_lo = splits_x[si]
                 if si + 1 < len(splits_x):
-                    sub_hi = splits_x[si + 1] - 1
+                    sub_hi = splits_x[si + 1]  # abutting: shared boundary
                 else:
                     sub_hi = ox1
 
