@@ -101,9 +101,9 @@ class Instrumented6502Spans(EndpointClipSpans):
             _frame_clip_match[0] = False
         _span_clip_6502.total_cycles = saved  # don't count read_spans in HUD
 
-    def mark_solid(self, lo, hi):
+    def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
         super().mark_solid(lo, hi)
-        _span_clip_6502.mark_solid(lo, hi)
+        _span_clip_6502.mark_solid(lo, hi, sx1=sx1, sx2=sx2, yt1=yt1, yt2=yt2, yb1=yb1, yb2=yb2)
         self._check()
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
@@ -896,7 +896,7 @@ class ClipSpans:
             if drawn and stats is not None:
                 stats[2 if was_clipped else 1] += 1
 
-    def mark_solid(self, lo, hi):
+    def mark_solid(self, lo, hi, **_kw):
         """Remove [ilo, ihi) from spans."""
         ilo = max(0, int(lo))
         ihi = min(WIDTH, int(hi) + 1)
@@ -1195,7 +1195,12 @@ def render_subsector(idx, clips, cos_a, sin_a, vx, vy, vz, surface):
     # Apply clip updates after all draws in this subsector
     for op in deferred:
         if op[0] == 'solid':
-            clips.mark_solid(op[1], op[2])
+            clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
+                             sx2=op[4] if len(op) > 4 else None,
+                             yt1=op[5] if len(op) > 5 else None,
+                             yt2=op[6] if len(op) > 6 else None,
+                             yb1=op[7] if len(op) > 7 else None,
+                             yb2=op[8] if len(op) > 8 else None)
         else:
             clips.tighten(*op[1:])
         if clips.is_full(): return
@@ -1624,7 +1629,12 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
     # Apply clip updates after all draws in this subsector
     for op in deferred:
         if op[0] == 'solid':
-            clips.mark_solid(op[1], op[2])
+            clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
+                             sx2=op[4] if len(op) > 4 else None,
+                             yt1=op[5] if len(op) > 5 else None,
+                             yt2=op[6] if len(op) > 6 else None,
+                             yb1=op[7] if len(op) > 7 else None,
+                             yb2=op[8] if len(op) > 8 else None)
         else:
             clips.tighten(*op[1:])
         if clips.is_full():
@@ -1923,9 +1933,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             lines.append((sx2, _bch2, sx2, _bfh2))
         clips.draw_clipped(lines, GREEN, surface, draw_stats)
         if deferred is not None:
-            deferred.append(('solid', x_lo, x_hi))
+            deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
-            clips.mark_solid(x_lo, x_hi)
+            clips.mark_solid(x_lo, x_hi, sx1=sx1, sx2=sx2, yt1=ft1, yt2=ft2, yb1=fb1, yb2=fb2)
     else:
         # Two-sided: read back heights from seg detail
         need_bt = bool(flags & SF_NEEDBT)
@@ -2039,7 +2049,12 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
         packed_render_seg(si, clips, ctx, vz, surface, ram, deferred)
     for op in deferred:
         if op[0] == 'solid':
-            clips.mark_solid(op[1], op[2])
+            clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
+                             sx2=op[4] if len(op) > 4 else None,
+                             yt1=op[5] if len(op) > 5 else None,
+                             yt2=op[6] if len(op) > 6 else None,
+                             yb1=op[7] if len(op) > 7 else None,
+                             yb2=op[8] if len(op) > 8 else None)
         else:
             clips.tighten(*op[1:])
         if clips.is_full():
@@ -2774,9 +2789,9 @@ def _record_frame_steps():
     import copy
 
     class RecordingClipSpans(EndpointClipSpans):
-        def mark_solid(self, lo, hi):
+        def mark_solid(self, lo, hi, **kw):
             nb = len(self.spans)
-            super().mark_solid(lo, hi)
+            super().mark_solid(lo, hi, **kw)
             _rec_mutations.append(('MS', lo, hi, nb, len(self.spans)))
         def tighten(self, *a, **k):
             nb = len(self.spans)
@@ -3347,10 +3362,14 @@ def _main():
             ccyc = _frame_clip_cycles[0]
             mode_tag = "fp/ROM"
             clip_tag = "MATCH" if _frame_clip_match[0] else "FAIL"
-            hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
-                   f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
-                   f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
-                   f"{cyc//1000}K rast  {ccyc//1000}K clip  [{clip_tag}]  {clock.get_fps():.0f}fps")
+            if _show_integrated_fb:
+                hud = (f"6502 clip+rast ({player_x:.0f},{player_y:.0f},{ang_display})  "
+                       f"{ccyc//1000}K clip+rast  [{clip_tag}]  {clock.get_fps():.0f}fps")
+            else:
+                hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
+                       f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
+                       f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
+                       f"{cyc//1000}K rast  {ccyc//1000}K clip  [{clip_tag}]  {clock.get_fps():.0f}fps")
     else:
         hud = (f"float ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "

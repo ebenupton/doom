@@ -288,7 +288,7 @@ class EndpointClipSpans:
 
     # -- Mutations -------------------------------------------------------------
 
-    def mark_solid(self, lo, hi):
+    def mark_solid(self, lo, hi, **_kw):
         # LAZY: only updates xstart/xend on existing spans. The line params
         # (xlo, xhi, tl, bl, tr, br) are preserved verbatim across splits —
         # no _interp_store calls happen in this method any more.
