@@ -110,6 +110,7 @@ zp_line_ylo = $AE    ; u8, min(yl, yr) — running Y bbox
 zp_line_yhi = $AF    ; u8, max(yl, yr) — running Y bbox
 zp_seg_start_x = $B0 ; u8, $FF = NULL (no segment started)
 zp_seg_start_y = $B1  ; u8, Y at seg_start_x
+zp_tg_cont    = $BA   ; portal continuation: $FF=inactive, else=prev span xend
 ; CB clip working set ($B2-$B9)
 zp_cb_cx1   = $B2    ; u8, clipped left X
 zp_cb_cy1   = $B3    ; u8, clipped left Y (line Y at cx1)
@@ -464,13 +465,15 @@ ENDIF
 .ms_chk_after_y
     TYA : TAX                                                            ; Y→X for overlap code
 .ms_chk_after
-    ; Done if xstart > ihi (span starts after solid range)
-    LDA zp_ihi : CMP POOL_XSTART,X : BCC ms_rts_x                       ; |||
-    ; Fall through to ms_overlap (ihi >= xstart: overlap confirmed)
+    ; Done if xstart > ihi (span starts after solid range).
+    ; Load xstart once and reuse for both ihi and ilo comparisons.
+    LDA POOL_XSTART,X                                                    ; |
+    CMP zp_ihi : BEQ ms_overlap : BCS ms_rts_x                          ; |||
 .ms_overlap
+    ; A = xstart (from ms_chk_after). Check left fragment.
     ; xstart < ilo  → keep a left fragment   (xend may need clip too)
     ; xstart >= ilo → no left fragment       (this span is entirely in or right of [ilo,ihi])
-    LDA POOL_XSTART,X : CMP zp_ilo : BCC ms_has_left                    ; ||
+    CMP zp_ilo : BCC ms_has_left                                         ; ||
     ; --- No left fragment ---
     ; xend > ihi  → shrink in place (BCC past ms_free)
     ; xend <= ihi → fully covered → fall through to ms_free
@@ -653,6 +656,7 @@ zp_cc_num_hi = $FC
 zp_cc_den_lo = $FD
 zp_cc_den_hi = $FE
 
+EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
 .span_tighten
     LDA zp_ihi : CMP zp_ilo : BCS tg_go    ; ihi >= ilo: valid range    ; |
     RTS
@@ -664,6 +668,7 @@ IF EMIT_LINES
     STA LINE_OUT_COUNT
 ENDIF
     LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
+    STA zp_tg_cont               ; invalidate portal continuation        ; |
     ; Initialize running seg bounds (clamped to [0,159]).
     ; seg_top_max = max(clamp(yt1), clamp(yt2))
     ; seg_bot_min = min(clamp(yb1), clamp(yb2))
@@ -726,16 +731,16 @@ ENDIF
     LDA POOL_XSTART,X : CMP zp_ihi : BCC tg_overlaps                    ; |||
     ; Post-seg: first span goes through tg_append_x (merge check),
     ; then bulk-link the remaining chain directly.
-    LDA POOL_NEXT,X : STA zp_old_cur                                    ; save rest of chain
+    ; old_cur already holds POOL_NEXT,X (set at tg_process), no re-read needed.
     JSR tg_append_x                                                     ; first post-seg (with merge)
     LDX zp_old_cur : BEQ tg_post_done                                   ; any more spans?
     LDY zp_new_tail : TXA : STA POOL_NEXT,Y                             ; bulk-link rest
 .tg_post_done RTS
 
 .tg_overlaps
-    ; ox0 = max(xstart, ilo).  CMP doesn't modify A, so BCS uses the
-    ; already-loaded XSTART value directly (avoids redundant reload).
-    LDA POOL_XSTART,X : CMP zp_ilo : BCS tg_ox0_set                     ; |
+    ; ox0 = max(xstart, ilo).  A already holds POOL_XSTART,X from tg_chk2's
+    ; CMP (which doesn't modify A). Skip the re-read.
+    CMP zp_ilo : BCS tg_ox0_set                                         ; |
     LDA zp_ilo                                                          ; |
 .tg_ox0_set STA zp_ox0                                                  ; |
     ; ox1 = min(xend, ihi).  BCC alone suffices: when xend == ihi, the
@@ -758,11 +763,38 @@ ENDIF
     CMP POOL_BL,X : BCC tg_not_old_bb                                   ; |
     CMP POOL_BR,X : BCC tg_not_old_bb                                   ; |
     ; Old dominates — skip all interpolation.
-    JSR tg_append_x                                                      ; |
-    JMP tg_walk                                                          ; |
+    ; Inline fast link (skip merge check: old-dom spans rarely merge,
+    ; and the merge check costs ~40 cycles per span).
+    LDA #$FF : STA zp_tg_cont   ; break continuation
+    LDA #0 : STA POOL_NEXT,X                                             ; |
+    LDY zp_new_tail : BEQ tg_od_first                                   ; |
+    TXA : STA POOL_NEXT,Y                                               ; |
+    STX zp_new_tail : JMP tg_walk                                       ; |
+.tg_od_first STX zp_head : STX zp_new_tail : JMP tg_walk                ; |
 
 .tg_not_old_bb
-    ; Tier 2: new-dom BB check.
+    ; --- Portal continuation: cheap new-dom using running bounds ---
+    ; If previous span was non-old-dom AND contiguous, the seg boundary
+    ; is likely still inside the aperture. Check using running bounds
+    ; (cheaper than the full new-dom BB which recomputes min/max).
+    ; New-dom: bb_yt_max > max(tl,tr) AND min(bl,br) > bb_yb_min (strict)
+    LDA zp_tg_cont : CMP #$FF : BEQ tg_no_cont
+    CMP POOL_XSTART,X : BNE tg_no_cont              ; not contiguous
+    LDA zp_bb_flags : AND #$40 : BEQ tg_no_cont     ; need on-screen bounds
+    ; Top: max(tl,tr) < bb_yt_max
+    LDA POOL_TL,X : CMP POOL_TR,X : BCS tg_cont_it : LDA POOL_TR,X
+.tg_cont_it  ; A = max(tl,tr)
+    CMP zp_bb_yt_max : BCS tg_no_cont               ; max(tl,tr) >= seg_top → fail
+    ; Bot: min(bl,br) > bb_yb_min (strict)
+    LDA POOL_BL,X : CMP POOL_BR,X : BCC tg_cont_ib : LDA POOL_BR,X
+.tg_cont_ib  ; A = min(bl,br)
+    CMP zp_bb_yb_min : BCC tg_no_cont               ; min(bl,br) < seg_bot → fail
+    BEQ tg_no_cont                                   ; equal → old-dom at boundary
+    ; Portal continuation: new dominates. Skip old interp.
+    JMP tg_newdom_fast
+.tg_no_cont
+
+    ; Tier 2: new-dom BB check (full version with overlap guard).
     ; Guard: all seg hi bytes zero (bb_flags bit 6 = $40).
     LDA zp_bb_flags : AND #$40 : BEQ tg_bb_skip                         ; |
     ; Guard: overlap covers entire span (xstart >= ilo AND xend <= ihi).
@@ -785,12 +817,9 @@ ENDIF
     LDA POOL_BL,X : CMP POOL_BR,X : BCC tg_nd_bmin : LDA POOL_BR,X      ; |
 .tg_nd_bmin
     CMP zp_tmp0 : BCC tg_bb_skip : BEQ tg_bb_skip                       ; |
-    ; New dominates everywhere. Set dummy old values so the no-crossover
-    ; path produces the new seg's boundary values in the result span.
-    LDA #0 : STA zp_ot_l : STA zp_ot_r                                  ; |
-    LDA #159 : STA zp_ob_l : STA zp_ob_r                                ; |
-    STX zp_save1                                                         ; |
-    JMP old_done                                                         ; |
+    ; Tier 2 success: new dominates. JMP to newdom_fast (moved after bb_skip
+    ; to keep tg_bb_skip in the same page as the tier 2 branches).
+    JMP tg_newdom_fast
 .tg_bb_skip
 
     ; --- Full interpolation pipeline ---
@@ -810,16 +839,21 @@ ENDIF
     ; Saves 4 interp_store calls when the OLD span has no slope.
     LDA POOL_TL,X : CMP POOL_TR,X : BNE old_slow                        ; |
     STA zp_ot_l : STA zp_ot_r                                           ; |
-    LDA POOL_BL,X : CMP POOL_BR,X : BNE old_slow                        ; |
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE old_slow_reload                 ; |
     STA zp_ob_l : STA zp_ob_r                                           ; |
     JMP old_done                                                        ; |
+.old_slow_reload
+    ; BL!=BR: need full interp. Re-read TL for zp_i_y0 (rare path).
+    LDA POOL_TL,X
 .old_slow
+    ; A holds TL on entry (from constant-line check or old_slow_reload).
     ; Hoisted den setup: den = POOL_XHI - POOL_XLO, shared by all 4 calls.
     ; (The anchor fast path above guards 1-pixel spans, so den > 0.)
+    STA zp_i_y0                                                          ; |
     LDA POOL_XLO,X : STA zp_i_x0                                        ; |
     LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den                 ; |
-    ; Top: y0 = tl, y1 = tr
-    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1           ; ||
+    ; Top: y0 = tl (already in zp_i_y0), y1 = tr
+    LDA POOL_TR,X : STA zp_i_y1                                          ; |
     LDA zp_ox0 : JSR interp_store : STA zp_ot_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ot_r                         ; |
     ; Bot: y0 = bl, y1 = br. Reload X (udiv16_8 in interp_store clobbers X).
@@ -827,6 +861,14 @@ ENDIF
     LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1           ; ||
     LDA zp_ox0 : JSR interp_store : STA zp_ob_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
+    JMP old_done
+.tg_newdom_fast
+    ; New dominates everywhere. Set dummy old values so the no-crossover
+    ; path produces the new seg's boundary values in the result span.
+    LDA #0 : STA zp_ot_l : STA zp_ot_r                                  ; |
+    LDA #159 : STA zp_ob_l : STA zp_ob_r                                ; |
+    STX zp_save1                                                         ; |
+    JMP tg_pod_skip   ; skip post-old-interp check (dummy values always fail it)
 .old_done
     ; --- Post-old-interp dominance check using running seg bounds ---
     ; More precise than tier-1 BB: uses actual interpolated old values.
@@ -835,7 +877,14 @@ ENDIF
     LDA zp_bb_yb_min : CMP zp_ob_l : BCC tg_pod_skip                    ; |
     CMP zp_ob_r : BCC tg_pod_skip                                       ; |
     ; Old dominates seg's bounding box — skip new seg interp entirely.
-    LDX zp_save1 : JSR tg_append_x : JMP tg_walk                        ; |
+    ; Inline fast link (same as tier 1 old-dom: skip merge check).
+    LDA #$FF : STA zp_tg_cont
+    LDX zp_save1                                                         ; |
+    LDA #0 : STA POOL_NEXT,X                                             ; |
+    LDY zp_new_tail : BEQ tg_pod_first                                  ; |
+    TXA : STA POOL_NEXT,Y                                               ; |
+    STX zp_new_tail : JMP tg_walk                                       ; |
+.tg_pod_first STX zp_head : STX zp_new_tail : JMP tg_walk               ; |
 .tg_pod_skip
     ; ---------- NEW seg: cache check for left-endpoint reuse -----------
     LDA zp_ox0 : CMP zp_cache_ox1 : BNE new_no_cache
@@ -897,6 +946,8 @@ ENDIF
     LDA zp_nt_r : STA zp_cache_nt : LDA zp_nt_rh : STA zp_cache_nt_h
     LDA zp_nb_r : STA zp_cache_nb : LDA zp_nb_rh : STA zp_cache_nb_h
     LDA zp_ox1 : STA zp_cache_ox1
+    ; Set portal continuation: record span's xend for contiguity check
+    LDX zp_save1 : LDA POOL_XEND,X : STA zp_tg_cont
     ; --- Narrow running seg bounds using cached right-edge seg values ---
     ; Only narrow when all-on-screen (bb_flags=$40); cached must be on-screen.
     LDA zp_bb_flags : BEQ tg_nd_skip                                    ; |
@@ -1067,6 +1118,7 @@ ENDIF
     LDA zp_nb_l : CMP zp_ob_l : BCC tg_not_old_dom                       ; |
     LDA zp_nb_r : CMP zp_ob_r : BCC tg_not_old_dom                       ; |
     ; Old dominates: keep span unchanged
+    LDA #$FF : STA zp_tg_cont
     LDX zp_save1                                                        ; |
     JSR tg_append_x                                                     ; |
     JMP tg_walk                                                         ; |
@@ -1238,13 +1290,18 @@ ENDIF
     LDX zp_save1                                                        ; |
     LDA POOL_TL,X : CMP POOL_TR,X : BNE tos_old_slow                    ; |
     STA zp_ot_l : STA zp_ot_r                                           ; |
-    LDA POOL_BL,X : CMP POOL_BR,X : BNE tos_old_slow                    ; |
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE tos_old_slow_reload             ; |
     STA zp_ob_l : STA zp_ob_r                                           ; |
     JMP tos_old_done                                                    ; |
+.tos_old_slow_reload
+    ; BL!=BR but TL==TR: re-read TL for old_slow (rare path)
+    LDA POOL_TL,X
 .tos_old_slow
+    ; A holds TL on entry from constant-line check
+    STA zp_i_y0                                                          ; |
     LDA POOL_XLO,X : STA zp_i_x0                                        ; |
     LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den                 ; |
-    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1           ; |
+    LDA POOL_TR,X : STA zp_i_y1                                          ; |
     LDA zp_ox0 : JSR interp_store : STA zp_ot_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ot_r                         ; |
     LDX zp_save1                                                        ; |
