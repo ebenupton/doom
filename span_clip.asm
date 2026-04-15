@@ -95,7 +95,7 @@ zp_bb_yb_min  = $A6    ; min(seg bot) over remaining overlap range
 zp_bb_flags   = $A7    ; bit 7: 1=narrowed bounds valid (all seg vals on-screen)
 zp_ms_emit    = $A8    ; mark_solid: $FF = emit wall edge lines, $00 = skip
 
-; === Draw-clipped-line ZP ($A8-$B1) — reuses $A8 (ms_emit) since non-overlapping ===
+; === Draw-clipped-line ZP ($A8-$B9) — reuses $A8 (ms_emit) since non-overlapping ===
 ; Caller sets xl/yl/xr/yr; routine computes dx/dy/ylo/yhi.
 zp_line_xl  = $A8    ; u8, left X (oriented left-to-right)
 zp_line_yl  = $A9    ; u8, Y at xl
@@ -107,6 +107,15 @@ zp_line_ylo = $AE    ; u8, min(yl, yr) — running Y bbox
 zp_line_yhi = $AF    ; u8, max(yl, yr) — running Y bbox
 zp_seg_start_x = $B0 ; u8, $FF = NULL (no segment started)
 zp_seg_start_y = $B1  ; u8, Y at seg_start_x
+; CB clip working set ($B2-$B9)
+zp_cb_cx1   = $B2    ; u8, clipped left X
+zp_cb_cy1   = $B3    ; u8, clipped left Y (line Y at cx1)
+zp_cb_cx2   = $B4    ; u8, clipped right X
+zp_cb_cy2   = $B5    ; u8, clipped right Y (line Y at cx2)
+zp_cb_top1  = $B6    ; u8, span top at cx1
+zp_cb_top2  = $B7    ; u8, span top at cx2
+zp_cb_bot1  = $B8    ; u8, span bot at cx1
+zp_cb_bot2  = $B9    ; u8, span bot at cx2
 
 ; === Line output buffer ($0200) ===
 ; Lines emitted during tighten (portal edges) and mark_solid (wall edges).
@@ -1750,13 +1759,13 @@ zp_cc_den_hi = $FE
     LDA POOL_TL,X : CMP POOL_TR,X : BCC dcl_ot_ok : LDA POOL_TR,X
 .dcl_ot_ok STA zp_tmp0    ; ot = min(tl, tr)
     ; Reject if yhi < ot (line entirely above aperture)
-    LDA zp_line_yhi : CMP zp_tmp0 : BCC dcl_skip  ; yhi < ot → reject
+    LDA zp_line_yhi : CMP zp_tmp0 : BCC dcl_outer_reject  ; yhi < ot → reject
 
     ; ob = max(bl, br)
     LDA POOL_BL,X : CMP POOL_BR,X : BCS dcl_ob_ok : LDA POOL_BR,X
 .dcl_ob_ok STA zp_tmp1    ; ob = max(bl, br)
     ; Reject if ylo > ob (line entirely below aperture)
-    LDA zp_tmp1 : CMP zp_line_ylo : BCC dcl_skip  ; ob < ylo → reject
+    LDA zp_tmp1 : CMP zp_line_ylo : BCC dcl_outer_reject  ; ob < ylo → reject
 
     ; --- Tier 2: inner bbox accept ---
     ; it = max(tl, tr)
@@ -1766,12 +1775,17 @@ zp_cc_den_hi = $FE
     LDA POOL_BL,X : CMP POOL_BR,X : BCC dcl_ib_ok : LDA POOL_BR,X
 .dcl_ib_ok STA zp_tmp1    ; ib = min(bl, br)
     ; Accept if ylo >= it AND ib >= yhi
-    LDA zp_line_ylo : CMP zp_tmp0 : BCC dcl_skip  ; ylo < it → ambiguous (skip for Phase 1)
+    LDA zp_line_ylo : CMP zp_tmp0 : BCC dcl_ambiguous  ; ylo < it → ambiguous → Phase 4 CB clip
     LDA zp_tmp1 : CMP zp_line_yhi : BCS dcl_accept
-.dcl_skip
-    JMP dcl_advance  ; trampoline: skip this span
-.dcl_accept
+    ; yhi > ib → ambiguous
+    JMP dcl_cb_clip
 
+.dcl_outer_reject
+    JMP dcl_advance  ; trampoline: outer reject this span
+.dcl_ambiguous
+    JMP dcl_cb_clip  ; trampoline: ambiguous → Phase 4 CB clip
+
+.dcl_accept
     ; Inner bbox accept! Line guaranteed inside this span's aperture.
     ; seg_start = (ox0, line_y_at(ox0))
     LDA zp_ox0 : STA zp_seg_start_x
@@ -1790,16 +1804,85 @@ zp_cc_den_hi = $FE
 .dcl_exit_check
     ; ========== EXIT CHECK ==========
     ; Does the line end within this span? (xr <= xend)
-    LDA zp_line_xr : CMP POOL_XEND,X : BEQ dcl_line_ends : BCC dcl_line_ends
+    LDA POOL_XEND,X : CMP zp_line_xr : BCC dcl_extends_past  ; xend < xr → extends past
+    ; xend >= xr: line ends within this span
+    JMP dcl_line_ends
 
-    ; Line extends past this span.
-    ; --- Phase 1: no portal check, just emit and reset ---
-    ; Emit seg_start → (ox1, line_y_at(ox1))
-    ; But first, for Phase 1 we flush the current segment at the span boundary.
-    STX zp_save0
-    ; Compute end Y = line_y_at(ox1)
-    LDA zp_ox1 : CMP zp_line_xr : BEQ dcl_exit_use_yr
-    JSR dcl_line_y_at_a  ; A = line Y at ox1
+.dcl_extends_past
+    ; ========== Line extends past this span — Phase 2 portal check ==========
+    STX zp_save0    ; save current span pointer
+
+    ; Check if next span abuts this one
+    LDY POOL_NEXT,X : BEQ dcl_exit_no_portal   ; no next span → emit+reset
+
+    ; Abutting? POOL_XEND[current] == POOL_XSTART[next]
+    LDA POOL_XEND,X : CMP POOL_XSTART,Y : BNE dcl_exit_no_portal
+
+    ; --- Compute portal aperture at shared boundary ---
+    ; pt = max(current.tr, next.tl) — tightest top
+    LDA POOL_TR,X : CMP POOL_TL,Y : BCS dcl_pt_ok : LDA POOL_TL,Y
+.dcl_pt_ok STA zp_tmp0    ; pt
+
+    ; pb = min(current.br, next.bl) — tightest bottom
+    LDA POOL_BR,X : CMP POOL_BL,Y : BCC dcl_pb_ok : LDA POOL_BL,Y
+.dcl_pb_ok STA zp_tmp1    ; pb
+
+    ; Portal open? pt < pb
+    LDA zp_tmp0 : CMP zp_tmp1 : BCS dcl_exit_no_portal  ; pt >= pb → portal closed
+
+    ; --- Tier 1 (cheap accept): pt <= ylo AND yhi <= pb ---
+    ; Line's entire Y range fits in portal aperture → continue
+    LDA zp_line_ylo : CMP zp_tmp0 : BCC dcl_portal_t2  ; ylo < pt → not tier 1
+    LDA zp_tmp1 : CMP zp_line_yhi : BCC dcl_portal_t2  ; pb < yhi → not tier 1
+    ; Tier 1 accept: continue to next span, keep seg_start
+    LDX zp_save0
+    JMP dcl_advance
+
+.dcl_portal_t2
+    ; --- Tier 2 (cheap reject): yhi < pt OR ylo > pb ---
+    LDA zp_line_yhi : CMP zp_tmp0 : BCC dcl_exit_no_portal  ; yhi < pt → reject
+    LDA zp_tmp1 : CMP zp_line_ylo : BCC dcl_exit_no_portal  ; pb < ylo → reject
+
+    ; --- Tier 3 (exact check): compute ly = line_y_at(portal_x) ---
+    ; portal_x = POOL_XEND of current span (shared boundary)
+    LDX zp_save0
+    LDA POOL_XEND,X : CMP zp_line_xr : BEQ dcl_portal_use_yr
+    JSR dcl_line_y_at_a  ; A = ly
+    JMP dcl_portal_chk_ly
+.dcl_portal_use_yr
+    LDA zp_line_yr
+.dcl_portal_chk_ly
+    ; Check: pt <= ly <= pb
+    CMP zp_tmp0 : BCC dcl_exit_no_portal_a  ; ly < pt → fail
+    STA zp_tmp2     ; save ly
+    LDA zp_tmp1 : CMP zp_tmp2 : BCC dcl_exit_no_portal_a  ; pb < ly → fail
+
+    ; Line passes through portal. Narrow Y bbox for next span.
+    ; ylo = min(ly, yr), yhi = max(ly, yr)
+    LDA zp_tmp2 : CMP zp_line_yr : BCC dcl_portal_ly_lo
+    ; ly >= yr: yhi=ly, ylo=yr
+    STA zp_line_yhi : LDA zp_line_yr : STA zp_line_ylo
+    JMP dcl_portal_continue
+.dcl_portal_ly_lo
+    ; ly < yr: ylo=ly, yhi=yr
+    STA zp_line_ylo : LDA zp_line_yr : STA zp_line_yhi
+.dcl_portal_continue
+    ; Continue to next span, keep seg_start
+    LDX zp_save0
+    JMP dcl_advance
+
+.dcl_exit_no_portal_a
+    ; Restore for emit path (ly check failed, need save0)
+.dcl_exit_no_portal
+    ; Portal failed or closed: emit current segment and reset.
+    ; Compute exit point Y.
+    LDX zp_save0
+    ; Exit Y: if xr > xend, use line_y_at(xend). If xr <= xend, use yr.
+    LDA POOL_XEND,X
+    STA zp_ox1   ; end_x = xend of current span
+    CMP zp_line_xr : BEQ dcl_exit_use_yr
+    ; xend < xr: compute line_y_at(ox1)
+    LDA zp_ox1 : JSR dcl_line_y_at_a
     JMP dcl_exit_emit
 .dcl_exit_use_yr
     LDA zp_line_yr
@@ -1830,17 +1913,288 @@ zp_cc_den_hi = $FE
 .dcl_flush
     ; End of walk. If seg_start is active, emit final segment.
     LDA zp_seg_start_x : CMP #$FF : BEQ dcl_done
-    ; Emit seg_start → (ox1, line_y_at(ox1)) from the last span
-    ; But we already fell out of the walk, so we need the last ox1.
-    ; Actually at this point we should emit to (xr, yr) since the line
-    ; may extend past the last span. But Phase 1: we already handled
-    ; line-ends-in-span above. If we get here with seg_start active,
-    ; it means the next span was right-of-line. Emit to (xr, yr).
+    ; Emit to (xr, yr) since line extends past last span
     LDA zp_line_yr : STA zp_tmp0
     LDA zp_line_xr : STA zp_ox1
     JSR dcl_emit_segment
 .dcl_done
     RTS
+
+; ========== Phase 4: CB clip (clip_to_span) ==========
+; Exact clip of the line against the span's trapezoid aperture.
+; Entry: X = span pointer, seg_start_x == $FF (no active segment)
+; Uses interp_store to evaluate span boundaries at clipped endpoints.
+.dcl_cb_clip
+    STX zp_save0  ; save span pointer
+
+    ; Step 1: X-clip line to [xstart, xend] = [ox0, ox1]
+    ; cx1 = ox0
+    LDA zp_ox0 : STA zp_cb_cx1
+    ; cx2 = ox1
+    LDA zp_ox1 : STA zp_cb_cx2
+
+    ; Step 2: Compute line Y at clipped X endpoints
+    ; cy1 = line_y_at(cx1)
+    LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_cy1_interp
+    LDA zp_line_yl : JMP dcl_cb_cy1_done
+.dcl_cb_cy1_interp
+    LDA zp_cb_cx1 : JSR dcl_line_y_at_a
+.dcl_cb_cy1_done
+    STA zp_cb_cy1
+
+    ; cy2 = line_y_at(cx2)
+    LDA zp_cb_cx2 : CMP zp_line_xr : BNE dcl_cb_cy2_interp
+    LDA zp_line_yr : JMP dcl_cb_cy2_done
+.dcl_cb_cy2_interp
+    LDA zp_cb_cx2 : JSR dcl_line_y_at_a
+.dcl_cb_cy2_done
+    STA zp_cb_cy2
+
+    ; Step 3: Evaluate span boundaries at cx1, cx2
+    LDX zp_save0
+    ; Setup interp for span: x0=xlo, den=xhi-xlo
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
+    BNE dcl_cb_has_den
+    ; den=0: single-column span, use tl/bl directly
+    LDA POOL_TL,X : STA zp_cb_top1 : STA zp_cb_top2
+    LDA POOL_BL,X : STA zp_cb_bot1 : STA zp_cb_bot2
+    JMP dcl_cb_have_bounds
+.dcl_cb_has_den
+    ; top1 = interp_store(cx1, xlo, tl, xhi, tr)
+    LDA POOL_TL,X : STA zp_i_y0
+    LDA POOL_TR,X : STA zp_i_y1
+    LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_top1
+    ; top2 = interp_store(cx2, ...)
+    LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_top2
+    ; bot1, bot2
+    LDX zp_save0
+    LDA POOL_BL,X : STA zp_i_y0
+    LDA POOL_BR,X : STA zp_i_y1
+    ; den still set from above (interp_store doesn't change div_den internally
+    ; BUT it calls udiv16_8 which may clobber it... need to re-set)
+    LDA POOL_XHI,X : SEC : SBC POOL_XLO,X : STA zp_div_den
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_bot1
+    LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_bot2
+
+.dcl_cb_have_bounds
+    ; Step 4: Top boundary clip
+    ; If cy1 < top1 AND cy2 < top2 → reject (entirely above)
+    LDA zp_cb_cy1 : CMP zp_cb_top1 : BCS dcl_cb_top_p1_ok  ; cy1 >= top1
+    LDA zp_cb_cy2 : CMP zp_cb_top2 : BCS dcl_cb_top_clip   ; cy2 >= top2 → one inside, clip
+    JMP dcl_cb_reject  ; both above → reject
+.dcl_cb_top_p1_ok
+    ; cy1 >= top1; check cy2
+    LDA zp_cb_cy2 : CMP zp_cb_top2 : BCS dcl_cb_top_done  ; cy2 >= top2 → both inside, no clip
+    ; cy2 < top2, cy1 >= top1: clip at p2 end
+    ; d1 = cy1 - top1 (positive or zero)
+    LDA zp_cb_cy1 : SEC : SBC zp_cb_top1 : STA zp_tmp0  ; d1 >= 0
+    ; d2 = cy2 - top2 (negative, since cy2 < top2)
+    LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 < 0 (signed)
+    ; boundary_ix with clip_p1=0 (clip p2 end, round toward cx1)
+    LDA #0 : JSR dcl_boundary_ix  ; A = ix
+    STA zp_cb_cx2
+    ; Recompute cy2 = line_y_at(cx2)
+    LDA zp_cb_cx2 : CMP zp_line_xr : BNE dcl_cb_top_cy2_interp
+    LDA zp_line_yr : JMP dcl_cb_top_cy2_done
+.dcl_cb_top_cy2_interp
+    LDA zp_cb_cx2 : CMP zp_line_xl : BNE dcl_cb_top_cy2_mid
+    LDA zp_line_yl : JMP dcl_cb_top_cy2_done
+.dcl_cb_top_cy2_mid
+    LDA zp_cb_cx2 : JSR dcl_line_y_at_a
+.dcl_cb_top_cy2_done
+    STA zp_cb_cy2
+    JMP dcl_cb_top_done
+
+.dcl_cb_top_clip
+    ; cy1 < top1, cy2 >= top2: clip at p1 end
+    ; d1 = cy1 - top1 (negative)
+    LDA zp_cb_cy1 : SEC : SBC zp_cb_top1 : STA zp_tmp0  ; d1 < 0
+    ; d2 = cy2 - top2 (positive or zero)
+    LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 >= 0
+    ; boundary_ix with clip_p1=1 (clip p1 end, round toward cx2)
+    LDA #1 : JSR dcl_boundary_ix  ; A = ix
+    STA zp_cb_cx1
+    ; Recompute cy1 = line_y_at(cx1)
+    LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_top_cy1_interp
+    LDA zp_line_yl : JMP dcl_cb_top_cy1_done
+.dcl_cb_top_cy1_interp
+    LDA zp_cb_cx1 : CMP zp_line_xr : BNE dcl_cb_top_cy1_mid
+    LDA zp_line_yr : JMP dcl_cb_top_cy1_done
+.dcl_cb_top_cy1_mid
+    LDA zp_cb_cx1 : JSR dcl_line_y_at_a
+.dcl_cb_top_cy1_done
+    STA zp_cb_cy1
+
+.dcl_cb_top_done
+    ; Check cx1 > cx2 after top clip → reject
+    LDA zp_cb_cx2 : CMP zp_cb_cx1 : BCS dcl_cb_top_ok
+    JMP dcl_cb_reject
+.dcl_cb_top_ok
+
+    ; Step 5: Bottom boundary clip
+    ; Need to re-evaluate bot boundaries at (possibly new) cx1, cx2
+    ; BUT: if we clipped for top, the old bot values at the original cx1/cx2
+    ; may no longer be correct. We need bot at the NEW cx1/cx2.
+    ; Optimization: only re-evaluate the endpoint that was clipped.
+    ; For simplicity: re-evaluate both bot boundaries at current cx1, cx2.
+    LDX zp_save0
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
+    BNE dcl_cb_bot_has_den
+    ; den=0: single-column
+    LDA POOL_BL,X : STA zp_cb_bot1 : STA zp_cb_bot2
+    JMP dcl_cb_bot_eval_done
+.dcl_cb_bot_has_den
+    LDA POOL_BL,X : STA zp_i_y0
+    LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_bot1
+    LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_bot2
+.dcl_cb_bot_eval_done
+
+    ; If cy1 > bot1 AND cy2 > bot2 → reject (entirely below)
+    LDA zp_cb_bot1 : CMP zp_cb_cy1 : BCS dcl_cb_bot_p1_ok  ; bot1 >= cy1
+    LDA zp_cb_bot2 : CMP zp_cb_cy2 : BCS dcl_cb_bot_clip   ; bot2 >= cy2 → one inside, clip
+    JMP dcl_cb_reject  ; both below → reject
+.dcl_cb_bot_p1_ok
+    ; bot1 >= cy1; check cy2
+    LDA zp_cb_bot2 : CMP zp_cb_cy2 : BCS dcl_cb_bot_done  ; bot2 >= cy2 → both inside
+    ; cy2 > bot2, cy1 <= bot1: clip p2 end
+    ; d1 = cy1 - bot1 (negative or zero, since cy1 <= bot1)
+    LDA zp_cb_cy1 : SEC : SBC zp_cb_bot1 : STA zp_tmp0  ; d1 <= 0
+    ; d2 = cy2 - bot2 (positive, since cy2 > bot2)
+    LDA zp_cb_cy2 : SEC : SBC zp_cb_bot2 : STA zp_tmp1  ; d2 > 0
+    ; boundary_ix with clip_p1=0 (clip p2, round toward cx1)
+    LDA #0 : JSR dcl_boundary_ix
+    STA zp_cb_cx2
+    ; Recompute cy2
+    LDA zp_cb_cx2 : CMP zp_line_xr : BNE dcl_cb_bot_cy2_interp
+    LDA zp_line_yr : JMP dcl_cb_bot_cy2_done
+.dcl_cb_bot_cy2_interp
+    LDA zp_cb_cx2 : CMP zp_line_xl : BNE dcl_cb_bot_cy2_mid
+    LDA zp_line_yl : JMP dcl_cb_bot_cy2_done
+.dcl_cb_bot_cy2_mid
+    LDA zp_cb_cx2 : JSR dcl_line_y_at_a
+.dcl_cb_bot_cy2_done
+    STA zp_cb_cy2
+    JMP dcl_cb_bot_done
+
+.dcl_cb_bot_clip
+    ; bot1 < cy1, bot2 >= cy2: clip p1 end
+    ; d1 = cy1 - bot1 (positive)
+    LDA zp_cb_cy1 : SEC : SBC zp_cb_bot1 : STA zp_tmp0  ; d1 > 0
+    ; d2 = cy2 - bot2 (negative or zero)
+    LDA zp_cb_cy2 : SEC : SBC zp_cb_bot2 : STA zp_tmp1  ; d2 <= 0
+    ; boundary_ix with clip_p1=1 (clip p1, round toward cx2)
+    LDA #1 : JSR dcl_boundary_ix
+    STA zp_cb_cx1
+    ; Recompute cy1
+    LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_bot_cy1_interp
+    LDA zp_line_yl : JMP dcl_cb_bot_cy1_done
+.dcl_cb_bot_cy1_interp
+    LDA zp_cb_cx1 : CMP zp_line_xr : BNE dcl_cb_bot_cy1_mid
+    LDA zp_line_yr : JMP dcl_cb_bot_cy1_done
+.dcl_cb_bot_cy1_mid
+    LDA zp_cb_cx1 : JSR dcl_line_y_at_a
+.dcl_cb_bot_cy1_done
+    STA zp_cb_cy1
+
+.dcl_cb_bot_done
+    ; Check cx1 > cx2 after bot clip → reject
+    LDA zp_cb_cx2 : CMP zp_cb_cx1 : BCC dcl_cb_reject
+
+    ; CB clip succeeded. Set seg_start to (cx1, cy1).
+    LDA zp_cb_cx1 : STA zp_seg_start_x
+    LDA zp_cb_cy1 : STA zp_seg_start_y
+    ; Update Y bbox for portal checks
+    LDA zp_cb_cy1 : CMP zp_cb_cy2 : BCC dcl_cb_ylo_ok
+    ; cy1 >= cy2
+    STA zp_line_yhi : LDA zp_cb_cy2 : STA zp_line_ylo
+    JMP dcl_cb_bbox_done
+.dcl_cb_ylo_ok
+    ; cy1 < cy2
+    STA zp_line_ylo : LDA zp_cb_cy2 : STA zp_line_yhi
+.dcl_cb_bbox_done
+    ; Restore span pointer and continue with exit check
+    LDX zp_save0
+    JMP dcl_exit_check
+
+.dcl_cb_reject
+    ; CB clip rejected — skip this span
+    LDX zp_save0
+    JMP dcl_advance
+
+; --- dcl_boundary_ix: compute intersection X for CB clip ---
+; Input: zp_tmp0 = d1 (s8), zp_tmp1 = d2 (s8), A = clip_p1 flag (0 or 1)
+;        zp_cb_cx1, zp_cb_cx2 = current clipped X range
+; Output: A = intersection X
+; Formula: ix = cx1 + (cx2 - cx1) * d1 / (d1 - d2)
+;   with directed rounding: if clip_p1, round toward cx2 (ceiling)
+;                           else round toward cx1 (floor)
+; d1 and d2 have opposite signs (one endpoint inside, one outside).
+; denom = d1 - d2, |num| = (cx2-cx1) * |d1|
+.dcl_boundary_ix
+    STA zp_save1        ; save clip_p1 flag
+
+    ; denom = d1 - d2 (s8 result, but could be s9 in theory)
+    ; Since d1 and d2 have opposite signs, |denom| = |d1| + |d2|
+    ; Compute |d1| and sign
+    LDA zp_tmp0 : BPL dcl_bix_d1_pos
+    ; d1 negative: |d1| = -d1
+    EOR #$FF : CLC : ADC #1
+.dcl_bix_d1_pos
+    STA zp_tmp2         ; |d1|
+
+    ; |denom| = |d1| + |d2| (since opposite signs)
+    LDA zp_tmp1 : BPL dcl_bix_d2_pos
+    EOR #$FF : CLC : ADC #1
+.dcl_bix_d2_pos
+    CLC : ADC zp_tmp2 : STA zp_div_den  ; |denom| = |d1| + |d2|
+    ; Handle overflow: if carry set, denom > 255 — shouldn't happen
+    ; for pixel-scale values, but guard just in case
+    BCS dcl_bix_mid     ; denom overflow → use midpoint fallback
+
+    ; Check denom == 0 (shouldn't happen if signs differ, but guard)
+    BEQ dcl_bix_mid
+
+    ; num = (cx2 - cx1) * |d1|
+    LDA zp_cb_cx2 : SEC : SBC zp_cb_cx1 : STA zp_mul_b  ; dx = cx2 - cx1
+    BEQ dcl_bix_cx1     ; dx=0 → return cx1
+
+    LDA zp_tmp2          ; |d1|
+    JSR umul8            ; prod = dx * |d1| → zp_prod_lo:hi
+
+    ; Directed rounding: if clip_p1, add (denom-1) to numerator before divide
+    ; (ceiling division). If !clip_p1, just floor division.
+    LDA zp_save1 : BEQ dcl_bix_no_round
+    ; Add (denom - 1) to product for ceiling
+    LDA zp_prod_lo : CLC : ADC zp_div_den : STA zp_div_lo
+    LDA zp_prod_hi : ADC #0 : STA zp_div_hi
+    ; Subtract 1
+    LDA zp_div_lo : SEC : SBC #1 : STA zp_div_lo
+    LDA zp_div_hi : SBC #0 : STA zp_div_hi
+    JMP dcl_bix_do_div
+.dcl_bix_no_round
+    ; prod already in div_lo:hi (aliases)
+.dcl_bix_do_div
+    JSR udiv16_8         ; A = quotient = num / denom
+
+    ; ix = cx1 + quotient
+    CLC : ADC zp_cb_cx1
+    ; Clamp to [cx1, cx2]
+    CMP zp_cb_cx1 : BCC dcl_bix_cx1
+    CMP zp_cb_cx2 : BEQ dcl_bix_ok : BCS dcl_bix_cx2
+.dcl_bix_ok
+    RTS
+
+.dcl_bix_cx1
+    LDA zp_cb_cx1 : RTS
+.dcl_bix_cx2
+    LDA zp_cb_cx2 : RTS
+.dcl_bix_mid
+    ; Fallback: return midpoint
+    LDA zp_cb_cx1 : CLC : ADC zp_cb_cx2 : ROR A : RTS
 
 ; --- dcl_emit_segment: write segment to LINE_OUT_BUF and call rasteriser ---
 ; Input: zp_seg_start_x, zp_seg_start_y, zp_ox1 (end_x), zp_tmp0 (end_y)
