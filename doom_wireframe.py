@@ -115,9 +115,12 @@ class Instrumented6502Spans(EndpointClipSpans):
             self._check()
 
     def draw_clipped(self, lines, color, surface, stats=None):
-        # Feed each line to the 6502's draw_clipped_line (clips + rasterises)
+        # Feed each non-vertical line to the 6502's draw_clipped_line.
+        # Verticals (x1==x2) are not handled by DCL — they need a
+        # separate vertical clip path (TODO).
         for lx1, ly1, lx2, ly2 in lines:
-            _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
+            if lx1 != lx2:
+                _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
         # Also run the Python draw_clipped for the Python surface
         super().draw_clipped(lines, color, surface, stats)
 
