@@ -664,9 +664,10 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; Save old head, then start building new list
     LDA zp_head : STA zp_old_cur                                        ; |
     LDA #0 : STA zp_new_tail : STA zp_head                                ; |
-IF EMIT_LINES
-    STA LINE_OUT_COUNT
-ENDIF
+    ; NOTE: do NOT reset LINE_OUT_COUNT here — draw_clipped_line may
+    ; have already written lines to the buffer before tighten was called.
+    ; The buffer is append-only; the rasteriser is called immediately
+    ; for each line, so the buffer is just a log for verification.
     LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
     STA zp_tg_cont               ; invalidate portal continuation        ; |
     ; Initialize running seg bounds (clamped to [0,159]).
@@ -1554,7 +1555,8 @@ ENDIF
 IF EMIT_LINES
 .ms_emit_lines
 {
-    LDA #0 : STA LINE_OUT_COUNT
+    ; NOTE: do NOT reset LINE_OUT_COUNT — draw_clipped_line may have
+    ; already written lines before mark_solid was called.
     LDX zp_head : BNE mel_loop
     RTS
 .mel_loop
