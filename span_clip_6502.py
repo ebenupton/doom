@@ -35,6 +35,7 @@ ZP_I_Y1  = 0xD5
 ZP_I_RES = 0xD7
 ZP_DIV_DEN = 0xDC
 ZP_BUF   = 0xE3
+ZP_MS_EMIT = 0xA8
 
 # Pool
 POOL_BASE = 0x0400
@@ -120,9 +121,15 @@ class SpanClip6502:
         self._run(ENTRY_INIT)
         self.total_cycles = 0  # init cost doesn't count toward frame
 
-    def mark_solid(self, lo, hi):
-        """mark_solid(lo, hi). Inclusive right edge (solid wall covers last column).
-        Closed-interval: ilo, ihi are both inclusive column indices in [0,255]."""
+    def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
+        """mark_solid(lo, hi[, sx1, sx2, yt1, yt2, yb1, yb2]).
+
+        Inclusive right edge (solid wall covers last column).
+        Closed-interval: ilo, ihi are both inclusive column indices in [0,255].
+
+        When seg Y values are provided, the 6502 also emits wall edge lines
+        clipped against the pre-mutation span boundaries.
+        """
         mem = self.mpu.memory
         ilo = max(0, lo)
         ihi = min(255, hi)
@@ -130,6 +137,32 @@ class SpanClip6502:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
+
+        # Optionally write seg parameters for line emission
+        if sx1 is not None:
+            from endpoint_spans import _remap_seg_for_8bit
+            s1, s2, t1, t2, b1, b2 = sx1, sx2, yt1, yt2, yb1, yb2
+            if s1 > s2:
+                s1, s2 = s2, s1
+                t1, t2 = t2, t1
+                b1, b2 = b2, b1
+            s1, s2, t1, t2, b1, b2 = _remap_seg_for_8bit(
+                ilo, ihi, s1, s2, t1, t2, b1, b2)
+
+            def _w16(addr, val):
+                mem[addr] = val & 0xFF
+                mem[addr + 1] = (val >> 8) & 0xFF
+
+            _w16(ZP_SX1, s1)
+            _w16(ZP_SX2, s2)
+            _w16(ZP_YT1, t1)
+            _w16(ZP_YT2, t2)
+            _w16(ZP_YB1, b1)
+            _w16(ZP_YB2, b2)
+            mem[ZP_MS_EMIT] = 0xFF
+        else:
+            mem[ZP_MS_EMIT] = 0x00
+
         self._run(ENTRY_MARK_SOLID)
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):

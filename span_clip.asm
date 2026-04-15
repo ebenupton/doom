@@ -92,6 +92,7 @@ zp_cache_nb_h = $A4    ; cached nb_rh (seg bot hi)
 zp_bb_yt_max  = $A5    ; max(seg top) over remaining overlap range
 zp_bb_yb_min  = $A6    ; min(seg bot) over remaining overlap range
 zp_bb_flags   = $A7    ; bit 7: 1=narrowed bounds valid (all seg vals on-screen)
+zp_ms_emit    = $A8    ; mark_solid: $FF = emit wall edge lines, $00 = skip
 
 ; === Line output buffer ($0200) ===
 ; Lines emitted during tighten (portal edges) and mark_solid (wall edges).
@@ -414,6 +415,10 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
     LDA zp_ihi : CMP zp_ilo : BCS mss                                   ; |
     RTS
 .mss
+    ; --- Wall edge line emission pre-pass (if seg params provided) ---
+    LDA zp_ms_emit : BEQ ms_no_emit                                     ; |
+    JSR ms_emit_lines                                                    ; |
+.ms_no_emit
     LDA #$FF : STA zp_prev                                              ; |
     LDA zp_head : TAX : BNE msl : RTS                                   ; |
 
@@ -1310,6 +1315,28 @@ zp_cc_den_hi = $FE
 .opt2_no_ap
     RTS                                                                 ; |
 .skip_opt2
+    ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
+    ; Top edge visible where nt > ot (new ceiling more restrictive).
+    ; Within a crossover sub-interval, sign is consistent at both endpoints.
+    LDA zp_nt_l : CMP zp_ot_l : BCC tos_no_top_edge : BEQ tos_no_top_edge
+    ; Top edge visible: emit (ox0, nt_l, ox1, nt_r)
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nt_l : STA LINE_OUT_BUF,Y : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nt_r : STA LINE_OUT_BUF,Y : INY
+    STY LINE_OUT_COUNT
+.tos_no_top_edge
+    ; Bot edge visible where nb < ob (new floor more restrictive).
+    LDA zp_nb_l : CMP zp_ob_l : BCS tos_no_bot_edge
+    ; Bot edge visible: emit (ox0, nb_l, ox1, nb_r)
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nb_l : STA LINE_OUT_BUF,Y : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nb_r : STA LINE_OUT_BUF,Y : INY
+    STY LINE_OUT_COUNT
+.tos_no_bot_edge
     ; max top, min bot
     LDA zp_ot_l : CMP zp_nt_l : BCS tl_ok : LDA zp_nt_l                 ; |
 .tl_ok STA zp_ot_l                                                      ; |
@@ -1449,6 +1476,164 @@ zp_cc_den_hi = $FE
     CMP zp_ox1 : BCS none        ; cx >= ox1: not strictly inside       ; |
     RTS                                                                 ; |
 .none LDA #0 : RTS
+}
+
+; ======================================================================
+; MS_EMIT_LINES: wall edge line emission for mark_solid
+;
+; Pre-pass over span list (read-only). For each span overlapping [ilo,ihi],
+; evaluates the seg's top/bot lines and the span's top/bot boundaries at the
+; overlap endpoints. Emits the seg line segment where it falls within the
+; span's aperture.
+;
+; Uses same ZP seg params as tighten (sx1/sx2/yt1/yt2/yb1/yb2).
+; Uses zp_save0 for current span offset, zp_save1 for ox0, zp_save2 for ox1.
+; ======================================================================
+.ms_emit_lines
+{
+    LDA #0 : STA LINE_OUT_COUNT
+    LDX zp_head : BNE mel_loop
+    RTS
+.mel_loop
+    ; Skip if span is entirely before [ilo, ihi]
+    LDA POOL_XEND,X : CMP zp_ilo : BCS mel_chk_start
+    JMP mel_next
+.mel_chk_start
+    ; Skip if span starts after [ilo, ihi]
+    LDA zp_ihi : CMP POOL_XSTART,X : BCS mel_has_overlap
+    RTS                                ; all subsequent spans are post-seg
+.mel_has_overlap
+    STX zp_save0
+    ; ox0 = max(xstart, ilo)
+    LDA POOL_XSTART,X : CMP zp_ilo : BCS mel_ox0_ok : LDA zp_ilo
+.mel_ox0_ok STA zp_save1              ; ox0
+    ; ox1 = min(xend, ihi)
+    LDA POOL_XEND,X : CMP zp_ihi : BCC mel_ox1_ok : LDA zp_ihi
+.mel_ox1_ok STA zp_save2              ; ox1
+
+    ; --- Evaluate span boundaries at ox0 and ox1 ---
+    ; Constant-line fast path: tl==tr AND bl==br
+    LDA POOL_TL,X : CMP POOL_TR,X : BNE mel_span_not_const
+    STA zp_ot_l : STA zp_ot_r
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE mel_span_not_const
+    STA zp_ob_l : STA zp_ob_r
+    JMP mel_span_done
+.mel_span_not_const
+    ; Anchor fast path: if ox0==xlo and ox1==xhi, use stored values
+    LDA zp_save1 : CMP POOL_XLO,X : BNE mel_span_interp
+    LDA zp_save2 : CMP POOL_XHI,X : BNE mel_span_interp
+    LDA POOL_TL,X : STA zp_ot_l : LDA POOL_TR,X : STA zp_ot_r
+    LDA POOL_BL,X : STA zp_ob_l : LDA POOL_BR,X : STA zp_ob_r
+    JMP mel_span_done
+.mel_span_interp
+    ; Full interp: den = xhi - xlo
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
+    LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1
+    LDA zp_save1 : JSR interp_store : STA zp_ot_l
+    LDA zp_save2 : JSR interp_store : STA zp_ot_r
+    LDX zp_save0
+    LDA POOL_BL,X : STA zp_i_y0 : LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_save1 : JSR interp_store : STA zp_ob_l
+    LDA zp_save2 : JSR interp_store : STA zp_ob_r
+.mel_span_done
+
+    ; --- Evaluate seg top/bot at ox0 and ox1 ---
+    ; Constant-line fast path: yt1==yt2 AND yb1==yb2 (s16)
+    LDA zp_yt1 : CMP zp_yt2 : BNE mel_seg_slow
+    LDA zp_yt1h : CMP zp_yt2h : BNE mel_seg_slow
+    LDA zp_yb1 : CMP zp_yb2 : BNE mel_seg_slow
+    LDA zp_yb1h : CMP zp_yb2h : BNE mel_seg_slow
+    LDA zp_yt1  : STA zp_nt_l  : STA zp_nt_r
+    LDA zp_yt1h : STA zp_nt_lh : STA zp_nt_rh
+    LDA zp_yb1  : STA zp_nb_l  : STA zp_nb_r
+    LDA zp_yb1h : STA zp_nb_lh : STA zp_nb_rh
+    JMP mel_seg_done
+.mel_seg_slow
+    ; Anchor fast path: if ox0==sx1 and ox1==sx2
+    LDA zp_save1 : CMP zp_sx1 : BNE mel_seg_interp
+    LDA zp_save2 : CMP zp_sx2 : BNE mel_seg_interp
+    LDA zp_yt1  : STA zp_nt_l  : LDA zp_yt2  : STA zp_nt_r
+    LDA zp_yt1h : STA zp_nt_lh : LDA zp_yt2h : STA zp_nt_rh
+    LDA zp_yb1  : STA zp_nb_l  : LDA zp_yb2  : STA zp_nb_r
+    LDA zp_yb1h : STA zp_nb_lh : LDA zp_yb2h : STA zp_nb_rh
+    JMP mel_seg_done
+.mel_seg_interp
+    ; Full seg interp
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
+    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h
+    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h
+    LDA zp_save1 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh
+    LDA zp_save2 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh
+    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h
+    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h
+    LDA zp_save1 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh
+    LDA zp_save2 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh
+.mel_seg_done
+
+    ; --- Clamp seg values to [0,159] ---
+    LDA zp_nt_lh : ORA zp_nt_rh : ORA zp_nb_lh : ORA zp_nb_rh
+    BNE mel_clamp_slow
+    LDA zp_nt_l : CMP #160 : BCS mel_clamp_slow
+    LDA zp_nt_r : CMP #160 : BCS mel_clamp_slow
+    LDA zp_nb_l : CMP #160 : BCS mel_clamp_slow
+    LDA zp_nb_r : CMP #160 : BCS mel_clamp_slow
+    BCC mel_clamp_ok
+.mel_clamp_slow
+    LDA zp_nt_lh : BMI mel_cz1 : BNE mel_cf1
+    LDA zp_nt_l : CMP #160 : BCC mel_cs1
+.mel_cf1 LDA #159 : EQUB $2C
+.mel_cz1 LDA #0
+.mel_cs1 STA zp_nt_l
+    LDA zp_nt_rh : BMI mel_cz2 : BNE mel_cf2
+    LDA zp_nt_r : CMP #160 : BCC mel_cs2
+.mel_cf2 LDA #159 : EQUB $2C
+.mel_cz2 LDA #0
+.mel_cs2 STA zp_nt_r
+    LDA zp_nb_lh : BMI mel_cz3 : BNE mel_cf3
+    LDA zp_nb_l : CMP #160 : BCC mel_cs3
+.mel_cf3 LDA #159 : EQUB $2C
+.mel_cz3 LDA #0
+.mel_cs3 STA zp_nb_l
+    LDA zp_nb_rh : BMI mel_cz4 : BNE mel_cf4
+    LDA zp_nb_r : CMP #160 : BCC mel_cs4
+.mel_cf4 LDA #159 : EQUB $2C
+.mel_cz4 LDA #0
+.mel_cs4 STA zp_nb_r
+.mel_clamp_ok
+
+    ; --- Emit visible edges ---
+    ; Top edge: visible where seg top > span top
+    LDA zp_nt_l : CMP zp_ot_l : BEQ mel_chk_top_r : BCS mel_emit_top
+.mel_chk_top_r
+    LDA zp_nt_r : CMP zp_ot_r : BCC mel_no_top : BEQ mel_no_top
+.mel_emit_top
+    LDY LINE_OUT_COUNT
+    LDA zp_save1 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nt_l  : STA LINE_OUT_BUF,Y : INY
+    LDA zp_save2 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nt_r  : STA LINE_OUT_BUF,Y : INY
+    STY LINE_OUT_COUNT
+.mel_no_top
+    ; Bot edge: visible where seg bot < span bot
+    LDA zp_nb_l : CMP zp_ob_l : BEQ mel_chk_bot_r : BCC mel_emit_bot
+.mel_chk_bot_r
+    LDA zp_nb_r : CMP zp_ob_r : BCS mel_no_bot
+.mel_emit_bot
+    LDY LINE_OUT_COUNT
+    LDA zp_save1 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nb_l  : STA LINE_OUT_BUF,Y : INY
+    LDA zp_save2 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nb_r  : STA LINE_OUT_BUF,Y : INY
+    STY LINE_OUT_COUNT
+.mel_no_bot
+    ; --- Advance to next span ---
+    LDX zp_save0
+.mel_next
+    LDA POOL_NEXT,X : TAX : BEQ mel_rts
+    JMP mel_loop
+.mel_rts
+    RTS
 }
 
 .end_code
