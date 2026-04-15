@@ -80,6 +80,7 @@ _span_clip_6502 = None  # lazy-loaded SpanClip6502 instance
 _frame_clip_cycles = [0]
 _frame_clip_match = [True]  # set False on any py/6502 span divergence
 _clip_mismatch_reported = set()  # (x,y,a) tuples already printed
+_show_integrated_fb = False  # F key: show 6502 framebuffer from integrated clip+raster
 
 class Instrumented6502Spans(EndpointClipSpans):
     """EndpointClipSpans that shadows mutations to a 6502 span clipper for cycle counting."""
@@ -90,6 +91,7 @@ class Instrumented6502Spans(EndpointClipSpans):
         if _span_clip_6502 is None:
             from span_clip_6502 import SpanClip6502
             _span_clip_6502 = SpanClip6502()
+        _span_clip_6502.clear_screen()
         _span_clip_6502.init()
         _frame_clip_match[0] = True
 
@@ -3034,7 +3036,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result
+  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result, _show_integrated_fb
   global _novt_annotate
   running = True
   while running:
@@ -3060,6 +3062,9 @@ def _main():
                 pass  # packed path is now the sole renderer
             elif ev.key == pygame.K_n:
                 _show_nj_raster = not _show_nj_raster
+            elif ev.key == pygame.K_b:
+                _show_integrated_fb = not _show_integrated_fb
+                print(f"Integrated framebuffer {'ON' if _show_integrated_fb else 'OFF'}", flush=True)
             elif ev.key == pygame.K_h:
                 _use_6502_frontend = not _use_6502_frontend
                 if _use_6502_frontend:
@@ -3250,7 +3255,11 @@ def _main():
         # Nearest-neighbour upscale to display
         _scr = pygame.display.get_surface()
         _scr.fill((0, 0, 0))
-        _scr.blit(pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H)), (0, 0))
+        if _show_integrated_fb and _span_clip_6502 is not None:
+            _fb_surf = _span_clip_6502.get_framebuffer_surface()
+            _scr.blit(pygame.transform.scale(_fb_surf, (SCREEN_W, SCREEN_H)), (0, 0))
+        else:
+            _scr.blit(pygame.transform.scale(fp_surface, (SCREEN_W, SCREEN_H)), (0, 0))
 
         # NOVT annotation overlay: render labels on the upscaled display.
         # Red = suppressed, cyan = drawn.

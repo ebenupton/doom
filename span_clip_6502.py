@@ -90,6 +90,22 @@ class SpanClip6502:
         for i, b in enumerate(code):
             mem[0x2000 + i] = b
 
+        # Load NJ rasteriser at $A900 (for integrated line drawing)
+        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')
+        if os.path.exists(raster_path):
+            with open(raster_path, 'rb') as f:
+                raster_code = f.read()
+            for i, b in enumerate(raster_code):
+                mem[0xA900 + i] = b
+            self._has_rasteriser = True
+        else:
+            self._has_rasteriser = False
+
+        # Screen buffer at $5800 (5120 bytes)
+        self.SCREEN_START = 0x5800
+        self.SCREEN_SIZE = 5120
+        mem[0x70] = self.SCREEN_START >> 8  # rasteriser scrstrt ZP
+
         # BRK at halt address
         mem[0xFF00] = 0x00
 
@@ -115,6 +131,36 @@ class SpanClip6502:
         self.last_cycles = mpu.processorCycles
         self.total_cycles += self.last_cycles
         return self.last_cycles
+
+    def clear_screen(self):
+        """Clear the framebuffer."""
+        mem = self.mpu.memory
+        start = self.SCREEN_START
+        for i in range(self.SCREEN_SIZE):
+            mem[start + i] = 0
+
+    def get_framebuffer_surface(self):
+        """Extract framebuffer as a pygame Surface (256×160, 1bpp)."""
+        import pygame
+        mem = self.mpu.memory
+        start = self.SCREEN_START
+        surf = pygame.Surface((256, 160))
+        surf.fill((0, 0, 0))
+        pxa = pygame.surfarray.pixels3d(surf)
+        for py in range(160):
+            char_row = py >> 3
+            scanline = py & 7
+            for byte_col in range(32):
+                addr = start + char_row * 256 + byte_col * 8 + scanline
+                byte = mem[addr]
+                if byte == 0:
+                    continue
+                for bit in range(8):
+                    if byte & (0x80 >> bit):
+                        px = byte_col * 8 + bit
+                        pxa[px, py] = (0, 200, 0)
+        del pxa
+        return surf
 
     def init(self):
         """Initialize: one full-screen span."""

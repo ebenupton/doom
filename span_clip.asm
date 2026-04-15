@@ -101,6 +101,17 @@ zp_ms_emit    = $A8    ; mark_solid: $FF = emit wall edge lines, $00 = skip
 LINE_OUT_COUNT = $0200
 LINE_OUT_BUF   = $0201
 
+; === NJ rasteriser integration ===
+; When rasteriser is loaded at $A900, emit_line calls it directly.
+; ZP $82-$85 = x0,y0,x1,y1 (rasteriser inputs, no conflict with clipper ZP).
+; ZP $70 = screen start hi byte (set once by Python before frame).
+RASTER_ENTRY = $A900
+RASTER_ZP_X0 = $82
+RASTER_ZP_Y0 = $83
+RASTER_ZP_X1 = $84
+RASTER_ZP_Y1 = $85
+RASTER_ZP_SCRSTRT = $70
+
 ; === Zero-page workspace ($C0-$FF) ===
 ; Layout: list management (head, free), input params (seg coords s16),
 ; interpolation temps (i_x, i_y0, mul_b, prod, div), scratch (tmp0-3),
@@ -1084,23 +1095,11 @@ zp_cc_den_hi = $FE
     ; Top edge visible where nt > ot (new ceiling more restrictive).
     ; No crossover → check left endpoint only (same sign at both).
     LDA zp_nt_l : CMP zp_ot_l : BCC ncf_no_top_edge : BEQ ncf_no_top_edge
-    ; Top edge visible: emit (ox0, nt_l, ox1, nt_r)
-    LDY LINE_OUT_COUNT
-    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nt_l : STA LINE_OUT_BUF,Y : INY
-    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nt_r : STA LINE_OUT_BUF,Y : INY
-    STY LINE_OUT_COUNT
+    JSR emit_top_edge
 .ncf_no_top_edge
     ; Bot edge visible where nb < ob (new floor more restrictive).
     LDA zp_nb_l : CMP zp_ob_l : BCS ncf_no_bot_edge
-    ; Bot edge visible: emit (ox0, nb_l, ox1, nb_r)
-    LDY LINE_OUT_COUNT
-    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nb_l : STA LINE_OUT_BUF,Y : INY
-    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nb_r : STA LINE_OUT_BUF,Y : INY
-    STY LINE_OUT_COUNT
+    JSR emit_bot_edge
 .ncf_no_bot_edge
     ; Do max/min + aperture + store inline without re-interpolating.
     LDA zp_ot_l : CMP zp_nt_l : BCS ncf_tl_ok : LDA zp_nt_l             ; |
@@ -1323,23 +1322,11 @@ zp_cc_den_hi = $FE
     ; Top edge visible where nt > ot (new ceiling more restrictive).
     ; Within a crossover sub-interval, sign is consistent at both endpoints.
     LDA zp_nt_l : CMP zp_ot_l : BCC tos_no_top_edge : BEQ tos_no_top_edge
-    ; Top edge visible: emit (ox0, nt_l, ox1, nt_r)
-    LDY LINE_OUT_COUNT
-    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nt_l : STA LINE_OUT_BUF,Y : INY
-    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nt_r : STA LINE_OUT_BUF,Y : INY
-    STY LINE_OUT_COUNT
+    JSR emit_top_edge
 .tos_no_top_edge
     ; Bot edge visible where nb < ob (new floor more restrictive).
     LDA zp_nb_l : CMP zp_ob_l : BCS tos_no_bot_edge
-    ; Bot edge visible: emit (ox0, nb_l, ox1, nb_r)
-    LDY LINE_OUT_COUNT
-    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nb_l : STA LINE_OUT_BUF,Y : INY
-    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nb_r : STA LINE_OUT_BUF,Y : INY
-    STY LINE_OUT_COUNT
+    JSR emit_bot_edge
 .tos_no_bot_edge
     ; max top, min bot
     LDA zp_ot_l : CMP zp_nt_l : BCS tl_ok : LDA zp_nt_l                 ; |
@@ -1612,12 +1599,14 @@ zp_cc_den_hi = $FE
 .mel_chk_top_r
     LDA zp_nt_r : CMP zp_ot_r : BCC mel_no_top : BEQ mel_no_top
 .mel_emit_top
+    ; Set up rasteriser + buffer: ox0 in save1, ox1 in save2
     LDY LINE_OUT_COUNT
-    LDA zp_save1 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nt_l  : STA LINE_OUT_BUF,Y : INY
-    LDA zp_save2 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nt_r  : STA LINE_OUT_BUF,Y : INY
+    LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_nt_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_nt_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
+    JSR RASTER_ENTRY
 .mel_no_top
     ; Bot edge: visible where seg bot < span bot
     LDA zp_nb_l : CMP zp_ob_l : BEQ mel_chk_bot_r : BCC mel_emit_bot
@@ -1625,11 +1614,12 @@ zp_cc_den_hi = $FE
     LDA zp_nb_r : CMP zp_ob_r : BCS mel_no_bot
 .mel_emit_bot
     LDY LINE_OUT_COUNT
-    LDA zp_save1 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nb_l  : STA LINE_OUT_BUF,Y : INY
-    LDA zp_save2 : STA LINE_OUT_BUF,Y : INY
-    LDA zp_nb_r  : STA LINE_OUT_BUF,Y : INY
+    LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_nb_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_nb_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
+    JSR RASTER_ENTRY
 .mel_no_bot
     ; --- Advance to next span ---
     LDX zp_save0
@@ -1638,6 +1628,35 @@ zp_cc_den_hi = $FE
     JMP mel_loop
 .mel_rts
     RTS
+}
+
+; ======================================================================
+; EMIT_LINE: write line to buffer AND call NJ rasteriser
+;
+; Call with: zp_ox0/zp_ox1 = X endpoints, A = y1, X = y2
+; (caller sets up which edge: top uses nt_l/nt_r, bot uses nb_l/nb_r)
+; Preserves: zp_ox0/ox1/ot_l/ot_r/ob_l/ob_r/nt_l/nt_r/nb_l/nb_r
+; ======================================================================
+.emit_top_edge
+{
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_nt_l : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_nt_r : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY   ; tail-call rasteriser (returns via RTS)
+}
+
+.emit_bot_edge
+{
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_nb_l : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_nb_r : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY   ; tail-call rasteriser (returns via RTS)
 }
 
 .end_code
