@@ -114,6 +114,13 @@ class Instrumented6502Spans(EndpointClipSpans):
             _span_clip_6502.tighten(*params)
             self._check()
 
+    def draw_clipped(self, lines, color, surface, stats=None):
+        # Feed each line to the 6502's draw_clipped_line (clips + rasterises)
+        for lx1, ly1, lx2, ly2 in lines:
+            _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
+        # Also run the Python draw_clipped for the Python surface
+        super().draw_clipped(lines, color, surface, stats)
+
     def has_gap(self, lo, hi):
         result = super().has_gap(lo, hi)
         _span_clip_6502.has_gap(lo, hi)
