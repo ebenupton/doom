@@ -93,6 +93,13 @@ zp_bb_yt_max  = $A5    ; max(seg top) over remaining overlap range
 zp_bb_yb_min  = $A6    ; min(seg bot) over remaining overlap range
 zp_bb_flags   = $A7    ; bit 7: 1=narrowed bounds valid (all seg vals on-screen)
 
+; === Line output buffer ($0200) ===
+; Lines emitted during tighten (portal edges) and mark_solid (wall edges).
+; Format: byte count at $0200, then x1,y1,x2,y2 tuples at $0201+.
+; Drained by Python after each tighten/mark_solid call.
+LINE_OUT_COUNT = $0200
+LINE_OUT_BUF   = $0201
+
 ; === Zero-page workspace ($C0-$FF) ===
 ; Layout: list management (head, free), input params (seg coords s16),
 ; interpolation temps (i_x, i_y0, mul_b, prod, div), scratch (tmp0-3),
@@ -608,7 +615,7 @@ zp_cc_den_hi = $FE
 .tg_go
     ; Save old head, then start building new list
     LDA zp_head : STA zp_old_cur                                        ; |
-    LDA #0 : STA zp_new_tail : STA zp_head                              ; |
+    LDA #0 : STA zp_new_tail : STA zp_head : STA LINE_OUT_COUNT           ; |
     LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
     ; Initialize narrowed BB bounds: max(yt1,yt2) and min(yb1,yb2)
     ; Flag: $80 = both-yt-negative (bot-only BB), $40 = all-on-screen (full BB)
@@ -1059,10 +1066,35 @@ zp_cc_den_hi = $FE
 .tg_no_left
 
     ; --- Process overlap with crossover splits ---
-    LDA zp_cx_top : ORA zp_cx_bot : BNE tg_has_splits                   ; |
+    LDA zp_cx_top : ORA zp_cx_bot : BEQ ncf_no_splits                   ; |
+    JMP tg_has_splits
+.ncf_no_splits
     ; --- No crossover fast path ---
     ; The dominance check already computed ot_l/ot_r/ob_l/ob_r (u8 via
     ; interp_store) and nt_l/nt_r/nb_l/nb_r (clamped u8) at (ox0, ox1).
+    ;
+    ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
+    ; Top edge visible where nt > ot (new ceiling more restrictive).
+    ; No crossover → check left endpoint only (same sign at both).
+    LDA zp_nt_l : CMP zp_ot_l : BCC ncf_no_top_edge : BEQ ncf_no_top_edge
+    ; Top edge visible: emit (ox0, nt_l, ox1, nt_r)
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nt_l : STA LINE_OUT_BUF,Y : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nt_r : STA LINE_OUT_BUF,Y : INY
+    STY LINE_OUT_COUNT
+.ncf_no_top_edge
+    ; Bot edge visible where nb < ob (new floor more restrictive).
+    LDA zp_nb_l : CMP zp_ob_l : BCS ncf_no_bot_edge
+    ; Bot edge visible: emit (ox0, nb_l, ox1, nb_r)
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nb_l : STA LINE_OUT_BUF,Y : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : INY
+    LDA zp_nb_r : STA LINE_OUT_BUF,Y : INY
+    STY LINE_OUT_COUNT
+.ncf_no_bot_edge
     ; Do max/min + aperture + store inline without re-interpolating.
     LDA zp_ot_l : CMP zp_nt_l : BCS ncf_tl_ok : LDA zp_nt_l             ; |
 .ncf_tl_ok STA zp_ot_l                                                  ; |

@@ -42,6 +42,10 @@ POOL_BASE = 0x0400
 # Buffer for span_read output
 READ_BUF = 0x0300
 
+# Line output buffer (written by 6502 during tighten/mark_solid)
+LINE_OUT_COUNT = 0x0200
+LINE_OUT_BUF   = 0x0201
+
 
 def _gen_quarter_square():
     """Generate quarter-square tables (same as fe6502.py)."""
@@ -205,6 +209,20 @@ class SpanClip6502:
             spans.append((xstart, xend, xlo, xhi, tl, bl, tr, br))
             off += 8
         return spans
+
+    def drain_lines(self):
+        """Read and clear line output buffer. Returns list of (x1,y1,x2,y2) tuples."""
+        mem = self.mpu.memory
+        count = mem[LINE_OUT_COUNT]  # byte count
+        lines = []
+        for i in range(0, count, 4):
+            x1 = mem[LINE_OUT_BUF + i]
+            y1 = mem[LINE_OUT_BUF + i + 1]
+            x2 = mem[LINE_OUT_BUF + i + 2]
+            y2 = mem[LINE_OUT_BUF + i + 3]
+            lines.append((x1, y1, x2, y2))
+        mem[LINE_OUT_COUNT] = 0
+        return lines
 
     def interp_store(self, x, x0, y0, x1, y1):
         """Call the round-to-nearest interp (span boundary values).
