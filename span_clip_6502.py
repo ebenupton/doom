@@ -15,6 +15,7 @@ ENTRY_HAS_GAP    = 0x2009
 ENTRY_IS_FULL    = 0x200C
 ENTRY_READ       = 0x200F
 ENTRY_INTERP_ST  = 0x2012
+ENTRY_DRAW_CLIP  = 0x2015
 
 # ZP addresses (must match span_clip.asm)
 ZP_HEAD  = 0xC0
@@ -36,6 +37,10 @@ ZP_I_RES = 0xD7
 ZP_DIV_DEN = 0xDC
 ZP_BUF   = 0xE3
 ZP_MS_EMIT = 0xA8
+ZP_LINE_XL = 0xA8
+ZP_LINE_YL = 0xA9
+ZP_LINE_XR = 0xAA
+ZP_LINE_YR = 0xAB
 
 # Pool
 POOL_BASE = 0x0400
@@ -303,6 +308,23 @@ class SpanClip6502:
         mem[LINE_OUT_COUNT] = 0
         return lines
 
+    def draw_clipped_line(self, xl, yl, xr, yr):
+        """Clip a single line against the span list and emit visible segments.
+
+        The line is oriented left-to-right by this method.  All coords u8.
+        Returns list of (x1, y1, x2, y2) tuples for emitted segments.
+        """
+        mem = self.mpu.memory
+        # Orient left-to-right
+        if xl > xr:
+            xl, yl, xr, yr = xr, yr, xl, yl
+        mem[ZP_LINE_XL] = xl & 0xFF
+        mem[ZP_LINE_YL] = yl & 0xFF
+        mem[ZP_LINE_XR] = xr & 0xFF
+        mem[ZP_LINE_YR] = yr & 0xFF
+        self._run(ENTRY_DRAW_CLIP)
+        return self.drain_lines()
+
     def interp_store(self, x, x0, y0, x1, y1):
         """Call the round-to-nearest interp (span boundary values).
 
@@ -497,6 +519,346 @@ def test_frame():
     print(f'  Full frame: {op_num[0]} ops, {mismatches[0]} mismatches, {total_cyc[0]} 6502 cycles')
 
 
+def test_draw_clipped_line():
+    """Test draw_clipped_line against Python draw_clipped reference.
+
+    Phase 1: basic walk, inner bbox only, no CB clip, no portal.
+    Tests lines against various span configurations.
+    """
+    from endpoint_spans import EndpointClipSpans, _span_top, _span_bot, _interp_store
+    from clip_math import div_round
+
+    sc = SpanClip6502()
+    total = 0
+    matches = 0
+    mismatches = 0
+    skipped = 0
+
+    def _line_y_at(xl, yl, xr, yr, x):
+        """Reference line_y_at using interp_store semantics."""
+        dx = xr - xl
+        if dx == 0:
+            return yl
+        return _interp_store(x, xl, yl, xr, yr)
+
+    def _py_draw_clipped_phase1(spans, lx1, ly1, lx2, ly2):
+        """Python reference for Phase 1 draw_clipped (inner bbox only, no portal).
+
+        Returns list of (x1, y1, x2, y2) tuples.
+        """
+        # Orient left-to-right
+        if lx1 > lx2:
+            lx1, ly1, lx2, ly2 = lx2, ly2, lx1, ly1
+        elif lx1 == lx2:
+            pass  # vertical
+        xl, yl, xr, yr = lx1, ly1, lx2, ly2
+        dx_line = xr - xl
+        y_lo = min(yl, yr)
+        y_hi = max(yl, yr)
+
+        result = []
+        seg_start = None
+        for s in spans:
+            xs, xe = s[0], s[1]
+            # Skip spans entirely left/right of line
+            if xe <= xl or xs >= xr:
+                continue
+
+            # Compute overlap
+            ox0 = max(xs, xl)
+            ox1 = min(xe, xr)
+
+            # Aperture bounds
+            ts = _span_top(s, xs); te = _span_top(s, xe)
+            bs = _span_bot(s, xs); be = _span_bot(s, xe)
+            ot = min(ts, te)
+            ob = max(bs, be)
+            it = max(ts, te)
+            ib = min(bs, be)
+
+            if seg_start is None:
+                # Entry: outer bbox reject
+                if y_hi < ot or y_lo > ob:
+                    continue
+                # Inner bbox accept
+                if y_lo >= it and y_hi <= ib:
+                    ex = ox0
+                    ey = _line_y_at(xl, yl, xr, yr, ex) if ex != xl else yl
+                    seg_start = (ex, ey)
+                else:
+                    # Phase 1: skip ambiguous
+                    continue
+
+            # Exit check: does line end within this span?
+            if xr <= xe:
+                # Line ends here
+                sx, sy = seg_start
+                # Emit
+                result.append((sx, sy, xr, yr))
+                seg_start = None
+                break
+            else:
+                # Phase 1: no portal, emit segment and reset
+                ex = ox1
+                ey = _line_y_at(xl, yl, xr, yr, ex) if ex != xr else yr
+                sx, sy = seg_start
+                result.append((sx, sy, ex, ey))
+                seg_start = None
+
+        # If seg_start still active at end of walk, emit to (xr, yr)
+        if seg_start is not None:
+            sx, sy = seg_start
+            result.append((sx, sy, xr, yr))
+        return result
+
+    # --- Test 1: Full screen span, line entirely inside ---
+    print('  Test 1: Full screen span, horizontal line')
+    sc.init()
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(50, 80, 200, 80)
+    lines_py = _py_draw_clipped_phase1(spans, 50, 80, 200, 80)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 2: Full screen span, diagonal line ---
+    print('  Test 2: Full screen span, diagonal line')
+    sc.init()
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(20, 30, 200, 120)
+    lines_py = _py_draw_clipped_phase1(spans, 20, 30, 200, 120)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 3: After mark_solid, line spans gap ---
+    print('  Test 3: After mark_solid, line in gap')
+    sc.init()
+    sc.mark_solid(100, 150)
+    spans = sc.read_spans()
+    # Line entirely in left gap
+    lines_asm = sc.draw_clipped_line(20, 80, 80, 80)
+    lines_py = _py_draw_clipped_phase1(spans, 20, 80, 80, 80)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 4: After mark_solid, line crosses solid region ---
+    print('  Test 4: Line crosses solid region (no portal = two segments)')
+    sc.init()
+    sc.mark_solid(100, 150)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(50, 80, 200, 80)
+    lines_py = _py_draw_clipped_phase1(spans, 50, 80, 200, 80)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 5: Line entirely outside (above top) ---
+    print('  Test 5: Line above aperture top')
+    sc.init()
+    sc.tighten(0, 255, 0, 255, 50, 50, 120, 120)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(20, 10, 200, 10)
+    lines_py = _py_draw_clipped_phase1(spans, 20, 10, 200, 10)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 6: Line entirely outside (below bot) ---
+    print('  Test 6: Line below aperture bot')
+    sc.init()
+    sc.tighten(0, 255, 0, 255, 50, 50, 120, 120)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(20, 140, 200, 140)
+    lines_py = _py_draw_clipped_phase1(spans, 20, 140, 200, 140)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 7: Diagonal line inside tightened aperture ---
+    print('  Test 7: Diagonal line inside tightened aperture')
+    sc.init()
+    sc.tighten(0, 255, 0, 255, 20, 20, 140, 140)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(30, 60, 220, 100)
+    lines_py = _py_draw_clipped_phase1(spans, 30, 60, 220, 100)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 8: Line partially outside (Phase 1 skips ambiguous) ---
+    print('  Test 8: Line partially outside aperture (Phase 1 skips)')
+    sc.init()
+    sc.tighten(0, 255, 0, 255, 50, 50, 120, 120)
+    spans = sc.read_spans()
+    # Line from y=40 (above top=50) to y=80 (inside) — ambiguous entry
+    lines_asm = sc.draw_clipped_line(30, 40, 200, 80)
+    lines_py = _py_draw_clipped_phase1(spans, 30, 40, 200, 80)
+    if lines_asm == lines_py:
+        print('    MATCH (both empty — Phase 1 skips ambiguous)')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 9: Line starts mid-span (ox0 != xl) ---
+    print('  Test 9: Line starts mid-span (needs line_y_at)')
+    sc.init()
+    sc.mark_solid(0, 50)  # remove left columns
+    spans = sc.read_spans()
+    # Line from x=20 to x=200, but span starts at x=51
+    lines_asm = sc.draw_clipped_line(20, 40, 200, 120)
+    lines_py = _py_draw_clipped_phase1(spans, 20, 40, 200, 120)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 10: Multiple spans after multiple mark_solids ---
+    print('  Test 10: Multiple gaps, line through all')
+    sc.init()
+    sc.mark_solid(50, 80)
+    sc.mark_solid(120, 160)
+    sc.mark_solid(200, 220)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(10, 79, 250, 79)
+    lines_py = _py_draw_clipped_phase1(spans, 10, 79, 250, 79)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 11: Sloped line through multiple gaps ---
+    print('  Test 11: Sloped line through multiple gaps')
+    sc.init()
+    sc.mark_solid(80, 120)
+    sc.mark_solid(180, 200)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(10, 30, 250, 130)
+    lines_py = _py_draw_clipped_phase1(spans, 10, 30, 250, 130)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 12: Reversed line (xr < xl before orient) ---
+    print('  Test 12: Reversed line orientation')
+    sc.init()
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(200, 120, 50, 40)
+    lines_py = _py_draw_clipped_phase1(spans, 200, 120, 50, 40)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 13: Edge case - line exactly at bbox boundary ---
+    print('  Test 13: Line Y exactly at inner bbox boundary')
+    sc.init()
+    sc.tighten(0, 255, 0, 255, 50, 50, 120, 120)
+    spans = sc.read_spans()
+    # Line at y=50 (exactly at top boundary) — should be accepted (ylo >= it)
+    lines_asm = sc.draw_clipped_line(20, 50, 200, 50)
+    lines_py = _py_draw_clipped_phase1(spans, 20, 50, 200, 50)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 14: Line at y=120 (exactly at bottom boundary) ---
+    print('  Test 14: Line Y exactly at bottom bbox boundary')
+    sc.init()
+    sc.tighten(0, 255, 0, 255, 50, 50, 120, 120)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(20, 120, 200, 120)
+    lines_py = _py_draw_clipped_phase1(spans, 20, 120, 200, 120)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 15: Sloped tighten aperture, flat line inside ---
+    print('  Test 15: Sloped aperture, flat line inside')
+    sc.init()
+    sc.tighten(0, 255, 0, 255, 30, 60, 130, 100)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(10, 80, 240, 80)
+    lines_py = _py_draw_clipped_phase1(spans, 10, 80, 240, 80)
+    if lines_asm == lines_py:
+        print('    MATCH')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    # --- Test 16: Empty span list (all solid) ---
+    print('  Test 16: Empty span list')
+    sc.init()
+    sc.mark_solid(0, 255)
+    spans = sc.read_spans()
+    lines_asm = sc.draw_clipped_line(50, 80, 200, 80)
+    lines_py = _py_draw_clipped_phase1(spans, 50, 80, 200, 80)
+    if lines_asm == lines_py:
+        print('    MATCH (both empty)')
+        matches += 1
+    else:
+        print(f'    MISMATCH: asm={lines_asm} py={lines_py}')
+        mismatches += 1
+    total += 1
+
+    print(f'  Summary: {matches}/{total} tests passed, {mismatches} mismatches')
+    return mismatches == 0
+
+
 if __name__ == '__main__':
     print('Testing 6502 span clipper...')
     print()
@@ -508,6 +870,9 @@ if __name__ == '__main__':
     print()
     print('tighten tests:')
     test_tighten()
+    print()
+    print('draw_clipped_line tests:')
+    test_draw_clipped_line()
     print()
     print('Full frame comparison:')
     test_frame()

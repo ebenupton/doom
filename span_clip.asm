@@ -33,6 +33,7 @@ JMP span_has_gap    ; $2009                                             ; |||
 JMP span_is_full    ; $200C
 JMP span_read       ; $200F
 JMP interp_store    ; $2012  (kept for test_interp verification)
+JMP draw_clipped_line ; $2015
 
 ; === Pool constants and field offsets ===
 ; The span pool is a flat array at $0400.  Each slot is 9 bytes, so slot N
@@ -93,6 +94,19 @@ zp_bb_yt_max  = $A5    ; max(seg top) over remaining overlap range
 zp_bb_yb_min  = $A6    ; min(seg bot) over remaining overlap range
 zp_bb_flags   = $A7    ; bit 7: 1=narrowed bounds valid (all seg vals on-screen)
 zp_ms_emit    = $A8    ; mark_solid: $FF = emit wall edge lines, $00 = skip
+
+; === Draw-clipped-line ZP ($A8-$B1) — reuses $A8 (ms_emit) since non-overlapping ===
+; Caller sets xl/yl/xr/yr; routine computes dx/dy/ylo/yhi.
+zp_line_xl  = $A8    ; u8, left X (oriented left-to-right)
+zp_line_yl  = $A9    ; u8, Y at xl
+zp_line_xr  = $AA    ; u8, right X
+zp_line_yr  = $AB    ; u8, Y at xr
+zp_line_dx  = $AC    ; u8, xr - xl (>= 0)
+zp_line_dy  = $AD    ; s8, yr - yl
+zp_line_ylo = $AE    ; u8, min(yl, yr) — running Y bbox
+zp_line_yhi = $AF    ; u8, max(yl, yr) — running Y bbox
+zp_seg_start_x = $B0 ; u8, $FF = NULL (no segment started)
+zp_seg_start_y = $B1  ; u8, Y at seg_start_x
 
 ; === Line output buffer ($0200) ===
 ; Lines emitted during tighten (portal edges) and mark_solid (wall edges).
@@ -1657,6 +1671,217 @@ zp_cc_den_hi = $FE
     LDA zp_nb_r : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser (returns via RTS)
+}
+
+; ======================================================================
+; DRAW_CLIPPED_LINE: clip a single line against the span list, emit
+; visible portions to LINE_OUT_BUF and call the NJ rasteriser.
+;
+; Phase 1: basic walk with outer bbox reject / inner bbox accept.
+; No CB clip (ambiguous cases skipped), no portal continuation
+; (each span is considered independently).
+;
+; Inputs (ZP): zp_line_xl, zp_line_yl, zp_line_xr, zp_line_yr
+; The line MUST be oriented left-to-right (xl <= xr).
+; All Y values u8 [0,159].
+;
+; Output: lines written to LINE_OUT_BUF, count at LINE_OUT_COUNT.
+; READ-ONLY walk — never modifies the span list.
+; ======================================================================
+.draw_clipped_line
+{
+    ; --- Compute dx, dy, ylo, yhi ---
+    LDA zp_line_xr : SEC : SBC zp_line_xl : STA zp_line_dx
+    LDA zp_line_yr : SEC : SBC zp_line_yl : STA zp_line_dy
+
+    ; Y bounding box: ylo = min(yl, yr), yhi = max(yl, yr)
+    LDA zp_line_yl : LDX zp_line_yr
+    CMP zp_line_yr : BCC dcl_yl_lo
+    ; yl >= yr: yhi=yl, ylo=yr
+    STA zp_line_yhi : STX zp_line_ylo : JMP dcl_bbox_done
+.dcl_yl_lo
+    ; yl < yr: ylo=yl, yhi=yr
+    STA zp_line_ylo : STX zp_line_yhi
+.dcl_bbox_done
+
+    ; Reset output
+    LDA #0 : STA LINE_OUT_COUNT
+
+    ; seg_start = NULL
+    LDA #$FF : STA zp_seg_start_x
+
+    ; Walk span list
+    LDX zp_head
+
+.dcl_walk
+    ; End of list?
+    BNE dcl_walk2
+    JMP dcl_flush
+.dcl_walk2
+
+    ; --- Skip spans entirely left of line ---
+    ; Skip if xend <= xl (strict: pixel-center model)
+    LDA zp_line_xl : CMP POOL_XEND,X : BCC dcl_not_left
+    JMP dcl_advance  ; xl >= xend → skip
+.dcl_not_left
+
+    ; --- Skip spans entirely right of line ---
+    ; Done if xstart >= xr (all remaining spans are further right)
+    LDA POOL_XSTART,X : CMP zp_line_xr : BCC dcl_in_range
+    JMP dcl_flush  ; xstart >= xr → done
+.dcl_in_range
+
+    ; --- Compute overlap ---
+    ; ox0 = max(xstart, xl)
+    LDA POOL_XSTART,X : CMP zp_line_xl : BCS dcl_ox0_ok
+    LDA zp_line_xl
+.dcl_ox0_ok STA zp_ox0
+    ; ox1 = min(xend, xr)
+    LDA POOL_XEND,X : CMP zp_line_xr : BCC dcl_ox1_ok
+    LDA zp_line_xr
+.dcl_ox1_ok STA zp_ox1
+
+    ; --- Entry or continuation? ---
+    LDA zp_seg_start_x : CMP #$FF : BNE dcl_exit_check
+
+    ; ========== ENTRY: seg_start is NULL ==========
+    ; --- Tier 1: outer bbox reject ---
+    ; ot = min(tl, tr)
+    LDA POOL_TL,X : CMP POOL_TR,X : BCC dcl_ot_ok : LDA POOL_TR,X
+.dcl_ot_ok STA zp_tmp0    ; ot = min(tl, tr)
+    ; Reject if yhi < ot (line entirely above aperture)
+    LDA zp_line_yhi : CMP zp_tmp0 : BCC dcl_skip  ; yhi < ot → reject
+
+    ; ob = max(bl, br)
+    LDA POOL_BL,X : CMP POOL_BR,X : BCS dcl_ob_ok : LDA POOL_BR,X
+.dcl_ob_ok STA zp_tmp1    ; ob = max(bl, br)
+    ; Reject if ylo > ob (line entirely below aperture)
+    LDA zp_tmp1 : CMP zp_line_ylo : BCC dcl_skip  ; ob < ylo → reject
+
+    ; --- Tier 2: inner bbox accept ---
+    ; it = max(tl, tr)
+    LDA POOL_TL,X : CMP POOL_TR,X : BCS dcl_it_ok : LDA POOL_TR,X
+.dcl_it_ok STA zp_tmp0    ; it = max(tl, tr)
+    ; ib = min(bl, br)
+    LDA POOL_BL,X : CMP POOL_BR,X : BCC dcl_ib_ok : LDA POOL_BR,X
+.dcl_ib_ok STA zp_tmp1    ; ib = min(bl, br)
+    ; Accept if ylo >= it AND ib >= yhi
+    LDA zp_line_ylo : CMP zp_tmp0 : BCC dcl_skip  ; ylo < it → ambiguous (skip for Phase 1)
+    LDA zp_tmp1 : CMP zp_line_yhi : BCS dcl_accept
+.dcl_skip
+    JMP dcl_advance  ; trampoline: skip this span
+.dcl_accept
+
+    ; Inner bbox accept! Line guaranteed inside this span's aperture.
+    ; seg_start = (ox0, line_y_at(ox0))
+    LDA zp_ox0 : STA zp_seg_start_x
+    CMP zp_line_xl : BNE dcl_entry_mid
+    ; ox0 == xl: use yl directly
+    LDA zp_line_yl : STA zp_seg_start_y
+    JMP dcl_exit_check
+.dcl_entry_mid
+    ; ox0 != xl: need line_y_at(ox0)
+    STX zp_save0  ; save span pointer
+    JSR dcl_line_y_at_ox0
+    STA zp_seg_start_y
+    LDX zp_save0  ; restore span pointer
+    ; Fall through to exit check
+
+.dcl_exit_check
+    ; ========== EXIT CHECK ==========
+    ; Does the line end within this span? (xr <= xend)
+    LDA zp_line_xr : CMP POOL_XEND,X : BEQ dcl_line_ends : BCC dcl_line_ends
+
+    ; Line extends past this span.
+    ; --- Phase 1: no portal check, just emit and reset ---
+    ; Emit seg_start → (ox1, line_y_at(ox1))
+    ; But first, for Phase 1 we flush the current segment at the span boundary.
+    STX zp_save0
+    ; Compute end Y = line_y_at(ox1)
+    LDA zp_ox1 : CMP zp_line_xr : BEQ dcl_exit_use_yr
+    JSR dcl_line_y_at_a  ; A = line Y at ox1
+    JMP dcl_exit_emit
+.dcl_exit_use_yr
+    LDA zp_line_yr
+.dcl_exit_emit
+    ; A = end_y, emit segment
+    STA zp_tmp0  ; end_y
+    JSR dcl_emit_segment
+    ; Reset seg_start
+    LDA #$FF : STA zp_seg_start_x
+    LDX zp_save0
+    ; Advance to next span
+    JMP dcl_advance
+
+.dcl_line_ends
+    ; Line ends within this span. Emit seg_start → (xr, yr)
+    STX zp_save0
+    LDA zp_line_yr : STA zp_tmp0  ; end_y = yr
+    LDA zp_line_xr : STA zp_ox1   ; end_x = xr
+    JSR dcl_emit_segment
+    ; Done (line fully consumed)
+    RTS
+
+.dcl_advance
+    ; Move to next span
+    LDA POOL_NEXT,X : TAX
+    JMP dcl_walk
+
+.dcl_flush
+    ; End of walk. If seg_start is active, emit final segment.
+    LDA zp_seg_start_x : CMP #$FF : BEQ dcl_done
+    ; Emit seg_start → (ox1, line_y_at(ox1)) from the last span
+    ; But we already fell out of the walk, so we need the last ox1.
+    ; Actually at this point we should emit to (xr, yr) since the line
+    ; may extend past the last span. But Phase 1: we already handled
+    ; line-ends-in-span above. If we get here with seg_start active,
+    ; it means the next span was right-of-line. Emit to (xr, yr).
+    LDA zp_line_yr : STA zp_tmp0
+    LDA zp_line_xr : STA zp_ox1
+    JSR dcl_emit_segment
+.dcl_done
+    RTS
+
+; --- dcl_emit_segment: write segment to LINE_OUT_BUF and call rasteriser ---
+; Input: zp_seg_start_x, zp_seg_start_y, zp_ox1 (end_x), zp_tmp0 (end_y)
+; Clobbers: A, Y
+.dcl_emit_segment
+    ; Skip degenerate segments (zero-length)
+    LDA zp_seg_start_x : CMP zp_ox1 : BNE dcl_es_ok
+    LDA zp_seg_start_y : CMP zp_tmp0 : BNE dcl_es_ok
+    RTS  ; degenerate: start == end
+.dcl_es_ok
+    LDY LINE_OUT_COUNT
+    LDA zp_seg_start_x : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_seg_start_y : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_tmp0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY   ; tail-call rasteriser
+
+; --- dcl_line_y_at_ox0: compute line Y at ox0 ---
+; Uses interp_store with the line as the interpolation source.
+; Input: zp_ox0 = X coordinate, line params in zp_line_*
+; Output: A = line Y at ox0
+; Clobbers: interp working set (zp_i_*, zp_mul_b, zp_prod_*, zp_div_*)
+.dcl_line_y_at_ox0
+    LDA zp_line_xl : STA zp_i_x0
+    LDA zp_line_yl : STA zp_i_y0
+    LDA zp_line_yr : STA zp_i_y1
+    LDA zp_line_dx : STA zp_div_den
+    LDA zp_ox0 : JMP interp_store
+
+; --- dcl_line_y_at_a: compute line Y at column A ---
+; Input: A = X coordinate, line params in zp_line_*
+; Output: A = line Y at the given X
+; Clobbers: interp working set
+.dcl_line_y_at_a
+    PHA
+    LDA zp_line_xl : STA zp_i_x0
+    LDA zp_line_yl : STA zp_i_y0
+    LDA zp_line_yr : STA zp_i_y1
+    LDA zp_line_dx : STA zp_div_den
+    PLA : JMP interp_store
 }
 
 .end_code
