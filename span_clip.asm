@@ -20,6 +20,9 @@
 ; Division by 256 (ex=0): just take high byte of multiply (shift, no loop).
 ; Otherwise: restoring division loop, 8 iterations.
 
+; --- Build flags ---
+EMIT_LINES = TRUE     ; set FALSE to disable line emission (pure clip benchmark)
+
 ; --- Code origin: $2000 in BBC Micro memory map ---
 ORG $2000
 
@@ -449,10 +452,12 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
     LDA zp_ihi : CMP zp_ilo : BCS mss                                   ; |
     RTS
 .mss
+IF EMIT_LINES
     ; --- Wall edge line emission pre-pass (if seg params provided) ---
     LDA zp_ms_emit : BEQ ms_no_emit                                     ; |
     JSR ms_emit_lines                                                    ; |
 .ms_no_emit
+ENDIF
     LDA #$FF : STA zp_prev                                              ; |
     LDA zp_head : TAX : BNE msl : RTS                                   ; |
 
@@ -654,7 +659,10 @@ zp_cc_den_hi = $FE
 .tg_go
     ; Save old head, then start building new list
     LDA zp_head : STA zp_old_cur                                        ; |
-    LDA #0 : STA zp_new_tail : STA zp_head : STA LINE_OUT_COUNT           ; |
+    LDA #0 : STA zp_new_tail : STA zp_head                                ; |
+IF EMIT_LINES
+    STA LINE_OUT_COUNT
+ENDIF
     LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
     ; Initialize narrowed BB bounds: max(yt1,yt2) and min(yb1,yb2)
     ; Flag: $80 = both-yt-negative (bot-only BB), $40 = all-on-screen (full BB)
@@ -1112,6 +1120,7 @@ zp_cc_den_hi = $FE
     ; The dominance check already computed ot_l/ot_r/ob_l/ob_r (u8 via
     ; interp_store) and nt_l/nt_r/nb_l/nb_r (clamped u8) at (ox0, ox1).
     ;
+IF EMIT_LINES
     ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
     ; Guard: skip emission for 1-column overlaps (degenerate point, not a line)
     LDA zp_ox0 : CMP zp_ox1 : BCS ncf_no_bot_edge                       ; ox0 >= ox1 → skip all emission
@@ -1124,6 +1133,7 @@ zp_cc_den_hi = $FE
     LDA zp_nb_l : CMP zp_ob_l : BCS ncf_no_bot_edge
     JSR emit_bot_edge
 .ncf_no_bot_edge
+ENDIF
     ; Do max/min + aperture + store inline without re-interpolating.
     LDA zp_ot_l : CMP zp_nt_l : BCS ncf_tl_ok : LDA zp_nt_l             ; |
 .ncf_tl_ok STA zp_ot_l                                                  ; |
@@ -1339,6 +1349,7 @@ zp_cc_den_hi = $FE
 .opt2_no_ap
     RTS                                                                 ; |
 .skip_opt2
+IF EMIT_LINES
     ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
     ; Guard: skip emission for degenerate 1-column sub-intervals (ox0 >= ox1)
     LDA zp_ox0 : CMP zp_ox1 : BCS tos_no_bot_edge
@@ -1350,6 +1361,7 @@ zp_cc_den_hi = $FE
     ; Bot edge visible where nb < ob (new floor more restrictive).
     LDA zp_nb_l : CMP zp_ob_l : BCS tos_no_bot_edge
     JSR emit_bot_edge
+ENDIF
 .tos_no_bot_edge
     ; max top, min bot
     LDA zp_ot_l : CMP zp_nt_l : BCS tl_ok : LDA zp_nt_l                 ; |
@@ -1503,6 +1515,7 @@ zp_cc_den_hi = $FE
 ; Uses same ZP seg params as tighten (sx1/sx2/yt1/yt2/yb1/yb2).
 ; Uses zp_save0 for current span offset, zp_save1 for ox0, zp_save2 for ox1.
 ; ======================================================================
+IF EMIT_LINES
 .ms_emit_lines
 {
     LDA #0 : STA LINE_OUT_COUNT
@@ -1652,6 +1665,7 @@ zp_cc_den_hi = $FE
 .mel_rts
     RTS
 }
+ENDIF
 
 ; ======================================================================
 ; EMIT_LINE: write line to buffer AND call NJ rasteriser
@@ -1660,6 +1674,7 @@ zp_cc_den_hi = $FE
 ; (caller sets up which edge: top uses nt_l/nt_r, bot uses nb_l/nb_r)
 ; Preserves: zp_ox0/ox1/ot_l/ot_r/ob_l/ob_r/nt_l/nt_r/nb_l/nb_r
 ; ======================================================================
+IF EMIT_LINES
 .emit_top_edge
 {
     LDY LINE_OUT_COUNT
@@ -1681,6 +1696,7 @@ zp_cc_den_hi = $FE
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser (returns via RTS)
 }
+ENDIF
 
 ; ======================================================================
 ; DRAW_CLIPPED_LINE: clip a single line against the span list, emit
