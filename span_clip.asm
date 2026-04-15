@@ -1793,8 +1793,8 @@ ENDIF
 .dcl_in_range
 
     ; --- Compute overlap ---
-    ; ox0 = max(xstart, xl)
-    LDA POOL_XSTART,X : CMP zp_line_xl : BCS dcl_ox0_ok
+    ; ox0 = max(xstart, xl) — A already holds POOL_XSTART,X from skip check
+    CMP zp_line_xl : BCS dcl_ox0_ok
     LDA zp_line_xl
 .dcl_ox0_ok STA zp_ox0
     ; ox1 = min(xend, xr)
@@ -1847,6 +1847,11 @@ ENDIF
     JMP dcl_exit_check
 .dcl_entry_mid
     ; ox0 != xl: need line_y_at(ox0)
+    LDA zp_line_dy : BNE dcl_entry_mid_interp
+    ; dy==0: flat line, Y = yl everywhere
+    LDA zp_line_yl : STA zp_seg_start_y
+    JMP dcl_exit_check
+.dcl_entry_mid_interp
     STX zp_save0  ; save span pointer
     JSR dcl_line_y_at_ox0
     STA zp_seg_start_y
@@ -1865,10 +1870,14 @@ ENDIF
     STX zp_save0    ; save current span pointer
 
     ; Check if next span abuts this one
-    LDY POOL_NEXT,X : BEQ dcl_exit_no_portal   ; no next span → emit+reset
+    LDY POOL_NEXT,X : BNE dcl_has_next
+    JMP dcl_exit_no_portal   ; no next span → emit+reset
+.dcl_has_next
 
     ; Abutting? POOL_XEND[current] == POOL_XSTART[next]
-    LDA POOL_XEND,X : CMP POOL_XSTART,Y : BNE dcl_exit_no_portal
+    LDA POOL_XEND,X : CMP POOL_XSTART,Y : BEQ dcl_is_abutting
+    JMP dcl_exit_no_portal
+.dcl_is_abutting
 
     ; --- Compute portal aperture at shared boundary ---
     ; pt = max(current.tr, next.tl) — tightest top
@@ -1898,8 +1907,12 @@ ENDIF
     ; --- Tier 3 (exact check): compute ly = line_y_at(portal_x) ---
     ; portal_x = POOL_XEND of current span (shared boundary)
     LDX zp_save0
+    LDA zp_line_dy : BEQ dcl_portal_use_yl  ; flat line: ly = yl always
     LDA POOL_XEND,X : CMP zp_line_xr : BEQ dcl_portal_use_yr
     JSR dcl_line_y_at_a  ; A = ly
+    JMP dcl_portal_chk_ly
+.dcl_portal_use_yl
+    LDA zp_line_yl
     JMP dcl_portal_chk_ly
 .dcl_portal_use_yr
     LDA zp_line_yr
@@ -1910,6 +1923,8 @@ ENDIF
     LDA zp_tmp1 : CMP zp_tmp2 : BCC dcl_exit_no_portal_a  ; pb < ly → fail
 
     ; Line passes through portal. Narrow Y bbox for next span.
+    ; For flat lines (dy==0), ylo=yhi=yl is already correct — skip narrowing.
+    LDA zp_line_dy : BEQ dcl_portal_continue
     ; ylo = min(ly, yr), yhi = max(ly, yr)
     LDA zp_tmp2 : CMP zp_line_yr : BCC dcl_portal_ly_lo
     ; ly >= yr: yhi=ly, ylo=yr
@@ -1934,6 +1949,9 @@ ENDIF
     STA zp_ox1   ; end_x = xend of current span
     CMP zp_line_xr : BEQ dcl_exit_use_yr
     ; xend < xr: compute line_y_at(ox1)
+    LDA zp_line_dy : BNE dcl_exit_interp
+    LDA zp_line_yl : JMP dcl_exit_emit  ; flat line: ly = yl
+.dcl_exit_interp
     LDA zp_ox1 : JSR dcl_line_y_at_a
     JMP dcl_exit_emit
 .dcl_exit_use_yr
@@ -1986,6 +2004,11 @@ ENDIF
     LDA zp_ox1 : STA zp_cb_cx2
 
     ; Step 2: Compute line Y at clipped X endpoints
+    ; dy==0 fast path: flat line → cy1 = cy2 = yl
+    LDA zp_line_dy : BNE dcl_cb_cy_slow
+    LDA zp_line_yl : STA zp_cb_cy1 : STA zp_cb_cy2
+    JMP dcl_cb_cy_done
+.dcl_cb_cy_slow
     ; cy1 = line_y_at(cx1)
     LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_cy1_interp
     LDA zp_line_yl : JMP dcl_cb_cy1_done
@@ -2001,6 +2024,7 @@ ENDIF
     LDA zp_cb_cx2 : JSR dcl_line_y_at_a
 .dcl_cb_cy2_done
     STA zp_cb_cy2
+.dcl_cb_cy_done
 
     ; Step 3: Evaluate span boundaries at cx1, cx2
     LDX zp_save0
@@ -2013,6 +2037,30 @@ ENDIF
     LDA POOL_BL,X : STA zp_cb_bot1 : STA zp_cb_bot2
     JMP dcl_cb_have_bounds
 .dcl_cb_has_den
+    ; --- Anchor fast path: if cx1==xlo AND cx2==xhi, use stored values ---
+    LDA zp_cb_cx1 : CMP POOL_XLO,X : BNE dcl_cb_not_anchor
+    LDA zp_cb_cx2 : CMP POOL_XHI,X : BNE dcl_cb_not_anchor
+    LDA POOL_TL,X : STA zp_cb_top1
+    LDA POOL_TR,X : STA zp_cb_top2
+    LDA POOL_BL,X : STA zp_cb_bot1
+    LDA POOL_BR,X : STA zp_cb_bot2
+    JMP dcl_cb_have_bounds
+.dcl_cb_not_anchor
+    ; --- Constant-line fast path: if tl==tr AND bl==br, skip interp ---
+    LDA POOL_TL,X : CMP POOL_TR,X : BNE dcl_cb_need_interp
+    STA zp_cb_top1 : STA zp_cb_top2
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE dcl_cb_need_interp_bot
+    STA zp_cb_bot1 : STA zp_cb_bot2
+    JMP dcl_cb_have_bounds
+.dcl_cb_need_interp_bot
+    ; TL==TR (tops constant) but BL!=BR: need bot interp only
+    ; i_x0 and div_den still valid from initial setup above
+    STA zp_i_y0  ; A = POOL_BL,X
+    LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_bot1
+    LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_bot2
+    JMP dcl_cb_have_bounds
+.dcl_cb_need_interp
     ; top1 = interp_store(cx1, xlo, tl, xhi, tr)
     LDA POOL_TL,X : STA zp_i_y0
     LDA POOL_TR,X : STA zp_i_y1
