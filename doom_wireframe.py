@@ -107,11 +107,19 @@ class Instrumented6502Spans(EndpointClipSpans):
         self._check()
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                top_dom=False, bot_dom=False):
+                top_dom=False, bot_dom=False,
+                emit_top=True, emit_bot=True):
         from endpoint_spans import _compute_tighten_splits
-        for params in _compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
+        # Split-tail fragments (index >= 1) are an approximation: constant y
+        # values over an active range that extends past the real seg's sx2.
+        # Emitting would produce phantom horizontal lines Python doesn't draw.
+        for i, params in enumerate(_compute_tighten_splits(
+                lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)):
             super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
-            _span_clip_6502.tighten(*params)
+            if i == 0:
+                _span_clip_6502.tighten(*params, emit_top=emit_top, emit_bot=emit_bot)
+            else:
+                _span_clip_6502.tighten(*params, emit_top=False, emit_bot=False)
             self._check()
 
     def draw_clipped(self, lines, color, surface, stats=None):
@@ -1615,12 +1623,17 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         # boundary dominates and spans can be merged after tighten.
         top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
         bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
+        # Emit flags mirror which lines Python's draw_clipped actually drew.
+        emit_top = need_bt or (back[1] > ch)
+        emit_bot = need_bb or (back[0] < fh)
         if deferred is not None:
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
-                             yt1, yt2, yb1, yb2, top_dom, bot_dom))
+                             yt1, yt2, yb1, yb2, top_dom, bot_dom,
+                             emit_top, emit_bot))
         else:
             clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                          top_dom, bot_dom)
+                          top_dom, bot_dom,
+                          emit_top=emit_top, emit_bot=emit_bot)
 
 
 def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
@@ -2038,12 +2051,20 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
         top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
         bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
+        # Emit flags for the 6502 shadow: only emit a portal edge during
+        # tighten mutation when the Python reference draws the matching
+        # line. Python draws a top line iff need_bt or bch > ch, and a
+        # bot line iff need_bb or bfh < fh.
+        emit_top = need_bt or (bch > ch)
+        emit_bot = need_bb or (bfh < fh)
         if deferred is not None:
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
-                             yt1, yt2, yb1, yb2, top_dom, bot_dom))
+                             yt1, yt2, yb1, yb2, top_dom, bot_dom,
+                             emit_top, emit_bot))
         else:
             clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                          top_dom, bot_dom)
+                          top_dom, bot_dom,
+                          emit_top=emit_top, emit_bot=emit_bot)
 
 
 def packed_render_subsector(idx, clips, ctx, vz, surface, ram):

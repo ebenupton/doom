@@ -41,6 +41,7 @@ ZP_LINE_XL = 0xA8
 ZP_LINE_YL = 0xA9
 ZP_LINE_XR = 0xAA
 ZP_LINE_YR = 0xAB
+ZP_TG_EMIT = 0xBB  # tighten emit mask: bit0=top, bit1=bot, 0x03=both
 
 # Pool
 POOL_BASE = 0x0400
@@ -216,10 +217,17 @@ class SpanClip6502:
 
         self._run(ENTRY_MARK_SOLID)
 
-    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
+    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                emit_top=True, emit_bot=True):
         """tighten with 16-bit seg parameters.
 
         Closed-interval: ilo, ihi are both inclusive column indices in [0,255].
+
+        emit_top/emit_bot: when True (default), the 6502 emits portal top/bot
+        edge lines during mutation where the new seg narrows the old span.
+        Set False to suppress emission for segs where the Python reference
+        doesn't draw the corresponding line (e.g. need_bt-only segs don't
+        draw the floor line, so emit_bot=False matches the Python semantic).
 
         Wraps the call in _remap_seg_for_8bit so the 6502 8-bit interp pipeline
         always operates with ex≤255, offset≤255, |dy|≤127 — i.e., always the
@@ -253,6 +261,7 @@ class SpanClip6502:
         _w16(ZP_YT2, yt2)
         _w16(ZP_YB1, yb1)
         _w16(ZP_YB2, yb2)
+        mem[ZP_TG_EMIT] = (0x01 if emit_top else 0) | (0x02 if emit_bot else 0)
         self._run(ENTRY_TIGHTEN)
 
     def has_gap(self, lo, hi):
@@ -308,12 +317,63 @@ class SpanClip6502:
         mem[LINE_OUT_COUNT] = 0
         return lines
 
+    @staticmethod
+    def _clip_to_screen(x1, y1, x2, y2):
+        """Liang-Barsky clip of line to [0,255] x [0,159].
+
+        Returns (cx1, cy1, cx2, cy2) as integers, or None if fully outside.
+        """
+        dx = x2 - x1
+        dy = y2 - y1
+        # p, q pairs for the four boundaries
+        checks = [
+            (-dx, x1),          # left   (x >= 0)
+            ( dx, 255 - x1),    # right  (x <= 255)
+            (-dy, y1),          # top    (y >= 0)
+            ( dy, 159 - y1),    # bottom (y <= 159)
+        ]
+        t0, t1 = 0.0, 1.0
+        for p, q in checks:
+            if p == 0:
+                if q < 0:
+                    return None  # parallel and outside
+            elif p < 0:
+                t = q / p
+                if t > t1:
+                    return None
+                if t > t0:
+                    t0 = t
+            else:
+                t = q / p
+                if t < t0:
+                    return None
+                if t < t1:
+                    t1 = t
+        cx1 = int(round(x1 + t0 * dx))
+        cy1 = int(round(y1 + t0 * dy))
+        cx2 = int(round(x1 + t1 * dx))
+        cy2 = int(round(y1 + t1 * dy))
+        # Final safety clamp
+        cx1 = max(0, min(255, cx1))
+        cy1 = max(0, min(159, cy1))
+        cx2 = max(0, min(255, cx2))
+        cy2 = max(0, min(159, cy2))
+        return cx1, cy1, cx2, cy2
+
     def draw_clipped_line(self, xl, yl, xr, yr):
         """Clip a single line against the span list and emit visible segments.
 
         The line is oriented left-to-right by this method.  All coords u8.
         Returns list of (x1, y1, x2, y2) tuples for emitted segments.
         """
+        # Pre-clip to screen bounds so all coords fit in u8
+        clipped = self._clip_to_screen(xl, yl, xr, yr)
+        if clipped is None:
+            return []
+        xl, yl, xr, yr = clipped
+        # Reject degenerate (single-point) lines
+        if xl == xr and yl == yr:
+            return []
         mem = self.mpu.memory
         # Orient left-to-right
         if xl > xr:

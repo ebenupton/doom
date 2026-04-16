@@ -111,6 +111,8 @@ zp_line_yhi = $AF    ; u8, max(yl, yr) — running Y bbox
 zp_seg_start_x = $B0 ; u8, $FF = NULL (no segment started)
 zp_seg_start_y = $B1  ; u8, Y at seg_start_x
 zp_tg_cont    = $BA   ; portal continuation: $FF=inactive, else=prev span xend
+zp_tg_emit    = $BB   ; tighten emission mask: bit0=emit top, bit1=emit bot
+                      ;   $03 = both (default), $01 = top only, $02 = bot only, $00 = none
 ; CB clip working set ($B2-$B9)
 zp_cb_cx1   = $B2    ; u8, clipped left X
 zp_cb_cy1   = $B3    ; u8, clipped left Y (line Y at cx1)
@@ -1086,28 +1088,34 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; to clamping only the bot values.
     LDA zp_nt_lh : AND zp_nt_rh : BPL tg_clamp_full
     LDA #0 : STA zp_nt_l : STA zp_nt_r
+    ; hi bytes already nonzero (negative) → no need to set them
     JMP tg_clamp_nb
 .tg_clamp_full
     ; High byte: negative→0, positive overflow (hi>0)→159, 0→check low
     ; byte (in [0,255], clamp [160,255] to 159).
-    LDA zp_nt_lh : BMI tg_cn1z : BNE tg_cn1f                            ; |
-    LDA zp_nt_l : CMP #160 : BCC tg_cn1s                                ; |
+    ; When clamping occurs, set hi byte to nonzero so edge emission guard fires.
+    LDA zp_nt_lh : BMI tg_cn1z : BNE tg_cn1f
+    LDA zp_nt_l : CMP #160 : BCC tg_cn1s
+    LDA #1 : STA zp_nt_lh                                               ; mark clamped
 .tg_cn1f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn1z LDA #0
 .tg_cn1s STA zp_nt_l                                                    ; |
-    LDA zp_nt_rh : BMI tg_cn2z : BNE tg_cn2f                            ; |
-    LDA zp_nt_r : CMP #160 : BCC tg_cn2s                                ; |
+    LDA zp_nt_rh : BMI tg_cn2z : BNE tg_cn2f
+    LDA zp_nt_r : CMP #160 : BCC tg_cn2s
+    LDA #1 : STA zp_nt_rh                                               ; mark clamped
 .tg_cn2f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn2z LDA #0
 .tg_cn2s STA zp_nt_r                                                    ; |
 .tg_clamp_nb
-    LDA zp_nb_lh : BMI tg_cn3z : BNE tg_cn3f                            ; |
-    LDA zp_nb_l : CMP #160 : BCC tg_cn3s                                ; |
+    LDA zp_nb_lh : BMI tg_cn3z : BNE tg_cn3f
+    LDA zp_nb_l : CMP #160 : BCC tg_cn3s
+    LDA #1 : STA zp_nb_lh                                               ; mark clamped
 .tg_cn3f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn3z LDA #0
 .tg_cn3s STA zp_nb_l                                                    ; |
-    LDA zp_nb_rh : BMI tg_cn4z : BNE tg_cn4f                            ; |
-    LDA zp_nb_r : CMP #160 : BCC tg_cn4s                                ; |
+    LDA zp_nb_rh : BMI tg_cn4z : BNE tg_cn4f
+    LDA zp_nb_r : CMP #160 : BCC tg_cn4s
+    LDA #1 : STA zp_nb_rh                                               ; mark clamped
 .tg_cn4f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn4z LDA #0
 .tg_cn4s STA zp_nb_r                                                    ; |
@@ -1158,10 +1166,18 @@ IF EMIT_LINES
     LDA zp_ox0 : CMP zp_ox1 : BCS ncf_no_bot_edge                       ; ox0 >= ox1 → skip all emission
     ; Top edge visible where nt > ot (new ceiling more restrictive).
     ; No crossover → check left endpoint only (same sign at both).
+    ; Guard 1: caller disabled top emission (emit_top bit clear)
+    LDA zp_tg_emit : AND #$01 : BEQ ncf_no_top_edge
+    ; Guard 2: skip if either top endpoint was clamped (hi byte nonzero)
+    LDA zp_nt_lh : ORA zp_nt_rh : BNE ncf_no_top_edge
     LDA zp_nt_l : CMP zp_ot_l : BCC ncf_no_top_edge : BEQ ncf_no_top_edge
     JSR emit_top_edge
 .ncf_no_top_edge
     ; Bot edge visible where nb < ob (new floor more restrictive).
+    ; Guard 1: caller disabled bot emission (emit_bot bit clear)
+    LDA zp_tg_emit : AND #$02 : BEQ ncf_no_bot_edge
+    ; Guard 2: skip if either bot endpoint was clamped (hi byte nonzero)
+    LDA zp_nb_lh : ORA zp_nb_rh : BNE ncf_no_bot_edge
     LDA zp_nb_l : CMP zp_ob_l : BCS ncf_no_bot_edge
     JSR emit_bot_edge
 .ncf_no_bot_edge
@@ -1342,23 +1358,27 @@ ENDIF
     BCC tos_clamp_done                                                    ; | C=0 from BCS not taken
 ; (1-byte tos_clamp pad removed)
 .tos_clamp_slow
-    LDA zp_nt_lh : BMI cn1z : BNE cn1f                                  ; |
-    LDA zp_nt_l : CMP #160 : BCC cn1s                                   ; |
+    LDA zp_nt_lh : BMI cn1z : BNE cn1f
+    LDA zp_nt_l : CMP #160 : BCC cn1s
+    LDA #1 : STA zp_nt_lh                                               ; mark clamped
 .cn1f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn1z LDA #0
 .cn1s STA zp_nt_l                                                       ; |
-    LDA zp_nt_rh : BMI cn2z : BNE cn2f                                  ; |
-    LDA zp_nt_r : CMP #160 : BCC cn2s                                   ; |
+    LDA zp_nt_rh : BMI cn2z : BNE cn2f
+    LDA zp_nt_r : CMP #160 : BCC cn2s
+    LDA #1 : STA zp_nt_rh                                               ; mark clamped
 .cn2f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn2z LDA #0
 .cn2s STA zp_nt_r                                                       ; |
-    LDA zp_nb_lh : BMI cn3z : BNE cn3f                                  ; |
-    LDA zp_nb_l : CMP #160 : BCC cn3s                                   ; |
+    LDA zp_nb_lh : BMI cn3z : BNE cn3f
+    LDA zp_nb_l : CMP #160 : BCC cn3s
+    LDA #1 : STA zp_nb_lh                                               ; mark clamped
 .cn3f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn3z LDA #0
 .cn3s STA zp_nb_l                                                       ; |
-    LDA zp_nb_rh : BMI cn4z : BNE cn4f                                  ; |
-    LDA zp_nb_r : CMP #160 : BCC cn4s                                   ; |
+    LDA zp_nb_rh : BMI cn4z : BNE cn4f
+    LDA zp_nb_r : CMP #160 : BCC cn4s
+    LDA #1 : STA zp_nb_rh                                               ; mark clamped
 .cn4f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
 .cn4z LDA #0
 .cn4s STA zp_nb_r                                                       ; |
@@ -1392,10 +1412,18 @@ IF EMIT_LINES
     LDA zp_ox0 : CMP zp_ox1 : BCS tos_no_bot_edge
     ; Top edge visible where nt > ot (new ceiling more restrictive).
     ; Within a crossover sub-interval, sign is consistent at both endpoints.
+    ; Guard 1: caller disabled top emission (emit_top bit clear)
+    LDA zp_tg_emit : AND #$01 : BEQ tos_no_top_edge
+    ; Guard 2: skip if either top endpoint was clamped (hi byte nonzero)
+    LDA zp_nt_lh : ORA zp_nt_rh : BNE tos_no_top_edge
     LDA zp_nt_l : CMP zp_ot_l : BCC tos_no_top_edge : BEQ tos_no_top_edge
     JSR emit_top_edge
 .tos_no_top_edge
     ; Bot edge visible where nb < ob (new floor more restrictive).
+    ; Guard 1: caller disabled bot emission (emit_bot bit clear)
+    LDA zp_tg_emit : AND #$02 : BEQ tos_no_bot_edge
+    ; Guard 2: skip if either bot endpoint was clamped (hi byte nonzero)
+    LDA zp_nb_lh : ORA zp_nb_rh : BNE tos_no_bot_edge
     LDA zp_nb_l : CMP zp_ob_l : BCS tos_no_bot_edge
     JSR emit_bot_edge
 ENDIF
@@ -1647,28 +1675,36 @@ IF EMIT_LINES
 .mel_clamp_slow
     LDA zp_nt_lh : BMI mel_cz1 : BNE mel_cf1
     LDA zp_nt_l : CMP #160 : BCC mel_cs1
+    LDA #1 : STA zp_nt_lh                                               ; mark clamped
 .mel_cf1 LDA #159 : EQUB $2C
 .mel_cz1 LDA #0
 .mel_cs1 STA zp_nt_l
     LDA zp_nt_rh : BMI mel_cz2 : BNE mel_cf2
     LDA zp_nt_r : CMP #160 : BCC mel_cs2
+    LDA #1 : STA zp_nt_rh                                               ; mark clamped
 .mel_cf2 LDA #159 : EQUB $2C
 .mel_cz2 LDA #0
 .mel_cs2 STA zp_nt_r
     LDA zp_nb_lh : BMI mel_cz3 : BNE mel_cf3
     LDA zp_nb_l : CMP #160 : BCC mel_cs3
+    LDA #1 : STA zp_nb_lh                                               ; mark clamped
 .mel_cf3 LDA #159 : EQUB $2C
 .mel_cz3 LDA #0
 .mel_cs3 STA zp_nb_l
     LDA zp_nb_rh : BMI mel_cz4 : BNE mel_cf4
     LDA zp_nb_r : CMP #160 : BCC mel_cs4
+    LDA #1 : STA zp_nb_rh                                               ; mark clamped
 .mel_cf4 LDA #159 : EQUB $2C
 .mel_cz4 LDA #0
 .mel_cs4 STA zp_nb_r
 .mel_clamp_ok
 
     ; --- Emit visible edges ---
+    ; Guard: skip emission for single-column overlaps (degenerate point)
+    LDA zp_save1 : CMP zp_save2 : BCS mel_no_bot
     ; Top edge: visible where seg top > span top
+    ; Guard: skip if either top endpoint was clamped (hi byte nonzero)
+    LDA zp_nt_lh : ORA zp_nt_rh : BNE mel_no_top
     LDA zp_nt_l : CMP zp_ot_l : BEQ mel_chk_top_r : BCS mel_emit_top
 .mel_chk_top_r
     LDA zp_nt_r : CMP zp_ot_r : BCC mel_no_top : BEQ mel_no_top
@@ -1683,6 +1719,8 @@ IF EMIT_LINES
     JSR RASTER_ENTRY
 .mel_no_top
     ; Bot edge: visible where seg bot < span bot
+    ; Guard: skip if either bot endpoint was clamped (hi byte nonzero)
+    LDA zp_nb_lh : ORA zp_nb_rh : BNE mel_no_bot
     LDA zp_nb_l : CMP zp_ob_l : BEQ mel_chk_bot_r : BCC mel_emit_bot
 .mel_chk_bot_r
     LDA zp_nb_r : CMP zp_ob_r : BCS mel_no_bot
@@ -2206,7 +2244,25 @@ ENDIF
     ; Check cx1 > cx2 after bot clip → reject
     LDA zp_cb_cx2 : CMP zp_cb_cx1 : BCC dcl_cb_reject
 
-    ; CB clip succeeded. Set seg_start to (cx1, cy1).
+    ; CB clip succeeded. If cx2 < ox1 the line exits the aperture INSIDE
+    ; the span (not at a span boundary). Emit (cx1,cy1)→(cx2,cy2) directly
+    ; and reset seg_start — no portal continuation possible since the line
+    ; left the aperture mid-span. dcl_line_ends / dcl_exit_no_portal both
+    ; use xr/yr or line_y_at(xend) for the exit, which would be wrong here.
+    LDA zp_cb_cx2 : CMP zp_ox1 : BCS dcl_cb_no_exit_clip
+    ; cx2 < ox1 → emit clipped fragment
+    LDA zp_cb_cx1 : STA zp_seg_start_x
+    LDA zp_cb_cy1 : STA zp_seg_start_y
+    LDA zp_cb_cx2 : STA zp_ox1
+    LDA zp_cb_cy2 : STA zp_tmp0
+    JSR dcl_emit_segment
+    LDA #$FF : STA zp_seg_start_x
+    LDX zp_save0
+    JMP dcl_advance
+
+.dcl_cb_no_exit_clip
+    ; cx2 == ox1: CB did not clip the exit. Set seg_start = (cx1, cy1)
+    ; and fall through to the normal exit check (portal or line_ends).
     LDA zp_cb_cx1 : STA zp_seg_start_x
     LDA zp_cb_cy1 : STA zp_seg_start_y
     ; Update Y bbox for portal checks
