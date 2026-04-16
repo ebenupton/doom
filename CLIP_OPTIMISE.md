@@ -386,3 +386,94 @@ Delta from carry round: **−81 cycles (−0.06%)**
 - Further JMP→branch conversions are limited: most remaining JMPs in
   mark_solid and tighten exceed the 128-byte branch range. Flag-state
   analysis must be rigorous (STX/STA do NOT set flags on 6502).
+
+## Total clip+render cycles
+
+Once the clipper gained integrated line emission (tighten/mark_solid
+edges + `draw_clipped_line`) with tail-calls into the NJ rasteriser,
+the "clip cycles" number above stopped capturing the full cost the
+6502 pays per frame. This section tracks `sc.total_cycles` across one
+`packed_render_bsp` of each scene — i.e. the sum of every cycle spent
+in span_clip.asm and in the NJ rasteriser (`linedraw_or_reloc.bin`
+@ $A900) combined.
+
+Measured via `span_clip_6502.SpanClip6502.total_cycles` counter,
+which accumulates `mpu.processorCycles` across every entry
+(mark_solid, tighten, has_gap, is_full, draw_clipped_line), including
+the tail-called rasteriser runs that each emission triggers.
+
+### Reproducing
+
+```bash
+python3 - <<'EOF'
+import os, math, random
+os.environ['SDL_VIDEODRIVER'] = 'dummy'
+import pygame; pygame.init(); pygame.display.set_mode((1, 1))
+import doom_wireframe as dw
+from fp import PRESCALE, MAP_CENTER_X, MAP_CENTER_Y, fp_sincos, fp_view_context
+from wad_packed import spans_init_full
+from endpoint_spans import EndpointClipSpans, _compute_tighten_splits
+from span_clip_6502 import SpanClip6502
+
+sc = SpanClip6502()
+
+class Inst(EndpointClipSpans):
+    def __init__(self):
+        super().__init__(); sc.clear_screen(); sc.init()
+    def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None,
+                   yb1=None, yb2=None):
+        super().mark_solid(lo, hi)
+        sc.mark_solid(lo, hi, sx1=sx1, sx2=sx2, yt1=yt1, yt2=yt2,
+                      yb1=yb1, yb2=yb2)
+    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                top_dom=False, bot_dom=False, emit_top=True, emit_bot=True):
+        for i, params in enumerate(_compute_tighten_splits(
+                lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)):
+            super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
+            if i == 0:
+                sc.tighten(*params, emit_top=emit_top, emit_bot=emit_bot)
+            else:
+                sc.tighten(*params, emit_top=False, emit_bot=False)
+    def has_gap(self, lo, hi):
+        r = super().has_gap(lo, hi); sc.has_gap(lo, hi); return r
+    def is_full(self):
+        r = super().is_full(); sc.is_full(); return r
+    def draw_clipped(self, lines, color, surface, stats=None):
+        for lx1, ly1, lx2, ly2 in lines:
+            if lx1 != lx2:
+                sc.draw_clipped_line(lx1, ly1, lx2, ly2)
+        super().draw_clipped(lines, color, surface, stats)
+
+SCENES = [('S1', 1056, -3616, 64), ('S2', 505, -3268, 125)]
+grand = 0
+for name, px, py, ab in SCENES:
+    ang_rad = ab * 2 * math.pi / 256
+    cos_f = math.cos(ang_rad); sin_f = math.sin(ang_rad)
+    px_88 = int((px - MAP_CENTER_X) * 256 / PRESCALE)
+    py_88 = int((py - MAP_CENTER_Y) * 256 / PRESCALE)
+    vz_ps = dw._prescale_height(dw.player_floor(px, py) + 41)
+    ctx = fp_view_context(px_88, py_88, fp_sincos(ab))
+    p_ram = dw._packed_ram_new()
+    spans_init_full(p_ram, dw.packed_layout['ram_spans'],
+                    dw.FP_RENDER_W, dw.FP_RENDER_H - 1)
+    inst = Inst()
+    random.seed(42)
+    for i in range(5): dw.draw_stats[i] = 0
+    for k in dw.map_trace:
+        dw.map_trace[k] = {} if k == 'vertex_muls' else (
+            [] if k == 'ss_order' else set())
+    sc.total_cycles = 0
+    dw.packed_render_bsp(len(dw.nodes)-1, inst, ctx, vz_ps,
+                         int(px), int(py), cos_f, sin_f,
+                         pygame.Surface((256, 160)), p_ram)
+    print(f'{name} ({px},{py},{ab}): {sc.total_cycles} clip+render cyc')
+    grand += sc.total_cycles
+print(f'GRAND TOTAL: {grand}')
+EOF
+```
+
+### History
+
+| Date       | span_clip.bin | **S1 clip+render** | Δ | **S2 clip+render** | Δ | **Grand** | Δ | Notes |
+|------------|--------------:|-------------------:|---:|-------------------:|---:|----------:|---:|-------|
+| 2026-04-16 |       6053 B  | **166436**         |   | **281767**         |   | **448203**|   | Baseline after mel crossover-clip fix (commit af70142). Includes DCL and all tail-called NJ rasteriser work. |
