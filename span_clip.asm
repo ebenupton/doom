@@ -1700,16 +1700,67 @@ IF EMIT_LINES
 .mel_clamp_ok
 
     ; --- Emit visible edges ---
+    ; The wall's top/bot edge must be INSIDE the span's aperture [ot, ob]
+    ; to be visible. We handle four cases at each edge:
+    ;   both endpoints inside aperture → emit full line
+    ;   left inside, right outside       → clip right at crossover
+    ;   left outside, right inside       → clip left at crossover
+    ;   both outside                     → skip
+    ; "Outside" for top edge means nt < ot (line above span top) or
+    ; nt > ob (line below span bot). For bot: nb < ot or nb > ob.
+    ; At present we only check the "primary" boundary (nt vs ot for top,
+    ; nb vs ob for bot) — the "line outside on the other side" case is
+    ; rare and not yet handled; it would require a second crossover.
     ; Guard: skip emission for single-column overlaps (degenerate point)
-    LDA zp_save1 : CMP zp_save2 : BCS mel_no_bot
-    ; Top edge: visible where seg top > span top
+    LDA zp_save1 : CMP zp_save2 : BCC mel_emit_any
+    JMP mel_no_bot
+.mel_emit_any
+    ; Top edge: visible where ot < nt (new top below span top, new
+    ; covers more of aperture).
     ; Guard: skip if either top endpoint was clamped (hi byte nonzero)
-    LDA zp_nt_lh : ORA zp_nt_rh : BNE mel_no_top
-    LDA zp_nt_l : CMP zp_ot_l : BEQ mel_chk_top_r : BCS mel_emit_top
-.mel_chk_top_r
-    LDA zp_nt_r : CMP zp_ot_r : BCC mel_no_top : BEQ mel_no_top
-.mel_emit_top
-    ; Set up rasteriser + buffer: ox0 in save1, ox1 in save2
+    LDA zp_nt_lh : ORA zp_nt_rh : BEQ mel_top_clamp_ok
+    JMP mel_no_top
+.mel_top_clamp_ok
+    ; Also skip if seg top is below span bot at BOTH endpoints
+    ; (entirely below aperture — line can't be visible).
+    LDA zp_nt_l : CMP zp_ob_l : BCC mel_top_lok
+    LDA zp_nt_r : CMP zp_ob_r : BCC mel_top_lok
+    JMP mel_no_top                                     ; both below aperture
+.mel_top_lok
+    ; Decision tree on left endpoint (nt_l vs ot_l).
+    ; For TOP emission, "inside aperture from top" means nt > ot.
+    LDA zp_nt_l : CMP zp_ot_l
+    BCC mel_top_l_above                              ; nt_l < ot_l (above aperture)
+    BEQ mel_top_l_eq                                 ; nt_l == ot_l (at boundary)
+    ; nt_l > ot_l: strict inside. Check right.
+    LDA zp_nt_r : CMP zp_ot_r
+    BCS mel_emit_top_full                            ; nt_r >= ot_r → both in → emit full
+    ; nt_r < ot_r → clip right at crossover
+    LDA zp_nt_l : SEC : SBC zp_ot_l : STA zp_tmp0    ; |d0| = nt_l - ot_l
+    LDA #0                         : STA zp_tmp1
+    LDA zp_ot_r : SEC : SBC zp_nt_r : STA zp_tmp2    ; |d1| = ot_r - nt_r
+    LDA #0                         : STA zp_tmp3
+    JSR mel_emit_top_cross_right
+    JMP mel_no_top
+.mel_top_l_eq
+    ; Left at boundary. Emit only if right strict inside (matches original).
+    LDA zp_nt_r : CMP zp_ot_r
+    BEQ mel_no_top
+    BCC mel_no_top
+    JMP mel_emit_top_full
+.mel_top_l_above
+    ; Left strict outside (above aperture). Check right.
+    LDA zp_nt_r : CMP zp_ot_r
+    BCC mel_no_top
+    BEQ mel_no_top
+    ; Left above, right strict inside → clip left at crossover
+    LDA zp_ot_l : SEC : SBC zp_nt_l : STA zp_tmp0    ; |d0| = ot_l - nt_l
+    LDA #0                         : STA zp_tmp1
+    LDA zp_nt_r : SEC : SBC zp_ot_r : STA zp_tmp2    ; |d1| = nt_r - ot_r
+    LDA #0                         : STA zp_tmp3
+    JSR mel_emit_top_cross_left
+    JMP mel_no_top
+.mel_emit_top_full
     LDY LINE_OUT_COUNT
     LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
     LDA zp_nt_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
@@ -1718,13 +1769,50 @@ IF EMIT_LINES
     STY LINE_OUT_COUNT
     JSR RASTER_ENTRY
 .mel_no_top
-    ; Bot edge: visible where seg bot < span bot
+    ; Bot edge: visible where nb < ob.
     ; Guard: skip if either bot endpoint was clamped (hi byte nonzero)
-    LDA zp_nb_lh : ORA zp_nb_rh : BNE mel_no_bot
-    LDA zp_nb_l : CMP zp_ob_l : BEQ mel_chk_bot_r : BCC mel_emit_bot
-.mel_chk_bot_r
-    LDA zp_nb_r : CMP zp_ob_r : BCS mel_no_bot
-.mel_emit_bot
+    LDA zp_nb_lh : ORA zp_nb_rh : BEQ mel_bot_clamp_ok
+    JMP mel_no_bot
+.mel_bot_clamp_ok
+    ; Skip if seg bot is above span top at BOTH endpoints (entirely above).
+    LDA zp_nb_l : CMP zp_ot_l : BCS mel_bot_lok
+    LDA zp_nb_r : CMP zp_ot_r : BCS mel_bot_lok
+    JMP mel_no_bot                                     ; both above aperture
+.mel_bot_lok
+    ; Decision tree on left endpoint (nb_l vs ob_l).
+    ; For BOT emission, "inside aperture from bot" means nb < ob.
+    LDA zp_nb_l : CMP zp_ob_l
+    BCC mel_bot_l_in                                 ; nb_l < ob_l (strict in)
+    BEQ mel_bot_l_eq                                 ; nb_l == ob_l (boundary)
+    ; nb_l > ob_l: strict outside (below aperture). Check right.
+    LDA zp_nb_r : CMP zp_ob_r
+    BCS mel_no_bot                                   ; nb_r >= ob_r → both out
+    ; nb_r < ob_r → clip left at crossover
+    LDA zp_nb_l : SEC : SBC zp_ob_l : STA zp_tmp0    ; |d0| = nb_l - ob_l
+    LDA #0                         : STA zp_tmp1
+    LDA zp_ob_r : SEC : SBC zp_nb_r : STA zp_tmp2    ; |d1| = ob_r - nb_r
+    LDA #0                         : STA zp_tmp3
+    JSR mel_emit_bot_cross_left
+    JMP mel_no_bot
+.mel_bot_l_eq
+    ; Left at boundary. Emit only if right strict inside.
+    LDA zp_nb_r : CMP zp_ob_r
+    BEQ mel_no_bot
+    BCS mel_no_bot
+    JMP mel_emit_bot_full
+.mel_bot_l_in
+    ; Left strict inside. Check right.
+    LDA zp_nb_r : CMP zp_ob_r
+    BCC mel_emit_bot_full                            ; both strict in → emit full
+    BEQ mel_emit_bot_full                            ; boundary at right → emit full
+    ; nb_r > ob_r → clip right
+    LDA zp_ob_l : SEC : SBC zp_nb_l : STA zp_tmp0    ; |d0| = ob_l - nb_l
+    LDA #0                         : STA zp_tmp1
+    LDA zp_nb_r : SEC : SBC zp_ob_r : STA zp_tmp2    ; |d1| = nb_r - ob_r
+    LDA #0                         : STA zp_tmp3
+    JSR mel_emit_bot_cross_right
+    JMP mel_no_bot
+.mel_emit_bot_full
     LDY LINE_OUT_COUNT
     LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
     LDA zp_nb_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
@@ -1739,6 +1827,106 @@ IF EMIT_LINES
     LDA POOL_NEXT,X : TAX : BEQ mel_rts
     JMP mel_loop
 .mel_rts
+    RTS
+
+; === mel crossover-clip helpers ===
+; Each takes |d0| in zp_tmp0:tmp1, |d1| in zp_tmp2:tmp3. Computes the
+; crossover X via compute_crossover, then the line Y at that X, then
+; emits the clipped line fragment. Uses zp_tmp0/tmp1 as scratch for
+; saved cx/cy after compute_crossover returns.
+
+.mel_emit_top_cross_left
+    ; Emit (cx, cy) → (save2, nt_r). Line Y uses nt_l→nt_r interp.
+    LDA zp_save1 : STA zp_ox0
+    LDA zp_save2 : STA zp_ox1
+    JSR compute_crossover                ; A = cx
+    BNE mel_emit_cx_ok
+    RTS                                  ; degenerate (boundary) → skip
+.mel_emit_cx_ok
+    STA zp_ox0                           ; save cx in ox0 (interp_store preserves it)
+    LDA zp_save1 : STA zp_i_x0
+    LDA zp_save2 : SEC : SBC zp_save1 : STA zp_div_den
+    LDA zp_nt_l : STA zp_i_y0
+    LDA zp_nt_r : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store        ; A = cy (clobbers tmp0 via umul8)
+    STA zp_ox1                           ; save cy in ox1
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_nt_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY
+
+.mel_emit_top_cross_right
+    ; Emit (save1, nt_l) → (cx, cy).
+    LDA zp_save1 : STA zp_ox0
+    LDA zp_save2 : STA zp_ox1
+    JSR compute_crossover
+    CMP #0 : BNE mel_ecx_ok_1
+    RTS                                  ; degenerate → skip
+.mel_ecx_ok_1
+    STA zp_ox0                           ; save cx
+    LDA zp_save1 : STA zp_i_x0
+    LDA zp_save2 : SEC : SBC zp_save1 : STA zp_div_den
+    LDA zp_nt_l : STA zp_i_y0
+    LDA zp_nt_r : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store
+    STA zp_ox1                           ; save cy
+    LDY LINE_OUT_COUNT
+    LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_nt_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY
+
+.mel_emit_bot_cross_left
+    ; Emit (cx, cy) → (save2, nb_r).
+    LDA zp_save1 : STA zp_ox0
+    LDA zp_save2 : STA zp_ox1
+    JSR compute_crossover
+    CMP #0 : BNE mel_ecx_ok_2
+    RTS                                  ; degenerate → skip
+.mel_ecx_ok_2
+    STA zp_ox0
+    LDA zp_save1 : STA zp_i_x0
+    LDA zp_save2 : SEC : SBC zp_save1 : STA zp_div_den
+    LDA zp_nb_l : STA zp_i_y0
+    LDA zp_nb_r : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store
+    STA zp_ox1
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_nb_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY
+
+.mel_emit_bot_cross_right
+    ; Emit (save1, nb_l) → (cx, cy).
+    LDA zp_save1 : STA zp_ox0
+    LDA zp_save2 : STA zp_ox1
+    JSR compute_crossover
+    CMP #0 : BNE mel_ecx_ok_3
+    RTS                                  ; degenerate → skip
+.mel_ecx_ok_3
+    STA zp_ox0
+    LDA zp_save1 : STA zp_i_x0
+    LDA zp_save2 : SEC : SBC zp_save1 : STA zp_div_den
+    LDA zp_nb_l : STA zp_i_y0
+    LDA zp_nb_r : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store
+    STA zp_ox1
+    LDY LINE_OUT_COUNT
+    LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_nb_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY
+.mel_emit_skip
     RTS
 }
 ENDIF
