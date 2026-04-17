@@ -10,12 +10,11 @@
 ;
 ; All arithmetic uses 8-bit fixed point with quarter-square lookup tables
 ; for multiply and restoring division loops for divide.  The span pool is
-; 28 nine-byte slots at $0400; slot 0 is the null sentinel.
+; 32 slots in block layout at $0400; slot 0 is the null sentinel.
 ;
-; Pool at POOL ($0400), 28 x 9-byte slots.  Slot 0 = null.
-; Slot layout: next(u8), xlo(u8), xhi(u8), tl(u8), bl(u8), tr(u8), br(u8),
-;              xstart(u8), xend(u8)
-; Access: LDX span_offset; LDA POOL_XLO,X  (fast absolute indexed)
+; Pool at POOL ($0400), 32 slots in block layout.  Slot 0 = null.
+; Each field is a 32-byte block; slot N is at POOL_FIELD + N.
+; Access: LDX slot_number; LDA POOL_XLO,X  (fast absolute indexed)
 ;
 ; Division by 256 (ex=0): just take high byte of multiply (shift, no loop).
 ; Otherwise: restoring division loop, 8 iterations.
@@ -39,24 +38,26 @@ JMP interp_store    ; $2012  (kept for test_interp verification)
 JMP draw_clipped_line ; $2015
 
 ; === Pool constants and field offsets ===
-; The span pool is a flat array at $0400.  Each slot is 9 bytes, so slot N
-; lives at byte offset N*9.  Absolute indexed addressing (LDA POOL_TL,X
-; where X = slot offset) gives O(1) field access.  The linked list is
-; threaded through the NEXT byte (+0) of each slot.
-; Span pool — 9-byte slots, 28 slots total ($400-$4FB).
-; Slot 0 is the null sentinel; slot 1 (offset 9) is the initial active span;
-; slots 2..27 (offsets 18, 27, ..., 243) start on the free list.
+; The span pool uses block layout at $0400: each field is a contiguous
+; 32-byte block, one byte per slot.  Slot N is at POOL_FIELD + N.
+; X register holds the slot number directly (0-31).
+; Slot 0 is the null sentinel; slot 1 is the initial active span;
+; slots 2..31 start on the free list.
 ;
-; Field layout per slot:
-;   +0 NEXT   linked-list next (byte offset, 0 = end)
-;   +1 XLO    line anchor x left  (immutable after span creation)
-;   +2 XHI    line anchor x right (immutable)
-;   +3 TL     top y at XLO
-;   +4 BL     bot y at XLO
-;   +5 TR     top y at XHI
-;   +6 BR     bot y at XHI
-;   +7 XSTART active range start (mutable: shrunk by mark_solid / tighten fragments)
-;   +8 XEND   active range end   (mutable)
+; Field blocks (32 bytes each):
+;   NEXT     linked-list next (slot number, 0 = end)
+;   XLO      line anchor x left  (immutable after span creation)
+;   XHI      line anchor x right (immutable)
+;   TL       top y at XLO
+;   BL       bot y at XLO
+;   TR       top y at XHI
+;   BR       bot y at XHI
+;   XSTART   active range start (mutable: shrunk by mark_solid / tighten fragments)
+;   XEND     active range end   (mutable)
+;   OT       min(TL, TR) — outer top (precomputed bbox)
+;   OB       max(BL, BR) — outer bot (precomputed bbox)
+;   IT       max(TL, TR) — inner top (precomputed bbox)
+;   IB       min(BL, BR) — inner bot (precomputed bbox)
 ;
 ; Spans interpolate y at any column x ∈ [XSTART, XEND] using the line through
 ; (XLO, TL/BL) — (XHI, TR/BR). XLO/XHI need not equal XSTART/XEND once a span
@@ -65,16 +66,19 @@ JMP draw_clipped_line ; $2015
 ; those operations.
 POOL        = $0400
 POOL_NEXT   = $0400
-POOL_XLO    = $0401
-POOL_XHI    = $0402
-POOL_TL     = $0403
-POOL_BL     = $0404
-POOL_TR     = $0405
-POOL_BR     = $0406
-POOL_XSTART = $0407
-POOL_XEND   = $0408
-SLOT_SIZE   = 9
-SLOT_END    = 28*SLOT_SIZE   ; one past the last byte offset (= 252)
+POOL_XLO    = $0420
+POOL_XHI    = $0440
+POOL_TL     = $0460
+POOL_BL     = $0480
+POOL_TR     = $04A0
+POOL_BR     = $04C0
+POOL_XSTART = $04E0
+POOL_XEND   = $0500
+POOL_OT     = $0520
+POOL_OB     = $0540
+POOL_IT     = $0560
+POOL_IB     = $0580
+NUM_SLOTS   = 32
 
 ; Quarter-square multiply tables (pre-loaded by the Python harness).
 ; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
@@ -182,30 +186,32 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 ; SPAN_INIT: reset the clipper to one full-screen span
 ;
 ; Builds two structures:
-;   FREE LIST -- singly-linked chain of unused slots 2..27
+;   FREE LIST -- singly-linked chain of unused slots 2..31
 ;   ACTIVE LIST -- single span (slot 1) covering [0,255] x [0,159]
 ;
 ; Called once per frame. Runtime is negligible (< 0.5% of total).
 ; ======================================================================
 .span_init
 {
-    ; Free list: slots 2..27 (byte offsets 18..243).
-    LDX #2*SLOT_SIZE       ; slot 2                                     ; |
+    ; Free list: slots 2..31 (indices 2,3,...,31).
+    LDX #2                 ; slot 2                                     ; |
     STX zp_free                                                         ; |
-.il  TXA : CLC : ADC #SLOT_SIZE                                         ; ||
-    CMP #SLOT_END          ; reached end? (= 252)                       ; |
+.il  TXA : CLC : ADC #1                                                 ; ||
+    CMP #NUM_SLOTS         ; reached end? (= 32)                        ; |
     BCS id                                                              ; |
     STA POOL_NEXT,X : TAX                                               ; ||
     BNE il                 ; always taken                               ; |
 .id  LDA #0 : STA POOL_NEXT,X                                           ; |
     ; Active list: slot 1 = full screen, line and active range both [0, 255].
-    LDX #SLOT_SIZE         ; slot 1 (offset 9)                          ; |
+    LDX #1                 ; slot 1 (index 1)                           ; |
     STX zp_head                                                         ; |
     STA POOL_NEXT,X : STA POOL_XLO,X : STA POOL_XSTART,X                ; |
     STA POOL_TL,X : STA POOL_TR,X                                       ; |
+    STA POOL_OT,X : STA POOL_IT,X                                       ; | OT=IT=0 for full-screen span
     LDA #255 : STA POOL_XHI,X : STA POOL_XEND,X                         ; |
     LDA #159                                                            ; |
     STA POOL_BL,X : STA POOL_BR,X                                       ; |
+    STA POOL_OB,X : STA POOL_IB,X                                       ; | OB=IB=159 for full-screen span
     STX zp_hg_cache         ; init cache to slot 1 (the initial span)   ; |
     RTS                                                                 ; |
 }
@@ -520,6 +526,10 @@ ENDIF
     LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
     LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
     LDA POOL_BR,Y   : STA POOL_BR,X                                     ; |
+    LDA POOL_OT,Y   : STA POOL_OT,X                                     ; |
+    LDA POOL_OB,Y   : STA POOL_OB,X                                     ; |
+    LDA POOL_IT,Y   : STA POOL_IT,X                                     ; |
+    LDA POOL_IB,Y   : STA POOL_IB,X                                     ; |
     ; Sibling's active range = [ihi+1, original xend]
     ; carry already clear: BCS ms_left_only fell through (C=0) and alloc_span/STAs don't change C
     LDA zp_ihi : ADC #1 : STA POOL_XSTART,X                             ; |
@@ -531,7 +541,8 @@ ENDIF
     ; carry is clear: C=0 propagated from BCS fall-through, through alloc+copies+ADC(no overflow)
     LDA zp_ilo : SBC #0 : STA POOL_XEND,Y                               ; |
     ; Continue from the span AFTER the new sibling
-    STX zp_prev : LDY POOL_NEXT,X : BNE msl_y : RTS                      ; |
+    STX zp_prev : LDY POOL_NEXT,X : BEQ ms_rts_ms : JMP msl_y            ; |
+.ms_rts_ms RTS
 
 .ms_left_only_after_fail
     ; alloc failed → fall through and just truncate left fragment
@@ -539,7 +550,8 @@ ENDIF
 .ms_left_only
     ; xend = ilo - 1 (truncate to left fragment only)
     LDA zp_ilo : SEC : SBC #1 : STA POOL_XEND,X                         ; |
-    STX zp_prev : LDY POOL_NEXT,X : BNE msl_y : RTS                     ; |
+    STX zp_prev : LDY POOL_NEXT,X : BEQ ms_rts_ml : JMP msl_y            ; |
+.ms_rts_ml RTS
 
 }
 
@@ -757,14 +769,12 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; all cases (neg-yt, all-on-screen, mixed) without flag dispatch.
 
     ; Tier 1: old-dom BB check.
-    ; tl >= seg_top_max AND tr >= seg_top_max (equiv. min(tl,tr) >= seg_top_max)
-    ; seg_bot_min >= bl AND seg_bot_min >= br (equiv. seg_bot_min >= max(bl,br))
-    LDA POOL_TL,X : CMP zp_bb_yt_max : BCC tg_not_old_bb                ; |
-    LDA POOL_TR,X : CMP zp_bb_yt_max : BCC tg_not_old_bb                ; |
-    ; Top passed. Check bot: seg_bot_min >= bl AND seg_bot_min >= br.
+    ; OT >= seg_top_max (equiv. min(tl,tr) >= seg_top_max)
+    ; seg_bot_min >= OB (equiv. seg_bot_min >= max(bl,br))
+    LDA POOL_OT,X : CMP zp_bb_yt_max : BCC tg_not_old_bb                ; |
+    ; Top passed. Check bot: seg_bot_min >= OB.
     LDA zp_bb_yb_min                                                     ; |
-    CMP POOL_BL,X : BCC tg_not_old_bb                                   ; |
-    CMP POOL_BR,X : BCC tg_not_old_bb                                   ; |
+    CMP POOL_OB,X : BCC tg_not_old_bb                                   ; |
     ; Old dominates — skip all interpolation.
     ; Inline fast link (skip merge check: old-dom spans rarely merge,
     ; and the merge check costs ~40 cycles per span).
@@ -784,14 +794,10 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA zp_tg_cont : CMP #$FF : BEQ tg_no_cont
     CMP POOL_XSTART,X : BNE tg_no_cont              ; not contiguous
     LDA zp_bb_flags : AND #$40 : BEQ tg_no_cont     ; need on-screen bounds
-    ; Top: max(tl,tr) < bb_yt_max
-    LDA POOL_TL,X : CMP POOL_TR,X : BCS tg_cont_it : LDA POOL_TR,X
-.tg_cont_it  ; A = max(tl,tr)
-    CMP zp_bb_yt_max : BCS tg_no_cont               ; max(tl,tr) >= seg_top → fail
-    ; Bot: min(bl,br) > bb_yb_min (strict)
-    LDA POOL_BL,X : CMP POOL_BR,X : BCC tg_cont_ib : LDA POOL_BR,X
-.tg_cont_ib  ; A = min(bl,br)
-    CMP zp_bb_yb_min : BCC tg_no_cont               ; min(bl,br) < seg_bot → fail
+    ; Top: IT < bb_yt_max
+    LDA POOL_IT,X : CMP zp_bb_yt_max : BCS tg_no_cont  ; IT >= seg_top → fail
+    ; Bot: IB > bb_yb_min (strict)
+    LDA POOL_IB,X : CMP zp_bb_yb_min : BCC tg_no_cont  ; IB < seg_bot → fail
     BEQ tg_no_cont                                   ; equal → old-dom at boundary
     ; Portal continuation: new dominates. Skip old interp.
     JMP tg_newdom_fast
@@ -805,21 +811,15 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
 .tg_nd_lo_ok
     LDA POOL_XEND,X : CMP zp_ihi : BEQ tg_nd_hi_ok : BCS tg_bb_skip    ; |
 .tg_nd_hi_ok
-    ; Check: min(yt1,yt2) > max(tl,tr) (strict: new top inside aperture)
-    LDA POOL_TL,X : CMP POOL_TR,X : BCS tg_nd_tmax                      ; |
-    LDA POOL_TR,X                                                        ; |
-.tg_nd_tmax
-    STA zp_tmp0                                                          ; |
+    ; Check: min(yt1,yt2) > IT (strict: new top inside aperture)
     LDA zp_yt1 : CMP zp_yt2 : BCC tg_nd_tmin : LDA zp_yt2               ; |
 .tg_nd_tmin
-    CMP zp_tmp0 : BCC tg_bb_skip : BEQ tg_bb_skip                       ; |
-    ; Check: min(bl,br) > max(yb1,yb2) (strict: new bot inside aperture)
+    CMP POOL_IT,X : BCC tg_bb_skip : BEQ tg_bb_skip                     ; |
+    ; Check: IB > max(yb1,yb2) (strict: new bot inside aperture)
     LDA zp_yb1 : CMP zp_yb2 : BCS tg_nd_bmax : LDA zp_yb2               ; |
 .tg_nd_bmax
     STA zp_tmp0                                                          ; |
-    LDA POOL_BL,X : CMP POOL_BR,X : BCC tg_nd_bmin : LDA POOL_BR,X      ; |
-.tg_nd_bmin
-    CMP zp_tmp0 : BCC tg_bb_skip : BEQ tg_bb_skip                       ; |
+    LDA POOL_IB,X : CMP zp_tmp0 : BCC tg_bb_skip : BEQ tg_bb_skip       ; |
     ; Tier 2 success: new dominates. JMP to newdom_fast (moved after bb_skip
     ; to keep tg_bb_skip in the same page as the tier 2 branches).
     JMP tg_newdom_fast
@@ -1146,6 +1146,10 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA POOL_BL,Y     : STA POOL_BL,X                                   ; |
     LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
     LDA POOL_BR,Y     : STA POOL_BR,X                                   ; |
+    LDA POOL_OT,Y     : STA POOL_OT,X                                   ; |
+    LDA POOL_OB,Y     : STA POOL_OB,X                                   ; |
+    LDA POOL_IT,Y     : STA POOL_IT,X                                   ; |
+    LDA POOL_IB,Y     : STA POOL_IB,X                                   ; |
     LDA POOL_XSTART,Y : STA POOL_XSTART,X                               ; |
     ; Abutting model: left fragment includes ilo (shared boundary)
     LDA zp_ilo : STA POOL_XEND,X                                        ; |
@@ -1201,6 +1205,18 @@ ENDIF
     LDA zp_ox1 : STA POOL_XHI,X : STA POOL_XEND,X                       ; |
     LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X           ; |
     LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X           ; |
+    ; OT = min(zp_ot_l, zp_ot_r)
+    LDA zp_ot_l : CMP zp_ot_r : BCC ncf_ot_ok : LDA zp_ot_r
+.ncf_ot_ok STA POOL_OT,X
+    ; OB = max(zp_ob_l, zp_ob_r)
+    LDA zp_ob_l : CMP zp_ob_r : BCS ncf_ob_ok : LDA zp_ob_r
+.ncf_ob_ok STA POOL_OB,X
+    ; IT = max(zp_ot_l, zp_ot_r)
+    LDA zp_ot_l : CMP zp_ot_r : BCS ncf_it_ok : LDA zp_ot_r
+.ncf_it_ok STA POOL_IT,X
+    ; IB = min(zp_ob_l, zp_ob_r)
+    LDA zp_ob_l : CMP zp_ob_r : BCC ncf_ib_ok : LDA zp_ob_r
+.ncf_ib_ok STA POOL_IB,X
     JSR tg_append_x                                                     ; |
 .ncf_no_ap
     JMP tg_right_frag                                                   ; |
@@ -1249,6 +1265,10 @@ ENDIF
     LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
     LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
     LDA POOL_BR,Y   : STA POOL_BR,X                                     ; |
+    LDA POOL_OT,Y   : STA POOL_OT,X                                     ; |
+    LDA POOL_OB,Y   : STA POOL_OB,X                                     ; |
+    LDA POOL_IT,Y   : STA POOL_IT,X                                     ; |
+    LDA POOL_IB,Y   : STA POOL_IB,X                                     ; |
     ; Abutting model: right fragment includes ihi (shared boundary)
     LDA zp_ihi : STA POOL_XSTART,X                                      ; |
     LDA POOL_XEND,Y : STA POOL_XEND,X                                   ; |
@@ -1400,6 +1420,10 @@ ENDIF
     LDA POOL_BL,Y     : STA POOL_BL,X                                   ; |
     LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
     LDA POOL_BR,Y     : STA POOL_BR,X                                   ; |
+    LDA POOL_OT,Y     : STA POOL_OT,X                                   ; |
+    LDA POOL_OB,Y     : STA POOL_OB,X                                   ; |
+    LDA POOL_IT,Y     : STA POOL_IT,X                                   ; |
+    LDA POOL_IB,Y     : STA POOL_IB,X                                   ; |
     LDA zp_ox0 : STA POOL_XSTART,X                                      ; |
     LDA zp_ox1 : STA POOL_XEND,X                                        ; |
     JMP tg_append_x                                                     ; | tail-call (saves 3 cyc)
@@ -1447,6 +1471,18 @@ ENDIF
     LDA zp_ox1 : STA POOL_XHI,X : STA POOL_XEND,X                       ; |
     LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X           ; |
     LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X           ; |
+    ; OT = min(zp_ot_l, zp_ot_r)
+    LDA zp_ot_l : CMP zp_ot_r : BCC tos_ot_ok : LDA zp_ot_r
+.tos_ot_ok STA POOL_OT,X
+    ; OB = max(zp_ob_l, zp_ob_r)
+    LDA zp_ob_l : CMP zp_ob_r : BCS tos_ob_ok : LDA zp_ob_r
+.tos_ob_ok STA POOL_OB,X
+    ; IT = max(zp_ot_l, zp_ot_r)
+    LDA zp_ot_l : CMP zp_ot_r : BCS tos_it_ok : LDA zp_ot_r
+.tos_it_ok STA POOL_IT,X
+    ; IB = min(zp_ob_l, zp_ob_r)
+    LDA zp_ob_l : CMP zp_ob_r : BCC tos_ib_ok : LDA zp_ob_r
+.tos_ib_ok STA POOL_IB,X
     JMP tg_append_x                                                     ; | tail-call (saves 3 cyc)
 .no_ap
     RTS                                                                 ; |
@@ -2035,25 +2071,21 @@ ENDIF
 
     ; ========== ENTRY: seg_start is NULL ==========
     ; --- Tier 1: outer bbox reject ---
-    ; ot = min(tl, tr)
-    LDA POOL_TL,X : CMP POOL_TR,X : BCC dcl_ot_ok : LDA POOL_TR,X
-.dcl_ot_ok STA zp_tmp0    ; ot = min(tl, tr)
+    ; OT = min(tl, tr) (precomputed)
+    LDA POOL_OT,X : STA zp_tmp0    ; ot
     ; Reject if yhi < ot (line entirely above aperture)
     LDA zp_line_yhi : CMP zp_tmp0 : BCC dcl_outer_reject  ; yhi < ot → reject
 
-    ; ob = max(bl, br)
-    LDA POOL_BL,X : CMP POOL_BR,X : BCS dcl_ob_ok : LDA POOL_BR,X
-.dcl_ob_ok STA zp_tmp1    ; ob = max(bl, br)
+    ; OB = max(bl, br) (precomputed)
+    LDA POOL_OB,X : STA zp_tmp1    ; ob
     ; Reject if ylo > ob (line entirely below aperture)
     LDA zp_tmp1 : CMP zp_line_ylo : BCC dcl_outer_reject  ; ob < ylo → reject
 
     ; --- Tier 2: inner bbox accept ---
-    ; it = max(tl, tr)
-    LDA POOL_TL,X : CMP POOL_TR,X : BCS dcl_it_ok : LDA POOL_TR,X
-.dcl_it_ok STA zp_tmp0    ; it = max(tl, tr)
-    ; ib = min(bl, br)
-    LDA POOL_BL,X : CMP POOL_BR,X : BCC dcl_ib_ok : LDA POOL_BR,X
-.dcl_ib_ok STA zp_tmp1    ; ib = min(bl, br)
+    ; IT = max(tl, tr) (precomputed)
+    LDA POOL_IT,X : STA zp_tmp0    ; it
+    ; IB = min(bl, br) (precomputed)
+    LDA POOL_IB,X : STA zp_tmp1    ; ib
     ; Accept if ylo >= it AND ib >= yhi
     LDA zp_line_ylo : CMP zp_tmp0 : BCC dcl_ambiguous  ; ylo < it → ambiguous → Phase 4 CB clip
     LDA zp_tmp1 : CMP zp_line_yhi : BCS dcl_accept

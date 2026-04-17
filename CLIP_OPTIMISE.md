@@ -476,4 +476,5 @@ EOF
 
 | Date       | span_clip.bin | **S1 clip+render** | Δ | **S2 clip+render** | Δ | **Grand** | Δ | Notes |
 |------------|--------------:|-------------------:|---:|-------------------:|---:|----------:|---:|-------|
-| 2026-04-16 |       6053 B  | **166436**         |   | **281767**         |   | **448203**|   | Baseline after mel crossover-clip fix (commit af70142). Includes DCL and all tail-called NJ rasteriser work. |
+| 2026-04-16 |       6053 B  | **166436**         |       | **281767**         |       | **448203**|       | Baseline after mel crossover-clip fix (commit af70142). Includes DCL and all tail-called NJ rasteriser work. |
+| 2026-04-17 |       6175 B  | **165163**         | −1273 | **280491**         | −1276 | **445654**| −2549 | **Span pool block layout + precomputed bbox.** Pool refactored from interleaved 9-byte slots (28 max, X=slot×9) to block layout (13 fields × 32 slots, X=slot index). Added POOL_OT/OB/IT/IB precomputed at 7 write sites; 4 consumer sites (tighten old-dom/new-dom BB, portal continuation, DCL bbox) now use direct loads instead of inline min/max. ROM +122 B, pool RAM $0400–$059F. |
