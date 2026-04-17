@@ -2253,6 +2253,15 @@ ENDIF
     ; cx2 = ox1
     LDA zp_ox1 : STA zp_cb_cx2
 
+    ; Pre-set interp workspace to line-mode so all line_y_at calls
+    ; within CB clip can call interp_store directly (no shuffle).
+    ; Span eval (top/bot) clobbers the workspace; dcl_cb_line_mode
+    ; restores it afterward.
+    LDA zp_line_xl : STA zp_i_x0
+    LDA zp_line_yl : STA zp_i_y0
+    LDA zp_line_yr : STA zp_i_y1
+    LDA zp_line_dx : STA zp_div_den
+
     ; Step 2: Compute line Y at clipped X endpoints
     ; dy==0 fast path: flat line → cy1 = cy2 = yl
     LDA zp_line_dy : BNE dcl_cb_cy_slow
@@ -2260,15 +2269,16 @@ ENDIF
     JMP dcl_cb_cy_done
 .dcl_cb_cy_slow
     ; cy1 = line_y_at(cx1). CMP preserves A, so interp reuses it.
+    ; Interp workspace already in line-mode — call interp_store directly.
     LDA zp_cb_cx1 : CMP zp_line_xl : BEQ dcl_cb_cy1_yl
-    JSR dcl_line_y_at_a : EQUB $2C                        ; BIT abs: skip LDA
+    JSR interp_store : EQUB $2C                            ; BIT abs: skip LDA
 .dcl_cb_cy1_yl
     LDA zp_line_yl
     STA zp_cb_cy1
 
     ; cy2 = line_y_at(cx2)
     LDA zp_cb_cx2 : CMP zp_line_xr : BEQ dcl_cb_cy2_yr
-    JSR dcl_line_y_at_a : EQUB $2C                        ; BIT abs: skip LDA
+    JSR interp_store : EQUB $2C                            ; BIT abs: skip LDA
 .dcl_cb_cy2_yr
     LDA zp_line_yr
     STA zp_cb_cy2
