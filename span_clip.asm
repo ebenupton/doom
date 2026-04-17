@@ -2089,20 +2089,28 @@ ENDIF
 .dcl_ambiguous
     JMP dcl_cb_clip  ; trampoline → Phase 4 CB clip
 
+    ; ── dcl_accept: record seg_start for an inner-bbox-accepted entry ──
+    ; Precondition: line [xl,yl]→[xr,yr] is fully inside this span's
+    ;   inner bbox [IT,IB] over the overlap range [ox0,ox1].
+    ; Action: set seg_start = (ox0, line_y_at(ox0)):
+    ;   if ox0 == xl:        seg_start_y = yl        (common: line starts at span)
+    ;   elif dy == 0:         seg_start_y = yl        (flat line, y constant)
+    ;   else:                 seg_start_y = interp    (rare: line starts mid-span)
+    ; Then fall through to dcl_exit_check.
+    ; Carry: CMP zp_line_xl below guarantees C=1 (ox0 >= xl always),
+    ;   preserved through LDA/STA; both BCS branches are unconditional.
 .dcl_accept
-    ; Inner bbox accept! Line guaranteed inside this span's aperture.
-    ; seg_start = (ox0, line_y_at(ox0))
     LDA zp_ox0 : STA zp_seg_start_x
     CMP zp_line_xl : BNE dcl_entry_mid
-    ; ox0 == xl: use yl directly
+    ; ox0 == xl: use yl directly (C=1 from CMP, ox0==xl)
     LDA zp_line_yl : STA zp_seg_start_y
-    JMP dcl_exit_check
+    BCS dcl_exit_check                                                  ; C=1, unconditional
 .dcl_entry_mid
-    ; ox0 != xl: need line_y_at(ox0)
+    ; ox0 > xl (C=1 from CMP, preserved through LDA/BNE below)
     LDA zp_line_dy : BNE dcl_entry_mid_interp
     ; dy==0: flat line, Y = yl everywhere
     LDA zp_line_yl : STA zp_seg_start_y
-    JMP dcl_exit_check
+    BCS dcl_exit_check                                                  ; C=1, unconditional
 .dcl_entry_mid_interp
     STX zp_save0  ; save span pointer
     JSR dcl_line_y_at_ox0
