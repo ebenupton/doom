@@ -2274,61 +2274,37 @@ ENDIF
     STA zp_cb_cy2
 .dcl_cb_cy_done
 
-    ; Step 3: Evaluate span boundaries at cx1, cx2
+    ; ── Step 3: Top boundary ──────────────────────────────────────────
+    ; Bbox filter: if both cy values are below the span's tightest top
+    ; (cy >= IT = max(tl,tr) for both endpoints), the line can't cross
+    ; the top boundary anywhere.  Skip top eval + clip entirely.
     LDX zp_save0
-    ; Setup interp for span: x0=xlo, den=xhi-xlo
+    LDA zp_cb_cy1 : CMP POOL_IT,X : BCC dcl_cb_top_eval
+    LDA zp_cb_cy2 : CMP POOL_IT,X : BCC dcl_cb_top_eval
+    JMP dcl_cb_top_done                                    ; both >= IT → skip top
+
+.dcl_cb_top_eval
+    ; Evaluate top1, top2 at cx1, cx2 (fast paths first)
     LDA POOL_XLO,X : STA zp_i_x0
     LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
-    BNE dcl_cb_has_den
-    ; den=0: single-column span, use tl/bl directly
+    BNE dcl_cb_top_has_den
+    ; den=0: single-column
     LDA POOL_TL,X : STA zp_cb_top1 : STA zp_cb_top2
-    LDA POOL_BL,X : STA zp_cb_bot1 : STA zp_cb_bot2
-    JMP dcl_cb_have_bounds
-.dcl_cb_has_den
-    ; --- Anchor fast path: if cx1==xlo AND cx2==xhi, use stored values ---
-    LDA zp_cb_cx1 : CMP POOL_XLO,X : BNE dcl_cb_not_anchor
-    LDA zp_cb_cx2 : CMP POOL_XHI,X : BNE dcl_cb_not_anchor
-    LDA POOL_TL,X : STA zp_cb_top1
-    LDA POOL_TR,X : STA zp_cb_top2
-    LDA POOL_BL,X : STA zp_cb_bot1
-    LDA POOL_BR,X : STA zp_cb_bot2
-    JMP dcl_cb_have_bounds
-.dcl_cb_not_anchor
-    ; --- Constant-line fast path: if tl==tr AND bl==br, skip interp ---
-    LDA POOL_TL,X : CMP POOL_TR,X : BNE dcl_cb_need_interp
+    JMP dcl_cb_top_evaled
+.dcl_cb_top_has_den
+    ; Constant top? TL==TR
+    LDA POOL_TL,X : CMP POOL_TR,X : BNE dcl_cb_top_interp
     STA zp_cb_top1 : STA zp_cb_top2
-    LDA POOL_BL,X : CMP POOL_BR,X : BNE dcl_cb_need_interp_bot
-    STA zp_cb_bot1 : STA zp_cb_bot2
-    JMP dcl_cb_have_bounds
-.dcl_cb_need_interp_bot
-    ; TL==TR (tops constant) but BL!=BR: need bot interp only
-    ; i_x0 and div_den still valid from initial setup above
-    STA zp_i_y0  ; A = POOL_BL,X
-    LDA POOL_BR,X : STA zp_i_y1
-    LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_bot1
-    LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_bot2
-    JMP dcl_cb_have_bounds
-.dcl_cb_need_interp
-    ; top1 = interp_store(cx1, xlo, tl, xhi, tr)
+    JMP dcl_cb_top_evaled
+.dcl_cb_top_interp
+    ; Anchor fast path per endpoint: offset-zero/max in interp_store
     LDA POOL_TL,X : STA zp_i_y0
     LDA POOL_TR,X : STA zp_i_y1
     LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_top1
-    ; top2 = interp_store(cx2, ...)
     LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_top2
-    ; bot1, bot2
-    LDX zp_save0
-    LDA POOL_BL,X : STA zp_i_y0
-    LDA POOL_BR,X : STA zp_i_y1
-    ; den still set from above (interp_store doesn't change div_den internally
-    ; BUT it calls udiv16_8 which may clobber it... need to re-set)
-    LDA POOL_XHI,X : SEC : SBC POOL_XLO,X : STA zp_div_den
-    LDA POOL_XLO,X : STA zp_i_x0
-    LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_bot1
-    LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_bot2
+.dcl_cb_top_evaled
 
-.dcl_cb_have_bounds
-    ; Step 4: Top boundary clip
-    ; If cy1 < top1 AND cy2 < top2 → reject (entirely above)
+    ; Top clip: test cy vs top at each endpoint
     LDA zp_cb_cy1 : CMP zp_cb_top1 : BCS dcl_cb_top_p1_ok  ; cy1 >= top1
     LDA zp_cb_cy2 : CMP zp_cb_top2 : BCS dcl_cb_top_clip   ; cy2 >= top2 → one inside, clip
     JMP dcl_cb_reject  ; both above → reject
@@ -2336,12 +2312,9 @@ ENDIF
     ; cy1 >= top1; check cy2
     LDA zp_cb_cy2 : CMP zp_cb_top2 : BCS dcl_cb_top_done  ; cy2 >= top2 → both inside, no clip
     ; cy2 < top2, cy1 >= top1: clip at p2 end
-    ; d1 = cy1 - top1 (positive or zero)
-    LDA zp_cb_cy1 : SEC : SBC zp_cb_top1 : STA zp_tmp0  ; d1 >= 0
-    ; d2 = cy2 - top2 (negative, since cy2 < top2)
-    LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 < 0 (signed)
-    ; boundary_ix with clip_p1=0 (clip p2 end, round toward cx1)
-    LDA #0 : JSR dcl_boundary_ix  ; A = ix
+    LDA zp_cb_cy1 : SEC : SBC zp_cb_top1 : STA zp_tmp0  ; d1 = cy1 - top1 >= 0
+    LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 = cy2 - top2 < 0
+    LDA #0 : JSR dcl_boundary_ix  ; A = ix (clip p2, round toward cx1)
     STA zp_cb_cx2
     ; Recompute cy2 = line_y_at(cx2)
     LDA zp_cb_cx2 : CMP zp_line_xr : BNE dcl_cb_top_cy2_interp
@@ -2357,12 +2330,9 @@ ENDIF
 
 .dcl_cb_top_clip
     ; cy1 < top1, cy2 >= top2: clip at p1 end
-    ; d1 = cy1 - top1 (negative)
     LDA zp_cb_cy1 : SEC : SBC zp_cb_top1 : STA zp_tmp0  ; d1 < 0
-    ; d2 = cy2 - top2 (positive or zero)
     LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 >= 0
-    ; boundary_ix with clip_p1=1 (clip p1 end, round toward cx2)
-    LDA #1 : JSR dcl_boundary_ix  ; A = ix
+    LDA #1 : JSR dcl_boundary_ix  ; A = ix (clip p1, round toward cx2)
     STA zp_cb_cx1
     ; Recompute cy1 = line_y_at(cx1)
     LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_top_cy1_interp
@@ -2381,13 +2351,17 @@ ENDIF
     JMP dcl_cb_reject
 .dcl_cb_top_ok
 
-    ; Step 5: Bottom boundary clip
-    ; Need to re-evaluate bot boundaries at (possibly new) cx1, cx2
-    ; BUT: if we clipped for top, the old bot values at the original cx1/cx2
-    ; may no longer be correct. We need bot at the NEW cx1/cx2.
-    ; Optimization: only re-evaluate the endpoint that was clipped.
-    ; For simplicity: re-evaluate both bot boundaries at current cx1, cx2.
+    ; ── Step 4: Bot boundary ──────────────────────────────────────────
+    ; Bbox filter: if both cy values are above the span's tightest bot
+    ; (cy <= IB = min(bl,br) for both endpoints), the line can't cross
+    ; the bot boundary anywhere.  Skip bot eval + clip entirely.
     LDX zp_save0
+    LDA POOL_IB,X : CMP zp_cb_cy1 : BCC dcl_cb_bot_eval
+    LDA POOL_IB,X : CMP zp_cb_cy2 : BCC dcl_cb_bot_eval
+    JMP dcl_cb_bot_done                                    ; both <= IB → skip bot
+
+.dcl_cb_bot_eval
+    ; Evaluate bot1, bot2 at (possibly top-clipped) cx1, cx2
     LDA POOL_XLO,X : STA zp_i_x0
     LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
     BNE dcl_cb_bot_has_den
@@ -2395,13 +2369,18 @@ ENDIF
     LDA POOL_BL,X : STA zp_cb_bot1 : STA zp_cb_bot2
     JMP dcl_cb_bot_eval_done
 .dcl_cb_bot_has_den
+    ; Constant bot? BL==BR
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE dcl_cb_bot_interp
+    STA zp_cb_bot1 : STA zp_cb_bot2
+    JMP dcl_cb_bot_eval_done
+.dcl_cb_bot_interp
     LDA POOL_BL,X : STA zp_i_y0
     LDA POOL_BR,X : STA zp_i_y1
     LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_bot1
     LDA zp_cb_cx2 : JSR interp_store : STA zp_cb_bot2
 .dcl_cb_bot_eval_done
 
-    ; If cy1 > bot1 AND cy2 > bot2 → reject (entirely below)
+    ; Bot clip: test cy vs bot at each endpoint
     LDA zp_cb_bot1 : CMP zp_cb_cy1 : BCS dcl_cb_bot_p1_ok  ; bot1 >= cy1
     LDA zp_cb_bot2 : CMP zp_cb_cy2 : BCS dcl_cb_bot_clip   ; bot2 >= cy2 → one inside, clip
     JMP dcl_cb_reject  ; both below → reject
