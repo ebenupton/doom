@@ -2287,19 +2287,14 @@ ENDIF
 
 .dcl_cb_top_eval
     ; Evaluate top1, top2 at cx1, cx2 (fast paths first)
-    LDA POOL_XLO,X : STA zp_i_x0
-    LDA POOL_DEN,X : STA zp_div_den
-    BNE dcl_cb_top_has_den
-    ; den=0: single-column
-    LDA POOL_TL,X : STA zp_cb_top1 : STA zp_cb_top2
-    JMP dcl_cb_top_evaled
-.dcl_cb_top_has_den
-    ; Constant top? TL==TR
+    ; Constant top? TL==TR (also covers den=0 since that implies TL==TR)
     LDA POOL_TL,X : CMP POOL_TR,X : BNE dcl_cb_top_interp
     STA zp_cb_top1 : STA zp_cb_top2
     JMP dcl_cb_top_evaled
 .dcl_cb_top_interp
-    ; Anchor fast path per endpoint: offset-zero/max in interp_store
+    ; Setup interp and evaluate
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_DEN,X : STA zp_div_den
     LDA POOL_TL,X : STA zp_i_y0
     LDA POOL_TR,X : STA zp_i_y1
     LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_top1
@@ -2364,18 +2359,13 @@ ENDIF
 
 .dcl_cb_bot_eval
     ; Evaluate bot1, bot2 at (possibly top-clipped) cx1, cx2
-    LDA POOL_XLO,X : STA zp_i_x0
-    LDA POOL_DEN,X : STA zp_div_den
-    BNE dcl_cb_bot_has_den
-    ; den=0: single-column
-    LDA POOL_BL,X : STA zp_cb_bot1 : STA zp_cb_bot2
-    JMP dcl_cb_bot_eval_done
-.dcl_cb_bot_has_den
-    ; Constant bot? BL==BR
+    ; Constant bot? BL==BR (also covers den=0 since that implies BL==BR)
     LDA POOL_BL,X : CMP POOL_BR,X : BNE dcl_cb_bot_interp
     STA zp_cb_bot1 : STA zp_cb_bot2
     JMP dcl_cb_bot_eval_done
 .dcl_cb_bot_interp
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_DEN,X : STA zp_div_den
     LDA POOL_BL,X : STA zp_i_y0
     LDA POOL_BR,X : STA zp_i_y1
     LDA zp_cb_cx1 : JSR interp_store : STA zp_cb_bot1
