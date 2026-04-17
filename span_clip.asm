@@ -2160,12 +2160,10 @@ ENDIF
     ; --- Tier 3 (exact check): compute ly = line_y_at(portal_x) ---
     ; portal_x = POOL_XEND of current span (shared boundary)
     LDX zp_save0
-    LDA zp_line_dy : BEQ dcl_portal_use_yl  ; flat line: ly = yl always
+    LDA zp_line_dy : BEQ dcl_portal_use_yr  ; flat → yr (== yl)
     LDA POOL_XEND,X : CMP zp_line_xr : BEQ dcl_portal_use_yr
     JSR dcl_line_y_at_a  ; A = ly
-    JMP dcl_portal_chk_ly
-.dcl_portal_use_yl
-    LDA zp_line_yl : EQUB $2C           ; BIT abs: skip LDA zp_line_yr
+    EQUB $2C                             ; BIT abs: skip LDA yr
 .dcl_portal_use_yr
     LDA zp_line_yr
 .dcl_portal_chk_ly
@@ -2204,12 +2202,10 @@ ENDIF
     LDA POOL_XEND,X
     STA zp_ox1   ; end_x = xend of current span
     CMP zp_line_xr : BEQ dcl_exit_use_yr
-    LDA zp_line_dy : BEQ dcl_exit_use_yl
+    LDA zp_line_dy : BEQ dcl_exit_use_yr      ; dy==0 → yr (== yl for flat lines)
     ; xend < xr, sloped: interp
     LDA zp_ox1 : JSR dcl_line_y_at_a
-    EQUB $2C                                   ; BIT abs: skip LDA yl
-.dcl_exit_use_yl
-    LDA zp_line_yl : EQUB $2C                 ; BIT abs: skip LDA yr
+    EQUB $2C                                   ; BIT abs: skip LDA yr
 .dcl_exit_use_yr
     LDA zp_line_yr
 .dcl_exit_emit
