@@ -47,11 +47,11 @@ JMP draw_clipped_line ; $2015
 ; Field blocks (32 bytes each):
 ;   NEXT     linked-list next (slot number, 0 = end)
 ;   XLO      line anchor x left  (immutable after span creation)
-;   XHI      line anchor x right (immutable)
+;   DEN      xhi - xlo (precomputed denominator for interp, immutable)
 ;   TL       top y at XLO
 ;   BL       bot y at XLO
-;   TR       top y at XHI
-;   BR       bot y at XHI
+;   TR       top y at XLO+DEN
+;   BR       bot y at XLO+DEN
 ;   XSTART   active range start (mutable: shrunk by mark_solid / tighten fragments)
 ;   XEND     active range end   (mutable)
 ;   OT       min(TL, TR) — outer top (precomputed bbox)
@@ -60,14 +60,14 @@ JMP draw_clipped_line ; $2015
 ;   IB       min(BL, BR) — inner bot (precomputed bbox)
 ;
 ; Spans interpolate y at any column x ∈ [XSTART, XEND] using the line through
-; (XLO, TL/BL) — (XHI, TR/BR). XLO/XHI need not equal XSTART/XEND once a span
-; has been narrowed: the line is preserved across mark_solid splits and across
-; left/right-fragment creation in tighten, so no interp_store is needed for
-; those operations.
+; (XLO, TL/BL) — (XLO+DEN, TR/BR). XLO/DEN need not match XSTART/XEND once
+; a span has been narrowed: the line is preserved across mark_solid splits
+; and left/right-fragment creation in tighten, so no interp_store is needed
+; for those operations.
 POOL        = $0400
 POOL_NEXT   = $0400
 POOL_XLO    = $0420
-POOL_XHI    = $0440
+POOL_DEN    = $0440  ; precomputed xhi - xlo (denominator for interp)
 POOL_TL     = $0460
 POOL_BL     = $0480
 POOL_TR     = $04A0
@@ -208,7 +208,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     STA POOL_NEXT,X : STA POOL_XLO,X : STA POOL_XSTART,X                ; |
     STA POOL_TL,X : STA POOL_TR,X                                       ; |
     STA POOL_OT,X : STA POOL_IT,X                                       ; | OT=IT=0 for full-screen span
-    LDA #255 : STA POOL_XHI,X : STA POOL_XEND,X                         ; |
+    LDA #255 : STA POOL_DEN,X : STA POOL_XEND,X                         ; |
     LDA #159                                                            ; |
     STA POOL_BL,X : STA POOL_BR,X                                       ; |
     STA POOL_OB,X : STA POOL_IB,X                                       ; | OB=IB=159 for full-screen span
@@ -521,7 +521,7 @@ ENDIF
     LDY zp_prev   ; Y = original span (the left fragment)               ; |
     ; Copy line params from Y to X (sibling shares the same line)
     LDA POOL_XLO,Y  : STA POOL_XLO,X                                    ; |
-    LDA POOL_XHI,Y  : STA POOL_XHI,X                                    ; |
+    LDA POOL_DEN,Y  : STA POOL_DEN,X                                    ; |
     LDA POOL_TL,Y   : STA POOL_TL,X                                     ; |
     LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
     LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
@@ -616,7 +616,7 @@ ENDIF
     LDA POOL_XSTART,X : STA (zp_buf),Y : INY
     LDA POOL_XEND,X   : STA (zp_buf),Y : INY
     LDA POOL_XLO,X    : STA (zp_buf),Y : INY
-    LDA POOL_XHI,X    : STA (zp_buf),Y : INY
+    CLC : ADC POOL_DEN,X : STA (zp_buf),Y : INY       ; xhi = xlo + den
     LDA POOL_TL,X     : STA (zp_buf),Y : INY
     LDA POOL_BL,X     : STA (zp_buf),Y : INY
     LDA POOL_TR,X     : STA (zp_buf),Y : INY
@@ -831,7 +831,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; If the overlap endpoints exactly match the span's LINE anchors, the
     ; stored tl/bl/tr/br are already the y values at those endpoints.
     LDA zp_ox0 : CMP POOL_XLO,X : BNE old_not_anchor                     ; |
-    LDA zp_ox1 : CMP POOL_XHI,X : BNE old_not_anchor                    ; |
+    LDA zp_ox1 : SEC : SBC zp_ox0 : CMP POOL_DEN,X : BNE old_not_anchor ; |
     LDA POOL_TL,X : STA zp_ot_l                                         ; |
     LDA POOL_TR,X : STA zp_ot_r                                         ; |
     LDA POOL_BL,X : STA zp_ob_l                                         ; |
@@ -850,11 +850,11 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA POOL_TL,X
 .old_slow
     ; A holds TL on entry (from constant-line check or old_slow_reload).
-    ; Hoisted den setup: den = POOL_XHI - POOL_XLO, shared by all 4 calls.
+    ; Hoisted den setup: den from precomputed POOL_DEN, shared by all 4 calls.
     ; (The anchor fast path above guards 1-pixel spans, so den > 0.)
     STA zp_i_y0                                                          ; |
     LDA POOL_XLO,X : STA zp_i_x0                                        ; |
-    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den                 ; |
+    LDA POOL_DEN,X : STA zp_div_den                 ; |
     ; Top: y0 = tl (already in zp_i_y0), y1 = tr
     LDA POOL_TR,X : STA zp_i_y1                                          ; |
     LDA zp_ox0 : JSR interp_store : STA zp_ot_l                         ; |
@@ -1141,7 +1141,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA POOL_XSTART,Y : CMP zp_ilo : BCS tg_no_left                     ; |
     JSR alloc_span : BEQ tg_no_left                                     ; |
     LDA POOL_XLO,Y    : STA POOL_XLO,X                                  ; |
-    LDA POOL_XHI,Y    : STA POOL_XHI,X                                  ; |
+    LDA POOL_DEN,Y    : STA POOL_DEN,X                                  ; |
     LDA POOL_TL,Y     : STA POOL_TL,X                                   ; |
     LDA POOL_BL,Y     : STA POOL_BL,X                                   ; |
     LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
@@ -1202,7 +1202,8 @@ ENDIF
     JSR alloc_span : BEQ ncf_no_ap                                      ; |
     ; Dense-anchored result span (line == active range)
     LDA zp_ox0 : STA POOL_XLO,X : STA POOL_XSTART,X                     ; |
-    LDA zp_ox1 : STA POOL_XHI,X : STA POOL_XEND,X                       ; |
+    LDA zp_ox1 : STA POOL_XEND,X                                        ; |
+    SEC : SBC zp_ox0 : STA POOL_DEN,X                                   ; | den = ox1 - ox0
     LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X           ; |
     LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X           ; |
     ; OT = min(zp_ot_l, zp_ot_r)
@@ -1260,7 +1261,7 @@ ENDIF
 .tg_make_right
     JSR alloc_span : BEQ tg_no_right                                    ; |
     LDA POOL_XLO,Y  : STA POOL_XLO,X                                    ; |
-    LDA POOL_XHI,Y  : STA POOL_XHI,X                                    ; |
+    LDA POOL_DEN,Y  : STA POOL_DEN,X                                    ; |
     LDA POOL_TL,Y   : STA POOL_TL,X                                     ; |
     LDA POOL_BL,Y   : STA POOL_BL,X                                     ; |
     LDA POOL_TR,Y   : STA POOL_TR,X                                     ; |
@@ -1337,7 +1338,7 @@ ENDIF
     ; A holds TL on entry from constant-line check
     STA zp_i_y0                                                          ; |
     LDA POOL_XLO,X : STA zp_i_x0                                        ; |
-    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den                 ; |
+    LDA POOL_DEN,X : STA zp_div_den                 ; |
     LDA POOL_TR,X : STA zp_i_y1                                          ; |
     LDA zp_ox0 : JSR interp_store : STA zp_ot_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ot_r                         ; |
@@ -1415,7 +1416,7 @@ ENDIF
     JSR alloc_span : BEQ opt2_no_ap                                     ; |
     LDY zp_save1                                                        ; |
     LDA POOL_XLO,Y    : STA POOL_XLO,X                                  ; |
-    LDA POOL_XHI,Y    : STA POOL_XHI,X                                  ; |
+    LDA POOL_DEN,Y    : STA POOL_DEN,X                                  ; |
     LDA POOL_TL,Y     : STA POOL_TL,X                                   ; |
     LDA POOL_BL,Y     : STA POOL_BL,X                                   ; |
     LDA POOL_TR,Y     : STA POOL_TR,X                                   ; |
@@ -1468,7 +1469,8 @@ ENDIF
     JSR alloc_span : BEQ no_ap                                          ; |
     ; Result span is dense-anchored: line endpoints == active range endpoints
     LDA zp_ox0 : STA POOL_XLO,X : STA POOL_XSTART,X                     ; |
-    LDA zp_ox1 : STA POOL_XHI,X : STA POOL_XEND,X                       ; |
+    LDA zp_ox1 : STA POOL_XEND,X                                        ; |
+    SEC : SBC zp_ox0 : STA POOL_DEN,X                                   ; | den = ox1 - ox0
     LDA zp_ot_l : STA POOL_TL,X : LDA zp_ob_l : STA POOL_BL,X           ; |
     LDA zp_ot_r : STA POOL_TR,X : LDA zp_ob_r : STA POOL_BR,X           ; |
     ; OT = min(zp_ot_l, zp_ot_r)
@@ -1650,14 +1652,14 @@ IF EMIT_LINES
 .mel_span_not_const
     ; Anchor fast path: if ox0==xlo and ox1==xhi, use stored values
     LDA zp_save1 : CMP POOL_XLO,X : BNE mel_span_interp
-    LDA zp_save2 : CMP POOL_XHI,X : BNE mel_span_interp
+    LDA zp_save2 : SEC : SBC zp_save1 : CMP POOL_DEN,X : BNE mel_span_interp
     LDA POOL_TL,X : STA zp_ot_l : LDA POOL_TR,X : STA zp_ot_r
     LDA POOL_BL,X : STA zp_ob_l : LDA POOL_BR,X : STA zp_ob_r
     JMP mel_span_done
 .mel_span_interp
     ; Full interp: den = xhi - xlo
     LDA POOL_XLO,X : STA zp_i_x0
-    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
+    LDA POOL_DEN,X : STA zp_div_den
     LDA POOL_TL,X : STA zp_i_y0 : LDA POOL_TR,X : STA zp_i_y1
     LDA zp_save1 : JSR interp_store : STA zp_ot_l
     LDA zp_save2 : JSR interp_store : STA zp_ot_r
@@ -2286,7 +2288,7 @@ ENDIF
 .dcl_cb_top_eval
     ; Evaluate top1, top2 at cx1, cx2 (fast paths first)
     LDA POOL_XLO,X : STA zp_i_x0
-    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
+    LDA POOL_DEN,X : STA zp_div_den
     BNE dcl_cb_top_has_den
     ; den=0: single-column
     LDA POOL_TL,X : STA zp_cb_top1 : STA zp_cb_top2
@@ -2363,7 +2365,7 @@ ENDIF
 .dcl_cb_bot_eval
     ; Evaluate bot1, bot2 at (possibly top-clipped) cx1, cx2
     LDA POOL_XLO,X : STA zp_i_x0
-    LDA POOL_XHI,X : SEC : SBC zp_i_x0 : STA zp_div_den
+    LDA POOL_DEN,X : STA zp_div_den
     BNE dcl_cb_bot_has_den
     ; den=0: single-column
     LDA POOL_BL,X : STA zp_cb_bot1 : STA zp_cb_bot2
