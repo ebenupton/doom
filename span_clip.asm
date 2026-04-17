@@ -2259,20 +2259,18 @@ ENDIF
     LDA zp_line_yl : STA zp_cb_cy1 : STA zp_cb_cy2
     JMP dcl_cb_cy_done
 .dcl_cb_cy_slow
-    ; cy1 = line_y_at(cx1)
-    LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_cy1_interp
-    LDA zp_line_yl : JMP dcl_cb_cy1_done
-.dcl_cb_cy1_interp
-    LDA zp_cb_cx1 : JSR dcl_line_y_at_a
-.dcl_cb_cy1_done
+    ; cy1 = line_y_at(cx1). CMP preserves A, so interp reuses it.
+    LDA zp_cb_cx1 : CMP zp_line_xl : BEQ dcl_cb_cy1_yl
+    JSR dcl_line_y_at_a : EQUB $2C                        ; BIT abs: skip LDA
+.dcl_cb_cy1_yl
+    LDA zp_line_yl
     STA zp_cb_cy1
 
     ; cy2 = line_y_at(cx2)
-    LDA zp_cb_cx2 : CMP zp_line_xr : BNE dcl_cb_cy2_interp
-    LDA zp_line_yr : JMP dcl_cb_cy2_done
-.dcl_cb_cy2_interp
-    LDA zp_cb_cx2 : JSR dcl_line_y_at_a
-.dcl_cb_cy2_done
+    LDA zp_cb_cx2 : CMP zp_line_xr : BEQ dcl_cb_cy2_yr
+    JSR dcl_line_y_at_a : EQUB $2C                        ; BIT abs: skip LDA
+.dcl_cb_cy2_yr
+    LDA zp_line_yr
     STA zp_cb_cy2
 .dcl_cb_cy_done
 
