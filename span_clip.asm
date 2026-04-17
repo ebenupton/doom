@@ -2071,24 +2071,12 @@ ENDIF
 
     ; ========== ENTRY: seg_start is NULL ==========
     ; --- Tier 1: outer bbox reject ---
-    ; OT = min(tl, tr) (precomputed)
-    LDA POOL_OT,X : STA zp_tmp0    ; ot
-    ; Reject if yhi < ot (line entirely above aperture)
-    LDA zp_line_yhi : CMP zp_tmp0 : BCC dcl_outer_reject  ; yhi < ot → reject
-
-    ; OB = max(bl, br) (precomputed)
-    LDA POOL_OB,X : STA zp_tmp1    ; ob
-    ; Reject if ylo > ob (line entirely below aperture)
-    LDA zp_tmp1 : CMP zp_line_ylo : BCC dcl_outer_reject  ; ob < ylo → reject
+    LDA zp_line_yhi : CMP POOL_OT,X : BCC dcl_outer_reject  ; yhi < min(tl,tr) → reject
+    LDA POOL_OB,X : CMP zp_line_ylo : BCC dcl_outer_reject  ; max(bl,br) < ylo → reject
 
     ; --- Tier 2: inner bbox accept ---
-    ; IT = max(tl, tr) (precomputed)
-    LDA POOL_IT,X : STA zp_tmp0    ; it
-    ; IB = min(bl, br) (precomputed)
-    LDA POOL_IB,X : STA zp_tmp1    ; ib
-    ; Accept if ylo >= it AND ib >= yhi
-    LDA zp_line_ylo : CMP zp_tmp0 : BCC dcl_ambiguous  ; ylo < it → ambiguous → Phase 4 CB clip
-    LDA zp_tmp1 : CMP zp_line_yhi : BCS dcl_accept
+    LDA zp_line_ylo : CMP POOL_IT,X : BCC dcl_ambiguous     ; ylo < max(tl,tr) → CB clip
+    LDA POOL_IB,X : CMP zp_line_yhi : BCS dcl_accept        ; min(bl,br) >= yhi → accept
     ; yhi > ib → ambiguous
     JMP dcl_cb_clip
 
