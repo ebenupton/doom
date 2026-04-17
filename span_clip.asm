@@ -2195,23 +2195,26 @@ ENDIF
     ; Restore for emit path (ly check failed, need save0)
 .dcl_exit_no_portal
     ; Portal failed or closed: emit current segment and reset.
-    ; Compute exit point Y.
+    ; Compute exit point Y — three cases converge at dcl_exit_emit via
+    ; chained BIT abs tricks (interp skips yl, yl skips yr):
+    ;   xend == xr → A = yr
+    ;   dy == 0    → A = yl
+    ;   else       → A = line_y_at(xend)
     LDX zp_save0
-    ; Exit Y: if xr > xend, use line_y_at(xend). If xr <= xend, use yr.
     LDA POOL_XEND,X
     STA zp_ox1   ; end_x = xend of current span
     CMP zp_line_xr : BEQ dcl_exit_use_yr
-    ; xend < xr: compute line_y_at(ox1)
-    LDA zp_line_dy : BNE dcl_exit_interp
-    LDA zp_line_yl : JMP dcl_exit_emit  ; flat line: ly = yl
-.dcl_exit_interp
+    LDA zp_line_dy : BEQ dcl_exit_use_yl
+    ; xend < xr, sloped: interp
     LDA zp_ox1 : JSR dcl_line_y_at_a
-    JMP dcl_exit_emit
+    EQUB $2C                                   ; BIT abs: skip LDA yl
+.dcl_exit_use_yl
+    LDA zp_line_yl : EQUB $2C                 ; BIT abs: skip LDA yr
 .dcl_exit_use_yr
     LDA zp_line_yr
 .dcl_exit_emit
-    ; A = end_y, emit segment
-    STA zp_tmp0  ; end_y
+    ; A = end_y
+    STA zp_tmp0
     JSR dcl_emit_segment
     ; Reset seg_start
     LDA #$FF : STA zp_seg_start_x
