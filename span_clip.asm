@@ -2047,7 +2047,9 @@ ENDIF
     ; --- Skip spans entirely left of line ---
     ; Skip if xend <= xl (strict: pixel-center model)
     LDA zp_line_xl : CMP POOL_XEND,X : BCC dcl_not_left
-    JMP dcl_advance  ; xl >= xend → skip
+    ; xl >= xend → skip this span (inline advance)
+    LDA POOL_NEXT,X : TAX : BNE dcl_walk2
+    JMP dcl_flush
 .dcl_not_left
 
     ; --- Skip spans entirely right of line ---
@@ -2081,9 +2083,11 @@ ENDIF
     JMP dcl_cb_clip
 
 .dcl_outer_reject
-    JMP dcl_advance  ; trampoline: outer reject this span
+    ; Outer reject → advance to next span (inline)
+    LDA POOL_NEXT,X : TAX : BNE dcl_walk2
+    JMP dcl_flush
 .dcl_ambiguous
-    JMP dcl_cb_clip  ; trampoline: ambiguous → Phase 4 CB clip
+    JMP dcl_cb_clip  ; trampoline → Phase 4 CB clip
 
 .dcl_accept
     ; Inner bbox accept! Line guaranteed inside this span's aperture.
@@ -2145,7 +2149,8 @@ ENDIF
     LDA zp_tmp1 : CMP zp_line_yhi : BCC dcl_portal_t2  ; pb < yhi → not tier 1
     ; Tier 1 accept: continue to next span, keep seg_start
     LDX zp_save0
-    JMP dcl_advance
+    LDA POOL_NEXT,X : TAX
+    JMP dcl_walk
 
 .dcl_portal_t2
     ; --- Tier 2 (cheap reject): yhi < pt OR ylo > pb ---
@@ -2160,8 +2165,7 @@ ENDIF
     JSR dcl_line_y_at_a  ; A = ly
     JMP dcl_portal_chk_ly
 .dcl_portal_use_yl
-    LDA zp_line_yl
-    JMP dcl_portal_chk_ly
+    LDA zp_line_yl : EQUB $2C           ; BIT abs: skip LDA zp_line_yr
 .dcl_portal_use_yr
     LDA zp_line_yr
 .dcl_portal_chk_ly
@@ -2184,7 +2188,8 @@ ENDIF
 .dcl_portal_continue
     ; Continue to next span, keep seg_start
     LDX zp_save0
-    JMP dcl_advance
+    LDA POOL_NEXT,X : TAX
+    JMP dcl_walk
 
 .dcl_exit_no_portal_a
     ; Restore for emit path (ly check failed, need save0)
@@ -2211,8 +2216,9 @@ ENDIF
     ; Reset seg_start
     LDA #$FF : STA zp_seg_start_x
     LDX zp_save0
-    ; Advance to next span
-    JMP dcl_advance
+    ; Advance to next span (inline)
+    LDA POOL_NEXT,X : TAX
+    JMP dcl_walk
 
 .dcl_line_ends
     ; Line ends within this span. Emit seg_start → (xr, yr)
@@ -2222,11 +2228,6 @@ ENDIF
     JSR dcl_emit_segment
     ; Done (line fully consumed)
     RTS
-
-.dcl_advance
-    ; Move to next span
-    LDA POOL_NEXT,X : TAX
-    JMP dcl_walk
 
 .dcl_flush
     ; End of walk. If seg_start is active, emit final segment.
@@ -2466,7 +2467,8 @@ ENDIF
     JSR dcl_emit_segment
     LDA #$FF : STA zp_seg_start_x
     LDX zp_save0
-    JMP dcl_advance
+    LDA POOL_NEXT,X : TAX
+    JMP dcl_walk
 
 .dcl_cb_no_exit_clip
     ; cx2 == ox1: CB did not clip the exit. Set seg_start = (cx1, cy1)
@@ -2489,7 +2491,8 @@ ENDIF
 .dcl_cb_reject
     ; CB clip rejected — skip this span
     LDX zp_save0
-    JMP dcl_advance
+    LDA POOL_NEXT,X : TAX
+    JMP dcl_walk
 
 ; --- dcl_boundary_ix: compute intersection X for CB clip ---
 ; Input: zp_tmp0 = d1 (s8), zp_tmp1 = d2 (s8), A = clip_p1 flag (0 or 1)
@@ -2540,10 +2543,8 @@ ENDIF
     ; Subtract 1
     LDA zp_div_lo : SEC : SBC #1 : STA zp_div_lo
     LDA zp_div_hi : SBC #0 : STA zp_div_hi
-    JMP dcl_bix_do_div
 .dcl_bix_no_round
-    ; prod already in div_lo:hi (aliases)
-.dcl_bix_do_div
+    ; prod already in div_lo:hi (aliases — fall through to divide)
     JSR udiv16_8         ; A = quotient = num / denom
 
     ; ix = cx1 + quotient
