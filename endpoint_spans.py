@@ -54,8 +54,27 @@ def _interp_ceil(x, x0, y0, x1, y1):
 
 
 def _interp_store(x, x0, y0, x1, y1):
-    """Interpolate Y for span storage: round-to-nearest (no systematic bias).
-    Prevents the min/max ratchet from accumulating in one direction."""
+    """Interpolate Y: direction-split unsigned formula.
+    Matches the 6502's interp_store which always computes with |dy|
+    and adds/subtracts the quotient. Used for u8 span boundaries
+    and u8 line-Y evaluation."""
+    if x1 == x0:
+        return y0
+    offset = x - x0
+    den = x1 - x0
+    if den < 0:
+        offset, den = -offset, -den
+    if y1 >= y0:
+        dy = y1 - y0
+        return y0 + (offset * dy + den // 2) // den
+    else:
+        dy = y0 - y1
+        return y0 - (offset * dy + den // 2) // den
+
+
+def _interp_store_s16(x, x0, y0, x1, y1):
+    """Interpolate Y with signed bias: old formula for s16 seg values.
+    Matches the 6502's seg_interp_store which uses smul8 + biased negate."""
     if x1 == x0:
         return y0
     num = (y1 - y0) * (x - x0)
@@ -101,24 +120,24 @@ def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2):
     new_ex = max(1, min(255, new_ex))
     x_lo = ilo
     x_hi = x_lo + new_ex
-    nyt1 = _interp_store(x_lo, sx1, yt1, sx2, yt2)
-    nyt2 = _interp_store(x_hi, sx1, yt1, sx2, yt2)
-    nyb1 = _interp_store(x_lo, sx1, yb1, sx2, yb2)
-    nyb2 = _interp_store(x_hi, sx1, yb1, sx2, yb2)
+    nyt1 = _interp_store_s16(x_lo, sx1, yt1, sx2, yt2)
+    nyt2 = _interp_store_s16(x_hi, sx1, yt1, sx2, yt2)
+    nyb1 = _interp_store_s16(x_lo, sx1, yb1, sx2, yb2)
+    nyb2 = _interp_store_s16(x_hi, sx1, yb1, sx2, yb2)
     # Verify |new_dy| ≤ 127. If the line is too steep for any new_ex ≥ 1,
     # check whether the affected boundary is consistently off-screen
     # across [ilo, ihi] and substitute a constant if so.
     if abs(nyt2 - nyt1) > 127:
-        t_ilo = _interp_store(ilo, sx1, yt1, sx2, yt2)
-        t_ihi = _interp_store(ihi, sx1, yt1, sx2, yt2)
+        t_ilo = _interp_store_s16(ilo, sx1, yt1, sx2, yt2)
+        t_ihi = _interp_store_s16(ihi, sx1, yt1, sx2, yt2)
         if t_ilo <= 0 and t_ihi <= 0:
             nyt1 = nyt2 = 0          # top entirely above screen → clamp
         elif t_ilo >= 159 and t_ihi >= 159:
             nyt1 = nyt2 = 159        # top entirely below screen → clamp
         # else: crossing case, leave unchanged (rare, may diverge)
     if abs(nyb2 - nyb1) > 127:
-        b_ilo = _interp_store(ilo, sx1, yb1, sx2, yb2)
-        b_ihi = _interp_store(ihi, sx1, yb1, sx2, yb2)
+        b_ilo = _interp_store_s16(ilo, sx1, yb1, sx2, yb2)
+        b_ihi = _interp_store_s16(ihi, sx1, yb1, sx2, yb2)
         if b_ilo <= 0 and b_ihi <= 0:
             nyb1 = nyb2 = 0          # bot entirely above screen → clamp
         elif b_ilo >= 159 and b_ihi >= 159:
@@ -347,10 +366,10 @@ class EndpointClipSpans:
                 new_tl = yt1; new_bl = yb1
                 new_tr = yt2; new_br = yb2
             else:
-                new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
-                new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
-                new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
-                new_br = _interp_store(ox1, sx1, yb1, sx2, yb2)
+                new_tl = _interp_store_s16(ox0, sx1, yt1, sx2, yt2)
+                new_tr = _interp_store_s16(ox1, sx1, yt1, sx2, yt2)
+                new_bl = _interp_store_s16(ox0, sx1, yb1, sx2, yb2)
+                new_br = _interp_store_s16(ox1, sx1, yb1, sx2, yb2)
             # Crossover detection uses UNCLAMPED s16 values so that a line
             # that crosses entirely in negative-y territory still registers
             # as a crossover. Matches the asm which does sign-bit logic on
@@ -617,16 +636,16 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out,
         else:
             ot_l = _interp_store(sx_lo, xlo, tl, xhi, tr)
             ob_l = _interp_store(sx_lo, xlo, bl, xhi, br)
-            nt_l = _interp_store(sx_lo, sx1, yt1, sx2, yt2)
-            nb_l = _interp_store(sx_lo, sx1, yb1, sx2, yb2)
+            nt_l = _interp_store_s16(sx_lo, sx1, yt1, sx2, yt2)
+            nb_l = _interp_store_s16(sx_lo, sx1, yb1, sx2, yb2)
         if sx_hi == ox1:
             ot_r = old_tr; ob_r = old_br
             nt_r = new_tr; nb_r = new_br
         else:
             ot_r = _interp_store(sx_hi, xlo, tl, xhi, tr)
             ob_r = _interp_store(sx_hi, xlo, bl, xhi, br)
-            nt_r = _interp_store(sx_hi, sx1, yt1, sx2, yt2)
-            nb_r = _interp_store(sx_hi, sx1, yb1, sx2, yb2)
+            nt_r = _interp_store_s16(sx_hi, sx1, yt1, sx2, yt2)
+            nb_r = _interp_store_s16(sx_hi, sx1, yb1, sx2, yb2)
         if nt_l < 0: nt_l = 0
         elif nt_l > 159: nt_l = 159
         if nb_l < 0: nb_l = 0
@@ -746,10 +765,10 @@ def compute_expected_tighten_lines(spans, ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2
             new_tl = new_tr = yt1
             new_bl = new_br = yb1
         else:
-            new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
-            new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
-            new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
-            new_br = _interp_store(ox1, sx1, yb1, sx2, yb2)
+            new_tl = _interp_store_s16(ox0, sx1, yt1, sx2, yt2)
+            new_tr = _interp_store_s16(ox1, sx1, yt1, sx2, yt2)
+            new_bl = _interp_store_s16(ox0, sx1, yb1, sx2, yb2)
+            new_br = _interp_store_s16(ox1, sx1, yb1, sx2, yb2)
 
         # --- Crossover detection (on unclamped values) ---
         dt0 = old_tl - new_tl
@@ -841,10 +860,10 @@ def compute_expected_tighten_lines(spans, ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2
                     s_nt_l = s_nt_r = yt1
                     s_nb_l = s_nb_r = yb1
                 else:
-                    s_nt_l = _interp_store(sub_lo, sx1, yt1, sx2, yt2)
-                    s_nt_r = _interp_store(sub_hi, sx1, yt1, sx2, yt2)
-                    s_nb_l = _interp_store(sub_lo, sx1, yb1, sx2, yb2)
-                    s_nb_r = _interp_store(sub_hi, sx1, yb1, sx2, yb2)
+                    s_nt_l = _interp_store_s16(sub_lo, sx1, yt1, sx2, yt2)
+                    s_nt_r = _interp_store_s16(sub_hi, sx1, yt1, sx2, yt2)
+                    s_nb_l = _interp_store_s16(sub_lo, sx1, yb1, sx2, yb2)
+                    s_nb_r = _interp_store_s16(sub_hi, sx1, yb1, sx2, yb2)
 
                 # Clamp new values
                 s_nt_l = _clamp8(s_nt_l)

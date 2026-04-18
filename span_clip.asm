@@ -410,28 +410,33 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
     SEC : SBC zp_i_x0 : BEQ is_y0                                        ; |||
     CMP zp_div_den : BEQ is_y1                                           ; ||
     STA zp_mul_b                                                         ; |
-    ; dy = y1 - y0 (BEQ is_y0 catches constant-line short-circuit)
-    LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ is_y0                         ; |||||
-    JSR smul8                                                           ; |
-    ; prod guaranteed nonzero (offset!=0 AND dy!=0, verified exhaustively)
-    ; Add ex/2 to product for round-to-nearest. ex always in [1,255].
-    LDA zp_div_den : LSR A                                              ; |
-    CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; |
-    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi                            ; |
-    BMI is_neg                                                          ; |
-    ; Positive: result = y0 + quot (u8)
-    JSR udiv16_8                                                        ; |
-    CLC : ADC zp_i_y0 : RTS                                             ; |
-.is_neg
-    ; Negate the biased product, divide, then result = y0 - quot (u8)
-    SEC : LDA zp_div_den : SBC #1 : SBC zp_prod_lo : STA zp_div_lo      ; |
-    LDA #0 : SBC zp_prod_hi : STA zp_div_hi                             ; |
-    JSR udiv16_8                                                        ; |
-    EOR #$FF : SEC : ADC zp_i_y0 : RTS                                  ; |
+    ; Direction check: compare y1 vs y0. Always unsigned multiply |dy|.
+    LDA zp_i_y1 : CMP zp_i_y0 : BEQ is_y0 : BCC descending              ; ||||
+    ; ASCENDING (y1 > y0): dy = y1 - y0 (unsigned)
+    SEC : SBC zp_i_y0                                                    ; |
+    JSR umul_round_div                                                   ; |
+    CLC : ADC zp_i_y0 : RTS                                             ; | y0 + quot
+.descending
+    ; DESCENDING (y1 < y0): |dy| = y0 - y1 (unsigned)
+    LDA zp_i_y0 : SEC : SBC zp_i_y1                                     ; |
+    JSR umul_round_div                                                   ; |
+    EOR #$FF : SEC : ADC zp_i_y0 : RTS                                  ; | y0 - quot
 .is_y0
     LDA zp_i_y0 : RTS                                                   ; ||
 .is_y1
     LDA zp_i_y1 : RTS                                                   ; ||
+}
+
+; Shared helper: umul8 + round-to-nearest + udiv16_8 (tail-call).
+; Input: A = |dy| (u8), zp_mul_b = offset (u8), zp_div_den set.
+; Output: A = quotient (u8). Product always positive.
+.umul_round_div
+{
+    JSR umul8
+    LDA zp_div_den : LSR A
+    CLC : ADC zp_prod_lo : STA zp_prod_lo
+    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi
+    JMP udiv16_8                                                        ; tail-call
 }
 
 ; (interp_span removed — mark_solid no longer interpolates)
@@ -2560,20 +2565,17 @@ ENDIF
     SEC : SBC zp_line_xl : BEQ lis_yl                                    ; offset=0 → yl
     CMP zp_line_dx : BEQ lis_yr                                         ; offset=dx → yr
     STA zp_mul_b
-    ; Set div_den for udiv16_8 (deferred past shortcuts)
     LDY zp_line_dx : STY zp_div_den
-    LDA zp_line_yr : SEC : SBC zp_line_yl : BEQ lis_yl                  ; dy=0 → yl
-    JSR smul8
-    LDA zp_div_den : LSR A
-    CLC : ADC zp_prod_lo : STA zp_prod_lo
-    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi
-    BMI lis_neg
-    JSR udiv16_8
+    ; Direction check
+    LDA zp_line_yr : CMP zp_line_yl : BEQ lis_yl : BCC lis_desc         ; |||
+    ; ASCENDING: dy = yr - yl (unsigned)
+    SEC : SBC zp_line_yl
+    JSR umul_round_div
     CLC : ADC zp_line_yl : RTS
-.lis_neg
-    SEC : LDA zp_div_den : SBC #1 : SBC zp_prod_lo : STA zp_div_lo
-    LDA #0 : SBC zp_prod_hi : STA zp_div_hi
-    JSR udiv16_8
+.lis_desc
+    ; DESCENDING: |dy| = yl - yr (unsigned)
+    LDA zp_line_yl : SEC : SBC zp_line_yr
+    JSR umul_round_div
     EOR #$FF : SEC : ADC zp_line_yl : RTS
 .lis_yl
     LDA zp_line_yl : RTS
