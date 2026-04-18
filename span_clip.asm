@@ -2104,7 +2104,7 @@ ENDIF
     LDA zp_line_dy : BEQ dcl_accept_yl                                 ; dy == 0 → yl
     ; ox0 > xl, dy != 0: interp (rare path)
     STX zp_save0
-    JSR dcl_line_y_at_ox0                                              ; A = line_y_at(ox0)
+    LDY zp_ox0 : JSR dcl_line_y_setup                                 ; A = line_y_at(ox0)
     LDX zp_save0
     EQUB $2C                                                           ; BIT abs: skip LDA
 .dcl_accept_yl
@@ -2558,29 +2558,19 @@ ENDIF
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser
 
-; --- dcl_line_y_at_ox0: compute line Y at ox0 ---
-; Uses interp_store with the line as the interpolation source.
-; Input: zp_ox0 = X coordinate, line params in zp_line_*
-; Output: A = line Y at ox0
-; Clobbers: interp working set (zp_i_*, zp_mul_b, zp_prod_*, zp_div_*)
-.dcl_line_y_at_ox0
-    LDA zp_line_xl : STA zp_i_x0
-    LDA zp_line_yl : STA zp_i_y0
-    LDA zp_line_yr : STA zp_i_y1
-    LDA zp_line_dx : STA zp_div_den
-    LDA zp_ox0 : JMP interp_store
-
 ; --- dcl_line_y_at_a: compute line Y at column A ---
 ; Input: A = X coordinate, line params in zp_line_*
 ; Output: A = line Y at the given X
-; Clobbers: interp working set
+; Clobbers: Y, interp working set
+; dcl_line_y_setup: same but X coordinate already in Y.
 .dcl_line_y_at_a
-    PHA
+    TAY                                                                ; save x coord in Y (2 cyc vs PHA 3)
+.dcl_line_y_setup
     LDA zp_line_xl : STA zp_i_x0
     LDA zp_line_yl : STA zp_i_y0
     LDA zp_line_yr : STA zp_i_y1
     LDA zp_line_dx : STA zp_div_den
-    PLA : JMP interp_store
+    TYA : JMP interp_store                                            ; restore x coord (2 cyc vs PLA 4)
 }
 
 .end_code
