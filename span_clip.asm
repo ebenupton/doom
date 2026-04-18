@@ -404,19 +404,6 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
 ; Output: A = interpolated Y (u8)
 ; ======================================================================
 
-; --- dcl_line_y_at: compute line Y at a column ---
-; Uses LDY/STY to shuffle line params into interp workspace while
-; preserving A (the x coordinate), then falls through to interp_store.
-; dcl_line_y_at_ox0: loads A from zp_ox0 first.
-.dcl_line_y_at_ox0
-    LDA $E9             ; zp_ox0 (forward ref workaround)
-.dcl_line_y_at_a
-    LDY zp_line_xl : STY zp_i_x0
-    LDY zp_line_yl : STY zp_i_y0
-    LDY zp_line_yr : STY zp_i_y1
-    LDY zp_line_dx : STY zp_div_den
-    ; Fall through to interp_store with A = x coordinate.
-
 .interp_store
 {
     ; offset = x - x0 (A holds x on entry)
@@ -2557,7 +2544,41 @@ ENDIF
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser
 
-; dcl_line_y_at_a/ox0 moved before interp_store for fall-through.
+}
+
+; --- line_interp_store: compute line Y at column A ---
+; Reads directly from zp_line_xl/yl/yr/dx — no shuffle into the
+; interp workspace needed.  Defers div_den setup past offset-zero
+; and offset-max shortcuts.
+; Input: A = x column.  Output: A = line Y.
+; Clobbers: Y, mul_b, prod_*, div_*.
+.dcl_line_y_at_ox0
+    LDA $E9                      ; zp_ox0 (forward ref)
+.dcl_line_y_at_a
+.line_interp_store
+{
+    SEC : SBC zp_line_xl : BEQ lis_yl                                    ; offset=0 → yl
+    CMP zp_line_dx : BEQ lis_yr                                         ; offset=dx → yr
+    STA zp_mul_b
+    ; Set div_den for udiv16_8 (deferred past shortcuts)
+    LDY zp_line_dx : STY zp_div_den
+    LDA zp_line_yr : SEC : SBC zp_line_yl : BEQ lis_yl                  ; dy=0 → yl
+    JSR smul8
+    LDA zp_div_den : LSR A
+    CLC : ADC zp_prod_lo : STA zp_prod_lo
+    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi
+    BMI lis_neg
+    JSR udiv16_8
+    CLC : ADC zp_line_yl : RTS
+.lis_neg
+    SEC : LDA zp_div_den : SBC #1 : SBC zp_prod_lo : STA zp_div_lo
+    LDA #0 : SBC zp_prod_hi : STA zp_div_hi
+    JSR udiv16_8
+    EOR #$FF : SEC : ADC zp_line_yl : RTS
+.lis_yl
+    LDA zp_line_yl : RTS
+.lis_yr
+    LDA zp_line_yr : RTS
 }
 
 .end_code
