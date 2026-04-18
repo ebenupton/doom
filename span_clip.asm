@@ -403,6 +403,20 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
 ; Input: A = x (eval point), zp_i_x0, zp_i_y0, zp_i_y1, zp_div_den
 ; Output: A = interpolated Y (u8)
 ; ======================================================================
+
+; --- dcl_line_y_at: compute line Y at a column ---
+; Uses LDY/STY to shuffle line params into interp workspace while
+; preserving A (the x coordinate), then falls through to interp_store.
+; dcl_line_y_at_ox0: loads A from zp_ox0 first.
+.dcl_line_y_at_ox0
+    LDA $E9             ; zp_ox0 (forward ref workaround)
+.dcl_line_y_at_a
+    LDY zp_line_xl : STY zp_i_x0
+    LDY zp_line_yl : STY zp_i_y0
+    LDY zp_line_yr : STY zp_i_y1
+    LDY zp_line_dx : STY zp_div_den
+    ; Fall through to interp_store with A = x coordinate.
+
 .interp_store
 {
     ; offset = x - x0 (A holds x on entry)
@@ -2104,7 +2118,7 @@ ENDIF
     LDA zp_line_dy : BEQ dcl_accept_yl                                 ; dy == 0 → yl
     ; ox0 > xl, dy != 0: interp (rare path)
     STX zp_save0
-    LDY zp_ox0 : JSR dcl_line_y_setup                                 ; A = line_y_at(ox0)
+    JSR dcl_line_y_at_ox0                                              ; A = line_y_at(ox0)
     LDX zp_save0
     EQUB $2C                                                           ; BIT abs: skip LDA
 .dcl_accept_yl
@@ -2558,19 +2572,7 @@ ENDIF
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser
 
-; --- dcl_line_y_at_a: compute line Y at column A ---
-; Input: A = X coordinate, line params in zp_line_*
-; Output: A = line Y at the given X
-; Clobbers: Y, interp working set
-; dcl_line_y_setup: same but X coordinate already in Y.
-.dcl_line_y_at_a
-    TAY                                                                ; save x coord in Y (2 cyc vs PHA 3)
-.dcl_line_y_setup
-    LDA zp_line_xl : STA zp_i_x0
-    LDA zp_line_yl : STA zp_i_y0
-    LDA zp_line_yr : STA zp_i_y1
-    LDA zp_line_dx : STA zp_div_den
-    TYA : JMP interp_store                                            ; restore x coord (2 cyc vs PLA 4)
+; dcl_line_y_at_a/ox0 moved before interp_store for fall-through.
 }
 
 .end_code
