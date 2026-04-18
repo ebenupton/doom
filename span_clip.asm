@@ -2334,16 +2334,8 @@ ENDIF
     LDA zp_cb_cy1 : SEC : SBC zp_cb_top1 : STA zp_tmp0  ; d1 = cy1 - top1 >= 0
     LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 = cy2 - top2 < 0
     LDA #0 : JSR dcl_boundary_ix  ; A = ix (clip p2, round toward cx1)
-    STA zp_cb_cx2
-    ; Recompute cy2 = line_y_at(cx2)
-    LDA zp_cb_cx2 : CMP zp_line_xr : BNE dcl_cb_top_cy2_interp
-    LDA zp_line_yr : JMP dcl_cb_top_cy2_done
-.dcl_cb_top_cy2_interp
-    LDA zp_cb_cx2 : CMP zp_line_xl : BNE dcl_cb_top_cy2_mid
-    LDA zp_line_yl : JMP dcl_cb_top_cy2_done
-.dcl_cb_top_cy2_mid
-    LDA zp_cb_cx2 : JSR dcl_line_y_at_a
-.dcl_cb_top_cy2_done
+    STA zp_cb_cx2               ; ix is interior → never xl/xr, always interp
+    JSR dcl_line_y_at_a         ; A still = ix after STA
     STA zp_cb_cy2
     JMP dcl_cb_top_done
 
@@ -2353,15 +2345,7 @@ ENDIF
     LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 >= 0
     LDA #1 : JSR dcl_boundary_ix  ; A = ix (clip p1, round toward cx2)
     STA zp_cb_cx1
-    ; Recompute cy1 = line_y_at(cx1)
-    LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_top_cy1_interp
-    LDA zp_line_yl : JMP dcl_cb_top_cy1_done
-.dcl_cb_top_cy1_interp
-    LDA zp_cb_cx1 : CMP zp_line_xr : BNE dcl_cb_top_cy1_mid
-    LDA zp_line_yr : JMP dcl_cb_top_cy1_done
-.dcl_cb_top_cy1_mid
-    LDA zp_cb_cx1 : JSR dcl_line_y_at_a
-.dcl_cb_top_cy1_done
+    JSR dcl_line_y_at_a
     STA zp_cb_cy1
 
 .dcl_cb_top_done
@@ -2409,15 +2393,7 @@ ENDIF
     ; boundary_ix with clip_p1=0 (clip p2, round toward cx1)
     LDA #0 : JSR dcl_boundary_ix
     STA zp_cb_cx2
-    ; Recompute cy2
-    LDA zp_cb_cx2 : CMP zp_line_xr : BNE dcl_cb_bot_cy2_interp
-    LDA zp_line_yr : JMP dcl_cb_bot_cy2_done
-.dcl_cb_bot_cy2_interp
-    LDA zp_cb_cx2 : CMP zp_line_xl : BNE dcl_cb_bot_cy2_mid
-    LDA zp_line_yl : JMP dcl_cb_bot_cy2_done
-.dcl_cb_bot_cy2_mid
-    LDA zp_cb_cx2 : JSR dcl_line_y_at_a
-.dcl_cb_bot_cy2_done
+    JSR dcl_line_y_at_a
     STA zp_cb_cy2
     JMP dcl_cb_bot_done
 
@@ -2430,15 +2406,7 @@ ENDIF
     ; boundary_ix with clip_p1=1 (clip p1, round toward cx2)
     LDA #1 : JSR dcl_boundary_ix
     STA zp_cb_cx1
-    ; Recompute cy1
-    LDA zp_cb_cx1 : CMP zp_line_xl : BNE dcl_cb_bot_cy1_interp
-    LDA zp_line_yl : JMP dcl_cb_bot_cy1_done
-.dcl_cb_bot_cy1_interp
-    LDA zp_cb_cx1 : CMP zp_line_xr : BNE dcl_cb_bot_cy1_mid
-    LDA zp_line_yr : JMP dcl_cb_bot_cy1_done
-.dcl_cb_bot_cy1_mid
-    LDA zp_cb_cx1 : JSR dcl_line_y_at_a
-.dcl_cb_bot_cy1_done
+    JSR dcl_line_y_at_a
     STA zp_cb_cy1
 
 .dcl_cb_bot_done
