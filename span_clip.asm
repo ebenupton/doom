@@ -2334,8 +2334,15 @@ ENDIF
     LDA zp_cb_cy1 : SEC : SBC zp_cb_top1 : STA zp_tmp0  ; d1 = cy1 - top1 >= 0
     LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 = cy2 - top2 < 0
     LDA #0 : JSR dcl_boundary_ix  ; A = ix (clip p2, round toward cx1)
-    STA zp_cb_cx2               ; ix is interior → never xl/xr, always interp
-    JSR dcl_line_y_at_a         ; A still = ix after STA
+    STA zp_cb_cx2
+    ; cy at crossing = boundary_y(ix). Interp workspace still has the
+    ; span's top line (i_x0=XLO, i_y0=TL, i_y1=TR); boundary_ix only
+    ; clobbered div_den. Constant spans: cy = top1 directly.
+    LDA zp_cb_top1 : CMP zp_cb_top2 : BEQ dcl_cb_top_cy2_const
+    LDX zp_save0 : LDA POOL_DEN,X : STA zp_div_den
+    LDA zp_cb_cx2 : JSR interp_store : EQUB $2C
+.dcl_cb_top_cy2_const
+    LDA zp_cb_top1
     STA zp_cb_cy2
     JMP dcl_cb_top_done
 
@@ -2345,7 +2352,11 @@ ENDIF
     LDA zp_cb_cy2 : SEC : SBC zp_cb_top2 : STA zp_tmp1  ; d2 >= 0
     LDA #1 : JSR dcl_boundary_ix  ; A = ix (clip p1, round toward cx2)
     STA zp_cb_cx1
-    JSR dcl_line_y_at_a
+    LDA zp_cb_top1 : CMP zp_cb_top2 : BEQ dcl_cb_top_cy1_const
+    LDX zp_save0 : LDA POOL_DEN,X : STA zp_div_den
+    LDA zp_cb_cx1 : JSR interp_store : EQUB $2C
+.dcl_cb_top_cy1_const
+    LDA zp_cb_top1
     STA zp_cb_cy1
 
 .dcl_cb_top_done
@@ -2393,20 +2404,26 @@ ENDIF
     ; boundary_ix with clip_p1=0 (clip p2, round toward cx1)
     LDA #0 : JSR dcl_boundary_ix
     STA zp_cb_cx2
-    JSR dcl_line_y_at_a
+    ; cy at crossing = boundary_y(ix). Bot interp workspace still valid.
+    LDA zp_cb_bot1 : CMP zp_cb_bot2 : BEQ dcl_cb_bot_cy2_const
+    LDX zp_save0 : LDA POOL_DEN,X : STA zp_div_den
+    LDA zp_cb_cx2 : JSR interp_store : EQUB $2C
+.dcl_cb_bot_cy2_const
+    LDA zp_cb_bot1
     STA zp_cb_cy2
     JMP dcl_cb_bot_done
 
 .dcl_cb_bot_clip
     ; bot1 < cy1, bot2 >= cy2: clip p1 end
-    ; d1 = cy1 - bot1 (positive)
     LDA zp_cb_cy1 : SEC : SBC zp_cb_bot1 : STA zp_tmp0  ; d1 > 0
-    ; d2 = cy2 - bot2 (negative or zero)
     LDA zp_cb_cy2 : SEC : SBC zp_cb_bot2 : STA zp_tmp1  ; d2 <= 0
-    ; boundary_ix with clip_p1=1 (clip p1, round toward cx2)
     LDA #1 : JSR dcl_boundary_ix
     STA zp_cb_cx1
-    JSR dcl_line_y_at_a
+    LDA zp_cb_bot1 : CMP zp_cb_bot2 : BEQ dcl_cb_bot_cy1_const
+    LDX zp_save0 : LDA POOL_DEN,X : STA zp_div_den
+    LDA zp_cb_cx1 : JSR interp_store : EQUB $2C
+.dcl_cb_bot_cy1_const
+    LDA zp_cb_bot1
     STA zp_cb_cy1
 
 .dcl_cb_bot_done
