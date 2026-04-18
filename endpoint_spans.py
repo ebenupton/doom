@@ -22,6 +22,8 @@ import random
 import pygame
 from fp import FP_RENDER_W, FP_RENDER_H
 
+Y_BIAS = 48  # bias Y so visible [0,159] maps to [48,207] within u8
+
 
 def _rand_color():
     return (random.randint(60, 255), random.randint(60, 255), random.randint(60, 255))
@@ -85,24 +87,15 @@ def _interp_store_s16(x, x0, y0, x1, y1):
 
 
 def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2):
-    """Remap seg parameters so the 6502 8-bit interp pipeline always works.
+    """Remap seg parameters so the 6502 8-bit interp pipeline works.
 
-    Constraints:
+    Constraints (X-only — Y constraint removed with unsigned interp):
       - ex = sx2 - sx1 ≤ 255 (fits u8)
       - offset = eval_x - sx1 ∈ [0, 255] for all eval_x ∈ [ilo, ihi]
-      - |dy_top|, |dy_bot| ≤ 127 (fits s8 fast path)
 
-    The remap chooses new_ex so |new_dy| ≤ 126 in real arithmetic; after
-    interp_store rounding the actual |new_dy| ≤ 127 with margin.
-
-    Degenerate case: when the line is too steep (`max_dy > 126 * orig_ex`,
-    e.g. orig_ex=3, max_dy=548), no integer new_ex ≥ 1 can achieve
-    |new_dy| ≤ 127. In that case we check whether the line is consistently
-    off-screen throughout [ilo, ihi]; if so, we replace that boundary with
-    a constant at the clamp value (0 or 159), which is exactly equivalent
-    to what the asm's clamping+dominance would compute. The crossing case
-    (line enters and exits visible range within [ilo, ihi]) is rare enough
-    that we leave the remap as-is and accept minor divergence.
+    When orig_ex > 255 or the seg doesn't cover [ilo, ihi], resample the
+    seg at closer anchor points.  Y values are biased u8 [0,255] — no
+    clamping needed.
     """
     orig_ex = sx2 - sx1
     if orig_ex == 0:
@@ -110,38 +103,29 @@ def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2):
     max_dy = max(abs(yt2 - yt1), abs(yb2 - yb1))
     # Early return when original parameters already satisfy all constraints
     if (sx1 <= ilo and sx1 + 255 >= ihi and
-            orig_ex <= 255 and max_dy <= 127):
+            orig_ex <= 255 and max_dy <= 127 and
+            0 <= yt1 <= 255 and 0 <= yt2 <= 255 and
+            0 <= yb1 <= 255 and 0 <= yb2 <= 255):
         return sx1, sx2, yt1, yt2, yb1, yb2
-    # Compute new_ex such that |new_dy_real| ≤ 126 (rounding margin → ≤127)
+    # Compute new_ex: fit both X offset and |dy| constraints
     if max_dy >= 1:
-        new_ex = (126 * orig_ex) // max_dy
+        new_ex = min(255, (126 * orig_ex) // max_dy)
     else:
-        new_ex = orig_ex
-    new_ex = max(1, min(255, new_ex))
+        new_ex = min(255, orig_ex)
+    new_ex = max(1, new_ex)
     x_lo = ilo
     x_hi = x_lo + new_ex
     nyt1 = _interp_store_s16(x_lo, sx1, yt1, sx2, yt2)
     nyt2 = _interp_store_s16(x_hi, sx1, yt1, sx2, yt2)
     nyb1 = _interp_store_s16(x_lo, sx1, yb1, sx2, yb2)
     nyb2 = _interp_store_s16(x_hi, sx1, yb1, sx2, yb2)
-    # Verify |new_dy| ≤ 127. If the line is too steep for any new_ex ≥ 1,
-    # check whether the affected boundary is consistently off-screen
-    # across [ilo, ihi] and substitute a constant if so.
-    if abs(nyt2 - nyt1) > 127:
-        t_ilo = _interp_store_s16(ilo, sx1, yt1, sx2, yt2)
-        t_ihi = _interp_store_s16(ihi, sx1, yt1, sx2, yt2)
-        if t_ilo <= 0 and t_ihi <= 0:
-            nyt1 = nyt2 = 0          # top entirely above screen → clamp
-        elif t_ilo >= 159 and t_ihi >= 159:
-            nyt1 = nyt2 = 159        # top entirely below screen → clamp
-        # else: crossing case, leave unchanged (rare, may diverge)
-    if abs(nyb2 - nyb1) > 127:
-        b_ilo = _interp_store_s16(ilo, sx1, yb1, sx2, yb2)
-        b_ihi = _interp_store_s16(ihi, sx1, yb1, sx2, yb2)
-        if b_ilo <= 0 and b_ihi <= 0:
-            nyb1 = nyb2 = 0          # bot entirely above screen → clamp
-        elif b_ilo >= 159 and b_ihi >= 159:
-            nyb1 = nyb2 = 159        # bot entirely below screen → clamp
+    # Clamp to u8 [0,255] for the 6502 pipeline.  The slope is correct
+    # because we interpolated from the original (un-clamped) seg values;
+    # we only clamp the resampled anchor Y values here.
+    nyt1 = max(0, min(255, nyt1))
+    nyt2 = max(0, min(255, nyt2))
+    nyb1 = max(0, min(255, nyb1))
+    nyb2 = max(0, min(255, nyb2))
     return x_lo, x_hi, nyt1, nyt2, nyb1, nyb2
 
 
@@ -171,6 +155,10 @@ def _compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
 
 # Cost tracking for debug mode
 _line_cost = None
+
+# Drawn-line collector: when enabled, every pygame.draw.line from draw_clipped
+# appends (idx, x1, y1, x2, y2) so an overlay can label them.
+_drawn_lines = None  # set to [] to enable collection
 
 # Partial-aperture detector. A "partial aperture" span is one where top<bot
 # at one endpoint but top>=bot at the other — i.e., the linear top/bot pair
@@ -245,16 +233,16 @@ class EndpointClipSpans:
     mark_solid splits or tighten's lazy left/right fragment paths).
     """
 
-    __slots__ = ("spans", "bbox")
+    __slots__ = ("spans", "bbox", "y_display_offset")
 
     def __init__(self):
-        # Initial full-screen span: line and active range both [0, 255],
-        # top constant 0, bot constant 159.
-        s = (0, FP_RENDER_W - 1,           # xstart, xend
-             0, FP_RENDER_W - 1,           # xlo, xhi (line anchors)
-             0, FP_RENDER_H - 1,           # tl, bl
-             0, FP_RENDER_H - 1)           # tr, br
+        # Initial full-screen span: un-biased Y [0, 159].
+        s = (0, FP_RENDER_W - 1,                   # xstart, xend
+             0, FP_RENDER_W - 1,                   # xlo, xhi (line anchors)
+             0, FP_RENDER_H - 1,                   # tl, bl
+             0, FP_RENDER_H - 1)                   # tr, br
         self.spans = [s]
+        self.y_display_offset = 0
         self._update_bbox()
 
     def _update_bbox(self):
@@ -366,10 +354,10 @@ class EndpointClipSpans:
                 new_tl = yt1; new_bl = yb1
                 new_tr = yt2; new_br = yb2
             else:
-                new_tl = _interp_store_s16(ox0, sx1, yt1, sx2, yt2)
-                new_tr = _interp_store_s16(ox1, sx1, yt1, sx2, yt2)
-                new_bl = _interp_store_s16(ox0, sx1, yb1, sx2, yb2)
-                new_br = _interp_store_s16(ox1, sx1, yb1, sx2, yb2)
+                new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
+                new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
+                new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
+                new_br = _interp_store(ox1, sx1, yb1, sx2, yb2)
             # Crossover detection uses UNCLAMPED s16 values so that a line
             # that crosses entirely in negative-y territory still registers
             # as a crossover. Matches the asm which does sign-bit logic on
@@ -383,10 +371,13 @@ class EndpointClipSpans:
             # storage (matches asm `tg_cn{1..4}` block). Unclamped new_*
             # stays available for the crossover path — _tighten_span needs
             # the signed values to compute the crossover x correctly.
-            c_tl = 0 if new_tl < 0 else (159 if new_tl > 159 else new_tl)
-            c_tr = 0 if new_tr < 0 else (159 if new_tr > 159 else new_tr)
-            c_bl = 0 if new_bl < 0 else (159 if new_bl > 159 else new_bl)
-            c_br = 0 if new_br < 0 else (159 if new_br > 159 else new_br)
+            # With Y_BIAS, visible range is [Y_BIAS, VIS_YMAX] = [48, 207].
+            vis_min = Y_BIAS
+            vis_max = Y_BIAS + FP_RENDER_H - 1  # 207
+            c_tl = max(vis_min, min(vis_max, new_tl))
+            c_tr = max(vis_min, min(vis_max, new_tr))
+            c_bl = max(vis_min, min(vis_max, new_bl))
+            c_br = max(vis_min, min(vis_max, new_br))
 
             if (c_tl <= old_tl and c_tr <= old_tr and
                     c_bl >= old_bl and c_br >= old_br):
@@ -424,6 +415,16 @@ class EndpointClipSpans:
     # -- Clipping --------------------------------------------------------------
 
     def draw_clipped(self, lines, color, surface, stats=None):
+        # Optionally collect drawn line segments for labelling overlay
+        _real_draw = pygame.draw.line
+        if _drawn_lines is not None:
+            def _tracking_draw(surf, col, p1, p2, w=1):
+                _drawn_lines.append((len(_drawn_lines), p1[0], p1[1], p2[0], p2[1]))
+                return _real_draw(surf, col, p1, p2, w)
+            _draw = _tracking_draw
+        else:
+            _draw = _real_draw
+
         for lx1, ly1, lx2, ly2 in lines:
             if stats is not None: stats[0] += 1
             drawn = False
@@ -462,8 +463,8 @@ class EndpointClipSpans:
                         cy1 = max(y_min, top_y)
                         cy2 = min(y_max, bot_y)
                         if cy1 <= cy2:
-                            pygame.draw.line(surface, _rand_color(),
-                                             (ix, cy1), (ix, cy2), 1)
+                            _draw(surface, _rand_color(),
+                                             (ix, cy1 - self.y_display_offset), (ix, cy2 - self.y_display_offset), 1)
                             drawn = True
                             if y_min >= top_y and y_max <= bot_y:
                                 _vert_drew = 'acc'
@@ -562,9 +563,10 @@ class EndpointClipSpans:
                         if c:
                             sx, sy = seg_start
                             ex, ey = c[2], c[3]
-                            sy = max(0, min(FP_RENDER_H-1, sy))
-                            ey = max(0, min(FP_RENDER_H-1, ey))
-                            pygame.draw.line(surface, _rand_color(),
+                            yoff = self.y_display_offset
+                            sy = max(0, min(FP_RENDER_H-1, sy - yoff))
+                            ey = max(0, min(FP_RENDER_H-1, ey - yoff))
+                            _draw(surface, _rand_color(),
                                              (sx, sy), (ex, ey), 1)
                             drawn = True
                             if cost is not None: cost['cb_exit'] += 1
@@ -572,11 +574,11 @@ class EndpointClipSpans:
                     else:
                         # Last span: line ends here.
                         if trivial_entry and xr <= s[1]:
-                            # Trivially accepted line ends inside span — no clip needed
                             sx, sy = seg_start
-                            sy = max(0, min(FP_RENDER_H-1, sy))
-                            yr_c = max(0, min(FP_RENDER_H-1, yr))
-                            pygame.draw.line(surface, _rand_color(),
+                            yoff = self.y_display_offset
+                            sy = max(0, min(FP_RENDER_H-1, sy - yoff))
+                            yr_c = max(0, min(FP_RENDER_H-1, yr - yoff))
+                            _draw(surface, _rand_color(),
                                              (sx, sy), (xr, yr_c), 1)
                             drawn = True
                         else:
@@ -584,9 +586,10 @@ class EndpointClipSpans:
                             if c:
                                 sx, sy = seg_start
                                 ex, ey = c[2], c[3]
-                                sy = max(0, min(FP_RENDER_H-1, sy))
-                                ey = max(0, min(FP_RENDER_H-1, ey))
-                                pygame.draw.line(surface, _rand_color(),
+                                yoff = self.y_display_offset
+                                sy = max(0, min(FP_RENDER_H-1, sy - yoff))
+                                ey = max(0, min(FP_RENDER_H-1, ey - yoff))
+                                _draw(surface, _rand_color(),
                                                  (sx, sy), (ex, ey), 1)
                                 drawn = True
                                 if cost is not None: cost['cb_exit'] += 1
@@ -619,11 +622,10 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out,
         cx = _crossover_x(ox0, ox1, db0, db1)
         if cx is not None: splits.append(cx)
     splits.sort()
-    splits.append(ox1 + 1)
 
-    for i in range(len(splits) - 1):
+    for i in range(len(splits)):
         sx_lo = splits[i]
-        sx_hi = splits[i + 1] - 1
+        sx_hi = splits[i + 1] if i + 1 < len(splits) else ox1
         if sx_hi < sx_lo: continue
         # Reuse cached values at the ox0/ox1 ends of the sub-intervals.
         # Caller passes UNCLAMPED new_*; we clamp after fetching so that
@@ -636,24 +638,22 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out,
         else:
             ot_l = _interp_store(sx_lo, xlo, tl, xhi, tr)
             ob_l = _interp_store(sx_lo, xlo, bl, xhi, br)
-            nt_l = _interp_store_s16(sx_lo, sx1, yt1, sx2, yt2)
-            nb_l = _interp_store_s16(sx_lo, sx1, yb1, sx2, yb2)
+            nt_l = _interp_store(sx_lo, sx1, yt1, sx2, yt2)
+            nb_l = _interp_store(sx_lo, sx1, yb1, sx2, yb2)
         if sx_hi == ox1:
             ot_r = old_tr; ob_r = old_br
             nt_r = new_tr; nb_r = new_br
         else:
             ot_r = _interp_store(sx_hi, xlo, tl, xhi, tr)
             ob_r = _interp_store(sx_hi, xlo, bl, xhi, br)
-            nt_r = _interp_store_s16(sx_hi, sx1, yt1, sx2, yt2)
-            nb_r = _interp_store_s16(sx_hi, sx1, yb1, sx2, yb2)
-        if nt_l < 0: nt_l = 0
-        elif nt_l > 159: nt_l = 159
-        if nb_l < 0: nb_l = 0
-        elif nb_l > 159: nb_l = 159
-        if nt_r < 0: nt_r = 0
-        elif nt_r > 159: nt_r = 159
-        if nb_r < 0: nb_r = 0
-        elif nb_r > 159: nb_r = 159
+            nt_r = _interp_store(sx_hi, sx1, yt1, sx2, yt2)
+            nb_r = _interp_store(sx_hi, sx1, yb1, sx2, yb2)
+        vis_min = Y_BIAS
+        vis_max = Y_BIAS + FP_RENDER_H - 1  # 207
+        nt_l = max(vis_min, min(vis_max, nt_l))
+        nb_l = max(vis_min, min(vis_max, nb_l))
+        nt_r = max(vis_min, min(vis_max, nt_r))
+        nb_r = max(vis_min, min(vis_max, nb_r))
         rt_l = max(ot_l, nt_l); rb_l = min(ob_l, nb_l)
         rt_r = max(ot_r, nt_r); rb_r = min(ob_r, nb_r)
         # Opt 2: if old wins both top and bot at the sub-interval endpoints,
@@ -708,11 +708,13 @@ def _crossover_x_6502(ox0, ox1, d0, d1):
 
 
 def _clamp8(v):
-    """Clamp a signed value to [0, 159] matching the 6502's clamping."""
-    if v < 0:
-        return 0
-    if v > 159:
-        return 159
+    """Clamp a signed value to [Y_BIAS, VIS_YMAX] matching the 6502's clamping."""
+    vis_min = Y_BIAS
+    vis_max = Y_BIAS + FP_RENDER_H - 1  # 207
+    if v < vis_min:
+        return vis_min
+    if v > vis_max:
+        return vis_max
     return v
 
 
@@ -765,10 +767,10 @@ def compute_expected_tighten_lines(spans, ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2
             new_tl = new_tr = yt1
             new_bl = new_br = yb1
         else:
-            new_tl = _interp_store_s16(ox0, sx1, yt1, sx2, yt2)
-            new_tr = _interp_store_s16(ox1, sx1, yt1, sx2, yt2)
-            new_bl = _interp_store_s16(ox0, sx1, yb1, sx2, yb2)
-            new_br = _interp_store_s16(ox1, sx1, yb1, sx2, yb2)
+            new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
+            new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
+            new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
+            new_br = _interp_store(ox1, sx1, yb1, sx2, yb2)
 
         # --- Crossover detection (on unclamped values) ---
         dt0 = old_tl - new_tl
@@ -860,10 +862,10 @@ def compute_expected_tighten_lines(spans, ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2
                     s_nt_l = s_nt_r = yt1
                     s_nb_l = s_nb_r = yb1
                 else:
-                    s_nt_l = _interp_store_s16(sub_lo, sx1, yt1, sx2, yt2)
-                    s_nt_r = _interp_store_s16(sub_hi, sx1, yt1, sx2, yt2)
-                    s_nb_l = _interp_store_s16(sub_lo, sx1, yb1, sx2, yb2)
-                    s_nb_r = _interp_store_s16(sub_hi, sx1, yb1, sx2, yb2)
+                    s_nt_l = _interp_store(sub_lo, sx1, yt1, sx2, yt2)
+                    s_nt_r = _interp_store(sub_hi, sx1, yt1, sx2, yt2)
+                    s_nb_l = _interp_store(sub_lo, sx1, yb1, sx2, yb2)
+                    s_nb_r = _interp_store(sub_hi, sx1, yb1, sx2, yb2)
 
                 # Clamp new values
                 s_nt_l = _clamp8(s_nt_l)
@@ -981,6 +983,4 @@ def _clip_to_span(lx1, ly1, lx2, ly2, s):
     else:
         if cx1 < cx2: return None
 
-    cy1 = max(0, min(FP_RENDER_H - 1, cy1))
-    cy2 = max(0, min(FP_RENDER_H - 1, cy2))
     return (cx1, cy1, cx2, cy2)

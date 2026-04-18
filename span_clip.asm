@@ -80,6 +80,9 @@ POOL_IT     = $0560
 POOL_IB     = $0580
 NUM_SLOTS   = 32
 
+Y_BIAS = 48   ; bias Y so visible [0,159] maps to [48,207] within u8
+VIS_YMAX = Y_BIAS + 159  ; = 207: maximum biased visible Y
+
 ; Quarter-square multiply tables (pre-loaded by the Python harness).
 ; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
 ; used when a+b overflows u8.
@@ -202,16 +205,17 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     STA POOL_NEXT,X : TAX                                               ; ||
     BNE il                 ; always taken                               ; |
 .id  LDA #0 : STA POOL_NEXT,X                                           ; |
-    ; Active list: slot 1 = full screen, line and active range both [0, 255].
+    ; Active list: slot 1 = full screen with biased Y [Y_BIAS, Y_BIAS+159].
     LDX #1                 ; slot 1 (index 1)                           ; |
     STX zp_head                                                         ; |
     STA POOL_NEXT,X : STA POOL_XLO,X : STA POOL_XSTART,X                ; |
+    LDA #Y_BIAS                                                        ; |
     STA POOL_TL,X : STA POOL_TR,X                                       ; |
-    STA POOL_OT,X : STA POOL_IT,X                                       ; | OT=IT=0 for full-screen span
+    STA POOL_OT,X : STA POOL_IT,X                                       ; | OT=IT=Y_BIAS
     LDA #255 : STA POOL_DEN,X : STA POOL_XEND,X                         ; |
-    LDA #159                                                            ; |
+    LDA #(Y_BIAS + 159)                                                ; |
     STA POOL_BL,X : STA POOL_BR,X                                       ; |
-    STA POOL_OB,X : STA POOL_IB,X                                       ; | OB=IB=159 for full-screen span
+    STA POOL_OB,X : STA POOL_IB,X                                       ; | OB=IB=Y_BIAS+159
     STX zp_hg_cache         ; init cache to slot 1 (the initial span)   ; |
     RTS                                                                 ; |
 }
@@ -263,18 +267,7 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
 
 ; (interp_core removed — inlined into interp_store below.)
 
-; --- SMUL8: signed 8-bit x unsigned 8-bit multiply ---
-; If A >= 0, falls through to umul8.  If A < 0, negates, calls umul8,
-; correction.  Result: zp_prod_lo:zp_prod_hi (s16).
-; s8 × u8: A(s8) × zp_mul_b(u8) → zp_prod_lo:zp_prod_hi(s16)
-.smul8
-{
-    BPL umul8                                                           ; |
-    ; A is negative (s8). Compute using unsigned interpretation:
-    ; A_s8 * B = A_u8 * B - 256 * B. So: umul8(A_u8, B), then prod_hi -= B.
-    JSR umul8                                                           ; |
-    LDA zp_prod_hi : SEC : SBC zp_mul_b : STA zp_prod_hi : RTS          ; |
-}
+; (smul8 removed — no longer used with u8 Y_BIAS pipeline)
 
 ; ======================================================================
 ; UDIV16_8: unsigned 16/8 restoring division
@@ -344,59 +337,13 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
 }
 ; (pad removed after udiv16_8)
 
-; ======================================================================
-; SEG_INTERP_STORE: interpolate seg Y at column X (s16 result)
-;
-; Evaluates: y0 + round_nearest(dy * offset / ex)
-;   dy = y1 - y0 (s8), offset = x - sx1 (u8), ex = sx2 - sx1 (u8)
-;
-; Seg Y values are s16 (may be off-screen).  The remap step guarantees
-; |dy| <= 127 and ex <= 255, keeping the s8*u8 multiply and u16/u8
-; divide within range.  Short-circuits on dy==0 and prod==0.
-; Returns: A = lo byte, Y = hi byte of s16 result.
-; ======================================================================
-.seg_interp_store
-{
-    ; offset = x - sx1 (A holds x on entry)
-    SEC : SBC zp_sx1 : BEQ sis_y0 : CMP zp_div_den : BEQ sis_y1         ; |||||
-    STA zp_mul_b                                                         ; |
-    ; dy = y1 - y0 (BEQ sis_y0 catches dy==0 constant-line shortcut)
-    LDA zp_i_y1 : SEC : SBC zp_i_y0 : BEQ sis_y0                        ; |||||
-    JSR smul8                                                           ; ||
-    ; prod guaranteed nonzero (offset!=0 AND dy!=0, verified exhaustively)
-    ; ex always in [1,255] post-remap; bias = ex/2 for round-to-nearest
-    LDA zp_div_den : LSR A                                              ; |
-    CLC : ADC zp_prod_lo : STA zp_prod_lo                               ; ||
-    LDA zp_prod_hi : ADC #0 : STA zp_prod_hi                            ; ||
-    BMI sis_neg                                                         ; |
-    ; Positive: result = y0 + quot (s16). Returns A=lo, Y=hi.
-    JSR udiv16_8                                                        ; |
-    CLC : ADC zp_i_y0 : TAX     ; X = result_lo (udiv leaves X=0, safe to clobber)  ; |
-    LDA zp_div_hi : ADC zp_i_y0h : TAY                                  ; |
-    TXA : RTS                                                           ; |
-.sis_neg
-    ; Negate the biased product, divide, then result = y0 - quot (s16)
-    SEC : LDA zp_div_den : SBC #1 : SBC zp_prod_lo : STA zp_div_lo      ; ||
-    LDA #0 : SBC zp_prod_hi : STA zp_div_hi                             ; |
-    JSR udiv16_8                                                        ; |
-    SEC : LDA zp_i_y0 : SBC zp_div_lo : TAX                             ; |
-    LDA zp_i_y0h : SBC zp_div_hi : TAY                                  ; |
-    TXA : RTS                                                           ; |
-.sis_y0
-    LDY zp_i_y0h                ; Y = y0 high, A = y0 low (RTS caller)  ; |
-    LDA zp_i_y0 : RTS                                                   ; ||
-.sis_y1
-    LDY zp_i_y1h                ; Y = y1 high, A = y1 low (offset==den) ; |
-    LDA zp_i_y1 : RTS                                                   ; ||
-}
-
-; (seg_interp_core removed — inlined into seg_interp_store above.)
+; (seg_interp_store + smul8 removed — replaced by u8 interp_store with Y_BIAS)
 
 ; ======================================================================
-; INTERP_STORE: interpolate old span Y at column X (u8 result)
+; INTERP_STORE: interpolate Y at column X (u8 result)
 ;
-; Same formula as seg_interp_store but for spans whose boundaries are
-; always u8 in [0,159].  Simpler tail: u8 add/sub instead of s16.
+; Used for both old span boundaries AND new seg boundaries (with Y_BIAS,
+; all Y values are u8).  Direction-split: always unsigned multiply |dy|.
 ; Caller pre-computes den = xhi - xlo once per span and reuses it
 ; for all 4 boundary interps (tl, tr, bl, br).
 ;
@@ -874,8 +821,10 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
 .tg_newdom_fast
     ; New dominates everywhere. Set dummy old values so the no-crossover
     ; path produces the new seg's boundary values in the result span.
-    LDA #0 : STA zp_ot_l : STA zp_ot_r                                  ; |
-    LDA #159 : STA zp_ob_l : STA zp_ob_r                                ; |
+    ; Use Y_BIAS/VIS_YMAX as sentinels so results stay in visible range
+    ; (avoids SBC #Y_BIAS underflow in edge emission rasteriser writes).
+    LDA #Y_BIAS : STA zp_ot_l : STA zp_ot_r                             ; |
+    LDA #VIS_YMAX : STA zp_ob_l : STA zp_ob_r                           ; |
     STX zp_save1                                                         ; |
     JMP tg_pod_skip   ; skip post-old-interp check (dummy values always fail it)
 .old_done
@@ -898,62 +847,61 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; ---------- NEW seg: cache check for left-endpoint reuse -----------
     LDA zp_ox0 : CMP zp_cache_ox1 : BNE new_no_cache
     ; Cache hit: reuse left-endpoint seg values from previous span
-    LDA zp_cache_nt : STA zp_nt_l : LDA zp_cache_nt_h : STA zp_nt_lh
-    LDA zp_cache_nb : STA zp_nb_l : LDA zp_cache_nb_h : STA zp_nb_lh
+    LDA zp_cache_nt : STA zp_nt_l
+    LDA zp_cache_nb : STA zp_nb_l
+    LDA #0 : STA zp_nt_lh : STA zp_nb_lh                                ; | hi bytes = 0
     JMP new_right_only
 .new_no_cache
     ; ---------- NEW seg: fast path when (ox0,ox1) == (sx1,sx2) -----------
     LDA zp_ox0 : CMP zp_sx1 : BNE new_not_anchor                        ; |
     LDA zp_ox1 : CMP zp_sx2 : BNE new_not_anchor                        ; |
-    ; Copy seg's s16 anchor values verbatim
+    ; Copy seg's u8 anchor values verbatim
     LDA zp_yt1  : STA zp_nt_l                                           ; |
-    LDA zp_yt1h : STA zp_nt_lh                                          ; |
     LDA zp_yt2  : STA zp_nt_r                                           ; |
-    LDA zp_yt2h : STA zp_nt_rh                                          ; |
     LDA zp_yb1  : STA zp_nb_l                                           ; |
-    LDA zp_yb1h : STA zp_nb_lh                                          ; |
     LDA zp_yb2  : STA zp_nb_r                                           ; |
-    LDA zp_yb2h : STA zp_nb_rh                                          ; |
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi bytes = 0
     JMP new_done                                                        ; |
 .new_not_anchor
-    ; --- Constant-line NEW seg fast path: yt1==yt2 AND yb1==yb2 (s16) ---
+    ; --- Constant-line NEW seg fast path: yt1==yt2 AND yb1==yb2 (u8) ---
     LDA zp_yt1 : CMP zp_yt2 : BNE new_slow                              ; |
-    LDA zp_yt1h : CMP zp_yt2h : BNE new_slow                            ; |
     LDA zp_yb1 : CMP zp_yb2 : BNE new_slow                              ; |
-    LDA zp_yb1h : CMP zp_yb2h : BNE new_slow                            ; |
-    ; Constant line: both endpoints are identical s16 values.
+    ; Constant line: both endpoints identical.
     LDA zp_yt1  : STA zp_nt_l  : STA zp_nt_r                            ; |
-    LDA zp_yt1h : STA zp_nt_lh : STA zp_nt_rh                           ; |
     LDA zp_yb1  : STA zp_nb_l  : STA zp_nb_r                            ; |
-    LDA zp_yb1h : STA zp_nb_lh : STA zp_nb_rh                           ; |
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi bytes = 0
     JMP new_done                                                        ; |
 .new_slow
     ; Hoisted den setup: den = sx2 - sx1. Guaranteed > 0 by remap.
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
-    ; Top: y0 = yt1 (s16), y1 = yt2 (s16)
-    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
-    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
-    LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; ||
-    LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; ||
-    ; Bot: y0 = yb1 (s16), y1 = yb2 (s16)
-    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
-    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
-    LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; ||
-    LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; ||
+    LDA zp_sx1 : STA zp_i_x0                                             ; |
+    ; Top: y0 = yt1 (u8 with Y_BIAS), y1 = yt2
+    LDA zp_yt1 : STA zp_i_y0                                             ; |
+    LDA zp_yt2 : STA zp_i_y1                                             ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_nt_l                         ; ||
+    LDA zp_ox1 : JSR interp_store : STA zp_nt_r                         ; ||
+    ; Bot: y0 = yb1 (u8), y1 = yb2
+    LDA zp_yb1 : STA zp_i_y0                                             ; |
+    LDA zp_yb2 : STA zp_i_y1                                             ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_nb_l                         ; ||
+    LDA zp_ox1 : JSR interp_store : STA zp_nb_r                         ; ||
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi bytes = 0
     JMP new_done                                                         ; |
 .new_right_only
     ; Cache hit: left-endpoint seg values already set. Compute right only.
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
-    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
-    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
-    LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; ||
-    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
-    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
-    LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; ||
+    LDA zp_sx1 : STA zp_i_x0                                             ; |
+    LDA zp_yt1 : STA zp_i_y0                                             ; |
+    LDA zp_yt2 : STA zp_i_y1                                             ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_nt_r                         ; ||
+    LDA zp_yb1 : STA zp_i_y0                                             ; |
+    LDA zp_yb2 : STA zp_i_y1                                             ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_nb_r                         ; ||
+    LDA #0 : STA zp_nt_rh : STA zp_nb_rh                                ; | hi bytes = 0
 .new_done
     ; Cache right-endpoint seg values for reuse by next contiguous span
-    LDA zp_nt_r : STA zp_cache_nt : LDA zp_nt_rh : STA zp_cache_nt_h
-    LDA zp_nb_r : STA zp_cache_nb : LDA zp_nb_rh : STA zp_cache_nb_h
+    LDA zp_nt_r : STA zp_cache_nt
+    LDA zp_nb_r : STA zp_cache_nb
     LDA zp_ox1 : STA zp_cache_ox1
     ; Set portal continuation: record span's xend for contiguity check
     LDX zp_save1 : LDA POOL_XEND,X : STA zp_tg_cont
@@ -961,14 +909,12 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; Only narrow when all-on-screen (bb_flags=$40); cached must be on-screen.
     LDA zp_bb_flags : BEQ tg_nd_skip                                    ; |
     ; Narrow top: seg_top_max = max(cached_nt, yt2)
-    LDA zp_cache_nt_h : BNE tg_nd_top_skip                              ; |
-    LDA zp_cache_nt : CMP #160 : BCS tg_nd_top_skip                     ; |
+    LDA zp_cache_nt : CMP #(VIS_YMAX + 1) : BCS tg_nd_top_skip          ; |
     CMP zp_yt2 : BCS tg_nd_top_ok : LDA zp_yt2                          ; |
 .tg_nd_top_ok STA zp_bb_yt_max                                          ; |
 .tg_nd_top_skip
     ; Narrow bot: seg_bot_min = min(cached_nb, yb2)
-    LDA zp_cache_nb_h : BNE tg_nd_skip                                  ; |
-    LDA zp_cache_nb : CMP #160 : BCS tg_nd_skip                         ; |
+    LDA zp_cache_nb : CMP #(VIS_YMAX + 1) : BCS tg_nd_skip              ; |
     CMP zp_yb2 : BCC tg_nd_bot_ok : LDA zp_yb2                          ; |
 .tg_nd_bot_ok STA zp_bb_yb_min                                          ; |
 .tg_nd_skip
@@ -1079,15 +1025,11 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     STA zp_cx_bot                                                        ; shared store
 .tg_cc_done
 
-    ; --- Clamp new s16 values to [0,159] u8 for dominance check ---
-    ; Fast path: if all 4 hi bytes are 0 and all lo bytes < 160, no clamp needed.
+    ; --- Clamp new s16 values for dominance check ---
+    ; With Y_BIAS, all values reaching here are u8 (hi bytes = 0).
+    ; Skip clamping when all hi bytes are zero.
     LDA zp_nt_lh : ORA zp_nt_rh : ORA zp_nb_lh : ORA zp_nb_rh           ; |
-    BNE tg_clamp_slow                                                    ; |
-    LDA zp_nt_l : CMP #160 : BCS tg_clamp_slow                          ; |
-    LDA zp_nt_r : CMP #160 : BCS tg_clamp_slow                          ; |
-    LDA zp_nb_l : CMP #160 : BCS tg_clamp_slow                          ; |
-    LDA zp_nb_r : CMP #160 : BCS tg_clamp_slow                          ; |
-    BCC tg_clamp_done                                                    ; | C=0 from BCS not taken
+    BEQ tg_clamp_done                                                    ; | all u8 → no clamp
 ; (2-byte clamp pad removed)
 .tg_clamp_slow
     ; Fast path: if both top hi bytes are negative, clamp tops to 0 and skip
@@ -1097,32 +1039,32 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; hi bytes already nonzero (negative) → no need to set them
     JMP tg_clamp_nb
 .tg_clamp_full
-    ; High byte: negative→0, positive overflow (hi>0)→159, 0→check low
-    ; byte (in [0,255], clamp [160,255] to 159).
+    ; High byte: negative→0, positive overflow (hi>0)→VIS_YMAX, 0→check low
+    ; byte (in [0,255], clamp [VIS_YMAX+1,255] to VIS_YMAX).
     ; When clamping occurs, set hi byte to nonzero so edge emission guard fires.
     LDA zp_nt_lh : BMI tg_cn1z : BNE tg_cn1f
-    LDA zp_nt_l : CMP #160 : BCC tg_cn1s
+    LDA zp_nt_l : CMP #(VIS_YMAX + 1) : BCC tg_cn1s
     LDA #1 : STA zp_nt_lh                                               ; mark clamped
-.tg_cn1f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.tg_cn1f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn1z LDA #0
 .tg_cn1s STA zp_nt_l                                                    ; |
     LDA zp_nt_rh : BMI tg_cn2z : BNE tg_cn2f
-    LDA zp_nt_r : CMP #160 : BCC tg_cn2s
+    LDA zp_nt_r : CMP #(VIS_YMAX + 1) : BCC tg_cn2s
     LDA #1 : STA zp_nt_rh                                               ; mark clamped
-.tg_cn2f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.tg_cn2f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn2z LDA #0
 .tg_cn2s STA zp_nt_r                                                    ; |
 .tg_clamp_nb
     LDA zp_nb_lh : BMI tg_cn3z : BNE tg_cn3f
-    LDA zp_nb_l : CMP #160 : BCC tg_cn3s
+    LDA zp_nb_l : CMP #(VIS_YMAX + 1) : BCC tg_cn3s
     LDA #1 : STA zp_nb_lh                                               ; mark clamped
-.tg_cn3f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.tg_cn3f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn3z LDA #0
 .tg_cn3s STA zp_nb_l                                                    ; |
     LDA zp_nb_rh : BMI tg_cn4z : BNE tg_cn4f
-    LDA zp_nb_r : CMP #160 : BCC tg_cn4s
+    LDA zp_nb_r : CMP #(VIS_YMAX + 1) : BCC tg_cn4s
     LDA #1 : STA zp_nb_rh                                               ; mark clamped
-.tg_cn4f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.tg_cn4f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .tg_cn4z LDA #0
 .tg_cn4s STA zp_nb_r                                                    ; |
 .tg_clamp_done
@@ -1235,11 +1177,11 @@ ENDIF
     LDA zp_cx_top : CMP zp_cx_bot : BCC tg_2sorted : BEQ tg_split_top
     LDY zp_cx_bot : STA zp_cx_bot : STY zp_cx_top
 .tg_2sorted
-    ; 3 closed intervals: [ox0, cx_top-1], [cx_top, cx_bot-1], [cx_bot, final_ox1]
-    LDA zp_cx_top : SEC : SBC #1 : STA zp_ox1
+    ; 3 sharing intervals: [ox0, cx_top], [cx_top, cx_bot], [cx_bot, final_ox1]
+    LDA zp_cx_top : STA zp_ox1
     JSR tg_overlap_sub
     LDA zp_cx_top : STA zp_ox0
-    LDA zp_cx_bot : SEC : SBC #1 : STA zp_ox1
+    LDA zp_cx_bot : STA zp_ox1
     JSR tg_overlap_sub
     LDA zp_cx_bot : STA zp_ox0
     LDA zp_final_ox1 : STA zp_ox1
@@ -1249,9 +1191,9 @@ ENDIF
 .tg_split_bot
     LDA zp_cx_bot                                                       ; |
 .tg_split_one
-    ; A = single crossover X. 2 closed intervals: [ox0, cx-1], [cx, final_ox1]
-    STA zp_tmp3                    ; save cx (tmp3 free between tg_overlap_sub calls)  ; |
-    SEC : SBC #1 : STA zp_ox1                                           ; |
+    ; A = single crossover X. 2 sharing intervals: [ox0, cx], [cx, final_ox1]
+    STA zp_tmp3                    ; save cx                             ; |
+    STA zp_ox1                     ; left sub-interval ends AT cx (shared)  ; |
     JSR tg_overlap_sub                                                  ; |
     LDA zp_tmp3 : STA zp_ox0                                            ; |
     LDA zp_final_ox1 : STA zp_ox1                                       ; |
@@ -1353,60 +1295,54 @@ ENDIF
     LDA zp_ox0 : JSR interp_store : STA zp_ob_l                         ; |
     LDA zp_ox1 : JSR interp_store : STA zp_ob_r                         ; |
 .tos_old_done
-    ; --- New seg: constant-line fast path or 4 seg_interp_store calls ---
+    ; --- New seg: constant-line fast path or 4 interp_store calls (u8) ---
     LDA zp_yt1 : CMP zp_yt2 : BNE tos_new_slow                          ; |
-    LDA zp_yt1h : CMP zp_yt2h : BNE tos_new_slow                        ; |
     LDA zp_yb1 : CMP zp_yb2 : BNE tos_new_slow                          ; |
-    LDA zp_yb1h : CMP zp_yb2h : BNE tos_new_slow                        ; |
+    ; Constant line: both endpoints identical.
     LDA zp_yt1  : STA zp_nt_l  : STA zp_nt_r                            ; |
-    LDA zp_yt1h : STA zp_nt_lh : STA zp_nt_rh                           ; |
     LDA zp_yb1  : STA zp_nb_l  : STA zp_nb_r                            ; |
-    LDA zp_yb1h : STA zp_nb_lh : STA zp_nb_rh                           ; |
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi bytes = 0
     JMP tos_new_done                                                    ; |
 .tos_new_slow
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
-    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h               ; |
-    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h               ; |
-    LDA zp_ox0 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh      ; |
-    LDA zp_ox1 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh      ; |
-    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h               ; |
-    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h               ; |
-    LDA zp_ox0 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh      ; |
-    LDA zp_ox1 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh      ; |
+    LDA zp_sx1 : STA zp_i_x0                                             ; |
+    LDA zp_yt1 : STA zp_i_y0                                             ; |
+    LDA zp_yt2 : STA zp_i_y1                                             ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_nt_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_nt_r                         ; |
+    LDA zp_yb1 : STA zp_i_y0                                             ; |
+    LDA zp_yb2 : STA zp_i_y1                                             ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_nb_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_nb_r                         ; |
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi bytes = 0
 .tos_new_done
-    ; Clamp s16 new values to [0,159] for unsigned max/min.
-    ; Fast path: if all hi bytes are 0 and all lo bytes < 160, skip.
+    ; Clamp s16 new values for dominance check.
+    ; With Y_BIAS, all values are u8 (hi bytes = 0). Skip clamping.
     LDA zp_nt_lh : ORA zp_nt_rh : ORA zp_nb_lh : ORA zp_nb_rh           ; |
-    BNE tos_clamp_slow                                                   ; |
-    LDA zp_nt_l : CMP #160 : BCS tos_clamp_slow                         ; |
-    LDA zp_nt_r : CMP #160 : BCS tos_clamp_slow                         ; |
-    LDA zp_nb_l : CMP #160 : BCS tos_clamp_slow                         ; |
-    LDA zp_nb_r : CMP #160 : BCS tos_clamp_slow                         ; |
-    BCC tos_clamp_done                                                    ; | C=0 from BCS not taken
-; (1-byte tos_clamp pad removed)
+    BEQ tos_clamp_done                                                   ; | all u8 → no clamp
 .tos_clamp_slow
     LDA zp_nt_lh : BMI cn1z : BNE cn1f
-    LDA zp_nt_l : CMP #160 : BCC cn1s
+    LDA zp_nt_l : CMP #(VIS_YMAX + 1) : BCC cn1s
     LDA #1 : STA zp_nt_lh                                               ; mark clamped
-.cn1f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.cn1f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .cn1z LDA #0
 .cn1s STA zp_nt_l                                                       ; |
     LDA zp_nt_rh : BMI cn2z : BNE cn2f
-    LDA zp_nt_r : CMP #160 : BCC cn2s
+    LDA zp_nt_r : CMP #(VIS_YMAX + 1) : BCC cn2s
     LDA #1 : STA zp_nt_rh                                               ; mark clamped
-.cn2f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.cn2f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .cn2z LDA #0
 .cn2s STA zp_nt_r                                                       ; |
     LDA zp_nb_lh : BMI cn3z : BNE cn3f
-    LDA zp_nb_l : CMP #160 : BCC cn3s
+    LDA zp_nb_l : CMP #(VIS_YMAX + 1) : BCC cn3s
     LDA #1 : STA zp_nb_lh                                               ; mark clamped
-.cn3f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.cn3f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .cn3z LDA #0
 .cn3s STA zp_nb_l                                                       ; |
     LDA zp_nb_rh : BMI cn4z : BNE cn4f
-    LDA zp_nb_r : CMP #160 : BCC cn4s
+    LDA zp_nb_r : CMP #(VIS_YMAX + 1) : BCC cn4s
     LDA #1 : STA zp_nb_rh                                               ; mark clamped
-.cn4f LDA #159 : EQUB $2C  ; BIT abs: skip LDA #0
+.cn4f LDA #VIS_YMAX : EQUB $2C  ; BIT abs: skip LDA #0
 .cn4z LDA #0
 .cn4s STA zp_nb_r                                                       ; |
 .tos_clamp_done
@@ -1675,70 +1611,64 @@ IF EMIT_LINES
     LDA zp_save2 : JSR interp_store : STA zp_ob_r
 .mel_span_done
 
-    ; --- Evaluate seg top/bot at ox0 and ox1 ---
-    ; Constant-line fast path: yt1==yt2 AND yb1==yb2 (s16)
+    ; --- Evaluate seg top/bot at ox0 and ox1 (u8 with Y_BIAS) ---
+    ; Constant-line fast path: yt1==yt2 AND yb1==yb2
     LDA zp_yt1 : CMP zp_yt2 : BNE mel_seg_slow
-    LDA zp_yt1h : CMP zp_yt2h : BNE mel_seg_slow
     LDA zp_yb1 : CMP zp_yb2 : BNE mel_seg_slow
-    LDA zp_yb1h : CMP zp_yb2h : BNE mel_seg_slow
     LDA zp_yt1  : STA zp_nt_l  : STA zp_nt_r
-    LDA zp_yt1h : STA zp_nt_lh : STA zp_nt_rh
     LDA zp_yb1  : STA zp_nb_l  : STA zp_nb_r
-    LDA zp_yb1h : STA zp_nb_lh : STA zp_nb_rh
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi = 0
     JMP mel_seg_done
 .mel_seg_slow
     ; Anchor fast path: if ox0==sx1 and ox1==sx2
     LDA zp_save1 : CMP zp_sx1 : BNE mel_seg_interp
     LDA zp_save2 : CMP zp_sx2 : BNE mel_seg_interp
     LDA zp_yt1  : STA zp_nt_l  : LDA zp_yt2  : STA zp_nt_r
-    LDA zp_yt1h : STA zp_nt_lh : LDA zp_yt2h : STA zp_nt_rh
     LDA zp_yb1  : STA zp_nb_l  : LDA zp_yb2  : STA zp_nb_r
-    LDA zp_yb1h : STA zp_nb_lh : LDA zp_yb2h : STA zp_nb_rh
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi = 0
     JMP mel_seg_done
 .mel_seg_interp
-    ; Full seg interp
+    ; Full interp (u8 via interp_store)
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
-    LDA zp_yt1 : STA zp_i_y0 : LDA zp_yt1h : STA zp_i_y0h
-    LDA zp_yt2 : STA zp_i_y1 : LDA zp_yt2h : STA zp_i_y1h
-    LDA zp_save1 : JSR seg_interp_store : STA zp_nt_l : STY zp_nt_lh
-    LDA zp_save2 : JSR seg_interp_store : STA zp_nt_r : STY zp_nt_rh
-    LDA zp_yb1 : STA zp_i_y0 : LDA zp_yb1h : STA zp_i_y0h
-    LDA zp_yb2 : STA zp_i_y1 : LDA zp_yb2h : STA zp_i_y1h
-    LDA zp_save1 : JSR seg_interp_store : STA zp_nb_l : STY zp_nb_lh
-    LDA zp_save2 : JSR seg_interp_store : STA zp_nb_r : STY zp_nb_rh
+    LDA zp_sx1 : STA zp_i_x0
+    LDA zp_yt1 : STA zp_i_y0
+    LDA zp_yt2 : STA zp_i_y1
+    LDA zp_save1 : JSR interp_store : STA zp_nt_l
+    LDA zp_save2 : JSR interp_store : STA zp_nt_r
+    LDA zp_yb1 : STA zp_i_y0
+    LDA zp_yb2 : STA zp_i_y1
+    LDA zp_save1 : JSR interp_store : STA zp_nb_l
+    LDA zp_save2 : JSR interp_store : STA zp_nb_r
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi = 0
 .mel_seg_done
 
-    ; --- Clamp seg values to [0,159] ---
+    ; --- Clamp seg values for dominance ---
+    ; With Y_BIAS, all values are u8 (hi bytes = 0). Skip clamping.
     LDA zp_nt_lh : ORA zp_nt_rh : ORA zp_nb_lh : ORA zp_nb_rh
-    BNE mel_clamp_slow
-    LDA zp_nt_l : CMP #160 : BCS mel_clamp_slow
-    LDA zp_nt_r : CMP #160 : BCS mel_clamp_slow
-    LDA zp_nb_l : CMP #160 : BCS mel_clamp_slow
-    LDA zp_nb_r : CMP #160 : BCS mel_clamp_slow
-    BCC mel_clamp_ok
+    BEQ mel_clamp_ok
 .mel_clamp_slow
     LDA zp_nt_lh : BMI mel_cz1 : BNE mel_cf1
-    LDA zp_nt_l : CMP #160 : BCC mel_cs1
+    LDA zp_nt_l : CMP #(VIS_YMAX + 1) : BCC mel_cs1
     LDA #1 : STA zp_nt_lh                                               ; mark clamped
-.mel_cf1 LDA #159 : EQUB $2C
+.mel_cf1 LDA #VIS_YMAX : EQUB $2C
 .mel_cz1 LDA #0
 .mel_cs1 STA zp_nt_l
     LDA zp_nt_rh : BMI mel_cz2 : BNE mel_cf2
-    LDA zp_nt_r : CMP #160 : BCC mel_cs2
+    LDA zp_nt_r : CMP #(VIS_YMAX + 1) : BCC mel_cs2
     LDA #1 : STA zp_nt_rh                                               ; mark clamped
-.mel_cf2 LDA #159 : EQUB $2C
+.mel_cf2 LDA #VIS_YMAX : EQUB $2C
 .mel_cz2 LDA #0
 .mel_cs2 STA zp_nt_r
     LDA zp_nb_lh : BMI mel_cz3 : BNE mel_cf3
-    LDA zp_nb_l : CMP #160 : BCC mel_cs3
+    LDA zp_nb_l : CMP #(VIS_YMAX + 1) : BCC mel_cs3
     LDA #1 : STA zp_nb_lh                                               ; mark clamped
-.mel_cf3 LDA #159 : EQUB $2C
+.mel_cf3 LDA #VIS_YMAX : EQUB $2C
 .mel_cz3 LDA #0
 .mel_cs3 STA zp_nb_l
     LDA zp_nb_rh : BMI mel_cz4 : BNE mel_cf4
-    LDA zp_nb_r : CMP #160 : BCC mel_cs4
+    LDA zp_nb_r : CMP #(VIS_YMAX + 1) : BCC mel_cs4
     LDA #1 : STA zp_nb_rh                                               ; mark clamped
-.mel_cf4 LDA #159 : EQUB $2C
+.mel_cf4 LDA #VIS_YMAX : EQUB $2C
 .mel_cz4 LDA #0
 .mel_cs4 STA zp_nb_r
 .mel_clamp_ok
@@ -1807,9 +1737,9 @@ IF EMIT_LINES
 .mel_emit_top_full
     LDY LINE_OUT_COUNT
     LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_nt_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_nt_l  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_nt_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_nt_r  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JSR RASTER_ENTRY
 .mel_no_top
@@ -1859,9 +1789,9 @@ IF EMIT_LINES
 .mel_emit_bot_full
     LDY LINE_OUT_COUNT
     LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_nb_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_nb_l  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_nb_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_nb_r  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JSR RASTER_ENTRY
 .mel_no_bot
@@ -1896,9 +1826,9 @@ IF EMIT_LINES
     STA zp_ox1                           ; save cy in ox1
     LDY LINE_OUT_COUNT
     LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox1   : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_nt_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_nt_r  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY
 
@@ -1919,9 +1849,9 @@ IF EMIT_LINES
     STA zp_ox1                           ; save cy
     LDY LINE_OUT_COUNT
     LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_nt_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_nt_l  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_ox1   : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY
 
@@ -1942,9 +1872,9 @@ IF EMIT_LINES
     STA zp_ox1
     LDY LINE_OUT_COUNT
     LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox1   : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_save2 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_nb_r  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_nb_r  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY
 
@@ -1965,9 +1895,9 @@ IF EMIT_LINES
     STA zp_ox1
     LDY LINE_OUT_COUNT
     LDA zp_save1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_nb_l  : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_nb_l  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_ox0   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_ox1   : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_ox1   : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY
 .mel_emit_skip
@@ -1987,9 +1917,9 @@ IF EMIT_LINES
 {
     LDY LINE_OUT_COUNT
     LDA zp_ox0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_nt_l : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_nt_l : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_nt_r : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_nt_r : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser (returns via RTS)
 }
@@ -1998,9 +1928,9 @@ IF EMIT_LINES
 {
     LDY LINE_OUT_COUNT
     LDA zp_ox0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_nb_l : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_nb_l : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_nb_r : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_nb_r : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser (returns via RTS)
 }
@@ -2134,7 +2064,7 @@ ENDIF
     JMP dcl_exit_no_portal   ; no next span → emit+reset
 .dcl_has_next
 
-    ; Abutting? POOL_XEND[current] == POOL_XSTART[next]
+    ; Abutting? POOL_XEND[current] == POOL_XSTART[next] (shared pixel center)
     LDA POOL_XEND,X : CMP POOL_XSTART,Y : BEQ dcl_is_abutting
     JMP dcl_exit_no_portal
 .dcl_is_abutting
@@ -2543,9 +2473,9 @@ ENDIF
 .dcl_es_ok
     LDY LINE_OUT_COUNT
     LDA zp_seg_start_x : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
-    LDA zp_seg_start_y : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_seg_start_y : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
     LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
-    LDA zp_tmp0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    LDA zp_tmp0 : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser
 

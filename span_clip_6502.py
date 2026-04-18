@@ -97,7 +97,7 @@ class SpanClip6502:
             mem[0x2000 + i] = b
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
-        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')
+        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_xor_reloc.bin')
         if os.path.exists(raster_path):
             with open(raster_path, 'rb') as f:
                 raster_code = f.read()
@@ -319,8 +319,9 @@ class SpanClip6502:
 
     @staticmethod
     def _clip_to_screen(x1, y1, x2, y2):
-        """Liang-Barsky clip of line to [0,255] x [0,159].
+        """Liang-Barsky clip of line to [0,255] x [0,255] (u8 range).
 
+        Y values are biased, so the full u8 range is valid.
         Returns (cx1, cy1, cx2, cy2) as integers, or None if fully outside.
         """
         dx = x2 - x1
@@ -330,7 +331,7 @@ class SpanClip6502:
             (-dx, x1),          # left   (x >= 0)
             ( dx, 255 - x1),    # right  (x <= 255)
             (-dy, y1),          # top    (y >= 0)
-            ( dy, 159 - y1),    # bottom (y <= 159)
+            ( dy, 255 - y1),    # bottom (y <= 255)
         ]
         t0, t1 = 0.0, 1.0
         for p, q in checks:
@@ -355,9 +356,9 @@ class SpanClip6502:
         cy2 = int(round(y1 + t1 * dy))
         # Final safety clamp
         cx1 = max(0, min(255, cx1))
-        cy1 = max(0, min(159, cy1))
+        cy1 = max(0, min(255, cy1))
         cx2 = max(0, min(255, cx2))
-        cy2 = max(0, min(159, cy2))
+        cy2 = max(0, min(255, cy2))
         return cx1, cy1, cx2, cy2
 
     def draw_clipped_line(self, xl, yl, xr, yr):

@@ -81,12 +81,27 @@ _frame_clip_cycles = [0]
 _frame_clip_match = [True]  # set False on any py/6502 span divergence
 _clip_mismatch_reported = set()  # (x,y,a) tuples already printed
 _show_integrated_fb = False  # F key: show 6502 framebuffer from integrated clip+raster
+_show_seg_numbers = False    # I key: show seg indices on wireframe
+_seg_annotations = []        # populated per frame: [(si, sx1, sx2, ft1, ft2)]
 
 class Instrumented6502Spans(EndpointClipSpans):
-    """EndpointClipSpans that shadows mutations to a 6502 span clipper for cycle counting."""
+    """EndpointClipSpans that shadows mutations to a 6502 span clipper for cycle counting.
+
+    All Y values are biased by Y_BIAS at this wrapper level so both the
+    Python reference (EndpointClipSpans) and the 6502 shadow work in
+    biased coordinate space.  The bias is transparent to callers.
+    """
 
     def __init__(self):
         super().__init__()
+        # Bias the initial span Y values for 6502 u8 arithmetic.
+        from endpoint_spans import Y_BIAS
+        s = self.spans[0]
+        self.spans = [(s[0], s[1], s[2], s[3],
+                       s[4] + Y_BIAS, s[5] + Y_BIAS,
+                       s[6] + Y_BIAS, s[7] + Y_BIAS)]
+        self.y_display_offset = Y_BIAS
+        self._update_bbox()
         global _span_clip_6502
         if _span_clip_6502 is None:
             from span_clip_6502 import SpanClip6502
@@ -101,18 +116,27 @@ class Instrumented6502Spans(EndpointClipSpans):
             _frame_clip_match[0] = False
         _span_clip_6502.total_cycles = saved  # don't count read_spans in HUD
 
+    @staticmethod
+    def _bias_y(*ys):
+        """Add Y_BIAS. No clamp — _remap_seg_for_8bit handles s16 values
+        via _interp_store_s16 and produces correct u8 at overlap endpoints.
+        Clamping here would distort the interpolation slope for segs
+        that extend far off-screen."""
+        from endpoint_spans import Y_BIAS
+        return tuple(y + Y_BIAS for y in ys)
+
     def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
-        super().mark_solid(lo, hi)
+        if yt1 is not None:
+            yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
+        super().mark_solid(lo, hi, sx1=sx1, sx2=sx2, yt1=yt1, yt2=yt2, yb1=yb1, yb2=yb2)
         _span_clip_6502.mark_solid(lo, hi, sx1=sx1, sx2=sx2, yt1=yt1, yt2=yt2, yb1=yb1, yb2=yb2)
         self._check()
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                 top_dom=False, bot_dom=False,
                 emit_top=True, emit_bot=True):
+        yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
         from endpoint_spans import _compute_tighten_splits
-        # Split-tail fragments (index >= 1) are an approximation: constant y
-        # values over an active range that extends past the real seg's sx2.
-        # Emitting would produce phantom horizontal lines Python doesn't draw.
         for i, params in enumerate(_compute_tighten_splits(
                 lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)):
             super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
@@ -123,14 +147,15 @@ class Instrumented6502Spans(EndpointClipSpans):
             self._check()
 
     def draw_clipped(self, lines, color, surface, stats=None):
-        # Feed each non-vertical line to the 6502's draw_clipped_line.
-        # Verticals (x1==x2) are not handled by DCL — they need a
-        # separate vertical clip path (TODO).
-        for lx1, ly1, lx2, ly2 in lines:
-            if lx1 != lx2:
-                _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
-        # Also run the Python draw_clipped for the Python surface
-        super().draw_clipped(lines, color, surface, stats)
+        from endpoint_spans import Y_BIAS
+        # Bias line Y values for clipping against biased spans.
+        biased = [(lx1, ly1 + Y_BIAS, lx2, ly2 + Y_BIAS) for lx1, ly1, lx2, ly2 in lines]
+        # 6502 DCL no longer needed: all horizontal edges are drawn by
+        # mel (mark_solid) / ncf (tighten) edge emission during span
+        # mutation, which is cheaper and clips against the final span state.
+        # Verticals are already skipped by DCL (lx1==lx2 check).
+        # Python draw_clipped still renders all lines for wireframe overlay.
+        super().draw_clipped(biased, color, surface, stats)
 
     def has_gap(self, lo, hi):
         result = super().has_gap(lo, hi)
@@ -1279,9 +1304,9 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
             (sx1, ft1, sx1, fb1), (sx2, ft2, sx2, fb2),
         ], GREEN, surface, draw_stats)
         if deferred is not None:
-            deferred.append(('solid', x_lo, x_hi))
+            deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
-            clips.mark_solid(x_lo, x_hi)
+            clips.mark_solid(x_lo, x_hi, sx1=sx1, sx2=sx2, yt1=ft1, yt2=ft2, yb1=fb1, yb2=fb2)
     elif back:
         if back[1] < ch:
             lines = [(sx1, bt1, sx2, bt2),
@@ -1512,9 +1537,9 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             if no_vt2:
                 _real_drawline(surface, _RED, (sx2, ft2), (sx2, fb2))
         if deferred is not None:
-            deferred.append(('solid', x_lo, x_hi))
+            deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
-            clips.mark_solid(x_lo, x_hi)
+            clips.mark_solid(x_lo, x_hi, sx1=sx1, sx2=sx2, yt1=ft1, yt2=ft2, yb1=fb1, yb2=fb2)
     elif back:
         # Only project back heights when needed (saves up to 8 muls)
         need_bt = back[1] < ch   # ceiling drops: need bt for upper step + tighten
@@ -2065,6 +2090,10 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
                           top_dom, bot_dom,
                           emit_top=emit_top, emit_bot=emit_bot)
+
+    # Seg number annotation (toggle with I key; drawn on upscaled display)
+    if _show_seg_numbers:
+        _seg_annotations.append((si, sx1, sx2, ft1, ft2))
 
 
 def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
@@ -3083,7 +3112,7 @@ def _draw_debug_step(surface):
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
   global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result, _show_integrated_fb
-  global _novt_annotate
+  global _novt_annotate, _show_seg_numbers
   running = True
   while running:
     dt = clock.tick(60) / 1000.0
@@ -3111,6 +3140,11 @@ def _main():
             elif ev.key == pygame.K_b:
                 _show_integrated_fb = not _show_integrated_fb
                 print(f"Integrated framebuffer {'ON' if _show_integrated_fb else 'OFF'}", flush=True)
+            elif ev.key == pygame.K_i:
+                _show_seg_numbers = not _show_seg_numbers
+                import endpoint_spans as es
+                es._drawn_lines = [] if _show_seg_numbers else None
+                print(f"Seg/line numbers {'ON' if _show_seg_numbers else 'OFF'}", flush=True)
             elif ev.key == pygame.K_h:
                 _use_6502_frontend = not _use_6502_frontend
                 if _use_6502_frontend:
@@ -3243,6 +3277,10 @@ def _main():
         sin_f = math.sin(ang_rad)
 
         _novt_annotations.clear()
+        _seg_annotations.clear()
+        import endpoint_spans as _es
+        if _es._drawn_lines is not None:
+            _es._drawn_lines.clear()
 
         if _use_6502_full and _render_6502 is not None:
             # J mode: full 6502 pipeline with NJ rasteriser → extract framebuffer
@@ -3328,6 +3366,27 @@ def _main():
                 _s2 = hud_font.render(_line2, True, _col)
                 _scr.blit(_s1, (_dx, _dy - _lh))
                 _scr.blit(_s2, (_dx, _dy))
+
+        # Seg number overlay: draw seg indices on the upscaled display
+        if _show_seg_numbers and _seg_annotations:
+            _sx = SCREEN_W / FP_WIDTH
+            _sy = SCREEN_H / FP_HEIGHT
+            for _si, _sx1, _sx2, _ft1, _ft2 in _seg_annotations:
+                _mx = int((_sx1 + _sx2) / 2 * _sx)
+                _my = int(((_ft1 + _ft2) / 2 - 3) * _sy)
+                _lbl = hud_font.render(str(_si), True, (255, 255, 0))
+                _scr.blit(_lbl, (_mx - _lbl.get_width() // 2, _my - _lbl.get_height()))
+
+        # Line segment overlay: label each drawn line with its index
+        import endpoint_spans as _es_overlay
+        if _show_seg_numbers and _es_overlay._drawn_lines is not None:
+            _sx = SCREEN_W / FP_WIDTH
+            _sy = SCREEN_H / FP_HEIGHT
+            for _idx, _lx1, _ly1, _lx2, _ly2 in _es_overlay._drawn_lines:
+                _mx = int((_lx1 + _lx2) / 2 * _sx)
+                _my = int((_ly1 + _ly2) / 2 * _sy)
+                _lbl = hud_font.render(str(_idx), True, (255, 180, 100))
+                _scr.blit(_lbl, (_mx + 2, _my - _lbl.get_height() // 2))
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:
