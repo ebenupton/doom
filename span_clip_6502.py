@@ -42,6 +42,11 @@ ZP_LINE_YL = 0xA9
 ZP_LINE_XR = 0xAA
 ZP_LINE_YR = 0xAB
 ZP_TG_EMIT = 0xBB  # tighten emit mask: bit0=top, bit1=bot, 0x03=both
+# Secondary seg Y values (u8) for emit_sec_top/emit_sec_bot — passed when flags set
+ZP_YT_SEC1 = 0xB2
+ZP_YT_SEC2 = 0xB3
+ZP_YB_SEC1 = 0xB4
+ZP_YB_SEC2 = 0xB5
 
 # Pool
 POOL_BASE = 0x0400
@@ -97,7 +102,7 @@ class SpanClip6502:
             mem[0x2000 + i] = b
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
-        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_xor_reloc.bin')
+        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')
         if os.path.exists(raster_path):
             with open(raster_path, 'rb') as f:
                 raster_code = f.read()
@@ -211,14 +216,17 @@ class SpanClip6502:
             _w16(ZP_YT2, t2)
             _w16(ZP_YB1, b1)
             _w16(ZP_YB2, b2)
-            mem[ZP_MS_EMIT] = 0xFF
+            mem[ZP_MS_EMIT] = 0x00  # DCL via draw_clipped handles all line emission
         else:
             mem[ZP_MS_EMIT] = 0x00
 
         self._run(ENTRY_MARK_SOLID)
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                emit_top=True, emit_bot=True):
+                emit_top=True, emit_bot=True,
+                emit_sec_top=False, emit_sec_bot=False,
+                yt_sec1=None, yt_sec2=None,
+                yb_sec1=None, yb_sec2=None):
         """tighten with 16-bit seg parameters.
 
         Closed-interval: ilo, ihi are both inclusive column indices in [0,255].
@@ -228,6 +236,13 @@ class SpanClip6502:
         Set False to suppress emission for segs where the Python reference
         doesn't draw the corresponding line (e.g. need_bt-only segs don't
         draw the floor line, so emit_bot=False matches the Python semantic).
+
+        emit_sec_top/emit_sec_bot: when True, the 6502 emits the OLD span
+        boundary (ot_l/r or ob_l/r) in addition to the new seg boundary.
+        Used for step cases (need_bt + ch>vz draws both bt and ft; need_bb
+        + fh<vz draws both bb and fb).  The old boundary at overlap
+        endpoints typically equals the front ceiling/floor projection when
+        the span is at its original room boundary.
 
         Wraps the call in _remap_seg_for_8bit so the 6502 8-bit interp pipeline
         always operates with ex≤255, offset≤255, |dy|≤127 — i.e., always the
@@ -239,15 +254,51 @@ class SpanClip6502:
         if ihi < ilo:
             return
 
+        # Remember pre-remap anchors so we can re-interp secondary values
+        # at the NEW anchors (remap shifts sx1/sx2 when the original seg
+        # doesn't fit u8 constraints).
+        orig_sx1, orig_sx2 = sx1, sx2
+        orig_yt_sec1, orig_yt_sec2 = yt_sec1, yt_sec2
+        orig_yb_sec1, orig_yb_sec2 = yb_sec1, yb_sec2
+
         # Swap inverted segs (sx1 > sx2) — 6502 can't handle negative ex
         if sx1 > sx2:
             sx1, sx2 = sx2, sx1
             yt1, yt2 = yt2, yt1
             yb1, yb2 = yb2, yb1
+            orig_sx1, orig_sx2 = orig_sx2, orig_sx1
+            if orig_yt_sec1 is not None:
+                orig_yt_sec1, orig_yt_sec2 = orig_yt_sec2, orig_yt_sec1
+            if orig_yb_sec1 is not None:
+                orig_yb_sec1, orig_yb_sec2 = orig_yb_sec2, orig_yb_sec1
 
-        from endpoint_spans import _remap_seg_for_8bit
+        from endpoint_spans import _remap_seg_for_8bit, _interp_store_s16
         sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
             ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2)
+
+        # Re-interpolate secondary Y values at the new anchors.  The
+        # secondary values (ft/fb) are on a linear line between orig_sx1
+        # and orig_sx2; project them to (sx1, sx2).
+        if emit_sec_top and orig_yt_sec1 is not None:
+            if sx1 == orig_sx1 and sx2 == orig_sx2:
+                new_yt_sec1, new_yt_sec2 = orig_yt_sec1, orig_yt_sec2
+            else:
+                new_yt_sec1 = _interp_store_s16(sx1, orig_sx1, orig_yt_sec1, orig_sx2, orig_yt_sec2)
+                new_yt_sec2 = _interp_store_s16(sx2, orig_sx1, orig_yt_sec1, orig_sx2, orig_yt_sec2)
+            new_yt_sec1 = max(0, min(255, new_yt_sec1))
+            new_yt_sec2 = max(0, min(255, new_yt_sec2))
+        else:
+            new_yt_sec1 = new_yt_sec2 = 0
+        if emit_sec_bot and orig_yb_sec1 is not None:
+            if sx1 == orig_sx1 and sx2 == orig_sx2:
+                new_yb_sec1, new_yb_sec2 = orig_yb_sec1, orig_yb_sec2
+            else:
+                new_yb_sec1 = _interp_store_s16(sx1, orig_sx1, orig_yb_sec1, orig_sx2, orig_yb_sec2)
+                new_yb_sec2 = _interp_store_s16(sx2, orig_sx1, orig_yb_sec1, orig_sx2, orig_yb_sec2)
+            new_yb_sec1 = max(0, min(255, new_yb_sec1))
+            new_yb_sec2 = max(0, min(255, new_yb_sec2))
+        else:
+            new_yb_sec1 = new_yb_sec2 = 0
 
         def _w16(addr, val):
             mem[addr] = val & 0xFF
@@ -261,7 +312,12 @@ class SpanClip6502:
         _w16(ZP_YT2, yt2)
         _w16(ZP_YB1, yb1)
         _w16(ZP_YB2, yb2)
-        mem[ZP_TG_EMIT] = (0x01 if emit_top else 0) | (0x02 if emit_bot else 0)
+        mem[ZP_YT_SEC1] = new_yt_sec1 & 0xFF
+        mem[ZP_YT_SEC2] = new_yt_sec2 & 0xFF
+        mem[ZP_YB_SEC1] = new_yb_sec1 & 0xFF
+        mem[ZP_YB_SEC2] = new_yb_sec2 & 0xFF
+        mem[ZP_TG_EMIT] = ((0x01 if emit_top else 0) | (0x02 if emit_bot else 0) |
+                           (0x04 if emit_sec_top else 0) | (0x08 if emit_sec_bot else 0))
         self._run(ENTRY_TIGHTEN)
 
     def has_gap(self, lo, hi):

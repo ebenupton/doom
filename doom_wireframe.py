@@ -134,14 +134,24 @@ class Instrumented6502Spans(EndpointClipSpans):
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                 top_dom=False, bot_dom=False,
-                emit_top=True, emit_bot=True):
+                emit_top=True, emit_bot=True,
+                emit_sec_top=False, emit_sec_bot=False,
+                yt_sec1=None, yt_sec2=None,
+                yb_sec1=None, yb_sec2=None):
         yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
+        if emit_sec_top and yt_sec1 is not None:
+            yt_sec1, yt_sec2 = self._bias_y(yt_sec1, yt_sec2)
+        if emit_sec_bot and yb_sec1 is not None:
+            yb_sec1, yb_sec2 = self._bias_y(yb_sec1, yb_sec2)
         from endpoint_spans import _compute_tighten_splits
         for i, params in enumerate(_compute_tighten_splits(
                 lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)):
             super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
             if i == 0:
-                _span_clip_6502.tighten(*params, emit_top=emit_top, emit_bot=emit_bot)
+                _span_clip_6502.tighten(*params, emit_top=emit_top, emit_bot=emit_bot,
+                                       emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
+                                       yt_sec1=yt_sec1, yt_sec2=yt_sec2,
+                                       yb_sec1=yb_sec1, yb_sec2=yb_sec2)
             else:
                 _span_clip_6502.tighten(*params, emit_top=False, emit_bot=False)
             self._check()
@@ -150,10 +160,12 @@ class Instrumented6502Spans(EndpointClipSpans):
         from endpoint_spans import Y_BIAS
         # Bias line Y values for clipping against biased spans.
         biased = [(lx1, ly1 + Y_BIAS, lx2, ly2 + Y_BIAS) for lx1, ly1, lx2, ly2 in lines]
-        # 6502 DCL no longer needed: all horizontal edges are drawn by
-        # mel (mark_solid) / ncf (tighten) edge emission during span
-        # mutation, which is cheaper and clips against the final span state.
-        # Verticals are already skipped by DCL (lx1==lx2 check).
+        # Forward every line to 6502 DCL.  DCL walks the span list and
+        # emits aperture-clipped segments (horizontal, vertical, sloped).
+        # OR-mode rasteriser means double-drawing with mel/tighten primary
+        # emissions is idempotent (pixel stays lit).
+        for lx1, ly1, lx2, ly2 in biased:
+            _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
         # Python draw_clipped still renders all lines for wireframe overlay.
         super().draw_clipped(biased, color, surface, stats)
 
@@ -1651,14 +1663,27 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         # Emit flags mirror which lines Python's draw_clipped actually drew.
         emit_top = need_bt or (back[1] > ch)
         emit_bot = need_bb or (back[0] < fh)
+        # Secondary edges: for steps (need_bt/need_bb), Python also draws
+        # the front ceiling/floor line — pass ft/fb so tighten can emit
+        # those lines at the overlap endpoints.
+        emit_sec_top = need_bt and (ch > vz)
+        emit_sec_bot = need_bb and (fh < vz)
+        yt_sec1 = ft1 if emit_sec_top else None
+        yt_sec2 = ft2 if emit_sec_top else None
+        yb_sec1 = fb1 if emit_sec_bot else None
+        yb_sec2 = fb2 if emit_sec_bot else None
         if deferred is not None:
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
                              yt1, yt2, yb1, yb2, top_dom, bot_dom,
-                             emit_top, emit_bot))
+                             emit_top, emit_bot, emit_sec_top, emit_sec_bot,
+                             yt_sec1, yt_sec2, yb_sec1, yb_sec2))
         else:
             clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
                           top_dom, bot_dom,
-                          emit_top=emit_top, emit_bot=emit_bot)
+                          emit_top=emit_top, emit_bot=emit_bot,
+                          emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
+                          yt_sec1=yt_sec1, yt_sec2=yt_sec2,
+                          yb_sec1=yb_sec1, yb_sec2=yb_sec2)
 
 
 def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
@@ -2082,14 +2107,29 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         # bot line iff need_bb or bfh < fh.
         emit_top = need_bt or (bch > ch)
         emit_bot = need_bb or (bfh < fh)
+        # Secondary edge emission: Python draws BOTH the step edge (at
+        # bt/bb) AND the front ceiling/floor edge (at ft/fb) when there's
+        # a step and the other edge is visible above/below eye.  Pass
+        # ft1/ft2 (secondary top) and fb1/fb2 (secondary bot) so tighten
+        # can interpolate and emit those lines at the overlap endpoints.
+        emit_sec_top = need_bt and (ch > vz)
+        emit_sec_bot = need_bb and (fh < vz)
+        yt_sec1 = ft1 if emit_sec_top else None
+        yt_sec2 = ft2 if emit_sec_top else None
+        yb_sec1 = fb1 if emit_sec_bot else None
+        yb_sec2 = fb2 if emit_sec_bot else None
         if deferred is not None:
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
                              yt1, yt2, yb1, yb2, top_dom, bot_dom,
-                             emit_top, emit_bot))
+                             emit_top, emit_bot, emit_sec_top, emit_sec_bot,
+                             yt_sec1, yt_sec2, yb_sec1, yb_sec2))
         else:
             clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
                           top_dom, bot_dom,
-                          emit_top=emit_top, emit_bot=emit_bot)
+                          emit_top=emit_top, emit_bot=emit_bot,
+                          emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
+                          yt_sec1=yt_sec1, yt_sec2=yt_sec2,
+                          yb_sec1=yb_sec1, yb_sec2=yb_sec2)
 
     # Seg number annotation (toggle with I key; drawn on upscaled display)
     if _show_seg_numbers:

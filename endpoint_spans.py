@@ -318,10 +318,15 @@ class EndpointClipSpans:
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                 top_dom=False, bot_dom=False,
-                emit_top=True, emit_bot=True):
-        # emit_top/emit_bot are consumed by the 6502 shadow — ignored in Python
-        # state mutation (Python doesn't emit lines during tighten).
-        _ = emit_top, emit_bot
+                emit_top=True, emit_bot=True,
+                emit_sec_top=False, emit_sec_bot=False,
+                yt_sec1=None, yt_sec2=None,
+                yb_sec1=None, yb_sec2=None):
+        # emit_top/emit_bot/emit_sec_top/emit_sec_bot and yt_sec/yb_sec
+        # are consumed by the 6502 shadow — ignored in Python state
+        # mutation (Python doesn't emit lines during tighten).
+        _ = emit_top, emit_bot, emit_sec_top, emit_sec_bot
+        _ = yt_sec1, yt_sec2, yb_sec1, yb_sec2
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W - 1, hi)
         if ihi < ilo: return

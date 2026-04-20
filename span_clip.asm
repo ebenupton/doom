@@ -105,6 +105,17 @@ zp_bb_yb_min  = $A6    ; min(seg bot clamped) over remaining overlap range
 zp_bb_flags   = $A7    ; $40 = all on-screen (new-dom + narrowing valid), $00 = disabled
 zp_ms_emit    = $A8    ; mark_solid: $FF = emit wall edge lines, $00 = skip
 
+; === Static seg Y bbox ($A8-$AB) — set once per mel/tg_go call ===
+; Aliased onto the DCL line ZP slots: mel runs only inside mark_solid and
+; tighten runs only inside span_tighten, neither overlaps DCL. mel reuses
+; zp_ms_emit's slot ($A8) since that flag is consumed at mark_solid entry.
+; Sentinels disable the per-span bbox check when seg values aren't u8:
+;   seg_top_max=$FF, seg_top_min=$00, seg_bot_max=$FF, seg_bot_min=$00.
+zp_seg_top_max = $A8   ; max(yt1, yt2) when all hi bytes 0; else $FF sentinel
+zp_seg_top_min = $A9   ; min(yt1, yt2)                       else $00 sentinel
+zp_seg_bot_max = $AA   ; max(yb1, yb2)                       else $FF sentinel
+zp_seg_bot_min = $AB   ; min(yb1, yb2)                       else $00 sentinel
+
 ; === Draw-clipped-line ZP ($A8-$B9) — reuses $A8 (ms_emit) since non-overlapping ===
 ; Caller sets xl/yl/xr/yr; routine computes dx/dy/ylo/yhi.
 zp_line_xl  = $A8    ; u8, left X (oriented left-to-right)
@@ -129,6 +140,15 @@ zp_cb_top1  = $B6    ; u8, span top at cx1
 zp_cb_top2  = $B7    ; u8, span top at cx2
 zp_cb_bot1  = $B8    ; u8, span bot at cx1
 zp_cb_bot2  = $B9    ; u8, span bot at cx2
+
+; === Tighten secondary seg params ($B2-$B5) — reuses DCL CB slots ===
+; Passed by the wrapper when emit_sec_top/emit_sec_bot flags are set.
+; Secondary values are the front ceiling/floor y at sx1/sx2 (u8 post-remap).
+; Used by ncf to emit the ft/fb line alongside the primary bt/bb line.
+zp_yt_sec1 = $B2     ; u8, secondary top y at sx1 (front ceiling proj)
+zp_yt_sec2 = $B3     ; u8, secondary top y at sx2
+zp_yb_sec1 = $B4     ; u8, secondary bot y at sx1 (front floor proj)
+zp_yb_sec2 = $B5     ; u8, secondary bot y at sx2
 
 ; === Line output buffer ($0200) ===
 ; Lines emitted during tighten (portal edges) and mark_solid (wall edges).
@@ -1113,26 +1133,8 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; interp_store) and nt_l/nt_r/nb_l/nb_r (clamped u8) at (ox0, ox1).
     ;
 IF EMIT_LINES
-    ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
-    ; Guard: skip emission for 1-column overlaps (degenerate point, not a line)
-    LDA zp_ox0 : CMP zp_ox1 : BCS ncf_no_bot_edge                       ; ox0 >= ox1 → skip all emission
-    ; Top edge visible where nt > ot (new ceiling more restrictive).
-    ; No crossover → check left endpoint only (same sign at both).
-    ; Guard 1: caller disabled top emission (emit_top bit clear)
-    LDA zp_tg_emit : AND #$01 : BEQ ncf_no_top_edge
-    ; Guard 2: skip if either top endpoint was clamped (hi byte nonzero)
-    LDA zp_nt_lh : ORA zp_nt_rh : BNE ncf_no_top_edge
-    LDA zp_nt_l : CMP zp_ot_l : BCC ncf_no_top_edge : BEQ ncf_no_top_edge
-    JSR emit_top_edge
-.ncf_no_top_edge
-    ; Bot edge visible where nb < ob (new floor more restrictive).
-    ; Guard 1: caller disabled bot emission (emit_bot bit clear)
-    LDA zp_tg_emit : AND #$02 : BEQ ncf_no_bot_edge
-    ; Guard 2: skip if either bot endpoint was clamped (hi byte nonzero)
-    LDA zp_nb_lh : ORA zp_nb_rh : BNE ncf_no_bot_edge
-    LDA zp_nb_l : CMP zp_ob_l : BCS ncf_no_bot_edge
-    JSR emit_bot_edge
-.ncf_no_bot_edge
+    ; Primary emission removed — DCL handles all line emission via the
+    ; wrapper's draw_clipped forward.
 ENDIF
     ; Do max/min + aperture + store inline without re-interpolating.
     LDA zp_ot_l : CMP zp_nt_l : BCS ncf_tl_ok : LDA zp_nt_l             ; |
@@ -1374,27 +1376,8 @@ ENDIF
     RTS                                                                 ; |
 .skip_opt2
 IF EMIT_LINES
-    ; --- Emit portal edges BEFORE max/min overwrites ot/ob ---
-    ; Guard: skip emission for degenerate 1-column sub-intervals (ox0 >= ox1)
-    LDA zp_ox0 : CMP zp_ox1 : BCS tos_no_bot_edge
-    ; Top edge visible where nt > ot (new ceiling more restrictive).
-    ; Within a crossover sub-interval, sign is consistent at both endpoints.
-    ; Guard 1: caller disabled top emission (emit_top bit clear)
-    LDA zp_tg_emit : AND #$01 : BEQ tos_no_top_edge
-    ; Guard 2: skip if either top endpoint was clamped (hi byte nonzero)
-    LDA zp_nt_lh : ORA zp_nt_rh : BNE tos_no_top_edge
-    LDA zp_nt_l : CMP zp_ot_l : BCC tos_no_top_edge : BEQ tos_no_top_edge
-    JSR emit_top_edge
-.tos_no_top_edge
-    ; Bot edge visible where nb < ob (new floor more restrictive).
-    ; Guard 1: caller disabled bot emission (emit_bot bit clear)
-    LDA zp_tg_emit : AND #$02 : BEQ tos_no_bot_edge
-    ; Guard 2: skip if either bot endpoint was clamped (hi byte nonzero)
-    LDA zp_nb_lh : ORA zp_nb_rh : BNE tos_no_bot_edge
-    LDA zp_nb_l : CMP zp_ob_l : BCS tos_no_bot_edge
-    JSR emit_bot_edge
+    ; Primary emission removed — DCL handles all line emission.
 ENDIF
-.tos_no_bot_edge
     ; max top, min bot
     LDA zp_ot_l : CMP zp_nt_l : BCS tl_ok : LDA zp_nt_l                 ; |
 .tl_ok STA zp_ot_l                                                      ; |
@@ -1565,6 +1548,45 @@ IF EMIT_LINES
 {
     ; NOTE: do NOT reset LINE_OUT_COUNT — draw_clipped_line may have
     ; already written lines before mark_solid was called.
+
+    ; --- DCL-style seg Y bbox setup (one-time per mel call) ---
+    ; Compute static seg bbox (max/min of yt1/yt2 and yb1/yb2) for the
+    ; per-span "neither edge can emit" reject below.  Sentinels disable
+    ; the check when:
+    ;   - any yt/yb hi byte is non-zero (seg extends off-screen in u8)
+    ;   - [sx1,sx2] doesn't cover [ilo,ihi] (overlap extrapolation
+    ;     would invalidate the bbox bounds derived from yt1/yt2)
+    LDA zp_yt1h : ORA zp_yt2h : ORA zp_yb1h : ORA zp_yb2h
+    BNE mel_bbox_disable
+    ; sx1 must be <= ilo (no left extrapolation).  sx1 negative covers
+    ; this trivially; sx1 with hi=0 needs sx1 <= ilo.
+    LDA zp_sx1h : BMI mel_bbox_sx1_ok
+    BNE mel_bbox_disable                               ; sx1 > 255 → impossible
+    LDA zp_ilo : CMP zp_sx1 : BCC mel_bbox_disable     ; ilo < sx1 → extrap
+.mel_bbox_sx1_ok
+    ; sx2 must be >= ihi (no right extrapolation).
+    LDA zp_sx2h : BMI mel_bbox_disable                 ; sx2 < 0 → impossible
+    BNE mel_bbox_valid                                  ; sx2 > 255 ≥ ihi → ok
+    LDA zp_sx2 : CMP zp_ihi : BCC mel_bbox_disable     ; sx2 < ihi → extrap
+.mel_bbox_valid
+    ; All hi bytes zero AND seg covers overlap — compute real bbox.
+    LDA zp_yt1 : CMP zp_yt2 : BCC mel_bbox_t_swap
+    STA zp_seg_top_max : LDX zp_yt2 : STX zp_seg_top_min
+    BCS mel_bbox_t_done                              ; always taken
+.mel_bbox_t_swap
+    STA zp_seg_top_min : LDX zp_yt2 : STX zp_seg_top_max
+.mel_bbox_t_done
+    LDA zp_yb1 : CMP zp_yb2 : BCC mel_bbox_b_swap
+    STA zp_seg_bot_max : LDX zp_yb2 : STX zp_seg_bot_min
+    BCS mel_bbox_done                                ; always taken
+.mel_bbox_b_swap
+    STA zp_seg_bot_min : LDX zp_yb2 : STX zp_seg_bot_max
+    BCC mel_bbox_done                                ; always taken
+.mel_bbox_disable
+    LDA #$FF : STA zp_seg_top_max : STA zp_seg_bot_max
+    LDA #$00 : STA zp_seg_top_min : STA zp_seg_bot_min
+.mel_bbox_done
+
     LDX zp_head : BNE mel_loop
     RTS
 .mel_loop
@@ -1583,6 +1605,23 @@ IF EMIT_LINES
     ; ox1 = min(xend, ihi)
     LDA POOL_XEND,X : CMP zp_ihi : BCC mel_ox1_ok : LDA zp_ihi
 .mel_ox1_ok STA zp_save2              ; ox1
+
+    ; --- DCL-style per-span bbox reject ---
+    ; Skip span entirely if neither top nor bot edge can emit anywhere
+    ; in this span.  Saves all 8 interp_store calls + emission tree.
+    ;   no top emit: seg_top_max <= POOL_OT  OR  seg_top_min >= POOL_OB
+    ;   no bot emit: seg_bot_max <= POOL_OT  OR  seg_bot_min >= POOL_OB
+    ; "Skip span" requires BOTH no-top AND no-bot.
+    LDA POOL_OT,X : CMP zp_seg_top_max : BCS mel_top_no_emit  ; OT >= top_max
+    LDA zp_seg_top_min : CMP POOL_OB,X : BCS mel_top_no_emit  ; top_min >= OB
+    JMP mel_span_check_done                                   ; top can emit
+.mel_top_no_emit
+    LDA POOL_OT,X : CMP zp_seg_bot_max : BCS mel_skip_span    ; OT >= bot_max
+    LDA zp_seg_bot_min : CMP POOL_OB,X : BCS mel_skip_span    ; bot_min >= OB
+    JMP mel_span_check_done                                   ; bot can emit
+.mel_skip_span
+    JMP mel_next
+.mel_span_check_done
 
     ; --- Evaluate span boundaries at ox0 and ox1 ---
     ; Constant-line fast path: tl==tr AND bl==br
@@ -1934,6 +1973,68 @@ IF EMIT_LINES
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser (returns via RTS)
 }
+
+; Secondary edge emitters: emit the front ceiling/floor line (ft/fb)
+; passed via zp_yt_sec1/2 or zp_yb_sec1/2.  Used for step cases
+; (need_bt / need_bb) where Python draws BOTH the step edge (at bt/bb,
+; primary) AND the front ceiling/floor edge (at ft/fb, secondary).
+; The values are u8 after the wrapper's remap.  We interp at (ox0, ox1)
+; using the seg anchors (sx1, sx2), reusing zp_tmp2/tmp3 for the
+; computed u8 y values.
+.emit_sec_top_edge
+{
+    ; Fast path: constant line (yt_sec1 == yt_sec2) → skip interp
+    LDA zp_yt_sec1 : CMP zp_yt_sec2 : BNE es_top_interp
+    STA zp_tmp2 : STA zp_tmp3
+    JMP es_top_emit
+.es_top_interp
+    ; interp at ox0
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
+    LDA zp_sx1 : STA zp_i_x0
+    LDA zp_yt_sec1 : STA zp_i_y0
+    LDA zp_yt_sec2 : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store : STA zp_tmp2
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
+    LDA zp_sx1 : STA zp_i_x0
+    LDA zp_yt_sec1 : STA zp_i_y0
+    LDA zp_yt_sec2 : STA zp_i_y1
+    LDA zp_ox1 : JSR interp_store : STA zp_tmp3
+.es_top_emit
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_tmp2 : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_tmp3 : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY
+}
+
+.emit_sec_bot_edge
+{
+    ; Fast path: constant line (yb_sec1 == yb_sec2) → skip interp
+    LDA zp_yb_sec1 : CMP zp_yb_sec2 : BNE es_bot_interp
+    STA zp_tmp2 : STA zp_tmp3
+    JMP es_bot_emit
+.es_bot_interp
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
+    LDA zp_sx1 : STA zp_i_x0
+    LDA zp_yb_sec1 : STA zp_i_y0
+    LDA zp_yb_sec2 : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store : STA zp_tmp2
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den
+    LDA zp_sx1 : STA zp_i_x0
+    LDA zp_yb_sec1 : STA zp_i_y0
+    LDA zp_yb_sec2 : STA zp_i_y1
+    LDA zp_ox1 : JSR interp_store : STA zp_tmp3
+.es_bot_emit
+    LDY LINE_OUT_COUNT
+    LDA zp_ox0 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_tmp2 : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_ox1 : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_tmp3 : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY
+}
 ENDIF
 
 ; ======================================================================
@@ -1953,6 +2054,10 @@ ENDIF
 ; ======================================================================
 .draw_clipped_line
 {
+    ; --- Vertical fast path: xl == xr (trampoline — dcl_vertical out of BEQ range) ---
+    LDA zp_line_xl : CMP zp_line_xr : BNE dcl_not_vert
+    JMP dcl_vertical
+.dcl_not_vert
     ; --- Compute dx, dy, ylo, yhi ---
     LDA zp_line_xr : SEC : SBC zp_line_xl : STA zp_line_dx
     LDA zp_line_yr : SEC : SBC zp_line_yl : STA zp_line_dy
@@ -2051,8 +2156,14 @@ ENDIF
 .dcl_exit_check
     ; ========== EXIT CHECK ==========
     ; Does the line end within this span? (xr <= xend)
-    LDA POOL_XEND,X : CMP zp_line_xr : BCC dcl_extends_past  ; xend < xr → extends past
-    ; xend >= xr: line ends within this span
+    ; xend < xr: extends past — portal check
+    ; xend == xr: line ends AT span boundary — still run portal check so
+    ;             abutting-next-span + trivial-accept matches Python's
+    ;             draw_clipped (which silently drops the line in this case)
+    ; xend > xr: line ends strictly inside span — emit
+    LDA POOL_XEND,X : CMP zp_line_xr : BCC dcl_extends_past
+    BEQ dcl_extends_past
+    ; xend > xr: line ends within this span
     JMP dcl_line_ends
 
 .dcl_extends_past
@@ -2167,14 +2278,85 @@ ENDIF
     RTS
 
 .dcl_flush
-    ; End of walk. If seg_start is active, emit final segment.
-    LDA zp_seg_start_x : CMP #$FF : BEQ dcl_done
-    ; Emit to (xr, yr) since line extends past last span
-    LDA zp_line_yr : STA zp_tmp0
-    LDA zp_line_xr : STA zp_ox1
-    JSR dcl_emit_segment
+    ; Python's draw_clipped LOSES seg_start at end-of-walk when the last
+    ; iteration was a portal-continue — the loop exits without emitting.
+    ; Match that behaviour: skip final emission.  (Normal line-ends-in-span
+    ; path emits via dcl_line_ends and clears seg_start before reaching
+    ; dcl_flush, so no case requires flushing.)
 .dcl_done
     RTS
+
+; ========== Vertical line handler ==========
+; For xl == xr: find the first span containing column xl, compute
+; aperture [top_y, bot_y] at that column, clip [ylo, yhi] to aperture,
+; emit single vertical line segment.  Matches Python's draw_clipped
+; vertical path (break on first span containing ix).
+.dcl_vertical
+    ; Compute ylo/yhi (dx/dy not needed for verticals)
+    LDA zp_line_yl : LDX zp_line_yr
+    CMP zp_line_yr : BCC dv_yl_lo
+    STA zp_line_yhi : STX zp_line_ylo : JMP dv_bbox_done
+.dv_yl_lo
+    STA zp_line_ylo : STX zp_line_yhi
+.dv_bbox_done
+    LDA #0 : STA LINE_OUT_COUNT
+    LDX zp_head
+.dv_walk
+    BNE dv_check
+    RTS                ; span list exhausted
+.dv_check
+    ; Skip if xend < xl (span entirely left of column — strict)
+    LDA POOL_XEND,X : CMP zp_line_xl : BCC dv_next
+    ; Done if xstart > xl (span entirely right of column; list sorted)
+    LDA POOL_XSTART,X : CMP zp_line_xl : BEQ dv_in : BCC dv_in
+    RTS
+.dv_next
+    LDA POOL_NEXT,X : TAX : JMP dv_walk
+.dv_in
+    ; Span contains column xl. Compute top_y and bot_y at xl.
+    STX zp_save0
+    ; Top: constant-line fast path or interp
+    LDA POOL_TL,X : CMP POOL_TR,X : BNE dv_top_interp
+    STA zp_cb_top1
+    JMP dv_top_done
+.dv_top_interp
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_DEN,X : STA zp_div_den
+    LDA POOL_TL,X : STA zp_i_y0
+    LDA POOL_TR,X : STA zp_i_y1
+    LDA zp_line_xl : JSR interp_store : STA zp_cb_top1
+.dv_top_done
+    ; Bot: constant-line fast path or interp
+    LDX zp_save0
+    LDA POOL_BL,X : CMP POOL_BR,X : BNE dv_bot_interp
+    STA zp_cb_bot1
+    JMP dv_bot_done
+.dv_bot_interp
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_DEN,X : STA zp_div_den
+    LDA POOL_BL,X : STA zp_i_y0
+    LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_line_xl : JSR interp_store : STA zp_cb_bot1
+.dv_bot_done
+    ; Clip [ylo, yhi] to [top_y, bot_y]
+    ; cy1 = max(ylo, top_y)
+    LDA zp_line_ylo : CMP zp_cb_top1 : BCS dv_cy1_ok : LDA zp_cb_top1
+.dv_cy1_ok STA zp_cb_cy1
+    ; cy2 = min(yhi, bot_y)
+    LDA zp_line_yhi : CMP zp_cb_bot1 : BCC dv_cy2_ok : LDA zp_cb_bot1
+.dv_cy2_ok STA zp_cb_cy2
+    ; Emit if cy1 <= cy2
+    LDA zp_cb_cy1 : CMP zp_cb_cy2 : BEQ dv_emit
+    BCC dv_emit
+    RTS   ; line clipped away
+.dv_emit
+    LDY LINE_OUT_COUNT
+    LDA zp_line_xl : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
+    LDA zp_cb_cy1  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y0 : INY
+    LDA zp_line_xl : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X1 : INY
+    LDA zp_cb_cy2  : SEC : SBC #Y_BIAS : STA LINE_OUT_BUF,Y : STA RASTER_ZP_Y1 : INY
+    STY LINE_OUT_COUNT
+    JMP RASTER_ENTRY
 
 ; ========== Phase 4: CB clip (clip_to_span) ==========
 ; Exact clip of the line against the span's trapezoid aperture.
