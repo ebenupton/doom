@@ -86,7 +86,8 @@ def _interp_store_s16(x, x0, y0, x1, y1):
     return y0 + (-num + (-den) // 2) // (-den)
 
 
-def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2):
+def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
+                        clamp_u8=True):
     """Remap seg parameters so the 6502 8-bit interp pipeline works.
 
     Constraints (X-only — Y constraint removed with unsigned interp):
@@ -94,18 +95,25 @@ def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2):
       - offset = eval_x - sx1 ∈ [0, 255] for all eval_x ∈ [ilo, ihi]
 
     When orig_ex > 255 or the seg doesn't cover [ilo, ihi], resample the
-    seg at closer anchor points.  Y values are biased u8 [0,255] — no
-    clamping needed.
+    seg at closer anchor points.
+
+    clamp_u8: when True (default, 6502 pipeline), clamp remapped yt/yb
+    to [0, 255] and require that range for the fast path.  When False
+    (Python reference with unbiased coordinates), skip the u8 clamp so
+    negative "above-screen" y values survive, preserving the sign info
+    that tighten's crossover detection relies on.
     """
     orig_ex = sx2 - sx1
     if orig_ex == 0:
         return sx1, sx1 + 1, yt1, yt2, yb1, yb2
     max_dy = max(abs(yt2 - yt1), abs(yb2 - yb1))
-    # Early return when original parameters already satisfy all constraints
+    # Early return when original parameters already satisfy all constraints.
+    # The Y range check is only required when we'll clamp the output.
+    y_ok = (not clamp_u8) or (
+        0 <= yt1 <= 255 and 0 <= yt2 <= 255 and
+        0 <= yb1 <= 255 and 0 <= yb2 <= 255)
     if (sx1 <= ilo and sx1 + 255 >= ihi and
-            orig_ex <= 255 and max_dy <= 127 and
-            0 <= yt1 <= 255 and 0 <= yt2 <= 255 and
-            0 <= yb1 <= 255 and 0 <= yb2 <= 255):
+            orig_ex <= 255 and max_dy <= 127 and y_ok):
         return sx1, sx2, yt1, yt2, yb1, yb2
     # Compute new_ex: fit both X offset and |dy| constraints
     if max_dy >= 1:
@@ -119,13 +127,14 @@ def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2):
     nyt2 = _interp_store_s16(x_hi, sx1, yt1, sx2, yt2)
     nyb1 = _interp_store_s16(x_lo, sx1, yb1, sx2, yb2)
     nyb2 = _interp_store_s16(x_hi, sx1, yb1, sx2, yb2)
-    # Clamp to u8 [0,255] for the 6502 pipeline.  The slope is correct
-    # because we interpolated from the original (un-clamped) seg values;
-    # we only clamp the resampled anchor Y values here.
-    nyt1 = max(0, min(255, nyt1))
-    nyt2 = max(0, min(255, nyt2))
-    nyb1 = max(0, min(255, nyb1))
-    nyb2 = max(0, min(255, nyb2))
+    if clamp_u8:
+        # Clamp to u8 [0,255] for the 6502 pipeline.  The slope is
+        # correct because we interpolated from the original (un-clamped)
+        # seg values; we only clamp the resampled anchor Y values here.
+        nyt1 = max(0, min(255, nyt1))
+        nyt2 = max(0, min(255, nyt2))
+        nyb1 = max(0, min(255, nyb1))
+        nyb2 = max(0, min(255, nyb2))
     return x_lo, x_hi, nyt1, nyt2, nyb1, nyb2
 
 
@@ -334,8 +343,15 @@ class EndpointClipSpans:
             sx1, sx2 = sx2, sx1
             yt1, yt2 = yt2, yt1
             yb1, yb2 = yb2, yb1
+        # 6502 shadow biases (y_display_offset=Y_BIAS) and needs u8 yt/yb.
+        # The unbiased Python reference (y_display_offset=0) preserves
+        # above-screen negative y values — without this, remap's u8 clamp
+        # forces nt_l up to 0, losing the sign info that crossover
+        # detection uses to split the span where seg transitions from
+        # above-screen to on-screen.
         sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
-            ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2)
+            ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
+            clamp_u8=(self.y_display_offset != 0))
         new = []
         for s in self.spans:
             xs, xe = s[0], s[1]
@@ -376,9 +392,13 @@ class EndpointClipSpans:
             # storage (matches asm `tg_cn{1..4}` block). Unclamped new_*
             # stays available for the crossover path — _tighten_span needs
             # the signed values to compute the crossover x correctly.
-            # With Y_BIAS, visible range is [Y_BIAS, VIS_YMAX] = [48, 207].
-            vis_min = Y_BIAS
-            vis_max = Y_BIAS + FP_RENDER_H - 1  # 207
+            # The visible Y range depends on the caller's coordinate
+            # system: biased (Instrumented6502Spans) uses [Y_BIAS, VIS_YMAX]
+            # = [48, 207], unbiased (plain EndpointClipSpans used by
+            # debug stepper / FP reference) uses [0, 159].  Derive from
+            # self.y_display_offset so tighten matches the caller's spans.
+            vis_min = self.y_display_offset
+            vis_max = self.y_display_offset + FP_RENDER_H - 1
             c_tl = max(vis_min, min(vis_max, new_tl))
             c_tr = max(vis_min, min(vis_max, new_tr))
             c_bl = max(vis_min, min(vis_max, new_bl))
@@ -411,7 +431,8 @@ class EndpointClipSpans:
                 _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
                               yb1, yb2, new,
                               old_tl, old_tr, old_bl, old_br,
-                              new_tl, new_tr, new_bl, new_br)
+                              new_tl, new_tr, new_bl, new_br,
+                              y_display_offset=self.y_display_offset)
             if right_s is not None:
                 _append_merge(new, right_s)
         self.spans = new
@@ -539,7 +560,14 @@ class EndpointClipSpans:
                             if cost is not None: cost['cb_entry'] += 1
 
                     next_s = None
-                    if si + 1 < len(self.spans) and self.spans[si + 1][0] == s[1]:  # abutting contiguity
+                    # Portal continuation only applies when the line
+                    # extends STRICTLY past this span's right edge.  If
+                    # xr == s[1] the line ends exactly at the portal
+                    # boundary; taking the portal path then causes the
+                    # next iteration to skip (ns[0] >= xr) and the
+                    # seg_start gets silently dropped.  Fall through to
+                    # the else branch and emit via _clip_to_span.
+                    if xr > s[1] and si + 1 < len(self.spans) and self.spans[si + 1][0] == s[1]:
                         ns = self.spans[si + 1]
                         if ns[0] <= xr:
                             next_s = ns
@@ -608,12 +636,19 @@ class EndpointClipSpans:
 
 def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out,
                   old_tl, old_tr, old_bl, old_br,
-                  new_tl, new_tr, new_bl, new_br):
+                  new_tl, new_tr, new_bl, new_br,
+                  y_display_offset=Y_BIAS):
     """Tighten span s over closed interval [ox0, ox1], crossover case only.
     The caller has already computed the dominance values at (ox0, ox1);
     those are passed in as old_tl..new_br (all via _interp_store). Result
     spans at sub-interval boundaries are dense-anchored, except the
     "old wins both" case which preserves the old line.
+
+    y_display_offset: caller's coordinate-system offset (0 for unbiased
+    EndpointClipSpans, Y_BIAS=48 for biased Instrumented6502Spans).
+    Used to derive the visible Y clamp range.  Default Y_BIAS matches
+    the production (biased) caller; the debug stepper / FP reference
+    should pass 0.
     """
     xlo, xhi, tl, bl, tr, br = s[2], s[3], s[4], s[5], s[6], s[7]
 
@@ -653,8 +688,8 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out,
             ob_r = _interp_store(sx_hi, xlo, bl, xhi, br)
             nt_r = _interp_store(sx_hi, sx1, yt1, sx2, yt2)
             nb_r = _interp_store(sx_hi, sx1, yb1, sx2, yb2)
-        vis_min = Y_BIAS
-        vis_max = Y_BIAS + FP_RENDER_H - 1  # 207
+        vis_min = y_display_offset
+        vis_max = y_display_offset + FP_RENDER_H - 1
         nt_l = max(vis_min, min(vis_max, nt_l))
         nb_l = max(vis_min, min(vis_max, nb_l))
         nt_r = max(vis_min, min(vis_max, nt_r))

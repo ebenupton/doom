@@ -2156,14 +2156,8 @@ ENDIF
 .dcl_exit_check
     ; ========== EXIT CHECK ==========
     ; Does the line end within this span? (xr <= xend)
-    ; xend < xr: extends past — portal check
-    ; xend == xr: line ends AT span boundary — still run portal check so
-    ;             abutting-next-span + trivial-accept matches Python's
-    ;             draw_clipped (which silently drops the line in this case)
-    ; xend > xr: line ends strictly inside span — emit
-    LDA POOL_XEND,X : CMP zp_line_xr : BCC dcl_extends_past
-    BEQ dcl_extends_past
-    ; xend > xr: line ends within this span
+    LDA POOL_XEND,X : CMP zp_line_xr : BCC dcl_extends_past  ; xend < xr → extends past
+    ; xend >= xr: line ends within this span
     JMP dcl_line_ends
 
 .dcl_extends_past
@@ -2278,11 +2272,13 @@ ENDIF
     RTS
 
 .dcl_flush
-    ; Python's draw_clipped LOSES seg_start at end-of-walk when the last
-    ; iteration was a portal-continue — the loop exits without emitting.
-    ; Match that behaviour: skip final emission.  (Normal line-ends-in-span
-    ; path emits via dcl_line_ends and clears seg_start before reaching
-    ; dcl_flush, so no case requires flushing.)
+    ; End of walk.  If seg_start is still active (last iteration was a
+    ; portal-continue into a span past xr, or list exhausted), emit the
+    ; final segment to (xr, yr).
+    LDA zp_seg_start_x : CMP #$FF : BEQ dcl_done
+    LDA zp_line_yr : STA zp_tmp0
+    LDA zp_line_xr : STA zp_ox1
+    JSR dcl_emit_segment
 .dcl_done
     RTS
 
