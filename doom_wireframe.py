@@ -99,6 +99,7 @@ _ap_skip_stats = {
     'apv_skipped': 0,          # solid aperture-edge vertical
     'step_v_skipped': 0,       # need_bt/bb step verticals (per-column)
     'fc_skipped': 0,           # front-ceil/floor line in need_bt/bb block
+    'tighten_skipped': 0,      # tighten op skipped (seg fully contains spans)
     'bt_lines_saved': 0, 'bb_lines_saved': 0,
 }
 _AP_SKIP_DEBUG = False
@@ -163,6 +164,19 @@ class Instrumented6502Spans(EndpointClipSpans):
             yt_sec1, yt_sec2 = self._bias_y(yt_sec1, yt_sec2)
         if emit_sec_bot and yb_sec1 is not None:
             yb_sec1, yb_sec2 = self._bias_y(yb_sec1, yb_sec2)
+        # No-op detection: when the seg's [yt, yb] strictly contains every
+        # overlapping span's [span_top, span_bot] (yt above all span_tops
+        # AND yb below all span_bots), tighten cannot narrow any span.  The
+        # per-span dominance check inside the existing implementation would
+        # discover this and continue, but the span walk + interp work isn't
+        # free.  Skip the whole call (Python tighten + 6502 shadow tighten)
+        # — yields identical span state.  Use the unbiased super method on
+        # already-biased y values.
+        if _AP_SKIP_ENABLE:
+            if (EndpointClipSpans.line_above_spans(self, sx1, yt1, sx2, yt2)
+                    and EndpointClipSpans.line_below_spans(self, sx1, yb1, sx2, yb2)):
+                _ap_skip_stats['tighten_skipped'] += 1
+                return
         from endpoint_spans import _compute_tighten_splits
         for i, params in enumerate(_compute_tighten_splits(
                 lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)):

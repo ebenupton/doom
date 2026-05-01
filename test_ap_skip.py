@@ -66,11 +66,13 @@ def render_python(px, py, ab):
 
 
 hdr = (f"{'scene':<10s}  {'bt_s':>4s}  {'bb_s':>4s}  "
-       f"{'sol_t':>5s}  {'sol_b':>5s}  {'pp_t':>4s}  {'pp_b':>4s}")
+       f"{'sol_t':>5s}  {'sol_b':>5s}  {'pp_t':>4s}  {'pp_b':>4s}  "
+       f"{'tght':>4s}  {'apv':>4s}  {'stpV':>4s}  {'fc':>4s}")
 print(hdr)
-totals = dict.fromkeys(['bt_skipped', 'bb_skipped', 'solid_top_skipped',
-                         'solid_bot_skipped', 'pp_top_skipped',
-                         'pp_bot_skipped'], 0)
+keys = ['bt_skipped', 'bb_skipped', 'solid_top_skipped',
+        'solid_bot_skipped', 'pp_top_skipped', 'pp_bot_skipped',
+        'tighten_skipped', 'apv_skipped', 'step_v_skipped', 'fc_skipped']
+totals = dict.fromkeys(keys, 0)
 for px, py, ab, name in POSITIONS:
     py_lines, stats = render_python(px, py, ab)
     for k in totals:
@@ -78,11 +80,15 @@ for px, py, ab, name in POSITIONS:
             totals[k] += stats[k]
     print(f"{name:<10s}  {stats['bt_skipped']:>4d}  {stats['bb_skipped']:>4d}  "
           f"{stats['solid_top_skipped']:>5d}  {stats['solid_bot_skipped']:>5d}  "
-          f"{stats['pp_top_skipped']:>4d}  {stats['pp_bot_skipped']:>4d}")
+          f"{stats['pp_top_skipped']:>4d}  {stats['pp_bot_skipped']:>4d}  "
+          f"{stats['tighten_skipped']:>4d}  {stats['apv_skipped']:>4d}  "
+          f"{stats['step_v_skipped']:>4d}  {stats['fc_skipped']:>4d}")
 
 print()
 print(f"TOTAL       {totals['bt_skipped']:>4d}  {totals['bb_skipped']:>4d}  "
       f"{totals['solid_top_skipped']:>5d}  {totals['solid_bot_skipped']:>5d}  "
-      f"{totals['pp_top_skipped']:>4d}  {totals['pp_bot_skipped']:>4d}")
-total_lines_saved = sum(totals.values())
-print(f"Total skipped emissions: {total_lines_saved}, avg per scene: {total_lines_saved/len(POSITIONS):.1f}")
+      f"{totals['pp_top_skipped']:>4d}  {totals['pp_bot_skipped']:>4d}  "
+      f"{totals['tighten_skipped']:>4d}  {totals['apv_skipped']:>4d}  "
+      f"{totals['step_v_skipped']:>4d}  {totals['fc_skipped']:>4d}")
+total_skipped = sum(totals.values())
+print(f"Total skipped operations: {total_skipped}, avg per scene: {total_skipped/len(POSITIONS):.1f}")
