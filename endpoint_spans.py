@@ -302,6 +302,79 @@ class EndpointClipSpans:
                 return False
         return found
 
+    def line_above_spans(self, lx1, ly1, lx2, ly2, _dbg=False):
+        """True iff the line is above span_top at every overlapping
+        span column.  Used to skip portal need_bt emission when the
+        back-ceiling horizontal lies entirely above the visible
+        aperture: the step verticals (which extend even further up)
+        are also above-clipped, so we can drop the whole need_bt
+        block (horizontal + 2 step verts + optional front-ceil line).
+
+        Conservative: returns True only when the line endpoints fall
+        strictly above each overlapping span's max top-y.  No partial
+        coverage / mixed-span handling.
+        """
+        if lx1 == lx2:
+            return False
+        xl, xr = min(lx1, lx2), max(lx1, lx2)
+        # Slope-form line: y at x = ly1 + (x-lx1)*(ly2-ly1)/(lx2-lx1)
+        dx = lx2 - lx1
+        dy = ly2 - ly1
+        found = False
+        for s in self.spans:
+            if s[1] <= xl or s[0] >= xr: continue
+            found = True
+            ox0 = max(s[0], xl); ox1 = min(s[1], xr)
+            ly_l = ly1 + (ox0 - lx1) * dy // dx
+            ly_r = ly1 + (ox1 - lx1) * dy // dx
+            ts_l = _span_top(s, ox0); ts_r = _span_top(s, ox1)
+            if _dbg:
+                print(f"   span {s[:4]} top {s[4],s[6]}  ox=[{ox0},{ox1}] "
+                      f"ly_l={ly_l} ly_r={ly_r} ts_l={ts_l} ts_r={ts_r}")
+            # max-of-line-y at the overlap < min-of-span-top in the overlap
+            if max(ly_l, ly_r) >= min(ts_l, ts_r):
+                return False
+        return found
+
+    def vertical_outside_spans(self, sx, y_lo, y_hi):
+        """True iff the vertical line at column sx with y range
+        [y_lo, y_hi] is entirely outside the visible aperture: either
+        no span covers column sx, the span at sx has no aperture, or
+        [y_lo, y_hi] sits entirely above span_top(sx) / below
+        span_bot(sx).  When True, the call to draw_clipped on this
+        vertical can be skipped — it would clip to nothing anyway,
+        saving the dispatch / span walk."""
+        for s in self.spans:
+            if not (s[0] <= sx <= s[1]):
+                continue
+            top_y = _span_top(s, sx)
+            bot_y = _span_bot(s, sx)
+            if top_y >= bot_y:
+                return True  # degenerate aperture at this column
+            return y_hi < top_y or y_lo > bot_y
+        return True  # no span covers sx
+
+    def line_below_spans(self, lx1, ly1, lx2, ly2):
+        """Symmetric to line_above_spans for the bottom.  Used to skip
+        portal need_bb emission when the back-floor horizontal lies
+        entirely below the visible aperture."""
+        if lx1 == lx2:
+            return False
+        xl, xr = min(lx1, lx2), max(lx1, lx2)
+        dx = lx2 - lx1
+        dy = ly2 - ly1
+        found = False
+        for s in self.spans:
+            if s[1] <= xl or s[0] >= xr: continue
+            found = True
+            ox0 = max(s[0], xl); ox1 = min(s[1], xr)
+            ly_l = ly1 + (ox0 - lx1) * dy // dx
+            ly_r = ly1 + (ox1 - lx1) * dy // dx
+            bs_l = _span_bot(s, ox0); bs_r = _span_bot(s, ox1)
+            if min(ly_l, ly_r) <= max(bs_l, bs_r):
+                return False
+        return found
+
     # -- Mutations -------------------------------------------------------------
 
     def mark_solid(self, lo, hi, **_kw):

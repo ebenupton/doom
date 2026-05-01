@@ -85,6 +85,25 @@ _show_seg_numbers = False    # I key: show seg indices on wireframe
 _seg_annotations = []        # populated per frame: [(si, sx1, sx2, ft1, ft2)]
 _show_diff_overlay = False   # O key: overlay Python-only (red) + 6502-only (blue) lines
 
+# Telemetry for the aperture-clip optimisation (need_bt/need_bb early skip).
+# Reset by callers before a render frame; reported by diagnostic scripts.
+_ap_skip_stats = {
+    'bt_seen': 0, 'bt_skipped': 0,
+    'bb_seen': 0, 'bb_skipped': 0,
+    'solid_top_skipped': 0,    # solid top-horizontal above-clipped
+    'solid_bot_skipped': 0,    # solid bot-horizontal below-clipped
+    'solid_v1_skipped': 0,
+    'solid_v2_skipped': 0,
+    'pp_top_skipped': 0,       # portal-plain elif bch>ch line above-clipped
+    'pp_bot_skipped': 0,       # portal-plain elif bfh<fh line below-clipped
+    'apv_skipped': 0,          # solid aperture-edge vertical
+    'step_v_skipped': 0,       # need_bt/bb step verticals (per-column)
+    'fc_skipped': 0,           # front-ceil/floor line in need_bt/bb block
+    'bt_lines_saved': 0, 'bb_lines_saved': 0,
+}
+_AP_SKIP_DEBUG = False
+_AP_SKIP_ENABLE = True   # toggle to compare on/off in tests
+
 class Instrumented6502Spans(EndpointClipSpans):
     """EndpointClipSpans that shadows mutations to a 6502 span clipper for cycle counting.
 
@@ -169,6 +188,19 @@ class Instrumented6502Spans(EndpointClipSpans):
             _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
         # Python draw_clipped still renders all lines for wireframe overlay.
         super().draw_clipped(biased, color, surface, stats)
+
+    def line_above_spans(self, lx1, ly1, lx2, ly2, _dbg=False):
+        # Bias line Y to match the biased spans before delegating.
+        from endpoint_spans import Y_BIAS
+        return super().line_above_spans(lx1, ly1 + Y_BIAS, lx2, ly2 + Y_BIAS, _dbg=_dbg)
+
+    def line_below_spans(self, lx1, ly1, lx2, ly2):
+        from endpoint_spans import Y_BIAS
+        return super().line_below_spans(lx1, ly1 + Y_BIAS, lx2, ly2 + Y_BIAS)
+
+    def vertical_outside_spans(self, sx, y_lo, y_hi):
+        from endpoint_spans import Y_BIAS
+        return super().vertical_outside_spans(sx, y_lo + Y_BIAS, y_hi + Y_BIAS)
 
     def has_gap(self, lo, hi):
         result = super().has_gap(lo, hi)
@@ -2078,26 +2110,50 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
     fp_module.mul_cat("clip")
     if solid:
-        lines = [
-            (sx1, ft1, sx2, ft2),
-            (sx1, fb1, sx2, fb2),
-        ]
+        lines = []
+        # Top horizontal: skip if line is above visible spans everywhere.
+        if _AP_SKIP_ENABLE and clips.line_above_spans(sx1, ft1, sx2, ft2):
+            _ap_skip_stats['solid_top_skipped'] += 1
+        else:
+            lines.append((sx1, ft1, sx2, ft2))
+        # Bottom horizontal: skip if line is below visible spans everywhere.
+        if _AP_SKIP_ENABLE and clips.line_below_spans(sx1, fb1, sx2, fb2):
+            _ap_skip_stats['solid_bot_skipped'] += 1
+        else:
+            lines.append((sx1, fb1, sx2, fb2))
         if not no_vt1:
-            lines.append((sx1, ft1, sx1, fb1))
+            if (_AP_SKIP_ENABLE and
+                    clips.vertical_outside_spans(sx1, min(ft1,fb1), max(ft1,fb1))):
+                _ap_skip_stats['solid_v1_skipped'] += 1
+            else:
+                lines.append((sx1, ft1, sx1, fb1))
         if not no_vt2:
-            lines.append((sx2, ft2, sx2, fb2))
+            if (_AP_SKIP_ENABLE and
+                    clips.vertical_outside_spans(sx2, min(ft2,fb2), max(ft2,fb2))):
+                _ap_skip_stats['solid_v2_skipped'] += 1
+            else:
+                lines.append((sx2, ft2, sx2, fb2))
         # Solid seg draws aperture edge at NOVT endpoints (see fp_render_seg)
         _ap = _seg_novt_aperture.get((si, 1))
         if _ap and no_vt1:
             _bch1 = fp_project_y(_ap[0] - vz, ryh1, ryl1)
             _bfh1 = fp_project_y(_ap[1] - vz, ryh1, ryl1)
-            lines.append((sx1, _bch1, sx1, _bfh1))
+            if (_AP_SKIP_ENABLE and
+                    clips.vertical_outside_spans(sx1, min(_bch1,_bfh1), max(_bch1,_bfh1))):
+                _ap_skip_stats['apv_skipped'] += 1
+            else:
+                lines.append((sx1, _bch1, sx1, _bfh1))
         _ap = _seg_novt_aperture.get((si, 2))
         if _ap and no_vt2:
             _bch2 = fp_project_y(_ap[0] - vz, ryh2, ryl2)
             _bfh2 = fp_project_y(_ap[1] - vz, ryh2, ryl2)
-            lines.append((sx2, _bch2, sx2, _bfh2))
-        clips.draw_clipped(lines, GREEN, surface, draw_stats)
+            if (_AP_SKIP_ENABLE and
+                    clips.vertical_outside_spans(sx2, min(_bch2,_bfh2), max(_bch2,_bfh2))):
+                _ap_skip_stats['apv_skipped'] += 1
+            else:
+                lines.append((sx2, _bch2, sx2, _bfh2))
+        if lines:
+            clips.draw_clipped(lines, GREEN, surface, draw_stats)
         # V-key annotation: draw suppressed verticals in red so the user
         # can spot them and reference the seg/vertex label.
         if _novt_annotate:
@@ -2133,23 +2189,56 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 bt2 = fp_project_y(bch - vz, ryh2, ryl2)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bt2, bt2)
             fp_module.mul_cat("clip")
-            lines = [(sx1, bt1, sx2, bt2)]
-            if not no_vt1:
-                lines.append((sx1, ft1, sx1, bt1))
-            if not no_vt2:
-                lines.append((sx2, ft2, sx2, bt2))
-            if ch <= vz:
-                pass
+            _ap_skip_stats['bt_seen'] += 1
+            # Aperture-above-clip: bt horizontal is entirely above the
+            # visible spans → step verticals (which extend further up
+            # to ft) and front-ceil line (also above) are also clipped.
+            # Skip emission of the whole need_bt block.
+            _dbg = (_AP_SKIP_DEBUG and si == 360)
+            _ap_above = (_AP_SKIP_ENABLE and
+                         clips.line_above_spans(sx1, bt1, sx2, bt2, _dbg=_dbg))
+            if _AP_SKIP_DEBUG and _ap_above:
+                print(f'  BT-SKIP s{si} sx=({sx1},{sx2}) bt=({bt1},{bt2}) ft=({ft1},{ft2}) '
+                      f'spans top0={[(s[0],s[1],s[4],s[6]) for s in clips.spans[:3]]}')
+            if _ap_above:
+                _ap_skip_stats['bt_skipped'] += 1
+                # Count lines we would have drawn (1 horiz + step verts + maybe front-ceil)
+                _saved = 1 + (0 if no_vt1 else 1) + (0 if no_vt2 else 1) + (1 if ch > vz else 0)
+                _ap_skip_stats['bt_lines_saved'] += _saved
             else:
-                lines.insert(0, (sx1, ft1, sx2, ft2))
-            clips.draw_clipped(lines, GREEN, surface, draw_stats)
-            if _novt_annotate:
-                if no_vt1:
-                    _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, bt1))
-                if no_vt2:
-                    _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, bt2))
+                lines = [(sx1, bt1, sx2, bt2)]
+                if not no_vt1:
+                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
+                            sx1, min(ft1, bt1), max(ft1, bt1))):
+                        _ap_skip_stats['step_v_skipped'] += 1
+                    else:
+                        lines.append((sx1, ft1, sx1, bt1))
+                if not no_vt2:
+                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
+                            sx2, min(ft2, bt2), max(ft2, bt2))):
+                        _ap_skip_stats['step_v_skipped'] += 1
+                    else:
+                        lines.append((sx2, ft2, sx2, bt2))
+                if ch <= vz:
+                    pass
+                elif (_AP_SKIP_ENABLE and
+                        clips.line_above_spans(sx1, ft1, sx2, ft2)):
+                    _ap_skip_stats['fc_skipped'] += 1
+                else:
+                    lines.insert(0, (sx1, ft1, sx2, ft2))
+                clips.draw_clipped(lines, GREEN, surface, draw_stats)
+                if _novt_annotate:
+                    if no_vt1:
+                        _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, bt1))
+                    if no_vt2:
+                        _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, bt2))
         elif bch > ch:
-            clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
+            # Portal-plain (no need_bt) "front-ceil only" line.  Skip if
+            # ft is above visible spans everywhere.
+            if _AP_SKIP_ENABLE and clips.line_above_spans(sx1, ft1, sx2, ft2):
+                _ap_skip_stats['pp_top_skipped'] += 1
+            else:
+                clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
 
         if need_bb:
             fp_module.mul_cat("proj")
@@ -2168,23 +2257,47 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 bb2 = fp_project_y(bfh - vz, ryh2, ryl2)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bb2, bb2)
             fp_module.mul_cat("clip")
-            lines = [(sx1, bb1, sx2, bb2)]
-            if not no_vt1:
-                lines.append((sx1, bb1, sx1, fb1))
-            if not no_vt2:
-                lines.append((sx2, bb2, sx2, fb2))
-            if fh >= vz:
-                pass
+            _ap_skip_stats['bb_seen'] += 1
+            # Aperture-below-clip mirror of need_bt skip.
+            if (_AP_SKIP_ENABLE and
+                    clips.line_below_spans(sx1, bb1, sx2, bb2)):
+                _ap_skip_stats['bb_skipped'] += 1
+                _saved = 1 + (0 if no_vt1 else 1) + (0 if no_vt2 else 1) + (1 if fh < vz else 0)
+                _ap_skip_stats['bb_lines_saved'] += _saved
             else:
-                lines.insert(1, (sx1, fb1, sx2, fb2))
-            clips.draw_clipped(lines, GREEN, surface, draw_stats)
-            if _novt_annotate:
-                if no_vt1:
-                    _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
-                if no_vt2:
-                    _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
+                lines = [(sx1, bb1, sx2, bb2)]
+                if not no_vt1:
+                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
+                            sx1, min(bb1, fb1), max(bb1, fb1))):
+                        _ap_skip_stats['step_v_skipped'] += 1
+                    else:
+                        lines.append((sx1, bb1, sx1, fb1))
+                if not no_vt2:
+                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
+                            sx2, min(bb2, fb2), max(bb2, fb2))):
+                        _ap_skip_stats['step_v_skipped'] += 1
+                    else:
+                        lines.append((sx2, bb2, sx2, fb2))
+                if fh >= vz:
+                    pass
+                elif (_AP_SKIP_ENABLE and
+                        clips.line_below_spans(sx1, fb1, sx2, fb2)):
+                    _ap_skip_stats['fc_skipped'] += 1
+                else:
+                    lines.insert(1, (sx1, fb1, sx2, fb2))
+                clips.draw_clipped(lines, GREEN, surface, draw_stats)
+                if _novt_annotate:
+                    if no_vt1:
+                        _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
+                    if no_vt2:
+                        _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
         elif bfh < fh:
-            clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+            # Portal-plain (no need_bb) "front-floor only" line.  Skip if
+            # fb is below visible spans everywhere.
+            if _AP_SKIP_ENABLE and clips.line_below_spans(sx1, fb1, sx2, fb2):
+                _ap_skip_stats['pp_bot_skipped'] += 1
+            else:
+                clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
 
         # Aperture edge (see fp_render_seg for rationale)
         if need_bt or need_bb:
@@ -2202,9 +2315,19 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                          and v2_idx not in _vert_covered_by_solid_ap
                          and (si, 2) not in _novt_rule4)
             if _need_ap1:
-                _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
+                if (_AP_SKIP_ENABLE and
+                        clips.vertical_outside_spans(sx1,
+                            min(_ap_top1, _ap_bot1), max(_ap_top1, _ap_bot1))):
+                    _ap_skip_stats['apv_skipped'] += 1
+                else:
+                    _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
             if _need_ap2:
-                _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
+                if (_AP_SKIP_ENABLE and
+                        clips.vertical_outside_spans(sx2,
+                            min(_ap_top2, _ap_bot2), max(_ap_top2, _ap_bot2))):
+                    _ap_skip_stats['apv_skipped'] += 1
+                else:
+                    _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
             if _ap_lines:
                 clips.draw_clipped(_ap_lines, GREEN, surface, draw_stats)
 
