@@ -177,6 +177,34 @@ _drawn_lines = None  # set to [] to enable collection
 _partial_aperture_check_enabled = False
 _partial_aperture_count = 0
 
+# Tighten instrumentation: counts dispositions per overlapping span.
+# Used to bound achievable savings of asymmetric top/bot anchor optimisation.
+TIGHTEN_STATS = {
+    'tighten_calls': 0,
+    'spans_visited': 0,
+    'no_overlap': 0,
+    'full_dom': 0,         # span unchanged (clamped seg between old top/bot)
+    'no_cx_both_win': 0,   # both sides unchanged after clamp
+    'no_cx_top_only': 0,   # only top side narrowed (bot unchanged) ← asymmetric saves here
+    'no_cx_bot_only': 0,   # only bot side narrowed (top unchanged) ← asymmetric saves here
+    'no_cx_both_narrow': 0,# both sides narrowed (asymmetric doesn't help)
+    'no_cx_killed': 0,     # span killed (rt >= rb after clamp)
+    'crossover': 0,        # has_top_cx or has_bot_cx
+    'old_fast_path': 0,    # ox0 == s[xlo] and ox1 == s[xhi] — old corners reused
+    'old_interp_path': 0,  # old corners need 4 interp_stores
+    'new_fast_path': 0,    # ox0 == sx1 and ox1 == sx2 — new corners are seg endpoints
+    'new_interp_path': 0,  # new corners need 4 interp_stores from seg line
+    # Pre-check fires (sufficient, not necessary): seg_top_max <= OT_span ⇒ top wins.
+    # If we add this check + asymmetric anchors, we skip top-side OLD+NEW interps
+    # for these spans (4 saved per fire when not also full-dom).
+    'pre_top_dom': 0,
+    'pre_bot_dom': 0,
+    # Spans where pre-check would save interps (top-only narrow → save top, etc.)
+    'pre_save_top4': 0,    # pre_top_dom AND ends up no_cx_bot_only → save 4 top interps
+    'pre_save_bot4': 0,    # pre_bot_dom AND ends up no_cx_top_only → save 4 bot interps
+}
+
+
 def _check_partial_aperture(span, source):
     # Disabled by default; preserved as a debugging hook for future work.
     if not _partial_aperture_check_enabled:
@@ -425,29 +453,50 @@ class EndpointClipSpans:
         sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
             ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
             clamp_u8=(self.y_display_offset != 0))
+        TIGHTEN_STATS['tighten_calls'] += 1
         new = []
         for s in self.spans:
+            TIGHTEN_STATS['spans_visited'] += 1
             xs, xe = s[0], s[1]
             if xe <= ilo or xs >= ihi:  # pixel-center: endpoint-only ≠ overlap
+                TIGHTEN_STATS['no_overlap'] += 1
                 _append_merge(new, s); continue
             ox0 = max(xs, ilo); ox1 = min(xe, ihi)
+            # Pre-check (cheap, no interp): does the seg's bbox prove one-sided
+            # dominance? OT_span = min(tl, tr); OB_span = max(bl, br); seg_top_max
+            # = max(yt1, yt2); seg_bot_min = min(yb1, yb2). If seg_top_max <=
+            # OT_span, the seg top is above old top everywhere on overlap → top
+            # wins for sure. Symmetric for bot. With asymmetric anchors, top-wins
+            # would let us skip ALL top-side interps.
+            ot_span = min(s[4], s[6])
+            ob_span = max(s[5], s[7])
+            seg_top_max_pre = max(yt1, yt2)
+            seg_bot_min_pre = min(yb1, yb2)
+            pre_top_dom = (seg_top_max_pre <= ot_span)
+            pre_bot_dom = (seg_bot_min_pre >= ob_span)
+            if pre_top_dom: TIGHTEN_STATS['pre_top_dom'] += 1
+            if pre_bot_dom: TIGHTEN_STATS['pre_bot_dom'] += 1
             # Dominance/crossover prelude
             # Fast path: if the overlap endpoints match the old span's LINE
             # anchors, the stored tl/bl/tr/br *are* the y values at those
             # endpoints — no interp needed.
             if ox0 == s[2] and ox1 == s[3]:
+                TIGHTEN_STATS['old_fast_path'] += 1
                 old_tl = s[4]; old_bl = s[5]
                 old_tr = s[6]; old_br = s[7]
             else:
+                TIGHTEN_STATS['old_interp_path'] += 1
                 old_tl = _span_top_store(s, ox0)
                 old_tr = _span_top_store(s, ox1)
                 old_bl = _span_bot_store(s, ox0)
                 old_br = _span_bot_store(s, ox1)
             # Same fast path for the seg's line
             if ox0 == sx1 and ox1 == sx2:
+                TIGHTEN_STATS['new_fast_path'] += 1
                 new_tl = yt1; new_bl = yb1
                 new_tr = yt2; new_br = yb2
             else:
+                TIGHTEN_STATS['new_interp_path'] += 1
                 new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
                 new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
                 new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
@@ -479,6 +528,7 @@ class EndpointClipSpans:
 
             if (c_tl <= old_tl and c_tr <= old_tr and
                     c_bl >= old_bl and c_br >= old_br):
+                TIGHTEN_STATS['full_dom'] += 1
                 _append_merge(new, s); continue
             # Left fragment (line preserved, abutting: includes ilo)
             if xs < ilo:
@@ -495,12 +545,26 @@ class EndpointClipSpans:
                     old_top_wins = (rt_l == old_tl and rt_r == old_tr)
                     old_bot_wins = (rb_l == old_bl and rb_r == old_br)
                     if old_top_wins and old_bot_wins:
+                        TIGHTEN_STATS['no_cx_both_win'] += 1
                         _append_merge(new, (ox0, ox1, s[2], s[3],
                                             s[4], s[5], s[6], s[7]))
                     else:
+                        if old_top_wins:
+                            TIGHTEN_STATS['no_cx_bot_only'] += 1
+                            if pre_top_dom:
+                                TIGHTEN_STATS['pre_save_top4'] += 1
+                        elif old_bot_wins:
+                            TIGHTEN_STATS['no_cx_top_only'] += 1
+                            if pre_bot_dom:
+                                TIGHTEN_STATS['pre_save_bot4'] += 1
+                        else:
+                            TIGHTEN_STATS['no_cx_both_narrow'] += 1
                         _append_merge(new, (ox0, ox1, ox0, ox1,
                                             rt_l, rb_l, rt_r, rb_r))
+                else:
+                    TIGHTEN_STATS['no_cx_killed'] += 1
             else:
+                TIGHTEN_STATS['crossover'] += 1
                 _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
                               yb1, yb2, new,
                               old_tl, old_tr, old_bl, old_br,

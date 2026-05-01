@@ -141,6 +141,13 @@ zp_cb_top2  = $B7    ; u8, span top at cx2
 zp_cb_bot1  = $B8    ; u8, span bot at cx1
 zp_cb_bot2  = $B9    ; u8, span bot at cx2
 
+; === Tighten pre-dominance flags ($B6 — reuses CB clip slot, non-overlapping) ===
+; Set per-span at post-old-interp dom check. Drives gating in new interp paths
+; so we skip top or bot interps when one side is dominated by the old span.
+;   bit 0 = top_dom (zp_nt_l/r preset to 0 sentinels — max(ot,nt) = ot)
+;   bit 1 = bot_dom (zp_nb_l/r preset to $FF sentinels — min(ob,nb) = ob)
+zp_pre_dom_flags = $B6
+
 ; === Tighten secondary seg params ($B2-$B5) — reuses DCL CB slots ===
 ; Passed by the wrapper when emit_sec_top/emit_sec_bot flags are set.
 ; Secondary values are the front ceiling/floor y at sx1/sx2 (u8 post-remap).
@@ -657,6 +664,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; for each line, so the buffer is just a log for verification.
     LDA #$FF : STA zp_cache_ox1  ; invalidate seg value cache            ; |
     STA zp_tg_cont               ; invalidate portal continuation        ; |
+    LDA #0   : STA zp_pre_dom_flags  ; pre-dom flags: clear at tighten entry
     ; Initialize running seg bounds (clamped to [0,159]).
     ; seg_top_max = max(clamp(yt1), clamp(yt2))
     ; seg_bot_min = min(clamp(yb1), clamp(yb2))
@@ -846,16 +854,23 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA #Y_BIAS : STA zp_ot_l : STA zp_ot_r                             ; |
     LDA #VIS_YMAX : STA zp_ob_l : STA zp_ob_r                           ; |
     STX zp_save1                                                         ; |
+    LDA #0 : STA zp_pre_dom_flags    ; clear so tg_pod_skip uses normal path
     JMP tg_pod_skip   ; skip post-old-interp check (dummy values always fail it)
 .old_done
-    ; --- Post-old-interp dominance check using running seg bounds ---
-    ; More precise than tier-1 BB: uses actual interpolated old values.
-    LDA zp_ot_l : CMP zp_bb_yt_max : BCC tg_pod_skip                    ; |
-    LDA zp_ot_r : CMP zp_bb_yt_max : BCC tg_pod_skip                    ; |
-    LDA zp_bb_yb_min : CMP zp_ob_l : BCC tg_pod_skip                    ; |
-    CMP zp_ob_r : BCC tg_pod_skip                                       ; |
-    ; Old dominates seg's bounding box — skip new seg interp entirely.
-    ; Inline fast link (same as tier 1 old-dom: skip merge check).
+    ; --- Post-old-interp dominance check (extended for one-sided dom) ---
+    ; Uses interpolated ot_l/r and ob_l/r at (ox0, ox1) — more precise than
+    ; tier-1 BB. Three-way fork:
+    ;   both top and bot dominate → full old-dom shortcut (link span unchanged)
+    ;   only top dominates       → set zp_nt_l/r = 0 sentinels, skip top NEW interp
+    ;   only bot dominates       → set zp_nb_l/r = $FF sentinels, skip bot NEW interp
+    ;   neither dominates        → fall through to tg_pod_skip (full interp)
+    LDA #0 : STA zp_pre_dom_flags
+    LDA zp_ot_l : CMP zp_bb_yt_max : BCC tg_top_no_dom
+    LDA zp_ot_r : CMP zp_bb_yt_max : BCC tg_top_no_dom
+    ; Top dominates. Check bot.
+    LDA zp_bb_yb_min : CMP zp_ob_l : BCC tg_top_only_dom
+    CMP zp_ob_r : BCC tg_top_only_dom
+    ; Both dominate — full old-dom shortcut (existing path).
     LDA #$FF : STA zp_tg_cont
     LDX zp_save1                                                         ; |
     LDA #0 : STA POOL_NEXT,X                                             ; |
@@ -863,7 +878,29 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     TXA : STA POOL_NEXT,Y                                               ; |
     STX zp_new_tail : JMP tg_walk                                       ; |
 .tg_pod_first STX zp_head : STX zp_new_tail : JMP tg_walk               ; |
+.tg_top_only_dom
+    ; Top dominates, bot doesn't. Set top sentinels: nt_l/r=0 + hi=0 →
+    ; max(ot,0)=ot, no top crossover (signs uniform), c_tl=clamp(0)=Y_BIAS<=ot_l.
+    LDA #0 : STA zp_nt_l : STA zp_nt_r : STA zp_nt_lh : STA zp_nt_rh
+    LDA #$01 : STA zp_pre_dom_flags
+    JMP tg_pod_skip
+.tg_top_no_dom
+    ; Top doesn't dominate. Check bot dominance alone.
+    LDA zp_bb_yb_min : CMP zp_ob_l : BCC tg_pod_skip                    ; |
+    CMP zp_ob_r : BCC tg_pod_skip                                       ; |
+    ; Bot only dom. Set bot sentinels: nb_l/r=$FF + hi=0 →
+    ; min(ob,$FF)=ob, no bot crossover, c_bl=clamp($FF)=VIS_YMAX>=ob_l.
+    LDA #$FF : STA zp_nb_l : STA zp_nb_r
+    LDA #0 : STA zp_nb_lh : STA zp_nb_rh
+    LDA #$02 : STA zp_pre_dom_flags
+    ; fall through to tg_pod_skip
 .tg_pod_skip
+    ; If pre-dom fired, bypass cache + anchor + constant fast paths (which
+    ; would overwrite our sentinels) and go directly to the gated slow path.
+    ; Branch out of range — trampoline through JMP.
+    LDA zp_pre_dom_flags : BEQ tg_pod_skip_normal
+    JMP new_slow_gated
+.tg_pod_skip_normal
     ; ---------- NEW seg: cache check for left-endpoint reuse -----------
     LDA zp_ox0 : CMP zp_cache_ox1 : BNE new_no_cache
     ; Cache hit: reuse left-endpoint seg values from previous span
@@ -907,6 +944,30 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA zp_ox1 : JSR interp_store : STA zp_nb_r                         ; ||
     LDA #0 : STA zp_nt_lh : STA zp_nt_rh : STA zp_nb_lh : STA zp_nb_rh ; | hi bytes = 0
     JMP new_done                                                         ; |
+.new_slow_gated
+    ; Pre-dom path: top OR bot interp gated on zp_pre_dom_flags. The
+    ; dominated side has its nt_l/r (top) or nb_l/r (bot) preset to
+    ; sentinels (0 or $FF) by the post-old-interp dom check, plus its
+    ; hi bytes set to 0. Compute only the non-dominated side.
+    LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
+    LDA zp_sx1 : STA zp_i_x0                                             ; |
+    ; Top: skip if zp_pre_dom_flags & $01 (top dominated)
+    LDA zp_pre_dom_flags : AND #$01 : BNE nsg_skip_top
+    LDA zp_yt1 : STA zp_i_y0                                             ; |
+    LDA zp_yt2 : STA zp_i_y1                                             ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_nt_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_nt_r                         ; |
+    LDA #0 : STA zp_nt_lh : STA zp_nt_rh                                 ; |
+.nsg_skip_top
+    ; Bot: skip if zp_pre_dom_flags & $02 (bot dominated)
+    LDA zp_pre_dom_flags : AND #$02 : BNE nsg_skip_bot
+    LDA zp_yb1 : STA zp_i_y0                                             ; |
+    LDA zp_yb2 : STA zp_i_y1                                             ; |
+    LDA zp_ox0 : JSR interp_store : STA zp_nb_l                         ; |
+    LDA zp_ox1 : JSR interp_store : STA zp_nb_r                         ; |
+    LDA #0 : STA zp_nb_lh : STA zp_nb_rh                                 ; |
+.nsg_skip_bot
+    JMP new_done                                                         ; |
 .new_right_only
     ; Cache hit: left-endpoint seg values already set. Compute right only.
     LDA zp_sx2 : SEC : SBC zp_sx1 : STA zp_div_den                      ; |
@@ -919,10 +980,20 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA zp_ox1 : JSR interp_store : STA zp_nb_r                         ; ||
     LDA #0 : STA zp_nt_rh : STA zp_nb_rh                                ; | hi bytes = 0
 .new_done
-    ; Cache right-endpoint seg values for reuse by next contiguous span
+    ; Cache right-endpoint seg values for reuse by next contiguous span.
+    ; If pre-dom fired (one or both sides hold sentinel values that would
+    ; corrupt the next span's left endpoint reuse), invalidate cache_ox1
+    ; AND set cache_nt/nb to off-screen sentinel ($FF) so the running
+    ; seg bound narrowing code below skips this span (its CMP #(VIS_YMAX+1)
+    ; check rejects $FF as off-screen).
+    LDA zp_pre_dom_flags : BNE new_done_invalidate_cache
     LDA zp_nt_r : STA zp_cache_nt
     LDA zp_nb_r : STA zp_cache_nb
     LDA zp_ox1 : STA zp_cache_ox1
+    JMP new_done_cache_done
+.new_done_invalidate_cache
+    LDA #$FF : STA zp_cache_ox1 : STA zp_cache_nt : STA zp_cache_nb
+.new_done_cache_done
     ; Set portal continuation: record span's xend for contiguity check
     LDX zp_save1 : LDA POOL_XEND,X : STA zp_tg_cont
     ; --- Narrow running seg bounds using cached right-edge seg values ---
