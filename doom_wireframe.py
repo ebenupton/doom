@@ -1778,11 +1778,15 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         tb2 = bb2 if need_bb else fb2
         yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
         yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
-        # Detect if tighten edges dominate all existing spans (0 muls).
-        # If the step edge passed through all spans unclipped, the new
-        # boundary dominates and spans can be merged after tighten.
-        top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
-        bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
+        # top_dom/bot_dom were the existing-spans dominance signal.  In the
+        # current Python+6502-shadow path they are dead — `EndpointClipSpans.
+        # tighten` ignores them, `_span_clip_6502.tighten` (span_clip.asm)
+        # doesn't accept them, and the only consumer was the now-superseded
+        # 6502 front-end's queue_tighten which has its own ASM line_survives.
+        # The new line_above_spans/line_below_spans checks (used by the
+        # tighten no-op skip) provide the actually-needed information.
+        # Stub these to False so downstream tuple positions stay aligned.
+        top_dom = bot_dom = False
         # Emit flags mirror which lines Python's draw_clipped actually drew.
         emit_top = need_bt or (back[1] > ch)
         emit_bot = need_bb or (back[0] < fh)
@@ -2352,8 +2356,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         tb2 = bb2 if need_bb else fb2
         yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
         yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
-        top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
-        bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
+        # See fp_render_seg note: top_dom/bot_dom are dead in the current
+        # Python+6502-shadow path; stubbed so tuple positions stay aligned.
+        top_dom = bot_dom = False
         # Emit flags for the 6502 shadow: only emit a portal edge during
         # tighten mutation when the Python reference draws the matching
         # line. Python draws a top line iff need_bt or bch > ch, and a
@@ -3086,10 +3091,9 @@ def clip_and_draw_6502(commands, surface, vz_ps):
             tb2 = bb2 if need_bb else fb2
             yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
             yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
-            top_dom = need_bt and clips.line_survives(sx1, bt1, sx2, bt2)
-            bot_dom = need_bb and clips.line_survives(sx1, bb1, sx2, bb2)
+            # top_dom/bot_dom dead in this path — see notes in fp_render_seg.
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
-                             yt1, yt2, yb1, yb2, top_dom, bot_dom))
+                             yt1, yt2, yb1, yb2, False, False))
 
     return drawn
 
