@@ -1134,7 +1134,9 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ;
 IF EMIT_LINES
     ; Primary emission removed — DCL handles all line emission via the
-    ; wrapper's draw_clipped forward.
+    ; wrapper's draw_clipped forward.  (See 2026-05-01 attempt at
+    ; combined draw-and-tighten — abandoned due to Bresenham
+    ; per-segment vs whole-line rasteriser pixel mismatch.)
 ENDIF
     ; Do max/min + aperture + store inline without re-interpolating.
     LDA zp_ot_l : CMP zp_nt_l : BCS ncf_tl_ok : LDA zp_nt_l             ; |
