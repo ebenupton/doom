@@ -133,7 +133,7 @@ zp_ptr1      = &5C         ; u16
 ; --- Running seg pointers (advanced by seg_loop to avoid per-seg
 ;     idx*12 and idx*24 multiplies inside render_seg/read_seg_detail) ---
 zp_seg_hdr_ptr = &5E       ; u16 pointer to current seg header (12B stride)
-zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (24B stride)
+zp_seg_det_ptr = &60       ; u16 pointer to current seg detail (20B stride)
 
 ; --- Clipper state (used during line drawing, after BSP traversal) ---
 ; These overlap with zp_vx1..zp_vx2 ($30-$36) and zp_ls_* ($C4-$CE),
@@ -394,16 +394,23 @@ SH_LDY  = 9                ; s8
 SH_FLAGS = 10              ; u8
 
 ; Seg flags
-SF_DIR    = &01
-SF_SOLID  = &02
-SF_NEEDBT = &04
-SF_NEEDBB = &08
+SF_DIR     = &01
+SF_SOLID   = &02
+SF_NEEDBT  = &04
+SF_NEEDBB  = &08
+SF_NOVT1   = &10           ; suppress vertical at v1
+SF_NOVT2   = &20           ; suppress vertical at v2
+SF_APEDGE1 = &40           ; emit aperture edge at v1 (only when NOVT1)
+SF_APEDGE2 = &80           ; emit aperture edge at v2 (only when NOVT2)
 
-; Seg detail offsets (within 24-byte record)
+; Seg detail offsets (within 20-byte record)
 SD_FH  = 0                 ; s8
 SD_CH  = 1                 ; s8
-SD_BFH = 2                 ; s8
-SD_BCH = 3                 ; s8
+SD_BFH = 2                 ; s8  (portal back floor)
+SD_BCH = 3                 ; s8  (portal back ceil)
+; Solid overlay: for SF_SOLID segs, +2/+3 are APV1 aperture heights
+SD_APV1_CH = 2             ; s8  (overlay SD_BFH)
+SD_APV1_FH = 3             ; s8  (overlay SD_BCH)
 ; VWH (vertex-with-height) indices: u16 each
 SD_VWH_FT1 = 4
 SD_VWH_FB1 = 6
@@ -413,6 +420,9 @@ SD_VWH_BT1 = 12
 SD_VWH_BB1 = 14
 SD_VWH_BT2 = 16
 SD_VWH_BB2 = 18
+; Solid overlay: for SF_SOLID segs, +12/+13 are APV2 aperture heights
+SD_APV2_CH = 12            ; s8  (overlay SD_VWH_BT1 lo)
+SD_APV2_FH = 13            ; s8  (overlay SD_VWH_BT1 hi)
 
 ; Node offsets (within 16-byte record)
 ND_PX  = 0                 ; s16
@@ -3991,20 +4001,25 @@ QET_TIGHTEN   = 1
 
     ; --- Initialise running seg header pointer: rom_window + off_seg_hdr + idx*12 ---
     ; idx * 12 = idx*8 + idx*4
-    ; Compute idx * 12 in zp_seg_hdr_ptr, then idx * 24 = idx*12 << 1
+    ; idx * 20 = idx*16 + idx*4
+    ; Share idx*4, derive *8 and *16 by shifting.
     LDA zp_seg_idx : STA zp_seg_hdr_ptr
     LDA zp_seg_idx+1 : STA zp_seg_hdr_ptr+1
     ASL zp_seg_hdr_ptr : ROL zp_seg_hdr_ptr+1
     ASL zp_seg_hdr_ptr : ROL zp_seg_hdr_ptr+1           ; × 4
     LDA zp_seg_hdr_ptr : STA zp_tmp0
-    LDA zp_seg_hdr_ptr+1 : STA zp_tmp0+1
+    LDA zp_seg_hdr_ptr+1 : STA zp_tmp0+1                ; tmp0 = idx*4
     ASL zp_seg_hdr_ptr : ROL zp_seg_hdr_ptr+1           ; × 8
+    ; zp_seg_det_ptr = idx*8 (scratch for *16 below, then +*4 → *20)
+    LDA zp_seg_hdr_ptr   : STA zp_seg_det_ptr
+    LDA zp_seg_hdr_ptr+1 : STA zp_seg_det_ptr+1
+    ; hdr = *8 + *4 = *12
     LDA zp_seg_hdr_ptr : CLC : ADC zp_tmp0 : STA zp_seg_hdr_ptr
     LDA zp_seg_hdr_ptr+1 : ADC zp_tmp0+1 : STA zp_seg_hdr_ptr+1   ; × 12
-
-    ; idx * 24 = idx * 12 * 2
-    LDA zp_seg_hdr_ptr   : ASL A : STA zp_seg_det_ptr
-    LDA zp_seg_hdr_ptr+1 : ROL A : STA zp_seg_det_ptr+1
+    ; det = *16 + *4 = *20
+    ASL zp_seg_det_ptr : ROL zp_seg_det_ptr+1           ; × 16
+    LDA zp_seg_det_ptr : CLC : ADC zp_tmp0 : STA zp_seg_det_ptr
+    LDA zp_seg_det_ptr+1 : ADC zp_tmp0+1 : STA zp_seg_det_ptr+1   ; × 20
 
     ; Add base: zp_seg_hdr_base (= rom_window + off_seg_hdr)
     LDA zp_seg_hdr_ptr   : CLC : ADC zp_seg_hdr_base : STA zp_seg_hdr_ptr
@@ -4018,12 +4033,12 @@ QET_TIGHTEN   = 1
     BEQ segs_done
 .seg_loop
     JSR render_seg
-    ; Advance running seg pointers (header += 12, detail += 24)
+    ; Advance running seg pointers (header += 12, detail += 20)
     LDA zp_seg_hdr_ptr : CLC : ADC #12 : STA zp_seg_hdr_ptr
     BCC sl_no_hdr_carry
     INC zp_seg_hdr_ptr+1
 .sl_no_hdr_carry
-    LDA zp_seg_det_ptr : CLC : ADC #24 : STA zp_seg_det_ptr
+    LDA zp_seg_det_ptr : CLC : ADC #20 : STA zp_seg_det_ptr
     BCC sl_no_det_carry
     INC zp_seg_det_ptr+1
 .sl_no_det_carry
@@ -5401,8 +5416,16 @@ QET_TIGHTEN   = 1
     ; Read fh/ch/bfh/bch directly via zp_seg_det_ptr (saves the copy to ptr0)
     LDY #SD_FH  : LDA (zp_seg_det_ptr),Y : STA &80
     LDY #SD_CH  : LDA (zp_seg_det_ptr),Y : STA &81
-    LDY #SD_BFH : LDA (zp_seg_det_ptr),Y : STA &82
-    LDY #SD_BCH : LDA (zp_seg_det_ptr),Y : STA &83
+    LDY #SD_BFH : LDA (zp_seg_det_ptr),Y : STA &82   ; solid: overlay APV1_CH
+    LDY #SD_BCH : LDA (zp_seg_det_ptr),Y : STA &83   ; solid: overlay APV1_FH
+    ; For solids, also read APV2 aperture heights at +12/+13 (overlay of
+    ; VWH_BT1) so draw_solid_lines can project them outside bank 1.
+    LDA zp_seg_flags
+    AND #SF_SOLID
+    BEQ rsd_done
+    LDY #SD_APV2_CH : LDA (zp_seg_det_ptr),Y : STA &9C
+    LDY #SD_APV2_FH : LDA (zp_seg_det_ptr),Y : STA &9D
+.rsd_done
     RTS
 }
 
@@ -5536,11 +5559,62 @@ QET_TIGHTEN   = 1
 }
 
 ; ======================================================================
-; DRAW SOLID LINES — write 4 edges to line peripheral at $FE20-$FE27
-; Line 1 (top):    sx1,ft1 -> sx2,ft2
-; Line 2 (bottom): sx1,fb1 -> sx2,fb2
-; Line 3 (left):   sx1,ft1 -> sx1,fb1
-; Line 4 (right):  sx2,ft2 -> sx2,fb2
+; PROJECT_Y_SINGLE: project a single height via ry1 or ry2.
+; Input: A = s8 height, X = ry offset (0 for ry1 at &88/&89,
+;        2 for ry2 at &8A/&8B).
+; Output: zp_tmp0 (s16) = projected y.
+; Clobbers: zp_tmp2, zp_tmp3 (X save), &70-&72, &94-&95, A, Y.
+; ======================================================================
+.project_y_single
+{
+    STX zp_tmp3                     ; save X across mul
+    SEC : SBC zp_vz_ps : STA zp_tmp2
+    BPL pys_pos
+    LDA #&FF : STA zp_tmp2+1 : JMP pys_mul
+.pys_pos
+    LDA #0 : STA zp_tmp2+1
+.pys_mul
+    LDX zp_tmp3
+    LDA &88,X : JSR mul_s16_u8_s24
+    LDA &70 : STA &94 : LDA &71 : STA &95
+    LDX zp_tmp3
+    LDA &89,X : JSR mul_s16_u8_s24
+    LDA &94 : CLC : ADC &71 : STA &70
+    LDA &95 : ADC &72 : STA &71
+    LDA #HALF_H : SEC : SBC &70 : STA zp_tmp0
+    LDA #0 : SBC &71 : STA zp_tmp0+1
+    RTS
+}
+
+; ======================================================================
+; PROJECT_AP_V1 / PROJECT_AP_V2: project a pair of aperture heights.
+; Output: zp_tmp0 = ap_bot, zp_tmp1 = ap_top (caller uses both).
+; ======================================================================
+.project_ap_v1
+    LDA &82 : LDX #0 : JSR project_y_single       ; ap_top → tmp0
+    LDA zp_tmp0   : STA zp_tmp1
+    LDA zp_tmp0+1 : STA zp_tmp1+1                 ; tmp1 = ap_top
+    LDA &83 : LDX #0 : JMP project_y_single       ; ap_bot → tmp0, tail-call RTS
+
+.project_ap_v2
+    LDA &9C : LDX #2 : JSR project_y_single
+    LDA zp_tmp0   : STA zp_tmp1
+    LDA zp_tmp0+1 : STA zp_tmp1+1
+    LDA &9D : LDX #2 : JMP project_y_single
+
+; emit_ap_tmp: emit aperture edge (sx, tmp0, sx, tmp1).
+; Input: X = 0 for v1 (sx at $20), 2 for v2 (sx at $22).
+.emit_ap_tmp
+    LDA &20,X : STA LINE_X0_LO : STA LINE_X1_LO
+    LDA &21,X : STA LINE_X0_HI : STA LINE_X1_HI
+    LDA zp_tmp0   : STA LINE_Y0_LO
+    LDA zp_tmp0+1 : STA LINE_Y0_HI
+    LDA zp_tmp1   : STA LINE_Y1_LO
+    LDA zp_tmp1+1 : STA LINE_Y1_HI
+    JMP clip_rasterise
+
+; ======================================================================
+; DRAW SOLID LINES — NOVT only (no APEDGE), bisect
 ; ======================================================================
 .draw_solid_lines
 {
@@ -5564,7 +5638,8 @@ QET_TIGHTEN   = 1
     LDA zp_fb2   : STA LINE_Y1_LO
     LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
 
-    ; Line 3: left edge  sx1,ft1 -> sx1,fb1
+    ; Line 3: left vertical (ft1→fb1) or aperture edge
+    LDA zp_seg_flags : AND #SF_NOVT1 : BNE ds_v1_novt
     LDA zp_sx1   : STA LINE_X0_LO
     LDA zp_sx1+1 : STA LINE_X0_HI
     LDA zp_ft1   : STA LINE_Y0_LO
@@ -5573,8 +5648,15 @@ QET_TIGHTEN   = 1
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA zp_fb1   : STA LINE_Y1_LO
     LDA zp_fb1+1 : STA LINE_Y1_HI : JSR clip_rasterise
+    JMP ds_v1_done
+.ds_v1_novt
+    LDA zp_seg_flags : AND #SF_APEDGE1 : BEQ ds_v1_done
+    JSR project_ap_v1
+    LDX #0 : JSR emit_ap_tmp
+.ds_v1_done
 
-    ; Line 4: right edge  sx2,ft2 -> sx2,fb2
+    ; Line 4: right vertical (ft2→fb2) or aperture edge
+    LDA zp_seg_flags : AND #SF_NOVT2 : BNE ds_v2_novt
     LDA zp_sx2   : STA LINE_X0_LO
     LDA zp_sx2+1 : STA LINE_X0_HI
     LDA zp_ft2   : STA LINE_Y0_LO
@@ -5583,6 +5665,12 @@ QET_TIGHTEN   = 1
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
     LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
+    JMP ds_v2_done
+.ds_v2_novt
+    LDA zp_seg_flags : AND #SF_APEDGE2 : BEQ ds_v2_done
+    JSR project_ap_v2
+    LDX #2 : JSR emit_ap_tmp
+.ds_v2_done
 
     RTS
 }
@@ -5626,7 +5714,8 @@ QET_TIGHTEN   = 1
     LDA &9A    : STA LINE_Y1_LO      ; bt2 lo
     LDA &9B    : STA LINE_Y1_HI : JSR clip_rasterise
 
-    ; draw left edge: sx1,ft1 -> sx1,bt1
+    ; draw left edge: sx1,ft1 -> sx1,bt1   (skip if NOVT1)
+    LDA zp_seg_flags : AND #SF_NOVT1 : BNE nbt_skip_v1
     LDA zp_sx1   : STA LINE_X0_LO
     LDA zp_sx1+1 : STA LINE_X0_HI
     LDA zp_ft1   : STA LINE_Y0_LO
@@ -5635,8 +5724,10 @@ QET_TIGHTEN   = 1
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA &98    : STA LINE_Y1_LO      ; bt1 lo (saved)
     LDA &99    : STA LINE_Y1_HI : JSR clip_rasterise
+.nbt_skip_v1
 
-    ; draw right edge: sx2,ft2 -> sx2,bt2
+    ; draw right edge: sx2,ft2 -> sx2,bt2  (skip if NOVT2)
+    LDA zp_seg_flags : AND #SF_NOVT2 : BNE nbt_skip_v2
     LDA zp_sx2   : STA LINE_X0_LO
     LDA zp_sx2+1 : STA LINE_X0_HI
     LDA zp_ft2   : STA LINE_Y0_LO
@@ -5645,6 +5736,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA &9A    : STA LINE_Y1_LO      ; bt2 lo (saved)
     LDA &9B    : STA LINE_Y1_HI : JSR clip_rasterise
+.nbt_skip_v2
 
     ; if ch > vz_ps: also draw ft1->ft2 (front ceiling line)
     LDA &95             ; ch (s8)
@@ -5684,7 +5776,8 @@ QET_TIGHTEN   = 1
     LDA &92    : STA LINE_Y1_LO      ; bb2 lo (saved)
     LDA &93    : STA LINE_Y1_HI : JSR clip_rasterise
 
-    ; draw left edge: sx1,bb1 -> sx1,fb1
+    ; draw left edge: sx1,bb1 -> sx1,fb1   (skip if NOVT1)
+    LDA zp_seg_flags : AND #SF_NOVT1 : BNE nbb_skip_v1
     LDA zp_sx1   : STA LINE_X0_LO
     LDA zp_sx1+1 : STA LINE_X0_HI
     LDA &90    : STA LINE_Y0_LO      ; bb1 lo (saved)
@@ -5693,8 +5786,10 @@ QET_TIGHTEN   = 1
     LDA zp_sx1+1 : STA LINE_X1_HI
     LDA zp_fb1   : STA LINE_Y1_LO
     LDA zp_fb1+1 : STA LINE_Y1_HI : JSR clip_rasterise
+.nbb_skip_v1
 
-    ; draw right edge: sx2,bb2 -> sx2,fb2
+    ; draw right edge: sx2,bb2 -> sx2,fb2  (skip if NOVT2)
+    LDA zp_seg_flags : AND #SF_NOVT2 : BNE nbb_skip_v2
     LDA zp_sx2   : STA LINE_X0_LO
     LDA zp_sx2+1 : STA LINE_X0_HI
     LDA &92    : STA LINE_Y0_LO      ; bb2 lo (saved)
@@ -5703,6 +5798,7 @@ QET_TIGHTEN   = 1
     LDA zp_sx2+1 : STA LINE_X1_HI
     LDA zp_fb2   : STA LINE_Y1_LO
     LDA zp_fb2+1 : STA LINE_Y1_HI : JSR clip_rasterise
+.nbb_skip_v2
 
     ; if fh < vz_ps: also draw fb1->fb2 (front floor line)
     LDA &94             ; fh (s8)
@@ -5724,7 +5820,45 @@ QET_TIGHTEN   = 1
     JSR draw_floor_line
 
 .floor_done
+    ; --- Aperture edge emission for portals at NOVT endpoints ---
+    ; Subroutine: portal_emit_ape (defined below) handles both sides via
+    ; a single flag mask parameter. Keeps the per-side overhead small.
+    LDA zp_seg_flags : AND #SF_APEDGE1 : BEQ dp_skip_ape1
+    LDX #0 : JSR portal_emit_ape           ; X=0 → v1 (sx1, ft1, fb1 at $20/$24/$26; bt at $98, bb at $90)
+.dp_skip_ape1
+    LDA zp_seg_flags : AND #SF_APEDGE2 : BEQ dp_skip_ape2
+    LDX #2 : JSR portal_emit_ape           ; X=2 → v2 (offsets: sx2 at $22, ft2 $28, fb2 $2A, bt2 $9A, bb2 $92)
+.dp_skip_ape2
     RTS
+
+; Emit a portal aperture edge at one side (v1 or v2).
+; Input: X = 0 for v1, 2 for v2.
+;   sx at $20+X, ft at $24+X+X, fb at $26+X+X (indexed via Y derived below).
+; Uses: if NEEDBT, Y0 = bt ($98+X); else Y0 = ft ($24 + X*2).
+;        if NEEDBB, Y1 = bb ($90+X); else Y1 = fb ($26 + X*2).
+.portal_emit_ape
+    ; X0/X1 = sx from $20+X
+    LDA &20,X : STA LINE_X0_LO : STA LINE_X1_LO
+    LDA &21,X : STA LINE_X0_HI : STA LINE_X1_HI
+    ; Y0: NEEDBT ? bt (&98+X) : ft (&24 + X*2, X*2 via TXA : ASL)
+    TXA : ASL A : TAY              ; Y = X*2 (ft/fb offset)
+    LDA zp_seg_flags : AND #SF_NEEDBT : BEQ pea_top_ft
+    LDA &98,X : STA LINE_Y0_LO
+    LDA &99,X : STA LINE_Y0_HI
+    JMP pea_bot
+.pea_top_ft
+    LDA zp_ft1,Y : STA LINE_Y0_LO
+    LDA zp_ft1+1,Y : STA LINE_Y0_HI
+.pea_bot
+    LDA zp_seg_flags : AND #SF_NEEDBB : BEQ pea_bot_fb
+    LDA &90,X : STA LINE_Y1_LO
+    LDA &91,X : STA LINE_Y1_HI
+    JMP pea_emit
+.pea_bot_fb
+    LDA zp_fb1,Y : STA LINE_Y1_LO
+    LDA zp_fb1+1,Y : STA LINE_Y1_HI
+.pea_emit
+    JMP clip_rasterise   ; tail-call
 
 ; Helper: draw ceiling line ft1->ft2
 .draw_ceil_line

@@ -83,6 +83,7 @@ _clip_mismatch_reported = set()  # (x,y,a) tuples already printed
 _show_integrated_fb = False  # F key: show 6502 framebuffer from integrated clip+raster
 _show_seg_numbers = False    # I key: show seg indices on wireframe
 _seg_annotations = []        # populated per frame: [(si, sx1, sx2, ft1, ft2)]
+_show_diff_overlay = False   # O key: overlay Python-only (red) + 6502-only (blue) lines
 
 class Instrumented6502Spans(EndpointClipSpans):
     """EndpointClipSpans that shadows mutations to a 6502 span clipper for cycle counting.
@@ -562,12 +563,23 @@ def _should_suppress_vertical(seg_idx, vidx):
     front_i = s_i[1]
     this_solid = _seg_is_solid_svwh(s_i)
 
-    # C-perp: solid at a perpendicular junction where the same-front
-    # portal has a continuous ceiling (need_bt=False, only floor step).
-    # The opening extends to the coplanar ceiling, making the solid's
-    # vertical above the back floor unnecessary.  Additional guard:
-    # the solid must have a colinear continuation at the vertex (any
-    # sector) confirming it's a mid-wall point, not a real corner.
+    # C-perp: solid at a perpendicular junction where a same-front
+    # portal draws an aperture edge at the shared vertex.  The aperture
+    # edge covers the full [bt, bb] at that column, which always contains
+    # (or equals) the solid's own [ft, fb] vertical since the shared
+    # vertex puts both in the same sector.  Two sub-cases:
+    #
+    #   C-perp-cont: solid has a colinear continuation at vidx (mid-wall
+    #     junction).  Original rule; fires only for floor-only steps
+    #     because the ceiling-side handling was asymmetric.
+    #   C-perp-corner: solid has NO colinear continuation at vidx (genuine
+    #     corner end).  The portal's aperture edge still draws the same
+    #     column + Y range, so suppressing the solid's corner vertical is
+    #     safe — the aperture edge replaces it pixel-for-pixel.
+    #
+    # Both cases require the portal neighbour to actually have steps
+    # (_portal_has_steps: bt < ch or bb > fh) so an aperture edge is
+    # actually emitted.
     if this_solid:
         fh_i, ch_i = s_i[3], s_i[4]
         ldx_i, ldy_i = s_i[13], s_i[14]
@@ -580,22 +592,43 @@ def _should_suppress_vertical(seg_idx, vidx):
             if ldx_i * ldy_k - ldy_i * ldx_k == 0:
                 _has_continuation = True
                 break
-        if _has_continuation:
-            for j in _vert_to_segs.get(vidx, ()):
-                if j == seg_idx:
-                    continue
-                s_j = fp_segs_vwh[j]
-                if s_j[1] != front_i:
-                    continue
-                if _seg_is_solid_svwh(s_j):
-                    continue
-                bi = s_j[2]
-                if bi is None:
-                    continue
-                bs = fp_sectors[bi]
-                # Only floor step (ceiling same) — opening extends to ceiling.
+        # Look for a same-front portal neighbour at vidx with any steps.
+        # The aperture edge it draws at vidx covers this solid's vertical.
+        for j in _vert_to_segs.get(vidx, ()):
+            if j == seg_idx:
+                continue
+            s_j = fp_segs_vwh[j]
+            if s_j[1] != front_i:
+                continue
+            if _seg_is_solid_svwh(s_j):
+                continue
+            bi = s_j[2]
+            if bi is None:
+                continue
+            bs = fp_sectors[bi]
+            # Check the portal emits an aperture edge at this vertex.
+            # Must have steps (need_bt or need_bb) AND vidx must be a
+            # linedef endpoint (aperture edge only fires there).
+            portal_has_steps = bs[1] < ch_i or bs[0] > fh_i
+            if not portal_has_steps:
+                continue
+            if vidx not in _ld_endpoint_verts:
+                continue
+            if _has_continuation:
+                # C-perp-cont: original rule (floor-only step).  Keep
+                # the narrower condition here to avoid regressing the
+                # case the old rule hand-tuned for.
                 if bs[1] >= ch_i and bs[0] > fh_i:
                     return True
+            # C-perp-corner DISABLED 2026-05-01.  Suppressing the
+            # solid's corner vertical relied on the portal-with-steps
+            # neighbour drawing its step verticals at the shared column.
+            # The portal is only visible from its OWN front sector
+            # (back-face culled from the back side), so when the player
+            # views the corner from the back side the column is left
+            # empty.  Keep the solid's vertical so the corner is always
+            # framed; the portal's step verticals overlap it when both
+            # are visible, which is harmless.
 
     # All remaining cases require a colinear continuation vertex.
     if not _is_continuation_vertex(vidx, front_i):
@@ -694,59 +727,94 @@ for _i, _svwh in enumerate(fp_segs_vwh):
                 _seg_novt_aperture[(_i, 2)] = _bh
     _seg_novt_flags.append(_f)
 
-# Rule 3 (second pass): suppress a perpendicular back-sector solid's
-# vertical at a vertex where a portal-with-steps has its steps VISIBLE
-# (NOT NOVT).  The visible step verticals already frame the aperture, so
-# the back-sector solid's full vertical through the opening is redundant.
-# When the portal IS NOVT (steps suppressed), the perpendicular solid is
-# kept — it's the only framing from the back side.
+# Vertices where a solid seg will draw an aperture edge.  Portals
+# sharing the same vertex skip their own aperture edge emission to
+# avoid double-drawing the same (column, [bt,bb]) line.  The solid's
+# aperture-edge draw runs in its own draw phase (before mark_solid),
+# so it's guaranteed to land; the portal's would be redundant.
+_vert_covered_by_solid_ap = set()
+for (_i, _side), _bh in _seg_novt_aperture.items():
+    _s = fp_segs_vwh[_i][0]
+    _vidx = _s[0] if _side == 1 else _s[1]
+    _vert_covered_by_solid_ap.add(_vidx)
+
+# Rule 3 (REMOVED 2026-05-01).  Previously suppressed a back-sector
+# solid's vertical at a vertex where a colinear portal-with-steps had
+# visible step verticals, on the theory that the step verticals already
+# framed the aperture.  This was wrong: the portal seg is only visible
+# from its OWN front sector (back-face culled from the opposite side),
+# so when the player is in the back sector, suppressing the back-sector
+# solid leaves no vertical at all in that column.  Removing Rule 3 keeps
+# the back-sector solid's vertical so the opening's back-side corner is
+# always framed.
+
+# Rule 4: same-front corner suppression.  At a linedef-endpoint vertex
+# shared by multiple segs of the same front sector, the vertical is
+# geometrically a single edge of that sector but each incident seg would
+# otherwise draw its own copy (solids: full ft→fb; portals-with-steps:
+# step segment).  Suppress all but the lowest-idx unsuppressed seg at
+# each (vertex, front_sector) group.  Cross-role corners (solid+portal)
+# are already handled by Rule 2 Case C, so this fires mainly for
+# solid+solid and portal+portal corners.
+#
+# NOTE: for portals, NOVT flag set here should ALSO skip the aperture-
+# edge emission (the owner's step vertical already covers the same
+# column; aperture edge would over-emit relative to the pre-Rule-4
+# rendering).  Tracked in _novt_rule4 so downstream code can distinguish
+# from Rule 2 Case C NOVTs (which DO need aperture edges).
+# Build seg → subsector index for same-ssector check below.
+_seg_to_ssect = [0] * len(fp_segs_vwh)
+for _ssi, (_count, _first) in enumerate(fp_ssectors):
+    for _k in range(_first, _first + _count):
+        _seg_to_ssect[_k] = _ssi
+
+_novt_rule4 = set()  # set of (seg_idx, side) where side ∈ {1, 2}
 for _i, _svwh in enumerate(fp_segs_vwh):
-    if not _seg_is_solid_svwh(_svwh):
-        continue
     _s = _svwh[0]
-    _front_i = _svwh[1]
-    for _bit, _vidx in ((_SF_NOVT1, _s[0]), (_SF_NOVT2, _s[1])):
+    _fi = _svwh[1]
+    _bi = _svwh[2]
+    _we_solid = _bi is None
+    _we_ss = _seg_to_ssect[_i]
+    for _bit, _vidx, _side in ((_SF_NOVT1, _s[0], 1), (_SF_NOVT2, _s[1], 2)):
         if _seg_novt_flags[_i] & _bit:
             continue
+        # Coverage rule: owner must cover the range we'd draw.
+        #  - we solid (full ft-fb)      : owner must be solid (same range)
+        #  - we portal (step bb-fb etc) : owner solid OK (full ⊃ step),
+        #                                  portal OK only if same back
+        #                                  sector (bt/bb match at vertex)
+        #
+        # Also require same subsector — BSP traversal either renders both
+        # or neither, so Rule 4 suppression is safe from frame-dependent
+        # visibility.  Cross-ssector owner might not render this frame.
         for _j in _vert_to_segs.get(_vidx, ()):
-            if _j == _i:
+            if _j >= _i:
+                continue
+            if _seg_to_ssect[_j] != _we_ss:
                 continue
             _sj = fp_segs_vwh[_j]
-            if _sj[2] != _front_i:  # portal's back != our front
+            if _sj[1] != _fi:
                 continue
-            if not _portal_has_steps(_sj):
+            _jbi = _sj[2]
+            _j_solid = _jbi is None
+            if _we_solid and not _j_solid:
+                continue  # portal owner doesn't cover solid's full vertical
+            if (not _we_solid) and (not _j_solid) and _jbi != _bi:
+                continue  # different back sector → step heights may differ
+            _sjs = _sj[0]
+            _jbit = _SF_NOVT1 if _sjs[0] == _vidx else _SF_NOVT2
+            if _seg_novt_flags[_j] & _jbit:
                 continue
-            # Check portal's NOVT is NOT set (steps are visible)
-            _sj_s = _sj[0]
-            _portal_novt = False
-            if _sj_s[0] == _vidx:
-                _portal_novt = bool(_seg_novt_flags[_j] & _SF_NOVT1)
-            elif _sj_s[1] == _vidx:
-                _portal_novt = bool(_seg_novt_flags[_j] & _SF_NOVT2)
-            if _portal_novt:
-                continue
-            # Verify the portal's colinear solid is actually suppressed
-            # (Case C fired), confirming the portal's steps are the
-            # primary framing at this vertex.
-            _portal_front = _sj[1]
-            _solid_suppressed = False
-            for _k in _vert_to_segs.get(_vidx, ()):
-                _sk = fp_segs_vwh[_k]
-                if _sk[1] != _portal_front or not _seg_is_solid_svwh(_sk):
-                    continue
-                _sk_s = _sk[0]
-                if _sk_s[0] == _vidx and (_seg_novt_flags[_k] & _SF_NOVT1):
-                    _solid_suppressed = True; break
-                if _sk_s[1] == _vidx and (_seg_novt_flags[_k] & _SF_NOVT2):
-                    _solid_suppressed = True; break
-            if _solid_suppressed:
-                _seg_novt_flags[_i] |= _bit
-                break
+            # j owns; suppress ours
+            _seg_novt_flags[_i] |= _bit
+            _novt_rule4.add((_i, _side))
+            break
 
 _n_novt1 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT1)
 _n_novt2 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT2)
 print(f"NOVT flags: {_n_novt1} v1 + {_n_novt2} v2 "
       f"= {_n_novt1 + _n_novt2} verticals suppressed")
+
 
 # Annotation mode: when True, suppressed verticals are drawn in RED and
 # labelled with seg/vertex/rule info so problem cases can be identified.
@@ -763,7 +831,10 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
     PRESCALE, MAP_CENTER_X, MAP_CENTER_Y,
-    seg_novt_flags=_seg_novt_flags)
+    seg_novt_flags=_seg_novt_flags,
+    seg_novt_aperture=_seg_novt_aperture,
+    novt_rule4=_novt_rule4,
+    vert_covered_by_solid_ap=_vert_covered_by_solid_ap)
 
 # Build ROM banks for sideways ROM paging
 packed_rom_banks = [
@@ -1545,9 +1616,9 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         # Annotation: show suppressed solid verticals in red
         if _novt_annotate:
             if no_vt1:
-                _real_drawline(surface, _RED, (sx1, ft1), (sx1, fb1))
+                _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, fb1))
             if no_vt2:
-                _real_drawline(surface, _RED, (sx2, ft2), (sx2, fb2))
+                _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, fb2))
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
@@ -1617,9 +1688,9 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             # Annotation: show suppressed step verticals in red
             if _novt_annotate:
                 if no_vt1:
-                    _real_drawline(surface, _RED, (sx1, bb1), (sx1, fb1))
+                    _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
                 if no_vt2:
-                    _real_drawline(surface, _RED, (sx2, bb2), (sx2, fb2))
+                    _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
 
@@ -1639,8 +1710,14 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             _ap_bot2 = bb2 if need_bb else fb2
             s = svwh[0]
             _ap_lines = []
-            _need_ap1 = no_vt1 and s[0] in _ld_endpoint_verts
-            _need_ap2 = no_vt2 and s[1] in _ld_endpoint_verts
+            # Yield to a solid neighbour that will draw the same aperture
+            # edge at the shared vertex (avoids double-emit).
+            _need_ap1 = (no_vt1 and s[0] in _ld_endpoint_verts
+                         and s[0] not in _vert_covered_by_solid_ap
+                         and (si, 1) not in _novt_rule4)
+            _need_ap2 = (no_vt2 and s[1] in _ld_endpoint_verts
+                         and s[1] not in _vert_covered_by_solid_ap
+                         and (si, 2) not in _novt_rule4)
             if _need_ap1:
                 _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
             if _need_ap2:
@@ -1983,6 +2060,22 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     no_vt1 = bool(flags & SF_NOVT1)
     no_vt2 = bool(flags & SF_NOVT2)
 
+    # Annotation: record verticals for the V-key overlay (mirrors
+    # fp_render_seg).  Rule string here is approximate — packed flags
+    # don't preserve which rule fired, so we just say "Rn" if suppressed.
+    if _novt_annotate:
+        svwh = fp_segs_vwh[si]
+        s = svwh[0]
+        r1_v1 = s[0] not in _ld_endpoint_verts
+        r1_v2 = s[1] not in _ld_endpoint_verts
+        def _vt_rule(suppressed, is_r1):
+            if not suppressed: return ""
+            return "R1" if is_r1 else "Rn"
+        _novt_annotations.append((sx1, ft1, fb1,
+            f"s{si} v{s[0]}", _vt_rule(no_vt1, r1_v1), solid, no_vt1))
+        _novt_annotations.append((sx2, ft2, fb2,
+            f"s{si} v{s[1]}", _vt_rule(no_vt2, r1_v2), solid, no_vt2))
+
     fp_module.mul_cat("clip")
     if solid:
         lines = [
@@ -2005,6 +2098,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             _bfh2 = fp_project_y(_ap[1] - vz, ryh2, ryl2)
             lines.append((sx2, _bch2, sx2, _bfh2))
         clips.draw_clipped(lines, GREEN, surface, draw_stats)
+        # V-key annotation: draw suppressed verticals in red so the user
+        # can spot them and reference the seg/vertex label.
+        if _novt_annotate:
+            if no_vt1:
+                _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, fb1))
+            if no_vt2:
+                _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, fb2))
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
@@ -2043,6 +2143,11 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             else:
                 lines.insert(0, (sx1, ft1, sx2, ft2))
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
+            if _novt_annotate:
+                if no_vt1:
+                    _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, bt1))
+                if no_vt2:
+                    _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, bt2))
         elif bch > ch:
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
 
@@ -2073,6 +2178,11 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             else:
                 lines.insert(1, (sx1, fb1, sx2, fb2))
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
+            if _novt_annotate:
+                if no_vt1:
+                    _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
+                if no_vt2:
+                    _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
         elif bfh < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
 
@@ -2083,8 +2193,14 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             _ap_bot1 = bb1 if need_bb else fb1
             _ap_bot2 = bb2 if need_bb else fb2
             _ap_lines = []
-            _need_ap1 = no_vt1 and v1_idx in _ld_endpoint_verts
-            _need_ap2 = no_vt2 and v2_idx in _ld_endpoint_verts
+            # Yield to a solid neighbour that will draw the same aperture
+            # edge at the shared vertex (avoids double-emit).
+            _need_ap1 = (no_vt1 and v1_idx in _ld_endpoint_verts
+                         and v1_idx not in _vert_covered_by_solid_ap
+                         and (si, 1) not in _novt_rule4)
+            _need_ap2 = (no_vt2 and v2_idx in _ld_endpoint_verts
+                         and v2_idx not in _vert_covered_by_solid_ap
+                         and (si, 2) not in _novt_rule4)
             if _need_ap1:
                 _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
             if _need_ap2:
@@ -3151,7 +3267,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result, _show_integrated_fb
+  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result, _show_integrated_fb, _show_diff_overlay
   global _novt_annotate, _show_seg_numbers
   running = True
   while running:
@@ -3236,6 +3352,11 @@ def _main():
             elif ev.key == pygame.K_v:
                 _novt_annotate = not _novt_annotate
                 print(f"NOVT annotation: {'ON' if _novt_annotate else 'OFF'}")
+            elif ev.key == pygame.K_o:
+                _show_diff_overlay = not _show_diff_overlay
+                print(f"Diff overlay: {'ON' if _show_diff_overlay else 'OFF'} "
+                      f"(red = Python-only / 6502 missing; "
+                      f"blue = 6502-only / 6502 extra)", flush=True)
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
             elif ev.key == pygame.K_g:
@@ -3319,6 +3440,9 @@ def _main():
         _novt_annotations.clear()
         _seg_annotations.clear()
         import endpoint_spans as _es
+        # Enable line collection when diff overlay or seg numbers active
+        if _show_diff_overlay and _es._drawn_lines is None:
+            _es._drawn_lines = []
         if _es._drawn_lines is not None:
             _es._drawn_lines.clear()
 
@@ -3427,6 +3551,78 @@ def _main():
                 _my = int((_ly1 + _ly2) / 2 * _sy)
                 _lbl = hud_font.render(str(_idx), True, (255, 180, 100))
                 _scr.blit(_lbl, (_mx + 2, _my - _lbl.get_height() // 2))
+
+        # Diff overlay: highlight lines that differ between Python and 6502.
+        # Red   = lines Python drew that 6502 did NOT (missing from 6502).
+        # Blue  = lines 6502 drew that Python did NOT (extra in 6502).
+        if _show_diff_overlay and _es_overlay._drawn_lines is not None:
+            # Run 6502 render to capture its lines (uses peripheral path).
+            if _render_6502 is None:
+                from fe6502 import Frontend6502
+                _render_6502 = Frontend6502(
+                    packed_rom_banks, packed_rom_recip,
+                    packed_bbox_table, packed_layout)
+            _ab_do = angle_byte if use_fixedpoint else radians_to_byte(angle)
+            _fz_do = player_floor(player_x, player_y)
+            _hw_lines, _ = _render_6502.render_frame(
+                player_x, player_y, _ab_do, _fz_do, capture_lines=True)
+
+            def _nrm(r):
+                x1, y1, x2, y2 = r
+                return r if (x1, y1) <= (x2, y2) else (x2, y2, x1, y1)
+
+            # Map normalised line → python draw index so we can label each
+            # missing line with its canonical id (press O and read the number).
+            _py_by_norm = {}
+            for _i, lx1, ly1, lx2, ly2 in _es_overlay._drawn_lines:
+                _py_by_norm.setdefault(_nrm((lx1, ly1, lx2, ly2)), _i)
+            _hw_set = set(_nrm(l) for l in _hw_lines)
+            _py_only = [(_py_by_norm[n], n) for n in _py_by_norm if n not in _hw_set]
+            _hw_only = [n for n in _hw_set if n not in _py_by_norm]
+            _py_only.sort()
+            _hw_only.sort()
+
+            _sx = SCREEN_W / FP_WIDTH
+            _sy = SCREEN_H / FP_HEIGHT
+            # Draw py-only in red, labeled with the python draw-index.
+            for _idx, (x1, y1, x2, y2) in _py_only:
+                pygame.draw.line(_scr, (255, 60, 60),
+                                 (int(x1 * _sx), int(y1 * _sy)),
+                                 (int(x2 * _sx), int(y2 * _sy)), 2)
+                _mx = int((x1 + x2) / 2 * _sx)
+                _my = int((y1 + y2) / 2 * _sy)
+                _lbl = hud_font.render(str(_idx), True, (255, 200, 200))
+                _scr.blit(_lbl, (_mx + 3, _my - _lbl.get_height() // 2))
+            # Draw hw-only in blue, labeled H#N for "hw-extra index N".
+            for _j, (x1, y1, x2, y2) in enumerate(_hw_only):
+                pygame.draw.line(_scr, (80, 160, 255),
+                                 (int(x1 * _sx), int(y1 * _sy)),
+                                 (int(x2 * _sx), int(y2 * _sy)), 2)
+                _mx = int((x1 + x2) / 2 * _sx)
+                _my = int((y1 + y2) / 2 * _sy)
+                _lbl = hud_font.render(f"H{_j}", True, (180, 220, 255))
+                _scr.blit(_lbl, (_mx + 3, _my - _lbl.get_height() // 2))
+            _legend = hud_font.render(
+                f"diff: py_only={len(_py_only)} (red, labeled by Python draw idx)  "
+                f"hw_only={len(_hw_only)} (blue, labeled H0..HN)",
+                True, (255, 255, 0))
+            _scr.blit(_legend, (8, SCREEN_H - _legend.get_height() - 4))
+
+            # Dump full listing to stdout once per toggle so the user can
+            # reference a specific index without re-running.
+            if _py_only or _hw_only:
+                _sig = (len(_py_only), len(_hw_only),
+                        _py_only[0][0] if _py_only else -1)
+                if getattr(render_bsp_fp, '_last_diff_sig', None) != _sig:
+                    render_bsp_fp._last_diff_sig = _sig
+                    print(f"\n--- Diff at ({player_x:.0f},{player_y:.0f},ab={_ab_do}) ---",
+                          flush=True)
+                    for _idx, (x1, y1, x2, y2) in _py_only:
+                        print(f"  PY-ONLY [{_idx}]:  ({x1},{y1})→({x2},{y2})",
+                              flush=True)
+                    for _j, (x1, y1, x2, y2) in enumerate(_hw_only):
+                        print(f"  HW-ONLY [H{_j}]: ({x1},{y1})→({x2},{y2})",
+                              flush=True)
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:

@@ -22,7 +22,7 @@ VERTEX_SIZE  = 4     # shift 2:  s16 x, s16 y
 NODE_SIZE    = 16    # shift 4:  s16 x,y,dx,dy + u16 children + 4B pad
 SSECTOR_SIZE = 4     # shift 2:  u8 count, u8 pad, u16 first_seg
 SEG_HDR_SIZE = 12    # (idx<<3)+(idx<<2): v1,v2,lv1_x,lv1_y,ldx,ldy,flags,pad
-SEG_DTL_SIZE = 24    # ×24 = (idx<<4)+(idx<<3): fh,ch + 8 VWH u16 + back heights + pad
+SEG_DTL_SIZE = 20    # ×20 = (idx<<4)+(idx<<2): fh,ch + 8 VWH u16 + back heights
 VWH_SIZE     = 1     # identity: s8 height
 # No separate linedef table — data inlined into seg headers
 
@@ -34,7 +34,7 @@ SH_LDX = 8; SH_LDY = 9          # s8 linedef delta
 SH_FLAGS = 10                    # u8 flags
 SH_PAD = 11
 
-# ── Offsets within seg detail (24 bytes) ─────────────────────────────────
+# ── Offsets within seg detail (20 bytes) ─────────────────────────────────
 
 SD_FH = 0; SD_CH = 1             # s8 prescaled front floor/ceil
 SD_BFH = 2; SD_BCH = 3           # s8 prescaled back floor/ceil (0 if solid)
@@ -42,7 +42,15 @@ SD_VWH_FT1 = 4; SD_VWH_FB1 = 6   # u16 front VWH
 SD_VWH_FT2 = 8; SD_VWH_FB2 = 10
 SD_VWH_BT1 = 12; SD_VWH_BB1 = 14 # u16 back VWH ($FFFF if solid)
 SD_VWH_BT2 = 16; SD_VWH_BB2 = 18
-# +20..23 padding
+
+# Solid-seg overlay: for segs with SF_SOLID set, these byte slots are
+# reinterpreted as aperture-edge heights (emitted when SF_APEDGE1/2 is
+# set at a NOVT endpoint — see _seg_novt_aperture in doom_wireframe).
+# Portals use these bytes as normal BFH/BCH and VWH_BT1.
+SD_APV1_CH = 2                   # s8  (overlay SD_BFH)
+SD_APV1_FH = 3                   # s8  (overlay SD_BCH)
+SD_APV2_CH = 12                  # s8  (overlay SD_VWH_BT1 lo)
+SD_APV2_FH = 13                  # s8  (overlay SD_VWH_BT1 hi)
 
 
 # ── Seg flags ───────────────────────────────────────────────────────────
@@ -53,6 +61,8 @@ SF_NEEDBT = 0x04   # back ceiling < front ceiling
 SF_NEEDBB = 0x08   # back floor > front floor
 SF_NOVT1  = 0x10   # suppress vertical at v1 (BSP-internal split point)
 SF_NOVT2  = 0x20   # suppress vertical at v2 (BSP-internal split point)
+SF_APEDGE1 = 0x40  # emit aperture edge at v1 when NOVT1 suppresses the vertical
+SF_APEDGE2 = 0x80  # emit aperture edge at v2 when NOVT2 suppresses the vertical
 
 # ── Vertex cache (RAM) ─────────────────────────────────────────────────
 
@@ -113,7 +123,10 @@ SP_INNER_BOT  = 12   # s16
 def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                  fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
                  prescale, map_center_x, map_center_y,
-                 seg_novt_flags=None):
+                 seg_novt_flags=None,
+                 seg_novt_aperture=None,
+                 novt_rule4=None,
+                 vert_covered_by_solid_ap=None):
     """Build the byte arrays from parsed WAD data.
 
     Returns (rom_main, rom_detail, rom_recip, layout).
@@ -121,6 +134,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     seg_novt_flags: optional list of pre-computed SF_NOVT1/SF_NOVT2 bits
     per seg.  When supplied, these are OR'd into the seg header flags;
     when None, only the BSP-internal-vertex rule is applied here.
+
+    seg_novt_aperture, novt_rule4, vert_covered_by_solid_ap: optional —
+    used to compute SF_APEDGE1/2 flags + APV heights so the 6502 can
+    emit aperture edges at NOVT endpoints.
     """
 
     n_verts = len(vertexes)
@@ -147,7 +164,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             bfh, bch = 0, 0
         if vbt1 == -1: vbt1 = vbb1 = vbt2 = vbb2 = 0xFFFF
         o = i * SEG_DTL_SIZE
-        struct.pack_into('<bbbbHHHHHHHHxxxx', rom_detail, o,
+        struct.pack_into('<bbbbHHHHHHHH', rom_detail, o,
                          fh, ch, bfh, bch,
                          vft1, vfb1, vft2, vfb2,
                          vbt1, vbb1, vbt2, vbb2)
@@ -236,9 +253,64 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         if seg_novt_flags is not None:
             flags |= seg_novt_flags[i] & (SF_NOVT1 | SF_NOVT2)
 
+        # APEDGE flags: emit an aperture edge at NOVT endpoints where
+        # the opening would otherwise have no visible boundary.
+        #   Portals: the portal's own step vertical is suppressed but
+        #     there is no colinear solid covering the aperture range,
+        #     so the portal must draw the (bt|ft)→(bb|fb) edge itself.
+        #   Solids: this solid is suppressed by RULE 2 Case C and has
+        #     recorded aperture heights from the colinear portal —
+        #     draw the opening frame so the suppressed side remains
+        #     visible.
+        # RULE 4 NOVTs never emit aperture edges (owner seg's step
+        # vertical already covers the same column-range).
+        if back_idx is None or (flags & SF_SOLID):
+            # Solid: APEDGE driven by seg_novt_aperture entries.
+            if seg_novt_aperture is not None:
+                if (i, 1) in seg_novt_aperture and (flags & SF_NOVT1):
+                    flags |= SF_APEDGE1
+                if (i, 2) in seg_novt_aperture and (flags & SF_NOVT2):
+                    flags |= SF_APEDGE2
+        else:
+            # Portal with visible opening: APEDGE iff NOVT AND at a
+            # linedef endpoint AND not yielded to a solid AND not a
+            # Rule-4 suppression AND the portal actually has steps
+            # (need_bt OR need_bb).  Portal-plain segs don't emit
+            # aperture edges in the Python reference — their opening
+            # has no step boundary to frame, so the ft/fb horizontals
+            # suffice.
+            novt_rule4 = novt_rule4 if novt_rule4 is not None else set()
+            solid_ap = vert_covered_by_solid_ap if vert_covered_by_solid_ap is not None else set()
+            has_steps = bool(flags & (SF_NEEDBT | SF_NEEDBB))
+            if (has_steps
+                    and (flags & SF_NOVT1) and s[0] in ld_endpoint_verts
+                    and s[0] not in solid_ap
+                    and (i, 1) not in novt_rule4):
+                flags |= SF_APEDGE1
+            if (has_steps
+                    and (flags & SF_NOVT2) and s[1] in ld_endpoint_verts
+                    and s[1] not in solid_ap
+                    and (i, 2) not in novt_rule4):
+                flags |= SF_APEDGE2
+
         o = off_seg_hdr + i * SEG_HDR_SIZE
         struct.pack_into('<HHhhbbBx', rom_main, o,
                          s[0], s[1], lv1[0], lv1[1], ldx, ldy, flags)
+
+        # For solids with aperture edges, overlay APV heights onto the
+        # unused portal-only slots in seg detail.
+        if (flags & SF_SOLID) and seg_novt_aperture is not None:
+            o_det = i * SEG_DTL_SIZE
+            ap1 = seg_novt_aperture.get((i, 1))
+            if ap1 is not None and (flags & SF_APEDGE1):
+                bch1, bfh1 = ap1
+                rom_detail[o_det + SD_APV1_CH] = bch1 & 0xFF
+                rom_detail[o_det + SD_APV1_FH] = bfh1 & 0xFF
+            ap2 = seg_novt_aperture.get((i, 2))
+            if ap2 is not None and (flags & SF_APEDGE2):
+                bch2, bfh2 = ap2
+                rom_detail[o_det + SD_APV2_CH] = bch2 & 0xFF
+                rom_detail[o_det + SD_APV2_FH] = bfh2 & 0xFF
 
     # VWH heights
     for i, (vi, h) in enumerate(vwh_table):
