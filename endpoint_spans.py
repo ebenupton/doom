@@ -177,6 +177,12 @@ _drawn_lines = None  # set to [] to enable collection
 _partial_aperture_check_enabled = False
 _partial_aperture_count = 0
 
+# Toggle: when True, EndpointClipSpans.tighten dispatches to
+# unified_clip_tighten (state-only — no emission piggyback yet). Used to
+# validate the unified algorithm produces identical span state under
+# integration tests. Default False = current tighten path.
+_USE_UNIFIED_TIGHTEN = False
+
 # Tighten instrumentation: counts dispositions per overlapping span.
 # Used to bound achievable savings of asymmetric top/bot anchor optimisation.
 TIGHTEN_STATS = {
@@ -437,6 +443,9 @@ class EndpointClipSpans:
         # mutation (Python doesn't emit lines during tighten).
         _ = emit_top, emit_bot, emit_sec_top, emit_sec_bot
         _ = yt_sec1, yt_sec2, yb_sec1, yb_sec2
+        if _USE_UNIFIED_TIGHTEN:
+            return self.unified_clip_tighten(lo, hi, sx1, sx2,
+                                             yt1, yt2, yb1, yb2)
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W - 1, hi)
         if ihi < ilo: return
@@ -565,6 +574,127 @@ class EndpointClipSpans:
                     TIGHTEN_STATS['no_cx_killed'] += 1
             else:
                 TIGHTEN_STATS['crossover'] += 1
+                _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
+                              yb1, yb2, new,
+                              old_tl, old_tr, old_bl, old_br,
+                              new_tl, new_tr, new_bl, new_br,
+                              y_display_offset=self.y_display_offset)
+            if right_s is not None:
+                _append_merge(new, right_s)
+        self.spans = new
+        self._update_bbox()
+
+    # -- Unified clip+tighten (prototype) --------------------------------------
+
+    def unified_clip_tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                             emit_top_to=None, emit_bot_to=None):
+        """Single-walk clip+narrow.
+
+        Walks self.spans once. For each span overlapping [lo, hi]:
+          - Compute the seg's effective top/bot at overlap endpoints.
+          - Compute the span's old top/bot at overlap endpoints.
+          - Determine: full_dom (span unchanged), mark_solid (seg outside
+            span aperture), narrow (intersection), or split (crossover).
+          - If emit_top_to / emit_bot_to callbacks are provided, emit the
+            yt-line / yb-line clipped to the span's aperture in [ox0, ox1].
+
+        Equivalent to tighten() in span-state outcome — verified by parallel
+        test. Adds emission piggybacked on the same per-span interp work,
+        which on 6502 would replace the separate DCL-of-bt/bb pass.
+
+        Mark-solid handling: when the seg's clamped aperture [c_tl, c_bl]
+        / [c_tr, c_br] doesn't overlap the span aperture at either endpoint,
+        the span is removed in [ox0, ox1] (its left/right fragments outside
+        the seg are preserved). This is equivalent to mark_solid for that
+        sub-range — but matches existing tighten behaviour which simply
+        omits the no-aperture span from the new list.
+
+        emit_top_to / emit_bot_to: optional callbacks `f(x1, y1, x2, y2)`
+        invoked with the clipped fragment of the yt-line / yb-line within
+        the span's aperture. None = don't emit (state-only mode).
+        """
+        ilo = max(0, lo)
+        ihi = min(FP_RENDER_W - 1, hi)
+        if ihi < ilo: return
+        if sx1 > sx2:
+            sx1, sx2 = sx2, sx1
+            yt1, yt2 = yt2, yt1
+            yb1, yb2 = yb2, yb1
+        sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
+            ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
+            clamp_u8=(self.y_display_offset != 0))
+        new = []
+        for s in self.spans:
+            xs, xe = s[0], s[1]
+            if xe <= ilo or xs >= ihi:
+                _append_merge(new, s); continue
+            ox0 = max(xs, ilo); ox1 = min(xe, ihi)
+            # Per-span interp work (used for both narrowing AND emission clip)
+            if ox0 == s[2] and ox1 == s[3]:
+                old_tl = s[4]; old_bl = s[5]
+                old_tr = s[6]; old_br = s[7]
+            else:
+                old_tl = _span_top_store(s, ox0)
+                old_tr = _span_top_store(s, ox1)
+                old_bl = _span_bot_store(s, ox0)
+                old_br = _span_bot_store(s, ox1)
+            if ox0 == sx1 and ox1 == sx2:
+                new_tl = yt1; new_bl = yb1
+                new_tr = yt2; new_br = yb2
+            else:
+                new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
+                new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
+                new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
+                new_br = _interp_store(ox1, sx1, yb1, sx2, yb2)
+            dt0 = old_tl - new_tl; dt1 = old_tr - new_tr
+            db0 = old_bl - new_bl; db1 = old_br - new_br
+            has_top_cx = (dt0 != dt1 and ((dt0 >= 0) != (dt1 >= 0)))
+            has_bot_cx = (db0 != db1 and ((db0 >= 0) != (db1 >= 0)))
+
+            vis_min = self.y_display_offset
+            vis_max = self.y_display_offset + FP_RENDER_H - 1
+            c_tl = max(vis_min, min(vis_max, new_tl))
+            c_tr = max(vis_min, min(vis_max, new_tr))
+            c_bl = max(vis_min, min(vis_max, new_bl))
+            c_br = max(vis_min, min(vis_max, new_br))
+
+            # Emission: yt-line clipped to aperture in [ox0, ox1].
+            # Visible iff the clamped new top is between old top and old bot
+            # at both endpoints (plain in-aperture). For partial visibility
+            # we'd compute a sub-range, but for the prototype we keep this
+            # simple: emit only when both endpoints are in-aperture.
+            if emit_top_to is not None:
+                if old_tl <= c_tl <= old_bl and old_tr <= c_tr <= old_br:
+                    emit_top_to(ox0, c_tl, ox1, c_tr)
+            if emit_bot_to is not None:
+                if old_tl <= c_bl <= old_bl and old_tr <= c_br <= old_br:
+                    emit_bot_to(ox0, c_bl, ox1, c_br)
+
+            # Span narrowing — same logic as tighten.
+            if (c_tl <= old_tl and c_tr <= old_tr and
+                    c_bl >= old_bl and c_br >= old_br):
+                _append_merge(new, s); continue
+            if xs < ilo:
+                _append_merge(new, (xs, ilo,
+                                    s[2], s[3], s[4], s[5], s[6], s[7]))
+            right_s = ((ihi, xe, s[2], s[3], s[4], s[5], s[6], s[7])
+                       if ihi < xe else None)
+
+            if not has_top_cx and not has_bot_cx:
+                rt_l = max(old_tl, c_tl); rb_l = min(old_bl, c_bl)
+                rt_r = max(old_tr, c_tr); rb_r = min(old_br, c_br)
+                if rt_l < rb_l or rt_r < rb_r:
+                    old_top_wins = (rt_l == old_tl and rt_r == old_tr)
+                    old_bot_wins = (rb_l == old_bl and rb_r == old_br)
+                    if old_top_wins and old_bot_wins:
+                        _append_merge(new, (ox0, ox1, s[2], s[3],
+                                            s[4], s[5], s[6], s[7]))
+                    else:
+                        _append_merge(new, (ox0, ox1, ox0, ox1,
+                                            rt_l, rb_l, rt_r, rb_r))
+                # else: rt >= rb at both endpoints — span fully occluded by
+                # seg's wall in [ox0, ox1] → mark_solid (omit fragment).
+            else:
                 _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
                               yb1, yb2, new,
                               old_tl, old_tr, old_bl, old_br,
