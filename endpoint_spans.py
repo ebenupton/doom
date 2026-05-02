@@ -584,6 +584,151 @@ class EndpointClipSpans:
         self.spans = new
         self._update_bbox()
 
+    # -- Records-based unified clip+tighten (prototype) -----------------------
+
+    def clip_line_records(self, lx1, ly1, lx2, ly2, ilo=None, ihi=None):
+        """Per-span clip records for a line. Mirrors the per-span work DCL
+        already does; the idea is that tighten reads these records instead
+        of redoing the interp.
+
+        ilo/ihi: optional clamp of overlap range. Tighten's caller passes
+        these to scope records to the seg's effective columns (after
+        clamping and possibly differing from the line's remapped [lx1, lx2]).
+        Default: full line range.
+
+        Returns: list of dicts, one per overlapping span:
+          'si'      span index in self.spans
+          'ox0','ox1'  overlap range [ox0, ox1] with the span
+          'cy0','cy1'  line y at ox0, ox1 (interp from line endpoints)
+          'old_tl','old_tr'  span top y at ox0, ox1
+          'old_bl','old_br'  span bot y at ox0, ox1
+          'verdict' ∈ {'above', 'below', 'inside', 'crosses_top',
+                       'crosses_bot', 'crosses_both'}
+        """
+        if lx1 == lx2:
+            return []
+        if lx1 > lx2:
+            xl, yl, xr, yr = lx2, ly2, lx1, ly1
+        else:
+            xl, yl, xr, yr = lx1, ly1, lx2, ly2
+        if ilo is None: ilo = xl
+        if ihi is None: ihi = xr
+        records = []
+        for si, s in enumerate(self.spans):
+            xs, xe = s[0], s[1]
+            if xe <= ilo or xs >= ihi:
+                continue
+            ox0 = max(xs, ilo); ox1 = min(xe, ihi)
+            cy0 = _interp_store(ox0, xl, yl, xr, yr)
+            cy1 = _interp_store(ox1, xl, yl, xr, yr)
+            old_tl = _span_top_store(s, ox0)
+            old_tr = _span_top_store(s, ox1)
+            old_bl = _span_bot_store(s, ox0)
+            old_br = _span_bot_store(s, ox1)
+            top_l = cy0 < old_tl
+            top_r = cy1 < old_tr
+            bot_l = cy0 > old_bl
+            bot_r = cy1 > old_br
+            if top_l and top_r:
+                verdict = 'above'
+            elif bot_l and bot_r:
+                verdict = 'below'
+            elif not (top_l or top_r or bot_l or bot_r):
+                verdict = 'inside'
+            elif (top_l or top_r) and (bot_l or bot_r):
+                verdict = 'crosses_both'
+            elif top_l or top_r:
+                verdict = 'crosses_top'
+            else:
+                verdict = 'crosses_bot'
+            records.append({
+                'si': si, 'ox0': ox0, 'ox1': ox1,
+                'cy0': cy0, 'cy1': cy1,
+                'old_tl': old_tl, 'old_tr': old_tr,
+                'old_bl': old_bl, 'old_br': old_br,
+                'verdict': verdict,
+            })
+        return records
+
+    def tighten_from_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                             top_records, bot_records):
+        """Tighten consumes pre-computed clip records (yt-line and yb-line).
+        Equivalent to tighten() in span-state outcome. Per-span, all interp
+        work is in the records — this routine only does max/min and merge.
+        """
+        ilo = max(0, lo)
+        ihi = min(FP_RENDER_W - 1, hi)
+        if ihi < ilo: return
+        # records are keyed by self.spans index BEFORE mutation; build a map
+        top_by_si = {r['si']: r for r in top_records}
+        bot_by_si = {r['si']: r for r in bot_records}
+        new = []
+        for si, s in enumerate(self.spans):
+            top_r = top_by_si.get(si)
+            bot_r = bot_by_si.get(si)
+            if top_r is None and bot_r is None:
+                # span not in seg's range — unchanged
+                _append_merge(new, s); continue
+            # Either record exists ⇒ span overlaps seg's column range.
+            r = top_r if top_r is not None else bot_r
+            ox0, ox1 = r['ox0'], r['ox1']
+            xs, xe = s[0], s[1]
+            # Use record values
+            old_tl = r['old_tl']; old_tr = r['old_tr']
+            old_bl = r['old_bl']; old_br = r['old_br']
+            new_tl = top_r['cy0'] if top_r else old_tl
+            new_tr = top_r['cy1'] if top_r else old_tr
+            new_bl = bot_r['cy0'] if bot_r else old_bl
+            new_br = bot_r['cy1'] if bot_r else old_br
+            # Clamp
+            vis_min = self.y_display_offset
+            vis_max = self.y_display_offset + FP_RENDER_H - 1
+            c_tl = max(vis_min, min(vis_max, new_tl))
+            c_tr = max(vis_min, min(vis_max, new_tr))
+            c_bl = max(vis_min, min(vis_max, new_bl))
+            c_br = max(vis_min, min(vis_max, new_br))
+            # Crossover detection
+            dt0 = old_tl - new_tl; dt1 = old_tr - new_tr
+            db0 = old_bl - new_bl; db1 = old_br - new_br
+            has_top_cx = (dt0 != dt1 and ((dt0 >= 0) != (dt1 >= 0)))
+            has_bot_cx = (db0 != db1 and ((db0 >= 0) != (db1 >= 0)))
+            # Full-dom check
+            if (c_tl <= old_tl and c_tr <= old_tr and
+                    c_bl >= old_bl and c_br >= old_br):
+                _append_merge(new, s); continue
+            # Left fragment outside seg
+            if xs < ilo:
+                _append_merge(new, (xs, ilo,
+                                    s[2], s[3], s[4], s[5], s[6], s[7]))
+            right_s = ((ihi, xe, s[2], s[3], s[4], s[5], s[6], s[7])
+                       if ihi < xe else None)
+            if not has_top_cx and not has_bot_cx:
+                rt_l = max(old_tl, c_tl); rb_l = min(old_bl, c_bl)
+                rt_r = max(old_tr, c_tr); rb_r = min(old_br, c_br)
+                if rt_l < rb_l or rt_r < rb_r:
+                    old_top_wins = (rt_l == old_tl and rt_r == old_tr)
+                    old_bot_wins = (rb_l == old_bl and rb_r == old_br)
+                    if old_top_wins and old_bot_wins:
+                        _append_merge(new, (ox0, ox1, s[2], s[3],
+                                            s[4], s[5], s[6], s[7]))
+                    else:
+                        _append_merge(new, (ox0, ox1, ox0, ox1,
+                                            rt_l, rb_l, rt_r, rb_r))
+                # else: mark_solid (omit fragment)
+            else:
+                # Crossover — fall back to per-span interp via _tighten_span.
+                # In a real ASM impl this path needs records that include
+                # crossover x; for the prototype we just delegate.
+                _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
+                              yb1, yb2, new,
+                              old_tl, old_tr, old_bl, old_br,
+                              new_tl, new_tr, new_bl, new_br,
+                              y_display_offset=self.y_display_offset)
+            if right_s is not None:
+                _append_merge(new, right_s)
+        self.spans = new
+        self._update_bbox()
+
     # -- Unified clip+tighten (prototype) --------------------------------------
 
     def unified_clip_tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,

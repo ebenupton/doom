@@ -29,6 +29,7 @@ POSITIONS = [
 
 # Counters
 _divergence_count = [0]
+_records_divergence_count = [0]
 _total_calls = [0]
 _emitted_top = [0]
 _emitted_bot = [0]
@@ -78,6 +79,32 @@ class CompareTighten(dw.Instrumented6502Spans):
                 emit_bot_to=lambda x1,y1,x2,y2: captured_bot.append((x1,y1,x2,y2)))
         spans_after_unified = list(self.spans)
 
+        # Reset and run records-driven tighten.
+        self.spans = list(spans_snapshot)
+        self._update_bbox()
+        for params in params_list:
+            p_lo, p_hi, p_sx1, p_sx2, p_yt1, p_yt2, p_yb1, p_yb2 = params
+            # Mirror tighten's pre-walk normalization
+            if p_sx1 > p_sx2:
+                p_sx1, p_sx2 = p_sx2, p_sx1
+                p_yt1, p_yt2 = p_yt2, p_yt1
+                p_yb1, p_yb2 = p_yb2, p_yb1
+            from endpoint_spans import _remap_seg_for_8bit
+            p_sx1, p_sx2, p_yt1, p_yt2, p_yb1, p_yb2 = _remap_seg_for_8bit(
+                max(0, p_lo), min(255, p_hi),
+                p_sx1, p_sx2, p_yt1, p_yt2, p_yb1, p_yb2,
+                clamp_u8=(self.y_display_offset != 0))
+            ilo_p = max(0, p_lo)
+            ihi_p = min(255, p_hi)
+            top_records = self.clip_line_records(p_sx1, p_yt1, p_sx2, p_yt2,
+                                                 ilo=ilo_p, ihi=ihi_p)
+            bot_records = self.clip_line_records(p_sx1, p_yb1, p_sx2, p_yb2,
+                                                 ilo=ilo_p, ihi=ihi_p)
+            self.tighten_from_records(p_lo, p_hi, p_sx1, p_sx2,
+                                      p_yt1, p_yt2, p_yb1, p_yb2,
+                                      top_records, bot_records)
+        spans_after_records = list(self.spans)
+
         # Restore canonical (normal tighten) state for further processing.
         self.spans = spans_after_normal
         self._update_bbox()
@@ -94,6 +121,15 @@ class CompareTighten(dw.Instrumented6502Spans):
                 print(f"  pre   ({len(spans_snapshot)}): {spans_snapshot[:3]}")
                 print(f"  norm  ({len(spans_after_normal)}): {spans_after_normal[:3]}")
                 print(f"  uni   ({len(spans_after_unified)}): {spans_after_unified[:3]}")
+
+        if spans_after_normal != spans_after_records:
+            _records_divergence_count[0] += 1
+            if _records_divergence_count[0] <= 5:
+                print(f"RECORDS DIVERGENCE call#{_total_calls[0]} "
+                      f"lo={lo} hi={hi} sx=[{sx1},{sx2}] "
+                      f"yt=[{yt1},{yt2}] yb=[{yb1},{yb2}]")
+                print(f"  norm    : {spans_after_normal}")
+                print(f"  records : {spans_after_records}")
 
 
 def render(px, py, ab):
@@ -131,7 +167,8 @@ for px, py, ab, name in POSITIONS:
     print(f"{name:<10s}  divergences: {after-pre}")
 
 print()
-print(f"Total tighten calls:  {_total_calls[0]}")
-print(f"Total divergences:    {_divergence_count[0]}")
-print(f"Top-line emits:       {_emitted_top[0]}")
-print(f"Bot-line emits:       {_emitted_bot[0]}")
+print(f"Total tighten calls:       {_total_calls[0]}")
+print(f"Unified divergences:       {_divergence_count[0]}")
+print(f"Records divergences:       {_records_divergence_count[0]}")
+print(f"Top-line emits:            {_emitted_top[0]}")
+print(f"Bot-line emits:            {_emitted_bot[0]}")
