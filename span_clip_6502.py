@@ -27,6 +27,11 @@ REC_VERDICT_ABOVE = 0
 REC_VERDICT_INSIDE = 1
 REC_VERDICT_BELOW = 2
 
+# Toggle: when True, _span_clip_6502.tighten() dispatches to records-driven
+# path (clip_line_records + tighten_from_records). v1 supports single-record-
+# per-side cases; multi-record (crossover) cases are not yet handled.
+_USE_6502_RECORDS_TIGHTEN = False
+
 # ZP addresses (must match span_clip.asm)
 ZP_HEAD  = 0xC0
 ZP_FREE  = 0xC1
@@ -328,7 +333,38 @@ class SpanClip6502:
         mem[ZP_YB_SEC2] = new_yb_sec2 & 0xFF
         mem[ZP_TG_EMIT] = ((0x01 if emit_top else 0) | (0x02 if emit_bot else 0) |
                            (0x04 if emit_sec_top else 0) | (0x08 if emit_sec_bot else 0))
-        self._run(ENTRY_TIGHTEN)
+        # Records-driven path: clip yt/yb lines to records, then consume.
+        # Emission of bt/ft/etc. is done by the caller via draw_clipped_line —
+        # records-driven only handles span state mutation (no emission).
+        if _USE_6502_RECORDS_TIGHTEN:
+            # Use post-remap (sx1, sx2, yt1, yt2, yb1, yb2). Lines are:
+            #   yt-line: (sx1, yt1) — (sx2, yt2)
+            #   yb-line: (sx1, yb1) — (sx2, yb2)
+            # Pass clamped u8 values to interp.
+            yt1_u = max(0, min(255, yt1))
+            yt2_u = max(0, min(255, yt2))
+            yb1_u = max(0, min(255, yb1))
+            yb2_u = max(0, min(255, yb2))
+            # Top line records
+            mem[ZP_LINE_XL] = sx1 & 0xFF
+            mem[ZP_LINE_YL] = yt1_u
+            mem[ZP_LINE_XR] = sx2 & 0xFF
+            mem[ZP_LINE_YR] = yt2_u
+            mem[ZP_BUF] = TOP_RECORDS & 0xFF
+            mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
+            self._run(ENTRY_CLIP_LINE_RECORDS)
+            # Bot line records
+            mem[ZP_LINE_XL] = sx1 & 0xFF
+            mem[ZP_LINE_YL] = yb1_u
+            mem[ZP_LINE_XR] = sx2 & 0xFF
+            mem[ZP_LINE_YR] = yb2_u
+            mem[ZP_BUF] = BOT_RECORDS & 0xFF
+            mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
+            self._run(ENTRY_CLIP_LINE_RECORDS)
+            # Apply
+            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+        else:
+            self._run(ENTRY_TIGHTEN)
 
     def has_gap(self, lo, hi):
         """has_gap(lo, hi) → bool. Closed interval [lo, hi]."""
