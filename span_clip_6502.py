@@ -16,6 +16,16 @@ ENTRY_IS_FULL    = 0x200C
 ENTRY_READ       = 0x200F
 ENTRY_INTERP_ST  = 0x2012
 ENTRY_DRAW_CLIP  = 0x2015
+ENTRY_CLIP_LINE_RECORDS = 0x2018
+ENTRY_TIGHTEN_FROM_RECORDS = 0x201B
+
+# Records buffers (must match span_clip.asm)
+TOP_RECORDS = 0x0700
+BOT_RECORDS = 0x0800
+REC_BYTES = 6
+REC_VERDICT_ABOVE = 0
+REC_VERDICT_INSIDE = 1
+REC_VERDICT_BELOW = 2
 
 # ZP addresses (must match span_clip.asm)
 ZP_HEAD  = 0xC0
@@ -416,6 +426,63 @@ class SpanClip6502:
         cx2 = max(0, min(255, cx2))
         cy2 = max(0, min(255, cy2))
         return cx1, cy1, cx2, cy2
+
+    def clip_line_records(self, xl, yl, xr, yr, ilo, ihi, buffer_addr):
+        """Walk active span list, write per-span sub-records to buffer.
+        Returns list of decoded records for testing/inspection.
+        Each record: dict with 'si', 'sox0', 'sox1', 'verdict', 'cy0', 'cy1'.
+        """
+        clipped = self._clip_to_screen(xl, yl, xr, yr)
+        if clipped is None:
+            # Write count=0, return empty
+            self.mpu.memory[buffer_addr] = 0
+            return []
+        xl, yl, xr, yr = clipped
+        if xl == xr and yl == yr:
+            self.mpu.memory[buffer_addr] = 0
+            return []
+        mem = self.mpu.memory
+        if xl > xr:
+            xl, yl, xr, yr = xr, yr, xl, yl
+        mem[ZP_LINE_XL] = xl & 0xFF
+        mem[ZP_LINE_YL] = yl & 0xFF
+        mem[ZP_LINE_XR] = xr & 0xFF
+        mem[ZP_LINE_YR] = yr & 0xFF
+        mem[ZP_ILO] = ilo & 0xFF
+        mem[ZP_IHI] = ihi & 0xFF
+        # Buffer pointer
+        mem[ZP_BUF] = buffer_addr & 0xFF
+        mem[ZP_BUF + 1] = (buffer_addr >> 8) & 0xFF
+        self._run(ENTRY_CLIP_LINE_RECORDS)
+        return self._decode_records(buffer_addr)
+
+    def _decode_records(self, buffer_addr):
+        """Read records from buffer, return list of dicts."""
+        mem = self.mpu.memory
+        count = mem[buffer_addr]
+        records = []
+        for i in range(count):
+            off = buffer_addr + 1 + i * REC_BYTES
+            v = mem[off + 3]
+            verdict = {0: 'above', 1: 'inside', 2: 'below'}.get(v, f'?{v}')
+            records.append({
+                'si': mem[off + 0],
+                'sox0': mem[off + 1],
+                'sox1': mem[off + 2],
+                'verdict': verdict,
+                'cy0': mem[off + 4],
+                'cy1': mem[off + 5],
+            })
+        return records
+
+    def tighten_from_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
+        """Run tighten consuming top+bot record buffers."""
+        mem = self.mpu.memory
+        mem[ZP_ILO] = max(0, lo) & 0xFF
+        mem[ZP_IHI] = min(255, hi) & 0xFF
+        # ZP for records-tighten not yet defined — pass via existing slots
+        # for now (caller already wrote records to TOP_RECORDS/BOT_RECORDS).
+        self._run(ENTRY_TIGHTEN_FROM_RECORDS)
 
     def draw_clipped_line(self, xl, yl, xr, yr):
         """Clip a single line against the span list and emit visible segments.

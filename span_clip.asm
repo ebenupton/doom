@@ -36,6 +36,8 @@ JMP span_is_full    ; $200C
 JMP span_read       ; $200F
 JMP interp_store    ; $2012  (kept for test_interp verification)
 JMP draw_clipped_line ; $2015
+JMP clip_line_records ; $2018
+JMP tighten_from_records ; $201B
 
 ; === Pool constants and field offsets ===
 ; The span pool uses block layout at $0400: each field is a contiguous
@@ -163,6 +165,20 @@ zp_yb_sec2 = $B5     ; u8, secondary bot y at sx2
 ; Drained by Python after each tighten/mark_solid call.
 LINE_OUT_COUNT = $0200
 LINE_OUT_BUF   = $0201
+
+; === Tighten records buffers ($0700, $0800) ===
+; clip_line_records writes per-span sub-records here; tighten_from_records
+; consumes them. Each buffer: byte 0 = record count, then records (6
+; bytes each) at offset +1. Top buffer for yt-line, bot buffer for yb-line.
+;   Record format: si (slot index), sox0, sox1, verdict, cy0, cy1
+;     verdict: 0 = above, 1 = inside, 2 = below
+;     cy0, cy1 only meaningful for verdict=inside (line y at sox0, sox1)
+TOP_RECORDS = $0700
+BOT_RECORDS = $0800
+REC_BYTES   = 6           ; bytes per record
+REC_VERDICT_ABOVE  = 0
+REC_VERDICT_INSIDE = 1
+REC_VERDICT_BELOW  = 2
 
 ; === NJ rasteriser integration ===
 ; When rasteriser is loaded at $A900, emit_line calls it directly.
@@ -2762,6 +2778,273 @@ ENDIF
     LDA zp_line_yl : RTS
 .lis_yr
     LDA zp_line_yr : RTS
+}
+
+; ======================================================================
+; CLIP_LINE_RECORDS / TIGHTEN_FROM_RECORDS — Phase B records-driven tighten
+;
+; Records-driven tighten architecture: clip_line_records walks the active
+; span list and writes per-span sub-records describing the line vs span
+; aperture relationship; tighten_from_records consumes the top+bot records
+; and applies the narrowing. Replaces the existing draw_clipped+tighten
+; pair for portal segs in records mode.
+;
+; Inputs (caller writes ZP):
+;   zp_line_xl, zp_line_yl, zp_line_xr, zp_line_yr  — line endpoints (u8)
+;   zp_ilo, zp_ihi                                  — clamp range (u8)
+; Output: records buffer pointed to by zp_buf is populated.
+; ======================================================================
+
+; ===== Records mode ZP aliases =====
+; Reuse tighten ZP slots since the two modes never run concurrently.
+zp_clr_cy0     = $EF   ; (alias zp_nt_l)   line y at ox0
+zp_clr_cy1     = $F1   ; (alias zp_nt_r)   line y at ox1
+zp_clr_otl     = $EB   ; (alias zp_ot_l)   span_top at ox0
+zp_clr_otr     = $EC   ; (alias zp_ot_r)   span_top at ox1
+zp_clr_obl     = $ED   ; (alias zp_ob_l)   span_bot at ox0
+zp_clr_obr     = $EE   ; (alias zp_ob_r)   span_bot at ox1
+zp_clr_cx_t    = $F7   ; (alias zp_cx_top) top crossover x  ($00 = none)
+zp_clr_cx_b    = $F8   ; (alias zp_cx_bot) bot crossover x  ($00 = none)
+zp_clr_offset  = $F0   ; (alias zp_nt_lh)  next-record write offset in buffer
+zp_clr_count   = $F2   ; (alias zp_nt_rh)  count of records written
+zp_clr_save_x  = $F4   ; (alias zp_nb_lh)  save X across interp_store calls
+; Per-sub-range scratch (overlap with tighten temps):
+zp_clr_slo     = $D7   ; sub-range low x
+zp_clr_shi     = $D8   ; sub-range high x
+
+.clip_line_records
+{
+    ; --- Initialise records buffer: count=0, write offset=1 ---
+    LDY #0 : LDA #0
+    STA (zp_buf),Y
+    STA zp_clr_count
+    LDA #1 : STA zp_clr_offset
+
+    ; --- Normalise line: ensure xl < xr ---
+    ; (Caller passes line already in zp_line_xl/yl/xr/yr; if xl > xr, swap.)
+    LDA zp_line_xl : CMP zp_line_xr : BCC clr_lhs_ok : BEQ clr_lhs_ok
+    ; xl > xr: swap endpoints
+    LDA zp_line_xl : LDX zp_line_xr : STX zp_line_xl : STA zp_line_xr
+    LDA zp_line_yl : LDX zp_line_yr : STX zp_line_yl : STA zp_line_yr
+.clr_lhs_ok
+
+    ; --- Walk active span list ---
+    LDX zp_head
+.clr_walk
+    BNE clr_process
+    JMP clr_done       ; X=0 → end of list
+.clr_process
+    ; Skip span if no overlap with [ilo, ihi].
+    ; pixel-center: xe <= ilo or xs >= ihi → no overlap.
+    LDA POOL_XEND,X : CMP zp_ilo : BCC clr_skip_tramp
+    BEQ clr_skip_tramp
+    LDA POOL_XSTART,X : CMP zp_ihi : BCC clr_in_range
+.clr_skip_tramp
+    JMP clr_next
+.clr_in_range
+
+    STX zp_clr_save_x
+
+    ; --- Compute ox0 = max(POOL_XSTART,X, ilo) ---
+    LDA POOL_XSTART,X : CMP zp_ilo : BCS clr_ox0_ok
+    LDA zp_ilo
+.clr_ox0_ok
+    STA zp_ox0
+
+    ; --- Compute ox1 = min(POOL_XEND,X, ihi) ---
+    LDA POOL_XEND,X : CMP zp_ihi : BCC clr_ox1_ok
+    LDA zp_ihi
+.clr_ox1_ok
+    STA zp_ox1
+
+    ; --- Compute line y at ox0 / ox1 (cy0, cy1) ---
+    ; Setup interp params for line: x0=line_xl, den=line_xr-line_xl, y0=line_yl, y1=line_yr.
+    LDA zp_line_xl : STA zp_i_x0
+    LDA zp_line_xr : SEC : SBC zp_line_xl : STA zp_div_den
+    LDA zp_line_yl : STA zp_i_y0
+    LDA zp_line_yr : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store : STA zp_clr_cy0
+    LDA zp_ox1 : JSR interp_store : STA zp_clr_cy1
+
+    ; --- Compute span_top at ox0 / ox1 (otl, otr) ---
+    LDX zp_clr_save_x
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_DEN,X : STA zp_div_den
+    LDA POOL_TL,X : STA zp_i_y0
+    LDA POOL_TR,X : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store : STA zp_clr_otl
+    LDA zp_ox1 : JSR interp_store : STA zp_clr_otr
+
+    ; --- Compute span_bot at ox0 / ox1 (obl, obr) ---
+    LDX zp_clr_save_x
+    LDA POOL_BL,X : STA zp_i_y0
+    LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store : STA zp_clr_obl
+    LDA zp_ox1 : JSR interp_store : STA zp_clr_obr
+
+    ; --- Detect top crossing: dt = cy - top, sign change ⇒ crossing ---
+    ; Compute |dt0|, |dt1| as u16 in zp_tmp0/1 and zp_tmp2/3 (compute_crossover args).
+    ; dt0 = cy0 - otl. dt1 = cy1 - otr.
+    LDA zp_clr_cy0 : SEC : SBC zp_clr_otl : STA zp_tmp0
+    LDA #0 : SBC #0 : STA zp_tmp1   ; sign-extend (carry from SBC gives s8→s16)
+    BPL clr_dt0_pos                  ; dt0 >= 0: keep
+    SEC : LDA #0 : SBC zp_tmp0 : STA zp_tmp0
+    LDA #0 : SBC zp_tmp1 : STA zp_tmp1
+.clr_dt0_pos
+    LDA zp_clr_cy1 : SEC : SBC zp_clr_otr : STA zp_tmp2
+    LDA #0 : SBC #0 : STA zp_tmp3
+    BPL clr_dt1_pos
+    SEC : LDA #0 : SBC zp_tmp2 : STA zp_tmp2
+    LDA #0 : SBC zp_tmp3 : STA zp_tmp3
+.clr_dt1_pos
+    ; Sign change check: was original dt0 sign != dt1 sign?
+    ; Re-derive from raw bytes: high bit of (cy-top) before abs.
+    ; Simpler: redo the sign check via direct compare.
+    LDA #0 : STA zp_clr_cx_t
+    LDA zp_clr_cy0 : CMP zp_clr_otl
+    PHP                              ; save N flag (cy0 < otl)
+    LDA zp_clr_cy1 : CMP zp_clr_otr
+    BCS clr_t_signs_known            ; cy1 >= otr: dt1 >= 0
+    ; cy1 < otr: dt1 < 0
+    PLP : BCS clr_top_cross          ; cy0 >= otl, cy1 < otr → cross
+    BCC clr_no_top_cross             ; both < (above)
+.clr_t_signs_known
+    PLP : BCC clr_top_cross          ; cy0 < otl, cy1 >= otr → cross
+.clr_no_top_cross
+    JMP clr_check_bot
+.clr_top_cross
+    ; |dt0|, |dt1| already in tmp0/1 and tmp2/3. compute_crossover.
+    JSR compute_crossover
+    STA zp_clr_cx_t
+
+.clr_check_bot
+    ; Same logic for bot: db = cy - bot, sign change ⇒ crossing.
+    LDA zp_clr_cy0 : SEC : SBC zp_clr_obl : STA zp_tmp0
+    LDA #0 : SBC #0 : STA zp_tmp1
+    BPL clr_db0_pos
+    SEC : LDA #0 : SBC zp_tmp0 : STA zp_tmp0
+    LDA #0 : SBC zp_tmp1 : STA zp_tmp1
+.clr_db0_pos
+    LDA zp_clr_cy1 : SEC : SBC zp_clr_obr : STA zp_tmp2
+    LDA #0 : SBC #0 : STA zp_tmp3
+    BPL clr_db1_pos
+    SEC : LDA #0 : SBC zp_tmp2 : STA zp_tmp2
+    LDA #0 : SBC zp_tmp3 : STA zp_tmp3
+.clr_db1_pos
+    LDA #0 : STA zp_clr_cx_b
+    LDA zp_clr_cy0 : CMP zp_clr_obl
+    PHP
+    LDA zp_clr_cy1 : CMP zp_clr_obr
+    BCS clr_b_signs_known
+    PLP : BCS clr_bot_cross
+    BCC clr_no_bot_cross
+.clr_b_signs_known
+    PLP : BCC clr_bot_cross
+.clr_no_bot_cross
+    JMP clr_emit_subranges
+.clr_bot_cross
+    JSR compute_crossover
+    STA zp_clr_cx_b
+
+.clr_emit_subranges
+    ; --- Emit sub-records for sub-ranges ---
+    ; Splits = sorted([ox0, ox1, cx_t (if nonzero), cx_b (if nonzero)]).
+    ; Up to 3 sub-ranges. Emit one record per sub-range.
+    ;
+    ; For the prototype: handle the no-crossing case (1 sub-range).
+    ; Crossings handled via fallthrough to per-split processing.
+    ;
+    ; Step 1: emit single record for [ox0, ox1] (whole-overlap).
+    LDA zp_ox0 : STA zp_clr_slo
+    LDA zp_ox1 : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+
+.clr_next
+    ; Move to next span
+    LDX zp_clr_save_x
+    LDA POOL_NEXT,X : TAX
+    JMP clr_walk
+
+.clr_done
+    ; Write final count to buffer[0]
+    LDA zp_clr_count : LDY #0
+    STA (zp_buf),Y
+    RTS
+}
+
+; --- Helper: emit one sub-record for [zp_clr_slo, zp_clr_shi] ---
+; Determines verdict based on cy_lo/cy_hi vs t_lo/t_hi/b_lo/b_hi.
+; Writes record to buffer at offset zp_clr_offset, increments offset and count.
+.clr_emit_one_subrange
+{
+    ; Compute cy_lo, cy_hi, t_lo, t_hi, b_lo, b_hi at slo/shi.
+    ; Setup line interp params.
+    LDA zp_line_xl : STA zp_i_x0
+    LDA zp_line_xr : SEC : SBC zp_line_xl : STA zp_div_den
+    LDA zp_line_yl : STA zp_i_y0
+    LDA zp_line_yr : STA zp_i_y1
+    LDA zp_clr_slo : JSR interp_store : STA zp_tmp0   ; cy_lo
+    LDA zp_clr_shi : JSR interp_store : STA zp_tmp1   ; cy_hi
+
+    ; Span top at slo/shi.
+    LDX zp_clr_save_x
+    LDA POOL_XLO,X : STA zp_i_x0
+    LDA POOL_DEN,X : STA zp_div_den
+    LDA POOL_TL,X : STA zp_i_y0
+    LDA POOL_TR,X : STA zp_i_y1
+    LDA zp_clr_slo : JSR interp_store : STA zp_tmp2   ; t_lo
+    LDA zp_clr_shi : JSR interp_store : STA zp_tmp3   ; t_hi
+
+    ; Span bot at slo/shi.
+    LDX zp_clr_save_x
+    LDA POOL_BL,X : STA zp_i_y0
+    LDA POOL_BR,X : STA zp_i_y1
+    LDA zp_clr_slo : JSR interp_store : STA zp_save0  ; b_lo
+    LDA zp_clr_shi : JSR interp_store : STA zp_save1  ; b_hi
+
+    ; Verdict determination:
+    ;   cy_lo <= t_lo AND cy_hi <= t_hi  → 'above'
+    ;   cy_lo >= b_lo AND cy_hi >= b_hi  → 'below'
+    ;   else                              → 'inside' (store cy_lo, cy_hi)
+    LDA zp_tmp0 : CMP zp_tmp2 : BEQ chk_top_eq_l : BCS chk_below ; cy_lo > t_lo
+.chk_top_eq_l
+    ; cy_lo <= t_lo. Check cy_hi <= t_hi.
+    LDA zp_tmp1 : CMP zp_tmp3 : BEQ above_v : BCC above_v
+    ; cy_hi > t_hi → 'inside' (or below; check below first).
+.chk_below
+    LDA zp_tmp0 : CMP zp_save0 : BCC inside_v : BEQ chk_bot_eq_l
+    ; cy_lo > b_lo. Check cy_hi >= b_hi.
+    LDA zp_tmp1 : CMP zp_save1 : BCS below_v : BEQ below_v
+    JMP inside_v
+.chk_bot_eq_l
+    LDA zp_tmp1 : CMP zp_save1 : BCS below_v : BEQ below_v
+.inside_v
+    LDA #REC_VERDICT_INSIDE : STA zp_save2
+    JMP write_record
+.above_v
+    LDA #REC_VERDICT_ABOVE : STA zp_save2
+    JMP write_record
+.below_v
+    LDA #REC_VERDICT_BELOW : STA zp_save2
+
+.write_record
+    ; Append 6-byte record at zp_clr_offset.
+    LDY zp_clr_offset
+    LDA zp_clr_save_x : STA (zp_buf),Y : INY    ; si
+    LDA zp_clr_slo    : STA (zp_buf),Y : INY    ; sox0
+    LDA zp_clr_shi    : STA (zp_buf),Y : INY    ; sox1
+    LDA zp_save2      : STA (zp_buf),Y : INY    ; verdict
+    LDA zp_tmp0       : STA (zp_buf),Y : INY    ; cy0 (= cy_lo)
+    LDA zp_tmp1       : STA (zp_buf),Y : INY    ; cy1 (= cy_hi)
+    STY zp_clr_offset
+    INC zp_clr_count
+    RTS
+}
+
+.tighten_from_records
+{
+    ; STUB — initial scaffolding. Returns without mutating.
+    RTS
 }
 
 .end_code
