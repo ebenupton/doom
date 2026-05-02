@@ -2661,6 +2661,12 @@ ENDIF
     ; use xr/yr or line_y_at(xend) for the exit, which would be wrong here.
     LDA zp_cb_cx2 : CMP zp_ox1 : BCS dcl_cb_no_exit_clip
     ; cx2 < ox1 → emit clipped fragment
+    ; Records hook: write records BEFORE modifying zp_ox1 below.
+    LDA zp_dcl_rec_buf_h : BEQ cb_clip_records_skip_a
+    LDX zp_save0
+    JSR dcl_record_cb_clip
+.cb_clip_records_skip_a
+    LDX zp_save0
     LDA zp_cb_cx1 : STA zp_seg_start_x
     LDA zp_cb_cy1 : STA zp_seg_start_y
     LDA zp_cb_cx2 : STA zp_ox1
@@ -2674,6 +2680,12 @@ ENDIF
 .dcl_cb_no_exit_clip
     ; cx2 == ox1: CB did not clip the exit. Set seg_start = (cx1, cy1)
     ; and fall through to the normal exit check (portal or line_ends).
+    ; Records hook: write records (right outer is empty since cx2 == ox1).
+    LDA zp_dcl_rec_buf_h : BEQ cb_clip_records_skip_b
+    LDX zp_save0
+    JSR dcl_record_cb_clip
+.cb_clip_records_skip_b
+    LDX zp_save0
     LDA zp_cb_cx1 : STA zp_seg_start_x
     LDA zp_cb_cy1 : STA zp_seg_start_y
     ; Update Y bbox for portal checks
@@ -2853,6 +2865,72 @@ zp_clr_slo     = $D7   ; sub-range low x
 zp_clr_shi     = $D8   ; sub-range high x
 
 ; --- DCL records hook helpers ---
+
+; Write CB-clip records. Inputs: X = span slot,
+;   zp_ox0, zp_ox1 = span overlap range
+;   zp_cb_cx1, zp_cb_cy1 = visible portion left endpoint
+;   zp_cb_cx2, zp_cb_cy2 = visible portion right endpoint
+;   zp_cb_top1, zp_cb_bot1 = span aperture at cx1
+;   zp_cb_top2, zp_cb_bot2 = span aperture at cx2
+; Writes 1-3 records: optional 'above'/'below' for [ox0, cb_cx1],
+; mandatory 'inside' for [cb_cx1, cb_cx2], optional 'above'/'below'
+; for [cb_cx2, ox1]. Determines above/below by comparing cb_cy{1,2}
+; with cb_top{1,2} / cb_bot{1,2} — no interp needed (already computed).
+.dcl_record_cb_clip
+{
+    LDY zp_dcl_rec_buf_h : BEQ cb_done_tramp
+    JMP cb_continue
+.cb_done_tramp
+    RTS
+.cb_continue
+    ; --- Outer left fragment [ox0, cb_cx1] (if cb_cx1 > ox0) ---
+    LDA zp_ox0 : CMP zp_cb_cx1 : BCS no_outer_left
+    ; Determine 'above' (cb_cy1 == cb_top1) or 'below' (cb_cy1 == cb_bot1).
+    LDA #REC_VERDICT_ABOVE
+    LDY zp_cb_cy1 : CPY zp_cb_top1 : BEQ ol_have_v
+    LDA #REC_VERDICT_BELOW
+.ol_have_v
+    LDY zp_dcl_rec_off
+    PHA                                       ; save verdict
+    TXA : STA (zp_dcl_rec_buf),Y : INY        ; si
+    LDA zp_ox0 : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_cb_cx1 : STA (zp_dcl_rec_buf),Y : INY
+    PLA : STA (zp_dcl_rec_buf),Y : INY        ; verdict
+    LDA #0 : STA (zp_dcl_rec_buf),Y : INY
+              STA (zp_dcl_rec_buf),Y : INY
+    STY zp_dcl_rec_off
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+.no_outer_left
+    ; --- Inside fragment [cb_cx1, cb_cx2] ---
+    LDY zp_dcl_rec_off
+    TXA : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_cb_cx1 : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_cb_cx2 : STA (zp_dcl_rec_buf),Y : INY
+    LDA #REC_VERDICT_INSIDE : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_cb_cy1 : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_cb_cy2 : STA (zp_dcl_rec_buf),Y : INY
+    STY zp_dcl_rec_off
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    ; --- Outer right fragment [cb_cx2, ox1] (if cb_cx2 < ox1) ---
+    LDA zp_cb_cx2 : CMP zp_ox1 : BCS no_outer_right
+    LDA #REC_VERDICT_ABOVE
+    LDY zp_cb_cy2 : CPY zp_cb_top2 : BEQ or_have_v
+    LDA #REC_VERDICT_BELOW
+.or_have_v
+    LDY zp_dcl_rec_off
+    PHA
+    TXA : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_cb_cx2 : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_ox1 : STA (zp_dcl_rec_buf),Y : INY
+    PLA : STA (zp_dcl_rec_buf),Y : INY
+    LDA #0 : STA (zp_dcl_rec_buf),Y : INY
+              STA (zp_dcl_rec_buf),Y : INY
+    STY zp_dcl_rec_off
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+.no_outer_right
+.done
+    RTS
+}
 
 ; Write 'above'/'below' record. Caller already checked records enabled.
 ; Inputs: A = verdict (ABOVE or BELOW), X = span slot, zp_ox0/zp_ox1 set.
