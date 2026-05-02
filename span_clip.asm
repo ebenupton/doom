@@ -2820,13 +2820,10 @@ zp_clr_shi     = $D8   ; sub-range high x
     STA zp_clr_count
     LDA #1 : STA zp_clr_offset
 
-    ; --- Normalise line: ensure xl < xr ---
-    ; (Caller passes line already in zp_line_xl/yl/xr/yr; if xl > xr, swap.)
-    LDA zp_line_xl : CMP zp_line_xr : BCC clr_lhs_ok : BEQ clr_lhs_ok
-    ; xl > xr: swap endpoints
-    LDA zp_line_xl : LDX zp_line_xr : STX zp_line_xl : STA zp_line_xr
-    LDA zp_line_yl : LDX zp_line_yr : STX zp_line_yl : STA zp_line_yr
-.clr_lhs_ok
+    ; Caller is responsible for line endpoint ordering. We don't swap here:
+    ; sx2 may legitimately be > 255 (u8 wraps to look smaller than sx1) when
+    ; the seg extends off-screen. interp_store handles via u8 SBC which wraps
+    ; correctly to give the right den = (sx2 - sx1) mod 256.
 
     ; --- Walk active span list ---
     LDX zp_head
