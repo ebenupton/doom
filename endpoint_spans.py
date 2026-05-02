@@ -177,10 +177,19 @@ _drawn_lines = None  # set to [] to enable collection
 _partial_aperture_check_enabled = False
 _partial_aperture_count = 0
 
-# Toggle: when True, EndpointClipSpans.tighten dispatches to
-# unified_clip_tighten (state-only — no emission piggyback yet). Used to
-# validate the unified algorithm produces identical span state under
-# integration tests. Default False = current tighten path.
+# Toggle: which implementation EndpointClipSpans.tighten dispatches to.
+#   'normal'  — current per-span tighten (default).
+#   'unified' — unified_clip_tighten (single-walk; state-equivalent).
+#   'records' — clip_line_records + tighten_from_records (records-driven;
+#               proof-of-concept that DCL's per-span clip output drives
+#               tighten via sub-range records, no per-span interp in
+#               tighten itself).
+# All three modes produce identical span state — verified by
+# test_unified_tighten.py against the 9 reference scenes.
+_TIGHTEN_MODE = 'normal'
+
+# Legacy boolean flag — retained as alias for back-compat. Set True ⇒
+# 'unified' mode. Read at tighten dispatch time, not import time.
 _USE_UNIFIED_TIGHTEN = False
 
 # Tighten instrumentation: counts dispositions per overlapping span.
@@ -443,9 +452,30 @@ class EndpointClipSpans:
         # mutation (Python doesn't emit lines during tighten).
         _ = emit_top, emit_bot, emit_sec_top, emit_sec_bot
         _ = yt_sec1, yt_sec2, yb_sec1, yb_sec2
-        if _USE_UNIFIED_TIGHTEN:
+        # Mode dispatch (legacy boolean still honoured).
+        mode = _TIGHTEN_MODE
+        if _USE_UNIFIED_TIGHTEN and mode == 'normal':
+            mode = 'unified'
+        if mode == 'unified':
             return self.unified_clip_tighten(lo, hi, sx1, sx2,
                                              yt1, yt2, yb1, yb2)
+        if mode == 'records':
+            ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
+            if ihi < ilo: return
+            if sx1 > sx2:
+                sx1, sx2 = sx2, sx1
+                yt1, yt2 = yt2, yt1
+                yb1, yb2 = yb2, yb1
+            sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
+                ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
+                clamp_u8=(self.y_display_offset != 0))
+            top_records = self.clip_line_records(sx1, yt1, sx2, yt2,
+                                                 ilo=ilo, ihi=ihi)
+            bot_records = self.clip_line_records(sx1, yb1, sx2, yb2,
+                                                 ilo=ilo, ihi=ihi)
+            return self.tighten_from_records(
+                lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                top_records, bot_records)
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W - 1, hi)
         if ihi < ilo: return
