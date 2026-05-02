@@ -132,6 +132,17 @@ zp_seg_start_x = $B0 ; u8, $FF = NULL (no segment started)
 zp_seg_start_y = $B1  ; u8, Y at seg_start_x
 zp_tg_cont    = $BA   ; portal continuation: $FF=inactive, else=prev span xend
 zp_tg_emit    = $BB   ; tighten emission mask: bit0=emit top, bit1=emit bot
+; ===== DCL records hook ($BC-$BF) =====
+; When zp_dcl_rec_buf+1 (high byte) is non-zero, DCL writes per-span records
+; to the buffer at zp_dcl_rec_buf during its existing per-span walk. Caller
+; sets to TOP_RECORDS or BOT_RECORDS to enable; sets high byte to 0 to disable.
+; Buffer format matches clip_line_records: byte 0 = count, then 6-byte records
+; (si, sox0, sox1, verdict, cy0, cy1). DCL initializes count=0 and offset=1
+; on entry when records enabled.
+zp_dcl_rec_buf   = $BC   ; lo byte of buffer ptr
+zp_dcl_rec_buf_h = $BD   ; hi byte of buffer ptr ($00 = records disabled)
+zp_dcl_rec_off   = $BE   ; current write offset (1-based) within buffer
+zp_dcl_last_cy   = $BF   ; cy at previous span's ox1 (for continuation cy0 reuse)
                       ;   $03 = both (default), $01 = top only, $02 = bot only, $00 = none
 ; CB clip working set ($B2-$B9)
 zp_cb_cx1   = $B2    ; u8, clipped left X
@@ -2161,6 +2172,12 @@ ENDIF
     STA zp_line_ylo : STX zp_line_yhi
 .dcl_bbox_done
 
+    ; --- Records-mode init (if enabled) ---
+    LDA zp_dcl_rec_buf_h : BEQ dcl_records_off
+    LDA #0 : LDY #0 : STA (zp_dcl_rec_buf),Y    ; count = 0
+    LDA #1 : STA zp_dcl_rec_off                  ; first record at offset 1
+.dcl_records_off
+
     ; Reset output
     LDA #0 : STA LINE_OUT_COUNT
 
@@ -2201,12 +2218,18 @@ ENDIF
 .dcl_ox1_ok STA zp_ox1
 
     ; --- Entry or continuation? ---
-    LDA zp_seg_start_x : CMP #$FF : BNE dcl_exit_check
+    LDA zp_seg_start_x : CMP #$FF : BEQ dcl_entry_path
+    ; Continuation: line still in aperture across this span. Records hook.
+    LDA zp_dcl_rec_buf_h : BEQ skip_cont_record
+    JSR dcl_record_inside_continuation
+.skip_cont_record
+    JMP dcl_exit_check
+.dcl_entry_path
 
     ; ========== ENTRY: seg_start is NULL ==========
     ; --- Tier 1: outer bbox reject ---
-    LDA zp_line_yhi : CMP POOL_OT,X : BCC dcl_outer_reject  ; yhi < min(tl,tr) → reject
-    LDA POOL_OB,X : CMP zp_line_ylo : BCC dcl_outer_reject  ; max(bl,br) < ylo → reject
+    LDA zp_line_yhi : CMP POOL_OT,X : BCC dcl_reject_above  ; yhi < OT → line above aperture
+    LDA POOL_OB,X : CMP zp_line_ylo : BCC dcl_reject_below  ; OB < ylo → line below aperture
 
     ; --- Tier 2: inner bbox accept ---
     LDA zp_line_ylo : CMP POOL_IT,X : BCC dcl_ambiguous     ; ylo < max(tl,tr) → CB clip
@@ -2214,6 +2237,13 @@ ENDIF
     ; yhi > ib → ambiguous
     JMP dcl_cb_clip
 
+.dcl_reject_above
+    LDA #REC_VERDICT_ABOVE
+    JSR dcl_record_outside
+    JMP dcl_outer_reject
+.dcl_reject_below
+    LDA #REC_VERDICT_BELOW
+    JSR dcl_record_outside
 .dcl_outer_reject
     ; Outer reject → advance to next span (inline)
     LDA POOL_NEXT,X : TAX : BNE dcl_walk2
@@ -2240,6 +2270,11 @@ ENDIF
 .dcl_accept_yl
     LDA zp_line_yl
     STA zp_seg_start_y
+    ; Records hook: write 'inside' record for this span.
+    ; cy0 = seg_start_y (just set), cy1 = line_y_at_ox1 (1 interp).
+    LDA zp_dcl_rec_buf_h : BEQ accept_no_record
+    JSR dcl_record_inside_at_accept
+.accept_no_record
     ; Fall through to exit check
 
 .dcl_exit_check
@@ -2733,10 +2768,15 @@ ENDIF
 ; Input: zp_seg_start_x, zp_seg_start_y, zp_ox1 (end_x), zp_tmp0 (end_y)
 ; Clobbers: A, Y
 .dcl_emit_segment
+    ; Records mode: skip rasteriser emission (DCL is being called only to
+    ; populate records, not to draw). Caller's prior draw_clipped already
+    ; emitted the actual seg edges.
+    LDA zp_dcl_rec_buf_h : BNE dcl_es_skip_emit
     ; Skip degenerate segments (zero-length)
     LDA zp_seg_start_x : CMP zp_ox1 : BNE dcl_es_ok
     LDA zp_seg_start_y : CMP zp_tmp0 : BNE dcl_es_ok
-    RTS  ; degenerate: start == end
+.dcl_es_skip_emit
+    RTS  ; degenerate or records-mode skip
 .dcl_es_ok
     LDY LINE_OUT_COUNT
     LDA zp_seg_start_x : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
@@ -2811,6 +2851,98 @@ zp_clr_save_x  = $F4   ; (alias zp_nb_lh)  save X across interp_store calls
 ; Per-sub-range scratch (overlap with tighten temps):
 zp_clr_slo     = $D7   ; sub-range low x
 zp_clr_shi     = $D8   ; sub-range high x
+
+; --- DCL records hook helpers ---
+
+; Write 'above'/'below' record. Caller already checked records enabled.
+; Inputs: A = verdict (ABOVE or BELOW), X = span slot, zp_ox0/zp_ox1 set.
+.dcl_record_outside
+{
+    LDY zp_dcl_rec_buf_h : BEQ done
+    PHA                                      ; save verdict
+    LDY zp_dcl_rec_off
+    TXA : STA (zp_dcl_rec_buf),Y : INY       ; si
+    LDA zp_ox0 : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_ox1 : STA (zp_dcl_rec_buf),Y : INY
+    PLA : STA (zp_dcl_rec_buf),Y : INY        ; verdict
+    LDA #0 : STA (zp_dcl_rec_buf),Y : INY    ; cy0 (unused)
+              STA (zp_dcl_rec_buf),Y : INY    ; cy1 (unused)
+    STY zp_dcl_rec_off
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+.done
+    RTS
+}
+
+; Write 'inside' record at continuation. cy0 = line_y at ox0, cy1 = line_y at ox1.
+; Both interps required — DCL doesn't track cy at span seams in continuation.
+; Optimization: ox0 == line_xl is rare in continuation (continuation means
+; line started before this span). ox1 == line_xr is common when line ends
+; in this span (line_ends path).
+; Inputs: X = span slot, zp_ox0/zp_ox1 set.
+.dcl_record_inside_continuation
+{
+    STX zp_save0                              ; save span slot
+    ; cy at ox0
+    LDA zp_ox0 : CMP zp_line_xl : BEQ cont_use_yl_lo
+    JSR dcl_line_y_at_a
+    JMP cont_have_cy0
+.cont_use_yl_lo
+    LDA zp_line_yl
+.cont_have_cy0
+    PHA                                       ; save cy0
+    ; cy at ox1
+    LDX zp_save0
+    LDA zp_ox1 : CMP zp_line_xr : BEQ cont_use_yr_hi
+    JSR dcl_line_y_at_a
+    JMP cont_have_cy1
+.cont_use_yr_hi
+    LDA zp_line_yr
+.cont_have_cy1
+    PHA                                       ; save cy1
+    ; Write record
+    LDX zp_save0
+    LDY zp_dcl_rec_off
+    TXA : STA (zp_dcl_rec_buf),Y : INY        ; si
+    LDA zp_ox0 : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_ox1 : STA (zp_dcl_rec_buf),Y : INY
+    LDA #REC_VERDICT_INSIDE : STA (zp_dcl_rec_buf),Y : INY
+    PLA : TAX : PLA                           ; X=cy1, A=cy0
+    STA (zp_dcl_rec_buf),Y : INY              ; cy0
+    TXA : STA (zp_dcl_rec_buf),Y : INY        ; cy1
+    STY zp_dcl_rec_off
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDX zp_save0
+    RTS
+}
+
+; Write 'inside' record at dcl_accept. cy0 = zp_seg_start_y (= line_y at ox0,
+; just set by accept logic). cy1 = line_y at ox1 (1 interp; OR zp_line_yr if
+; ox1 == line_xr to avoid the interp).
+; Inputs: X = span slot, zp_ox0/zp_ox1 set, zp_seg_start_y set.
+.dcl_record_inside_at_accept
+{
+    STX zp_save0                              ; save span slot
+    ; Compute cy at ox1: if ox1 == line_xr, cy = line_yr (no interp); else interp.
+    LDA zp_ox1 : CMP zp_line_xr : BEQ use_yr
+    JSR dcl_line_y_at_a                       ; A = line_y_at(ox1)
+    JMP write_record
+.use_yr
+    LDA zp_line_yr
+.write_record
+    PHA                                       ; save cy1
+    LDX zp_save0                              ; restore span slot
+    LDY zp_dcl_rec_off
+    TXA : STA (zp_dcl_rec_buf),Y : INY        ; si
+    LDA zp_ox0 : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_ox1 : STA (zp_dcl_rec_buf),Y : INY
+    LDA #REC_VERDICT_INSIDE : STA (zp_dcl_rec_buf),Y : INY
+    LDA zp_seg_start_y : STA (zp_dcl_rec_buf),Y : INY  ; cy0
+    PLA : STA (zp_dcl_rec_buf),Y : INY        ; cy1
+    STY zp_dcl_rec_off
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDX zp_save0
+    RTS
+}
 
 .clip_line_records
 {

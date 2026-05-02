@@ -32,6 +32,14 @@ REC_VERDICT_BELOW = 2
 # per-side cases; multi-record (crossover) cases are not yet handled.
 _USE_6502_RECORDS_TIGHTEN = False
 
+# When True, records mode uses DCL hooks to populate records (Phase B).
+# When False (default), records mode uses standalone clip_line_records (Phase A).
+_USE_DCL_RECORDS_HOOK = False
+
+# DCL records-hook ZP slots (must match span_clip.asm)
+ZP_DCL_REC_BUF   = 0xBC
+ZP_DCL_REC_BUF_H = 0xBD
+
 # ZP addresses (must match span_clip.asm)
 ZP_HEAD  = 0xC0
 ZP_FREE  = 0xC1
@@ -341,20 +349,47 @@ class SpanClip6502:
             yt2_u = max(0, min(255, yt2))
             yb1_u = max(0, min(255, yb1))
             yb2_u = max(0, min(255, yb2))
-            mem[ZP_LINE_XL] = sx1 & 0xFF
-            mem[ZP_LINE_YL] = yt1_u
-            mem[ZP_LINE_XR] = sx2 & 0xFF
-            mem[ZP_LINE_YR] = yt2_u
-            mem[ZP_BUF] = TOP_RECORDS & 0xFF
-            mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
-            self._run(ENTRY_CLIP_LINE_RECORDS)
-            mem[ZP_LINE_XL] = sx1 & 0xFF
-            mem[ZP_LINE_YL] = yb1_u
-            mem[ZP_LINE_XR] = sx2 & 0xFF
-            mem[ZP_LINE_YR] = yb2_u
-            mem[ZP_BUF] = BOT_RECORDS & 0xFF
-            mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
-            self._run(ENTRY_CLIP_LINE_RECORDS)
+            if _USE_DCL_RECORDS_HOOK:
+                # Phase B: DCL writes records during its existing per-span walk.
+                mem[ZP_LINE_XL] = sx1 & 0xFF
+                mem[ZP_LINE_YL] = yt1_u
+                mem[ZP_LINE_XR] = sx2 & 0xFF
+                mem[ZP_LINE_YR] = yt2_u
+                mem[ZP_DCL_REC_BUF] = TOP_RECORDS & 0xFF
+                mem[ZP_DCL_REC_BUF_H] = (TOP_RECORDS >> 8) & 0xFF
+                self._run(ENTRY_DRAW_CLIP)
+                mem[ZP_DCL_REC_BUF] = 0
+                mem[ZP_DCL_REC_BUF_H] = 0
+                mem[ZP_LINE_XL] = sx1 & 0xFF
+                mem[ZP_LINE_YL] = yb1_u
+                mem[ZP_LINE_XR] = sx2 & 0xFF
+                mem[ZP_LINE_YR] = yb2_u
+                mem[ZP_DCL_REC_BUF] = BOT_RECORDS & 0xFF
+                mem[ZP_DCL_REC_BUF_H] = (BOT_RECORDS >> 8) & 0xFF
+                self._run(ENTRY_DRAW_CLIP)
+                mem[ZP_DCL_REC_BUF] = 0
+                mem[ZP_DCL_REC_BUF_H] = 0
+                # Drain emitted lines (DCL also emitted lines as side-effect;
+                # caller already invoked draw_clipped_line for these in the
+                # Instrumented6502Spans wrapper, so OR-mode rasteriser makes
+                # the double-emit idempotent).
+                self.drain_lines()
+            else:
+                # Phase A: standalone clip_line_records walks span list separately.
+                mem[ZP_LINE_XL] = sx1 & 0xFF
+                mem[ZP_LINE_YL] = yt1_u
+                mem[ZP_LINE_XR] = sx2 & 0xFF
+                mem[ZP_LINE_YR] = yt2_u
+                mem[ZP_BUF] = TOP_RECORDS & 0xFF
+                mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
+                self._run(ENTRY_CLIP_LINE_RECORDS)
+                mem[ZP_LINE_XL] = sx1 & 0xFF
+                mem[ZP_LINE_YL] = yb1_u
+                mem[ZP_LINE_XR] = sx2 & 0xFF
+                mem[ZP_LINE_YR] = yb2_u
+                mem[ZP_BUF] = BOT_RECORDS & 0xFF
+                mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
+                self._run(ENTRY_CLIP_LINE_RECORDS)
             # Multi-record detection: ASM tighten_from_records v1 only handles
             # single-record-per-side cases. If any span has multiple records
             # (crossover), fall back to regular ASM tighten for correctness.
