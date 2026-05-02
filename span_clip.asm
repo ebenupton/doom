@@ -3020,6 +3020,17 @@ zp_clr_shi     = $D8   ; sub-range high x
 ; --- Helper: emit one sub-record for [zp_clr_slo, zp_clr_shi] ---
 ; Determines verdict based on cy_lo/cy_hi vs t_lo/t_hi/b_lo/b_hi.
 ; Writes record to buffer at offset zp_clr_offset, increments offset and count.
+; ===== emit_one_subrange ZP =====
+; Avoid zp_tmp0..3 ($DE-$E1) — umul8 clobbers zp_tmp0; other helpers use $DE-E1.
+; Use $B6-$B9 (CB clip slots, free during records mode) and $E5-$E7 (safe scratch).
+zp_eos_cy_lo = $B6
+zp_eos_cy_hi = $B7
+zp_eos_t_lo  = $B8
+zp_eos_t_hi  = $B9
+zp_eos_b_lo  = $E5
+zp_eos_b_hi  = $E6
+zp_eos_verdict = $E7
+
 .clr_emit_one_subrange
 {
     ; Compute cy_lo, cy_hi, t_lo, t_hi, b_lo, b_hi at slo/shi.
@@ -3028,8 +3039,8 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA zp_line_xr : SEC : SBC zp_line_xl : STA zp_div_den
     LDA zp_line_yl : STA zp_i_y0
     LDA zp_line_yr : STA zp_i_y1
-    LDA zp_clr_slo : JSR interp_store : STA zp_tmp0   ; cy_lo
-    LDA zp_clr_shi : JSR interp_store : STA zp_tmp1   ; cy_hi
+    LDA zp_clr_slo : JSR interp_store : STA zp_eos_cy_lo
+    LDA zp_clr_shi : JSR interp_store : STA zp_eos_cy_hi
 
     ; Span top at slo/shi.
     LDX zp_clr_save_x
@@ -3037,40 +3048,37 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA POOL_DEN,X : STA zp_div_den
     LDA POOL_TL,X : STA zp_i_y0
     LDA POOL_TR,X : STA zp_i_y1
-    LDA zp_clr_slo : JSR interp_store : STA zp_tmp2   ; t_lo
-    LDA zp_clr_shi : JSR interp_store : STA zp_tmp3   ; t_hi
+    LDA zp_clr_slo : JSR interp_store : STA zp_eos_t_lo
+    LDA zp_clr_shi : JSR interp_store : STA zp_eos_t_hi
 
     ; Span bot at slo/shi.
     LDX zp_clr_save_x
     LDA POOL_BL,X : STA zp_i_y0
     LDA POOL_BR,X : STA zp_i_y1
-    LDA zp_clr_slo : JSR interp_store : STA zp_save0  ; b_lo
-    LDA zp_clr_shi : JSR interp_store : STA zp_save1  ; b_hi
+    LDA zp_clr_slo : JSR interp_store : STA zp_eos_b_lo
+    LDA zp_clr_shi : JSR interp_store : STA zp_eos_b_hi
 
     ; Verdict determination:
     ;   cy_lo <= t_lo AND cy_hi <= t_hi  → 'above'
     ;   cy_lo >= b_lo AND cy_hi >= b_hi  → 'below'
     ;   else                              → 'inside' (store cy_lo, cy_hi)
-    LDA zp_tmp0 : CMP zp_tmp2 : BEQ chk_top_eq_l : BCS chk_below ; cy_lo > t_lo
+    LDA zp_eos_cy_lo : CMP zp_eos_t_lo : BEQ chk_top_eq_l : BCS chk_below
 .chk_top_eq_l
-    ; cy_lo <= t_lo. Check cy_hi <= t_hi.
-    LDA zp_tmp1 : CMP zp_tmp3 : BEQ above_v : BCC above_v
-    ; cy_hi > t_hi → 'inside' (or below; check below first).
+    LDA zp_eos_cy_hi : CMP zp_eos_t_hi : BEQ above_v : BCC above_v
 .chk_below
-    LDA zp_tmp0 : CMP zp_save0 : BCC inside_v : BEQ chk_bot_eq_l
-    ; cy_lo > b_lo. Check cy_hi >= b_hi.
-    LDA zp_tmp1 : CMP zp_save1 : BCS below_v : BEQ below_v
+    LDA zp_eos_cy_lo : CMP zp_eos_b_lo : BCC inside_v : BEQ chk_bot_eq_l
+    LDA zp_eos_cy_hi : CMP zp_eos_b_hi : BCS below_v : BEQ below_v
     JMP inside_v
 .chk_bot_eq_l
-    LDA zp_tmp1 : CMP zp_save1 : BCS below_v : BEQ below_v
+    LDA zp_eos_cy_hi : CMP zp_eos_b_hi : BCS below_v : BEQ below_v
 .inside_v
-    LDA #REC_VERDICT_INSIDE : STA zp_save2
+    LDA #REC_VERDICT_INSIDE : STA zp_eos_verdict
     JMP write_record
 .above_v
-    LDA #REC_VERDICT_ABOVE : STA zp_save2
+    LDA #REC_VERDICT_ABOVE : STA zp_eos_verdict
     JMP write_record
 .below_v
-    LDA #REC_VERDICT_BELOW : STA zp_save2
+    LDA #REC_VERDICT_BELOW : STA zp_eos_verdict
 
 .write_record
     ; Append 6-byte record at zp_clr_offset.
@@ -3078,9 +3086,9 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA zp_clr_save_x : STA (zp_buf),Y : INY    ; si
     LDA zp_clr_slo    : STA (zp_buf),Y : INY    ; sox0
     LDA zp_clr_shi    : STA (zp_buf),Y : INY    ; sox1
-    LDA zp_save2      : STA (zp_buf),Y : INY    ; verdict
-    LDA zp_tmp0       : STA (zp_buf),Y : INY    ; cy0 (= cy_lo)
-    LDA zp_tmp1       : STA (zp_buf),Y : INY    ; cy1 (= cy_hi)
+    LDA zp_eos_verdict : STA (zp_buf),Y : INY   ; verdict
+    LDA zp_eos_cy_lo  : STA (zp_buf),Y : INY    ; cy0
+    LDA zp_eos_cy_hi  : STA (zp_buf),Y : INY    ; cy1
     STY zp_clr_offset
     INC zp_clr_count
     RTS
