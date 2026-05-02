@@ -128,6 +128,8 @@ class CompareTighten(dw.Instrumented6502Spans):
                 print(f"RECORDS DIVERGENCE call#{_total_calls[0]} "
                       f"lo={lo} hi={hi} sx=[{sx1},{sx2}] "
                       f"yt=[{yt1},{yt2}] yb=[{yb1},{yb2}]")
+                print(f"  pre     : {spans_snapshot}")
+                print(f"  params  : {params_list}")
                 print(f"  norm    : {spans_after_normal}")
                 print(f"  records : {spans_after_records}")
 

@@ -587,23 +587,24 @@ class EndpointClipSpans:
     # -- Records-based unified clip+tighten (prototype) -----------------------
 
     def clip_line_records(self, lx1, ly1, lx2, ly2, ilo=None, ihi=None):
-        """Per-span clip records for a line. Mirrors the per-span work DCL
-        already does; the idea is that tighten reads these records instead
-        of redoing the interp.
+        """Per-span clip sub-records for a line. Mirrors what DCL writes
+        during its emission walk: the clipped fragment endpoints encode
+        the boundary x's where the line crosses span_top or span_bot.
 
-        ilo/ihi: optional clamp of overlap range. Tighten's caller passes
-        these to scope records to the seg's effective columns (after
-        clamping and possibly differing from the line's remapped [lx1, lx2]).
-        Default: full line range.
+        Each span's overlap [ox0, ox1] is decomposed into 1-3 sub-ranges
+        with uniform verdict (the natural sub-ranges between consecutive
+        clip-boundary x's). The user's observation: crossover IS just
+        "line goes from being clipped to not clipped" — those are the
+        sub-range boundaries.
 
-        Returns: list of dicts, one per overlapping span:
-          'si'      span index in self.spans
-          'ox0','ox1'  overlap range [ox0, ox1] with the span
-          'cy0','cy1'  line y at ox0, ox1 (interp from line endpoints)
-          'old_tl','old_tr'  span top y at ox0, ox1
-          'old_bl','old_br'  span bot y at ox0, ox1
-          'verdict' ∈ {'above', 'below', 'inside', 'crosses_top',
-                       'crosses_bot', 'crosses_both'}
+        Returns flat list of sub-records:
+          'si'              span index in self.spans
+          'sox0','sox1'     sub-range column range [sox0, sox1]
+          'verdict'         'above'  (line above span_top → no narrow)
+                            'inside' (line in aperture  → narrow to line)
+                            'below'  (line below span_bot → mark_solid)
+          'cy0','cy1'       line y at sox0, sox1 (only for verdict='inside';
+                            these are what tighten uses for narrowing)
         """
         if lx1 == lx2:
             return []
@@ -619,111 +620,210 @@ class EndpointClipSpans:
             if xe <= ilo or xs >= ihi:
                 continue
             ox0 = max(xs, ilo); ox1 = min(xe, ihi)
+            # Endpoint values to detect crossings.
             cy0 = _interp_store(ox0, xl, yl, xr, yr)
             cy1 = _interp_store(ox1, xl, yl, xr, yr)
             old_tl = _span_top_store(s, ox0)
             old_tr = _span_top_store(s, ox1)
             old_bl = _span_bot_store(s, ox0)
             old_br = _span_bot_store(s, ox1)
-            top_l = cy0 < old_tl
-            top_r = cy1 < old_tr
-            bot_l = cy0 > old_bl
-            bot_r = cy1 > old_br
-            if top_l and top_r:
-                verdict = 'above'
-            elif bot_l and bot_r:
-                verdict = 'below'
-            elif not (top_l or top_r or bot_l or bot_r):
-                verdict = 'inside'
-            elif (top_l or top_r) and (bot_l or bot_r):
-                verdict = 'crosses_both'
-            elif top_l or top_r:
-                verdict = 'crosses_top'
-            else:
-                verdict = 'crosses_bot'
-            records.append({
-                'si': si, 'ox0': ox0, 'ox1': ox1,
-                'cy0': cy0, 'cy1': cy1,
-                'old_tl': old_tl, 'old_tr': old_tr,
-                'old_bl': old_bl, 'old_br': old_br,
-                'verdict': verdict,
-            })
+            # Collect sub-range boundaries via line-vs-boundary crossings.
+            # Sign change in (cy - boundary) over [ox0, ox1] ⇒ crossing.
+            dt0 = cy0 - old_tl; dt1 = cy1 - old_tr
+            db0 = cy0 - old_bl; db1 = cy1 - old_br
+            splits = [ox0, ox1]
+            if dt0 != dt1 and ((dt0 < 0) != (dt1 < 0)):
+                cx_t = _crossover_x(ox0, ox1, dt0, dt1)
+                if cx_t is not None and ox0 < cx_t < ox1:
+                    splits.append(cx_t)
+            if db0 != db1 and ((db0 < 0) != (db1 < 0)):
+                cx_b = _crossover_x(ox0, ox1, db0, db1)
+                if cx_b is not None and ox0 < cx_b < ox1:
+                    splits.append(cx_b)
+            splits = sorted(set(splits))
+            # Single-column span (ox0 == ox1) collapses to one boundary; emit
+            # a degenerate sub-record at that point.
+            if len(splits) == 1:
+                p = splits[0]
+                cy_p = _interp_store(p, xl, yl, xr, yr)
+                tp = _span_top_store(s, p)
+                bp = _span_bot_store(s, p)
+                if cy_p <= tp:
+                    records.append({'si': si, 'sox0': p, 'sox1': p,
+                                    'verdict': 'above'})
+                elif cy_p >= bp:
+                    records.append({'si': si, 'sox0': p, 'sox1': p,
+                                    'verdict': 'below'})
+                else:
+                    records.append({'si': si, 'sox0': p, 'sox1': p,
+                                    'verdict': 'inside',
+                                    'cy0': cy_p, 'cy1': cy_p})
+                continue
+            # Emit one sub-record per [splits[i], splits[i+1]]. Verdict is
+            # determined by both endpoints (handles "boundary touch" cases
+            # where the line equals span_top at one end and is in-aperture
+            # at the other — the endpoint-based check catches these).
+            for i in range(len(splits) - 1):
+                s_lo = splits[i]; s_hi = splits[i + 1]
+                if s_hi <= s_lo:
+                    continue
+                cy_lo = _interp_store(s_lo, xl, yl, xr, yr)
+                cy_hi = _interp_store(s_hi, xl, yl, xr, yr)
+                t_lo = _span_top_store(s, s_lo)
+                t_hi = _span_top_store(s, s_hi)
+                b_lo = _span_bot_store(s, s_lo)
+                b_hi = _span_bot_store(s, s_hi)
+                # Inclusive: cy <= top at both endpoints → 'above'
+                # (no narrow for yt, mark_solid for yb).
+                if cy_lo <= t_lo and cy_hi <= t_hi:
+                    records.append({'si': si, 'sox0': s_lo, 'sox1': s_hi,
+                                    'verdict': 'above'})
+                elif cy_lo >= b_lo and cy_hi >= b_hi:
+                    records.append({'si': si, 'sox0': s_lo, 'sox1': s_hi,
+                                    'verdict': 'below'})
+                else:
+                    records.append({'si': si, 'sox0': s_lo, 'sox1': s_hi,
+                                    'verdict': 'inside',
+                                    'cy0': cy_lo, 'cy1': cy_hi})
         return records
 
     def tighten_from_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                              top_records, bot_records):
-        """Tighten consumes pre-computed clip records (yt-line and yb-line).
-        Equivalent to tighten() in span-state outcome. Per-span, all interp
-        work is in the records — this routine only does max/min and merge.
+        """Tighten consumes sub-records from clip_line_records of yt and yb.
+        Each span's [ox0, ox1] is partitioned into uniform sub-ranges by
+        the union of top and bot crossings. Per combined sub-range:
+          top_verdict='below' OR bot_verdict='above' → mark_solid
+          top='above' AND bot='below' → span unchanged in this sub-range
+          top='inside' → narrow top to yt-line in this sub-range
+          bot='inside' → narrow bot to yb-line in this sub-range
+        Crossover handled natively by sub-range fragmentation; no fallback
+        to per-span interp.
+
+        Verdict semantics per line:
+          yt 'above':  yt < span_top → no top narrow.
+          yt 'inside': yt in aperture → narrow top to yt.
+          yt 'below':  yt > span_bot → mark_solid (seg below span).
+          yb 'above':  yb < span_top → mark_solid (seg above span).
+          yb 'inside': yb in aperture → narrow bot to yb.
+          yb 'below':  yb > span_bot → no bot narrow.
         """
-        ilo = max(0, lo)
-        ihi = min(FP_RENDER_W - 1, hi)
+        _ = sx1, sx2, yt1, yt2, yb1, yb2  # not needed — info is in records
+        ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
         if ihi < ilo: return
-        # records are keyed by self.spans index BEFORE mutation; build a map
-        top_by_si = {r['si']: r for r in top_records}
-        bot_by_si = {r['si']: r for r in bot_records}
+        # Group sub-records by span index.
+        top_by_si = {}
+        bot_by_si = {}
+        for r in top_records:
+            top_by_si.setdefault(r['si'], []).append(r)
+        for r in bot_records:
+            bot_by_si.setdefault(r['si'], []).append(r)
         new = []
         for si, s in enumerate(self.spans):
-            top_r = top_by_si.get(si)
-            bot_r = bot_by_si.get(si)
-            if top_r is None and bot_r is None:
-                # span not in seg's range — unchanged
+            top_subs = top_by_si.get(si, [])
+            bot_subs = bot_by_si.get(si, [])
+            if not top_subs and not bot_subs:
                 _append_merge(new, s); continue
-            # Either record exists ⇒ span overlaps seg's column range.
-            r = top_r if top_r is not None else bot_r
-            ox0, ox1 = r['ox0'], r['ox1']
+            # Full-dom shortcut: yt above span_top AND yb below span_bot
+            # everywhere on overlap → span unchanged. Matches norm's
+            # _append_merge(new, s) case (line 532) when c_tl<=old_tl etc.
+            if (all(r['verdict'] == 'above' for r in top_subs) and
+                    all(r['verdict'] == 'below' for r in bot_subs)):
+                _append_merge(new, s); continue
             xs, xe = s[0], s[1]
-            # Use record values
-            old_tl = r['old_tl']; old_tr = r['old_tr']
-            old_bl = r['old_bl']; old_br = r['old_br']
-            new_tl = top_r['cy0'] if top_r else old_tl
-            new_tr = top_r['cy1'] if top_r else old_tr
-            new_bl = bot_r['cy0'] if bot_r else old_bl
-            new_br = bot_r['cy1'] if bot_r else old_br
-            # Clamp
-            vis_min = self.y_display_offset
-            vis_max = self.y_display_offset + FP_RENDER_H - 1
-            c_tl = max(vis_min, min(vis_max, new_tl))
-            c_tr = max(vis_min, min(vis_max, new_tr))
-            c_bl = max(vis_min, min(vis_max, new_bl))
-            c_br = max(vis_min, min(vis_max, new_br))
-            # Crossover detection
-            dt0 = old_tl - new_tl; dt1 = old_tr - new_tr
-            db0 = old_bl - new_bl; db1 = old_br - new_br
-            has_top_cx = (dt0 != dt1 and ((dt0 >= 0) != (dt1 >= 0)))
-            has_bot_cx = (db0 != db1 and ((db0 >= 0) != (db1 >= 0)))
-            # Full-dom check
-            if (c_tl <= old_tl and c_tr <= old_tr and
-                    c_bl >= old_bl and c_br >= old_br):
-                _append_merge(new, s); continue
-            # Left fragment outside seg
-            if xs < ilo:
-                _append_merge(new, (xs, ilo,
+            # Union of all sub-range boundaries inside this span.
+            boundaries = set()
+            for r in top_subs:
+                boundaries.add(r['sox0']); boundaries.add(r['sox1'])
+            for r in bot_subs:
+                boundaries.add(r['sox0']); boundaries.add(r['sox1'])
+            boundaries = sorted(boundaries)
+            ox0 = boundaries[0]; ox1 = boundaries[-1]
+            # Single-column span: treat as one degenerate sub-range.
+            if len(boundaries) == 1:
+                p = boundaries[0]
+                top_r = next((r for r in top_subs if r['sox0'] == p), None)
+                bot_r = next((r for r in bot_subs if r['sox0'] == p), None)
+                top_v = top_r['verdict'] if top_r else 'above'
+                bot_v = bot_r['verdict'] if bot_r else 'below'
+                if top_v == 'below' or bot_v == 'above':
+                    continue  # mark_solid
+                old_t_p = _span_top_store(s, p); old_b_p = _span_bot_store(s, p)
+                rt = max(old_t_p, top_r['cy0']) if top_v == 'inside' else old_t_p
+                rb = min(old_b_p, bot_r['cy0']) if bot_v == 'inside' else old_b_p
+                if rt >= rb: continue  # no aperture
+                if rt == old_t_p and rb == old_b_p:
+                    _append_merge(new, s); continue
+                _append_merge(new, (p, p, p, p, rt, rb, rt, rb))
+                continue
+            # Left fragment outside seg (line preserved).
+            if xs < ox0:
+                _append_merge(new, (xs, ox0,
                                     s[2], s[3], s[4], s[5], s[6], s[7]))
-            right_s = ((ihi, xe, s[2], s[3], s[4], s[5], s[6], s[7])
-                       if ihi < xe else None)
-            if not has_top_cx and not has_bot_cx:
-                rt_l = max(old_tl, c_tl); rb_l = min(old_bl, c_bl)
-                rt_r = max(old_tr, c_tr); rb_r = min(old_br, c_br)
-                if rt_l < rb_l or rt_r < rb_r:
-                    old_top_wins = (rt_l == old_tl and rt_r == old_tr)
-                    old_bot_wins = (rb_l == old_bl and rb_r == old_br)
-                    if old_top_wins and old_bot_wins:
-                        _append_merge(new, (ox0, ox1, s[2], s[3],
-                                            s[4], s[5], s[6], s[7]))
+            right_s = ((ox1, xe, s[2], s[3], s[4], s[5], s[6], s[7])
+                       if ox1 < xe else None)
+            # Walk combined sub-ranges.
+            for i in range(len(boundaries) - 1):
+                s_lo = boundaries[i]; s_hi = boundaries[i + 1]
+                if s_hi <= s_lo: continue
+                mid = (s_lo + s_hi) // 2
+                # Find covering sub-records (linear scan — small N per span).
+                top_r = None
+                for r in top_subs:
+                    if r['sox0'] <= mid <= r['sox1']:
+                        top_r = r; break
+                bot_r = None
+                for r in bot_subs:
+                    if r['sox0'] <= mid <= r['sox1']:
+                        bot_r = r; break
+                # If no record covers this sub-range, treat as no narrow on
+                # that side (line wasn't sampled there — happens when one
+                # line's overlap extends beyond the other's).
+                top_v = top_r['verdict'] if top_r else 'above'
+                bot_v = bot_r['verdict'] if bot_r else 'below'
+                # mark_solid?
+                if top_v == 'below' or bot_v == 'above':
+                    continue
+                # Compute narrowing values at sub-range endpoints.
+                old_t_lo = _span_top_store(s, s_lo)
+                old_t_hi = _span_top_store(s, s_hi)
+                old_b_lo = _span_bot_store(s, s_lo)
+                old_b_hi = _span_bot_store(s, s_hi)
+                if top_v == 'inside':
+                    # Interp yt-line value at s_lo, s_hi from top_r endpoints.
+                    t_a, t_b = top_r['sox0'], top_r['sox1']
+                    t_y0, t_y1 = top_r['cy0'], top_r['cy1']
+                    if t_a == t_b or (s_lo == t_a and s_hi == t_b):
+                        nt_lo, nt_hi = t_y0, t_y1
                     else:
-                        _append_merge(new, (ox0, ox1, ox0, ox1,
-                                            rt_l, rb_l, rt_r, rb_r))
-                # else: mark_solid (omit fragment)
-            else:
-                # Crossover — fall back to per-span interp via _tighten_span.
-                # In a real ASM impl this path needs records that include
-                # crossover x; for the prototype we just delegate.
-                _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
-                              yb1, yb2, new,
-                              old_tl, old_tr, old_bl, old_br,
-                              new_tl, new_tr, new_bl, new_br,
-                              y_display_offset=self.y_display_offset)
+                        nt_lo = _interp_store(s_lo, t_a, t_y0, t_b, t_y1)
+                        nt_hi = _interp_store(s_hi, t_a, t_y0, t_b, t_y1)
+                    rt_lo = max(old_t_lo, nt_lo)
+                    rt_hi = max(old_t_hi, nt_hi)
+                else:
+                    rt_lo, rt_hi = old_t_lo, old_t_hi
+                if bot_v == 'inside':
+                    b_a, b_b = bot_r['sox0'], bot_r['sox1']
+                    b_y0, b_y1 = bot_r['cy0'], bot_r['cy1']
+                    if b_a == b_b or (s_lo == b_a and s_hi == b_b):
+                        nb_lo, nb_hi = b_y0, b_y1
+                    else:
+                        nb_lo = _interp_store(s_lo, b_a, b_y0, b_b, b_y1)
+                        nb_hi = _interp_store(s_hi, b_a, b_y0, b_b, b_y1)
+                    rb_lo = min(old_b_lo, nb_lo)
+                    rb_hi = min(old_b_hi, nb_hi)
+                else:
+                    rb_lo, rb_hi = old_b_lo, old_b_hi
+                # Aperture check (closed range — abutting seam-friendly).
+                if rt_lo >= rb_lo and rt_hi >= rb_hi:
+                    continue  # no aperture → mark_solid
+                old_top_wins = (rt_lo == old_t_lo and rt_hi == old_t_hi)
+                old_bot_wins = (rb_lo == old_b_lo and rb_hi == old_b_hi)
+                if old_top_wins and old_bot_wins:
+                    _append_merge(new, (s_lo, s_hi, s[2], s[3],
+                                        s[4], s[5], s[6], s[7]))
+                else:
+                    _append_merge(new, (s_lo, s_hi, s_lo, s_hi,
+                                        rt_lo, rb_lo, rt_hi, rb_hi))
             if right_s is not None:
                 _append_merge(new, right_s)
         self.spans = new
