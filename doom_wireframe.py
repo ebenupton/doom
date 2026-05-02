@@ -3500,6 +3500,14 @@ def _main():
                       f"blue = 6502-only / 6502 extra)", flush=True)
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
+            elif ev.key == pygame.K_t:
+                # Cycle Python tighten implementation: normal → unified → records → normal
+                import endpoint_spans as _es
+                _next = {'normal': 'unified',
+                         'unified': 'records',
+                         'records': 'normal'}.get(_es._TIGHTEN_MODE, 'normal')
+                _es._TIGHTEN_MODE = _next
+                print(f"Tighten mode: {_next}", flush=True)
             elif ev.key == pygame.K_g:
                 _debug_mode = not _debug_mode
                 if _debug_mode:
@@ -3829,14 +3837,16 @@ def _main():
             ccyc = _frame_clip_cycles[0]
             mode_tag = "fp/ROM"
             clip_tag = "MATCH" if _frame_clip_match[0] else "FAIL"
+            import endpoint_spans as _es
+            tighten_tag = f"T:{_es._TIGHTEN_MODE}"
             if _show_integrated_fb:
                 hud = (f"6502 clip+rast ({player_x:.0f},{player_y:.0f},{ang_display})  "
-                       f"{ccyc//1000}K clip+rast  [{clip_tag}]  {clock.get_fps():.0f}fps")
+                       f"{ccyc//1000}K clip+rast  [{clip_tag}] [{tighten_tag}]  {clock.get_fps():.0f}fps")
             else:
                 hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                        f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
                        f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
-                       f"{cyc//1000}K rast  {ccyc//1000}K clip  [{clip_tag}]  {clock.get_fps():.0f}fps")
+                       f"{cyc//1000}K rast  {ccyc//1000}K clip  [{clip_tag}] [{tighten_tag}]  {clock.get_fps():.0f}fps")
     else:
         hud = (f"float ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
