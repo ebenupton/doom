@@ -337,15 +337,10 @@ class SpanClip6502:
         # Emission of bt/ft/etc. is done by the caller via draw_clipped_line —
         # records-driven only handles span state mutation (no emission).
         if _USE_6502_RECORDS_TIGHTEN:
-            # Use post-remap (sx1, sx2, yt1, yt2, yb1, yb2). Lines are:
-            #   yt-line: (sx1, yt1) — (sx2, yt2)
-            #   yb-line: (sx1, yb1) — (sx2, yb2)
-            # Pass clamped u8 values to interp.
             yt1_u = max(0, min(255, yt1))
             yt2_u = max(0, min(255, yt2))
             yb1_u = max(0, min(255, yb1))
             yb2_u = max(0, min(255, yb2))
-            # Top line records
             mem[ZP_LINE_XL] = sx1 & 0xFF
             mem[ZP_LINE_YL] = yt1_u
             mem[ZP_LINE_XR] = sx2 & 0xFF
@@ -353,7 +348,6 @@ class SpanClip6502:
             mem[ZP_BUF] = TOP_RECORDS & 0xFF
             mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
             self._run(ENTRY_CLIP_LINE_RECORDS)
-            # Bot line records
             mem[ZP_LINE_XL] = sx1 & 0xFF
             mem[ZP_LINE_YL] = yb1_u
             mem[ZP_LINE_XR] = sx2 & 0xFF
@@ -361,8 +355,13 @@ class SpanClip6502:
             mem[ZP_BUF] = BOT_RECORDS & 0xFF
             mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
             self._run(ENTRY_CLIP_LINE_RECORDS)
-            # Apply
-            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+            # Multi-record detection: ASM tighten_from_records v1 only handles
+            # single-record-per-side cases. If any span has multiple records
+            # (crossover), fall back to regular ASM tighten for correctness.
+            if self._has_multi_record():
+                self._run(ENTRY_TIGHTEN)
+            else:
+                self._run(ENTRY_TIGHTEN_FROM_RECORDS)
         else:
             self._run(ENTRY_TIGHTEN)
 
@@ -491,6 +490,21 @@ class SpanClip6502:
         mem[ZP_BUF + 1] = (buffer_addr >> 8) & 0xFF
         self._run(ENTRY_CLIP_LINE_RECORDS)
         return self._decode_records(buffer_addr)
+
+    def _has_multi_record(self):
+        """Return True if any span has multiple records in TOP or BOT buffer.
+        Used by records-driven tighten to detect crossover cases (where v1
+        ASM tighten_from_records would only process the first record)."""
+        mem = self.mpu.memory
+        for buf in (TOP_RECORDS, BOT_RECORDS):
+            count = mem[buf]
+            seen = set()
+            for i in range(count):
+                si = mem[buf + 1 + i * REC_BYTES]
+                if si in seen:
+                    return True
+                seen.add(si)
+        return False
 
     def _decode_records(self, buffer_addr):
         """Read records from buffer, return list of dicts."""
