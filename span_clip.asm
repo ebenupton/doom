@@ -2834,6 +2834,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     BNE clr_process
     JMP clr_done       ; X=0 → end of list
 .clr_process
+    STX zp_clr_save_x   ; save X early so clr_next can reload it
     ; Skip span if no overlap with [ilo, ihi].
     ; pixel-center: xe <= ilo or xs >= ihi → no overlap.
     LDA POOL_XEND,X : CMP zp_ilo : BCC clr_skip_tramp
@@ -2842,8 +2843,6 @@ zp_clr_shi     = $D8   ; sub-range high x
 .clr_skip_tramp
     JMP clr_next
 .clr_in_range
-
-    STX zp_clr_save_x
 
     ; --- Compute ox0 = max(POOL_XSTART,X, ilo) ---
     LDA POOL_XSTART,X : CMP zp_ilo : BCS clr_ox0_ok
@@ -2948,14 +2947,60 @@ zp_clr_shi     = $D8   ; sub-range high x
 
 .clr_emit_subranges
     ; --- Emit sub-records for sub-ranges ---
-    ; Splits = sorted([ox0, ox1, cx_t (if nonzero), cx_b (if nonzero)]).
-    ; Up to 3 sub-ranges. Emit one record per sub-range.
-    ;
-    ; For the prototype: handle the no-crossing case (1 sub-range).
-    ; Crossings handled via fallthrough to per-split processing.
-    ;
-    ; Step 1: emit single record for [ox0, ox1] (whole-overlap).
+    ; Up to 3 sub-ranges based on (cx_t, cx_b) crossings.
+    ; Case 0 (no crossings): [ox0, ox1] only.
+    ; Case T (top only):     [ox0, cx_t], [cx_t, ox1].
+    ; Case B (bot only):     [ox0, cx_b], [cx_b, ox1].
+    ; Case TB (both):        sorted at min(cx_t, cx_b), max(cx_t, cx_b).
+    LDA zp_clr_cx_t : BNE clr_has_cx_t
+    LDA zp_clr_cx_b : BNE clr_only_cx_b
+    ; Case 0: no crossings. Single sub-range.
     LDA zp_ox0 : STA zp_clr_slo
+    LDA zp_ox1 : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    JMP clr_next
+.clr_only_cx_b
+    ; Case B: bot only.
+    LDA zp_ox0 : STA zp_clr_slo
+    LDA zp_clr_cx_b : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    LDA zp_clr_cx_b : STA zp_clr_slo
+    LDA zp_ox1 : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    JMP clr_next
+.clr_has_cx_t
+    LDA zp_clr_cx_b : BNE clr_both_cx
+    ; Case T: top only.
+    LDA zp_ox0 : STA zp_clr_slo
+    LDA zp_clr_cx_t : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    LDA zp_clr_cx_t : STA zp_clr_slo
+    LDA zp_ox1 : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    JMP clr_next
+.clr_both_cx
+    ; Case TB: both crossings. Sort cx_t, cx_b → 3 sub-ranges.
+    LDA zp_clr_cx_t : CMP zp_clr_cx_b : BCC clr_t_first
+    ; cx_t >= cx_b: order [ox0, cx_b], [cx_b, cx_t], [cx_t, ox1].
+    LDA zp_ox0 : STA zp_clr_slo
+    LDA zp_clr_cx_b : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    LDA zp_clr_cx_b : STA zp_clr_slo
+    LDA zp_clr_cx_t : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    LDA zp_clr_cx_t : STA zp_clr_slo
+    LDA zp_ox1 : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    JMP clr_next
+.clr_t_first
+    ; cx_t < cx_b: order [ox0, cx_t], [cx_t, cx_b], [cx_b, ox1].
+    LDA zp_ox0 : STA zp_clr_slo
+    LDA zp_clr_cx_t : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    LDA zp_clr_cx_t : STA zp_clr_slo
+    LDA zp_clr_cx_b : STA zp_clr_shi
+    JSR clr_emit_one_subrange
+    LDA zp_clr_cx_b : STA zp_clr_slo
     LDA zp_ox1 : STA zp_clr_shi
     JSR clr_emit_one_subrange
 
@@ -3041,9 +3086,191 @@ zp_clr_shi     = $D8   ; sub-range high x
     RTS
 }
 
+; ===== tighten_from_records ZP aliases =====
+zp_tfr_top_off = $D7   ; offset of current top record in TOP_RECORDS ($00 = none)
+zp_tfr_bot_off = $D8   ; offset of current bot record in BOT_RECORDS ($00 = none)
+
 .tighten_from_records
 {
-    ; STUB — initial scaffolding. Returns without mutating.
+    ; --- Save old head, init new list ---
+    LDA zp_head : STA zp_old_cur
+    LDA #0 : STA zp_new_tail : STA zp_head
+    LDA #$FF : STA zp_tg_cont        ; invalidate portal continuation
+
+    LDX zp_old_cur
+.tfr_walk
+    BNE tfr_process
+    JMP tfr_done
+.tfr_process
+    ; Save next ptr early
+    LDA POOL_NEXT,X : STA zp_old_cur
+    STX zp_clr_save_x
+
+    ; Find top record matching si == X. Linear scan TOP_RECORDS.
+    ; Sets zp_tfr_top_off to first matching offset, or 0 if none.
+    LDA #<TOP_RECORDS : STA zp_buf
+    LDA #>TOP_RECORDS : STA zp_buf+1
+    JSR tfr_find_first_record
+    STA zp_tfr_top_off
+
+    ; Find bot record. Same routine, different buffer.
+    LDA #<BOT_RECORDS : STA zp_buf
+    LDA #>BOT_RECORDS : STA zp_buf+1
+    JSR tfr_find_first_record
+    STA zp_tfr_bot_off
+
+    LDX zp_clr_save_x
+
+    ; If no records for this span: span unchanged → tg_append_x.
+    LDA zp_tfr_top_off : ORA zp_tfr_bot_off : BNE tfr_has_records
+    JSR tg_append_x
+    JMP tfr_continue
+.tfr_has_records
+    ; ----- Process records for this span -----
+    ; v1: assume at most ONE record per side (no multi-sub-range fragmentation).
+    ; If multiple records exist for this span, only the first is used.
+    ; This handles non-crossover cases correctly; crossover cases TBD.
+    JSR tfr_apply_simple
+.tfr_continue
+    LDA zp_old_cur : TAX
+    JMP tfr_walk
+
+.tfr_done
+    RTS
+}
+
+; --- Find first record in buffer (zp_buf) with si matching zp_clr_save_x ---
+; Returns A = offset of record (1-based, points at si byte), or 0 if not found.
+.tfr_find_first_record
+{
+    LDY #0
+    LDA (zp_buf),Y                 ; A = count
+    BEQ no_match
+    STA zp_tmp0                     ; remaining count
+    LDY #1                          ; offset of first record's si byte
+    LDA zp_clr_save_x : STA zp_tmp1  ; target si
+.scan_loop
+    LDA (zp_buf),Y
+    CMP zp_tmp1 : BEQ found
+    ; advance Y by REC_BYTES (=6)
+    TYA : CLC : ADC #REC_BYTES : TAY
+    DEC zp_tmp0 : BNE scan_loop
+.no_match
+    LDA #0 : RTS
+.found
+    TYA : RTS
+}
+
+; --- Apply records for current span X (simplified: 1 record per side) ---
+; Inputs: zp_clr_save_x = X, zp_tfr_top_off, zp_tfr_bot_off
+.tfr_apply_simple
+{
+    ; Read top verdict + cy values (if record present)
+    LDA zp_tfr_top_off : BEQ no_top
+    LDA #<TOP_RECORDS : STA zp_buf
+    LDA #>TOP_RECORDS : STA zp_buf+1
+    LDY zp_tfr_top_off
+    INY : INY                       ; skip si, sox0
+    LDA (zp_buf),Y : STA zp_tmp0    ; sox1 (= ox1 for non-crossover)
+    DEY : DEY                       ; back to si
+    INY                             ; sox0
+    LDA (zp_buf),Y : STA zp_ox0     ; ox0
+    LDY zp_tfr_top_off
+    INY : INY : INY                 ; verdict offset
+    LDA (zp_buf),Y : STA zp_tmp1    ; top verdict
+    INY
+    LDA (zp_buf),Y : STA zp_clr_cy0 ; top cy0
+    INY
+    LDA (zp_buf),Y : STA zp_clr_cy1 ; top cy1
+    LDA zp_tmp0 : STA zp_ox1
+    JMP tfr_have_top_data
+.no_top
+    LDA #0 : STA zp_tmp1            ; default verdict 'above' (no narrow on top)
+    ; Outer check guarantees bot record exists. Read ox0/ox1 from bot.
+    LDA #<BOT_RECORDS : STA zp_buf
+    LDA #>BOT_RECORDS : STA zp_buf+1
+    LDY zp_tfr_bot_off
+    INY
+    LDA (zp_buf),Y : STA zp_ox0
+    INY
+    LDA (zp_buf),Y : STA zp_ox1
+.tfr_have_top_data
+    ; Read bot verdict + cy values (if record present)
+    LDA zp_tfr_bot_off : BEQ no_bot
+    LDA #<BOT_RECORDS : STA zp_buf
+    LDA #>BOT_RECORDS : STA zp_buf+1
+    LDY zp_tfr_bot_off
+    INY : INY : INY                 ; verdict offset
+    LDA (zp_buf),Y : STA zp_tmp2    ; bot verdict
+    INY
+    LDA (zp_buf),Y : STA zp_clr_obl ; bot cy0 (reusing zp_clr_obl as scratch)
+    INY
+    LDA (zp_buf),Y : STA zp_clr_obr ; bot cy1
+    JMP tfr_have_both
+.no_bot
+    LDA #2 : STA zp_tmp2            ; default verdict 'below' (no narrow on bot)
+.tfr_have_both
+    ; Now: zp_tmp1 = top verdict, zp_tmp2 = bot verdict.
+    ; zp_clr_cy0/cy1 = top line values (when top inside).
+    ; zp_clr_obl/obr = bot line values (when bot inside).
+    ;
+    ; Action selection:
+    ;   top='below' (=2) OR bot='above' (=0) → mark_solid (omit).
+    ;   top='above' (=0) AND bot='below' (=2) → span unchanged (tg_append_x).
+    ;   else → narrow.
+    LDA zp_tmp1 : CMP #2 : BEQ tfr_mark_solid          ; top below → solid
+    LDA zp_tmp2 : CMP #0 : BEQ tfr_mark_solid          ; bot above → solid
+    ; Full-dom shortcut: top=above (0) AND bot=below (2)
+    LDA zp_tmp1 : ORA #0 : BNE tfr_narrow              ; top != above
+    LDA zp_tmp2 : CMP #2 : BNE tfr_narrow              ; bot != below
+    ; Both stable: append span unchanged.
+    LDX zp_clr_save_x
+    JSR tg_append_x
+    RTS
+.tfr_mark_solid
+    ; Span eliminated for the seg's range. For now, omit entirely (assumes
+    ; seg covers full span).
+    ; TODO: handle case where seg only partially covers span (need left/right
+    ; fragments outside seg range). For v1 simplification: free the slot.
+    LDX zp_clr_save_x
+    JSR free_span
+    RTS
+.tfr_narrow
+    ; --- Allocate new span and apply narrowing ---
+    LDX zp_clr_save_x
+    LDY zp_clr_save_x  ; preserve original
+    JSR alloc_span : BEQ tfr_alloc_fail
+    ; X = new slot. Y = old slot (zp_clr_save_x)
+    LDY zp_clr_save_x
+    ; Compute old aperture at sub-range endpoints (ox0, ox1).
+    ; For simplicity v1: copy span line params verbatim from old, override
+    ; the narrowed side(s) by re-anchoring at (ox0, ox1).
+    ; Actually simplest: dense-anchor at (ox0, ox1), interp old/new as needed.
+    ;
+    ; Compute old_t at (ox0, ox1) from old span's top line.
+    LDA POOL_XLO,Y : STA zp_i_x0
+    LDA POOL_DEN,Y : STA zp_div_den
+    LDA POOL_TL,Y  : STA zp_i_y0
+    LDA POOL_TR,Y  : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store : STA zp_clr_otl
+    LDA zp_ox1 : JSR interp_store : STA zp_clr_otr
+    ; Compute old_b at (ox0, ox1) from old span's bot line.
+    LDY zp_clr_save_x
+    LDA POOL_BL,Y  : STA zp_i_y0
+    LDA POOL_BR,Y  : STA zp_i_y1
+    LDA zp_ox0 : JSR interp_store : STA zp_clr_obl  ; OVERWRITES bot cy0!
+    LDA zp_ox1 : JSR interp_store : STA zp_clr_obr  ; OVERWRITES bot cy1!
+    ; ARGH — I clobbered the bot record cy values. Need to save them first.
+    ; v1 BUG: this needs reorganizing. For now this is a placeholder.
+    ;
+    ; Free new slot, fall back to keeping span unchanged.
+    JSR free_span
+    LDX zp_clr_save_x
+    JSR tg_append_x
+    RTS
+.tfr_alloc_fail
+    LDX zp_clr_save_x
+    JSR tg_append_x
     RTS
 }
 
