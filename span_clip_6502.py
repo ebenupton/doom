@@ -358,8 +358,9 @@ class SpanClip6502:
         # fall back to ENTRY_TIGHTEN.
         if _USE_6502_RECORDS_TIGHTEN and _USE_DCL_RECORDS_HOOK:
             # Records-driven only — no fallback to ENTRY_TIGHTEN allowed.
-            # Run ASM clip_line_records + ASM tighten_from_records; then
-            # compare to Python reference for debugging if desired.
+            # All-6502: clip_line_records writes records for yt/yb against
+            # the current pool, then tighten_from_records (multi-record-aware
+            # tfr_apply) consumes them.
             yt1_u = max(0, min(255, yt1))
             yt2_u = max(0, min(255, yt2))
             yb1_u = max(0, min(255, yb1))
@@ -378,8 +379,6 @@ class SpanClip6502:
             mem[ZP_BUF] = BOT_RECORDS & 0xFF
             mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
             self._run(ENTRY_CLIP_LINE_RECORDS)
-            if hasattr(self, '_debug_capture'):
-                self._debug_capture(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)
             self._run(ENTRY_TIGHTEN_FROM_RECORDS)
         elif _USE_6502_RECORDS_TIGHTEN:
             # Phase A: standalone clip_line_records + multi-record-aware
