@@ -22,19 +22,16 @@ ENTRY_TIGHTEN_FROM_RECORDS = 0x201B
 # Records buffers (must match span_clip.asm)
 TOP_RECORDS = 0x0700
 BOT_RECORDS = 0x0800
-REC_BYTES = 6
-REC_VERDICT_ABOVE = 0
-REC_VERDICT_INSIDE = 1
-REC_VERDICT_BELOW = 2
+REC_BYTES = 4   # one record per surviving DCL segment: (xl, yl, xr, yr)
 
 # Toggle: when True, _span_clip_6502.tighten() dispatches to records-driven
 # path (clip_line_records + tighten_from_records). v1 supports single-record-
 # per-side cases; multi-record (crossover) cases are not yet handled.
-_USE_6502_RECORDS_TIGHTEN = False
+_USE_6502_RECORDS_TIGHTEN = True
 
 # When True, records mode uses DCL hooks to populate records (Phase B).
 # When False (default), records mode uses standalone clip_line_records (Phase A).
-_USE_DCL_RECORDS_HOOK = False
+_USE_DCL_RECORDS_HOOK = True
 
 # DCL records-hook ZP slots (must match span_clip.asm)
 ZP_DCL_REC_BUF   = 0xBC
@@ -358,27 +355,11 @@ class SpanClip6502:
         # fall back to ENTRY_TIGHTEN.
         if _USE_6502_RECORDS_TIGHTEN and _USE_DCL_RECORDS_HOOK:
             # Records-driven only — no fallback to ENTRY_TIGHTEN allowed.
-            # All-6502: clip_line_records writes records for yt/yb against
-            # the current pool, then tighten_from_records (multi-record-aware
-            # tfr_apply) consumes them.
-            yt1_u = max(0, min(255, yt1))
-            yt2_u = max(0, min(255, yt2))
-            yb1_u = max(0, min(255, yb1))
-            yb2_u = max(0, min(255, yb2))
-            mem[ZP_LINE_XL] = sx1 & 0xFF
-            mem[ZP_LINE_YL] = yt1_u
-            mem[ZP_LINE_XR] = sx2 & 0xFF
-            mem[ZP_LINE_YR] = yt2_u
-            mem[ZP_BUF] = TOP_RECORDS & 0xFF
-            mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
-            self._run(ENTRY_CLIP_LINE_RECORDS)
-            mem[ZP_LINE_XL] = sx1 & 0xFF
-            mem[ZP_LINE_YL] = yb1_u
-            mem[ZP_LINE_XR] = sx2 & 0xFF
-            mem[ZP_LINE_YR] = yb2_u
-            mem[ZP_BUF] = BOT_RECORDS & 0xFF
-            mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
-            self._run(ENTRY_CLIP_LINE_RECORDS)
+            # Records were already populated by DCL hooks during the
+            # preceding draw_clipped_line(yt) and draw_clipped_line(yb).
+            # Fast skip: both buffers empty → no dominance, pool unchanged.
+            if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0:
+                return
             self._run(ENTRY_TIGHTEN_FROM_RECORDS)
         elif _USE_6502_RECORDS_TIGHTEN:
             # Phase A: standalone clip_line_records + multi-record-aware
