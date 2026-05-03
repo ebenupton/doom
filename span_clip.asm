@@ -3548,6 +3548,15 @@ TFR_BOT_BUFEND  = $0913   ; offset past last byte of valid bot records buffer
     LDA (zp_buf),Y : CMP TFR_END_X : BCC skip_bot_lmost
     STA TFR_END_X
 .skip_bot_lmost
+    ; Clamp [LEFTMOST, END_X] to [ilo, ihi]. DCL records can extend past
+    ; the tighten range (DCL doesn't know ihi); clip_line_records already
+    ; bounds them. Clamping here makes both record sources equivalent.
+    LDA TFR_LEFTMOST : CMP zp_ilo : BCS lmost_ge_ilo
+    LDA zp_ilo : STA TFR_LEFTMOST
+.lmost_ge_ilo
+    LDA TFR_END_X : CMP zp_ihi : BCC end_lt_ihi
+    LDA zp_ihi : STA TFR_END_X
+.end_lt_ihi
 
     ; --- Emit LEFT fragment if span.xstart < TFR_LEFTMOST ---
     LDX zp_clr_save_x
