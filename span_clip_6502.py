@@ -199,13 +199,14 @@ class SpanClip6502:
         self.total_cycles = 0  # init cost doesn't count toward frame
 
     def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
-        """mark_solid(lo, hi[, sx1, sx2, yt1, yt2, yb1, yb2]).
+        """mark_solid(lo, hi).
 
         Inclusive right edge (solid wall covers last column).
         Closed-interval: ilo, ihi are both inclusive column indices in [0,255].
 
-        When seg Y values are provided, the 6502 also emits wall edge lines
-        clipped against the pre-mutation span boundaries.
+        Seg params are accepted for API compatibility but ignored — wall
+        line emission is handled by draw_clipped_line (DCL), so the 6502's
+        internal ms_emit_lines path stays disabled (ZP_MS_EMIT = 0).
         """
         mem = self.mpu.memory
         ilo = max(0, lo)
@@ -214,32 +215,7 @@ class SpanClip6502:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
-
-        # Optionally write seg parameters for line emission
-        if sx1 is not None:
-            from endpoint_spans import _remap_seg_for_8bit
-            s1, s2, t1, t2, b1, b2 = sx1, sx2, yt1, yt2, yb1, yb2
-            if s1 > s2:
-                s1, s2 = s2, s1
-                t1, t2 = t2, t1
-                b1, b2 = b2, b1
-            s1, s2, t1, t2, b1, b2 = _remap_seg_for_8bit(
-                ilo, ihi, s1, s2, t1, t2, b1, b2)
-
-            def _w16(addr, val):
-                mem[addr] = val & 0xFF
-                mem[addr + 1] = (val >> 8) & 0xFF
-
-            _w16(ZP_SX1, s1)
-            _w16(ZP_SX2, s2)
-            _w16(ZP_YT1, t1)
-            _w16(ZP_YT2, t2)
-            _w16(ZP_YB1, b1)
-            _w16(ZP_YB2, b2)
-            mem[ZP_MS_EMIT] = 0x00  # DCL via draw_clipped handles all line emission
-        else:
-            mem[ZP_MS_EMIT] = 0x00
-
+        mem[ZP_MS_EMIT] = 0x00
         self._run(ENTRY_MARK_SOLID)
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
@@ -264,9 +240,12 @@ class SpanClip6502:
         endpoints typically equals the front ceiling/floor projection when
         the span is at its original room boundary.
 
-        Wraps the call in _remap_seg_for_8bit so the 6502 8-bit interp pipeline
-        always operates with ex≤255, offset≤255, |dy|≤127 — i.e., always the
-        s8 fast path. The slow path (s16-overflow-prone) is never triggered.
+        Records-driven path (default) skips all seg-param preconditioning —
+        line geometry comes from segment records written by the prior
+        draw_clipped_line(yt) and draw_clipped_line(yb) calls. The
+        BSP/transform-cache values flow through unchanged. Legacy path
+        (records mode off) still applies _remap_seg_for_8bit for
+        ENTRY_TIGHTEN's 8-bit interp pipeline.
         """
         mem = self.mpu.memory
         ilo = max(0, lo)
@@ -274,41 +253,36 @@ class SpanClip6502:
         if ihi < ilo:
             return
 
-        # Remember pre-remap anchors so we can re-interp secondary values
-        # at the NEW anchors (remap shifts sx1/sx2 when the original seg
-        # doesn't fit u8 constraints).
-        orig_sx1, orig_sx2 = sx1, sx2
-        orig_yt_sec1, orig_yt_sec2 = yt_sec1, yt_sec2
-        orig_yb_sec1, orig_yb_sec2 = yb_sec1, yb_sec2
+        # ----- Records-driven fast path (default) -----
+        # ENTRY_TIGHTEN_FROM_RECORDS doesn't read any of the seg ZP slots:
+        # line geometry comes from the segment records that the prior
+        # draw_clipped_line(yt/yb) calls wrote. Skip remap, swap, secondary
+        # interp, and ZP fanout entirely — just pass [ilo, ihi] through and
+        # dispatch. Bare BSP/transform-cache values go in unmolested.
+        if _USE_6502_RECORDS_TIGHTEN and _USE_DCL_RECORDS_HOOK:
+            if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0:
+                return
+            mem[ZP_ILO] = ilo & 0xFF
+            mem[ZP_IHI] = ihi & 0xFF
+            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+            return
 
+        # ----- Legacy paths below (records mode off) -----
         # Swap inverted segs (sx1 > sx2) — 6502 can't handle negative ex
         if sx1 > sx2:
             sx1, sx2 = sx2, sx1
             yt1, yt2 = yt2, yt1
             yb1, yb2 = yb2, yb1
-            orig_sx1, orig_sx2 = orig_sx2, orig_sx1
-            if orig_yt_sec1 is not None:
-                orig_yt_sec1, orig_yt_sec2 = orig_yt_sec2, orig_yt_sec1
-            if orig_yb_sec1 is not None:
-                orig_yb_sec1, orig_yb_sec2 = orig_yb_sec2, orig_yb_sec1
-
+            if yt_sec1 is not None:
+                yt_sec1, yt_sec2 = yt_sec2, yt_sec1
+            if yb_sec1 is not None:
+                yb_sec1, yb_sec2 = yb_sec2, yb_sec1
+        orig_sx1, orig_sx2 = sx1, sx2
+        orig_yt_sec1, orig_yt_sec2 = yt_sec1, yt_sec2
+        orig_yb_sec1, orig_yb_sec2 = yb_sec1, yb_sec2
         from endpoint_spans import _remap_seg_for_8bit, _interp_store_s16
-        pre_remap = (sx1, sx2, yt1, yt2, yb1, yb2)
         sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
             ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2)
-        # Records from wireframe DCL are based on the PRE-remap line, and
-        # _clip_to_screen clips line endpoints to [0, 255] before passing
-        # to DCL. ENTRY_TIGHTEN uses s16 endpoints directly. When endpoints
-        # extend outside u8, the records-driven path processes a different
-        # x range than ENTRY_TIGHTEN — fall back.
-        remap_changed = (sx1, sx2, yt1, yt2, yb1, yb2) != pre_remap
-        out_of_u8 = (sx1 < 0 or sx2 > 255 or
-                     yt1 < 0 or yt1 > 255 or yt2 < 0 or yt2 > 255 or
-                     yb1 < 0 or yb1 > 255 or yb2 < 0 or yb2 > 255)
-
-        # Re-interpolate secondary Y values at the new anchors.  The
-        # secondary values (ft/fb) are on a linear line between orig_sx1
-        # and orig_sx2; project them to (sx1, sx2).
         if emit_sec_top and orig_yt_sec1 is not None:
             if sx1 == orig_sx1 and sx2 == orig_sx2:
                 new_yt_sec1, new_yt_sec2 = orig_yt_sec1, orig_yt_sec2
@@ -348,20 +322,7 @@ class SpanClip6502:
         mem[ZP_YB_SEC2] = new_yb_sec2 & 0xFF
         mem[ZP_TG_EMIT] = ((0x01 if emit_top else 0) | (0x02 if emit_bot else 0) |
                            (0x04 if emit_sec_top else 0) | (0x08 if emit_sec_bot else 0))
-        # Records-driven path: consume records that the wireframe's prior
-        # draw_clipped_line calls populated for the yt/yb edge lines (free
-        # records — no extra DCL pass). If records weren't pre-populated
-        # (rare edge cases like back[1]==ch where yt-line wasn't drawn),
-        # fall back to ENTRY_TIGHTEN.
-        if _USE_6502_RECORDS_TIGHTEN and _USE_DCL_RECORDS_HOOK:
-            # Records-driven only — no fallback to ENTRY_TIGHTEN allowed.
-            # Records were already populated by DCL hooks during the
-            # preceding draw_clipped_line(yt) and draw_clipped_line(yb).
-            # Fast skip: both buffers empty → no dominance, pool unchanged.
-            if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0:
-                return
-            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
-        elif _USE_6502_RECORDS_TIGHTEN:
+        if _USE_6502_RECORDS_TIGHTEN:
             # Phase A: standalone clip_line_records + multi-record-aware
             # tighten_from_records. Pure 6502 — no fallback.
             yt1_u = max(0, min(255, yt1))
