@@ -178,29 +178,45 @@ class Instrumented6502Spans(EndpointClipSpans):
                 _ap_skip_stats['tighten_skipped'] += 1
                 return
         from endpoint_spans import _compute_tighten_splits
-        for i, params in enumerate(_compute_tighten_splits(
-                lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)):
+        from span_clip_6502 import _USE_DCL_RECORDS_HOOK as _RECORDS_MODE
+        splits = list(_compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2))
+        for i, params in enumerate(splits):
             super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
-            if i == 0:
-                _span_clip_6502.tighten(*params, emit_top=emit_top, emit_bot=emit_bot,
-                                       emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
-                                       yt_sec1=yt_sec1, yt_sec2=yt_sec2,
-                                       yb_sec1=yb_sec1, yb_sec2=yb_sec2)
-            else:
-                _span_clip_6502.tighten(*params, emit_top=False, emit_bot=False)
+        if _RECORDS_MODE:
+            # Records-driven path: records were written for the FULL seg
+            # line, not per-split. Call _span_clip_6502.tighten ONCE with
+            # the whole range so records' span indices stay valid (per-split
+            # tightens would mutate the pool and invalidate records si).
+            _span_clip_6502.tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                                    emit_top=emit_top, emit_bot=emit_bot,
+                                    emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
+                                    yt_sec1=yt_sec1, yt_sec2=yt_sec2,
+                                    yb_sec1=yb_sec1, yb_sec2=yb_sec2)
             self._check()
+        else:
+            for i, params in enumerate(splits):
+                if i == 0:
+                    _span_clip_6502.tighten(*params, emit_top=emit_top, emit_bot=emit_bot,
+                                           emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
+                                           yt_sec1=yt_sec1, yt_sec2=yt_sec2,
+                                           yb_sec1=yb_sec1, yb_sec2=yb_sec2)
+                else:
+                    _span_clip_6502.tighten(*params, emit_top=False, emit_bot=False)
+                self._check()
 
-    def draw_clipped(self, lines, color, surface, stats=None):
+    def draw_clipped(self, lines, color, surface, stats=None, roles=None):
+        """Forward lines to 6502 DCL for clipped emission.
+
+        roles: optional dict mapping line index → records buffer address.
+        When set, DCL writes per-span verdict records during emission for
+        that line — used to feed the subsequent tighten() call without an
+        extra DCL pass (records are 'free' since DCL is running anyway).
+        """
         from endpoint_spans import Y_BIAS
-        # Bias line Y values for clipping against biased spans.
         biased = [(lx1, ly1 + Y_BIAS, lx2, ly2 + Y_BIAS) for lx1, ly1, lx2, ly2 in lines]
-        # Forward every line to 6502 DCL.  DCL walks the span list and
-        # emits aperture-clipped segments (horizontal, vertical, sloped).
-        # OR-mode rasteriser means double-drawing with mel/tighten primary
-        # emissions is idempotent (pixel stays lit).
-        for lx1, ly1, lx2, ly2 in biased:
-            _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
-        # Python draw_clipped still renders all lines for wireframe overlay.
+        for i, (lx1, ly1, lx2, ly2) in enumerate(biased):
+            rb = roles.get(i) if roles else None
+            _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2, records_buf=rb)
         super().draw_clipped(biased, color, surface, stats)
 
     def line_above_spans(self, lx1, ly1, lx2, ly2, _dbg=False):
@@ -1483,6 +1499,10 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     vcache: frame-global vertex transforms.
     vwh_cache: frame-global Y projections indexed by VWH.
     """
+    # Reset records buffers so a seg with no yt/yb edge draw (e.g.,
+    # back[1]==ch) doesn't consume stale records from a previous seg.
+    if _span_clip_6502 is not None:
+        _span_clip_6502.reset_records()
     svwh = fp_segs_vwh[si]
     s = svwh[0]
     v1_idx, v2_idx = s[0], s[1]
@@ -1695,17 +1715,22 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                 lines.append((sx2, ft2, sx2, bt2))
             if ch <= vz:  # face below eyeline: top edge (ft) always clipped
                 pass
+                yt_idx = 0  # bt at index 0
             else:
                 lines.insert(0, (sx1, ft1, sx2, ft2))
-            clips.draw_clipped(lines, GREEN, surface, draw_stats)
-            # Annotation: show suppressed step verticals in red
+                yt_idx = 1  # bt at index 1 (ft at 0)
+            from span_clip_6502 import TOP_RECORDS as _TOP_REC
+            clips.draw_clipped(lines, GREEN, surface, draw_stats,
+                               roles={yt_idx: _TOP_REC})
             if _novt_annotate:
                 if no_vt1:
                     _real_drawline(surface, _RED, (sx1, ft1), (sx1, bt1))
                 if no_vt2:
                     _real_drawline(surface, _RED, (sx2, ft2), (sx2, bt2))
         elif back[1] > ch:
-            clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
+            from span_clip_6502 import TOP_RECORDS as _TOP_REC
+            clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface,
+                               draw_stats, roles={0: _TOP_REC})
 
         if need_bb:
             fp_module.mul_cat("proj")
@@ -1730,15 +1755,18 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                 pass
             else:
                 lines.insert(1, (sx1, fb1, sx2, fb2))
-            clips.draw_clipped(lines, GREEN, surface, draw_stats)
-            # Annotation: show suppressed step verticals in red
+            from span_clip_6502 import BOT_RECORDS as _BOT_REC
+            clips.draw_clipped(lines, GREEN, surface, draw_stats,
+                               roles={0: _BOT_REC})  # bb is yb-line at idx 0
             if _novt_annotate:
                 if no_vt1:
                     _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
                 if no_vt2:
                     _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
         elif back[0] < fh:
-            clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+            from span_clip_6502 import BOT_RECORDS as _BOT_REC
+            clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
+                               draw_stats, roles={0: _BOT_REC})
 
         # Aperture edge at Rule 2 NOVT endpoints: when step extensions
         # are suppressed at a colinear solid joint, draw the aperture
@@ -1961,6 +1989,10 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
     Produces IDENTICAL output to fp_render_seg when data is consistent.
     """
+    # Reset records buffers so a seg with no yt/yb edge draw doesn't
+    # consume stale records from a previous seg.
+    if _span_clip_6502 is not None:
+        _span_clip_6502.reset_records()
     layout = _p_layout
     rom = _p_rom_main
     rom_d = _p_rom_detail
@@ -2237,6 +2269,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                         _ap_skip_stats['step_v_skipped'] += 1
                     else:
                         lines.append((sx2, ft2, sx2, bt2))
+                yt_idx = 0  # bt is yt-line, currently at index 0
                 if ch <= vz:
                     pass
                 elif (_AP_SKIP_ENABLE and
@@ -2244,19 +2277,22 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                     _ap_skip_stats['fc_skipped'] += 1
                 else:
                     lines.insert(0, (sx1, ft1, sx2, ft2))
-                clips.draw_clipped(lines, GREEN, surface, draw_stats)
+                    yt_idx = 1  # bt now at index 1 (ft at 0)
+                from span_clip_6502 import TOP_RECORDS as _TOP_REC
+                clips.draw_clipped(lines, GREEN, surface, draw_stats,
+                                   roles={yt_idx: _TOP_REC})
                 if _novt_annotate:
                     if no_vt1:
                         _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, bt1))
                     if no_vt2:
                         _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, bt2))
         elif bch > ch:
-            # Portal-plain (no need_bt) "front-ceil only" line.  Skip if
-            # ft is above visible spans everywhere.
             if _AP_SKIP_ENABLE and clips.line_above_spans(sx1, ft1, sx2, ft2):
                 _ap_skip_stats['pp_top_skipped'] += 1
             else:
-                clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
+                from span_clip_6502 import TOP_RECORDS as _TOP_REC
+                clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface,
+                                   draw_stats, roles={0: _TOP_REC})
 
         if need_bb:
             fp_module.mul_cat("proj")
@@ -2303,19 +2339,21 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                     _ap_skip_stats['fc_skipped'] += 1
                 else:
                     lines.insert(1, (sx1, fb1, sx2, fb2))
-                clips.draw_clipped(lines, GREEN, surface, draw_stats)
+                from span_clip_6502 import BOT_RECORDS as _BOT_REC
+                clips.draw_clipped(lines, GREEN, surface, draw_stats,
+                                   roles={0: _BOT_REC})  # bb is yb-line at idx 0
                 if _novt_annotate:
                     if no_vt1:
                         _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
                     if no_vt2:
                         _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
         elif bfh < fh:
-            # Portal-plain (no need_bb) "front-floor only" line.  Skip if
-            # fb is below visible spans everywhere.
             if _AP_SKIP_ENABLE and clips.line_below_spans(sx1, fb1, sx2, fb2):
                 _ap_skip_stats['pp_bot_skipped'] += 1
             else:
-                clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+                from span_clip_6502 import BOT_RECORDS as _BOT_REC
+                clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
+                                   draw_stats, roles={0: _BOT_REC})
 
         # Aperture edge (see fp_render_seg for rationale)
         if need_bt or need_bb:

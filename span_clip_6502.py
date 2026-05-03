@@ -296,8 +296,18 @@ class SpanClip6502:
                 orig_yb_sec1, orig_yb_sec2 = orig_yb_sec2, orig_yb_sec1
 
         from endpoint_spans import _remap_seg_for_8bit, _interp_store_s16
+        pre_remap = (sx1, sx2, yt1, yt2, yb1, yb2)
         sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
             ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2)
+        # Records from wireframe DCL are based on the PRE-remap line, and
+        # _clip_to_screen clips line endpoints to [0, 255] before passing
+        # to DCL. ENTRY_TIGHTEN uses s16 endpoints directly. When endpoints
+        # extend outside u8, the records-driven path processes a different
+        # x range than ENTRY_TIGHTEN — fall back.
+        remap_changed = (sx1, sx2, yt1, yt2, yb1, yb2) != pre_remap
+        out_of_u8 = (sx1 < 0 or sx2 > 255 or
+                     yt1 < 0 or yt1 > 255 or yt2 < 0 or yt2 > 255 or
+                     yb1 < 0 or yb1 > 255 or yb2 < 0 or yb2 > 255)
 
         # Re-interpolate secondary Y values at the new anchors.  The
         # secondary values (ft/fb) are on a linear line between orig_sx1
@@ -341,64 +351,162 @@ class SpanClip6502:
         mem[ZP_YB_SEC2] = new_yb_sec2 & 0xFF
         mem[ZP_TG_EMIT] = ((0x01 if emit_top else 0) | (0x02 if emit_bot else 0) |
                            (0x04 if emit_sec_top else 0) | (0x08 if emit_sec_bot else 0))
-        # Records-driven path: clip yt/yb lines to records, then consume.
-        # Emission of bt/ft/etc. is done by the caller via draw_clipped_line —
-        # records-driven only handles span state mutation (no emission).
-        if _USE_6502_RECORDS_TIGHTEN:
+        # Records-driven path: consume records that the wireframe's prior
+        # draw_clipped_line calls populated for the yt/yb edge lines (free
+        # records — no extra DCL pass). If records weren't pre-populated
+        # (rare edge cases like back[1]==ch where yt-line wasn't drawn),
+        # fall back to ENTRY_TIGHTEN.
+        if _USE_6502_RECORDS_TIGHTEN and _USE_DCL_RECORDS_HOOK:
+            # Records-driven only — no fallback to ENTRY_TIGHTEN allowed.
+            # Run ASM clip_line_records + ASM tighten_from_records; then
+            # compare to Python reference for debugging if desired.
             yt1_u = max(0, min(255, yt1))
             yt2_u = max(0, min(255, yt2))
             yb1_u = max(0, min(255, yb1))
             yb2_u = max(0, min(255, yb2))
-            if _USE_DCL_RECORDS_HOOK:
-                # Phase B: DCL writes records during its existing per-span walk.
-                mem[ZP_LINE_XL] = sx1 & 0xFF
-                mem[ZP_LINE_YL] = yt1_u
-                mem[ZP_LINE_XR] = sx2 & 0xFF
-                mem[ZP_LINE_YR] = yt2_u
-                mem[ZP_DCL_REC_BUF] = TOP_RECORDS & 0xFF
-                mem[ZP_DCL_REC_BUF_H] = (TOP_RECORDS >> 8) & 0xFF
-                self._run(ENTRY_DRAW_CLIP)
-                mem[ZP_DCL_REC_BUF] = 0
-                mem[ZP_DCL_REC_BUF_H] = 0
-                mem[ZP_LINE_XL] = sx1 & 0xFF
-                mem[ZP_LINE_YL] = yb1_u
-                mem[ZP_LINE_XR] = sx2 & 0xFF
-                mem[ZP_LINE_YR] = yb2_u
-                mem[ZP_DCL_REC_BUF] = BOT_RECORDS & 0xFF
-                mem[ZP_DCL_REC_BUF_H] = (BOT_RECORDS >> 8) & 0xFF
-                self._run(ENTRY_DRAW_CLIP)
-                mem[ZP_DCL_REC_BUF] = 0
-                mem[ZP_DCL_REC_BUF_H] = 0
-                # Drain emitted lines (DCL also emitted lines as side-effect;
-                # caller already invoked draw_clipped_line for these in the
-                # Instrumented6502Spans wrapper, so OR-mode rasteriser makes
-                # the double-emit idempotent).
-                self.drain_lines()
-            else:
-                # Phase A: standalone clip_line_records walks span list separately.
-                mem[ZP_LINE_XL] = sx1 & 0xFF
-                mem[ZP_LINE_YL] = yt1_u
-                mem[ZP_LINE_XR] = sx2 & 0xFF
-                mem[ZP_LINE_YR] = yt2_u
-                mem[ZP_BUF] = TOP_RECORDS & 0xFF
-                mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
-                self._run(ENTRY_CLIP_LINE_RECORDS)
-                mem[ZP_LINE_XL] = sx1 & 0xFF
-                mem[ZP_LINE_YL] = yb1_u
-                mem[ZP_LINE_XR] = sx2 & 0xFF
-                mem[ZP_LINE_YR] = yb2_u
-                mem[ZP_BUF] = BOT_RECORDS & 0xFF
-                mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
-                self._run(ENTRY_CLIP_LINE_RECORDS)
-            # Multi-record detection: ASM tighten_from_records v1 only handles
-            # single-record-per-side cases. If any span has multiple records
-            # (crossover), fall back to regular ASM tighten for correctness.
-            if self._has_multi_record():
-                self._run(ENTRY_TIGHTEN)
-            else:
-                self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+            mem[ZP_LINE_XL] = sx1 & 0xFF
+            mem[ZP_LINE_YL] = yt1_u
+            mem[ZP_LINE_XR] = sx2 & 0xFF
+            mem[ZP_LINE_YR] = yt2_u
+            mem[ZP_BUF] = TOP_RECORDS & 0xFF
+            mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
+            self._run(ENTRY_CLIP_LINE_RECORDS)
+            mem[ZP_LINE_XL] = sx1 & 0xFF
+            mem[ZP_LINE_YL] = yb1_u
+            mem[ZP_LINE_XR] = sx2 & 0xFF
+            mem[ZP_LINE_YR] = yb2_u
+            mem[ZP_BUF] = BOT_RECORDS & 0xFF
+            mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
+            self._run(ENTRY_CLIP_LINE_RECORDS)
+            if hasattr(self, '_debug_capture'):
+                self._debug_capture(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)
+            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+        elif _USE_6502_RECORDS_TIGHTEN:
+            # Phase A: standalone clip_line_records + multi-record-aware
+            # tighten_from_records. Pure 6502 — no fallback.
+            yt1_u = max(0, min(255, yt1))
+            yt2_u = max(0, min(255, yt2))
+            yb1_u = max(0, min(255, yb1))
+            yb2_u = max(0, min(255, yb2))
+            mem[ZP_LINE_XL] = sx1 & 0xFF
+            mem[ZP_LINE_YL] = yt1_u
+            mem[ZP_LINE_XR] = sx2 & 0xFF
+            mem[ZP_LINE_YR] = yt2_u
+            mem[ZP_BUF] = TOP_RECORDS & 0xFF
+            mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
+            self._run(ENTRY_CLIP_LINE_RECORDS)
+            mem[ZP_LINE_XL] = sx1 & 0xFF
+            mem[ZP_LINE_YL] = yb1_u
+            mem[ZP_LINE_XR] = sx2 & 0xFF
+            mem[ZP_LINE_YR] = yb2_u
+            mem[ZP_BUF] = BOT_RECORDS & 0xFF
+            mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
+            self._run(ENTRY_CLIP_LINE_RECORDS)
+            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
         else:
             self._run(ENTRY_TIGHTEN)
+
+    _reset_count = [0]
+    def reset_records(self):
+        """Zero record buffer counts. Called by the wireframe between segs
+        so stale records don't leak into the next seg's tighten."""
+        mem = self.mpu.memory
+        mem[TOP_RECORDS] = 0
+        mem[BOT_RECORDS] = 0
+        SpanClip6502._reset_count[0] += 1
+
+    def _read_span_at_slot(self, slot):
+        """Read a single span from pool by slot number."""
+        mem = self.mpu.memory
+        POOL_NEXT = 0x0400
+        POOL_XLO = 0x0420
+        POOL_DEN = 0x0440
+        POOL_TL = 0x0460
+        POOL_BL = 0x0480
+        POOL_TR = 0x04A0
+        POOL_BR = 0x04C0
+        POOL_XSTART = 0x04E0
+        POOL_XEND = 0x0500
+        xlo = mem[POOL_XLO + slot]
+        den = mem[POOL_DEN + slot]
+        return (mem[POOL_XSTART + slot], mem[POOL_XEND + slot],
+                xlo, (xlo + den) & 0xFF,
+                mem[POOL_TL + slot], mem[POOL_BL + slot],
+                mem[POOL_TR + slot], mem[POOL_BR + slot])
+
+    def _set_spans(self, spans):
+        """Write spans list to 6502 pool, replacing current state.
+        Spans must be in xstart order, non-overlapping. Up to 31 spans."""
+        mem = self.mpu.memory
+        POOL_NEXT = 0x0400
+        POOL_XLO = 0x0420
+        POOL_DEN = 0x0440
+        POOL_TL = 0x0460
+        POOL_BL = 0x0480
+        POOL_TR = 0x04A0
+        POOL_BR = 0x04C0
+        POOL_XSTART = 0x04E0
+        POOL_XEND = 0x0500
+        POOL_OT = 0x0520
+        POOL_OB = 0x0540
+        POOL_IT = 0x0560
+        POOL_IB = 0x0580
+        n = len(spans)
+        if n > 31:
+            raise RuntimeError(f"too many spans for pool ({n} > 31)")
+        for i, s in enumerate(spans):
+            slot = i + 1
+            xstart, xend, xlo, xhi, tl, bl, tr, br = s
+            mem[POOL_XSTART + slot] = xstart & 0xFF
+            mem[POOL_XEND + slot] = xend & 0xFF
+            mem[POOL_XLO + slot] = xlo & 0xFF
+            mem[POOL_DEN + slot] = (xhi - xlo) & 0xFF
+            mem[POOL_TL + slot] = tl & 0xFF
+            mem[POOL_BL + slot] = bl & 0xFF
+            mem[POOL_TR + slot] = tr & 0xFF
+            mem[POOL_BR + slot] = br & 0xFF
+            mem[POOL_OT + slot] = min(tl, tr) & 0xFF
+            mem[POOL_OB + slot] = max(bl, br) & 0xFF
+            mem[POOL_IT + slot] = max(tl, tr) & 0xFF
+            mem[POOL_IB + slot] = min(bl, br) & 0xFF
+            mem[POOL_NEXT + slot] = (i + 2) if (i + 1) < n else 0
+        mem[ZP_HEAD] = 1 if n > 0 else 0
+        # Free chain: slots after used spans
+        free_start = n + 1
+        if free_start <= 31:
+            mem[ZP_FREE] = free_start
+            for i in range(free_start, 32):
+                mem[POOL_NEXT + i] = (i + 1) if i < 31 else 0
+        else:
+            mem[ZP_FREE] = 0
+
+    def _tighten_from_records_py(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
+        """Records-driven tighten in Python — handles multi-record cases
+        that the v1 ASM tfr_apply doesn't yet support. Regenerates records
+        from the line at replay time (using EndpointClipSpans.clip_line_records)
+        so they're valid against the CURRENT pool state — sidesteps the slot-
+        reuse staleness issue that would arise from snapshotting DCL records
+        across deferred-tighten replays. Still records-driven (no fallback to
+        ENTRY_TIGHTEN), just records sourced from a per-tighten compute pass."""
+        from endpoint_spans import EndpointClipSpans
+        mem = self.mpu.memory
+        POOL_NEXT = 0x0400
+        # Read pool spans (in walk order)
+        spans_list = []
+        cur = mem[ZP_HEAD]
+        while cur != 0:
+            spans_list.append(self._read_span_at_slot(cur))
+            cur = mem[POOL_NEXT + cur]
+        # Build EndpointClipSpans state from current pool, regenerate records.
+        tmp = EndpointClipSpans()
+        tmp.spans = spans_list
+        tmp.y_display_offset = 48  # Y_BIAS
+        top_records = tmp.clip_line_records(sx1, yt1, sx2, yt2, ilo=lo, ihi=hi)
+        bot_records = tmp.clip_line_records(sx1, yb1, sx2, yb2, ilo=lo, ihi=hi)
+        # Apply Python tighten_from_records (multi-record aware)
+        tmp.tighten_from_records(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                                 top_records, bot_records)
+        self._set_spans(tmp.spans)
 
     def has_gap(self, lo, hi):
         """has_gap(lo, hi) → bool. Closed interval [lo, hi]."""
@@ -454,43 +562,95 @@ class SpanClip6502:
         return lines
 
     @staticmethod
-    def _clip_to_screen(x1, y1, x2, y2):
-        """Liang-Barsky clip of line to [0,255] x [0,255] (u8 range).
+    def _clip_x_range(x1, y1, x2, y2, xlo, xhi):
+        """Clip line x range to [xlo, xhi]; uses _interp_store (matches
+        6502's u8 interp) for y values at clipped endpoints, preserving
+        the original line's interpolation behaviour at intermediate x.
+        Returns (cx1, cy1, cx2, cy2) or None if outside.
 
-        Y values are biased, so the full u8 range is valid.
-        Returns (cx1, cy1, cx2, cy2) as integers, or None if fully outside.
+        Phase A's clip_line_records skips spans with xstart >= ihi.
+        DCL's walk terminator `xstart >= line_xr` gives the same
+        exclusion when line_xr = ihi. To preserve overlap [xstart, ihi]
+        for spans crossing ihi, line_xr is set to ihi+1 (so DCL accepts
+        spans with xstart=ihi as the last column).
+        Note: Phase A's clr_skip uses BCC zp_ihi → BCC + BEQ skip, so it
+        effectively skips when xstart >= ihi too; matched here.
         """
+        from endpoint_spans import _interp_store
+        if x1 > x2:
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        if x2 < xlo or x1 > xhi:
+            return None
+        orig_x1, orig_y1, orig_x2, orig_y2 = x1, y1, x2, y2
+        if x1 < xlo:
+            y1 = _interp_store(xlo, orig_x1, orig_y1, orig_x2, orig_y2)
+            x1 = xlo
+        if x2 > xhi:
+            y2 = _interp_store(xhi, orig_x1, orig_y1, orig_x2, orig_y2)
+            x2 = xhi
+        x1 = max(0, min(255, x1))
+        x2 = max(0, min(255, x2))
+        y1 = max(0, min(255, y1))
+        y2 = max(0, min(255, y2))
+        return x1, y1, x2, y2
+
+    @staticmethod
+    def _clip_to_screen(x1, y1, x2, y2):
+        """Clip line to u8 [0,255] x [0,255].
+
+        Uses _interp_store (matches 6502's u8 interp_store rounding) for y
+        values at clipped endpoints when only x is out of range. This is
+        important for records-mode emission: tighten consumes records cy
+        values directly, so they must match what ENTRY_TIGHTEN's per-span
+        interp would compute at the same x — i.e., be rounded the same way.
+
+        Returns (cx1, cy1, cx2, cy2) or None if fully outside.
+        """
+        from endpoint_spans import _interp_store
+        # Quick reject: line fully off-screen on one axis.
+        if x1 < 0 and x2 < 0: return None
+        if x1 > 255 and x2 > 255: return None
+        if y1 < 0 and y2 < 0: return None
+        if y1 > 255 and y2 > 255: return None
+
+        # Y in range — only X clipping needed (common path).
+        if 0 <= y1 <= 255 and 0 <= y2 <= 255:
+            ox1, oy1, ox2, oy2 = x1, y1, x2, y2
+            if x1 < 0:
+                y1 = _interp_store(0, ox1, oy1, ox2, oy2)
+                x1 = 0
+            if x1 > 255:
+                y1 = _interp_store(255, ox1, oy1, ox2, oy2)
+                x1 = 255
+            if x2 < 0:
+                y2 = _interp_store(0, ox1, oy1, ox2, oy2)
+                x2 = 0
+            if x2 > 255:
+                y2 = _interp_store(255, ox1, oy1, ox2, oy2)
+                x2 = 255
+            return x1, y1, x2, y2
+
+        # Y out of range — fall back to Liang-Barsky float clipping.
         dx = x2 - x1
         dy = y2 - y1
-        # p, q pairs for the four boundaries
-        checks = [
-            (-dx, x1),          # left   (x >= 0)
-            ( dx, 255 - x1),    # right  (x <= 255)
-            (-dy, y1),          # top    (y >= 0)
-            ( dy, 255 - y1),    # bottom (y <= 255)
-        ]
+        checks = [(-dx, x1), (dx, 255 - x1), (-dy, y1), (dy, 255 - y1)]
         t0, t1 = 0.0, 1.0
         for p, q in checks:
             if p == 0:
                 if q < 0:
-                    return None  # parallel and outside
+                    return None
             elif p < 0:
                 t = q / p
-                if t > t1:
-                    return None
-                if t > t0:
-                    t0 = t
+                if t > t1: return None
+                if t > t0: t0 = t
             else:
                 t = q / p
-                if t < t0:
-                    return None
-                if t < t1:
-                    t1 = t
+                if t < t0: return None
+                if t < t1: t1 = t
         cx1 = int(round(x1 + t0 * dx))
         cy1 = int(round(y1 + t0 * dy))
         cx2 = int(round(x1 + t1 * dx))
         cy2 = int(round(y1 + t1 * dy))
-        # Final safety clamp
         cx1 = max(0, min(255, cx1))
         cy1 = max(0, min(255, cy1))
         cx2 = max(0, min(255, cx2))
@@ -569,29 +729,42 @@ class SpanClip6502:
         # for now (caller already wrote records to TOP_RECORDS/BOT_RECORDS).
         self._run(ENTRY_TIGHTEN_FROM_RECORDS)
 
-    def draw_clipped_line(self, xl, yl, xr, yr):
+    def draw_clipped_line(self, xl, yl, xr, yr, records_buf=None):
         """Clip a single line against the span list and emit visible segments.
 
         The line is oriented left-to-right by this method.  All coords u8.
         Returns list of (x1, y1, x2, y2) tuples for emitted segments.
+
+        records_buf: optional buffer address (TOP_RECORDS or BOT_RECORDS) —
+        when set, DCL writes per-span verdict records during its walk
+        alongside emission. Free records: no extra walk required.
         """
-        # Pre-clip to screen bounds so all coords fit in u8
         clipped = self._clip_to_screen(xl, yl, xr, yr)
         if clipped is None:
+            if records_buf is not None:
+                self.mpu.memory[records_buf] = 0
             return []
         xl, yl, xr, yr = clipped
-        # Reject degenerate (single-point) lines
         if xl == xr and yl == yr:
+            if records_buf is not None:
+                self.mpu.memory[records_buf] = 0
             return []
         mem = self.mpu.memory
-        # Orient left-to-right
         if xl > xr:
             xl, yl, xr, yr = xr, yr, xl, yl
         mem[ZP_LINE_XL] = xl & 0xFF
         mem[ZP_LINE_YL] = yl & 0xFF
         mem[ZP_LINE_XR] = xr & 0xFF
         mem[ZP_LINE_YR] = yr & 0xFF
+        if records_buf is not None:
+            mem[ZP_DCL_REC_BUF] = records_buf & 0xFF
+            mem[ZP_DCL_REC_BUF_H] = (records_buf >> 8) & 0xFF
+        else:
+            mem[ZP_DCL_REC_BUF_H] = 0
         self._run(ENTRY_DRAW_CLIP)
+        if records_buf is not None:
+            mem[ZP_DCL_REC_BUF] = 0
+            mem[ZP_DCL_REC_BUF_H] = 0
         return self.drain_lines()
 
     def interp_store(self, x, x0, y0, x1, y1):
