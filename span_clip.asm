@@ -38,6 +38,7 @@ JMP interp_store    ; $2012  (kept for test_interp verification)
 JMP draw_clipped_line ; $2015
 JMP clip_line_records ; $2018
 JMP tighten_from_records ; $201B
+JMP draw_clipped_line_s16 ; $201E
 
 ; === Pool constants and field offsets ===
 ; The span pool uses block layout at $0400: each field is a contiguous
@@ -3688,6 +3689,367 @@ TFS_PEND_BID    = $091B
 .ues_fail
     RTS
 
+
+; ===================================================================
+; s16 line clipper — generic first cut
+;
+; Wrapper writes 8 bytes of s16 input (4 endpoints × 2 bytes) to
+; LC_X1_LO..LC_Y2_HI in scratch RAM, then JSRs $201E. Routine clips
+; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl/yl/xr/yr,
+; then falls through to draw_clipped_line (existing DCL pipeline).
+;
+; The math is the slow generic version: u16×u16 = u32, u32÷u16 = u16.
+; A `project_clip_arithmetic_fastpath` memo notes the obvious fast
+; paths to add later (u8-fits-operand, trivial offset==0/den cases,
+; early-exit divide when leading zeros guarantee u8 quotient).
+; ===================================================================
+
+; ---- s16 line input (wrapper writes these) ----
+LC_X1_LO    = $0930
+LC_X1_HI    = $0931
+LC_Y1_LO    = $0932
+LC_Y1_HI    = $0933
+LC_X2_LO    = $0934
+LC_X2_HI    = $0935
+LC_Y2_LO    = $0936
+LC_Y2_HI    = $0937
+; ---- saved originals for interp (snapped at start of x-clip / y-clip) ----
+LC_OX1_LO   = $0938
+LC_OX1_HI   = $0939
+LC_OY1_LO   = $093A
+LC_OY1_HI   = $093B
+LC_OX2_LO   = $093C
+LC_OX2_HI   = $093D
+LC_OY2_LO   = $093E
+LC_OY2_HI   = $093F
+; ---- math working ----
+LC_OFF_LO   = $0940
+LC_OFF_HI   = $0941
+LC_DEN_LO   = $0942
+LC_DEN_HI   = $0943
+LC_DY_LO    = $0944
+LC_DY_HI    = $0945
+LC_DY_NEG   = $0946
+LC_M_A_LO   = $0947
+LC_M_A_HI   = $0948
+LC_M_B_LO   = $0949
+LC_M_B_HI   = $094A
+LC_M_R0     = $094B
+LC_M_R1     = $094C
+LC_M_R2     = $094D
+LC_M_R3     = $094E
+LC_QUOT_LO  = $094F
+LC_QUOT_HI  = $0950
+LC_REM_LO   = $0951
+LC_REM_HI   = $0952
+LC_TMP_LO   = $0953
+LC_TMP_HI   = $0954
+LC_RES_LO   = $0955
+LC_RES_HI   = $0956
+LC_TGT_LO   = $0957     ; clip target value (s16)
+LC_TGT_HI   = $0958
+
+; ===================================================================
+; umul16x16 — u16 × u16 = u32
+; Inputs:  LC_M_A_LO/HI, LC_M_B_LO/HI
+; Output:  LC_M_R0..LC_M_R3 (LSB first)
+; Clobbers: A, X, Y, zp_mul_b, zp_prod_lo, zp_prod_hi
+.umul16x16
+{
+    LDA LC_M_B_LO : STA zp_mul_b
+    LDA LC_M_A_LO : JSR umul8           ; p1 = a_lo * b_lo
+    LDA zp_prod_lo : STA LC_M_R0
+    LDA zp_prod_hi : STA LC_M_R1
+    LDA #0 : STA LC_M_R2 : STA LC_M_R3
+
+    LDA LC_M_B_HI : STA zp_mul_b
+    LDA LC_M_A_LO : JSR umul8           ; p2 = a_lo * b_hi → byte 1, 2
+    LDA zp_prod_lo : CLC : ADC LC_M_R1 : STA LC_M_R1
+    LDA zp_prod_hi : ADC LC_M_R2 : STA LC_M_R2
+    LDA #0          : ADC LC_M_R3 : STA LC_M_R3
+
+    LDA LC_M_B_LO : STA zp_mul_b
+    LDA LC_M_A_HI : JSR umul8           ; p3 = a_hi * b_lo → byte 1, 2
+    LDA zp_prod_lo : CLC : ADC LC_M_R1 : STA LC_M_R1
+    LDA zp_prod_hi : ADC LC_M_R2 : STA LC_M_R2
+    LDA #0          : ADC LC_M_R3 : STA LC_M_R3
+
+    LDA LC_M_B_HI : STA zp_mul_b
+    LDA LC_M_A_HI : JSR umul8           ; p4 = a_hi * b_hi → byte 2, 3
+    LDA zp_prod_lo : CLC : ADC LC_M_R2 : STA LC_M_R2
+    LDA zp_prod_hi : ADC LC_M_R3 : STA LC_M_R3
+    RTS
+}
+
+; ===================================================================
+; udiv32_16 — u32 ÷ u16 = u16 quotient (low 16 bits, with rounding
+; pre-applied by caller)
+; Inputs:  LC_M_R0..R3 (dividend, modified); LC_DEN_LO/HI (divisor)
+; Output:  LC_QUOT_LO/HI, LC_REM_LO/HI
+; Clobbers: A, X, dividend bytes
+.udiv32_16
+{
+    LDA #0 : STA LC_QUOT_LO : STA LC_QUOT_HI
+    STA LC_REM_LO : STA LC_REM_HI
+    LDX #32
+.div_loop
+    ASL LC_M_R0 : ROL LC_M_R1 : ROL LC_M_R2 : ROL LC_M_R3
+    ROL LC_REM_LO : ROL LC_REM_HI
+    LDA LC_REM_LO : SEC : SBC LC_DEN_LO : STA LC_TMP_LO
+    LDA LC_REM_HI : SBC LC_DEN_HI
+    BCC div_no_sub
+    STA LC_REM_HI
+    LDA LC_TMP_LO : STA LC_REM_LO
+    SEC
+    JMP div_setbit
+.div_no_sub
+    CLC
+.div_setbit
+    ROL LC_QUOT_LO : ROL LC_QUOT_HI
+    DEX : BNE div_loop
+    RTS
+}
+
+; ===================================================================
+; s16_interp — find target axis at given free-axis value
+; The "free" axis is the one whose value we know (the clip target);
+; the "target" axis is the one we want to compute. Caller sets:
+;   LC_TGT_LO/HI       = target free-axis value (s16)
+;   LC_OX1_LO/HI etc.  = anchor 1 (free, target)
+;   LC_OX2_LO/HI etc.  = anchor 2 (free, target)
+; To clip x at boundary: free=x, target=y, OX*=x, OY*=y.
+; To clip y at boundary: free=y, target=x, OX*=y, OY*=x.
+; Output: A = clamped u8 result, LC_RES_LO/HI = unclamped s16 result.
+; Clobbers: many.
+.s16_interp
+{
+    ; offset = target - x0
+    LDA LC_TGT_LO : SEC : SBC LC_OX1_LO : STA LC_OFF_LO
+    LDA LC_TGT_HI : SBC LC_OX1_HI : STA LC_OFF_HI
+    ; den = x1 - x0
+    LDA LC_OX2_LO : SEC : SBC LC_OX1_LO : STA LC_DEN_LO
+    LDA LC_OX2_HI : SBC LC_OX1_HI : STA LC_DEN_HI
+    ; If den < 0, negate both offset and den.
+    LDA LC_DEN_HI : BPL si_den_pos
+    LDA #0 : SEC : SBC LC_OFF_LO : STA LC_OFF_LO
+    LDA #0 : SBC LC_OFF_HI : STA LC_OFF_HI
+    LDA #0 : SEC : SBC LC_DEN_LO : STA LC_DEN_LO
+    LDA #0 : SBC LC_DEN_HI : STA LC_DEN_HI
+.si_den_pos
+    ; den == 0 → return y0 (degenerate line)
+    LDA LC_DEN_LO : ORA LC_DEN_HI : BNE si_den_nz
+    LDA LC_OY1_LO : STA LC_RES_LO
+    LDA LC_OY1_HI : STA LC_RES_HI
+    JMP si_clamp
+.si_den_nz
+    ; offset == 0 → return y0
+    LDA LC_OFF_LO : ORA LC_OFF_HI : BNE si_off_nz
+    LDA LC_OY1_LO : STA LC_RES_LO
+    LDA LC_OY1_HI : STA LC_RES_HI
+    JMP si_clamp
+.si_off_nz
+    ; dy = y1 - y0 (s16)
+    LDA LC_OY2_LO : SEC : SBC LC_OY1_LO : STA LC_DY_LO
+    LDA LC_OY2_HI : SBC LC_OY1_HI : STA LC_DY_HI
+    ; |dy|, sign tracked in LC_DY_NEG
+    LDA LC_DY_HI : BPL si_dy_pos
+    LDA #1 : STA LC_DY_NEG
+    LDA #0 : SEC : SBC LC_DY_LO : STA LC_DY_LO
+    LDA #0 : SBC LC_DY_HI : STA LC_DY_HI
+    JMP si_dy_done
+.si_dy_pos
+    LDA #0 : STA LC_DY_NEG
+.si_dy_done
+    ; multiply: |offset| × |dy| → u32
+    LDA LC_OFF_LO : STA LC_M_A_LO
+    LDA LC_OFF_HI : STA LC_M_A_HI
+    LDA LC_DY_LO  : STA LC_M_B_LO
+    LDA LC_DY_HI  : STA LC_M_B_HI
+    JSR umul16x16
+    ; round-to-nearest: add (den / 2) before divide
+    LDA LC_DEN_HI : LSR A : STA LC_TMP_HI
+    LDA LC_DEN_LO : ROR A : STA LC_TMP_LO
+    LDA LC_M_R0 : CLC : ADC LC_TMP_LO : STA LC_M_R0
+    LDA LC_M_R1 :       ADC LC_TMP_HI : STA LC_M_R1
+    LDA LC_M_R2 :       ADC #0        : STA LC_M_R2
+    LDA LC_M_R3 :       ADC #0        : STA LC_M_R3
+    JSR udiv32_16
+    ; result = y0 ± quot
+    LDA LC_DY_NEG : BNE si_sub
+    LDA LC_OY1_LO : CLC : ADC LC_QUOT_LO : STA LC_RES_LO
+    LDA LC_OY1_HI :       ADC LC_QUOT_HI : STA LC_RES_HI
+    JMP si_clamp
+.si_sub
+    LDA LC_OY1_LO : SEC : SBC LC_QUOT_LO : STA LC_RES_LO
+    LDA LC_OY1_HI :       SBC LC_QUOT_HI : STA LC_RES_HI
+.si_clamp
+    LDA LC_RES_HI : BMI si_clamp_zero
+                    BNE si_clamp_max
+    LDA LC_RES_LO : RTS
+.si_clamp_zero
+    LDA #0 : RTS
+.si_clamp_max
+    LDA #$FF : RTS
+}
+
+; ===================================================================
+; draw_clipped_line_s16 — clip s16 line to u8 then dispatch to DCL.
+; Reads LC_X1_LO..LC_Y2_HI (8 bytes of s16 input).
+; Writes u8 to zp_line_xl, zp_line_yl, zp_line_xr, zp_line_yr and
+; falls through to draw_clipped_line. If line fully off-screen,
+; degenerate, or otherwise rejected, RTS without invoking DCL.
+.draw_clipped_line_s16
+{
+    ; ---- Quick reject: both endpoints on the same side of any edge ----
+    ; Both x < 0?  hi byte negative for both means both < 0 (s16).
+    LDA LC_X1_HI : BPL x1_in_or_big
+    LDA LC_X2_HI : BPL not_both_xneg
+    JMP rejected
+.x1_in_or_big
+    ; LC_X1_HI ≥ 0. Check if LC_X1_LO/HI > 255 (i.e. HI != 0).
+    BEQ not_both_xbig                ; HI = 0 → in [0, 255] (low byte)
+    ; HI > 0 → x1 > 255. Is x2 also > 255?
+    LDA LC_X2_HI : BMI not_both_xbig ; x2 < 0 → not both > 255
+    BEQ not_both_xbig                ; x2 in [0, 255] → not both > 255
+    ; both > 255
+    JMP rejected
+.not_both_xneg
+.not_both_xbig
+    ; same for y
+    LDA LC_Y1_HI : BPL y1_in_or_big
+    LDA LC_Y2_HI : BPL not_both_yneg
+    JMP rejected
+.y1_in_or_big
+    BEQ not_both_ybig
+    LDA LC_Y2_HI : BMI not_both_ybig
+    BEQ not_both_ybig
+    JMP rejected
+.not_both_yneg
+.not_both_ybig
+
+    ; ---- Save originals for x-clip interp ----
+    LDA LC_X1_LO : STA LC_OX1_LO
+    LDA LC_X1_HI : STA LC_OX1_HI
+    LDA LC_Y1_LO : STA LC_OY1_LO
+    LDA LC_Y1_HI : STA LC_OY1_HI
+    LDA LC_X2_LO : STA LC_OX2_LO
+    LDA LC_X2_HI : STA LC_OX2_HI
+    LDA LC_Y2_LO : STA LC_OY2_LO
+    LDA LC_Y2_HI : STA LC_OY2_HI
+
+    ; ---- X clip ----
+    ; If x1 < 0, replace y1 with y at x=0; x1 = 0.
+    ; Else if x1 > 255, replace y1 with y at x=255; x1 = 255.
+    LDA LC_X1_HI : BPL x1_not_neg
+    LDA #0 : STA LC_TGT_LO : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_Y1_LO : LDA #0 : STA LC_Y1_HI
+    LDA #0 : STA LC_X1_LO : STA LC_X1_HI
+    JMP x1_done
+.x1_not_neg
+    BEQ x1_done                      ; HI=0 → in u8 range, no clip
+    LDA #$FF : STA LC_TGT_LO
+    LDA #0   : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_Y1_LO : LDA #0 : STA LC_Y1_HI
+    LDA #$FF : STA LC_X1_LO : LDA #0 : STA LC_X1_HI
+.x1_done
+    ; same for x2
+    LDA LC_X2_HI : BPL x2_not_neg
+    LDA #0 : STA LC_TGT_LO : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_Y2_LO : LDA #0 : STA LC_Y2_HI
+    LDA #0 : STA LC_X2_LO : STA LC_X2_HI
+    JMP x2_done
+.x2_not_neg
+    BEQ x2_done
+    LDA #$FF : STA LC_TGT_LO
+    LDA #0   : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_Y2_LO : LDA #0 : STA LC_Y2_HI
+    LDA #$FF : STA LC_X2_LO : LDA #0 : STA LC_X2_HI
+.x2_done
+
+    ; ---- Quick reject after x-clip (y might still be out same side) ----
+    LDA LC_Y1_HI : BPL y1_after_in_or_big
+    LDA LC_Y2_HI : BPL not_both_yneg2
+    JMP rejected
+.y1_after_in_or_big
+    BEQ not_both_ybig2
+    LDA LC_Y2_HI : BMI not_both_ybig2
+    BEQ not_both_ybig2
+    JMP rejected
+.not_both_yneg2
+.not_both_ybig2
+
+    ; ---- If both y already in u8, skip y-clip ----
+    LDA LC_Y1_HI : BNE need_yclip
+    LDA LC_Y2_HI : BNE need_yclip
+    JMP y_in_range
+.need_yclip
+    ; Re-snap originals to post-x-clip values; for y-clip, axes swap:
+    ; OX* now holds the FREE axis (y), OY* the TARGET (x).
+    LDA LC_Y1_LO : STA LC_OX1_LO
+    LDA LC_Y1_HI : STA LC_OX1_HI
+    LDA LC_X1_LO : STA LC_OY1_LO
+    LDA LC_X1_HI : STA LC_OY1_HI
+    LDA LC_Y2_LO : STA LC_OX2_LO
+    LDA LC_Y2_HI : STA LC_OX2_HI
+    LDA LC_X2_LO : STA LC_OY2_LO
+    LDA LC_X2_HI : STA LC_OY2_HI
+
+    ; y1 clip
+    LDA LC_Y1_HI : BPL y1c_not_neg
+    LDA #0 : STA LC_TGT_LO : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_X1_LO : LDA #0 : STA LC_X1_HI
+    LDA #0 : STA LC_Y1_LO : STA LC_Y1_HI
+    JMP y1c_done
+.y1c_not_neg
+    BEQ y1c_done
+    LDA #$FF : STA LC_TGT_LO
+    LDA #0   : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_X1_LO : LDA #0 : STA LC_X1_HI
+    LDA #$FF : STA LC_Y1_LO : LDA #0 : STA LC_Y1_HI
+.y1c_done
+    ; y2 clip
+    LDA LC_Y2_HI : BPL y2c_not_neg
+    LDA #0 : STA LC_TGT_LO : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_X2_LO : LDA #0 : STA LC_X2_HI
+    LDA #0 : STA LC_Y2_LO : STA LC_Y2_HI
+    JMP y2c_done
+.y2c_not_neg
+    BEQ y2c_done
+    LDA #$FF : STA LC_TGT_LO
+    LDA #0   : STA LC_TGT_HI
+    JSR s16_interp
+    STA LC_X2_LO : LDA #0 : STA LC_X2_HI
+    LDA #$FF : STA LC_Y2_LO : LDA #0 : STA LC_Y2_HI
+.y2c_done
+.y_in_range
+
+    ; ---- Truncate to u8 and write zp_line_*. DCL needs xl ≤ xr. ----
+    ; Compare LC_X1_LO vs LC_X2_LO.
+    LDA LC_X1_LO : CMP LC_X2_LO : BCC ordered : BEQ ordered
+    ; swap
+    LDA LC_X1_LO : LDX LC_X2_LO : STX LC_X1_LO : STA LC_X2_LO
+    LDA LC_Y1_LO : LDX LC_Y2_LO : STX LC_Y1_LO : STA LC_Y2_LO
+.ordered
+
+    ; ---- Skip degenerate (xl == xr AND yl == yr) ----
+    LDA LC_X1_LO : CMP LC_X2_LO : BNE not_degenerate
+    LDA LC_Y1_LO : CMP LC_Y2_LO : BEQ rejected
+.not_degenerate
+    LDA LC_X1_LO : STA zp_line_xl
+    LDA LC_Y1_LO : STA zp_line_yl
+    LDA LC_X2_LO : STA zp_line_xr
+    LDA LC_Y2_LO : STA zp_line_yr
+    JMP draw_clipped_line          ; tail-call DCL
+.rejected
+    RTS
+}
 
 .end_code
 SAVE "span_clip.bin", $2000, end_code, $2000

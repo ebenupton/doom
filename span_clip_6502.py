@@ -18,11 +18,22 @@ ENTRY_INTERP_ST  = 0x2012
 ENTRY_DRAW_CLIP  = 0x2015
 ENTRY_CLIP_LINE_RECORDS = 0x2018
 ENTRY_TIGHTEN_FROM_RECORDS = 0x201B
+ENTRY_DRAW_CLIP_S16 = 0x201E
 
 # Records buffers (must match span_clip.asm)
 TOP_RECORDS = 0x0700
 BOT_RECORDS = 0x0800
 REC_BYTES = 4   # one record per surviving DCL segment: (xl, yl, xr, yr)
+
+# s16 line clipper input (must match span_clip.asm)
+LC_X1_LO = 0x0930
+LC_X1_HI = 0x0931
+LC_Y1_LO = 0x0932
+LC_Y1_HI = 0x0933
+LC_X2_LO = 0x0934
+LC_X2_HI = 0x0935
+LC_Y2_LO = 0x0936
+LC_Y2_HI = 0x0937
 
 # Toggle: when True, _span_clip_6502.tighten() dispatches to records-driven
 # path (clip_line_records + tighten_from_records). v1 supports single-record-
@@ -671,40 +682,36 @@ class SpanClip6502:
         self._run(ENTRY_TIGHTEN_FROM_RECORDS)
 
     def draw_clipped_line(self, xl, yl, xr, yr, records_buf=None):
-        """Clip a single line against the span list and emit visible segments.
+        """Clip a single s16 line against the span list and emit visible segments.
 
-        The line is oriented left-to-right by this method.  All coords u8.
-        Returns list of (x1, y1, x2, y2) tuples for emitted segments.
-
-        records_buf: optional buffer address (TOP_RECORDS or BOT_RECORDS) —
-        when set, DCL writes per-span verdict records during its walk
-        alongside emission. Free records: no extra walk required.
+        Inputs are s16 (raw BSP/transform values, can be negative or > 255).
+        The 6502 ENTRY_DRAW_CLIP_S16 entry handles clipping to [0,255]×[0,255]
+        before falling into the existing DCL walk. Returns list of emitted
+        (x1, y1, x2, y2) segment tuples.
         """
-        clipped = self._clip_to_screen(xl, yl, xr, yr)
-        if clipped is None:
-            if records_buf is not None:
-                self.mpu.memory[records_buf] = 0
-            return []
-        xl, yl, xr, yr = clipped
-        if xl == xr and yl == yr:
-            if records_buf is not None:
-                self.mpu.memory[records_buf] = 0
-            return []
         mem = self.mpu.memory
-        if xl > xr:
-            xl, yl, xr, yr = xr, yr, xl, yl
-        mem[ZP_LINE_XL] = xl & 0xFF
-        mem[ZP_LINE_YL] = yl & 0xFF
-        mem[ZP_LINE_XR] = xr & 0xFF
-        mem[ZP_LINE_YR] = yr & 0xFF
+        # Pre-zero the records count if requested. The 6502 clipper may
+        # reject the line entirely, in which case DCL never runs and the
+        # buffer stays as we left it.
         if records_buf is not None:
-            mem[ZP_DCL_REC_BUF] = records_buf & 0xFF
+            mem[records_buf] = 0
+        # Write s16 input
+        mem[LC_X1_LO] = xl & 0xFF
+        mem[LC_X1_HI] = (xl >> 8) & 0xFF
+        mem[LC_Y1_LO] = yl & 0xFF
+        mem[LC_Y1_HI] = (yl >> 8) & 0xFF
+        mem[LC_X2_LO] = xr & 0xFF
+        mem[LC_X2_HI] = (xr >> 8) & 0xFF
+        mem[LC_Y2_LO] = yr & 0xFF
+        mem[LC_Y2_HI] = (yr >> 8) & 0xFF
+        if records_buf is not None:
+            mem[ZP_DCL_REC_BUF]   = records_buf & 0xFF
             mem[ZP_DCL_REC_BUF_H] = (records_buf >> 8) & 0xFF
         else:
             mem[ZP_DCL_REC_BUF_H] = 0
-        self._run(ENTRY_DRAW_CLIP)
+        self._run(ENTRY_DRAW_CLIP_S16)
         if records_buf is not None:
-            mem[ZP_DCL_REC_BUF] = 0
+            mem[ZP_DCL_REC_BUF]   = 0
             mem[ZP_DCL_REC_BUF_H] = 0
         return self.drain_lines()
 
