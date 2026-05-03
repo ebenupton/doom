@@ -3804,26 +3804,64 @@ LC_TGT_HI   = $0958
 .udiv32_16
 {
     LDA #0 : STA LC_QUOT_LO : STA LC_QUOT_HI
-    STA LC_REM_LO : STA LC_REM_HI
+
+    ; ---- Fast path: quotient fits u16 ----
+    ; True iff top 16 bits of dividend < den. Pre-load rem = R3:R2 and
+    ; run 16 iterations on the low 16 bits (skip the first 16 no-op
+    ; iterations the standard loop would do). For typical s16 clipper
+    ; inputs (product u20-u22, den u12) this is always true.
+    LDA LC_M_R3 : CMP LC_DEN_HI : BCC u16_quot
+    BNE no_u16_quot
+    LDA LC_M_R2 : CMP LC_DEN_LO : BCS no_u16_quot
+.u16_quot
+    LDA LC_M_R3 : STA LC_REM_HI
+    LDA LC_M_R2 : STA LC_REM_LO
+    LDX #16
+.u16_loop
+    ASL LC_M_R0 : ROL LC_M_R1 : ROL LC_REM_LO : ROL LC_REM_HI
+    LDA LC_REM_LO : SEC : SBC LC_DEN_LO : STA LC_TMP_LO
+    LDA LC_REM_HI : SBC LC_DEN_HI
+    BCC u16_no_sub
+    STA LC_REM_HI
+    LDA LC_TMP_LO : STA LC_REM_LO
+    SEC
+    JMP u16_set
+.u16_no_sub
+    CLC
+.u16_set
+    ROL LC_QUOT_LO : ROL LC_QUOT_HI
+    DEX : BNE u16_loop
+    RTS
+
+.no_u16_quot
+    ; ---- Slow path: u32 ÷ u16 → up to u17 quotient ----
+    ; (Rare for s16 clipper; kept for correctness.) Use byte-level skip
+    ; + bit-level skip to trim no-op iterations.
+    LDA #0 : STA LC_REM_LO : STA LC_REM_HI
     LDX #32
-    LDA LC_M_R3 : BNE div_loop
+    LDA LC_M_R3 : BNE bit_skip
     LDA LC_M_R2 : STA LC_M_R3
     LDA LC_M_R1 : STA LC_M_R2
     LDA LC_M_R0 : STA LC_M_R1
     LDA #0 : STA LC_M_R0
     LDX #24
-    LDA LC_M_R3 : BNE div_loop
+    LDA LC_M_R3 : BNE bit_skip
     LDA LC_M_R2 : STA LC_M_R3
     LDA LC_M_R1 : STA LC_M_R2
     LDA #0 : STA LC_M_R0 : STA LC_M_R1
     LDX #16
-    LDA LC_M_R3 : BNE div_loop
+    LDA LC_M_R3 : BNE bit_skip
     LDA LC_M_R2 : STA LC_M_R3
     LDA #0 : STA LC_M_R0 : STA LC_M_R1 : STA LC_M_R2
     LDX #8
-    LDA LC_M_R3 : BNE div_loop
-    ; Dividend is all zero → quotient = 0 (already initialised).
+    LDA LC_M_R3 : BNE bit_skip
     RTS
+.bit_skip
+    BMI div_loop
+.bs_loop
+    ASL LC_M_R0 : ROL LC_M_R1 : ROL LC_M_R2 : ROL LC_M_R3
+    DEX
+    LDA LC_M_R3 : BPL bs_loop
 .div_loop
     ASL LC_M_R0 : ROL LC_M_R1 : ROL LC_M_R2 : ROL LC_M_R3
     ROL LC_REM_LO : ROL LC_REM_HI
@@ -4002,7 +4040,13 @@ LC_TGT_HI   = $0958
 .not_both_yneg
 .not_both_ybig
 
-    ; ---- Save originals for x-clip interp ----
+    ; ---- Skip x-clip path entirely if both x already in u8 ----
+    ; (We got here because at least one HI byte is non-zero; might be y.)
+    LDA LC_X1_HI : ORA LC_X2_HI : BNE need_xclip
+    JMP skip_xclip
+.need_xclip
+
+    ; ---- Save originals for x-clip interp (only when needed) ----
     LDA LC_X1_LO : STA LC_OX1_LO
     LDA LC_X1_HI : STA LC_OX1_HI
     LDA LC_Y1_LO : STA LC_OY1_LO
@@ -4044,6 +4088,7 @@ LC_TGT_HI   = $0958
     STA LC_Y2_LO : LDA #0 : STA LC_Y2_HI
     LDA #$FF : STA LC_X2_LO : LDA #0 : STA LC_X2_HI
 .x2_done
+.skip_xclip
 
     ; ---- Quick reject after x-clip (y might still be out same side) ----
     LDA LC_Y1_HI : BPL y1_after_in_or_big
