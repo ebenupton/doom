@@ -25,15 +25,11 @@ TOP_RECORDS = 0x0700
 BOT_RECORDS = 0x0800
 REC_BYTES = 4   # one record per surviving DCL segment: (xl, yl, xr, yr)
 
-# s16 line clipper input (must match span_clip.asm)
-LC_X1_LO = 0x0930
-LC_X1_HI = 0x0931
-LC_Y1_LO = 0x0932
-LC_Y1_HI = 0x0933
-LC_X2_LO = 0x0934
-LC_X2_HI = 0x0935
-LC_Y2_LO = 0x0936
-LC_Y2_HI = 0x0937
+# s16 line clipper hi bytes (ZP, alias CB-clip / secondary-seg block).
+LC_X1_HI = 0x00B2
+LC_Y1_HI = 0x00B3
+LC_X2_HI = 0x00B4
+LC_Y2_HI = 0x00B5
 
 # Toggle: when True, _span_clip_6502.tighten() dispatches to records-driven
 # path (clip_line_records + tighten_from_records). v1 supports single-record-
@@ -685,24 +681,31 @@ class SpanClip6502:
         """Clip a single s16 line against the span list and emit visible segments.
 
         Inputs are s16 (raw BSP/transform values, can be negative or > 255).
-        The 6502 ENTRY_DRAW_CLIP_S16 entry handles clipping to [0,255]×[0,255]
-        before falling into the existing DCL walk. Returns list of emitted
-        (x1, y1, x2, y2) segment tuples.
+        The 6502 ENTRY_DRAW_CLIP_S16 entry checks if the line is already in
+        u8 range; if so it tail-calls DCL directly (the wrapper has already
+        written zp_line_xl/yl/xr/yr). Out-of-range lines hit the slow
+        clipping path. Returns list of emitted (x1, y1, x2, y2) segments.
         """
         mem = self.mpu.memory
-        # Pre-zero the records count if requested. The 6502 clipper may
-        # reject the line entirely, in which case DCL never runs and the
-        # buffer stays as we left it.
         if records_buf is not None:
             mem[records_buf] = 0
-        # Write s16 input
-        mem[LC_X1_LO] = xl & 0xFF
+        # Trivial wrapper-side prep: order endpoints, reject degenerate.
+        # Both are simple data shuffling — they preserve the line's
+        # geometry and don't constitute "pre-conditioning" of values.
+        if xl > xr:
+            xl, yl, xr, yr = xr, yr, xl, yl
+        if xl == xr and yl == yr:
+            return []
+        # Lo bytes alias zp_line_*; on the in-range fast path the 6502
+        # entry just JMPs draw_clipped_line and these bytes are already
+        # the correct u8 values DCL needs.
+        mem[ZP_LINE_XL] = xl & 0xFF
+        mem[ZP_LINE_YL] = yl & 0xFF
+        mem[ZP_LINE_XR] = xr & 0xFF
+        mem[ZP_LINE_YR] = yr & 0xFF
         mem[LC_X1_HI] = (xl >> 8) & 0xFF
-        mem[LC_Y1_LO] = yl & 0xFF
         mem[LC_Y1_HI] = (yl >> 8) & 0xFF
-        mem[LC_X2_LO] = xr & 0xFF
         mem[LC_X2_HI] = (xr >> 8) & 0xFF
-        mem[LC_Y2_LO] = yr & 0xFF
         mem[LC_Y2_HI] = (yr >> 8) & 0xFF
         if records_buf is not None:
             mem[ZP_DCL_REC_BUF]   = records_buf & 0xFF

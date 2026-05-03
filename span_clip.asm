@@ -3705,14 +3705,20 @@ TFS_PEND_BID    = $091B
 ; ===================================================================
 
 ; ---- s16 line input (wrapper writes these) ----
-LC_X1_LO    = $0930
-LC_X1_HI    = $0931
-LC_Y1_LO    = $0932
-LC_Y1_HI    = $0933
-LC_X2_LO    = $0934
-LC_X2_HI    = $0935
-LC_Y2_LO    = $0936
-LC_Y2_HI    = $0937
+; Lo bytes alias zp_line_* (the same u8 slots DCL reads). Hi bytes
+; alias the CB-clip / tighten-secondary ZP block ($B2-$B5) — those
+; slots are used DOWNSTREAM of the s16 clipper (DCL clobbers them
+; during emission), but the wrapper rewrites them before each call,
+; so there's no conflict. ZP access shaves ~7 cycles off the in-range
+; fast-path detect (4 ORAs of zp vs absolute).
+LC_X1_LO    = zp_line_xl
+LC_X1_HI    = $B2
+LC_Y1_LO    = zp_line_yl
+LC_Y1_HI    = $B3
+LC_X2_LO    = zp_line_xr
+LC_X2_HI    = $B4
+LC_Y2_LO    = zp_line_yr
+LC_Y2_HI    = $B5
 ; ---- saved originals for interp (snapped at start of x-clip / y-clip) ----
 LC_OX1_LO   = $0938
 LC_OX1_HI   = $0939
@@ -4006,12 +4012,12 @@ LC_TGT_HI   = $0958
 .draw_clipped_line_s16
 {
     ; ---- Fast path: all 4 endpoints already in u8 range ----
-    ; HI bytes all zero ⇔ all coords in [0, 255]. Skip the entire
-    ; quick-reject + clip + interp pipeline; jump straight to
-    ; ordering/dispatch.
+    ; HI bytes all zero ⇔ all coords in [0, 255]. Wrapper has already
+    ; written zp_line_xl/yl/xr/yr (= LC_X*_LO via alias), ordered the
+    ; endpoints, and rejected degenerate input. Tail-call DCL directly.
     LDA LC_X1_HI : ORA LC_Y1_HI : ORA LC_X2_HI : ORA LC_Y2_HI
     BNE main_clip
-    JMP y_in_range
+    JMP draw_clipped_line
 .main_clip
     ; ---- Quick reject: both endpoints on the same side of any edge ----
     ; Both x < 0?  hi byte negative for both means both < 0 (s16).
@@ -4150,23 +4156,20 @@ LC_TGT_HI   = $0958
 .y2c_done
 .y_in_range
 
-    ; ---- Truncate to u8 and write zp_line_*. DCL needs xl ≤ xr. ----
-    ; Compare LC_X1_LO vs LC_X2_LO.
-    LDA LC_X1_LO : CMP LC_X2_LO : BCC ordered : BEQ ordered
-    ; swap
-    LDA LC_X1_LO : LDX LC_X2_LO : STX LC_X1_LO : STA LC_X2_LO
-    LDA LC_Y1_LO : LDX LC_Y2_LO : STX LC_Y1_LO : STA LC_Y2_LO
-.ordered
-
-    ; ---- Skip degenerate (xl == xr AND yl == yr) ----
-    LDA LC_X1_LO : CMP LC_X2_LO : BNE not_degenerate
-    LDA LC_Y1_LO : CMP LC_Y2_LO : BEQ rejected
-.not_degenerate
-    LDA LC_X1_LO : STA zp_line_xl
-    LDA LC_Y1_LO : STA zp_line_yl
-    LDA LC_X2_LO : STA zp_line_xr
-    LDA LC_Y2_LO : STA zp_line_yr
-    JMP draw_clipped_line          ; tail-call DCL
+    ; ---- Order/copy/degen handled by wrapper for input; clipping in
+    ; this slow path could shrink the line to a point, so check that
+    ; one case before dispatching. zp_line_* already holds the clipped
+    ; values via the LC_X*_LO aliases.
+    LDA zp_line_xl : CMP zp_line_xr : BCC dispatch_dcl
+    BNE rejected_swap_after_clip   ; clipping reordered: bail (rare)
+    LDA zp_line_yl : CMP zp_line_yr : BEQ rejected
+.dispatch_dcl
+    JMP draw_clipped_line
+.rejected_swap_after_clip
+    ; Post-clip x1 > x2 — would require swap; just emit reordered.
+    LDA zp_line_xl : LDX zp_line_xr : STX zp_line_xl : STA zp_line_xr
+    LDA zp_line_yl : LDX zp_line_yr : STX zp_line_yl : STA zp_line_yr
+    JMP draw_clipped_line
 .rejected
     RTS
 }
