@@ -3756,28 +3756,37 @@ LC_TGT_HI   = $0958
 ; Clobbers: A, X, Y, zp_mul_b, zp_prod_lo, zp_prod_hi
 .umul16x16
 {
+    ; Always need p1 = a_lo * b_lo.
     LDA LC_M_B_LO : STA zp_mul_b
-    LDA LC_M_A_LO : JSR umul8           ; p1 = a_lo * b_lo
+    LDA LC_M_A_LO : JSR umul8
     LDA zp_prod_lo : STA LC_M_R0
     LDA zp_prod_hi : STA LC_M_R1
     LDA #0 : STA LC_M_R2 : STA LC_M_R3
 
+    ; Fast paths: skip multiplies whose factor is zero.
+    LDA LC_M_B_HI : BEQ skip_p2
+
     LDA LC_M_B_HI : STA zp_mul_b
-    LDA LC_M_A_LO : JSR umul8           ; p2 = a_lo * b_hi → byte 1, 2
+    LDA LC_M_A_LO : JSR umul8           ; p2 = a_lo * b_hi
     LDA zp_prod_lo : CLC : ADC LC_M_R1 : STA LC_M_R1
     LDA zp_prod_hi : ADC LC_M_R2 : STA LC_M_R2
     LDA #0          : ADC LC_M_R3 : STA LC_M_R3
+.skip_p2
+
+    LDA LC_M_A_HI : BEQ skip_p3_p4
 
     LDA LC_M_B_LO : STA zp_mul_b
-    LDA LC_M_A_HI : JSR umul8           ; p3 = a_hi * b_lo → byte 1, 2
+    LDA LC_M_A_HI : JSR umul8           ; p3 = a_hi * b_lo
     LDA zp_prod_lo : CLC : ADC LC_M_R1 : STA LC_M_R1
     LDA zp_prod_hi : ADC LC_M_R2 : STA LC_M_R2
     LDA #0          : ADC LC_M_R3 : STA LC_M_R3
 
+    LDA LC_M_B_HI : BEQ skip_p3_p4      ; if b fits u8, p4 = a_hi * 0 = 0
     LDA LC_M_B_HI : STA zp_mul_b
-    LDA LC_M_A_HI : JSR umul8           ; p4 = a_hi * b_hi → byte 2, 3
+    LDA LC_M_A_HI : JSR umul8           ; p4 = a_hi * b_hi
     LDA zp_prod_lo : CLC : ADC LC_M_R2 : STA LC_M_R2
     LDA zp_prod_hi : ADC LC_M_R3 : STA LC_M_R3
+.skip_p3_p4
     RTS
 }
 
@@ -3787,11 +3796,34 @@ LC_TGT_HI   = $0958
 ; Inputs:  LC_M_R0..R3 (dividend, modified); LC_DEN_LO/HI (divisor)
 ; Output:  LC_QUOT_LO/HI, LC_REM_LO/HI
 ; Clobbers: A, X, dividend bytes
+;
+; Fast path (per project_clip_arithmetic_fastpath): byte-level skip of
+; leading-zero dividend bytes. Each skipped byte saves 8 iterations
+; (~240 cycles). Typical s16 clipper inputs produce a u20-u22 product
+; from umul16x16, so R3 is always 0 and we always save ≥8 iterations.
 .udiv32_16
 {
     LDA #0 : STA LC_QUOT_LO : STA LC_QUOT_HI
     STA LC_REM_LO : STA LC_REM_HI
     LDX #32
+    LDA LC_M_R3 : BNE div_loop
+    LDA LC_M_R2 : STA LC_M_R3
+    LDA LC_M_R1 : STA LC_M_R2
+    LDA LC_M_R0 : STA LC_M_R1
+    LDA #0 : STA LC_M_R0
+    LDX #24
+    LDA LC_M_R3 : BNE div_loop
+    LDA LC_M_R2 : STA LC_M_R3
+    LDA LC_M_R1 : STA LC_M_R2
+    LDA #0 : STA LC_M_R0 : STA LC_M_R1
+    LDX #16
+    LDA LC_M_R3 : BNE div_loop
+    LDA LC_M_R2 : STA LC_M_R3
+    LDA #0 : STA LC_M_R0 : STA LC_M_R1 : STA LC_M_R2
+    LDX #8
+    LDA LC_M_R3 : BNE div_loop
+    ; Dividend is all zero → quotient = 0 (already initialised).
+    RTS
 .div_loop
     ASL LC_M_R0 : ROL LC_M_R1 : ROL LC_M_R2 : ROL LC_M_R3
     ROL LC_REM_LO : ROL LC_REM_HI
@@ -3836,21 +3868,26 @@ LC_TGT_HI   = $0958
     LDA #0 : SEC : SBC LC_DEN_LO : STA LC_DEN_LO
     LDA #0 : SBC LC_DEN_HI : STA LC_DEN_HI
 .si_den_pos
-    ; den == 0 → return y0 (degenerate line)
+    ; Trivial: den == 0 (degenerate line) → return y0
     LDA LC_DEN_LO : ORA LC_DEN_HI : BNE si_den_nz
-    LDA LC_OY1_LO : STA LC_RES_LO
-    LDA LC_OY1_HI : STA LC_RES_HI
-    JMP si_clamp
+    JMP si_return_y0
 .si_den_nz
-    ; offset == 0 → return y0
+    ; Trivial: offset == 0 (target == x0) → return y0
     LDA LC_OFF_LO : ORA LC_OFF_HI : BNE si_off_nz
-    LDA LC_OY1_LO : STA LC_RES_LO
-    LDA LC_OY1_HI : STA LC_RES_HI
-    JMP si_clamp
+    JMP si_return_y0
 .si_off_nz
+    ; Trivial: offset == den (target == x1) → return y1
+    LDA LC_OFF_LO : CMP LC_DEN_LO : BNE si_off_lt_den
+    LDA LC_OFF_HI : CMP LC_DEN_HI : BNE si_off_lt_den
+    JMP si_return_y1
+.si_off_lt_den
     ; dy = y1 - y0 (s16)
     LDA LC_OY2_LO : SEC : SBC LC_OY1_LO : STA LC_DY_LO
     LDA LC_OY2_HI : SBC LC_OY1_HI : STA LC_DY_HI
+    ; Trivial: dy == 0 (horizontal line) → return y0
+    LDA LC_DY_LO : ORA LC_DY_HI : BNE si_dy_nz
+    JMP si_return_y0
+.si_dy_nz
     ; |dy|, sign tracked in LC_DY_NEG
     LDA LC_DY_HI : BPL si_dy_pos
     LDA #1 : STA LC_DY_NEG
@@ -3860,7 +3897,29 @@ LC_TGT_HI   = $0958
 .si_dy_pos
     LDA #0 : STA LC_DY_NEG
 .si_dy_done
-    ; multiply: |offset| × |dy| → u32
+    ; Fast path: |offset|, |den|, |dy| all fit u8 → use existing
+    ; umul8 + udiv16_8 (one multiply, one divide-with-skip-zeros).
+    LDA LC_OFF_HI : ORA LC_DEN_HI : ORA LC_DY_HI : BNE si_general
+    LDA LC_DY_LO : STA zp_mul_b
+    LDA LC_OFF_LO : JSR umul8
+    ; round: prod += (den / 2)
+    LDA LC_DEN_LO : LSR A
+    CLC : ADC zp_prod_lo : STA zp_div_lo
+    LDA #0 : ADC zp_prod_hi : STA zp_div_hi
+    LDA LC_DEN_LO : STA zp_div_den
+    JSR udiv16_8                  ; A = u8 quotient
+    LDX LC_DY_NEG : BNE si_u8_sub
+    CLC : ADC LC_OY1_LO : STA LC_RES_LO
+    LDA LC_OY1_HI : ADC #0 : STA LC_RES_HI
+    JMP si_clamp
+.si_u8_sub
+    STA LC_TMP_LO
+    LDA LC_OY1_LO : SEC : SBC LC_TMP_LO : STA LC_RES_LO
+    LDA LC_OY1_HI : SBC #0 : STA LC_RES_HI
+    JMP si_clamp
+.si_general
+    ; multiply: |offset| × |dy| → u32 (umul16x16 also has a_hi=0/b_hi=0
+    ; fast paths internally).
     LDA LC_OFF_LO : STA LC_M_A_LO
     LDA LC_OFF_HI : STA LC_M_A_HI
     LDA LC_DY_LO  : STA LC_M_B_LO
@@ -3890,6 +3949,14 @@ LC_TGT_HI   = $0958
     LDA #0 : RTS
 .si_clamp_max
     LDA #$FF : RTS
+.si_return_y0
+    LDA LC_OY1_LO : STA LC_RES_LO
+    LDA LC_OY1_HI : STA LC_RES_HI
+    JMP si_clamp
+.si_return_y1
+    LDA LC_OY2_LO : STA LC_RES_LO
+    LDA LC_OY2_HI : STA LC_RES_HI
+    JMP si_clamp
 }
 
 ; ===================================================================
@@ -3900,6 +3967,14 @@ LC_TGT_HI   = $0958
 ; degenerate, or otherwise rejected, RTS without invoking DCL.
 .draw_clipped_line_s16
 {
+    ; ---- Fast path: all 4 endpoints already in u8 range ----
+    ; HI bytes all zero ⇔ all coords in [0, 255]. Skip the entire
+    ; quick-reject + clip + interp pipeline; jump straight to
+    ; ordering/dispatch.
+    LDA LC_X1_HI : ORA LC_Y1_HI : ORA LC_X2_HI : ORA LC_Y2_HI
+    BNE main_clip
+    JMP y_in_range
+.main_clip
     ; ---- Quick reject: both endpoints on the same side of any edge ----
     ; Both x < 0?  hi byte negative for both means both < 0 (s16).
     LDA LC_X1_HI : BPL x1_in_or_big
