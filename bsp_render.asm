@@ -539,6 +539,55 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 }
 
 ; ============================================================================
+; HELPER: br_smul_s8_s16 — signed s8 × signed s16 → s16 (low 16 bits of s24).
+;   Inputs:  zp_br_a (s8), zp_br_dxlo:dxhi (s16).
+;   Output:  zp_br_resl/h (s16).
+;
+;   For our scene products fit in s16; for larger ones the high bits are
+;   silently dropped. Used by the back-face test where we only need sign.
+; ============================================================================
+.br_smul_s8_s16
+{
+    LDA #0 : STA zp_br_sign
+
+    ; |a|
+    LDA zp_br_a : BPL a_pos
+    EOR #$FF : CLC : ADC #1 : STA zp_br_a
+    INC zp_br_sign
+.a_pos
+
+    ; |dx|, store as zp_br_t0 (lo), zp_br_t1 (hi)
+    LDA zp_br_dxlo : STA zp_br_t0
+    LDA zp_br_dxhi : STA zp_br_t1
+    BPL b_pos
+    LDA #0 : SEC : SBC zp_br_t0 : STA zp_br_t0
+    LDA #0 :       SBC zp_br_t1 : STA zp_br_t1
+    LDA zp_br_sign : EOR #1 : STA zp_br_sign
+.b_pos
+
+    ; |a| * t0 (u8 × u8 → u16) — low part of u8 * u16
+    LDA zp_br_t0 : STA zp_mul_b
+    LDA zp_br_a
+    JSR SC_UMUL8
+    LDA zp_prod_lo : STA zp_br_resl
+    LDA zp_prod_hi : STA zp_br_resh
+
+    ; |a| * t1 (u8 × u8 → u16) — high byte of result; only the low byte of
+    ; this product contributes to the s16 result's high byte.
+    LDA zp_br_t1 : STA zp_mul_b
+    LDA zp_br_a
+    JSR SC_UMUL8
+    LDA zp_br_resh : CLC : ADC zp_prod_lo : STA zp_br_resh
+
+    ; Apply sign
+    LDA zp_br_sign : BEQ ss_pos
+    LDA #0 : SEC : SBC zp_br_resl : STA zp_br_resl
+    LDA #0 :       SBC zp_br_resh : STA zp_br_resh
+.ss_pos
+    RTS
+}
+
+; ============================================================================
 ; br_project_x_subpx — project view-space X to screen X with sub-pixel.
 ;
 ;   Inputs (zp):
@@ -827,6 +876,75 @@ zp_v_xfrac      = $38      ; saved fractional view-x (u8)
 ; FH/CH table base ptr (set once per frame by Python wrapper)
 zp_rom_fhch_lo  = $30
 zp_rom_fhch_hi  = $31
+; Per-seg back-face / linedef state
+zp_seg_lv1x_lo  = $39
+zp_seg_lv1x_hi  = $3A
+zp_seg_lv1y_lo  = $3B
+zp_seg_lv1y_hi  = $3C
+zp_seg_ldx      = $3D      ; s8 linedef delta x
+zp_seg_ldy      = $3E      ; s8 linedef delta y
+zp_seg_flags    = $3F      ; u8
+
+; ============================================================================
+; br_back_face_test — test current seg for back-facing.
+;   Inputs (zp): zp_seg_lv1x/lv1y (s16), zp_seg_ldx/ldy (s8), zp_seg_flags.
+;                zp_br_px_h, zp_br_py_h = player px_int, py_int (s8).
+;   Output: zp_seg_skip = 1 if back-facing, 0 if front-facing.
+;
+;   dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
+;   if flags & SF_DIR: dot = -dot
+;   back-facing if dot <= 0.
+; ============================================================================
+.br_back_face_test
+{
+    ; dx = px_int - lv1_x (s16)
+    LDA zp_br_px_h : STA zp_br_t2
+    LDA #0 : STA zp_br_t3
+    LDA zp_br_t2 : BPL bf_px_pos
+    LDA #$FF : STA zp_br_t3
+.bf_px_pos
+    LDA zp_br_t2 : SEC : SBC zp_seg_lv1x_lo : STA zp_br_dxlo
+    LDA zp_br_t3 :       SBC zp_seg_lv1x_hi : STA zp_br_dxhi
+
+    ; ldy * dx → s16 in resl/resh
+    LDA zp_seg_ldy : STA zp_br_a
+    JSR br_smul_s8_s16
+    ; Save prod1 in t2:t3 (scratch — different from t0:t1 used by helper)
+    LDA zp_br_resl : STA zp_br_t2
+    LDA zp_br_resh : STA zp_br_t3
+
+    ; dy = py_int - lv1_y (s16)
+    LDA zp_br_py_h : STA zp_br_dxlo   ; reuse dx slots as scratch
+    LDA #0 : STA zp_br_dxhi
+    LDA zp_br_dxlo : BPL bf_py_pos
+    LDA #$FF : STA zp_br_dxhi
+.bf_py_pos
+    LDA zp_br_dxlo : SEC : SBC zp_seg_lv1y_lo : STA zp_br_dxlo
+    LDA zp_br_dxhi :       SBC zp_seg_lv1y_hi : STA zp_br_dxhi
+
+    ; ldx * dy → s16 in resl/resh
+    LDA zp_seg_ldx : STA zp_br_a
+    JSR br_smul_s8_s16
+
+    ; dot = prod1 - prod2 (s16)
+    LDA zp_br_t2 : SEC : SBC zp_br_resl : STA zp_br_t2
+    LDA zp_br_t3 :       SBC zp_br_resh : STA zp_br_t3
+
+    ; SF_DIR negate
+    LDA zp_seg_flags : AND #$01 : BEQ bf_no_neg
+    LDA #0 : SEC : SBC zp_br_t2 : STA zp_br_t2
+    LDA #0 :       SBC zp_br_t3 : STA zp_br_t3
+.bf_no_neg
+
+    ; dot <= 0 → back-facing
+    LDA zp_br_t3 : BMI bf_back
+    BNE bf_front
+    LDA zp_br_t2 : BEQ bf_back
+.bf_front
+    LDA #0 : STA zp_seg_skip : RTS
+.bf_back
+    LDA #1 : STA zp_seg_skip : RTS
+}
 
 ; ============================================================================
 ; br_render_subsector — process one subsector.
@@ -834,10 +952,11 @@ zp_rom_fhch_hi  = $31
 ;
 ;   Reads subsector header (count, first_seg). Loops through segs:
 ;     1. Mark visited (test instrumentation).
-;     2. Read v1, v2 indices.
-;     3. Transform each vertex using br_to_view.
-;     4. Project x via br_project_x_subpx.
-;     5. Emit one horizontal line at HALF_H to test the pipeline.
+;     2. Read seg header (v1/v2/lv1x/lv1y/ldx/ldy/flags).
+;     3. Read fh/ch from FHCH table; compute height deltas.
+;     4. Back-face test; skip if back-facing.
+;     5. Transform v1, v2; project to screen X and to Y for top+bot edges.
+;     6. Emit top + bottom horizontals (and L+R verticals).
 ; ============================================================================
 .br_render_subsector
 {
@@ -879,19 +998,6 @@ zp_rom_fhch_hi  = $31
     LDA zp_seg_count : BNE seg_proc
     RTS
 .seg_proc
-    ; --- Read fh, ch from FHCH table at offset (seg_idx * 2) ---
-    LDA zp_seg_first_lo : STA zp_br_t0
-    LDA zp_seg_first_hi : STA zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1                ; *2
-    CLC
-    LDA zp_rom_fhch_lo : ADC zp_br_t0 : STA zp_br_p
-    LDA zp_rom_fhch_hi : ADC zp_br_t1 : STA zp_br_p_h
-    LDY #0 : LDA (zp_br_p),Y : STA zp_seg_fh
-    INY    : LDA (zp_br_p),Y : STA zp_seg_ch
-    ; top_dlt = ch - vz, bot_dlt = fh - vz (both s8)
-    LDA zp_seg_ch : SEC : SBC zp_br_vz : STA zp_seg_top_dlt
-    LDA zp_seg_fh : SEC : SBC zp_br_vz : STA zp_seg_bot_dlt
-
     ; --- ptr to seg header = ROM_SEG_HDR + first_seg * 12 ---
     LDA zp_seg_first_lo : STA zp_br_t0
     LDA zp_seg_first_hi : STA zp_br_t1
@@ -910,6 +1016,40 @@ zp_rom_fhch_hi  = $31
     INY    : LDA (zp_br_p),Y : STA zp_seg_v1_hi
     INY    : LDA (zp_br_p),Y : STA zp_seg_v2_lo
     INY    : LDA (zp_br_p),Y : STA zp_seg_v2_hi
+    INY    : LDA (zp_br_p),Y : STA zp_seg_lv1x_lo
+    INY    : LDA (zp_br_p),Y : STA zp_seg_lv1x_hi
+    INY    : LDA (zp_br_p),Y : STA zp_seg_lv1y_lo
+    INY    : LDA (zp_br_p),Y : STA zp_seg_lv1y_hi
+    INY    : LDA (zp_br_p),Y : STA zp_seg_ldx
+    INY    : LDA (zp_br_p),Y : STA zp_seg_ldy
+    INY    : LDA (zp_br_p),Y : STA zp_seg_flags
+
+    ; --- Back-face test ---
+    ; Instrumentation: total segs seen counter at $0A78 (16-bit).
+    INC $0A78 : BNE bf_no_carry_total
+    INC $0A79
+.bf_no_carry_total
+    JSR br_back_face_test
+    LDA zp_seg_skip : BEQ bf_passed
+    JMP s_advance
+.bf_passed
+    ; Instrumentation: front-facing segs counter at $0A7A (16-bit).
+    INC $0A7A : BNE bf_no_carry_front
+    INC $0A7B
+.bf_no_carry_front
+
+    ; --- Read fh, ch from FHCH table at offset (seg_idx * 2) ---
+    LDA zp_seg_first_lo : STA zp_br_t0
+    LDA zp_seg_first_hi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1                ; *2
+    CLC
+    LDA zp_rom_fhch_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_fhch_hi : ADC zp_br_t1 : STA zp_br_p_h
+    LDY #0 : LDA (zp_br_p),Y : STA zp_seg_fh
+    INY    : LDA (zp_br_p),Y : STA zp_seg_ch
+    ; top_dlt = ch - vz, bot_dlt = fh - vz (both s8)
+    LDA zp_seg_ch : SEC : SBC zp_br_vz : STA zp_seg_top_dlt
+    LDA zp_seg_fh : SEC : SBC zp_br_vz : STA zp_seg_bot_dlt
 
     ; Transform v1 (writes sx, sy_top, sy_bot)
     LDA zp_seg_v1_lo : STA zp_br_t0
@@ -956,6 +1096,30 @@ zp_rom_fhch_hi  = $31
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_bot_lo : STA zp_line_yl
     LDA zp_seg_sy1_bot_hi : STA $B3
+    LDA zp_seg_sx2_lo : STA zp_line_xr
+    LDA zp_seg_sx2_hi : STA $B4
+    LDA zp_seg_sy2_bot_lo : STA zp_line_yr
+    LDA zp_seg_sy2_bot_hi : STA $B5
+    LDA #0   : STA $BD
+    JSR SC_DRAW_S16
+
+    ; --- Emit left vertical: (sx1, sy1_top) → (sx1, sy1_bot) ---
+    LDA zp_seg_sx1_lo : STA zp_line_xl
+    LDA zp_seg_sx1_hi : STA $B2
+    LDA zp_seg_sy1_top_lo : STA zp_line_yl
+    LDA zp_seg_sy1_top_hi : STA $B3
+    LDA zp_seg_sx1_lo : STA zp_line_xr
+    LDA zp_seg_sx1_hi : STA $B4
+    LDA zp_seg_sy1_bot_lo : STA zp_line_yr
+    LDA zp_seg_sy1_bot_hi : STA $B5
+    LDA #0   : STA $BD
+    JSR SC_DRAW_S16
+
+    ; --- Emit right vertical: (sx2, sy2_top) → (sx2, sy2_bot) ---
+    LDA zp_seg_sx2_lo : STA zp_line_xl
+    LDA zp_seg_sx2_hi : STA $B2
+    LDA zp_seg_sy2_top_lo : STA zp_line_yl
+    LDA zp_seg_sy2_top_hi : STA $B3
     LDA zp_seg_sx2_lo : STA zp_line_xr
     LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_bot_lo : STA zp_line_yr
