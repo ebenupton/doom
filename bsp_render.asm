@@ -832,6 +832,15 @@ zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
     PLA
     ORA (zp_br_p),Y
     STA (zp_br_p),Y
+
+    ; --- Emit a hardcoded line (proof-of-concept end-to-end) ---
+    LDA #50  : STA zp_line_xl
+    LDA #128 : STA zp_line_yl
+    LDA #200 : STA zp_line_xr
+    LDA #128 : STA zp_line_yr
+    LDA #0
+    STA $B2 : STA $B3 : STA $B4 : STA $B5 : STA $BD
+    JSR SC_DRAW_S16
     RTS
 
     ; --- Read subsector header at ROM_SS + id * 4 ---

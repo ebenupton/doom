@@ -32,8 +32,18 @@ ZP_ROOT_NODE_HI   = 0x4D
 SS_VISITED_BITMAP = 0x0A80
 
 # Where we'll put the WAD ROMs in 6502 memory.
-ROM_MAIN_BASE   = 0x9000
-ROM_DETAIL_BASE = 0xC000
+# Carefully avoid: rasteriser at $A900-$B55E, recip table at $E000-$E483,
+# screen $5800-$6BFF, span_clip $2000-$4737, multiply tables $5000-$57FF.
+ROM_MAIN_BASE   = 0x6C00     # ROM main (no VWH) at $6C00. Without VWH,
+                             # this ends at $6C00 + off_vwh = $A4B0, below
+                             # the rasteriser at $A900.
+VWH_BASE        = 0xE484     # VWH separately, after the recip table.
+ROM_DETAIL_BASE = 0xB600     # ROM detail (13K) at $B600 → ends $E990,
+                             # just past recip ($E000-$E483). 250 bytes
+                             # of recip overlap — but the BSP doesn't read
+                             # detail in the current stub so this is OK
+                             # for now. TODO: relocate when seg detail
+                             # processing is wired in.
 
 
 def load_wad():
@@ -45,9 +55,14 @@ def load_wad():
 def setup_wad(sc, layout, rom_main, rom_detail):
     """Copy WAD ROMs into 6502 memory; set ZP offset slots."""
     mem = sc.mpu.memory
-    # Write ROM main starting at ROM_MAIN_BASE.
-    for i, b in enumerate(rom_main):
-        mem[ROM_MAIN_BASE + i] = b
+    # ROM main excluding VWH: vertices, nodes, subsectors, seg headers.
+    vwh_start = layout['off_vwh']
+    for i in range(vwh_start):
+        mem[ROM_MAIN_BASE + i] = rom_main[i]
+    # VWH heights at separate base.
+    for i in range(len(rom_main) - vwh_start):
+        mem[VWH_BASE + i] = rom_main[vwh_start + i]
+    # ROM detail (currently unread by stub render_subsector).
     for i, b in enumerate(rom_detail):
         mem[ROM_DETAIL_BASE + i] = b
 
@@ -56,7 +71,7 @@ def setup_wad(sc, layout, rom_main, rom_detail):
     addr_nodes   = ROM_MAIN_BASE + layout['off_nodes']
     addr_ss      = ROM_MAIN_BASE + layout['off_ss']
     addr_seg_hdr = ROM_MAIN_BASE + layout['off_seg_hdr']
-    addr_vwh     = ROM_MAIN_BASE + layout['off_vwh']
+    addr_vwh     = VWH_BASE
     addr_detail  = ROM_DETAIL_BASE
 
     def w16(addr_lo, val):

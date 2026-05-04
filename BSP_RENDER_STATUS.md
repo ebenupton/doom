@@ -22,46 +22,54 @@ subsectors of the test WAD using an iterative stack-based walk
 stub (always picks front), so traversal order isn't geometrically
 correct — but every leaf is reached.
 
-## What's blocked
+## End-to-end render works
 
-**Per-seg line emission**. The scaffolding is in place
-(`br_render_subsector` and the dead `br_transform_vertex` block in
-the asm), but calling `JSR SC_DRAW_S16` or `JSR SC_DRAW_U8` from
-inside `br_render_subsector` causes the simulator to end with PC
-stuck at $0000 (infinite BRK loop). This is a stack-imbalance
-symptom: something on the call path between bsp_render → DCL →
-rasteriser is RTSing more times than it pushes, or doing
-unbalanced PHA/PLA, in a way that's only exposed when DCL is
-called nested rather than via py65's `_run` (which sets up just
-one stack frame).
+`test_bsp_render_frame.py` produces **151 pixels** in the
+framebuffer — the BSP walks all 237 subsectors and each emits a
+hardcoded horizontal line (50, 128) → (200, 128) via the existing
+s16 clipper / DCL / rasteriser pipeline. All 237 visits succeed
+(no stack imbalance). The proof-of-concept end-to-end pipeline is
+working.
 
-A standalone test that JSRs DCL twice-deep from a tiny stub at
-$0500 *works* (`PC = $FF00` exit, both inner and outer stubs
-return). So the imbalance is sensitive to the surrounding state
-at the time of the call — not a fixed issue with DCL itself.
+### Bug found and fixed
 
-## To diagnose
+The earlier "stack underflow" was actually a memory-overlap bug:
+the WAD ROM main was loaded at `$9000` (15 KB), which extended to
+`$CD66` and OVERWROTE the rasteriser at `$A900-$B55E`. The
+rasteriser code became garbage; calling DCL hit a corrupted
+instruction at `$A925` ($00 = BRK), which trampolined to the BRK
+vector ($0000) and looped.
 
-The next session should add a py65 instruction-level trace inside
-`br_render_subsector` between "before JSR DCL" and "after JSR DCL"
-to find the exact instruction where the stack goes wrong. Look for:
-
-- An RTS in DCL or rasteriser that pops more than its matching JSR
-  pushed.
-- A PHA/PLA imbalance somewhere in the rasteriser at $A900
-  (`linedraw_or_reloc.bin` — 4 PHA / 2 PLA in the raw bytes,
-  which might be data not code, but worth checking by disassembling).
-- Anything that writes to the 6502 hardware stack page directly.
-
-Once that's resolved, the existing scaffolding should produce a
-partial render: each subsector emits one horizontal line per seg,
-visible in the framebuffer. From there, fill in the back-face test,
-the seg detail / VWH lookup, the records-mode tighten, and the
-correct side-test for proper geometry.
+The fix: load ROM main at `$6C00` (excluding VWH, ending at
+`$A4B0`, safely below the rasteriser), and put VWH separately at
+`$E484` (after the recip table). ROM detail goes at `$B600` for
+now (overlaps with recip but isn't read by the current stub
+render_subsector — needs proper relocation when seg-detail
+processing comes online).
 
 ## Test files
 
 - `test_bsp_render.py` — 5 primitive tests (all pass).
 - `test_bsp_walk.py` — BSP traversal smoke test (passes: 237/237).
-- `test_bsp_render_frame.py` — end-to-end render attempt (currently
-  produces 0 pixels; will work once the stack issue is resolved).
+- `test_bsp_render_frame.py` — end-to-end render: 151 pixels for
+  the test position. Proof that BSP walk + DCL pipeline works.
+
+## Next steps
+
+1. Wire in real seg processing in `br_render_subsector`:
+   read each seg's vertex indices, call `br_to_view` to transform
+   them, project to screen X via `br_project_x_subpx`, emit the
+   line via `JSR SC_DRAW_S16` (`$201E`).
+2. Project Y values from VWH heights via `br_project_y`.
+3. Emit four lines per seg (top, bottom, left vertical, right
+   vertical) per the seg flags.
+4. Add proper back-face test (s16 cross product).
+5. Add proper side test in BSP traversal (currently always picks
+   the right child first — geometry will be wrong until this is
+   fixed).
+6. Add vertex caching with valid-bitmap (`ram_vcache` /
+   `ram_vcache_valid`).
+7. Compare framebuffer to Python reference — debug divergences.
+
+The hardest part (stack/memory bug + arithmetic primitives + BSP
+walk) is now done.

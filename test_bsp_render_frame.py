@@ -32,8 +32,9 @@ ZP_PX = 0x00; ZP_PY = 0x02
 ZP_SMAG = 0x05; ZP_SNEG = 0x06; ZP_SONE = 0x07
 ZP_CMAG = 0x08; ZP_CNEG = 0x09; ZP_CONE = 0x0A
 
-ROM_MAIN_BASE   = 0x9000
-ROM_DETAIL_BASE = 0xC000
+ROM_MAIN_BASE   = 0x6C00       # ROM main (no VWH) — fits below rasteriser.
+VWH_BASE        = 0xE484       # VWH separately, after recip table.
+ROM_DETAIL_BASE = 0xB600       # OK while detail is unread by stub.
 
 
 def setup_wad(sc):
@@ -41,10 +42,14 @@ def setup_wad(sc):
     rom_main = dw.packed_rom_main
     rom_detail = dw.packed_rom_detail
     mem = sc.mpu.memory
-    for i, b in enumerate(rom_main):
-        mem[ROM_MAIN_BASE + i] = b
-    for i, b in enumerate(rom_detail):
-        mem[ROM_DETAIL_BASE + i] = b
+    vwh_start = layout['off_vwh']
+    for i in range(vwh_start):
+        mem[ROM_MAIN_BASE + i] = rom_main[i]
+    for i in range(len(rom_main) - vwh_start):
+        mem[VWH_BASE + i] = rom_main[vwh_start + i]
+    # ROM detail not loaded — not read by the current stub render_subsector,
+    # and there's no contiguous space for it without conflicting with the
+    # recip table at $E000-$E483.
 
     def w16(addr_lo, val):
         mem[addr_lo]     = val & 0xFF
@@ -54,7 +59,7 @@ def setup_wad(sc):
     w16(ZP_ROM_NODES_LO,   ROM_MAIN_BASE + layout['off_nodes'])
     w16(ZP_ROM_SS_LO,      ROM_MAIN_BASE + layout['off_ss'])
     w16(ZP_ROM_SEG_HDR_LO, ROM_MAIN_BASE + layout['off_seg_hdr'])
-    w16(ZP_ROM_VWH_LO,     ROM_MAIN_BASE + layout['off_vwh'])
+    w16(ZP_ROM_VWH_LO,     VWH_BASE)
     w16(ZP_ROM_DETAIL_LO,  ROM_DETAIL_BASE)
     w16(ZP_ROOT_NODE_LO,   layout['n_nodes'] - 1)
 
