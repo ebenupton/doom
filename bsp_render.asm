@@ -798,6 +798,35 @@ zp_seg_sx1_hi   = $62
 zp_seg_sx2_lo   = $63
 zp_seg_sx2_hi   = $64
 zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
+zp_seg_fh       = $66      ; s8 prescaled front floor height
+zp_seg_ch       = $67      ; s8 prescaled front ceiling height
+zp_seg_top_dlt  = $68      ; s8 ch - vz (height delta for top edge)
+zp_seg_bot_dlt  = $69      ; s8 fh - vz (height delta for bottom edge)
+; Per-vertex helper outputs (set by br_seg_xform_vertex)
+zp_seg_sy_top_lo = $6A     ; s16 projected screen y for top edge
+zp_seg_sy_top_hi = $6B
+zp_seg_sy_bot_lo = $6C     ; s16 projected screen y for bottom edge
+zp_seg_sy_bot_hi = $6D
+zp_seg_sx_lo    = $6E      ; s16 projected screen x
+zp_seg_sx_hi    = $6F
+; Per-seg saved vertex projections live in RAM (ZP $70+ is rasteriser
+; territory: RASTER_ZP_SCRSTRT=$70, RASTER_ZP_X0..Y1=$82-$85). Use the
+; gap between BSP_STACK ($0A00-$0A3F) and SS_VISITED_BITMAP ($0A80).
+SEG_PROJ_BUF      = $0A40
+zp_seg_sy1_top_lo = SEG_PROJ_BUF + 0
+zp_seg_sy1_top_hi = SEG_PROJ_BUF + 1
+zp_seg_sy1_bot_lo = SEG_PROJ_BUF + 2
+zp_seg_sy1_bot_hi = SEG_PROJ_BUF + 3
+zp_seg_sy2_top_lo = SEG_PROJ_BUF + 4
+zp_seg_sy2_top_hi = SEG_PROJ_BUF + 5
+zp_seg_sy2_bot_lo = SEG_PROJ_BUF + 6
+zp_seg_sy2_bot_hi = SEG_PROJ_BUF + 7
+; Working-saver for projecting X after project_y trashes vxlo/hi
+zp_v_xint       = $37      ; saved integer view-x (s8)
+zp_v_xfrac      = $38      ; saved fractional view-x (u8)
+; FH/CH table base ptr (set once per frame by Python wrapper)
+zp_rom_fhch_lo  = $30
+zp_rom_fhch_hi  = $31
 
 ; ============================================================================
 ; br_render_subsector — process one subsector.
@@ -833,17 +862,7 @@ zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
     ORA (zp_br_p),Y
     STA (zp_br_p),Y
 
-    ; --- Emit a hardcoded line (proof-of-concept end-to-end) ---
-    LDA #50  : STA zp_line_xl
-    LDA #128 : STA zp_line_yl
-    LDA #200 : STA zp_line_xr
-    LDA #128 : STA zp_line_yr
-    LDA #0
-    STA $B2 : STA $B3 : STA $B4 : STA $B5 : STA $BD
-    JSR SC_DRAW_S16
-    RTS
-
-    ; --- Read subsector header at ROM_SS + id * 4 ---
+    ; --- Read subsector header from ROM_SS + id*4 ---
     LDA zp_node_chlo : STA zp_br_t0
     LDA zp_node_chhi : STA zp_br_t1
     ASL zp_br_t0 : ROL zp_br_t1
@@ -851,120 +870,118 @@ zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
     CLC
     LDA zp_rom_ss_lo : ADC zp_br_t0 : STA zp_br_p
     LDA zp_rom_ss_hi : ADC zp_br_t1 : STA zp_br_p_h
-    LDY #0
-    LDA (zp_br_p),Y : STA zp_seg_count          ; count
-    LDY #2
-    LDA (zp_br_p),Y : STA zp_seg_first_lo
-    LDY #3
-    LDA (zp_br_p),Y : STA zp_seg_first_hi
+    LDY #0 : LDA (zp_br_p),Y : STA zp_seg_count
+    LDY #2 : LDA (zp_br_p),Y : STA zp_seg_first_lo
+    LDY #3 : LDA (zp_br_p),Y : STA zp_seg_first_hi
 
     ; --- Loop over segs ---
-.ss_seg_loop
-    LDA zp_seg_count : BNE ss_have_seg
+.seg_loop
+    LDA zp_seg_count : BNE seg_proc
     RTS
-.ss_have_seg
-
-    ; Compute pointer to seg header = ROM_SEG_HDR + first_seg * 12.
-    ; first_seg * 12 = first_seg * 8 + first_seg * 4.
+.seg_proc
+    ; --- Read fh, ch from FHCH table at offset (seg_idx * 2) ---
     LDA zp_seg_first_lo : STA zp_br_t0
     LDA zp_seg_first_hi : STA zp_br_t1
-    ; * 4
-    ASL zp_br_t0 : ROL zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    LDA zp_br_t0 : STA zp_br_t2     ; save *4
-    LDA zp_br_t1 : STA zp_br_t3
-    ; *8 (= shift again)
-    ASL zp_br_t0 : ROL zp_br_t1
-    ; sum = *8 + *4 = *12
+    ASL zp_br_t0 : ROL zp_br_t1                ; *2
     CLC
-    LDA zp_br_t0 : ADC zp_br_t2 : STA zp_br_t0
+    LDA zp_rom_fhch_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_fhch_hi : ADC zp_br_t1 : STA zp_br_p_h
+    LDY #0 : LDA (zp_br_p),Y : STA zp_seg_fh
+    INY    : LDA (zp_br_p),Y : STA zp_seg_ch
+    ; top_dlt = ch - vz, bot_dlt = fh - vz (both s8)
+    LDA zp_seg_ch : SEC : SBC zp_br_vz : STA zp_seg_top_dlt
+    LDA zp_seg_fh : SEC : SBC zp_br_vz : STA zp_seg_bot_dlt
+
+    ; --- ptr to seg header = ROM_SEG_HDR + first_seg * 12 ---
+    LDA zp_seg_first_lo : STA zp_br_t0
+    LDA zp_seg_first_hi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1                ; *2
+    ASL zp_br_t0 : ROL zp_br_t1                ; *4
+    LDA zp_br_t0 : STA zp_br_t2
+    LDA zp_br_t1 : STA zp_br_t3
+    ASL zp_br_t0 : ROL zp_br_t1                ; *8
+    CLC
+    LDA zp_br_t0 : ADC zp_br_t2 : STA zp_br_t0 ; *12
     LDA zp_br_t1 : ADC zp_br_t3 : STA zp_br_t1
     CLC
     LDA zp_rom_seg_hdr_lo : ADC zp_br_t0 : STA zp_br_p
     LDA zp_rom_seg_hdr_hi : ADC zp_br_t1 : STA zp_br_p_h
+    LDY #0 : LDA (zp_br_p),Y : STA zp_seg_v1_lo
+    INY    : LDA (zp_br_p),Y : STA zp_seg_v1_hi
+    INY    : LDA (zp_br_p),Y : STA zp_seg_v2_lo
+    INY    : LDA (zp_br_p),Y : STA zp_seg_v2_hi
 
-    ; Read v1_idx, v2_idx.
-    LDY #0
-    LDA (zp_br_p),Y : STA zp_seg_v1_lo
-    INY : LDA (zp_br_p),Y : STA zp_seg_v1_hi
-    INY : LDA (zp_br_p),Y : STA zp_seg_v2_lo
-    INY : LDA (zp_br_p),Y : STA zp_seg_v2_hi
-
-    ; --- Transform v1 ---
+    ; Transform v1 (writes sx, sy_top, sy_bot)
     LDA zp_seg_v1_lo : STA zp_br_t0
     LDA zp_seg_v1_hi : STA zp_br_t1
-    JSR br_transform_vertex
-    LDA zp_seg_skip : BEQ seg_no_skip
-    JMP seg_advance
-.seg_no_skip
-    LDA zp_br_resl : STA zp_seg_sx1_lo
-    LDA zp_br_resh : STA zp_seg_sx1_hi
+    JSR br_seg_xform_vertex
+    LDA zp_seg_skip : BEQ s_v1_ok
+    JMP s_advance
+.s_v1_ok
+    LDA zp_seg_sx_lo : STA zp_seg_sx1_lo
+    LDA zp_seg_sx_hi : STA zp_seg_sx1_hi
+    LDA zp_seg_sy_top_lo : STA zp_seg_sy1_top_lo
+    LDA zp_seg_sy_top_hi : STA zp_seg_sy1_top_hi
+    LDA zp_seg_sy_bot_lo : STA zp_seg_sy1_bot_lo
+    LDA zp_seg_sy_bot_hi : STA zp_seg_sy1_bot_hi
 
-    ; --- Transform v2 ---
+    ; Transform v2
     LDA zp_seg_v2_lo : STA zp_br_t0
     LDA zp_seg_v2_hi : STA zp_br_t1
-    JSR br_transform_vertex
-    LDA zp_seg_skip : BEQ seg_no_skip2
-    JMP seg_advance
-.seg_no_skip2
-    LDA zp_br_resl : STA zp_seg_sx2_lo
-    LDA zp_br_resh : STA zp_seg_sx2_hi
+    JSR br_seg_xform_vertex
+    LDA zp_seg_skip : BEQ s_v2_ok
+    JMP s_advance
+.s_v2_ok
+    LDA zp_seg_sx_lo : STA zp_seg_sx2_lo
+    LDA zp_seg_sx_hi : STA zp_seg_sx2_hi
+    LDA zp_seg_sy_top_lo : STA zp_seg_sy2_top_lo
+    LDA zp_seg_sy_top_hi : STA zp_seg_sy2_top_hi
+    LDA zp_seg_sy_bot_lo : STA zp_seg_sy2_bot_lo
+    LDA zp_seg_sy_bot_hi : STA zp_seg_sy2_bot_hi
 
-    ; --- Emit a horizontal line at HALF_H + Y_BIAS = 80 + 48 = 128 ---
-    ; (The clipper expects Y values pre-biased by Y_BIAS = 48.)
+    ; --- Emit top horizontal: (sx1, sy1_top) → (sx2, sy2_top) ---
     LDA zp_seg_sx1_lo : STA zp_line_xl
-    LDA zp_seg_sx1_hi : STA $B2          ; LC_X1_HI
-    LDA #128 : STA zp_line_yl
-    LDA #0   : STA $B3                    ; LC_Y1_HI
+    LDA zp_seg_sx1_hi : STA $B2
+    LDA zp_seg_sy1_top_lo : STA zp_line_yl
+    LDA zp_seg_sy1_top_hi : STA $B3
     LDA zp_seg_sx2_lo : STA zp_line_xr
     LDA zp_seg_sx2_hi : STA $B4
-    LDA #128 : STA zp_line_yr
-    LDA #0   : STA $B5
-
-    ; Order endpoints: if xl > xr, swap. Compare s16 (signed).
-    LDA $B4 : SEC : SBC $B2          ; xr.HI - xl.HI
-    BVC sw_no_v_flip
-    EOR #$80
-.sw_no_v_flip
-    BMI seg_swap                      ; result negative → xr < xl → swap
-    BNE seg_no_swap                   ; positive non-zero → ordered, OK
-    ; HI bytes equal: compare LO bytes (unsigned).
-    LDA zp_line_xl : CMP zp_line_xr : BCC seg_no_swap : BEQ seg_no_swap
-.seg_swap
-    LDA zp_line_xl : LDX zp_line_xr : STX zp_line_xl : STA zp_line_xr
-    LDA zp_line_yl : LDX zp_line_yr : STX zp_line_yl : STA zp_line_yr
-    LDA $B2 : LDX $B4 : STX $B2 : STA $B4
-    LDA $B3 : LDX $B5 : STX $B3 : STA $B5
-.seg_no_swap
-
-    ; Disable records on this call.
-    LDA #0 : STA $BD                  ; ZP_DCL_REC_BUF_H
-
+    LDA zp_seg_sy2_top_lo : STA zp_line_yr
+    LDA zp_seg_sy2_top_hi : STA $B5
+    LDA #0   : STA $BD
     JSR SC_DRAW_S16
 
-.seg_advance
-    ; Advance to next seg.
+    ; --- Emit bottom horizontal: (sx1, sy1_bot) → (sx2, sy2_bot) ---
+    LDA zp_seg_sx1_lo : STA zp_line_xl
+    LDA zp_seg_sx1_hi : STA $B2
+    LDA zp_seg_sy1_bot_lo : STA zp_line_yl
+    LDA zp_seg_sy1_bot_hi : STA $B3
+    LDA zp_seg_sx2_lo : STA zp_line_xr
+    LDA zp_seg_sx2_hi : STA $B4
+    LDA zp_seg_sy2_bot_lo : STA zp_line_yr
+    LDA zp_seg_sy2_bot_hi : STA $B5
+    LDA #0   : STA $BD
+    JSR SC_DRAW_S16
+
+.s_advance
     LDA #0 : STA zp_seg_skip
-    INC zp_seg_first_lo : BNE no_carry_first
+    INC zp_seg_first_lo : BNE s_no_carry
     INC zp_seg_first_hi
-.no_carry_first
+.s_no_carry
     DEC zp_seg_count
-    JMP ss_seg_loop
+    JMP seg_loop
 }
 
 ; ============================================================================
-; br_transform_vertex — fetch vertex by index, transform to view, project
-; to screen X.
+; br_seg_xform_vertex — fetch vertex by index, transform to view, project X.
 ;   Input:  zp_br_t0:t1 = vertex index (u16).
-;   Output: zp_br_resl/h = screen X (s16). zp_seg_skip = 1 if near-clipped.
-;
-; Uses zp_rom_verts_lo/hi for ROM base. Each vertex is 4 bytes (s16 x, y).
+;   Output: zp_br_resl/h = screen x (s16). zp_seg_skip = 1 if near-clipped.
 ; ============================================================================
-.br_transform_vertex
+.br_seg_xform_vertex
 {
     LDA #0 : STA zp_seg_skip
 
-    ; ptr = ROM_VERTS + idx * 4
+    ; ptr = ROM_VERTS + idx*4
     LDA zp_br_t0 : STA zp_br_t2
     LDA zp_br_t1 : STA zp_br_t3
     ASL zp_br_t2 : ROL zp_br_t3
@@ -973,45 +990,55 @@ zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
     LDA zp_rom_verts_lo : ADC zp_br_t2 : STA zp_br_p
     LDA zp_rom_verts_hi : ADC zp_br_t3 : STA zp_br_p_h
 
-    ; Read full s16 x and y from ROM.
+    ; Read full s16 vertex x, y from ROM
     LDY #0 : LDA (zp_br_p),Y : STA zp_br_dxlo
     LDY #1 : LDA (zp_br_p),Y : STA zp_br_dxhi
     LDY #2 : LDA (zp_br_p),Y : STA zp_br_dylo
     LDY #3 : LDA (zp_br_p),Y : STA zp_br_dyhi
 
-    ; Transform to view space.
     JSR br_to_view
 
-    ; Near-clip: skip if vy < 1 (i.e. behind us). vy is s16 (8.8 fixed).
-    ; vy.HI < 0 → behind. vy.HI == 0 AND vy.LO < 1 → ditto.
-    LDA zp_br_vyhi : BPL vy_check_lo
+    ; Save view-space x (vxhi=int part, vxlo=frac part) before project_y
+    ; clobbers vxlo/hi.
+    LDA zp_br_vxhi : STA zp_v_xint
+    LDA zp_br_vxlo : STA zp_v_xfrac
+
+    ; Near-clip: skip if vy < 1
+    LDA zp_br_vyhi : BPL nc_pos
     LDA #1 : STA zp_seg_skip : RTS
-.vy_check_lo
-    BNE vy_ok
-    LDA zp_br_vylo : CMP #1 : BCS vy_ok
+.nc_pos
+    BNE nc_ok                          ; HI > 0 → safe (vy ≥ 256)
+    LDA zp_br_vylo : CMP #1 : BCS nc_ok
     LDA #1 : STA zp_seg_skip : RTS
-.vy_ok
+.nc_ok
 
-    ; Build vy_idx (9.1 fixed) = max(2, vy << 1) where vy is the s16 8.8
-    ; total. vy>>7 in 9.1 form = take HI byte + bit 7 of LO into LSB.
-    ; Equivalently: shift the s16 vy left by 1 in place.
-    ASL zp_br_vylo : ROL zp_br_vyhi
-    LDA zp_br_vyhi : STA zp_br_t0
-    LDA #0 : STA zp_br_t1                 ; HI byte of vy_idx (always 0 or 1)
-    ; Note: we destroyed vy in the shift but don't need it after this.
+    ; vy_idx = vy << 1 (9.1 fixed). Capture carry for hi byte.
+    LDA zp_br_vylo : ASL A
+    LDA zp_br_vyhi : ROL A
+    STA zp_br_t0                       ; lo
+    LDA #0 : ROL A
+    STA zp_br_t1                       ; hi
 
-    ; Reciprocal lookup.
-    JSR br_recip
+    JSR br_recip                        ; rhi/rlo = reciprocal
 
-    ; Project: vx = high byte of total_vx (rounded). For now use the
-    ; rounded value: (total_vx + 128) >> 8 — i.e. add 128 to LO, take HI.
-    LDA zp_br_vxlo : CLC : ADC #128
-    LDA zp_br_vxhi : ADC #0           ; A = rounded vx
-    STA zp_br_t0
-    LDA #0 : STA zp_br_t1             ; vx_frac = 0 (skip sub-pixel for now)
+    ; --- Project Y for top edge (height = ch - vz) ---
+    LDA zp_seg_top_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_top_lo
+    LDA zp_br_resh : STA zp_seg_sy_top_hi
 
+    ; --- Project Y for bottom edge (height = fh - vz) ---
+    LDA zp_seg_bot_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_bot_lo
+    LDA zp_br_resh : STA zp_seg_sy_bot_hi
+
+    ; --- Project X using saved view-x integer + fractional parts ---
+    LDA zp_v_xint  : STA zp_br_t0
+    LDA zp_v_xfrac : STA zp_br_t1
     JSR br_project_x_subpx
-    ; resl/h = sx (s16). Done.
+    LDA zp_br_resl : STA zp_seg_sx_lo
+    LDA zp_br_resh : STA zp_seg_sx_hi
     RTS
 }
 

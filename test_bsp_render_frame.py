@@ -1,10 +1,6 @@
 """End-to-end test: render one frame using bsp_render's BSP walker
-+ minimal seg processor. Counts pixels in the framebuffer to confirm
-that lines are actually being emitted.
-
-This is a smoke test, not a pixel-perfect comparison. The seg
-processor emits one horizontal line per seg at HALF_H, which won't
-match the Python reference but should produce visible pixels.
++ seg processor with real fh/ch heights. Counts pixels in the
+framebuffer to confirm that lines are actually being emitted.
 """
 import os, math
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
@@ -14,6 +10,7 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 from span_clip_6502 import SpanClip6502
 import doom_wireframe as dw
 import fp
+from wad_packed import SEG_DTL_SIZE, SD_FH, SD_CH
 
 ENTRY_BR_VIEW_SETUP   = 0x4809
 ENTRY_BR_RENDER_FRAME = 0x4815
@@ -26,15 +23,18 @@ ZP_ROM_SEG_HDR_LO = 0x46
 ZP_ROM_VWH_LO     = 0x48
 ZP_ROM_DETAIL_LO  = 0x4A
 ZP_ROOT_NODE_LO   = 0x4C
+ZP_ROM_FHCH_LO    = 0x30        # fh/ch table base
 
 # View context slots
 ZP_PX = 0x00; ZP_PY = 0x02
+ZP_VZ = 0x04
 ZP_SMAG = 0x05; ZP_SNEG = 0x06; ZP_SONE = 0x07
 ZP_CMAG = 0x08; ZP_CNEG = 0x09; ZP_CONE = 0x0A
 
 ROM_MAIN_BASE   = 0x6C00       # ROM main (no VWH) — fits below rasteriser.
 VWH_BASE        = 0xE484       # VWH separately, after recip table.
 ROM_DETAIL_BASE = 0xB600       # OK while detail is unread by stub.
+ROM_FHCH_BASE   = 0xB600       # 1320-byte fh/ch table (same area; detail unused now)
 
 
 def setup_wad(sc):
@@ -47,9 +47,14 @@ def setup_wad(sc):
         mem[ROM_MAIN_BASE + i] = rom_main[i]
     for i in range(len(rom_main) - vwh_start):
         mem[VWH_BASE + i] = rom_main[vwh_start + i]
-    # ROM detail not loaded — not read by the current stub render_subsector,
-    # and there's no contiguous space for it without conflicting with the
-    # recip table at $E000-$E483.
+
+    # Pack a small fh/ch table (2 bytes per seg) at ROM_FHCH_BASE.
+    # 660 segs × 2 = 1320 bytes — far smaller than full rom_detail.
+    n_segs = layout['n_segs']
+    for si in range(n_segs):
+        off = si * SEG_DTL_SIZE
+        mem[ROM_FHCH_BASE + si * 2 + 0] = rom_detail[off + SD_FH]
+        mem[ROM_FHCH_BASE + si * 2 + 1] = rom_detail[off + SD_CH]
 
     def w16(addr_lo, val):
         mem[addr_lo]     = val & 0xFF
@@ -61,6 +66,7 @@ def setup_wad(sc):
     w16(ZP_ROM_SEG_HDR_LO, ROM_MAIN_BASE + layout['off_seg_hdr'])
     w16(ZP_ROM_VWH_LO,     VWH_BASE)
     w16(ZP_ROM_DETAIL_LO,  ROM_DETAIL_BASE)
+    w16(ZP_ROM_FHCH_LO,    ROM_FHCH_BASE)
     w16(ZP_ROOT_NODE_LO,   layout['n_nodes'] - 1)
 
 
@@ -73,6 +79,11 @@ def setup_view(sc, px, py, ab):
     mem[ZP_PX + 1] = (px_88 >> 8) & 0xFF
     mem[ZP_PY]     = py_88 & 0xFF
     mem[ZP_PY + 1] = (py_88 >> 8) & 0xFF
+
+    # vz = prescale_height(player_floor + 41), s8.
+    fz = dw.player_floor(px, py)
+    vz = dw._prescale_height(fz + 41)
+    mem[ZP_VZ] = vz & 0xFF
 
     s_mag, s_neg, s_one, c_mag, c_neg, c_one = fp.fp_sincos(ab)
     mem[ZP_SMAG] = s_mag
@@ -118,7 +129,7 @@ def main():
     clear_screen(sc)
 
     print(f"Rendering frame from (px={px}, py={py}, angle={ab})...")
-    sc._run(ENTRY_BR_RENDER_FRAME)
+    sc._run(ENTRY_BR_RENDER_FRAME, max_cycles=10000000)
 
     n = count_pixels(sc)
     print(f"  Framebuffer has {n} pixels set")
