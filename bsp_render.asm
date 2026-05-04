@@ -27,11 +27,16 @@ ORG $4800
 ; ============================================================================
 
 ; Per-frame view-context (Python wrapper writes once per frame)
-zp_br_px        = $00       ; s16 player x_88 (8.8 fixed)
+zp_br_px        = $00       ; s16 player x_88 (8.8 fixed, prescaled)
 zp_br_px_h      = $01
 zp_br_py        = $02
 zp_br_py_h      = $03
 zp_br_vz        = $04       ; s8 eye-height (prescaled)
+; Raw (un-prescaled) player position for BSP side test.
+zp_br_pxraw_lo  = $71       ; s16 player x relative to map_center (raw)
+zp_br_pxraw_hi  = $72
+zp_br_pyraw_lo  = $73
+zp_br_pyraw_hi  = $74
 zp_br_smag      = $05       ; u8 sin magnitude
 zp_br_sneg      = $06       ; 1 if sin negative
 zp_br_sone      = $07       ; 1 if |sin| == 1
@@ -104,6 +109,7 @@ SC_UMUL8        = $2021
 SC_UDIV16_8     = $2024
 SC_DRAW_S16     = $201E
 SC_DRAW_U8      = $2015      ; standalone DCL (u8 input, no clipper prelude)
+SC_MARK_SOLID   = $2003
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 zp_mul_b        = $D9
@@ -588,6 +594,71 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 }
 
 ; ============================================================================
+; HELPER: br_smul_s16_s16_s32 — signed s16 × s16 → s32 (4-byte little-endian).
+;   Inputs:  zp_br_dxlo:dxhi (A, s16), zp_br_dylo:dyhi (B, s16).
+;   Output:  zp_br_t0:t1:t2:t3 (s32).
+;   Clobbers: zp_br_dxlo:dxhi, zp_br_dylo:dyhi (negated for sign tracking).
+; ============================================================================
+.br_smul_s16_s16_s32
+{
+    LDA #0 : STA zp_br_sign
+
+    ; |A|
+    LDA zp_br_dxhi : BPL aa_pos
+    LDA #0 : SEC : SBC zp_br_dxlo : STA zp_br_dxlo
+    LDA #0 :       SBC zp_br_dxhi : STA zp_br_dxhi
+    INC zp_br_sign
+.aa_pos
+    ; |B|
+    LDA zp_br_dyhi : BPL bb_pos
+    LDA #0 : SEC : SBC zp_br_dylo : STA zp_br_dylo
+    LDA #0 :       SBC zp_br_dyhi : STA zp_br_dyhi
+    LDA zp_br_sign : EOR #1 : STA zp_br_sign
+.bb_pos
+
+    ; al × bl → t0:t1
+    LDA zp_br_dxlo : STA zp_mul_b
+    LDA zp_br_dylo
+    JSR SC_UMUL8
+    LDA zp_prod_lo : STA zp_br_t0
+    LDA zp_prod_hi : STA zp_br_t1
+
+    ; ah × bh → t2:t3
+    LDA zp_br_dxhi : STA zp_mul_b
+    LDA zp_br_dyhi
+    JSR SC_UMUL8
+    LDA zp_prod_lo : STA zp_br_t2
+    LDA zp_prod_hi : STA zp_br_t3
+
+    ; al × bh → add to t1:t2:t3
+    LDA zp_br_dyhi : STA zp_mul_b
+    LDA zp_br_dxlo
+    JSR SC_UMUL8
+    CLC
+    LDA zp_prod_lo : ADC zp_br_t1 : STA zp_br_t1
+    LDA zp_prod_hi : ADC zp_br_t2 : STA zp_br_t2
+    LDA zp_br_t3   : ADC #0       : STA zp_br_t3
+
+    ; ah × bl → add to t1:t2:t3
+    LDA zp_br_dylo : STA zp_mul_b
+    LDA zp_br_dxhi
+    JSR SC_UMUL8
+    CLC
+    LDA zp_prod_lo : ADC zp_br_t1 : STA zp_br_t1
+    LDA zp_prod_hi : ADC zp_br_t2 : STA zp_br_t2
+    LDA zp_br_t3   : ADC #0       : STA zp_br_t3
+
+    ; Apply sign (negate s32 if negative)
+    LDA zp_br_sign : BEQ s32_pos
+    LDA #0 : SEC : SBC zp_br_t0 : STA zp_br_t0
+    LDA #0 :       SBC zp_br_t1 : STA zp_br_t1
+    LDA #0 :       SBC zp_br_t2 : STA zp_br_t2
+    LDA #0 :       SBC zp_br_t3 : STA zp_br_t3
+.s32_pos
+    RTS
+}
+
+; ============================================================================
 ; br_project_x_subpx — project view-space X to screen X with sub-pixel.
 ;
 ;   Inputs (zp):
@@ -774,27 +845,62 @@ zp_node_chhi  = $59
 .bsp_node
     ; --- Internal node ---
     ; Compute pointer to node = ROM_NODES + node_id * 16.
-    ; node_id is in zp_node_chlo:hi (we just popped it). Multiply by 16.
-    ; Lo byte * 16: low 4 bits go to high byte, upper 4 stay in low.
-    ; hi_byte * 16: shifts up — but if id × 16 might overflow u16,
-    ; we need 24-bit math. For up to ~4000 nodes, id × 16 = up to 64K,
-    ; just barely fits u16. Use 16-bit shift left by 4.
     LDA zp_node_chlo : STA zp_br_t0
     LDA zp_node_chhi : STA zp_br_t1
     ASL zp_br_t0 : ROL zp_br_t1
     ASL zp_br_t0 : ROL zp_br_t1
     ASL zp_br_t0 : ROL zp_br_t1
     ASL zp_br_t0 : ROL zp_br_t1
-    ; node_offset = (id * 16) in zp_br_t0:t1.
     CLC
     LDA zp_rom_nodes_lo : ADC zp_br_t0 : STA zp_br_p
     LDA zp_rom_nodes_hi : ADC zp_br_t1 : STA zp_br_p_h
 
-    ; Read node fields (skip dx/dy — placeholder side test).
-    ; For now, always go front first (right child first). This is
-    ; INCORRECT geometrically but lets us walk the tree. Real side
-    ; test requires s16 × s16 = s32 multiply (TODO).
-    LDA #0 : STA zp_side             ; placeholder: always side 0
+    ; Read node fields: nx, ny, ndx, ndy (s16 each).
+    LDY #0 : LDA (zp_br_p),Y : STA zp_node_nxlo
+    INY    : LDA (zp_br_p),Y : STA zp_node_nxhi
+    INY    : LDA (zp_br_p),Y : STA zp_node_nylo
+    INY    : LDA (zp_br_p),Y : STA zp_node_nyhi
+    INY    : LDA (zp_br_p),Y : STA zp_node_dxlo
+    INY    : LDA (zp_br_p),Y : STA zp_node_dxhi
+    INY    : LDA (zp_br_p),Y : STA zp_node_dylo
+    INY    : LDA (zp_br_p),Y : STA zp_node_dyhi
+
+    ; --- Side test: side = 0 if (ndy*(px-nx) - ndx*(py-ny)) > 0 else 1.
+    ; Compute prod1 = ndy * (px_raw - nx_raw) → s32 in t0:t3.
+    ; First: (px - nx) → zp_br_dxlo:dxhi (s16).
+    LDA zp_br_pxraw_lo : SEC : SBC zp_node_nxlo : STA zp_br_dxlo
+    LDA zp_br_pxraw_hi :       SBC zp_node_nxhi : STA zp_br_dxhi
+    ; B = ndy → dylo:dyhi
+    LDA zp_node_dylo : STA zp_br_dylo
+    LDA zp_node_dyhi : STA zp_br_dyhi
+    JSR br_smul_s16_s16_s32
+    ; Save s32 to RAM at $0A50-$0A53.
+    LDA zp_br_t0 : STA $0A50
+    LDA zp_br_t1 : STA $0A51
+    LDA zp_br_t2 : STA $0A52
+    LDA zp_br_t3 : STA $0A53
+
+    ; Compute prod2 = ndx * (py_raw - ny_raw) → s32.
+    LDA zp_br_pyraw_lo : SEC : SBC zp_node_nylo : STA zp_br_dxlo
+    LDA zp_br_pyraw_hi :       SBC zp_node_nyhi : STA zp_br_dxhi
+    LDA zp_node_dxlo : STA zp_br_dylo
+    LDA zp_node_dxhi : STA zp_br_dyhi
+    JSR br_smul_s16_s16_s32
+    ; t0:t3 = prod2
+
+    ; side_s32 = prod1 - prod2 (32-bit signed subtract).
+    LDA $0A50 : SEC : SBC zp_br_t0 : STA $0A50
+    LDA $0A51 :       SBC zp_br_t1 : STA $0A51
+    LDA $0A52 :       SBC zp_br_t2 : STA $0A52
+    LDA $0A53 :       SBC zp_br_t3 : STA $0A53
+
+    ; side = 0 if side_s32 > 0, else 1 (negative or zero).
+    LDA $0A53 : BMI st_side1
+    ORA $0A52 : ORA $0A51 : ORA $0A50 : BEQ st_side1
+    LDA #0 : STA zp_side : JMP st_done
+.st_side1
+    LDA #1 : STA zp_side
+.st_done
 
     ; Read right child (offset +8) and left child (offset +10).
     LDY #8 : LDA (zp_br_p),Y : STA zp_br_t0   ; right.lo
@@ -802,14 +908,23 @@ zp_node_chhi  = $59
     INY    : LDA (zp_br_p),Y : STA zp_br_t2   ; left.lo
     INY    : LDA (zp_br_p),Y : STA zp_br_t3   ; left.hi
 
-    ; Push back child first (visited later), then near child (visited next).
-    ; side=0 → right is near, left is far. (Or vice versa — for now we just
-    ; push left first then right, regardless.)
+    ; side=0 → right is near, left is far. side=1 → vice versa.
+    ; Push far first, near last, so near is popped first.
     LDX zp_bsp_stack_sp
-    LDA zp_br_t2 : STA BSP_STACK,X : INX     ; far.lo
-    LDA zp_br_t3 : STA BSP_STACK,X : INX     ; far.hi
-    LDA zp_br_t0 : STA BSP_STACK,X : INX     ; near.lo
-    LDA zp_br_t1 : STA BSP_STACK,X : INX     ; near.hi
+    LDA zp_side : BNE st_side_back
+    ; side=0: far=left, near=right
+    LDA zp_br_t2 : STA BSP_STACK,X : INX
+    LDA zp_br_t3 : STA BSP_STACK,X : INX
+    LDA zp_br_t0 : STA BSP_STACK,X : INX
+    LDA zp_br_t1 : STA BSP_STACK,X : INX
+    JMP st_pushed
+.st_side_back
+    ; side=1: far=right, near=left
+    LDA zp_br_t0 : STA BSP_STACK,X : INX
+    LDA zp_br_t1 : STA BSP_STACK,X : INX
+    LDA zp_br_t2 : STA BSP_STACK,X : INX
+    LDA zp_br_t3 : STA BSP_STACK,X : INX
+.st_pushed
     STX zp_bsp_stack_sp
     JMP bsp_loop
 }
