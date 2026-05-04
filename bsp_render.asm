@@ -1242,6 +1242,40 @@ zp_seg_flags    = $3F      ; u8
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
 
+    ; --- mark_solid for solid walls (SF_SOLID = $02) ---
+    LDA zp_seg_flags : AND #$02 : BEQ ms_skip
+    ; Clamp sx1 to u8 → zp_br_t2
+    LDA zp_seg_sx1_hi : BMI ms_sx1_neg
+    BEQ ms_sx1_lo
+    LDA #$FF : STA zp_br_t2 : JMP ms_sx2
+.ms_sx1_neg
+    LDA #0   : STA zp_br_t2 : JMP ms_sx2
+.ms_sx1_lo
+    LDA zp_seg_sx1_lo : STA zp_br_t2
+.ms_sx2
+    ; Clamp sx2 to u8 → zp_br_t3
+    LDA zp_seg_sx2_hi : BMI ms_sx2_neg
+    BEQ ms_sx2_lo
+    LDA #$FF : STA zp_br_t3 : JMP ms_setrange
+.ms_sx2_neg
+    LDA #0   : STA zp_br_t3 : JMP ms_setrange
+.ms_sx2_lo
+    LDA zp_seg_sx2_lo : STA zp_br_t3
+.ms_setrange
+    ; ilo = min(t2, t3), ihi = max(t2, t3)
+    LDA zp_br_t2 : CMP zp_br_t3 : BCC ms_t2lt
+    ; t2 >= t3
+    LDA zp_br_t3 : STA $C2          ; ilo = t3
+    LDA zp_br_t2 : STA $C3          ; ihi = t2
+    JMP ms_invoke
+.ms_t2lt
+    LDA zp_br_t2 : STA $C2          ; ilo = t2
+    LDA zp_br_t3 : STA $C3          ; ihi = t3
+.ms_invoke
+    LDA #0 : STA $A8                ; zp_ms_emit = 0 (skip line emission)
+    JSR SC_MARK_SOLID
+.ms_skip
+
 .s_advance
     LDA #0 : STA zp_seg_skip
     INC zp_seg_first_lo : BNE s_no_carry
