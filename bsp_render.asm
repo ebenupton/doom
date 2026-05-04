@@ -82,6 +82,18 @@ zp_br_t1        = $21
 zp_br_t2        = $22
 zp_br_t3        = $23
 
+; Vertex cache helper state
+zp_seg_v_idx_lo   = $77    ; cached: vertex index (u16)
+zp_seg_v_idx_hi   = $78
+zp_seg_v_bitm     = $79    ; valid-bitmap mask (1 << (idx & 7))
+zp_seg_v_cache_lo = $7A    ; cached: pointer to this vertex's cache entry
+zp_seg_v_cache_hi = $7B
+; Side test working state (s16 deltas px-nx, py-ny held across fast/slow paths)
+zp_seg_dxraw_lo   = $7C
+zp_seg_dxraw_hi   = $7D
+zp_seg_dyraw_lo   = $7E
+zp_seg_dyraw_hi   = $7F
+
 ; ============================================================================
 ; Memory map (RAM caches + ROM tables — Python wrapper places data here)
 ; ============================================================================
@@ -884,37 +896,68 @@ zp_node_chhi  = $59
     INY    : LDA (zp_br_p),Y : STA zp_node_dyhi
 
     ; --- Side test: side = 0 if (ndy*(px-nx) - ndx*(py-ny)) > 0 else 1.
-    ; Compute prod1 = ndy * (px_raw - nx_raw) → s32 in t0:t3.
-    ; First: (px - nx) → zp_br_dxlo:dxhi (s16).
-    LDA zp_br_pxraw_lo : SEC : SBC zp_node_nxlo : STA zp_br_dxlo
-    LDA zp_br_pxraw_hi :       SBC zp_node_nxhi : STA zp_br_dxhi
-    ; B = ndy → dylo:dyhi
+    ;
+    ; Fast paths for axis-aligned partition lines (~73% of nodes):
+    ;   If ndx == 0 (and ndy != 0):
+    ;     side = sign(ndy) XOR sign(px-nx)        — both nonzero
+    ;   If ndy == 0 (and ndx != 0):
+    ;     side = NOT (sign(ndx) XOR sign(py-ny))  — note negation
+    ;   (boundary case dot==0 falls through to side=1).
+    ;
+    ; General path: full s16×s16 → s24 cross product (3 partial muls each,
+    ; products fit in s24 for our scene).
+
+    ; Compute (px - nx) and (py - ny) once — used by both fast and slow paths.
+    LDA zp_br_pxraw_lo : SEC : SBC zp_node_nxlo : STA zp_seg_dxraw_lo
+    LDA zp_br_pxraw_hi :       SBC zp_node_nxhi : STA zp_seg_dxraw_hi
+    LDA zp_br_pyraw_lo : SEC : SBC zp_node_nylo : STA zp_seg_dyraw_lo
+    LDA zp_br_pyraw_hi :       SBC zp_node_nyhi : STA zp_seg_dyraw_hi
+
+    ; Check ndx == 0 (both bytes zero)
+    LDA zp_node_dxlo : ORA zp_node_dxhi : BNE st_ndx_nz
+    ; ndx == 0: side = sign(ndy) XOR sign(px-nx). Result: 0 if signs match
+    ; (positive product), else 1. Zero in either factor → product 0 → side=1.
+    LDA zp_node_dylo : ORA zp_node_dyhi : BEQ st_jmp_side1   ; ndy also 0
+    LDA zp_seg_dxraw_lo : ORA zp_seg_dxraw_hi : BEQ st_jmp_side1
+    LDA zp_node_dyhi : EOR zp_seg_dxraw_hi : BMI st_jmp_side1
+    JMP st_side0
+.st_jmp_side1
+    JMP st_side1
+.st_ndx_nz
+    ; Check ndy == 0
+    LDA zp_node_dylo : ORA zp_node_dyhi : BNE st_general
+    ; ndy == 0: side = sign(ndx) XOR sign(py-ny) inverted (since the term is
+    ; negated in the cross product). Equivalent: side = 0 if signs DIFFER.
+    LDA zp_seg_dyraw_lo : ORA zp_seg_dyraw_hi : BEQ st_jmp_side1
+    LDA zp_node_dxhi : EOR zp_seg_dyraw_hi : BPL st_jmp_side1
+    JMP st_side0
+
+.st_general
+    ; --- General path: prod1 = ndy * (px-nx), prod2 = ndx * (py-ny), s24 each.
+    LDA zp_seg_dxraw_lo : STA zp_br_dxlo
+    LDA zp_seg_dxraw_hi : STA zp_br_dxhi
     LDA zp_node_dylo : STA zp_br_dylo
     LDA zp_node_dyhi : STA zp_br_dyhi
     JSR br_smul_s16_s16_s32
-    ; Save s32 to RAM at $0A50-$0A53.
     LDA zp_br_t0 : STA $0A50
     LDA zp_br_t1 : STA $0A51
     LDA zp_br_t2 : STA $0A52
-    LDA zp_br_t3 : STA $0A53
 
-    ; Compute prod2 = ndx * (py_raw - ny_raw) → s32.
-    LDA zp_br_pyraw_lo : SEC : SBC zp_node_nylo : STA zp_br_dxlo
-    LDA zp_br_pyraw_hi :       SBC zp_node_nyhi : STA zp_br_dxhi
+    LDA zp_seg_dyraw_lo : STA zp_br_dxlo
+    LDA zp_seg_dyraw_hi : STA zp_br_dxhi
     LDA zp_node_dxlo : STA zp_br_dylo
     LDA zp_node_dxhi : STA zp_br_dyhi
     JSR br_smul_s16_s16_s32
-    ; t0:t3 = prod2
 
-    ; side_s32 = prod1 - prod2 (32-bit signed subtract).
+    ; side_s24 = prod1 - prod2 (24-bit signed subtract).
     LDA $0A50 : SEC : SBC zp_br_t0 : STA $0A50
     LDA $0A51 :       SBC zp_br_t1 : STA $0A51
     LDA $0A52 :       SBC zp_br_t2 : STA $0A52
-    LDA $0A53 :       SBC zp_br_t3 : STA $0A53
 
-    ; side = 0 if side_s32 > 0, else 1 (negative or zero).
-    LDA $0A53 : BMI st_side1
-    ORA $0A52 : ORA $0A51 : ORA $0A50 : BEQ st_side1
+    ; side = 0 if positive (sign bit 0 + at least one nonzero byte), else 1.
+    LDA $0A52 : BMI st_side1
+    ORA $0A51 : ORA $0A50 : BEQ st_side1
+.st_side0
     LDA #0 : STA zp_side : JMP st_done
 .st_side1
     LDA #1 : STA zp_side
@@ -1006,12 +1049,6 @@ zp_seg_sy2_bot_hi = SEG_PROJ_BUF + 7
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
-; Vertex cache helper state
-zp_seg_v_idx_lo   = $77    ; cached: vertex index (u16)
-zp_seg_v_idx_hi   = $78
-zp_seg_v_bitm     = $79    ; valid-bitmap mask (1 << (idx & 7))
-zp_seg_v_cache_lo = $7A    ; cached: pointer to this vertex's cache entry
-zp_seg_v_cache_hi = $7B
 ; FH/CH table base ptr (set once per frame by Python wrapper)
 zp_rom_fhch_lo  = $30
 zp_rom_fhch_hi  = $31
