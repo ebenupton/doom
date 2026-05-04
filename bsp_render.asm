@@ -1218,7 +1218,15 @@ zp_seg_flags    = $3F      ; u8
     LDA zp_seg_sy_bot_lo : STA zp_seg_sy2_bot_lo
     LDA zp_seg_sy_bot_hi : STA zp_seg_sy2_bot_hi
 
-    ; --- Emit top horizontal: (sx1, sy1_top) → (sx2, sy2_top) ---
+    ; --- Emit top + bottom horizontals only for solid walls (SF_SOLID = $02) ---
+    ; Portal walls would draw "fake" front-sector floor/ceiling here that
+    ; are usually NOT visible from this seg's perspective; the visible top/
+    ; bottom edges come from neighbouring solid walls' horizontals + aperture
+    ; edges (verticals). Suppressing portal horizontals removes most of the
+    ; noise lines that span across the frame.
+    LDA zp_seg_flags : AND #$02 : BEQ skip_horiz
+
+    ; Top horizontal: (sx1, sy1_top) → (sx2, sy2_top)
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_top_lo : STA zp_line_yl
@@ -1230,7 +1238,7 @@ zp_seg_flags    = $3F      ; u8
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
 
-    ; --- Emit bottom horizontal: (sx1, sy1_bot) → (sx2, sy2_bot) ---
+    ; Bottom horizontal: (sx1, sy1_bot) → (sx2, sy2_bot)
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_bot_lo : STA zp_line_yl
@@ -1241,6 +1249,7 @@ zp_seg_flags    = $3F      ; u8
     LDA zp_seg_sy2_bot_hi : STA $B5
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
+.skip_horiz
 
     ; --- Emit left vertical (suppressed by SF_NOVT1 = $10) ---
     LDA zp_seg_flags : AND #$10 : BNE skip_lvert
