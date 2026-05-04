@@ -1218,7 +1218,8 @@ zp_seg_flags    = $3F      ; u8
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
 
-    ; --- Emit left vertical: (sx1, sy1_top) → (sx1, sy1_bot) ---
+    ; --- Emit left vertical (suppressed by SF_NOVT1 = $10) ---
+    LDA zp_seg_flags : AND #$10 : BNE skip_lvert
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_top_lo : STA zp_line_yl
@@ -1229,8 +1230,10 @@ zp_seg_flags    = $3F      ; u8
     LDA zp_seg_sy1_bot_hi : STA $B5
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
+.skip_lvert
 
-    ; --- Emit right vertical: (sx2, sy2_top) → (sx2, sy2_bot) ---
+    ; --- Emit right vertical (suppressed by SF_NOVT2 = $20) ---
+    LDA zp_seg_flags : AND #$20 : BNE skip_rvert
     LDA zp_seg_sx2_lo : STA zp_line_xl
     LDA zp_seg_sx2_hi : STA $B2
     LDA zp_seg_sy2_top_lo : STA zp_line_yl
@@ -1241,6 +1244,7 @@ zp_seg_flags    = $3F      ; u8
     LDA zp_seg_sy2_bot_hi : STA $B5
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
+.skip_rvert
 
     ; --- mark_solid for solid walls (SF_SOLID = $02) ---
     LDA zp_seg_flags : AND #$02 : BEQ ms_skip
