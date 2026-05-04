@@ -1242,18 +1242,10 @@ zp_seg_flags    = $3F      ; u8
     INY    : LDA (zp_br_p),Y : STA zp_seg_flags
 
     ; --- Back-face test ---
-    ; Instrumentation: total segs seen counter at $0A78 (16-bit).
-    INC $0A78 : BNE bf_no_carry_total
-    INC $0A79
-.bf_no_carry_total
     JSR br_back_face_test
     LDA zp_seg_skip : BEQ bf_passed
     JMP s_advance
 .bf_passed
-    ; Instrumentation: front-facing segs counter at $0A7A (16-bit).
-    INC $0A7A : BNE bf_no_carry_front
-    INC $0A7B
-.bf_no_carry_front
 
     ; --- Read fh, ch from FHCH table at offset (seg_idx * 2) ---
     LDA zp_seg_first_lo : STA zp_br_t0
