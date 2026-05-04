@@ -90,6 +90,18 @@ RECIP_BASE      = $E000     ; base of recip table (HI bytes first, then LO)
                             ; LO[0..513] at $E202-$E403
 SINCOS_BASE     = $E480     ; sin_mag[0..63], sin_unity[0..63] (128 bytes)
 
+; Vertex transform cache: per-vertex saved view + projection results.
+; Skip redundant transforms when multiple segs share a vertex.
+;   8 bytes per entry (shift 3 for indexing).
+;   +0 vx_int (s8)   +1 vx_frac (u8)
+;   +2 rhi (u8)      +3 rlo (u8)
+;   +4 sx_lo (u8)    +5 sx_hi (u8)   (s16 projected screen X)
+;   +6 near_clip_flag (non-zero = vertex was near-clipped, skip seg)
+;   +7 pad
+; Valid bitmap: 1 bit per vertex; cleared at the start of each frame.
+VCACHE_BASE       = $0C00
+VCACHE_VALID_BASE = $1B00      ; 59 bytes for 467 vertices
+
 ; ============================================================================
 ; Jump-table entries (Python wrapper JSRs to these fixed addresses)
 ; ============================================================================
@@ -816,6 +828,12 @@ zp_node_chhi  = $59
 ; ============================================================================
 .br_render_frame
 {
+    ; Clear vertex cache valid bitmap (59 bytes).
+    LDA #0
+    LDX #59
+.vc_clr
+    DEX : STA VCACHE_VALID_BASE,X : BNE vc_clr
+
     ; Initialize BSP stack: push root node id.
     LDA #0 : STA zp_bsp_stack_sp
     LDX zp_bsp_stack_sp
@@ -988,6 +1006,12 @@ zp_seg_sy2_bot_hi = SEG_PROJ_BUF + 7
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
+; Vertex cache helper state
+zp_seg_v_idx_lo   = $77    ; cached: vertex index (u16)
+zp_seg_v_idx_hi   = $78
+zp_seg_v_bitm     = $79    ; valid-bitmap mask (1 << (idx & 7))
+zp_seg_v_cache_lo = $7A    ; cached: pointer to this vertex's cache entry
+zp_seg_v_cache_hi = $7B
 ; FH/CH table base ptr (set once per frame by Python wrapper)
 zp_rom_fhch_lo  = $30
 zp_rom_fhch_hi  = $31
@@ -1298,16 +1322,81 @@ zp_seg_flags    = $3F      ; u8
 {
     LDA #0 : STA zp_seg_skip
 
-    ; ptr = ROM_VERTS + idx*4
+    ; --- Compute vertex cache index (idx*8 → cache offset) ---
+    ; idx is in zp_br_t0:t1 (u16). vc_offset = idx * 8 (s/o offset for valid).
+    ; valid_byte_offset = idx >> 3, valid_bit = idx & 7.
+    ;
+    ; Save idx for later (cache write) at zp_seg_v_idx_lo/hi.
+    LDA zp_br_t0 : STA zp_seg_v_idx_lo
+    LDA zp_br_t1 : STA zp_seg_v_idx_hi
+
+    ; --- Check valid bit ---
+    ; valid_byte_offset = idx_lo >> 3 + idx_hi << 5 (since high byte each adds 32 bytes)
     LDA zp_br_t0 : STA zp_br_t2
     LDA zp_br_t1 : STA zp_br_t3
+    LSR zp_br_t3 : ROR zp_br_t2
+    LSR zp_br_t3 : ROR zp_br_t2
+    LSR zp_br_t3 : ROR zp_br_t2          ; t2:t3 = idx >> 3
+    CLC
+    LDA #<VCACHE_VALID_BASE : ADC zp_br_t2 : STA zp_br_p
+    LDA #>VCACHE_VALID_BASE : ADC zp_br_t3 : STA zp_br_p_h
+    ; bit mask = 1 << (idx_lo & 7)
+    LDA zp_br_t0 : AND #7 : TAX
+    LDA #1
+.vc_bitm
+    DEX : BMI vc_bitm_done
+    ASL A
+    JMP vc_bitm
+.vc_bitm_done
+    STA zp_seg_v_bitm
+    LDY #0 : LDA (zp_br_p),Y : AND zp_seg_v_bitm : BNE vc_hit
+    JMP vc_miss
+
+.vc_hit
+    ; --- Cache hit: load rhi/rlo, sx, near-clip flag from cache ---
+    ; Cache offset = idx*8. Compute base ptr.
+    LDA zp_seg_v_idx_lo : STA zp_br_t2
+    LDA zp_seg_v_idx_hi : STA zp_br_t3
+    ASL zp_br_t2 : ROL zp_br_t3                ; *2
+    ASL zp_br_t2 : ROL zp_br_t3                ; *4
+    ASL zp_br_t2 : ROL zp_br_t3                ; *8
+    CLC
+    LDA #<VCACHE_BASE : ADC zp_br_t2 : STA zp_br_p
+    LDA #>VCACHE_BASE : ADC zp_br_t3 : STA zp_br_p_h
+    ; Check near-clip flag at offset 6
+    LDY #6 : LDA (zp_br_p),Y : BEQ vc_hit_ok
+    LDA #1 : STA zp_seg_skip : RTS
+.vc_hit_ok
+    ; Load rhi, rlo, sx from cache.
+    LDY #2 : LDA (zp_br_p),Y : STA zp_br_rhi
+    INY    : LDA (zp_br_p),Y : STA zp_br_rlo
+    INY    : LDA (zp_br_p),Y : STA zp_seg_sx_lo
+    INY    : LDA (zp_br_p),Y : STA zp_seg_sx_hi
+    ; Project Y for top + bottom (heights vary per seg, can't cache).
+    JMP do_project_y
+
+.vc_miss
+    ; --- Set valid bit ---
+    LDY #0 : LDA (zp_br_p),Y : ORA zp_seg_v_bitm : STA (zp_br_p),Y
+
+    ; --- Compute cache base ptr (idx*8) ---
+    LDA zp_seg_v_idx_lo : STA zp_br_t2
+    LDA zp_seg_v_idx_hi : STA zp_br_t3
+    ASL zp_br_t2 : ROL zp_br_t3
+    ASL zp_br_t2 : ROL zp_br_t3
+    ASL zp_br_t2 : ROL zp_br_t3                ; *8
+    CLC
+    LDA #<VCACHE_BASE : ADC zp_br_t2 : STA zp_seg_v_cache_lo
+    LDA #>VCACHE_BASE : ADC zp_br_t3 : STA zp_seg_v_cache_hi
+
+    ; --- Read s16 vertex x, y from ROM_VERTS + idx*4 ---
+    LDA zp_seg_v_idx_lo : STA zp_br_t2
+    LDA zp_seg_v_idx_hi : STA zp_br_t3
     ASL zp_br_t2 : ROL zp_br_t3
     ASL zp_br_t2 : ROL zp_br_t3
     CLC
     LDA zp_rom_verts_lo : ADC zp_br_t2 : STA zp_br_p
     LDA zp_rom_verts_hi : ADC zp_br_t3 : STA zp_br_p_h
-
-    ; Read full s16 vertex x, y from ROM
     LDY #0 : LDA (zp_br_p),Y : STA zp_br_dxlo
     LDY #1 : LDA (zp_br_p),Y : STA zp_br_dxhi
     LDY #2 : LDA (zp_br_p),Y : STA zp_br_dylo
@@ -1322,22 +1411,43 @@ zp_seg_flags    = $3F      ; u8
 
     ; Near-clip: skip if vy < 1
     LDA zp_br_vyhi : BPL nc_pos
-    LDA #1 : STA zp_seg_skip : RTS
+    JMP nc_fail
 .nc_pos
     BNE nc_ok                          ; HI > 0 → safe (vy ≥ 256)
     LDA zp_br_vylo : CMP #1 : BCS nc_ok
-    LDA #1 : STA zp_seg_skip : RTS
+.nc_fail
+    ; Mark near-clipped in cache, set skip.
+    LDA zp_seg_v_cache_lo : STA zp_br_p
+    LDA zp_seg_v_cache_hi : STA zp_br_p_h
+    LDY #6 : LDA #1 : STA (zp_br_p),Y
+    LDA #1 : STA zp_seg_skip
+    RTS
 .nc_ok
-
-    ; vy_idx = vy << 1 (9.1 fixed). Capture carry for hi byte.
+    ; --- Compute reciprocal ---
     LDA zp_br_vylo : ASL A
     LDA zp_br_vyhi : ROL A
-    STA zp_br_t0                       ; lo
+    STA zp_br_t0
     LDA #0 : ROL A
-    STA zp_br_t1                       ; hi
-
+    STA zp_br_t1
     JSR br_recip                        ; rhi/rlo = reciprocal
 
+    ; --- Project X using saved view-x integer + fractional parts ---
+    LDA zp_v_xint  : STA zp_br_t0
+    LDA zp_v_xfrac : STA zp_br_t1
+    JSR br_project_x_subpx
+    LDA zp_br_resl : STA zp_seg_sx_lo
+    LDA zp_br_resh : STA zp_seg_sx_hi
+
+    ; --- Cache the per-vertex results (rhi, rlo, sx, near-clip=0) ---
+    LDA zp_seg_v_cache_lo : STA zp_br_p
+    LDA zp_seg_v_cache_hi : STA zp_br_p_h
+    LDY #2 : LDA zp_br_rhi : STA (zp_br_p),Y
+    INY    : LDA zp_br_rlo : STA (zp_br_p),Y
+    INY    : LDA zp_seg_sx_lo : STA (zp_br_p),Y
+    INY    : LDA zp_seg_sx_hi : STA (zp_br_p),Y
+    INY    : LDA #0 : STA (zp_br_p),Y       ; near_clip = 0
+
+.do_project_y
     ; --- Project Y for top edge (height = ch - vz) ---
     LDA zp_seg_top_dlt : STA zp_br_t0
     JSR br_project_y
@@ -1349,13 +1459,6 @@ zp_seg_flags    = $3F      ; u8
     JSR br_project_y
     LDA zp_br_resl : STA zp_seg_sy_bot_lo
     LDA zp_br_resh : STA zp_seg_sy_bot_hi
-
-    ; --- Project X using saved view-x integer + fractional parts ---
-    LDA zp_v_xint  : STA zp_br_t0
-    LDA zp_v_xfrac : STA zp_br_t1
-    JSR br_project_x_subpx
-    LDA zp_br_resl : STA zp_seg_sx_lo
-    LDA zp_br_resh : STA zp_seg_sx_hi
     RTS
 }
 
