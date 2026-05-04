@@ -187,8 +187,11 @@ def test_to_view():
     cases = [(10, 10), (-30, 50), (100, -100), (0, 0), (5, -5)]
     fail = 0
     for wx, wy in cases:
-        mem[ZP_DX] = wx & 0xFF
-        mem[ZP_DY] = wy & 0xFF
+        # New s16 ZP layout: dxlo=$0F, dxhi=$35, dylo=$10, dyhi=$36
+        mem[0x0F] = wx & 0xFF
+        mem[0x35] = (wx >> 8) & 0xFF
+        mem[0x10] = wy & 0xFF
+        mem[0x36] = (wy >> 8) & 0xFF
         sc._run(ENTRY_BR_TO_VIEW)
         got_vx = s16_from_zp(mem, ZP_VXLO)
         got_vy = s16_from_zp(mem, ZP_VYLO)

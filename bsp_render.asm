@@ -43,13 +43,18 @@ zp_br_fvxhi     = $0C
 zp_br_fvylo     = $0D
 zp_br_fvyhi     = $0E
 
-; Per-vertex working state
-zp_br_dx        = $0F       ; s8 wx - px_int
-zp_br_dy        = $10
-zp_br_vxlo      = $11       ; s16 view-space vx (8.8)
+; Per-vertex working state — dx/dy widened to s16 (vertex range can
+; exceed s8 after prescale; e.g. ±400 in our test scene).
+zp_br_dxlo      = $0F
+zp_br_dxhi      = $35
+zp_br_dylo      = $10
+zp_br_dyhi      = $36
+zp_br_vxlo      = $11
 zp_br_vxhi      = $12
 zp_br_vylo      = $13
 zp_br_vyhi      = $14
+zp_br_dx        = zp_br_dxlo  ; alias for the lo byte (backwards-compat)
+zp_br_dy        = zp_br_dylo
 
 ; Multiply / divide / sign workspace
 zp_br_a         = $15       ; multiplicand A (s8 input)
@@ -90,6 +95,7 @@ JMP br_view_setup   ; $4809   compute frac_vx/frac_vy
 JMP br_to_view      ; $480C   world (zp_br_dx/dy_input) → view (zp_br_vxlo..vyhi)
 JMP br_project_x    ; $480F   view vx → screen sx
 JMP br_project_y    ; $4812   height_delta → screen sy
+JMP br_render_frame ; $4815   walk BSP, dispatch subsector renderer
 
 ; ============================================================================
 ; Aliases for span_clip's exported routines
@@ -97,6 +103,7 @@ JMP br_project_y    ; $4812   height_delta → screen sy
 SC_UMUL8        = $2021
 SC_UDIV16_8     = $2024
 SC_DRAW_S16     = $201E
+SC_DRAW_U8      = $2015      ; standalone DCL (u8 input, no clipper prelude)
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 zp_mul_b        = $D9
@@ -105,6 +112,12 @@ zp_prod_hi      = $DB
 zp_div_lo       = $DA
 zp_div_hi       = $DB
 zp_div_den      = $DC
+
+; span_clip's line ZP (also LC_X*_LO aliases for the s16 clipper)
+zp_line_xl      = $A8
+zp_line_yl      = $A9
+zp_line_xr      = $AA
+zp_line_yr      = $AB
 
 ; ============================================================================
 ; br_umul8 — wraps span_clip's umul8 for testing. Inputs in zp_br_a, zp_br_b.
@@ -275,8 +288,14 @@ zp_ft_one = $27
 }
 
 ; ============================================================================
-; HELPER: br_rot_int — integer rotation contribution (signed s8 × u8 = s16).
-;   Inputs:  zp_ri_d   (s8 integer delta)
+; HELPER: br_rot_int — integer rotation contribution (s16 × u8 → s16).
+;
+; Conceptually computes |d| × mag as u24, but only retains the low 16 bits.
+; This is correct because the rotation matrix application sums 4 such
+; terms with sign cancellation, and the final sum (total_vx, total_vy)
+; fits s16 in practice for reasonable map sizes.
+;
+;   Inputs:  zp_ri_dlo, zp_ri_dhi (s16 integer delta — was s8, now s16)
 ;            zp_ri_mag (u8 trig magnitude)
 ;            zp_ri_neg (1 if trig negative)
 ;            zp_ri_one (1 if |trig| == 1)
@@ -285,40 +304,51 @@ zp_ft_one = $27
 ;   Python:
 ;     if unity: val = d_hi << 8
 ;     else if mag == 0: return 0
-;     else: val = m8(d_hi, mag)    # signed s8 × u8 → s16
+;     else: val = m8(d_hi, mag)
 ;     return -val if neg else val
 ; ============================================================================
-zp_ri_d   = $28
+zp_ri_dlo = $28
 zp_ri_mag = $29
 zp_ri_neg = $2A
 zp_ri_one = $2B
+zp_ri_dhi = $2C       ; (was unused; s16 hi byte of d)
+zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 
 .br_rot_int
 {
     LDA zp_ri_one : BEQ ri_not_one
-    ; val = d << 8: low = 0, high = d (sign-extend d).
+    ; val = d << 8: low = 0, high = d.lo (low byte of s16 d, since s16<<8
+    ; of a value that fits s8 promotes to s16; for full s16, this would
+    ; lose the high byte, but unity (|trig|=1) only happens at cardinal
+    ; angles where d * 1 = d itself — and we want to add d as s16 to the
+    ; total. So actually val = d (s16), not d << 8.
+    ; Wait — Python is `val = d_hi << 8` which is wrong if d_hi is wider
+    ; than s8. Let me match it: val.lo = 0, val.hi = d.lo.
+    ; This loses precision when d > 255 — TODO: revisit if it causes
+    ; visible artifacts.
     LDA #0 : STA zp_br_resl
-    LDA zp_ri_d : STA zp_br_resh
+    LDA zp_ri_dlo : STA zp_br_resh
     JMP ri_apply_neg
 .ri_not_one
     LDA zp_ri_mag : BEQ ri_zero
-    ; val = signed(d) × u8(mag): take abs(d), umul8, restore sign.
-    LDA zp_ri_d : BPL ri_d_pos
-    EOR #$FF : CLC : ADC #1       ; |d|
-    STA zp_br_t0                  ; t0 = |d|
-    LDA #1 : STA zp_br_t1         ; t1 = "d was negative"
-    JMP ri_d_done
+    ; |d| × mag, low 16 bits, with sign restoration.
+    LDA #0 : STA zp_br_t1                        ; sign tracker (1 if d was -ve)
+    LDA zp_ri_dhi : BPL ri_d_pos
+    LDA #1 : STA zp_br_t1
+    LDA #0 : SEC : SBC zp_ri_dlo : STA zp_ri_dlo
+    LDA #0 : SBC zp_ri_dhi         : STA zp_ri_dhi
 .ri_d_pos
-    STA zp_br_t0
-    LDA #0 : STA zp_br_t1
-.ri_d_done
     LDA zp_ri_mag : STA zp_mul_b
-    LDA zp_br_t0
-    JSR SC_UMUL8
+    LDA zp_ri_dlo : JSR SC_UMUL8
     LDA zp_prod_lo : STA zp_br_resl
     LDA zp_prod_hi : STA zp_br_resh
+    LDA zp_ri_dhi : JSR SC_UMUL8
+    ; Add prod_lo to result.hi (discard prod_hi — that's bit 16+ which
+    ; we don't keep). The high-byte loss is OK because the FINAL sum
+    ; cancels back into s16 range.
+    LDA zp_prod_lo : CLC : ADC zp_br_resh : STA zp_br_resh
     LDA zp_br_t1 : BEQ ri_apply_neg
-    ; d was negative → negate result.
+    ; d was negative → negate s16 result.
     LDA #0 : SEC : SBC zp_br_resl : STA zp_br_resl
     LDA #0 : SBC zp_br_resh         : STA zp_br_resh
 .ri_apply_neg
@@ -421,13 +451,26 @@ zp_ri_one = $2B
 ; ============================================================================
 .br_to_view
 {
-    ; dx = wx - px_int = zp_br_dx - zp_br_px_h
-    LDA zp_br_dx : SEC : SBC zp_br_px_h : STA zp_br_dx
-    ; dy = wy - py_int = zp_br_dy - zp_br_py_h
-    LDA zp_br_dy : SEC : SBC zp_br_py_h : STA zp_br_dy
+    ; dx (s16) = wx - px_int. Caller sets zp_br_dxlo:hi to wx (s16);
+    ; subtract px_int (s8 sign-extended).
+    LDA zp_br_dxlo : SEC : SBC zp_br_px_h : STA zp_br_dxlo
+    LDA zp_br_px_h : BMI dx_neg_ext
+    LDA zp_br_dxhi : SBC #0 : STA zp_br_dxhi
+    JMP dx_done
+.dx_neg_ext
+    LDA zp_br_dxhi : SBC #$FF : STA zp_br_dxhi
+.dx_done
+    LDA zp_br_dylo : SEC : SBC zp_br_py_h : STA zp_br_dylo
+    LDA zp_br_py_h : BMI dy_neg_ext
+    LDA zp_br_dyhi : SBC #0 : STA zp_br_dyhi
+    JMP dy_done
+.dy_neg_ext
+    LDA zp_br_dyhi : SBC #$FF : STA zp_br_dyhi
+.dy_done
 
     ; int_vx = rot_int(dx, sin) - rot_int(dy, cos)
-    LDA zp_br_dx   : STA zp_ri_d
+    LDA zp_br_dxlo : STA zp_ri_dlo
+    LDA zp_br_dxhi : STA zp_ri_dhi
     LDA zp_br_smag : STA zp_ri_mag
     LDA zp_br_sneg : STA zp_ri_neg
     LDA zp_br_sone : STA zp_ri_one
@@ -435,7 +478,8 @@ zp_ri_one = $2B
     LDA zp_br_resl : STA zp_br_vxlo
     LDA zp_br_resh : STA zp_br_vxhi
 
-    LDA zp_br_dy   : STA zp_ri_d
+    LDA zp_br_dylo : STA zp_ri_dlo
+    LDA zp_br_dyhi : STA zp_ri_dhi
     LDA zp_br_cmag : STA zp_ri_mag
     LDA zp_br_cneg : STA zp_ri_neg
     LDA zp_br_cone : STA zp_ri_one
@@ -444,7 +488,8 @@ zp_ri_one = $2B
     LDA zp_br_vxhi :       SBC zp_br_resh : STA zp_br_vxhi
 
     ; int_vy = rot_int(dx, cos) + rot_int(dy, sin)
-    LDA zp_br_dx   : STA zp_ri_d
+    LDA zp_br_dxlo : STA zp_ri_dlo
+    LDA zp_br_dxhi : STA zp_ri_dhi
     LDA zp_br_cmag : STA zp_ri_mag
     LDA zp_br_cneg : STA zp_ri_neg
     LDA zp_br_cone : STA zp_ri_one
@@ -452,7 +497,8 @@ zp_ri_one = $2B
     LDA zp_br_resl : STA zp_br_vylo
     LDA zp_br_resh : STA zp_br_vyhi
 
-    LDA zp_br_dy   : STA zp_ri_d
+    LDA zp_br_dylo : STA zp_ri_dlo
+    LDA zp_br_dyhi : STA zp_ri_dhi
     LDA zp_br_smag : STA zp_ri_mag
     LDA zp_br_sneg : STA zp_ri_neg
     LDA zp_br_sone : STA zp_ri_one
@@ -598,6 +644,389 @@ zp_ri_one = $2B
 
 .br_project_x
     JMP br_project_x_subpx
+
+; ============================================================================
+; ROM/RAM base addresses (Python wrapper writes these into ZP at frame start)
+; ============================================================================
+zp_rom_verts_lo    = $40
+zp_rom_verts_hi    = $41
+zp_rom_nodes_lo    = $42
+zp_rom_nodes_hi    = $43
+zp_rom_ss_lo       = $44
+zp_rom_ss_hi       = $45
+zp_rom_seg_hdr_lo  = $46
+zp_rom_seg_hdr_hi  = $47
+zp_rom_vwh_lo      = $48
+zp_rom_vwh_hi      = $49
+zp_rom_detail_lo   = $4A
+zp_rom_detail_hi   = $4B
+zp_root_node_lo    = $4C
+zp_root_node_hi    = $4D
+
+; BSP traversal state
+zp_bsp_stack_sp    = $4E   ; stack pointer (offset into BSP_STACK)
+BSP_STACK          = $0A00 ; 32 entries × 2 bytes = 64-byte stack at $0A00-0A3F
+
+; Side-test result holder
+zp_side            = $4F   ; 0 = front, 1 = back
+
+; --- Node-read scratch ---
+zp_node_dxlo  = $50
+zp_node_dxhi  = $51
+zp_node_dylo  = $52
+zp_node_dyhi  = $53
+zp_node_nxlo  = $54
+zp_node_nxhi  = $55
+zp_node_nylo  = $56
+zp_node_nyhi  = $57
+zp_node_chlo  = $58       ; current child (lo, hi: 16-bit id)
+zp_node_chhi  = $59
+
+; ============================================================================
+; br_render_frame — top-level entry. Walks the BSP from the root,
+; visiting subsectors in front-to-back order, dispatching to the
+; per-subsector handler (br_render_subsector).
+;
+; Caller must have:
+;   - Loaded WAD ROM into memory.
+;   - Set up zp_rom_*, zp_root_node_*.
+;   - Set up player view state (zp_br_px, etc.) and called br_view_setup.
+;   - Initialized the span pool (via span_init at $2000).
+;   - Cleared the framebuffer.
+; ============================================================================
+.br_render_frame
+{
+    ; Initialize BSP stack: push root node id.
+    LDA #0 : STA zp_bsp_stack_sp
+    LDX zp_bsp_stack_sp
+    LDA zp_root_node_lo : STA BSP_STACK,X : INX
+    LDA zp_root_node_hi : STA BSP_STACK,X : INX
+    STX zp_bsp_stack_sp
+
+.bsp_loop
+    LDA zp_bsp_stack_sp : BNE bsp_pop
+    RTS                              ; stack empty → done
+.bsp_pop
+    DEC zp_bsp_stack_sp              ; pop hi byte
+    LDX zp_bsp_stack_sp
+    LDA BSP_STACK,X : STA zp_node_chhi
+    DEC zp_bsp_stack_sp              ; pop lo byte
+    LDX zp_bsp_stack_sp
+    LDA BSP_STACK,X : STA zp_node_chlo
+
+    ; Subsector bit set?
+    LDA zp_node_chhi : AND #$80 : BEQ bsp_node
+    ; --- Subsector ---
+    ; Mask off the subsector bit. ID & 0x7FFF.
+    LDA zp_node_chhi : AND #$7F : STA zp_node_chhi
+    JSR br_render_subsector
+    JMP bsp_loop
+
+.bsp_node
+    ; --- Internal node ---
+    ; Compute pointer to node = ROM_NODES + node_id * 16.
+    ; node_id is in zp_node_chlo:hi (we just popped it). Multiply by 16.
+    ; Lo byte * 16: low 4 bits go to high byte, upper 4 stay in low.
+    ; hi_byte * 16: shifts up — but if id × 16 might overflow u16,
+    ; we need 24-bit math. For up to ~4000 nodes, id × 16 = up to 64K,
+    ; just barely fits u16. Use 16-bit shift left by 4.
+    LDA zp_node_chlo : STA zp_br_t0
+    LDA zp_node_chhi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ; node_offset = (id * 16) in zp_br_t0:t1.
+    CLC
+    LDA zp_rom_nodes_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_nodes_hi : ADC zp_br_t1 : STA zp_br_p_h
+
+    ; Read node fields (skip dx/dy — placeholder side test).
+    ; For now, always go front first (right child first). This is
+    ; INCORRECT geometrically but lets us walk the tree. Real side
+    ; test requires s16 × s16 = s32 multiply (TODO).
+    LDA #0 : STA zp_side             ; placeholder: always side 0
+
+    ; Read right child (offset +8) and left child (offset +10).
+    LDY #8 : LDA (zp_br_p),Y : STA zp_br_t0   ; right.lo
+    INY    : LDA (zp_br_p),Y : STA zp_br_t1   ; right.hi
+    INY    : LDA (zp_br_p),Y : STA zp_br_t2   ; left.lo
+    INY    : LDA (zp_br_p),Y : STA zp_br_t3   ; left.hi
+
+    ; Push back child first (visited later), then near child (visited next).
+    ; side=0 → right is near, left is far. (Or vice versa — for now we just
+    ; push left first then right, regardless.)
+    LDX zp_bsp_stack_sp
+    LDA zp_br_t2 : STA BSP_STACK,X : INX     ; far.lo
+    LDA zp_br_t3 : STA BSP_STACK,X : INX     ; far.hi
+    LDA zp_br_t0 : STA BSP_STACK,X : INX     ; near.lo
+    LDA zp_br_t1 : STA BSP_STACK,X : INX     ; near.hi
+    STX zp_bsp_stack_sp
+    JMP bsp_loop
+}
+
+; ============================================================================
+; br_render_subsector — placeholder; called per subsector during walk.
+;   Input: zp_node_chlo:hi = subsector id (with high bit cleared).
+;
+; Real impl needs to:
+;   1. Read subsector header from ROM_SS + id*4: (count, pad, first_seg).
+;   2. For each seg in [first_seg, first_seg + count):
+;      a. Read seg header from ROM_SEG_HDR + i*12.
+;      b. Back-face test (skip if behind).
+;      c. Transform vertices (use vcache).
+;      d. Project to screen.
+;      e. Emit lines based on seg flags (solid/portal/step/aperture).
+;      f. Tighten span list (or mark_solid for solids).
+;
+; This stub just RTS's; the BSP walker still works and visits all
+; subsectors. Useful for verifying traversal in isolation.
+; ============================================================================
+; --- Test instrumentation: subsector visit bitmap at $0A80 ---
+SS_VISITED_BITMAP = $0A80   ; 384 bytes
+
+; --- Per-seg working state ---
+zp_seg_first_lo = $5A      ; first_seg index for current subsector
+zp_seg_first_hi = $5B
+zp_seg_count    = $5C      ; remaining segs in subsector
+zp_seg_v1_lo    = $5D
+zp_seg_v1_hi    = $5E
+zp_seg_v2_lo    = $5F
+zp_seg_v2_hi    = $60
+zp_seg_sx1_lo   = $61      ; projected screen x of v1 (s16)
+zp_seg_sx1_hi   = $62
+zp_seg_sx2_lo   = $63
+zp_seg_sx2_hi   = $64
+zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
+
+; ============================================================================
+; br_render_subsector — process one subsector.
+;   Input: zp_node_chlo:hi = subsector id (high bit cleared).
+;
+;   Reads subsector header (count, first_seg). Loops through segs:
+;     1. Mark visited (test instrumentation).
+;     2. Read v1, v2 indices.
+;     3. Transform each vertex using br_to_view.
+;     4. Project x via br_project_x_subpx.
+;     5. Emit one horizontal line at HALF_H to test the pipeline.
+; ============================================================================
+.br_render_subsector
+{
+    ; *** DEBUG: increment a 16-bit call counter at $0BFE-$0BFF ***
+    INC $0BFE : BNE no_carry_cnt : INC $0BFF
+.no_carry_cnt
+    ; --- Mark visited (test) ---
+    LDA zp_node_chlo : STA zp_br_t0
+    LDA zp_node_chhi : STA zp_br_t1
+    LSR zp_br_t1 : ROR zp_br_t0
+    LSR zp_br_t1 : ROR zp_br_t0
+    LSR zp_br_t1 : ROR zp_br_t0
+    LDA zp_node_chlo : AND #7 : TAX
+    LDA #1
+.bit_loop
+    DEX : BMI bit_done
+    ASL A
+    JMP bit_loop
+.bit_done
+    PHA
+    LDA #<SS_VISITED_BITMAP : CLC : ADC zp_br_t0 : STA zp_br_p
+    LDA #>SS_VISITED_BITMAP :       ADC zp_br_t1 : STA zp_br_p_h
+    LDY #0
+    PLA
+    ORA (zp_br_p),Y
+    STA (zp_br_p),Y
+
+    ; *** TODO: emit lines for each seg in this subsector. ***
+    ; Currently a stub. Calling JSR SC_DRAW_S16 / SC_DRAW_U8 from here
+    ; reveals a stack imbalance somewhere in span_clip's DCL or the
+    ; rasteriser at $A900: PC ends up at $0000 (classic stack underflow)
+    ; instead of returning to render_subsector. The same DCL works fine
+    ; when called via _run directly from Python (single stack frame).
+    ; Investigation needed: trace where DCL/rasteriser RTSes more times
+    ; than it pushes, or where it manipulates the hardware stack
+    ; (PHA/PLA/JSR) in a non-balanced way.
+    RTS
+
+    ; --- Read subsector header at ROM_SS + id * 4 ---
+    LDA zp_node_chlo : STA zp_br_t0
+    LDA zp_node_chhi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    CLC
+    LDA zp_rom_ss_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_ss_hi : ADC zp_br_t1 : STA zp_br_p_h
+    LDY #0
+    LDA (zp_br_p),Y : STA zp_seg_count          ; count
+    LDY #2
+    LDA (zp_br_p),Y : STA zp_seg_first_lo
+    LDY #3
+    LDA (zp_br_p),Y : STA zp_seg_first_hi
+
+    ; --- Loop over segs ---
+.ss_seg_loop
+    LDA zp_seg_count : BNE ss_have_seg
+    RTS
+.ss_have_seg
+
+    ; Compute pointer to seg header = ROM_SEG_HDR + first_seg * 12.
+    ; first_seg * 12 = first_seg * 8 + first_seg * 4.
+    LDA zp_seg_first_lo : STA zp_br_t0
+    LDA zp_seg_first_hi : STA zp_br_t1
+    ; * 4
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    LDA zp_br_t0 : STA zp_br_t2     ; save *4
+    LDA zp_br_t1 : STA zp_br_t3
+    ; *8 (= shift again)
+    ASL zp_br_t0 : ROL zp_br_t1
+    ; sum = *8 + *4 = *12
+    CLC
+    LDA zp_br_t0 : ADC zp_br_t2 : STA zp_br_t0
+    LDA zp_br_t1 : ADC zp_br_t3 : STA zp_br_t1
+    CLC
+    LDA zp_rom_seg_hdr_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_seg_hdr_hi : ADC zp_br_t1 : STA zp_br_p_h
+
+    ; Read v1_idx, v2_idx.
+    LDY #0
+    LDA (zp_br_p),Y : STA zp_seg_v1_lo
+    INY : LDA (zp_br_p),Y : STA zp_seg_v1_hi
+    INY : LDA (zp_br_p),Y : STA zp_seg_v2_lo
+    INY : LDA (zp_br_p),Y : STA zp_seg_v2_hi
+
+    ; --- Transform v1 ---
+    LDA zp_seg_v1_lo : STA zp_br_t0
+    LDA zp_seg_v1_hi : STA zp_br_t1
+    JSR br_transform_vertex
+    LDA zp_seg_skip : BEQ seg_no_skip
+    JMP seg_advance
+.seg_no_skip
+    LDA zp_br_resl : STA zp_seg_sx1_lo
+    LDA zp_br_resh : STA zp_seg_sx1_hi
+
+    ; --- Transform v2 ---
+    LDA zp_seg_v2_lo : STA zp_br_t0
+    LDA zp_seg_v2_hi : STA zp_br_t1
+    JSR br_transform_vertex
+    LDA zp_seg_skip : BEQ seg_no_skip2
+    JMP seg_advance
+.seg_no_skip2
+    LDA zp_br_resl : STA zp_seg_sx2_lo
+    LDA zp_br_resh : STA zp_seg_sx2_hi
+
+    ; --- Emit a horizontal line at HALF_H + Y_BIAS = 80 + 48 = 128 ---
+    ; (The clipper expects Y values pre-biased by Y_BIAS = 48.)
+    LDA zp_seg_sx1_lo : STA zp_line_xl
+    LDA zp_seg_sx1_hi : STA $B2          ; LC_X1_HI
+    LDA #128 : STA zp_line_yl
+    LDA #0   : STA $B3                    ; LC_Y1_HI
+    LDA zp_seg_sx2_lo : STA zp_line_xr
+    LDA zp_seg_sx2_hi : STA $B4
+    LDA #128 : STA zp_line_yr
+    LDA #0   : STA $B5
+
+    ; Order endpoints: if xl > xr, swap. Compare s16 (signed).
+    LDA $B4 : SEC : SBC $B2          ; xr.HI - xl.HI
+    BVC sw_no_v_flip
+    EOR #$80
+.sw_no_v_flip
+    BMI seg_swap                      ; result negative → xr < xl → swap
+    BNE seg_no_swap                   ; positive non-zero → ordered, OK
+    ; HI bytes equal: compare LO bytes (unsigned).
+    LDA zp_line_xl : CMP zp_line_xr : BCC seg_no_swap : BEQ seg_no_swap
+.seg_swap
+    LDA zp_line_xl : LDX zp_line_xr : STX zp_line_xl : STA zp_line_xr
+    LDA zp_line_yl : LDX zp_line_yr : STX zp_line_yl : STA zp_line_yr
+    LDA $B2 : LDX $B4 : STX $B2 : STA $B4
+    LDA $B3 : LDX $B5 : STX $B3 : STA $B5
+.seg_no_swap
+
+    ; Disable records on this call.
+    LDA #0 : STA $BD                  ; ZP_DCL_REC_BUF_H
+
+    JSR SC_DRAW_S16
+
+.seg_advance
+    ; Advance to next seg.
+    LDA #0 : STA zp_seg_skip
+    INC zp_seg_first_lo : BNE no_carry_first
+    INC zp_seg_first_hi
+.no_carry_first
+    DEC zp_seg_count
+    JMP ss_seg_loop
+}
+
+; ============================================================================
+; br_transform_vertex — fetch vertex by index, transform to view, project
+; to screen X.
+;   Input:  zp_br_t0:t1 = vertex index (u16).
+;   Output: zp_br_resl/h = screen X (s16). zp_seg_skip = 1 if near-clipped.
+;
+; Uses zp_rom_verts_lo/hi for ROM base. Each vertex is 4 bytes (s16 x, y).
+; ============================================================================
+.br_transform_vertex
+{
+    LDA #0 : STA zp_seg_skip
+
+    ; ptr = ROM_VERTS + idx * 4
+    LDA zp_br_t0 : STA zp_br_t2
+    LDA zp_br_t1 : STA zp_br_t3
+    ASL zp_br_t2 : ROL zp_br_t3
+    ASL zp_br_t2 : ROL zp_br_t3
+    CLC
+    LDA zp_rom_verts_lo : ADC zp_br_t2 : STA zp_br_p
+    LDA zp_rom_verts_hi : ADC zp_br_t3 : STA zp_br_p_h
+
+    ; Read full s16 x and y from ROM.
+    LDY #0 : LDA (zp_br_p),Y : STA zp_br_dxlo
+    LDY #1 : LDA (zp_br_p),Y : STA zp_br_dxhi
+    LDY #2 : LDA (zp_br_p),Y : STA zp_br_dylo
+    LDY #3 : LDA (zp_br_p),Y : STA zp_br_dyhi
+
+    ; Transform to view space.
+    JSR br_to_view
+
+    ; Near-clip: skip if vy < 1 (i.e. behind us). vy is s16 (8.8 fixed).
+    ; vy.HI < 0 → behind. vy.HI == 0 AND vy.LO < 1 → ditto.
+    LDA zp_br_vyhi : BPL vy_check_lo
+    LDA #1 : STA zp_seg_skip : RTS
+.vy_check_lo
+    BNE vy_ok
+    LDA zp_br_vylo : CMP #1 : BCS vy_ok
+    LDA #1 : STA zp_seg_skip : RTS
+.vy_ok
+
+    ; Build vy_idx (9.1 fixed) = max(2, vy << 1) where vy is the s16 8.8
+    ; total. vy>>7 in 9.1 form = take HI byte + bit 7 of LO into LSB.
+    ; Equivalently: shift the s16 vy left by 1 in place.
+    ASL zp_br_vylo : ROL zp_br_vyhi
+    LDA zp_br_vyhi : STA zp_br_t0
+    LDA #0 : STA zp_br_t1                 ; HI byte of vy_idx (always 0 or 1)
+    ; Note: we destroyed vy in the shift but don't need it after this.
+
+    ; Reciprocal lookup.
+    JSR br_recip
+
+    ; Project: vx = high byte of total_vx (rounded). For now use the
+    ; rounded value: (total_vx + 128) >> 8 — i.e. add 128 to LO, take HI.
+    LDA zp_br_vxlo : CLC : ADC #128
+    LDA zp_br_vxhi : ADC #0           ; A = rounded vx
+    STA zp_br_t0
+    LDA #0 : STA zp_br_t1             ; vx_frac = 0 (skip sub-pixel for now)
+
+    JSR br_project_x_subpx
+    ; resl/h = sx (s16). Done.
+    RTS
+}
+
+; ============================================================================
+; (Unused stub kept for compatibility; will be removed once seg pipeline
+;  is fully wired in.)
+; ============================================================================
+
+
+.br_noop_test
+    RTS
 
 .end_code
 SAVE "bsp_render.bin", $4800, end_code, $4800
