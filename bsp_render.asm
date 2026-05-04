@@ -812,10 +812,7 @@ zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
 ; ============================================================================
 .br_render_subsector
 {
-    ; *** DEBUG: increment a 16-bit call counter at $0BFE-$0BFF ***
-    INC $0BFE : BNE no_carry_cnt : INC $0BFF
-.no_carry_cnt
-    ; --- Mark visited (test) ---
+    ; --- Mark visited (test instrumentation) ---
     LDA zp_node_chlo : STA zp_br_t0
     LDA zp_node_chhi : STA zp_br_t1
     LSR zp_br_t1 : ROR zp_br_t0
@@ -835,16 +832,6 @@ zp_seg_skip     = $65      ; non-zero → skip emit (near-clipped)
     PLA
     ORA (zp_br_p),Y
     STA (zp_br_p),Y
-
-    ; *** TODO: emit lines for each seg in this subsector. ***
-    ; Currently a stub. Calling JSR SC_DRAW_S16 / SC_DRAW_U8 from here
-    ; reveals a stack imbalance somewhere in span_clip's DCL or the
-    ; rasteriser at $A900: PC ends up at $0000 (classic stack underflow)
-    ; instead of returning to render_subsector. The same DCL works fine
-    ; when called via _run directly from Python (single stack frame).
-    ; Investigation needed: trace where DCL/rasteriser RTSes more times
-    ; than it pushes, or where it manipulates the hardware stack
-    ; (PHA/PLA/JSR) in a non-balanced way.
     RTS
 
     ; --- Read subsector header at ROM_SS + id * 4 ---
