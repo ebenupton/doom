@@ -1073,32 +1073,74 @@ zp_seg_flags    = $3F      ; u8
 ; ============================================================================
 .br_back_face_test
 {
-    ; dx = px_int - lv1_x (s16)
-    LDA zp_br_px_h : STA zp_br_t2
-    LDA #0 : STA zp_br_t3
-    LDA zp_br_t2 : BPL bf_px_pos
-    LDA #$FF : STA zp_br_t3
+    ; dx = px_int - lv1_x (s16). px_int (s8) sign-extended.
+    LDA zp_br_px_h : STA zp_br_dxlo
+    LDA #0 : STA zp_br_dxhi
+    LDA zp_br_dxlo : BPL bf_px_pos
+    LDA #$FF : STA zp_br_dxhi
 .bf_px_pos
-    LDA zp_br_t2 : SEC : SBC zp_seg_lv1x_lo : STA zp_br_dxlo
-    LDA zp_br_t3 :       SBC zp_seg_lv1x_hi : STA zp_br_dxhi
+    LDA zp_br_dxlo : SEC : SBC zp_seg_lv1x_lo : STA zp_br_dxlo
+    LDA zp_br_dxhi :       SBC zp_seg_lv1x_hi : STA zp_br_dxhi
+    ; dy = py_int - lv1_y (s16)
+    LDA zp_br_py_h : STA zp_br_dylo
+    LDA #0 : STA zp_br_dyhi
+    LDA zp_br_dylo : BPL bf_py_pos
+    LDA #$FF : STA zp_br_dyhi
+.bf_py_pos
+    LDA zp_br_dylo : SEC : SBC zp_seg_lv1y_lo : STA zp_br_dylo
+    LDA zp_br_dyhi :       SBC zp_seg_lv1y_hi : STA zp_br_dyhi
 
-    ; ldy * dx → s16 in resl/resh
+    ; --- Fast path for axis-aligned linedefs (~76% of segs).
+    ; If ldx == 0: dot = ldy*dx, sign matches iff sign(ldy)==sign(dx).
+    ; If ldy == 0: dot = -ldx*dy, sign matches iff sign(ldx)!=sign(dy).
+    ; SF_DIR negates dot.
+    LDA zp_seg_ldx : BNE bf_ldx_nz
+    ; ldx==0
+    LDA zp_seg_ldy : BNE bf_ldx0_ldy_nz
+    JMP bf_back            ; ldx=0, ldy=0 → dot=0 → back
+.bf_ldx0_ldy_nz
+    LDA zp_br_dxlo : ORA zp_br_dxhi : BNE bf_ldx0_dx_nz
+    JMP bf_back            ; dx == 0 → dot=0 → back
+.bf_ldx0_dx_nz
+    ; sign(dot) = sign(ldy) XOR sign(dx_hi)
+    LDA zp_seg_ldy : EOR zp_br_dxhi
+    JMP bf_apply_dir
+.bf_ldx_nz
+    LDA zp_seg_ldy : BNE bf_general
+    ; ldy==0: dot = -ldx*dy.
+    LDA zp_br_dylo : ORA zp_br_dyhi : BNE bf_ldy0_dy_nz
+    JMP bf_back
+.bf_ldy0_dy_nz
+    ; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi))
+    LDA zp_seg_ldx : EOR zp_br_dyhi : EOR #$80
+    JMP bf_apply_dir
+
+.bf_apply_dir
+    ; A holds a byte whose top bit = sign of dot (1=neg, 0=pos).
+    ; SF_DIR ($01) negates the dot, so XOR top bit with bit 0 of flags shifted.
+    ; Simpler: stash, then if SF_DIR set, EOR #$80.
+    PHA
+    LDA zp_seg_flags : AND #$01 : BEQ bf_apply_no_neg
+    PLA : EOR #$80 : JMP bf_check_sign
+.bf_apply_no_neg
+    PLA
+.bf_check_sign
+    ; Top bit set → dot < 0 → back. Top bit clear → dot ≥ 0 → check zero.
+    BMI bf_back
+    ; dot ≥ 0; we already checked dot != 0 above (BEQ branches to bf_back).
+    JMP bf_front
+
+.bf_general
+    ; ldx and ldy both nonzero — full 2-mul s8×s16 dot product.
+    ; ldy * dx → s16 in resl/resh; save in t2:t3.
     LDA zp_seg_ldy : STA zp_br_a
     JSR br_smul_s8_s16
-    ; Save prod1 in t2:t3 (scratch — different from t0:t1 used by helper)
     LDA zp_br_resl : STA zp_br_t2
     LDA zp_br_resh : STA zp_br_t3
 
-    ; dy = py_int - lv1_y (s16)
-    LDA zp_br_py_h : STA zp_br_dxlo   ; reuse dx slots as scratch
-    LDA #0 : STA zp_br_dxhi
-    LDA zp_br_dxlo : BPL bf_py_pos
-    LDA #$FF : STA zp_br_dxhi
-.bf_py_pos
-    LDA zp_br_dxlo : SEC : SBC zp_seg_lv1y_lo : STA zp_br_dxlo
-    LDA zp_br_dxhi :       SBC zp_seg_lv1y_hi : STA zp_br_dxhi
-
-    ; ldx * dy → s16 in resl/resh
+    ; ldx * dy → s16 in resl/resh.
+    LDA zp_br_dylo : STA zp_br_dxlo
+    LDA zp_br_dyhi : STA zp_br_dxhi
     LDA zp_seg_ldx : STA zp_br_a
     JSR br_smul_s8_s16
 
@@ -1107,11 +1149,10 @@ zp_seg_flags    = $3F      ; u8
     LDA zp_br_t3 :       SBC zp_br_resh : STA zp_br_t3
 
     ; SF_DIR negate
-    LDA zp_seg_flags : AND #$01 : BEQ bf_no_neg
+    LDA zp_seg_flags : AND #$01 : BEQ bf_g_no_neg
     LDA #0 : SEC : SBC zp_br_t2 : STA zp_br_t2
     LDA #0 :       SBC zp_br_t3 : STA zp_br_t3
-.bf_no_neg
-
+.bf_g_no_neg
     ; dot <= 0 → back-facing
     LDA zp_br_t3 : BMI bf_back
     BNE bf_front
