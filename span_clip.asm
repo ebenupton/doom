@@ -39,6 +39,8 @@ JMP draw_clipped_line ; $2015
 JMP clip_line_records ; $2018
 JMP tighten_from_records ; $201B
 JMP draw_clipped_line_s16 ; $201E
+JMP umul8                 ; $2021  (exported for bsp_render.asm)
+JMP udiv16_8              ; $2024  (exported for bsp_render.asm)
 
 ; === Pool constants and field offsets ===
 ; The span pool uses block layout at $0400: each field is a contiguous

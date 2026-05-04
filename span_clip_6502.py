@@ -128,6 +128,24 @@ class SpanClip6502:
         for i, b in enumerate(code):
             mem[0x2000 + i] = b
 
+        # Assemble and load bsp_render.bin (BSP traversal + transform)
+        bsp_asm = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.asm')
+        bsp_bin = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.bin')
+        if os.path.exists(bsp_asm):
+            os.system(f'./beebasm -i {bsp_asm} -o {bsp_bin} 2>/dev/null')
+            if os.path.exists(bsp_bin):
+                with open(bsp_bin, 'rb') as f:
+                    bsp_code = f.read()
+                for i, b in enumerate(bsp_code):
+                    mem[0x4800 + i] = b
+                # Load the reciprocal table at $E000 (HI bytes 0..513,
+                # then LO bytes 0..513).
+                from fp import _RECIP_X_HI, _RECIP_X_LO
+                for i in range(514):
+                    mem[0xE000 + i] = _RECIP_X_HI[i] if i < len(_RECIP_X_HI) else 0
+                for i in range(514):
+                    mem[0xE000 + 514 + i] = _RECIP_X_LO[i] if i < len(_RECIP_X_LO) else 0
+
         # Load NJ rasteriser at $A900 (for integrated line drawing)
         raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')
         if os.path.exists(raster_path):
