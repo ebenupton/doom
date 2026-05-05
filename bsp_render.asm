@@ -64,8 +64,11 @@ zp_br_dy        = zp_br_dylo
 ; Multiply / divide / sign workspace
 zp_br_a         = $15       ; multiplicand A (s8 input)
 zp_br_b         = $16       ; multiplicand B
-zp_br_resl      = $17       ; s16 result lo
-zp_br_resh      = $18       ; s16 result hi
+zp_br_resl      = $17       ; s24 result lo
+zp_br_resh      = $18       ; s24 result mid (the s16 path stops here)
+zp_br_resext    = $2D       ; s24 result high byte (rot_int + to_view extension)
+zp_br_vxext     = $2E       ; total view-space x sign-extension byte
+zp_br_vyext     = $2F       ; total view-space y sign-extension byte
 zp_br_sign      = $19       ; 0 = positive, non-0 = negative
 
 ; Reciprocal output
@@ -354,21 +357,17 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 .br_rot_int
 {
     LDA zp_ri_one : BEQ ri_not_one
-    ; val = d << 8: low = 0, high = d.lo (low byte of s16 d, since s16<<8
-    ; of a value that fits s8 promotes to s16; for full s16, this would
-    ; lose the high byte, but unity (|trig|=1) only happens at cardinal
-    ; angles where d * 1 = d itself — and we want to add d as s16 to the
-    ; total. So actually val = d (s16), not d << 8.
-    ; Wait — Python is `val = d_hi << 8` which is wrong if d_hi is wider
-    ; than s8. Let me match it: val.lo = 0, val.hi = d.lo.
-    ; This loses precision when d > 255 — TODO: revisit if it causes
-    ; visible artifacts.
+    ; Unity: val = d << 8 as s24. resl=0, resh=dlo, resext=dhi.
     LDA #0 : STA zp_br_resl
     LDA zp_ri_dlo : STA zp_br_resh
+    LDA zp_ri_dhi : STA zp_br_resext
     JMP ri_apply_neg
 .ri_not_one
     LDA zp_ri_mag : BEQ ri_zero
-    ; |d| × mag, low 16 bits, with sign restoration.
+    ; |d| × mag → s24, with sign restoration. Compute as
+    ;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
+    ; First product: (lo,hi) → resl, resh; resext starts 0.
+    ; Second product: (lo,hi) added to resh, resext.
     LDA #0 : STA zp_br_t1                        ; sign tracker (1 if d was -ve)
     LDA zp_ri_dhi : BPL ri_d_pos
     LDA #1 : STA zp_br_t1
@@ -379,23 +378,25 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA zp_ri_dlo : JSR SC_UMUL8
     LDA zp_prod_lo : STA zp_br_resl
     LDA zp_prod_hi : STA zp_br_resh
+    LDA #0 : STA zp_br_resext
     LDA zp_ri_dhi : JSR SC_UMUL8
-    ; Add prod_lo to result.hi (discard prod_hi — that's bit 16+ which
-    ; we don't keep). The high-byte loss is OK because the FINAL sum
-    ; cancels back into s16 range.
-    LDA zp_prod_lo : CLC : ADC zp_br_resh : STA zp_br_resh
+    CLC
+    LDA zp_prod_lo : ADC zp_br_resh   : STA zp_br_resh
+    LDA zp_prod_hi : ADC zp_br_resext : STA zp_br_resext
     LDA zp_br_t1 : BEQ ri_apply_neg
-    ; d was negative → negate s16 result.
-    LDA #0 : SEC : SBC zp_br_resl : STA zp_br_resl
-    LDA #0 : SBC zp_br_resh         : STA zp_br_resh
+    ; d was negative → negate s24 result.
+    LDA #0 : SEC : SBC zp_br_resl   : STA zp_br_resl
+    LDA #0 :       SBC zp_br_resh   : STA zp_br_resh
+    LDA #0 :       SBC zp_br_resext : STA zp_br_resext
 .ri_apply_neg
     LDA zp_ri_neg : BEQ ri_done
-    LDA #0 : SEC : SBC zp_br_resl : STA zp_br_resl
-    LDA #0 : SBC zp_br_resh         : STA zp_br_resh
+    LDA #0 : SEC : SBC zp_br_resl   : STA zp_br_resl
+    LDA #0 :       SBC zp_br_resh   : STA zp_br_resh
+    LDA #0 :       SBC zp_br_resext : STA zp_br_resext
 .ri_done
     RTS
 .ri_zero
-    LDA #0 : STA zp_br_resl : STA zp_br_resh
+    LDA #0 : STA zp_br_resl : STA zp_br_resh : STA zp_br_resext
     RTS
 }
 
@@ -505,15 +506,16 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA zp_br_dyhi : SBC #$FF : STA zp_br_dyhi
 .dy_done
 
-    ; int_vx = rot_int(dx, sin) - rot_int(dy, cos)
+    ; int_vx = rot_int(dx, sin) - rot_int(dy, cos), as s24
     LDA zp_br_dxlo : STA zp_ri_dlo
     LDA zp_br_dxhi : STA zp_ri_dhi
     LDA zp_br_smag : STA zp_ri_mag
     LDA zp_br_sneg : STA zp_ri_neg
     LDA zp_br_sone : STA zp_ri_one
     JSR br_rot_int
-    LDA zp_br_resl : STA zp_br_vxlo
-    LDA zp_br_resh : STA zp_br_vxhi
+    LDA zp_br_resl   : STA zp_br_vxlo
+    LDA zp_br_resh   : STA zp_br_vxhi
+    LDA zp_br_resext : STA zp_br_vxext
 
     LDA zp_br_dylo : STA zp_ri_dlo
     LDA zp_br_dyhi : STA zp_ri_dhi
@@ -521,18 +523,20 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA zp_br_cneg : STA zp_ri_neg
     LDA zp_br_cone : STA zp_ri_one
     JSR br_rot_int
-    LDA zp_br_vxlo : SEC : SBC zp_br_resl : STA zp_br_vxlo
-    LDA zp_br_vxhi :       SBC zp_br_resh : STA zp_br_vxhi
+    LDA zp_br_vxlo : SEC : SBC zp_br_resl   : STA zp_br_vxlo
+    LDA zp_br_vxhi :       SBC zp_br_resh   : STA zp_br_vxhi
+    LDA zp_br_vxext :      SBC zp_br_resext : STA zp_br_vxext
 
-    ; int_vy = rot_int(dx, cos) + rot_int(dy, sin)
+    ; int_vy = rot_int(dx, cos) + rot_int(dy, sin), as s24
     LDA zp_br_dxlo : STA zp_ri_dlo
     LDA zp_br_dxhi : STA zp_ri_dhi
     LDA zp_br_cmag : STA zp_ri_mag
     LDA zp_br_cneg : STA zp_ri_neg
     LDA zp_br_cone : STA zp_ri_one
     JSR br_rot_int
-    LDA zp_br_resl : STA zp_br_vylo
-    LDA zp_br_resh : STA zp_br_vyhi
+    LDA zp_br_resl   : STA zp_br_vylo
+    LDA zp_br_resh   : STA zp_br_vyhi
+    LDA zp_br_resext : STA zp_br_vyext
 
     LDA zp_br_dylo : STA zp_ri_dlo
     LDA zp_br_dyhi : STA zp_ri_dhi
@@ -540,14 +544,28 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA zp_br_sneg : STA zp_ri_neg
     LDA zp_br_sone : STA zp_ri_one
     JSR br_rot_int
-    LDA zp_br_vylo : CLC : ADC zp_br_resl : STA zp_br_vylo
-    LDA zp_br_vyhi :       ADC zp_br_resh : STA zp_br_vyhi
+    LDA zp_br_vylo : CLC : ADC zp_br_resl   : STA zp_br_vylo
+    LDA zp_br_vyhi :       ADC zp_br_resh   : STA zp_br_vyhi
+    LDA zp_br_vyext :      ADC zp_br_resext : STA zp_br_vyext
 
-    ; Add frac terms
-    LDA zp_br_vxlo : CLC : ADC zp_br_fvxlo : STA zp_br_vxlo
-    LDA zp_br_vxhi :       ADC zp_br_fvxhi : STA zp_br_vxhi
-    LDA zp_br_vylo : CLC : ADC zp_br_fvylo : STA zp_br_vylo
-    LDA zp_br_vyhi :       ADC zp_br_fvyhi : STA zp_br_vyhi
+    ; Add frac terms (s16, sign-extended into ext byte)
+    LDA zp_br_vxlo  : CLC : ADC zp_br_fvxlo : STA zp_br_vxlo
+    LDA zp_br_vxhi  :       ADC zp_br_fvxhi : STA zp_br_vxhi
+    LDA zp_br_fvxhi : BMI bv_fvxneg
+    LDA zp_br_vxext : ADC #0 : STA zp_br_vxext
+    JMP bv_fvx_done
+.bv_fvxneg
+    LDA zp_br_vxext : ADC #$FF : STA zp_br_vxext
+.bv_fvx_done
+
+    LDA zp_br_vylo  : CLC : ADC zp_br_fvylo : STA zp_br_vylo
+    LDA zp_br_vyhi  :       ADC zp_br_fvyhi : STA zp_br_vyhi
+    LDA zp_br_fvyhi : BMI bv_fvyneg
+    LDA zp_br_vyext : ADC #0 : STA zp_br_vyext
+    JMP bv_fvy_done
+.bv_fvyneg
+    LDA zp_br_vyext : ADC #$FF : STA zp_br_vyext
+.bv_fvy_done
     RTS
 }
 
@@ -1332,25 +1350,29 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 ; Inputs: zp_br_dxlo:dxhi, zp_br_dylo:dyhi (raw prescaled corner s16).
 .bv_proj_one
 {
-    JSR br_to_view             ; → zp_br_vxlo:vxhi (vx 8.8), vylo:vyhi (vy 8.8)
+    JSR br_to_view             ; → s24 vy in (vyext, vyhi, vylo); s24 vx similarly
     ; Save vx int+frac before project_x_subpx (it uses vxlo/hi as accumulator).
     LDA zp_br_vxhi : STA zp_v_xint
     LDA zp_br_vxlo : STA zp_v_xfrac
 
-    ; Near-clip test: vy < 1 (s16, treating high bit as sign).
-    LDA zp_br_vyhi : BMI bv_behind
-    BNE bv_in_front
-    LDA zp_br_vylo : CMP #1 : BCS bv_in_front
+    ; Near-clip test: vy >= 1 (s24, integer part = (vyext, vyhi) as s16).
+    ; If high byte (vyext) MSB set → s24 negative → behind.
+    ; Else if (vyext, vyhi) both zero → integer part = 0 → behind.
+    LDA zp_br_vyext : BMI bv_behind
+    ORA zp_br_vyhi : BNE bv_in_front
+    ; vyext = 0 and vyhi = 0 → vy < 1 → behind
 .bv_behind
     LDA BBOX_FLAGS : ORA #$01 : STA BBOX_FLAGS
     RTS
 .bv_in_front
     LDA BBOX_FLAGS : ORA #$02 : STA BBOX_FLAGS
-    ; vy_idx = vy << 1
+    ; vy_idx = (vy_ext, vy_hi, vy_lo) >> 7 (== vy_idx in 9.1 form for fp_recip).
+    ; The shift folds in vy_ext properly, no clamping needed here — br_recip
+    ; clamps to [2, 1023] internally.
     LDA zp_br_vylo : ASL A
     LDA zp_br_vyhi : ROL A
     STA zp_br_t0
-    LDA #0 : ROL A
+    LDA zp_br_vyext : ROL A
     STA zp_br_t1
     JSR br_recip
     LDA zp_v_xint  : STA zp_br_t0
@@ -1700,11 +1722,15 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_vxhi : STA zp_v_xint
     LDA zp_br_vxlo : STA zp_v_xfrac
 
-    ; Near-clip: skip if vy < 1
+    ; Near-clip for regular vertex transform: keep using s16 sign on vyhi.
+    ; For our scene's vertex range, normal seg vertices fit s16 view space,
+    ; and the existing project_x/project_y assume s8 vx_int. If we widened
+    ; here we'd lie to those projections. The bbox corner path (bv_proj_one)
+    ; uses the s24-aware near-clip because it only needs the sign of vy.
     LDA zp_br_vyhi : BPL nc_pos
     JMP nc_fail
 .nc_pos
-    BNE nc_ok                          ; HI > 0 → safe (vy ≥ 256)
+    BNE nc_ok
     LDA zp_br_vylo : CMP #1 : BCS nc_ok
 .nc_fail
     ; Mark near-clipped in cache, set skip.
@@ -1714,7 +1740,7 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA #1 : STA zp_seg_skip
     RTS
 .nc_ok
-    ; --- Compute reciprocal ---
+    ; --- Compute reciprocal (s16 vy_idx — vy_ext ignored per s8 vx contract) ---
     LDA zp_br_vylo : ASL A
     LDA zp_br_vyhi : ROL A
     STA zp_br_t0
