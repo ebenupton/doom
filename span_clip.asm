@@ -91,8 +91,8 @@ VIS_YMAX = Y_BIAS + 159  ; = 207: maximum biased visible Y
 ; Quarter-square multiply tables (pre-loaded by the Python harness).
 ; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
 ; used when a+b overflows u8.
-sqr_lo  = $5400 : sqr_hi  = $5500
-sqr2_lo = $5600 : sqr2_hi = $5700
+sqr_lo  = $A500 : sqr_hi  = $A600
+sqr2_lo = $A700 : sqr2_hi = $A800
 
 ; === Seg value cache ($A0-$A4) — separate from crossover working set ===
 ; Caches the right-endpoint new-seg values from the previous overlapping span

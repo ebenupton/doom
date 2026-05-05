@@ -114,10 +114,10 @@ class SpanClip6502:
 
         # Load quarter-square tables
         sqr_lo, sqr_hi, sqr2_lo, sqr2_hi = _gen_quarter_square()
-        mem[0x5400:0x5500] = sqr_lo
-        mem[0x5500:0x5600] = sqr_hi
-        mem[0x5600:0x5700] = sqr2_lo
-        mem[0x5700:0x5800] = sqr2_hi
+        mem[0xA500:0xA600] = sqr_lo
+        mem[0xA600:0xA700] = sqr_hi
+        mem[0xA700:0xA800] = sqr2_lo
+        mem[0xA800:0xA900] = sqr2_hi
 
         # Assemble and load span_clip.bin
         asm_path = os.path.join(os.path.dirname(__file__) or '.', 'span_clip.asm')

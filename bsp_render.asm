@@ -93,6 +93,13 @@ zp_seg_dxraw_lo   = $7C
 zp_seg_dxraw_hi   = $7D
 zp_seg_dyraw_lo   = $7E
 zp_seg_dyraw_hi   = $7F
+; Frame ROM table base ptrs (Python wrapper writes once)
+zp_rom_fhch_lo    = $30
+zp_rom_fhch_hi    = $31
+zp_rom_bbox_lo    = $32
+zp_rom_bbox_hi    = $33
+; Bbox routine arg
+zp_bbox_side      = $34
 
 ; ============================================================================
 ; Memory map (RAM caches + ROM tables — Python wrapper places data here)
@@ -963,32 +970,49 @@ zp_node_chhi  = $59
     LDA #1 : STA zp_side
 .st_done
 
-    ; Read right child (offset +8) and left child (offset +10).
-    LDY #8 : LDA (zp_br_p),Y : STA zp_br_t0   ; right.lo
-    INY    : LDA (zp_br_p),Y : STA zp_br_t1   ; right.hi
-    INY    : LDA (zp_br_p),Y : STA zp_br_t2   ; left.lo
-    INY    : LDA (zp_br_p),Y : STA zp_br_t3   ; left.hi
+    ; Read children into RAM scratch slots based on side:
+    ;   side=0: near=right (+8), far=left (+10)
+    ;   side=1: near=left (+10), far=right (+8)
+    LDA zp_side : BNE bsp_nf_back
+    LDY #8  : LDA (zp_br_p),Y : STA BSP_NEAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_NEAR_HI
+    INY     : LDA (zp_br_p),Y : STA BSP_FAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
+    JMP bsp_nf_done
+.bsp_nf_back
+    LDY #10 : LDA (zp_br_p),Y : STA BSP_NEAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_NEAR_HI
+    LDY #8  : LDA (zp_br_p),Y : STA BSP_FAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
+.bsp_nf_done
 
-    ; side=0 → right is near, left is far. side=1 → vice versa.
-    ; Push far first, near last, so near is popped first.
+    ; Push FAR child if its bbox is visible. Push first so it's popped LAST.
+    LDA zp_side : EOR #1 : STA zp_bbox_side
+    JSR br_bbox_visible
+    BEQ bsp_skip_far
     LDX zp_bsp_stack_sp
-    LDA zp_side : BNE st_side_back
-    ; side=0: far=left, near=right
-    LDA zp_br_t2 : STA BSP_STACK,X : INX
-    LDA zp_br_t3 : STA BSP_STACK,X : INX
-    LDA zp_br_t0 : STA BSP_STACK,X : INX
-    LDA zp_br_t1 : STA BSP_STACK,X : INX
-    JMP st_pushed
-.st_side_back
-    ; side=1: far=right, near=left
-    LDA zp_br_t0 : STA BSP_STACK,X : INX
-    LDA zp_br_t1 : STA BSP_STACK,X : INX
-    LDA zp_br_t2 : STA BSP_STACK,X : INX
-    LDA zp_br_t3 : STA BSP_STACK,X : INX
-.st_pushed
+    LDA BSP_FAR_LO : STA BSP_STACK,X : INX
+    LDA BSP_FAR_HI : STA BSP_STACK,X : INX
     STX zp_bsp_stack_sp
+.bsp_skip_far
+
+    ; Push NEAR child if its bbox is visible.
+    LDA zp_side : STA zp_bbox_side
+    JSR br_bbox_visible
+    BEQ bsp_skip_near
+    LDX zp_bsp_stack_sp
+    LDA BSP_NEAR_LO : STA BSP_STACK,X : INX
+    LDA BSP_NEAR_HI : STA BSP_STACK,X : INX
+    STX zp_bsp_stack_sp
+.bsp_skip_near
     JMP bsp_loop
 }
+
+; --- Children-id slots (set per bsp_node visit, used after bbox checks).
+BSP_NEAR_LO = $0A68
+BSP_NEAR_HI = $0A69
+BSP_FAR_LO  = $0A6A
+BSP_FAR_HI  = $0A6B
 
 ; ============================================================================
 ; br_render_subsector — placeholder; called per subsector during walk.
@@ -1049,9 +1073,6 @@ zp_seg_sy2_bot_hi = SEG_PROJ_BUF + 7
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
-; FH/CH table base ptr (set once per frame by Python wrapper)
-zp_rom_fhch_lo  = $30
-zp_rom_fhch_hi  = $31
 ; Per-seg back-face / linedef state
 zp_seg_lv1x_lo  = $39
 zp_seg_lv1x_hi  = $3A
@@ -1161,6 +1182,197 @@ zp_seg_flags    = $3F      ; u8
     LDA #0 : STA zp_seg_skip : RTS
 .bf_back
     LDA #1 : STA zp_seg_skip : RTS
+}
+
+; ============================================================================
+; br_bbox_visible — visibility test for a child subtree's bounding box.
+;
+;   Inputs:
+;     zp_node_chlo:hi = node id (used by caller; we read bbox by ourselves)
+;     zp_bbox_side    = 0 for right child's bbox, 1 for left child's bbox.
+;
+;   Output: A = 1 if any visible gap in the bbox's screen-X range, else 0.
+;
+;   Algorithm (matches Python fp_bbox_visible_fixed loosely):
+;     1. Compute bbox ptr = ROM_BBOX + node_id*16 + (side<<3).
+;     2. Inside test: if (px_int, py_int) inside bbox, return 1 (always visible).
+;     3. Transform 4 corners (l,t)(r,t)(r,b)(l,b) through br_to_view.
+;     4. For each in front of NEAR plane, project to screen X.
+;     5. If all behind near plane → return 0 (off-screen).
+;        If any behind near plane → assume visible (set ilo=0, ihi=255).
+;        Else min/max projected sx, clamped to [0, 255] → ilo, ihi.
+;     6. If ilo > ihi → return 0.
+;     7. JSR span_has_gap → return its A.
+; ============================================================================
+SC_HAS_GAP      = $2009
+
+BBOX_SCRATCH    = $0A58     ; 8 bytes: top_lo,top_hi,bot_lo,bot_hi,
+                            ;          left_lo,left_hi,right_lo,right_hi
+BBOX_FLAGS      = $0A60     ; bit 0 = any_behind, bit 1 = any_front
+BBOX_ILO        = $0A61     ; running min sx clamped (u8)
+BBOX_IHI        = $0A62     ; running max sx clamped (u8)
+
+.br_bbox_visible
+{
+    ; --- Compute bbox table pointer = ROM_BBOX + node_id*16 + side*8 ---
+    LDA zp_node_chlo : STA zp_br_t0
+    LDA zp_node_chhi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1                      ; node_id * 16
+    LDA zp_bbox_side : BEQ bv_side_done
+    ; side=1: add 8
+    LDA zp_br_t0 : CLC : ADC #8 : STA zp_br_t0
+    LDA zp_br_t1 :       ADC #0 : STA zp_br_t1
+.bv_side_done
+    CLC
+    LDA zp_rom_bbox_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_bbox_hi : ADC zp_br_t1 : STA zp_br_p_h
+
+    ; Read top, bot, left, right (s16 each, 8 bytes total).
+    LDY #0
+.bv_read
+    LDA (zp_br_p),Y : STA BBOX_SCRATCH,Y
+    INY : CPY #8 : BNE bv_read
+
+    ; --- Inside test: px_int (s8) in [left_int, right_int]
+    ;     and py_int (s8) in [bot_int, top_int]?
+    ; left_int (s8) = high byte of (left_lo:hi >> ?). Actually left_lo:hi
+    ; is s16 (raw prescaled units). px_int is s8 (high byte of px_88).
+    ; So compare s8 with s16 — sign-extend px_int and compare s16:s16.
+    ; Sign-extended px_int = (px_h, $00 or $FF based on px_h).
+    LDA zp_br_px_h : STA zp_br_t0
+    LDA #0 : STA zp_br_t1
+    LDA zp_br_t0 : BPL bv_pxext_done
+    LDA #$FF : STA zp_br_t1
+.bv_pxext_done
+    ; left <= px ?  i.e. (px - left) >= 0 (s16 sub).
+    LDA zp_br_t0 : SEC : SBC BBOX_SCRATCH+4 : STA zp_br_t2
+    LDA zp_br_t1 :       SBC BBOX_SCRATCH+5 : STA zp_br_t3
+    BMI bv_not_inside
+    ; px <= right ?  i.e. (right - px) >= 0
+    LDA BBOX_SCRATCH+6 : SEC : SBC zp_br_t0
+    LDA BBOX_SCRATCH+7 :       SBC zp_br_t1
+    BMI bv_not_inside
+    ; py_int sign-extend
+    LDA zp_br_py_h : STA zp_br_t0
+    LDA #0 : STA zp_br_t1
+    LDA zp_br_t0 : BPL bv_pyext_done
+    LDA #$FF : STA zp_br_t1
+.bv_pyext_done
+    ; bot <= py ?
+    LDA zp_br_t0 : SEC : SBC BBOX_SCRATCH+2
+    LDA zp_br_t1 :       SBC BBOX_SCRATCH+3
+    BMI bv_not_inside
+    ; py <= top ?
+    LDA BBOX_SCRATCH+0 : SEC : SBC zp_br_t0
+    LDA BBOX_SCRATCH+1 :       SBC zp_br_t1
+    BMI bv_not_inside
+    ; Player is inside this bbox → assume visible.
+    LDA #1 : RTS
+.bv_not_inside
+
+    ; --- Transform 4 corners and project ---
+    ; Init: BBOX_FLAGS = 0, ILO = 255, IHI = 0.
+    LDA #0   : STA BBOX_FLAGS
+    LDA #255 : STA BBOX_ILO
+    LDA #0   : STA BBOX_IHI
+
+    ; Corner 0: (left, top)
+    LDA BBOX_SCRATCH+4 : STA zp_br_dxlo
+    LDA BBOX_SCRATCH+5 : STA zp_br_dxhi
+    LDA BBOX_SCRATCH+0 : STA zp_br_dylo
+    LDA BBOX_SCRATCH+1 : STA zp_br_dyhi
+    JSR bv_proj_one
+
+    ; Corner 1: (right, top)
+    LDA BBOX_SCRATCH+6 : STA zp_br_dxlo
+    LDA BBOX_SCRATCH+7 : STA zp_br_dxhi
+    LDA BBOX_SCRATCH+0 : STA zp_br_dylo
+    LDA BBOX_SCRATCH+1 : STA zp_br_dyhi
+    JSR bv_proj_one
+
+    ; Corner 2: (right, bot)
+    LDA BBOX_SCRATCH+6 : STA zp_br_dxlo
+    LDA BBOX_SCRATCH+7 : STA zp_br_dxhi
+    LDA BBOX_SCRATCH+2 : STA zp_br_dylo
+    LDA BBOX_SCRATCH+3 : STA zp_br_dyhi
+    JSR bv_proj_one
+
+    ; Corner 3: (left, bot)
+    LDA BBOX_SCRATCH+4 : STA zp_br_dxlo
+    LDA BBOX_SCRATCH+5 : STA zp_br_dxhi
+    LDA BBOX_SCRATCH+2 : STA zp_br_dylo
+    LDA BBOX_SCRATCH+3 : STA zp_br_dyhi
+    JSR bv_proj_one
+
+    ; If no corner was in front of NEAR plane, the bbox is fully behind.
+    LDA BBOX_FLAGS : AND #$02 : BNE bv_have_front
+    LDA #0 : RTS
+.bv_have_front
+    ; If any corner is behind the near plane, the bbox crosses the near
+    ; plane and projection is partial. Conservatively treat as full screen
+    ; (so bbox cull doesn't reject visible geometry).
+    LDA BBOX_FLAGS : AND #$01 : BEQ bv_all_front
+    LDA #0   : STA BBOX_ILO
+    LDA #255 : STA BBOX_IHI
+.bv_all_front
+    ; Degenerate: ilo > ihi → reject.
+    LDA BBOX_ILO : CMP BBOX_IHI : BCC bv_query
+    BEQ bv_query
+    LDA #0 : RTS
+.bv_query
+    LDA BBOX_ILO : STA $C2     ; zp_ilo
+    LDA BBOX_IHI : STA $C3     ; zp_ihi
+    JMP SC_HAS_GAP             ; tail-call; result in A
+}
+
+; bv_proj_one — process a single corner: transform, project, update min/max.
+; Inputs: zp_br_dxlo:dxhi, zp_br_dylo:dyhi (raw prescaled corner s16).
+.bv_proj_one
+{
+    JSR br_to_view             ; → zp_br_vxlo:vxhi (vx 8.8), vylo:vyhi (vy 8.8)
+    ; Save vx int+frac before project_x_subpx (it uses vxlo/hi as accumulator).
+    LDA zp_br_vxhi : STA zp_v_xint
+    LDA zp_br_vxlo : STA zp_v_xfrac
+
+    ; Near-clip test: vy < 1 (s16, treating high bit as sign).
+    LDA zp_br_vyhi : BMI bv_behind
+    BNE bv_in_front
+    LDA zp_br_vylo : CMP #1 : BCS bv_in_front
+.bv_behind
+    LDA BBOX_FLAGS : ORA #$01 : STA BBOX_FLAGS
+    RTS
+.bv_in_front
+    LDA BBOX_FLAGS : ORA #$02 : STA BBOX_FLAGS
+    ; vy_idx = vy << 1
+    LDA zp_br_vylo : ASL A
+    LDA zp_br_vyhi : ROL A
+    STA zp_br_t0
+    LDA #0 : ROL A
+    STA zp_br_t1
+    JSR br_recip
+    LDA zp_v_xint  : STA zp_br_t0
+    LDA zp_v_xfrac : STA zp_br_t1
+    JSR br_project_x_subpx
+    ; Clamp s16 sx in zp_br_resl/h to u8.
+    LDA zp_br_resh : BMI bv_sx_clamp_lo
+    BEQ bv_sx_in_range
+    LDA #255 : JMP bv_update_minmax
+.bv_sx_clamp_lo
+    LDA #0   : JMP bv_update_minmax
+.bv_sx_in_range
+    LDA zp_br_resl
+.bv_update_minmax
+    ; A holds clamped sx. Update min/max.
+    CMP BBOX_ILO : BCS bv_no_lo
+    STA BBOX_ILO
+.bv_no_lo
+    CMP BBOX_IHI : BCC bv_no_hi
+    STA BBOX_IHI
+.bv_no_hi
+    RTS
 }
 
 ; ============================================================================

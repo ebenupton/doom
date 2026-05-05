@@ -24,6 +24,7 @@ ZP_ROM_VWH_LO     = 0x48
 ZP_ROM_DETAIL_LO  = 0x4A
 ZP_ROOT_NODE_LO   = 0x4C
 ZP_ROM_FHCH_LO    = 0x30        # fh/ch table base
+ZP_ROM_BBOX_LO    = 0x32        # bbox table base (16B per node × 236 = 3776B)
 
 # View context slots
 ZP_PX = 0x00; ZP_PY = 0x02
@@ -37,6 +38,7 @@ ROM_MAIN_BASE   = 0x6C00       # ROM main (no VWH) — fits below rasteriser.
 VWH_BASE        = 0xE484       # VWH separately, after recip table.
 ROM_DETAIL_BASE = 0xB600       # OK while detail is unread by stub.
 ROM_FHCH_BASE   = 0xB600       # 1320-byte fh/ch table (same area; detail unused now)
+ROM_BBOX_BASE   = 0xBC00       # 3776-byte prescaled bbox table (16B per node)
 
 
 def setup_wad(sc):
@@ -58,6 +60,12 @@ def setup_wad(sc):
         mem[ROM_FHCH_BASE + si * 2 + 0] = rom_detail[off + SD_FH]
         mem[ROM_FHCH_BASE + si * 2 + 1] = rom_detail[off + SD_CH]
 
+    # Bbox table: 16 bytes per node (right-side bbox, then left-side).
+    # Each side is (top, bot, left, right) as s16, prescaled.
+    bbox = dw.packed_bbox_table
+    for i, b in enumerate(bbox):
+        mem[ROM_BBOX_BASE + i] = b
+
     def w16(addr_lo, val):
         mem[addr_lo]     = val & 0xFF
         mem[addr_lo + 1] = (val >> 8) & 0xFF
@@ -69,6 +77,7 @@ def setup_wad(sc):
     w16(ZP_ROM_VWH_LO,     VWH_BASE)
     w16(ZP_ROM_DETAIL_LO,  ROM_DETAIL_BASE)
     w16(ZP_ROM_FHCH_LO,    ROM_FHCH_BASE)
+    w16(ZP_ROM_BBOX_LO,    ROM_BBOX_BASE)
     w16(ZP_ROOT_NODE_LO,   layout['n_nodes'] - 1)
 
 
