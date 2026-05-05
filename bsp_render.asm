@@ -889,50 +889,11 @@ zp_node_chhi  = $59
     LDX zp_bsp_stack_sp
     LDA BSP_STACK,X : STA zp_node_chlo
 
-    ; Decode entry type:
-    ;   hi bit 7 set ($80+): subsector
-    ;   hi bit 6 set ($40-$7F): deferred FAR bbox check (lo = parent node id, hi & 1 = side)
-    ;   else: regular node id
-    LDA zp_node_chhi : BMI bsp_subsector
-    AND #$40 : BNE bsp_deferred_far
-    JMP bsp_node
-
-.bsp_subsector
-    ; Mask off the subsector bit. ID & 0x7FFF.
+    ; Subsector bit set?
+    LDA zp_node_chhi : AND #$80 : BEQ bsp_node
+    ; --- Subsector ---
     LDA zp_node_chhi : AND #$7F : STA zp_node_chhi
     JSR br_render_subsector
-    JMP bsp_loop
-
-.bsp_deferred_far
-    ; zp_node_chhi has bit 6 set; bit 0 is the parent's side. zp_node_chlo
-    ; is the parent node id. Need to bbox-check the FAR child (side ^ 1)
-    ; and push its actual id if visible.
-    LDA zp_node_chhi : AND #$01 : EOR #$01 : STA zp_bbox_side    ; FAR side
-    ; zp_node_chlo already holds parent node id; zp_node_chhi will be reset
-    ; when br_bbox_visible reads it (it reads chlo:chhi). Reset chhi to 0.
-    LDA #0 : STA zp_node_chhi
-    JSR br_bbox_visible
-    BEQ bsp_far_culled
-    ; Re-read parent node to get FAR child id.
-    LDA zp_node_chlo : STA zp_br_t0
-    LDA zp_node_chhi : STA zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1                       ; * 16
-    CLC
-    LDA zp_rom_nodes_lo : ADC zp_br_t0 : STA zp_br_p
-    LDA zp_rom_nodes_hi : ADC zp_br_t1 : STA zp_br_p_h
-    ; FAR child offset = 8 + side*2 (where side = 0 → right at +8, side = 1 → left at +10)
-    LDA zp_bbox_side : ASL A : CLC : ADC #8 : TAY
-    LDA (zp_br_p),Y : STA zp_br_t0      ; FAR child lo
-    INY : LDA (zp_br_p),Y : STA zp_br_t1 ; FAR child hi
-    ; Push FAR child
-    LDX zp_bsp_stack_sp
-    LDA zp_br_t0 : STA BSP_STACK,X : INX
-    LDA zp_br_t1 : STA BSP_STACK,X : INX
-    STX zp_bsp_stack_sp
-.bsp_far_culled
     JMP bsp_loop
 
 .bsp_node
@@ -1042,16 +1003,17 @@ zp_node_chhi  = $59
     INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
 .bsp_nf_done
 
-    ; Push deferred FAR marker (popped after NEAR's subtree finishes — gives
-    ; FAR the benefit of NEAR's mark_solid in the bbox+has_gap query).
-    ; Marker encoding: hi byte = $40 + side (so $40 or $41), lo = parent node id.
+    ; Push FAR child if its bbox is visible. Push first so it's popped LAST.
+    LDA zp_side : EOR #1 : STA zp_bbox_side
+    JSR br_bbox_visible
+    BEQ bsp_skip_far
     LDX zp_bsp_stack_sp
-    LDA zp_node_chlo : STA BSP_STACK,X : INX            ; parent node id lo
-    LDA zp_side      : ORA #$40 : STA BSP_STACK,X : INX ; marker hi
+    LDA BSP_FAR_LO : STA BSP_STACK,X : INX
+    LDA BSP_FAR_HI : STA BSP_STACK,X : INX
     STX zp_bsp_stack_sp
+.bsp_skip_far
 
-    ; Push NEAR child unconditionally (player's side — bbox always passes
-    ; in practice, so save the cost of checking).
+    ; Push NEAR child unconditionally (player's side — bbox always passes).
     LDX zp_bsp_stack_sp
     LDA BSP_NEAR_LO : STA BSP_STACK,X : INX
     LDA BSP_NEAR_HI : STA BSP_STACK,X : INX
