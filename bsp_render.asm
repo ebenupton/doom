@@ -1320,10 +1320,20 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA BBOX_SCRATCH+3 : STA zp_br_dyhi
     JSR bv_proj_one
 
-    ; If no corner was in front of NEAR plane, the bbox is fully behind.
+    ; --- Reject tests using BBOX_FLAGS bits collected by bv_proj_one ---
+    ;   bit 0: any_behind  (corner had vy < NEAR)
+    ;   bit 1: any_front   (corner had vy >= NEAR)
+    ;   bit 2: any_not_left  (some corner has vx + vy >= 0  → not behind L frustum)
+    ;   bit 3: any_not_right (some corner has vx - vy <= 0  → not past R frustum)
     LDA BBOX_FLAGS : AND #$02 : BNE bv_have_front
-    LDA #0 : RTS
+    LDA #0 : RTS                              ; all behind near plane
 .bv_have_front
+    LDA BBOX_FLAGS : AND #$04 : BNE bv_have_not_left
+    LDA #0 : RTS                              ; all left of L frustum
+.bv_have_not_left
+    LDA BBOX_FLAGS : AND #$08 : BNE bv_have_not_right
+    LDA #0 : RTS                              ; all right of R frustum
+.bv_have_not_right
     ; If any corner is behind the near plane, the bbox crosses the near
     ; plane and projection is partial. Conservatively treat as full screen
     ; (so bbox cull doesn't reject visible geometry).
@@ -1349,6 +1359,29 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     ; Save vx int+frac before project_x_subpx (it uses vxlo/hi as accumulator).
     LDA zp_br_vxhi : STA zp_v_xint
     LDA zp_br_vxlo : STA zp_v_xfrac
+
+    ; --- Frustum-side flags (run for every corner regardless of near-clip).
+    ;   left frustum plane:  vx + vy = 0  (corner to the LEFT of it has vx + vy < 0).
+    ;   right frustum plane: vx - vy = 0  (corner to the RIGHT of it has vx > vy).
+    ; Set BBOX_FLAGS bit 2 if any corner is NOT to the left  (vx + vy >= 0).
+    ; Set BBOX_FLAGS bit 3 if any corner is NOT to the right (vx - vy <= 0).
+    ; vx + vy: high byte sign = sign of sum.
+    LDA zp_br_vxlo  : CLC : ADC zp_br_vylo
+    LDA zp_br_vxhi  :       ADC zp_br_vyhi
+    LDA zp_br_vxext :       ADC zp_br_vyext
+    BMI bv_lt_neg
+    LDA BBOX_FLAGS : ORA #$04 : STA BBOX_FLAGS
+.bv_lt_neg
+    ; vx - vy: BPL means result >= 0 → vx >= vy → corner past R frustum.
+    LDA zp_br_vxlo  : SEC : SBC zp_br_vylo
+    LDA zp_br_vxhi  :       SBC zp_br_vyhi
+    LDA zp_br_vxext :       SBC zp_br_vyext
+    BMI bv_rt_set        ; result < 0 → vx < vy → not past R frustum
+    BNE bv_rt_skip       ; result > 0 → vx > vy → past R frustum
+    ; result == 0 → also not past (vx <= vy)
+.bv_rt_set
+    LDA BBOX_FLAGS : ORA #$08 : STA BBOX_FLAGS
+.bv_rt_skip
 
     ; Near-clip test: vy >= 1 (s24, integer part = (vyext, vyhi) as s16).
     ; If high byte (vyext) MSB set → s24 negative → behind.
