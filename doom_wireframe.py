@@ -3081,6 +3081,8 @@ show_map = False                          # Top-down map visualisation
 _show_nj_raster = False                   # Show NJ 6502 rasteriser output (FP lines)
 _use_6502_frontend = False                # H key: 6502 front-end + Python clip/draw
 _use_6502_full = False                    # J key: 6502 front-end + clip + NJ rasteriser
+_use_bsp_render = False                   # K key: bsp_render.bin pipeline (BSP+xform+clip+raster)
+_bsp_render_6502 = None                   # lazy-loaded BspRender6502 instance
 
 def clip_and_draw_6502(commands, surface, vz_ps):
     """Process 6502 engine seg commands through EndpointClipSpans with full clipping.
@@ -3471,7 +3473,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result, _show_integrated_fb, _show_diff_overlay
+  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result, _show_integrated_fb, _show_diff_overlay, _use_bsp_render, _bsp_render_6502
   global _novt_annotate, _show_seg_numbers
   running = True
   while running:
@@ -3521,6 +3523,7 @@ def _main():
                 _use_6502_full = not _use_6502_full
                 if _use_6502_full:
                     _use_6502_frontend = False  # J supersedes H
+                    _use_bsp_render = False
                     if _render_6502 is None:
                         from fe6502 import Frontend6502
                         _render_6502 = Frontend6502(
@@ -3529,6 +3532,19 @@ def _main():
                     print("6502 full pipeline ON (front-end + clip + NJ raster)", flush=True)
                 else:
                     print("6502 full pipeline OFF", flush=True)
+            elif ev.key == pygame.K_k:
+                _use_bsp_render = not _use_bsp_render
+                if _use_bsp_render:
+                    _use_6502_frontend = False
+                    _use_6502_full = False
+                    if _bsp_render_6502 is None:
+                        from bsp_render_6502 import BspRender6502
+                        _bsp_render_6502 = BspRender6502(
+                            packed_layout, packed_rom_main, packed_rom_detail,
+                            packed_bbox_table, MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
+                    print("bsp_render.bin pipeline ON (BSP + xform + clip + raster)", flush=True)
+                else:
+                    print("bsp_render.bin pipeline OFF", flush=True)
             elif ev.key == pygame.K_p:
                 # Profile: run 6502 with per-function cycle accounting
                 import threading
@@ -3658,7 +3674,17 @@ def _main():
         if _es._drawn_lines is not None:
             _es._drawn_lines.clear()
 
-        if _use_6502_full and _render_6502 is not None:
+        if _use_bsp_render and _bsp_render_6502 is not None:
+            # K mode: bsp_render.bin pipeline (our new BSP+xform+clip+raster).
+            import time as _time
+            _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
+            _fz = player_floor(player_x, player_y)
+            _t0 = _time.perf_counter()
+            hw_cyc = _bsp_render_6502.render_frame(
+                player_x, player_y, _ab, _fz)
+            _t1 = _time.perf_counter()
+            _bsp_render_6502.blit_framebuffer_to(fp_surface)
+        elif _use_6502_full and _render_6502 is not None:
             # J mode: full 6502 pipeline with NJ rasteriser → extract framebuffer
             import time as _time
             _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
