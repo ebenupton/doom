@@ -889,10 +889,17 @@ zp_node_chhi  = $59
     LDX zp_bsp_stack_sp
     LDA BSP_STACK,X : STA zp_node_chlo
 
+    ; Quick reject: if every column is solid (span list empty), discard
+    ; the rest of the BSP queue — nothing more can become visible.
+    JSR SC_IS_FULL
+    BNE bsp_done_full
     ; Subsector bit set?
     LDA zp_node_chhi : AND #$80 : BEQ bsp_node
     LDA zp_node_chhi : AND #$7F : STA zp_node_chhi
     JSR br_render_subsector
+    JMP bsp_loop
+.bsp_done_full
+    LDA #0 : STA zp_bsp_stack_sp     ; flush stack and exit
     JMP bsp_loop
 
 .bsp_node
@@ -1217,6 +1224,7 @@ zp_seg_flags    = $3F      ; u8
 ;     7. JSR span_has_gap → return its A.
 ; ============================================================================
 SC_HAS_GAP      = $2009
+SC_IS_FULL      = $200C
 
 ; Per-corner storage (5 bytes × 4 = 20). bv_proj_one writes here so that a
 ; second pass can compute near-plane edge crossings between consecutive
