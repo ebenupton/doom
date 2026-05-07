@@ -891,7 +891,6 @@ zp_node_chhi  = $59
 
     ; Subsector bit set?
     LDA zp_node_chhi : AND #$80 : BEQ bsp_node
-    ; --- Subsector ---
     LDA zp_node_chhi : AND #$7F : STA zp_node_chhi
     JSR br_render_subsector
     JMP bsp_loop
@@ -1003,7 +1002,7 @@ zp_node_chhi  = $59
     INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
 .bsp_nf_done
 
-    ; Push FAR child if its bbox is visible. Push first so it's popped LAST.
+    ; Push FAR child if its bbox passes (push first so it's popped LAST).
     LDA zp_side : EOR #1 : STA zp_bbox_side
     JSR br_bbox_visible
     BEQ bsp_skip_far
@@ -1219,6 +1218,12 @@ zp_seg_flags    = $3F      ; u8
 ; ============================================================================
 SC_HAS_GAP      = $2009
 
+; Per-corner storage (5 bytes × 4 = 20). bv_proj_one writes here so that a
+; second pass can compute near-plane edge crossings between consecutive
+; corners. Layout per corner: vx_lo, vx_hi, vy_lo, vy_hi, in_front (0/1).
+BBOX_CORNERS    = $0E00
+BBOX_CORNER_IDX = $0E14     ; offset into BBOX_CORNERS for current corner
+
 BBOX_SCRATCH    = $0A58     ; 8 bytes: top_lo,top_hi,bot_lo,bot_hi,
                             ;          left_lo,left_hi,right_lo,right_hi
 BBOX_FLAGS      = $0A60     ; bit 0 = any_behind, bit 1 = any_front
@@ -1292,33 +1297,43 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA #255 : STA BBOX_ILO
     LDA #0   : STA BBOX_IHI
 
-    ; Corner 0: (left, top)
+    ; Corner 0: (left, top) — store at BBOX_CORNERS + 0
+    LDA #0 : STA BBOX_CORNER_IDX
     LDA BBOX_SCRATCH+4 : STA zp_br_dxlo
     LDA BBOX_SCRATCH+5 : STA zp_br_dxhi
     LDA BBOX_SCRATCH+0 : STA zp_br_dylo
     LDA BBOX_SCRATCH+1 : STA zp_br_dyhi
     JSR bv_proj_one
 
-    ; Corner 1: (right, top)
+    ; Corner 1: (right, top) — store at BBOX_CORNERS + 5
+    LDA #5 : STA BBOX_CORNER_IDX
     LDA BBOX_SCRATCH+6 : STA zp_br_dxlo
     LDA BBOX_SCRATCH+7 : STA zp_br_dxhi
     LDA BBOX_SCRATCH+0 : STA zp_br_dylo
     LDA BBOX_SCRATCH+1 : STA zp_br_dyhi
     JSR bv_proj_one
 
-    ; Corner 2: (right, bot)
+    ; Corner 2: (right, bot) — store at BBOX_CORNERS + 10
+    LDA #10 : STA BBOX_CORNER_IDX
     LDA BBOX_SCRATCH+6 : STA zp_br_dxlo
     LDA BBOX_SCRATCH+7 : STA zp_br_dxhi
     LDA BBOX_SCRATCH+2 : STA zp_br_dylo
     LDA BBOX_SCRATCH+3 : STA zp_br_dyhi
     JSR bv_proj_one
 
-    ; Corner 3: (left, bot)
+    ; Corner 3: (left, bot) — store at BBOX_CORNERS + 15
+    LDA #15 : STA BBOX_CORNER_IDX
     LDA BBOX_SCRATCH+4 : STA zp_br_dxlo
     LDA BBOX_SCRATCH+5 : STA zp_br_dxhi
     LDA BBOX_SCRATCH+2 : STA zp_br_dylo
     LDA BBOX_SCRATCH+3 : STA zp_br_dyhi
     JSR bv_proj_one
+
+    ; --- Near-plane edge crossings: for any edge that straddles NEAR,
+    ; project the crossing point's sx and update min/max. This tightens
+    ; the bbox sx range (vs the conservative full-screen fallback when
+    ; any corner is behind the near plane).
+    JSR bv_compute_edge_crossings
 
     ; --- Reject tests using BBOX_FLAGS bits collected by bv_proj_one ---
     ;   bit 0: any_behind  (corner had vy < NEAR)
@@ -1360,6 +1375,16 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_vxhi : STA zp_v_xint
     LDA zp_br_vxlo : STA zp_v_xfrac
 
+    ; Stash s16 (vx, vy) for this corner so a later pass can compute
+    ; near-plane edge crossings. (Low 16 bits are enough — for far corners
+    ; with vy_ext != 0 we already mark "any-behind" and fall back to full
+    ; screen, so edge crossings only matter when corners fit in s16.)
+    LDX BBOX_CORNER_IDX
+    LDA zp_br_vxlo : STA BBOX_CORNERS+0,X
+    LDA zp_br_vxhi : STA BBOX_CORNERS+1,X
+    LDA zp_br_vylo : STA BBOX_CORNERS+2,X
+    LDA zp_br_vyhi : STA BBOX_CORNERS+3,X
+
     ; --- Frustum-side flags (run for every corner regardless of near-clip).
     ;   left frustum plane:  vx + vy = 0  (corner to the LEFT of it has vx + vy < 0).
     ;   right frustum plane: vx - vy = 0  (corner to the RIGHT of it has vx > vy).
@@ -1383,16 +1408,23 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA BBOX_FLAGS : ORA #$08 : STA BBOX_FLAGS
 .bv_rt_skip
 
-    ; Near-clip test: vy >= 1 (s24, integer part = (vyext, vyhi) as s16).
-    ; If high byte (vyext) MSB set → s24 negative → behind.
-    ; Else if (vyext, vyhi) both zero → integer part = 0 → behind.
+    ; Near-clip test: matches Python's evy >= NEAR where evy = (total_vy + 128) >> 8.
+    ; Equivalent to total_vy >= 128 (= half-integer) in 8.8 fixed-point.
+    ;   vy_ext < 0  → behind
+    ;   vy_ext > 0  → in front (>= 256)
+    ;   vy_ext = 0:
+    ;     vy_hi != 0 → in front (>= 256)
+    ;     vy_hi = 0  → in front iff vy_lo >= $80
     LDA zp_br_vyext : BMI bv_behind
-    ORA zp_br_vyhi : BNE bv_in_front
-    ; vyext = 0 and vyhi = 0 → vy < 1 → behind
+    BNE bv_in_front
+    LDA zp_br_vyhi : BNE bv_in_front
+    LDA zp_br_vylo : CMP #$80 : BCS bv_in_front
 .bv_behind
+    LDX BBOX_CORNER_IDX : LDA #0 : STA BBOX_CORNERS+4,X
     LDA BBOX_FLAGS : ORA #$01 : STA BBOX_FLAGS
     RTS
 .bv_in_front
+    LDX BBOX_CORNER_IDX : LDA #1 : STA BBOX_CORNERS+4,X
     LDA BBOX_FLAGS : ORA #$02 : STA BBOX_FLAGS
     ; If view-space x overflows s16 (vx_ext != 0), br_project_x_subpx (s8 vx
     ; assumption) would produce nonsense sx. Conservatively mark "any behind"
@@ -1432,6 +1464,17 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .bv_no_hi
     RTS
 }
+
+; bv_compute_edge_crossings — for any bbox edge that straddles the near
+; plane, project the crossing point's sx and update min/max. Called once
+; after all 4 corners have been written to BBOX_CORNERS by bv_proj_one.
+;
+; Currently a no-op: when an edge straddles near, the corresponding corner
+; is "behind", BBOX_FLAGS bit 0 fires and bv_have_front falls back to full
+; screen [0, 255] anyway. A future tighter implementation would interpolate
+; the crossing point and project it, narrowing the sx range further.
+.bv_compute_edge_crossings
+    RTS
 
 ; ============================================================================
 ; br_render_subsector — process one subsector.
