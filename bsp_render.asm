@@ -1590,10 +1590,13 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .s_v1_ok
     LDA zp_seg_sx_lo : STA zp_seg_sx1_lo
     LDA zp_seg_sx_hi : STA zp_seg_sx1_hi
-    LDA zp_seg_sy_top_lo : STA zp_seg_sy1_top_lo
-    LDA zp_seg_sy_top_hi : STA zp_seg_sy1_top_hi
-    LDA zp_seg_sy_bot_lo : STA zp_seg_sy1_bot_lo
-    LDA zp_seg_sy_bot_hi : STA zp_seg_sy1_bot_hi
+    ; Bias sy by Y_BIAS (= 48) so the s16 line clipper sees biased coords
+    ; and the rasteriser's SBC #Y_BIAS unbias gives the correct unbiased
+    ; framebuffer Y in [0, 159].
+    LDA zp_seg_sy_top_lo : CLC : ADC #48 : STA zp_seg_sy1_top_lo
+    LDA zp_seg_sy_top_hi :       ADC #0  : STA zp_seg_sy1_top_hi
+    LDA zp_seg_sy_bot_lo : CLC : ADC #48 : STA zp_seg_sy1_bot_lo
+    LDA zp_seg_sy_bot_hi :       ADC #0  : STA zp_seg_sy1_bot_hi
 
     ; Transform v2
     LDA zp_seg_v2_lo : STA zp_br_t0
@@ -1604,10 +1607,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .s_v2_ok
     LDA zp_seg_sx_lo : STA zp_seg_sx2_lo
     LDA zp_seg_sx_hi : STA zp_seg_sx2_hi
-    LDA zp_seg_sy_top_lo : STA zp_seg_sy2_top_lo
-    LDA zp_seg_sy_top_hi : STA zp_seg_sy2_top_hi
-    LDA zp_seg_sy_bot_lo : STA zp_seg_sy2_bot_lo
-    LDA zp_seg_sy_bot_hi : STA zp_seg_sy2_bot_hi
+    LDA zp_seg_sy_top_lo : CLC : ADC #48 : STA zp_seg_sy2_top_lo
+    LDA zp_seg_sy_top_hi :       ADC #0  : STA zp_seg_sy2_top_hi
+    LDA zp_seg_sy_bot_lo : CLC : ADC #48 : STA zp_seg_sy2_bot_lo
+    LDA zp_seg_sy_bot_hi :       ADC #0  : STA zp_seg_sy2_bot_hi
 
     ; --- Emit top + bottom horizontals only for solid walls (SF_SOLID = $02) ---
     ; Portal walls would draw "fake" front-sector floor/ceiling here that
