@@ -1612,13 +1612,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy_bot_lo : CLC : ADC #48 : STA zp_seg_sy2_bot_lo
     LDA zp_seg_sy_bot_hi :       ADC #0  : STA zp_seg_sy2_bot_hi
 
-    ; --- Emit top + bottom horizontals only for solid walls (SF_SOLID = $02) ---
-    ; Portal walls would draw "fake" front-sector floor/ceiling here that
-    ; are usually NOT visible from this seg's perspective; the visible top/
-    ; bottom edges come from neighbouring solid walls' horizontals + aperture
-    ; edges (verticals). Suppressing portal horizontals removes most of the
-    ; noise lines that span across the frame.
-    LDA zp_seg_flags : AND #$02 : BEQ skip_horiz
+    ; --- Emit top + bottom horizontals (front sector floor/ceiling) ---
+    ; Drawn for both solid and portal walls (matches Python packed_render_seg
+    ; behaviour — Python emits the front-sector horizontals as needed and
+    ; relies on the line clipper to drop the parts hidden by mark_solid).
 
     ; Top horizontal: (sx1, sy1_top) → (sx2, sy2_top)
     LDA zp_seg_sx1_lo : STA zp_line_xl
@@ -1643,7 +1640,6 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy2_bot_hi : STA $B5
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
-.skip_horiz
 
     ; --- Emit left vertical (suppressed by SF_NOVT1 = $10) ---
     LDA zp_seg_flags : AND #$10 : BNE skip_lvert
