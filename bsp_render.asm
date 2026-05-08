@@ -1645,12 +1645,21 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy2_bbot_lo
     LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy2_bbot_hi
 
-    ; --- Emit top + bottom horizontals (front sector floor/ceiling) ---
-    ; Drawn for both solid and portal walls (matches Python packed_render_seg
-    ; behaviour — Python emits the front-sector horizontals as needed and
-    ; relies on the line clipper to drop the parts hidden by mark_solid).
-
-    ; Top horizontal: (sx1, sy1_top) → (sx2, sy2_top)
+    ; --- Emit top horizontal (front-sector ceiling) ---
+    ; Solid wall:        always.
+    ; Portal w/ NEEDBT:  iff ch > vz (face above eyeline, ft visible).
+    ; Portal w/o NEEDBT: iff bch > ch (back ceiling above front; step visible).
+    LDA zp_seg_flags : AND #$02 : BNE ft_emit       ; SF_SOLID → emit
+    LDA zp_seg_flags : AND #$04 : BEQ ft_no_needbt
+    ; NEEDBT: emit only if ch > vz (s8 compare via signed test on ch - vz).
+    LDA zp_seg_ch : SEC : SBC zp_br_vz : BMI ft_skip
+    BEQ ft_skip
+    JMP ft_emit
+.ft_no_needbt
+    ; bch > ch ?
+    LDA zp_seg_bch : SEC : SBC zp_seg_ch : BMI ft_skip
+    BEQ ft_skip
+.ft_emit
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_top_lo : STA zp_line_yl
@@ -1661,8 +1670,23 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy2_top_hi : STA $B5
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
+.ft_skip
 
-    ; Bottom horizontal: (sx1, sy1_bot) → (sx2, sy2_bot)
+    ; --- Emit bottom horizontal (front-sector floor) ---
+    ; Solid:             always.
+    ; Portal w/ NEEDBB:  iff fh < vz (face below eyeline, fb visible).
+    ; Portal w/o NEEDBB: iff bfh < fh (back floor below front; step visible).
+    LDA zp_seg_flags : AND #$02 : BNE fb_emit
+    LDA zp_seg_flags : AND #$08 : BEQ fb_no_needbb
+    ; NEEDBB: emit only if fh < vz (vz - fh > 0).
+    LDA zp_br_vz : SEC : SBC zp_seg_fh : BMI fb_skip
+    BEQ fb_skip
+    JMP fb_emit
+.fb_no_needbb
+    ; bfh < fh ?
+    LDA zp_seg_fh : SEC : SBC zp_seg_bfh : BMI fb_skip
+    BEQ fb_skip
+.fb_emit
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_bot_lo : STA zp_line_yl
@@ -1673,6 +1697,7 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy2_bot_hi : STA $B5
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
+.fb_skip
 
     ; --- Portal step edges (back ceiling / floor) ---
     ; Solid walls have no back sector — skip the step emits.
