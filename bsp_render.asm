@@ -144,6 +144,7 @@ SC_UDIV16_8     = $2024
 SC_DRAW_S16     = $201E
 SC_DRAW_U8      = $2015      ; standalone DCL (u8 input, no clipper prelude)
 SC_MARK_SOLID   = $2003
+SC_TIGHTEN      = $2006
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 zp_mul_b        = $D9
@@ -1732,36 +1733,68 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .step_no_bot
 .step_skip
 
-    ; --- Emit left vertical (suppressed by SF_NOVT1 = $10) ---
+    ; --- Emit verticals ---
+    ; Solid wall: full ft-to-fb on both sides.
+    ; Portal: ft-to-bt for NEEDBT (top doorframe edge),
+    ;         bb-to-fb for NEEDBB (bottom doorframe edge).
+    ;         Both for NEEDBT+NEEDBB. Otherwise no vertical.
+    ; SF_NOVT1/NOVT2 still suppress verticals at BSP-internal split vertices.
+
+    ; Left vertical (sx1).
     LDA zp_seg_flags : AND #$10 : BNE skip_lvert
-    LDA zp_seg_sx1_lo : STA zp_line_xl
-    LDA zp_seg_sx1_hi : STA $B2
+    LDA zp_seg_flags : AND #$02 : BEQ lvert_portal
+    ; Solid: ft1 → fb1
     LDA zp_seg_sy1_top_lo : STA zp_line_yl
     LDA zp_seg_sy1_top_hi : STA $B3
-    LDA zp_seg_sx1_lo : STA zp_line_xr
-    LDA zp_seg_sx1_hi : STA $B4
     LDA zp_seg_sy1_bot_lo : STA zp_line_yr
     LDA zp_seg_sy1_bot_hi : STA $B5
-    LDA #0   : STA $BD
-    JSR SC_DRAW_S16
+    JSR emit_vert_sx1
+    JMP skip_lvert
+.lvert_portal
+    ; NEEDBT? top piece ft1 → bt1
+    LDA zp_seg_flags : AND #$04 : BEQ lvert_no_top
+    LDA zp_seg_sy1_top_lo : STA zp_line_yl
+    LDA zp_seg_sy1_top_hi : STA $B3
+    LDA zp_seg_sy1_btop_lo : STA zp_line_yr
+    LDA zp_seg_sy1_btop_hi : STA $B5
+    JSR emit_vert_sx1
+.lvert_no_top
+    ; NEEDBB? bottom piece bb1 → fb1
+    LDA zp_seg_flags : AND #$08 : BEQ skip_lvert
+    LDA zp_seg_sy1_bbot_lo : STA zp_line_yl
+    LDA zp_seg_sy1_bbot_hi : STA $B3
+    LDA zp_seg_sy1_bot_lo : STA zp_line_yr
+    LDA zp_seg_sy1_bot_hi : STA $B5
+    JSR emit_vert_sx1
 .skip_lvert
 
-    ; --- Emit right vertical (suppressed by SF_NOVT2 = $20) ---
+    ; Right vertical (sx2).
     LDA zp_seg_flags : AND #$20 : BNE skip_rvert
-    LDA zp_seg_sx2_lo : STA zp_line_xl
-    LDA zp_seg_sx2_hi : STA $B2
+    LDA zp_seg_flags : AND #$02 : BEQ rvert_portal
     LDA zp_seg_sy2_top_lo : STA zp_line_yl
     LDA zp_seg_sy2_top_hi : STA $B3
-    LDA zp_seg_sx2_lo : STA zp_line_xr
-    LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_bot_lo : STA zp_line_yr
     LDA zp_seg_sy2_bot_hi : STA $B5
-    LDA #0   : STA $BD
-    JSR SC_DRAW_S16
+    JSR emit_vert_sx2
+    JMP skip_rvert
+.rvert_portal
+    LDA zp_seg_flags : AND #$04 : BEQ rvert_no_top
+    LDA zp_seg_sy2_top_lo : STA zp_line_yl
+    LDA zp_seg_sy2_top_hi : STA $B3
+    LDA zp_seg_sy2_btop_lo : STA zp_line_yr
+    LDA zp_seg_sy2_btop_hi : STA $B5
+    JSR emit_vert_sx2
+.rvert_no_top
+    LDA zp_seg_flags : AND #$08 : BEQ skip_rvert
+    LDA zp_seg_sy2_bbot_lo : STA zp_line_yl
+    LDA zp_seg_sy2_bbot_hi : STA $B3
+    LDA zp_seg_sy2_bot_lo : STA zp_line_yr
+    LDA zp_seg_sy2_bot_hi : STA $B5
+    JSR emit_vert_sx2
 .skip_rvert
 
-    ; --- mark_solid for solid walls (SF_SOLID = $02) ---
-    LDA zp_seg_flags : AND #$02 : BEQ ms_skip
+    ; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and
+    ;     portal (tighten) cases.
     ; Clamp sx1 to u8 → zp_br_t2
     LDA zp_seg_sx1_hi : BMI ms_sx1_neg
     BEQ ms_sx1_lo
@@ -1782,15 +1815,16 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .ms_setrange
     ; ilo = min(t2, t3), ihi = max(t2, t3)
     LDA zp_br_t2 : CMP zp_br_t3 : BCC ms_t2lt
-    ; t2 >= t3
     LDA zp_br_t3 : STA $C2          ; ilo = t3
     LDA zp_br_t2 : STA $C3          ; ihi = t2
-    JMP ms_invoke
+    JMP ms_dispatch
 .ms_t2lt
     LDA zp_br_t2 : STA $C2          ; ilo = t2
     LDA zp_br_t3 : STA $C3          ; ihi = t3
-.ms_invoke
-    LDA #0 : STA $A8                ; zp_ms_emit = 0 (skip line emission)
+.ms_dispatch
+    LDA zp_seg_flags : AND #$02 : BEQ ms_skip
+    ; --- Solid wall: mark_solid ---
+    LDA #0 : STA $A8                ; zp_ms_emit = 0
     JSR SC_MARK_SOLID
 .ms_skip
 
@@ -1802,6 +1836,24 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     DEC zp_seg_count
     JMP seg_loop
 }
+
+; emit_vert_sx1 — caller has set yl/yh/yr/yh in zp_line_yl/$B3/zp_line_yr/$B5.
+; Fills xl/xh/xr/xh from sx1, clears records hi byte, calls SC_DRAW_S16.
+.emit_vert_sx1
+    LDA zp_seg_sx1_lo : STA zp_line_xl
+    LDA zp_seg_sx1_hi : STA $B2
+    LDA zp_seg_sx1_lo : STA zp_line_xr
+    LDA zp_seg_sx1_hi : STA $B4
+    LDA #0 : STA $BD
+    JMP SC_DRAW_S16
+
+.emit_vert_sx2
+    LDA zp_seg_sx2_lo : STA zp_line_xl
+    LDA zp_seg_sx2_hi : STA $B2
+    LDA zp_seg_sx2_lo : STA zp_line_xr
+    LDA zp_seg_sx2_hi : STA $B4
+    LDA #0 : STA $BD
+    JMP SC_DRAW_S16
 
 ; ============================================================================
 ; br_seg_xform_vertex — fetch vertex by index, transform to view, project X.
