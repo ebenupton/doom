@@ -1077,6 +1077,16 @@ zp_seg_sy_bot_lo = $6C     ; s16 projected screen y for bottom edge
 zp_seg_sy_bot_hi = $6D
 zp_seg_sx_lo    = $6E      ; s16 projected screen x
 zp_seg_sx_hi    = $6F
+; Back-sector heights (s8 each) — only meaningful for portal segs.
+zp_seg_bfh      = $0A78
+zp_seg_bch      = $0A79
+zp_seg_btop_dlt = $0A7A    ; bch - vz
+zp_seg_bbot_dlt = $0A7B    ; bfh - vz
+; Output of bv_proj_one's back-step projection (transient).
+zp_seg_sy_btop_lo = $0A7C
+zp_seg_sy_btop_hi = $0A7D
+zp_seg_sy_bbot_lo = $0A7E
+zp_seg_sy_bbot_hi = $0A7F
 ; Per-seg saved vertex projections live in RAM (ZP $70+ is rasteriser
 ; territory: RASTER_ZP_SCRSTRT=$70, RASTER_ZP_X0..Y1=$82-$85). Use the
 ; gap between BSP_STACK ($0A00-$0A3F) and SS_VISITED_BITMAP ($0A80).
@@ -1089,6 +1099,15 @@ zp_seg_sy2_top_lo = SEG_PROJ_BUF + 4
 zp_seg_sy2_top_hi = SEG_PROJ_BUF + 5
 zp_seg_sy2_bot_lo = SEG_PROJ_BUF + 6
 zp_seg_sy2_bot_hi = SEG_PROJ_BUF + 7
+; Per-vertex saved back-step projections.
+zp_seg_sy1_btop_lo = SEG_PROJ_BUF + 8
+zp_seg_sy1_btop_hi = SEG_PROJ_BUF + 9
+zp_seg_sy1_bbot_lo = SEG_PROJ_BUF + 10
+zp_seg_sy1_bbot_hi = SEG_PROJ_BUF + 11
+zp_seg_sy2_btop_lo = SEG_PROJ_BUF + 12
+zp_seg_sy2_btop_hi = SEG_PROJ_BUF + 13
+zp_seg_sy2_bbot_lo = SEG_PROJ_BUF + 14
+zp_seg_sy2_bbot_hi = SEG_PROJ_BUF + 15
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
@@ -1568,18 +1587,24 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JMP s_advance
 .bf_passed
 
-    ; --- Read fh, ch from FHCH table at offset (seg_idx * 2) ---
+    ; --- Read fh, ch, bfh, bch from FHCH table at offset (seg_idx * 4) ---
     LDA zp_seg_first_lo : STA zp_br_t0
     LDA zp_seg_first_hi : STA zp_br_t1
     ASL zp_br_t0 : ROL zp_br_t1                ; *2
+    ASL zp_br_t0 : ROL zp_br_t1                ; *4
     CLC
     LDA zp_rom_fhch_lo : ADC zp_br_t0 : STA zp_br_p
     LDA zp_rom_fhch_hi : ADC zp_br_t1 : STA zp_br_p_h
     LDY #0 : LDA (zp_br_p),Y : STA zp_seg_fh
     INY    : LDA (zp_br_p),Y : STA zp_seg_ch
-    ; top_dlt = ch - vz, bot_dlt = fh - vz (both s8)
-    LDA zp_seg_ch : SEC : SBC zp_br_vz : STA zp_seg_top_dlt
-    LDA zp_seg_fh : SEC : SBC zp_br_vz : STA zp_seg_bot_dlt
+    INY    : LDA (zp_br_p),Y : STA zp_seg_bfh
+    INY    : LDA (zp_br_p),Y : STA zp_seg_bch
+    ; Height deltas (all s8). Front: top_dlt = ch - vz, bot_dlt = fh - vz.
+    ; Back: btop_dlt = bch - vz, bbot_dlt = bfh - vz.
+    LDA zp_seg_ch  : SEC : SBC zp_br_vz : STA zp_seg_top_dlt
+    LDA zp_seg_fh  : SEC : SBC zp_br_vz : STA zp_seg_bot_dlt
+    LDA zp_seg_bch : SEC : SBC zp_br_vz : STA zp_seg_btop_dlt
+    LDA zp_seg_bfh : SEC : SBC zp_br_vz : STA zp_seg_bbot_dlt
 
     ; Transform v1 (writes sx, sy_top, sy_bot)
     LDA zp_seg_v1_lo : STA zp_br_t0
@@ -1597,6 +1622,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy_top_hi :       ADC #0  : STA zp_seg_sy1_top_hi
     LDA zp_seg_sy_bot_lo : CLC : ADC #48 : STA zp_seg_sy1_bot_lo
     LDA zp_seg_sy_bot_hi :       ADC #0  : STA zp_seg_sy1_bot_hi
+    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy1_btop_lo
+    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy1_btop_hi
+    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy1_bbot_lo
+    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy1_bbot_hi
 
     ; Transform v2
     LDA zp_seg_v2_lo : STA zp_br_t0
@@ -1611,6 +1640,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy_top_hi :       ADC #0  : STA zp_seg_sy2_top_hi
     LDA zp_seg_sy_bot_lo : CLC : ADC #48 : STA zp_seg_sy2_bot_lo
     LDA zp_seg_sy_bot_hi :       ADC #0  : STA zp_seg_sy2_bot_hi
+    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy2_btop_lo
+    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy2_btop_hi
+    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy2_bbot_lo
+    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy2_bbot_hi
 
     ; --- Emit top + bottom horizontals (front sector floor/ceiling) ---
     ; Drawn for both solid and portal walls (matches Python packed_render_seg
@@ -1640,6 +1673,39 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sy2_bot_hi : STA $B5
     LDA #0   : STA $BD
     JSR SC_DRAW_S16
+
+    ; --- Portal step edges (back ceiling / floor) ---
+    ; Solid walls have no back sector — skip the step emits.
+    LDA zp_seg_flags : AND #$02 : BNE step_skip   ; SF_SOLID set → skip steps
+
+    ; Back ceiling step if NEEDBT (= $04) set: emit (sx1, bt1) → (sx2, bt2).
+    LDA zp_seg_flags : AND #$04 : BEQ step_no_top
+    LDA zp_seg_sx1_lo : STA zp_line_xl
+    LDA zp_seg_sx1_hi : STA $B2
+    LDA zp_seg_sy1_btop_lo : STA zp_line_yl
+    LDA zp_seg_sy1_btop_hi : STA $B3
+    LDA zp_seg_sx2_lo : STA zp_line_xr
+    LDA zp_seg_sx2_hi : STA $B4
+    LDA zp_seg_sy2_btop_lo : STA zp_line_yr
+    LDA zp_seg_sy2_btop_hi : STA $B5
+    LDA #0   : STA $BD
+    JSR SC_DRAW_S16
+.step_no_top
+
+    ; Back floor step if NEEDBB (= $08) set: emit (sx1, bb1) → (sx2, bb2).
+    LDA zp_seg_flags : AND #$08 : BEQ step_no_bot
+    LDA zp_seg_sx1_lo : STA zp_line_xl
+    LDA zp_seg_sx1_hi : STA $B2
+    LDA zp_seg_sy1_bbot_lo : STA zp_line_yl
+    LDA zp_seg_sy1_bbot_hi : STA $B3
+    LDA zp_seg_sx2_lo : STA zp_line_xr
+    LDA zp_seg_sx2_hi : STA $B4
+    LDA zp_seg_sy2_bbot_lo : STA zp_line_yr
+    LDA zp_seg_sy2_bbot_hi : STA $B5
+    LDA #0   : STA $BD
+    JSR SC_DRAW_S16
+.step_no_bot
+.step_skip
 
     ; --- Emit left vertical (suppressed by SF_NOVT1 = $10) ---
     LDA zp_seg_flags : AND #$10 : BNE skip_lvert
@@ -1862,6 +1928,18 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JSR br_project_y
     LDA zp_br_resl : STA zp_seg_sy_bot_lo
     LDA zp_br_resh : STA zp_seg_sy_bot_hi
+
+    ; --- Project Y for back ceiling (height = bch - vz) ---
+    LDA zp_seg_btop_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_btop_lo
+    LDA zp_br_resh : STA zp_seg_sy_btop_hi
+
+    ; --- Project Y for back floor (height = bfh - vz) ---
+    LDA zp_seg_bbot_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_bbot_lo
+    LDA zp_br_resh : STA zp_seg_sy_bbot_hi
     RTS
 }
 

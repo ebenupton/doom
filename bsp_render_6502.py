@@ -63,7 +63,7 @@ class BspRender6502:
         self._load_wad()
 
     def _load_wad(self):
-        from wad_packed import SEG_DTL_SIZE, SD_FH, SD_CH
+        from wad_packed import SEG_DTL_SIZE, SD_FH, SD_CH, SD_BFH, SD_BCH
 
         layout = self.layout
         rom_main = self.rom_main
@@ -77,11 +77,14 @@ class BspRender6502:
         for i in range(len(rom_main) - vwh_start):
             mem[VWH_BASE + i] = rom_main[vwh_start + i]
 
+        # 4 bytes per seg: fh, ch, bfh, bch (front + back floor/ceiling, s8).
         n_segs = layout['n_segs']
         for si in range(n_segs):
             off = si * SEG_DTL_SIZE
-            mem[ROM_FHCH_BASE + si * 2 + 0] = rom_detail[off + SD_FH]
-            mem[ROM_FHCH_BASE + si * 2 + 1] = rom_detail[off + SD_CH]
+            mem[ROM_FHCH_BASE + si * 4 + 0] = rom_detail[off + SD_FH]
+            mem[ROM_FHCH_BASE + si * 4 + 1] = rom_detail[off + SD_CH]
+            mem[ROM_FHCH_BASE + si * 4 + 2] = rom_detail[off + SD_BFH]
+            mem[ROM_FHCH_BASE + si * 4 + 3] = rom_detail[off + SD_BCH]
 
         for i, b in enumerate(bbox):
             mem[ROM_BBOX_BASE + i] = b

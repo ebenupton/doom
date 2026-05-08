@@ -10,7 +10,7 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 from span_clip_6502 import SpanClip6502
 import doom_wireframe as dw
 import fp
-from wad_packed import SEG_DTL_SIZE, SD_FH, SD_CH
+from wad_packed import SEG_DTL_SIZE, SD_FH, SD_CH, SD_BFH, SD_BCH
 
 ENTRY_BR_VIEW_SETUP   = 0x4809
 ENTRY_BR_RENDER_FRAME = 0x4815
@@ -52,13 +52,15 @@ def setup_wad(sc):
     for i in range(len(rom_main) - vwh_start):
         mem[VWH_BASE + i] = rom_main[vwh_start + i]
 
-    # Pack a small fh/ch table (2 bytes per seg) at ROM_FHCH_BASE.
-    # 660 segs × 2 = 1320 bytes — far smaller than full rom_detail.
+    # Pack fh/ch/bfh/bch (4 bytes per seg) at ROM_FHCH_BASE.
+    # 660 segs × 4 = 2640 bytes.
     n_segs = layout['n_segs']
     for si in range(n_segs):
         off = si * SEG_DTL_SIZE
-        mem[ROM_FHCH_BASE + si * 2 + 0] = rom_detail[off + SD_FH]
-        mem[ROM_FHCH_BASE + si * 2 + 1] = rom_detail[off + SD_CH]
+        mem[ROM_FHCH_BASE + si * 4 + 0] = rom_detail[off + SD_FH]
+        mem[ROM_FHCH_BASE + si * 4 + 1] = rom_detail[off + SD_CH]
+        mem[ROM_FHCH_BASE + si * 4 + 2] = rom_detail[off + SD_BFH]
+        mem[ROM_FHCH_BASE + si * 4 + 3] = rom_detail[off + SD_BCH]
 
     # Bbox table: 16 bytes per node (right-side bbox, then left-side).
     # Each side is (top, bot, left, right) as s16, prescaled.
