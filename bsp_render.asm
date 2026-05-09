@@ -1121,13 +1121,7 @@ zp_seg_v1_clipped = $0A54
 zp_seg_v2_evy    = $0A55
 zp_seg_v2_evx    = $0A56
 zp_seg_v2_clipped = $0A57
-; cross_compute scratch — Python's fp_near_clip operates on (vx1,vy1,vx2,vy2)
-; regardless of which is clipped, so we keep v1/v2 ordering rather than
-; swapping to a clipped/unclipped pair (preserves Python's truncation order).
-zp_clip_v1_evy   = $0A58
-zp_clip_v1_evx   = $0A59
-zp_clip_v2_evy   = $0A5A
-zp_clip_v2_evx   = $0A5B
+; cross_compute reads zp_seg_v{1,2}_{evy,evx} directly. Output:
 zp_clip_cx       = $0A5C    ; output: crossing-point view-x (s8)
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
@@ -1652,15 +1646,23 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 
     ; Both vertices xform'd. If both clipped → bail. If exactly one clipped,
     ; reproject from crossing point and copy into that vertex's slots.
-    ; Either-clipped → bail. (Crossing-reproject path implemented but
-    ; disabled by default — it introduces a 4% pixel-agreement regression
-    ; vs Python's reference renderer because Python has aperture-skip
-    ; optimizations that the 6502 lacks. The reproject_at_crossing helper
-    ; remains in bsp_render_lo.bin for future use once the 6502 emit
-    ; path skips offscreen lines like Python.)
+    ; Either clipped: bail solid walls (over-occlude when crossed),
+    ; reproject portals (no mark_solid → safe to render).
     LDA zp_seg_v1_clipped : ORA zp_seg_v2_clipped
     BEQ s_both_have_proj
+    LDA zp_seg_flags : AND #$02 : BNE s_advance_jmp  ; solid → bail
+    LDA zp_seg_v1_clipped
+    BEQ s_v2_was_clipped
+    LDA zp_seg_v2_clipped
+    BNE s_advance_jmp                                 ; both clipped
+    JSR reproject_at_crossing
+    JSR copy_seg_to_v1
+    JMP s_both_have_proj
+.s_advance_jmp
     JMP s_advance
+.s_v2_was_clipped
+    JSR reproject_at_crossing
+    JSR copy_seg_to_v2
 .s_both_have_proj
 
     ; --- Emit top horizontal (front-sector ceiling) ---
@@ -2146,13 +2148,13 @@ ORG $1C00
 
     ; Special case: v2_evy = NEAR. Then |num| = |den|, t would be 256 and
     ; wrap to 0 in u8. Crossing point is v2 itself.
-    LDA zp_clip_v2_evy : CMP #1 : BNE c_normal
-    LDA zp_clip_v2_evx : STA zp_clip_cx
+    LDA zp_seg_v2_evy : CMP #1 : BNE c_normal
+    LDA zp_seg_v2_evx : STA zp_clip_cx
     JMP c_set_recip
 .c_normal
 
     ; |num| = |1 - v1_evy| via signed abs of (1 - v1_evy).
-    LDA #1 : SEC : SBC zp_clip_v1_evy
+    LDA #1 : SEC : SBC zp_seg_v1_evy
     BPL c_num_ok
     EOR #$FF : CLC : ADC #1
 .c_num_ok
@@ -2160,7 +2162,7 @@ ORG $1C00
     LDA #0 : STA zp_div_lo
 
     ; |den| = |v2_evy - v1_evy|
-    LDA zp_clip_v2_evy : SEC : SBC zp_clip_v1_evy
+    LDA zp_seg_v2_evy : SEC : SBC zp_seg_v1_evy
     BPL c_den_ok
     EOR #$FF : CLC : ADC #1
 .c_den_ok
@@ -2170,22 +2172,22 @@ ORG $1C00
     STA zp_br_a
 
     ; dvx = v2_evx - v1_evx as s16 (sign-extend then subtract).
-    LDA zp_clip_v2_evx : STA zp_br_dxlo
+    LDA zp_seg_v2_evx : STA zp_br_dxlo
     LDA #0 : STA zp_br_dxhi
-    LDA zp_clip_v2_evx : BPL c_v2_pos
+    LDA zp_seg_v2_evx : BPL c_v2_pos
     LDA #$FF : STA zp_br_dxhi
 .c_v2_pos
-    LDA zp_clip_v1_evx : BPL c_v1_pos
-    LDA zp_br_dxlo : SEC : SBC zp_clip_v1_evx : STA zp_br_dxlo
+    LDA zp_seg_v1_evx : BPL c_v1_pos
+    LDA zp_br_dxlo : SEC : SBC zp_seg_v1_evx : STA zp_br_dxlo
     LDA zp_br_dxhi :       SBC #$FF           : STA zp_br_dxhi
     JMP c_have_dvx
 .c_v1_pos
-    LDA zp_br_dxlo : SEC : SBC zp_clip_v1_evx : STA zp_br_dxlo
+    LDA zp_br_dxlo : SEC : SBC zp_seg_v1_evx : STA zp_br_dxlo
     LDA zp_br_dxhi :       SBC #0             : STA zp_br_dxhi
 .c_have_dvx
 
     JSR cross_umul_u8_s16
-    LDA zp_clip_v1_evx : CLC : ADC zp_br_resh : STA zp_clip_cx
+    LDA zp_seg_v1_evx : CLC : ADC zp_br_resh : STA zp_clip_cx
 
 .c_set_recip
     LDA #2 : STA zp_br_t0
