@@ -1109,6 +1109,26 @@ zp_seg_sy2_btop_lo = SEG_PROJ_BUF + 12
 zp_seg_sy2_btop_hi = SEG_PROJ_BUF + 13
 zp_seg_sy2_bbot_lo = SEG_PROJ_BUF + 14
 zp_seg_sy2_bbot_hi = SEG_PROJ_BUF + 15
+; Per-vertex view-space integer values, for near-plane crossing math.
+; Always populated by br_seg_xform_vertex into "current" slots; the seg
+; loop copies into v1/v2 slots so we have both vertices' values when
+; computing the crossing point.
+zp_seg_cur_evy   = $0A50    ; rounded s8 view-y of just-processed vertex
+zp_seg_cur_evx   = $0A51    ; truncated s8 view-x
+zp_seg_v1_evy    = $0A52
+zp_seg_v1_evx    = $0A53
+zp_seg_v1_clipped = $0A54
+zp_seg_v2_evy    = $0A55
+zp_seg_v2_evx    = $0A56
+zp_seg_v2_clipped = $0A57
+; cross_compute scratch — Python's fp_near_clip operates on (vx1,vy1,vx2,vy2)
+; regardless of which is clipped, so we keep v1/v2 ordering rather than
+; swapping to a clipped/unclipped pair (preserves Python's truncation order).
+zp_clip_v1_evy   = $0A58
+zp_clip_v1_evx   = $0A59
+zp_clip_v2_evy   = $0A5A
+zp_clip_v2_evx   = $0A5B
+zp_clip_cx       = $0A5C    ; output: crossing-point view-x (s8)
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
@@ -1607,44 +1627,41 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_bch : SEC : SBC zp_br_vz : STA zp_seg_btop_dlt
     LDA zp_seg_bfh : SEC : SBC zp_br_vz : STA zp_seg_bbot_dlt
 
-    ; Transform v1 (writes sx, sy_top, sy_bot)
+    ; Transform v1. Always copy evy/evx/clipped so both endpoints are
+    ; available for near-plane crossing math even when one side is clipped.
     LDA zp_seg_v1_lo : STA zp_br_t0
     LDA zp_seg_v1_hi : STA zp_br_t1
     JSR br_seg_xform_vertex
-    LDA zp_seg_skip : BEQ s_v1_ok
-    JMP s_advance
-.s_v1_ok
-    LDA zp_seg_sx_lo : STA zp_seg_sx1_lo
-    LDA zp_seg_sx_hi : STA zp_seg_sx1_hi
-    ; Bias sy by Y_BIAS (= 48) so the s16 line clipper sees biased coords
-    ; and the rasteriser's SBC #Y_BIAS unbias gives the correct unbiased
-    ; framebuffer Y in [0, 159].
-    LDA zp_seg_sy_top_lo : CLC : ADC #48 : STA zp_seg_sy1_top_lo
-    LDA zp_seg_sy_top_hi :       ADC #0  : STA zp_seg_sy1_top_hi
-    LDA zp_seg_sy_bot_lo : CLC : ADC #48 : STA zp_seg_sy1_bot_lo
-    LDA zp_seg_sy_bot_hi :       ADC #0  : STA zp_seg_sy1_bot_hi
-    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy1_btop_lo
-    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy1_btop_hi
-    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy1_bbot_lo
-    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy1_bbot_hi
+    LDA zp_seg_cur_evy : STA zp_seg_v1_evy
+    LDA zp_seg_cur_evx : STA zp_seg_v1_evx
+    LDA zp_seg_skip    : STA zp_seg_v1_clipped
+    BNE s_v1_skipped
+    JSR copy_seg_to_v1
+.s_v1_skipped
 
-    ; Transform v2
+    ; Transform v2.
     LDA zp_seg_v2_lo : STA zp_br_t0
     LDA zp_seg_v2_hi : STA zp_br_t1
     JSR br_seg_xform_vertex
-    LDA zp_seg_skip : BEQ s_v2_ok
+    LDA zp_seg_cur_evy : STA zp_seg_v2_evy
+    LDA zp_seg_cur_evx : STA zp_seg_v2_evx
+    LDA zp_seg_skip    : STA zp_seg_v2_clipped
+    BNE s_v2_skipped
+    JSR copy_seg_to_v2
+.s_v2_skipped
+
+    ; Both vertices xform'd. If both clipped → bail. If exactly one clipped,
+    ; reproject from crossing point and copy into that vertex's slots.
+    ; Either-clipped → bail. (Crossing-reproject path implemented but
+    ; disabled by default — it introduces a 4% pixel-agreement regression
+    ; vs Python's reference renderer because Python has aperture-skip
+    ; optimizations that the 6502 lacks. The reproject_at_crossing helper
+    ; remains in bsp_render_lo.bin for future use once the 6502 emit
+    ; path skips offscreen lines like Python.)
+    LDA zp_seg_v1_clipped : ORA zp_seg_v2_clipped
+    BEQ s_both_have_proj
     JMP s_advance
-.s_v2_ok
-    LDA zp_seg_sx_lo : STA zp_seg_sx2_lo
-    LDA zp_seg_sx_hi : STA zp_seg_sx2_hi
-    LDA zp_seg_sy_top_lo : CLC : ADC #48 : STA zp_seg_sy2_top_lo
-    LDA zp_seg_sy_top_hi :       ADC #0  : STA zp_seg_sy2_top_hi
-    LDA zp_seg_sy_bot_lo : CLC : ADC #48 : STA zp_seg_sy2_bot_lo
-    LDA zp_seg_sy_bot_hi :       ADC #0  : STA zp_seg_sy2_bot_hi
-    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy2_btop_lo
-    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy2_btop_hi
-    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy2_bbot_lo
-    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy2_bbot_hi
+.s_both_have_proj
 
     ; --- Emit top horizontal (front-sector ceiling) ---
     ; Solid wall:        always.
@@ -1895,7 +1912,7 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JMP vc_miss
 
 .vc_hit
-    ; --- Cache hit: load rhi/rlo, sx, near-clip flag from cache ---
+    ; --- Cache hit: load evy, evx, rhi/rlo, sx, near-clip flag from cache ---
     ; Cache offset = idx*8. Compute base ptr.
     LDA zp_seg_v_idx_lo : STA zp_br_t2
     LDA zp_seg_v_idx_hi : STA zp_br_t3
@@ -1905,6 +1922,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     CLC
     LDA #<VCACHE_BASE : ADC zp_br_t2 : STA zp_br_p
     LDA #>VCACHE_BASE : ADC zp_br_t3 : STA zp_br_p_h
+    ; Load evy, evx (offsets 0, 1) into current slots — needed for near-plane
+    ; crossing math even when the vertex is clipped or a cache hit.
+    LDY #0 : LDA (zp_br_p),Y : STA zp_seg_cur_evy
+    INY    : LDA (zp_br_p),Y : STA zp_seg_cur_evx
     ; Check near-clip flag at offset 6
     LDY #6 : LDA (zp_br_p),Y : BEQ vc_hit_ok
     LDA #1 : STA zp_seg_skip : RTS
@@ -1951,20 +1972,27 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_vxhi : STA zp_v_xint
     LDA zp_br_vxlo : STA zp_v_xfrac
 
-    ; Near-clip for regular vertex transform: keep using s16 sign on vyhi.
-    ; For our scene's vertex range, normal seg vertices fit s16 view space,
-    ; and the existing project_x/project_y assume s8 vx_int. If we widened
-    ; here we'd lie to those projections. The bbox corner path (bv_proj_one)
-    ; uses the s24-aware near-clip because it only needs the sign of vy.
-    LDA zp_br_vyhi : BPL nc_pos
-    JMP nc_fail
-.nc_pos
-    BNE nc_ok
-    LDA zp_br_vylo : CMP #1 : BCS nc_ok
-.nc_fail
-    ; Mark near-clipped in cache, set skip.
+    ; Compute evx = vxhi (truncated s8) and evy = (vy + 128) >> 8 (rounded
+    ; s8). These match Python's fp_to_view return values and are what
+    ; fp_near_clip / crossing math operate on.
+    LDA zp_br_vxhi : STA zp_seg_cur_evx
+    LDA zp_br_vylo : ASL A             ; carry = bit7 of vylo (= 128-bias)
+    LDA zp_br_vyhi : ADC #0
+    STA zp_seg_cur_evy
+
+    ; Pre-write evy/evx into cache (offsets 0/1) — needed on any future
+    ; cache hit, including the near-clipped path.
     LDA zp_seg_v_cache_lo : STA zp_br_p
     LDA zp_seg_v_cache_hi : STA zp_br_p_h
+    LDY #0 : LDA zp_seg_cur_evy : STA (zp_br_p),Y
+    INY    : LDA zp_seg_cur_evx : STA (zp_br_p),Y
+
+    ; Near-clip on rounded evy: fail if evy <= 0 (matches Python NEAR_FP=1).
+    LDA zp_seg_cur_evy : BMI nc_fail
+    BEQ nc_fail
+    JMP nc_ok
+.nc_fail
+    ; Mark near-clipped in cache, set skip.
     LDY #6 : LDA #1 : STA (zp_br_p),Y
     LDA #1 : STA zp_seg_skip
     RTS
@@ -2031,3 +2059,169 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 
 .end_code
 SAVE "bsp_render.bin", $4800, end_code, $4800
+
+; ============================================================================
+; OVERFLOW REGION — bsp_render.bin is bound to $4800-$57FF (4096 bytes max,
+; framebuffer starts at $5800). Helpers that don't fit live here at $1C00 and
+; are loaded as a separate binary by span_clip_6502.py (bsp_render_lo.bin).
+; ============================================================================
+ORG $1C00
+.bsp_lo_start
+
+; reproject_at_crossing — call cross_compute, then project sx + 4 sy values
+; using the reciprocal at NEAR. Output → zp_seg_sx_lo/hi, zp_seg_sy_*.
+.reproject_at_crossing
+{
+    JSR cross_compute
+    LDA zp_clip_cx : STA zp_br_t0
+    LDA #0          : STA zp_br_t1
+    JSR br_project_x_subpx
+    LDA zp_br_resl : STA zp_seg_sx_lo
+    LDA zp_br_resh : STA zp_seg_sx_hi
+    LDA zp_seg_top_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_top_lo
+    LDA zp_br_resh : STA zp_seg_sy_top_hi
+    LDA zp_seg_bot_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_bot_lo
+    LDA zp_br_resh : STA zp_seg_sy_bot_hi
+    LDA zp_seg_btop_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_btop_lo
+    LDA zp_br_resh : STA zp_seg_sy_btop_hi
+    LDA zp_seg_bbot_dlt : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : STA zp_seg_sy_bbot_lo
+    LDA zp_br_resh : STA zp_seg_sy_bbot_hi
+    RTS
+}
+
+; copy_seg_to_v1 / copy_seg_to_v2 — copy zp_seg_sx_*/sy_*_* into vN slots,
+; biasing sy by Y_BIAS (= 48). Used after both br_seg_xform_vertex and
+; reproject_at_crossing fill the "current vertex" slots.
+.copy_seg_to_v1
+    LDA zp_seg_sx_lo : STA zp_seg_sx1_lo
+    LDA zp_seg_sx_hi : STA zp_seg_sx1_hi
+    LDA zp_seg_sy_top_lo  : CLC : ADC #48 : STA zp_seg_sy1_top_lo
+    LDA zp_seg_sy_top_hi  :       ADC #0  : STA zp_seg_sy1_top_hi
+    LDA zp_seg_sy_bot_lo  : CLC : ADC #48 : STA zp_seg_sy1_bot_lo
+    LDA zp_seg_sy_bot_hi  :       ADC #0  : STA zp_seg_sy1_bot_hi
+    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy1_btop_lo
+    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy1_btop_hi
+    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy1_bbot_lo
+    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy1_bbot_hi
+    RTS
+
+.copy_seg_to_v2
+    LDA zp_seg_sx_lo : STA zp_seg_sx2_lo
+    LDA zp_seg_sx_hi : STA zp_seg_sx2_hi
+    LDA zp_seg_sy_top_lo  : CLC : ADC #48 : STA zp_seg_sy2_top_lo
+    LDA zp_seg_sy_top_hi  :       ADC #0  : STA zp_seg_sy2_top_hi
+    LDA zp_seg_sy_bot_lo  : CLC : ADC #48 : STA zp_seg_sy2_bot_lo
+    LDA zp_seg_sy_bot_hi  :       ADC #0  : STA zp_seg_sy2_bot_hi
+    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy2_btop_lo
+    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy2_btop_hi
+    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy2_bbot_lo
+    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy2_bbot_hi
+    RTS
+
+; cross_compute — near-plane crossing point for a seg with one clipped vertex.
+;   Inputs:  zp_clip_C_evy, zp_clip_C_evx (clipped, evy ≤ 0)
+;            zp_clip_U_evy, zp_clip_U_evx (unclipped, evy ≥ 1)
+;   Outputs: zp_clip_cx (s8 crossing view-x), zp_br_rhi/rlo (recip at NEAR)
+;
+;   Mirrors fp_near_clip exactly:
+;     t   = ((NEAR - vy_C) << 8) / (vy_U - vy_C)    (u8 truncated)
+;     dvx = vx_U - vx_C                              (s9: -255..255)
+;     cx  = vx_C + (t * dvx) >> 8                    (s8 wraparound)
+.cross_compute
+{
+    ; Compute cx = v1_evx + (t * (v2_evx - v1_evx)) >> 8 where
+    ;   t = ((NEAR - v1_evy) << 8) / (v2_evy - v1_evy)
+    ; matching Python's fp_near_clip path. Both num and den always share
+    ; sign in our cases (one vertex clipped, one not), so t is non-negative.
+    ; Use unsigned division on magnitudes; sign of the t*dvx term comes
+    ; from dvx alone.
+
+    ; Special case: v2_evy = NEAR. Then |num| = |den|, t would be 256 and
+    ; wrap to 0 in u8. Crossing point is v2 itself.
+    LDA zp_clip_v2_evy : CMP #1 : BNE c_normal
+    LDA zp_clip_v2_evx : STA zp_clip_cx
+    JMP c_set_recip
+.c_normal
+
+    ; |num| = |1 - v1_evy| via signed abs of (1 - v1_evy).
+    LDA #1 : SEC : SBC zp_clip_v1_evy
+    BPL c_num_ok
+    EOR #$FF : CLC : ADC #1
+.c_num_ok
+    STA zp_div_hi
+    LDA #0 : STA zp_div_lo
+
+    ; |den| = |v2_evy - v1_evy|
+    LDA zp_clip_v2_evy : SEC : SBC zp_clip_v1_evy
+    BPL c_den_ok
+    EOR #$FF : CLC : ADC #1
+.c_den_ok
+    STA zp_div_den
+
+    JSR SC_UDIV16_8                              ; A = t (u8)
+    STA zp_br_a
+
+    ; dvx = v2_evx - v1_evx as s16 (sign-extend then subtract).
+    LDA zp_clip_v2_evx : STA zp_br_dxlo
+    LDA #0 : STA zp_br_dxhi
+    LDA zp_clip_v2_evx : BPL c_v2_pos
+    LDA #$FF : STA zp_br_dxhi
+.c_v2_pos
+    LDA zp_clip_v1_evx : BPL c_v1_pos
+    LDA zp_br_dxlo : SEC : SBC zp_clip_v1_evx : STA zp_br_dxlo
+    LDA zp_br_dxhi :       SBC #$FF           : STA zp_br_dxhi
+    JMP c_have_dvx
+.c_v1_pos
+    LDA zp_br_dxlo : SEC : SBC zp_clip_v1_evx : STA zp_br_dxlo
+    LDA zp_br_dxhi :       SBC #0             : STA zp_br_dxhi
+.c_have_dvx
+
+    JSR cross_umul_u8_s16
+    LDA zp_clip_v1_evx : CLC : ADC zp_br_resh : STA zp_clip_cx
+
+.c_set_recip
+    LDA #2 : STA zp_br_t0
+    LDA #0 : STA zp_br_t1
+    JMP br_recip
+}
+
+; cross_umul_u8_s16 — t (u8 in zp_br_a) × dx (s16 in zp_br_dxlo:dxhi) → s16
+; in zp_br_resl:resh. Caller takes resh as the (>>8) result.
+.cross_umul_u8_s16
+{
+    ; |dx|: track sign in zp_br_sign.
+    LDA #0 : STA zp_br_sign
+    LDA zp_br_dxhi : BPL c2_dxp
+    LDA #0 : SEC : SBC zp_br_dxlo : STA zp_br_dxlo
+    LDA #0 :       SBC zp_br_dxhi : STA zp_br_dxhi
+    INC zp_br_sign
+.c2_dxp
+    ; t * |dx|_lo (u8 × u8 → u16 → resl:resh)
+    LDA zp_br_dxlo : STA zp_mul_b
+    LDA zp_br_a
+    JSR SC_UMUL8
+    LDA zp_prod_lo : STA zp_br_resl
+    LDA zp_prod_hi : STA zp_br_resh
+    ; t * |dx|_hi (u8 × u8 → contributes to resh)
+    LDA zp_br_dxhi : STA zp_mul_b
+    LDA zp_br_a
+    JSR SC_UMUL8
+    LDA zp_br_resh : CLC : ADC zp_prod_lo : STA zp_br_resh
+    ; sign-flip if dx was negative
+    LDA zp_br_sign : BEQ c2_pos
+    LDA #0 : SEC : SBC zp_br_resl : STA zp_br_resl
+    LDA #0 :       SBC zp_br_resh : STA zp_br_resh
+.c2_pos
+    RTS
+}
+
+.bsp_lo_end
+SAVE "bsp_render_lo.bin", $1C00, bsp_lo_end, $1C00

@@ -128,9 +128,13 @@ class SpanClip6502:
         for i, b in enumerate(code):
             mem[0x2000 + i] = b
 
-        # Assemble and load bsp_render.bin (BSP traversal + transform)
+        # Assemble and load bsp_render.bin (BSP traversal + transform).
+        # The asm produces TWO outputs: main code at $4800, plus an overflow
+        # region at $1C00 (helpers that don't fit in the $4800-$57FF window
+        # bounded by the framebuffer at $5800).
         bsp_asm = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.asm')
         bsp_bin = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.bin')
+        bsp_lo  = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render_lo.bin')
         if os.path.exists(bsp_asm):
             os.system(f'./beebasm -i {bsp_asm} -o {bsp_bin} 2>/dev/null')
             if os.path.exists(bsp_bin):
@@ -138,6 +142,11 @@ class SpanClip6502:
                     bsp_code = f.read()
                 for i, b in enumerate(bsp_code):
                     mem[0x4800 + i] = b
+            if os.path.exists(bsp_lo):
+                with open(bsp_lo, 'rb') as f:
+                    bsp_lo_code = f.read()
+                for i, b in enumerate(bsp_lo_code):
+                    mem[0x1C00 + i] = b
                 # Load the reciprocal table at $E000 (HI bytes 0..513,
                 # then LO bytes 0..513).
                 from fp import _RECIP_X_HI, _RECIP_X_LO
