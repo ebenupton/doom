@@ -890,127 +890,18 @@ zp_node_chhi  = $59
     LDX zp_bsp_stack_sp
     LDA BSP_STACK,X : STA zp_node_chlo
 
-    ; Quick reject: if every column is solid (span list empty), discard
-    ; the rest of the BSP queue — nothing more can become visible.
     JSR SC_IS_FULL
     BNE bsp_done_full
-    ; Subsector bit set?
     LDA zp_node_chhi : AND #$80 : BEQ bsp_node
     LDA zp_node_chhi : AND #$7F : STA zp_node_chhi
     JSR br_render_subsector
     JMP bsp_loop
 .bsp_done_full
-    LDA #0 : STA zp_bsp_stack_sp     ; flush stack and exit
+    LDA #0 : STA zp_bsp_stack_sp
     JMP bsp_loop
 
 .bsp_node
-    ; --- Internal node ---
-    ; Compute pointer to node = ROM_NODES + node_id * 16.
-    LDA zp_node_chlo : STA zp_br_t0
-    LDA zp_node_chhi : STA zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1
-    CLC
-    LDA zp_rom_nodes_lo : ADC zp_br_t0 : STA zp_br_p
-    LDA zp_rom_nodes_hi : ADC zp_br_t1 : STA zp_br_p_h
-
-    ; Read node fields: nx, ny, ndx, ndy (s16 each).
-    LDY #0 : LDA (zp_br_p),Y : STA zp_node_nxlo
-    INY    : LDA (zp_br_p),Y : STA zp_node_nxhi
-    INY    : LDA (zp_br_p),Y : STA zp_node_nylo
-    INY    : LDA (zp_br_p),Y : STA zp_node_nyhi
-    INY    : LDA (zp_br_p),Y : STA zp_node_dxlo
-    INY    : LDA (zp_br_p),Y : STA zp_node_dxhi
-    INY    : LDA (zp_br_p),Y : STA zp_node_dylo
-    INY    : LDA (zp_br_p),Y : STA zp_node_dyhi
-
-    ; --- Side test: side = 0 if (ndy*(px-nx) - ndx*(py-ny)) > 0 else 1.
-    ;
-    ; Fast paths for axis-aligned partition lines (~73% of nodes):
-    ;   If ndx == 0 (and ndy != 0):
-    ;     side = sign(ndy) XOR sign(px-nx)        — both nonzero
-    ;   If ndy == 0 (and ndx != 0):
-    ;     side = NOT (sign(ndx) XOR sign(py-ny))  — note negation
-    ;   (boundary case dot==0 falls through to side=1).
-    ;
-    ; General path: full s16×s16 → s24 cross product (3 partial muls each,
-    ; products fit in s24 for our scene).
-
-    ; Compute (px - nx) and (py - ny) once — used by both fast and slow paths.
-    LDA zp_br_pxraw_lo : SEC : SBC zp_node_nxlo : STA zp_seg_dxraw_lo
-    LDA zp_br_pxraw_hi :       SBC zp_node_nxhi : STA zp_seg_dxraw_hi
-    LDA zp_br_pyraw_lo : SEC : SBC zp_node_nylo : STA zp_seg_dyraw_lo
-    LDA zp_br_pyraw_hi :       SBC zp_node_nyhi : STA zp_seg_dyraw_hi
-
-    ; Check ndx == 0 (both bytes zero)
-    LDA zp_node_dxlo : ORA zp_node_dxhi : BNE st_ndx_nz
-    ; ndx == 0: side = sign(ndy) XOR sign(px-nx). Result: 0 if signs match
-    ; (positive product), else 1. Zero in either factor → product 0 → side=1.
-    LDA zp_node_dylo : ORA zp_node_dyhi : BEQ st_jmp_side1   ; ndy also 0
-    LDA zp_seg_dxraw_lo : ORA zp_seg_dxraw_hi : BEQ st_jmp_side1
-    LDA zp_node_dyhi : EOR zp_seg_dxraw_hi : BMI st_jmp_side1
-    JMP st_side0
-.st_jmp_side1
-    JMP st_side1
-.st_ndx_nz
-    ; Check ndy == 0
-    LDA zp_node_dylo : ORA zp_node_dyhi : BNE st_general
-    ; ndy == 0: side = sign(ndx) XOR sign(py-ny) inverted (since the term is
-    ; negated in the cross product). Equivalent: side = 0 if signs DIFFER.
-    LDA zp_seg_dyraw_lo : ORA zp_seg_dyraw_hi : BEQ st_jmp_side1
-    LDA zp_node_dxhi : EOR zp_seg_dyraw_hi : BPL st_jmp_side1
-    JMP st_side0
-
-.st_general
-    ; --- General path: prod1 = ndy * (px-nx), prod2 = ndx * (py-ny), s24 each.
-    LDA zp_seg_dxraw_lo : STA zp_br_dxlo
-    LDA zp_seg_dxraw_hi : STA zp_br_dxhi
-    LDA zp_node_dylo : STA zp_br_dylo
-    LDA zp_node_dyhi : STA zp_br_dyhi
-    JSR br_smul_s16_s16_s32
-    LDA zp_br_t0 : STA $0A50
-    LDA zp_br_t1 : STA $0A51
-    LDA zp_br_t2 : STA $0A52
-
-    LDA zp_seg_dyraw_lo : STA zp_br_dxlo
-    LDA zp_seg_dyraw_hi : STA zp_br_dxhi
-    LDA zp_node_dxlo : STA zp_br_dylo
-    LDA zp_node_dxhi : STA zp_br_dyhi
-    JSR br_smul_s16_s16_s32
-
-    ; side_s24 = prod1 - prod2 (24-bit signed subtract).
-    LDA $0A50 : SEC : SBC zp_br_t0 : STA $0A50
-    LDA $0A51 :       SBC zp_br_t1 : STA $0A51
-    LDA $0A52 :       SBC zp_br_t2 : STA $0A52
-
-    ; side = 0 if positive (sign bit 0 + at least one nonzero byte), else 1.
-    LDA $0A52 : BMI st_side1
-    ORA $0A51 : ORA $0A50 : BEQ st_side1
-.st_side0
-    LDA #0 : STA zp_side : JMP st_done
-.st_side1
-    LDA #1 : STA zp_side
-.st_done
-
-    ; Read children into RAM scratch slots based on side:
-    ;   side=0: near=right (+8), far=left (+10)
-    ;   side=1: near=left (+10), far=right (+8)
-    LDA zp_side : BNE bsp_nf_back
-    LDY #8  : LDA (zp_br_p),Y : STA BSP_NEAR_LO
-    INY     : LDA (zp_br_p),Y : STA BSP_NEAR_HI
-    INY     : LDA (zp_br_p),Y : STA BSP_FAR_LO
-    INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
-    JMP bsp_nf_done
-.bsp_nf_back
-    LDY #10 : LDA (zp_br_p),Y : STA BSP_NEAR_LO
-    INY     : LDA (zp_br_p),Y : STA BSP_NEAR_HI
-    LDY #8  : LDA (zp_br_p),Y : STA BSP_FAR_LO
-    INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
-.bsp_nf_done
-
-    ; Push FAR child if its bbox passes (push first so it's popped LAST).
+    JSR br_node_setup
     LDA zp_side : EOR #1 : STA zp_bbox_side
     JSR br_bbox_visible
     BEQ bsp_skip_far
@@ -1019,14 +910,14 @@ zp_node_chhi  = $59
     LDA BSP_FAR_HI : STA BSP_STACK,X : INX
     STX zp_bsp_stack_sp
 .bsp_skip_far
-
-    ; Push NEAR child unconditionally (player's side — bbox always passes).
     LDX zp_bsp_stack_sp
     LDA BSP_NEAR_LO : STA BSP_STACK,X : INX
     LDA BSP_NEAR_HI : STA BSP_STACK,X : INX
     STX zp_bsp_stack_sp
     JMP bsp_loop
 }
+
+; (br_node_setup moved to bsp_render_lo.bin overflow region — see end of file)
 
 ; --- Children-id slots (set per bsp_node visit, used after bbox checks).
 BSP_NEAR_LO = $0A68
@@ -1329,8 +1220,13 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA BBOX_SCRATCH+0 : SEC : SBC zp_br_t0
     LDA BBOX_SCRATCH+1 :       SBC zp_br_t1
     BMI bv_not_inside
-    ; Player is inside this bbox → assume visible.
-    LDA #1 : RTS
+    ; Player is inside this bbox → call has_gap(0, 255) directly. (Match
+    ; Python's fp_bbox_visible_fixed which returns (0, FPW-1) on inside hit
+    ; and lets the caller call has_gap; we tail-call has_gap here so the
+    ; trace shows the same has_gap event as Python.)
+    LDA #0   : STA $C2
+    LDA #255 : STA $C3
+    JMP SC_HAS_GAP
 .bv_not_inside
 
     ; --- Transform 4 corners and project ---
@@ -1664,6 +1560,38 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JSR reproject_at_crossing
     JSR copy_seg_to_v2
 .s_both_have_proj
+
+    ; --- Compute clamped u8 ilo/ihi from sx1/sx2; has_gap to skip occluded
+    ;     segs (matches Python's `if not clips.has_gap(x_lo, x_hi): return`
+    ;     in packed_render_seg).
+    LDA zp_seg_sx1_hi : BMI hg_sx1_neg
+    BEQ hg_sx1_lo
+    LDA #$FF : STA zp_br_t2 : JMP hg_sx2
+.hg_sx1_neg
+    LDA #0   : STA zp_br_t2 : JMP hg_sx2
+.hg_sx1_lo
+    LDA zp_seg_sx1_lo : STA zp_br_t2
+.hg_sx2
+    LDA zp_seg_sx2_hi : BMI hg_sx2_neg
+    BEQ hg_sx2_lo
+    LDA #$FF : STA zp_br_t3 : JMP hg_setrange
+.hg_sx2_neg
+    LDA #0   : STA zp_br_t3 : JMP hg_setrange
+.hg_sx2_lo
+    LDA zp_seg_sx2_lo : STA zp_br_t3
+.hg_setrange
+    LDA zp_br_t2 : CMP zp_br_t3 : BCC hg_t2lt
+    LDA zp_br_t3 : STA $C2
+    LDA zp_br_t2 : STA $C3
+    JMP hg_query
+.hg_t2lt
+    LDA zp_br_t2 : STA $C2
+    LDA zp_br_t3 : STA $C3
+.hg_query
+    JSR SC_HAS_GAP
+    BNE hg_pass
+    JMP s_advance
+.hg_pass
 
     ; --- Emit top horizontal (front-sector ceiling) ---
     ; Solid wall:        always.
@@ -2222,6 +2150,91 @@ ORG $1C00
     LDA #0 : SEC : SBC zp_br_resl : STA zp_br_resl
     LDA #0 :       SBC zp_br_resh : STA zp_br_resh
 .c2_pos
+    RTS
+}
+
+; br_node_setup — read node from ROM, compute side, set BSP_NEAR/FAR.
+; Called twice per internal node (entry + post-near phases).
+.br_node_setup
+{
+    LDA zp_node_chlo : STA zp_br_t0
+    LDA zp_node_chhi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    CLC
+    LDA zp_rom_nodes_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_nodes_hi : ADC zp_br_t1 : STA zp_br_p_h
+    LDY #0 : LDA (zp_br_p),Y : STA zp_node_nxlo
+    INY    : LDA (zp_br_p),Y : STA zp_node_nxhi
+    INY    : LDA (zp_br_p),Y : STA zp_node_nylo
+    INY    : LDA (zp_br_p),Y : STA zp_node_nyhi
+    INY    : LDA (zp_br_p),Y : STA zp_node_dxlo
+    INY    : LDA (zp_br_p),Y : STA zp_node_dxhi
+    INY    : LDA (zp_br_p),Y : STA zp_node_dylo
+    INY    : LDA (zp_br_p),Y : STA zp_node_dyhi
+    LDA zp_br_pxraw_lo : SEC : SBC zp_node_nxlo : STA zp_seg_dxraw_lo
+    LDA zp_br_pxraw_hi :       SBC zp_node_nxhi : STA zp_seg_dxraw_hi
+    LDA zp_br_pyraw_lo : SEC : SBC zp_node_nylo : STA zp_seg_dyraw_lo
+    LDA zp_br_pyraw_hi :       SBC zp_node_nyhi : STA zp_seg_dyraw_hi
+    LDA zp_node_dxlo : ORA zp_node_dxhi : BNE ns_ndx_nz
+    LDA zp_node_dylo : ORA zp_node_dyhi : BEQ ns_jmp_side1
+    LDA zp_seg_dxraw_lo : ORA zp_seg_dxraw_hi : BEQ ns_jmp_side1
+    LDA zp_node_dyhi : EOR zp_seg_dxraw_hi : BMI ns_jmp_side1
+    JMP ns_side0
+.ns_jmp_side1
+    JMP ns_side1
+.ns_ndx_nz
+    LDA zp_node_dylo : ORA zp_node_dyhi : BNE ns_general
+    LDA zp_seg_dyraw_lo : ORA zp_seg_dyraw_hi : BEQ ns_jmp_side1
+    LDA zp_node_dxhi : EOR zp_seg_dyraw_hi : BPL ns_jmp_side1
+    JMP ns_side0
+.ns_general
+    LDA zp_seg_dxraw_lo : STA zp_br_dxlo
+    LDA zp_seg_dxraw_hi : STA zp_br_dxhi
+    LDA zp_node_dylo : STA zp_br_dylo
+    LDA zp_node_dyhi : STA zp_br_dyhi
+    JSR br_smul_s16_s16_s32
+    LDA zp_br_t0 : STA $0A50
+    LDA zp_br_t1 : STA $0A51
+    LDA zp_br_t2 : STA $0A52
+    LDA zp_seg_dyraw_lo : STA zp_br_dxlo
+    LDA zp_seg_dyraw_hi : STA zp_br_dxhi
+    LDA zp_node_dxlo : STA zp_br_dylo
+    LDA zp_node_dxhi : STA zp_br_dyhi
+    JSR br_smul_s16_s16_s32
+    LDA $0A50 : SEC : SBC zp_br_t0 : STA $0A50
+    LDA $0A51 :       SBC zp_br_t1 : STA $0A51
+    LDA $0A52 :       SBC zp_br_t2 : STA $0A52
+    LDA $0A52 : BMI ns_side1
+    ORA $0A51 : ORA $0A50 : BEQ ns_side1
+.ns_side0
+    LDA #0 : STA zp_side : JMP ns_done
+.ns_side1
+    LDA #1 : STA zp_side
+.ns_done
+    ; Re-fetch node ptr (br_smul_s16_s16_s32 may have clobbered zp_br_p).
+    LDA zp_node_chlo : STA zp_br_t0
+    LDA zp_node_chhi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    CLC
+    LDA zp_rom_nodes_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_nodes_hi : ADC zp_br_t1 : STA zp_br_p_h
+    LDA zp_side : BNE ns_back
+    LDY #8  : LDA (zp_br_p),Y : STA BSP_NEAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_NEAR_HI
+    INY     : LDA (zp_br_p),Y : STA BSP_FAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
+    RTS
+.ns_back
+    LDY #10 : LDA (zp_br_p),Y : STA BSP_NEAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_NEAR_HI
+    LDY #8  : LDA (zp_br_p),Y : STA BSP_FAR_LO
+    INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
     RTS
 }
 
