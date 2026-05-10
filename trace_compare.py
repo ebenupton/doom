@@ -94,11 +94,13 @@ def s16(v):
     return v - 0x10000 if v >= 0x8000 else v
 
 
-def install_tracing_run(sc, trace, nid_hook_pc=None):
+def install_tracing_run(sc, trace, with_context=False):
     """Replace sc._run with a stepping version that records clipper calls.
 
-    If nid_hook_pc is set, also records ('nid', lo, hi) when PC hits that
-    address — used to log BSP node-id pops in the 6502 path.
+    If with_context, each call tuple is (op, *args, ssid, seg_idx) where
+    ssid is zp_node_chlo:hi (subsector id, with $80 flag) and seg_idx is
+    zp_seg_first_lo:hi. These let us group calls by which seg in which
+    subsector emitted them.
     """
     def traced_run(entry, max_cycles=20_000_000):
         mpu = sc.mpu
@@ -113,23 +115,25 @@ def install_tracing_run(sc, trace, nid_hook_pc=None):
             if mpu.pc == 0xFF00:
                 break
             pc = mpu.pc
+            evt = None
             if pc == 0x2003:
-                trace.append(('mark_solid', mem[0xC2], mem[0xC3]))
+                evt = ('mark_solid', mem[0xC2], mem[0xC3])
             elif pc == 0x2009:
-                trace.append(('has_gap', mem[0xC2], mem[0xC3]))
+                evt = ('has_gap', mem[0xC2], mem[0xC3])
             elif pc == 0x200C:
-                # Include current nid (zp_node_chlo:hi at $58:$59) so we
-                # can correlate is_full events with BSP traversal state.
-                trace.append(('is_full', mem[0x58], mem[0x59]))
+                evt = ('is_full', mem[0x58], mem[0x59])
             elif pc == 0x201E:
                 xl = s16(mem[0xA8] | (mem[0xB2] << 8))
                 yl = s16(mem[0xA9] | (mem[0xB3] << 8))
                 xr = s16(mem[0xAA] | (mem[0xB4] << 8))
                 yr = s16(mem[0xAB] | (mem[0xB5] << 8))
-                trace.append(('draw', xl, yl, xr, yr))
-            elif nid_hook_pc is not None and pc == nid_hook_pc:
-                lo = mem[0x58]; hi = mem[0x59]
-                trace.append(('pop', lo, hi))
+                evt = ('draw', xl, yl, xr, yr)
+            if evt is not None:
+                if with_context:
+                    ssid = mem[0x58] | (mem[0x59] << 8)
+                    seg_idx = mem[0x5A] | (mem[0x5B] << 8)
+                    evt = evt + (ssid, seg_idx)
+                trace.append(evt)
             mpu.step()
         sc.last_cycles = mpu.processorCycles
         sc.total_cycles += sc.last_cycles
