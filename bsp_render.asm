@@ -1561,9 +1561,27 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JSR copy_seg_to_v2
 .s_both_have_proj
 
-    ; --- Compute clamped u8 ilo/ihi from sx1/sx2; has_gap to skip occluded
-    ;     segs (matches Python's `if not clips.has_gap(x_lo, x_hi): return`
-    ;     in packed_render_seg).
+    ; Match Python's has_gap wrapper:
+    ;   ilo = max(0, lo); ihi = min(255, hi); if ihi < ilo: return False
+    ; The wrapper-side off-screen test bails BEFORE the 6502 has_gap call,
+    ; so we replicate it here. Both endpoints off-screen-left  (both s16 hi
+    ; negative) → ihi = -lo_min (negative), ilo = 0  → ihi < ilo, bail.
+    ; Both off-screen-right (both s16 hi > 0)         → ilo = lo_max > 255,
+    ; clamped to 255; ihi clamped to 255 too — borderline; let has_gap run.
+    ; Only the left/negative case bails cleanly with a sign test.
+    LDA zp_seg_sx1_hi : BPL hg_sx1_nonneg
+    LDA zp_seg_sx2_hi : BPL hg_sx1_nonneg
+    JMP s_advance                       ; both s16 hi < 0 → off-screen left
+.hg_sx1_nonneg
+    ; Both off-screen right? Need BOTH hi bytes strictly positive (>= 1).
+    LDA zp_seg_sx1_hi : BMI hg_check_x  ; one negative → mixed, don't bail
+    BEQ hg_check_x                      ; one zero → in u8 range, don't bail
+    LDA zp_seg_sx2_hi : BMI hg_check_x
+    BEQ hg_check_x
+    JMP s_advance                       ; both s16 hi > 0 → off-screen right
+.hg_check_x
+
+    ; Compute clamped u8 ilo/ihi from sx1/sx2.
     LDA zp_seg_sx1_hi : BMI hg_sx1_neg
     BEQ hg_sx1_lo
     LDA #$FF : STA zp_br_t2 : JMP hg_sx2
@@ -1902,13 +1920,24 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_vxhi : STA zp_v_xint
     LDA zp_br_vxlo : STA zp_v_xfrac
 
-    ; Compute evx = vxhi (truncated s8) and evy = (vy + 128) >> 8 (rounded
-    ; s8). These match Python's fp_to_view return values and are what
-    ; fp_near_clip / crossing math operate on.
+    ; Compute evx = vxhi (truncated s8) and evy = (vy + 128) >> 8 from the
+    ; full s24 view-y (vyext, vyhi, vylo). Far-behind segs have negative
+    ; vyext that overflows the s16 (vyhi:vylo) representation — using
+    ; only vyhi misses the sign and lets clipped segs through.
     LDA zp_br_vxhi : STA zp_seg_cur_evx
-    LDA zp_br_vylo : ASL A             ; carry = bit7 of vylo (= 128-bias)
-    LDA zp_br_vyhi : ADC #0
+    LDA zp_br_vylo : ASL A             ; carry = bit 7 of vylo
+    LDA zp_br_vyhi : ADC #0            ; A = (vyhi:vylo + 128) >> 8 low byte
     STA zp_seg_cur_evy
+    ; If vyext is non-zero, evy doesn't fit s8. Clamp the saved value to
+    ; the sign of vyext so the cache + crossing-math see a consistent
+    ; "very negative" or "very positive" tag.
+    LDA zp_br_vyext : BEQ ev_evy_done
+    BMI ev_evy_neg
+    LDA #$7F : STA zp_seg_cur_evy
+    JMP ev_evy_done
+.ev_evy_neg
+    LDA #$80 : STA zp_seg_cur_evy
+.ev_evy_done
 
     ; Pre-write evy/evx into cache (offsets 0/1) — needed on any future
     ; cache hit, including the near-clipped path.
@@ -1917,7 +1946,12 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDY #0 : LDA zp_seg_cur_evy : STA (zp_br_p),Y
     INY    : LDA zp_seg_cur_evx : STA (zp_br_p),Y
 
-    ; Near-clip on rounded evy: fail if evy <= 0 (matches Python NEAR_FP=1).
+    ; Near-clip on full s24: clipped iff total_vy < NEAR_88 (= 128 in 8.8).
+    ;   vyext < 0 → clipped (very negative)
+    ;   vyext > 0 → ok      (very positive, ≥ 256)
+    ;   vyext = 0 → check (vyhi + carry from vylo bit 7) >= 1.
+    LDA zp_br_vyext : BMI nc_fail
+    BNE nc_ok
     LDA zp_seg_cur_evy : BMI nc_fail
     BEQ nc_fail
     JMP nc_ok
