@@ -1707,6 +1707,7 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 
     ; Left vertical (sx1).
     LDA zp_seg_flags : AND #$10 : BNE skip_lvert
+    LDA zp_seg_sx1_hi : BNE skip_lvert      ; sx1 off-screen → skip vertical
     LDA zp_seg_flags : AND #$02 : BEQ lvert_portal
     ; Solid: ft1 → fb1
     LDA zp_seg_sy1_top_lo : STA zp_line_yl
@@ -1735,6 +1736,7 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 
     ; Right vertical (sx2).
     LDA zp_seg_flags : AND #$20 : BNE skip_rvert
+    LDA zp_seg_sx2_hi : BNE skip_rvert       ; sx2 off-screen → skip vertical
     LDA zp_seg_flags : AND #$02 : BEQ rvert_portal
     LDA zp_seg_sy2_top_lo : STA zp_line_yl
     LDA zp_seg_sy2_top_hi : STA $B3
