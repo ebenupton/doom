@@ -135,6 +135,12 @@ JMP br_to_view      ; $480C   world (zp_br_dx/dy_input) → view (zp_br_vxlo..vy
 JMP br_project_x    ; $480F   view vx → screen sx
 JMP br_project_y    ; $4812   height_delta → screen sy
 JMP br_render_frame ; $4815   walk BSP, dispatch subsector renderer
+JMP br_render_subsector ; $4818  process one subsector's segs (caller sets
+                        ;        zp_node_chlo:hi to the subsector id). Used
+                        ;        by the hybrid Python-BSP + 6502-seg harness
+                        ;        to isolate BSP-traversal vs seg-processor
+                        ;        divergence.
+JMP br_init_frame   ; $481B   clear vcache valid bitmap (for hybrid mode)
 
 ; ============================================================================
 ; Aliases for span_clip's exported routines
@@ -864,13 +870,19 @@ zp_node_chhi  = $59
 ;   - Initialized the span pool (via span_init at $2000).
 ;   - Cleared the framebuffer.
 ; ============================================================================
-.br_render_frame
-{
-    ; Clear vertex cache valid bitmap (59 bytes).
+; br_init_frame — clear vcache valid bitmap (so a fresh frame rebuilds
+; vertex transforms). Exposed so the hybrid Python-BSP harness can call
+; it before its first subsector pass.
+.br_init_frame
     LDA #0
     LDX #59
-.vc_clr
-    DEX : STA VCACHE_VALID_BASE,X : BNE vc_clr
+.bif_clr
+    DEX : STA VCACHE_VALID_BASE,X : BNE bif_clr
+    RTS
+
+.br_render_frame
+{
+    JSR br_init_frame
 
     ; Initialize BSP stack: push root node id.
     LDA #0 : STA zp_bsp_stack_sp
