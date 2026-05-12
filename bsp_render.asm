@@ -944,6 +944,13 @@ BSP_FAR_HI  = $0A6B
 ; ============================================================================
 ; --- Test instrumentation: subsector visit bitmap at $0A80 ---
 SS_VISITED_BITMAP = $0A80   ; 384 bytes
+; Deferred mark_solid buffer (per-subsector): COUNT bytes (= 2 × num entries)
+; followed by entries. Python's packed_render_subsector collects ('solid',
+; ilo, ihi) tuples into a list, then applies them after the seg loop. The
+; 6502 was applying them immediately per seg; this buffer matches Python's
+; timing so within-subsector mark_solids don't affect later segs' has_gap.
+DEFERRED_MS_COUNT = $1B3C   ; byte count (= 2 × entries)
+DEFERRED_MS_BUF   = $1B3D   ; (ilo, ihi) pairs, up to ~60 bytes available
 
 ; --- Per-seg working state ---
 zp_seg_first_lo = $5A      ; first_seg index for current subsector
@@ -1461,10 +1468,13 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDY #2 : LDA (zp_br_p),Y : STA zp_seg_first_lo
     LDY #3 : LDA (zp_br_p),Y : STA zp_seg_first_hi
 
+    ; Reset deferred mark_solid buffer for this subsector.
+    LDA #0 : STA DEFERRED_MS_COUNT
+
     ; --- Loop over segs ---
 .seg_loop
     LDA zp_seg_count : BNE seg_proc
-    RTS
+    JMP drain_deferred_ms                ; subsector done — flush deferred mark_solids
 .seg_proc
     ; --- ptr to seg header = ROM_SEG_HDR + first_seg * 12 ---
     LDA zp_seg_first_lo : STA zp_br_t0
@@ -1790,9 +1800,12 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_t3 : STA $C3          ; ihi = t3
 .ms_dispatch
     LDA zp_seg_flags : AND #$02 : BEQ ms_skip
-    ; --- Solid wall: mark_solid ---
-    LDA #0 : STA $A8                ; zp_ms_emit = 0
-    JSR SC_MARK_SOLID
+    ; --- Solid wall: defer mark_solid (Python collects them per subsector
+    ;     and applies at the end). Append (ilo, ihi) to DEFERRED_MS_BUF. ---
+    LDX DEFERRED_MS_COUNT
+    LDA $C2 : STA DEFERRED_MS_BUF,X : INX
+    LDA $C3 : STA DEFERRED_MS_BUF,X : INX
+    STX DEFERRED_MS_COUNT
 .ms_skip
 
 .s_advance
@@ -1802,6 +1815,29 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .s_no_carry
     DEC zp_seg_count
     JMP seg_loop
+}
+
+; drain_deferred_ms — apply queued mark_solid ops at end of subsector.
+; Each entry is (ilo, ihi). is_full check between ops matches Python's
+; "if clips.is_full(): return" inside the deferred-ops loop.
+.drain_deferred_ms
+{
+    LDX #0
+.dms_loop
+    CPX DEFERRED_MS_COUNT : BCS dms_done
+    LDA DEFERRED_MS_BUF,X : STA $C2
+    INX
+    LDA DEFERRED_MS_BUF,X : STA $C3
+    INX
+    STX zp_br_t0                  ; save X across SC_MARK_SOLID call
+    LDA #0 : STA $A8              ; zp_ms_emit = 0
+    JSR SC_MARK_SOLID
+    JSR SC_IS_FULL
+    BNE dms_done
+    LDX zp_br_t0
+    JMP dms_loop
+.dms_done
+    RTS
 }
 
 ; emit_vert_sx1 — caller has set yl/yh/yr/yh in zp_line_yl/$B3/zp_line_yr/$B5.
