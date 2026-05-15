@@ -151,6 +151,7 @@ SC_DRAW_S16     = $201E
 SC_DRAW_U8      = $2015      ; standalone DCL (u8 input, no clipper prelude)
 SC_MARK_SOLID   = $2003
 SC_TIGHTEN      = $2006
+SC_TIGHTEN_FROM_RECORDS = $201B
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 zp_mul_b        = $D9
