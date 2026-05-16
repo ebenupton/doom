@@ -1489,6 +1489,15 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_count : BNE seg_proc
     JMP drain_deferred_ms                ; subsector done — flush deferred mark_solids
 .seg_proc
+    ; Reset DCL records buffers (used by portal tighten). Python's
+    ; packed_render_seg calls _span_clip_6502.reset_records() at the
+    ; top of each seg, mirrored here.
+    LDA #0
+    STA $0700                      ; TOP_RECORDS count
+    STA $0800                      ; BOT_RECORDS count
+    STA $BC                        ; ZP_DCL_REC_BUF lo
+    STA $BD                        ; ZP_DCL_REC_BUF hi (= "no records buffer")
+
     ; --- ptr to seg header = ROM_SEG_HDR + first_seg * 12 ---
     LDA zp_seg_first_lo : STA zp_br_t0
     LDA zp_seg_first_hi : STA zp_br_t1
@@ -1649,6 +1658,16 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_bch : SEC : SBC zp_seg_ch : BMI ft_skip
     BEQ ft_skip
 .ft_emit
+    ; If portal-lip case (!SOLID, !NEEDBT, bch>ch reached here), ft IS the
+    ; new top of the aperture and needs TOP_RECORDS. Solid walls and
+    ; NEEDBT segs (where bt has the role) get no records.
+    LDA zp_seg_flags : AND #$06 : BNE ft_no_rec  ; SOLID or NEEDBT → no rec
+    LDA #$07 : STA $BD                            ; portal-lip → TOP_RECORDS
+    JMP ft_set_line
+.ft_no_rec
+    LDA #0   : STA $BD
+.ft_set_line
+    LDA #0   : STA $BC
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_top_lo : STA zp_line_yl
@@ -1657,8 +1676,8 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_top_lo : STA zp_line_yr
     LDA zp_seg_sy2_top_hi : STA $B5
-    LDA #0   : STA $BD
     JSR SC_DRAW_S16
+    LDA #0   : STA $BC : STA $BD
 .ft_skip
 
     ; --- Emit bottom horizontal (front-sector floor) ---
@@ -1676,6 +1695,15 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_fh : SEC : SBC zp_seg_bfh : BMI fb_skip
     BEQ fb_skip
 .fb_emit
+    ; Mirror of ft_emit: fb gets BOT_RECORDS in the portal-lip case
+    ; (!SOLID, !NEEDBB, bfh<fh reached here).
+    LDA zp_seg_flags : AND #$0A : BNE fb_no_rec  ; SOLID or NEEDBB → no rec
+    LDA #$08 : STA $BD                            ; portal-lip → BOT_RECORDS
+    JMP fb_set_line
+.fb_no_rec
+    LDA #0   : STA $BD
+.fb_set_line
+    LDA #0   : STA $BC
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
     LDA zp_seg_sy1_bot_lo : STA zp_line_yl
@@ -1684,8 +1712,8 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_bot_lo : STA zp_line_yr
     LDA zp_seg_sy2_bot_hi : STA $B5
-    LDA #0   : STA $BD
     JSR SC_DRAW_S16
+    LDA #0   : STA $BC : STA $BD
 .fb_skip
 
     ; --- Portal step edges (back ceiling / floor) ---
@@ -1693,6 +1721,9 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_flags : AND #$02 : BNE step_skip   ; SF_SOLID set → skip steps
 
     ; Back ceiling step if NEEDBT (= $04) set: emit (sx1, bt1) → (sx2, bt2).
+    ; bt is the new TOP of the aperture — populate TOP_RECORDS so the
+    ; tighten_from_records call at end of seg has the right per-span
+    ; verdict data. Matches Python's roles={yt_idx: TOP_RECORDS}.
     LDA zp_seg_flags : AND #$04 : BEQ step_no_top
     LDA zp_seg_sx1_lo : STA zp_line_xl
     LDA zp_seg_sx1_hi : STA $B2
@@ -1702,8 +1733,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_btop_lo : STA zp_line_yr
     LDA zp_seg_sy2_btop_hi : STA $B5
-    LDA #0   : STA $BD
+    LDA #0   : STA $BC
+    LDA #$07 : STA $BD             ; TOP_RECORDS = $0700
     JSR SC_DRAW_S16
+    LDA #0   : STA $BC : STA $BD   ; reset records pointer
 .step_no_top
 
     ; Back floor step if NEEDBB (= $08) set: emit (sx1, bb1) → (sx2, bb2).
@@ -1716,8 +1749,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_bbot_lo : STA zp_line_yr
     LDA zp_seg_sy2_bbot_hi : STA $B5
-    LDA #0   : STA $BD
+    LDA #0   : STA $BC
+    LDA #$08 : STA $BD             ; BOT_RECORDS = $0800
     JSR SC_DRAW_S16
+    LDA #0   : STA $BC : STA $BD
 .step_no_bot
 .step_skip
 
@@ -1812,7 +1847,16 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_t2 : STA $C2          ; ilo = t2
     LDA zp_br_t3 : STA $C3          ; ihi = t3
 .ms_dispatch
-    LDA zp_seg_flags : AND #$02 : BEQ ms_skip
+    LDA zp_seg_flags : AND #$02 : BNE ms_solid_path
+    ; --- Portal: tighten the visible aperture using the per-span verdict
+    ;     records populated by the bt/bb step-edge emits above. Skip if
+    ;     no records were populated (no NEEDBT and no NEEDBB → portal
+    ;     doesn't narrow the aperture). Mirrors Python's wrapper test
+    ;     `if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0: return`.
+    LDA $0700 : ORA $0800 : BEQ ms_skip
+    JSR SC_TIGHTEN_FROM_RECORDS
+    JMP ms_skip
+.ms_solid_path
     ; --- Solid wall: defer mark_solid (Python collects them per subsector
     ;     and applies at the end). Append (ilo, ihi) to DEFERRED_MS_BUF. ---
     LDX DEFERRED_MS_COUNT
