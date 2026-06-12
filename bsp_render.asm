@@ -366,16 +366,22 @@ zp_ri_one = $2B
 zp_ri_dhi = $2C       ; (was unused; s16 hi byte of d)
 zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 
+; br_rot_int — Y = 0 (sin) or 3 (cos); mag/neg/one are read directly
+; from the contiguous trig ZP block at $05 (smag,sneg,sone,cmag,cneg,cone)
+; via abs,Y. Callers no longer stage zp_ri_mag/neg/one. neg is captured
+; up front because SC_UMUL8 clobbers Y.
 .br_rot_int
 {
-    LDA zp_ri_one : BEQ ri_not_one
+    LDA $0006,Y : STA zp_ri_neg
+    LDA $0007,Y : BEQ ri_not_one
     ; Unity: val = d << 8 as s24. resl=0, resh=dlo, resext=dhi.
     LDA #0 : STA zp_br_resl
     LDA zp_ri_dlo : STA zp_br_resh
     LDA zp_ri_dhi : STA zp_br_resext
     JMP ri_apply_neg
 .ri_not_one
-    LDA zp_ri_mag : BEQ ri_zero
+    LDA $0005,Y : BEQ ri_zero
+    STA zp_mul_b
     ; |d| × mag → s24, with sign restoration. Compute as
     ;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
     ; First product: (lo,hi) → resl, resh; resext starts 0.
@@ -386,7 +392,6 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA #0 : SEC : SBC zp_ri_dlo : STA zp_ri_dlo
     LDA #0 : SBC zp_ri_dhi         : STA zp_ri_dhi
 .ri_d_pos
-    LDA zp_ri_mag : STA zp_mul_b
     LDA zp_ri_dlo : JSR SC_UMUL8
     LDA zp_prod_lo : STA zp_br_resl
     LDA zp_prod_hi : STA zp_br_resh
@@ -521,9 +526,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     ; int_vx = rot_int(dx, sin) - rot_int(dy, cos), as s24
     LDA zp_br_dxlo : STA zp_ri_dlo
     LDA zp_br_dxhi : STA zp_ri_dhi
-    LDA zp_br_smag : STA zp_ri_mag
-    LDA zp_br_sneg : STA zp_ri_neg
-    LDA zp_br_sone : STA zp_ri_one
+    LDY #0
     JSR br_rot_int
     LDA zp_br_resl   : STA zp_br_vxlo
     LDA zp_br_resh   : STA zp_br_vxhi
@@ -531,9 +534,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 
     LDA zp_br_dylo : STA zp_ri_dlo
     LDA zp_br_dyhi : STA zp_ri_dhi
-    LDA zp_br_cmag : STA zp_ri_mag
-    LDA zp_br_cneg : STA zp_ri_neg
-    LDA zp_br_cone : STA zp_ri_one
+    LDY #3
     JSR br_rot_int
     LDA zp_br_vxlo : SEC : SBC zp_br_resl   : STA zp_br_vxlo
     LDA zp_br_vxhi :       SBC zp_br_resh   : STA zp_br_vxhi
@@ -542,9 +543,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     ; int_vy = rot_int(dx, cos) + rot_int(dy, sin), as s24
     LDA zp_br_dxlo : STA zp_ri_dlo
     LDA zp_br_dxhi : STA zp_ri_dhi
-    LDA zp_br_cmag : STA zp_ri_mag
-    LDA zp_br_cneg : STA zp_ri_neg
-    LDA zp_br_cone : STA zp_ri_one
+    LDY #3
     JSR br_rot_int
     LDA zp_br_resl   : STA zp_br_vylo
     LDA zp_br_resh   : STA zp_br_vyhi
@@ -552,9 +551,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 
     LDA zp_br_dylo : STA zp_ri_dlo
     LDA zp_br_dyhi : STA zp_ri_dhi
-    LDA zp_br_smag : STA zp_ri_mag
-    LDA zp_br_sneg : STA zp_ri_neg
-    LDA zp_br_sone : STA zp_ri_one
+    LDY #0
     JSR br_rot_int
     LDA zp_br_vylo : CLC : ADC zp_br_resl   : STA zp_br_vylo
     LDA zp_br_vyhi :       ADC zp_br_resh   : STA zp_br_vyhi
@@ -800,9 +797,11 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 ; ============================================================================
 .br_project_y
 {
-    ; sum := HALF_H (80) as s16
-    LDA #80 : STA zp_br_vxlo
-    LDA #0  : STA zp_br_vxhi
+    ; sum := HALF_H + Y_BIAS (80 + 48) as s16 — the bias every consumer
+    ; previously added (copy_seg_to_vx, ap2_solid_proj) is folded into
+    ; the projection constant. Same final values, no per-store adds.
+    LDA #128 : STA zp_br_vxlo
+    LDA #0   : STA zp_br_vxhi
 
     ; --- Subtract A = signed(h) × u8(recip_hi) ---
     LDA zp_br_t0  : STA zp_br_a
@@ -1074,6 +1073,10 @@ zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
 zp_v_xext       = $94      ; saved view-x s24 extension byte (wide-vx path)
 zp_br_t4        = $95      ; bbox corner/edge loop counter
+zp_seg_hdr_p    = $96      ; persistent seg-header ptr (advances +12/seg)
+zp_seg_hdr_p_h  = $97
+zp_fhch_p       = $98      ; persistent FHCH ptr (advances +6/seg)
+zp_fhch_p_h     = $99
 ; Per-seg back-face / linedef state
 zp_seg_lv1x_lo  = $39
 zp_seg_lv1x_hi  = $3A
@@ -1579,6 +1582,18 @@ BBOX_IHI        = $096A     ; running max sx clamped (u8)
     LDY #2 : LDA (zp_br_p),Y : STA zp_seg_first_lo
     LDY #3 : LDA (zp_br_p),Y : STA zp_seg_first_hi
 
+    ; Persistent per-seg pointers: computed once here, advanced by the
+    ; loop (+12 header, +6 FHCH) — the old code re-multiplied si*12 and
+    ; si*6 on every seg. fhch_ptr_si6 leaves si*6 in t0/t1; one more
+    ; shift gives si*12.
+    JSR fhch_ptr_si6
+    LDA zp_br_p   : STA zp_fhch_p
+    LDA zp_br_p_h : STA zp_fhch_p_h
+    ASL zp_br_t0 : ROL zp_br_t1                ; si*12
+    CLC
+    LDA zp_rom_seg_hdr_lo : ADC zp_br_t0 : STA zp_seg_hdr_p
+    LDA zp_rom_seg_hdr_hi : ADC zp_br_t1 : STA zp_seg_hdr_p_h
+
     ; Reset deferred op queue for this subsector.
     LDA #0 : STA DEFQ_TAIL
 
@@ -1596,20 +1611,9 @@ BBOX_IHI        = $096A     ; running max sx clamped (u8)
     STA $BC                        ; ZP_DCL_REC_BUF lo
     STA $BD                        ; ZP_DCL_REC_BUF hi (= "no records buffer")
 
-    ; --- ptr to seg header = ROM_SEG_HDR + first_seg * 12 ---
-    LDA zp_seg_first_lo : STA zp_br_t0
-    LDA zp_seg_first_hi : STA zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1                ; *2
-    ASL zp_br_t0 : ROL zp_br_t1                ; *4
-    LDA zp_br_t0 : STA zp_br_t2
-    LDA zp_br_t1 : STA zp_br_t3
-    ASL zp_br_t0 : ROL zp_br_t1                ; *8
-    CLC
-    LDA zp_br_t0 : ADC zp_br_t2 : STA zp_br_t0 ; *12
-    LDA zp_br_t1 : ADC zp_br_t3 : STA zp_br_t1
-    CLC
-    LDA zp_rom_seg_hdr_lo : ADC zp_br_t0 : STA zp_br_p
-    LDA zp_rom_seg_hdr_hi : ADC zp_br_t1 : STA zp_br_p_h
+    ; --- seg header via the persistent pointer ---
+    LDA zp_seg_hdr_p   : STA zp_br_p
+    LDA zp_seg_hdr_p_h : STA zp_br_p_h
     LDY #0 : LDA (zp_br_p),Y : STA zp_seg_v1_lo
     INY    : LDA (zp_br_p),Y : STA zp_seg_v1_hi
     INY    : LDA (zp_br_p),Y : STA zp_seg_v2_lo
@@ -1632,7 +1636,8 @@ BBOX_IHI        = $096A     ; running max sx clamped (u8)
     ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
     ;     Bytes 4/5 carry the solid-seg APV2 aperture heights (the seg
     ;     detail ROM is not resident on the 6502). ---
-    JSR fhch_ptr_si6
+    LDA zp_fhch_p   : STA zp_br_p
+    LDA zp_fhch_p_h : STA zp_br_p_h
     LDY #0 : LDA (zp_br_p),Y : STA zp_seg_fh
     INY    : LDA (zp_br_p),Y : STA zp_seg_ch
     INY    : LDA (zp_br_p),Y : STA zp_seg_bfh
@@ -1969,6 +1974,12 @@ BBOX_IHI        = $096A     ; running max sx clamped (u8)
     INC zp_seg_first_lo : BNE s_no_carry
     INC zp_seg_first_hi
 .s_no_carry
+    CLC
+    LDA zp_seg_hdr_p : ADC #12 : STA zp_seg_hdr_p
+    LDA zp_seg_hdr_p_h : ADC #0 : STA zp_seg_hdr_p_h
+    CLC
+    LDA zp_fhch_p : ADC #6 : STA zp_fhch_p
+    LDA zp_fhch_p_h : ADC #0 : STA zp_fhch_p_h
     DEC zp_seg_count
     JMP seg_loop
 }
@@ -2606,10 +2617,7 @@ CPD     = $096F          ; 4 x s16: dxl, dxr, dyt, dyb ($096F-$0976)
     LDA CPD+0,Y : STA zp_ri_dlo
     LDA CPD+1,Y : STA zp_ri_dhi
     TXA : AND #1 : TAY
-    LDA cp_t3,Y : TAY                  ; 0 → sin block ($05), 3 → cos ($08)
-    LDA $0005,Y : STA zp_ri_mag
-    LDA $0006,Y : STA zp_ri_neg
-    LDA $0007,Y : STA zp_ri_one
+    LDA cp_t3,Y : TAY                  ; Y = 0 (sin) / 3 (cos)
     STX CPIDX
     JSR br_rot_int
     LDX CPIDX
@@ -2725,16 +2733,17 @@ ORG $1B40
 ; (0=v1, 2=v2). SEG_PROJ_BUF pairs: vK_top at +0/+4, btop at +8/+12,
 ; bbot at +10/+14; sx slots at $61/$63. Y values biased by Y_BIAS (48).
 .copy_seg_to_vx
+    ; Y values arrive pre-biased from br_project_y (HALF_H + Y_BIAS).
     LDA zp_seg_sx_lo : STA $0061,Y
     LDA zp_seg_sx_hi : STA $0062,Y
-    LDA zp_seg_sy_top_lo  : CLC : ADC #48 : STA SEG_PROJ_BUF+0,X
-    LDA zp_seg_sy_top_hi  :       ADC #0  : STA SEG_PROJ_BUF+1,X
-    LDA zp_seg_sy_bot_lo  : CLC : ADC #48 : STA SEG_PROJ_BUF+2,X
-    LDA zp_seg_sy_bot_hi  :       ADC #0  : STA SEG_PROJ_BUF+3,X
-    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA SEG_PROJ_BUF+8,X
-    LDA zp_seg_sy_btop_hi :       ADC #0  : STA SEG_PROJ_BUF+9,X
-    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA SEG_PROJ_BUF+10,X
-    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA SEG_PROJ_BUF+11,X
+    LDA zp_seg_sy_top_lo  : STA SEG_PROJ_BUF+0,X
+    LDA zp_seg_sy_top_hi  : STA SEG_PROJ_BUF+1,X
+    LDA zp_seg_sy_bot_lo  : STA SEG_PROJ_BUF+2,X
+    LDA zp_seg_sy_bot_hi  : STA SEG_PROJ_BUF+3,X
+    LDA zp_seg_sy_btop_lo : STA SEG_PROJ_BUF+8,X
+    LDA zp_seg_sy_btop_hi : STA SEG_PROJ_BUF+9,X
+    LDA zp_seg_sy_bbot_lo : STA SEG_PROJ_BUF+10,X
+    LDA zp_seg_sy_bbot_hi : STA SEG_PROJ_BUF+11,X
     RTS
 
 ; cross_compute — near-plane crossing point for a seg with one clipped vertex.
@@ -3106,19 +3115,20 @@ ASSERT bsp_lo_end <= $2000
     LDY #2 : LDA (zp_br_p),Y : STA zp_br_rhi
     INY    : LDA (zp_br_p),Y : STA zp_br_rlo
 .a2_have_recip
-    JSR fhch_ptr_si6
+    LDA zp_fhch_p   : STA zp_br_p
+    LDA zp_fhch_p_h : STA zp_br_p_h
     ; bch2' = project(APV2_CH - vz)  (FHCH byte 4)
     LDY #4 : LDA (zp_br_p),Y
     SEC : SBC zp_br_vz : STA zp_br_t0
-    JSR br_project_y
-    LDA zp_br_resl : CLC : ADC #48 : STA zp_line_yl     ; + Y_BIAS
-    LDA zp_br_resh :       ADC #0  : STA $B3
+    JSR br_project_y                    ; output pre-biased
+    LDA zp_br_resl : STA zp_line_yl
+    LDA zp_br_resh : STA $B3
     ; bfh2' = project(APV2_FH - vz)  (FHCH byte 5)
     LDY #5 : LDA (zp_br_p),Y
     SEC : SBC zp_br_vz : STA zp_br_t0
     JSR br_project_y
-    LDA zp_br_resl : CLC : ADC #48 : STA zp_line_yr
-    LDA zp_br_resh :       ADC #0  : STA $B5
+    LDA zp_br_resl : STA zp_line_yr
+    LDA zp_br_resh : STA $B5
     JMP emit_vert_sx2
 }
 

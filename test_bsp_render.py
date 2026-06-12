@@ -282,7 +282,9 @@ def test_project_y():
         mem[0x1B] = rl
         sc._run(ENTRY_BR_PROJECT_Y)
         got = s16_from_zp(mem, 0x17)
-        want = fp.fp_project_y(h, rh, rl)
+        # br_project_y outputs HALF_H + Y_BIAS based values (the bias the
+        # emission paths used to add per store is folded into the constant).
+        want = fp.fp_project_y(h, rh, rl) + 48
         ok = got == want
         if not ok:
             fail += 1
