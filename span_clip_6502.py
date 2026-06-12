@@ -161,6 +161,20 @@ class SpanClip6502:
                     bsp_d_code = f.read()
                 for i, b in enumerate(bsp_d_code):
                     mem[0x0978 + i] = b
+            bsp_z = os.path.join(os.path.dirname(__file__) or '.',
+                                 'bsp_render_z.bin')
+            if os.path.exists(bsp_z):
+                with open(bsp_z, 'rb') as f:
+                    bsp_z_code = f.read()
+                for i, b in enumerate(bsp_z_code):
+                    mem[0x1A99 + i] = b
+            bsp_y = os.path.join(os.path.dirname(__file__) or '.',
+                                 'bsp_render_y.bin')
+            if os.path.exists(bsp_y):
+                with open(bsp_y, 'rb') as f:
+                    bsp_y_code = f.read()
+                for i, b in enumerate(bsp_y_code):
+                    mem[0x4740 + i] = b
             # X region: low half of the stack page (code; stack stays
             # within $01E0-$01FF on this module's call depths).
             bsp_x = os.path.join(os.path.dirname(__file__) or '.',
