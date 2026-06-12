@@ -468,6 +468,11 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
     ; on existing spans. The line params (XLO/XHI/TL/BL/TR/BR) never change,
     ; so no interp_store calls happen here. Splitting a span in the middle
     ; just allocates a sibling and copies the 6 line bytes verbatim.
+    ; Invalidate the has_gap coherence cache: this entry frees/merges
+    ; slots, and a stale cached slot's leftover XSTART/XEND can overlap
+    ; any later query (observed: freed slot (60,69) made has_gap(60,73)
+    ; return 1 against a pool whose only live span was (121,132)).
+    LDA #0 : STA zp_hg_cache
     LDA zp_ihi : CMP zp_ilo : BCS mss                                   ; |
     RTS
 .mss
@@ -682,6 +687,9 @@ zp_cc_den_hi = $FE
 
 EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
 .span_tighten
+    ; Invalidate the has_gap coherence cache (pool slots are about to be
+    ; rebuilt/freed — see span_mark_solid note).
+    LDA #0 : STA zp_hg_cache
     LDA zp_ihi : CMP zp_ilo : BCS tg_go    ; ihi >= ilo: valid range    ; |
     RTS
 .tg_go
@@ -3366,6 +3374,8 @@ TFS_PEND_BID    = $091B
 ; ===================================================================
 .tighten_from_records
 {
+    ; Invalidate the has_gap coherence cache (see span_mark_solid note).
+    LDA #0 : STA zp_hg_cache
     LDA zp_head : STA zp_old_cur
     LDA #0 : STA zp_new_tail : STA zp_head
     LDA #$FF : STA zp_tg_cont
