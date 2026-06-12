@@ -38,7 +38,7 @@ ROM_MAIN_BASE   = 0x6C00       # ROM main (no VWH) — fits below rasteriser.
 VWH_BASE        = 0xE484       # VWH separately, after recip table.
 ROM_DETAIL_BASE = 0xB600       # OK while detail is unread by stub.
 ROM_FHCH_BASE   = 0xB600       # 1320-byte fh/ch table (same area; detail unused now)
-ROM_BBOX_BASE   = 0xBC00       # 3776-byte prescaled bbox table (16B per node)
+ROM_BBOX_BASE   = 0xC100       # 3776-byte prescaled bbox table (16B per node); $BC00 collided with the 4B/seg FHCH table ($B600+2640=$C050)
 
 
 def setup_wad(sc):
