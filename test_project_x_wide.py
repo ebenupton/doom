@@ -23,7 +23,7 @@ def _find_label(label):
 
 ENTRY_WIDE = _find_label('br_project_x_wide')
 
-ZP_V_XINT, ZP_V_XFRAC, ZP_V_XEXT = 0x37, 0x38, 0x75
+ZP_V_XINT, ZP_V_XFRAC, ZP_V_XEXT = 0x37, 0x38, 0x94
 ZP_RHI, ZP_RLO = 0x1A, 0x1B
 ZP_RESL, ZP_RESH = 0x17, 0x18
 

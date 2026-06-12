@@ -28,7 +28,7 @@ ROM_MAIN_BASE   = 0x6C00
 VWH_BASE        = 0xE484
 ROM_DETAIL_BASE = 0xB600
 ROM_FHCH_BASE   = 0xB600
-ROM_BBOX_BASE   = 0xC100
+ROM_BBOX_BASE   = 0xC600
 
 
 def setup_wad(sc):
@@ -44,10 +44,13 @@ def setup_wad(sc):
     n_segs = layout['n_segs']
     for si in range(n_segs):
         off = si * SEG_DTL_SIZE
-        mem[ROM_FHCH_BASE + si * 4 + 0] = rom_detail[off + SD_FH]
-        mem[ROM_FHCH_BASE + si * 4 + 1] = rom_detail[off + SD_CH]
-        mem[ROM_FHCH_BASE + si * 4 + 2] = rom_detail[off + SD_BFH]
-        mem[ROM_FHCH_BASE + si * 4 + 3] = rom_detail[off + SD_BCH]
+        mem[ROM_FHCH_BASE + si * 6 + 0] = rom_detail[off + SD_FH]
+        mem[ROM_FHCH_BASE + si * 6 + 1] = rom_detail[off + SD_CH]
+        mem[ROM_FHCH_BASE + si * 6 + 2] = rom_detail[off + SD_BFH]
+        mem[ROM_FHCH_BASE + si * 6 + 3] = rom_detail[off + SD_BCH]
+        # bytes 4/5: solid-seg APV2 aperture heights (detail 12/13)
+        mem[ROM_FHCH_BASE + si * 6 + 4] = rom_detail[off + 12]
+        mem[ROM_FHCH_BASE + si * 6 + 5] = rom_detail[off + 13]
     for i, b in enumerate(dw.packed_bbox_table):
         mem[ROM_BBOX_BASE + i] = b
     def w16(addr_lo, val):

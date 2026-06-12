@@ -38,7 +38,7 @@ ROM_MAIN_BASE   = 0x6C00       # ROM main (no VWH) — fits below rasteriser.
 VWH_BASE        = 0xE484       # VWH separately, after recip table.
 ROM_DETAIL_BASE = 0xB600       # OK while detail is unread by stub.
 ROM_FHCH_BASE   = 0xB600       # 1320-byte fh/ch table (same area; detail unused now)
-ROM_BBOX_BASE   = 0xC100       # 3776-byte prescaled bbox table (16B per node); $BC00 collided with the 4B/seg FHCH table ($B600+2640=$C050)
+ROM_BBOX_BASE   = 0xC600       # 3776-byte prescaled bbox table (16B per node); $BC00 collided with the 4B/seg FHCH table ($B600+2640=$C050)
 
 
 def setup_wad(sc):
@@ -57,10 +57,13 @@ def setup_wad(sc):
     n_segs = layout['n_segs']
     for si in range(n_segs):
         off = si * SEG_DTL_SIZE
-        mem[ROM_FHCH_BASE + si * 4 + 0] = rom_detail[off + SD_FH]
-        mem[ROM_FHCH_BASE + si * 4 + 1] = rom_detail[off + SD_CH]
-        mem[ROM_FHCH_BASE + si * 4 + 2] = rom_detail[off + SD_BFH]
-        mem[ROM_FHCH_BASE + si * 4 + 3] = rom_detail[off + SD_BCH]
+        mem[ROM_FHCH_BASE + si * 6 + 0] = rom_detail[off + SD_FH]
+        mem[ROM_FHCH_BASE + si * 6 + 1] = rom_detail[off + SD_CH]
+        mem[ROM_FHCH_BASE + si * 6 + 2] = rom_detail[off + SD_BFH]
+        mem[ROM_FHCH_BASE + si * 6 + 3] = rom_detail[off + SD_BCH]
+        # bytes 4/5: solid-seg APV2 aperture heights (detail 12/13)
+        mem[ROM_FHCH_BASE + si * 6 + 4] = rom_detail[off + 12]
+        mem[ROM_FHCH_BASE + si * 6 + 5] = rom_detail[off + 13]
 
     # Bbox table: 16 bytes per node (right-side bbox, then left-side).
     # Each side is (top, bot, left, right) as s16, prescaled.

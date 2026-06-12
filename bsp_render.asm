@@ -136,7 +136,7 @@ JMP br_smul8        ; $4803   signed s8 × s8 → s16
 JMP br_recip        ; $4806   reciprocal lookup
 JMP br_view_setup   ; $4809   compute frac_vx/frac_vy
 JMP br_to_view      ; $480C   world (zp_br_dx/dy_input) → view (zp_br_vxlo..vyhi)
-JMP br_project_x    ; $480F   view vx → screen sx
+JMP br_project_x_subpx ; $480F   view vx → screen sx
 JMP br_project_y    ; $4812   height_delta → screen sy
 JMP br_render_frame ; $4815   walk BSP, dispatch subsector renderer
 JMP br_render_subsector ; $4818  process one subsector's segs (caller sets
@@ -822,9 +822,6 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA zp_br_vxhi : STA zp_br_resh
     RTS
 }
-
-.br_project_x
-    JMP br_project_x_subpx
 
 ; ============================================================================
 ; ROM/RAM base addresses (Python wrapper writes these into ZP at frame start)
@@ -1647,14 +1644,11 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JMP s_advance
 .bf_passed
 
-    ; --- Read fh, ch, bfh, bch from FHCH table at offset (seg_idx * 4) ---
-    LDA zp_seg_first_lo : STA zp_br_t0
-    LDA zp_seg_first_hi : STA zp_br_t1
-    ASL zp_br_t0 : ROL zp_br_t1                ; *2
-    ASL zp_br_t0 : ROL zp_br_t1                ; *4
-    CLC
-    LDA zp_rom_fhch_lo : ADC zp_br_t0 : STA zp_br_p
-    LDA zp_rom_fhch_hi : ADC zp_br_t1 : STA zp_br_p_h
+    ; --- Read fh, ch, bfh, bch from the 6-byte/seg FHCH table:
+    ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
+    ;     Bytes 4/5 carry the solid-seg APV2 aperture heights (the seg
+    ;     detail ROM is not resident on the 6502). ---
+    JSR fhch_ptr_si6
     LDY #0 : LDA (zp_br_p),Y : STA zp_seg_fh
     INY    : LDA (zp_br_p),Y : STA zp_seg_ch
     INY    : LDA (zp_br_p),Y : STA zp_seg_bfh
@@ -1936,6 +1930,9 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JSR emit_vert_sx2
 .skip_rvert
 
+    ; --- NOVT aperture-edge verticals (SF_APEDGE1/2) ---
+    JSR ap_edges
+
     ; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and
     ;     portal (tighten) cases.
     ; Clamp sx1 to u8 → zp_br_t2
@@ -2148,11 +2145,15 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA #1 : STA zp_seg_skip
     RTS
 .nc_ok
-    ; --- Compute reciprocal (s16 vy_idx — vy_ext ignored per s8 vx contract) ---
+    ; --- Compute reciprocal: vy_idx = s24 total_vy >> 7 (9.1). The old
+    ; code dropped vy_ext ('per s8 vx contract') — but wide-vx segs are
+    ; projected now, and a vertex with vy >= 256 view units got an index
+    ; computed mod 65536 (e.g. vy=262 -> idx 10 instead of 524, recip 23x
+    ; too big, sx=-2296 instead of 77). br_recip clamps to [2,1023]. ---
     LDA zp_br_vylo : ASL A
     LDA zp_br_vyhi : ROL A
     STA zp_br_t0
-    LDA #0 : ROL A
+    LDA zp_br_vyext : ROL A
     STA zp_br_t1
     JSR br_recip                        ; rhi/rlo = reciprocal
 
@@ -2174,8 +2175,14 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     INY    : LDA zp_seg_sx_lo : STA (zp_br_p),Y
     INY    : LDA zp_seg_sx_hi : STA (zp_br_p),Y
     INY    : LDA #0 : STA (zp_br_p),Y       ; near_clip = 0
+    JMP do_project_y
+}
 
+; do_project_y — project the four per-seg heights (top/bot/btop/bbot)
+; with the current reciprocal into the zp_seg_sy_* slots. Global so the
+; crossing reprojection can tail-call it instead of duplicating it.
 .do_project_y
+{
     ; --- Project Y for top edge (height = ch - vz) ---
     LDA zp_seg_top_dlt : STA zp_br_t0
     JSR br_project_y
@@ -2207,9 +2214,6 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 ;  is fully wired in.)
 ; ============================================================================
 
-
-.br_noop_test
-    RTS
 
 .end_code
 ASSERT end_code <= $5800
@@ -2550,7 +2554,7 @@ SAVE "bsp_render_x.bin", $0100, bsp_x_end, $0100
 ; framebuffer starts at $5800). Helpers that don't fit live here at $1C00 and
 ; are loaded as a separate binary by span_clip_6502.py (bsp_render_lo.bin).
 ; ============================================================================
-ORG $1C00
+ORG $1B40
 .bsp_lo_start
 
 ; reproject_at_crossing — call cross_compute, then project sx + 4 sy values
@@ -2566,52 +2570,33 @@ ORG $1C00
     JSR br_project_x_auto
     LDA zp_br_resl : STA zp_seg_sx_lo
     LDA zp_br_resh : STA zp_seg_sx_hi
-    LDA zp_seg_top_dlt : STA zp_br_t0
-    JSR br_project_y
-    LDA zp_br_resl : STA zp_seg_sy_top_lo
-    LDA zp_br_resh : STA zp_seg_sy_top_hi
-    LDA zp_seg_bot_dlt : STA zp_br_t0
-    JSR br_project_y
-    LDA zp_br_resl : STA zp_seg_sy_bot_lo
-    LDA zp_br_resh : STA zp_seg_sy_bot_hi
-    LDA zp_seg_btop_dlt : STA zp_br_t0
-    JSR br_project_y
-    LDA zp_br_resl : STA zp_seg_sy_btop_lo
-    LDA zp_br_resh : STA zp_seg_sy_btop_hi
-    LDA zp_seg_bbot_dlt : STA zp_br_t0
-    JSR br_project_y
-    LDA zp_br_resl : STA zp_seg_sy_bbot_lo
-    LDA zp_br_resh : STA zp_seg_sy_bbot_hi
-    RTS
+    JMP do_project_y
 }
 
 ; copy_seg_to_v1 / copy_seg_to_v2 — copy zp_seg_sx_*/sy_*_* into vN slots,
 ; biasing sy by Y_BIAS (= 48). Used after both br_seg_xform_vertex and
 ; reproject_at_crossing fill the "current vertex" slots.
 .copy_seg_to_v1
-    LDA zp_seg_sx_lo : STA zp_seg_sx1_lo
-    LDA zp_seg_sx_hi : STA zp_seg_sx1_hi
-    LDA zp_seg_sy_top_lo  : CLC : ADC #48 : STA zp_seg_sy1_top_lo
-    LDA zp_seg_sy_top_hi  :       ADC #0  : STA zp_seg_sy1_top_hi
-    LDA zp_seg_sy_bot_lo  : CLC : ADC #48 : STA zp_seg_sy1_bot_lo
-    LDA zp_seg_sy_bot_hi  :       ADC #0  : STA zp_seg_sy1_bot_hi
-    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy1_btop_lo
-    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy1_btop_hi
-    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy1_bbot_lo
-    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy1_bbot_hi
-    RTS
-
+    LDX #0
+    LDY #0
+    BEQ copy_seg_to_vx
 .copy_seg_to_v2
-    LDA zp_seg_sx_lo : STA zp_seg_sx2_lo
-    LDA zp_seg_sx_hi : STA zp_seg_sx2_hi
-    LDA zp_seg_sy_top_lo  : CLC : ADC #48 : STA zp_seg_sy2_top_lo
-    LDA zp_seg_sy_top_hi  :       ADC #0  : STA zp_seg_sy2_top_hi
-    LDA zp_seg_sy_bot_lo  : CLC : ADC #48 : STA zp_seg_sy2_bot_lo
-    LDA zp_seg_sy_bot_hi  :       ADC #0  : STA zp_seg_sy2_bot_hi
-    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA zp_seg_sy2_btop_lo
-    LDA zp_seg_sy_btop_hi :       ADC #0  : STA zp_seg_sy2_btop_hi
-    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA zp_seg_sy2_bbot_lo
-    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA zp_seg_sy2_bbot_hi
+    LDX #4
+    LDY #2
+; copy_seg_to_vx — X = sy-slot offset (0=v1, 4=v2), Y = sx-slot offset
+; (0=v1, 2=v2). SEG_PROJ_BUF pairs: vK_top at +0/+4, btop at +8/+12,
+; bbot at +10/+14; sx slots at $61/$63. Y values biased by Y_BIAS (48).
+.copy_seg_to_vx
+    LDA zp_seg_sx_lo : STA $0061,Y
+    LDA zp_seg_sx_hi : STA $0062,Y
+    LDA zp_seg_sy_top_lo  : CLC : ADC #48 : STA SEG_PROJ_BUF+0,X
+    LDA zp_seg_sy_top_hi  :       ADC #0  : STA SEG_PROJ_BUF+1,X
+    LDA zp_seg_sy_bot_lo  : CLC : ADC #48 : STA SEG_PROJ_BUF+2,X
+    LDA zp_seg_sy_bot_hi  :       ADC #0  : STA SEG_PROJ_BUF+3,X
+    LDA zp_seg_sy_btop_lo : CLC : ADC #48 : STA SEG_PROJ_BUF+8,X
+    LDA zp_seg_sy_btop_hi :       ADC #0  : STA SEG_PROJ_BUF+9,X
+    LDA zp_seg_sy_bbot_lo : CLC : ADC #48 : STA SEG_PROJ_BUF+10,X
+    LDA zp_seg_sy_bbot_hi :       ADC #0  : STA SEG_PROJ_BUF+11,X
     RTS
 
 ; cross_compute — near-plane crossing point for a seg with one clipped vertex.
@@ -2889,5 +2874,135 @@ ORG $1C00
 
 ASSERT bsp_lo_end <= $2000
 
+
+; ============================================================================
+; ap_edges — NOVT aperture-edge verticals (SF_APEDGE1=$40 / SF_APEDGE2=$80).
+; Mirrors the Python reference:
+;   SOLID seg, APEDGE_K: draw (sxK, bchK', sxK, bfhK') where (bch,bfh) are
+;     the colinear portal's aperture heights, projected with endpoint K's
+;     reciprocal. For K=1 the packer overlays them on the bfh/bch slots,
+;     so sy1_bbot/sy1_btop ALREADY hold the projections. For K=2 they sit
+;     in seg detail bytes 12/13 and are projected by ap2_solid_proj.
+;   PORTAL seg (has steps), APEDGE_K: draw (sxK, bt|ft, sxK, bb|fb) — all
+;     four projections already in the SEG_PROJ_BUF slots.
+; Off-screen endpoints (sx hi != 0) are skipped like the other verticals:
+; Python computes then AP-skips or DCL-clips them; pixel output matches.
+; X = sy-slot offset (0=v1, 4=v2), Y = sx-slot offset (0=v1, 2=v2).
+; ============================================================================
+.ap_edges
+{
+    LDA zp_seg_flags : AND #$40 : BEQ ap_chk2
+    LDX #0
+    LDY #0
+    JSR ap_edge_one
+.ap_chk2
+    LDA zp_seg_flags : AND #$80 : BEQ ap_done
+    LDX #4
+    LDY #2
+    JSR ap_edge_one
+.ap_done
+    RTS
+}
+
+.ap_edge_one
+{
+    LDA $0062,Y : BNE ap_rts            ; sx off-screen → skip
+    LDA zp_seg_flags : AND #$02 : BNE ap_solid
+    ; portal: top edge = bt if NEEDBT else ft; bot = bb if NEEDBB else fb
+    LDA zp_seg_flags : AND #$04 : BEQ ap_top_ft
+    LDA SEG_PROJ_BUF+8,X : STA zp_line_yl
+    LDA SEG_PROJ_BUF+9,X : STA $B3
+    JMP ap_bot
+.ap_top_ft
+    LDA SEG_PROJ_BUF+0,X : STA zp_line_yl
+    LDA SEG_PROJ_BUF+1,X : STA $B3
+.ap_bot
+    LDA zp_seg_flags : AND #$08 : BEQ ap_bot_fb
+    LDA SEG_PROJ_BUF+10,X : STA zp_line_yr
+    LDA SEG_PROJ_BUF+11,X : STA $B5
+    JMP ap_emit_y
+.ap_bot_fb
+    LDA SEG_PROJ_BUF+2,X : STA zp_line_yr
+    LDA SEG_PROJ_BUF+3,X : STA $B5
+    JMP ap_emit_y
+.ap_solid
+    CPX #0 : BNE ap2_solid_jmp
+    ; v1 solid: line from sy1_bbot (APV1_CH proj) to sy1_btop (APV1_FH)
+    LDA SEG_PROJ_BUF+10,X : STA zp_line_yl
+    LDA SEG_PROJ_BUF+11,X : STA $B3
+    LDA SEG_PROJ_BUF+8,X : STA zp_line_yr
+    LDA SEG_PROJ_BUF+9,X : STA $B5
+.ap_emit_y
+    ; vertical at the endpoint's sx ($61/$63 via Y)
+    LDA $0061,Y : STA zp_line_xl : STA zp_line_xr
+    LDA $0062,Y : STA $B2 : STA $B4
+    LDA #0 : STA $BD
+    JMP SC_DRAW_S16
+.ap2_solid_jmp
+    JMP ap2_solid_proj
+.ap_rts
+    RTS
+}
+
+; ap2_solid_proj — project the solid seg's APV2 aperture heights with
+; endpoint 2's reciprocal and emit the vertical at sx2.
+;   v2 crossed → recip = recip(NEAR) = (127,255) constant (Python idx2).
+;   else       → recip from v2's vertex cache entry (offsets 2,3).
+.ap2_solid_proj
+{
+    LDA zp_seg_v2_clipped : BEQ a2_cached
+    LDA #127 : STA zp_br_rhi
+    LDA #255 : STA zp_br_rlo
+    JMP a2_have_recip
+.a2_cached
+    ; cache ptr = VCACHE_BASE + v2_idx*8 (the ZP cache ptr is rasteriser-
+    ; clobbered scratch by now — recompute).
+    LDA zp_seg_v2_lo : STA zp_br_t0
+    LDA zp_seg_v2_hi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1
+    CLC
+    LDA #<VCACHE_BASE : ADC zp_br_t0 : STA zp_br_p
+    LDA #>VCACHE_BASE : ADC zp_br_t1 : STA zp_br_p_h
+    LDY #2 : LDA (zp_br_p),Y : STA zp_br_rhi
+    INY    : LDA (zp_br_p),Y : STA zp_br_rlo
+.a2_have_recip
+    JSR fhch_ptr_si6
+    ; bch2' = project(APV2_CH - vz)  (FHCH byte 4)
+    LDY #4 : LDA (zp_br_p),Y
+    SEC : SBC zp_br_vz : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : CLC : ADC #48 : STA zp_line_yl     ; + Y_BIAS
+    LDA zp_br_resh :       ADC #0  : STA $B3
+    ; bfh2' = project(APV2_FH - vz)  (FHCH byte 5)
+    LDY #5 : LDA (zp_br_p),Y
+    SEC : SBC zp_br_vz : STA zp_br_t0
+    JSR br_project_y
+    LDA zp_br_resl : CLC : ADC #48 : STA zp_line_yr
+    LDA zp_br_resh :       ADC #0  : STA $B5
+    JMP emit_vert_sx2
+}
+
+
+; fhch_ptr_si6 — zp_br_p := rom_fhch + zp_seg_first*6 (the 6-byte/seg
+; height table: fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh).
+.fhch_ptr_si6
+{
+    LDA zp_seg_first_lo : STA zp_br_t0
+    LDA zp_seg_first_hi : STA zp_br_t1
+    ASL zp_br_t0 : ROL zp_br_t1                ; *2
+    LDA zp_br_t0 : STA zp_br_t2
+    LDA zp_br_t1 : STA zp_br_t3
+    ASL zp_br_t0 : ROL zp_br_t1                ; *4
+    CLC
+    LDA zp_br_t0 : ADC zp_br_t2 : STA zp_br_t0 ; *6
+    LDA zp_br_t1 : ADC zp_br_t3 : STA zp_br_t1
+    CLC
+    LDA zp_rom_fhch_lo : ADC zp_br_t0 : STA zp_br_p
+    LDA zp_rom_fhch_hi : ADC zp_br_t1 : STA zp_br_p_h
+    RTS
+}
+
 .bsp_lo_end
-SAVE "bsp_render_lo.bin", $1C00, bsp_lo_end, $1C00
+SAVE "bsp_render_lo.bin", $1B40, bsp_lo_end, $1B40
