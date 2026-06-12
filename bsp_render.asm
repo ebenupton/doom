@@ -795,7 +795,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 ;   Python:
 ;     sy = HALF_H - (m8(h, recip_hi) + (m8(h, recip_lo) >> 8))
 ; ============================================================================
-.br_project_y
+.br_project_y_raw
 {
     ; sum := HALF_H + Y_BIAS (80 + 48) as s16 — the bias every consumer
     ; previously added (copy_seg_to_vx, ap2_solid_proj) is folded into
@@ -882,6 +882,7 @@ zp_node_chhi  = $59
 ; vertex transforms). Exposed so the hybrid Python-BSP harness can call
 ; it before its first subsector pass.
 .br_init_frame
+    JSR vwhc_clear
     LDA #0
     LDX #59
 .bif_clr
@@ -1077,6 +1078,7 @@ zp_seg_hdr_p    = $96      ; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h  = $97
 zp_fhch_p       = $98      ; persistent FHCH ptr (advances +6/seg)
 zp_fhch_p_h     = $99
+zp_pyc_idx      = $9A      ; projection-cache probe index (X save)
 ; Per-seg back-face / linedef state
 zp_seg_lv1x_lo  = $39
 zp_seg_lv1x_hi  = $3A
@@ -2694,6 +2696,67 @@ ORG $1A99
 .bsp_z_end
 ASSERT bsp_z_end <= $1B00
 SAVE "bsp_render_z.bin", $1A99, bsp_z_end, $1A99
+
+
+; ============================================================================
+; W REGION ($DAC0-$DFFF) — Y-projection cache. Free RAM between the
+; harness-loaded bbox table (ends $D4BF) and the recip table ($E000);
+; the cache arrays occupy $D4C0-$DABF. Loaded as bsp_render_w.bin.
+;
+; br_project_y is now a caching front for br_project_y_raw: the key is
+; the COMPLETE input set (rhi, rlo, h), so a hit returns the previously
+; computed value — bit-identical by construction. 58-64%% of projections
+; repeat within a frame (measured); a raw projection costs ~315 cycles
+; end-to-end, a hit ~45.
+; ============================================================================
+VWHC_VALID = $D4C0
+VWHC_RHI   = $D5C0
+VWHC_RLO   = $D6C0
+VWHC_H     = $D7C0
+VWHC_LO    = $D8C0
+VWHC_HI    = $D9C0
+
+ORG $DAC0
+.bsp_w_start
+
+.br_project_y
+{
+    ; probe: idx = (rlo + h + rhi) & 255
+    LDA zp_br_rlo : CLC : ADC zp_br_t0 : ADC zp_br_rhi : TAX
+    LDA VWHC_VALID,X : BEQ pyc_miss
+    LDA VWHC_RHI,X : CMP zp_br_rhi : BNE pyc_miss
+    LDA VWHC_RLO,X : CMP zp_br_rlo : BNE pyc_miss
+    LDA VWHC_H,X   : CMP zp_br_t0  : BNE pyc_miss
+    LDA VWHC_LO,X : STA zp_br_resl
+    LDA VWHC_HI,X : STA zp_br_resh
+    RTS
+.pyc_miss
+    STX zp_pyc_idx
+    JSR br_project_y_raw
+    LDX zp_pyc_idx
+    LDA #1 : STA VWHC_VALID,X
+    LDA zp_br_rhi  : STA VWHC_RHI,X
+    LDA zp_br_rlo  : STA VWHC_RLO,X
+    LDA zp_br_t0   : STA VWHC_H,X
+    LDA zp_br_resl : STA VWHC_LO,X
+    LDA zp_br_resh : STA VWHC_HI,X
+    RTS
+}
+
+; vwhc_clear — invalidate the projection cache (per frame).
+.vwhc_clear
+{
+    LDA #0
+    LDX #0
+.vc_loop
+    STA VWHC_VALID,X
+    INX : BNE vc_loop
+    RTS
+}
+
+.bsp_w_end
+ASSERT bsp_w_end <= $E000
+SAVE "bsp_render_w.bin", $DAC0, bsp_w_end, $DAC0
 
 ; ============================================================================
 ; OVERFLOW REGION — bsp_render.bin is bound to $4800-$57FF (4096 bytes max,
