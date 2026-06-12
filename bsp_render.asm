@@ -33,10 +33,14 @@ zp_br_py        = $02
 zp_br_py_h      = $03
 zp_br_vz        = $04       ; s8 eye-height (prescaled)
 ; Raw (un-prescaled) player position for BSP side test.
-zp_br_pxraw_lo  = $71       ; s16 player x relative to map_center (raw)
-zp_br_pxraw_hi  = $72
-zp_br_pyraw_lo  = $73
-zp_br_pyraw_hi  = $74
+; NOTE: these lived at $71-$74, but the NJ rasteriser at $A900 uses
+; $74-$76/$79-$7A/$80-$88 as scratch — every drawn line corrupted
+; zp_br_pyraw_hi and flipped point_on_side decisions mid-walk.
+; $90-$9F is unclaimed by span_clip, the rasteriser, and this module.
+zp_br_pxraw_lo  = $90       ; s16 player x relative to map_center (raw)
+zp_br_pxraw_hi  = $91
+zp_br_pyraw_lo  = $92
+zp_br_pyraw_hi  = $93
 zp_br_smag      = $05       ; u8 sin magnitude
 zp_br_sneg      = $06       ; 1 if sin negative
 zp_br_sone      = $07       ; 1 if |sin| == 1
@@ -905,6 +909,10 @@ zp_node_chhi  = $59
 
     JSR SC_IS_FULL
     BNE bsp_done_full
+.bsp_dispatch
+    ; Entry kinds (hi byte): $80|sshi = subsector, $40|side<<5 = deferred
+    ; far child (bbox-checked at pop time), else plain node id.
+    LDA zp_node_chhi : AND #$40 : BNE bsp_deferred
     LDA zp_node_chhi : AND #$80 : BEQ bsp_node
     LDA zp_node_chhi : AND #$7F : STA zp_node_chhi
     JSR br_render_subsector
@@ -913,22 +921,48 @@ zp_node_chhi  = $59
     LDA #0 : STA zp_bsp_stack_sp
     JMP bsp_loop
 
+.bsp_deferred
+    ; Deferred far child of node (chlo, chhi&$1F), side = bit 5.
+    ; Python checks the far side AFTER the near subtree has rendered —
+    ; this pop-time check sees exactly that span state.
+    LDA zp_node_chhi : AND #$20 : BEQ bsp_df_s0
+    LDA #1 : BNE bsp_df_have
+.bsp_df_s0
+    LDA #0
+.bsp_df_have
+    STA zp_bbox_side
+    LDA zp_node_chhi : AND #$1F : STA zp_node_chhi
+    JSR br_bbox_visible
+    BEQ bsp_loop_j                   ; far side invisible/occluded → skip
+    JSR bsp_resolve_child            ; ch := node.children[side]
+    JMP bsp_dispatch
+.bsp_loop_j
+    JMP bsp_loop
+
 .bsp_node
     JSR br_node_setup
-    LDA zp_side : EOR #1 : STA zp_bbox_side
-    JSR br_bbox_visible
-    BEQ bsp_skip_far
+    ; Push the far child as a DEFERRED (node, farside) entry — its
+    ; bbox/has_gap runs at pop time, after the near subtree.
     LDX zp_bsp_stack_sp
-    LDA BSP_FAR_LO : STA BSP_STACK,X : INX
-    LDA BSP_FAR_HI : STA BSP_STACK,X : INX
+    LDA zp_node_chlo : STA BSP_STACK,X : INX
+    LDA zp_side : EOR #1
+    ASL A : ASL A : ASL A : ASL A : ASL A     ; farside << 5
+    ORA #$40
+    ORA zp_node_chhi : STA BSP_STACK,X : INX
     STX zp_bsp_stack_sp
-.bsp_skip_far
+    ; Near child: bbox + has_gap NOW (Python checks near at visit time;
+    ; the old walk pushed near unconditionally and over-visited).
+    LDA zp_side : STA zp_bbox_side
+    JSR br_bbox_visible
+    BEQ bsp_loop_j                   ; near side invisible → skip subtree
     LDX zp_bsp_stack_sp
     LDA BSP_NEAR_LO : STA BSP_STACK,X : INX
     LDA BSP_NEAR_HI : STA BSP_STACK,X : INX
     STX zp_bsp_stack_sp
     JMP bsp_loop
 }
+
+; (bsp_resolve_child lives in the D region.)
 
 ; (br_node_setup moved to bsp_render_lo.bin overflow region — see end of file)
 
@@ -1034,7 +1068,8 @@ zp_clip_cx_hi    = $0A5D    ; output: crossing-point view-x (s16 hi)
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
-zp_v_xext       = $75      ; saved view-x s24 extension byte (wide-vx path)
+zp_v_xext       = $94      ; saved view-x s24 extension byte (wide-vx path)
+zp_br_t4        = $95      ; bbox corner/edge loop counter
 ; Per-seg back-face / linedef state
 zp_seg_lv1x_lo  = $39
 zp_seg_lv1x_hi  = $3A
@@ -1191,6 +1226,18 @@ DEFQ_BASE       = $0600     ; 256 bytes (free: span pool ends $059F)
 DEFQ_TAIL       = $0975     ; queue tail offset (u8)
 DEFQ_OVF        = $0976     ; set if an op was dropped (queue full) — debug
 
+; Near-plane edge-crossing scratch. Reuses the per-seg ZP block — bbox
+; visibility runs during node processing, when the seg-loop variables
+; ($5D-$6F) are dead.
+zp_crx_num      = $5D       ; |1 - vy0| u16
+zp_crx_den      = $5F       ; |dvy| u16
+zp_crx_q        = $61       ; t = (num<<8)/den, u16 (<= 256)
+zp_crx_dvx      = $63       ; |dvx| u16
+zp_crx_neg      = $65       ; 1 if dvx negative
+zp_crx_p        = $66       ; t*|dvx| u24
+zp_crx_v        = $69       ; division: shifted divisor u24
+zp_crx_d        = $6C       ; division: dividend u24
+
 BBOX_SCRATCH    = $0A58     ; 8 bytes: top_lo,top_hi,bot_lo,bot_hi,
                             ;          left_lo,left_hi,right_lo,right_hi
 BBOX_FLAGS      = $0A60     ; bit 0 = any_behind, bit 1 = any_front
@@ -1269,37 +1316,23 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA #255 : STA BBOX_ILO
     LDA #0   : STA BBOX_IHI
 
-    ; Corner 0: (left, top) — store at BBOX_CORNERS + 0
+    ; Corners (LT, RT, RB, LB) — table-driven loop over the 4 corners.
+    ; bv_corner_x/y give the BBOX_SCRATCH offsets of each corner's
+    ; (x, y) pair; BBOX_CORNER_IDX advances by 5 per corner.
     LDA #0 : STA BBOX_CORNER_IDX
-    LDA BBOX_SCRATCH+4 : STA zp_br_dxlo
-    LDA BBOX_SCRATCH+5 : STA zp_br_dxhi
-    LDA BBOX_SCRATCH+0 : STA zp_br_dylo
-    LDA BBOX_SCRATCH+1 : STA zp_br_dyhi
+    LDA #0 : STA zp_br_t4
+.bv_corner_loop
+    LDX zp_br_t4
+    LDY bv_corner_x,X
+    LDA BBOX_SCRATCH+0,Y : STA zp_br_dxlo
+    LDA BBOX_SCRATCH+1,Y : STA zp_br_dxhi
+    LDY bv_corner_y,X
+    LDA BBOX_SCRATCH+0,Y : STA zp_br_dylo
+    LDA BBOX_SCRATCH+1,Y : STA zp_br_dyhi
     JSR bv_proj_one
-
-    ; Corner 1: (right, top) — store at BBOX_CORNERS + 5
-    LDA #5 : STA BBOX_CORNER_IDX
-    LDA BBOX_SCRATCH+6 : STA zp_br_dxlo
-    LDA BBOX_SCRATCH+7 : STA zp_br_dxhi
-    LDA BBOX_SCRATCH+0 : STA zp_br_dylo
-    LDA BBOX_SCRATCH+1 : STA zp_br_dyhi
-    JSR bv_proj_one
-
-    ; Corner 2: (right, bot) — store at BBOX_CORNERS + 10
-    LDA #10 : STA BBOX_CORNER_IDX
-    LDA BBOX_SCRATCH+6 : STA zp_br_dxlo
-    LDA BBOX_SCRATCH+7 : STA zp_br_dxhi
-    LDA BBOX_SCRATCH+2 : STA zp_br_dylo
-    LDA BBOX_SCRATCH+3 : STA zp_br_dyhi
-    JSR bv_proj_one
-
-    ; Corner 3: (left, bot) — store at BBOX_CORNERS + 15
-    LDA #15 : STA BBOX_CORNER_IDX
-    LDA BBOX_SCRATCH+4 : STA zp_br_dxlo
-    LDA BBOX_SCRATCH+5 : STA zp_br_dxhi
-    LDA BBOX_SCRATCH+2 : STA zp_br_dylo
-    LDA BBOX_SCRATCH+3 : STA zp_br_dyhi
-    JSR bv_proj_one
+    LDA BBOX_CORNER_IDX : CLC : ADC #5 : STA BBOX_CORNER_IDX
+    INC zp_br_t4
+    LDA zp_br_t4 : CMP #4 : BNE bv_corner_loop
 
     ; --- Near-plane edge crossings: for any edge that straddles NEAR,
     ; project the crossing point's sx and update min/max. This tightens
@@ -1321,16 +1354,16 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA BBOX_FLAGS : AND #$08 : BNE bv_have_not_right
     LDA #0 : RTS                              ; all right of R frustum
 .bv_have_not_right
-    ; If any corner is behind the near plane, the bbox crosses the near
-    ; plane and projection is partial. Conservatively treat as full screen
-    ; (so bbox cull doesn't reject visible geometry).
-    LDA BBOX_FLAGS : AND #$01 : BEQ bv_all_front
-    LDA #0   : STA BBOX_ILO
-    LDA #255 : STA BBOX_IHI
-.bv_all_front
-    ; Degenerate: ilo > ihi → reject.
-    LDA BBOX_ILO : CMP BBOX_IHI : BCC bv_query
-    BEQ bv_query
+    ; All-off-one-side reject (Python: sx_lo = max(0, min(sxs)),
+    ; sx_hi = min(255, max(sxs)), None when sx_lo > sx_hi). With every
+    ; sx < 0, flag bit 4 never set; with every sx > 255, bit 5 never set.
+    ; Corner projections AND near-crossing projections both feed these
+    ; flags, so this replaces the old "any corner behind → full screen"
+    ; fallback with Python's exact range.
+    LDA BBOX_FLAGS : AND #$10 : BEQ bv_reject
+    LDA BBOX_FLAGS : AND #$20 : BEQ bv_reject
+    JMP bv_query
+.bv_reject
     LDA #0 : RTS
 .bv_query
     LDA BBOX_ILO : STA $C2     ; zp_ilo
@@ -1340,57 +1373,61 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 
 ; bv_proj_one — process a single corner: transform, project, update min/max.
 ; Inputs: zp_br_dxlo:dxhi, zp_br_dylo:dyhi (raw prescaled corner s16).
+;
+; Mirrors fp_bbox_visible_fixed per corner exactly:
+;   evx = (total_vx + 128) >> 8   (ROUNDED s16 — fp_to_view's evx_round;
+;                                  the old code used trunc + subpx, which
+;                                  is NOT bit-equal to Python's
+;                                  fp_project_x on the rounded value)
+;   evy = (total_vy + 128) >> 8   (ROUNDED s16)
+;   frustum tests on the rounded values; near test evy >= 1;
+;   sx = fp_project_x(evx, rxh, rxl) full-width via br_project_x_auto
+;   (xfrac = 0 reproduces the 2-mul form bit-exactly, wide path covers
+;   |evx| > 127 instead of the old conservative full-screen fallback).
 .bv_proj_one
 {
     JSR br_to_view             ; → s24 vy in (vyext, vyhi, vylo); s24 vx similarly
-    ; Save vx int+frac before project_x_subpx (it uses vxlo/hi as accumulator).
-    LDA zp_br_vxhi : STA zp_v_xint
-    LDA zp_br_vxlo : STA zp_v_xfrac
 
-    ; Stash s16 (vx, vy) for this corner so a later pass can compute
-    ; near-plane edge crossings. (Low 16 bits are enough — for far corners
-    ; with vy_ext != 0 we already mark "any-behind" and fall back to full
-    ; screen, so edge crossings only matter when corners fit in s16.)
+    ; Rounded evx16 → zp_v_xint (lo) / zp_v_xext (hi); xfrac = 0.
+    LDA zp_br_vxlo : ASL A             ; C = bit7(vxlo)
+    LDA zp_br_vxhi : ADC #0 : STA zp_v_xint
+    LDA zp_br_vxext : ADC #0 : STA zp_v_xext
+    LDA #0 : STA zp_v_xfrac
+
+    ; Rounded evy16 → t2 (lo) / t3 (hi).
+    LDA zp_br_vylo : ASL A
+    LDA zp_br_vyhi : ADC #0 : STA zp_br_t2
+    LDA zp_br_vyext : ADC #0 : STA zp_br_t3
+
+    ; Stash rounded s16 (evx, evy) for the near-plane edge-crossing pass.
     LDX BBOX_CORNER_IDX
-    LDA zp_br_vxlo : STA BBOX_CORNERS+0,X
-    LDA zp_br_vxhi : STA BBOX_CORNERS+1,X
-    LDA zp_br_vylo : STA BBOX_CORNERS+2,X
-    LDA zp_br_vyhi : STA BBOX_CORNERS+3,X
+    LDA zp_v_xint : STA BBOX_CORNERS+0,X
+    LDA zp_v_xext : STA BBOX_CORNERS+1,X
+    LDA zp_br_t2  : STA BBOX_CORNERS+2,X
+    LDA zp_br_t3  : STA BBOX_CORNERS+3,X
 
-    ; --- Frustum-side flags (run for every corner regardless of near-clip).
-    ;   left frustum plane:  vx + vy = 0  (corner to the LEFT of it has vx + vy < 0).
-    ;   right frustum plane: vx - vy = 0  (corner to the RIGHT of it has vx > vy).
-    ; Set BBOX_FLAGS bit 2 if any corner is NOT to the left  (vx + vy >= 0).
-    ; Set BBOX_FLAGS bit 3 if any corner is NOT to the right (vx - vy <= 0).
-    ; vx + vy: high byte sign = sign of sum.
-    LDA zp_br_vxlo  : CLC : ADC zp_br_vylo
-    LDA zp_br_vxhi  :       ADC zp_br_vyhi
-    LDA zp_br_vxext :       ADC zp_br_vyext
+    ; --- Frustum-side flags on ROUNDED s16 values (Python: pts).
+    ; bit 2: any corner with evx + evy >= 0 (not left of L frustum).
+    ; bit 3: any corner with evx - evy <= 0 (not past R frustum).
+    LDA zp_v_xint : CLC : ADC zp_br_t2
+    LDA zp_v_xext :       ADC zp_br_t3
     BMI bv_lt_neg
     LDA BBOX_FLAGS : ORA #$04 : STA BBOX_FLAGS
 .bv_lt_neg
-    ; vx - vy: BPL means result >= 0 → vx >= vy → corner past R frustum.
-    LDA zp_br_vxlo  : SEC : SBC zp_br_vylo
-    LDA zp_br_vxhi  :       SBC zp_br_vyhi
-    LDA zp_br_vxext :       SBC zp_br_vyext
-    BMI bv_rt_set        ; result < 0 → vx < vy → not past R frustum
-    BNE bv_rt_skip       ; result > 0 → vx > vy → past R frustum
-    ; result == 0 → also not past (vx <= vy)
+    LDA zp_v_xint : SEC : SBC zp_br_t2 : STA zp_br_t0
+    LDA zp_v_xext :       SBC zp_br_t3
+    BMI bv_rt_set        ; evx < evy → not past R frustum
+    ORA zp_br_t0
+    BNE bv_rt_skip       ; evx > evy → past R frustum
 .bv_rt_set
     LDA BBOX_FLAGS : ORA #$08 : STA BBOX_FLAGS
 .bv_rt_skip
 
-    ; Near-clip test: matches Python's evy >= NEAR where evy = (total_vy + 128) >> 8.
-    ; Equivalent to total_vy >= 128 (= half-integer) in 8.8 fixed-point.
-    ;   vy_ext < 0  → behind
-    ;   vy_ext > 0  → in front (>= 256)
-    ;   vy_ext = 0:
-    ;     vy_hi != 0 → in front (>= 256)
-    ;     vy_hi = 0  → in front iff vy_lo >= $80
-    LDA zp_br_vyext : BMI bv_behind
-    BNE bv_in_front
-    LDA zp_br_vyhi : BNE bv_in_front
-    LDA zp_br_vylo : CMP #$80 : BCS bv_in_front
+    ; Near test: evy >= 1 on the rounded s16 (identical to Python's
+    ; p[1] >= NEAR since both use the rounded value).
+    LDA zp_br_t3 : BMI bv_behind       ; evy < 0
+    BNE bv_in_front                    ; evy >= 256
+    LDA zp_br_t2 : BNE bv_in_front     ; 1..255
 .bv_behind
     LDX BBOX_CORNER_IDX : LDA #0 : STA BBOX_CORNERS+4,X
     LDA BBOX_FLAGS : ORA #$01 : STA BBOX_FLAGS
@@ -1398,14 +1435,6 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .bv_in_front
     LDX BBOX_CORNER_IDX : LDA #1 : STA BBOX_CORNERS+4,X
     LDA BBOX_FLAGS : ORA #$02 : STA BBOX_FLAGS
-    ; If view-space x overflows s16 (vx_ext != 0), br_project_x_subpx (s8 vx
-    ; assumption) would produce nonsense sx. Conservatively mark "any behind"
-    ; so the final logic falls through to full-screen sx range (and lets
-    ; has_gap make the call). RTS without projecting this corner.
-    LDA zp_br_vxext : BEQ bv_vx_safe
-    LDA BBOX_FLAGS : ORA #$01 : STA BBOX_FLAGS
-    RTS
-.bv_vx_safe
     ; vy_idx = (vy_ext, vy_hi, vy_lo) >> 7 (== vy_idx in 9.1 form for fp_recip).
     ; The shift folds in vy_ext properly, no clamping needed here — br_recip
     ; clamps to [2, 1023] internally.
@@ -1415,16 +1444,33 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_vyext : ROL A
     STA zp_br_t1
     JSR br_recip
-    LDA zp_v_xint  : STA zp_br_t0
-    LDA zp_v_xfrac : STA zp_br_t1
-    JSR br_project_x_subpx
-    ; Clamp s16 sx in zp_br_resl/h to u8.
-    LDA zp_br_resh : BMI bv_sx_clamp_lo
-    BEQ bv_sx_in_range
+    ; Project rounded evx full-width: s24 result in resl/resh/resext,
+    ; then classify into the clamp + side flags.
+    JSR br_project_x_auto
+    JMP bv_classify_sx
+}
+
+; bv_classify_sx — classify s24 sx (zp_br_resl/resh/resext), update
+; BBOX_ILO/IHI with the u8 clamp and set BBOX_FLAGS bit 4 (any sx >= 0)
+; / bit 5 (any sx <= 255). Python computes min/max over raw sx values
+; then clamps; clamping is monotone so per-value clamping commutes, and
+; the two flags recover Python's "all off one side" reject
+; (sx_lo > sx_hi after the final clamp).
+.bv_classify_sx
+{
+    LDA zp_br_resext : BMI bv_neg      ; sx < 0 (s24 sign)
+    BNE bv_big                         ; sx >= 65536 → > 255
+    LDA zp_br_resh : BEQ bv_in_u8      ; 0..255
+.bv_big
+    ; sx > 255: ge0 flag only, clamp 255.
+    LDA BBOX_FLAGS : ORA #$10 : STA BBOX_FLAGS
     LDA #255 : JMP bv_update_minmax
-.bv_sx_clamp_lo
-    LDA #0   : JMP bv_update_minmax
-.bv_sx_in_range
+.bv_neg
+    ; sx < 0: le255 flag only, clamp 0.
+    LDA BBOX_FLAGS : ORA #$20 : STA BBOX_FLAGS
+    LDA #0 : JMP bv_update_minmax
+.bv_in_u8
+    LDA BBOX_FLAGS : ORA #$30 : STA BBOX_FLAGS
     LDA zp_br_resl
 .bv_update_minmax
     ; A holds clamped sx. Update min/max.
@@ -1437,16 +1483,73 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     RTS
 }
 
+; crx_classify — classify s24 cx in (zp_br_t0 lo, zp_br_t1 mid, A ext)
+; into the equivalent sx and feed bv_classify_sx via resl/resh/resext.
+.crx_classify
+{
+    BMI cxc_neg
+    ORA zp_br_t1 : BNE cxc_big          ; cx >= 256 → sx > 255
+    LDA zp_br_t0 : BEQ cxc_mid          ; cx = 0  → sx = 128
+    CMP #1 : BEQ cxc_edge255            ; cx = 1  → sx = 255
+.cxc_big                                 ; cx >= 2 → sx > 255
+    LDA #0 : STA zp_br_resext
+    LDA #1 : STA zp_br_resh
+    JMP bv_classify_sx
+.cxc_mid
+    LDA #128 : BNE cxc_u8
+.cxc_edge255
+    LDA #255
+.cxc_u8
+    STA zp_br_resl
+    LDA #0 : STA zp_br_resh : STA zp_br_resext
+    JMP bv_classify_sx
+.cxc_neg
+    AND zp_br_t1 : AND zp_br_t0 : CMP #$FF : BEQ cxc_edge0   ; cx = -1 → sx = 0
+    LDA #$FF : STA zp_br_resext          ; cx <= -2 → sx < 0
+    JMP bv_classify_sx
+.cxc_edge0
+    LDA #0 : STA zp_br_resl : STA zp_br_resh : STA zp_br_resext
+    JMP bv_classify_sx
+}
+
 ; bv_compute_edge_crossings — for any bbox edge that straddles the near
-; plane, project the crossing point's sx and update min/max. Called once
-; after all 4 corners have been written to BBOX_CORNERS by bv_proj_one.
-;
-; Currently a no-op: when an edge straddles near, the corresponding corner
-; is "behind", BBOX_FLAGS bit 0 fires and bv_have_front falls back to full
-; screen [0, 255] anyway. A future tighter implementation would interpolate
-; the crossing point and project it, narrowing the sx range further.
+; plane, "project" the crossing point's sx and update min/max + side
+; flags, mirroring fp_bbox_visible_fixed's crossing loop exactly:
+;     t  = ((1 - vy0) << 8) // dvy          (floor; signs cancel)
+;     cx = vx0 + t*dvx                      (NOTE: full product, no >>8 —
+;                                            this matches the Python
+;                                            reference literally)
+;     sx = fp_project_x(cx, recip(NEAR<<1)) = 128 + 127*cx + (255*cx >> 8)
+; At NEAR the reciprocal is the CONSTANT (127, 255), so sx classifies
+; exactly by cx alone:  cx <= -2 → sx < 0;  cx = -1 → sx = 0;
+; cx = 0 → sx = 128;  cx = +1 → sx = 255;  cx >= +2 → sx > 255.
+; No projection arithmetic is needed — just the s24 cx.
 .bv_compute_edge_crossings
+{
+    LDA #0 : STA zp_br_t4
+.crx_loop
+    LDX zp_br_t4
+    LDY bv_edge_j,X                     ; corner j offset (5,10,15,0)
+    LDA bv_edge_i,X : TAX               ; corner i offset (0,5,10,15)
+    ; straddle iff front flags differ
+    LDA BBOX_CORNERS+4,X : STA zp_br_t0
+    LDA BBOX_CORNERS+4,Y : CMP zp_br_t0 : BEQ crx_next
+    JSR crx_edge                        ; X = i offset, Y = j offset
+.crx_next
+    INC zp_br_t4
+    LDA zp_br_t4 : CMP #4 : BNE crx_loop
     RTS
+}
+.bv_edge_i
+    EQUB 0, 5, 10, 15
+.bv_edge_j
+    EQUB 5, 10, 15, 0
+; BBOX_SCRATCH offsets of each corner's (x, y): LT, RT, RB, LB.
+.bv_corner_x
+    EQUB 4, 6, 6, 4
+.bv_corner_y
+    EQUB 0, 0, 2, 2
+
 
 ; ============================================================================
 ; br_render_subsector — process one subsector.
@@ -2113,12 +2216,12 @@ ASSERT end_code <= $5800
 SAVE "bsp_render.bin", $4800, end_code, $4800
 
 ; ============================================================================
-; B REGION ($0B00-$0BFF) — deferred-op queue code. This page is the unused
-; upper half of the old 384-byte SS_VISITED_BITMAP allocation (237
+; B REGION ($0AA0-$0BFF) — deferred-op queue + helpers. This space is the
+; unused tail of the old 384-byte SS_VISITED_BITMAP allocation (237
 ; subsectors need only 30 bytes, $0A80-$0A9D). Loaded as a separate binary
 ; (bsp_render_b.bin) by span_clip_6502.py.
 ; ============================================================================
-ORG $0B00
+ORG $0AA0
 .bsp_b_start
 
 ; defq_append_solid — append ($00, ilo, ihi) from $C2/$C3 to the op queue.
@@ -2229,9 +2332,218 @@ ORG $0B00
     RTS
 }
 
+; ============================================================================
+; ev_clamp_evy16 — clamp zp_seg_cur_evy to s8 range using the s24 view-y.
+; Called with C = carry-out of (vyhi + bit7(vylo)), i.e. the rounding add
+; that produced zp_seg_cur_evy. evy16 hi byte = vyext + C. The vertex fits
+; s8 iff that hi byte is the sign-extension of the lo byte. (The old
+; `vyext != 0 → clamp` collapsed every behind-the-viewer vertex to
+; evy=-128, corrupting crossing math: t = (1-evy_C)<<8/(evy_U-evy_C)
+; needs the true evy_C — e.g. evy=-4 became -128 and a crossed solid
+; wall projected sx=-2560 instead of Python's -2176.)
+; ============================================================================
+.ev_clamp_evy16
+{
+    LDA zp_br_vyext : ADC #0           ; hi byte of rounded evy16
+    BEQ ev_case_zero
+    CMP #$FF : BEQ ev_case_ff
+    ASL A : BCS ev_clamp_neg           ; carry = sign of hi byte
+    LDA #$7F : BNE ev_store
+.ev_clamp_neg
+    LDA #$80 : BNE ev_store
+.ev_case_ff
+    LDA zp_seg_cur_evy : BMI ev_done       ; $FF:%1xxxxxxx → fits s8
+    LDA #$80 : BNE ev_store                ; -256..-129 → clamp
+.ev_case_zero
+    LDA zp_seg_cur_evy : BPL ev_done       ; $00:%0xxxxxxx → fits s8
+    LDA #$7F                               ; 128..255 → clamp
+.ev_store
+    STA zp_seg_cur_evy
+.ev_done
+    RTS
+}
+
+; ============================================================================
+; br_project_x_auto — project saved view-x (zp_v_xext:zp_v_xint . zp_v_xfrac)
+; to screen X, choosing the 3-mul narrow path when the integer part fits
+; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
+; ============================================================================
+.br_project_x_auto
+{
+    ; Narrow iff xext equals the sign-extension of xint's bit 7.
+    LDA zp_v_xint : ASL A              ; C = sign of int part
+    LDA #0 : ADC #$FF : EOR #$FF       ; A = $FF if C else $00
+    CMP zp_v_xext : BNE a_wide
+    LDA zp_v_xint  : STA zp_br_t0
+    LDA zp_v_xfrac : STA zp_br_t1
+    JSR br_project_x_subpx
+    ; Narrow sx always fits s16 (|evx|<=127, rxh<=127 → |sx|<=16383);
+    ; set the s24 extension byte so callers can classify uniformly.
+    LDX #0
+    LDA zp_br_resh : BPL a_pos
+    DEX
+.a_pos
+    STX zp_br_resext
+    RTS
+.a_wide
+    JMP br_project_x_wide
+}
+
 .bsp_b_end
 ASSERT bsp_b_end <= $0C00
-SAVE "bsp_render_b.bin", $0B00, bsp_b_end, $0B00
+SAVE "bsp_render_b.bin", $0AA0, bsp_b_end, $0AA0
+
+; ============================================================================
+; D REGION ($0978-$09FF) — near-plane edge-crossing math for bbox
+; visibility. Free space after span_clip's LC_* scratch ($0958) and the
+; BBOX_CORNERS/DEFQ vars ($0960-$0976). Loaded as bsp_render_d.bin.
+; ============================================================================
+ORG $0978
+.bsp_d_start
+
+; crx_udiv — zp_crx_q = (zp_crx_num << 8) / zp_crx_den, unsigned.
+; Restoring division, 9 quotient bits (t <= 256 since num <= den).
+.crx_udiv
+{
+    LDA #0           : STA zp_crx_d
+    LDA zp_crx_num   : STA zp_crx_d+1
+    LDA zp_crx_num+1 : STA zp_crx_d+2
+    LDA #0           : STA zp_crx_v
+    LDA zp_crx_den   : STA zp_crx_v+1
+    LDA zp_crx_den+1 : STA zp_crx_v+2
+    LDA #0 : STA zp_crx_q : STA zp_crx_q+1
+    LDX #9
+.cu_loop
+    ASL zp_crx_q : ROL zp_crx_q+1
+    LDA zp_crx_d+2 : CMP zp_crx_v+2 : BCC cu_no
+    BNE cu_yes
+    LDA zp_crx_d+1 : CMP zp_crx_v+1 : BCC cu_no
+    BNE cu_yes
+    LDA zp_crx_d : CMP zp_crx_v : BCC cu_no
+.cu_yes
+    SEC
+    LDA zp_crx_d   : SBC zp_crx_v   : STA zp_crx_d
+    LDA zp_crx_d+1 : SBC zp_crx_v+1 : STA zp_crx_d+1
+    LDA zp_crx_d+2 : SBC zp_crx_v+2 : STA zp_crx_d+2
+    INC zp_crx_q
+.cu_no
+    LSR zp_crx_v+2 : ROR zp_crx_v+1 : ROR zp_crx_v
+    DEX : BNE cu_loop
+    RTS
+}
+
+
+; bsp_resolve_child — ch := children[zp_bbox_side] of node ch.
+;   ptr = rom_nodes + id*16; child_r at +8, child_l at +10.
+.bsp_resolve_child
+{
+    ; Node ids fit one byte (<= 235): id*16 via single-byte shifts.
+    LDA zp_node_chlo
+    LSR A : LSR A : LSR A : LSR A : STA zp_br_t1
+    LDA zp_node_chlo
+    ASL A : ASL A : ASL A : ASL A
+    CLC : ADC zp_rom_nodes_lo : STA zp_br_p
+    LDA zp_br_t1 : ADC zp_rom_nodes_hi : STA zp_br_p_h
+    LDA zp_bbox_side : ASL A : CLC : ADC #8 : TAY
+    LDA (zp_br_p),Y : STA zp_node_chlo
+    INY
+    LDA (zp_br_p),Y : STA zp_node_chhi
+    RTS
+}
+
+.bsp_d_end
+ASSERT bsp_d_end <= $0A00
+SAVE "bsp_render_d.bin", $0978, bsp_d_end, $0978
+
+; ============================================================================
+; X REGION ($0100-$01BF) — low half of the hardware stack page. The call
+; stack grows down from $01FF; max JSR nesting on this path is ~7 frames
+; (~16 bytes), so $01E0-$01FF (32 bytes) is ample headroom. Holds the
+; rare-path bbox edge-crossing math. Loaded as bsp_render_x.bin.
+; ============================================================================
+ORG $0100
+.bsp_x_start
+
+; crx_edge — compute the near-plane crossing of bbox edge (corner i → j)
+; and feed its classified sx into the bbox min/max + side flags.
+;   X = corner i offset (vy0/vx0), Y = corner j offset (vy1/vx1).
+;   t  = ((1 - vy0) << 8) // dvy   (signs cancel; magnitudes division)
+;   cx = vx0 + t*dvx               (s24; full product per the reference)
+.crx_edge
+{
+    ; num = 1 - vy0 ; den = vy1 - vy0 ; dvx = vx1 - vx0 (all s16)
+    LDA #1 : SEC : SBC BBOX_CORNERS+2,X : STA zp_crx_num
+    LDA #0 :       SBC BBOX_CORNERS+3,X : STA zp_crx_num+1
+    LDA BBOX_CORNERS+2,Y : SEC : SBC BBOX_CORNERS+2,X : STA zp_crx_den
+    LDA BBOX_CORNERS+3,Y :       SBC BBOX_CORNERS+3,X : STA zp_crx_den+1
+    LDA BBOX_CORNERS+0,Y : SEC : SBC BBOX_CORNERS+0,X : STA zp_crx_dvx
+    LDA BBOX_CORNERS+1,Y :       SBC BBOX_CORNERS+1,X : STA zp_crx_dvx+1
+    STX zp_br_t2                       ; save corner i offset for vx0
+    ; |num| (num and den always share sign; t is non-negative)
+    LDA zp_crx_num+1 : BPL cn_pos
+    SEC
+    LDA #0 : SBC zp_crx_num   : STA zp_crx_num
+    LDA #0 : SBC zp_crx_num+1 : STA zp_crx_num+1
+.cn_pos
+    ; |den|
+    LDA zp_crx_den+1 : BPL cd_pos
+    SEC
+    LDA #0 : SBC zp_crx_den   : STA zp_crx_den
+    LDA #0 : SBC zp_crx_den+1 : STA zp_crx_den+1
+.cd_pos
+    ; |dvx| + sign (zp_crx_neg = original hi byte; bit 7 = negative)
+    LDA zp_crx_dvx+1 : STA zp_crx_neg
+    BPL cv_pos
+    SEC
+    LDA #0 : SBC zp_crx_dvx   : STA zp_crx_dvx
+    LDA #0 : SBC zp_crx_dvx+1 : STA zp_crx_dvx+1
+.cv_pos
+    JSR crx_udiv                       ; zp_crx_q = (num<<8)/den
+
+    ; prod24 = t * |dvx|
+    LDA zp_crx_q+1 : BEQ ct_small      ; t = 256 → prod = |dvx| << 8
+    LDA #0           : STA zp_crx_p
+    LDA zp_crx_dvx   : STA zp_crx_p+1
+    LDA zp_crx_dvx+1 : STA zp_crx_p+2
+    JMP ct_have
+.ct_small
+    LDA zp_crx_dvx : STA zp_mul_b
+    LDA zp_crx_q
+    JSR SC_UMUL8
+    LDA zp_prod_lo : STA zp_crx_p
+    LDA zp_prod_hi : STA zp_crx_p+1
+    LDA zp_crx_dvx+1 : STA zp_mul_b
+    LDA zp_crx_q
+    JSR SC_UMUL8
+    LDA zp_prod_lo : CLC : ADC zp_crx_p+1 : STA zp_crx_p+1
+    LDA zp_prod_hi :       ADC #0          : STA zp_crx_p+2
+.ct_have
+    ; Fold the dvx sign into prod (negate s24), then a single add path.
+    LDA zp_crx_neg : BPL ct_pos
+    SEC
+    LDA #0 : SBC zp_crx_p   : STA zp_crx_p
+    LDA #0 : SBC zp_crx_p+1 : STA zp_crx_p+1
+    LDA #0 : SBC zp_crx_p+2 : STA zp_crx_p+2
+.ct_pos
+    ; cx24 = sext24(vx0) + prod → (zp_br_t0, zp_br_t1, A)
+    LDX zp_br_t2
+    LDY #0
+    LDA BBOX_CORNERS+1,X : STA zp_br_t1
+    BPL cx0_ext
+    DEY
+.cx0_ext
+    STY zp_br_t3
+    LDA BBOX_CORNERS+0,X : CLC : ADC zp_crx_p   : STA zp_br_t0
+    LDA zp_br_t1         :       ADC zp_crx_p+1 : STA zp_br_t1
+    LDA zp_br_t3         :       ADC zp_crx_p+2
+    JMP crx_classify
+}
+
+
+.bsp_x_end
+ASSERT bsp_x_end <= $01E0
+SAVE "bsp_render_x.bin", $0100, bsp_x_end, $0100
+
 
 ; ============================================================================
 ; OVERFLOW REGION — bsp_render.bin is bound to $4800-$57FF (4096 bytes max,
@@ -2520,6 +2832,11 @@ ORG $1C00
 ; ============================================================================
 .br_project_x_wide
 {
+    ; 24-bit accumulation: the bbox corner path needs the true sign of
+    ; sx when |sx| exceeds s16 (off-screen side classification); the seg
+    ; path uses the low 16 only (matches Python's value at the s16 ZP
+    ; interface). Accumulator: vxlo/vxhi/t2 (lo/mid/ext).
+
     ; sum := 128 + umul8(xint, rxh)
     LDA zp_br_rhi : STA zp_mul_b
     LDA zp_v_xint
@@ -2527,19 +2844,26 @@ ORG $1C00
     CLC
     LDA zp_prod_lo : ADC #128 : STA zp_br_vxlo
     LDA zp_prod_hi : ADC #0   : STA zp_br_vxhi
+    LDA #0         : ADC #0   : STA zp_br_t2
 
-    ; sum_hi += smul_s8_u8(xext, rxh).lo   (the <<8 part of evx*rxh)
+    ; sum += smul_s8_u8(xext, rxh) << 8   (s16 product into mid/ext)
     LDA zp_v_xext : STA zp_br_a
     LDA zp_br_rhi : STA zp_br_b
     JSR br_smul_s8_u8
     LDA zp_br_resl : CLC : ADC zp_br_vxhi : STA zp_br_vxhi
+    LDA zp_br_resh :       ADC zp_br_t2   : STA zp_br_t2
 
-    ; sum += smul_s8_u8(xext, rxl)   (s16 part of evx*rxl >> 8)
+    ; sum += sext24(smul_s8_u8(xext, rxl))   (s16 part of evx*rxl >> 8)
     LDA zp_v_xext : STA zp_br_a
     LDA zp_br_rlo : STA zp_br_b
     JSR br_smul_s8_u8
+    LDX #0
+    LDA zp_br_resh : BPL pw_t2_pos
+    DEX                                      ; X = $FF sign extension
+.pw_t2_pos
     LDA zp_br_resl : CLC : ADC zp_br_vxlo : STA zp_br_vxlo
     LDA zp_br_resh :       ADC zp_br_vxhi : STA zp_br_vxhi
+    TXA            :       ADC zp_br_t2   : STA zp_br_t2
 
     ; sum += umul8(xint, rxl).hi   (u8, the non-negative floor remainder)
     LDA zp_br_rlo : STA zp_mul_b
@@ -2547,6 +2871,7 @@ ORG $1C00
     JSR SC_UMUL8
     LDA zp_prod_hi : CLC : ADC zp_br_vxlo : STA zp_br_vxlo
     LDA #0         :       ADC zp_br_vxhi : STA zp_br_vxhi
+    LDA #0         :       ADC zp_br_t2   : STA zp_br_t2
 
     ; sum += umul8(xfrac, rxh).hi  (sub-pixel term)
     LDA zp_br_rhi : STA zp_mul_b
@@ -2554,57 +2879,13 @@ ORG $1C00
     JSR SC_UMUL8
     LDA zp_prod_hi : CLC : ADC zp_br_vxlo : STA zp_br_resl
     LDA #0         :       ADC zp_br_vxhi : STA zp_br_resh
+    LDA #0         :       ADC zp_br_t2   : STA zp_br_resext
     RTS
 }
 
-; ============================================================================
-; ev_clamp_evy16 — clamp zp_seg_cur_evy to s8 range using the s24 view-y.
-; Called with C = carry-out of (vyhi + bit7(vylo)), i.e. the rounding add
-; that produced zp_seg_cur_evy. evy16 hi byte = vyext + C. The vertex fits
-; s8 iff that hi byte is the sign-extension of the lo byte. (The old
-; `vyext != 0 → clamp` collapsed every behind-the-viewer vertex to
-; evy=-128, corrupting crossing math: t = (1-evy_C)<<8/(evy_U-evy_C)
-; needs the true evy_C — e.g. evy=-4 became -128 and a crossed solid
-; wall projected sx=-2560 instead of Python's -2176.)
-; ============================================================================
-.ev_clamp_evy16
-{
-    LDA zp_br_vyext : ADC #0           ; hi byte of rounded evy16
-    BEQ ev_case_zero
-    CMP #$FF : BEQ ev_case_ff
-    ASL A : BCS ev_clamp_neg           ; carry = sign of hi byte
-    LDA #$7F : BNE ev_store
-.ev_clamp_neg
-    LDA #$80 : BNE ev_store
-.ev_case_ff
-    LDA zp_seg_cur_evy : BMI ev_done       ; $FF:%1xxxxxxx → fits s8
-    LDA #$80 : BNE ev_store                ; -256..-129 → clamp
-.ev_case_zero
-    LDA zp_seg_cur_evy : BPL ev_done       ; $00:%0xxxxxxx → fits s8
-    LDA #$7F                               ; 128..255 → clamp
-.ev_store
-    STA zp_seg_cur_evy
-.ev_done
-    RTS
-}
+; (ev_clamp_evy16 moved to the B region.)
 
-; ============================================================================
-; br_project_x_auto — project saved view-x (zp_v_xext:zp_v_xint . zp_v_xfrac)
-; to screen X, choosing the 3-mul narrow path when the integer part fits
-; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
-; ============================================================================
-.br_project_x_auto
-{
-    ; Narrow iff xext equals the sign-extension of xint's bit 7.
-    LDA zp_v_xint : ASL A              ; C = sign of int part
-    LDA #0 : ADC #$FF : EOR #$FF       ; A = $FF if C else $00
-    CMP zp_v_xext : BNE a_wide
-    LDA zp_v_xint  : STA zp_br_t0
-    LDA zp_v_xfrac : STA zp_br_t1
-    JMP br_project_x_subpx
-.a_wide
-    JMP br_project_x_wide
-}
+; (br_project_x_auto moved to the B region.)
 
 ASSERT bsp_lo_end <= $2000
 

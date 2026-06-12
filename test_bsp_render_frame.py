@@ -31,7 +31,7 @@ ZP_PX = 0x00; ZP_PY = 0x02
 ZP_VZ = 0x04
 ZP_SMAG = 0x05; ZP_SNEG = 0x06; ZP_SONE = 0x07
 ZP_CMAG = 0x08; ZP_CNEG = 0x09; ZP_CONE = 0x0A
-ZP_PXRAW_LO = 0x71  # raw (unprescaled) player position s16 — for side test
+ZP_PXRAW_LO = 0x90  # raw (unprescaled) player position s16 — for side test
 ZP_PYRAW_LO = 0x73
 
 ROM_MAIN_BASE   = 0x6C00       # ROM main (no VWH) — fits below rasteriser.

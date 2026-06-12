@@ -77,10 +77,10 @@ def setup_view_zp(sc, px, py, ab):
     mem[4] = vz & 0xFF
     raw_px = px - dw.MAP_CENTER_X
     raw_py = py - dw.MAP_CENTER_Y
-    mem[0x71] = raw_px & 0xFF
-    mem[0x72] = (raw_px >> 8) & 0xFF
-    mem[0x73] = raw_py & 0xFF
-    mem[0x74] = (raw_py >> 8) & 0xFF
+    mem[0x90] = raw_px & 0xFF
+    mem[0x91] = (raw_px >> 8) & 0xFF
+    mem[0x92] = raw_py & 0xFF
+    mem[0x93] = (raw_py >> 8) & 0xFF
     sc_t = fp.fp_sincos(ab)
     mem[5] = sc_t[0]
     mem[6] = 1 if sc_t[1] else 0

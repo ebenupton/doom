@@ -52,6 +52,11 @@ def setup(sc, px, py, ab):
 
 
 def install_tracing(sc, trace_all):
+    # The BSP walk JSRs br_render_subsector's real address, not the jump
+    # table — read the JMP operand at $4819 to find it.
+    ss_real = (sc.mpu.memory[ENTRY_BR_RENDER_SUBSECTOR + 1]
+               | (sc.mpu.memory[ENTRY_BR_RENDER_SUBSECTOR + 2] << 8))
+
     def traced_run(entry, max_cycles=30_000_000):
         mpu = sc.mpu
         mem = mpu.memory
@@ -67,7 +72,7 @@ def install_tracing(sc, trace_all):
             pc = mpu.pc
             if pc == 0x2009:
                 trace_all.append(('has_gap', mem[0xC2], mem[0xC3]))
-            elif pc == ENTRY_BR_RENDER_SUBSECTOR:
+            elif pc == ss_real:
                 trace_all.append(('ss', mem[0x58] | (mem[0x59] << 8)))
             mpu.step()
         sc.last_cycles = mpu.processorCycles
@@ -96,8 +101,8 @@ def trace_hybrid(px, py, ab):
     install_tracing(sc, trace)
 
     def hybrid_ss(idx, clips, ctx, vz, surface, ram):
+        # (the traced_run pc watch records the ss entry — no explicit append)
         mem = sc.mpu.memory
-        trace.append(('ss', idx))
         mem[0x58] = idx & 0xFF
         mem[0x59] = (idx >> 8) & 0xFF
         sc._run(ENTRY_BR_RENDER_SUBSECTOR)
@@ -143,21 +148,23 @@ if __name__ == '__main__':
         asm_t, asm_fb = trace_asm(px, py, ab)
         hyb_t, hyb_fb = trace_hybrid(px, py, ab)
         px_diff = sum(bin(a ^ b).count('1') for a, b in zip(asm_fb, hyb_fb))
-        asm_ss = [c for c in asm_t if c[0] == 'ss']
-        hyb_ss = [c for c in hyb_t if c[0] == 'ss']
-        match = 'MATCH' if asm_t == hyb_t else 'DIFFER'
-        print(f'({px},{py},{ab}): traces {match}, '
-              f'ss asm={len(asm_ss)} hyb={len(hyb_ss)}, fb diff={px_diff} px')
-        if asm_t != hyb_t:
-            n = min(len(asm_t), len(hyb_t))
+        # has_gap order legitimately differs (the 6502 walk bbox-checks far
+        # children only; Python checks near+far) — compare the subsector
+        # visit SEQUENCE and the framebuffer.
+        asm_ss = [c[1] for c in asm_t if c[0] == 'ss']
+        hyb_ss = [c[1] for c in hyb_t if c[0] == 'ss']
+        match = 'MATCH' if asm_ss == hyb_ss else 'DIFFER'
+        print(f'({px},{py},{ab}): ss-seq {match} '
+              f'(asm {len(asm_ss)}, hyb {len(hyb_ss)}), fb diff={px_diff} px')
+        if asm_ss != hyb_ss:
+            n = min(len(asm_ss), len(hyb_ss))
             for i in range(n):
-                if asm_t[i] != hyb_t[i]:
-                    lo = max(0, i - 2)
-                    for j in range(lo, min(n, i + 5)):
-                        mark = '<--' if j == i else '   '
-                        print(f'    [{j:4d}] asm={fmt(asm_t[j]):28s} '
-                              f'hyb={fmt(hyb_t[j]):28s} {mark}')
+                if asm_ss[i] != hyb_ss[i]:
+                    print(f'    first ss divergence at #{i}: '
+                          f'asm={asm_ss[i]} hyb={hyb_ss[i]}')
+                    print(f'    asm: ...{asm_ss[max(0,i-2):i+4]}')
+                    print(f'    hyb: ...{hyb_ss[max(0,i-2):i+4]}')
                     break
             else:
-                print(f'    common prefix identical; lengths differ '
-                      f'(asm {len(asm_t)}, hyb {len(hyb_t)})')
+                print(f'    one is a prefix of the other: '
+                      f'asm extra={asm_ss[n:][:6]} hyb extra={hyb_ss[n:][:6]}')

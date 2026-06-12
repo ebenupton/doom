@@ -153,7 +153,23 @@ class SpanClip6502:
                 with open(bsp_b, 'rb') as f:
                     bsp_b_code = f.read()
                 for i, b in enumerate(bsp_b_code):
-                    mem[0x0B00 + i] = b
+                    mem[0x0AA0 + i] = b
+            bsp_d = os.path.join(os.path.dirname(__file__) or '.',
+                                 'bsp_render_d.bin')
+            if os.path.exists(bsp_d):
+                with open(bsp_d, 'rb') as f:
+                    bsp_d_code = f.read()
+                for i, b in enumerate(bsp_d_code):
+                    mem[0x0978 + i] = b
+            # X region: low half of the stack page (code; stack stays
+            # within $01E0-$01FF on this module's call depths).
+            bsp_x = os.path.join(os.path.dirname(__file__) or '.',
+                                 'bsp_render_x.bin')
+            if os.path.exists(bsp_x):
+                with open(bsp_x, 'rb') as f:
+                    bsp_x_code = f.read()
+                for i, b in enumerate(bsp_x_code):
+                    mem[0x0100 + i] = b
                 # Load the reciprocal table at $E000 (HI bytes 0..513,
                 # then LO bytes 0..513).
                 from fp import _RECIP_X_HI, _RECIP_X_LO
