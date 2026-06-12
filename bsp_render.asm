@@ -1033,10 +1033,12 @@ zp_seg_v2_evy    = $0A55
 zp_seg_v2_evx    = $0A56
 zp_seg_v2_clipped = $0A57
 ; cross_compute reads zp_seg_v{1,2}_{evy,evx} directly. Output:
-zp_clip_cx       = $0A5C    ; output: crossing-point view-x (s8)
+zp_clip_cx       = $0A5C    ; output: crossing-point view-x (s16 lo)
+zp_clip_cx_hi    = $0A5D    ; output: crossing-point view-x (s16 hi)
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 zp_v_xint       = $37      ; saved integer view-x (s8)
 zp_v_xfrac      = $38      ; saved fractional view-x (u8)
+zp_v_xext       = $75      ; saved view-x s24 extension byte (wide-vx path)
 ; Per-seg back-face / linedef state
 zp_seg_lv1x_lo  = $39
 zp_seg_lv1x_hi  = $3A
@@ -1574,11 +1576,12 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 
     ; Both vertices xform'd. If both clipped → bail. If exactly one clipped,
     ; reproject from crossing point and copy into that vertex's slots.
-    ; Either clipped: bail solid walls (over-occlude when crossed),
-    ; reproject portals (no mark_solid → safe to render).
+    ; Python near-clips ALL front-facing segs (fp_near_clip), so solid
+    ; walls reproject too — their clamped mark_solid range comes from the
+    ; crossing projection (e.g. mark_solid(0,81) from sx=-2176 at
+    ; (800,-3400,96); bailing solids loses that occlusion entirely).
     LDA zp_seg_v1_clipped : ORA zp_seg_v2_clipped
     BEQ s_both_have_proj
-    LDA zp_seg_flags : AND #$02 : BNE s_advance_jmp  ; solid → bail
     LDA zp_seg_v1_clipped
     BEQ s_v2_was_clipped
     LDA zp_seg_v2_clipped
@@ -2010,10 +2013,11 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 
     JSR br_to_view
 
-    ; Save view-space x (vxhi=int part, vxlo=frac part) before project_y
-    ; clobbers vxlo/hi.
+    ; Save view-space x (vxext:vxhi=int part s16, vxlo=frac part) before
+    ; project_y clobbers vxlo/hi.
     LDA zp_br_vxhi : STA zp_v_xint
     LDA zp_br_vxlo : STA zp_v_xfrac
+    LDA zp_br_vxext : STA zp_v_xext
 
     ; Compute evx = vxhi (truncated s8) and evy = (vy + 128) >> 8 from the
     ; full s24 view-y (vyext, vyhi, vylo). Far-behind segs have negative
@@ -2023,16 +2027,10 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_vylo : ASL A             ; carry = bit 7 of vylo
     LDA zp_br_vyhi : ADC #0            ; A = (vyhi:vylo + 128) >> 8 low byte
     STA zp_seg_cur_evy
-    ; If vyext is non-zero, evy doesn't fit s8. Clamp the saved value to
-    ; the sign of vyext so the cache + crossing-math see a consistent
-    ; "very negative" or "very positive" tag.
-    LDA zp_br_vyext : BEQ ev_evy_done
-    BMI ev_evy_neg
-    LDA #$7F : STA zp_seg_cur_evy
-    JMP ev_evy_done
-.ev_evy_neg
-    LDA #$80 : STA zp_seg_cur_evy
-.ev_evy_done
+    ; Clamp evy to s8 only when the rounded evy16 truly exceeds s8 —
+    ; vyext=$FF is NORMAL for negative vy (s24 sign extension), not an
+    ; overflow. Helper consumes the carry-out of the rounding add.
+    JSR ev_clamp_evy16
 
     ; Pre-write evy/evx into cache (offsets 0/1) — needed on any future
     ; cache hit, including the near-clipped path.
@@ -2040,26 +2038,6 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_seg_v_cache_hi : STA zp_br_p_h
     LDY #0 : LDA zp_seg_cur_evy : STA (zp_br_p),Y
     INY    : LDA zp_seg_cur_evx : STA (zp_br_p),Y
-
-    ; View-x overflow check: br_project_x_subpx uses br_smul_s8_u8 which
-    ; treats evx as s8. If total_vx is outside [-32768, 32767] (in 8.8 form
-    ; that's |vxext| != 0 with sign disagreement, or |vxext|==0 with vxhi
-    ; bit 7 having wrong sign), the s8 interpretation wraps and the
-    ; projection produces garbage sx — leading to bogus mark_solid ranges
-    ; (e.g., mark_solid(0,255) → screen-full → BSP terminates early).
-    ; Treat as near-clipped so the seg loop drops it.
-    LDA zp_br_vxext : BEQ vx_chk_pos
-    CMP #$FF : BNE vx_overflow
-    LDA zp_br_vxhi : BPL vx_overflow      ; vxext=$FF, vxhi must be neg s8
-    JMP vx_in_range
-.vx_chk_pos
-    LDA zp_br_vxhi : BMI vx_overflow      ; vxext=0, vxhi must be pos s8
-    JMP vx_in_range
-.vx_overflow
-    LDY #6 : LDA #1 : STA (zp_br_p),Y
-    LDA #1 : STA zp_seg_skip
-    RTS
-.vx_in_range
 
     ; Near-clip on full s24: clipped iff total_vy < NEAR_88 (= 128 in 8.8).
     ;   vyext < 0 → clipped (very negative)
@@ -2085,9 +2063,12 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JSR br_recip                        ; rhi/rlo = reciprocal
 
     ; --- Project X using saved view-x integer + fractional parts ---
-    LDA zp_v_xint  : STA zp_br_t0
-    LDA zp_v_xfrac : STA zp_br_t1
-    JSR br_project_x_subpx
+    ; br_project_x_auto goes wide when the s16 view-x (vxext:vxint)
+    ; doesn't fit s8: Python projects these full-width (sx far
+    ; off-screen) and their mark_solid and clipped draws still count —
+    ; skipping the seg loses occlusion (e.g. mark_solid(0,81) at
+    ; (800,-3400,96)) and over-emits behind it.
+    JSR br_project_x_auto
     LDA zp_br_resl : STA zp_seg_sx_lo
     LDA zp_br_resh : STA zp_seg_sx_hi
 
@@ -2137,6 +2118,7 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     RTS
 
 .end_code
+ASSERT end_code <= $5800
 SAVE "bsp_render.bin", $4800, end_code, $4800
 
 ; ============================================================================
@@ -2152,9 +2134,12 @@ ORG $1C00
 .reproject_at_crossing
 {
     JSR cross_compute
-    LDA zp_clip_cx : STA zp_br_t0
-    LDA #0          : STA zp_br_t1
-    JSR br_project_x_subpx
+    ; Project cx with frac=0 (Python passes fvx_c=0 for clipped endpoints).
+    ; cx is s16; br_project_x_auto dispatches narrow/wide on its hi byte.
+    LDA zp_clip_cx    : STA zp_v_xint
+    LDA zp_clip_cx_hi : STA zp_v_xext
+    LDA #0            : STA zp_v_xfrac
+    JSR br_project_x_auto
     LDA zp_br_resl : STA zp_seg_sx_lo
     LDA zp_br_resh : STA zp_seg_sx_hi
     LDA zp_seg_top_dlt : STA zp_br_t0
@@ -2227,6 +2212,10 @@ ORG $1C00
     ; wrap to 0 in u8. Crossing point is v2 itself.
     LDA zp_seg_v2_evy : CMP #1 : BNE c_normal
     LDA zp_seg_v2_evx : STA zp_clip_cx
+    LDA #0 : STA zp_clip_cx_hi
+    LDA zp_seg_v2_evx : BPL c_sc_done
+    LDA #$FF : STA zp_clip_cx_hi
+.c_sc_done
     JMP c_set_recip
 .c_normal
 
@@ -2264,7 +2253,20 @@ ORG $1C00
 .c_have_dvx
 
     JSR cross_umul_u8_s16
+    ; cx (s16) = sext(v1_evx) + sext(resh). With both endpoint evx in s8
+    ; and t in [0,256], cx lies between them so s16 always holds it; cx
+    ; itself can still fall outside s8 (sum of two s8) — the caller
+    ; dispatches narrow/wide projection on the hi byte.
+    LDA #0 : STA zp_br_t2
+    LDA zp_seg_v1_evx : BPL c_cx_v1p
+    LDA #$FF : STA zp_br_t2
+.c_cx_v1p
+    LDA #0 : STA zp_br_t3
+    LDA zp_br_resh : BPL c_cx_rp
+    LDA #$FF : STA zp_br_t3
+.c_cx_rp
     LDA zp_seg_v1_evx : CLC : ADC zp_br_resh : STA zp_clip_cx
+    LDA zp_br_t2 :           ADC zp_br_t3    : STA zp_clip_cx_hi
 
 .c_set_recip
     LDA #2 : STA zp_br_t0
@@ -2386,6 +2388,113 @@ ORG $1C00
     INY     : LDA (zp_br_p),Y : STA BSP_FAR_HI
     RTS
 }
+
+; ============================================================================
+; br_project_x_wide — project a view-space X whose integer part is s16
+; (doesn't fit s8) to screen X, bit-exact with Python's full-width
+;   sx = 128 + evx*rxh + (evx*rxl >> 8) + (frac*rxh >> 8)   (mod 2^16)
+; where evx = (zp_v_xext : zp_v_xint) s16, frac = zp_v_xfrac u8,
+; rxh in [0,127] (recip 8.8 clamped to $7FFF), rxl u8.
+;
+; Byte decomposition (5 8x8 muls; wide path only, |evx| >= 128):
+;   evx*rxh mod 2^16 = umul8(xint,rxh) + (smul_s8_u8(xext,rxh).lo << 8)
+;   evx*rxl >> 8     = smul_s8_u8(xext,rxl) + umul8(xint,rxl).hi
+;     (exact floor: evx*rxl = 256*(xext*rxl) + xint*rxl with xint*rxl >= 0)
+;   frac*rxh >> 8    = umul8(xfrac,rxh).hi
+;
+;   Inputs:  zp_v_xext/zp_v_xint/zp_v_xfrac, zp_br_rhi/zp_br_rlo
+;   Output:  zp_br_resl/h = sx (s16, mod 2^16 of Python's value)
+;   Clobbers: zp_br_a/b, zp_br_vxlo/hi, zp_mul_b, zp_prod_lo/hi
+; ============================================================================
+.br_project_x_wide
+{
+    ; sum := 128 + umul8(xint, rxh)
+    LDA zp_br_rhi : STA zp_mul_b
+    LDA zp_v_xint
+    JSR SC_UMUL8
+    CLC
+    LDA zp_prod_lo : ADC #128 : STA zp_br_vxlo
+    LDA zp_prod_hi : ADC #0   : STA zp_br_vxhi
+
+    ; sum_hi += smul_s8_u8(xext, rxh).lo   (the <<8 part of evx*rxh)
+    LDA zp_v_xext : STA zp_br_a
+    LDA zp_br_rhi : STA zp_br_b
+    JSR br_smul_s8_u8
+    LDA zp_br_resl : CLC : ADC zp_br_vxhi : STA zp_br_vxhi
+
+    ; sum += smul_s8_u8(xext, rxl)   (s16 part of evx*rxl >> 8)
+    LDA zp_v_xext : STA zp_br_a
+    LDA zp_br_rlo : STA zp_br_b
+    JSR br_smul_s8_u8
+    LDA zp_br_resl : CLC : ADC zp_br_vxlo : STA zp_br_vxlo
+    LDA zp_br_resh :       ADC zp_br_vxhi : STA zp_br_vxhi
+
+    ; sum += umul8(xint, rxl).hi   (u8, the non-negative floor remainder)
+    LDA zp_br_rlo : STA zp_mul_b
+    LDA zp_v_xint
+    JSR SC_UMUL8
+    LDA zp_prod_hi : CLC : ADC zp_br_vxlo : STA zp_br_vxlo
+    LDA #0         :       ADC zp_br_vxhi : STA zp_br_vxhi
+
+    ; sum += umul8(xfrac, rxh).hi  (sub-pixel term)
+    LDA zp_br_rhi : STA zp_mul_b
+    LDA zp_v_xfrac
+    JSR SC_UMUL8
+    LDA zp_prod_hi : CLC : ADC zp_br_vxlo : STA zp_br_resl
+    LDA #0         :       ADC zp_br_vxhi : STA zp_br_resh
+    RTS
+}
+
+; ============================================================================
+; ev_clamp_evy16 — clamp zp_seg_cur_evy to s8 range using the s24 view-y.
+; Called with C = carry-out of (vyhi + bit7(vylo)), i.e. the rounding add
+; that produced zp_seg_cur_evy. evy16 hi byte = vyext + C. The vertex fits
+; s8 iff that hi byte is the sign-extension of the lo byte. (The old
+; `vyext != 0 → clamp` collapsed every behind-the-viewer vertex to
+; evy=-128, corrupting crossing math: t = (1-evy_C)<<8/(evy_U-evy_C)
+; needs the true evy_C — e.g. evy=-4 became -128 and a crossed solid
+; wall projected sx=-2560 instead of Python's -2176.)
+; ============================================================================
+.ev_clamp_evy16
+{
+    LDA zp_br_vyext : ADC #0           ; hi byte of rounded evy16
+    BEQ ev_case_zero
+    CMP #$FF : BEQ ev_case_ff
+    ASL A : BCS ev_clamp_neg           ; carry = sign of hi byte
+    LDA #$7F : BNE ev_store
+.ev_clamp_neg
+    LDA #$80 : BNE ev_store
+.ev_case_ff
+    LDA zp_seg_cur_evy : BMI ev_done       ; $FF:%1xxxxxxx → fits s8
+    LDA #$80 : BNE ev_store                ; -256..-129 → clamp
+.ev_case_zero
+    LDA zp_seg_cur_evy : BPL ev_done       ; $00:%0xxxxxxx → fits s8
+    LDA #$7F                               ; 128..255 → clamp
+.ev_store
+    STA zp_seg_cur_evy
+.ev_done
+    RTS
+}
+
+; ============================================================================
+; br_project_x_auto — project saved view-x (zp_v_xext:zp_v_xint . zp_v_xfrac)
+; to screen X, choosing the 3-mul narrow path when the integer part fits
+; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
+; ============================================================================
+.br_project_x_auto
+{
+    ; Narrow iff xext equals the sign-extension of xint's bit 7.
+    LDA zp_v_xint : ASL A              ; C = sign of int part
+    LDA #0 : ADC #$FF : EOR #$FF       ; A = $FF if C else $00
+    CMP zp_v_xext : BNE a_wide
+    LDA zp_v_xint  : STA zp_br_t0
+    LDA zp_v_xfrac : STA zp_br_t1
+    JMP br_project_x_subpx
+.a_wide
+    JMP br_project_x_wide
+}
+
+ASSERT bsp_lo_end <= $2000
 
 .bsp_lo_end
 SAVE "bsp_render_lo.bin", $1C00, bsp_lo_end, $1C00
