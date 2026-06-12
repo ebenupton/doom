@@ -102,9 +102,36 @@ $71-$76 range — the rasteriser clobbers $74-$76 on every line).
   predicate logging).
 - `test_hybrid.py` — three-way pixel agreement table.
 
+## Performance (2026-06-13)
+
+Profiled with `profile_frame.py` (py65 cycle deltas bucketed by
+top-level routine). 3-frame profile set baseline 4,002,663 cycles →
+**3,599,925 (-10.1%)**, output-identical throughout. Full-suite frame
+costs now 67k (trivial view) to 1.82M (1500,-3700,0).
+
+Optimizations landed:
+- `br_smul_s8_u8` split sign paths (no flag, no writeback, single copy)
+- bbox corners share rotation products: 8 `rot_int` per node-side
+  instead of 16 (Y region $4740; `tv_add_fracs` shared tail)
+- bbox two-pass: all-behind/frustum rejects fire before any
+  recip/projection/classify work (Python's own order)
+- `do_project_y` gates back-pair projections on their only consumers
+  (plain solid walls skip 2 of 4 Y projections per vertex)
+- seg loop: persistent header/FHCH pointers (+12/+6 per seg) replace
+  per-seg multiplies
+- `br_project_y` emits HALF_H+Y_BIAS; per-store bias adds dropped
+- `br_rot_int` reads trig via Y index (callers stop staging 3 ZP bytes)
+- `umul8` pinned at $2030; bsp_render skips the jump-table dispatch
+
+Measured and rejected: Python's AP-skip predicates — a zero-pixel DCL
+call averages only ~341 cycles on the 6502 (measured per-call), so the
+predicates would not pay for themselves. They remain solely the route
+to the last 7 px of exactness if ever wanted.
+
 ## Next
 
-1. **AP-skip predicates in 6502** (cycles + the last 7 px).
-2. VWH cache (Python caches projected Y per (vertex,height); the 6502
+1. VWH cache (Python caches projected Y per (vertex,height); the 6502
    re-projects — correctness-neutral, cycles only).
-3. Cycle measurement pass (py65 counts) once exactness work settles.
+2. Hardware bring-up: jsbeeb/SSD integration of the standalone module
+   (memory map per the table above — note the X region in the stack
+   page and the harness-loaded tables at $B600+/$C600+/$E000+).
