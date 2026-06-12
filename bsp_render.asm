@@ -957,13 +957,9 @@ BSP_FAR_HI  = $0A6B
 ; ============================================================================
 ; --- Test instrumentation: subsector visit bitmap at $0A80 ---
 SS_VISITED_BITMAP = $0A80   ; 384 bytes
-; Deferred mark_solid buffer (per-subsector): COUNT bytes (= 2 × num entries)
-; followed by entries. Python's packed_render_subsector collects ('solid',
-; ilo, ihi) tuples into a list, then applies them after the seg loop. The
-; 6502 was applying them immediately per seg; this buffer matches Python's
-; timing so within-subsector mark_solids don't affect later segs' has_gap.
-DEFERRED_MS_COUNT = $1B3C   ; byte count (= 2 × entries)
-DEFERRED_MS_BUF   = $1B3D   ; (ilo, ihi) pairs, up to ~60 bytes available
+; (Deferred mark_solid buffer replaced by the unified DEFQ op queue at
+; $0600 — see DEFQ_BASE above. It preserves seg ORDER across solid and
+; tighten ops, matching Python's deferred list.)
 
 ; --- Per-seg working state ---
 zp_seg_first_lo = $5A      ; first_seg index for current subsector
@@ -1176,8 +1172,24 @@ SC_IS_FULL      = $200C
 ; Per-corner storage (5 bytes × 4 = 20). bv_proj_one writes here so that a
 ; second pass can compute near-plane edge crossings between consecutive
 ; corners. Layout per corner: vx_lo, vx_hi, vy_lo, vy_hi, in_front (0/1).
-BBOX_CORNERS    = $0E00
-BBOX_CORNER_IDX = $0E14     ; offset into BBOX_CORNERS for current corner
+; NOTE: these previously lived at $0E00/$0E14 — INSIDE the vertex cache
+; ($0C00 + 8x467 = $1A98) — so every bbox visibility check corrupted the
+; cached transforms of vertices ~64-66. $0960-$0974 is free scratch
+; (span_clip's LC_* scratch ends at $0958).
+BBOX_CORNERS    = $0960
+BBOX_CORNER_IDX = $0974     ; offset into BBOX_CORNERS for current corner
+
+; Deferred per-subsector op queue (mirrors Python's packed_render_subsector
+; `deferred` list): seg-ordered solid/tighten ops, applied at subsector end.
+;   entry: $00, ilo, ihi                                  (solid)
+;          $01, ilo, ihi, top block, bot block            (tighten)
+;   where each block is (count, 6*count record bytes) snapshotted from
+;   TOP_RECORDS/$0700 / BOT_RECORDS/$0800 at seg end — later segs' DCL
+;   emission overwrites those buffers before the drain, exactly the
+;   problem Python solves with its '__rec__' snapshots.
+DEFQ_BASE       = $0600     ; 256 bytes (free: span pool ends $059F)
+DEFQ_TAIL       = $0975     ; queue tail offset (u8)
+DEFQ_OVF        = $0976     ; set if an op was dropped (queue full) — debug
 
 BBOX_SCRATCH    = $0A58     ; 8 bytes: top_lo,top_hi,bot_lo,bot_hi,
                             ;          left_lo,left_hi,right_lo,right_hi
@@ -1483,13 +1495,13 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDY #2 : LDA (zp_br_p),Y : STA zp_seg_first_lo
     LDY #3 : LDA (zp_br_p),Y : STA zp_seg_first_hi
 
-    ; Reset deferred mark_solid buffer for this subsector.
-    LDA #0 : STA DEFERRED_MS_COUNT
+    ; Reset deferred op queue for this subsector.
+    LDA #0 : STA DEFQ_TAIL
 
     ; --- Loop over segs ---
 .seg_loop
     LDA zp_seg_count : BNE seg_proc
-    JMP drain_deferred_ms                ; subsector done — flush deferred mark_solids
+    JMP defq_drain                       ; subsector done — apply deferred ops
 .seg_proc
     ; Reset DCL records buffers (used by portal tighten). Python's
     ; packed_render_seg calls _span_clip_6502.reset_records() at the
@@ -1851,21 +1863,21 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDA zp_br_t3 : STA $C3          ; ihi = t3
 .ms_dispatch
     LDA zp_seg_flags : AND #$02 : BNE ms_solid_path
-    ; --- Portal: tighten the visible aperture using the per-span verdict
-    ;     records populated by the bt/bb step-edge emits above. Skip if
-    ;     no records were populated (no NEEDBT and no NEEDBB → portal
-    ;     doesn't narrow the aperture). Mirrors Python's wrapper test
+    ; --- Portal: DEFER the tighten to the subsector drain (Python defers
+    ;     both solids and tightens in seg order — applying the tighten at
+    ;     seg end mutates spans BEFORE an earlier sibling's mark_solid,
+    ;     producing off-by-one span anchors). Records are snapshotted into
+    ;     the queue because later segs' DCL emission overwrites
+    ;     TOP_RECORDS/BOT_RECORDS before the drain. Skip if no records
+    ;     were populated — mirrors Python's wrapper test
     ;     `if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0: return`.
     LDA $0700 : ORA $0800 : BEQ ms_skip
-    JSR SC_TIGHTEN_FROM_RECORDS
+    JSR defq_append_tighten
     JMP ms_skip
 .ms_solid_path
     ; --- Solid wall: defer mark_solid (Python collects them per subsector
-    ;     and applies at the end). Append (ilo, ihi) to DEFERRED_MS_BUF. ---
-    LDX DEFERRED_MS_COUNT
-    LDA $C2 : STA DEFERRED_MS_BUF,X : INX
-    LDA $C3 : STA DEFERRED_MS_BUF,X : INX
-    STX DEFERRED_MS_COUNT
+    ;     and applies at the end). ---
+    JSR defq_append_solid
 .ms_skip
 
 .s_advance
@@ -1877,28 +1889,7 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     JMP seg_loop
 }
 
-; drain_deferred_ms — apply queued mark_solid ops at end of subsector.
-; Each entry is (ilo, ihi). is_full check between ops matches Python's
-; "if clips.is_full(): return" inside the deferred-ops loop.
-.drain_deferred_ms
-{
-    LDX #0
-.dms_loop
-    CPX DEFERRED_MS_COUNT : BCS dms_done
-    LDA DEFERRED_MS_BUF,X : STA $C2
-    INX
-    LDA DEFERRED_MS_BUF,X : STA $C3
-    INX
-    STX zp_br_t0                  ; save X across SC_MARK_SOLID call
-    LDA #0 : STA $A8              ; zp_ms_emit = 0
-    JSR SC_MARK_SOLID
-    JSR SC_IS_FULL
-    BNE dms_done
-    LDX zp_br_t0
-    JMP dms_loop
-.dms_done
-    RTS
-}
+; (drain_deferred_ms replaced by defq_drain — see the $0B00 region.)
 
 ; emit_vert_sx1 — caller has set yl/yh/yr/yh in zp_line_yl/$B3/zp_line_yr/$B5.
 ; Fills xl/xh/xr/xh from sx1, clears records hi byte, calls SC_DRAW_S16.
@@ -2120,6 +2111,127 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
 .end_code
 ASSERT end_code <= $5800
 SAVE "bsp_render.bin", $4800, end_code, $4800
+
+; ============================================================================
+; B REGION ($0B00-$0BFF) — deferred-op queue code. This page is the unused
+; upper half of the old 384-byte SS_VISITED_BITMAP allocation (237
+; subsectors need only 30 bytes, $0A80-$0A9D). Loaded as a separate binary
+; (bsp_render_b.bin) by span_clip_6502.py.
+; ============================================================================
+ORG $0B00
+.bsp_b_start
+
+; defq_append_solid — append ($00, ilo, ihi) from $C2/$C3 to the op queue.
+.defq_append_solid
+{
+    LDX DEFQ_TAIL
+    CPX #$FD : BCS dqs_ovf            ; need 3 bytes
+    LDA #0  : STA DEFQ_BASE,X : INX
+    LDA $C2 : STA DEFQ_BASE,X : INX
+    LDA $C3 : STA DEFQ_BASE,X : INX
+    STX DEFQ_TAIL
+    RTS
+.dqs_ovf
+    LDA #1 : STA DEFQ_OVF
+    RTS
+}
+
+; defq_append_tighten — append ($01, ilo, ihi, top block, bot block) where
+; each block is (count, 6*count bytes) copied from $0700 / $0800.
+; Caller guarantees at least one count is non-zero.
+.defq_append_tighten
+{
+    ; size check: 5 + 6*(tc+bc) must fit in the remaining queue space.
+    LDA $0700 : CLC : ADC $0800 : BCS dqt_ovf    ; n = tc + bc
+    STA zp_br_t0
+    ASL A : BCS dqt_ovf                          ; 2n
+    STA zp_br_t1
+    ASL A : BCS dqt_ovf                          ; 4n
+    CLC : ADC zp_br_t1 : BCS dqt_ovf             ; 6n
+    CLC : ADC #5 : BCS dqt_ovf                   ; entry size
+    CLC : ADC DEFQ_TAIL : BCS dqt_ovf            ; tail + size > 255 → drop
+
+    LDX DEFQ_TAIL
+    LDA #1  : STA DEFQ_BASE,X : INX
+    LDA $C2 : STA DEFQ_BASE,X : INX
+    LDA $C3 : STA DEFQ_BASE,X : INX
+
+    ; copy top block: 1 + 6*tc bytes from $0700
+    LDA $0700 : JSR defq_blocklen
+    LDY #0
+.dqt_cp_top
+    LDA $0700,Y : STA DEFQ_BASE,X : INX
+    INY
+    CPY zp_br_t1 : BNE dqt_cp_top
+
+    ; copy bot block: 1 + 6*bc bytes from $0800
+    LDA $0800 : JSR defq_blocklen
+    LDY #0
+.dqt_cp_bot
+    LDA $0800,Y : STA DEFQ_BASE,X : INX
+    INY
+    CPY zp_br_t1 : BNE dqt_cp_bot
+
+    STX DEFQ_TAIL
+    RTS
+.dqt_ovf
+    LDA #1 : STA DEFQ_OVF
+    RTS
+}
+
+; defq_blocklen — A = record count (<= 42) → zp_br_t1 = 1 + 6*count.
+; No CLCs needed: 6*42 = 252, so no intermediate carry is possible.
+.defq_blocklen
+    ASL A : STA zp_br_t1
+    ASL A : ADC zp_br_t1
+    ADC #1 : STA zp_br_t1
+    RTS
+
+; defq_drain — apply queued ops in seg order at subsector end. Mirrors
+; Python's deferred loop: each op then `if clips.is_full(): return`.
+.defq_drain
+{
+    LDX #0
+.dd_loop
+    CPX DEFQ_TAIL : BCS dd_done
+    LDA DEFQ_BASE,X : INX : STA zp_br_t3         ; type
+    LDA DEFQ_BASE,X : INX : STA $C2
+    LDA DEFQ_BASE,X : INX : STA $C3
+    LDA zp_br_t3 : BNE dd_tighten
+    ; solid: mark_solid(ilo, ihi), no line emission.
+    STX zp_br_t2
+    LDA #0 : STA $A8                             ; zp_ms_emit = 0
+    JSR SC_MARK_SOLID
+    JMP dd_after
+.dd_tighten
+    ; restore top block to $0700
+    LDA DEFQ_BASE,X : JSR defq_blocklen
+    LDY #0
+.dd_cp_top
+    LDA DEFQ_BASE,X : STA $0700,Y : INX
+    INY
+    CPY zp_br_t1 : BNE dd_cp_top
+    ; restore bot block to $0800
+    LDA DEFQ_BASE,X : JSR defq_blocklen
+    LDY #0
+.dd_cp_bot
+    LDA DEFQ_BASE,X : STA $0800,Y : INX
+    INY
+    CPY zp_br_t1 : BNE dd_cp_bot
+    STX zp_br_t2
+    JSR SC_TIGHTEN_FROM_RECORDS
+.dd_after
+    JSR SC_IS_FULL
+    BNE dd_done
+    LDX zp_br_t2
+    JMP dd_loop
+.dd_done
+    RTS
+}
+
+.bsp_b_end
+ASSERT bsp_b_end <= $0C00
+SAVE "bsp_render_b.bin", $0B00, bsp_b_end, $0B00
 
 ; ============================================================================
 ; OVERFLOW REGION — bsp_render.bin is bound to $4800-$57FF (4096 bytes max,

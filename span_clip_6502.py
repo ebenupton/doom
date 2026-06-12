@@ -147,6 +147,13 @@ class SpanClip6502:
                     bsp_lo_code = f.read()
                 for i, b in enumerate(bsp_lo_code):
                     mem[0x1C00 + i] = b
+            bsp_b = os.path.join(os.path.dirname(__file__) or '.',
+                                 'bsp_render_b.bin')
+            if os.path.exists(bsp_b):
+                with open(bsp_b, 'rb') as f:
+                    bsp_b_code = f.read()
+                for i, b in enumerate(bsp_b_code):
+                    mem[0x0B00 + i] = b
                 # Load the reciprocal table at $E000 (HI bytes 0..513,
                 # then LO bytes 0..513).
                 from fp import _RECIP_X_HI, _RECIP_X_LO
