@@ -146,7 +146,7 @@ class SpanClip6502:
                 with open(bsp_lo, 'rb') as f:
                     bsp_lo_code = f.read()
                 for i, b in enumerate(bsp_lo_code):
-                    mem[0x1C00 + i] = b
+                    mem[0x1B40 + i] = b
             bsp_b = os.path.join(os.path.dirname(__file__) or '.',
                                  'bsp_render_b.bin')
             if os.path.exists(bsp_b):
