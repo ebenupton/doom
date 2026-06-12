@@ -1,135 +1,83 @@
-"""Test BSP walker — verify it visits all subsectors when given a real
-packed WAD.
+"""Test BSP walker — verify the visited-subsector set matches the
+Python reference walk at several positions.
 
-This tests the structural traversal only (not geometric correctness;
-the side test is currently a stub that always picks front).
+(Historic version expected 237/237 with the stub subsector renderer;
+the walk now culls invisible/occluded subtrees exactly like Python's
+packed_render_bsp, so the reference is the Python visit list.)
 """
 import os
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 
-from span_clip_6502 import SpanClip6502
+import doom_wireframe as dw
+import fp
+import trace_compare as tc
+from wad_packed import spans_init_full
 
 ENTRY_BR_RENDER_FRAME = 0x4815
-
-# ROM/RAM offset ZP slots (must match bsp_render.asm).
-ZP_ROM_VERTS_LO   = 0x40
-ZP_ROM_VERTS_HI   = 0x41
-ZP_ROM_NODES_LO   = 0x42
-ZP_ROM_NODES_HI   = 0x43
-ZP_ROM_SS_LO      = 0x44
-ZP_ROM_SS_HI      = 0x45
-ZP_ROM_SEG_HDR_LO = 0x46
-ZP_ROM_SEG_HDR_HI = 0x47
-ZP_ROM_VWH_LO     = 0x48
-ZP_ROM_VWH_HI     = 0x49
-ZP_ROM_DETAIL_LO  = 0x4A
-ZP_ROM_DETAIL_HI  = 0x4B
-ZP_ROOT_NODE_LO   = 0x4C
-ZP_ROOT_NODE_HI   = 0x4D
-
+ENTRY_BR_INIT_FRAME   = 0x481B
 SS_VISITED_BITMAP = 0x0A80
 
-# Where we'll put the WAD ROMs in 6502 memory.
-# Carefully avoid: rasteriser at $A900-$B55E, recip table at $E000-$E483,
-# screen $5800-$6BFF, span_clip $2000-$4737, multiply tables $5000-$57FF.
-ROM_MAIN_BASE   = 0x6C00     # ROM main (no VWH) at $6C00. Without VWH,
-                             # this ends at $6C00 + off_vwh = $A4B0, below
-                             # the rasteriser at $A900.
-VWH_BASE        = 0xE484     # VWH separately, after the recip table.
-ROM_DETAIL_BASE = 0xB600     # ROM detail (13K) at $B600 → ends $E990,
-                             # just past recip ($E000-$E483). 250 bytes
-                             # of recip overlap — but the BSP doesn't read
-                             # detail in the current stub so this is OK
-                             # for now. TODO: relocate when seg detail
-                             # processing is wired in.
 
-
-def load_wad():
-    """Build packed WAD from the doom_wireframe loaded data."""
-    import doom_wireframe as dw
-    return dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail
-
-
-def setup_wad(sc, layout, rom_main, rom_detail):
-    """Copy WAD ROMs into 6502 memory; set ZP offset slots."""
+def asm_visited(px, py, ab):
+    _ = dw.Instrumented6502Spans()
+    sc = dw._span_clip_6502
+    tc.setup_wad(sc)
+    tc.setup_view_zp(sc, px, py, ab)
+    sc._run(tc.ENTRY_BR_VIEW_SETUP)
+    sc.init()
+    sc.clear_screen()
+    sc._run(ENTRY_BR_INIT_FRAME)
     mem = sc.mpu.memory
-    # ROM main excluding VWH: vertices, nodes, subsectors, seg headers.
-    vwh_start = layout['off_vwh']
-    for i in range(vwh_start):
-        mem[ROM_MAIN_BASE + i] = rom_main[i]
-    # VWH heights at separate base.
-    for i in range(len(rom_main) - vwh_start):
-        mem[VWH_BASE + i] = rom_main[vwh_start + i]
-    # ROM detail (currently unread by stub render_subsector).
-    for i, b in enumerate(rom_detail):
-        mem[ROM_DETAIL_BASE + i] = b
-
-    # Resolve absolute addresses for each section.
-    addr_verts   = ROM_MAIN_BASE + layout['off_verts']
-    addr_nodes   = ROM_MAIN_BASE + layout['off_nodes']
-    addr_ss      = ROM_MAIN_BASE + layout['off_ss']
-    addr_seg_hdr = ROM_MAIN_BASE + layout['off_seg_hdr']
-    addr_vwh     = VWH_BASE
-    addr_detail  = ROM_DETAIL_BASE
-
-    def w16(addr_lo, val):
-        mem[addr_lo]     = val & 0xFF
-        mem[addr_lo + 1] = (val >> 8) & 0xFF
-
-    w16(ZP_ROM_VERTS_LO,   addr_verts)
-    w16(ZP_ROM_NODES_LO,   addr_nodes)
-    w16(ZP_ROM_SS_LO,      addr_ss)
-    w16(ZP_ROM_SEG_HDR_LO, addr_seg_hdr)
-    w16(ZP_ROM_VWH_LO,     addr_vwh)
-    w16(ZP_ROM_DETAIL_LO,  addr_detail)
-
-    # Root node id is layout['root_id'] — the index of the last (top-level)
-    # BSP node. With high bit possibly set if it's a single-subsector tree.
-    n_nodes = layout['n_nodes']
-    root_id = n_nodes - 1
-    w16(ZP_ROOT_NODE_LO, root_id)
-
-
-def clear_visited(sc):
-    mem = sc.mpu.memory
-    for i in range(384):
+    for i in range(30):   # 237 subsectors = 30 bytes; $0AA0+ is the B-region CODE
         mem[SS_VISITED_BITMAP + i] = 0
-
-
-def read_visited(sc, n_ss):
-    mem = sc.mpu.memory
-    visited = set()
-    for i in range(n_ss):
+    sc._run(ENTRY_BR_RENDER_FRAME, max_cycles=40_000_000)
+    out = set()
+    for i in range(len(dw.nodes) + 1):
         if mem[SS_VISITED_BITMAP + (i >> 3)] & (1 << (i & 7)):
-            visited.add(i)
-    return visited
+            out.add(i)
+    return out
 
 
-def main():
-    print("Loading packed WAD...")
-    layout, rom_main, rom_detail = load_wad()
-    n_ss = layout['n_ss']
-    print(f"  {layout['n_verts']} vertices, {layout['n_nodes']} nodes, "
-          f"{n_ss} subsectors, {layout['n_segs']} segs")
-    print(f"  ROM main: {len(rom_main)} bytes, ROM detail: {len(rom_detail)} bytes")
+def py_visited(px, py, ab):
+    seen = set()
+    orig = dw.packed_render_subsector
 
-    sc = SpanClip6502()
-    setup_wad(sc, layout, rom_main, rom_detail)
-    clear_visited(sc)
+    def logger(idx, *a):
+        seen.add(idx)
+        orig(idx, *a)
 
-    print("Running br_render_frame...")
-    sc._run(ENTRY_BR_RENDER_FRAME)
-
-    visited = read_visited(sc, n_ss)
-    print(f"  Visited {len(visited)}/{n_ss} subsectors")
-    if len(visited) == n_ss:
-        print("  ✓ All subsectors visited")
-    else:
-        missing = set(range(n_ss)) - visited
-        print(f"  ✗ Missing: {sorted(missing)[:20]}{'...' if len(missing) > 20 else ''}")
+    dw.packed_render_subsector = logger
+    try:
+        _ = dw.Instrumented6502Spans()
+        px_88 = int((px - dw.MAP_CENTER_X) * 256 / dw.PRESCALE)
+        py_88 = int((py - dw.MAP_CENTER_Y) * 256 / dw.PRESCALE)
+        ctx = fp.fp_view_context(px_88, py_88, fp.fp_sincos(ab))
+        vz = dw._prescale_height(dw.player_floor(px, py) + 41)
+        cos_f = pygame.math.Vector2(1, 0).rotate(ab * 360 / 256).x
+        sin_f = pygame.math.Vector2(1, 0).rotate(ab * 360 / 256).y
+        p_ram = bytearray(dw.packed_layout['ram_size'])
+        spans_init_full(p_ram, dw.packed_layout['ram_spans'],
+                        dw.FP_RENDER_W, dw.FP_RENDER_H - 1)
+        surf = pygame.Surface((256, 160))
+        dw.packed_render_bsp(len(dw.nodes) - 1, dw.Instrumented6502Spans(),
+                             ctx, vz, px, py, cos_f, sin_f, surf, p_ram)
+    finally:
+        dw.packed_render_subsector = orig
+    return seen
 
 
 if __name__ == '__main__':
-    main()
+    POSITIONS = [(1056, -3616, 0), (1024, -3500, 64), (1500, -3700, 0),
+                 (800, -3400, 96)]
+    fails = 0
+    for px, py, ab in POSITIONS:
+        a = asm_visited(px, py, ab)
+        p = py_visited(px, py, ab)
+        ok = a == p
+        if not ok:
+            fails += 1
+        print(f'({px},{py},{ab}): asm {len(a)} vs py {len(p)} '
+              f'{"OK" if ok else f"MISMATCH asm-only={sorted(a-p)} py-only={sorted(p-a)}"}')
+    print('All positions match.' if not fails else f'{fails} position(s) FAILED')

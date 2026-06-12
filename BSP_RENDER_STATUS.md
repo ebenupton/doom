@@ -1,102 +1,110 @@
-# bsp_render.asm — overnight progress
+# bsp_render.asm — status
 
-## What's working
+## Current state (2026-06-12)
 
-**Phase A-E: arithmetic foundation + transforms**, all unit-tested via
-`test_bsp_render.py` against `fp.py` reference. 100+ test cases pass:
+The pure-6502 renderer (BSP walk + seg processor + span clipper + DCL)
+is **framebuffer-identical to the Python reference pipeline** at 9 of
+the 10 standard suite positions, and within 7 px at the tenth — when
+both pipelines rasterise through the 6502 DCL. Measured by:
 
-- `br_umul8` — u8 × u8 → u16
-- `br_smul8` — s8 × s8 → s16
-- `br_smul_s8_u8` — s8 × u8 → s16
-- `br_smul_s8_s16` — s8 × s16 → s16 (low 16 of s24)
-- `br_smul_s16_s16_s32` — s16 × s16 → s32 (full precision, sign tracked)
-- `br_recip` — reciprocal lookup with 1-bit fractional averaging
-- `br_frac_rot_term` — fractional rotation contribution
-- `br_rot_int` — signed integer rotation (s16 × u8 → s16)
-- `br_view_setup` — frac_vx, frac_vy for the frame
-- `br_to_view` — world (s16 wx, wy) → view (s16 vx, vy in 8.8)
-- `br_project_x_subpx` — view vx → screen sx (3 muls)
-- `br_project_y` — height → screen sy (2 muls)
+- `compare_subsector.py` — per-subsector differential (runs the 6502
+  and Python seg processors from identical clipper state, diffs calls,
+  span state, and FB; continues from the reference state):
+  **0 pixel/span-affecting subsectors, 0 px** across all 178 suite
+  subsectors.
+- `compare_traversal.py` — pure-6502 walk vs Python-BSP hybrid (same
+  seg processor, 6502-backed visibility): **identical visit sequences
+  and 0 px FB diff at all 10 positions**.
+- `test_bsp_walk.py` — visited-subsector sets match the Python walk.
+- Full-frame FB compare (6502 DCL on both sides): 0 px at 9 positions,
+  7 px at (1056,-3616,64) — see "Known residual" below.
+- `test_hybrid.py` headline: py-vs-asm 96.2% pixel agreement — the gap
+  is pygame-vs-NJ *rasterisation* in the metric (Python's surface uses
+  pygame lines), not renderer divergence.
 
-**BSP traversal** is iterative + stack-based (`$0A00`, 64 bytes) and
-uses a real side test (`s16×s16 → s32` cross product) to walk in
-front-to-back order. `test_bsp_walk.py` confirms 237/237 subsectors
-visited; the side computation matches Python's `point_on_side`
-exactly for all 236 nodes at the test position.
+## Known residual
 
-**Per-seg pipeline** (front-to-back):
+7 asm-only pixels at (1056,-3616,64): a flat horizontal lying exactly
+ON a span bottom. Python's `line_below_spans` AP-skip treats the
+boundary as occluded and skips the draw; the DCL keeps the boundary
+row when the line is submitted. Exact reproduction requires the
+AP-skip predicates (`line_above_spans` / `line_below_spans` /
+`vertical_outside_spans`) in 6502 — which is also the planned cycle
+optimisation (the 6502 currently draws every line Python AP-skips and
+lets the DCL clip them; pure cycle waste). Acceptance test: the 7 px
+at this position go to zero.
 
-1. Read seg header (v1/v2/lv1x/lv1y/ldx/ldy/flags).
-2. Back-face cull via `dot = ldy*(px-lv1x) - ldx*(py-lv1y)` —
-   matches Python (345/660 front-facing at the test position).
-3. Read fh/ch from a packed 2-byte-per-seg table.
-4. Transform v1, v2 with vertex cache lookup; compute reciprocal,
-   project x once, project y twice (top + bot heights per seg).
-5. Emit lines:
-   - SOLID walls: top + bottom horizontals + L/R verticals,
-     then `JSR span_mark_solid` to punch out the X range.
-   - PORTAL walls: just verticals (skip front-sector horizontals).
-   - SF_NOVT1/NOVT2 suppress verticals at BSP-internal splits.
-
-**Vertex transform cache** at `$0C00` (8B × 467) with valid bitmap at
-`$1B00` (59B). Caches rhi/rlo, sx, and a near-clip flag. Cleared at
-the start of each frame. Saves the transform + reciprocal +
-project_x for shared vertices: ~17% cycle reduction.
-
-## End-to-end render
-
-`test_bsp_render_frame.py` produces **~1000 pixels** of recognizable
-DOOM geometry at the test position — distinct rooms, vertical wall
-edges, a clean horizon, and receding floor lines. Solid walls
-correctly occlude geometry behind them. 10 different positions
-render cleanly in 1.7-2.2 M cycles each.
-
-## Memory map (6502)
+## Memory map (6502, test harness layout)
 
 | Region | Address | Notes |
 |---|---|---|
-| Span pool / clipper code | $2000-$4737 | span_clip.asm |
-| bsp_render code | $4800-$4F33 (~1.8K) | this module |
-| Multiply tables | $5000-$57FF | quarter-square |
+| X region | $0100-$01DF | bbox edge-crossing math (stack page low half; stack stays ≥ $01E0, observed min $01F1) |
+| Span read buffer | $0300 | test harness only |
+| Span pool | $0400-$059F | span_clip |
+| Deferred op queue | $0600-$06FF | seg-ordered solid/tighten ops + records snapshots |
+| DCL records | $0700 / $0800 | TOP/BOT verdict records |
+| span_clip LC scratch | $0900-$0958 | |
+| BBOX corners/vars | $0960-$0976 | corners (rounded s16), DEFQ_TAIL/OVF |
+| D region | $0978-$09FF | crossing divide, classify, child resolver |
+| BSP stack | $0A00-$0A3F | |
+| Seg/bbox scratch | $0A40-$0A6B | |
+| Visited bitmap | $0A80-$0A9D | 30 bytes (237 subsectors) |
+| B region | $0AA0-$0BFF | deferred-op queue code, ev_clamp, project_x_auto |
+| Vertex cache | $0C00-$1A98 | 8B × 467 |
+| Vcache valid bitmap | $1B00-$1B3A | |
+| lo region | $1B40-$1FFF | xform helpers, crossing, ap_edges, fhch ptr |
+| span_clip + pool code | $2000-$4737 | |
+| bsp_render main | $4800-$57FF | ASSERT-bounded |
 | Screen | $5800-$6BFF | mode 4 |
-| ROM main (no VWH) | $6C00-$A4B0 | 15K |
-| Rasteriser | $A900-$B55E | DCL backend |
-| FH/CH table | $B600-$BB28 | 1320B |
-| Recip table | $E000-$E483 | 1156B |
-| VWH heights | $E484-$E939 | 1206B |
-| Vertex cache | $0C00-$1AB7 | 8B × 467 |
-| Vertex valid bitmap | $1B00-$1B3A | 59B |
-| BSP stack | $0A00-$0A3F | 64B |
-| Per-seg projection scratch | $0A40-$0A4F | 16B |
-| Side test scratch | $0A50-$0A53 | 4B |
-| Subsector visited bitmap | $0A80-$0BFF | 384B |
+| ROM main (no VWH) | $6C00-$A4B0 | |
+| Rasteriser | $A900-$B55E | NJ DCL backend — **owns ZP $74-$76, $79-$7A, $80-$88** |
+| FHCH table | $B600-$C577 | **6 bytes/seg**: fh, ch, bfh\|apv1_ch, bch\|apv1_fh, apv2_ch, apv2_fh |
+| BBox table | $C600-$D4BF | 16B per node |
+| Recip table | $E000-$E483 | |
+| VWH heights | $E484-$E939 | |
+
+ZP: $90-$95 hold pxraw/pyraw/v_xext/t4 (moved out of the rasteriser's
+$71-$76 range — the rasteriser clobbers $74-$76 on every line).
+
+## Architecture notes
+
+- **BSP walk** mirrors Python's `packed_render_bsp` exactly: near
+  children are bbox+has_gap checked at node-visit time; far children
+  are pushed as deferred `(node, side)` entries ($40-flagged) and
+  checked at pop time, i.e. against the span state after the near
+  subtree rendered. is_full at every pop.
+- **bbox visibility** mirrors `fp_bbox_visible_fixed` bit-exactly:
+  rounded evx/evy16, frustum tests on rounded values, full-width
+  projection (24-bit sx classification), near-plane edge crossings
+  (t via 24/16 restoring divide; at NEAR the recip is constant
+  (127,255) so the crossing sx classifies by cx ∈ {≤-2,-1,0,1,≥2}),
+  and the all-off-one-side reject via "any sx ≥ 0 / ≤ 255" flags.
+- **Seg processor**: wide view-x projection (`br_project_x_auto`
+  narrow 3-mul / wide 5-mul, mod-2^16 exact vs Python, s24 result);
+  near-plane crossing for portals AND solids (s16 cx); s24-aware
+  reciprocal index; deferred solid/tighten op queue applied in seg
+  order at subsector end with records snapshots (Python's `deferred`
+  list semantics); NOVT aperture-edge verticals via SF_APEDGE1/2.
+- **span_clip**: has_gap coherence cache is invalidated on every pool
+  mutation (stale freed-slot extents previously produced false
+  positives — invisible to the Python-driven pipeline, which discards
+  the 6502 has_gap result).
 
 ## Test files
 
-- `test_bsp_render.py` — 5 primitive tests (all pass).
-- `test_bsp_walk.py` — BSP traversal smoke test (237/237).
-- `test_bsp_render_frame.py` — end-to-end render: ~1000 pixels of
-  recognizable DOOM geometry. Stable across 10 test positions.
-- `dump_framebuffer.py` — ASCII dump of the rendered frame.
+- `test_bsp_render.py` — arithmetic primitives (all pass).
+- `test_project_x_wide.py` — wide projection vs full-width formula,
+  3200 cases (addresses resolved from the beebasm listing).
+- `test_bsp_walk.py` — visited set vs Python walk, 4 positions.
+- `compare_subsector.py` — per-subsector differential (the workhorse).
+- `compare_traversal.py` — traversal isolation (asm vs hybrid).
+- `drill_seg.py` — verbose one-subsector drill (both sides, AP-skip
+  predicate logging).
+- `test_hybrid.py` — three-way pixel agreement table.
 
-## Not yet wired in
+## Next
 
-1. **Portal aperture tightening** (the "tighten" call in Python).
-   Currently solid walls occlude correctly via `mark_solid`, but
-   distant geometry visible through a portal opening doesn't get
-   clipped to the aperture's Y range. Need to integrate
-   `tighten_from_records` (which the s16 line clipper records into
-   per-line buffers).
-2. **Step edges at portals** (NEEDBT/NEEDBB flags). When the back
-   ceiling is lower than the front, a horizontal "back ceiling"
-   line should be drawn. Same for back floor higher than front.
-3. **BBox-based subtree culling**. `fp_bbox_visible_fixed` in Python
-   skips subtrees whose entire bbox is off-screen / fully occluded.
-   No equivalent yet.
-4. **VWH cache** — Python caches projected screen-Y per (vertex,
-   height) pair. We currently re-project Y every seg even if a
-   different seg already hit the same (v_idx, h) combination.
-5. **Pixel-perfect comparison to Python reference**. We confirm
-   geometry/walking matches Python at the building-block level
-   (back-face count, side test) but haven't done a full
-   line-by-line / pixel-by-pixel comparison.
+1. **AP-skip predicates in 6502** (cycles + the last 7 px).
+2. VWH cache (Python caches projected Y per (vertex,height); the 6502
+   re-projects — correctness-neutral, cycles only).
+3. Cycle measurement pass (py65 counts) once exactness work settles.
