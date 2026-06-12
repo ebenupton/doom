@@ -106,8 +106,8 @@ $71-$76 range — the rasteriser clobbers $74-$76 on every line).
 
 Profiled with `profile_frame.py` (py65 cycle deltas bucketed by
 top-level routine). 3-frame profile set baseline 4,002,663 cycles →
-**3,599,925 (-10.1%)**, output-identical throughout. Full-suite frame
-costs now 67k (trivial view) to 1.82M (1500,-3700,0).
+**3,518,511 (-12.1%)**, output-identical throughout. Full-suite frame
+costs now 65k (trivial view) to 1.79M (1500,-3700,0).
 
 Optimizations landed:
 - `br_smul_s8_u8` split sign paths (no flag, no writeback, single copy)
@@ -122,6 +122,9 @@ Optimizations landed:
 - `br_project_y` emits HALF_H+Y_BIAS; per-store bias adds dropped
 - `br_rot_int` reads trig via Y index (callers stop staging 3 ZP bytes)
 - `umul8` pinned at $2030; bsp_render skips the jump-table dispatch
+- Y-projection cache (W region $DAC0): key = the full input set
+  (rhi, rlo, h) → hits are bit-identical pure-function results; 58-64%
+  of projections repeat per frame, ~315 cycles each vs ~45 per hit
 
 Measured and rejected: Python's AP-skip predicates — a zero-pixel DCL
 call averages only ~341 cycles on the 6502 (measured per-call), so the
@@ -130,8 +133,6 @@ to the last 7 px of exactness if ever wanted.
 
 ## Next
 
-1. VWH cache (Python caches projected Y per (vertex,height); the 6502
-   re-projects — correctness-neutral, cycles only).
-2. Hardware bring-up: jsbeeb/SSD integration of the standalone module
+1. Hardware bring-up: jsbeeb/SSD integration of the standalone module
    (memory map per the table above — note the X region in the stack
    page and the harness-loaded tables at $B600+/$C600+/$E000+).
