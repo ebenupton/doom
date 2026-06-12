@@ -149,7 +149,7 @@ JMP br_init_frame   ; $481B   clear vcache valid bitmap (for hybrid mode)
 ; ============================================================================
 ; Aliases for span_clip's exported routines
 ; ============================================================================
-SC_UMUL8        = $2021
+SC_UMUL8        = $2030      ; umul8 pinned (skips the table JMP)
 SC_UDIV16_8     = $2024
 SC_DRAW_S16     = $201E
 SC_DRAW_U8      = $2015      ; standalone DCL (u8 input, no clipper prelude)

@@ -23,6 +23,13 @@
 EMIT_LINES = TRUE     ; set FALSE to disable line emission (pure clip benchmark)
 
 ; --- Code origin: $2000 in BBC Micro memory map ---
+; (hoisted: the pinned umul8 at $2030 references these before the main
+; equate block)
+zp_mul_b = $D9
+zp_prod_lo = $DA : zp_div_lo = $DA   ; shared: mul output = div input
+zp_prod_hi = $DB : zp_div_hi = $DB
+zp_tmp0  = $DE : zp_tmp1  = $DF : zp_tmp2  = $E0
+
 ORG $2000
 
 ; --- Jump table: fixed entry points for each public operation ---
@@ -41,6 +48,27 @@ JMP tighten_from_records ; $201B
 JMP draw_clipped_line_s16 ; $201E
 JMP umul8                 ; $2021  (exported for bsp_render.asm)
 JMP udiv16_8              ; $2024  (exported for bsp_render.asm)
+
+; umul8 is the hottest cross-module call (every multiply) — pin it at a
+; FIXED address so bsp_render can JSR it directly, skipping the table's
+; extra JMP (3 cycles per multiply). The ASSERT keeps the pin honest.
+ORG $2030
+.umul8_fixed
+.umul8
+{
+    STA zp_tmp0                                                         ; |
+    SEC : SBC zp_mul_b : BCS pos                                        ; |||
+    EOR #$FF : ADC #1    ; |diff| (C was 0 from SBC, so ADC adds +0+1)  ; ||
+.pos TAY                  ; Y = |diff|                                  ; |
+    LDA zp_tmp0 : CLC : ADC zp_mul_b                                    ; ||||
+    TAX : BCS uo          ; X = sum; overflow if carry from ADC          ; ||
+    ; sum < 256: sqr tables for sum
+    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo                  ; |||||
+    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS                  ; |||||||
+.uo ; sum >= 256: sqr2 tables for sum (carry already set from BCS)
+    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
+}
 
 ; === Pool constants and field offsets ===
 ; The span pool uses block layout at $0400: each field is a contiguous
@@ -231,11 +259,7 @@ zp_i_x0  = $D1
 zp_i_y0  = $D2 : zp_i_y0h = $D3   ; s16 Y for seg interp
 zp_i_x1  = $D4 : zp_i_y1  = $D5 : zp_i_y1h = $D6
 zp_i_res = $D7 : zp_i_resh = $D8
-zp_mul_b = $D9
-zp_prod_lo = $DA : zp_div_lo = $DA   ; shared: mul output = div input
-zp_prod_hi = $DB : zp_div_hi = $DB
 zp_div_den = $DC : zp_div_rem = $DD
-zp_tmp0  = $DE : zp_tmp1  = $DF : zp_tmp2  = $E0
 zp_tmp3  = $E1 : zp_prev  = $E2
 zp_buf   = $E3  ; u16 pointer ($E3/$E4)
 zp_save0 = $E5  ; safe scratch (not clobbered by interp)
@@ -304,21 +328,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
 ;
 ; This is the hottest subroutine -- called by every interpolation.
 ; ======================================================================
-.umul8
-{
-    STA zp_tmp0                                                         ; |
-    SEC : SBC zp_mul_b : BCS pos                                        ; |||
-    EOR #$FF : ADC #1    ; |diff| (C was 0 from SBC, so ADC adds +0+1)  ; ||
-.pos TAY                  ; Y = |diff|                                  ; |
-    LDA zp_tmp0 : CLC : ADC zp_mul_b                                    ; ||||
-    TAX : BCS uo          ; X = sum; overflow if carry from ADC          ; ||
-    ; sum < 256: sqr tables for sum
-    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo                  ; |||||
-    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS                  ; |||||||
-.uo ; sum >= 256: sqr2 tables for sum (carry already set from BCS)
-    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
-    LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
-}
+; (umul8 moved to the fixed $2030 slot below the jump table.)
 
 EQUB 0   ; 1-byte pad: optimal alignment for umul8
 
