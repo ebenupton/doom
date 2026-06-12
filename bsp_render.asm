@@ -2041,6 +2041,26 @@ BBOX_IHI        = $0A62     ; running max sx clamped (u8)
     LDY #0 : LDA zp_seg_cur_evy : STA (zp_br_p),Y
     INY    : LDA zp_seg_cur_evx : STA (zp_br_p),Y
 
+    ; View-x overflow check: br_project_x_subpx uses br_smul_s8_u8 which
+    ; treats evx as s8. If total_vx is outside [-32768, 32767] (in 8.8 form
+    ; that's |vxext| != 0 with sign disagreement, or |vxext|==0 with vxhi
+    ; bit 7 having wrong sign), the s8 interpretation wraps and the
+    ; projection produces garbage sx — leading to bogus mark_solid ranges
+    ; (e.g., mark_solid(0,255) → screen-full → BSP terminates early).
+    ; Treat as near-clipped so the seg loop drops it.
+    LDA zp_br_vxext : BEQ vx_chk_pos
+    CMP #$FF : BNE vx_overflow
+    LDA zp_br_vxhi : BPL vx_overflow      ; vxext=$FF, vxhi must be neg s8
+    JMP vx_in_range
+.vx_chk_pos
+    LDA zp_br_vxhi : BMI vx_overflow      ; vxext=0, vxhi must be pos s8
+    JMP vx_in_range
+.vx_overflow
+    LDY #6 : LDA #1 : STA (zp_br_p),Y
+    LDA #1 : STA zp_seg_skip
+    RTS
+.vx_in_range
+
     ; Near-clip on full s24: clipped iff total_vy < NEAR_88 (= 128 in 8.8).
     ;   vyext < 0 → clipped (very negative)
     ;   vyext > 0 → ok      (very positive, ≥ 256)
