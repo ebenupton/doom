@@ -106,10 +106,26 @@ $71-$76 range — the rasteriser clobbers $74-$76 on every line).
 
 Profiled with `profile_frame.py` (py65 cycle deltas bucketed by
 top-level routine). 3-frame profile set baseline 4,002,663 cycles →
-**3,518,511 (-12.1%)**, output-identical throughout. Full-suite frame
-costs now 65k (trivial view) to 1.79M (1500,-3700,0).
+**3,449,420 (-13.8%)**, output-identical throughout. Full-suite frame
+costs now 65k (trivial view) to 1.75M (1500,-3700,0).
+
+6-position suite total (incl. non-cardinal views): 5,275,433 →
+**5,084,603 (-3.62%)** after the rotation-product cache, bit-exact
+(compare_subsector/compare_traversal 0 px). Per-view the win ranges
+from ~2% at cardinal angles (br_rot_int already takes its cheap unity
+path there) to **-12.5%** at (800,-3400,96), where the bbox rotations
+are full multiplies and the ~80% delta reuse pays off.
 
 Optimizations landed:
+- bbox rotation-product cache (W region; `rot_pair_cached` +
+  RPC_* arrays $DC00): bv_corner_products rotates 4 bbox-edge deltas
+  d=(coord-player) by sin/cos; d is a pure function of the edge within
+  a frame and ~80% of deltas recur across node-sides (child bbox ⊂
+  parent; equal x/y deltas share a product). Per-frame direct-mapped
+  N=64 cache of the (sin,cos) s24 pair turns ~80% of those rotations
+  into a 6-byte copy. Full key (d lo,hi) checked → collisions
+  miss-and-recompute, never corrupt. bv_corner_products 275k→129k,
+  br_rot_int 135k→57k.
 - `br_smul_s8_u8` split sign paths (no flag, no writeback, single copy)
 - bbox corners share rotation products: 8 `rot_int` per node-side
   instead of 16 (Y region $4740; `tv_add_fracs` shared tail)

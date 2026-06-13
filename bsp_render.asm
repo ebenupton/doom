@@ -2612,22 +2612,20 @@ CPD     = $096F          ; 4 x s16: dxl, dxr, dyt, dyb ($096F-$0976)
 .cp_d_next
     INX : INX : CPX #8 : BNE cp_d
 
-    ; 8 products: index i: d = CPD[i & ~1], trig = sin (i even) / cos.
+    ; 4 deltas: rot_pair_cached fills CPBUF[dest..dest+5] with the (sin,cos)
+    ; s24 products, hitting the per-frame product cache when the delta value
+    ; recurs (~80%% of bbox edge deltas repeat within a frame — child bboxes
+    ; are subsets of their parents, and x/y deltas of equal value share a
+    ; product). dest = X*3 with X in {0,2,4,6} → {0,6,12,18} via cp_mul3.
     LDX #0
 .cp_loop
-    TXA : AND #$FE : TAY
-    LDA CPD+0,Y : STA zp_ri_dlo
-    LDA CPD+1,Y : STA zp_ri_dhi
-    TXA : AND #1 : TAY
-    LDA cp_t3,Y : TAY                  ; Y = 0 (sin) / 3 (cos)
-    STX CPIDX
-    JSR br_rot_int
-    LDX CPIDX
-    LDY cp_mul3,X
-    LDA zp_br_resl   : STA CPBUF+0,Y
-    LDA zp_br_resh   : STA CPBUF+1,Y
-    LDA zp_br_resext : STA CPBUF+2,Y
-    INX : CPX #8 : BNE cp_loop
+    LDA CPD+0,X : STA zp_ri_dlo
+    LDA CPD+1,X : STA zp_ri_dhi
+    LDA cp_mul3,X : STA RPC_DEST
+    STX RPC_SAVE_I
+    JSR rot_pair_cached
+    LDX RPC_SAVE_I
+    INX : INX : CPX #8 : BNE cp_loop
     RTS
 }
 ; bv_corner_view — build s24 (vx, vy) for corner zp_br_t4 from the shared
@@ -2716,6 +2714,30 @@ VWHC_H     = $D7C0
 VWHC_LO    = $D8C0
 VWHC_HI    = $D9C0
 
+; --- Rotation-product cache (bbox corner transform) -------------------------
+; bv_corner_products rotates 4 bbox-edge deltas d=(coord-player) by sin and
+; cos (8x8 muls). d is a pure function of the bbox edge within a frame, and
+; ~80%% of edge deltas recur across node-sides (child bbox ⊂ parent), so a
+; per-frame direct-mapped cache (N=64) of the (sin,cos) s24 products turns
+; ~80%% of those rotations into a 6-byte copy. Key = d (lo,hi); full key is
+; checked so collisions miss-and-recompute (bit-exact, never corrupt).
+; Arrays live in W-region RAM above the code (not in the saved bin); cleared
+; per frame alongside VWHC.
+RPC_VALID = $DC00
+RPC_KLO   = $DC40
+RPC_KHI   = $DC80
+RPC_S0    = $DCC0        ; sin product lo/mid/ext (s24)
+RPC_S1    = $DD00
+RPC_S2    = $DD40
+RPC_C0    = $DD80        ; cos product lo/mid/ext (s24)
+RPC_C1    = $DDC0
+RPC_C2    = $DE00
+RPC_DLO   = $DE40        ; scratch: saved d (br_rot_int destroys zp_ri_*)
+RPC_DHI   = $DE41
+RPC_IDX   = $DE42        ; scratch: cache idx across br_rot_int
+RPC_DEST  = $DE43        ; in: CPBUF dest offset for the pair
+RPC_SAVE_I= $DE44        ; bv_corner_products loop index across the call
+
 ORG $DAC0
 .bsp_w_start
 
@@ -2743,7 +2765,7 @@ ORG $DAC0
     RTS
 }
 
-; vwhc_clear — invalidate the projection cache (per frame).
+; vwhc_clear — invalidate the projection + rotation-product caches (per frame).
 .vwhc_clear
 {
     LDA #0
@@ -2751,11 +2773,58 @@ ORG $DAC0
 .vc_loop
     STA VWHC_VALID,X
     INX : BNE vc_loop
+    LDX #64
+.rpc_clr
+    DEX : STA RPC_VALID,X : BNE rpc_clr      ; clears RPC_VALID[0..63]
+    RTS
+}
+
+; rot_pair_cached — return the (sin,cos) s24 rotation products of delta
+; d=(zp_ri_dlo:zp_ri_dhi), writing them to CPBUF[RPC_DEST..+5]. On a cache
+; hit (delta seen this frame) it copies 6 bytes; on a miss it computes both
+; via br_rot_int (re-staging d, which br_rot_int destroys) and fills the cache.
+.rot_pair_cached
+{
+    ; idx = (dhi ^ dlo) & 63. d (zp_ri_*) is intact from the caller, so the
+    ; hit path and the first (sin) br_rot_int read it directly; only the cos
+    ; call (after br_rot_int destroys zp_ri_*) needs the saved copy.
+    LDA zp_ri_dhi : EOR zp_ri_dlo : AND #$3F : TAX
+    STX RPC_IDX
+    LDA RPC_VALID,X : BEQ rpc_miss
+    LDA RPC_KLO,X : CMP zp_ri_dlo : BNE rpc_miss
+    LDA RPC_KHI,X : CMP zp_ri_dhi : BNE rpc_miss
+    ; --- hit: copy cached pair to CPBUF[dest] ---
+    LDY RPC_DEST
+    LDA RPC_S0,X : STA CPBUF+0,Y
+    LDA RPC_S1,X : STA CPBUF+1,Y
+    LDA RPC_S2,X : STA CPBUF+2,Y
+    LDA RPC_C0,X : STA CPBUF+3,Y
+    LDA RPC_C1,X : STA CPBUF+4,Y
+    LDA RPC_C2,X : STA CPBUF+5,Y
+    RTS
+.rpc_miss
+    LDA zp_ri_dlo : STA RPC_DLO : STA RPC_KLO,X
+    LDA zp_ri_dhi : STA RPC_DHI : STA RPC_KHI,X
+    LDA #1 : STA RPC_VALID,X
+    ; sin product (Y=0) — zp_ri_* still holds d
+    LDY #0 : JSR br_rot_int
+    LDX RPC_IDX : LDY RPC_DEST
+    LDA zp_br_resl   : STA CPBUF+0,Y : STA RPC_S0,X
+    LDA zp_br_resh   : STA CPBUF+1,Y : STA RPC_S1,X
+    LDA zp_br_resext : STA CPBUF+2,Y : STA RPC_S2,X
+    ; cos product (Y=3)
+    LDA RPC_DLO : STA zp_ri_dlo
+    LDA RPC_DHI : STA zp_ri_dhi
+    LDY #3 : JSR br_rot_int
+    LDX RPC_IDX : LDY RPC_DEST
+    LDA zp_br_resl   : STA CPBUF+3,Y : STA RPC_C0,X
+    LDA zp_br_resh   : STA CPBUF+4,Y : STA RPC_C1,X
+    LDA zp_br_resext : STA CPBUF+5,Y : STA RPC_C2,X
     RTS
 }
 
 .bsp_w_end
-ASSERT bsp_w_end <= $E000
+ASSERT bsp_w_end <= RPC_VALID
 SAVE "bsp_render_w.bin", $DAC0, bsp_w_end, $DAC0
 
 ; ============================================================================
