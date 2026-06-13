@@ -85,7 +85,9 @@ if __name__ == '__main__':
     if len(sys.argv) >= 4:
         POSITIONS = [(int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]))]
     else:
-        POSITIONS = [(1056, -3616, 64), (1500, -3700, 0), (1024, -3500, 64)]
+        # Non-axis-aligned angles only: cardinal views (ab % 64 == 0) take the
+        # sin/cos unity fast path and behave atypically, so they're nudged +1.
+        POSITIONS = [(1056, -3616, 65), (1500, -3700, 1), (1024, -3500, 65)]
 
     total_buckets = {}
     totals = []
