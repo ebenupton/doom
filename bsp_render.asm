@@ -225,12 +225,8 @@ zp_line_yr      = $AB
 ;   else: 16-bit avg of (HI:LO[i], HI:LO[i+1]).
 ;
 ; Tables: HI[0..513] at $E000, LO[0..513] at $E202.
-;
-; br_recip (the public label) is a caching front-end in the W region; this
-; raw body does the table lookup/interpolation on a cache miss. The front-end
-; pre-clamps vy_idx so the clamp below is a no-op on the cached path.
 ; ============================================================================
-.br_recip_raw
+.br_recip
 {
     ; --- Clamp vy_idx to [2, 1023] ---
     LDA zp_br_t1 : CMP #4 : BCC c_hi_ok
@@ -2727,35 +2723,20 @@ VWHC_HI    = $D9C0
 ; checked so collisions miss-and-recompute (bit-exact, never corrupt).
 ; Arrays live in W-region RAM above the code (not in the saved bin); cleared
 ; per frame alongside VWHC.
-RPC_VALID = $DC60
-RPC_KLO   = $DCA0
-RPC_KHI   = $DCE0
-RPC_S0    = $DD20        ; sin product lo/mid/ext (s24)
-RPC_S1    = $DD60
-RPC_S2    = $DDA0
-RPC_C0    = $DDE0        ; cos product lo/mid/ext (s24)
-RPC_C1    = $DE20
-RPC_C2    = $DE60
-RPC_DLO   = $DEA0        ; scratch: saved d (br_rot_int destroys zp_ri_*)
-RPC_DHI   = $DEA1
-RPC_IDX   = $DEA2        ; scratch: cache idx across br_rot_int
-RPC_DEST  = $DEA3        ; in: CPBUF dest offset for the pair
-RPC_SAVE_I= $DEA4        ; bv_corner_products loop index across the call
-
-; --- Reciprocal cache --------------------------------------------------------
-; br_recip is a pure function of vy_idx (post-clamp [2,1023]); ~88%% of recip
-; queries repeat within a frame (bbox corners and seg-vertex misses cluster
-; in depth), and 63%% take the expensive 1-bit-fractional 16-bit averaging
-; path. A per-frame direct-mapped N=64 cache (key = clamped vy_idx) turns the
-; repeats into a 2-byte load. idx = (vy_idx_lo >> 1) & 63.
-RCC_VALID = $DEB0
-RCC_KLO   = $DEF0
-RCC_KHI   = $DF30
-RCC_RHI   = $DF70
-RCC_RLO   = $DFB0
-RCC_KLOS  = $DFF0        ; scratch: clamped key saved across br_recip_raw
-RCC_KHIS  = $DFF1
-RCC_IDX   = $DFF2
+RPC_VALID = $DC00
+RPC_KLO   = $DC40
+RPC_KHI   = $DC80
+RPC_S0    = $DCC0        ; sin product lo/mid/ext (s24)
+RPC_S1    = $DD00
+RPC_S2    = $DD40
+RPC_C0    = $DD80        ; cos product lo/mid/ext (s24)
+RPC_C1    = $DDC0
+RPC_C2    = $DE00
+RPC_DLO   = $DE40        ; scratch: saved d (br_rot_int destroys zp_ri_*)
+RPC_DHI   = $DE41
+RPC_IDX   = $DE42        ; scratch: cache idx across br_rot_int
+RPC_DEST  = $DE43        ; in: CPBUF dest offset for the pair
+RPC_SAVE_I= $DE44        ; bv_corner_products loop index across the call
 
 ORG $DAC0
 .bsp_w_start
@@ -2795,45 +2776,6 @@ ORG $DAC0
     LDX #64
 .rpc_clr
     DEX : STA RPC_VALID,X : BNE rpc_clr      ; clears RPC_VALID[0..63]
-    LDX #64
-.rcc_clr
-    DEX : STA RCC_VALID,X : BNE rcc_clr      ; clears RCC_VALID[0..63]
-    RTS
-}
-
-; br_recip — caching front-end for br_recip_raw. Clamps vy_idx, probes the
-; per-frame reciprocal cache (key = clamped vy_idx), and on a miss computes
-; via br_recip_raw and fills the slot. Output zp_br_rhi/rlo as before.
-.br_recip
-{
-    ; clamp vy_idx (zp_br_t0:t1) to [2,1023] (same as br_recip_raw, so the
-    ; key matches and the raw clamp is a no-op on the miss path).
-    LDA zp_br_t1 : CMP #4 : BCC rc_hi_ok
-    LDA #$FF : STA zp_br_t0
-    LDA #3   : STA zp_br_t1
-.rc_hi_ok
-    LDA zp_br_t1 : BNE rc_lo_ok
-    LDA zp_br_t0 : CMP #2 : BCS rc_lo_ok
-    LDA #2 : STA zp_br_t0
-.rc_lo_ok
-    LDA zp_br_t0 : LSR A : AND #$3F : TAX     ; idx = (vy_idx_lo >> 1) & 63
-    LDA RCC_VALID,X : BEQ rc_miss
-    LDA RCC_KLO,X : CMP zp_br_t0 : BNE rc_miss
-    LDA RCC_KHI,X : CMP zp_br_t1 : BNE rc_miss
-    LDA RCC_RHI,X : STA zp_br_rhi
-    LDA RCC_RLO,X : STA zp_br_rlo
-    RTS
-.rc_miss
-    STX RCC_IDX
-    LDA zp_br_t0 : STA RCC_KLOS
-    LDA zp_br_t1 : STA RCC_KHIS
-    JSR br_recip_raw                          ; clamped t0:t1 → rhi/rlo
-    LDX RCC_IDX
-    LDA #1        : STA RCC_VALID,X
-    LDA RCC_KLOS  : STA RCC_KLO,X
-    LDA RCC_KHIS  : STA RCC_KHI,X
-    LDA zp_br_rhi : STA RCC_RHI,X
-    LDA zp_br_rlo : STA RCC_RLO,X
     RTS
 }
 

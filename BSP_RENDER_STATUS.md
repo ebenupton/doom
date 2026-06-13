@@ -105,20 +105,18 @@ $71-$76 range — the rasteriser clobbers $74-$76 on every line).
 ## Performance (2026-06-13)
 
 Profiled with `profile_frame.py` (py65 cycle deltas bucketed by
-top-level routine). 3-frame profile set baseline 4,002,663 cycles →
-**3,364,512 (-15.9%)**, output-identical throughout. Full-suite frame
-costs now 65k (trivial view) to 1.70M (1500,-3700,0).
+top-level routine), output-identical throughout.
 
-6-position suite total (incl. non-cardinal views): 5,275,433 →
-**4,990,854 (-5.39%)** after the two bbox-corner caches, bit-exact
-(compare_subsector/compare_traversal 0 px). The rotation-product cache
-alone is -3.62% (per-view ~2% at cardinal angles up to -12.5% at
-(800,-3400,96)); the reciprocal cache adds another -1.84% on top,
-concentrated in the larger views (more bbox corners → more recip calls).
+Measured on the off-axis suite (cardinal angles nudged +1 — see "Test
+set" below; the old cardinal-heavy suite understated multiply-caching).
+6-position off-axis suite: no-cache 5,686,684 → **5,239,656 (-7.86%)**
+with the rotation-product cache, bit-exact (compare_subsector /
+compare_traversal 0 px). Per-view -7.86% holds broadly; heaviest off-axis
+view (1500,-3700,1) 1.79M → 1.71M.
 
 Optimizations landed:
 - bbox rotation-product cache (W region; `rot_pair_cached` +
-  RPC_* arrays $DC60): bv_corner_products rotates 4 bbox-edge deltas
+  RPC_* arrays $DC00): bv_corner_products rotates 4 bbox-edge deltas
   d=(coord-player) by sin/cos; d is a pure function of the edge within
   a frame and ~80% of deltas recur across node-sides (child bbox ⊂
   parent; equal x/y deltas share a product). Per-frame direct-mapped
@@ -126,13 +124,6 @@ Optimizations landed:
   into a 6-byte copy. Full key (d lo,hi) checked → collisions
   miss-and-recompute, never corrupt. bv_corner_products 275k→129k,
   br_rot_int 135k→57k.
-- reciprocal cache (W region; `br_recip` front-end wraps `br_recip_raw`
-  + RCC_* arrays $DEB0): recip is a pure function of vy_idx; ~88% of
-  queries repeat per frame and 63% take the expensive 1-bit-fractional
-  16-bit averaging path. Per-frame direct-mapped N=64 cache (key =
-  clamped vy_idx, idx = (lo>>1)&63) turns repeats into a 2-byte load.
-  br_recip 213k→126k (front-end 99k + raw 27k). Transparent to all
-  callers (bbox corners + seg-vertex misses) via the wrapped label.
 - `br_smul_s8_u8` split sign paths (no flag, no writeback, single copy)
 - bbox corners share rotation products: 8 `rot_int` per node-side
   instead of 16 (Y region $4740; `tv_add_fracs` shared tail)
@@ -153,6 +144,30 @@ Measured and rejected: Python's AP-skip predicates — a zero-pixel DCL
 call averages only ~341 cycles on the 6502 (measured per-call), so the
 predicates would not pay for themselves. They remain solely the route
 to the last 7 px of exactness if ever wanted.
+
+Measured and rejected: **reciprocal cache** (br_recip front-end keyed on
+clamped vy_idx). Looked like -1.84% on the old cardinal-heavy suite, but
+on representative off-axis views it *regresses* +0.5% (5 of 6 views
+slower, up to +2%): off-axis the hit rate falls to 75% (vs 88% cardinal)
+and only 46% of calls take the averaging path (vs 63%), so the per-call
+clamp+probe overhead outweighs the savings. recip is already a table
+lookup; caching it only pays when the averaging path dominates AND the
+depth distribution clusters — both true only for axis-aligned views.
+
+Measured and rejected: **corner-view cache** (cache the per-corner view
+transform keyed on the (dx,dy) pair). 60% pair-reuse, but with the
+rotation cache already making the products cheap, the probe + lost
+product-sharing nets ~0 on the suite and *regresses the heaviest frame*
+(the fps floor) by ~1%. The bbox corner pipeline is at its practical
+floor once rotation products are cached.
+
+## Test set
+
+Profiling/exactness suites use **off-axis** view angles only. Cardinal
+angles (ab % 64 == 0) take the sin/cos unity fast path in br_rot_int and
+render atypically — they understated the value of multiply-caching and
+flattered the recip cache. Every cardinal angle in the suite is nudged
++1 (0→1, 64→65, 128→129, 192→193); 32/96/224 were already off-axis.
 
 ## Next
 
