@@ -161,6 +161,59 @@ product-sharing nets ~0 on the suite and *regresses the heaviest frame*
 (the fps floor) by ~1%. The bbox corner pipeline is at its practical
 floor once rotation products are cached.
 
+## Cost structure (where the cycles go)
+
+Call-stack-attributed profile (`profile_subsystems.py` — each cycle is
+charged to the subsystem whose *call frame* it runs under, so shared leaf
+routines (umul8, br_recip, br_project_x) are billed to the caller, not to
+the module they physically live in). Off-axis suite, rotation-cache build:
+
+| Subsystem | % of frame |
+|---|---|
+| BSP traversal (total) | **66.7%** |
+| — bbox visibility | 52.4% |
+| — walk + seg-processor glue | 14.3% |
+| Vertex transform & cache | 18.5% |
+| Windowed clipped renderer | 9.6% |
+| NJ rasteriser backend | 5.2% |
+
+**bbox visibility (52%) is the dominant cost** and it is *necessary*, not
+waste. Per-child accounting (`measure_child_math.py`): each bbox test
+averages ~11.8 8×8 multiplies, ~3.1 reciprocal lookups and ~5,600 cycles
+— about the cost of rendering a subsector — and 56% of every multiply in
+the frame is bbox culling. After the rotation cache, ~3 of those 12 muls
+are corner rotations; the rest are the perspective projection (recip +
+project_x) of the in-front corners.
+
+Why it's necessary — outcome of all 495 children across the suite:
+
+| Outcome | % |
+|---|---|
+| descend (visible — projection feeds the has_gap that says "yes") | 80% |
+| frustum reject (cheap, pre-projection — two-pass already handles it) | 9% |
+| projected, then occlusion-culled by has_gap | 11% |
+
+The walk reaches only 4.6–21.5% of the 237 subsectors per scene
+(`test_bsp_walk.py`, set-identical to Python's `packed_render_bsp`), but
+to get there it tests ~3.5 in-frustum children per rendered subsector and
+**80% of children are genuinely visible**. has_gap needs the screen-X
+extent [ilo,ihi], whose only source is projecting the corners — so the
+projection cannot be skipped for visible children.
+
+Measured and rejected: **cheaper-reject for bbox** (a conservative
+pre-test to kill children before projecting corners). The addressable
+pool is only the 11% that project-then-occlusion-cull; the 80% visible
+children must project regardless, and even the 11% need *some* extent to
+be occlusion-tested. Upside is a few percent of bbox at best with real
+divergence risk — not worth it. The bbox pipeline is doing real
+front-to-back occlusion work, not spinning.
+
+Remaining levers, in rough priority: (1) the 18.5% vertex-transform path
+(seg-vertex projection); (2) a genuinely cheaper *exact* screen-extent
+for in-frustum children (the corner-view cache was the obvious attempt
+and didn't pay — would need a different formulation); (3) the clipped
+renderer / rasteriser are already small (15% combined).
+
 ## Test set
 
 Profiling/exactness suites use **off-axis** view angles only. Cardinal
