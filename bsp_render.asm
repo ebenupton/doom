@@ -1460,12 +1460,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LSR zp_br_t1 : ROR zp_br_t0
     LSR zp_br_t1 : ROR zp_br_t0
     LDA zp_node_chlo : AND #7 : TAX
-    LDA #1
-.bit_loop
-    DEX : BMI bit_done
-    ASL A
-    JMP bit_loop
-.bit_done
+    LDA vc_bit_mask,X
     PHA
     LDA #<SS_VISITED_BITMAP : CLC : ADC zp_br_t0 : STA zp_br_p
     LDA #>SS_VISITED_BITMAP :       ADC zp_br_t1 : STA zp_br_p_h
