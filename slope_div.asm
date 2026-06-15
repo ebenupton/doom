@@ -32,17 +32,37 @@ ORG $E940
     LDA #>1024 : STA sd_q+1
     RTS
 .lt
-    \ 98% of divides have den < 256 (so num < den < 256). Take an 8-bit
-    \ restoring-divide fast path: r stays < den < 256, so r's high byte is
-    \ never needed. Bit-identical result to the 16-bit loop below.
+    \ 98% of divides have den < 256 (so num < den < 256): 8-bit restoring
+    \ divide, r in A, no high byte. The quotient is <= 1024 (11 bits); after 8
+    \ iterations q holds the top 8 bits (quotient>>2 <= 255), so q's high byte
+    \ is only needed for the last 2 iterations -- phase A shifts the low byte
+    \ only, phase B both. The quotient bit (carry = "2r >= den") is folded into
+    \ q via ROL, so no INC.
     LDA sd_den+1 : BNE slow
     LDA #0 : STA sd_q : STA sd_q+1
+    \ Second operand leading zero: if den < 128 too, then 2r < 256 always, so
+    \ the bit-8 overflow case can't happen -- drop the BCS test and the SEC
+    \ fixup (the SBC after CMP-ge already leaves carry set). 69% of divides.
+    LDA sd_den : BMI hi128
+    LDA sd_num                        \ r in A
+    LDX #8
+.fa7
+    ASL A : CMP sd_den : BCC fa7_q    \ 2r < 256; C = (2r >= den) = qbit
+    SBC sd_den                        \ A = 2r - den ; carry stays set
+.fa7_q
+    ROL sd_q
+    DEX : BNE fa7
+    LDX #2
+.fb7
+    ASL A : CMP sd_den : BCC fb7_q
+    SBC sd_den
+.fb7_q
+    ROL sd_q : ROL sd_q+1
+    DEX : BNE fb7
+    RTS
+.hi128
+    \ 128 <= den < 256: 2r can reach 9 bits, so keep the overflow handling.
     LDA sd_num                        \ remainder r lives in A throughout
-    \ The quotient is <= 1024 (11 bits). After 8 iterations q holds the top 8
-    \ bits (quotient>>2 <= 255), so q's high byte is only needed for the last 2
-    \ iterations: phase A shifts only the low byte, phase B shifts both. Each
-    \ iteration folds the quotient bit (carry = "2r >= den") into q via ROL, so
-    \ no INC; r stays in A so the shift/compare/subtract avoid load/store.
     LDX #8
 .fa
     ASL A                             \ r <<= 1 ; C = bit8 (2r >= 256)
