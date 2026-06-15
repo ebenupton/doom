@@ -1260,6 +1260,10 @@ def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
 # (angle_bbox.view_col) instead of perspective fp_project_x. Set per run by
 # the validation harness; the seg path honours it too.
 _USE_ANGLE_COL = False
+# M2: full rotation-free angle-space bbox (2-corner checkcoord). Needs the
+# view angle byte, set per frame in _VIEW_AB by the render harness.
+_USE_ANGLE_BBOX = False
+_VIEW_AB = 0
 
 
 def fp_bbox_visible_fixed(node, far_side, ctx):
@@ -1291,6 +1295,10 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
     right = (rr_raw - _MCX) // _PRESCALE
 
     px_int, py_int = ctx[0], ctx[1]
+
+    if _USE_ANGLE_BBOX:
+        from angle_bbox import bbox_check_angle
+        return bbox_check_angle(top, bot, left, right, px_int, py_int, _VIEW_AB)
 
     # Trivial inside test (prescaled).
     if left <= px_int <= right and bot <= py_int <= top:

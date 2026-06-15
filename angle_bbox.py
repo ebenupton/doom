@@ -77,6 +77,63 @@ def point_to_angle(dx, dy):
         else ANG270 - _tantoangle[slope_div(adx, ady)]
 
 
+CLIPANGLE = ANG45        # half-FOV (45 deg)
+
+# DOOM checkcoord: per viewer box-region, the two silhouette corners as indices
+# into (top,bot,left,right) == DOOM bspcoord order (TOP=0,BOT=1,LEFT=2,RIGHT=3).
+_CHECKCOORD = [
+    [3, 0, 2, 1], [3, 0, 2, 0], [3, 1, 2, 0], None,
+    [2, 0, 2, 1], None,         [3, 1, 3, 0], None,
+    [2, 0, 3, 1], [2, 1, 3, 1], [2, 1, 3, 0],
+]
+
+
+def _phi(cx, cy, px, py, a_fine):
+    """View-relative signed angle phi = a_fine - atan2(dy,dx), in [-ANG180,ANG180).
+    Same convention as view_col (phi>0 == right of centre). Validated vs float.
+    """
+    phi = (a_fine - point_to_angle(cx - px, cy - py)) & ANGMASK
+    return phi - FINEANGLES if phi >= ANG180 else phi
+
+
+def _phi_col(phi):
+    """viewangletox centre column for an in-FOV signed phi."""
+    idx = phi + ANG90
+    return (_vatox_lo[idx] + _vatox_hi[idx]) // 2
+
+
+def bbox_check_angle(top, bot, left, right, px, py, ab):
+    """Angle-space bbox visibility (2 silhouette corners, no rotation), in the
+    view_col phi-convention. Returns a conservative (ilo,ihi) column extent or
+    None. Per corner: 0 muls, 1 divide.
+    """
+    if left <= px <= right and bot <= py <= top:
+        return 0, VIS_W - 1
+    boxx = 0 if px <= left else (1 if px < right else 2)
+    boxy = 0 if py >= top else (1 if py > bot else 2)
+    cc = _CHECKCOORD[(boxy << 2) + boxx]
+    if cc is None:
+        return 0, VIS_W - 1
+    val = (top, bot, left, right)
+    a_fine = (ab * (FINEANGLES // 256)) & ANGMASK
+    p1 = _phi(val[cc[0]], val[cc[1]], px, py, a_fine)
+    p2 = _phi(val[cc[2]], val[cc[3]], px, py, a_fine)
+    lo_phi, hi_phi = (p1, p2) if p1 <= p2 else (p2, p1)
+    # viewer is outside the box, so it subtends <180deg; if the signed span
+    # exceeds 180 the short arc wraps through behind -> not visible.
+    if hi_phi - lo_phi > ANG180:
+        return None
+    if hi_phi < -CLIPANGLE or lo_phi > CLIPANGLE:
+        return None                                # wholly outside the FOV
+    lo_phi = max(lo_phi, -CLIPANGLE)
+    hi_phi = min(hi_phi, CLIPANGLE)
+    lo = max(0, _phi_col(lo_phi) - 1)              # conservative +/-1
+    hi = min(VIS_W - 1, _phi_col(hi_phi) + 1)
+    if lo > hi:
+        return None
+    return lo, hi
+
+
 def view_col(vx, vy):
     """Screen column for a VIEW-SPACE point (vx sideways, vy forward).
     Angle-table projection: phi = atan2(vx,vy) -> viewangletox. 0 muls, 1 divide.

@@ -23,8 +23,10 @@ POS = [(1056,-3616,65),(1500,-3700,1),(1024,-3500,65),
        (800,-3400,96),(1200,-3000,129),(1056,-3616,129)]
 
 
-def render_lines(px, py, ab, angle):
+def render_lines(px, py, ab, angle, angle_bbox=False):
     dw._USE_ANGLE_COL = angle
+    dw._USE_ANGLE_BBOX = angle_bbox
+    dw._VIEW_AB = ab
     spans = dw.Instrumented6502Spans()
     sc = dw._span_clip_6502
     tc.setup_wad(sc); tc.setup_view_zp(sc, px, py, ab)
@@ -48,6 +50,7 @@ def render_lines(px, py, ab, angle):
     dw.packed_render_bsp(len(dw.nodes) - 1, spans, ctx, vz,
                          px, py, cos_f, sin_f, surf, p_ram)
     dw._USE_ANGLE_COL = False
+    dw._USE_ANGLE_BBOX = False
     return captured
 
 
@@ -74,8 +77,8 @@ if __name__ == '__main__':
           f'{"<=2px":>6s} {"lost":>5s}')
     tp = ta = te = tm = 0
     for px, py, ab in POS:
-        lp = render_lines(px, py, ab, False)
-        la = render_lines(px, py, ab, True)
+        lp = render_lines(px, py, ab, False, False)
+        la = render_lines(px, py, ab, True, True)     # full angle: col + bbox
         e = matched(lp, la, 0)
         m = matched(lp, la, TOL)
         tp += len(lp); ta += len(la); te += e; tm += m
