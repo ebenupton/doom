@@ -31,7 +31,26 @@ ROM_FHCH_BASE   = 0xB600
 ROM_BBOX_BASE   = 0xC600
 
 
+import angle_bbox as _A
+
+
+def load_angle_module(mem):
+    """Load the angle-space bbox module + tables into 6502 memory.
+    Code @ $E940; TA_LO $DC00, TA_HI $EF00 (tantoangle); VATOX $F300 (1025)."""
+    code = open('bsp_render_ang.bin', 'rb').read()
+    for i, b in enumerate(code):
+        mem[0xE940 + i] = b
+    for i in range(1024):
+        v = _A._tantoangle[i]
+        mem[0xDC00 + i] = v & 0xFF
+        mem[0xEF00 + i] = (v >> 8) & 0xFF
+    for k in range(1025):            # VATOX shrunk: phi+512 index, $F300
+        _vt = (_A._vatox_lo[k + 512] + _A._vatox_hi[k + 512]) // 2
+        mem[0xF300 + k] = max(0, min(255, _vt))
+
+
 def setup_wad(sc):
+    load_angle_module(sc.mpu.memory)
     layout = dw.packed_layout
     rom_main = dw.packed_rom_main
     rom_detail = dw.packed_rom_detail
@@ -84,6 +103,7 @@ def setup_view_zp(sc, px, py, ab):
     mem[0x91] = (raw_px >> 8) & 0xFF
     mem[0x92] = raw_py & 0xFF
     mem[0x93] = (raw_py >> 8) & 0xFF
+    mem[0xFA2F] = ab & 0xFF        # bca_ab: angle-space bbox view angle (u8)
     sc_t = fp.fp_sincos(ab)
     mem[5] = sc_t[0]
     mem[6] = 1 if sc_t[1] else 0

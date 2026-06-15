@@ -16,10 +16,10 @@ for i, b in enumerate(code):
 for i in range(1024):                            # TA_LO $DC00 / TA_HI $EE00
     v = A._tantoangle[i]
     mpu.memory[0xDC00 + i] = v & 0xFF
-    mpu.memory[0xEE00 + i] = (v >> 8) & 0xFF
-for idx in range(A.ANG180 + 1):                 # VATOX $4000 (centres, u8)
-    c = (A._vatox_lo[idx] + A._vatox_hi[idx]) // 2
-    mpu.memory[0xF200 + idx] = max(0, min(255, c))
+    mpu.memory[0xEF00 + i] = (v >> 8) & 0xFF
+for k in range(1025):                           # VATOX shrunk: phi+512, $F300
+    c = (A._vatox_lo[k + 512] + A._vatox_hi[k + 512]) // 2
+    mpu.memory[0xF300 + k] = max(0, min(255, c))
 
 
 def w16(addr, v):
@@ -27,16 +27,16 @@ def w16(addr, v):
 
 
 def run(top, bot, left, right, px, py, ab):
-    w16(0x88, top); w16(0x8A, bot); w16(0x8C, left); w16(0x8E, right)
+    w16(0xFA10, top); w16(0xFA12, bot); w16(0xFA14, left); w16(0xFA16, right)
     mpu.memory[0x01] = px & 0xFF; mpu.memory[0x03] = py & 0xFF
-    mpu.memory[0x0960] = ab & 0xFF
+    mpu.memory[0xFA2F] = ab & 0xFF
     mpu.pc = BCA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 20000:
         mpu.step(); steps += 1
-    vis = mpu.memory[0x0963]
-    return (mpu.memory[0x0961], mpu.memory[0x0962]) if vis else None
+    vis = mpu.memory[0xFA32]
+    return (mpu.memory[0xFA30], mpu.memory[0xFA31]) if vis else None
 
 
 # sample boxes around the map, varied viewer positions/angles

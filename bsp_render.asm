@@ -1254,6 +1254,14 @@ BBOX_FLAGS      = $0968     ; bit 0 = any_behind, bit 1 = any_front
 BBOX_ILO        = $0969     ; running min sx clamped (u8)
 BBOX_IHI        = $096A     ; running max sx clamped (u8)
 
+; --- Angle-space bbox module (bsp_render_ang.bin @ $E940; tables $DC00/$E400/$F200).
+;     Replaces the perspective corner-projection path below (now dead code).
+BCA_CHECK = $E946           ; JSR -> bbox_check_angle (px=$01, py=$03, ab=$FA2F)
+bca_top   = $FA10           ; box input: top,bot,left,right = $FA10,$12,$14,$16
+bca_ilo   = $FA30           ; output: left column (u8)
+bca_ihi   = $FA31           ; output: right column (u8)
+bca_vis   = $FA32           ; output: 1=visible, 0=cull
+
 .br_bbox_visible
 {
     ; --- Compute bbox table pointer = ROM_BBOX + node_id*16 + side*8 ---
@@ -1272,127 +1280,21 @@ BBOX_IHI        = $096A     ; running max sx clamped (u8)
     LDA zp_rom_bbox_lo : ADC zp_br_t0 : STA zp_br_p
     LDA zp_rom_bbox_hi : ADC zp_br_t1 : STA zp_br_p_h
 
-    ; Read top, bot, left, right (s16 each, 8 bytes total).
-    LDY #0
+    ; Read top, bot, left, right (s16 each, 8 bytes) into the angle box.
+    LDY #7
 .bv_read
-    LDA (zp_br_p),Y : STA BBOX_SCRATCH,Y
-    INY : CPY #8 : BNE bv_read
+    LDA (zp_br_p),Y : STA bca_top,Y
+    DEY : BPL bv_read
 
-    ; --- Inside test: px_int (s8) in [left_int, right_int]
-    ;     and py_int (s8) in [bot_int, top_int]?
-    ; left_int (s8) = high byte of (left_lo:hi >> ?). Actually left_lo:hi
-    ; is s16 (raw prescaled units). px_int is s8 (high byte of px_88).
-    ; So compare s8 with s16 — sign-extend px_int and compare s16:s16.
-    ; Sign-extended px_int = (px_h, $00 or $FF based on px_h).
-    LDA zp_br_px_h : STA zp_br_t0
-    LDA #0 : STA zp_br_t1
-    LDA zp_br_t0 : BPL bv_pxext_done
-    LDA #$FF : STA zp_br_t1
-.bv_pxext_done
-    ; left <= px ?  i.e. (px - left) >= 0 (s16 sub).
-    LDA zp_br_t0 : SEC : SBC BBOX_SCRATCH+4 : STA zp_br_t2
-    LDA zp_br_t1 :       SBC BBOX_SCRATCH+5 : STA zp_br_t3
-    BMI bv_not_inside
-    ; px <= right ?  i.e. (right - px) >= 0
-    LDA BBOX_SCRATCH+6 : SEC : SBC zp_br_t0
-    LDA BBOX_SCRATCH+7 :       SBC zp_br_t1
-    BMI bv_not_inside
-    ; py_int sign-extend
-    LDA zp_br_py_h : STA zp_br_t0
-    LDA #0 : STA zp_br_t1
-    LDA zp_br_t0 : BPL bv_pyext_done
-    LDA #$FF : STA zp_br_t1
-.bv_pyext_done
-    ; bot <= py ?
-    LDA zp_br_t0 : SEC : SBC BBOX_SCRATCH+2
-    LDA zp_br_t1 :       SBC BBOX_SCRATCH+3
-    BMI bv_not_inside
-    ; py <= top ?
-    LDA BBOX_SCRATCH+0 : SEC : SBC zp_br_t0
-    LDA BBOX_SCRATCH+1 :       SBC zp_br_t1
-    BMI bv_not_inside
-    ; Player is inside this bbox → call has_gap(0, 255) directly. (Match
-    ; Python's fp_bbox_visible_fixed which returns (0, FPW-1) on inside hit
-    ; and lets the caller call has_gap; we tail-call has_gap here so the
-    ; trace shows the same has_gap event as Python.)
-    LDA #0   : STA $C2
-    LDA #255 : STA $C3
+    ; --- Angle-space visibility (px=$01, py=$03, ab=$FA2F preset per frame) ---
+    JSR BCA_CHECK
+    LDA bca_vis : BNE bv_anglevis
+    LDA #0 : RTS
+.bv_anglevis
+    LDA bca_ilo : STA $C2
+    LDA bca_ihi : STA $C3
     JMP SC_HAS_GAP
-.bv_not_inside
 
-    ; --- Transform 4 corners and project ---
-    ; Init: BBOX_FLAGS = 0, ILO = 255, IHI = 0.
-    LDA #0   : STA BBOX_FLAGS
-    LDA #255 : STA BBOX_ILO
-    LDA #0   : STA BBOX_IHI
-
-    ; Corners (LT, RT, RB, LB). The 8 shared rotation products (2 x's,
-    ; 2 y's, each x sin,cos) are computed ONCE; each corner combines two
-    ; of them — the old per-corner br_to_view did 16 rot_int per
-    ; node-side, this does 8 (same products, same sums, bit-identical).
-    JSR bv_corner_products
-    LDA #0 : STA BBOX_CORNER_IDX
-    LDA #0 : STA zp_br_t4
-.bv_corner_loop
-    JSR bv_proj_one
-    LDA BBOX_CORNER_IDX : CLC : ADC #8 : STA BBOX_CORNER_IDX
-    INC zp_br_t4
-    LDA zp_br_t4 : CMP #4 : BNE bv_corner_loop
-
-    ; --- Rejects BEFORE the projection pass (Python's order: corners are
-    ; transformed first, the all-behind / frustum rejects fire, and only
-    ; survivors pay for recip + projection + classify). Outputs identical:
-    ; rejected nodes never produced sx values in Python either. ---
-    LDA BBOX_FLAGS : AND #$02 : BEQ bv_rej1     ; no corner in front
-    LDA BBOX_FLAGS : AND #$04 : BEQ bv_rej1     ; all left of L frustum
-    LDA BBOX_FLAGS : AND #$08 : BNE bv_pass2
-.bv_rej1
-    LDA #0 : RTS
-.bv_pass2
-    ; Project each in-front corner: recip from the stashed s24 vy,
-    ; rounded evx16 from the stash, xfrac = 0.
-    LDX #0
-.bv_p2_loop
-    LDA BBOX_CORNERS+4,X : BEQ bv_p2_next       ; behind → no sx
-    STX zp_br_t4
-    LDA BBOX_CORNERS+5,X : ASL A
-    LDA BBOX_CORNERS+6,X : ROL A
-    STA zp_br_t0
-    LDA BBOX_CORNERS+7,X : ROL A
-    STA zp_br_t1
-    JSR br_recip
-    LDX zp_br_t4
-    LDA BBOX_CORNERS+0,X : STA zp_v_xint
-    LDA BBOX_CORNERS+1,X : STA zp_v_xext
-    LDA #0 : STA zp_v_xfrac
-    JSR br_project_x_auto
-    JSR bv_classify_sx
-    LDX zp_br_t4
-.bv_p2_next
-    TXA : CLC : ADC #8 : TAX
-    CPX #32 : BNE bv_p2_loop
-
-    ; --- Near-plane edge crossings: for any edge that straddles NEAR,
-    ; project the crossing point's sx and update min/max. This tightens
-    ; the bbox sx range (vs the conservative full-screen fallback when
-    ; any corner is behind the near plane).
-    JSR bv_compute_edge_crossings
-
-    ; All-off-one-side reject (Python: sx_lo = max(0, min(sxs)),
-    ; sx_hi = min(255, max(sxs)), None when sx_lo > sx_hi). With every
-    ; sx < 0, flag bit 4 never set; with every sx > 255, bit 5 never set.
-    ; Corner projections AND near-crossing projections both feed these
-    ; flags, so this replaces the old "any corner behind → full screen"
-    ; fallback with Python's exact range.
-    LDA BBOX_FLAGS : AND #$10 : BEQ bv_reject
-    LDA BBOX_FLAGS : AND #$20 : BEQ bv_reject
-    JMP bv_query
-.bv_reject
-    LDA #0 : RTS
-.bv_query
-    LDA BBOX_ILO : STA $C2     ; zp_ilo
-    LDA BBOX_IHI : STA $C3     ; zp_ihi
-    JMP SC_HAS_GAP             ; tail-call; result in A
 }
 
 ; bv_proj_one — process a single corner: transform, project, update min/max.
@@ -2773,9 +2675,7 @@ ORG $DAC0
 .vc_loop
     STA VWHC_VALID,X
     INX : BNE vc_loop
-    LDX #64
-.rpc_clr
-    DEX : STA RPC_VALID,X : BNE rpc_clr      ; clears RPC_VALID[0..63]
+    ; (RPC rotation-product cache removed: $DC00 reclaimed for angle TA_LO.)
     RTS
 }
 

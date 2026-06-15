@@ -22,20 +22,23 @@ ZP_SONE         = 0x07
 ZP_CMAG         = 0x08
 ZP_CNEG         = 0x09
 ZP_CONE         = 0x0A
-ZP_ROM_FHCH_LO  = 0x30
-ZP_ROM_BBOX_LO  = 0x32
-ZP_ROM_VERTS_LO = 0x40
+# ROM base pointers were moved from ZP to absolute RAM by the ZP scavenge
+# (batch 1) — angle module now owns the old ZP slots. Match bsp_render.asm.
+ZP_ROM_FHCH_LO  = 0x0BE8
+ZP_ROM_BBOX_LO  = 0x0BEA
+ZP_ROM_VERTS_LO = 0x0BEC
 ZP_ROM_NODES_LO = 0x42
-ZP_ROM_SS_LO    = 0x44
-ZP_ROM_SEG_HDR_LO = 0x46
-ZP_ROM_VWH_LO   = 0x48
-ZP_ROM_DETAIL_LO = 0x4A
+ZP_ROM_SS_LO    = 0x0BF0
+ZP_ROM_SEG_HDR_LO = 0x0BF2
+ZP_ROM_VWH_LO   = 0x0BF4
+ZP_ROM_DETAIL_LO = 0x0BF6
 ZP_ROOT_NODE_LO = 0x4C
 ZP_PXRAW_LO     = 0x90
 ZP_PYRAW_LO     = 0x92
 
 ENTRY_BR_VIEW_SETUP   = 0x4809
 ENTRY_BR_RENDER_FRAME = 0x4815
+ENTRY_BR_INIT_FRAME   = 0x481B
 
 ROM_MAIN_BASE   = 0x6C00
 VWH_BASE        = 0xE484
@@ -106,6 +109,20 @@ class BspRender6502:
         w16(ZP_ROM_BBOX_LO,    ROM_BBOX_BASE)
         w16(ZP_ROOT_NODE_LO,   layout['n_nodes'] - 1)
 
+        # Angle-space bbox module: code @ $E940; TA_LO $DC00, TA_HI $E000,
+        # VATOX $F200 (no overlap with VWH @ $E484 or the renderer).
+        import angle_bbox as _A
+        code = open('bsp_render_ang.bin', 'rb').read()
+        for i, b in enumerate(code):
+            mem[0xE940 + i] = b
+        for i in range(1024):
+            v = _A._tantoangle[i]
+            mem[0xDC00 + i] = v & 0xFF
+            mem[0xEF00 + i] = (v >> 8) & 0xFF
+        for k in range(1025):            # VATOX shrunk: phi+512 index, $F300
+            _vt = (_A._vatox_lo[k + 512] + _A._vatox_hi[k + 512]) // 2
+            mem[0xF300 + k] = max(0, min(255, _vt))
+
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0):
         import fp
         sc = self.sc
@@ -140,10 +157,12 @@ class BspRender6502:
         mem[ZP_CMAG] = c_mag
         mem[ZP_CNEG] = 1 if c_neg else 0
         mem[ZP_CONE] = 1 if c_one else 0
+        mem[0xFA2F] = angle_byte & 0xFF      # bca_ab: angle-space bbox view angle
 
         sc._run(ENTRY_BR_VIEW_SETUP)
         sc.init()
         sc.clear_screen()
+        sc._run(ENTRY_BR_INIT_FRAME)
         cyc = sc._run(ENTRY_BR_RENDER_FRAME, max_cycles=10000000)
         self.last_cycles = cyc
         return cyc

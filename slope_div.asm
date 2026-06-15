@@ -9,10 +9,10 @@
 \ Python clamp). Otherwise a 10-iteration restoring divide: r=num; 10x
 \ { r<<=1; q<<=1; if r>=den { r-=den; q+=1 } } yields floor(num*2^10/den).
 
-sd_num = $70
-sd_den = $72
-sd_q   = $74
-sd_r   = $76
+sd_num = $44
+sd_den = $46
+sd_q   = $48
+sd_r   = $4A
 
 \ Integration build: loaded at $E940 (bsp_render_ang.bin). Tables: TA_LO in the
 \ reclaimed rotation-cache RAM ($DC00-$DFFF, 1024 entries), TA_HI/VATOX in the
@@ -55,17 +55,17 @@ ORG $E940
 \ point_to_angle(dx,dy) -> fineangle [0,4096). 8 octants; each does
 \ slope_div(min(|dx|,|dy|), max(...)) -> tantoangle, then base +/- ta.
 \ tantoangle table: TA_LO/TA_HI (1025 entries) loaded by the harness.
-pa_dx  = $78          \ s16 in
-pa_dy  = $7A          \ s16 in
-pa_res = $7C          \ u16 out (fineangle)
-pa_adx = $7E
-pa_ady = $80
-pa_sx  = $82
-pa_sy  = $83
-pa_oct = $84
-pa_ptr = $86          \ 16-bit table pointer
+pa_dx  = $30          \ s16 in
+pa_dy  = $32          \ s16 in
+pa_res = $39          \ u16 out (fineangle)
+pa_adx = $3B
+pa_ady = $71
+pa_sx  = $73
+pa_sy  = $89
+pa_oct = $8A
+pa_ptr = $40          \ 16-bit table pointer
 TA_LO  = $DC00        \ 1024 entries (reclaimed rotation-cache RAM)
-TA_HI  = $EE00        \ 1024 entries
+TA_HI  = $EF00        \ 1024 entries ($EF00-$F2FF, after code; recip owns $E000)
 
 .point_to_angle
 {
@@ -155,33 +155,33 @@ TA_HI  = $EE00        \ 1024 entries
 \        bca_ab (u8)
 \   out: bca_vis (1=visible/0=cull), bca_ilo, bca_ihi (u8 columns)
 \ ============================================================================
-bca_top  = $88        \ s16; bot $8A, left $8C, right $8E (contiguous = val[])
-bca_bot  = $8A
-bca_left = $8C
-bca_right = $8E
+bca_top  = $FA10        \ s16; bot $8A, left $8C, right $8E (contiguous = val[])
+bca_bot  = $FA12
+bca_left = $FA14
+bca_right = $FA16
 \ px/py aliased to the live renderer's player-int ZP (frame-persistent);
 \ ab + outputs in the BBOX-vars region the old br_bbox_visible freed.
 bca_px   = $01        \ zp_br_px_h (player int x, s8)
 bca_py   = $03        \ zp_br_py_h
-bca_ab   = $0960
-bca_ilo  = $0961
-bca_ihi  = $0962
-bca_vis  = $0963
-bca_afn  = $96        \ a_fine (s16)
-bca_pxs  = $98        \ px sign-extended (s16); py $9A
-bca_pys  = $9A
-bca_p1   = $9C        \ phi1 (s16); phi2 $9E
-bca_p2   = $9E
-bca_lo   = $A0        \ lo_phi (s16); hi_phi $A2
-bca_hi   = $A2
-bca_cx   = $A4        \ corner x (s16); cy $A6
-bca_cy   = $A6
-t0       = $A8
-t1       = $A9
-val_lo   = $AA
-val_hi   = $AB
-bca_ccsave = $AC
-VATOX    = $F200      \ viewangletox centres, u8
+bca_ab   = $FA2F
+bca_ilo  = $FA30
+bca_ihi  = $FA31
+bca_vis  = $FA32
+bca_afn  = $FA18        \ a_fine (s16)
+bca_pxs  = $FA1A        \ px sign-extended (s16); py $9A
+bca_pys  = $FA1C
+bca_p1   = $FA1E        \ phi1 (s16); phi2 $9E
+bca_p2   = $FA20
+bca_lo   = $FA22        \ lo_phi (s16); hi_phi $A2
+bca_hi   = $FA24
+bca_cx   = $FA26        \ corner x (s16); cy $A6
+bca_cy   = $FA28
+t0       = $FA2A
+t1       = $FA2B
+val_lo   = $FA2C
+val_hi   = $FA2D
+bca_ccsave = $FA2E
+VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
 
 .bbox_check_angle
 {
@@ -257,17 +257,20 @@ VATOX    = $F200      \ viewangletox centres, u8
 .lo_le
     \ clamp lo to >= -512, hi to <= 512
     JSR clamp_lohi
-    \ ilo = VATOX[lo+1024]-1 ; ihi = VATOX[hi+1024]+1 ; clamp [0,255]
-    CLC : LDA bca_lo : ADC #<1024 : STA pa_ptr
-          LDA bca_lo+1 : ADC #>1024 : STA pa_ptr+1
+    \ ilo = VATOX[lo+512]-1 ; ihi = VATOX[hi+512]+1 ; clamp [0,255].
+    \ VATOX holds only the used range (phi in [-512,512] -> index [0,1024]),
+    \ so the bias is +512 (not +1024); upper half of the angle range is
+    \ never reached after clamp_lohi.
+    CLC : LDA bca_lo : ADC #<512 : STA pa_ptr
+          LDA bca_lo+1 : ADC #>512 : STA pa_ptr+1
     CLC : LDA #<VATOX : ADC pa_ptr : STA pa_ptr
           LDA #>VATOX : ADC pa_ptr+1 : STA pa_ptr+1
     LDY #0 : LDA (pa_ptr),Y          \ vatox[lo]
     SEC : SBC #1 : BCS il1 : LDA #0
 .il1
     STA bca_ilo
-    CLC : LDA bca_hi : ADC #<1024 : STA pa_ptr
-          LDA bca_hi+1 : ADC #>1024 : STA pa_ptr+1
+    CLC : LDA bca_hi : ADC #<512 : STA pa_ptr
+          LDA bca_hi+1 : ADC #>512 : STA pa_ptr+1
     CLC : LDA #<VATOX : ADC pa_ptr : STA pa_ptr
           LDA #>VATOX : ADC pa_ptr+1 : STA pa_ptr+1
     LDA (pa_ptr),Y                    \ vatox[hi]

@@ -15,15 +15,15 @@ mpu.memory[0xFF00] = 0x00  # BRK lands here -> we detect via PC
 
 
 def run(num, den):
-    mpu.memory[0x70] = num & 0xFF; mpu.memory[0x71] = (num >> 8) & 0xFF
-    mpu.memory[0x72] = den & 0xFF; mpu.memory[0x73] = (den >> 8) & 0xFF
+    mpu.memory[0x44] = num & 0xFF; mpu.memory[0x45] = (num >> 8) & 0xFF
+    mpu.memory[0x46] = den & 0xFF; mpu.memory[0x47] = (den >> 8) & 0xFF
     mpu.pc = 0xE940
     mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF  # RTS -> $0000
     steps = 0
     while mpu.pc != 0x0000 and steps < 2000:
         mpu.step(); steps += 1
-    return mpu.memory[0x74] | (mpu.memory[0x75] << 8)
+    return mpu.memory[0x48] | (mpu.memory[0x49] << 8)
 
 
 fails = 0
@@ -44,7 +44,7 @@ print(f"slope_div: checked {checked} (num,den) pairs, {fails} mismatches")
 for i in range(1024):
     v=A._tantoangle[i]
     mpu.memory[0xDC00 + i] = v & 0xFF
-    mpu.memory[0xEE00 + i] = (v >> 8) & 0xFF
+    mpu.memory[0xEF00 + i] = (v >> 8) & 0xFF
 PA = None
 out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-v'],
                      capture_output=True, text=True).stdout
@@ -58,14 +58,14 @@ def s16(v):
 
 
 def run_pa(dx, dy):
-    mpu.memory[0x78] = dx & 0xFF; mpu.memory[0x79] = (dx >> 8) & 0xFF
-    mpu.memory[0x7A] = dy & 0xFF; mpu.memory[0x7B] = (dy >> 8) & 0xFF
+    mpu.memory[0x30] = dx & 0xFF; mpu.memory[0x31] = (dx >> 8) & 0xFF
+    mpu.memory[0x32] = dy & 0xFF; mpu.memory[0x33] = (dy >> 8) & 0xFF
     mpu.pc = PA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 5000:
         mpu.step(); steps += 1
-    return mpu.memory[0x7C] | (mpu.memory[0x7D] << 8)
+    return mpu.memory[0x39] | (mpu.memory[0x3A] << 8)
 
 
 pafails = pachecked = 0
