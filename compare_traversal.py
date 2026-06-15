@@ -109,6 +109,11 @@ def trace_hybrid(px, py, ab):
 
     orig = dw.packed_render_subsector
     dw.packed_render_subsector = hybrid_ss
+    # Python side uses the SAME angle-space bbox visibility as the 6502, so the
+    # traversal stays pixel-exact (6502 br_bbox_visible -> bbox_check_angle).
+    orig_use, orig_ab = dw._USE_ANGLE_BBOX, dw._VIEW_AB
+    dw._USE_ANGLE_BBOX = True
+    dw._VIEW_AB = ab
     try:
         px_88 = int((px - dw.MAP_CENTER_X) * 256 / dw.PRESCALE)
         py_88 = int((py - dw.MAP_CENTER_Y) * 256 / dw.PRESCALE)
@@ -125,6 +130,7 @@ def trace_hybrid(px, py, ab):
                              ctx, vz, px, py, cos_f, sin_f, surf, p_ram)
     finally:
         dw.packed_render_subsector = orig
+        dw._USE_ANGLE_BBOX, dw._VIEW_AB = orig_use, orig_ab
     fb = bytes(sc.mpu.memory[0x5800:0x6C00])
     return trace, fb
 
