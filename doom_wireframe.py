@@ -1256,6 +1256,12 @@ def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
     return _bbox_screen_range(pts, FP_RENDER_W * 0.5, FP_FOCAL_X)
 
 
+# M1: when True, screen columns come from the DOOM-style angle table
+# (angle_bbox.view_col) instead of perspective fp_project_x. Set per run by
+# the validation harness; the seg path honours it too.
+_USE_ANGLE_COL = False
+
+
 def fp_bbox_visible_fixed(node, far_side, ctx):
     """Fixed-point bbox visibility — matches the 6502 native implementation.
 
@@ -1274,6 +1280,7 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
                          NEAR_FP as _NEAR, fp_to_view as _fp_to_view,
                          fp_recip as _fp_recip, fp_project_x as _fp_project_x,
                          m8 as _m8)
+    from angle_bbox import view_col as _view_col
     base = 4 + far_side * 4
     rt_raw, rb_raw, rl_raw, rr_raw = (
         node[base], node[base + 1], node[base + 2], node[base + 3])
@@ -1316,8 +1323,11 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
         vx0, vy0, vy_idx0 = pts[i]
         vx1, vy1, _ = pts[(i + 1) % 4]
         if vy0 >= _NEAR:
-            rxh, rxl = _fp_recip(vy_idx0)
-            sxs.append(_fp_project_x(vx0, rxh, rxl))
+            if _USE_ANGLE_COL:
+                sxs.append(_view_col(vx0, vy0))
+            else:
+                rxh, rxl = _fp_recip(vy_idx0)
+                sxs.append(_fp_project_x(vx0, rxh, rxl))
         # Edge crossing NEAR plane → project the crossing point at NEAR.
         if (vy0 < _NEAR) != (vy1 < _NEAR):
             dvy = vy1 - vy0
@@ -1326,11 +1336,14 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
                 t = ((_NEAR - vy0) << 8) // dvy
                 dvx = vx1 - vx0
                 cx = vx0 + _m8(t, dvx)
-                # 6502's use_ey1 path passes ey1 (=NEAR_FP) directly as a
-                # raw integer index with averaging flag = 0.  In fp_recip's
-                # 9.1 convention that's NEAR_FP << 1 (even → no averaging).
-                rxh, rxl = _fp_recip(_NEAR << 1)
-                sxs.append(_fp_project_x(cx, rxh, rxl))
+                if _USE_ANGLE_COL:
+                    sxs.append(_view_col(cx, _NEAR))
+                else:
+                    # 6502's use_ey1 path passes ey1 (=NEAR_FP) directly as a
+                    # raw integer index with averaging flag = 0.  In fp_recip's
+                    # 9.1 convention that's NEAR_FP << 1 (even → no averaging).
+                    rxh, rxl = _fp_recip(_NEAR << 1)
+                    sxs.append(_fp_project_x(cx, rxh, rxl))
 
     if not sxs:
         return None
@@ -1585,6 +1598,11 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         if ey2 == evy2:
             vcache[v2_idx] = vc2 + (sx2, rxh2, rxl2)
     vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
+
+    if _USE_ANGLE_COL:
+        from angle_bbox import view_col as _view_col
+        sx1 = _view_col(ex1, ey1)
+        sx2 = _view_col(ex2, ey2)
 
     x_lo = min(sx1, sx2)
     x_hi = max(sx1, sx2)
@@ -2090,6 +2108,11 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if ey2 == evy2:
             base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
             write_s16(ram, base + VC_SX, sx2)
+
+    if _USE_ANGLE_COL:
+        from angle_bbox import view_col as _view_col
+        sx1 = _view_col(ex1, ey1)
+        sx2 = _view_col(ex2, ey2)
 
     x_lo = min(sx1, sx2)
     x_hi = max(sx1, sx2)

@@ -77,6 +77,23 @@ def point_to_angle(dx, dy):
         else ANG270 - _tantoangle[slope_div(adx, ady)]
 
 
+def view_col(vx, vy):
+    """Screen column for a VIEW-SPACE point (vx sideways, vy forward).
+    Angle-table projection: phi = atan2(vx,vy) -> viewangletox. 0 muls, 1 divide.
+    Returns -1 (off left), 256 (off right), or an on-screen column [0,255].
+    Caller must have near-clipped (vy >= NEAR), so phi in (-90,+90)deg.
+    """
+    phi = point_to_angle(vy, vx)            # atan2(vx, vy) in fine units
+    if phi >= ANG180:
+        phi -= FINEANGLES
+    idx = phi + ANG90
+    if idx < 0:
+        return -1
+    if idx > ANG180:
+        return VIS_W
+    return (_vatox_lo[idx] + _vatox_hi[idx]) // 2
+
+
 def view_column(dx, dy, ab):
     """Conservative (lo,hi) screen-column bracket for world delta (dx,dy) at
     view angle byte ab, via world-angle minus view-angle. None if behind/outside.
