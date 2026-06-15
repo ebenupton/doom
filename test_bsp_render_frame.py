@@ -16,15 +16,15 @@ ENTRY_BR_VIEW_SETUP   = 0x4809
 ENTRY_BR_RENDER_FRAME = 0x4815
 
 # ROM/RAM offset slots
-ZP_ROM_VERTS_LO   = 0x40
+ZP_ROM_VERTS_LO   = 0x0BEC
 ZP_ROM_NODES_LO   = 0x42
-ZP_ROM_SS_LO      = 0x44
-ZP_ROM_SEG_HDR_LO = 0x46
-ZP_ROM_VWH_LO     = 0x48
-ZP_ROM_DETAIL_LO  = 0x4A
+ZP_ROM_SS_LO      = 0x0BF0
+ZP_ROM_SEG_HDR_LO = 0x0BF2
+ZP_ROM_VWH_LO     = 0x0BF4
+ZP_ROM_DETAIL_LO  = 0x0BF6
 ZP_ROOT_NODE_LO   = 0x4C
-ZP_ROM_FHCH_LO    = 0x30        # fh/ch table base
-ZP_ROM_BBOX_LO    = 0x32        # bbox table base (16B per node × 236 = 3776B)
+ZP_ROM_FHCH_LO    = 0x0BE8        # fh/ch table base
+ZP_ROM_BBOX_LO    = 0x0BEA        # bbox table base (16B per node × 236 = 3776B)
 
 # View context slots
 ZP_PX = 0x00; ZP_PY = 0x02

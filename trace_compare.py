@@ -56,14 +56,14 @@ def setup_wad(sc):
     def w16(addr_lo, val):
         mem[addr_lo]     = val & 0xFF
         mem[addr_lo + 1] = (val >> 8) & 0xFF
-    w16(0x40, ROM_MAIN_BASE + layout['off_verts'])
+    w16(0x0BEC, ROM_MAIN_BASE + layout['off_verts'])
     w16(0x42, ROM_MAIN_BASE + layout['off_nodes'])
-    w16(0x44, ROM_MAIN_BASE + layout['off_ss'])
-    w16(0x46, ROM_MAIN_BASE + layout['off_seg_hdr'])
-    w16(0x48, VWH_BASE)
-    w16(0x4A, ROM_DETAIL_BASE)
-    w16(0x30, ROM_FHCH_BASE)
-    w16(0x32, ROM_BBOX_BASE)
+    w16(0x0BF0, ROM_MAIN_BASE + layout['off_ss'])
+    w16(0x0BF2, ROM_MAIN_BASE + layout['off_seg_hdr'])
+    w16(0x0BF4, VWH_BASE)
+    w16(0x0BF6, ROM_DETAIL_BASE)
+    w16(0x0BE8, ROM_FHCH_BASE)
+    w16(0x0BEA, ROM_BBOX_BASE)
     w16(0x4C, layout['n_nodes'] - 1)
 
 

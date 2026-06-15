@@ -101,10 +101,10 @@ zp_seg_dxraw_hi   = $7D
 zp_seg_dyraw_lo   = $7E
 zp_seg_dyraw_hi   = $7F
 ; Frame ROM table base ptrs (Python wrapper writes once)
-zp_rom_fhch_lo    = $30
-zp_rom_fhch_hi    = $31
-zp_rom_bbox_lo    = $32
-zp_rom_bbox_hi    = $33
+zp_rom_fhch_lo    = $0BE8
+zp_rom_fhch_hi    = $0BE9
+zp_rom_bbox_lo    = $0BEA
+zp_rom_bbox_hi    = $0BEB
 ; Bbox routine arg
 zp_bbox_side      = $34
 
@@ -832,18 +832,18 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 ; ============================================================================
 ; ROM/RAM base addresses (Python wrapper writes these into ZP at frame start)
 ; ============================================================================
-zp_rom_verts_lo    = $40
-zp_rom_verts_hi    = $41
+zp_rom_verts_lo    = $0BEC
+zp_rom_verts_hi    = $0BED
 zp_rom_nodes_lo    = $42
 zp_rom_nodes_hi    = $43
-zp_rom_ss_lo       = $44
-zp_rom_ss_hi       = $45
-zp_rom_seg_hdr_lo  = $46
-zp_rom_seg_hdr_hi  = $47
-zp_rom_vwh_lo      = $48
-zp_rom_vwh_hi      = $49
-zp_rom_detail_lo   = $4A
-zp_rom_detail_hi   = $4B
+zp_rom_ss_lo       = $0BF0
+zp_rom_ss_hi       = $0BF1
+zp_rom_seg_hdr_lo  = $0BF2
+zp_rom_seg_hdr_hi  = $0BF3
+zp_rom_vwh_lo      = $0BF4
+zp_rom_vwh_hi      = $0BF5
+zp_rom_detail_lo   = $0BF6
+zp_rom_detail_hi   = $0BF7
 zp_root_node_lo    = $4C
 zp_root_node_hi    = $4D
 
