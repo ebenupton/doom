@@ -1058,14 +1058,16 @@ zp_seg_sy2_bbot_hi = SEG_PROJ_BUF + 15
 ; Always populated by br_seg_xform_vertex into "current" slots; the seg
 ; loop copies into v1/v2 slots so we have both vertices' values when
 ; computing the crossing point.
-zp_seg_cur_evy   = $0A50    ; rounded s8 view-y of just-processed vertex
-zp_seg_cur_evx   = $0A51    ; truncated s8 view-x
-zp_seg_v1_evy    = $0A52
-zp_seg_v1_evx    = $0A53
-zp_seg_v1_clipped = $0A54
-zp_seg_v2_evy    = $0A55
-zp_seg_v2_evx    = $0A56
-zp_seg_v2_clipped = $0A57
+; Hot per-vertex view coords promoted to real ZP (were $0A50.. absolute) —
+; safe-free ZP (0-access incl. rasteriser; not used by the angle module).
+zp_seg_cur_evy   = $D3      ; rounded s8 view-y of just-processed vertex
+zp_seg_cur_evx   = $D4      ; truncated s8 view-x
+zp_seg_v1_evy    = $D6
+zp_seg_v1_evx    = $DD
+zp_seg_v1_clipped = $E1
+zp_seg_v2_evy    = $E4
+zp_seg_v2_evx    = $8F
+zp_seg_v2_clipped = $9F
 ; cross_compute reads zp_seg_v{1,2}_{evy,evx} directly. Output:
 zp_clip_cx       = $0A5C    ; output: crossing-point view-x (s16 lo)
 zp_clip_cx_hi    = $0A5D    ; output: crossing-point view-x (s16 hi)
@@ -1282,9 +1284,14 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
 
     ; Read top, bot, left, right (s16 each, 8 bytes) into the angle box.
     LDY #7
-.bv_read
+    LDA (zp_br_p),Y : STA bca_top,Y : DEY    ; unrolled 8-byte box copy
+    LDA (zp_br_p),Y : STA bca_top,Y : DEY
+    LDA (zp_br_p),Y : STA bca_top,Y : DEY
+    LDA (zp_br_p),Y : STA bca_top,Y : DEY
+    LDA (zp_br_p),Y : STA bca_top,Y : DEY
+    LDA (zp_br_p),Y : STA bca_top,Y : DEY
+    LDA (zp_br_p),Y : STA bca_top,Y : DEY
     LDA (zp_br_p),Y : STA bca_top,Y
-    DEY : BPL bv_read
 
     ; --- Angle-space visibility (px=$01, py=$03, ab=$FA2F preset per frame) ---
     JSR BCA_CHECK
