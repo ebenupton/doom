@@ -159,12 +159,14 @@ bca_top  = $88        \ s16; bot $8A, left $8C, right $8E (contiguous = val[])
 bca_bot  = $8A
 bca_left = $8C
 bca_right = $8E
-bca_px   = $90        \ s8
-bca_py   = $91
-bca_ab   = $92
-bca_ilo  = $93
-bca_ihi  = $94
-bca_vis  = $95
+\ px/py aliased to the live renderer's player-int ZP (frame-persistent);
+\ ab + outputs in the BBOX-vars region the old br_bbox_visible freed.
+bca_px   = $01        \ zp_br_px_h (player int x, s8)
+bca_py   = $03        \ zp_br_py_h
+bca_ab   = $0960
+bca_ilo  = $0961
+bca_ihi  = $0962
+bca_vis  = $0963
 bca_afn  = $96        \ a_fine (s16)
 bca_pxs  = $98        \ px sign-extended (s16); py $9A
 bca_pys  = $9A

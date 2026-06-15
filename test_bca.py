@@ -28,15 +28,15 @@ def w16(addr, v):
 
 def run(top, bot, left, right, px, py, ab):
     w16(0x88, top); w16(0x8A, bot); w16(0x8C, left); w16(0x8E, right)
-    mpu.memory[0x90] = px & 0xFF; mpu.memory[0x91] = py & 0xFF
-    mpu.memory[0x92] = ab & 0xFF
+    mpu.memory[0x01] = px & 0xFF; mpu.memory[0x03] = py & 0xFF
+    mpu.memory[0x0960] = ab & 0xFF
     mpu.pc = BCA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 20000:
         mpu.step(); steps += 1
-    vis = mpu.memory[0x95]
-    return (mpu.memory[0x93], mpu.memory[0x94]) if vis else None
+    vis = mpu.memory[0x0963]
+    return (mpu.memory[0x0961], mpu.memory[0x0962]) if vis else None
 
 
 # sample boxes around the map, varied viewer positions/angles
