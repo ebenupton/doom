@@ -1080,10 +1080,10 @@ zp_fhch_p       = $98      ; persistent FHCH ptr (advances +6/seg)
 zp_fhch_p_h     = $99
 zp_pyc_idx      = $9A      ; projection-cache probe index (X save)
 ; Per-seg back-face / linedef state
-zp_seg_lv1x_lo  = $39
-zp_seg_lv1x_hi  = $3A
-zp_seg_lv1y_lo  = $3B
-zp_seg_lv1y_hi  = $3C
+zp_seg_lv1x_lo  = $0BF8
+zp_seg_lv1x_hi  = $0BF9
+zp_seg_lv1y_lo  = $0BFA
+zp_seg_lv1y_hi  = $0BFB
 zp_seg_ldx      = $3D      ; s8 linedef delta x
 zp_seg_ldy      = $3E      ; s8 linedef delta y
 zp_seg_flags    = $3F      ; u8
