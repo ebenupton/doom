@@ -5,11 +5,11 @@ import angle_bbox as A
 
 subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
                check=True, capture_output=True)
-code = open('slope_div.bin', 'rb').read()
+code = open('bsp_render_ang.bin', 'rb').read()
 
 mpu = MPU()
 for i, b in enumerate(code):
-    mpu.memory[0x2000 + i] = b
+    mpu.memory[0xE940 + i] = b
 mpu.memory[0xFFFE] = 0x00; mpu.memory[0xFFFF] = 0xFF  # IRQ vec sink
 mpu.memory[0xFF00] = 0x00  # BRK lands here -> we detect via PC
 
@@ -17,7 +17,7 @@ mpu.memory[0xFF00] = 0x00  # BRK lands here -> we detect via PC
 def run(num, den):
     mpu.memory[0x70] = num & 0xFF; mpu.memory[0x71] = (num >> 8) & 0xFF
     mpu.memory[0x72] = den & 0xFF; mpu.memory[0x73] = (den >> 8) & 0xFF
-    mpu.pc = 0x2000
+    mpu.pc = 0xE940
     mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF  # RTS -> $0000
     steps = 0
@@ -41,9 +41,10 @@ print(f"slope_div: checked {checked} (num,den) pairs, {fails} mismatches")
 
 # ---- point_to_angle ----
 # load tantoangle table: TA_LO=$3000, TA_HI=$3800 (1025 entries)
-for i, v in enumerate(A._tantoangle):
-    mpu.memory[0x3000 + i] = v & 0xFF
-    mpu.memory[0x3800 + i] = (v >> 8) & 0xFF
+for i in range(1024):
+    v=A._tantoangle[i]
+    mpu.memory[0xDC00 + i] = v & 0xFF
+    mpu.memory[0xEE00 + i] = (v >> 8) & 0xFF
 PA = None
 out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-v'],
                      capture_output=True, text=True).stdout

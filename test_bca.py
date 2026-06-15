@@ -7,18 +7,19 @@ subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
                check=True, capture_output=True)
 out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-v'],
                      capture_output=True, text=True).stdout
-BCA = int(re.search(r'\.bbox_check_angle\n\s+([0-9A-F]{4})', out).group(1), 16)
-code = open('slope_div.bin', 'rb').read()
+BCA = 0xE946
+code = open('bsp_render_ang.bin', 'rb').read()
 
 mpu = MPU()
 for i, b in enumerate(code):
-    mpu.memory[0x2000 + i] = b
-for i, v in enumerate(A._tantoangle):           # TA_LO $3000 / TA_HI $3800
-    mpu.memory[0x3000 + i] = v & 0xFF
-    mpu.memory[0x3800 + i] = (v >> 8) & 0xFF
+    mpu.memory[0xE940 + i] = b
+for i in range(1024):                            # TA_LO $DC00 / TA_HI $EE00
+    v = A._tantoangle[i]
+    mpu.memory[0xDC00 + i] = v & 0xFF
+    mpu.memory[0xEE00 + i] = (v >> 8) & 0xFF
 for idx in range(A.ANG180 + 1):                 # VATOX $4000 (centres, u8)
     c = (A._vatox_lo[idx] + A._vatox_hi[idx]) // 2
-    mpu.memory[0x4000 + idx] = max(0, min(255, c))
+    mpu.memory[0xF200 + idx] = max(0, min(255, c))
 
 
 def w16(addr, v):

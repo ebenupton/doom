@@ -14,7 +14,13 @@ sd_den = $72
 sd_q   = $74
 sd_r   = $76
 
-ORG $2000
+\ Integration build: loaded at $E940 (bsp_render_ang.bin). Tables: TA_LO in the
+\ reclaimed rotation-cache RAM ($DC00-$DFFF, 1024 entries), TA_HI/VATOX in the
+\ $E940 region after the code. Fixed entry jump table for bsp_render to call.
+ORG $E940
+    JMP slope_div            \ $E940
+    JMP point_to_angle       \ $E943
+    JMP bbox_check_angle     \ $E946
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -58,8 +64,8 @@ pa_sx  = $82
 pa_sy  = $83
 pa_oct = $84
 pa_ptr = $86          \ 16-bit table pointer
-TA_LO  = $3000        \ 1025 entries ($3000-$3400)
-TA_HI  = $3800        \ 1025 entries ($3800-$3C00)
+TA_LO  = $DC00        \ 1024 entries (reclaimed rotation-cache RAM)
+TA_HI  = $EE00        \ 1024 entries
 
 .point_to_angle
 {
@@ -104,7 +110,13 @@ TA_HI  = $3800        \ 1025 entries ($3800-$3C00)
     LDA pa_sy : ASL A : ORA pa_oct : STA pa_oct
     LDA pa_sx : ASL A : ASL A : ORA pa_oct : STA pa_oct
     JSR slope_div            \ -> sd_q (0..1024)
-    \ ta = tantoangle[sd_q] via 16-bit index (sd_q can be up to 1024)
+    \ tantoangle has 1024 entries (0..1023); the exact diagonal sd_q==1024
+    \ (hi byte == 4) maps to ANG45 = 512 directly (no table entry).
+    LDA sd_q+1 : CMP #4 : BNE pa_lookup
+    LDA #<512 : STA pa_res : LDA #>512 : STA pa_res+1
+    JMP comb
+.pa_lookup
+    \ ta = tantoangle[sd_q] via 16-bit index
     LDY #0
     CLC : LDA #<TA_LO : ADC sd_q : STA pa_ptr
           LDA #>TA_LO : ADC sd_q+1 : STA pa_ptr+1
@@ -167,7 +179,7 @@ t1       = $A9
 val_lo   = $AA
 val_hi   = $AB
 bca_ccsave = $AC
-VATOX    = $4000      \ viewangletox centres, u8, indexed by (phi+ANG90)
+VATOX    = $F200      \ viewangletox centres, u8
 
 .bbox_check_angle
 {
@@ -398,4 +410,4 @@ VATOX    = $4000      \ viewangletox centres, u8, indexed by (phi+ANG90)
     EQUB 2,0,3,1,  2,1,3,1,  2,1,3,0,  0,0,0,0
 
 .end
-SAVE "slope_div.bin", $2000, end, $2000
+SAVE "bsp_render_ang.bin", $E940, end, $E940
