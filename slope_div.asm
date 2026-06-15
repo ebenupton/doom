@@ -151,13 +151,14 @@ TA_HI  = $EF00        \ 1024 entries ($EF00-$F2FF, after code; recip owns $E000)
     LDA #<512 : STA pa_res : LDA #>512 : STA pa_res+1
     JMP comb
 .pa_lookup
-    \ ta = tantoangle[sd_q] via 16-bit index
+    \ ta = tantoangle[sd_q] via 16-bit index. TA_HI = TA_LO + (TA_HI-TA_LO),
+    \ so reach the hi-byte table by adding the page delta to the pointer high
+    \ byte instead of recomputing the whole pointer.
     LDY #0
     CLC : LDA #<TA_LO : ADC sd_q : STA pa_ptr
           LDA #>TA_LO : ADC sd_q+1 : STA pa_ptr+1
     LDA (pa_ptr),Y : STA pa_res
-    CLC : LDA #<TA_HI : ADC sd_q : STA pa_ptr
-          LDA #>TA_HI : ADC sd_q+1 : STA pa_ptr+1
+    LDA pa_ptr+1 : CLC : ADC #(>TA_HI - >TA_LO) : STA pa_ptr+1
     LDA (pa_ptr),Y : STA pa_res+1
 .comb
     \ res = base[oct] +/- ta  (& MASK)
@@ -203,14 +204,16 @@ bca_ilo  = $FA30
 bca_ihi  = $FA31
 bca_vis  = $FA32
 bca_afn  = $FA18        \ a_fine (s16)
-bca_pxs  = $FA1A        \ px sign-extended (s16); py $9A
-bca_pys  = $FA1C
-bca_p1   = $FA1E        \ phi1 (s16); phi2 $9E
-bca_p2   = $FA20
-bca_lo   = $FA22        \ lo_phi (s16); hi_phi $A2
-bca_hi   = $FA24
-bca_cx   = $FA26        \ corner x (s16); cy $A6
-bca_cy   = $FA28
+bca_p1   = $FA1E        \ phi1 (s16)
+bca_p2   = $FA20        \ phi2 (s16)
+bca_cy   = $FA28        \ corner y (s16)
+\ Hottest body vars in spare scavenged ZP (conflict-free) to cut the
+\ absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
+bca_lo   = $1E          \ lo_phi (s16)
+bca_hi   = $8B          \ hi_phi (s16)
+bca_pxs  = $8D          \ px sign-extended (s16)
+bca_pys  = $9B          \ py sign-extended (s16)
+bca_cx   = $9D          \ corner x (s16)
 t0       = $FA2A
 t1       = $FA2B
 val_lo   = $FA2C
