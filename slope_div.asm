@@ -113,8 +113,8 @@ ORG $E940
 pa_dx  = $30          \ s16 in
 pa_dy  = $32          \ s16 in
 pa_res = $39          \ u16 out (fineangle)
-pa_adx = $3B
-pa_ady = $71
+\ ($3B/$3C, $71/$72 freed: abs now writes the divide operands directly --
+\  reused below for bca_afn / bca_cy)
 pa_sx  = $73
 pa_sy  = $89
 pa_oct = $8A
@@ -127,37 +127,36 @@ TA_HI  = $EF00        \ 1024 entries ($EF00-$F2FF, after code; recip owns $E000)
     LDA pa_dx : ORA pa_dx+1 : ORA pa_dy : ORA pa_dy+1 : BNE nz
     LDA #0 : STA pa_res : STA pa_res+1 : RTS
 .nz
-    \ adx = |dx|, sx = (dx<0)
+    \ |dx| -> sd_num, sx = (dx<0)  (abs written straight to the divide operands;
+    \ if |dx|>|dy| we swap below so sd_num=min, sd_den=max -- no separate copy).
     LDA #0 : STA pa_sx
     LDA pa_dx+1 : BPL dxp
     INC pa_sx
-    LDA #0 : SEC : SBC pa_dx : STA pa_adx
-    LDA #0 :       SBC pa_dx+1 : STA pa_adx+1 : JMP dxd
+    LDA #0 : SEC : SBC pa_dx : STA sd_num
+    LDA #0 :       SBC pa_dx+1 : STA sd_num+1 : JMP dxd
 .dxp
-    LDA pa_dx : STA pa_adx : LDA pa_dx+1 : STA pa_adx+1
+    LDA pa_dx : STA sd_num : LDA pa_dx+1 : STA sd_num+1
 .dxd
-    \ ady = |dy|, sy = (dy<0)
+    \ |dy| -> sd_den, sy = (dy<0)
     LDA #0 : STA pa_sy
     LDA pa_dy+1 : BPL dyp
     INC pa_sy
-    LDA #0 : SEC : SBC pa_dy : STA pa_ady
-    LDA #0 :       SBC pa_dy+1 : STA pa_ady+1 : JMP dyd
+    LDA #0 : SEC : SBC pa_dy : STA sd_den
+    LDA #0 :       SBC pa_dy+1 : STA sd_den+1 : JMP dyd
 .dyp
-    LDA pa_dy : STA pa_ady : LDA pa_dy+1 : STA pa_ady+1
+    LDA pa_dy : STA sd_den : LDA pa_dy+1 : STA sd_den+1
 .dyd
-    \ axgt = (adx > ady) ; num=min, den=max
-    LDA pa_ady+1 : CMP pa_adx+1 : BCC axgt   \ ady<adx -> adx>ady
+    \ axgt = (|dx| > |dy|): now sd_num=|dx|, sd_den=|dy|.
+    LDA sd_den+1 : CMP sd_num+1 : BCC axgt   \ |dy|<|dx| -> |dx|>|dy|
     BNE axle
-    LDA pa_ady   : CMP pa_adx   : BCS axle    \ ady>=adx -> not axgt
+    LDA sd_den   : CMP sd_num   : BCS axle    \ |dy|>=|dx| -> not axgt
 .axgt
-    \ adx > ady : num=ady, den=adx, axgt bit=1
-    LDA pa_ady : STA sd_num : LDA pa_ady+1 : STA sd_num+1
-    LDA pa_adx : STA sd_den : LDA pa_adx+1 : STA sd_den+1
+    \ |dx| > |dy|: swap so sd_num=|dy|(min), sd_den=|dx|(max); axgt bit=1
+    LDA sd_num   : LDX sd_den   : STA sd_den   : STX sd_num
+    LDA sd_num+1 : LDX sd_den+1 : STA sd_den+1 : STX sd_num+1
     LDA #1 : JMP haveax
 .axle
-    \ adx <= ady : num=adx, den=ady, axgt bit=0
-    LDA pa_adx : STA sd_num : LDA pa_adx+1 : STA sd_num+1
-    LDA pa_ady : STA sd_den : LDA pa_ady+1 : STA sd_den+1
+    \ |dx| <= |dy|: sd_num=|dx|(min), sd_den=|dy|(max) already; axgt bit=0
     LDA #0
 .haveax
     \ oct = (sx<<2)|(sy<<1)|axgt
@@ -223,10 +222,10 @@ bca_ab   = $FA2F
 bca_ilo  = $FA30
 bca_ihi  = $FA31
 bca_vis  = $FA32
-bca_afn  = $FA18        \ a_fine (s16)
+bca_afn  = $3B          \ a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi
+bca_cy   = $71          \ corner y (s16) -- ZP (freed from pa_ady); hot in corner_phi
 bca_p1   = $FA1E        \ phi1 (s16)
 bca_p2   = $FA20        \ phi2 (s16)
-bca_cy   = $FA28        \ corner y (s16)
 \ Hottest body vars in spare scavenged ZP (conflict-free) to cut the
 \ absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 bca_lo   = $1E          \ lo_phi (s16)
