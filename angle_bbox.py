@@ -99,9 +99,11 @@ def _phi(cx, cy, px, py, a_fine):
 
 
 def _phi_col(phi):
-    """viewangletox centre column for an in-FOV signed phi."""
+    """viewangletox centre column for an in-FOV signed phi, clamped to u8
+    (the 6502 viewangletox table stores columns as bytes)."""
     idx = phi + ANG90
-    return (_vatox_lo[idx] + _vatox_hi[idx]) // 2
+    c = (_vatox_lo[idx] + _vatox_hi[idx]) // 2
+    return 0 if c < 0 else (255 if c > 255 else c)
 
 
 def bbox_check_angle(top, bot, left, right, px, py, ab):
