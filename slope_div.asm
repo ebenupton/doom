@@ -161,18 +161,18 @@ TA_HI  = $EF00        \ 1024 entries ($EF00-$F2FF, after code; recip owns $E000)
     LDA pa_ptr+1 : CLC : ADC #(>TA_HI - >TA_LO) : STA pa_ptr+1
     LDA (pa_ptr),Y : STA pa_res+1
 .comb
-    \ res = base[oct] +/- ta  (& MASK)
+    \ res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
+    \ (0/1024/2048/3072), so base_lo is always 0.
     LDX pa_oct
     LDA pa_sign,X : BMI sub
-    \ add: res = base + ta
+    \ add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0
     CLC
-    LDA pa_base_lo,X : ADC pa_res   : STA pa_res
     LDA pa_base_hi,X : ADC pa_res+1 : STA pa_res+1
     JMP mask
 .sub
-    \ res = base - ta
+    \ sub: res = base - ta ; base_lo = 0
     SEC
-    LDA pa_base_lo,X : SBC pa_res   : STA pa_res
+    LDA #0           : SBC pa_res   : STA pa_res
     LDA pa_base_hi,X : SBC pa_res+1 : STA pa_res+1
 .mask
     LDA pa_res+1 : AND #$0F : STA pa_res+1     \ & 4095
@@ -237,12 +237,10 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
     \ inside test: left<=px<=right and bot<=py<=top  -> full (0,255)
     \ left<=px : px-left >= 0
     JSR ins_test
-    \ a_fine = ab << 4
-    LDA bca_ab : STA bca_afn : LDA #0 : STA bca_afn+1
-    ASL bca_afn : ROL bca_afn+1
-    ASL bca_afn : ROL bca_afn+1
-    ASL bca_afn : ROL bca_afn+1
-    ASL bca_afn : ROL bca_afn+1
+    \ a_fine = ab << 4 (ab is u8): low = (ab<<4)&FF, high = ab>>4. Nibble
+    \ shifts in the register beat 8 absolute read-modify-write shifts.
+    LDA bca_ab : LSR A : LSR A : LSR A : LSR A : STA bca_afn+1
+    LDA bca_ab : ASL A : ASL A : ASL A : ASL A : STA bca_afn
     \ boxx/boxy -> boxpos -> checkcoord
     JSR box_pos               \ -> X = boxpos
     \ cc = checkcoord + boxpos*4
