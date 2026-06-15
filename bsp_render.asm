@@ -1935,15 +1935,9 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     CLC
     LDA #<VCACHE_VALID_BASE : ADC zp_br_t2 : STA zp_br_p
     LDA #>VCACHE_VALID_BASE : ADC zp_br_t3 : STA zp_br_p_h
-    ; bit mask = 1 << (idx_lo & 7)
+    ; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
     LDA zp_br_t0 : AND #7 : TAX
-    LDA #1
-.vc_bitm
-    DEX : BMI vc_bitm_done
-    ASL A
-    JMP vc_bitm
-.vc_bitm_done
-    STA zp_seg_v_bitm
+    LDA vc_bit_mask,X : STA zp_seg_v_bitm
     LDY #0 : LDA (zp_br_p),Y : AND zp_seg_v_bitm : BNE vc_hit
     JMP vc_miss
 
@@ -2140,6 +2134,9 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     EQUB 0, 6, 6, 0
 .bv_cv_dyo
     EQUB 12, 12, 18, 18
+
+.vc_bit_mask
+    EQUB 1, 2, 4, 8, 16, 32, 64, 128   ; 1 << (idx & 7) for the vertex cache
 
 .end_code
 ASSERT end_code <= $5800
