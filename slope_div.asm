@@ -32,6 +32,25 @@ ORG $E940
     LDA #>1024 : STA sd_q+1
     RTS
 .lt
+    \ 98% of divides have den < 256 (so num < den < 256). Take an 8-bit
+    \ restoring-divide fast path: r stays < den < 256, so r's high byte is
+    \ never needed. Bit-identical result to the 16-bit loop below.
+    LDA sd_den+1 : BNE slow
+    LDA sd_num : STA sd_r             \ r = num (u8)
+    LDA #0 : STA sd_q : STA sd_q+1
+    LDX #10
+.floop
+    ASL sd_q : ROL sd_q+1            \ q <<= 1 (bit0 = 0) FIRST, so the ASL
+    ASL sd_r                          \ r <<= 1 ; C = bit8 (2r >= 256) survives
+    BCS fsub                          \ 2r >= 256 > den -> subtract
+    LDA sd_r : CMP sd_den : BCC fno   \ else if r >= den
+.fsub
+    LDA sd_r : SEC : SBC sd_den : STA sd_r
+    INC sd_q                          \ q |= 1
+.fno
+    DEX : BNE floop
+    RTS
+.slow
     LDA sd_num   : STA sd_r
     LDA sd_num+1 : STA sd_r+1
     LDA #0 : STA sd_q : STA sd_q+1
