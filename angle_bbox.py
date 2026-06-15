@@ -12,14 +12,16 @@ perspective extent — has_gap can only over-descend, never under-cull.
 """
 import math
 
-FINEANGLES = 8192
+# FINEANGLES sized for the 6502 table budget (~4.6 KB free at $E93A+):
+#   viewangletox = ANG180+1 bytes (~2 KB), tantoangle = SLOPERANGE+1 entries.
+FINEANGLES = 4096
 ANGMASK = FINEANGLES - 1
-ANG45 = FINEANGLES // 8      # 1024
-ANG90 = FINEANGLES // 4      # 2048
+ANG45 = FINEANGLES // 8      # 512
+ANG90 = FINEANGLES // 4      # 1024
 ANG180 = FINEANGLES // 2
 ANG270 = 3 * ANG90
-SLOPERANGE = 2048
-SLOPEBITS = 11
+SLOPERANGE = 1024
+SLOPEBITS = 10
 
 HALF_W = 128
 FOCAL = 128
