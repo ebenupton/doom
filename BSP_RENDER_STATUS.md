@@ -214,6 +214,56 @@ for in-frustum children (the corner-view cache was the obvious attempt
 and didn't pay — would need a different formulation); (3) the clipped
 renderer / rasteriser are already small (15% combined).
 
+## Angle-space pipeline conversion (in progress)
+
+Decision (user): convert the whole projection from perspective (rotation +
+recip + project_x) to DOOM-style **angle space** — bbox *and* segs — re-based
+for correctness against the **float reference** within ±1 column, not against
+the current perspective renderer. Motivation: angle space folds the rotation
+into an angle subtract and replaces per-corner projection multiplies with a
+single divide + table lookups. Per corner/vertex: **0 muls, 1 divide,
+depth ~2** vs perspective's rotation (≤8 muls) + project_x (2–5 muls).
+
+Why it is correct (not just cheaper): validated (`validate_angle.py`) that the
+angle column tracks the **true float projection within ±1 col for 100%** of
+934k sampled points, *including near-plane*. The current perspective `sx`
+(128·vx/vy) is the one that misbehaves at small vy (diverges up to 19 col);
+angle space (`atan2`) is well-conditioned everywhere — it is the *more*
+faithful basis.
+
+Module `angle_bbox.py` (Python prototype, validated): `point_to_angle`
+(octant + `SlopeDiv` + `tantoangle`), `viewangletox` conservative bracket,
+`view_col(vx,vy)` (column from view coords), `bbox_check_angle` (DOOM
+`checkcoord` 2-corner, rotation-free). FINEANGLES=8192, ANG45=1024 (90° FOV),
+SLOPERANGE=2048. φ-convention: φ = view_angle − atan2(dy,dx), φ>0 = right.
+
+Milestones (Python-first behind `doom_wireframe._USE_ANGLE_COL` /
+`_USE_ANGLE_BBOX`, default False so the perspective path + all 0px tests are
+untouched — `compare_traversal` still 10/10):
+- **Foundation** ✅ angle column ≈ float ±1 (validated).
+- **M1** ✅ angle column for bbox + segs (`view_col`). Faithful vs perspective
+  (`compare_angle_frames.py`): lit-pixel counts within 0.6%, line counts
+  within 1.4%, 87% of submitted lines within 2px; residual ~8% is
+  clip-boundary re-fragmentation from sub-pixel shifts (same pixels), not
+  breakage.
+- **M2 (bbox)** ✅ `bbox_check_angle` — rotation-free, 2 silhouette corners,
+  0 muls + 2 divides. Produces **identical visit decisions** to the
+  rotation-based bbox (same 352/357 line numbers as M1). (A first
+  convention bug — DOOM angle sign opposite to `view_col` → mirrored columns
+  → 43% over-cull — was caught by the harness and fixed before commit.)
+- **M2 (seg)** ⏳ drop the seg rotation: column from world-delta angle, depth
+  via `point_to_dist`/`finecosine` (or a 2-term vy), near-plane handled by
+  DOOM-style angle-span clip (R_AddLine). The harder remaining Python piece.
+- **M3 (6502)** ⏳ port: `tantoangle`/`viewangletox` tables into the image,
+  `SlopeDiv` (a u≤24/u8 divide), `point_to_angle`, `checkcoord`, replace
+  bbox + seg projection; validate 6502 == angle-Python, measure cycles;
+  retire the rotation-product cache (bbox no longer rotates) and recip's X
+  role. Validated Python angle path is the spec.
+
+Validation harnesses: `validate_angle.py` (angle vs float vs perspective at
+the column level), `compare_angle_frames.py` (full-frame submitted-line diff,
+angle vs perspective; the "did angle-space break Python?" check).
+
 ## Test set
 
 Profiling/exactness suites use **off-axis** view angles only. Cardinal
