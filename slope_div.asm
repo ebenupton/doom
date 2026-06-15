@@ -36,31 +36,31 @@ ORG $E940
     \ restoring-divide fast path: r stays < den < 256, so r's high byte is
     \ never needed. Bit-identical result to the 16-bit loop below.
     LDA sd_den+1 : BNE slow
-    LDA sd_num : STA sd_r             \ r = num (u8)
     LDA #0 : STA sd_q : STA sd_q+1
+    LDA sd_num                        \ remainder r lives in A throughout
     \ The quotient is <= 1024 (11 bits). After 8 iterations q holds the top 8
-    \ bits (value quotient>>2 <= 255), so the high byte is only needed for the
-    \ last 2 iterations. Phase A shifts only the low byte; phase B shifts both.
-    \ Each iteration folds the quotient bit straight into q via the carry
-    \ (carry = "r >= den"), so no separate INC.
+    \ bits (quotient>>2 <= 255), so q's high byte is only needed for the last 2
+    \ iterations: phase A shifts only the low byte, phase B shifts both. Each
+    \ iteration folds the quotient bit (carry = "2r >= den") into q via ROL, so
+    \ no INC; r stays in A so the shift/compare/subtract avoid load/store.
     LDX #8
 .fa
-    ASL sd_r                          \ r <<= 1 ; C = bit8 (2r >= 256)
-    BCS fa_sub                        \ 2r >= 256 > den -> subtract, qbit=1
-    LDA sd_r : CMP sd_den : BCC fa_q  \ C = (r >= den) = qbit
+    ASL A                             \ r <<= 1 ; C = bit8 (2r >= 256)
+    BCS fa_sub                        \ 2r >= 256 > den -> subtract (C=1), qbit=1
+    CMP sd_den : BCC fa_q             \ C = (r >= den) = qbit
 .fa_sub
-    LDA sd_r : SEC : SBC sd_den : STA sd_r
+    SBC sd_den                        \ A = r - den   (C=1 here -> no borrow)
     SEC                               \ qbit = 1
 .fa_q
     ROL sd_q                          \ shift qbit (carry) into q (low byte only)
     DEX : BNE fa
     LDX #2
 .fb
-    ASL sd_r
+    ASL A
     BCS fb_sub
-    LDA sd_r : CMP sd_den : BCC fb_q
+    CMP sd_den : BCC fb_q
 .fb_sub
-    LDA sd_r : SEC : SBC sd_den : STA sd_r
+    SBC sd_den
     SEC
 .fb_q
     ROL sd_q : ROL sd_q+1            \ now q needs both bytes
