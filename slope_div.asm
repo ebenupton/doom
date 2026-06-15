@@ -247,15 +247,16 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
     JSR box_pos               \ -> X = boxpos
     \ cc = checkcoord + boxpos*4
     TXA : ASL A : ASL A : TAX
-    \ corner1 = (val[cc0], val[cc1])
-    LDY bca_cc,X : JSR load_val : LDA val_lo : STA bca_cx : LDA val_hi : STA bca_cx+1
-    LDY bca_cc+1,X : JSR load_val : LDA val_lo : STA bca_cy : LDA val_hi : STA bca_cy+1
+    \ corner1 = (val[cc0], val[cc1]); load_val inlined -> cx/cy directly
+    \ (Y = val index*2 into the box at bca_top; X unchanged by the load).
+    LDY bca_cc,X   : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cx : LDA bca_top+1,Y : STA bca_cx+1
+    LDY bca_cc+1,X : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cy : LDA bca_top+1,Y : STA bca_cy+1
     STX bca_ccsave
     JSR corner_phi : LDA pa_res : STA bca_p1 : LDA pa_res+1 : STA bca_p1+1
     LDX bca_ccsave
-    LDY bca_cc+2,X : JSR load_val : LDA val_lo : STA bca_cx : LDA val_hi : STA bca_cx+1
-    LDX bca_ccsave
-    LDY bca_cc+3,X : JSR load_val : LDA val_lo : STA bca_cy : LDA val_hi : STA bca_cy+1
+    \ corner2 = (val[cc2], val[cc3])
+    LDY bca_cc+2,X : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cx : LDA bca_top+1,Y : STA bca_cx+1
+    LDY bca_cc+3,X : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cy : LDA bca_top+1,Y : STA bca_cy+1
     JSR corner_phi : LDA pa_res : STA bca_p2 : LDA pa_res+1 : STA bca_p2+1
     \ lo/hi = sorted(p1,p2)  (SIGNED s16 compare: p1-p2 < 0 -> p1 is lo)
     SEC : LDA bca_p1 : SBC bca_p2 : LDA bca_p1+1 : SBC bca_p2+1
@@ -299,18 +300,16 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
     \ VATOX holds only the used range (phi in [-512,512] -> index [0,1024]),
     \ so the bias is +512 (not +1024); upper half of the angle range is
     \ never reached after clamp_lohi.
-    CLC : LDA bca_lo : ADC #<512 : STA pa_ptr
-          LDA bca_lo+1 : ADC #>512 : STA pa_ptr+1
-    CLC : LDA #<VATOX : ADC pa_ptr : STA pa_ptr
-          LDA #>VATOX : ADC pa_ptr+1 : STA pa_ptr+1
+    \ address = (VATOX+512) + lo : fold the +512 bias into the base so it's a
+    \ single add (lo is signed s16; two's-complement add lands in range).
+    CLC : LDA #<(VATOX+512) : ADC bca_lo   : STA pa_ptr
+          LDA #>(VATOX+512) : ADC bca_lo+1 : STA pa_ptr+1
     LDY #0 : LDA (pa_ptr),Y          \ vatox[lo]
     SEC : SBC #1 : BCS il1 : LDA #0
 .il1
     STA bca_ilo
-    CLC : LDA bca_hi : ADC #<512 : STA pa_ptr
-          LDA bca_hi+1 : ADC #>512 : STA pa_ptr+1
-    CLC : LDA #<VATOX : ADC pa_ptr : STA pa_ptr
-          LDA #>VATOX : ADC pa_ptr+1 : STA pa_ptr+1
+    CLC : LDA #<(VATOX+512) : ADC bca_hi   : STA pa_ptr
+          LDA #>(VATOX+512) : ADC bca_hi+1 : STA pa_ptr+1
     LDA (pa_ptr),Y                    \ vatox[hi]
     CLC : ADC #1 : BCC ih1 : LDA #255
 .ih1
