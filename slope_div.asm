@@ -38,17 +38,33 @@ ORG $E940
     LDA sd_den+1 : BNE slow
     LDA sd_num : STA sd_r             \ r = num (u8)
     LDA #0 : STA sd_q : STA sd_q+1
-    LDX #10
-.floop
-    ASL sd_q : ROL sd_q+1            \ q <<= 1 (bit0 = 0) FIRST, so the ASL
-    ASL sd_r                          \ r <<= 1 ; C = bit8 (2r >= 256) survives
-    BCS fsub                          \ 2r >= 256 > den -> subtract
-    LDA sd_r : CMP sd_den : BCC fno   \ else if r >= den
-.fsub
+    \ The quotient is <= 1024 (11 bits). After 8 iterations q holds the top 8
+    \ bits (value quotient>>2 <= 255), so the high byte is only needed for the
+    \ last 2 iterations. Phase A shifts only the low byte; phase B shifts both.
+    \ Each iteration folds the quotient bit straight into q via the carry
+    \ (carry = "r >= den"), so no separate INC.
+    LDX #8
+.fa
+    ASL sd_r                          \ r <<= 1 ; C = bit8 (2r >= 256)
+    BCS fa_sub                        \ 2r >= 256 > den -> subtract, qbit=1
+    LDA sd_r : CMP sd_den : BCC fa_q  \ C = (r >= den) = qbit
+.fa_sub
     LDA sd_r : SEC : SBC sd_den : STA sd_r
-    INC sd_q                          \ q |= 1
-.fno
-    DEX : BNE floop
+    SEC                               \ qbit = 1
+.fa_q
+    ROL sd_q                          \ shift qbit (carry) into q (low byte only)
+    DEX : BNE fa
+    LDX #2
+.fb
+    ASL sd_r
+    BCS fb_sub
+    LDA sd_r : CMP sd_den : BCC fb_q
+.fb_sub
+    LDA sd_r : SEC : SBC sd_den : STA sd_r
+    SEC
+.fb_q
+    ROL sd_q : ROL sd_q+1            \ now q needs both bytes
+    DEX : BNE fb
     RTS
 .slow
     LDA sd_num   : STA sd_r
