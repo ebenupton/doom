@@ -38,53 +38,36 @@ ORG $E940
     \ is only needed for the last 2 iterations -- phase A shifts the low byte
     \ only, phase B both. The quotient bit (carry = "2r >= den") is folded into
     \ q via ROL, so no INC.
-    LDA sd_den+1 : BNE slow
+    LDA sd_den+1 : BEQ den_fits : JMP slow   \ (trampoline: .slow now >127 away)
+.den_fits
     LDA #0 : STA sd_q : STA sd_q+1
     \ Second operand leading zero: if den < 128 too, then 2r < 256 always, so
     \ the bit-8 overflow case can't happen -- drop the BCS test and the SEC
     \ fixup (the SBC after CMP-ge already leaves carry set). 69% of divides.
     LDA sd_den : BMI hi128
+    \ Unrolled (no DEX:BNE). BCC P%+4 skips the 2-byte SBC with no label.
     LDA sd_num                        \ r in A
-    LDX #8
-.fa7
-    ASL A : CMP sd_den : BCC fa7_q    \ 2r < 256; C = (2r >= den) = qbit
-    SBC sd_den                        \ A = 2r - den ; carry stays set
-.fa7_q
+    FOR i,1,8                         \ phase A: low byte of q only
+    ASL A : CMP sd_den : BCC P%+4 : SBC sd_den
     ROL sd_q
-    DEX : BNE fa7
-    LDX #2
-.fb7
-    ASL A : CMP sd_den : BCC fb7_q
-    SBC sd_den
-.fb7_q
+    NEXT
+    FOR i,1,2                         \ phase B: both bytes of q
+    ASL A : CMP sd_den : BCC P%+4 : SBC sd_den
     ROL sd_q : ROL sd_q+1
-    DEX : BNE fb7
+    NEXT
     RTS
 .hi128
-    \ 128 <= den < 256: 2r can reach 9 bits, so keep the overflow handling.
+    \ 128 <= den < 256: 2r can reach 9 bits, keep overflow handling. Unrolled:
+    \ BCS P%+6 -> SBC (overflow, qbit=1); BCC P%+5 -> ROL (r<den, qbit=0).
     LDA sd_num                        \ remainder r lives in A throughout
-    LDX #8
-.fa
-    ASL A                             \ r <<= 1 ; C = bit8 (2r >= 256)
-    BCS fa_sub                        \ 2r >= 256 > den -> subtract (C=1), qbit=1
-    CMP sd_den : BCC fa_q             \ C = (r >= den) = qbit
-.fa_sub
-    SBC sd_den                        \ A = r - den   (C=1 here -> no borrow)
-    SEC                               \ qbit = 1
-.fa_q
-    ROL sd_q                          \ shift qbit (carry) into q (low byte only)
-    DEX : BNE fa
-    LDX #2
-.fb
-    ASL A
-    BCS fb_sub
-    CMP sd_den : BCC fb_q
-.fb_sub
-    SBC sd_den
-    SEC
-.fb_q
-    ROL sd_q : ROL sd_q+1            \ now q needs both bytes
-    DEX : BNE fb
+    FOR i,1,8
+    ASL A : BCS P%+6 : CMP sd_den : BCC P%+5 : SBC sd_den : SEC
+    ROL sd_q
+    NEXT
+    FOR i,1,2
+    ASL A : BCS P%+6 : CMP sd_den : BCC P%+5 : SBC sd_den : SEC
+    ROL sd_q : ROL sd_q+1
+    NEXT
     RTS
 .slow
     LDA sd_num   : STA sd_r
