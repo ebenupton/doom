@@ -80,6 +80,26 @@ Status (2026-06-16): math fully validated; bit-exact reference module built.
      default path stays green; then 6502 (bsp_render.asm br_render_subsector /
      br_seg_xform_vertex / br_project_*); then a new pixel-exact 6502-2b vs
      Python-2b check in run_regression. compare_traversal must stay green.
+   PYTHON SIDE: **DONE** (2026-06-16). packed_render_seg branches on
+   _USE_ANGLE_SEG: 2b computes (sx,depth) via angle_seg.seg_2b (== the 6502
+   seg_c+seg_project), Y via _AS.proj_y(h,depth,vz) (== proj_yd); vwh/vcache
+   fast-paths bypassed (ey!=evy) since depth is per-seg-endpoint. Recip lines
+   gated. Harness must set _VIEW_AB=ab per frame. Flag-OFF path byte-identical
+   (full regression green). VALIDATED flag-ON across 10 ref frames:
+   - in-FOV segs match the fp perspective within ~2-3 col; the offset is the
+     fp recip/rotation QUANTISATION error -- 2b matches ideal-perspective
+     columns exactly (VATOX centre == 128+128*tan(phi)) and is MORE accurate
+     than the fp path (earlier: 99.4% vs 42.6% within 1col of true).
+   - all culls (seg_2b->None) are segs the fp path ALSO discards (off-screen
+     or back-face) -- NO visible wall dropped.
+   - FOV-crossing endpoints clamp to the FOV-edge column (DOOM-correct;
+     clamped-endpoint Y validated 0.000px in validate_2b).
+   So the 2b frame legitimately differs from the old perspective frame (~2px
+   on every wall, 2b being the more accurate one) -- this is the projection
+   change, not a bug. The binding contract is 6502-2b == Python-2b (pending
+   the 6502 seg-loop integration).
+   REMAINING: 6502 seg-loop integration + na/L ROM table + pixel-exact
+   6502-2b vs Python-2b regression.
 5. Integrate into the seg loop replacing rotation/project_x/project_y; the
    clip/draw/aperture interface is unchanged (feed sx/yt/yb as today). Two-sided
    + aperture heights all project via proj_y(h,depth).

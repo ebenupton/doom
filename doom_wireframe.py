@@ -1265,8 +1265,11 @@ _USE_ANGLE_COL = False
 _USE_ANGLE_BBOX = False
 _VIEW_AB = 0
 # Option 2b: full angle-space SEG (no per-vertex rotation). X from world angle,
-# Y from wall-distance scale. Reference path in packed_render_seg.
+# Y from wall-distance scale. Reference path in packed_render_seg. Mirrors the
+# 6502 seg_c/seg_project pipeline exactly (angle_seg.py is the shared math).
 _USE_ANGLE_SEG = False
+_seg2b_stats = {'cull': 0, 'segs': 0}   # diagnostics; no silent fallback
+_seg2b_debug = None                     # {si: (sx1, sx2)} capture for debugging
 
 
 def fp_bbox_visible_fixed(node, far_side, ctx):
@@ -2052,81 +2055,105 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     wx2 = read_s16(rom, verts_off + v2_idx * VERTEX_SIZE)
     wy2 = read_s16(rom, verts_off + v2_idx * VERTEX_SIZE + 2)
 
-    # ── View transform with RAM vcache ──
-    fp_module.mul_cat("view")
-    vc1 = _packed_read_vcache(ram, v1_idx)
-    if vc1 is None:
-        result = fp_to_view(wx1, wy1, ctx)
-        evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
-        _packed_write_vcache(ram, v1_idx, evx1_t, fvx1, evy1, vy_idx1, 0)
-        _vc1_has_sx = False
+    if _USE_ANGLE_SEG:
+        # ── Angle-space 2b projection (mirrors 6502 seg_c + seg_project) ──
+        _seg2b_stats['segs'] += 1
+        import angle_seg as _AS
+        _na, _L = _AS.seg_consts(ldx, ldy)
+        _r = _AS.seg_2b(wx1, wy1, wx2, wy2, ldx, ldy,
+                        ctx[0], ctx[1], _VIEW_AB, _na, _L)
+        if _r is None:
+            _seg2b_stats['cull'] += 1
+            if _seg2b_debug is not None:
+                _seg2b_debug[si] = ('CULL',)
+            return
+        (sx1, _depth1), (sx2, _depth2) = _r
+        _py1 = lambda h: _AS.proj_y(h, _depth1, vz)
+        _py2 = lambda h: _AS.proj_y(h, _depth2, vz)
+        # Force ey!=evy below so the vwh/vcache fast-paths are bypassed
+        # (depth is per-seg-endpoint here, recomputed via _py1/_py2).
+        evy1, ey1, evy2, ey2 = 0, 1, 0, 1
     else:
-        evx1_t = vc1[0]
-        evy1   = vc1[1]
-        vy_idx1 = vc1[2]
-        fvx1   = vc1[4]
-        evx1_r = evx1_t  # not used for projection, but set for consistency
-        _vc1_has_sx = (vc1[3] != 0)
+        # ── View transform with RAM vcache ──
+        fp_module.mul_cat("view")
+        vc1 = _packed_read_vcache(ram, v1_idx)
+        if vc1 is None:
+            result = fp_to_view(wx1, wy1, ctx)
+            evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
+            _packed_write_vcache(ram, v1_idx, evx1_t, fvx1, evy1, vy_idx1, 0)
+            _vc1_has_sx = False
+        else:
+            evx1_t = vc1[0]
+            evy1   = vc1[1]
+            vy_idx1 = vc1[2]
+            fvx1   = vc1[4]
+            evx1_r = evx1_t  # not used for projection, but set for consistency
+            _vc1_has_sx = (vc1[3] != 0)
 
-    vc2 = _packed_read_vcache(ram, v2_idx)
-    if vc2 is None:
-        result = fp_to_view(wx2, wy2, ctx)
-        evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
-        _packed_write_vcache(ram, v2_idx, evx2_t, fvx2, evy2, vy_idx2, 0)
-        _vc2_has_sx = False
-    else:
-        evx2_t = vc2[0]
-        evy2   = vc2[1]
-        vy_idx2 = vc2[2]
-        fvx2   = vc2[4]
-        evx2_r = evx2_t
-        _vc2_has_sx = (vc2[3] != 0)
+        vc2 = _packed_read_vcache(ram, v2_idx)
+        if vc2 is None:
+            result = fp_to_view(wx2, wy2, ctx)
+            evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
+            _packed_write_vcache(ram, v2_idx, evx2_t, fvx2, evy2, vy_idx2, 0)
+            _vc2_has_sx = False
+        else:
+            evx2_t = vc2[0]
+            evy2   = vc2[1]
+            vy_idx2 = vc2[2]
+            fvx2   = vc2[4]
+            evx2_r = evx2_t
+            _vc2_has_sx = (vc2[3] != 0)
 
-    evx1 = evx1_t
-    evx2 = evx2_t
+        evx1 = evx1_t
+        evx2 = evx2_t
 
-    # ── Near clip ──
-    nc = fp_near_clip(evx1, evy1, evx2, evy2)
-    if nc is None:
-        return
-    ex1, ey1, ex2, ey2 = nc
+        # ── Near clip ──
+        nc = fp_near_clip(evx1, evy1, evx2, evy2)
+        if nc is None:
+            return
+        ex1, ey1, ex2, ey2 = nc
 
-    # ── Reciprocals + X projection ──
-    idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
-    idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
-    rxh1, rxl1 = fp_recip(idx1)
-    rxh2, rxl2 = fp_recip(idx2)
+        # ── Reciprocals + X projection ──
+        idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
+        idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
+        rxh1, rxl1 = fp_recip(idx1)
+        rxh2, rxl2 = fp_recip(idx2)
 
-    fp_module.mul_cat("proj")
+        fp_module.mul_cat("proj")
 
-    # sx1
-    if ey1 == evy1 and _vc1_has_sx:
-        sx1 = _packed_read_vcache(ram, v1_idx)[3]
-    else:
-        fvx1_c = fvx1 if ey1 == evy1 else 0
-        sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
-        if ey1 == evy1:
-            # Update vcache with sx
-            base = _p_layout['ram_vcache'] + v1_idx * VCACHE_ENTRY
-            write_s16(ram, base + VC_SX, sx1)
+        # sx1
+        if ey1 == evy1 and _vc1_has_sx:
+            sx1 = _packed_read_vcache(ram, v1_idx)[3]
+        else:
+            fvx1_c = fvx1 if ey1 == evy1 else 0
+            sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
+            if ey1 == evy1:
+                # Update vcache with sx
+                base = _p_layout['ram_vcache'] + v1_idx * VCACHE_ENTRY
+                write_s16(ram, base + VC_SX, sx1)
 
-    # sx2
-    if ey2 == evy2 and _vc2_has_sx:
-        sx2 = _packed_read_vcache(ram, v2_idx)[3]
-    else:
-        fvx2_c = fvx2 if ey2 == evy2 else 0
-        sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
-        if ey2 == evy2:
-            base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
-            write_s16(ram, base + VC_SX, sx2)
+        # sx2
+        if ey2 == evy2 and _vc2_has_sx:
+            sx2 = _packed_read_vcache(ram, v2_idx)[3]
+        else:
+            fvx2_c = fvx2 if ey2 == evy2 else 0
+            sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
+            if ey2 == evy2:
+                base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
+                write_s16(ram, base + VC_SX, sx2)
 
-    if _USE_ANGLE_COL:
-        from angle_bbox import view_col as _view_col
-        sx1 = _view_col(ex1, ey1)
-        sx2 = _view_col(ex2, ey2)
+        if _USE_ANGLE_COL:
+            from angle_bbox import view_col as _view_col
+            sx1 = _view_col(ex1, ey1)
+            sx2 = _view_col(ex2, ey2)
+        _py1 = lambda h: fp_project_y(h - vz, ryh1, ryl1)
+        _py2 = lambda h: fp_project_y(h - vz, ryh2, ryl2)
 
     x_lo = min(sx1, sx2)
     x_hi = max(sx1, sx2)
+
+    if _seg2b_debug is not None:
+        _seg2b_debug[si] = (sx1, sx2)
 
     fp_module.mul_cat("clip")
     if not clips.has_gap(x_lo, x_hi):
@@ -2141,7 +2168,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     fp_module.mul_cat("proj")
     vwh_ft1 = read_u16(rom_d, dtl_off + SD_VWH_FT1)
     vwh_fb1 = read_u16(rom_d, dtl_off + SD_VWH_FB1)
-    ryh1, ryl1 = fp_recip(idx1)
+    ryh1, ryl1 = fp_recip(idx1) if not _USE_ANGLE_SEG else (0, 0)
 
     cached_ft1 = _packed_read_vwh(ram, vwh_ft1) if ey1 == evy1 else None
     cached_fb1 = _packed_read_vwh(ram, vwh_fb1) if ey1 == evy1 else None
@@ -2149,15 +2176,15 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         ft1 = cached_ft1
         fb1 = cached_fb1
     else:
-        ft1 = fp_project_y(ch - vz, ryh1, ryl1)
-        fb1 = fp_project_y(fh - vz, ryh1, ryl1)
+        ft1 = _py1(ch)
+        fb1 = _py1(fh)
         if ey1 == evy1:
             _packed_write_vwh(ram, vwh_ft1, ft1)
             _packed_write_vwh(ram, vwh_fb1, fb1)
 
     vwh_ft2 = read_u16(rom_d, dtl_off + SD_VWH_FT2)
     vwh_fb2 = read_u16(rom_d, dtl_off + SD_VWH_FB2)
-    ryh2, ryl2 = fp_recip(idx2)
+    ryh2, ryl2 = fp_recip(idx2) if not _USE_ANGLE_SEG else (0, 0)
 
     cached_ft2 = _packed_read_vwh(ram, vwh_ft2) if ey2 == evy2 else None
     cached_fb2 = _packed_read_vwh(ram, vwh_fb2) if ey2 == evy2 else None
@@ -2165,8 +2192,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         ft2 = cached_ft2
         fb2 = cached_fb2
     else:
-        ft2 = fp_project_y(ch - vz, ryh2, ryl2)
-        fb2 = fp_project_y(fh - vz, ryh2, ryl2)
+        ft2 = _py2(ch)
+        fb2 = _py2(fh)
         if ey2 == evy2:
             _packed_write_vwh(ram, vwh_ft2, ft2)
             _packed_write_vwh(ram, vwh_fb2, fb2)
@@ -2220,8 +2247,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         # Solid seg draws aperture edge at NOVT endpoints (see fp_render_seg)
         _ap = _seg_novt_aperture.get((si, 1))
         if _ap and no_vt1:
-            _bch1 = fp_project_y(_ap[0] - vz, ryh1, ryl1)
-            _bfh1 = fp_project_y(_ap[1] - vz, ryh1, ryl1)
+            _bch1 = _py1(_ap[0])
+            _bfh1 = _py1(_ap[1])
             if (_AP_SKIP_ENABLE and
                     clips.vertical_outside_spans(sx1, min(_bch1,_bfh1), max(_bch1,_bfh1))):
                 _ap_skip_stats['apv_skipped'] += 1
@@ -2229,8 +2256,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 lines.append((sx1, _bch1, sx1, _bfh1))
         _ap = _seg_novt_aperture.get((si, 2))
         if _ap and no_vt2:
-            _bch2 = fp_project_y(_ap[0] - vz, ryh2, ryl2)
-            _bfh2 = fp_project_y(_ap[1] - vz, ryh2, ryl2)
+            _bch2 = _py2(_ap[0])
+            _bfh2 = _py2(_ap[1])
             if (_AP_SKIP_ENABLE and
                     clips.vertical_outside_spans(sx2, min(_bch2,_bfh2), max(_bch2,_bfh2))):
                 _ap_skip_stats['apv_skipped'] += 1
@@ -2264,13 +2291,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             if cached_bt1 is not None:
                 bt1 = cached_bt1
             else:
-                bt1 = fp_project_y(bch - vz, ryh1, ryl1)
+                bt1 = _py1(bch)
                 if ey1 == evy1: _packed_write_vwh(ram, vwh_bt1, bt1)
             cached_bt2 = _packed_read_vwh(ram, vwh_bt2) if ey2 == evy2 else None
             if cached_bt2 is not None:
                 bt2 = cached_bt2
             else:
-                bt2 = fp_project_y(bch - vz, ryh2, ryl2)
+                bt2 = _py2(bch)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bt2, bt2)
             fp_module.mul_cat("clip")
             _ap_skip_stats['bt_seen'] += 1
@@ -2336,13 +2363,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             if cached_bb1 is not None:
                 bb1 = cached_bb1
             else:
-                bb1 = fp_project_y(bfh - vz, ryh1, ryl1)
+                bb1 = _py1(bfh)
                 if ey1 == evy1: _packed_write_vwh(ram, vwh_bb1, bb1)
             cached_bb2 = _packed_read_vwh(ram, vwh_bb2) if ey2 == evy2 else None
             if cached_bb2 is not None:
                 bb2 = cached_bb2
             else:
-                bb2 = fp_project_y(bfh - vz, ryh2, ryl2)
+                bb2 = _py2(bfh)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bb2, bb2)
             fp_module.mul_cat("clip")
             _ap_skip_stats['bb_seen'] += 1
