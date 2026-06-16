@@ -244,10 +244,9 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
     \ inside test: left<=px<=right and bot<=py<=top  -> full (0,255)
     \ left<=px : px-left >= 0
     JSR ins_test
-    \ a_fine = ab << 4 (ab is u8): low = (ab<<4)&FF, high = ab>>4. Nibble
-    \ shifts in the register beat 8 absolute read-modify-write shifts.
-    LDA bca_ab : LSR A : LSR A : LSR A : LSR A : STA bca_afn+1
-    LDA bca_ab : ASL A : ASL A : ASL A : ASL A : STA bca_afn
+    \ a_fine (bca_afn) is now precomputed once/frame by the caller
+    \ (br_view_setup), not recomputed here — it is frame-constant. Direct
+    \ unit-test callers (test_bca, check_angle_calls) set bca_afn themselves.
     \ boxx/boxy -> boxpos -> checkcoord
     JSR box_pos               \ -> X = boxpos
     \ cc = checkcoord + boxpos*4

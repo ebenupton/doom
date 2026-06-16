@@ -30,6 +30,8 @@ def run(top, bot, left, right, px, py, ab):
     w16(0xFA10, top); w16(0xFA12, bot); w16(0xFA14, left); w16(0xFA16, right)
     mpu.memory[0x01] = px & 0xFF; mpu.memory[0x03] = py & 0xFF
     mpu.memory[0xFA2F] = ab & 0xFF
+    afn = (ab << 4) & 0xFFFF          # a_fine now precomputed by the caller
+    mpu.memory[0x3B] = afn & 0xFF; mpu.memory[0x3C] = (afn >> 8) & 0xFF
     mpu.pc = BCA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0

@@ -439,6 +439,11 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 ; ============================================================================
 .br_view_setup
 {
+    ; a_fine = ab<<4 is frame-constant; hoist it here (once/frame) instead of
+    ; recomputing inside bbox_check_angle on every one of the ~650 bbox checks.
+    ; bca_afn ($3B/$3C) is untouched by the perspective path between checks.
+    LDA $FA2F : LSR A : LSR A : LSR A : LSR A : STA $3C   ; bca_afn+1 = ab>>4
+    LDA $FA2F : ASL A : ASL A : ASL A : ASL A : STA $3B   ; bca_afn = (ab<<4)&FF
     ; dx_lo = (-zp_br_px) & 0xFF
     LDA #0 : SEC : SBC zp_br_px : STA zp_br_t2     ; dx_lo
     ; dy_lo = (-zp_br_py) & 0xFF
