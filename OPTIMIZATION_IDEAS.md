@@ -53,7 +53,26 @@ Frame mean (10 ref frames): **431,993 -> 416,919 cyc (-3.5%)**. bbox_check_angle
 - Tooling: run_regression.py, profile_mem.py, profile_cycles.py (v3 = PC
   attributed to nearest JSR-target; the accurate one).
 
-### State of remaining opportunities
+### Final state (end of session)
+Frame mean **431,993 -> 416,287 (-3.6%)**; bbox **2823 -> 1705 (-39.6%)**;
+bsp_render.bin 3830 -> 3546 B; dead perspective-bbox cluster removed; $DC00/
+TA_LO hazard gone. Verified pixel-exact across 112 positions (sweep_verify).
+Everything pushed, all regression green.
+
+### Remaining opportunities (all small or invasive — need direction)
+- seg-header per-seg copy is ~1.5% of frame, but direct-from-ROM reads cost
+  +2cyc/access and most fields are read-once or already ZP, so the realistic
+  net is only ~0.15-0.3% and it rewrites back_face_test's 5 paths (risky).
+- udiv16_8 (projection divide) ALREADY has the unrolled leading-zero-skip
+  preamble; umul8 is optimal quarter-square; clipper tg_append is O(1) — all
+  at their floor.
+- Bigger swings would need re-architecture (e.g. full angle-space SEG pipeline
+  to cut the 8 muls/vertex) or improving the vertex-cache hit rate — both are
+  scope/risk that warrant supervision.
+- Hot scalars are all in ZP now; remaining absolute scalars are <0.1% each and
+  ZP is packed (swaps need cold-var demotion, often harness-coupled).
+
+### State of remaining opportunities (mid-session notes)
 - ZP promotion is **exhausted** for meaningful wins: the hot scalars are in ZP;
   remaining absolute scalars are <800 acc/10-frames (<0.1% each). Only $29/$2B/$FF
   are free (and $29/$2B are unreferenced reclaims).
