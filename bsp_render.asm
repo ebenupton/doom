@@ -360,10 +360,9 @@ zp_ft_one = $27
 ;     return -val if neg else val
 ; ============================================================================
 zp_ri_dlo = $28
-zp_ri_mag = $29
 zp_ri_neg = $2A
-zp_ri_one = $2B
 zp_ri_dhi = $2C       ; (was unused; s16 hi byte of d)
+\ ($29, $2B were unused zp_ri_mag/zp_ri_one -> reclaimed for zp_seg_bfh/bch)
 zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 
 ; br_rot_int — Y = 0 (sin) or 3 (cos); mag/neg/one are read directly
@@ -1024,8 +1023,8 @@ zp_seg_sy_bot_hi = $6D
 zp_seg_sx_lo    = $6E      ; s16 projected screen x
 zp_seg_sx_hi    = $6F
 ; Back-sector heights (s8 each) — only meaningful for portal segs.
-zp_seg_bfh      = $0A78
-zp_seg_bch      = $0A79
+zp_seg_bfh      = $29      ; ZP (reclaimed unused zp_ri_mag); per-seg back floor
+zp_seg_bch      = $2B      ; ZP (reclaimed unused zp_ri_one); per-seg back ceil
 zp_seg_btop_dlt = $0A7A    ; bch - vz
 zp_seg_bbot_dlt = $0A7B    ; bfh - vz
 ; Output of bv_proj_one's back-step projection (transient).
