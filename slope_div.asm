@@ -409,13 +409,15 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
           LDA bca_cy+1 : SBC bca_pys+1 : STA pa_dy+1
     JSR point_to_angle       \ -> pa_res (psi)
     SEC : LDA bca_afn : SBC pa_res : STA pa_res
-          LDA bca_afn+1 : SBC pa_res+1 : STA pa_res+1
-    LDA pa_res+1 : AND #$0F : STA pa_res+1     \ & 4095
-    \ if >= 2048: subtract 4096 (sign-extend to s16)
-    LDA pa_res+1 : CMP #8 : BCC cp_done
-    SEC : LDA pa_res : SBC #<4096 : STA pa_res
-          LDA pa_res+1 : SBC #>4096 : STA pa_res+1
-.cp_done
+          LDA bca_afn+1 : SBC pa_res+1
+    \ Mask to 12 bits and sign-extend to s16 in one go on the hi byte: 4096's
+    \ low byte is 0, so the &4095 and the (>=2048 ? -4096) only touch the hi
+    \ byte; pa_res (lo) is already correct.
+    AND #$0F                  \ phi & 4095 (hi nibble)
+    CMP #8 : BCC cp_store     \ < 2048 -> keep; else C=1 for the wrap
+    SBC #$10                  \ -= 4096 (hi -= $10) -> signed [-2048,2048)
+.cp_store
+    STA pa_res+1
     RTS
 }
 
