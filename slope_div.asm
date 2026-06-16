@@ -23,6 +23,7 @@ ORG $E940
     JMP bbox_check_angle     \ $E946
     JMP cos_fine             \ $E949  (option-2b seg projection helper)
     JMP seg_depth            \ $E94C  (option-2b: depth = c*cos(phi)/cos(den))
+    JMP proj_yd              \ $E94F  (option-2b: yt = HALF_H - (hd<<11)/depth)
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -546,6 +547,60 @@ sp_rem   = $8A
     CLC : RTS
 .sd_cull
     SEC : RTS
+}
+
+\ proj_yd (option-2b): yt = HALF_H - round(hd*FOCAL*16 / depth)  (= hd<<11 / depth).
+\   in : sp_hd (s8), sp_depth (u16, from seg_depth) ; out: sp_yt (s16).
+HALF_H_C = 80
+sp_hd  = $30
+sp_yt  = $32
+sp_dl  = $48
+sp_dh  = $49
+sp_yrem = $44
+.proj_yd
+{
+    LDA sp_hd : BPL py_pos
+    EOR #$FF : CLC : ADC #1            \ |hd|
+.py_pos
+    \ (|hd|<<3) -> sp_dl:sp_dh ; num24 = that << 8  (num0=0,num1=dl,num2=dh)
+    STA sp_dl : LDA #0 : STA sp_dh
+    ASL sp_dl : ROL sp_dh
+    ASL sp_dl : ROL sp_dh
+    ASL sp_dl : ROL sp_dh
+    LDA #0     : STA sp_num0
+    LDA sp_dl  : STA sp_num1
+    LDA sp_dh  : STA sp_num2
+    \ round: num24 += depth>>1
+    LDA sp_depth+1 : LSR A : STA sp_dh
+    LDA sp_depth   : ROR A : STA sp_dl
+    CLC
+    LDA sp_num0 : ADC sp_dl : STA sp_num0
+    LDA sp_num1 : ADC sp_dh : STA sp_num1
+    LDA sp_num2 : ADC #0    : STA sp_num2
+    \ u24 / u16 restoring divide -> quotient in sp_num0/1
+    LDA #0 : STA sp_yrem : STA sp_yrem+1
+    LDX #24
+.py_dl
+    ASL sp_num0 : ROL sp_num1 : ROL sp_num2 : ROL sp_yrem : ROL sp_yrem+1
+    BCS py_dyes                       \ 17th bit -> rem >= 65536 > depth
+    LDA sp_yrem+1 : CMP sp_depth+1 : BCC py_dno
+    BNE py_dyes
+    LDA sp_yrem   : CMP sp_depth   : BCC py_dno
+.py_dyes
+    LDA sp_yrem   : SEC : SBC sp_depth   : STA sp_yrem
+    LDA sp_yrem+1 :       SBC sp_depth+1 : STA sp_yrem+1
+    INC sp_num0
+.py_dno
+    DEX : BNE py_dl
+    \ yt = 80 -/+ quotient (sign of hd)
+    LDA sp_hd : BMI py_neg
+    SEC : LDA #HALF_H_C : SBC sp_num0 : STA sp_yt
+    LDA #0 :             SBC sp_num1 : STA sp_yt+1
+    RTS
+.py_neg
+    CLC : LDA #HALF_H_C : ADC sp_num0 : STA sp_yt
+    LDA #0 :             ADC sp_num1 : STA sp_yt+1
+    RTS
 }
 
 .end

@@ -44,8 +44,10 @@ def _signed(a):
     return a - FINE if a >= FINE // 2 else a
 
 
-def _rdiv(num, den):            # rounded integer divide, den > 0
-    return (num + (den // 2 if num >= 0 else -(den // 2))) // den
+def _rdiv(num, den):            # rounded divide, den>0; symmetric (round |.| half up)
+    if num >= 0:
+        return (num + den // 2) // den
+    return -((-num + den // 2) // den)
 
 
 def seg_consts(ldx, ldy):

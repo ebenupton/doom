@@ -32,11 +32,20 @@ Status (2026-06-16): math fully validated; bit-exact reference module built.
     the limiter; 256 suffices.
 
 ### Remaining work (the 6502 rewrite proper -- large, do supervised)
-1. asm: COS_LO/HI table + cos_fine(angle)->s16 (idx=((hi&15)<<4)|(lo>>4); 2 reads).
-2. asm: seg_project(dx,dy,c,na,a_fine)->(sx,depth): point_to_angle + VATOX (have)
-   + cph/cden via cos_fine + a SIGNED 16x16->32 mul (c*cph) and a signed
-   ~s32/s16 divide (/cden) for depth. New wide arithmetic (use umul8 primitive).
-3. asm: per-seg c (cross via 2 muls * rlen recip) and proj_y(hd,depth) (a divide).
+1. asm: COS table + cos_fine. **DONE** ($E949, COS_TAB $F800, 256-entry s8
+   cos*127). Unit-tested test_cos_fine.py 4096/0.
+2. asm: seg_depth. **DONE** ($E94C) depth=c*cos(phi)/cos(den) via umul8 +
+   u24/u8 rounded restoring divide, sign-normalise, cden==0/depth<=0 cull
+   (carry=cull), u16 clamp. Unit-tested test_seg_depth.py 47520/0.
+   asm: proj_yd. **DONE** ($E94F) yt=HALF_H-(hd<<11)/depth via u24/u16 rounded
+   restoring divide (17th-bit handling for depth>32768), sign from hd.
+   Unit-tested test_proj_yd.py 139008/0 (exhaustive over depth 11..65535, all s8 hd).
+   NOTE: angle_seg._rdiv made symmetric (round |.| half up) so the 6502's
+   |num|-then-sign path is exact; seg_depth unaffected (neg-num culled there).
+   STILL TODO: seg_project orchestration -- point_to_angle + phi clamp + VATOX
+   column (sx) + seg_depth; and the per-seg c = cross*rlen (2 muls + recip mul).
+   point_to_angle/VATOX already exist in the bbox module.
+3. asm: per-seg c (cross via 2 muls * rlen recip). proj_yd DONE (see above).
 4. ROM tables: per-seg na + rlen (precompute in wad_packed, like the bbox table).
 5. Integrate into the seg loop replacing rotation/project_x/project_y; the
    clip/draw/aperture interface is unchanged (feed sx/yt/yb as today). Two-sided
