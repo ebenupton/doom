@@ -24,6 +24,7 @@ ORG $E940
     JMP cos_fine             \ $E949  (option-2b seg projection helper)
     JMP seg_depth            \ $E94C  (option-2b: depth = c*cos(phi)/cos(den))
     JMP proj_yd              \ $E94F  (option-2b: yt = HALF_H - (hd<<11)/depth)
+    JMP seg_c               \ $E952  (option-2b: c = (cross<<4)/L, perp distance)
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -600,6 +601,113 @@ sp_yrem = $44
 .py_neg
     CLC : LDA #HALF_H_C : ADC sp_num0 : STA sp_yt
     LDA #0 :             ADC sp_num1 : STA sp_yt+1
+    RTS
+}
+
+\ seg_c (option-2b): per-seg signed perpendicular distance (s.4).
+\   c = round( (dy1*ldx - dx1*ldy) << 4 / L )  with L the seg length (u8 ROM).
+\   in : sc_dy1=wy1-py (s16), sc_dx1=wx1-px (s16), sc_ldx (s8), sc_ldy (s8),
+\        sc_L (u8) ;  out: sp_c (s16, $30/$31).
+sc_dy1 = $32
+sc_dx1 = $34
+sc_ldx = $36
+sc_ldy = $37
+sc_L   = $38
+sc_sgn = $39
+sc_p2  = $3A
+.seg_c
+{
+    \ ---- p1 = dy1 * ldx -> cross (sp_num0/1/2, signed 24) ----
+    LDA #0 : STA sc_sgn
+    LDA sc_dy1+1 : BPL sc_dyp
+    SEC : LDA #0 : SBC sc_dy1 : STA sc_dy1
+          LDA #0 : SBC sc_dy1+1 : STA sc_dy1+1
+    INC sc_sgn
+.sc_dyp
+    LDA sc_ldx : BPL sc_lxp
+    EOR #$FF : CLC : ADC #1 : STA sc_ldx
+    LDA sc_sgn : EOR #1 : STA sc_sgn
+.sc_lxp
+    LDA sc_ldx : STA zp_mul_b
+    LDA sc_dy1 : JSR SC_UMUL8
+    LDA zp_prod_lo : STA sp_num0
+    LDA zp_prod_hi : STA sp_num1
+    LDA sc_ldx : STA zp_mul_b
+    LDA sc_dy1+1 : JSR SC_UMUL8
+    CLC
+    LDA zp_prod_lo : ADC sp_num1 : STA sp_num1
+    LDA zp_prod_hi : ADC #0      : STA sp_num2
+    LDA sc_sgn : BEQ sc_p1pos
+    SEC : LDA #0 : SBC sp_num0 : STA sp_num0
+          LDA #0 : SBC sp_num1 : STA sp_num1
+          LDA #0 : SBC sp_num2 : STA sp_num2
+.sc_p1pos
+    \ ---- p2 = dx1 * ldy -> sc_p2 (signed 24) ----
+    LDA #0 : STA sc_sgn
+    LDA sc_dx1+1 : BPL sc_dxp
+    SEC : LDA #0 : SBC sc_dx1 : STA sc_dx1
+          LDA #0 : SBC sc_dx1+1 : STA sc_dx1+1
+    INC sc_sgn
+.sc_dxp
+    LDA sc_ldy : BPL sc_lyp
+    EOR #$FF : CLC : ADC #1 : STA sc_ldy
+    LDA sc_sgn : EOR #1 : STA sc_sgn
+.sc_lyp
+    LDA sc_ldy : STA zp_mul_b
+    LDA sc_dx1 : JSR SC_UMUL8
+    LDA zp_prod_lo : STA sc_p2
+    LDA zp_prod_hi : STA sc_p2+1
+    LDA sc_ldy : STA zp_mul_b
+    LDA sc_dx1+1 : JSR SC_UMUL8
+    CLC
+    LDA zp_prod_lo : ADC sc_p2+1 : STA sc_p2+1
+    LDA zp_prod_hi : ADC #0      : STA sc_p2+2
+    LDA sc_sgn : BEQ sc_p2pos
+    SEC : LDA #0 : SBC sc_p2   : STA sc_p2
+          LDA #0 : SBC sc_p2+1 : STA sc_p2+1
+          LDA #0 : SBC sc_p2+2 : STA sc_p2+2
+.sc_p2pos
+    \ ---- cross = p1 - p2 (signed 24, in sp_num0/1/2) ----
+    SEC
+    LDA sp_num0 : SBC sc_p2   : STA sp_num0
+    LDA sp_num1 : SBC sc_p2+1 : STA sp_num1
+    LDA sp_num2 : SBC sc_p2+2 : STA sp_num2
+    \ ---- |cross| + sign ----
+    LDA #0 : STA sc_sgn
+    LDA sp_num2 : BPL sc_crp
+    SEC : LDA #0 : SBC sp_num0 : STA sp_num0
+          LDA #0 : SBC sp_num1 : STA sp_num1
+          LDA #0 : SBC sp_num2 : STA sp_num2
+    INC sc_sgn
+.sc_crp
+    \ num = |cross| << 4
+    LDX #4
+.sc_shl
+    ASL sp_num0 : ROL sp_num1 : ROL sp_num2
+    DEX : BNE sc_shl
+    \ round: num += L>>1
+    LDA sc_L : LSR A
+    CLC : ADC sp_num0 : STA sp_num0
+    LDA sp_num1 : ADC #0 : STA sp_num1
+    LDA sp_num2 : ADC #0 : STA sp_num2
+    \ u24 / u8 restoring divide -> quotient (sp_num0/1)
+    LDA #0 : STA sp_rem
+    LDX #24
+.sc_dl
+    ASL sp_num0 : ROL sp_num1 : ROL sp_num2 : ROL sp_rem
+    LDA sp_rem : CMP sc_L : BCC sc_dno
+    SBC sc_L : STA sp_rem
+    INC sp_num0
+.sc_dno
+    DEX : BNE sc_dl
+    \ c = sgn ? -quotient : quotient -> sp_c
+    LDA sc_sgn : BNE sc_cneg
+    LDA sp_num0 : STA sp_c
+    LDA sp_num1 : STA sp_c+1
+    RTS
+.sc_cneg
+    SEC : LDA #0 : SBC sp_num0 : STA sp_c
+          LDA #0 : SBC sp_num1 : STA sp_c+1
     RTS
 }
 
