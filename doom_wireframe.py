@@ -2377,6 +2377,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             else:
                 bb2 = _py2(bfh)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bb2, bb2)
+            if _seg2b_debug_bt is not None:
+                _seg2b_debug_bt.setdefault(si, (None, None))
+                _seg2b_debug_bt[si] = _seg2b_debug_bt[si] + (bb1, bb2)
             fp_module.mul_cat("clip")
             _ap_skip_stats['bb_seen'] += 1
             # Aperture-below-clip mirror of need_bt skip.

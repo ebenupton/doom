@@ -116,13 +116,29 @@ Status (2026-06-16): math fully validated; bit-exact reference module built.
      6502-2b vs Python-2b -- front (sx1,sx2,ft1,fb1,ft2,fb2) 0 mismatches over
      all segs; portal step bt 0 mismatches. (Captured per-si by stepping the
      6502 frame and via doom_wireframe _seg2b_debug/_seg2b_debug_bt.)
-   - RESIDUAL: full-frame 6502-2b vs Python-2b differs ~2-5% (50-150px, small
-     ±1 / edge clusters). NOT the projection (proven bit-exact). It is a
-     rendered-seg-SET / emit difference: FOV-edge-clamped degenerate segs (both
-     endpoints clamp to sx=0 or 255 -> a spurious edge vertical) and likely
-     has_gap edge cases handled slightly differently between the full-6502 path
-     and the Python-packed path. CLOSURE = reconcile the has_gap/edge-clamp emit
-     so the frame is pixel-exact, then flip the default + add to run_regression.
+   - RECONCILED (2026-06-16): the 6502-2b renderer IS pixel-exact. The earlier
+     ~50-150px "diff" was a render_python rasterisation artifact (it draws lines
+     to a pygame surface, not via the 6502 clipper) -- the SAME ±1 diff appears
+     for the PERSPECTIVE path (render_python vs render_6502 = 54px @
+     (1024,-3500,64)), so it is a harness artifact, NOT a 2b error. On the real
+     6502 framebuffer the 2b path is exact:
+       * compare_traversal with the 2b bin: 10/10 ss-seq MATCH, fb diff = 0 px
+         (full-6502 == Python-traversal + 6502-2b-seg). trace_compare.setup_wad
+         now loads the COS table ($FB00).
+       * per-seg projection (sx, ft, fb, bt, bb) BIT-EXACT 6502-2b vs Python-2b
+         (0 mismatches over all segs).
+   - *** DECISION: 2b stays flag-OFF; perspective is the default. ***
+     2b is CORRECT but 2.05x SLOWER: frame mean 851,410 cyc vs perspective
+     416,331 (10 ref frames). The angle path trades the 8-mul/vertex rotation
+     for per-vertex DIVIDES -- point_to_angle (slope_div), seg_depth (mul +
+     u24/u8 divide) and 8x proj_yd (u24/u16 divides) per seg -- which cost far
+     more than the perspective recip-TABLE + multiply (+ VWH proj cache). DOOM
+     itself avoids per-vertex divides via a per-column interpolated scale; this
+     port does full per-vertex divides. Making 2b competitive needs: depth-recip
+     via TABLE then multiply for proj_yd (earlier ~1.1px, too lossy as-is),
+     per-vertex depth-recip caching, and removing the slope_div in
+     point_to_angle. Until then 2b is a validated, parked alternative kept
+     in-tree behind _USE_ANGLE_SEG_6502; the angle math primitives stay for it.
 5. Integrate into the seg loop replacing rotation/project_x/project_y; the
    clip/draw/aperture interface is unchanged (feed sx/yt/yb as today). Two-sided
    + aperture heights all project via proj_y(h,depth).

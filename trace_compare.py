@@ -47,6 +47,9 @@ def load_angle_module(mem):
     for k in range(1025):            # VATOX shrunk: phi+512 index, $F300
         _vt = (_A._vatox_lo[k + 512] + _A._vatox_hi[k + 512]) // 2
         mem[0xF601 + k] = max(0, min(255, _vt))
+    import angle_seg as _AS               # COS table ($FB00) for option-2b seg depth
+    for i in range(256):
+        mem[0xFB00 + i] = _AS._COSR[i] & 0xFF
 
 
 def setup_wad(sc):
