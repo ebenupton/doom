@@ -60,11 +60,35 @@ Frame mean (10 ref frames): **431,993 -> 416,919 cyc (-3.5%)**. bbox_check_angle
 - Frame is now ~28% bbox (optimised), ~30% seg transform (multiply-bound, count
   frozen), 8% rasteriser (fixed $A900 blob, no source), ~10% clipper (span_clip,
   tg_append already O(1)), rest node-setup/init.
-- DEAD-CODE REMOVAL: still the big byte win + removes the $DC00/TA_LO latent
-  hazard, BUT it is one connected component spanning 6 SAVE regions (main/x/d/
-  y/z/w) AND the Python harness loads — all-or-nothing, auto-analysis unreliable
-  for the cluster's internal sub-labels. NOT attempted unsupervised (byte-only,
-  build currently fits). Recommend doing interactively with review.
+- DEAD-CODE REMOVAL (perspective bbox) — TURNKEY PLAN. One fully-cyclic dead
+  component; must be removed atomically (no intermediate build passes), then
+  `python3 run_regression.py`. All provably dead (0 calls; the only entry,
+  br_bbox_visible's perspective path, was already deleted). Frees the tight main
+  region + the $0100 stack page + removes the $DC00/TA_LO hazard.
+  Delete (bottom-to-top, or one `sed` pass on original line numbers):
+    * w-region dead tail: `; rot_pair_cached` comment + rot_pair_cached + rpc_*
+      (keep br_project_y/pyc_miss/vwhc_clear/vc_loop and bsp_w_end).
+    * RPC_* defs block (the "Rotation-product cache" comment + RPC_VALID..
+      RPC_SAVE_I); KEEP the VWHC_* defs just above (live, used by br_project_y).
+    * z-region: ENTIRE region (ORG $1A99 .. SAVE bsp_render_z.bin) — all dead
+      (bv_classify_sx/bv_big/bv_neg/bv_in_u8/bv_update_minmax/bv_no_lo/bv_no_hi).
+    * y-region: ENTIRE (ORG $4740 .. SAVE bsp_render_y.bin) — bv_corner_products,
+      cp_d*, cp_loop, bv_corner_view, + CPBUF/CPIDX/CPD defs.
+    * x-region: ENTIRE (ORG $0100 .. SAVE bsp_render_x.bin) — crx_edge, cn_pos,
+      cd_pos, cv_pos, ct_*, cx0_ext. (Frees stack-page low half.)
+    * d-region dead: crx_udiv/cu_loop/cu_yes/cu_no (KEEP bsp_resolve_child).
+    * main: dead block between br_bbox_visible's `}` and `.br_render_subsector`
+      (bv_proj_one, bv_lt_neg, bv_rt_*, bv_behind, bv_in_front, crx_classify,
+      cxc_*, crx_loop/next, bv_compute_edge_crossings, bv_edge_i/j, bv_corner_x/y,
+      bv_corner_view ref); the "Unused stub" tables cp_src/cp_t3/cp_mul3/
+      bv_cv_dxo/bv_cv_dyo (KEEP vc_bit_mask just below); dead ZP defs
+      zp_ri_mag=$29, zp_ri_one=$2B (free reclaims).
+    * Python (span_clip_6502.py): remove the bsp_render_x/y/z.bin load blocks
+      (or leave — harness `if os.path.exists` skips missing; but delete the
+      stale .bins). The recip-table load currently rides inside the x-region
+      load block — MOVE it out before deleting that block.
+  Caution: the recip table ($E000) is loaded inside the bsp_render_x.bin `if`
+  block in span_clip_6502.py — preserve that load when removing x.
 
 ## Completed (earlier)
 - angle bbox visibility: 2823 → 1868 cyc/call (-34%) via slope_div fast paths
