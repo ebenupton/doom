@@ -21,6 +21,7 @@ ORG $E940
     JMP slope_div            \ $E940
     JMP point_to_angle       \ $E943
     JMP bbox_check_angle     \ $E946
+    JMP cos_fine             \ $E949  (option-2b seg projection helper)
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -445,6 +446,23 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
     EQUB 3,0,2,1,  3,0,2,0,  3,1,2,0,  0,0,0,0
     EQUB 2,0,2,1,  0,0,0,0,  3,1,3,0,  0,0,0,0
     EQUB 2,0,3,1,  2,1,3,1,  2,1,3,0,  0,0,0,0
+
+\ cos_fine (option-2b): cf_ang (u16 fine angle) -> cf_res (s16 = cos*256).
+\ 256-entry cos table at byte-angle resolution: idx = ((hi&15)<<4)|(lo>>4).
+cf_ang = $9B
+cf_res = $9D
+cf_tmp = $9F
+COS_LO = $F800
+COS_HI = $F900
+.cos_fine
+{
+    LDA cf_ang : LSR A : LSR A : LSR A : LSR A : STA cf_tmp   \ lo>>4
+    LDA cf_ang+1 : AND #$0F : ASL A : ASL A : ASL A : ASL A   \ (hi&15)<<4
+    ORA cf_tmp : TAX
+    LDA COS_LO,X : STA cf_res
+    LDA COS_HI,X : STA cf_res+1
+    RTS
+}
 
 .end
 SAVE "bsp_render_ang.bin", $E940, end, $E940
