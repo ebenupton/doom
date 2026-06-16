@@ -140,7 +140,21 @@ Status (2026-06-16): math fully validated; bit-exact reference module built.
      point_to_angle. Until then 2b is a validated, parked alternative kept
      in-tree behind _USE_ANGLE_SEG_6502; the angle math primitives stay for it.
 
-### Divide-free 2b investigation (2026-06-16) — FEASIBLE, modest payoff
+### CORRECTION (2026-06-16): divide-free 2b will NOT beat perspective
+The "floor 354k" below was a FALSE SIGNAL. Stubbing seg_depth/proj_yd to
+constants collapses every wall (depth/Y constant -> clipped), so the stubbed
+frame draws only 2,211 lit px vs the real 2b's 13,989 -- the 354k excluded
+~84% of the raster/clip/tighten work. The REAL divide-free cost = full 2b
+(851k) minus only the divide time (proj_yd ~127k + seg_depth ~29k ≈ 156k)
+plus the replacement recip+mul, i.e. ~700-750k -- still ~1.8x perspective
+(416k). Root cause is structural: 2b computes X (point_to_angle/atan2) and Y
+(depth) SEPARATELY per vertex, while perspective's single 4-mul rotation
+yields BOTH vx and vy, and its recip is a table. Eliminating divides can't
+close a gap that is mostly the redundant per-vertex angle+depth work. 2b is
+PARKED (correct + pixel-exact, but ~2x slower); perspective stays default.
+Pursue cycle wins elsewhere (the perspective hot path).
+
+### Divide-free 2b investigation (2026-06-16) — [superseded by CORRECTION above]
 Profiled the 851k/frame 2b (the profiler mis-attributes the whole angle-module
 arithmetic to "cos_fine" 51%; real call counts/frame: proj_yd 264 [8/seg],
 point_to_angle 221, seg_depth 67, seg_c 34, seg_project 67, cos_fine 134).
