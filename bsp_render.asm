@@ -888,7 +888,14 @@ zp_node_chhi  = $59
 ; vertex transforms). Exposed so the hybrid Python-BSP harness can call
 ; it before its first subsector pass.
 .br_init_frame
-    JSR vwhc_clear
+    ; The VWH projection cache is self-validating: its key is the COMPLETE
+    ; input (rhi,rlo,h) to br_project_y_raw, a pure function — so a hit is
+    ; correct regardless of age (stale key -> mismatch -> miss). Per-frame
+    ; invalidation is therefore unnecessary; we skip the 256-byte clear and
+    ; let entries persist (a free cross-frame hit-rate bonus under motion).
+    ; (VWHC_VALID must be zeroed ONCE at boot; the key check is the backstop
+    ;  for any residual garbage. The vcache below IS player-relative and must
+    ;  still clear every frame.)
     LDA #0
     LDX #59
 .bif_clr
