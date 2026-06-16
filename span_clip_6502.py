@@ -168,36 +168,13 @@ class SpanClip6502:
                     bsp_w_code = f.read()
                 for i, b in enumerate(bsp_w_code):
                     mem[0xDAC0 + i] = b
-            bsp_z = os.path.join(os.path.dirname(__file__) or '.',
-                                 'bsp_render_z.bin')
-            if os.path.exists(bsp_z):
-                with open(bsp_z, 'rb') as f:
-                    bsp_z_code = f.read()
-                for i, b in enumerate(bsp_z_code):
-                    mem[0x1A99 + i] = b
-            bsp_y = os.path.join(os.path.dirname(__file__) or '.',
-                                 'bsp_render_y.bin')
-            if os.path.exists(bsp_y):
-                with open(bsp_y, 'rb') as f:
-                    bsp_y_code = f.read()
-                for i, b in enumerate(bsp_y_code):
-                    mem[0x4740 + i] = b
-            # X region: low half of the stack page (code; stack stays
-            # within $01E0-$01FF on this module's call depths).
-            bsp_x = os.path.join(os.path.dirname(__file__) or '.',
-                                 'bsp_render_x.bin')
-            if os.path.exists(bsp_x):
-                with open(bsp_x, 'rb') as f:
-                    bsp_x_code = f.read()
-                for i, b in enumerate(bsp_x_code):
-                    mem[0x0100 + i] = b
-                # Load the reciprocal table at $E000 (HI bytes 0..513,
-                # then LO bytes 0..513).
-                from fp import _RECIP_X_HI, _RECIP_X_LO
-                for i in range(514):
-                    mem[0xE000 + i] = _RECIP_X_HI[i] if i < len(_RECIP_X_HI) else 0
-                for i in range(514):
-                    mem[0xE000 + 514 + i] = _RECIP_X_LO[i] if i < len(_RECIP_X_LO) else 0
+            # (x/y/z regions held the perspective-bbox dead code, now removed.)
+            # Reciprocal table at $E000 (HI bytes 0..513, then LO bytes 0..513).
+            from fp import _RECIP_X_HI, _RECIP_X_LO
+            for i in range(514):
+                mem[0xE000 + i] = _RECIP_X_HI[i] if i < len(_RECIP_X_HI) else 0
+            for i in range(514):
+                mem[0xE000 + 514 + i] = _RECIP_X_LO[i] if i < len(_RECIP_X_LO) else 0
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
         raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')
