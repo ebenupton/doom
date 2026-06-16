@@ -12,6 +12,43 @@ log of what's been done. Every change must stay under the regression suite
 - `check_angle_calls.py` — 0 mismatch vs Python angle, 0 corruption.
 - `compare_subsector.py` — 0 pixel/span-affecting divergences.
 
+## Option 2b (angle-space SEG, no rotation) — DE-RISKED, ready to implement
+Status (2026-06-16): math fully validated; bit-exact reference module built.
+- `angle_seg.py` (+ `test_angle_seg.py`): the reference. seg_2b() returns per
+  endpoint (sx, depth); proj_y(h,depth,vz) projects any height. Integer math
+  identical to the planned 6502. X 99.6% within1col vs true; Y 0.60px/97.3%
+  within2px (matches project_y's faithfulness, and handles clamped columns).
+- Validators: validate_angle_seg.py (X), validate_2b.py (Y float, exact),
+  validate_2b_fp.py (Y fixed-point).
+- Design decisions locked:
+  * X: world angle (point_to_angle) - viewangle, clamp +/-ANG45, VATOX. Back-face
+    is free from the angle span. (All reuse the existing 6502 angle module.)
+  * Y/depth: per-seg c = signed perp dist in s.4 = ((wy1-py)*ldx-(wx1-px)*ldy)*rlen>>12,
+    where rlen=(1<<16)/len is a STATIC per-seg ROM constant; na = seg normal
+    fine-angle, also STATIC ROM. depth = (c*COS[phi])/COS[a_fine-phi-na]
+    (sign-normalise, rounded). yt/yb = HALF_H - (h-vz)*FOCAL*16/depth.
+  * COS table: 256 entries, index = (fineangle>>4)&255, s16 cos*256 (512 B).
+    Place COS_LO/COS_HI at $F800/$F900 (free $F701-$FA0F). cos resolution is not
+    the limiter; 256 suffices.
+
+### Remaining work (the 6502 rewrite proper -- large, do supervised)
+1. asm: COS_LO/HI table + cos_fine(angle)->s16 (idx=((hi&15)<<4)|(lo>>4); 2 reads).
+2. asm: seg_project(dx,dy,c,na,a_fine)->(sx,depth): point_to_angle + VATOX (have)
+   + cph/cden via cos_fine + a SIGNED 16x16->32 mul (c*cph) and a signed
+   ~s32/s16 divide (/cden) for depth. New wide arithmetic (use umul8 primitive).
+3. asm: per-seg c (cross via 2 muls * rlen recip) and proj_y(hd,depth) (a divide).
+4. ROM tables: per-seg na + rlen (precompute in wad_packed, like the bbox table).
+5. Integrate into the seg loop replacing rotation/project_x/project_y; the
+   clip/draw/aperture interface is unchanged (feed sx/yt/yb as today). Two-sided
+   + aperture heights all project via proj_y(h,depth).
+6. Mirror in Python packed_render_seg behind _USE_ANGLE_SEG (global already
+   added, default off) so the regression is pixel-exact 6502-2b vs Python-2b
+   (add to run_regression), exactly like the bbox rollout. compare_traversal
+   stays green (both sides use the 6502 seg processor).
+Net per vertex: removes the 4-mul rotation + project_x + the separate back-face
+test; adds c (per seg) + depth (mul+divide via cos tables) -- fewer muls, more
+tables/divides (the DOOM trade), and X comes out more accurate.
+
 ## Parked ideas
 - (DONE 2026-06-16) ~~Unroll slope_div's 10-iteration loop~~. UNBLOCKED: the
   beebasm label problem is sidestepped with `BCC/BCS P%+N` relative branches
