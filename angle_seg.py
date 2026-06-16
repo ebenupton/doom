@@ -51,14 +51,16 @@ def _rdiv(num, den):            # rounded divide, den>0; symmetric (round |.| ha
 
 
 def seg_consts(ldx, ldy):
-    """Static per-seg constants (would live in ROM): (na_fine, rlen_0_16).
-    n = (-ldy, ldx)/len  -> na = atan2(ldx, -ldy)."""
+    """Static per-seg constants (would live in ROM): (na_fine, L).
+    n = (-ldy, ldx)/len -> na = atan2(ldx, -ldy). L = round(len) is a u8
+    (<=89 for E1M1); c = (cross<<4)/L is an exact signed u24/u8 divide on the
+    6502 -- cheaper than (and more accurate than) multiplying by a rounded
+    reciprocal rlen, and removes a wide multiply."""
     L = math.hypot(ldx, ldy)
     if L == 0:
         return 0, 0
     na = round(math.atan2(ldx, -ldy) / (2 * math.pi) * FINE) & MASK
-    rlen = round((1 << 16) / L)
-    return na, rlen
+    return na, round(L)
 
 
 def _vatox_centre(phi):
@@ -78,12 +80,14 @@ def proj_y(h, depth, vz):
     return proj_y_delta(h - vz, depth)
 
 
-def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, px, py, ab, na, rlen):
+def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, px, py, ab, na, L):
     """Return [(sx1,depth1),(sx2,depth2)] for the two endpoints, or None.
     depth is CFRAC*true_depth; feed it to proj_y(h, depth, vz) for any height."""
+    if L == 0:
+        return None
     a_fine = (ab * (FINE // 256)) & MASK
     cross = (wy1 - py) * ldx - (wx1 - px) * ldy
-    c = (cross * rlen) >> (16 - 4)            # s.4 : (cross/len)<<4
+    c = _rdiv(cross << 4, L)                  # s.4 perp distance = (cross/len)<<4
     out = []
     for (wx, wy) in ((wx1, wy1), (wx2, wy2)):
         dx, dy = wx - px, wy - py

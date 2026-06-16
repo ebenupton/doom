@@ -33,8 +33,9 @@ for (px,py,ab) in [(1056,-3616,a) for a in range(0,256,8)]+[(1024,-3500,65),(800
     a_fine=(ab*16)&S.MASK
     for svwh in dw.fp_segs_vwh:
         sg=svwh[0];v1=dw.fp_vertexes[sg[0]];v2=dw.fp_vertexes[sg[1]]
-        ldx,ldy=v2[0]-v1[0],v2[1]-v1[1]; na,rlen=S.seg_consts(ldx,ldy)
-        cross=(v1[1]-pyi)*ldx-(v1[0]-pxi)*ldy; c=(cross*rlen)>>12
+        ldx,ldy=v2[0]-v1[0],v2[1]-v1[1]; na,L=S.seg_consts(ldx,ldy)
+        if L==0: continue
+        cross=(v1[1]-pyi)*ldx-(v1[0]-pxi)*ldy; c=S._rdiv(cross<<4,L)
         if not (-32768<=c<=32767): continue
         for (wx,wy) in ((v1[0],v1[1]),(v2[0],v2[1])):
             dx,dy=wx-pxi,wy-pyi
