@@ -447,20 +447,18 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
     EQUB 2,0,2,1,  0,0,0,0,  3,1,3,0,  0,0,0,0
     EQUB 2,0,3,1,  2,1,3,1,  2,1,3,0,  0,0,0,0
 
-\ cos_fine (option-2b): cf_ang (u16 fine angle) -> cf_res (s16 = cos*256).
-\ 256-entry cos table at byte-angle resolution: idx = ((hi&15)<<4)|(lo>>4).
+\ cos_fine (option-2b): cf_ang (u16 fine angle) -> A = cf_res = s8 (cos*127).
+\ 256-entry s8 cos table at byte-angle resolution: idx = ((hi&15)<<4)|(lo>>4).
 cf_ang = $9B
 cf_res = $9D
 cf_tmp = $9F
-COS_LO = $F800
-COS_HI = $F900
+COS_TAB = $F800          \ 256 bytes, signed
 .cos_fine
 {
     LDA cf_ang : LSR A : LSR A : LSR A : LSR A : STA cf_tmp   \ lo>>4
     LDA cf_ang+1 : AND #$0F : ASL A : ASL A : ASL A : ASL A   \ (hi&15)<<4
     ORA cf_tmp : TAX
-    LDA COS_LO,X : STA cf_res
-    LDA COS_HI,X : STA cf_res+1
+    LDA COS_TAB,X : STA cf_res
     RTS
 }
 

@@ -29,11 +29,12 @@ HALF_H = 80
 CFRAC = 16                      # 4 fractional bits on c
 
 # Cosine table: 256 entries at byte-angle resolution (index = fineangle>>4),
-# values cos*256 as s16. 512 bytes -- fits the 6502 RAM map at $F701, and the
-# resolution is adequate (0.58px Y vs true; cos precision is not the limiter --
-# see validate_2b_fp.py). 6502 lookup: idx=(angle>>4)&255, read 2 bytes.
+# values cos*127 as s8 (single byte) -- 256 bytes, and keeps the 6502 depth math
+# 8-bit (c*cph is s16xs8; depth divide is s24/s8). cos magnitude precision is
+# not the limiter (0.59px Y vs true, same as cos*256). 6502: idx=(angle>>4)&255.
 _COSSHIFT = 4
-_COSR = [round(256 * math.cos((i << _COSSHIFT) / FINE * 2 * math.pi)) for i in range(256)]
+_COSSCALE = 127
+_COSR = [round(_COSSCALE * math.cos((i << _COSSHIFT) / FINE * 2 * math.pi)) for i in range(256)]
 def _cos(f):
     return _COSR[(f & MASK) >> _COSSHIFT]
 
