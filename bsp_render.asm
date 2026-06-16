@@ -306,10 +306,10 @@ zp_line_yr      = $AB
 ;     else: val = (lo*mag + 128) >> 8
 ;     return -val if neg else val
 ; ============================================================================
-zp_ft_lo  = $24
-zp_ft_mag = $25
-zp_ft_neg = $26
-zp_ft_one = $27
+zp_ft_lo  = $0BF8      ; absolute (swapped with zp_seg_lv1x/y); cold
+zp_ft_mag = $0BF9
+zp_ft_neg = $0BFA
+zp_ft_one = $0BFB
 
 .br_frac_rot_term
 {
@@ -1081,10 +1081,10 @@ zp_fhch_p       = $98      ; persistent FHCH ptr (advances +6/seg)
 zp_fhch_p_h     = $99
 zp_pyc_idx      = $9A      ; projection-cache probe index (X save)
 ; Per-seg back-face / linedef state
-zp_seg_lv1x_lo  = $0BF8
-zp_seg_lv1x_hi  = $0BF9
-zp_seg_lv1y_lo  = $0BFA
-zp_seg_lv1y_hi  = $0BFB
+zp_seg_lv1x_lo  = $24      ; ZP (swapped with zp_ft_*); hot per-seg back-face in
+zp_seg_lv1x_hi  = $25
+zp_seg_lv1y_lo  = $26
+zp_seg_lv1y_hi  = $27
 zp_seg_ldx      = $3D      ; s8 linedef delta x
 zp_seg_ldy      = $3E      ; s8 linedef delta y
 zp_seg_flags    = $3F      ; u8
