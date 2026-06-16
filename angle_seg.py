@@ -59,7 +59,10 @@ def seg_consts(ldx, ldy):
     L = math.hypot(ldx, ldy)
     if L == 0:
         return 0, 0
-    na = round(math.atan2(ldx, -ldy) / (2 * math.pi) * FINE) & MASK
+    # na = atan2(ldx, -ldy) == point_to_angle(-ldy, ldx). Use the integer
+    # point_to_angle (not float atan2) so the 6502 can recompute na on the fly
+    # from ldx/ldy -- bit-exact, no ROM na table. (L is a u8 ROM byte.)
+    na = A.point_to_angle(-ldy, ldx) & MASK
     return na, round(L)
 
 
