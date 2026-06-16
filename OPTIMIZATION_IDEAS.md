@@ -13,12 +13,23 @@ log of what's been done. Every change must stay under the regression suite
 - `compare_subsector.py` — 0 pixel/span-affecting divergences.
 
 ## Parked ideas
-- **Unroll slope_div's 10-iteration loop** to kill the per-iteration `DEX:BNE`
-  (~100 cyc/bbox, ~5%). Blocked by beebasm: unrolling with branches needs a
-  unique label per iteration (the MACRO/FOR text-substitution limitation), and
-  a branchless divide step has no spare register (A=remainder, X=counter). Would
-  require hand-unrolling all 10 (8 phase-A + 2 phase-B) iterations explicitly.
-  PARKED at user request (2026-06-15).
+- (DONE 2026-06-16) ~~Unroll slope_div's 10-iteration loop~~. UNBLOCKED: the
+  beebasm label problem is sidestepped with `BCC/BCS P%+N` relative branches
+  (no label) inside a `FOR` loop. Done: bbox 1839 -> 1736.
+
+## Open candidates (from profile_cycles.py, 10 reference frames)
+- point_to_angle 12.4% (heavily optimised; abs/octant/lookup/combine).
+- br_render_subsector 7.9%, br_seg_xform_vertex 7.1% (seg loop/transform glue).
+- umul8 6.4% (near-optimal quarter-square; count frozen).
+- tg_append_x 4.4% (span-list append; span_clip, risky).
+- DEAD CODE to remove (bytes + removes $DC00/TA_LO latent hazard): the whole
+  perspective-bbox subsystem is orphaned (0 calls) -- bv_corner_products,
+  rot_pair_cached + rpc_* (RPC at $DC00 == angle TA_LO!), bv_proj_one,
+  bv_corner_view, crx_* near-plane, bv_classify_sx, cp_* tables, plus dead
+  helpers load_val/val_lo/val_hi/pa_base_lo in slope_div.asm. Spread across
+  regions x/d/y/w + main; remove carefully under regression.
+- More hot absolute scalars -> ZP: SEG_PROJ_BUF ($0A40-$0A4F, ~600 acc each)
+  once more ZP is freed by demoting cold ZP scalars.
 
 ## Method: hot/cold ZP analysis
 Goal: hot scalar values accessed outside ZP → move into ZP; shuffle cold ZP

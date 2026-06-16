@@ -181,8 +181,8 @@ TA_HI  = $EF00        \ 1024 entries ($EF00-$F2FF, after code; recip owns $E000)
     RTS
 }
 
-\ per-octant base (0/ANG90=1024/ANG180=2048/ANG270=3072) and sign (+ / $80=-)
-.pa_base_lo EQUB 0,0,0,0, 0,0,0,0
+\ per-octant base (0/ANG90=1024/ANG180=2048/ANG270=3072) and sign (+ / $80=-).
+\ base_lo is always 0 (bases are multiples of 256) so the table is omitted.
 .pa_base_hi EQUB 4,0,12,0, 4,8,12,8     \ /256: ANG90=>4, ANG180=>8, ANG270=>12
 .pa_sign    EQUB $80,0,0,$80, 0,$80,$80,0
 
@@ -398,14 +398,7 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
     RTS
 }
 
-\ load val[Y] (Y in 0..3 = top/bot/left/right) -> val_lo/val_hi (s16)
-.load_val
-{
-    TYA : ASL A : TAY
-    LDA bca_top,Y : STA val_lo
-    LDA bca_top+1,Y : STA val_hi
-    RTS
-}
+\ (load_val removed: inlined at the corner loads.)
 
 \ corner_phi: dx=cx-pxs, dy=cy-pys; point_to_angle; pa_res=(afn-psi)&MASK signed
 .corner_phi
