@@ -15,6 +15,7 @@ Struct sizes are powers of 2 for fast index→offset shifts.
 """
 
 import struct
+import math
 
 # ── Struct sizes (all powers of 2) ──────────────────────────────────────
 
@@ -32,6 +33,7 @@ SH_V1 = 0; SH_V2 = 2             # u16 vertex indices
 SH_LV1X = 4; SH_LV1Y = 6        # s16 linedef v1 (for back-face)
 SH_LDX = 8; SH_LDY = 9          # s8 linedef delta
 SH_FLAGS = 10                    # u8 flags
+SH_L = 11                        # u8 round(seg length) for option-2b (was pad)
 SH_PAD = 11
 
 # ── Offsets within seg detail (20 bytes) ─────────────────────────────────
@@ -293,9 +295,14 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                     and (i, 2) not in novt_rule4):
                 flags |= SF_APEDGE2
 
+        # L = round(seg length) in the formerly-pad byte (offset 11), for the
+        # option-2b angle-space seg projection: c = (cross<<4)/L. u8 (<=89 for
+        # E1M1). na is recomputed on the 6502 via point_to_angle(-ldy, ldx).
+        seg_L = int(round(math.hypot(ldx, ldy)))
+        assert 0 <= seg_L <= 255, f"seg {i}: L={seg_L} not u8"
         o = off_seg_hdr + i * SEG_HDR_SIZE
-        struct.pack_into('<HHhhbbBx', rom_main, o,
-                         s[0], s[1], lv1[0], lv1[1], ldx, ldy, flags)
+        struct.pack_into('<HHhhbbBB', rom_main, o,
+                         s[0], s[1], lv1[0], lv1[1], ldx, ldy, flags, seg_L)
 
         # For solids with aperture edges, overlay APV heights onto the
         # unused portal-only slots in seg detail.
