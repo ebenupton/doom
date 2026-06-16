@@ -128,9 +128,6 @@ SINCOS_BASE     = $E480     ; sin_mag[0..63], sin_unity[0..63] (128 bytes)
 VCACHE_BASE       = $0C00
 VCACHE_VALID_BASE = $1B00      ; 59 bytes for 467 vertices
 
-; Build flag: option-2b angle-space seg projection in the seg loop. Default
-; FALSE (perspective). Flip to TRUE to build the 2b seg path (test toggles it).
-_USE_ANGLE_SEG_6502 = FALSE
 
 ; ============================================================================
 ; Jump-table entries (Python wrapper JSRs to these fixed addresses)
@@ -149,9 +146,6 @@ JMP br_render_subsector ; $4818  process one subsector's segs (caller sets
                         ;        to isolate BSP-traversal vs seg-processor
                         ;        divergence.
 JMP br_init_frame   ; $481B   clear vcache valid bitmap (for hybrid mode)
-JMP br_seg_project_2b ; $481E  option-2b: project current seg's v1/v2 via the
-                      ;        angle module (seg_c + seg_project + proj_yd),
-                      ;        writing sx1/sx2 + sy1/sy2 slots (or zp_seg_skip=1).
 
 ; ============================================================================
 ; Aliases for span_clip's exported routines
@@ -1431,13 +1425,6 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_seg_bch : SEC : SBC zp_br_vz : STA zp_seg_btop_dlt
     LDA zp_seg_bfh : SEC : SBC zp_br_vz : STA zp_seg_bbot_dlt
 
-IF _USE_ANGLE_SEG_6502
-    ; Option-2b: angle-space projection of both endpoints in one call.
-    JSR br_seg_project_2b
-    LDA zp_seg_skip : BEQ asp2b_ok
-    JMP s_advance
-.asp2b_ok
-ELSE
     ; Transform v1. Always copy evy/evx/clipped so both endpoints are
     ; available for near-plane crossing math even when one side is clipped.
     LDA zp_seg_v1_lo : STA zp_br_t0
@@ -1481,7 +1468,6 @@ ELSE
 .s_v2_was_clipped
     JSR reproject_at_crossing
     JSR copy_seg_to_v2
-ENDIF
 .s_both_have_proj
 
     ; Match Python's has_gap wrapper:
@@ -2006,156 +1992,6 @@ ENDIF
 ; ============================================================================
 .vc_bit_mask
     EQUB 1, 2, 4, 8, 16, 32, 64, 128   ; 1 << (idx & 7) for the vertex cache
-
-; ============================================================================
-; br_seg_project_2b (option-2b) — project the current seg's two endpoints via
-; the angle module instead of rotation/recip. Produces the SAME outputs as the
-; perspective xform path (zp_seg_sx1/sx2 + the SEG_PROJ_BUF sy1/sy2 slots),
-; pre-biased by Y_BIAS like br_project_y. Sets zp_seg_skip=1 to cull the seg.
-;
-; Reuses the bit-exact angle routines: point_to_angle ($E943) for na, seg_c
-; ($E952) for c, seg_project ($E955) for (sx,depth), proj_yd ($E94F) for Y.
-; na is recomputed (= point_to_angle(-ldy, ldx)); L comes from seg-header[11].
-;
-; The angle module clobbers $42/$43 (rom_nodes), $4C/$4D (root_node), $4E
-; (bsp_stack_sp) — saved/restored on the stack so BSP traversal survives.
-; ============================================================================
-BR_PTA_E      = $E943
-BR_PROJ_YD_E  = $E94F
-BR_SEG_C_E    = $E952
-BR_SEG_PROJ_E = $E955
-S2B_WX1 = $0A50          ; v1 world x (s16)   ] freed when per-vertex view
-S2B_WY1 = $0A52          ; v1 world y (s16)   ] coords were promoted to ZP
-S2B_WX2 = $0A54          ; v2 world x (s16)
-S2B_WY2 = $0A56          ; v2 world y (s16)
-S2B_C   = $0A58          ; saved sp_c for this seg (s16)
-S2B_SE  = $0A5A          ; sign-extend scratch (1 byte)
-Y_BIAS_2B = 48
-.br_seg_project_2b
-{
-    LDA $42 : PHA
-    LDA $43 : PHA
-    LDA $4C : PHA
-    LDA $4D : PHA
-    LDA $4E : PHA
-
-    ; --- v1 world coords (ROM_VERTS + v1_idx*4) ---
-    LDA zp_seg_v1_lo : STA zp_br_t2
-    LDA zp_seg_v1_hi : STA zp_br_t3
-    ASL zp_br_t2 : ROL zp_br_t3
-    ASL zp_br_t2 : ROL zp_br_t3
-    CLC : LDA zp_rom_verts_lo : ADC zp_br_t2 : STA zp_br_p
-          LDA zp_rom_verts_hi : ADC zp_br_t3 : STA zp_br_p_h
-    LDY #0 : LDA (zp_br_p),Y : STA S2B_WX1
-    INY    : LDA (zp_br_p),Y : STA S2B_WX1+1
-    INY    : LDA (zp_br_p),Y : STA S2B_WY1
-    INY    : LDA (zp_br_p),Y : STA S2B_WY1+1
-    ; --- v2 world coords ---
-    LDA zp_seg_v2_lo : STA zp_br_t2
-    LDA zp_seg_v2_hi : STA zp_br_t3
-    ASL zp_br_t2 : ROL zp_br_t3
-    ASL zp_br_t2 : ROL zp_br_t3
-    CLC : LDA zp_rom_verts_lo : ADC zp_br_t2 : STA zp_br_p
-          LDA zp_rom_verts_hi : ADC zp_br_t3 : STA zp_br_p_h
-    LDY #0 : LDA (zp_br_p),Y : STA S2B_WX2
-    INY    : LDA (zp_br_p),Y : STA S2B_WX2+1
-    INY    : LDA (zp_br_p),Y : STA S2B_WY2
-    INY    : LDA (zp_br_p),Y : STA S2B_WY2+1
-
-    ; --- na = point_to_angle(-ldy, ldx) -> sp_na ($4C/$4D) ---
-    LDX #0 : LDA zp_seg_ldy : BPL na1 : DEX
-.na1 STX S2B_SE
-    SEC : LDA #0 : SBC zp_seg_ldy : STA $30
-    LDA #0 : SBC S2B_SE : STA $31              ; pa_dx = -ldy
-    LDX #0 : LDA zp_seg_ldx : BPL na2 : DEX
-.na2 STX $33
-    LDA zp_seg_ldx : STA $32                   ; pa_dy = ldx
-    JSR BR_PTA_E
-    LDA $39 : STA $4C
-    LDA $3A : STA $4D
-
-    ; --- c = seg_c(wy1-py, wx1-px, ldx, ldy, L) -> sp_c, saved ---
-    LDX #0 : LDA zp_br_py_h : BPL c1 : DEX
-.c1 STX S2B_SE
-    SEC : LDA S2B_WY1 : SBC zp_br_py_h : STA $32
-    LDA S2B_WY1+1 : SBC S2B_SE : STA $33       ; sc_dy1
-    LDX #0 : LDA zp_br_px_h : BPL c2 : DEX
-.c2 STX S2B_SE
-    SEC : LDA S2B_WX1 : SBC zp_br_px_h : STA $34
-    LDA S2B_WX1+1 : SBC S2B_SE : STA $35       ; sc_dx1
-    LDA zp_seg_ldx : STA $36
-    LDA zp_seg_ldy : STA $37
-    LDY #11 : LDA (zp_seg_hdr_p),Y : STA $38   ; L from seg-header pad byte
-    JSR BR_SEG_C_E
-    LDA $30 : STA S2B_C
-    LDA $31 : STA S2B_C+1
-
-    ; --- a_fine from bca_ab ($FA2F) -> bca_afn ($3B/$3C) ---
-    LDA $FA2F : LSR A : LSR A : LSR A : LSR A : STA $3C
-    LDA $FA2F : ASL A : ASL A : ASL A : ASL A : STA $3B
-
-    ; ===== vertex 1 =====
-    JSR s2b_set_player
-    LDA S2B_WX1 : STA $9D : LDA S2B_WX1+1 : STA $9E
-    LDA S2B_WY1 : STA $71 : LDA S2B_WY1+1 : STA $72
-    JSR BR_SEG_PROJ_E
-    BCC s2b_v1ok
-    JMP s2b_cull
-.s2b_v1ok
-    LDA $4E : STA zp_seg_sx1_lo
-    LDA #0  : STA zp_seg_sx1_hi
-    LDA zp_seg_top_dlt  : JSR s2b_py : STA zp_seg_sy1_top_lo  : TYA : STA zp_seg_sy1_top_hi
-    LDA zp_seg_bot_dlt  : JSR s2b_py : STA zp_seg_sy1_bot_lo  : TYA : STA zp_seg_sy1_bot_hi
-    LDA zp_seg_btop_dlt : JSR s2b_py : STA zp_seg_sy1_btop_lo : TYA : STA zp_seg_sy1_btop_hi
-    LDA zp_seg_bbot_dlt : JSR s2b_py : STA zp_seg_sy1_bbot_lo : TYA : STA zp_seg_sy1_bbot_hi
-
-    ; ===== vertex 2 =====
-    JSR s2b_set_player
-    LDA S2B_WX2 : STA $9D : LDA S2B_WX2+1 : STA $9E
-    LDA S2B_WY2 : STA $71 : LDA S2B_WY2+1 : STA $72
-    JSR BR_SEG_PROJ_E
-    BCC s2b_v2ok
-    JMP s2b_cull
-.s2b_v2ok
-    LDA $4E : STA zp_seg_sx2_lo
-    LDA #0  : STA zp_seg_sx2_hi
-    LDA zp_seg_top_dlt  : JSR s2b_py : STA zp_seg_sy2_top_lo  : TYA : STA zp_seg_sy2_top_hi
-    LDA zp_seg_bot_dlt  : JSR s2b_py : STA zp_seg_sy2_bot_lo  : TYA : STA zp_seg_sy2_bot_hi
-    LDA zp_seg_btop_dlt : JSR s2b_py : STA zp_seg_sy2_btop_lo : TYA : STA zp_seg_sy2_btop_hi
-    LDA zp_seg_bbot_dlt : JSR s2b_py : STA zp_seg_sy2_bbot_lo : TYA : STA zp_seg_sy2_bbot_hi
-
-    LDA #0 : STA zp_seg_skip
-    JMP s2b_done
-.s2b_cull
-    LDA #1 : STA zp_seg_skip
-.s2b_done
-    PLA : STA $4E
-    PLA : STA $4D
-    PLA : STA $4C
-    PLA : STA $43
-    PLA : STA $42
-    RTS
-
-; restore sp_c and set bca_pxs/pys (player, s16) before a seg_project call.
-.s2b_set_player
-    LDA S2B_C : STA $30 : LDA S2B_C+1 : STA $31
-    LDX #0 : LDA zp_br_px_h : BPL sp1 : DEX
-.sp1 STX $8E : LDA zp_br_px_h : STA $8D
-    LDX #0 : LDA zp_br_py_h : BPL sp2 : DEX
-.sp2 STX $9C : LDA zp_br_py_h : STA $9B
-    RTS
-
-; proj_yd(A = height delta s8) using current depth ($46/$47); returns the
-; Y_BIAS-added s16 in A (lo) / Y (hi).
-.s2b_py
-    STA $30                            ; sp_hd
-    JSR BR_PROJ_YD_E
-    LDA $32 : CLC : ADC #Y_BIAS_2B
-    PHA
-    LDA $33 : ADC #0 : TAY
-    PLA
-    RTS
-}
 
 .end_code
 ASSERT end_code <= $5800

@@ -267,3 +267,28 @@ Everything pushed, all regression green.
 - angle bbox visibility: 2823 → 1868 cyc/call (-34%) via slope_div fast paths
   (den<256, den<128, r-in-A, 8+2 phase split), tantoangle/VATOX pointer folds,
   load_val inlining, a_fine register shifts, ZP placement of hot bbox vars.
+
+## Autonomous micro-opt session (2026-06-17) — plan + reliable profile
+Built a call-stack EXCLUSIVE-time profiler (/tmp/prof.py) — the nearest-label
+attribution in profile_cycles.py is unreliable (it mis-blamed cos_fine and
+br_init_frame this week). Self-time over 10 ref frames (total 4,131,823):
+  draw_clipped_line_s16  9.4%   br_render_subsector 8.8%  br_seg_xform_vertex 7.3%
+  point_to_angle 6.5%    umul8 6.4% (4672 calls)  bbox_check_angle 6.4%
+  slope_div 5.7%         br_bbox_visible 4.0%     emit_vert_sx1/2 5.2%
+  br_to_view/rot_int/smul 7.2%
+Targets (self-time x tractability): umul8 (broad), seg-loop glue (~21%),
+bbox glue (~16% non-atan2). Plus: remove jump tables (user ask). Method:
+measure (call-bracket) -> change -> regression green -> measure -> commit.
+
+## Parked 2b REMOVED from the build (2026-06-17)
+bsp_render.bin was exactly full ($5800, 0 headroom), blocking any code-adding
+micro-opt. The parked option-2b 6502 path (br_seg_project_2b + the IF-gated
+seg-loop branch + the 5 angle routines cos_fine/seg_depth/proj_yd/seg_c/
+seg_project + 6 jump-table entries + COS table) was consuming it, is 2.05x
+slower (won't ship), and is the source of the jump tables to remove. Removed
+it: bsp_render.bin 4096->3561 B (535 B headroom), angle bin 2139->1265 B,
+6 jump entries gone. Perspective behaviour byte-identical (2b was flag-off);
+regression GREEN, mean 411,504. Fully recoverable from git history (the 2b
+work + bit-exact unit tests are at the commits tagged "6502 2b:" / "option-2b").
+The Python-side reference (angle_seg.py + packed_render_seg _USE_ANGLE_SEG,
+flag-off) is kept as documentation of the validated-but-slower approach.
