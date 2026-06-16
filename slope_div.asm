@@ -25,6 +25,7 @@ ORG $E940
     JMP seg_depth            \ $E94C  (option-2b: depth = c*cos(phi)/cos(den))
     JMP proj_yd              \ $E94F  (option-2b: yt = HALF_H - (hd<<11)/depth)
     JMP seg_c               \ $E952  (option-2b: c = (cross<<4)/L, perp distance)
+    JMP seg_project         \ $E955  (option-2b: endpoint -> sx + depth)
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -107,7 +108,7 @@ pa_sy  = $89
 pa_oct = $8A
 pa_ptr = $40          \ 16-bit table pointer
 TA_LO  = $DC00        \ 1024 entries (reclaimed rotation-cache RAM)
-TA_HI  = $EF00        \ 1024 entries ($EF00-$F2FF, after code; recip owns $E000)
+TA_HI  = $F200        \ 1025 entries ($F200-$F600, above the grown code <$F200)
 
 .point_to_angle
 {
@@ -225,7 +226,7 @@ t1       = $FA2B
 val_lo   = $FA2C
 val_hi   = $FA2D
 bca_ccsave = $FA2E
-VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
+VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
 
 .bbox_check_angle
 {
@@ -455,7 +456,7 @@ VATOX    = $F300      \ viewangletox, 1025 entries (phi+512), $F300-$F700
 cf_ang = $9B
 cf_res = $9D
 cf_tmp = $9F
-COS_TAB = $F800          \ 256 bytes, signed
+COS_TAB = $FB00          \ 256 bytes, signed (above bca vars at $FA10)
 .cos_fine
 {
     LDA cf_ang : LSR A : LSR A : LSR A : LSR A : STA cf_tmp   \ lo>>4
@@ -711,5 +712,48 @@ sc_p2  = $3A
     RTS
 }
 
+\ seg_project (option-2b): one endpoint -> sx (column) + depth, or carry=cull.
+\   in : bca_cx/bca_cy (vertex s16), bca_pxs/bca_pys (player s16),
+\        bca_afn (a_fine), sp_na (seg normal s16), sp_c (perp dist, from seg_c).
+\   out: sp_sx (u8 column), sp_depth (u16) ; carry set = cull.
+\   Mirrors angle_seg.seg_2b per-endpoint: phi = clamp(a_fine-ptangle, +/-512);
+\   sx = VATOX_centre[phi] (clamp baked into table); depth via seg_depth.
+sp_na    = $4C
+sp_sx    = $4E
+sc_stash = $42
+.seg_project
+{
+    LDA sp_c   : STA sc_stash          \ c survives point_to_angle ($30/$31 reuse)
+    LDA sp_c+1 : STA sc_stash+1
+    JSR corner_phi                     \ pa_res = phi signed [-2048,2048)
+    \ clamp phi to [-512,+512]  (same compares as clamp_lohi)
+    LDA #<512 : CMP pa_res : LDA #>512 : SBC pa_res+1 : BVC sp_c1 : EOR #$80
+.sp_c1
+    BPL sp_clo
+    LDA #<512 : STA pa_res : LDA #>512 : STA pa_res+1
+    JMP sp_have
+.sp_clo
+    LDA pa_res : CMP #$00 : LDA pa_res+1 : SBC #$FE : BVC sp_c2 : EOR #$80
+.sp_c2
+    BPL sp_have
+    LDA #$00 : STA pa_res : LDA #$FE : STA pa_res+1
+.sp_have
+    LDA pa_res   : STA sp_phi
+    LDA pa_res+1 : STA sp_phi+1
+    \ sx = VATOX[(VATOX+512) + phi]   (table already clamps column to [0,255])
+    CLC : LDA #<(VATOX+512) : ADC pa_res   : STA pa_ptr
+          LDA #>(VATOX+512) : ADC pa_res+1 : STA pa_ptr+1
+    LDY #0 : LDA (pa_ptr),Y : STA sp_sx
+    \ den = a_fine - phi - na -> sp_den  (cos_fine masks to 4096 internally)
+    SEC : LDA bca_afn   : SBC sp_phi   : STA sp_den
+          LDA bca_afn+1 : SBC sp_phi+1 : STA sp_den+1
+    SEC : LDA sp_den   : SBC sp_na   : STA sp_den
+          LDA sp_den+1 : SBC sp_na+1 : STA sp_den+1
+    LDA sc_stash   : STA sp_c          \ restore c for seg_depth
+    LDA sc_stash+1 : STA sp_c+1
+    JMP seg_depth                      \ tail: -> sp_depth or carry=cull
+}
+
 .end
+ASSERT end <= TA_HI      \ code must not grow into the relocated tables ($F200+)
 SAVE "bsp_render_ang.bin", $E940, end, $E940

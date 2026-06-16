@@ -16,10 +16,10 @@ for i, b in enumerate(code):
 for i in range(1024):                            # TA_LO $DC00 / TA_HI $EE00
     v = A._tantoangle[i]
     mpu.memory[0xDC00 + i] = v & 0xFF
-    mpu.memory[0xEF00 + i] = (v >> 8) & 0xFF
+    mpu.memory[0xF200 + i] = (v >> 8) & 0xFF
 for k in range(1025):                           # VATOX shrunk: phi+512, $F300
     c = (A._vatox_lo[k + 512] + A._vatox_hi[k + 512]) // 2
-    mpu.memory[0xF300 + k] = max(0, min(255, c))
+    mpu.memory[0xF601 + k] = max(0, min(255, c))
 
 
 def w16(addr, v):

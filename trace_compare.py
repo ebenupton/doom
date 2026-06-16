@@ -43,10 +43,10 @@ def load_angle_module(mem):
     for i in range(1024):
         v = _A._tantoangle[i]
         mem[0xDC00 + i] = v & 0xFF
-        mem[0xEF00 + i] = (v >> 8) & 0xFF
+        mem[0xF200 + i] = (v >> 8) & 0xFF
     for k in range(1025):            # VATOX shrunk: phi+512 index, $F300
         _vt = (_A._vatox_lo[k + 512] + _A._vatox_hi[k + 512]) // 2
-        mem[0xF300 + k] = max(0, min(255, _vt))
+        mem[0xF601 + k] = max(0, min(255, _vt))
 
 
 def setup_wad(sc):

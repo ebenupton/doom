@@ -7,7 +7,7 @@ import doom_wireframe as dw, angle_seg as S
 sc=SpanClip6502(); m=sc.mpu
 code=open('bsp_render_ang.bin','rb').read()
 for i,b in enumerate(code): m.memory[0xE940+i]=b
-for i in range(256): m.memory[0xF800+i]=S._COSR[i]&0xFF
+for i in range(256): m.memory[0xFB00+i]=S._COSR[i]&0xFF
 def s16(v): return v-65536 if v>=32768 else v
 def seg_depth(c, phi, den):
     m.memory[0x30]=c&0xFF; m.memory[0x31]=(c>>8)&0xFF

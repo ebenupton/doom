@@ -16,9 +16,9 @@ _st=MPU()
 _code=open('bsp_render_ang.bin','rb').read()
 for i,b in enumerate(_code): _st.memory[0xE940+i]=b
 for i in range(1024):
-    v=A._tantoangle[i]; _st.memory[0xDC00+i]=v&0xFF; _st.memory[0xEF00+i]=(v>>8)&0xFF
+    v=A._tantoangle[i]; _st.memory[0xDC00+i]=v&0xFF; _st.memory[0xF200+i]=(v>>8)&0xFF
 for k in range(1025):
-    c=(A._vatox_lo[k+512]+A._vatox_hi[k+512])//2; _st.memory[0xF300+k]=max(0,min(255,c))
+    c=(A._vatox_lo[k+512]+A._vatox_hi[k+512])//2; _st.memory[0xF601+k]=max(0,min(255,c))
 def standalone(top,bot,left,right,px,py,ab):
     m=_st.memory
     m[0xFA10]=top&0xFF;m[0xFA11]=(top>>8)&0xFF;m[0xFA12]=bot&0xFF;m[0xFA13]=(bot>>8)&0xFF

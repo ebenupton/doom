@@ -1264,6 +1264,9 @@ _USE_ANGLE_COL = False
 # view angle byte, set per frame in _VIEW_AB by the render harness.
 _USE_ANGLE_BBOX = False
 _VIEW_AB = 0
+# Option 2b: full angle-space SEG (no per-vertex rotation). X from world angle,
+# Y from wall-distance scale. Reference path in packed_render_seg.
+_USE_ANGLE_SEG = False
 
 
 def fp_bbox_visible_fixed(node, far_side, ctx):

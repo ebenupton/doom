@@ -44,7 +44,7 @@ print(f"slope_div: checked {checked} (num,den) pairs, {fails} mismatches")
 for i in range(1024):
     v=A._tantoangle[i]
     mpu.memory[0xDC00 + i] = v & 0xFF
-    mpu.memory[0xEF00 + i] = (v >> 8) & 0xFF
+    mpu.memory[0xF200 + i] = (v >> 8) & 0xFF
 PA = None
 out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-v'],
                      capture_output=True, text=True).stdout

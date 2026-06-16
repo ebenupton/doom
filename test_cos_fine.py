@@ -5,7 +5,7 @@ import angle_seg as S
 subprocess.run(['./beebasm','-i','slope_div.asm'], check=True, capture_output=True)
 m=MPU(); code=open('bsp_render_ang.bin','rb').read()
 for i,b in enumerate(code): m.memory[0xE940+i]=b
-for i in range(256): m.memory[0xF800+i]=S._COSR[i]&0xFF     # signed byte
+for i in range(256): m.memory[0xFB00+i]=S._COSR[i]&0xFF     # signed byte
 def cos_fine(ang):
     m.memory[0x9B]=ang&0xFF; m.memory[0x9C]=(ang>>8)&0xFF
     m.pc=0xE949; m.sp=0xFD; m.memory[0x1FF]=0xFF; m.memory[0x1FE]=0xFF
