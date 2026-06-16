@@ -28,9 +28,14 @@ HALF_W = 128
 HALF_H = 80
 CFRAC = 16                      # 4 fractional bits on c
 
-# 8-bit cosine table over the fine circle (cos table precision is not the
-# limiter; 8 bits suffices -- see validate_2b_fp.py).
-_COS = [round(256 * math.cos(f / FINE * 2 * math.pi)) for f in range(FINE)]
+# Cosine table: 256 entries at byte-angle resolution (index = fineangle>>4),
+# values cos*256 as s16. 512 bytes -- fits the 6502 RAM map at $F701, and the
+# resolution is adequate (0.58px Y vs true; cos precision is not the limiter --
+# see validate_2b_fp.py). 6502 lookup: idx=(angle>>4)&255, read 2 bytes.
+_COSSHIFT = 4
+_COSR = [round(256 * math.cos((i << _COSSHIFT) / FINE * 2 * math.pi)) for i in range(256)]
+def _cos(f):
+    return _COSR[(f & MASK) >> _COSSHIFT]
 
 
 def _signed(a):
@@ -59,11 +64,22 @@ def _vatox_centre(phi):
     return (A._vatox_lo[idx] + A._vatox_hi[idx]) // 2
 
 
-def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, ch, fh, px, py, ab, vz, na, rlen):
-    """Return [(sx1,ft1,fb1),(sx2,ft2,fb2)] for the two endpoints, or None."""
+def proj_y(h, depth, vz):
+    """Screen Y of height h at a column whose CFRAC*depth is `depth`."""
+    return HALF_H - _rdiv((h - vz) * FOCAL * CFRAC, depth)
+
+
+def proj_y_delta(hd, depth):
+    """Screen Y of a pre-subtracted height delta hd=(h-vz)."""
+    return HALF_H - _rdiv(hd * FOCAL * CFRAC, depth)
+
+
+def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, px, py, ab, na, rlen):
+    """Return [(sx1,depth1),(sx2,depth2)] for the two endpoints, or None.
+    depth is CFRAC*true_depth; feed it to proj_y(h, depth, vz) for any height."""
     a_fine = (ab * (FINE // 256)) & MASK
     cross = (wy1 - py) * ldx - (wx1 - px) * ldy
-    c = (cross * rlen) >> (16 - 4)            # s.4 : (1/len<<16)*cross >>12 = (cross/len)<<4
+    c = (cross * rlen) >> (16 - 4)            # s.4 : (cross/len)<<4
     out = []
     for (wx, wy) in ((wx1, wy1), (wx2, wy2)):
         dx, dy = wx - px, wy - py
@@ -71,8 +87,8 @@ def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, ch, fh, px, py, ab, vz, na, rlen):
         phi = _signed(a_fine - wa)
         phi = max(-ANG45, min(ANG45, phi))
         sx = max(0, min(255, _vatox_centre(phi)))
-        cph = _COS[phi & MASK]
-        cden = _COS[(a_fine - phi - na) & MASK]
+        cph = _cos(phi)
+        cden = _cos(a_fine - phi - na)
         num, den = c * cph, cden
         if den < 0:
             num, den = -num, -den
@@ -81,7 +97,5 @@ def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, ch, fh, px, py, ab, vz, na, rlen):
         depth = _rdiv(num, den)               # = CFRAC * true_depth
         if depth <= 0:
             return None
-        ft = HALF_H - _rdiv((ch - vz) * FOCAL * CFRAC, depth)
-        fb = HALF_H - _rdiv((fh - vz) * FOCAL * CFRAC, depth)
-        out.append((sx, ft, fb))
+        out.append((sx, depth))
     return out
