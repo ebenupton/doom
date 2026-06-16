@@ -100,6 +100,29 @@ Status (2026-06-16): math fully validated; bit-exact reference module built.
    the 6502 seg-loop integration).
    REMAINING: 6502 seg-loop integration + na/L ROM table + pixel-exact
    6502-2b vs Python-2b regression.
+   ROM L: **DONE** packed into the seg-header pad byte (offset 11, SH_L);
+   na recomputed on-6502 via point_to_angle(-ldy,ldx).
+   6502 SEG LOOP: **scaffolded + per-seg bit-exact** (2026-06-16).
+   - br_seg_project_2b ($481E, bsp_render.asm): projects the seg's v1/v2 via
+     seg_c + seg_project + proj_yd (8 Y projections), writing the SAME sx1/sx2 +
+     SEG_PROJ_BUF sy slots as the perspective xform, Y_BIAS-added. Saves/restores
+     the 5 traversal ZP bytes the angle module clobbers ($42/$43 rom_nodes,
+     $4C/$4D root_node, $4E bsp_stack_sp) on the stack.
+   - Wired into the seg loop behind `_USE_ANGLE_SEG_6502` (beebasm IF, DEFAULT
+     FALSE so the perspective bin + full regression stay green). Build the 2b
+     bin by flipping the flag TRUE.
+   - BspRender6502 now also loads the COS table ($FB00) for seg_depth.
+   - VALIDATED (frame 1024,-3500,64 etc): the per-seg projection is BIT-EXACT
+     6502-2b vs Python-2b -- front (sx1,sx2,ft1,fb1,ft2,fb2) 0 mismatches over
+     all segs; portal step bt 0 mismatches. (Captured per-si by stepping the
+     6502 frame and via doom_wireframe _seg2b_debug/_seg2b_debug_bt.)
+   - RESIDUAL: full-frame 6502-2b vs Python-2b differs ~2-5% (50-150px, small
+     ±1 / edge clusters). NOT the projection (proven bit-exact). It is a
+     rendered-seg-SET / emit difference: FOV-edge-clamped degenerate segs (both
+     endpoints clamp to sx=0 or 255 -> a spurious edge vertical) and likely
+     has_gap edge cases handled slightly differently between the full-6502 path
+     and the Python-packed path. CLOSURE = reconcile the has_gap/edge-clamp emit
+     so the frame is pixel-exact, then flip the default + add to run_regression.
 5. Integrate into the seg loop replacing rotation/project_x/project_y; the
    clip/draw/aperture interface is unchanged (feed sx/yt/yb as today). Two-sided
    + aperture heights all project via proj_y(h,depth).

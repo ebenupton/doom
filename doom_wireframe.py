@@ -1270,6 +1270,7 @@ _VIEW_AB = 0
 _USE_ANGLE_SEG = False
 _seg2b_stats = {'cull': 0, 'segs': 0}   # diagnostics; no silent fallback
 _seg2b_debug = None                     # {si: (sx1, sx2)} capture for debugging
+_seg2b_debug_bt = None                  # {si: (bt1,bt2)} ; _bb separate
 
 
 def fp_bbox_visible_fixed(node, far_side, ctx):
@@ -2198,6 +2199,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             _packed_write_vwh(ram, vwh_ft2, ft2)
             _packed_write_vwh(ram, vwh_fb2, fb2)
 
+    if _seg2b_debug is not None and _USE_ANGLE_SEG:
+        _seg2b_debug[si] = (sx1, sx2, ft1, fb1, ft2, fb2)
+
     # ── Determine solid / two-sided ──
     solid = bool(flags & SF_SOLID)
     no_vt1 = bool(flags & SF_NOVT1)
@@ -2299,6 +2303,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             else:
                 bt2 = _py2(bch)
                 if ey2 == evy2: _packed_write_vwh(ram, vwh_bt2, bt2)
+            if _seg2b_debug_bt is not None:
+                _seg2b_debug_bt[si] = (bt1, bt2)
             fp_module.mul_cat("clip")
             _ap_skip_stats['bt_seen'] += 1
             # Aperture-above-clip: bt horizontal is entirely above the

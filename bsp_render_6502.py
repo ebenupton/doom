@@ -122,6 +122,11 @@ class BspRender6502:
         for k in range(1025):            # VATOX shrunk: phi+512 index, $F300
             _vt = (_A._vatox_lo[k + 512] + _A._vatox_hi[k + 512]) // 2
             mem[0xF601 + k] = max(0, min(255, _vt))
+        # COS table ($FB00, 256 s8) for option-2b seg depth (seg_depth ->
+        # cos_fine). Harmless for the perspective build (never read).
+        import angle_seg as _AS
+        for i in range(256):
+            mem[0xFB00 + i] = _AS._COSR[i] & 0xFF
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0):
         import fp
