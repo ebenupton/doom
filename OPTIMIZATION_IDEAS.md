@@ -38,7 +38,35 @@ read+write accesses over representative frames and flags:
 - hot absolute scalars ($0100+) = candidates to promote to ZP.
 - cold ZP scalars ($00-$FF) = candidates to demote to absolute.
 
-## Completed (this session)
+## Autonomous grind session (2026-06-16) — results
+Frame mean (10 ref frames): **431,993 -> 416,919 cyc (-3.5%)**. bbox_check_angle
+**2823 -> 1705 cyc/call (-39.6%)** cumulative. All steps under regression
+(10/10 pixel-exact, bit-exact angle module). Commits:
+- slope_div fast paths: 8-bit (den<256), den<128 (drop overflow), r-in-A,
+  8+2 phase split, **unrolled (BCC/BCS P%+N, no labels)**.
+- point_to_angle: abs writes divide operands directly; tantoangle hi-pointer
+  reuse; drop zero base_lo add; afn/cy -> ZP.
+- corner_phi: fold &4095 mask + 4096 wrap into one hi-byte pass.
+- VATOX: fold +512 bias into base. bbox box-copy unrolled.
+- Vertex-cache + visited bitmask: shift-loop -> table lookup.
+- Hot per-vertex seg view-coords ($0A50..) -> ZP.
+- Tooling: run_regression.py, profile_mem.py, profile_cycles.py (v3 = PC
+  attributed to nearest JSR-target; the accurate one).
+
+### State of remaining opportunities
+- ZP promotion is **exhausted** for meaningful wins: the hot scalars are in ZP;
+  remaining absolute scalars are <800 acc/10-frames (<0.1% each). Only $29/$2B/$FF
+  are free (and $29/$2B are unreferenced reclaims).
+- Frame is now ~28% bbox (optimised), ~30% seg transform (multiply-bound, count
+  frozen), 8% rasteriser (fixed $A900 blob, no source), ~10% clipper (span_clip,
+  tg_append already O(1)), rest node-setup/init.
+- DEAD-CODE REMOVAL: still the big byte win + removes the $DC00/TA_LO latent
+  hazard, BUT it is one connected component spanning 6 SAVE regions (main/x/d/
+  y/z/w) AND the Python harness loads — all-or-nothing, auto-analysis unreliable
+  for the cluster's internal sub-labels. NOT attempted unsupervised (byte-only,
+  build currently fits). Recommend doing interactively with review.
+
+## Completed (earlier)
 - angle bbox visibility: 2823 → 1868 cyc/call (-34%) via slope_div fast paths
   (den<256, den<128, r-in-A, 8+2 phase split), tantoangle/VATOX pointer folds,
   load_val inlining, a_fine register shifts, ZP placement of hot bbox vars.
