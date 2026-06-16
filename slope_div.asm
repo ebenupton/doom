@@ -22,6 +22,7 @@ ORG $E940
     JMP point_to_angle       \ $E943
     JMP bbox_check_angle     \ $E946
     JMP cos_fine             \ $E949  (option-2b seg projection helper)
+    JMP seg_depth            \ $E94C  (option-2b: depth = c*cos(phi)/cos(den))
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -460,6 +461,91 @@ COS_TAB = $F800          \ 256 bytes, signed
     ORA cf_tmp : TAX
     LDA COS_TAB,X : STA cf_res
     RTS
+}
+
+\ seg_depth (option-2b): depth = c*cos(phi)/cos(den_angle), clamped u16.
+\   in : sp_c (s16, perp dist s.4), sp_phi (fine), sp_den (fine = a_fine-phi-na)
+\   out: sp_depth (u16 = CFRAC*true_depth); C set on cull (depth<=0).
+\ Uses umul8 ($2030) for |c|*cph and a u24/u8 rounded restoring divide.
+SC_UMUL8 = $2030
+zp_mul_b = $D9
+zp_prod_lo = $DA
+zp_prod_hi = $DB
+sp_c     = $30
+sp_phi   = $32
+sp_den   = $44
+sp_depth = $46
+sp_absc  = $48
+sp_num0  = $4A
+sp_num1  = $4B
+sp_num2  = $71
+sp_cph   = $72
+sp_den8  = $73
+sp_sign  = $89
+sp_rem   = $8A
+.seg_depth
+{
+    LDA sp_phi   : STA cf_ang
+    LDA sp_phi+1 : STA cf_ang+1
+    JSR cos_fine                       \ A = cph (s8, >0 for clamped phi)
+    STA sp_cph
+    LDA sp_den   : STA cf_ang
+    LDA sp_den+1 : STA cf_ang+1
+    JSR cos_fine                       \ A = cden (s8)
+    LDX #0
+    STA sp_den8
+    CMP #0 : BPL sd_dpos               \ CMP sets N from cden (LDX clobbered it)
+    LDA #0 : SEC : SBC sp_den8 : STA sp_den8    \ |cden|
+    LDX #1
+.sd_dpos
+    STX sp_sign
+    LDA sp_den8 : BNE sd_dok           \ cos(den)==0 -> divide-by-zero -> cull
+    SEC : RTS
+.sd_dok
+    LDA sp_c+1 : BPL sd_cpos
+    SEC : LDA #0 : SBC sp_c   : STA sp_absc
+          LDA #0 : SBC sp_c+1 : STA sp_absc+1
+    LDA sp_sign : EOR #1 : STA sp_sign
+    JMP sd_havec
+.sd_cpos
+    LDA sp_c : STA sp_absc : LDA sp_c+1 : STA sp_absc+1
+.sd_havec
+    \ |num| (u24) = |c| * cph
+    LDA sp_cph : STA zp_mul_b
+    LDA sp_absc : JSR SC_UMUL8
+    LDA zp_prod_lo : STA sp_num0
+    LDA zp_prod_hi : STA sp_num1
+    LDA sp_cph : STA zp_mul_b
+    LDA sp_absc+1 : JSR SC_UMUL8
+    CLC
+    LDA zp_prod_lo : ADC sp_num1 : STA sp_num1
+    LDA zp_prod_hi : ADC #0      : STA sp_num2
+    \ round: num += |den|>>1
+    LDA sp_den8 : LSR A
+    CLC : ADC sp_num0 : STA sp_num0
+    LDA sp_num1 : ADC #0 : STA sp_num1
+    LDA sp_num2 : ADC #0 : STA sp_num2
+    \ u24 / u8 restoring divide
+    LDA #0 : STA sp_rem
+    LDX #24
+.sd_dl
+    ASL sp_num0 : ROL sp_num1 : ROL sp_num2 : ROL sp_rem
+    LDA sp_rem : CMP sp_den8 : BCC sd_dno
+    SBC sp_den8 : STA sp_rem
+    INC sp_num0
+.sd_dno
+    DEX : BNE sd_dl
+    LDA sp_sign : BNE sd_cull
+    LDA sp_num2 : BNE sd_clamp
+    LDA sp_num0 : STA sp_depth
+    LDA sp_num1 : STA sp_depth+1
+    ORA sp_depth : BEQ sd_cull
+    CLC : RTS
+.sd_clamp
+    LDA #$FF : STA sp_depth : STA sp_depth+1
+    CLC : RTS
+.sd_cull
+    SEC : RTS
 }
 
 .end

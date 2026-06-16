@@ -98,5 +98,7 @@ def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, px, py, ab, na, rlen):
         depth = _rdiv(num, den)               # = CFRAC * true_depth
         if depth <= 0:
             return None
+        if depth > 65535:                     # keep depth u16 for the 6502;
+            depth = 65535                     # only far/grazing endpoints (~0.4%)
         out.append((sx, depth))
     return out
