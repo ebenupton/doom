@@ -139,6 +139,32 @@ Status (2026-06-16): math fully validated; bit-exact reference module built.
      per-vertex depth-recip caching, and removing the slope_div in
      point_to_angle. Until then 2b is a validated, parked alternative kept
      in-tree behind _USE_ANGLE_SEG_6502; the angle math primitives stay for it.
+
+### Divide-free 2b investigation (2026-06-16) — FEASIBLE, modest payoff
+Profiled the 851k/frame 2b (the profiler mis-attributes the whole angle-module
+arithmetic to "cos_fine" 51%; real call counts/frame: proj_yd 264 [8/seg],
+point_to_angle 221, seg_depth 67, seg_c 34, seg_project 67, cos_fine 134).
+The DIVIDES dominate. Cycle floors (stubbing divides, 10 ref frames):
+  - proj_yd stubbed:            518k  (still > perspective 416k)
+  - proj_yd + seg_depth stubbed: 354k  (BELOW perspective 416k)  <-- the target
+So eliminating BOTH the depth and Y divides is necessary AND sufficient to beat
+perspective (~15% at the floor; realistically ~390-430k after the replacement
+muls -- a modest win or near-wash).
+DESIGN (validated in Python, accuracy 0.48px mean vs true, == the divide form):
+  recip = (FOCAL*CFRAC/c) * cden * recip_cph[cph]     [no per-vertex divide]
+  - Rc = K/c : ONE reciprocal PER SEG (c is per-seg). 1 divide/seg (or a
+    normalised recip). Replaces the 2 seg_depth + 8 proj_yd divides/seg.
+  - recip_cph[cph] : small TABLE; phi clamped +/-512 => cph in [90,127] only
+    (no near-zero -> well-behaved). cden is a NUMERATOR (no divide by it).
+  - per vertex: 2 muls (Rc*cden, *recip_cph) -> recip(hi,lo); then the EXISTING
+    br_project_y (mul + VWH cache) for all 4 heights. Reuses perspective Y path.
+  - GUARDS: keep the depth<=0 cull and u16 clamp (small-c gives ~59px outliers
+    unguarded; the divide path already culls/clamps these).
+  Net divides/seg: ~4 (Rc + seg_c + 2x point_to_angle) down from ~14.
+REMAINING TO BUILD: 6502 per-seg reciprocal of c, recip_cph table, the
+per-vertex recip mul-chain, rewire br_seg_project_2b to emit (rhi,rlo) and call
+br_project_y, then re-validate (compare_traversal fb=0) + measure. Large but
+de-risked. Payoff is modest, so weigh against effort before committing.
 5. Integrate into the seg loop replacing rotation/project_x/project_y; the
    clip/draw/aperture interface is unchanged (feed sx/yt/yb as today). Two-sided
    + aperture heights all project via proj_y(h,depth).
