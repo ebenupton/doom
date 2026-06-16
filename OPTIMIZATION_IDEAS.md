@@ -42,11 +42,44 @@ Status (2026-06-16): math fully validated; bit-exact reference module built.
    Unit-tested test_proj_yd.py 139008/0 (exhaustive over depth 11..65535, all s8 hd).
    NOTE: angle_seg._rdiv made symmetric (round |.| half up) so the 6502's
    |num|-then-sign path is exact; seg_depth unaffected (neg-num culled there).
-   STILL TODO: seg_project orchestration -- point_to_angle + phi clamp + VATOX
-   column (sx) + seg_depth; and the per-seg c = cross*rlen (2 muls + recip mul).
-   point_to_angle/VATOX already exist in the bbox module.
-3. asm: per-seg c (cross via 2 muls * rlen recip). proj_yd DONE (see above).
-4. ROM tables: per-seg na + rlen (precompute in wad_packed, like the bbox table).
+   asm: seg_c. **DONE** ($E952) c = (cross<<4)/L via 2 signed u16xu8 products
+   (4 umul8) into a signed-24 cross, then u24/u8 rounded divide by L (u8 ROM).
+   Unit-tested test_seg_c.py 23760/0.
+   asm: seg_project. **DONE** ($E955) one endpoint -> (sx, depth): corner_phi
+   (point_to_angle + a_fine-psi) + clamp +/-512 + VATOX column + seg_depth.
+   c stashed at $42/$43 across point_to_angle (reuses $30), restored before
+   seg_depth so $30=c survives both endpoints. Unit-tested test_seg_project.py
+   47520/0 (full per-seg flow: seg_c then both endpoints).
+   MEMORY MAP: angle code grew past $EF00; relocated TA_HI $EF00->$F200,
+   VATOX $F300->$F601, COS $F800->$FB00 (bca stays $FA10). ASSERT end<=TA_HI.
+   ALL FIVE 2b primitives now bit-exact: cos_fine, seg_depth, proj_yd, seg_c,
+   seg_project. bsp_render_ang.bin = 2139 B.
+3. (done -- see seg_c above)
+4. ROM tables: per-seg na + L (precompute in wad_packed, like the bbox table). TODO
+   - na = seg normal fine-angle (s16/u16), L = round(len) (u8, <=89). 3 B/seg x
+     660 = 1980 B. Add as a separate bytearray returned from build_packed (like
+     bbox_table) and thread through callers (bsp_render_6502 loads it to 6502 RAM;
+     doom_wireframe holds it). Both are pure functions of ldx/ldy already in the
+     seg header, so seg_consts(ldx,ldy) computes them -- no new WAD data.
+5. INTEGRATION (the large, supervised step -- NOT a drop-in). The 2b path
+   restructures the front half of packed_render_seg / fp_render_seg / the 6502
+   seg loop. It is NOT a projection swap; these change:
+   - REMOVE per-vertex fp_to_view rotation (4 muls), fp_near_clip (view-space),
+     fp_recip + fp_project_x. ADD seg_c (once/seg) + seg_project (per endpoint).
+   - vcache contents change: cache per-vertex (wa or phi, sx, and a per-(vertex,
+     seg) depth) instead of view coords evx/evy. depth depends on the seg (c,na),
+     so it is NOT a pure per-vertex value -- only sx/wa cache per vertex; depth
+     recomputes per seg endpoint (cheap: one seg_depth).
+   - FOV: angle path clamps phi to +/-ANG45 (no view-space near clip). Segs
+     crossing behind the player: point_to_angle handles all quadrants; the phi
+     clamp + back-face (dot<=0) cover culling. Verify vs near-clip cases.
+   - Y: every height (ch,fh, two-sided bh/bt, aperture APV) projects via
+     proj_y(h, depth) = HALF_H - (h-vz)*FOCAL*16/depth  (the proj_yd divide).
+     Replaces fp_project_y(hd, recip). vwh-cache keys on depth now.
+   - Do Python first behind _USE_ANGLE_SEG (global exists, default off) so the
+     default path stays green; then 6502 (bsp_render.asm br_render_subsector /
+     br_seg_xform_vertex / br_project_*); then a new pixel-exact 6502-2b vs
+     Python-2b check in run_regression. compare_traversal must stay green.
 5. Integrate into the seg loop replacing rotation/project_x/project_y; the
    clip/draw/aperture interface is unchanged (feed sx/yt/yb as today). Two-sided
    + aperture heights all project via proj_y(h,depth).
