@@ -65,14 +65,15 @@ def _vatox_centre(phi):
     return (A._vatox_lo[idx] + A._vatox_hi[idx]) // 2
 
 
-def proj_y(h, depth, vz):
-    """Screen Y of height h at a column whose CFRAC*depth is `depth`."""
-    return HALF_H - _rdiv((h - vz) * FOCAL * CFRAC, depth)
-
-
 def proj_y_delta(hd, depth):
-    """Screen Y of a pre-subtracted height delta hd=(h-vz)."""
+    """Screen Y of a pre-subtracted height delta hd=(h-vz). Direct rounded
+    divide (keeps 0.60px vs true; the recip table would be ~1.1px). 6502 needs
+    a signed (hd<<11)/depth divide -- see proj_yd."""
     return HALF_H - _rdiv(hd * FOCAL * CFRAC, depth)
+
+
+def proj_y(h, depth, vz):
+    return proj_y_delta(h - vz, depth)
 
 
 def seg_2b(wx1, wy1, wx2, wy2, ldx, ldy, px, py, ab, na, rlen):
