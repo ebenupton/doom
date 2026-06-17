@@ -19,8 +19,7 @@ sd_r   = $4A
 \ $E940 region after the code. Fixed entry jump table for bsp_render to call.
 ORG $E940
     JMP slope_div            \ $E940
-    JMP point_to_angle       \ $E943
-    JMP bbox_check_angle     \ $E946
+    JMP bbox_check_angle     \ $E943   (point_to_angle inlined into corner_phi -> 1 fewer entry)
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -105,81 +104,7 @@ pa_ptr = $40          \ 16-bit table pointer
 TA_LO  = $DC00        \ 1024 entries (reclaimed rotation-cache RAM)
 TA_HI  = $F200        \ 1025 entries ($F200-$F600, above the grown code <$F200)
 
-.point_to_angle
-{
-    LDA pa_dx : ORA pa_dx+1 : ORA pa_dy : ORA pa_dy+1 : BNE nz
-    LDA #0 : STA pa_res : STA pa_res+1 : RTS
-.nz
-    \ |dx| -> sd_num, sx = (dx<0)  (abs written straight to the divide operands;
-    \ if |dx|>|dy| we swap below so sd_num=min, sd_den=max -- no separate copy).
-    LDA #0 : STA pa_sx
-    LDA pa_dx+1 : BPL dxp
-    INC pa_sx
-    LDA #0 : SEC : SBC pa_dx : STA sd_num
-    LDA #0 :       SBC pa_dx+1 : STA sd_num+1 : JMP dxd
-.dxp
-    LDA pa_dx : STA sd_num : LDA pa_dx+1 : STA sd_num+1
-.dxd
-    \ |dy| -> sd_den, sy = (dy<0)
-    LDA #0 : STA pa_sy
-    LDA pa_dy+1 : BPL dyp
-    INC pa_sy
-    LDA #0 : SEC : SBC pa_dy : STA sd_den
-    LDA #0 :       SBC pa_dy+1 : STA sd_den+1 : JMP dyd
-.dyp
-    LDA pa_dy : STA sd_den : LDA pa_dy+1 : STA sd_den+1
-.dyd
-    \ axgt = (|dx| > |dy|): now sd_num=|dx|, sd_den=|dy|.
-    LDA sd_den+1 : CMP sd_num+1 : BCC axgt   \ |dy|<|dx| -> |dx|>|dy|
-    BNE axle
-    LDA sd_den   : CMP sd_num   : BCS axle    \ |dy|>=|dx| -> not axgt
-.axgt
-    \ |dx| > |dy|: swap so sd_num=|dy|(min), sd_den=|dx|(max); axgt bit=1
-    LDA sd_num   : LDX sd_den   : STA sd_den   : STX sd_num
-    LDA sd_num+1 : LDX sd_den+1 : STA sd_den+1 : STX sd_num+1
-    LDA #1 : JMP haveax
-.axle
-    \ |dx| <= |dy|: sd_num=|dx|(min), sd_den=|dy|(max) already; axgt bit=0
-    LDA #0
-.haveax
-    \ oct = (sx<<2)|(sy<<1)|axgt
-    STA pa_oct
-    LDA pa_sy : ASL A : ORA pa_oct : STA pa_oct
-    LDA pa_sx : ASL A : ASL A : ORA pa_oct : STA pa_oct
-    JSR slope_div            \ -> sd_q (0..1024)
-    \ tantoangle has 1024 entries (0..1023); the exact diagonal sd_q==1024
-    \ (hi byte == 4) maps to ANG45 = 512 directly (no table entry).
-    LDA sd_q+1 : CMP #4 : BNE pa_lookup
-    LDA #<512 : STA pa_res : LDA #>512 : STA pa_res+1
-    JMP comb
-.pa_lookup
-    \ ta = tantoangle[sd_q] via 16-bit index. TA_HI = TA_LO + (TA_HI-TA_LO),
-    \ so reach the hi-byte table by adding the page delta to the pointer high
-    \ byte instead of recomputing the whole pointer.
-    LDY #0
-    CLC : LDA #<TA_LO : ADC sd_q : STA pa_ptr
-          LDA #>TA_LO : ADC sd_q+1 : STA pa_ptr+1
-    LDA (pa_ptr),Y : STA pa_res
-    LDA pa_ptr+1 : CLC : ADC #(>TA_HI - >TA_LO) : STA pa_ptr+1
-    LDA (pa_ptr),Y : STA pa_res+1
-.comb
-    \ res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
-    \ (0/1024/2048/3072), so base_lo is always 0.
-    LDX pa_oct
-    LDA pa_sign,X : BMI sub
-    \ add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0
-    CLC
-    LDA pa_base_hi,X : ADC pa_res+1 : STA pa_res+1
-    JMP mask
-.sub
-    \ sub: res = base - ta ; base_lo = 0
-    SEC
-    LDA #0           : SBC pa_res   : STA pa_res
-    LDA pa_base_hi,X : SBC pa_res+1 : STA pa_res+1
-.mask
-    LDA pa_res+1 : AND #$0F : STA pa_res+1     \ & 4095
-    RTS
-}
+\ point_to_angle: INLINED into corner_phi (its sole caller); see below.
 
 \ per-octant base (0/ANG90=1024/ANG180=2048/ANG270=3072) and sign (+ / $80=-).
 \ base_lo is always 0 (bases are multiples of 256) so the table is omitted.
@@ -404,12 +329,85 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
           LDA bca_cx+1 : SBC bca_pxs+1 : STA pa_dx+1
     SEC : LDA bca_cy : SBC bca_pys : STA pa_dy
           LDA bca_cy+1 : SBC bca_pys+1 : STA pa_dy+1
-    JSR point_to_angle       \ -> pa_res (psi)
+    \ --- inlined point_to_angle(pa_dx,pa_dy) -> pa_res (psi) ---
+    \ .pa_entry: unit-test hook -- jump here with pa_dx/pa_dy set and
+    \ bca_afn=0 to read back (-psi)&signed in pa_res (see test_slope_div).
+.pa_entry
+    LDA pa_dx : ORA pa_dx+1 : ORA pa_dy : ORA pa_dy+1 : BNE nz
+    LDA #0 : STA pa_res : STA pa_res+1 : JMP cp_havepsi   \ zero -> psi=0 (was RTS)
+.nz
+    \ |dx| -> sd_num, sx = (dx<0)  (abs written straight to the divide operands;
+    \ if |dx|>|dy| we swap below so sd_num=min, sd_den=max -- no separate copy).
+    LDA #0 : STA pa_sx
+    LDA pa_dx+1 : BPL dxp
+    INC pa_sx
+    LDA #0 : SEC : SBC pa_dx : STA sd_num
+    LDA #0 :       SBC pa_dx+1 : STA sd_num+1 : JMP dxd
+.dxp
+    LDA pa_dx : STA sd_num : LDA pa_dx+1 : STA sd_num+1
+.dxd
+    \ |dy| -> sd_den, sy = (dy<0)
+    LDA #0 : STA pa_sy
+    LDA pa_dy+1 : BPL dyp
+    INC pa_sy
+    LDA #0 : SEC : SBC pa_dy : STA sd_den
+    LDA #0 :       SBC pa_dy+1 : STA sd_den+1 : JMP dyd
+.dyp
+    LDA pa_dy : STA sd_den : LDA pa_dy+1 : STA sd_den+1
+.dyd
+    \ axgt = (|dx| > |dy|): now sd_num=|dx|, sd_den=|dy|.
+    LDA sd_den+1 : CMP sd_num+1 : BCC axgt   \ |dy|<|dx| -> |dx|>|dy|
+    BNE axle
+    LDA sd_den   : CMP sd_num   : BCS axle    \ |dy|>=|dx| -> not axgt
+.axgt
+    \ |dx| > |dy|: swap so sd_num=|dy|(min), sd_den=|dx|(max); axgt bit=1
+    LDA sd_num   : LDX sd_den   : STA sd_den   : STX sd_num
+    LDA sd_num+1 : LDX sd_den+1 : STA sd_den+1 : STX sd_num+1
+    LDA #1 : JMP haveax
+.axle
+    \ |dx| <= |dy|: sd_num=|dx|(min), sd_den=|dy|(max) already; axgt bit=0
+    LDA #0
+.haveax
+    \ oct = (sx<<2)|(sy<<1)|axgt
+    STA pa_oct
+    LDA pa_sy : ASL A : ORA pa_oct : STA pa_oct
+    LDA pa_sx : ASL A : ASL A : ORA pa_oct : STA pa_oct
+    JSR slope_div            \ -> sd_q (0..1024)
+    \ tantoangle has 1024 entries (0..1023); the exact diagonal sd_q==1024
+    \ (hi byte == 4) maps to ANG45 = 512 directly (no table entry).
+    LDA sd_q+1 : CMP #4 : BNE pa_lookup
+    LDA #<512 : STA pa_res : LDA #>512 : STA pa_res+1
+    JMP comb
+.pa_lookup
+    \ ta = tantoangle[sd_q] via 16-bit index. TA_HI = TA_LO + (TA_HI-TA_LO),
+    \ so reach the hi-byte table by adding the page delta to the pointer high
+    \ byte instead of recomputing the whole pointer.
+    LDY #0
+    CLC : LDA #<TA_LO : ADC sd_q : STA pa_ptr
+          LDA #>TA_LO : ADC sd_q+1 : STA pa_ptr+1
+    LDA (pa_ptr),Y : STA pa_res
+    LDA pa_ptr+1 : CLC : ADC #(>TA_HI - >TA_LO) : STA pa_ptr+1
+    LDA (pa_ptr),Y : STA pa_res+1
+.comb
+    \ res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
+    \ (0/1024/2048/3072), so base_lo is always 0.
+    LDX pa_oct
+    LDA pa_sign,X : BMI sub
+    \ add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0
+    CLC
+    LDA pa_base_hi,X : ADC pa_res+1 : STA pa_res+1
+    JMP mask
+.sub
+    \ sub: res = base - ta ; base_lo = 0
+    SEC
+    LDA #0           : SBC pa_res   : STA pa_res
+    LDA pa_base_hi,X : SBC pa_res+1 : STA pa_res+1
+.mask
+    LDA pa_res+1 : AND #$0F : STA pa_res+1     \ & 4095 (psi ready; was RTS->fall through)
+    \ --- afn - psi, mask & sign-extend to s16 ---
+.cp_havepsi
     SEC : LDA bca_afn : SBC pa_res : STA pa_res
           LDA bca_afn+1 : SBC pa_res+1
-    \ Mask to 12 bits and sign-extend to s16 in one go on the hi byte: 4096's
-    \ low byte is 0, so the &4095 and the (>=2048 ? -4096) only touch the hi
-    \ byte; pa_res (lo) is already correct.
     AND #$0F                  \ phi & 4095 (hi nibble)
     CMP #8 : BCC cp_store     \ < 2048 -> keep; else C=1 for the wrap
     SBC #$10                  \ -= 4096 (hi -= $10) -> signed [-2048,2048)

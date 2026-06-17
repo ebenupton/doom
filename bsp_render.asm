@@ -1277,7 +1277,7 @@ BBOX_IHI        = $096A     ; running max sx clamped (u8)
 
 ; --- Angle-space bbox module (bsp_render_ang.bin @ $E940; tables $DC00/$E400/$F200).
 ;     Replaces the perspective corner-projection path below (now dead code).
-BCA_CHECK = $E946           ; JSR -> bbox_check_angle (px=$01, py=$03, ab=$FA2F)
+BCA_CHECK = $E943           ; JSR -> bbox_check_angle (px=$01, py=$03, ab=$FA2F); $E943 after point_to_angle inlined out of the jump table
 bca_top   = $FA10           ; box input: top,bot,left,right = $FA10,$12,$14,$16
 bca_ilo   = $FA30           ; output: left column (u8)
 bca_ihi   = $FA31           ; output: right column (u8)

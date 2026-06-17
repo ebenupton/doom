@@ -28,7 +28,7 @@ def standalone(top,bot,left,right,px,py,ab):
     m[0x8D]=px&0xFF; m[0x8E]=0xFF if px<0 else 0   # bca_pxs (caller-set)
     m[0x9B]=py&0xFF; m[0x9C]=0xFF if py<0 else 0   # bca_pys
     m[0x86]=0x10; m[0x87]=0xFA                      # bca_boxp -> box at $FA10
-    _st.pc=0xE946;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
+    _st.pc=0xE943;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
     return (m[0xFA30],m[0xFA31]) if m[0xFA32] else None
@@ -45,7 +45,7 @@ def check(px,py,ab):
         for _ in range(max_cycles):
             pc=mpu.pc
             if pc==0xFF00: break
-            if pc==0xE946 and armed is None:
+            if pc==0xE943 and armed is None:
                 bp=mem[0x86]|(mem[0x87]<<8)          # bca_boxp -> ROM box (top,bot,left,right)
                 armed=(s16(mem[bp]|(mem[bp+1]<<8)),s16(mem[bp+2]|(mem[bp+3]<<8)),
                        s16(mem[bp+4]|(mem[bp+5]<<8)),s16(mem[bp+6]|(mem[bp+7]<<8)),

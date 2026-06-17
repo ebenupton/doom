@@ -45,12 +45,18 @@ for i in range(1024):
     v=A._tantoangle[i]
     mpu.memory[0xDC00 + i] = v & 0xFF
     mpu.memory[0xF200 + i] = (v >> 8) & 0xFF
+# point_to_angle is now INLINED into corner_phi; .pa_entry is the test hook.
+# Calling it with bca_afn ($3B/$3C)=0 makes corner_phi's tail compute
+# pa_res = signed12(0 - psi), from which psi = (-pa_res) % 4096.
 PA = None
-out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-v'],
+out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-dd'],
                      capture_output=True, text=True).stdout
-import re
-m = re.search(r'\.point_to_angle\n\s+([0-9A-F]{4})', out)
-PA = int(m.group(1), 16)
+import re, ast
+labels = {}
+for d in ast.literal_eval(out[out.index('['):].replace('L,', ',').replace('L}', '}').replace('L]', ']')):
+    for k, v in d.items():
+        labels[k.lstrip('.').split('.')[-1]] = v
+PA = labels['pa_entry']
 
 
 def s16(v):
@@ -60,12 +66,16 @@ def s16(v):
 def run_pa(dx, dy):
     mpu.memory[0x30] = dx & 0xFF; mpu.memory[0x31] = (dx >> 8) & 0xFF
     mpu.memory[0x32] = dy & 0xFF; mpu.memory[0x33] = (dy >> 8) & 0xFF
+    mpu.memory[0x3B] = 0; mpu.memory[0x3C] = 0          # bca_afn = 0 -> pa_res = -psi
     mpu.pc = PA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 5000:
         mpu.step(); steps += 1
-    return mpu.memory[0x39] | (mpu.memory[0x3A] << 8)
+    raw = mpu.memory[0x39] | (mpu.memory[0x3A] << 8)    # signed12(-psi)
+    if raw >= 0x8000:
+        raw -= 0x10000
+    return (-raw) % 4096                                 # recover psi in [0,4096)
 
 
 pafails = pachecked = 0

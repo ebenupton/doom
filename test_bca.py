@@ -7,7 +7,7 @@ subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
                check=True, capture_output=True)
 out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-v'],
                      capture_output=True, text=True).stdout
-BCA = 0xE946
+BCA = 0xE943
 code = open('bsp_render_ang.bin', 'rb').read()
 
 mpu = MPU()
