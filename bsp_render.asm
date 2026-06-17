@@ -1161,8 +1161,7 @@ zp_seg_flags    = $3F      ; u8
 .bf_ldy0_dy_nz
     ; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi))
     LDA zp_seg_ldx : EOR zp_br_dyhi : EOR #$80
-    JMP bf_apply_dir
-
+    ; falls through to bf_apply_dir
 .bf_apply_dir
     ; A holds a byte whose top bit = sign of dot (1=neg, 0=pos).
     ; SF_DIR ($01) negates the dot, so XOR top bit with bit 0 of flags shifted.
