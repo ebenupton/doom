@@ -2402,9 +2402,7 @@ ENDIF
     STX zp_save0
     LDA zp_line_yr : STA zp_tmp0  ; end_y = yr
     LDA zp_line_xr : STA zp_ox1   ; end_x = xr
-    JSR dcl_emit_segment
-    ; Done (line fully consumed)
-    RTS
+    JMP dcl_emit_segment          ; tail call (was JSR+RTS): -9 cyc, line fully consumed
 
 .dcl_flush
     ; End of walk.  If seg_start is still active (last iteration was a
@@ -3658,8 +3656,7 @@ TFS_PEND_BID    = $091B
     JMP tfs_walk
 
 .tfs_finish
-    JSR tfs_flush_pending
-    RTS
+    JMP tfs_flush_pending          ; tail call (was JSR+RTS): -9 cyc
 }
 
 ; ---- Flush pending output span: alloc, populate fields, append. ----
