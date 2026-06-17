@@ -324,3 +324,20 @@ suspicious % against the routine's actual instruction count / call count.
   switch to dynamic (build-dumped) addresses or an assembly merge -- risky
   unsupervised (could break the regression infra). The 2b removal handled the
   bulk of the jump-table cleanup; the remainder is load-bearing infrastructure.
+
+## Session final tally (2026-06-17)
+Frame mean 413,182 -> 408,851 (-1.04% this session) + 535 B + 6 jump entries.
+Wins (all GREEN, committed): VWH-clear removal, a_fine hoist, player-sign-ext
+hoist, parked-2b removal, back-delta gate. Productive pattern: hoist FRAME-
+CONSTANTS out of per-call hot paths; remove UNNECESSARY work (clears, dead code).
+
+### Top remaining opportunity (SUPERVISED — correctness-critical)
+br_bbox_visible copies the 8-byte box ROM->work-area every check (~98 cyc x652
+= ~1.6% frame). bbox_check_angle could read it directly via a ROM pointer
+((boxptr),Y instead of bca_top abs), saving ~0.7-0.9% net (the (ptr),Y reads
+cost +1 cyc each, partially offsetting). NOT done unsupervised: it restructures
+ins_test/box_pos/corner-loads in the visibility path; a subtle error = wrong
+cull = dropped/extra segs, and the 10-frame regression may not hit every box/
+player config. Do with a wide position sweep for validation.
+Other parked: umul8 primitive rewrite (risky), live ABI jump tables (harness
+rework), rasteriser (complex). All need supervision.
