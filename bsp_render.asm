@@ -1302,16 +1302,10 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_rom_bbox_lo : ADC zp_br_t0 : STA zp_br_p
     LDA zp_rom_bbox_hi : ADC zp_br_t1 : STA zp_br_p_h
 
-    ; Read top, bot, left, right (s16 each, 8 bytes) into the angle box.
-    LDY #7
-    LDA (zp_br_p),Y : STA bca_top,Y : DEY    ; unrolled 8-byte box copy
-    LDA (zp_br_p),Y : STA bca_top,Y : DEY
-    LDA (zp_br_p),Y : STA bca_top,Y : DEY
-    LDA (zp_br_p),Y : STA bca_top,Y : DEY
-    LDA (zp_br_p),Y : STA bca_top,Y : DEY
-    LDA (zp_br_p),Y : STA bca_top,Y : DEY
-    LDA (zp_br_p),Y : STA bca_top,Y : DEY
-    LDA (zp_br_p),Y : STA bca_top,Y
+    ; Point bca_boxp ($86/$87) at the ROM box; bbox_check_angle reads it via
+    ; (bca_boxp),Y — no 8-byte copy into a work area.
+    LDA zp_br_p   : STA $86
+    LDA zp_br_p_h : STA $87
 
     ; --- Angle-space visibility (px=$01, py=$03, ab=$FA2F preset per frame) ---
     JSR BCA_CHECK

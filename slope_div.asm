@@ -216,6 +216,9 @@ bca_hi   = $8B          \ hi_phi (s16)
 bca_pxs  = $8D          \ px sign-extended (s16)
 bca_pys  = $9B          \ py sign-extended (s16)
 bca_cx   = $9D          \ corner x (s16)
+bca_boxp = $86          \ ROM box pointer: caller points this at the 8-byte box
+                        \ (top,bot,left,right s16) and we read via (bca_boxp),Y
+                        \ instead of copying it into a work area each check.
 t0       = $FA2A
 t1       = $FA2B
 val_lo   = $FA2C
@@ -241,14 +244,14 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
     TXA : ASL A : ASL A : TAX
     \ corner1 = (val[cc0], val[cc1]); load_val inlined -> cx/cy directly
     \ (Y = val index*2 into the box at bca_top; X unchanged by the load).
-    LDY bca_cc,X   : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cx : LDA bca_top+1,Y : STA bca_cx+1
-    LDY bca_cc+1,X : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cy : LDA bca_top+1,Y : STA bca_cy+1
+    LDY bca_cc,X   : TYA : ASL A : TAY : LDA (bca_boxp),Y : STA bca_cx : INY : LDA (bca_boxp),Y : STA bca_cx+1
+    LDY bca_cc+1,X : TYA : ASL A : TAY : LDA (bca_boxp),Y : STA bca_cy : INY : LDA (bca_boxp),Y : STA bca_cy+1
     STX bca_ccsave
     JSR corner_phi : LDA pa_res : STA bca_p1 : LDA pa_res+1 : STA bca_p1+1
     LDX bca_ccsave
     \ corner2 = (val[cc2], val[cc3])
-    LDY bca_cc+2,X : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cx : LDA bca_top+1,Y : STA bca_cx+1
-    LDY bca_cc+3,X : TYA : ASL A : TAY : LDA bca_top,Y : STA bca_cy : LDA bca_top+1,Y : STA bca_cy+1
+    LDY bca_cc+2,X : TYA : ASL A : TAY : LDA (bca_boxp),Y : STA bca_cx : INY : LDA (bca_boxp),Y : STA bca_cx+1
+    LDY bca_cc+3,X : TYA : ASL A : TAY : LDA (bca_boxp),Y : STA bca_cy : INY : LDA (bca_boxp),Y : STA bca_cy+1
     JSR corner_phi : LDA pa_res : STA bca_p2 : LDA pa_res+1 : STA bca_p2+1
     \ lo/hi = sorted(p1,p2)  (SIGNED s16 compare: p1-p2 < 0 -> p1 is lo)
     SEC : LDA bca_p1 : SBC bca_p2 : LDA bca_p1+1 : SBC bca_p2+1
@@ -322,23 +325,24 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
 \ and return from bbox_check_angle (pull caller return).
 .ins_test
 {
+    \ box read via (bca_boxp),Y : top@0/1, bot@2/3, left@4/5, right@6/7.
     \ px - left >= 0 ?
-    SEC : LDA bca_pxs : SBC bca_left : LDA bca_pxs+1 : SBC bca_left+1
+    LDY #4 : SEC : LDA bca_pxs : SBC (bca_boxp),Y : INY : LDA bca_pxs+1 : SBC (bca_boxp),Y
     BVC i1 : EOR #$80
 .i1
     BMI notin
     \ right - px >= 0 ?
-    SEC : LDA bca_right : SBC bca_pxs : LDA bca_right+1 : SBC bca_pxs+1
+    LDY #6 : SEC : LDA (bca_boxp),Y : SBC bca_pxs : INY : LDA (bca_boxp),Y : SBC bca_pxs+1
     BVC i2 : EOR #$80
 .i2
     BMI notin
     \ py - bot >= 0 ?
-    SEC : LDA bca_pys : SBC bca_bot : LDA bca_pys+1 : SBC bca_bot+1
+    LDY #2 : SEC : LDA bca_pys : SBC (bca_boxp),Y : INY : LDA bca_pys+1 : SBC (bca_boxp),Y
     BVC i3 : EOR #$80
 .i3
     BMI notin
     \ top - py >= 0 ?
-    SEC : LDA bca_top : SBC bca_pys : LDA bca_top+1 : SBC bca_pys+1
+    LDY #0 : SEC : LDA (bca_boxp),Y : SBC bca_pys : INY : LDA (bca_boxp),Y : SBC bca_pys+1
     BVC i4 : EOR #$80
 .i4
     BMI notin
@@ -355,12 +359,13 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
 \ box_pos -> X = boxy*4+boxx
 .box_pos
 {
+    \ box via (bca_boxp),Y : top@0, bot@2, left@4, right@6.
     \ boxx: 0 if px<=left, 1 if px<right, else 2
-    SEC : LDA bca_left : SBC bca_pxs : LDA bca_left+1 : SBC bca_pxs+1
+    LDY #4 : SEC : LDA (bca_boxp),Y : SBC bca_pxs : INY : LDA (bca_boxp),Y : SBC bca_pxs+1
     BVC b1 : EOR #$80
 .b1
     BPL bx0                 \ left-px >= 0 -> px<=left -> boxx=0
-    SEC : LDA bca_right : SBC bca_pxs : LDA bca_right+1 : SBC bca_pxs+1
+    LDY #6 : SEC : LDA (bca_boxp),Y : SBC bca_pxs : INY : LDA (bca_boxp),Y : SBC bca_pxs+1
     BVC b2 : EOR #$80
 .b2
     BMI bx2                 \ right-px < 0 -> px>=right -> boxx=2 (px<right false)
@@ -372,11 +377,11 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
 .bxd
     STA t0                  \ boxx
     \ boxy: 0 if py>=top, 1 if py>bot, else 2
-    SEC : LDA bca_pys : SBC bca_top : LDA bca_pys+1 : SBC bca_top+1
+    LDY #0 : SEC : LDA bca_pys : SBC (bca_boxp),Y : INY : LDA bca_pys+1 : SBC (bca_boxp),Y
     BVC c1 : EOR #$80
 .c1
     BPL by0                 \ py-top>=0 -> py>=top -> boxy=0
-    SEC : LDA bca_pys : SBC bca_bot : LDA bca_pys+1 : SBC bca_bot+1
+    LDY #2 : SEC : LDA bca_pys : SBC (bca_boxp),Y : INY : LDA bca_pys+1 : SBC (bca_boxp),Y
     BVC c2 : EOR #$80
 .c2
     BMI by2                 \ py-bot<0 -> py<=bot -> boxy=2

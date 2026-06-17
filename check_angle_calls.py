@@ -27,6 +27,7 @@ def standalone(top,bot,left,right,px,py,ab):
     _afn=(ab<<4)&0xFFFF; m[0x3B]=_afn&0xFF; m[0x3C]=(_afn>>8)&0xFF  # a_fine now caller-set
     m[0x8D]=px&0xFF; m[0x8E]=0xFF if px<0 else 0   # bca_pxs (caller-set)
     m[0x9B]=py&0xFF; m[0x9C]=0xFF if py<0 else 0   # bca_pys
+    m[0x86]=0x10; m[0x87]=0xFA                      # bca_boxp -> box at $FA10
     _st.pc=0xE946;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
@@ -45,8 +46,9 @@ def check(px,py,ab):
             pc=mpu.pc
             if pc==0xFF00: break
             if pc==0xE946 and armed is None:
-                armed=(s16(mem[0xFA10]|(mem[0xFA11]<<8)),s16(mem[0xFA12]|(mem[0xFA13]<<8)),
-                       s16(mem[0xFA14]|(mem[0xFA15]<<8)),s16(mem[0xFA16]|(mem[0xFA17]<<8)),
+                bp=mem[0x86]|(mem[0x87]<<8)          # bca_boxp -> ROM box (top,bot,left,right)
+                armed=(s16(mem[bp]|(mem[bp+1]<<8)),s16(mem[bp+2]|(mem[bp+3]<<8)),
+                       s16(mem[bp+4]|(mem[bp+5]<<8)),s16(mem[bp+6]|(mem[bp+7]<<8)),
                        s8(mem[0x01]),s8(mem[0x03]),mem[0xFA2F])
             elif armed is not None and pc<0xC000:
                 got=(mem[0xFA30],mem[0xFA31]) if mem[0xFA32] else None
