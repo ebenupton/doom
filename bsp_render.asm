@@ -1430,8 +1430,14 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     ; Back: btop_dlt = bch - vz, bbot_dlt = bfh - vz.
     LDA zp_seg_ch  : SEC : SBC zp_br_vz : STA zp_seg_top_dlt
     LDA zp_seg_fh  : SEC : SBC zp_br_vz : STA zp_seg_bot_dlt
+    ; Back deltas are consumed ONLY by do_project_y, which reads them only when
+    ; NEEDBT($04)/NEEDBB($08)/APEDGE1($40) is set. Skip the 2 subtractions for
+    ; plain solids/portals (the common case) — conservative: this superset
+    ; never skips a delta do_project_y will read.
+    LDA zp_seg_flags : AND #$4C : BEQ skip_bdlt
     LDA zp_seg_bch : SEC : SBC zp_br_vz : STA zp_seg_btop_dlt
     LDA zp_seg_bfh : SEC : SBC zp_br_vz : STA zp_seg_bbot_dlt
+.skip_bdlt
 
     ; Transform v1. Always copy evy/evx/clipped so both endpoints are
     ; available for near-plane crossing math even when one side is clipped.
