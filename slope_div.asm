@@ -226,16 +226,9 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
 .bbox_check_angle
 {
     LDA #0 : STA bca_vis
-    \ sign-extend px,py to s16
-    LDA bca_px : STA bca_pxs : LDX #0 : BPL bs1
-.bs1
-    LDA bca_px : BPL bs1p : LDX #$FF
-.bs1p
-    STX bca_pxs+1
-    LDA bca_py : STA bca_pys : LDX #0
-    LDA bca_py : BPL bs2p : LDX #$FF
-.bs2p
-    STX bca_pys+1
+    \ bca_pxs/bca_pys (px,py sign-extended to s16) are precomputed once/frame
+    \ by br_view_setup — frame-constant. Direct unit-test callers set them.
+    \ bca_px/bca_py (s8) are still read below by ins_test/box_pos.
     \ inside test: left<=px<=right and bot<=py<=top  -> full (0,255)
     \ left<=px : px-left >= 0
     JSR ins_test

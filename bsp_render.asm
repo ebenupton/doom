@@ -438,6 +438,14 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     ; bca_afn ($3B/$3C) is untouched by the perspective path between checks.
     LDA $FA2F : LSR A : LSR A : LSR A : LSR A : STA $3C   ; bca_afn+1 = ab>>4
     LDA $FA2F : ASL A : ASL A : ASL A : ASL A : STA $3B   ; bca_afn = (ab<<4)&FF
+    ; Player px,py sign-extended to s16 (bca_pxs $8D/$8E, bca_pys $9B/$9C) is
+    ; also frame-constant; hoist it (was recomputed per bbox check).
+    LDX #0 : LDA zp_br_px_h : STA $8D : BPL vs_px : DEX
+.vs_px
+    STX $8E
+    LDX #0 : LDA zp_br_py_h : STA $9B : BPL vs_py : DEX
+.vs_py
+    STX $9C
     ; dx_lo = (-zp_br_px) & 0xFF
     LDA #0 : SEC : SBC zp_br_px : STA zp_br_t2     ; dx_lo
     ; dy_lo = (-zp_br_py) & 0xFF
