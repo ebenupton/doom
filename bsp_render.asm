@@ -1157,8 +1157,7 @@ zp_seg_flags    = $3F      ; u8
 .bf_ldx_nz
     LDA zp_seg_ldy : BNE bf_general
     ; ldy==0: dot = -ldx*dy.
-    LDA zp_br_dylo : ORA zp_br_dyhi : BNE bf_ldy0_dy_nz
-    JMP bf_back
+    LDA zp_br_dylo : ORA zp_br_dyhi : BEQ bf_back   ; dy==0 -> back (was BNE+JMP)
 .bf_ldy0_dy_nz
     ; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi))
     LDA zp_seg_ldx : EOR zp_br_dyhi : EOR #$80
@@ -1818,9 +1817,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     ; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
     LDA zp_br_t0 : AND #7 : TAX
     LDA vc_bit_mask,X : STA zp_seg_v_bitm
-    LDY #0 : LDA (zp_br_p),Y : AND zp_seg_v_bitm : BNE vc_hit
-    JMP vc_miss
-
+    LDY #0 : LDA (zp_br_p),Y : AND zp_seg_v_bitm : BEQ vc_miss  ; (was BNE+JMP)
 .vc_hit
     ; --- Cache hit: load evy, evx, rhi/rlo, sx, near-clip flag from cache ---
     ; Cache offset = idx*8. Compute base ptr.
@@ -1910,8 +1907,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_br_vyext : BMI nc_fail
     BNE nc_ok
     LDA zp_seg_cur_evy : BMI nc_fail
-    BEQ nc_fail
-    JMP nc_ok
+    BNE nc_ok                       ; evy>0 -> ok (was BEQ+JMP)
 .nc_fail
     ; Mark near-clipped in cache, set skip.
     LDY #6 : LDA #1 : STA (zp_br_p),Y
@@ -2471,8 +2467,7 @@ ORG $1B40
     LDA zp_node_dxlo : ORA zp_node_dxhi : BNE ns_ndx_nz
     LDA zp_node_dylo : ORA zp_node_dyhi : BEQ ns_jmp_side1
     LDA zp_seg_dxraw_lo : ORA zp_seg_dxraw_hi : BEQ ns_jmp_side1
-    LDA zp_node_dyhi : EOR zp_seg_dxraw_hi : BMI ns_jmp_side1
-    JMP ns_side0
+    LDA zp_node_dyhi : EOR zp_seg_dxraw_hi : BPL ns_side0   ; (was BMI+JMP)
 .ns_jmp_side1
     JMP ns_side1
 .ns_ndx_nz

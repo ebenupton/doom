@@ -1734,12 +1734,10 @@ IF EMIT_LINES
     ;   no bot emit: seg_bot_max <= POOL_OT  OR  seg_bot_min >= POOL_OB
     ; "Skip span" requires BOTH no-top AND no-bot.
     LDA POOL_OT,X : CMP zp_seg_top_max : BCS mel_top_no_emit  ; OT >= top_max
-    LDA zp_seg_top_min : CMP POOL_OB,X : BCS mel_top_no_emit  ; top_min >= OB
-    JMP mel_span_check_done                                   ; top can emit
+    LDA zp_seg_top_min : CMP POOL_OB,X : BCC mel_span_check_done  ; top_min < OB -> emit (was BCS+JMP)
 .mel_top_no_emit
     LDA POOL_OT,X : CMP zp_seg_bot_max : BCS mel_skip_span    ; OT >= bot_max
-    LDA zp_seg_bot_min : CMP POOL_OB,X : BCS mel_skip_span    ; bot_min >= OB
-    JMP mel_span_check_done                                   ; bot can emit
+    LDA zp_seg_bot_min : CMP POOL_OB,X : BCC mel_span_check_done  ; bot_min < OB -> emit (was BCS+JMP)
 .mel_skip_span
     JMP mel_next
 .mel_span_check_done
@@ -2239,10 +2237,9 @@ ENDIF
 .dcl_ox1_ok STA zp_ox1
 
     ; --- Entry or continuation? ---
-    LDA zp_seg_start_x : CMP #$FF : BEQ dcl_entry_path
+    LDA zp_seg_start_x : CMP #$FF : BNE dcl_exit_check   ; not entry -> exit_check (was BEQ+JMP)
     ; Continuation: line still in aperture across this span. Records are
     ; written once at dcl_emit_segment, not per-span.
-    JMP dcl_exit_check
 .dcl_entry_path
 
     ; ========== ENTRY: seg_start is NULL ==========
@@ -2889,8 +2886,7 @@ zp_clr_shi     = $D8   ; sub-range high x
 ; with cb_top{1,2} / cb_bot{1,2} — no interp needed (already computed).
 .dcl_record_cb_clip
 {
-    LDY zp_dcl_rec_buf_h : BEQ cb_done_tramp
-    JMP cb_continue
+    LDY zp_dcl_rec_buf_h : BNE cb_continue   ; (was BEQ+JMP)
 .cb_done_tramp
     RTS
 .cb_continue
