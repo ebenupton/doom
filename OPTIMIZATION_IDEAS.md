@@ -292,3 +292,35 @@ regression GREEN, mean 411,504. Fully recoverable from git history (the 2b
 work + bit-exact unit tests are at the commits tagged "6502 2b:" / "option-2b").
 The Python-side reference (angle_seg.py + packed_render_seg _USE_ANGLE_SEG,
 flag-off) is kept as documentation of the validated-but-slower approach.
+
+## Micro-opt session results (2026-06-17) — running tally
+Frame mean 413,182 -> 409,156 (-0.97% this session) + 535 B freed + 6 jump
+entries removed. All under regression (GREEN). Commits:
+  - drop unnecessary per-frame VWH cache clear (-0.76%, prior day)
+  - hoist frame-constant a_fine out of bbox_check_angle (-0.41%)
+  - REMOVE parked option-2b from the build (+535 B, +6 jump entries gone)
+  - hoist frame-constant player sign-extension out of bbox_check_angle (-0.57%)
+Method that worked: hoist FRAME-CONSTANTS out of per-call hot paths (the bbox
+recomputed a_fine and the sign-extended player on all ~650 checks/frame).
+
+### Reliable profiler note
+profile_cycles.py (nearest-JSR attribution) is UNRELIABLE — it mis-blamed
+cos_fine, br_init_frame, and emit_vert_sx1/2 (the last via tail-call JMP to the
+rasteriser). Use call-stack EXCLUSIVE timing (/tmp/prof.py) + call-bracketing;
+even that has a tail-call blind spot (JMP doesn't move SP). Always cross-check a
+suspicious % against the routine's actual instruction count / call count.
+
+### Remaining targets (all harder; flagged for SUPERVISED work)
+- Rasteriser draw_clipped_line_s16 ~15% (incl. the tail-call-attributed verticals):
+  the line clipper+drawer. Touching it risks pixel divergence -> do supervised.
+- umul8 6.5% (4672 calls, near-optimal quarter-square): only fewer calls or a
+  risky primitive rewrite helps; corrupts everything if wrong.
+- bbox point_to_angle+slope_div ~12% (652 checks x 2 atan2): the atan2 is
+  genuinely needed for 89% of checks (occlusion columns); frame-constant hoists
+  already done. Only fewer CHECKS (traversal) would help.
+- LIVE jump tables: bsp_render $4800 (harness ABI, ~0 runtime cost) and
+  slope_div $E940 (now 3 entries: slope_div/point_to_angle/bbox_check_angle --
+  cross-binary ABI + runtime BCA_CHECK). Removing these needs a harness-wide
+  switch to dynamic (build-dumped) addresses or an assembly merge -- risky
+  unsupervised (could break the regression infra). The 2b removal handled the
+  bulk of the jump-table cleanup; the remainder is load-bearing infrastructure.
