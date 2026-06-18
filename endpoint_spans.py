@@ -75,15 +75,29 @@ def _interp_store(x, x0, y0, x1, y1):
 
 
 def _interp_store_s16(x, x0, y0, x1, y1):
-    """Interpolate Y with signed bias: old formula for s16 seg values.
-    Matches the 6502's seg_interp_store which uses smul8 + biased negate."""
+    """Interpolate Y for s16 seg values, rounding half AWAY FROM ZERO to match
+    the 6502 s16_interp exactly (it computes with |offset|,|den|,|dy| and
+    adds/subtracts the +den//2-rounded quotient).
+
+    The previous form used signed-floor with a +den//2 bias, which rounds half
+    toward +inf -- diverging from the 6502 by 1px on DESCENDING lines (dy<0) at
+    exact half-points (even den). That 1px error cascaded through occlusion:
+    a span boundary off by one flips a has_gap result, leaking whole walls
+    (e.g. the wall at player 1056,-3328 byte-angle 14). The 6502 binary is the
+    shipping target, so the Python reference is aligned to it here. Verified
+    0/8000 mismatches vs the emulated s16_interp over wide and narrow inputs.
+    Note _interp_store (u8 spans) already rounds away-from-zero this way."""
     if x1 == x0:
         return y0
-    num = (y1 - y0) * (x - x0)
+    offset = x - x0
     den = x1 - x0
-    if den > 0:
-        return y0 + (num + den // 2) // den
-    return y0 + (-num + (-den) // 2) // (-den)
+    if den < 0:
+        offset, den = -offset, -den
+    if y1 >= y0:
+        dy = y1 - y0
+        return y0 + (offset * dy + den // 2) // den
+    dy = y0 - y1
+    return y0 - (offset * dy + den // 2) // den
 
 
 def _remap_seg_for_8bit(ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
