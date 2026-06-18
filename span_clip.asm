@@ -2790,6 +2790,13 @@ ENDIF
     ; many pool spans the segment crossed. Tighten consumer derives
     ; everything from these 4 endpoint values via interp.
     LDA zp_dcl_rec_buf_h : BEQ dcl_es_no_record
+    ; (A) Skip zero-width records (xl==xr). A degenerate [x,x] record carries
+    ; no tighten information AND deadlocks tfs_inner: bot_dom needs xl<=cur<xr
+    ; (impossible when xl==xr), so the cursor never advances past it and the
+    ; inner loop spins forever. Edge-on segs that project to one column hit
+    ; this (e.g. at 1308,-3289,ab=252). The segment is already drawn above;
+    ; only the tighten record is dropped.
+    LDA zp_seg_start_x : CMP zp_ox1 : BEQ dcl_es_no_record
     LDY zp_dcl_rec_off
     LDA zp_seg_start_x : STA (zp_dcl_rec_buf),Y : INY
     LDA zp_seg_start_y : STA (zp_dcl_rec_buf),Y : INY
