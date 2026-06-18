@@ -165,6 +165,10 @@ zp_prod_hi      = $DB
 zp_div_lo       = $DA
 zp_div_hi       = $DB
 zp_div_den      = $DC
+zp_tmp0         = $DE        ; umul8 scratch (matches span_clip); free outside span_clip
+; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites
+sqr_lo  = $A500 : sqr_hi  = $A600
+sqr2_lo = $A700 : sqr2_hi = $A800
 
 ; span_clip's line ZP (also LC_X*_LO aliases for the s16 clipper)
 zp_line_xl      = $A8
@@ -380,7 +384,8 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA zp_ri_dhi : STA zp_br_resext
     JMP ri_apply_neg
 .ri_not_one
-    LDA $0005,Y : BEQ ri_zero
+    LDA $0005,Y : BNE ri_mag_nz : JMP ri_zero   ; (ri_zero now >127 away after inline)
+.ri_mag_nz
     STA zp_mul_b
     ; |d| × mag → s24, with sign restoration. Compute as
     ;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
@@ -392,11 +397,37 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA #0 : SEC : SBC zp_ri_dlo : STA zp_ri_dlo
     LDA #0 : SBC zp_ri_dhi         : STA zp_ri_dhi
 .ri_d_pos
-    LDA zp_ri_dlo : JSR SC_UMUL8
+    ; --- inlined umul8(zp_ri_dlo, mag) — saves JSR/RTS in the hot rotation ---
+    LDA zp_ri_dlo : STA zp_tmp0
+    SEC : SBC zp_mul_b : BCS um1_pos
+    EOR #$FF : ADC #1
+.um1_pos
+    TAY
+    LDA zp_tmp0 : CLC : ADC zp_mul_b : TAX : BCS um1_uo
+    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+    JMP um1_done
+.um1_uo
+    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+.um1_done
     LDA zp_prod_lo : STA zp_br_resl
     LDA zp_prod_hi : STA zp_br_resh
     LDA #0 : STA zp_br_resext
-    LDA zp_ri_dhi : JSR SC_UMUL8
+    ; --- inlined umul8(zp_ri_dhi, mag) ---
+    LDA zp_ri_dhi : STA zp_tmp0
+    SEC : SBC zp_mul_b : BCS um2_pos
+    EOR #$FF : ADC #1
+.um2_pos
+    TAY
+    LDA zp_tmp0 : CLC : ADC zp_mul_b : TAX : BCS um2_uo
+    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+    JMP um2_done
+.um2_uo
+    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+.um2_done
     CLC
     LDA zp_prod_lo : ADC zp_br_resh   : STA zp_br_resh
     LDA zp_prod_hi : ADC zp_br_resext : STA zp_br_resext
@@ -609,13 +640,39 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     ; writeback, single result copy (negative path negates during copy).
     LDA zp_br_b : STA zp_mul_b
     LDA zp_br_a : BMI a_neg
-    JSR SC_UMUL8
+    ; --- inlined umul8(A, mag) — 56% of all umul8 calls go through here ---
+    STA zp_tmp0
+    SEC : SBC zp_mul_b : BCS up_pos
+    EOR #$FF : ADC #1
+.up_pos
+    TAY
+    LDA zp_tmp0 : CLC : ADC zp_mul_b : TAX : BCS up_uo
+    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+    JMP up_done
+.up_uo
+    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+.up_done
     LDA zp_prod_lo : STA zp_br_resl
     LDA zp_prod_hi : STA zp_br_resh
     RTS
 .a_neg
     EOR #$FF : CLC : ADC #1
-    JSR SC_UMUL8
+    ; --- inlined umul8(|a|, mag) ---
+    STA zp_tmp0
+    SEC : SBC zp_mul_b : BCS un_pos
+    EOR #$FF : ADC #1
+.un_pos
+    TAY
+    LDA zp_tmp0 : CLC : ADC zp_mul_b : TAX : BCS un_uo
+    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+    JMP un_done
+.un_uo
+    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi
+.un_done
     SEC
     LDA #0 : SBC zp_prod_lo : STA zp_br_resl
     LDA #0 : SBC zp_prod_hi : STA zp_br_resh
