@@ -51,3 +51,67 @@ BANK L1: bbox 3776 + FHCH 3960 + VWH 1206 + recip 1154 + sincos 128 = 10224
 ## Flip cadence
 Per node/seg the BSP walk alternates data-bank reads with bank-C pool ops + clip
 + raster; shared math needs no flip (low). ~5-8 `STA $FE30`/seg, <1% of frame.
+
+## Verification harness (banked_mem.py) — built + unit-tested 2026-06-21
+
+`banked_mem.py` models $FE30 SWRAM banking for the py65 flat-memory harness by
+overriding __setitem__ only: a $FE30 write swaps the active 16K bank in/out of
+the flat $8000-$BFFF window (reads stay fast/unmodified). Unit-tested in py65:
+write distinct bytes to banks 4 & 5, switch, read back — `$70=$11`, `$71=$AA`,
+identical to the jsbeeb spike. This is the fast oracle for verifying a banked
+build bit-exact against the flat reference before jsbeeb confirmation.
+
+## Codebase reality (discovered 2026-06-21)
+
+There are TWO renderers:
+- **doom_fe.asm** (257K) — a COMPLETE banked, bootable, integrated build with its
+  OWN renderer (`bsp_traverse`, `mark_solid`, `tighten`, `umul8x8`) and its own
+  clipper (`clipper_bank2.bin` @ $9B20 in bank 2). Shipped via `doom_loader.asm`
+  + `build_ssd.py` → `doom_e1m1.ssd` (BANK0/1/2 + CODE@$22D2 + RECIP@$4F7E +
+  QSQ@$5400). This is the LEGACY renderer (the approximation), but the
+  boot/bank/CRTC/keyboard infra is proven and reusable. Its layout INDEPENDENTLY
+  CONFIRMS the budget plan (sqr low @$5400, recip low @$4F7E, 3 data banks).
+- **span_clip.asm + bsp_render.asm** — the ACCURATE records-driven clipper fixed
+  this session (4 clip-bug fixes). Flat/emulator-only (BspRender6502). NOT in a
+  banked/bootable form.
+
+"Running on hardware" = port the accurate clipper into a banked bootable build.
+
+## jsbeeb boot of the existing (legacy) disc — status
+
+Built `doom_e1m1.ssd` and booted on jsbeeb. Loader runs (prints "DOOM E1M1",
+DFS *LOAD works — $3000 staging populated). BUT the game loop does not render:
+post-run CODE@$22D2 reads as zeros and PC has crashed (~$0D2E). Banks 0-2 accept
+writes. Root cause not yet isolated (off the critical path — it's the legacy
+build). Likely candidates: game-loop crash zeroing memory, a CODE-load overlap
+with $3000 staging ($22D2-$4F47 overlaps $3000-$6FFF staging), or a jsbeeb
+bank/DFS timing quirk. Not pursued further — the goal is the new clipper.
+
+## DECISION POINT (needs user) — port path
+
+The remaining work is large and forks on one structural decision:
+  (A) **Retrofit** the accurate records-driven clipper into doom_fe.asm's proven
+      banked framework (reuse loader/CRTC/keyboard/game-loop; swap render path).
+      Pro: reuses working boot+display+input. Con: deep surgery in 257K of legacy
+      code; reconcile ZP maps, data-bank layout, entry points, packed_layout.
+  (B) **Fresh banking** around the standalone span_clip/bsp_render, reusing only
+      doom_loader's proven layout constants (sqr@$5400, recip@$4F7E, 3 banks,
+      CRTC setup). Pro: clean, built on the code I verified this session, with
+      the banked_mem.py oracle. Con: re-implement boot/keyboard glue.
+
+Recommendation: **(B)** — build fresh banking around the standalone accurate
+modules, verified with banked_mem.py then jsbeeb, lifting doom_loader.asm's
+proven CRTC/keyboard/bank-copy code verbatim. Keeps us on the verified clipper
+and avoids entangling with the legacy renderer.
+
+### Next steps once (B) is chosen
+1. Re-layout span_clip.asm via multi-ORG/SAVE (beebasm resolves intra-file labels
+   across ORGs, as bsp_render.asm already does): math primitives
+   (umul8/umul16x16/udiv16_8/udiv32_16) + sqr tables LOW; clipper body + raster @
+   $8000 (bank C). Repoint bsp_render SC_UMUL8/SC_UDIV16_8 to the low math addrs.
+2. bsp_render: set rom pointers to L0/L1 window addresses; insert STA $FE30 bank
+   selects at the data-read vs pool-op/clip boundaries (per-seg cadence).
+3. Build L0/L1/C bank images; verify the whole thing bit-exact vs the flat
+   BspRender6502 using banked_mem.py (BankedBspRender6502).
+4. Adapt doom_loader.asm (bank-copy + CRTC + keyboard) for the new entry point;
+   build .ssd; boot on jsbeeb; compare framebuffer to the flat reference.
