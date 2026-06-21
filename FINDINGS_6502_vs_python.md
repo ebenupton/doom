@@ -70,6 +70,36 @@ float `render_bsp` is the best-fidelity *geometry* reference.
    0/8000 mismatches vs the emulated interp; regression GREEN. (This is a
    latent consistency fix; it was not the cause of the reported divergence.)
 
+3. **Off-framebuffer rasteriser write → memory corruption → crash.** Reported
+   as "1056,−3291,34 hangs" — actually a crash (PC spins at $0000), not a hang.
+   Fully traced in the *real* `BspRender6502` pipeline (not the harness shadow):
+   - A wall-edge line whose projected biased Y is **below `Y_BIAS` (48)** — here
+     biased Y=41, i.e. ~7px above the screen top — reaches `dcl_emit_segment`
+     (the DCL wireframe emit, span_clip.asm). It un-biases with `SBC #Y_BIAS`,
+     wrapping 41→**249**, and emits a line to row 29 (the 160-row / 20-char-row
+     framebuffer is `$5800–$6C00`).
+   - The line rasteriser (`linedraw` @ $A900, PC $B0E2/$B117) writes that wrapped
+     row into **ROM_MAIN** (`$6C00+`), corrupting **node 39**'s left child from
+     `$8029` to `$8829`.
+   - BSP traversal then resolves child `$8829` → subsector **2089** (only 237
+     exist) → garbage `seg_count` → out-of-range vertex index (~32945) →
+     `br_seg_xform_vertex` stores the vcache valid-bit through a wild pointer
+     into **code** (`STA ($1C),Y` @ $555B) → BRK → PC=$0000 spin (69M cycles).
+   - Root: the DCL emit never clipped Y to the visible band. The `draw_clipped_line_s16`
+     wrapper's Y-clip targets `[0,255]` (and is bypassed entirely by its
+     all-coords-in-u8 fast path), so biased Y in `[0,47]`/`[208,255]`
+     (off-screen but valid u8) slips through. The Python reference clamps Y to
+     `[0,255]` too — it only avoids the wild write because `pygame.draw.line`
+     auto-clips to the surface.
+   **Fix (committed):** `dcl_emit_segment` now guards each emitted segment with a
+   four-compare in-band check `[Y_BIAS, VIS_YMAX]`. In-band segments (every
+   regression seg) are byte-identical. Off-band segments are clipped
+   analytically to the band via `dcl_yband_clip` (reuses `s16_interp` with axes
+   swapped: free=Y, target=X — interp X at the Y boundary) or dropped if the
+   whole segment is off-screen. No clamping/distortion (per the analytical-clip
+   rule). Verified: crash position completes (797k cyc); regression ALL GREEN
+   (byte-identical); wild-write sweep clean.
+
 ## "Truncations" were a tool artifact, not hangs
 
 The first sweep flagged many TRUNCATED frames. They all **complete fine with a

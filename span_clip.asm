@@ -2241,6 +2241,18 @@ ENDIF
     ; Continuation: line still in aperture across this span. Records are
     ; written once at dcl_emit_segment, not per-span.
 .dcl_entry_path
+    ; Reset the Y bbox to the full line range for this fresh segment.  A
+    ; previous segment may have NARROWED ylo/yhi (continuation) and then
+    ; reset seg_start without restoring it; a stale narrow bbox here makes
+    ; Tier-2 wrongly ACCEPT (skip CB clip) for the new span -> over-draw
+    ; (the slot4 over-draw at 845,-3084,215).  The full-line bbox is
+    ; conservative: it never wrongly accepts/rejects; CB clip refines.
+    ; (X = span slot must be preserved for the Tier checks below.)
+    LDA zp_line_yl : CMP zp_line_yr : BCS dcl_ep_yge
+    STA zp_line_ylo : LDA zp_line_yr : STA zp_line_yhi : JMP dcl_ep_done
+.dcl_ep_yge
+    STA zp_line_yhi : LDA zp_line_yr : STA zp_line_ylo
+.dcl_ep_done
 
     ; ========== ENTRY: seg_start is NULL ==========
     ; --- Tier 1: outer bbox reject ---
@@ -2306,62 +2318,40 @@ ENDIF
     JMP dcl_exit_no_portal
 .dcl_is_abutting
 
-    ; --- Compute portal aperture at shared boundary ---
-    ; pt = max(current.tr, next.tl) — tightest top
-    LDA POOL_TR,X : CMP POOL_TL,Y : BCS dcl_pt_ok : LDA POOL_TL,Y
-.dcl_pt_ok STA zp_tmp0    ; pt
-
-    ; pb = min(current.br, next.bl) — tightest bottom
-    LDA POOL_BR,X : CMP POOL_BL,Y : BCC dcl_pb_ok : LDA POOL_BL,Y
-.dcl_pb_ok STA zp_tmp1    ; pb
-
-    ; Portal open? pt < pb
-    LDA zp_tmp0 : CMP zp_tmp1 : BCS dcl_exit_no_portal  ; pt >= pb → portal closed
-
-    ; --- Tier 1 (cheap accept): pt <= ylo AND yhi <= pb ---
-    ; Line's entire Y range fits in portal aperture → continue
-    LDA zp_line_ylo : CMP zp_tmp0 : BCC dcl_portal_t2  ; ylo < pt → not tier 1
-    LDA zp_tmp1 : CMP zp_line_yhi : BCC dcl_portal_t2  ; pb < yhi → not tier 1
-    ; Tier 1 accept: continue to next span, keep seg_start
+    ; --- Continuation containment check (FIX 2026-06-19) ---
+    ; Merge across the portal ONLY if the line, from the shared boundary to
+    ; its end, stays within the NEXT span's inner bbox [IT, IB] — which
+    ; guarantees the line cannot exit that span's aperture anywhere, so no
+    ; per-span re-clip is needed.  Otherwise end the segment at the boundary
+    ; and let the next span re-enter via the entry path (CB clip).  The old
+    ; code only checked the portal aperture at the shared boundary column, so
+    ; a line grazing the aperture edge at the boundary but running outside it
+    ; WITHIN the next span was emitted across the whole span (over-extension
+    ; -> off-screen; the 845,-3084,215 over-draw and the 1056,-3291,34 crash).
+    ; ly = line_y at the shared boundary (= current.XEND)
     LDX zp_save0
-    LDA POOL_NEXT,X : TAX
-    JMP dcl_walk
-
-.dcl_portal_t2
-    ; --- Tier 2 (cheap reject): yhi < pt OR ylo > pb ---
-    LDA zp_line_yhi : CMP zp_tmp0 : BCC dcl_exit_no_portal  ; yhi < pt → reject
-    LDA zp_tmp1 : CMP zp_line_ylo : BCC dcl_exit_no_portal  ; pb < ylo → reject
-
-    ; --- Tier 3 (exact check): compute ly = line_y_at(portal_x) ---
-    ; portal_x = POOL_XEND of current span (shared boundary)
-    LDX zp_save0
-    LDA zp_line_dy : BEQ dcl_portal_use_yr  ; flat → yr (== yl)
-    LDA POOL_XEND,X : CMP zp_line_xr : BEQ dcl_portal_use_yr
-    JSR dcl_line_y_at_a  ; A = ly
-    EQUB $2C                             ; BIT abs: skip LDA yr
-.dcl_portal_use_yr
+    LDA zp_line_dy : BEQ dcl_pp_use_yr
+    LDA POOL_XEND,X : CMP zp_line_xr : BEQ dcl_pp_use_yr
+    LDA POOL_XEND,X : JSR dcl_line_y_at_a
+    EQUB $2C                                   ; BIT abs: skip LDA yr
+.dcl_pp_use_yr
     LDA zp_line_yr
-.dcl_portal_chk_ly
-    ; Check: pt <= ly <= pb
-    CMP zp_tmp0 : BCC dcl_exit_no_portal_a  ; ly < pt → fail
-    STA zp_tmp2     ; save ly
-    LDA zp_tmp1 : CMP zp_tmp2 : BCC dcl_exit_no_portal_a  ; pb < ly → fail
-
-    ; Line passes through portal. Narrow Y bbox for next span.
-    ; For flat lines (dy==0), ylo=yhi=yl is already correct — skip narrowing.
-    LDA zp_line_dy : BEQ dcl_portal_continue
-    ; ylo = min(ly, yr), yhi = max(ly, yr)
-    LDA zp_tmp2 : CMP zp_line_yr : BCC dcl_portal_ly_lo
-    ; ly >= yr: yhi=ly, ylo=yr
-    STA zp_line_yhi : LDA zp_line_yr : STA zp_line_ylo
-    JMP dcl_portal_continue
-.dcl_portal_ly_lo
-    ; ly < yr: ylo=ly, yhi=yr
-    STA zp_line_ylo : LDA zp_line_yr : STA zp_line_yhi
-.dcl_portal_continue
-    ; Continue to next span, keep seg_start
-    LDX zp_save0
-    LDA POOL_NEXT,X : TAX
+    ; bbox of the line over [boundary, xr] = [min(ly,yr), max(ly,yr)].
+    STA zp_tmp2                                ; ly (A)
+    CMP zp_line_yr : BCS dcl_pp_ly_ge
+    STA zp_tmp0 : LDA zp_line_yr : STA zp_tmp1 ; ly < yr: lo=ly, hi=yr
+    JMP dcl_pp_bbox
+.dcl_pp_ly_ge
+    LDA zp_line_yr : STA zp_tmp0
+    LDA zp_tmp2    : STA zp_tmp1                ; ly >= yr: lo=yr, hi=ly
+.dcl_pp_bbox
+    LDX zp_save0 : LDY POOL_NEXT,X             ; Y = next span slot
+    LDA zp_tmp0 : CMP POOL_IT,Y : BCC dcl_exit_no_portal  ; lo < next.IT -> may exit top
+    LDA POOL_IB,Y : CMP zp_tmp1 : BCC dcl_exit_no_portal  ; next.IB < hi -> may exit bot
+    ; Contained in next span's inner bbox: commit narrowed bbox, continue.
+    LDA zp_tmp0 : STA zp_line_ylo
+    LDA zp_tmp1 : STA zp_line_yhi
+    TYA : TAX
     JMP dcl_walk
 
 .dcl_exit_no_portal_a
@@ -2784,19 +2774,38 @@ ENDIF
     LDA zp_seg_start_y : CMP zp_tmp0 : BNE dcl_es_ok
     RTS  ; degenerate
 .dcl_es_ok
+    ; --- Y-band safety clip: clamp biased Y to [Y_BIAS, VIS_YMAX] so the
+    ; un-bias below can't wrap an off-screen Y into a wild row address.  The
+    ; tighten can produce spans whose aperture extends off-screen (a floor/
+    ; ceil edge projecting beyond the screen, not clamped), so the DCL's
+    ; aperture clip can still hand us an off-screen segment (e.g. the BL=241
+    ; span at 1000,-3160,156).  Needed until the tighten clamps apertures to
+    ; [Y_BIAS,VIS_YMAX].  In-band segments are byte-identical (4 compares).
+    LDA zp_seg_start_y : CMP #Y_BIAS : BCC dcl_es_yband
+    CMP #(VIS_YMAX + 1) : BCS dcl_es_yband
+    LDA zp_tmp0 : CMP #Y_BIAS : BCC dcl_es_yband
+    CMP #(VIS_YMAX + 1) : BCS dcl_es_yband
+    JMP dcl_es_record
+.dcl_es_yband
+    JSR dcl_yband_clip
+    BCC dcl_es_record
+    RTS                              ; fully off-screen -> drop segment
+.dcl_es_record
     ; --- Records hook: ONE record per surviving segment ---
     ; Segment record format: 4 bytes (xl, yl, xr, yr).
     ; Triggers exactly when DCL emits a visible segment, regardless of how
     ; many pool spans the segment crossed. Tighten consumer derives
     ; everything from these 4 endpoint values via interp.
     LDA zp_dcl_rec_buf_h : BEQ dcl_es_no_record
-    ; (A) Skip zero-width records (xl==xr). A degenerate [x,x] record carries
-    ; no tighten information AND deadlocks tfs_inner: bot_dom needs xl<=cur<xr
-    ; (impossible when xl==xr), so the cursor never advances past it and the
-    ; inner loop spins forever. Edge-on segs that project to one column hit
-    ; this (e.g. at 1308,-3289,ab=252). The segment is already drawn above;
-    ; only the tighten record is dropped.
-    LDA zp_seg_start_x : CMP zp_ox1 : BEQ dcl_es_no_record
+    ; (A) Skip degenerate records where xl >= xr (zero-width xl==xr OR reversed
+    ; xl>xr). Such a record carries no tighten information AND deadlocks
+    ; tfs_inner: bot_dom needs xl<=cur<xr (impossible when xl>=xr), so the
+    ; cursor never advances and the inner loop spins forever. Edge-on segs that
+    ; project to one column give xl==xr (e.g. 1308,-3289,252); the per-span
+    ; clip can also emit a 1-column REVERSED sliver xl>xr (e.g. 1160,-3400,102
+    ; after the continuation/entry clip fix). The segment is already drawn
+    ; above; only the (useless) tighten record is dropped.
+    LDA zp_seg_start_x : CMP zp_ox1 : BCS dcl_es_no_record
     LDY zp_dcl_rec_off
     LDA zp_seg_start_x : STA (zp_dcl_rec_buf),Y : INY
     LDA zp_seg_start_y : STA (zp_dcl_rec_buf),Y : INY
@@ -2813,6 +2822,65 @@ ENDIF
     STY LINE_OUT_COUNT
     JMP RASTER_ENTRY   ; tail-call rasteriser
 
+}
+
+; --- dcl_yband_clip: clip emit segment to visible Y band [Y_BIAS,VIS_YMAX].
+; In: zp_seg_start_x/y, zp_ox1, zp_tmp0 (u8 biased). Out: clipped; C clear=keep,
+; C set=reject. Uses s16_interp axis-swapped (free=Y,target=X); LC_OX*/OY*
+; anchors preserved across the call so both ends clip against the ORIGINAL line.
+.dcl_yband_clip
+{
+    LDA zp_seg_start_y : STA LC_OX1_LO
+    LDA zp_tmp0        : STA LC_OX2_LO
+    LDA zp_seg_start_x : STA LC_OY1_LO
+    LDA zp_ox1         : STA LC_OY2_LO
+    LDA #0 : STA LC_OX1_HI : STA LC_OX2_HI : STA LC_OY1_HI : STA LC_OY2_HI
+    LDX #0 : LDY #0
+    LDA zp_seg_start_y : CMP #Y_BIAS : BCC yb_e1_lo
+    CMP #(VIS_YMAX + 1) : BCS yb_e1_hi
+    JMP yb_e2
+.yb_e1_lo
+    INX : JMP yb_e2
+.yb_e1_hi
+    INY
+.yb_e2
+    LDA zp_tmp0 : CMP #Y_BIAS : BCC yb_e2_lo
+    CMP #(VIS_YMAX + 1) : BCS yb_e2_hi
+    JMP yb_decide
+.yb_e2_lo
+    INX : JMP yb_decide
+.yb_e2_hi
+    INY
+.yb_decide
+    CPX #2 : BEQ yb_reject
+    CPY #2 : BEQ yb_reject
+    LDA zp_seg_start_y : CMP #Y_BIAS : BCC yb_c1_lo
+    CMP #(VIS_YMAX + 1) : BCC yb_c1_done
+    LDA #VIS_YMAX : STA LC_TGT_LO : LDA #0 : STA LC_TGT_HI
+    JSR s16_interp : STA zp_seg_start_x
+    LDA #VIS_YMAX : STA zp_seg_start_y
+    JMP yb_c1_done
+.yb_c1_lo
+    LDA #Y_BIAS : STA LC_TGT_LO : LDA #0 : STA LC_TGT_HI
+    JSR s16_interp : STA zp_seg_start_x
+    LDA #Y_BIAS : STA zp_seg_start_y
+.yb_c1_done
+    LDA zp_tmp0 : CMP #Y_BIAS : BCC yb_c2_lo
+    CMP #(VIS_YMAX + 1) : BCC yb_c2_done
+    LDA #VIS_YMAX : STA LC_TGT_LO : LDA #0 : STA LC_TGT_HI
+    JSR s16_interp : STA zp_ox1
+    LDA #VIS_YMAX : STA zp_tmp0
+    JMP yb_c2_done
+.yb_c2_lo
+    LDA #Y_BIAS : STA LC_TGT_LO : LDA #0 : STA LC_TGT_HI
+    JSR s16_interp : STA zp_ox1
+    LDA #Y_BIAS : STA zp_tmp0
+.yb_c2_done
+    CLC
+    RTS
+.yb_reject
+    SEC
+    RTS
 }
 
 ; --- line_interp_store: compute line Y at column A ---
@@ -4090,7 +4158,11 @@ LC_TGT_HI   = $0958
     LDA LC_X1_HI : BPL x1_not_neg
     LDA #0 : STA LC_TGT_LO : STA LC_TGT_HI
     JSR s16_interp
-    STA LC_Y1_LO : LDA #0 : STA LC_Y1_HI
+    ; store the UNCLAMPED crossing Y (LC_RES), not the u8-clamped A: if the
+    ; y-crossing at the x-boundary is itself out of [0,255] the later y-clip
+    ; must still fire. Storing clamped A here zeroed Y_HI, skipped the y-clip,
+    ; and emitted the screen CORNER (wrong slope) — 994,-3291,237 bottom seg.
+    LDA LC_RES_LO : STA LC_Y1_LO : LDA LC_RES_HI : STA LC_Y1_HI
     LDA #0 : STA LC_X1_LO : STA LC_X1_HI
     JMP x1_done
 .x1_not_neg
@@ -4098,14 +4170,19 @@ LC_TGT_HI   = $0958
     LDA #$FF : STA LC_TGT_LO
     LDA #0   : STA LC_TGT_HI
     JSR s16_interp
-    STA LC_Y1_LO : LDA #0 : STA LC_Y1_HI
+    ; store the UNCLAMPED crossing Y (LC_RES), not the u8-clamped A: if the
+    ; y-crossing at the x-boundary is itself out of [0,255] the later y-clip
+    ; must still fire. Storing clamped A here zeroed Y_HI, skipped the y-clip,
+    ; and emitted the screen CORNER (wrong slope) — 994,-3291,237 bottom seg.
+    LDA LC_RES_LO : STA LC_Y1_LO : LDA LC_RES_HI : STA LC_Y1_HI
     LDA #$FF : STA LC_X1_LO : LDA #0 : STA LC_X1_HI
 .x1_done
     ; same for x2
     LDA LC_X2_HI : BPL x2_not_neg
     LDA #0 : STA LC_TGT_LO : STA LC_TGT_HI
     JSR s16_interp
-    STA LC_Y2_LO : LDA #0 : STA LC_Y2_HI
+    ; store UNCLAMPED crossing Y (see LC_Y1 note above).
+    LDA LC_RES_LO : STA LC_Y2_LO : LDA LC_RES_HI : STA LC_Y2_HI
     LDA #0 : STA LC_X2_LO : STA LC_X2_HI
     JMP x2_done
 .x2_not_neg
@@ -4113,7 +4190,8 @@ LC_TGT_HI   = $0958
     LDA #$FF : STA LC_TGT_LO
     LDA #0   : STA LC_TGT_HI
     JSR s16_interp
-    STA LC_Y2_LO : LDA #0 : STA LC_Y2_HI
+    ; store UNCLAMPED crossing Y (see LC_Y1 note above).
+    LDA LC_RES_LO : STA LC_Y2_LO : LDA LC_RES_HI : STA LC_Y2_HI
     LDA #$FF : STA LC_X2_LO : LDA #0 : STA LC_X2_HI
 .x2_done
 .skip_xclip
