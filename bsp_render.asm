@@ -150,8 +150,8 @@ JMP br_init_frame   ; $481B   clear vcache valid bitmap (for hybrid mode)
 ; ============================================================================
 ; Aliases for span_clip's exported routines
 ; ============================================================================
-SC_UMUL8        = $2030      ; umul8 pinned (skips the table JMP)
-SC_UDIV16_8     = $2024
+; SC_UMUL8 / SC_UDIV16_8 are now local labels (see .SC_UMUL8 / .SC_UDIV16_8
+; in the $4800 region) — banked port decouples them from span_clip.
 SC_DRAW_S16     = $201E
 SC_DRAW_U8      = $2015      ; standalone DCL (u8 input, no clipper prelude)
 SC_MARK_SOLID   = $2003
@@ -180,6 +180,66 @@ zp_line_yr      = $AB
 ; br_umul8 — wraps span_clip's umul8 for testing. Inputs in zp_br_a, zp_br_b.
 ; Result in zp_br_resl/resh. ~50 cycles.
 ; ============================================================================
+; Local copies of umul8 / udiv16_8 (was SC_UMUL8/SC_UDIV16_8 in span_clip).
+; Decouples bsp_render's transform arithmetic from the clipper so the clipper
+; can move to a sideways-RAM bank: these stay in low RAM (always mapped),
+; reached during the data-bank phase. Bit-identical to span_clip's versions;
+; same ZP map + sqr tables. (BBC banked port.)
+.SC_UMUL8
+{
+    STA zp_tmp0
+    SEC : SBC zp_mul_b : BCS pos
+    EOR #$FF : ADC #1
+.pos TAY
+    LDA zp_tmp0 : CLC : ADC zp_mul_b
+    TAX : BCS uo
+    LDA sqr_lo,X : SEC : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
+.uo
+    LDA sqr2_lo,X : SBC sqr_lo,Y : STA zp_prod_lo
+    LDA sqr2_hi,X : SBC sqr_hi,Y : STA zp_prod_hi : RTS
+}
+.SC_UDIV16_8
+{
+    LDA zp_div_hi : CMP zp_div_den : BCS d16
+    LDX zp_div_lo : STX zp_div_hi
+    LDX #0 : STX zp_div_lo
+    ASL zp_div_hi : ROL A : BCS dskip_c8 : CMP zp_div_den : BCS dskip_c8
+    ASL zp_div_hi : ROL A : BCS dskip_c7 : CMP zp_div_den : BCS dskip_c7
+    ASL zp_div_hi : ROL A : BCS dskip_c6 : CMP zp_div_den : BCS dskip_c6
+    ASL zp_div_hi : ROL A : BCS dskip_c5 : CMP zp_div_den : BCS dskip_c5
+    ASL zp_div_hi : ROL A : BCS dskip_c4 : CMP zp_div_den : BCS dskip_c4
+    ASL zp_div_hi : ROL A : BCS dskip_c3 : CMP zp_div_den : BCS dskip_c3
+    ASL zp_div_hi : ROL A : BCS dskip_c2 : CMP zp_div_den : BCS dskip_c2
+    ASL zp_div_hi : ROL A : BCS dskip_c1 : CMP zp_div_den : BCS dskip_c1
+    LDA #0 : RTS
+.dskip_c8 LDX #8 : BNE dskip_commit
+.dskip_c7 LDX #7 : BNE dskip_commit
+.dskip_c6 LDX #6 : BNE dskip_commit
+.dskip_c5 LDX #5 : BNE dskip_commit
+.dskip_c4 LDX #4 : BNE dskip_commit
+.dskip_c3 LDX #3 : BNE dskip_commit
+.dskip_c2 LDX #2 : BNE dskip_commit
+.dskip_c1 LDX #1
+.dskip_commit
+    SBC zp_div_den
+    INC zp_div_lo
+    DEX : BNE dl
+    LDA zp_div_lo : RTS
+.d16 LDA #0
+    LDX #16
+.dl ASL zp_div_lo : ROL zp_div_hi : ROL A
+    BCS dl_over
+    CMP zp_div_den : BCC ds
+    SBC zp_div_den
+.dl_commit
+    INC zp_div_lo
+.ds DEX : BNE dl
+    LDA zp_div_lo : RTS
+.dl_over
+    SBC zp_div_den
+    JMP dl_commit
+}
 .br_umul8
     LDA zp_br_b : STA zp_mul_b
     LDA zp_br_a
