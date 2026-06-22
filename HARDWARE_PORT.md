@@ -215,3 +215,39 @@ Edits: slope_div.asm ORG+3 tables+~15 bca defs conditional; bsp_render.asm
   harness/loader build L2 image + low angle/bca. Then adapt doom_loader.asm
   (copy 4 banks 4/5/6/7; CRTC 256x160; keyboard; relocate-down) -> .ssd ->
   boot jsbeeb -> compare framebuffer to flat at known positions.
+
+## MILESTONE 2 (2026-06-22): full $C000+ relocation done — real-HW-ready layout
+
+The renderer now uses NO addresses above the $8000 bank window except sideways
+RAM. Verified bit-identical to flat (all reference positions + 252-position
+sweep, 0 diffs; flat regression GREEN). Final banked map:
+  bank 4 (L0): ROM_MAIN (nodes/ss/seg_hdr/verts)
+  bank 6 (C):  clipper ($8000) + rasteriser ($A900)
+  bank 7 (L2): TA_LO$8000 TA_HI$8400 VATOX$8900 bbox$8E00 recip$9D00 VWH$A200
+               VWHC$A700
+  low: sqr$2000 FHCH$2400 angle-code$3400 br_project_y$3900 bca-ws$3A00
+       bsp_d$0978 bsp_b$0AA0 vcache$0C00 bsp_lo$1B40 bsp_render$4800
+  framebuffers $5800/$6C00.
+This should run on a real BBC Model B + sideways RAM. banked_bsp.py is the
+model oracle; jsbeeb is the real-HW test.
+
+## REMAINING: boot packaging (task 9)
+
+Need a bootloader + (eventually) a 6502 game loop. Scoped:
+- Build disc: 3 bank images (-> banks 4/6/7) + low-RAM regions + bootloader.
+- Most low regions are >= PAGE ($1900) so *LOAD-able directly; only bsp_d
+  ($0978, 42B) + bsp_b ($0AA0, 339B) are below PAGE -> load high + copy down
+  after disc I/O, or embed in the loader and copy after SEI.
+- Per-frame setup (currently done by the Python harness) for a fixed spawn can
+  be PRECOMPUTED and poked: ZP_PX/PY (8.8), ZP_VZ, ZP_PXRAW/PYRAW, sincos
+  (SMAG/SNEG/SONE/CMAG/CNEG/CONE), bca_ab ($3A2F). (A real game loop needs a
+  6502 sincos table + keyboard + movement + 8.8 division — follow-on.)
+- Boot sequence: SEI; CRTC 256x160 (R1=32,R2=45,R6=20,R7=28,R10 cursor-off,
+  R12/R13 -> $5800); page C + JSR span_init($8000); clear $5800 FB; page L0 +
+  JSR br_view_setup($4809) + br_init_frame($481B); JSR br_render_frame($4815)
+  (pages banks internally); flip CRTC to drawn buffer; (loop or halt).
+- Verify on jsbeeb: boot .ssd, screenshot, compare to flat BspRender6502
+  framebuffer at the spawn.
+doom_loader.asm is the template (bank-copy + CRTC + keyboard all proven there),
+but its ZP map ($10+) differs from the standalone ($00+) so the per-frame setup
+must be rewritten.
