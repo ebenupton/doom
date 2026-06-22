@@ -278,3 +278,31 @@ FIX DIRECTIONS to try:
  - Or *SRLOAD (DFS 2.x) to load banks straight into SWRAM (no main-RAM staging),
    removing the staging/restore dance entirely.
 The renderer itself is DONE and model-verified; this is pure boot plumbing.
+
+## jsbeeb boot — diagnosis + tooling boundary (2026-06-22)
+
+Root causes found for the boot not displaying (the renderer itself is verified):
+1. **jsbeeb `B-DFS1.2` has NO writable sideways RAM.** CPU write/read-back test
+   per bank: banks 4-7 all read back 0 after CPU writes. The earlier "spike"
+   only confirmed CPU *reads* of MCP-populated banks, not CPU *writes*. So the
+   banked build cannot run on jsbeeb's plain Model B — there are no RAM banks
+   for copy_bank to write into.
+2. **jsbeeb `Master` HAS banks 4-7 as RAM** (CPU test: $70-$73 = 4,5,6,7). The
+   banked build's banks (4/6/7) fit. But the Master adds shadow RAM + MOS 3.20 +
+   1770 DFS differences; the disc bootloader's $3000 staging / *LOAD behaviour
+   differs ($3000 read back as code, not bank data) and the boot still doesn't
+   land LOW. Needs Master-specific handling (ACCCON main/shadow, or *SRLOAD to
+   load straight into SWRAM avoiding staging).
+3. The intended TARGET — "Model B + sideways-RAM board" — has SWRAM AND the
+   simple Model-B memory map (no shadow). **jsbeeb's MCP offers no such model**
+   (plain B = no SWRAM; Master = SWRAM + shadow complexity), so the exact target
+   can't be cleanly validated through this tool. The boot logic is sound for a
+   real B+SWRAM (banks load, simple map); the blocker is emulator configuration.
+
+NEXT (boot only, renderer is done):
+ - For Master testing: rewrite the loader to *SRLOAD BANK0/1/2 straight into
+   banks 4/6/7 (no main-RAM staging, sidesteps shadow), keep *LOAD for LOW/DRV.
+ - Or test on a jsbeeb configured with a Model B + SWRAM (e.g. the web jsbeeb
+   with a SWRAM expansion), where the current loader should work as-is.
+ - Or bypass disc: populate banks + low RAM + ZP directly and run the driver
+   (proves the render on real banking hardware) — many writes but conclusive.
