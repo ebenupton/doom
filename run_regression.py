@@ -11,7 +11,9 @@ os.chdir(ROOT)
 fails = []
 
 def build(asm):
-    r = subprocess.run(['./beebasm', '-i', asm], capture_output=True, text=True)
+    # -D BANKED=0 selects the flat layout (banked port uses BANKED=1 separately).
+    r = subprocess.run(['./beebasm', '-i', asm, '-D', 'BANKED=0'],
+                       capture_output=True, text=True)
     out = r.stdout + r.stderr
     if re.search(r'error|Assert', out, re.I):
         fails.append(f'build {asm}: ' + out.strip().splitlines()[-1])

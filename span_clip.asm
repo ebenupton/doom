@@ -30,7 +30,17 @@ zp_prod_lo = $DA : zp_div_lo = $DA   ; shared: mul output = div input
 zp_prod_hi = $DB : zp_div_hi = $DB
 zp_tmp0  = $DE : zp_tmp1  = $DF : zp_tmp2  = $E0
 
-ORG $2000
+; --- BBC banked port (path B) ---
+; BANKED is passed via beebasm -D BANKED=0|1 (never assigned here).
+;   BANKED=0 : flat build (ORG $2000, sqr @ $A500) — regression oracle.
+;   BANKED=1 : clipper lives in sideways-RAM bank C @ $8000; sqr tables move
+;              to low RAM ($1000) so the bank-C clipper can reach them (the
+;              flat $A500 is inside the $8000-$BFFF bank window when paged).
+IF BANKED
+  ORG $8000
+ELSE
+  ORG $2000
+ENDIF
 
 ; --- Jump table: fixed entry points for each public operation ---
 ; Callers (Python harness, game engine) JSR to $2000 + 3*N.
@@ -49,10 +59,16 @@ JMP draw_clipped_line_s16 ; $201E
 JMP umul8                 ; $2021  (exported for bsp_render.asm)
 JMP udiv16_8              ; $2024  (exported for bsp_render.asm)
 
-; umul8 is the hottest cross-module call (every multiply) — pin it at a
-; FIXED address so bsp_render can JSR it directly, skipping the table's
-; extra JMP (3 cycles per multiply). The ASSERT keeps the pin honest.
-ORG $2030
+; umul8 pin: flat build pins it at $2030 (legacy; bsp_render now has its own
+; local copy so the pin is no longer strictly needed, but kept to keep the flat
+; build byte-identical). In the banked build the clipper is at $8000 and umul8
+; just floats after the jump table — the pin must NOT fire (it would move the
+; ORG backwards out of the bank window).
+IF BANKED
+  ; banked: umul8 floats after the jump table at $8000 (no pin)
+ELSE
+  ORG $2030
+ENDIF
 .umul8_fixed
 .umul8
 {
@@ -119,8 +135,13 @@ VIS_YMAX = Y_BIAS + 159  ; = 207: maximum biased visible Y
 ; Quarter-square multiply tables (pre-loaded by the Python harness).
 ; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
 ; used when a+b overflows u8.
-sqr_lo  = $A500 : sqr_hi  = $A600
-sqr2_lo = $A700 : sqr2_hi = $A800
+IF BANKED
+  sqr_lo  = $1000 : sqr_hi  = $1100   ; low RAM: reachable from bank-C clipper
+  sqr2_lo = $1200 : sqr2_hi = $1300
+ELSE
+  sqr_lo  = $A500 : sqr_hi  = $A600
+  sqr2_lo = $A700 : sqr2_hi = $A800
+ENDIF
 
 ; === Seg value cache ($A0-$A4) — separate from crossover working set ===
 ; Caches the right-endpoint new-seg values from the previous overlapping span
@@ -4275,4 +4296,8 @@ LC_TGT_HI   = $0958
 }
 
 .end_code
-SAVE "span_clip.bin", $2000, end_code, $2000
+IF BANKED
+  SAVE "span_clip_bankc.bin", $8000, end_code, $8000
+ELSE
+  SAVE "span_clip.bin", $2000, end_code, $2000
+ENDIF

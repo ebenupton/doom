@@ -122,7 +122,7 @@ class SpanClip6502:
         # Assemble and load span_clip.bin
         asm_path = os.path.join(os.path.dirname(__file__) or '.', 'span_clip.asm')
         bin_path = os.path.join(os.path.dirname(__file__) or '.', 'span_clip.bin')
-        os.system(f'./beebasm -i {asm_path} -o {bin_path} 2>/dev/null')
+        os.system(f'./beebasm -i {asm_path} -o {bin_path} -D BANKED=0 2>/dev/null')
         with open(bin_path, 'rb') as f:
             code = f.read()
         for i, b in enumerate(code):
@@ -136,7 +136,7 @@ class SpanClip6502:
         bsp_bin = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.bin')
         bsp_lo  = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render_lo.bin')
         if os.path.exists(bsp_asm):
-            os.system(f'./beebasm -i {bsp_asm} -o {bsp_bin} 2>/dev/null')
+            os.system(f'./beebasm -i {bsp_asm} -o {bsp_bin} -D BANKED=0 2>/dev/null')
             if os.path.exists(bsp_bin):
                 with open(bsp_bin, 'rb') as f:
                     bsp_code = f.read()
