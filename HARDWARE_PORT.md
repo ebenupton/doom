@@ -115,3 +115,48 @@ and avoids entangling with the legacy renderer.
    BspRender6502 using banked_mem.py (BankedBspRender6502).
 4. Adapt doom_loader.asm (bank-copy + CRTC + keyboard) for the new entry point;
    build .ssd; boot on jsbeeb; compare framebuffer to the flat reference.
+
+## PROGRESS (path B, 2026-06-22) — clipper banking DONE + verified
+
+Done and committed:
+1. **Math decoupling** — bsp_render has its own umul8/udiv16_8 (.SC_UMUL8/.SC_UDIV16_8
+   labels, low RAM); no longer JSRs the clipper's math. Flat regression GREEN
+   (bit-exact). [commit: bsp_render local umul8/udiv16_8]
+2. **Conditional banked build** — span_clip.asm takes beebasm `-D BANKED=0|1`.
+   BANKED=1 → clipper @ $8000 (bank C), sqr tables → low RAM $1000, umul8 pin
+   dropped → `span_clip_bankc.bin`. Flat sites pass `-D BANKED=0`. Flat regression
+   byte-identical.
+3. **Bank-C clipper VERIFIED bit-exact** — `banked_dcl_test.py` runs the bank-C
+   clipper via banked_mem.py (sqr @ $1000, $FE30-paged) vs the flat clipper:
+   **40000 random cases + directed, 0 mismatches.** The hard part is proven.
+
+## REMAINING (path B) — data banking + bsp_render paging, then boot
+
+Bank layout (chosen to give ~3 page-flips/seg):
+  L0 (bank, ~14.6K): nodes(3776) ss(948) seg_hdr(7920) verts(1868) sincos(128)
+  L1 (bank, ~10.1K): bbox(3776) FHCH(3960) VWH(1206) recip(1154)
+  C  (bank): clipper (span_clip_bankc.bin) + rasteriser (relocate linedraw here)
+  LOW: sqr@$1000, bsp_render code+math, workspace, vcache, framebuffers $5800-$7FFF
+
+PAGE macro (no-op when BANKED=0, so flat stays bit-exact; A-safe = place only at
+A-dead points): `MACRO PAGE b : IF BANKED : LDA #b : STA &FE30 : ENDIF : ENDMACRO`.
+
+Invariant to avoid restore logic: every data-reading routine PAGEs its bank at
+entry; every clip-op call PAGEs C before the JSR; loop tops that read data after
+a clip re-PAGE. Insert points (identified):
+  - br_node_setup, bsp_resolve_child  -> PAGE L0 (nodes)
+  - br_bbox_visible / bbox_check       -> PAGE L1 (bbox)
+  - br_render_subsector entry + seg-loop top -> PAGE L0 (ss/seg_hdr/verts/sincos)
+  - projection (FHCH/VWH/recip read)   -> PAGE L1
+  - 9 clip-op JSRs (lines ~1051,1641,1679,1715,1738,1754,2209,2227,2229)
+    -> PAGE C before each (args are in ZP, so A is free — A-safe)
+Then: set zp_rom_* bases to $8000-window offsets (conditional); build L0/L1
+images (split packed_rom_main + recip into the two bank layouts); write
+BankedBspRender6502 (banked_mem: L0/L1/C banks + sqr low + rasteriser in C) and
+verify its framebuffer == flat BspRender6502 bit-exact at several positions.
+Finally: adapt doom_loader.asm (bank-copy + CRTC 256x160 + keyboard, all proven)
+for the new entry; build .ssd; boot on jsbeeb; compare to flat reference.
+
+This remaining work is invasive but mechanical; the banked_mem.py oracle gives
+bit-exact verification at each step before jsbeeb. The novel risk (paged code +
+low tables) is already retired by the bank-C clipper result.
