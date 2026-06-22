@@ -84,7 +84,7 @@ def build_banked(flatr):
     # bsp_render_w (br_project_y) and the angle module move to the clipper-vacated
     # low space ($3900 / $3400); bca workspace sits at $3A00 (RAM, no load).
     loads = [('bsp_render_bk.bin', 0x4800), ('bsp_render_lo_bk.bin', 0x1B40),
-             ('bsp_render_b_bk.bin', 0x0AA0), ('bsp_render_d_bk.bin', 0x0978),
+             ('bsp_render_b_bk.bin', 0x3A40), ('bsp_render_d_bk.bin', 0x3BC0),
              ('bsp_render_w_bk.bin', 0x3900), ('bsp_render_ang_bk.bin', 0x3400)]
     for fn, addr in loads:
         if os.path.exists(fn):

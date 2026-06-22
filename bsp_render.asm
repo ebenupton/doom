@@ -2190,7 +2190,11 @@ ENDIF
 ; subsectors need only 30 bytes, $0A80-$0A9D). Loaded as a separate binary
 ; (bsp_render_b.bin) by span_clip_6502.py.
 ; ============================================================================
-ORG $0AA0
+IF BANKED
+  ORG $3A40                  ; above PAGE (directly *LOAD-able; avoids relocate-down)
+ELSE
+  ORG $0AA0
+ENDIF
 .bsp_b_start
 
 ; defq_append_solid — append ($00, ilo, ihi) from $C2/$C3 to the op queue.
@@ -2359,10 +2363,10 @@ ORG $0AA0
 }
 
 .bsp_b_end
-ASSERT bsp_b_end <= $0C00
 IF BANKED
-  SAVE "bsp_render_b_bk.bin", $0AA0, bsp_b_end, $0AA0
+  SAVE "bsp_render_b_bk.bin", $3A40, bsp_b_end, $3A40
 ELSE
+  ASSERT bsp_b_end <= $0C00
   SAVE "bsp_render_b.bin", $0AA0, bsp_b_end, $0AA0
 ENDIF
 
@@ -2371,7 +2375,11 @@ ENDIF
 ; visibility. Free space after span_clip's LC_* scratch ($0958) and the
 ; BBOX_CORNERS/DEFQ vars ($0960-$0976). Loaded as bsp_render_d.bin.
 ; ============================================================================
-ORG $0978
+IF BANKED
+  ORG $3BC0                  ; above PAGE (directly *LOAD-able)
+ELSE
+  ORG $0978
+ENDIF
 .bsp_d_start
 
 ; bsp_resolve_child — ch := children[zp_bbox_side] of node ch.
@@ -2394,10 +2402,10 @@ ORG $0978
 }
 
 .bsp_d_end
-ASSERT bsp_d_end <= $09FB   ; $09FB-$09FD hold DEFQ_TAIL/OVF + corner idx
 IF BANKED
-  SAVE "bsp_render_d_bk.bin", $0978, bsp_d_end, $0978
+  SAVE "bsp_render_d_bk.bin", $3BC0, bsp_d_end, $3BC0
 ELSE
+  ASSERT bsp_d_end <= $09FB   ; $09FB-$09FD hold DEFQ_TAIL/OVF + corner idx
   SAVE "bsp_render_d.bin", $0978, bsp_d_end, $0978
 ENDIF
 

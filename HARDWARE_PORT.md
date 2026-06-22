@@ -251,3 +251,30 @@ Need a bootloader + (eventually) a 6502 game loop. Scoped:
 doom_loader.asm is the template (bank-copy + CRTC + keyboard all proven there),
 but its ZP map ($10+) differs from the standalone ($00+) so the per-frame setup
 must be rewritten.
+
+## jsbeeb BOOT status (2026-06-22)
+
+Built banked_boot.asm (BOOT loader $0900 + DRV render-one-frame driver $3C00)
+and build_banked_ssd.py -> doom_banked.ssd (!BOOT, BANK0=L0, BANK1=C, BANK2=L2,
+LOW $1B40, DRV $3C00). All low regions are >= PAGE (bsp_d/bsp_b relocated to
+$3BC0/$3A40), so no relocate-down is needed.
+
+VERIFIED on jsbeeb: manual `*LOAD LOW 1B40` loads correctly ($1B40 = 20 A0 1B AD,
+matches the model) — LOW/DRV/banks images + the renderer are all correct.
+
+REMAINING BUG (boot only): the loader copies each bank to SWRAM then the next
+`*LOAD` runs; after the bank copies, `*LOAD LOW` does not land ($1B40 stays 0)
+and the driver jump lands in garbage (PC -> $ACB1). copy_bank now restores the
+FS/language bank ($F4) after paging, and the 3 bank *LOADs themselves work
+($3000 holds BANK2), but the post-copy `*LOAD LOW` still fails. This is the
+classic "load into sideways RAM / FS state after ROMSEL" interaction.
+FIX DIRECTIONS to try:
+ - Use DFS OSFILE (A=$FF load) via a parameter block instead of OSCLI *LOAD, so
+   the FS call is explicit and self-contained.
+ - Or load LOW+DRV FIRST (clean DFS), then load each bank to a SMALL staging
+   that does NOT overlap LOW ($1B40-$5784) and copy — e.g. stage in $0E00? no
+   (DFS ws). The clean answer is OSFILE + ensuring $F4/$FE30 consistent and IRQ
+   off only AFTER all disc I/O.
+ - Or *SRLOAD (DFS 2.x) to load banks straight into SWRAM (no main-RAM staging),
+   removing the staging/restore dance entirely.
+The renderer itself is DONE and model-verified; this is pure boot plumbing.
