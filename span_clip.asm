@@ -136,8 +136,11 @@ VIS_YMAX = Y_BIAS + 159  ; = 207: maximum biased visible Y
 ; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
 ; used when a+b overflows u8.
 IF BANKED
-  sqr_lo  = $1000 : sqr_hi  = $1100   ; low RAM: reachable from bank-C clipper
-  sqr2_lo = $1200 : sqr2_hi = $1300
+  ; low RAM, in the space the clipper vacated ($2000+); above vcache ($0C00-
+  ; $1A97) and bsp_render_lo ($1B40-$1FB4). Reachable from the bank-C clipper
+  ; AND from bsp_render's local umul8 (both read sqr).
+  sqr_lo  = $2000 : sqr_hi  = $2100
+  sqr2_lo = $2200 : sqr2_hi = $2300
 ELSE
   sqr_lo  = $A500 : sqr_hi  = $A600
   sqr2_lo = $A700 : sqr2_hi = $A800

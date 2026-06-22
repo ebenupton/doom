@@ -13,6 +13,19 @@
 ;   $2006  span_tighten      (legacy; records mode dispatches differently)
 ;   $201B  tighten_from_records
 
+; --- BBC banked port (path B), selected by beebasm -D BANKED=0|1 ---
+; Sideways-RAM bank numbers (RAM banks confirmed on jsbeeb B; loader copies here)
+BANK_L0 = 4    ; nodes, ss, seg_hdr, verts, sincos
+BANK_L1 = 5    ; bbox, FHCH, VWH, recip
+BANK_C  = 6    ; clipper + rasteriser
+; PAGE b : page sideways bank b ($FE30). No-op in the flat build, so flat stays
+; bit-exact. A is clobbered — only invoke at A-dead points.
+MACRO PAGE bank
+IF BANKED
+  LDA #bank : STA &FE30
+ENDIF
+ENDMACRO
+
 ORG $4800
 
 ; ============================================================================
@@ -111,9 +124,10 @@ zp_bbox_side      = $34
 ; ============================================================================
 ; Memory map (RAM caches + ROM tables — Python wrapper places data here)
 ; ============================================================================
+; recip/sincos: milestone keeps them flat ($E000/$E480), reachable in the
+; banked_mem model (above the $8000-$BFFF window). Real-HW will bank these with
+; the rest of the $C000+ subsystems (separate relocation step).
 RECIP_BASE      = $E000     ; base of recip table (HI bytes first, then LO)
-                            ; HI[0..513] at $E000-$E201
-                            ; LO[0..513] at $E202-$E403
 SINCOS_BASE     = $E480     ; sin_mag[0..63], sin_unity[0..63] (128 bytes)
 
 ; Vertex transform cache: per-vertex saved view + projection results.
@@ -152,11 +166,17 @@ JMP br_init_frame   ; $481B   clear vcache valid bitmap (for hybrid mode)
 ; ============================================================================
 ; SC_UMUL8 / SC_UDIV16_8 are now local labels (see .SC_UMUL8 / .SC_UDIV16_8
 ; in the $4800 region) — banked port decouples them from span_clip.
-SC_DRAW_S16     = $201E
-SC_DRAW_U8      = $2015      ; standalone DCL (u8 input, no clipper prelude)
-SC_MARK_SOLID   = $2003
-SC_TIGHTEN      = $2006
-SC_TIGHTEN_FROM_RECORDS = $201B
+; Clipper jump table is at $2000 (flat) or $8000 (bank C). SC_BASE offsets all.
+IF BANKED
+  SC_BASE = $8000
+ELSE
+  SC_BASE = $2000
+ENDIF
+SC_DRAW_S16     = SC_BASE + $1E
+SC_DRAW_U8      = SC_BASE + $15   ; standalone DCL (u8 input, no clipper prelude)
+SC_MARK_SOLID   = SC_BASE + $03
+SC_TIGHTEN      = SC_BASE + $06
+SC_TIGHTEN_FROM_RECORDS = SC_BASE + $1B
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 zp_mul_b        = $D9
@@ -167,8 +187,13 @@ zp_div_hi       = $DB
 zp_div_den      = $DC
 zp_tmp0         = $DE        ; umul8 scratch (matches span_clip); free outside span_clip
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites
-sqr_lo  = $A500 : sqr_hi  = $A600
-sqr2_lo = $A700 : sqr2_hi = $A800
+IF BANKED
+  sqr_lo  = $2000 : sqr_hi  = $2100   ; low RAM (matches span_clip banked sqr)
+  sqr2_lo = $2200 : sqr2_hi = $2300
+ELSE
+  sqr_lo  = $A500 : sqr_hi  = $A600
+  sqr2_lo = $A700 : sqr2_hi = $A800
+ENDIF
 
 ; span_clip's line ZP (also LC_X*_LO aliases for the s16 clipper)
 zp_line_xl      = $A8
@@ -1048,6 +1073,7 @@ zp_node_chhi  = $59
     LDX zp_bsp_stack_sp
     LDA BSP_STACK,X : STA zp_node_chlo
 
+    PAGE BANK_C
     JSR SC_IS_FULL
     BNE bsp_done_full
 .bsp_dispatch
@@ -1347,8 +1373,8 @@ zp_seg_flags    = $3F      ; u8
 ;     6. If ilo > ihi → return 0.
 ;     7. JSR span_has_gap → return its A.
 ; ============================================================================
-SC_HAS_GAP      = $2009
-SC_IS_FULL      = $200C
+SC_HAS_GAP      = SC_BASE + $09
+SC_IS_FULL      = SC_BASE + $0C
 
 ; Per-corner storage (5 bytes × 4 = 20). bv_proj_one writes here so that a
 ; second pass can compute near-plane edge crossings between consecutive
@@ -1401,6 +1427,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
 
 .br_bbox_visible
 {
+    ; (milestone: bbox visibility uses the angle module + tables, kept flat)
     ; --- Compute bbox table pointer = ROM_BBOX + node_id*16 + side*8 ---
     LDA zp_node_chlo : STA zp_br_t0
     LDA zp_node_chhi : STA zp_br_t1
@@ -1429,6 +1456,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
 .bv_anglevis
     LDA bca_ilo : STA $C2
     LDA bca_ihi : STA $C3
+    PAGE BANK_C
     JMP SC_HAS_GAP
 
 }
@@ -1447,6 +1475,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
 ; ============================================================================
 .br_render_subsector
 {
+    PAGE BANK_L0                ; ss / seg_hdr / verts / sincos live in bank L0
     ; --- Mark visited (test instrumentation) ---
     LDA zp_node_chlo : STA zp_br_t0
     LDA zp_node_chhi : STA zp_br_t1
@@ -1493,8 +1522,10 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     ; --- Loop over segs ---
 .seg_loop
     LDA zp_seg_count : BNE seg_proc
+    PAGE BANK_C                          ; defq_drain only does clip ops (bank C)
     JMP defq_drain                       ; subsector done — apply deferred ops
 .seg_proc
+    PAGE BANK_L0                ; re-page L0 each seg (prev seg ended in bank C)
     ; Reset DCL records buffers (used by portal tighten). Python's
     ; packed_render_seg calls _span_clip_6502.reset_records() at the
     ; top of each seg, mirrored here.
@@ -1638,6 +1669,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_br_t2 : STA $C2
     LDA zp_br_t3 : STA $C3
 .hg_query
+    PAGE BANK_C
     JSR SC_HAS_GAP
     BNE hg_pass
     JMP s_advance
@@ -1676,6 +1708,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_top_lo : STA zp_line_yr
     LDA zp_seg_sy2_top_hi : STA $B5
+    PAGE BANK_C
     JSR SC_DRAW_S16
     LDA #0   : STA $BC : STA $BD
 .ft_skip
@@ -1712,13 +1745,16 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_seg_sx2_hi : STA $B4
     LDA zp_seg_sy2_bot_lo : STA zp_line_yr
     LDA zp_seg_sy2_bot_hi : STA $B5
+    PAGE BANK_C
     JSR SC_DRAW_S16
     LDA #0   : STA $BC : STA $BD
 .fb_skip
 
     ; --- Portal step edges (back ceiling / floor) ---
     ; Solid walls have no back sector — skip the step emits.
-    LDA zp_seg_flags : AND #$02 : BNE step_skip   ; SF_SOLID set → skip steps
+    LDA zp_seg_flags : AND #$02 : BEQ step_cont   ; SF_SOLID set → skip steps
+    JMP step_skip                                 ; (trampoline: PAGE inserts
+.step_cont                                        ;  pushed the branch out of range)
 
     ; Back ceiling step if NEEDBT (= $04) set: emit (sx1, bt1) → (sx2, bt2).
     ; bt is the new TOP of the aperture — populate TOP_RECORDS so the
@@ -1735,6 +1771,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_seg_sy2_btop_hi : STA $B5
     LDA #0   : STA $BC
     LDA #$07 : STA $BD             ; TOP_RECORDS = $0700
+    PAGE BANK_C
     JSR SC_DRAW_S16
     LDA #0   : STA $BC : STA $BD   ; reset records pointer
 .step_no_top
@@ -1751,6 +1788,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_seg_sy2_bbot_hi : STA $B5
     LDA #0   : STA $BC
     LDA #$08 : STA $BD             ; BOT_RECORDS = $0800
+    PAGE BANK_C
     JSR SC_DRAW_S16
     LDA #0   : STA $BC : STA $BD
 .step_no_bot
@@ -1893,6 +1931,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_seg_sx1_lo : STA zp_line_xr
     LDA zp_seg_sx1_hi : STA $B4
     LDA #0 : STA $BD
+    PAGE BANK_C
     JMP SC_DRAW_S16
 
 .emit_vert_sx2
@@ -1901,6 +1940,7 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
     LDA zp_seg_sx2_lo : STA zp_line_xr
     LDA zp_seg_sx2_hi : STA $B4
     LDA #0 : STA $BD
+    PAGE BANK_C
     JMP SC_DRAW_S16
 
 ; ============================================================================
@@ -2115,7 +2155,11 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
 
 .end_code
 ASSERT end_code <= $5800
-SAVE "bsp_render.bin", $4800, end_code, $4800
+IF BANKED
+  SAVE "bsp_render_bk.bin", $4800, end_code, $4800
+ELSE
+  SAVE "bsp_render.bin", $4800, end_code, $4800
+ENDIF
 
 ; ============================================================================
 ; B REGION ($0AA0-$0BFF) — deferred-op queue + helpers. This space is the
@@ -2206,7 +2250,7 @@ ORG $0AA0
     ; solid: mark_solid(ilo, ihi), no line emission.
     STX zp_br_t2
     LDA #0 : STA $A8                             ; zp_ms_emit = 0
-    JSR SC_MARK_SOLID
+    JSR SC_MARK_SOLID                            ; (bank C paged by caller)
     JMP dd_after
 .dd_tighten
     ; restore top block to $0700
@@ -2224,9 +2268,9 @@ ORG $0AA0
     INY
     CPY zp_br_t1 : BNE dd_cp_bot
     STX zp_br_t2
-    JSR SC_TIGHTEN_FROM_RECORDS
+    JSR SC_TIGHTEN_FROM_RECORDS                  ; (bank C paged by caller)
 .dd_after
-    JSR SC_IS_FULL
+    JSR SC_IS_FULL                               ; (bank C paged by caller)
     BNE dd_done
     LDX zp_br_t2
     JMP dd_loop
@@ -2293,7 +2337,11 @@ ORG $0AA0
 
 .bsp_b_end
 ASSERT bsp_b_end <= $0C00
-SAVE "bsp_render_b.bin", $0AA0, bsp_b_end, $0AA0
+IF BANKED
+  SAVE "bsp_render_b_bk.bin", $0AA0, bsp_b_end, $0AA0
+ELSE
+  SAVE "bsp_render_b.bin", $0AA0, bsp_b_end, $0AA0
+ENDIF
 
 ; ============================================================================
 ; D REGION ($0978-$09FF) — near-plane edge-crossing math for bbox
@@ -2307,6 +2355,7 @@ ORG $0978
 ;   ptr = rom_nodes + id*16; child_r at +8, child_l at +10.
 .bsp_resolve_child
 {
+    PAGE BANK_L0                ; nodes table lives in bank L0
     ; Node ids fit one byte (<= 235): id*16 via single-byte shifts.
     LDA zp_node_chlo
     LSR A : LSR A : LSR A : LSR A : STA zp_br_t1
@@ -2323,7 +2372,11 @@ ORG $0978
 
 .bsp_d_end
 ASSERT bsp_d_end <= $09FB   ; $09FB-$09FD hold DEFQ_TAIL/OVF + corner idx
-SAVE "bsp_render_d.bin", $0978, bsp_d_end, $0978
+IF BANKED
+  SAVE "bsp_render_d_bk.bin", $0978, bsp_d_end, $0978
+ELSE
+  SAVE "bsp_render_d.bin", $0978, bsp_d_end, $0978
+ENDIF
 
 
 
@@ -2352,6 +2405,7 @@ ORG $DAC0
 
 .br_project_y
 {
+    ; (milestone: recip + VWHC cache kept flat — no paging here)
     ; probe: idx = (rlo + h + rhi) & 255
     LDA zp_br_rlo : CLC : ADC zp_br_t0 : ADC zp_br_rhi : TAX
     LDA VWHC_VALID,X : BEQ pyc_miss
@@ -2388,7 +2442,11 @@ ORG $DAC0
 
 .bsp_w_end
 ASSERT bsp_w_end <= $DC00       ; stay below angle TA_LO (was RPC_VALID, removed)
-SAVE "bsp_render_w.bin", $DAC0, bsp_w_end, $DAC0
+IF BANKED
+  SAVE "bsp_render_w_bk.bin", $DAC0, bsp_w_end, $DAC0
+ELSE
+  SAVE "bsp_render_w.bin", $DAC0, bsp_w_end, $DAC0
+ENDIF
 
 ; ============================================================================
 ; OVERFLOW REGION — bsp_render.bin is bound to $4800-$57FF (4096 bytes max,
@@ -2559,6 +2617,7 @@ ORG $1B40
 ; Called twice per internal node (entry + post-near phases).
 .br_node_setup
 {
+    PAGE BANK_L0                ; nodes table lives in bank L0
     LDA zp_node_chlo : STA zp_br_t0
     LDA zp_node_chhi : STA zp_br_t1
     ASL zp_br_t0 : ROL zp_br_t1
@@ -2778,6 +2837,7 @@ ASSERT bsp_lo_end <= $2000
     LDA $0061,Y : STA zp_line_xl : STA zp_line_xr
     LDA $0062,Y : STA $B2 : STA $B4
     LDA #0 : STA $BD
+    PAGE BANK_C
     JMP SC_DRAW_S16
 .ap2_solid_jmp
     JMP ap2_solid_proj
@@ -2847,4 +2907,8 @@ ASSERT bsp_lo_end <= $2000
 }
 
 .bsp_lo_end
-SAVE "bsp_render_lo.bin", $1B40, bsp_lo_end, $1B40
+IF BANKED
+  SAVE "bsp_render_lo_bk.bin", $1B40, bsp_lo_end, $1B40
+ELSE
+  SAVE "bsp_render_lo.bin", $1B40, bsp_lo_end, $1B40
+ENDIF
