@@ -187,3 +187,31 @@ Plan: bbox + recip + VWH + angle tables -> bank L1; angle module code + VWHC
 cache + yproj code -> low RAM (clipper vacated $2000-$47FF, ~10K free; sqr@$2000,
 FHCH@$2400 already there). Then PAGE L1 around recip/VWH/bbox/angle-table reads,
 verify bit-exact via banked_bsp, then adapt doom_loader.asm + boot on jsbeeb.
+
+## VERIFICATION BOUNDARY (2026-06-22)
+
+banked_mem.py models the $8000-$BFFF window but has RAM everywhere else, incl.
+$C000-$FFFF. So it has ALREADY verified everything the model can: the full
+renderer running with ROM_MAIN in bank L0 + clipper/raster in bank C, paged via
+$FE30, bit-identical to flat (448 positions). The remaining $C000+ relocation
+does NOT change renderer logic — it only moves bytes out of MOS-ROM space — so
+the model would show it "passing" without proving the real-HW constraint. Its
+real test is jsbeeb (real banking + real MOS ROM at $C000+). The novel,
+risky part (paged code calling low tables; per-seg bank cadence; correct PAGE
+placement) is DONE and proven.
+
+### Full $C000+ inventory to relocate for real HW (jsbeeb phase)
+Bank L2 (bank 7) <- TA_LO($DC00,1024) TA_HI($F200,1025) VATOX($F601,1025)
+  bbox($C600,3776) recip($E000,1028) VWH($E484,1206) VWHC cache($D4C0,1536)
+  = 10620B, fits 16K.
+Low RAM (clipper-vacated $2000-$47FF) <- angle module code (slope_div.asm,
+  ORG $E940->~$3400, 1234B), br_project_y/bsp_render_w (ORG $DAC0->~$3F00),
+  bca workspace ($FA10-$FA32, 35B -> ~$0300; shared by slope_div.asm +
+  bsp_render.asm lines 555/556/1423-1426 + harness mem[0xFA2F]).
+PAGE L2 points: br_bbox_visible (angle tables+bbox; angle code runs low, reads
+  L2), br_project_y (recip+VWH+VWHC).
+Edits: slope_div.asm ORG+3 tables+~15 bca defs conditional; bsp_render.asm
+  RECIP_BASE/VWHC/bsp_render_w-ORG/BCA_CHECK/bca-refs conditional + 2 PAGE L2;
+  harness/loader build L2 image + low angle/bca. Then adapt doom_loader.asm
+  (copy 4 banks 4/5/6/7; CRTC 256x160; keyboard; relocate-down) -> .ssd ->
+  boot jsbeeb -> compare framebuffer to flat at known positions.
