@@ -160,3 +160,30 @@ for the new entry; build .ssd; boot on jsbeeb; compare to flat reference.
 This remaining work is invasive but mechanical; the banked_mem.py oracle gives
 bit-exact verification at each step before jsbeeb. The novel risk (paged code +
 low tables) is already retired by the bank-C clipper result.
+
+## MILESTONE (2026-06-22): full renderer runs banked, bit-identical to flat
+
+Both halves of the banking now verified end-to-end against the flat reference
+via banked_mem.py:
+- Clipper in bank C: 40000 dcl_test cases, 0 mismatches.
+- FULL renderer (ROM_MAIN -> bank L0, clipper+rasteriser -> bank C, sqr+FHCH ->
+  low, paged via $FE30): banked_bsp.py, all reference positions + a 448-position
+  sweep -> 0 differences. ~0.5-1% paging overhead. Flat regression ALL GREEN.
+
+Key bug found+fixed during bring-up: PAGE inserts in the $0AA0 _b (defq) blob
+grew it from 324->339 bytes, overrunning the zp_rom_* pointers at $0BE8 ->
+corrupted zp_rom_bbox -> BCA culled everything. Fix: page bank C ONCE before
+JMP defq_drain (defq only does clip ops), drop the per-op PAGEs inside defq.
+Also: br_bbox_visible's JMP SC_HAS_GAP tail-call needed PAGE C (JMP-form clip
+calls were missed by the JSR-only first pass).
+
+## REMAINING for real-HW jsbeeb boot
+
+On a Model B, $C000-$FFFF is MOS ROM — every table/cache currently there must
+move. Still resident at $C000+ (flat in the model, must relocate):
+  bbox $C600, VWHC cache $D4C0, bsp_render_w (yproj) $DAC0, recip $E000,
+  VWH $E484, angle module code $E940, angle tables $DC00/$F200/$F601.
+Plan: bbox + recip + VWH + angle tables -> bank L1; angle module code + VWHC
+cache + yproj code -> low RAM (clipper vacated $2000-$47FF, ~10K free; sqr@$2000,
+FHCH@$2400 already there). Then PAGE L1 around recip/VWH/bbox/angle-table reads,
+verify bit-exact via banked_bsp, then adapt doom_loader.asm + boot on jsbeeb.
