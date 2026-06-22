@@ -3,7 +3,7 @@ import subprocess, sys
 from py65.devices.mpu6502 import MPU
 import angle_bbox as A
 
-subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
+subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
                check=True, capture_output=True)
 code = open('bsp_render_ang.bin', 'rb').read()
 
@@ -49,7 +49,7 @@ for i in range(1024):
 # Calling it with bca_afn ($3B/$3C)=0 makes corner_phi's tail compute
 # pa_res = signed12(0 - psi), from which psi = (-pa_res) % 4096.
 PA = None
-out = subprocess.run(['./beebasm', '-i', 'slope_div.asm', '-dd'],
+out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'slope_div.asm', '-dd'],
                      capture_output=True, text=True).stdout
 import re, ast
 labels = {}

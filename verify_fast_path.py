@@ -35,7 +35,7 @@ def capture_cmds():
     return out
 
 def rebuild():
-    r = subprocess.run(['./beebasm', '-i', 'doom_fe.asm'],
+    r = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'doom_fe.asm'],
                        capture_output=True, text=True)
     if r.returncode != 0:
         print("BUILD FAILED:", r.stderr)

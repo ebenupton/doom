@@ -15,9 +15,9 @@
 
 ; --- BBC banked port (path B), selected by beebasm -D BANKED=0|1 ---
 ; Sideways-RAM bank numbers (RAM banks confirmed on jsbeeb B; loader copies here)
-BANK_L0 = 4    ; nodes, ss, seg_hdr, verts, sincos
-BANK_L1 = 5    ; bbox, FHCH, VWH, recip
+BANK_L0 = 4    ; nodes, ss, seg_hdr, verts
 BANK_C  = 6    ; clipper + rasteriser
+BANK_L2 = 7    ; angle tables, bbox, recip, VWH, VWHC cache ($C000+ relocated)
 ; PAGE b : page sideways bank b ($FE30). No-op in the flat build, so flat stays
 ; bit-exact. A is clobbered — only invoke at A-dead points.
 MACRO PAGE bank
@@ -127,7 +127,18 @@ zp_bbox_side      = $34
 ; recip/sincos: milestone keeps them flat ($E000/$E480), reachable in the
 ; banked_mem model (above the $8000-$BFFF window). Real-HW will bank these with
 ; the rest of the $C000+ subsystems (separate relocation step).
-RECIP_BASE      = $E000     ; base of recip table (HI bytes first, then LO)
+; $C000+ subsystems relocate to bank L2 for real HW. L2 window layout:
+;   TA_LO $8000 TA_HI $8400 VATOX $8800 (angle tables, slope_div.asm)
+;   bbox $8D00  recip $9C00  VWH $A100  VWHC cache $A600
+IF BANKED
+  ; L2 window (no overlaps): TA_LO$8000 TA_HI$8400 VATOX$8900 bbox$8E00
+  ;   recip$9D00 VWH$A200 VWHC$A700
+  RECIP_BASE  = $9D00       ; bank L2
+  L2_BBOX     = $8E00       ; bank L2 (harness/loader points zp_rom_bbox here)
+  L2_VWH      = $A200       ; bank L2 (harness/loader points zp_rom_vwh here)
+ELSE
+  RECIP_BASE  = $E000       ; recip table (HI bytes first, then LO)
+ENDIF
 SINCOS_BASE     = $E480     ; sin_mag[0..63], sin_unity[0..63] (128 bytes)
 
 ; Vertex transform cache: per-vertex saved view + projection results.
@@ -318,6 +329,7 @@ zp_line_yr      = $AB
 ; ============================================================================
 .br_recip
 {
+    PAGE BANK_L2                ; recip table lives in bank L2
     ; --- Clamp vy_idx to [2, 1023] ---
     LDA zp_br_t1 : CMP #4 : BCC c_hi_ok
     LDA #$FF : STA zp_br_t0
@@ -552,8 +564,8 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     ; a_fine = ab<<4 is frame-constant; hoist it here (once/frame) instead of
     ; recomputing inside bbox_check_angle on every one of the ~650 bbox checks.
     ; bca_afn ($3B/$3C) is untouched by the perspective path between checks.
-    LDA $FA2F : LSR A : LSR A : LSR A : LSR A : STA $3C   ; bca_afn+1 = ab>>4
-    LDA $FA2F : ASL A : ASL A : ASL A : ASL A : STA $3B   ; bca_afn = (ab<<4)&FF
+    LDA bca_ab : LSR A : LSR A : LSR A : LSR A : STA $3C   ; bca_afn+1 = ab>>4
+    LDA bca_ab : ASL A : ASL A : ASL A : ASL A : STA $3B   ; bca_afn = (ab<<4)&FF
     ; Player px,py sign-extended to s16 (bca_pxs $8D/$8E, bca_pys $9B/$9C) is
     ; also frame-constant; hoist it (was recomputed per bbox check).
     LDX #0 : LDA zp_br_px_h : STA $8D : BPL vs_px : DEX
@@ -1419,15 +1431,24 @@ BBOX_IHI        = $096A     ; running max sx clamped (u8)
 
 ; --- Angle-space bbox module (bsp_render_ang.bin @ $E940; tables $DC00/$E400/$F200).
 ;     Replaces the perspective corner-projection path below (now dead code).
-BCA_CHECK = $E943           ; JSR -> bbox_check_angle (px=$01, py=$03, ab=$FA2F); $E943 after point_to_angle inlined out of the jump table
-bca_top   = $FA10           ; box input: top,bot,left,right = $FA10,$12,$14,$16
-bca_ilo   = $FA30           ; output: left column (u8)
-bca_ihi   = $FA31           ; output: right column (u8)
-bca_vis   = $FA32           ; output: 1=visible, 0=cull
+; angle module + bca workspace relocate when banked (must match slope_div.asm:
+;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
+IF BANKED
+  BCA_CHECK = $3403
+  BCA_WS    = $3A00
+ELSE
+  BCA_CHECK = $E943          ; JSR -> bbox_check_angle (point_to_angle inlined out)
+  BCA_WS    = $FA00
+ENDIF
+bca_top   = BCA_WS+$10      ; box input: top,bot,left,right = +$10,$12,$14,$16
+bca_ilo   = BCA_WS+$30      ; output: left column (u8)
+bca_ihi   = BCA_WS+$31      ; output: right column (u8)
+bca_vis   = BCA_WS+$32      ; output: 1=visible, 0=cull
+bca_ab    = BCA_WS+$2F      ; per-frame view angle (set by render setup)
 
 .br_bbox_visible
 {
-    ; (milestone: bbox visibility uses the angle module + tables, kept flat)
+    PAGE BANK_L2                ; bbox + angle tables (TA/VATOX) live in bank L2
     ; --- Compute bbox table pointer = ROM_BBOX + node_id*16 + side*8 ---
     LDA zp_node_chlo : STA zp_br_t0
     LDA zp_node_chhi : STA zp_br_t1
@@ -1950,6 +1971,8 @@ bca_vis   = $FA32           ; output: 1=visible, 0=cull
 ; ============================================================================
 .br_seg_xform_vertex
 {
+    PAGE BANK_L0                ; reads verts (L0) on vcache miss; prior seg's
+                               ; projection may have left L2/C paged
     LDA #0 : STA zp_seg_skip
 
     ; --- Compute vertex cache index (idx*8 → cache offset) ---
@@ -2393,19 +2416,23 @@ ENDIF
 ; repeat within a frame (measured); a raw projection costs ~315 cycles
 ; end-to-end, a hit ~45.
 ; ============================================================================
-VWHC_VALID = $D4C0
-VWHC_RHI   = $D5C0
-VWHC_RLO   = $D6C0
-VWHC_H     = $D7C0
-VWHC_LO    = $D8C0
-VWHC_HI    = $D9C0
-
-ORG $DAC0
+; VWHC y-projection cache: flat @ $D4C0; banked -> bank L2 ($A600). br_project_y
+; (this code) -> banked low RAM ($3900, clipper-vacated space) since $DAC0 is in
+; MOS-ROM space on a real Model B.
+IF BANKED
+  VWHC_VALID = $A700 : VWHC_RHI = $A800 : VWHC_RLO = $A900
+  VWHC_H     = $AA00 : VWHC_LO  = $AB00 : VWHC_HI  = $AC00
+  ORG $3900
+ELSE
+  VWHC_VALID = $D4C0 : VWHC_RHI = $D5C0 : VWHC_RLO = $D6C0
+  VWHC_H     = $D7C0 : VWHC_LO  = $D8C0 : VWHC_HI  = $D9C0
+  ORG $DAC0
+ENDIF
 .bsp_w_start
 
 .br_project_y
 {
-    ; (milestone: recip + VWHC cache kept flat — no paging here)
+    PAGE BANK_L2                ; recip + VWHC cache live in bank L2
     ; probe: idx = (rlo + h + rhi) & 255
     LDA zp_br_rlo : CLC : ADC zp_br_t0 : ADC zp_br_rhi : TAX
     LDA VWHC_VALID,X : BEQ pyc_miss
@@ -2443,7 +2470,7 @@ ORG $DAC0
 .bsp_w_end
 ASSERT bsp_w_end <= $DC00       ; stay below angle TA_LO (was RPC_VALID, removed)
 IF BANKED
-  SAVE "bsp_render_w_bk.bin", $DAC0, bsp_w_end, $DAC0
+  SAVE "bsp_render_w_bk.bin", $3900, bsp_w_end, $3900
 ELSE
   SAVE "bsp_render_w.bin", $DAC0, bsp_w_end, $DAC0
 ENDIF

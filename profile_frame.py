@@ -33,7 +33,7 @@ def build_symbols():
     syms = []
     for asm in ('bsp_render.asm', 'span_clip.asm'):
         top = toplevel_labels(asm)
-        out = subprocess.run(['./beebasm', '-i', asm, '-v'],
+        out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', asm, '-v'],
                              capture_output=True, text=True).stdout
         for m in re.finditer(r'\.([A-Za-z_][A-Za-z0-9_]*)\n\s+([0-9A-F]{4})', out):
             if m.group(1) in top:

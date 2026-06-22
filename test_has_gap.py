@@ -20,7 +20,7 @@ mpu = fe.mpu
 mem = mpu.memory
 
 # Find has_gap address
-r = subprocess.run(['./beebasm', '-i', 'doom_fe.asm', '-v'],
+r = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'doom_fe.asm', '-v'],
                     capture_output=True, text=True)
 hg_addr = None
 for i, line in enumerate(r.stdout.split('\n')):

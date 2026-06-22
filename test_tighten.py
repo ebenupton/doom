@@ -13,7 +13,7 @@ SP_XLO=0; SP_XHI=1; SP_TSLOPE=2; SP_BSLOPE=4
 SP_TINTERCEPT=6; SP_BINTERCEPT=8; SP_INNER_TOP=10; SP_INNER_BOT=12
 SP_OUTER_TOP=14; SP_OUTER_BOT=15
 
-result = subprocess.run(['./beebasm', '-i', 'doom_fe.asm', '-v'], capture_output=True, text=True)
+result = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'doom_fe.asm', '-v'], capture_output=True, text=True)
 ADDR_TIGHTEN = None
 for i, line in enumerate(result.stdout.split('\n')):
     if line.strip() == '.tighten':

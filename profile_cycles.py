@@ -11,7 +11,7 @@ from bsp_render_6502 import BspRender6502
 import compare_renders as C
 
 def labels(asm):
-    out = subprocess.run(['./beebasm', '-i', asm, '-v'], capture_output=True, text=True).stdout
+    out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', asm, '-v'], capture_output=True, text=True).stdout
     return {int(m.group(2), 16): m.group(1)
             for m in re.finditer(r'^\.([A-Za-z_][A-Za-z0-9_]*)\n\s+([0-9A-F]{4})', out, re.M)}
 sym = {}

@@ -127,5 +127,5 @@ def build_ssd(output_path='doom_e1m1.ssd'):
 if __name__ == '__main__':
     # First assemble the loader
     import subprocess
-    subprocess.run(['./beebasm', '-i', 'doom_loader.asm', '-o', 'doom_loader.bin'], check=True)
+    subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'doom_loader.asm', '-o', 'doom_loader.bin'], check=True)
     build_ssd()

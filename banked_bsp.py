@@ -23,7 +23,7 @@ from bsp_render_6502 import (BspRender6502, ROM_MAIN_BASE, ROM_FHCH_BASE,
     ZP_ROM_VERTS_LO, ZP_ROM_NODES_LO, ZP_ROM_SS_LO, ZP_ROM_SEG_HDR_LO,
     ZP_ROM_FHCH_LO, ZP_ROM_DETAIL_LO)
 
-BANK_L0, BANK_C = 4, 6
+BANK_L0, BANK_C, BANK_L2 = 4, 6, 7
 FHCH_LOW = 0x2400
 SQR_LOW = 0x2000
 RASTER_OFF = 0xA900            # rasteriser window addr in bank C
@@ -66,22 +66,41 @@ def build_banked(flatr):
     for i in range(0x400):
         bm[SQR_LOW + i] = fmem[0xA500 + i]
 
+    # --- bank L2 = relocated $C000+ data (window offsets must match the asm) ---
+    # TA_LO $8000, TA_HI $8400, VATOX $8800, bbox $8D00, recip $9C00, VWH $A100,
+    # VWHC cache $A600 (zeroed).
+    l2 = bytearray(16384)
+    def cpy(dst_off, src, n):
+        l2[dst_off:dst_off + n] = bytes(fmem[src:src + n])
+    cpy(0x0000, 0xDC00, 1024)            # TA_LO  -> $8000
+    cpy(0x0400, 0xF200, 1025)            # TA_HI  -> $8400
+    cpy(0x0900, 0xF601, 1025)            # VATOX  -> $8900
+    cpy(0x0E00, 0xC600, len(flatr.bbox_table))   # bbox -> $8E00
+    cpy(0x1D00, 0xE000, 1028)            # recip  -> $9D00 (514 HI + 514 LO)
+    cpy(0x2200, 0xE484, layout['n_vwh'])  # VWH   -> $A200
+    bm.define_bank(BANK_L2, l2)
+
     # --- banked bsp_render code (_bk variants) into low RAM ---
-    for fn, addr in [('bsp_render_bk.bin', 0x4800), ('bsp_render_lo_bk.bin', 0x1B40),
-                     ('bsp_render_b_bk.bin', 0x0AA0), ('bsp_render_d_bk.bin', 0x0978),
-                     ('bsp_render_w_bk.bin', 0xDAC0)]:
+    # bsp_render_w (br_project_y) and the angle module move to the clipper-vacated
+    # low space ($3900 / $3400); bca workspace sits at $3A00 (RAM, no load).
+    loads = [('bsp_render_bk.bin', 0x4800), ('bsp_render_lo_bk.bin', 0x1B40),
+             ('bsp_render_b_bk.bin', 0x0AA0), ('bsp_render_d_bk.bin', 0x0978),
+             ('bsp_render_w_bk.bin', 0x3900), ('bsp_render_ang_bk.bin', 0x3400)]
+    for fn, addr in loads:
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):
                 bm[addr + i] = b
 
-    # --- ZP pointers: ROM_MAIN tables -> $8000 window; FHCH -> $2400 ---
+    # --- ZP pointers: ROM_MAIN tables -> L0 window; FHCH -> low; bbox/VWH -> L2 ---
     _w16(bm, ZP_ROM_VERTS_LO,   0x8000 + layout['off_verts'])
     _w16(bm, ZP_ROM_NODES_LO,   0x8000 + layout['off_nodes'])
     _w16(bm, ZP_ROM_SS_LO,      0x8000 + layout['off_ss'])
     _w16(bm, ZP_ROM_SEG_HDR_LO, 0x8000 + layout['off_seg_hdr'])
     _w16(bm, ZP_ROM_FHCH_LO,    FHCH_LOW)
     _w16(bm, ZP_ROM_DETAIL_LO,  FHCH_LOW)
+    _w16(bm, 0x0BEA,            0x8E00)   # zp_rom_bbox -> L2
+    _w16(bm, 0x0BF4,            0xA200)   # zp_rom_vwh  -> L2
     bm[0xFF00] = 0x00
     bm.select(BANK_L0)
     return bm
@@ -99,6 +118,11 @@ class BankedBspRender(BspRender6502):
             sc._run(0x8000)              # ENTRY_INIT (jump table entry 0) in bank C
             sc.total_cycles = 0
         sc.init = banked_init
+
+    def render_frame(self, px, py, ab, floor_z=0):
+        # bca_ab relocated from $FA2F to $3A2F (BCA_WS+$2F) in the banked build.
+        self.bm[0x3A2F] = ab & 0xFF
+        return super().render_frame(px, py, ab, floor_z)
 
 
 def fb_mask(r):

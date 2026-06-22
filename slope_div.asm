@@ -17,9 +17,15 @@ sd_r   = $4A
 \ Integration build: loaded at $E940 (bsp_render_ang.bin). Tables: TA_LO in the
 \ reclaimed rotation-cache RAM ($DC00-$DFFF, 1024 entries), TA_HI/VATOX in the
 \ $E940 region after the code. Fixed entry jump table for bsp_render to call.
-ORG $E940
-    JMP slope_div            \ $E940
-    JMP bbox_check_angle     \ $E943   (point_to_angle inlined into corner_phi -> 1 fewer entry)
+\ Angle module code: flat @ $E940 (above renderer); banked (BBC) -> low RAM
+\ ($3400, in the clipper-vacated space) since $C000+ is MOS ROM on a Model B.
+IF BANKED
+  ORG $3400
+ELSE
+  ORG $E940
+ENDIF
+    JMP slope_div            \ entry+0
+    JMP bbox_check_angle     \ entry+3   (point_to_angle inlined into corner_phi -> 1 fewer entry)
 .slope_div
 {
     \ if num >= den -> SLOPERANGE (1024)
@@ -101,8 +107,13 @@ pa_sx  = $73
 pa_sy  = $89
 pa_oct = $8A
 pa_ptr = $40          \ 16-bit table pointer
-TA_LO  = $DC00        \ 1024 entries (reclaimed rotation-cache RAM)
-TA_HI  = $F200        \ 1025 entries ($F200-$F600, above the grown code <$F200)
+IF BANKED
+  TA_LO = $8000       \ bank L2 window: tantoangle lo (1024)
+  TA_HI = $8400       \ bank L2: tantoangle hi (1025)
+ELSE
+  TA_LO  = $DC00      \ 1024 entries (reclaimed rotation-cache RAM)
+  TA_HI  = $F200      \ 1025 entries ($F200-$F600, above the grown code <$F200)
+ENDIF
 
 \ point_to_angle: INLINED into corner_phi (its sole caller); see below.
 
@@ -118,22 +129,29 @@ TA_HI  = $F200        \ 1025 entries ($F200-$F600, above the grown code <$F200)
 \        bca_ab (u8)
 \   out: bca_vis (1=visible/0=cull), bca_ilo, bca_ihi (u8 columns)
 \ ============================================================================
-bca_top  = $FA10        \ s16; bot $8A, left $8C, right $8E (contiguous = val[])
-bca_bot  = $FA12
-bca_left = $FA14
-bca_right = $FA16
+\ bca workspace block ($FA10-$FA32) — flat sits in the BBOX-vars region; banked
+\ (BBC) relocates it to low RAM (the $FA00 page is MOS/IO on a real Model B).
+IF BANKED
+  BCA_WS = $3A00
+ELSE
+  BCA_WS = $FA00
+ENDIF
+bca_top  = BCA_WS+$10   \ s16; bot $8A, left $8C, right $8E (contiguous = val[])
+bca_bot  = BCA_WS+$12
+bca_left = BCA_WS+$14
+bca_right = BCA_WS+$16
 \ px/py aliased to the live renderer's player-int ZP (frame-persistent);
 \ ab + outputs in the BBOX-vars region the old br_bbox_visible freed.
 bca_px   = $01        \ zp_br_px_h (player int x, s8)
 bca_py   = $03        \ zp_br_py_h
-bca_ab   = $FA2F
-bca_ilo  = $FA30
-bca_ihi  = $FA31
-bca_vis  = $FA32
+bca_ab   = BCA_WS+$2F
+bca_ilo  = BCA_WS+$30
+bca_ihi  = BCA_WS+$31
+bca_vis  = BCA_WS+$32
 bca_afn  = $3B          \ a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi
 bca_cy   = $71          \ corner y (s16) -- ZP (freed from pa_ady); hot in corner_phi
-bca_p1   = $FA1E        \ phi1 (s16)
-bca_p2   = $FA20        \ phi2 (s16)
+bca_p1   = BCA_WS+$1E   \ phi1 (s16)
+bca_p2   = BCA_WS+$20   \ phi2 (s16)
 \ Hottest body vars in spare scavenged ZP (conflict-free) to cut the
 \ absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 bca_lo   = $1E          \ lo_phi (s16)
@@ -144,12 +162,16 @@ bca_cx   = $9D          \ corner x (s16)
 bca_boxp = $86          \ ROM box pointer: caller points this at the 8-byte box
                         \ (top,bot,left,right s16) and we read via (bca_boxp),Y
                         \ instead of copying it into a work area each check.
-t0       = $FA2A
-t1       = $FA2B
-val_lo   = $FA2C
-val_hi   = $FA2D
-bca_ccsave = $FA2E
-VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
+t0       = BCA_WS+$2A
+t1       = BCA_WS+$2B
+val_lo   = BCA_WS+$2C
+val_hi   = BCA_WS+$2D
+bca_ccsave = BCA_WS+$2E
+IF BANKED
+  VATOX  = $8900      \ bank L2: viewangletox, 1025 entries (phi+512)
+ELSE
+  VATOX    = $F601    \ viewangletox, 1025 entries (phi+512), $F601-$FA01
+ENDIF
 
 .bbox_check_angle
 {
@@ -443,5 +465,9 @@ VATOX    = $F601      \ viewangletox, 1025 entries (phi+512), $F601-$FA01
 
 
 .end
-ASSERT end <= TA_HI      \ code must not grow into the relocated tables ($F200+)
-SAVE "bsp_render_ang.bin", $E940, end, $E940
+IF BANKED
+  SAVE "bsp_render_ang_bk.bin", $3400, end, $3400
+ELSE
+  ASSERT end <= TA_HI    \ code must not grow into the relocated tables ($F200+)
+  SAVE "bsp_render_ang.bin", $E940, end, $E940
+ENDIF
