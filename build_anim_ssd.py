@@ -58,7 +58,7 @@ def build_images():
     return L0, C, L2, bytes(low)
 
 
-def write_ssd(files, path='doom_spin.ssd'):
+def write_ssd(files, path='doom_spin.ssd', boot_opt=3):
     disc = bytearray(SSD_SIZE)
     disc[0:8] = b'DOOMSPN\x00'
     n = len(files); assert n <= 31
@@ -68,7 +68,7 @@ def write_ssd(files, path='doom_spin.ssd'):
         ns = (len(data) + SECTOR - 1) // SECTOR
         secs.append((nxt, ns)); nxt += ns
     total = nxt; assert total <= TOTAL_SECTORS, f"disc full {total}"
-    disc[SECTOR + 6] = (2 << 4) | ((total >> 8) & 3)   # boot option 2 = *RUN
+    disc[SECTOR + 6] = (boot_opt << 4) | ((total >> 8) & 3)   # boot option (3 = *EXEC)
     disc[SECTOR + 7] = total & 0xFF
     for i, (name, load, exe, data) in enumerate(files):
         ss, ns = secs[i]; off = (i + 1) * 8
@@ -88,15 +88,27 @@ def write_ssd(files, path='doom_spin.ssd'):
         print(f"  {name:8s} ${load:04X}  {len(data):>6} B  sec {secs[i][0]}")
 
 
+# Canonical DFS autoboot: a TEXT !BOOT (*EXEC, boot option 3) fed straight into
+# BASIC. *SRLOAD/*LOAD are MOS/DFS commands; MODE 4 + CALL are BASIC. This is the
+# "insert disc, SHIFT+BREAK" path and is far more robust than a *RUN machine-code
+# loader. Loaded with PAGE-safe addresses (text file: load/exec irrelevant).
+BOOT_TEXT = (
+    "*SRLOAD BANK0 8000 4\r"
+    "*SRLOAD BANK1 8000 6\r"
+    "*SRLOAD BANK2 8000 7\r"
+    "*LOAD LOW 1B40\r"
+    "MODE 4\r"
+    "CALL &3C00\r"
+).encode('ascii')
+
+
 def main():
     for src in ['slope_div.asm', 'bsp_render.asm', 'span_clip.asm']:
         subprocess.run(['./beebasm', '-i', src, '-D', 'BANKED=1'], check=True, capture_output=True)
     subprocess.run(['./beebasm', '-i', 'anim_drv.asm', '-D', 'BANKED=1'], check=True)
-    subprocess.run(['./beebasm', '-i', 'anim_boot.asm', '-D', 'BANKED=1'], check=True)
     L0, C, L2, LOW = build_images()
-    BOOT = open('ANIMBOOT', 'rb').read()
     files = [
-        ('!BOOT', 0x0900, 0x0900, BOOT),
+        ('!BOOT', 0x0000, 0xFFFF, BOOT_TEXT),   # text file: *EXEC'd by autoboot
         ('BANK0', 0x3000, 0x3000, L0),
         ('BANK1', 0x3000, 0x3000, C),
         ('BANK2', 0x3000, 0x3000, L2),

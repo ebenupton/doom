@@ -17,6 +17,12 @@ tabbase = &3E00         ; sincos table (build-overlaid): 64 x 8 bytes
 ORG &3C00
 .drv
     SEI
+    ; --- Master 128: clear ACCCON so $8000-$8FFF is the sideways bank (not ANDY),
+    ;     $3000-$7FFF is main RAM, and the display reads main (no shadow). This
+    ;     makes the Master behave like a plain Model B + SWRAM. Harmless on a B
+    ;     (no $FE34). Without this the DFS may leave ANDY paged over our bank
+    ;     window's first 4K -> render reads garbage. ---
+    LDA #0 : STA &FE34
     ; --- fixed (position-derived) ZP for spawn 1056,-3616 ---
     LDA #&00:STA &00 : LDA #&EE:STA &01             ; PX = $EE00
     LDA #&40:STA &02 : LDA #&D2:STA &03             ; PY = $D240

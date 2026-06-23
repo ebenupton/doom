@@ -36,6 +36,9 @@ SAVE "BOOT", &0900, boot_end, &0900
 ORG &3C00
 .drv
     SEI
+    ; --- Master 128: clear ACCCON -> $8000 = sideways bank (not ANDY), $3000-7FFF
+    ;     main, display main. Plain Model-B+SWRAM behaviour. Harmless on a B. ---
+    LDA #0 : STA &FE34
     ; --- spawn player ZP (precomputed for 1056,-3616, angle 128) ---
     LDA #&00:STA &00  : LDA #&EE:STA &01            ; ZP_PX (8.8)
     LDA #&40:STA &02  : LDA #&D2:STA &03            ; ZP_PY
