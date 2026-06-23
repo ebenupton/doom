@@ -3,6 +3,38 @@
 Target: **Model B + sideways-RAM board**, framebuffers in main RAM, incremental
 occlusion (per-seg bank flips). (ACCCON/shadow is Master-only — not used.)
 
+## ✅ MILESTONE: banked E1M1 renders on real hardware (jsbeeb Master, 2026-06-23)
+
+The banked build boots from `doom_banked.ssd` (banks 4/6/7 = L0/C/L2 via
+`*SRLOAD`, LOW code at $1B40, driver at $3C00), runs to completion (PC reaches
+the spin loop, no crash), and displays a **pixel-perfect E1M1 wireframe** from
+spawn (1056,-3616,128). The framebuffer ($5800-$6BFF, 256×160 = 5K) is
+**byte-exact** to the verified model reference (539/539 non-zero bytes).
+
+Validated off-emulator first via a real-HW-faithful bare-boot harness
+(`test_bare_boot.py`): zeroed low RAM + banks + LOW + driver only, driven through
+the `banked_mem` $FE30 model. Five bugs were found and fixed with the
+bare/lockstep/flat-read methodology (`test_lockstep.py`, `test_flatreads.py`):
+
+1. **Root node ZP** ($4C/$4D = n_nodes-1) never set by the driver → BSP walk
+   started at node 0 → everything culled. Driver now writes it.
+2. **LOW file truncated** at $5785 — `bsp_render_bk` actually ends at $57CA, so
+   70 bytes of code were cut off → walk crashed off the end. `build_banked_ssd`
+   now extracts LOW up to the real code end (asserts < $5800 framebuffer).
+3. **Recip LO table** read used a hardcoded flat `$E000+514` instead of
+   `RECIP_BASE+514` (bsp_render.asm br_recip) → wrong reciprocal in banked mode.
+   No-op in flat (RECIP_BASE=$E000); correct in banked ($9D00). The model
+   verification had hidden it because the flat recip copy stayed resident.
+4. **Driver call order** ran `span_init` before `br_view_setup`; canonical order
+   (matching `render_frame`) is view_setup → span_init → clear → init → render.
+5. **FB measurement** must use $5800-$6BFF (true 5K mode-4 buffer), not
+   $5800-$7FFF (which catches resident ROM_MAIN at $6C00 in the model).
+
+jsbeeb notes: load banks/LOW with `type_input` + **`run_until_prompt`** (plain
+`run_for_cycles` after typing leaves the command unsubmitted); `write_memory` +
+`$FE30` poke also pages banks reliably. No Master shadow-RAM issue hit — MODE 4
++ CALL displays main $5800 directly.
+
 ## Memory map (planned)
 
 ```

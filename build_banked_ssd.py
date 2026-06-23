@@ -16,15 +16,24 @@ SECTOR = 256
 TOTAL_SECTORS = 800
 SSD_SIZE = TOTAL_SECTORS * SECTOR
 
+# LOW spans $1B40 up to the end of the highest low-RAM blob (bsp_render_bk @
+# $4800). It MUST cover all of bsp_render or the walk crashes off the end, and
+# MUST stay below the framebuffer at $5800.
+def _low_end():
+    end = 0x4800 + os.path.getsize('bsp_render_bk.bin')
+    assert end <= 0x5800, f"bsp_render code (${end:04X}) collides with framebuffer $5800"
+    return end
+
 
 def build_images():
     r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     bm = r.bm
+    LOW_END = _low_end()
     L0 = bytes(bm._banks[BANK_L0])    # -> sideways bank 4
     C  = bytes(bm._banks[BANK_C])     # -> bank 6
     L2 = bytes(bm._banks[BANK_L2])    # -> bank 7
-    LOW = bytes(bm[0x1B40:0x5785])    # low code+tables (all >= PAGE)
+    LOW = bytes(bm[0x1B40:LOW_END])   # low code+tables (all >= PAGE)
     return L0, C, L2, LOW
 
 

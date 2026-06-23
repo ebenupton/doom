@@ -361,8 +361,8 @@ zp_line_yr      = $AB
     ; We can index the same pointer with Y=$202 — but that overflows u8 Y.
     ; Easier: build a second pointer for LO base.
     CLC
-    LDA zp_br_t0 : ADC #<($E000 + 514) : STA zp_br_p
-    LDA zp_br_t1 : ADC #>($E000 + 514) : STA zp_br_p_h
+    LDA zp_br_t0 : ADC #<(RECIP_BASE + 514) : STA zp_br_p
+    LDA zp_br_t1 : ADC #>(RECIP_BASE + 514) : STA zp_br_p_h
     LDA (zp_br_p),Y : STA zp_br_rlo
 
     ; --- If no averaging needed, done ---
