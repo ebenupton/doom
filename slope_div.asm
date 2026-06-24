@@ -152,6 +152,8 @@ bca_ab   = BCA_WS+$2F
 bca_ilo  = BCA_WS+$30
 bca_ihi  = BCA_WS+$31
 bca_vis  = BCA_WS+$32
+bca_straddle = BCA_WS+$33   \ 1 if a silhouette corner is behind the view plane
+                            \ (|phi|>ANG90) -> caller uses corner-projection
 bca_afn  = $3B          \ a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi
 bca_cy   = $71          \ corner y (s16) -- ZP (freed from pa_ady); hot in corner_phi
 bca_p1   = BCA_WS+$1E   \ phi1 (s16)
@@ -179,7 +181,7 @@ ENDIF
 
 .bbox_check_angle
 {
-    LDA #0 : STA bca_vis
+    LDA #0 : STA bca_vis : STA bca_straddle
     \ bca_pxs/bca_pys (px,py sign-extended to s16) are precomputed once/frame
     \ by br_view_setup — frame-constant. Direct unit-test callers set them.
     \ bca_px/bca_py (s8) are still read below by ins_test/box_pos.
@@ -204,6 +206,20 @@ ENDIF
     LDY bca_cc+2,X : TYA : ASL A : TAY : LDA (bca_boxp),Y : STA bca_cx : INY : LDA (bca_boxp),Y : STA bca_cx+1
     LDY bca_cc+3,X : TYA : ASL A : TAY : LDA (bca_boxp),Y : STA bca_cy : INY : LDA (bca_boxp),Y : STA bca_cy+1
     JSR corner_phi : LDA pa_res : STA bca_p2 : LDA pa_res+1 : STA bca_p2+1
+    \ --- straddle: |p1|>ANG90(1024) or |p2|>ANG90 -> a silhouette corner is
+    \ --- behind the view plane; caller falls back to corner-projection. ---
+    LDA bca_p1+1 : BMI st_p1n
+    SEC : LDA bca_p1 : SBC #<1025 : LDA bca_p1+1 : SBC #>1025 : BCS st_set : JMP st_c2
+.st_p1n
+    CLC : LDA bca_p1 : ADC #<1024 : LDA bca_p1+1 : ADC #>1024 : BMI st_set
+.st_c2
+    LDA bca_p2+1 : BMI st_p2n
+    SEC : LDA bca_p2 : SBC #<1025 : LDA bca_p2+1 : SBC #>1025 : BCS st_set : JMP st_done
+.st_p2n
+    CLC : LDA bca_p2 : ADC #<1024 : LDA bca_p2+1 : ADC #>1024 : BPL st_done
+.st_set
+    LDA #1 : STA bca_straddle
+.st_done
     \ lo/hi = sorted(p1,p2)  (SIGNED s16 compare: p1-p2 < 0 -> p1 is lo)
     SEC : LDA bca_p1 : SBC bca_p2 : LDA bca_p1+1 : SBC bca_p2+1
     BVC so1 : EOR #$80
