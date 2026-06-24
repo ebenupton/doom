@@ -6,6 +6,10 @@ span_clip.asm; the rasteriser ($A900+) is one bucket.
 
 Usage: profile_frame.py [px py ab]   (default: 3-position summary)
 """
+# WARNING: buckets by TOP-LEVEL label only -> dead/data symbols absorb the
+# cycles of unlabeled hot code after them (e.g. vwhc_clear wrongly showed 22%).
+# Use profile_pc.py (PC histogram) for accurate numbers.
+
 import os, re, subprocess, bisect
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
