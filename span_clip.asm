@@ -1,3 +1,28 @@
+; --- CPU target: every builder MUST pass -D C02=0 (plain 6502) or -D C02=1
+;     (enable 65C02 opcodes). STZ/INC A/PHX/etc are gated on C02 throughout. ---
+IF C02
+CPU 1
+ENDIF
+; ZERO addr: zero a byte. 65C02 = STZ (A preserved); 6502 = LDA #0:STA (A
+; clobbered) — only use where A is dead afterwards.
+MACRO ZERO addr
+IF C02
+  STZ addr
+ELSE
+  LDA #0 : STA addr
+ENDIF
+ENDMACRO
+
+; BUMP: A = A + 1. 65C02 = INC A (no carry); 6502 = CLC : ADC #1. Use only
+; where the carry/overflow OUT is dead (negate, single-byte increments).
+MACRO BUMP
+IF C02
+  INC A
+ELSE
+  CLC : ADC #1
+ENDIF
+ENDMACRO
+
 ; span_clip.asm -- Standalone 6502 span-clipper for a DOOM-style BSP renderer
 ;
 ; This module manages a linked list of 'spans' representing the visible
@@ -304,7 +329,7 @@ zp_save2 = $E7  ; safe scratch #3 (alias for tighten zp_new_tail; mark_solid onl
     ; Free list: slots 2..31 (indices 2,3,...,31).
     LDX #2                 ; slot 2                                     ; |
     STX zp_free                                                         ; |
-.il  TXA : CLC : ADC #1                                                 ; ||
+.il  TXA : BUMP                                                 ; ||
     CMP #NUM_SLOTS         ; reached end? (= 32)                        ; |
     BCS id                                                              ; |
     STA POOL_NEXT,X : TAX                                               ; ||
@@ -506,7 +531,7 @@ EQUB 0   ; 1-byte pad: optimal alignment for umul8
     ; slots, and a stale cached slot's leftover XSTART/XEND can overlap
     ; any later query (observed: freed slot (60,69) made has_gap(60,73)
     ; return 1 against a pool whose only live span was (121,132)).
-    LDA #0 : STA zp_hg_cache
+    ZERO zp_hg_cache
     LDA zp_ihi : CMP zp_ilo : BCS mss                                   ; |
     RTS
 .mss
@@ -723,7 +748,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
 .span_tighten
     ; Invalidate the has_gap coherence cache (pool slots are about to be
     ; rebuilt/freed — see span_mark_solid note).
-    LDA #0 : STA zp_hg_cache
+    ZERO zp_hg_cache
     LDA zp_ihi : CMP zp_ilo : BCS tg_go    ; ihi >= ilo: valid range    ; |
     RTS
 .tg_go
@@ -756,7 +781,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; Sub-path: both yt negative → seg_top_max = 0, compute bot if on-screen.
     LDA zp_yt1h : AND zp_yt2h : BPL tg_go_sentinel                      ; |
     ; Both yt hi negative → seg_top_max = 0
-    LDA #0 : STA zp_bb_yt_max                                           ; |
+    ZERO zp_bb_yt_max ; |
     ; Check if bot values on-screen (both hi == 0)
     LDA zp_yb1h : ORA zp_yb2h : BNE tg_go_sentinel_bot                  ; |
     ; Bot on-screen: compute min(yb1, yb2)
@@ -789,7 +814,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     LDA zp_ilo : CMP POOL_XEND,X : BCC tg_chk2                           ; ilo < xend → might overlap
     ; Pre-seg: fast link (skip merge check — pre-seg spans never merge)
 .tg_pre_link
-    LDA #0 : STA POOL_NEXT,X                                            ; ||
+    LDA #0 : STA POOL_NEXT,X ; ||
     LDY zp_new_tail : BEQ tg_pre_first                                  ; |
     TXA : STA POOL_NEXT,Y                                               ; ||
     STX zp_new_tail : JMP tg_walk                                       ; |
@@ -832,7 +857,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; Inline fast link (skip merge check: old-dom spans rarely merge,
     ; and the merge check costs ~40 cycles per span).
     LDA #$FF : STA zp_tg_cont   ; break continuation
-    LDA #0 : STA POOL_NEXT,X                                             ; |
+    LDA #0 : STA POOL_NEXT,X ; |
     LDY zp_new_tail : BEQ tg_od_first                                   ; |
     TXA : STA POOL_NEXT,Y                                               ; |
     STX zp_new_tail : JMP tg_walk                                       ; |
@@ -936,7 +961,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ;   only top dominates       → set zp_nt_l/r = 0 sentinels, skip top NEW interp
     ;   only bot dominates       → set zp_nb_l/r = $FF sentinels, skip bot NEW interp
     ;   neither dominates        → fall through to tg_pod_skip (full interp)
-    LDA #0 : STA zp_pre_dom_flags
+    ZERO zp_pre_dom_flags
     LDA zp_ot_l : CMP zp_bb_yt_max : BCC tg_top_no_dom
     LDA zp_ot_r : CMP zp_bb_yt_max : BCC tg_top_no_dom
     ; Top dominates. Check bot.
@@ -945,7 +970,7 @@ EQUW 0  ; 2-byte alignment pad for tighten hot loop page optimization
     ; Both dominate — full old-dom shortcut (existing path).
     LDA #$FF : STA zp_tg_cont
     LDX zp_save1                                                         ; |
-    LDA #0 : STA POOL_NEXT,X                                             ; |
+    LDA #0 : STA POOL_NEXT,X ; |
     LDY zp_new_tail : BEQ tg_pod_first                                  ; |
     TXA : STA POOL_NEXT,Y                                               ; |
     STX zp_new_tail : JMP tg_walk                                       ; |
@@ -1639,7 +1664,7 @@ ENDIF
     ; the second umul8 below clobbers zp_prod_*).
     LDA zp_prod_lo : STA zp_cc_num_lo
     LDA zp_prod_hi : STA zp_cc_num_mid
-    LDA #0 : STA zp_cc_num_hi
+    ZERO zp_cc_num_hi
     LDA zp_tmp1 : BEQ num_done    ; |d0|_hi == 0 → num is already u16
     ; Add |d0|_hi * ex, shifted up one byte into mid:hi.
     JSR umul8
@@ -2222,7 +2247,7 @@ ENDIF
 .dcl_records_off
 
     ; Reset output
-    LDA #0 : STA LINE_OUT_COUNT
+    ZERO LINE_OUT_COUNT
 
     ; seg_start = NULL
     LDA #$FF : STA zp_seg_start_x
@@ -2439,7 +2464,7 @@ ENDIF
 .dv_yl_lo
     STA zp_line_ylo : STX zp_line_yhi
 .dv_bbox_done
-    LDA #0 : STA LINE_OUT_COUNT
+    ZERO LINE_OUT_COUNT
     LDX zp_head
 .dv_walk
     BNE dv_check
@@ -2737,13 +2762,13 @@ ENDIF
     ; Compute |d1| and sign
     LDA zp_tmp0 : BPL dcl_bix_d1_pos
     ; d1 negative: |d1| = -d1
-    EOR #$FF : CLC : ADC #1
+    EOR #$FF : BUMP
 .dcl_bix_d1_pos
     STA zp_tmp2         ; |d1|
 
     ; |denom| = |d1| + |d2| (since opposite signs)
     LDA zp_tmp1 : BPL dcl_bix_d2_pos
-    EOR #$FF : CLC : ADC #1
+    EOR #$FF : BUMP
 .dcl_bix_d2_pos
     CLC : ADC zp_tmp2 : STA zp_div_den  ; |denom| = |d1| + |d2|
     ; Handle overflow: if carry set, denom > 255 — shouldn't happen
@@ -2836,7 +2861,7 @@ ENDIF
     LDA zp_ox1         : STA (zp_dcl_rec_buf),Y : INY
     LDA zp_tmp0        : STA (zp_dcl_rec_buf),Y : INY
     STY zp_dcl_rec_off
-    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : BUMP : STA (zp_dcl_rec_buf),Y
 .dcl_es_no_record
     LDY LINE_OUT_COUNT
     LDA zp_seg_start_x : STA LINE_OUT_BUF,Y : STA RASTER_ZP_X0 : INY
@@ -3005,7 +3030,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA #0 : STA (zp_dcl_rec_buf),Y : INY
               STA (zp_dcl_rec_buf),Y : INY
     STY zp_dcl_rec_off
-    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : BUMP : STA (zp_dcl_rec_buf),Y
 .no_outer_left
     ; --- Inside fragment [cb_cx1, cb_cx2] ---
     LDY zp_dcl_rec_off
@@ -3016,7 +3041,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA zp_cb_cy1 : STA (zp_dcl_rec_buf),Y : INY
     LDA zp_cb_cy2 : STA (zp_dcl_rec_buf),Y : INY
     STY zp_dcl_rec_off
-    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : BUMP : STA (zp_dcl_rec_buf),Y
     ; --- Outer right fragment [cb_cx2, ox1] (if cb_cx2 < ox1) ---
     LDA zp_cb_cx2 : CMP zp_ox1 : BCS no_outer_right
     LDA #REC_VERDICT_ABOVE
@@ -3032,7 +3057,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA #0 : STA (zp_dcl_rec_buf),Y : INY
               STA (zp_dcl_rec_buf),Y : INY
     STY zp_dcl_rec_off
-    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : BUMP : STA (zp_dcl_rec_buf),Y
 .no_outer_right
 .done
     RTS
@@ -3052,7 +3077,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA #0 : STA (zp_dcl_rec_buf),Y : INY    ; cy0 (unused)
               STA (zp_dcl_rec_buf),Y : INY    ; cy1 (unused)
     STY zp_dcl_rec_off
-    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : BUMP : STA (zp_dcl_rec_buf),Y
 .done
     RTS
 }
@@ -3094,7 +3119,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     STA (zp_dcl_rec_buf),Y : INY              ; cy0
     TXA : STA (zp_dcl_rec_buf),Y : INY        ; cy1
     STY zp_dcl_rec_off
-    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : BUMP : STA (zp_dcl_rec_buf),Y
     LDX zp_save0
     RTS
 }
@@ -3123,7 +3148,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     LDA zp_seg_start_y : STA (zp_dcl_rec_buf),Y : INY  ; cy0
     PLA : STA (zp_dcl_rec_buf),Y : INY        ; cy1
     STY zp_dcl_rec_off
-    LDY #0 : LDA (zp_dcl_rec_buf),Y : CLC : ADC #1 : STA (zp_dcl_rec_buf),Y
+    LDY #0 : LDA (zp_dcl_rec_buf),Y : BUMP : STA (zp_dcl_rec_buf),Y
     LDX zp_save0
     RTS
 }
@@ -3212,7 +3237,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     ; Sign change check: was original dt0 sign != dt1 sign?
     ; Re-derive from raw bytes: high bit of (cy-top) before abs.
     ; Simpler: redo the sign check via direct compare.
-    LDA #0 : STA zp_clr_cx_t
+    ZERO zp_clr_cx_t
     LDA zp_clr_cy0 : CMP zp_clr_otl
     PHP                              ; save N flag (cy0 < otl)
     LDA zp_clr_cy1 : CMP zp_clr_otr
@@ -3243,7 +3268,7 @@ zp_clr_shi     = $D8   ; sub-range high x
     SEC : LDA #0 : SBC zp_tmp2 : STA zp_tmp2
     LDA #0 : SBC zp_tmp3 : STA zp_tmp3
 .clr_db1_pos
-    LDA #0 : STA zp_clr_cx_b
+    ZERO zp_clr_cx_b
     LDA zp_clr_cy0 : CMP zp_clr_obl
     PHP
     LDA zp_clr_cy1 : CMP zp_clr_obr
@@ -3478,7 +3503,7 @@ TFS_PEND_BID    = $091B
 .tighten_from_records
 {
     ; Invalidate the has_gap coherence cache (see span_mark_solid note).
-    LDA #0 : STA zp_hg_cache
+    ZERO zp_hg_cache
     LDA zp_head : STA zp_old_cur
     LDA #0 : STA zp_new_tail : STA zp_head
     LDA #$FF : STA zp_tg_cont
@@ -3489,16 +3514,16 @@ TFS_PEND_BID    = $091B
 .tfs_no_top
     LDA #0 : STA TFS_T_CUR
 .tfs_top_be
-    LDA TOP_RECORDS : ASL A : ASL A : CLC : ADC #1 : STA TFS_TOP_BUFEND
+    LDA TOP_RECORDS : ASL A : ASL A : BUMP : STA TFS_TOP_BUFEND
     LDA BOT_RECORDS : BEQ tfs_no_bot
     LDA #1 : STA TFS_B_CUR : JMP tfs_bot_be
 .tfs_no_bot
     LDA #0 : STA TFS_B_CUR
 .tfs_bot_be
-    LDA BOT_RECORDS : ASL A : ASL A : CLC : ADC #1 : STA TFS_BOT_BUFEND
+    LDA BOT_RECORDS : ASL A : ASL A : BUMP : STA TFS_BOT_BUFEND
 
     ; No pending output span yet.
-    LDA #0 : STA TFS_PEND_ACT
+    ZERO TFS_PEND_ACT
 
     LDX zp_old_cur
 .tfs_walk
@@ -3564,7 +3589,7 @@ TFS_PEND_BID    = $091B
 .tfs_inner_go
 
     ; ---- Determine top_dom (T.xl <= cur_x < T.xr) ----
-    LDA #0 : STA TFS_TOP_DOM
+    ZERO TFS_TOP_DOM
     LDA TFS_T_CUR : BEQ tfs_top_dom_done
     TAY : LDA TOP_RECORDS,Y                ; T.xl
     CMP TFS_CUR_X : BEQ tfs_top_chk_xr : BCS tfs_top_dom_done
@@ -3575,7 +3600,7 @@ TFS_PEND_BID    = $091B
 .tfs_top_dom_done
 
     ; ---- Determine bot_dom ----
-    LDA #0 : STA TFS_BOT_DOM
+    ZERO TFS_BOT_DOM
     LDA TFS_B_CUR : BEQ tfs_bot_dom_done
     TAY : LDA BOT_RECORDS,Y
     CMP TFS_CUR_X : BEQ tfs_bot_chk_xr : BCS tfs_bot_dom_done
@@ -3648,7 +3673,7 @@ TFS_PEND_BID    = $091B
     LDA POOL_DEN,X : STA zp_div_den
     LDA TFS_CUR_X : JSR interp_store : STA TFS_TOP_L
     LDA TFS_NEXT_X : JSR interp_store : STA TFS_TOP_R
-    LDA #0 : STA TFS_TOP_KIND
+    ZERO TFS_TOP_KIND
     LDA zp_clr_save_x : STA TFS_TOP_ID
 .tfs_top_vals_done
 
@@ -3673,7 +3698,7 @@ TFS_PEND_BID    = $091B
     LDA POOL_DEN,X : STA zp_div_den
     LDA TFS_CUR_X : JSR interp_store : STA TFS_BOT_L
     LDA TFS_NEXT_X : JSR interp_store : STA TFS_BOT_R
-    LDA #0 : STA TFS_BOT_KIND
+    ZERO TFS_BOT_KIND
     LDA zp_clr_save_x : STA TFS_BOT_ID
 .tfs_bot_vals_done
 
@@ -3963,7 +3988,7 @@ LC_TGT_HI   = $0958
     LDA LC_M_R2 : STA LC_M_R3
     LDA LC_M_R1 : STA LC_M_R2
     LDA LC_M_R0 : STA LC_M_R1
-    LDA #0 : STA LC_M_R0
+    ZERO LC_M_R0
     LDX #24
     LDA LC_M_R3 : BNE bit_skip
     LDA LC_M_R2 : STA LC_M_R3

@@ -26,7 +26,7 @@ RASTER_FLAT = 0xA900               # clipper's RASTER_ENTRY constant (in-bank wh
 class BankedDCL:
     def __init__(self):
         # build the banked clipper
-        rc = os.system('./beebasm -i span_clip.asm -D BANKED=1 >/dev/null 2>&1')
+        rc = os.system('./beebasm -i span_clip.asm -D BANKED=1 -D C02=0 >/dev/null 2>&1')
         assert rc == 0 and os.path.exists('span_clip_bankc.bin'), "banked clipper build failed"
         self.mpu = MPU()
         self.mem = BankedMemory([0] * 65536)

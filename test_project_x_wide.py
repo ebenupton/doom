@@ -13,7 +13,7 @@ import subprocess, re
 
 def _find_label(label):
     """Resolve a label's address from the beebasm verbose listing."""
-    out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'bsp_render.asm', '-v'],
+    out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', 'C02=0', '-i', 'bsp_render.asm', '-v'],
                          capture_output=True, text=True).stdout
     m = re.search(r'\.%s\n\s+([0-9A-F]{4})' % re.escape(label), out)
     if not m:

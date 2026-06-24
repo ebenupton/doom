@@ -26,7 +26,7 @@ POS = [(1056,-3616,65),(1500,-3700,1),(1024,-3500,65),
 
 def resolve():
     import subprocess, re
-    out = subprocess.run(['./beebasm','-i','bsp_render.asm','-v'],
+    out = subprocess.run(['./beebasm','-i','bsp_render.asm','-D','BANKED=0','-D','C02=0','-v'],
                          capture_output=True, text=True).stdout
     addr = {}
     for m in re.finditer(r'\.([A-Za-z_][A-Za-z0-9_]*)\n\s+([0-9A-F]{4})', out):

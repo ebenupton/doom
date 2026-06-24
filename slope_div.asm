@@ -1,3 +1,7 @@
+\ CPU target: every builder MUST pass -D C02=0 (6502) or -D C02=1 (65C02 opcodes).
+IF C02
+CPU 1
+ENDIF
 \ SlopeDiv for the angle-space pipeline (M3 primitive, unit-tested standalone).
 \ Computes floor(num * 2^SLOPEBITS / den) clamped to SLOPERANGE, for num <= den.
 \ SLOPEBITS=10, SLOPERANGE=1024. num,den are u16 (bbox/seg deltas, <= ~660).

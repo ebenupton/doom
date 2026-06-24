@@ -3,9 +3,9 @@ import subprocess, re, sys
 from py65.devices.mpu6502 import MPU
 import angle_bbox as A
 
-subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
+subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', 'C02=0', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
                check=True, capture_output=True)
-out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-i', 'slope_div.asm', '-v'],
+out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', 'C02=0', '-i', 'slope_div.asm', '-v'],
                      capture_output=True, text=True).stdout
 BCA = 0xE943
 code = open('bsp_render_ang.bin', 'rb').read()

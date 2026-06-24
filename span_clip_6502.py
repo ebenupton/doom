@@ -4,7 +4,15 @@ Loads span_clip.bin into py65, provides methods to call each entry point,
 and reads results back.  Used for comparison testing against EndpointClipSpans.
 """
 import os
-from py65.devices.mpu6502 import MPU
+
+# CPU target: set DOOM_CPU=65c02 to build the engine with -D C02=1 and run it on
+# py65's 65C02 core; anything else = plain 6502. Drives both the beebasm flag and
+# the MPU class so the build and the executor always agree.
+_C02 = '1' if os.environ.get('DOOM_CPU', '').lower() in ('65c02', 'c02', '1') else '0'
+if _C02 == '1':
+    from py65.devices.mpu65c02 import MPU
+else:
+    from py65.devices.mpu6502 import MPU
 
 
 # Entry points (must match span_clip.asm jump table)
@@ -122,7 +130,7 @@ class SpanClip6502:
         # Assemble and load span_clip.bin
         asm_path = os.path.join(os.path.dirname(__file__) or '.', 'span_clip.asm')
         bin_path = os.path.join(os.path.dirname(__file__) or '.', 'span_clip.bin')
-        os.system(f'./beebasm -i {asm_path} -o {bin_path} -D BANKED=0 2>/dev/null')
+        os.system(f'./beebasm -i {asm_path} -o {bin_path} -D BANKED=0 -D C02={_C02} 2>/dev/null')
         with open(bin_path, 'rb') as f:
             code = f.read()
         for i, b in enumerate(code):
@@ -136,7 +144,7 @@ class SpanClip6502:
         bsp_bin = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.bin')
         bsp_lo  = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render_lo.bin')
         if os.path.exists(bsp_asm):
-            os.system(f'./beebasm -i {bsp_asm} -o {bsp_bin} -D BANKED=0 2>/dev/null')
+            os.system(f'./beebasm -i {bsp_asm} -o {bsp_bin} -D BANKED=0 -D C02={_C02} 2>/dev/null')
             if os.path.exists(bsp_bin):
                 with open(bsp_bin, 'rb') as f:
                     bsp_code = f.read()

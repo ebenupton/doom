@@ -1,3 +1,28 @@
+; --- CPU target: every builder MUST pass -D C02=0 (plain 6502) or -D C02=1
+;     (enable 65C02 opcodes). STZ/INC A/PHX/etc are gated on C02 throughout. ---
+IF C02
+CPU 1
+ENDIF
+; ZERO addr: zero a byte. 65C02 = STZ (A preserved); 6502 = LDA #0:STA (A
+; clobbered) — only use where A is dead afterwards.
+MACRO ZERO addr
+IF C02
+  STZ addr
+ELSE
+  LDA #0 : STA addr
+ENDIF
+ENDMACRO
+
+; BUMP: A = A + 1. 65C02 = INC A (no carry); 6502 = CLC : ADC #1. Use only
+; where the carry/overflow OUT is dead (negate, single-byte increments).
+MACRO BUMP
+IF C02
+  INC A
+ELSE
+  CLC : ADC #1
+ENDIF
+ENDMACRO
+
 ; bsp_render.asm — fresh 6502 BSP traversal + vertex transform + seg
 ; projection. Feeds lines into the existing s16 clipper / DCL pipeline
 ; in span_clip.asm.
@@ -290,14 +315,14 @@ zp_line_yr      = $AB
 ; ============================================================================
 .br_smul8
 {
-    LDA #0 : STA zp_br_sign
+    ZERO zp_br_sign
     ; |a|, track sign
     LDA zp_br_a : BPL a_pos
-    EOR #$FF : CLC : ADC #1 : STA zp_br_a
+    EOR #$FF : BUMP : STA zp_br_a
     INC zp_br_sign
 .a_pos
     LDA zp_br_b : BPL b_pos
-    EOR #$FF : CLC : ADC #1 : STA zp_br_b
+    EOR #$FF : BUMP : STA zp_br_b
     LDA zp_br_sign : EOR #1 : STA zp_br_sign
 .b_pos
     LDA zp_br_b : STA zp_mul_b
@@ -430,7 +455,7 @@ zp_ft_one = $0BFB
 .ft_apply_neg
     ; A = u8 magnitude. Promote to s16 in zp_br_resl:resh.
     STA zp_br_resl
-    LDA #0 : STA zp_br_resh
+    ZERO zp_br_resh
     LDA zp_ft_neg : BEQ ft_done
     LDA #0 : SEC : SBC zp_br_resl : STA zp_br_resl
     LDA #0 : SBC zp_br_resh         : STA zp_br_resh
@@ -476,7 +501,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA $0006,Y : STA zp_ri_neg
     LDA $0007,Y : BEQ ri_not_one
     ; Unity: val = d << 8 as s24. resl=0, resh=dlo, resext=dhi.
-    LDA #0 : STA zp_br_resl
+    ZERO zp_br_resl
     LDA zp_ri_dlo : STA zp_br_resh
     LDA zp_ri_dhi : STA zp_br_resext
     JMP ri_apply_neg
@@ -488,7 +513,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     ;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
     ; First product: (lo,hi) → resl, resh; resext starts 0.
     ; Second product: (lo,hi) added to resh, resext.
-    LDA #0 : STA zp_br_t1                        ; sign tracker (1 if d was -ve)
+    ZERO zp_br_t1 ; sign tracker (1 if d was -ve)
     LDA zp_ri_dhi : BPL ri_d_pos
     LDA #1 : STA zp_br_t1
     LDA #0 : SEC : SBC zp_ri_dlo : STA zp_ri_dlo
@@ -510,7 +535,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 .um1_done
     LDA zp_prod_lo : STA zp_br_resl
     LDA zp_prod_hi : STA zp_br_resh
-    LDA #0 : STA zp_br_resext
+    ZERO zp_br_resext
     ; --- inlined umul8(zp_ri_dhi, mag) ---
     LDA zp_ri_dhi : STA zp_tmp0
     SEC : SBC zp_mul_b : BCS um2_pos
@@ -755,7 +780,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
     LDA zp_prod_hi : STA zp_br_resh
     RTS
 .a_neg
-    EOR #$FF : CLC : ADC #1
+    EOR #$FF : BUMP
     ; --- inlined umul8(|a|, mag) ---
     STA zp_tmp0
     SEC : SBC zp_mul_b : BCS un_pos
@@ -786,11 +811,11 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 ; ============================================================================
 .br_smul_s8_s16
 {
-    LDA #0 : STA zp_br_sign
+    ZERO zp_br_sign
 
     ; |a|
     LDA zp_br_a : BPL a_pos
-    EOR #$FF : CLC : ADC #1 : STA zp_br_a
+    EOR #$FF : BUMP : STA zp_br_a
     INC zp_br_sign
 .a_pos
 
@@ -833,7 +858,7 @@ zp_ri_d   = zp_ri_dlo ; backwards-compat alias
 ; ============================================================================
 .br_smul_s16_s16_s32
 {
-    LDA #0 : STA zp_br_sign
+    ZERO zp_br_sign
 
     ; |A|
     LDA zp_br_dxhi : BPL aa_pos
@@ -1068,7 +1093,7 @@ zp_node_chhi  = $59
     JSR br_init_frame
 
     ; Initialize BSP stack: push root node id.
-    LDA #0 : STA zp_bsp_stack_sp
+    ZERO zp_bsp_stack_sp
     LDX zp_bsp_stack_sp
     LDA zp_root_node_lo : STA BSP_STACK,X : INX
     LDA zp_root_node_hi : STA BSP_STACK,X : INX
@@ -1279,7 +1304,7 @@ zp_seg_flags    = $3F      ; u8
 {
     ; dx = px_int - lv1_x (s16). px_int (s8) sign-extended.
     LDA zp_br_px_h : STA zp_br_dxlo
-    LDA #0 : STA zp_br_dxhi
+    ZERO zp_br_dxhi
     LDA zp_br_dxlo : BPL bf_px_pos
     LDA #$FF : STA zp_br_dxhi
 .bf_px_pos
@@ -1287,7 +1312,7 @@ zp_seg_flags    = $3F      ; u8
     LDA zp_br_dxhi :       SBC zp_seg_lv1x_hi : STA zp_br_dxhi
     ; dy = py_int - lv1_y (s16)
     LDA zp_br_py_h : STA zp_br_dylo
-    LDA #0 : STA zp_br_dyhi
+    ZERO zp_br_dyhi
     LDA zp_br_dylo : BPL bf_py_pos
     LDA #$FF : STA zp_br_dyhi
 .bf_py_pos
@@ -1973,7 +1998,7 @@ bca_ab    = BCA_WS+$2F      ; per-frame view angle (set by render setup)
 {
     PAGE BANK_L0                ; reads verts (L0) on vcache miss; prior seg's
                                ; projection may have left L2/C paged
-    LDA #0 : STA zp_seg_skip
+    ZERO zp_seg_skip
 
     ; --- Compute vertex cache index (idx*8 → cache offset) ---
     ; idx is in zp_br_t0:t1 (u16). vc_offset = idx * 8 (s/o offset for valid).
@@ -2556,7 +2581,7 @@ ORG $1B40
     ; wrap to 0 in u8. Crossing point is v2 itself.
     LDA zp_seg_v2_evy : CMP #1 : BNE c_normal
     LDA zp_seg_v2_evx : STA zp_clip_cx
-    LDA #0 : STA zp_clip_cx_hi
+    ZERO zp_clip_cx_hi
     LDA zp_seg_v2_evx : BPL c_sc_done
     LDA #$FF : STA zp_clip_cx_hi
 .c_sc_done
@@ -2566,15 +2591,15 @@ ORG $1B40
     ; |num| = |1 - v1_evy| via signed abs of (1 - v1_evy).
     LDA #1 : SEC : SBC zp_seg_v1_evy
     BPL c_num_ok
-    EOR #$FF : CLC : ADC #1
+    EOR #$FF : BUMP
 .c_num_ok
     STA zp_div_hi
-    LDA #0 : STA zp_div_lo
+    ZERO zp_div_lo
 
     ; |den| = |v2_evy - v1_evy|
     LDA zp_seg_v2_evy : SEC : SBC zp_seg_v1_evy
     BPL c_den_ok
-    EOR #$FF : CLC : ADC #1
+    EOR #$FF : BUMP
 .c_den_ok
     STA zp_div_den
 
@@ -2583,7 +2608,7 @@ ORG $1B40
 
     ; dvx = v2_evx - v1_evx as s16 (sign-extend then subtract).
     LDA zp_seg_v2_evx : STA zp_br_dxlo
-    LDA #0 : STA zp_br_dxhi
+    ZERO zp_br_dxhi
     LDA zp_seg_v2_evx : BPL c_v2_pos
     LDA #$FF : STA zp_br_dxhi
 .c_v2_pos
@@ -2601,11 +2626,11 @@ ORG $1B40
     ; and t in [0,256], cx lies between them so s16 always holds it; cx
     ; itself can still fall outside s8 (sum of two s8) — the caller
     ; dispatches narrow/wide projection on the hi byte.
-    LDA #0 : STA zp_br_t2
+    ZERO zp_br_t2
     LDA zp_seg_v1_evx : BPL c_cx_v1p
     LDA #$FF : STA zp_br_t2
 .c_cx_v1p
-    LDA #0 : STA zp_br_t3
+    ZERO zp_br_t3
     LDA zp_br_resh : BPL c_cx_rp
     LDA #$FF : STA zp_br_t3
 .c_cx_rp
@@ -2623,7 +2648,7 @@ ORG $1B40
 .cross_umul_u8_s16
 {
     ; |dx|: track sign in zp_br_sign.
-    LDA #0 : STA zp_br_sign
+    ZERO zp_br_sign
     LDA zp_br_dxhi : BPL c2_dxp
     LDA #0 : SEC : SBC zp_br_dxlo : STA zp_br_dxlo
     LDA #0 :       SBC zp_br_dxhi : STA zp_br_dxhi

@@ -12,7 +12,9 @@ fails = []
 
 def build(asm):
     # -D BANKED=0 selects the flat layout (banked port uses BANKED=1 separately).
-    r = subprocess.run(['./beebasm', '-i', asm, '-D', 'BANKED=0'],
+    # -D C02 from DOOM_CPU so the regression can validate either CPU target.
+    c02 = '1' if os.environ.get('DOOM_CPU', '').lower() in ('65c02', 'c02', '1') else '0'
+    r = subprocess.run(['./beebasm', '-i', asm, '-D', 'BANKED=0', '-D', f'C02={c02}'],
                        capture_output=True, text=True)
     out = r.stdout + r.stderr
     if re.search(r'error|Assert', out, re.I):
