@@ -21,3 +21,7 @@ build/
 bsp_render*.bin
 span_clip*.bin
 slope_div.bin
+
+# separate line-drawing experiment repos (own git histories)
+line-test-a/
+line-test-new/
