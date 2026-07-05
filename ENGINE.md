@@ -23,7 +23,7 @@ list and rasterised by the vendored NJ line drawer.
 
 ## Source layout
 
-    src/zp.inc           ZERO-PAGE REGISTRY — all 301 ZP symbols, one file.
+    src/zp.inc           ZERO-PAGE REGISTRY — every ZP symbol, one file.
                          Overlay groups are deliberate; see "Zero page".
     src/slope_div.s      Angle module: SlopeDiv, point_to_angle (inlined
                          into corner_phi), bbox_check_angle, straddle flag.

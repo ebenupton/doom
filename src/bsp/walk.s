@@ -171,7 +171,7 @@ BSP_FAR_HI = $096E
 ; subsectors. Useful for verifying traversal in isolation.
 ; ============================================================================
 ; --- Test instrumentation: subsector visit bitmap at $0A80 ---
-SS_VISITED_BITMAP = $0A80               ; 384 bytes
+SS_VISITED_BITMAP = $0A80               ; 30 bytes used (237 subsectors); B-region code starts at $0AA0
 ; (Deferred mark_solid buffer replaced by the unified DEFQ op queue at
 ; $0600 — see DEFQ_BASE above. It preserves seg ORDER across solid and
 ; tighten ops, matching Python's deferred list.)
