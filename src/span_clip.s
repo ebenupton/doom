@@ -9,8 +9,6 @@
 .include "clip/query.s"
 .include "clip/tighten.s"
 .include "clip/crossover.s"
-.include "clip/emit_dead.s"
 .include "clip/dcl.s"
-.include "clip/records_legacy.s"
 .include "clip/tfr.s"
 .include "clip/dcl_s16.s"

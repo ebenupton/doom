@@ -1170,12 +1170,6 @@ ncf_no_splits:
 ; The dominance check already computed ot_l/ot_r/ob_l/ob_r (u8 via
 ; interp_store) and nt_l/nt_r/nb_l/nb_r (clamped u8) at (ox0, ox1).
 ;
-.if ::EMIT_LINES
-; Primary emission removed — DCL handles all line emission via the
-; wrapper's draw_clipped forward.  (See 2026-05-01 attempt at
-; combined draw-and-tighten — abandoned due to Bresenham
-; per-segment vs whole-line rasteriser pixel mismatch.)
-.endif
 ; Do max/min + aperture + store inline without re-interpolating.
 LDA zp_ot_l
 CMP zp_nt_l
@@ -1733,9 +1727,6 @@ JMP tg_append_x                         ; | tail-call (saves 3 cyc)
 opt2_no_ap:
 RTS                                     ; |
 skip_opt2:
-.if ::EMIT_LINES
-; Primary emission removed — DCL handles all line emission.
-.endif
 ; max top, min bot
 LDA zp_ot_l
 CMP zp_nt_l

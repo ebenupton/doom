@@ -1,3 +1,34 @@
+; TFS state block ($0900-$091B) — the 3-cursor event walk's working set.
+; (Moved here from the deleted 6-byte-records legacy file.)
+TFS_CUR_X = $0900                       ; current x in inner loop
+TFS_X_HI = $0901                        ; right edge of in-range processing
+TFS_NEXT_X = $0902                      ; next event x
+TFS_TOP_DOM = $0903                     ; 1 if top dominated by record at cur_x, else 0
+TFS_BOT_DOM = $0904                     ; same for bot
+TFS_TOP_L = $0905                       ; top value at cur_x
+TFS_TOP_R = $0906                       ; top value at next_x
+TFS_BOT_L = $0907
+TFS_BOT_R = $0908
+TFS_TOP_KIND = $0909                    ; 0 = pool, 1 = top record
+TFS_TOP_ID = $090A                      ; pool slot or record offset
+TFS_BOT_KIND = $090B                    ; 0 = pool, 1 = bot record
+TFS_BOT_ID = $090C
+TFS_TOP_BUFEND = $090D                  ; 1 + top_count*4 (first invalid offset)
+TFS_BOT_BUFEND = $090E
+TFS_T_CUR = $090F                       ; top record cursor offset (0 = exhausted)
+TFS_B_CUR = $0910                       ; bot record cursor offset (0 = exhausted)
+TFS_PEND_ACT = $0911                    ; 1 if a pending output span is buffered
+TFS_PEND_XL = $0912
+TFS_PEND_XR = $0913
+TFS_PEND_TL = $0914
+TFS_PEND_TR = $0915
+TFS_PEND_BL = $0916
+TFS_PEND_BR = $0917
+TFS_PEND_TKIND = $0918
+TFS_PEND_TID = $0919
+TFS_PEND_BKIND = $091A
+TFS_PEND_BID = $091B
+
 
 ; ===================================================================
 ; tighten_from_records — segment-record consumer (3-cursor walk).

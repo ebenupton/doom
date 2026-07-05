@@ -16,3 +16,8 @@ trace_*.py
 test_pw_max.py
 test_tighten*.py
 build/
+
+# Engine build outputs (asmbuild/ld65 writes these; deterministic from src/)
+bsp_render*.bin
+span_clip*.bin
+slope_div.bin

@@ -66,7 +66,7 @@ import os, struct, math, sys, random, pygame
 from line6502 import estimate_line_cycles
 import fp as fp_module
 from endpoint_spans import EndpointClipSpans
-from fp import (fp_mul8, fp_mul7, fp_div8, s8,
+from fp import (fp_mul8, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
                 fp_recip, fp_project_x, fp_project_x_subpx, fp_project_y,
                 fp_linfn, fp_eval, fp_eval_88, fp_view_context, fp_to_view, fp_near_clip,
@@ -178,7 +178,7 @@ class Instrumented6502Spans(EndpointClipSpans):
                 _ap_skip_stats['tighten_skipped'] += 1
                 return
         from endpoint_spans import _compute_tighten_splits
-        from span_clip_6502 import _USE_DCL_RECORDS_HOOK as _RECORDS_MODE
+        _RECORDS_MODE = True   # records-driven tighten is the only 6502 path
         splits = list(_compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2))
         for i, params in enumerate(splits):
             super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
@@ -1241,24 +1241,6 @@ def bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
            for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
     return _bbox_screen_range(pts, WIDTH * 0.5, FOCAL_X)
 
-def fp_bbox_visible(node, far_side, cos_a, sin_a, vx, vy):
-    """Bbox visibility for fixed-point mode (256-wide render target).
-
-    Uses float arithmetic on un-prescaled node data.
-    Returns screen X range in 8.0 pixels, or None.
-    """
-    base = 4 + far_side * 4
-    top, bot, left, right = node[base], node[base+1], node[base+2], node[base+3]
-    if left <= vx <= right and bot <= vy <= top:
-        return 0, FP_RENDER_W - 1
-    pts = [to_view(wx, wy, vx, vy, cos_a, sin_a)
-           for wx, wy in ((left, top), (right, top), (right, bot), (left, bot))]
-    return _bbox_screen_range(pts, FP_RENDER_W * 0.5, FP_FOCAL_X)
-
-
-# M1: when True, screen columns come from the DOOM-style angle table
-# (angle_bbox.view_col) instead of perspective fp_project_x. Set per run by
-# the validation harness; the seg path honours it too.
 _USE_ANGLE_COL = False
 # M2: full rotation-free angle-space bbox (2-corner checkcoord). Needs the
 # view angle byte, set per frame in _VIEW_AB by the render harness.
@@ -1960,7 +1942,6 @@ _p_rom_main   = packed_rom_main
 _p_rom_detail = packed_rom_detail
 _p_rom_recip  = packed_rom_recip
 _p_layout     = packed_layout
-_p_ram        = None   # allocated per-frame
 
 
 def _packed_ram_new():
@@ -2512,7 +2493,7 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
 
     deferred = []
     import span_clip_6502 as _scmod
-    records_mode = _scmod._USE_DCL_RECORDS_HOOK
+    records_mode = True    # records-driven tighten is the only 6502 path
     for si in range(first_seg, first_seg + count):
         prev_len = len(deferred)
         packed_render_seg(si, clips, ctx, vz, surface, ram, deferred)

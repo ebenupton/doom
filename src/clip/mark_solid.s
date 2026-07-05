@@ -35,14 +35,6 @@ BCS mss
 ; |
 RTS
 mss:
-.if ::EMIT_LINES
-; --- Wall edge line emission pre-pass (if seg params provided) ---
-LDA zp_ms_emit
-BEQ ms_no_emit
-; |
-JSR ms_emit_lines                       ; |
-ms_no_emit:
-.endif
 LDA #$FF
 STA zp_prev
 ; |

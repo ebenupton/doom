@@ -58,11 +58,6 @@ def fp_mul8(a, b):
     """Counted 8x8 signed multiply, shift right by 8."""
     return _memo_mul(a, b, 8)
 
-def fp_mul7(a, b):
-    """Counted 8x8 signed multiply, shift right by 7."""
-    return _memo_mul(a, b, 7)
-    return (a * b) >> 7
-
 def fp_div8(num, den):
     """Signed divide: (num << 8) // den.  Returns 0 if den == 0.
     Truncates toward zero for consistency with C/hardware."""
@@ -113,34 +108,6 @@ for _i in range(1, 65):
 _SIN_QUADRANT[0] = 0
 _SIN_UNITY[0] = False
 
-def fp_sincos(angle_byte):
-    """Returns (sin_mag, sin_neg, sin_unity, cos_mag, cos_neg, cos_unity).
-
-    mag: unsigned 0..255 (0.8 format).
-    neg: True if the value is negative.
-    unity: True if |value| == 1.0 exactly (skip multiply, use delta directly).
-    """
-    a = angle_byte & 0xFF
-    # Sin: magnitude from quadrant index
-    q = a >> 6
-    idx = a & 63
-    if q == 0:
-        s_mag, s_neg, s_unity = (_SIN_QUADRANT[idx], False, idx == 0 and False) if idx != 0 else (0, False, False)
-    elif q == 1:
-        ridx = 64 - idx
-        s_mag, s_neg = (_SIN_QUADRANT[ridx], False) if ridx != 0 else (0, False)
-        s_unity = (ridx == 64) or (idx == 0)  # angle=64: sin=1
-    elif q == 2:
-        s_mag, s_neg = (_SIN_QUADRANT[idx], True) if idx != 0 else (0, False)
-        s_unity = False
-    else:  # q == 3
-        ridx = 64 - idx
-        s_mag, s_neg = (_SIN_QUADRANT[ridx], True) if ridx != 0 else (0, False)
-        s_unity = (ridx == 64) or (idx == 0)  # angle=192: sin=-1
-    # Simplify: use a cleaner approach
-    pass
-
-# Actually, let's simplify this significantly:
 
 def _sin_mag_sign(a):
     """For angle byte a, return (magnitude 0..255, is_negative, is_unity).

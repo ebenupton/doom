@@ -28,7 +28,6 @@ ENTRY_IS_FULL    = _sym('jt_is_full')
 ENTRY_READ       = _sym('jt_read')
 ENTRY_INTERP_ST  = _sym('jt_interp_store')
 ENTRY_DRAW_CLIP  = _sym('jt_draw_clip')
-ENTRY_CLIP_LINE_RECORDS = _sym('jt_clip_line_records')
 ENTRY_TIGHTEN_FROM_RECORDS = _sym('jt_tighten_from_records')
 ENTRY_DRAW_CLIP_S16 = _sym('jt_draw_clip_s16')
 
@@ -42,15 +41,6 @@ LC_X1_HI = _sym('LC_X1_HI')
 LC_Y1_HI = _sym('LC_Y1_HI')
 LC_X2_HI = _sym('LC_X2_HI')
 LC_Y2_HI = _sym('LC_Y2_HI')
-
-# Toggle: when True, _span_clip_6502.tighten() dispatches to records-driven
-# path (clip_line_records + tighten_from_records). v1 supports single-record-
-# per-side cases; multi-record (crossover) cases are not yet handled.
-_USE_6502_RECORDS_TIGHTEN = True
-
-# When True, records mode uses DCL hooks to populate records (Phase B).
-# When False (default), records mode uses standalone clip_line_records (Phase A).
-_USE_DCL_RECORDS_HOOK = True
 
 # DCL records-hook ZP slots
 ZP_DCL_REC_BUF   = _sym('zp_dcl_rec_buf')
@@ -276,99 +266,14 @@ class SpanClip6502:
         if ihi < ilo:
             return
 
-        # ----- Records-driven fast path (default) -----
-        # ENTRY_TIGHTEN_FROM_RECORDS doesn't read any of the seg ZP slots:
-        # line geometry comes from the segment records that the prior
-        # draw_clipped_line(yt/yb) calls wrote. Skip remap, swap, secondary
-        # interp, and ZP fanout entirely — just pass [ilo, ihi] through and
-        # dispatch. Bare BSP/transform-cache values go in unmolested.
-        if _USE_6502_RECORDS_TIGHTEN and _USE_DCL_RECORDS_HOOK:
-            if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0:
-                return
-            mem[ZP_ILO] = ilo & 0xFF
-            mem[ZP_IHI] = ihi & 0xFF
-            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+        # Records-driven (the ONLY path): line geometry comes from the
+        # segment records the prior draw_clipped_line(yt/yb) calls wrote.
+        # Just pass [ilo, ihi] through and dispatch.
+        if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0:
             return
-
-        # ----- Legacy paths below (records mode off) -----
-        # Swap inverted segs (sx1 > sx2) — 6502 can't handle negative ex
-        if sx1 > sx2:
-            sx1, sx2 = sx2, sx1
-            yt1, yt2 = yt2, yt1
-            yb1, yb2 = yb2, yb1
-            if yt_sec1 is not None:
-                yt_sec1, yt_sec2 = yt_sec2, yt_sec1
-            if yb_sec1 is not None:
-                yb_sec1, yb_sec2 = yb_sec2, yb_sec1
-        orig_sx1, orig_sx2 = sx1, sx2
-        orig_yt_sec1, orig_yt_sec2 = yt_sec1, yt_sec2
-        orig_yb_sec1, orig_yb_sec2 = yb_sec1, yb_sec2
-        from endpoint_spans import _remap_seg_for_8bit, _interp_store_s16
-        sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
-            ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2)
-        if emit_sec_top and orig_yt_sec1 is not None:
-            if sx1 == orig_sx1 and sx2 == orig_sx2:
-                new_yt_sec1, new_yt_sec2 = orig_yt_sec1, orig_yt_sec2
-            else:
-                new_yt_sec1 = _interp_store_s16(sx1, orig_sx1, orig_yt_sec1, orig_sx2, orig_yt_sec2)
-                new_yt_sec2 = _interp_store_s16(sx2, orig_sx1, orig_yt_sec1, orig_sx2, orig_yt_sec2)
-            new_yt_sec1 = max(0, min(255, new_yt_sec1))
-            new_yt_sec2 = max(0, min(255, new_yt_sec2))
-        else:
-            new_yt_sec1 = new_yt_sec2 = 0
-        if emit_sec_bot and orig_yb_sec1 is not None:
-            if sx1 == orig_sx1 and sx2 == orig_sx2:
-                new_yb_sec1, new_yb_sec2 = orig_yb_sec1, orig_yb_sec2
-            else:
-                new_yb_sec1 = _interp_store_s16(sx1, orig_sx1, orig_yb_sec1, orig_sx2, orig_yb_sec2)
-                new_yb_sec2 = _interp_store_s16(sx2, orig_sx1, orig_yb_sec1, orig_sx2, orig_yb_sec2)
-            new_yb_sec1 = max(0, min(255, new_yb_sec1))
-            new_yb_sec2 = max(0, min(255, new_yb_sec2))
-        else:
-            new_yb_sec1 = new_yb_sec2 = 0
-
-        def _w16(addr, val):
-            mem[addr] = val & 0xFF
-            mem[addr + 1] = (val >> 8) & 0xFF
-
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
-        _w16(ZP_SX1, sx1)
-        _w16(ZP_SX2, sx2)
-        _w16(ZP_YT1, yt1)
-        _w16(ZP_YT2, yt2)
-        _w16(ZP_YB1, yb1)
-        _w16(ZP_YB2, yb2)
-        mem[ZP_YT_SEC1] = new_yt_sec1 & 0xFF
-        mem[ZP_YT_SEC2] = new_yt_sec2 & 0xFF
-        mem[ZP_YB_SEC1] = new_yb_sec1 & 0xFF
-        mem[ZP_YB_SEC2] = new_yb_sec2 & 0xFF
-        mem[ZP_TG_EMIT] = ((0x01 if emit_top else 0) | (0x02 if emit_bot else 0) |
-                           (0x04 if emit_sec_top else 0) | (0x08 if emit_sec_bot else 0))
-        if _USE_6502_RECORDS_TIGHTEN:
-            # Phase A: standalone clip_line_records + multi-record-aware
-            # tighten_from_records. Pure 6502 — no fallback.
-            yt1_u = max(0, min(255, yt1))
-            yt2_u = max(0, min(255, yt2))
-            yb1_u = max(0, min(255, yb1))
-            yb2_u = max(0, min(255, yb2))
-            mem[ZP_LINE_XL] = sx1 & 0xFF
-            mem[ZP_LINE_YL] = yt1_u
-            mem[ZP_LINE_XR] = sx2 & 0xFF
-            mem[ZP_LINE_YR] = yt2_u
-            mem[ZP_BUF] = TOP_RECORDS & 0xFF
-            mem[ZP_BUF + 1] = (TOP_RECORDS >> 8) & 0xFF
-            self._run(ENTRY_CLIP_LINE_RECORDS)
-            mem[ZP_LINE_XL] = sx1 & 0xFF
-            mem[ZP_LINE_YL] = yb1_u
-            mem[ZP_LINE_XR] = sx2 & 0xFF
-            mem[ZP_LINE_YR] = yb2_u
-            mem[ZP_BUF] = BOT_RECORDS & 0xFF
-            mem[ZP_BUF + 1] = (BOT_RECORDS >> 8) & 0xFF
-            self._run(ENTRY_CLIP_LINE_RECORDS)
-            self._run(ENTRY_TIGHTEN_FROM_RECORDS)
-        else:
-            self._run(ENTRY_TIGHTEN)
+        self._run(ENTRY_TIGHTEN_FROM_RECORDS)
 
     _reset_count = [0]
     def reset_records(self):
@@ -443,34 +348,6 @@ class SpanClip6502:
                 mem[POOL_NEXT + i] = (i + 1) if i < 31 else 0
         else:
             mem[ZP_FREE] = 0
-
-    def _tighten_from_records_py(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
-        """Records-driven tighten in Python — handles multi-record cases
-        that the v1 ASM tfr_apply doesn't yet support. Regenerates records
-        from the line at replay time (using EndpointClipSpans.clip_line_records)
-        so they're valid against the CURRENT pool state — sidesteps the slot-
-        reuse staleness issue that would arise from snapshotting DCL records
-        across deferred-tighten replays. Still records-driven (no fallback to
-        ENTRY_TIGHTEN), just records sourced from a per-tighten compute pass."""
-        from endpoint_spans import EndpointClipSpans
-        mem = self.mpu.memory
-        POOL_NEXT = 0x0400
-        # Read pool spans (in walk order)
-        spans_list = []
-        cur = mem[ZP_HEAD]
-        while cur != 0:
-            spans_list.append(self._read_span_at_slot(cur))
-            cur = mem[POOL_NEXT + cur]
-        # Build EndpointClipSpans state from current pool, regenerate records.
-        tmp = EndpointClipSpans()
-        tmp.spans = spans_list
-        tmp.y_display_offset = 48  # Y_BIAS
-        top_records = tmp.clip_line_records(sx1, yt1, sx2, yt2, ilo=lo, ihi=hi)
-        bot_records = tmp.clip_line_records(sx1, yb1, sx2, yb2, ilo=lo, ihi=hi)
-        # Apply Python tighten_from_records (multi-record aware)
-        tmp.tighten_from_records(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                                 top_records, bot_records)
-        self._set_spans(tmp.spans)
 
     def has_gap(self, lo, hi):
         """has_gap(lo, hi) → bool. Closed interval [lo, hi]."""
@@ -620,69 +497,6 @@ class SpanClip6502:
         cx2 = max(0, min(255, cx2))
         cy2 = max(0, min(255, cy2))
         return cx1, cy1, cx2, cy2
-
-    def clip_line_records(self, xl, yl, xr, yr, ilo, ihi, buffer_addr):
-        """Walk active span list, write per-span sub-records to buffer.
-        Returns list of decoded records for testing/inspection.
-        Each record: dict with 'si', 'sox0', 'sox1', 'verdict', 'cy0', 'cy1'.
-        """
-        clipped = self._clip_to_screen(xl, yl, xr, yr)
-        if clipped is None:
-            # Write count=0, return empty
-            self.mpu.memory[buffer_addr] = 0
-            return []
-        xl, yl, xr, yr = clipped
-        if xl == xr and yl == yr:
-            self.mpu.memory[buffer_addr] = 0
-            return []
-        mem = self.mpu.memory
-        if xl > xr:
-            xl, yl, xr, yr = xr, yr, xl, yl
-        mem[ZP_LINE_XL] = xl & 0xFF
-        mem[ZP_LINE_YL] = yl & 0xFF
-        mem[ZP_LINE_XR] = xr & 0xFF
-        mem[ZP_LINE_YR] = yr & 0xFF
-        mem[ZP_ILO] = ilo & 0xFF
-        mem[ZP_IHI] = ihi & 0xFF
-        # Buffer pointer
-        mem[ZP_BUF] = buffer_addr & 0xFF
-        mem[ZP_BUF + 1] = (buffer_addr >> 8) & 0xFF
-        self._run(ENTRY_CLIP_LINE_RECORDS)
-        return self._decode_records(buffer_addr)
-
-    def _has_multi_record(self):
-        """Return True if any span has multiple records in TOP or BOT buffer.
-        Used by records-driven tighten to detect crossover cases (where v1
-        ASM tighten_from_records would only process the first record)."""
-        mem = self.mpu.memory
-        for buf in (TOP_RECORDS, BOT_RECORDS):
-            count = mem[buf]
-            seen = set()
-            for i in range(count):
-                si = mem[buf + 1 + i * REC_BYTES]
-                if si in seen:
-                    return True
-                seen.add(si)
-        return False
-
-    def _decode_records(self, buffer_addr):
-        """Read records from buffer, return list of dicts."""
-        mem = self.mpu.memory
-        count = mem[buffer_addr]
-        records = []
-        for i in range(count):
-            off = buffer_addr + 1 + i * REC_BYTES
-            v = mem[off + 3]
-            verdict = {0: 'above', 1: 'inside', 2: 'below'}.get(v, f'?{v}')
-            records.append({
-                'si': mem[off + 0],
-                'sox0': mem[off + 1],
-                'sox1': mem[off + 2],
-                'verdict': verdict,
-                'cy0': mem[off + 4],
-                'cy1': mem[off + 5],
-            })
-        return records
 
     def tighten_from_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
         """Run tighten consuming top+bot record buffers."""

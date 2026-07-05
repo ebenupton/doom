@@ -23,7 +23,7 @@ _screen = pygame.display.set_mode((1, 1))
 from doom_wireframe import (
     fp_vertexes, linedefs, fp_segs_vwh, fp_ssectors, nodes, vertexes,
     vwh_table, fp_sectors, segs, sectors, sidedefs,
-    FPClipSpans, render_bsp_fp, fp_bbox_visible,
+    FPClipSpans, render_bsp_fp,
     packed_render_bsp, packed_render_seg, packed_render_subsector,
     _packed_ram_new, _p_layout, _p_rom_main, _p_rom_detail,
     player_x, player_y, player_floor, _prescale_height,

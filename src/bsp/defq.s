@@ -132,9 +132,6 @@ LDA zp_br_t3
 BNE dd_tighten
 ; solid: mark_solid(ilo, ihi), no line emission.
 STX zp_br_t2
-LDA #0
-STA $A8
-; zp_ms_emit = 0
 JSR SC_MARK_SOLID                       ; (bank C paged by caller)
 JMP dd_after
 dd_tighten:

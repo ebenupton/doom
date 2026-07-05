@@ -47,7 +47,6 @@ ADC #1
 ; Otherwise: restoring division loop, 8 iterations.
 
 ; --- Build flags ---
-EMIT_LINES = 1                          ; set FALSE to disable line emission (pure clip benchmark)
 
 ; --- Code origin: $2000 in BBC Micro memory map ---
 ; (hoisted: the pinned umul8 at $2030 references these before the main
@@ -69,7 +68,7 @@ EMIT_LINES = 1                          ; set FALSE to disable line emission (pu
 ; Public entry points for other engine modules (bsp_render links against
 ; these; the Python harness finds them through the symbol map).
 .export jt_init, jt_mark_solid, jt_tighten, jt_has_gap, jt_is_full
-.export jt_read, jt_interp_store, jt_draw_clip, jt_clip_line_records
+.export jt_read, jt_interp_store, jt_draw_clip
 .export jt_tighten_from_records, jt_draw_clip_s16, jt_umul8, jt_udiv16_8
 
 ; --- Jump table: fixed entry points for each public operation ---
@@ -83,7 +82,6 @@ jt_is_full: JMP span_is_full                        ; $200C
 jt_read: JMP span_read                           ; $200F
 jt_interp_store: JMP interp_store                        ; $2012  (kept for test_interp verification)
 jt_draw_clip: JMP draw_clipped_line                   ; $2015
-jt_clip_line_records: JMP clip_line_records                   ; $2018
 jt_tighten_from_records: JMP tighten_from_records                ; $201B
 jt_draw_clip_s16: JMP draw_clipped_line_s16               ; $201E
 jt_umul8: JMP umul8                               ; $2021  (exported for bsp_render.asm)
