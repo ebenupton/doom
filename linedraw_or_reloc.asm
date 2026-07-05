@@ -16,7 +16,8 @@ b = &87
 
 HAMILTONIAN_12 = TRUE
 
-INCLUDE "line-test/nj-linedraw4-or.asm"
+\ engine NJ + recovered line-test-a double-SBC shallow entries
+INCLUDE "raster/nj-linedraw4-fast-or.asm"
 INCLUDE "line-test/shallow_12_hamiltonian-or.asm"
 
-SAVE "/tmp/linedraw_or_reloc.bin", &A900, P%
+SAVE "linedraw_or_reloc.bin", &A900, P%
