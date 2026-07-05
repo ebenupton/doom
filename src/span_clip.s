@@ -10,5 +10,4 @@
 .include "clip/dcl.s"
 .include "clip/tfr.s"
 .include "clip/plot_axis.s"
-.include "clip/plot_run.s"
 .include "clip/dcl_s16.s"

@@ -127,10 +127,13 @@ cardinal angles flatter the engine ~5% (axis-aligned walls project to
 exact horizontals, which the axis plotters eat). Gradient censuses
 (cardinal + off-axis) in the perf-grind memory: verticals are
 structural (~37% of pixels at any angle); off-axis, horizontals halve
-into the <1:4 shallow band (34.8% of pixels), making a run-based
-shallow plotter (horizontal byte-runs driven by run-length Bresenham,
-exact vs NJ via an exhaustive line battery + fb_gate) the next big
-target (~2-4% est.).
+into the <1:4 shallow band (34.8% of pixels), A run-based shallow
+plotter was built, proven pixel-exact (16k-sequence oracle check +
+15,872-draw battery — tools/run_oracle.py / run_battery.py), and
+MEASURED AND REJECTED: NJ's shallow path is already run-accumulating
+(~11 cyc/px), so the win only exists below ~1:33 gradient and every
+dispatch threshold netted +0.2%. Code preserved in the 'experiment:
+run-slice' commit; revival needs ~2.5x cheaper per-row plotting.
 All changes are output-exact by construction (sign identities, x*0=0,
 load reordering, predicate merges) — verified by the full differential
 suite each batch, not assumed.

@@ -1052,34 +1052,12 @@ CMP RASTER_ZP_X1
 BNE des_diag
 JMP plot_v
 des_diag:
-; run-slice band: x ascending (reversed 1px slivers go to NJ), 8*dy <= dx
-LDA RASTER_ZP_X1
-SEC
-SBC RASTER_ZP_X0
-BCC des_nj                              ; reversed sliver -> NJ handles
-TAX                                     ; X = dx
-LDA RASTER_ZP_Y1
-SEC
-SBC RASTER_ZP_Y0
-BCS des_dy_pos
-EOR #$FF
-ADC #1
-des_dy_pos:
-ASL A
-BCS des_nj
-ASL A
-BCS des_nj
-ASL A
-BCS des_nj
-ASL A
-BCS des_nj                              ; A = dy*16 (overflow -> too steep)
-STA zp_tmp2
-CPX zp_tmp2
-BCC des_nj                              ; dx < dy*16 -> NJ
-CPX #128
-BCC des_nj                              ; short lines: NJ's setup is cheaper
-JMP plot_run
-des_nj:
+; (A run-slice plotter for shallow diagonals was measured-and-rejected
+; here 2026-07-05: pixel-exact — proven by a 16k-sequence oracle check
+; and a 15,872-draw framebuffer battery — but slower: NJ's shallow path
+; is already run-accumulating at ~11 cyc/px and E1M1 lacks enough
+; sub-1:33 lines to amortize even the dispatch test. See the
+; 'experiment: run-slice' commit to revive.)
 JMP RASTER_ENTRY                        ; tail-call rasteriser
 
 .endscope

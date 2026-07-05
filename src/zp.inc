@@ -228,16 +228,6 @@ zp_seg_v1_evx = $DD               ; [bsp]
 zp_tmp0 = $DE                     ; [bsp+clip]; umul8 scratch (matches span_clip); free outside span_clip
 zp_tmp1 = $DF                     ; [clip]
 zp_tmp2 = $E0                     ; [clip]
-zp_run_q = $9D                      ; [clip]; run-slice: base run length q
-zp_run_rem = $9E                    ; [clip]; run-slice: dx mod dy
-zp_run_r = $A0                      ; [clip]; run-slice: remainder accumulator
-zp_run_n = $A1                      ; [clip]; run-slice: current run length
-zp_run_x = $A2                      ; [clip]; run-slice: x cursor
-zp_run_y = $A3                      ; [clip]; run-slice: y cursor
-zp_run_rows = $A4                   ; [clip]; run-slice: rows remaining
-zp_run_left = $A5                   ; [clip]; run-slice: pixels-1 remaining
-zp_run_dir = $A6                    ; [clip]; run-slice: 0 = x ascending, 1 = descending
-zp_run_dy = $A7                     ; [clip]; run-slice: dy
 zp_plot_i = $95                     ; [clip]; plot_h byte-index scratch
 ; --- $E1: overlay group (2 phase-disjoint users) ---
 zp_seg_v1_clipped = $E1           ; [bsp]
