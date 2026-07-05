@@ -56,7 +56,6 @@ def run(label, argv, want):
 print('== correctness ==')
 run('test_slope_div', ['test_slope_div.py'], lambda o: 'PASS' in o and 'FAIL' not in o)
 run('test_bca',       ['test_bca.py'],       lambda o: 'PASS' in o and 'FAIL' not in o)
-run('test_straddle',  ['test_straddle_flag.py'], lambda o: 'PASS' in o and 'FAIL' not in o)
 run('test_bsp_render',['test_bsp_render.py'],lambda o: 'All tests passed' in o)
 run('check_angle',    ['check_angle_calls.py'], lambda o: re.search(r'TOTAL .*: 0 differ vs python, 0 differ', o) is not None)
 ct = run('compare_traversal', ['compare_traversal.py'], lambda o: o.count('diff=0 px') == 10 and 'DIFFER' not in o)

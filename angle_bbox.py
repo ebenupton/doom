@@ -110,6 +110,15 @@ def bbox_check_angle(top, bot, left, right, px, py, ab):
     """Angle-space bbox visibility (2 silhouette corners, no rotation), in the
     view_col phi-convention. Returns a conservative (ilo,ihi) column extent or
     None. Per corner: 0 muls, 1 divide.
+
+    Faithful DOOM R_CheckBBox in our phi convention (our _phi is the NEGATED
+    DOOM view-relative angle, so DOOM angle1=-p1, angle2=-p2). All angular
+    arithmetic is UNSIGNED-BAM wraparound, which natively handles a
+    silhouette corner behind the view plane — the case the original
+    signed-sort logic mis-narrowed (over-culled straddling boxes, drawing
+    far rooms through walls; see the 2026-07 angle_race: signed-sort
+    diverged 11/68 positions vs the corner reference, this version 0/68
+    with equal descend counts).
     """
     if left <= px <= right and bot <= py <= top:
         return 0, VIS_W - 1
@@ -120,19 +129,24 @@ def bbox_check_angle(top, bot, left, right, px, py, ab):
         return 0, VIS_W - 1
     val = (top, bot, left, right)
     a_fine = (ab * (FINEANGLES // 256)) & ANGMASK
-    p1 = _phi(val[cc[0]], val[cc[1]], px, py, a_fine)
-    p2 = _phi(val[cc[2]], val[cc[3]], px, py, a_fine)
-    lo_phi, hi_phi = (p1, p2) if p1 <= p2 else (p2, p1)
-    # viewer is outside the box, so it subtends <180deg; if the signed span
-    # exceeds 180 the short arc wraps through behind -> not visible.
-    if hi_phi - lo_phi > ANG180:
-        return None
-    if hi_phi < -CLIPANGLE or lo_phi > CLIPANGLE:
-        return None                                # wholly outside the FOV
-    lo_phi = max(lo_phi, -CLIPANGLE)
-    hi_phi = min(hi_phi, CLIPANGLE)
-    lo = max(0, _phi_col(lo_phi) - 1)              # conservative +/-1
-    hi = min(VIS_W - 1, _phi_col(hi_phi) + 1)
+    p1 = _phi(val[cc[0]], val[cc[1]], px, py, a_fine)   # left silhouette
+    p2 = _phi(val[cc[2]], val[cc[3]], px, py, a_fine)   # right silhouette
+    span = (p2 - p1) & ANGMASK                          # DOOM angle1-angle2
+    if span >= ANG180:
+        return 0, VIS_W - 1            # viewer within the box's angular span
+    twoclip = 2 * CLIPANGLE
+    tspan = (-p1 + CLIPANGLE) & ANGMASK                 # clip left corner
+    if tspan > twoclip:
+        if (tspan - twoclip) >= span:
+            return None                                 # wholly off the left
+        p1 = -CLIPANGLE
+    tspan = (CLIPANGLE + p2) & ANGMASK                  # clip right corner
+    if tspan > twoclip:
+        if (tspan - twoclip) >= span:
+            return None                                 # wholly off the right
+        p2 = CLIPANGLE
+    lo = max(0, _phi_col(p1) - 1)                       # conservative +/-1
+    hi = min(VIS_W - 1, _phi_col(p2) + 1)
     if lo > hi:
         return None
     return lo, hi

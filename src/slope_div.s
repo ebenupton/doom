@@ -192,8 +192,6 @@ bca_ab = BCA_WS+$2F
 bca_ilo = BCA_WS+$30
 bca_ihi = BCA_WS+$31
 bca_vis = BCA_WS+$32
-bca_straddle = BCA_WS+$33               ; 1 if a silhouette corner is behind the view plane
-; (|phi|>ANG90) -> caller uses corner-projection
 bca_p1 = BCA_WS+$1E                     ; phi1 (s16)
 bca_p2 = BCA_WS+$20                     ; phi2 (s16)
 ; Hottest body vars in spare scavenged ZP (conflict-free) to cut the
@@ -215,7 +213,6 @@ bbox_check_angle:
 .scope
 LDA #0
 STA bca_vis
-STA bca_straddle
 ; bca_pxs/bca_pys (px,py sign-extended to s16) are precomputed once/frame
 ; by br_view_setup — frame-constant. Direct unit-test callers set them.
 ; bca_px/bca_py (s8) are still read below by ins_test/box_pos.
@@ -283,127 +280,103 @@ LDA pa_res
 STA bca_p2
 LDA pa_res+1
 STA bca_p2+1
-; --- straddle: |p1|>ANG90(1024) or |p2|>ANG90 -> a silhouette corner is
-; --- behind the view plane; caller falls back to corner-projection. ---
-LDA bca_p1+1
-BMI st_p1n
-SEC
-LDA bca_p1
-SBC #<1025
-LDA bca_p1+1
-SBC #>1025
-BCS st_set
-JMP st_c2
-st_p1n:
-CLC
-LDA bca_p1
-ADC #<1024
-LDA bca_p1+1
-ADC #>1024
-BMI st_set
-st_c2:
-LDA bca_p2+1
-BMI st_p2n
+; --- Faithful DOOM R_CheckBBox, unsigned-BAM wraparound (FINEANGLES=4096).
+; Our phi = -(DOOM view-relative angle), so DOOM angle1=-p1 (p1 = LEFT
+; silhouette, checkcoord order), angle2=-p2 (RIGHT). All arithmetic is
+; mod-4096 wraparound, which natively handles a silhouette corner behind
+; the view plane — the case the old signed-sort logic mis-narrowed
+; (over-culled straddling boxes -> far rooms drawn through walls).
+; p1/p2 are s16 whose low 12 bits ARE the BAM value (sign extension adds
+; multiples of 4096), so 16-bit sub/add + AND #$0F on the hi byte = BAM.
+;
+; span = (p2 - p1) & 4095 ; span >= ANG180(2048) -> viewer inside the
+; box's angular span -> visible full-width.
 SEC
 LDA bca_p2
-SBC #<1025
-LDA bca_p2+1
-SBC #>1025
-BCS st_set
-JMP st_done
-st_p2n:
-CLC
-LDA bca_p2
-ADC #<1024
-LDA bca_p2+1
-ADC #>1024
-BPL st_done
-st_set:
-LDA #1
-STA bca_straddle
-st_done:
-; lo/hi = sorted(p1,p2)  (SIGNED s16 compare: p1-p2 < 0 -> p1 is lo)
-SEC
-LDA bca_p1
-SBC bca_p2
-LDA bca_p1+1
-SBC bca_p2+1
-BVC so1
-EOR #$80
-so1:
-BMI p1lo
-p2lo:                                   ; p1 >= p2 -> p2 is lo
-LDA bca_p2
-STA bca_lo
-LDA bca_p2+1
-STA bca_lo+1
-LDA bca_p1
-STA bca_hi
-LDA bca_p1+1
-STA bca_hi+1
-JMP havelh
-p1lo:
-LDA bca_p1
-STA bca_lo
-LDA bca_p1+1
-STA bca_lo+1
-LDA bca_p2
-STA bca_hi
-LDA bca_p2+1
-STA bca_hi+1
-havelh:
-JMP havelh2
-cullt:
-JMP cull
-havelh2:
-; if hi-lo > ANG180 (2048): None
-SEC
-LDA bca_hi
-SBC bca_lo
+SBC bca_p1
 STA t0
-LDA bca_hi+1
-SBC bca_lo+1
+LDA bca_p2+1
+SBC bca_p1+1
+AND #$0F
 STA t1
-; compare (t1:t0) > 2048 : if t1>8 or (t1==8 and t0>0)
-LDA t1
 CMP #8
-BCC span_ok
-BNE cullt
-LDA t0
-BNE cullt
-span_ok:
-; if hi < -CLIPANGLE(-512): cull   (hi signed)
-LDA bca_hi+1
-BPL hi_nonneg
-; hi negative: hi < -512 ? compare hi < -512
-LDA bca_hi
-CMP #$00
-LDA bca_hi+1
-SBC #$FE
-BVC h1
-EOR #$80
-h1:
-BMI cullt
-hi_nonneg:
-; if lo > CLIPANGLE(512): cull  (strict: keep lo == 512)
+BCC ck_left
+JMP full_vis                            ; span >= 2048
+ck_left:
+; left clip: tspan = (CLIPANGLE - p1) & 4095 ; if tspan > 2*CLIPANGLE:
+;   wholly off left when tspan - 2*CLIPANGLE >= span, else p1 = -CLIPANGLE
 SEC
 LDA #<512
-SBC bca_lo
+SBC bca_p1
+TAX                                     ; tspan lo
 LDA #>512
-SBC bca_lo+1
-BVC h2
-EOR #$80
-h2:
-BPL lo_le
-JMP cull
-; 512-lo >= 0 -> lo <= 512 -> keep
-lo_le:
-; clamp lo to >= -512, hi to <= 512
-JSR clamp_lohi
+SBC bca_p1+1
+AND #$0F                                ; tspan hi (12-bit)
+CMP #4
+BCC ck_right                            ; tspan < 1024 -> in range
+BNE ck_left_out
+CPX #0
+BEQ ck_right                            ; tspan == 1024 exactly -> in range
+ck_left_out:
+STX pa_sx                               ; (corner_phi scratch, dead here)
+SEC
+SBC #4                                  ; tspan hi -= 4  (tspan - 1024)
+STA pa_sy
+LDA pa_sx
+CMP t0
+LDA pa_sy
+SBC t1
+BCC ck_left_clip
+JMP cull                                ; (tspan-2*CLIP) >= span: off left
+ck_left_clip:
+LDA #$00                                ; p1 = -CLIPANGLE = -512 = $FE00
+STA bca_p1
+LDA #$FE
+STA bca_p1+1
+ck_right:
+; right clip: tspan = (CLIPANGLE + p2) & 4095 ; same, clamping p2 = +512
+CLC
+LDA #<512
+ADC bca_p2
+TAX
+LDA #>512
+ADC bca_p2+1
+AND #$0F
+CMP #4
+BCC ck_done
+BNE ck_right_out
+CPX #0
+BEQ ck_done
+ck_right_out:
+STX pa_sx
+SEC
+SBC #4
+STA pa_sy
+LDA pa_sx
+CMP t0
+LDA pa_sy
+SBC t1
+BCC ck_right_clip
+JMP cull                                ; off right
+ck_right_clip:
+LDA #<512                               ; p2 = +CLIPANGLE
+STA bca_p2
+LDA #>512
+STA bca_p2+1
+ck_done:
+; feed the VATOX tail: lo := p1 (left), hi := p2 (right), both in [-512,512]
+LDA bca_p1
+STA bca_lo
+LDA bca_p1+1
+STA bca_lo+1
+LDA bca_p2
+STA bca_hi
+LDA bca_p2+1
+STA bca_hi+1
 ; ilo = VATOX[lo+512]-1 ; ihi = VATOX[hi+512]+1 ; clamp [0,255].
 ; VATOX holds only the used range (phi in [-512,512] -> index [0,1024]),
-; so the bias is +512 (not +1024); upper half of the angle range is
-; never reached after clamp_lohi.
+; so the bias is +512 (not +1024); the R_CheckBBox clip above guarantees
+; lo/hi land in [-512,512].
 ; address = (VATOX+512) + lo : fold the +512 bias into the base so it's a
 ; single add (lo is signed s16; two's-complement add lands in range).
 CLC
@@ -448,6 +421,14 @@ BCS cull
 visok:
 LDA #1
 STA bca_vis
+RTS
+full_vis:                               ; span >= ANG180: full width
+LDA #1
+STA bca_vis
+LDA #0
+STA bca_ilo
+LDA #255
+STA bca_ihi
 RTS
 cull:
 LDA #0
@@ -783,40 +764,6 @@ BCC cp_store
 SBC #$10                                ; -= 4096 (hi -= $10) -> signed [-2048,2048)
 cp_store:
 STA pa_res+1
-RTS
-.endscope
-
-; clamp bca_lo >= -512, bca_hi <= 512
-clamp_lohi:
-.scope
-; lo < -512 ? -> lo = -512
-LDA bca_lo
-CMP #$00
-LDA bca_lo+1
-SBC #$FE
-BVC k1
-EOR #$80
-k1:
-BPL k_hi
-LDA #$00
-STA bca_lo
-LDA #$FE
-STA bca_lo+1
-k_hi:
-; hi > 512 ? -> hi = 512
-LDA #<512
-CMP bca_hi
-LDA #>512
-SBC bca_hi+1
-BVC k2
-EOR #$80
-k2:
-BPL k_done
-LDA #<512
-STA bca_hi
-LDA #>512
-STA bca_hi+1
-k_done:
 RTS
 .endscope
 

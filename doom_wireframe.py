@@ -1332,7 +1332,16 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
                 # Parametric t in 0.8: (NEAR - vy0) << 8 / dvy
                 t = ((_NEAR - vy0) << 8) // dvy
                 dvx = vx1 - vx0
-                cx = vx0 + _m8(t, dvx)
+                # t is 0.8 fixed-point: the product must be >>8 (fp_mul8),
+                # exactly like the seg path's fp_near_clip. This was _m8
+                # (the RAW 8x8 product) for a long time — the crossing then
+                # landed ~256x too far out, usually just off-screen
+                # (harmless over-descend) but sometimes on the WRONG SIDE,
+                # collapsing the extent and pruning a VISIBLE subtree
+                # (973,-3367,239 node 113: true crossing cx=-3, raw cx=+4830
+                # -> extent (64,255) instead of (0,255) -> ss105 culled ->
+                # missing room + far geometry drawn through its walls).
+                cx = vx0 + fp_mul8(t, dvx)
                 if _USE_ANGLE_COL:
                     sxs.append(_view_col(cx, _NEAR))
                 else:
@@ -1344,8 +1353,15 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
 
     if not sxs:
         return None
-    sx_lo = max(0, min(sxs))
-    sx_hi = min(_FPW - 1, max(sxs))
+    # Conservative ±1: bbox corners are integer-prescaled and project
+    # through a different rounding path than seg vertices (8.8 fractional
+    # player-relative), so the raw extent can be a column narrower than
+    # the subtree's real seg extent (893,-3218,123 node 80: extent
+    # (122,171) missed ss86 geometry at column 121). The angle-space bbox
+    # has carried the same ±1 guard from day one; a visibility test must
+    # be conservative.
+    sx_lo = max(0, min(sxs) - 1)
+    sx_hi = min(_FPW - 1, max(sxs) + 1)
     if sx_lo > sx_hi:
         return None
     return sx_lo, sx_hi

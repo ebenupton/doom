@@ -125,7 +125,9 @@ ground-truth verify at 5 fixed positions has not worsened vs
   either direction as "BSP divergence".
 - The float `render_bsp` is ground truth; `render_bsp_fp` is a legacy
   approximation used by the verifier as a proxy; the packed path is the
-  bit-exact spec the 6502 must match.
+  bit-exact spec the 6502 must match. When two fixed-point walks
+  disagree, arbitrate with the float renderer (this method found the
+  2026-07 corner-reference bugs).
 - Unit-test individual stages first (the per-primitive tests exist —
   extend them); debug integrated frames only when isolation fails.
 
@@ -157,17 +159,16 @@ ground-truth verify at 5 fixed positions has not worsened vs
 - **Back-face test truncation**: `br_smul_s8_s16` keeps 16 bits; large
   diagonal products can wrap sign and drop a front-facing seg. Latent,
   data-dependent, invisible to self-consistency tests. Fix = s24 sign.
-- **Over-traversal non-robustness** (ACTIVE WORK): visiting subtrees the
-  bbox cull would prune CHANGES PIXELS at some positions (reject-only
-  experiment: exact at most positions, divergent at e.g. 973,-3367,239;
-  worst sweep case 20k px). Root cause in seg processing (suspected
-  near-plane crossing / span over-extension — dcl_yband_clip is a
-  band-aid, see project memory). Until fixed, bbox extent narrowing is
-  load-bearing for CORRECTNESS, which is why the angle-space bbox
-  straddle bug (git stash holds a DOOM R_CheckBBox rewrite; commit
-  5a6ebfb holds step 1 of a hybrid fallback) matters at all. Once seg
-  processing is robust, a conservative angle bbox is safe and the
-  hybrid/corner machinery can go.
+- **Over-traversal robustness: RESOLVED (2026-07-05).** Over-descent
+  provably costs cycles only, never pixels (certificates:
+  overtraversal_probe.py — occluded visits must be perfect no-ops;
+  angle_race.py — angle walk vs corner walk). The apparent
+  non-robustness was two bugs in the Python corner REFERENCE (raw
+  product where 0.8-t needed >>8 in the near-plane crossing; missing
+  conservative ±1 on the extent). The angle bbox is now a faithful DOOM
+  R_CheckBBox (unsigned-BAM wraparound) on BOTH sides, bit-exact,
+  replacing the buggy signed-sort. Any future bbox change must keep the
+  test conservative: frustum rejects + never under-report the extent.
 - Pool exhaustion (32 span slots) silently drops visible fragments;
   LINE_OUT_BUF wraps past 63 lines. Both are latent, not observed.
 
