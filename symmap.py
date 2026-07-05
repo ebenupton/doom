@@ -31,14 +31,13 @@ def _load(banked=0, c02=None):
         return _cache[key]
     table = {}
     ambiguous = set()
-    for mod in asmbuild._TARGETS:
-        asmbuild.build(mod, banked=banked, c02=c02)
-        dbg = os.path.join(asmbuild._ROOT, 'build', f'{mod}_b{banked}c{int(c02)}.dbg')
-        for name, val in _parse_dbg(dbg):
-            if name in table and table[name] != val:
-                ambiguous.add(name)
-            else:
-                table[name] = val
+    asmbuild.build('engine', banked=banked, c02=c02)
+    dbg = os.path.join(asmbuild._ROOT, 'build', f'engine_b{banked}c{int(c02)}.dbg')
+    for name, val in _parse_dbg(dbg):
+        if name in table and table[name] != val:
+            ambiguous.add(name)
+        else:
+            table[name] = val
     for name in ambiguous:
         del table[name]
     _cache[key] = (table, ambiguous)

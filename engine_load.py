@@ -1,15 +1,42 @@
 """Shared loaders for engine binaries + generated tables into a py65 memory.
 
-One definition of "where things go" — addresses come from the linked symbol
-map, table contents from angle_bbox. Replaces the per-test cloned load
-blocks that drifted (stale comments disagreed about TA_HI/VATOX addresses).
+One definition of "where things go" — load addresses are parsed from the
+SAME ld65 config the linker places code with (they cannot drift), symbol
+addresses come from the linked symbol map, table contents from angle_bbox.
+Replaces the per-test cloned load blocks that drifted (stale comments
+disagreed about TA_HI/VATOX addresses).
 """
 import os
+import re
 
 import asmbuild
 from symmap import sym
 
 _ROOT = asmbuild._ROOT
+
+
+def _regions(banked=0):
+    """Parse MEMORY areas from the engine ld65 config: [(start, file)]."""
+    cfg = open(os.path.join(_ROOT, asmbuild._CFGS[banked])).read()
+    mem = cfg[cfg.index('MEMORY'):cfg.index('SEGMENTS')]
+    out = []
+    for m in re.finditer(r'start\s*=\s*\$([0-9A-Fa-f]+)[^;]*?file\s*=\s*"([^"]+)"', mem):
+        out.append((int(m.group(1), 16), m.group(2)))
+    return out
+
+
+def load_engine(mem, banked=0, c02=None):
+    """Build the whole engine and load every output region into py65 memory.
+    Regions sharing an output file concatenate in declaration order (the
+    umul8 pin's zero-filled jump-table gap is part of the file)."""
+    asmbuild.build('engine', banked=banked, c02=c02)
+    loaded = set()
+    for start, fname in _regions(banked):
+        if fname in loaded:
+            continue                     # later areas append to the same file
+        loaded.add(fname)
+        code = open(os.path.join(_ROOT, fname), 'rb').read()
+        mem[start:start + len(code)] = code
 
 
 def load_angle_module(mem, c02=None):

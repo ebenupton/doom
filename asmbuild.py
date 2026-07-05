@@ -20,22 +20,13 @@ import subprocess
 _ROOT = os.path.dirname(os.path.abspath(__file__)) or '.'
 _built = set()
 
-# module -> (source, {banked: (cfg, ld65 -o or None)}).
-# Where the cfg names explicit per-region files (bsp_render), -o is unused.
-_TARGETS = {
-    'slope_div': ('src/slope_div.s', {
-        0: ('src/ang_flat.cfg', 'bsp_render_ang.bin'),
-        1: ('src/ang_banked.cfg', 'bsp_render_ang_bk.bin'),
-    }),
-    'span_clip': ('src/span_clip.s', {
-        0: ('src/clip_flat.cfg', 'span_clip.bin'),
-        1: ('src/clip_banked.cfg', 'span_clip_bankc.bin'),
-    }),
-    'bsp_render': ('src/bsp_render.s', {
-        0: ('src/bsp_flat.cfg', None),
-        1: ('src/bsp_banked.cfg', None),
-    }),
-}
+# The engine is ONE link: three objects (angle module, span clipper, bsp
+# renderer) resolved together, so cross-module calls are linker symbols.
+# All legacy per-module names alias the single 'engine' target.
+_SOURCES = ['src/slope_div.s', 'src/span_clip.s', 'src/bsp_render.s']
+_CFGS = {0: 'src/engine_flat.cfg', 1: 'src/engine_banked.cfg'}
+_TARGETS = {'engine': None, 'slope_div': None, 'span_clip': None,
+            'bsp_render': None}
 
 
 def env_c02():
@@ -63,7 +54,7 @@ def build(asm, banked=0, c02=None, out=None, force=False):
         c02 = env_c02()
     c02 = int(c02)
     banked = int(banked)
-    key = (mod, banked, c02)
+    key = ('engine', banked, c02)
     if key in _built and not force:
         return ''
     # refuse to build with unallocated ZP declarations (name = ?) pending —
@@ -74,23 +65,22 @@ def build(asm, banked=0, c02=None, out=None, force=False):
     if m:
         raise RuntimeError(f'unallocated ZP declaration {m.group(1)!r} in src/zp.inc '
                            f'— run: python3 tools/zpcheck.py --alloc')
-    src, cfgs = _TARGETS[mod]
-    cfg, ofile = cfgs[banked]
     objdir = os.path.join(_ROOT, 'build')
     os.makedirs(objdir, exist_ok=True)
-    obj = os.path.join(objdir, f'{mod}_b{banked}c{c02}.o')
-    text = _run(['ca65', '-g', '-D', f'C02={c02}', '-D', f'BANKED={banked}',
-                 os.path.join(_ROOT, src), '-o', obj])
-    ld = ['ld65', '-C', os.path.join(_ROOT, cfg), obj,
-          '-m', os.path.join(objdir, f'{mod}_b{banked}c{c02}.map'),
-          '--dbgfile', os.path.join(objdir, f'{mod}_b{banked}c{c02}.dbg')]
-    if ofile:
-        ld += ['-o', os.path.join(_ROOT, ofile)]
-    text += _run(ld)
+    text = ''
+    objs = []
+    for src in _SOURCES:
+        name = os.path.basename(src).replace('.s', '')
+        obj = os.path.join(objdir, f'{name}_b{banked}c{c02}.o')
+        text += _run(['ca65', '-g', '-D', f'C02={c02}', '-D', f'BANKED={banked}',
+                      os.path.join(_ROOT, src), '-o', obj])
+        objs.append(obj)
+    text += _run(['ld65', '-C', os.path.join(_ROOT, _CFGS[banked])] + objs +
+                 ['-m', os.path.join(objdir, f'engine_b{banked}c{c02}.map'),
+                  '--dbgfile', os.path.join(objdir, f'engine_b{banked}c{c02}.dbg')])
     _built.add(key)
     return text
 
 
 def build_all(banked=0, c02=None, force=False):
-    for mod in _TARGETS:
-        build(mod, banked=banked, c02=c02, force=force)
+    build('engine', banked=banked, c02=c02, force=force)

@@ -174,8 +174,8 @@ RTS
 ;     6. If ilo > ihi → return 0.
 ;     7. JSR span_has_gap → return its A.
 ; ============================================================================
-SC_HAS_GAP = SC_BASE + $09
-SC_IS_FULL = SC_BASE + $0C
+SC_HAS_GAP = jt_has_gap
+SC_IS_FULL = jt_is_full
 
 ; Per-corner storage (5 bytes × 4 = 20). bv_proj_one writes here so that a
 ; second pass can compute near-plane edge crossings between consecutive
@@ -214,11 +214,11 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 ;     Replaces the perspective corner-projection path below (now dead code).
 ; angle module + bca workspace relocate when banked (must match slope_div.asm:
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
+.import jt_bca_check
+BCA_CHECK = jt_bca_check                ; JSR -> bbox_check_angle (point_to_angle inlined out)
 .if ::BANKED
-BCA_CHECK = $3403
 BCA_WS = $3A00
 .else
-BCA_CHECK = $E943                       ; JSR -> bbox_check_angle (point_to_angle inlined out)
 BCA_WS = $FA00
 .endif
 bca_top = BCA_WS+$10                    ; box input: top,bot,left,right = +$10,$12,$14,$16

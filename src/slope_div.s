@@ -25,6 +25,7 @@
 .else
 .segment "ANG"
 .endif
+.export jt_slope_div, jt_bca_check
 jt_slope_div: JMP slope_div                           ; entry+0
 jt_bca_check: JMP bbox_check_angle                    ; entry+3   (point_to_angle inlined into corner_phi -> 1 fewer entry)
 slope_div:

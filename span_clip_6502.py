@@ -130,62 +130,19 @@ class SpanClip6502:
         mem[0xA700:0xA800] = sqr2_lo
         mem[0xA800:0xA900] = sqr2_hi
 
-        # Assemble and load span_clip.bin (fail-loud, session-memoized)
-        import asmbuild
-        bin_path = os.path.join(os.path.dirname(__file__) or '.', 'span_clip.bin')
-        asmbuild.build('span_clip.asm', banked=0, c02=int(_C02), out='span_clip.bin')
-        with open(bin_path, 'rb') as f:
-            code = f.read()
-        for i, b in enumerate(code):
-            mem[0x2000 + i] = b
+        # Build + load every engine region (clipper, renderer regions, angle
+        # module) at the addresses in the ld65 config — one loader, no
+        # file-existence guards to rot (a deleted legacy .asm once silently
+        # disabled the renderer load).
+        from engine_load import load_engine
+        load_engine(mem, banked=0, c02=int(_C02))
 
-        # Assemble and load bsp_render.bin (BSP traversal + transform).
-        # The asm produces TWO outputs: main code at $4800, plus an overflow
-        # region at $1C00 (helpers that don't fit in the $4800-$57FF window
-        # bounded by the framebuffer at $5800).
-        bsp_asm = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.asm')
-        bsp_bin = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render.bin')
-        bsp_lo  = os.path.join(os.path.dirname(__file__) or '.', 'bsp_render_lo.bin')
-        if os.path.exists(bsp_asm):
-            asmbuild.build('bsp_render.asm', banked=0, c02=int(_C02), out='bsp_render.bin')
-            if os.path.exists(bsp_bin):
-                with open(bsp_bin, 'rb') as f:
-                    bsp_code = f.read()
-                for i, b in enumerate(bsp_code):
-                    mem[0x4800 + i] = b
-            if os.path.exists(bsp_lo):
-                with open(bsp_lo, 'rb') as f:
-                    bsp_lo_code = f.read()
-                for i, b in enumerate(bsp_lo_code):
-                    mem[0x1B40 + i] = b
-            bsp_b = os.path.join(os.path.dirname(__file__) or '.',
-                                 'bsp_render_b.bin')
-            if os.path.exists(bsp_b):
-                with open(bsp_b, 'rb') as f:
-                    bsp_b_code = f.read()
-                for i, b in enumerate(bsp_b_code):
-                    mem[0x0AA0 + i] = b
-            bsp_d = os.path.join(os.path.dirname(__file__) or '.',
-                                 'bsp_render_d.bin')
-            if os.path.exists(bsp_d):
-                with open(bsp_d, 'rb') as f:
-                    bsp_d_code = f.read()
-                for i, b in enumerate(bsp_d_code):
-                    mem[0x0978 + i] = b
-            bsp_w = os.path.join(os.path.dirname(__file__) or '.',
-                                 'bsp_render_w.bin')
-            if os.path.exists(bsp_w):
-                with open(bsp_w, 'rb') as f:
-                    bsp_w_code = f.read()
-                for i, b in enumerate(bsp_w_code):
-                    mem[0xDAC0 + i] = b
-            # (x/y/z regions held the perspective-bbox dead code, now removed.)
-            # Reciprocal table at $E000 (HI bytes 0..513, then LO bytes 0..513).
-            from fp import _RECIP_X_HI, _RECIP_X_LO
-            for i in range(514):
-                mem[0xE000 + i] = _RECIP_X_HI[i] if i < len(_RECIP_X_HI) else 0
-            for i in range(514):
-                mem[0xE000 + 514 + i] = _RECIP_X_LO[i] if i < len(_RECIP_X_LO) else 0
+        # Reciprocal table at $E000 (HI bytes 0..513, then LO bytes 0..513).
+        from fp import _RECIP_X_HI, _RECIP_X_LO
+        for i in range(514):
+            mem[0xE000 + i] = _RECIP_X_HI[i] if i < len(_RECIP_X_HI) else 0
+        for i in range(514):
+            mem[0xE000 + 514 + i] = _RECIP_X_LO[i] if i < len(_RECIP_X_LO) else 0
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
         raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')

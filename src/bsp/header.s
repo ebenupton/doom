@@ -153,16 +153,15 @@ jt_br_init_frame: JMP br_init_frame                       ; $481B   clear vcache
 ; SC_UMUL8 / SC_UDIV16_8 are now local labels (see .SC_UMUL8 / .SC_UDIV16_8
 ; in the $4800 region) — banked port decouples them from span_clip.
 ; Clipper jump table is at $2000 (flat) or $8000 (bank C). SC_BASE offsets all.
-.if ::BANKED
-SC_BASE = $8000
-.else
-SC_BASE = $2000
-.endif
-SC_DRAW_S16 = SC_BASE + $1E
-SC_DRAW_U8 = SC_BASE + $15              ; standalone DCL (u8 input, no clipper prelude)
-SC_MARK_SOLID = SC_BASE + $03
-SC_TIGHTEN = SC_BASE + $06
-SC_TIGHTEN_FROM_RECORDS = SC_BASE + $1B
+; Imported from span_clip (same link; the jump-table indirection is kept so
+; entries stay uniformly callable from the harness).
+.import jt_mark_solid, jt_tighten, jt_has_gap, jt_is_full
+.import jt_tighten_from_records, jt_draw_clip, jt_draw_clip_s16
+SC_DRAW_S16 = jt_draw_clip_s16
+SC_DRAW_U8 = jt_draw_clip                ; standalone DCL (u8 input, no clipper prelude)
+SC_MARK_SOLID = jt_mark_solid
+SC_TIGHTEN = jt_tighten
+SC_TIGHTEN_FROM_RECORDS = jt_tighten_from_records
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites

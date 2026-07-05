@@ -66,6 +66,12 @@ EMIT_LINES = 1                          ; set FALSE to disable line emission (pu
 .segment "CLIPJT"
 .endif
 
+; Public entry points for other engine modules (bsp_render links against
+; these; the Python harness finds them through the symbol map).
+.export jt_init, jt_mark_solid, jt_tighten, jt_has_gap, jt_is_full
+.export jt_read, jt_interp_store, jt_draw_clip, jt_clip_line_records
+.export jt_tighten_from_records, jt_draw_clip_s16, jt_umul8, jt_udiv16_8
+
 ; --- Jump table: fixed entry points for each public operation ---
 ; Callers (Python harness, game engine) JSR to $2000 + 3*N.
 ; JMP is 3 bytes, so entries are evenly spaced.
