@@ -117,7 +117,20 @@ on ALL GREEN). 10-position suite totals:
 | B3: merged box classifier; octant fold; pre-doubled cc table | 3,891,285 | −1.02% |
 | B4: rot_int zero-delta gate; corner-load fold | 3,866,537 | −0.64% |
 
-Mean frame 386,653 cycles ≈ 5.2 fps at 2 MHz (was 4.9 at session start).
+| axis plotters (H/V = ~70% of cardinal-view pixels) | 3,793,143 | −1.90% |
+| plot_v cell unroll + plot_h byte-walk | 3,761,193 | −0.84% |
+
+Mean frame 376,119 ≈ 5.3 fps at 2 MHz (was 4.9 at session start). The
+OFF-AXIS variant of the suite (all angles nudged +3) measures 3,969,615
+(mean 396,961 ≈ 5.0 fps) — the honest number for the rotating demo;
+cardinal angles flatter the engine ~5% (axis-aligned walls project to
+exact horizontals, which the axis plotters eat). Gradient censuses
+(cardinal + off-axis) in the perf-grind memory: verticals are
+structural (~37% of pixels at any angle); off-axis, horizontals halve
+into the <1:4 shallow band (34.8% of pixels), making a run-based
+shallow plotter (horizontal byte-runs driven by run-length Bresenham,
+exact vs NJ via an exhaustive line battery + fb_gate) the next big
+target (~2-4% est.).
 All changes are output-exact by construction (sign identities, x*0=0,
 load reordering, predicate merges) — verified by the full differential
 suite each batch, not assumed.

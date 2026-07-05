@@ -70,6 +70,11 @@ ORA (zp_tmp0),Y
 STA (zp_tmp0),Y
 RTS
 ph_multi:
+; middle-byte count -> zp_plot_i (bytes strictly between first and last)
+LDA zp_tmp2
+SEC
+SBC zp_plot_i
+STA zp_plot_i                           ; = last-first (>=1); middles = n-1
 ; left partial byte
 LDA RASTER_ZP_X0
 AND #7
@@ -77,21 +82,25 @@ TAX
 LDA plot_lmask,X
 ORA (zp_tmp0),Y
 STA (zp_tmp0),Y
-; middle full bytes: while ++byteindex < last
+; middle full bytes: same y&7 in every cell, cells 8 bytes apart -> walk Y
+LDX zp_plot_i
+DEX
+BEQ ph_right                            ; no middles
+CLC                                     ; Y+8 sums never carry (max $FF)
 ph_mid:
-INC zp_plot_i
-LDA zp_tmp0
-CLC
+TYA
 ADC #8
-STA zp_tmp0                             ; never crosses a page within a row
-LDA zp_plot_i
-CMP zp_tmp2
-BEQ ph_right
+TAY
 LDA #$FF                                ; OR with $FF == unconditional set
 STA (zp_tmp0),Y
-JMP ph_mid
+DEX
+BNE ph_mid
 ph_right:
-; right partial byte
+; right partial byte (advance Y one more cell)
+TYA
+CLC
+ADC #8
+TAY
 LDA RASTER_ZP_X1
 AND #7
 TAX
@@ -149,7 +158,24 @@ CPY #8
 BNE pv_loop
 LDY #0
 INC zp_tmp1                             ; next char row (+256)
-JMP pv_loop
+pv_cell:
+; Y == 0 here: unroll whole 8-row cells while at least 8 pixels remain
+CPX #8
+BCC pv_loop
+.repeat 8
+LDA (zp_tmp0),Y
+ORA zp_tmp2
+STA (zp_tmp0),Y
+INY
+.endrepeat
+TXA
+SEC
+SBC #8
+TAX
+BEQ pv_done
+LDY #0
+INC zp_tmp1                             ; next char row (+256)
+JMP pv_cell
 pv_done:
 RTS
 .endscope
