@@ -72,9 +72,8 @@ def write_ssd(files, path='doom_banked.ssd'):
 
 
 def main():
-    for flag, src in [('1', 'slope_div.asm'), ('1', 'bsp_render.asm'), ('1', 'span_clip.asm')]:
-        subprocess.run(['./beebasm', '-i', src, '-D', f'BANKED={flag}', '-D', 'C02=0'], check=True,
-                       capture_output=True)
+    import asmbuild
+    asmbuild.build_all(banked=1, c02=0)
     subprocess.run(['./beebasm', '-i', 'banked_boot.asm', '-D', 'BANKED=1'], check=True)
     L0, C, L2, LOW = build_images()
     BOOT = open('BOOT', 'rb').read()

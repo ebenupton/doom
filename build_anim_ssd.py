@@ -103,8 +103,8 @@ BOOT_TEXT = (
 
 
 def main():
-    for src in ['slope_div.asm', 'bsp_render.asm', 'span_clip.asm']:
-        subprocess.run(['./beebasm', '-i', src, '-D', 'BANKED=1', '-D', 'C02=0'], check=True, capture_output=True)
+    import asmbuild
+    asmbuild.build_all(banked=1, c02=0)
     subprocess.run(['./beebasm', '-i', 'anim_drv.asm', '-D', 'BANKED=1'], check=True)
     L0, C, L2, LOW = build_images()
     files = [
