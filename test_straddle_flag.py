@@ -1,7 +1,11 @@
 import subprocess, sys
-from py65.devices.mpu6502 import MPU
 import angle_bbox as A
-subprocess.run(['./beebasm','-D','BANKED=0','-D','C02=0','-i','slope_div.asm','-o','slope_div.bin'],check=True,capture_output=True)
+import asmbuild
+if asmbuild.env_c02():
+    from py65.devices.mpu65c02 import MPU
+else:
+    from py65.devices.mpu6502 import MPU
+asmbuild.build('slope_div.asm', banked=0)
 BCA=0xE943; code=open('bsp_render_ang.bin','rb').read()
 mpu=MPU()
 for i,b in enumerate(code): mpu.memory[0xE940+i]=b

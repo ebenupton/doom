@@ -81,35 +81,50 @@ def _six_mask(px, py, ab):
     return mask, cyc, done
 
 
-def compare(px, py, ab):
-    """Return (max_disp, n_divergent, cyc, completed). max_disp>ALIAS_PX is a
-    real divergence."""
-    A = _py_mask(px, py, ab)
-    B, cyc, done = _six_mask(px, py, ab)
+def _col_disp(only, ref):
+    """Per-column displacement of `only`-lit pixels to the nearest `ref`-lit
+    pixel in the same column. Returns (max_disp_beyond_alias, n_beyond_alias)."""
     maxd = 0; ndiv = 0
     for x in range(W):
-        ay = np.where(A[x])[0]
-        bonly = np.where(B[x] & ~A[x])[0]
-        if len(bonly) == 0:
+        oy = np.where(only[x])[0]
+        if len(oy) == 0:
             continue
-        if len(ay) == 0:
-            d = np.full(len(bonly), 99)
+        ry = np.where(ref[x])[0]
+        if len(ry) == 0:
+            d = np.full(len(oy), 99)
         else:
-            d = np.abs(ay[None, :] - bonly[:, None]).min(axis=1)
+            d = np.abs(ry[None, :] - oy[:, None]).min(axis=1)
         far = d[d > ALIAS_PX]
         ndiv += len(far)
         if len(far):
             maxd = max(maxd, int(far.max()))
-    return maxd, ndiv, cyc, done
+    return maxd, ndiv
+
+
+def compare(px, py, ab):
+    """Two-sided comparison. Returns (max_over, n_over, max_miss, n_miss,
+    cyc, completed).
+
+    over  = pixels the 6502 lit that Python didn't (over-draw / over-emission)
+    miss  = pixels Python lit that the 6502 didn't (missing lines — these are
+            BUGS per the project rules, never 'BSP divergence')
+    Displacement > ALIAS_PX in either direction is a real divergence.
+    """
+    A = _py_mask(px, py, ab)
+    B, cyc, done = _six_mask(px, py, ab)
+    max_over, n_over = _col_disp(B & ~A, A)
+    max_miss, n_miss = _col_disp(A & ~B, B)
+    return max_over, n_over, max_miss, n_miss, cyc, done
 
 
 def main():
     pygame.init()
     if len(sys.argv) == 4:
         px, py, ab = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
-        maxd, ndiv, cyc, done = compare(px, py, ab)
-        verdict = ("CLEAN" if maxd <= ALIAS_PX else f"DIVERGENT (max {maxd}px)")
-        print(f"({px},{py},{ab}): {verdict}  divergent_px={ndiv}  "
+        mo, no, mm, nm, cyc, done = compare(px, py, ab)
+        verdict = ("CLEAN" if (mo <= ALIAS_PX and mm <= ALIAS_PX)
+                   else f"DIVERGENT (over {mo}px / miss {mm}px)")
+        print(f"({px},{py},{ab}): {verdict}  over_px={no} miss_px={nm}  "
               f"6502={cyc} cyc {'ok' if done else 'TRUNCATED'}")
         return
 
@@ -131,20 +146,20 @@ def main():
 
     divergent = []
     for i, (px, py, ab) in enumerate(positions):
-        maxd, ndiv, cyc, done = compare(px, py, ab)
-        flag = (maxd > ALIAS_PX) or (not done)
+        mo, no, mm, nm, cyc, done = compare(px, py, ab)
+        flag = (mo > ALIAS_PX) or (mm > ALIAS_PX) or (not done)
         if flag:
-            divergent.append((px, py, ab, maxd, ndiv, done))
-            print(f"  DIVERGENT ({px},{py},{ab}): max_disp={maxd}px "
-                  f"divergent_px={ndiv} {'' if done else 'TRUNCATED'}")
+            divergent.append((px, py, ab, mo, no, mm, nm, done))
+            print(f"  DIVERGENT ({px},{py},{ab}): over={mo}px({no}) "
+                  f"miss={mm}px({nm}) {'' if done else 'TRUNCATED'}")
         if (i + 1) % 20 == 0:
             print(f"  ...{i+1}/{len(positions)} checked, "
                   f"{len(divergent)} divergent so far")
     print(f"\nSWEEP: {len(positions)} positions, {len(divergent)} divergent "
-          f"(>{ALIAS_PX}px displacement)")
-    for d in sorted(divergent, key=lambda r: -r[3]):
-        print(f"   ({d[0]},{d[1]},{d[2]})  max_disp={d[3]}px  px={d[4]}  "
-              f"{'TRUNCATED' if not d[5] else ''}")
+          f"(>{ALIAS_PX}px displacement, either direction)")
+    for d in sorted(divergent, key=lambda r: -max(r[3], r[5])):
+        print(f"   ({d[0]},{d[1]},{d[2]})  over={d[3]}px({d[4]})  "
+              f"miss={d[5]}px({d[6]})  {'TRUNCATED' if not d[7] else ''}")
 
 
 if __name__ == '__main__':

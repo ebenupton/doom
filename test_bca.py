@@ -1,12 +1,14 @@
 """Unit-test 6502 bbox_check_angle vs angle_bbox.bbox_check_angle."""
 import subprocess, re, sys
-from py65.devices.mpu6502 import MPU
 import angle_bbox as A
+import asmbuild
 
-subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', 'C02=0', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
-               check=True, capture_output=True)
-out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', 'C02=0', '-i', 'slope_div.asm', '-v'],
-                     capture_output=True, text=True).stdout
+if asmbuild.env_c02():
+    from py65.devices.mpu65c02 import MPU
+else:
+    from py65.devices.mpu6502 import MPU
+
+asmbuild.build('slope_div.asm', banked=0)
 BCA = 0xE943
 code = open('bsp_render_ang.bin', 'rb').read()
 

@@ -1,10 +1,14 @@
 """Unit-test the 6502 slope_div against angle_bbox.slope_div (Python)."""
 import subprocess, sys
-from py65.devices.mpu6502 import MPU
 import angle_bbox as A
+import asmbuild
 
-subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', 'C02=0', '-i', 'slope_div.asm', '-o', 'slope_div.bin'],
-               check=True, capture_output=True)
+if asmbuild.env_c02():
+    from py65.devices.mpu65c02 import MPU
+else:
+    from py65.devices.mpu6502 import MPU
+
+asmbuild.build('slope_div.asm', banked=0)
 code = open('bsp_render_ang.bin', 'rb').read()
 
 mpu = MPU()
@@ -49,7 +53,8 @@ for i in range(1024):
 # Calling it with bca_afn ($3B/$3C)=0 makes corner_phi's tail compute
 # pa_res = signed12(0 - psi), from which psi = (-pa_res) % 4096.
 PA = None
-out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', 'C02=0', '-i', 'slope_div.asm', '-dd'],
+out = subprocess.run(['./beebasm', '-D', 'BANKED=0', '-D', f'C02={asmbuild.env_c02()}',
+                      '-i', 'slope_div.asm', '-dd'],
                      capture_output=True, text=True).stdout
 import re, ast
 labels = {}

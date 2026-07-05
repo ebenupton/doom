@@ -109,9 +109,12 @@ class BspRender6502:
         w16(ZP_ROM_BBOX_LO,    ROM_BBOX_BASE)
         w16(ZP_ROOT_NODE_LO,   layout['n_nodes'] - 1)
 
-        # Angle-space bbox module: code @ $E940; TA_LO $DC00, TA_HI $E000,
-        # VATOX $F200 (no overlap with VWH @ $E484 or the renderer).
-        import angle_bbox as _A
+        # Angle-space bbox module: code @ $E940; TA_LO $DC00, TA_HI $F200,
+        # VATOX $F601 (no overlap with VWH @ $E484 or the renderer).
+        # Rebuild before loading — a standalone run after a slope_div.asm
+        # edit must not test a stale bin.
+        import asmbuild, angle_bbox as _A
+        asmbuild.build('slope_div.asm', banked=0)
         code = open('bsp_render_ang.bin', 'rb').read()
         for i, b in enumerate(code):
             mem[0xE940 + i] = b
