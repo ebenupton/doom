@@ -193,8 +193,8 @@ ground-truth verify at 5 fixed positions has not worsened vs
 
 ## Performance
 
-Suite cycle counts are gated by baseline.json (currently 4,098,167 total
-over 10 positions ≈ 2 MHz → ~4.9 fps mean). The cost structure and the
+Suite cycle counts are gated by baseline.json (currently ~4.74M total
+over 14 positions — 10 near-spawn + 4 far in-spec — ≈ 2 MHz). The cost structure and the
 optimisation history (measured-and-rejected ideas included — read before
 re-proposing one) are in BSP_RENDER_STATUS.md and CLIP_OPTIMISE.md.
 

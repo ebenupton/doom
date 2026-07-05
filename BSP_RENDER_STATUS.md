@@ -120,6 +120,12 @@ on ALL GREEN). 10-position suite totals:
 | axis plotters (H/V = ~70% of cardinal-view pixels) | 3,793,143 | −1.90% |
 | plot_v cell unroll + plot_h byte-walk | 3,761,193 | −0.84% |
 
+Suite broadened 2026-07-05 to 14 positions (4 far-from-spawn in-spec
+added after the s16 8.8 position-range investigation); new baseline
+total 4,737,588. Subsequent deltas are against that suite.
+
+| steep de-unroll (STEEP_COMPACT; frees ~880B raster budget) | 4,737,747 | +0.003% |
+
 Mean frame 376,119 ≈ 5.3 fps at 2 MHz (was 4.9 at session start). The
 OFF-AXIS variant of the suite (all angles nudged +3) measures 3,969,615
 (mean 396,961 ≈ 5.0 fps) — the honest number for the rotating demo;
@@ -142,6 +148,19 @@ Cost structure after the angle-bbox fix (profile_subsystems, 6 off-axis
 positions): vertex transform 28.4%, walk+glue 22.1%, bbox 24.1%,
 clipper 16.9%, rasteriser 8.4%. The old "bbox is 52%" figure predates
 the angle conversion — do not plan against it.
+
+Measured and rejected: **2-3 band Hamiltonian shallow module**
+(raster/shallow_23_hamiltonian-or.asm, HAMILTONIAN_23, off by default;
+'experiment:' commit 643fac6). Oracle-proven run protocol (first run
+always 2, interior {2,3} by one ADC/SBC per run, final run always 2
+drawn up-front at the far endpoint so the machine terminates on pure
+row count), exhaustively pixel-exact (54,760-draw on/off A/B, corpus,
+fb_gate). Suite verdict -0.036% only: the band is 4.9% of pixels / 32
+lines, and the ~4.2k machine win is eaten by the ~9 cyc/line dispatch
+tax on the 154 non-band shallow lines plus ~35 cyc/line heavier entry
+(deltas + far-end prologue + row anchor). Revival needs either a free
+dispatch discriminator or a materially larger band share; the module
+itself is correct and 1,030 bytes.
 
 Measured-and-rejected this session: slope_div reciprocal-multiply and
 leading-zero-skip variants (restoring divide already ~breaks even);
