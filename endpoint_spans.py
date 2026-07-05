@@ -996,7 +996,10 @@ class EndpointClipSpans:
 
     # -- Clipping --------------------------------------------------------------
 
-    def draw_clipped(self, lines, color, surface, stats=None):
+    def draw_clipped(self, lines, color, surface, stats=None, roles=None):
+        # roles: records-buffer routing used by the 6502-backed subclass;
+        # the pure-Python spans have no records machinery — accepted and
+        # ignored so both classes are call-compatible.
         # Optionally collect drawn line segments for labelling overlay
         _real_draw = pygame.draw.line
         if _drawn_lines is not None:

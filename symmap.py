@@ -7,7 +7,7 @@ and equates (ZP assignments, workspace addresses) are included.
 
 Usage:
     import symmap
-    ENTRY_TIGHTEN = symmap.sym('span_tighten')     # linked address
+    ENTRY_MARK_SOLID = symmap.sym('jt_mark_solid')  # linked address
     ZP_ILO        = symmap.sym('zp_ilo')           # ZP equate
 
 Symbols are per build variant (BANKED/C02 change addresses); the variant

@@ -34,12 +34,9 @@ list and rasterised by the vendored NJ line drawer.
       clip/interp.s        interp_store (round-to-nearest lerp)
       clip/mark_solid.s    lazy column removal (split/truncate/shrink)
       clip/query.s         has_gap (+coherence cache), is_full, span_read
-      clip/tighten.s       tiered dominance ladder + overlap sub-intervals
-      clip/crossover.s     boundary crossover column divide
-      clip/emit_dead.s     DEAD legacy emission pre-pass (strip candidate)
       clip/dcl.s           draw_clipped_line: per-span CB clip + emission
-      clip/records_legacy.s DEAD 6-byte record writers (strip candidate)
-      clip/tfr.s           tighten_from_records (3-cursor event walk)
+      clip/tfr.s           tighten_from_records (3-cursor event walk,
+                           tg_append_x merge) — THE production tighten
       clip/dcl_s16.s       s16 front-end: clips to u8, tail-calls DCL
     src/bsp_render.s     Renderer unit = ordered .includes of src/bsp/:
       bsp/header.s         equates, macros (ZERO/BUMP/PAGE), jump table,
@@ -94,12 +91,13 @@ hex address into a Python file, stop and use the map.
 ## Zero page
 
 `src/zp.inc` is the registry (included first by all three units).
-**The zero page is full: 248/256 bytes claimed, one free slot.**
+After the dead-code strip: 206 addresses claimed, **43 free slots**
+(run tools/zpcheck.py for the current map), 12 deliberate overlay groups.
 
 - New variable: declare `name = ?` in zp.inc, run
   `python3 tools/zpcheck.py --alloc` (the build refuses while a `?` is
-  pending). Expect to have to free something first.
-- 48 overlay groups exist — multiple names on one address, deliberate
+  pending).
+- Overlay groups exist — multiple names on one address, deliberate
   phase-disjoint reuse (e.g. bbox-visibility scratch overlays the seg-loop
   block; both never live at once). Do not join a group without proving
   phase-disjointness; the group comments say who the users are.
@@ -147,8 +145,10 @@ ground-truth verify at 5 fixed positions has not worsened vs
 - **Deferred op queue**: seg solid/tighten ops queue at $0600 and apply at
   subsector end with records snapshots (later segs overwrite the records
   buffers — the snapshot is load-bearing). DEFQ_OVF flags dropped ops.
-- **Records**: the live format is 4-byte per surviving DCL segment
-  (xl,yl,xr,yr). The 6-byte verdict format is legacy/dead code.
+- **Records**: the format is 4-byte per surviving DCL segment
+  (xl,yl,xr,yr). (The old 6-byte verdict path was deleted; note the defq
+  snapshot code still STRIDES at 6 bytes on both sides — consistent,
+  exact, but wasteful of queue capacity. Fix both sides together.)
 - The BSP stack entry encoding requires node ids < $2000 and subsector
   hi-byte bit 6 clear (fine for E1M1; unstated elsewhere).
 

@@ -100,36 +100,28 @@ zp_seg_first_lo = $5A             ; [bsp]; first_seg index for current subsector
 zp_seg_first_hi = $5B             ; [bsp]
 zp_seg_count = $5C                ; [bsp]; remaining segs in subsector
 ; --- $5D: overlay group (2 phase-disjoint users) ---
-zp_crx_num = $5D                  ; [bsp]; |1 - vy0| u16
 zp_seg_v1_lo = $5D                ; [bsp]
 zp_seg_v1_hi = $5E                ; [bsp]
 ; --- $5F: overlay group (2 phase-disjoint users) ---
-zp_crx_den = $5F                  ; [bsp]; |dvy| u16
 zp_seg_v2_lo = $5F                ; [bsp]
 zp_seg_v2_hi = $60                ; [bsp]
 ; --- $61: overlay group (2 phase-disjoint users) ---
-zp_crx_q = $61                    ; [bsp]; t = (num<<8)/den, u16 (<= 256)
 zp_seg_sx1_lo = $61               ; [bsp]; projected screen x of v1 (s16)
 zp_seg_sx1_hi = $62               ; [bsp]
 ; --- $63: overlay group (2 phase-disjoint users) ---
-zp_crx_dvx = $63                  ; [bsp]; |dvx| u16
 zp_seg_sx2_lo = $63               ; [bsp]
 zp_seg_sx2_hi = $64               ; [bsp]
 ; --- $65: overlay group (2 phase-disjoint users) ---
-zp_crx_neg = $65                  ; [bsp]; 1 if dvx negative
 zp_seg_skip = $65                 ; [bsp]; non-zero → skip emit (near-clipped)
 ; --- $66: overlay group (2 phase-disjoint users) ---
-zp_crx_p = $66                    ; [bsp]; t*|dvx| u24
 zp_seg_fh = $66                   ; [bsp]; s8 prescaled front floor height
 zp_seg_ch = $67                   ; [bsp]; s8 prescaled front ceiling height
 zp_seg_top_dlt = $68              ; [bsp]; s8 ch - vz (height delta for top edge)
 ; --- $69: overlay group (2 phase-disjoint users) ---
-zp_crx_v = $69                    ; [bsp]; division: shifted divisor u24
 zp_seg_bot_dlt = $69              ; [bsp]; s8 fh - vz (height delta for bottom edge)
 zp_seg_sy_top_lo = $6A            ; [bsp]; s16 projected screen y for top edge
 zp_seg_sy_top_hi = $6B            ; [bsp]
 ; --- $6C: overlay group (2 phase-disjoint users) ---
-zp_crx_d = $6C                    ; [bsp]; division: dividend u24
 zp_seg_sy_bot_lo = $6C            ; [bsp]; s16 projected screen y for bottom edge
 zp_seg_sy_bot_hi = $6D            ; [bsp]
 zp_seg_sx_lo = $6E                ; [bsp]; s16 projected screen x
@@ -161,7 +153,6 @@ zp_br_pxraw_hi = $91              ; [bsp]
 zp_br_pyraw_lo = $92              ; [bsp]
 zp_br_pyraw_hi = $93              ; [bsp]
 zp_v_xext = $94                   ; [bsp]; saved view-x s24 extension byte (wide-vx path)
-zp_br_t4 = $95                    ; [bsp]; bbox corner/edge loop counter
 zp_seg_hdr_p = $96                ; [bsp]; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h = $97              ; [bsp]
 zp_fhch_p = $98                   ; [bsp]; persistent FHCH ptr (advances +6/seg)
@@ -170,26 +161,14 @@ zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
 bca_cx = $9D                      ; [ang]; corner x (s16) ; w=2
 zp_seg_v2_clipped = $9F           ; [bsp]
-zp_cache_ox1 = $A0                ; [clip]; cached ox1 ($FF = invalid)
-zp_cache_nt = $A1                 ; [clip]; cached nt_r (seg top lo)
-zp_cache_nt_h = $A2               ; [clip]; cached nt_rh (seg top hi)
-zp_cache_nb = $A3                 ; [clip]; cached nb_r (seg bot lo)
-zp_cache_nb_h = $A4               ; [clip]; cached nb_rh (seg bot hi)
-zp_bb_yt_max = $A5                ; [clip]; max(seg top clamped) over remaining overlap range
-zp_bb_yb_min = $A6                ; [clip]; min(seg bot clamped) over remaining overlap range
-zp_bb_flags = $A7                 ; [clip]; $40 = all on-screen (new-dom + narrowing valid), $00 = disabled
 ; --- $A8: overlay group (3 phase-disjoint users) ---
 zp_ms_emit = $A8                  ; [clip]; mark_solid: $FF = emit wall edge lines, $00 = skip
-zp_seg_top_max = $A8              ; [clip]; max(yt1, yt2) when all hi bytes 0; else $FF sentinel
 zp_line_xl = $A8                  ; [bsp+clip]; u8, left X (oriented left-to-right)
 ; --- $A9: overlay group (2 phase-disjoint users) ---
-zp_seg_top_min = $A9              ; [clip]; min(yt1, yt2)                       else $00 sentinel
 zp_line_yl = $A9                  ; [bsp+clip]; u8, Y at xl
 ; --- $AA: overlay group (2 phase-disjoint users) ---
-zp_seg_bot_max = $AA              ; [clip]; max(yb1, yb2)                       else $FF sentinel
 zp_line_xr = $AA                  ; [bsp+clip]; u8, right X
 ; --- $AB: overlay group (2 phase-disjoint users) ---
-zp_seg_bot_min = $AB              ; [clip]; min(yb1, yb2)                       else $00 sentinel
 zp_line_yr = $AB                  ; [bsp+clip]; u8, Y at xr
 zp_line_dx = $AC                  ; [clip]; u8, xr - xl (>= 0)
 zp_line_dy = $AD                  ; [clip]; s8, yr - yl
@@ -199,80 +178,44 @@ zp_seg_start_x = $B0              ; [clip]; u8, $FF = NULL (no segment started)
 zp_seg_start_y = $B1              ; [clip]; u8, Y at seg_start_x
 ; --- $B2: overlay group (3 phase-disjoint users) ---
 zp_cb_cx1 = $B2                   ; [clip]; u8, clipped left X
-zp_yt_sec1 = $B2                  ; [clip]; u8, secondary top y at sx1 (front ceiling proj)
 LC_X1_HI = $B2                    ; [clip]
 ; --- $B3: overlay group (3 phase-disjoint users) ---
 zp_cb_cy1 = $B3                   ; [clip]; u8, clipped left Y (line Y at cx1)
-zp_yt_sec2 = $B3                  ; [clip]; u8, secondary top y at sx2
 LC_Y1_HI = $B3                    ; [clip]
 ; --- $B4: overlay group (3 phase-disjoint users) ---
 zp_cb_cx2 = $B4                   ; [clip]; u8, clipped right X
-zp_yb_sec1 = $B4                  ; [clip]; u8, secondary bot y at sx1 (front floor proj)
 LC_X2_HI = $B4                    ; [clip]
 ; --- $B5: overlay group (3 phase-disjoint users) ---
 zp_cb_cy2 = $B5                   ; [clip]; u8, clipped right Y (line Y at cx2)
-zp_yb_sec2 = $B5                  ; [clip]; u8, secondary bot y at sx2
 LC_Y2_HI = $B5                    ; [clip]
 ; --- $B6: overlay group (4 phase-disjoint users) ---
 zp_cb_top1 = $B6                  ; [clip]; u8, span top at cx1
-zp_pre_dom_flags = $B6            ; [clip]
-zp_eos_cy_lo = $B6                ; [clip]
-zp_tfr_top_v = $B6                ; [clip]; top verdict (0/1/2) for current fragment
 ; --- $B7: overlay group (3 phase-disjoint users) ---
 zp_cb_top2 = $B7                  ; [clip]; u8, span top at cx2
-zp_eos_cy_hi = $B7                ; [clip]
-zp_tfr_top_cy0 = $B7              ; [clip]; top line y at fragment lo
 ; --- $B8: overlay group (3 phase-disjoint users) ---
 zp_cb_bot1 = $B8                  ; [clip]; u8, span bot at cx1
-zp_eos_t_lo = $B8                 ; [clip]
-zp_tfr_top_cy1 = $B8              ; [clip]; top line y at fragment hi
 ; --- $B9: overlay group (3 phase-disjoint users) ---
 zp_cb_bot2 = $B9                  ; [clip]; u8, span bot at cx2
-zp_eos_t_hi = $B9                 ; [clip]
-zp_tfr_bot_v = $B9                ; [clip]; bot verdict for current fragment
 zp_tg_cont = $BA                  ; [clip]; portal continuation: $FF=inactive, else=prev span xend
-zp_tg_emit = $BB                  ; [clip]; tighten emission mask: bit0=emit top, bit1=emit bot
 zp_dcl_rec_buf = $BC              ; [clip]; lo byte of buffer ptr ; w=2
 zp_dcl_rec_buf_h = $BD            ; [clip]; hi byte of buffer ptr ($00 = records disabled)
 zp_dcl_rec_off = $BE              ; [clip]; current write offset (1-based) within buffer
-zp_dcl_last_cy = $BF              ; [clip]; cy at previous span's ox1 (for continuation cy0 reuse)
 zp_head = $C0                     ; [clip]
 zp_free = $C1                     ; [clip]
 zp_ilo = $C2                      ; [clip]
 zp_ihi = $C3                      ; [clip]
-zp_sx1 = $C4                      ; [clip]; s16: seg left X  (lo, hi)
-zp_sx1h = $C5                     ; [clip]
-zp_sx2 = $C6                      ; [clip]; s16: seg right X
-zp_sx2h = $C7                     ; [clip]
-zp_yt1 = $C8                      ; [clip]; s16: top Y at sx1
-zp_yt1h = $C9                     ; [clip]
-zp_yt2 = $CA                      ; [clip]; s16: top Y at sx2
-zp_yt2h = $CB                     ; [clip]
-zp_yb1 = $CC                      ; [clip]; s16: bot Y at sx1
-zp_yb1h = $CD                     ; [clip]
-zp_yb2 = $CE                      ; [clip]; s16: bot Y at sx2
-zp_yb2h = $CF                     ; [clip]
 zp_hg_cache = $D0                 ; [clip]; has_gap coherence cache: last-matching span offset
 zp_i_x0 = $D1                     ; [clip]
 zp_i_y0 = $D2                     ; [clip]
 ; --- $D3: overlay group (2 phase-disjoint users) ---
-zp_i_y0h = $D3                    ; [clip]
 zp_seg_cur_evy = $D3              ; [bsp]; rounded s8 view-y of just-processed vertex
 ; --- $D4: overlay group (2 phase-disjoint users) ---
-zp_i_x1 = $D4                     ; [clip]
 zp_seg_cur_evx = $D4              ; [bsp]; truncated s8 view-x
 zp_i_y1 = $D5                     ; [clip]
 ; --- $D6: overlay group (2 phase-disjoint users) ---
-zp_i_y1h = $D6                    ; [clip]
 zp_seg_v1_evy = $D6               ; [bsp]
 ; --- $D7: overlay group (3 phase-disjoint users) ---
-zp_i_res = $D7                    ; [clip]
-zp_clr_slo = $D7                  ; [clip]; sub-range low x
-zp_tfr_top_off = $D7              ; [clip]; offset of top record (0 = none)
 ; --- $D8: overlay group (3 phase-disjoint users) ---
-zp_i_resh = $D8                   ; [clip]
-zp_clr_shi = $D8                  ; [clip]; sub-range high x
-zp_tfr_bot_off = $D8              ; [clip]; offset of bot record (0 = none)
 zp_mul_b = $D9                    ; [bsp+clip]
 ; --- $DA: overlay group (2 phase-disjoint users) ---
 zp_prod_lo = $DA                  ; [bsp+clip]
@@ -288,75 +231,33 @@ zp_tmp0 = $DE                     ; [bsp+clip]; umul8 scratch (matches span_clip
 zp_tmp1 = $DF                     ; [clip]
 zp_tmp2 = $E0                     ; [clip]
 ; --- $E1: overlay group (2 phase-disjoint users) ---
-zp_tmp3 = $E1                     ; [clip]
 zp_seg_v1_clipped = $E1           ; [bsp]
 zp_prev = $E2                     ; [clip]
 zp_buf = $E3                      ; [clip]; u16 pointer ($E3/$E4)
 zp_seg_v2_evy = $E4               ; [bsp]
 ; --- $E5: overlay group (3 phase-disjoint users) ---
 zp_save0 = $E5                    ; [clip]; safe scratch (not clobbered by interp)
-zp_eos_b_lo = $E5                 ; [clip]
-zp_tfr_bot_cy0 = $E5              ; [clip]; bot line y at fragment lo
 ; --- $E6: overlay group (3 phase-disjoint users) ---
 zp_save1 = $E6                    ; [clip]; safe scratch #2
-zp_eos_b_hi = $E6                 ; [clip]
-zp_tfr_bot_cy1 = $E6              ; [clip]; bot line y at fragment hi
 ; --- $E7: overlay group (3 phase-disjoint users) ---
 zp_save2 = $E7                    ; [clip]; safe scratch #3 (alias for tighten zp_new_tail; mark_solid only)
 zp_new_tail = $E7                 ; [clip]; offset of last span in new list (0 = no tail yet)
-zp_eos_verdict = $E7              ; [clip]
 zp_old_cur = $E8                  ; [clip]; current span in old list walk
 zp_ox0 = $E9                      ; [clip]; overlap X range
 zp_ox1 = $EA                      ; [clip]
 ; --- $EB: overlay group (3 phase-disjoint users) ---
-zp_clr_otl = $EB                  ; [clip]; (alias zp_ot_l)   span_top at ox0
-zp_ot_l = $EB                     ; [clip]; old boundary at overlap endpoints (u8)
-zp_tfr_old_tl = $EB               ; [clip]; old span top at fragment lo (alias zp_ot_l)
 ; --- $EC: overlay group (3 phase-disjoint users) ---
-zp_clr_otr = $EC                  ; [clip]; (alias zp_ot_r)   span_top at ox1
-zp_ot_r = $EC                     ; [clip]
-zp_tfr_old_tr = $EC               ; [clip]; old span top at fragment hi
 ; --- $ED: overlay group (3 phase-disjoint users) ---
-zp_clr_obl = $ED                  ; [clip]; (alias zp_ob_l)   span_bot at ox0
-zp_ob_l = $ED                     ; [clip]
-zp_tfr_old_bl = $ED               ; [clip]; old span bot at fragment lo
 ; --- $EE: overlay group (3 phase-disjoint users) ---
-zp_clr_obr = $EE                  ; [clip]; (alias zp_ob_r)   span_bot at ox1
-zp_ob_r = $EE                     ; [clip]
-zp_tfr_old_br = $EE               ; [clip]; old span bot at fragment hi
 ; --- $EF: overlay group (3 phase-disjoint users) ---
-zp_clr_cy0 = $EF                  ; [clip]; (alias zp_nt_l)   line y at ox0
 zp_nt_l = $EF                     ; [clip]; new boundary at overlap endpoints (s16)
-zp_tfr_rt_l = $EF                 ; [clip]; result top at fragment lo (after max)
 ; --- $F0: overlay group (2 phase-disjoint users) ---
-zp_clr_offset = $F0               ; [clip]; (alias zp_nt_lh)  next-record write offset in buffer
-zp_nt_lh = $F0                    ; [clip]
 ; --- $F1: overlay group (3 phase-disjoint users) ---
-zp_clr_cy1 = $F1                  ; [clip]; (alias zp_nt_r)   line y at ox1
-zp_nt_r = $F1                     ; [clip]
-zp_tfr_rt_r = $F1                 ; [clip]; result top at fragment hi
 ; --- $F2: overlay group (2 phase-disjoint users) ---
-zp_clr_count = $F2                ; [clip]; (alias zp_nt_rh)  count of records written
-zp_nt_rh = $F2                    ; [clip]
 ; --- $F3: overlay group (2 phase-disjoint users) ---
 zp_nb_l = $F3                     ; [clip]
-zp_tfr_rb_l = $F3                 ; [clip]; result bot at fragment lo (after min)
 ; --- $F4: overlay group (2 phase-disjoint users) ---
 zp_clr_save_x = $F4               ; [clip]; (alias zp_nb_lh)  save X across interp_store calls
-zp_nb_lh = $F4                    ; [clip]
 ; --- $F5: overlay group (2 phase-disjoint users) ---
-zp_nb_r = $F5                     ; [clip]
-zp_tfr_rb_r = $F5                 ; [clip]; result bot at fragment hi
-zp_nb_rh = $F6                    ; [clip]
 ; --- $F7: overlay group (2 phase-disjoint users) ---
-zp_clr_cx_t = $F7                 ; [clip]; (alias zp_cx_top) top crossover x  ($00 = none)
-zp_cx_top = $F7                   ; [clip]; crossover X for top boundary (0=none)
 ; --- $F8: overlay group (2 phase-disjoint users) ---
-zp_clr_cx_b = $F8                 ; [clip]; (alias zp_cx_bot) bot crossover x  ($00 = none)
-zp_cx_bot = $F8                   ; [clip]; crossover X for bot boundary (0=none)
-zp_final_ox1 = $F9                ; [clip]; saved ox1 for multi-interval processing
-zp_cc_num_lo = $FA                ; [clip]
-zp_cc_num_mid = $FB               ; [clip]
-zp_cc_num_hi = $FC                ; [clip]
-zp_cc_den_lo = $FD                ; [clip]
-zp_cc_den_hi = $FE                ; [clip]

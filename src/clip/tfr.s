@@ -1,3 +1,74 @@
+
+; --- TG_APPEND_X: append span X to the new list, with merge optimization ---
+;
+; Tries to merge X into the tail when both are constant-line spans
+; (tl==tr, bl==br) with matching Y values and contiguous X ranges.
+; This prevents span-count explosion from crossover splits; ~96% of
+; merge candidates are constant-line, so the 6-compare fast path
+; resolves quickly.
+tg_append_x:
+.scope
+LDA zp_new_tail
+BNE ta_try_merge
+; ||
+; First span: set head. POOL_NEXT,X = 0 (end of list).
+; A is already 0 from the LDA above (BNE not taken ↔ A=0).
+STA POOL_NEXT,X                         ; |
+STX zp_head
+STX zp_new_tail
+RTS
+; |
+ta_try_merge:
+LDY zp_new_tail                         ; |
+; Fail fast: tail Y must be a constant-line span (tl==tr AND bl==br).
+LDA POOL_TL,Y
+CMP POOL_TR,Y
+BNE ta_link
+; |||
+LDA POOL_BL,Y
+CMP POOL_BR,Y
+BNE ta_link
+; ||
+; New X must also be a constant-line span.
+LDA POOL_TL,X
+CMP POOL_TR,X
+BNE ta_link
+; ||
+LDA POOL_BL,X
+CMP POOL_BR,X
+BNE ta_link
+; |
+; Matching constants?
+LDA POOL_TL,Y
+CMP POOL_TL,X
+BNE ta_link
+; |
+LDA POOL_BL,Y
+CMP POOL_BL,X
+BNE ta_link
+; |
+; Contiguous active ranges? (abutting: tail.xend == new.xstart)
+LDA POOL_XEND,Y
+CMP POOL_XSTART,X
+BNE ta_link
+; |
+; Merge: extend tail's xend to cover new, then free X.
+LDA POOL_XEND,X
+STA POOL_XEND,Y
+JMP free_span                           ; frees X (via tail-call), returns
+ta_link:
+; X becomes new tail — write POOL_NEXT,X = 0 (deferred from entry).
+LDA #0
+STA POOL_NEXT,X
+; ||
+TXA
+STA POOL_NEXT,Y
+; ||
+STX zp_new_tail
+RTS
+; |||
+.endscope
+
 ; TFS state block ($0900-$091B) — the 3-cursor event walk's working set.
 ; (Moved here from the deleted 6-byte-records legacy file.)
 TFS_CUR_X = $0900                       ; current x in inner loop

@@ -7,8 +7,6 @@
 .include "clip/interp.s"
 .include "clip/mark_solid.s"
 .include "clip/query.s"
-.include "clip/tighten.s"
-.include "clip/crossover.s"
 .include "clip/dcl.s"
 .include "clip/tfr.s"
 .include "clip/dcl_s16.s"

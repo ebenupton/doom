@@ -67,7 +67,7 @@ ADC #1
 
 ; Public entry points for other engine modules (bsp_render links against
 ; these; the Python harness finds them through the symbol map).
-.export jt_init, jt_mark_solid, jt_tighten, jt_has_gap, jt_is_full
+.export jt_init, jt_mark_solid, jt_has_gap, jt_is_full
 .export jt_read, jt_interp_store, jt_draw_clip
 .export jt_tighten_from_records, jt_draw_clip_s16, jt_umul8, jt_udiv16_8
 
@@ -76,7 +76,6 @@ ADC #1
 ; JMP is 3 bytes, so entries are evenly spaced.
 jt_init: JMP span_init                           ; $2000                                             ; |
 jt_mark_solid: JMP span_mark_solid                     ; $2003                                             ; |
-jt_tighten: JMP span_tighten                        ; $2006                                             ; |
 jt_has_gap: JMP span_has_gap                        ; $2009                                             ; |||
 jt_is_full: JMP span_is_full                        ; $200C
 jt_read: JMP span_read                           ; $200F
