@@ -36,6 +36,16 @@ IF HAMILTONIAN_12
     JMP entry_12_nj        ; hamiltonian path (do_dispatch PLPs direction)
     .skip_ham
 ENDIF
+IF HAMILTONIAN_23
+    \ here dx >= 2dy (dy <= dx/2), so dx-dy >= dy and neither SBC borrows
+    TXA:SEC:SBC dy:SBC dy  ; A = dx - 2dy exact, C=1
+    BEQ skip_23            ; dx == 2dy -> generic (protocol excludes boundary)
+    CMP dy
+    BCC in_23              ; dx <  3dy -> band
+    BNE skip_23            ; dx >  3dy -> generic
+    .in_23 JMP entry_23_nj ; dx == 3dy included; A = delta1
+    .skip_23
+ENDIF
     LDA dy:BEQ horizontal:STA cnt
     TXA:LSR A:STA err:STA errs
     LDA #2:STA ls

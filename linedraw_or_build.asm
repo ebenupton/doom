@@ -20,8 +20,12 @@ b = &87
 
 HAMILTONIAN_12 = TRUE
 STEEP_COMPACT = TRUE
+HAMILTONIAN_23 = TRUE
 
 INCLUDE "raster/nj-linedraw4-or.asm"
 INCLUDE "raster/shallow_12_hamiltonian-or.asm"
+IF HAMILTONIAN_23
+INCLUDE "raster/shallow_23_hamiltonian-or.asm"
+ENDIF
 
 SAVE "linedraw_or.bin", &2000, P%
