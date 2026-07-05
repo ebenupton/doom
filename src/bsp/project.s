@@ -18,6 +18,13 @@
 ; ============================================================================
 br_project_x_subpx:
 .scope
+; rhi==0 (vertex beyond ~1024 world units — recip < 1.0): terms A
+; (vx*rhi) and C (vx_frac*rhi >> 8) are EXACTLY zero, so only term B
+; survives: sx = 128 + signext(hi(vx*rlo)). 1 multiply instead of 3.
+LDA zp_br_rhi
+BNE px_full
+JMP px_rhi0                             ; handler lives in the D region
+px_full:
 ; sum := HALF_W (128) as s16
 LDA #128
 STA zp_br_vxlo
@@ -69,6 +76,9 @@ ADC zp_br_t3
 STA zp_br_vxhi
 
 ; --- Add C = (u8(vx_frac) × u8(recip_hi)) >> 8 ---
+; (exactly zero when the fractional view-x is zero — skip the multiply)
+LDA zp_br_t1
+BEQ px_c_done
 LDA zp_br_rhi
 STA zp_mul_b
 LDA zp_br_t1
@@ -80,6 +90,7 @@ STA zp_br_vxlo
 LDA #0
 ADC zp_br_vxhi
 STA zp_br_vxhi
+px_c_done:
 
 ; Move sum into resl/h (the standard output slot).
 LDA zp_br_vxlo
@@ -104,6 +115,11 @@ RTS
 ; ============================================================================
 br_project_y_raw:
 .scope
+; rhi==0: term A (h*rhi) is exactly zero -> sy = 128 - signext(hi(h*rlo)).
+LDA zp_br_rhi
+BNE py_full
+JMP py_rhi0                             ; handler lives in the D region
+py_full:
 ; sum := HALF_H + Y_BIAS (80 + 48) as s16 — the bias every consumer
 ; previously added (copy_seg_to_vx, ap2_solid_proj) is folded into
 ; the projection constant. Same final values, no per-store adds.

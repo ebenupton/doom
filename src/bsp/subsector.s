@@ -109,24 +109,14 @@ STA $0800                               ; BOT_RECORDS count
 STA $BC                                 ; ZP_DCL_REC_BUF lo
 STA $BD                                 ; ZP_DCL_REC_BUF hi (= "no records buffer")
 
-; --- seg header via the persistent pointer ---
+; --- seg header via the persistent pointer. Back-face inputs first
+; (offsets 4-10: lv1x/lv1y/ldx/ldy/flags); v1/v2 (offsets 0-3) are only
+; read after the test passes — back-facing segs never need them. ---
 LDA zp_seg_hdr_p
 STA zp_br_p
 LDA zp_seg_hdr_p_h
 STA zp_br_p_h
-LDY #0
-LDA (zp_br_p),Y
-STA zp_seg_v1_lo
-INY
-LDA (zp_br_p),Y
-STA zp_seg_v1_hi
-INY
-LDA (zp_br_p),Y
-STA zp_seg_v2_lo
-INY
-LDA (zp_br_p),Y
-STA zp_seg_v2_hi
-INY
+LDY #4
 LDA (zp_br_p),Y
 STA zp_seg_lv1x_lo
 INY
@@ -154,6 +144,23 @@ LDA zp_seg_skip
 BEQ bf_passed
 JMP s_advance
 bf_passed:
+; front-facing: fetch v1/v2 (the test clobbers zp_br_p — reload)
+LDA zp_seg_hdr_p
+STA zp_br_p
+LDA zp_seg_hdr_p_h
+STA zp_br_p_h
+LDY #0
+LDA (zp_br_p),Y
+STA zp_seg_v1_lo
+INY
+LDA (zp_br_p),Y
+STA zp_seg_v1_hi
+INY
+LDA (zp_br_p),Y
+STA zp_seg_v2_lo
+INY
+LDA (zp_br_p),Y
+STA zp_seg_v2_hi
 
 ; --- Read fh, ch, bfh, bch from the 6-byte/seg FHCH table:
 ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].

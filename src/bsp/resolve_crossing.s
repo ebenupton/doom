@@ -36,6 +36,59 @@ STA zp_node_chhi
 RTS
 .endscope
 
+; ============================================================================
+; rhi==0 projection fast paths (bodies live here — MAIN is full). When the
+; reciprocal hi byte is zero (vertex beyond ~1024 world units) the rhi
+; product terms are EXACTLY zero: only the rlo term survives.
+; ============================================================================
+px_rhi0:
+; sx = 128 + signext(hi(vx*rlo))    (terms A and C of the 3-mul path = 0)
+LDA zp_br_t0
+STA zp_br_a
+LDA zp_br_rlo
+STA zp_br_b
+JSR br_smul_s8_u8
+LDA zp_br_resh
+BPL px0_pos
+CLC
+ADC #128
+STA zp_br_resl
+LDA #$FF
+ADC #0
+STA zp_br_resh
+RTS
+px0_pos:
+CLC
+ADC #128
+STA zp_br_resl
+LDA #0
+ADC #0
+STA zp_br_resh
+RTS
+
+py_rhi0:
+; sy = 128 - signext(hi(h*rlo))     (term A of the 2-mul path = 0)
+LDA zp_br_t0
+STA zp_br_a
+LDA zp_br_rlo
+STA zp_br_b
+JSR br_smul_s8_u8
+LDX #0
+LDA zp_br_resh
+BPL py0_ext
+LDX #$FF
+py0_ext:
+STA zp_br_t2
+STX zp_br_t3
+LDA #128
+SEC
+SBC zp_br_t2
+STA zp_br_resl
+LDA #0
+SBC zp_br_t3
+STA zp_br_resh
+RTS
+
 bsp_d_end:
 .if ::BANKED
 ; (ld65 writes this: SAVE "bsp_render_d_bk.bin", $3BC0, bsp_d_end, $3BC0)

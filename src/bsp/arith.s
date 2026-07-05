@@ -320,23 +320,19 @@ BCS um1_uo
 LDA sqr_lo,X
 SEC
 SBC sqr_lo,Y
-STA zp_prod_lo
+STA zp_br_resl
 LDA sqr_hi,X
 SBC sqr_hi,Y
-STA zp_prod_hi
+STA zp_br_resh
 JMP um1_done
 um1_uo:
 LDA sqr2_lo,X
 SBC sqr_lo,Y
-STA zp_prod_lo
+STA zp_br_resl
 LDA sqr2_hi,X
 SBC sqr_hi,Y
-STA zp_prod_hi
-um1_done:
-LDA zp_prod_lo
-STA zp_br_resl
-LDA zp_prod_hi
 STA zp_br_resh
+um1_done:
 ZERO zp_br_resext
 ; --- inlined umul8(zp_ri_dhi, mag) ---
 LDA zp_ri_dhi
