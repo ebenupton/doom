@@ -9,4 +9,5 @@
 .include "clip/query.s"
 .include "clip/dcl.s"
 .include "clip/tfr.s"
+.include "clip/plot_axis.s"
 .include "clip/dcl_s16.s"

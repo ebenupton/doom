@@ -228,6 +228,7 @@ zp_seg_v1_evx = $DD               ; [bsp]
 zp_tmp0 = $DE                     ; [bsp+clip]; umul8 scratch (matches span_clip); free outside span_clip
 zp_tmp1 = $DF                     ; [clip]
 zp_tmp2 = $E0                     ; [clip]
+zp_plot_i = $95                     ; [clip]; plot_h byte-index scratch
 ; --- $E1: overlay group (2 phase-disjoint users) ---
 zp_seg_v1_clipped = $E1           ; [bsp]
 zp_prev = $E2                     ; [clip]

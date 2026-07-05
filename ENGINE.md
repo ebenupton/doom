@@ -35,6 +35,8 @@ list and rasterised by the vendored NJ line drawer.
       clip/mark_solid.s    lazy column removal (split/truncate/shrink)
       clip/query.s         has_gap (+coherence cache), is_full, span_read
       clip/dcl.s           draw_clipped_line: per-span CB clip + emission
+      clip/plot_axis.s     dedicated horizontal/vertical plotters (~70% of
+                           rasterised pixels; byte strips / constant mask)
       clip/tfr.s           tighten_from_records (3-cursor event walk,
                            tg_append_x merge) — THE production tighten
       clip/dcl_s16.s       s16 front-end: clips to u8, tail-calls DCL
@@ -119,6 +121,10 @@ ground-truth verify at 5 fixed positions has not worsened vs
 `baseline.json`; suite frame cycles have not regressed >0.25%.
 
 - Cycle counts come from py65 execution only — never estimate.
+- Rasteriser/pixel changes: the differential suite renders BOTH sides
+  through the same 6502 rasteriser and cannot see a pixel change that
+  affects both equally — use fb_gate.py (capture golden framebuffers
+  before, byte-compare after).
 - `verify_6502_vs_python.py X Y AB` for one position; no args for the
   147-position sweep. Its metric is two-sided: `over` = 6502-only pixels,
   `miss` = Python-only pixels. **Missing lines are bugs** — never dismiss

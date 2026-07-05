@@ -471,7 +471,7 @@ STA LINE_OUT_BUF,Y
 STA RASTER_ZP_Y1
 INY
 STY LINE_OUT_COUNT
-JMP RASTER_ENTRY
+JMP plot_v                              ; always vertical on this path
 
 ; ========== Phase 4: CB clip (clip_to_span) ==========
 ; Exact clip of the line against the span's trapezoid aperture.
@@ -1039,6 +1039,19 @@ STA LINE_OUT_BUF,Y
 STA RASTER_ZP_Y1
 INY
 STY LINE_OUT_COUNT
+; --- axis dispatch: ~70% of rasterised pixels are in horizontal or
+; vertical segments (gradient census 2026-07-05) — route them to the
+; dedicated plotters instead of the generic NJ machinery ---
+LDA RASTER_ZP_Y0
+CMP RASTER_ZP_Y1
+BNE des_not_h
+JMP plot_h
+des_not_h:
+LDA RASTER_ZP_X0
+CMP RASTER_ZP_X1
+BNE des_diag
+JMP plot_v
+des_diag:
 JMP RASTER_ENTRY                        ; tail-call rasteriser
 
 .endscope
