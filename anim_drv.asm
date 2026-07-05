@@ -41,10 +41,23 @@ ORG &3C00
     LDA #6 :STA &FE00: LDA #20 :STA &FE01
     LDA #7 :STA &FE00: LDA #28 :STA &FE01
     LDA #10:STA &FE00: LDA #&20:STA &FE01
+    ; --- System VIA T1: free-run, period 19968us = exactly one 312-line PAL
+    ;     field (latch 19966 + 2), so one phase-lock to vsync here holds for
+    ;     ever (zero drift). T1 high byte then gives the beam position at any
+    ;     instant (4-line granularity) without interrupts. CA1 IFR bit 1 is
+    ;     the vsync edge; MOS is dead after our SEI so nobody else clears it.
+    LDA &FE4B:AND #&3F:ORA #&40:STA &FE4B           ; ACR: T1 continuous, PB7 off
+    LDA #&FE:STA &FE46                              ; T1 latch = $4DFE = 19966
+    LDA #&4D:STA &FE47
+    LDA #2  :STA &FE4D                              ; clear stale vsync flag
+.vsy0
+    LDA &FE4D:AND #2:BEQ vsy0                       ; wait for vsync edge
+    LDA #&4D:STA &FE45                              ; start T1: phase = time since vsync
     ; --- init animation state ---
     LDA #0   :STA angidx
     LDA #LO(tabbase):STA ptlo : LDA #HI(tabbase):STA pthi
     LDA #&6C :STA backhi                            ; first hidden buffer = FB1
+    JSR clr58t:JSR clr58b:JSR clr6Ct:JSR clr6Cb     ; both buffers start clean
 .frame
     ; --- load per-frame sincos + view angle from the table ---
     LDA ptlo:STA &EC : LDA pthi:STA &ED
@@ -56,21 +69,14 @@ ORG &3C00
     INY:LDA (&EC),Y:STA &09                         ; c_neg
     INY:LDA (&EC),Y:STA &0A                         ; c_one
     INY:LDA (&EC),Y:STA &3A2F                       ; bca_ab (view angle)
-    ; --- render one frame into the hidden buffer ---
+    ; --- render one frame into the hidden buffer (cleared for us by the
+    ;     previous iteration's flip scheduler) ---
     LDA backhi:STA &70                              ; rasteriser scrstrt hi
     LDA #4 :STA &FE30 : JSR &4809                   ; br_view_setup
     LDA #6 :STA &FE30 : JSR &8000                   ; span_init / pool
-    ; --- clear hidden buffer (unrolled; one routine per buffer location) ---
-    LDA backhi : CMP #&58 : BNE cb_fb1
-    JSR clr_5800 : JMP cb_done
-.cb_fb1
-    JSR clr_6C00
-.cb_done
     LDA #4 :STA &FE30 : JSR &481B : JSR &4815       ; init_frame + render_frame
-    ; --- flip CRTC to show the buffer we just drew ---
-    LDA #12:STA &FE00 : LDA backhi:LSR A:LSR A:LSR A:STA &FE01          ; R12=hi>>3
-    LDA #13:STA &FE00 : LDA backhi:AND #7:ASL A:ASL A:ASL A:ASL A:ASL A:STA &FE01
-    LDA backhi:EOR #(&58 EOR &6C):STA backhi        ; toggle $58<->$6C
+    ; --- flip + beam-scheduled clear of the buffer coming off display ---
+    JSR flip_sched                                  ; toggles backhi
     ; --- advance to next frame (wrap at 64) ---
     INC angidx
     LDA angidx:CMP #64:BCC adv
@@ -86,28 +92,119 @@ ORG &3C00
 .drv_end
 
 ; --- unrolled framebuffer clears (in the $4000-$47FF the render never touches).
-;     A=0 stored through 20 absolute,Y stores per Y; Y walks 0..255. One routine
-;     per buffer so the page addresses are fixed immediates (STA abs,Y = 5cyc). ---
+;     Split at the half-screen boundary (80 rows = 10 pages) so the flip
+;     scheduler can clear the beam-passed top half early. STA abs,Y = 5cyc. ---
 ORG &4000
-.clr_5800
+.clr58t
     LDA #0 : TAY
-.c0
+.c0t
     STA &5800,Y : STA &5900,Y : STA &5A00,Y : STA &5B00,Y
     STA &5C00,Y : STA &5D00,Y : STA &5E00,Y : STA &5F00,Y
-    STA &6000,Y : STA &6100,Y : STA &6200,Y : STA &6300,Y
-    STA &6400,Y : STA &6500,Y : STA &6600,Y : STA &6700,Y
-    STA &6800,Y : STA &6900,Y : STA &6A00,Y : STA &6B00,Y
-    INY : BNE c0
+    STA &6000,Y : STA &6100,Y
+    INY : BNE c0t
     RTS
-.clr_6C00
+.clr58b
     LDA #0 : TAY
-.c1
+.c0b
+    STA &6200,Y : STA &6300,Y : STA &6400,Y : STA &6500,Y
+    STA &6600,Y : STA &6700,Y : STA &6800,Y : STA &6900,Y
+    STA &6A00,Y : STA &6B00,Y
+    INY : BNE c0b
+    RTS
+.clr6Ct
+    LDA #0 : TAY
+.c1t
     STA &6C00,Y : STA &6D00,Y : STA &6E00,Y : STA &6F00,Y
     STA &7000,Y : STA &7100,Y : STA &7200,Y : STA &7300,Y
-    STA &7400,Y : STA &7500,Y : STA &7600,Y : STA &7700,Y
-    STA &7800,Y : STA &7900,Y : STA &7A00,Y : STA &7B00,Y
-    STA &7C00,Y : STA &7D00,Y : STA &7E00,Y : STA &7F00,Y
-    INY : BNE c1
+    STA &7400,Y : STA &7500,Y
+    INY : BNE c1t
     RTS
+.clr6Cb
+    LDA #0 : TAY
+.c1b
+    STA &7600,Y : STA &7700,Y : STA &7800,Y : STA &7900,Y
+    STA &7A00,Y : STA &7B00,Y : STA &7C00,Y : STA &7D00,Y
+    STA &7E00,Y : STA &7F00,Y
+    INY : BNE c1b
+    RTS
+
+; --- flip_sched: show the just-rendered buffer, then clear the buffer coming
+; off display without ever touching a row the beam has yet to draw.
+;
+; Field timeline (T1 phase e = us since vsync, one field = 19968us):
+;   e in [0,5632)      vertical blanking; frame top (CRTC reloads R12/R13)
+;                      at e=5632
+;   e in [5632,15872)  display rows 0..159 of the CURRENT address
+;   e in [15872,19968) bottom border
+;
+; After we write R12/R13 the OLD buffer keeps displaying only until the next
+; frame top. So: rows the beam has already drawn this field are clearable NOW;
+; rows still ahead of the beam must wait for the vsync flag. If the display of
+; the old buffer has already finished (blanking or bottom border), everything
+; is clearable and no wait is needed at all.
+;
+; T1 high byte H -> class (4-line granularity, boundaries biased conservative):
+;   H  0..14  bottom border          -> class 2: clear all, no wait
+;   H 15..34  beam in bottom half    -> class 1: clear top now, wait, clear bot
+;   H 35..56  beam in top half       -> class 0: wait, then clear all
+;   H 57..77  post-vsync blanking    -> class 2
+;   H 78..255 unreachable/transient  -> class 0 (safe fallback)
+; ---------------------------------------------------------------------------
+.flip_sched
+    ; R12/R13 straddle guard: the pair must not bracket the frame-top reload
+    ; (e=5632 -> T1 = 14334 = $37FE). Spin while H in [$36,$38] (<=768us, rare).
+.fs_guard
+    LDA &FE45
+    CMP #&36 : BCC fs_go
+    CMP #&39 : BCS fs_go
+    JMP fs_guard
+.fs_go
+    LDA #12:STA &FE00 : LDA backhi:LSR A:LSR A:LSR A:STA &FE01          ; R12=hi>>3
+    LDA #13:STA &FE00 : LDA backhi:AND #7:ASL A:ASL A:ASL A:ASL A:ASL A:STA &FE01
+    LDA backhi:EOR #(&58 EOR &6C):STA backhi        ; backhi = buffer coming off display
+    LDX &FE45
+    LDA beamtbl,X
+    BEQ fs_cls0
+    CMP #1 : BEQ fs_cls1
+    JMP fs_clrall                                   ; class 2: no wait
+.fs_cls0                                            ; beam in top half: all must wait
+    LDA #2:STA &FE4D
+.fs_w0
+    LDA &FE4D:AND #2:BEQ fs_w0
+    JMP fs_clrall
+.fs_cls1                                            ; beam in bottom half
+    LDA #2:STA &FE4D                                ; arm BEFORE clearing (flag latches)
+    JSR fs_clrtop
+.fs_w1
+    LDA &FE4D:AND #2:BEQ fs_w1
+    JMP fs_clrbot
+.fs_clrall
+    JSR fs_clrtop
+.fs_clrbot
+    LDA backhi : CMP #&58 : BNE fs_cb1
+    JMP clr58b
+.fs_cb1
+    JMP clr6Cb
+.fs_clrtop
+    LDA backhi : CMP #&58 : BNE fs_ct1
+    JMP clr58t
+.fs_ct1
+    JMP clr6Ct
+
+ALIGN &100
+.beamtbl
+    FOR n, 0, 255
+      IF n <= 14
+        EQUB 2
+      ELIF n <= 34
+        EQUB 1
+      ELIF n <= 56
+        EQUB 0
+      ELIF n <= 77
+        EQUB 2
+      ELSE
+        EQUB 0
+      ENDIF
+    NEXT
 .clr_end
 SAVE "ANIMDRV", &3C00, clr_end, &3C00
