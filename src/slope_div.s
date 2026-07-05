@@ -1,3 +1,4 @@
+.include "zp.inc"
 ; CPU target: every builder MUST pass -D C02=0 (6502) or -D C02=1 (65C02 opcodes).
 .if C02
 .setcpu "65C02"
@@ -13,10 +14,6 @@
 ; Python clamp). Otherwise a 10-iteration restoring divide: r=num; 10x
 ; { r<<=1; q<<=1; if r>=den { r-=den; q+=1 } } yields floor(num*2^10/den).
 
-sd_num = $44
-sd_den = $46
-sd_q = $48
-sd_r = $4A
 
 ; Integration build: loaded at $E940 (bsp_render_ang.bin). Tables: TA_LO in the
 ; reclaimed rotation-cache RAM ($DC00-$DFFF, 1024 entries), TA_HI/VATOX in the
@@ -150,15 +147,8 @@ RTS
 ; point_to_angle(dx,dy) -> fineangle [0,4096). 8 octants; each does
 ; slope_div(min(|dx|,|dy|), max(...)) -> tantoangle, then base +/- ta.
 ; tantoangle table: TA_LO/TA_HI (1025 entries) loaded by the harness.
-pa_dx = $30                             ; s16 in
-pa_dy = $32                             ; s16 in
-pa_res = $39                            ; u16 out (fineangle)
 ; ($3B/$3C, $71/$72 freed: abs now writes the divide operands directly --
 ;  reused below for bca_afn / bca_cy)
-pa_sx = $73
-pa_sy = $89
-pa_oct = $8A
-pa_ptr = $40                            ; 16-bit table pointer
 .if BANKED
 TA_LO = $8000                           ; bank L2 window: tantoangle lo (1024)
 TA_HI = $8400                           ; bank L2: tantoangle hi (1025)
@@ -197,26 +187,16 @@ bca_left = BCA_WS+$14
 bca_right = BCA_WS+$16
 ; px/py aliased to the live renderer's player-int ZP (frame-persistent);
 ; ab + outputs in the BBOX-vars region the old br_bbox_visible freed.
-bca_px = $01                            ; zp_br_px_h (player int x, s8)
-bca_py = $03                            ; zp_br_py_h
 bca_ab = BCA_WS+$2F
 bca_ilo = BCA_WS+$30
 bca_ihi = BCA_WS+$31
 bca_vis = BCA_WS+$32
 bca_straddle = BCA_WS+$33               ; 1 if a silhouette corner is behind the view plane
 ; (|phi|>ANG90) -> caller uses corner-projection
-bca_afn = $3B                           ; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi
-bca_cy = $71                            ; corner y (s16) -- ZP (freed from pa_ady); hot in corner_phi
 bca_p1 = BCA_WS+$1E                     ; phi1 (s16)
 bca_p2 = BCA_WS+$20                     ; phi2 (s16)
 ; Hottest body vars in spare scavenged ZP (conflict-free) to cut the
 ; absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
-bca_lo = $1E                            ; lo_phi (s16)
-bca_hi = $8B                            ; hi_phi (s16)
-bca_pxs = $8D                           ; px sign-extended (s16)
-bca_pys = $9B                           ; py sign-extended (s16)
-bca_cx = $9D                            ; corner x (s16)
-bca_boxp = $86                          ; ROM box pointer: caller points this at the 8-byte box
 ; (top,bot,left,right s16) and we read via (bca_boxp),Y
 ; instead of copying it into a work area each check.
 t0 = BCA_WS+$2A

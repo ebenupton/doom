@@ -66,6 +66,14 @@ def build(asm, banked=0, c02=None, out=None, force=False):
     key = (mod, banked, c02)
     if key in _built and not force:
         return ''
+    # refuse to build with unallocated ZP declarations (name = ?) pending —
+    # run tools/zpcheck.py --alloc to assign them
+    zp = open(os.path.join(_ROOT, 'src', 'zp.inc')).read()
+    import re as _re
+    m = _re.search(r'^\s*([A-Za-z_]\w*)\s*=\s*\?', zp, _re.M)
+    if m:
+        raise RuntimeError(f'unallocated ZP declaration {m.group(1)!r} in src/zp.inc '
+                           f'— run: python3 tools/zpcheck.py --alloc')
     src, cfgs = _TARGETS[mod]
     cfg, ofile = cfgs[banked]
     objdir = os.path.join(_ROOT, 'build')
