@@ -218,12 +218,11 @@ STA bca_vis
 ; bca_px/bca_py (s8) are still read below by ins_test/box_pos.
 ; inside test: left<=px<=right and bot<=py<=top  -> full (0,255)
 ; left<=px : px-left >= 0
-JSR ins_test
-; a_fine (bca_afn) is now precomputed once/frame by the caller
+; a_fine (bca_afn) is precomputed once/frame by the caller
 ; (br_view_setup), not recomputed here — it is frame-constant. Direct
 ; unit-test callers (test_bca, check_angle_calls) set bca_afn themselves.
-; boxx/boxy -> boxpos -> checkcoord
-JSR box_pos                             ; -> X = boxpos
+; inside test + boxx/boxy classification share one set of subtractions:
+JSR box_classify                        ; -> X = boxpos (inside: full-exit)
 ; cc = checkcoord + boxpos*4
 TXA
 ASL A
@@ -232,18 +231,12 @@ TAX
 ; corner1 = (val[cc0], val[cc1]); load_val inlined -> cx/cy directly
 ; (Y = val index*2 into the box at bca_top; X unchanged by the load).
 LDY bca_cc,X
-TYA
-ASL A
-TAY
 LDA (bca_boxp),Y
 STA bca_cx
 INY
 LDA (bca_boxp),Y
 STA bca_cx+1
 LDY bca_cc+1,X
-TYA
-ASL A
-TAY
 LDA (bca_boxp),Y
 STA bca_cy
 INY
@@ -258,18 +251,12 @@ STA bca_p1+1
 LDX bca_ccsave
 ; corner2 = (val[cc2], val[cc3])
 LDY bca_cc+2,X
-TYA
-ASL A
-TAY
 LDA (bca_boxp),Y
 STA bca_cx
 INY
 LDA (bca_boxp),Y
 STA bca_cx+1
 LDY bca_cc+3,X
-TYA
-ASL A
-TAY
 LDA (bca_boxp),Y
 STA bca_cy
 INY
@@ -436,24 +423,57 @@ STA bca_vis
 RTS
 .endscope
 
-; inside test: if left<=px<=right and bot<=py<=top, set vis=1,ilo=0,ihi=255,
-; and return from bbox_check_angle (pull caller return).
-ins_test:
+; ============================================================================
+; box_classify — ONE pass of box-vs-viewer subtractions yields both the
+; inside test and the checkcoord classification (the old ins_test + box_pos
+; pair recomputed the same comparisons in opposite directions: 8 s16
+; subtracts; this does at most 4).
+;
+;   X <- boxpos = boxy*4 + boxx
+;     boxx: 0 if px<=left,  1 if px<right,  else 2   (px==right -> 1,
+;     boxy: 0 if py>=top,   1 if py>bot,    else 2    py==bot  -> 1 —
+;     both preserved from the original box_pos exactly)
+;   inside (px-left>=0 && right-px>=0 && py-bot>=0 && top-py>=0):
+;     sets vis=1/ilo=0/ihi=255 and returns STRAIGHT to
+;     bbox_check_angle's caller (double-RTS pull), like the old ins_test.
+;
+; Derivation (d = px-left, e = right-px, f = py-top, g = py-bot):
+;   boxx = 0 iff d<=0 ; 2 iff e<0 ; else 1.   inside-x iff d>=0 && e>=0
+;     (d==0 implies e>0 since left<right, so the d==0 arm skips e).
+;   boxy = 0 iff f>=0 ; 2 iff g<0 ; else 1.   inside-y iff f<=0 && g>=0
+;     (f==0 implies g>0 since bot<top).
+; ============================================================================
+box_classify:
 .scope
-; box read via (bca_boxp),Y : top@0/1, bot@2/3, left@4/5, right@6/7.
-; px - left >= 0 ?
+; box via (bca_boxp),Y : top@0, bot@2, left@4, right@6.
+LDA #0
+STA t1                                  ; outside flag
+; --- d = px - left (sign via V fix; 16-bit zero via raw bytes) ---
 LDY #4
 SEC
 LDA bca_pxs
 SBC (bca_boxp),Y
+STA val_lo
 INY
 LDA bca_pxs+1
 SBC (bca_boxp),Y
-BVC i1
+TAX                                     ; raw hi (zero test)
+BVC c1
 EOR #$80
-i1:
-BMI notin
-; right - px >= 0 ?
+c1:
+BMI cx_x0_out                           ; d<0: px<left -> boxx=0, outside
+CPX #0
+BNE cx_x_pos
+LDA val_lo
+BNE cx_x_pos
+LDA #0                                  ; d==0: boxx=0, inside-x ok
+BEQ cx_have_x
+cx_x0_out:
+INC t1
+LDA #0
+BEQ cx_have_x
+cx_x_pos:
+; --- e = right - px (sign only) ---
 LDY #6
 SEC
 LDA (bca_boxp),Y
@@ -461,11 +481,43 @@ SBC bca_pxs
 INY
 LDA (bca_boxp),Y
 SBC bca_pxs+1
-BVC i2
+BVC c2
 EOR #$80
-i2:
-BMI notin
-; py - bot >= 0 ?
+c2:
+BMI cx_x2_out
+LDA #1                                  ; e>=0: boxx=1, inside-x ok
+BNE cx_have_x
+cx_x2_out:
+INC t1                                  ; e<0: px>right -> boxx=2, outside
+LDA #2
+cx_have_x:
+STA t0                                  ; boxx
+; --- f = py - top ---
+LDY #0
+SEC
+LDA bca_pys
+SBC (bca_boxp),Y
+STA val_lo
+INY
+LDA bca_pys+1
+SBC (bca_boxp),Y
+TAX
+BVC c3
+EOR #$80
+c3:
+BMI cx_y_low                            ; f<0: py<top -> boxy 1/2, inside-hi ok
+CPX #0
+BNE cx_y0_out
+LDA val_lo
+BNE cx_y0_out
+LDA #0                                  ; f==0: boxy=0, inside-y ok
+BEQ cx_have_y
+cx_y0_out:
+INC t1                                  ; f>0: py>top -> boxy=0, outside
+LDA #0
+BEQ cx_have_y
+cx_y_low:
+; --- g = py - bot (sign only) ---
 LDY #2
 SEC
 LDA bca_pys
@@ -473,23 +525,28 @@ SBC (bca_boxp),Y
 INY
 LDA bca_pys+1
 SBC (bca_boxp),Y
-BVC i3
+BVC c4
 EOR #$80
-i3:
-BMI notin
-; top - py >= 0 ?
-LDY #0
-SEC
-LDA (bca_boxp),Y
-SBC bca_pys
-INY
-LDA (bca_boxp),Y
-SBC bca_pys+1
-BVC i4
-EOR #$80
-i4:
-BMI notin
-; inside -> set full, discard bbox_check_angle's return addr, return to its caller
+c4:
+BMI cx_y2_out
+LDA #1                                  ; g>=0: boxy=1, inside-y ok
+BNE cx_have_y
+cx_y2_out:
+INC t1                                  ; g<0: py<bot -> boxy=2, outside
+LDA #2
+cx_have_y:
+; X = boxy*4 + boxx
+ASL A
+ASL A
+CLC
+ADC t0
+TAX
+LDA t1
+BEQ cx_inside
+RTS
+cx_inside:
+; inside -> full result; discard box_classify's return, exit to
+; bbox_check_angle's caller.
 LDA #1
 STA bca_vis
 LDA #0
@@ -498,85 +555,6 @@ LDA #255
 STA bca_ihi
 PLA
 PLA
-; drop ins_test return
-RTS                                     ; return to bbox_check_angle's caller
-notin:
-RTS
-.endscope
-
-; box_pos -> X = boxy*4+boxx
-box_pos:
-.scope
-; box via (bca_boxp),Y : top@0, bot@2, left@4, right@6.
-; boxx: 0 if px<=left, 1 if px<right, else 2
-LDY #4
-SEC
-LDA (bca_boxp),Y
-SBC bca_pxs
-INY
-LDA (bca_boxp),Y
-SBC bca_pxs+1
-BVC b1
-EOR #$80
-b1:
-BPL bx0                                 ; left-px >= 0 -> px<=left -> boxx=0
-LDY #6
-SEC
-LDA (bca_boxp),Y
-SBC bca_pxs
-INY
-LDA (bca_boxp),Y
-SBC bca_pxs+1
-BVC b2
-EOR #$80
-b2:
-BMI bx2                                 ; right-px < 0 -> px>=right -> boxx=2 (px<right false)
-LDA #1
-JMP bxd
-bx0:
-LDA #0
-JMP bxd
-bx2:
-LDA #2
-bxd:
-STA t0                                  ; boxx
-; boxy: 0 if py>=top, 1 if py>bot, else 2
-LDY #0
-SEC
-LDA bca_pys
-SBC (bca_boxp),Y
-INY
-LDA bca_pys+1
-SBC (bca_boxp),Y
-BVC c1
-EOR #$80
-c1:
-BPL by0                                 ; py-top>=0 -> py>=top -> boxy=0
-LDY #2
-SEC
-LDA bca_pys
-SBC (bca_boxp),Y
-INY
-LDA bca_pys+1
-SBC (bca_boxp),Y
-BVC c2
-EOR #$80
-c2:
-BMI by2                                 ; py-bot<0 -> py<=bot -> boxy=2
-LDA #1
-JMP byd
-; py>bot -> boxy=1
-by0:
-LDA #0
-JMP byd
-by2:
-LDA #2
-byd:
-ASL A
-ASL A
-CLC
-ADC t0
-TAX
 RTS
 .endscope
 
@@ -620,7 +598,8 @@ LDA #0
 STA pa_sx
 LDA pa_dx+1
 BPL dxp
-INC pa_sx
+LDA #4                                  ; sx pre-shifted for the oct fold
+STA pa_sx
 LDA #0
 SEC
 SBC pa_dx
@@ -640,7 +619,8 @@ LDA #0
 STA pa_sy
 LDA pa_dy+1
 BPL dyp
-INC pa_sy
+LDA #2                                  ; sy pre-shifted for the oct fold
+STA pa_sy
 LDA #0
 SEC
 SBC pa_dy
@@ -681,16 +661,9 @@ axle:
 ; |dx| <= |dy|: sd_num=|dx|(min), sd_den=|dy|(max) already; axgt bit=0
 LDA #0
 haveax:
-; oct = (sx<<2)|(sy<<1)|axgt
-STA pa_oct
-LDA pa_sy
-ASL A
-ORA pa_oct
-STA pa_oct
-LDA pa_sx
-ASL A
-ASL A
-ORA pa_oct
+; oct = sx(0/4) | sy(0/2) | axgt(0/1) — signs stored pre-shifted
+ORA pa_sy
+ORA pa_sx
 STA pa_oct
 JSR slope_div                           ; -> sd_q (0..1024)
 ; tantoangle has 1024 entries (0..1023); the exact diagonal sd_q==1024
@@ -769,10 +742,12 @@ RTS
 
 ; checkcoord[boxpos*4]: indices into (top=0,bot=1,left=2,right=3).
 ; rows 3,7,11 and 5 unused (5=inside handled earlier).
+; checkcoord indices PRE-DOUBLED (byte offsets into the s16 box: top=0,
+; bot=2, left=4, right=6) so the corner loads index (bca_boxp),Y directly.
 bca_cc:
-.byte 3,0,2,1,  3,0,2,0,  3,1,2,0,  0,0,0,0
-.byte 2,0,2,1,  0,0,0,0,  3,1,3,0,  0,0,0,0
-.byte 2,0,3,1,  2,1,3,1,  2,1,3,0,  0,0,0,0
+.byte 6,0,4,2,  6,0,4,0,  6,2,4,0,  0,0,0,0
+.byte 4,0,4,2,  0,0,0,0,  6,2,6,0,  0,0,0,0
+.byte 4,0,6,2,  4,2,6,2,  4,2,6,0,  0,0,0,0
 
 
 end:
