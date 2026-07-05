@@ -77,19 +77,19 @@ zp_tmp2 = $E0
 ; --- Jump table: fixed entry points for each public operation ---
 ; Callers (Python harness, game engine) JSR to $2000 + 3*N.
 ; JMP is 3 bytes, so entries are evenly spaced.
-JMP span_init                           ; $2000                                             ; |
-JMP span_mark_solid                     ; $2003                                             ; |
-JMP span_tighten                        ; $2006                                             ; |
-JMP span_has_gap                        ; $2009                                             ; |||
-JMP span_is_full                        ; $200C
-JMP span_read                           ; $200F
-JMP interp_store                        ; $2012  (kept for test_interp verification)
-JMP draw_clipped_line                   ; $2015
-JMP clip_line_records                   ; $2018
-JMP tighten_from_records                ; $201B
-JMP draw_clipped_line_s16               ; $201E
-JMP umul8                               ; $2021  (exported for bsp_render.asm)
-JMP udiv16_8                            ; $2024  (exported for bsp_render.asm)
+jt_init: JMP span_init                           ; $2000                                             ; |
+jt_mark_solid: JMP span_mark_solid                     ; $2003                                             ; |
+jt_tighten: JMP span_tighten                        ; $2006                                             ; |
+jt_has_gap: JMP span_has_gap                        ; $2009                                             ; |||
+jt_is_full: JMP span_is_full                        ; $200C
+jt_read: JMP span_read                           ; $200F
+jt_interp_store: JMP interp_store                        ; $2012  (kept for test_interp verification)
+jt_draw_clip: JMP draw_clipped_line                   ; $2015
+jt_clip_line_records: JMP clip_line_records                   ; $2018
+jt_tighten_from_records: JMP tighten_from_records                ; $201B
+jt_draw_clip_s16: JMP draw_clipped_line_s16               ; $201E
+jt_umul8: JMP umul8                               ; $2021  (exported for bsp_render.asm)
+jt_udiv16_8: JMP udiv16_8                            ; $2024  (exported for bsp_render.asm)
 
 ; umul8 pin: flat build pins it at $2030 (legacy; bsp_render now has its own
 ; local copy so the pin is no longer strictly needed, but kept to keep the flat

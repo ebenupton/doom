@@ -25,9 +25,11 @@ import fp
 from wad_packed import spans_init_full
 import trace_compare as tc
 
-ENTRY_BR_RENDER_SUBSECTOR = 0x4818
-ENTRY_BR_INIT_FRAME       = 0x481B
-ENTRY_BR_RENDER_FRAME     = 0x4815
+from symmap import sym as _sym
+ENTRY_BR_RENDER_SUBSECTOR = _sym('jt_br_render_subsector')
+ENTRY_BR_INIT_FRAME       = _sym('jt_br_init_frame')
+ENTRY_BR_RENDER_FRAME     = _sym('jt_br_render_frame')
+_E_HAS_GAP = _sym('jt_has_gap')
 
 
 class Asm6502Clips:
@@ -70,7 +72,7 @@ def install_tracing(sc, trace_all):
             if mpu.pc == 0xFF00:
                 break
             pc = mpu.pc
-            if pc == 0x2009:
+            if pc == _E_HAS_GAP:
                 trace_all.append(('has_gap', mem[0xC2], mem[0xC3]))
             elif pc == ss_real:
                 trace_all.append(('ss', mem[0x58] | (mem[0x59] << 8)))

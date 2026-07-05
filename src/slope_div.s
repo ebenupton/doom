@@ -28,8 +28,8 @@ sd_r = $4A
 .else
 .segment "ANG"
 .endif
-JMP slope_div                           ; entry+0
-JMP bbox_check_angle                    ; entry+3   (point_to_angle inlined into corner_phi -> 1 fewer entry)
+jt_slope_div: JMP slope_div                           ; entry+0
+jt_bca_check: JMP bbox_check_angle                    ; entry+3   (point_to_angle inlined into corner_phi -> 1 fewer entry)
 slope_div:
 .scope
 ; if num >= den -> SLOPERANGE (1024)

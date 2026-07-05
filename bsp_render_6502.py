@@ -10,36 +10,39 @@ Frontend6502 in fe6502.py which uses doom_fe.bin.
 """
 import os
 from span_clip_6502 import SpanClip6502
+from symmap import sym as _sym
 
 
-# ZP slots used by bsp_render.asm — mirror these from the .asm file.
-ZP_PX           = 0x00
-ZP_PY           = 0x02
-ZP_VZ           = 0x04
-ZP_SMAG         = 0x05
-ZP_SNEG         = 0x06
-ZP_SONE         = 0x07
-ZP_CMAG         = 0x08
-ZP_CNEG         = 0x09
-ZP_CONE         = 0x0A
-# ROM base pointers were moved from ZP to absolute RAM by the ZP scavenge
-# (batch 1) — angle module now owns the old ZP slots. Match bsp_render.asm.
-ZP_ROM_FHCH_LO  = 0x0BE8
-ZP_ROM_BBOX_LO  = 0x0BEA
-ZP_ROM_VERTS_LO = 0x0BEC
-ZP_ROM_NODES_LO = 0x42
-ZP_ROM_SS_LO    = 0x0BF0
-ZP_ROM_SEG_HDR_LO = 0x0BF2
-ZP_ROM_VWH_LO   = 0x0BF4
-ZP_ROM_DETAIL_LO = 0x0BF6
-ZP_ROOT_NODE_LO = 0x4C
-ZP_PXRAW_LO     = 0x90
-ZP_PYRAW_LO     = 0x92
+# ZP slots used by the engine — resolved from the linked symbol map.
+ZP_PX           = _sym('zp_br_px')
+ZP_PY           = _sym('zp_br_py')
+ZP_VZ           = _sym('zp_br_vz')
+ZP_SMAG         = _sym('zp_br_smag')
+ZP_SNEG         = _sym('zp_br_sneg')
+ZP_SONE         = _sym('zp_br_sone')
+ZP_CMAG         = _sym('zp_br_cmag')
+ZP_CNEG         = _sym('zp_br_cneg')
+ZP_CONE         = _sym('zp_br_cone')
+# Table base pointer slots (absolute RAM — the ZP scavenge moved most of
+# them out of ZP; the angle module owns the freed slots).
+ZP_ROM_FHCH_LO  = _sym('zp_rom_fhch_lo')
+ZP_ROM_BBOX_LO  = _sym('zp_rom_bbox_lo')
+ZP_ROM_VERTS_LO = _sym('zp_rom_verts_lo')
+ZP_ROM_NODES_LO = _sym('zp_rom_nodes_lo')
+ZP_ROM_SS_LO    = _sym('zp_rom_ss_lo')
+ZP_ROM_SEG_HDR_LO = _sym('zp_rom_seg_hdr_lo')
+ZP_ROM_VWH_LO   = _sym('zp_rom_vwh_lo')
+ZP_ROM_DETAIL_LO = _sym('zp_rom_detail_lo')
+ZP_ROOT_NODE_LO = _sym('zp_root_node_lo')
+ZP_PXRAW_LO     = _sym('zp_br_pxraw_lo')
+ZP_PYRAW_LO     = _sym('zp_br_pyraw_lo')
 
-ENTRY_BR_VIEW_SETUP   = 0x4809
-ENTRY_BR_RENDER_FRAME = 0x4815
-ENTRY_BR_INIT_FRAME   = 0x481B
+ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup')
+ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame')
+ENTRY_BR_INIT_FRAME   = _sym('jt_br_init_frame')
 
+# Table load addresses: harness-owned placement decisions (the engine reads
+# these tables only through the pointer slots above), NOT engine symbols.
 ROM_MAIN_BASE   = 0x6C00
 VWH_BASE        = 0xE484
 ROM_DETAIL_BASE = 0xB600
@@ -109,22 +112,10 @@ class BspRender6502:
         w16(ZP_ROM_BBOX_LO,    ROM_BBOX_BASE)
         w16(ZP_ROOT_NODE_LO,   layout['n_nodes'] - 1)
 
-        # Angle-space bbox module: code @ $E940; TA_LO $DC00, TA_HI $F200,
-        # VATOX $F601 (no overlap with VWH @ $E484 or the renderer).
-        # Rebuild before loading — a standalone run after a slope_div.asm
-        # edit must not test a stale bin.
-        import asmbuild, angle_bbox as _A
-        asmbuild.build('slope_div.asm', banked=0)
-        code = open('bsp_render_ang.bin', 'rb').read()
-        for i, b in enumerate(code):
-            mem[0xE940 + i] = b
-        for i in range(1024):
-            v = _A._tantoangle[i]
-            mem[0xDC00 + i] = v & 0xFF
-            mem[0xF200 + i] = (v >> 8) & 0xFF
-        for k in range(1025):            # VATOX shrunk: phi+512 index, $F300
-            _vt = (_A._vatox_lo[k + 512] + _A._vatox_hi[k + 512]) // 2
-            mem[0xF601 + k] = max(0, min(255, _vt))
+        # Angle-space bbox module + tables (rebuilds first — a standalone run
+        # after a source edit must not test a stale bin).
+        from engine_load import load_angle_module
+        load_angle_module(mem)
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0):
         import fp
@@ -160,7 +151,7 @@ class BspRender6502:
         mem[ZP_CMAG] = c_mag
         mem[ZP_CNEG] = 1 if c_neg else 0
         mem[ZP_CONE] = 1 if c_one else 0
-        mem[0xFA2F] = angle_byte & 0xFF      # bca_ab: angle-space bbox view angle
+        mem[_sym('bca_ab')] = angle_byte & 0xFF  # angle-space bbox view angle
 
         sc._run(ENTRY_BR_VIEW_SETUP)
         sc.init()

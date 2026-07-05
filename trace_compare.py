@@ -22,8 +22,13 @@ import fp
 from wad_packed import (SEG_DTL_SIZE, SD_FH, SD_CH, SD_BFH, SD_BCH,
                         spans_init_full)
 
-ENTRY_BR_VIEW_SETUP   = 0x4809
-ENTRY_BR_RENDER_FRAME = 0x4815
+from symmap import sym as _sym
+ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup')
+ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame')
+_E_MARK_SOLID = _sym('jt_mark_solid')
+_E_HAS_GAP    = _sym('jt_has_gap')
+_E_IS_FULL    = _sym('jt_is_full')
+_E_DCL_S16    = _sym('jt_draw_clip_s16')
 ROM_MAIN_BASE   = 0x6C00
 VWH_BASE        = 0xE484
 ROM_DETAIL_BASE = 0xB600
@@ -139,13 +144,13 @@ def install_tracing_run(sc, trace, with_context=False):
                 break
             pc = mpu.pc
             evt = None
-            if pc == 0x2003:
+            if pc == _E_MARK_SOLID:
                 evt = ('mark_solid', mem[0xC2], mem[0xC3])
-            elif pc == 0x2009:
+            elif pc == _E_HAS_GAP:
                 evt = ('has_gap', mem[0xC2], mem[0xC3])
-            elif pc == 0x200C:
+            elif pc == _E_IS_FULL:
                 evt = ('is_full', mem[0x58], mem[0x59])
-            elif pc == 0x201E:
+            elif pc == _E_DCL_S16:
                 xl = s16(mem[0xA8] | (mem[0xB2] << 8))
                 yl = s16(mem[0xA9] | (mem[0xB3] << 8))
                 xr = s16(mem[0xAA] | (mem[0xB4] << 8))

@@ -8,20 +8,13 @@ if asmbuild.env_c02():
 else:
     from py65.devices.mpu6502 import MPU
 
-asmbuild.build('slope_div.asm', banked=0)
-BCA = 0xE943
-code = open('bsp_render_ang.bin', 'rb').read()
+from engine_load import load_angle_module
+from symmap import sym
 
 mpu = MPU()
-for i, b in enumerate(code):
-    mpu.memory[0xE940 + i] = b
-for i in range(1024):                            # TA_LO $DC00 / TA_HI $EE00
-    v = A._tantoangle[i]
-    mpu.memory[0xDC00 + i] = v & 0xFF
-    mpu.memory[0xF200 + i] = (v >> 8) & 0xFF
-for k in range(1025):                           # VATOX shrunk: phi+512, $F300
-    c = (A._vatox_lo[k + 512] + A._vatox_hi[k + 512]) // 2
-    mpu.memory[0xF601 + k] = max(0, min(255, c))
+load_angle_module(mpu.memory)
+BCA = sym('jt_bca_check')
+BOX = sym('bca_top')
 
 
 def w16(addr, v):
@@ -29,21 +22,25 @@ def w16(addr, v):
 
 
 def run(top, bot, left, right, px, py, ab):
-    w16(0xFA10, top); w16(0xFA12, bot); w16(0xFA14, left); w16(0xFA16, right)
-    mpu.memory[0x01] = px & 0xFF; mpu.memory[0x03] = py & 0xFF
-    mpu.memory[0xFA2F] = ab & 0xFF
+    w16(sym('bca_top'), top); w16(sym('bca_bot'), bot)
+    w16(sym('bca_left'), left); w16(sym('bca_right'), right)
+    mpu.memory[sym('bca_px')] = px & 0xFF
+    mpu.memory[sym('bca_py')] = py & 0xFF
+    mpu.memory[sym('bca_ab')] = ab & 0xFF
     afn = (ab << 4) & 0xFFFF          # a_fine now precomputed by the caller
-    mpu.memory[0x3B] = afn & 0xFF; mpu.memory[0x3C] = (afn >> 8) & 0xFF
-    mpu.memory[0x8D] = px & 0xFF; mpu.memory[0x8E] = 0xFF if px < 0 else 0  # bca_pxs
-    mpu.memory[0x9B] = py & 0xFF; mpu.memory[0x9C] = 0xFF if py < 0 else 0  # bca_pys
-    mpu.memory[0x86] = 0x10; mpu.memory[0x87] = 0xFA   # bca_boxp -> box at $FA10
+    w16(sym('bca_afn'), afn)
+    mpu.memory[sym('bca_pxs')] = px & 0xFF
+    mpu.memory[sym('bca_pxs') + 1] = 0xFF if px < 0 else 0
+    mpu.memory[sym('bca_pys')] = py & 0xFF
+    mpu.memory[sym('bca_pys') + 1] = 0xFF if py < 0 else 0
+    w16(sym('bca_boxp'), BOX)                       # box pointer -> bca_top
     mpu.pc = BCA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 20000:
         mpu.step(); steps += 1
-    vis = mpu.memory[0xFA32]
-    return (mpu.memory[0xFA30], mpu.memory[0xFA31]) if vis else None
+    vis = mpu.memory[sym('bca_vis')]
+    return (mpu.memory[sym('bca_ilo')], mpu.memory[sym('bca_ihi')]) if vis else None
 
 
 # sample boxes around the map, varied viewer positions/angles

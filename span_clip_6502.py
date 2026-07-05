@@ -15,29 +15,33 @@ else:
     from py65.devices.mpu6502 import MPU
 
 
-# Entry points (must match span_clip.asm jump table)
-ENTRY_INIT       = 0x2000
-ENTRY_MARK_SOLID = 0x2003
-ENTRY_TIGHTEN    = 0x2006
-ENTRY_HAS_GAP    = 0x2009
-ENTRY_IS_FULL    = 0x200C
-ENTRY_READ       = 0x200F
-ENTRY_INTERP_ST  = 0x2012
-ENTRY_DRAW_CLIP  = 0x2015
-ENTRY_CLIP_LINE_RECORDS = 0x2018
-ENTRY_TIGHTEN_FROM_RECORDS = 0x201B
-ENTRY_DRAW_CLIP_S16 = 0x201E
+# Engine addresses come from the linked symbol map (ld65 dbgfile) — no more
+# hand-mirrored magic numbers. Names are the .s source labels/equates.
+from symmap import sym as _sym
 
-# Records buffers (must match span_clip.asm)
-TOP_RECORDS = 0x0700
-BOT_RECORDS = 0x0800
+# Entry points (span_clip jump table labels)
+ENTRY_INIT       = _sym('jt_init')
+ENTRY_MARK_SOLID = _sym('jt_mark_solid')
+ENTRY_TIGHTEN    = _sym('jt_tighten')
+ENTRY_HAS_GAP    = _sym('jt_has_gap')
+ENTRY_IS_FULL    = _sym('jt_is_full')
+ENTRY_READ       = _sym('jt_read')
+ENTRY_INTERP_ST  = _sym('jt_interp_store')
+ENTRY_DRAW_CLIP  = _sym('jt_draw_clip')
+ENTRY_CLIP_LINE_RECORDS = _sym('jt_clip_line_records')
+ENTRY_TIGHTEN_FROM_RECORDS = _sym('jt_tighten_from_records')
+ENTRY_DRAW_CLIP_S16 = _sym('jt_draw_clip_s16')
+
+# Records buffers
+TOP_RECORDS = _sym('TOP_RECORDS')
+BOT_RECORDS = _sym('BOT_RECORDS')
 REC_BYTES = 4   # one record per surviving DCL segment: (xl, yl, xr, yr)
 
 # s16 line clipper hi bytes (ZP, alias CB-clip / secondary-seg block).
-LC_X1_HI = 0x00B2
-LC_Y1_HI = 0x00B3
-LC_X2_HI = 0x00B4
-LC_Y2_HI = 0x00B5
+LC_X1_HI = _sym('LC_X1_HI')
+LC_Y1_HI = _sym('LC_Y1_HI')
+LC_X2_HI = _sym('LC_X2_HI')
+LC_Y2_HI = _sym('LC_Y2_HI')
 
 # Toggle: when True, _span_clip_6502.tighten() dispatches to records-driven
 # path (clip_line_records + tighten_from_records). v1 supports single-record-
@@ -48,50 +52,49 @@ _USE_6502_RECORDS_TIGHTEN = True
 # When False (default), records mode uses standalone clip_line_records (Phase A).
 _USE_DCL_RECORDS_HOOK = True
 
-# DCL records-hook ZP slots (must match span_clip.asm)
-ZP_DCL_REC_BUF   = 0xBC
-ZP_DCL_REC_BUF_H = 0xBD
+# DCL records-hook ZP slots
+ZP_DCL_REC_BUF   = _sym('zp_dcl_rec_buf')
+ZP_DCL_REC_BUF_H = _sym('zp_dcl_rec_buf_h')
 
-# ZP addresses (must match span_clip.asm)
-ZP_HEAD  = 0xC0
-ZP_FREE  = 0xC1
-ZP_ILO   = 0xC2
-ZP_IHI   = 0xC3
-ZP_SX1   = 0xC4  # s16 (lo/hi at C4/C5)
-ZP_SX2   = 0xC6  # s16 (lo/hi at C6/C7)
-ZP_YT1   = 0xC8  # s16 (lo/hi at C8/C9)
-ZP_YT2   = 0xCA  # s16 (lo/hi at CA/CB)
-ZP_YB1   = 0xCC  # s16 (lo/hi at CC/CD)
-ZP_YB2   = 0xCE  # s16 (lo/hi at CE/CF)
-ZP_I_X   = 0xD0
-ZP_I_X0  = 0xD1
-ZP_I_Y0  = 0xD2
-ZP_I_X1  = 0xD4
-ZP_I_Y1  = 0xD5
-ZP_I_RES = 0xD7
-ZP_DIV_DEN = 0xDC
-ZP_BUF   = 0xE3
-ZP_MS_EMIT = 0xA8
-ZP_LINE_XL = 0xA8
-ZP_LINE_YL = 0xA9
-ZP_LINE_XR = 0xAA
-ZP_LINE_YR = 0xAB
-ZP_TG_EMIT = 0xBB  # tighten emit mask: bit0=top, bit1=bot, 0x03=both
-# Secondary seg Y values (u8) for emit_sec_top/emit_sec_bot — passed when flags set
-ZP_YT_SEC1 = 0xB2
-ZP_YT_SEC2 = 0xB3
-ZP_YB_SEC1 = 0xB4
-ZP_YB_SEC2 = 0xB5
+# ZP addresses (linked equates)
+ZP_HEAD  = _sym('zp_head')
+ZP_FREE  = _sym('zp_free')
+ZP_ILO   = _sym('zp_ilo')
+ZP_IHI   = _sym('zp_ihi')
+ZP_SX1   = _sym('zp_sx1')   # s16 lo/hi
+ZP_SX2   = _sym('zp_sx2')
+ZP_YT1   = _sym('zp_yt1')
+ZP_YT2   = _sym('zp_yt2')
+ZP_YB1   = _sym('zp_yb1')
+ZP_YB2   = _sym('zp_yb2')
+ZP_I_X0  = _sym('zp_i_x0')
+ZP_I_Y0  = _sym('zp_i_y0')
+ZP_I_X1  = _sym('zp_i_x1')
+ZP_I_Y1  = _sym('zp_i_y1')
+ZP_I_RES = _sym('zp_i_res')
+ZP_DIV_DEN = _sym('zp_div_den')
+ZP_BUF   = _sym('zp_buf')
+ZP_MS_EMIT = _sym('zp_ms_emit')
+ZP_LINE_XL = _sym('zp_line_xl')
+ZP_LINE_YL = _sym('zp_line_yl')
+ZP_LINE_XR = _sym('zp_line_xr')
+ZP_LINE_YR = _sym('zp_line_yr')
+ZP_TG_EMIT = _sym('zp_tg_emit')  # tighten emit mask: bit0=top, bit1=bot
+# Secondary seg Y values (u8), also aliased as the s16 DCL input hi bytes
+ZP_YT_SEC1 = _sym('zp_yt_sec1')
+ZP_YT_SEC2 = _sym('zp_yt_sec2')
+ZP_YB_SEC1 = _sym('zp_yb_sec1')
+ZP_YB_SEC2 = _sym('zp_yb_sec2')
 
 # Pool
-POOL_BASE = 0x0400
+POOL_BASE = _sym('POOL')
 
-# Buffer for span_read output
+# Buffer for span_read output (harness-owned scratch, not an engine symbol)
 READ_BUF = 0x0300
 
 # Line output buffer (written by 6502 during tighten/mark_solid)
-LINE_OUT_COUNT = 0x0200
-LINE_OUT_BUF   = 0x0201
+LINE_OUT_COUNT = _sym('LINE_OUT_COUNT')
+LINE_OUT_BUF   = _sym('LINE_OUT_BUF')
 
 
 def _gen_quarter_square():

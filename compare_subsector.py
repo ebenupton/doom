@@ -24,8 +24,12 @@ import fp
 from wad_packed import spans_init_full
 import trace_compare as tc
 
-ENTRY_BR_RENDER_SUBSECTOR = 0x4818
-ENTRY_BR_INIT_FRAME       = 0x481B
+from symmap import sym as _sym
+ENTRY_BR_RENDER_SUBSECTOR = _sym('jt_br_render_subsector')
+ENTRY_BR_INIT_FRAME       = _sym('jt_br_init_frame')
+_E_MARK_SOLID = _sym('jt_mark_solid')
+_E_TFR        = _sym('jt_tighten_from_records')
+_E_DCL_S16    = _sym('jt_draw_clip_s16')
 
 
 def install_tracing(sc, trace_all):
@@ -46,11 +50,11 @@ def install_tracing(sc, trace_all):
             if mpu.pc == 0xFF00:
                 break
             pc = mpu.pc
-            if pc == 0x2003:
+            if pc == _E_MARK_SOLID:
                 trace_all.append(('mark_solid', mem[0xC2], mem[0xC3]))
-            elif pc == 0x201B:
+            elif pc == _E_TFR:
                 trace_all.append(('tighten', mem[0xC2], mem[0xC3]))
-            elif pc == 0x201E:
+            elif pc == _E_DCL_S16:
                 xl = s16(mem[0xA8] | (mem[0xB2] << 8))
                 yl = s16(mem[0xA9] | (mem[0xB3] << 8))
                 xr = s16(mem[0xAA] | (mem[0xB4] << 8))

@@ -13,18 +13,19 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 from span_clip_6502 import SpanClip6502
 import fp
 
-ENTRY_BR_UMUL8 = 0x4800
-ENTRY_BR_SMUL8 = 0x4803
-ENTRY_BR_RECIP = 0x4806
+from symmap import sym as _sym
+ENTRY_BR_UMUL8 = _sym('jt_br_umul8')
+ENTRY_BR_SMUL8 = _sym('jt_br_smul8')
+ENTRY_BR_RECIP = _sym('jt_br_recip')
 
-ZP_A    = 0x15
-ZP_B    = 0x16
-ZP_RESL = 0x17
-ZP_RESH = 0x18
-ZP_T0   = 0x20
-ZP_T1   = 0x21
-ZP_RHI  = 0x1A
-ZP_RLO  = 0x1B
+ZP_A    = _sym('zp_br_a')
+ZP_B    = _sym('zp_br_b')
+ZP_RESL = _sym('zp_br_resl')
+ZP_RESH = _sym('zp_br_resh')
+ZP_T0   = _sym('zp_br_t0')
+ZP_T1   = _sym('zp_br_t1')
+ZP_RHI  = _sym('zp_br_rhi')
+ZP_RLO  = _sym('zp_br_rlo')
 
 
 def s8(v):
@@ -106,19 +107,19 @@ def test_recip():
     return fail
 
 
-ENTRY_BR_VIEW_SETUP = 0x4809
-ENTRY_BR_TO_VIEW    = 0x480C
+ENTRY_BR_VIEW_SETUP = _sym('jt_br_view_setup')
+ENTRY_BR_TO_VIEW    = _sym('jt_br_to_view')
 
-# zp slots
-ZP_PX    = 0x00; ZP_PXH  = 0x01
-ZP_PY    = 0x02; ZP_PYH  = 0x03
-ZP_SMAG  = 0x05; ZP_SNEG = 0x06; ZP_SONE = 0x07
-ZP_CMAG  = 0x08; ZP_CNEG = 0x09; ZP_CONE = 0x0A
-ZP_FVXLO = 0x0B; ZP_FVXHI = 0x0C
-ZP_FVYLO = 0x0D; ZP_FVYHI = 0x0E
-ZP_DX    = 0x0F; ZP_DY    = 0x10
-ZP_VXLO  = 0x11; ZP_VXHI  = 0x12
-ZP_VYLO  = 0x13; ZP_VYHI  = 0x14
+# zp slots (linked equates; hi bytes are lo+1)
+ZP_PX    = _sym('zp_br_px');    ZP_PXH  = ZP_PX + 1
+ZP_PY    = _sym('zp_br_py');    ZP_PYH  = ZP_PY + 1
+ZP_SMAG  = _sym('zp_br_smag');  ZP_SNEG = _sym('zp_br_sneg'); ZP_SONE = _sym('zp_br_sone')
+ZP_CMAG  = _sym('zp_br_cmag');  ZP_CNEG = _sym('zp_br_cneg'); ZP_CONE = _sym('zp_br_cone')
+ZP_FVXLO = _sym('zp_br_fvxlo'); ZP_FVXHI = ZP_FVXLO + 1
+ZP_FVYLO = _sym('zp_br_fvylo'); ZP_FVYHI = ZP_FVYLO + 1
+ZP_DX    = _sym('zp_br_dx');    ZP_DY    = _sym('zp_br_dy')
+ZP_VXLO  = _sym('zp_br_vxlo');  ZP_VXHI  = _sym('zp_br_vxhi')
+ZP_VYLO  = _sym('zp_br_vylo');  ZP_VYHI  = _sym('zp_br_vyhi')
 
 
 def write_view_state(mem, vx_88, vy_88, sc_tuple):
