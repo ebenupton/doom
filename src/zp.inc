@@ -127,7 +127,6 @@ zp_seg_sy_bot_hi = $6D            ; [bsp]
 zp_seg_sx_lo = $6E                ; [bsp]; s16 projected screen x
 zp_seg_sx_hi = $6F                ; [bsp]
 RASTER_ZP_SCRSTRT = $70           ; [clip]
-bca_cy = $71                      ; [ang]; corner y (s16) -- ZP (freed from pa_ady); hot in corner_phi ; w=2
 pa_sx = $73                       ; [ang]
 zp_seg_v_idx_lo = $77             ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_hi = $78             ; [bsp]
@@ -159,7 +158,6 @@ zp_fhch_p = $98                   ; [bsp]; persistent FHCH ptr (advances +6/seg)
 zp_fhch_p_h = $99                 ; [bsp]
 zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
-bca_cx = $9D                      ; [ang]; corner x (s16) ; w=2
 zp_seg_v2_clipped = $9F           ; [bsp]
 ; --- $A8: overlay group (3 phase-disjoint users) ---
 zp_ms_emit = $A8                  ; [clip]; mark_solid: $FF = emit wall edge lines, $00 = skip

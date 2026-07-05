@@ -285,6 +285,13 @@ JMP ri_zero
 ; (ri_zero now >127 away after inline)
 ri_mag_nz:
 STA zp_mul_b
+; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
+; common on E1M1's grid geometry) — skip the two multiplies.
+LDA zp_ri_dlo
+ORA zp_ri_dhi
+BNE ri_d_nz
+JMP ri_zero
+ri_d_nz:
 ; |d| × mag → s24, with sign restoration. Compute as
 ;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
 ; First product: (lo,hi) → resl, resh; resext starts 0.

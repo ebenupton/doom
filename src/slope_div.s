@@ -230,18 +230,26 @@ ASL A
 TAX
 ; corner1 = (val[cc0], val[cc1]); load_val inlined -> cx/cy directly
 ; (Y = val index*2 into the box at bca_top; X unchanged by the load).
+; corner load folds straight into the phi subtraction: pa_dx = box[cc0]-pxs,
+; pa_dy = box[cc1]-pys (the bca_cx/cy staging is gone).
 LDY bca_cc,X
+SEC
 LDA (bca_boxp),Y
-STA bca_cx
+SBC bca_pxs
+STA pa_dx
 INY
 LDA (bca_boxp),Y
-STA bca_cx+1
+SBC bca_pxs+1
+STA pa_dx+1
 LDY bca_cc+1,X
+SEC
 LDA (bca_boxp),Y
-STA bca_cy
+SBC bca_pys
+STA pa_dy
 INY
 LDA (bca_boxp),Y
-STA bca_cy+1
+SBC bca_pys+1
+STA pa_dy+1
 STX bca_ccsave
 JSR corner_phi
 LDA pa_res
@@ -251,17 +259,23 @@ STA bca_p1+1
 LDX bca_ccsave
 ; corner2 = (val[cc2], val[cc3])
 LDY bca_cc+2,X
+SEC
 LDA (bca_boxp),Y
-STA bca_cx
+SBC bca_pxs
+STA pa_dx
 INY
 LDA (bca_boxp),Y
-STA bca_cx+1
+SBC bca_pxs+1
+STA pa_dx+1
 LDY bca_cc+3,X
+SEC
 LDA (bca_boxp),Y
-STA bca_cy
+SBC bca_pys
+STA pa_dy
 INY
 LDA (bca_boxp),Y
-STA bca_cy+1
+SBC bca_pys+1
+STA pa_dy+1
 JSR corner_phi
 LDA pa_res
 STA bca_p2
@@ -561,22 +575,9 @@ RTS
 ; (load_val removed: inlined at the corner loads.)
 
 ; corner_phi: dx=cx-pxs, dy=cy-pys; point_to_angle; pa_res=(afn-psi)&MASK signed
+; corner_phi: callers load pa_dx/pa_dy directly (box corner minus viewer).
 corner_phi:
 .scope
-SEC
-LDA bca_cx
-SBC bca_pxs
-STA pa_dx
-LDA bca_cx+1
-SBC bca_pxs+1
-STA pa_dx+1
-SEC
-LDA bca_cy
-SBC bca_pys
-STA pa_dy
-LDA bca_cy+1
-SBC bca_pys+1
-STA pa_dy+1
 ; --- inlined point_to_angle(pa_dx,pa_dy) -> pa_res (psi) ---
 ; .pa_entry: unit-test hook -- jump here with pa_dx/pa_dy set and
 ; bca_afn=0 to read back (-psi)&signed in pa_res (see test_slope_div).
