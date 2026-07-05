@@ -15,3 +15,4 @@ diag_*.py
 trace_*.py
 test_pw_max.py
 test_tighten*.py
+build/
