@@ -399,6 +399,14 @@ RTS
 ;   Output:  zp_br_resl/h (s16).
 ;
 ;   For our scene products fit in s16; for larger ones the high bits are
+
+; (banked MAIN is fatter — PAGE emits code — and hit its $5800 ceiling;
+;  this PAGE-free leaf relocates to the banked W region ($3900, 221 free;
+;  D_BK is bounded at $40 by anim_drv at $3C00 — learned the hard way). Flat
+;  placement unchanged.)
+.if ::BANKED
+.segment "W_BK"
+.endif
 ;   silently dropped. Used by the back-face test where we only need sign.
 ; ============================================================================
 br_smul_s8_s16:
@@ -466,6 +474,10 @@ STA zp_br_resh
 ss_pos:
 RTS
 .endscope
+.if ::BANKED
+.segment "MAIN"
+.endif
+
 
 ; ============================================================================
 ; HELPER: br_smul_s16_s16_s32 — signed s16 × s16 → s32 (4-byte little-endian).

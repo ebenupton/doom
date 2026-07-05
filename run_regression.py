@@ -32,11 +32,11 @@ fails = []
 
 # ---- builds (fail-loud via the shared helper) -----------------------------
 import asmbuild
-for asm in ('slope_div.asm', 'bsp_render.asm', 'span_clip.asm'):
-    try:
-        asmbuild.build(asm, banked=0)
+for banked in (0, 1):     # banked build catches memory-map overflows the
+    try:                  # flat-only tests never see (e.g. anim_drv at $3C00)
+        asmbuild.build('engine', banked=banked)
     except RuntimeError as e:
-        fails.append(f'build {asm}: ' + str(e).strip().splitlines()[-1])
+        fails.append(f'build banked={banked}: ' + str(e).strip().splitlines()[-1])
 
 
 def run(label, argv, want):

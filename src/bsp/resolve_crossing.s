@@ -37,6 +37,9 @@ RTS
 .endscope
 
 ; ============================================================================
+.if ::BANKED
+.segment "W_BK"                         ; banked D is capped at $40 by anim_drv
+.endif
 ; rhi==0 projection fast paths (bodies live here — MAIN is full). When the
 ; reciprocal hi byte is zero (vertex beyond ~1024 world units) the rhi
 ; product terms are EXACTLY zero: only the rlo term survives.
@@ -88,6 +91,9 @@ LDA #0
 SBC zp_br_t3
 STA zp_br_resh
 RTS
+.if ::BANKED
+.segment "D_BK"                         ; back for the region-end marker
+.endif
 
 bsp_d_end:
 .if ::BANKED
