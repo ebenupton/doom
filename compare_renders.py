@@ -22,6 +22,12 @@ POSITIONS = [
     (1500, -3700, 0),
     (800, -3400, 96),
     (1200, -3000, 128),
+    # far-from-spawn but in-spec (player pos is s16 8.8: integer part must
+    # fit s8 after prescale, i.e. within +/-1023 world units of MAP_CENTER)
+    (2112, -2368, 35),
+    (192, -2368, 99),
+    (1984, -2496, 67),
+    (1856, -2368, 3),
 ]
 
 

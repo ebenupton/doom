@@ -177,6 +177,19 @@ ground-truth verify at 5 fixed positions has not worsened vs
   test conservative: frustum rejects + never under-report the extent.
 - Pool exhaustion (32 span slots) silently drops visible fragments;
   LINE_OUT_BUF wraps past 63 lines. Both are latent, not observed.
+- **Playable area is a ±1023-unit box around MAP_CENTER (measured
+  2026-07-05).** Player position is s16 8.8 fixed-point: after PRESCALE=8
+  the integer part must fit s8, so only positions within ±1023 world
+  units of MAP_CENTER (1200,-3250) are representable — 67% of walkable
+  E1M1 (489/729 grid samples) is OUT of range. Verified empirically:
+  6/6 far in-spec positions render pixel-exact (CLEAN even at prescaled
+  ±126, i.e. no distance-dependent accuracy loss inside the box), 3/3
+  out-of-spec positions are catastrophically wrong (wraparound; e.g.
+  (3648,-2368) → over 841px). This is the long-remembered "moves far
+  from start and breaks" symptom. PRESCALE=16 doubles the box to ±2047
+  but E1M1 spans 4576×2816, so full-map coverage needs a wider player
+  representation (s16.8 / per-region re-centering), not just prescale.
+  Far in-spec corners are in the standing suites since 2026-07-05.
 
 ## Performance
 
