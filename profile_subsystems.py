@@ -23,10 +23,12 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 import doom_wireframe as dw
 import trace_compare as tc
 
-VERTEX = {0x55D7, 0x1B40}
-CLIP   = {0x2003, 0x2006, 0x2009, 0x200C, 0x200F, 0x2012,
-          0x2015, 0x2018, 0x201B, 0x201E}
-BBOX   = {0x4EB7}            # br_bbox_visible (sub-slice of BSP traversal)
+from symmap import sym
+VERTEX = {sym('br_seg_xform_vertex'), sym('reproject_at_crossing')}
+CLIP   = {sym('jt_mark_solid'), sym('jt_has_gap'), sym('jt_is_full'),
+          sym('jt_read'), sym('jt_interp_store'), sym('jt_draw_clip'),
+          sym('jt_tighten_from_records'), sym('jt_draw_clip_s16')}
+BBOX   = {sym('br_bbox_visible')}    # sub-slice of BSP traversal
 GATE = {a: 'VERTEX' for a in VERTEX}
 GATE.update({a: 'CLIP' for a in CLIP})
 GATE.update({a: 'BBOX' for a in BBOX})
@@ -41,9 +43,9 @@ def profile(px, py, ab):
     sc = dw._span_clip_6502
     tc.setup_wad(sc); tc.setup_view_zp(sc, px, py, ab)
     sc._run(tc.ENTRY_BR_VIEW_SETUP)
-    sc.init(); sc.clear_screen(); sc._run(0x481B)
+    sc.init(); sc.clear_screen(); sc._run(sym('jt_br_init_frame'))
     mpu = sc.mpu; mem = mpu.memory
-    mpu.pc = 0x4815; mpu.sp = 0xFD; mpu.p = 0x30
+    mpu.pc = sym('jt_br_render_frame'); mpu.sp = 0xFD; mpu.p = 0x30
     mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF
     mpu.processorCycles = 0
     buckets = {'VERTEX': 0, 'BSP': 0, 'BBOX': 0, 'CLIP': 0, 'RASTER': 0}

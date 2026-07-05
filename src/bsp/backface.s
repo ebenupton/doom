@@ -70,8 +70,8 @@ BNE bf_general
 ; ldy==0: dot = -ldx*dy.
 LDA zp_br_dylo
 ORA zp_br_dyhi
-BEQ bf_back
-; dy==0 -> back (was BNE+JMP)
+BNE bf_ldy0_dy_nz
+JMP bf_back                             ; dy==0 -> dot=0 -> back
 bf_ldy0_dy_nz:
 ; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi))
 LDA zp_seg_ldx
@@ -92,12 +92,51 @@ JMP bf_check_sign
 bf_apply_no_neg:
 PLA
 bf_check_sign:
-; Top bit set → dot < 0 → back. Top bit clear → dot ≥ 0 → check zero.
-BMI bf_back
-; dot ≥ 0; we already checked dot != 0 above (BEQ branches to bf_back).
+; Top bit set → dot < 0 → back. Top bit clear → dot > 0 → front
+; (zero-dot cases never reach here).
+BPL bf_cs_front
+JMP bf_back
+bf_cs_front:
 JMP bf_front
 
 bf_general:
+; Sign shortcut first (EXACT — ldx,ldy nonzero here, so P1 = ldy*dx is
+; zero iff dx==0, P2 = ldx*dy zero iff dy==0, and sign(product) = XOR of
+; operand signs). dot = P1 - P2 > 0 -> front. Opposite-sign products
+; decide by sign alone; only same-sign products need the two multiplies.
+; (Bonus: the decided-by-sign cases are immune to the s16 truncation of
+; br_smul_s8_s16 — the residual risk is confined to same-sign products.)
+LDA zp_br_dxlo
+ORA zp_br_dxhi
+BNE bf_g_dx_nz
+LDA zp_br_dylo
+ORA zp_br_dyhi
+BNE bf_g_p2only
+JMP bf_back                             ; dx==0 and dy==0 -> dot=0 -> back
+bf_g_p2only:
+; dot = -P2: sign = NOT(sign(ldx) ^ sign(dy))
+LDA zp_seg_ldx
+EOR zp_br_dyhi
+EOR #$80
+JMP bf_apply_dir
+bf_g_dx_nz:
+LDA zp_br_dylo
+ORA zp_br_dyhi
+BNE bf_g_both
+; dy==0 -> dot = P1: sign = sign(ldy) ^ sign(dx)
+LDA zp_seg_ldy
+EOR zp_br_dxhi
+JMP bf_apply_dir
+bf_g_both:
+LDA zp_seg_ldy
+EOR zp_br_dxhi                          ; sign(P1)
+STA zp_br_t2
+EOR zp_seg_ldx
+EOR zp_br_dyhi                          ; ^ sign(P2)
+BPL bf_g_mul                            ; same sign -> full compare below
+LDA zp_br_t2                            ; opposite: sign(dot) = sign(P1)
+JMP bf_apply_dir
+bf_g_mul:
 ; ldx and ldy both nonzero — full 2-mul s8×s16 dot product.
 ; ldy * dx → s16 in resl/resh; save in t2:t3.
 LDA zp_seg_ldy

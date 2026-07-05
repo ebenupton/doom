@@ -300,8 +300,8 @@ ORA zp_seg_dxraw_hi
 BEQ ns_jmp_side1
 LDA zp_node_dyhi
 EOR zp_seg_dxraw_hi
-BPL ns_side0
-; (was BMI+JMP)
+BMI ns_jmp_side1
+JMP ns_side0
 ns_jmp_side1:
 JMP ns_side1
 ns_ndx_nz:
@@ -316,6 +316,46 @@ EOR zp_seg_dyraw_hi
 BPL ns_jmp_side1
 JMP ns_side0
 ns_general:
+; DOOM R_PointOnSide sign shortcut (EXACT — ndx and ndy are both nonzero
+; on this path, so P1 = dxraw*ndy is zero iff dxraw==0, P2 = dyraw*ndx
+; is zero iff dyraw==0, and sign(product) = XOR of the operand signs).
+; side0 iff D = P1 - P2 > 0. Only same-sign nonzero products need the
+; two s16*s16 multiplies below.
+LDA zp_seg_dxraw_lo
+ORA zp_seg_dxraw_hi
+BNE ns_dx_nz
+; dxraw==0 -> P1=0 -> D=-P2 (dyraw==0 too -> D=0 -> side1)
+LDA zp_seg_dyraw_lo
+ORA zp_seg_dyraw_hi
+BEQ ns_sh_side1
+LDA zp_seg_dyraw_hi
+EOR zp_node_dxhi
+BMI ns_sh_side0                         ; P2<0 -> D>0 -> side0
+ns_sh_side1:
+JMP ns_side1
+ns_sh_side0:
+JMP ns_side0
+ns_dx_nz:
+LDA zp_seg_dyraw_lo
+ORA zp_seg_dyraw_hi
+BNE ns_dy_nz
+; dyraw==0 -> D=P1 -> side by sign(dxraw)^sign(ndy)
+LDA zp_seg_dxraw_hi
+EOR zp_node_dyhi
+BMI ns_sh_side1
+JMP ns_side0
+ns_dy_nz:
+; both products nonzero: opposite signs decide without multiplying
+LDA zp_seg_dxraw_hi
+EOR zp_node_dyhi                        ; sign(P1)
+STA zp_br_t3
+EOR zp_seg_dyraw_hi
+EOR zp_node_dxhi                        ; sign(P1) ^ sign(P2)
+BPL ns_mul                              ; same sign -> full compare
+LDA zp_br_t3
+BMI ns_sh_side1                         ; P1<0<P2 -> D<0 -> side1
+JMP ns_side0
+ns_mul:
 LDA zp_seg_dxraw_lo
 STA zp_br_dxlo
 LDA zp_seg_dxraw_hi

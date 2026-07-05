@@ -2521,8 +2521,8 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
             mem = _span_clip_6502.mpu.memory
             tc = mem[_scmod.TOP_RECORDS]
             bc = mem[_scmod.BOT_RECORDS]
-            top_snap = bytes(mem[_scmod.TOP_RECORDS:_scmod.TOP_RECORDS + 1 + tc * 6])
-            bot_snap = bytes(mem[_scmod.BOT_RECORDS:_scmod.BOT_RECORDS + 1 + bc * 6])
+            top_snap = bytes(mem[_scmod.TOP_RECORDS:_scmod.TOP_RECORDS + 1 + tc * 4])
+            bot_snap = bytes(mem[_scmod.BOT_RECORDS:_scmod.BOT_RECORDS + 1 + bc * 4])
             deferred[-1] = deferred[-1] + (('__rec__', top_snap, bot_snap),)
     for op in deferred:
         if op[0] == 'solid':

@@ -2,21 +2,26 @@
 """Accurate per-routine frame profile: bucket each executed instruction by the
 nearest preceding label of ANY kind (top-level OR local), using the beebasm -v
 listing for addresses. Also reports how many times vwhc_clear actually runs."""
-import os, re, subprocess, bisect
+import os, re, bisect
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy'); os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()
 import doom_wireframe as dw
 from bsp_render_6502 import BspRender6502
 import compare_renders as C
+import asmbuild
 
-# all labels (any indentation) -> address, from the -v listings
+# all labels (top-level AND scope-local) -> address, from the ld65 dbgfile
+asmbuild.build('engine', banked=0, c02=0)
 syms = {}
-for asm in ('bsp_render.asm', 'span_clip.asm'):
-    out = subprocess.run(['./beebasm', '-i', asm, '-D', 'BANKED=0', '-D', 'C02=0', '-v'],
-                         capture_output=True, text=True).stdout
-    for m in re.finditer(r'\.([A-Za-z_][A-Za-z0-9_]*)\s*\n\s+([0-9A-F]{4})', out):
-        a = int(m.group(2), 16)
-        syms.setdefault(a, m.group(1))
+with open('build/engine_b0c0.dbg') as f:
+    for line in f:
+        if not line.startswith('sym'):
+            continue
+        fields = dict(kv.split('=', 1) for kv in line.split('\t')[1].strip().split(','))
+        if fields.get('type') != 'lab' or 'val' not in fields:
+            continue
+        a = int(fields['val'], 16)
+        syms.setdefault(a, fields['name'].strip('"'))
 addrs = sorted(syms); names = [syms[a] for a in addrs]
 VWHC = next((a for a, n in syms.items() if n == 'vwhc_clear'), None)
 
@@ -49,11 +54,12 @@ def prof_run(entry, max_cycles=10_000_000):
 
 sc._run = prof_run
 tot = 0
-for (px, py, ab) in C.POSITIONS[:3]:
+POS = [(1056,-3616,65),(1500,-3700,1),(1024,-3500,65),(800,-3400,96),(1200,-3000,129),(1056,-3616,129)]
+for (px, py, ab) in POS:
     tot += r.render_frame(px, py, ab, dw.player_floor(px, py))
 
-print(f"vwhc_clear ($%04X) entries over 3 frames: {vwhc_hits[0]}" % VWHC)
-print(f"total cycles (3 frames): {tot:,}\n")
+print(f"vwhc_clear entries: {vwhc_hits[0]}")
+print(f"total cycles (6 frames): {tot:,}\n")
 print(f"{'routine':28s}{'cycles':>12}{'%':>8}")
-for n, c in sorted(buckets.items(), key=lambda kv: -kv[1])[:18]:
+for n, c in sorted(buckets.items(), key=lambda kv: -kv[1])[:40]:
     print(f"{n:28s}{c:>12,}{100*c/tot:>7.1f}%")

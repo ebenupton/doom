@@ -25,11 +25,11 @@ RTS
 .endscope
 
 ; defq_append_tighten — append ($01, ilo, ihi, top block, bot block) where
-; each block is (count, 6*count bytes) copied from $0700 / $0800.
+; each block is (count, 4*count bytes) copied from $0700 / $0800.
 ; Caller guarantees at least one count is non-zero.
 defq_append_tighten:
 .scope
-; size check: 5 + 6*(tc+bc) must fit in the remaining queue space.
+; size check: 5 + 4*(tc+bc) must fit in the remaining queue space.
 LDA $0700
 CLC
 ADC $0800
@@ -39,14 +39,9 @@ STA zp_br_t0
 ASL A
 BCS dqt_ovf
 ; 2n
-STA zp_br_t1
 ASL A
 BCS dqt_ovf
 ; 4n
-CLC
-ADC zp_br_t1
-BCS dqt_ovf
-; 6n
 CLC
 ADC #5
 BCS dqt_ovf
@@ -67,7 +62,7 @@ LDA $C3
 STA DEFQ_BASE,X
 INX
 
-; copy top block: 1 + 6*tc bytes from $0700
+; copy top block: 1 + 4*tc bytes from $0700
 LDA $0700
 JSR defq_blocklen
 LDY #0
@@ -79,7 +74,7 @@ INY
 CPY zp_br_t1
 BNE dqt_cp_top
 
-; copy bot block: 1 + 6*bc bytes from $0800
+; copy bot block: 1 + 4*bc bytes from $0800
 LDA $0800
 JSR defq_blocklen
 LDY #0
@@ -99,13 +94,13 @@ STA DEFQ_OVF
 RTS
 .endscope
 
-; defq_blocklen — A = record count (<= 42) → zp_br_t1 = 1 + 6*count.
-; No CLCs needed: 6*42 = 252, so no intermediate carry is possible.
+; defq_blocklen — A = record count (<= 42) → zp_br_t1 = 1 + 4*count.
+; (Records are 4 bytes: xl,yl,xr,yr. Historically strided at 6 — the old
+; verdict-record size — over-copying 2 stale bytes per record both ways.)
+; No CLCs needed: 4*42 = 168, so no intermediate carry is possible.
 defq_blocklen:
 ASL A
-STA zp_br_t1
 ASL A
-ADC zp_br_t1
 ADC #1
 STA zp_br_t1
 RTS
