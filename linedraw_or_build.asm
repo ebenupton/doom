@@ -19,8 +19,9 @@ ls = &86
 b = &87
 
 HAMILTONIAN_12 = TRUE
+STEEP_COMPACT = TRUE
 
-INCLUDE "line-test/nj-linedraw4-or.asm"
-INCLUDE "line-test/shallow_12_hamiltonian-or.asm"
+INCLUDE "raster/nj-linedraw4-or.asm"
+INCLUDE "raster/shallow_12_hamiltonian-or.asm"
 
 SAVE "linedraw_or.bin", &2000, P%
