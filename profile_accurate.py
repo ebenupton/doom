@@ -22,6 +22,14 @@ with open('build/engine_b0c0.dbg') as f:
             continue
         a = int(fields['val'], 16)
         syms.setdefault(a, fields['name'].strip('"'))
+# rasteriser labels from its beebasm -v listing (vendored, not in the link)
+import subprocess as _sp
+_out = _sp.run(['./beebasm', '-i', 'linedraw_or_reloc.asm', '-v'],
+               capture_output=True, text=True).stdout
+for m in re.finditer(r'\.([A-Za-z_][A-Za-z0-9_]*)\s*\n\s*([0-9A-F]{4})', _out):
+    a = int(m.group(2), 16)
+    if 0xA900 <= a < 0xB560:
+        syms.setdefault(a, 'NJ_' + m.group(1))
 addrs = sorted(syms); names = [syms[a] for a in addrs]
 VWHC = next((a for a, n in syms.items() if n == 'vwhc_clear'), None)
 

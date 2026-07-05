@@ -102,6 +102,37 @@ $71-$76 range — the rasteriser clobbers $74-$76 on every line).
   predicate logging).
 - `test_hybrid.py` — three-way pixel agreement table.
 
+## Performance (2026-07-05 session)
+
+Post-refactor grind (ca65/ld65 source in src/; every step measured by
+py65 via measure_cycles.py, gated by run_regression.py, committed only
+on ALL GREEN). 10-position suite totals:
+
+| Change | Total | Δ |
+|---|---:|---|
+| session start (post-strip) | 4,097,401 | |
+| R_CheckBBox angle bbox (correctness fix, also faster) | 4,059,215 | −0.93% |
+| B1: point-on-side + back-face sign shortcuts; defq 4-byte stride | 3,978,045 | −2.00% |
+| B2: lazy seg header; rhi==0/frac==0 projection gates | 3,931,582 | −1.02% |
+| B3: merged box classifier; octant fold; pre-doubled cc table | 3,891,285 | −1.02% |
+| B4: rot_int zero-delta gate; corner-load fold | 3,866,537 | −0.64% |
+
+Mean frame 386,653 cycles ≈ 5.2 fps at 2 MHz (was 4.9 at session start).
+All changes are output-exact by construction (sign identities, x*0=0,
+load reordering, predicate merges) — verified by the full differential
+suite each batch, not assumed.
+
+Cost structure after the angle-bbox fix (profile_subsystems, 6 off-axis
+positions): vertex transform 28.4%, walk+glue 22.1%, bbox 24.1%,
+clipper 16.9%, rasteriser 8.4%. The old "bbox is 52%" figure predates
+the angle conversion — do not plan against it.
+
+Measured-and-rejected this session: slope_div reciprocal-multiply and
+leading-zero-skip variants (restoring divide already ~breaks even);
+per-frame trig product tables (build cost exceeds use); rasteriser
+short-line fast path (deferred: must reproduce Hamiltonian pixels
+exactly; per-line SMC setup ~96 cyc is the cost to beat).
+
 ## Performance (2026-06-13)
 
 Profiled with `profile_frame.py` (py65 cycle deltas bucketed by
