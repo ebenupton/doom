@@ -20,6 +20,12 @@ pxh    = &3D84
 pyf    = &3D85
 pyl    = &3D86
 pyh    = &3D87
+jidx   = &3D88          ; vsync journal index (0..62)
+; vsync journal: 64 x 4 bytes at $0300 (dead OS workspace; no OS after boot):
+;   +0 class taken (0/1/2)   +1 T1 hi at classify
+;   +2 T1 hi after the vsync wait ($FF = class 2, no wait)
+;   +3 T1 hi after clears done
+jbase  = &0300
 tabbase = &3E00         ; sincos table (build-overlaid): 64 x 8 bytes
 
 SPEED = 12              ; world units per frame of forward motion
@@ -50,6 +56,12 @@ ORG &3C00
     LDA #2 :STA &FE00: LDA #45 :STA &FE01
     LDA #6 :STA &FE00: LDA #20 :STA &FE01
     LDA #7 :STA &FE00: LDA #28 :STA &FE01
+    LDA #8 :STA &FE00: LDA #0  :STA &FE01           ; R8=0: interlace OFF. The MODE 4
+    ; default (R8=1, interlace sync) makes every field 312.5 lines = 20000us,
+    ; which drifts the 19968us T1 field lock by 32us/field (beam classes
+    ; rotate through all phases every ~12s -> periodic clear-vs-beam races),
+    ; and shimmers 1px lines at 25Hz. Non-interlaced: field = exactly 312
+    ; lines = 19968us, T1 lock is exact and the raster is stable.
     LDA #10:STA &FE00: LDA #&20:STA &FE01
     ; --- System VIA T1 field lock (see anim_drv for the full rationale) ---
     LDA &FE4B:AND #&3F:ORA #&40:STA &FE4B
@@ -64,6 +76,7 @@ ORG &3C00
     LDA #&7F:STA &FE43
     ; --- init state ---
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
+    LDA #0   :STA jidx
     LDA #&6C :STA backhi
     JSR clr58t:JSR clr58b:JSR clr6Ct:JSR clr6Cb
 .frame
@@ -146,24 +159,49 @@ ORG &4000
     LDA #12:STA &FE00 : LDA backhi:LSR A:LSR A:LSR A:STA &FE01
     LDA #13:STA &FE00 : LDA backhi:AND #7:ASL A:ASL A:ASL A:ASL A:ASL A:STA &FE01
     LDA backhi:EOR #(&58 EOR &6C):STA backhi
+    LDA jidx:ASL A:ASL A:TAY
     LDX &FE45
     LDA beamtbl,X
+    STA jbase,Y                                     ; journal: class
+    TXA:STA jbase+1,Y                               ; journal: T1hi at classify
+    LDA jbase,Y
     BEQ fs_cls0
     CMP #1 : BEQ fs_cls1
-    JMP fs_clrall
+    LDA #&FF:STA jbase+2,Y                          ; journal: no wait
+    JSR fs_clrtop
+    JSR fs_clrbot
+    JMP fs_logdone
 .fs_cls0
     LDA #2:STA &FE4D
 .fs_w0
     LDA &FE4D:AND #2:BEQ fs_w0
-    JMP fs_clrall
+    LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
+    JSR fs_logwait
+    JSR fs_clrtop
+    JSR fs_clrbot
+    JMP fs_logdone
 .fs_cls1
     LDA #2:STA &FE4D
     JSR fs_clrtop
 .fs_w1
     LDA &FE4D:AND #2:BEQ fs_w1
-    JMP fs_clrbot
-.fs_clrall
-    JSR fs_clrtop
+    LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
+    JSR fs_logwait
+    JSR fs_clrbot
+    JMP fs_logdone
+.fs_logwait
+    LDA jidx:ASL A:ASL A:TAY
+    LDA &FE45:STA jbase+2,Y
+    RTS
+.fs_logdone
+    LDA jidx:ASL A:ASL A:TAY
+    LDA &FE45:STA jbase+3,Y
+    LDX jidx:INX
+    CPX #63:BCC fs_jw
+    LDX #0
+.fs_jw
+    STX jidx
+    RTS
 .fs_clrbot
     LDA backhi : CMP #&58 : BNE fs_cb1
     JMP clr58b

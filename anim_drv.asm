@@ -41,6 +41,12 @@ ORG &3C00
     LDA #2 :STA &FE00: LDA #45 :STA &FE01
     LDA #6 :STA &FE00: LDA #20 :STA &FE01
     LDA #7 :STA &FE00: LDA #28 :STA &FE01
+    LDA #8 :STA &FE00: LDA #0  :STA &FE01           ; R8=0: interlace OFF. The MODE 4
+    ; default (R8=1, interlace sync) makes every field 312.5 lines = 20000us,
+    ; which drifts the 19968us T1 field lock by 32us/field (beam classes
+    ; rotate through all phases every ~12s -> periodic clear-vs-beam races),
+    ; and shimmers 1px lines at 25Hz. Non-interlaced: field = exactly 312
+    ; lines = 19968us, T1 lock is exact and the raster is stable.
     LDA #10:STA &FE00: LDA #&20:STA &FE01
     ; --- System VIA T1: free-run, period 19968us = exactly one 312-line PAL
     ;     field (latch 19966 + 2), so one phase-lock to vsync here holds for
@@ -172,12 +178,14 @@ ORG &4000
     LDA #2:STA &FE4D
 .fs_w0
     LDA &FE4D:AND #2:BEQ fs_w0
+    LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
     JMP fs_clrall
 .fs_cls1                                            ; beam in bottom half
     LDA #2:STA &FE4D                                ; arm BEFORE clearing (flag latches)
     JSR fs_clrtop
 .fs_w1
     LDA &FE4D:AND #2:BEQ fs_w1
+    LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
     JMP fs_clrbot
 .fs_clrall
     JSR fs_clrtop
