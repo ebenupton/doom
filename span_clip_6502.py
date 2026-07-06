@@ -97,6 +97,10 @@ class SpanClip6502:
         self.mpu = MPU()
         self.total_cycles = 0
         self.last_cycles = 0
+        # When set to a list, every emitted (x0,y0,x1,y1) raster segment is
+        # appended (drained from LINE_OUT after each entry that can emit).
+        # Feeds the pixel-exact pure-Python reference (tools/pyref_render.py).
+        self.capture = None
         mem = self.mpu.memory
 
         # Load quarter-square tables
@@ -216,6 +220,8 @@ class SpanClip6502:
         mem[ZP_IHI] = ihi & 0xFF
         mem[ZP_MS_EMIT] = 0x00
         self._run(ENTRY_MARK_SOLID)
+        if self.capture is not None:
+            self.capture.extend(self.drain_lines())
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                 emit_top=True, emit_bot=True,
@@ -270,6 +276,8 @@ class SpanClip6502:
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
         self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+        if self.capture is not None:
+            self.capture.extend(self.drain_lines())
 
     _reset_count = [0]
     def reset_records(self):
@@ -542,7 +550,10 @@ class SpanClip6502:
         if records_buf is not None:
             mem[ZP_DCL_REC_BUF]   = 0
             mem[ZP_DCL_REC_BUF_H] = 0
-        return self.drain_lines()
+        lines = self.drain_lines()
+        if self.capture is not None:
+            self.capture.extend(lines)
+        return lines
 
     def interp_store(self, x, x0, y0, x1, y1):
         """Call the round-to-nearest interp (span boundary values).

@@ -233,14 +233,19 @@ class Instrumented6502Spans(EndpointClipSpans):
         return super().vertical_outside_spans(sx, y_lo + Y_BIAS, y_hi + Y_BIAS)
 
     def has_gap(self, lo, hi):
-        result = super().has_gap(lo, hi)
-        _span_clip_6502.has_gap(lo, hi)
-        return result
+        # Return the 6502's verdict (not the Python model's): the engine's
+        # traversal descends on ITS pool state, and the two span
+        # representations drift ±1 row where the records-driven 6502 tighten
+        # and the legacy u8-interp Python tighten pick different split
+        # anchors. Taking the 6502 answer keeps the Python reference's
+        # traversal decisions engine-exact; the Python model is still
+        # queried so lockstep drift remains observable via _check.
+        super().has_gap(lo, hi)
+        return _span_clip_6502.has_gap(lo, hi)
 
     def is_full(self):
-        result = super().is_full()
-        _span_clip_6502.is_full()
-        return result
+        super().is_full()
+        return _span_clip_6502.is_full()
 
 
 # ── WAD parsing ──────────────────────────────────────────────────────────────
