@@ -805,3 +805,109 @@ LC_RES_LO = $0955
 LC_RES_HI = $0956
 LC_TGT_LO = $0957                       ; clip target value (s16)
 LC_TGT_HI = $0958
+
+; ---------------------------------------------------------------------------
+; seg_zero_rec_solid — classify a portal whose aperture-edge DCL emissions
+; produced ZERO records. That is ambiguous: either the opening covers the
+; whole screen (the tighten is a genuine no-op -> skip), or the opening is
+; entirely OFF-screen (every visible row in the seg's columns shows wall or
+; flat -> the columns must be CLOSED). The packed-Python reference
+; (endpoint_spans records verdicts: top 'below' or bot 'above' -> solid)
+; already closes; the 6502 skipped, leaving the columns open — found via
+; the (-486,-3307,243) phantom, where a screen-wide portal whose aperture
+; projects wholly above the screen left columns 0..69 open and the far
+; rooms drew through the wall (276px cross-impl divergence).
+;
+; In:  SEG_PROJ_BUF ($0A40, layout in bsp/walk.s) biased s16 projections,
+;      zp_seg_flags (SF_NEEDBT=$04, SF_NEEDBB=$08).
+; Out: C=1 -> aperture band provably empty on screen (caller appends a
+;      SOLID over [ilo,ihi]); C=0 -> genuine no-op (skip).
+;
+; Band bottom = min(fb, bb when SF_NEEDBB); band top = max(ft, bt when
+; SF_NEEDBT). Empty on screen iff bottom < Y_BIAS at BOTH endpoints
+; (min < k <=> either < k), or top > Y_BIAS+159 at both.
+; ---------------------------------------------------------------------------
+SZR_PROJ = $0A40                        ; = SEG_PROJ_BUF (bsp/walk.s)
+.export seg_zero_rec_solid
+
+; X = lo-byte offset of a projection in SZR_PROJ. C=1 iff value < Y_BIAS.
+szr_lt:
+LDA SZR_PROJ,X
+SEC
+SBC #Y_BIAS
+LDA SZR_PROJ+1,X
+SBC #0
+BVC szr_lt_nv
+EOR #$80
+szr_lt_nv:
+BMI szr_yes
+CLC
+RTS
+; C=1 iff value > Y_BIAS+159.
+szr_gt:
+LDA #<(Y_BIAS+159)
+SEC
+SBC SZR_PROJ,X
+LDA #>(Y_BIAS+159)
+SBC SZR_PROJ+1,X
+BVC szr_gt_nv
+EOR #$80
+szr_gt_nv:
+BMI szr_yes
+CLC
+RTS
+szr_yes:
+SEC
+RTS
+
+seg_zero_rec_solid:
+.scope
+; bottom family: band bottom above the screen top at endpoint 1?
+LDX #2                                  ; sy1_bot (fb1)
+JSR szr_lt
+BCS szr_b1
+LDA zp_seg_flags
+AND #$08                                ; SF_NEEDBB
+BEQ szr_top
+LDX #10                                 ; sy1_bbot (bb1)
+JSR szr_lt
+BCC szr_top
+szr_b1:
+; ... and at endpoint 2?
+LDX #6                                  ; sy2_bot (fb2)
+JSR szr_lt
+BCS szr_closed
+LDA zp_seg_flags
+AND #$08
+BEQ szr_top
+LDX #14                                 ; sy2_bbot (bb2)
+JSR szr_lt
+BCS szr_closed
+szr_top:
+; top family: band top below the screen bottom at endpoint 1?
+LDX #0                                  ; sy1_top (ft1)
+JSR szr_gt
+BCS szr_t1
+LDA zp_seg_flags
+AND #$04                                ; SF_NEEDBT
+BEQ szr_open
+LDX #8                                  ; sy1_btop (bt1)
+JSR szr_gt
+BCC szr_open
+szr_t1:
+LDX #4                                  ; sy2_top (ft2)
+JSR szr_gt
+BCS szr_closed
+LDA zp_seg_flags
+AND #$04
+BEQ szr_open
+LDX #12                                 ; sy2_btop (bt2)
+JSR szr_gt
+BCS szr_closed
+szr_open:
+CLC
+RTS
+szr_closed:
+SEC
+RTS
+.endscope

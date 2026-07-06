@@ -157,6 +157,7 @@ if __name__ == '__main__':
             (1856, -2368, 3),
             # beyond the old +/-1023-unit box (s16 player int)
             (3648, -2368, 35), (2500, -2600, 67), (3648, -4800, 131),
+            (-486, -3307, 243),
         ]
 
     for px, py, ab in POSITIONS:

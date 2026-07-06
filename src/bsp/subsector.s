@@ -720,8 +720,17 @@ BNE ms_solid_path
 ;     `if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0: return`.
 LDA $0700
 ORA $0800
-BEQ ms_skip
+BEQ ms_zero_rec
 JSR defq_append_tighten
+JMP ms_skip
+ms_zero_rec:
+; Zero records: skip only when the aperture genuinely covers the whole
+; screen; a wholly off-screen aperture means the columns are all wall ->
+; close them (aligns with endpoint_spans' record verdicts; see
+; seg_zero_rec_solid in clip/tfr.s).
+JSR seg_zero_rec_solid
+BCC ms_skip
+JSR defq_append_solid
 JMP ms_skip
 ms_solid_path:
 ; --- Solid wall: defer mark_solid (Python collects them per subsector

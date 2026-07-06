@@ -256,6 +256,16 @@ class SpanClip6502:
         # segment records the prior draw_clipped_line(yt/yb) calls wrote.
         # Just pass [ilo, ihi] through and dispatch.
         if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0:
+            # Zero records is ambiguous: the aperture edges drew nothing
+            # either because the opening covers the whole screen (genuine
+            # no-op) or because the opening is entirely OFF-screen (every
+            # visible row in [ilo,ihi] is wall/flat -> the columns must be
+            # CLOSED). Mirror of seg_zero_rec_solid in src/clip/tfr.s and
+            # of endpoint_spans' record verdicts. yt/yb here are the
+            # combined (min/max) band boundaries, biased.
+            if ((yb1 < 48 and yb2 < 48) or
+                    (yt1 > 48 + 159 and yt2 > 48 + 159)):
+                self.mark_solid(ilo, ihi)
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF

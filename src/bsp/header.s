@@ -156,6 +156,7 @@ jt_br_init_frame: JMP br_init_frame                       ; $481B   clear vcache
 ; Imported from span_clip (same link; the jump-table indirection is kept so
 ; entries stay uniformly callable from the harness).
 .import jt_mark_solid, jt_has_gap, jt_is_full
+.import seg_zero_rec_solid
 .import jt_tighten_from_records, jt_draw_clip, jt_draw_clip_s16
 SC_DRAW_S16 = jt_draw_clip_s16
 SC_DRAW_U8 = jt_draw_clip                ; standalone DCL (u8 input, no clipper prelude)

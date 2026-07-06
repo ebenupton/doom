@@ -32,6 +32,9 @@ POSITIONS = [
     (3648, -2368, 35),
     (2500, -2600, 67),
     (3648, -4800, 131),
+    # zero-record off-screen-aperture portal (screen-wide wall just behind
+    # the viewer) — the sixth clipper bug's reproducer
+    (-486, -3307, 243),
 ]
 
 
