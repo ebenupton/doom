@@ -28,6 +28,13 @@ import fp
 import nj_raster
 from wad_packed import spans_init_full
 
+# The ENGINE has no aperture-skip: subsector.s gates ft/fb/bt/bb emission on
+# seg flags + height compares only and lets DCL clip against the pool. The
+# python ap-skip is a python-side speed hack that decides from the legacy
+# span MODEL (which drifts ±1 from the pool) — with it on, the reference
+# skips draws/tightens the engine performs and diverges. Keep it off here.
+dw._AP_SKIP_ENABLE = False
+
 _surf = None
 
 
