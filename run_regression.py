@@ -58,7 +58,7 @@ run('test_slope_div', ['test_slope_div.py'], lambda o: 'PASS' in o and 'FAIL' no
 run('test_bca',       ['test_bca.py'],       lambda o: 'PASS' in o and 'FAIL' not in o)
 run('test_bsp_render',['test_bsp_render.py'],lambda o: 'All tests passed' in o)
 run('check_angle',    ['check_angle_calls.py'], lambda o: re.search(r'TOTAL .*: 0 differ vs python, 0 differ', o) is not None)
-ct = run('compare_traversal', ['compare_traversal.py'], lambda o: o.count('diff=0 px') == 14 and 'DIFFER' not in o)
+ct = run('compare_traversal', ['compare_traversal.py'], lambda o: o.count('diff=0 px') == 17 and 'DIFFER' not in o)
 run('compare_subsector', ['compare_subsector.py'], lambda o: re.search(r'TOTAL:.*0 pixel/span-affecting, 0 px', o) is not None)
 
 baseline = None
@@ -75,7 +75,9 @@ print('== verify vs Python (two-sided) ==')
 VERIFY_POSITIONS = [(1056, -3616, 64), (1500, -3700, 0), (800, -3400, 96),
                     (1056, -3328, 14), (1200, -3000, 129),
                     # far-from-spawn, in-spec (+/-1023 units of MAP_CENTER)
-                    (2112, -2368, 35), (1984, -2496, 67)]
+                    (2112, -2368, 35), (1984, -2496, 67),
+                    # beyond the old box (s16 player int)
+                    (3648, -4800, 131)]
 try:
     import pygame; pygame.init(); pygame.display.set_mode((1, 1))
     import verify_6502_vs_python as V

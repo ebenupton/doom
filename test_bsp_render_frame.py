@@ -93,6 +93,9 @@ def setup_view(sc, px, py, ab):
     py_88 = int((py - dw.MAP_CENTER_Y) * 256 / dw.PRESCALE)
     mem[ZP_PX]     = px_88 & 0xFF
     mem[ZP_PX + 1] = (px_88 >> 8) & 0xFF
+    from symmap import sym as _s
+    mem[_s('zp_br_px_e')] = (px_88 >> 16) & 0xFF
+    mem[_s('zp_br_py_e')] = (py_88 >> 16) & 0xFF
     mem[ZP_PY]     = py_88 & 0xFF
     mem[ZP_PY + 1] = (py_88 >> 8) & 0xFF
 

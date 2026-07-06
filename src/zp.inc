@@ -21,6 +21,8 @@ zp_br_py = $02                    ; [bsp]
 zp_br_py_h = $03                  ; [bsp]
 bca_py = $03                      ; [ang]; zp_br_py_h
 zp_br_vz = $04                    ; [bsp]; s8 eye-height (prescaled)
+zp_br_px_e = $9D                  ; [bsp]; s16 player int x HIGH byte (px_h is lo)
+zp_br_py_e = $9E                  ; [bsp]; s16 player int y HIGH byte (py_h is lo)
 zp_br_smag = $05                  ; [bsp]; u8 sin magnitude
 zp_br_sneg = $06                  ; [bsp]; 1 if sin negative
 zp_br_sone = $07                  ; [bsp]; 1 if |sin| == 1

@@ -128,6 +128,10 @@ class BspRender6502:
         mem[ZP_PX + 1] = (px_88 >> 8) & 0xFF
         mem[ZP_PY]     = py_88 & 0xFF
         mem[ZP_PY + 1] = (py_88 >> 8) & 0xFF
+        # s16 integer position: high bytes (whole-map support, not just
+        # +/-127 prescaled units around MAP_CENTER)
+        mem[_sym('zp_br_px_e')] = (px_88 >> 16) & 0xFF
+        mem[_sym('zp_br_py_e')] = (py_88 >> 16) & 0xFF
 
         # Eye height (pre-scaled, s8). doom_wireframe normally does
         # vz = prescale_height(player_floor + 41); we get player_floor in.

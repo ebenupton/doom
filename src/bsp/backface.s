@@ -2,7 +2,7 @@
 ; ============================================================================
 ; br_back_face_test — test current seg for back-facing.
 ;   Inputs (zp): zp_seg_lv1x/lv1y (s16), zp_seg_ldx/ldy (s8), zp_seg_flags.
-;                zp_br_px_h, zp_br_py_h = player px_int, py_int (s8).
+;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
 ;   Output: zp_seg_skip = 1 if back-facing, 0 if front-facing.
 ;
 ;   dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
@@ -11,36 +11,20 @@
 ; ============================================================================
 br_back_face_test:
 .scope
-; dx = px_int - lv1_x (s16). px_int (s8) sign-extended.
+; dx = px_int - lv1_x (s16).
 LDA zp_br_px_h
-STA zp_br_dxlo
-ZERO zp_br_dxhi
-LDA zp_br_dxlo
-BPL bf_px_pos
-LDA #$FF
-STA zp_br_dxhi
-bf_px_pos:
-LDA zp_br_dxlo
 SEC
 SBC zp_seg_lv1x_lo
 STA zp_br_dxlo
-LDA zp_br_dxhi
+LDA zp_br_px_e
 SBC zp_seg_lv1x_hi
 STA zp_br_dxhi
 ; dy = py_int - lv1_y (s16)
 LDA zp_br_py_h
-STA zp_br_dylo
-ZERO zp_br_dyhi
-LDA zp_br_dylo
-BPL bf_py_pos
-LDA #$FF
-STA zp_br_dyhi
-bf_py_pos:
-LDA zp_br_dylo
 SEC
 SBC zp_seg_lv1y_lo
 STA zp_br_dylo
-LDA zp_br_dyhi
+LDA zp_br_py_e
 SBC zp_seg_lv1y_hi
 STA zp_br_dyhi
 

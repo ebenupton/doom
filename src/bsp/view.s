@@ -34,20 +34,14 @@ STA $3B
 ; bca_afn = (ab<<4)&FF
 ; Player px,py sign-extended to s16 (bca_pxs $8D/$8E, bca_pys $9B/$9C) is
 ; also frame-constant; hoist it (was recomputed per bbox check).
-LDX #0
 LDA zp_br_px_h
 STA $8D
-BPL vs_px
-DEX
-vs_px:
-STX $8E
-LDX #0
+LDA zp_br_px_e
+STA $8E
 LDA zp_br_py_h
 STA $9B
-BPL vs_py
-DEX
-vs_py:
-STX $9C
+LDA zp_br_py_e
+STA $9C
 ; dx_lo = (-zp_br_px) & 0xFF
 LDA #0
 SEC
@@ -159,38 +153,21 @@ RTS
 ; ============================================================================
 br_to_view:
 .scope
-; dx (s16) = wx - px_int. Caller sets zp_br_dxlo:hi to wx (s16);
-; subtract px_int (s8 sign-extended).
+; dx (s16) = wx - px_int (s16: px_h lo, px_e hi).
 LDA zp_br_dxlo
 SEC
 SBC zp_br_px_h
 STA zp_br_dxlo
-LDA zp_br_px_h
-BMI dx_neg_ext
 LDA zp_br_dxhi
-SBC #0
+SBC zp_br_px_e
 STA zp_br_dxhi
-JMP dx_done
-dx_neg_ext:
-LDA zp_br_dxhi
-SBC #$FF
-STA zp_br_dxhi
-dx_done:
 LDA zp_br_dylo
 SEC
 SBC zp_br_py_h
 STA zp_br_dylo
-LDA zp_br_py_h
-BMI dy_neg_ext
 LDA zp_br_dyhi
-SBC #0
+SBC zp_br_py_e
 STA zp_br_dyhi
-JMP dy_done
-dy_neg_ext:
-LDA zp_br_dyhi
-SBC #$FF
-STA zp_br_dyhi
-dy_done:
 
 ; int_vx = rot_int(dx, sin) - rot_int(dy, cos), as s24
 LDA zp_br_dxlo

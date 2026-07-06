@@ -129,6 +129,8 @@ def write_view_state(mem, vx_88, vy_88, sc_tuple):
     mem[ZP_PXH] = (vx_88 >> 8) & 0xFF
     mem[ZP_PY]  = vy_88 & 0xFF
     mem[ZP_PYH] = (vy_88 >> 8) & 0xFF
+    mem[_sym('zp_br_px_e')] = (vx_88 >> 16) & 0xFF
+    mem[_sym('zp_br_py_e')] = (vy_88 >> 16) & 0xFF
     mem[ZP_SMAG] = s_mag
     mem[ZP_SNEG] = 1 if s_neg else 0
     mem[ZP_SONE] = 1 if s_one else 0

@@ -26,6 +26,7 @@ ORG &3C00
     ; --- fixed (position-derived) ZP for spawn 1056,-3616 ---
     LDA #&00:STA &00 : LDA #&EE:STA &01             ; PX = $EE00
     LDA #&40:STA &02 : LDA #&D2:STA &03             ; PY = $D240
+    LDA #&FF:STA &9D : STA &9E                      ; px_e/py_e: s16 int high bytes
     LDA #&06:STA &04                                ; VZ
     LDA #&70:STA &90 : LDA #&FF:STA &91             ; PXRAW
     LDA #&92:STA &92 : LDA #&FE:STA &93             ; PYRAW
