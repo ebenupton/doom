@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Build doom_walk.ssd: an autobooting WALKABLE E1M1 wireframe for a plain
+Model B + SWRAM (same machine-code ROMSEL boot as doom_modelb.ssd), with
+walk_drv (keyboard-driven position/angle) overlaid at $3C00 instead of the
+spin driver. Cursor keys: Left/Right turn, Up/Down move forward/back."""
+import os, subprocess, builtins
+os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
+os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
+import pygame; pygame.init()
+import build_anim_ssd as anim
+import build_modelb_ssd as modelb
+
+
+def main():
+    import asmbuild
+    asmbuild.build_all(banked=1, c02=0)
+    subprocess.run(['./beebasm', '-i', 'walk_drv.asm', '-D', 'BANKED=1'], check=True)
+    subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)
+    orig = builtins.open
+    def swap(path, *a, **k):
+        if path == 'ANIMDRV':
+            path = 'WALKDRV'
+        return orig(path, *a, **k)
+    builtins.open = swap
+    try:
+        L0, C, L2, LOW = anim.build_images()
+    finally:
+        builtins.open = orig
+    BOOT = orig('!BOOT', 'rb').read()
+    files = [
+        ('!BOOT', 0x1900, 0x1900, BOOT),
+        ('BANK0', 0x3000, 0x3000, L0),
+        ('BANK1', 0x3000, 0x3000, C),
+        ('BANK2', 0x3000, 0x3000, L2),
+        ('LOW',   0x1B40, 0x1B40, LOW),
+    ]
+    modelb.write_ssd(files, path='doom_walk.ssd')
+
+
+if __name__ == '__main__':
+    main()
