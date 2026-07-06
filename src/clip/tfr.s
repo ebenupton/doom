@@ -187,6 +187,20 @@ JSR tg_append_x
 JMP tfs_continue
 tfs_in_range:
 
+; Single-column span [x..x]: the sweep below is empty (CUR_X == X_HI),
+; which used to DROP the span entirely and leave its records unconsumed
+; (whose stale xl then drags next_x backwards on the next span, emitting
+; reversed/overlapping phantom spans — the 1056,-3616,64 window bug).
+; Enter the loop body directly with CUR_X = X_HI = x: the body evaluates
+; record dominance at x, emits the one column, and the loop test exits.
+LDA POOL_XSTART,X
+CMP POOL_XEND,X
+BNE tfs_pre_chk
+STA TFS_CUR_X
+STA TFS_X_HI
+JMP tfs_body
+tfs_pre_chk:
+
 ; Pre-fragment [span.xstart, ilo] if span.xstart < ilo.
 LDA POOL_XSTART,X
 CMP zp_ilo
@@ -253,6 +267,56 @@ CMP TFS_X_HI
 BCC tfs_inner_go
 JMP tfs_inner_done
 tfs_inner_go:
+
+tfs_body:
+; ---- Consume stale records (xr <= cur_x) ----
+; Records are captured at DCL time; ops that run between then and this
+; deferred tighten can close the columns they refer to. A record that
+; can no longer dominate (cur_x >= xr) must be consumed here: feeding
+; its xl into the next_x computation moves the sweep BACKWARDS and
+; emits reversed/overlapping spans.
+tfs_st_top:
+LDA TFS_T_CUR
+BEQ tfs_st_top_done
+CLC
+ADC #2
+TAY
+LDA TOP_RECORDS,Y
+CMP TFS_CUR_X
+BEQ tfs_st_top_stale
+BCS tfs_st_top_done
+tfs_st_top_stale:
+LDA TFS_T_CUR
+CLC
+ADC #4
+CMP TFS_TOP_BUFEND
+BCC tfs_st_top_store
+LDA #0
+tfs_st_top_store:
+STA TFS_T_CUR
+JMP tfs_st_top
+tfs_st_top_done:
+tfs_st_bot:
+LDA TFS_B_CUR
+BEQ tfs_st_bot_done
+CLC
+ADC #2
+TAY
+LDA BOT_RECORDS,Y
+CMP TFS_CUR_X
+BEQ tfs_st_bot_stale
+BCS tfs_st_bot_done
+tfs_st_bot_stale:
+LDA TFS_B_CUR
+CLC
+ADC #4
+CMP TFS_BOT_BUFEND
+BCC tfs_st_bot_store
+LDA #0
+tfs_st_bot_store:
+STA TFS_B_CUR
+JMP tfs_st_bot
+tfs_st_bot_done:
 
 ; ---- Determine top_dom (T.xl <= cur_x < T.xr) ----
 ZERO TFS_TOP_DOM
