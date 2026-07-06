@@ -85,6 +85,7 @@ ORG &3C00
     LDA pxf:STA &00 : LDA pxl:STA &01 : LDA pxh:STA &9D
     LDA pyf:STA &02 : LDA pyl:STA &03 : LDA pyh:STA &9E
     JSR derive_raw                                  ; PXRAW/PYRAW ($90-$93)
+    JSR floor_vz                                    ; VZ from grid (smoothed)
     ; --- sincos + view angle from table[angidx] ---
     LDA #0:STA &ED
     LDA angidx
@@ -161,7 +162,11 @@ ORG &4000
     LDA backhi:EOR #(&58 EOR &6C):STA backhi
     LDA jidx:ASL A:ASL A:TAY
     LDX &FE45
+    LDA #0                                          ; T1hi >= 78: transient/wrap read
+    CPX #78                                         ; -> class 0 (wait; always safe)
+    BCS fs_havecls
     LDA beamtbl,X
+.fs_havecls
     STA jbase,Y                                     ; journal: class
     TXA:STA jbase+1,Y                               ; journal: T1hi at classify
     LDA jbase,Y
@@ -295,6 +300,37 @@ ORG &4000
     DEX:BNE dr_y
     RTS
 
+; --- floor_vz: VZ ($04) tracks the grid floor under the derived raws ------
+.floor_vz
+    LDA &90:CLC:ADC #&90:STA &EC                    ; rawx + 1936 ($790)
+    LDA &91:ADC #&07:STA &ED
+    LDA &EC:ASL A                                   ; C = bit 7 of lo
+    LDA &ED:ROL A                                   ; A = (hi<<1)|(lo>>7) = cellx
+    STA &EC                                         ; cellx (0..35)
+    LDA &92:CLC:ADC #&2E:STA &ED                    ; rawy + 1582 ($62E)
+    LDA &93:ADC #&06:STA &EE
+    LDA &ED:ASL A
+    LDA &EE:ROL A                                   ; A = celly (0..21)
+    TAY
+    LDA frow_lo,Y:CLC:ADC &EC:STA &EC
+    LDA frow_hi,Y:ADC #0:STA &ED
+    LDA &EC:CLC:ADC #LO(floor_tab):STA &EC
+    LDA &ED:ADC #HI(floor_tab):STA &ED
+    LDY #0
+    LDA (&EC),Y                                     ; target VZ (s8, -15..21)
+    CMP &04
+    BEQ fv_done
+    ; move VZ one prescaled unit per frame toward the target (smooth stairs);
+    ; |diff| <= ~36 so the s8 subtract cannot overflow and N is the true sign
+    SEC:SBC &04
+    BMI fv_down
+    INC &04
+    RTS
+.fv_down
+    DEC &04
+.fv_done
+    RTS
+
 ; --- bounds check on the derived raws; revert the step if outside ---------
 ; s16 compare: in-range iff RAW >= MIN and RAW <= MAX.
 .bounds_or_revert_fwd
@@ -351,27 +387,38 @@ ORG &4000
 ; --- 64-entry movement step table: premultiplied 8.8 deltas ---------------
 ; forward = (cos(a), sin(a)) in world units; 8.8 prescaled delta =
 ; world_step * 256/8 = *32. Entry: dx lo, dx hi, dy lo, dy hi (s16).
-ALIGN &100
 .step_tab
 FOR i, 0, 63
     EQUW INT(SPEED * 32 * COS(i * PI / 32) + 65536.5) AND &FFFF
     EQUW INT(SPEED * 32 * SIN(i * PI / 32) + 65536.5) AND &FFFF
 NEXT
 
-ALIGN &100
 .beamtbl
-    FOR n, 0, 255
+    FOR n, 0, 77
       IF n <= 14
         EQUB 2
       ELIF n <= 34
         EQUB 1
       ELIF n <= 56
         EQUB 0
-      ELIF n <= 77
-        EQUB 2
       ELSE
-        EQUB 0
+        EQUB 2
       ENDIF
     NEXT
+
+; --- floor-height grid: 36x22 cells of 128 world units over the clamp
+; bounds, holding prescaled VZ (= _prescale_height(player_floor+41)),
+; sampled at cell centres from the Python float BSP at build time.
+; cellx = (rawx+1936)>>7, celly = (rawy+1582)>>7, byte = grid[celly*36+cellx].
+.floor_tab
+INCBIN "FLOORGRD.bin"
+.frow_lo
+FOR n, 0, 21
+    EQUB LO(n * 36)
+NEXT
+.frow_hi
+FOR n, 0, 21
+    EQUB HI(n * 36)
+NEXT
 .clr_end
 SAVE "WALKDRV", &3C00, clr_end, &3C00

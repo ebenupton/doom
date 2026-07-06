@@ -11,9 +11,30 @@ import build_anim_ssd as anim
 import build_modelb_ssd as modelb
 
 
+def build_floor_grid():
+    """36x22 grid of prescaled VZ (player_floor+41) at 128-unit cells over
+    the walk clamp bounds; sampled from the Python float BSP."""
+    import doom_wireframe as dw
+    RAWX_MIN, RAWY_MIN = -1936, -1582
+    COLS, ROWS, CELL = 36, 22, 128
+    grid = bytearray(COLS * ROWS)
+    fallback = dw._prescale_height(dw.player_floor(1056, -3616) + 41) & 0xFF
+    for r in range(ROWS):
+        for c in range(COLS):
+            wx = dw.MAP_CENTER_X + RAWX_MIN + c * CELL + CELL // 2
+            wy = dw.MAP_CENTER_Y + RAWY_MIN + r * CELL + CELL // 2
+            try:
+                grid[r * COLS + c] = dw._prescale_height(
+                    dw.player_floor(wx, wy) + 41) & 0xFF
+            except Exception:
+                grid[r * COLS + c] = fallback
+    open('FLOORGRD.bin', 'wb').write(bytes(grid))
+
+
 def main():
     import asmbuild
     asmbuild.build_all(banked=1, c02=0)
+    build_floor_grid()
     subprocess.run(['./beebasm', '-i', 'walk_drv.asm', '-D', 'BANKED=1'], check=True)
     subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)
     orig = builtins.open
