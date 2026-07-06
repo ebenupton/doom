@@ -237,7 +237,7 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 ;     Replaces the perspective corner-projection path below (now dead code).
 ; angle module + bca workspace relocate when banked (must match slope_div.asm:
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
-.import jt_bca_check
+.import jt_bca_check, jt_bca_frame
 BCA_CHECK = jt_bca_check                ; JSR -> bbox_check_angle (point_to_angle inlined out)
 .if ::BANKED
 BCA_WS = $3A00

@@ -120,6 +120,13 @@ LDA zp_br_fvyhi
 ADC zp_br_resh
 STA zp_br_fvyhi
 
+; Rotation-coherence: choose cached vs original bbox_check_angle for this
+; frame (SMC-patches jt_bca_check) by whether the integer player position
+; moved. Cheap (~40 cyc/frame); zero per-check overhead on moved frames.
+; Banked: the cache code+data live in the bank L2 window — page it in
+; (no-op macro on flat; callers re-page before their next engine call).
+PAGE BANK_L2
+JSR jt_bca_frame
 RTS
 .endscope
 

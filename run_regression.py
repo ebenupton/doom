@@ -60,6 +60,7 @@ run('test_bsp_render',['test_bsp_render.py'],lambda o: 'All tests passed' in o)
 run('check_angle',    ['check_angle_calls.py'], lambda o: re.search(r'TOTAL .*: 0 differ vs python, 0 differ', o) is not None)
 ct = run('compare_traversal', ['compare_traversal.py'], lambda o: o.count('diff=0 px') == 18 and 'DIFFER' not in o)
 run('compare_subsector', ['compare_subsector.py'], lambda o: re.search(r'TOTAL:.*0 pixel/span-affecting, 0 px', o) is not None)
+run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 
 baseline = None
 if os.path.exists(BASELINE_PATH):

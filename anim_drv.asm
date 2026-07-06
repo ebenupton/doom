@@ -60,6 +60,23 @@ ORG &3C00
 .vsy0
     LDA &FE4D:AND #2:BEQ vsy0                       ; wait for vsync edge
     LDA #&4D:STA &FE45                              ; start T1: phase = time since vsync
+    ; --- rotation-coherence bbox cache: clear header state, enable.
+    ;     RCACHE lives in the bank L2 window ($AD00 data; header/bitmaps at
+    ;     $B460-$B4E8) — page L2 for the init writes; the frame loop pages
+    ;     banks explicitly before every engine call anyway. Zero-init is
+    ;     safe: even a false-stable first frame sees COMPUTED=0 -> all
+    ;     checks take the cold path -> correct results. ---
+    LDA #7
+    STA &FE30                                       ; page bank L2
+    LDA #0
+    TAX
+.rcinit
+    STA &B460,X
+    INX
+    CPX #&89
+    BNE rcinit
+    LDA #1
+    STA &B4E8                                       ; RCACHE_ENABLE
     ; --- init animation state ---
     LDA #0   :STA angidx
     LDA #LO(tabbase):STA ptlo : LDA #HI(tabbase):STA pthi

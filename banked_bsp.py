@@ -78,15 +78,24 @@ def build_banked(flatr):
     cpy(0x0E00, 0xC600, len(flatr.bbox_table))   # bbox -> $8E00
     cpy(0x1D00, 0xE000, 1028)            # recip  -> $9D00 (514 HI + 514 LO)
     cpy(0x2200, 0xE484, layout['n_vwh'])  # VWH   -> $A200
+    # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
+    # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays
+    # end at $ACFF).
+    if os.path.exists('bsp_render_rc_bk.bin'):
+        rc = open('bsp_render_rc_bk.bin', 'rb').read()
+        l2[0x3500:0x3500 + len(rc)] = rc
     bm.define_bank(BANK_L2, l2)
 
     # --- banked bsp_render code (_bk variants) into low RAM ---
-    # bsp_render_w (br_project_y) and the angle module move to the clipper-vacated
-    # low space ($3900 / $3400); bca workspace sits at $3A00 (RAM, no load).
-    loads = [('bsp_render_bk.bin', 0x4800), ('bsp_render_lo_bk.bin', 0x1B40),
-             ('bsp_render_b_bk.bin', 0x3A40), ('bsp_render_d_bk.bin', 0x3BC0),
-             ('bsp_render_w_bk.bin', 0x3900), ('bsp_render_ang_bk.bin', 0x3400)]
-    for fn, addr in loads:
+    # Region list comes FROM THE LD65 CONFIG (engine_load._regions) so a new
+    # MEMORY area can never be silently missing here (a hardcoded list once
+    # dropped the RCCODE rotation-cache region -> jt_bca_frame jumped into
+    # garbage and the disc hung at boot). Skip the clipper bank (loaded into
+    # BANK_C above, not main RAM).
+    from engine_load import _regions
+    for addr, fn in _regions(banked=1):
+        if fn.startswith('span_clip') or fn == 'bsp_render_rc_bk.bin':
+            continue                    # clipper -> BANK_C; rc code -> BANK_L2 above
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):

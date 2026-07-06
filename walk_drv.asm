@@ -74,6 +74,23 @@ ORG &3C00
     ; --- keyboard: manual scan mode (IC32 addr 3 = 0), DDRA 0-6 out ---
     LDA #3  :STA &FE40
     LDA #&7F:STA &FE43
+    ; --- rotation-coherence bbox cache: clear header state, enable.
+    ;     RCACHE lives in the bank L2 window ($AD00 data; header/bitmaps at
+    ;     $B460-$B4E8) — page L2 for the init writes; the frame loop pages
+    ;     banks explicitly before every engine call anyway. Zero-init is
+    ;     safe: even a false-stable first frame sees COMPUTED=0 -> all
+    ;     checks take the cold path -> correct results. ---
+    LDA #7
+    STA &FE30                                       ; page bank L2
+    LDA #0
+    TAX
+.rcinit
+    STA &B460,X
+    INX
+    CPX #&89
+    BNE rcinit
+    LDA #1
+    STA &B4E8                                       ; RCACHE_ENABLE
     ; --- init state ---
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
     LDA #0   :STA jidx
