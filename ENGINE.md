@@ -177,8 +177,12 @@ ground-truth verify at 5 fixed positions has not worsened vs
   test conservative: frustum rejects + never under-report the extent.
 - Pool exhaustion (32 span slots) silently drops visible fragments;
   LINE_OUT_BUF wraps past 63 lines. Both are latent, not observed.
-- **Playable area is a ±1023-unit box around MAP_CENTER (measured
-  2026-07-05).** Player position is s16 8.8 fixed-point: after PRESCALE=8
+- **Playable-area box: FIXED 2026-07-06** — player integer position is
+  now s16 (zp_br_px_e/py_e), the whole map is representable, and
+  doom_walk.ssd walks it (cursor keys). Historical note follows; the
+  remaining v1 limitation is spawn-constant VZ in the walk build.
+- **(historical) Playable area was a ±1023-unit box around MAP_CENTER
+  (measured 2026-07-05).** Player position is s16 8.8 fixed-point: after PRESCALE=8
   the integer part must fit s8, so only positions within ±1023 world
   units of MAP_CENTER (1200,-3250) are representable — 67% of walkable
   E1M1 (489/729 grid samples) is OUT of range. Verified empirically:
