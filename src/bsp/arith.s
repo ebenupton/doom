@@ -394,7 +394,10 @@ SBC zp_br_resext
 STA zp_br_resext
 ri_apply_neg:
 LDA zp_ri_neg
-BEQ ri_done
+BNE ri_do_neg                           ; rare (trig negative); common case
+ri_done:                                ; falls straight through to RTS
+RTS
+ri_do_neg:
 LDA #0
 SEC
 SBC zp_br_resl
@@ -405,7 +408,6 @@ STA zp_br_resh
 LDA #0
 SBC zp_br_resext
 STA zp_br_resext
-ri_done:
 RTS
 ri_zero:
 LDA #0
