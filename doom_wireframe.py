@@ -1968,7 +1968,12 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                           yb_sec1=yb_sec1, yb_sec2=yb_sec2)
 
 
+_anim_ss_hook = None    # anim_sectors installs a per-subsector visibility
+                        # hook here (lazy mover patching); None = no cost
+
 def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
+    if _anim_ss_hook is not None:
+        _anim_ss_hook(idx)
     """Render a subsector with frame-global vertex cache.
 
     ctx: view context tuple from fp_view_context.
@@ -2596,6 +2601,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
 
 def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
+    if _anim_ss_hook is not None:
+        _anim_ss_hook(idx)
     """Render a subsector reading from packed ROM arrays."""
     layout = _p_layout
     rom = _p_rom_main

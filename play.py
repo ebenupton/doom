@@ -31,12 +31,20 @@ Run:  python3 play.py        (needs DOOM1.WAD in this directory)
 """
 import os, math, random
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
+# Animated sectors (doors/lifts) on by default; DOOM_ANIM=0 to disable.
+os.environ.setdefault('DOOM_ANIM', '1')
 import pygame
 
 # Importing the renderer loads DOOM1.WAD, builds the BSP, and sets the player
 # start. It opens a 1x1 SDL window as a side effect; replaced below.
 import doom_wireframe as dw
 from endpoint_spans import EndpointClipSpans
+
+if dw.ANIM_SECTORS:
+    import anim_sectors as an
+    an.install()          # visibility-lazy mover patching in the render paths
+else:
+    an = None
 
 FB_W, FB_H = dw.FP_RENDER_W, dw.FP_RENDER_H    # 256 x 160 integer framebuffer
 SCALE = 4
@@ -56,13 +64,22 @@ _r6502 = None
 
 
 def get_6502():
-    """Lazily build the full-6502 renderer (loads bsp_render.bin + tables)."""
+    """Lazily build the full-6502 renderer (loads bsp_render.bin + tables).
+    Returns None if the build doesn't fit the flat harness (the DOOM_ANIM
+    build's private VWH slots overflow the $E484 placement — engine-side
+    relocation pending)."""
     global _r6502
     if _r6502 is None:
         from bsp_render_6502 import BspRender6502
-        _r6502 = BspRender6502(
-            dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
-            dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+        try:
+            _r6502 = BspRender6502(
+                dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
+                dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+        except AssertionError as e:
+            print(f'6502 mode unavailable: {e}')
+            return None
+        if an is not None:
+            an.attach_6502(_r6502)   # mirror mover patches into py65 memory
     return _r6502
 
 
@@ -148,8 +165,8 @@ def main():
                     show_help = not show_help
                 elif ev.key == pygame.K_m:
                     mode = '6502' if mode == 'py' else 'py'
-                    if mode == '6502':
-                        get_6502()        # build it now (one-time hitch)
+                    if mode == '6502' and get_6502() is None:
+                        mode = 'py'       # anim build doesn't fit flat yet
             elif ev.type == pygame.MOUSEMOTION and mouse_look:
                 angle -= ev.rel[0] * MOUSE_SENS
 
@@ -174,10 +191,15 @@ def main():
 
         ab = dw.radians_to_byte(angle) & 0xFF        # quantise to 256 directions
 
+        if an is not None:
+            an.tick(dt)          # logical heights advance; tables patch lazily
+
         if mode == 'py':
             render_frame(fb, px, py, ab)             # pure-Python fixed-point
             detail = f"PYTHON  {len(dw.map_trace['segs_drawn'])} segs"
         else:
+            if an is not None:
+                an.flush_all()   # 6502 frames can't lazy-hook from python
             cyc = get_6502().render_frame(px, py, ab, dw.player_floor(px, py))
             get_6502().blit_framebuffer_to(fb)        # real $5800 framebuffer (mono)
             capped = "  CAPPED-incomplete" if cyc > 30_000_000 else ""
@@ -191,6 +213,8 @@ def main():
         screen.blit(font.render(
             f"({px:.0f},{py:.0f})  byte-angle {ab:3d}   {clock.get_fps():4.0f} fps",
             True, HUD), (6, 26))
+        if an is not None:
+            screen.blit(font.render(an.hud_line(), True, DIM), (6, 46))
         if show_help:
             screen.blit(font.render(
                 "WASD/arrows move · Q/E strafe · Shift run · M Python/6502 · "

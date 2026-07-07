@@ -78,6 +78,14 @@ class BspRender6502:
         mem = self.sc.mpu.memory
 
         vwh_start = layout['off_vwh']
+        # Flat placement guard: VWH lives at $E484 below the ANG region at
+        # $E940. The DOOM_ANIM build adds private mover slots (+42 on E1M1,
+        # 1248 total) and DOES NOT FIT — relocation needed before the 6502
+        # can run an anim build (banked VWH_BK $A200-$A6FF fits: 1280).
+        n_vwh_total = len(rom_main) - vwh_start
+        assert VWH_BASE + n_vwh_total <= 0xE940, (
+            f"VWH table ({n_vwh_total} entries) overflows flat placement "
+            f"$E484-$E93F — DOOM_ANIM build needs a VWH relocation")
         for i in range(vwh_start):
             mem[ROM_MAIN_BASE + i] = rom_main[i]
         for i in range(len(rom_main) - vwh_start):
