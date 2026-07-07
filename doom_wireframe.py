@@ -83,7 +83,6 @@ _clip_mismatch_reported = set()  # (x,y,a) tuples already printed
 _show_integrated_fb = False  # F key: show 6502 framebuffer from integrated clip+raster
 _show_seg_numbers = False    # I key: show seg indices on wireframe
 _seg_annotations = []        # populated per frame: [(si, sx1, sx2, ft1, ft2)]
-_show_diff_overlay = False   # O key: overlay Python-only (red) + 6502-only (blue) lines
 
 # Telemetry for the aperture-clip optimisation (need_bt/need_bb early skip).
 # Reset by callers before a render frame; reported by diagnostic scripts.
@@ -982,8 +981,6 @@ _novt_annotations = []  # populated per frame: [(sx, sy, label), ...]
 # ── Build packed byte arrays for 8-bit processor simulation ──────────────
 from wad_packed import build_packed
 print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
-_render_6502 = None  # lazy-loaded on first use
-_6502_result = None  # (lines, muls) from background render
 packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_layout = build_packed(
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
@@ -1009,13 +1006,6 @@ if os.path.exists(_rast_path):
         _rast_bin = _f.read()
     _rast_offset = len(packed_bbox_table)
     packed_rom_banks[2][_rast_offset:_rast_offset + len(_rast_bin)] = _rast_bin
-_clip_path = os.path.join(os.path.dirname(__file__) or '.', 'clipper_bank2.bin')
-if os.path.exists(_clip_path):
-    with open(_clip_path, 'rb') as _f:
-        _clip_bin = _f.read()
-    # clipper ORG is $9B20, bank 2 base is $8000 → offset $1B20
-    _clip_offset = 0x9B20 - 0x8000
-    packed_rom_banks[2][_clip_offset:_clip_offset + len(_clip_bin)] = _clip_bin
 
 # ── Analytical 2D trapezoid clip spans ───────────────────────────────────────
 #
@@ -3249,8 +3239,6 @@ use_fixedpoint = False                    # False = float, True = fixed-point
 use_xor = False                           # XOR drawing mode
 show_map = False                          # Top-down map visualisation
 _show_nj_raster = False                   # Show NJ 6502 rasteriser output (FP lines)
-_use_6502_frontend = False                # H key: 6502 front-end + Python clip/draw
-_use_6502_full = False                    # J key: 6502 front-end + clip + NJ rasteriser
 _use_bsp_render = False                   # K key: bsp_render.bin pipeline (BSP+xform+clip+raster)
 _bsp_render_6502 = None                   # lazy-loaded BspRender6502 instance
 
@@ -3643,7 +3631,7 @@ def _draw_debug_step(surface):
 
 def _main():
   global player_x, player_y, angle, angle_byte, use_fixedpoint, use_xor
-  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _use_6502_frontend, _use_6502_full, _render_6502, _6502_result, _show_integrated_fb, _show_diff_overlay, _use_bsp_render, _bsp_render_6502
+  global show_map, use_packed, _debug_mode, _debug_steps, _debug_idx, _map_scale, _show_nj_raster, _show_integrated_fb, _use_bsp_render, _bsp_render_6502
   global _novt_annotate, _show_seg_numbers
   running = True
   while running:
@@ -3677,36 +3665,9 @@ def _main():
                 import endpoint_spans as es
                 es._drawn_lines = [] if _show_seg_numbers else None
                 print(f"Seg/line numbers {'ON' if _show_seg_numbers else 'OFF'}", flush=True)
-            elif ev.key == pygame.K_h:
-                _use_6502_frontend = not _use_6502_frontend
-                if _use_6502_frontend:
-                    # Lazy-init the persistent Frontend6502 instance
-                    if _render_6502 is None:
-                        from fe6502 import Frontend6502
-                        _render_6502 = Frontend6502(
-                            packed_rom_banks, packed_rom_recip,
-                            packed_bbox_table, packed_layout)
-                    print("6502 front-end ON (inline)", flush=True)
-                else:
-                    print("6502 front-end OFF", flush=True)
-            elif ev.key == pygame.K_j:
-                _use_6502_full = not _use_6502_full
-                if _use_6502_full:
-                    _use_6502_frontend = False  # J supersedes H
-                    _use_bsp_render = False
-                    if _render_6502 is None:
-                        from fe6502 import Frontend6502
-                        _render_6502 = Frontend6502(
-                            packed_rom_banks, packed_rom_recip,
-                            packed_bbox_table, packed_layout)
-                    print("6502 full pipeline ON (front-end + clip + NJ raster)", flush=True)
-                else:
-                    print("6502 full pipeline OFF", flush=True)
             elif ev.key == pygame.K_k:
                 _use_bsp_render = not _use_bsp_render
                 if _use_bsp_render:
-                    _use_6502_frontend = False
-                    _use_6502_full = False
                     if _bsp_render_6502 is None:
                         from bsp_render_6502 import BspRender6502
                         _bsp_render_6502 = BspRender6502(
@@ -3715,38 +3676,9 @@ def _main():
                     print("bsp_render.bin pipeline ON (BSP + xform + clip + raster)", flush=True)
                 else:
                     print("bsp_render.bin pipeline OFF", flush=True)
-            elif ev.key == pygame.K_p:
-                # Profile: run 6502 with per-function cycle accounting
-                import threading
-                _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
-                _px, _py = player_x, player_y
-                _rb, _rr, _bt, _pl, _nd = packed_rom_banks, packed_rom_recip, packed_bbox_table, packed_layout, nodes
-                _fz = player_floor(player_x, player_y)
-                _vzps = _prescale_height(_fz + 41)
-                def _profile_6502():
-                    global _6502_result
-                    import time as _time
-                    from fe6502 import Frontend6502, format_profile
-                    fe = Frontend6502(_rb, _rr, _bt, _pl)
-                    _t0 = _time.time()
-                    cmds, cycles, profile = fe.profile_frame(_px, _py, _ab, _fz)
-                    _t1 = _time.time()
-                    _6502_result = (cmds, cycles, _vzps)
-                    print(f"\n=== 6502 profile ({_px:.0f},{_py:.0f},{_ab}) "
-                          f"— {_t1-_t0:.1f}s wall ===", flush=True)
-                    print(format_profile(profile, cycles), flush=True)
-                    print("", flush=True)
-                print("6502 profiling in background...", flush=True)
-                threading.Thread(target=_profile_6502, daemon=True).start()
-                _use_6502_frontend = True
             elif ev.key == pygame.K_v:
                 _novt_annotate = not _novt_annotate
                 print(f"NOVT annotation: {'ON' if _novt_annotate else 'OFF'}")
-            elif ev.key == pygame.K_o:
-                _show_diff_overlay = not _show_diff_overlay
-                print(f"Diff overlay: {'ON' if _show_diff_overlay else 'OFF'} "
-                      f"(red = Python-only / 6502 missing; "
-                      f"blue = 6502-only / 6502 extra)", flush=True)
             elif ev.key == pygame.K_d:
                 _compare_draw_calls()
             elif ev.key == pygame.K_t:
@@ -3838,9 +3770,6 @@ def _main():
         _novt_annotations.clear()
         _seg_annotations.clear()
         import endpoint_spans as _es
-        # Enable line collection when diff overlay or seg numbers active
-        if _show_diff_overlay and _es._drawn_lines is None:
-            _es._drawn_lines = []
         if _es._drawn_lines is not None:
             _es._drawn_lines.clear()
 
@@ -3854,43 +3783,6 @@ def _main():
                 player_x, player_y, _ab, _fz)
             _t1 = _time.perf_counter()
             _bsp_render_6502.blit_framebuffer_to(fp_surface)
-        elif _use_6502_full and _render_6502 is not None:
-            # J mode: full 6502 pipeline with NJ rasteriser → extract framebuffer
-            import time as _time
-            _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
-            _fz = player_floor(player_x, player_y)
-            _t0 = _time.perf_counter()
-            hw_cyc = _render_6502.render_frame(
-                player_x, player_y, _ab, _fz)
-            _t1 = _time.perf_counter()
-            # Extract framebuffer from py65 memory at $5800 (256×160, Mode 4)
-            _mem = _render_6502.mpu.memory
-            fp_surface.fill((0, 0, 0))
-            _pix = pygame.PixelArray(fp_surface)
-            for _cy in range(20):
-                for _col in range(32):
-                    for _pr in range(8):
-                        _y = _cy * 8 + _pr
-                        if _y >= 160: break
-                        _byte = _mem[0x5800 + _cy * 256 + _col * 8 + _pr]
-                        for _bit in range(8):
-                            if _byte & (1 << (7 - _bit)):
-                                _pix[_col * 8 + _bit, _y] = (255, 255, 255)
-            del _pix
-        elif _use_6502_frontend and _render_6502 is not None:
-            # H mode: 6502 BSP + clip, but Python rasterisation via peripheral
-            import time as _time
-            _ab = angle_byte if use_fixedpoint else radians_to_byte(angle)
-            _fz = player_floor(player_x, player_y)
-            _t0 = _time.perf_counter()
-            hw_lines, hw_cyc = _render_6502.render_frame(
-                player_x, player_y, _ab, _fz, use_peripheral=True)
-            _t1 = _time.perf_counter()
-            # Draw captured lines with pygame (identical to Python rasterisation)
-            fp_surface.fill((0, 0, 0))
-            _c = (255, 255, 255)
-            for _x0, _y0, _x1, _y1 in hw_lines:
-                pygame.draw.line(fp_surface, _c, (_x0, _y0), (_x1, _y1))
         else:
             from wad_packed import spans_init_full, SPAN_TOTAL
             p_ram = _packed_ram_new()
@@ -3960,77 +3852,6 @@ def _main():
                 _lbl = hud_font.render(str(_idx), True, (255, 180, 100))
                 _scr.blit(_lbl, (_mx + 2, _my - _lbl.get_height() // 2))
 
-        # Diff overlay: highlight lines that differ between Python and 6502.
-        # Red   = lines Python drew that 6502 did NOT (missing from 6502).
-        # Blue  = lines 6502 drew that Python did NOT (extra in 6502).
-        if _show_diff_overlay and _es_overlay._drawn_lines is not None:
-            # Run 6502 render to capture its lines (uses peripheral path).
-            if _render_6502 is None:
-                from fe6502 import Frontend6502
-                _render_6502 = Frontend6502(
-                    packed_rom_banks, packed_rom_recip,
-                    packed_bbox_table, packed_layout)
-            _ab_do = angle_byte if use_fixedpoint else radians_to_byte(angle)
-            _fz_do = player_floor(player_x, player_y)
-            _hw_lines, _ = _render_6502.render_frame(
-                player_x, player_y, _ab_do, _fz_do, capture_lines=True)
-
-            def _nrm(r):
-                x1, y1, x2, y2 = r
-                return r if (x1, y1) <= (x2, y2) else (x2, y2, x1, y1)
-
-            # Map normalised line → python draw index so we can label each
-            # missing line with its canonical id (press O and read the number).
-            _py_by_norm = {}
-            for _i, lx1, ly1, lx2, ly2 in _es_overlay._drawn_lines:
-                _py_by_norm.setdefault(_nrm((lx1, ly1, lx2, ly2)), _i)
-            _hw_set = set(_nrm(l) for l in _hw_lines)
-            _py_only = [(_py_by_norm[n], n) for n in _py_by_norm if n not in _hw_set]
-            _hw_only = [n for n in _hw_set if n not in _py_by_norm]
-            _py_only.sort()
-            _hw_only.sort()
-
-            _sx = SCREEN_W / FP_WIDTH
-            _sy = SCREEN_H / FP_HEIGHT
-            # Draw py-only in red, labeled with the python draw-index.
-            for _idx, (x1, y1, x2, y2) in _py_only:
-                pygame.draw.line(_scr, (255, 60, 60),
-                                 (int(x1 * _sx), int(y1 * _sy)),
-                                 (int(x2 * _sx), int(y2 * _sy)), 2)
-                _mx = int((x1 + x2) / 2 * _sx)
-                _my = int((y1 + y2) / 2 * _sy)
-                _lbl = hud_font.render(str(_idx), True, (255, 200, 200))
-                _scr.blit(_lbl, (_mx + 3, _my - _lbl.get_height() // 2))
-            # Draw hw-only in blue, labeled H#N for "hw-extra index N".
-            for _j, (x1, y1, x2, y2) in enumerate(_hw_only):
-                pygame.draw.line(_scr, (80, 160, 255),
-                                 (int(x1 * _sx), int(y1 * _sy)),
-                                 (int(x2 * _sx), int(y2 * _sy)), 2)
-                _mx = int((x1 + x2) / 2 * _sx)
-                _my = int((y1 + y2) / 2 * _sy)
-                _lbl = hud_font.render(f"H{_j}", True, (180, 220, 255))
-                _scr.blit(_lbl, (_mx + 3, _my - _lbl.get_height() // 2))
-            _legend = hud_font.render(
-                f"diff: py_only={len(_py_only)} (red, labeled by Python draw idx)  "
-                f"hw_only={len(_hw_only)} (blue, labeled H0..HN)",
-                True, (255, 255, 0))
-            _scr.blit(_legend, (8, SCREEN_H - _legend.get_height() - 4))
-
-            # Dump full listing to stdout once per toggle so the user can
-            # reference a specific index without re-running.
-            if _py_only or _hw_only:
-                _sig = (len(_py_only), len(_hw_only),
-                        _py_only[0][0] if _py_only else -1)
-                if getattr(render_bsp_fp, '_last_diff_sig', None) != _sig:
-                    render_bsp_fp._last_diff_sig = _sig
-                    print(f"\n--- Diff at ({player_x:.0f},{player_y:.0f},ab={_ab_do}) ---",
-                          flush=True)
-                    for _idx, (x1, y1, x2, y2) in _py_only:
-                        print(f"  PY-ONLY [{_idx}]:  ({x1},{y1})→({x2},{y2})",
-                              flush=True)
-                    for _j, (x1, y1, x2, y2) in enumerate(_hw_only):
-                        print(f"  HW-ONLY [H{_j}]: ({x1},{y1})→({x2},{y2})",
-                              flush=True)
     else:
         # ── Float movement (original) ──
         if keys[pygame.K_LEFT]:
@@ -4081,31 +3902,22 @@ def _main():
     total, unclipped, clipped, trivial, clip_rej = draw_stats
     ang_display = angle_byte if use_fixedpoint else radians_to_byte(angle)
     if use_fixedpoint:
-        if _use_6502_frontend and _6502_result is not None:
-            hw_cmds, hw_cyc, hw_vzps = _6502_result
-            n_segs = sum(1 for c in hw_cmds if c[0] in ('S', 'P'))
-            hud = (f"6502x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  "
-                   f"{n_segs} segs  {hw_cyc} fe cyc  "
-                   f"{clock.get_fps():.0f}fps")
-        elif _use_6502_frontend:
-            hud = f"6502x{PRESCALE} rendering... ({player_x:.0f},{player_y:.0f},{ang_display})"
+        mc = fp_module.mul_counts
+        mul_total = sum(mc.values())
+        cyc = _frame_6502_cycles[0]
+        ccyc = _frame_clip_cycles[0]
+        mode_tag = "fp/ROM"
+        clip_tag = "MATCH" if _frame_clip_match[0] else "FAIL"
+        import endpoint_spans as _es
+        tighten_tag = f"T:{_es._TIGHTEN_MODE}"
+        if _show_integrated_fb:
+            hud = (f"6502 clip+rast ({player_x:.0f},{player_y:.0f},{ang_display})  "
+                   f"{ccyc//1000}K clip+rast  [{clip_tag}] [{tighten_tag}]  {clock.get_fps():.0f}fps")
         else:
-            mc = fp_module.mul_counts
-            mul_total = sum(mc.values())
-            cyc = _frame_6502_cycles[0]
-            ccyc = _frame_clip_cycles[0]
-            mode_tag = "fp/ROM"
-            clip_tag = "MATCH" if _frame_clip_match[0] else "FAIL"
-            import endpoint_spans as _es
-            tighten_tag = f"T:{_es._TIGHTEN_MODE}"
-            if _show_integrated_fb:
-                hud = (f"6502 clip+rast ({player_x:.0f},{player_y:.0f},{ang_display})  "
-                       f"{ccyc//1000}K clip+rast  [{clip_tag}] [{tighten_tag}]  {clock.get_fps():.0f}fps")
-            else:
-                hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
-                       f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
-                       f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
-                       f"{cyc//1000}K rast  {ccyc//1000}K clip  [{clip_tag}] [{tighten_tag}]  {clock.get_fps():.0f}fps")
+            hud = (f"{mode_tag}x{PRESCALE} ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
+                   f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "
+                   f"{mul_total} muls (V:{mc['view']} P:{mc['proj']} C:{mc['clip']})  "
+                   f"{cyc//1000}K rast  {ccyc//1000}K clip  [{clip_tag}] [{tighten_tag}]  {clock.get_fps():.0f}fps")
     else:
         hud = (f"float ({player_x:.0f},{player_y:.0f},{ang_display})  {total} lines  "
                f"{unclipped} pass  {trivial + clip_rej} fail  {clipped} partial  "

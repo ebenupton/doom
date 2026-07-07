@@ -220,6 +220,9 @@ re-proposing one) are in BSP_RENDER_STATUS.md and CLIP_OPTIMISE.md.
 
 ## Legacy
 
-`doom_fe.asm` / `fe6502.py` / `build_ssd.py` are the pre-BSP-renderer
-generation (magic line peripheral, Python raster). Kept for history;
-not part of the regression; do not extend.
+`doom_fe.asm` is the pre-BSP-renderer generation (magic line peripheral,
+Python raster). Its Python side (`fe6502.py` / `spans6502.py` /
+`build_ssd.py`, plus `doom_fe.bin` / `doom_loader.bin` /
+`clipper_bank2.bin` and the H/J/P/O modes in `doom_wireframe.py`) was
+garbage-collected 2026-07-07; recover from git history if ever needed.
+Not part of the regression; do not extend.

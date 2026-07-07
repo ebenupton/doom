@@ -65,9 +65,9 @@ _r6502 = None
 
 def get_6502():
     """Lazily build the full-6502 renderer (loads bsp_render.bin + tables).
-    Returns None if the build doesn't fit the flat harness (the DOOM_ANIM
-    build's private VWH slots overflow the $E484 placement — engine-side
-    relocation pending)."""
+    Works with DOOM_ANIM=1 (the default): the VWH table now lives at $FB00
+    with capacity for the anim build's private slots. Returns None only if
+    a future build outgrows the flat harness (capacity assert fires)."""
     global _r6502
     if _r6502 is None:
         from bsp_render_6502 import BspRender6502
