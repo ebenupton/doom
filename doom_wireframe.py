@@ -63,7 +63,6 @@ Architecture enables:
 """
 
 import os, struct, math, sys, random, pygame
-from line6502 import estimate_line_cycles
 import fp as fp_module
 from endpoint_spans import EndpointClipSpans
 from fp import (fp_mul8, fp_div8, s8,
@@ -1464,7 +1463,6 @@ _frame_nj_lines = []  # captured line coords for NJ raster mode
 def _cycle_drawline(surface, color, p1, p2, w=1):
     """Draw line and accumulate 6502 cycle estimate."""
     x1, y1, x2, y2 = int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])
-    _frame_6502_cycles[0] += estimate_line_cycles(x1, y1, x2, y2)
     _frame_nj_lines.append((x1, y1, x2, y2))
     return _real_drawline(surface, color, p1, p2, w)
 
@@ -3655,8 +3653,6 @@ def _main():
                 show_map = not show_map
             elif ev.key == pygame.K_r:
                 pass  # packed path is now the sole renderer
-            elif ev.key == pygame.K_n:
-                _show_nj_raster = not _show_nj_raster
             elif ev.key == pygame.K_b:
                 _show_integrated_fb = not _show_integrated_fb
                 print(f"Integrated framebuffer {'ON' if _show_integrated_fb else 'OFF'}", flush=True)
@@ -3883,12 +3879,6 @@ def _main():
     # Restore normal draw after frame
     pygame.draw.line = _real_drawline
 
-    # ── NJ 6502 raster overlay ──
-    if _show_nj_raster and use_fixedpoint:
-        from raster6502 import render_lines_6502
-        nj_surf, nj_cyc = render_lines_6502(_frame_nj_lines)
-        screen.blit(pygame.transform.scale(nj_surf, (SCREEN_W, SCREEN_H)), (0, 0))
-
     # ── Debug stepper or map overlay ──
     if _debug_mode:
         _draw_debug_step(screen)
@@ -3904,7 +3894,7 @@ def _main():
     if use_fixedpoint:
         mc = fp_module.mul_counts
         mul_total = sum(mc.values())
-        cyc = _frame_6502_cycles[0]
+        cyc = 0                        # (legacy line-cycle estimator removed)
         ccyc = _frame_clip_cycles[0]
         mode_tag = "fp/ROM"
         clip_tag = "MATCH" if _frame_clip_match[0] else "FAIL"
