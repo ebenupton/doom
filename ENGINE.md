@@ -126,6 +126,10 @@ After the dead-code strip: 206 addresses claimed, **43 free slots**
 
 ## Verification (the contract for ANY change)
 
+    # The verification toolchain (run_regression, soak, cache gates,
+    # comparators, profilers) lives at the `full-toolchain` git tag —
+    # this minimal tree keeps only the build + play closure.
+    git checkout full-toolchain -- run_regression.py baseline.json  # to restore
     python3 run_regression.py              # must print ALL GREEN
     python3 run_regression.py --rebaseline # after a DELIBERATE cycle/verify
                                            # change, with justification

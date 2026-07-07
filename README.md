@@ -105,12 +105,12 @@ rounding. The rasteriser has a pure-Python twin proven pixel-exact over a
 ## Building and running
 
 Needs `DOOM1.WAD` (shareware) in the repo root, Python 3 with pygame and
-py65, and the vendored `beebasm`.
+py65, the vendored `beebasm`, and `ca65`/`ld65` (cc65) on the PATH for
+the engine link.
 
 ```
 python3 play.py               # interactive: pure-Python engine (fast), or
                               #   M = the real 6502 pipeline under simulation
-python3 run_regression.py     # the full exactness + cycle gate
 python3 build_walk_ssd.py     # build the walkable disc -> doom_walk.ssd
 ```
 
@@ -128,8 +128,13 @@ B + SWRAM, no Master required.
 | `raster/` | the NJ linedraw4 rasteriser (vendored) |
 | `wad_packed.py` | the pack stage: WAD → prescaled SoA tables |
 | `doom_wireframe.py`, `fp.py` | the bit-exact Python reference pipeline |
-| `tools/` | soak, triage, cache gates, profilers |
 | `ENGINE.md` | the engineering map: memory layout, invariants, ZP registry |
+
+This tree is deliberately minimal: just the engine sources, the pack
+stage, `play.py`, and the disc builds. The full development toolchain —
+the cycle-gated regression suite, the 272k-frame soak harness, cache
+exactness gates, lockstep comparators and profilers — lives intact at
+the [`full-toolchain`](../../tree/full-toolchain) tag.
 
 ---
 

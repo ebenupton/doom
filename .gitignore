@@ -1,12 +1,22 @@
 __pycache__/
 *.pyc
 build/
-# personal working files kept out of the repo
+.DS_Store
+# generated build artifacts (asmbuild/beebasm outputs; disc build intermediates)
+*.bin
+ANIMBOOT
+ANIMDRV
+BOOT
+DRV
+WALKDRV
+!BOOT
+# personal working files
 *.png
 *.pdf
 *.html
 *_files/
 Screenshot*
-# emulator side files
 line-test/
-.DS_Store
+line-test*/
+*.zip
+doom_debug.txt

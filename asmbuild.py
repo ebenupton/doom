@@ -41,6 +41,7 @@ def _run(argv):
 
 
 def build(asm, banked=0, c02=None, out=None, force=False):
+    _build_raster()
     """Build one engine module. Raises RuntimeError on any tool error.
 
     `asm` is a module name ('span_clip') or legacy source name
@@ -82,5 +83,18 @@ def build(asm, banked=0, c02=None, out=None, force=False):
     return text
 
 
+def _build_raster():
+    """Regenerate the NJ rasteriser bin (read at load by span_clip_6502 and
+    the banked images). beebasm is vendored; output is deterministic."""
+    import subprocess
+    src = os.path.join(_ROOT, 'linedraw_or_reloc.asm')
+    out = os.path.join(_ROOT, 'linedraw_or_reloc.bin')
+    if (not os.path.exists(out)
+            or os.path.getmtime(out) < os.path.getmtime(src)):
+        subprocess.run([os.path.join(_ROOT, 'beebasm'), '-i', src],
+                       cwd=_ROOT, check=True, capture_output=True)
+
+
 def build_all(banked=0, c02=None, force=False):
+    _build_raster()
     build('engine', banked=banked, c02=c02, force=force)
