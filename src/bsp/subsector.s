@@ -48,30 +48,13 @@ PLA
 ORA (zp_br_p),Y
 STA (zp_br_p),Y
 
-; --- Read subsector header from ROM_SS + id*4 ---
-LDA zp_node_chlo
-STA zp_br_t0
-LDA zp_node_chhi
-STA zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-CLC
-LDA zp_rom_ss_lo
-ADC zp_br_t0
-STA zp_br_p
-LDA zp_rom_ss_hi
-ADC zp_br_t1
-STA zp_br_p_h
-LDY #0
-LDA (zp_br_p),Y
+; --- Read subsector header (SoA pages: count / first_lo / first_hi) ---
+LDX zp_node_chlo
+LDA SS_CNT,X
 STA zp_seg_count
-LDY #2
-LDA (zp_br_p),Y
+LDA SS_FLO,X
 STA zp_seg_first_lo
-LDY #3
-LDA (zp_br_p),Y
+LDA SS_FHI,X
 STA zp_seg_first_hi
 
 ; Persistent per-seg pointers: computed once here, advanced by the

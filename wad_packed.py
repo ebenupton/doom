@@ -20,8 +20,14 @@ import math
 # ── Struct sizes (all powers of 2) ──────────────────────────────────────
 
 VERTEX_SIZE  = 4     # shift 2:  s16 x, s16 y
-NODE_SIZE    = 16    # shift 4:  s16 x,y,dx,dy + u16 children + 4B pad
-SSECTOR_SIZE = 4     # shift 2:  u8 count, u8 pad, u16 first_seg
+NODE_SIZE    = 16    # (legacy AoS reader stride — packed data is now SoA)
+SSECTOR_SIZE = 4     # (legacy)
+# SoA pages at the head of rom_main (see build_packed): 13 node pages
+# (8 field bytes + 4 children bytes + type) then 3 subsector pages.
+NODE_SOA_PAGES = 13
+SS_SOA_PAGES   = 3
+NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
+NT_GENERAL, NT_DX0, NT_DY0 = 0, 1, 2
 SEG_HDR_SIZE = 12    # (idx<<3)+(idx<<2): v1,v2,lv1_x,lv1_y,ldx,ldy,flags,pad
 SEG_DTL_SIZE = 20    # ×20 = (idx<<4)+(idx<<2): fh,ch + 8 VWH u16 + back heights
 VWH_SIZE     = 1     # identity: s8 height
@@ -172,12 +178,22 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                          vft1, vfb1, vft2, vfb2,
                          vbt1, vbb1, vbt2, vbb2)
 
-    # ── ROM Main: everything else ───────────────────────────────────────
+    # ── ROM Main: node + subsector data first, as page-aligned parallel
+    # arrays (structure-of-arrays). Both counts are <=256, so the 6502
+    # indexes every field with a constant-base LDA abs,X — no pointer
+    # arithmetic, and br_node_setup reads only the fields its (baked)
+    # partition type needs. Layout (offset = page*256):
+    #   pg 0-7  node nx_lo,nx_hi,ny_lo,ny_hi,dx_lo,dx_hi,dy_lo,dy_hi
+    #   pg 8-11 node children right_lo,right_hi,left_lo,left_hi
+    #   pg 12   node type: 0 general, 1 dx==0 (vertical), 2 dy==0
+    #   pg 13-15 subsector count, first_lo, first_hi
+    # Everything else follows at NODE_SOA_SIZE.
+    assert n_nodes <= 256 and n_ss <= 256
 
-    off_verts = 0
-    off_nodes = off_verts + n_verts * VERTEX_SIZE
-    off_ss = off_nodes + n_nodes * NODE_SIZE
-    off_seg_hdr = off_ss + n_ss * SSECTOR_SIZE
+    off_nodes = 0
+    off_ss = NODE_SOA_PAGES * 256
+    off_verts = NODE_SOA_SIZE
+    off_seg_hdr = off_verts + n_verts * VERTEX_SIZE
     off_vwh = off_seg_hdr + n_segs * SEG_HDR_SIZE
     rom_main_size = off_vwh + n_vwh * VWH_SIZE
 
@@ -190,9 +206,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # BSP nodes — point_on_side uses raw s16 values so the prescale rounding
     # doesn't lose a weak axis (nodes where, e.g., raw dx=0 dy=8 would
     # otherwise both truncate to 0).  nx/ny are stored relative to
-    # map_center so they stay in s16 range.
+    # map_center so they stay in s16 range. SoA pages (see layout above),
+    # with the partition type baked so the 6502 skips the axis test AND
+    # the unused field loads (73% of E1M1 nodes are axis-aligned).
+    def _npg(pg, i, v):
+        rom_main[off_nodes + pg * 256 + i] = v & 0xFF
     for i, n in enumerate(nodes):
-        o = off_nodes + i * NODE_SIZE
         raw_nx = n[0] - map_center_x
         raw_ny = n[1] - map_center_y
         raw_dx = n[2]
@@ -201,12 +220,21 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"node {i} nx/ny out of s16 range"
         assert -32768 <= raw_dx <= 32767 and -32768 <= raw_dy <= 32767, \
             f"node {i} dx/dy out of s16 range"
-        struct.pack_into('<hhhhHH', rom_main, o, raw_nx, raw_ny, raw_dx, raw_dy,
-                         n[12], n[13])
+        assert raw_dx or raw_dy, \
+            f"node {i} degenerate (dx==dy==0) — type bake can't represent it"
+        _npg(0, i, raw_nx); _npg(1, i, raw_nx >> 8)
+        _npg(2, i, raw_ny); _npg(3, i, raw_ny >> 8)
+        _npg(4, i, raw_dx); _npg(5, i, raw_dx >> 8)
+        _npg(6, i, raw_dy); _npg(7, i, raw_dy >> 8)
+        _npg(8, i, n[12]);  _npg(9, i, n[12] >> 8)
+        _npg(10, i, n[13]); _npg(11, i, n[13] >> 8)
+        _npg(12, i, NT_DX0 if raw_dx == 0 else (NT_DY0 if raw_dy == 0 else NT_GENERAL))
 
-    # Subsectors
+    # Subsectors (SoA pages 13-15: count, first_lo, first_hi)
     for i, ss in enumerate(fp_ssectors):
-        struct.pack_into('<BxH', rom_main, off_ss + i * SSECTOR_SIZE, ss[0], ss[1])
+        rom_main[off_ss + i] = ss[0] & 0xFF
+        rom_main[off_ss + 256 + i] = ss[1] & 0xFF
+        rom_main[off_ss + 512 + i] = (ss[1] >> 8) & 0xFF
 
     # Build the set of "linedef-endpoint" vertices. Any vertex not in this
     # set is a BSP-inserted split point; segs whose v1 or v2 is such a

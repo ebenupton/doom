@@ -231,90 +231,71 @@ RTS
 ; Called twice per internal node (entry + post-near phases).
 br_node_setup:
 .scope
-PAGE BANK_L0                            ; nodes table lives in bank L0
-LDA zp_node_chlo
-STA zp_br_t0
-LDA zp_node_chhi
-STA zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-CLC
-LDA zp_rom_nodes_lo
-ADC zp_br_t0
-STA zp_br_p
-LDA zp_rom_nodes_hi
-ADC zp_br_t1
-STA zp_br_p_h
-LDY #0
-LDA (zp_br_p),Y
-STA zp_node_nxlo
-INY
-LDA (zp_br_p),Y
-STA zp_node_nxhi
-INY
-LDA (zp_br_p),Y
-STA zp_node_nylo
-INY
-LDA (zp_br_p),Y
-STA zp_node_nyhi
-INY
-LDA (zp_br_p),Y
-STA zp_node_dxlo
-INY
-LDA (zp_br_p),Y
-STA zp_node_dxhi
-INY
-LDA (zp_br_p),Y
-STA zp_node_dylo
-INY
-LDA (zp_br_p),Y
-STA zp_node_dyhi
-LDA zp_br_pxraw_lo
-SEC
-SBC zp_node_nxlo
-STA zp_seg_dxraw_lo
-LDA zp_br_pxraw_hi
-SBC zp_node_nxhi
-STA zp_seg_dxraw_hi
+PAGE BANK_L0                            ; node SoA pages live in bank L0
+; Node index is u8 (n_nodes <= 256, asserted at pack time); the partition
+; type is baked (page NODE_TYPE), so axis-aligned nodes — 73% on E1M1 —
+; skip the classification and load only the two fields they need.
+LDX zp_node_chlo
+LDA NODE_TYPE,X
+BEQ ns_t_general
+CMP #1
+BEQ ns_t_dx0
+; --- type 2: ndy==0 -> side from sign(dyraw) vs sign(ndx) ---
 LDA zp_br_pyraw_lo
 SEC
-SBC zp_node_nylo
+SBC NODE_NYLO,X
 STA zp_seg_dyraw_lo
 LDA zp_br_pyraw_hi
-SBC zp_node_nyhi
+SBC NODE_NYHI,X
 STA zp_seg_dyraw_hi
-LDA zp_node_dxlo
-ORA zp_node_dxhi
-BNE ns_ndx_nz
-LDA zp_node_dylo
-ORA zp_node_dyhi
+ORA zp_seg_dyraw_lo
 BEQ ns_jmp_side1
-LDA zp_seg_dxraw_lo
-ORA zp_seg_dxraw_hi
+LDA NODE_DXHI,X
+EOR zp_seg_dyraw_hi
+BPL ns_jmp_side1
+JMP ns_side0
+ns_t_dx0:
+; --- type 1: ndx==0 -> side from sign(dxraw) vs sign(ndy) ---
+LDA zp_br_pxraw_lo
+SEC
+SBC NODE_NXLO,X
+STA zp_seg_dxraw_lo
+LDA zp_br_pxraw_hi
+SBC NODE_NXHI,X
+STA zp_seg_dxraw_hi
+ORA zp_seg_dxraw_lo
 BEQ ns_jmp_side1
-LDA zp_node_dyhi
+LDA NODE_DYHI,X
 EOR zp_seg_dxraw_hi
 BMI ns_jmp_side1
 JMP ns_side0
 ns_jmp_side1:
 JMP ns_side1
-ns_ndx_nz:
-LDA zp_node_dylo
-ORA zp_node_dyhi
-BNE ns_general
-LDA zp_seg_dyraw_lo
-ORA zp_seg_dyraw_hi
-BEQ ns_jmp_side1
-LDA zp_node_dxhi
-EOR zp_seg_dyraw_hi
-BPL ns_jmp_side1
-JMP ns_side0
+ns_t_general:
+; --- general partition: both deltas + the dx/dy fields for the
+;     sign-shortcut / multiply cascade below ---
+LDA NODE_DXLO,X
+STA zp_node_dxlo
+LDA NODE_DXHI,X
+STA zp_node_dxhi
+LDA NODE_DYLO,X
+STA zp_node_dylo
+LDA NODE_DYHI,X
+STA zp_node_dyhi
+LDA zp_br_pxraw_lo
+SEC
+SBC NODE_NXLO,X
+STA zp_seg_dxraw_lo
+LDA zp_br_pxraw_hi
+SBC NODE_NXHI,X
+STA zp_seg_dxraw_hi
+LDA zp_br_pyraw_lo
+SEC
+SBC NODE_NYLO,X
+STA zp_seg_dyraw_lo
+LDA zp_br_pyraw_hi
+SBC NODE_NYHI,X
+STA zp_seg_dyraw_hi
 ns_general:
 ; DOOM R_PointOnSide sign shortcut (EXACT — ndx and ndy are both nonzero
 ; on this path, so P1 = dxraw*ndy is zero iff dxraw==0, P2 = dyraw*ndx
@@ -403,53 +384,27 @@ ns_side1:
 LDA #1
 STA zp_side
 ns_done:
-; Re-fetch node ptr (br_smul_s16_s16_s32 may have clobbered zp_br_p).
-LDA zp_node_chlo
-STA zp_br_t0
-LDA zp_node_chhi
-STA zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-ASL zp_br_t0
-ROL zp_br_t1
-CLC
-LDA zp_rom_nodes_lo
-ADC zp_br_t0
-STA zp_br_p
-LDA zp_rom_nodes_hi
-ADC zp_br_t1
-STA zp_br_p_h
+; Children from the SoA pages (no pointer re-fetch needed).
+LDX zp_node_chlo
 LDA zp_side
 BNE ns_back
-LDY #8
-LDA (zp_br_p),Y
+LDA NODE_CRLO,X
 STA BSP_NEAR_LO
-INY
-LDA (zp_br_p),Y
+LDA NODE_CRHI,X
 STA BSP_NEAR_HI
-INY
-LDA (zp_br_p),Y
+LDA NODE_CLLO,X
 STA BSP_FAR_LO
-INY
-LDA (zp_br_p),Y
+LDA NODE_CLHI,X
 STA BSP_FAR_HI
 RTS
 ns_back:
-LDY #10
-LDA (zp_br_p),Y
+LDA NODE_CLLO,X
 STA BSP_NEAR_LO
-INY
-LDA (zp_br_p),Y
+LDA NODE_CLHI,X
 STA BSP_NEAR_HI
-LDY #8
-LDA (zp_br_p),Y
+LDA NODE_CRLO,X
 STA BSP_FAR_LO
-INY
-LDA (zp_br_p),Y
+LDA NODE_CRHI,X
 STA BSP_FAR_HI
 RTS
 .endscope

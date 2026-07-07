@@ -35,6 +35,14 @@ def build_floor_grid():
 def main():
     import asmbuild
     asmbuild.build_all(banked=1, c02=0)
+    # The drivers' ptrtab EQUBs are hardcoded window addresses — assert they
+    # match the packed layout so a layout change can't ship a stale table.
+    import doom_wireframe as dw
+    lay = dw.packed_layout
+    assert lay['off_verts'] == 0x1000 and lay['off_ss'] == 0x0D00, \
+        f"ptrtab EQUBs stale: off_verts={lay['off_verts']:#x} off_ss={lay['off_ss']:#x}"
+    assert lay['off_seg_hdr'] == 0x174C, \
+        f"ptrtab EQUBs stale: off_seg_hdr={lay['off_seg_hdr']:#x}"
     build_floor_grid()
     subprocess.run(['./beebasm', '-i', 'walk_drv.asm', '-D', 'BANKED=1'], check=True)
     subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)

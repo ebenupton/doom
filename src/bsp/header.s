@@ -47,6 +47,30 @@ BANK_C = 6                              ; clipper + rasteriser
 BANK_L2 = 7                             ; angle tables, bbox, recip, VWH, VWHC cache ($C000+ relocated)
 ; PAGE b : page sideways bank b ($FE30). No-op in the flat build, so flat stays
 ; bit-exact. A is clobbered — only invoke at A-dead points.
+; --- Node/subsector SoA pages (head of ROM_MAIN; see wad_packed.py).
+; n_nodes, n_ss <= 256, so every field is a constant-base LDA abs,X.
+.if ::BANKED
+NODE_SOA = $8000                        ; bank L0 window
+.else
+NODE_SOA = $6C00                        ; flat ROM_MAIN_BASE
+.endif
+NODE_NXLO = NODE_SOA + $000
+NODE_NXHI = NODE_SOA + $100
+NODE_NYLO = NODE_SOA + $200
+NODE_NYHI = NODE_SOA + $300
+NODE_DXLO = NODE_SOA + $400
+NODE_DXHI = NODE_SOA + $500
+NODE_DYLO = NODE_SOA + $600
+NODE_DYHI = NODE_SOA + $700
+NODE_CRLO = NODE_SOA + $800             ; right child (side 0 = near)
+NODE_CRHI = NODE_SOA + $900
+NODE_CLLO = NODE_SOA + $A00             ; left child
+NODE_CLHI = NODE_SOA + $B00
+NODE_TYPE = NODE_SOA + $C00             ; 0 general, 1 dx==0, 2 dy==0
+SS_CNT    = NODE_SOA + $D00
+SS_FLO    = NODE_SOA + $E00
+SS_FHI    = NODE_SOA + $F00
+
 .macro PAGE bank
 .if ::BANKED
 LDA #bank

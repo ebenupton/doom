@@ -79,7 +79,10 @@ ORG &3C00
 .spin
     JMP spin
 .ptrtab
-    EQUB &00,&24, &00,&8E, &00,&80, &00,&00         ; fhch bbox verts (unused)
-    EQUB &0C,&96, &C0,&99, &00,&A2, &00,&24         ; ss seg_hdr vwh detail
+    ; SoA layout: node/ss pages head ROM_MAIN, verts at +$1000 ($9000),
+    ; ss pages at +$0D00 ($8D00), seg_hdr after verts ($974C).
+    ; build_walk_ssd asserts these against dw.packed_layout.
+    EQUB &00,&24, &00,&8E, &00,&90, &00,&00         ; fhch bbox verts (unused)
+    EQUB &00,&8D, &4C,&97, &00,&A2, &00,&24         ; ss seg_hdr vwh detail
 .drv_end
 SAVE "DRV", &3C00, drv_end, &3C00

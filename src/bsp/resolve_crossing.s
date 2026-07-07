@@ -4,34 +4,19 @@ bsp_d_start:
 ;   ptr = rom_nodes + id*16; child_r at +8, child_l at +10.
 bsp_resolve_child:
 .scope
-PAGE BANK_L0                            ; nodes table lives in bank L0
-; Node ids fit one byte (<= 235): id*16 via single-byte shifts.
-LDA zp_node_chlo
-LSR A
-LSR A
-LSR A
-LSR A
-STA zp_br_t1
-LDA zp_node_chlo
-ASL A
-ASL A
-ASL A
-ASL A
-CLC
-ADC zp_rom_nodes_lo
-STA zp_br_p
-LDA zp_br_t1
-ADC zp_rom_nodes_hi
-STA zp_br_p_h
+PAGE BANK_L0                            ; node SoA pages live in bank L0
+LDX zp_node_chlo
 LDA zp_bbox_side
-ASL A
-CLC
-ADC #8
-TAY
-LDA (zp_br_p),Y
+BNE rc_left
+LDA NODE_CRLO,X
 STA zp_node_chlo
-INY
-LDA (zp_br_p),Y
+LDA NODE_CRHI,X
+STA zp_node_chhi
+RTS
+rc_left:
+LDA NODE_CLLO,X
+STA zp_node_chlo
+LDA NODE_CLHI,X
 STA zp_node_chhi
 RTS
 .endscope

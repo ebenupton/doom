@@ -2606,9 +2606,9 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     """Render a subsector reading from packed ROM arrays."""
     layout = _p_layout
     rom = _p_rom_main
-    ss_off = layout['off_ss'] + idx * SSECTOR_SIZE
-    count     = read_u8(rom, ss_off)
-    first_seg = read_u16(rom, ss_off + 2)
+    ss_off = layout['off_ss']              # SoA pages: count, first_lo, first_hi
+    count     = rom[ss_off + idx]
+    first_seg = rom[ss_off + 256 + idx] | (rom[ss_off + 512 + idx] << 8)
 
     deferred = []
     import span_clip_6502 as _scmod
@@ -2670,9 +2670,9 @@ def packed_render_bsp(nid, clips, ctx, vz,
     # Read children from packed ROM
     layout = _p_layout
     rom = _p_rom_main
-    node_off = layout['off_nodes'] + nid * NODE_SIZE
-    child_r = read_u16(rom, node_off + 8)
-    child_l = read_u16(rom, node_off + 10)
+    nb = layout['off_nodes']               # SoA pages; children at pg 8-11
+    child_r = rom[nb + 8*256 + nid] | (rom[nb + 9*256 + nid] << 8)
+    child_l = rom[nb + 10*256 + nid] | (rom[nb + 11*256 + nid] << 8)
 
     # point_on_side uses un-prescaled node data (matches render_bsp_fp exactly)
     node = nodes[nid]
