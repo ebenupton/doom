@@ -225,9 +225,14 @@ ORG &4000
 .fs_cls1                                            ; beam in bottom half
     LDA #2:STA &FE4D                                ; arm BEFORE clearing (flag latches)
     JSR fs_clrtop
+    ; Stale-latch guard (see walk_drv): if vsync landed during the top
+    ; clear, re-phasing from the latched flag would shift the beam clock
+    ; by up to the clear time. Only re-phase on a fresh edge.
+    LDA &FE4D:AND #2:BNE fs_w1_stale
 .fs_w1
     LDA &FE4D:AND #2:BEQ fs_w1
-    LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
+    LDA #&4D:STA &FE45                              ; fresh edge: re-phase T1
+.fs_w1_stale
     JMP fs_clrbot
 ; fs_clrall falls through into fs_clrbot after the top; fs_clrtop/fs_clrbot
 ; clear the half of whichever buffer backhi now names (the one just taken

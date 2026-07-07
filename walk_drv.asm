@@ -343,9 +343,18 @@ ORG &4000
     ; flag BEFORE clearing (it latches), then wait and clear the bottom
     LDA #2:STA &FE4D
     JSR fs_clrtop
+    ; If vsync latched DURING the top clear, the edge is stale (up to
+    ; ~5.5ms old): re-phasing T1 from it would set the beam clock that
+    ; late and every later frame would classify against a shifted clock —
+    ; clears then race the visible beam (mid-screen tearing/corruption).
+    ; T1 free-runs at exactly one field (latch 19966 + 2), so when the
+    ; edge is stale the existing phase is still correct: skip the
+    ; re-phase and only re-lock on a freshly-observed edge.
+    LDA &FE4D:AND #2:BNE fs_w1_stale
 .fs_w1
     LDA &FE4D:AND #2:BEQ fs_w1
-    LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
+    LDA #&4D:STA &FE45                              ; fresh edge: re-phase T1
+.fs_w1_stale
     JSR fs_logwait
     JSR fs_clrbot
     JMP fs_logdone
