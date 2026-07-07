@@ -4,6 +4,15 @@
 ; Inputs:  LC_M_A_LO/HI, LC_M_B_LO/HI
 ; Output:  LC_M_R0..LC_M_R3 (LSB first)
 ; Clobbers: A, X, Y, zp_mul_b, zp_prod_lo, zp_prod_hi
+;
+; Schoolbook multiply from four u8×u8 partial products, each via the
+; quarter-square umul8 primitive; hi-byte-zero factors skip their
+; partial products entirely (u8×u8 costs 1 mul, u8×u16 costs 2).
+; Pseudocode:
+;   R = a_lo * b_lo                       # p1, always
+;   if b_hi: R += (a_lo * b_hi) << 8      # p2
+;   if a_hi: R += (a_hi * b_lo) << 8      # p3
+;            if b_hi: R += (a_hi * b_hi) << 16   # p4
 umul16x16:
 .scope
 ; Always need p1 = a_lo * b_lo.
@@ -89,6 +98,23 @@ RTS
 ; leading-zero dividend bytes. Each skipped byte saves 8 iterations
 ; (~240 cycles). Typical s16 clipper inputs produce a u20-u22 product
 ; from umul16x16, so R3 is always 0 and we always save ≥8 iterations.
+;
+; Algorithm: restoring long division (shift dividend left into the
+; remainder; if remainder >= den, subtract and shift a 1 into the
+; quotient, else shift a 0).  Two variants:
+;   - u16 fast path: if the top 16 dividend bits < den, the quotient
+;     fits u16; preload rem = R3:R2 and run only 16 iterations over
+;     R1:R0.
+;   - slow path: full 32-iteration loop, minus 8 iterations per
+;     leading-zero dividend BYTE (repeated 8-bit left shifts of
+;     R0..R3) and minus further no-op iterations until the dividend
+;     MSB is set (bit-level skip).
+; Pseudocode:
+;   quot = 0; rem = 0
+;   for i in remaining_iterations:
+;       rem = (rem << 1) | msb(dividend); dividend <<= 1
+;       if rem >= den: rem -= den; bit = 1 else bit = 0
+;       quot = (quot << 1) | bit
 udiv32_16:
 .scope
 LDA #0
@@ -146,6 +172,9 @@ no_u16_quot:
 LDA #0
 STA LC_REM_LO
 STA LC_REM_HI
+; Byte-level skip: while the top dividend byte (R3) is zero, shift the
+; dividend left 8 bits in one move (R2->R3, R1->R2, R0->R1, 0->R0) and
+; drop the iteration count by 8.  X = 32/24/16/8 iterations remaining.
 LDX #32
 LDA LC_M_R3
 BNE bit_skip
@@ -178,8 +207,10 @@ STA LC_M_R2
 LDX #8
 LDA LC_M_R3
 BNE bit_skip
-RTS
+RTS                                     ; dividend == 0 → quot = rem = 0
 bit_skip:
+; Bit-level skip: shift left until the dividend MSB is set (those
+; iterations can never make rem >= den since rem stays 0).
 BMI div_loop
 bs_loop:
 ASL LC_M_R0
@@ -229,6 +260,23 @@ RTS
 ; To clip y at boundary: free=y, target=x, OX*=y, OY*=x.
 ; Output: A = clamped u8 result, LC_RES_LO/HI = unclamped s16 result.
 ; Clobbers: many.
+;
+; Python mirror: _interp_store_s16 (endpoint_spans.py).  Computes with
+; |offset|, |den|, |dy| and a +den//2 bias before the divide, then
+; adds/subtracts the quotient — i.e. rounds half AWAY FROM ZERO (see
+; the mirror's docstring for the 1px descending-line bug this fixed).
+; Pseudocode:
+;   off = tgt - x0; den = x1 - x0
+;   if den < 0: off, den = -off, -den
+;   if den == 0 or off == 0: return y0     # degenerate / at anchor 1
+;   if off == den: return y1               # at anchor 2
+;   dy = y1 - y0; if dy == 0: return y0    # horizontal
+;   q = (|off| * |dy| + den//2) // den     # u8 fast path: umul8 +
+;                                          # udiv16_8; else 16x16/32:16
+;   res = y0 + q if dy > 0 else y0 - q
+;   A = clamp(res, 0, 255); LC_RES = res
+; NOTE: no directed rounding here — callers that need floor/ceil
+; behaviour (dcl_boundary_ix) do their own arithmetic.
 s16_interp:
 .scope
 ; offset = target - x0
@@ -442,6 +490,28 @@ JMP si_clamp
 ; Writes u8 to zp_line_xl, zp_line_yl, zp_line_xr, zp_line_yr and
 ; falls through to draw_clipped_line. If line fully off-screen,
 ; degenerate, or otherwise rejected, RTS without invoking DCL.
+;
+; Python mirror: the wrapper side of span_clip_6502.draw_clipped_line
+; plus _clip_to_screen semantics.  The CALLER has already ordered the
+; endpoints left-to-right (x1 <= x2), rejected zero-length input, and
+; written the LO bytes — which alias zp_line_xl/yl/xr/yr — so the
+; all-in-u8 fast path is a single 4-byte OR test and a JMP.
+;
+; Pseudocode (slow path):
+;   if HI(x1)|HI(y1)|HI(x2)|HI(y2) == 0: goto draw_clipped_line
+;   if both x < 0 or both x > 255: reject     # same-side quick reject
+;   if both y < 0 or both y > 255: reject
+;   if either x out of [0,255]:               # X clip (per endpoint)
+;       y_at = s16_interp(x = 0 or 255)       # UNCLAMPED s16 result —
+;       (x, y) = (edge, y_at)                 # y may still be out of
+;                                             # range for the y-clip
+;   if both y < 0 or both y > 255: reject     # re-check after x-clip
+;   if either y out of [0,255]:               # Y clip, axes swapped
+;       x_at = s16_interp(y = 0 or 255)       # (clamped u8 is fine:
+;       (x, y) = (x_at, edge)                 #  x already in [0,255])
+;   if xl > xr: swap endpoints                # clip can reorder (rare)
+;   if xl == xr and yl == yr: reject          # clipped to a point
+;   goto draw_clipped_line
 draw_clipped_line_s16:
 .scope
 ; ---- Fast path: all 4 endpoints already in u8 range ----

@@ -1,6 +1,30 @@
 bsp_b_start:
 
+; ============================================================================
+; DEFERRED OP QUEUE (DEFQ) — clip-span mutations postponed to subsector end.
+;
+; Python's packed_render_seg appends ('solid', ...) / ('tighten', ...)
+; tuples to a `deferred` list instead of mutating the span list mid-
+; subsector; packed_render_subsector then applies them IN SEG ORDER (a
+; tighten applied early would move span anchors a later sibling's
+; mark_solid depends on). This is the 6502 equivalent: a flat byte queue
+; at DEFQ_BASE ($0600, one 256-byte page), tail offset in DEFQ_TAIL,
+; drained by defq_drain at subsector end.
+;
+; Entry formats (byte stream, no alignment):
+;   solid:   $00, ilo, ihi
+;   tighten: $01, ilo, ihi, top_block, bot_block
+;     block = count, count × (xl, yl, xr, yr)   — a snapshot of the DCL's
+;             TOP_RECORDS ($0700) / BOT_RECORDS ($0800) buffers, which
+;             later segs' line emission would overwrite before the drain.
+; ilo/ihi ($C2/$C3) = seg screen-x range clamped to u8 by the seg loop
+; (subsector.s ms_setrange). On overflow the op is DROPPED and DEFQ_OVF
+; set (debug flag; queue sized so this does not happen on E1M1).
+; ============================================================================
+
 ; defq_append_solid — append ($00, ilo, ihi) from $C2/$C3 to the op queue.
+;   Inputs:  $C2/$C3 = ilo/ihi, DEFQ_TAIL. Clobbers A, X.
+;   Queues a mark_solid(ilo, ihi) — Python's ('solid', x_lo, x_hi, ...).
 defq_append_solid:
 .scope
 LDX DEFQ_TAIL
@@ -27,6 +51,15 @@ RTS
 ; defq_append_tighten — append ($01, ilo, ihi, top block, bot block) where
 ; each block is (count, 4*count bytes) copied from $0700 / $0800.
 ; Caller guarantees at least one count is non-zero.
+;   Inputs:  $C2/$C3 = ilo/ihi; $0700/$0800 = top/bot record blocks
+;            (count byte + records) written by the DCL during this seg's
+;            yt/yb line emission. Clobbers A, X, Y, zp_br_t0/t1.
+;   The records-driven tighten (SC_TIGHTEN_FROM_RECORDS) replays these at
+;   drain time — Python's ('tighten', x_lo, x_hi, sx1, sx2, yt.., yb..)
+;   deferred entry, with the interpolated boundary data carried as DCL
+;   verdict records instead of endpoint values.
+;   Overflow policy: all size checks funnel to dqt_ovf BEFORE any byte is
+;   written, so a dropped op never leaves a partial entry in the queue.
 defq_append_tighten:
 .scope
 ; size check: 5 + 4*(tc+bc) must fit in the remaining queue space.
@@ -107,6 +140,22 @@ RTS
 
 ; defq_drain — apply queued ops in seg order at subsector end. Mirrors
 ; Python's deferred loop: each op then `if clips.is_full(): return`.
+;   Inputs:  DEFQ_BASE stream, DEFQ_TAIL; bank C already paged by caller
+;            (subsector.s pages it before the tail-JMP here).
+;   Effects: solid ops → SC_MARK_SOLID($C2,$C3); tighten ops → records
+;            copied back to $0700/$0800, then SC_TIGHTEN_FROM_RECORDS.
+;            After EACH op, SC_IS_FULL: screen fully occluded → stop
+;            early (remaining ops can no longer change any span).
+;   Note: DEFQ_TAIL is reset to 0 by the subsector-entry code, not here —
+;         X (queue cursor) is saved in zp_br_t2 across the bank-C calls.
+;
+;   Pseudocode:
+;     x = 0
+;     while x < tail:
+;         op, ilo, ihi = q[x], q[x+1], q[x+2];  x += 3
+;         if op == 0: mark_solid(ilo, ihi)
+;         else:       restore top/bot records; tighten_from_records()
+;         if is_full(): break
 defq_drain:
 .scope
 LDX #0
@@ -172,6 +221,15 @@ RTS
 ; evy=-128, corrupting crossing math: t = (1-evy_C)<<8/(evy_U-evy_C)
 ; needs the true evy_C — e.g. evy=-4 became -128 and a crossed solid
 ; wall projected sx=-2560 instead of Python's -2176.)
+;
+;   Inputs:  C flag (carry-out of the rounding add — do NOT touch C
+;            before the ADC below), zp_br_vyext (s24 extension byte),
+;            zp_seg_cur_evy (low byte of the rounded evy16).
+;   Output:  zp_seg_cur_evy clamped to [-128, 127] iff evy16 exceeds s8.
+;   Case map (hi = vyext + C):
+;     hi == $00: lo < $80 fits, else clamp to +$7F   (128..255)
+;     hi == $FF: lo >= $80 fits, else clamp to -$80  (-256..-129)
+;     hi other:  clamp to +$7F / -$80 by sign of hi.
 ; ============================================================================
 ev_clamp_evy16:
 .scope
@@ -211,6 +269,15 @@ RTS
 ; br_project_x_auto — project saved view-x (zp_v_xext:zp_v_xint . zp_v_xfrac)
 ; to screen X, choosing the 3-mul narrow path when the integer part fits
 ; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
+;
+;   Inputs:  zp_v_xext:zp_v_xint = s16 integer view-x, zp_v_xfrac = u8
+;            fraction; zp_br_rhi/rlo = reciprocal.
+;   Output:  zp_br_resl/h = sx (s16), zp_br_resext = s24 extension so
+;            callers (bbox corner path) can classify off-screen sides
+;            uniformly whichever path ran.
+;   Both paths are bit-exact with Python's full-width fp_project_x_subpx
+;   (mod 2^16 at the s16 interface); wide-vx segs must still be projected
+;   — their mark_solid/draws count (see br_seg_xform_vertex notes).
 ; ============================================================================
 br_project_x_auto:
 .scope

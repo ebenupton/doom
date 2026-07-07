@@ -15,6 +15,16 @@ backhi = &3D83          ; hidden-buffer page hi ($58 or $6C)
 tabbase = &3E00         ; sincos table (build-overlaid): 64 x 8 bytes
 
 ORG &3C00
+; ---------------------------------------------------------------------------
+; drv — one-time boot init, then falls through into the frame loop.
+; Entry: JMP $3C00 from !BOOT (banks loaded, LOW loaded, MODE 4). Never
+; returns; interrupts stay off for ever (SEI; direct hardware only).
+; The camera never translates, so ALL position-derived ZP (PX/PY, s16 int
+; high bytes, VZ, PXRAW/PYRAW) is written once here; the frame loop only
+; changes sincos + view angle. Phases: fixed ZP -> engine table pointers ->
+; CRTC (non-interlaced 256x160) -> T1 field-locked beam clock -> RCACHE
+; init -> animation state + clear both buffers.
+; ---------------------------------------------------------------------------
 .drv
     SEI
     ; --- Master 128: clear ACCCON so $8000-$8FFF is the sideways bank (not ANDY),
@@ -82,6 +92,14 @@ ORG &3C00
     LDA #LO(tabbase):STA ptlo : LDA #HI(tabbase):STA pthi
     LDA #&6C :STA backhi                            ; first hidden buffer = FB1
     JSR clr58t:JSR clr58b:JSR clr6Ct:JSR clr6Cb     ; both buffers start clean
+; ---------------------------------------------------------------------------
+; frame — one rendered frame per iteration (paced by flip_sched's vsync
+; waits when the beam demands one; free-running otherwise):
+;   load the 8-byte sincos entry at ptlo/pthi -> ZP $05-$0A + bca_ab
+;   render into the hidden buffer backhi (pre-cleared by the previous flip)
+;   flip_sched: display it, beam-safe clear of the other buffer
+;   advance angidx 0..63 (table pointer += 8; both rewound at wrap)
+; ---------------------------------------------------------------------------
 .frame
     ; --- load per-frame sincos + view angle from the table ---
     LDA ptlo:STA &EC : LDA pthi:STA &ED
@@ -120,7 +138,9 @@ ORG &3C00
 
 ; --- unrolled framebuffer clears (in the $4000-$47FF the render never touches).
 ;     Split at the half-screen boundary (80 rows = 10 pages) so the flip
-;     scheduler can clear the beam-passed top half early. STA abs,Y = 5cyc. ---
+;     scheduler can clear the beam-passed top half early. STA abs,Y = 5cyc.
+;     clr58t/clr58b = top/bottom of FB0 ($5800); clr6Ct/clr6Cb = FB1 ($6C00).
+;     Each clobbers A,Y. ---
 ORG &4000
 .clr58t
     LDA #0 : TAY
@@ -176,6 +196,8 @@ ORG &4000
 ;   H 35..56  beam in top half       -> class 0: wait, then clear all
 ;   H 57..77  post-vsync blanking    -> class 2
 ;   H 78..255 unreachable/transient  -> class 0 (safe fallback)
+; Toggles backhi. Re-phases T1 at each vsync it waits on. Clobbers A,X.
+; (walk_drv carries a journalling variant of this same routine.)
 ; ---------------------------------------------------------------------------
 .flip_sched
     ; R12/R13 straddle guard: the pair must not bracket the frame-top reload
@@ -207,6 +229,9 @@ ORG &4000
     LDA &FE4D:AND #2:BEQ fs_w1
     LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
     JMP fs_clrbot
+; fs_clrall falls through into fs_clrbot after the top; fs_clrtop/fs_clrbot
+; clear the half of whichever buffer backhi now names (the one just taken
+; OFF display — the CRTC is showing the other one).
 .fs_clrall
     JSR fs_clrtop
 .fs_clrbot
@@ -220,6 +245,9 @@ ORG &4000
 .fs_ct1
     JMP clr6Ct
 
+; --- T1hi -> beam class, indexed directly by the raw high byte (256 entries,
+; page-aligned so the LDA abs,X never crosses); boundaries as per the
+; flip_sched header, padded with the safe class 0 above 77. ---
 ALIGN &100
 .beamtbl
     FOR n, 0, 255

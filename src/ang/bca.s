@@ -1,4 +1,21 @@
 
+; ============================================================================
+; bbox_check_angle — angle-space bbox visibility (jt_bca_check target).
+; Mirrors angle_bbox.bbox_check_angle exactly: faithful DOOM R_CheckBBox in
+; our negated-phi convention, conservative screen-column extent, no rotation
+; (0 muls; per corner: octant fold + 1 SlopeDiv + tantoangle lookup).
+;   in : bca_boxp     -> the 8-byte s16 ROM box (top,bot,left,right)
+;        bca_pxs/pys  player int position sign-extended s16 (frame-const)
+;        bca_afn      a_fine = view angle in fineangles (frame-const)
+;   out: bca_vis (1 visible / 0 cull); bca_ilo/bca_ihi (u8 column extent,
+;        valid only when bca_vis=1)
+; pseudocode (angle_bbox.bbox_check_angle):
+;   if box contains player: return full (0,255)      [box_classify short-exit]
+;   cc = checkcoord[boxy*4 + boxx]                    [box_classify -> X]
+;   p1 = phi(box[cc0]-px, box[cc1]-py)                # LEFT silhouette corner
+;   p2 = phi(box[cc2]-px, box[cc3]-py)                # RIGHT silhouette corner
+;   -> bca_tail (span / FOV clip / column lookup, shared with the rot cache)
+; ============================================================================
 bbox_check_angle:
 ; (scope opened out to file level so the rotation cache — bbox_check_angle_cached
 ;  + bca_frame below — can share box_classify, corner_phi and the bca_tail
@@ -84,6 +101,15 @@ STA bca_p2+1
 ;
 ; span = (p2 - p1) & 4095 ; span >= ANG180(2048) -> viewer inside the
 ; box's angular span -> visible full-width.
+;
+; bca_tail pseudocode (CLIPANGLE=512, 2*CLIPANGLE=1024):
+;   span = (p2 - p1) & 4095 ; if span >= 2048: full (0,255)
+;   tspan = (512 - p1) & 4095                            # left corner vs FOV
+;   if tspan > 1024: cull if tspan-1024 >= span else p1 = -512
+;   tspan = (512 + p2) & 4095                            # right corner vs FOV
+;   if tspan > 1024: cull if tspan-1024 >= span else p2 = +512
+;   ilo = max(0, vatox[p1+512] - 1) ; ihi = min(255, vatox[p2+512] + 1)
+;   cull if ilo > ihi else visible
 bca_tail:                               ; shared by bbox_check_angle + _cached
 SEC
 LDA bca_p2
@@ -112,6 +138,9 @@ BNE ck_left_out
 CPX #0
 BEQ ck_right                            ; tspan == 1024 exactly -> in range
 ck_left_out:
+; tspan > 1024: left corner outside the FOV. Compute tspan-1024 (12-bit) and
+; test it against span with a discard-result 16-bit compare (CMP lo / SBC hi:
+; only the carry survives; C=1 iff tspan-1024 >= span -> wholly off the left).
 STX pa_sx                               ; (corner_phi scratch, dead here)
 SEC
 SBC #4                                  ; tspan hi -= 4  (tspan - 1024)
@@ -142,6 +171,7 @@ BNE ck_right_out
 CPX #0
 BEQ ck_done
 ck_right_out:
+; mirror of ck_left_out: 16-bit (tspan-1024) >= span test, carry-only.
 STX pa_sx
 SEC
 SBC #4

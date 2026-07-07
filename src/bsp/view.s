@@ -2,16 +2,33 @@
 ; ============================================================================
 ; br_view_setup — compute frac_vx, frac_vy for the current frame.
 ;
-;   Inputs (zp):  zp_br_px (s16), zp_br_py (s16),
-;                 zp_br_smag, zp_br_sneg, zp_br_sone,
-;                 zp_br_cmag, zp_br_cneg, zp_br_cone.
-;   Outputs (zp): zp_br_fvxlo/hi, zp_br_fvylo/hi (each s16).
+; Per-frame view-context setup, mirror of fp_view_context (fp.py): the
+; vertex fraction is always 0, so the fractional part of the rotated
+; player-relative delta is frame-constant (= rotate(-player_frac)).
+; Precomputing it here (≤4 muls, once per frame) lets the hot per-vertex
+; transform (br_to_view) handle only the integer part. Also hoists the
+; frame-constant inputs of the angle-space bbox check and picks the
+; coherence-cache variants for this frame.
+;
+;   Inputs (zp):  zp_br_px (s16 8.8 prescaled player x; int part s16 at
+;                 zp_br_px_h/px_e), zp_br_py / zp_br_py_h/py_e (same for y),
+;                 zp_br_smag, zp_br_sneg, zp_br_sone,  (sin: u8 magnitude,
+;                 zp_br_cmag, zp_br_cneg, zp_br_cone    neg flag, |t|=1 flag)
+;                 bca_ab = view-angle byte (frame preset).
+;   Outputs (zp): zp_br_fvxlo/hi, zp_br_fvylo/hi (each s16);
+;                 bca_afn ($3B/$3C) = ab<<4 fine angle (hoisted);
+;                 bca_pxs/pys ($8D/$8E, $9B/$9C) = player pos s16 copies;
+;                 jt_bca_check SMC-patched (cached vs original bbox check);
+;                 per-frame vertex-cache mode chosen (vxc_frame).
+;   Clobbers: A, X, Y, zp_br_t2/t3, zp_ft_* staging, mul workspace.
 ;
 ;   Python:
 ;     dx_lo = (-vx_88) & 0xFF
 ;     dy_lo = (-vy_88) & 0xFF
 ;     frac_vx = ft(dx_lo, sin) - ft(dy_lo, cos)
 ;     frac_vy = ft(dx_lo, cos) + ft(dy_lo, sin)
+;   where ft = _frac_rot_term: unity → lo; else (lo*mag + 128) >> 8, then
+;   negate if trig negative (see br_frac_rot_term in arith.s).
 ; ============================================================================
 br_view_setup:
 .scope
@@ -42,6 +59,8 @@ LDA zp_br_py_h
 STA $9B
 LDA zp_br_py_e
 STA $9C
+; --- Fractional deltas: low byte of the NEGATED 8.8 player position
+; (vertex frac is 0, so frac(vertex - player) = frac(-player)). ---
 ; dx_lo = (-zp_br_px) & 0xFF
 LDA #0
 SEC
@@ -56,6 +75,8 @@ STA zp_br_t3
 ; dy_lo
 
 ; --- frac_vx = ft(dx_lo, sin) - ft(dy_lo, cos) ---
+; Each ft call stages (lo, mag, neg, one) into the zp_ft_* slots and
+; returns an s16 in zp_br_resl/resh.
 LDA zp_br_t2
 STA zp_ft_lo
 LDA zp_br_smag
@@ -158,9 +179,17 @@ RTS
 ;
 ;   px_int = high byte of zp_br_px. The wrapper precomputes this and
 ;   stores it at zp_br_px_h (we use the HI byte of the s16 player pos).
+;
+;   Accumulators are s24 (lo/hi/ext) — the intermediate rot_int terms are
+;   8.8 with an s16 integer delta, so single terms can exceed s16; the
+;   final sums are consumed as 8.8 (hi byte = integer view coord).
+;   Mirrors fp_to_view (fp.py) up to the total_vx/total_vy sums; the
+;   >>8 truncation/rounding happens in the caller (br_seg_xform_vertex).
+;   Clobbers: A, Y, zp_ri_dlo/dhi, mul workspace, zp_br_res*.
 ; ============================================================================
 br_to_view:
 .scope
+; --- Integer deltas: d = vertex_world - player_int (both axes, s16). ---
 ; dx (s16) = wx - px_int (s16: px_h lo, px_e hi).
 LDA zp_br_dxlo
 SEC
@@ -178,6 +207,8 @@ SBC zp_br_py_e
 STA zp_br_dyhi
 
 ; int_vx = rot_int(dx, sin) - rot_int(dy, cos), as s24
+; (br_rot_int: Y = 0 selects sin, Y = 3 selects cos from the contiguous
+; trig ZP block at $05; result s24 in zp_br_resl/resh/resext.)
 LDA zp_br_dxlo
 STA zp_ri_dlo
 LDA zp_br_dxhi
@@ -242,9 +273,22 @@ STA zp_br_vyext
 JMP tv_add_fracs
 .endscope
 
+; ============================================================================
 ; tv_add_fracs — add the per-frame fractional rotation terms (s16,
 ; sign-extended) to the s24 vx/vy accumulators. Shared by br_to_view and
 ; the bbox corner combine.
+;
+;   Inputs (zp):  zp_br_vxlo/vxhi/vxext, zp_br_vylo/vyhi/vyext (s24
+;                 integer-rotation sums), zp_br_fvxlo/hi, zp_br_fvylo/hi
+;                 (s16 per-frame fracs from br_view_setup).
+;   Outputs (zp): the same accumulators, += sign-extended frac:
+;                 total_v* = int_v* + frac_v*   (Python: fp_to_view's sums)
+;   Clobbers: A.
+;
+;   The frac term is s16; its sign extension into the ext byte is done by
+;   adding #$00 (frac >= 0) or #$FF (frac < 0) with the carry propagated
+;   from the hi-byte add.
+; ============================================================================
 tv_add_fracs:
 .scope
 LDA zp_br_vxlo
@@ -290,7 +334,13 @@ RTS
 ; ============================================================================
 ; HELPER: br_smul_s8_u8 — signed s8 × unsigned u8 → s16.
 ;   Inputs:  zp_br_a (s8), zp_br_b (u8).
-;   Output:  zp_br_resl/h (s16).
+;   Output:  zp_br_resl/h (s16 = a * b, exact: |a|<=128, b<=255 fits s16).
+;   Clobbers: A, X, Y, zp_tmp0, zp_mul_b, zp_prod_lo/hi.
+;
+;   res = umul8(|a|, b), negated if a < 0. The quarter-square umul8 body
+;   (see SC_UMUL8 in header.s) is inlined in BOTH sign paths — 56% of all
+;   umul8 calls come through here, so the JSR/RTS and the sign-flag
+;   bookkeeping are worth flattening.
 ; ============================================================================
 br_smul_s8_u8:
 .scope
@@ -393,6 +443,13 @@ RTS
 .segment "W_BK"
 .endif
 ;   silently dropped. Used by the back-face test where we only need sign.
+;
+;   Algorithm: sign-magnitude. res = |a| * |d| (u8 × u16, low 16 bits),
+;   negated if exactly one operand was negative:
+;     res_lo:hi  = umul8(|a|, d_lo)
+;     res_hi    += lo(umul8(|a|, d_hi))     # (<<8 term; carry-out dropped)
+;   Clobbers: A, X, Y, zp_br_a (|a| written back), zp_br_t0/t1 (|d|),
+;             zp_br_sign, mul workspace.
 ; ============================================================================
 br_smul_s8_s16:
 .scope
@@ -468,7 +525,15 @@ RTS
 ; HELPER: br_smul_s16_s16_s32 — signed s16 × s16 → s32 (4-byte little-endian).
 ;   Inputs:  zp_br_dxlo:dxhi (A, s16), zp_br_dylo:dyhi (B, s16).
 ;   Output:  zp_br_t0:t1:t2:t3 (s32).
-;   Clobbers: zp_br_dxlo:dxhi, zp_br_dylo:dyhi (negated for sign tracking).
+;   Clobbers: zp_br_dxlo:dxhi, zp_br_dylo:dyhi (negated for sign tracking),
+;             A, X, Y, zp_br_sign, mul workspace.
+;
+;   Algorithm: sign-magnitude schoolbook with 4 u8×u8 partial products —
+;     t0:t1  = al*bl
+;     t2:t3  = ah*bh                        # the <<16 term
+;     t1:t2:t3 += al*bh + ah*bl             # the two <<8 cross terms
+;   then negate the s32 if the operand signs differed. Exact: |A|,|B|
+;   <= 32768, product < 2^31. Used by the general point_on_side cascade.
 ; ============================================================================
 br_smul_s16_s16_s32:
 .scope

@@ -7,6 +7,15 @@
 ;   ACTIVE LIST -- single span (slot 1) covering [0,255] x [0,159]
 ;
 ; Called once per frame. Runtime is negligible (< 0.5% of total).
+;
+; Input:  none.
+; Output: zp_free = 2 (free chain 2->3->...->31->0),
+;         zp_head = 1, slot 1 = full-screen span:
+;           XSTART=XLO=0, XEND=DEN=255,
+;           TL=TR=OT=IT=Y_BIAS (48), BL=BR=OB=IB=Y_BIAS+159 (207)
+;           (screen-space Y is stored BIASED: visible [0,159] -> [48,207])
+;         zp_hg_cache = 1 (has_gap coherence cache primed to the span).
+; Clobbers A,X.  Python mirror: EndpointClipSpans.__init__.
 ; ======================================================================
 span_init:
 .scope
@@ -61,6 +70,12 @@ RTS                                     ; |
 ;
 ; alloc_span: pops free list head into X.  Z=0 on success, Z=1 if empty.
 ; free_span:  pushes slot X back onto free list.  Tail-callable (JMP).
+;
+; alloc_span — In: none. Out: X = slot (0 + Z=1 if pool exhausted).
+;              Clobbers A. All other slot fields are stale — caller fills.
+; free_span  — In: X = slot to free (must be unlinked from the active
+;              list first). Out: slot pushed on free chain. Clobbers A;
+;              X preserved.
 ; ======================================================================
 alloc_span:
 ; Returns X = new span offset.  Z=1 if failed (X=0), Z=0 if success.
@@ -94,6 +109,8 @@ RTS
 ; This is the hottest subroutine -- called by every interpolation.
 ; ======================================================================
 ; (umul8 moved to the fixed $2030 slot below the jump table.)
+; The code + full I/O header now live in clip/arith.s (included right
+; after clip/header.s so the pin lands at $2030 in the flat build).
 
 .byte 0                                 ; 1-byte pad: optimal alignment for umul8
 
@@ -114,9 +131,26 @@ RTS
 ;
 ; *** HOTTEST LOOP *** -- the 3-instruction shift chain (ASL/ROL/ROL)
 ; plus trial subtraction account for ~20% of all clipper cycles.
+;
+; Input:  zp_div_lo:zp_div_hi = dividend (u16; aliases zp_prod_lo/hi so
+;         umul8's product is already in place), zp_div_den = divisor
+;         (u8, caller guarantees != 0).
+; Output: A = quotient. Fast path: full u8 quotient. Slow path: LOW byte
+;         of the 16-bit quotient (high byte is left in zp_div_hi);
+;         callers on that path only need the low 8 bits. Remainder is
+;         discarded. Clobbers X and zp_div_lo/hi; Y preserved.
+;
+; pseudocode:
+;   if div_hi < den:                      # quotient fits u8
+;       rem:acc = dividend (rem in A)     # 8 shift/trial-subtract steps,
+;       skip leading 0 quotient bits cheaply, then main loop
+;   else:                                 # rare: seg extrapolation
+;       16 shift/trial-subtract steps, quotient spread over div_lo:div_hi
+;   return div_lo
 ; ======================================================================
 udiv16_8:
 .scope
+; Path select: den > div_hi ⇒ quotient < 256 ⇒ 8-iteration fast path.
 LDA zp_div_hi
 CMP zp_div_den
 BCS d16
@@ -133,6 +167,11 @@ STX zp_div_lo
 ; --- Unrolled skip: consume leading zero quotient bits ---
 ; 8 copies; each branches to its own per-copy commit handler that sets
 ; X directly (saves DEX per skipped copy: −2 cyc per skip iteration).
+; Each copy: shift rem(A):div_hi left one bit; the quotient bit is 1
+; iff a bit fell out of A (BCS: rem >= 256 > den) or rem >= den (CMP).
+; While bits are 0 there's nothing to write (div_lo is already 0), so
+; skipping is pure profit; the first 1 bit jumps to dskip_cN with
+; X = iterations remaining (this one included).
 ASL zp_div_hi
 ROL A
 BCS dskip_c8
@@ -200,6 +239,11 @@ BNE dskip_commit
 dskip_c1:
 LDX #1
 dskip_commit:
+; First 1 quotient bit: commit the trial subtract and enter the main
+; loop for the remaining X-1 iterations (X=1 ⇒ done, quotient=1 in
+; div_lo). SBC is correct on both arrival paths: via CMP-BCS C=1 and
+; rem>=den; via ROL-BCS the true 9-bit rem is 256+A, and 256+A-den
+; still fits u8 with C=1.
 SBC zp_div_den                          ; carry already set (from BCS)
 INC zp_div_lo                           ; set this quotient bit
 DEX
@@ -208,9 +252,15 @@ BNE dl
 LDA zp_div_lo
 RTS
 d16:
+; SLOW PATH: quotient can exceed u8. Full 16-iteration restoring divide
+; over div_lo:div_hi; quotient bits accumulate across div_lo (low 8)
+; and div_hi (high 8); only the low byte is returned.
 LDA #0
 LDX #16
 ; Main loop: remainder kept in A (saves LDA/STA zp_div_rem per iter)
+; Per iteration: shift dividend/quotient register left (top bit into
+; rem); if rem >= den (or a bit overflowed rem: dl_over) subtract den
+; and set the vacated quotient bit via INC div_lo.
 dl:
 ASL zp_div_lo
 ROL zp_div_hi

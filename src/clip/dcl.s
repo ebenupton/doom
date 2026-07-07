@@ -9,10 +9,36 @@
 ;
 ; Inputs (ZP): zp_line_xl, zp_line_yl, zp_line_xr, zp_line_yr
 ; The line MUST be oriented left-to-right (xl <= xr).
-; All Y values u8 [0,159].
+; All Y values u8, biased by Y_BIAS (visible rows [0,159] -> [48,207]).
+;   zp_head                = first slot of the sorted active span list
+;   zp_dcl_rec_buf(_h)     = segment-record buffer ptr; hi byte $00
+;                            disables records mode entirely
 ;
-; Output: lines written to LINE_OUT_BUF, count at LINE_OUT_COUNT.
+; Output: lines written to LINE_OUT_BUF (4 bytes each: x0,y0,x1,y1 with
+; Y un-biased), count at LINE_OUT_COUNT; each segment is also handed to
+; the rasteriser as it is produced.  In records mode, one 4-byte record
+; (xl,yl,xr,yr — BIASED Y) per surviving segment is appended to the
+; record buffer (count in byte 0) for the records-driven tighten.
 ; READ-ONLY walk — never modifies the span list.
+;
+; Python mirror: EndpointClipSpans.draw_clipped (endpoint_spans.py) —
+; the sloped-line branch; dcl_vertical mirrors the |dx|<1 branch.
+;
+; Pseudocode (per span s in the sorted list, left to right):
+;   if s.xend <= xl: continue            # span left of line
+;   if s.xstart >= xr: break             # span right of line (sorted)
+;   ox0 = max(s.xstart, xl); ox1 = min(s.xend, xr)
+;   if seg_start is None:                # ENTRY
+;       if yhi < s.OT or ylo > s.OB: continue      # Tier 1 outer reject
+;       if ylo >= s.IT and yhi <= s.IB:            # Tier 2 inner accept
+;           seg_start = (ox0, line_y_at(ox0))
+;       else:                                       # ambiguous
+;           CB-clip line to s's trapezoid aperture  # dcl_cb_clip
+;   # EXIT CHECK
+;   if xr <= s.xend: emit(seg_start, (xr, yr)); done
+;   elif next span abuts and line's remaining bbox fits its inner
+;        bbox: continue into next span (portal merge, no re-clip)
+;   else: emit(seg_start, (s.xend, line_y_at(s.xend))); seg_start=None
 ; ======================================================================
 draw_clipped_line:
 .scope
@@ -111,6 +137,11 @@ dcl_ox1_ok:
 STA zp_ox1
 
 ; --- Entry or continuation? ---
+; seg_start_x == $FF means no segment is open (NULL sentinel).
+; Open segment (BNE): this span was reached via a portal merge — the
+; line is already known to stay inside the aperture across it, so go
+; straight to the exit check.  Records are written once at
+; dcl_emit_segment, not per-span.
 LDA zp_seg_start_x
 CMP #$FF
 BNE dcl_exit_check
@@ -352,6 +383,18 @@ RTS
 ; aperture [top_y, bot_y] at that column, clip [ylo, yhi] to aperture,
 ; emit single vertical line segment.  Matches Python's draw_clipped
 ; vertical path (break on first span containing ix).
+;
+; Inputs:  zp_line_xl (== xr), zp_line_yl, zp_line_yr; zp_head.
+; Output:  at most one segment to LINE_OUT_BUF + plot_v; no records
+;          (vertical lines carry no tighten information).
+; Pseudocode:
+;   for s in spans:
+;       if s.xend < xl: continue
+;       if s.xstart > xl: return         # sorted list — no span has xl
+;       top = span_top(s, xl); bot = span_bot(s, xl)   # interp_store
+;       cy1 = max(ylo, top); cy2 = min(yhi, bot)
+;       if cy1 <= cy2: emit vertical (xl, cy1)-(xl, cy2)
+;       return                           # first containing span only
 dcl_vertical:
 ; Compute ylo/yhi (dx/dy not needed for verticals)
 LDA zp_line_yl
@@ -449,6 +492,9 @@ BEQ dv_emit
 BCC dv_emit
 RTS                                     ; line clipped away
 dv_emit:
+; Write the 4-byte segment (x, cy1, x, cy2) to LINE_OUT_BUF and the
+; rasteriser ZP args, un-biasing Y (biased [48,207] -> screen [0,159]),
+; then tail-call the dedicated vertical plotter.
 LDY LINE_OUT_COUNT
 LDA zp_line_xl
 STA LINE_OUT_BUF,Y
@@ -477,6 +523,35 @@ JMP plot_v                              ; always vertical on this path
 ; Exact clip of the line against the span's trapezoid aperture.
 ; Entry: X = span pointer, seg_start_x == $FF (no active segment)
 ; Uses interp_store to evaluate span boundaries at clipped endpoints.
+;
+; Python mirror: _clip_to_span (endpoint_spans.py), restricted to the
+; already-computed overlap [ox0, ox1] (the X clip is just cx1=ox0,
+; cx2=ox1 since the walk guarantees overlap).
+;
+; Inputs:  zp_ox0/zp_ox1 (overlap), zp_line_* (line), X = span slot.
+; Outputs: either
+;   - reject (line outside aperture): advance to next span, or
+;   - exit clipped inside the span (cx2 < ox1): emit fragment
+;     (cx1,cy1)-(cx2,cy2) immediately, reset seg_start, next span, or
+;   - exit not clipped (cx2 == ox1): seg_start = (cx1,cy1), narrow the
+;     running Y bbox to [min(cy1,cy2), max(cy1,cy2)], resume at the
+;     normal exit check (portal merge still possible).
+; Clobbers: zp_cb_* workspace, interp workspace, zp_tmp0/1, zp_save0/1.
+;
+; Pseudocode:
+;   cx1, cx2 = ox0, ox1
+;   cy1 = line_y_at(cx1); cy2 = line_y_at(cx2)       # round-to-nearest
+;   # top boundary: need cy >= top at both ends
+;   if not (cy1 >= IT and cy2 >= IT):                # bbox filter
+;       top1 = span_top(cx1); top2 = span_top(cx2)
+;       if cy1 < top1 and cy2 < top2: reject          # both above
+;       if one above: ix = boundary_ix(...); move that end to
+;           (ix, span_top(ix)); other end unchanged
+;   if cx1 > cx2: reject
+;   # bot boundary: need cy <= bot at both ends (same shape, mirrored)
+;   if not (cy1 <= IB and cy2 <= IB):
+;       ... symmetric with span_bot / reject-below ...
+;   if cx1 > cx2: reject
 dcl_cb_clip:
 STX zp_save0                            ; save span pointer
 
@@ -852,6 +927,14 @@ JMP dcl_walk
 ;                           else round toward cx1 (floor)
 ; d1 and d2 have opposite signs (one endpoint inside, one outside).
 ; denom = d1 - d2, |num| = (cx2-cx1) * |d1|
+;
+; Python mirror: boundary_ix (clip_math.py).
+; Pseudocode:
+;   num = (cx2 - cx1) * abs(d1); den = abs(d1) + abs(d2)
+;   q = ceil(num / den) if clip_p1 else floor(num / den)
+;   return clamp(cx1 + q, cx1, cx2)
+; Guards: den == 0 or den > 255 -> return midpoint (cannot occur for
+; sane pixel-scale inputs); cx2 == cx1 -> return cx1.
 dcl_boundary_ix:
 STA zp_save1                            ; save clip_p1 flag
 
@@ -947,6 +1030,16 @@ RTS
 ; --- dcl_emit_segment: write segment to LINE_OUT_BUF and call rasteriser ---
 ; Input: zp_seg_start_x, zp_seg_start_y, zp_ox1 (end_x), zp_tmp0 (end_y)
 ; Clobbers: A, Y
+;
+; Pipeline (pseudocode):
+;   if start == end: return                       # degenerate point
+;   if either Y outside [Y_BIAS, VIS_YMAX]:
+;       yband-clip segment; if fully off-screen: return
+;   if records mode and xl < xr:                  # skip useless records
+;       append record (xl, yl, xr, yr); records[0] += 1
+;   append (xl, yl-Y_BIAS, xr, yr-Y_BIAS) to LINE_OUT_BUF and the
+;   rasteriser ZP args; bump LINE_OUT_COUNT
+;   tail-call plot_h / plot_v / RASTER_ENTRY by segment axis
 dcl_emit_segment:
 ; Skip degenerate segments (zero-length).
 LDA zp_seg_start_x
@@ -1066,8 +1159,22 @@ JMP RASTER_ENTRY                        ; tail-call rasteriser
 ; In: zp_seg_start_x/y, zp_ox1, zp_tmp0 (u8 biased). Out: clipped; C clear=keep,
 ; C set=reject. Uses s16_interp axis-swapped (free=Y,target=X); LC_OX*/OY*
 ; anchors preserved across the call so both ends clip against the ORIGINAL line.
+;
+; Cohen-Sutherland-style: count endpoints above the band (X reg) and
+; below it (Y reg); 2 on the same side = trivial reject; otherwise each
+; out-of-band endpoint is moved to its band edge with X recomputed by
+; interpolation along the original segment.
+; Pseudocode:
+;   if y1 < LO and y2 < LO: reject      # LO = Y_BIAS, HI = VIS_YMAX
+;   if y1 > HI and y2 > HI: reject
+;   for each endpoint (x, y):
+;       if y < LO: x = interp_x_at(LO); y = LO
+;       if y > HI: x = interp_x_at(HI); y = HI
+;   keep
 dcl_yband_clip:
 .scope
+; --- Load s16_interp anchors, axis-swapped: free axis (OX*) = Y,
+; target axis (OY*) = X.  Hi bytes zero — all values are u8. ---
 LDA zp_seg_start_y
 STA LC_OX1_LO
 LDA zp_tmp0
@@ -1081,6 +1188,8 @@ STA LC_OX1_HI
 STA LC_OX2_HI
 STA LC_OY1_HI
 STA LC_OY2_HI
+; --- Outcode census: X = #endpoints above band (y < Y_BIAS),
+; Y = #endpoints below band (y > VIS_YMAX) ---
 LDX #0
 LDY #0
 LDA zp_seg_start_y
@@ -1107,10 +1216,13 @@ JMP yb_decide
 yb_e2_hi:
 INY
 yb_decide:
+; Both endpoints on the same off-screen side -> trivial reject.
 CPX #2
 BEQ yb_reject
 CPY #2
 BEQ yb_reject
+; --- Endpoint 1 (seg_start): if out of band, interpolate X at the
+; band edge and clamp Y to that edge ---
 LDA zp_seg_start_y
 CMP #Y_BIAS
 BCC yb_c1_lo
@@ -1135,6 +1247,7 @@ STA zp_seg_start_x
 LDA #Y_BIAS
 STA zp_seg_start_y
 yb_c1_done:
+; --- Endpoint 2 (end_x/end_y in zp_ox1/zp_tmp0): same treatment ---
 LDA zp_tmp0
 CMP #Y_BIAS
 BCC yb_c2_lo
@@ -1172,6 +1285,18 @@ RTS
 ; and offset-max shortcuts.
 ; Input: A = x column.  Output: A = line Y.
 ; Clobbers: Y, mul_b, prod_*, div_*.
+;
+; Python mirror: _interp_store (endpoint_spans.py) with anchors
+; (xl,yl)-(xr,yr): direction-split unsigned round-to-nearest —
+;   off = x - xl
+;   if yr >= yl: return yl + (off*(yr-yl) + dx//2) // dx
+;   else:        return yl - (off*(yl-yr) + dx//2) // dx
+; The multiply-round-divide is umul_round_div (umul8 + den/2 bias +
+; udiv16_8).  Descending path negates via EOR #$FF / SEC ADC yl
+; (= yl - q).  Entry points:
+;   dcl_line_y_at_ox0 — x taken from zp_ox0 (literal $E9 keeps ZP
+;                       addressing despite the forward reference)
+;   dcl_line_y_at_a   — x in A
 dcl_line_y_at_ox0:
 LDA $E9                                 ; zp_ox0 (forward ref)
 dcl_line_y_at_a:

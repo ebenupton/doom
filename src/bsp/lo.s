@@ -1,7 +1,28 @@
 bsp_lo_start:
 
+; ============================================================================
 ; reproject_at_crossing — call cross_compute, then project sx + 4 sy values
 ; using the reciprocal at NEAR. Output → zp_seg_sx_lo/hi, zp_seg_sy_*.
+;
+; Called by the seg loop (subsector.s) when EXACTLY ONE endpoint of a
+; front-facing seg is behind the near plane: that endpoint is replaced by
+; the seg's crossing point with vy = NEAR, mirroring Python's fp_near_clip
+; branch in packed_render_seg (idxK = eyK << 1 = 2 → recip at NEAR;
+; fvxK_c = 0 for clipped endpoints). The caller then copies these results
+; into the clipped endpoint's v1/v2 slots via copy_seg_to_v1/v2.
+;
+;   Inputs:  zp_seg_v1_evy/evx, zp_seg_v2_evy/evx (both endpoints' s8 view
+;              coords — always populated by br_seg_xform_vertex),
+;            zp_seg_*_dlt + zp_seg_flags (consumed by the do_project_y tail).
+;   Outputs: zp_seg_sx_lo/hi = screen x of the crossing point (s16),
+;            zp_seg_sy_*     = seg heights projected with recip(NEAR),
+;            zp_br_rhi/rlo   = recip(NEAR) = ($7F, $FF).
+;
+;   Pseudocode:
+;     cx = cross_compute()             # view-x where the seg meets vy=NEAR
+;     sx = project_x(cx, frac=0)       # narrow/wide auto-dispatch
+;     do_project_y()                   # 4 heights at the NEAR reciprocal
+; ============================================================================
 reproject_at_crossing:
 .scope
 JSR cross_compute
@@ -21,9 +42,20 @@ STA zp_seg_sx_hi
 JMP do_project_y
 .endscope
 
+; ============================================================================
 ; copy_seg_to_v1 / copy_seg_to_v2 — copy zp_seg_sx_*/sy_*_* into vN slots,
 ; biasing sy by Y_BIAS (= 48). Used after both br_seg_xform_vertex and
 ; reproject_at_crossing fill the "current vertex" slots.
+;
+; The per-vertex helpers write one shared set of "current" slots; the seg
+; loop calls this to bank them into the endpoint-specific v1/v2 slots so
+; both endpoints' projections coexist for the emit/tighten phase.
+;   Inputs:  zp_seg_sx_lo/hi, zp_seg_sy_{top,bot,btop,bbot}_lo/hi.
+;   Outputs: sxK at $61/$62 (v1) or $63/$64 (v2);
+;            syK_{top,bot,btop,bbot} in SEG_PROJ_BUF (see offsets below).
+;   (The "biasing" note above is historical — see the comment at
+;   copy_seg_to_vx: Y values now arrive pre-biased from br_project_y.)
+; ============================================================================
 copy_seg_to_v1:
 LDX #0
 LDY #0
@@ -58,6 +90,7 @@ LDA zp_seg_sy_bbot_hi
 STA SEG_PROJ_BUF+11,X
 RTS
 
+; ============================================================================
 ; cross_compute — near-plane crossing point for a seg with one clipped vertex.
 ;   Inputs:  zp_clip_C_evy, zp_clip_C_evx (clipped, evy ≤ 0)
 ;            zp_clip_U_evy, zp_clip_U_evx (unclipped, evy ≥ 1)
@@ -67,6 +100,17 @@ RTS
 ;     t   = ((NEAR - vy_C) << 8) / (vy_U - vy_C)    (u8 truncated)
 ;     dvx = vx_U - vx_C                              (s9: -255..255)
 ;     cx  = vx_C + (t * dvx) >> 8                    (s8 wraparound)
+;
+; CURRENT interface (the C/U slot names above are historical): the seg
+; loop copies both endpoints into zp_seg_v{1,2}_{evy,evx}; this routine
+; always parametrises from v1 — t = ((1 - v1_evy) << 8) / (v2_evy -
+; v1_evy), cx = v1_evx + (t * (v2_evx - v1_evx)) >> 8 — exactly as
+; fp_near_clip does regardless of WHICH endpoint is the clipped one.
+; Output is now s16: zp_clip_cx (lo) : zp_clip_cx_hi (hi); the tail JMPs
+; to br_recip with vy_idx = 2 (9.1 for vy = NEAR), so rhi/rlo = $7F/$FF.
+; Clobbers zp_div_lo/hi/den, zp_br_a, zp_br_dxlo/dxhi, zp_br_t2/t3,
+; zp_br_sign, plus SC_UDIV16_8 / SC_UMUL8 scratch.
+; ============================================================================
 cross_compute:
 .scope
 ; Compute cx = v1_evx + (t * (v2_evx - v1_evx)) >> 8 where
@@ -178,8 +222,18 @@ STA zp_br_t1
 JMP br_recip
 .endscope
 
+; ============================================================================
 ; cross_umul_u8_s16 — t (u8 in zp_br_a) × dx (s16 in zp_br_dxlo:dxhi) → s16
 ; in zp_br_resl:resh. Caller takes resh as the (>>8) result.
+;
+; Sign-magnitude: |dx| via 16-bit negate (sign in zp_br_sign), then
+;   res = t*|dx|.lo  +  (t*|dx|.hi << 8)      (two u8×u8 muls; only the
+;                                              low byte of the second
+;                                              product fits — dx is s9
+;                                              here so it never carries)
+; and negate the s16 result if dx was negative. Clobbers zp_br_dxlo/dxhi
+; (replaced by |dx|), zp_br_sign, zp_mul_b, zp_prod_lo/hi.
+; ============================================================================
 cross_umul_u8_s16:
 .scope
 ; |dx|: track sign in zp_br_sign.
@@ -227,8 +281,41 @@ c2_pos:
 RTS
 .endscope
 
+; ============================================================================
 ; br_node_setup — read node from ROM, compute side, set BSP_NEAR/FAR.
 ; Called twice per internal node (entry + post-near phases).
+;
+;   Inputs:  zp_node_chlo = node id (u8 — n_nodes <= 256, pack-time assert)
+;            zp_br_pxraw_lo/hi, zp_br_pyraw_lo/hi = player position, RAW
+;              map units relative to map_center (s16, NOT prescaled — the
+;              side test must not lose a weak axis to /8 truncation).
+;   Outputs: zp_side = 0 (right of partition) / 1 (left/on),
+;            BSP_NEAR_LO/HI = child on the player's side (walk descends
+;              this first), BSP_FAR_LO/HI = the other child.
+;   Scratch: zp_seg_dxraw/dyraw (player - node origin), zp_node_dx/dy,
+;            $0A50-$0A52 (s24 cross-product accumulator), zp_br_dx/dy*.
+;
+; Node data comes from the SoA pages built by wad_packed.build_packed:
+; one 256-byte page per field byte (NODE_NXLO..NODE_DYHI, children
+; NODE_CRLO..NODE_CLHI, and NODE_TYPE), indexed with constant-base
+; LDA abs,X — no pointer arithmetic. The partition TYPE is baked at pack
+; time (NT_GENERAL=0, NT_DX0=1 vertical, NT_DY0=2 horizontal) so the 73%
+; of E1M1 nodes that are axis-aligned skip the classification AND load
+; only the one delta they need.
+;
+; Python mirror (doom_wireframe.point_on_side, raw s16 values):
+;   dx, dy = x - node.nx, y - node.ny
+;   side = 0 if (node.dy*dx - node.dx*dy) > 0 else 1
+;
+; Pseudocode (D = dxraw*ndy - dyraw*ndx, side0 iff D > 0):
+;   type NT_DY0 (ndy==0): D = -dyraw*ndx → side0 iff dyraw!=0 and
+;                          sign(dyraw) != sign(ndx)         (no multiply)
+;   type NT_DX0 (ndx==0): D =  dxraw*ndy → side0 iff dxraw!=0 and
+;                          sign(dxraw) == sign(ndy)         (no multiply)
+;   general: DOOM R_PointOnSide sign shortcuts (see block comment below);
+;            only same-sign nonzero products fall through to the two
+;            s16×s16→s32 multiplies and the full 24-bit compare.
+; ============================================================================
 br_node_setup:
 .scope
 PAGE BANK_L0                            ; node SoA pages live in bank L0
@@ -337,6 +424,9 @@ LDA zp_br_t3
 BMI ns_sh_side1                         ; P1<0<P2 -> D<0 -> side1
 JMP ns_side0
 ns_mul:
+; --- Full evaluation: P1 = dxraw*ndy → $0A50-52 (low 3 bytes of the s32
+; product), then P2 = dyraw*ndx subtracted in place; sign/zero test on
+; the 24-bit difference: D<0 or D==0 → side1, else side0. ---
 LDA zp_seg_dxraw_lo
 STA zp_br_dxlo
 LDA zp_seg_dxraw_hi
@@ -559,6 +649,13 @@ ap_done:
 RTS
 .endscope
 
+; ap_edge_one — emit ONE aperture-edge vertical at endpoint K.
+;   X = sy-slot offset (0=v1, 4=v2), Y = sx-slot offset (0=v1, 2=v2).
+;   Dispatch: portal → y-range from the SEG_PROJ_BUF slots selected by
+;   NEEDBT/NEEDBB; solid v1 → APV1 projections already sit in the
+;   btop/bbot slots (do_project_y projected the overlaid APV heights);
+;   solid v2 → tail-jump to ap2_solid_proj (heights not yet projected).
+;   Line emitted through SC_DRAW_S16 (bank C) at x = sxK.
 ap_edge_one:
 .scope
 LDA $0062,Y
@@ -698,6 +795,11 @@ JMP emit_vert_sx2
 
 ; fhch_ptr_si6 — zp_br_p := rom_fhch + zp_seg_first*6 (the 6-byte/seg
 ; height table: fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh).
+;   Input:  zp_seg_first_lo/hi = seg index (u16).
+;   Output: zp_br_p/p_h. Clobbers zp_br_t0-t3.
+;   idx*6 built as (idx*2)*2 + idx*2 — three 16-bit shifts/adds, no mul.
+;   (The 6-byte table is the 6502-resident subset of Python's 20-byte
+;   seg detail: heights only; the VWH u16 indices stay Python-side.)
 fhch_ptr_si6:
 .scope
 LDA zp_seg_first_lo

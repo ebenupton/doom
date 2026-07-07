@@ -1,5 +1,35 @@
 bsp_w_start:
 
+; ============================================================================
+; br_project_y — memoising front for br_project_y_raw (the VWHC cache).
+;
+;   Inputs:  zp_br_t0 = height delta (s8), zp_br_rhi/rlo = 8.8 reciprocal
+;   Output:  zp_br_resl/h = screen y (s16, pre-biased by Y_BIAS)
+;   Preserves the full input set; clobbers X and zp_pyc_idx (+ raw-path
+;   scratch on a miss).
+;
+; Direct-mapped, 256 entries, six parallel 256-byte arrays (VALID / RHI /
+; RLO / H / LO / HI — see the W-region layout in resolve_crossing.s).
+; Probe index = (rlo + h + rhi) & 255, a cheap hash of the key; a HIT
+; additionally requires all three key bytes to match, so the returned
+; value is the one previously computed for exactly these inputs —
+; bit-identical to calling _raw, by construction. Collisions just
+; overwrite (miss path re-stores the new key+value).
+;
+; This plays the role of Python's VWH cache (_packed_read_vwh /
+; _packed_write_vwh in packed_render_seg): Python keys by VWH table index
+; per frame, the 6502 keys by the complete input tuple (rhi, rlo, h) —
+; either way each distinct projection is computed once. Measured
+; 58-64% of projections repeat within a frame; raw ~315 cycles, hit ~45.
+;
+;   Pseudocode:
+;     i = (rlo + h + rhi) & 255
+;     if VALID[i] and RHI[i]==rhi and RLO[i]==rlo and H[i]==h:
+;         return (LO[i], HI[i])                     # hit
+;     res = br_project_y_raw(h, rhi, rlo)           # miss
+;     VALID[i]=1; RHI[i]=rhi; RLO[i]=rlo; H[i]=h; LO[i],HI[i] = res
+;     return res
+; ============================================================================
 br_project_y:
 .scope
 PAGE BANK_L2                            ; recip + VWHC cache live in bank L2
@@ -45,6 +75,11 @@ RTS
 .endscope
 
 ; vwhc_clear — invalidate the projection + rotation-product caches (per frame).
+;   Zeroes the 256-byte VWHC_VALID page (key/value pages may stay stale —
+;   VALID gates every probe). NOTE: no longer run per frame — the cache
+;   key is the complete input of a pure function, so entries stay correct
+;   across frames; br_init_frame (walk.s) deliberately skips this and it
+;   is needed ONCE at boot to scrub power-on garbage. Clobbers A, X.
 vwhc_clear:
 .scope
 LDA #0

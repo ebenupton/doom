@@ -1,7 +1,49 @@
 
 ;----------------------------------------------------------------------------------------------------------
 ; Line rendering routine for 1-bit per pixel mode 4
-; Not yet annotated
+;
+; linedraw4 — OR-mode Bresenham into the BBC mode-4 framebuffer.
+; Pixel-exact python mirror: nj_raster.py (the authoritative pseudocode);
+; the pixel-for-pixel contract is enforced against the 42,462-line golden
+; corpus by tools/nj_raster_check.py. Derived from Nick Jameson's routine,
+; retargeted from 320 to 256 pixels wide.
+;
+; In:  x0,y0,x1,y1 (ZP)  endpoints (x 0..255, y 0..159)
+;      scrstrt (ZP)      framebuffer page hi ($58 or $6C)
+; Out: pixels ORed into the framebuffer. A,X,Y trashed; x0/y0/x1/y1 and the
+;      ZP scratch (scr, cnt, err, errs, ls, b, dx, dy) trashed.
+; Framebuffer byte = (scrstrt<<8) + ((y>>3)<<8) + (x AND &F8) + (y AND 7);
+; pixel bit = &80 >> (x AND 7). At 256 wide a character row is exactly one
+; page, so vertical byte steps are pure scr-hi arithmetic.
+;
+; Structure:
+;   setup     sort endpoints so y0 >= y1 (drawing runs bottom-to-top, rows
+;             DECrement); x direction = carry of the post-sort x0-x1
+;             compare, saved with PHP and consumed by the cores' PLP
+;             (C=1 -> x decreases along the drawing direction: "left");
+;             dy=|y0-y1|, dx=|x0-x1| (kept in X); scr -> byte of (x0,y0)
+;   dispatch  dx >= dy -> shallow (run-accumulating; optional handoff to
+;             the Hamiltonian slope-band modules), else steep (per-pixel)
+;
+; NJ error protocol (both cores; see nj_raster.py draw_line/_shallow/_steep):
+;   shallow: err starts at dx>>1; per pixel err -= dy; on borrow the run of
+;     pixels accumulated since the last y-step is plotted as one ORed byte
+;     mask and err += dx. cnt counts the dy y-steps.
+;   steep:   r starts at dy>>1; per row r -= dx; on borrow r += dy and the
+;     column steps. cnt counts the dx x-steps.
+;   two-phase ls counter: ls=2 for a generic line. When cnt reaches 0 the
+;     e-phase runs: ls 2->1 and err -= errs (errs holds the initial dx>>1
+;     or dy>>1); borrow -> line complete, else exactly one more run/step
+;     (cnt=1) whose completion (ls 1->0) ends the line. This decides
+;     whether the final half-step lands on a row/column of its own, giving
+;     symmetric endpoints across all dy+1 rows (dx+1 columns).
+;   degenerates re-enter the same cores with cnt=ls=1 and patched state:
+;     horizontal: err=dx, dy:=1  (one long run, plotted via byte flushes)
+;     vertical:   r=dy, step:=1  (one column; the e-phase ends it)
+;
+; NOTE on SMC: the '#dy' / '#dx' immediates inside the cores are
+; placeholders (they assemble as the ZP ADDRESSES of dy/dx); the dispatch
+; code pokes the real dy/dx VALUES over them before jumping in.
 ;----------------------------------------------------------------------------------------------------------
 
 SCREEN_WIDTH=256
@@ -9,14 +51,21 @@ SCREEN_WIDTH=256
 
 .linedraw4
 {
+    ; --- endpoint sort: ensure y0 >= y1; dy = |y0-y1| ---
     LDA y0:SEC:SBC y1:BCS dyok
-    SBC #0:EOR #&FF
-    LDX x0:LDY x1:STY x0:STX x1
+    SBC #0:EOR #&FF             ; y0 < y1: negate (SBC #0 exits with C=1)...
+    LDX x0:LDY x1:STY x0:STX x1 ; ...and swap the endpoints
     LDY y1:STY y0
     .dyok STA dy
+    ; --- x direction + dx: C=1 into the SBC on both paths (exact subtract);
+    ;     PHP banks C (1 = x0 >= x1 = leftward) for the cores' PLP ---
     LDA x0:SBC x1:PHP:BCS dxok
-    SBC #0:EOR #&FF
-    .dxok TAX
+    SBC #0:EOR #&FF             ; negate: dx = x1-x0
+    .dxok TAX                   ; X = dx from here to core entry
+    ; --- scr -> framebuffer byte of the start pixel (x0,y0) ---
+    ; (the commented-out lines are NJ's original 320-wide address math —
+    ;  (y>>3)*320 with a +&80 base; at 256 wide a char row is one whole
+    ;  page, so hi = scrstrt + (y0>>3) and lo is just the byte column)
 ;    LDA #&80:STA scr
     LDA #&00:STA scr            \\ KCHACK
     LDA y0:LSR A:LSR A:LSR A:STA scr+1
@@ -25,9 +74,10 @@ SCREEN_WIDTH=256
     CLC
     LDA x0:AND #&F8:ADC scr:STA scr
     LDA scrstrt:ADC scr+1:STA scr+1
-    LDA x0:AND #7:TAY
+    LDA x0:AND #7:TAY           ; Y = start bit -> strtN dispatch index
     CPX dy:BCS notsteep:JMP steep
 
+    ; ==================== shallow dispatch (dx >= dy) ====================
     .notsteep
 IF HAMILTONIAN_12
     STX dx                 ; store dx to ZP for hamiltonian entry
@@ -46,10 +96,17 @@ IF HAMILTONIAN_23
     .in_23 JMP entry_23_nj ; dx == 3dy included; A = delta1
     .skip_23
 ENDIF
+    ; --- generic shallow setup: cnt = dy y-steps, err = errs = dx>>1, ls=2 ---
     LDA dy:BEQ horizontal:STA cnt
     TXA:LSR A:STA err:STA errs
     LDA #2:STA ls
-    .backh PLP:BCC right
+    ; --- direction dispatch + SMC patch: poke the dy VALUE over the eight
+    ;     SBC immediates (bN?+1) and the dx VALUE over the eight ADC
+    ;     immediates (bN?+5) of the chosen direction's blocks; x1/y1 are
+    ;     dead now and get reused as the JMP (x1) vector, picked from the
+    ;     strtN table by the pre-loaded Y = x0&7; then Y := y0&7 (the row
+    ;     within the char row, i.e. the (scr),Y offset). C=1 on entry. ---
+    .backh PLP:BCC right        ; banked x-compare carry: C=1 -> leftward
     LDA strt1,Y:STA x1
     LDA strt1+8,Y:STA y1
     LDA y0:AND #7:TAY
@@ -63,9 +120,13 @@ ENDIF
     STA b41+1:STA b51+1
     STA b61+1:STA b71+1
     SEC:JMP (x1)
+    ; dy == 0: one run of dx+1 pixels. Re-enter the shallow core with
+    ; err=dx and dy:=1, so err borrows only after exactly dx+1 bits;
+    ; cnt=ls=1 makes that first y-step attempt end the line. The row
+    ; emerges as byte-split run flushes.
     .horizontal STX err
     LDA #1:STA ls:STA cnt:STA dy
-    BNE backh
+    BNE backh                   ; (A=1, always taken)
     .right
     LDA strt0,Y:STA x1
     LDA strt0+8,Y:STA y1
@@ -81,6 +142,9 @@ ENDIF
     STA b60+1:STA b70+1
     SEC:JMP (x1)
 
+    ; ==================== steep dispatch (dy > dx) =======================
+    ; generic setup: cnt = dx x-steps, errs = dy>>1, ls=2; the running
+    ; error r rides in X (loaded from errs at entry).
     .steep
     TXA:BEQ vertical:STX cnt
     LDA dy:LSR A:STA errs
@@ -88,11 +152,11 @@ ENDIF
     .backv
 IF STEEP_COMPACT
     LDA stmask,Y:STA b       \ single-pixel mask for x0&7 (Y = x0&7 here)
-    PLP:BCS left
-    STX sr_dx+1
-    LDA dy:STA sr_dy+1
-    LDA y0:AND #7:TAY
-    LDX errs:SEC:JMP sr_loop
+    PLP:BCS left             \ banked x-compare carry: C=1 -> leftward
+    STX sr_dx+1              \ SMC: core's SBC #dx (X = dx, or 1 if vertical)
+    LDA dy:STA sr_dy+1       \ SMC: core's ADC #dy
+    LDA y0:AND #7:TAY        \ Y = row within char row
+    LDX errs:SEC:JMP sr_loop \ X = r = dy>>1 (or dy); C=1 loop invariant
 ELSE
     PLP:BCS left
     LDA strt2,Y:STA x1
@@ -110,13 +174,16 @@ ELSE
     LDX errs:SEC:JMP (x1)
 ENDIF
 
+    ; dx == 0: re-enter the steep core with step:=1 (X=1 -> SBC #1) and
+    ; r=dy: r never borrows within the column's dy+1 rows, and cnt=ls=1
+    ; makes the first x-step attempt end the line via the e-phase.
     .vertical LDA dy:STA errs
     LDX #1:STX ls:STX cnt
-    BNE backv
+    BNE backv                   ; (X=1, always taken)
     .left
 IF STEEP_COMPACT
-    STX sl_dx+1
-    LDA dy:STA sl_dy+1
+    STX sl_dx+1              \ SMC: core's SBC #dx
+    LDA dy:STA sl_dy+1       \ SMC: core's ADC #dy
     LDA y0:AND #7:TAY
     LDX errs:SEC:JMP sl_loop
 ELSE
@@ -135,18 +202,47 @@ ELSE
     LDX errs:SEC:JMP (x1)
 ENDIF
 
-    .a00 LDA err:LDX #&FF
-    .b00 SBC #dy:BCS b10:ADC #dx:STA err
-    LDA #&80:ORA (scr),Y:STA (scr),Y
-    DEC cnt:BEQ e00:.f00 DEY:BPL a10
+    ; =====================================================================
+    ; Unrolled shallow cores: eight blocks per direction, one per bit
+    ; position in the byte. Right-going blocks aN0/bN0 handle the (N+1)th
+    ; pixel from the LEFT edge (plot mask &80>>N); left-going aN1/bN1 the
+    ; (N+1)th from the RIGHT edge (&01<<N). Entered via strt0/strt1[x0&7].
+    ;
+    ; Run accumulation: X carries the run mask seed — all bits from the
+    ; run's start position to the byte's far edge (right: LDX #&FF>>M at
+    ; block M; left: the mirror &FF<<M). While err-dy doesn't borrow,
+    ; control FALLS THROUGH from bN to the NEXT block's b entry: the run
+    ; grows one bit, nothing is plotted, err rides in A. On borrow
+    ; (y-step): err += dx is stored, and the run is plotted in one OR —
+    ; TXA AND end-mask = exactly the bits [run start..N]. Then:
+    ;   fN (cnt > 0): DEY steps to the row below in the char row (drawing
+    ;      is bottom-to-top); on Y wrap, scr -= 256 with a two-step hi
+    ;      borrow (the SBC #LO(256) leaves C for the BCS after LDY #7)
+    ;      and Y := 7; continue at block N+1 with a fresh run.
+    ;   eN (cnt == 0): the two-phase ls tail — ls 2->1: err -= errs; no
+    ;      borrow -> one final run (cnt := 1, resume at fN); borrow, or
+    ;      ls 1->0 -> RTS.
+    ; Block 7 handles the byte edge: the no-y-step path (by0/by1) flushes
+    ; the run up to the edge, then ad0/sb1 step scr one byte along and
+    ; re-enter block 0 (mirror: block 7) continuing the SAME run — the
+    ; 'byte-end flush'. C=1 is an invariant into every SBC.
+    ; =====================================================================
+    ; --- right-going blocks: masks &80,&40..&01; scr steps right ---
+    .a00 LDA err:LDX #&FF       ; run starts at bit 0: seed mask = all 8 bits
+    .b00 SBC #dy:BCS b10:ADC #dx:STA err    ; (dy/dx immediates SMC-patched)
+    LDA #&80:ORA (scr),Y:STA (scr),Y        ; plot run [bit 0..bit 0]
+    DEC cnt:BEQ e00:.f00 DEY:BPL a10        ; row step; new run at bit 1
     LDA scr
 	SBC #LO(SCREEN_WIDTH)
 	STA scr:DEC scr+1
-    LDY #7:BCS a10:DEC scr+1:SEC:BCS a10
-    .e00 DEC ls:BEQ d00:LDA err:SBC errs
+    LDY #7:BCS a10:DEC scr+1:SEC:BCS a10    ; char-row wrap (scr -= 256)
+    .e00 DEC ls:BEQ d00:LDA err:SBC errs    ; ls tail: final half-step test
     STA err:INC cnt:BCS f00
     .d00 RTS
 
+    ; blocks 1..6: as block 0 with everything shifted one pixel — seed
+    ; LDX #&FF>>N, plot mask X AND (bits 0..N); run [M..N] plots as
+    ; (&FF>>M) AND ~(&FF>>(N+1))
     .a10 LDA err:LDX #&7F
     .b10 SBC #dy:BCS b20:ADC #dx:STA err
     TXA:AND #&C0:ORA (scr),Y:STA (scr),Y
@@ -219,19 +315,26 @@ ENDIF
     STA err:INC cnt:BCS f60
     .d60 RTS
 
+    ; block 7 (rightmost pixel): every continuation crosses into the next
+    ; byte to the right
     .a70 LDA err:LDX #1
     .b70 SBC #dy:BCS by0:ADC #dx:STA err
     TXA:ORA (scr),Y:STA (scr),Y
-    DEC cnt:BEQ e70:.f70 DEY:BPL ad0
-    LDA scr:SBC #LO(SCREEN_WIDTH-8):LDY #7:STA scr
-    LDA scr+1:SBC #HI(SCREEN_WIDTH-8):STA scr+1:JMP a00
+    DEC cnt:BEQ e70:.f70 DEY:BPL ad0        ; y-step: next byte (same rows)
+    LDA scr:SBC #LO(SCREEN_WIDTH-8):LDY #7:STA scr      ; combined char-row
+    LDA scr+1:SBC #HI(SCREEN_WIDTH-8):STA scr+1:JMP a00 ; wrap + byte right
     .e70 DEC ls:BEQ d70:LDA err:SBC errs
     STA err:INC cnt:BCS f70
+    ; by0: no y-step at the byte edge — flush the run to the edge and let
+    ; ad0 step scr one byte right (+8: ADC #7 with C=1); the run continues
+    ; from bit 0 of the new byte (a00 reseeds the mask)
     .d70 RTS:.by0 STA err
     TXA:ORA (scr),Y:STA (scr),Y
     .ad0 LDA scr:ADC #7:STA scr:BCS ac0
     SEC:JMP a00
     .ac0 INC scr+1:JMP a00
+    ; --- left-going blocks: masks &01,&02..&80; scr steps left (mirror of
+    ;     the above; block digit still = distance along drawing direction) ---
     .a01 LDA err:LDX #&FF
     .b01 SBC #dy:BCS b11:ADC #dx:STA err
     LDA #1:ORA (scr),Y:STA (scr),Y
@@ -316,14 +419,18 @@ ENDIF
     STA err:INC cnt:BCS f61
     .d61 RTS
 
+    ; block 7 of the left core (leftmost pixel, mask &80): continuations
+    ; cross into the next byte to the LEFT
     .a71 LDA err:LDX #&80
     .b71 SBC #dy:BCS by1:ADC #dx:STA err
     TXA:ORA (scr),Y:STA (scr),Y
-    DEC cnt:BEQ e71:.f71 DEY:BPL sb1
-    LDA scr:SBC #LO(SCREEN_WIDTH+8):LDY #7:STA scr
-    LDA scr+1:SBC #HI(SCREEN_WIDTH+8):STA scr+1:JMP a01
+    DEC cnt:BEQ e71:.f71 DEY:BPL sb1        ; y-step: next byte (same rows)
+    LDA scr:SBC #LO(SCREEN_WIDTH+8):LDY #7:STA scr      ; combined char-row
+    LDA scr+1:SBC #HI(SCREEN_WIDTH+8):STA scr+1:JMP a01 ; wrap + byte left
     .e71 DEC ls:BEQ d71:LDA err:SBC errs
     STA err:INC cnt:BCS f71
+    ; by1: no y-step at the byte edge — flush, then sb1 steps scr one byte
+    ; left (-8: SBC #8 with C=1) and the run continues at a01 (mask &01)
     .d71 RTS:.by1 STA err
     TXA:ORA (scr),Y:STA (scr),Y
     .sb1 LDA scr:SBC #8:STA scr:BCC sc1
@@ -339,84 +446,97 @@ IF STEEP_COMPACT
     \ a borrow always carries out (err+dy >= dx because dy > dx), so the
     \ x-step path also re-enters with C=1 available via SEC.
     \ ------------------------------------------------------------------
+    \ sr_loop — right-going steep core. State: X = running error r,
+    \ Y = row within char row, b = single-pixel mask, cnt/ls as per the
+    \ protocol. One pixel per iteration, rows bottom-to-top.
     .sr_loop
     LDA b:ORA (scr),Y:STA (scr),Y
     TXA
-    .sr_dx SBC #0
-    BCC sr_x
+    .sr_dx SBC #0            \ r -= dx (immediate SMC-patched; C=1 in)
+    BCC sr_x                 \ borrow -> column step
     TAX
-    DEY:BPL sr_loop
-    LDY #7:DEC scr+1
-    BCS sr_loop
+    DEY:BPL sr_loop          \ same column, row above
+    LDY #7:DEC scr+1         \ char-row wrap: up one page
+    BCS sr_loop              \ (C=1 preserved: SBC didn't borrow)
     .sr_x
-    .sr_dy ADC #0
-    DEC cnt:BEQ sr_e
+    .sr_dy ADC #0            \ r += dy (SMC); always carries out (dy > dx)
+    DEC cnt:BEQ sr_e         \ all dx column steps done -> ls tail
     .sr_n
     TAX
-    LSR b
-    BCS sr_wrap
+    LSR b                    \ mask one pixel right...
+    BCS sr_wrap              \ ...bit fell off the byte -> byte cross
     DEY:BMI sr_row
-    SEC:BCS sr_loop
+    SEC:BCS sr_loop          \ (SEC restores the C=1 loop invariant)
     .sr_row
-    LDY #7:DEC scr+1
+    LDY #7:DEC scr+1         \ char-row wrap after the column step
     SEC:BCS sr_loop
     .sr_wrap
-    ROR b
-    LDA scr:ADC #8:STA scr
+    ROR b                    \ C back into bit 7: mask := &80, C := 0
+    LDA scr:ADC #8:STA scr   \ scr one byte right (C=0 -> exact +8)
     BCS sr_hi
     DEY:BMI sr_row
     SEC:BCS sr_loop
     .sr_hi
-    INC scr+1
+    INC scr+1                \ +8 crossed a page
     DEY:BMI sr_row
     SEC:BCS sr_loop
     .sr_e
-    DEC ls:BEQ sr_d
-    SBC errs
+    DEC ls:BEQ sr_d          \ ls 1->0: line complete
+    SBC errs                 \ ls 2->1: final half-step test (A = r+dy, C=1)
     INC cnt
-    BCS sr_n
+    BCS sr_n                 \ no borrow -> exactly one more column
     .sr_d RTS
 
+    \ sl_loop — left-going steep core: exact mirror of sr_loop (mask
+    \ shifts left with ASL/ROL, byte cross steps scr -8)
     .sl_loop
     LDA b:ORA (scr),Y:STA (scr),Y
     TXA
-    .sl_dx SBC #0
+    .sl_dx SBC #0            \ r -= dx (SMC)
     BCC sl_x
     TAX
     DEY:BPL sl_loop
     LDY #7:DEC scr+1
     BCS sl_loop
     .sl_x
-    .sl_dy ADC #0
+    .sl_dy ADC #0            \ r += dy (SMC); always carries out
     DEC cnt:BEQ sl_e
     .sl_n
     TAX
-    ASL b
-    BCS sl_wrap
+    ASL b                    \ mask one pixel left...
+    BCS sl_wrap              \ ...bit fell off -> byte cross
     DEY:BMI sl_row
     SEC:BCS sl_loop
     .sl_row
     LDY #7:DEC scr+1
     SEC:BCS sl_loop
     .sl_wrap
-    ROL b
-    LDA scr:SBC #7:STA scr
+    ROL b                    \ C back into bit 0: mask := &01, C := 0
+    LDA scr:SBC #7:STA scr   \ scr one byte left (C=0 -> exact -8)
     BCC sl_hi
     DEY:BMI sl_row
     SEC:BCS sl_loop
     .sl_hi
-    DEC scr+1
+    DEC scr+1                \ -8 crossed a page
     DEY:BMI sl_row
     SEC:BCS sl_loop
     .sl_e
-    DEC ls:BEQ sl_d
+    DEC ls:BEQ sl_d          \ ls tail, as sr_e
     SBC errs
     INC cnt
     BCS sl_n
     .sl_d RTS
 
+    \ stmask[x&7] = single-pixel mask &80>>(x&7)
     .stmask EQUB &80,&40,&20,&10,&08,&04,&02,&01
 ELSE
+    \ ------------------------------------------------------------------
+    \ Original unrolled steep cores (superseded by STEEP_COMPACT above,
+    \ kept selectable): one block per bit position, pN2 right-going /
+    \ pN3 left-going, same protocol with dx/dy SMC-poked into the aN?/bN?
+    \ immediates and entry via strt2/strt3[x0&7]. sN2/sN3 = char-row
+    \ wraps; s82/s83 = combined wrap + byte cross at block 7.
+    \ ------------------------------------------------------------------
     .p02 LDA #&80:ORA (scr),Y:STA (scr),Y
     TXA:.a02 SBC #dx:BCC b02:TAX
     DEY:BPL p02
@@ -589,6 +709,10 @@ ELSE
 ENDIF
 
 
+    ; entry-point dispatch tables, indexed by x0&7 (8 lo bytes then 8 hi
+    ; bytes -> the strtN,Y / strtN+8,Y pairs). strt1/strt3 are listed
+    ; reversed so that index 0 (leftmost pixel, mask &80) selects the
+    ; &80-mask block of the left-going core, and so on.
     .strt0
     EQUB a00 AND &FF:EQUB a10 AND &FF
     EQUB a20 AND &FF:EQUB a30 AND &FF

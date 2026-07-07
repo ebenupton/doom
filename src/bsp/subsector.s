@@ -10,6 +10,36 @@
 ;     4. Back-face test; skip if back-facing.
 ;     5. Transform v1, v2; project to screen X and to Y for top+bot edges.
 ;     6. Emit top + bottom horizontals (and L+R verticals).
+;
+; Python mirror: packed_render_subsector + packed_render_seg
+; (doom_wireframe.py). Per-subsector pseudocode:
+;   count, first = SS_CNT[idx], SS_FLO/FHI[idx]
+;   defq = []                                  # DEFQ op queue, seg order
+;   for si in range(first, first + count):
+;     reset_records()                          # TOP/BOT_RECORDS counts = 0
+;     hdr = seg_hdr[si]                        # 12-byte header, ROM
+;     if back_face(hdr): continue
+;     xform v1, v2 (vcache'd); near-clip; project sx1/sx2 (s16)
+;     if both endpoints off one screen side: continue
+;     if not has_gap(clamp8(sx), clamp8(sx')): continue
+;     emit flag-gated lines (SC_DRAW_S16, records routed via $BC/$BD):
+;       front top/bottom horizontals, back-step horizontals,
+;       endpoint verticals, aperture-edge verticals
+;     defq.append(solid(ilo,ihi) | tighten(ilo,ihi + records snapshot))
+;   defq_drain()                               # mark_solid / tighten, in order
+;
+; Line emission contract (clipper interface):
+;   zp_line_xl/yl/xr/yr ($A8-$AB) = endpoint lo bytes,
+;   $B2-$B5 (LC_X1_HI..LC_Y2_HI)  = endpoint s16 hi bytes → SC_DRAW_S16.
+;   $BC/$BD (zp_dcl_rec_buf) = per-span records buffer: hi byte $00 =
+;   records off, $07 → TOP_RECORDS ($0700), $08 → BOT_RECORDS ($0800).
+;   $C2/$C3 (zp_ilo/zp_ihi) = column range for has_gap / defq ops.
+;
+; Deferral (why not apply at seg end): Python defers both mark_solid and
+; tighten to subsector end IN SEG ORDER — applying a tighten immediately
+; would mutate spans before an earlier sibling's mark_solid and shift
+; span anchors. Records are snapshotted into the queue because later
+; segs' DCL emission overwrites TOP/BOT_RECORDS before the drain.
 ; ============================================================================
 br_render_subsector:
 PAGE BANK_L0                            ; ss / seg_hdr / verts / sincos live in bank L0
@@ -21,6 +51,8 @@ JMP anim_ss_cont
 anim_ss_cont:
 .scope
 ; --- Mark visited (test instrumentation) ---
+; SS_VISITED_BITMAP[id >> 3] |= bit_mask[id & 7] — regression harnesses
+; diff this against the Python walk's subsector set.
 LDA zp_node_chlo
 STA zp_br_t0
 LDA zp_node_chhi
@@ -101,6 +133,11 @@ STA $BD                                 ; ZP_DCL_REC_BUF hi (= "no records buffe
 ; --- seg header via the persistent pointer. Back-face inputs first
 ; (offsets 4-10: lv1x/lv1y/ldx/ldy/flags); v1/v2 (offsets 0-3) are only
 ; read after the test passes — back-facing segs never need them. ---
+; 12-byte header layout (wad_packed.py SH_*): +0/+2 v1/v2 vertex idx u16,
+; +4/+6 linedef v1 x/y s16, +8/+9 linedef dx/dy s8, +10 flags, +11 len.
+; Flags: $01 DIR (flip back-face sign), $02 SOLID, $04 NEEDBT (back ceil
+; below front), $08 NEEDBB (back floor above front), $10/$20 NOVT1/2
+; (suppress endpoint vertical), $40/$80 APEDGE1/2 (aperture edge there).
 LDA zp_seg_hdr_p
 STA zp_br_p
 LDA zp_seg_hdr_p_h
@@ -198,6 +235,10 @@ SBC zp_br_vz
 STA zp_seg_bbot_dlt
 skip_bdlt:
 
+; --- Transform + project both endpoints (br_seg_xform_vertex:
+; vcache-backed br_to_view, near-plane test, X projection, Y projections
+; for the edges this seg's flags need; sets zp_seg_skip=1 if the vertex
+; is behind the near plane, else fills the SEG_PROJ_BUF "current" slots).
 ; Transform v1. Always copy evy/evx/clipped so both endpoints are
 ; available for near-plane crossing math even when one side is clipped.
 LDA zp_seg_v1_lo
@@ -231,8 +272,12 @@ BNE s_v2_skipped
 JSR copy_seg_to_v2
 s_v2_skipped:
 
+; --- Near-plane clip resolution (mirrors fp_near_clip in fp.py) ---
 ; Both vertices xform'd. If both clipped → bail. If exactly one clipped,
 ; reproject from crossing point and copy into that vertex's slots.
+; (reproject_at_crossing computes the vy=NEAR crossing from the saved
+; v1/v2 view coords and projects it; copy_seg_to_vN then installs the
+; result as that endpoint's sx/sy set.)
 ; Python near-clips ALL front-facing segs (fp_near_clip), so solid
 ; walls reproject too — their clamped mark_solid range comes from the
 ; crossing projection (e.g. mark_solid(0,81) from sx=-2176 at
@@ -328,10 +373,13 @@ BNE hg_pass
 JMP s_advance
 hg_pass:
 
-; --- Emit top horizontal (front-sector ceiling) ---
+; --- Emit top horizontal (front-sector ceiling): (sx1,ft1)→(sx2,ft2) ---
 ; Solid wall:        always.
 ; Portal w/ NEEDBT:  iff ch > vz (face above eyeline, ft visible).
 ; Portal w/o NEEDBT: iff bch > ch (back ceiling above front; step visible).
+; (Python: solid lines[] always includes ft; need_bt inserts ft only when
+; ch > vz — the "secondary" front-ceiling above the bt step; the
+; bch > ch portal-lip case draws ft with roles={0: TOP_RECORDS}.)
 LDA zp_seg_flags
 AND #$02
 BNE ft_emit
@@ -371,6 +419,8 @@ STA $BD
 ft_set_line:
 LDA #0
 STA $BC
+; Stage the s16 line (lo bytes → zp_line_*, hi bytes → LC_*_HI $B2-$B5)
+; and hand it to the s16 clip + draw pipeline.
 LDA zp_seg_sx1_lo
 STA zp_line_xl
 LDA zp_seg_sx1_hi
@@ -392,12 +442,14 @@ JSR SC_DRAW_S16
 LDA #0
 STA $BC
 STA $BD
+; records off again (draw may have consumed them)
 ft_skip:
 
-; --- Emit bottom horizontal (front-sector floor) ---
+; --- Emit bottom horizontal (front-sector floor): (sx1,fb1)→(sx2,fb2) ---
 ; Solid:             always.
 ; Portal w/ NEEDBB:  iff fh < vz (face below eyeline, fb visible).
 ; Portal w/o NEEDBB: iff bfh < fh (back floor below front; step visible).
+; (Exact mirror of the top-horizontal logic with floor/bottom roles.)
 LDA zp_seg_flags
 AND #$02
 BNE fb_emit
@@ -643,10 +695,17 @@ JSR emit_vert_sx2
 skip_rvert:
 
 ; --- NOVT aperture-edge verticals (SF_APEDGE1/2) ---
+; A NOVT endpoint suppresses the seg's own vertical, but a colinear
+; portal's aperture still needs its edge drawn there. ap_edges (lo.s)
+; emits (sxK, aperture_top) → (sxK, aperture_bot) per flagged endpoint;
+; solid segs take the APV heights packed into FHCH bytes 2-5.
 JSR ap_edges
 
 ; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and
 ;     portal (tighten) cases.
+; Same clamp as the has_gap prelude (Python: ilo = max(0, min(sx1,sx2)),
+; ihi = min(255, max(sx1,sx2))), recomputed from the sx slots — the
+; t2/t3/$C2/$C3 scratch is not guaranteed to survive the emissions above.
 ; Clamp sx1 to u8 → zp_br_t2
 LDA zp_seg_sx1_hi
 BMI ms_sx1_neg
@@ -727,6 +786,8 @@ ms_solid_path:
 JSR defq_append_solid
 ms_skip:
 
+; --- Advance to the next seg: clear the skip flag, bump the seg index
+;     (u16) and the two persistent ROM cursors (+12 header, +6 FHCH). ---
 s_advance:
 LDA #0
 STA zp_seg_skip
@@ -754,8 +815,15 @@ JMP seg_loop
 
 ; (drain_deferred_ms replaced by defq_drain — see the $0B00 region.)
 
-; emit_vert_sx1 — caller has set yl/yh/yr/yh in zp_line_yl/$B3/zp_line_yr/$B5.
-; Fills xl/xh/xr/xh from sx1, clears records hi byte, calls SC_DRAW_S16.
+; ============================================================================
+; emit_vert_sx1 / emit_vert_sx2 — draw a vertical at endpoint 1 / 2.
+; Caller has set yl/yh/yr/yh in zp_line_yl/$B3/zp_line_yr/$B5.
+; Fills xl/xh/xr/xh from sx1 (resp. sx2), clears records hi byte
+; (verticals never populate tighten records), pages bank C and
+; tail-calls SC_DRAW_S16. Clobbers A.
+; NOTE: callers have already verified sx_hi == 0 (on-screen column), so
+; loading the hi bytes here keeps the s16 fast path.
+; ============================================================================
 emit_vert_sx1:
 LDA zp_seg_sx1_lo
 STA zp_line_xl
@@ -770,6 +838,7 @@ STA $BD
 PAGE BANK_C
 JMP SC_DRAW_S16
 
+; (see banner above emit_vert_sx1)
 emit_vert_sx2:
 LDA zp_seg_sx2_lo
 STA zp_line_xl

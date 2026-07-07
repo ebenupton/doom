@@ -2,6 +2,14 @@ bsp_d_start:
 
 ; bsp_resolve_child — ch := children[zp_bbox_side] of node ch.
 ;   ptr = rom_nodes + id*16; child_r at +8, child_l at +10.
+;   (The line above describes the ORIGINAL AoS node reader; children now
+;   come from the SoA pages NODE_CRLO/CRHI/CLLO/CLHI — one 256-byte page
+;   per byte, indexed by node id — see wad_packed.build_packed.)
+;   Inputs:  zp_node_chlo = node id (u8), zp_bbox_side = 0 (right child)
+;            or nonzero (left child).
+;   Output:  zp_node_chlo:chhi = child id (bit 15 set = subsector leaf).
+;   Used by the walk after a bbox-visibility verdict picks which child
+;   of a deferred node to descend.
 bsp_resolve_child:
 .scope
 PAGE BANK_L0                            ; node SoA pages live in bank L0
@@ -31,6 +39,10 @@ RTS
 ; ============================================================================
 px_rhi0:
 ; sx = 128 + signext(hi(vx*rlo))    (terms A and C of the 3-mul path = 0)
+;   Inputs:  zp_br_t0 = vx (s8), zp_br_rlo. Output: zp_br_resl/h (s16).
+;   Reached by JMP from br_project_x_subpx (project.s); RTS returns to
+;   ITS caller. One s8×u8 multiply; the sign-extended high byte of the
+;   product is the whole non-constant part of sx.
 LDA zp_br_t0
 STA zp_br_a
 LDA zp_br_rlo
@@ -56,6 +68,9 @@ RTS
 
 py_rhi0:
 ; sy = 128 - signext(hi(h*rlo))     (term A of the 2-mul path = 0)
+;   Inputs:  zp_br_t0 = h (s8), zp_br_rlo. Output: zp_br_resl/h (s16).
+;   Reached by JMP from br_project_y_raw (project.s); the 128 constant is
+;   the same folded HALF_H + Y_BIAS, so the result stays pre-biased.
 LDA zp_br_t0
 STA zp_br_a
 LDA zp_br_rlo

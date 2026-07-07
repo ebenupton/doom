@@ -54,6 +54,17 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 .endif
 ; --- bca_frame: per-frame stability check + dispatch patch --------------------
 ; Called by br_view_setup after it has set the integer player position ZP.
+;   in : RCACHE_ENABLE; player int position ZP $01/$9D (x lo/hi), $03/$9E
+;        (y lo/hi); bca_prevpos/bca_cachepos (persistent across frames)
+;   out: jt_bca_check operand SMC-patched to bbox_check_angle (moved frame or
+;        cache disabled: verbatim original, zero per-check overhead) or to
+;        bbox_check_angle_cached (stable frame); COMPUTED bitmap cleared on
+;        the first stable frame at a new position (new cache epoch).
+; pseudocode:
+;   if not ENABLE:        patch original; return
+;   if pos != prevpos:    prevpos = pos; patch original; return    # moved
+;   if pos != cachepos:   cachepos = pos; COMPUTED[:] = 0          # new epoch
+;   patch cached                                                   # stable
 .export jt_bca_frame
 jt_bca_frame: JMP bca_frame
 bca_frame:
@@ -132,6 +143,23 @@ STA jt_bca_check+2
 RTS
 
 ; --- bbox_check_angle_cached: rotation-coherent bbox visibility ---------------
+; Same contract as bbox_check_angle (in: bca_boxp, bca_pxs/pys, bca_afn;
+; out: bca_vis, bca_ilo/bca_ihi) and bit-identical results — only cycles
+; change. Warm hits skip the per-corner abs/octant/SlopeDiv/tantoangle work
+; and re-derive phi with one subtraction; FULL hits skip the tail entirely.
+; pseudocode:
+;   idx = bca_boxp - rom_bbox                    # node*16 + side*8
+;   if COMPUTED[idx]:                            # --- WARM ---
+;     if FULL[idx]: return full (0,255)          # a_fine-independent result
+;     p1 = sgnext((a_fine - psi1) & 4095)        # cp_havepsi
+;     p2 = sgnext((a_fine - psi2) & 4095)
+;     goto bca_tail
+;   else:                                        # --- COLD ---
+;     if viewer inside box: set COMPUTED+FULL; return full
+;     box_classify + 2x corner_phi -> RAW p1/p2 (pre-clip!)
+;     psi_k = (a_fine - p_k) & 4095 ; store ; set COMPUTED
+;     FULL := (span = (p2-p1) & 4095) >= 2048    # a_fine cancels in span
+;     goto bca_tail
 bbox_check_angle_cached:
 LDA #0
 STA bca_vis

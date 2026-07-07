@@ -1,13 +1,30 @@
 
 ; ============================================================================
 ; br_back_face_test — test current seg for back-facing.
-;   Inputs (zp): zp_seg_lv1x/lv1y (s16), zp_seg_ldx/ldy (s8), zp_seg_flags.
+;   Inputs (zp): zp_seg_lv1x/lv1y (s16 linedef v1, seg header bytes 4-7),
+;                zp_seg_ldx/ldy (s8 linedef delta, header bytes 8-9),
+;                zp_seg_flags (header byte 10; SF_DIR = $01).
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
 ;   Output: zp_seg_skip = 1 if back-facing, 0 if front-facing.
+;   Clobbers: A, X, Y; zp_br_dxlo/hi, zp_br_dylo/hi (the s16 deltas),
+;             zp_br_t2/t3, zp_br_a, and the mul workspace (via br_smul_s8_s16).
 ;
 ;   dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
 ;   if flags & SF_DIR: dot = -dot
 ;   back-facing if dot <= 0.
+;
+;   (Python mirror: packed_render_seg's back-face block. dot is the 2D
+;   cross product of the linedef direction with the v1→player vector:
+;   > 0 → player on the seg's front side. SF_DIR marks segs running
+;   opposite their linedef, which flips the sign.)
+;
+;   Structure — three tiers, cheapest first, all EXACT:
+;     1. axis-aligned linedefs (ldx==0 or ldy==0, ~76% of segs): dot is a
+;        single product; its sign is the XOR of the operand sign bits —
+;        no multiplies (any zero operand short-circuits to "back").
+;     2. general linedefs whose products P1=ldy*dx, P2=ldx*dy have
+;        OPPOSITE signs: sign(P1-P2) = sign(P1) — still no multiplies.
+;     3. same-sign products: full 2 × (s8×s16) multiply + s16 subtract.
 ; ============================================================================
 br_back_face_test:
 .scope
@@ -131,7 +148,8 @@ STA zp_br_t2
 LDA zp_br_resh
 STA zp_br_t3
 
-; ldx * dy → s16 in resl/resh.
+; ldx * dy → s16 in resl/resh. (br_smul_s8_s16 takes its s16 operand in
+; the dxlo/dxhi slots, so copy dy over — dx is no longer needed.)
 LDA zp_br_dylo
 STA zp_br_dxlo
 LDA zp_br_dyhi
@@ -180,6 +198,12 @@ RTS
 ; ============================================================================
 ; br_bbox_visible — visibility test for a child subtree's bounding box.
 ;
+; NOTE: the routine itself lives in src/bsp/bbox.s. The algorithm sketch
+; below (steps 1-7) describes the RETIRED perspective corner-projection
+; implementation; the live code dispatches to the angle-space BCA module
+; instead (see the banner near BCA_CHECK below). This block is kept for
+; the I/O contract and the scratch-layout documentation that follows.
+;
 ;   Inputs:
 ;     zp_node_chlo:hi = node id (used by caller; we read bbox by ourselves)
 ;     zp_bbox_side    = 0 for right child's bbox, 1 for left child's bbox.
@@ -200,9 +224,11 @@ RTS
 SC_HAS_GAP = jt_has_gap
 SC_IS_FULL = jt_is_full
 
-; Per-corner storage (5 bytes × 4 = 20). bv_proj_one writes here so that a
-; second pass can compute near-plane edge crossings between consecutive
-; corners. Layout per corner: vx_lo, vx_hi, vy_lo, vy_hi, in_front (0/1).
+; Per-corner storage (5 bytes × 4 = 20) — legacy perspective-path scratch
+; (dead with the angle module; layout retained). bv_proj_one writes here so
+; that a second pass can compute near-plane edge crossings between
+; consecutive corners. Layout per corner: vx_lo, vx_hi, vy_lo, vy_hi,
+; in_front (0/1).
 ; NOTE: these previously lived at $0E00/$0E14 — INSIDE the vertex cache
 ; ($0C00 + 8x467 = $1A98) — so every bbox visibility check corrupted the
 ; cached transforms of vertices ~64-66. $0960-$0974 is free scratch
@@ -219,6 +245,9 @@ BBOX_CORNER_IDX = $09FD                 ; offset into BBOX_CORNERS for current c
 ;   TOP_RECORDS/$0700 / BOT_RECORDS/$0800 at seg end — later segs' DCL
 ;   emission overwrites those buffers before the drain, exactly the
 ;   problem Python solves with its '__rec__' snapshots.
+;   (Correction: records are 4 bytes each now — blocks are
+;   (count, 4*count bytes); see defq_append_tighten in defq.s and the
+;   Python snapshot `TOP_RECORDS : TOP_RECORDS + 1 + tc*4`.)
 DEFQ_BASE = $0600                       ; 256 bytes (free: span pool ends $059F)
 DEFQ_TAIL = $09FB                       ; queue tail offset (u8)
 DEFQ_OVF = $09FC                        ; set if an op was dropped (queue full) — debug

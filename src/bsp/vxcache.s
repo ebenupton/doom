@@ -81,6 +81,8 @@ LSR A
 LSR A
 LDX zp_seg_v_idx_hi
 BEQ vt_xok
+; idx in 256..466: idx>>3 = 32 + ((idx&255)>>3), and (idx&255)>>3 <= 26 < 32,
+; so ORA #32 is the exact add (no carry into bit 5 possible).
 ORA #32                                 ; idx>>3 for idx in 256..466 (r>>3<=26)
 vt_xok:
 TAX
@@ -92,6 +94,8 @@ JSR vxc_warm_load                       ; VXCODE: total = base + CACC -> zp
 PAGE BANK_L0
 RTS
 vt_cold:
+; cold: mark the vertex valid, run the real transform (br_to_view needs
+; BANK_L0), then snapshot base = total - CACC for future warm frames.
 LDA VXC_VALID,X
 ORA zp_seg_v_bitm
 STA VXC_VALID,X
@@ -112,6 +116,12 @@ RTS
 .segment "ANG"
 .endif
 
+; --- vxc_warm_load: total = base + CACC (two s24 adds) ----------------------
+;   in : zp_seg_v_idx_lo/hi (vertex index 0..466), vxc_cacc_x/y (s24)
+;   out: zp_br_vx/vy lo/hi/ext = the exact view totals br_to_view would give
+; Plane arrays are page-aligned with 467 entries: idx < 256 indexes the base
+; page, idx >= 256 the +$100 page (Y = idx low byte either way — hence the
+; duplicated body). One CLC per axis; the carry rides the 3-byte ADC chain.
 vxc_warm_load:
 .scope
 LDY zp_seg_v_idx_lo
@@ -162,6 +172,12 @@ STA zp_br_vyext
 RTS
 .endscope
 
+; --- vxc_cold_store: base = total - CACC (inverse of vxc_warm_load) ---------
+;   in : zp_br_vx/vy lo/hi/ext (totals just computed by br_to_view),
+;        zp_seg_v_idx_lo/hi, vxc_cacc_x/y
+;   out: this vertex's 6 plane bytes. Telescoping: base + ANY later frame's
+;        CACC reconstructs that frame's exact totals, so entries never go
+;        stale within an angle epoch (see file header).
 vxc_cold_store:
 .scope
 LDY zp_seg_v_idx_lo
@@ -223,6 +239,19 @@ RTS
 .segment "ANG"
 .endif
 
+;   in : VXC_ENABLE; vxc_ab (this frame's angle byte — alias of bca_ab,
+;        written per frame by the caller); vxc_prev_ab; the frame view
+;        context (read by br_to_view)
+;   out: vxc_jsr_site operand patched; vxc_cacc_x/y, vxc_refc_x/y,
+;        vxc_prev_ab and VXC_VALID maintained
+; pseudocode:
+;   if not ENABLE: restore JSR br_to_view; return
+;   ref = to_view(0,0)                      # this frame's reference shift
+;   if ab != prev_ab:                       # cold: angle byte changed
+;     prev_ab = ab; ref_cold = ref; CACC = 0; VALID[:] = 0
+;   else:                                   # warm: same-angle translation
+;     CACC = ref - ref_cold
+;   patch JSR -> vxc_to_view
 vxc_frame:
 .scope
 LDA VXC_ENABLE

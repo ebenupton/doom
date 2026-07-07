@@ -11,7 +11,23 @@
 ; for all 4 boundary interps (tl, tr, bl, br).
 ;
 ; Input: A = x (eval point), zp_i_x0, zp_i_y0, zp_i_y1, zp_div_den
-; Output: A = interpolated Y (u8)
+;        (den = xhi - xlo; caller guarantees 0 <= x - x0 <= den, den > 0
+;        except when x == x0, which early-exits before the divide)
+; Output: A = interpolated Y (u8).  Clobbers X,Y and the mul/div ZP
+;        working set (zp_mul_b, zp_prod_lo/hi = zp_div_lo/hi).
+;
+; Python mirror: endpoint_spans._interp_store (verified bit-exact).
+; Rounds to nearest, half AWAY FROM ZERO (the +den//2 bias is applied
+; to the unsigned |dy| product, then the quotient is added/subtracted).
+;
+; pseudocode:
+;   offset = x - x0
+;   if offset == 0:   return y0            # also y1 == y0 short-circuit
+;   if offset == den: return y1
+;   if y1 >= y0: return y0 + (offset*(y1-y0) + den//2) // den
+;   else:        return y0 - (offset*(y0-y1) + den//2) // den
+;
+; Cost: 1 umul8 (8x8->16) + 1 udiv16_8; critical path = mul + div.
 ; ======================================================================
 
 interp_store:
@@ -47,6 +63,7 @@ SEC
 SBC zp_i_y1
 ; |
 JSR umul_round_div                      ; |
+; y0 - quot via two's complement: A = ~quot, then ADC y0 with C=1
 EOR #$FF
 SEC
 ADC zp_i_y0
@@ -62,12 +79,26 @@ RTS
 ; ||
 .endscope
 
-; Shared helper: umul8 + round-to-nearest + udiv16_8 (tail-call).
-; Input: A = |dy| (u8), zp_mul_b = offset (u8), zp_div_den set.
+; ======================================================================
+; UMUL_ROUND_DIV: shared helper — umul8 + round bias + udiv16_8 tail-call.
+;
+; Computes  quot = (|dy| * offset + den//2) / den  entirely unsigned.
+; The caller's direction split (ascending/descending above) turns this
+; into the half-away-from-zero rounding of _interp_store.
+;
+; Input:  A = |dy| (u8), zp_mul_b = offset (u8), zp_div_den = den (u8)
 ; Output: A = quotient (u8). Product always positive.
+;         Clobbers X and zp_prod_lo/hi (= zp_div_lo/hi).
+; pseudocode:
+;   prod = |dy| * offset          # umul8 -> zp_prod (u16)
+;   prod += den >> 1              # round-to-nearest bias
+;   return prod / den             # udiv16_8 (tail-called, its RTS
+;                                 # returns to OUR caller)
+; ======================================================================
 umul_round_div:
 .scope
 JSR umul8
+; 16-bit add of den//2 into the product (prod aliases the div dividend)
 LDA zp_div_den
 LSR A
 CLC

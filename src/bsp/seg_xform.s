@@ -1,8 +1,49 @@
 
 ; ============================================================================
 ; br_seg_xform_vertex — fetch vertex by index, transform to view, project X.
+;
+; One call per seg endpoint (subsector.s seg loop). Mirrors the "View
+; transform with RAM vcache" + reciprocal + X-projection phase of Python's
+; packed_render_seg (fp_to_view / fp_recip / fp_project_x_subpx), with a
+; per-frame VERTEX CACHE so a vertex shared by several segs is transformed
+; and X-projected only once per frame.
+;
 ;   Input:  zp_br_t0:t1 = vertex index (u16).
-;   Output: zp_br_resl/h = screen x (s16). zp_seg_skip = 1 if near-clipped.
+;   Output: zp_seg_cur_evy/evx = rounded s8 view y / truncated s8 view x
+;             (ALWAYS set — near-plane crossing math needs both endpoints
+;             even when this one is clipped or served from the cache).
+;           zp_seg_skip = 1 if near-clipped (vy < NEAR); everything below
+;             is then undefined and the caller must not use it.
+;           zp_br_rhi/rlo = 8.8 reciprocal FOCAL/vy for this vertex.
+;           zp_seg_sx_lo/hi (and zp_br_resl/h) = screen x (s16).
+;           zp_seg_sy_* = the four per-seg height projections — the routine
+;             tail-calls do_project_y (seg_project.s) with this vertex's
+;             reciprocal.
+;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x_auto.
+;
+; Vertex cache: VCACHE_BASE + idx*8, one 8-byte entry per vertex, plus a
+; 1-bit-per-vertex valid bitmap at VCACHE_VALID_BASE (cleared per frame).
+; 6502 entry layout (differs from Python's VCACHE_ENTRY, which stores
+; vx/vy/vy_idx/sx — here the post-recip results are cached instead):
+;   +0 evy (s8)  +1 evx (s8)  +2 rhi  +3 rlo  +4 sx_lo  +5 sx_hi
+;   +6 near-clip flag (1 = vertex behind near plane)  +7 unused
+;
+; Pseudocode:
+;   if valid[idx]:                          # cache hit
+;       evy, evx = cache[0..1]
+;       if cache[6]: skip = 1; return       # cached near-clip verdict
+;       rhi, rlo, sx = cache[2..5]
+;   else:                                   # cache miss
+;       valid[idx] = 1
+;       wx, wy = ROM_VERTS[idx]             # s16 prescaled world coords
+;       vx, vy = br_to_view(wx, wy)         # s24 view space (8.8 + ext)
+;       evx = vx >> 8 (trunc); evy = clamp_s8((vy + 128) >> 8)
+;       cache[0..1] = evy, evx              # pre-write: hit path needs them
+;       if vy < NEAR (s24 test): cache[6] = 1; skip = 1; return
+;       rhi, rlo = br_recip(vy >> 7)        # 9.1 index into recip table
+;       sx = br_project_x_auto(vx)          # narrow 3-mul / wide 5-mul
+;       cache[2..6] = rhi, rlo, sx, 0
+;   do_project_y()                          # per-seg heights, tail call
 ; ============================================================================
 br_seg_xform_vertex:
 .scope
@@ -55,6 +96,7 @@ vc_hit:
 ; --- Cache hit: load evy, evx, rhi/rlo, sx, near-clip flag from cache ---
 ; Cache offset = idx*8. Compute base ptr.
 ; idx*8 with VCACHE_BASE page-aligned: byte-at-a-time, no 16-bit chain.
+; hi = (idx_lo >> 5) | (idx_hi << 3) + >VCACHE_BASE, lo = idx_lo << 3.
 LDA zp_seg_v_idx_lo
 LSR A
 LSR A
@@ -108,6 +150,9 @@ STA zp_seg_sx_hi
 JMP do_project_y
 
 vc_miss:
+; --- Cache miss: mark valid now (entry bytes are filled as they are
+; computed below — evy/evx first, so even the near-clipped path leaves
+; a usable entry). ---
 ; --- Set valid bit ---
 LDY #0
 LDA (zp_br_p),Y

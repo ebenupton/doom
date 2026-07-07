@@ -25,6 +25,28 @@ plot_rmask:
 plot_bmask:
 .byte $80, $40, $20, $10, $08, $04, $02, $01
 
+; ======================================================================
+; PLOT_H: draw horizontal pixel run, y = Y0 (== Y1), x in [X0, X1]
+;
+; Input:  RASTER_ZP_X0/X1 (u8, X0 <= X1 guaranteed by DCL's emit),
+;         RASTER_ZP_Y0 = row (unbiased 0-159), RASTER_ZP_SCRSTRT.
+; Output: pixels OR'd into the mode-4 framebuffer.
+;         Clobbers A,X,Y, zp_tmp0/1/2, zp_plot_i.
+;
+; In mode 4 the 8 pixels of one byte share a scanline, so a horizontal
+; run is byte strips: partial masks at the two ends, solid $FF between.
+; Successive byte columns on the SAME scanline are 8 bytes apart (one
+; char cell), so the strip walk is just Y += 8 on one base pointer.
+;
+; pseudocode:
+;   ptr = (scrstrt + (y>>3)) : (x0 & $F8);  Y = y & 7
+;   if (x0>>3) == (x1>>3):
+;       byte |= lmask[x0&7] & rmask[x1&7]          # run within one byte
+;   else:
+;       byte |= lmask[x0&7]                        # left partial
+;       repeat (x1>>3)-(x0>>3)-1 times: Y += 8; byte = $FF   # middles
+;       Y += 8; byte |= rmask[x1&7]                # right partial
+; ======================================================================
 ; --- plot_h: y = Y0 (== Y1), x from X0 to X1 --------------------------------
 plot_h:
 .scope
@@ -110,9 +132,30 @@ STA (zp_tmp0),Y
 RTS
 .endscope
 
+; ======================================================================
+; PLOT_V: draw vertical pixel run, x = X0 (== X1), y in [Y0, Y1]
+;
+; Input:  RASTER_ZP_X0 = column, RASTER_ZP_Y0/Y1 = row range (either
+;         order — swapped in place if Y0 > Y1), RASTER_ZP_SCRSTRT.
+; Output: pixels OR'd into the framebuffer.  Clobbers A,X,Y,
+;         zp_tmp0/1/2; RASTER_ZP_Y0/Y1 may be exchanged.
+;
+; One constant bit mask, no error term.  Moving down one scanline
+; inside an 8-row char cell is Y+1; crossing into the next cell row is
+; Y=0 / ptr_hi+1 (+256, since one char row = 32 cells * 8 bytes).
+;
+; pseudocode:
+;   if y0 > y1: swap
+;   ptr = (scrstrt + (y0>>3)) : (x & $F8);  Y = y0 & 7
+;   mask = bmask[x&7]; count = y1 - y0 + 1
+;   loop: byte |= mask; if --count == 0 done
+;         if ++Y == 8: Y = 0; ptr += 256
+;         (whole 8-row cells unrolled 8x while count >= 8 and Y == 0)
+; ======================================================================
 ; --- plot_v: x = X0 (== X1), y from min(Y0,Y1) to max(Y0,Y1) ----------------
 plot_v:
 .scope
+; Order endpoints: ensure Y0 <= Y1 (swap in place; A = y0 after)
 LDA RASTER_ZP_Y0
 CMP RASTER_ZP_Y1
 BCC pv_ordered

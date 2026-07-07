@@ -1,7 +1,31 @@
+; ======================================================================
+; UMUL8: unsigned 8x8 -> 16 multiply via quarter-square identity
+;
+; The hottest arithmetic primitive — one call per boundary interpolation
+; (see feedback: all FP arithmetic is built on this 8x8 mul).
+;
+; Identity:  a*b = floor((a+b)^2/4) - floor((a-b)^2/4)
+; Exact because a+b and a-b have the same parity, so the two /4
+; truncation errors cancel.  sqr[n] = floor(n^2/4) covers n in [0,255];
+; when a+b >= 256 the sum term uses sqr2[n] = floor((n+256)^2/4),
+; indexed with (a+b) & $FF.  |a-b| < 256 always, so the difference term
+; always reads sqr_lo/hi.
+;
+; Input:  A = a (u8), zp_mul_b = b (u8)
+; Output: zp_prod_lo:zp_prod_hi = a*b (u16).  Clobbers A,X,Y, zp_tmp0.
+;         zp_prod_lo/hi alias zp_div_lo/hi, so the product feeds
+;         directly into udiv16_8 with no extra loads.
+;
+; pseudocode:
+;   d = |a - b|; s = a + b
+;   if s < 256: prod = sqr[s]        - sqr[d]
+;   else:       prod = sqr2[s & 255] - sqr[d]
+; ======================================================================
 umul8_fixed:
 umul8:
 .scope
 STA zp_tmp0                             ; |
+; d = a - b; negate if borrow (take absolute value)
 SEC
 SBC zp_mul_b
 BCS pos
@@ -12,6 +36,7 @@ ADC #1
 pos:
 TAY
 ; Y = |diff|                                  ; |
+; s = a + b (carry out selects sqr vs sqr2 table for the sum term)
 LDA zp_tmp0
 CLC
 ADC zp_mul_b
@@ -20,6 +45,7 @@ TAX
 BCS uo
 ; X = sum; overflow if carry from ADC          ; ||
 ; sum < 256: sqr tables for sum
+; prod = sqr[s] - sqr[d]  (16-bit table subtract)
 LDA sqr_lo,X
 SEC
 SBC sqr_lo,Y
@@ -31,6 +57,7 @@ STA zp_prod_hi
 RTS
 ; |||||||
 uo:                                     ; sum >= 256: sqr2 tables for sum (carry already set from BCS)
+; prod = sqr2[s & 255] - sqr[d]  (X already wrapped mod 256 by the ADC)
 LDA sqr2_lo,X
 SBC sqr_lo,Y
 STA zp_prod_lo
@@ -155,6 +182,14 @@ LINE_OUT_BUF = $0201
 ;   Record format: si (slot index), sox0, sox1, verdict, cy0, cy1
 ;     verdict: 0 = above, 1 = inside, 2 = below
 ;     cy0, cy1 only meaningful for verdict=inside (line y at sox0, sox1)
+; NOTE (2026-07): the 6-byte verdict record layout above is the LEGACY
+; Phase-A format and is retained as a historical reference only.  The
+; shipping records path uses 4-byte segment records (xl, yl, xr, yr) —
+; one per surviving DCL segment — written by dcl_emit_segment (clip/dcl.s)
+; and consumed by tighten_from_records (clip/tfr.s).  Byte 0 of each
+; buffer is still the record COUNT; records start at offset 1.
+; REC_BYTES/REC_VERDICT_* below are unreferenced (kept: equates emit no
+; bytes and record the old scheme).
 TOP_RECORDS = $0700
 BOT_RECORDS = $0800
 REC_BYTES = 6                           ; bytes per record

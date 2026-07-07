@@ -6,6 +6,22 @@
 ; This prevents span-count explosion from crossover splits; ~96% of
 ; merge candidates are constant-line, so the 6-compare fast path
 ; resolves quickly.
+;
+; Input:  X = span slot to append (all fields populated EXCEPT NEXT,
+;         which this routine owns); zp_new_tail = tail of the list
+;         being built (0 = empty); zp_head is set on first append.
+; Output: X linked as the new tail, or merged into the old tail and
+;         slot X freed.  Clobbers A,Y; X preserved on the link path.
+;
+; Python mirror: endpoint_spans._append_merge.
+; pseudocode:
+;   if list empty: head = tail = X
+;   elif tail and X both constant (tl==tr, bl==br), same (tl, bl),
+;        and tail.xend == X.xstart:            # abutting active ranges
+;       tail.xend = X.xend; free(X)            # lossless: same flat line
+;   else: tail.next = X; X.next = 0; tail = X
+; (Non-constant co-linear pairs are rare — ~6/568 in scene 2 — and not
+; worth a general slope check; see the Python mirror's note.)
 tg_append_x:
 .scope
 LDA zp_new_tail
@@ -71,6 +87,11 @@ RTS
 
 ; TFS state block ($0900-$091B) — the 3-cursor event walk's working set.
 ; (Moved here from the deleted 6-byte-records legacy file.)
+; Plain RAM rather than ZP: all accesses are absolute (non-indexed), and
+; the ZP map is full — see project_refactor_toolchain / src/zp.inc.
+; PEND_* is a 1-deep output buffer: the interval most recently produced
+; by the sweep, held back so the next interval can extend it in place
+; (same top/bot sources) instead of allocating a new pool span.
 TFS_CUR_X = $0900                       ; current x in inner loop
 TFS_X_HI = $0901                        ; right edge of in-range processing
 TFS_NEXT_X = $0902                      ; next event x
@@ -117,9 +138,53 @@ TFS_PEND_BID = $091B
 ; Adjacent emitted spans are merged when their TOP and BOT sources
 ; (kind + id) match — this is the lossless-merge condition because
 ; same-source guarantees same line equation and hence same slope.
+;
+; Input:  zp_ilo/zp_ihi = seg column range (closed, pre-clamped u8);
+;         zp_head = old span list (consumed);
+;         TOP_RECORDS/BOT_RECORDS = record buffers written by the
+;         preceding draw_clipped_line(yt)/(yb) calls: byte 0 = count,
+;         then 4-byte records (xl, yl, xr, yr) at offset 1, in
+;         ascending x order (DCL walks spans left to right).
+; Output: zp_head = rebuilt list (old slots freed and reused);
+;         zp_hg_cache invalidated.  Clobbers A,X,Y, zp_old_cur,
+;         zp_new_tail, zp_clr_save_x, zp_ox0/1, the interp/div ZP set,
+;         and the TFS_* block.
+;
+; A record DOMINATES column x when rec.xl <= x < rec.xr: there the
+; portal edge line was VISIBLE inside the old aperture (DCL emitted
+; it), so it becomes the new boundary. Where no record covers x the
+; edge was clipped away (old boundary wins) and the pool value is
+; kept. The all-records-clipped-away case (zero records) never reaches
+; this routine: the wrapper resolves it via seg_zero_rec_solid below.
+;
+; Python mirror: EndpointClipSpans.tighten_from_records (older 6-byte
+; verdict form; this 4-byte segment walk is state-equivalent — records
+; only exist for 'inside' sub-ranges).
+;
+; pseudocode:
+;   for span in old list:
+;     if span.xend <= ilo or span.xstart >= ihi:   # pixel-center overlap
+;         append span unchanged; continue
+;     if span.xstart < ilo: emit [xstart, ilo] unchanged  # left fragment
+;     cur_x = max(xstart, ilo); x_hi = min(xend, ihi)
+;     while cur_x < x_hi:                          # event sweep
+;         drop stale records (rec.xr <= cur_x)
+;         top_dom = T covers cur_x; bot_dom = B covers cur_x
+;         next_x = min(x_hi, T.xl or T.xr, B.xl or B.xr)
+;                  #  not-yet-dom → next event is xl; dom → xr
+;         top/bot lines for [cur_x, next_x] = record line if dom
+;                                             else pool line (interp both ends)
+;         merge into pending if same sources and abutting, else flush+start
+;         consume records whose xr == next_x; cur_x = next_x
+;     if span.xend > ihi: emit [ihi, xend] unchanged      # right fragment
+;     free original span
+;   flush pending
+; Fragments and sweep intervals ABUT (shared boundary column), unlike
+; mark_solid's ilo-1/ihi+1 — closed-interval seam-friendly model.
 ; ===================================================================
 tighten_from_records:
 .scope
+; ---- Init: detach the old list and start the new one empty ----
 ; Invalidate the has_gap coherence cache (see span_mark_solid note).
 ZERO zp_hg_cache
 LDA zp_head
@@ -127,10 +192,14 @@ STA zp_old_cur
 LDA #0
 STA zp_new_tail
 STA zp_head
+; Reset DCL's portal-continuation state ($FF = inactive) so the next
+; draw_clipped_line starts clean. (Write-only from this module.)
 LDA #$FF
 STA zp_tg_cont
 
 ; Init top/bot cursors and buffer-end offsets.
+; Cursor = offset of the current record (1 = first; 0 = exhausted/none).
+; BUFEND = 1 + count*4 = first invalid offset (via ASL,ASL,+1).
 LDA TOP_RECORDS
 BEQ tfs_no_top
 LDA #1
@@ -163,16 +232,21 @@ STA TFS_BOT_BUFEND
 ; No pending output span yet.
 ZERO TFS_PEND_ACT
 
+; ---- Outer loop: walk the old span list (X = current slot) ----
 LDX zp_old_cur
 tfs_walk:
 BNE tfs_proc
 JMP tfs_finish
 tfs_proc:
+; Save NEXT now (this slot is freed/relinked below) and stash the
+; current slot in zp_clr_save_x — X is clobbered by every JSR here.
 LDA POOL_NEXT,X
 STA zp_old_cur
 STX zp_clr_save_x
 
-; Out-of-range check.
+; Out-of-range check: pixel-center overlap semantics — a span touching
+; the seg only at a shared endpoint column (xend == ilo or
+; xstart == ihi) does NOT overlap; append it unchanged.
 LDA POOL_XEND,X
 CMP zp_ilo
 BCC tfs_oor
@@ -181,6 +255,8 @@ LDA POOL_XSTART,X
 CMP zp_ihi
 BCC tfs_in_range
 tfs_oor:
+; Relink the untouched span. Flush pending first to keep the output
+; list in x order (pending always precedes this span).
 JSR tfs_flush_pending
 LDX zp_clr_save_x
 JSR tg_append_x
@@ -202,6 +278,8 @@ JMP tfs_body
 tfs_pre_chk:
 
 ; Pre-fragment [span.xstart, ilo] if span.xstart < ilo.
+; Abutting: the fragment KEEPS ilo as its xend (shared boundary column
+; with the swept region starting at cur_x = ilo). Line def preserved.
 LDA POOL_XSTART,X
 CMP zp_ilo
 BCS tfs_no_pre
@@ -252,6 +330,7 @@ LDA BOT_RECORDS,Y
 CMP TFS_X_HI
 BCC tfs_inner
 tfs_fp_emit:
+; Neither record reaches this span: emit [cur_x, x_hi] unchanged.
 JSR tfs_flush_pending
 LDX zp_clr_save_x
 LDA TFS_CUR_X
@@ -261,6 +340,9 @@ STA zp_ox1
 JSR emit_unchanged_subspan
 JMP tfs_inner_done
 
+; ---- Event sweep: process uniform intervals while cur_x < x_hi ----
+; Each pass handles one interval [cur_x, next_x] over which the
+; dominating source (record vs pool) is constant on both sides.
 tfs_inner:
 LDA TFS_CUR_X
 CMP TFS_X_HI
@@ -276,6 +358,8 @@ tfs_body:
 ; its xl into the next_x computation moves the sweep BACKWARDS and
 ; emits reversed/overlapping spans.
 tfs_st_top:
+; While T exists and T.xr (offset +2) <= cur_x: advance cursor by 4
+; (one record), or mark exhausted (0) at BUFEND.
 LDA TFS_T_CUR
 BEQ tfs_st_top_done
 CLC
@@ -296,6 +380,7 @@ tfs_st_top_store:
 STA TFS_T_CUR
 JMP tfs_st_top
 tfs_st_top_done:
+; Same stale-consume loop for the bot cursor.
 tfs_st_bot:
 LDA TFS_B_CUR
 BEQ tfs_st_bot_done
@@ -319,6 +404,8 @@ JMP tfs_st_bot
 tfs_st_bot_done:
 
 ; ---- Determine top_dom (T.xl <= cur_x < T.xr) ----
+; i.e. the current top record's segment covers cur_x, so the yt-line
+; (not the pool line) is the top boundary on this interval.
 ZERO TFS_TOP_DOM
 LDA TFS_T_CUR
 BEQ tfs_top_dom_done
@@ -361,6 +448,10 @@ STA TFS_BOT_DOM
 tfs_bot_dom_done:
 
 ; ---- next_x = min(x_hi, top event, bot event) ----
+; The next event for a side is where its dominance state CHANGES:
+;   not yet dominating → the record's xl (segment starts there)
+;   dominating         → the record's xr (segment ends there)
+; Clamped to x_hi. Dominance is therefore uniform on [cur_x, next_x].
 LDA TFS_X_HI
 STA TFS_NEXT_X
 LDA TFS_T_CUR
@@ -419,6 +510,8 @@ JMP tfs_advance_curs
 tfs_compute_vals:
 
 ; ---- Compute top values for [cur_x, next_x] ----
+; TOP_L/TOP_R = top boundary y at the interval's two ends, plus the
+; (KIND, ID) source tag used by the pending-merge test below.
 LDA TFS_TOP_DOM
 BEQ tfs_top_pool
 ; top from record T_CUR: read (xl, yl, xr, yr) and interp.
@@ -454,6 +547,8 @@ LDA TFS_T_CUR
 STA TFS_TOP_ID
 JMP tfs_top_vals_done
 tfs_top_pool:
+; Top from the pool span's own line: interp (XLO,TL)-(XLO+DEN,TR) at
+; cur_x / next_x. Source tag = (kind 0, id = pool slot).
 LDX zp_clr_save_x
 LDA POOL_XLO,X
 STA zp_i_x0
@@ -475,6 +570,8 @@ STA TFS_TOP_ID
 tfs_top_vals_done:
 
 ; ---- Compute bot values for [cur_x, next_x] ----
+; Mirror of the top block: bot record line if BOT_DOM, else the pool
+; span's (XLO,BL)-(XLO+DEN,BR) line; tag (KIND, ID) for merging.
 LDA TFS_BOT_DOM
 BEQ tfs_bot_pool
 LDY TFS_B_CUR
@@ -526,6 +623,10 @@ STA TFS_BOT_ID
 tfs_bot_vals_done:
 
 ; ---- Try to merge with pending ----
+; Merge iff the pending interval abuts this one (pend.xr == cur_x) and
+; BOTH boundary sources match (top kind+id AND bot kind+id). Same
+; source ⇒ same line equation, so extending the interval and re-tagging
+; its right-end values is lossless — no geometry is re-derived.
 LDA TFS_PEND_ACT
 BEQ tfs_start_pend
 LDA TFS_PEND_XR
@@ -554,6 +655,8 @@ JMP tfs_advance_curs
 tfs_no_merge:
 JSR tfs_flush_pending
 tfs_start_pend:
+; Buffer this interval as the new pending span (materialized by
+; tfs_flush_pending when the next interval can't merge into it).
 LDA #1
 STA TFS_PEND_ACT
 LDA TFS_CUR_X
@@ -578,6 +681,9 @@ LDA TFS_BOT_ID
 STA TFS_PEND_BID
 
 tfs_advance_curs:
+; ---- Consume records whose segment ends exactly at next_x ----
+; Only a DOMINATING record can end here (its xr was a next_x candidate).
+; Advance the cursor by 4, wrapping to 0 (exhausted) at BUFEND.
 ; Advance T_CUR if next_x crossed T.xr.
 LDA TFS_T_CUR
 BEQ tfs_skip_t_adv
@@ -620,6 +726,7 @@ tfs_b_adv_ok:
 STA TFS_B_CUR
 tfs_skip_b_adv:
 
+; Step the sweep to the next event.
 LDA TFS_NEXT_X
 STA TFS_CUR_X
 JMP tfs_inner
@@ -627,6 +734,7 @@ JMP tfs_inner
 tfs_inner_done:
 
 ; Post-fragment [ihi, span.xend] if span.xend > ihi.
+; Abutting: keeps ihi as its xstart (shared with the swept region).
 LDX zp_clr_save_x
 LDA POOL_XEND,X
 CMP zp_ihi
@@ -655,6 +763,15 @@ JMP tfs_flush_pending                   ; tail call (was JSR+RTS): -9 cyc
 .endscope
 
 ; ---- Flush pending output span: alloc, populate fields, append. ----
+;
+; Input:  TFS_PEND_* (valid only when TFS_PEND_ACT = 1; no-op otherwise).
+; Output: pending interval materialized as a pool span and appended via
+;         tg_append_x; TFS_PEND_ACT cleared.  The span is DENSE-ANCHORED:
+;         line anchors == active range (XLO = XL, DEN = XR - XL), with
+;         the OT/IT/OB/IB bbox bytes computed from the endpoint values.
+;         On pool exhaustion the interval is silently dropped
+;         (flush_fail) — columns vanish rather than corrupt the list.
+;         Clobbers A,X,Y.
 tfs_flush_pending:
 .scope
 LDA TFS_PEND_ACT
@@ -712,6 +829,14 @@ RTS
 .endscope
 
 ; Emit unchanged sub-span [zp_ox0, zp_ox1] with old span's line def.
+;
+; Input:  zp_ox0/zp_ox1 = active range for the fragment (closed);
+;         zp_clr_save_x = source pool slot.
+; Output: new slot with the source's line definition copied VERBATIM
+;         (XLO/DEN/TL/BL/TR/BR + precomputed OT/OB/IT/IB — no interp,
+;         matching the lazy fragments of the Python mirrors) and active
+;         range [ox0, ox1], appended via tg_append_x.  Silently dropped
+;         on pool exhaustion.  Clobbers A,X,Y.
 emit_unchanged_subspan:
 JSR alloc_span
 BEQ ues_fail
@@ -757,6 +882,10 @@ RTS
 ; A `project_clip_arithmetic_fastpath` memo notes the obvious fast
 ; paths to add later (u8-fits-operand, trivial offset==0/den cases,
 ; early-exit divide when leading zeros guarantee u8 quotient).
+;
+; NB: only the DATA LAYOUT (input aliases + $0938-$0958 working set)
+; lives here; the s16 clipper CODE is in clip/dcl_s16.s
+; (draw_clipped_line_s16). Python wrapper: SpanClip6502.draw_clipped_line.
 ; ===================================================================
 
 ; ---- s16 line input (wrapper writes these) ----
@@ -830,7 +959,11 @@ LC_TGT_HI = $0958
 SZR_PROJ = $0A40                        ; = SEG_PROJ_BUF (bsp/walk.s)
 .export seg_zero_rec_solid
 
+; --- s16 threshold helpers for seg_zero_rec_solid ---------------------
 ; X = lo-byte offset of a projection in SZR_PROJ. C=1 iff value < Y_BIAS.
+; s16 compare via full SBC pair: the sign of (value - Y_BIAS) is the
+; N flag of the hi-byte SBC, corrected for signed overflow by EOR #$80
+; when V is set (standard 6502 signed-compare idiom). Clobbers A.
 szr_lt:
 LDA SZR_PROJ,X
 SEC
@@ -844,6 +977,7 @@ BMI szr_yes
 CLC
 RTS
 ; C=1 iff value > Y_BIAS+159.
+; Same idiom, operands reversed: sign of ((Y_BIAS+159) - value) < 0.
 szr_gt:
 LDA #<(Y_BIAS+159)
 SEC
@@ -862,6 +996,9 @@ RTS
 
 seg_zero_rec_solid:
 .scope
+; Band bottom = min(fb, bb-if-NEEDBB), so "bottom < Y_BIAS" at an
+; endpoint iff fb < Y_BIAS OR (NEEDBB and bb < Y_BIAS). Endpoint 1
+; first; only if it passes do we pay for endpoint 2 (szr_b1).
 ; bottom family: band bottom above the screen top at endpoint 1?
 LDX #2                                  ; sy1_bot (fb1)
 JSR szr_lt
@@ -885,6 +1022,9 @@ JSR szr_lt
 BCS szr_closed
 szr_top:
 ; top family: band top below the screen bottom at endpoint 1?
+; Band top = max(ft, bt-if-NEEDBT), and max(a,b) > k iff a > k OR
+; b > k — the same either-of-two test per endpoint as the bottom
+; family above, with szr_gt in place of szr_lt.
 LDX #0                                  ; sy1_top (ft1)
 JSR szr_gt
 BCS szr_t1

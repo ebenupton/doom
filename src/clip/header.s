@@ -74,6 +74,24 @@ ADC #1
 ; --- Jump table: fixed entry points for each public operation ---
 ; Callers (Python harness, game engine) JSR to $2000 + 3*N.
 ; JMP is 3 bytes, so entries are evenly spaced.
+; NB: the "$20xx" end-of-line annotations below are HISTORICAL — they
+; predate the removal of intermediate entries (e.g. the legacy
+; jt_tighten slot), so several are off by one or two entries. Nothing
+; resolves entries by these numbers any more: the engine links against
+; the jt_* symbols and the Python harness reads them from the ld65
+; symbol map (symmap.py). Kept as-is per house rule on old notes.
+;
+; Entry contracts (full I/O headers at each routine):
+;   jt_init                 reset pool: free chain + one full-screen span
+;   jt_mark_solid           remove closed range [zp_ilo, zp_ihi] (solid)
+;   jt_has_gap              A=1 iff any span overlaps [zp_ilo, zp_ihi]
+;   jt_is_full              A=1 iff active list empty (screen occluded)
+;   jt_read                 serialize span list to buffer at (zp_buf)
+;   jt_interp_store         A = line y at column A (u8 round-to-nearest)
+;   jt_draw_clip            clip u8 line zp_line_* to spans, emit + records
+;   jt_tighten_from_records narrow spans by consuming TOP/BOT_RECORDS
+;   jt_draw_clip_s16        s16 line: pre-clip to u8 box, then DCL
+;   jt_umul8 / jt_udiv16_8  arithmetic primitives (shared with bsp_render)
 jt_init: JMP span_init                           ; $2000                                             ; |
 jt_mark_solid: JMP span_mark_solid                     ; $2003                                             ; |
 jt_has_gap: JMP span_has_gap                        ; $2009                                             ; |||

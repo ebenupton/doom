@@ -1,5 +1,20 @@
+; linedraw_or_reloc.asm — build wrapper for the OR-mode NJ line rasteriser.
+; Assembles raster/nj-linedraw4-or.asm (+ the Hamiltonian 1:2-band shallow
+; module) at $A900 with the engine's ZP assignments, and saves the raw image
+; as linedraw_or_reloc.bin — loaded verbatim by the harnesses/engine builds
+; (banked_bsp.py, span_clip_6502.py; the entry point linedraw4 is at $A900).
+;
+; Feature flags:
+;   HAMILTONIAN_12  specialised shallow core for the 1:2..1:1 slope band ON
+;   STEEP_COMPACT   compact loop steep core ON (replaces the 16 unrolled
+;                   steep blocks; pixel-identical)
+;   HAMILTONIAN_23  2:3-band module OFF (measured +0.036% only)
 ORG &A900
 
+; ZP interface (must match the engine's zp map):
+;   scrstrt      in: framebuffer page hi ($58/$6C)
+;   x0,y0,x1,y1  in: line endpoints (trashed — x1/y1 reused as a jump vector)
+;   scr,cnt,err,errs,ls,b,dx,dy: scratch owned by the rasteriser
 scr = &74
 scrstrt = &70
 cnt = &79

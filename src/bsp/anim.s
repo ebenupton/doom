@@ -36,6 +36,15 @@ ANIM_TABL0  = $E580
 ANIM_CFG    = $E680
 ANIM_TABL2  = $E6D0
 .endif
+; CFG record layout (12 B/mover, anim_sectors.gen_6502_tables; heights are
+; prescaled 8.8 fixed point — hi byte = the packer's prescaled s8 height):
+;   +0  min88  (s16: endpoint "A" — doors: closed, lifts: bottom)
+;   +2  max88  (s16: endpoint "B" — doors: open,   lifts: top)
+;   +4  speed88 (u16, per frame)
+;   +6  wait_at_A, +7 wait_at_B (frames, <= 63 to fit the packed timer)
+;   +8  start88, +10 packed start state/timer, +11 pad
+; Mover bit/index m = index in sorted(ANIM_SECTORS) everywhere (SSMASK bits,
+; TABL0/TABL2 pointer slots, CFG stride 12, ANIM_WS stride 3, DIRTY bits).
 
 ; --- state (unbanked; drivers zero $05E9-$05FF at init) ---
 ANIM_ENABLE = $05E9
@@ -61,6 +70,12 @@ ANIM_CUR  = $F1                         ; mover index during hub loop
 .segment "ANIMH"
 .endif
 
+; pseudocode:
+;   pend = SSMASK[ss] & DIRTY            # dirty movers revealable via this ss
+;   for m in 5..0 where pend has bit m:
+;     ANIM_VAL = pos_hi(m)               # ANIM_WS[m*3+1], prescaled s8 height
+;     anim_l0_worker (FHCH bytes + seg flags) ; anim_l2_worker (VWH bytes)
+;     DIRTY &= ~bit(m)                   # applied == logical again
 anim_hub:
 .scope
 LDX zp_node_chlo
@@ -113,6 +128,17 @@ jt_anim_init: JMP anim_init             ; +3
 ;     Per mover: Y = m*3 indexes the WS block, X = m*12 the CFG block.
 ;     Prescaled 8.8 arithmetic; bounds |int| <= ~30 so SBC-sign compares
 ;     are exact. Sets the mover's ANIM_DIRTY bit iff pos_hi changed. ---
+; pseudocode (integerised Mover.tick, anim_sectors.py):
+;   for m in 5..0:
+;     state = WS[m*3+2] & $C0 ; timer = WS[m*3+2] & $3F
+;     if state in (0 wait@A, 2 wait@B):
+;       if --timer == 0: state += $40      # 0 -> 1 (A->B), 2 -> 3 (B->A)
+;     elif state == 1 (A->B):
+;       pos += speed88; if pos >= max88: pos = max88; state = 2; timer = wait_B
+;     else (3, B->A):
+;       pos -= speed88; if pos < min88:  pos = min88; state = 0; timer = wait_A
+;     WS[m*3+2] = state | timer
+;     if pos_hi != previous pos_hi: DIRTY |= bit(m)  # renderer bytes now stale
 anim_tick:
 .scope
 LDA ANIM_ENABLE
@@ -240,6 +266,18 @@ anim_bit2:
 
 ; --- anim_l0_worker: patch FHCH bytes + re-derive seg flags for mover
 ;     ANIM_CUR with value ANIM_VAL. Runs with BANK_L0 paged. ---
+; TABL0 block (gen_6502_tables): n_fhch, n_flag, then n_fhch u16 FHCH byte
+; addresses (the MOVING role only — doors: ch/bch slots, lifts: fh/bfh),
+; then n_flag x (u16 seg-header flag addr, u16 FHCH quad addr) covering
+; every two-sided seg touching the sector.
+; pseudocode:
+;   for each fhch addr: *addr = ANIM_VAL
+;   for each flag entry:                       # packer's rules, post-patch
+;     fh,ch,bfh,bch = quad[0..3]               # prescaled s8, SBC sign exact
+;     f = *hdr & ~(SOLID|NEEDBT|NEEDBB)        # & $F1
+;     if bch <= fh or bfh >= ch: f |= SOLID
+;     else: if bch < ch: f |= NEEDBT ; if bfh > fh: f |= NEEDBB
+;     *hdr = f
 .segment "ANIML0"
 anim_l0_worker:
 .scope
@@ -370,6 +408,10 @@ alw_f:   .byte 0
 
 ; --- anim_init: load start state from CFG, mark all dirty, enable, and
 ;     point the subsector hook at the hub. Runs with BANK_L2 paged. ---
+;   in : ANIM_CFG (+8 start88, +10 packed start state/timer)
+;   out: ANIM_WS seeded (all 6 movers), ANIM_DIRTY = $3F (every mover patches
+;        on first visibility, even before any motion), ANIM_ENABLE = 1,
+;        anim_ss_hook operand SMC-patched -> anim_hub.
 .segment "ANIML2"
 anim_init:
 .scope
@@ -415,6 +457,10 @@ ai_midx: .byte 0
 ; ============================================================================
 .segment "ANIML2"
 
+; --- anim_l2_worker: write ANIM_VAL to every private VWH slot byte of mover
+;     ANIM_CUR. TABL2 block (gen_6502_tables): n_vwh, then n_vwh u16 slot
+;     addresses (moving role only — doors: ceil slots, lifts: floor slots).
+;     n_vwh may be 0. Runs with BANK_L2 paged (hub pages it). ---
 anim_l2_worker:
 .scope
 LDA ANIM_CUR

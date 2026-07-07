@@ -34,6 +34,9 @@ INY
 LDA bca_pxs+1
 SBC (bca_boxp),Y
 TAX                                     ; raw hi (zero test)
+; s16 sign of a subtract that may overflow: if V is set the N flag is
+; inverted, so EOR #$80 recovers the true sign (standard signed-compare
+; idiom; same BVC/EOR pattern at c2/c3/c4 below).
 BVC c1
 EOR #$80
 c1:
@@ -136,6 +139,21 @@ RTS
 
 ; (load_val removed: inlined at the corner loads.)
 
+; ============================================================================
+; corner_phi — signed view-relative angle (phi) of one box corner.
+;   in : pa_dx/pa_dy (s16 = corner - viewer int pos, loaded by the caller),
+;        bca_afn (a_fine, frame-constant)
+;   out: pa_res = phi (s16 in [-2048,2048))
+;        clobbers sd_num/sd_den/sd_q, pa_sx/pa_sy/pa_oct/pa_ptr
+;   phi = sign_extend((a_fine - psi) & 4095), psi = point_to_angle(dx,dy).
+; point_to_angle (angle_bbox.py) is INLINED below — corner_phi is its sole
+; caller. pseudocode:
+;   if dx == 0 and dy == 0: psi = 0
+;   num = min(|dx|,|dy|) ; den = max(|dx|,|dy|)       # first-octant fold
+;   oct = (dx<0)*4 | (dy<0)*2 | (|dx|>|dy|)
+;   ta  = tantoangle[slope_div(num,den)]              # sd_q==1024 -> ANG45
+;   psi = (base[oct] +/- ta) & 4095                   # tables in header_div.s
+; ============================================================================
 ; corner_phi: dx=cx-pxs, dy=cy-pys; point_to_angle; pa_res=(afn-psi)&MASK signed
 ; corner_phi: callers load pa_dx/pa_dy directly (box corner minus viewer).
 corner_phi:
@@ -288,6 +306,11 @@ STA pa_res+1
 .endscope
 ; --- afn - psi, mask & sign-extend to s16 (file-global: reused by the
 ;     rotation cache's warm path to re-derive phi from cached psi) ---
+;   in : pa_res = psi (u12 fineangle), bca_afn = a_fine (frame-constant)
+;   out: pa_res = phi (s16 in [-2048,2048))
+;   phi = (a_fine - psi) & 4095 ; if phi >= 2048: phi -= 4096
+; The AND #$0F masks to 12 bits; hi-nibble >= 8 means phi >= 2048, and
+; SBC #$10 (carry known set from the CMP) subtracts 4096 from the hi byte.
 cp_havepsi:
 SEC
 LDA bca_afn
@@ -308,6 +331,9 @@ RTS
 ; rows 3,7,11 and 5 unused (5=inside handled earlier).
 ; checkcoord indices PRE-DOUBLED (byte offsets into the s16 box: top=0,
 ; bot=2, left=4, right=6) so the corner loads index (bca_boxp),Y directly.
+; Row layout: 4 bytes per boxpos = (c1x,c1y, c2x,c2y); corner1 = LEFT
+; silhouette, corner2 = RIGHT (angle_bbox._CHECKCOORD, DOOM checkcoord).
+; boxpos = boxy*4 + boxx: row 0-2 viewer above top, 4/6 level, 8-10 below.
 bca_cc:
 .byte 6,0,4,2,  6,0,4,0,  6,2,4,0,  0,0,0,0
 .byte 4,0,4,2,  0,0,0,0,  6,2,6,0,  0,0,0,0

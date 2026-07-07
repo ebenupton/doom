@@ -5,6 +5,12 @@
 ; jump to the driver. Banks 4/6/7 = L0/C/L2 (all writable SWRAM on a Model B).
 ;
 ; *RUN as !BOOT (boot option 2) -> SHIFT-BREAK autoboots. PAGE=$1900 (DFS).
+;
+; ldr — load/copy each bank in turn, then LOW, then hand off. Each
+; JSR $FFF7 is OSCLI on a command string; OS calls are fine here (the
+; driver's SEI at $3C00 is where the OS goes away). The $3000 staging
+; area is plain user RAM under the boot-time MODE 7, and LOW ($1B40+)
+; only lands after the last bank copy has consumed the staging.
 ORG &1900
 .ldr
     LDX #LO(c_b0): LDY #HI(c_b0): JSR &FFF7      ; *LOAD BANK0 3000  (L0)
@@ -17,6 +23,12 @@ ORG &1900
     LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4
     JMP &3C00                                    ; -> animation driver
 
+; copy — copy the 16K staged at $3000-$6FFF into sideways bank A.
+; In: A = target bank number (4/6/7). Uses ZP $80-$83 as src/dst pointers.
+; SEI brackets the copy so no IRQ handler runs while ROMSEL points at the
+; SWRAM bank (the OS would index the wrong ROM); $F4 (the OS's ROMSEL
+; shadow) is kept in sync both ways so the DFS ROM is correctly restored
+; for the next *LOAD. Clobbers A,X,Y,$80-$83.
 .copy                            ; A = target bank; copy $3000-$6FFF -> $8000 bank
     LDX &F4 : STX oldrom         ; save OS's current ROM
     SEI                          ; no IRQ -> ROMSEL stays put during the copy

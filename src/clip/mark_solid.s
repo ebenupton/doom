@@ -17,6 +17,28 @@
 ;   1. No left frag (xstart >= ilo): shrink xstart or free entirely
 ;   2. Left only (xend <= ihi): truncate xend = ilo - 1
 ;   3. Middle split: alloc sibling for right frag, truncate original
+;
+; Input:  zp_ilo, zp_ihi = solid column range (closed, both inclusive,
+;         pre-clamped to [0,255] by the caller; ihi < ilo = no-op).
+;         zp_head = active span list (sorted by XSTART).
+; Output: every active column in [ilo,ihi] removed; freed slots pushed
+;         on the free list; zp_head updated; zp_hg_cache invalidated.
+;         Clobbers A,X,Y, zp_prev, zp_tmp0.
+;
+; Python mirror: EndpointClipSpans.mark_solid (lazy, line-preserving).
+; pseudocode (per span s, walked left to right):
+;   if s.xend   <  ilo: skip (fast ping-pong scan below)
+;   if s.xstart >  ihi: done (list is sorted)
+;   if s.xstart >= ilo:                    # no left fragment
+;       if s.xend <= ihi: unlink + free s  # fully covered
+;       else:             s.xstart = ihi+1 # shrink in place, done-check
+;   else:                                  # keep left fragment
+;       if s.xend <= ihi: s.xend = ilo-1   # right part swallowed
+;       else:                              # middle split
+;           sib = alloc(); sib.line = s.line (copied verbatim)
+;           sib.range = [ihi+1, s.xend]; link after s; s.xend = ilo-1
+; Fragments here are NON-abutting (ilo-1 / ihi+1): solid columns are
+; removed outright, unlike tighten's shared-boundary fragments.
 ; ======================================================================
 span_mark_solid:
 .scope
@@ -29,12 +51,15 @@ span_mark_solid:
 ; any later query (observed: freed slot (60,69) made has_gap(60,73)
 ; return 1 against a pool whose only live span was (121,132)).
 ZERO zp_hg_cache
+; Degenerate range (ihi < ilo) → no-op.
 LDA zp_ihi
 CMP zp_ilo
 BCS mss
 ; |
 RTS
 mss:
+; zp_prev = $FF sentinel: "current span is the list head" (unlink via
+; zp_head rather than a predecessor's NEXT).
 LDA #$FF
 STA zp_prev
 ; |
@@ -44,6 +69,8 @@ BNE msl
 RTS
 ; |
 
+; --- Overlap classification (entered from the scan loop when
+;     xend >= ilo, i.e. the span is not entirely left of the range) ---
 ms_chk_after_y:
 TYA
 TAX
@@ -72,6 +99,8 @@ BCC ms_shrink
 ; |
 
 ; --- Fully covered: free this span (fall-through, no JMP) ---
+; Save NEXT before freeing (free_span overwrites POOL_NEXT,X), then
+; unlink: through zp_head when prev==$FF sentinel, else prev's NEXT.
 ms_free:
 LDA POOL_NEXT,X
 STA zp_tmp0
@@ -97,6 +126,7 @@ RTS
 ; |
 
 ms_shrink:
+; Shrink in place: xstart = ihi + 1 (span keeps its line + right part).
 ; A holds ihi; carry clear from BCC
 ADC #1
 STA POOL_XSTART,X
@@ -107,6 +137,10 @@ TAX
 BEQ ms_rts_x
 ; Fall through to msl (common: continue scanning)
 
+; --- Skip-ahead scan: chase NEXT while xend < ilo (span wholly left of
+;     the solid range). Unrolled 2x ping-pong: the current slot
+;     alternates X/Y so the skip path needs no TAX/TAY transfer.
+;     zp_prev tracks the predecessor for the unlink in ms_free. ---
 msl:                                    ; X = current span — fall-through from shrink, branch target from free
 msl_x:
 LDA POOL_XEND,X
@@ -136,6 +170,11 @@ CMP POOL_XEND,X
 BCS ms_left_only
 ; |
 ; --- Middle split: allocate sibling for the right fragment ---
+; Original span becomes the left fragment; the sibling inherits the
+; SAME line definition (10 field bytes copied verbatim, including the
+; precomputed OT/OB/IT/IB bbox) and takes the right active range.
+; On pool exhaustion the right fragment is sacrificed (left-only) —
+; conservative: drops open columns, never leaks solid ones as open.
 STX zp_prev                             ; |
 JSR alloc_span
 BEQ ms_left_only_after_fail

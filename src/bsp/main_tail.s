@@ -1,5 +1,10 @@
 
 ; ============================================================================
+; MAIN-region tail: last data table + end-of-code marker, then the B-region
+; segment switch. vc_bit_mask is the bit-mask lookup used by
+; br_seg_xform_vertex (seg_xform.s) to test/set a vertex's valid bit in
+; the VCACHE valid bitmap without a 0..7-iteration shift loop.
+; ============================================================================
 vc_bit_mask:
 .byte 1, 2, 4, 8, 16, 32, 64, 128       ; 1 << (idx & 7) for the vertex cache
 

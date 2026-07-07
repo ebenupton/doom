@@ -15,6 +15,12 @@
 ;                + (m8(vx_frac, recip_hi) >> 8)
 ;
 ;   Three 8x8 multiplies: signed s8×u8 (×2) and unsigned u8×u8 (×1).
+;   (fp_project_x_subpx in fp.py; terms A/B/C below in that order.)
+;
+;   This is the NARROW path — the integer view-x must fit s8. Callers go
+;   through br_project_x_auto (defq.s B region), which dispatches here or
+;   to br_project_x_wide (lo.s, 5 muls) on the s16 view-x sign extension.
+;   Clobbers zp_br_vxlo/hi (reused as the sx accumulator) and zp_br_a/b.
 ; ============================================================================
 br_project_x_subpx:
 .scope
@@ -112,6 +118,16 @@ RTS
 ;
 ;   Python:
 ;     sy = HALF_H - (m8(h, recip_hi) + (m8(h, recip_lo) >> 8))
+;
+;   This label is br_project_y_RAW: the uncached projection body, two
+;   signed s8×u8 multiplies (fp_project_y in fp.py). Production callers go
+;   through br_project_y (ycache.s), a memoising front keyed on the full
+;   (rhi, rlo, h) input tuple; only that front calls _raw.
+;
+;   NOTE the constant loaded below is 128 = HALF_H (80) + Y_BIAS (48): the
+;   screen-space Y bias every consumer used to add per-store is folded into
+;   the projection, so results come out PRE-BIASED. Same final values.
+;   Clobbers zp_br_vxlo/hi (accumulator), zp_br_a/b, zp_br_t2/t3.
 ; ============================================================================
 br_project_y_raw:
 .scope
@@ -176,6 +192,10 @@ RTS
 
 ; ============================================================================
 ; ROM/RAM base addresses (Python wrapper writes these into ZP at frame start)
+; "zp_"-named for history but these live in the $0BEC-$0BF7 absolute page —
+; cold, read a few times per seg via indirect-pointer setup. They point at
+; the packed WAD arrays built by wad_packed.build_packed (vertices,
+; subsector SoA pages, seg headers, VWH heights, seg detail).
 ; ============================================================================
 zp_rom_verts_lo = $0BEC
 zp_rom_verts_hi = $0BED

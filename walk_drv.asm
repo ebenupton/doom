@@ -38,6 +38,18 @@ RAWY_MIN = &F9D2        ; -1582
 RAWY_MAX = &0492        ;  1170
 
 ORG &3C00
+; ---------------------------------------------------------------------------
+; drv — one-time boot init, then falls through into the frame loop.
+; Entry: JMP $3C00 from the !BOOT loader (banks 4/6/7 = L0/C/L2 already
+; copied to sideways RAM, LOW loaded, MODE 4 selected). Never returns.
+; Interrupts stay off for ever (SEI; direct hardware only from here on —
+; the OS workspace is dead and reused, e.g. the vsync journal at $0300).
+; Phases:
+;   1. spawn position/VZ            5. keyboard -> manual-scan mode
+;   2. engine ROM-table pointers    6. render caches (RCACHE, VXC)
+;   3. CRTC 256x160 non-interlaced  7. animated-sector init (bank L2)
+;   4. T1 field-locked beam clock   8. driver state + clear both buffers
+; ---------------------------------------------------------------------------
 .drv
     SEI
     LDA #0 : STA &FE34                              ; Master: ACCCON off (harmless on B)
@@ -63,14 +75,18 @@ ORG &3C00
     ; and shimmers 1px lines at 25Hz. Non-interlaced: field = exactly 312
     ; lines = 19968us, T1 lock is exact and the raster is stable.
     LDA #10:STA &FE00: LDA #&20:STA &FE01
-    ; --- System VIA T1 field lock (see anim_drv for the full rationale) ---
-    LDA &FE4B:AND #&3F:ORA #&40:STA &FE4B
-    LDA #&FE:STA &FE46
+    ; --- System VIA T1 field lock (see anim_drv for the full rationale):
+    ;     free-running T1, period 19968us = exactly one non-interlaced
+    ;     312-line PAL field, phase-locked once to the vsync edge (CA1 IFR
+    ;     bit 1). T1's high byte is then a drift-free beam-position clock
+    ;     (4-line granularity) that flip_sched reads every frame. ---
+    LDA &FE4B:AND #&3F:ORA #&40:STA &FE4B           ; ACR: T1 continuous, PB7 off
+    LDA #&FE:STA &FE46                              ; T1 latch = $4DFE = 19966 (+2)
     LDA #&4D:STA &FE47
-    LDA #2  :STA &FE4D
+    LDA #2  :STA &FE4D                              ; clear stale vsync flag
 .vsy0
-    LDA &FE4D:AND #2:BEQ vsy0
-    LDA #&4D:STA &FE45
+    LDA &FE4D:AND #2:BEQ vsy0                       ; wait for vsync edge
+    LDA #&4D:STA &FE45                              ; start T1: phase = time since vsync
     ; --- keyboard: manual scan mode (IC32 addr 3 = 0), DDRA 0-6 out ---
     LDA #3  :STA &FE40
     LDA #&7F:STA &FE43
@@ -112,6 +128,23 @@ ORG &3C00
     LDA #0   :STA jidx
     LDA #&6C :STA backhi
     JSR clr58t:JSR clr58b:JSR clr6Ct:JSR clr6Cb
+; ---------------------------------------------------------------------------
+; frame — main loop, one iteration per rendered frame (paced by flip_sched's
+; vsync waits when the beam demands one; free-running otherwise).
+; Pseudocode:
+;   read_input                  keys -> angidx, 24-bit position (bounds-checked)
+;   ZP $00-$03/$9D/$9E <- pos   8.8 frac/lo + s16 integer high bytes
+;   derive_raw / floor_vz       PXRAW/PYRAW ($90-$93); VZ ($04) eased to grid
+;   sincos <- table[angidx]     entry is 8 bytes, so ptr = tabbase + idx*8
+;                               (24-bit shift into $EC/$ED); bytes 0-5 ->
+;                               ZP $05-$0A (s/c mag,neg,one), byte 6 -> bca_ab
+;   anim_glue_tick              advance door/lift movers (lazy patching)
+;   render                      view_setup (bank L0) -> span_init (bank C) ->
+;                               init_frame + render_frame (L0) into the
+;                               hidden buffer backhi (pre-cleared by the
+;                               previous flip_sched)
+;   flip_sched                  show it; beam-safe clear of the other buffer
+; ---------------------------------------------------------------------------
 .frame
     JSR read_input
     ; --- position -> engine ZP ---
@@ -163,6 +196,13 @@ ORG &3D90
 ; --- animated-sector glue: page bank L2 and enter the anim jump table
 ;     ($3DA0-$3DBF pocket between ptrtab and the sincos table at $3E00) ---
 ORG &3DA0
+; anim_glue_init: one-time mover-state init + SMC-installs the per-subsector
+; visibility hook in the renderer. anim_glue_tick: per-frame logical advance
+; of every mover's height state machine (no table writes; the hook patches
+; the read tables lazily when a mover becomes visible — see src/bsp/anim.s /
+; anim_sectors.py). Both live behind a bank L2 page-in because the anim jump
+; table, CFG and VWH tables are all in L2. Leaves L2 paged (the frame loop
+; re-pages banks before every engine call). Clobbers A + whatever anim uses.
 .anim_glue_init
     LDA #7:STA &FE30
     JMP &BA03                                       ; jt_anim_init (RTS there)
@@ -171,6 +211,13 @@ ORG &3DA0
     JMP &BA00                                       ; jt_anim_tick
 
 ORG &4000
+; ---------------------------------------------------------------------------
+; clr58t/clr58b/clr6Ct/clr6Cb — unrolled clears of framebuffer half-screens.
+; Each 20-page buffer ($5800 or $6C00) splits at the 80-row midline into a
+; top half (10 pages) and a bottom half (10 pages) so flip_sched can clear
+; the beam-passed top early while waiting for vsync to release the bottom.
+; One INY/BNE loop, ten STA abs,Y per pass = 5 cyc/byte. Clobbers A,Y.
+; ---------------------------------------------------------------------------
 .clr58t
     LDA #0 : TAY
 .c0t
@@ -204,16 +251,39 @@ ORG &4000
     INY : BNE c1b
     RTS
 
+; ---------------------------------------------------------------------------
+; flip_sched — show the just-rendered buffer, then clear the buffer coming
+; off display without ever touching a row the beam has yet to draw. Same
+; beam-class scheme as anim_drv (see the header there for the full field
+; timeline); T1's high byte H classifies the beam:
+;   class 2 (H 0..14 bottom border, 57..77 blanking): old buffer's display
+;           is over -> clear top+bottom now, no wait
+;   class 1 (H 15..34, beam in bottom half): clear top now, wait for vsync,
+;           then clear bottom
+;   class 0 (H 35..56, beam in top half): wait for vsync, then clear all
+; walk_drv extras over the anim_drv version:
+;   - beamtbl here has only 78 entries, so a raw H >= 78 (transient/wrap
+;     read) is pre-filtered to class 0, the always-safe choice;
+;   - every decision is journalled, 4 bytes/frame at jbase ($0300): class,
+;     H at classify, H after the vsync wait ($FF = class 2, none), H when
+;     the clears finished — post-mortem evidence for clear-vs-beam races.
+; Toggles backhi. Re-phases T1 at each vsync it waits on. Clobbers A,X,Y.
+; ---------------------------------------------------------------------------
 .flip_sched
+    ; R12/R13 straddle guard: the pair of writes must not bracket the CRTC
+    ; frame-top reload (e=5632us -> T1 = $37FE), or one field displays a
+    ; mixed address. Spin while H is in [$36,$38] (<= 768us, rare).
 .fs_guard
     LDA &FE45
     CMP #&36 : BCC fs_go
     CMP #&39 : BCS fs_go
     JMP fs_guard
 .fs_go
+    ; CRTC screen start = address/8: R12 = backhi>>3, R13 = (backhi&7)<<5
     LDA #12:STA &FE00 : LDA backhi:LSR A:LSR A:LSR A:STA &FE01
     LDA #13:STA &FE00 : LDA backhi:AND #7:ASL A:ASL A:ASL A:ASL A:ASL A:STA &FE01
-    LDA backhi:EOR #(&58 EOR &6C):STA backhi
+    LDA backhi:EOR #(&58 EOR &6C):STA backhi        ; backhi = buffer coming off display
+    ; classify the beam; Y = jidx*4 = journal record offset
     LDA jidx:ASL A:ASL A:TAY
     LDX &FE45
     LDA #0                                          ; T1hi >= 78: transient/wrap read
@@ -226,12 +296,14 @@ ORG &4000
     LDA jbase,Y
     BEQ fs_cls0
     CMP #1 : BEQ fs_cls1
+    ; class 2: display of the old buffer already over — clear all, no wait
     LDA #&FF:STA jbase+2,Y                          ; journal: no wait
     JSR fs_clrtop
     JSR fs_clrbot
     JMP fs_logdone
 .fs_cls0
-    LDA #2:STA &FE4D
+    ; class 0: beam still in the top half — everything must wait for vsync
+    LDA #2:STA &FE4D                                ; arm the vsync flag
 .fs_w0
     LDA &FE4D:AND #2:BEQ fs_w0
     LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
@@ -240,6 +312,8 @@ ORG &4000
     JSR fs_clrbot
     JMP fs_logdone
 .fs_cls1
+    ; class 1: beam in the bottom half — top is clearable now; arm the vsync
+    ; flag BEFORE clearing (it latches), then wait and clear the bottom
     LDA #2:STA &FE4D
     JSR fs_clrtop
 .fs_w1
@@ -248,6 +322,9 @@ ORG &4000
     JSR fs_logwait
     JSR fs_clrbot
     JMP fs_logdone
+; fs_logwait: journal byte +2 = T1hi right after the vsync wait (should be
+; ~$4D). fs_logdone: byte +3 = T1hi when the clears finished, then advance
+; the ring index (wraps at 63 so record 63 stays as a scribble guard).
 .fs_logwait
     LDA jidx:ASL A:ASL A:TAY
     LDA &FE45:STA jbase+2,Y
@@ -261,6 +338,8 @@ ORG &4000
 .fs_jw
     STX jidx
     RTS
+; fs_clrtop/fs_clrbot: clear the half of whichever buffer backhi now names
+; (i.e. the one just taken OFF display; the CRTC shows the other one).
 .fs_clrbot
     LDA backhi : CMP #&58 : BNE fs_cb1
     JMP clr58b
@@ -273,6 +352,14 @@ ORG &4000
     JMP clr6Ct
 
 ; --- read_input: scan keys, update angidx / position (with bounds) --------
+; Manual keyboard scan, no OS: init put the keyboard in manual-scan mode
+; (IC32 addr 3 low) with DDRA bits 0-6 out; writing a key number to $FE4F
+; and reading bit 7 back (BIT -> N) gives that key's state directly.
+; Keys (internal key numbers): $19 LEFT / $79 RIGHT turn one table step
+; (= 4 angle-bytes); $39 UP / $29 DOWN move SPEED world units along the
+; view direction, then bounds_or_revert undoes any step that leaves the
+; clamp rectangle. All four keys are independent (no else-chains).
+; Clobbers A,X (via the movement helpers).
 .read_input
     LDA #&19:STA &FE4F : BIT &FE4F : BPL ri_nleft   ; cursor LEFT
     LDA angidx:CLC:ADC #1:AND #63:STA angidx
@@ -291,6 +378,12 @@ ORG &4000
     RTS
 
 ; --- movement: position += / -= step table entry for angidx ---------------
+; step_fwd: 24-bit position += step_tab[angidx] (s16 8.8 delta, applied to
+; x then y). The delta is sign-extended by hand: the high-byte ADC uses #0
+; or #$FF depending on the delta's sign bit (tested from the table's hi
+; byte). step_back is the exact inverse (SBC with #0/#$FF), used both for
+; reverse motion and to undo an out-of-bounds step, so fwd-then-back is
+; always bit-exact. Clobbers A,X.
 .step_fwd
     LDA angidx:ASL A:ASL A:TAX                      ; idx*4 into step table
     CLC
@@ -334,6 +427,9 @@ ORG &4000
     RTS
 
 ; --- derive_raw: PXRAW/PYRAW = 24-bit 8.8 position >> 5 (s16 result) ------
+; In: pxf..pyh. Out: $90/$91 = PXRAW, $92/$93 = PYRAW. Clobbers A,X,$EC.
+; Each shift step is an arithmetic >>1 of the 24-bit value: CMP #$80 copies
+; the top byte's sign into C, then ROR ripples it down through all 3 bytes.
 .derive_raw
     ; raw s16 = (24-bit 8.8 position) >> 5 — i.e. bits [20:5]. Shift the
     ; full 24 bits right 5 and keep the LOW TWO bytes of the result
@@ -355,6 +451,11 @@ ORG &4000
     RTS
 
 ; --- floor_vz: VZ ($04) tracks the grid floor under the derived raws ------
+; In: PXRAW/PYRAW ($90-$93). Out: VZ ($04) moved at most 1 prescaled unit
+; toward floor_tab[celly*36 + cellx] (see the grid comment at floor_tab):
+;   cellx = (rawx+1936)>>7 (0..35), celly = (rawy+1582)>>7 (0..21)
+; The 1-unit-per-frame easing ramps stairs/lifts smoothly instead of
+; snapping the eye height. Clobbers A,Y,$EC-$EE.
 .floor_vz
     LDA &90:CLC:ADC #&90:STA &EC                    ; rawx + 1936 ($790)
     LDA &91:ADC #&07:STA &ED
@@ -387,6 +488,10 @@ ORG &4000
 
 ; --- bounds check on the derived raws; revert the step if outside ---------
 ; s16 compare: in-range iff RAW >= MIN and RAW <= MAX.
+; bounds_or_revert_fwd/back: re-derive the raws for the just-stepped
+; position, test them, and undo the step (with the exact-inverse helper)
+; if any of the four limits failed. The stale raws left by a revert are
+; harmless: the frame loop re-derives before rendering.
 .bounds_or_revert_fwd
     JSR derive_raw
     JSR bounds_ok
@@ -402,6 +507,11 @@ ORG &4000
 .bor_ok2
     RTS
 
+; bounds_ok — C=1 iff (PXRAW,PYRAW) is inside the clamp rectangle.
+; Each test is the standard signed-16 '>=': subtract (keeping only the high
+; byte's flags) and correct N by V (EOR #$80 when the subtract overflowed);
+; N set after correction means the difference is negative -> out of range.
+; Clobbers A.
 .bounds_ok
     ; x >= RAWX_MIN ?
     LDA &90:SEC:SBC #LO(RAWX_MIN)
@@ -441,12 +551,17 @@ ORG &4000
 ; --- 64-entry movement step table: premultiplied 8.8 deltas ---------------
 ; forward = (cos(a), sin(a)) in world units; 8.8 prescaled delta =
 ; world_step * 256/8 = *32. Entry: dx lo, dx hi, dy lo, dy hi (s16).
+; The +65536.5 / AND &FFFF idiom is round-to-nearest of a possibly-negative
+; value into u16 two's complement (beebasm INT truncates toward zero).
 .step_tab
 FOR i, 0, 63
     EQUW INT(SPEED * 32 * COS(i * PI / 32) + 65536.5) AND &FFFF
     EQUW INT(SPEED * 32 * SIN(i * PI / 32) + 65536.5) AND &FFFF
 NEXT
 
+; --- T1hi -> beam class (same boundaries as anim_drv's table; see the
+; flip_sched header). Only 78 entries — flip_sched pre-filters H >= 78
+; to class 0 — where anim_drv pads the table to 256 instead. ---
 .beamtbl
     FOR n, 0, 77
       IF n <= 14

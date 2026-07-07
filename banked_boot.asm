@@ -6,11 +6,18 @@
 ; Boot: copy banks, load LOW, MODE 4, JMP driver. Driver: SEI, set spawn ZP +
 ; CRTC, span_init (bank C), clear FB, render (bank L0->...), display, spin.
 
+; (legacy equates from an earlier copy-loop bootloader; nothing below uses
+; them — the driver stores scrstrt to $70 directly)
 zp_src = &70
 zp_dst = &72
 zp_save = &74
 
 ; ============================ BOOTLOADER ($0900) ============================
+; boot — runs via *RUN !BOOT (SHIFT-BREAK). Each JSR $FFF7 is OSCLI on one
+; of the command strings below; *SRLOAD needs a Master MOS / SWRAM utility
+; ROM (modelb_boot.asm is the plain-DFS equivalent that stages each bank
+; through main RAM and copies via ROMSEL instead). Ends with a jump into
+; the driver; never returns.
 ORG &0900
 .boot
     ; *SRLOAD each bank straight into sideways RAM (no main-RAM staging, no
@@ -33,6 +40,12 @@ SAVE "BOOT", &0900, boot_end, &0900
 
 ; ============================ DRIVER ($3C00) ===============================
 ; Lives in the clipper-vacated low space the render never touches ($3C00-$47FF).
+; drv — render exactly ONE frame and halt (hardware proof, not a game loop;
+; anim_drv/walk_drv are the looping drivers built on this skeleton).
+; SEI then direct hardware only. Phases: spawn ZP (position, sincos for
+; angle-byte 128, raws) -> engine table pointers -> CRTC + screen start
+; $5800 -> view_setup then span_init (canonical render_frame order) ->
+; clear the framebuffer -> init_frame + render_frame -> spin for ever.
 ORG &3C00
 .drv
     SEI

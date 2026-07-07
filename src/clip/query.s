@@ -7,12 +7,28 @@
 ; 3 compares + linked-list chase, so it's very fast per iteration.
 ; Profile: ~14% of all clipper cycles despite trivial per-call cost,
 ; due to sheer call frequency.
+;
+; Input:  zp_ilo, zp_ihi (closed range; caller pre-clamps to [0,255]).
+; Output: A = 1/0 (Z reflects result).  Clobbers X,Y; may update
+;         zp_hg_cache (slot of the hit span, for the next call).
+;
+; Python mirror: EndpointClipSpans.has_gap — a pure X-overlap test:
+; every live span is treated as having aperture (no top/bot check).
+; pseudocode:
+;   for s in spans (sorted by xstart):
+;     if s.xend < ilo:  continue          # wholly left — keep scanning
+;     return 1 if s.xstart <= ihi else 0  # first candidate decides
+;   return 0
 ; ======================================================================
 span_has_gap:
 .scope
 ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
 ; range, 0 otherwise. Spans are sorted by xstart.
 ; Coherence cache: check last-matching span first (saves full walk).
+; Cache probe: if the cached slot still overlaps [ilo,ihi], answer 1
+; without walking. Only a positive answer is cacheable — cache misses
+; fall through to the full walk. (mark_solid / tighten zero the cache,
+; so a live cached slot always holds current XSTART/XEND.)
 LDX zp_hg_cache
 BEQ hg_no_cache
 LDA POOL_XEND,X
@@ -78,6 +94,8 @@ RTS
 ; ======================================================================
 ; IS_FULL: check if screen is completely occluded (active list empty)
 ; Returns A=1 if head==0 (all columns solid), A=0 otherwise.
+; Input: zp_head only.  No clobbers besides A (X,Y preserved).
+; Python mirror: EndpointClipSpans.is_full (== not self.spans).
 ; ======================================================================
 span_is_full:
 LDA zp_head
@@ -92,6 +110,15 @@ RTS
 ; SPAN_READ: serialize active span list to buffer at (zp_buf)
 ; Output: byte 0 = count, then 8 bytes per span (xstart, xend, xlo,
 ; xhi, tl, bl, tr, br).  Used by test harness for state comparison.
+;
+; Input:  zp_buf = u16 pointer to output buffer (harness sets $0300);
+;         zp_head = active list.
+; Output: buffer filled as above; xhi is RECONSTRUCTED as xlo + den
+;         (the pool stores DEN, not XHI); count written last at offset
+;         0.  Clobbers A,X,Y, zp_tmp0 (running count).
+; Consumed by SpanClip6502.read_spans (span_clip_6502.py), which
+; returns the same 8-tuples as EndpointClipSpans.spans.
+; NB: no overflow guard — 31 spans max * 8 + 1 = 249 bytes, fits a page.
 ; ======================================================================
 span_read:
 .scope
@@ -158,6 +185,13 @@ RTS
 ;
 ; This is the most complex and cycle-expensive operation.
 ; ======================================================================
+; NOTE (2026-07): the banner above describes the RETIRED per-span
+; tighten that lived at this site. Narrowing is now records-driven:
+; DCL writes 4-byte segment records while clipping the portal edge
+; lines, and tighten_from_records (clip/tfr.s) consumes them with a
+; 3-cursor event walk — no per-span seg interpolation here any more.
+; The banner is kept as an algorithm reference for what the records
+; walk must be state-equivalent to; only the alignment pad remains.
 ; Extra ZP for tighten (zp_new_tail aliases zp_save2 — tighten doesn't use mark_solid scratch)
 ; Crossover divide working set ($FA-$FF)
 

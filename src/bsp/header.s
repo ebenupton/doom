@@ -49,6 +49,18 @@ BANK_L2 = 7                             ; angle tables, bbox, recip, VWH, VWHC c
 ; bit-exact. A is clobbered — only invoke at A-dead points.
 ; --- Node/subsector SoA pages (head of ROM_MAIN; see wad_packed.py).
 ; n_nodes, n_ss <= 256, so every field is a constant-base LDA abs,X.
+; Layout mirrors wad_packed.build_packed: 13 node pages (one page per
+; field byte, index X = node id) then 3 subsector pages (index X = ss id):
+;   pg 0/1  nx lo/hi   partition-line origin, map-centre-relative raw s16
+;   pg 2/3  ny lo/hi
+;   pg 4/5  dx lo/hi   partition-line direction (raw s16)
+;   pg 6/7  dy lo/hi
+;   pg 8/9  right child id lo/hi   (WAD encoding: bit 15 set = subsector)
+;   pg 10/11 left child id lo/hi
+;   pg 12   baked partition type (NT_*: skips the axis test AND the
+;           unused field loads — 73% of E1M1 nodes are axis-aligned)
+;   pg 13   subsector seg count
+;   pg 14/15 subsector first-seg index lo/hi
 .if ::BANKED
 NODE_SOA = $8000                        ; bank L0 window
 .else
@@ -217,6 +229,23 @@ sqr2_hi = $A800
 ; can move to a sideways-RAM bank: these stay in low RAM (always mapped),
 ; reached during the data-bank phase. Bit-identical to span_clip's versions;
 ; same ZP map + sqr tables. (BBC banked port.)
+;
+; ============================================================================
+; SC_UMUL8 — u8 × u8 → u16 via quarter-square tables. ~50 cycles, no loop.
+;   Inputs:  A = a, zp_mul_b = b.
+;   Output:  zp_prod_lo/hi = a * b (u16).
+;   Clobbers: A, X, Y, zp_tmp0.
+;
+;   Identity: a*b = qsqr(a+b) - qsqr(|a-b|), where qsqr(n) = floor(n²/4).
+;   Pseudocode:
+;     d = |a - b|                       # Y index
+;     s = a + b                         # X index (9 bits)
+;     if s < 256:  prod = sqr[s]  - sqr[d]
+;     else:        prod = sqr2[s & $FF] - sqr[d]   # sqr2[n] = qsqr(n+256)
+;   The sqr2 tables absorb the 9th bit of a+b, so no 16-bit indexing is
+;   needed. (The uo path enters SBC with carry set from the ADC overflow,
+;   which is exactly the required borrow-clear.)
+; ============================================================================
 SC_UMUL8:
 .scope
 STA zp_tmp0
@@ -249,11 +278,34 @@ SBC sqr_hi,Y
 STA zp_prod_hi
 RTS
 .endscope
+; ============================================================================
+; SC_UDIV16_8 — restoring shift-subtract division, u16 ÷ u8.
+;   Inputs:  zp_div_lo/hi = numerator (u16), zp_div_den = denominator (u8).
+;   Output:  A = quotient low byte (also in zp_div_lo; on the 16-bit path
+;            zp_div_hi holds the quotient high byte). Remainder discarded.
+;   Clobbers: A, X, zp_div_lo/hi.
+;
+;   Two paths, selected on div_hi vs den:
+;   - div_hi < den → quotient fits u8. The numerator is pre-shifted left 8
+;     (lo→hi, lo:=0) so only 8 loop iterations remain, and the leading
+;     zero bits of the quotient are skipped by an unrolled compare-only
+;     prelude: ASL/ROL + CMP den per bit, with NO quotient bookkeeping
+;     until the first bit that commits (remainder >= den, or a carry out
+;     of ROL). That bit jumps to dskip_cN, which loads X = bits remaining
+;     and falls into the shared loop via dskip_commit. If all 8 compares
+;     miss, the quotient is exactly 0 (early RTS).
+;   - div_hi >= den → d16: full 16-iteration loop. Quotient bits shift
+;     into div_lo:div_hi from the right as the numerator shifts out into
+;     the remainder accumulating in A; dl_over handles remainder bit 8
+;     popping out of ROL (subtract always fits, CMP skipped).
+; ============================================================================
 SC_UDIV16_8:
 .scope
 LDA zp_div_hi
 CMP zp_div_den
 BCS d16
+; --- u8-quotient fast path: numerator <<= 8, then find the first
+;     committing quotient bit with compare-only steps. ---
 LDX zp_div_lo
 STX zp_div_hi
 LDX #0
@@ -300,6 +352,9 @@ CMP zp_div_den
 BCS dskip_c1
 LDA #0
 RTS
+; all 8 compares missed → quotient = 0
+; --- dskip ladder: entered from the prelude at the first committing
+;     quotient bit; X = loop iterations remaining (this bit included). ---
 dskip_c8:
 LDX #8
 BNE dskip_commit
@@ -324,12 +379,16 @@ BNE dskip_commit
 dskip_c1:
 LDX #1
 dskip_commit:
+; Commit the first quotient bit: remainder -= den, quotient bit → 1,
+; then continue in the generic loop for the remaining X-1 bits.
 SBC zp_div_den
 INC zp_div_lo
 DEX
 BNE dl
 LDA zp_div_lo
 RTS
+; --- 16-bit path: A = remainder, X = 16 iterations; quotient shifts
+;     into div_lo:div_hi behind the departing numerator bits. ---
 d16:
 LDA #0
 LDX #16
@@ -349,6 +408,8 @@ BNE dl
 LDA zp_div_lo
 RTS
 dl_over:
+; remainder bit 8 carried out of ROL → remainder >= 256 > den:
+; the subtract always fits (carry already set), skip the CMP.
 SBC zp_div_den
 JMP dl_commit
 .endscope

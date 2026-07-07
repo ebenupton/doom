@@ -1,3 +1,12 @@
+; ============================================================================
+; br_umul8 — unsigned u8 × u8 → u16.
+;   Inputs:  zp_br_a, zp_br_b (u8 each)
+;   Output:  zp_br_resl/resh (u16)
+;   Uses:    SC_UMUL8, the shared quarter-square multiplier
+;            (a*b = f(a+b) - f(a-b), f(x) = x^2/4 table lookup);
+;            clobbers zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
+; Thin adapter from the br_a/br_b register convention onto SC_UMUL8.
+; ============================================================================
 br_umul8:
 LDA zp_br_b
 STA zp_mul_b
@@ -12,6 +21,15 @@ RTS
 ; ============================================================================
 ; br_smul8 — signed s8 × s8 → s16. Inputs in zp_br_a, zp_br_b.
 ; Result in zp_br_resl/resh (s16, 2's complement). ~80 cycles.
+;
+; Sign-magnitude wrapper over the unsigned quarter-square core:
+;   sign = (a < 0) ^ (b < 0);  a = |a|;  b = |b|
+;   res  = SC_UMUL8(a, b)                        (u8 × u8 → u16)
+;   if sign: res = -res                          (16-bit negate)
+; (br_smul_s8_u8 — a signed, b unsigned full 0..255 — is the clipper
+; unit's variant; THIS one treats BOTH operands as s8.)
+; Clobbers zp_br_a/b (replaced by magnitudes), zp_br_sign, zp_mul_b,
+; zp_prod_lo/hi, zp_tmp0, X, Y.
 ; ============================================================================
 br_smul8:
 .scope
@@ -68,6 +86,15 @@ RTS
 ;   else: 16-bit avg of (HI:LO[i], HI:LO[i+1]).
 ;
 ; Tables: HI[0..513] at $E000, LO[0..513] at $E202.
+;
+; Mirrors fp_recip (fp.py): HI:LO[i] = min((128 << 8) // i, $7FFF), the
+; 8.8 perspective scale FOCAL/vy. The 9.1 input keeps one fractional bit
+; of vy; averaging the two adjacent 16-bit entries (add + 17-bit shift,
+; no multiply) resolves it. The average MUST be done on the reconstructed
+; 16-bit values — averaging hi/lo bytes separately is catastrophically
+; wrong when HI[i] != HI[i+1]. One reciprocal serves both X and Y
+; projection: the 1.2 aspect ratio is baked into height prescaling.
+; Clobbers zp_br_t0-t3 and zp_br_p/p_h.
 ; ============================================================================
 br_recip:
 .scope
@@ -188,6 +215,13 @@ RTS
 ;     elif mag == 0 or lo == 0: return 0
 ;     else: val = (lo*mag + 128) >> 8
 ;     return -val if neg else val
+;
+; Mirrors _frac_rot_term (fp.py). Called (up to) 4× per FRAME by
+; br_view_setup (view.s) to build frac_vx/frac_vy — the rotation of the
+; player position's fractional byte. Vertex fractions are always 0, so
+; per-vertex work needs only the integer terms (br_rot_int below).
+; unity = cardinal angle (|sin| or |cos| rounds to 1.0): exact copy of
+; lo, no multiply. Clobbers zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
 ; ============================================================================
 zp_ft_lo = $0BF8                        ; absolute (swapped with zp_seg_lv1x/y); cold
 zp_ft_mag = $0BF9
@@ -257,6 +291,13 @@ RTS
 ;     else if mag == 0: return 0
 ;     else: val = m8(d_hi, mag)
 ;     return -val if neg else val
+;
+; Mirrors _rot_int (fp.py), widened: d is now the full s16 world-space
+; delta (wx - px_int), so the result is s24 in resl/resh/resext — the
+; 8.8 view coordinate plus a sign/overflow extension byte. Called 4× per
+; vertex-cache miss by br_to_view (view.s): dx·sin, dy·cos, dx·cos,
+; dy·sin. Clobbers zp_ri_dlo/dhi (replaced by |d|), zp_ri_neg, zp_br_t1,
+; zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
 ; ============================================================================
 ; ($29, $2B were unused zp_ri_mag/zp_ri_one -> reclaimed for zp_seg_bfh/bch)
 zp_ri_d = zp_ri_dlo                     ; backwards-compat alias
@@ -310,6 +351,8 @@ SBC zp_ri_dhi
 STA zp_ri_dhi
 ri_d_pos:
 ; --- inlined umul8(zp_ri_dlo, mag) — saves JSR/RTS in the hot rotation ---
+; Quarter-square multiply: a*b = f(a+b) - f(|a-b|), f(x) = x²/4 tables.
+; X = a+b (sqr2_* tables when the sum carries past 255), Y = |a-b|.
 LDA zp_ri_dlo
 STA zp_tmp0
 SEC
@@ -341,7 +384,8 @@ SBC sqr_hi,Y
 STA zp_br_resh
 um1_done:
 ZERO zp_br_resext
-; --- inlined umul8(zp_ri_dhi, mag) ---
+; --- inlined umul8(zp_ri_dhi, mag) — same quarter-square pattern; its
+; u16 product lands one byte up: added into resh (lo) and resext (hi). ---
 LDA zp_ri_dhi
 STA zp_tmp0
 SEC
