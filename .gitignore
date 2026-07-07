@@ -1,27 +1,11 @@
 __pycache__/
 *.pyc
-*.pyo
-.DS_Store
-Screenshot *.png
-cmp_h_mode.png
-doom_frame.png
-doom_frame_2x.png
-hw_frame.png
-doom_debug.txt
-doom95.zip
-
-# Diagnostic scripts (not part of the core)
-diag_*.py
-trace_*.py
-test_pw_max.py
-test_tighten*.py
 build/
-
-# Engine build outputs (asmbuild/ld65 writes these; deterministic from src/)
-bsp_render*.bin
-span_clip*.bin
-slope_div.bin
-
-# separate line-drawing experiment repos (own git histories)
-line-test-a/
-line-test-new/
+# personal working files kept out of the repo
+*.png
+*.pdf
+*.html
+*_files/
+Screenshot*
+# emulator side files
+line-test/
