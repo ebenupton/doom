@@ -157,13 +157,15 @@ STA bca_p1
 LDA #$FE
 STA bca_p1+1
 ck_right:
-; right clip: tspan = (CLIPANGLE + p2) & 4095 ; same, clamping p2 = +512
+; right clip: tspan = (CLIPANGLE + p2) & 4095 ; same, clamping p2 = +512.
+; 512's low byte is 0, so the low-byte "add" is just p2's low byte (no
+; carry possible) and only the high byte needs the +2 — unlike the left
+; side, where 0 - p1_lo genuinely borrows. (Was CLC / LDA #<512 /
+; ADC lo / TAX / LDA #>512 / ADC hi: 4 cycles of adding zero.)
+LDX bca_p2                              ; tspan lo = p2 lo
+LDA bca_p2+1
 CLC
-LDA #<512
-ADC bca_p2
-TAX
-LDA #>512
-ADC bca_p2+1
+ADC #>512                               ; tspan hi = p2 hi + 2
 AND #$0F
 CMP #4
 BCC ck_done
