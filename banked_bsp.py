@@ -70,6 +70,9 @@ def build_banked(flatr):
     if os.path.exists('bsp_render_vxc_bk.bin'):
         vxc = open('bsp_render_vxc_bk.bin', 'rb').read()
         c[0x2300:0x2300 + len(vxc)] = vxc
+    if os.path.exists('bsp_render_hud_bk.bin'):
+        hud = open('bsp_render_hud_bk.bin', 'rb').read()
+        c[0x2400:0x2400 + len(hud)] = hud   # debug HUD @ $A400
     bm.define_bank(BANK_C, c)
 
     # --- FHCH -> low $2400 (copy the bytes the flat harness put at $B600) ---
@@ -125,8 +128,9 @@ def build_banked(flatr):
     from engine_load import _regions
     for addr, fn in _regions(banked=1):
         if (fn.startswith('span_clip') or fn == 'bsp_render_rc_bk.bin'
-                or fn == 'bsp_render_al0_bk.bin' or fn == 'bsp_render_al2_bk.bin'):
-            continue    # clipper -> BANK_C; rc -> L2; anim workers -> L0/L2 above
+                or fn == 'bsp_render_al0_bk.bin' or fn == 'bsp_render_al2_bk.bin'
+                or fn == 'bsp_render_hud_bk.bin'):
+            continue    # clipper/HUD -> BANK_C; rc -> L2; anim workers -> L0/L2
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):

@@ -21,6 +21,8 @@ pyf    = &3D85
 pyl    = &3D86
 pyh    = &3D87
 jidx   = &3D88          ; vsync journal index (0..62)
+hud_en   = &3D89        ; debug HUD on/off (H key toggles)
+hud_prev = &3D8A        ; H-key state last frame (press-edge debounce)
 ; vsync journal: 64 x 4 bytes at $0300 (dead OS workspace; no OS after boot):
 ;   +0 class taken (0/1/2)   +1 T1 hi at classify
 ;   +2 T1 hi after the vsync wait ($FF = class 2, no wait)
@@ -125,7 +127,6 @@ ORG &3C00
     JSR anim_glue_init
     ; --- init state ---
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
-    LDA #0   :STA jidx
     LDA #&6C :STA backhi
     JSR clr58t:JSR clr58b:JSR clr6Ct:JSR clr6Cb
 ; ---------------------------------------------------------------------------
@@ -204,11 +205,36 @@ ORG &3DA0
 ; table, CFG and VWH tables are all in L2. Leaves L2 paged (the frame loop
 ; re-pages banks before every engine call). Clobbers A + whatever anim uses.
 .anim_glue_init
+    LDA #0
+    STA jidx                                        ; (init spill: main is full)
+    STA hud_en : STA hud_prev                       ; HUD off at boot
     LDA #7:STA &FE30
     JMP &BA03                                       ; jt_anim_init (RTS there)
 .anim_glue_tick
     LDA #7:STA &FE30
     JMP &BA00                                       ; jt_anim_tick
+.key_hud
+    ; H key: toggle the debug HUD on the press edge only (hud_prev holds
+    ; last frame's state, so holding the key flips it exactly once).
+    LDA #&54:STA &FE4F : BIT &FE4F : BMI kh_dn      ; H internal code &54
+    LDA #0 : STA hud_prev
+    RTS
+.kh_dn
+    LDA hud_prev : BNE kh_done                      ; still held: no retrigger
+    LDA #1 : STA hud_prev
+    LDA hud_en : EOR #1 : STA hud_en
+.kh_done
+    RTS
+.hud_glue
+    ; When enabled, draw "X=hhhh Y=hhhh R=hh" (OS ROM font) onto the top
+    ; row of the buffer just rendered, before flip_sched displays it.
+    LDA hud_en : BNE hg_on
+    RTS
+.hg_on
+    LDA #6:STA &FE30                                ; HUD code lives in bank C
+    JSR &A400                                       ; hud_draw
+    LDA #4:STA &FE30                                ; restore a render bank
+    RTS
 
 ORG &4000
 ; ---------------------------------------------------------------------------
@@ -270,6 +296,7 @@ ORG &4000
 ; Toggles backhi. Re-phases T1 at each vsync it waits on. Clobbers A,X,Y.
 ; ---------------------------------------------------------------------------
 .flip_sched
+    JSR hud_glue                                    ; debug HUD onto the back buffer
     ; R12/R13 straddle guard: the pair of writes must not bracket the CRTC
     ; frame-top reload (e=5632us -> T1 = $37FE), or one field displays a
     ; mixed address. Spin while H is in [$36,$38] (<= 768us, rare).
@@ -375,7 +402,8 @@ ORG &4000
     JSR step_back
     JSR bounds_or_revert_back
 .ri_ndown
-    RTS
+    JMP key_hud                                     ; H: HUD toggle (in the
+                                                    ; $3DA0 pocket; RTSes)
 
 ; --- movement: position += / -= step table entry for angidx ---------------
 ; step_fwd: 24-bit position += step_tab[angidx] (s16 8.8 delta, applied to

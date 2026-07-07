@@ -138,8 +138,12 @@ LDA zp_hud_dst
 ADC #8
 STA zp_hud_dst                          ; next cell (row 0 never crosses
 RTS                                     ; the page: 32 cells * 8 = 256)
+.endscope
+
 hexdig:
 .byte "0123456789ABCDEF"
-.endscope
+
+; restore the segment for subsequently-included parts (they inherit)
+.segment "MAIN"
 
 .endif
