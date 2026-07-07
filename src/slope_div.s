@@ -775,10 +775,11 @@ RTS
 ; idx>>1), rc_bytehi (bitmap byte idx>>6), rc_bit (mask for (idx>>3)&7).
 ; idx = boxp - rom_bbox = node*16 + side*8 (0..3768).
 bcac_index:
-SEC
+; ROM_BBOX is page-aligned (loaders assert), so idx = boxp - base is just
+; the boxp low byte plus a single hi-byte subtract.
 LDA bca_boxp
-SBC zp_rom_bbox_lo
 STA rc_idxlo
+SEC
 LDA bca_boxp+1
 SBC zp_rom_bbox_hi
 STA rc_idxhi

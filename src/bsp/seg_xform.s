@@ -54,26 +54,27 @@ BEQ vc_miss
 vc_hit:
 ; --- Cache hit: load evy, evx, rhi/rlo, sx, near-clip flag from cache ---
 ; Cache offset = idx*8. Compute base ptr.
+; idx*8 with VCACHE_BASE page-aligned: byte-at-a-time, no 16-bit chain.
 LDA zp_seg_v_idx_lo
-STA zp_br_t2
+LSR A
+LSR A
+LSR A
+LSR A
+LSR A
+STA zp_br_t2                            ; idx_lo >> 5
 LDA zp_seg_v_idx_hi
-STA zp_br_t3
-ASL zp_br_t2
-ROL zp_br_t3
-; *2
-ASL zp_br_t2
-ROL zp_br_t3
-; *4
-ASL zp_br_t2
-ROL zp_br_t3
-; *8
+ASL A
+ASL A
+ASL A
+ORA zp_br_t2
 CLC
-LDA #<VCACHE_BASE
-ADC zp_br_t2
-STA zp_br_p
-LDA #>VCACHE_BASE
-ADC zp_br_t3
+ADC #>VCACHE_BASE
 STA zp_br_p_h
+LDA zp_seg_v_idx_lo
+ASL A
+ASL A
+ASL A
+STA zp_br_p
 ; Load evy, evx (offsets 0, 1) into current slots — needed for near-plane
 ; crossing math even when the vertex is clipped or a cache hit.
 LDY #0
@@ -114,24 +115,27 @@ ORA zp_seg_v_bitm
 STA (zp_br_p),Y
 
 ; --- Compute cache base ptr (idx*8) ---
+; idx*8, page-aligned base (see the hit path above)
 LDA zp_seg_v_idx_lo
+LSR A
+LSR A
+LSR A
+LSR A
+LSR A
 STA zp_br_t2
 LDA zp_seg_v_idx_hi
-STA zp_br_t3
-ASL zp_br_t2
-ROL zp_br_t3
-ASL zp_br_t2
-ROL zp_br_t3
-ASL zp_br_t2
-ROL zp_br_t3
-; *8
+ASL A
+ASL A
+ASL A
+ORA zp_br_t2
 CLC
-LDA #<VCACHE_BASE
-ADC zp_br_t2
-STA zp_seg_v_cache_lo
-LDA #>VCACHE_BASE
-ADC zp_br_t3
+ADC #>VCACHE_BASE
 STA zp_seg_v_cache_hi
+LDA zp_seg_v_idx_lo
+ASL A
+ASL A
+ASL A
+STA zp_seg_v_cache_lo
 
 ; --- Read s16 vertex x, y from ROM_VERTS + idx*4 ---
 LDA zp_seg_v_idx_lo

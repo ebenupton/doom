@@ -139,7 +139,7 @@ def build_banked(flatr):
     _w16(bm, ZP_ROM_SEG_HDR_LO, 0x8000 + layout['off_seg_hdr'])
     _w16(bm, ZP_ROM_FHCH_LO,    FHCH_LOW)
     _w16(bm, ZP_ROM_DETAIL_LO,  FHCH_LOW)
-    _w16(bm, 0x0BEA,            0x8E00)   # zp_rom_bbox -> L2
+    _w16(bm, 0x0BEA,            0x8E00)   # zp_rom_bbox -> L2 (MUST be page-aligned)
     _w16(bm, 0x0BF4,            0xA200)   # zp_rom_vwh  -> L2
     bm[0xFF00] = 0x00
     bm.select(BANK_L0)

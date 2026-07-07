@@ -71,6 +71,10 @@ SS_CNT    = NODE_SOA + $D00
 SS_FLO    = NODE_SOA + $E00
 SS_FHI    = NODE_SOA + $F00
 
+; Page-alignment contracts for the byte-at-a-time pointer builds
+; (br_bbox_visible, bcac_index, the seg_xform vcache indexers):
+.assert (VCACHE_BASE & $FF) = 0, error, "VCACHE_BASE must be page-aligned"
+
 .macro PAGE bank
 .if ::BANKED
 LDA #bank

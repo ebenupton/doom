@@ -50,7 +50,8 @@ VWH_BASE        = 0xFB00   # relocated from $E484: the DOOM_ANIM build's private
                            # $E484-$E93F now hosts the flat ANIM tables + workers.
 ROM_DETAIL_BASE = 0xB600
 ROM_FHCH_BASE   = 0xB600
-ROM_BBOX_BASE   = 0xC600
+ROM_BBOX_BASE   = 0xC600   # MUST stay page-aligned: br_bbox_visible/bcac_index
+                           # build/split the bbox pointer byte-at-a-time
 
 
 class BspRender6502:
