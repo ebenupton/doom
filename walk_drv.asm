@@ -104,6 +104,9 @@ ORG &3C00
     BNE vxinit
     LDA #1
     STA &05DB                                       ; VXC_ENABLE
+    ; --- animated sectors: init state machines + lazy patch hook (glue
+    ;     at $3DA0 pages bank L2; must run AFTER vxinit's $05xx zeroing) ---
+    JSR anim_glue_init
     ; --- init state ---
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
     LDA #0   :STA jidx
@@ -132,6 +135,7 @@ ORG &3C00
     INY:LDA (&EC),Y:STA &09
     INY:LDA (&EC),Y:STA &0A
     INY:LDA (&EC),Y:STA &3A2F                       ; bca_ab
+    JSR anim_glue_tick                              ; advance movers (lazy patch)
     ; --- render into hidden buffer (cleared by previous flip_sched) ---
     LDA backhi:STA &70
     LDA #4 :STA &FE30 : JSR &4809                   ; br_view_setup
@@ -153,6 +157,16 @@ ORG &3D90
 .drv_end
 
 ; --- unrolled framebuffer clears + flip scheduler: identical to anim_drv --
+; --- animated-sector glue: page bank L2 and enter the anim jump table
+;     ($3DA0-$3DBF pocket between ptrtab and the sincos table at $3E00) ---
+ORG &3DA0
+.anim_glue_init
+    LDA #7:STA &FE30
+    JMP &BA03                                       ; jt_anim_init (RTS there)
+.anim_glue_tick
+    LDA #7:STA &FE30
+    JMP &BA00                                       ; jt_anim_tick
+
 ORG &4000
 .clr58t
     LDA #0 : TAY

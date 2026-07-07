@@ -4,6 +4,7 @@ Model B + SWRAM (same machine-code ROMSEL boot as doom_modelb.ssd), with
 walk_drv (keyboard-driven position/angle) overlaid at $3C00 instead of the
 spin driver. Cursor keys: Left/Right turn, Up/Down move forward/back."""
 import os, subprocess, builtins
+os.environ.setdefault('DOOM_ANIM', '1')     # animated doors/lifts on the disc
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()

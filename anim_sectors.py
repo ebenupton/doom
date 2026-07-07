@@ -293,6 +293,108 @@ def fb_to_surface(fb):
     return surf
 
 
+# ── 6502 table generation ───────────────────────────────────────────────
+#
+# Emits the exact byte tables src/bsp/anim.s consumes, for either address
+# space. Mover bit m = index in sorted(ANIM_SECTORS) everywhere (SSMASK,
+# TABL0/TABL2 pointer slots, CFG stride, ANIM_WS blocks).
+#
+# CFG (12 B/mover): min88, max88, speed88 (all prescaled 8.8), wait_at_A,
+# wait_at_B (frames, <=63), start88, start state/timer byte, pad.
+# Doors (ceil): A=closed, B=open, start at A. Lifts (floor): A=bottom,
+# B=top, start waiting at B.
+
+ANIM_SPEED_WORLD = {'ceil': 12, 'floor': 10}      # world units / frame
+ANIM_WAITS = {'ceil': (14, 20), 'floor': (12, 18)}  # frames at A, at B
+
+
+def _speed88(world_per_frame):
+    # world/frame -> prescaled 8.8 per frame (exact packer rounding)
+    return max(1, dw._prescale_height(world_per_frame * 256))
+
+
+def gen_6502_tables(flat=True):
+    """{address: bytes} for the flat harness or the banked window space."""
+    import struct as _st
+    if flat:
+        import bsp_render_6502 as br
+        A = dict(ssmask=0xE484, tabl0=0xE580, cfg=0xE680, tabl2=0xE6D0,
+                 fhch=br.ROM_FHCH_BASE, vwh=br.VWH_BASE,
+                 hdr=br.ROM_MAIN_BASE + _OFF_SEG_HDR)
+    else:
+        A = dict(ssmask=0xBB00, tabl0=0xBC00, cfg=0xB980, tabl2=0xB900,
+                 fhch=0x2400, vwh=0xA200, hdr=0x8000 + _OFF_SEG_HDR)
+    order = sorted(dw.ANIM_SECTORS)
+    out = {}
+    # SSMASK
+    mask = bytearray(len(dw.fp_ssectors))
+    for ssi, ms in SS_MOVERS.items():
+        for m in ms:
+            mask[ssi] |= 1 << order.index(m.sec)
+    out[A['ssmask']] = bytes(mask)
+    # TABL0: 6 ptrs + blocks (FHCH byte addrs for the MOVING role + flag entries)
+    ptrs = bytearray(12)
+    blocks = bytearray()
+    base0 = A['tabl0']
+    for mi, sec in enumerate(order):
+        m = MOVERS[sec]
+        addr = base0 + 12 + len(blocks)
+        _st.pack_into('<H', ptrs, mi * 2, addr)
+        fhch_addrs = []
+        if m.kind == 'ceil':
+            fhch_addrs += [A['fhch'] + i * 6 + 1 for i in m.front_segs]  # ch
+            fhch_addrs += [A['fhch'] + i * 6 + 3 for i in m.back_segs]   # bch
+        else:
+            fhch_addrs += [A['fhch'] + i * 6 + 0 for i in m.front_segs]  # fh
+            fhch_addrs += [A['fhch'] + i * 6 + 2 for i in m.back_segs]   # bfh
+        flag_segs = [i for i in m.touch_segs if dw.fp_segs_vwh[i][2] is not None]
+        blk = bytearray([len(fhch_addrs), len(flag_segs)])
+        for a in fhch_addrs:
+            blk += _st.pack('<H', a)
+        for i in flag_segs:
+            blk += _st.pack('<HH', A['hdr'] + i * SEG_HDR_SIZE + SH_FLAGS,
+                            A['fhch'] + i * 6)
+        blocks += blk
+    out[A['tabl0']] = bytes(ptrs) + bytes(blocks)
+    # TABL2: 6 ptrs + blocks (private VWH slot addrs for the moving role)
+    ptrs2 = bytearray(12)
+    blocks2 = bytearray()
+    for mi, sec in enumerate(order):
+        m = MOVERS[sec]
+        addr = A['tabl2'] + 12 + len(blocks2)
+        _st.pack_into('<H', ptrs2, mi * 2, addr)
+        slots = m.vwh_c if m.kind == 'ceil' else m.vwh_f
+        blk = bytearray([len(slots)])
+        for idx, _v in slots:
+            blk += _st.pack('<H', A['vwh'] + idx)
+        blocks2 += blk
+    out[A['tabl2']] = bytes(ptrs2) + bytes(blocks2)
+    # CFG
+    cfg = bytearray()
+    for sec in order:
+        m = MOVERS[sec]
+        wa, wb = ANIM_WAITS[m.kind]
+        sp = _speed88(ANIM_SPEED_WORLD[m.kind])
+        if m.kind == 'ceil':
+            lo, hi = m.closed, m.open
+            start, sst = lo, (0x00 | wa)          # waiting at A (closed)
+        else:
+            lo, hi = m.bottom, m.top
+            start, sst = hi, (0x80 | wb)          # waiting at B (top)
+        lo88 = dw._prescale_height(lo) << 8
+        hi88 = dw._prescale_height(hi) << 8
+        st88 = dw._prescale_height(start) << 8
+        cfg += _st.pack('<hhHBBhBB', lo88, hi88, sp, wa, wb, st88, sst, 0)
+    out[A['cfg']] = bytes(cfg)
+    return out
+
+
+def install_6502_tables(mem, flat=True):
+    for addr, blob in gen_6502_tables(flat).items():
+        for i, b in enumerate(blob):
+            mem[addr + i] = b
+
+
 def camera_for(mover, dist=170.0):
     """Viewpoint in front of the mover's largest outside-facing seg."""
     import math

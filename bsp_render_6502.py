@@ -44,7 +44,10 @@ ENTRY_BR_INIT_FRAME   = _sym('jt_br_init_frame')
 # Table load addresses: harness-owned placement decisions (the engine reads
 # these tables only through the pointer slots above), NOT engine symbols.
 ROM_MAIN_BASE   = 0x6C00
-VWH_BASE        = 0xE484
+VWH_BASE        = 0xFB00   # relocated from $E484: the DOOM_ANIM build's private
+                           # mover slots (1248 total) overflowed the old slot below
+                           # ANG at $E940; $FB00-$FFF9 is unused in the flat harness.
+                           # $E484-$E93F now hosts the flat ANIM tables + workers.
 ROM_DETAIL_BASE = 0xB600
 ROM_FHCH_BASE   = 0xB600
 ROM_BBOX_BASE   = 0xC600
@@ -83,9 +86,9 @@ class BspRender6502:
         # 1248 total) and DOES NOT FIT — relocation needed before the 6502
         # can run an anim build (banked VWH_BK $A200-$A6FF fits: 1280).
         n_vwh_total = len(rom_main) - vwh_start
-        assert VWH_BASE + n_vwh_total <= 0xE940, (
+        assert VWH_BASE + n_vwh_total <= 0xFFFA, (
             f"VWH table ({n_vwh_total} entries) overflows flat placement "
-            f"$E484-$E93F — DOOM_ANIM build needs a VWH relocation")
+            f"$FB00-$FFF9")
         for i in range(vwh_start):
             mem[ROM_MAIN_BASE + i] = rom_main[i]
         for i in range(len(rom_main) - vwh_start):

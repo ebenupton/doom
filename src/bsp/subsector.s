@@ -12,8 +12,14 @@
 ;     6. Emit top + bottom horizontals (and L+R verticals).
 ; ============================================================================
 br_render_subsector:
-.scope
 PAGE BANK_L0                            ; ss / seg_hdr / verts / sincos live in bank L0
+; Animated-sector hook: anim_init retargets this JMP at anim_hub, which
+; lazily patches any dirty mover with segs in this subsector (see
+; src/bsp/anim.s). Disabled (default) it falls straight through: 3 cycles.
+anim_ss_hook:
+JMP anim_ss_cont
+anim_ss_cont:
+.scope
 ; --- Mark visited (test instrumentation) ---
 LDA zp_node_chlo
 STA zp_br_t0

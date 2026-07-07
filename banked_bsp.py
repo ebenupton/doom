@@ -46,6 +46,14 @@ def build_banked(flatr):
     # --- bank L0 = ROM_MAIN (rom_main[0:off_vwh]) at window offset 0 ($8000) ---
     l0 = bytearray(16384)
     l0[:off_vwh] = bytes(rom_main[:off_vwh])
+    if os.path.exists('bsp_render_al0_bk.bin'):
+        al0 = open('bsp_render_al0_bk.bin', 'rb').read()
+        l0[0x3E00:0x3E00 + len(al0)] = al0
+    if dw.ANIM_SECTORS:
+        import anim_sectors as _an0
+        for addr, blob in _an0.gen_6502_tables(flat=False).items():
+            if 0xBB00 <= addr < 0xBE00:          # L0-side tables (SSMASK/TABL0)
+                l0[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
     bm.define_bank(BANK_L0, l0)
 
     # --- bank C = clipper ($8000) + rasteriser ($A900) ---
@@ -84,13 +92,27 @@ def build_banked(flatr):
     cpy(0x0900, 0xF601, 1025)            # VATOX  -> $8900
     cpy(0x0E00, 0xC600, len(flatr.bbox_table))   # bbox -> $8E00
     cpy(0x1D00, 0xE000, 1028)            # recip  -> $9D00 (514 HI + 514 LO)
-    cpy(0x2200, 0xE484, layout['n_vwh'])  # VWH   -> $A200
+    from bsp_render_6502 import VWH_BASE as _FLAT_VWH
+    assert layout['n_vwh'] <= 0x0500, f"VWH {layout['n_vwh']} overflows VWH_BK $A200-$A6FF"
+    cpy(0x2200, _FLAT_VWH, layout['n_vwh'])  # VWH -> $A200
     # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
     # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays
     # end at $ACFF).
     if os.path.exists('bsp_render_rc_bk.bin'):
         rc = open('bsp_render_rc_bk.bin', 'rb').read()
         l2[0x3500:0x3500 + len(rc)] = rc
+    # Animated sectors (DOOM_ANIM builds): VWH worker -> L2 @ $BA00; tick
+    # tables TABL2/CFG @ $B900/$B980; L0 gets the FHCH+flags worker @ $BE00
+    # plus SSMASK/TABL0 @ $BB00/$BC00 (seeded before define_bank below via
+    # the l0 image; L2 seeded here).
+    if os.path.exists('bsp_render_al2_bk.bin'):
+        al2 = open('bsp_render_al2_bk.bin', 'rb').read()
+        l2[0x3A00:0x3A00 + len(al2)] = al2
+    if dw.ANIM_SECTORS:
+        import anim_sectors as _an
+        for addr, blob in _an.gen_6502_tables(flat=False).items():
+            if 0xB900 <= addr < 0xBA00:          # L2-side tables
+                l2[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
     bm.define_bank(BANK_L2, l2)
 
 
@@ -102,8 +124,9 @@ def build_banked(flatr):
     # BANK_C above, not main RAM).
     from engine_load import _regions
     for addr, fn in _regions(banked=1):
-        if fn.startswith('span_clip') or fn == 'bsp_render_rc_bk.bin':
-            continue                    # clipper -> BANK_C; rc code -> BANK_L2 above
+        if (fn.startswith('span_clip') or fn == 'bsp_render_rc_bk.bin'
+                or fn == 'bsp_render_al0_bk.bin' or fn == 'bsp_render_al2_bk.bin'):
+            continue    # clipper -> BANK_C; rc -> L2; anim workers -> L0/L2 above
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):
