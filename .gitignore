@@ -9,3 +9,4 @@ build/
 Screenshot*
 # emulator side files
 line-test/
+.DS_Store

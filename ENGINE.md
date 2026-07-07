@@ -7,6 +7,12 @@ without re-deriving tribal knowledge.
 
 ## The one-paragraph architecture
 
+> Data note: node and subsector tables live at the HEAD of ROM_MAIN as
+> page-aligned structure-of-arrays (13 node pages incl. a baked partition
+> type + 3 subsector pages; `NODE_SOA` in bsp/header.s). Every consumer
+> indexes them with a constant-base `LDA abs,X`; keep n_nodes, n_ss <= 256.
+
+
 Two lock-stepped pipelines over shared prescaled WAD data: a **Python
 packed reference** (`doom_wireframe.packed_render_bsp` + `fp.py`, all
 arithmetic through the 8×8-multiply primitive) and the **native 6502
@@ -25,8 +31,12 @@ list and rasterised by the vendored NJ line drawer.
 
     src/zp.inc           ZERO-PAGE REGISTRY — every ZP symbol, one file.
                          Overlay groups are deliberate; see "Zero page".
-    src/slope_div.s      Angle module: SlopeDiv, point_to_angle (inlined
-                         into corner_phi), bbox_check_angle, straddle flag.
+    src/slope_div.s      Angle unit = ordered .includes of src/ang/:
+      ang/header_div.s     jump table, workspace, SlopeDiv (exact, unrolled)
+      ang/bca.s            bbox_check_angle (angle-space visibility)
+      ang/rcache.s         rotation-coherence psi cache (frame classifier,
+                           cached check path; RCCODE segment when banked)
+      ang/corner_phi.s     box_classify + corner_phi/point_to_angle
     src/span_clip.s      Span clipper unit = ordered .includes of src/clip/:
       clip/header.s        build flags, jump table (+ .exports)
       clip/arith.s         umul8 (pinned $2030), udiv16_8
@@ -57,8 +67,14 @@ list and rasterised by the vendored NJ line drawer.
       bsp/defq.s           deferred solid/tighten op queue ($0600) — B region
       bsp/resolve_crossing.s  child resolver + crossing divide — D region
       bsp/ycache.s         Y-projection cache (VWHC) — W region
-      bsp/lo.s             overflow region: reproject_at_crossing, ap-edge
-                           verticals, wide projection — LO region
+      bsp/lo.s             overflow region: br_node_setup (SoA node reads,
+                           baked partition types), reproject_at_crossing,
+                           ap-edge verticals, wide projection — LO region
+      bsp/vxcache.s        translation-coherence vertex cache (base+CACC
+                           telescoping; VXCODE segment = bank C when banked)
+      bsp/anim.s           animated sectors: mover tick state machines +
+                           lazy visibility-driven table patching (ANIMH
+                           resident hub, ANIML0/ANIML2 bank workers)
     src/engine_flat.cfg  ld65 config, flat build (harness/regression)
     src/engine_banked.cfg  ld65 config, BANKED build (Model B disc)
 
