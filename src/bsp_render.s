@@ -10,6 +10,7 @@
 .include "bsp/bbox.s"
 .include "bsp/subsector.s"
 .include "bsp/seg_xform.s"
+.include "bsp/vxcache.s"
 .include "bsp/seg_project.s"
 .include "bsp/main_tail.s"
 .include "bsp/defq.s"

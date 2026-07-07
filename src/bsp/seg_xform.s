@@ -162,7 +162,15 @@ LDY #3
 LDA (zp_br_p),Y
 STA zp_br_dyhi
 
+; Scope split: vxc_jsr_site must be a GLOBAL label — vxc_frame SMC-patches
+; this JSR's operand between br_to_view (VXC disabled: byte-identical
+; original path) and vxc_to_view (translation-coherent vertex cache).
+; No local labels cross this boundary (verified: vc_* live above, nc_*
+; below in their own scope).
+.endscope
+vxc_jsr_site:
 JSR br_to_view
+.scope
 
 ; Save view-space x (vxext:vxhi=int part s16, vxlo=frac part) before
 ; project_y clobbers vxlo/hi.

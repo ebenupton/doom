@@ -91,6 +91,19 @@ ORG &3C00
     BNE rcinit
     LDA #1
     STA &B4E8                                       ; RCACHE_ENABLE
+    ; --- translation-coherence vertex cache (VXC): zero valid bitmap +
+    ;     state ($05A0-$05FF, unbanked), then enable. Zero-init is safe:
+    ;     first enabled frame is cold (prev_ab sentinel path) and every
+    ;     entry stores before it loads. ---
+    LDA #0
+    TAX
+.vxinit
+    STA &05A0,X
+    INX
+    CPX #&60
+    BNE vxinit
+    LDA #1
+    STA &05DB                                       ; VXC_ENABLE
     ; --- init state ---
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
     LDA #0   :STA jidx
@@ -127,6 +140,13 @@ ORG &3C00
     JSR flip_sched
     JMP frame
 
+; ptrtab must clear the driver variable block (angidx..jidx live at
+; $3D80-$3D88 as fixed equates; the sincos table is overlaid at $3E00).
+; An extra init block once pushed it INTO the variables - the engine's
+; table pointers then got clobbered at runtime by angidx/jidx stores and
+; every frame rendered pixel-free while the loop ran happily. Pin it.
+ASSERT P% <= &3D80
+ORG &3D90
 .ptrtab
     EQUB &00,&24, &00,&8E, &00,&80, &00,&00         ; fhch bbox verts (unused)
     EQUB &0C,&96, &C0,&99, &00,&A2, &00,&24         ; ss seg_hdr vwh detail

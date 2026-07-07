@@ -55,6 +55,13 @@ def build_banked(flatr):
     rast = open('linedraw_or_reloc.bin', 'rb').read()      # ORG $A900
     roff = RASTER_OFF - 0x8000
     c[roff:roff + len(rast)] = rast
+    # VXC fat paths -> bank C @ $A300 (planes are BSS at $9700-$A2D3; the
+    # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
+    # define_bank: it COPIES the image into a fresh buffer.
+    assert len(clip) <= 0x1700, f'clipper {len(clip)} bytes reaches VXC planes at $9700'
+    if os.path.exists('bsp_render_vxc_bk.bin'):
+        vxc = open('bsp_render_vxc_bk.bin', 'rb').read()
+        c[0x2300:0x2300 + len(vxc)] = vxc
     bm.define_bank(BANK_C, c)
 
     # --- FHCH -> low $2400 (copy the bytes the flat harness put at $B600) ---
@@ -85,6 +92,7 @@ def build_banked(flatr):
         rc = open('bsp_render_rc_bk.bin', 'rb').read()
         l2[0x3500:0x3500 + len(rc)] = rc
     bm.define_bank(BANK_L2, l2)
+
 
     # --- banked bsp_render code (_bk variants) into low RAM ---
     # Region list comes FROM THE LD65 CONFIG (engine_load._regions) so a new
