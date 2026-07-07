@@ -359,13 +359,48 @@ def player_floor(x, y):
     if sd_idx == 0xFFFF: sd_idx = ld[5]
     return sectors[sidedefs[sd_idx][5]][0]
 
+# ── Animatable (mover) sectors — DOOM_ANIM=1 (prototype) ────────────────
+#
+# Sectors whose floor or ceiling moves at runtime (doors, lifts, one-shot
+# floors), discovered from linedef specials.  Build passes that bake
+# height assumptions (seg stripping, NOVT suppression, VWH dedup) treat
+# their bounding segs conservatively so heights become pure runtime
+# inputs for them.  Off by default: the build is byte-identical unless
+# DOOM_ANIM=1 (see anim_sectors.py for the runtime patcher).
+_ANIM_ENABLED = os.environ.get('DOOM_ANIM', '0') == '1'
+_DOOR_SPECIALS = {1, 26, 27, 28, 31, 46, 61, 63, 86, 90, 103, 117, 118}
+_TAG_MOVER_SPECIALS = {          # sector found via tag; moving part:
+    88: 'floor', 62: 'floor', 10: 'floor', 21: 'floor',   # lifts
+    36: 'floor', 37: 'floor', 38: 'floor', 70: 'floor',   # floor lowers
+    102: 'floor', 82: 'floor', 23: 'floor',
+}
+ANIM_SECTORS = {}                # sector idx -> 'ceil' (doors) | 'floor'
+if _ANIM_ENABLED:
+    for _ld in linedefs:
+        _spec, _tag = _ld[3], _ld[4]
+        if _spec in _DOOR_SPECIALS and _ld[6] != 0xFFFF:
+            ANIM_SECTORS[sidedefs[_ld[6]][5]] = 'ceil'
+        elif _spec in _TAG_MOVER_SPECIALS and _tag:
+            for _si2, _sec2 in enumerate(sectors):
+                if _sec2[6] == _tag:
+                    ANIM_SECTORS[_si2] = _TAG_MOVER_SPECIALS[_spec]
+    print(f"ANIM: {len(ANIM_SECTORS)} mover sectors: {sorted(ANIM_SECTORS)}")
+
+def _seg_touches_anim(s):
+    fi, bi = seg_sectors(s)
+    return fi in ANIM_SECTORS or (bi is not None and bi in ANIM_SECTORS)
+
 # ── Strip invisible segs for fixed-point path ────────────────────────────
 #
 # Two-sided segs with identical floor AND ceiling on both sides are pure
 # lighting/trigger boundaries.  They produce no draws and their tighten is
 # a no-op.  Strip them and rebuild the subsector seg table.
+# Mover-bounding segs are never stripped: their heights change at runtime
+# (a lift flush with the adjacent floor still needs its boundary segs).
 
 def _is_renderable(s):
+    if ANIM_SECTORS and _seg_touches_anim(s):
+        return True
     fi, bi = seg_sectors(s)
     if bi is None: return True
     return sectors[fi][0] != sectors[bi][0] or sectors[fi][1] != sectors[bi][1]
@@ -400,6 +435,25 @@ def _vwh(vertex_idx, height):
         _vwh_map[key] = idx
     return idx
 
+# Mover heights get PRIVATE (un-shared) VWH slots: the dedup above shares
+# a (vertex, height) entry across sectors, so mutating a mover's entry
+# would corrupt every other user of that height at that vertex.  One slot
+# per (mover sector, vertex, floor|ceil) — segs bounding the same mover
+# share it (they move together).  ANIM_VWH_SLOTS[(sector, 'f'|'c')] lists
+# the slot indices the runtime patcher must rewrite on height change.
+_anim_vwh_map = {}
+ANIM_VWH_SLOTS = {}
+
+def _vwh_anim(sector_idx, which, vertex_idx, height):
+    key = (sector_idx, vertex_idx, which)
+    idx = _anim_vwh_map.get(key)
+    if idx is None:
+        idx = len(_vwh_table)
+        _vwh_table.append((vertex_idx, height))
+        _anim_vwh_map[key] = idx
+        ANIM_VWH_SLOTS.setdefault((sector_idx, which), []).append(idx)
+    return idx
+
 # Build VWH-augmented seg table: original seg fields + 4 front VWH indices
 # + 4 back VWH indices (or -1 if one-sided) + linedef deltas (ldx, ldy).
 #
@@ -416,16 +470,28 @@ for _i, _s in enumerate(_stripped_segs):
     _fs = fp_sectors[_fi]
     _fh, _ch = _fs[0], _fs[1]
     _v1, _v2 = _s[0], _s[1]
-    _vwh_ft1 = _vwh(_v1, _ch)
-    _vwh_fb1 = _vwh(_v1, _fh)
-    _vwh_ft2 = _vwh(_v2, _ch)
-    _vwh_fb2 = _vwh(_v2, _fh)
+    if _fi in ANIM_SECTORS:
+        _vwh_ft1 = _vwh_anim(_fi, 'c', _v1, _ch)
+        _vwh_fb1 = _vwh_anim(_fi, 'f', _v1, _fh)
+        _vwh_ft2 = _vwh_anim(_fi, 'c', _v2, _ch)
+        _vwh_fb2 = _vwh_anim(_fi, 'f', _v2, _fh)
+    else:
+        _vwh_ft1 = _vwh(_v1, _ch)
+        _vwh_fb1 = _vwh(_v1, _fh)
+        _vwh_ft2 = _vwh(_v2, _ch)
+        _vwh_fb2 = _vwh(_v2, _fh)
     if _bi is not None:
         _bs = fp_sectors[_bi]
-        _vwh_bt1 = _vwh(_v1, _bs[1])
-        _vwh_bb1 = _vwh(_v1, _bs[0])
-        _vwh_bt2 = _vwh(_v2, _bs[1])
-        _vwh_bb2 = _vwh(_v2, _bs[0])
+        if _bi in ANIM_SECTORS:
+            _vwh_bt1 = _vwh_anim(_bi, 'c', _v1, _bs[1])
+            _vwh_bb1 = _vwh_anim(_bi, 'f', _v1, _bs[0])
+            _vwh_bt2 = _vwh_anim(_bi, 'c', _v2, _bs[1])
+            _vwh_bb2 = _vwh_anim(_bi, 'f', _v2, _bs[0])
+        else:
+            _vwh_bt1 = _vwh(_v1, _bs[1])
+            _vwh_bb1 = _vwh(_v1, _bs[0])
+            _vwh_bt2 = _vwh(_v2, _bs[1])
+            _vwh_bb2 = _vwh(_v2, _bs[0])
     else:
         _vwh_bt1 = _vwh_bb1 = _vwh_bt2 = _vwh_bb2 = -1
     # Linedef delta (for back-face test), asserted s8 — matches 6502 packing.
@@ -877,6 +943,30 @@ for _i, _svwh in enumerate(fp_segs_vwh):
             _novt_rule4.add((_i, _side))
             break
 
+# Movers: suppression decisions reason about heights that now change at
+# runtime (solidity, steps, aperture frames).  Conservatively draw ALL
+# verticals for any seg sharing a vertex with a mover-bounding seg — a
+# superset of every rule's owner/neighbour dependency (rules only reason
+# about segs at the shared vertex).
+if ANIM_SECTORS:
+    _anim_verts = set()
+    for _svwh in fp_segs_vwh:
+        if _svwh[1] in ANIM_SECTORS or (_svwh[2] is not None and _svwh[2] in ANIM_SECTORS):
+            _anim_verts.add(_svwh[0][0])
+            _anim_verts.add(_svwh[0][1])
+    _n_anim_novt_cleared = 0
+    for _i, _svwh in enumerate(fp_segs_vwh):
+        _s = _svwh[0]
+        if _s[0] in _anim_verts or _s[1] in _anim_verts:
+            if _seg_novt_flags[_i]:
+                _n_anim_novt_cleared += 1
+            _seg_novt_flags[_i] = 0
+            _seg_novt_aperture.pop((_i, 1), None)
+            _seg_novt_aperture.pop((_i, 2), None)
+            _novt_rule4.discard((_i, 1))
+            _novt_rule4.discard((_i, 2))
+    print(f"ANIM: NOVT cleared on {_n_anim_novt_cleared} mover-adjacent segs")
+
 _n_novt1 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT1)
 _n_novt2 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT2)
 print(f"NOVT flags: {_n_novt1} v1 + {_n_novt2} v2 "
@@ -901,7 +991,8 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
     seg_novt_flags=_seg_novt_flags,
     seg_novt_aperture=_seg_novt_aperture,
     novt_rule4=_novt_rule4,
-    vert_covered_by_solid_ap=_vert_covered_by_solid_ap)
+    vert_covered_by_solid_ap=_vert_covered_by_solid_ap,
+    anim_vert_set=(_anim_verts if ANIM_SECTORS else None))
 
 # Build ROM banks for sideways ROM paging
 packed_rom_banks = [

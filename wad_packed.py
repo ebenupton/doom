@@ -128,7 +128,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                  seg_novt_flags=None,
                  seg_novt_aperture=None,
                  novt_rule4=None,
-                 vert_covered_by_solid_ap=None):
+                 vert_covered_by_solid_ap=None,
+                 anim_vert_set=None):
     """Build the byte arrays from parsed WAD data.
 
     Returns (rom_main, rom_detail, rom_recip, layout).
@@ -254,6 +255,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         # RULE 2 contributions from the caller (colinear solid neighbour).
         if seg_novt_flags is not None:
             flags |= seg_novt_flags[i] & (SF_NOVT1 | SF_NOVT2)
+        # Mover-adjacent segs (DOOM_ANIM): heights are runtime inputs, so
+        # every vertical is drawn unconditionally (rule 1 included) and no
+        # aperture edges are baked — the APV overlay slots stay portal
+        # bfh/bch/VWH data for the runtime patcher.
+        if anim_vert_set is not None and (s[0] in anim_vert_set or s[1] in anim_vert_set):
+            flags &= ~(SF_NOVT1 | SF_NOVT2)
 
         # APEDGE flags: emit an aperture edge at NOVT endpoints where
         # the opening would otherwise have no visible boundary.
