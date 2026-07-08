@@ -514,17 +514,100 @@ JMP si_clamp
 ;   goto draw_clipped_line
 draw_clipped_line_s16:
 .scope
+; ---- Order endpoints / reject the degenerate point ----
+; This entry OWNS the ordering contract (swap when x1 > x2, reject the
+; zero-length point), mirroring the harness wrapper's Python prelude.
+; It used to be caller-side only: the harness wrapper did it, but the
+; NATIVE seg emitters (bsp/subsector.s) stage sx1/sx2 raw — and a
+; nearly-edge-on seg can project REVERSED by one pixel (sub-pixel
+; rounding inverts the 1px order). A reversed line walked the span
+; list without emitting or recording, the portal's tighten record was
+; lost, and the aperture stayed open — far subtrees leaked through
+; (the 8F.1F/0F.DB/84 "solid bars": 1891px over-draw, 4x frame cost).
+; Records counts need no handling on the reject path: the seg emitter
+; pre-zeroes TOP/BOT_RECORDS counts (and the wrapper zeroes its buffer)
+; before any edge is staged.
+;
 ; ---- Fast path: all 4 endpoints already in u8 range ----
-; HI bytes all zero ⇔ all coords in [0, 255]. Wrapper has already
-; written zp_line_xl/yl/xr/yr (= LC_X*_LO via alias), ordered the
-; endpoints, and rejected degenerate input. Tail-call DCL directly.
+; HI bytes all zero ⇔ all coords in [0, 255]; u8 compares suffice for
+; the ordering contract here.  zp_line_xl/yl/xr/yr (= LC_X*_LO via
+; alias) are already written by the caller.
 LDA LC_X1_HI
 ORA LC_Y1_HI
 ORA LC_X2_HI
 ORA LC_Y2_HI
 BNE main_clip
+LDA zp_line_xl
+CMP zp_line_xr
+BEQ fp_x_eq
+BCS fp_swap
 JMP draw_clipped_line
+fp_x_eq:
+; x1 == x2: vertical unless y1 == y2 (zero-length point → reject)
+LDA zp_line_yl
+CMP zp_line_yr
+BEQ fp_degen
+JMP draw_clipped_line
+fp_degen:
+RTS
+fp_swap:
+; x1 > x2: swap the endpoints (u8 — hi bytes are all zero here)
+LDA zp_line_xl
+LDX zp_line_xr
+STX zp_line_xl
+STA zp_line_xr
+LDA zp_line_yl
+LDX zp_line_yr
+STX zp_line_yl
+STA zp_line_yr
+JMP draw_clipped_line
+
 main_clip:
+; ---- Slow path: same contract on full s16 values, BEFORE the clip
+; (the wrapper swapped before clipping; clipping a reversed line and
+; re-ordering afterwards is NOT rounding-identical) ----
+LDA LC_X1_LO
+CMP LC_X2_LO
+BNE mc_x_ne
+LDA LC_X1_HI
+CMP LC_X2_HI
+BNE mc_x_ne
+; x1 == x2 (s16): degenerate iff y1 == y2 too
+LDA LC_Y1_LO
+CMP LC_Y2_LO
+BNE mc_ordered
+LDA LC_Y1_HI
+CMP LC_Y2_HI
+BNE mc_ordered
+RTS                                     ; zero-length point → reject
+mc_x_ne:
+; sign of x1 - x2 (s16): lo CMP has set C; standard SBC/V idiom on hi
+LDA LC_X1_LO
+CMP LC_X2_LO
+LDA LC_X1_HI
+SBC LC_X2_HI
+BVC mc_sign_ok
+EOR #$80
+mc_sign_ok:
+BMI mc_ordered                          ; x1 < x2 → already ordered
+; x1 > x2: swap endpoints (lo aliases + hi bytes)
+LDA zp_line_xl
+LDX zp_line_xr
+STX zp_line_xl
+STA zp_line_xr
+LDA zp_line_yl
+LDX zp_line_yr
+STX zp_line_yl
+STA zp_line_yr
+LDA LC_X1_HI
+LDX LC_X2_HI
+STX LC_X1_HI
+STA LC_X2_HI
+LDA LC_Y1_HI
+LDX LC_Y2_HI
+STX LC_Y1_HI
+STA LC_Y2_HI
+mc_ordered:
 ; ---- Quick reject: both endpoints on the same side of any edge ----
 ; Both x < 0?  hi byte negative for both means both < 0 (s16).
 LDA LC_X1_HI

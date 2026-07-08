@@ -23,11 +23,16 @@ pyh    = &3D87
 jidx   = &3D88          ; vsync journal index (0..62)
 hud_en   = &3D89        ; debug HUD on/off (H key toggles)
 hud_prev = &3D8A        ; H-key state last frame (press-edge debounce)
+D_ENABLE = &05FE        ; forward-coherence bbox cache master switch (bbox.s)
+D_FWD    = &05FF        ; per-frame flag: this frame's move was forward-only
 ; vsync journal: 64 x 4 bytes at $0300 (dead OS workspace; no OS after boot):
 ;   +0 class taken (0/1/2)   +1 T1 hi at classify
 ;   +2 T1 hi after the vsync wait ($FF = class 2, no wait)
 ;   +3 T1 hi after clears done
-jbase  = &0300
+jbase  = &1A00          ; RELOCATED 2026-07-08 from $0300: the forward-coherence
+                        ; bbox cache owns $0210-$03F7 (bbox.s); $1A00 is dead
+                        ; boot-loader memory (loader stages below $1B40, never
+                        ; touched after boot)
 tabbase = &3E00         ; sincos table (build-overlaid): 64 x 8 bytes
 
 SPEED = 12              ; world units per frame of forward motion
@@ -126,6 +131,8 @@ ORG &3C00
     ;     at $3DA0 pages bank L2; must run AFTER vxinit's $05xx zeroing) ---
     JSR anim_glue_init
     ; --- init state ---
+    LDA #1  :STA D_ENABLE                           ; forward-coherence bbox cache
+    ; (D_FWD needs no init: read_input clears it every frame)
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
     LDA #&6C :STA backhi
     JSR clr58t:JSR clr58b:JSR clr6Ct:JSR clr6Cb
@@ -288,7 +295,7 @@ ORG &4000
 ;           then clear bottom
 ;   class 0 (H 35..56, beam in top half): wait for vsync, then clear all
 ; walk_drv extras over the anim_drv version:
-;   - beamtbl here has only 78 entries, so a raw H >= 78 (transient/wrap
+;   - the class thresholds cover H 0-77, so a raw H >= 78 (transient/wrap
 ;     read) is pre-filtered to class 0, the always-safe choice;
 ;   - every decision is journalled, 4 bytes/frame at jbase ($0300): class,
 ;     H at classify, H after the vsync wait ($FF = class 2, none), H when
@@ -313,10 +320,18 @@ ORG &4000
     ; classify the beam; Y = jidx*4 = journal record offset
     LDA jidx:ASL A:ASL A:TAY
     LDX &FE45
-    LDA #0                                          ; T1hi >= 78: transient/wrap read
-    CPX #78                                         ; -> class 0 (wait; always safe)
-    BCS fs_havecls
-    LDA beamtbl,X
+    ; class(T1hi): <=14 -> 2, 15-34 -> 1, 35-56 -> 0, 57-77 -> 2, >=78 -> 0
+    ; (was a 78-byte beamtbl lookup; thresholds inlined 2026-07-08 to free
+    ; driver bytes for the D-cache flag handling)
+    LDA #0                                          ; class 0 (35-56, >=78 guard)
+    CPX #78 : BCS fs_havecls                        ; transient/wrap read -> wait
+    CPX #57 : BCS fs_cls2i                          ; 57-77 -> class 2
+    CPX #35 : BCS fs_havecls                        ; 35-56 -> class 0
+    CPX #15 : BCS fs_cls1i                          ; 15-34 -> class 1
+.fs_cls2i
+    LDA #2 : BNE fs_havecls                         ; <=14 (and 57-77) -> class 2
+.fs_cls1i
+    LDA #1
 .fs_havecls
     STA jbase,Y                                     ; journal: class
     TXA:STA jbase+1,Y                               ; journal: T1hi at classify
@@ -397,6 +412,11 @@ ORG &4000
 ; clamp rectangle. All four keys are independent (no else-chains).
 ; Clobbers A,X (via the movement helpers).
 .read_input
+    ; D_FWD: 1 iff this frame's net move is forward-only. Turn keys need
+    ; no explicit clear (the engine classifier compares the angle byte);
+    ; DOWN clears it (an UP whose bounds-revert cancelled plus a live
+    ; DOWN would otherwise flag a net-backward frame as forward).
+    LDA #0:STA D_FWD
     LDA #&19:STA &FE4F : BIT &FE4F : BPL ri_nleft   ; cursor LEFT
     LDA angidx:CLC:ADC #1:AND #63:STA angidx
 .ri_nleft
@@ -406,10 +426,12 @@ ORG &4000
     LDA #&39:STA &FE4F : BIT &FE4F : BPL ri_nup     ; cursor UP: forward
     JSR step_fwd
     JSR bounds_or_revert_fwd
+    LDA #1:STA D_FWD
 .ri_nup
     LDA #&29:STA &FE4F : BIT &FE4F : BPL ri_ndown   ; cursor DOWN: back
     JSR step_back
     JSR bounds_or_revert_back
+    LDA #0:STA D_FWD
 .ri_ndown
     JMP key_hud                                     ; H: HUD toggle (in the
                                                     ; $3DA0 pocket; RTSes)
@@ -599,18 +621,6 @@ NEXT
 ; --- T1hi -> beam class (same boundaries as anim_drv's table; see the
 ; flip_sched header). Only 78 entries — flip_sched pre-filters H >= 78
 ; to class 0 — where anim_drv pads the table to 256 instead. ---
-.beamtbl
-    FOR n, 0, 77
-      IF n <= 14
-        EQUB 2
-      ELIF n <= 34
-        EQUB 1
-      ELIF n <= 56
-        EQUB 0
-      ELSE
-        EQUB 2
-      ENDIF
-    NEXT
 
 ; --- floor-height grid: 36x22 cells of 128 world units over the clamp
 ; bounds, holding prescaled VZ (= _prescale_height(player_floor+41)),
@@ -627,4 +637,5 @@ FOR n, 0, 21
     EQUB HI(n * 36)
 NEXT
 .clr_end
+ASSERT clr_end <= &4800     ; MUST NOT touch the engine at $4800 (jump table!)
 SAVE "WALKDRV", &3C00, clr_end, &3C00

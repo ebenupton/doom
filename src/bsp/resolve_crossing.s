@@ -38,17 +38,25 @@ RTS
 ; product terms are EXACTLY zero: only the rlo term survives.
 ; ============================================================================
 px_rhi0:
-; sx = 128 + signext(hi(vx*rlo))    (terms A and C of the 3-mul path = 0)
+; sx = 128 + ((vx*rlo + 128) >> 8)  (terms A and C of the 3-mul path = 0;
+; the +128 is the round-to-nearest bias of the combined fractional term —
+; C is exactly zero here, so only B's product is rounded. 2026-07-08.)
 ;   Inputs:  zp_br_t0 = vx (s8), zp_br_rlo. Output: zp_br_resl/h (s16).
 ;   Reached by JMP from br_project_x_subpx (project.s); RTS returns to
-;   ITS caller. One s8×u8 multiply; the sign-extended high byte of the
-;   product is the whole non-constant part of sx.
+;   ITS caller. One s8×u8 multiply.
 LDA zp_br_t0
 STA zp_br_a
 LDA zp_br_rlo
 STA zp_br_b
 JSR br_smul_s8_u8
+; (product + 128) >> 8: add the bias to the lo byte, carry into hi
+; (no s16 overflow: |product| <= 127*255)
+LDA zp_br_resl
+CLC
+ADC #128
 LDA zp_br_resh
+ADC #0
+; A = rounded fractional term (s8); sx = 128 + signext(A)
 BPL px0_pos
 CLC
 ADC #128

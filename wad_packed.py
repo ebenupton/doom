@@ -432,10 +432,16 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             raw_bot   = n[side_base + 1]
             raw_left  = n[side_base + 2]
             raw_right = n[side_base + 3]
-            p_top   = (raw_top   - map_center_y) // prescale
-            p_bot   = (raw_bot   - map_center_y) // prescale
-            p_left  = (raw_left  - map_center_x) // prescale
-            p_right = (raw_right - map_center_x) // prescale
+            # Corners round OUTWARD (+1 unit inflation) so the prescaled
+            # box is a strict superset of the raw box even against the
+            # integer player position (2026-07-08): plain floor pulled the
+            # north/east edges INWARD by up to 7 world units, costing the
+            # angle-space gate several columns of span at near boxes (the
+            # gate-excess study; see fp_project_x's matching note).
+            p_top   = -((-(raw_top   - map_center_y)) // prescale) + 1
+            p_bot   = (raw_bot   - map_center_y) // prescale - 1
+            p_left  = (raw_left  - map_center_x) // prescale - 1
+            p_right = -((-(raw_right - map_center_x)) // prescale) + 1
             side_off = o + (side_base - 4) * 2  # +0 for right, +8 for left
             struct.pack_into('<hhhh', bbox_table, side_off,
                              p_top, p_bot, p_left, p_right)

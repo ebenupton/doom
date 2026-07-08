@@ -61,8 +61,8 @@ BNE bif_clr
 RTS
 
 br_render_frame:
-.scope
-JSR br_init_frame
+.scope bsp_walk                         ; named: br_dcache_frame SMC-patches
+JSR br_init_frame                       ; bsp_walk::bv_site_near/_far operands
 
 ; --- Initialize BSP stack: push root node id (plain-node entry). ---
 ZERO zp_bsp_stack_sp
@@ -138,7 +138,8 @@ STA zp_bbox_side
 LDA zp_node_chhi
 AND #$1F
 STA zp_node_chhi
-JSR br_bbox_visible
+bv_site_far:                            ; operand SMC-patched by br_dcache_frame
+JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
 BEQ bsp_loop_j                          ; far side invisible/occluded → skip
 JSR bsp_resolve_child                   ; ch := node.children[side]
 JMP bsp_dispatch
@@ -176,7 +177,8 @@ STX zp_bsp_stack_sp
 ; the old walk pushed near unconditionally and over-visited).
 LDA zp_side
 STA zp_bbox_side
-JSR br_bbox_visible
+bv_site_near:                           ; operand SMC-patched by br_dcache_frame
+JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
 BEQ bsp_loop_j                          ; near side invisible → skip subtree
 ; Near child visible → push it (already tagged: BSP_NEAR_HI carries the
 ; WAD subsector bit if the child is a leaf).

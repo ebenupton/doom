@@ -502,7 +502,7 @@ RTS
 ; ============================================================================
 ; br_project_x_wide — project a view-space X whose integer part is s16
 ; (doesn't fit s8) to screen X, bit-exact with Python's full-width
-;   sx = 128 + evx*rxh + (evx*rxl >> 8) + (frac*rxh >> 8)   (mod 2^16)
+;   sx = 128 + evx*rxh + ((evx*rxl + frac*rxh + 128) >> 8)   (mod 2^16)
 ; where evx = (zp_v_xext : zp_v_xint) s16, frac = zp_v_xfrac u8,
 ; rxh in [0,127] (recip 8.8 clamped to $7FFF), rxl u8.
 ;
@@ -575,32 +575,43 @@ TXA
 ADC zp_br_t2
 STA zp_br_t2
 
-; sum += umul8(xint, rxl).hi   (u8, the non-negative floor remainder)
+; sum += (umul8(xint, rxl) + umul8(xfrac, rxh) + 128) >> 8
+; Round-to-nearest of the COMBINED u16 fractional products (2026-07-08,
+; mirrors fp_project_x_subpx — see project.s note). Exact identity:
+;   (evx*rxl + frac*rxh + 128) >> 8
+;     = xext*rxl (added above) + ((xint*rxl + frac*rxh + 128) >> 8)
+; since the bracket is non-negative. +128 can't overflow the first u16
+; product (65025 + 128 < 65536), so a single carry chain suffices.
 LDA zp_br_rlo
 STA zp_mul_b
 LDA zp_v_xint
 JSR SC_UMUL8
-LDA zp_prod_hi
+LDA zp_prod_lo
 CLC
-ADC zp_br_vxlo
-STA zp_br_vxlo
-LDA #0
-ADC zp_br_vxhi
-STA zp_br_vxhi
-LDA #0
-ADC zp_br_t2
-STA zp_br_t2
-
-; sum += umul8(xfrac, rxh).hi  (sub-pixel term)
+ADC #128
+STA zp_br_t3
+LDA zp_prod_hi
+ADC #0
+STA zp_br_a                             ; (xint*rxl + 128) u16 in (t3, a)
 LDA zp_br_rhi
 STA zp_mul_b
 LDA zp_v_xfrac
 JSR SC_UMUL8
-LDA zp_prod_hi
+LDA zp_br_t3
+CLC
+ADC zp_prod_lo                          ; low half discarded past the carry
+LDA zp_br_a
+ADC zp_prod_hi
+STA zp_br_a                             ; term bits 8-15
+LDA #0
+ADC #0
+STA zp_br_t3                            ; term bit 16
+; accumulate the u9 term into (vxlo, vxhi, t2), staging the result
+LDA zp_br_a
 CLC
 ADC zp_br_vxlo
 STA zp_br_resl
-LDA #0
+LDA zp_br_t3
 ADC zp_br_vxhi
 STA zp_br_resh
 LDA #0

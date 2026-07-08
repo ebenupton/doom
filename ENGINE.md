@@ -59,7 +59,10 @@ list and rasterised by the vendored NJ line drawer.
       bsp/walk.s           br_init_frame, br_render_frame (BSP stack @ $0A00,
                            deferred far children, is_full early-exit)
       bsp/backface.s       back-face test (see "Known risks"), SC_/BCA imports
-      bsp/bbox.s           br_bbox_visible -> angle module -> has_gap
+      bsp/bbox.s           br_bbox_visible -> angle module -> has_gap;
+                           br_bbox_visible_d = forward-coherence cache
+                           wrapper (walk JSRs SMC-patched per frame;
+                           D_ENABLE, data $0210-$03F7 in old OS space)
       bsp/subsector.s      seg loop: headers, FHCH heights, emits, deferred ops
       bsp/seg_xform.s      per-vertex transform + vertex cache ($0C00)
       bsp/seg_project.s    do_project_y consumer gating
@@ -146,7 +149,11 @@ ground-truth verify at 5 fixed positions has not worsened vs
   affects both equally — use fb_gate.py (capture golden framebuffers
   before, byte-compare after).
 - `verify_6502_vs_python.py X Y AB` for one position; no args for the
-  147-position sweep. Its metric is two-sided: `over` = 6502-only pixels,
+  147-position sweep.
+- `tools/walkseq_check.py` (in the regression) drives multi-frame WALK
+  sequences with the forward-coherence bbox cache enabled and demands
+  pixel equality vs the fresh reference each frame — the gate for any
+  cross-frame caching of walk decisions. Its metric is two-sided: `over` = 6502-only pixels,
   `miss` = Python-only pixels. **Missing lines are bugs** — never dismiss
   either direction as "BSP divergence".
 - The float `render_bsp` is ground truth; `render_bsp_fp` is a legacy
@@ -214,6 +221,20 @@ ground-truth verify at 5 fixed positions has not worsened vs
   but E1M1 spans 4576×2816, so full-map coverage needs a wider player
   representation (s16.8 / per-region re-centering), not just prescale.
   Far in-spec corners are in the standing suites since 2026-07-05.
+
+## Cross-frame caches
+
+Three caches, all driver-enabled (harness default off, byte-identical):
+VXC (translation-coherent vertex transforms), RCACHE (position-keyed bbox
+corner angles; rotation/stationary frames), and the D cache (forward-
+coherence bbox verdicts+extents, bbox.s: serves while movement stays in
+the view cone at a fixed angle; 1/8 round-robin refresh; invisible
+verdicts exact by the convex-cone theorem, extents FOE-opened supersets).
+The D cache is pixel-preserving ONLY because of the 2026-07-08 gate
+invariant: projection round-to-nearest + outward-rounded/inflated packed
+bbox corners make every seg's drawn columns lie inside its ancestors'
+gate extents (153-view sweep, 100%). Walking frames measured -10..-19%
+(deep views) / -16% (spawn); stationary -1..-4% on top of RCACHE.
 
 ## Performance
 

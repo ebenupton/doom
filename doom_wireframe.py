@@ -1363,10 +1363,12 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
     rt_raw, rb_raw, rl_raw, rr_raw = (
         node[base], node[base + 1], node[base + 2], node[base + 3])
     # Prescale bbox corners into the same 8.0 frame as the player in ctx.
-    top = (rt_raw - _MCY) // _PRESCALE
-    bot = (rb_raw - _MCY) // _PRESCALE
-    left = (rl_raw - _MCX) // _PRESCALE
-    right = (rr_raw - _MCX) // _PRESCALE
+    # OUTWARD rounding + 1-unit inflation, identical to the packed bbox
+    # table (wad_packed.py) — see the note there.
+    top = -((-(rt_raw - _MCY)) // _PRESCALE) + 1
+    bot = (rb_raw - _MCY) // _PRESCALE - 1
+    left = (rl_raw - _MCX) // _PRESCALE - 1
+    right = -((-(rr_raw - _MCX)) // _PRESCALE) + 1
 
     px_int, py_int = ctx[0], ctx[1]
 

@@ -215,19 +215,24 @@ fp_recip_y = fp_recip
 def fp_project_x(vx, recip_hi, recip_lo):
     """Project view-space X to screen X (integer).
 
-    sx = 128 + vx * recip_hi + (vx * recip_lo >> 8)
-    Two 8x8 multiplies.
+    sx = 128 + vx * recip_hi + ((vx * recip_lo + 128) >> 8)
+    Two 8x8 multiplies.  The fractional term ROUNDS TO NEAREST
+    (2026-07-08): the old floor truncation gave a 0..1 column leftward
+    bias which (stacked with fp_project_x_subpx's second truncated
+    term) pushed drawn segs outside the angle-space bbox gate extents.
     """
-    return HALF_W + m8(vx, recip_hi) + (m8(vx, recip_lo) >> 8)
+    return HALF_W + m8(vx, recip_hi) + ((m8(vx, recip_lo) + 128) >> 8)
 
 def fp_project_x_subpx(vx, vx_frac, recip_hi, recip_lo):
     """Project with sub-pixel correction from fractional view-space X.
 
-    sx = 128 + vx * recip_hi + (vx * recip_lo >> 8) + (vx_frac * recip_hi >> 8)
-    Three 8x8 multiplies.
+    sx = 128 + vx*recip_hi + ((vx*recip_lo + vx_frac*recip_hi + 128) >> 8)
+    Three 8x8 multiplies.  The two fractional terms are SUMMED and
+    rounded to nearest ONCE (2026-07-08) — per-term floor truncation
+    lost up to 2 columns leftward (see fp_project_x note).
     """
-    return (HALF_W + m8(vx, recip_hi) + (m8(vx, recip_lo) >> 8)
-            + (m8(vx_frac, recip_hi) >> 8))
+    return (HALF_W + m8(vx, recip_hi)
+            + ((m8(vx, recip_lo) + m8(vx_frac, recip_hi) + 128) >> 8))
 
 def fp_project_y(height_delta, recip_hi, recip_lo):
     """Project height delta to screen Y (integer).

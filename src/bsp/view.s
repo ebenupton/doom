@@ -148,6 +148,7 @@ STA zp_br_fvyhi
 ; (no-op macro on flat; callers re-page before their next engine call).
 PAGE BANK_L2
 JSR jt_bca_frame
+JSR br_dcache_frame                     ; forward-coherence bbox cache (bbox.s)
 JSR vxc_frame                           ; translation-coherence vertex cache
 RTS
 .endscope

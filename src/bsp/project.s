@@ -11,11 +11,14 @@
 ;     zp_br_resl/h = sx (s16 screen x)
 ;
 ;   Python:
-;     sx = HALF_W + m8(vx, recip_hi) + (m8(vx, recip_lo) >> 8)
-;                + (m8(vx_frac, recip_hi) >> 8)
+;     sx = HALF_W + m8(vx, recip_hi)
+;                + ((m8(vx, recip_lo) + m8(vx_frac, recip_hi) + 128) >> 8)
 ;
 ;   Three 8x8 multiplies: signed s8×u8 (×2) and unsigned u8×u8 (×1).
 ;   (fp_project_x_subpx in fp.py; terms A/B/C below in that order.)
+;   The B+C fractional terms are summed and ROUNDED TO NEAREST once
+;   (2026-07-08): per-term floor truncation lost up to 2 columns
+;   leftward, pushing drawn segs outside the angle-space bbox gates.
 ;
 ;   This is the NARROW path — the integer view-x must fit s8. Callers go
 ;   through br_project_x_auto (defq.s B region), which dispatches here or
@@ -52,51 +55,57 @@ LDA zp_br_vxhi
 ADC zp_br_resh
 STA zp_br_vxhi
 
-; --- Add B = (signed(vx) × u8(recip_lo)) >> 8 ---
-; Compute s16 product, take HI byte as s8, sign-extend, add to sum.
+; --- Add ((B + C + 128) >> 8): B = s16 vx*recip_lo, C = u16 frac*recip_hi.
+; Round-to-nearest over the combined fractional terms. s24 running sum
+; in (t2, t3, vxext); vxext is dead in the narrow path (view-x fits s8;
+; vxlo/hi are already reused as the sx accumulator).
 LDA zp_br_t0
 STA zp_br_a
 LDA zp_br_rlo
 STA zp_br_b
 JSR br_smul_s8_u8
-LDA zp_br_resh
-STA zp_br_t2
-; s8 hi byte of product = "B" value
-; Sign-extend t2 into a 16-bit add.
-LDA zp_br_t2
-BPL b_pos
-LDA #$FF
-STA zp_br_t3
-; sign-extension byte
-JMP b_have_ext
-b_pos:
-LDA #0
-STA zp_br_t3
-b_have_ext:
-LDA zp_br_vxlo
+; (B + 128): exact s16, |B| <= 127*255 so no overflow
+LDA zp_br_resl
 CLC
-ADC zp_br_t2
-STA zp_br_vxlo
-LDA zp_br_vxhi
-ADC zp_br_t3
-STA zp_br_vxhi
-
-; --- Add C = (u8(vx_frac) × u8(recip_hi)) >> 8 ---
-; (exactly zero when the fractional view-x is zero — skip the multiply)
+ADC #128
+STA zp_br_t2
+LDA zp_br_resh
+ADC #0
+STA zp_br_t3
+; sign-extend (B + 128) into the s24 ext byte
+LDA #0
+STA zp_br_vxext
+LDA zp_br_t3
+BPL px_b_pos
+LDA #$FF
+STA zp_br_vxext
+px_b_pos:
+; + C (u16) — exactly zero when the fractional view-x is zero
 LDA zp_br_t1
 BEQ px_c_done
 LDA zp_br_rhi
 STA zp_mul_b
 LDA zp_br_t1
 JSR SC_UMUL8
-LDA zp_prod_hi
+LDA zp_br_t2
 CLC
-ADC zp_br_vxlo
-STA zp_br_vxlo
-LDA #0
-ADC zp_br_vxhi
-STA zp_br_vxhi
+ADC zp_prod_lo
+STA zp_br_t2
+LDA zp_br_t3
+ADC zp_prod_hi
+STA zp_br_t3
+LDA zp_br_vxext
+ADC #0
+STA zp_br_vxext
 px_c_done:
+; fractional term = s24 sum >> 8 = (t3, vxext) as s16; add to sx
+LDA zp_br_vxlo
+CLC
+ADC zp_br_t3
+STA zp_br_vxlo
+LDA zp_br_vxhi
+ADC zp_br_vxext
+STA zp_br_vxhi
 
 ; Move sum into resl/h (the standard output slot).
 LDA zp_br_vxlo
