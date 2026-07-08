@@ -5,7 +5,10 @@
 ;                zp_seg_ldx/ldy (s8 linedef delta, header bytes 8-9),
 ;                zp_seg_flags (header byte 10; SF_DIR = $01).
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
-;   Output: zp_seg_skip = 1 if back-facing, 0 if front-facing.
+;   Output: A = 1 if back-facing, 0 if front-facing (Z flag valid at
+;           return — callers can branch without reloading). 2026-07-09:
+;           was zp_seg_skip; that slot now belongs to the near-clip flag
+;           (br_seg_xform_vertex) alone.
 ;   Clobbers: A, X, Y; zp_br_dxlo/hi, zp_br_dylo/hi (the s16 deltas),
 ;             zp_br_t2/t3, zp_br_a, and the mul workspace (via br_smul_s8_s16).
 ;
@@ -28,24 +31,11 @@
 ; ============================================================================
 br_back_face_test:
 .scope
-; dx = px_int - lv1_x (s16).
-LDA zp_br_px_h
-SEC
-SBC zp_seg_lv1x_lo
-STA zp_br_dxlo
-LDA zp_br_px_e
-SBC zp_seg_lv1x_hi
-STA zp_br_dxhi
-; dy = py_int - lv1_y (s16)
-LDA zp_br_py_h
-SEC
-SBC zp_seg_lv1y_lo
-STA zp_br_dylo
-LDA zp_br_py_e
-SBC zp_seg_lv1y_hi
-STA zp_br_dyhi
-
-; --- Fast path for axis-aligned linedefs (~76% of segs).
+; --- Dispatch FIRST, compute deltas LAZILY (2026-07-09): the old body
+; computed BOTH s16 deltas up front, but the axis-aligned majority
+; (~76% of segs, measured) consumes exactly one, and the degenerate
+; early-outs consume none. Each arm now derives only what it reads;
+; the general arm computes both.
 ; If ldx == 0: dot = ldy*dx, sign matches iff sign(ldy)==sign(dx).
 ; If ldy == 0: dot = -ldx*dy, sign matches iff sign(ldx)!=sign(dy).
 ; SF_DIR negates dot.
@@ -56,6 +46,14 @@ LDA zp_seg_ldy
 BNE bf_ldx0_ldy_nz
 JMP bf_back                             ; ldx=0, ldy=0 → dot=0 → back
 bf_ldx0_ldy_nz:
+; dx = px_int - lv1_x (s16) — the only delta this arm needs
+LDA zp_br_px_h
+SEC
+SBC zp_seg_lv1x_lo
+STA zp_br_dxlo
+LDA zp_br_px_e
+SBC zp_seg_lv1x_hi
+STA zp_br_dxhi
 LDA zp_br_dxlo
 ORA zp_br_dxhi
 BNE bf_ldx0_dx_nz
@@ -68,7 +66,14 @@ JMP bf_apply_dir
 bf_ldx_nz:
 LDA zp_seg_ldy
 BNE bf_general
-; ldy==0: dot = -ldx*dy.
+; ldy==0: dot = -ldx*dy. dy = py_int - lv1_y (s16) — only delta needed.
+LDA zp_br_py_h
+SEC
+SBC zp_seg_lv1y_lo
+STA zp_br_dylo
+LDA zp_br_py_e
+SBC zp_seg_lv1y_hi
+STA zp_br_dyhi
 LDA zp_br_dylo
 ORA zp_br_dyhi
 BNE bf_ldy0_dy_nz
@@ -101,6 +106,21 @@ bf_cs_front:
 JMP bf_front
 
 bf_general:
+; both deltas needed from here (lazy dispatch above computed neither)
+LDA zp_br_px_h
+SEC
+SBC zp_seg_lv1x_lo
+STA zp_br_dxlo
+LDA zp_br_px_e
+SBC zp_seg_lv1x_hi
+STA zp_br_dxhi
+LDA zp_br_py_h
+SEC
+SBC zp_seg_lv1y_lo
+STA zp_br_dylo
+LDA zp_br_py_e
+SBC zp_seg_lv1y_hi
+STA zp_br_dyhi
 ; Sign shortcut first (EXACT — ldx,ldy nonzero here, so P1 = ldy*dx is
 ; zero iff dx==0, P2 = ldx*dy zero iff dy==0, and sign(product) = XOR of
 ; operand signs). dot = P1 - P2 > 0 -> front. Opposite-sign products
@@ -186,12 +206,10 @@ BNE bf_front
 LDA zp_br_t2
 BEQ bf_back
 bf_front:
-LDA #0
-STA zp_seg_skip
+LDA #0                                  ; A = 0 / Z=1: front-facing
 RTS
 bf_back:
-LDA #1
-STA zp_seg_skip
+LDA #1                                  ; A = 1 / Z=0: back-facing
 RTS
 .endscope
 

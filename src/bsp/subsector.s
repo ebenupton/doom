@@ -164,9 +164,8 @@ INY
 LDA (zp_br_p),Y
 STA zp_seg_flags
 
-; --- Back-face test ---
+; --- Back-face test (returns A/Z: nonzero = back-facing) ---
 JSR br_back_face_test
-LDA zp_seg_skip
 BEQ bf_passed
 JMP s_advance
 bf_passed:
@@ -791,8 +790,8 @@ ms_skip:
 ; --- Advance to the next seg: clear the skip flag, bump the seg index
 ;     (u16) and the two persistent ROM cursors (+12 header, +6 FHCH). ---
 s_advance:
-LDA #0
-STA zp_seg_skip
+; (no zp_seg_skip reset needed: the back-face test returns in A now, and
+; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
 INC zp_seg_first_lo
 BNE s_no_carry
 INC zp_seg_first_hi

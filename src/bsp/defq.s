@@ -310,6 +310,9 @@ JMP br_project_x_wide
 .endscope
 
 
+vc_bit_mask:
+.byte 1, 2, 4, 8, 16, 32, 64, 128       ; 1 << (idx & 7) for the vertex cache
+                                        ; (from main_tail.s; MAIN at ceiling)
 bsp_b_end:
 .if ::BANKED
 ; (ld65 writes this: SAVE "bsp_render_b_bk.bin", $3A40, bsp_b_end, $3A40)

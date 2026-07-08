@@ -5,8 +5,8 @@
 ; br_seg_xform_vertex (seg_xform.s) to test/set a vertex's valid bit in
 ; the VCACHE valid bitmap without a 0..7-iteration shift loop.
 ; ============================================================================
-vc_bit_mask:
-.byte 1, 2, 4, 8, 16, 32, 64, 128       ; 1 << (idx & 7) for the vertex cache
+; (vc_bit_mask moved to the B region — defq.s — 2026-07-09: 8 table bytes
+; that MAIN could no longer afford; abs,X reads cost the same anywhere.)
 
 end_code:
 .assert end_code <= $5800, error
