@@ -67,7 +67,9 @@ bf_ldx0_dx_nz:
 ; sign(dot) = sign(ldy) XOR sign(dx_hi)
 LDA zp_seg_ldy
 EOR zp_br_dxhi
-JMP bf_apply_dir
+EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+AND #$80                                ; FRONT (SAMEDIR packed inverted);
+RTS                                     ; A/Z IS the verdict
 bf_ldx_nz:
 LDA zp_seg_ldy
 BNE bf_general
@@ -88,13 +90,11 @@ bf_ldy0_dy_nz:
 LDA zp_seg_ldx
 EOR zp_br_dyhi
 EOR #$80
-; falls through to bf_apply_dir
-bf_apply_dir:
+; sign tail (inlined at every producer, 2026-07-09 — was JMP bf_apply_dir):
 ; A's top bit = sign of dot (1=neg). SF_SAMEDIR is the top flag bit and
 ; PACKED INVERTED (set = no direction flip), so sign ^ flags gives
 ; bit7 = 1 ⇔ FRONT with no correction — and AND #$80 then IS the whole
 ; Z-contract verdict: A=$80/Z=0 front, A=$00/Z=1 back. Branchless.
-; (Was EOR flags + BPL/LDA stubs; before that PHA/AND/BEQ/PLA/EOR #$80.)
 EOR zp_seg_flags
 AND #$80
 RTS
@@ -133,7 +133,9 @@ bf_g_p2only:
 LDA zp_seg_ldx
 EOR zp_br_dyhi
 EOR #$80
-JMP bf_apply_dir
+EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+AND #$80                                ; FRONT (SAMEDIR packed inverted);
+RTS                                     ; A/Z IS the verdict
 bf_g_dx_nz:
 LDA zp_br_dylo
 ORA zp_br_dyhi
@@ -141,7 +143,9 @@ BNE bf_g_both
 ; dy==0 -> dot = P1: sign = sign(ldy) ^ sign(dx)
 LDA zp_seg_ldy
 EOR zp_br_dxhi
-JMP bf_apply_dir
+EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+AND #$80                                ; FRONT (SAMEDIR packed inverted);
+RTS                                     ; A/Z IS the verdict
 bf_g_both:
 LDA zp_seg_ldy
 EOR zp_br_dxhi                          ; sign(P1)
@@ -150,7 +154,9 @@ EOR zp_seg_ldx
 EOR zp_br_dyhi                          ; ^ sign(P2)
 BPL bf_g_mul                            ; same sign -> full compare below
 LDA zp_br_t2                            ; opposite: sign(dot) = sign(P1)
-JMP bf_apply_dir
+EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+AND #$80                                ; FRONT (SAMEDIR packed inverted);
+RTS                                     ; A/Z IS the verdict
 bf_g_mul:
 ; ldx and ldy both nonzero — full 2-mul s8×s16 dot product.
 ; ldy * dx → s16 in resl/resh; save in t2:t3.
