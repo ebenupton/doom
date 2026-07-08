@@ -74,28 +74,26 @@ RTS
 .endscope
 
 ; ============================================================================
-; br_recip — reciprocal lookup with 1-bit-fractional averaging.
+; br_recip — floating-mantissa reciprocal lookup.
 ;   Input:  zp_br_t0:t1 = u16 vy_idx (9.1 format).
-;   Output: zp_br_rhi, zp_br_rlo.
+;   Output: zp_br_rhi = M8 (mantissa byte), zp_br_rlo = S (shift, 1..10):
+;           FOCAL/vy = 256/idx ≈ (256 + M8) / 2^S.
 ;
-; Algorithm:
+; Algorithm (mirrors fp_recip, fp.py):
 ;   vy_idx clamped to [2, 1023].
-;   i = vy_idx >> 1.
-;   frac = vy_idx & 1.
-;   if !frac: return HI[i], LO[i].
-;   else: 16-bit avg of (HI:LO[i], HI:LO[i+1]).
+;   M8 = RECIP_M8[vy_idx]           (direct 1024-entry byte table)
+;   S  = bit_length(vy_idx - 1)     (computed — always normalizes m9 =
+;                                    256+M8 into [256,511], no S table)
 ;
-; Tables: HI[0..513] at $E000, LO[0..513] at $E202.
-;
-; Mirrors fp_recip (fp.py): HI:LO[i] = min((128 << 8) // i, $7FFF), the
-; 8.8 perspective scale FOCAL/vy. The 9.1 input keeps one fractional bit
-; of vy; averaging the two adjacent 16-bit entries (add + 17-bit shift,
-; no multiply) resolves it. The average MUST be done on the reconstructed
-; 16-bit values — averaging hi/lo bytes separately is catastrophically
-; wrong when HI[i] != HI[i+1]. One reciprocal serves both X and Y
-; projection: the 1.2 aspect ratio is baked into height prescaling.
-; Clobbers zp_br_t0-t3 and zp_br_p/p_h.
+; The m9 mantissa carries 9 significant bits (implicit leading 1):
+; relative error <= 2^-10 — on-screen coordinates land within 1/8 px,
+; and anything below quarter-pixel is unobservable. This replaced the
+; 8.8 fixed reciprocal + 16-bit adjacent-entry averaging (2026-07-08):
+; direct lookup, and one fewer multiply in every projection consumer.
+; One reciprocal serves both X and Y projection: the 1.2 aspect ratio
+; is baked into height prescaling. Clobbers A, X, Y, zp_br_p/p_h.
 ; ============================================================================
+.assert (RECIP_BASE & $FF) = 0, error   ; 4-page table indexed (page | t1)
 br_recip:
 .scope
 PAGE BANK_L2                            ; recip table lives in bank L2
@@ -118,88 +116,61 @@ LDA #2
 STA zp_br_t0
 c_lo_ok:
 
-; --- Save the frac bit (LSB of vy_idx.LO) ---
-LDA zp_br_t0
-AND #1
-STA zp_br_t2
-
-; --- Compute i = vy_idx >> 1 (16-bit shift right) ---
-; LSR HI, ROR LO. After LSR HI, carry holds old bit 0 of HI; ROR LO
-; brings carry into LO bit 7. Result: i.HI in t1, i.LO in t0.
-LSR zp_br_t1
-ROR zp_br_t0
-
-; --- Build pointer to HI[i] = $E000 + i ---
-CLC
-LDA zp_br_t0
-ADC #<RECIP_BASE
+; --- M8 = RECIP_M8[idx]: page = >RECIP_BASE + idx.hi, offset = idx.lo ---
+LDA #0
 STA zp_br_p
 LDA zp_br_t1
+CLC
 ADC #>RECIP_BASE
 STA zp_br_p_h
-
-; --- HI[i] ---
-LDY #0
+LDY zp_br_t0
 LDA (zp_br_p),Y
-STA zp_br_rhi
+STA zp_br_rhi                           ; M8
 
-; --- LO[i] = HI[i] + 0x202 (= 514, table size) ---
-; We can index the same pointer with Y=$202 — but that overflows u8 Y.
-; Easier: build a second pointer for LO base.
-CLC
+; --- S = bit_length(idx - 1); idx >= 2 so idx-1 >= 1 ---
 LDA zp_br_t0
-ADC #<(RECIP_BASE + 514)
-STA zp_br_p
+SEC
+SBC #1
+TAX                                     ; X = lo(idx-1)
 LDA zp_br_t1
-ADC #>(RECIP_BASE + 514)
-STA zp_br_p_h
-LDA (zp_br_p),Y
+SBC #0                                  ; A = hi(idx-1), in [0,3]
+BEQ s_scan_lo
+CMP #1
+BEQ s_9
+LDA #10                                 ; hi = 2 or 3 → top bit 9 → S = 10
 STA zp_br_rlo
-
-; --- If no averaging needed, done ---
-LDA zp_br_t2
-BNE r_avg
-RTS
-
-r_avg:
-; --- Read HI[i+1] and LO[i+1], full 16-bit average with current ---
-; Re-build LO pointer (currently set) and bump Y to 1.
-LDY #1
-LDA (zp_br_p),Y
-STA zp_br_t3
-; LO[i+1]
-
-; HI[i+1]: rebuild pointer to HI base.
-CLC
-LDA zp_br_t0
-ADC #<RECIP_BASE
-STA zp_br_p
-LDA zp_br_t1
-ADC #>RECIP_BASE
-STA zp_br_p_h
-LDA (zp_br_p),Y                         ; HI[i+1]
-STA zp_br_t2                            ; t2 = HI[i+1] (frac flag no longer needed)
-
-; --- 16-bit average: ((HI[i]:LO[i]) + (HI[i+1]:LO[i+1])) >> 1 ---
-CLC
-LDA zp_br_rlo
-ADC zp_br_t3
-STA zp_br_t3
-; sum.LO
-LDA zp_br_rhi
-ADC zp_br_t2
-STA zp_br_t2
-; sum.HI (carry=overflow bit)
-
-; Shift right 17 bits (16-bit + 1 carry) by 1.
-; ROR carries the overflow into bit 7 of HI.
-ROR zp_br_t2
-ROR zp_br_t3
-LDA zp_br_t2
-STA zp_br_rhi
-LDA zp_br_t3
+JMP rns_select                          ; pick the vectored shifter (RTSes)
+s_9:
+LDA #9                                  ; hi = 1 → top bit 8 → S = 9
 STA zp_br_rlo
-RTS
+JMP rns_select
+s_scan_lo:
+; bit_length of X (>= 1): descending compare cascade
+LDA #8
+CPX #128
+BCS s_have
+LDA #7
+CPX #64
+BCS s_have
+LDA #6
+CPX #32
+BCS s_have
+LDA #5
+CPX #16
+BCS s_have
+LDA #4
+CPX #8
+BCS s_have
+LDA #3
+CPX #4
+BCS s_have
+LDA #2
+CPX #2
+BCS s_have
+LDA #1                                  ; X == 1
+s_have:
+STA zp_br_rlo                           ; S
+JMP rns_select                          ; pick the vectored shifter (RTSes)
 .endscope
 
 ; ============================================================================
@@ -302,30 +273,67 @@ RTS
 ; ($29, $2B were unused zp_ri_mag/zp_ri_one -> reclaimed for zp_seg_bfh/bch)
 zp_ri_d = zp_ri_dlo                     ; backwards-compat alias
 
-; br_rot_int — Y = 0 (sin) or 3 (cos); mag/neg/one are read directly
-; from the contiguous trig ZP block at $05 (smag,sneg,sone,cmag,cneg,cone)
-; via abs,Y. Callers no longer stage zp_ri_mag/neg/one. neg is captured
-; up front because SC_UMUL8 clobbers Y.
-br_rot_int:
-.scope
-LDA $0006,Y
-STA zp_ri_neg
-LDA $0007,Y
-BEQ ri_not_one
-; Unity: val = d << 8 as s24. resl=0, resh=dlo, resext=dhi.
+; SMC rotation variants (2026-07-08): the trig config (one/mag/neg per
+; sin/cos) is FRAME-CONSTANT, so the per-call tests and Y-indexed trig
+; loads the old br_rot_int did ~200x/frame are hoisted into a per-frame
+; specialization: rot_select (SEL region, bank C window) patches the four
+; call-site JSR operands in br_to_view (rot_s1..rot_s4, view.s) to one of
+;   rot_zero        mag == 0            result := 0
+;   rot_unity_pos   |trig| == 1, +ve    result := d << 8
+;   rot_unity_neg   |trig| == 1, -ve    result := -(d << 8)
+;   rot_gen_sin/cos general             thunk stages the frame's mag/neg
+;                                       as SMC'd immediates, falls into
+;                                       rot_core (the old mul body)
+; Same pattern as the jt_bca_check / vxc_jsr_site / D-cache frame hooks.
+; All variants are bit-exact with the old in-body branches.
+rot_zero:
+LDA #0
+STA zp_br_resl
+STA zp_br_resh
+STA zp_br_resext
+RTS
+
+rot_unity_pos:
+; val = d << 8 as s24: resl=0, resh=dlo, resext=dhi.
 ZERO zp_br_resl
 LDA zp_ri_dlo
 STA zp_br_resh
 LDA zp_ri_dhi
 STA zp_br_resext
-JMP ri_apply_neg
-ri_not_one:
-LDA $0005,Y
-BNE ri_mag_nz
-JMP ri_zero
-; (ri_zero now >127 away after inline)
-ri_mag_nz:
+RTS
+
+rot_unity_neg:
+; -(d << 8): byte 0 stays 0 (no borrow out of 0-0), negate the top pair.
+ZERO zp_br_resl
+LDA #0
+SEC
+SBC zp_ri_dlo
+STA zp_br_resh
+LDA #0
+SBC zp_ri_dhi
+STA zp_br_resext
+RTS
+
+rot_gen_sin:
+LDA #0                                  ; SMC +1: |sin| mag (rot_select)
 STA zp_mul_b
+LDA #0                                  ; SMC +5: sin neg flag
+STA zp_ri_neg
+JMP rot_core
+
+rot_gen_cos:
+LDA #0                                  ; SMC +1: |cos| mag (rot_select)
+STA zp_mul_b
+LDA #0                                  ; SMC +5: cos neg flag
+STA zp_ri_neg
+JMP rot_core
+
+; rot_core — the general |d|*mag s24 path (the old br_rot_int body).
+; In: zp_ri_dlo/dhi = d (s16), zp_mul_b = mag (staged by the thunk),
+;     zp_ri_neg = trig sign (staged). Out: resl/resh/resext (s24).
+; Clobbers as before (|d| written back to zp_ri_dlo/dhi).
+rot_core:
+.scope
 ; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
 ; common on E1M1's grid geometry) — skip the two multiplies.
 LDA zp_ri_dlo

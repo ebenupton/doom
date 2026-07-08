@@ -29,79 +29,18 @@ STA zp_node_chhi
 RTS
 .endscope
 
-; ============================================================================
-.if ::BANKED
-.segment "W_BK"                         ; banked D is capped at $40 by anim_drv
-.endif
-; rhi==0 projection fast paths (bodies live here — MAIN is full). When the
-; reciprocal hi byte is zero (vertex beyond ~1024 world units) the rhi
-; product terms are EXACTLY zero: only the rlo term survives.
-; ============================================================================
-px_rhi0:
-; sx = 128 + ((vx*rlo + 128) >> 8)  (terms A and C of the 3-mul path = 0;
-; the +128 is the round-to-nearest bias of the combined fractional term —
-; C is exactly zero here, so only B's product is rounded. 2026-07-08.)
-;   Inputs:  zp_br_t0 = vx (s8), zp_br_rlo. Output: zp_br_resl/h (s16).
-;   Reached by JMP from br_project_x_subpx (project.s); RTS returns to
-;   ITS caller. One s8×u8 multiply.
-LDA zp_br_t0
-STA zp_br_a
-LDA zp_br_rlo
-STA zp_br_b
-JSR br_smul_s8_u8
-; (product + 128) >> 8: add the bias to the lo byte, carry into hi
-; (no s16 overflow: |product| <= 127*255)
-LDA zp_br_resl
-CLC
-ADC #128
-LDA zp_br_resh
-ADC #0
-; A = rounded fractional term (s8); sx = 128 + signext(A)
-BPL px0_pos
-CLC
-ADC #128
-STA zp_br_resl
-LDA #$FF
-ADC #0
-STA zp_br_resh
-RTS
-px0_pos:
-CLC
-ADC #128
-STA zp_br_resl
-LDA #0
-ADC #0
-STA zp_br_resh
-RTS
 
-py_rhi0:
-; sy = 128 - signext(hi(h*rlo))     (term A of the 2-mul path = 0)
-;   Inputs:  zp_br_t0 = h (s8), zp_br_rlo. Output: zp_br_resl/h (s16).
-;   Reached by JMP from br_project_y_raw (project.s); the 128 constant is
-;   the same folded HALF_H + Y_BIAS, so the result stays pre-biased.
-LDA zp_br_t0
-STA zp_br_a
-LDA zp_br_rlo
-STA zp_br_b
-JSR br_smul_s8_u8
-LDX #0
-LDA zp_br_resh
-BPL py0_ext
-LDX #$FF
-py0_ext:
-STA zp_br_t2
-STX zp_br_t3
-LDA #128
-SEC
-SBC zp_br_t2
-STA zp_br_resl
-LDA #0
-SBC zp_br_t3
-STA zp_br_resh
-RTS
 .if ::BANKED
 .segment "D_BK"                         ; back for the region-end marker
 .endif
+
+; rns24 half constants, indexed S-1 (S in 1..10):
+;   half = 2^(S-1) = rns_half_lo + (rns_half_mid << 8)
+rns_half_lo:
+.byte $01, $02, $04, $08, $10, $20, $40, $80, $00, $00
+rns_half_mid:
+.byte $00, $00, $00, $00, $00, $00, $00, $00, $01, $02
+
 
 bsp_d_end:
 .if ::BANKED

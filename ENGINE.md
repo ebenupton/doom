@@ -23,7 +23,16 @@ a linked list of spans with linear top/bot boundaries; solid walls
 prunes subtrees with `has_gap`/`is_full`. BBox visibility runs in **angle
 space** (DOOM-style checkcoord, `SlopeDiv` + `tantoangle` + `viewangletox`
 tables — 0 muls, 1 divide per corner); seg vertices project in
-**Cartesian** space (s24 view transform → 9.1 reciprocal table → screen X).
+**Cartesian** space (s24 view transform → floating-mantissa reciprocal →
+screen X). The reciprocal FOCAL/vy is stored as (M8, S): m9 = 256+M8, a
+9-bit mantissa with implicit leading 1, R ≈ m9/2^S with S =
+bit_length(idx-1) computed, not stored (1024-byte table, 9.1 index).
+Relative error ≤ 2^-10 (≤1/8 px on screen — quarter-pixel is the design
+budget): Y projection is ONE 8x8 mul + a round-to-nearest shift
+(per-vertex VECTORED: rns_select picks an unrolled body S6-S10 through
+zp_rns_vec whenever zp_br_rlo changes; generic rns24/rns32 take the rest),
+X is two muls (wide three), and the near-plane crossing recip (M8=0,
+S=1) projects with pure shifts.
 Lines are clipped by the DCL (draw-clipped-line) walk against the span
 list and rasterised by the vendored NJ line drawer.
 
@@ -53,8 +62,14 @@ list and rasterised by the vendored NJ line drawer.
     src/bsp_render.s     Renderer unit = ordered .includes of src/bsp/:
       bsp/header.s         equates, macros (ZERO/BUMP/PAGE), jump table,
                            imports of clipper entries
-      bsp/arith.s          local umul/udiv copies, br_umul8/br_smul8, recip
-      bsp/view.s           br_view_setup, br_to_view (s24), rot_int, fracs
+      bsp/arith.s          local umul/udiv copies, br_umul8/br_smul8, recip,
+                           rot variants (rot_zero/unity/gen thunks/rot_core)
+      bsp/view.s           br_view_setup, br_to_view (s24), rot_select
+                           (SEL region: per-frame SMC of the rot_s1..s4
+                           call sites — trig config is frame-constant, so
+                           the zero/unity/general variant choice and the
+                           general thunks' mag/neg immediates are patched
+                           once per frame, not tested ~200x; -0.86%)
       bsp/project.s        br_project_x_subpx, br_project_y_raw
       bsp/walk.s           br_init_frame, br_render_frame (BSP stack @ $0A00,
                            deferred far children, is_full early-exit)
@@ -68,7 +83,8 @@ list and rasterised by the vendored NJ line drawer.
       bsp/seg_project.s    do_project_y consumer gating
       bsp/main_tail.s      vc_bit_mask + end_code assert
       bsp/defq.s           deferred solid/tighten op queue ($0600) — B region
-      bsp/resolve_crossing.s  child resolver + crossing divide — D region
+      bsp/resolve_crossing.s  child resolver + rns_fast/half tables — D region
+                           (banked W_BK/D_BK: see the BCA_WS note below)
       bsp/ycache.s         Y-projection cache (VWHC) — W region
       bsp/lo.s             overflow region: br_node_setup (SoA node reads,
                            baked partition types), reproject_at_crossing,
@@ -188,6 +204,38 @@ ground-truth verify at 5 fixed positions has not worsened vs
   hi-byte bit 6 clear (fine for E1M1; unstated elsewhere).
 
 ## Known risks / open items
+
+- **SEL region ($A400)**: rot_select rides the HUD's bank C window slack
+  (banked; flat = the free page below the sqr tables). Runs once per frame
+  from br_view_setup with bank C paged; its stores all target resident
+  MAIN, so only the FETCH needs the bank.
+- **STK region ($0100-$01BF)**: the RNS vectoring block lives in the
+  BOTTOM OF THE HARDWARE STACK PAGE. Measured SP floor is $F1 (12 bytes
+  used); the region cap leaves $01C0-$01FF (64 bytes) for the stack. If
+  call depth ever grows (new nested JSR chains), re-measure — a stack
+  descending into $01BF silently corrupts these routines. The disc cannot
+  *LOAD page 1 (the OS owns the stack during loading): the image is staged
+  in bank L2 at $A100 and both drivers copy it down at boot (walk_drv
+  anim_glue_init / banked_boot init).
+- **Bank-window eviction hazard** (learned the hard way, then reverted):
+  code moved into a paged window is only correct if EVERY caller pages the
+  window first — an L2-paged call into a bank C routine executes table
+  bytes as code, and FLAT BUILDS CANNOT CATCH IT (PAGE is a no-op flat).
+  Grep every caller of every relocated label; validate with bare-boot +
+  jsbeeb. (The debug HUD's vacated $A400 bank C window is currently FREE.)
+- **Unregistered ZP squatters**: ang/rcache.s owns $C4/$C5 and bsp/anim.s
+  owns $EB-$EE/$F0-$F1 outside zp.inc's registry — tools/zpcheck.py calls
+  them "free". Grep ang/, anim, the drivers and the NJ reloc wrapper
+  before claiming a "free" slot (zp_rns_vec landed on $C4 first and the
+  rotation-cache clobbered it on stable frames).
+- **W_BK / BCA_WS overlay (banked)**: the BCA angle workspace is
+  $3A00-$3A3F, INSIDE the W_BK memory area ($3900-$3A3F). Anything W_BK
+  holds above $3A00 is overwritten at runtime by bbox checks — only
+  boot-once code (vwhc_clear) may live there. Moving/growing W_BK
+  contents silently corrupts whatever crosses $3A00 (cost a black-screen
+  disc during the recip rework). Same class: the flat B region's usable
+  ceiling is $0BE8 (ROM-pointer block $0BE8-$0BF7 is poked at init), not
+  the $0C00 the cfg suggests.
 
 - **Back-face test truncation**: `br_smul_s8_s16` keeps 16 bits; large
   diagonal products can wrap sign and drop a front-facing seg. Latent,

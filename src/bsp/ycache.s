@@ -3,7 +3,7 @@ bsp_w_start:
 ; ============================================================================
 ; br_project_y — memoising front for br_project_y_raw (the VWHC cache).
 ;
-;   Inputs:  zp_br_t0 = height delta (s8), zp_br_rhi/rlo = 8.8 reciprocal
+;   Inputs:  zp_br_t0 = height delta (s8), zp_br_rhi/rlo = (M8, S) recip
 ;   Output:  zp_br_resl/h = screen y (s16, pre-biased by Y_BIAS)
 ;   Preserves the full input set; clobbers X and zp_pyc_idx (+ raw-path
 ;   scratch on a miss).
@@ -91,6 +91,7 @@ BNE vc_loop
 ; (RPC rotation-product cache removed: $DC00 reclaimed for angle TA_LO.)
 RTS
 .endscope
+
 
 bsp_w_end:
 .assert bsp_w_end <= $DC00, error       ; stay below angle TA_LO (was RPC_VALID, removed)

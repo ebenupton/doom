@@ -94,7 +94,7 @@ def build_banked(flatr):
     cpy(0x0400, 0xF200, 1025)            # TA_HI  -> $8400
     cpy(0x0900, 0xF601, 1025)            # VATOX  -> $8900
     cpy(0x0E00, 0xC600, len(flatr.bbox_table))   # bbox -> $8E00
-    cpy(0x1D00, 0xE000, 1028)            # recip  -> $9D00 (514 HI + 514 LO)
+    cpy(0x1D00, 0xE000, 1024)            # recip  -> $9D00 (M8[1024] mantissas)
     from bsp_render_6502 import VWH_BASE as _FLAT_VWH
     assert layout['n_vwh'] <= 0x0500, f"VWH {layout['n_vwh']} overflows VWH_BK $A200-$A6FF"
     cpy(0x2200, _FLAT_VWH, layout['n_vwh'])  # VWH -> $A200
@@ -108,6 +108,10 @@ def build_banked(flatr):
     # tables TABL2/CFG @ $B900/$B980; L0 gets the FHCH+flags worker @ $BE00
     # plus SSMASK/TABL0 @ $BB00/$BC00 (seeded before define_bank below via
     # the l0 image; L2 seeded here).
+    if os.path.exists('bsp_render_stk_bk.bin'):
+        stk = open('bsp_render_stk_bk.bin', 'rb').read()
+        assert len(stk) <= 0x100, f'STK image {len(stk)} overflows the $A100 staging page'
+        l2[0x2100:0x2100 + len(stk)] = stk  # staged for the drivers' boot copy -> $0100
     if os.path.exists('bsp_render_al2_bk.bin'):
         al2 = open('bsp_render_al2_bk.bin', 'rb').read()
         l2[0x3A00:0x3A00 + len(al2)] = al2
@@ -130,7 +134,7 @@ def build_banked(flatr):
         if (fn.startswith('span_clip') or fn == 'bsp_render_rc_bk.bin'
                 or fn == 'bsp_render_al0_bk.bin' or fn == 'bsp_render_al2_bk.bin'
                 or fn == 'bsp_render_hud_bk.bin'):
-            continue    # clipper/HUD -> BANK_C; rc -> L2; anim workers -> L0/L2
+            continue    # clipper -> BANK_C; rc -> L2; anim workers -> L0/L2
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):

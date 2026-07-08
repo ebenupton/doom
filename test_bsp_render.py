@@ -84,11 +84,11 @@ def test_smul8():
 
 
 def test_recip():
-    """Reciprocal lookup with 1-bit fractional averaging."""
+    """Floating-mantissa reciprocal: (M8, S) for the FULL 9.1 index domain
+    (every idx 2..1023) plus the clamp corners."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
-    # Sample vy_idx values (9.1 format). Range [2, 1023].
-    cases = [2, 3, 4, 100, 101, 256, 511, 512, 513, 1023]
+    cases = list(range(2, 1024)) + [0, 1, 1024, 2048, 65535]
     fail = 0
     for vy_idx in cases:
         mem[ZP_T0] = vy_idx & 0xFF
@@ -100,10 +100,13 @@ def test_recip():
         ok = got_hi == want_hi and got_lo == want_lo
         if not ok:
             fail += 1
-            print(f"  FAIL recip({vy_idx}): got=({got_hi:02X}, {got_lo:02X}), "
-                  f"want=({want_hi:02X}, {want_lo:02X})")
-        else:
-            print(f"  OK   recip({vy_idx}) = ({got_hi:02X}, {got_lo:02X})")
+            if fail <= 5:
+                print(f"  FAIL recip({vy_idx}): got=({got_hi:02X}, {got_lo:02X}), "
+                      f"want=({want_hi:02X}, {want_lo:02X})")
+    if fail == 0:
+        print(f"  OK   recip: {len(cases)} cases pass (full domain + clamps)")
+    else:
+        print(f"  ... {fail}/{len(cases)} failed")
     return fail
 
 
@@ -236,23 +239,31 @@ ENTRY_BR_PROJECT_X = 0x480F
 ENTRY_BR_PROJECT_Y = 0x4812
 
 
+# One recip sample per shift value S=1..10 (idx chosen mid-range for each
+# bit-length band) plus the S-band edges, so every rns24/rns32 branch and
+# half constant is exercised.
+_IDX_SWEEP = [2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32, 33, 48, 64, 65, 100,
+              128, 129, 200, 256, 257, 400, 512, 513, 800, 1023]
+
+
 def test_project_x():
-    """fp_project_x_subpx: vx, vx_frac, recip_hi, recip_lo → sx."""
+    """fp_project_x_subpx (narrow): vx, vx_frac, (M8, S) → sx. Dense sweep:
+    every S band × full-range vx (s8) × frac corners."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     cases = []
-    # Sample a few vy values and a few vx values.
-    for vy_idx in [10, 50, 200, 500]:
+    for vy_idx in _IDX_SWEEP:
         rh, rl = fp.fp_recip(vy_idx)
-        for vx in [-50, 0, 30, 100]:
-            for vx_frac in [0, 64, 128, 200]:
+        for vx in range(-128, 128, 7):
+            for vx_frac in [0, 1, 127, 128, 255]:
                 cases.append((vx, vx_frac, rh, rl))
     fail = 0
     for vx, vx_frac, rh, rl in cases:
         mem[0x20] = vx & 0xFF       # zp_br_t0
         mem[0x21] = vx_frac          # zp_br_t1
-        mem[0x1A] = rh               # zp_br_rhi
-        mem[0x1B] = rl               # zp_br_rlo
+        mem[0x1A] = rh               # zp_br_rhi (M8)
+        mem[0x1B] = rl               # zp_br_rlo (S)
+        sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
         sc._run(ENTRY_BR_PROJECT_X)
         got = s16_from_zp(mem, 0x17)
         want = fp.fp_project_x_subpx(vx, vx_frac, rh, rl)
@@ -260,7 +271,7 @@ def test_project_x():
         if not ok:
             fail += 1
             if fail <= 5:
-                print(f"  FAIL project_x(vx={vx}, frac={vx_frac}, rh={rh:02X}, rl={rl:02X}): "
+                print(f"  FAIL project_x(vx={vx}, frac={vx_frac}, M8={rh:02X}, S={rl}): "
                       f"got={got}, want={want}")
     if fail == 0:
         print(f"  OK   project_x: {len(cases)} cases pass")
@@ -269,20 +280,69 @@ def test_project_x():
     return fail
 
 
+def test_project_x_wide():
+    """br_project_x_auto wide dispatch: s16 view-x beyond s8, mod-2^16
+    exact vs Python's full-width fp_project_x_subpx."""
+    sc = SpanClip6502()
+    mem = sc.mpu.memory
+    ZP_XINT = _sym('zp_v_xint')
+    ZP_XEXT = _sym('zp_v_xext')
+    ZP_XFRAC = _sym('zp_v_xfrac')
+    ENTRY_AUTO = _sym('jt_br_project_x_auto') if _has_sym('jt_br_project_x_auto') \
+        else _sym('br_project_x_auto')
+    cases = []
+    for vy_idx in [2, 5, 17, 65, 200, 513, 1023]:
+        rh, rl = fp.fp_recip(vy_idx)
+        for vx in [-32768, -3000, -300, -129, -128, 127, 128, 300, 3000, 32767]:
+            for vx_frac in [0, 128, 255]:
+                cases.append((vx, vx_frac, rh, rl))
+    fail = 0
+    for vx, vx_frac, rh, rl in cases:
+        mem[ZP_XINT] = vx & 0xFF
+        mem[ZP_XEXT] = (vx >> 8) & 0xFF
+        mem[ZP_XFRAC] = vx_frac
+        mem[0x1A] = rh
+        mem[0x1B] = rl
+        sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
+        sc._run(ENTRY_AUTO)
+        got = mem[0x17] | (mem[0x18] << 8)
+        want = fp.fp_project_x_subpx(vx, vx_frac, rh, rl) & 0xFFFF
+        ok = got == want
+        if not ok:
+            fail += 1
+            if fail <= 5:
+                print(f"  FAIL project_x_wide(vx={vx}, frac={vx_frac}, M8={rh:02X}, S={rl}): "
+                      f"got={got:04X}, want={want:04X}")
+    if fail == 0:
+        print(f"  OK   project_x_wide: {len(cases)} cases pass")
+    else:
+        print(f"  ... {fail}/{len(cases)} failed")
+    return fail
+
+
+def _has_sym(name):
+    try:
+        _sym(name)
+        return True
+    except Exception:
+        return False
+
+
 def test_project_y():
-    """fp_project_y: height_delta, recip_hi, recip_lo → sy."""
+    """fp_project_y: FULL height-delta domain (every s8 h) × every S band."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     cases = []
-    for vy_idx in [10, 50, 200, 500]:
+    for vy_idx in _IDX_SWEEP:
         rh, rl = fp.fp_recip(vy_idx)
-        for h in [-30, -10, 0, 5, 20, 40]:
+        for h in range(-128, 128):
             cases.append((h, rh, rl))
     fail = 0
     for h, rh, rl in cases:
         mem[0x20] = h & 0xFF
         mem[0x1A] = rh
         mem[0x1B] = rl
+        sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
         sc._run(ENTRY_BR_PROJECT_Y)
         got = s16_from_zp(mem, 0x17)
         # br_project_y outputs HALF_H + Y_BIAS based values (the bias the
@@ -292,7 +352,7 @@ def test_project_y():
         if not ok:
             fail += 1
             if fail <= 5:
-                print(f"  FAIL project_y(h={h}, rh={rh:02X}, rl={rl:02X}): "
+                print(f"  FAIL project_y(h={h}, M8={rh:02X}, S={rl}): "
                       f"got={got}, want={want}")
     if fail == 0:
         print(f"  OK   project_y: {len(cases)} cases pass")
@@ -316,7 +376,9 @@ if __name__ == '__main__':
     f6 = test_project_x()
     print("== br_project_y ==")
     f7 = test_project_y()
-    total = f1 + f2 + f3 + f4 + f5 + f6 + f7
+    print("== br_project_x_auto (wide) ==")
+    f8 = test_project_x_wide()
+    total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
     print()
     if total == 0:
         print(f"All tests passed.")

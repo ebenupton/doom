@@ -594,6 +594,8 @@ step_skip:
 ;         bb-to-fb for NEEDBB (bottom doorframe edge).
 ;         Both for NEEDBT+NEEDBB. Otherwise no vertical.
 ; SF_NOVT1/NOVT2 still suppress verticals at BSP-internal split vertices.
+; (Back inline in MAIN since the RNS vectoring moved to the stack page —
+; the CEMIT eviction and its per-seg PAGE+JSR cost are gone.)
 
 ; Left vertical (sx1).
 LDA zp_seg_flags
@@ -852,3 +854,5 @@ LDA #0
 STA $BD
 PAGE BANK_C
 JMP SC_DRAW_S16
+
+

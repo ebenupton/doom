@@ -170,41 +170,53 @@ HALF_H = FP_RENDER_H // 2       # 80
 ASPECT_NUM = 6    # 6/5 = 1.2
 ASPECT_DEN = 5
 
-# Reciprocal tables: 512 entries, 1 entry per integer vy (0..512).
-# A fractional bit is resolved by averaging adjacent 16-bit values
-# (add + shift, no multiply), giving 1024 effective resolution.
-# The 16-bit average is reconstructed from hi/lo bytes to avoid the
-# catastrophic error that separate byte averaging produces when the
-# hi byte changes between adjacent entries.
-RECIP_FRAC_BITS = 1   # 1 bit extracted from vy; LSB triggers averaging
-RECIP_TABLE_BITS = 0   # table indexed directly by integer vy
-RECIP_TABLE_SIZE = 512  # covers vy 1..512 (prescaled; 8..4096 world units)
+# Reciprocal table (2026-07-08, quarter-pixel rework): FOCAL/vy is stored
+# as a NORMALIZED FLOATING MANTISSA instead of 8.8 fixed point. For the
+# 10-bit 9.1 index (vy in half-units, clamped [2, 1023]):
+#
+#   R = 256/idx  ≈  (256 + M8[idx]) / 2^S,   S = bit_length(idx - 1)
+#
+# m9 = 256+M8 is a 9-bit mantissa with implicit leading 1 (256..511 for
+# every idx — bit_length(idx-1) always normalizes, no S table needed).
+# Relative error <= 2^-10: an on-screen coordinate is localized to
+# <= 1/8 px. Anything finer than ~1/4 px is wasted effort, so the 16-bit
+# recip was paying a multiply per byte for precision nobody consumed:
+#   proj_y   1 mul (was 2)      proj_x narrow  2 muls (was 3)
+#   proj_x wide 3 muls (was 5)  recip lookup   direct byte read (no
+#   16-bit averaging), and recip(NEAR) = (M8=0, S=1) projects the
+#   near-plane crossing with pure shifts.
+RECIP_FRAC_BITS = 1   # 1 fractional bit of vy in the index
+RECIP_TABLE_SIZE = 512  # in whole vy units; table has 2*512 entries
 
-_RECIP_X_HI = [0] * (RECIP_TABLE_SIZE + 1)  # +1 for averaging guard
-_RECIP_X_LO = [0] * (RECIP_TABLE_SIZE + 1)
-for _i in range(1, RECIP_TABLE_SIZE + 1):
-    _rx = min((FP_FOCAL_X << (8 + RECIP_TABLE_BITS)) // _i, 0x7FFF)
-    _RECIP_X_HI[_i] = _rx >> 8;  _RECIP_X_LO[_i] = _rx & 0xFF
-_RECIP_X_HI[0] = 0x7F; _RECIP_X_LO[0] = 0xFF
+_RECIP_M8 = [0] * 1024
+for _i in range(2, 1024):
+    _s = (_i - 1).bit_length()                    # S in [1, 10]
+    _m9 = ((256 << (_s + 1)) + _i) // (2 * _i)    # round-to-nearest, exact
+    # no ties: 2^(8+S)/idx is never exactly x.5 (idx has an odd factor
+    # unless it is a power of two, which divides exactly)
+    assert 256 <= _m9 <= 511, (_i, _m9, _s)
+    _RECIP_M8[_i] = _m9 - 256
+_RECIP_M8[0] = _RECIP_M8[1] = _RECIP_M8[2]        # unreachable (clamp >= 2)
 
 def fp_recip(vy_idx):
-    """Returns (hi, lo) of 8.8 reciprocal (FOCAL_X / vy).
+    """Returns (M8, S): FOCAL_X / vy ≈ (256 + M8) / 2^S.
 
     Single table for both X and Y projection — the 1.2 aspect ratio
     correction is baked into height prescaling instead.
-
-    vy_idx: 9.1 index (1 fractional bit from vy).
-    Integer part indexes the 512-entry table.  LSB averages with next
-    entry using full 16-bit reconstruction (not separate byte averaging).
+    vy_idx: 9.1 index (1 fractional bit from vy), clamped to [2, 1023].
     """
     vy_idx = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx))
-    i = vy_idx >> 1                           # integer table index
-    if vy_idx & 1:                            # LSB set: average with next
-        val1 = (_RECIP_X_HI[i] << 8) | _RECIP_X_LO[i]
-        val2 = (_RECIP_X_HI[i + 1] << 8) | _RECIP_X_LO[i + 1]
-        avg = (val1 + val2) >> 1
-        return avg >> 8, avg & 0xFF
-    return _RECIP_X_HI[i], _RECIP_X_LO[i]
+    return _RECIP_M8[vy_idx], (vy_idx - 1).bit_length()
+
+
+def rns(p, s):
+    """floor((p + 2^(s-1)) >> s) — round-to-nearest arithmetic shift.
+
+    s >= 1 always (S ranges [1,10], and proj_x uses S+8). The 6502
+    mirrors this exactly: add the half constant, then arithmetic
+    shifts (right shifts, or left-shift-then-drop-a-byte — both are
+    exact floor((p+half)/2^s) implementations)."""
+    return (p + (1 << (s - 1))) >> s
 
 # Backwards-compatible aliases
 fp_recip_x = fp_recip
@@ -212,60 +224,39 @@ fp_recip_y = fp_recip
 
 # -- Projection helpers (two 8x8 multiplies each) ----------------------------
 
-def fp_project_x(vx, recip_hi, recip_lo):
-    """Project view-space X to screen X (integer).
+def fp_project_x(vx, recip_m8, recip_s):
+    """Project view-space X to screen X (integer, no fraction).
 
-    sx = 128 + vx * recip_hi + ((vx * recip_lo + 128) >> 8)
-    Two 8x8 multiplies.  The fractional term ROUNDS TO NEAREST
-    (2026-07-08): the old floor truncation gave a 0..1 column leftward
-    bias which (stacked with fp_project_x_subpx's second truncated
-    term) pushed drawn segs outside the angle-space bbox gate extents.
+    sx = 128 + rns(vx*m9 << 8, S+8)  with m9 = 256 + M8.
+    One 8x8 multiply (the m9 implicit-1 term is a shift-add).
     """
-    return HALF_W + m8(vx, recip_hi) + ((m8(vx, recip_lo) + 128) >> 8)
+    return HALF_W + rns((m8(vx, recip_m8) + (vx << 8)) << 8, recip_s + 8)
 
-def fp_project_x_subpx(vx, vx_frac, recip_hi, recip_lo):
+def fp_project_x_subpx(vx, vx_frac, recip_m8, recip_s):
     """Project with sub-pixel correction from fractional view-space X.
 
-    sx = 128 + vx*recip_hi + ((vx*recip_lo + vx_frac*recip_hi + 128) >> 8)
-    Three 8x8 multiplies.  The two fractional terms are SUMMED and
-    rounded to nearest ONCE (2026-07-08) — per-term floor truncation
-    lost up to 2 columns leftward (see fp_project_x note).
+    sx = 128 + rns(X88 * m9, S+8),  X88 = vx*256 + vx_frac (8.8 view x)
+    decomposed so every product is an 8x8 partial on the 6502:
+      X88*m9 = frac*M8 + ((vx*M8 + frac) << 8) + (vx << 16)
+    Two 8x8 multiplies (was 3; the old third mul carried recip bits
+    below quarter-pixel significance).
     """
-    return (HALF_W + m8(vx, recip_hi)
-            + ((m8(vx, recip_lo) + m8(vx_frac, recip_hi) + 128) >> 8))
+    return HALF_W + rns(m8(vx_frac, recip_m8)
+                        + ((m8(vx, recip_m8) + vx_frac) << 8)
+                        + (vx << 16), recip_s + 8)
 
-def fp_project_y(height_delta, recip_hi, recip_lo):
+def fp_project_y(height_delta, recip_m8, recip_s):
     """Project height delta to screen Y (integer).
 
-    sy = 80 - (height_delta * recip_hi + (height_delta * recip_lo >> 8))
-    Two 8x8 multiplies.  No sub-pixel needed for Y (heights are integer).
-
-    OPTIMISATION OPPORTUNITY — eliminate both muls via shift-add chains:
-
-    height_delta is prescaled (ch-vz or fh-vz), range ±31 (6 bits), and is
-    constant per front sector.  This means h * recip_hi can be expressed as
-    shifts and adds of recip_hi based on the set bits of |h|.  Example for
-    h=11 (0b1011): (recip_hi<<3) + (recip_hi<<1) + recip_hi.  Max cost:
-    5 adds + 4 shifts for h=31, vs ~50-100 cycles for an 8x8 multiply.
-
-    Per-sector setup (once):
-      - Precompute shift-add recipe: list of bit positions in |h_ceil|, |h_floor|
-      - Precompute recip_lo skip threshold: 256 // max(|h|, 1)
-        (skip the fractional correction when |h| * recip_lo < 256, i.e. < 1px)
-      - Special-case h==0 (result=HALF_H), |h|==1 (copy), |h|==pow2 (shift)
-
-    Per-vertex (replaces current 2 muls per call, 4 per vertex):
-      - Apply shift-add chain to recip_hi (0 muls)
-      - If recip_lo > threshold: apply chain to recip_lo, >>8 for correction
-      - Typical savings: 50% of floor projections skip recip_lo (|h|≈2-5)
-
-    Threshold analysis (% of vertices where recip_lo correction < 1px):
-      |h|=2 → 50%,  |h|=5 → 20%,  |h|=11 → 9%,  |h|=16 → 6%
-
-    Net effect: Y projection drops from 4 muls/vertex to 0, leaving only
-    view transform (4) and X projection (2) = 6 muls/vertex total.
+    sy = 80 - rns(h * m9, S)  with m9 = 256 + M8:
+      h*m9 = h*M8 + (h << 8)
+    ONE 8x8 multiply (was 2). The 6502 mirror (br_project_y_raw) builds
+    the same s24 product and feeds the shared RNS shifter; with the
+    crossing reciprocal (M8=0, S=1) this degenerates to sy = 80 - (h<<7),
+    exact, no multiplies.
     """
-    return HALF_H - (m8(height_delta, recip_hi) + (m8(height_delta, recip_lo) >> 8))
+    return HALF_H - rns(m8(height_delta, recip_m8) + (height_delta << 8),
+                        recip_s)
 
 # -- Clip function helpers (0.8 slope, 8.0 intercept) -------------------------
 

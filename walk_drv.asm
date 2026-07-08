@@ -216,6 +216,16 @@ ORG &3DA0
     STA jidx                                        ; (init spill: main is full)
     STA hud_en : STA hud_prev                       ; HUD off at boot
     LDA #7:STA &FE30
+    ; RNS vectoring block -> stack page: staged in bank L2 @ $A100 (page 1
+    ; cannot be *LOADed — the OS owns the stack during loading). $C0 bytes
+    ; into $0100-$01BF, the region the engine reserves (SP floor $F1).
+    LDX #0
+.stkcpy
+    LDA &A100,X
+    STA &0100,X
+    INX
+    CPX #&C0
+    BNE stkcpy
     JMP &BA03                                       ; jt_anim_init (RTS there)
 .anim_glue_tick
     LDA #7:STA &FE30

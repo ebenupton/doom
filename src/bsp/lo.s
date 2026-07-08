@@ -16,7 +16,7 @@ bsp_lo_start:
 ;            zp_seg_*_dlt + zp_seg_flags (consumed by the do_project_y tail).
 ;   Outputs: zp_seg_sx_lo/hi = screen x of the crossing point (s16),
 ;            zp_seg_sy_*     = seg heights projected with recip(NEAR),
-;            zp_br_rhi/rlo   = recip(NEAR) = ($7F, $FF).
+;            zp_br_rhi/rlo   = recip(NEAR) = (M8=0, S=1).
 ;
 ;   Pseudocode:
 ;     cx = cross_compute()             # view-x where the seg meets vy=NEAR
@@ -94,7 +94,7 @@ RTS
 ; cross_compute — near-plane crossing point for a seg with one clipped vertex.
 ;   Inputs:  zp_clip_C_evy, zp_clip_C_evx (clipped, evy ≤ 0)
 ;            zp_clip_U_evy, zp_clip_U_evx (unclipped, evy ≥ 1)
-;   Outputs: zp_clip_cx (s8 crossing view-x), zp_br_rhi/rlo (recip at NEAR)
+;   Outputs: zp_clip_cx (s8 crossing view-x), zp_br_rhi/rlo = (M8, S) at NEAR
 ;
 ;   Mirrors fp_near_clip exactly:
 ;     t   = ((NEAR - vy_C) << 8) / (vy_U - vy_C)    (u8 truncated)
@@ -107,7 +107,7 @@ RTS
 ; v1_evy), cx = v1_evx + (t * (v2_evx - v1_evx)) >> 8 — exactly as
 ; fp_near_clip does regardless of WHICH endpoint is the clipped one.
 ; Output is now s16: zp_clip_cx (lo) : zp_clip_cx_hi (hi); the tail JMPs
-; to br_recip with vy_idx = 2 (9.1 for vy = NEAR), so rhi/rlo = $7F/$FF.
+; to br_recip with vy_idx = 2 (9.1 for vy = NEAR), so (M8, S) = (0, 1).
 ; Clobbers zp_div_lo/hi/den, zp_br_a, zp_br_dxlo/dxhi, zp_br_t2/t3,
 ; zp_br_sign, plus SC_UDIV16_8 / SC_UMUL8 scratch.
 ; ============================================================================
@@ -501,121 +501,170 @@ RTS
 
 ; ============================================================================
 ; br_project_x_wide — project a view-space X whose integer part is s16
-; (doesn't fit s8) to screen X, bit-exact with Python's full-width
-;   sx = 128 + evx*rxh + ((evx*rxl + frac*rxh + 128) >> 8)   (mod 2^16)
-; where evx = (zp_v_xext : zp_v_xint) s16, frac = zp_v_xfrac u8,
-; rxh in [0,127] (recip 8.8 clamped to $7FFF), rxl u8.
+; (doesn't fit s8) to screen X, bit-exact (mod 2^16) with Python's
+; full-width fp_project_x_subpx:
+;   sx = 128 + rns(X88*m9, S+8),  X88 = (xext:xint).xfrac (s24 view x),
+;   m9 = 256 + M8 (floating-mantissa reciprocal, see br_recip).
 ;
-; Byte decomposition (5 8x8 muls; wide path only, |evx| >= 128):
-;   evx*rxh mod 2^16 = umul8(xint,rxh) + (smul_s8_u8(xext,rxh).lo << 8)
-;   evx*rxl >> 8     = smul_s8_u8(xext,rxl) + umul8(xint,rxl).hi
-;     (exact floor: evx*rxl = 256*(xext*rxl) + xint*rxl with xint*rxl >= 0)
-;   frac*rxh >> 8    = umul8(xfrac,rxh).hi
+; Byte decomposition (3 8x8 muls; was 5 with the 8.8 recip). Only
+; frac*M8 has bits below 2^8, so
+;   B = floor(X88*m9 / 256)
+;     = (frac*M8 >> 8) + frac + xint*M8
+;       + ((xext*M8 + xint) << 8) + (xext << 16)
+; is EXACT, accumulated as s32 in (t2,t3,vxext,t0) — |X88| < 2^23 and
+; m9 < 2^9 keep |B| < 2^25. rns32 then computes
+; floor((B + 2^(S-1)) / 2^S), which equals Python's rns(X88*m9, S+8) by
+; floor composition; the s16 interface takes the low 16 bits (mod 2^16,
+; same contract as before).
 ;
-;   Inputs:  zp_v_xext/zp_v_xint/zp_v_xfrac, zp_br_rhi/zp_br_rlo
-;   Output:  zp_br_resl/h = sx (s16, mod 2^16 of Python's value)
-;   Clobbers: zp_br_a/b, zp_br_vxlo/hi, zp_mul_b, zp_prod_lo/hi
+;   Inputs:  zp_v_xext/zp_v_xint/zp_v_xfrac, zp_br_rhi (M8), zp_br_rlo (S)
+;   Output:  zp_br_resl/h = sx (s16, mod 2^16 of Python's value);
+;            zp_br_resext = s24 extension for side classification.
+;   Clobbers: zp_br_a/b, zp_br_t0/t2/t3, zp_br_vxext, mul workspace.
+;   (t0/t1 are dead here: br_project_x_auto only stages them for the
+;   narrow path.)
 ; ============================================================================
 br_project_x_wide:
 .scope
-; 24-bit accumulation: the bbox corner path needs the true sign of
-; sx when |sx| exceeds s16 (off-screen side classification); the seg
-; path uses the low 16 only (matches Python's value at the s16 ZP
-; interface). Accumulator: vxlo/vxhi/t2 (lo/mid/ext).
-
-; sum := 128 + umul8(xint, rxh)
-LDA zp_br_rhi
-STA zp_mul_b
-LDA zp_v_xint
-JSR SC_UMUL8
-CLC
-LDA zp_prod_lo
-ADC #128
-STA zp_br_vxlo
-LDA zp_prod_hi
-ADC #0
-STA zp_br_vxhi
-LDA #0
-ADC #0
-STA zp_br_t2
-
-; sum += smul_s8_u8(xext, rxh) << 8   (s16 product into mid/ext)
-LDA zp_v_xext
-STA zp_br_a
-LDA zp_br_rhi
-STA zp_br_b
-JSR br_smul_s8_u8
-LDA zp_br_resl
-CLC
-ADC zp_br_vxhi
-STA zp_br_vxhi
-LDA zp_br_resh
-ADC zp_br_t2
-STA zp_br_t2
-
-; sum += sext24(smul_s8_u8(xext, rxl))   (s16 part of evx*rxl >> 8)
-LDA zp_v_xext
-STA zp_br_a
-LDA zp_br_rlo
-STA zp_br_b
-JSR br_smul_s8_u8
-LDX #0
-LDA zp_br_resh
-BPL pw_t2_pos
-DEX                                     ; X = $FF sign extension
-pw_t2_pos:
-LDA zp_br_resl
-CLC
-ADC zp_br_vxlo
-STA zp_br_vxlo
-LDA zp_br_resh
-ADC zp_br_vxhi
-STA zp_br_vxhi
-TXA
-ADC zp_br_t2
-STA zp_br_t2
-
-; sum += (umul8(xint, rxl) + umul8(xfrac, rxh) + 128) >> 8
-; Round-to-nearest of the COMBINED u16 fractional products (2026-07-08,
-; mirrors fp_project_x_subpx — see project.s note). Exact identity:
-;   (evx*rxl + frac*rxh + 128) >> 8
-;     = xext*rxl (added above) + ((xint*rxl + frac*rxh + 128) >> 8)
-; since the bracket is non-negative. +128 can't overflow the first u16
-; product (65025 + 128 < 65536), so a single carry chain suffices.
-LDA zp_br_rlo
-STA zp_mul_b
-LDA zp_v_xint
-JSR SC_UMUL8
-LDA zp_prod_lo
-CLC
-ADC #128
-STA zp_br_t3
-LDA zp_prod_hi
-ADC #0
-STA zp_br_a                             ; (xint*rxl + 128) u16 in (t3, a)
+; --- b0/b1 := (frac*M8 >> 8) + frac; b2/b3 := 0 ---
 LDA zp_br_rhi
 STA zp_mul_b
 LDA zp_v_xfrac
 JSR SC_UMUL8
-LDA zp_br_t3
+LDA zp_prod_hi
 CLC
-ADC zp_prod_lo                          ; low half discarded past the carry
-LDA zp_br_a
-ADC zp_prod_hi
-STA zp_br_a                             ; term bits 8-15
+ADC zp_v_xfrac
+STA zp_br_t2
 LDA #0
 ADC #0
-STA zp_br_t3                            ; term bit 16
-; accumulate the u9 term into (vxlo, vxhi, t2), staging the result
-LDA zp_br_a
+STA zp_br_t3
+LDA #0
+STA zp_br_vxext
+STA zp_br_t0
+
+; --- += xint*M8 (u8 x u8: xint is the unsigned middle byte) ---
+LDA zp_br_rhi
+STA zp_mul_b
+LDA zp_v_xint
+JSR SC_UMUL8
+LDA zp_prod_lo
 CLC
-ADC zp_br_vxlo
+ADC zp_br_t2
+STA zp_br_t2
+LDA zp_prod_hi
+ADC zp_br_t3
+STA zp_br_t3
+LDA #0
+ADC zp_br_vxext
+STA zp_br_vxext                         ; (b3 can't carry yet: b2 was 0)
+
+; --- += (xext*M8) << 8 (s16, sign-extended into b3) ---
+LDA zp_v_xext
+STA zp_br_a
+LDA zp_br_rhi
+STA zp_br_b
+JSR br_smul_s8_u8
+LDA zp_br_resl
+CLC
+ADC zp_br_t3
+STA zp_br_t3
+LDA zp_br_resh
+ADC zp_br_vxext
+STA zp_br_vxext
+LDA #0
+ADC zp_br_t0
+STA zp_br_t0
+LDA zp_br_resh
+BPL w_m_pos
+DEC zp_br_t0
+w_m_pos:
+
+; --- += xint << 8 ---
+LDA zp_v_xint
+CLC
+ADC zp_br_t3
+STA zp_br_t3
+LDA #0
+ADC zp_br_vxext
+STA zp_br_vxext
+LDA #0
+ADC zp_br_t0
+STA zp_br_t0
+
+; --- += xext << 16 (sign-extended into b3) ---
+LDA zp_v_xext
+CLC
+ADC zp_br_vxext
+STA zp_br_vxext
+LDA #0
+ADC zp_br_t0
+STA zp_br_t0
+LDA zp_v_xext
+BPL w_e_pos
+DEC zp_br_t0
+w_e_pos:
+
+; --- sx = 128 + rns32(B, S), carry propagated into the s24 extension ---
+JSR rns32
+CLC
+LDA zp_br_resl
+ADC #128
+STA zp_br_resl
+LDA zp_br_resh
+ADC #0
+STA zp_br_resh
+LDA zp_br_resext
+ADC #0
+STA zp_br_resext
+RTS
+.endscope
+
+; ============================================================================
+; rns32 — round-to-nearest arithmetic shift of an s32 value (wide path).
+;
+;   Inputs:  zp_br_t2/t3/vxext/t0 = B (s32, b0..b3), zp_br_rlo = S (1..10)
+;   Output:  zp_br_resl/h = floor((B + 2^(S-1)) / 2^S) low 16 bits,
+;            zp_br_resext = the next byte (s24 extension).
+;   Clobbers A, X, and the B bytes.
+;
+;   Same floor identity as rns24 (resolve_crossing.s), one byte wider,
+;   implemented as a plain S-iteration 4-byte ASR: the wide path is a
+;   handful of calls per frame, so loop cycles are noise — byte size
+;   (the LO region is nearly full) wins over the byte-drop fast paths.
+; ============================================================================
+
+rns32:
+.scope
+LDX zp_br_rlo
+; --- add half = 2^(S-1) (tables in resolve_crossing.s) ---
+LDA rns_half_lo-1,X
+CLC
+ADC zp_br_t2
+STA zp_br_t2
+LDA rns_half_mid-1,X
+ADC zp_br_t3
+STA zp_br_t3
+LDA #0
+ADC zp_br_vxext
+STA zp_br_vxext
+LDA #0
+ADC zp_br_t0
+STA zp_br_t0
+; --- ASR the 4 bytes S times ---
+r32_loop:
+LDA zp_br_t0
+CMP #$80
+ROR zp_br_t0
+ROR zp_br_vxext
+ROR zp_br_t3
+ROR zp_br_t2
+DEX
+BNE r32_loop
+LDA zp_br_t2
 STA zp_br_resl
 LDA zp_br_t3
-ADC zp_br_vxhi
 STA zp_br_resh
-LDA #0
-ADC zp_br_t2
+LDA zp_br_vxext
 STA zp_br_resext
 RTS
 .endscope
@@ -736,15 +785,17 @@ RTS
 
 ; ap2_solid_proj — project the solid seg's APV2 aperture heights with
 ; endpoint 2's reciprocal and emit the vertical at sx2.
-;   v2 crossed → recip = recip(NEAR) = (127,255) constant (Python idx2).
+;   v2 crossed → recip = recip(NEAR) = (M8=0, S=1) constant (Python idx2:
+;                fp_recip(2) — the mantissa form makes the projection a
+;                pure h<<7 shift inside br_project_y).
 ;   else       → recip from v2's vertex cache entry (offsets 2,3).
 ap2_solid_proj:
 .scope
 LDA zp_seg_v2_clipped
 BEQ a2_cached
-LDA #127
+LDA #0
 STA zp_br_rhi
-LDA #255
+LDA #1
 STA zp_br_rlo
 JMP a2_have_recip
 a2_cached:
@@ -774,6 +825,8 @@ INY
 LDA (zp_br_p),Y
 STA zp_br_rlo
 a2_have_recip:
+JSR rns_select                          ; rlo was just set (crossing const
+                                        ; or vcache read) → re-vector
 LDA zp_fhch_p
 STA zp_br_p
 LDA zp_fhch_p_h

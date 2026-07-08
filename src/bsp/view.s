@@ -146,6 +146,10 @@ STA zp_br_fvyhi
 ; moved. Cheap (~40 cyc/frame); zero per-check overhead on moved frames.
 ; Banked: the cache code+data live in the bank L2 window — page it in
 ; (no-op macro on flat; callers re-page before their next engine call).
+PAGE BANK_C
+JSR rot_select                          ; SMC: specialize rot_s1..s4 for this
+                                        ; frame's trig (SEL, bank C window —
+                                        ; its stores hit resident MAIN)
 PAGE BANK_L2
 JSR jt_bca_frame
 JSR br_dcache_frame                     ; forward-coherence bbox cache (bbox.s)
@@ -189,7 +193,9 @@ RTS
 ;   Clobbers: A, Y, zp_ri_dlo/dhi, mul workspace, zp_br_res*.
 ; ============================================================================
 br_to_view:
-.scope
+; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
+; their operands — and the body has no local labels; same rule as
+; vxc_jsr_site in seg_xform.s.)
 ; --- Integer deltas: d = vertex_world - player_int (both axes, s16). ---
 ; dx (s16) = wx - px_int (s16: px_h lo, px_e hi).
 LDA zp_br_dxlo
@@ -208,14 +214,14 @@ SBC zp_br_py_e
 STA zp_br_dyhi
 
 ; int_vx = rot_int(dx, sin) - rot_int(dy, cos), as s24
-; (br_rot_int: Y = 0 selects sin, Y = 3 selects cos from the contiguous
-; trig ZP block at $05; result s24 in zp_br_resl/resh/resext.)
+; (rot_s1..rot_s4 are SMC call sites — rot_select points them at the
+; per-frame trig variants in arith.s; result s24 in resl/resh/resext.)
 LDA zp_br_dxlo
 STA zp_ri_dlo
 LDA zp_br_dxhi
 STA zp_ri_dhi
-LDY #0
-JSR br_rot_int
+rot_s1:
+JSR rot_gen_sin                         ; operand SMC'd per frame (rot_select)
 LDA zp_br_resl
 STA zp_br_vxlo
 LDA zp_br_resh
@@ -227,8 +233,8 @@ LDA zp_br_dylo
 STA zp_ri_dlo
 LDA zp_br_dyhi
 STA zp_ri_dhi
-LDY #3
-JSR br_rot_int
+rot_s2:
+JSR rot_gen_cos                         ; operand SMC'd per frame
 LDA zp_br_vxlo
 SEC
 SBC zp_br_resl
@@ -245,8 +251,8 @@ LDA zp_br_dxlo
 STA zp_ri_dlo
 LDA zp_br_dxhi
 STA zp_ri_dhi
-LDY #3
-JSR br_rot_int
+rot_s3:
+JSR rot_gen_cos                         ; operand SMC'd per frame
 LDA zp_br_resl
 STA zp_br_vylo
 LDA zp_br_resh
@@ -258,8 +264,8 @@ LDA zp_br_dylo
 STA zp_ri_dlo
 LDA zp_br_dyhi
 STA zp_ri_dhi
-LDY #0
-JSR br_rot_int
+rot_s4:
+JSR rot_gen_sin                         ; operand SMC'd per frame
 LDA zp_br_vylo
 CLC
 ADC zp_br_resl
@@ -272,7 +278,6 @@ ADC zp_br_resext
 STA zp_br_vyext
 
 JMP tv_add_fracs
-.endscope
 
 ; ============================================================================
 ; tv_add_fracs — add the per-frame fractional rotation terms (s16,
@@ -638,3 +643,78 @@ STA zp_br_t3
 s32_pos:
 RTS
 .endscope
+
+; ============================================================================
+; rot_select — per-frame SMC specialization of the br_to_view rotation
+; call sites (SEL region: banked = the HUD's bank C window slack at $A400,
+; flat = the free page below the quarter-square tables). Runs once per
+; frame from br_view_setup with bank C paged; every store below targets
+; resident MAIN, so bank state only matters for FETCHING this code.
+;   sin -> rot_s1/rot_s4, cos -> rot_s2/rot_s3. General thunks get the
+;   frame's mag/neg poked into their immediates (offsets +1 / +5).
+; Clobbers A, X.
+; ============================================================================
+.segment "SEL"
+rot_select:
+.scope
+; --- sin variant -> A/X = lo/hi ---
+LDA zp_br_sone
+BEQ sin_notone
+LDA zp_br_sneg
+BEQ sin_up
+LDA #<rot_unity_neg
+LDX #>rot_unity_neg
+BNE sin_have                            ; (hi byte never 0 — always taken)
+sin_up:
+LDA #<rot_unity_pos
+LDX #>rot_unity_pos
+BNE sin_have
+sin_notone:
+LDA zp_br_smag
+BNE sin_gen
+LDA #<rot_zero
+LDX #>rot_zero
+BNE sin_have
+sin_gen:
+STA rot_gen_sin+1                       ; mag immediate
+LDA zp_br_sneg
+STA rot_gen_sin+5                       ; neg immediate
+LDA #<rot_gen_sin
+LDX #>rot_gen_sin
+sin_have:
+STA rot_s1+1
+STX rot_s1+2
+STA rot_s4+1
+STX rot_s4+2
+; --- cos variant -> rot_s2 / rot_s3 ---
+LDA zp_br_cone
+BEQ cos_notone
+LDA zp_br_cneg
+BEQ cos_up
+LDA #<rot_unity_neg
+LDX #>rot_unity_neg
+BNE cos_have
+cos_up:
+LDA #<rot_unity_pos
+LDX #>rot_unity_pos
+BNE cos_have
+cos_notone:
+LDA zp_br_cmag
+BNE cos_gen
+LDA #<rot_zero
+LDX #>rot_zero
+BNE cos_have
+cos_gen:
+STA rot_gen_cos+1
+LDA zp_br_cneg
+STA rot_gen_cos+5
+LDA #<rot_gen_cos
+LDX #>rot_gen_cos
+cos_have:
+STA rot_s2+1
+STX rot_s2+2
+STA rot_s3+1
+STX rot_s3+2
+RTS
+.endscope
+.segment "MAIN"

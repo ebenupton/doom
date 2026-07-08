@@ -46,6 +46,12 @@ zp_br_resh = $18                  ; [bsp]; s24 result mid (the s16 path stops he
 zp_br_sign = $19                  ; [bsp]; 0 = positive, non-0 = negative
 zp_br_rhi = $1A                   ; [bsp]; u8 hi of reciprocal
 zp_br_rlo = $1B                   ; [bsp]; u8 lo
+zp_rns_vec = $C6                  ; [bsp]; RNS shifter vector lo (per-vertex,
+zp_rns_vec_hi = $C7               ; [bsp]; set by rns_select from S; JMP (ind))
+; --- $C4/$C5: rc_psilo/rc_psihi (ang/rcache.s) — UNREGISTERED SQUATTER,
+; registered 2026-07-08 after zp_rns_vec landed on them and the walk disc
+; jammed (cached-bbox frames clobbered the vector). anim.s similarly owns
+; $EB-$EE/$F0-$F1. Do not trust "free" without grepping ang/anim/drivers.
 zp_br_p = $1C                     ; [bsp]
 zp_br_p_h = $1D                   ; [bsp]
 bca_lo = $1E                      ; [ang]; lo_phi (s16) ; w=2

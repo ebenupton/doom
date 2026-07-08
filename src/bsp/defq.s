@@ -271,7 +271,7 @@ RTS
 ; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
 ;
 ;   Inputs:  zp_v_xext:zp_v_xint = s16 integer view-x, zp_v_xfrac = u8
-;            fraction; zp_br_rhi/rlo = reciprocal.
+;            fraction; zp_br_rhi/rlo = (M8, S) reciprocal.
 ;   Output:  zp_br_resl/h = sx (s16), zp_br_resext = s24 extension so
 ;            callers (bbox corner path) can classify off-screen sides
 ;            uniformly whichever path ran.
@@ -308,6 +308,7 @@ RTS
 a_wide:
 JMP br_project_x_wide
 .endscope
+
 
 bsp_b_end:
 .if ::BANKED

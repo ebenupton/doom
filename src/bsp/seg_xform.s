@@ -14,7 +14,7 @@
 ;             even when this one is clipped or served from the cache).
 ;           zp_seg_skip = 1 if near-clipped (vy < NEAR); everything below
 ;             is then undefined and the caller must not use it.
-;           zp_br_rhi/rlo = 8.8 reciprocal FOCAL/vy for this vertex.
+;           zp_br_rhi/rlo = (M8, S) floating recip FOCAL/vy for this vertex.
 ;           zp_seg_sx_lo/hi (and zp_br_resl/h) = screen x (s16).
 ;           zp_seg_sy_* = the four per-seg height projections — the routine
 ;             tail-calls do_project_y (seg_project.s) with this vertex's
@@ -140,6 +140,9 @@ STA zp_br_rhi
 INY
 LDA (zp_br_p),Y
 STA zp_br_rlo
+JSR rns_select                          ; cached S → re-pick the shifter
+                                        ; (preserves Y; the vector belongs
+                                        ; to whoever wrote rlo LAST)
 INY
 LDA (zp_br_p),Y
 STA zp_seg_sx_lo

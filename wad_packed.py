@@ -360,27 +360,26 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 
-    from fp import (_SIN_QUADRANT, _SIN_UNITY, _RECIP_X_HI, _RECIP_X_LO,
-                    RECIP_TABLE_SIZE)
+    from fp import _SIN_QUADRANT, _SIN_UNITY, _RECIP_M8
 
-    # Layout: sin_mag[64] + sin_unity[64] + recip_hi[513] + recip_lo[513]
+    # Layout: sin_mag[64] + sin_unity[64] + recip_m8[1024]. The recip is a
+    # normalized floating mantissa per 10-bit 9.1 index (see fp.py); the
+    # shift S = bit_length(idx-1) is computed by br_recip, not stored.
     SINCOS_SIZE = 64 + 64   # magnitude + unity flags, one quadrant
-    RECIP_ENTRIES = RECIP_TABLE_SIZE + 1  # +1 guard for averaging
-    rom_recip_size = SINCOS_SIZE + RECIP_ENTRIES * 2
+    RECIP_ENTRIES = 1024
+    rom_recip_size = SINCOS_SIZE + RECIP_ENTRIES
 
     rom_recip = bytearray(rom_recip_size)
     off_sin_mag = 0
     off_sin_unity = 64
-    off_recip_hi = SINCOS_SIZE
-    off_recip_lo = SINCOS_SIZE + RECIP_ENTRIES
+    off_recip_m8 = SINCOS_SIZE
 
     for j in range(64):
         rom_recip[off_sin_mag + j] = _SIN_QUADRANT[j] & 0xFF
         rom_recip[off_sin_unity + j] = 1 if _SIN_UNITY[j] else 0
 
     for j in range(RECIP_ENTRIES):
-        rom_recip[off_recip_hi + j] = _RECIP_X_HI[j] & 0xFF
-        rom_recip[off_recip_lo + j] = _RECIP_X_LO[j] & 0xFF
+        rom_recip[off_recip_m8 + j] = _RECIP_M8[j] & 0xFF
 
     # ── RAM sizing ──────────────────────────────────────────────────────
 
@@ -401,7 +400,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'rom_detail_size': len(rom_detail),
         'rom_recip_size': rom_recip_size,
         'off_sin_mag': off_sin_mag, 'off_sin_unity': off_sin_unity,
-        'off_recip_hi': off_recip_hi, 'off_recip_lo': off_recip_lo,
+        'off_recip_m8': off_recip_m8,
         'ram_vcache': 0,
         'ram_vcache_valid': vcache_size,
         'ram_vwh_cache': vcache_size + vcache_valid,
@@ -419,7 +418,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = {n_segs * SEG_HDR_SIZE}")
     print(f"  VWH heights: {n_vwh} × {VWH_SIZE} = {n_vwh}")
     print(f"  Seg detail:  {n_segs} × {SEG_DTL_SIZE} = {len(rom_detail)}")
-    print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES*2})")
+    print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES})")
     print(f"  RAM:         {ram_size}")
 
     # Build prescaled bbox table (separate from rom_main so NODE_SIZE stays 16).

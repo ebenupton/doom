@@ -117,12 +117,11 @@ class SpanClip6502:
         from engine_load import load_engine
         load_engine(mem, banked=0, c02=int(_C02))
 
-        # Reciprocal table at $E000 (HI bytes 0..513, then LO bytes 0..513).
-        from fp import _RECIP_X_HI, _RECIP_X_LO
-        for i in range(514):
-            mem[0xE000 + i] = _RECIP_X_HI[i] if i < len(_RECIP_X_HI) else 0
-        for i in range(514):
-            mem[0xE000 + 514 + i] = _RECIP_X_LO[i] if i < len(_RECIP_X_LO) else 0
+        # Reciprocal mantissa table at $E000: M8[idx] for the 10-bit 9.1
+        # index (4 pages; S = bit_length(idx-1) is computed, not stored).
+        from fp import _RECIP_M8
+        for i in range(1024):
+            mem[0xE000 + i] = _RECIP_M8[i]
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
         raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')
