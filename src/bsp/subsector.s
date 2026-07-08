@@ -801,16 +801,16 @@ CLC
 LDA zp_seg_hdr_p
 ADC #12
 STA zp_seg_hdr_p
-LDA zp_seg_hdr_p_h
-ADC #0
-STA zp_seg_hdr_p_h
+BCC sa_h_nc                             ; BCC/INC: page cross every ~21 segs
+INC zp_seg_hdr_p_h
+sa_h_nc:
 CLC
 LDA zp_fhch_p
 ADC #6
 STA zp_fhch_p
-LDA zp_fhch_p_h
-ADC #0
-STA zp_fhch_p_h
+BCC sa_f_nc                             ; BCC/INC: page cross every ~42 segs
+INC zp_fhch_p_h
+sa_f_nc:
 DEC zp_seg_count
 JMP seg_loop
 .endscope

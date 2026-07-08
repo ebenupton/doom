@@ -184,9 +184,9 @@ LDA zp_br_dxlo
 SEC
 SBC zp_seg_v1_evx
 STA zp_br_dxlo
-LDA zp_br_dxhi
-SBC #0
-STA zp_br_dxhi
+BCS c_dvx_nb                            ; BCS/DEC borrow bump (-2 bytes)
+DEC zp_br_dxhi
+c_dvx_nb:
 c_have_dvx:
 
 JSR cross_umul_u8_s16

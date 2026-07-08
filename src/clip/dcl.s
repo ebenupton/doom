@@ -986,17 +986,15 @@ LDA zp_prod_lo
 CLC
 ADC zp_div_den
 STA zp_div_lo
-LDA zp_prod_hi
-ADC #0
-STA zp_div_hi
-; Subtract 1
+BCC dcl_bix_den_nc                      ; BCC/INC carry bump (prod_hi
+INC zp_div_hi                           ; aliases div_hi — same cell)
+dcl_bix_den_nc:
+; Subtract 1: borrow only when the low byte is zero (BNE/DEC pre-check)
 LDA zp_div_lo
-SEC
-SBC #1
-STA zp_div_lo
-LDA zp_div_hi
-SBC #0
-STA zp_div_hi
+BNE dcl_bix_m1_nb
+DEC zp_div_hi
+dcl_bix_m1_nb:
+DEC zp_div_lo
 dcl_bix_no_round:
 ; prod already in div_lo:hi (aliases — fall through to divide)
 JSR udiv16_8                            ; A = quotient = num / denom

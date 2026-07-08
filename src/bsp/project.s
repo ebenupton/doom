@@ -70,9 +70,9 @@ STA zp_br_t2
 LDA zp_br_resh
 ADC zp_br_t3
 STA zp_br_t3
-LDA #0
-ADC zp_br_vxext
-STA zp_br_vxext
+BCC px_p_nc                             ; BCC/INC ext bump (carry ~50%)
+INC zp_br_vxext
+px_p_nc:
 LDA zp_br_resh
 BPL px_p_pos
 DEC zp_br_vxext
@@ -83,9 +83,9 @@ LDA zp_br_t0
 CLC
 ADC zp_br_t3
 STA zp_br_t3
-LDA #0
-ADC zp_br_vxext
-STA zp_br_vxext
+BCC px_i_nc
+INC zp_br_vxext
+px_i_nc:
 LDA zp_br_t0
 BPL px_i_pos
 DEC zp_br_vxext
@@ -344,9 +344,9 @@ STA zp_br_t2
 LDA rns_half_mid-1,X
 ADC zp_br_t3
 STA zp_br_t3
-LDA #0
-ADC zp_br_vxext
-STA zp_br_vxext
+BCC rn_half_nc                          ; BCC/INC ext bump (-2 bytes, ANG is full)
+INC zp_br_vxext
+rn_half_nc:
 CPX #8
 BCC rn_small
 ; --- S >= 8 here means S = 10: rns_fast (the only caller) intercepts

@@ -104,8 +104,8 @@ LSR A
 CLC
 ADC zp_prod_lo
 STA zp_prod_lo
-LDA zp_prod_hi
-ADC #0
-STA zp_prod_hi
+BCC ip_rn_nc                            ; BCC/INC round-carry (~50%)
+INC zp_prod_hi
+ip_rn_nc:
 JMP udiv16_8                            ; tail-call
 .endscope

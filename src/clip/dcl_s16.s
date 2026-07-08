@@ -432,12 +432,11 @@ STA LC_M_R0
 LDA LC_M_R1
 ADC LC_TMP_HI
 STA LC_M_R1
-LDA LC_M_R2
-ADC #0
-STA LC_M_R2
-LDA LC_M_R3
-ADC #0
-STA LC_M_R3
+BCC m_r_nc                              ; BCC/INC 2-byte propagate:
+INC LC_M_R2                             ; wrap of R2 carries into R3
+BNE m_r_nc
+INC LC_M_R3
+m_r_nc:
 JSR udiv32_16
 ; result = y0 ± quot
 LDA LC_DY_NEG
