@@ -206,20 +206,23 @@ bca_right = BCA_WS+$16
 ; px/py aliased to the live renderer's player-int ZP (frame-persistent);
 ; ab + outputs in the BBOX-vars region the old br_bbox_visible freed.
 bca_ab = BCA_WS+$2F
-bca_ilo = BCA_WS+$30
-bca_ihi = BCA_WS+$31
-bca_vis = BCA_WS+$32
-bca_p1 = BCA_WS+$1E                     ; phi1 (s16)
-bca_p2 = BCA_WS+$20                     ; phi2 (s16)
+; Outputs + hottest body vars now in ZERO PAGE (2026-07-08: measured
+; ~3,650 absolute accesses/frame across these slots — the ZP move is a
+; straight 1-cycle-per-access cut). Registered in zp.inc.
+bca_ilo = $BB
+bca_ihi = $BF
+bca_vis = $F5
+bca_p1 = $C8                            ; phi1 (s16, pair $C8/$C9)
+bca_p2 = $CA                            ; phi2 (s16, pair $CA/$CB)
 ; Hottest body vars in spare scavenged ZP (conflict-free) to cut the
 ; absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 ; (top,bot,left,right s16) and we read via (bca_boxp),Y
 ; instead of copying it into a work area each check.
-t0 = BCA_WS+$2A
-t1 = BCA_WS+$2B
-val_lo = BCA_WS+$2C
-val_hi = BCA_WS+$2D
-bca_ccsave = BCA_WS+$2E
+t0 = $CC
+t1 = $CD
+val_lo = $CE
+val_hi = $CF
+bca_ccsave = $F6
 .if BANKED
 VATOX = $8900                           ; bank L2: viewangletox, 1025 entries (phi+512)
 .else

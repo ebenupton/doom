@@ -46,6 +46,24 @@ zp_br_resh = $18                  ; [bsp]; s24 result mid (the s16 path stops he
 zp_br_sign = $19                  ; [bsp]; 0 = positive, non-0 = negative
 zp_br_rhi = $1A                   ; [bsp]; u8 hi of reciprocal
 zp_br_rlo = $1B                   ; [bsp]; u8 lo
+; --- BCA angle-module hot slots (moved from BCA_WS absolutes 2026-07-08;
+; equates live in ang/header_div.s + bsp/backface.s, names kept there) ---
+; $BB bca_ilo   $BF bca_ihi   $C8-$C9 bca_p1   $CA-$CB bca_p2
+; $CC t0        $CD t1        $CE val_lo       $CF val_hi
+; $F5 bca_vis   $F6 bca_ccsave                 $F7 DEFQ_TAIL
+zp_bca_ilo = $BB                  ; [ang]
+zp_bca_ihi = $BF                  ; [ang]
+zp_bca_p1 = $C8                   ; [ang]; s16 pair with $C9
+zp_bca_p1_hi = $C9                ; [ang]
+zp_bca_p2 = $CA                   ; [ang]; s16 pair with $CB
+zp_bca_p2_hi = $CB                ; [ang]
+zp_bca_t0 = $CC                   ; [ang]
+zp_bca_t1 = $CD                   ; [ang]
+zp_bca_val_lo = $CE               ; [ang]
+zp_bca_val_hi = $CF               ; [ang]
+zp_bca_vis = $F5                  ; [ang]
+zp_bca_ccsave = $F6               ; [ang]
+zp_defq_tail = $F7                ; [bsp]; DEFQ queue tail (was $09FB)
 zp_rns_vec = $C6                  ; [bsp]; RNS shifter vector lo (per-vertex,
 zp_rns_vec_hi = $C7               ; [bsp]; set by rns_select from S; JMP (ind))
 ; --- $C4/$C5: rc_psilo/rc_psihi (ang/rcache.s) — UNREGISTERED SQUATTER,
