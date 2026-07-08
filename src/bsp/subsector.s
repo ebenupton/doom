@@ -164,9 +164,9 @@ INY
 LDA (zp_br_p),Y
 STA zp_seg_flags
 
-; --- Back-face test (returns A/Z: nonzero = back-facing) ---
+; --- Back-face test (returns Z: BEQ = back-facing) ---
 JSR br_back_face_test
-BEQ bf_passed
+BNE bf_passed
 JMP s_advance
 bf_passed:
 ; front-facing: fetch v1/v2 (the test clobbers zp_br_p — reload)

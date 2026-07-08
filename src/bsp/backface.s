@@ -5,10 +5,14 @@
 ;                zp_seg_ldx/ldy (s8 linedef delta, header bytes 8-9),
 ;                zp_seg_flags (header byte 10; SF_DIR = $01).
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
-;   Output: A = 1 if back-facing, 0 if front-facing (Z flag valid at
-;           return — callers can branch without reloading). 2026-07-09:
-;           was zp_seg_skip; that slot now belongs to the near-clip flag
-;           (br_seg_xform_vertex) alone.
+;   Output: Z FLAG — Z=1 (BEQ) back-facing, Z=0 (BNE) front-facing.
+;           A is scratch. 2026-07-09: inverted from A=1-means-back so the
+;           degenerate back exits (ldx/ldy/delta == 0) return STRAIGHT
+;           from the test that decided them — the zero just tested IS the
+;           verdict, no reload, no JMP to a stub. Sign-path exits load
+;           #0/#1 only to force Z; the mul tail's final LDA t2 IS the
+;           verdict. (Was zp_seg_skip before that; the slot now belongs
+;           to the near-clip flag alone.)
 ;   Clobbers: A, X, Y; zp_br_dxlo/hi, zp_br_dylo/hi (the s16 deltas),
 ;             zp_br_t2/t3, zp_br_a, and the mul workspace (via br_smul_s8_s16).
 ;
@@ -44,7 +48,7 @@ BNE bf_ldx_nz
 ; ldx==0
 LDA zp_seg_ldy
 BNE bf_ldx0_ldy_nz
-JMP bf_back                             ; ldx=0, ldy=0 → dot=0 → back
+RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
 bf_ldx0_ldy_nz:
 ; dx = px_int - lv1_x (s16) — the only delta this arm needs
 LDA zp_br_px_h
@@ -57,7 +61,7 @@ STA zp_br_dxhi
 LDA zp_br_dxlo
 ORA zp_br_dxhi
 BNE bf_ldx0_dx_nz
-JMP bf_back                             ; dx == 0 → dot=0 → back
+RTS                                     ; dx == 0 → dot=0 → back (Z=1)
 bf_ldx0_dx_nz:
 ; sign(dot) = sign(ldy) XOR sign(dx_hi)
 LDA zp_seg_ldy
@@ -77,7 +81,7 @@ STA zp_br_dyhi
 LDA zp_br_dylo
 ORA zp_br_dyhi
 BNE bf_ldy0_dy_nz
-JMP bf_back                             ; dy==0 -> dot=0 -> back
+RTS                                     ; dy == 0 → dot=0 → back (Z=1)
 bf_ldy0_dy_nz:
 ; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi))
 LDA zp_seg_ldx
@@ -99,11 +103,14 @@ bf_apply_no_neg:
 PLA
 bf_check_sign:
 ; Top bit set → dot < 0 → back. Top bit clear → dot > 0 → front
-; (zero-dot cases never reach here).
+; (zero-dot cases never reach here). A may be $00 with bit7 clear, so
+; the front side must force Z=0 explicitly; the back side forces Z=1.
 BPL bf_cs_front
-JMP bf_back
+LDA #0                                  ; Z=1: back
+RTS
 bf_cs_front:
-JMP bf_front
+LDA #1                                  ; Z=0: front
+RTS
 
 bf_general:
 ; both deltas needed from here (lazy dispatch above computed neither)
@@ -133,7 +140,7 @@ BNE bf_g_dx_nz
 LDA zp_br_dylo
 ORA zp_br_dyhi
 BNE bf_g_p2only
-JMP bf_back                             ; dx==0 and dy==0 -> dot=0 -> back
+RTS                                     ; dx==0 and dy==0 → back (Z=1)
 bf_g_p2only:
 ; dot = -P2: sign = NOT(sign(ldx) ^ sign(dy))
 LDA zp_seg_ldx
@@ -201,15 +208,13 @@ STA zp_br_t3
 bf_g_no_neg:
 ; dot <= 0 → back-facing
 LDA zp_br_t3
-BMI bf_back
-BNE bf_front
-LDA zp_br_t2
-BEQ bf_back
-bf_front:
-LDA #0                                  ; A = 0 / Z=1: front-facing
+BMI bf_mul_back
+BNE bf_ret                              ; t3 > 0 → front, Z=0 in hand
+LDA zp_br_t2                            ; Z = (t2 == 0) IS the verdict
+bf_ret:
 RTS
-bf_back:
-LDA #1                                  ; A = 1 / Z=0: back-facing
+bf_mul_back:
+LDA #0                                  ; Z=1: back
 RTS
 .endscope
 
