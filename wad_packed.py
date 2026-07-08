@@ -63,14 +63,17 @@ SD_APV2_FH = 13                  # s8  (overlay SD_VWH_BT1 hi)
 
 # ── Seg flags ───────────────────────────────────────────────────────────
 
-SF_DIR    = 0x01   # direction (flip back-face sign)
+SF_DIR    = 0x80   # direction (flip back-face sign) — TOP bit, so the
+                   # 6502 applies it with one EOR of the whole flags byte
+                   # (sign checks read bit 7 only) / BIT+BMI (2026-07-09;
+                   # swapped with SF_APEDGE2, previously 0x01)
 SF_SOLID  = 0x02   # one-sided wall
 SF_NEEDBT = 0x04   # back ceiling < front ceiling
 SF_NEEDBB = 0x08   # back floor > front floor
 SF_NOVT1  = 0x10   # suppress vertical at v1 (BSP-internal split point)
 SF_NOVT2  = 0x20   # suppress vertical at v2 (BSP-internal split point)
 SF_APEDGE1 = 0x40  # emit aperture edge at v1 when NOVT1 suppresses the vertical
-SF_APEDGE2 = 0x80  # emit aperture edge at v2 when NOVT2 suppresses the vertical
+SF_APEDGE2 = 0x01  # emit aperture edge at v2 when NOVT2 suppresses the vertical
 
 # ── Vertex cache (RAM) ─────────────────────────────────────────────────
 

@@ -135,9 +135,10 @@ STA $BD                                 ; ZP_DCL_REC_BUF hi (= "no records buffe
 ; read after the test passes — back-facing segs never need them. ---
 ; 12-byte header layout (wad_packed.py SH_*): +0/+2 v1/v2 vertex idx u16,
 ; +4/+6 linedef v1 x/y s16, +8/+9 linedef dx/dy s8, +10 flags, +11 len.
-; Flags: $01 DIR (flip back-face sign), $02 SOLID, $04 NEEDBT (back ceil
-; below front), $08 NEEDBB (back floor above front), $10/$20 NOVT1/2
-; (suppress endpoint vertical), $40/$80 APEDGE1/2 (aperture edge there).
+; Flags: $80 DIR (flip back-face sign; TOP bit — applied by EOR/BIT),
+; $02 SOLID, $04 NEEDBT (back ceil below front), $08 NEEDBB (back floor
+; above front), $10/$20 NOVT1/2 (suppress endpoint vertical),
+; $40/$01 APEDGE1/2 (aperture edge there; $01 was DIR before 2026-07-09).
 LDA zp_seg_hdr_p
 STA zp_br_p
 LDA zp_seg_hdr_p_h

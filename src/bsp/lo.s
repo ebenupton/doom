@@ -677,7 +677,7 @@ RTS
 
 
 ; ============================================================================
-; ap_edges — NOVT aperture-edge verticals (SF_APEDGE1=$40 / SF_APEDGE2=$80).
+; ap_edges — NOVT aperture-edge verticals (SF_APEDGE1=$40 / SF_APEDGE2=$01).
 ; Mirrors the Python reference:
 ;   SOLID seg, APEDGE_K: draw (sxK, bchK', sxK, bfhK') where (bch,bfh) are
 ;     the colinear portal's aperture heights, projected with endpoint K's
@@ -700,7 +700,7 @@ LDY #0
 JSR ap_edge_one
 ap_chk2:
 LDA zp_seg_flags
-AND #$80
+AND #$01                                ; SF_APEDGE2 (swapped with DIR 2026-07-09)
 BEQ ap_done
 LDX #4
 LDY #2

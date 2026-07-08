@@ -3,7 +3,7 @@
 ; br_back_face_test — test current seg for back-facing.
 ;   Inputs (zp): zp_seg_lv1x/lv1y (s16 linedef v1, seg header bytes 4-7),
 ;                zp_seg_ldx/ldy (s8 linedef delta, header bytes 8-9),
-;                zp_seg_flags (header byte 10; SF_DIR = $01).
+;                zp_seg_flags (header byte 10; SF_DIR = $80, the top bit).
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
 ;   Output: Z FLAG — Z=1 (BEQ) back-facing, Z=0 (BNE) front-facing.
 ;           A is scratch. 2026-07-09: inverted from A=1-means-back so the
@@ -89,18 +89,11 @@ EOR zp_br_dyhi
 EOR #$80
 ; falls through to bf_apply_dir
 bf_apply_dir:
-; A holds a byte whose top bit = sign of dot (1=neg, 0=pos).
-; SF_DIR ($01) negates the dot, so XOR top bit with bit 0 of flags shifted.
-; Simpler: stash, then if SF_DIR set, EOR #$80.
-PHA
-LDA zp_seg_flags
-AND #$01
-BEQ bf_apply_no_neg
-PLA
-EOR #$80
-JMP bf_check_sign
-bf_apply_no_neg:
-PLA
+; A's top bit = sign of dot (1=neg, 0=pos). SF_DIR is the TOP flag bit
+; (2026-07-09, swapped with APEDGE2), so ONE EOR of the whole flags byte
+; flips exactly the bit the BPL below reads — the bits 0-6 pollution is
+; dead, only N is tested. (Was PHA / AND #$01 / BEQ / PLA / EOR #$80.)
+EOR zp_seg_flags
 bf_check_sign:
 ; Top bit set → dot < 0 → back. Top bit clear → dot > 0 → front
 ; (zero-dot cases never reach here). A may be $00 with bit7 clear, so
@@ -194,28 +187,23 @@ LDA zp_br_t3
 SBC zp_br_resh
 STA zp_br_t3
 
-; SF_DIR negate
-LDA zp_seg_flags
-AND #$01
-BEQ bf_g_no_neg
-LDA #0
-SEC
-SBC zp_br_t2
-STA zp_br_t2
-LDA #0
-SBC zp_br_t3
-STA zp_br_t3
-bf_g_no_neg:
-; dot <= 0 → back-facing
+; SF_DIR (top bit) MIRRORS the comparison instead of negating the dot:
+; back iff dot <= 0 normally; back iff dot >= 0 when DIR (-dot <= 0).
+; Kills the conditional 16-bit negate.
+BIT zp_seg_flags
+BMI bf_g_dir
 LDA zp_br_t3
 BMI bf_mul_back
 BNE bf_ret                              ; t3 > 0 → front, Z=0 in hand
 LDA zp_br_t2                            ; Z = (t2 == 0) IS the verdict
 bf_ret:
 RTS
+bf_g_dir:
+LDA zp_br_t3
+BMI bf_ret                              ; dot < 0 → -dot > 0 → front (Z=0)
 bf_mul_back:
-LDA #0                                  ; Z=1: back
-RTS
+LDA #0                                  ; Z=1: back (dot >= 0 under DIR,
+RTS                                     ;  dot <= 0 normally)
 .endscope
 
 ; ============================================================================
