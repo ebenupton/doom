@@ -3,7 +3,8 @@
 ; br_back_face_test — test current seg for back-facing.
 ;   Inputs (zp): zp_seg_lv1x/lv1y (s16 linedef v1, seg header bytes 4-7),
 ;                zp_seg_ldx/ldy (s8 linedef delta, header bytes 8-9),
-;                zp_seg_flags (header byte 10; SF_DIR = $80, the top bit).
+;                zp_seg_flags (header byte 10; SF_SAMEDIR = $80, the top
+;                bit, INVERTED: set = seg runs with its linedef).
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
 ;   Output: Z FLAG — Z=1 (BEQ) back-facing, Z=0 (BNE) front-facing.
 ;           A is scratch. 2026-07-09: inverted from A=1-means-back so the
@@ -89,20 +90,13 @@ EOR zp_br_dyhi
 EOR #$80
 ; falls through to bf_apply_dir
 bf_apply_dir:
-; A's top bit = sign of dot (1=neg, 0=pos). SF_DIR is the TOP flag bit
-; (2026-07-09, swapped with APEDGE2), so ONE EOR of the whole flags byte
-; flips exactly the bit the BPL below reads — the bits 0-6 pollution is
-; dead, only N is tested. (Was PHA / AND #$01 / BEQ / PLA / EOR #$80.)
+; A's top bit = sign of dot (1=neg). SF_SAMEDIR is the top flag bit and
+; PACKED INVERTED (set = no direction flip), so sign ^ flags gives
+; bit7 = 1 ⇔ FRONT with no correction — and AND #$80 then IS the whole
+; Z-contract verdict: A=$80/Z=0 front, A=$00/Z=1 back. Branchless.
+; (Was EOR flags + BPL/LDA stubs; before that PHA/AND/BEQ/PLA/EOR #$80.)
 EOR zp_seg_flags
-bf_check_sign:
-; Top bit set → dot < 0 → back. Top bit clear → dot > 0 → front
-; (zero-dot cases never reach here). A may be $00 with bit7 clear, so
-; the front side must force Z=0 explicitly; the back side forces Z=1.
-BPL bf_cs_front
-LDA #0                                  ; Z=1: back
-RTS
-bf_cs_front:
-LDA #1                                  ; Z=0: front
+AND #$80
 RTS
 
 bf_general:
@@ -187,11 +181,11 @@ LDA zp_br_t3
 SBC zp_br_resh
 STA zp_br_t3
 
-; SF_DIR (top bit) MIRRORS the comparison instead of negating the dot:
-; back iff dot <= 0 normally; back iff dot >= 0 when DIR (-dot <= 0).
-; Kills the conditional 16-bit negate.
+; SF_SAMEDIR (top bit, inverted) MIRRORS the comparison instead of
+; negating the dot: SET (BMI) = normal back iff dot <= 0; CLEAR (BPL) =
+; flipped seg, back iff dot >= 0 (-dot <= 0). No 16-bit negate.
 BIT zp_seg_flags
-BMI bf_g_dir
+BPL bf_g_dir
 LDA zp_br_t3
 BMI bf_mul_back
 BNE bf_ret                              ; t3 > 0 → front, Z=0 in hand

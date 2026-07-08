@@ -63,10 +63,11 @@ SD_APV2_FH = 13                  # s8  (overlay SD_VWH_BT1 hi)
 
 # ── Seg flags ───────────────────────────────────────────────────────────
 
-SF_DIR    = 0x80   # direction (flip back-face sign) — TOP bit, so the
-                   # 6502 applies it with one EOR of the whole flags byte
-                   # (sign checks read bit 7 only) / BIT+BMI (2026-07-09;
-                   # swapped with SF_APEDGE2, previously 0x01)
+SF_SAMEDIR = 0x80  # set when the seg runs WITH its linedef (bit INVERTED
+                   # from the old SF_DIR, 2026-07-09): sign ^ flags then
+                   # yields bit7 = FRONT directly, so the back-face sign
+                   # tail is branchless (EOR flags / AND #$80 / RTS with
+                   # the Z-contract). TOP bit so one EOR/BIT applies it.
 SF_SOLID  = 0x02   # one-sided wall
 SF_NEEDBT = 0x04   # back ceiling < front ceiling
 SF_NEEDBB = 0x08   # back floor > front floor
@@ -268,7 +269,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"seg {i}: ldx/ldy not s8 — caller should have asserted earlier"
 
         flags = 0
-        if s[4] == 1: flags |= SF_DIR
+        if s[4] != 1: flags |= SF_SAMEDIR   # inverted: set = same direction
         if back_idx is None:
             flags |= SF_SOLID
         else:

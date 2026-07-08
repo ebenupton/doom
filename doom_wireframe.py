@@ -2039,7 +2039,7 @@ from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s
                         SD_FH, SD_CH, SD_BFH, SD_BCH,
                         SD_VWH_FT1, SD_VWH_FB1, SD_VWH_FT2, SD_VWH_FB2,
                         SD_VWH_BT1, SD_VWH_BB1, SD_VWH_BT2, SD_VWH_BB2,
-                        SF_DIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB, SF_NOVT1, SF_NOVT2,
+                        SF_SAMEDIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB, SF_NOVT1, SF_NOVT2,
                         VC_VX, VC_VY, VC_VYIDX, VC_SX, VWHCACHE_ENTRY)
 
 use_packed = True    # packed ROM path is now the sole FP renderer
@@ -2132,7 +2132,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     px_int = ctx[0]
     py_int = ctx[1]
     dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
-    if flags & SF_DIR:
+    if not (flags & SF_SAMEDIR):        # inverted bit: clear = negate
         dot = -dot
     if dot <= 0:
         return
