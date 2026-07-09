@@ -175,19 +175,17 @@ bf_passed:
 ; plain solid wall never touches them, so staging both was waste (rule 2b,
 ; 2026-07-09). zp_fhch_p (the persistent FHCH cursor) is read directly, so
 ; the old copy into zp_br_p is gone too.
-   LDY #0
-   LDA (zp_fhch_p),Y
-   STA zp_seg_fh
-   INY
+   LDY #1
    LDA (zp_fhch_p),Y
    STA zp_seg_ch
 ; Height deltas (all s8). Front: top_dlt = ch - vz, bot_dlt = fh - vz.
 ; Back: btop_dlt = bch - vz, bbot_dlt = bfh - vz.
-   LDA zp_seg_ch
    SEC
    SBC zp_br_vz
    STA zp_seg_top_dlt
-   LDA zp_seg_fh
+   DEY
+   LDA (zp_fhch_p),Y
+   STA zp_seg_fh
    SEC
    SBC zp_br_vz
    STA zp_seg_bot_dlt
