@@ -7,6 +7,11 @@
 ;            clobbers zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
 ; Thin adapter from the br_a/br_b register convention onto SC_UMUL8.
 ; ============================================================================
+.if ::BANKED
+.segment "W_BK"
+; (banked: the thin jt adapter rides in the space br_smul_s8_s16 vacated;
+; stays below the $3A00 BCA_WS line. MAIN is at its ceiling.)
+.endif
 br_umul8:
    LDA zp_br_b
    STA zp_mul_b
@@ -18,6 +23,9 @@ br_umul8:
    STA zp_br_resh
    RTS
 
+.if ::BANKED
+.segment "MAIN"
+.endif
 ; ============================================================================
 ; br_smul8 — signed s8 × s8 → s16. Inputs in zp_br_a, zp_br_b.
 ; Result in zp_br_resl/resh (s16, 2's complement). ~80 cycles.
@@ -286,6 +294,11 @@ zp_ri_d = zp_ri_dlo                     ; backwards-compat alias
 ;                                       rot_core (the old mul body)
 ; Same pattern as the jt_bca_check / vxc_jsr_site / D-cache frame hooks.
 ; All variants are bit-exact with the old in-body branches.
+.if ::BANKED
+.segment "B_BK"
+; (banked: the rot variants live in B_BK — MAIN hit its ceiling when the
+; back-face mul arm grew; they are vector/SMC targets, resident anywhere.)
+.endif
 rot_zero:
    LDA #0
    STA zp_br_resl
@@ -328,6 +341,9 @@ rot_gen_cos:
    STA zp_ri_neg
    JMP rot_core
 
+.if ::BANKED
+.segment "MAIN"
+.endif
 ; rot_core — the general |d|*mag s24 path (the old br_rot_int body).
 ; In: zp_ri_dlo/dhi = d (s16), zp_mul_b = mag (staged by the thunk),
 ;     zp_ri_neg = trig sign (staged). Out: resl/resh/resext (s24).

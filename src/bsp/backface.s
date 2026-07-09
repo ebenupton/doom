@@ -50,16 +50,17 @@
 ;      [bf_general]     dx = px - lv1x ; dy = py - lv1y
 ;      if dx == 0:
 ;         if dy == 0:             return BACK
-;         [bf_g_p2only]    return TAIL(~(sign(ldx) ^ sign(dy)))    # dot = -P2
+;         (shares [bf_ldy0_dy_nz])  TAIL(~(sign(ldx) ^ sign(dy)))  # dot = -P2
 ;      [bf_g_dx_nz]
 ;      if dy == 0:         return TAIL(sign(ldy) ^ sign(dx))       # dot = P1
 ;      [bf_g_both]      X = sign(P1) = sign(ldy) ^ sign(dx)
 ;      if X != sign(P2):   return TAIL(X)       # opposite signs decide
-;      [bf_g_mul]       dot = ldy*dx - ldx*dy   # 2 x s8xs16, s16 in t2/t3
-;      if SAMEDIR (BIT/BMI):  back iff dot <= 0 # normal compare
-;      [bf_g_dir] else:       back iff dot >= 0 # mirrored (-dot <= 0),
-;                                               # no 16-bit negate
-;      [bf_ret / bf_mul_back]  shared Z-contract exits for the mul arm
+;      [bf_g_mul]       |P1| = |ldy|*|dx|, |P2| = |ldx|*|dy|   # u24 EXACT
+;                       (high partial skipped when a senior byte is clear)
+;      mode = bit7(X ^ flags):                  # sign and SAMEDIR together
+;      [bfm_ge_dec] clear:  back iff |P1| >= |P2|
+;      [bfm_le]     set:    back iff |P1| <= |P2|   # equal -> dot 0 -> back
+;      [bfm_back]   shared Z-contract back exit
 ;
 ;   TAIL(s) = (s ^ flags) & $80                 # inlined at every producer:
 ;                                               # SAMEDIR is the top flag bit,
@@ -159,26 +160,14 @@ bf_general:
    BNE bf_g_dx_nz
    LDA zp_br_dylo
    ORA zp_br_dyhi
-   BNE bf_g_p2only
+   BNE bf_ldy0_dy_nz                       ; dot = -P2: byte-identical to the
+                                           ; ldy==0 arm's tail — share it
    RTS                                     ; dx==0 and dy==0 → back (Z=1)
-bf_g_p2only:
-; dot = -P2: sign = NOT(sign(ldx) ^ sign(dy))
-   LDA zp_seg_ldx
-   EOR zp_br_dyhi
-   EOR #$80
-   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-   AND #$80                                ; FRONT (SAMEDIR packed inverted);
-   RTS                                     ; A/Z IS the verdict
 bf_g_dx_nz:
    LDA zp_br_dylo
    ORA zp_br_dyhi
-   BNE bf_g_both
-; dy==0 -> dot = P1: sign = sign(ldy) ^ sign(dx)
-   LDA zp_seg_ldy
-   EOR zp_br_dxhi
-   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-   AND #$80                                ; FRONT (SAMEDIR packed inverted);
-   RTS                                     ; A/Z IS the verdict
+   BEQ bf_ldx0_dx_nz                       ; dy==0 → dot = P1: byte-identical
+                                           ; to the ldx==0 arm's tail — share
 bf_g_both:
    LDA zp_seg_ldy
    EOR zp_br_dxhi                          ; sign(P1)
@@ -191,52 +180,140 @@ bf_g_both:
    AND #$80                                ; FRONT (SAMEDIR packed inverted);
    RTS                                     ; A/Z IS the verdict
 bf_g_mul:
-; ldx and ldy both nonzero — full 2-mul s8×s16 dot product.
-; ldy * dx → s16 in resl/resh; save in t2:t3.
+; ldx and ldy both nonzero, products SAME sign (X = the shared sign byte,
+; bit7). dot = P1 - P2 with P1 = ldy*dx, P2 = ldx*dy, so in magnitudes:
+;   sign + : back iff |P1| <= |P2|      sign - : back iff |P1| >= |P2|
+; and SF_SAMEDIR (clear = flipped seg) swaps the sense. Mode = bit7 of
+; (X ^ flags): clear -> back iff |P1| >= |P2|, set -> back iff <=.
+; Unsigned u24 magnitude products — EXACT (the old br_smul_s8_s16 pair
+; truncated the dot to s16) — with the HIGH PARTIAL SKIPPED whenever a
+; magnitude's senior byte is clear (|delta| fits u8, the common case:
+; one mul per product instead of two). |P1|==|P2| means dot == 0 ->
+; back under both modes. Replaced the 2x sign-magnitude smul wrappers,
+; the dy->dx operand copy, the s16 subtract and both negates; the only
+; caller of br_smul_s8_s16, which is deleted.
+   STX zp_br_sign                          ; the shared sign byte CANNOT ride
+                                           ; in X here — SC_UMUL8 clobbers X/Y
+                                           ; (zp_br_sign is free: its owner
+                                           ; br_smul_s8_s16 is deleted)
+; --- magnitudes in place: |dx|, |dy| ---
+   LDA zp_br_dxhi
+   BPL bfm_dx_pos
+   LDA #0
+   SEC
+   SBC zp_br_dxlo
+   STA zp_br_dxlo
+   LDA #0
+   SBC zp_br_dxhi
+   STA zp_br_dxhi
+bfm_dx_pos:
+   LDA zp_br_dyhi
+   BPL bfm_dy_pos
+   LDA #0
+   SEC
+   SBC zp_br_dylo
+   STA zp_br_dylo
+   LDA #0
+   SBC zp_br_dyhi
+   STA zp_br_dyhi
+bfm_dy_pos:
+; --- |P1| = |ldy| * |dx| -> (t2, t3, vxext) u24 ---
    LDA zp_seg_ldy
-   STA zp_br_a
-   JSR br_smul_s8_s16
-   LDA zp_br_resl
+   BPL bfm_ly_pos
+   EOR #$FF
+   CLC
+   ADC #1
+bfm_ly_pos:
+   STA zp_br_a                             ; |ldy| survives for the hi partial
+   LDA zp_br_dxlo
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_lo
    STA zp_br_t2
-   LDA zp_br_resh
+   LDA zp_prod_hi
    STA zp_br_t3
-
-; ldx * dy → s16 in resl/resh. (br_smul_s8_s16 takes its s16 operand in
-; the dxlo/dxhi slots, so copy dy over — dx is no longer needed.)
+   LDA #0
+   STA zp_br_vxext
+   LDA zp_br_dxhi
+   BEQ bfm_p1_done                         ; senior byte clear: 1-mul product
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_lo
+   CLC
+   ADC zp_br_t3
+   STA zp_br_t3
+   LDA zp_prod_hi
+   ADC #0                                  ; (+ carry; vxext was 0)
+   STA zp_br_vxext
+bfm_p1_done:
+; --- |P2| = |ldx| * |dy| -> (t0, t1, dxlo) u24 (dx slots are dead) ---
+   LDA zp_seg_ldx
+   BPL bfm_lx_pos
+   EOR #$FF
+   CLC
+   ADC #1
+bfm_lx_pos:
+   STA zp_br_a
    LDA zp_br_dylo
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_lo
+   STA zp_br_t0
+   LDA zp_prod_hi
+   STA zp_br_t1
+   LDA #0
    STA zp_br_dxlo
    LDA zp_br_dyhi
-   STA zp_br_dxhi
-   LDA zp_seg_ldx
-   STA zp_br_a
-   JSR br_smul_s8_s16
-
-; dot = prod1 - prod2 (s16)
+   BEQ bfm_p2_done
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_lo
+   CLC
+   ADC zp_br_t1
+   STA zp_br_t1
+   LDA zp_prod_hi
+   ADC #0
+   STA zp_br_dxlo
+bfm_p2_done:
+; --- mode select and u24 compare (Z-contract verdict) ---
+   LDA zp_br_sign
+   EOR zp_seg_flags
+   BMI bfm_le
+; back iff |P1| >= |P2|: C=1 through the chain decides (equal -> back)
+   LDA zp_br_vxext
+   CMP zp_br_dxlo
+   BNE bfm_ge_dec
+   LDA zp_br_t3
+   CMP zp_br_t1
+   BNE bfm_ge_dec
    LDA zp_br_t2
-   SEC
-   SBC zp_br_resl
-   STA zp_br_t2
-   LDA zp_br_t3
-   SBC zp_br_resh
-   STA zp_br_t3
-
-; SF_SAMEDIR (top bit, inverted) MIRRORS the comparison instead of
-; negating the dot: SET (BMI) = normal back iff dot <= 0; CLEAR (BPL) =
-; flipped seg, back iff dot >= 0 (-dot <= 0). No 16-bit negate.
-   BIT zp_seg_flags
-   BPL bf_g_dir
-   LDA zp_br_t3
-   BMI bf_mul_back
-   BNE bf_ret                              ; t3 > 0 → front, Z=0 in hand
-   LDA zp_br_t2                            ; Z = (t2 == 0) IS the verdict
-bf_ret:
+   CMP zp_br_t0
+bfm_ge_dec:
+   BCS bfm_back
+   LDA #1                                  ; Z=0: front
    RTS
-bf_g_dir:
+bfm_le:
+; back iff |P1| <= |P2|: first difference decides; equal -> back
+   LDA zp_br_vxext
+   CMP zp_br_dxlo
+   BNE bfm_le_dec
    LDA zp_br_t3
-   BMI bf_ret                              ; dot < 0 → -dot > 0 → front (Z=0)
-bf_mul_back:
-   LDA #0                                  ; Z=1: back (dot >= 0 under DIR,
-   RTS                                     ;  dot <= 0 normally)
+   CMP zp_br_t1
+   BNE bfm_le_dec
+   LDA zp_br_t2
+   CMP zp_br_t0
+   BEQ bfm_back                            ; equal -> dot == 0 -> back
+bfm_le_dec:
+   BCC bfm_back                            ; |P1| < |P2| -> back
+   LDA #1                                  ; Z=0: front
+   RTS
+bfm_back:
+   LDA #0                                  ; Z=1: back
+   RTS
 .endscope
 
 ; ============================================================================
