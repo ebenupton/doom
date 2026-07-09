@@ -24,20 +24,19 @@
 umul8_fixed:
 umul8:
 .scope
-STA zp_tmp0                             ; |
-; d = a - b; negate if borrow (take absolute value)
+TAX                                     ; stash a in X (was zp_tmp0: the
+; d = a - b; negate if borrow            ; round-trip cost 6, TAX/TXA 4)
 SEC
 SBC zp_mul_b
 BCS pos
-; |||
 EOR #$FF
 ADC #1
-; |diff| (C was 0 from SBC, so ADC adds +0+1)  ; ||
+; |diff| (C was 0 from SBC, so ADC adds +0+1)
 pos:
 TAY
-; Y = |diff|                                  ; |
+; Y = |diff|
 ; s = a + b (carry out selects sqr vs sqr2 table for the sum term)
-LDA zp_tmp0
+TXA
 CLC
 ADC zp_mul_b
 ; ||||

@@ -165,7 +165,7 @@ STX RASTER_ZP_Y0
 TXA
 pv_ordered:
 ; A = y0. ptr: lo = x & $F8, hi = scrstrt + (y0>>3); Y = y0 & 7
-PHA
+TAX                                     ; y0 rides in X (was PHA/PLA)
 LSR A
 LSR A
 LSR A
@@ -175,7 +175,7 @@ STA zp_tmp1
 LDA RASTER_ZP_X0
 AND #$F8
 STA zp_tmp0
-PLA
+TXA
 AND #7
 TAY
 ; mask = bmask[x&7]

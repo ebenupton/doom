@@ -357,7 +357,7 @@ STA zp_mul_b
 LDA zp_br_a
 BMI a_neg
 ; --- inlined umul8(A, mag) — 56% of all umul8 calls go through here ---
-STA zp_tmp0
+TAX                                     ; stash a in X (was zp_tmp0)
 SEC
 SBC zp_mul_b
 BCS up_pos
@@ -365,7 +365,7 @@ EOR #$FF
 ADC #1
 up_pos:
 TAY
-LDA zp_tmp0
+TXA
 CLC
 ADC zp_mul_b
 TAX
@@ -395,7 +395,7 @@ a_neg:
 EOR #$FF
 BUMP
 ; --- inlined umul8(|a|, mag) ---
-STA zp_tmp0
+TAX                                     ; stash a in X (was zp_tmp0)
 SEC
 SBC zp_mul_b
 BCS un_pos
@@ -403,7 +403,7 @@ EOR #$FF
 ADC #1
 un_pos:
 TAY
-LDA zp_tmp0
+TXA
 CLC
 ADC zp_mul_b
 TAX

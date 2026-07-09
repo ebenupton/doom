@@ -362,7 +362,7 @@ ri_d_pos:
 ; Quarter-square multiply: a*b = f(a+b) - f(|a-b|), f(x) = x²/4 tables.
 ; X = a+b (sqr2_* tables when the sum carries past 255), Y = |a-b|.
 LDA zp_ri_dlo
-STA zp_tmp0
+TAX                                     ; stash in X (was zp_tmp0)
 SEC
 SBC zp_mul_b
 BCS um1_pos
@@ -370,7 +370,7 @@ EOR #$FF
 ADC #1
 um1_pos:
 TAY
-LDA zp_tmp0
+TXA
 CLC
 ADC zp_mul_b
 TAX
@@ -395,7 +395,7 @@ ZERO zp_br_resext
 ; --- inlined umul8(zp_ri_dhi, mag) — same quarter-square pattern; its
 ; u16 product lands one byte up: added into resh (lo) and resext (hi). ---
 LDA zp_ri_dhi
-STA zp_tmp0
+TAX                                     ; stash in X (was zp_tmp0)
 SEC
 SBC zp_mul_b
 BCS um2_pos
@@ -403,7 +403,7 @@ EOR #$FF
 ADC #1
 um2_pos:
 TAY
-LDA zp_tmp0
+TXA
 CLC
 ADC zp_mul_b
 TAX

@@ -66,8 +66,6 @@ ROR zp_br_t0
 LDA zp_node_chlo
 AND #7
 TAX
-LDA vc_bit_mask,X
-PHA
 LDA #<SS_VISITED_BITMAP
 CLC
 ADC zp_br_t0
@@ -76,8 +74,8 @@ LDA #>SS_VISITED_BITMAP
 ADC zp_br_t1
 STA zp_br_p_h
 LDY #0
-PLA
-ORA (zp_br_p),Y
+LDA vc_bit_mask,X                       ; X survived the pointer build —
+ORA (zp_br_p),Y                         ; reload beats the old PHA/PLA
 STA (zp_br_p),Y
 
 ; --- Read subsector header (SoA pages: count / first_lo / first_hi) ---

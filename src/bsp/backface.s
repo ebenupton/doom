@@ -149,11 +149,11 @@ RTS                                     ; A/Z IS the verdict
 bf_g_both:
 LDA zp_seg_ldy
 EOR zp_br_dxhi                          ; sign(P1)
-STA zp_br_t2
+TAX                                     ; ride in X (was a zp_br_t2 stash)
 EOR zp_seg_ldx
 EOR zp_br_dyhi                          ; ^ sign(P2)
 BPL bf_g_mul                            ; same sign -> full compare below
-LDA zp_br_t2                            ; opposite: sign(dot) = sign(P1)
+TXA                                     ; opposite: sign(dot) = sign(P1)
 EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
 AND #$80                                ; FRONT (SAMEDIR packed inverted);
 RTS                                     ; A/Z IS the verdict
