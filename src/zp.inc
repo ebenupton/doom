@@ -99,8 +99,9 @@ zp_v_xint = $37                   ; [bsp]; saved integer view-x (s8)
 zp_v_xfrac = $38                  ; [bsp]; saved fractional view-x (u8)
 pa_res = $39                      ; [ang]; u16 out (fineangle) ; w=2
 bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
-zp_seg_ldx = $3D                  ; [bsp]; s8 linedef delta x
-zp_seg_ldy = $3E                  ; [bsp]; s8 linedef delta y
+; $3D-$3E FREE (2026-07-09): zp_seg_ldx/ldy retired — the back-face test
+; reads the linedef deltas on demand from the header (+8/+9) via
+; (zp_br_p),Y; the caller no longer stages them.
 zp_seg_flags = $3F                ; [bsp]; u8
 pa_ptr = $40                      ; [ang]; 16-bit table pointer ; w=2
 zp_rom_nodes_lo = $42             ; [bsp]
