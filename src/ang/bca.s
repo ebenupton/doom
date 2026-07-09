@@ -244,20 +244,25 @@ ih2:
    CMP bca_ihi
    BEQ visok
    BCS cull
+; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
+; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
+; stays for the D-cache store, but callers branch without reloading.
+; full_vis is the CANONICAL full-visibility tail (rcache's two warm/store
+; paths and corner_phi's inside-escape JMP here instead of local copies).
 visok:
-   LDA #1
+   LDA #1                                  ; A=1/Z=0: visible
    STA bca_vis
    RTS
 full_vis:                               ; span >= ANG180: full width
-   LDA #1
-   STA bca_vis
    LDA #0
    STA bca_ilo
    LDA #255
    STA bca_ihi
+   LDA #1                                  ; vis LAST: A/Z = verdict at RTS
+   STA bca_vis
    RTS
 cull:
-   LDA #0
+   LDA #0                                  ; A=0/Z=1: culled
    STA bca_vis
    RTS
 

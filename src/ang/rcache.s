@@ -198,13 +198,8 @@ bbox_check_angle_cached:
    STA bca_p2+1
    JMP bca_tail
 bcac_warm_full:
-   LDA #1
-   STA bca_vis
-   LDA #0
-   STA bca_ilo
-   LDA #255
-   STA bca_ihi
-   RTS
+   JMP full_vis                            ; canonical tail (bca.s): sets
+                                           ; ilo/ihi/vis, A/Z = verdict
 
 ; --- COLD: compute fresh (box_classify + 2 corner_phi), then populate cache ---
 bcac_cold:
@@ -340,13 +335,7 @@ bcac_cold_inside:
    LDA RCACHE_FULL,X
    ORA rc_bit
    STA RCACHE_FULL,X
-   LDA #1
-   STA bca_vis
-   LDA #0
-   STA bca_ilo
-   LDA #255
-   STA bca_ihi
-   RTS
+   JMP full_vis                            ; canonical tail (bca.s)
 
 ; bcac_index: from bca_boxp derive rc_psilo/hi (16-bit ptr = RCACHE_PSI +
 ; idx>>1), rc_bytehi (bitmap byte idx>>6), rc_bit (mask for (idx>>3)&7).

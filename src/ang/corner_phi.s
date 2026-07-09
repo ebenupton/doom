@@ -125,16 +125,10 @@ cx_have_y:
    RTS
 cx_inside:
 ; inside -> full result; discard box_classify's return, exit to
-; bbox_check_angle's caller.
-   LDA #1
-   STA bca_vis
-   LDA #0
-   STA bca_ilo
-   LDA #255
-   STA bca_ihi
+; bbox_check_angle's caller through the canonical tail (A/Z = verdict).
    PLA
    PLA
-   RTS
+   JMP full_vis
 .endscope
 
 ; (load_val removed: inlined at the corner loads.)

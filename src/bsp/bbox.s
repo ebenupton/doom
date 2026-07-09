@@ -117,8 +117,8 @@ bv_side_done:
 ; conservative column extent, clips against the view cone. Writes
 ; bca_vis (1=some columns visible, 0=cull) and bca_ilo/bca_ihi (u8
 ; column extent, ±1 conservative).
-   JSR BCA_CHECK
-   LDA bca_vis
+   JSR BCA_CHECK                           ; returns A/Z = bca_vis (byte
+                                           ; still written for the D store)
    BNE bv_anglevis
    LDA #0
    RTS
