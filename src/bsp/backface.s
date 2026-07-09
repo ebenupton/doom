@@ -84,10 +84,13 @@ br_back_face_test:
 ; ldx==0
    INY
    LDA (zp_br_p),Y                          ; ldy (+9), Y walked 8->9
-   STA zp_seg_ldy                           ; stash: reused at bf_ldx0_dx_nz
    BNE bf_ldx0_ldy_nz
    RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
 bf_ldx0_ldy_nz:
+; A still = ldy (BNE preserves it). Stash DEFERRED past the ldy==0 RTS
+; above so that degenerate back path never pays it — reused at the
+; bf_ldx0_dx_nz sign below.
+   STA zp_seg_ldy
 ; dx = px_int - lv1_x (s16) — the only delta this arm needs. lv1x is read
 ; ON DEMAND from the header (+4/+5) via zp_br_p, not a ZP stage.
    LDY #4
