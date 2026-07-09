@@ -78,12 +78,12 @@ br_back_face_test:
 ; If ldx == 0: dot = ldy*dx, sign matches iff sign(ldy)==sign(dx).
 ; If ldy == 0: dot = -ldx*dy, sign matches iff sign(ldx)!=sign(dy).
 ; SF_DIR negates dot.
-   LDY #8
-   LDA (zp_br_p),Y                          ; ldx on demand (header +8)
+   LDY #8                                   ; -> ldx (+8)
+   LDA (zp_br_p),Y
    BNE bf_ldx_nz
 ; ldx==0
-   INY
-   LDA (zp_br_p),Y                          ; ldy (+9), Y walked 8->9
+   INY                                      ; -> ldy (+9)
+   LDA (zp_br_p),Y
    BNE bf_ldx0_ldy_nz
    RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
 bf_ldx0_ldy_nz:
@@ -93,13 +93,13 @@ bf_ldx0_ldy_nz:
    STA zp_seg_ldy
 ; dx = px_int - lv1_x (s16) — the only delta this arm needs. lv1x is read
 ; ON DEMAND from the header (+4/+5) via zp_br_p, not a ZP stage.
-   LDY #4
    LDA zp_br_px_h
    SEC
+   LDY #4                                   ; -> lv1x_lo (+4)
    SBC (zp_br_p),Y
    STA zp_br_dxlo
-   INY
    LDA zp_br_px_e
+   INY                                      ; -> lv1x_hi (+5)
    SBC (zp_br_p),Y
    STA zp_br_dxhi
    LDA zp_br_dxlo
@@ -121,13 +121,13 @@ bf_ldx_nz:
    BNE bf_general
 ; ldy==0: dot = -ldx*dy. dy = py_int - lv1_y (s16) — only delta needed.
 ; lv1y read on demand from the header (+6/+7) via zp_br_p.
-   LDY #6
    LDA zp_br_py_h
    SEC
+   LDY #6                                   ; -> lv1y_lo (+6)
    SBC (zp_br_p),Y
    STA zp_br_dylo
-   INY
    LDA zp_br_py_e
+   INY                                      ; -> lv1y_hi (+7)
    SBC (zp_br_p),Y
    STA zp_br_dyhi
    LDA zp_br_dylo
@@ -153,32 +153,32 @@ bf_general:
 ; stash it (ldx was stashed at bf_ldx_nz). Both deltas on demand below,
 ; lv1x (+4/+5) then lv1y (+6/+7) — Y walks 4→7.
    STA zp_seg_ldy
-   LDY #4
-   LDA zp_br_px_h
-   SEC
-   SBC (zp_br_p),Y
-   STA zp_br_dxlo
-   INY
-   LDA zp_br_px_e
-   SBC (zp_br_p),Y
-   STA zp_br_dxhi
-   INY
+; Deltas computed dy FIRST, dx SECOND so the last STA leaves dxhi in A
+; for the dx==0 test below (saves its LDA). lv1y (+6/+7) then lv1x (+4/+5).
    LDA zp_br_py_h
    SEC
+   LDY #6                                   ; -> lv1y_lo (+6)
    SBC (zp_br_p),Y
    STA zp_br_dylo
-   INY
    LDA zp_br_py_e
+   INY                                      ; -> lv1y_hi (+7)
    SBC (zp_br_p),Y
    STA zp_br_dyhi
+   LDA zp_br_px_h
+   SEC
+   LDY #4                                   ; -> lv1x_lo (+4)
+   SBC (zp_br_p),Y
+   STA zp_br_dxlo
+   LDA zp_br_px_e
+   INY                                      ; -> lv1x_hi (+5)
+   SBC (zp_br_p),Y
+   STA zp_br_dxhi                           ; A = dxhi, in hand below
 ; Sign shortcut first (EXACT — ldx,ldy nonzero here, so P1 = ldy*dx is
 ; zero iff dx==0, P2 = ldx*dy zero iff dy==0, and sign(product) = XOR of
 ; operand signs). dot = P1 - P2 > 0 -> front. Opposite-sign products
 ; decide by sign alone; only same-sign products need the two multiplies.
-; (Bonus: the decided-by-sign cases are immune to the s16 truncation of
-; br_smul_s8_s16 — the residual risk is confined to same-sign products.)
-   LDA zp_br_dxlo
-   ORA zp_br_dxhi
+; (Bonus: the decided-by-sign cases never reach the u24 magnitude path.)
+   ORA zp_br_dxlo                           ; dxhi (in A) | dxlo → dx==0 test
    BNE bf_g_dx_nz
    LDA zp_br_dylo
    ORA zp_br_dyhi
