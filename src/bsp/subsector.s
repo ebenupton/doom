@@ -138,18 +138,13 @@ seg_proc:
 ; $02 SOLID, $04 NEEDBT (back ceil below front), $08 NEEDBB (back floor
 ; above front), $10/$20 NOVT1/2 (suppress endpoint vertical),
 ; $40/$01 APEDGE1/2 (aperture edge there).
-   LDA zp_seg_hdr_p
-   STA zp_br_p
-   LDA zp_seg_hdr_p_h
-   STA zp_br_p_h
 ; Stage ONLY flags (reused all over the seg loop AND across the DCL emit
 ; calls that clobber registers — it must live in ZP). ldx/ldy AND lv1x/
-; lv1y are read ON DEMAND by the back-face test via (zp_br_p),Y — the
-; caller no longer pre-loads on the callee's behalf (2026-07-09). zp_br_p
-; is left pointing at the header base for those reads; the test never
-; writes it, so v1/v2 below reuse it as-is.
+; lv1y are read ON DEMAND by the back-face test straight from the header
+; via (zp_seg_hdr_p),Y — the persistent cursor is already a ZP pointer, so
+; no copy into zp_br_p is needed (2026-07-09).
    LDY #10
-   LDA (zp_br_p),Y
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_flags
 
 ; --- Back-face test (returns Z: BEQ = back-facing) ---
@@ -157,19 +152,18 @@ seg_proc:
    BNE bf_passed
    JMP s_advance
 bf_passed:
-; front-facing: fetch v1/v2. zp_br_p still points at the header base (the
-; test only READS through it, never writes) — no reload needed.
+; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
    LDY #0
-   LDA (zp_br_p),Y
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v1_lo
    INY
-   LDA (zp_br_p),Y
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v1_hi
    INY
-   LDA (zp_br_p),Y
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v2_lo
    INY
-   LDA (zp_br_p),Y
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v2_hi
 
 ; --- Read fh, ch, bfh, bch from the 6-byte/seg FHCH table:

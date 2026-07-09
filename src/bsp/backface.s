@@ -1,10 +1,10 @@
 
 ; ============================================================================
 ; br_back_face_test — test current seg for back-facing.
-;   Inputs (zp): zp_seg_lv1x/lv1y (s16 linedef v1, seg header bytes 4-7),
-;                zp_seg_ldx/ldy (s8 linedef delta, header bytes 8-9),
-;                zp_seg_flags (header byte 10; SF_SAMEDIR = $80, the top
-;                bit, INVERTED: set = seg runs with its linedef).
+;   Inputs (zp): zp_seg_hdr_p -> the 12-byte seg header (read on demand via
+;                (zp_seg_hdr_p),Y: linedef v1 x/y at +4..+7, delta ldx/ldy
+;                at +8/+9); zp_seg_flags staged by the caller (header +10;
+;                SF_SAMEDIR = $80, top bit, INVERTED: set = runs with ld).
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
 ;   Output: Z FLAG — Z=1 (BEQ) back-facing, Z=0 (BNE) front-facing.
 ;           A is scratch. 2026-07-09: inverted from A=1-means-back so the
@@ -79,11 +79,11 @@ br_back_face_test:
 ; If ldy == 0: dot = -ldx*dy, sign matches iff sign(ldx)!=sign(dy).
 ; SF_DIR negates dot.
    LDY #8                                   ; -> ldx (+8)
-   LDA (zp_br_p),Y
+   LDA (zp_seg_hdr_p),Y
    BNE bf_ldx_nz
 ; ldx==0
    INY                                      ; -> ldy (+9)
-   LDA (zp_br_p),Y
+   LDA (zp_seg_hdr_p),Y
    BNE bf_ldx0_ldy_nz
    RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
 bf_ldx0_ldy_nz:
@@ -92,15 +92,15 @@ bf_ldx0_ldy_nz:
 ; bf_ldx0_dx_nz sign below.
    STA zp_seg_ldy
 ; dx = px_int - lv1_x (s16) — the only delta this arm needs. lv1x is read
-; ON DEMAND from the header (+4/+5) via zp_br_p, not a ZP stage.
+; ON DEMAND from the header (+4/+5) via zp_seg_hdr_p, not a ZP stage.
    LDA zp_br_px_h
    SEC
    LDY #4                                   ; -> lv1x_lo (+4)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dxlo
    LDA zp_br_px_e
    INY                                      ; -> lv1x_hi (+5)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dxhi
    ORA zp_br_dxlo
    BNE bf_ldx0_dx_nz
@@ -116,18 +116,18 @@ bf_ldx_nz:
    STA zp_seg_ldx                           ; A=ldx from dispatch; reused on
                                             ; every ldx!=0 path — stash from A
    INY                                      ; Y was 8 (dispatch) -> 9
-   LDA (zp_br_p),Y                          ; ldy (+9)
+   LDA (zp_seg_hdr_p),Y                          ; ldy (+9)
    BNE bf_general
 ; ldy==0: dot = -ldx*dy. dy = py_int - lv1_y (s16) — only delta needed.
-; lv1y read on demand from the header (+6/+7) via zp_br_p.
+; lv1y read on demand from the header (+6/+7) via zp_seg_hdr_p.
    LDA zp_br_py_h
    SEC
    LDY #6                                   ; -> lv1y_lo (+6)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dylo
    LDA zp_br_py_e
    INY                                      ; -> lv1y_hi (+7)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dyhi
    ORA zp_br_dylo
    BNE bf_ldy0_dy_nz
@@ -157,11 +157,11 @@ bf_general:
    LDA zp_br_px_h
    SEC
    LDY #4                                   ; -> lv1x_lo (+4)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dxlo
    LDA zp_br_px_e
    INY                                      ; -> lv1x_hi (+5)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dxhi                           ; A = dxhi, in hand below
 ; Sign shortcut first (EXACT — ldx,ldy nonzero here, so P1 = ldy*dx is
 ; zero iff dx==0, P2 = ldx*dy zero iff dy==0, and sign(product) = XOR of
@@ -173,11 +173,11 @@ bf_general:
    LDA zp_br_py_h
    SEC
    INY                                      ; -> lv1y_lo (+6)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dylo
    LDA zp_br_py_e
    INY                                      ; -> lv1y_hi (+7)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dyhi
    ORA zp_br_dylo
    BNE bf_ldy0_dy_nz                       ; dot = -P2: byte-identical to the
@@ -187,11 +187,11 @@ bf_g_dx_nz:
    LDA zp_br_py_h
    SEC
    INY                                      ; -> lv1y_lo (+6)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dylo
    LDA zp_br_py_e
    INY                                      ; -> lv1y_hi (+7)
-   SBC (zp_br_p),Y
+   SBC (zp_seg_hdr_p),Y
    STA zp_br_dyhi
    ORA zp_br_dylo
    BEQ bf_ldx0_dx_nz                       ; dy==0 → dot = P1: byte-identical
