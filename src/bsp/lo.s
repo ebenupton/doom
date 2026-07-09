@@ -825,13 +825,12 @@ a2_cached:
 a2_have_recip:
    JSR rns_select                          ; rlo was just set (crossing const
                                         ; or vcache read) → re-vector
-   LDA zp_fhch_p
-   STA zp_br_p
-   LDA zp_fhch_p_h
-   STA zp_br_p_h
+; APV2 heights read straight from the FHCH cursor — zp_fhch_p is a ZP
+; pointer, so no copy into zp_br_p is needed (and it survives the
+; br_project_y calls, unlike zp_br_p which is general scratch).
 ; bch2' = project(APV2_CH - vz)  (FHCH byte 4)
    LDY #4
-   LDA (zp_br_p),Y
+   LDA (zp_fhch_p),Y
    SEC
    SBC zp_br_vz
    STA zp_br_t0
@@ -842,7 +841,7 @@ a2_have_recip:
    STA $B3
 ; bfh2' = project(APV2_FH - vz)  (FHCH byte 5)
    LDY #5
-   LDA (zp_br_p),Y
+   LDA (zp_fhch_p),Y
    SEC
    SBC zp_br_vz
    STA zp_br_t0
