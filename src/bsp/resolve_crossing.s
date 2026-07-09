@@ -12,21 +12,21 @@ bsp_d_start:
 ;   of a deferred node to descend.
 bsp_resolve_child:
 .scope
-PAGE BANK_L0                            ; node SoA pages live in bank L0
-LDX zp_node_chlo
-LDA zp_bbox_side
-BNE rc_left
-LDA NODE_CRLO,X
-STA zp_node_chlo
-LDA NODE_CRHI,X
-STA zp_node_chhi
-RTS
+   PAGE BANK_L0                            ; node SoA pages live in bank L0
+   LDX zp_node_chlo
+   LDA zp_bbox_side
+   BNE rc_left
+   LDA NODE_CRLO,X
+   STA zp_node_chlo
+   LDA NODE_CRHI,X
+   STA zp_node_chhi
+   RTS
 rc_left:
-LDA NODE_CLLO,X
-STA zp_node_chlo
-LDA NODE_CLHI,X
-STA zp_node_chhi
-RTS
+   LDA NODE_CLLO,X
+   STA zp_node_chlo
+   LDA NODE_CLHI,X
+   STA zp_node_chhi
+   RTS
 .endscope
 
 
@@ -37,9 +37,9 @@ RTS
 ; rns24 half constants, indexed S-1 (S in 1..10):
 ;   half = 2^(S-1) = rns_half_lo + (rns_half_mid << 8)
 rns_half_lo:
-.byte $01, $02, $04, $08, $10, $20, $40, $80, $00, $00
+   .byte $01, $02, $04, $08, $10, $20, $40, $80, $00, $00
 rns_half_mid:
-.byte $00, $00, $00, $00, $00, $00, $00, $00, $01, $02
+   .byte $00, $00, $00, $00, $00, $00, $00, $00, $01, $02
 
 
 bsp_d_end:

@@ -8,15 +8,15 @@
 ; Thin adapter from the br_a/br_b register convention onto SC_UMUL8.
 ; ============================================================================
 br_umul8:
-LDA zp_br_b
-STA zp_mul_b
-LDA zp_br_a
-JSR SC_UMUL8
-LDA zp_prod_lo
-STA zp_br_resl
-LDA zp_prod_hi
-STA zp_br_resh
-RTS
+   LDA zp_br_b
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_lo
+   STA zp_br_resl
+   LDA zp_prod_hi
+   STA zp_br_resh
+   RTS
 
 ; ============================================================================
 ; br_smul8 — signed s8 × s8 → s16. Inputs in zp_br_a, zp_br_b.
@@ -33,44 +33,44 @@ RTS
 ; ============================================================================
 br_smul8:
 .scope
-ZERO zp_br_sign
+   ZERO zp_br_sign
 ; |a|, track sign
-LDA zp_br_a
-BPL a_pos
-EOR #$FF
-BUMP
-STA zp_br_a
-INC zp_br_sign
+   LDA zp_br_a
+   BPL a_pos
+   EOR #$FF
+   BUMP
+   STA zp_br_a
+   INC zp_br_sign
 a_pos:
-LDA zp_br_b
-BPL b_pos
-EOR #$FF
-BUMP
-STA zp_br_b
-LDA zp_br_sign
-EOR #1
-STA zp_br_sign
+   LDA zp_br_b
+   BPL b_pos
+   EOR #$FF
+   BUMP
+   STA zp_br_b
+   LDA zp_br_sign
+   EOR #1
+   STA zp_br_sign
 b_pos:
-LDA zp_br_b
-STA zp_mul_b
-LDA zp_br_a
-JSR SC_UMUL8
-LDA zp_prod_lo
-STA zp_br_resl
-LDA zp_prod_hi
-STA zp_br_resh
-LDA zp_br_sign
-BEQ pos
+   LDA zp_br_b
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_lo
+   STA zp_br_resl
+   LDA zp_prod_hi
+   STA zp_br_resh
+   LDA zp_br_sign
+   BEQ pos
 ; Negate s16 result
-LDA #0
-SEC
-SBC zp_br_resl
-STA zp_br_resl
-LDA #0
-SBC zp_br_resh
-STA zp_br_resh
+   LDA #0
+   SEC
+   SBC zp_br_resl
+   STA zp_br_resl
+   LDA #0
+   SBC zp_br_resh
+   STA zp_br_resh
 pos:
-RTS
+   RTS
 .endscope
 
 ; ============================================================================
@@ -96,81 +96,81 @@ RTS
 .assert (RECIP_BASE & $FF) = 0, error   ; 4-page table indexed (page | t1)
 br_recip:
 .scope
-PAGE BANK_L2                            ; recip table lives in bank L2
+   PAGE BANK_L2                            ; recip table lives in bank L2
 ; --- Clamp vy_idx to [2, 1023] ---
-LDA zp_br_t1
-CMP #4
-BCC c_hi_ok
-LDA #$FF
-STA zp_br_t0
-LDA #3
-STA zp_br_t1
+   LDA zp_br_t1
+   CMP #4
+   BCC c_hi_ok
+   LDA #$FF
+   STA zp_br_t0
+   LDA #3
+   STA zp_br_t1
 c_hi_ok:
-LDA zp_br_t1
-BNE c_lo_ok
+   LDA zp_br_t1
+   BNE c_lo_ok
 ; HI > 0 → ≥ 256 ≥ 2, OK
-LDA zp_br_t0
-CMP #2
-BCS c_lo_ok
-LDA #2
-STA zp_br_t0
+   LDA zp_br_t0
+   CMP #2
+   BCS c_lo_ok
+   LDA #2
+   STA zp_br_t0
 c_lo_ok:
 
 ; --- M8 = RECIP_M8[idx]: page = >RECIP_BASE + idx.hi, offset = idx.lo ---
-LDA #0
-STA zp_br_p
-LDA zp_br_t1
-CLC
-ADC #>RECIP_BASE
-STA zp_br_p_h
-LDY zp_br_t0
-LDA (zp_br_p),Y
-STA zp_br_rhi                           ; M8
+   LDA #0
+   STA zp_br_p
+   LDA zp_br_t1
+   CLC
+   ADC #>RECIP_BASE
+   STA zp_br_p_h
+   LDY zp_br_t0
+   LDA (zp_br_p),Y
+   STA zp_br_rhi                           ; M8
 
 ; --- S = bit_length(idx - 1); idx >= 2 so idx-1 >= 1 ---
-LDA zp_br_t0
-SEC
-SBC #1
-TAX                                     ; X = lo(idx-1)
-LDA zp_br_t1
-SBC #0                                  ; A = hi(idx-1), in [0,3]
-BEQ s_scan_lo
-CMP #1
-BEQ s_9
-LDA #10                                 ; hi = 2 or 3 → top bit 9 → S = 10
-STA zp_br_rlo
-JMP rns_select                          ; pick the vectored shifter (RTSes)
+   LDA zp_br_t0
+   SEC
+   SBC #1
+   TAX                                     ; X = lo(idx-1)
+   LDA zp_br_t1
+   SBC #0                                  ; A = hi(idx-1), in [0,3]
+   BEQ s_scan_lo
+   CMP #1
+   BEQ s_9
+   LDA #10                                 ; hi = 2 or 3 → top bit 9 → S = 10
+   STA zp_br_rlo
+   JMP rns_select                          ; pick the vectored shifter (RTSes)
 s_9:
-LDA #9                                  ; hi = 1 → top bit 8 → S = 9
-STA zp_br_rlo
-JMP rns_select
+   LDA #9                                  ; hi = 1 → top bit 8 → S = 9
+   STA zp_br_rlo
+   JMP rns_select
 s_scan_lo:
 ; bit_length of X (>= 1): descending compare cascade
-LDA #8
-CPX #128
-BCS s_have
-LDA #7
-CPX #64
-BCS s_have
-LDA #6
-CPX #32
-BCS s_have
-LDA #5
-CPX #16
-BCS s_have
-LDA #4
-CPX #8
-BCS s_have
-LDA #3
-CPX #4
-BCS s_have
-LDA #2
-CPX #2
-BCS s_have
-LDA #1                                  ; X == 1
+   LDA #8
+   CPX #128
+   BCS s_have
+   LDA #7
+   CPX #64
+   BCS s_have
+   LDA #6
+   CPX #32
+   BCS s_have
+   LDA #5
+   CPX #16
+   BCS s_have
+   LDA #4
+   CPX #8
+   BCS s_have
+   LDA #3
+   CPX #4
+   BCS s_have
+   LDA #2
+   CPX #2
+   BCS s_have
+   LDA #1                                  ; X == 1
 s_have:
-STA zp_br_rlo                           ; S
-JMP rns_select                          ; pick the vectored shifter (RTSes)
+   STA zp_br_rlo                           ; S
+   JMP rns_select                          ; pick the vectored shifter (RTSes)
 .endscope
 
 ; ============================================================================
@@ -201,46 +201,46 @@ zp_ft_one = $0BFB
 
 br_frac_rot_term:
 .scope
-LDA zp_ft_one
-BEQ ft_not_one
-LDA zp_ft_lo
-JMP ft_apply_neg
+   LDA zp_ft_one
+   BEQ ft_not_one
+   LDA zp_ft_lo
+   JMP ft_apply_neg
 ft_not_one:
-LDA zp_ft_mag
-BEQ ft_zero
-LDA zp_ft_lo
-BEQ ft_zero
-LDA zp_ft_mag
-STA zp_mul_b
-LDA zp_ft_lo
-JSR SC_UMUL8                            ; prod_lo:hi = lo * mag
+   LDA zp_ft_mag
+   BEQ ft_zero
+   LDA zp_ft_lo
+   BEQ ft_zero
+   LDA zp_ft_mag
+   STA zp_mul_b
+   LDA zp_ft_lo
+   JSR SC_UMUL8                            ; prod_lo:hi = lo * mag
 ; val = (prod + 128) >> 8 — round-to-nearest, then take HI byte.
-LDA zp_prod_lo
-CLC
-ADC #128
-LDA zp_prod_hi
-ADC #0
+   LDA zp_prod_lo
+   CLC
+   ADC #128
+   LDA zp_prod_hi
+   ADC #0
 ; A = HI byte after rounding
 ft_apply_neg:
 ; A = u8 magnitude. Promote to s16 in zp_br_resl:resh.
-STA zp_br_resl
-ZERO zp_br_resh
-LDA zp_ft_neg
-BEQ ft_done
-LDA #0
-SEC
-SBC zp_br_resl
-STA zp_br_resl
-LDA #0
-SBC zp_br_resh
-STA zp_br_resh
+   STA zp_br_resl
+   ZERO zp_br_resh
+   LDA zp_ft_neg
+   BEQ ft_done
+   LDA #0
+   SEC
+   SBC zp_br_resl
+   STA zp_br_resl
+   LDA #0
+   SBC zp_br_resh
+   STA zp_br_resh
 ft_done:
-RTS
+   RTS
 ft_zero:
-LDA #0
-STA zp_br_resl
-STA zp_br_resh
-RTS
+   LDA #0
+   STA zp_br_resl
+   STA zp_br_resh
+   RTS
 .endscope
 
 ; ============================================================================
@@ -287,46 +287,46 @@ zp_ri_d = zp_ri_dlo                     ; backwards-compat alias
 ; Same pattern as the jt_bca_check / vxc_jsr_site / D-cache frame hooks.
 ; All variants are bit-exact with the old in-body branches.
 rot_zero:
-LDA #0
-STA zp_br_resl
-STA zp_br_resh
-STA zp_br_resext
-RTS
+   LDA #0
+   STA zp_br_resl
+   STA zp_br_resh
+   STA zp_br_resext
+   RTS
 
 rot_unity_pos:
 ; val = d << 8 as s24: resl=0, resh=dlo, resext=dhi.
-ZERO zp_br_resl
-LDA zp_ri_dlo
-STA zp_br_resh
-LDA zp_ri_dhi
-STA zp_br_resext
-RTS
+   ZERO zp_br_resl
+   LDA zp_ri_dlo
+   STA zp_br_resh
+   LDA zp_ri_dhi
+   STA zp_br_resext
+   RTS
 
 rot_unity_neg:
 ; -(d << 8): byte 0 stays 0 (no borrow out of 0-0), negate the top pair.
-ZERO zp_br_resl
-LDA #0
-SEC
-SBC zp_ri_dlo
-STA zp_br_resh
-LDA #0
-SBC zp_ri_dhi
-STA zp_br_resext
-RTS
+   ZERO zp_br_resl
+   LDA #0
+   SEC
+   SBC zp_ri_dlo
+   STA zp_br_resh
+   LDA #0
+   SBC zp_ri_dhi
+   STA zp_br_resext
+   RTS
 
 rot_gen_sin:
-LDA #0                                  ; SMC +1: |sin| mag (rot_select)
-STA zp_mul_b
-LDA #0                                  ; SMC +5: sin neg flag
-STA zp_ri_neg
-JMP rot_core
+   LDA #0                                  ; SMC +1: |sin| mag (rot_select)
+   STA zp_mul_b
+   LDA #0                                  ; SMC +5: sin neg flag
+   STA zp_ri_neg
+   JMP rot_core
 
 rot_gen_cos:
-LDA #0                                  ; SMC +1: |cos| mag (rot_select)
-STA zp_mul_b
-LDA #0                                  ; SMC +5: cos neg flag
-STA zp_ri_neg
-JMP rot_core
+   LDA #0                                  ; SMC +1: |cos| mag (rot_select)
+   STA zp_mul_b
+   LDA #0                                  ; SMC +5: cos neg flag
+   STA zp_ri_neg
+   JMP rot_core
 
 ; rot_core — the general |d|*mag s24 path (the old br_rot_int body).
 ; In: zp_ri_dlo/dhi = d (s16), zp_mul_b = mag (staged by the thunk),
@@ -336,135 +336,135 @@ rot_core:
 .scope
 ; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
 ; common on E1M1's grid geometry) — skip the two multiplies.
-LDA zp_ri_dlo
-ORA zp_ri_dhi
-BNE ri_d_nz
-JMP ri_zero
+   LDA zp_ri_dlo
+   ORA zp_ri_dhi
+   BNE ri_d_nz
+   JMP ri_zero
 ri_d_nz:
 ; |d| × mag → s24, with sign restoration. Compute as
 ;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
 ; First product: (lo,hi) → resl, resh; resext starts 0.
 ; Second product: (lo,hi) added to resh, resext.
-ZERO zp_br_t1                           ; sign tracker (1 if d was -ve)
-LDA zp_ri_dhi
-BPL ri_d_pos
-LDA #1
-STA zp_br_t1
-LDA #0
-SEC
-SBC zp_ri_dlo
-STA zp_ri_dlo
-LDA #0
-SBC zp_ri_dhi
-STA zp_ri_dhi
+   ZERO zp_br_t1                           ; sign tracker (1 if d was -ve)
+   LDA zp_ri_dhi
+   BPL ri_d_pos
+   LDA #1
+   STA zp_br_t1
+   LDA #0
+   SEC
+   SBC zp_ri_dlo
+   STA zp_ri_dlo
+   LDA #0
+   SBC zp_ri_dhi
+   STA zp_ri_dhi
 ri_d_pos:
 ; --- inlined umul8(zp_ri_dlo, mag) — saves JSR/RTS in the hot rotation ---
 ; Quarter-square multiply: a*b = f(a+b) - f(|a-b|), f(x) = x²/4 tables.
 ; X = a+b (sqr2_* tables when the sum carries past 255), Y = |a-b|.
-LDA zp_ri_dlo
-TAX                                     ; stash in X (was zp_tmp0)
-SEC
-SBC zp_mul_b
-BCS um1_pos
-EOR #$FF
-ADC #1
+   LDA zp_ri_dlo
+   TAX                                     ; stash in X (was zp_tmp0)
+   SEC
+   SBC zp_mul_b
+   BCS um1_pos
+   EOR #$FF
+   ADC #1
 um1_pos:
-TAY
-TXA
-CLC
-ADC zp_mul_b
-TAX
-BCS um1_uo
-LDA sqr_lo,X
-SEC
-SBC sqr_lo,Y
-STA zp_br_resl
-LDA sqr_hi,X
-SBC sqr_hi,Y
-STA zp_br_resh
-JMP um1_done
+   TAY
+   TXA
+   CLC
+   ADC zp_mul_b
+   TAX
+   BCS um1_uo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_br_resl
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   STA zp_br_resh
+   JMP um1_done
 um1_uo:
-LDA sqr2_lo,X
-SBC sqr_lo,Y
-STA zp_br_resl
-LDA sqr2_hi,X
-SBC sqr_hi,Y
-STA zp_br_resh
+   LDA sqr2_lo,X
+   SBC sqr_lo,Y
+   STA zp_br_resl
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+   STA zp_br_resh
 um1_done:
-ZERO zp_br_resext
+   ZERO zp_br_resext
 ; --- inlined umul8(zp_ri_dhi, mag) — same quarter-square pattern; its
 ; u16 product lands one byte up: added into resh (lo) and resext (hi). ---
-LDA zp_ri_dhi
-TAX                                     ; stash in X (was zp_tmp0)
-SEC
-SBC zp_mul_b
-BCS um2_pos
-EOR #$FF
-ADC #1
+   LDA zp_ri_dhi
+   TAX                                     ; stash in X (was zp_tmp0)
+   SEC
+   SBC zp_mul_b
+   BCS um2_pos
+   EOR #$FF
+   ADC #1
 um2_pos:
-TAY
-TXA
-CLC
-ADC zp_mul_b
-TAX
-BCS um2_uo
-LDA sqr_lo,X
-SEC
-SBC sqr_lo,Y
-STA zp_prod_lo
-LDA sqr_hi,X
-SBC sqr_hi,Y
-STA zp_prod_hi
-JMP um2_done
+   TAY
+   TXA
+   CLC
+   ADC zp_mul_b
+   TAX
+   BCS um2_uo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_prod_lo
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   STA zp_prod_hi
+   JMP um2_done
 um2_uo:
-LDA sqr2_lo,X
-SBC sqr_lo,Y
-STA zp_prod_lo
-LDA sqr2_hi,X
-SBC sqr_hi,Y
-STA zp_prod_hi
+   LDA sqr2_lo,X
+   SBC sqr_lo,Y
+   STA zp_prod_lo
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+   STA zp_prod_hi
 um2_done:
-CLC
-LDA zp_prod_lo
-ADC zp_br_resh
-STA zp_br_resh
-LDA zp_prod_hi
-ADC zp_br_resext
-STA zp_br_resext
-LDA zp_br_t1
-BEQ ri_apply_neg
+   CLC
+   LDA zp_prod_lo
+   ADC zp_br_resh
+   STA zp_br_resh
+   LDA zp_prod_hi
+   ADC zp_br_resext
+   STA zp_br_resext
+   LDA zp_br_t1
+   BEQ ri_apply_neg
 ; d was negative → negate s24 result.
-LDA #0
-SEC
-SBC zp_br_resl
-STA zp_br_resl
-LDA #0
-SBC zp_br_resh
-STA zp_br_resh
-LDA #0
-SBC zp_br_resext
-STA zp_br_resext
+   LDA #0
+   SEC
+   SBC zp_br_resl
+   STA zp_br_resl
+   LDA #0
+   SBC zp_br_resh
+   STA zp_br_resh
+   LDA #0
+   SBC zp_br_resext
+   STA zp_br_resext
 ri_apply_neg:
-LDA zp_ri_neg
-BNE ri_do_neg                           ; rare (trig negative); common case
+   LDA zp_ri_neg
+   BNE ri_do_neg                           ; rare (trig negative); common case
 ri_done:                                ; falls straight through to RTS
-RTS
+   RTS
 ri_do_neg:
-LDA #0
-SEC
-SBC zp_br_resl
-STA zp_br_resl
-LDA #0
-SBC zp_br_resh
-STA zp_br_resh
-LDA #0
-SBC zp_br_resext
-STA zp_br_resext
-RTS
+   LDA #0
+   SEC
+   SBC zp_br_resl
+   STA zp_br_resl
+   LDA #0
+   SBC zp_br_resh
+   STA zp_br_resh
+   LDA #0
+   SBC zp_br_resext
+   STA zp_br_resext
+   RTS
 ri_zero:
-LDA #0
-STA zp_br_resl
-STA zp_br_resh
-STA zp_br_resext
-RTS
+   LDA #0
+   STA zp_br_resl
+   STA zp_br_resh
+   STA zp_br_resext
+   RTS
 .endscope

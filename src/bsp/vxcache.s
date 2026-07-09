@@ -75,36 +75,36 @@ vxc_ab = $FA00+$2F
 .segment "MAIN"
 vxc_to_view:
 .scope
-LDA zp_seg_v_idx_lo
-LSR A
-LSR A
-LSR A
-LDX zp_seg_v_idx_hi
-BEQ vt_xok
+   LDA zp_seg_v_idx_lo
+   LSR A
+   LSR A
+   LSR A
+   LDX zp_seg_v_idx_hi
+   BEQ vt_xok
 ; idx in 256..466: idx>>3 = 32 + ((idx&255)>>3), and (idx&255)>>3 <= 26 < 32,
 ; so ORA #32 is the exact add (no carry into bit 5 possible).
-ORA #32                                 ; idx>>3 for idx in 256..466 (r>>3<=26)
+   ORA #32                                 ; idx>>3 for idx in 256..466 (r>>3<=26)
 vt_xok:
-TAX
-PAGE BANK_C
-LDA VXC_VALID,X
-AND zp_seg_v_bitm
-BEQ vt_cold
-JSR vxc_warm_load                       ; VXCODE: total = base + CACC -> zp
-PAGE BANK_L0
-RTS
+   TAX
+   PAGE BANK_C
+   LDA VXC_VALID,X
+   AND zp_seg_v_bitm
+   BEQ vt_cold
+   JSR vxc_warm_load                       ; VXCODE: total = base + CACC -> zp
+   PAGE BANK_L0
+   RTS
 vt_cold:
 ; cold: mark the vertex valid, run the real transform (br_to_view needs
 ; BANK_L0), then snapshot base = total - CACC for future warm frames.
-LDA VXC_VALID,X
-ORA zp_seg_v_bitm
-STA VXC_VALID,X
-PAGE BANK_L0
-JSR br_to_view
-PAGE BANK_C
-JSR vxc_cold_store                      ; VXCODE: base = total - CACC
-PAGE BANK_L0
-RTS
+   LDA VXC_VALID,X
+   ORA zp_seg_v_bitm
+   STA VXC_VALID,X
+   PAGE BANK_L0
+   JSR br_to_view
+   PAGE BANK_C
+   JSR vxc_cold_store                      ; VXCODE: base = total - CACC
+   PAGE BANK_L0
+   RTS
 .endscope
 
 ; ============================================================================
@@ -124,52 +124,52 @@ RTS
 ; duplicated body). One CLC per axis; the carry rides the 3-byte ADC chain.
 vxc_warm_load:
 .scope
-LDY zp_seg_v_idx_lo
-LDA zp_seg_v_idx_hi
-BNE vw_hi
-CLC
-LDA VXC_XLO,Y
-ADC vxc_cacc_x+0
-STA zp_br_vxlo
-LDA VXC_XHI,Y
-ADC vxc_cacc_x+1
-STA zp_br_vxhi
-LDA VXC_XEXT,Y
-ADC vxc_cacc_x+2
-STA zp_br_vxext
-CLC
-LDA VXC_YLO,Y
-ADC vxc_cacc_y+0
-STA zp_br_vylo
-LDA VXC_YHI,Y
-ADC vxc_cacc_y+1
-STA zp_br_vyhi
-LDA VXC_YEXT,Y
-ADC vxc_cacc_y+2
-STA zp_br_vyext
-RTS
+   LDY zp_seg_v_idx_lo
+   LDA zp_seg_v_idx_hi
+   BNE vw_hi
+   CLC
+   LDA VXC_XLO,Y
+   ADC vxc_cacc_x+0
+   STA zp_br_vxlo
+   LDA VXC_XHI,Y
+   ADC vxc_cacc_x+1
+   STA zp_br_vxhi
+   LDA VXC_XEXT,Y
+   ADC vxc_cacc_x+2
+   STA zp_br_vxext
+   CLC
+   LDA VXC_YLO,Y
+   ADC vxc_cacc_y+0
+   STA zp_br_vylo
+   LDA VXC_YHI,Y
+   ADC vxc_cacc_y+1
+   STA zp_br_vyhi
+   LDA VXC_YEXT,Y
+   ADC vxc_cacc_y+2
+   STA zp_br_vyext
+   RTS
 vw_hi:
-CLC
-LDA VXC_XLO+$100,Y
-ADC vxc_cacc_x+0
-STA zp_br_vxlo
-LDA VXC_XHI+$100,Y
-ADC vxc_cacc_x+1
-STA zp_br_vxhi
-LDA VXC_XEXT+$100,Y
-ADC vxc_cacc_x+2
-STA zp_br_vxext
-CLC
-LDA VXC_YLO+$100,Y
-ADC vxc_cacc_y+0
-STA zp_br_vylo
-LDA VXC_YHI+$100,Y
-ADC vxc_cacc_y+1
-STA zp_br_vyhi
-LDA VXC_YEXT+$100,Y
-ADC vxc_cacc_y+2
-STA zp_br_vyext
-RTS
+   CLC
+   LDA VXC_XLO+$100,Y
+   ADC vxc_cacc_x+0
+   STA zp_br_vxlo
+   LDA VXC_XHI+$100,Y
+   ADC vxc_cacc_x+1
+   STA zp_br_vxhi
+   LDA VXC_XEXT+$100,Y
+   ADC vxc_cacc_x+2
+   STA zp_br_vxext
+   CLC
+   LDA VXC_YLO+$100,Y
+   ADC vxc_cacc_y+0
+   STA zp_br_vylo
+   LDA VXC_YHI+$100,Y
+   ADC vxc_cacc_y+1
+   STA zp_br_vyhi
+   LDA VXC_YEXT+$100,Y
+   ADC vxc_cacc_y+2
+   STA zp_br_vyext
+   RTS
 .endscope
 
 ; --- vxc_cold_store: base = total - CACC (inverse of vxc_warm_load) ---------
@@ -180,52 +180,52 @@ RTS
 ;        stale within an angle epoch (see file header).
 vxc_cold_store:
 .scope
-LDY zp_seg_v_idx_lo
-LDA zp_seg_v_idx_hi
-BNE vs_hi
-SEC
-LDA zp_br_vxlo
-SBC vxc_cacc_x+0
-STA VXC_XLO,Y
-LDA zp_br_vxhi
-SBC vxc_cacc_x+1
-STA VXC_XHI,Y
-LDA zp_br_vxext
-SBC vxc_cacc_x+2
-STA VXC_XEXT,Y
-SEC
-LDA zp_br_vylo
-SBC vxc_cacc_y+0
-STA VXC_YLO,Y
-LDA zp_br_vyhi
-SBC vxc_cacc_y+1
-STA VXC_YHI,Y
-LDA zp_br_vyext
-SBC vxc_cacc_y+2
-STA VXC_YEXT,Y
-RTS
+   LDY zp_seg_v_idx_lo
+   LDA zp_seg_v_idx_hi
+   BNE vs_hi
+   SEC
+   LDA zp_br_vxlo
+   SBC vxc_cacc_x+0
+   STA VXC_XLO,Y
+   LDA zp_br_vxhi
+   SBC vxc_cacc_x+1
+   STA VXC_XHI,Y
+   LDA zp_br_vxext
+   SBC vxc_cacc_x+2
+   STA VXC_XEXT,Y
+   SEC
+   LDA zp_br_vylo
+   SBC vxc_cacc_y+0
+   STA VXC_YLO,Y
+   LDA zp_br_vyhi
+   SBC vxc_cacc_y+1
+   STA VXC_YHI,Y
+   LDA zp_br_vyext
+   SBC vxc_cacc_y+2
+   STA VXC_YEXT,Y
+   RTS
 vs_hi:
-SEC
-LDA zp_br_vxlo
-SBC vxc_cacc_x+0
-STA VXC_XLO+$100,Y
-LDA zp_br_vxhi
-SBC vxc_cacc_x+1
-STA VXC_XHI+$100,Y
-LDA zp_br_vxext
-SBC vxc_cacc_x+2
-STA VXC_XEXT+$100,Y
-SEC
-LDA zp_br_vylo
-SBC vxc_cacc_y+0
-STA VXC_YLO+$100,Y
-LDA zp_br_vyhi
-SBC vxc_cacc_y+1
-STA VXC_YHI+$100,Y
-LDA zp_br_vyext
-SBC vxc_cacc_y+2
-STA VXC_YEXT+$100,Y
-RTS
+   SEC
+   LDA zp_br_vxlo
+   SBC vxc_cacc_x+0
+   STA VXC_XLO+$100,Y
+   LDA zp_br_vxhi
+   SBC vxc_cacc_x+1
+   STA VXC_XHI+$100,Y
+   LDA zp_br_vxext
+   SBC vxc_cacc_x+2
+   STA VXC_XEXT+$100,Y
+   SEC
+   LDA zp_br_vylo
+   SBC vxc_cacc_y+0
+   STA VXC_YLO+$100,Y
+   LDA zp_br_vyhi
+   SBC vxc_cacc_y+1
+   STA VXC_YHI+$100,Y
+   LDA zp_br_vyext
+   SBC vxc_cacc_y+2
+   STA VXC_YEXT+$100,Y
+   RTS
 .endscope
 
 ; ============================================================================
@@ -254,80 +254,80 @@ RTS
 ;   patch JSR -> vxc_to_view
 vxc_frame:
 .scope
-LDA VXC_ENABLE
-BNE vf_on
+   LDA VXC_ENABLE
+   BNE vf_on
 ; disabled: restore the original br_to_view target (byte-identical path)
-LDA #<br_to_view
-STA vxc_jsr_site+1
-LDA #>br_to_view
-STA vxc_jsr_site+2
-RTS
+   LDA #<br_to_view
+   STA vxc_jsr_site+1
+   LDA #>br_to_view
+   STA vxc_jsr_site+2
+   RTS
 vf_on:
 ; ref = view totals of world (0,0) under this frame's context
-LDA #0
-STA zp_br_dxlo
-STA zp_br_dxhi
-STA zp_br_dylo
-STA zp_br_dyhi
-JSR br_to_view
-LDA vxc_ab
-CMP vxc_prev_ab
-BEQ vf_warm
+   LDA #0
+   STA zp_br_dxlo
+   STA zp_br_dxhi
+   STA zp_br_dylo
+   STA zp_br_dyhi
+   JSR br_to_view
+   LDA vxc_ab
+   CMP vxc_prev_ab
+   BEQ vf_warm
 ; --- cold frame: re-anchor ref_cold, zero CACC, wipe the valid bitmap ---
-STA vxc_prev_ab
-LDA zp_br_vxlo
-STA vxc_refc_x+0
-LDA zp_br_vxhi
-STA vxc_refc_x+1
-LDA zp_br_vxext
-STA vxc_refc_x+2
-LDA zp_br_vylo
-STA vxc_refc_y+0
-LDA zp_br_vyhi
-STA vxc_refc_y+1
-LDA zp_br_vyext
-STA vxc_refc_y+2
-LDA #0
-LDX #5
+   STA vxc_prev_ab
+   LDA zp_br_vxlo
+   STA vxc_refc_x+0
+   LDA zp_br_vxhi
+   STA vxc_refc_x+1
+   LDA zp_br_vxext
+   STA vxc_refc_x+2
+   LDA zp_br_vylo
+   STA vxc_refc_y+0
+   LDA zp_br_vyhi
+   STA vxc_refc_y+1
+   LDA zp_br_vyext
+   STA vxc_refc_y+2
+   LDA #0
+   LDX #5
 vf_zc:
-STA vxc_cacc_x,X                        ; cacc_x/y are contiguous (6 bytes)
-DEX
-BPL vf_zc
-LDX #58
-LDA #0
+   STA vxc_cacc_x,X                        ; cacc_x/y are contiguous (6 bytes)
+   DEX
+   BPL vf_zc
+   LDX #58
+   LDA #0
 vf_wipe:
-STA VXC_VALID,X
-DEX
-BPL vf_wipe
-JMP vf_patch
+   STA VXC_VALID,X
+   DEX
+   BPL vf_wipe
+   JMP vf_patch
 vf_warm:
 ; --- warm frame: CACC = ref - ref_cold (s24 x2) ---
-SEC
-LDA zp_br_vxlo
-SBC vxc_refc_x+0
-STA vxc_cacc_x+0
-LDA zp_br_vxhi
-SBC vxc_refc_x+1
-STA vxc_cacc_x+1
-LDA zp_br_vxext
-SBC vxc_refc_x+2
-STA vxc_cacc_x+2
-SEC
-LDA zp_br_vylo
-SBC vxc_refc_y+0
-STA vxc_cacc_y+0
-LDA zp_br_vyhi
-SBC vxc_refc_y+1
-STA vxc_cacc_y+1
-LDA zp_br_vyext
-SBC vxc_refc_y+2
-STA vxc_cacc_y+2
+   SEC
+   LDA zp_br_vxlo
+   SBC vxc_refc_x+0
+   STA vxc_cacc_x+0
+   LDA zp_br_vxhi
+   SBC vxc_refc_x+1
+   STA vxc_cacc_x+1
+   LDA zp_br_vxext
+   SBC vxc_refc_x+2
+   STA vxc_cacc_x+2
+   SEC
+   LDA zp_br_vylo
+   SBC vxc_refc_y+0
+   STA vxc_cacc_y+0
+   LDA zp_br_vyhi
+   SBC vxc_refc_y+1
+   STA vxc_cacc_y+1
+   LDA zp_br_vyext
+   SBC vxc_refc_y+2
+   STA vxc_cacc_y+2
 vf_patch:
-LDA #<vxc_to_view
-STA vxc_jsr_site+1
-LDA #>vxc_to_view
-STA vxc_jsr_site+2
-RTS
+   LDA #<vxc_to_view
+   STA vxc_jsr_site+1
+   LDA #>vxc_to_view
+   STA vxc_jsr_site+2
+   RTS
 .endscope
 
 ; restore the segment for subsequently-included parts (they inherit)

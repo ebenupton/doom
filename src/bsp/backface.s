@@ -34,6 +34,39 @@
 ;        OPPOSITE signs: sign(P1-P2) = sign(P1) — still no multiplies.
 ;     3. same-sign products: full 2 × (s8×s16) multiply + s16 subtract.
 ; ============================================================================
+; Pseudocode (each [label] tags the basic block below that implements it):
+;
+;   br_back_face_test():                        # Z=1 back, Z=0 front
+;      if ldx == 0:                             # vertical linedef
+;         if ldy == 0:            return BACK   # degenerate
+;         [bf_ldx0_ldy_nz] dx = px - lv1x       # the only delta needed
+;         if dx == 0:             return BACK
+;         [bf_ldx0_dx_nz]  return TAIL(sign(ldy) ^ sign(dx))       # dot = P1
+;      [bf_ldx_nz]
+;      if ldy == 0:                             # horizontal linedef
+;         dy = py - lv1y                        # the only delta needed
+;         if dy == 0:             return BACK
+;         [bf_ldy0_dy_nz]  return TAIL(~(sign(ldx) ^ sign(dy)))    # dot = -P2
+;      [bf_general]     dx = px - lv1x ; dy = py - lv1y
+;      if dx == 0:
+;         if dy == 0:             return BACK
+;         [bf_g_p2only]    return TAIL(~(sign(ldx) ^ sign(dy)))    # dot = -P2
+;      [bf_g_dx_nz]
+;      if dy == 0:         return TAIL(sign(ldy) ^ sign(dx))       # dot = P1
+;      [bf_g_both]      X = sign(P1) = sign(ldy) ^ sign(dx)
+;      if X != sign(P2):   return TAIL(X)       # opposite signs decide
+;      [bf_g_mul]       dot = ldy*dx - ldx*dy   # 2 x s8xs16, s16 in t2/t3
+;      if SAMEDIR (BIT/BMI):  back iff dot <= 0 # normal compare
+;      [bf_g_dir] else:       back iff dot >= 0 # mirrored (-dot <= 0),
+;                                               # no 16-bit negate
+;      [bf_ret / bf_mul_back]  shared Z-contract exits for the mul arm
+;
+;   TAIL(s) = (s ^ flags) & $80                 # inlined at every producer:
+;                                               # SAMEDIR is the top flag bit,
+;                                               # packed INVERTED, so bit7 of
+;                                               # s^flags = FRONT; A=$80/Z=0
+;                                               # front, A=$00/Z=1 back.
+;
 br_back_face_test:
 .scope
 ; --- Dispatch FIRST, compute deltas LAZILY (2026-07-09): the old body
@@ -44,166 +77,166 @@ br_back_face_test:
 ; If ldx == 0: dot = ldy*dx, sign matches iff sign(ldy)==sign(dx).
 ; If ldy == 0: dot = -ldx*dy, sign matches iff sign(ldx)!=sign(dy).
 ; SF_DIR negates dot.
-LDA zp_seg_ldx
-BNE bf_ldx_nz
+   LDA zp_seg_ldx
+   BNE bf_ldx_nz
 ; ldx==0
-LDA zp_seg_ldy
-BNE bf_ldx0_ldy_nz
-RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
+   LDA zp_seg_ldy
+   BNE bf_ldx0_ldy_nz
+   RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
 bf_ldx0_ldy_nz:
 ; dx = px_int - lv1_x (s16) — the only delta this arm needs
-LDA zp_br_px_h
-SEC
-SBC zp_seg_lv1x_lo
-STA zp_br_dxlo
-LDA zp_br_px_e
-SBC zp_seg_lv1x_hi
-STA zp_br_dxhi
-LDA zp_br_dxlo
-ORA zp_br_dxhi
-BNE bf_ldx0_dx_nz
-RTS                                     ; dx == 0 → dot=0 → back (Z=1)
+   LDA zp_br_px_h
+   SEC
+   SBC zp_seg_lv1x_lo
+   STA zp_br_dxlo
+   LDA zp_br_px_e
+   SBC zp_seg_lv1x_hi
+   STA zp_br_dxhi
+   LDA zp_br_dxlo
+   ORA zp_br_dxhi
+   BNE bf_ldx0_dx_nz
+   RTS                                     ; dx == 0 → dot=0 → back (Z=1)
 bf_ldx0_dx_nz:
 ; sign(dot) = sign(ldy) XOR sign(dx_hi)
-LDA zp_seg_ldy
-EOR zp_br_dxhi
-EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-AND #$80                                ; FRONT (SAMEDIR packed inverted);
-RTS                                     ; A/Z IS the verdict
+   LDA zp_seg_ldy
+   EOR zp_br_dxhi
+   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+   AND #$80                                ; FRONT (SAMEDIR packed inverted);
+   RTS                                     ; A/Z IS the verdict
 bf_ldx_nz:
-LDA zp_seg_ldy
-BNE bf_general
+   LDA zp_seg_ldy
+   BNE bf_general
 ; ldy==0: dot = -ldx*dy. dy = py_int - lv1_y (s16) — only delta needed.
-LDA zp_br_py_h
-SEC
-SBC zp_seg_lv1y_lo
-STA zp_br_dylo
-LDA zp_br_py_e
-SBC zp_seg_lv1y_hi
-STA zp_br_dyhi
-LDA zp_br_dylo
-ORA zp_br_dyhi
-BNE bf_ldy0_dy_nz
-RTS                                     ; dy == 0 → dot=0 → back (Z=1)
+   LDA zp_br_py_h
+   SEC
+   SBC zp_seg_lv1y_lo
+   STA zp_br_dylo
+   LDA zp_br_py_e
+   SBC zp_seg_lv1y_hi
+   STA zp_br_dyhi
+   LDA zp_br_dylo
+   ORA zp_br_dyhi
+   BNE bf_ldy0_dy_nz
+   RTS                                     ; dy == 0 → dot=0 → back (Z=1)
 bf_ldy0_dy_nz:
 ; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi))
-LDA zp_seg_ldx
-EOR zp_br_dyhi
-EOR #$80
+   LDA zp_seg_ldx
+   EOR zp_br_dyhi
+   EOR #$80
 ; sign tail (inlined at every producer, 2026-07-09 — was JMP bf_apply_dir):
 ; A's top bit = sign of dot (1=neg). SF_SAMEDIR is the top flag bit and
 ; PACKED INVERTED (set = no direction flip), so sign ^ flags gives
 ; bit7 = 1 ⇔ FRONT with no correction — and AND #$80 then IS the whole
 ; Z-contract verdict: A=$80/Z=0 front, A=$00/Z=1 back. Branchless.
-EOR zp_seg_flags
-AND #$80
-RTS
+   EOR zp_seg_flags
+   AND #$80
+   RTS
 
 bf_general:
 ; both deltas needed from here (lazy dispatch above computed neither)
-LDA zp_br_px_h
-SEC
-SBC zp_seg_lv1x_lo
-STA zp_br_dxlo
-LDA zp_br_px_e
-SBC zp_seg_lv1x_hi
-STA zp_br_dxhi
-LDA zp_br_py_h
-SEC
-SBC zp_seg_lv1y_lo
-STA zp_br_dylo
-LDA zp_br_py_e
-SBC zp_seg_lv1y_hi
-STA zp_br_dyhi
+   LDA zp_br_px_h
+   SEC
+   SBC zp_seg_lv1x_lo
+   STA zp_br_dxlo
+   LDA zp_br_px_e
+   SBC zp_seg_lv1x_hi
+   STA zp_br_dxhi
+   LDA zp_br_py_h
+   SEC
+   SBC zp_seg_lv1y_lo
+   STA zp_br_dylo
+   LDA zp_br_py_e
+   SBC zp_seg_lv1y_hi
+   STA zp_br_dyhi
 ; Sign shortcut first (EXACT — ldx,ldy nonzero here, so P1 = ldy*dx is
 ; zero iff dx==0, P2 = ldx*dy zero iff dy==0, and sign(product) = XOR of
 ; operand signs). dot = P1 - P2 > 0 -> front. Opposite-sign products
 ; decide by sign alone; only same-sign products need the two multiplies.
 ; (Bonus: the decided-by-sign cases are immune to the s16 truncation of
 ; br_smul_s8_s16 — the residual risk is confined to same-sign products.)
-LDA zp_br_dxlo
-ORA zp_br_dxhi
-BNE bf_g_dx_nz
-LDA zp_br_dylo
-ORA zp_br_dyhi
-BNE bf_g_p2only
-RTS                                     ; dx==0 and dy==0 → back (Z=1)
+   LDA zp_br_dxlo
+   ORA zp_br_dxhi
+   BNE bf_g_dx_nz
+   LDA zp_br_dylo
+   ORA zp_br_dyhi
+   BNE bf_g_p2only
+   RTS                                     ; dx==0 and dy==0 → back (Z=1)
 bf_g_p2only:
 ; dot = -P2: sign = NOT(sign(ldx) ^ sign(dy))
-LDA zp_seg_ldx
-EOR zp_br_dyhi
-EOR #$80
-EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-AND #$80                                ; FRONT (SAMEDIR packed inverted);
-RTS                                     ; A/Z IS the verdict
+   LDA zp_seg_ldx
+   EOR zp_br_dyhi
+   EOR #$80
+   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+   AND #$80                                ; FRONT (SAMEDIR packed inverted);
+   RTS                                     ; A/Z IS the verdict
 bf_g_dx_nz:
-LDA zp_br_dylo
-ORA zp_br_dyhi
-BNE bf_g_both
+   LDA zp_br_dylo
+   ORA zp_br_dyhi
+   BNE bf_g_both
 ; dy==0 -> dot = P1: sign = sign(ldy) ^ sign(dx)
-LDA zp_seg_ldy
-EOR zp_br_dxhi
-EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-AND #$80                                ; FRONT (SAMEDIR packed inverted);
-RTS                                     ; A/Z IS the verdict
+   LDA zp_seg_ldy
+   EOR zp_br_dxhi
+   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+   AND #$80                                ; FRONT (SAMEDIR packed inverted);
+   RTS                                     ; A/Z IS the verdict
 bf_g_both:
-LDA zp_seg_ldy
-EOR zp_br_dxhi                          ; sign(P1)
-TAX                                     ; ride in X (was a zp_br_t2 stash)
-EOR zp_seg_ldx
-EOR zp_br_dyhi                          ; ^ sign(P2)
-BPL bf_g_mul                            ; same sign -> full compare below
-TXA                                     ; opposite: sign(dot) = sign(P1)
-EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-AND #$80                                ; FRONT (SAMEDIR packed inverted);
-RTS                                     ; A/Z IS the verdict
+   LDA zp_seg_ldy
+   EOR zp_br_dxhi                          ; sign(P1)
+   TAX                                     ; ride in X (was a zp_br_t2 stash)
+   EOR zp_seg_ldx
+   EOR zp_br_dyhi                          ; ^ sign(P2)
+   BPL bf_g_mul                            ; same sign -> full compare below
+   TXA                                     ; opposite: sign(dot) = sign(P1)
+   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
+   AND #$80                                ; FRONT (SAMEDIR packed inverted);
+   RTS                                     ; A/Z IS the verdict
 bf_g_mul:
 ; ldx and ldy both nonzero — full 2-mul s8×s16 dot product.
 ; ldy * dx → s16 in resl/resh; save in t2:t3.
-LDA zp_seg_ldy
-STA zp_br_a
-JSR br_smul_s8_s16
-LDA zp_br_resl
-STA zp_br_t2
-LDA zp_br_resh
-STA zp_br_t3
+   LDA zp_seg_ldy
+   STA zp_br_a
+   JSR br_smul_s8_s16
+   LDA zp_br_resl
+   STA zp_br_t2
+   LDA zp_br_resh
+   STA zp_br_t3
 
 ; ldx * dy → s16 in resl/resh. (br_smul_s8_s16 takes its s16 operand in
 ; the dxlo/dxhi slots, so copy dy over — dx is no longer needed.)
-LDA zp_br_dylo
-STA zp_br_dxlo
-LDA zp_br_dyhi
-STA zp_br_dxhi
-LDA zp_seg_ldx
-STA zp_br_a
-JSR br_smul_s8_s16
+   LDA zp_br_dylo
+   STA zp_br_dxlo
+   LDA zp_br_dyhi
+   STA zp_br_dxhi
+   LDA zp_seg_ldx
+   STA zp_br_a
+   JSR br_smul_s8_s16
 
 ; dot = prod1 - prod2 (s16)
-LDA zp_br_t2
-SEC
-SBC zp_br_resl
-STA zp_br_t2
-LDA zp_br_t3
-SBC zp_br_resh
-STA zp_br_t3
+   LDA zp_br_t2
+   SEC
+   SBC zp_br_resl
+   STA zp_br_t2
+   LDA zp_br_t3
+   SBC zp_br_resh
+   STA zp_br_t3
 
 ; SF_SAMEDIR (top bit, inverted) MIRRORS the comparison instead of
 ; negating the dot: SET (BMI) = normal back iff dot <= 0; CLEAR (BPL) =
 ; flipped seg, back iff dot >= 0 (-dot <= 0). No 16-bit negate.
-BIT zp_seg_flags
-BPL bf_g_dir
-LDA zp_br_t3
-BMI bf_mul_back
-BNE bf_ret                              ; t3 > 0 → front, Z=0 in hand
-LDA zp_br_t2                            ; Z = (t2 == 0) IS the verdict
+   BIT zp_seg_flags
+   BPL bf_g_dir
+   LDA zp_br_t3
+   BMI bf_mul_back
+   BNE bf_ret                              ; t3 > 0 → front, Z=0 in hand
+   LDA zp_br_t2                            ; Z = (t2 == 0) IS the verdict
 bf_ret:
-RTS
+   RTS
 bf_g_dir:
-LDA zp_br_t3
-BMI bf_ret                              ; dot < 0 → -dot > 0 → front (Z=0)
+   LDA zp_br_t3
+   BMI bf_ret                              ; dot < 0 → -dot > 0 → front (Z=0)
 bf_mul_back:
-LDA #0                                  ; Z=1: back (dot >= 0 under DIR,
-RTS                                     ;  dot <= 0 normally)
+   LDA #0                                  ; Z=1: back (dot >= 0 under DIR,
+   RTS                                     ;  dot <= 0 normally)
 .endscope
 
 ; ============================================================================

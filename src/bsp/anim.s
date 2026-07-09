@@ -78,41 +78,41 @@ ANIM_CUR  = $F1                         ; mover index during hub loop
 ;     DIRTY &= ~bit(m)                   # applied == logical again
 anim_hub:
 .scope
-LDX zp_node_chlo
-LDA ANIM_SSMASK,X                       ; movers with segs in this subsector
-AND ANIM_DIRTY
-BEQ ah_done
-STA ah_pend
-LDX #5
+   LDX zp_node_chlo
+   LDA ANIM_SSMASK,X                       ; movers with segs in this subsector
+   AND ANIM_DIRTY
+   BEQ ah_done
+   STA ah_pend
+   LDX #5
 ah_loop:
-LDA ah_pend
-AND ah_bit,X
-BEQ ah_next
-STX ANIM_CUR
+   LDA ah_pend
+   AND ah_bit,X
+   BEQ ah_next
+   STX ANIM_CUR
 ; value = pos_hi of mover X (ws + X*3 + 1)
-TXA
-ASL A
-ADC ANIM_CUR                            ; A = X*3 (carry clear: X<=5)
-TAY
-LDA ANIM_WS+1,Y
-STA ANIM_VAL
-JSR anim_l0_worker                      ; FHCH bytes + seg flags (L0 paged)
-PAGE BANK_L2
-JSR anim_l2_worker                      ; private VWH bytes
-PAGE BANK_L0
-LDX ANIM_CUR
-LDA ANIM_DIRTY
-EOR ah_bit,X                            ; clear this mover's dirty bit
-STA ANIM_DIRTY
+   TXA
+   ASL A
+   ADC ANIM_CUR                            ; A = X*3 (carry clear: X<=5)
+   TAY
+   LDA ANIM_WS+1,Y
+   STA ANIM_VAL
+   JSR anim_l0_worker                      ; FHCH bytes + seg flags (L0 paged)
+   PAGE BANK_L2
+   JSR anim_l2_worker                      ; private VWH bytes
+   PAGE BANK_L0
+   LDX ANIM_CUR
+   LDA ANIM_DIRTY
+   EOR ah_bit,X                            ; clear this mover's dirty bit
+   STA ANIM_DIRTY
 ah_next:
-DEX
-BPL ah_loop
+   DEX
+   BPL ah_loop
 ah_done:
-JMP anim_ss_cont                        ; resume br_render_subsector
+   JMP anim_ss_cont                        ; resume br_render_subsector
 ah_bit:
-.byte 1,2,4,8,16,32
+   .byte 1,2,4,8,16,32
 ah_pend:
-.byte 0
+   .byte 0
 .endscope
 
 ; ============================================================================
@@ -141,119 +141,119 @@ jt_anim_init: JMP anim_init             ; +3
 ;     if pos_hi != previous pos_hi: DIRTY |= bit(m)  # renderer bytes now stale
 anim_tick:
 .scope
-LDA ANIM_ENABLE
-BNE at_on
-RTS
+   LDA ANIM_ENABLE
+   BNE at_on
+   RTS
 at_on:
-LDA #5
-STA at_m
+   LDA #5
+   STA at_m
 at_loop:
-LDA at_m
-ASL A
-ADC at_m                                ; m*3 (no carry: m<=5)
-TAY
-LDA at_m
-ASL A
-ASL A
-STA at_t                                ; m*4
-ASL A                                   ; m*8
-CLC
-ADC at_t                                ; m*12
-TAX
-LDA ANIM_WS+1,Y
-STA at_prevhi
-LDA ANIM_WS+2,Y
-AND #$3F
-STA at_timer
-LDA ANIM_WS+2,Y
-AND #$C0
-STA at_state
-BNE at_notwa
-JMP at_wait                             ; 0: wait at A
+   LDA at_m
+   ASL A
+   ADC at_m                                ; m*3 (no carry: m<=5)
+   TAY
+   LDA at_m
+   ASL A
+   ASL A
+   STA at_t                                ; m*4
+   ASL A                                   ; m*8
+   CLC
+   ADC at_t                                ; m*12
+   TAX
+   LDA ANIM_WS+1,Y
+   STA at_prevhi
+   LDA ANIM_WS+2,Y
+   AND #$3F
+   STA at_timer
+   LDA ANIM_WS+2,Y
+   AND #$C0
+   STA at_state
+   BNE at_notwa
+   JMP at_wait                             ; 0: wait at A
 at_notwa:
-CMP #$80
-BNE at_notwb
-JMP at_wait                             ; 2: wait at B
+   CMP #$80
+   BNE at_notwb
+   JMP at_wait                             ; 2: wait at B
 at_notwb:
-CMP #$40
-BEQ at_up                               ; 1: A -> B
+   CMP #$40
+   BEQ at_up                               ; 1: A -> B
 ; --- 3: B -> A (pos -= speed, clamp at min = CFG+0) ---
-LDA ANIM_WS+0,Y
-SEC
-SBC ANIM_CFG+4,X
-STA ANIM_WS+0,Y
-LDA ANIM_WS+1,Y
-SBC ANIM_CFG+5,X
-STA ANIM_WS+1,Y
-LDA ANIM_WS+0,Y
-SEC
-SBC ANIM_CFG+0,X
-LDA ANIM_WS+1,Y
-SBC ANIM_CFG+1,X
-BPL at_done                             ; pos >= min: still travelling
-LDA ANIM_CFG+0,X
-STA ANIM_WS+0,Y
-LDA ANIM_CFG+1,X
-STA ANIM_WS+1,Y
-LDA #$00
-STA at_state
-LDA ANIM_CFG+6,X                        ; wait_at_A
-STA at_timer
-JMP at_done
+   LDA ANIM_WS+0,Y
+   SEC
+   SBC ANIM_CFG+4,X
+   STA ANIM_WS+0,Y
+   LDA ANIM_WS+1,Y
+   SBC ANIM_CFG+5,X
+   STA ANIM_WS+1,Y
+   LDA ANIM_WS+0,Y
+   SEC
+   SBC ANIM_CFG+0,X
+   LDA ANIM_WS+1,Y
+   SBC ANIM_CFG+1,X
+   BPL at_done                             ; pos >= min: still travelling
+   LDA ANIM_CFG+0,X
+   STA ANIM_WS+0,Y
+   LDA ANIM_CFG+1,X
+   STA ANIM_WS+1,Y
+   LDA #$00
+   STA at_state
+   LDA ANIM_CFG+6,X                        ; wait_at_A
+   STA at_timer
+   JMP at_done
 
 at_up:
 ; --- 1: A -> B (pos += speed, clamp at max = CFG+2) ---
-LDA ANIM_WS+0,Y
-CLC
-ADC ANIM_CFG+4,X
-STA ANIM_WS+0,Y
-LDA ANIM_WS+1,Y
-ADC ANIM_CFG+5,X
-STA ANIM_WS+1,Y
-LDA ANIM_WS+0,Y
-SEC
-SBC ANIM_CFG+2,X
-LDA ANIM_WS+1,Y
-SBC ANIM_CFG+3,X
-BMI at_done                             ; pos < max: still travelling
-LDA ANIM_CFG+2,X
-STA ANIM_WS+0,Y
-LDA ANIM_CFG+3,X
-STA ANIM_WS+1,Y
-LDA #$80
-STA at_state
-LDA ANIM_CFG+7,X                        ; wait_at_B
-STA at_timer
-JMP at_done
+   LDA ANIM_WS+0,Y
+   CLC
+   ADC ANIM_CFG+4,X
+   STA ANIM_WS+0,Y
+   LDA ANIM_WS+1,Y
+   ADC ANIM_CFG+5,X
+   STA ANIM_WS+1,Y
+   LDA ANIM_WS+0,Y
+   SEC
+   SBC ANIM_CFG+2,X
+   LDA ANIM_WS+1,Y
+   SBC ANIM_CFG+3,X
+   BMI at_done                             ; pos < max: still travelling
+   LDA ANIM_CFG+2,X
+   STA ANIM_WS+0,Y
+   LDA ANIM_CFG+3,X
+   STA ANIM_WS+1,Y
+   LDA #$80
+   STA at_state
+   LDA ANIM_CFG+7,X                        ; wait_at_B
+   STA at_timer
+   JMP at_done
 
 at_wait:
-DEC at_timer
-BNE at_done
+   DEC at_timer
+   BNE at_done
 ; wait expired: 0 -> 1 (A->B), 2 -> 3 (B->A); timer stays 0 while moving
-LDA at_state
-CLC
-ADC #$40
-STA at_state
-LDA #0
-STA at_timer
+   LDA at_state
+   CLC
+   ADC #$40
+   STA at_state
+   LDA #0
+   STA at_timer
 
 at_done:
-LDA at_state
-ORA at_timer
-STA ANIM_WS+2,Y
-LDA ANIM_WS+1,Y
-CMP at_prevhi
-BEQ at_clean
-LDX at_m
-LDA ANIM_DIRTY
-ORA anim_bit2,X
-STA ANIM_DIRTY
+   LDA at_state
+   ORA at_timer
+   STA ANIM_WS+2,Y
+   LDA ANIM_WS+1,Y
+   CMP at_prevhi
+   BEQ at_clean
+   LDX at_m
+   LDA ANIM_DIRTY
+   ORA anim_bit2,X
+   STA ANIM_DIRTY
 at_clean:
-DEC at_m
-BMI at_end
-JMP at_loop
+   DEC at_m
+   BMI at_end
+   JMP at_loop
 at_end:
-RTS
+   RTS
 at_m:      .byte 0
 at_t:      .byte 0
 at_state:  .byte 0
@@ -262,7 +262,7 @@ at_prevhi: .byte 0
 .endscope
 
 anim_bit2:
-.byte 1,2,4,8,16,32
+   .byte 1,2,4,8,16,32
 
 ; --- anim_l0_worker: patch FHCH bytes + re-derive seg flags for mover
 ;     ANIM_CUR with value ANIM_VAL. Runs with BANK_L0 paged. ---
@@ -281,120 +281,120 @@ anim_bit2:
 .segment "ANIML0"
 anim_l0_worker:
 .scope
-LDA ANIM_CUR
-ASL A
-TAY
-LDA ANIM_TABL0,Y
-STA zp_anim_p
-LDA ANIM_TABL0+1,Y
-STA zp_anim_p+1
-LDY #0
-LDA (zp_anim_p),Y                       ; n_fhch
-STA alw_nf
-INY
-LDA (zp_anim_p),Y                       ; n_flag
-STA alw_ng
-INY
+   LDA ANIM_CUR
+   ASL A
+   TAY
+   LDA ANIM_TABL0,Y
+   STA zp_anim_p
+   LDA ANIM_TABL0+1,Y
+   STA zp_anim_p+1
+   LDY #0
+   LDA (zp_anim_p),Y                       ; n_fhch
+   STA alw_nf
+   INY
+   LDA (zp_anim_p),Y                       ; n_flag
+   STA alw_ng
+   INY
 ; FHCH byte patches
 alw_floop:
-LDA alw_nf
-BNE alw_fbody
-JMP alw_flags
+   LDA alw_nf
+   BNE alw_fbody
+   JMP alw_flags
 alw_fbody:
-LDA (zp_anim_p),Y
-STA zp_anim_w
-INY
-LDA (zp_anim_p),Y
-STA zp_anim_w+1
-INY
-STY alw_y
-LDY #0
-LDA ANIM_VAL
-STA (zp_anim_w),Y
-LDY alw_y
-DEC alw_nf
-JMP alw_floop
+   LDA (zp_anim_p),Y
+   STA zp_anim_w
+   INY
+   LDA (zp_anim_p),Y
+   STA zp_anim_w+1
+   INY
+   STY alw_y
+   LDY #0
+   LDA ANIM_VAL
+   STA (zp_anim_w),Y
+   LDY alw_y
+   DEC alw_nf
+   JMP alw_floop
 alw_flags:
 ; per flag entry: u16 hdr flag addr, u16 FHCH quad addr
-LDA alw_ng
-BNE alw_gbody
-JMP alw_done
+   LDA alw_ng
+   BNE alw_gbody
+   JMP alw_done
 alw_gbody:
-LDA (zp_anim_p),Y
-STA alw_hdr
-INY
-LDA (zp_anim_p),Y
-STA alw_hdr+1
-INY
-LDA (zp_anim_p),Y
-STA zp_anim_w
-INY
-LDA (zp_anim_p),Y
-STA zp_anim_w+1
-INY
-STY alw_y
+   LDA (zp_anim_p),Y
+   STA alw_hdr
+   INY
+   LDA (zp_anim_p),Y
+   STA alw_hdr+1
+   INY
+   LDA (zp_anim_p),Y
+   STA zp_anim_w
+   INY
+   LDA (zp_anim_p),Y
+   STA zp_anim_w+1
+   INY
+   STY alw_y
 ; read quad: fh, ch, bfh, bch (prescaled s8; |h| small so SBC sign is exact)
-LDY #0
-LDA (zp_anim_w),Y
-STA alw_fh
-INY
-LDA (zp_anim_w),Y
-STA alw_ch
-INY
-LDA (zp_anim_w),Y
-STA alw_bfh
-INY
-LDA (zp_anim_w),Y
-STA alw_bch
+   LDY #0
+   LDA (zp_anim_w),Y
+   STA alw_fh
+   INY
+   LDA (zp_anim_w),Y
+   STA alw_ch
+   INY
+   LDA (zp_anim_w),Y
+   STA alw_bfh
+   INY
+   LDA (zp_anim_w),Y
+   STA alw_bch
 ; flags = old & ~(SOLID|NEEDBT|NEEDBB) = old & ~$0E
-LDA alw_hdr
-STA zp_anim_w
-LDA alw_hdr+1
-STA zp_anim_w+1
-LDY #0
-LDA (zp_anim_w),Y
-AND #$F1
-STA alw_f
+   LDA alw_hdr
+   STA zp_anim_w
+   LDA alw_hdr+1
+   STA zp_anim_w+1
+   LDY #0
+   LDA (zp_anim_w),Y
+   AND #$F1
+   STA alw_f
 ; SOLID iff bch <= fh  or  bfh >= ch
-LDA alw_bch
-SEC
-SBC alw_fh
-BMI alw_solid
-BEQ alw_solid
-LDA alw_bfh
-SEC
-SBC alw_ch
-BPL alw_solid
+   LDA alw_bch
+   SEC
+   SBC alw_fh
+   BMI alw_solid
+   BEQ alw_solid
+   LDA alw_bfh
+   SEC
+   SBC alw_ch
+   BPL alw_solid
 ; portal: NEEDBT iff bch < ch ; NEEDBB iff bfh > fh
-LDA alw_bch
-SEC
-SBC alw_ch
-BPL alw_nobt
-LDA alw_f
-ORA #$04                                ; SF_NEEDBT
-STA alw_f
+   LDA alw_bch
+   SEC
+   SBC alw_ch
+   BPL alw_nobt
+   LDA alw_f
+   ORA #$04                                ; SF_NEEDBT
+   STA alw_f
 alw_nobt:
-LDA alw_fh
-SEC
-SBC alw_bfh
-BPL alw_nobb
-LDA alw_f
-ORA #$08                                ; SF_NEEDBB
-STA alw_f
+   LDA alw_fh
+   SEC
+   SBC alw_bfh
+   BPL alw_nobb
+   LDA alw_f
+   ORA #$08                                ; SF_NEEDBB
+   STA alw_f
 alw_nobb:
-JMP alw_wf
+   JMP alw_wf
 alw_solid:
-LDA alw_f
-ORA #$02                                ; SF_SOLID
-STA alw_f
+   LDA alw_f
+   ORA #$02                                ; SF_SOLID
+   STA alw_f
 alw_wf:
-LDA alw_f
-STA (zp_anim_w),Y
-LDY alw_y
-DEC alw_ng
-JMP alw_flags
+   LDA alw_f
+   STA (zp_anim_w),Y
+   LDY alw_y
+   DEC alw_ng
+   JMP alw_flags
 alw_done:
-RTS
+   RTS
 alw_nf:  .byte 0
 alw_ng:  .byte 0
 alw_y:   .byte 0
@@ -415,39 +415,39 @@ alw_f:   .byte 0
 .segment "ANIML2"
 anim_init:
 .scope
-LDA #5
-STA ai_midx
+   LDA #5
+   STA ai_midx
 ai_m:
-LDA ai_midx
-ASL A
-CLC
-ADC ai_midx
-TAY                                     ; m*3
-LDA ai_midx
-ASL A
-ASL A
-STA ai_t                                ; m*4
-ASL A                                   ; m*8
-CLC
-ADC ai_t                                ; m*12
-TAX
-LDA ANIM_CFG+8,X                        ; start pos (8.8 prescaled)
-STA ANIM_WS+0,Y
-LDA ANIM_CFG+9,X
-STA ANIM_WS+1,Y
-LDA ANIM_CFG+10,X                       ; packed start state/timer
-STA ANIM_WS+2,Y
-DEC ai_midx
-BPL ai_m
-LDA #$3F
-STA ANIM_DIRTY
-LDA #1
-STA ANIM_ENABLE
-LDA #<anim_hub
-STA anim_ss_hook+1
-LDA #>anim_hub
-STA anim_ss_hook+2
-RTS
+   LDA ai_midx
+   ASL A
+   CLC
+   ADC ai_midx
+   TAY                                     ; m*3
+   LDA ai_midx
+   ASL A
+   ASL A
+   STA ai_t                                ; m*4
+   ASL A                                   ; m*8
+   CLC
+   ADC ai_t                                ; m*12
+   TAX
+   LDA ANIM_CFG+8,X                        ; start pos (8.8 prescaled)
+   STA ANIM_WS+0,Y
+   LDA ANIM_CFG+9,X
+   STA ANIM_WS+1,Y
+   LDA ANIM_CFG+10,X                       ; packed start state/timer
+   STA ANIM_WS+2,Y
+   DEC ai_midx
+   BPL ai_m
+   LDA #$3F
+   STA ANIM_DIRTY
+   LDA #1
+   STA ANIM_ENABLE
+   LDA #<anim_hub
+   STA anim_ss_hook+1
+   LDA #>anim_hub
+   STA anim_ss_hook+2
+   RTS
 ai_t:    .byte 0
 ai_midx: .byte 0
 .endscope
@@ -463,34 +463,34 @@ ai_midx: .byte 0
 ;     n_vwh may be 0. Runs with BANK_L2 paged (hub pages it). ---
 anim_l2_worker:
 .scope
-LDA ANIM_CUR
-ASL A
-TAY
-LDA ANIM_TABL2,Y
-STA zp_anim_p
-LDA ANIM_TABL2+1,Y
-STA zp_anim_p+1
-LDY #0
-LDA (zp_anim_p),Y                       ; n_vwh
-BEQ al2_done
-STA al2_n
-INY
+   LDA ANIM_CUR
+   ASL A
+   TAY
+   LDA ANIM_TABL2,Y
+   STA zp_anim_p
+   LDA ANIM_TABL2+1,Y
+   STA zp_anim_p+1
+   LDY #0
+   LDA (zp_anim_p),Y                       ; n_vwh
+   BEQ al2_done
+   STA al2_n
+   INY
 al2_loop:
-LDA (zp_anim_p),Y
-STA zp_anim_w
-INY
-LDA (zp_anim_p),Y
-STA zp_anim_w+1
-INY
-STY al2_y
-LDY #0
-LDA ANIM_VAL
-STA (zp_anim_w),Y
-LDY al2_y
-DEC al2_n
-BNE al2_loop
+   LDA (zp_anim_p),Y
+   STA zp_anim_w
+   INY
+   LDA (zp_anim_p),Y
+   STA zp_anim_w+1
+   INY
+   STY al2_y
+   LDY #0
+   LDA ANIM_VAL
+   STA (zp_anim_w),Y
+   LDY al2_y
+   DEC al2_n
+   BNE al2_loop
 al2_done:
-RTS
+   RTS
 al2_n: .byte 0
 al2_y: .byte 0
 .endscope

@@ -57,66 +57,66 @@ OS_FONT    = $C000                      ; OS 1.2 glyphs, chars 32..127
 ; --- hud_draw ($A400): entry. Emits the whole line. Clobbers A,X,Y. ---
 hud_draw:
 .scope
-LDA #0
-STA zp_hud_dst                          ; cell 0 (col*8 accumulates below)
-LDA HUD_BACKHI
-STA zp_hud_dst+1                        ; row-0 block = FB page start
+   LDA #0
+   STA zp_hud_dst                          ; cell 0 (col*8 accumulates below)
+   LDA HUD_BACKHI
+   STA zp_hud_dst+1                        ; row-0 block = FB page start
 ; "X="
-LDA #'X'
-JSR hud_char
-LDA #'='
-JSR hud_char
-LDA HUD_XHI
-JSR hud_hex
-LDA HUD_XLO
-JSR hud_hex
-LDA #'.'
-JSR hud_char
-LDA HUD_XFRAC
-JSR hud_hex
-LDA #' '
-JSR hud_char
+   LDA #'X'
+   JSR hud_char
+   LDA #'='
+   JSR hud_char
+   LDA HUD_XHI
+   JSR hud_hex
+   LDA HUD_XLO
+   JSR hud_hex
+   LDA #'.'
+   JSR hud_char
+   LDA HUD_XFRAC
+   JSR hud_hex
+   LDA #' '
+   JSR hud_char
 ; "Y="
-LDA #'Y'
-JSR hud_char
-LDA #'='
-JSR hud_char
-LDA HUD_YHI
-JSR hud_hex
-LDA HUD_YLO
-JSR hud_hex
-LDA #'.'
-JSR hud_char
-LDA HUD_YFRAC
-JSR hud_hex
-LDA #' '
-JSR hud_char
+   LDA #'Y'
+   JSR hud_char
+   LDA #'='
+   JSR hud_char
+   LDA HUD_YHI
+   JSR hud_hex
+   LDA HUD_YLO
+   JSR hud_hex
+   LDA #'.'
+   JSR hud_char
+   LDA HUD_YFRAC
+   JSR hud_hex
+   LDA #' '
+   JSR hud_char
 ; "R="
-LDA #'R'
-JSR hud_char
-LDA #'='
-JSR hud_char
-LDA HUD_ANGIDX
-ASL A
-ASL A                                   ; angle byte = angidx*4
+   LDA #'R'
+   JSR hud_char
+   LDA #'='
+   JSR hud_char
+   LDA HUD_ANGIDX
+   ASL A
+   ASL A                                   ; angle byte = angidx*4
 ; fall through to hud_hex for the final value
 .endscope
 
 ; --- hud_hex: A = byte -> two hex digit cells. Clobbers A,X,Y. ---
 hud_hex:
 .scope
-PHA
-LSR A
-LSR A
-LSR A
-LSR A
-TAX
-LDA hexdig,X
-JSR hud_char
-PLA
-AND #$0F
-TAX
-LDA hexdig,X
+   PHA
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   TAX
+   LDA hexdig,X
+   JSR hud_char
+   PLA
+   AND #$0F
+   TAX
+   LDA hexdig,X
 ; fall through to hud_char
 .endscope
 
@@ -126,37 +126,37 @@ hud_char:
 .scope
 ; font ptr = OS_FONT + (A-32)*8: (A-32) < 96 so the product is 11 bits —
 ; hi = >OS_FONT + (A-32)>>5, lo = ((A-32)<<3) & $FF
-SEC
-SBC #32
-PHA
-LSR A
-LSR A
-LSR A
-LSR A
-LSR A
-CLC
-ADC #>OS_FONT
-STA zp_hud_src+1
-PLA
-ASL A
-ASL A
-ASL A
-STA zp_hud_src
-LDY #7
+   SEC
+   SBC #32
+   PHA
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   CLC
+   ADC #>OS_FONT
+   STA zp_hud_src+1
+   PLA
+   ASL A
+   ASL A
+   ASL A
+   STA zp_hud_src
+   LDY #7
 hc_row:
-LDA (zp_hud_src),Y
-STA (zp_hud_dst),Y
-DEY
-BPL hc_row
-CLC
-LDA zp_hud_dst
-ADC #8
-STA zp_hud_dst                          ; next cell (row 0 never crosses
-RTS                                     ; the page: 32 cells * 8 = 256)
+   LDA (zp_hud_src),Y
+   STA (zp_hud_dst),Y
+   DEY
+   BPL hc_row
+   CLC
+   LDA zp_hud_dst
+   ADC #8
+   STA zp_hud_dst                          ; next cell (row 0 never crosses
+   RTS                                     ; the page: 32 cells * 8 = 256)
 .endscope
 
 hexdig:
-.byte "0123456789ABCDEF"
+   .byte "0123456789ABCDEF"
 
 ; restore the segment for subsequently-included parts (they inherit)
 .segment "MAIN"

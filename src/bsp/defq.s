@@ -27,25 +27,25 @@ bsp_b_start:
 ;   Queues a mark_solid(ilo, ihi) — Python's ('solid', x_lo, x_hi, ...).
 defq_append_solid:
 .scope
-LDX DEFQ_TAIL
-CPX #$FD
-BCS dqs_ovf
+   LDX DEFQ_TAIL
+   CPX #$FD
+   BCS dqs_ovf
 ; need 3 bytes
-LDA #0
-STA DEFQ_BASE,X
-INX
-LDA $C2
-STA DEFQ_BASE,X
-INX
-LDA $C3
-STA DEFQ_BASE,X
-INX
-STX DEFQ_TAIL
-RTS
+   LDA #0
+   STA DEFQ_BASE,X
+   INX
+   LDA $C2
+   STA DEFQ_BASE,X
+   INX
+   LDA $C3
+   STA DEFQ_BASE,X
+   INX
+   STX DEFQ_TAIL
+   RTS
 dqs_ovf:
-LDA #1
-STA DEFQ_OVF
-RTS
+   LDA #1
+   STA DEFQ_OVF
+   RTS
 .endscope
 
 ; defq_append_tighten — append ($01, ilo, ihi, top block, bot block) where
@@ -63,68 +63,68 @@ RTS
 defq_append_tighten:
 .scope
 ; size check: 5 + 4*(tc+bc) must fit in the remaining queue space.
-LDA $0700
-CLC
-ADC $0800
-BCS dqt_ovf
+   LDA $0700
+   CLC
+   ADC $0800
+   BCS dqt_ovf
 ; n = tc + bc
-STA zp_br_t0
-ASL A
-BCS dqt_ovf
+   STA zp_br_t0
+   ASL A
+   BCS dqt_ovf
 ; 2n
-ASL A
-BCS dqt_ovf
+   ASL A
+   BCS dqt_ovf
 ; 4n
-CLC
-ADC #5
-BCS dqt_ovf
+   CLC
+   ADC #5
+   BCS dqt_ovf
 ; entry size
-CLC
-ADC DEFQ_TAIL
-BCS dqt_ovf
+   CLC
+   ADC DEFQ_TAIL
+   BCS dqt_ovf
 ; tail + size > 255 → drop
 
-LDX DEFQ_TAIL
-LDA #1
-STA DEFQ_BASE,X
-INX
-LDA $C2
-STA DEFQ_BASE,X
-INX
-LDA $C3
-STA DEFQ_BASE,X
-INX
+   LDX DEFQ_TAIL
+   LDA #1
+   STA DEFQ_BASE,X
+   INX
+   LDA $C2
+   STA DEFQ_BASE,X
+   INX
+   LDA $C3
+   STA DEFQ_BASE,X
+   INX
 
 ; copy top block: 1 + 4*tc bytes from $0700
-LDA $0700
-JSR defq_blocklen
-LDY #0
+   LDA $0700
+   JSR defq_blocklen
+   LDY #0
 dqt_cp_top:
-LDA $0700,Y
-STA DEFQ_BASE,X
-INX
-INY
-CPY zp_br_t1
-BNE dqt_cp_top
+   LDA $0700,Y
+   STA DEFQ_BASE,X
+   INX
+   INY
+   CPY zp_br_t1
+   BNE dqt_cp_top
 
 ; copy bot block: 1 + 4*bc bytes from $0800
-LDA $0800
-JSR defq_blocklen
-LDY #0
+   LDA $0800
+   JSR defq_blocklen
+   LDY #0
 dqt_cp_bot:
-LDA $0800,Y
-STA DEFQ_BASE,X
-INX
-INY
-CPY zp_br_t1
-BNE dqt_cp_bot
+   LDA $0800,Y
+   STA DEFQ_BASE,X
+   INX
+   INY
+   CPY zp_br_t1
+   BNE dqt_cp_bot
 
-STX DEFQ_TAIL
-RTS
+   STX DEFQ_TAIL
+   RTS
 dqt_ovf:
-LDA #1
-STA DEFQ_OVF
-RTS
+   LDA #1
+   STA DEFQ_OVF
+   RTS
 .endscope
 
 ; defq_blocklen — A = record count (<= 42) → zp_br_t1 = 1 + 4*count.
@@ -132,11 +132,11 @@ RTS
 ; verdict-record size — over-copying 2 stale bytes per record both ways.)
 ; No CLCs needed: 4*42 = 168, so no intermediate carry is possible.
 defq_blocklen:
-ASL A
-ASL A
-ADC #1
-STA zp_br_t1
-RTS
+   ASL A
+   ASL A
+   ADC #1
+   STA zp_br_t1
+   RTS
 
 ; defq_drain — apply queued ops in seg order at subsector end. Mirrors
 ; Python's deferred loop: each op then `if clips.is_full(): return`.
@@ -158,58 +158,58 @@ RTS
 ;         if is_full(): break
 defq_drain:
 .scope
-LDX #0
+   LDX #0
 dd_loop:
-CPX DEFQ_TAIL
-BCS dd_done
-LDA DEFQ_BASE,X
-INX
-STA zp_br_t3
+   CPX DEFQ_TAIL
+   BCS dd_done
+   LDA DEFQ_BASE,X
+   INX
+   STA zp_br_t3
 ; type
-LDA DEFQ_BASE,X
-INX
-STA $C2
-LDA DEFQ_BASE,X
-INX
-STA $C3
-LDA zp_br_t3
-BNE dd_tighten
+   LDA DEFQ_BASE,X
+   INX
+   STA $C2
+   LDA DEFQ_BASE,X
+   INX
+   STA $C3
+   LDA zp_br_t3
+   BNE dd_tighten
 ; solid: mark_solid(ilo, ihi), no line emission.
-STX zp_br_t2
-JSR SC_MARK_SOLID                       ; (bank C paged by caller)
-JMP dd_after
+   STX zp_br_t2
+   JSR SC_MARK_SOLID                       ; (bank C paged by caller)
+   JMP dd_after
 dd_tighten:
 ; restore top block to $0700
-LDA DEFQ_BASE,X
-JSR defq_blocklen
-LDY #0
+   LDA DEFQ_BASE,X
+   JSR defq_blocklen
+   LDY #0
 dd_cp_top:
-LDA DEFQ_BASE,X
-STA $0700,Y
-INX
-INY
-CPY zp_br_t1
-BNE dd_cp_top
+   LDA DEFQ_BASE,X
+   STA $0700,Y
+   INX
+   INY
+   CPY zp_br_t1
+   BNE dd_cp_top
 ; restore bot block to $0800
-LDA DEFQ_BASE,X
-JSR defq_blocklen
-LDY #0
+   LDA DEFQ_BASE,X
+   JSR defq_blocklen
+   LDY #0
 dd_cp_bot:
-LDA DEFQ_BASE,X
-STA $0800,Y
-INX
-INY
-CPY zp_br_t1
-BNE dd_cp_bot
-STX zp_br_t2
-JSR SC_TIGHTEN_FROM_RECORDS             ; (bank C paged by caller)
+   LDA DEFQ_BASE,X
+   STA $0800,Y
+   INX
+   INY
+   CPY zp_br_t1
+   BNE dd_cp_bot
+   STX zp_br_t2
+   JSR SC_TIGHTEN_FROM_RECORDS             ; (bank C paged by caller)
 dd_after:
-JSR SC_IS_FULL                          ; (bank C paged by caller)
-BNE dd_done
-LDX zp_br_t2
-JMP dd_loop
+   JSR SC_IS_FULL                          ; (bank C paged by caller)
+   BNE dd_done
+   LDX zp_br_t2
+   JMP dd_loop
 dd_done:
-RTS
+   RTS
 .endscope
 
 ; ============================================================================
@@ -233,36 +233,36 @@ RTS
 ; ============================================================================
 ev_clamp_evy16:
 .scope
-LDA zp_br_vyext
-ADC #0
+   LDA zp_br_vyext
+   ADC #0
 ; hi byte of rounded evy16
-BEQ ev_case_zero
-CMP #$FF
-BEQ ev_case_ff
-ASL A
-BCS ev_clamp_neg
+   BEQ ev_case_zero
+   CMP #$FF
+   BEQ ev_case_ff
+   ASL A
+   BCS ev_clamp_neg
 ; carry = sign of hi byte
-LDA #$7F
-BNE ev_store
+   LDA #$7F
+   BNE ev_store
 ev_clamp_neg:
-LDA #$80
-BNE ev_store
+   LDA #$80
+   BNE ev_store
 ev_case_ff:
-LDA zp_seg_cur_evy
-BMI ev_done
+   LDA zp_seg_cur_evy
+   BMI ev_done
 ; $FF:%1xxxxxxx → fits s8
-LDA #$80
-BNE ev_store
+   LDA #$80
+   BNE ev_store
 ; -256..-129 → clamp
 ev_case_zero:
-LDA zp_seg_cur_evy
-BPL ev_done
+   LDA zp_seg_cur_evy
+   BPL ev_done
 ; $00:%0xxxxxxx → fits s8
-LDA #$7F                                ; 128..255 → clamp
+   LDA #$7F                                ; 128..255 → clamp
 ev_store:
-STA zp_seg_cur_evy
+   STA zp_seg_cur_evy
 ev_done:
-RTS
+   RTS
 .endscope
 
 ; ============================================================================
@@ -282,36 +282,36 @@ RTS
 br_project_x_auto:
 .scope
 ; Narrow iff xext equals the sign-extension of xint's bit 7.
-LDA zp_v_xint
-ASL A
+   LDA zp_v_xint
+   ASL A
 ; C = sign of int part
-LDA #0
-ADC #$FF
-EOR #$FF
+   LDA #0
+   ADC #$FF
+   EOR #$FF
 ; A = $FF if C else $00
-CMP zp_v_xext
-BNE a_wide
-LDA zp_v_xint
-STA zp_br_t0
-LDA zp_v_xfrac
-STA zp_br_t1
-JSR br_project_x_subpx
+   CMP zp_v_xext
+   BNE a_wide
+   LDA zp_v_xint
+   STA zp_br_t0
+   LDA zp_v_xfrac
+   STA zp_br_t1
+   JSR br_project_x_subpx
 ; Narrow sx always fits s16 (|evx|<=127, rxh<=127 → |sx|<=16383);
 ; set the s24 extension byte so callers can classify uniformly.
-LDX #0
-LDA zp_br_resh
-BPL a_pos
-DEX
+   LDX #0
+   LDA zp_br_resh
+   BPL a_pos
+   DEX
 a_pos:
-STX zp_br_resext
-RTS
+   STX zp_br_resext
+   RTS
 a_wide:
-JMP br_project_x_wide
+   JMP br_project_x_wide
 .endscope
 
 
 vc_bit_mask:
-.byte 1, 2, 4, 8, 16, 32, 64, 128       ; 1 << (idx & 7) for the vertex cache
+   .byte 1, 2, 4, 8, 16, 32, 64, 128       ; 1 << (idx & 7) for the vertex cache
                                         ; (from main_tail.s; MAIN at ceiling)
 bsp_b_end:
 .if ::BANKED

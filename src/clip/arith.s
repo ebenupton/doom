@@ -24,46 +24,46 @@
 umul8_fixed:
 umul8:
 .scope
-TAX                                     ; stash a in X (was zp_tmp0: the
+   TAX                                     ; stash a in X (was zp_tmp0: the
 ; d = a - b; negate if borrow            ; round-trip cost 6, TAX/TXA 4)
-SEC
-SBC zp_mul_b
-BCS pos
-EOR #$FF
-ADC #1
+   SEC
+   SBC zp_mul_b
+   BCS pos
+   EOR #$FF
+   ADC #1
 ; |diff| (C was 0 from SBC, so ADC adds +0+1)
 pos:
-TAY
+   TAY
 ; Y = |diff|
 ; s = a + b (carry out selects sqr vs sqr2 table for the sum term)
-TXA
-CLC
-ADC zp_mul_b
+   TXA
+   CLC
+   ADC zp_mul_b
 ; ||||
-TAX
-BCS uo
+   TAX
+   BCS uo
 ; X = sum; overflow if carry from ADC          ; ||
 ; sum < 256: sqr tables for sum
 ; prod = sqr[s] - sqr[d]  (16-bit table subtract)
-LDA sqr_lo,X
-SEC
-SBC sqr_lo,Y
-STA zp_prod_lo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_prod_lo
 ; |||||
-LDA sqr_hi,X
-SBC sqr_hi,Y
-STA zp_prod_hi
-RTS
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   STA zp_prod_hi
+   RTS
 ; |||||||
 uo:                                     ; sum >= 256: sqr2 tables for sum (carry already set from BCS)
 ; prod = sqr2[s & 255] - sqr[d]  (X already wrapped mod 256 by the ADC)
-LDA sqr2_lo,X
-SBC sqr_lo,Y
-STA zp_prod_lo
-LDA sqr2_hi,X
-SBC sqr_hi,Y
-STA zp_prod_hi
-RTS
+   LDA sqr2_lo,X
+   SBC sqr_lo,Y
+   STA zp_prod_lo
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+   STA zp_prod_hi
+   RTS
 .endscope
 
 ; === Pool constants and field offsets ===

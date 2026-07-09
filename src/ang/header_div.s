@@ -31,19 +31,19 @@ jt_bca_check: JMP bbox_check_angle                    ; entry+3   (point_to_angl
 slope_div:
 .scope
 ; if num >= den -> SLOPERANGE (1024)
-LDA sd_num+1
-CMP sd_den+1
-BCC lt
-BNE ge
-LDA sd_num
-CMP sd_den
-BCC lt
+   LDA sd_num+1
+   CMP sd_den+1
+   BCC lt
+   BNE ge
+   LDA sd_num
+   CMP sd_den
+   BCC lt
 ge:
-LDA #<1024
-STA sd_q
-LDA #>1024
-STA sd_q+1
-RTS
+   LDA #<1024
+   STA sd_q
+   LDA #>1024
+   STA sd_q+1
+   RTS
 lt:
 ; 98% of divides have den < 256 (so num < den < 256): 8-bit restoring
 ; divide, r in A, no high byte. The quotient is <= 1024 (11 bits); after 8
@@ -51,101 +51,101 @@ lt:
 ; is only needed for the last 2 iterations -- phase A shifts the low byte
 ; only, phase B both. The quotient bit (carry = "2r >= den") is folded into
 ; q via ROL, so no INC.
-LDA sd_den+1
-BEQ den_fits
-JMP slow
+   LDA sd_den+1
+   BEQ den_fits
+   JMP slow
 ; (trampoline: .slow now >127 away)
 den_fits:
-LDA #0
-STA sd_q
-STA sd_q+1
+   LDA #0
+   STA sd_q
+   STA sd_q+1
 ; Second operand leading zero: if den < 128 too, then 2r < 256 always, so
 ; the bit-8 overflow case can't happen -- drop the BCS test and the SEC
 ; fixup (the SBC after CMP-ge already leaves carry set). 69% of divides.
-LDA sd_den
-BMI hi128
+   LDA sd_den
+   BMI hi128
 ; Unrolled (no DEX:BNE). BCC P%+4 skips the 2-byte SBC with no label.
-LDA sd_num                              ; r in A
+   LDA sd_num                              ; r in A
 .repeat (8)-(1)+1                       ; phase A: low byte of q only
-ASL A
-CMP sd_den
-BCC *+4
-SBC sd_den
-ROL sd_q
+   ASL A
+   CMP sd_den
+   BCC *+4
+   SBC sd_den
+   ROL sd_q
 .endrepeat
 .repeat (2)-(1)+1                       ; phase B: both bytes of q
-ASL A
-CMP sd_den
-BCC *+4
-SBC sd_den
-ROL sd_q
-ROL sd_q+1
+   ASL A
+   CMP sd_den
+   BCC *+4
+   SBC sd_den
+   ROL sd_q
+   ROL sd_q+1
 .endrepeat
-RTS
+   RTS
 hi128:
 ; 128 <= den < 256: 2r can reach 9 bits, keep overflow handling. Unrolled:
 ; BCS P%+6 -> SBC (overflow, qbit=1); BCC P%+5 -> ROL (r<den, qbit=0).
-LDA sd_num                              ; remainder r lives in A throughout
+   LDA sd_num                              ; remainder r lives in A throughout
 .repeat (8)-(1)+1
-ASL A
-BCS *+6
-CMP sd_den
-BCC *+5
-SBC sd_den
-SEC
-ROL sd_q
+   ASL A
+   BCS *+6
+   CMP sd_den
+   BCC *+5
+   SBC sd_den
+   SEC
+   ROL sd_q
 .endrepeat
 .repeat (2)-(1)+1
-ASL A
-BCS *+6
-CMP sd_den
-BCC *+5
-SBC sd_den
-SEC
-ROL sd_q
-ROL sd_q+1
+   ASL A
+   BCS *+6
+   CMP sd_den
+   BCC *+5
+   SBC sd_den
+   SEC
+   ROL sd_q
+   ROL sd_q+1
 .endrepeat
-RTS
+   RTS
 slow:
 ; Generic path (den >= 256, ~2% of divides): classic 16-bit restoring divide
 ; with the remainder in ZP (sd_r). 10 iterations of
 ;   { r<<=1; q<<=1; if r>=den { r-=den; q|=1 } }  ->  q = floor(num*1024/den).
-LDA sd_num
-STA sd_r
-LDA sd_num+1
-STA sd_r+1
-LDA #0
-STA sd_q
-STA sd_q+1
-LDX #10
+   LDA sd_num
+   STA sd_r
+   LDA sd_num+1
+   STA sd_r+1
+   LDA #0
+   STA sd_q
+   STA sd_q+1
+   LDX #10
 loop:
-ASL sd_r
-ROL sd_r+1
+   ASL sd_r
+   ROL sd_r+1
 ; r <<= 1
-ASL sd_q
-ROL sd_q+1
+   ASL sd_q
+   ROL sd_q+1
 ; q <<= 1 (bit0 = 0)
 ; if r >= den: r -= den; q++
-LDA sd_r+1
-CMP sd_den+1
-BCC no
-BNE yes
-LDA sd_r
-CMP sd_den
-BCC no
+   LDA sd_r+1
+   CMP sd_den+1
+   BCC no
+   BNE yes
+   LDA sd_r
+   CMP sd_den
+   BCC no
 yes:
-LDA sd_r
-SEC
-SBC sd_den
-STA sd_r
-LDA sd_r+1
-SBC sd_den+1
-STA sd_r+1
-INC sd_q                                ; q |= 1
+   LDA sd_r
+   SEC
+   SBC sd_den
+   STA sd_r
+   LDA sd_r+1
+   SBC sd_den+1
+   STA sd_r+1
+   INC sd_q                                ; q |= 1
 no:
-DEX
-BNE loop
-RTS
+   DEX
+   BNE loop
+   RTS
 .endscope
 
 ; point_to_angle(dx,dy) -> fineangle [0,4096). 8 octants; each does
@@ -180,10 +180,10 @@ TA_HI = $F200                           ; 1025 entries ($F200-$F600, above the g
 ;   6    dx<0  dy<0  |dx|<=|dy|      ANG270 - ta       12     -
 ;   7    dx<0  dy<0  |dx|> |dy|      ANG180 + ta        8     +
 pa_base_hi:
-.byte 4,0,12,0, 4,8,12,8
+   .byte 4,0,12,0, 4,8,12,8
 ; /256: ANG90=>4, ANG180=>8, ANG270=>12
 pa_sign:
-.byte $80,0,0,$80, 0,$80,$80,0
+   .byte $80,0,0,$80, 0,$80,$80,0
 
 ; ============================================================================
 ; bbox_check_angle: angle-space bbox visibility (FINEANGLES=4096, ANG90=1024,

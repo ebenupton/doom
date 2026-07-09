@@ -24,64 +24,64 @@
 ; worth a general slope check; see the Python mirror's note.)
 tg_append_x:
 .scope
-LDA zp_new_tail
-BNE ta_try_merge
+   LDA zp_new_tail
+   BNE ta_try_merge
 ; ||
 ; First span: set head. POOL_NEXT,X = 0 (end of list).
 ; A is already 0 from the LDA above (BNE not taken ↔ A=0).
-STA POOL_NEXT,X                         ; |
-STX zp_head
-STX zp_new_tail
-RTS
+   STA POOL_NEXT,X                         ; |
+   STX zp_head
+   STX zp_new_tail
+   RTS
 ; |
 ta_try_merge:
-LDY zp_new_tail                         ; |
+   LDY zp_new_tail                         ; |
 ; Fail fast: tail Y must be a constant-line span (tl==tr AND bl==br).
-LDA POOL_TL,Y
-CMP POOL_TR,Y
-BNE ta_link
+   LDA POOL_TL,Y
+   CMP POOL_TR,Y
+   BNE ta_link
 ; |||
-LDA POOL_BL,Y
-CMP POOL_BR,Y
-BNE ta_link
+   LDA POOL_BL,Y
+   CMP POOL_BR,Y
+   BNE ta_link
 ; ||
 ; New X must also be a constant-line span.
-LDA POOL_TL,X
-CMP POOL_TR,X
-BNE ta_link
+   LDA POOL_TL,X
+   CMP POOL_TR,X
+   BNE ta_link
 ; ||
-LDA POOL_BL,X
-CMP POOL_BR,X
-BNE ta_link
+   LDA POOL_BL,X
+   CMP POOL_BR,X
+   BNE ta_link
 ; |
 ; Matching constants?
-LDA POOL_TL,Y
-CMP POOL_TL,X
-BNE ta_link
+   LDA POOL_TL,Y
+   CMP POOL_TL,X
+   BNE ta_link
 ; |
-LDA POOL_BL,Y
-CMP POOL_BL,X
-BNE ta_link
+   LDA POOL_BL,Y
+   CMP POOL_BL,X
+   BNE ta_link
 ; |
 ; Contiguous active ranges? (abutting: tail.xend == new.xstart)
-LDA POOL_XEND,Y
-CMP POOL_XSTART,X
-BNE ta_link
+   LDA POOL_XEND,Y
+   CMP POOL_XSTART,X
+   BNE ta_link
 ; |
 ; Merge: extend tail's xend to cover new, then free X.
-LDA POOL_XEND,X
-STA POOL_XEND,Y
-JMP free_span                           ; frees X (via tail-call), returns
+   LDA POOL_XEND,X
+   STA POOL_XEND,Y
+   JMP free_span                           ; frees X (via tail-call), returns
 ta_link:
 ; X becomes new tail — write POOL_NEXT,X = 0 (deferred from entry).
-LDA #0
-STA POOL_NEXT,X
+   LDA #0
+   STA POOL_NEXT,X
 ; ||
-TXA
-STA POOL_NEXT,Y
+   TXA
+   STA POOL_NEXT,Y
 ; ||
-STX zp_new_tail
-RTS
+   STX zp_new_tail
+   RTS
 ; |||
 .endscope
 
@@ -186,81 +186,81 @@ tighten_from_records:
 .scope
 ; ---- Init: detach the old list and start the new one empty ----
 ; Invalidate the has_gap coherence cache (see span_mark_solid note).
-ZERO zp_hg_cache
-LDA zp_head
-STA zp_old_cur
-LDA #0
-STA zp_new_tail
-STA zp_head
+   ZERO zp_hg_cache
+   LDA zp_head
+   STA zp_old_cur
+   LDA #0
+   STA zp_new_tail
+   STA zp_head
 ; Reset DCL's portal-continuation state ($FF = inactive) so the next
 ; draw_clipped_line starts clean. (Write-only from this module.)
-LDA #$FF
-STA zp_tg_cont
+   LDA #$FF
+   STA zp_tg_cont
 
 ; Init top/bot cursors and buffer-end offsets.
 ; Cursor = offset of the current record (1 = first; 0 = exhausted/none).
 ; BUFEND = 1 + count*4 = first invalid offset (via ASL,ASL,+1).
-LDA TOP_RECORDS
-BEQ tfs_no_top
-LDA #1
-STA TFS_T_CUR
-JMP tfs_top_be
+   LDA TOP_RECORDS
+   BEQ tfs_no_top
+   LDA #1
+   STA TFS_T_CUR
+   JMP tfs_top_be
 tfs_no_top:
-LDA #0
-STA TFS_T_CUR
+   LDA #0
+   STA TFS_T_CUR
 tfs_top_be:
-LDA TOP_RECORDS
-ASL A
-ASL A
-BUMP
-STA TFS_TOP_BUFEND
-LDA BOT_RECORDS
-BEQ tfs_no_bot
-LDA #1
-STA TFS_B_CUR
-JMP tfs_bot_be
+   LDA TOP_RECORDS
+   ASL A
+   ASL A
+   BUMP
+   STA TFS_TOP_BUFEND
+   LDA BOT_RECORDS
+   BEQ tfs_no_bot
+   LDA #1
+   STA TFS_B_CUR
+   JMP tfs_bot_be
 tfs_no_bot:
-LDA #0
-STA TFS_B_CUR
+   LDA #0
+   STA TFS_B_CUR
 tfs_bot_be:
-LDA BOT_RECORDS
-ASL A
-ASL A
-BUMP
-STA TFS_BOT_BUFEND
+   LDA BOT_RECORDS
+   ASL A
+   ASL A
+   BUMP
+   STA TFS_BOT_BUFEND
 
 ; No pending output span yet.
-ZERO TFS_PEND_ACT
+   ZERO TFS_PEND_ACT
 
 ; ---- Outer loop: walk the old span list (X = current slot) ----
-LDX zp_old_cur
+   LDX zp_old_cur
 tfs_walk:
-BNE tfs_proc
-JMP tfs_finish
+   BNE tfs_proc
+   JMP tfs_finish
 tfs_proc:
 ; Save NEXT now (this slot is freed/relinked below) and stash the
 ; current slot in zp_clr_save_x — X is clobbered by every JSR here.
-LDA POOL_NEXT,X
-STA zp_old_cur
-STX zp_clr_save_x
+   LDA POOL_NEXT,X
+   STA zp_old_cur
+   STX zp_clr_save_x
 
 ; Out-of-range check: pixel-center overlap semantics — a span touching
 ; the seg only at a shared endpoint column (xend == ilo or
 ; xstart == ihi) does NOT overlap; append it unchanged.
-LDA POOL_XEND,X
-CMP zp_ilo
-BCC tfs_oor
-BEQ tfs_oor
-LDA POOL_XSTART,X
-CMP zp_ihi
-BCC tfs_in_range
+   LDA POOL_XEND,X
+   CMP zp_ilo
+   BCC tfs_oor
+   BEQ tfs_oor
+   LDA POOL_XSTART,X
+   CMP zp_ihi
+   BCC tfs_in_range
 tfs_oor:
 ; Relink the untouched span. Flush pending first to keep the output
 ; list in x order (pending always precedes this span).
-JSR tfs_flush_pending
-LDX zp_clr_save_x
-JSR tg_append_x
-JMP tfs_continue
+   JSR tfs_flush_pending
+   LDX zp_clr_save_x
+   JSR tg_append_x
+   JMP tfs_continue
 tfs_in_range:
 
 ; Single-column span [x..x]: the sweep below is empty (CUR_X == X_HI),
@@ -269,85 +269,85 @@ tfs_in_range:
 ; reversed/overlapping phantom spans — the 1056,-3616,64 window bug).
 ; Enter the loop body directly with CUR_X = X_HI = x: the body evaluates
 ; record dominance at x, emits the one column, and the loop test exits.
-LDA POOL_XSTART,X
-CMP POOL_XEND,X
-BNE tfs_pre_chk
-STA TFS_CUR_X
-STA TFS_X_HI
-JMP tfs_body
+   LDA POOL_XSTART,X
+   CMP POOL_XEND,X
+   BNE tfs_pre_chk
+   STA TFS_CUR_X
+   STA TFS_X_HI
+   JMP tfs_body
 tfs_pre_chk:
 
 ; Pre-fragment [span.xstart, ilo] if span.xstart < ilo.
 ; Abutting: the fragment KEEPS ilo as its xend (shared boundary column
 ; with the swept region starting at cur_x = ilo). Line def preserved.
-LDA POOL_XSTART,X
-CMP zp_ilo
-BCS tfs_no_pre
-JSR tfs_flush_pending
-LDX zp_clr_save_x
-LDA POOL_XSTART,X
-STA zp_ox0
-LDA zp_ilo
-STA zp_ox1
-JSR emit_unchanged_subspan
-LDA zp_ilo
-STA TFS_CUR_X
-JMP tfs_xhi_done
+   LDA POOL_XSTART,X
+   CMP zp_ilo
+   BCS tfs_no_pre
+   JSR tfs_flush_pending
+   LDX zp_clr_save_x
+   LDA POOL_XSTART,X
+   STA zp_ox0
+   LDA zp_ilo
+   STA zp_ox1
+   JSR emit_unchanged_subspan
+   LDA zp_ilo
+   STA TFS_CUR_X
+   JMP tfs_xhi_done
 tfs_no_pre:
-LDX zp_clr_save_x
-LDA POOL_XSTART,X
-STA TFS_CUR_X
+   LDX zp_clr_save_x
+   LDA POOL_XSTART,X
+   STA TFS_CUR_X
 tfs_xhi_done:
 
 ; x_hi = min(span.xend, ihi).
-LDX zp_clr_save_x
-LDA POOL_XEND,X
-CMP zp_ihi
-BCC tfs_xhi_xend
-LDA zp_ihi
-STA TFS_X_HI
-JMP tfs_xhi_set
+   LDX zp_clr_save_x
+   LDA POOL_XEND,X
+   CMP zp_ihi
+   BCC tfs_xhi_xend
+   LDA zp_ihi
+   STA TFS_X_HI
+   JMP tfs_xhi_set
 tfs_xhi_xend:
-STA TFS_X_HI
+   STA TFS_X_HI
 tfs_xhi_set:
 
 ; Fast path: if NEITHER top nor bot record overlaps [cur_x, x_hi],
 ; emit the pool span unchanged and skip the interp inner loop.
 ; A record at the cursor doesn't overlap if its xl >= x_hi (segment
 ; starts past us). T_CUR == 0 also means no overlap.
-LDA TFS_T_CUR
-BEQ tfs_fp_chk_bot
-TAY
-LDA TOP_RECORDS,Y
-CMP TFS_X_HI
-BCC tfs_inner
+   LDA TFS_T_CUR
+   BEQ tfs_fp_chk_bot
+   TAY
+   LDA TOP_RECORDS,Y
+   CMP TFS_X_HI
+   BCC tfs_inner
 ; T.xl < x_hi → overlap
 tfs_fp_chk_bot:
-LDA TFS_B_CUR
-BEQ tfs_fp_emit
-TAY
-LDA BOT_RECORDS,Y
-CMP TFS_X_HI
-BCC tfs_inner
+   LDA TFS_B_CUR
+   BEQ tfs_fp_emit
+   TAY
+   LDA BOT_RECORDS,Y
+   CMP TFS_X_HI
+   BCC tfs_inner
 tfs_fp_emit:
 ; Neither record reaches this span: emit [cur_x, x_hi] unchanged.
-JSR tfs_flush_pending
-LDX zp_clr_save_x
-LDA TFS_CUR_X
-STA zp_ox0
-LDA TFS_X_HI
-STA zp_ox1
-JSR emit_unchanged_subspan
-JMP tfs_inner_done
+   JSR tfs_flush_pending
+   LDX zp_clr_save_x
+   LDA TFS_CUR_X
+   STA zp_ox0
+   LDA TFS_X_HI
+   STA zp_ox1
+   JSR emit_unchanged_subspan
+   JMP tfs_inner_done
 
 ; ---- Event sweep: process uniform intervals while cur_x < x_hi ----
 ; Each pass handles one interval [cur_x, next_x] over which the
 ; dominating source (record vs pool) is constant on both sides.
 tfs_inner:
-LDA TFS_CUR_X
-CMP TFS_X_HI
-BCC tfs_inner_go
-JMP tfs_inner_done
+   LDA TFS_CUR_X
+   CMP TFS_X_HI
+   BCC tfs_inner_go
+   JMP tfs_inner_done
 tfs_inner_go:
 
 tfs_body:
@@ -360,91 +360,91 @@ tfs_body:
 tfs_st_top:
 ; While T exists and T.xr (offset +2) <= cur_x: advance cursor by 4
 ; (one record), or mark exhausted (0) at BUFEND.
-LDA TFS_T_CUR
-BEQ tfs_st_top_done
-CLC
-ADC #2
-TAY
-LDA TOP_RECORDS,Y
-CMP TFS_CUR_X
-BEQ tfs_st_top_stale
-BCS tfs_st_top_done
+   LDA TFS_T_CUR
+   BEQ tfs_st_top_done
+   CLC
+   ADC #2
+   TAY
+   LDA TOP_RECORDS,Y
+   CMP TFS_CUR_X
+   BEQ tfs_st_top_stale
+   BCS tfs_st_top_done
 tfs_st_top_stale:
-LDA TFS_T_CUR
-CLC
-ADC #4
-CMP TFS_TOP_BUFEND
-BCC tfs_st_top_store
-LDA #0
+   LDA TFS_T_CUR
+   CLC
+   ADC #4
+   CMP TFS_TOP_BUFEND
+   BCC tfs_st_top_store
+   LDA #0
 tfs_st_top_store:
-STA TFS_T_CUR
-JMP tfs_st_top
+   STA TFS_T_CUR
+   JMP tfs_st_top
 tfs_st_top_done:
 ; Same stale-consume loop for the bot cursor.
 tfs_st_bot:
-LDA TFS_B_CUR
-BEQ tfs_st_bot_done
-CLC
-ADC #2
-TAY
-LDA BOT_RECORDS,Y
-CMP TFS_CUR_X
-BEQ tfs_st_bot_stale
-BCS tfs_st_bot_done
+   LDA TFS_B_CUR
+   BEQ tfs_st_bot_done
+   CLC
+   ADC #2
+   TAY
+   LDA BOT_RECORDS,Y
+   CMP TFS_CUR_X
+   BEQ tfs_st_bot_stale
+   BCS tfs_st_bot_done
 tfs_st_bot_stale:
-LDA TFS_B_CUR
-CLC
-ADC #4
-CMP TFS_BOT_BUFEND
-BCC tfs_st_bot_store
-LDA #0
+   LDA TFS_B_CUR
+   CLC
+   ADC #4
+   CMP TFS_BOT_BUFEND
+   BCC tfs_st_bot_store
+   LDA #0
 tfs_st_bot_store:
-STA TFS_B_CUR
-JMP tfs_st_bot
+   STA TFS_B_CUR
+   JMP tfs_st_bot
 tfs_st_bot_done:
 
 ; ---- Determine top_dom (T.xl <= cur_x < T.xr) ----
 ; i.e. the current top record's segment covers cur_x, so the yt-line
 ; (not the pool line) is the top boundary on this interval.
-ZERO TFS_TOP_DOM
-LDA TFS_T_CUR
-BEQ tfs_top_dom_done
-TAY
-LDA TOP_RECORDS,Y
+   ZERO TFS_TOP_DOM
+   LDA TFS_T_CUR
+   BEQ tfs_top_dom_done
+   TAY
+   LDA TOP_RECORDS,Y
 ; T.xl
-CMP TFS_CUR_X
-BEQ tfs_top_chk_xr
-BCS tfs_top_dom_done
+   CMP TFS_CUR_X
+   BEQ tfs_top_chk_xr
+   BCS tfs_top_dom_done
 tfs_top_chk_xr:
-INY
-INY
-LDA TOP_RECORDS,Y
+   INY
+   INY
+   LDA TOP_RECORDS,Y
 ; T.xr
-CMP TFS_CUR_X
-BCC tfs_top_dom_done
-BEQ tfs_top_dom_done
-LDA #1
-STA TFS_TOP_DOM
+   CMP TFS_CUR_X
+   BCC tfs_top_dom_done
+   BEQ tfs_top_dom_done
+   LDA #1
+   STA TFS_TOP_DOM
 tfs_top_dom_done:
 
 ; ---- Determine bot_dom ----
-ZERO TFS_BOT_DOM
-LDA TFS_B_CUR
-BEQ tfs_bot_dom_done
-TAY
-LDA BOT_RECORDS,Y
-CMP TFS_CUR_X
-BEQ tfs_bot_chk_xr
-BCS tfs_bot_dom_done
+   ZERO TFS_BOT_DOM
+   LDA TFS_B_CUR
+   BEQ tfs_bot_dom_done
+   TAY
+   LDA BOT_RECORDS,Y
+   CMP TFS_CUR_X
+   BEQ tfs_bot_chk_xr
+   BCS tfs_bot_dom_done
 tfs_bot_chk_xr:
-INY
-INY
-LDA BOT_RECORDS,Y
-CMP TFS_CUR_X
-BCC tfs_bot_dom_done
-BEQ tfs_bot_dom_done
-LDA #1
-STA TFS_BOT_DOM
+   INY
+   INY
+   LDA BOT_RECORDS,Y
+   CMP TFS_CUR_X
+   BCC tfs_bot_dom_done
+   BEQ tfs_bot_dom_done
+   LDA #1
+   STA TFS_BOT_DOM
 tfs_bot_dom_done:
 
 ; ---- next_x = min(x_hi, top event, bot event) ----
@@ -452,174 +452,174 @@ tfs_bot_dom_done:
 ;   not yet dominating → the record's xl (segment starts there)
 ;   dominating         → the record's xr (segment ends there)
 ; Clamped to x_hi. Dominance is therefore uniform on [cur_x, next_x].
-LDA TFS_X_HI
-STA TFS_NEXT_X
-LDA TFS_T_CUR
-BEQ tfs_skip_top_evt
-LDA TFS_TOP_DOM
-BNE tfs_top_evt_xr
-LDY TFS_T_CUR
-LDA TOP_RECORDS,Y
+   LDA TFS_X_HI
+   STA TFS_NEXT_X
+   LDA TFS_T_CUR
+   BEQ tfs_skip_top_evt
+   LDA TFS_TOP_DOM
+   BNE tfs_top_evt_xr
+   LDY TFS_T_CUR
+   LDA TOP_RECORDS,Y
 ; not yet dom: candidate = T.xl
-JMP tfs_top_evt_check
+   JMP tfs_top_evt_check
 tfs_top_evt_xr:
-LDA TFS_T_CUR
-CLC
-ADC #2
-TAY
+   LDA TFS_T_CUR
+   CLC
+   ADC #2
+   TAY
 ; dom: candidate = T.xr
-LDA TOP_RECORDS,Y
+   LDA TOP_RECORDS,Y
 tfs_top_evt_check:
-CMP TFS_NEXT_X
-BCS tfs_skip_top_evt
-STA TFS_NEXT_X
+   CMP TFS_NEXT_X
+   BCS tfs_skip_top_evt
+   STA TFS_NEXT_X
 tfs_skip_top_evt:
-LDA TFS_B_CUR
-BEQ tfs_skip_bot_evt
-LDA TFS_BOT_DOM
-BNE tfs_bot_evt_xr
-LDY TFS_B_CUR
-LDA BOT_RECORDS,Y
-JMP tfs_bot_evt_check
+   LDA TFS_B_CUR
+   BEQ tfs_skip_bot_evt
+   LDA TFS_BOT_DOM
+   BNE tfs_bot_evt_xr
+   LDY TFS_B_CUR
+   LDA BOT_RECORDS,Y
+   JMP tfs_bot_evt_check
 tfs_bot_evt_xr:
-LDA TFS_B_CUR
-CLC
-ADC #2
-TAY
-LDA BOT_RECORDS,Y
+   LDA TFS_B_CUR
+   CLC
+   ADC #2
+   TAY
+   LDA BOT_RECORDS,Y
 tfs_bot_evt_check:
-CMP TFS_NEXT_X
-BCS tfs_skip_bot_evt
-STA TFS_NEXT_X
+   CMP TFS_NEXT_X
+   BCS tfs_skip_bot_evt
+   STA TFS_NEXT_X
 tfs_skip_bot_evt:
 
 ; ---- Per-interval fast path: both sides from pool → emit unchanged.
 ; Saves the 4 interps the normal path would do for a pool/pool sub-
 ; fragment (the parts of a pool span that records don't dominate).
-LDA TFS_TOP_DOM
-ORA TFS_BOT_DOM
-BNE tfs_compute_vals
-JSR tfs_flush_pending
-LDX zp_clr_save_x
-LDA TFS_CUR_X
-STA zp_ox0
-LDA TFS_NEXT_X
-STA zp_ox1
-JSR emit_unchanged_subspan
-JMP tfs_advance_curs
+   LDA TFS_TOP_DOM
+   ORA TFS_BOT_DOM
+   BNE tfs_compute_vals
+   JSR tfs_flush_pending
+   LDX zp_clr_save_x
+   LDA TFS_CUR_X
+   STA zp_ox0
+   LDA TFS_NEXT_X
+   STA zp_ox1
+   JSR emit_unchanged_subspan
+   JMP tfs_advance_curs
 tfs_compute_vals:
 
 ; ---- Compute top values for [cur_x, next_x] ----
 ; TOP_L/TOP_R = top boundary y at the interval's two ends, plus the
 ; (KIND, ID) source tag used by the pending-merge test below.
-LDA TFS_TOP_DOM
-BEQ tfs_top_pool
+   LDA TFS_TOP_DOM
+   BEQ tfs_top_pool
 ; top from record T_CUR: read (xl, yl, xr, yr) and interp.
 ; Segment endpoints are on the original yt-line (DCL computes them with
 ; the same interp_store used here), so interp between them recovers the
 ; line's geometry. Small u8-rounding aliasing at sub-segment fragments
 ; can shift a pixel; this is inherent to integer interp.
-LDY TFS_T_CUR
-LDA TOP_RECORDS,Y
-STA zp_i_x0
-INY
-LDA TOP_RECORDS,Y
-STA zp_i_y0
-INY
-LDA TOP_RECORDS,Y
-STA zp_tmp0
-INY
-LDA TOP_RECORDS,Y
-STA zp_i_y1
-LDA zp_tmp0
-SEC
-SBC zp_i_x0
-STA zp_div_den
-LDA TFS_CUR_X
-JSR interp_store
-STA TFS_TOP_L
-LDA TFS_NEXT_X
-JSR interp_store
-STA TFS_TOP_R
-LDA #1
-STA TFS_TOP_KIND
-LDA TFS_T_CUR
-STA TFS_TOP_ID
-JMP tfs_top_vals_done
+   LDY TFS_T_CUR
+   LDA TOP_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
+   LDA #1
+   STA TFS_TOP_KIND
+   LDA TFS_T_CUR
+   STA TFS_TOP_ID
+   JMP tfs_top_vals_done
 tfs_top_pool:
 ; Top from the pool span's own line: interp (XLO,TL)-(XLO+DEN,TR) at
 ; cur_x / next_x. Source tag = (kind 0, id = pool slot).
-LDX zp_clr_save_x
-LDA POOL_XLO,X
-STA zp_i_x0
-LDA POOL_TL,X
-STA zp_i_y0
-LDA POOL_TR,X
-STA zp_i_y1
-LDA POOL_DEN,X
-STA zp_div_den
-LDA TFS_CUR_X
-JSR interp_store
-STA TFS_TOP_L
-LDA TFS_NEXT_X
-JSR interp_store
-STA TFS_TOP_R
-ZERO TFS_TOP_KIND
-LDA zp_clr_save_x
-STA TFS_TOP_ID
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_TL,X
+   STA zp_i_y0
+   LDA POOL_TR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
+   ZERO TFS_TOP_KIND
+   LDA zp_clr_save_x
+   STA TFS_TOP_ID
 tfs_top_vals_done:
 
 ; ---- Compute bot values for [cur_x, next_x] ----
 ; Mirror of the top block: bot record line if BOT_DOM, else the pool
 ; span's (XLO,BL)-(XLO+DEN,BR) line; tag (KIND, ID) for merging.
-LDA TFS_BOT_DOM
-BEQ tfs_bot_pool
-LDY TFS_B_CUR
-LDA BOT_RECORDS,Y
-STA zp_i_x0
-INY
-LDA BOT_RECORDS,Y
-STA zp_i_y0
-INY
-LDA BOT_RECORDS,Y
-STA zp_tmp0
-INY
-LDA BOT_RECORDS,Y
-STA zp_i_y1
-LDA zp_tmp0
-SEC
-SBC zp_i_x0
-STA zp_div_den
-LDA TFS_CUR_X
-JSR interp_store
-STA TFS_BOT_L
-LDA TFS_NEXT_X
-JSR interp_store
-STA TFS_BOT_R
-LDA #1
-STA TFS_BOT_KIND
-LDA TFS_B_CUR
-STA TFS_BOT_ID
-JMP tfs_bot_vals_done
+   LDA TFS_BOT_DOM
+   BEQ tfs_bot_pool
+   LDY TFS_B_CUR
+   LDA BOT_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
+   LDA #1
+   STA TFS_BOT_KIND
+   LDA TFS_B_CUR
+   STA TFS_BOT_ID
+   JMP tfs_bot_vals_done
 tfs_bot_pool:
-LDX zp_clr_save_x
-LDA POOL_XLO,X
-STA zp_i_x0
-LDA POOL_BL,X
-STA zp_i_y0
-LDA POOL_BR,X
-STA zp_i_y1
-LDA POOL_DEN,X
-STA zp_div_den
-LDA TFS_CUR_X
-JSR interp_store
-STA TFS_BOT_L
-LDA TFS_NEXT_X
-JSR interp_store
-STA TFS_BOT_R
-ZERO TFS_BOT_KIND
-LDA zp_clr_save_x
-STA TFS_BOT_ID
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_BL,X
+   STA zp_i_y0
+   LDA POOL_BR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
+   ZERO TFS_BOT_KIND
+   LDA zp_clr_save_x
+   STA TFS_BOT_ID
 tfs_bot_vals_done:
 
 ; ---- Try to merge with pending ----
@@ -627,139 +627,139 @@ tfs_bot_vals_done:
 ; BOTH boundary sources match (top kind+id AND bot kind+id). Same
 ; source ⇒ same line equation, so extending the interval and re-tagging
 ; its right-end values is lossless — no geometry is re-derived.
-LDA TFS_PEND_ACT
-BEQ tfs_start_pend
-LDA TFS_PEND_XR
-CMP TFS_CUR_X
-BNE tfs_no_merge
-LDA TFS_PEND_TKIND
-CMP TFS_TOP_KIND
-BNE tfs_no_merge
-LDA TFS_PEND_TID
-CMP TFS_TOP_ID
-BNE tfs_no_merge
-LDA TFS_PEND_BKIND
-CMP TFS_BOT_KIND
-BNE tfs_no_merge
-LDA TFS_PEND_BID
-CMP TFS_BOT_ID
-BNE tfs_no_merge
+   LDA TFS_PEND_ACT
+   BEQ tfs_start_pend
+   LDA TFS_PEND_XR
+   CMP TFS_CUR_X
+   BNE tfs_no_merge
+   LDA TFS_PEND_TKIND
+   CMP TFS_TOP_KIND
+   BNE tfs_no_merge
+   LDA TFS_PEND_TID
+   CMP TFS_TOP_ID
+   BNE tfs_no_merge
+   LDA TFS_PEND_BKIND
+   CMP TFS_BOT_KIND
+   BNE tfs_no_merge
+   LDA TFS_PEND_BID
+   CMP TFS_BOT_ID
+   BNE tfs_no_merge
 ; Merge: extend pending right edge.
-LDA TFS_NEXT_X
-STA TFS_PEND_XR
-LDA TFS_TOP_R
-STA TFS_PEND_TR
-LDA TFS_BOT_R
-STA TFS_PEND_BR
-JMP tfs_advance_curs
+   LDA TFS_NEXT_X
+   STA TFS_PEND_XR
+   LDA TFS_TOP_R
+   STA TFS_PEND_TR
+   LDA TFS_BOT_R
+   STA TFS_PEND_BR
+   JMP tfs_advance_curs
 tfs_no_merge:
-JSR tfs_flush_pending
+   JSR tfs_flush_pending
 tfs_start_pend:
 ; Buffer this interval as the new pending span (materialized by
 ; tfs_flush_pending when the next interval can't merge into it).
-LDA #1
-STA TFS_PEND_ACT
-LDA TFS_CUR_X
-STA TFS_PEND_XL
-LDA TFS_NEXT_X
-STA TFS_PEND_XR
-LDA TFS_TOP_L
-STA TFS_PEND_TL
-LDA TFS_TOP_R
-STA TFS_PEND_TR
-LDA TFS_BOT_L
-STA TFS_PEND_BL
-LDA TFS_BOT_R
-STA TFS_PEND_BR
-LDA TFS_TOP_KIND
-STA TFS_PEND_TKIND
-LDA TFS_TOP_ID
-STA TFS_PEND_TID
-LDA TFS_BOT_KIND
-STA TFS_PEND_BKIND
-LDA TFS_BOT_ID
-STA TFS_PEND_BID
+   LDA #1
+   STA TFS_PEND_ACT
+   LDA TFS_CUR_X
+   STA TFS_PEND_XL
+   LDA TFS_NEXT_X
+   STA TFS_PEND_XR
+   LDA TFS_TOP_L
+   STA TFS_PEND_TL
+   LDA TFS_TOP_R
+   STA TFS_PEND_TR
+   LDA TFS_BOT_L
+   STA TFS_PEND_BL
+   LDA TFS_BOT_R
+   STA TFS_PEND_BR
+   LDA TFS_TOP_KIND
+   STA TFS_PEND_TKIND
+   LDA TFS_TOP_ID
+   STA TFS_PEND_TID
+   LDA TFS_BOT_KIND
+   STA TFS_PEND_BKIND
+   LDA TFS_BOT_ID
+   STA TFS_PEND_BID
 
 tfs_advance_curs:
 ; ---- Consume records whose segment ends exactly at next_x ----
 ; Only a DOMINATING record can end here (its xr was a next_x candidate).
 ; Advance the cursor by 4, wrapping to 0 (exhausted) at BUFEND.
 ; Advance T_CUR if next_x crossed T.xr.
-LDA TFS_T_CUR
-BEQ tfs_skip_t_adv
-LDA TFS_TOP_DOM
-BEQ tfs_skip_t_adv
-LDA TFS_T_CUR
-CLC
-ADC #2
-TAY
-LDA TOP_RECORDS,Y
-CMP TFS_NEXT_X
-BNE tfs_skip_t_adv
-LDA TFS_T_CUR
-CLC
-ADC #4
-CMP TFS_TOP_BUFEND
-BCC tfs_t_adv_ok
-LDA #0
+   LDA TFS_T_CUR
+   BEQ tfs_skip_t_adv
+   LDA TFS_TOP_DOM
+   BEQ tfs_skip_t_adv
+   LDA TFS_T_CUR
+   CLC
+   ADC #2
+   TAY
+   LDA TOP_RECORDS,Y
+   CMP TFS_NEXT_X
+   BNE tfs_skip_t_adv
+   LDA TFS_T_CUR
+   CLC
+   ADC #4
+   CMP TFS_TOP_BUFEND
+   BCC tfs_t_adv_ok
+   LDA #0
 tfs_t_adv_ok:
-STA TFS_T_CUR
+   STA TFS_T_CUR
 tfs_skip_t_adv:
-LDA TFS_B_CUR
-BEQ tfs_skip_b_adv
-LDA TFS_BOT_DOM
-BEQ tfs_skip_b_adv
-LDA TFS_B_CUR
-CLC
-ADC #2
-TAY
-LDA BOT_RECORDS,Y
-CMP TFS_NEXT_X
-BNE tfs_skip_b_adv
-LDA TFS_B_CUR
-CLC
-ADC #4
-CMP TFS_BOT_BUFEND
-BCC tfs_b_adv_ok
-LDA #0
+   LDA TFS_B_CUR
+   BEQ tfs_skip_b_adv
+   LDA TFS_BOT_DOM
+   BEQ tfs_skip_b_adv
+   LDA TFS_B_CUR
+   CLC
+   ADC #2
+   TAY
+   LDA BOT_RECORDS,Y
+   CMP TFS_NEXT_X
+   BNE tfs_skip_b_adv
+   LDA TFS_B_CUR
+   CLC
+   ADC #4
+   CMP TFS_BOT_BUFEND
+   BCC tfs_b_adv_ok
+   LDA #0
 tfs_b_adv_ok:
-STA TFS_B_CUR
+   STA TFS_B_CUR
 tfs_skip_b_adv:
 
 ; Step the sweep to the next event.
-LDA TFS_NEXT_X
-STA TFS_CUR_X
-JMP tfs_inner
+   LDA TFS_NEXT_X
+   STA TFS_CUR_X
+   JMP tfs_inner
 
 tfs_inner_done:
 
 ; Post-fragment [ihi, span.xend] if span.xend > ihi.
 ; Abutting: keeps ihi as its xstart (shared with the swept region).
-LDX zp_clr_save_x
-LDA POOL_XEND,X
-CMP zp_ihi
-BCC tfs_no_post
-BEQ tfs_no_post
-JSR tfs_flush_pending
-LDX zp_clr_save_x
-LDA zp_ihi
-STA zp_ox0
-LDA POOL_XEND,X
-STA zp_ox1
-JSR emit_unchanged_subspan
+   LDX zp_clr_save_x
+   LDA POOL_XEND,X
+   CMP zp_ihi
+   BCC tfs_no_post
+   BEQ tfs_no_post
+   JSR tfs_flush_pending
+   LDX zp_clr_save_x
+   LDA zp_ihi
+   STA zp_ox0
+   LDA POOL_XEND,X
+   STA zp_ox1
+   JSR emit_unchanged_subspan
 tfs_no_post:
 
 ; Free original pool span (its replacements are now in the new list).
-LDX zp_clr_save_x
-JSR free_span
+   LDX zp_clr_save_x
+   JSR free_span
 
 tfs_continue:
-LDA zp_old_cur
-TAX
-JMP tfs_walk
+   LDA zp_old_cur
+   TAX
+   JMP tfs_walk
 
 tfs_finish:
-JMP tfs_flush_pending                   ; tail call (was JSR+RTS): -9 cyc
+   JMP tfs_flush_pending                   ; tail call (was JSR+RTS): -9 cyc
 .endscope
 
 ; ---- Flush pending output span: alloc, populate fields, append. ----
@@ -774,58 +774,58 @@ JMP tfs_flush_pending                   ; tail call (was JSR+RTS): -9 cyc
 ;         Clobbers A,X,Y.
 tfs_flush_pending:
 .scope
-LDA TFS_PEND_ACT
-BNE flush_do
-RTS
+   LDA TFS_PEND_ACT
+   BNE flush_do
+   RTS
 flush_do:
-LDA #0
-STA TFS_PEND_ACT
-JSR alloc_span
-BEQ flush_fail
-LDA TFS_PEND_XL
-STA POOL_XSTART,X
-STA POOL_XLO,X
-LDA TFS_PEND_XR
-STA POOL_XEND,X
-SEC
-SBC TFS_PEND_XL
-STA POOL_DEN,X
-LDA TFS_PEND_TL
-STA POOL_TL,X
-LDA TFS_PEND_TR
-STA POOL_TR,X
-LDA TFS_PEND_BL
-STA POOL_BL,X
-LDA TFS_PEND_BR
-STA POOL_BR,X
+   LDA #0
+   STA TFS_PEND_ACT
+   JSR alloc_span
+   BEQ flush_fail
+   LDA TFS_PEND_XL
+   STA POOL_XSTART,X
+   STA POOL_XLO,X
+   LDA TFS_PEND_XR
+   STA POOL_XEND,X
+   SEC
+   SBC TFS_PEND_XL
+   STA POOL_DEN,X
+   LDA TFS_PEND_TL
+   STA POOL_TL,X
+   LDA TFS_PEND_TR
+   STA POOL_TR,X
+   LDA TFS_PEND_BL
+   STA POOL_BL,X
+   LDA TFS_PEND_BR
+   STA POOL_BR,X
 ; OT = min(TL,TR), IT = max(TL,TR), OB = max(BL,BR), IB = min(BL,BR).
-LDA TFS_PEND_TL
-CMP TFS_PEND_TR
-BCC fp_ot
-LDA TFS_PEND_TR
+   LDA TFS_PEND_TL
+   CMP TFS_PEND_TR
+   BCC fp_ot
+   LDA TFS_PEND_TR
 fp_ot:
-STA POOL_OT,X
-LDA TFS_PEND_TL
-CMP TFS_PEND_TR
-BCS fp_it
-LDA TFS_PEND_TR
+   STA POOL_OT,X
+   LDA TFS_PEND_TL
+   CMP TFS_PEND_TR
+   BCS fp_it
+   LDA TFS_PEND_TR
 fp_it:
-STA POOL_IT,X
-LDA TFS_PEND_BL
-CMP TFS_PEND_BR
-BCS fp_ob
-LDA TFS_PEND_BR
+   STA POOL_IT,X
+   LDA TFS_PEND_BL
+   CMP TFS_PEND_BR
+   BCS fp_ob
+   LDA TFS_PEND_BR
 fp_ob:
-STA POOL_OB,X
-LDA TFS_PEND_BL
-CMP TFS_PEND_BR
-BCC fp_ib
-LDA TFS_PEND_BR
+   STA POOL_OB,X
+   LDA TFS_PEND_BL
+   CMP TFS_PEND_BR
+   BCC fp_ib
+   LDA TFS_PEND_BR
 fp_ib:
-STA POOL_IB,X
-JSR tg_append_x
+   STA POOL_IB,X
+   JSR tg_append_x
 flush_fail:
-RTS
+   RTS
 .endscope
 
 ; Emit unchanged sub-span [zp_ox0, zp_ox1] with old span's line def.
@@ -838,36 +838,36 @@ RTS
 ;         range [ox0, ox1], appended via tg_append_x.  Silently dropped
 ;         on pool exhaustion.  Clobbers A,X,Y.
 emit_unchanged_subspan:
-JSR alloc_span
-BEQ ues_fail
-LDY zp_clr_save_x
-LDA POOL_XLO,Y
-STA POOL_XLO,X
-LDA POOL_DEN,Y
-STA POOL_DEN,X
-LDA POOL_TL,Y
-STA POOL_TL,X
-LDA POOL_BL,Y
-STA POOL_BL,X
-LDA POOL_TR,Y
-STA POOL_TR,X
-LDA POOL_BR,Y
-STA POOL_BR,X
-LDA POOL_OT,Y
-STA POOL_OT,X
-LDA POOL_OB,Y
-STA POOL_OB,X
-LDA POOL_IT,Y
-STA POOL_IT,X
-LDA POOL_IB,Y
-STA POOL_IB,X
-LDA zp_ox0
-STA POOL_XSTART,X
-LDA zp_ox1
-STA POOL_XEND,X
-JSR tg_append_x
+   JSR alloc_span
+   BEQ ues_fail
+   LDY zp_clr_save_x
+   LDA POOL_XLO,Y
+   STA POOL_XLO,X
+   LDA POOL_DEN,Y
+   STA POOL_DEN,X
+   LDA POOL_TL,Y
+   STA POOL_TL,X
+   LDA POOL_BL,Y
+   STA POOL_BL,X
+   LDA POOL_TR,Y
+   STA POOL_TR,X
+   LDA POOL_BR,Y
+   STA POOL_BR,X
+   LDA POOL_OT,Y
+   STA POOL_OT,X
+   LDA POOL_OB,Y
+   STA POOL_OB,X
+   LDA POOL_IT,Y
+   STA POOL_IT,X
+   LDA POOL_IB,Y
+   STA POOL_IB,X
+   LDA zp_ox0
+   STA POOL_XSTART,X
+   LDA zp_ox1
+   STA POOL_XEND,X
+   JSR tg_append_x
 ues_fail:
-RTS
+   RTS
 
 
 ; ===================================================================
@@ -965,34 +965,34 @@ SZR_PROJ = $0A40                        ; = SEG_PROJ_BUF (bsp/walk.s)
 ; N flag of the hi-byte SBC, corrected for signed overflow by EOR #$80
 ; when V is set (standard 6502 signed-compare idiom). Clobbers A.
 szr_lt:
-LDA SZR_PROJ,X
-SEC
-SBC #Y_BIAS
-LDA SZR_PROJ+1,X
-SBC #0
-BVC szr_lt_nv
-EOR #$80
+   LDA SZR_PROJ,X
+   SEC
+   SBC #Y_BIAS
+   LDA SZR_PROJ+1,X
+   SBC #0
+   BVC szr_lt_nv
+   EOR #$80
 szr_lt_nv:
-BMI szr_yes
-CLC
-RTS
+   BMI szr_yes
+   CLC
+   RTS
 ; C=1 iff value > Y_BIAS+159.
 ; Same idiom, operands reversed: sign of ((Y_BIAS+159) - value) < 0.
 szr_gt:
-LDA #<(Y_BIAS+159)
-SEC
-SBC SZR_PROJ,X
-LDA #>(Y_BIAS+159)
-SBC SZR_PROJ+1,X
-BVC szr_gt_nv
-EOR #$80
+   LDA #<(Y_BIAS+159)
+   SEC
+   SBC SZR_PROJ,X
+   LDA #>(Y_BIAS+159)
+   SBC SZR_PROJ+1,X
+   BVC szr_gt_nv
+   EOR #$80
 szr_gt_nv:
-BMI szr_yes
-CLC
-RTS
+   BMI szr_yes
+   CLC
+   RTS
 szr_yes:
-SEC
-RTS
+   SEC
+   RTS
 
 seg_zero_rec_solid:
 .scope
@@ -1000,54 +1000,54 @@ seg_zero_rec_solid:
 ; endpoint iff fb < Y_BIAS OR (NEEDBB and bb < Y_BIAS). Endpoint 1
 ; first; only if it passes do we pay for endpoint 2 (szr_b1).
 ; bottom family: band bottom above the screen top at endpoint 1?
-LDX #2                                  ; sy1_bot (fb1)
-JSR szr_lt
-BCS szr_b1
-LDA zp_seg_flags
-AND #$08                                ; SF_NEEDBB
-BEQ szr_top
-LDX #10                                 ; sy1_bbot (bb1)
-JSR szr_lt
-BCC szr_top
+   LDX #2                                  ; sy1_bot (fb1)
+   JSR szr_lt
+   BCS szr_b1
+   LDA zp_seg_flags
+   AND #$08                                ; SF_NEEDBB
+   BEQ szr_top
+   LDX #10                                 ; sy1_bbot (bb1)
+   JSR szr_lt
+   BCC szr_top
 szr_b1:
 ; ... and at endpoint 2?
-LDX #6                                  ; sy2_bot (fb2)
-JSR szr_lt
-BCS szr_closed
-LDA zp_seg_flags
-AND #$08
-BEQ szr_top
-LDX #14                                 ; sy2_bbot (bb2)
-JSR szr_lt
-BCS szr_closed
+   LDX #6                                  ; sy2_bot (fb2)
+   JSR szr_lt
+   BCS szr_closed
+   LDA zp_seg_flags
+   AND #$08
+   BEQ szr_top
+   LDX #14                                 ; sy2_bbot (bb2)
+   JSR szr_lt
+   BCS szr_closed
 szr_top:
 ; top family: band top below the screen bottom at endpoint 1?
 ; Band top = max(ft, bt-if-NEEDBT), and max(a,b) > k iff a > k OR
 ; b > k — the same either-of-two test per endpoint as the bottom
 ; family above, with szr_gt in place of szr_lt.
-LDX #0                                  ; sy1_top (ft1)
-JSR szr_gt
-BCS szr_t1
-LDA zp_seg_flags
-AND #$04                                ; SF_NEEDBT
-BEQ szr_open
-LDX #8                                  ; sy1_btop (bt1)
-JSR szr_gt
-BCC szr_open
+   LDX #0                                  ; sy1_top (ft1)
+   JSR szr_gt
+   BCS szr_t1
+   LDA zp_seg_flags
+   AND #$04                                ; SF_NEEDBT
+   BEQ szr_open
+   LDX #8                                  ; sy1_btop (bt1)
+   JSR szr_gt
+   BCC szr_open
 szr_t1:
-LDX #4                                  ; sy2_top (ft2)
-JSR szr_gt
-BCS szr_closed
-LDA zp_seg_flags
-AND #$04
-BEQ szr_open
-LDX #12                                 ; sy2_btop (bt2)
-JSR szr_gt
-BCS szr_closed
+   LDX #4                                  ; sy2_top (ft2)
+   JSR szr_gt
+   BCS szr_closed
+   LDA zp_seg_flags
+   AND #$04
+   BEQ szr_open
+   LDX #12                                 ; sy2_btop (bt2)
+   JSR szr_gt
+   BCS szr_closed
 szr_open:
-CLC
-RTS
+   CLC
+   RTS
 szr_closed:
-SEC
-RTS
+   SEC
+   RTS
 .endscope

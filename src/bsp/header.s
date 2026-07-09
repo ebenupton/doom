@@ -9,8 +9,8 @@
 .if ::C02
 STZ addr
 .else
-LDA #0
-STA addr
+   LDA #0
+   STA addr
 .endif
 .endmacro
 
@@ -20,8 +20,8 @@ STA addr
 .if ::C02
 ina
 .else
-CLC
-ADC #1
+   CLC
+   ADC #1
 .endif
 .endmacro
 
@@ -89,8 +89,8 @@ SS_FHI    = NODE_SOA + $F00
 
 .macro PAGE bank
 .if ::BANKED
-LDA #bank
-STA $FE30
+   LDA #bank
+   STA $FE30
 .endif
 .endmacro
 
@@ -248,35 +248,35 @@ sqr2_hi = $A800
 ; ============================================================================
 SC_UMUL8:
 .scope
-STA zp_tmp0
-SEC
-SBC zp_mul_b
-BCS pos
-EOR #$FF
-ADC #1
+   STA zp_tmp0
+   SEC
+   SBC zp_mul_b
+   BCS pos
+   EOR #$FF
+   ADC #1
 pos:
-TAY
-LDA zp_tmp0
-CLC
-ADC zp_mul_b
-TAX
-BCS uo
-LDA sqr_lo,X
-SEC
-SBC sqr_lo,Y
-STA zp_prod_lo
-LDA sqr_hi,X
-SBC sqr_hi,Y
-STA zp_prod_hi
-RTS
+   TAY
+   LDA zp_tmp0
+   CLC
+   ADC zp_mul_b
+   TAX
+   BCS uo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_prod_lo
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   STA zp_prod_hi
+   RTS
 uo:
-LDA sqr2_lo,X
-SBC sqr_lo,Y
-STA zp_prod_lo
-LDA sqr2_hi,X
-SBC sqr_hi,Y
-STA zp_prod_hi
-RTS
+   LDA sqr2_lo,X
+   SBC sqr_lo,Y
+   STA zp_prod_lo
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+   STA zp_prod_hi
+   RTS
 .endscope
 ; ============================================================================
 ; SC_UDIV16_8 — restoring shift-subtract division, u16 ÷ u8.
@@ -301,115 +301,115 @@ RTS
 ; ============================================================================
 SC_UDIV16_8:
 .scope
-LDA zp_div_hi
-CMP zp_div_den
-BCS d16
+   LDA zp_div_hi
+   CMP zp_div_den
+   BCS d16
 ; --- u8-quotient fast path: numerator <<= 8, then find the first
 ;     committing quotient bit with compare-only steps. ---
-LDX zp_div_lo
-STX zp_div_hi
-LDX #0
-STX zp_div_lo
-ASL zp_div_hi
-ROL A
-BCS dskip_c8
-CMP zp_div_den
-BCS dskip_c8
-ASL zp_div_hi
-ROL A
-BCS dskip_c7
-CMP zp_div_den
-BCS dskip_c7
-ASL zp_div_hi
-ROL A
-BCS dskip_c6
-CMP zp_div_den
-BCS dskip_c6
-ASL zp_div_hi
-ROL A
-BCS dskip_c5
-CMP zp_div_den
-BCS dskip_c5
-ASL zp_div_hi
-ROL A
-BCS dskip_c4
-CMP zp_div_den
-BCS dskip_c4
-ASL zp_div_hi
-ROL A
-BCS dskip_c3
-CMP zp_div_den
-BCS dskip_c3
-ASL zp_div_hi
-ROL A
-BCS dskip_c2
-CMP zp_div_den
-BCS dskip_c2
-ASL zp_div_hi
-ROL A
-BCS dskip_c1
-CMP zp_div_den
-BCS dskip_c1
-LDA #0
-RTS
+   LDX zp_div_lo
+   STX zp_div_hi
+   LDX #0
+   STX zp_div_lo
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c8
+   CMP zp_div_den
+   BCS dskip_c8
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c7
+   CMP zp_div_den
+   BCS dskip_c7
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c6
+   CMP zp_div_den
+   BCS dskip_c6
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c5
+   CMP zp_div_den
+   BCS dskip_c5
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c4
+   CMP zp_div_den
+   BCS dskip_c4
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c3
+   CMP zp_div_den
+   BCS dskip_c3
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c2
+   CMP zp_div_den
+   BCS dskip_c2
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c1
+   CMP zp_div_den
+   BCS dskip_c1
+   LDA #0
+   RTS
 ; all 8 compares missed → quotient = 0
 ; --- dskip ladder: entered from the prelude at the first committing
 ;     quotient bit; X = loop iterations remaining (this bit included). ---
 dskip_c8:
-LDX #8
-BNE dskip_commit
+   LDX #8
+   BNE dskip_commit
 dskip_c7:
-LDX #7
-BNE dskip_commit
+   LDX #7
+   BNE dskip_commit
 dskip_c6:
-LDX #6
-BNE dskip_commit
+   LDX #6
+   BNE dskip_commit
 dskip_c5:
-LDX #5
-BNE dskip_commit
+   LDX #5
+   BNE dskip_commit
 dskip_c4:
-LDX #4
-BNE dskip_commit
+   LDX #4
+   BNE dskip_commit
 dskip_c3:
-LDX #3
-BNE dskip_commit
+   LDX #3
+   BNE dskip_commit
 dskip_c2:
-LDX #2
-BNE dskip_commit
+   LDX #2
+   BNE dskip_commit
 dskip_c1:
-LDX #1
+   LDX #1
 dskip_commit:
 ; Commit the first quotient bit: remainder -= den, quotient bit → 1,
 ; then continue in the generic loop for the remaining X-1 bits.
-SBC zp_div_den
-INC zp_div_lo
-DEX
-BNE dl
-LDA zp_div_lo
-RTS
+   SBC zp_div_den
+   INC zp_div_lo
+   DEX
+   BNE dl
+   LDA zp_div_lo
+   RTS
 ; --- 16-bit path: A = remainder, X = 16 iterations; quotient shifts
 ;     into div_lo:div_hi behind the departing numerator bits. ---
 d16:
-LDA #0
-LDX #16
+   LDA #0
+   LDX #16
 dl:
-ASL zp_div_lo
-ROL zp_div_hi
-ROL A
-BCS dl_over
-CMP zp_div_den
-BCC ds
-SBC zp_div_den
+   ASL zp_div_lo
+   ROL zp_div_hi
+   ROL A
+   BCS dl_over
+   CMP zp_div_den
+   BCC ds
+   SBC zp_div_den
 dl_commit:
-INC zp_div_lo
+   INC zp_div_lo
 ds:
-DEX
-BNE dl
-LDA zp_div_lo
-RTS
+   DEX
+   BNE dl
+   LDA zp_div_lo
+   RTS
 dl_over:
 ; remainder bit 8 carried out of ROL → remainder >= 256 > den:
 ; the subtract always fits (carry already set), skip the CMP.
-SBC zp_div_den
-JMP dl_commit
+   SBC zp_div_den
+   JMP dl_commit
 .endscope

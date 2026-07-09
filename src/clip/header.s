@@ -9,8 +9,8 @@
 .if ::C02
 STZ addr
 .else
-LDA #0
-STA addr
+   LDA #0
+   STA addr
 .endif
 .endmacro
 
@@ -20,8 +20,8 @@ STA addr
 .if ::C02
 ina
 .else
-CLC
-ADC #1
+   CLC
+   ADC #1
 .endif
 .endmacro
 

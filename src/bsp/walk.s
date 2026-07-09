@@ -52,71 +52,71 @@ br_init_frame:
 ; (VWHC_VALID must be zeroed ONCE at boot; the key check is the backstop
 ;  for any residual garbage. The vcache below IS player-relative and must
 ;  still clear every frame.)
-LDA #0
-LDX #59
+   LDA #0
+   LDX #59
 bif_clr:
-DEX
-STA VCACHE_VALID_BASE,X
-BNE bif_clr
-RTS
+   DEX
+   STA VCACHE_VALID_BASE,X
+   BNE bif_clr
+   RTS
 
 br_render_frame:
 .scope bsp_walk                         ; named: br_dcache_frame SMC-patches
-JSR br_init_frame                       ; bsp_walk::bv_site_near/_far operands
+   JSR br_init_frame                       ; bsp_walk::bv_site_near/_far operands
 
 ; --- Initialize BSP stack: push root node id (plain-node entry). ---
-ZERO zp_bsp_stack_sp
-LDX zp_bsp_stack_sp
-LDA zp_root_node_lo
-STA BSP_STACK,X
-INX
-LDA zp_root_node_hi
-STA BSP_STACK,X
-INX
-STX zp_bsp_stack_sp
+   ZERO zp_bsp_stack_sp
+   LDX zp_bsp_stack_sp
+   LDA zp_root_node_lo
+   STA BSP_STACK,X
+   INX
+   LDA zp_root_node_hi
+   STA BSP_STACK,X
+   INX
+   STX zp_bsp_stack_sp
 
 ; --- Main loop: pop an entry into zp_node_chlo:chhi and dispatch on its
 ;     kind. Loop ends when the stack empties (or the screen fills). ---
 bsp_loop:
-LDA zp_bsp_stack_sp
-BNE bsp_pop
-RTS                                     ; stack empty → done
+   LDA zp_bsp_stack_sp
+   BNE bsp_pop
+   RTS                                     ; stack empty → done
 bsp_pop:
-DEC zp_bsp_stack_sp                     ; pop hi byte
-LDX zp_bsp_stack_sp
-LDA BSP_STACK,X
-STA zp_node_chhi
-DEC zp_bsp_stack_sp                     ; pop lo byte
-LDX zp_bsp_stack_sp
-LDA BSP_STACK,X
-STA zp_node_chlo
+   DEC zp_bsp_stack_sp                     ; pop hi byte
+   LDX zp_bsp_stack_sp
+   LDA BSP_STACK,X
+   STA zp_node_chhi
+   DEC zp_bsp_stack_sp                     ; pop lo byte
+   LDX zp_bsp_stack_sp
+   LDA BSP_STACK,X
+   STA zp_node_chlo
 
 ; Screen full → nothing more can become visible; drain the stack and
 ; return (mirrors Python's `if clips.is_full(): return` at every level).
-PAGE BANK_C
-JSR SC_IS_FULL
-BNE bsp_done_full
+   PAGE BANK_C
+   JSR SC_IS_FULL
+   BNE bsp_done_full
 bsp_dispatch:
 ; Entry kinds (hi byte): $80|sshi = subsector, $40|side<<5 = deferred
 ; far child (bbox-checked at pop time), else plain node id.
-LDA zp_node_chhi
-AND #$40
-BNE bsp_deferred
-LDA zp_node_chhi
-AND #$80
-BEQ bsp_node
+   LDA zp_node_chhi
+   AND #$40
+   BNE bsp_deferred
+   LDA zp_node_chhi
+   AND #$80
+   BEQ bsp_node
 ; Subsector: strip the tag bit and render its segs. (WAD id $FFFF is
 ; pre-normalized to subsector 0 by the packer/wrapper.)
-LDA zp_node_chhi
-AND #$7F
-STA zp_node_chhi
-JSR br_render_subsector
-JMP bsp_loop
+   LDA zp_node_chhi
+   AND #$7F
+   STA zp_node_chhi
+   JSR br_render_subsector
+   JMP bsp_loop
 bsp_done_full:
 ; Force the stack empty so the next bsp_loop iteration RTSes.
-LDA #0
-STA zp_bsp_stack_sp
-JMP bsp_loop
+   LDA #0
+   STA zp_bsp_stack_sp
+   JMP bsp_loop
 
 bsp_deferred:
 ; Deferred far child of node (chlo, chhi&$1F), side = bit 5.
@@ -125,72 +125,72 @@ bsp_deferred:
 ;   side = (chhi >> 5) & 1
 ;   if bbox_visible(node, side): ch = node.children[side]; dispatch(ch)
 ; Extract the far-side bit into zp_bbox_side.
-LDA zp_node_chhi
-AND #$20
-BEQ bsp_df_s0
-LDA #1
-BNE bsp_df_have
+   LDA zp_node_chhi
+   AND #$20
+   BEQ bsp_df_s0
+   LDA #1
+   BNE bsp_df_have
 bsp_df_s0:
-LDA #0
+   LDA #0
 bsp_df_have:
-STA zp_bbox_side
+   STA zp_bbox_side
 ; Strip the tag+side bits, leaving the plain node id for the bbox read.
-LDA zp_node_chhi
-AND #$1F
-STA zp_node_chhi
+   LDA zp_node_chhi
+   AND #$1F
+   STA zp_node_chhi
 bv_site_far:                            ; operand SMC-patched by br_dcache_frame
-JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
-BEQ bsp_loop_j                          ; far side invisible/occluded → skip
-JSR bsp_resolve_child                   ; ch := node.children[side]
-JMP bsp_dispatch
+   JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
+   BEQ bsp_loop_j                          ; far side invisible/occluded → skip
+   JSR bsp_resolve_child                   ; ch := node.children[side]
+   JMP bsp_dispatch
 ; re-dispatch: child may be node OR subsector
 bsp_loop_j:
-JMP bsp_loop
+   JMP bsp_loop
 
 bsp_node:
 ; Plain node: br_node_setup reads the node's SoA fields, runs DOOM
 ; R_PointOnSide on the raw player position → zp_side (0=right, 1=left,
 ; = the NEAR child), and resolves both child ids into BSP_NEAR_LO/HI
 ; (+ FAR slots).
-JSR br_node_setup
+   JSR br_node_setup
 ; Push the far child as a DEFERRED (node, farside) entry — its
 ; bbox/has_gap runs at pop time, after the near subtree.
 ; Entry = (node_lo, $40 | farside<<5 | node_hi).
-LDX zp_bsp_stack_sp
-LDA zp_node_chlo
-STA BSP_STACK,X
-INX
-LDA zp_side
-EOR #1
-ASL A
-ASL A
-ASL A
-ASL A
-ASL A
+   LDX zp_bsp_stack_sp
+   LDA zp_node_chlo
+   STA BSP_STACK,X
+   INX
+   LDA zp_side
+   EOR #1
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A
 ; farside << 5
-ORA #$40
-ORA zp_node_chhi
-STA BSP_STACK,X
-INX
-STX zp_bsp_stack_sp
+   ORA #$40
+   ORA zp_node_chhi
+   STA BSP_STACK,X
+   INX
+   STX zp_bsp_stack_sp
 ; Near child: bbox + has_gap NOW (Python checks near at visit time;
 ; the old walk pushed near unconditionally and over-visited).
-LDA zp_side
-STA zp_bbox_side
+   LDA zp_side
+   STA zp_bbox_side
 bv_site_near:                           ; operand SMC-patched by br_dcache_frame
-JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
-BEQ bsp_loop_j                          ; near side invisible → skip subtree
+   JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
+   BEQ bsp_loop_j                          ; near side invisible → skip subtree
 ; Near child visible → push it (already tagged: BSP_NEAR_HI carries the
 ; WAD subsector bit if the child is a leaf).
-LDX zp_bsp_stack_sp
-LDA BSP_NEAR_LO
-STA BSP_STACK,X
-INX
-LDA BSP_NEAR_HI
-STA BSP_STACK,X
-INX
-STX zp_bsp_stack_sp
-JMP bsp_loop
+   LDX zp_bsp_stack_sp
+   LDA BSP_NEAR_LO
+   STA BSP_STACK,X
+   INX
+   LDA BSP_NEAR_HI
+   STA BSP_STACK,X
+   INX
+   STX zp_bsp_stack_sp
+   JMP bsp_loop
 .endscope
 
 ; (bsp_resolve_child lives in the D region.)

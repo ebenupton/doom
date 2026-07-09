@@ -86,29 +86,29 @@ D_FWD    = $05FF                        ; unbanked: 1 = this frame's move was
 
 br_bbox_visible:
 .scope
-PAGE BANK_L2                            ; bbox + angle tables (TA/VATOX) live in bank L2
+   PAGE BANK_L2                            ; bbox + angle tables (TA/VATOX) live in bank L2
 ; --- bca_boxp = ROM_BBOX + node_id*16 + side*8, exploiting the base's
 ; page alignment (asserted by the loaders): the record never straddles a
 ; page, so lo = (node & 15)<<4 | side<<3 and hi = base_hi + (node >> 4)
 ; — byte-at-a-time, no 16-bit shift chain. Node ids are u8. ---
-LDA zp_node_chlo
-LSR A
-LSR A
-LSR A
-LSR A
-CLC
-ADC zp_rom_bbox_hi
-STA $87
-LDA zp_node_chlo
-ASL A
-ASL A
-ASL A
-ASL A
-LDX zp_bbox_side
-BEQ bv_side_done
-ORA #8
+   LDA zp_node_chlo
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   CLC
+   ADC zp_rom_bbox_hi
+   STA $87
+   LDA zp_node_chlo
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   LDX zp_bbox_side
+   BEQ bv_side_done
+   ORA #8
 bv_side_done:
-STA $86
+   STA $86
 
 ; --- Angle-space visibility (px=$01, py=$03, ab=$FA2F preset per frame) ---
 ; BCA_CHECK = bbox_check_angle (angle module, DOOM R_CheckBBox in the
@@ -117,24 +117,24 @@ STA $86
 ; conservative column extent, clips against the view cone. Writes
 ; bca_vis (1=some columns visible, 0=cull) and bca_ilo/bca_ihi (u8
 ; column extent, ±1 conservative).
-JSR BCA_CHECK
-LDA bca_vis
-BNE bv_anglevis
-LDA #0
-RTS
+   JSR BCA_CHECK
+   LDA bca_vis
+   BNE bv_anglevis
+   LDA #0
+   RTS
 ; box wholly outside view cone → invisible (A=0, Z set)
 bv_anglevis:
 ; Visible columns exist — ask the clipper whether any of them still
 ; have an open span. Tail-call: SC_HAS_GAP's A (1=gap, 0=fully
 ; occluded) and flags are our return value.
-LDA bca_ilo
-STA $C2
+   LDA bca_ilo
+   STA $C2
 ; zp_ilo
-LDA bca_ihi
-STA $C3
+   LDA bca_ihi
+   STA $C3
 ; zp_ihi
-PAGE BANK_C
-JMP SC_HAS_GAP
+   PAGE BANK_C
+   JMP SC_HAS_GAP
 
 .endscope
 
@@ -159,60 +159,60 @@ JMP SC_HAS_GAP
 ; ============================================================================
 br_bbox_visible_d:
 .scope
-LDX zp_node_chlo
-LDA zp_bbox_side
-BNE dv_left
-LDA D_CODE_R,X
-JMP dv_have
+   LDX zp_node_chlo
+   LDA zp_bbox_side
+   BNE dv_left
+   LDA D_CODE_R,X
+   JMP dv_have
 dv_left:
-LDA D_CODE_L,X
+   LDA D_CODE_L,X
 dv_have:
-CMP #125
-BEQ dv_fresh                            ; invalid → recompute + store
-CMP #126
-BEQ dv_invis                            ; invisible: exact, no refresh needed
+   CMP #125
+   BEQ dv_fresh                            ; invalid → recompute + store
+   CMP #126
+   BEQ dv_invis                            ; invisible: exact, no refresh needed
 ; (no D_MODE test needed: on store-only frames the wipe has set every
 ; code to 125, and the tree walk never re-reads an entry stored earlier
 ; in the same frame, so only the two branches above can fire there)
-STA zp_br_t0                            ; code (visible entry)
-TXA
-CLC
-ADC D_FRAME
-AND #7
-BEQ dv_fresh                            ; this entry's refresh slot
-LDA zp_br_t0
-CMP #127
-BEQ dv_straddle
-BCS dv_right                            ; 132-255: right-of-centre
-LDY #0                                  ; 0-124: left-of-centre → (0, code+2)
-STY $C2
-ADC #2                                  ; C clear here (CMP #127 not taken)
-STA $C3
-JMP dv_gap
+   STA zp_br_t0                            ; code (visible entry)
+   TXA
+   CLC
+   ADC D_FRAME
+   AND #7
+   BEQ dv_fresh                            ; this entry's refresh slot
+   LDA zp_br_t0
+   CMP #127
+   BEQ dv_straddle
+   BCS dv_right                            ; 132-255: right-of-centre
+   LDY #0                                  ; 0-124: left-of-centre → (0, code+2)
+   STY $C2
+   ADC #2                                  ; C clear here (CMP #127 not taken)
+   STA $C3
+   JMP dv_gap
 dv_right:
-SBC #2                                  ; C set here (BCS taken) → code-2
-STA $C2                                 ; (code-2, 255)
-LDA #255
-STA $C3
-JMP dv_gap
+   SBC #2                                  ; C set here (BCS taken) → code-2
+   STA $C2                                 ; (code-2, 255)
+   LDA #255
+   STA $C3
+   JMP dv_gap
 dv_straddle:
-LDA #0
-STA $C2
-LDA #255
-STA $C3
+   LDA #0
+   STA $C2
+   LDA #255
+   STA $C3
 dv_gap:
-PAGE BANK_C
-JMP SC_HAS_GAP                          ; serve: A/Z is our return value
+   PAGE BANK_C
+   JMP SC_HAS_GAP                          ; serve: A/Z is our return value
 dv_invis:
-LDA #0
-RTS
+   LDA #0
+   RTS
 dv_fresh:
-JSR br_bbox_visible                     ; pristine core (pages L2/C itself)
-PHA                                     ; A = verdict (has_gap already run)
-PAGE BANK_L2                            ; store code lives in the L2 window
-JSR bv_dcache_store                     ; encode bca_vis/ilo/ihi → code byte
-PLA                                     ; restore verdict; Z tracks A
-RTS
+   JSR br_bbox_visible                     ; pristine core (pages L2/C itself)
+   PHA                                     ; A = verdict (has_gap already run)
+   PAGE BANK_L2                            ; store code lives in the L2 window
+   JSR bv_dcache_store                     ; encode bca_vis/ilo/ihi → code byte
+   PLA                                     ; restore verdict; Z tracks A
+   RTS
 .endscope
 
 ; ---- D-cache cold code: once-per-frame classifier + per-fresh-check store.
@@ -229,11 +229,11 @@ RTS
 ; Clobbers A, X, Y.
 bv_dcache_store:
 .scope
-LDX zp_node_chlo
-LDA bca_vis
-BNE st_vis
-LDA #126                                ; invisible
-BNE st_put                              ; (always)
+   LDX zp_node_chlo
+   LDA bca_vis
+   BNE st_vis
+   LDA #126                                ; invisible
+   BNE st_put                              ; (always)
 st_vis:
 ; Classification needs a GUARD BAND around the pivot: extent endpoints
 ; are conservative-wide and viewangletox rounds, so a bound within a few
@@ -241,21 +241,21 @@ st_vis:
 ; optical axis — which migrate the other way. 4 columns on each side
 ; (left class ends at 124, right class starts at 132); anything nearer
 ; the pivot is treated as straddling (0,255) — always safe.
-LDA bca_ilo
-CMP #132
-BCS st_put                              ; right of centre: code = ilo (>=132)
-LDA bca_ihi
-CMP #125
-BCC st_put                              ; left of centre: code = ihi (0-124)
-LDA #127                                ; near-pivot / straddle
+   LDA bca_ilo
+   CMP #132
+   BCS st_put                              ; right of centre: code = ilo (>=132)
+   LDA bca_ihi
+   CMP #125
+   BCC st_put                              ; left of centre: code = ihi (0-124)
+   LDA #127                                ; near-pivot / straddle
 st_put:
-LDY zp_bbox_side
-BNE st_left
-STA D_CODE_R,X
-RTS
+   LDY zp_bbox_side
+   BNE st_left
+   STA D_CODE_R,X
+   RTS
 st_left:
-STA D_CODE_L,X
-RTS
+   STA D_CODE_L,X
+   RTS
 .endscope
 
 ; ============================================================================
@@ -277,72 +277,72 @@ RTS
 ; ============================================================================
 br_dcache_frame:
 .scope
-LDA D_ENABLE
-BNE df_on
-STA D_MODE                              ; A = 0
-JMP df_patch                            ; point sites at the pristine core
+   LDA D_ENABLE
+   BNE df_on
+   STA D_MODE                              ; A = 0
+   JMP df_patch                            ; point sites at the pristine core
 df_on:
-LDA zp_br_px
-CMP D_PREVP+0
-BNE df_moved
-LDA zp_br_px_h
-CMP D_PREVP+1
-BNE df_moved
-LDA zp_br_px_e
-CMP D_PREVP+2
-BNE df_moved
-LDA zp_br_py
-CMP D_PREVP+3
-BNE df_moved
-LDA zp_br_py_h
-CMP D_PREVP+4
-BNE df_moved
-LDA zp_br_py_e
-CMP D_PREVP+5
-BNE df_moved
+   LDA zp_br_px
+   CMP D_PREVP+0
+   BNE df_moved
+   LDA zp_br_px_h
+   CMP D_PREVP+1
+   BNE df_moved
+   LDA zp_br_px_e
+   CMP D_PREVP+2
+   BNE df_moved
+   LDA zp_br_py
+   CMP D_PREVP+3
+   BNE df_moved
+   LDA zp_br_py_h
+   CMP D_PREVP+4
+   BNE df_moved
+   LDA zp_br_py_e
+   CMP D_PREVP+5
+   BNE df_moved
 ; stationary — same angle?
-LDA bca_ab
-CMP D_PREV_AB
-BNE df_wipe                             ; rotated in place → extents invalid
-LDA #2
-STA D_MODE
-BNE df_patch                            ; (always) prevs unchanged, no advance
+   LDA bca_ab
+   CMP D_PREV_AB
+   BNE df_wipe                             ; rotated in place → extents invalid
+   LDA #2
+   STA D_MODE
+   BNE df_patch                            ; (always) prevs unchanged, no advance
 df_moved:
-LDA D_FWD
-BEQ df_wipe
-LDA bca_ab
-CMP D_PREV_AB
-BNE df_wipe                             ; move + turn in one frame → wipe
-INC D_FRAME
-LDA #2
-STA D_MODE
-BNE df_save                             ; (always)
+   LDA D_FWD
+   BEQ df_wipe
+   LDA bca_ab
+   CMP D_PREV_AB
+   BNE df_wipe                             ; move + turn in one frame → wipe
+   INC D_FRAME
+   LDA #2
+   STA D_MODE
+   BNE df_save                             ; (always)
 df_wipe:
-LDA #125                                ; invalid code
-LDX #0
+   LDA #125                                ; invalid code
+   LDX #0
 df_wl:
-STA D_CODE_R,X
-STA D_CODE_L,X
-INX
-CPX #236
-BNE df_wl
-LDA #1
-STA D_MODE                              ; store-only rebuild frame
+   STA D_CODE_R,X
+   STA D_CODE_L,X
+   INX
+   CPX #236
+   BNE df_wl
+   LDA #1
+   STA D_MODE                              ; store-only rebuild frame
 df_save:
-LDA zp_br_px
-STA D_PREVP+0
-LDA zp_br_px_h
-STA D_PREVP+1
-LDA zp_br_px_e
-STA D_PREVP+2
-LDA zp_br_py
-STA D_PREVP+3
-LDA zp_br_py_h
-STA D_PREVP+4
-LDA zp_br_py_e
-STA D_PREVP+5
-LDA bca_ab
-STA D_PREV_AB
+   LDA zp_br_px
+   STA D_PREVP+0
+   LDA zp_br_px_h
+   STA D_PREVP+1
+   LDA zp_br_px_e
+   STA D_PREVP+2
+   LDA zp_br_py
+   STA D_PREVP+3
+   LDA zp_br_py_h
+   STA D_PREVP+4
+   LDA zp_br_py_e
+   STA D_PREVP+5
+   LDA bca_ab
+   STA D_PREV_AB
 ; fall through to df_patch
 ; --- SMC: point the walk's two bbox-check JSRs at the D wrapper when
 ; the cache is active this frame, at the pristine core when not — the
@@ -350,21 +350,21 @@ STA D_PREV_AB
 ; (the vxc_frame / bca_frame idiom). Operands are resident MAIN bytes,
 ; writable regardless of banking. ---
 df_patch:
-LDA D_MODE
-BEQ df_plain
-LDA #<br_bbox_visible_d
-LDY #>br_bbox_visible_d
-BNE df_write                            ; (always: page byte nonzero)
+   LDA D_MODE
+   BEQ df_plain
+   LDA #<br_bbox_visible_d
+   LDY #>br_bbox_visible_d
+   BNE df_write                            ; (always: page byte nonzero)
 df_plain:
-LDA #<br_bbox_visible
-LDY #>br_bbox_visible
+   LDA #<br_bbox_visible
+   LDY #>br_bbox_visible
 df_write:
-STA bsp_walk::bv_site_near+1
-STA bsp_walk::bv_site_far+1
-TYA
-STA bsp_walk::bv_site_near+2
-STA bsp_walk::bv_site_far+2
-RTS
+   STA bsp_walk::bv_site_near+1
+   STA bsp_walk::bv_site_far+1
+   TYA
+   STA bsp_walk::bv_site_near+2
+   STA bsp_walk::bv_site_far+2
+   RTS
 .endscope
 
 .segment "MAIN"                         ; restore for subsequently-included parts

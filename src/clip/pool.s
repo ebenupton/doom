@@ -20,49 +20,49 @@
 span_init:
 .scope
 ; Free list: slots 2..31 (indices 2,3,...,31).
-LDX #2                                  ; slot 2                                     ; |
-STX zp_free                             ; |
+   LDX #2                                  ; slot 2                                     ; |
+   STX zp_free                             ; |
 il:
-TXA
-BUMP
+   TXA
+   BUMP
 ; ||
-CMP #NUM_SLOTS                          ; reached end? (= 32)                        ; |
-BCS id                                  ; |
-STA POOL_NEXT,X
-TAX
+   CMP #NUM_SLOTS                          ; reached end? (= 32)                        ; |
+   BCS id                                  ; |
+   STA POOL_NEXT,X
+   TAX
 ; ||
-BNE il                                  ; always taken                               ; |
+   BNE il                                  ; always taken                               ; |
 id:
-LDA #0
-STA POOL_NEXT,X
+   LDA #0
+   STA POOL_NEXT,X
 ; |
 ; Active list: slot 1 = full screen with biased Y [Y_BIAS, Y_BIAS+159].
-LDX #1                                  ; slot 1 (index 1)                           ; |
-STX zp_head                             ; |
-STA POOL_NEXT,X
-STA POOL_XLO,X
-STA POOL_XSTART,X
+   LDX #1                                  ; slot 1 (index 1)                           ; |
+   STX zp_head                             ; |
+   STA POOL_NEXT,X
+   STA POOL_XLO,X
+   STA POOL_XSTART,X
 ; |
-LDA #Y_BIAS                             ; |
-STA POOL_TL,X
-STA POOL_TR,X
+   LDA #Y_BIAS                             ; |
+   STA POOL_TL,X
+   STA POOL_TR,X
 ; |
-STA POOL_OT,X
-STA POOL_IT,X
+   STA POOL_OT,X
+   STA POOL_IT,X
 ; | OT=IT=Y_BIAS
-LDA #255
-STA POOL_DEN,X
-STA POOL_XEND,X
+   LDA #255
+   STA POOL_DEN,X
+   STA POOL_XEND,X
 ; |
-LDA #(Y_BIAS + 159)                     ; |
-STA POOL_BL,X
-STA POOL_BR,X
+   LDA #(Y_BIAS + 159)                     ; |
+   STA POOL_BL,X
+   STA POOL_BR,X
 ; |
-STA POOL_OB,X
-STA POOL_IB,X
+   STA POOL_OB,X
+   STA POOL_IB,X
 ; | OB=IB=Y_BIAS+159
-STX zp_hg_cache                         ; init cache to slot 1 (the initial span)   ; |
-RTS                                     ; |
+   STX zp_hg_cache                         ; init cache to slot 1 (the initial span)   ; |
+   RTS                                     ; |
 .endscope
 
 ; ======================================================================
@@ -80,22 +80,22 @@ RTS                                     ; |
 alloc_span:
 ; Returns X = new span offset.  Z=1 if failed (X=0), Z=0 if success.
 ; Caller is responsible for setting POOL_NEXT (tg_append_x or mark_solid linking).
-LDX zp_free
-BEQ af
+   LDX zp_free
+   BEQ af
 ; |
-LDA POOL_NEXT,X
-STA zp_free
+   LDA POOL_NEXT,X
+   STA zp_free
 ; |
-TXA                                     ; A=X≠0, sets Z=0                           ; |
+   TXA                                     ; A=X≠0, sets Z=0                           ; |
 af:
-RTS
+   RTS
 ; |
 
 free_span:
-LDA zp_free
-STA POOL_NEXT,X
-STX zp_free
-RTS
+   LDA zp_free
+   STA POOL_NEXT,X
+   STX zp_free
+   RTS
 ; |||
 
 ; ======================================================================
@@ -112,7 +112,7 @@ RTS
 ; The code + full I/O header now live in clip/arith.s (included right
 ; after clip/header.s so the pin lands at $2030 in the flat build).
 
-.byte 0                                 ; 1-byte pad: optimal alignment for umul8
+   .byte 0                                 ; 1-byte pad: optimal alignment for umul8
 
 ; (interp_core removed — inlined into interp_store below.)
 
@@ -151,19 +151,19 @@ RTS
 udiv16_8:
 .scope
 ; Path select: den > div_hi ⇒ quotient < 256 ⇒ 8-iteration fast path.
-LDA zp_div_hi
-CMP zp_div_den
-BCS d16
+   LDA zp_div_hi
+   CMP zp_div_den
+   BCS d16
 ; FAST PATH: quotient fits in 8 bits.  Setup: rem = div_hi,
 ; div_hi = div_lo, div_lo = 0.  Then skip leading zero-bit
 ; iterations: shift rem:div_hi left, checking rem vs den each
 ; time.  Each skip iteration (~19 cyc) is cheaper than the main
 ; loop iteration (~33 cyc when the trial subtract fails), saving
 ; ~14 cyc per skipped iteration.
-LDX zp_div_lo
-STX zp_div_hi
-LDX #0
-STX zp_div_lo
+   LDX zp_div_lo
+   STX zp_div_hi
+   LDX #0
+   STX zp_div_lo
 ; --- Unrolled skip: consume leading zero quotient bits ---
 ; 8 copies; each branches to its own per-copy commit handler that sets
 ; X directly (saves DEX per skipped copy: −2 cyc per skip iteration).
@@ -172,115 +172,115 @@ STX zp_div_lo
 ; While bits are 0 there's nothing to write (div_lo is already 0), so
 ; skipping is pure profit; the first 1 bit jumps to dskip_cN with
 ; X = iterations remaining (this one included).
-ASL zp_div_hi
-ROL A
-BCS dskip_c8
-CMP zp_div_den
-BCS dskip_c8
-ASL zp_div_hi
-ROL A
-BCS dskip_c7
-CMP zp_div_den
-BCS dskip_c7
-ASL zp_div_hi
-ROL A
-BCS dskip_c6
-CMP zp_div_den
-BCS dskip_c6
-ASL zp_div_hi
-ROL A
-BCS dskip_c5
-CMP zp_div_den
-BCS dskip_c5
-ASL zp_div_hi
-ROL A
-BCS dskip_c4
-CMP zp_div_den
-BCS dskip_c4
-ASL zp_div_hi
-ROL A
-BCS dskip_c3
-CMP zp_div_den
-BCS dskip_c3
-ASL zp_div_hi
-ROL A
-BCS dskip_c2
-CMP zp_div_den
-BCS dskip_c2
-ASL zp_div_hi
-ROL A
-BCS dskip_c1
-CMP zp_div_den
-BCS dskip_c1
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c8
+   CMP zp_div_den
+   BCS dskip_c8
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c7
+   CMP zp_div_den
+   BCS dskip_c7
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c6
+   CMP zp_div_den
+   BCS dskip_c6
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c5
+   CMP zp_div_den
+   BCS dskip_c5
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c4
+   CMP zp_div_den
+   BCS dskip_c4
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c3
+   CMP zp_div_den
+   BCS dskip_c3
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c2
+   CMP zp_div_den
+   BCS dskip_c2
+   ASL zp_div_hi
+   ROL A
+   BCS dskip_c1
+   CMP zp_div_den
+   BCS dskip_c1
 ; All 8 iterations zero → quotient = 0
-LDA #0
-RTS
+   LDA #0
+   RTS
 dskip_c8:
-LDX #8
-BNE dskip_commit
+   LDX #8
+   BNE dskip_commit
 dskip_c7:
-LDX #7
-BNE dskip_commit
+   LDX #7
+   BNE dskip_commit
 dskip_c6:
-LDX #6
-BNE dskip_commit
+   LDX #6
+   BNE dskip_commit
 dskip_c5:
-LDX #5
-BNE dskip_commit
+   LDX #5
+   BNE dskip_commit
 dskip_c4:
-LDX #4
-BNE dskip_commit
+   LDX #4
+   BNE dskip_commit
 dskip_c3:
-LDX #3
-BNE dskip_commit
+   LDX #3
+   BNE dskip_commit
 dskip_c2:
-LDX #2
-BNE dskip_commit
+   LDX #2
+   BNE dskip_commit
 dskip_c1:
-LDX #1
+   LDX #1
 dskip_commit:
 ; First 1 quotient bit: commit the trial subtract and enter the main
 ; loop for the remaining X-1 iterations (X=1 ⇒ done, quotient=1 in
 ; div_lo). SBC is correct on both arrival paths: via CMP-BCS C=1 and
 ; rem>=den; via ROL-BCS the true 9-bit rem is 256+A, and 256+A-den
 ; still fits u8 with C=1.
-SBC zp_div_den                          ; carry already set (from BCS)
-INC zp_div_lo                           ; set this quotient bit
-DEX
-BNE dl
+   SBC zp_div_den                          ; carry already set (from BCS)
+   INC zp_div_lo                           ; set this quotient bit
+   DEX
+   BNE dl
 ; remaining iterations via main loop (rem in A)
-LDA zp_div_lo
-RTS
+   LDA zp_div_lo
+   RTS
 d16:
 ; SLOW PATH: quotient can exceed u8. Full 16-iteration restoring divide
 ; over div_lo:div_hi; quotient bits accumulate across div_lo (low 8)
 ; and div_hi (high 8); only the low byte is returned.
-LDA #0
-LDX #16
+   LDA #0
+   LDX #16
 ; Main loop: remainder kept in A (saves LDA/STA zp_div_rem per iter)
 ; Per iteration: shift dividend/quotient register left (top bit into
 ; rem); if rem >= den (or a bit overflowed rem: dl_over) subtract den
 ; and set the vacated quotient bit via INC div_lo.
 dl:
-ASL zp_div_lo
-ROL zp_div_hi
-ROL A
+   ASL zp_div_lo
+   ROL zp_div_hi
+   ROL A
 ; ||||||||||||||||||||||||||||||||||||||||
-BCS dl_over                             ; |||||
-CMP zp_div_den
-BCC ds
+   BCS dl_over                             ; |||||
+   CMP zp_div_den
+   BCC ds
 ; |||||||||||||||||||||||||||||
-SBC zp_div_den                          ; |
+   SBC zp_div_den                          ; |
 dl_commit:
-INC zp_div_lo                           ; |||||
+   INC zp_div_lo                           ; |||||
 ds:
-DEX
-BNE dl
+   DEX
+   BNE dl
 ; |||||||||||||
-LDA zp_div_lo
-RTS
+   LDA zp_div_lo
+   RTS
 ; |||
 dl_over:
-SBC zp_div_den                          ; carry already set from BCS dl_over
-JMP dl_commit
+   SBC zp_div_den                          ; carry already set from BCS dl_over
+   JMP dl_commit
 .endscope

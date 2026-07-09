@@ -29,66 +29,66 @@ span_has_gap:
 ; without walking. Only a positive answer is cacheable — cache misses
 ; fall through to the full walk. (mark_solid / tighten zero the cache,
 ; so a live cached slot always holds current XSTART/XEND.)
-LDX zp_hg_cache
-BEQ hg_no_cache
-LDA POOL_XEND,X
-CMP zp_ilo
-BCC hg_no_cache
+   LDX zp_hg_cache
+   BEQ hg_no_cache
+   LDA POOL_XEND,X
+   CMP zp_ilo
+   BCC hg_no_cache
 ; xend < ilo → miss
-LDA zp_ihi
-CMP POOL_XSTART,X
-BCC hg_no_cache
+   LDA zp_ihi
+   CMP POOL_XSTART,X
+   BCC hg_no_cache
 ; ihi < xstart → miss
-LDA #1
-RTS
+   LDA #1
+   RTS
 ; cache hit → return 1 (avoids page-cross)
 hg_no_cache:
 ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
 ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
-LDX zp_head
-BEQ hgn
+   LDX zp_head
+   BEQ hgn
 ; --- X iteration: current span in X ---
 hgl_x:
-LDA POOL_XEND,X
-CMP zp_ilo
-BCS hg_chk_x
+   LDA POOL_XEND,X
+   CMP zp_ilo
+   BCS hg_chk_x
 ; xend >= ilo → hit
-LDY POOL_NEXT,X
-BEQ hgn
+   LDY POOL_NEXT,X
+   BEQ hgn
 ; advance via Y
 ; --- Y iteration: current span in Y ---
 hgl_y:
-LDA POOL_XEND,Y
-CMP zp_ilo
-BCS hg_chk_y
+   LDA POOL_XEND,Y
+   CMP zp_ilo
+   BCS hg_chk_y
 ; xend >= ilo → hit
-LDX POOL_NEXT,Y
-BNE hgl_x
+   LDX POOL_NEXT,Y
+   BNE hgl_x
 ; advance via X
 hgn:
-LDA #0
-RTS
+   LDA #0
+   RTS
 ; --- Hit checks (one copy per register, avoids TYX which doesn't exist) ---
 hg_chk_x:
-LDA zp_ihi
-CMP POOL_XSTART,X
-BCS hg_cx_yes
-LDA #0
-RTS
+   LDA zp_ihi
+   CMP POOL_XSTART,X
+   BCS hg_cx_yes
+   LDA #0
+   RTS
 hg_chk_y:
-LDA zp_ihi
-CMP POOL_XSTART,Y
-BCS hg_cy_yes
-LDA #0
-RTS
+   LDA zp_ihi
+   CMP POOL_XSTART,Y
+   BCS hg_cy_yes
+   LDA #0
+   RTS
 hg_cx_yes:
-STX zp_hg_cache
-LDA #1
-RTS
+   STX zp_hg_cache
+   LDA #1
+   RTS
 hg_cy_yes:
-STY zp_hg_cache
-LDA #1
-RTS
+   STY zp_hg_cache
+   LDA #1
+   RTS
 .endscope
 
 ; ======================================================================
@@ -98,13 +98,13 @@ RTS
 ; Python mirror: EndpointClipSpans.is_full (== not self.spans).
 ; ======================================================================
 span_is_full:
-LDA zp_head
-BEQ sif_yes
-LDA #0
-RTS
+   LDA zp_head
+   BEQ sif_yes
+   LDA #0
+   RTS
 sif_yes:
-LDA #1
-RTS
+   LDA #1
+   RTS
 
 ; ======================================================================
 ; SPAN_READ: serialize active span list to buffer at (zp_buf)
@@ -124,47 +124,47 @@ span_read:
 .scope
 ; Output: 1 byte count, then 8 bytes per span:
 ;   xstart, xend, xlo, xhi, tl, bl, tr, br
-LDY #1
-LDA #0
-STA zp_tmp0
-LDX zp_head
-BEQ srd
+   LDY #1
+   LDA #0
+   STA zp_tmp0
+   LDX zp_head
+   BEQ srd
 srl:
-INC zp_tmp0
-LDA POOL_XSTART,X
-STA (zp_buf),Y
-INY
-LDA POOL_XEND,X
-STA (zp_buf),Y
-INY
-LDA POOL_XLO,X
-STA (zp_buf),Y
-INY
-CLC
-ADC POOL_DEN,X
-STA (zp_buf),Y
-INY
+   INC zp_tmp0
+   LDA POOL_XSTART,X
+   STA (zp_buf),Y
+   INY
+   LDA POOL_XEND,X
+   STA (zp_buf),Y
+   INY
+   LDA POOL_XLO,X
+   STA (zp_buf),Y
+   INY
+   CLC
+   ADC POOL_DEN,X
+   STA (zp_buf),Y
+   INY
 ; xhi = xlo + den
-LDA POOL_TL,X
-STA (zp_buf),Y
-INY
-LDA POOL_BL,X
-STA (zp_buf),Y
-INY
-LDA POOL_TR,X
-STA (zp_buf),Y
-INY
-LDA POOL_BR,X
-STA (zp_buf),Y
-INY
-LDA POOL_NEXT,X
-TAX
-BNE srl
+   LDA POOL_TL,X
+   STA (zp_buf),Y
+   INY
+   LDA POOL_BL,X
+   STA (zp_buf),Y
+   INY
+   LDA POOL_TR,X
+   STA (zp_buf),Y
+   INY
+   LDA POOL_BR,X
+   STA (zp_buf),Y
+   INY
+   LDA POOL_NEXT,X
+   TAX
+   BNE srl
 srd:
-LDA zp_tmp0
-LDY #0
-STA (zp_buf),Y
-RTS
+   LDA zp_tmp0
+   LDY #0
+   STA (zp_buf),Y
+   RTS
 .endscope
 
 ; ======================================================================

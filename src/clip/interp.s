@@ -33,49 +33,49 @@
 interp_store:
 .scope
 ; offset = x - x0 (A holds x on entry)
-SEC
-SBC zp_i_x0
-BEQ is_y0
+   SEC
+   SBC zp_i_x0
+   BEQ is_y0
 ; |||
-CMP zp_div_den
-BEQ is_y1
+   CMP zp_div_den
+   BEQ is_y1
 ; ||
-STA zp_mul_b                            ; |
+   STA zp_mul_b                            ; |
 ; Direction check: compare y1 vs y0. Always unsigned multiply |dy|.
-LDA zp_i_y1
-CMP zp_i_y0
-BEQ is_y0
-BCC descending
+   LDA zp_i_y1
+   CMP zp_i_y0
+   BEQ is_y0
+   BCC descending
 ; ||||
 ; ASCENDING (y1 > y0): dy = y1 - y0 (unsigned)
-SEC
-SBC zp_i_y0
+   SEC
+   SBC zp_i_y0
 ; |
-JSR umul_round_div                      ; |
-CLC
-ADC zp_i_y0
-RTS
+   JSR umul_round_div                      ; |
+   CLC
+   ADC zp_i_y0
+   RTS
 ; | y0 + quot
 descending:
 ; DESCENDING (y1 < y0): |dy| = y0 - y1 (unsigned)
-LDA zp_i_y0
-SEC
-SBC zp_i_y1
+   LDA zp_i_y0
+   SEC
+   SBC zp_i_y1
 ; |
-JSR umul_round_div                      ; |
+   JSR umul_round_div                      ; |
 ; y0 - quot via two's complement: A = ~quot, then ADC y0 with C=1
-EOR #$FF
-SEC
-ADC zp_i_y0
-RTS
+   EOR #$FF
+   SEC
+   ADC zp_i_y0
+   RTS
 ; | y0 - quot
 is_y0:
-LDA zp_i_y0
-RTS
+   LDA zp_i_y0
+   RTS
 ; ||
 is_y1:
-LDA zp_i_y1
-RTS
+   LDA zp_i_y1
+   RTS
 ; ||
 .endscope
 
@@ -97,15 +97,15 @@ RTS
 ; ======================================================================
 umul_round_div:
 .scope
-JSR umul8
+   JSR umul8
 ; 16-bit add of den//2 into the product (prod aliases the div dividend)
-LDA zp_div_den
-LSR A
-CLC
-ADC zp_prod_lo
-STA zp_prod_lo
-BCC ip_rn_nc                            ; BCC/INC round-carry (~50%)
-INC zp_prod_hi
+   LDA zp_div_den
+   LSR A
+   CLC
+   ADC zp_prod_lo
+   STA zp_prod_lo
+   BCC ip_rn_nc                            ; BCC/INC round-carry (~50%)
+   INC zp_prod_hi
 ip_rn_nc:
-JMP udiv16_8                            ; tail-call
+   JMP udiv16_8                            ; tail-call
 .endscope

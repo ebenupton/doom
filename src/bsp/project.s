@@ -29,78 +29,78 @@
 br_project_x_subpx:
 .scope
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
-LDA #0
-STA zp_br_t3
-STA zp_br_vxext
+   LDA #0
+   STA zp_br_t3
+   STA zp_br_vxext
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
-LDA zp_br_rhi
-BNE px_have_m8
-LDA zp_br_t1
-STA zp_br_t2
-JMP px_p_pos
+   LDA zp_br_rhi
+   BNE px_have_m8
+   LDA zp_br_t1
+   STA zp_br_t2
+   JMP px_p_pos
 px_have_m8:
-LDA zp_br_t1
-BNE px_have_frac
-STA zp_br_t2
-BEQ px_no_frac
+   LDA zp_br_t1
+   BNE px_have_frac
+   STA zp_br_t2
+   BEQ px_no_frac
 px_have_frac:
-LDA zp_br_rhi
-STA zp_mul_b
-LDA zp_br_t1
-JSR SC_UMUL8
-LDA zp_prod_hi
-CLC
-ADC zp_br_t1
-STA zp_br_t2
-LDA #0
-ADC #0
-STA zp_br_t3
+   LDA zp_br_rhi
+   STA zp_mul_b
+   LDA zp_br_t1
+   JSR SC_UMUL8
+   LDA zp_prod_hi
+   CLC
+   ADC zp_br_t1
+   STA zp_br_t2
+   LDA #0
+   ADC #0
+   STA zp_br_t3
 px_no_frac:
 
 ; --- += smul(vx, M8) (s16, sign-extended into vxext) ---
-LDA zp_br_t0
-STA zp_br_a
-LDA zp_br_rhi
-STA zp_br_b
-JSR br_smul_s8_u8
-LDA zp_br_resl
-CLC
-ADC zp_br_t2
-STA zp_br_t2
-LDA zp_br_resh
-ADC zp_br_t3
-STA zp_br_t3
-BCC px_p_nc                             ; BCC/INC ext bump (carry ~50%)
-INC zp_br_vxext
+   LDA zp_br_t0
+   STA zp_br_a
+   LDA zp_br_rhi
+   STA zp_br_b
+   JSR br_smul_s8_u8
+   LDA zp_br_resl
+   CLC
+   ADC zp_br_t2
+   STA zp_br_t2
+   LDA zp_br_resh
+   ADC zp_br_t3
+   STA zp_br_t3
+   BCC px_p_nc                             ; BCC/INC ext bump (carry ~50%)
+   INC zp_br_vxext
 px_p_nc:
-LDA zp_br_resh
-BPL px_p_pos
-DEC zp_br_vxext
+   LDA zp_br_resh
+   BPL px_p_pos
+   DEC zp_br_vxext
 px_p_pos:
 
 ; --- += vx << 8 (sign-extended) ---
-LDA zp_br_t0
-CLC
-ADC zp_br_t3
-STA zp_br_t3
-BCC px_i_nc
-INC zp_br_vxext
+   LDA zp_br_t0
+   CLC
+   ADC zp_br_t3
+   STA zp_br_t3
+   BCC px_i_nc
+   INC zp_br_vxext
 px_i_nc:
-LDA zp_br_t0
-BPL px_i_pos
-DEC zp_br_vxext
+   LDA zp_br_t0
+   BPL px_i_pos
+   DEC zp_br_vxext
 px_i_pos:
 
 ; --- sx = 128 + rns(b123, S) (per-vertex vectored shifter) ---
-JSR rns_go
-LDA zp_br_resl
-CLC
-ADC #128
-STA zp_br_resl
-LDA zp_br_resh
-ADC #0
-STA zp_br_resh
-RTS
+   JSR rns_go
+   LDA zp_br_resl
+   CLC
+   ADC #128
+   STA zp_br_resl
+   LDA zp_br_resh
+   ADC #0
+   STA zp_br_resh
+   RTS
 .endscope
 
 ; ============================================================================
@@ -137,53 +137,53 @@ br_project_y_raw:
 ; --- P24 = h*M8 + (h << 8), s24 in (t2, t3, vxext) ---
 ; M8 == 0 (m9 = 256 exactly: the near-plane crossing recip and every
 ; power-of-two depth): the product is zero — skip the mul, P24 = h<<8.
-LDA zp_br_rhi
-BNE py_have_m8
-STA zp_br_t2
-LDA zp_br_t0
-STA zp_br_t3
-LDA #0
-STA zp_br_vxext
-LDA zp_br_t0
-BPL py_go
-DEC zp_br_vxext
+   LDA zp_br_rhi
+   BNE py_have_m8
+   STA zp_br_t2
+   LDA zp_br_t0
+   STA zp_br_t3
+   LDA #0
+   STA zp_br_vxext
+   LDA zp_br_t0
+   BPL py_go
+   DEC zp_br_vxext
 py_go:
-JMP py_shift
+   JMP py_shift
 py_have_m8:
-LDA zp_br_t0
-STA zp_br_a
-LDA zp_br_rhi
-STA zp_br_b
-JSR br_smul_s8_u8
-LDA zp_br_resl
-STA zp_br_t2
-CLC
-LDA zp_br_resh
-ADC zp_br_t0                            ; mid = hi(h*M8) + h
-STA zp_br_t3
-LDA #0
-ADC #0                                  ; carry from the mid add
-STA zp_br_vxext
-LDA zp_br_resh
-BPL py_p_pos
-DEC zp_br_vxext                         ; + sign extension of h*M8
+   LDA zp_br_t0
+   STA zp_br_a
+   LDA zp_br_rhi
+   STA zp_br_b
+   JSR br_smul_s8_u8
+   LDA zp_br_resl
+   STA zp_br_t2
+   CLC
+   LDA zp_br_resh
+   ADC zp_br_t0                            ; mid = hi(h*M8) + h
+   STA zp_br_t3
+   LDA #0
+   ADC #0                                  ; carry from the mid add
+   STA zp_br_vxext
+   LDA zp_br_resh
+   BPL py_p_pos
+   DEC zp_br_vxext                         ; + sign extension of h*M8
 py_p_pos:
-LDA zp_br_t0
-BPL py_h_pos
-DEC zp_br_vxext                         ; + sign extension of h<<8
+   LDA zp_br_t0
+   BPL py_h_pos
+   DEC zp_br_vxext                         ; + sign extension of h<<8
 py_h_pos:
 py_shift:
 
 ; --- sy = 128 - rns(P24, S) (per-vertex vectored shifter) ---
-JSR rns_go
-LDA #128
-SEC
-SBC zp_br_resl
-STA zp_br_resl
-LDA #0
-SBC zp_br_resh
-STA zp_br_resh
-RTS
+   JSR rns_go
+   LDA #128
+   SEC
+   SBC zp_br_resl
+   STA zp_br_resl
+   LDA #0
+   SBC zp_br_resh
+   STA zp_br_resh
+   RTS
 .endscope
 
 ; ============================================================================
@@ -202,124 +202,124 @@ RTS
 ; ============================================================================
 .segment "STK"
 rns_go:
-JMP (zp_rns_vec)
+   JMP (zp_rns_vec)
 
 rns_select:
 .scope
-LDX zp_br_rlo
-LDA rns_vec_lo-1,X
-STA zp_rns_vec
-LDA rns_vec_hi-1,X
-STA zp_rns_vec_hi
-RTS
+   LDX zp_br_rlo
+   LDA rns_vec_lo-1,X
+   STA zp_rns_vec
+   LDA rns_vec_hi-1,X
+   STA zp_rns_vec_hi
+   RTS
 .endscope
 rns_vec_lo:
-.byte <rns24, <rns24, <rns24, <rns24, <rns24
-.byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10
+   .byte <rns24, <rns24, <rns24, <rns24, <rns24
+   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10
 rns_vec_hi:
-.byte >rns24, >rns24, >rns24, >rns24, >rns24
-.byte >rns_s6, >rns_s7, >rns_s8, >rns_s9, >rns_s10
+   .byte >rns24, >rns24, >rns24, >rns24, >rns24
+   .byte >rns_s6, >rns_s7, >rns_s8, >rns_s9, >rns_s10
 
 rns_s8:
 .scope
 ; floor((P + $80) / 256): carry out of the b0 half-add, then drop b0
-LDA zp_br_t2
-CLC
-ADC #$80
-LDA zp_br_t3
-ADC #0
-STA zp_br_resl
-LDA zp_br_vxext
-ADC #0
-STA zp_br_resh
-RTS
+   LDA zp_br_t2
+   CLC
+   ADC #$80
+   LDA zp_br_t3
+   ADC #0
+   STA zp_br_resl
+   LDA zp_br_vxext
+   ADC #0
+   STA zp_br_resh
+   RTS
 .endscope
 rns_s9:
 .scope
 ; floor((P + $100) / 512): t3 += 1 (carry into ext), ASR the top pair
-LDA zp_br_t3
-CLC
-ADC #1
-TAX
-LDA zp_br_vxext
-ADC #0
-CMP #$80                                ; C = sign bit → arithmetic ROR
-ROR A
-STA zp_br_resh
-TXA
-ROR A
-STA zp_br_resl
-RTS
+   LDA zp_br_t3
+   CLC
+   ADC #1
+   TAX
+   LDA zp_br_vxext
+   ADC #0
+   CMP #$80                                ; C = sign bit → arithmetic ROR
+   ROR A
+   STA zp_br_resh
+   TXA
+   ROR A
+   STA zp_br_resl
+   RTS
 .endscope
 
 rns_s6:
 .scope
 ; floor((P + $20) / 64) = ((P + $20) << 2) >> 8
-LDA zp_br_t2
-CLC
-ADC #$20
-STA zp_br_t2
-LDA zp_br_t3
-ADC #0
-STA zp_br_t3
-LDA zp_br_vxext
-ADC #0
-STA zp_br_vxext
-ASL zp_br_t2
-ROL zp_br_t3
-ROL zp_br_vxext
-ASL zp_br_t2
-LDA zp_br_t3
-ROL A
-STA zp_br_resl
-LDA zp_br_vxext
-ROL A
-STA zp_br_resh
-RTS
+   LDA zp_br_t2
+   CLC
+   ADC #$20
+   STA zp_br_t2
+   LDA zp_br_t3
+   ADC #0
+   STA zp_br_t3
+   LDA zp_br_vxext
+   ADC #0
+   STA zp_br_vxext
+   ASL zp_br_t2
+   ROL zp_br_t3
+   ROL zp_br_vxext
+   ASL zp_br_t2
+   LDA zp_br_t3
+   ROL A
+   STA zp_br_resl
+   LDA zp_br_vxext
+   ROL A
+   STA zp_br_resh
+   RTS
 .endscope
 
 rns_s7:
 .scope
 ; floor((P + $40) / 128) = ((P + $40) << 1) >> 8
-LDA zp_br_t2
-CLC
-ADC #$40
-STA zp_br_t2
-LDA zp_br_t3
-ADC #0
-STA zp_br_t3
-LDA zp_br_vxext
-ADC #0
-STA zp_br_vxext
-ASL zp_br_t2
-LDA zp_br_t3
-ROL A
-STA zp_br_resl
-LDA zp_br_vxext
-ROL A
-STA zp_br_resh
-RTS
+   LDA zp_br_t2
+   CLC
+   ADC #$40
+   STA zp_br_t2
+   LDA zp_br_t3
+   ADC #0
+   STA zp_br_t3
+   LDA zp_br_vxext
+   ADC #0
+   STA zp_br_vxext
+   ASL zp_br_t2
+   LDA zp_br_t3
+   ROL A
+   STA zp_br_resl
+   LDA zp_br_vxext
+   ROL A
+   STA zp_br_resh
+   RTS
 .endscope
 
 rns_s10:
 .scope
 ; floor((P + $200) / 1024): t3 += 2 (carry into ext), drop b0, ASR twice
-LDA zp_br_t3
-CLC
-ADC #2
-STA zp_br_t3
-LDA zp_br_vxext
-ADC #0
-CMP #$80                                ; C = sign → arithmetic ROR
-ROR A
-ROR zp_br_t3
-CMP #$80
-ROR A
-ROR zp_br_t3
-STA zp_br_resh
-LDA zp_br_t3
-STA zp_br_resl
-RTS
+   LDA zp_br_t3
+   CLC
+   ADC #2
+   STA zp_br_t3
+   LDA zp_br_vxext
+   ADC #0
+   CMP #$80                                ; C = sign → arithmetic ROR
+   ROR A
+   ROR zp_br_t3
+   CMP #$80
+   ROR A
+   ROR zp_br_t3
+   STA zp_br_resh
+   LDA zp_br_t3
+   STA zp_br_resl
+   RTS
 .endscope
 .segment "MAIN"
 
@@ -335,67 +335,67 @@ RTS
 ; ============================================================================
 rns24:
 .scope
-LDX zp_br_rlo
+   LDX zp_br_rlo
 ; --- add half = 2^(S-1): lo byte for S<=8, mid byte holds S=9,10 ---
-LDA rns_half_lo-1,X
-CLC
-ADC zp_br_t2
-STA zp_br_t2
-LDA rns_half_mid-1,X
-ADC zp_br_t3
-STA zp_br_t3
-BCC rn_half_nc                          ; BCC/INC ext bump (-2 bytes, ANG is full)
-INC zp_br_vxext
+   LDA rns_half_lo-1,X
+   CLC
+   ADC zp_br_t2
+   STA zp_br_t2
+   LDA rns_half_mid-1,X
+   ADC zp_br_t3
+   STA zp_br_t3
+   BCC rn_half_nc                          ; BCC/INC ext bump (-2 bytes, ANG is full)
+   INC zp_br_vxext
 rn_half_nc:
-CPX #8
-BCC rn_small
+   CPX #8
+   BCC rn_small
 ; --- S >= 8 here means S = 10: rns_fast (the only caller) intercepts
 ; S = 8 and S = 9 with unrolled bodies. Drop b0, ASR twice. ---
-LDA zp_br_vxext
-CMP #$80                                ; C = sign bit → arithmetic ROR
-ROR zp_br_vxext
-ROR zp_br_t3
-LDA zp_br_vxext
-CMP #$80
-ROR zp_br_vxext
-ROR zp_br_t3
+   LDA zp_br_vxext
+   CMP #$80                                ; C = sign bit → arithmetic ROR
+   ROR zp_br_vxext
+   ROR zp_br_t3
+   LDA zp_br_vxext
+   CMP #$80
+   ROR zp_br_vxext
+   ROR zp_br_t3
 rn_tail_mid:
-LDA zp_br_t3
-STA zp_br_resl
-LDA zp_br_vxext
-STA zp_br_resh
-RTS
+   LDA zp_br_t3
+   STA zp_br_resl
+   LDA zp_br_vxext
+   STA zp_br_resh
+   RTS
 rn_small:
-CPX #5
-BCC rn_right
+   CPX #5
+   BCC rn_right
 ; --- S in [5,7]: shift LEFT (8-S) — 1..3 iterations — then drop b0 ---
-LDA #8
-SEC
-SBC zp_br_rlo
-TAX                                     ; X = 8-S in [1,3]
+   LDA #8
+   SEC
+   SBC zp_br_rlo
+   TAX                                     ; X = 8-S in [1,3]
 rn_lloop:
-ASL zp_br_t2
-ROL zp_br_t3
-ROL zp_br_vxext
-DEX
-BNE rn_lloop
-BEQ rn_tail_mid                         ; (always) result = (t3, vxext)
+   ASL zp_br_t2
+   ROL zp_br_t3
+   ROL zp_br_vxext
+   DEX
+   BNE rn_lloop
+   BEQ rn_tail_mid                         ; (always) result = (t3, vxext)
 rn_right:
 ; --- S in [1,4]: ASR the s24 S times — 1..4 iterations. S=1 is the
 ; near-plane crossing reciprocal, so this path is hot for clipped segs.
 rn_rloop:
-LDA zp_br_vxext
-CMP #$80
-ROR zp_br_vxext
-ROR zp_br_t3
-ROR zp_br_t2
-DEX
-BNE rn_rloop
-LDA zp_br_t2
-STA zp_br_resl
-LDA zp_br_t3
-STA zp_br_resh
-RTS
+   LDA zp_br_vxext
+   CMP #$80
+   ROR zp_br_vxext
+   ROR zp_br_t3
+   ROR zp_br_t2
+   DEX
+   BNE rn_rloop
+   LDA zp_br_t2
+   STA zp_br_resl
+   LDA zp_br_t3
+   STA zp_br_resh
+   RTS
 .endscope
 
 
