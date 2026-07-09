@@ -84,6 +84,7 @@ br_back_face_test:
 ; ldx==0
    INY
    LDA (zp_br_p),Y                          ; ldy (+9), Y walked 8->9
+   STA zp_seg_ldy                           ; stash: reused at bf_ldx0_dx_nz
    BNE bf_ldx0_ldy_nz
    RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
 bf_ldx0_ldy_nz:
@@ -103,14 +104,15 @@ bf_ldx0_ldy_nz:
    BNE bf_ldx0_dx_nz
    RTS                                     ; dx == 0 → dot=0 → back (Z=1)
 bf_ldx0_dx_nz:
-; sign(dot) = sign(ldy) XOR sign(dx_hi); ldy on demand (+9)
-   LDY #9
-   LDA (zp_br_p),Y
+; sign(dot) = sign(ldy) XOR sign(dx_hi); ldy from ZP (stashed at first load)
+   LDA zp_seg_ldy
    EOR zp_br_dxhi
    EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
    AND #$80                                ; FRONT (SAMEDIR packed inverted);
    RTS                                     ; A/Z IS the verdict
 bf_ldx_nz:
+   STA zp_seg_ldx                           ; A=ldx from dispatch; reused on
+                                            ; every ldx!=0 path — stash from A
    INY                                      ; Y was 8 (dispatch) -> 9
    LDA (zp_br_p),Y                          ; ldy (+9)
    BNE bf_general
@@ -130,9 +132,8 @@ bf_ldx_nz:
    BNE bf_ldy0_dy_nz
    RTS                                     ; dy == 0 → dot=0 → back (Z=1)
 bf_ldy0_dy_nz:
-; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi)); ldx on demand
-   LDY #8
-   LDA (zp_br_p),Y
+; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi)); ldx from ZP
+   LDA zp_seg_ldx
    EOR zp_br_dyhi
    EOR #$80
 ; sign tail (inlined at every producer, 2026-07-09 — was JMP bf_apply_dir):
@@ -145,8 +146,10 @@ bf_ldy0_dy_nz:
    RTS
 
 bf_general:
-; both deltas needed from here (lazy dispatch above computed neither).
-; lv1x (+4/+5) then lv1y (+6/+7) read on demand — Y walks 4→7.
+; A=ldy from the bf_ldx_nz load; reused in the sign shortcut + mul arm —
+; stash it (ldx was stashed at bf_ldx_nz). Both deltas on demand below,
+; lv1x (+4/+5) then lv1y (+6/+7) — Y walks 4→7.
+   STA zp_seg_ldy
    LDY #4
    LDA zp_br_px_h
    SEC
@@ -185,12 +188,10 @@ bf_g_dx_nz:
    BEQ bf_ldx0_dx_nz                       ; dy==0 → dot = P1: byte-identical
                                            ; to the ldx==0 arm's tail — share
 bf_g_both:
-   LDY #9
-   LDA (zp_br_p),Y                          ; ldy (+9)
+   LDA zp_seg_ldy                           ; ldy from ZP
    EOR zp_br_dxhi                          ; sign(P1)
    TAX                                     ; ride in X (was a zp_br_t2 stash)
-   DEY
-   EOR (zp_br_p),Y                          ; ^ ldx (+8), Y 9->8
+   EOR zp_seg_ldx                           ; ^ ldx from ZP
    EOR zp_br_dyhi                          ; ^ sign(P2)
    BPL bf_g_mul                            ; same sign -> full compare below
    TXA                                     ; opposite: sign(dot) = sign(P1)
@@ -236,9 +237,8 @@ bfm_dx_pos:
    STA zp_br_dyhi
 bfm_dy_pos:
 ; --- |P1| = |ldy| * |dx| -> (t2, t3, vxext) u24 ---
-   LDY #9
-   LDA (zp_br_p),Y                          ; ldy (+9); ptr still at header
-   BPL bfm_ly_pos
+   LDA zp_seg_ldy                           ; ldy from ZP (Y-agnostic; SC_UMUL8
+   BPL bfm_ly_pos                           ;   clobbers Y so ZP read is ideal)
    EOR #$FF
    CLC
    ADC #1
@@ -268,8 +268,7 @@ bfm_ly_pos:
    STA zp_br_vxext
 bfm_p1_done:
 ; --- |P2| = |ldx| * |dy| -> (t0, t1, dxlo) u24 (dx slots are dead) ---
-   LDY #8
-   LDA (zp_br_p),Y                          ; ldx (+8); SC_UMUL8 clobbered Y
+   LDA zp_seg_ldx                           ; ldx from ZP
    BPL bfm_lx_pos
    EOR #$FF
    CLC
