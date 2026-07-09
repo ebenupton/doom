@@ -81,9 +81,11 @@ zp_br_t3 = $23                    ; [bsp]
 ; reads the linedef v1 x/y on demand from the header via (zp_br_p),Y
 ; instead of staging them. 4 contiguous slots available.
 zp_ri_dlo = $28                   ; [bsp]
-zp_seg_bfh = $29                  ; [bsp]; ZP (reclaimed unused zp_ri_mag); per-seg back floor
+; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
+; from FHCH+2 via (zp_fhch_p),Y (rule 2b; solid walls never touch it).
 zp_ri_neg = $2A                   ; [bsp]
-zp_seg_bch = $2B                  ; [bsp]; ZP (reclaimed unused zp_ri_one); per-seg back ceil
+; $2B FREE (2026-07-09): zp_seg_bch retired — back ceil read on demand
+; from FHCH+3 via (zp_fhch_p),Y.
 zp_ri_dhi = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
 zp_br_resext = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
 zp_br_vxext = $2E                 ; [bsp]; total view-space x sign-extension byte

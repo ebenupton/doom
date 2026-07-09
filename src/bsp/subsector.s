@@ -182,22 +182,17 @@ bf_passed:
 ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
 ;     Bytes 4/5 carry the solid-seg APV2 aperture heights (the seg
 ;     detail ROM is not resident on the 6502). ---
-   LDA zp_fhch_p
-   STA zp_br_p
-   LDA zp_fhch_p_h
-   STA zp_br_p_h
+; Stage only fh/ch (front deltas + emit tests read them repeatedly). bfh/bch
+; are read ON DEMAND via (zp_fhch_p),Y at their conditional sites below — a
+; plain solid wall never touches them, so staging both was waste (rule 2b,
+; 2026-07-09). zp_fhch_p (the persistent FHCH cursor) is read directly, so
+; the old copy into zp_br_p is gone too.
    LDY #0
-   LDA (zp_br_p),Y
+   LDA (zp_fhch_p),Y
    STA zp_seg_fh
    INY
-   LDA (zp_br_p),Y
+   LDA (zp_fhch_p),Y
    STA zp_seg_ch
-   INY
-   LDA (zp_br_p),Y
-   STA zp_seg_bfh
-   INY
-   LDA (zp_br_p),Y
-   STA zp_seg_bch
 ; Height deltas (all s8). Front: top_dlt = ch - vz, bot_dlt = fh - vz.
 ; Back: btop_dlt = bch - vz, bbot_dlt = bfh - vz.
    LDA zp_seg_ch
@@ -211,15 +206,18 @@ bf_passed:
 ; Back deltas are consumed ONLY by do_project_y, which reads them only when
 ; NEEDBT($04)/NEEDBB($08)/APEDGE1($40) is set. Skip the 2 subtractions for
 ; plain solids/portals (the common case) — conservative: this superset
-; never skips a delta do_project_y will read.
+; never skips a delta do_project_y will read. bch/bfh read on demand
+; (FHCH+3/+2) — never staged.
    LDA zp_seg_flags
    AND #$4C
    BEQ skip_bdlt
-   LDA zp_seg_bch
+   LDY #3
+   LDA (zp_fhch_p),Y                        ; bch
    SEC
    SBC zp_br_vz
    STA zp_seg_btop_dlt
-   LDA zp_seg_bfh
+   LDY #2
+   LDA (zp_fhch_p),Y                        ; bfh
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
@@ -385,8 +383,9 @@ hg_pass:
    BEQ ft_skip
    JMP ft_emit
 ft_no_needbt:
-; bch > ch ?
-   LDA zp_seg_bch
+; bch > ch ? (bch on demand from FHCH+3)
+   LDY #3
+   LDA (zp_fhch_p),Y
    SEC
    SBC zp_seg_ch
    BMI ft_skip
@@ -454,10 +453,11 @@ ft_skip:
    BEQ fb_skip
    JMP fb_emit
 fb_no_needbb:
-; bfh < fh ?
+; bfh < fh ? (bfh on demand from FHCH+2)
+   LDY #2
    LDA zp_seg_fh
    SEC
-   SBC zp_seg_bfh
+   SBC (zp_fhch_p),Y
    BMI fb_skip
    BEQ fb_skip
 fb_emit:
