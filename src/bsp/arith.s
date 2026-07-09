@@ -17,10 +17,9 @@ br_umul8:
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
+   STA zp_br_resh                          ; A = prod_hi (umul8 contract)
    LDA zp_prod_lo
    STA zp_br_resl
-   LDA zp_prod_hi
-   STA zp_br_resh
    RTS
 
 .if ::BANKED
@@ -63,10 +62,9 @@ b_pos:
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
+   STA zp_br_resh                          ; A = prod_hi (umul8 contract)
    LDA zp_prod_lo
    STA zp_br_resl
-   LDA zp_prod_hi
-   STA zp_br_resh
    LDA zp_br_sign
    BEQ pos
 ; Negate s16 result

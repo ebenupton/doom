@@ -77,9 +77,11 @@ zp_br_t0 = $20                    ; [bsp]
 zp_br_t1 = $21                    ; [bsp]
 zp_br_t2 = $22                    ; [bsp]
 zp_br_t3 = $23                    ; [bsp]
-; $24-$27 FREE (2026-07-09): zp_seg_lv1x/lv1y retired — the back-face test
-; reads the linedef v1 x/y on demand from the header via (zp_br_p),Y
-; instead of staging them. 4 contiguous slots available.
+zp_br_t4 = $24                    ; [bsp]; back-face u24 product hi bytes —
+zp_br_t5 = $25                    ; [bsp]; |P1|=(t2,t3,t4) |P2|=(t0,t1,t5),
+; dedicated so the two magnitude products get 6 clean bytes and never reuse
+; the live dx/dy delta slots (2026-07-09). $26-$27 still FREE (were the
+; lv1x/lv1y stage, now read on demand from the header via (zp_br_p),Y).
 zp_ri_dlo = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
 ; from FHCH+2 via (zp_fhch_p),Y (rule 2b; solid walls never touch it).

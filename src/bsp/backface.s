@@ -102,8 +102,7 @@ bf_ldx0_ldy_nz:
    INY                                      ; -> lv1x_hi (+5)
    SBC (zp_br_p),Y
    STA zp_br_dxhi
-   LDA zp_br_dxlo
-   ORA zp_br_dxhi
+   ORA zp_br_dxlo
    BNE bf_ldx0_dx_nz
    RTS                                     ; dx == 0 → dot=0 → back (Z=1)
 bf_ldx0_dx_nz:
@@ -130,8 +129,7 @@ bf_ldx_nz:
    INY                                      ; -> lv1y_hi (+7)
    SBC (zp_br_p),Y
    STA zp_br_dyhi
-   LDA zp_br_dylo
-   ORA zp_br_dyhi
+   ORA zp_br_dylo
    BNE bf_ldy0_dy_nz
    RTS                                     ; dy == 0 → dot=0 → back (Z=1)
 bf_ldy0_dy_nz:
@@ -150,20 +148,12 @@ bf_ldy0_dy_nz:
 
 bf_general:
 ; A=ldy from the bf_ldx_nz load; reused in the sign shortcut + mul arm —
-; stash it (ldx was stashed at bf_ldx_nz). Both deltas on demand below,
-; lv1x (+4/+5) then lv1y (+6/+7) — Y walks 4→7.
+; stash it (ldx was stashed at bf_ldx_nz).
    STA zp_seg_ldy
-; Deltas computed dy FIRST, dx SECOND so the last STA leaves dxhi in A
-; for the dx==0 test below (saves its LDA). lv1y (+6/+7) then lv1x (+4/+5).
-   LDA zp_br_py_h
-   SEC
-   LDY #6                                   ; -> lv1y_lo (+6)
-   SBC (zp_br_p),Y
-   STA zp_br_dylo
-   LDA zp_br_py_e
-   INY                                      ; -> lv1y_hi (+7)
-   SBC (zp_br_p),Y
-   STA zp_br_dyhi
+; dx computed eagerly (lv1x +4/+5); its final STA leaves dxhi in A so the
+; dx==0 test is a bare ORA. dy is then computed LAZILY in whichever branch
+; the dx==0 test takes (lv1y +6/+7, Y walks on from 5), leaving dyhi in A
+; for that branch's dy==0 test too — both tests skip the LDA.
    LDA zp_br_px_h
    SEC
    LDY #4                                   ; -> lv1x_lo (+4)
@@ -180,14 +170,30 @@ bf_general:
 ; (Bonus: the decided-by-sign cases never reach the u24 magnitude path.)
    ORA zp_br_dxlo                           ; dxhi (in A) | dxlo → dx==0 test
    BNE bf_g_dx_nz
-   LDA zp_br_dylo
-   ORA zp_br_dyhi
+   LDA zp_br_py_h
+   SEC
+   INY                                      ; -> lv1y_lo (+6)
+   SBC (zp_br_p),Y
+   STA zp_br_dylo
+   LDA zp_br_py_e
+   INY                                      ; -> lv1y_hi (+7)
+   SBC (zp_br_p),Y
+   STA zp_br_dyhi
+   ORA zp_br_dylo
    BNE bf_ldy0_dy_nz                       ; dot = -P2: byte-identical to the
                                            ; ldy==0 arm's tail — share it
    RTS                                     ; dx==0 and dy==0 → back (Z=1)
 bf_g_dx_nz:
-   LDA zp_br_dylo
-   ORA zp_br_dyhi
+   LDA zp_br_py_h
+   SEC
+   INY                                      ; -> lv1y_lo (+6)
+   SBC (zp_br_p),Y
+   STA zp_br_dylo
+   LDA zp_br_py_e
+   INY                                      ; -> lv1y_hi (+7)
+   SBC (zp_br_p),Y
+   STA zp_br_dyhi
+   ORA zp_br_dylo
    BEQ bf_ldx0_dx_nz                       ; dy==0 → dot = P1: byte-identical
                                            ; to the ldx==0 arm's tail — share
 bf_g_both:
@@ -218,10 +224,14 @@ bf_g_mul:
                                            ; in X here — SC_UMUL8 clobbers X/Y
                                            ; (zp_br_sign is free: its owner
                                            ; br_smul_s8_s16 is deleted)
-; --- magnitudes in place: |dx|, |dy| ---
-   LDA zp_br_dxhi
-   BPL bfm_dx_pos
+; --- magnitudes in place: |dx|, |dy|. Zero both product hi bytes now,
+;     while A=0 (and reuse that 0 for the |dx| negate below). t4/t5 are
+;     DEDICATED product storage — never the live dx/dy delta slots. ---
    LDA #0
+   STA zp_br_t4                            ; |P1| hi = 0
+   STA zp_br_t5                            ; |P2| hi = 0
+   LDX zp_br_dxhi
+   BPL bfm_dx_pos
    SEC
    SBC zp_br_dxlo
    STA zp_br_dxlo
@@ -229,7 +239,7 @@ bf_g_mul:
    SBC zp_br_dxhi
    STA zp_br_dxhi
 bfm_dx_pos:
-   LDA zp_br_dyhi
+   LDX zp_br_dyhi
    BPL bfm_dy_pos
    LDA #0
    SEC
@@ -239,7 +249,7 @@ bfm_dx_pos:
    SBC zp_br_dyhi
    STA zp_br_dyhi
 bfm_dy_pos:
-; --- |P1| = |ldy| * |dx| -> (t2, t3, vxext) u24 ---
+; --- |P1| = |ldy| * |dx| -> (t2, t3, t4) u24 ---
    LDA zp_seg_ldy                           ; ldy from ZP (Y-agnostic; SC_UMUL8
    BPL bfm_ly_pos                           ;   clobbers Y so ZP read is ideal)
    EOR #$FF
@@ -247,16 +257,12 @@ bfm_dy_pos:
    ADC #1
 bfm_ly_pos:
    STA zp_br_a                             ; |ldy| survives for the hi partial
-   LDA zp_br_dxlo
-   STA zp_mul_b
-   LDA zp_br_a
+   LDX zp_br_dxlo
+   STX zp_mul_b
    JSR SC_UMUL8
+   STA zp_br_t3
    LDA zp_prod_lo
    STA zp_br_t2
-   LDA zp_prod_hi
-   STA zp_br_t3
-   LDA #0
-   STA zp_br_vxext
    LDA zp_br_dxhi
    BEQ bfm_p1_done                         ; senior byte clear: 1-mul product
    STA zp_mul_b
@@ -267,10 +273,10 @@ bfm_ly_pos:
    ADC zp_br_t3
    STA zp_br_t3
    LDA zp_prod_hi
-   ADC #0                                  ; (+ carry; vxext was 0)
-   STA zp_br_vxext
+   ADC #0                                  ; (+ carry; t4 was 0)
+   STA zp_br_t4
 bfm_p1_done:
-; --- |P2| = |ldx| * |dy| -> (t0, t1, dxlo) u24 (dx slots are dead) ---
+; --- |P2| = |ldx| * |dy| -> (t0, t1, t5) u24 ---
    LDA zp_seg_ldx                           ; ldx from ZP
    BPL bfm_lx_pos
    EOR #$FF
@@ -278,16 +284,12 @@ bfm_p1_done:
    ADC #1
 bfm_lx_pos:
    STA zp_br_a
-   LDA zp_br_dylo
-   STA zp_mul_b
-   LDA zp_br_a
+   LDX zp_br_dylo
+   STX zp_mul_b
    JSR SC_UMUL8
+   STA zp_br_t1
    LDA zp_prod_lo
    STA zp_br_t0
-   LDA zp_prod_hi
-   STA zp_br_t1
-   LDA #0
-   STA zp_br_dxlo
    LDA zp_br_dyhi
    BEQ bfm_p2_done
    STA zp_mul_b
@@ -298,16 +300,16 @@ bfm_lx_pos:
    ADC zp_br_t1
    STA zp_br_t1
    LDA zp_prod_hi
-   ADC #0
-   STA zp_br_dxlo
+   ADC #0                                  ; (+ carry; t5 was 0)
+   STA zp_br_t5
 bfm_p2_done:
 ; --- mode select and u24 compare (Z-contract verdict) ---
    LDA zp_br_sign
    EOR zp_seg_flags
    BMI bfm_le
 ; back iff |P1| >= |P2|: C=1 through the chain decides (equal -> back)
-   LDA zp_br_vxext
-   CMP zp_br_dxlo
+   LDA zp_br_t4
+   CMP zp_br_t5
    BNE bfm_ge_dec
    LDA zp_br_t3
    CMP zp_br_t1
@@ -320,8 +322,8 @@ bfm_ge_dec:
    RTS
 bfm_le:
 ; back iff |P1| <= |P2|: first difference decides; equal -> back
-   LDA zp_br_vxext
-   CMP zp_br_dxlo
+   LDA zp_br_t4
+   CMP zp_br_t5
    BNE bfm_le_dec
    LDA zp_br_t3
    CMP zp_br_t1

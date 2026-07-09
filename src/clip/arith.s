@@ -12,7 +12,12 @@
 ; always reads sqr_lo/hi.
 ;
 ; Input:  A = a (u8), zp_mul_b = b (u8)
-; Output: zp_prod_lo:zp_prod_hi = a*b (u16).  Clobbers A,X,Y, zp_tmp0.
+; Output: zp_prod_lo:zp_prod_hi = a*b (u16).  Clobbers X,Y, zp_tmp0.
+;         CONTRACT (2026-07-09): A = zp_prod_hi on return AND the N/Z
+;         flags reflect it — BOTH exit paths end `STA zp_prod_hi`, which
+;         leaves A intact. Callers may take the product's HIGH byte
+;         straight from A (backface's u24 magnitude products do). Preserve
+;         this if you ever restructure the tail.
 ;         zp_prod_lo/hi alias zp_div_lo/hi, so the product feeds
 ;         directly into udiv16_8 with no extra loads.
 ;

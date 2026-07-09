@@ -47,8 +47,7 @@ px_have_frac:
    LDA zp_br_rhi
    STA zp_mul_b
    LDA zp_br_t1
-   JSR SC_UMUL8
-   LDA zp_prod_hi
+   JSR SC_UMUL8                            ; A = prod_hi (umul8 contract)
    CLC
    ADC zp_br_t1
    STA zp_br_t2

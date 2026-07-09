@@ -20,10 +20,9 @@ umul16x16:
    STA zp_mul_b
    LDA LC_M_A_LO
    JSR umul8
+   STA LC_M_R1                             ; A = prod_hi (umul8 contract)
    LDA zp_prod_lo
    STA LC_M_R0
-   LDA zp_prod_hi
-   STA LC_M_R1
    LDA #0
    STA LC_M_R2
    STA LC_M_R3

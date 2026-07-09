@@ -489,20 +489,18 @@ bb_pos:
    STA zp_mul_b
    LDA zp_br_dylo
    JSR SC_UMUL8
+   STA zp_br_t1                            ; A = prod_hi (umul8 contract)
    LDA zp_prod_lo
    STA zp_br_t0
-   LDA zp_prod_hi
-   STA zp_br_t1
 
 ; ah × bh → t2:t3
    LDA zp_br_dxhi
    STA zp_mul_b
    LDA zp_br_dyhi
    JSR SC_UMUL8
+   STA zp_br_t3                            ; A = prod_hi (umul8 contract)
    LDA zp_prod_lo
    STA zp_br_t2
-   LDA zp_prod_hi
-   STA zp_br_t3
 
 ; al × bh → add to t1:t2:t3
    LDA zp_br_dyhi

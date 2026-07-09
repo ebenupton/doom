@@ -254,10 +254,9 @@ c2_dxp:
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
+   STA zp_br_resh                          ; A = prod_hi (umul8 contract)
    LDA zp_prod_lo
    STA zp_br_resl
-   LDA zp_prod_hi
-   STA zp_br_resh
 ; t * |dx|_hi (u8 × u8 → contributes to resh)
    LDA zp_br_dxhi
    STA zp_mul_b
@@ -530,8 +529,7 @@ br_project_x_wide:
    LDA zp_br_rhi
    STA zp_mul_b
    LDA zp_v_xfrac
-   JSR SC_UMUL8
-   LDA zp_prod_hi
+   JSR SC_UMUL8                            ; A = prod_hi (umul8 contract)
    CLC
    ADC zp_v_xfrac
    STA zp_br_t2
