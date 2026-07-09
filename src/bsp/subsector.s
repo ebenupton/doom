@@ -142,19 +142,13 @@ seg_proc:
    STA zp_br_p
    LDA zp_seg_hdr_p_h
    STA zp_br_p_h
-   LDY #4
-   LDA (zp_br_p),Y
-   STA zp_seg_lv1x_lo
-   INY
-   LDA (zp_br_p),Y
-   STA zp_seg_lv1x_hi
-   INY
-   LDA (zp_br_p),Y
-   STA zp_seg_lv1y_lo
-   INY
-   LDA (zp_br_p),Y
-   STA zp_seg_lv1y_hi
-   INY
+; Stage ONLY ldx/ldy (dispatch, read repeatedly) + flags (reused all over
+; the seg loop). lv1x/lv1y (+4..+7) are read ON DEMAND by the back-face
+; test via SBC (zp_br_p),Y — the lazy dispatch touches at most one delta
+; pair, so staging both unconditionally was pure waste (2026-07-09,
+; completing rule 2). zp_br_p is left pointing at the header base for
+; those reads; the test never writes it, so v1/v2 below reuse it as-is.
+   LDY #8
    LDA (zp_br_p),Y
    STA zp_seg_ldx
    INY
@@ -169,11 +163,8 @@ seg_proc:
    BNE bf_passed
    JMP s_advance
 bf_passed:
-; front-facing: fetch v1/v2 (the test clobbers zp_br_p — reload)
-   LDA zp_seg_hdr_p
-   STA zp_br_p
-   LDA zp_seg_hdr_p_h
-   STA zp_br_p_h
+; front-facing: fetch v1/v2. zp_br_p still points at the header base (the
+; test only READS through it, never writes) — no reload needed.
    LDY #0
    LDA (zp_br_p),Y
    STA zp_seg_v1_lo

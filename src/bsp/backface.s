@@ -85,13 +85,16 @@ br_back_face_test:
    BNE bf_ldx0_ldy_nz
    RTS                                     ; ldx=0, ldy=0 → dot=0 → back (Z=1)
 bf_ldx0_ldy_nz:
-; dx = px_int - lv1_x (s16) — the only delta this arm needs
+; dx = px_int - lv1_x (s16) — the only delta this arm needs. lv1x is read
+; ON DEMAND from the header (+4/+5) via zp_br_p, not a ZP stage.
+   LDY #4
    LDA zp_br_px_h
    SEC
-   SBC zp_seg_lv1x_lo
+   SBC (zp_br_p),Y
    STA zp_br_dxlo
+   INY
    LDA zp_br_px_e
-   SBC zp_seg_lv1x_hi
+   SBC (zp_br_p),Y
    STA zp_br_dxhi
    LDA zp_br_dxlo
    ORA zp_br_dxhi
@@ -108,12 +111,15 @@ bf_ldx_nz:
    LDA zp_seg_ldy
    BNE bf_general
 ; ldy==0: dot = -ldx*dy. dy = py_int - lv1_y (s16) — only delta needed.
+; lv1y read on demand from the header (+6/+7) via zp_br_p.
+   LDY #6
    LDA zp_br_py_h
    SEC
-   SBC zp_seg_lv1y_lo
+   SBC (zp_br_p),Y
    STA zp_br_dylo
+   INY
    LDA zp_br_py_e
-   SBC zp_seg_lv1y_hi
+   SBC (zp_br_p),Y
    STA zp_br_dyhi
    LDA zp_br_dylo
    ORA zp_br_dyhi
@@ -134,20 +140,25 @@ bf_ldy0_dy_nz:
    RTS
 
 bf_general:
-; both deltas needed from here (lazy dispatch above computed neither)
+; both deltas needed from here (lazy dispatch above computed neither).
+; lv1x (+4/+5) then lv1y (+6/+7) read on demand — Y walks 4→7.
+   LDY #4
    LDA zp_br_px_h
    SEC
-   SBC zp_seg_lv1x_lo
+   SBC (zp_br_p),Y
    STA zp_br_dxlo
+   INY
    LDA zp_br_px_e
-   SBC zp_seg_lv1x_hi
+   SBC (zp_br_p),Y
    STA zp_br_dxhi
+   INY
    LDA zp_br_py_h
    SEC
-   SBC zp_seg_lv1y_lo
+   SBC (zp_br_p),Y
    STA zp_br_dylo
+   INY
    LDA zp_br_py_e
-   SBC zp_seg_lv1y_hi
+   SBC (zp_br_p),Y
    STA zp_br_dyhi
 ; Sign shortcut first (EXACT — ldx,ldy nonzero here, so P1 = ldy*dx is
 ; zero iff dx==0, P2 = ldx*dy zero iff dy==0, and sign(product) = XOR of

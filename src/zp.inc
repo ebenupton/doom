@@ -77,10 +77,9 @@ zp_br_t0 = $20                    ; [bsp]
 zp_br_t1 = $21                    ; [bsp]
 zp_br_t2 = $22                    ; [bsp]
 zp_br_t3 = $23                    ; [bsp]
-zp_seg_lv1x_lo = $24              ; [bsp]; ZP (swapped with zp_ft_*); hot per-seg back-face in
-zp_seg_lv1x_hi = $25              ; [bsp]
-zp_seg_lv1y_lo = $26              ; [bsp]
-zp_seg_lv1y_hi = $27              ; [bsp]
+; $24-$27 FREE (2026-07-09): zp_seg_lv1x/lv1y retired — the back-face test
+; reads the linedef v1 x/y on demand from the header via (zp_br_p),Y
+; instead of staging them. 4 contiguous slots available.
 zp_ri_dlo = $28                   ; [bsp]
 zp_seg_bfh = $29                  ; [bsp]; ZP (reclaimed unused zp_ri_mag); per-seg back floor
 zp_ri_neg = $2A                   ; [bsp]
