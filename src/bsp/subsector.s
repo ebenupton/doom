@@ -50,9 +50,11 @@ anim_ss_hook:
    JMP anim_ss_cont
 anim_ss_cont:
 .scope
-; --- Mark visited (test instrumentation) ---
+; --- Mark visited (test instrumentation, FLAT BUILD ONLY) ---
 ; SS_VISITED_BITMAP[id >> 3] |= bit_mask[id & 7] — regression harnesses
-; diff this against the Python walk's subsector set.
+; diff this against the Python walk's subsector set. The banked build
+; compiles it out (nothing on the disc reads it; ~44 bytes of MAIN back).
+.if .not ::BANKED
    LDA zp_node_chlo
    STA zp_br_t0
    LDA zp_node_chhi
@@ -77,6 +79,7 @@ anim_ss_cont:
    LDA vc_bit_mask,X                       ; X survived the pointer build —
    ORA (zp_br_p),Y                         ; reload beats the old PHA/PLA
    STA (zp_br_p),Y
+.endif
 
 ; --- Read subsector header (SoA pages: count / first_lo / first_hi) ---
    LDX zp_node_chlo
@@ -89,12 +92,38 @@ anim_ss_cont:
 
 ; Persistent per-seg pointers: computed once here, advanced by the
 ; loop (+12 header, +6 FHCH) — the old code re-multiplied si*12 and
-; si*6 on every seg. fhch_ptr_si6 leaves si*6 in t0/t1; one more
-; shift gives si*12.
-   JSR fhch_ptr_si6
-   LDA zp_br_p
+; si*6 on every seg. Inlined si*6 (was fhch_ptr_si6 in LO, single
+; caller): t0:t1 = si*2 (stash t2:t3) then si*6, + rom_fhch straight
+; into zp_fhch_p (the zp_br_p middleman is gone with the JSR); one
+; more shift below gives si*12 for the header ptr.
+   LDA zp_seg_first_lo
+   STA zp_br_t0
+   LDA zp_seg_first_hi
+   STA zp_br_t1
+   ASL zp_br_t0
+   ROL zp_br_t1
+; *2
+   LDA zp_br_t0
+   STA zp_br_t2
+   LDA zp_br_t1
+   STA zp_br_t3
+   ASL zp_br_t0
+   ROL zp_br_t1
+; *4
+   CLC
+   LDA zp_br_t0
+   ADC zp_br_t2
+   STA zp_br_t0
+; *6
+   LDA zp_br_t1
+   ADC zp_br_t3
+   STA zp_br_t1
+   CLC
+   LDA zp_rom_fhch_lo
+   ADC zp_br_t0
    STA zp_fhch_p
-   LDA zp_br_p_h
+   LDA zp_rom_fhch_hi
+   ADC zp_br_t1
    STA zp_fhch_p_h
    ASL zp_br_t0
    ROL zp_br_t1

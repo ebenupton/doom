@@ -826,46 +826,6 @@ a2_have_recip:
 .endscope
 
 
-; fhch_ptr_si6 — zp_br_p := rom_fhch + zp_seg_first*6 (the 6-byte/seg
-; height table: fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh).
-;   Input:  zp_seg_first_lo/hi = seg index (u16).
-;   Output: zp_br_p/p_h. Clobbers zp_br_t0-t3.
-;   idx*6 built as (idx*2)*2 + idx*2 — three 16-bit shifts/adds, no mul.
-;   (The 6-byte table is the 6502-resident subset of Python's 20-byte
-;   seg detail: heights only; the VWH u16 indices stay Python-side.)
-fhch_ptr_si6:
-.scope
-   LDA zp_seg_first_lo
-   STA zp_br_t0
-   LDA zp_seg_first_hi
-   STA zp_br_t1
-   ASL zp_br_t0
-   ROL zp_br_t1
-; *2
-   LDA zp_br_t0
-   STA zp_br_t2
-   LDA zp_br_t1
-   STA zp_br_t3
-   ASL zp_br_t0
-   ROL zp_br_t1
-; *4
-   CLC
-   LDA zp_br_t0
-   ADC zp_br_t2
-   STA zp_br_t0
-; *6
-   LDA zp_br_t1
-   ADC zp_br_t3
-   STA zp_br_t1
-   CLC
-   LDA zp_rom_fhch_lo
-   ADC zp_br_t0
-   STA zp_br_p
-   LDA zp_rom_fhch_hi
-   ADC zp_br_t1
-   STA zp_br_p_h
-   RTS
-.endscope
 
 bsp_lo_end:
 .if ::BANKED
