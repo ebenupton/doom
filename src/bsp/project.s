@@ -149,21 +149,89 @@ br_project_y_raw:
 py_go:
    JMP py_shift
 py_have_m8:
+; --- h*M8 inlined (br_smul_s8_u8 body, de-larded): lo lands straight in
+; t2 and the hi byte stays in A for the mid add — saves the a/b staging,
+; the JSR/RTS, the prod->res copy and both resh reloads (~44 cyc/call).
+; Math is bit-identical to br_smul_s8_u8 (same quarter-square idiom).
    LDA zp_br_t0
-   STA zp_br_a
-   LDA zp_br_rhi
-   STA zp_br_b
-   JSR br_smul_s8_u8
-   LDA zp_br_resl
-   STA zp_br_t2
+   BMI pym_neg
+; positive h: unsigned quarter-square, result used as-is
+   TAX
+   SEC
+   SBC zp_br_rhi
+   BCS pym_pd
+   EOR #$FF
+   ADC #1
+pym_pd:
+   TAY                                     ; Y = |h - M8|
+   TXA
    CLC
-   LDA zp_br_resh
+   ADC zp_br_rhi
+   TAX                                     ; X = h + M8
+   BCS pym_puo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_br_t2                            ; P24 lo
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   JMP pym_join                            ; A = hi(h*M8)
+pym_puo:
+   LDA sqr2_lo,X                           ; f(x+y) overflowed into the
+   SBC sqr_lo,Y                            ; +256 window (carry in = 1)
+   STA zp_br_t2
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+   JMP pym_join
+pym_neg:
+; negative h: |h| through the quarter-square, negate during the copy-out
+   EOR #$FF
+   BUMP                                    ; A = |h|
+   TAX
+   SEC
+   SBC zp_br_rhi
+   BCS pym_nd
+   EOR #$FF
+   ADC #1
+pym_nd:
+   TAY
+   TXA
+   CLC
+   ADC zp_br_rhi
+   TAX
+   BCS pym_nuo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_br_t2                            ; |prod| lo (negated below)
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   JMP pym_nneg
+pym_nuo:
+   LDA sqr2_lo,X
+   SBC sqr_lo,Y
+   STA zp_br_t2
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+pym_nneg:
+   TAX                                     ; X = |prod| hi
+   SEC
+   LDA #0
+   SBC zp_br_t2
+   STA zp_br_t2                            ; lo = -|prod| lo
+   TXA
+   EOR #$FF
+   ADC #0                                  ; hi = ~|hi| + (lo == 0)
+pym_join:
+; --- P24 mid/hi: A = hi(h*M8) throughout ---
+   TAX                                     ; X = hi (sign check below)
+   CLC
    ADC zp_br_t0                            ; mid = hi(h*M8) + h
    STA zp_br_t3
    LDA #0
    ADC #0                                  ; carry from the mid add
    STA zp_br_vxext
-   LDA zp_br_resh
+   TXA
    BPL py_p_pos
    DEC zp_br_vxext                         ; + sign extension of h*M8
 py_p_pos:

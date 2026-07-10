@@ -69,7 +69,7 @@ bsp_d_end:
 ; (this code) -> banked low RAM ($3900, clipper-vacated space) since $DAC0 is in
 ; MOS-ROM space on a real Model B.
 .if ::BANKED
-VWHC_VALID = $A700
+; ($A700 page freed 2026-07-10: VWHC_VALID retired — RLO doubles as valid)
 VWHC_RHI = $A800
 VWHC_RLO = $A900
 VWHC_H = $AA00
@@ -77,7 +77,7 @@ VWHC_LO = $AB00
 VWHC_HI = $AC00
 .segment "W_BK"
 .else
-VWHC_VALID = $D4C0
+; ($D4C0 page freed 2026-07-10: VWHC_VALID retired — RLO doubles as valid)
 VWHC_RHI = $D5C0
 VWHC_RLO = $D6C0
 VWHC_H = $D7C0
