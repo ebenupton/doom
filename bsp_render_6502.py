@@ -31,7 +31,6 @@ ZP_ROM_VERTS_LO = _sym('zp_rom_verts_lo')
 ZP_ROM_NODES_LO = _sym('zp_rom_nodes_lo')
 ZP_ROM_SS_LO    = _sym('zp_rom_ss_lo')
 ZP_ROM_SEG_HDR_LO = _sym('zp_rom_seg_hdr_lo')
-ZP_ROM_VWH_LO   = _sym('zp_rom_vwh_lo')
 ZP_ROM_DETAIL_LO = _sym('zp_rom_detail_lo')
 ZP_ROOT_NODE_LO = _sym('zp_root_node_lo')
 ZP_PXRAW_LO     = _sym('zp_br_pxraw_lo')
@@ -44,7 +43,6 @@ ENTRY_BR_INIT_FRAME   = _sym('jt_br_init_frame')
 # Table load addresses: harness-owned placement decisions (the engine reads
 # these tables only through the pointer slots above), NOT engine symbols.
 ROM_MAIN_BASE   = 0x6C00
-VWH_BASE        = 0xFB00   # relocated from $E484: the DOOM_ANIM build's private
                            # mover slots (1248 total) overflowed the old slot below
                            # ANG at $E940; $FB00-$FFF9 is unused in the flat harness.
                            # $E484-$E93F now hosts the flat ANIM tables + workers.
@@ -81,19 +79,10 @@ class BspRender6502:
         bbox = self.bbox_table
         mem = self.sc.mpu.memory
 
-        vwh_start = layout['off_vwh']
-        # Flat placement guard: VWH lives at $E484 below the ANG region at
-        # $E940. The DOOM_ANIM build adds private mover slots (+42 on E1M1,
-        # 1248 total) and DOES NOT FIT — relocation needed before the 6502
-        # can run an anim build (banked VWH_BK $A200-$A6FF fits: 1280).
-        n_vwh_total = len(rom_main) - vwh_start
-        assert VWH_BASE + n_vwh_total <= 0xFFFA, (
-            f"VWH table ({n_vwh_total} entries) overflows flat placement "
-            f"$FB00-$FFF9")
-        for i in range(vwh_start):
+        # (VWH heights no longer ship: rom_main ends at off_vwh and the 6502
+        # has no reader — projection heights come from the FHCH stream.)
+        for i in range(len(rom_main)):
             mem[ROM_MAIN_BASE + i] = rom_main[i]
-        for i in range(len(rom_main) - vwh_start):
-            mem[VWH_BASE + i] = rom_main[vwh_start + i]
 
         # 4 bytes per seg: fh, ch, bfh, bch (front + back floor/ceiling, s8).
         n_segs = layout['n_segs']
@@ -118,7 +107,6 @@ class BspRender6502:
         w16(ZP_ROM_NODES_LO,   ROM_MAIN_BASE + layout['off_nodes'])
         w16(ZP_ROM_SS_LO,      ROM_MAIN_BASE + layout['off_ss'])
         w16(ZP_ROM_SEG_HDR_LO, ROM_MAIN_BASE + layout['off_seg_hdr'])
-        w16(ZP_ROM_VWH_LO,     VWH_BASE)
         w16(ZP_ROM_DETAIL_LO,  ROM_DETAIL_BASE)
         w16(ZP_ROM_FHCH_LO,    ROM_FHCH_BASE)
         w16(ZP_ROM_BBOX_LO,    ROM_BBOX_BASE)

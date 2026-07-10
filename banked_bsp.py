@@ -10,7 +10,7 @@ copy its 64K into a BankedMemory, then patch the banked deltas:
   - FHCH -> low RAM $2400 (was $B600, inside the bank window); ZP -> $2400
   - sqr tables -> low RAM $2000 (banked clipper/bsp umul8 read them there)
   - bsp_render code -> the *_bk.bin variants (PAGE inserts + $80xx clip entries)
-Everything else (recip/VWH/bbox/angle subsystem/vcache) stays flat (above the
+Everything else (recip/bbox/angle subsystem/vcache) stays flat (above the
 $8000-$BFFF window) — reachable in the model; real-HW relocation is a later step.
 """
 import os, math
@@ -85,8 +85,8 @@ def build_banked(flatr):
         bm[SQR_LOW + i] = fmem[0xA500 + i]
 
     # --- bank L2 = relocated $C000+ data (window offsets must match the asm) ---
-    # TA_LO $8000, TA_HI $8400, VATOX $8800, bbox $8D00, recip $9C00, VWH $A100,
-    # VWHC cache $A600 (zeroed).
+    # TA_LO $8000, TA_HI $8400, VATOX $8800, bbox $8D00, recip $9C00,
+    # VWHC cache $A600 (zeroed). ($A200 VWH heights stripped 2026-07-10.)
     l2 = bytearray(16384)
     def cpy(dst_off, src, n):
         l2[dst_off:dst_off + n] = bytes(fmem[src:src + n])
@@ -95,9 +95,7 @@ def build_banked(flatr):
     cpy(0x0900, 0xF601, 1025)            # VATOX  -> $8900
     cpy(0x0E00, 0xC600, len(flatr.bbox_table))   # bbox -> $8E00
     cpy(0x1D00, 0xE000, 1024)            # recip  -> $9D00 (M8[1024] mantissas)
-    from bsp_render_6502 import VWH_BASE as _FLAT_VWH
-    assert layout['n_vwh'] <= 0x0500, f"VWH {layout['n_vwh']} overflows VWH_BK $A200-$A6FF"
-    cpy(0x2200, _FLAT_VWH, layout['n_vwh'])  # VWH -> $A200
+    # (VWH heights table stripped 2026-07-10: no 6502 reader)
     # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
     # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays
     # end at $ACFF).
@@ -148,7 +146,6 @@ def build_banked(flatr):
     _w16(bm, ZP_ROM_FHCH_LO,    FHCH_LOW)
     _w16(bm, ZP_ROM_DETAIL_LO,  FHCH_LOW)
     _w16(bm, 0x0BEA,            0x8E00)   # zp_rom_bbox -> L2 (MUST be page-aligned)
-    _w16(bm, 0x0BF4,            0xA200)   # zp_rom_vwh  -> L2
     bm[0xFF00] = 0x00
     bm.select(BANK_L0)
     return bm

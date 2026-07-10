@@ -16,7 +16,6 @@
 ;   FHCH height bytes (low RAM)          — n_fhch u16 addrs, value = pos_hi
 ;   seg-header flags (bank L0 / flat)    — SOLID/NEEDBT/NEEDBB re-derived
 ;                                          from the (patched) FHCH quad
-;   private VWH slot bytes (bank L2 / flat $FB00) — n_vwh u16 addrs
 ;
 ; Segments: ANIMH = resident hub (pages banks, walks dirty&visible bits);
 ; ANIML0 = FHCH+flags worker (BANK_L0 context, bank image $BE00);
@@ -28,13 +27,11 @@
 .if ::BANKED
 ANIM_SSMASK = $BB00                     ; L0: u8 mover bitmask per subsector
 ANIM_TABL0  = $BC00                     ; L0: 6 u16 ptrs -> per-mover blocks
-ANIM_TABL2  = $B900                     ; L2: 6 u16 ptrs -> vwh addr lists
 ANIM_CFG    = $B980                     ; L2: 12 B per mover (bounds/speed/waits)
 .else
 ANIM_SSMASK = $E484
 ANIM_TABL0  = $E580
 ANIM_CFG    = $E680
-ANIM_TABL2  = $E6D0
 .endif
 ; CFG record layout (12 B/mover, anim_sectors.gen_6502_tables; heights are
 ; prescaled 8.8 fixed point — hi byte = the packer's prescaled s8 height):
@@ -44,7 +41,7 @@ ANIM_TABL2  = $E6D0
 ;   +6  wait_at_A, +7 wait_at_B (frames, <= 63 to fit the packed timer)
 ;   +8  start88, +10 packed start state/timer, +11 pad
 ; Mover bit/index m = index in sorted(ANIM_SECTORS) everywhere (SSMASK bits,
-; TABL0/TABL2 pointer slots, CFG stride 12, ANIM_WS stride 3, DIRTY bits).
+; TABL0 pointer slots, CFG stride 12, ANIM_WS stride 3, DIRTY bits).
 
 ; --- state (unbanked; drivers zero $05E9-$05FF at init) ---
 ANIM_ENABLE = $05E9
@@ -74,7 +71,7 @@ ANIM_CUR  = $F1                         ; mover index during hub loop
 ;   pend = SSMASK[ss] & DIRTY            # dirty movers revealable via this ss
 ;   for m in 5..0 where pend has bit m:
 ;     ANIM_VAL = pos_hi(m)               # ANIM_WS[m*3+1], prescaled s8 height
-;     anim_l0_worker (FHCH bytes + seg flags) ; anim_l2_worker (VWH bytes)
+;     anim_l0_worker (FHCH bytes + seg flags)
 ;     DIRTY &= ~bit(m)                   # applied == logical again
 anim_hub:
 .scope
@@ -97,9 +94,9 @@ ah_loop:
    LDA ANIM_WS+1,Y
    STA ANIM_VAL
    JSR anim_l0_worker                      ; FHCH bytes + seg flags (L0 paged)
-   PAGE BANK_L2
-   JSR anim_l2_worker                      ; private VWH bytes
-   PAGE BANK_L0
+; (the L2 VWH worker is gone: the private VWH slot bytes were write-only —
+; the 6502 render projects from FHCH heights; VWH indices are Python-side
+; cache keys. Stripped 2026-07-10.)
    LDX ANIM_CUR
    LDA ANIM_DIRTY
    EOR ah_bit,X                            ; clear this mover's dirty bit
@@ -452,47 +449,5 @@ ai_t:    .byte 0
 ai_midx: .byte 0
 .endscope
 
-; ============================================================================
-; BANK_L2-context worker: private VWH slot bytes.
-; ============================================================================
-.segment "ANIML2"
-
-; --- anim_l2_worker: write ANIM_VAL to every private VWH slot byte of mover
-;     ANIM_CUR. TABL2 block (gen_6502_tables): n_vwh, then n_vwh u16 slot
-;     addresses (moving role only — doors: ceil slots, lifts: floor slots).
-;     n_vwh may be 0. Runs with BANK_L2 paged (hub pages it). ---
-anim_l2_worker:
-.scope
-   LDA ANIM_CUR
-   ASL A
-   TAY
-   LDA ANIM_TABL2,Y
-   STA zp_anim_p
-   LDA ANIM_TABL2+1,Y
-   STA zp_anim_p+1
-   LDY #0
-   LDA (zp_anim_p),Y                       ; n_vwh
-   BEQ al2_done
-   STA al2_n
-   INY
-al2_loop:
-   LDA (zp_anim_p),Y
-   STA zp_anim_w
-   INY
-   LDA (zp_anim_p),Y
-   STA zp_anim_w+1
-   INY
-   STY al2_y
-   LDY #0
-   LDA ANIM_VAL
-   STA (zp_anim_w),Y
-   LDY al2_y
-   DEC al2_n
-   BNE al2_loop
-al2_done:
-   RTS
-al2_n: .byte 0
-al2_y: .byte 0
-.endscope
 
 .segment "MAIN"

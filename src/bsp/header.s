@@ -150,7 +150,6 @@ zp_rom_bbox_hi = $0BEB
 ;   recip$9D00 VWH$A200 VWHC$A700
 RECIP_BASE = $9D00                      ; bank L2
 L2_BBOX = $8E00                         ; bank L2 (harness/loader points zp_rom_bbox here)
-L2_VWH = $A200                          ; bank L2 (harness/loader points zp_rom_vwh here)
 .else
 RECIP_BASE = $E000                      ; recip table (HI bytes first, then LO)
 .endif

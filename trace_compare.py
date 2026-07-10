@@ -30,7 +30,6 @@ _E_HAS_GAP    = _sym('jt_has_gap')
 _E_IS_FULL    = _sym('jt_is_full')
 _E_DCL_S16    = _sym('jt_draw_clip_s16')
 ROM_MAIN_BASE   = 0x6C00
-VWH_BASE        = 0xE484
 ROM_DETAIL_BASE = 0xB600
 ROM_FHCH_BASE   = 0xB600
 ROM_BBOX_BASE   = 0xC600
@@ -60,11 +59,8 @@ def setup_wad(sc):
     rom_main = dw.packed_rom_main
     rom_detail = dw.packed_rom_detail
     mem = sc.mpu.memory
-    vwh_start = layout['off_vwh']
-    for i in range(vwh_start):
+    for i in range(len(rom_main)):
         mem[ROM_MAIN_BASE + i] = rom_main[i]
-    for i in range(len(rom_main) - vwh_start):
-        mem[VWH_BASE + i] = rom_main[vwh_start + i]
     n_segs = layout['n_segs']
     for si in range(n_segs):
         off = si * SEG_DTL_SIZE
@@ -84,7 +80,6 @@ def setup_wad(sc):
     w16(0x42, ROM_MAIN_BASE + layout['off_nodes'])
     w16(0x0BF0, ROM_MAIN_BASE + layout['off_ss'])
     w16(0x0BF2, ROM_MAIN_BASE + layout['off_seg_hdr'])
-    w16(0x0BF4, VWH_BASE)
     w16(0x0BF6, ROM_DETAIL_BASE)
     w16(0x0BE8, ROM_FHCH_BASE)
     w16(0x0BEA, ROM_BBOX_BASE)

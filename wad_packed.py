@@ -199,7 +199,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     off_verts = NODE_SOA_SIZE
     off_seg_hdr = off_verts + n_verts * VERTEX_SIZE
     off_vwh = off_seg_hdr + n_segs * SEG_HDR_SIZE
-    rom_main_size = off_vwh + n_vwh * VWH_SIZE
+    # VWH heights no longer ship in rom_main (2026-07-10): the 6502 render
+    # projects from the FHCH stream; VWH indices are Python-side cache keys
+    # only. off_vwh == rom_main_size is kept as a layout landmark.
+    rom_main_size = off_vwh
 
     rom_main = bytearray(rom_main_size)
 
@@ -357,10 +360,6 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                 bch2, bfh2 = ap2
                 rom_detail[o_det + SD_APV2_CH] = bch2 & 0xFF
                 rom_detail[o_det + SD_APV2_FH] = bfh2 & 0xFF
-
-    # VWH heights
-    for i, (vi, h) in enumerate(vwh_table):
-        rom_main[off_vwh + i] = h & 0xFF
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 

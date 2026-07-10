@@ -39,7 +39,6 @@ _LAYOUT = dw.packed_layout
 _ROM_MAIN = dw.packed_rom_main          # bytearray — shared with _p_rom_main
 _ROM_DETAIL = dw.packed_rom_detail
 _OFF_SEG_HDR = _LAYOUT['off_seg_hdr']
-_OFF_VWH = _LAYOUT['off_vwh']
 
 # speeds (world units / second) and dwell times (seconds)
 DOOR_SPEED = 140.0
@@ -157,19 +156,12 @@ class Mover:
         for i in self.front_segs:
             sv = dw.fp_segs_vwh[i]
             dw.fp_segs_vwh[i] = sv[:3] + (fh_ps, ch_ps) + sv[5:]
-        # private VWH slots (python table + packed byte + attached 6502s)
+        # private VWH slots: python cache-key table only (the ROM copies were
+        # write-only and are stripped — 6502 projects from FHCH heights)
         for idx, vert in self.vwh_f:
             dw.vwh_table[idx] = (vert, fh_ps)
-            _ROM_MAIN[_OFF_VWH + idx] = fh_ps & 0xFF
-            for mem, base in _attached:
-                mem[base['vwh'] + idx] = fh_ps & 0xFF
-            nbytes += 1
         for idx, vert in self.vwh_c:
             dw.vwh_table[idx] = (vert, ch_ps)
-            _ROM_MAIN[_OFF_VWH + idx] = ch_ps & 0xFF
-            for mem, base in _attached:
-                mem[base['vwh'] + idx] = ch_ps & 0xFF
-            nbytes += 1
         # packed seg detail + 6502 FHCH condensation
         for i in self.front_segs:
             o = i * SEG_DTL_SIZE
@@ -264,7 +256,6 @@ def attach_6502(renderer):
     """Mirror every patch into a flat BspRender6502's py65 memory."""
     import bsp_render_6502 as br
     _attached.append((renderer.sc.mpu.memory, {
-        'vwh': br.VWH_BASE,
         'fhch': br.ROM_FHCH_BASE,
         'seg_hdr': br.ROM_MAIN_BASE + _OFF_SEG_HDR,
     }))
@@ -318,12 +309,12 @@ def gen_6502_tables(flat=True):
     import struct as _st
     if flat:
         import bsp_render_6502 as br
-        A = dict(ssmask=0xE484, tabl0=0xE580, cfg=0xE680, tabl2=0xE6D0,
-                 fhch=br.ROM_FHCH_BASE, vwh=br.VWH_BASE,
+        A = dict(ssmask=0xE484, tabl0=0xE580, cfg=0xE680,
+                 fhch=br.ROM_FHCH_BASE,
                  hdr=br.ROM_MAIN_BASE + _OFF_SEG_HDR)
     else:
-        A = dict(ssmask=0xBB00, tabl0=0xBC00, cfg=0xB980, tabl2=0xB900,
-                 fhch=0x2400, vwh=0xA200, hdr=0x8000 + _OFF_SEG_HDR)
+        A = dict(ssmask=0xBB00, tabl0=0xBC00, cfg=0xB980,
+                 fhch=0x2400, hdr=0x8000 + _OFF_SEG_HDR)
     order = sorted(dw.ANIM_SECTORS)
     out = {}
     # SSMASK
@@ -356,19 +347,7 @@ def gen_6502_tables(flat=True):
                             A['fhch'] + i * 6)
         blocks += blk
     out[A['tabl0']] = bytes(ptrs) + bytes(blocks)
-    # TABL2: 6 ptrs + blocks (private VWH slot addrs for the moving role)
-    ptrs2 = bytearray(12)
-    blocks2 = bytearray()
-    for mi, sec in enumerate(order):
-        m = MOVERS[sec]
-        addr = A['tabl2'] + 12 + len(blocks2)
-        _st.pack_into('<H', ptrs2, mi * 2, addr)
-        slots = m.vwh_c if m.kind == 'ceil' else m.vwh_f
-        blk = bytearray([len(slots)])
-        for idx, _v in slots:
-            blk += _st.pack('<H', A['vwh'] + idx)
-        blocks2 += blk
-    out[A['tabl2']] = bytes(ptrs2) + bytes(blocks2)
+    # (TABL2 / private VWH slot lists stripped 2026-07-10: write-only data)
     # CFG
     cfg = bytearray()
     for sec in order:
