@@ -50,81 +50,68 @@ br_seg_xform_vertex:
 .scope
 ; ENTRY CONTRACT: A = idx_hi — both callers end LDA vN_hi / STA
 ; zp_seg_v_idx_hi immediately before the JSR (mirrored at the call sites
-; in subsector.s). PAGE BANK_L0 lives at vc_miss now: only the ROM vert
-; read needs L0 (the hit path touches main-RAM VCACHE + rns vectors only,
-; and br_project_y / br_recip page L2 themselves), so nothing here may
-; touch A before the STA below. skip clears via X to keep A intact.
-   STA zp_br_t3                            ; t3 = idx_hi (A from caller)
-   LDX #0
-   STX zp_seg_skip
-
-; --- Compute vertex cache index (idx*8 → cache offset) ---
-; idx is in zp_seg_v_idx_lo/hi (u16). vc_offset = idx * 8 (s/o offset for valid).
-; valid_byte_offset = idx >> 3, valid_bit = idx & 7.
+; in subsector.s). PAGE BANK_L0 lives at vc_miss: only the ROM vert read
+; needs L0 (the hit path touches main-RAM VCACHE + rns vectors only, and
+; br_project_y / br_recip page L2 themselves), so nothing here may touch
+; A before the shift chain consumes it.
 ;
-; --- Check valid bit ---
-; valid_byte_offset = idx_lo >> 3 + idx_hi << 5 (since high byte each adds 32 bytes)
-   LDA zp_seg_v_idx_lo
-   LSR zp_br_t3
+; LAYOUT INVARIANT: idx < 481 — VCACHE $0C00..$1AFF holds 480 8-byte
+; entries and the valid bitmap is 59 bytes. Hence idx_hi ∈ {0,1},
+; idx>>3 fits one byte (valid ptr hi = >VCACHE_VALID_BASE constant), and
+; the idx*8 hi byte is ≤ $0F, so no carry survives either shift chain.
+;
+; --- Cache entry base = VCACHE_BASE + idx*8, computed ONCE for both
+; paths (hit reads the entry, miss writes it): 16-bit <<3 with the hi
+; byte riding in A — the page-aligned base add lands on the hi byte only,
+; and A = idx_hi is already in hand from the caller.
+   LDX zp_seg_v_idx_lo
+   STX zp_seg_v_cache_lo
+   ASL zp_seg_v_cache_lo
+   ROL A
+   ASL zp_seg_v_cache_lo
+   ROL A
+   ASL zp_seg_v_cache_lo
+   ROL A
+   ADC #>VCACHE_BASE                       ; C = 0: last ROL shifted a 0 out
+   STA zp_seg_v_cache_hi
+   LDY #0
+   STY zp_seg_skip                         ; Y stays 0 for the bitmap read
+
+; --- Check valid bit: byte = idx >> 3 (single byte per the invariant,
+; so the hi byte is the constant bitmap page) ---
+   LDA zp_seg_v_idx_hi
+   LSR A                                   ; C = idx bit 8, A = 0
+   TXA                                     ; X = idx_lo (C untouched)
    ROR A
-   LSR zp_br_t3
-   ROR A
-   LSR zp_br_t3
-   ROR A
-; A:t3 = idx >> 3 (lo rides in A straight into the base add)
-   CLC
-   ADC #<VCACHE_VALID_BASE
+   LSR A
+   LSR A                                   ; A = idx >> 3
    STA zp_br_p
-   LDA zp_br_t3
-   ADC #>VCACHE_VALID_BASE
+   LDA #>VCACHE_VALID_BASE
    STA zp_br_p_h
 ; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
-   LDA zp_seg_v_idx_lo
+   TXA
    AND #7
    TAX
    LDA vc_bit_mask,X
    STA zp_seg_v_bitm
-   LDY #0
-   LDA (zp_br_p),Y
+   LDA (zp_br_p),Y                         ; Y = 0 from the skip clear
    AND zp_seg_v_bitm
    BEQ vc_miss
 ; (was BNE+JMP)
 vc_hit:
-; --- Cache hit: load evy, evx, rhi/rlo, sx, near-clip flag from cache ---
-; Cache offset = idx*8. Compute base ptr.
-; idx*8 with VCACHE_BASE page-aligned: byte-at-a-time, no 16-bit chain.
-; hi = (idx_lo >> 5) | (idx_hi << 3) + >VCACHE_BASE, lo = idx_lo << 3.
-   LDA zp_seg_v_idx_lo
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   STA zp_br_t2                            ; idx_lo >> 5
-   LDA zp_seg_v_idx_hi
-   ASL A
-   ASL A
-   ASL A
-   ORA zp_br_t2
-   CLC
-   ADC #>VCACHE_BASE
-   STA zp_br_p_h
-   LDA zp_seg_v_idx_lo
-   ASL A
-   ASL A
-   ASL A
-   STA zp_br_p
+; --- Cache hit: load evy, evx, rhi/rlo, sx, near-clip flag from the
+; entry at zp_seg_v_cache (computed once at entry, shared with the miss
+; path's writes). ---
 ; Load evy, evx (offsets 0, 1) into current slots — needed for near-plane
 ; crossing math even when the vertex is clipped or a cache hit.
-   LDY #0
-   LDA (zp_br_p),Y
+   LDA (zp_seg_v_cache_lo),Y               ; Y = 0
    STA zp_seg_cur_evy
    INY
-   LDA (zp_br_p),Y
+   LDA (zp_seg_v_cache_lo),Y
    STA zp_seg_cur_evx
 ; Check near-clip flag at offset 6
    LDY #6
-   LDA (zp_br_p),Y
+   LDA (zp_seg_v_cache_lo),Y
    BEQ vc_hit_ok
    LDA #1
    STA zp_seg_skip
@@ -132,10 +119,10 @@ vc_hit:
 vc_hit_ok:
 ; Load rhi, rlo, sx from cache.
    LDY #2
-   LDA (zp_br_p),Y
+   LDA (zp_seg_v_cache_lo),Y
    STA zp_br_rhi
    INY
-   LDA (zp_br_p),Y
+   LDA (zp_seg_v_cache_lo),Y
    STA zp_br_rlo
    JSR rns_select                          ; cached S → re-pick the shifter
                                         ; (preserves Y; the vector belongs
@@ -144,10 +131,10 @@ vc_hit_ok:
    LSR A
    TAX                                     ; X = sx offset (0=v1, 2=v2)
    LDY #4
-   LDA (zp_br_p),Y
+   LDA (zp_seg_v_cache_lo),Y
    STA $0061,X                             ; sx_lo → sx1/sx2 direct
    LDY #5
-   LDA (zp_br_p),Y
+   LDA (zp_seg_v_cache_lo),Y
    STA $0062,X                             ; sx_hi
 ; Project Y for top + bottom (heights vary per seg, can't cache).
    JMP do_project_y
@@ -165,28 +152,7 @@ vc_miss:
    ORA zp_seg_v_bitm
    STA (zp_br_p),Y
 
-; --- Compute cache base ptr (idx*8) ---
-; idx*8, page-aligned base (see the hit path above)
-   LDA zp_seg_v_idx_lo
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   STA zp_br_t2
-   LDA zp_seg_v_idx_hi
-   ASL A
-   ASL A
-   ASL A
-   ORA zp_br_t2
-   CLC
-   ADC #>VCACHE_BASE
-   STA zp_seg_v_cache_hi
-   LDA zp_seg_v_idx_lo
-   ASL A
-   ASL A
-   ASL A
-   STA zp_seg_v_cache_lo
+; (cache base ptr already at zp_seg_v_cache_lo/hi — computed at entry)
 
 ; --- Read s16 vertex x, y from ROM_VERTS + idx*4 ---
    LDA zp_seg_v_idx_lo
