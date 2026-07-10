@@ -511,25 +511,52 @@ si_return_y1:
 ;   if xl == xr and yl == yr: reject          # clipped to a point
 ;   goto draw_clipped_line
 ; --- draw_clipped_line_s16_h: horizontal-emit entry -------------------
-; Every horizontal seg line (ft/fb/bt/bb) shares the same s16 x pair, so
-; the x endpoints come straight from the LIVE seg struct (zp_seg_sx1/2 —
-; the emitters cannot park them in zp_line_*: this clipper normalizes
-; those slots in place). Callers stage only the y pair. The two x hi
-; bytes pass through A on the way in, folding the classic entry's 4-OR
-; fast-path test down to a 3-OR.
+; In: X = offset of the s16 y coord inside EACH vertex struct (the four
+;     sy pairs sit at the same offsets in VX1 and VX2, so one offset
+;     names the line: +5 top, +7 bot, +9 btop, +11 bbot; lo at VX+X,
+;     hi at VX+X+1). The x pair comes straight from zp_seg_sx1/sx2.
+; Every horizontal seg line (ft/fb/bt/bb) shares the same s16 x pair,
+; and the emitters cannot park anything in zp_line_* across draws (this
+; clipper normalizes those slots in place) — so callers pass ONLY the
+; pair offset. All four hi bytes are tested BEFORE any staging: the
+; common all-in-u8 case stages just the four lo bytes the u8 DCL reads.
 draw_clipped_line_s16_h:
+   LDA VX1+1,X                             ; y1 hi
+   ORA VX2+1,X                             ; y2 hi
+   ORA zp_seg_sx1_hi
+   ORA zp_seg_sx2_hi
+   BNE dclh_slow
+; all four coords in [0,255]: stage ONLY the lo bytes. The hi slots stay
+; stale — they overlay the u8 DCL's zp_cb_* workspace, and the u8 path
+; writes those before every read (the direct u8-entry callers never
+; zero them either, so no entry contract exists).
    LDA zp_seg_sx1_lo
    STA zp_line_xl_lo
    LDA zp_seg_sx2_lo
    STA zp_line_xr_lo
+   LDA VX1,X
+   STA zp_line_yl_lo
+   LDA VX2,X
+   STA zp_line_yr_lo
+   JMP dcl16_fastu8
+dclh_slow:
+; some coord outside u8: stage the full s16 line for the classic clip
+   LDA zp_seg_sx1_lo
+   STA zp_line_xl_lo
    LDA zp_seg_sx1_hi
    STA zp_line_xl_hi
+   LDA zp_seg_sx2_lo
+   STA zp_line_xr_lo
    LDA zp_seg_sx2_hi
    STA zp_line_xr_hi
-   ORA zp_line_xl_hi
-   ORA zp_line_yl_hi
-   ORA zp_line_yr_hi
-   BEQ dcl16_fastu8
+   LDA VX1,X
+   STA zp_line_yl_lo
+   LDA VX1+1,X
+   STA zp_line_yl_hi
+   LDA VX2,X
+   STA zp_line_yr_lo
+   LDA VX2+1,X
+   STA zp_line_yr_hi
    JMP dcl16_mainclip
 
 draw_clipped_line_s16:

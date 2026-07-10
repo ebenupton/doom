@@ -439,18 +439,12 @@ ft_no_rec:
 ft_set_line:
    LDA #0
    STA zp_dcl_rec_buf
-; Stage the s16 y pair and hand off to the horizontal s16 entry —
-; SC_DRAW_S16_H reads the x pair straight from zp_seg_sx1/sx2 (all
-; horizontal seg lines share them; the zp_line_* slots don't survive
-; the clipper's in-place normalization, so they can't be seg-hoisted).
-   LDA zp_seg_sy1_top_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy1_top_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy2_top_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy2_top_hi
-   STA zp_line_yr_hi
+; Hand off to the horizontal s16 entry: X names the sy pair (same
+; offset in both vertex structs); SC_DRAW_S16_H fetches x from
+; zp_seg_sx1/sx2 and the y pair from VX1+X/VX2+X itself — no staging
+; here at all (the zp_line_* slots don't survive the clipper's
+; in-place normalization, so nothing can be seg-hoisted into them).
+   LDX #zp_seg_sy1_top_lo - VX1            ; sy pair offset (top)
    PAGE BANK_C
    JSR SC_DRAW_S16_H
    LDA #0
@@ -507,14 +501,7 @@ fb_no_rec:
 fb_set_line:
    LDA #0
    STA zp_dcl_rec_buf
-   LDA zp_seg_sy1_bot_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy1_bot_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy2_bot_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy2_bot_hi
-   STA zp_line_yr_hi
+   LDX #zp_seg_sy1_bot_lo - VX1            ; sy pair offset (bot)
    PAGE BANK_C
    JSR SC_DRAW_S16_H
    LDA #0
@@ -538,14 +525,7 @@ step_cont:                              ;  pushed the branch out of range)
    LDA zp_seg_flags
    AND #$04
    BEQ step_no_top
-   LDA zp_seg_sy1_btop_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy1_btop_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy2_btop_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy2_btop_hi
-   STA zp_line_yr_hi
+   LDX #zp_seg_sy1_btop_lo - VX1            ; sy pair offset (btop)
    LDA #0
    STA zp_dcl_rec_buf
    LDA #$07
@@ -563,14 +543,7 @@ step_no_top:
    LDA zp_seg_flags
    AND #$08
    BEQ step_no_bot
-   LDA zp_seg_sy1_bbot_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy1_bbot_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy2_bbot_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy2_bbot_hi
-   STA zp_line_yr_hi
+   LDX #zp_seg_sy1_bbot_lo - VX1            ; sy pair offset (bbot)
    LDA #0
    STA zp_dcl_rec_buf
    LDA #$08
