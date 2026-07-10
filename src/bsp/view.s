@@ -148,8 +148,8 @@ br_view_setup:
 ; (no-op macro on flat; callers re-page before their next engine call).
    PAGE BANK_C
    JSR rot_select                          ; SMC: specialize rot_s1..s4 for this
-                                        ; frame's trig (SEL, bank C window —
-                                        ; its stores hit resident MAIN)
+                                        ; frame's trig (SEL, main $2C00 —
+                                        ; runs under any bank)
    PAGE BANK_L2
    JSR jt_bca_frame
    JSR br_dcache_frame                     ; forward-coherence bbox cache (bbox.s)
@@ -556,7 +556,8 @@ s32_pos:
 
 ; ============================================================================
 ; rot_select — per-frame SMC specialization of the br_to_view rotation
-; call sites (SEL region: banked = the HUD's bank C window slack at $A400,
+; call sites (SEL region: banked = main $2C00 since 2026-07-10 — no code
+; in banks without explicit permission;
 ; flat = the free page below the quarter-square tables). Runs once per
 ; frame from br_view_setup with bank C paged; every store below targets
 ; resident MAIN, so bank state only matters for FETCHING this code.
