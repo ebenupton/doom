@@ -29,7 +29,7 @@ descends to lowest neighbour floor; type-36 floors use the same bottom.
 """
 import os
 
-assert os.environ.get('DOOM_ANIM') == '1', 'set DOOM_ANIM=1 before importing'
+# (DOOM_ANIM gate removed 2026-07-10: anim is the only variant)
 
 import doom_wireframe as dw
 from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, SD_FH, SD_CH, SD_BFH,

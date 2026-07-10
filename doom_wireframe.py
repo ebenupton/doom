@@ -365,7 +365,10 @@ def player_floor(x, y):
 # their bounding segs conservatively so heights become pure runtime
 # inputs for them.  Off by default: the build is byte-identical unless
 # DOOM_ANIM=1 (see anim_sectors.py for the runtime patcher).
-_ANIM_ENABLED = os.environ.get('DOOM_ANIM', '0') == '1'
+# 2026-07-10: the static ("walk") variant is DISCARDED — animated sectors
+# are the only build. One packed layout (662 segs, 469 verts) everywhere,
+# which is what lets the ROM layout be assembly-time constant.
+_ANIM_ENABLED = True
 _DOOR_SPECIALS = {1, 26, 27, 28, 31, 46, 61, 63, 86, 90, 103, 117, 118}
 _TAG_MOVER_SPECIALS = {          # sector found via tag; moving part:
     88: 'floor', 62: 'floor', 10: 'floor', 21: 'floor',   # lifts
