@@ -571,6 +571,8 @@ def _try_merge_svwh(a, b):
 _merged_segs = []
 _merged_ssectors = []
 _merge_count = 0
+import os as _os_mod
+_os_env_nochain = bool(_os_mod.environ.get('DOOM_NO_CHAINORD'))  # A/B probe
 for _ssi, (_count, _first) in enumerate(fp_ssectors):
     _out_first = len(_merged_segs)
     # Copy segs for this subsector, attempting to merge consecutive pairs.
@@ -593,7 +595,7 @@ for _ssi, (_count, _first) in enumerate(fp_ssectors):
     # closed loops (fully bounded subsectors) break at the lowest index
     # for determinism. Both pipelines consume the same reordered list, so
     # lockstep is preserved by construction.
-    if len(_out) > 2:
+    if len(_out) > 2 and not _os_env_nochain:
         _by_v1 = {}
         for _k, _sv in enumerate(_out):
             _by_v1.setdefault(_sv[0][0], _k)
