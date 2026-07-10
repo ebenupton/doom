@@ -59,9 +59,13 @@ VXC_YHI  = $B200
 VXC_YEXT = $B400
 .endif
 
-; local duplicate (slope_div.s precedent): angle byte written per frame
+; local duplicate (slope_div.s precedent): angle byte written per frame.
+; KEEP IN SYNC with BCA_WS in ang/header_div.s AND bsp/backface.s — this
+; TRIPLET missed the 2026-07-10 $3A00->$1B40 move and shipped a disc
+; where VXC never saw the angle change: every turn reused translation-
+; telescoped vertices (geometry collapse on rotation, forward fine).
 .if ::BANKED
-vxc_ab = $3A00+$2F                      ; = bca_ab (BCA_WS+$2F)
+vxc_ab = $1B40+$2F                      ; = bca_ab (BCA_WS+$2F)
 .else
 vxc_ab = $FA00+$2F
 .endif

@@ -35,6 +35,12 @@ def _w16(mem, addr, val):
 def build_banked(flatr):
     """flatr: a constructed BspRender6502 (flat). Returns a BankedMemory set up
     for the banked layout, sharing the same loaded tables."""
+    # Build the banked engine BEFORE reading its bins: without this, the
+    # region loop below loads whatever a PREVIOUS process linked — every
+    # consumer ran one build behind its sources (caught 2026-07-10 when a
+    # vxcache negative-test alternated PASS/FAIL run-to-run).
+    import asmbuild
+    asmbuild.build('engine', banked=1)
     fmem = flatr.sc.mpu.memory
     bm = BankedMemory(list(fmem))
     layout = dw.packed_layout

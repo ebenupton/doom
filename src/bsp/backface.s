@@ -416,7 +416,8 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 .import jt_bca_check, jt_bca_frame
 BCA_CHECK = jt_bca_check                ; JSR -> bbox_check_angle (point_to_angle inlined out)
 .if ::BANKED
-BCA_WS = $1B40
+BCA_WS = $1B40                          ; KEEP IN SYNC: twin in the other
+; header AND vxc_ab in bsp/vxcache.s (the triplet cost a broken disc 2026-07-10)
 .else
 BCA_WS = $FA00
 .endif
