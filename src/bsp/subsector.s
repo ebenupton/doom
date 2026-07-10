@@ -437,8 +437,8 @@ ft_no_rec:
    LDA #0
    STA zp_dcl_rec_buf_h
 ft_set_line:
-   LDA #0
-   STA zp_dcl_rec_buf
+; (rec_buf lo is never non-zero — both record pages are page-aligned;
+;  the per-seg prologue zeroes it once. Only _h arms/disarms.)
 ; Hand off to the horizontal s16 entry: X names the sy pair (same
 ; offset in both vertex structs); SC_DRAW_S16_H fetches x from
 ; zp_seg_sx1/sx2 and the y pair from VX1+X/VX2+X itself — no staging
@@ -447,10 +447,8 @@ ft_set_line:
    LDX #zp_seg_sy1_top_lo - VX1            ; sy pair offset (top)
    PAGE BANK_C
    JSR SC_DRAW_S16_H
-   LDA #0
-   STA zp_dcl_rec_buf
-   STA zp_dcl_rec_buf_h
-; records off again (draw may have consumed them)
+; (no disarm: every later DCL entry in this seg sets _h itself, and the
+;  defq snapshot reads the $0700/$0800 COUNTS, not the pointer)
 ft_skip:
 
 ; --- Emit bottom horizontal (front-sector floor): (sx1,fb1)→(sx2,fb2) ---
@@ -499,14 +497,9 @@ fb_no_rec:
    LDA #0
    STA zp_dcl_rec_buf_h
 fb_set_line:
-   LDA #0
-   STA zp_dcl_rec_buf
    LDX #zp_seg_sy1_bot_lo - VX1            ; sy pair offset (bot)
    PAGE BANK_C
    JSR SC_DRAW_S16_H
-   LDA #0
-   STA zp_dcl_rec_buf
-   STA zp_dcl_rec_buf_h
 fb_skip:
 
 ; --- Portal step edges (back ceiling / floor) ---
@@ -526,17 +519,11 @@ step_cont:                              ;  pushed the branch out of range)
    AND #$04
    BEQ step_no_top
    LDX #zp_seg_sy1_btop_lo - VX1            ; sy pair offset (btop)
-   LDA #0
-   STA zp_dcl_rec_buf
    LDA #$07
    STA zp_dcl_rec_buf_h
 ; TOP_RECORDS = $0700
    PAGE BANK_C
    JSR SC_DRAW_S16_H
-   LDA #0
-   STA zp_dcl_rec_buf
-   STA zp_dcl_rec_buf_h
-; reset records pointer
 step_no_top:
 
 ; Back floor step if NEEDBB (= $08) set: emit (sx1, bb1) → (sx2, bb2).
@@ -544,16 +531,11 @@ step_no_top:
    AND #$08
    BEQ step_no_bot
    LDX #zp_seg_sy1_bbot_lo - VX1            ; sy pair offset (bbot)
-   LDA #0
-   STA zp_dcl_rec_buf
    LDA #$08
    STA zp_dcl_rec_buf_h
 ; BOT_RECORDS = $0800
    PAGE BANK_C
    JSR SC_DRAW_S16_H
-   LDA #0
-   STA zp_dcl_rec_buf
-   STA zp_dcl_rec_buf_h
 step_no_bot:
 step_skip:
 
