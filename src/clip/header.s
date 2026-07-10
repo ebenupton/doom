@@ -69,7 +69,7 @@ ina
 ; these; the Python harness finds them through the symbol map).
 .export jt_init, jt_mark_solid, jt_has_gap, jt_is_full
 .export jt_read, jt_interp_store, jt_draw_clip
-.export jt_tighten_from_records, jt_draw_clip_s16, jt_umul8, jt_udiv16_8
+.export jt_tighten_from_records, jt_draw_clip_s16, jt_draw_clip_s16_h, jt_umul8, jt_udiv16_8
 
 ; --- Jump table: fixed entry points for each public operation ---
 ; Callers (Python harness, game engine) JSR to $2000 + 3*N.
@@ -103,6 +103,7 @@ jt_tighten_from_records: JMP tighten_from_records                ; $201B
 jt_draw_clip_s16: JMP draw_clipped_line_s16               ; $201E
 jt_umul8: JMP umul8                               ; $2021  (exported for bsp_render.asm)
 jt_udiv16_8: JMP udiv16_8                            ; $2024  (exported for bsp_render.asm)
+jt_draw_clip_s16_h: JMP draw_clipped_line_s16_h             ; $2027  (x from seg struct)
 
 ; umul8 pin: flat build pins it at $2030 (legacy; bsp_render now has its own
 ; local copy so the pin is no longer strictly needed, but kept to keep the flat

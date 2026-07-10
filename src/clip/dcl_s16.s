@@ -510,6 +510,28 @@ si_return_y1:
 ;   if xl > xr: swap endpoints                # clip can reorder (rare)
 ;   if xl == xr and yl == yr: reject          # clipped to a point
 ;   goto draw_clipped_line
+; --- draw_clipped_line_s16_h: horizontal-emit entry -------------------
+; Every horizontal seg line (ft/fb/bt/bb) shares the same s16 x pair, so
+; the x endpoints come straight from the LIVE seg struct (zp_seg_sx1/2 —
+; the emitters cannot park them in zp_line_*: this clipper normalizes
+; those slots in place). Callers stage only the y pair. The two x hi
+; bytes pass through A on the way in, folding the classic entry's 4-OR
+; fast-path test down to a 3-OR.
+draw_clipped_line_s16_h:
+   LDA zp_seg_sx1_lo
+   STA zp_line_xl_lo
+   LDA zp_seg_sx2_lo
+   STA zp_line_xr_lo
+   LDA zp_seg_sx1_hi
+   STA zp_line_xl_hi
+   LDA zp_seg_sx2_hi
+   STA zp_line_xr_hi
+   ORA zp_line_xl_hi
+   ORA zp_line_yl_hi
+   ORA zp_line_yr_hi
+   BEQ dcl16_fastu8
+   JMP dcl16_mainclip
+
 draw_clipped_line_s16:
 .scope
 ; ---- Order endpoints / reject the degenerate point ----
@@ -535,6 +557,7 @@ draw_clipped_line_s16:
    ORA zp_line_xr_hi
    ORA zp_line_yr_hi
    BNE main_clip
+::dcl16_fastu8:
    LDA zp_line_xl_lo
    CMP zp_line_xr_lo
    BEQ fp_x_eq
@@ -561,6 +584,7 @@ fp_swap:
    JMP draw_clipped_line
 
 main_clip:
+::dcl16_mainclip:
 ; ---- Slow path: same contract on full s16 values, BEFORE the clip
 ; (the wrapper swapped before clipping; clipping a reversed line and
 ; re-ordering afterwards is NOT rounding-identical) ----

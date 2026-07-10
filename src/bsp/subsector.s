@@ -439,26 +439,20 @@ ft_no_rec:
 ft_set_line:
    LDA #0
    STA zp_dcl_rec_buf
-; Stage the s16 line (lo bytes → zp_line_*, hi bytes → LC_*_HI $B2-$B5)
-; and hand it to the s16 clip + draw pipeline.
-   LDA zp_seg_sx1_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xl_hi
+; Stage the s16 y pair and hand off to the horizontal s16 entry —
+; SC_DRAW_S16_H reads the x pair straight from zp_seg_sx1/sx2 (all
+; horizontal seg lines share them; the zp_line_* slots don't survive
+; the clipper's in-place normalization, so they can't be seg-hoisted).
    LDA zp_seg_sy1_top_lo
    STA zp_line_yl_lo
    LDA zp_seg_sy1_top_hi
    STA zp_line_yl_hi
-   LDA zp_seg_sx2_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xr_hi
    LDA zp_seg_sy2_top_lo
    STA zp_line_yr_lo
    LDA zp_seg_sy2_top_hi
    STA zp_line_yr_hi
    PAGE BANK_C
-   JSR SC_DRAW_S16
+   JSR SC_DRAW_S16_H
    LDA #0
    STA zp_dcl_rec_buf
    STA zp_dcl_rec_buf_h
@@ -513,24 +507,16 @@ fb_no_rec:
 fb_set_line:
    LDA #0
    STA zp_dcl_rec_buf
-   LDA zp_seg_sx1_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xl_hi
    LDA zp_seg_sy1_bot_lo
    STA zp_line_yl_lo
    LDA zp_seg_sy1_bot_hi
    STA zp_line_yl_hi
-   LDA zp_seg_sx2_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xr_hi
    LDA zp_seg_sy2_bot_lo
    STA zp_line_yr_lo
    LDA zp_seg_sy2_bot_hi
    STA zp_line_yr_hi
    PAGE BANK_C
-   JSR SC_DRAW_S16
+   JSR SC_DRAW_S16_H
    LDA #0
    STA zp_dcl_rec_buf
    STA zp_dcl_rec_buf_h
@@ -552,18 +538,10 @@ step_cont:                              ;  pushed the branch out of range)
    LDA zp_seg_flags
    AND #$04
    BEQ step_no_top
-   LDA zp_seg_sx1_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xl_hi
    LDA zp_seg_sy1_btop_lo
    STA zp_line_yl_lo
    LDA zp_seg_sy1_btop_hi
    STA zp_line_yl_hi
-   LDA zp_seg_sx2_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xr_hi
    LDA zp_seg_sy2_btop_lo
    STA zp_line_yr_lo
    LDA zp_seg_sy2_btop_hi
@@ -574,7 +552,7 @@ step_cont:                              ;  pushed the branch out of range)
    STA zp_dcl_rec_buf_h
 ; TOP_RECORDS = $0700
    PAGE BANK_C
-   JSR SC_DRAW_S16
+   JSR SC_DRAW_S16_H
    LDA #0
    STA zp_dcl_rec_buf
    STA zp_dcl_rec_buf_h
@@ -585,18 +563,10 @@ step_no_top:
    LDA zp_seg_flags
    AND #$08
    BEQ step_no_bot
-   LDA zp_seg_sx1_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xl_hi
    LDA zp_seg_sy1_bbot_lo
    STA zp_line_yl_lo
    LDA zp_seg_sy1_bbot_hi
    STA zp_line_yl_hi
-   LDA zp_seg_sx2_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xr_hi
    LDA zp_seg_sy2_bbot_lo
    STA zp_line_yr_lo
    LDA zp_seg_sy2_bbot_hi
@@ -607,7 +577,7 @@ step_no_top:
    STA zp_dcl_rec_buf_h
 ; BOT_RECORDS = $0800
    PAGE BANK_C
-   JSR SC_DRAW_S16
+   JSR SC_DRAW_S16_H
    LDA #0
    STA zp_dcl_rec_buf
    STA zp_dcl_rec_buf_h

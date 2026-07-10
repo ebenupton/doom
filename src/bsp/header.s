@@ -211,7 +211,9 @@ jt_anim_init: JMP anim_init                          ; +$21
 .import jt_mark_solid, jt_has_gap, jt_is_full
 .import seg_zero_rec_solid
 .import jt_tighten_from_records, jt_draw_clip, jt_draw_clip_s16
+.import jt_draw_clip_s16_h
 SC_DRAW_S16 = jt_draw_clip_s16
+SC_DRAW_S16_H = jt_draw_clip_s16_h        ; horizontal: x read from zp_seg_sx1/2
 SC_DRAW_U8 = jt_draw_clip                ; standalone DCL (u8 input, no clipper prelude)
 SC_MARK_SOLID = jt_mark_solid
 SC_TIGHTEN_FROM_RECORDS = jt_tighten_from_records
