@@ -874,7 +874,7 @@ ues_fail:
 ; s16 line clipper — generic first cut
 ;
 ; Wrapper writes 8 bytes of s16 input (4 endpoints × 2 bytes) to
-; LC_X1_LO..LC_Y2_HI in scratch RAM, then JSRs $201E. Routine clips
+; zp_line_xl..zp_line_yr_hi in scratch RAM, then JSRs $201E. Routine clips
 ; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl/yl/xr/yr,
 ; then falls through to draw_clipped_line (existing DCL pipeline).
 ;
@@ -895,10 +895,8 @@ ues_fail:
 ; during emission), but the wrapper rewrites them before each call,
 ; so there's no conflict. ZP access shaves ~7 cycles off the in-range
 ; fast-path detect (4 ORAs of zp vs absolute).
-LC_X1_LO = zp_line_xl
-LC_Y1_LO = zp_line_yl
-LC_X2_LO = zp_line_xr
-LC_Y2_LO = zp_line_yr
+; (LC_*_LO alias layer removed 2026-07-10: the s16 clipper reads the
+; zp_line_* slots by their real names.)
 ; ---- saved originals for interp (snapped at start of x-clip / y-clip) ----
 LC_OX1_LO = $0938
 LC_OX1_HI = $0939

@@ -36,10 +36,10 @@ BOT_RECORDS = _sym('BOT_RECORDS')
 REC_BYTES = 4   # one record per surviving DCL segment: (xl, yl, xr, yr)
 
 # s16 line clipper hi bytes (ZP, alias CB-clip / secondary-seg block).
-LC_X1_HI = _sym('LC_X1_HI')
-LC_Y1_HI = _sym('LC_Y1_HI')
-LC_X2_HI = _sym('LC_X2_HI')
-LC_Y2_HI = _sym('LC_Y2_HI')
+zp_line_xl_hi = _sym('zp_line_xl_hi')
+zp_line_yl_hi = _sym('zp_line_yl_hi')
+zp_line_xr_hi = _sym('zp_line_xr_hi')
+zp_line_yr_hi = _sym('zp_line_yr_hi')
 
 # DCL records-hook ZP slots
 ZP_DCL_REC_BUF   = _sym('zp_dcl_rec_buf')
@@ -536,10 +536,10 @@ class SpanClip6502:
         mem[ZP_LINE_YL] = yl & 0xFF
         mem[ZP_LINE_XR] = xr & 0xFF
         mem[ZP_LINE_YR] = yr & 0xFF
-        mem[LC_X1_HI] = (xl >> 8) & 0xFF
-        mem[LC_Y1_HI] = (yl >> 8) & 0xFF
-        mem[LC_X2_HI] = (xr >> 8) & 0xFF
-        mem[LC_Y2_HI] = (yr >> 8) & 0xFF
+        mem[zp_line_xl_hi] = (xl >> 8) & 0xFF
+        mem[zp_line_yl_hi] = (yl >> 8) & 0xFF
+        mem[zp_line_xr_hi] = (xr >> 8) & 0xFF
+        mem[zp_line_yr_hi] = (yr >> 8) & 0xFF
         if records_buf is not None:
             mem[ZP_DCL_REC_BUF]   = records_buf & 0xFF
             mem[ZP_DCL_REC_BUF_H] = (records_buf >> 8) & 0xFF

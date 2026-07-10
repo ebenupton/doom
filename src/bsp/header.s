@@ -231,7 +231,7 @@ sqr2_lo = $A700
 sqr2_hi = $A800
 .endif
 
-; span_clip's line ZP (also LC_X*_LO aliases for the s16 clipper)
+; span_clip's line ZP (zp_line_* lo bytes + zp_line_*_hi for the s16 clipper)
 
 ; ============================================================================
 ; br_umul8 — wraps span_clip's umul8 for testing. Inputs in zp_br_a, zp_br_b.

@@ -686,13 +686,13 @@ ap_edge_one:
    LDA VX1+9,X                             ; sy_btop
    STA zp_line_yl
    LDA VX1+10,X
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    JMP ap_bot
 ap_top_ft:
    LDA VX1+5,X                             ; sy_top
    STA zp_line_yl
    LDA VX1+6,X
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
 ap_bot:
    LDA zp_seg_flags
    AND #$08
@@ -700,13 +700,13 @@ ap_bot:
    LDA VX1+11,X                            ; sy_bbot
    STA zp_line_yr
    LDA VX1+12,X
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JMP ap_emit_y
 ap_bot_fb:
    LDA VX1+7,X                             ; sy_bot
    STA zp_line_yr
    LDA VX1+8,X
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JMP ap_emit_y
 ap_solid:
    CPX #0
@@ -715,19 +715,19 @@ ap_solid:
    LDA VX1+11,X
    STA zp_line_yl
    LDA VX1+12,X
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA VX1+9,X
    STA zp_line_yr
    LDA VX1+10,X
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
 ap_emit_y:
 ; vertical at the endpoint's sx (struct slots)
    LDA VX1+3,X
    STA zp_line_xl
    STA zp_line_xr
    LDA VX1+4,X
-   STA LC_X1_HI
-   STA LC_X2_HI
+   STA zp_line_xl_hi
+   STA zp_line_xr_hi
    LDA #0
    STA zp_dcl_rec_buf_h
    PAGE BANK_C
@@ -780,7 +780,7 @@ a2_have_recip:
    LDA zp_br_resl
    STA zp_line_yl
    LDA zp_br_resh
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
 ; bfh2' = project(APV2_FH - vz)  (FHCH byte 5; br_project_y left L2 paged)
    PAGE BANK_L0
    LDY #5
@@ -792,7 +792,7 @@ a2_have_recip:
    LDA zp_br_resl
    STA zp_line_yr
    LDA zp_br_resh
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JMP emit_vert_sx2
 .endscope
 

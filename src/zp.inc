@@ -253,16 +253,16 @@ zp_seg_start_x = $B0              ; [clip]; u8, $FF = NULL (no segment started)
 zp_seg_start_y = $B1              ; [clip]; u8, Y at seg_start_x
 ; --- $B2: overlay group (3 phase-disjoint users) ---
 zp_cb_cx1 = $B2                   ; [clip]; u8, clipped left X
-LC_X1_HI = $B2                    ; [clip]
+zp_line_xl_hi = $B2                    ; [clip]
 ; --- $B3: overlay group (3 phase-disjoint users) ---
 zp_cb_cy1 = $B3                   ; [clip]; u8, clipped left Y (line Y at cx1)
-LC_Y1_HI = $B3                    ; [clip]
+zp_line_yl_hi = $B3                    ; [clip]
 ; --- $B4: overlay group (3 phase-disjoint users) ---
 zp_cb_cx2 = $B4                   ; [clip]; u8, clipped right X
-LC_X2_HI = $B4                    ; [clip]
+zp_line_xr_hi = $B4                    ; [clip]
 ; --- $B5: overlay group (3 phase-disjoint users) ---
 zp_cb_cy2 = $B5                   ; [clip]; u8, clipped right Y (line Y at cx2)
-LC_Y2_HI = $B5                    ; [clip]
+zp_line_yr_hi = $B5                    ; [clip]
 ; --- $B6: overlay group (4 phase-disjoint users) ---
 zp_cb_top1 = $B6                  ; [clip]; u8, span top at cx1
 ; --- $B7: overlay group (3 phase-disjoint users) ---

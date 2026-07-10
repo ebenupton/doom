@@ -30,7 +30,7 @@
 ;
 ; Line emission contract (clipper interface):
 ;   zp_line_xl/yl/xr/yr ($A8-$AB) = endpoint lo bytes,
-;   $B2-$B5 (LC_X1_HI..LC_Y2_HI)  = endpoint s16 hi bytes → SC_DRAW_S16.
+;   $B2-$B5 (zp_line_xl_hi..zp_line_yr_hi)  = endpoint s16 hi bytes → SC_DRAW_S16.
 ;   $BC/$BD (zp_dcl_rec_buf) = per-span records buffer: hi byte $00 =
 ;   records off, $07 → TOP_RECORDS ($0700), $08 → BOT_RECORDS ($0800).
 ;   $C2/$C3 (zp_ilo/zp_ihi) = column range for has_gap / defq ops.
@@ -444,19 +444,19 @@ ft_set_line:
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA LC_X1_HI
+   STA zp_line_xl_hi
    LDA zp_seg_sy1_top_lo
    STA zp_line_yl
    LDA zp_seg_sy1_top_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA LC_X2_HI
+   STA zp_line_xr_hi
    LDA zp_seg_sy2_top_lo
    STA zp_line_yr
    LDA zp_seg_sy2_top_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    PAGE BANK_C
    JSR SC_DRAW_S16
    LDA #0
@@ -516,19 +516,19 @@ fb_set_line:
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA LC_X1_HI
+   STA zp_line_xl_hi
    LDA zp_seg_sy1_bot_lo
    STA zp_line_yl
    LDA zp_seg_sy1_bot_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA LC_X2_HI
+   STA zp_line_xr_hi
    LDA zp_seg_sy2_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bot_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    PAGE BANK_C
    JSR SC_DRAW_S16
    LDA #0
@@ -555,19 +555,19 @@ step_cont:                              ;  pushed the branch out of range)
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA LC_X1_HI
+   STA zp_line_xl_hi
    LDA zp_seg_sy1_btop_lo
    STA zp_line_yl
    LDA zp_seg_sy1_btop_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA LC_X2_HI
+   STA zp_line_xr_hi
    LDA zp_seg_sy2_btop_lo
    STA zp_line_yr
    LDA zp_seg_sy2_btop_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    LDA #0
    STA zp_dcl_rec_buf
    LDA #$07
@@ -588,19 +588,19 @@ step_no_top:
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA LC_X1_HI
+   STA zp_line_xl_hi
    LDA zp_seg_sy1_bbot_lo
    STA zp_line_yl
    LDA zp_seg_sy1_bbot_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA LC_X2_HI
+   STA zp_line_xr_hi
    LDA zp_seg_sy2_bbot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bbot_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    LDA #0
    STA zp_dcl_rec_buf
    LDA #$08
@@ -637,11 +637,11 @@ step_skip:
    LDA zp_seg_sy1_top_lo
    STA zp_line_yl
    LDA zp_seg_sy1_top_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sy1_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy1_bot_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JSR emit_vert_sx1
    JMP skip_lvert
 lvert_portal:
@@ -652,11 +652,11 @@ lvert_portal:
    LDA zp_seg_sy1_top_lo
    STA zp_line_yl
    LDA zp_seg_sy1_top_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sy1_btop_lo
    STA zp_line_yr
    LDA zp_seg_sy1_btop_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JSR emit_vert_sx1
 lvert_no_top:
 ; NEEDBB? bottom piece bb1 → fb1
@@ -666,11 +666,11 @@ lvert_no_top:
    LDA zp_seg_sy1_bbot_lo
    STA zp_line_yl
    LDA zp_seg_sy1_bbot_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sy1_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy1_bot_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JSR emit_vert_sx1
 skip_lvert:
 
@@ -687,11 +687,11 @@ skip_lvert:
    LDA zp_seg_sy2_top_lo
    STA zp_line_yl
    LDA zp_seg_sy2_top_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sy2_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bot_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JSR emit_vert_sx2
    JMP skip_rvert
 rvert_portal:
@@ -701,11 +701,11 @@ rvert_portal:
    LDA zp_seg_sy2_top_lo
    STA zp_line_yl
    LDA zp_seg_sy2_top_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sy2_btop_lo
    STA zp_line_yr
    LDA zp_seg_sy2_btop_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JSR emit_vert_sx2
 rvert_no_top:
    LDA zp_seg_flags
@@ -714,11 +714,11 @@ rvert_no_top:
    LDA zp_seg_sy2_bbot_lo
    STA zp_line_yl
    LDA zp_seg_sy2_bbot_hi
-   STA LC_Y1_HI
+   STA zp_line_yl_hi
    LDA zp_seg_sy2_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bot_hi
-   STA LC_Y2_HI
+   STA zp_line_yr_hi
    JSR emit_vert_sx2
 skip_rvert:
 
@@ -848,11 +848,11 @@ emit_vert_sx1:
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA LC_X1_HI
+   STA zp_line_xl_hi
    LDA zp_seg_sx1_lo
    STA zp_line_xr
    LDA zp_seg_sx1_hi
-   STA LC_X2_HI
+   STA zp_line_xr_hi
    LDA #0
    STA zp_dcl_rec_buf_h
    PAGE BANK_C
@@ -863,11 +863,11 @@ emit_vert_sx2:
    LDA zp_seg_sx2_lo
    STA zp_line_xl
    LDA zp_seg_sx2_hi
-   STA LC_X1_HI
+   STA zp_line_xl_hi
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA LC_X2_HI
+   STA zp_line_xr_hi
    LDA #0
    STA zp_dcl_rec_buf_h
    PAGE BANK_C
