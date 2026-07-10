@@ -56,10 +56,10 @@ ZP_I_Y1  = _sym('zp_i_y1')
 ZP_DIV_DEN = _sym('zp_div_den')
 ZP_BUF   = _sym('zp_buf')
 ZP_MS_EMIT = _sym('zp_ms_emit')
-ZP_LINE_XL = _sym('zp_line_xl')
-ZP_LINE_YL = _sym('zp_line_yl')
-ZP_LINE_XR = _sym('zp_line_xr')
-ZP_LINE_YR = _sym('zp_line_yr')
+ZP_LINE_XL = _sym('zp_line_xl_lo')
+ZP_LINE_YL = _sym('zp_line_yl_lo')
+ZP_LINE_XR = _sym('zp_line_xr_lo')
+ZP_LINE_YR = _sym('zp_line_yr_lo')
 # Secondary seg Y values (u8), also aliased as the s16 DCL input hi bytes
 
 # Pool
@@ -516,7 +516,7 @@ class SpanClip6502:
         Inputs are s16 (raw BSP/transform values, can be negative or > 255).
         The 6502 ENTRY_DRAW_CLIP_S16 entry checks if the line is already in
         u8 range; if so it tail-calls DCL directly (the wrapper has already
-        written zp_line_xl/yl/xr/yr). Out-of-range lines hit the slow
+        written zp_line_xl_lo/yl/xr/yr). Out-of-range lines hit the slow
         clipping path. Returns list of emitted (x1, y1, x2, y2) segments.
         """
         mem = self.mpu.memory

@@ -7,7 +7,7 @@
 ; No CB clip (ambiguous cases skipped), no portal continuation
 ; (each span is considered independently).
 ;
-; Inputs (ZP): zp_line_xl, zp_line_yl, zp_line_xr, zp_line_yr
+; Inputs (ZP): zp_line_xl_lo, zp_line_yl_lo, zp_line_xr_lo, zp_line_yr_lo
 ; The line MUST be oriented left-to-right (xl <= xr).
 ; All Y values u8, biased by Y_BIAS (visible rows [0,159] -> [48,207]).
 ;   zp_head                = first slot of the sorted active span list
@@ -43,25 +43,25 @@
 draw_clipped_line:
 .scope
 ; --- Vertical fast path: xl == xr (trampoline — dcl_vertical out of BEQ range) ---
-   LDA zp_line_xl
-   CMP zp_line_xr
+   LDA zp_line_xl_lo
+   CMP zp_line_xr_lo
    BNE dcl_not_vert
    JMP dcl_vertical
 dcl_not_vert:
 ; --- Compute dx, dy, ylo, yhi ---
-   LDA zp_line_xr
+   LDA zp_line_xr_lo
    SEC
-   SBC zp_line_xl
+   SBC zp_line_xl_lo
    STA zp_line_dx
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    SEC
-   SBC zp_line_yl
+   SBC zp_line_yl_lo
    STA zp_line_dy
 
 ; Y bounding box: ylo = min(yl, yr), yhi = max(yl, yr)
-   LDA zp_line_yl
-   LDX zp_line_yr
-   CMP zp_line_yr
+   LDA zp_line_yl_lo
+   LDX zp_line_yr_lo
+   CMP zp_line_yr_lo
    BCC dcl_yl_lo
 ; yl >= yr: yhi=yl, ylo=yr
    STA zp_line_yhi
@@ -103,7 +103,7 @@ dcl_walk2:
 
 ; --- Skip spans entirely left of line ---
 ; Skip if xend <= xl (strict: pixel-center model)
-   LDA zp_line_xl
+   LDA zp_line_xl_lo
    CMP POOL_XEND,X
    BCC dcl_not_left
 ; xl >= xend → skip this span (inline advance)
@@ -116,23 +116,23 @@ dcl_not_left:
 ; --- Skip spans entirely right of line ---
 ; Done if xstart >= xr (all remaining spans are further right)
    LDA POOL_XSTART,X
-   CMP zp_line_xr
+   CMP zp_line_xr_lo
    BCC dcl_in_range
    JMP dcl_flush                           ; xstart >= xr → done
 dcl_in_range:
 
 ; --- Compute overlap ---
 ; ox0 = max(xstart, xl) — A already holds POOL_XSTART,X from skip check
-   CMP zp_line_xl
+   CMP zp_line_xl_lo
    BCS dcl_ox0_ok
-   LDA zp_line_xl
+   LDA zp_line_xl_lo
 dcl_ox0_ok:
    STA zp_ox0
 ; ox1 = min(xend, xr)
    LDA POOL_XEND,X
-   CMP zp_line_xr
+   CMP zp_line_xr_lo
    BCC dcl_ox1_ok
-   LDA zp_line_xr
+   LDA zp_line_xr_lo
 dcl_ox1_ok:
    STA zp_ox1
 
@@ -156,16 +156,16 @@ dcl_entry_path:
 ; (the slot4 over-draw at 845,-3084,215).  The full-line bbox is
 ; conservative: it never wrongly accepts/rejects; CB clip refines.
 ; (X = span slot must be preserved for the Tier checks below.)
-   LDA zp_line_yl
-   CMP zp_line_yr
+   LDA zp_line_yl_lo
+   CMP zp_line_yr_lo
    BCS dcl_ep_yge
    STA zp_line_ylo
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_line_yhi
    JMP dcl_ep_done
 dcl_ep_yge:
    STA zp_line_yhi
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_line_ylo
 dcl_ep_done:
 
@@ -209,11 +209,11 @@ dcl_ambiguous:
 ;   ox0 == xl  → A = yl      (common: line starts at/before span)
 ;   dy == 0    → A = yl      (flat line, y constant everywhere)
 ;   else       → A = interp  (rare: line enters span mid-way)
-; The rare interp path uses BIT abs to skip the LDA zp_line_yl.
+; The rare interp path uses BIT abs to skip the LDA zp_line_yl_lo.
 dcl_accept:
    LDA zp_ox0
    STA zp_seg_start_x
-   CMP zp_line_xl
+   CMP zp_line_xl_lo
    BEQ dcl_accept_yl
 ; ox0 == xl → yl
    LDA zp_line_dy
@@ -225,7 +225,7 @@ dcl_accept:
    LDX zp_save0
    .byte $2C                               ; BIT abs: skip LDA
 dcl_accept_yl:
-   LDA zp_line_yl
+   LDA zp_line_yl_lo
    STA zp_seg_start_y
 ; (Records hook moved to dcl_emit_segment — one record per surviving
 ;  segment, not per-span.)
@@ -235,7 +235,7 @@ dcl_exit_check:
 ; ========== EXIT CHECK ==========
 ; Does the line end within this span? (xr <= xend)
    LDA POOL_XEND,X
-   CMP zp_line_xr
+   CMP zp_line_xr_lo
    BCC dcl_extends_past
 ; xend < xr → extends past
 ; xend >= xr: line ends within this span
@@ -273,24 +273,24 @@ dcl_is_abutting:
    LDA zp_line_dy
    BEQ dcl_pp_use_yr
    LDA POOL_XEND,X
-   CMP zp_line_xr
+   CMP zp_line_xr_lo
    BEQ dcl_pp_use_yr
    LDA POOL_XEND,X
    JSR dcl_line_y_at_a
    .byte $2C                               ; BIT abs: skip LDA yr
 dcl_pp_use_yr:
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
 ; bbox of the line over [boundary, xr] = [min(ly,yr), max(ly,yr)].
    STA zp_tmp2                             ; ly (A)
-   CMP zp_line_yr
+   CMP zp_line_yr_lo
    BCS dcl_pp_ly_ge
    STA zp_tmp0
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_tmp1
 ; ly < yr: lo=ly, hi=yr
    JMP dcl_pp_bbox
 dcl_pp_ly_ge:
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_tmp0
    LDA zp_tmp2
    STA zp_tmp1
@@ -328,7 +328,7 @@ dcl_exit_no_portal:
    LDX zp_save0
    LDA POOL_XEND,X
    STA zp_ox1                              ; end_x = xend of current span
-   CMP zp_line_xr
+   CMP zp_line_xr_lo
    BEQ dcl_exit_use_yr
    LDA zp_line_dy
    BEQ dcl_exit_use_yr
@@ -338,7 +338,7 @@ dcl_exit_no_portal:
    JSR dcl_line_y_at_a
    .byte $2C                               ; BIT abs: skip LDA yr
 dcl_exit_use_yr:
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
 dcl_exit_emit:
 ; A = end_y
    STA zp_tmp0
@@ -355,10 +355,10 @@ dcl_exit_emit:
 dcl_line_ends:
 ; Line ends within this span. Emit seg_start → (xr, yr)
    STX zp_save0
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_tmp0
 ; end_y = yr
-   LDA zp_line_xr
+   LDA zp_line_xr_lo
    STA zp_ox1
 ; end_x = xr
    JMP dcl_emit_segment                    ; tail call (was JSR+RTS): -9 cyc, line fully consumed
@@ -370,9 +370,9 @@ dcl_flush:
    LDA zp_seg_start_x
    CMP #$FF
    BEQ dcl_done
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_tmp0
-   LDA zp_line_xr
+   LDA zp_line_xr_lo
    STA zp_ox1
    JSR dcl_emit_segment
 dcl_done:
@@ -384,7 +384,7 @@ dcl_done:
 ; emit single vertical line segment.  Matches Python's draw_clipped
 ; vertical path (break on first span containing ix).
 ;
-; Inputs:  zp_line_xl (== xr), zp_line_yl, zp_line_yr; zp_head.
+; Inputs:  zp_line_xl_lo (== xr), zp_line_yl_lo, zp_line_yr_lo; zp_head.
 ; Output:  at most one segment to LINE_OUT_BUF + plot_v; no records
 ;          (vertical lines carry no tighten information).
 ; Pseudocode:
@@ -397,9 +397,9 @@ dcl_done:
 ;       return                           # first containing span only
 dcl_vertical:
 ; Compute ylo/yhi (dx/dy not needed for verticals)
-   LDA zp_line_yl
-   LDX zp_line_yr
-   CMP zp_line_yr
+   LDA zp_line_yl_lo
+   LDX zp_line_yr_lo
+   CMP zp_line_yr_lo
    BCC dv_yl_lo
    STA zp_line_yhi
    STX zp_line_ylo
@@ -416,11 +416,11 @@ dv_walk:
 dv_check:
 ; Skip if xend < xl (span entirely left of column — strict)
    LDA POOL_XEND,X
-   CMP zp_line_xl
+   CMP zp_line_xl_lo
    BCC dv_next
 ; Done if xstart > xl (span entirely right of column; list sorted)
    LDA POOL_XSTART,X
-   CMP zp_line_xl
+   CMP zp_line_xl_lo
    BEQ dv_in
    BCC dv_in
    RTS
@@ -446,7 +446,7 @@ dv_top_interp:
    STA zp_i_y0
    LDA POOL_TR,X
    STA zp_i_y1
-   LDA zp_line_xl
+   LDA zp_line_xl_lo
    JSR interp_store
    STA zp_cb_top1
 dv_top_done:
@@ -466,7 +466,7 @@ dv_bot_interp:
    STA zp_i_y0
    LDA POOL_BR,X
    STA zp_i_y1
-   LDA zp_line_xl
+   LDA zp_line_xl_lo
    JSR interp_store
    STA zp_cb_bot1
 dv_bot_done:
@@ -496,7 +496,7 @@ dv_emit:
 ; rasteriser ZP args, un-biasing Y (biased [48,207] -> screen [0,159]),
 ; then tail-call the dedicated vertical plotter.
    LDY LINE_OUT_COUNT
-   LDA zp_line_xl
+   LDA zp_line_xl_lo
    STA LINE_OUT_BUF,Y
    STA RASTER_ZP_X0
    INY
@@ -506,7 +506,7 @@ dv_emit:
    STA LINE_OUT_BUF,Y
    STA RASTER_ZP_Y0
    INY
-   LDA zp_line_xl
+   LDA zp_line_xl_lo
    STA LINE_OUT_BUF,Y
    STA RASTER_ZP_X1
    INY
@@ -567,11 +567,11 @@ dcl_cb_clip:
 ; within CB clip can call interp_store directly (no shuffle).
 ; Span eval (top/bot) clobbers the workspace; dcl_cb_line_mode
 ; restores it afterward.
-   LDA zp_line_xl
+   LDA zp_line_xl_lo
    STA zp_i_x0
-   LDA zp_line_yl
+   LDA zp_line_yl_lo
    STA zp_i_y0
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_i_y1
    LDA zp_line_dx
    STA zp_div_den
@@ -580,7 +580,7 @@ dcl_cb_clip:
 ; dy==0 fast path: flat line → cy1 = cy2 = yl
    LDA zp_line_dy
    BNE dcl_cb_cy_slow
-   LDA zp_line_yl
+   LDA zp_line_yl_lo
    STA zp_cb_cy1
    STA zp_cb_cy2
    JMP dcl_cb_cy_done
@@ -588,24 +588,24 @@ dcl_cb_cy_slow:
 ; cy1 = line_y_at(cx1). CMP preserves A, so interp reuses it.
 ; Interp workspace already in line-mode — call interp_store directly.
    LDA zp_cb_cx1
-   CMP zp_line_xl
+   CMP zp_line_xl_lo
    BEQ dcl_cb_cy1_yl
    JSR interp_store
    .byte $2C
 ; BIT abs: skip LDA
 dcl_cb_cy1_yl:
-   LDA zp_line_yl
+   LDA zp_line_yl_lo
    STA zp_cb_cy1
 
 ; cy2 = line_y_at(cx2)
    LDA zp_cb_cx2
-   CMP zp_line_xr
+   CMP zp_line_xr_lo
    BEQ dcl_cb_cy2_yr
    JSR interp_store
    .byte $2C
 ; BIT abs: skip LDA
 dcl_cb_cy2_yr:
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    STA zp_cb_cy2
 dcl_cb_cy_done:
 
@@ -1278,7 +1278,7 @@ yb_reject:
 .endscope
 
 ; --- line_interp_store: compute line Y at column A ---
-; Reads directly from zp_line_xl/yl/yr/dx — no shuffle into the
+; Reads directly from zp_line_xl_lo/yl/yr/dx — no shuffle into the
 ; interp workspace needed.  Defers div_den setup past offset-zero
 ; and offset-max shortcuts.
 ; Input: A = x column.  Output: A = line Y.
@@ -1303,7 +1303,7 @@ dcl_line_y_at_a:
 line_interp_store:
 .scope
    SEC
-   SBC zp_line_xl
+   SBC zp_line_xl_lo
    BEQ lis_yl
 ; offset=0 → yl
    CMP zp_line_dx
@@ -1313,33 +1313,33 @@ line_interp_store:
    LDY zp_line_dx
    STY zp_div_den
 ; Direction check
-   LDA zp_line_yr
-   CMP zp_line_yl
+   LDA zp_line_yr_lo
+   CMP zp_line_yl_lo
    BEQ lis_yl
    BCC lis_desc
 ; |||
 ; ASCENDING: dy = yr - yl (unsigned)
    SEC
-   SBC zp_line_yl
+   SBC zp_line_yl_lo
    JSR umul_round_div
    CLC
-   ADC zp_line_yl
+   ADC zp_line_yl_lo
    RTS
 lis_desc:
 ; DESCENDING: |dy| = yl - yr (unsigned)
-   LDA zp_line_yl
+   LDA zp_line_yl_lo
    SEC
-   SBC zp_line_yr
+   SBC zp_line_yr_lo
    JSR umul_round_div
    EOR #$FF
    SEC
-   ADC zp_line_yl
+   ADC zp_line_yl_lo
    RTS
 lis_yl:
-   LDA zp_line_yl
+   LDA zp_line_yl_lo
    RTS
 lis_yr:
-   LDA zp_line_yr
+   LDA zp_line_yr_lo
    RTS
 .endscope
 
@@ -1353,7 +1353,7 @@ lis_yr:
 ; pair for portal segs in records mode.
 ;
 ; Inputs (caller writes ZP):
-;   zp_line_xl, zp_line_yl, zp_line_xr, zp_line_yr  — line endpoints (u8)
+;   zp_line_xl_lo, zp_line_yl_lo, zp_line_xr_lo, zp_line_yr_lo  — line endpoints (u8)
 ;   zp_ilo, zp_ihi                                  — clamp range (u8)
 ; Output: records buffer pointed to by zp_buf is populated.
 ; ======================================================================

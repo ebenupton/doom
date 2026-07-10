@@ -684,13 +684,13 @@ ap_edge_one:
    AND #$04
    BEQ ap_top_ft
    LDA VX1+9,X                             ; sy_btop
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA VX1+10,X
    STA zp_line_yl_hi
    JMP ap_bot
 ap_top_ft:
    LDA VX1+5,X                             ; sy_top
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA VX1+6,X
    STA zp_line_yl_hi
 ap_bot:
@@ -698,13 +698,13 @@ ap_bot:
    AND #$08
    BEQ ap_bot_fb
    LDA VX1+11,X                            ; sy_bbot
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA VX1+12,X
    STA zp_line_yr_hi
    JMP ap_emit_y
 ap_bot_fb:
    LDA VX1+7,X                             ; sy_bot
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA VX1+8,X
    STA zp_line_yr_hi
    JMP ap_emit_y
@@ -713,18 +713,18 @@ ap_solid:
    BNE ap2_solid_jmp
 ; v1 solid: line from sy1_bbot (APV1_CH proj) to sy1_btop (APV1_FH)
    LDA VX1+11,X
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA VX1+12,X
    STA zp_line_yl_hi
    LDA VX1+9,X
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA VX1+10,X
    STA zp_line_yr_hi
 ap_emit_y:
 ; vertical at the endpoint's sx (struct slots)
    LDA VX1+3,X
-   STA zp_line_xl
-   STA zp_line_xr
+   STA zp_line_xl_lo
+   STA zp_line_xr_lo
    LDA VX1+4,X
    STA zp_line_xl_hi
    STA zp_line_xr_hi
@@ -778,7 +778,7 @@ a2_have_recip:
    STA zp_br_t0
    JSR br_project_y                        ; output pre-biased
    LDA zp_br_resl
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_br_resh
    STA zp_line_yl_hi
 ; bfh2' = project(APV2_FH - vz)  (FHCH byte 5; br_project_y left L2 paged)
@@ -790,7 +790,7 @@ a2_have_recip:
    STA zp_br_t0
    JSR br_project_y
    LDA zp_br_resl
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_br_resh
    STA zp_line_yr_hi
    JMP emit_vert_sx2

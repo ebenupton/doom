@@ -238,13 +238,13 @@ zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
 ; --- $A8: overlay group (3 phase-disjoint users) ---
 zp_ms_emit = $A8                  ; [clip]; mark_solid: $FF = emit wall edge lines, $00 = skip
-zp_line_xl = $A8                  ; [bsp+clip]; u8, left X (oriented left-to-right)
+zp_line_xl_lo = $A8                  ; [bsp+clip]; u8, left X (oriented left-to-right)
 ; --- $A9: overlay group (2 phase-disjoint users) ---
-zp_line_yl = $A9                  ; [bsp+clip]; u8, Y at xl
+zp_line_yl_lo = $A9                  ; [bsp+clip]; u8, Y at xl
 ; --- $AA: overlay group (2 phase-disjoint users) ---
-zp_line_xr = $AA                  ; [bsp+clip]; u8, right X
+zp_line_xr_lo = $AA                  ; [bsp+clip]; u8, right X
 ; --- $AB: overlay group (2 phase-disjoint users) ---
-zp_line_yr = $AB                  ; [bsp+clip]; u8, Y at xr
+zp_line_yr_lo = $AB                  ; [bsp+clip]; u8, Y at xr
 zp_line_dx = $AC                  ; [clip]; u8, xr - xl (>= 0)
 zp_line_dy = $AD                  ; [clip]; s8, yr - yl
 zp_line_ylo = $AE                 ; [clip]; u8, min(yl, yr) — running Y bbox

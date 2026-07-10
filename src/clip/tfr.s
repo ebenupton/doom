@@ -874,8 +874,8 @@ ues_fail:
 ; s16 line clipper — generic first cut
 ;
 ; Wrapper writes 8 bytes of s16 input (4 endpoints × 2 bytes) to
-; zp_line_xl..zp_line_yr_hi in scratch RAM, then JSRs $201E. Routine clips
-; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl/yl/xr/yr,
+; zp_line_xl_lo..zp_line_yr_hi in scratch RAM, then JSRs $201E. Routine clips
+; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl_lo/yl/xr/yr,
 ; then falls through to draw_clipped_line (existing DCL pipeline).
 ;
 ; The math is the slow generic version: u16×u16 = u32, u32÷u16 = u16.

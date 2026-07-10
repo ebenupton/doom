@@ -29,7 +29,7 @@
 ;   defq_drain()                               # mark_solid / tighten, in order
 ;
 ; Line emission contract (clipper interface):
-;   zp_line_xl/yl/xr/yr ($A8-$AB) = endpoint lo bytes,
+;   zp_line_xl_lo/yl/xr/yr ($A8-$AB) = endpoint lo bytes,
 ;   $B2-$B5 (zp_line_xl_hi..zp_line_yr_hi)  = endpoint s16 hi bytes → SC_DRAW_S16.
 ;   $BC/$BD (zp_dcl_rec_buf) = per-span records buffer: hi byte $00 =
 ;   records off, $07 → TOP_RECORDS ($0700), $08 → BOT_RECORDS ($0800).
@@ -442,19 +442,19 @@ ft_set_line:
 ; Stage the s16 line (lo bytes → zp_line_*, hi bytes → LC_*_HI $B2-$B5)
 ; and hand it to the s16 clip + draw pipeline.
    LDA zp_seg_sx1_lo
-   STA zp_line_xl
+   STA zp_line_xl_lo
    LDA zp_seg_sx1_hi
    STA zp_line_xl_hi
    LDA zp_seg_sy1_top_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy1_top_hi
    STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
-   STA zp_line_xr
+   STA zp_line_xr_lo
    LDA zp_seg_sx2_hi
    STA zp_line_xr_hi
    LDA zp_seg_sy2_top_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy2_top_hi
    STA zp_line_yr_hi
    PAGE BANK_C
@@ -514,19 +514,19 @@ fb_set_line:
    LDA #0
    STA zp_dcl_rec_buf
    LDA zp_seg_sx1_lo
-   STA zp_line_xl
+   STA zp_line_xl_lo
    LDA zp_seg_sx1_hi
    STA zp_line_xl_hi
    LDA zp_seg_sy1_bot_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy1_bot_hi
    STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
-   STA zp_line_xr
+   STA zp_line_xr_lo
    LDA zp_seg_sx2_hi
    STA zp_line_xr_hi
    LDA zp_seg_sy2_bot_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy2_bot_hi
    STA zp_line_yr_hi
    PAGE BANK_C
@@ -553,19 +553,19 @@ step_cont:                              ;  pushed the branch out of range)
    AND #$04
    BEQ step_no_top
    LDA zp_seg_sx1_lo
-   STA zp_line_xl
+   STA zp_line_xl_lo
    LDA zp_seg_sx1_hi
    STA zp_line_xl_hi
    LDA zp_seg_sy1_btop_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy1_btop_hi
    STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
-   STA zp_line_xr
+   STA zp_line_xr_lo
    LDA zp_seg_sx2_hi
    STA zp_line_xr_hi
    LDA zp_seg_sy2_btop_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy2_btop_hi
    STA zp_line_yr_hi
    LDA #0
@@ -586,19 +586,19 @@ step_no_top:
    AND #$08
    BEQ step_no_bot
    LDA zp_seg_sx1_lo
-   STA zp_line_xl
+   STA zp_line_xl_lo
    LDA zp_seg_sx1_hi
    STA zp_line_xl_hi
    LDA zp_seg_sy1_bbot_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy1_bbot_hi
    STA zp_line_yl_hi
    LDA zp_seg_sx2_lo
-   STA zp_line_xr
+   STA zp_line_xr_lo
    LDA zp_seg_sx2_hi
    STA zp_line_xr_hi
    LDA zp_seg_sy2_bbot_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy2_bbot_hi
    STA zp_line_yr_hi
    LDA #0
@@ -635,11 +635,11 @@ step_skip:
    BEQ lvert_portal
 ; Solid: ft1 → fb1
    LDA zp_seg_sy1_top_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy1_top_hi
    STA zp_line_yl_hi
    LDA zp_seg_sy1_bot_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy1_bot_hi
    STA zp_line_yr_hi
    JSR emit_vert_sx1
@@ -650,11 +650,11 @@ lvert_portal:
    AND #$04
    BEQ lvert_no_top
    LDA zp_seg_sy1_top_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy1_top_hi
    STA zp_line_yl_hi
    LDA zp_seg_sy1_btop_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy1_btop_hi
    STA zp_line_yr_hi
    JSR emit_vert_sx1
@@ -664,11 +664,11 @@ lvert_no_top:
    AND #$08
    BEQ skip_lvert
    LDA zp_seg_sy1_bbot_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy1_bbot_hi
    STA zp_line_yl_hi
    LDA zp_seg_sy1_bot_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy1_bot_hi
    STA zp_line_yr_hi
    JSR emit_vert_sx1
@@ -685,11 +685,11 @@ skip_lvert:
    AND #$02
    BEQ rvert_portal
    LDA zp_seg_sy2_top_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy2_top_hi
    STA zp_line_yl_hi
    LDA zp_seg_sy2_bot_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy2_bot_hi
    STA zp_line_yr_hi
    JSR emit_vert_sx2
@@ -699,11 +699,11 @@ rvert_portal:
    AND #$04
    BEQ rvert_no_top
    LDA zp_seg_sy2_top_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy2_top_hi
    STA zp_line_yl_hi
    LDA zp_seg_sy2_btop_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy2_btop_hi
    STA zp_line_yr_hi
    JSR emit_vert_sx2
@@ -712,11 +712,11 @@ rvert_no_top:
    AND #$08
    BEQ skip_rvert
    LDA zp_seg_sy2_bbot_lo
-   STA zp_line_yl
+   STA zp_line_yl_lo
    LDA zp_seg_sy2_bbot_hi
    STA zp_line_yl_hi
    LDA zp_seg_sy2_bot_lo
-   STA zp_line_yr
+   STA zp_line_yr_lo
    LDA zp_seg_sy2_bot_hi
    STA zp_line_yr_hi
    JSR emit_vert_sx2
@@ -837,7 +837,7 @@ sa_f_nc:
 
 ; ============================================================================
 ; emit_vert_sx1 / emit_vert_sx2 — draw a vertical at endpoint 1 / 2.
-; Caller has set yl/yh/yr/yh in zp_line_yl/$B3/zp_line_yr/$B5.
+; Caller has set yl/yh/yr/yh in zp_line_yl_lo/$B3/zp_line_yr_lo/$B5.
 ; Fills xl/xh/xr/xh from sx1 (resp. sx2), clears records hi byte
 ; (verticals never populate tighten records), pages bank C and
 ; tail-calls SC_DRAW_S16. Clobbers A.
@@ -846,11 +846,11 @@ sa_f_nc:
 ; ============================================================================
 emit_vert_sx1:
    LDA zp_seg_sx1_lo
-   STA zp_line_xl
+   STA zp_line_xl_lo
    LDA zp_seg_sx1_hi
    STA zp_line_xl_hi
    LDA zp_seg_sx1_lo
-   STA zp_line_xr
+   STA zp_line_xr_lo
    LDA zp_seg_sx1_hi
    STA zp_line_xr_hi
    LDA #0
@@ -861,11 +861,11 @@ emit_vert_sx1:
 ; (see banner above emit_vert_sx1)
 emit_vert_sx2:
    LDA zp_seg_sx2_lo
-   STA zp_line_xl
+   STA zp_line_xl_lo
    LDA zp_seg_sx2_hi
    STA zp_line_xl_hi
    LDA zp_seg_sx2_lo
-   STA zp_line_xr
+   STA zp_line_xr_lo
    LDA zp_seg_sx2_hi
    STA zp_line_xr_hi
    LDA #0
