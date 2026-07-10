@@ -236,6 +236,21 @@ ground-truth verify at 5 fixed positions has not worsened vs
   disc during the recip rework). Same class: the flat B region's usable
   ceiling is $0BE8 (ROM-pointer block $0BE8-$0BF7 is poked at init), not
   the $0C00 the cfg suggests.
+- **Banked main-RAM data anchors (2026-07-10 reshuffle)**: the sqr
+  quarter-square tables live at $2000-$23FF in MAIN (both banks' code
+  needs them — placing anything there black-screens the disc while every
+  harness stays green; the region loop seeds bm before the sqr copy, so
+  the clobber is invisible to flat AND banked harness composition).
+  Banked layout after the reshuffle: level data lives in the banks
+  (L0 = SoA $8000 / seg_hdr $9000 / FHCH $9000+n_segs*12 / TABL0 $BE90;
+  L2 adds verts $A200, VWHC $B500-$B9FF, CFG $BA00), engine code below
+  $8000 (RCCODE $2400, ANIML2 jt+tick $2800 — walk_drv JMPs anchor it,
+  ANIML0 $2A00, VXCODE $2B00). SSMASK is a documented main-RAM exception
+  at $0A80 (per-subsector read under arbitrary banks). SEL+HUD remain in
+  the bank C window. RULE: no level data in main unless the banked
+  placement has a measured-unacceptable paging cost; validate any banked
+  placement with the flat-vs-banked FB lockstep AND a jsbeeb disc boot —
+  harness green alone is not evidence.
 
 - **Back-face test truncation**: `br_smul_s8_s16` keeps 16 bits; large
   diagonal products can wrap sign and drop a front-facing seg. Latent,
