@@ -1,3 +1,4 @@
+.include "layout.inc"
 .include "zp.inc"
 ; CPU target: every builder MUST pass -D C02=0 (6502) or -D C02=1 (65C02 opcodes).
 .if C02

@@ -94,6 +94,8 @@ SS_FHI    = NODE_SOA + $F00
 .endif
 .endmacro
 
+.include "layout.inc"
+
 .segment "MAIN"
 
 ; ============================================================================
@@ -130,10 +132,9 @@ zp_br_dy = zp_br_dylo
 ; Vertex cache helper state
 ; Side test working state (s16 deltas px-nx, py-ny held across fast/slow paths)
 ; Frame ROM table base ptrs (Python wrapper writes once)
-zp_rom_fhch_lo = $0BE8
-zp_rom_fhch_hi = $0BE9
-zp_rom_bbox_lo = $0BEA
-zp_rom_bbox_hi = $0BEB
+; ($0BE8-$0BF7 ROM-pointer block RETIRED 2026-07-10: the packed layout is
+; static — bases are layout.inc assembly-time constants; loaders no longer
+; poke pointers and the walk_drv ptrtab is gone. Page-$0B bytes freed.)
 ; Bbox routine arg
 
 ; ============================================================================

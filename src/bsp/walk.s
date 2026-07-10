@@ -6,7 +6,7 @@
 ;
 ; Caller must have:
 ;   - Loaded WAD ROM into memory.
-;   - Set up zp_rom_*, zp_root_node_*.
+;   - (ROM bases are layout.inc constants since 2026-07-10 — no pointer setup.)
 ;   - Set up player view state (zp_br_px, etc.) and called br_view_setup.
 ;   - Initialized the span pool (via span_init at $2000).
 ;   - Cleared the framebuffer.
@@ -67,10 +67,10 @@ br_render_frame:
 ; --- Initialize BSP stack: push root node id (plain-node entry). ---
    ZERO zp_bsp_stack_sp
    LDX zp_bsp_stack_sp
-   LDA zp_root_node_lo
+   LDA #<LAY_ROOT                          ; layout.inc constant
    STA BSP_STACK,X
    INX
-   LDA zp_root_node_hi
+   LDA #>LAY_ROOT
    STA BSP_STACK,X
    INX
    STX zp_bsp_stack_sp

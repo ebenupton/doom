@@ -25,14 +25,6 @@ ZP_CNEG         = _sym('zp_br_cneg')
 ZP_CONE         = _sym('zp_br_cone')
 # Table base pointer slots (absolute RAM — the ZP scavenge moved most of
 # them out of ZP; the angle module owns the freed slots).
-ZP_ROM_FHCH_LO  = _sym('zp_rom_fhch_lo')
-ZP_ROM_BBOX_LO  = _sym('zp_rom_bbox_lo')
-ZP_ROM_VERTS_LO = _sym('zp_rom_verts_lo')
-ZP_ROM_NODES_LO = _sym('zp_rom_nodes_lo')
-ZP_ROM_SS_LO    = _sym('zp_rom_ss_lo')
-ZP_ROM_SEG_HDR_LO = _sym('zp_rom_seg_hdr_lo')
-ZP_ROM_DETAIL_LO = _sym('zp_rom_detail_lo')
-ZP_ROOT_NODE_LO = _sym('zp_root_node_lo')
 ZP_PXRAW_LO     = _sym('zp_br_pxraw_lo')
 ZP_PYRAW_LO     = _sym('zp_br_pyraw_lo')
 
@@ -102,15 +94,6 @@ class BspRender6502:
         def w16(addr_lo, val):
             mem[addr_lo]     = val & 0xFF
             mem[addr_lo + 1] = (val >> 8) & 0xFF
-
-        w16(ZP_ROM_VERTS_LO,   ROM_MAIN_BASE + layout['off_verts'])
-        w16(ZP_ROM_NODES_LO,   ROM_MAIN_BASE + layout['off_nodes'])
-        w16(ZP_ROM_SS_LO,      ROM_MAIN_BASE + layout['off_ss'])
-        w16(ZP_ROM_SEG_HDR_LO, ROM_MAIN_BASE + layout['off_seg_hdr'])
-        w16(ZP_ROM_DETAIL_LO,  ROM_DETAIL_BASE)
-        w16(ZP_ROM_FHCH_LO,    ROM_FHCH_BASE)
-        w16(ZP_ROM_BBOX_LO,    ROM_BBOX_BASE)
-        w16(ZP_ROOT_NODE_LO,   layout['n_nodes'] - 1)
 
         # Angle-space bbox module + tables (rebuilds first — a standalone run
         # after a source edit must not test a stale bin).

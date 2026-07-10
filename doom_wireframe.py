@@ -629,6 +629,22 @@ fp_segs = [svwh[0] for svwh in _merged_segs]
 fp_ssectors = _merged_ssectors
 print(f"Merged {_merge_count} colinear seg pair(s) "
       f"({len(_stripped_segs)} → {len(_merged_segs)} segs)")
+# ── layout.inc drift gate (2026-07-10): the engine assembles against the
+# GENERATED constants in src/layout.inc; if the packed layout ever moves,
+# fail HERE (first harness import), never silently in the binary. ──
+def _layout_inc_gate():
+    import re as _re
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src', 'layout.inc')
+    _t = open(_p).read()
+    def _val(name):
+        m = _re.search(rf'^{name}\s*=\s*(\$?[0-9A-Fa-f]+)', _t, _re.M)
+        v = m.group(1)
+        return int(v[1:], 16) if v.startswith('$') else int(v)
+    _n_segs = len(fp_segs_vwh)
+    assert _val('LAY_N_SEGS') == _n_segs, \
+        f"layout.inc stale: LAY_N_SEGS {_val('LAY_N_SEGS')} != {_n_segs} — run tools/gen_layout_inc.py and rebuild"
+_layout_inc_gate()
+
 
 # ── Suppressed-vertical bookkeeping ────────────────────────────────────
 #

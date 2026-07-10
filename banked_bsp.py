@@ -19,9 +19,7 @@ os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()
 import doom_wireframe as dw
 from banked_mem import BankedMemory
-from bsp_render_6502 import (BspRender6502, ROM_MAIN_BASE, ROM_FHCH_BASE,
-    ZP_ROM_VERTS_LO, ZP_ROM_NODES_LO, ZP_ROM_SS_LO, ZP_ROM_SEG_HDR_LO,
-    ZP_ROM_FHCH_LO, ZP_ROM_DETAIL_LO)
+from bsp_render_6502 import BspRender6502, ROM_MAIN_BASE, ROM_FHCH_BASE
 
 BANK_L0, BANK_C, BANK_L2 = 4, 6, 7
 FHCH_LOW = 0x2400
@@ -144,14 +142,7 @@ def build_banked(flatr):
             for i, b in enumerate(d):
                 bm[addr + i] = b
 
-    # --- ZP pointers: ROM_MAIN tables -> L0 window; FHCH -> low; bbox/VWH -> L2 ---
-    _w16(bm, ZP_ROM_VERTS_LO,   0xA200)                  # L2 window (reshuffle)
-    _w16(bm, ZP_ROM_NODES_LO,   0x8000 + layout['off_nodes'])
-    _w16(bm, ZP_ROM_SS_LO,      0x8000 + layout['off_ss'])
-    _w16(bm, ZP_ROM_SEG_HDR_LO, 0x9000)                  # hdrs slid over verts
-    _w16(bm, ZP_ROM_FHCH_LO,    0x9000 + hdr_len)        # FHCH tails the hdrs in L0
-    _w16(bm, ZP_ROM_DETAIL_LO,  0x9000 + hdr_len)
-    _w16(bm, 0x0BEA,            0x8E00)   # zp_rom_bbox -> L2 (MUST be page-aligned)
+    # (ROM-pointer block retired 2026-07-10: bases are layout.inc constants)
     bm[0xFF00] = 0x00
     bm.select(BANK_L0)
     return bm

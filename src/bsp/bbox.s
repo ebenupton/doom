@@ -97,7 +97,7 @@ br_bbox_visible:
    LSR A
    LSR A
    CLC
-   ADC zp_rom_bbox_hi
+   ADC #>ROM_BBOX_C                        ; layout.inc constant (page-aligned)
    STA $87
    LDA zp_node_chlo
    ASL A

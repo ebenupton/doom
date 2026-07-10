@@ -108,11 +108,11 @@ anim_ss_cont:
    ROL A                                   ; (A : t0) = si*6
    TAY                                     ; stash hi6 for the si*12 shift
    CLC
-   LDA zp_rom_fhch_lo
-   ADC zp_br_t0
-   STA zp_fhch_p
+   LDA #<ROM_FHCH_C                        ; layout.inc constant — the ROM
+   ADC zp_br_t0                            ; pointer block is retired for
+   STA zp_fhch_p                           ; the static-layout bases
    TYA
-   ADC zp_rom_fhch_hi
+   ADC #>ROM_FHCH_C
    STA zp_fhch_p_h
 ; si*12 = si*6 << 1, done NOW while Y still holds hi6 (the FHCH hoist
 ; below clobbers Y with its own LDY/DEY indexing).
@@ -121,11 +121,11 @@ anim_ss_cont:
    ROL A                                   ; A = hi12
    TAY
    CLC
-   LDA zp_rom_seg_hdr_lo
+   LDA #<ROM_SEG_HDR_C
    ADC zp_br_t0
    STA zp_seg_hdr_p
    TYA
-   ADC zp_rom_seg_hdr_hi
+   ADC #>ROM_SEG_HDR_C
    STA zp_seg_hdr_p_h
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so read fh/ch + compute the front deltas ONCE

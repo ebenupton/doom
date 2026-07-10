@@ -158,14 +158,13 @@ zp_seg_ldy = $3E                  ; [bsp]; s8 ldy. NOT caller-staged: the test
 ; only when the taken path reuses it downstream (2026-07-09).
 zp_seg_flags = $3F                ; [bsp]; u8
 pa_ptr = $40                      ; [ang]; 16-bit table pointer ; w=2
-zp_rom_nodes_lo = $42             ; [bsp]
-zp_rom_nodes_hi = $43             ; [bsp]
+; ($42/$43 freed 2026-07-10: zp_rom_nodes retired — node SoA reads are
+; constant-base abs,X; layout constants live in layout.inc)
 sd_num = $44                      ; [ang] ; w=2
 sd_den = $46                      ; [ang] ; w=2
 sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
-zp_root_node_lo = $4C             ; [bsp]
-zp_root_node_hi = $4D             ; [bsp]
+; ($4C/$4D freed 2026-07-10: zp_root_node retired — LAY_ROOT constant)
 zp_bsp_stack_sp = $4E             ; [bsp]; stack pointer (offset into BSP_STACK)
 zp_side = $4F                     ; [bsp]; 0 = front, 1 = back
 zp_node_dxlo = $50                ; [bsp]

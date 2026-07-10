@@ -25,8 +25,7 @@ RCACHE      = $AD00                     ; bank L2 window, free tail after the VW
 RCACHE      = $3800                     ; CLIP-reserved tail (flat harness); zero RAM
 .endif
 ; rom_bbox base pointer (set per frame by the loader; BSP-unit zp $0BEA/$0BEB)
-zp_rom_bbox_lo = $0BEA
-zp_rom_bbox_hi = $0BEB
+; (zp_rom_bbox retired 2026-07-10 — ROM_BBOX_C in layout.inc)
 RCACHE_PSI  = RCACHE                    ; 472*4 = 1888 bytes ($760)
 RCACHE_COMPUTED = RCACHE + $760         ; 59 bytes
 RCACHE_FULL = RCACHE + $7A0             ; 59 bytes
@@ -347,7 +346,7 @@ bcac_index:
    STA rc_idxlo
    SEC
    LDA bca_boxp+1
-   SBC zp_rom_bbox_hi
+   SBC #>ROM_BBOX_C                        ; layout.inc constant
    STA rc_idxhi
    LSR rc_idxhi                             ; idx>>1 (11-bit)
    ROR rc_idxlo

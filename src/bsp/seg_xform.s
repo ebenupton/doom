@@ -163,10 +163,10 @@ vc_miss:
    ASL zp_br_t2
    ROL zp_br_t3
    CLC
-   LDA zp_rom_verts_lo
+   LDA #<ROM_VERTS_C                       ; layout.inc constant
    ADC zp_br_t2
    STA zp_br_p
-   LDA zp_rom_verts_hi
+   LDA #>ROM_VERTS_C
    ADC zp_br_t3
    STA zp_br_p_h
    LDY #0

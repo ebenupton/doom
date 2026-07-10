@@ -67,9 +67,7 @@ ORG &3C00
     ; --- ROM table pointers ---
     LDA #&4C:STA &42 : LDA #&87:STA &43             ; zp_rom_nodes -> $874C
     LDA #235:STA &4C : LDA #0:STA &4D               ; zp_root_node = n_nodes-1
-    LDX #15
-.pcpy
-    LDA ptrtab,X : STA &0BE8,X : DEX : BPL pcpy
+    ; (ROM-pointer copy retired 2026-07-10: bases are layout.inc constants)
     ; --- CRTC: narrow 256x160 centred, cursor off (R12/R13 set per flip) ---
     LDA #1 :STA &FE00: LDA #32 :STA &FE01
     LDA #2 :STA &FE00: LDA #45 :STA &FE01
@@ -192,14 +190,8 @@ ORG &3C00
 ; every frame rendered pixel-free while the loop ran happily. Pin it.
 ASSERT P% <= &3D80
 ORG &3D90
-.ptrtab
-    ; SoA layout: node/ss pages head ROM_MAIN, verts at +$1000 ($9000),
-    ; ss pages at +$0D00 ($8D00), seg_hdr after verts ($974C).
-    ; build_walk_ssd asserts these against dw.packed_layout.
-    ; 2026-07-10 reshuffle: FHCH -> L0 window $AF08 (= $9000 + 662*12),
-    ; verts -> L2 $A200, seg_hdr slid to $9000 (verts evicted), vwh retired.
-    EQUB &08,&AF, &00,&8E, &00,&A2, &00,&00         ; fhch bbox verts (unused)
-    EQUB &00,&8D, &00,&90, &00,&00, &08,&AF         ; ss seg_hdr (vwh dead) detail
+; (.ptrtab retired 2026-07-10 — the engine assembles its ROM bases from
+; src/layout.inc; the $0BE8 block is dead. $3D90-$3D9F freed.)
 .drv_end
 
 ; --- unrolled framebuffer clears + flip scheduler: identical to anim_drv --

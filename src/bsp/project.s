@@ -479,12 +479,6 @@ rn_rloop:
 ; the packed WAD arrays built by wad_packed.build_packed (vertices,
 ; subsector SoA pages, seg headers, VWH heights, seg detail).
 ; ============================================================================
-zp_rom_verts_lo = $0BEC
-zp_rom_verts_hi = $0BED
-zp_rom_ss_lo = $0BF0
-zp_rom_ss_hi = $0BF1
-zp_rom_seg_hdr_lo = $0BF2
-zp_rom_seg_hdr_hi = $0BF3
 ; ($0BF4/$0BF5 freed 2026-07-10: zp_rom_vwh retired — no 6502 reader)
 zp_rom_detail_lo = $0BF6
 zp_rom_detail_hi = $0BF7
