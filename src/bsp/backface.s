@@ -394,7 +394,9 @@ BBOX_CORNER_IDX = $09FD                 ; offset into BBOX_CORNERS for current c
 ;   (count, 4*count bytes); see defq_append_tighten in defq.s and the
 ;   Python snapshot `TOP_RECORDS : TOP_RECORDS + 1 + tc*4`.)
 DEFQ_BASE = $0600                       ; 256 bytes (free: span pool ends $059F)
-DEFQ_TAIL = $F7                         ; queue tail offset (u8) — ZP (was $09FB)
+DEFQ_TAIL = $2B                         ; queue tail offset (u8) — moved from
+; $F7 (2026-07-10: $F7 is now inside the VX2 vertex struct); zp.inc
+; registers this address as zp_defq_tail — keep in sync
 DEFQ_OVF = $09FC                        ; set if an op was dropped (queue full) — debug
 
 ; Near-plane edge-crossing scratch. Reuses the per-seg ZP block — bbox
@@ -421,6 +423,7 @@ BCA_WS = $FA00
 bca_top = BCA_WS+$10                    ; box input: top,bot,left,right = +$10,$12,$14,$16
 bca_ilo = $BB                           ; output: left column (u8) — ZP
 bca_ihi = $BF                           ; output: right column (u8) — ZP
-bca_vis = $F5                           ; output: 1=visible, 0=cull — ZP
-; (moved from BCA_WS+$30.. 2026-07-08; keep in sync with ang/header_div.s)
+bca_vis = $64                           ; output: 1=visible, 0=cull — ZP
+; (2026-07-10: $F5 is inside the VX2 vertex struct now; keep in sync with
+; ang/header_div.s — BOTH define this)
 bca_ab = BCA_WS+$2F                     ; per-frame view angle (set by render setup)

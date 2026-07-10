@@ -1296,7 +1296,9 @@ yb_reject:
 ;                       addressing despite the forward reference)
 ;   dcl_line_y_at_a   — x in A
 dcl_line_y_at_ox0:
-   LDA $E9                                 ; zp_ox0 (forward ref)
+   LDA zp_ox0                              ; (was a hardcoded $E9 "forward
+; ref" — zp.inc is included first, the symbol resolves fine; the literal
+; silently missed the 2026-07-10 relocation and read struct sy garbage)
 dcl_line_y_at_a:
 line_interp_store:
 .scope

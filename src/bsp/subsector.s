@@ -233,7 +233,7 @@ skip_bdlt:
 ; slots via zp_seg_ep). Transform v1. Always copy evy/evx/clipped so both
 ; endpoints are available for near-plane crossing math even when clipped.
    LDA #0
-   STA zp_seg_ep                            ; v1 → SEG_PROJ_BUF +0
+   STA zp_seg_ep                            ; v1 → struct VX1
    LDY #0
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_lo
@@ -241,16 +241,11 @@ skip_bdlt:
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
-   LDA zp_seg_cur_evy
-   STA zp_seg_v1_evy
-   LDA zp_seg_cur_evx
-   STA zp_seg_v1_evx
-   LDA zp_seg_skip
-   STA zp_seg_v1_clipped
+; (no marshalling: evy/evx/clip/sx/sy/recip all landed in VX1 directly)
 
 ; Transform v2.
-   LDA #4
-   STA zp_seg_ep                            ; v2 → SEG_PROJ_BUF +4
+   LDA #VX_STRIDE
+   STA zp_seg_ep                            ; v2 → struct VX2
    PAGE BANK_L0                             ; v1's projection paged L2 (br_
 ; project_y / br_recip) unless v1 was near-clipped — the header read below
 ; needs the L0 window back. Flat: no-op.
@@ -261,12 +256,7 @@ skip_bdlt:
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
-   LDA zp_seg_cur_evy
-   STA zp_seg_v2_evy
-   LDA zp_seg_cur_evx
-   STA zp_seg_v2_evx
-   LDA zp_seg_skip
-   STA zp_seg_v2_clipped
+; (no marshalling — see v1)
 
 ; --- Near-plane clip resolution (mirrors fp_near_clip in fp.py) ---
 ; Both vertices xform'd. If both clipped → bail. If exactly one clipped,
@@ -286,14 +276,14 @@ skip_bdlt:
    LDA zp_seg_v2_clipped
    BNE s_advance_jmp                       ; both clipped
    LDA #0
-   STA zp_seg_ep                            ; reproject into v1
+   STA zp_seg_ep                            ; reproject into v1 (struct VX1)
    JSR reproject_at_crossing
    JMP s_both_have_proj
 s_advance_jmp:
    JMP s_advance
 s_v2_was_clipped:
-   LDA #4
-   STA zp_seg_ep                            ; reproject into v2
+   LDA #VX_STRIDE
+   STA zp_seg_ep                            ; reproject into v2 (struct VX2)
    JSR reproject_at_crossing
 s_both_have_proj:
 

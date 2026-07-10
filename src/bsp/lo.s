@@ -36,30 +36,14 @@ reproject_at_crossing:
    LDA #0
    STA zp_v_xfrac
    JSR br_project_x_auto
-   LDA zp_seg_ep
-   LSR A
-   TAX                                     ; X = sx offset (0=v1, 2=v2)
+   LDX zp_seg_ep                           ; struct offset (0/15)
    LDA zp_br_resl
-   STA $0061,X                             ; sx_lo → sx1/sx2 direct
-   LDA zp_br_resh
-   STA $0062,X
+   STA VX1+3,X                             ; sx → the clipped endpoint's
+   LDA zp_br_resh                          ; struct slots, in place
+   STA VX1+4,X
    JMP do_project_y
 .endscope
 
-; ============================================================================
-; copy_seg_to_v1 / copy_seg_to_v2 — copy zp_seg_sx_*/sy_*_* into vN slots,
-; biasing sy by Y_BIAS (= 48). Used after both br_seg_xform_vertex and
-; reproject_at_crossing fill the "current vertex" slots.
-;
-; The per-vertex helpers write one shared set of "current" slots; the seg
-; loop calls this to bank them into the endpoint-specific v1/v2 slots so
-; both endpoints' projections coexist for the emit/tighten phase.
-;   Inputs:  zp_seg_sx_lo/hi, zp_seg_sy_{top,bot,btop,bbot}_lo/hi.
-;   Outputs: sxK at $61/$62 (v1) or $63/$64 (v2);
-;            syK_{top,bot,btop,bbot} in SEG_PROJ_BUF (see offsets below).
-;   (The "biasing" note above is historical — see the comment at
-;   copy_seg_to_vx: Y values now arrive pre-biased from br_project_y.)
-; ============================================================================
 ; ============================================================================
 ; cross_compute — near-plane crossing point for a seg with one clipped vertex.
 ;   Inputs:  zp_clip_C_evy, zp_clip_C_evx (clipped, evy ≤ 0)
@@ -663,30 +647,29 @@ ap_edges:
    LDA zp_seg_flags
    AND #$40
    BEQ ap_chk2
-   LDX #0
-   LDY #0
+   LDX #0                                  ; v1 struct
    JSR ap_edge_one
 ap_chk2:
    LDA zp_seg_flags
    AND #$01                                ; SF_APEDGE2 (swapped with DIR 2026-07-09)
    BEQ ap_done
-   LDX #4
-   LDY #2
+   LDX #VX_STRIDE                          ; v2 struct
    JSR ap_edge_one
 ap_done:
    RTS
 .endscope
 
 ; ap_edge_one — emit ONE aperture-edge vertical at endpoint K.
-;   X = sy-slot offset (0=v1, 4=v2), Y = sx-slot offset (0=v1, 2=v2).
-;   Dispatch: portal → y-range from the SEG_PROJ_BUF slots selected by
+;   X = vertex struct offset (0 = v1, VX_STRIDE = v2); everything (sx,
+;   sy pairs) reads from the packed ZP struct VX1+ofs,X.
+;   Dispatch: portal → y-range from the struct sy slots selected by
 ;   NEEDBT/NEEDBB; solid v1 → APV1 projections already sit in the
 ;   btop/bbot slots (do_project_y projected the overlaid APV heights);
 ;   solid v2 → tail-jump to ap2_solid_proj (heights not yet projected).
 ;   Line emitted through SC_DRAW_S16 (bank C) at x = sxK.
 ap_edge_one:
 .scope
-   LDA $0062,Y
+   LDA VX1+4,X                             ; sx_hi
    BNE ap_rts
 ; sx off-screen → skip
    LDA zp_seg_flags
@@ -696,49 +679,49 @@ ap_edge_one:
    LDA zp_seg_flags
    AND #$04
    BEQ ap_top_ft
-   LDA SEG_PROJ_BUF+8,X
+   LDA VX1+9,X                             ; sy_btop
    STA zp_line_yl
-   LDA SEG_PROJ_BUF+9,X
+   LDA VX1+10,X
    STA $B3
    JMP ap_bot
 ap_top_ft:
-   LDA SEG_PROJ_BUF+0,X
+   LDA VX1+5,X                             ; sy_top
    STA zp_line_yl
-   LDA SEG_PROJ_BUF+1,X
+   LDA VX1+6,X
    STA $B3
 ap_bot:
    LDA zp_seg_flags
    AND #$08
    BEQ ap_bot_fb
-   LDA SEG_PROJ_BUF+10,X
+   LDA VX1+11,X                            ; sy_bbot
    STA zp_line_yr
-   LDA SEG_PROJ_BUF+11,X
+   LDA VX1+12,X
    STA $B5
    JMP ap_emit_y
 ap_bot_fb:
-   LDA SEG_PROJ_BUF+2,X
+   LDA VX1+7,X                             ; sy_bot
    STA zp_line_yr
-   LDA SEG_PROJ_BUF+3,X
+   LDA VX1+8,X
    STA $B5
    JMP ap_emit_y
 ap_solid:
    CPX #0
    BNE ap2_solid_jmp
 ; v1 solid: line from sy1_bbot (APV1_CH proj) to sy1_btop (APV1_FH)
-   LDA SEG_PROJ_BUF+10,X
+   LDA VX1+11,X
    STA zp_line_yl
-   LDA SEG_PROJ_BUF+11,X
+   LDA VX1+12,X
    STA $B3
-   LDA SEG_PROJ_BUF+8,X
+   LDA VX1+9,X
    STA zp_line_yr
-   LDA SEG_PROJ_BUF+9,X
+   LDA VX1+10,X
    STA $B5
 ap_emit_y:
-; vertical at the endpoint's sx ($61/$63 via Y)
-   LDA $0061,Y
+; vertical at the endpoint's sx (struct slots)
+   LDA VX1+3,X
    STA zp_line_xl
    STA zp_line_xr
-   LDA $0062,Y
+   LDA VX1+4,X
    STA $B2
    STA $B4
    LDA #0
@@ -767,32 +750,12 @@ ap2_solid_proj:
    STA zp_br_rlo
    JMP a2_have_recip
 a2_cached:
-; cache ptr = VCACHE_BASE + v2_idx*8 (the ZP cache ptr is rasteriser-
-; clobbered scratch by now — recompute). v2's index is still in
-; zp_seg_v_idx: the v2 transform loaded it there and nothing after
-; (reproject / emit) writes it, so the old zp_seg_v2 stage is gone.
-   LDA zp_seg_v_idx_lo
-   STA zp_br_t0
-   LDA zp_seg_v_idx_hi
-   STA zp_br_t1
-   ASL zp_br_t0
-   ROL zp_br_t1
-   ASL zp_br_t0
-   ROL zp_br_t1
-   ASL zp_br_t0
-   ROL zp_br_t1
-   CLC
-   LDA #<VCACHE_BASE
-   ADC zp_br_t0
-   STA zp_br_p
-   LDA #>VCACHE_BASE
-   ADC zp_br_t1
-   STA zp_br_p_h
-   LDY #2
-   LDA (zp_br_p),Y
+; v2's reciprocal sits in the endpoint struct (+13/+14) — the transform
+; banked it exactly for this consumer. The whole VCACHE pointer rebuild
+; (idx<<3 + base + two indirect reads, ~47 cyc) is gone.
+   LDA zp_seg_v2_rhi
    STA zp_br_rhi
-   INY
-   LDA (zp_br_p),Y
+   LDA zp_seg_v2_rlo
    STA zp_br_rlo
 a2_have_recip:
    JSR rns_select                          ; rlo was just set (crossing const

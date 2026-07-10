@@ -53,10 +53,9 @@ ANIM_WS     = $05EB                     ; per mover: pos_lo, pos_hi, state/timer
                                         ;   2 wait@B, 3 B->A), timer = bits 5-0
 
 ; --- zp scratch (frame-scoped; free per zpcheck) ---
-zp_anim_p = $EB                         ; table cursor (2)
-zp_anim_w = $ED                         ; write/quad pointer (2)
-ANIM_VAL  = $F0                         ; patch value (pos_hi, prescaled s8)
-ANIM_CUR  = $F1                         ; mover index during hub loop
+; (zp_anim_p/zp_anim_w/ANIM_VAL/ANIM_CUR moved to zp.inc 2026-07-10 —
+; registered at $5D/$5F/$27/$29; they were unregistered squatters at
+; $EB-$EE/$F0/$F1, which now belong to the free top block.)
 
 ; ============================================================================
 ; Resident hub — anim_ss_hook (in subsector.s) is SMC-patched here by

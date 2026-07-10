@@ -947,7 +947,7 @@ LC_TGT_HI = $0958
 ; projects wholly above the screen left columns 0..69 open and the far
 ; rooms drew through the wall (276px cross-impl divergence).
 ;
-; In:  SEG_PROJ_BUF ($0A40, layout in bsp/walk.s) biased s16 projections,
+; In:  the packed ZP vertex structs (zp.inc VX1/VX2) biased s16 sy pairs,
 ;      zp_seg_flags (SF_NEEDBT=$04, SF_NEEDBB=$08).
 ; Out: C=1 -> aperture band provably empty on screen (caller appends a
 ;      SOLID over [ilo,ihi]); C=0 -> genuine no-op (skip).
@@ -956,7 +956,11 @@ LC_TGT_HI = $0958
 ; SF_NEEDBT). Empty on screen iff bottom < Y_BIAS at BOTH endpoints
 ; (min < k <=> either < k), or top > Y_BIAS+159 at both.
 ; ---------------------------------------------------------------------------
-SZR_PROJ = $0A40                        ; = SEG_PROJ_BUF (bsp/walk.s)
+SZR_PROJ = $E2                          ; = VX1 (zp.inc vertex structs).
+; X offsets below = struct offsets: +5 top, +7 bot, +9 btop, +11 bbot;
+; +15 more for the v2 struct. (Old SEG_PROJ_BUF interleave retired
+; 2026-07-10.) ZP,X addressing: abs,X on a ZP base still works; keep the
+; absolute form for the +1 hi-byte reads (no page crossing: max $FC+1).
 .export seg_zero_rec_solid
 
 ; --- s16 threshold helpers for seg_zero_rec_solid ---------------------
@@ -1000,24 +1004,24 @@ seg_zero_rec_solid:
 ; endpoint iff fb < Y_BIAS OR (NEEDBB and bb < Y_BIAS). Endpoint 1
 ; first; only if it passes do we pay for endpoint 2 (szr_b1).
 ; bottom family: band bottom above the screen top at endpoint 1?
-   LDX #2                                  ; sy1_bot (fb1)
+   LDX #7                                  ; sy1_bot (fb1) — VX1+7
    JSR szr_lt
    BCS szr_b1
    LDA zp_seg_flags
    AND #$08                                ; SF_NEEDBB
    BEQ szr_top
-   LDX #10                                 ; sy1_bbot (bb1)
+   LDX #11                                 ; sy1_bbot (bb1) — VX1+11
    JSR szr_lt
    BCC szr_top
 szr_b1:
 ; ... and at endpoint 2?
-   LDX #6                                  ; sy2_bot (fb2)
+   LDX #22                                 ; sy2_bot (fb2) — VX2+7
    JSR szr_lt
    BCS szr_closed
    LDA zp_seg_flags
    AND #$08
    BEQ szr_top
-   LDX #14                                 ; sy2_bbot (bb2)
+   LDX #26                                 ; sy2_bbot (bb2) — VX2+11
    JSR szr_lt
    BCS szr_closed
 szr_top:
@@ -1025,23 +1029,23 @@ szr_top:
 ; Band top = max(ft, bt-if-NEEDBT), and max(a,b) > k iff a > k OR
 ; b > k — the same either-of-two test per endpoint as the bottom
 ; family above, with szr_gt in place of szr_lt.
-   LDX #0                                  ; sy1_top (ft1)
+   LDX #5                                  ; sy1_top (ft1) — VX1+5
    JSR szr_gt
    BCS szr_t1
    LDA zp_seg_flags
    AND #$04                                ; SF_NEEDBT
    BEQ szr_open
-   LDX #8                                  ; sy1_btop (bt1)
+   LDX #9                                  ; sy1_btop (bt1) — VX1+9
    JSR szr_gt
    BCC szr_open
 szr_t1:
-   LDX #4                                  ; sy2_top (ft2)
+   LDX #20                                 ; sy2_top (ft2) — VX2+5
    JSR szr_gt
    BCS szr_closed
    LDA zp_seg_flags
    AND #$04
    BEQ szr_open
-   LDX #12                                 ; sy2_btop (bt2)
+   LDX #24                                 ; sy2_btop (bt2) — VX2+9
    JSR szr_gt
    BCS szr_closed
 szr_open:

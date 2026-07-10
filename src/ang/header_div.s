@@ -211,7 +211,7 @@ bca_ab = BCA_WS+$2F
 ; straight 1-cycle-per-access cut). Registered in zp.inc.
 bca_ilo = $BB
 bca_ihi = $BF
-bca_vis = $F5
+bca_vis = $64                           ; sole owner (see zp.inc $64 note)
 bca_p1 = $C8                            ; phi1 (s16, pair $C8/$C9)
 bca_p2 = $CA                            ; phi2 (s16, pair $CA/$CB)
 ; Hottest body vars in spare scavenged ZP (conflict-free) to cut the
@@ -222,7 +222,7 @@ t0 = $CC
 t1 = $CD
 val_lo = $CE
 val_hi = $CF
-bca_ccsave = $F6
+bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
 .if BANKED
 VATOX = $8900                           ; bank L2: viewangletox, 1025 entries (phi+512)
 .else

@@ -213,9 +213,9 @@ dd_done:
 .endscope
 
 ; ============================================================================
-; ev_clamp_evy16 — clamp zp_seg_cur_evy to s8 range using the s24 view-y.
+; ev_clamp_evy16 — clamp the endpoint struct's evy (VX1+0,X) to s8 range.
 ; Called with C = carry-out of (vyhi + bit7(vylo)), i.e. the rounding add
-; that produced zp_seg_cur_evy. evy16 hi byte = vyext + C. The vertex fits
+; that produced evy. evy16 hi byte = vyext + C. The vertex fits
 ; s8 iff that hi byte is the sign-extension of the lo byte. (The old
 ; `vyext != 0 → clamp` collapsed every behind-the-viewer vertex to
 ; evy=-128, corrupting crossing math: t = (1-evy_C)<<8/(evy_U-evy_C)
@@ -224,8 +224,8 @@ dd_done:
 ;
 ;   Inputs:  C flag (carry-out of the rounding add — do NOT touch C
 ;            before the ADC below), zp_br_vyext (s24 extension byte),
-;            zp_seg_cur_evy (low byte of the rounded evy16).
-;   Output:  zp_seg_cur_evy clamped to [-128, 127] iff evy16 exceeds s8.
+;            X = zp_seg_ep (struct offset), VX1+0,X = rounded evy lo byte.
+;   Output:  VX1+0,X clamped to [-128, 127] iff evy16 exceeds s8. X kept.
 ;   Case map (hi = vyext + C):
 ;     hi == $00: lo < $80 fits, else clamp to +$7F   (128..255)
 ;     hi == $FF: lo >= $80 fits, else clamp to -$80  (-256..-129)
@@ -248,19 +248,19 @@ ev_clamp_neg:
    LDA #$80
    BNE ev_store
 ev_case_ff:
-   LDA zp_seg_cur_evy
+   LDA VX1+0,X
    BMI ev_done
 ; $FF:%1xxxxxxx → fits s8
    LDA #$80
    BNE ev_store
 ; -256..-129 → clamp
 ev_case_zero:
-   LDA zp_seg_cur_evy
+   LDA VX1+0,X
    BPL ev_done
 ; $00:%0xxxxxxx → fits s8
    LDA #$7F                                ; 128..255 → clamp
 ev_store:
-   STA zp_seg_cur_evy
+   STA VX1+0,X
 ev_done:
    RTS
 .endscope

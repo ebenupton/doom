@@ -11,8 +11,8 @@
 ;            zp_seg_bbot_dlt  = bfh - vz (s8)  back floor   (or APV1_CH)
 ;            zp_seg_flags     = seg header flags
 ;                               (SOLID=$02 NEEDBT=$04 NEEDBB=$08 APEDGE1=$40)
-;   Outputs: zp_seg_sy_top_lo/hi, zp_seg_sy_bot_lo/hi   (always)
-;            zp_seg_sy_btop_lo/hi, zp_seg_sy_bbot_lo/hi (when gated in)
+;   Outputs: the endpoint struct sy pairs (VX1+5..12,X, X = zp_seg_ep):
+;            top/bot always, btop/bbot when the flags gate them in
 ;            All s16 screen y, pre-biased by Y_BIAS (br_project_y folds it).
 ;   Uses:    br_project_y — the VWHC-cached front (ycache.s) over
 ;            br_project_y_raw; mirrors Python's per-endpoint _py(h) =
@@ -37,9 +37,9 @@ do_project_y:
    JSR br_project_y
    LDX zp_seg_ep                            ; re-establish endpoint offset
    LDA zp_br_resl
-   STA SEG_PROJ_BUF+0,X                     ; sy_top_lo (v1 +0 / v2 +4)
+   STA VX1+5,X                              ; sy_top (struct)
    LDA zp_br_resh
-   STA SEG_PROJ_BUF+1,X
+   STA VX1+6,X
 
 ; --- Project Y for bottom edge (height = fh - vz) ---
    LDA zp_seg_bot_dlt
@@ -47,9 +47,9 @@ do_project_y:
    JSR br_project_y
    LDX zp_seg_ep
    LDA zp_br_resl
-   STA SEG_PROJ_BUF+2,X                     ; sy_bot
+   STA VX1+7,X                              ; sy_bot
    LDA zp_br_resh
-   STA SEG_PROJ_BUF+3,X
+   STA VX1+8,X
 
 ; --- Back-pair projections only when a consumer exists: every use of
 ; sy_btop/sy_bbot is gated on (SOLID & APEDGE1) — the APV1 aperture
@@ -76,9 +76,9 @@ dpy_btop:
    JSR br_project_y
    LDX zp_seg_ep
    LDA zp_br_resl
-   STA SEG_PROJ_BUF+8,X                     ; sy_btop
+   STA VX1+9,X                              ; sy_btop
    LDA zp_br_resh
-   STA SEG_PROJ_BUF+9,X
+   STA VX1+10,X
    LDA zp_seg_flags
    AND #$02
    BNE dpy_bbot
@@ -95,9 +95,9 @@ dpy_bbot:
    JSR br_project_y
    LDX zp_seg_ep
    LDA zp_br_resl
-   STA SEG_PROJ_BUF+10,X                    ; sy_bbot
+   STA VX1+11,X                             ; sy_bbot
    LDA zp_br_resh
-   STA SEG_PROJ_BUF+11,X
+   STA VX1+12,X
 dpy_done:
    RTS
 .endscope

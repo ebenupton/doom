@@ -61,9 +61,10 @@ zp_bca_t0 = $CC                   ; [ang]
 zp_bca_t1 = $CD                   ; [ang]
 zp_bca_val_lo = $CE               ; [ang]
 zp_bca_val_hi = $CF               ; [ang]
-zp_bca_vis = $F5                  ; [ang]
-zp_bca_ccsave = $F6               ; [ang]
-zp_defq_tail = $F7                ; [bsp]; DEFQ queue tail (was $09FB)
+; $C4/$C5: OWNED by ang/rcache.s (position-keyed rotation cache) — was an
+; unregistered squatter; registered 2026-07-10. Do not allocate.
+zp_rcache_c4 = $C4                ; [bsp]; rcache internal (see ang/rcache.s)
+zp_rcache_c5 = $C5                ; [bsp]; rcache internal
 zp_rns_vec = $C6                  ; [bsp]; RNS shifter vector lo (per-vertex,
 zp_rns_vec_hi = $C7               ; [bsp]; set by rns_select from S; JMP (ind))
 ; --- $C4/$C5: rc_psilo/rc_psihi (ang/rcache.s) — UNREGISTERED SQUATTER,
@@ -79,6 +80,54 @@ zp_br_t2 = $22                    ; [bsp]
 zp_br_t3 = $23                    ; [bsp]
 zp_br_t4 = $24                    ; [bsp]; back-face u24 product hi bytes —
 zp_br_t5 = $25                    ; [bsp]; |P1|=(t2,t3,t4) |P2|=(t0,t1,t5),
+ANIM_VAL = $27                    ; [bsp]; anim: patch value (registered
+;   2026-07-10 — was an unregistered squatter at $F0)
+ANIM_CUR = $29                    ; [bsp]; anim: mover index (was $F1)
+zp_defq_tail = $2B                ; [bsp]; deferred-op queue tail (was $F7)
+; ============================================================
+; $E2-$FF: the two PACKED PER-ENDPOINT VERTEX STRUCTS (2026-07-10).
+; br_seg_xform_vertex + do_project_y write every vertex output
+; here DIRECTLY (no staging); the near-plane reproject overwrites
+; the clipped endpoint in place. X = zp_seg_ep = 0 (v1) / 15 (v2)
+; indexes VX1+ofs,X. All legacy consumer names below are ALIASES
+; into these structs — the emit/near-clip code is unchanged.
+;   +0 evy  +1 evx  +2 clip  +3 sx_lo  +4 sx_hi
+;   +5 sy_top_lo/hi +7 sy_bot_lo/hi +9 sy_btop_lo/hi +11 sy_bbot_lo/hi
+;   +13 rhi +14 rlo   (recip banked for ap2_solid_proj)
+; ============================================================
+VX1 = $E2
+VX2 = $F1
+VX_STRIDE = 15
+zp_seg_v1_evy = VX1+0
+zp_seg_v1_evx = VX1+1
+zp_seg_v1_clipped = VX1+2
+zp_seg_sx1_lo = VX1+3
+zp_seg_sx1_hi = VX1+4
+zp_seg_sy1_top_lo = VX1+5
+zp_seg_sy1_top_hi = VX1+6
+zp_seg_sy1_bot_lo = VX1+7
+zp_seg_sy1_bot_hi = VX1+8
+zp_seg_sy1_btop_lo = VX1+9
+zp_seg_sy1_btop_hi = VX1+10
+zp_seg_sy1_bbot_lo = VX1+11
+zp_seg_sy1_bbot_hi = VX1+12
+zp_seg_v1_rhi = VX1+13
+zp_seg_v1_rlo = VX1+14
+zp_seg_v2_evy = VX2+0
+zp_seg_v2_evx = VX2+1
+zp_seg_v2_clipped = VX2+2
+zp_seg_sx2_lo = VX2+3
+zp_seg_sx2_hi = VX2+4
+zp_seg_sy2_top_lo = VX2+5
+zp_seg_sy2_top_hi = VX2+6
+zp_seg_sy2_bot_lo = VX2+7
+zp_seg_sy2_bot_hi = VX2+8
+zp_seg_sy2_btop_lo = VX2+9
+zp_seg_sy2_btop_hi = VX2+10
+zp_seg_sy2_bbot_lo = VX2+11
+zp_seg_sy2_bbot_hi = VX2+12
+zp_seg_v2_rhi = VX2+13
+zp_seg_v2_rlo = VX2+14
 zp_seg_ep = $26                   ; [bsp]; per-endpoint SEG_PROJ_BUF offset
 ; (0 = v1, 4 = v2): the generators write sx/sy DIRECTLY into the endpoint
 ; dedicated so the two magnitude products get 6 clean bytes and never reuse
@@ -133,33 +182,27 @@ zp_seg_first_lo = $5A             ; [bsp]; first_seg index for current subsector
 zp_seg_first_hi = $5B             ; [bsp]
 zp_seg_count = $5C                ; [bsp]; remaining segs in subsector
 ; --- $5D: overlay group (2 phase-disjoint users) ---
-; ($5D/$5E freed 2026-07-10: zp_seg_v1_lo/hi retired — the v1 transform
-; reads the vertex index straight from the header via zp_seg_hdr_p)
+zp_anim_p = $5D                   ; [bsp]; anim table cursor (2; was the
+;   unregistered $EB/$EC squatter). Anim hub runs BETWEEN seg emits —
+;   no live seg scratch here since zp_seg_v1 retired.
+zp_anim_w = $5F                   ; [bsp]; anim write pointer (2; was $ED/$EE)
 ; --- $5F: overlay group (2 phase-disjoint users) ---
-; ($5F/$60 freed 2026-07-10: zp_seg_v2_lo/hi retired — the v2 transform
-; reads the header via zp_seg_hdr_p (re-paging L0), and ap2_solid_proj
-; takes v2's index from zp_seg_v_idx which still holds it at emit time)
 ; --- $61: overlay group (2 phase-disjoint users) ---
-zp_seg_sx1_lo = $61               ; [bsp]; projected screen x of v1 (s16)
-zp_seg_sx1_hi = $62               ; [bsp]
 ; --- $63: overlay group (2 phase-disjoint users) ---
-zp_seg_sx2_lo = $63               ; [bsp]
-zp_seg_sx2_hi = $64               ; [bsp]
 ; --- $65: overlay group (2 phase-disjoint users) ---
-zp_seg_skip = $65                 ; [bsp]; non-zero → skip emit (near-clipped)
 ; --- $66: overlay group (2 phase-disjoint users) ---
 zp_seg_fh = $66                   ; [bsp]; s8 prescaled front floor height
 zp_seg_ch = $67                   ; [bsp]; s8 prescaled front ceiling height
 zp_seg_top_dlt = $68              ; [bsp]; s8 ch - vz (height delta for top edge)
 ; --- $69: overlay group (2 phase-disjoint users) ---
 zp_seg_bot_dlt = $69              ; [bsp]; s8 fh - vz (height delta for bottom edge)
-zp_seg_sy_top_lo = $6A            ; [bsp]; s16 projected screen y for top edge
-zp_seg_sy_top_hi = $6B            ; [bsp]
-; --- $6C: overlay group (2 phase-disjoint users) ---
-zp_seg_sy_bot_lo = $6C            ; [bsp]; s16 projected screen y for bottom edge
-zp_seg_sy_bot_hi = $6D            ; [bsp]
-zp_seg_sx_lo = $6E                ; [bsp]; s16 projected screen x
-zp_seg_sx_hi = $6F                ; [bsp]
+zp_prev = $61                     ; [clip]; pool-walk prev (from $E2 — structs)
+zp_buf = $62                      ; [clip]; u16 pointer $62/$63 (from $E3/$E4)
+; $64/$65: bca_vis / bca_ccsave live here via LOCAL equates in
+; ang/header_div.s (keep in sync) — persistent across checks, so they
+; get sole ownership (from the old $F5/$F6 squat inside the structs).
+; ($6A-$6F retired 2026-07-10 — sy/sx staging dead; BISECT: temporarily
+; unallocated while hunting the divergence)
 RASTER_ZP_SCRSTRT = $70           ; [clip]
 pa_sx = $73                       ; [ang]
 zp_seg_v_idx_lo = $77             ; [bsp]; cached: vertex index (u16)
@@ -180,7 +223,6 @@ pa_sy = $89                       ; [ang]
 pa_oct = $8A                      ; [ang]
 bca_hi = $8B                      ; [ang]; hi_phi (s16) ; w=2
 bca_pxs = $8D                     ; [ang]; px sign-extended (s16) ; w=2
-zp_seg_v2_evx = $8F               ; [bsp]
 zp_br_pxraw_lo = $90              ; [bsp]; s16 player x relative to map_center (raw)
 zp_br_pxraw_hi = $91              ; [bsp]
 zp_br_pyraw_lo = $92              ; [bsp]
@@ -192,7 +234,6 @@ zp_fhch_p = $98                   ; [bsp]; persistent FHCH ptr (advances +6/seg)
 zp_fhch_p_h = $99                 ; [bsp]
 zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
-zp_seg_v2_clipped = $9F           ; [bsp]
 ; --- $A8: overlay group (3 phase-disjoint users) ---
 zp_ms_emit = $A8                  ; [clip]; mark_solid: $FF = emit wall edge lines, $00 = skip
 zp_line_xl = $A8                  ; [bsp+clip]; u8, left X (oriented left-to-right)
@@ -240,12 +281,10 @@ zp_hg_cache = $D0                 ; [clip]; has_gap coherence cache: last-matchi
 zp_i_x0 = $D1                     ; [clip]
 zp_i_y0 = $D2                     ; [clip]
 ; --- $D3: overlay group (2 phase-disjoint users) ---
-zp_seg_cur_evy = $D3              ; [bsp]; rounded s8 view-y of just-processed vertex
 ; --- $D4: overlay group (2 phase-disjoint users) ---
-zp_seg_cur_evx = $D4              ; [bsp]; truncated s8 view-x
 zp_i_y1 = $D5                     ; [clip]
 ; --- $D6: overlay group (2 phase-disjoint users) ---
-zp_seg_v1_evy = $D6               ; [bsp]
+
 ; --- $D7: overlay group (3 phase-disjoint users) ---
 ; --- $D8: overlay group (3 phase-disjoint users) ---
 zp_mul_b = $D9                    ; [bsp+clip]
@@ -258,39 +297,34 @@ zp_div_hi = $DB                   ; [bsp+clip]
 zp_div_den = $DC                  ; [bsp+clip]
 ; --- $DD: overlay group (2 phase-disjoint users) ---
 zp_div_rem = $DD                  ; [clip]
-zp_seg_v1_evx = $DD               ; [bsp]
 zp_tmp0 = $DE                     ; [bsp+clip]; umul8 scratch (matches span_clip); free outside span_clip
 zp_tmp1 = $DF                     ; [clip]
 zp_tmp2 = $E0                     ; [clip]
 zp_plot_i = $95                     ; [clip]; plot_h byte-index scratch
 ; --- $E1: overlay group (2 phase-disjoint users) ---
-zp_seg_v1_clipped = $E1           ; [bsp]
-zp_prev = $E2                     ; [clip]
-zp_buf = $E3                      ; [clip]; u16 pointer ($E3/$E4)
-zp_seg_v2_evy = $E4               ; [bsp]
+
 ; --- $E5: overlay group (3 phase-disjoint users) ---
-zp_save0 = $E5                    ; [clip]; safe scratch (not clobbered by interp)
-; --- $E6: overlay group (3 phase-disjoint users) ---
-zp_save1 = $E6                    ; [clip]; safe scratch #2
-; --- $E7: overlay group (3 phase-disjoint users) ---
-zp_save2 = $E7                    ; [clip]; safe scratch #3 (alias for tighten zp_new_tail; mark_solid only)
-zp_new_tail = $E7                 ; [clip]; offset of last span in new list (0 = no tail yet)
-zp_old_cur = $E8                  ; [clip]; current span in old list walk
-zp_ox0 = $E9                      ; [clip]; overlap X range
-zp_ox1 = $EA                      ; [clip]
+zp_save0 = $6A                    ; [clip]; DCL line-clip scratch (also
+;   carries bca_vis's old duty? NO — bca_vis/ccsave own $64/$65 solo)
+zp_save1 = $6B                    ; [clip]
+zp_save2 = $6C                    ; [clip]
+zp_new_tail = $6C                 ; [clip]; OVERLAY (pre-existing pair):
+;   mark_solid vs tighten phases
+zp_old_cur = $6D                  ; [clip]; tighten cursor scratch (tfr.s)
+zp_ox0 = $6E                      ; [clip]; subspan extent scratch (dcl+tfr)
+zp_ox1 = $6F                      ; [clip]
+zp_clr_save_x = $D7               ; [clip]; tighten X-save (tfr.s; the name
+;   is historic — NOT the frame clear; concurrently live with zp_old_cur)
 ; --- $EB: overlay group (3 phase-disjoint users) ---
 ; --- $EC: overlay group (3 phase-disjoint users) ---
 ; --- $ED: overlay group (3 phase-disjoint users) ---
 ; --- $EE: overlay group (3 phase-disjoint users) ---
 ; --- $EF: overlay group (3 phase-disjoint users) ---
-zp_nt_l = $EF                     ; [clip]; new boundary at overlap endpoints (s16)
 ; --- $F0: overlay group (2 phase-disjoint users) ---
 ; --- $F1: overlay group (3 phase-disjoint users) ---
 ; --- $F2: overlay group (2 phase-disjoint users) ---
 ; --- $F3: overlay group (2 phase-disjoint users) ---
-zp_nb_l = $F3                     ; [clip]
 ; --- $F4: overlay group (2 phase-disjoint users) ---
-zp_clr_save_x = $F4               ; [clip]; (alias zp_nb_lh)  save X across interp_store calls
 ; --- $F5: overlay group (2 phase-disjoint users) ---
 ; --- $F7: overlay group (2 phase-disjoint users) ---
 ; --- $F8: overlay group (2 phase-disjoint users) ---

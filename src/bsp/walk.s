@@ -246,24 +246,10 @@ zp_seg_sy_bbot_hi = $0A7F
 ; Per-seg saved vertex projections live in RAM (ZP $70+ is rasteriser
 ; territory: RASTER_ZP_SCRSTRT=$70, RASTER_ZP_X0..Y1=$82-$85). Use the
 ; gap between BSP_STACK ($0A00-$0A3F) and SS_VISITED_BITMAP ($0A80).
-SEG_PROJ_BUF = $0A40
-zp_seg_sy1_top_lo = SEG_PROJ_BUF + 0
-zp_seg_sy1_top_hi = SEG_PROJ_BUF + 1
-zp_seg_sy1_bot_lo = SEG_PROJ_BUF + 2
-zp_seg_sy1_bot_hi = SEG_PROJ_BUF + 3
-zp_seg_sy2_top_lo = SEG_PROJ_BUF + 4
-zp_seg_sy2_top_hi = SEG_PROJ_BUF + 5
-zp_seg_sy2_bot_lo = SEG_PROJ_BUF + 6
-zp_seg_sy2_bot_hi = SEG_PROJ_BUF + 7
-; Per-vertex saved back-step projections.
-zp_seg_sy1_btop_lo = SEG_PROJ_BUF + 8
-zp_seg_sy1_btop_hi = SEG_PROJ_BUF + 9
-zp_seg_sy1_bbot_lo = SEG_PROJ_BUF + 10
-zp_seg_sy1_bbot_hi = SEG_PROJ_BUF + 11
-zp_seg_sy2_btop_lo = SEG_PROJ_BUF + 12
-zp_seg_sy2_btop_hi = SEG_PROJ_BUF + 13
-zp_seg_sy2_bbot_lo = SEG_PROJ_BUF + 14
-zp_seg_sy2_bbot_hi = SEG_PROJ_BUF + 15
+; (SEG_PROJ_BUF retired 2026-07-10: the per-endpoint sy pairs live in the
+; packed ZP vertex structs (zp.inc VX1/VX2) — written by do_project_y via
+; zp_seg_ep, read by emit through the same zp_seg_sy* names, now 1 cycle
+; cheaper as ZP. $0A40-$0A7F now belongs to BBOX_CORNERS alone.)
 ; Per-vertex view-space integer values, for near-plane crossing math.
 ; Always populated by br_seg_xform_vertex into "current" slots; the seg
 ; loop copies into v1/v2 slots so we have both vertices' values when
