@@ -228,29 +228,28 @@ ground-truth verify at 5 fixed positions has not worsened vs
   them "free". Grep ang/, anim, the drivers and the NJ reloc wrapper
   before claiming a "free" slot (zp_rns_vec landed on $C4 first and the
   rotation-cache clobbered it on stable frames).
-- **W_BK / BCA_WS overlay (banked)**: the BCA angle workspace is
-  $3A00-$3A3F, INSIDE the W_BK memory area ($3900-$3A3F). Anything W_BK
-  holds above $3A00 is overwritten at runtime by bbox checks — only
-  boot-once code (vwhc_clear) may live there. Moving/growing W_BK
-  contents silently corrupts whatever crosses $3A00 (cost a black-screen
-  disc during the recip rework). Same class: the flat B region's usable
-  ceiling is $0BE8 (ROM-pointer block $0BE8-$0BF7 is poked at init), not
-  the $0C00 the cfg suggests.
-- **Banked main-RAM data anchors (2026-07-10 reshuffle)**: the sqr
-  quarter-square tables live at $2000-$23FF in MAIN (both banks' code
-  needs them — placing anything there black-screens the disc while every
-  harness stays green; the region loop seeds bm before the sqr copy, so
-  the clobber is invisible to flat AND banked harness composition).
-  Banked layout after the reshuffle: level data lives in the banks
-  (L0 = SoA $8000 / seg_hdr $9000 / FHCH $9000+n_segs*12 / TABL0 $BE90;
-  L2 adds verts $A200, VWHC $B500-$B9FF, CFG $BA00), engine code below
-  $8000 (RCCODE $2400, ANIML2 jt+tick $2800 — walk_drv JMPs anchor it,
-  ANIML0 $2A00, VXCODE $2B00). SSMASK is a documented main-RAM exception
-  at $0A80 (per-subsector read under arbitrary banks). SEL+HUD remain in
+- **Banked main-RAM map (2026-07-10 one-region merge)**: ALL engine code
+  is ONE ld65 memory area, CODE $2C00-$57FF, with the MAIN segment first
+  so the driver-facing jump table is PINNED at $2C00 (link asserts in
+  bsp/header.s; jt_anim_tick/init live in the same table at +$1E/+$21).
+  Everything after MAIN floats — there is no more per-region byte-Tetris.
+  Data anchors below the code: BCA_WS $1B40-$1B7F (bca_ab = $1B6F, poked
+  by drivers/harness), sqr quarter-square tables $1C00-$1FFF (both
+  banks' code multiplies through them; TWIN equates in clip/arith.s AND
+  bsp/header.s — keep in sync), beebasm drivers $2000-$2BFF (drv $2000,
+  vars $2180, glue $21A0, sincos $2200, clears+input $2400; !BOOT CALLs
+  &2000). Level data lives in the banks (L0 = SoA $8000 / seg_hdr $9000 /
+  FHCH $9000+n_segs*12 / TABL0 $BE90; L2 adds verts $A200, VWHC
+  $B500-$B9FF, CFG $BA00). SSMASK is a documented main-RAM exception at
+  $0A80 (per-subsector read under arbitrary banks). SEL+HUD remain in
   the bank C window. RULE: no level data in main unless the banked
   placement has a measured-unacceptable paging cost; validate any banked
   placement with the flat-vs-banked FB lockstep AND a jsbeeb disc boot —
-  harness green alone is not evidence.
+  harness green alone is not evidence. (Historical black-screen classes
+  now retired by the merge: the W_BK/BCA_WS $3A00 overlay and the flat
+  $0BE8 ROM-pointer ceiling — the pointer block itself is gone; ROM
+  bases are src/layout.inc assembly-time constants gated against
+  dw.packed_layout on import.)
 
 - **Back-face test truncation**: `br_smul_s8_s16` keeps 16 bits; large
   diagonal products can wrap sign and drop a front-facing seg. Latent,

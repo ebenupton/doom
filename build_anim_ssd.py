@@ -16,8 +16,8 @@ from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 SECTOR = 256
 TOTAL_SECTORS = 800
 SSD_SIZE = TOTAL_SECTORS * SECTOR
-DRV_ADDR = 0x3C00
-TAB_ADDR = 0x3E00
+DRV_ADDR = 0x2000
+TAB_ADDR = 0x2200
 N_FRAMES = 64
 ANGLE_STEP = 256 // N_FRAMES        # 4
 
@@ -45,16 +45,16 @@ def build_images():
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     bm = r.bm
     L0 = bytes(bm._banks[BANK_L0]); C = bytes(bm._banks[BANK_C]); L2 = bytes(bm._banks[BANK_L2])
-    low_end = 0x4800 + os.path.getsize('bsp_render_bk.bin')
-    assert low_end <= DRV_ADDR or low_end >= 0x4800, low_end
+    low_end = 0x2C00 + os.path.getsize('bsp_render_bk.bin')   # CODE region
     low = bytearray(bm[0x1B40:max(low_end, TAB_ADDR + N_FRAMES*8)])
     def overlay(addr, data):
         off = addr - 0x1B40
         low[off:off+len(data)] = data
     overlay(DRV_ADDR, open('ANIMDRV', 'rb').read())
     overlay(TAB_ADDR, sincos_table())
-    # sanity: render code starts at $4800, must not be clobbered by table/driver
-    assert TAB_ADDR + N_FRAMES*8 <= 0x4800, "table collides with bsp_render code"
+    # sanity: engine CODE starts at $2C00; the sincos table ends at $2400
+    # (the driver's clear/input block sits at $2400-$2BFF, part of ANIMDRV)
+    assert TAB_ADDR + N_FRAMES*8 <= 0x2C00, "table collides with bsp_render code"
     return L0, C, L2, bytes(low)
 
 
@@ -98,7 +98,7 @@ BOOT_TEXT = (
     "*SRLOAD BANK2 8000 7\r"
     "*LOAD LOW 1B40\r"
     "MODE 4\r"
-    "CALL &3C00\r"
+    "CALL &2000\r"
 ).encode('ascii')
 
 

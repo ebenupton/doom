@@ -1,14 +1,14 @@
 ; modelb_boot.asm — !BOOT loader for a plain Model B + sideways RAM (no *SRLOAD).
 ; Acorn DFS has no *SRLOAD, so we *LOAD each 16K bank file into a main-RAM staging
 ; area ($3000) and copy it into the target sideways bank via ROMSEL ($FE30). Then
-; *LOAD LOW (code + animation driver @ $3C00 + sincos table @ $3E00), MODE 4, and
+; *LOAD LOW (code + animation driver @ $2000 + sincos table @ $2200), MODE 4, and
 ; jump to the driver. Banks 4/6/7 = L0/C/L2 (all writable SWRAM on a Model B).
 ;
 ; *RUN as !BOOT (boot option 2) -> SHIFT-BREAK autoboots. PAGE=$1900 (DFS).
 ;
 ; ldr — load/copy each bank in turn, then LOW, then hand off. Each
 ; JSR $FFF7 is OSCLI on a command string; OS calls are fine here (the
-; driver's SEI at $3C00 is where the OS goes away). The $3000 staging
+; driver's SEI at $2000 is where the OS goes away). The $3000 staging
 ; area is plain user RAM under the boot-time MODE 7, and LOW ($1B40+)
 ; only lands after the last bank copy has consumed the staging.
 ORG &1900
@@ -21,7 +21,7 @@ ORG &1900
     LDA #7:  JSR copy                            ; -> bank 7
     LDX #LO(c_low):LDY #HI(c_low):JSR &FFF7      ; *LOAD LOW 1B40
     LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4
-    JMP &3C00                                    ; -> animation driver
+    JMP &2000                                    ; -> animation driver
 
 ; copy — copy the 16K staged at $3000-$6FFF into sideways bank A.
 ; In: A = target bank number (4/6/7). Uses ZP $80-$83 as src/dst pointers.

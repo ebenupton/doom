@@ -22,8 +22,9 @@ from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 from span_clip_6502 import SpanClip6502
 
 SPAWN = (1056, -3616, 128)
-DRV_ADDR = 0x3C00
-SPIN = 0x3CCD            # .spin JMP self  (see banked_boot.asm DRV)
+DRV_ADDR = 0x2000
+# SPIN (.spin JMP self, see banked_boot.asm DRV) is found by scanning DRV
+# for the self-jump — the driver shrinks/moves with layout work.
 FB_LO, FB_HI = 0x5800, 0x6C00     # true 256x160 mode-4 framebuffer = 5K (20 pages)
 
 
@@ -49,7 +50,9 @@ def main():
     C  = bytes(src.bm._banks[BANK_C])
     L2 = bytes(src.bm._banks[BANK_L2])
     import os as _os
-    LOW = bytes(src.bm[0x1B40:0x4800 + _os.path.getsize('bsp_render_bk.bin')])
+    LOW = bytes(src.bm[0x1B40:0x2C00 + _os.path.getsize('bsp_render_bk.bin')])
+    import subprocess as _sp
+    _sp.run(['./beebasm', '-i', 'banked_boot.asm'], check=True)  # fresh DRV
     DRV = open('DRV', 'rb').read()
 
     # --- bare machine: zeroed RAM + banks + LOW + driver, nothing else ---
@@ -65,7 +68,7 @@ def main():
     bare.select(BANK_L0)
     sc.mpu.memory = bare
 
-    # --- run the driver from $3C00 until it reaches the spin loop ---
+    # --- run the driver from DRV_ADDR until it reaches the spin loop ---
     mpu = sc.mpu
     mpu.pc = DRV_ADDR
     mpu.sp = 0xFD
@@ -93,8 +96,8 @@ def main():
         diff = sum(1 for a, b in zip(bare_fb, ref_fb) if a != b)
         print(f"\nFAIL — {diff} FB bytes differ from reference")
         # diagnostics: did the walk visit anything? check table pointers
-        print(f"  $42/$43 = {bare[0x42]:02X} {bare[0x43]:02X} (want 4C 87)")
-        print(f"  $0BE8.. = {' '.join('%02X'%bare[0xBE8+i] for i in range(16))}")
+        # ($42/$43 + $0BE8 pointer diagnostics retired 2026-07-10:
+        #  ROM bases are layout.inc constants now)
         print(f"  visited $0A80 = {' '.join('%02X'%bare[0xA80+i] for i in range(8))}")
 
 

@@ -119,14 +119,8 @@ ah_pend:
 ; ============================================================================
 .segment "ANIML2"
 
-jt_anim_tick: JMP anim_tick             ; +0  (driver: PAGE BANK_L2, JSR)
-.if ::BANKED
-; walk_drv's anim glue hardcodes JMP $2800/$2803 — the ANIML2 segment rides
-; align=$100 inside LOWB, so pin it: if RCCODE outgrows 1024 (or shrinks
-; below 769) this fails the LINK instead of shipping a wild driver JMP.
-.assert jt_anim_tick = $2800, error, "jt_anim_tick moved off $2800 (walk_drv JMP anchor)"
-.endif
-jt_anim_init: JMP anim_init             ; +3
+; (jt_anim_tick/jt_anim_init moved into the pinned MAIN jump table at
+;  $2C1E/$2C21 — see bsp/header.s; the one-region merge lets ANIML2 float.)
 
 ; --- anim_tick: advance every mover's logical state; no table writes.
 ;     Per mover: Y = m*3 indexes the WS block, X = m*12 the CFG block.

@@ -416,7 +416,7 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 .import jt_bca_check, jt_bca_frame
 BCA_CHECK = jt_bca_check                ; JSR -> bbox_check_angle (point_to_angle inlined out)
 .if ::BANKED
-BCA_WS = $3A00
+BCA_WS = $1B40
 .else
 BCA_WS = $FA00
 .endif

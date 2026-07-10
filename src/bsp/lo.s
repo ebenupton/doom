@@ -625,7 +625,11 @@ r32_loop:
 
 ; (br_project_x_auto moved to the B region.)
 
+.if !::BANKED
+; flat only: LO still sits at $1B40 under the $2000 clipper jt. Banked LO
+; floats inside the one CODE region (2026-07-10 merge) — no ceiling.
 .assert bsp_lo_end <= $2000, error
+.endif
 
 
 ; ============================================================================

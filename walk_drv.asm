@@ -12,17 +12,17 @@
 ; Keyboard: direct System VIA scan (IC32 addr 3 low = manual scan, key number
 ; written to $FE4F, bit 7 read back). No OS.
 
-angidx = &3D80          ; view angle index 0..63 (angle byte = idx*4)
-backhi = &3D81          ; hidden-buffer page hi ($58 or $6C)
-pxf    = &3D82          ; player x: 8.8 prescaled, 24-bit (frac, lo, hi)
-pxl    = &3D83
-pxh    = &3D84
-pyf    = &3D85
-pyl    = &3D86
-pyh    = &3D87
-jidx   = &3D88          ; vsync journal index (0..62)
-hud_en   = &3D89        ; debug HUD on/off (H key toggles)
-hud_prev = &3D8A        ; H-key state last frame (press-edge debounce)
+angidx = &2180          ; view angle index 0..63 (angle byte = idx*4)
+backhi = &2181          ; hidden-buffer page hi ($58 or $6C)
+pxf    = &2182          ; player x: 8.8 prescaled, 24-bit (frac, lo, hi)
+pxl    = &2183
+pxh    = &2184
+pyf    = &2185
+pyl    = &2186
+pyh    = &2187
+jidx   = &2188          ; vsync journal index (0..62)
+hud_en   = &2189        ; debug HUD on/off (H key toggles)
+hud_prev = &218A        ; H-key state last frame (press-edge debounce)
 D_ENABLE = &05FE        ; forward-coherence bbox cache master switch (bbox.s)
 D_FWD    = &05FF        ; per-frame flag: this frame's move was forward-only
 ; vsync journal: 64 x 4 bytes at $0300 (dead OS workspace; no OS after boot):
@@ -33,7 +33,7 @@ jbase  = &1A00          ; RELOCATED 2026-07-08 from $0300: the forward-coherence
                         ; bbox cache owns $0210-$03F7 (bbox.s); $1A00 is dead
                         ; boot-loader memory (loader stages below $1B40, never
                         ; touched after boot)
-tabbase = &3E00         ; sincos table (build-overlaid): 64 x 8 bytes
+tabbase = &2200         ; sincos table (build-overlaid): 64 x 8 bytes
 
 SPEED = 12              ; world units per frame of forward motion
 
@@ -44,10 +44,10 @@ RAWX_MAX = &0A10        ;  2576
 RAWY_MIN = &F9D2        ; -1582
 RAWY_MAX = &0492        ;  1170
 
-ORG &3C00
+ORG &2000
 ; ---------------------------------------------------------------------------
 ; drv — one-time boot init, then falls through into the frame loop.
-; Entry: JMP $3C00 from the !BOOT loader (banks 4/6/7 = L0/C/L2 already
+; Entry: JMP $2000 from the !BOOT loader (banks 4/6/7 = L0/C/L2 already
 ; copied to sideways RAM, LOW loaded, MODE 4 selected). Never returns.
 ; Interrupts stay off for ever (SEI; direct hardware only from here on —
 ; the OS workspace is dead and reused, e.g. the vsync journal at $0300).
@@ -64,10 +64,6 @@ ORG &3C00
     LDA #&00:STA pxf : LDA #&EE:STA pxl : LDA #&FF:STA pxh
     LDA #&40:STA pyf : LDA #&D2:STA pyl : LDA #&FF:STA pyh
     LDA #&06:STA &04                                ; VZ (spawn floor; constant v1)
-    ; --- ROM table pointers ---
-    LDA #&4C:STA &42 : LDA #&87:STA &43             ; zp_rom_nodes -> $874C
-    LDA #235:STA &4C : LDA #0:STA &4D               ; zp_root_node = n_nodes-1
-    ; (ROM-pointer copy retired 2026-07-10: bases are layout.inc constants)
     ; --- CRTC: narrow 256x160 centred, cursor off (R12/R13 set per flip) ---
     LDA #1 :STA &FE00: LDA #32 :STA &FE01
     LDA #2 :STA &FE00: LDA #45 :STA &FE01
@@ -173,13 +169,13 @@ ORG &3C00
     INY:LDA (&EC),Y:STA &08
     INY:LDA (&EC),Y:STA &09
     INY:LDA (&EC),Y:STA &0A
-    INY:LDA (&EC),Y:STA &3A2F                       ; bca_ab
+    INY:LDA (&EC),Y:STA &1B6F                       ; bca_ab (BCA_WS+$2F)
     JSR anim_glue_tick                              ; advance movers (lazy patch)
     ; --- render into hidden buffer (cleared by previous flip_sched) ---
     LDA backhi:STA &70
-    LDA #4 :STA &FE30 : JSR &4809                   ; br_view_setup
+    LDA #4 :STA &FE30 : JSR &2C09                   ; br_view_setup
     LDA #6 :STA &FE30 : JSR &8000                   ; span_init / pool
-    LDA #4 :STA &FE30 : JSR &481B : JSR &4815       ; init_frame + render_frame
+    LDA #4 :STA &FE30 : JSR &2C1B : JSR &2C15       ; init_frame + render_frame
     JSR flip_sched
     JMP frame
 
@@ -188,8 +184,8 @@ ORG &3C00
 ; An extra init block once pushed it INTO the variables - the engine's
 ; table pointers then got clobbered at runtime by angidx/jidx stores and
 ; every frame rendered pixel-free while the loop ran happily. Pin it.
-ASSERT P% <= &3D80
-ORG &3D90
+ASSERT P% <= &2180
+ORG &2190
 ; (.ptrtab retired 2026-07-10 — the engine assembles its ROM bases from
 ; src/layout.inc; the $0BE8 block is dead. $3D90-$3D9F freed.)
 .drv_end
@@ -197,7 +193,7 @@ ORG &3D90
 ; --- unrolled framebuffer clears + flip scheduler: identical to anim_drv --
 ; --- animated-sector glue: page bank L2 and enter the anim jump table
 ;     ($3DA0-$3DBF pocket between ptrtab and the sincos table at $3E00) ---
-ORG &3DA0
+ORG &21A0
 ; anim_glue_init: one-time mover-state init + SMC-installs the per-subsector
 ; visibility hook in the renderer. anim_glue_tick: per-frame logical advance
 ; of every mover's height state machine (no table writes; the hook patches
@@ -220,11 +216,10 @@ ORG &3DA0
     INX
     CPX #&C0
     BNE stkcpy
-    JMP &2803                                       ; jt_anim_init (main since the
-                                                    ; 2026-07-10 reshuffle)
+    JMP &2C21                                       ; jt_anim_init (pinned jt)
 .anim_glue_tick
     LDA #7:STA &FE30
-    JMP &2800                                       ; jt_anim_tick (main)
+    JMP &2C1E                                       ; jt_anim_tick (pinned jt)
 .key_hud
     ; H key: toggle the debug HUD on the press edge only (hud_prev holds
     ; last frame's state, so holding the key flips it exactly once).
@@ -248,7 +243,7 @@ ORG &3DA0
     LDA #4:STA &FE30                                ; restore a render bank
     RTS
 
-ORG &4000
+ORG &2400
 ; ---------------------------------------------------------------------------
 ; clr58t/clr58b/clr6Ct/clr6Cb — unrolled clears of framebuffer half-screens.
 ; Each 20-page buffer ($5800 or $6C00) splits at the 80-row midline into a
@@ -642,5 +637,5 @@ FOR n, 0, 21
     EQUB HI(n * 36)
 NEXT
 .clr_end
-ASSERT clr_end <= &4800     ; MUST NOT touch the engine at $4800 (jump table!)
-SAVE "WALKDRV", &3C00, clr_end, &3C00
+ASSERT clr_end <= &2C00     ; MUST NOT touch the engine at $2C00 (jump table!)
+SAVE "WALKDRV", &2000, clr_end, &2000

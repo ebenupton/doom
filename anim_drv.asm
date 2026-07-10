@@ -4,17 +4,17 @@
 ; table (8 bytes/entry) the build overlays at $3E00. Double-buffered: render to
 ; the hidden buffer ($5800/$6C00), then flip CRTC R12/R13 to show it.
 ;
-; Lives in the clipper-vacated low space ($3C00-$47FF) the render never touches.
+; Lives in the driver slot ($2000-$2BFF) below the engine CODE region at $2C00.
 ; Loaded as part of LOW; !BOOT just *SRLOADs the banks, *LOADs LOW, MODE 4, and
-; JMP $3C00. No separate DRV file.
+; JMP $2000. No separate DRV file.
 
-angidx = &3D80          ; frame index 0..63
-ptlo   = &3D81          ; running table pointer
-pthi   = &3D82
-backhi = &3D83          ; hidden-buffer page hi ($58 or $6C)
-tabbase = &3E00         ; sincos table (build-overlaid): 64 x 8 bytes
+angidx = &2180          ; frame index 0..63
+ptlo   = &2181          ; running table pointer
+pthi   = &2182
+backhi = &2183          ; hidden-buffer page hi ($58 or $6C)
+tabbase = &2200         ; sincos table (build-overlaid): 64 x 8 bytes
 
-ORG &3C00
+ORG &2000
 ; ---------------------------------------------------------------------------
 ; drv — one-time boot init, then falls through into the frame loop.
 ; Entry: JMP $3C00 from !BOOT (banks loaded, LOW loaded, MODE 4). Never
@@ -40,12 +40,7 @@ ORG &3C00
     LDA #&06:STA &04                                ; VZ
     LDA #&70:STA &90 : LDA #&FF:STA &91             ; PXRAW
     LDA #&92:STA &92 : LDA #&FE:STA &93             ; PYRAW
-    ; --- ROM table pointers ---
-    LDA #&4C:STA &42 : LDA #&87:STA &43             ; zp_rom_nodes -> $874C
-    LDA #235:STA &4C : LDA #0:STA &4D               ; zp_root_node = n_nodes-1
-    LDX #15
-.pcpy
-    LDA ptrtab,X : STA &0BE8,X : DEX : BPL pcpy
+    ; (ROM-pointer copy retired 2026-07-10: bases are layout.inc constants)
     ; --- CRTC: narrow 256x160 centred, cursor off (R12/R13 set per flip) ---
     LDA #1 :STA &FE00: LDA #32 :STA &FE01
     LDA #2 :STA &FE00: LDA #45 :STA &FE01
@@ -110,13 +105,13 @@ ORG &3C00
     INY:LDA (&EC),Y:STA &08                         ; c_mag
     INY:LDA (&EC),Y:STA &09                         ; c_neg
     INY:LDA (&EC),Y:STA &0A                         ; c_one
-    INY:LDA (&EC),Y:STA &3A2F                       ; bca_ab (view angle)
+    INY:LDA (&EC),Y:STA &1B6F                       ; bca_ab (view angle; BCA_WS+$2F)
     ; --- render one frame into the hidden buffer (cleared for us by the
     ;     previous iteration's flip scheduler) ---
     LDA backhi:STA &70                              ; rasteriser scrstrt hi
-    LDA #4 :STA &FE30 : JSR &4809                   ; br_view_setup
+    LDA #4 :STA &FE30 : JSR &2C09                   ; br_view_setup
     LDA #6 :STA &FE30 : JSR &8000                   ; span_init / pool
-    LDA #4 :STA &FE30 : JSR &481B : JSR &4815       ; init_frame + render_frame
+    LDA #4 :STA &FE30 : JSR &2C1B : JSR &2C15       ; init_frame + render_frame
     ; --- flip + beam-scheduled clear of the buffer coming off display ---
     JSR flip_sched                                  ; toggles backhi
     ; --- advance to next frame (wrap at 64) ---
@@ -128,12 +123,6 @@ ORG &3C00
 .adv
     CLC:LDA ptlo:ADC #8:STA ptlo : LDA pthi:ADC #0:STA pthi
     JMP frame
-.ptrtab
-    ; SoA layout: node/ss pages head ROM_MAIN, verts at +$1000 ($9000),
-    ; ss pages at +$0D00 ($8D00), seg_hdr after verts ($974C).
-    ; build_walk_ssd asserts these against dw.packed_layout.
-    EQUB &00,&24, &00,&8E, &00,&90, &00,&00         ; fhch bbox verts (unused)
-    EQUB &00,&8D, &4C,&97, &00,&A2, &00,&24         ; ss seg_hdr vwh detail
 .drv_end
 
 ; --- unrolled framebuffer clears (in the $4000-$47FF the render never touches).
@@ -141,7 +130,7 @@ ORG &3C00
 ;     scheduler can clear the beam-passed top half early. STA abs,Y = 5cyc.
 ;     clr58t/clr58b = top/bottom of FB0 ($5800); clr6Ct/clr6Cb = FB1 ($6C00).
 ;     Each clobbers A,Y. ---
-ORG &4000
+ORG &2400
 .clr58t
     LDA #0 : TAY
 .c0t
@@ -269,4 +258,4 @@ ALIGN &100
       ENDIF
     NEXT
 .clr_end
-SAVE "ANIMDRV", &3C00, clr_end, &3C00
+SAVE "ANIMDRV", &2000, clr_end, &2000

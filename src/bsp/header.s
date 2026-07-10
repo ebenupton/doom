@@ -186,6 +186,19 @@ jt_br_render_subsector: JMP br_render_subsector                 ; $4818  process
 ;        to isolate BSP-traversal vs seg-processor
 ;        divergence.
 jt_br_init_frame: JMP br_init_frame                       ; $481B   clear vcache valid bitmap (for hybrid mode)
+; Animated-sector entries (bodies in anim.s): kept in THIS table so the
+; beebasm drivers see one pinned dispatch block and everything after the
+; MAIN segment can float freely inside the CODE region.
+jt_anim_tick: JMP anim_tick                          ; +$1E  (driver: PAGE BANK_L2, JSR)
+jt_anim_init: JMP anim_init                          ; +$21
+; (anim_tick/anim_init are same-unit labels — anim.s is part of this link unit)
+.export jt_anim_tick, jt_anim_init
+.if ::BANKED
+; The drivers hardcode these addresses (walk_drv/anim_drv JSR &2C09 etc);
+; MAIN must stay FIRST in the CODE region and the table must not move.
+.assert jt_br_umul8 = $2C00, error, "banked jump table moved off $2C00 (driver ABI)"
+.assert jt_anim_tick = $2C1E, error, "jt_anim_tick moved off $2C1E (driver ABI)"
+.endif
 
 ; ============================================================================
 ; Aliases for span_clip's exported routines
@@ -206,11 +219,11 @@ SC_TIGHTEN_FROM_RECORDS = jt_tighten_from_records
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites
 .if ::BANKED
-sqr_lo = $2000
-sqr_hi = $2100
-; low RAM (matches span_clip banked sqr)
-sqr2_lo = $2200
-sqr2_hi = $2300
+; low RAM (KEEP IN SYNC with src/clip/arith.s — same tables, twin equates)
+sqr_lo = $1C00
+sqr_hi = $1D00
+sqr2_lo = $1E00
+sqr2_hi = $1F00
 .else
 sqr_lo = $A500
 sqr_hi = $A600

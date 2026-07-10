@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build doom_walk.ssd: an autobooting WALKABLE E1M1 wireframe for a plain
 Model B + SWRAM (same machine-code ROMSEL boot as doom_modelb.ssd), with
-walk_drv (keyboard-driven position/angle) overlaid at $3C00 instead of the
+walk_drv (keyboard-driven position/angle) overlaid at $2000 instead of the
 spin driver. Cursor keys: Left/Right turn, Up/Down move forward/back."""
 import os, subprocess, builtins
 os.environ.setdefault('DOOM_ANIM', '1')     # animated doors/lifts on the disc

@@ -8,7 +8,7 @@ copy its 64K into a BankedMemory, then patch the banked deltas:
   - ROM_MAIN (verts/nodes/ss/seg_hdr) -> bank L0 @ $8000; ZP ptrs -> $8000+off
   - clipper (span_clip_bankc.bin) + rasteriser -> bank C @ $8000/$A900
   - FHCH -> low RAM $2400 (was $B600, inside the bank window); ZP -> $2400
-  - sqr tables -> low RAM $2000 (banked clipper/bsp umul8 read them there)
+  - sqr tables -> low RAM $1C00 (banked clipper/bsp umul8 read them there)
   - bsp_render code -> the *_bk.bin variants (PAGE inserts + $80xx clip entries)
 Everything else (recip/bbox/angle subsystem/vcache) stays flat (above the
 $8000-$BFFF window) — reachable in the model; real-HW relocation is a later step.
@@ -23,7 +23,7 @@ from bsp_render_6502 import BspRender6502, ROM_MAIN_BASE, ROM_FHCH_BASE
 
 BANK_L0, BANK_C, BANK_L2 = 4, 6, 7
 FHCH_LOW = 0x2400
-SQR_LOW = 0x2000
+SQR_LOW = 0x1C00
 RASTER_OFF = 0xA900            # rasteriser window addr in bank C
 
 
@@ -87,7 +87,7 @@ def build_banked(flatr):
 
     # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)
 
-    # --- sqr tables -> low $2000 (copy from flat $A500) ---
+    # --- sqr tables -> low $1C00 (copy from flat $A500) ---
     for i in range(0x400):
         bm[SQR_LOW + i] = fmem[0xA500 + i]
 
@@ -162,9 +162,23 @@ class BankedBspRender(BspRender6502):
         sc.init = banked_init
 
     def render_frame(self, px, py, ab, floor_z=0):
-        # bca_ab relocated from $FA2F to $3A2F (BCA_WS+$2F) in the banked build.
-        self.bm[0x3A2F] = ab & 0xFF
-        return super().render_frame(px, py, ab, floor_z)
+        # bca_ab relocated from $FA2F to $1B6F (BCA_WS+$2F) in the banked build.
+        self.bm[0x1B6F] = ab & 0xFF
+        # 2026-07-10 one-region merge: banked jt is at $2C00 (flat stays at
+        # $4800), so the inherited render_frame's flat entry constants no
+        # longer apply. Swap in the banked-map addresses around the call.
+        import bsp_render_6502 as _br
+        from symmap import sym as _sym
+        saved = (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_INIT_FRAME,
+                 _br.ENTRY_BR_RENDER_FRAME)
+        _br.ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup', banked=1)
+        _br.ENTRY_BR_INIT_FRAME   = _sym('jt_br_init_frame', banked=1)
+        _br.ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame', banked=1)
+        try:
+            return super().render_frame(px, py, ab, floor_z)
+        finally:
+            (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_INIT_FRAME,
+             _br.ENTRY_BR_RENDER_FRAME) = saved
 
 
 def fb_mask(r):
