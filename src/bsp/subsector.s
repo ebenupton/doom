@@ -212,13 +212,15 @@ skip_bdlt:
 ; --- Transform + project both endpoints (br_seg_xform_vertex:
 ; vcache-backed br_to_view, near-plane test, X projection, Y projections
 ; for the edges this seg's flags need; sets zp_seg_skip=1 if the vertex
-; is behind the near plane, else fills the SEG_PROJ_BUF "current" slots).
-; Transform v1. Always copy evy/evx/clipped so both endpoints are
-; available for near-plane crossing math even when one side is clipped.
+; is behind the near plane, else writes sx/sy straight into this endpoint's
+; slots via zp_seg_ep). Transform v1. Always copy evy/evx/clipped so both
+; endpoints are available for near-plane crossing math even when clipped.
    LDA zp_seg_v1_lo
    STA zp_br_t0
    LDA zp_seg_v1_hi
    STA zp_br_t1
+   LDA #0
+   STA zp_seg_ep                            ; v1 → SEG_PROJ_BUF +0
    JSR br_seg_xform_vertex
    LDA zp_seg_cur_evy
    STA zp_seg_v1_evy
@@ -226,15 +228,14 @@ skip_bdlt:
    STA zp_seg_v1_evx
    LDA zp_seg_skip
    STA zp_seg_v1_clipped
-   BNE s_v1_skipped
-   JSR copy_seg_to_v1
-s_v1_skipped:
 
 ; Transform v2.
    LDA zp_seg_v2_lo
    STA zp_br_t0
    LDA zp_seg_v2_hi
    STA zp_br_t1
+   LDA #4
+   STA zp_seg_ep                            ; v2 → SEG_PROJ_BUF +4
    JSR br_seg_xform_vertex
    LDA zp_seg_cur_evy
    STA zp_seg_v2_evy
@@ -242,16 +243,13 @@ s_v1_skipped:
    STA zp_seg_v2_evx
    LDA zp_seg_skip
    STA zp_seg_v2_clipped
-   BNE s_v2_skipped
-   JSR copy_seg_to_v2
-s_v2_skipped:
 
 ; --- Near-plane clip resolution (mirrors fp_near_clip in fp.py) ---
 ; Both vertices xform'd. If both clipped → bail. If exactly one clipped,
 ; reproject from crossing point and copy into that vertex's slots.
 ; (reproject_at_crossing computes the vy=NEAR crossing from the saved
-; v1/v2 view coords and projects it; copy_seg_to_vN then installs the
-; result as that endpoint's sx/sy set.)
+; v1/v2 view coords and projects it straight into that endpoint's slots
+; via zp_seg_ep.)
 ; Python near-clips ALL front-facing segs (fp_near_clip), so solid
 ; walls reproject too — their clamped mark_solid range comes from the
 ; crossing projection (e.g. mark_solid(0,81) from sx=-2176 at
@@ -263,14 +261,16 @@ s_v2_skipped:
    BEQ s_v2_was_clipped
    LDA zp_seg_v2_clipped
    BNE s_advance_jmp                       ; both clipped
+   LDA #0
+   STA zp_seg_ep                            ; reproject into v1
    JSR reproject_at_crossing
-   JSR copy_seg_to_v1
    JMP s_both_have_proj
 s_advance_jmp:
    JMP s_advance
 s_v2_was_clipped:
+   LDA #4
+   STA zp_seg_ep                            ; reproject into v2
    JSR reproject_at_crossing
-   JSR copy_seg_to_v2
 s_both_have_proj:
 
 ; Match Python's has_gap wrapper:

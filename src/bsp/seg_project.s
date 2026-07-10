@@ -35,19 +35,21 @@ do_project_y:
    LDA zp_seg_top_dlt
    STA zp_br_t0
    JSR br_project_y
+   LDX zp_seg_ep                            ; re-establish endpoint offset
    LDA zp_br_resl
-   STA zp_seg_sy_top_lo
+   STA SEG_PROJ_BUF+0,X                     ; sy_top_lo (v1 +0 / v2 +4)
    LDA zp_br_resh
-   STA zp_seg_sy_top_hi
+   STA SEG_PROJ_BUF+1,X
 
 ; --- Project Y for bottom edge (height = fh - vz) ---
    LDA zp_seg_bot_dlt
    STA zp_br_t0
    JSR br_project_y
+   LDX zp_seg_ep
    LDA zp_br_resl
-   STA zp_seg_sy_bot_lo
+   STA SEG_PROJ_BUF+2,X                     ; sy_bot
    LDA zp_br_resh
-   STA zp_seg_sy_bot_hi
+   STA SEG_PROJ_BUF+3,X
 
 ; --- Back-pair projections only when a consumer exists: every use of
 ; sy_btop/sy_bbot is gated on (SOLID & APEDGE1) — the APV1 aperture
@@ -72,10 +74,11 @@ dpy_btop:
    LDA zp_seg_btop_dlt
    STA zp_br_t0
    JSR br_project_y
+   LDX zp_seg_ep
    LDA zp_br_resl
-   STA zp_seg_sy_btop_lo
+   STA SEG_PROJ_BUF+8,X                     ; sy_btop
    LDA zp_br_resh
-   STA zp_seg_sy_btop_hi
+   STA SEG_PROJ_BUF+9,X
    LDA zp_seg_flags
    AND #$02
    BNE dpy_bbot
@@ -90,10 +93,11 @@ dpy_bbot:
    LDA zp_seg_bbot_dlt
    STA zp_br_t0
    JSR br_project_y
+   LDX zp_seg_ep
    LDA zp_br_resl
-   STA zp_seg_sy_bbot_lo
+   STA SEG_PROJ_BUF+10,X                    ; sy_bbot
    LDA zp_br_resh
-   STA zp_seg_sy_bbot_hi
+   STA SEG_PROJ_BUF+11,X
 dpy_done:
    RTS
 .endscope

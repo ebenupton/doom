@@ -2,20 +2,21 @@ bsp_lo_start:
 
 ; ============================================================================
 ; reproject_at_crossing — call cross_compute, then project sx + 4 sy values
-; using the reciprocal at NEAR. Output → zp_seg_sx_lo/hi, zp_seg_sy_*.
+; using the reciprocal at NEAR. Writes sx (→ sx1/sx2 via zp_seg_ep) and the
+; four sy pairs (→ SEG_PROJ_BUF via zp_seg_ep) straight into the endpoint.
 ;
 ; Called by the seg loop (subsector.s) when EXACTLY ONE endpoint of a
 ; front-facing seg is behind the near plane: that endpoint is replaced by
 ; the seg's crossing point with vy = NEAR, mirroring Python's fp_near_clip
 ; branch in packed_render_seg (idxK = eyK << 1 = 2 → recip at NEAR;
-; fvxK_c = 0 for clipped endpoints). The caller then copies these results
-; into the clipped endpoint's v1/v2 slots via copy_seg_to_v1/v2.
+; fvxK_c = 0 for clipped endpoints). zp_seg_ep selects the endpoint
+; (0=v1, 4=v2), set by the caller before the JSR.
 ;
 ;   Inputs:  zp_seg_v1_evy/evx, zp_seg_v2_evy/evx (both endpoints' s8 view
 ;              coords — always populated by br_seg_xform_vertex),
 ;            zp_seg_*_dlt + zp_seg_flags (consumed by the do_project_y tail).
-;   Outputs: zp_seg_sx_lo/hi = screen x of the crossing point (s16),
-;            zp_seg_sy_*     = seg heights projected with recip(NEAR),
+;   Outputs: sx1/sx2 (via zp_seg_ep) = screen x of the crossing point (s16),
+;            SEG_PROJ_BUF sy (via zp_seg_ep) = heights at recip(NEAR),
 ;            zp_br_rhi/rlo   = recip(NEAR) = (M8=0, S=1).
 ;
 ;   Pseudocode:
@@ -35,10 +36,13 @@ reproject_at_crossing:
    LDA #0
    STA zp_v_xfrac
    JSR br_project_x_auto
+   LDA zp_seg_ep
+   LSR A
+   TAX                                     ; X = sx offset (0=v1, 2=v2)
    LDA zp_br_resl
-   STA zp_seg_sx_lo
+   STA $0061,X                             ; sx_lo → sx1/sx2 direct
    LDA zp_br_resh
-   STA zp_seg_sx_hi
+   STA $0062,X
    JMP do_project_y
 .endscope
 
@@ -56,40 +60,6 @@ reproject_at_crossing:
 ;   (The "biasing" note above is historical — see the comment at
 ;   copy_seg_to_vx: Y values now arrive pre-biased from br_project_y.)
 ; ============================================================================
-copy_seg_to_v1:
-   LDX #0
-   LDY #0
-   BEQ copy_seg_to_vx
-copy_seg_to_v2:
-   LDX #4
-   LDY #2
-; copy_seg_to_vx — X = sy-slot offset (0=v1, 4=v2), Y = sx-slot offset
-; (0=v1, 2=v2). SEG_PROJ_BUF pairs: vK_top at +0/+4, btop at +8/+12,
-; bbot at +10/+14; sx slots at $61/$63. Y values biased by Y_BIAS (48).
-copy_seg_to_vx:
-; Y values arrive pre-biased from br_project_y (HALF_H + Y_BIAS).
-   LDA zp_seg_sx_lo
-   STA $0061,Y
-   LDA zp_seg_sx_hi
-   STA $0062,Y
-   LDA zp_seg_sy_top_lo
-   STA SEG_PROJ_BUF+0,X
-   LDA zp_seg_sy_top_hi
-   STA SEG_PROJ_BUF+1,X
-   LDA zp_seg_sy_bot_lo
-   STA SEG_PROJ_BUF+2,X
-   LDA zp_seg_sy_bot_hi
-   STA SEG_PROJ_BUF+3,X
-   LDA zp_seg_sy_btop_lo
-   STA SEG_PROJ_BUF+8,X
-   LDA zp_seg_sy_btop_hi
-   STA SEG_PROJ_BUF+9,X
-   LDA zp_seg_sy_bbot_lo
-   STA SEG_PROJ_BUF+10,X
-   LDA zp_seg_sy_bbot_hi
-   STA SEG_PROJ_BUF+11,X
-   RTS
-
 ; ============================================================================
 ; cross_compute — near-plane crossing point for a seg with one clipped vertex.
 ;   Inputs:  zp_clip_C_evy, zp_clip_C_evx (clipped, evy ≤ 0)

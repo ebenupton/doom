@@ -15,7 +15,7 @@
 ;           zp_seg_skip = 1 if near-clipped (vy < NEAR); everything below
 ;             is then undefined and the caller must not use it.
 ;           zp_br_rhi/rlo = (M8, S) floating recip FOCAL/vy for this vertex.
-;           zp_seg_sx_lo/hi (and zp_br_resl/h) = screen x (s16).
+;           sx1/sx2 (via zp_seg_ep) and zp_br_resl/h = screen x (s16).
 ;           zp_seg_sy_* = the four per-seg height projections — the routine
 ;             tail-calls do_project_y (seg_project.s) with this vertex's
 ;             reciprocal.
@@ -143,12 +143,15 @@ vc_hit_ok:
    JSR rns_select                          ; cached S → re-pick the shifter
                                         ; (preserves Y; the vector belongs
                                         ; to whoever wrote rlo LAST)
-   INY
+   LDA zp_seg_ep
+   LSR A
+   TAX                                     ; X = sx offset (0=v1, 2=v2)
+   LDY #4
    LDA (zp_br_p),Y
-   STA zp_seg_sx_lo
-   INY
+   STA $0061,X                             ; sx_lo → sx1/sx2 direct
+   LDY #5
    LDA (zp_br_p),Y
-   STA zp_seg_sx_hi
+   STA $0062,X                             ; sx_hi
 ; Project Y for top + bottom (heights vary per seg, can't cache).
    JMP do_project_y
 
@@ -305,12 +308,16 @@ nc_ok:
 ; skipping the seg loses occlusion (e.g. mark_solid(0,81) at
 ; (800,-3400,96)) and over-emits behind it.
    JSR br_project_x_auto
+   LDA zp_seg_ep
+   LSR A
+   TAX                                     ; X = sx offset (0=v1, 2=v2)
    LDA zp_br_resl
-   STA zp_seg_sx_lo
+   STA $0061,X                             ; sx_lo → sx1/sx2 direct
    LDA zp_br_resh
-   STA zp_seg_sx_hi
+   STA $0062,X                             ; sx_hi
 
 ; --- Cache the per-vertex results (rhi, rlo, sx, near-clip=0) ---
+; (X still = sx offset; the cache reads sx back from $0061,X.)
    LDA zp_seg_v_cache_lo
    STA zp_br_p
    LDA zp_seg_v_cache_hi
@@ -322,10 +329,10 @@ nc_ok:
    LDA zp_br_rlo
    STA (zp_br_p),Y
    INY
-   LDA zp_seg_sx_lo
+   LDA $0061,X
    STA (zp_br_p),Y
    INY
-   LDA zp_seg_sx_hi
+   LDA $0062,X
    STA (zp_br_p),Y
    INY
    LDA #0
