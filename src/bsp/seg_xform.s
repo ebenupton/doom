@@ -48,9 +48,15 @@
 ; ============================================================================
 br_seg_xform_vertex:
 .scope
-   PAGE BANK_L0                            ; reads verts (L0) on vcache miss; prior seg's
-; projection may have left L2/C paged
-   ZERO zp_seg_skip
+; ENTRY CONTRACT: A = idx_hi — both callers end LDA vN_hi / STA
+; zp_seg_v_idx_hi immediately before the JSR (mirrored at the call sites
+; in subsector.s). PAGE BANK_L0 lives at vc_miss now: only the ROM vert
+; read needs L0 (the hit path touches main-RAM VCACHE + rns vectors only,
+; and br_project_y / br_recip page L2 themselves), so nothing here may
+; touch A before the STA below. skip clears via X to keep A intact.
+   STA zp_br_t3                            ; t3 = idx_hi (A from caller)
+   LDX #0
+   STX zp_seg_skip
 
 ; --- Compute vertex cache index (idx*8 → cache offset) ---
 ; idx is in zp_seg_v_idx_lo/hi (u16). vc_offset = idx * 8 (s/o offset for valid).
@@ -58,9 +64,6 @@ br_seg_xform_vertex:
 ;
 ; --- Check valid bit ---
 ; valid_byte_offset = idx_lo >> 3 + idx_hi << 5 (since high byte each adds 32 bytes)
-; (Can't ride idx_hi in from the caller's last STA: ZERO/PAGE above leave A=0.)
-   LDA zp_seg_v_idx_hi
-   STA zp_br_t3
    LDA zp_seg_v_idx_lo
    LSR zp_br_t3
    ROR A
@@ -150,6 +153,9 @@ vc_hit_ok:
    JMP do_project_y
 
 vc_miss:
+   PAGE BANK_L0                            ; ROM vert read below needs L0; the
+; prior vertex's projection may have left L2/C paged. (Moved from entry —
+; the hit path never touches a banked region.)
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
 ; a usable entry). ---

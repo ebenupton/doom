@@ -220,8 +220,8 @@ skip_bdlt:
    LDA zp_seg_v1_lo
    STA zp_seg_v_idx_lo
    LDA zp_seg_v1_hi
-   STA zp_seg_v_idx_hi
-   JSR br_seg_xform_vertex
+   STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
+   JSR br_seg_xform_vertex                  ; keep this STA immediately before
    LDA zp_seg_cur_evy
    STA zp_seg_v1_evy
    LDA zp_seg_cur_evx
@@ -235,8 +235,8 @@ skip_bdlt:
    LDA zp_seg_v2_lo
    STA zp_seg_v_idx_lo
    LDA zp_seg_v2_hi
-   STA zp_seg_v_idx_hi
-   JSR br_seg_xform_vertex
+   STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
+   JSR br_seg_xform_vertex                  ; keep this STA immediately before
    LDA zp_seg_cur_evy
    STA zp_seg_v2_evy
    LDA zp_seg_cur_evx
