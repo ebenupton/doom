@@ -313,8 +313,8 @@ def gen_6502_tables(flat=True):
                  fhch=br.ROM_FHCH_BASE,
                  hdr=br.ROM_MAIN_BASE + _OFF_SEG_HDR)
     else:
-        A = dict(ssmask=0xBB00, tabl0=0xBC00, cfg=0xB980,
-                 fhch=0x2400, hdr=0x8000 + _OFF_SEG_HDR)
+        A = dict(ssmask=0x0A80, tabl0=0xBE90, cfg=0xBA00,
+                 fhch=0x9000 + _LAYOUT['n_segs'] * 12, hdr=0x9000)
     order = sorted(dw.ANIM_SECTORS)
     out = {}
     # SSMASK

@@ -800,7 +800,10 @@ a2_have_recip:
 ; APV2 heights read straight from the FHCH cursor — zp_fhch_p is a ZP
 ; pointer, so no copy into zp_br_p is needed (and it survives the
 ; br_project_y calls, unlike zp_br_p which is general scratch).
-; bch2' = project(APV2_CH - vz)  (FHCH byte 4)
+; bch2' = project(APV2_CH - vz)  (FHCH byte 4). FHCH is L0-window data
+; since the 2026-07-10 reshuffle: this path arrives under BANK_C, so page
+; L0 for the read (br_project_y pages L2 itself; emit_vert_sx2 pages C).
+   PAGE BANK_L0
    LDY #4
    LDA (zp_fhch_p),Y
    SEC
@@ -811,7 +814,8 @@ a2_have_recip:
    STA zp_line_yl
    LDA zp_br_resh
    STA $B3
-; bfh2' = project(APV2_FH - vz)  (FHCH byte 5)
+; bfh2' = project(APV2_FH - vz)  (FHCH byte 5; br_project_y left L2 paged)
+   PAGE BANK_L0
    LDY #5
    LDA (zp_fhch_p),Y
    SEC

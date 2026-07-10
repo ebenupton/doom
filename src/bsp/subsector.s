@@ -393,11 +393,17 @@ hg_pass:
    BEQ ft_skip
    JMP ft_emit
 ft_no_needbt:
-; bch > ch ? (bch on demand from FHCH+3)
+; bch > ch ? (bch on demand from FHCH+3 — FHCH lives in the L0 window
+; since the 2026-07-10 reshuffle and this path runs under BANK_C, so
+; page around the read; flat: no-ops)
+   PAGE BANK_L0
    LDY #3
    LDA (zp_fhch_p),Y
    SEC
    SBC zp_seg_ch
+   TAX                                     ; verdict rides in X: PAGE (banked)
+   PAGE BANK_C                             ; is LDA #bank — clobbers A + flags
+   TXA
    BMI ft_skip
    BEQ ft_skip
 ft_emit:
@@ -463,11 +469,16 @@ ft_skip:
    BEQ fb_skip
    JMP fb_emit
 fb_no_needbb:
-; bfh < fh ? (bfh on demand from FHCH+2)
+; bfh < fh ? (bfh on demand from FHCH+2 — L0-window read under BANK_C,
+; page around like ft_no_needbt; flat: no-ops)
+   PAGE BANK_L0
    LDY #2
    LDA zp_seg_fh
    SEC
    SBC (zp_fhch_p),Y
+   TAX                                     ; verdict rides in X across the
+   PAGE BANK_C                             ; A-clobbering PAGE (see ft above)
+   TXA
    BMI fb_skip
    BEQ fb_skip
 fb_emit:

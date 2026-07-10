@@ -140,9 +140,11 @@ vc_hit_ok:
    JMP do_project_y
 
 vc_miss:
-   PAGE BANK_L0                            ; ROM vert read below needs L0; the
-; prior vertex's projection may have left L2/C paged. (Moved from entry —
-; the hit path never touches a banked region.)
+   PAGE BANK_L2                            ; ROM vert read below needs L2 (verts
+; moved to the L2 window $A200 in the 2026-07-10 reshuffle); the prior
+; vertex's projection may have left C paged. (The hit path never touches a
+; banked region; br_recip's own PAGE L2 downstream is now redundant but
+; harmless.)
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
 ; a usable entry). ---

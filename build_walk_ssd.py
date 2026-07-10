@@ -39,10 +39,12 @@ def main():
     # match the packed layout so a layout change can't ship a stale table.
     import doom_wireframe as dw
     lay = dw.packed_layout
-    assert lay['off_verts'] == 0x1000 and lay['off_ss'] == 0x0D00, \
-        f"ptrtab EQUBs stale: off_verts={lay['off_verts']:#x} off_ss={lay['off_ss']:#x}"
-    assert lay['off_seg_hdr'] == 0x174C, \
-        f"ptrtab EQUBs stale: off_seg_hdr={lay['off_seg_hdr']:#x}"
+    # 2026-07-10 reshuffle: L0 = [SoA $8000 | seg_hdr $9000 | FHCH]; verts L2
+    # $A200. ptrtab EQUBs: fhch/detail $AF08 = $9000 + n_segs*12, seg_hdr
+    # $9000, verts $A200.
+    assert lay['off_ss'] == 0x0D00, f"ptrtab stale: off_ss={lay['off_ss']:#x}"
+    assert 0x9000 + lay['n_segs'] * 12 == 0xAF08, \
+        f"ptrtab EQUBs stale: fhch={0x9000 + lay['n_segs']*12:#x} (expect $AF08)"
     build_floor_grid()
     subprocess.run(['./beebasm', '-i', 'walk_drv.asm', '-D', 'BANKED=1'], check=True)
     subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)

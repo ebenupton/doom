@@ -43,17 +43,31 @@ def build_banked(flatr):
     off_vwh = layout['off_vwh']
     rom_main = flatr.rom_main
 
-    # --- bank L0 = ROM_MAIN (rom_main[0:off_vwh]) at window offset 0 ($8000) ---
+    # --- bank L0 (2026-07-10 reshuffle): pure level data, verts evicted to
+    # L2. [SoA $8000 | seg_hdr $9000 | FHCH | TABL0 $BE90]. FHCH base =
+    # $9000 + n_segs*12 (walk 660: $AEF0; anim 662: $AF08) — consumers get
+    # it via zp_rom_fhch, drivers via ptrtab (build_walk_ssd asserts).
+    # SSMASK -> MAIN $0A80 (rule exception, measured: hub reads it per
+    # subsector under whatever bank; main = 0 paging. 237 B.)
     l0 = bytearray(16384)
-    l0[:off_vwh] = bytes(rom_main[:off_vwh])
-    if os.path.exists('bsp_render_al0_bk.bin'):
-        al0 = open('bsp_render_al0_bk.bin', 'rb').read()
-        l0[0x3E00:0x3E00 + len(al0)] = al0
+    off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
+    n_segs = layout['n_segs']
+    hdr_len = n_segs * 12
+    l0[:0x1000] = bytes(rom_main[:0x1000])               # node/ss SoA pages
+    l0[0x1000:0x1000 + hdr_len] = bytes(rom_main[off_hdr:off_hdr + hdr_len])
+    fhch_off = 0x1000 + hdr_len
+    n_fhch = n_segs * 6
+    for i in range(n_fhch):
+        l0[fhch_off + i] = fmem[ROM_FHCH_BASE + i]
+    assert fhch_off + n_fhch <= 0x3E90, "FHCH reaches TABL0 at $BE90"
     if dw.ANIM_SECTORS:
         import anim_sectors as _an0
         for addr, blob in _an0.gen_6502_tables(flat=False).items():
-            if 0xBB00 <= addr < 0xBE00:          # L0-side tables (SSMASK/TABL0)
+            if 0xBE90 <= addr < 0x4000 + 0x8000:  # L0-side table (TABL0 @ $BE90)
                 l0[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
+            elif 0x0A80 <= addr < 0x0C00:         # SSMASK -> MAIN
+                for i, b in enumerate(blob):
+                    bm[addr + i] = b
     bm.define_bank(BANK_L0, l0)
 
     # --- bank C = clipper ($8000) + rasteriser ($A900) ---
@@ -67,18 +81,13 @@ def build_banked(flatr):
     # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
     # define_bank: it COPIES the image into a fresh buffer.
     assert len(clip) <= 0x1700, f'clipper {len(clip)} bytes reaches VXC planes at $9700'
-    if os.path.exists('bsp_render_vxc_bk.bin'):
-        vxc = open('bsp_render_vxc_bk.bin', 'rb').read()
-        c[0x2300:0x2300 + len(vxc)] = vxc
+    # (VXCODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
         c[0x2400:0x2400 + len(hud)] = hud   # debug HUD @ $A400
     bm.define_bank(BANK_C, c)
 
-    # --- FHCH -> low $2400 (copy the bytes the flat harness put at $B600) ---
-    n_fhch = layout['n_segs'] * 6
-    for i in range(n_fhch):
-        bm[FHCH_LOW + i] = fmem[ROM_FHCH_BASE + i]
+    # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)
 
     # --- sqr tables -> low $2000 (copy from flat $A500) ---
     for i in range(0x400):
@@ -99,9 +108,11 @@ def build_banked(flatr):
     # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
     # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays
     # end at $ACFF).
-    if os.path.exists('bsp_render_rc_bk.bin'):
-        rc = open('bsp_render_rc_bk.bin', 'rb').read()
-        l2[0x3500:0x3500 + len(rc)] = rc
+    # verts -> L2 $A200 (evicted from L0 to make room for FHCH; the only
+    # reader is vc_miss, which now pages L2 for the fetch)
+    n_verts_b = layout['off_nodes'] and 0  # (offsets: verts span off_verts..off_seg_hdr)
+    vlen = layout['off_seg_hdr'] - layout['off_verts']
+    l2[0x2200:0x2200 + vlen] = bytes(rom_main[layout['off_verts']:layout['off_seg_hdr']])
     # Animated sectors (DOOM_ANIM builds): VWH worker -> L2 @ $BA00; tick
     # tables TABL2/CFG @ $B900/$B980; L0 gets the FHCH+flags worker @ $BE00
     # plus SSMASK/TABL0 @ $BB00/$BC00 (seeded before define_bank below via
@@ -110,13 +121,10 @@ def build_banked(flatr):
         stk = open('bsp_render_stk_bk.bin', 'rb').read()
         assert len(stk) <= 0x100, f'STK image {len(stk)} overflows the $A100 staging page'
         l2[0x2100:0x2100 + len(stk)] = stk  # staged for the drivers' boot copy -> $0100
-    if os.path.exists('bsp_render_al2_bk.bin'):
-        al2 = open('bsp_render_al2_bk.bin', 'rb').read()
-        l2[0x3A00:0x3A00 + len(al2)] = al2
     if dw.ANIM_SECTORS:
         import anim_sectors as _an
         for addr, blob in _an.gen_6502_tables(flat=False).items():
-            if 0xB900 <= addr < 0xBA00:          # L2-side tables
+            if 0xBA00 <= addr < 0xBB00:          # L2-side table (CFG @ $BA00)
                 l2[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
     bm.define_bank(BANK_L2, l2)
 
@@ -129,22 +137,20 @@ def build_banked(flatr):
     # BANK_C above, not main RAM).
     from engine_load import _regions
     for addr, fn in _regions(banked=1):
-        if (fn.startswith('span_clip') or fn == 'bsp_render_rc_bk.bin'
-                or fn == 'bsp_render_al0_bk.bin' or fn == 'bsp_render_al2_bk.bin'
-                or fn == 'bsp_render_hud_bk.bin'):
-            continue    # clipper -> BANK_C; rc -> L2; anim workers -> L0/L2
+        if fn.startswith('span_clip') or fn == 'bsp_render_hud_bk.bin':
+            continue    # clipper + HUD -> BANK_C (rc/anim/vxc/sel are main now)
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):
                 bm[addr + i] = b
 
     # --- ZP pointers: ROM_MAIN tables -> L0 window; FHCH -> low; bbox/VWH -> L2 ---
-    _w16(bm, ZP_ROM_VERTS_LO,   0x8000 + layout['off_verts'])
+    _w16(bm, ZP_ROM_VERTS_LO,   0xA200)                  # L2 window (reshuffle)
     _w16(bm, ZP_ROM_NODES_LO,   0x8000 + layout['off_nodes'])
     _w16(bm, ZP_ROM_SS_LO,      0x8000 + layout['off_ss'])
-    _w16(bm, ZP_ROM_SEG_HDR_LO, 0x8000 + layout['off_seg_hdr'])
-    _w16(bm, ZP_ROM_FHCH_LO,    FHCH_LOW)
-    _w16(bm, ZP_ROM_DETAIL_LO,  FHCH_LOW)
+    _w16(bm, ZP_ROM_SEG_HDR_LO, 0x9000)                  # hdrs slid over verts
+    _w16(bm, ZP_ROM_FHCH_LO,    0x9000 + hdr_len)        # FHCH tails the hdrs in L0
+    _w16(bm, ZP_ROM_DETAIL_LO,  0x9000 + hdr_len)
     _w16(bm, 0x0BEA,            0x8E00)   # zp_rom_bbox -> L2 (MUST be page-aligned)
     bm[0xFF00] = 0x00
     bm.select(BANK_L0)

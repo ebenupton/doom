@@ -196,8 +196,10 @@ ORG &3D90
     ; SoA layout: node/ss pages head ROM_MAIN, verts at +$1000 ($9000),
     ; ss pages at +$0D00 ($8D00), seg_hdr after verts ($974C).
     ; build_walk_ssd asserts these against dw.packed_layout.
-    EQUB &00,&24, &00,&8E, &00,&90, &00,&00         ; fhch bbox verts (unused)
-    EQUB &00,&8D, &4C,&97, &00,&A2, &00,&24         ; ss seg_hdr vwh detail
+    ; 2026-07-10 reshuffle: FHCH -> L0 window $AF08 (= $9000 + 662*12),
+    ; verts -> L2 $A200, seg_hdr slid to $9000 (verts evicted), vwh retired.
+    EQUB &08,&AF, &00,&8E, &00,&A2, &00,&00         ; fhch bbox verts (unused)
+    EQUB &00,&8D, &00,&90, &00,&00, &08,&AF         ; ss seg_hdr (vwh dead) detail
 .drv_end
 
 ; --- unrolled framebuffer clears + flip scheduler: identical to anim_drv --
@@ -208,8 +210,8 @@ ORG &3DA0
 ; visibility hook in the renderer. anim_glue_tick: per-frame logical advance
 ; of every mover's height state machine (no table writes; the hook patches
 ; the read tables lazily when a mover becomes visible — see src/bsp/anim.s /
-; anim_sectors.py). Both live behind a bank L2 page-in because the anim jump
-; table, CFG and VWH tables are all in L2. Leaves L2 paged (the frame loop
+; anim_sectors.py). The jump table + tick code are MAIN now (2026-07-10
+; reshuffle) but the tick reads ANIM_CFG in bank L2, so the page-in stays. Leaves L2 paged (the frame loop
 ; re-pages banks before every engine call). Clobbers A + whatever anim uses.
 .anim_glue_init
     LDA #0
@@ -226,10 +228,11 @@ ORG &3DA0
     INX
     CPX #&C0
     BNE stkcpy
-    JMP &BA03                                       ; jt_anim_init (RTS there)
+    JMP &2803                                       ; jt_anim_init (main since the
+                                                    ; 2026-07-10 reshuffle)
 .anim_glue_tick
     LDA #7:STA &FE30
-    JMP &BA00                                       ; jt_anim_tick
+    JMP &2800                                       ; jt_anim_tick (main)
 .key_hud
     ; H key: toggle the debug HUD on the press edge only (hud_prev holds
     ; last frame's state, so holding the key flips it exactly once).
