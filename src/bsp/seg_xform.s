@@ -63,23 +63,21 @@ br_seg_xform_vertex:
 
 ; --- Check valid bit ---
 ; valid_byte_offset = idx_lo >> 3 + idx_hi << 5 (since high byte each adds 32 bytes)
-   LDA zp_br_t0
-   STA zp_br_t2
    LDA zp_br_t1
    STA zp_br_t3
+   LDA zp_br_t0
    LSR zp_br_t3
-   ROR zp_br_t2
+   ROR A
    LSR zp_br_t3
-   ROR zp_br_t2
+   ROR A
    LSR zp_br_t3
-   ROR zp_br_t2
-; t2:t3 = idx >> 3
+   ROR A
+; A:t3 = idx >> 3 (lo rides in A straight into the base add)
    CLC
-   LDA #<VCACHE_VALID_BASE
-   ADC zp_br_t2
+   ADC #<VCACHE_VALID_BASE
    STA zp_br_p
-   LDA #>VCACHE_VALID_BASE
-   ADC zp_br_t3
+   LDA zp_br_t3
+   ADC #>VCACHE_VALID_BASE
    STA zp_br_p_h
 ; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
    LDA zp_br_t0
