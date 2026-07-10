@@ -215,12 +215,12 @@ skip_bdlt:
 ; is behind the near plane, else writes sx/sy straight into this endpoint's
 ; slots via zp_seg_ep). Transform v1. Always copy evy/evx/clipped so both
 ; endpoints are available for near-plane crossing math even when clipped.
-   LDA zp_seg_v1_lo
-   STA zp_br_t0
-   LDA zp_seg_v1_hi
-   STA zp_br_t1
    LDA #0
    STA zp_seg_ep                            ; v1 → SEG_PROJ_BUF +0
+   LDA zp_seg_v1_lo
+   STA zp_seg_v_idx_lo
+   LDA zp_seg_v1_hi
+   STA zp_seg_v_idx_hi
    JSR br_seg_xform_vertex
    LDA zp_seg_cur_evy
    STA zp_seg_v1_evy
@@ -230,12 +230,12 @@ skip_bdlt:
    STA zp_seg_v1_clipped
 
 ; Transform v2.
-   LDA zp_seg_v2_lo
-   STA zp_br_t0
-   LDA zp_seg_v2_hi
-   STA zp_br_t1
    LDA #4
    STA zp_seg_ep                            ; v2 → SEG_PROJ_BUF +4
+   LDA zp_seg_v2_lo
+   STA zp_seg_v_idx_lo
+   LDA zp_seg_v2_hi
+   STA zp_seg_v_idx_hi
    JSR br_seg_xform_vertex
    LDA zp_seg_cur_evy
    STA zp_seg_v2_evy

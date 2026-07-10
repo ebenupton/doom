@@ -8,7 +8,8 @@
 ; per-frame VERTEX CACHE so a vertex shared by several segs is transformed
 ; and X-projected only once per frame.
 ;
-;   Input:  zp_br_t0:t1 = vertex index (u16).
+;   Input:  zp_seg_v_idx_lo/hi = vertex index (u16), written by the caller
+;             (doubles as the cache-write index — no staging copy).
 ;   Output: zp_seg_cur_evy/evx = rounded s8 view y / truncated s8 view x
 ;             (ALWAYS set — near-plane crossing math needs both endpoints
 ;             even when this one is clipped or served from the cache).
@@ -52,20 +53,15 @@ br_seg_xform_vertex:
    ZERO zp_seg_skip
 
 ; --- Compute vertex cache index (idx*8 → cache offset) ---
-; idx is in zp_br_t0:t1 (u16). vc_offset = idx * 8 (s/o offset for valid).
+; idx is in zp_seg_v_idx_lo/hi (u16). vc_offset = idx * 8 (s/o offset for valid).
 ; valid_byte_offset = idx >> 3, valid_bit = idx & 7.
 ;
-; Save idx for later (cache write) at zp_seg_v_idx_lo/hi.
-   LDA zp_br_t0
-   STA zp_seg_v_idx_lo
-   LDA zp_br_t1
-   STA zp_seg_v_idx_hi
-
 ; --- Check valid bit ---
 ; valid_byte_offset = idx_lo >> 3 + idx_hi << 5 (since high byte each adds 32 bytes)
-   LDA zp_br_t1
+; (Can't ride idx_hi in from the caller's last STA: ZERO/PAGE above leave A=0.)
+   LDA zp_seg_v_idx_hi
    STA zp_br_t3
-   LDA zp_br_t0
+   LDA zp_seg_v_idx_lo
    LSR zp_br_t3
    ROR A
    LSR zp_br_t3
@@ -80,7 +76,7 @@ br_seg_xform_vertex:
    ADC #>VCACHE_VALID_BASE
    STA zp_br_p_h
 ; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
-   LDA zp_br_t0
+   LDA zp_seg_v_idx_lo
    AND #7
    TAX
    LDA vc_bit_mask,X
