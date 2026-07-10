@@ -136,8 +136,9 @@ zp_seg_count = $5C                ; [bsp]; remaining segs in subsector
 ; ($5D/$5E freed 2026-07-10: zp_seg_v1_lo/hi retired — the v1 transform
 ; reads the vertex index straight from the header via zp_seg_hdr_p)
 ; --- $5F: overlay group (2 phase-disjoint users) ---
-zp_seg_v2_lo = $5F                ; [bsp]
-zp_seg_v2_hi = $60                ; [bsp]
+; ($5F/$60 freed 2026-07-10: zp_seg_v2_lo/hi retired — the v2 transform
+; reads the header via zp_seg_hdr_p (re-paging L0), and ap2_solid_proj
+; takes v2's index from zp_seg_v_idx which still holds it at emit time)
 ; --- $61: overlay group (2 phase-disjoint users) ---
 zp_seg_sx1_lo = $61               ; [bsp]; projected screen x of v1 (s16)
 zp_seg_sx1_hi = $62               ; [bsp]

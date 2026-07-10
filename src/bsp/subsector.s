@@ -153,12 +153,6 @@ seg_proc:
    JMP s_advance
 bf_passed:
 ; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
-   LDY #2
-   LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v2_lo
-   INY
-   LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v2_hi
 
 ; --- Read fh, ch, bfh, bch from the 6-byte/seg FHCH table:
 ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
@@ -228,9 +222,14 @@ skip_bdlt:
 ; Transform v2.
    LDA #4
    STA zp_seg_ep                            ; v2 → SEG_PROJ_BUF +4
-   LDA zp_seg_v2_lo
+   PAGE BANK_L0                             ; v1's projection paged L2 (br_
+; project_y / br_recip) unless v1 was near-clipped — the header read below
+; needs the L0 window back. Flat: no-op.
+   LDY #2
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_lo
-   LDA zp_seg_v2_hi
+   INY
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
    LDA zp_seg_cur_evy

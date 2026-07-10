@@ -768,10 +768,12 @@ ap2_solid_proj:
    JMP a2_have_recip
 a2_cached:
 ; cache ptr = VCACHE_BASE + v2_idx*8 (the ZP cache ptr is rasteriser-
-; clobbered scratch by now — recompute).
-   LDA zp_seg_v2_lo
+; clobbered scratch by now — recompute). v2's index is still in
+; zp_seg_v_idx: the v2 transform loaded it there and nothing after
+; (reproject / emit) writes it, so the old zp_seg_v2 stage is gone.
+   LDA zp_seg_v_idx_lo
    STA zp_br_t0
-   LDA zp_seg_v2_hi
+   LDA zp_seg_v_idx_hi
    STA zp_br_t1
    ASL zp_br_t0
    ROL zp_br_t1
