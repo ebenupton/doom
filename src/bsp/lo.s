@@ -823,18 +823,17 @@ chain_reuse_v1:
    STA zp_seg_sy1_bot_lo
    LDA zp_seg_sy2_bot_hi
    STA zp_seg_sy1_bot_hi
-   LDA zp_seg_v2_rhi
-   STA zp_seg_v1_rhi
-   LDA zp_seg_v2_rlo
-   STA zp_seg_v1_rlo
 ; back pair (portal NEEDBT/NEEDBB or solid APEDGE1) projects with THIS
-; vertex's recip: restore the working recip + re-vector the shifter.
+; vertex's recip — read it STRAIGHT from VX2 (still alive until the v2
+; transform); VX1+13/14 have no other consumer, so the rhi/rlo copy is
+; dropped (ping-pong analysis 2026-07-10: the full role swap loses — the
+; copy is chain-only, the indexed-read tax would hit every seg).
    LDA zp_seg_flags
    AND #$4C
    BEQ ch_rts
-   LDA zp_seg_v1_rhi
+   LDA zp_seg_v2_rhi
    STA zp_br_rhi
-   LDA zp_seg_v1_rlo
+   LDA zp_seg_v2_rlo
    STA zp_br_rlo
    JSR rns_select
    JMP dpy_back                             ; tail: RTS from there
