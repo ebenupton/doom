@@ -29,8 +29,9 @@
 ;         if NEEDBT:  sy_btop = project_y(btop_dlt)   # bt = _py(bch)
 ;         if NEEDBB:  sy_bbot = project_y(bbot_dlt)   # bb = _py(bfh)
 ; ============================================================================
+; (unscoped: dpy_back is a public entry for the chain path; dpy_* label
+; names are globally unique)
 do_project_y:
-.scope
 ; --- Project Y for top edge (height = ch - vz) ---
    LDA zp_seg_top_dlt
    STA zp_br_t0
@@ -55,7 +56,13 @@ do_project_y:
 ; sy_btop/sy_bbot is gated on (SOLID & APEDGE1) — the APV1 aperture
 ; vertical — or (portal & NEEDBT/NEEDBB). Skipping unused projections
 ; is output-identical and saves 2 projections (4 muls) per vertex on
-; plain solid walls. ---
+; plain solid walls.
+; dpy_back is ALSO a public entry (2026-07-10): the seg loop's vertex-
+; CHAIN path reuses the previous v2's front sy pair verbatim (same
+; vertex, same subsector heights) and calls in here for just the
+; flag-gated back pair, with the vertex's recip restored to zp_br_rhi/
+; rlo + rns_select re-vectored by the caller. ---
+dpy_back:
    LDA zp_seg_flags
    AND #$02
    BEQ dpy_portal
@@ -100,4 +107,3 @@ dpy_bbot:
    STA VX1+12,X
 dpy_done:
    RTS
-.endscope

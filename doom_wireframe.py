@@ -584,6 +584,38 @@ for _ssi, (_count, _first) in enumerate(fp_ssectors):
                 _merge_count += 1
                 continue
         _out.append(_seg)
+    # ── Chain-order the subsector's segs (2026-07-10): reorder so that
+    # consecutive segs share a vertex (v2 of one == v1 of the next)
+    # wherever the boundary allows. The 6502 seg loop reuses the whole
+    # shared-vertex setup (transform, sx, recip, front sy pair) for a
+    # chained v1, so maximising chains is a straight cycle win. Greedy:
+    # chain heads are segs whose v1 is no other seg's v2; walk each chain;
+    # closed loops (fully bounded subsectors) break at the lowest index
+    # for determinism. Both pipelines consume the same reordered list, so
+    # lockstep is preserved by construction.
+    if len(_out) > 2:
+        _by_v1 = {}
+        for _k, _sv in enumerate(_out):
+            _by_v1.setdefault(_sv[0][0], _k)
+        _v2set = set(_sv[0][1] for _sv in _out)
+        _order = []
+        _left = set(range(len(_out)))
+        # chain heads first (v1 not produced by any v2), in index order
+        _heads = [_k for _k in range(len(_out))
+                  if _out[_k][0][0] not in _v2set]
+        while _left:
+            if _heads:
+                _k = _heads.pop(0)
+                if _k not in _left:
+                    continue
+            else:
+                _k = min(_left)              # closed loop: break at min idx
+            while _k is not None and _k in _left:
+                _order.append(_k)
+                _left.discard(_k)
+                _nk = _by_v1.get(_out[_k][0][1])
+                _k = _nk if (_nk is not None and _nk in _left) else None
+        _out = [_out[_k] for _k in _order]
     _merged_segs.extend(_out)
     _merged_ssectors.append((len(_out), _out_first))
 

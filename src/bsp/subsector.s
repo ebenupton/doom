@@ -125,6 +125,27 @@ anim_ss_cont:
    LDA zp_rom_fhch_hi
    ADC zp_br_t1
    STA zp_fhch_p_h
+; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
+; subsector's sector), so read fh/ch + compute the front deltas ONCE
+; here instead of per seg (2026-07-10; runs after the anim hub, so
+; mover-patched heights are already in place). ---
+   LDY #1
+   LDA (zp_fhch_p),Y
+   STA zp_seg_ch
+   SEC
+   SBC zp_br_vz
+   STA zp_seg_top_dlt                       ; top_dlt = ch - vz
+   DEY
+   LDA (zp_fhch_p),Y
+   STA zp_seg_fh
+   SEC
+   SBC zp_br_vz
+   STA zp_seg_bot_dlt                       ; bot_dlt = fh - vz
+; Invalidate the vertex-chain key at the subsector boundary: chained
+; front-sy reuse needs the SAME front heights, only guaranteed within
+; one subsector. idx < 481, so $FF never matches a real hi byte.
+   LDA #$FF
+   STA zp_seg_v_idx_hi
    ASL zp_br_t0
    ROL zp_br_t1
 ; si*12
@@ -183,29 +204,9 @@ seg_proc:
 bf_passed:
 ; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
 
-; --- Read fh, ch, bfh, bch from the 6-byte/seg FHCH table:
+; --- FHCH per-seg: front fh/ch + deltas were HOISTED to the subsector
+; prologue (subsector-constant). Only the back heights remain per seg:
 ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
-;     Bytes 4/5 carry the solid-seg APV2 aperture heights (the seg
-;     detail ROM is not resident on the 6502). ---
-; Stage only fh/ch (front deltas + emit tests read them repeatedly). bfh/bch
-; are read ON DEMAND via (zp_fhch_p),Y at their conditional sites below — a
-; plain solid wall never touches them, so staging both was waste (rule 2b,
-; 2026-07-09). zp_fhch_p (the persistent FHCH cursor) is read directly, so
-; the old copy into zp_br_p is gone too.
-   LDY #1
-   LDA (zp_fhch_p),Y
-   STA zp_seg_ch
-; Height deltas (all s8). Front: top_dlt = ch - vz, bot_dlt = fh - vz.
-; Back: btop_dlt = bch - vz, bbot_dlt = bfh - vz.
-   SEC
-   SBC zp_br_vz
-   STA zp_seg_top_dlt
-   DEY
-   LDA (zp_fhch_p),Y
-   STA zp_seg_fh
-   SEC
-   SBC zp_br_vz
-   STA zp_seg_bot_dlt
 ; Back deltas are consumed ONLY by do_project_y, which reads them only when
 ; NEEDBT($04)/NEEDBB($08)/APEDGE1($40) is set. Skip the 2 subtractions for
 ; plain solids/portals (the common case) — conservative: this superset
@@ -234,6 +235,26 @@ skip_bdlt:
 ; endpoints are available for near-plane crossing math even when clipped.
    LDA #0
    STA zp_seg_ep                            ; v1 → struct VX1
+; --- VERTEX CHAIN (2026-07-10): if this seg's v1 is the vertex the LAST
+; transform produced (zp_seg_v_idx still holds it, and VX2 still holds
+; its outputs), reuse VX2 wholesale: evy/evx/clip always; sx, the front
+; sy pair (same subsector => same fh/ch) and rhi/rlo when unclipped.
+; The packer chain-orders subsector segs, so this hits ~80% of
+; consecutive front-facing pairs. zp_seg_v_idx_hi is invalidated at the
+; subsector boundary and when a crossing overwrites VX2.
+   LDY #0
+   LDA (zp_seg_hdr_p),Y
+   CMP zp_seg_v_idx_lo
+   BNE ch_miss
+   INY
+   LDA (zp_seg_hdr_p),Y
+   CMP zp_seg_v_idx_hi
+   BNE ch_miss
+; chain hit: the copy + back-pair body lives in LO (MAIN is at its
+; ceiling); ~12 cyc JSR/RTS tax on a ~200-cyc win.
+   JSR chain_reuse_v1
+   JMP ch_v1_done
+ch_miss:
    LDY #0
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_lo
@@ -242,6 +263,7 @@ skip_bdlt:
    STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
 ; (no marshalling: evy/evx/clip/sx/sy/recip all landed in VX1 directly)
+ch_v1_done:
 
 ; Transform v2.
    LDA #VX_STRIDE
@@ -285,6 +307,9 @@ s_v2_was_clipped:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; reproject into v2 (struct VX2)
    JSR reproject_at_crossing
+   LDA #$FF
+   STA zp_seg_v_idx_hi                      ; VX2 now holds the CROSSING, not
+                                        ; the vertex — kill the chain key
 s_both_have_proj:
 
 ; Match Python's has_gap wrapper:

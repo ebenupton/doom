@@ -794,6 +794,54 @@ a2_have_recip:
 
 
 
+; ============================================================================
+; chain_reuse_v1 — the seg loop's vertex-chain hit path (2026-07-10).
+; This seg's v1 == the previous transform's v2 (same subsector): copy
+; VX2 -> VX1 wholesale — evy/evx/clip always; sx + front sy pair (same
+; subsector => same fh/ch) + rhi/rlo when unclipped — then project just
+; the flag-gated back pair with the vertex's recip restored. ep = 0 set
+; by the caller. Replaces the whole VCACHE hit path + 2 VWHC lookups.
+; ============================================================================
+chain_reuse_v1:
+.scope
+   LDA zp_seg_v2_evy
+   STA zp_seg_v1_evy
+   LDA zp_seg_v2_evx
+   STA zp_seg_v1_evx
+   LDA zp_seg_v2_clipped
+   STA zp_seg_v1_clipped
+   BNE ch_rts                               ; clipped: rest undefined
+   LDA zp_seg_sx2_lo
+   STA zp_seg_sx1_lo
+   LDA zp_seg_sx2_hi
+   STA zp_seg_sx1_hi
+   LDA zp_seg_sy2_top_lo
+   STA zp_seg_sy1_top_lo
+   LDA zp_seg_sy2_top_hi
+   STA zp_seg_sy1_top_hi
+   LDA zp_seg_sy2_bot_lo
+   STA zp_seg_sy1_bot_lo
+   LDA zp_seg_sy2_bot_hi
+   STA zp_seg_sy1_bot_hi
+   LDA zp_seg_v2_rhi
+   STA zp_seg_v1_rhi
+   LDA zp_seg_v2_rlo
+   STA zp_seg_v1_rlo
+; back pair (portal NEEDBT/NEEDBB or solid APEDGE1) projects with THIS
+; vertex's recip: restore the working recip + re-vector the shifter.
+   LDA zp_seg_flags
+   AND #$4C
+   BEQ ch_rts
+   LDA zp_seg_v1_rhi
+   STA zp_br_rhi
+   LDA zp_seg_v1_rlo
+   STA zp_br_rlo
+   JSR rns_select
+   JMP dpy_back                             ; tail: RTS from there
+ch_rts:
+   RTS
+.endscope
+
 bsp_lo_end:
 .if ::BANKED
 ; (ld65 writes this: SAVE "bsp_render_lo_bk.bin", $1B40, bsp_lo_end, $1B40)
