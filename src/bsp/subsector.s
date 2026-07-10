@@ -85,46 +85,48 @@ anim_ss_cont:
    LDX zp_node_chlo
    LDA SS_CNT,X
    STA zp_seg_count
-   LDA SS_FLO,X
-   STA zp_seg_first_lo
-   LDA SS_FHI,X
-   STA zp_seg_first_hi
 
-; Persistent per-seg pointers: computed once here, advanced by the
-; loop (+12 header, +6 FHCH) — the old code re-multiplied si*12 and
-; si*6 on every seg. Inlined si*6 (was fhch_ptr_si6 in LO, single
-; caller): t0:t1 = si*2 (stash t2:t3) then si*6, + rom_fhch straight
-; into zp_fhch_p (the zp_br_p middleman is gone with the JSR); one
-; more shift below gives si*12 for the header ptr.
-   LDA zp_seg_first_lo
-   STA zp_br_t0
-   LDA zp_seg_first_hi
-   STA zp_br_t1
-   ASL zp_br_t0
-   ROL zp_br_t1
-; *2
-   LDA zp_br_t0
-   STA zp_br_t2
-   LDA zp_br_t1
-   STA zp_br_t3
-   ASL zp_br_t0
-   ROL zp_br_t1
-; *4
+; Persistent per-seg pointers, computed once here and advanced by the
+; loop (+12 header, +6 FHCH). si*6 = (si*3) << 1 — one add beats the
+; old *2-stash-*4-add chain — reading SS_FLO/FHI straight through X
+; (the zp_seg_first staging had no other reader and is GONE; $5A/$5B
+; freed). Hi byte rides A into the base adds; Y stashes it across the
+; lo-half adds. si_hi <= 2 (660 segs), so the hi arithmetic is exact.
+   LDA SS_FLO,X
+   ASL A                                   ; C = lo.b7
+   STA zp_br_t0                            ; lo(si*2)
+   LDA SS_FHI,X
+   ROL A                                   ; A = hi(si*2)
+   TAY
    CLC
    LDA zp_br_t0
-   ADC zp_br_t2
+   ADC SS_FLO,X                            ; lo(si*3)
    STA zp_br_t0
-; *6
-   LDA zp_br_t1
-   ADC zp_br_t3
-   STA zp_br_t1
+   TYA
+   ADC SS_FHI,X                            ; hi(si*3) (+ carry)
+   ASL zp_br_t0
+   ROL A                                   ; (A : t0) = si*6
+   TAY                                     ; stash hi6 for the si*12 shift
    CLC
    LDA zp_rom_fhch_lo
    ADC zp_br_t0
    STA zp_fhch_p
-   LDA zp_rom_fhch_hi
-   ADC zp_br_t1
+   TYA
+   ADC zp_rom_fhch_hi
    STA zp_fhch_p_h
+; si*12 = si*6 << 1, done NOW while Y still holds hi6 (the FHCH hoist
+; below clobbers Y with its own LDY/DEY indexing).
+   ASL zp_br_t0                            ; C = lo6.b7
+   TYA
+   ROL A                                   ; A = hi12
+   TAY
+   CLC
+   LDA zp_rom_seg_hdr_lo
+   ADC zp_br_t0
+   STA zp_seg_hdr_p
+   TYA
+   ADC zp_rom_seg_hdr_hi
+   STA zp_seg_hdr_p_h
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so read fh/ch + compute the front deltas ONCE
 ; here instead of per seg (2026-07-10; runs after the anim hub, so
@@ -146,16 +148,6 @@ anim_ss_cont:
 ; one subsector. idx < 481, so $FF never matches a real hi byte.
    LDA #$FF
    STA zp_seg_v_idx_hi
-   ASL zp_br_t0
-   ROL zp_br_t1
-; si*12
-   CLC
-   LDA zp_rom_seg_hdr_lo
-   ADC zp_br_t0
-   STA zp_seg_hdr_p
-   LDA zp_rom_seg_hdr_hi
-   ADC zp_br_t1
-   STA zp_seg_hdr_p_h
 
 ; Reset deferred op queue for this subsector.
    LDA #0

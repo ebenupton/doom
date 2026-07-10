@@ -124,11 +124,11 @@ def install_tracing_run(sc, trace, with_context=False):
     """Replace sc._run with a stepping version that records clipper calls.
 
     If with_context, each call tuple is (op, *args, ssid, seg_idx) where
-    ssid is zp_node_chlo:hi (subsector id, with $80 flag) and seg_idx is
-    zp_seg_first_lo:hi — NOTE (2026-07-10): the engine no longer advances
-    zp_seg_first per seg (dead work removed), so seg_idx is the SUBSECTOR'S
-    FIRST seg. For per-seg attribution derive the offset from the FHCH
-    cursor instead: (zp_fhch_p - rom_fhch_base) / 6.
+    ssid is zp_node_chlo:hi (subsector id, with $80 flag). seg_idx —
+    NOTE (2026-07-10): zp_seg_first is RETIRED ($5A/$5B freed; the
+    prologue derives both cursors from the SS SoA directly), so $5A/$5B
+    read garbage. For per-seg attribution derive the offset from the
+    FHCH cursor: (zp_fhch_p - rom_fhch_base) / 6.
     """
     def traced_run(entry, max_cycles=20_000_000):
         mpu = sc.mpu
