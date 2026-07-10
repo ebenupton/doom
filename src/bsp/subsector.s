@@ -819,10 +819,9 @@ ms_skip:
 s_advance:
 ; (no zp_seg_skip reset needed: the back-face test returns in A now, and
 ; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
-   INC zp_seg_first_lo
-   BNE s_no_carry
-   INC zp_seg_first_hi
-s_no_carry:
+; (zp_seg_first is NOT advanced per seg: its only reader is the subsector
+; prologue's cursor derivation — the loop lives off zp_seg_hdr_p/zp_fhch_p.
+; The old INC pair was ~8 cyc/seg of dead work, removed 2026-07-10.)
    CLC
    LDA zp_seg_hdr_p
    ADC #12
