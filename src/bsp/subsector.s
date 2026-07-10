@@ -153,13 +153,7 @@ seg_proc:
    JMP s_advance
 bf_passed:
 ; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
-   LDY #0
-   LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v1_lo
-   INY
-   LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v1_hi
-   INY
+   LDY #2
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v2_lo
    INY
@@ -217,9 +211,11 @@ skip_bdlt:
 ; endpoints are available for near-plane crossing math even when clipped.
    LDA #0
    STA zp_seg_ep                            ; v1 → SEG_PROJ_BUF +0
-   LDA zp_seg_v1_lo
+   LDY #0
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_lo
-   LDA zp_seg_v1_hi
+   INY
+   LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
    LDA zp_seg_cur_evy

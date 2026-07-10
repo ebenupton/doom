@@ -133,8 +133,8 @@ zp_seg_first_lo = $5A             ; [bsp]; first_seg index for current subsector
 zp_seg_first_hi = $5B             ; [bsp]
 zp_seg_count = $5C                ; [bsp]; remaining segs in subsector
 ; --- $5D: overlay group (2 phase-disjoint users) ---
-zp_seg_v1_lo = $5D                ; [bsp]
-zp_seg_v1_hi = $5E                ; [bsp]
+; ($5D/$5E freed 2026-07-10: zp_seg_v1_lo/hi retired — the v1 transform
+; reads the vertex index straight from the header via zp_seg_hdr_p)
 ; --- $5F: overlay group (2 phase-disjoint users) ---
 zp_seg_v2_lo = $5F                ; [bsp]
 zp_seg_v2_hi = $60                ; [bsp]
