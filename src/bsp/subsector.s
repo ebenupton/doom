@@ -167,8 +167,8 @@ seg_proc:
    LDA #0
    STA $0700                               ; TOP_RECORDS count
    STA $0800                               ; BOT_RECORDS count
-   STA $BC                                 ; ZP_DCL_REC_BUF lo
-   STA $BD                                 ; ZP_DCL_REC_BUF hi (= "no records buffer")
+   STA zp_dcl_rec_buf                                 ; ZP_DCL_REC_BUF lo
+   STA zp_dcl_rec_buf_h                                 ; ZP_DCL_REC_BUF hi (= "no records buffer")
 
 ; --- seg header via the persistent pointer. Back-face inputs first
 ; (offsets 4-10: lv1x/lv1y/ldx/ldy/flags); v1/v2 (offsets 0-3) are only
@@ -430,38 +430,38 @@ ft_emit:
    BNE ft_no_rec
 ; SOLID or NEEDBT → no rec
    LDA #$07
-   STA $BD
+   STA zp_dcl_rec_buf_h
 ; portal-lip → TOP_RECORDS
    JMP ft_set_line
 ft_no_rec:
    LDA #0
-   STA $BD
+   STA zp_dcl_rec_buf_h
 ft_set_line:
    LDA #0
-   STA $BC
+   STA zp_dcl_rec_buf
 ; Stage the s16 line (lo bytes → zp_line_*, hi bytes → LC_*_HI $B2-$B5)
 ; and hand it to the s16 clip + draw pipeline.
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA $B2
+   STA LC_X1_HI
    LDA zp_seg_sy1_top_lo
    STA zp_line_yl
    LDA zp_seg_sy1_top_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA $B4
+   STA LC_X2_HI
    LDA zp_seg_sy2_top_lo
    STA zp_line_yr
    LDA zp_seg_sy2_top_hi
-   STA $B5
+   STA LC_Y2_HI
    PAGE BANK_C
    JSR SC_DRAW_S16
    LDA #0
-   STA $BC
-   STA $BD
+   STA zp_dcl_rec_buf
+   STA zp_dcl_rec_buf_h
 ; records off again (draw may have consumed them)
 ft_skip:
 
@@ -504,36 +504,36 @@ fb_emit:
    BNE fb_no_rec
 ; SOLID or NEEDBB → no rec
    LDA #$08
-   STA $BD
+   STA zp_dcl_rec_buf_h
 ; portal-lip → BOT_RECORDS
    JMP fb_set_line
 fb_no_rec:
    LDA #0
-   STA $BD
+   STA zp_dcl_rec_buf_h
 fb_set_line:
    LDA #0
-   STA $BC
+   STA zp_dcl_rec_buf
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA $B2
+   STA LC_X1_HI
    LDA zp_seg_sy1_bot_lo
    STA zp_line_yl
    LDA zp_seg_sy1_bot_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA $B4
+   STA LC_X2_HI
    LDA zp_seg_sy2_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bot_hi
-   STA $B5
+   STA LC_Y2_HI
    PAGE BANK_C
    JSR SC_DRAW_S16
    LDA #0
-   STA $BC
-   STA $BD
+   STA zp_dcl_rec_buf
+   STA zp_dcl_rec_buf_h
 fb_skip:
 
 ; --- Portal step edges (back ceiling / floor) ---
@@ -555,29 +555,29 @@ step_cont:                              ;  pushed the branch out of range)
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA $B2
+   STA LC_X1_HI
    LDA zp_seg_sy1_btop_lo
    STA zp_line_yl
    LDA zp_seg_sy1_btop_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA $B4
+   STA LC_X2_HI
    LDA zp_seg_sy2_btop_lo
    STA zp_line_yr
    LDA zp_seg_sy2_btop_hi
-   STA $B5
+   STA LC_Y2_HI
    LDA #0
-   STA $BC
+   STA zp_dcl_rec_buf
    LDA #$07
-   STA $BD
+   STA zp_dcl_rec_buf_h
 ; TOP_RECORDS = $0700
    PAGE BANK_C
    JSR SC_DRAW_S16
    LDA #0
-   STA $BC
-   STA $BD
+   STA zp_dcl_rec_buf
+   STA zp_dcl_rec_buf_h
 ; reset records pointer
 step_no_top:
 
@@ -588,29 +588,29 @@ step_no_top:
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA $B2
+   STA LC_X1_HI
    LDA zp_seg_sy1_bbot_lo
    STA zp_line_yl
    LDA zp_seg_sy1_bbot_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA $B4
+   STA LC_X2_HI
    LDA zp_seg_sy2_bbot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bbot_hi
-   STA $B5
+   STA LC_Y2_HI
    LDA #0
-   STA $BC
+   STA zp_dcl_rec_buf
    LDA #$08
-   STA $BD
+   STA zp_dcl_rec_buf_h
 ; BOT_RECORDS = $0800
    PAGE BANK_C
    JSR SC_DRAW_S16
    LDA #0
-   STA $BC
-   STA $BD
+   STA zp_dcl_rec_buf
+   STA zp_dcl_rec_buf_h
 step_no_bot:
 step_skip:
 
@@ -637,11 +637,11 @@ step_skip:
    LDA zp_seg_sy1_top_lo
    STA zp_line_yl
    LDA zp_seg_sy1_top_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sy1_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy1_bot_hi
-   STA $B5
+   STA LC_Y2_HI
    JSR emit_vert_sx1
    JMP skip_lvert
 lvert_portal:
@@ -652,11 +652,11 @@ lvert_portal:
    LDA zp_seg_sy1_top_lo
    STA zp_line_yl
    LDA zp_seg_sy1_top_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sy1_btop_lo
    STA zp_line_yr
    LDA zp_seg_sy1_btop_hi
-   STA $B5
+   STA LC_Y2_HI
    JSR emit_vert_sx1
 lvert_no_top:
 ; NEEDBB? bottom piece bb1 → fb1
@@ -666,11 +666,11 @@ lvert_no_top:
    LDA zp_seg_sy1_bbot_lo
    STA zp_line_yl
    LDA zp_seg_sy1_bbot_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sy1_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy1_bot_hi
-   STA $B5
+   STA LC_Y2_HI
    JSR emit_vert_sx1
 skip_lvert:
 
@@ -687,11 +687,11 @@ skip_lvert:
    LDA zp_seg_sy2_top_lo
    STA zp_line_yl
    LDA zp_seg_sy2_top_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sy2_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bot_hi
-   STA $B5
+   STA LC_Y2_HI
    JSR emit_vert_sx2
    JMP skip_rvert
 rvert_portal:
@@ -701,11 +701,11 @@ rvert_portal:
    LDA zp_seg_sy2_top_lo
    STA zp_line_yl
    LDA zp_seg_sy2_top_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sy2_btop_lo
    STA zp_line_yr
    LDA zp_seg_sy2_btop_hi
-   STA $B5
+   STA LC_Y2_HI
    JSR emit_vert_sx2
 rvert_no_top:
    LDA zp_seg_flags
@@ -714,11 +714,11 @@ rvert_no_top:
    LDA zp_seg_sy2_bbot_lo
    STA zp_line_yl
    LDA zp_seg_sy2_bbot_hi
-   STA $B3
+   STA LC_Y1_HI
    LDA zp_seg_sy2_bot_lo
    STA zp_line_yr
    LDA zp_seg_sy2_bot_hi
-   STA $B5
+   STA LC_Y2_HI
    JSR emit_vert_sx2
 skip_rvert:
 
@@ -848,13 +848,13 @@ emit_vert_sx1:
    LDA zp_seg_sx1_lo
    STA zp_line_xl
    LDA zp_seg_sx1_hi
-   STA $B2
+   STA LC_X1_HI
    LDA zp_seg_sx1_lo
    STA zp_line_xr
    LDA zp_seg_sx1_hi
-   STA $B4
+   STA LC_X2_HI
    LDA #0
-   STA $BD
+   STA zp_dcl_rec_buf_h
    PAGE BANK_C
    JMP SC_DRAW_S16
 
@@ -863,13 +863,13 @@ emit_vert_sx2:
    LDA zp_seg_sx2_lo
    STA zp_line_xl
    LDA zp_seg_sx2_hi
-   STA $B2
+   STA LC_X1_HI
    LDA zp_seg_sx2_lo
    STA zp_line_xr
    LDA zp_seg_sx2_hi
-   STA $B4
+   STA LC_X2_HI
    LDA #0
-   STA $BD
+   STA zp_dcl_rec_buf_h
    PAGE BANK_C
    JMP SC_DRAW_S16
 

@@ -128,10 +128,10 @@ bv_anglevis:
 ; have an open span. Tail-call: SC_HAS_GAP's A (1=gap, 0=fully
 ; occluded) and flags are our return value.
    LDA bca_ilo
-   STA $C2
+   STA zp_ilo
 ; zp_ilo
    LDA bca_ihi
-   STA $C3
+   STA zp_ihi
 ; zp_ihi
    PAGE BANK_C
    JMP SC_HAS_GAP
@@ -185,21 +185,21 @@ dv_have:
    BEQ dv_straddle
    BCS dv_right                            ; 132-255: right-of-centre
    LDY #0                                  ; 0-124: left-of-centre → (0, code+2)
-   STY $C2
+   STY zp_ilo
    ADC #2                                  ; C clear here (CMP #127 not taken)
-   STA $C3
+   STA zp_ihi
    JMP dv_gap
 dv_right:
    SBC #2                                  ; C set here (BCS taken) → code-2
-   STA $C2                                 ; (code-2, 255)
+   STA zp_ilo                                 ; (code-2, 255)
    LDA #255
-   STA $C3
+   STA zp_ihi
    JMP dv_gap
 dv_straddle:
    LDA #0
-   STA $C2
+   STA zp_ilo
    LDA #255
-   STA $C3
+   STA zp_ihi
 dv_gap:
    PAGE BANK_C
    JMP SC_HAS_GAP                          ; serve: A/Z is our return value

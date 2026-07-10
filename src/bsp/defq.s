@@ -34,10 +34,10 @@ defq_append_solid:
    LDA #0
    STA DEFQ_BASE,X
    INX
-   LDA $C2
+   LDA zp_ilo
    STA DEFQ_BASE,X
    INX
-   LDA $C3
+   LDA zp_ihi
    STA DEFQ_BASE,X
    INX
    STX DEFQ_TAIL
@@ -88,10 +88,10 @@ defq_append_tighten:
    LDA #1
    STA DEFQ_BASE,X
    INX
-   LDA $C2
+   LDA zp_ilo
    STA DEFQ_BASE,X
    INX
-   LDA $C3
+   LDA zp_ihi
    STA DEFQ_BASE,X
    INX
 
@@ -168,10 +168,10 @@ dd_loop:
 ; type
    LDA DEFQ_BASE,X
    INX
-   STA $C2
+   STA zp_ilo
    LDA DEFQ_BASE,X
    INX
-   STA $C3
+   STA zp_ihi
    LDA zp_br_t3
    BNE dd_tighten
 ; solid: mark_solid(ilo, ihi), no line emission.
