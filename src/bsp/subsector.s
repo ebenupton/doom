@@ -305,73 +305,81 @@ s_v2_was_clipped:
 s_both_have_proj:
 
 ; Match Python's has_gap wrapper:
-;   ilo = max(0, lo); ihi = min(255, hi); if ihi < ilo: return False
-; The wrapper-side off-screen test bails BEFORE the 6502 has_gap call,
-; so we replicate it here. Both endpoints off-screen-left  (both s16 hi
-; negative) → ihi = -lo_min (negative), ilo = 0  → ihi < ilo, bail.
-; Both off-screen-right (both s16 hi > 0)         → ilo = lo_max > 255,
-; clamped to 255; ihi clamped to 255 too — borderline; let has_gap run.
-; Only the left/negative case bails cleanly with a sign test.
+;   ilo = max(0, min(sx1,sx2)); ihi = min(255, max(sx1,sx2))
+;   bail if the range is empty (whole seg off one side of the screen)
+; Order the s16 endpoints FIRST — clamp8 is monotone, so order-then-clamp
+; equals clamp-then-order — then ONE hi-byte test per endpoint does both
+; the off-screen bail and the clamp:
+;   max hi: BMI = whole seg left of screen; BNE = ihi clamps 255; else
+;           the low byte IS ihi.
+;   min hi: zero = low byte IS ilo; BMI = ilo clamps 0; else min >= 256,
+;           whole seg right of screen (matches the old both-hi>=1 bail,
+;           since min >= 256 forces max >= 256).
+; The min endpoint's struct offset (0 = sx1, VX_STRIDE = sx2) is latched
+; in zp_sx_ord at hg_query so the mark_solid/tighten range below the
+; emits can re-derive its clamps without repeating the s16 compare
+; (sx1/sx2 survive the emits; the u8 scratch does not). X is dead here:
+; nothing carries X across the SC_HAS_GAP JSR.
    LDA zp_seg_sx1_hi
-   BPL hg_sx1_nonneg
-   LDA zp_seg_sx2_hi
-   BPL hg_sx1_nonneg
-   JMP s_advance                           ; both s16 hi < 0 → off-screen left
-hg_sx1_nonneg:
-; Both off-screen right? Need BOTH hi bytes strictly positive (>= 1).
-   LDA zp_seg_sx1_hi
-   BMI hg_check_x
-; one negative → mixed, don't bail
-   BEQ hg_check_x                          ; one zero → in u8 range, don't bail
-   LDA zp_seg_sx2_hi
-   BMI hg_check_x
-   BEQ hg_check_x
-   JMP s_advance                           ; both s16 hi > 0 → off-screen right
-hg_check_x:
-
-; Compute clamped u8 ilo/ihi from sx1/sx2.
-   LDA zp_seg_sx1_hi
-   BMI hg_sx1_neg
-   BEQ hg_sx1_lo
-   LDA #$FF
-   STA zp_br_t2
-   JMP hg_sx2
-hg_sx1_neg:
-   LDA #0
-   STA zp_br_t2
-   JMP hg_sx2
-hg_sx1_lo:
+   EOR zp_seg_sx2_hi
+   BPL hg_samesign                         ; sign bits equal
+   LDA zp_seg_sx1_hi                       ; signs differ: the negative
+   BMI hg_min1                             ; endpoint is the min
+   BPL hg_min2                             ; (always)
+hg_samesign:
+; same sign: unsigned 16-bit compare gives the signed order
    LDA zp_seg_sx1_lo
-   STA zp_br_t2
-hg_sx2:
-   LDA zp_seg_sx2_hi
-   BMI hg_sx2_neg
-   BEQ hg_sx2_lo
-   LDA #$FF
-   STA zp_br_t3
-   JMP hg_setrange
-hg_sx2_neg:
-   LDA #0
-   STA zp_br_t3
-   JMP hg_setrange
-hg_sx2_lo:
+   CMP zp_seg_sx2_lo
+   LDA zp_seg_sx1_hi
+   SBC zp_seg_sx2_hi
+   BCS hg_min2                             ; sx1 >= sx2
+; --- min = sx1, max = sx2 ---
+hg_min1:
+   LDX #0
+   LDA zp_seg_sx2_hi                       ; max hi
+   BMI hg_adv                              ; max < 0: off-screen left
+   BNE hg_hi255_1                          ; max >= 256: ihi = 255
    LDA zp_seg_sx2_lo
-   STA zp_br_t3
-hg_setrange:
-   LDA zp_br_t2
-   CMP zp_br_t3
-   BCC hg_t2lt
-   LDA zp_br_t3
-   STA $C2
-   LDA zp_br_t2
-   STA $C3
+hg_hist1:
+   STA zp_ihi
+   LDA zp_seg_sx1_hi                       ; min hi
+   BNE hg_lock1                            ; nonzero: neg -> 0 / pos -> bail
+   LDA zp_seg_sx1_lo
+hg_lost1:
+   STA zp_ilo
    JMP hg_query
-hg_t2lt:
-   LDA zp_br_t2
-   STA $C2
-   LDA zp_br_t3
-   STA $C3
+hg_hi255_1:
+   LDA #255
+   BNE hg_hist1                            ; (always: A=255)
+hg_lock1:
+   BPL hg_adv                              ; min >= 256: off-screen right
+   LDA #0
+   BEQ hg_lost1                            ; (always: A=0)
+hg_adv:
+   JMP s_advance
+hg_hi255_2:
+   LDA #255
+   BNE hg_hist2                            ; (always: A=255)
+hg_lock2:
+   BPL hg_adv                              ; min >= 256: off-screen right
+   LDA #0
+   BEQ hg_lost2                            ; (always: A=0)
+; --- min = sx2, max = sx1 ---
+hg_min2:
+   LDX #VX_STRIDE
+   LDA zp_seg_sx1_hi                       ; max hi
+   BMI hg_adv                              ; max < 0: off-screen left
+   BNE hg_hi255_2                          ; max >= 256: ihi = 255
+   LDA zp_seg_sx1_lo
+hg_hist2:
+   STA zp_ihi
+   LDA zp_seg_sx2_hi                       ; min hi
+   BNE hg_lock2                            ; nonzero: neg -> 0 / pos -> bail
+   LDA zp_seg_sx2_lo
+hg_lost2:
+   STA zp_ilo
 hg_query:
+   STX zp_sx_ord                           ; latch min-endpoint offset
    PAGE BANK_C
    JSR SC_HAS_GAP
    BNE hg_pass
@@ -725,55 +733,48 @@ skip_rvert:
 ;     portal (tighten) cases.
 ; Same clamp as the has_gap prelude (Python: ilo = max(0, min(sx1,sx2)),
 ; ihi = min(255, max(sx1,sx2))), recomputed from the sx slots — the
-; t2/t3/$C2/$C3 scratch is not guaranteed to survive the emissions above.
-; Clamp sx1 to u8 → zp_br_t2
-   LDA zp_seg_sx1_hi
-   BMI ms_sx1_neg
-   BEQ ms_sx1_lo
-   LDA #$FF
-   STA zp_br_t2
-   JMP ms_sx2
-ms_sx1_neg:
-   LDA #0
-   STA zp_br_t2
-   JMP ms_sx2
-ms_sx1_lo:
-   LDA zp_seg_sx1_lo
-   STA zp_br_t2
-ms_sx2:
-; Clamp sx2 to u8 → zp_br_t3
-   LDA zp_seg_sx2_hi
-   BMI ms_sx2_neg
-   BEQ ms_sx2_lo
-   LDA #$FF
-   STA zp_br_t3
-   JMP ms_setrange
-ms_sx2_neg:
-   LDA #0
-   STA zp_br_t3
-   JMP ms_setrange
-ms_sx2_lo:
+; $C2/$C3 scratch does not survive the emissions above, but the s16
+; ORDER does: zp_sx_ord (latched at hg_query) picks the ladder, and the
+; prelude's bails guarantee max >= 0 (no off-left seg gets here) and
+; min < 256 (no off-right seg) — so each endpoint needs ONE hi-byte test.
+   LDA zp_sx_ord
+   BNE ms_min2
+; --- min = sx1, max = sx2 ---
+   LDA zp_seg_sx2_hi                       ; max hi: 0 = in range
+   BNE ms_hi255_1                          ; >= 256 (BMI impossible): 255
    LDA zp_seg_sx2_lo
-   STA zp_br_t3
-ms_setrange:
-; ilo = min(t2, t3), ihi = max(t2, t3)
-   LDA zp_br_t2
-   CMP zp_br_t3
-   BCC ms_t2lt
-   LDA zp_br_t3
-   STA $C2
-; ilo = t3
-   LDA zp_br_t2
-   STA $C3
-; ihi = t2
+ms_hist1:
+   STA zp_ihi
+   LDA zp_seg_sx1_hi                       ; min hi: 0 = in range
+   BMI ms_lo0_1                            ; < 0 (pos-nonzero impossible): 0
+   LDA zp_seg_sx1_lo
+ms_lost1:
+   STA zp_ilo
    JMP ms_dispatch
-ms_t2lt:
-   LDA zp_br_t2
-   STA $C2
-; ilo = t2
-   LDA zp_br_t3
-   STA $C3
-; ihi = t3
+ms_hi255_1:
+   LDA #255
+   BNE ms_hist1                            ; (always: A=255)
+ms_lo0_1:
+   LDA #0
+   BEQ ms_lost1                            ; (always: A=0)
+ms_hi255_2:
+   LDA #255
+   BNE ms_hist2                            ; (always: A=255)
+ms_lo0_2:
+   LDA #0
+   BEQ ms_lost2                            ; (always: A=0)
+; --- min = sx2, max = sx1 ---
+ms_min2:
+   LDA zp_seg_sx1_hi                       ; max hi
+   BNE ms_hi255_2
+   LDA zp_seg_sx1_lo
+ms_hist2:
+   STA zp_ihi
+   LDA zp_seg_sx2_hi                       ; min hi
+   BMI ms_lo0_2
+   LDA zp_seg_sx2_lo
+ms_lost2:
+   STA zp_ilo
 ms_dispatch:
    LDA zp_seg_flags
    AND #$02
