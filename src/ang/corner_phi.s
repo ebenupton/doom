@@ -29,11 +29,11 @@ box_classify:
    SEC
    LDA bca_pxs
    SBC (bca_boxp),Y
-   STA val_lo
-   INY
+   TAX                                     ; d lo rides X (only the hi==0
+   INY                                     ; branch ever looks at it)
    LDA bca_pxs+1
    SBC (bca_boxp),Y
-   TAX                                     ; raw hi (zero test)
+   TAY                                     ; raw hi (zero test; Y is free)
 ; s16 sign of a subtract that may overflow: if V is set the N flag is
 ; inverted, so EOR #$80 recovers the true sign (standard signed-compare
 ; idiom; same BVC/EOR pattern at c2/c3/c4 below).
@@ -41,12 +41,11 @@ box_classify:
    EOR #$80
 c1:
    BMI cx_x0_out                           ; d<0: px<left -> boxx=0, outside
-   CPX #0
+   CPY #0
    BNE cx_x_pos
-   LDA val_lo
+   TXA
    BNE cx_x_pos
-   LDA #0                                  ; d==0: boxx=0, inside-x ok
-   BEQ cx_have_x
+   BEQ cx_have_x                           ; d==0: boxx=0 (A=0), inside-x ok
 cx_x0_out:
    INC t1
    LDA #0
@@ -76,21 +75,20 @@ cx_have_x:
    SEC
    LDA bca_pys
    SBC (bca_boxp),Y
-   STA val_lo
+   TAX                                     ; f lo rides X
    INY
    LDA bca_pys+1
    SBC (bca_boxp),Y
-   TAX
+   TAY                                     ; raw hi
    BVC c3
    EOR #$80
 c3:
    BMI cx_y_low                            ; f<0: py<top -> boxy 1/2, inside-hi ok
-   CPX #0
+   CPY #0
    BNE cx_y0_out
-   LDA val_lo
+   TXA
    BNE cx_y0_out
-   LDA #0                                  ; f==0: boxy=0, inside-y ok
-   BEQ cx_have_y
+   BEQ cx_have_y                           ; f==0: boxy=0 (A=0), inside-y ok
 cx_y0_out:
    INC t1                                  ; f>0: py>top -> boxy=0, outside
    LDA #0
@@ -218,6 +216,7 @@ dyd:
    BNE axle
    LDA sd_den
    CMP sd_num
+   BEQ pa_equal                            ; |dx|==|dy|: exact diagonal
    BCS axle
 ; |dy|>=|dx| -> not axgt
 axgt:
@@ -232,6 +231,19 @@ axgt:
    STX sd_num+1
    LDA #1
    JMP haveax
+pa_equal:
+; |dx| == |dy|: sd_q would be exactly 1024 -> ta = ANG45 = 512 directly,
+; no divide, no table. This divert is what lets haveax call slope_div_le
+; (strict num<den) and drop the old post-divide q==1024 check. Ties fold
+; as |dx|<=|dy| (axgt=0), matching the BCS the equal case used to take.
+   LDA pa_sy
+   ORA pa_sx
+   TAX
+   LDA #<512
+   STA pa_res
+   LDA #>512
+   STA pa_res+1
+   JMP comb
 axle:
 ; |dx| <= |dy|: sd_num=|dx|(min), sd_den=|dy|(max) already; axgt bit=0
    LDA #0
@@ -243,17 +255,9 @@ haveax:
    ORA pa_sy
    ORA pa_sx
    TAX
-   JSR slope_div                           ; -> sd_q (0..1024); preserves X
-; tantoangle has 1024 entries (0..1023); the exact diagonal sd_q==1024
-; (hi byte == 4) maps to ANG45 = 512 directly (no table entry).
-   LDA sd_q+1
-   CMP #4
-   BNE pa_lookup
-   LDA #<512
-   STA pa_res
-   LDA #>512
-   STA pa_res+1
-   JMP comb
+   JSR slope_div_le                        ; -> sd_q (0..1023); preserves X
+; (num < den strictly here — pa_equal diverted the diagonal — so q fits
+; the 1024-entry tantoangle and the old q==1024 check is gone.)
 pa_lookup:
 ; ta = tantoangle[sd_q] via 16-bit index. TA_HI = TA_LO + (TA_HI-TA_LO),
 ; so reach the hi-byte table by adding the page delta to the pointer high
@@ -307,11 +311,16 @@ mask:
 ;   phi = (a_fine - psi) & 4095 ; if phi >= 2048: phi -= 4096
 ; The AND #$0F masks to 12 bits; hi-nibble >= 8 means phi >= 2048, and
 ; SBC #$10 (carry known set from the CMP) subtracts 4096 from the hi byte.
+; RETURNS phi hi in A, lo in Y (dead-write tracker 2026-07-11: every
+; caller immediately copied pa_res out — the register return drops both
+; loads at all six sites). pa_res is STILL stored: the test hooks
+; (test_slope_div) read it from memory, and psi-hi feeds the SBC below.
 cp_havepsi:
    SEC
    LDA bca_afn
    SBC pa_res
    STA pa_res
+   TAY                                     ; phi lo rides Y to the caller
    LDA bca_afn+1
    SBC pa_res+1
    AND #$0F                                ; phi & 4095 (hi nibble)
@@ -320,7 +329,7 @@ cp_havepsi:
 ; < 2048 -> keep; else C=1 for the wrap
    SBC #$10                                ; -= 4096 (hi -= $10) -> signed [-2048,2048)
 cp_store:
-   STA pa_res+1
+   STA pa_res+1                            ; (A still = phi hi at RTS)
    RTS
 
 ; checkcoord[boxpos*4]: indices into (top=0,bot=1,left=2,right=3).

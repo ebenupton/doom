@@ -45,6 +45,12 @@ ge:
    LDA #>1024
    STA sd_q+1
    RTS
+; slope_div_le — entry for callers that GUARANTEE num < den strictly
+; (corner_phi: the axgt fold swaps to num<=den and diverts the num==den
+; diagonal to ANG45 before calling). Skips the 16-bit num>=den entry
+; proof above (~19 cycles when both hi bytes match). q <= 1023 here, so
+; the caller needs no q==1024 check either. Preserves X.
+::slope_div_le:
 lt:
 ; 98% of divides have den < 256 (so num < den < 256): 8-bit restoring
 ; divide, r in A, no high byte. The quotient is <= 1024 (11 bits); after 8
@@ -217,8 +223,8 @@ bca_p2 = $CA                            ; phi2 (s16, pair $CA/$CB)
 ; instead of copying it into a work area each check.
 t0 = $CC
 t1 = $CD
-val_lo = $CE
-val_hi = $CF
+; $CE free (was val_lo — box_classify's lo bytes ride X now, 2026-07-11)
+val_hi = $CF                            ; only user: rcache's rc_bytehi alias
 bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
 .if BANKED
 VATOX = $8900                           ; bank L2: viewangletox, 1025 entries (phi+512)

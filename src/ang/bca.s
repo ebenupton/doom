@@ -60,11 +60,9 @@ bbox_check_angle:
    SBC bca_pys+1
    STA pa_dy+1
    STX bca_ccsave
-   JSR corner_phi
-   LDA pa_res
-   STA bca_p1
-   LDA pa_res+1
+   JSR corner_phi                          ; -> phi hi in A, lo in Y
    STA bca_p1+1
+   STY bca_p1
    LDX bca_ccsave
 ; corner2 = (val[cc2], val[cc3])
    LDY bca_cc+2,X
@@ -85,11 +83,9 @@ bbox_check_angle:
    LDA (bca_boxp),Y
    SBC bca_pys+1
    STA pa_dy+1
-   JSR corner_phi
-   LDA pa_res
-   STA bca_p2
-   LDA pa_res+1
+   JSR corner_phi                          ; -> phi hi in A, lo in Y
    STA bca_p2+1
+   STY bca_p2
 ; --- Faithful DOOM R_CheckBBox, unsigned-BAM wraparound (FINEANGLES=4096).
 ; Our phi = -(DOOM view-relative angle), so DOOM angle1=-p1 (p1 = LEFT
 ; silhouette, checkcoord order), angle2=-p2 (RIGHT). All arithmetic is

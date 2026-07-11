@@ -60,7 +60,7 @@ zp_bca_p2 = $CA                   ; [ang]; s16 pair with $CB
 zp_bca_p2_hi = $CB                ; [ang]
 zp_bca_t0 = $CC                   ; [ang]
 zp_bca_t1 = $CD                   ; [ang]
-zp_bca_val_lo = $CE               ; [ang]
+; $CE free (was zp_bca_val_lo, 2026-07-11)
 zp_bca_val_hi = $CF               ; [ang]
 ; $C4/$C5: OWNED by ang/rcache.s (position-keyed rotation cache) — was an
 ; unregistered squatter; registered 2026-07-10. Do not allocate.

@@ -181,22 +181,18 @@ bbox_check_angle_cached:
    INY
    LDA (rc_psilo),Y
    STA pa_res+1
-   JSR cp_havepsi
-   LDA pa_res
-   STA bca_p1
-   LDA pa_res+1
+   JSR cp_havepsi                          ; -> phi hi in A, lo in Y
    STA bca_p1+1
+   STY bca_p1
    LDY #2
    LDA (rc_psilo),Y
    STA pa_res
    INY
    LDA (rc_psilo),Y
    STA pa_res+1
-   JSR cp_havepsi
-   LDA pa_res
-   STA bca_p2
-   LDA pa_res+1
+   JSR cp_havepsi                          ; -> phi hi in A, lo in Y
    STA bca_p2+1
+   STY bca_p2
    JMP bca_tail
 bcac_warm_full:
    JMP full_vis                            ; canonical tail (bca.s): sets
@@ -244,11 +240,9 @@ bcac_cold:
    SBC bca_pys+1
    STA pa_dy+1
    STX bca_ccsave
-   JSR corner_phi
-   LDA pa_res
-   STA bca_p1
-   LDA pa_res+1
+   JSR corner_phi                          ; -> phi hi in A, lo in Y
    STA bca_p1+1
+   STY bca_p1
    LDX bca_ccsave
 ; corner2 -> bca_p2
    LDY bca_cc+2,X
@@ -269,11 +263,9 @@ bcac_cold:
    LDA (bca_boxp),Y
    SBC bca_pys+1
    STA pa_dy+1
-   JSR corner_phi
-   LDA pa_res
-   STA bca_p2
-   LDA pa_res+1
+   JSR corner_phi                          ; -> phi hi in A, lo in Y
    STA bca_p2+1
+   STY bca_p2
 ; --- populate cache from RAW bca_p1/p2 (pre-clip), then run the tail once ---
    JSR bcac_index
 ; store psi1 = (a_fine - p1) & 4095, psi2 = (a_fine - p2) & 4095
