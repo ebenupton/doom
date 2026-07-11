@@ -338,12 +338,13 @@ rot_s4:
    ADC zp_br_resext
    STA zp_br_vyext
 
-   JMP tv_add_fracs
+; (falls through into tv_add_fracs — its RTS is br_to_view's return)
 
 ; ============================================================================
 ; tv_add_fracs — add the per-frame fractional rotation terms (s16,
-; sign-extended) to the s24 vx/vy accumulators. Shared by br_to_view and
-; the bbox corner combine.
+; sign-extended) to the s24 vx/vy accumulators. Tail of br_to_view (the
+; old second caller — the perspective bbox corner combine — is long
+; retired; the JMP became fall-through 2026-07-11).
 ;
 ;   Inputs (zp):  zp_br_vxlo/vxhi/vxext, zp_br_vylo/vyhi/vyext (s24
 ;                 integer-rotation sums), zp_br_fvxlo/hi, zp_br_fvylo/hi
