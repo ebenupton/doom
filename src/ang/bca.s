@@ -190,16 +190,10 @@ ck_right_clip:
    LDA #>512
    STA bca_p2+1
 ck_done:
-; feed the VATOX tail: lo := p1 (left), hi := p2 (right), both in [-512,512]
-   LDA bca_p1
-   STA bca_lo
-   LDA bca_p1+1
-   STA bca_lo+1
-   LDA bca_p2
-   STA bca_hi
-   LDA bca_p2+1
-   STA bca_hi+1
-; ilo = VATOX[lo+512]-1 ; ihi = VATOX[hi+512]+1 ; clamp [0,255].
+; the VATOX tail reads the clipped p1 (left) / p2 (right) directly, both
+; in [-512,512] — the old bca_lo/bca_hi staging copies were pure channels
+; (dead-write tracker, 2026-07-11) and are gone.
+; ilo = VATOX[p1+512]-1 ; ihi = VATOX[p2+512]+1 ; clamp [0,255].
 ; VATOX holds only the used range (phi in [-512,512] -> index [0,1024]),
 ; so the bias is +512 (not +1024); the R_CheckBBox clip above guarantees
 ; lo/hi land in [-512,512].
@@ -207,10 +201,10 @@ ck_done:
 ; single add (lo is signed s16; two's-complement add lands in range).
    CLC
    LDA #<(VATOX+512)
-   ADC bca_lo
+   ADC bca_p1
    STA pa_ptr
    LDA #>(VATOX+512)
-   ADC bca_lo+1
+   ADC bca_p1+1
    STA pa_ptr+1
    LDY #0
    LDA (pa_ptr),Y
@@ -223,10 +217,10 @@ il1:
    STA bca_ilo
    CLC
    LDA #<(VATOX+512)
-   ADC bca_hi
+   ADC bca_p2
    STA pa_ptr
    LDA #>(VATOX+512)
-   ADC bca_hi+1
+   ADC bca_p2+1
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[hi]
    CLC

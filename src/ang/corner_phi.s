@@ -138,7 +138,7 @@ cx_inside:
 ;   in : pa_dx/pa_dy (s16 = corner - viewer int pos, loaded by the caller),
 ;        bca_afn (a_fine, frame-constant)
 ;   out: pa_res = phi (s16 in [-2048,2048))
-;        clobbers sd_num/sd_den/sd_q, pa_sx/pa_sy/pa_oct/pa_ptr
+;        clobbers sd_num/sd_den/sd_q, pa_sx/pa_sy/pa_ptr (oct rides X)
 ;   phi = sign_extend((a_fine - psi) & 4095), psi = point_to_angle(dx,dy).
 ; point_to_angle (angle_bbox.py) is INLINED below — corner_phi is its sole
 ; caller. pseudocode:
@@ -236,11 +236,14 @@ axle:
 ; |dx| <= |dy|: sd_num=|dx|(min), sd_den=|dy|(max) already; axgt bit=0
    LDA #0
 haveax:
-; oct = sx(0/4) | sy(0/2) | axgt(0/1) — signs stored pre-shifted
+; oct = sx(0/4) | sy(0/2) | axgt(0/1) — signs stored pre-shifted.
+; oct RIDES X to comb (dead-write tracker, 2026-07-11): slope_div's fast
+; paths never touch X (the slow path's counter moved to Y to keep this
+; contract) and neither does the tantoangle lookup.
    ORA pa_sy
    ORA pa_sx
-   STA pa_oct
-   JSR slope_div                           ; -> sd_q (0..1024)
+   TAX
+   JSR slope_div                           ; -> sd_q (0..1024); preserves X
 ; tantoangle has 1024 entries (0..1023); the exact diagonal sd_q==1024
 ; (hi byte == 4) maps to ANG45 = 512 directly (no table entry).
    LDA sd_q+1
@@ -273,8 +276,7 @@ pa_lookup:
    STA pa_res+1
 comb:
 ; res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
-; (0/1024/2048/3072), so base_lo is always 0.
-   LDX pa_oct
+; (0/1024/2048/3072), so base_lo is always 0. X = oct (from haveax).
    LDA pa_sign,X
    BMI sub
 ; add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0

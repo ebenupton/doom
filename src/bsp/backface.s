@@ -170,10 +170,7 @@ bf_diag:
    TAX                                     ; X = dir index
    LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; sign byte (b7 dy', b6 dx')
    STA zp_br_sign
-   LDA ROM_DIRS_C,X                        ; |dx'|
-   STA zp_seg_ldx
-   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'|
-   STA zp_seg_ldy
+   STX zp_bf_dir                           ; mags load lazily in the mul tier
 ; dx = px - lv1x (s16, header +5/6); dxhi rides A for the zero test
    LDA zp_br_px_h
    SEC
@@ -273,7 +270,8 @@ bfm_dx_pos:
    STA zp_br_dyhi
 bfm_dy_pos:
 ; --- |P1| = |dy'| * |dx| -> (t2, t3, t4) u24 (|dy'| pre-abs'd) ---
-   LDA zp_seg_ldy
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'| (lazy: only this tier pays)
    STA zp_br_a                             ; survives for the hi partial
    LDX zp_br_dxlo
    STX zp_mul_b
@@ -295,7 +293,8 @@ bfm_dy_pos:
    STA zp_br_t4
 bfm_p1_done:
 ; --- |P2| = |dx'| * |dy| -> (t0, t1, t5) u24 ---
-   LDA zp_seg_ldx
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C,X                        ; |dx'|
    STA zp_br_a
    LDX zp_br_dylo
    STX zp_mul_b

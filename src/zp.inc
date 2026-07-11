@@ -74,7 +74,7 @@ zp_rns_vec_hi = $C7               ; [bsp]; set by rns_select from S; JMP (ind))
 ; $EB-$EE/$F0-$F1. Do not trust "free" without grepping ang/anim/drivers.
 zp_br_p = $1C                     ; [bsp]
 zp_br_p_h = $1D                   ; [bsp]
-bca_lo = $1E                      ; [ang]; lo_phi (s16) ; w=2
+; $1E/$1F free (was bca_lo — folded into direct bca_p1 reads, 2026-07-11)
 zp_br_t0 = $20                    ; [bsp]
 zp_br_t1 = $21                    ; [bsp]
 zp_br_t2 = $22                    ; [bsp]
@@ -153,10 +153,10 @@ zp_v_xint = $37                   ; [bsp]; saved integer view-x (s8)
 zp_v_xfrac = $38                  ; [bsp]; saved fractional view-x (u8)
 pa_res = $39                      ; [ang]; u16 out (fineangle) ; w=2
 bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
-zp_seg_ldx = $3D                  ; [bsp]; s8 linedef delta x — the back-face
-zp_seg_ldy = $3E                  ; [bsp]; s8 ldy. NOT caller-staged: the test
-; loads each from the header (+8/+9) on first use and STASHES here from A
-; only when the taken path reuses it downstream (2026-07-09).
+zp_bf_dir = $3D                   ; [bsp]; diagonal back-face DIR-table index;
+; the |dx'|/|dy'| magnitudes load lazily in the mul tier via this stash
+; (dead-write tracker 2026-07-11: sign-shortcut exits never read them).
+; $3E free (was zp_seg_ldy)
 zp_seg_flags = $3F                ; [bsp]; u8
 pa_ptr = $40                      ; [ang]; 16-bit table pointer ; w=2
 zp_ys_done = $42                  ; [bsp]; 1 = the PREVIOUS seg ran the
@@ -231,8 +231,8 @@ RASTER_ZP_X1 = $84                ; [clip]
 RASTER_ZP_Y1 = $85                ; [clip]
 bca_boxp = $86                    ; [ang]; ROM box pointer: caller points this at the 8-byte box
 pa_sy = $89                       ; [ang]
-pa_oct = $8A                      ; [ang]
-bca_hi = $8B                      ; [ang]; hi_phi (s16) ; w=2
+; $8A free (was pa_oct — oct rides X haveax->comb, 2026-07-11)
+; $8B/$8C free (was bca_hi — folded into direct bca_p2 reads, 2026-07-11)
 bca_pxs = $8D                     ; [ang]; px sign-extended (s16) ; w=2
 zp_br_pxraw_lo = $90              ; [bsp]; s16 player x relative to map_center (raw)
 zp_br_pxraw_hi = $91              ; [bsp]

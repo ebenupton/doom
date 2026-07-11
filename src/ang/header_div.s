@@ -118,8 +118,8 @@ slow:
    LDA #0
    STA sd_q
    STA sd_q+1
-   LDX #10
-loop:
+   LDY #10                                 ; counter in Y: slope_div must
+loop:                                      ; preserve X (oct rides it)
    ASL sd_r
    ROL sd_r+1
 ; r <<= 1
@@ -144,7 +144,7 @@ yes:
    STA sd_r+1
    INC sd_q                                ; q |= 1
 no:
-   DEX
+   DEY
    BNE loop
    RTS
 .endscope
