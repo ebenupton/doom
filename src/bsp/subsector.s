@@ -221,13 +221,15 @@ ch_miss:
    INY
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
-   JSR br_seg_xform_vertex                  ; keep this STA immediately before
+   LDX #0                                   ; keep this STA immediately before;
+   JSR br_seg_xform_vertex                  ; X = zp_seg_ep (v1 struct)
 ; (no marshalling: evy/evx/clip/sx/recip all landed in VX1 directly)
 ch_v1_done:
 
 ; Transform v2.
-   LDA #VX_STRIDE
-   STA zp_seg_ep                            ; v2 → struct VX2
+   LDX #VX_STRIDE
+   STX zp_seg_ep                            ; v2 → struct VX2; X RIDES to the
+; JSR (entry contract: X = ep) — PAGE and the header reads are A/Y only.
    PAGE BANK_L0                             ; v1's projection paged L2 (br_
 ; project_y / br_recip) unless v1 was near-clipped — the header read below
 ; needs the L0 window back. Flat: no-op.
