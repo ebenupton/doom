@@ -839,13 +839,28 @@ chain_reuse_v1:
    LDA zp_seg_sx2_hi
    STA zp_seg_sx1_hi
 ; recip carried UNCONDITIONALLY (2026-07-11): the post-has_gap y stage
-; projects BOTH endpoints' sy pairs from the struct-banked recips — the
-; front-sy copy and the transform-time dpy_back tail are DELETED with
-; the Y deferral (culled segs never project; VWHC memoizes repeats).
+; projects from the struct-banked recips.
    LDA zp_seg_v2_rhi
    STA zp_seg_v1_rhi
    LDA zp_seg_v2_rlo
    STA zp_seg_v1_rlo
+; CHAIN SY RECOVERY (2026-07-11): if the PREVIOUS seg ran its y stage
+; (zp_ys_done — cleared by any culled/back-facing seg in between), VX2
+; still holds its v2's projected FRONT pair, and this seg's v1 is that
+; same vertex under the same subsector heights: copy the pair and let
+; the y stage skip v1's front projection (zp_ys_v1ok).
+   LDA zp_ys_done
+   BEQ ch_rts
+   LDA zp_seg_sy2_top_lo
+   STA zp_seg_sy1_top_lo
+   LDA zp_seg_sy2_top_hi
+   STA zp_seg_sy1_top_hi
+   LDA zp_seg_sy2_bot_lo
+   STA zp_seg_sy1_bot_lo
+   LDA zp_seg_sy2_bot_hi
+   STA zp_seg_sy1_bot_hi
+   LDA #1
+   STA zp_ys_v1ok
 ch_rts:
    RTS
 .endscope

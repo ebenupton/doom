@@ -129,6 +129,9 @@ anim_ss_cont:
 ; one subsector. idx < 481, so $FF never matches a real hi byte.
    LDA #$FF
    STA zp_seg_v_idx_hi
+   LDA #0
+   STA zp_ys_done                           ; no cross-subsector sy donation
+   STA zp_ys_v1ok
 
 ; Reset deferred op queue for this subsector.
    LDA #0
@@ -209,10 +212,17 @@ seg_proc:
    CMP zp_seg_v_idx_hi
    BNE ch_miss
 ; chain hit: the copy + back-pair body lives in LO (MAIN is at its
-; ceiling); ~12 cyc JSR/RTS tax on a ~200-cyc win.
+; ceiling); ~12 cyc JSR/RTS tax. chain_reuse_v1 consumes zp_ys_done
+; (prev seg y-staged => VX2's front sy pair is live => copy it and set
+; zp_ys_v1ok so the y stage skips v1's front projection).
    JSR chain_reuse_v1
-   JMP ch_v1_done
+   LDA #0
+   STA zp_ys_done                           ; consumed (chain) — reset for
+   JMP ch_v1_done                           ; THIS seg's own y stage
 ch_miss:
+   LDA #0
+   STA zp_ys_done                           ; prev-seg donation dies here
+   STA zp_ys_v1ok
    LDY #0
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_lo
@@ -220,7 +230,7 @@ ch_miss:
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
-; (no marshalling: evy/evx/clip/sx/sy/recip all landed in VX1 directly)
+; (no marshalling: evy/evx/clip/sx/recip all landed in VX1 directly)
 ch_v1_done:
 
 ; Transform v2.
@@ -399,6 +409,23 @@ hg_pass:
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
 ys_deltas_done:
+   LDA zp_ys_v1ok
+   BEQ ys_v1_full
+; chained v1 with a LIVE front sy pair (copied from the emitted prev
+; seg) — only a portal's back pair still needs v1's recip
+   LDA zp_seg_flags
+   AND #$0C
+   BEQ ys_v2
+   LDA #0
+   STA zp_seg_ep
+   LDA zp_seg_v1_rhi
+   STA zp_br_rhi
+   LDA zp_seg_v1_rlo
+   STA zp_br_rlo
+   JSR rns_select
+   JSR dpy_back
+   JMP ys_v2
+ys_v1_full:
    LDA #0
    STA zp_seg_ep                            ; v1 -> struct VX1
    LDA zp_seg_v1_rhi
@@ -407,6 +434,7 @@ ys_deltas_done:
    STA zp_br_rlo
    JSR rns_select
    JSR do_project_y
+ys_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; v2 -> struct VX2
    LDA zp_seg_v2_rhi
@@ -415,6 +443,10 @@ ys_deltas_done:
    STA zp_br_rlo
    JSR rns_select
    JSR do_project_y
+   LDA #1
+   STA zp_ys_done                           ; this seg's VX2 sy is live for
+   LDA #0                                   ; the next seg's chain
+   STA zp_ys_v1ok
 ; --- Post-visibility APV staging, then endpoint canonicalization ---
    LDA zp_seg_flags
    AND #$02

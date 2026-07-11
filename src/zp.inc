@@ -159,7 +159,12 @@ zp_seg_ldy = $3E                  ; [bsp]; s8 ldy. NOT caller-staged: the test
 ; only when the taken path reuses it downstream (2026-07-09).
 zp_seg_flags = $3F                ; [bsp]; u8
 pa_ptr = $40                      ; [ang]; 16-bit table pointer ; w=2
-; ($42/$43 freed 2026-07-10: zp_rom_nodes retired — node SoA reads are
+zp_ys_done = $42                  ; [bsp]; 1 = the PREVIOUS seg ran the
+; post-has_gap y stage (its VX2 sy pairs are live for the chain);
+; cleared per seg at the chain decision, set at y-stage end
+zp_ys_v1ok = $43                  ; [bsp]; 1 = this seg's chained v1
+; already carries a valid front sy pair (copied from an emitted prev
+; seg) — the y stage skips v1's front projection
 ; constant-base abs,X; layout constants live in layout.inc)
 sd_num = $44                      ; [ang] ; w=2
 sd_den = $46                      ; [ang] ; w=2
