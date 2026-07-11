@@ -153,72 +153,111 @@ ph_right:
 ;         (whole 8-row cells unrolled 8x while count >= 8 and Y == 0)
 ; ======================================================================
 ; --- plot_v: x = X0 (== X1), y from min(Y0,Y1) to max(Y0,Y1) ----------------
+; BOTTOM-UP rewrite (2026-07-11): the pixel mask rides X for the whole
+; line (row op = TXA / ORA (zp),Y / STA (zp),Y); rows walk DESCENDING so
+; DEY is simultaneously the step and the loop test (BPL) — no CPY #8
+; boundary compare, no pixel counter. Partial cells BIAS the base
+; pointer (base lo bits 0-2 are clear; ORA composes) so Y reaches 0
+; exactly at the run's top pixel; full middle cells are an unrolled
+; Y=7..0 ladder. Write order is reversed vs the old top-down walk —
+; OR-writes commute, so the framebuffer is bit-identical.
 plot_v:
 .scope
-; Order endpoints: ensure Y0 <= Y1 (swap in place; A = y0 after)
    LDA RASTER_ZP_Y0
    CMP RASTER_ZP_Y1
-   BCC pv_ordered
+   BCC pv_ord
    LDX RASTER_ZP_Y1
    STA RASTER_ZP_Y1
    STX RASTER_ZP_Y0
-   TXA
-pv_ordered:
-; A = y0. ptr: lo = x & $F8, hi = scrstrt + (y0>>3); Y = y0 & 7
-   TAX                                     ; y0 rides in X (was PHA/PLA)
-   LSR A
-   LSR A
-   LSR A
-   CLC
-   ADC RASTER_ZP_SCRSTRT
-   STA zp_tmp1
+pv_ord:
+; mask -> X for the whole line; column base lo -> zp_tmp0 (unbiased)
+   LDA RASTER_ZP_X0
+   AND #7
+   TAX
    LDA RASTER_ZP_X0
    AND #$F8
    STA zp_tmp0
-   TXA
-   AND #7
-   TAY
-; mask = bmask[x&7]
-   LDA RASTER_ZP_X0
-   AND #7
-   TAX
    LDA plot_bmask,X
-   STA zp_tmp2
-; count = y1 - y0 + 1
+   TAX
+; bottom cell page: zp_tmp1 = scrstrt + (y1>>3); cells spanned -> zp_plot_i
+   LDA RASTER_ZP_Y1
+   LSR A
+   LSR A
+   LSR A
+   STA zp_plot_i                            ; y1 cell#
+   CLC
+   ADC RASTER_ZP_SCRSTRT
+   STA zp_tmp1
+   LDA RASTER_ZP_Y0
+   LSR A
+   LSR A
+   LSR A
+   STA zp_tmp2                              ; y0 cell#
+   LDA zp_plot_i
+   SEC
+   SBC zp_tmp2
+   STA zp_plot_i
+   BNE pv_multi
+; --- single cell: rows (y0&7)..(y1&7); bias base to the run's top ---
+   LDA RASTER_ZP_Y0
+   AND #7
+   ORA zp_tmp0
+   STA zp_tmp0
    LDA RASTER_ZP_Y1
    SEC
    SBC RASTER_ZP_Y0
-   TAX
-   INX
-pv_loop:
-   LDA (zp_tmp0),Y
-   ORA zp_tmp2
+   TAY                                     ; Y = run length - 1
+pv_lp1:
+   TXA
+   ORA (zp_tmp0),Y
    STA (zp_tmp0),Y
-   DEX
-   BEQ pv_done
-   INY
-   CPY #8
-   BNE pv_loop
-   LDY #0
-   INC zp_tmp1                             ; next char row (+256)
-pv_cell:
-; Y == 0 here: unroll whole 8-row cells while at least 8 pixels remain
-   CPX #8
-   BCC pv_loop
-.repeat 8
-   LDA (zp_tmp0),Y
-   ORA zp_tmp2
+   DEY
+   BPL pv_lp1
+   RTS
+pv_multi:
+; --- bottom partial cell: rows 0..(y1&7) ---
+   LDA RASTER_ZP_Y1
+   AND #7
+   TAY
+pv_lp2:
+   TXA
+   ORA (zp_tmp0),Y
    STA (zp_tmp0),Y
-   INY
+   DEY
+   BPL pv_lp2
+   DEC zp_tmp1                              ; up one char row (-256)
+   DEC zp_plot_i
+   BEQ pv_top
+; --- middle full cells: unrolled Y = 7..0 ladder ---
+pv_mid:
+   LDY #7
+.repeat 7
+   TXA
+   ORA (zp_tmp0),Y
+   STA (zp_tmp0),Y
+   DEY
 .endrepeat
    TXA
-   SEC
-   SBC #8
-   TAX
-   BEQ pv_done
-   LDY #0
-   INC zp_tmp1                             ; next char row (+256)
-   JMP pv_cell
-pv_done:
+   ORA (zp_tmp0),Y
+   STA (zp_tmp0),Y
+   DEC zp_tmp1
+   DEC zp_plot_i
+   BNE pv_mid
+pv_top:
+; --- top partial: rows (y0&7)..7; bias so Y = 0 lands on row y0&7 ---
+   LDA RASTER_ZP_Y0
+   AND #7
+   ORA zp_tmp0
+   STA zp_tmp0
+   LDA RASTER_ZP_Y0
+   AND #7
+   EOR #7
+   TAY                                     ; Y = 7 - (y0&7)
+pv_lp3:
+   TXA
+   ORA (zp_tmp0),Y
+   STA (zp_tmp0),Y
+   DEY
+   BPL pv_lp3
    RTS
 .endscope
