@@ -78,7 +78,7 @@ list and rasterised by the vendored NJ line drawer.
                            br_bbox_visible_d = forward-coherence cache
                            wrapper (walk JSRs SMC-patched per frame;
                            D_ENABLE, data $0210-$03F7 in old OS space)
-      bsp/subsector.s      seg loop: headers, FHCH heights, emits, deferred ops
+      bsp/subsector.s      seg loop: stride-18 headers (heights inlined +12..17), emits, deferred ops
       bsp/seg_xform.s      per-vertex transform + vertex cache ($0C00)
       bsp/seg_project.s    do_project_y consumer gating
       bsp/main_tail.s      vc_bit_mask + end_code assert
@@ -239,7 +239,8 @@ ground-truth verify at 5 fixed positions has not worsened vs
   bsp/header.s — keep in sync), beebasm drivers $2000-$2BFF (drv $2000,
   vars $2180, glue $21A0, sincos $2200, clears+input $2400; !BOOT CALLs
   &2000). Level data lives in the banks (L0 = SoA $8000 / seg_hdr $9000 /
-  FHCH $9000+n_segs*12 / TABL0 $BE90; L2 adds verts $A200, VWHC
+  stride-18 seg headers with INLINED heights at +12..17, $9000-$BE8B /
+  TABL0 $BE90; L2 adds verts $A200, VWHC
   $B500-$B9FF, CFG $BA00). SSMASK is a documented main-RAM exception at
   $0A80 (per-subsector read under arbitrary banks). SEL+HUD remain in
   the bank C window. RULE: no level data in main unless the banked
