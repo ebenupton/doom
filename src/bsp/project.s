@@ -57,11 +57,10 @@ px_have_frac:
 px_no_frac:
 
 ; --- += smul(vx, M8) (s16, sign-extended into vxext) ---
-   LDA zp_br_t0
-   STA zp_br_a
    LDA zp_br_rhi
-   STA zp_br_b
-   JSR br_smul_s8_u8
+   STA zp_mul_b
+   LDA zp_br_t0
+   JSR br_smul_am                          ; a in A (N live), b in zp_mul_b
    LDA zp_br_resl
    CLC
    ADC zp_br_t2

@@ -383,6 +383,12 @@ br_smul_s8_u8:
    LDA zp_br_b
    STA zp_mul_b
    LDA zp_br_a
+; br_smul_am — register-contract entry (dead-write tracker 2026-07-11):
+; caller pre-stores zp_mul_b (u8 = b) and arrives with a (s8) in A, the
+; N flag still live from its own LDA — JSR preserves flags, so the BMI
+; below is the first instruction that needs them. Drops the zp_br_a/
+; zp_br_b staging round-trip (12 cycles) at every hot call site.
+::br_smul_am:
    BMI a_neg
 ; --- inlined umul8(A, mag) — 56% of all umul8 calls go through here ---
    TAX                                     ; stash a in X (was zp_tmp0)

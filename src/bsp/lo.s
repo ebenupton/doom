@@ -515,11 +515,10 @@ br_project_x_wide:
    STA zp_br_vxext                         ; (b3 can't carry yet: b2 was 0)
 
 ; --- += (xext*M8) << 8 (s16, sign-extended into b3) ---
-   LDA zp_v_xext
-   STA zp_br_a
    LDA zp_br_rhi
-   STA zp_br_b
-   JSR br_smul_s8_u8
+   STA zp_mul_b
+   LDA zp_v_xext
+   JSR br_smul_am                          ; a in A (N live), b in zp_mul_b
    LDA zp_br_resl
    CLC
    ADC zp_br_t3
