@@ -2175,20 +2175,33 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     seg_off = layout['off_seg_hdr'] + si * SEG_HDR_SIZE
     v1_idx = read_u16(rom, seg_off + SH_V1)
     v2_idx = read_u16(rom, seg_off + SH_V2)
-    lv1_x  = read_s16(rom, seg_off + SH_LV1X)
-    lv1_y  = read_s16(rom, seg_off + SH_LV1Y)
-    ldx    = read_s8(rom,  seg_off + SH_LDX)
-    ldy    = read_s8(rom,  seg_off + SH_LDY)
+    bf_ldy = read_s8(rom, seg_off + 9)      # 0 = axis C-form marker
     flags  = read_u8(rom,  seg_off + SH_FLAGS)
 
     # ── Back-face test (same arithmetic as classic path) ──
     px_int = ctx[0]
     py_int = ctx[1]
-    dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
-    if not (flags & SF_SAMEDIR):        # inverted bit: clear = negate
-        dot = -dot
-    if dot <= 0:
-        return
+    if bf_ldy == 0:
+        # axis C-form: one signed compare, SAMEDIR folded at pack time
+        bf_form = rom[seg_off + 4]
+        bf_c16 = read_s16(rom, seg_off + 5)
+        if bf_form == 0:   front = px_int > bf_c16
+        elif bf_form == 1: front = px_int < bf_c16
+        elif bf_form == 2: front = py_int > bf_c16
+        else:              front = py_int < bf_c16
+        if not front:
+            return
+    else:
+        # diagonal: classic delta form (unchanged)
+        lv1_x = read_s16(rom, seg_off + SH_LV1X)
+        lv1_y = read_s16(rom, seg_off + SH_LV1Y)
+        ldx   = read_s8(rom,  seg_off + SH_LDX)
+        ldy   = read_s8(rom,  seg_off + SH_LDY)
+        dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
+        if not (flags & SF_SAMEDIR):
+            dot = -dot
+        if dot <= 0:
+            return
 
     # ── Read vertex positions from rom_main ──
     verts_off = layout['off_verts']

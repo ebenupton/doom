@@ -189,11 +189,13 @@ seg_proc:
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_flags
 
-; --- Back-face test (returns Z: BEQ = back-facing) ---
-   JSR br_back_face_test
-   BNE bf_passed
+; --- Back-face test: TAIL-DISPATCHED (2026-07-11). Single caller, so
+; the test JMPs straight to bf_seg_front / bf_seg_back instead of
+; returning a Z verdict — no JSR/RTS, no verdict LDA, no re-branch.
+   JMP br_back_face_test
+::bf_seg_back:
    JMP s_advance
-bf_passed:
+::bf_seg_front:
 ; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
 
 ; --- FHCH per-seg: front fh/ch + deltas were HOISTED to the subsector

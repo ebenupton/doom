@@ -346,8 +346,31 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         seg_L = int(round(math.hypot(ldx, ldy)))
         assert 0 <= seg_L <= 255, f"seg {i}: L={seg_L} not u8"
         o = off_seg_hdr + i * SEG_HDR_SIZE
-        struct.pack_into('<HHhhbbBB', rom_main, o,
-                         s[0], s[1], lv1[0], lv1[1], ldx, ldy, flags, seg_L)
+        # --- back-face representations (2026-07-11) ---
+        # AXIS-aligned linedefs (~76%): C-form — the whole test collapses
+        # to one signed s16 compare with SF_SAMEDIR folded at pack time:
+        #   +4 form: 0 front iff px>C16, 1 px<C16, 2 py>C16, 3 py<C16
+        #   +5/6 C16 (= lv1x or lv1y), +7..9 = 0 (+9==0 IS the marker).
+        # DIAGONAL linedefs keep the classic delta layout byte-for-byte
+        # (+4..7 lv1x/lv1y, +8/9 ldx/ldy, SAMEDIR live) for the tiered
+        # sign-shortcut machinery; ldy!=0 there, so +9 discriminates.
+        sgn = 1 if (flags & SF_SAMEDIR) else -1
+        if ldx == 0 or ldy == 0:
+            if ldx == 0 and ldy == 0:
+                form, c16 = 1, -32768        # px < -32768 never: always BACK
+            elif ldx == 0:
+                pdy = sgn * (1 if ldy > 0 else -1)
+                form, c16 = (0 if pdy > 0 else 1), lv1[0]
+            else:
+                pdx = sgn * (1 if ldx > 0 else -1)
+                form, c16 = (3 if pdx > 0 else 2), lv1[1]
+            struct.pack_into('<HHBhBBB', rom_main, o,
+                             s[0], s[1], form, c16, 0, 0, 0)
+        else:
+            struct.pack_into('<HHhhbb', rom_main, o,
+                             s[0], s[1], lv1[0], lv1[1], ldx, ldy)
+        rom_main[o + 10] = flags
+        rom_main[o + 11] = seg_L
 
         # For solids with aperture edges, overlay APV heights onto the
         # unused portal-only slots in seg detail.
