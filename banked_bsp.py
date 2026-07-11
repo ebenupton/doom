@@ -116,10 +116,11 @@ def build_banked(flatr):
     # tables TABL2/CFG @ $B900/$B980; L0 gets the FHCH+flags worker @ $BE00
     # plus SSMASK/TABL0 @ $BB00/$BC00 (seeded before define_bank below via
     # the l0 image; L2 seeded here).
-    if os.path.exists('bsp_render_stk_bk.bin'):
-        stk = open('bsp_render_stk_bk.bin', 'rb').read()
-        assert len(stk) <= 0x100, f'STK image {len(stk)} overflows the $A100 staging page'
-        l2[0x2100:0x2100 + len(stk)] = stk  # staged for the drivers' boot copy -> $0100
+    # HARD requirement (was a silent if-exists: a missing stk bin shipped a
+    # $FF-filled $0100 and the disc BRK'd through the first RNS vector).
+    stk = open('bsp_render_stk_bk.bin', 'rb').read()
+    assert len(stk) <= 0x100, f'STK image {len(stk)} overflows the $A100 staging page'
+    l2[0x2100:0x2100 + len(stk)] = stk  # staged for the drivers' boot copy -> $0100
     if dw.ANIM_SECTORS:
         import anim_sectors as _an
         for addr, blob in _an.gen_6502_tables(flat=False).items():
