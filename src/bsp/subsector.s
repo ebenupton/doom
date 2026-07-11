@@ -320,19 +320,44 @@ s_both_have_proj:
 ; emits can re-derive its clamps without repeating the s16 compare
 ; (sx1/sx2 survive the emits; the u8 scratch does not). X is dead here:
 ; nothing carries X across the SC_HAS_GAP JSR.
+; FUSED order + clamp analysis (2026-07-11): both decisions key off the
+; hi bytes. EQUAL hi bytes (the common case) collapse everything:
+;   zero    -> both endpoints in [0,255]: the lo bytes ARE the range and
+;              one unsigned lo compare is the order;
+;   nonzero -> both endpoints share an off-screen page (both < 0 or both
+;              >= 256): bail, no clamps needed.
+; Only page-straddling segs (hi bytes differ) take the full s16 order +
+; per-endpoint ladder path below.
    LDA zp_seg_sx1_hi
-   EOR zp_seg_sx2_hi
-   BPL hg_samesign                         ; sign bits equal
-   LDA zp_seg_sx1_hi                       ; signs differ: the negative
-   BMI hg_min1                             ; endpoint is the min
-   BPL hg_min2                             ; (always)
-hg_samesign:
-; same sign: unsigned 16-bit compare gives the signed order
+   CMP zp_seg_sx2_hi
+   BNE hg_hi_diff
+   TAX                                     ; shared hi byte
+   BNE hg_adv                              ; nonzero: off one side entirely
    LDA zp_seg_sx1_lo
    CMP zp_seg_sx2_lo
+   BCS hg_fast_rev                         ; sx1 >= sx2 (ties -> rev, as before)
+   LDX #0
+   STA zp_ilo                              ; A = sx1_lo
+   LDA zp_seg_sx2_lo
+   STA zp_ihi
+   JMP hg_query
+hg_fast_rev:
+   LDX #VX_STRIDE
+   LDA zp_seg_sx2_lo
+   STA zp_ilo
+   LDA zp_seg_sx1_lo
+   STA zp_ihi
+   JMP hg_query
+hg_hi_diff:
+; hi bytes differ: signed hi-byte difference gives the order (lo bytes
+; only ever break ties, and ties took the equal path above)
    LDA zp_seg_sx1_hi
+   SEC
    SBC zp_seg_sx2_hi
-   BCS hg_min2                             ; sx1 >= sx2
+   BVC hgd_v_ok
+   EOR #$80
+hgd_v_ok:
+   BPL hg_min2                             ; sx1 >= sx2
 ; --- min = sx1, max = sx2 ---
 hg_min1:
    LDX #0
