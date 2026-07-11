@@ -47,9 +47,10 @@ br_seg_xform_vertex:
 .scope
 ; ENTRY CONTRACT: A = idx_hi — both callers end LDA vN_hi / STA
 ; zp_seg_v_idx_hi immediately before the JSR (mirrored at the call sites
-; in subsector.s). PAGE BANK_L0 lives at vc_miss: only the ROM vert read
-; needs L0 (the hit path touches main-RAM VCACHE + rns vectors only, and
-; br_project_y / br_recip page L2 themselves), so nothing here may touch
+; in subsector.s). No PAGE anywhere in this routine (2026-07-11): the
+; ROM vert fetch and its PAGE L2 moved to br_to_view_fetch (view.s);
+; the hit path touches main-RAM VCACHE + rns vectors only, and
+; br_project_y / br_recip page L2 themselves. Nothing here may touch
 ; A before the shift chain consumes it.
 ;
 ; LAYOUT INVARIANT: idx < 481 — VCACHE $0C00..$1AFF holds 480 8-byte
@@ -140,14 +141,12 @@ vc_hit_ok:
                                         ; post-has_gap y stage (2026-07-11):
                                         ; culled segs never project.
 vc_miss:
-   PAGE BANK_L2                            ; ROM vert read below needs L2 (verts
-; moved to the L2 window $A200 in the 2026-07-10 reshuffle); the prior
-; vertex's projection may have left C paged. (The hit path never touches a
-; banked region; br_recip's own PAGE L2 downstream is now redundant but
-; harmless.)
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
-; a usable entry). ---
+; a usable entry). The bitmap is main RAM, so no PAGE here: the ROM vert
+; fetch (and its PAGE L2) moved into br_to_view_fetch (view.s,
+; 2026-07-11) — the VXC warm path never reads the world coords, so only
+; the paths that actually rotate pay for them. ---
 ; --- Set valid bit (Y = bitmap byte index, carried from the check) ---
    LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
@@ -155,41 +154,15 @@ vc_miss:
 
 ; (cache base ptr already at zp_seg_v_cache_lo/hi — computed at entry)
 
-; --- Read s16 vertex x, y from ROM_VERTS + idx*4 ---
-   LDA zp_seg_v_idx_hi
-   STA zp_br_t3
-   LDA zp_seg_v_idx_lo
-   ASL A
-   ROL zp_br_t3
-   ASL A
-   ROL zp_br_t3
-   CLC
-   ADC #<ROM_VERTS_C                       ; layout.inc constant
-   STA zp_br_p
-   LDA zp_br_t3
-   ADC #>ROM_VERTS_C
-   STA zp_br_p_h
-   LDY #0
-   LDA (zp_br_p),Y
-   STA zp_br_dxlo
-   INY
-   LDA (zp_br_p),Y
-   STA zp_br_dxhi
-   INY
-   LDA (zp_br_p),Y
-   STA zp_br_dylo
-   INY
-   LDA (zp_br_p),Y
-   STA zp_br_dyhi
-
 ; Scope split: vxc_jsr_site must be a GLOBAL label — vxc_frame SMC-patches
-; this JSR's operand between br_to_view (VXC disabled: byte-identical
-; original path) and vxc_to_view (translation-coherent vertex cache).
+; this JSR's operand between br_to_view_fetch (VXC disabled: the original
+; fetch+rotate path) and vxc_to_view (translation-coherent vertex cache,
+; which reaches the fetch through its own cold path).
 ; No local labels cross this boundary (verified: vc_* live above, nc_*
 ; below in their own scope).
 .endscope
 vxc_jsr_site:
-   JSR br_to_view
+   JSR br_to_view_fetch
 .scope
 
 ; Save view-space x (vxext:vxhi=int part s16, vxlo=frac part) before

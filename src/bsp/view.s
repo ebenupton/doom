@@ -220,6 +220,39 @@ vs_pym_pos:
 ;   >>8 truncation/rounding happens in the caller (br_seg_xform_vertex).
 ;   Clobbers: A, Y, zp_ri_dlo/dhi, mul workspace, zp_br_res*.
 ; ============================================================================
+; br_to_view_fetch — vertex-fetch entry (2026-07-11): pages L2, builds the
+; ROM_VERTS pointer from zp_seg_v_idx and loads wx/wy into zp_br_dx/dy,
+; then falls into br_to_view. Pushed down from seg_xform's vc_miss: the
+; VXC warm path never reads the world coords, so the fetch (and its PAGE)
+; now costs only the paths that actually rotate. Callers with dx/dy
+; already staged (jt harness, vxc_frame's ref probe) enter at br_to_view.
+br_to_view_fetch:
+   PAGE BANK_L2                            ; verts live in the L2 window
+   LDA zp_seg_v_idx_hi
+   STA zp_br_t3
+   LDA zp_seg_v_idx_lo
+   ASL A
+   ROL zp_br_t3
+   ASL A
+   ROL zp_br_t3
+   CLC
+   ADC #<ROM_VERTS_C                       ; layout.inc constant
+   STA zp_br_p
+   LDA zp_br_t3
+   ADC #>ROM_VERTS_C
+   STA zp_br_p_h
+   LDY #0
+   LDA (zp_br_p),Y
+   STA zp_br_dxlo
+   INY
+   LDA (zp_br_p),Y
+   STA zp_br_dxhi
+   INY
+   LDA (zp_br_p),Y
+   STA zp_br_dylo
+   INY
+   LDA (zp_br_p),Y
+   STA zp_br_dyhi
 br_to_view:
 ; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
 ; their operands — and the body has no local labels; same rule as

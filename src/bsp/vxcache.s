@@ -66,8 +66,10 @@ vxc_ab = BCA_AB
 ; ============================================================================
 ; Resident stub — replaces br_to_view via the vxc_jsr_site SMC when enabled.
 ; In: zp_seg_v_idx_lo/hi (vertex index), zp_seg_v_bitm (1 << (idx&7), already
-;     computed by the per-frame VCACHE check), zp_br_dx/dy loaded (ignored on
-;     a warm hit). Out: zp_br_vx/vy lo/hi/ext = exact view totals.
+;     computed by the per-frame VCACHE check). The world coords are NOT an
+;     input (2026-07-11): the cold path fetches them itself through
+;     br_to_view_fetch — warm hits never touch them.
+; Out: zp_br_vx/vy lo/hi/ext = exact view totals.
 ; ============================================================================
 .segment "MAIN"
 vxc_to_view:
@@ -91,13 +93,13 @@ vt_xok:
    PAGE BANK_L0
    RTS
 vt_cold:
-; cold: mark the vertex valid, run the real transform (br_to_view needs
-; BANK_L0), then snapshot base = total - CACC for future warm frames.
+; cold: mark the vertex valid, run fetch + real transform (the fetch
+; entry pages L2 itself), then snapshot base = total - CACC for future
+; warm frames.
    LDA VXC_VALID,X
    ORA zp_seg_v_bitm
    STA VXC_VALID,X
-   PAGE BANK_L0
-   JSR br_to_view
+   JSR br_to_view_fetch
    PAGE BANK_C
    JSR vxc_cold_store                      ; VXCODE: base = total - CACC
    PAGE BANK_L0
@@ -253,10 +255,10 @@ vxc_frame:
 .scope
    LDA VXC_ENABLE
    BNE vf_on
-; disabled: restore the original br_to_view target (byte-identical path)
-   LDA #<br_to_view
+; disabled: restore the original fetch+rotate target (byte-identical path)
+   LDA #<br_to_view_fetch
    STA vxc_jsr_site+1
-   LDA #>br_to_view
+   LDA #>br_to_view_fetch
    STA vxc_jsr_site+2
    RTS
 vf_on:
