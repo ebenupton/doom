@@ -21,10 +21,14 @@
 ;       dst = back_fb + i*8                  # back_fb page from the driver
 ;       dst[0..7] = os_font[(ch-32)*8 .. +7]
 ;
-; Driver interface (walk_drv.asm):
-;   $3D80 angidx (view angle byte = angidx*4), $3D81 backhi (FB page),
-;   $3D82/85 = x/y fraction bytes, $3D83/84 = x int lo/hi,
-;   $3D86/87 = y int lo/hi, $3D89 hud_en, $3D8A hud_prev (toggle edge
+; Driver interface (walk_drv.asm — KEEP IN SYNC, the vars are raw
+; addresses on both sides; the 2026-07-10 driver move to $2180 left
+; these at $3D8x and HUD_BACKHI read an engine-code byte as the FB
+; page: every glyph blit sprayed 192 bytes over a random page — ZP
+; when it landed on page 0, corrupting the VZ easing state):
+;   $2180 angidx (view angle byte = angidx*4), $2181 backhi (FB page),
+;   $2182/85 = x/y fraction bytes, $2183/84 = x int lo/hi,
+;   $2186/87 = y int lo/hi, $2189 hud_en, $218A hud_prev (toggle edge
 ;   state).  The driver's hud_glue pages BANK_C and JSRs hud_draw
 ;   ($A400) when hud_en is nonzero.
 ;
@@ -35,20 +39,21 @@
 
 .if ::BANKED
 
-; zp scratch — frame-scoped, shared with the anim workers (the HUD runs
-; after the render, when they are dead)
+; zp scratch — frame-scoped: these sit inside the VX vertex structs
+; ($E2-$FF), which are per-seg working state, dead between the frame's
+; last seg and the next frame's first (the HUD runs post-render).
 zp_hud_src = $EB                        ; font glyph pointer
 zp_hud_dst = $ED                        ; framebuffer cell pointer
 HUD_VAL    = $F0                        ; byte being hexed
 
-HUD_ANGIDX = $3D80
-HUD_BACKHI = $3D81
-HUD_XFRAC  = $3D82
-HUD_XLO    = $3D83
-HUD_XHI    = $3D84
-HUD_YFRAC  = $3D85
-HUD_YLO    = $3D86
-HUD_YHI    = $3D87
+HUD_ANGIDX = $2180
+HUD_BACKHI = $2181
+HUD_XFRAC  = $2182
+HUD_XLO    = $2183
+HUD_XHI    = $2184
+HUD_YFRAC  = $2185
+HUD_YLO    = $2186
+HUD_YHI    = $2187
 
 OS_FONT    = $C000                      ; OS 1.2 glyphs, chars 32..127
 
