@@ -19,7 +19,7 @@
 ; a changed angle byte is a cold frame (bitmap wiped, ref_cold re-anchored).
 ;
 ; Dispatch: vxc_frame (called from br_view_setup) SMC-patches the operand of
-; seg_xform's `JSR br_to_view` (vxc_jsr_site+1) between br_to_view (disabled —
+; seg_xform's `JSR br_to_view_fetch` (vxc_jsr_site+1) between br_to_view_fetch (disabled —
 ; zero cost, byte-identical path) and vxc_to_view. VXC_ENABLE lives in low
 ; RAM ($05DB) so drivers set it without paging.
 ;
@@ -244,7 +244,7 @@ vs_hi:
 ;   out: vxc_jsr_site operand patched; vxc_cacc_x/y, vxc_refc_x/y,
 ;        vxc_prev_ab and VXC_VALID maintained
 ; pseudocode:
-;   if not ENABLE: restore JSR br_to_view; return
+;   if not ENABLE: restore JSR br_to_view_fetch; return
 ;   ref = to_view(0,0)                      # this frame's reference shift
 ;   if ab != prev_ab:                       # cold: angle byte changed
 ;     prev_ab = ab; ref_cold = ref; CACC = 0; VALID[:] = 0
