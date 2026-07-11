@@ -133,9 +133,9 @@ vc_hit_ok:
    LDY #5
    LDA (zp_seg_v_cache_lo),Y
    STA VX1+4,X                             ; sx_hi
-; Project Y for top + bottom (heights vary per seg, can't cache).
-   JMP do_project_y
-
+   RTS                                     ; Y projection DEFERRED to the
+                                        ; post-has_gap y stage (2026-07-11):
+                                        ; culled segs never project.
 vc_miss:
    PAGE BANK_L2                            ; ROM vert read below needs L2 (verts
 ; moved to the L2 window $A200 in the 2026-07-10 reshuffle); the prior
@@ -306,6 +306,6 @@ nc_ok:
    INY
    LDA #0
    STA (zp_br_p),Y
-; near_clip = 0
-   JMP do_project_y
+; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
+   RTS
 .endscope

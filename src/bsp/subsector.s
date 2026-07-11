@@ -182,24 +182,8 @@ seg_proc:
 ; --- FHCH per-seg: front fh/ch + deltas were HOISTED to the subsector
 ; prologue (subsector-constant). Only the back heights remain per seg:
 ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
-; Back deltas are consumed ONLY by do_project_y, which reads them only
-; for PORTAL steps (NEEDBT $04 / NEEDBB $08). Solid APV apertures are
-; projected post-visibility by apv_stage (2026-07-11) — no transform-
-; time speculation, no deltas staged here for them.
-   LDA zp_seg_flags
-   AND #$0C
-   BEQ skip_bdlt
-   LDY #13
-   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
-   SEC
-   SBC zp_br_vz
-   STA zp_seg_btop_dlt
-   LDY #12
-   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
-   SEC
-   SBC zp_br_vz
-   STA zp_seg_bbot_dlt
-skip_bdlt:
+; (Back-delta staging DEFERRED into the post-has_gap y stage 2026-07-11
+; — culled portals no longer pay the header reads + subtractions.)
 
 ; --- Transform + project both endpoints (br_seg_xform_vertex:
 ; vcache-backed br_to_view, near-plane test, X projection, Y projections
@@ -392,14 +376,49 @@ hg_query:
    BNE hg_pass
    JMP s_advance
 hg_pass:
+; --- DEFERRED Y PROJECTION (2026-07-11): ALL sy pairs are projected
+; HERE, only for segs that passed has_gap — the transform phase now
+; computes evy/evx/clip/sx/recip only (measured 11.5k cyc/frame of
+; culled-seg projections deleted). Front deltas are subsector-constant;
+; portal back deltas are staged just below; each endpoint projects via
+; do_project_y with its OWN struct-banked recip (for a near-clipped
+; endpoint that is the crossing recip). Runs BEFORE the canonicalizing
+; swap so struct identity still equals seg-endpoint identity.
+   LDA zp_seg_flags
+   AND #$0C                                ; portal steps need back deltas
+   BEQ ys_deltas_done
+   PAGE BANK_L0
+   LDY #13
+   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
+   SEC
+   SBC zp_br_vz
+   STA zp_seg_btop_dlt
+   DEY
+   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
+   SEC
+   SBC zp_br_vz
+   STA zp_seg_bbot_dlt
+ys_deltas_done:
+   LDA #0
+   STA zp_seg_ep                            ; v1 -> struct VX1
+   LDA zp_seg_v1_rhi
+   STA zp_br_rhi
+   LDA zp_seg_v1_rlo
+   STA zp_br_rlo
+   JSR rns_select
+   JSR do_project_y
+   LDA #VX_STRIDE
+   STA zp_seg_ep                            ; v2 -> struct VX2
+   LDA zp_seg_v2_rhi
+   STA zp_br_rhi
+   LDA zp_seg_v2_rlo
+   STA zp_br_rlo
+   JSR rns_select
+   JSR do_project_y
 ; --- Post-visibility APV staging, then endpoint canonicalization ---
-; apv_stage projects solid aperture pairs into the structs (only
-; VISIBLE segs pay — replaces dpy's transform-time speculation). It
-; MUST run before the swap: header APV offsets are bound to SEG
-; endpoint identity, which equals struct identity only pre-swap.
    LDA zp_seg_flags
    AND #$02
-   BEQ hgp_can                             ; portal: pairs came from dpy
+   BEQ hgp_can                             ; portal: pairs staged above
    LDA zp_seg_flags
    AND #$41                                ; APEDGE1|APEDGE2
    BEQ hgp_can

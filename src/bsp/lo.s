@@ -41,7 +41,11 @@ reproject_at_crossing:
    STA VX1+3,X                             ; sx → the clipped endpoint's
    LDA zp_br_resh                          ; struct slots, in place
    STA VX1+4,X
-   JMP do_project_y
+   LDA zp_br_rhi                           ; bank recip(NEAR) = (M8=0, S=1)
+   STA VX1+13,X                            ; into the struct: the deferred
+   LDA zp_br_rlo                           ; y stage (and apv_stage) project
+   STA VX1+14,X                            ; the crossing with THIS recip
+   RTS
 .endscope
 
 ; ============================================================================
@@ -834,38 +838,14 @@ chain_reuse_v1:
    STA zp_seg_sx1_lo
    LDA zp_seg_sx2_hi
    STA zp_seg_sx1_hi
-   LDA zp_seg_sy2_top_lo
-   STA zp_seg_sy1_top_lo
-   LDA zp_seg_sy2_top_hi
-   STA zp_seg_sy1_top_hi
-   LDA zp_seg_sy2_bot_lo
-   STA zp_seg_sy1_bot_lo
-   LDA zp_seg_sy2_bot_hi
-   STA zp_seg_sy1_bot_hi
-; APEDGE1 solids: apv_stage projects v1's aperture with VX1+13/14 —
-; the ONE consumer of v1's banked recip — so a chained v1 must carry
-; the pair over (the transform it skipped would have written them).
-   LDA zp_seg_flags
-   AND #$40
-   BEQ ch_no_apv
+; recip carried UNCONDITIONALLY (2026-07-11): the post-has_gap y stage
+; projects BOTH endpoints' sy pairs from the struct-banked recips — the
+; front-sy copy and the transform-time dpy_back tail are DELETED with
+; the Y deferral (culled segs never project; VWHC memoizes repeats).
    LDA zp_seg_v2_rhi
    STA zp_seg_v1_rhi
    LDA zp_seg_v2_rlo
    STA zp_seg_v1_rlo
-ch_no_apv:
-; back pair (portal NEEDBT/NEEDBB only — solid APV apertures moved to
-; the post-visibility apv_stage 2026-07-11) projects with THIS vertex's
-; recip — read it STRAIGHT from VX2 (still alive until the v2
-; transform).
-   LDA zp_seg_flags
-   AND #$0C
-   BEQ ch_rts
-   LDA zp_seg_v2_rhi
-   STA zp_br_rhi
-   LDA zp_seg_v2_rlo
-   STA zp_br_rlo
-   JSR rns_select
-   JMP dpy_back                             ; tail: RTS from there
 ch_rts:
    RTS
 .endscope
