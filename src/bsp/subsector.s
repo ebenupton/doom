@@ -89,23 +89,21 @@ anim_ss_cont:
 ; Persistent per-seg pointer, computed once here and advanced by the
 ; loop (+16). si*16 = FOUR pure shift/rotate pairs riding A — the
 ; stride-18 add-chain died with the C-form header (2026-07-11).
-   LDA SS_FLO,X
-   STA zp_br_t0
    LDA SS_FHI,X
-   ASL zp_br_t0
-   ROL A
-   ASL zp_br_t0
-   ROL A
-   ASL zp_br_t0
-   ROL A
-   ASL zp_br_t0
-   ROL A                                   ; (A : t0) = si*16
-   TAY
+   STA zp_br_t0
+   LDA SS_FLO,X
+   ASL A
+   ROL zp_br_t0
+   ASL A
+   ROL zp_br_t0
+   ASL A
+   ROL zp_br_t0
+   ASL A
+   ROL zp_br_t0
    CLC
-   LDA #<ROM_SEG_HDR_C                     ; ONE cursor: heights ride the
-   ADC zp_br_t0                            ; header at +12..17 (the FHCH
+   ADC #<ROM_SEG_HDR_C                     ; ONE cursor: heights ride the
    STA zp_seg_hdr_p                        ; stream + its second cursor
-   TYA                                     ; retired 2026-07-11)
+   LDA zp_br_t0                            ; retired 2026-07-11)
    ADC #>ROM_SEG_HDR_C
    STA zp_seg_hdr_p_h
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
