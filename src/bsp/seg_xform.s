@@ -47,9 +47,7 @@ br_seg_xform_vertex:
 .scope
 ; ENTRY CONTRACT: A = idx_hi — both callers end LDA vN_hi / STA
 ; zp_seg_v_idx_hi immediately before the JSR (mirrored at the call sites
-; in subsector.s) — and X = zp_seg_ep (2026-07-11: the struct offset
-; arrives in-register; the prologue runs in Y/A so X survives).
-; PAGE BANK_L0 lives at vc_miss: only the ROM vert read
+; in subsector.s). PAGE BANK_L0 lives at vc_miss: only the ROM vert read
 ; needs L0 (the hit path touches main-RAM VCACHE + rns vectors only, and
 ; br_project_y / br_recip page L2 themselves), so nothing here may touch
 ; A before the shift chain consumes it.
@@ -63,8 +61,8 @@ br_seg_xform_vertex:
 ; paths (hit reads the entry, miss writes it): 16-bit <<3 with the hi
 ; byte riding in A — the page-aligned base add lands on the hi byte only,
 ; and A = idx_hi is already in hand from the caller.
-   LDY zp_seg_v_idx_lo
-   STY zp_seg_v_cache_lo
+   LDX zp_seg_v_idx_lo
+   STX zp_seg_v_cache_lo
    ASL zp_seg_v_cache_lo
    ROL A
    ASL zp_seg_v_cache_lo
@@ -75,27 +73,31 @@ br_seg_xform_vertex:
    STA zp_seg_v_cache_hi
 
 ; --- Check valid bit: byte = idx >> 3 (single byte per the invariant,
-; so the hi byte is the constant bitmap page). The byte index is SMC'd
-; into the LDA's operand lo byte (2026-07-11) — no register carries it,
-; so the prologue runs entirely in Y/A and X = zp_seg_ep from the caller
-; survives untouched. ---
+; so the hi byte is the constant bitmap page) ---
    LDA zp_seg_v_idx_hi
    LSR A                                   ; C = idx bit 8, A = 0
-   TYA                                     ; Y = idx_lo (C untouched)
+   TXA                                     ; X = idx_lo (C untouched)
    ROR A
    LSR A
    LSR A                                   ; A = idx >> 3
-   STA ldv+1                               ; patch the bitmap byte address
+   TAY                                     ; Y = bitmap byte index. The page
+                                        ; is a constant, so the bitmap is
+                                        ; addressed abs,Y — the zp_br_p
+                                        ; pointer staging is gone
+                                        ; (2026-07-11). Y RIDES to the
+                                        ; vc_miss set-bit (PAGE between is
+                                        ; A/flags only).
 ; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
-   TYA
+   TXA
    AND #7
-   TAY                                     ; Y = bit index (miss re-reads the
-                                        ; mask table through it)
+   TAX
+   LDA vc_bit_mask,X
+   STA zp_seg_v_bitm
+   LDX zp_seg_ep                           ; X = struct offset from here on
    LDA #0
    STA VX1+2,X                             ; clip = 0 (struct)
-ldv:
-   LDA VCACHE_VALID_BASE                   ; operand lo byte SMC'd above
-   AND vc_bit_mask,Y
+   LDA VCACHE_VALID_BASE,Y
+   AND zp_seg_v_bitm
    BEQ vc_miss
    LDY #0                                  ; hit reads the entry from Y = 0
 vc_hit:
@@ -146,15 +148,9 @@ vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
 ; a usable entry). ---
-; --- Set valid bit. Y = bit index from the check (PAGE is A/flags only);
-; the mask lands in zp_seg_v_bitm here because the VXC path (vxc_to_view,
-; reached below through vxc_jsr_site) consumes it as an input contract —
-; hits never need it, so the staging is miss-only now. Byte address from
-; the SMC slot. ---
-   LDA vc_bit_mask,Y
-   STA zp_seg_v_bitm
-   LDY ldv+1
-   ORA VCACHE_VALID_BASE,Y
+; --- Set valid bit (Y = bitmap byte index, carried from the check) ---
+   LDA VCACHE_VALID_BASE,Y
+   ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
 
 ; (cache base ptr already at zp_seg_v_cache_lo/hi — computed at entry)
