@@ -32,9 +32,13 @@ bsp_w_start:
 ;     VALID[i]=1; RHI[i]=rhi; RLO[i]=rlo; H[i]=h; LO[i],HI[i] = res
 ;     return res
 ; ============================================================================
+; CONTRACT (2026-07-11): the CALLER guarantees BANK_L2 is paged (y_stage
+; and apv_stage page once per run — consecutive projections used to
+; re-page for nothing). Harness/jt users go through br_project_y_paged.
+br_project_y_paged:
+   PAGE BANK_L2
 br_project_y:
 .scope
-   PAGE BANK_L2                            ; recip + VWHC cache live in bank L2
 ; probe: idx = (rlo + h + rhi) & 255
    LDA zp_br_rlo
    CLC

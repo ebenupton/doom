@@ -795,7 +795,8 @@ as_one:
    SEC                                     ; the first projection
    SBC zp_br_vz
    STA zp_ap2_dlt
-   JSR br_project_y
+   PAGE BANK_L2                             ; both projections below (they
+   JSR br_project_y                         ; no longer page themselves)
    LDX as_x
    LDA zp_br_resl
    STA VX1+9,X                             ; FH projection

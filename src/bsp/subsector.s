@@ -409,6 +409,9 @@ hg_pass:
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
 ys_deltas_done:
+   PAGE BANK_L2                             ; ONE page-in serves every
+                                        ; projection below (br_project_y
+                                        ; no longer re-pages per call)
    LDA zp_ys_v1ok
    BEQ ys_v1_full
 ; chained v1 with a LIVE front sy pair (copied from the emitted prev
@@ -420,9 +423,12 @@ ys_deltas_done:
    STA zp_seg_ep
    LDA zp_seg_v1_rhi
    STA zp_br_rhi
-   LDA zp_seg_v1_rlo
-   STA zp_br_rlo
-   JSR rns_select
+   LDX zp_seg_v1_rlo                        ; inlined rns_select (hot site)
+   STX zp_br_rlo
+   LDA rns_vec_lo-1,X
+   STA zp_rns_vec
+   LDA rns_vec_hi-1,X
+   STA zp_rns_vec_hi
    JSR dpy_back
    JMP ys_v2
 ys_v1_full:
@@ -430,18 +436,24 @@ ys_v1_full:
    STA zp_seg_ep                            ; v1 -> struct VX1
    LDA zp_seg_v1_rhi
    STA zp_br_rhi
-   LDA zp_seg_v1_rlo
-   STA zp_br_rlo
-   JSR rns_select
+   LDX zp_seg_v1_rlo                        ; inlined rns_select
+   STX zp_br_rlo
+   LDA rns_vec_lo-1,X
+   STA zp_rns_vec
+   LDA rns_vec_hi-1,X
+   STA zp_rns_vec_hi
    JSR do_project_y
 ys_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; v2 -> struct VX2
    LDA zp_seg_v2_rhi
    STA zp_br_rhi
-   LDA zp_seg_v2_rlo
-   STA zp_br_rlo
-   JSR rns_select
+   LDX zp_seg_v2_rlo                        ; inlined rns_select
+   STX zp_br_rlo
+   LDA rns_vec_lo-1,X
+   STA zp_rns_vec
+   LDA rns_vec_hi-1,X
+   STA zp_rns_vec_hi
    JSR do_project_y
    LDA #1
    STA zp_ys_done                           ; this seg's VX2 sy is live for
