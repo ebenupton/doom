@@ -55,10 +55,10 @@ def build_banked(flatr):
     l0 = bytearray(16384)
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     n_segs = layout['n_segs']
-    hdr_len = n_segs * 18
+    hdr_len = len(rom_main) - off_hdr        # stride-16 headers + DIR tables
     l0[:0x1000] = bytes(rom_main[:0x1000])               # node/ss SoA pages
     l0[0x1000:0x1000 + hdr_len] = bytes(rom_main[off_hdr:off_hdr + hdr_len])
-    assert 0x1000 + hdr_len <= 0x3E90, "seg headers reach TABL0 at $BE90"
+    assert 0x1000 + hdr_len <= 0x3E90, "seg headers + DIRs reach TABL0 at $BE90"
     if dw.ANIM_SECTORS:
         import anim_sectors as _an0
         for addr, blob in _an0.gen_6502_tables(flat=False).items():

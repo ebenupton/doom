@@ -2088,7 +2088,7 @@ from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s
                         clear_valid, is_valid, set_valid,
                         VERTEX_SIZE, NODE_SIZE, SSECTOR_SIZE, SEG_HDR_SIZE, SEG_DTL_SIZE,
                         VWH_SIZE, VCACHE_ENTRY,
-                        SH_V1, SH_V2, SH_LV1X, SH_LV1Y, SH_LDX, SH_LDY, SH_FLAGS,
+                        SH_V1, SH_V2, SH_FORM, SH_C, SH_FLAGS,
                         SD_FH, SD_CH, SD_BFH, SD_BCH,
                         SD_VWH_FT1, SD_VWH_FB1, SD_VWH_FT2, SD_VWH_FB2,
                         SD_VWH_BT1, SD_VWH_BB1, SD_VWH_BT2, SD_VWH_BB2,
@@ -2175,15 +2175,14 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     seg_off = layout['off_seg_hdr'] + si * SEG_HDR_SIZE
     v1_idx = read_u16(rom, seg_off + SH_V1)
     v2_idx = read_u16(rom, seg_off + SH_V2)
-    bf_ldy = read_s8(rom, seg_off + 9)      # 0 = axis C-form marker
+    bf_form = rom[seg_off + 4]              # 0-3 axis, >=4 diagonal dir_id+4
     flags  = read_u8(rom,  seg_off + SH_FLAGS)
 
     # ── Back-face test (same arithmetic as classic path) ──
     px_int = ctx[0]
     py_int = ctx[1]
-    if bf_ldy == 0:
+    if bf_form < 4:
         # axis C-form: one signed compare, SAMEDIR folded at pack time
-        bf_form = rom[seg_off + 4]
         bf_c16 = read_s16(rom, seg_off + 5)
         if bf_form == 0:   front = px_int > bf_c16
         elif bf_form == 1: front = px_int < bf_c16
@@ -2192,14 +2191,18 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if not front:
             return
     else:
-        # diagonal: classic delta form (unchanged)
-        lv1_x = read_s16(rom, seg_off + SH_LV1X)
-        lv1_y = read_s16(rom, seg_off + SH_LV1Y)
-        ldx   = read_s8(rom,  seg_off + SH_LDX)
-        ldy   = read_s8(rom,  seg_off + SH_LDY)
-        dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
-        if not (flags & SF_SAMEDIR):
-            dot = -dot
+        # diagonal DELTA form: primitives from the DIR tables, lv1 from
+        # the header (+5/6 x, +7/+9 y split), SAMEDIR folded at pack
+        od = layout['off_dirs']; md = layout['max_dirs']
+        did = bf_form - 4
+        dxm = rom[od + did]; dym = rom[od + md + did]
+        sg  = rom[od + 2 * md + did]
+        dxp = -dxm if (sg & 0x40) else dxm
+        dyp = -dym if (sg & 0x80) else dym
+        lv1_x = read_s16(rom, seg_off + 5)
+        lv1_y = rom[seg_off + 7] | (rom[seg_off + 9] << 8)
+        if lv1_y & 0x8000: lv1_y -= 0x10000
+        dot = dyp * (px_int - lv1_x) - dxp * (py_int - lv1_y)
         if dot <= 0:
             return
 

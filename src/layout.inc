@@ -11,21 +11,26 @@ LAY_OFF_VERTS   = $1000
 LAY_OFF_SS   = $0D00
 LAY_OFF_SEG_HDR   = $174C
 
-LAY_HDR_STRIDE  = 18                    ; heights INLINED at +12..17
-; (the FHCH stream is GONE 2026-07-11: heights ride the seg header)
+LAY_HDR_STRIDE  = 16                    ; heights INLINED at +10..15
+; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —
+; +4 form/dir_id, +5..7 C24, +8 flags, +9 L(pad), +10..15 heights)
+LAY_N_DIRS   = 113                   ; distinct diagonal primitives
+LAY_MAX_DIRS   = 160                   ; DIR table stride (3 arrays)
 
 .if ::BANKED
-ROM_SEG_HDR_C = $9000                   ; 662*18 = 11916, ends $BE8C
+ROM_SEG_HDR_C = $9000                   ; 662*16 = 10592 + DIR tables
 ROM_VERTS_C   = $A200                   ; bank L2
 ROM_BBOX_C    = $8E00                   ; bank L2 (page-aligned)
 NODE_SOA_C    = $8000                   ; bank L0 window head
-.assert ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE <= $BE90, error, "seg headers reach TABL0"
+ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
+.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $BE90, error, "DIR tables reach TABL0"
 .else
 ROM_SEG_HDR_C = $6C00                   ; flat: stride-18 stream, ends $9B8B
 ROM_VERTS_C   = $9C00                   ; flat verts (ends $A34B, below SEL $A400)
 ROM_BBOX_C    = $C600                   ; flat bbox (page-aligned)
 NODE_SOA_C    = $B600                   ; flat SoA: the old FHCH hole (16 pages)
-.assert ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE <= ROM_VERTS_C, error
+ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
+.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= ROM_VERTS_C, error
 .assert ROM_VERTS_C + 467*4 <= $A400, error, "flat verts reach SEL"
 .endif
 .assert (ROM_BBOX_C & $FF) = 0, error, "bbox base must stay page-aligned"

@@ -168,16 +168,16 @@ class Mover:
             _ROM_DETAIL[o + SD_FH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_CH] = ch_ps & 0xFF
             for mem, base in _attached:
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 12] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 13] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 10] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 11] = ch_ps & 0xFF
             nbytes += 2
         for i in self.back_segs:
             o = i * SEG_DTL_SIZE
             _ROM_DETAIL[o + SD_BFH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_BCH] = ch_ps & 0xFF
             for mem, base in _attached:
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 14] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 15] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 12] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 13] = ch_ps & 0xFF
             nbytes += 2
         # seg flags: re-derive SOLID/NEEDBT/NEEDBB (the packer's rules)
         for i in self.touch_segs:
@@ -329,7 +329,7 @@ def gen_6502_tables(flat=True):
         addr = base0 + 12 + len(blocks)
         _st.pack_into('<H', ptrs, mi * 2, addr)
         fhch_addrs = []
-        H = lambda i, k: A['hdr'] + i * SEG_HDR_SIZE + 12 + k
+        H = lambda i, k: A['hdr'] + i * SEG_HDR_SIZE + 10 + k
         if m.kind == 'ceil':
             fhch_addrs += [H(i, 1) for i in m.front_segs]  # ch
             fhch_addrs += [H(i, 3) for i in m.back_segs]   # bch
@@ -342,7 +342,7 @@ def gen_6502_tables(flat=True):
             blk += _st.pack('<H', a)
         for i in flag_segs:
             blk += _st.pack('<HH', A['hdr'] + i * SEG_HDR_SIZE + SH_FLAGS,
-                            A['hdr'] + i * SEG_HDR_SIZE + 12)
+                            A['hdr'] + i * SEG_HDR_SIZE + 10)
         blocks += blk
     out[A['tabl0']] = bytes(ptrs) + bytes(blocks)
     # (TABL2 / private VWH slot lists stripped 2026-07-10: write-only data)

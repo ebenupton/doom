@@ -745,7 +745,7 @@ ap_rts:
 ; Called once per VISIBLE solid seg carrying APEDGE1/2, from the seg
 ; loop right after has_gap passes and BEFORE any canonicalizing endpoint
 ; swap — seg-endpoint identity still equals struct identity here, so the
-; header offsets are unambiguous (+14/15 = APV1 ch/fh, +16/17 = APV2).
+; header offsets are unambiguous (+12/13 = APV1 ch/fh, +14/15 = APV2).
 ; Projects with the endpoint's OWN recip (VXk+13/14 — for a near-clipped
 ; endpoint that is the crossing recip the reprojection banked), filling
 ; VXk+9/10 (FH projection) and +11/12 (CH projection): the same slots
@@ -760,14 +760,14 @@ apv_stage:
    AND #$40                                ; APEDGE1
    BEQ as_chk2
    LDX #0
-   LDY #15                                 ; header +15 = apv1_fh (+14 ch)
+   LDY #13                                 ; header +13 = apv1_fh (+12 ch)
    JSR as_one
 as_chk2:
    LDA zp_seg_flags
    AND #$01                                ; APEDGE2
    BEQ as_done
    LDX #VX_STRIDE
-   LDY #17                                 ; header +17 = apv2_fh (+16 ch)
+   LDY #15                                 ; header +15 = apv2_fh (+14 ch)
    JSR as_one
 as_done:
    RTS

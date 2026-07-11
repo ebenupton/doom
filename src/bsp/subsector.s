@@ -87,38 +87,19 @@ anim_ss_cont:
    STA zp_seg_count
 
 ; Persistent per-seg pointer, computed once here and advanced by the
-; loop (+18: heights ride the header). si*18 = ((si*3)<<2 + (si*3)<<1)
-; << is shift/rotate pairs riding A — reading SS_FLO/FHI straight through X
-; (the zp_seg_first staging had no other reader and is GONE; $5A/$5B
-; freed). Hi byte rides A into the base adds; Y stashes it across the
-; lo-half adds. si_hi <= 2 (660 segs), so the hi arithmetic is exact.
+; loop (+16). si*16 = FOUR pure shift/rotate pairs riding A — the
+; stride-18 add-chain died with the C-form header (2026-07-11).
    LDA SS_FLO,X
-   ASL A                                   ; C = lo.b7
-   STA zp_br_t0                            ; lo(si*2)
+   STA zp_br_t0
    LDA SS_FHI,X
-   ROL A                                   ; A = hi(si*2)
-   TAY
-   CLC
-   LDA zp_br_t0
-   ADC SS_FLO,X                            ; lo(si*3)
-   STA zp_br_t0
-   TYA
-   ADC SS_FHI,X                            ; hi(si*3) (+ carry)
    ASL zp_br_t0
-   ROL A                                   ; (A : t0) = si*6
-   STA zp_br_t3                            ; bank si*6 (hi -> t3, lo -> t2)
-   LDA zp_br_t0
-   STA zp_br_t2
+   ROL A
    ASL zp_br_t0
-   LDA zp_br_t3
-   ROL A                                   ; (A : t0) = si*12
-   TAY
-   CLC
-   LDA zp_br_t0
-   ADC zp_br_t2                            ; si*12 + si*6 = si*18
-   STA zp_br_t0
-   TYA
-   ADC zp_br_t3
+   ROL A
+   ASL zp_br_t0
+   ROL A
+   ASL zp_br_t0
+   ROL A                                   ; (A : t0) = si*16
    TAY
    CLC
    LDA #<ROM_SEG_HDR_C                     ; ONE cursor: heights ride the
@@ -131,14 +112,14 @@ anim_ss_cont:
 ; subsector's sector), so read fh/ch + compute the front deltas ONCE
 ; here instead of per seg (2026-07-10; runs after the anim hub, so
 ; mover-patched heights are already in place). ---
-   LDY #13
-   LDA (zp_seg_hdr_p),Y                     ; ch (header +13)
+   LDY #11
+   LDA (zp_seg_hdr_p),Y                     ; ch (header +11)
    STA zp_seg_ch
    SEC
    SBC zp_br_vz
    STA zp_seg_top_dlt                       ; top_dlt = ch - vz
    DEY
-   LDA (zp_seg_hdr_p),Y                     ; fh (header +12)
+   LDA (zp_seg_hdr_p),Y                     ; fh (header +10)
    STA zp_seg_fh
    SEC
    SBC zp_br_vz
@@ -185,7 +166,7 @@ seg_proc:
 ; lv1y are read ON DEMAND by the back-face test straight from the header
 ; via (zp_seg_hdr_p),Y — the persistent cursor is already a ZP pointer, so
 ; no copy into zp_br_p is needed (2026-07-09).
-   LDY #10
+   LDY #8
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_flags
 
@@ -208,13 +189,13 @@ seg_proc:
    LDA zp_seg_flags
    AND #$0C
    BEQ skip_bdlt
-   LDY #15
-   LDA (zp_seg_hdr_p),Y                     ; bch (header +15)
+   LDY #13
+   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
    SEC
    SBC zp_br_vz
    STA zp_seg_btop_dlt
-   LDY #14
-   LDA (zp_seg_hdr_p),Y                     ; bfh (header +14)
+   LDY #12
+   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
@@ -457,8 +438,8 @@ ft_no_needbt:
 ; since the 2026-07-10 reshuffle and this path runs under BANK_C, so
 ; page around the read; flat: no-ops)
    PAGE BANK_L0
-   LDY #15
-   LDA (zp_seg_hdr_p),Y                     ; bch (header +15)
+   LDY #13
+   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
    SEC
    SBC zp_seg_ch
    TAX                                     ; verdict rides in X: PAGE (banked)
@@ -518,10 +499,10 @@ fb_no_needbb:
 ; bfh < fh ? (bfh on demand from FHCH+2 — L0-window read under BANK_C,
 ; page around like ft_no_needbt; flat: no-ops)
    PAGE BANK_L0
-   LDY #14
+   LDY #12
    LDA zp_seg_fh
    SEC
-   SBC (zp_seg_hdr_p),Y                     ; bfh (header +14)
+   SBC (zp_seg_hdr_p),Y                     ; bfh (header +12)
    TAX                                     ; verdict rides in X across the
    PAGE BANK_C                             ; A-clobbering PAGE (see ft above)
    TXA
@@ -767,9 +748,9 @@ s_advance:
 ; The old INC pair was ~8 cyc/seg of dead work, removed 2026-07-10.)
    CLC
    LDA zp_seg_hdr_p
-   ADC #18
+   ADC #16
    STA zp_seg_hdr_p
-   BCC sa_h_nc                             ; BCC/INC: page cross every ~14 segs
+   BCC sa_h_nc                             ; BCC/INC: page cross every 16 segs
    INC zp_seg_hdr_p_h
 sa_h_nc:
    DEC zp_seg_count

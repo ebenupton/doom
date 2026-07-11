@@ -28,10 +28,18 @@ NODE_SOA_PAGES = 13
 SS_SOA_PAGES   = 3
 NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
 NT_GENERAL, NT_DX0, NT_DY0 = 0, 1, 2
-SEG_HDR_SIZE = 18    # (idx<<4)+(idx<<1): v1,v2,lv1_x,lv1_y,ldx,ldy,flags,L,
-                     # + INLINED heights (2026-07-11, was the FHCH stream):
-                     # +12 fh +13 ch +14 bfh|apv1_ch +15 bch|apv1_fh
-                     # +16 apv2_ch +17 apv2_fh
+SEG_HDR_SIZE = 16    # idx<<4 (pure shifts). Uniform back-face C-FORM:
+                     # +4 form/dir_id: 0 front iff px>C16, 1 px<C16,
+                     #    2 py>C16, 3 py<C16; >=4 diagonal (id-4 indexes
+                     #    the DIR tables appended after the headers)
+                     # +5..7 C24 = dy'*lv1x - dx'*lv1y (axis: C16 +5/6)
+                     # +8 flags, +9 L, +10..15 INLINED heights:
+                     # +10 fh +11 ch +12 bfh|apv1_ch +13 bch|apv1_fh
+                     # +14 apv2_ch +15 apv2_fh
+                     # DIR tables (at off_seg_hdr + n_segs*16): DIRXM
+                     # |dx'| , DIRYM |dy'|, DIRS sign byte (b7=dy' neg,
+                     # b6=dx' neg) — one entry per distinct primitive
+                     # diagonal direction (SAMEDIR folded at pack).
 SEG_DTL_SIZE = 20    # ×20 = (idx<<4)+(idx<<2): fh,ch + 8 VWH u16 + back heights
 VWH_SIZE     = 1     # identity: s8 height
 # No separate linedef table — data inlined into seg headers
@@ -39,10 +47,10 @@ VWH_SIZE     = 1     # identity: s8 height
 # ── Offsets within seg header ───────────────────────────────────────────
 
 SH_V1 = 0; SH_V2 = 2             # u16 vertex indices
-SH_LV1X = 4; SH_LV1Y = 6        # s16 linedef v1 (for back-face)
-SH_LDX = 8; SH_LDY = 9          # s8 linedef delta
-SH_FLAGS = 10                    # u8 flags
-SH_L = 11                        # u8 round(seg length) for option-2b (was pad)
+SH_FORM = 4; SH_C = 5           # back-face C-form (see SEG_HDR_SIZE note)
+# (lv1x/lv1y/ldx/ldy retired 2026-07-11: the C-form + DIR tables replace them)
+SH_FLAGS = 8                     # u8 flags
+SH_L = 9                         # u8 round(seg length) for option-2b
 SH_PAD = 11
 
 # ── Offsets within seg detail (20 bytes) ─────────────────────────────────
@@ -201,7 +209,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     off_ss = NODE_SOA_PAGES * 256
     off_verts = NODE_SOA_SIZE
     off_seg_hdr = off_verts + n_verts * VERTEX_SIZE
-    off_vwh = off_seg_hdr + n_segs * SEG_HDR_SIZE
+    # DIR tables tail the headers: 3 parallel u8 arrays, one entry per
+    # distinct primitive diagonal direction (filled during the seg loop).
+    _dirs = {}          # (dx', dy') -> id  (0-based; header stores id+4)
+    off_dirs = off_seg_hdr + n_segs * SEG_HDR_SIZE
+    MAX_DIRS = 160
+    off_vwh = off_dirs + 3 * MAX_DIRS
     # VWH heights no longer ship in rom_main (2026-07-10): the 6502 render
     # projects from the FHCH stream; VWH indices are Python-side cache keys
     # only. off_vwh == rom_main_size is kept as a layout landmark.
@@ -346,31 +359,50 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         seg_L = int(round(math.hypot(ldx, ldy)))
         assert 0 <= seg_L <= 255, f"seg {i}: L={seg_L} not u8"
         o = off_seg_hdr + i * SEG_HDR_SIZE
-        # --- back-face representations (2026-07-11) ---
-        # AXIS-aligned linedefs (~76%): C-form — the whole test collapses
-        # to one signed s16 compare with SF_SAMEDIR folded at pack time:
-        #   +4 form: 0 front iff px>C16, 1 px<C16, 2 py>C16, 3 py<C16
-        #   +5/6 C16 (= lv1x or lv1y), +7..9 = 0 (+9==0 IS the marker).
-        # DIAGONAL linedefs keep the classic delta layout byte-for-byte
-        # (+4..7 lv1x/lv1y, +8/9 ldx/ldy, SAMEDIR live) for the tiered
-        # sign-shortcut machinery; ldy!=0 there, so +9 discriminates.
+        # --- back-face C-form, UNIFORM (2026-07-11, stride 16) ---
+        # dot = dy'*px - dx'*py - C with (dx',dy') the primitive linedef
+        # direction (SF_SAMEDIR folded into its sign) and C pack-time.
+        # Axis: one s16 compare via form 0-3. Diagonal: form = dir_id+4,
+        # magnitudes+signs from the DIR tables, C24 in the header.
         sgn = 1 if (flags & SF_SAMEDIR) else -1
-        if ldx == 0 or ldy == 0:
-            if ldx == 0 and ldy == 0:
-                form, c16 = 1, -32768        # px < -32768 never: always BACK
-            elif ldx == 0:
-                pdy = sgn * (1 if ldy > 0 else -1)
-                form, c16 = (0 if pdy > 0 else 1), lv1[0]
-            else:
-                pdx = sgn * (1 if ldx > 0 else -1)
-                form, c16 = (3 if pdx > 0 else 2), lv1[1]
-            struct.pack_into('<HHBhBBB', rom_main, o,
-                             s[0], s[1], form, c16, 0, 0, 0)
+        pdx, pdy = sgn * ldx, sgn * ldy
+        g = math.gcd(abs(pdx), abs(pdy))
+        if g:
+            pdx //= g; pdy //= g
+        if ldx == 0 and ldy == 0:
+            form, c24 = 1, (-32768) & 0xFFFFFF   # px < -32768: always BACK
+        elif pdx == 0:
+            form = 0 if pdy > 0 else 1
+            c24 = lv1[0] & 0xFFFFFF              # compare constant = lv1x
+        elif pdy == 0:
+            form = 3 if pdx > 0 else 2
+            c24 = lv1[1] & 0xFFFFFF              # compare constant = lv1y
         else:
-            struct.pack_into('<HHhhbb', rom_main, o,
-                             s[0], s[1], lv1[0], lv1[1], ldx, ldy)
-        rom_main[o + 10] = flags
-        rom_main[o + 11] = seg_L
+            # diagonal: DELTA form (operands stay small — the C-form's
+            # raw-coordinate products measured SLOWER: 4 muls vs the
+            # delta form's senior-byte-clear 1-mul fast paths). Header:
+            # +5/6 lv1x s16, +7 lv1y lo, +9 lv1y hi (evicting the fossil
+            # L byte); primitives via the DIR tables.
+            did = _dirs.setdefault((pdx, pdy), len(_dirs))
+            assert did + 4 <= 255 and len(_dirs) <= MAX_DIRS
+            form = did + 4
+            rom_main[off_dirs + did] = abs(pdx)
+            rom_main[off_dirs + MAX_DIRS + did] = abs(pdy)
+            rom_main[off_dirs + 2 * MAX_DIRS + did] = \
+                ((0x80 if pdy < 0 else 0) | (0x40 if pdx < 0 else 0))
+        struct.pack_into('<HH', rom_main, o, s[0], s[1])
+        rom_main[o + 4] = form
+        if form >= 4:
+            rom_main[o + 5] = lv1[0] & 0xFF
+            rom_main[o + 6] = (lv1[0] >> 8) & 0xFF
+            rom_main[o + 7] = lv1[1] & 0xFF
+            rom_main[o + 9] = (lv1[1] >> 8) & 0xFF
+        else:
+            rom_main[o + 5] = c24 & 0xFF
+            rom_main[o + 6] = (c24 >> 8) & 0xFF
+            rom_main[o + 7] = 0
+            rom_main[o + 9] = seg_L          # fossil pad (no 6502 reader)
+        rom_main[o + 8] = flags
 
         # For solids with aperture edges, overlay APV heights onto the
         # unused portal-only slots in seg detail.
@@ -391,12 +423,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         # bytes the old load-time FHCH synthesis emitted): the separate
         # FHCH stream is gone — one cursor walks everything.
         od = i * SEG_DTL_SIZE
-        rom_main[o + 12] = rom_detail[od + SD_FH]
-        rom_main[o + 13] = rom_detail[od + SD_CH]
-        rom_main[o + 14] = rom_detail[od + SD_BFH]
-        rom_main[o + 15] = rom_detail[od + SD_BCH]
-        rom_main[o + 16] = rom_detail[od + SD_APV2_CH]
-        rom_main[o + 17] = rom_detail[od + SD_APV2_FH]
+        rom_main[o + 10] = rom_detail[od + SD_FH]
+        rom_main[o + 11] = rom_detail[od + SD_CH]
+        rom_main[o + 12] = rom_detail[od + SD_BFH]
+        rom_main[o + 13] = rom_detail[od + SD_BCH]
+        rom_main[o + 14] = rom_detail[od + SD_APV2_CH]
+        rom_main[o + 15] = rom_detail[od + SD_APV2_FH]
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 
@@ -436,6 +468,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_verts': off_verts, 'off_nodes': off_nodes,
         'off_ss': off_ss, 'off_seg_hdr': off_seg_hdr,
         'off_vwh': off_vwh,
+        'off_dirs': off_dirs, 'n_dirs': len(_dirs), 'max_dirs': MAX_DIRS,
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
         'rom_recip_size': rom_recip_size,

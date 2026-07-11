@@ -165,9 +165,10 @@ sd_num = $44                      ; [ang] ; w=2
 sd_den = $46                      ; [ang] ; w=2
 sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
-zp_ap2_dlt = $4C                  ; [bsp]; ap2_solid_proj: apv2_fh - vz stash
+zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
 ; between its two projections (one L0 page-in reads both header bytes)
-; ($4D freed 2026-07-10: zp_root_node retired — LAY_ROOT constant)
+zp_bf_pym_lo = $4D                ; [bsp]; |py| u16 (pair with $5B; the
+; back-face diagonal C-form reads both per call)
 zp_bsp_stack_sp = $4E             ; [bsp]; stack pointer (offset into BSP_STACK)
 zp_side = $4F                     ; [bsp]; 0 = front, 1 = back
 zp_node_dxlo = $50                ; [bsp]
@@ -180,12 +181,11 @@ zp_node_nylo = $56                ; [bsp]
 zp_node_nyhi = $57                ; [bsp]
 zp_node_chlo = $58                ; [bsp]; current child (lo, hi: 16-bit id)
 zp_node_chhi = $59                ; [bsp]
+zp_bf_pym_hi = $5B                ; [bsp]; |py| hi byte
 zp_sx_ord = $5A                   ; [bsp]; reversal flag (0 = v1 already
 ; left, VX_STRIDE = reversed): latched by the has_gap prelude; its ONLY
 ; consumer is the hg_pass canonicalization gate (seg_swap_vx) — every
 ; emit path downstream assumes VX1 = left.
-; ($5B freed 2026-07-10: zp_seg_first retired — the subsector prologue
-; computes both ROM cursors straight from the SS SoA pages via X)
 zp_seg_count = $5C                ; [bsp]; remaining segs in subsector
 ; --- $5D: overlay group (2 phase-disjoint users) ---
 zp_anim_p = $5D                   ; [bsp]; anim table cursor (2; was the
@@ -236,8 +236,9 @@ zp_br_pyraw_hi = $93              ; [bsp]
 zp_v_xext = $94                   ; [bsp]; saved view-x s24 extension byte (wide-vx path)
 zp_seg_hdr_p = $96                ; [bsp]; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h = $97              ; [bsp]
-; ($98/$99 freed 2026-07-11: zp_fhch_p retired — heights are INLINED in
-; the seg header at +12..17; one cursor walks everything)
+zp_bf_pxm_lo = $98                ; [bsp]; |px| u16, staged per frame by
+zp_bf_pxm_hi = $99                ; br_view_setup for the diagonal
+; back-face C-form magnitudes (signs read live from px_e/py_e bit7)
 zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
 ; --- $A8: overlay group (3 phase-disjoint users) ---

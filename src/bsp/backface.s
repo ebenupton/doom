@@ -70,27 +70,32 @@
 ;
 br_back_face_test:
 .scope
-; --- AXIS C-FORM FAST PATH (2026-07-11): axis-aligned linedefs (~76%)
-; carry a pack-time compare form instead of geometry — header +9 == 0
-; is the marker (true diagonals always have ldy' != 0):
-;   +4 form: 0 front iff px>C16, 1 px<C16, 2 py>C16, 3 py<C16
-;   +5/6 C16 (s16; SF_SAMEDIR already folded into the form).
-; One signed s16 compare replaces the fetch-delta-sign machinery
-; (74 -> ~40 cycles measured class average). Ties (dot == 0) are BACK,
-; exactly like the dot formula. Diagonals fall into the classic tiered
-; body below, byte-for-byte unchanged.
-   LDY #9                                   ; -> ldy' (+9)
-   LDA (zp_seg_hdr_p),Y
-   BNE bf_diag_entry                        ; diagonal -> classic tiers
+; ============================================================================
+; UNIFORM C-FORM (2026-07-11, stride-16 header): dot = dy'*px - dx'*py - C
+; with (dx',dy') the primitive linedef direction (SF_SAMEDIR folded into
+; its sign at pack time) and C = dy'*lv1x - dx'*lv1y a pack-time s24.
+;   header +4  form: 0 front iff px>C16, 1 px<C16, 2 py>C16, 3 py<C16,
+;              >= 4: diagonal, (form-4) indexes the DIR tables
+;   header +5..7 C (s24; axis compares use only +5/6 as s16)
+; DIR tables (ROM_DIRS_C, one entry per distinct primitive direction):
+;   +0*MAX |dx'| , +1*MAX |dy'| , +2*MAX sign byte (b7 dy'<0, b6 dx'<0)
+; |px|/|py| are staged per frame by br_view_setup (zp_bf_p?m_*); signs
+; read live from px_e/py_e bit7. Ties (dot == 0) are BACK, as always.
+; TAIL-DISPATCHED: exits JMP bf_seg_front / bf_seg_back (no RTS).
+; Ranges: |P1|,|P2| <= 127*2600 < 2^19; |dot|+|C| < 2^21 — s24 exact,
+; no overflow handling needed anywhere.
+; ============================================================================
    LDY #4
-   LDA (zp_seg_hdr_p),Y                     ; form
-   LSR A                                    ; C = strict-side (0 '>', 1 '<')
-   BNE bf_ax_py                             ; A = 0 px : 1 py
+   LDA (zp_seg_hdr_p),Y
+   CMP #4
+   BCS bf_diag
+   LSR A                                   ; C = strict-side (0 '>', 1 '<')
+   BNE bf_ax_py                            ; A = 0 px : 1 py
 ; --- px vs C16 ---
    LDA zp_br_px_h
    BCS bf_ax_px_lt
 ; form 0: front iff px > C16  <=>  (px - C) > 0
-   INY                                      ; -> C lo (+5)
+   INY                                     ; -> C lo (+5)
    SEC
    SBC (zp_seg_hdr_p),Y
    STA zp_br_t2
@@ -98,12 +103,12 @@ br_back_face_test:
    LDA zp_br_px_e
    SBC (zp_seg_hdr_p),Y
    BVS bf_ax_gt_ovf
-   BMI bf_ax_back                           ; diff < 0
+   BMI bf_ax_back                          ; diff < 0
    ORA zp_br_t2
-   BEQ bf_ax_back                           ; diff == 0 (tie -> back)
+   BEQ bf_ax_back                          ; diff == 0 (tie -> back)
    JMP bf_seg_front
 bf_ax_gt_ovf:
-   BMI bf_ax_front                          ; V:N inverted — N set = positive
+   BMI bf_ax_front                         ; V:N inverted — N set = positive
    BPL bf_ax_back
 bf_ax_px_lt:
 ; form 1: front iff px < C16  <=>  (px - C) < 0
@@ -114,11 +119,11 @@ bf_ax_px_lt:
    LDA zp_br_px_e
    SBC (zp_seg_hdr_p),Y
    BVS bf_ax_lt_ovf
-   BMI bf_ax_front                          ; diff < 0
+   BMI bf_ax_front                         ; diff < 0
 bf_ax_back:
    JMP bf_seg_back
 bf_ax_lt_ovf:
-   BPL bf_ax_front                          ; V:N inverted — N clear = negative
+   BPL bf_ax_front                         ; V:N inverted — N clear = negative
    BMI bf_ax_back
 bf_ax_front:
    JMP bf_seg_front
@@ -151,173 +156,100 @@ bf_ax_py_lt:
    BMI bf_ax_front
    BPL bf_ax_back
 
-; ============================================================================
-; Classic tiered body — DIAGONAL segs only now (ldx' != 0 and ldy' != 0;
-; the ldx==0 / ldy==0 arms below are unreachable but kept verbatim: the
-; axis population moved to the C-form above).
-; If ldx == 0: dot = ldy*dx, sign matches iff sign(ldy)==sign(dx).
-; If ldy == 0: dot = -ldx*dy, sign matches iff sign(ldx)!=sign(dy).
-; SF_DIR negates dot.
-bf_diag_entry:
-   LDY #8                                   ; -> ldx (+8)
-   LDA (zp_seg_hdr_p),Y
-   BNE bf_ldx_nz
-; ldx==0
-   INY                                      ; -> ldy (+9)
-   LDA (zp_seg_hdr_p),Y
-   BNE bf_ldx0_ldy_nz
-   JMP bf_seg_back                          ; ldx=0, ldy=0 → dot=0 → back
-bf_ldx0_ldy_nz:
-; A still = ldy (BNE preserves it). Stash DEFERRED past the ldy==0 RTS
-; above so that degenerate back path never pays it — reused at the
-; bf_ldx0_dx_nz sign below.
+; --- diagonal: DELTA form with table primitives (2026-07-11 v2) ---
+; dot = dy'*(px - lv1x) - dx'*(py - lv1y) > 0. The deltas stay SMALL
+; near walls (senior-byte-clear -> 1-mul products), which measured
+; FASTER than the C-form's raw-coordinate 4-mul products. Primitives
+; (magnitudes + sign byte) come from the DIR tables; lv1x at +5/6,
+; lv1y SPLIT +7 lo / +9 hi (the fossil L byte's slot); SF_SAMEDIR is
+; folded into the primitive signs at pack time, so the old flags-EOR
+; mode twist is gone.
+bf_diag:
+   SEC
+   SBC #4
+   TAX                                     ; X = dir index
+   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; sign byte (b7 dy', b6 dx')
+   STA zp_br_sign
+   LDA ROM_DIRS_C,X                        ; |dx'|
+   STA zp_seg_ldx
+   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'|
    STA zp_seg_ldy
-; dx = px_int - lv1_x (s16) — the only delta this arm needs. lv1x is read
-; ON DEMAND from the header (+4/+5) via zp_seg_hdr_p, not a ZP stage.
+; dx = px - lv1x (s16, header +5/6); dxhi rides A for the zero test
    LDA zp_br_px_h
    SEC
-   LDY #4                                   ; -> lv1x_lo (+4)
+   LDY #5
    SBC (zp_seg_hdr_p),Y
    STA zp_br_dxlo
    LDA zp_br_px_e
-   INY                                      ; -> lv1x_hi (+5)
+   INY
    SBC (zp_seg_hdr_p),Y
    STA zp_br_dxhi
    ORA zp_br_dxlo
-   BNE bf_ldx0_dx_nz
-   JMP bf_seg_back                          ; dx == 0 → dot=0 → back
-bf_ldx0_dx_nz:
-; sign(dot) = sign(ldy) XOR sign(dx_hi); ldy from ZP (stashed at first load)
-   LDA zp_seg_ldy
-   EOR zp_br_dxhi
-   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-   AND #$80                                ; FRONT (SAMEDIR packed inverted)
-   BNE bf_go_front
-   JMP bf_seg_back
-bf_go_front:
-   JMP bf_seg_front
-bf_ldx_nz:
-   STA zp_seg_ldx                           ; A=ldx from dispatch; reused on
-                                            ; every ldx!=0 path — stash from A
-   INY                                      ; Y was 8 (dispatch) -> 9
-   LDA (zp_seg_hdr_p),Y                          ; ldy (+9)
-   BNE bf_general
-; ldy==0: dot = -ldx*dy. dy = py_int - lv1_y (s16) — only delta needed.
-; lv1y read on demand from the header (+6/+7) via zp_seg_hdr_p.
+   BEQ bfd_dx0
+; dy = py - lv1y (lo at +7, hi at +9 — the split around flags)
    LDA zp_br_py_h
    SEC
-   LDY #6                                   ; -> lv1y_lo (+6)
+   INY                                     ; -> +7 (lv1y lo)
    SBC (zp_seg_hdr_p),Y
    STA zp_br_dylo
    LDA zp_br_py_e
-   INY                                      ; -> lv1y_hi (+7)
+   LDY #9                                  ; -> lv1y hi
    SBC (zp_seg_hdr_p),Y
    STA zp_br_dyhi
    ORA zp_br_dylo
-   BNE bf_ldy0_dy_nz
-   JMP bf_seg_back                          ; dy == 0 → dot=0 → back
-bf_ldy0_dy_nz:
-; sign(dot) = sign(-ldx*dy) = NOT(sign(ldx) XOR sign(dy_hi)); ldx from ZP
-   LDA zp_seg_ldx
-   EOR zp_br_dyhi
-   EOR #$80
-; sign tail (inlined at every producer, 2026-07-09 — was JMP bf_apply_dir):
-; A's top bit = sign of dot (1=neg). SF_SAMEDIR is the top flag bit and
-; PACKED INVERTED (set = no direction flip), so sign ^ flags gives
-; bit7 = 1 ⇔ FRONT with no correction — and AND #$80 then IS the whole
-; Z-contract verdict: A=$80/Z=0 front, A=$00/Z=1 back. Branchless.
-   EOR zp_seg_flags
-   AND #$80
-   BNE bf_go_front2
+   BEQ bfd_dy0                             ; dy==0: dot = P1
+bf_g_both:
+; sign(P1) = sgn(dy') ^ sgn(dxhi); sign(P2) = sgn(dx')<<1... build both:
+   LDA zp_br_sign                          ; b7 = sgn dy'
+   EOR zp_br_dxhi                          ; b7 = sign(P1)
+   TAX                                     ; ride in X across the P2 sign
+   LDA zp_br_sign
+   ASL A                                   ; b6 (dx' sign) -> b7
+   EOR zp_br_dyhi                          ; b7 = sign(P2)
+   STA zp_br_t2
+   TXA
+   EOR zp_br_t2                            ; b7 set = opposite signs
+   BPL bf_g_mul                            ; same sign -> magnitude compare
+   TXA                                     ; opposite: sign(dot) = sign(P1)
+   BMI bfd_back_j
+   JMP bf_seg_front
+bfd_back_j:
    JMP bf_seg_back
-bf_go_front2:
+; dx == 0: dot = -P2 = -(dx'*dy); need dy for its sign (P2 = 0 handled:
+; dy==0 too -> dot = 0 -> back)
+bfd_dx0:
+   LDA zp_br_py_h
+   SEC
+   INY                                     ; -> +7
+   SBC (zp_seg_hdr_p),Y
+   STA zp_br_dylo
+   LDA zp_br_py_e
+   LDY #9
+   SBC (zp_seg_hdr_p),Y
+   STA zp_br_dyhi
+   ORA zp_br_dylo
+   BEQ bfd_back_j                          ; dx==0 and dy==0 -> back
+   LDA zp_br_sign
+   ASL A                                   ; b7 = sgn dx'
+   EOR zp_br_dyhi                          ; b7 = sign(P2)
+   BMI bfd_front_j                         ; dot = -P2 > 0 iff P2 < 0
+   JMP bf_seg_back
+bfd_front_j:
+   JMP bf_seg_front
+; dy == 0: dot = P1 = dy'*dx (nonzero: dx != 0 here)
+bfd_dy0:
+   LDA zp_br_sign                          ; b7 = sgn dy'
+   EOR zp_br_dxhi                          ; b7 = sign(P1)
+   BMI bfd_back_j
    JMP bf_seg_front
 
-bf_general:
-; A=ldy from the bf_ldx_nz load; reused in the sign shortcut + mul arm —
-; stash it (ldx was stashed at bf_ldx_nz).
-   STA zp_seg_ldy
-; dx computed eagerly (lv1x +4/+5); its final STA leaves dxhi in A so the
-; dx==0 test is a bare ORA. dy is then computed LAZILY in whichever branch
-; the dx==0 test takes (lv1y +6/+7, Y walks on from 5), leaving dyhi in A
-; for that branch's dy==0 test too — both tests skip the LDA.
-   LDA zp_br_px_h
-   SEC
-   LDY #4                                   ; -> lv1x_lo (+4)
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_dxlo
-   LDA zp_br_px_e
-   INY                                      ; -> lv1x_hi (+5)
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_dxhi                           ; A = dxhi, in hand below
-; Sign shortcut first (EXACT — ldx,ldy nonzero here, so P1 = ldy*dx is
-; zero iff dx==0, P2 = ldx*dy zero iff dy==0, and sign(product) = XOR of
-; operand signs). dot = P1 - P2 > 0 -> front. Opposite-sign products
-; decide by sign alone; only same-sign products need the two multiplies.
-; (Bonus: the decided-by-sign cases never reach the u24 magnitude path.)
-   ORA zp_br_dxlo                           ; dxhi (in A) | dxlo → dx==0 test
-   BNE bf_g_dx_nz
-   LDA zp_br_py_h
-   SEC
-   INY                                      ; -> lv1y_lo (+6)
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_dylo
-   LDA zp_br_py_e
-   INY                                      ; -> lv1y_hi (+7)
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_dyhi
-   ORA zp_br_dylo
-   BNE bf_ldy0_dy_nz                       ; dot = -P2: byte-identical to the
-                                           ; ldy==0 arm's tail — share it
-   JMP bf_seg_back                          ; dx==0 and dy==0 → back
-bf_g_dx_nz:
-   LDA zp_br_py_h
-   SEC
-   INY                                      ; -> lv1y_lo (+6)
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_dylo
-   LDA zp_br_py_e
-   INY                                      ; -> lv1y_hi (+7)
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_dyhi
-   ORA zp_br_dylo
-   BEQ bf_ldx0_dx_nz                       ; dy==0 → dot = P1: byte-identical
-                                           ; to the ldx==0 arm's tail — share
-bf_g_both:
-   LDA zp_seg_ldy                           ; ldy from ZP
-   EOR zp_br_dxhi                          ; sign(P1)
-   TAX                                     ; ride in X (was a zp_br_t2 stash)
-   EOR zp_seg_ldx                           ; ^ ldx from ZP
-   EOR zp_br_dyhi                          ; ^ sign(P2)
-   BPL bf_g_mul                            ; same sign -> full compare below
-   TXA                                     ; opposite: sign(dot) = sign(P1)
-   EOR zp_seg_flags                        ; inlined bf_apply_dir: bit7 =
-   AND #$80                                ; FRONT (SAMEDIR packed inverted);
-   AND #$80
-   BNE bf_go_front3
-   JMP bf_seg_back
-bf_go_front3:
-   JMP bf_seg_front
 bf_g_mul:
-; ldx and ldy both nonzero, products SAME sign (X = the shared sign byte,
-; bit7). dot = P1 - P2 with P1 = ldy*dx, P2 = ldx*dy, so in magnitudes:
+; both deltas nonzero, products same sign (X = shared sign, bit7):
 ;   sign + : back iff |P1| <= |P2|      sign - : back iff |P1| >= |P2|
-; and SF_SAMEDIR (clear = flipped seg) swaps the sense. Mode = bit7 of
-; (X ^ flags): clear -> back iff |P1| >= |P2|, set -> back iff <=.
-; Unsigned u24 magnitude products — EXACT (the old br_smul_s8_s16 pair
-; truncated the dot to s16) — with the HIGH PARTIAL SKIPPED whenever a
-; magnitude's senior byte is clear (|delta| fits u8, the common case:
-; one mul per product instead of two). |P1|==|P2| means dot == 0 ->
-; back under both modes. Replaced the 2x sign-magnitude smul wrappers,
-; the dy->dx operand copy, the s16 subtract and both negates; the only
-; caller of br_smul_s8_s16, which is deleted.
-   STX zp_br_sign                          ; the shared sign byte CANNOT ride
-                                           ; in X here — SC_UMUL8 clobbers X/Y
-                                           ; (zp_br_sign is free: its owner
-                                           ; br_smul_s8_s16 is deleted)
-; --- magnitudes in place: |dx|, |dy|. Zero both product hi bytes now,
-;     while A=0 (and reuse that 0 for the |dx| negate below). t4/t5 are
-;     DEDICATED product storage — never the live dx/dy delta slots. ---
+; (SF_SAMEDIR already folded into the primitives — no flags twist.)
+; u24 magnitude products with the high partial skipped when a delta's
+; senior byte is clear (the common case).
+   STX zp_br_sign                          ; X dies at SC_UMUL8
    LDA #0
    STA zp_br_t4                            ; |P1| hi = 0
    STA zp_br_t5                            ; |P2| hi = 0
@@ -340,14 +272,9 @@ bfm_dx_pos:
    SBC zp_br_dyhi
    STA zp_br_dyhi
 bfm_dy_pos:
-; --- |P1| = |ldy| * |dx| -> (t2, t3, t4) u24 ---
-   LDA zp_seg_ldy                           ; ldy from ZP (Y-agnostic; SC_UMUL8
-   BPL bfm_ly_pos                           ;   clobbers Y so ZP read is ideal)
-   EOR #$FF
-   CLC
-   ADC #1
-bfm_ly_pos:
-   STA zp_br_a                             ; |ldy| survives for the hi partial
+; --- |P1| = |dy'| * |dx| -> (t2, t3, t4) u24 (|dy'| pre-abs'd) ---
+   LDA zp_seg_ldy
+   STA zp_br_a                             ; survives for the hi partial
    LDX zp_br_dxlo
    STX zp_mul_b
    JSR SC_UMUL8
@@ -364,16 +291,11 @@ bfm_ly_pos:
    ADC zp_br_t3
    STA zp_br_t3
    LDA zp_prod_hi
-   ADC #0                                  ; (+ carry; t4 was 0)
+   ADC #0
    STA zp_br_t4
 bfm_p1_done:
-; --- |P2| = |ldx| * |dy| -> (t0, t1, t5) u24 ---
-   LDA zp_seg_ldx                           ; ldx from ZP
-   BPL bfm_lx_pos
-   EOR #$FF
-   CLC
-   ADC #1
-bfm_lx_pos:
+; --- |P2| = |dx'| * |dy| -> (t0, t1, t5) u24 ---
+   LDA zp_seg_ldx
    STA zp_br_a
    LDX zp_br_dylo
    STX zp_mul_b
@@ -391,38 +313,37 @@ bfm_lx_pos:
    ADC zp_br_t1
    STA zp_br_t1
    LDA zp_prod_hi
-   ADC #0                                  ; (+ carry; t5 was 0)
+   ADC #0
    STA zp_br_t5
 bfm_p2_done:
-; --- mode select and u24 compare (Z-contract verdict) ---
+; --- mode select on sign(P1) and u24 compare ---
    LDA zp_br_sign
-   EOR zp_seg_flags
    BMI bfm_le
-; back iff |P1| >= |P2|: C=1 through the chain decides (equal -> back)
+; positive: back iff |P1| <= |P2| ... i.e. FRONT iff |P1| > |P2|
    LDA zp_br_t4
    CMP zp_br_t5
-   BNE bfm_ge_dec
+   BNE bfm_gt_dec
    LDA zp_br_t3
    CMP zp_br_t1
-   BNE bfm_ge_dec
-   LDA zp_br_t2
-   CMP zp_br_t0
-bfm_ge_dec:
-   BCS bfm_back
-   JMP bf_seg_front
-bfm_le:
-; back iff |P1| <= |P2|: first difference decides; equal -> back
-   LDA zp_br_t4
-   CMP zp_br_t5
-   BNE bfm_le_dec
-   LDA zp_br_t3
-   CMP zp_br_t1
-   BNE bfm_le_dec
+   BNE bfm_gt_dec
    LDA zp_br_t2
    CMP zp_br_t0
    BEQ bfm_back                            ; equal -> dot == 0 -> back
-bfm_le_dec:
+bfm_gt_dec:
    BCC bfm_back                            ; |P1| < |P2| -> back
+   JMP bf_seg_front
+bfm_le:
+; negative: back iff |P1| >= |P2| ... FRONT iff |P1| < |P2|
+   LDA zp_br_t4
+   CMP zp_br_t5
+   BNE bfm_lt_dec
+   LDA zp_br_t3
+   CMP zp_br_t1
+   BNE bfm_lt_dec
+   LDA zp_br_t2
+   CMP zp_br_t0
+bfm_lt_dec:
+   BCS bfm_back                            ; |P1| >= |P2| -> back
    JMP bf_seg_front
 bfm_back:
    JMP bf_seg_back
