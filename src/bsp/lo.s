@@ -764,29 +764,30 @@ a2_cached:
 a2_have_recip:
    JSR rns_select                          ; rlo was just set (crossing const
                                         ; or vcache read) → re-vector
-; APV2 heights read straight from the FHCH cursor — zp_fhch_p is a ZP
-; pointer, so no copy into zp_br_p is needed (and it survives the
-; br_project_y calls, unlike zp_br_p which is general scratch).
-; bch2' = project(APV2_CH - vz)  (FHCH byte 4). FHCH is L0-window data
-; since the 2026-07-10 reshuffle: this path arrives under BANK_C, so page
-; L0 for the read (br_project_y pages L2 itself; emit_vert_sx2 pages C).
+; APV2 heights read straight from the seg header cursor (heights are
+; INLINED at +12..17 since 2026-07-11; zp_seg_hdr_p survives the
+; br_project_y calls, unlike zp_br_p which is general scratch). This
+; path arrives under BANK_C and the header is L0-window data — ONE
+; page-in reads both bytes; the fh delta waits in zp_ap2_dlt across
+; the first projection (which pages L2 itself; emit_vert_sx2 pages C).
    PAGE BANK_L0
-   LDY #4
-   LDA (zp_fhch_p),Y
+   LDY #16
+   LDA (zp_seg_hdr_p),Y                    ; apv2_ch (header +16)
    SEC
    SBC zp_br_vz
    STA zp_br_t0
+   INY
+   LDA (zp_seg_hdr_p),Y                    ; apv2_fh (header +17)
+   SEC
+   SBC zp_br_vz
+   STA zp_ap2_dlt
    JSR br_project_y                        ; output pre-biased
    LDA zp_br_resl
    STA zp_line_yl_lo
    LDA zp_br_resh
    STA zp_line_yl_hi
-; bfh2' = project(APV2_FH - vz)  (FHCH byte 5; br_project_y left L2 paged)
-   PAGE BANK_L0
-   LDY #5
-   LDA (zp_fhch_p),Y
-   SEC
-   SBC zp_br_vz
+; bfh2' = project(APV2_FH - vz)  (delta already staged above)
+   LDA zp_ap2_dlt
    STA zp_br_t0
    JSR br_project_y
    LDA zp_br_resl

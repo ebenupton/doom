@@ -39,7 +39,10 @@ ROM_MAIN_BASE   = 0x6C00
                            # ANG at $E940; $FB00-$FFF9 is unused in the flat harness.
                            # $E484-$E93F now hosts the flat ANIM tables + workers.
 ROM_DETAIL_BASE = 0xB600
-ROM_FHCH_BASE   = 0xB600
+# flat bases (KEEP IN SYNC with src/layout.inc flat branch):
+ROM_SEG_HDR_BASE = 0x6C00       # stride-18 headers, heights at +12..17
+ROM_VERTS_BASE   = 0x9C00
+NODE_SOA_BASE    = 0xB600       # node/ss SoA pages (old FHCH hole)
 ROM_BBOX_BASE   = 0xC600   # MUST stay page-aligned: br_bbox_visible/bcac_index
                            # build/split the bbox pointer byte-at-a-time
 
@@ -71,22 +74,17 @@ class BspRender6502:
         bbox = self.bbox_table
         mem = self.sc.mpu.memory
 
-        # (VWH heights no longer ship: rom_main ends at off_vwh and the 6502
-        # has no reader — projection heights come from the FHCH stream.)
-        for i in range(len(rom_main)):
-            mem[ROM_MAIN_BASE + i] = rom_main[i]
-
-        # 4 bytes per seg: fh, ch, bfh, bch (front + back floor/ceiling, s8).
-        n_segs = layout['n_segs']
-        for si in range(n_segs):
-            off = si * SEG_DTL_SIZE
-            mem[ROM_FHCH_BASE + si * 6 + 0] = rom_detail[off + SD_FH]
-            mem[ROM_FHCH_BASE + si * 6 + 1] = rom_detail[off + SD_CH]
-            mem[ROM_FHCH_BASE + si * 6 + 2] = rom_detail[off + SD_BFH]
-            mem[ROM_FHCH_BASE + si * 6 + 3] = rom_detail[off + SD_BCH]
-            # bytes 4/5: solid-seg APV2 aperture heights (detail 12/13)
-            mem[ROM_FHCH_BASE + si * 6 + 4] = rom_detail[off + 12]
-            mem[ROM_FHCH_BASE + si * 6 + 5] = rom_detail[off + 13]
+        # Flat placement (2026-07-11, heights inlined in stride-18 headers):
+        # headers $6C00-$9B8B, verts $9C00, node/ss SoA $B600 (the hole the
+        # retired FHCH stream vacated). The packer bakes the height bytes
+        # (former load-time FHCH synthesis) into the header at +12..17.
+        off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
+        for i in range(0x1000):                          # SoA pages
+            mem[NODE_SOA_BASE + i] = rom_main[i]
+        for i in range(off_verts, off_hdr):              # verts
+            mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
+        for i in range(off_hdr, len(rom_main)):          # stride-18 headers
+            mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
 
         for i, b in enumerate(bbox):
             mem[ROM_BBOX_BASE + i] = b

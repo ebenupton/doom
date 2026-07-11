@@ -5,22 +5,28 @@
 ; values on import — drift fails loud there, never silently here.
 ; ============================================================================
 LAY_N_SEGS   = 662
-LAY_N_NODES  = 236
-LAY_ROOT     = 235                      ; n_nodes - 1
+LAY_N_NODES   = 236
+LAY_ROOT   = 235                      ; n_nodes - 1
 LAY_OFF_VERTS   = $1000
-LAY_OFF_SS      = $0D00
-LAY_OFF_SEG_HDR = $174C
+LAY_OFF_SS   = $0D00
+LAY_OFF_SEG_HDR   = $174C
+
+LAY_HDR_STRIDE  = 18                    ; heights INLINED at +12..17
+; (the FHCH stream is GONE 2026-07-11: heights ride the seg header)
 
 .if ::BANKED
-ROM_SEG_HDR_C = $9000                   ; headers slide over the evicted verts
-ROM_FHCH_C    = $9000 + 662*12          ; = $AF08, tails the headers in L0
+ROM_SEG_HDR_C = $9000                   ; 662*18 = 11916, ends $BE8C
 ROM_VERTS_C   = $A200                   ; bank L2
 ROM_BBOX_C    = $8E00                   ; bank L2 (page-aligned)
+NODE_SOA_C    = $8000                   ; bank L0 window head
+.assert ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE <= $BE90, error, "seg headers reach TABL0"
 .else
-ROM_MAIN_C    = $6C00                   ; flat rom_main base (harness)
-ROM_SEG_HDR_C = ROM_MAIN_C + LAY_OFF_SEG_HDR
-ROM_FHCH_C    = $B600                   ; flat FHCH stream
-ROM_VERTS_C   = ROM_MAIN_C + LAY_OFF_VERTS
+ROM_SEG_HDR_C = $6C00                   ; flat: stride-18 stream, ends $9B8B
+ROM_VERTS_C   = $9C00                   ; flat verts (ends $A34B, below SEL $A400)
 ROM_BBOX_C    = $C600                   ; flat bbox (page-aligned)
+NODE_SOA_C    = $B600                   ; flat SoA: the old FHCH hole (16 pages)
+.assert ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE <= ROM_VERTS_C, error
+.assert ROM_VERTS_C + 467*4 <= $A400, error, "flat verts reach SEL"
 .endif
 .assert (ROM_BBOX_C & $FF) = 0, error, "bbox base must stay page-aligned"
+.assert (NODE_SOA_C & $FF) = 0, error, "node SoA must stay page-aligned"

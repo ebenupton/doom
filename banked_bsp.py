@@ -7,7 +7,6 @@ Strategy: build a flat BspRender6502 (loads all tables + code at flat addrs),
 copy its 64K into a BankedMemory, then patch the banked deltas:
   - ROM_MAIN (verts/nodes/ss/seg_hdr) -> bank L0 @ $8000; ZP ptrs -> $8000+off
   - clipper (span_clip_bankc.bin) + rasteriser -> bank C @ $8000/$A900
-  - FHCH -> low RAM $2400 (was $B600, inside the bank window); ZP -> $2400
   - sqr tables -> low RAM $1C00 (banked clipper/bsp umul8 read them there)
   - bsp_render code -> the *_bk.bin variants (PAGE inserts + $80xx clip entries)
 Everything else (recip/bbox/angle subsystem/vcache) stays flat (above the
@@ -19,7 +18,7 @@ os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()
 import doom_wireframe as dw
 from banked_mem import BankedMemory
-from bsp_render_6502 import BspRender6502, ROM_MAIN_BASE, ROM_FHCH_BASE
+from bsp_render_6502 import BspRender6502
 
 import abi
 BANK_L0, BANK_C, BANK_L2 = abi.BANK_L0, abi.BANK_C, abi.BANK_L2
@@ -48,23 +47,18 @@ def build_banked(flatr):
     off_vwh = layout['off_vwh']
     rom_main = flatr.rom_main
 
-    # --- bank L0 (2026-07-10 reshuffle): pure level data, verts evicted to
-    # L2. [SoA $8000 | seg_hdr $9000 | FHCH | TABL0 $BE90]. FHCH base =
-    # $9000 + n_segs*12 (walk 660: $AEF0; anim 662: $AF08) — consumers get
-    # it via zp_rom_fhch, drivers via ptrtab (build_walk_ssd asserts).
+    # --- bank L0: pure level data, verts evicted to L2.
+    # [SoA $8000 | seg_hdr $9000 (stride 18, heights INLINED at +12..17;
+    # the separate FHCH stream retired 2026-07-11) | TABL0 $BE90].
     # SSMASK -> MAIN $0A80 (rule exception, measured: hub reads it per
     # subsector under whatever bank; main = 0 paging. 237 B.)
     l0 = bytearray(16384)
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     n_segs = layout['n_segs']
-    hdr_len = n_segs * 12
+    hdr_len = n_segs * 18
     l0[:0x1000] = bytes(rom_main[:0x1000])               # node/ss SoA pages
     l0[0x1000:0x1000 + hdr_len] = bytes(rom_main[off_hdr:off_hdr + hdr_len])
-    fhch_off = 0x1000 + hdr_len
-    n_fhch = n_segs * 6
-    for i in range(n_fhch):
-        l0[fhch_off + i] = fmem[ROM_FHCH_BASE + i]
-    assert fhch_off + n_fhch <= 0x3E90, "FHCH reaches TABL0 at $BE90"
+    assert 0x1000 + hdr_len <= 0x3E90, "seg headers reach TABL0 at $BE90"
     if dw.ANIM_SECTORS:
         import anim_sectors as _an0
         for addr, blob in _an0.gen_6502_tables(flat=False).items():

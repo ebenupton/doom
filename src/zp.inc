@@ -136,10 +136,10 @@ zp_seg_ep = $26                   ; [bsp]; per-endpoint SEG_PROJ_BUF offset
 ; lv1x/lv1y stage). $27 still FREE.
 zp_ri_dlo = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
-; from FHCH+2 via (zp_fhch_p),Y (rule 2b; solid walls never touch it).
+; from header+14 via (zp_seg_hdr_p),Y (rule 2b; solids never touch it).
 zp_ri_neg = $2A                   ; [bsp]
 ; $2B FREE (2026-07-09): zp_seg_bch retired — back ceil read on demand
-; from FHCH+3 via (zp_fhch_p),Y.
+; from header+15 via (zp_seg_hdr_p),Y.
 zp_ri_dhi = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
 zp_br_resext = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
 zp_br_vxext = $2E                 ; [bsp]; total view-space x sign-extension byte
@@ -165,7 +165,9 @@ sd_num = $44                      ; [ang] ; w=2
 sd_den = $46                      ; [ang] ; w=2
 sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
-; ($4C/$4D freed 2026-07-10: zp_root_node retired — LAY_ROOT constant)
+zp_ap2_dlt = $4C                  ; [bsp]; ap2_solid_proj: apv2_fh - vz stash
+; between its two projections (one L0 page-in reads both header bytes)
+; ($4D freed 2026-07-10: zp_root_node retired — LAY_ROOT constant)
 zp_bsp_stack_sp = $4E             ; [bsp]; stack pointer (offset into BSP_STACK)
 zp_side = $4F                     ; [bsp]; 0 = front, 1 = back
 zp_node_dxlo = $50                ; [bsp]
@@ -233,8 +235,8 @@ zp_br_pyraw_hi = $93              ; [bsp]
 zp_v_xext = $94                   ; [bsp]; saved view-x s24 extension byte (wide-vx path)
 zp_seg_hdr_p = $96                ; [bsp]; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h = $97              ; [bsp]
-zp_fhch_p = $98                   ; [bsp]; persistent FHCH ptr (advances +6/seg)
-zp_fhch_p_h = $99                 ; [bsp]
+; ($98/$99 freed 2026-07-11: zp_fhch_p retired — heights are INLINED in
+; the seg header at +12..17; one cursor walks everything)
 zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
 ; --- $A8: overlay group (3 phase-disjoint users) ---

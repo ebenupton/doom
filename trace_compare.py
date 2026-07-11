@@ -29,9 +29,7 @@ _E_MARK_SOLID = _sym('jt_mark_solid')
 _E_HAS_GAP    = _sym('jt_has_gap')
 _E_IS_FULL    = _sym('jt_is_full')
 _E_DCL_S16    = _sym('jt_draw_clip_s16')
-ROM_MAIN_BASE   = 0x6C00
 ROM_DETAIL_BASE = 0xB600
-ROM_FHCH_BASE   = 0xB600
 ROM_BBOX_BASE   = 0xC600
 
 
@@ -59,18 +57,18 @@ def setup_wad(sc):
     rom_main = dw.packed_rom_main
     rom_detail = dw.packed_rom_detail
     mem = sc.mpu.memory
-    for i in range(len(rom_main)):
-        mem[ROM_MAIN_BASE + i] = rom_main[i]
-    n_segs = layout['n_segs']
-    for si in range(n_segs):
-        off = si * SEG_DTL_SIZE
-        mem[ROM_FHCH_BASE + si * 6 + 0] = rom_detail[off + SD_FH]
-        mem[ROM_FHCH_BASE + si * 6 + 1] = rom_detail[off + SD_CH]
-        mem[ROM_FHCH_BASE + si * 6 + 2] = rom_detail[off + SD_BFH]
-        mem[ROM_FHCH_BASE + si * 6 + 3] = rom_detail[off + SD_BCH]
-        # bytes 4/5: solid-seg APV2 aperture heights (detail 12/13)
-        mem[ROM_FHCH_BASE + si * 6 + 4] = rom_detail[off + 12]
-        mem[ROM_FHCH_BASE + si * 6 + 5] = rom_detail[off + 13]
+    # flat scatter (2026-07-11): headers (stride 18, heights inlined by
+    # the packer) at $6C00, verts $9C00, SoA $B600 — one loader truth in
+    # bsp_render_6502; reuse its bases.
+    from bsp_render_6502 import (ROM_SEG_HDR_BASE, ROM_VERTS_BASE,
+                                 NODE_SOA_BASE)
+    off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
+    for i in range(0x1000):
+        mem[NODE_SOA_BASE + i] = rom_main[i]
+    for i in range(off_verts, off_hdr):
+        mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
+    for i in range(off_hdr, len(rom_main)):
+        mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
     for i, b in enumerate(dw.packed_bbox_table):
         mem[ROM_BBOX_BASE + i] = b
     def w16(addr_lo, val):

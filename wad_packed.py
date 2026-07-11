@@ -28,7 +28,10 @@ NODE_SOA_PAGES = 13
 SS_SOA_PAGES   = 3
 NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
 NT_GENERAL, NT_DX0, NT_DY0 = 0, 1, 2
-SEG_HDR_SIZE = 12    # (idx<<3)+(idx<<2): v1,v2,lv1_x,lv1_y,ldx,ldy,flags,pad
+SEG_HDR_SIZE = 18    # (idx<<4)+(idx<<1): v1,v2,lv1_x,lv1_y,ldx,ldy,flags,L,
+                     # + INLINED heights (2026-07-11, was the FHCH stream):
+                     # +12 fh +13 ch +14 bfh|apv1_ch +15 bch|apv1_fh
+                     # +16 apv2_ch +17 apv2_fh
 SEG_DTL_SIZE = 20    # ×20 = (idx<<4)+(idx<<2): fh,ch + 8 VWH u16 + back heights
 VWH_SIZE     = 1     # identity: s8 height
 # No separate linedef table — data inlined into seg headers
@@ -360,6 +363,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                 bch2, bfh2 = ap2
                 rom_detail[o_det + SD_APV2_CH] = bch2 & 0xFF
                 rom_detail[o_det + SD_APV2_FH] = bfh2 & 0xFF
+
+        # Heights INLINED into the header (post-APV overlay, exactly the
+        # bytes the old load-time FHCH synthesis emitted): the separate
+        # FHCH stream is gone — one cursor walks everything.
+        od = i * SEG_DTL_SIZE
+        rom_main[o + 12] = rom_detail[od + SD_FH]
+        rom_main[o + 13] = rom_detail[od + SD_CH]
+        rom_main[o + 14] = rom_detail[od + SD_BFH]
+        rom_main[o + 15] = rom_detail[od + SD_BCH]
+        rom_main[o + 16] = rom_detail[od + SD_APV2_CH]
+        rom_main[o + 17] = rom_detail[od + SD_APV2_FH]
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 

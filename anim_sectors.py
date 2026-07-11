@@ -168,16 +168,16 @@ class Mover:
             _ROM_DETAIL[o + SD_FH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_CH] = ch_ps & 0xFF
             for mem, base in _attached:
-                mem[base['fhch'] + i * 6 + 0] = fh_ps & 0xFF
-                mem[base['fhch'] + i * 6 + 1] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 12] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 13] = ch_ps & 0xFF
             nbytes += 2
         for i in self.back_segs:
             o = i * SEG_DTL_SIZE
             _ROM_DETAIL[o + SD_BFH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_BCH] = ch_ps & 0xFF
             for mem, base in _attached:
-                mem[base['fhch'] + i * 6 + 2] = fh_ps & 0xFF
-                mem[base['fhch'] + i * 6 + 3] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 14] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 15] = ch_ps & 0xFF
             nbytes += 2
         # seg flags: re-derive SOLID/NEEDBT/NEEDBB (the packer's rules)
         for i in self.touch_segs:
@@ -256,8 +256,7 @@ def attach_6502(renderer):
     """Mirror every patch into a flat BspRender6502's py65 memory."""
     import bsp_render_6502 as br
     _attached.append((renderer.sc.mpu.memory, {
-        'fhch': br.ROM_FHCH_BASE,
-        'seg_hdr': br.ROM_MAIN_BASE + _OFF_SEG_HDR,
+        'seg_hdr': br.ROM_SEG_HDR_BASE,
     }))
 
 
@@ -310,11 +309,9 @@ def gen_6502_tables(flat=True):
     if flat:
         import bsp_render_6502 as br
         A = dict(ssmask=0xE484, tabl0=0xE580, cfg=0xE680,
-                 fhch=br.ROM_FHCH_BASE,
-                 hdr=br.ROM_MAIN_BASE + _OFF_SEG_HDR)
+                 hdr=br.ROM_SEG_HDR_BASE)
     else:
-        A = dict(ssmask=0x0A80, tabl0=0xBE90, cfg=0xBA00,
-                 fhch=0x9000 + _LAYOUT['n_segs'] * 12, hdr=0x9000)
+        A = dict(ssmask=0x0A80, tabl0=0xBE90, cfg=0xBA00, hdr=0x9000)
     order = sorted(dw.ANIM_SECTORS)
     out = {}
     # SSMASK
@@ -332,19 +329,20 @@ def gen_6502_tables(flat=True):
         addr = base0 + 12 + len(blocks)
         _st.pack_into('<H', ptrs, mi * 2, addr)
         fhch_addrs = []
+        H = lambda i, k: A['hdr'] + i * SEG_HDR_SIZE + 12 + k
         if m.kind == 'ceil':
-            fhch_addrs += [A['fhch'] + i * 6 + 1 for i in m.front_segs]  # ch
-            fhch_addrs += [A['fhch'] + i * 6 + 3 for i in m.back_segs]   # bch
+            fhch_addrs += [H(i, 1) for i in m.front_segs]  # ch
+            fhch_addrs += [H(i, 3) for i in m.back_segs]   # bch
         else:
-            fhch_addrs += [A['fhch'] + i * 6 + 0 for i in m.front_segs]  # fh
-            fhch_addrs += [A['fhch'] + i * 6 + 2 for i in m.back_segs]   # bfh
+            fhch_addrs += [H(i, 0) for i in m.front_segs]  # fh
+            fhch_addrs += [H(i, 2) for i in m.back_segs]   # bfh
         flag_segs = [i for i in m.touch_segs if dw.fp_segs_vwh[i][2] is not None]
         blk = bytearray([len(fhch_addrs), len(flag_segs)])
         for a in fhch_addrs:
             blk += _st.pack('<H', a)
         for i in flag_segs:
             blk += _st.pack('<HH', A['hdr'] + i * SEG_HDR_SIZE + SH_FLAGS,
-                            A['fhch'] + i * 6)
+                            A['hdr'] + i * SEG_HDR_SIZE + 12)
         blocks += blk
     out[A['tabl0']] = bytes(ptrs) + bytes(blocks)
     # (TABL2 / private VWH slot lists stripped 2026-07-10: write-only data)

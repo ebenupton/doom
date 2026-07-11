@@ -86,9 +86,9 @@ anim_ss_cont:
    LDA SS_CNT,X
    STA zp_seg_count
 
-; Persistent per-seg pointers, computed once here and advanced by the
-; loop (+12 header, +6 FHCH). si*6 = (si*3) << 1 — one add beats the
-; old *2-stash-*4-add chain — reading SS_FLO/FHI straight through X
+; Persistent per-seg pointer, computed once here and advanced by the
+; loop (+18: heights ride the header). si*18 = ((si*3)<<2 + (si*3)<<1)
+; << is shift/rotate pairs riding A — reading SS_FLO/FHI straight through X
 ; (the zp_seg_first staging had no other reader and is GONE; $5A/$5B
 ; freed). Hi byte rides A into the base adds; Y stashes it across the
 ; lo-half adds. si_hi <= 2 (660 segs), so the hi arithmetic is exact.
@@ -106,39 +106,39 @@ anim_ss_cont:
    ADC SS_FHI,X                            ; hi(si*3) (+ carry)
    ASL zp_br_t0
    ROL A                                   ; (A : t0) = si*6
-   TAY                                     ; stash hi6 for the si*12 shift
-   CLC
-   LDA #<ROM_FHCH_C                        ; layout.inc constant — the ROM
-   ADC zp_br_t0                            ; pointer block is retired for
-   STA zp_fhch_p                           ; the static-layout bases
-   TYA
-   ADC #>ROM_FHCH_C
-   STA zp_fhch_p_h
-; si*12 = si*6 << 1, done NOW while Y still holds hi6 (the FHCH hoist
-; below clobbers Y with its own LDY/DEY indexing).
-   ASL zp_br_t0                            ; C = lo6.b7
-   TYA
-   ROL A                                   ; A = hi12
+   STA zp_br_t3                            ; bank si*6 (hi -> t3, lo -> t2)
+   LDA zp_br_t0
+   STA zp_br_t2
+   ASL zp_br_t0
+   LDA zp_br_t3
+   ROL A                                   ; (A : t0) = si*12
    TAY
    CLC
-   LDA #<ROM_SEG_HDR_C
-   ADC zp_br_t0
-   STA zp_seg_hdr_p
+   LDA zp_br_t0
+   ADC zp_br_t2                            ; si*12 + si*6 = si*18
+   STA zp_br_t0
    TYA
+   ADC zp_br_t3
+   TAY
+   CLC
+   LDA #<ROM_SEG_HDR_C                     ; ONE cursor: heights ride the
+   ADC zp_br_t0                            ; header at +12..17 (the FHCH
+   STA zp_seg_hdr_p                        ; stream + its second cursor
+   TYA                                     ; retired 2026-07-11)
    ADC #>ROM_SEG_HDR_C
    STA zp_seg_hdr_p_h
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so read fh/ch + compute the front deltas ONCE
 ; here instead of per seg (2026-07-10; runs after the anim hub, so
 ; mover-patched heights are already in place). ---
-   LDY #1
-   LDA (zp_fhch_p),Y
+   LDY #13
+   LDA (zp_seg_hdr_p),Y                     ; ch (header +13)
    STA zp_seg_ch
    SEC
    SBC zp_br_vz
    STA zp_seg_top_dlt                       ; top_dlt = ch - vz
    DEY
-   LDA (zp_fhch_p),Y
+   LDA (zp_seg_hdr_p),Y                     ; fh (header +12)
    STA zp_seg_fh
    SEC
    SBC zp_br_vz
@@ -207,13 +207,13 @@ bf_passed:
    LDA zp_seg_flags
    AND #$4C
    BEQ skip_bdlt
-   LDY #3
-   LDA (zp_fhch_p),Y                        ; bch
+   LDY #15
+   LDA (zp_seg_hdr_p),Y                     ; bch (header +15)
    SEC
    SBC zp_br_vz
    STA zp_seg_btop_dlt
-   LDY #2
-   LDA (zp_fhch_p),Y                        ; bfh
+   LDY #14
+   LDA (zp_seg_hdr_p),Y                     ; bfh (header +14)
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
@@ -437,8 +437,8 @@ ft_no_needbt:
 ; since the 2026-07-10 reshuffle and this path runs under BANK_C, so
 ; page around the read; flat: no-ops)
    PAGE BANK_L0
-   LDY #3
-   LDA (zp_fhch_p),Y
+   LDY #15
+   LDA (zp_seg_hdr_p),Y                     ; bch (header +15)
    SEC
    SBC zp_seg_ch
    TAX                                     ; verdict rides in X: PAGE (banked)
@@ -498,10 +498,10 @@ fb_no_needbb:
 ; bfh < fh ? (bfh on demand from FHCH+2 — L0-window read under BANK_C,
 ; page around like ft_no_needbt; flat: no-ops)
    PAGE BANK_L0
-   LDY #2
+   LDY #14
    LDA zp_seg_fh
    SEC
-   SBC (zp_fhch_p),Y
+   SBC (zp_seg_hdr_p),Y                     ; bfh (header +14)
    TAX                                     ; verdict rides in X across the
    PAGE BANK_C                             ; A-clobbering PAGE (see ft above)
    TXA
@@ -763,22 +763,15 @@ s_advance:
 ; (no zp_seg_skip reset needed: the back-face test returns in A now, and
 ; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
 ; (zp_seg_first is NOT advanced per seg: its only reader is the subsector
-; prologue's cursor derivation — the loop lives off zp_seg_hdr_p/zp_fhch_p.
+; prologue's cursor derivation — the loop lives off zp_seg_hdr_p.
 ; The old INC pair was ~8 cyc/seg of dead work, removed 2026-07-10.)
    CLC
    LDA zp_seg_hdr_p
-   ADC #12
+   ADC #18
    STA zp_seg_hdr_p
-   BCC sa_h_nc                             ; BCC/INC: page cross every ~21 segs
+   BCC sa_h_nc                             ; BCC/INC: page cross every ~14 segs
    INC zp_seg_hdr_p_h
 sa_h_nc:
-   CLC
-   LDA zp_fhch_p
-   ADC #6
-   STA zp_fhch_p
-   BCC sa_f_nc                             ; BCC/INC: page cross every ~42 segs
-   INC zp_fhch_p_h
-sa_f_nc:
    DEC zp_seg_count
    JMP seg_loop
 .endscope

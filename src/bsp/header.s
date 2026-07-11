@@ -59,11 +59,12 @@ ina
 ;           unused field loads — 73% of E1M1 nodes are axis-aligned)
 ;   pg 13   subsector seg count
 ;   pg 14/15 subsector first-seg index lo/hi
-.if ::BANKED
-NODE_SOA = $8000                        ; bank L0 window
-.else
-NODE_SOA = $6C00                        ; flat ROM_MAIN_BASE
-.endif
+.include "layout.inc"
+
+; NODE_SOA comes from layout.inc (NODE_SOA_C): banked = L0 window head,
+; flat = $B600 (the hole the retired FHCH stream vacated 2026-07-11 —
+; the stride-18 headers with inlined heights own $6C00 now).
+NODE_SOA = NODE_SOA_C
 NODE_NXLO = NODE_SOA + $000
 NODE_NXHI = NODE_SOA + $100
 NODE_NYLO = NODE_SOA + $200
@@ -91,8 +92,6 @@ SS_FHI    = NODE_SOA + $F00
    STA $FE30
 .endif
 .endmacro
-
-.include "layout.inc"
 
 .segment "MAIN"
 
