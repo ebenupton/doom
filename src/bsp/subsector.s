@@ -199,13 +199,12 @@ bf_passed:
 ; --- FHCH per-seg: front fh/ch + deltas were HOISTED to the subsector
 ; prologue (subsector-constant). Only the back heights remain per seg:
 ;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
-; Back deltas are consumed ONLY by do_project_y, which reads them only when
-; NEEDBT($04)/NEEDBB($08)/APEDGE1($40) is set. Skip the 2 subtractions for
-; plain solids/portals (the common case) — conservative: this superset
-; never skips a delta do_project_y will read. bch/bfh read on demand
-; (FHCH+3/+2) — never staged.
+; Back deltas are consumed ONLY by do_project_y, which reads them only
+; for PORTAL steps (NEEDBT $04 / NEEDBB $08). Solid APV apertures are
+; projected post-visibility by apv_stage (2026-07-11) — no transform-
+; time speculation, no deltas staged here for them.
    LDA zp_seg_flags
-   AND #$4C
+   AND #$0C
    BEQ skip_bdlt
    LDY #15
    LDA (zp_seg_hdr_p),Y                     ; bch (header +15)
@@ -410,6 +409,25 @@ hg_query:
    BNE hg_pass
    JMP s_advance
 hg_pass:
+; --- Post-visibility APV staging, then endpoint canonicalization ---
+; apv_stage projects solid aperture pairs into the structs (only
+; VISIBLE segs pay — replaces dpy's transform-time speculation). It
+; MUST run before the swap: header APV offsets are bound to SEG
+; endpoint identity, which equals struct identity only pre-swap.
+   LDA zp_seg_flags
+   AND #$02
+   BEQ hgp_can                             ; portal: pairs came from dpy
+   LDA zp_seg_flags
+   AND #$41                                ; APEDGE1|APEDGE2
+   BEQ hgp_can
+   JSR apv_stage
+hgp_can:
+; Canonicalize: after this point VX1 is ALWAYS the left endpoint, and
+; every emit path below is single-path (no ord dispatch anywhere).
+   LDA zp_sx_ord
+   BEQ hgp_fwd
+   JSR seg_swap_vx
+hgp_fwd:
 
 ; --- Emit top horizontal (front-sector ceiling): (sx1,ft1)→(sx2,ft2) ---
 ; Solid wall:        always.
@@ -683,48 +701,27 @@ skip_rvert:
 ;     portal (tighten) cases.
 ; Same clamp as the has_gap prelude (Python: ilo = max(0, min(sx1,sx2)),
 ; ihi = min(255, max(sx1,sx2))), recomputed from the sx slots — the
-; $C2/$C3 scratch does not survive the emissions above, but the s16
-; ORDER does: zp_sx_ord (latched at hg_query) picks the ladder, and the
-; prelude's bails guarantee max >= 0 (no off-left seg gets here) and
-; min < 256 (no off-right seg) — so each endpoint needs ONE hi-byte test.
-   LDA zp_sx_ord
-   BNE ms_min2
-; --- min = sx1, max = sx2 ---
+; $C2/$C3 scratch does not survive the emissions above. The seg was
+; CANONICALIZED at hg_pass (sx1 <= sx2 always), and the prelude's bails
+; guarantee max >= 0 and min < 256 — one hi-byte test per endpoint,
+; single path.
    LDA zp_seg_sx2_hi                       ; max hi: 0 = in range
-   BNE ms_hi255_1                          ; >= 256 (BMI impossible): 255
+   BNE ms_hi255                            ; >= 256 (BMI impossible): 255
    LDA zp_seg_sx2_lo
-ms_hist1:
+ms_hist:
    STA zp_ihi
    LDA zp_seg_sx1_hi                       ; min hi: 0 = in range
-   BMI ms_lo0_1                            ; < 0 (pos-nonzero impossible): 0
+   BMI ms_lo0                              ; < 0 (pos-nonzero impossible): 0
    LDA zp_seg_sx1_lo
-ms_lost1:
+ms_lost:
    STA zp_ilo
    JMP ms_dispatch
-ms_hi255_1:
+ms_hi255:
    LDA #255
-   BNE ms_hist1                            ; (always: A=255)
-ms_lo0_1:
+   BNE ms_hist                             ; (always: A=255)
+ms_lo0:
    LDA #0
-   BEQ ms_lost1                            ; (always: A=0)
-ms_hi255_2:
-   LDA #255
-   BNE ms_hist2                            ; (always: A=255)
-ms_lo0_2:
-   LDA #0
-   BEQ ms_lost2                            ; (always: A=0)
-; --- min = sx2, max = sx1 ---
-ms_min2:
-   LDA zp_seg_sx1_hi                       ; max hi
-   BNE ms_hi255_2
-   LDA zp_seg_sx1_lo
-ms_hist2:
-   STA zp_ihi
-   LDA zp_seg_sx2_hi                       ; min hi
-   BMI ms_lo0_2
-   LDA zp_seg_sx2_lo
-ms_lost2:
-   STA zp_ilo
+   BEQ ms_lost                             ; (always: A=0)
 ms_dispatch:
    LDA zp_seg_flags
    AND #$02
@@ -759,6 +756,7 @@ ms_skip:
 
 ; --- Advance to the next seg: clear the skip flag, bump the seg index
 ;     (u16) and the two persistent ROM cursors (+12 header, +6 FHCH). ---
+
 s_advance:
 ; (no zp_seg_skip reset needed: the back-face test returns in A now, and
 ; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
@@ -774,6 +772,66 @@ s_advance:
 sa_h_nc:
    DEC zp_seg_count
    JMP seg_loop
+.endscope
+
+; ============================================================================
+; seg_swap_vx — canonicalize endpoint order: make VX1 the LEFT endpoint.
+; RARE (~1/frame): only the 1px edge-on projection reversal (the 8F.1F
+; class) lands here. Deep swap deliberately (measured eval 2026-07-11):
+; ~350 cycles once a frame vs pointer-indirection taxing every one of
+; ~200 static struct references on the hot paths (+2 cyc or worse each,
+; thousands of accesses per frame) AND killing the zp,X endpoint idioms.
+; Swaps the whole structs, exchanges the endpoint-bound flag bits
+; (APEDGE1<->APEDGE2, NOVT1<->NOVT2 — seg-level bits pass through), and
+; kills the vertex-chain key: VX2 no longer holds the last-transformed
+; vertex, exactly like a crossing.
+; ============================================================================
+seg_swap_vx:
+.scope
+   LDX #VX_STRIDE-1
+sw_loop:
+   LDA VX1,X
+   LDY VX2,X
+   STA VX2,X
+   STY VX1,X
+   DEX
+   BPL sw_loop
+   LDA zp_seg_flags
+   AND #$8E                                ; pass SOLID/NEEDBT/NEEDBB/$80
+   STA zp_br_t0
+   LDA zp_seg_flags
+   AND #$40                                ; APEDGE1 -> APEDGE2
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   ORA zp_br_t0
+   STA zp_br_t0
+   LDA zp_seg_flags
+   AND #$01                                ; APEDGE2 -> APEDGE1
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ORA zp_br_t0
+   STA zp_br_t0
+   LDA zp_seg_flags
+   AND #$10                                ; NOVT1 -> NOVT2
+   ASL A
+   ORA zp_br_t0
+   STA zp_br_t0
+   LDA zp_seg_flags
+   AND #$20                                ; NOVT2 -> NOVT1
+   LSR A
+   ORA zp_br_t0
+   STA zp_seg_flags
+   LDA #$FF
+   STA zp_seg_v_idx_hi                     ; chain key dies with the swap
+   RTS
 .endscope
 
 ; (drain_deferred_ms replaced by defq_drain — see the $0B00 region.)

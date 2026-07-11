@@ -180,9 +180,10 @@ zp_node_nylo = $56                ; [bsp]
 zp_node_nyhi = $57                ; [bsp]
 zp_node_chlo = $58                ; [bsp]; current child (lo, hi: 16-bit id)
 zp_node_chhi = $59                ; [bsp]
-zp_sx_ord = $5A                   ; [bsp]; min-endpoint struct offset (0 =
-; sx1 is min, VX_STRIDE = sx2): latched by the has_gap prelude, reread by
-; the ms/tighten range so the s16 order compare runs once per seg.
+zp_sx_ord = $5A                   ; [bsp]; reversal flag (0 = v1 already
+; left, VX_STRIDE = reversed): latched by the has_gap prelude; its ONLY
+; consumer is the hg_pass canonicalization gate (seg_swap_vx) — every
+; emit path downstream assumes VX1 = left.
 ; ($5B freed 2026-07-10: zp_seg_first retired — the subsector prologue
 ; computes both ROM cursors straight from the SS SoA pages via X)
 zp_seg_count = $5C                ; [bsp]; remaining segs in subsector

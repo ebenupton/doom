@@ -515,19 +515,15 @@ si_return_y1:
 ;     sy pairs sit at the same offsets in VX1 and VX2, so one offset
 ;     names the line: +5 top, +7 bot, +9 btop, +11 bbot; lo at VX+X,
 ;     hi at VX+X+1). The x pair comes straight from zp_seg_sx1/sx2.
-; THE SEG LAYER OWNS THE LEFT-TO-RIGHT CONTRACT: zp_sx_ord (latched by
-; the has_gap prelude from the full s16 compare) names the min endpoint,
-; and this entry stages (xl,yl)/(xr,yr) already ordered — the clipper's
-; per-draw swap machinery is GONE (see main_clip). ord=0 is the normal
-; front-facing orientation; ord=VX_STRIDE is the rare 1px edge-on
-; reversal (the old 8F.1F class), which takes the mirrored staging.
+; THE SEG LAYER OWNS THE LEFT-TO-RIGHT CONTRACT: the seg loop
+; CANONICALIZES on the rare 1px edge-on reversal (seg_swap_vx exchanges
+; the endpoint structs post-visibility), so VX1 is ALWAYS the left
+; endpoint here — no ord dispatch, no mirrored staging, and the
+; clipper's per-draw swap machinery stays GONE (see main_clip).
 ; All four hi bytes are tested BEFORE any staging: the common all-in-u8
 ; case stages just the four lo bytes the u8 DCL reads (the hi slots
 ; overlay the u8 DCL's zp_cb_* workspace, written before every read).
 draw_clipped_line_s16_h:
-   LDA zp_sx_ord
-   BNE dclh_rev
-; --- v1 is the left endpoint (common orientation) ---
    LDA VX1+1,X                             ; y1 hi
    ORA VX2+1,X                             ; y2 hi
    ORA zp_seg_sx1_hi
@@ -559,40 +555,6 @@ dclh_slow:
    LDA VX2,X
    STA zp_line_yr_lo
    LDA VX2+1,X
-   STA zp_line_yr_hi
-   JMP dcl16_mainclip
-; --- v2 is the left endpoint (edge-on 1px reversal) — mirrored copy ---
-dclh_rev:
-   LDA VX1+1,X
-   ORA VX2+1,X
-   ORA zp_seg_sx1_hi
-   ORA zp_seg_sx2_hi
-   BNE dclh_rslow
-   LDA zp_seg_sx2_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx1_lo
-   STA zp_line_xr_lo
-   LDA VX2,X
-   STA zp_line_yl_lo
-   LDA VX1,X
-   STA zp_line_yr_lo
-   JMP dcl16_fastu8
-dclh_rslow:
-   LDA zp_seg_sx2_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xl_hi
-   LDA zp_seg_sx1_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xr_hi
-   LDA VX2,X
-   STA zp_line_yl_lo
-   LDA VX2+1,X
-   STA zp_line_yl_hi
-   LDA VX1,X
-   STA zp_line_yr_lo
-   LDA VX1+1,X
    STA zp_line_yr_hi
    JMP dcl16_mainclip
 

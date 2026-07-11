@@ -639,7 +639,7 @@ r32_loop:
 ;     the colinear portal's aperture heights, projected with endpoint K's
 ;     reciprocal. For K=1 the packer overlays them on the bfh/bch slots,
 ;     so sy1_bbot/sy1_btop ALREADY hold the projections. For K=2 they sit
-;     in seg detail bytes 12/13 and are projected by ap2_solid_proj.
+;     in header bytes +16/17 and are projected by apv_stage (post-hg).
 ;   PORTAL seg (has steps), APEDGE_K: draw (sxK, bt|ft, sxK, bb|fb) — all
 ;     four projections already in the SEG_PROJ_BUF slots.
 ; Off-screen endpoints (sx hi != 0) are skipped like the other verticals:
@@ -669,7 +669,7 @@ ap_done:
 ;   Dispatch: portal → y-range from the struct sy slots selected by
 ;   NEEDBT/NEEDBB; solid v1 → APV1 projections already sit in the
 ;   btop/bbot slots (do_project_y projected the overlaid APV heights);
-;   solid v2 → tail-jump to ap2_solid_proj (heights not yet projected).
+;   solid (either endpoint) → APV projections staged by apv_stage.
 ;   Line emitted through SC_DRAW_S16 (bank C) at x = sxK.
 ap_edge_one:
 .scope
@@ -709,9 +709,9 @@ ap_bot_fb:
    STA zp_line_yr_hi
    JMP ap_emit_y
 ap_solid:
-   CPX #0
-   BNE ap2_solid_jmp
-; v1 solid: line from sy1_bbot (APV1_CH proj) to sy1_btop (APV1_FH)
+; APV projections sit in the struct for BOTH endpoints now (apv_stage
+; runs post-visibility, pre-swap — the ap2_solid_proj special case is
+; dead): line from CH proj (+11/12) to FH proj (+9/10).
    LDA VX1+11,X
    STA zp_line_yl_lo
    LDA VX1+12,X
@@ -732,70 +732,84 @@ ap_emit_y:
    STA zp_dcl_rec_buf_h
    PAGE BANK_C
    JMP SC_DRAW_S16
-ap2_solid_jmp:
-   JMP ap2_solid_proj
 ap_rts:
    RTS
 .endscope
 
-; ap2_solid_proj — project the solid seg's APV2 aperture heights with
-; endpoint 2's reciprocal and emit the vertical at sx2.
-;   v2 crossed → recip = recip(NEAR) = (M8=0, S=1) constant (Python idx2:
-;                fp_recip(2) — the mantissa form makes the projection a
-;                pure h<<7 shift inside br_project_y).
-;   else       → recip from v2's vertex cache entry (offsets 2,3).
-ap2_solid_proj:
+; (ap2_solid_proj DELETED 2026-07-11: apv_stage projects BOTH endpoints'
+; aperture pairs into the structs post-visibility — one uniform solid
+; path in ap_edge_one, no emit-time special case.)
+
+; ============================================================================
+; apv_stage — post-visibility APV aperture projections (2026-07-11).
+; Called once per VISIBLE solid seg carrying APEDGE1/2, from the seg
+; loop right after has_gap passes and BEFORE any canonicalizing endpoint
+; swap — seg-endpoint identity still equals struct identity here, so the
+; header offsets are unambiguous (+14/15 = APV1 ch/fh, +16/17 = APV2).
+; Projects with the endpoint's OWN recip (VXk+13/14 — for a near-clipped
+; endpoint that is the crossing recip the reprojection banked), filling
+; VXk+9/10 (FH projection) and +11/12 (CH projection): the same slots
+; and orientation the old dpy(APEDGE1)/ap2_solid_proj paths produced.
+; Replaces TRANSFORM-TIME speculation: has_gap-culled segs pay nothing.
+; Arrives under BANK_C; pages L0 for the header reads; br_project_y
+; pages L2 itself; the emits re-page C per draw as always.
+; ============================================================================
+apv_stage:
 .scope
-   LDA zp_seg_v2_clipped
-   BEQ a2_cached
-   LDA #0
+   LDA zp_seg_flags
+   AND #$40                                ; APEDGE1
+   BEQ as_chk2
+   LDX #0
+   LDY #15                                 ; header +15 = apv1_fh (+14 ch)
+   JSR as_one
+as_chk2:
+   LDA zp_seg_flags
+   AND #$01                                ; APEDGE2
+   BEQ as_done
+   LDX #VX_STRIDE
+   LDY #17                                 ; header +17 = apv2_fh (+16 ch)
+   JSR as_one
+as_done:
+   RTS
+; as_one: X = struct offset, Y = header offset of the FH byte (CH = Y-1)
+as_one:
+   STX as_x
+   STY as_y
+   LDA VX1+13,X                            ; endpoint recip
    STA zp_br_rhi
-   LDA #1
+   LDA VX1+14,X
    STA zp_br_rlo
-   JMP a2_have_recip
-a2_cached:
-; v2's reciprocal sits in the endpoint struct (+13/+14) — the transform
-; banked it exactly for this consumer. The whole VCACHE pointer rebuild
-; (idx<<3 + base + two indirect reads, ~47 cyc) is gone.
-   LDA zp_seg_v2_rhi
-   STA zp_br_rhi
-   LDA zp_seg_v2_rlo
-   STA zp_br_rlo
-a2_have_recip:
-   JSR rns_select                          ; rlo was just set (crossing const
-                                        ; or vcache read) → re-vector
-; APV2 heights read straight from the seg header cursor (heights are
-; INLINED at +12..17 since 2026-07-11; zp_seg_hdr_p survives the
-; br_project_y calls, unlike zp_br_p which is general scratch). This
-; path arrives under BANK_C and the header is L0-window data — ONE
-; page-in reads both bytes; the fh delta waits in zp_ap2_dlt across
-; the first projection (which pages L2 itself; emit_vert_sx2 pages C).
+   JSR rns_select
    PAGE BANK_L0
-   LDY #16
-   LDA (zp_seg_hdr_p),Y                    ; apv2_ch (header +16)
+   LDY as_y
+   LDA (zp_seg_hdr_p),Y                    ; APV fh
    SEC
    SBC zp_br_vz
    STA zp_br_t0
-   INY
-   LDA (zp_seg_hdr_p),Y                    ; apv2_fh (header +17)
-   SEC
+   DEY
+   LDA (zp_seg_hdr_p),Y                    ; APV ch — delta waits across
+   SEC                                     ; the first projection
    SBC zp_br_vz
    STA zp_ap2_dlt
-   JSR br_project_y                        ; output pre-biased
+   JSR br_project_y
+   LDX as_x
    LDA zp_br_resl
-   STA zp_line_yl_lo
+   STA VX1+9,X                             ; FH projection
    LDA zp_br_resh
-   STA zp_line_yl_hi
-; bfh2' = project(APV2_FH - vz)  (delta already staged above)
+   STA VX1+10,X
    LDA zp_ap2_dlt
    STA zp_br_t0
    JSR br_project_y
+   LDX as_x
    LDA zp_br_resl
-   STA zp_line_yr_lo
+   STA VX1+11,X                            ; CH projection
    LDA zp_br_resh
-   STA zp_line_yr_hi
-   JMP emit_vert_sx2
+   STA VX1+12,X
+   RTS
+as_x: .byte 0
+as_y: .byte 0
 .endscope
+
 
 
 
@@ -828,13 +842,23 @@ chain_reuse_v1:
    STA zp_seg_sy1_bot_lo
    LDA zp_seg_sy2_bot_hi
    STA zp_seg_sy1_bot_hi
-; back pair (portal NEEDBT/NEEDBB or solid APEDGE1) projects with THIS
-; vertex's recip — read it STRAIGHT from VX2 (still alive until the v2
-; transform); VX1+13/14 have no other consumer, so the rhi/rlo copy is
-; dropped (ping-pong analysis 2026-07-10: the full role swap loses — the
-; copy is chain-only, the indexed-read tax would hit every seg).
+; APEDGE1 solids: apv_stage projects v1's aperture with VX1+13/14 —
+; the ONE consumer of v1's banked recip — so a chained v1 must carry
+; the pair over (the transform it skipped would have written them).
    LDA zp_seg_flags
-   AND #$4C
+   AND #$40
+   BEQ ch_no_apv
+   LDA zp_seg_v2_rhi
+   STA zp_seg_v1_rhi
+   LDA zp_seg_v2_rlo
+   STA zp_seg_v1_rlo
+ch_no_apv:
+; back pair (portal NEEDBT/NEEDBB only — solid APV apertures moved to
+; the post-visibility apv_stage 2026-07-11) projects with THIS vertex's
+; recip — read it STRAIGHT from VX2 (still alive until the v2
+; transform).
+   LDA zp_seg_flags
+   AND #$0C
    BEQ ch_rts
    LDA zp_seg_v2_rhi
    STA zp_br_rhi

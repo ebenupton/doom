@@ -63,15 +63,14 @@ do_project_y:
 ; flag-gated back pair, with the vertex's recip restored to zp_br_rhi/
 ; rlo + rns_select re-vectored by the caller. ---
 dpy_back:
+; SOLIDS: no aperture work here any more (2026-07-11). The APV pairs
+; are projected POST-visibility by apv_stage (lo.s) — has_gap-culled
+; segs pay nothing (this path used to speculate APV1 for every
+; front-facing solid+APEDGE1 seg), and the struct becomes fully
+; endpoint-self-contained before any canonicalizing swap.
    LDA zp_seg_flags
    AND #$02
-   BEQ dpy_portal
-   LDA zp_seg_flags
-   AND #$40
-   BNE dpy_btop
-; solid + APEDGE1 → both
-   RTS                                     ; plain solid → neither
-dpy_portal:
+   BNE dpy_done_s
    LDA zp_seg_flags
    AND #$04
    BEQ dpy_chk_bb
@@ -86,10 +85,6 @@ dpy_btop:
    STA VX1+9,X                              ; sy_btop
    LDA zp_br_resh
    STA VX1+10,X
-   LDA zp_seg_flags
-   AND #$02
-   BNE dpy_bbot
-; solid+APEDGE1 → both
 dpy_chk_bb:
    LDA zp_seg_flags
    AND #$08
@@ -106,4 +101,6 @@ dpy_bbot:
    LDA zp_br_resh
    STA VX1+12,X
 dpy_done:
+   RTS
+dpy_done_s:
    RTS
