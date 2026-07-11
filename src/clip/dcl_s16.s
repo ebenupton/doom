@@ -515,21 +515,24 @@ si_return_y1:
 ;     sy pairs sit at the same offsets in VX1 and VX2, so one offset
 ;     names the line: +5 top, +7 bot, +9 btop, +11 bbot; lo at VX+X,
 ;     hi at VX+X+1). The x pair comes straight from zp_seg_sx1/sx2.
-; Every horizontal seg line (ft/fb/bt/bb) shares the same s16 x pair,
-; and the emitters cannot park anything in zp_line_* across draws (this
-; clipper normalizes those slots in place) — so callers pass ONLY the
-; pair offset. All four hi bytes are tested BEFORE any staging: the
-; common all-in-u8 case stages just the four lo bytes the u8 DCL reads.
+; THE SEG LAYER OWNS THE LEFT-TO-RIGHT CONTRACT: zp_sx_ord (latched by
+; the has_gap prelude from the full s16 compare) names the min endpoint,
+; and this entry stages (xl,yl)/(xr,yr) already ordered — the clipper's
+; per-draw swap machinery is GONE (see main_clip). ord=0 is the normal
+; front-facing orientation; ord=VX_STRIDE is the rare 1px edge-on
+; reversal (the old 8F.1F class), which takes the mirrored staging.
+; All four hi bytes are tested BEFORE any staging: the common all-in-u8
+; case stages just the four lo bytes the u8 DCL reads (the hi slots
+; overlay the u8 DCL's zp_cb_* workspace, written before every read).
 draw_clipped_line_s16_h:
+   LDA zp_sx_ord
+   BNE dclh_rev
+; --- v1 is the left endpoint (common orientation) ---
    LDA VX1+1,X                             ; y1 hi
    ORA VX2+1,X                             ; y2 hi
    ORA zp_seg_sx1_hi
    ORA zp_seg_sx2_hi
    BNE dclh_slow
-; all four coords in [0,255]: stage ONLY the lo bytes. The hi slots stay
-; stale — they overlay the u8 DCL's zp_cb_* workspace, and the u8 path
-; writes those before every read (the direct u8-entry callers never
-; zero them either, so no entry contract exists).
    LDA zp_seg_sx1_lo
    STA zp_line_xl_lo
    LDA zp_seg_sx2_lo
@@ -556,6 +559,40 @@ dclh_slow:
    LDA VX2,X
    STA zp_line_yr_lo
    LDA VX2+1,X
+   STA zp_line_yr_hi
+   JMP dcl16_mainclip
+; --- v2 is the left endpoint (edge-on 1px reversal) — mirrored copy ---
+dclh_rev:
+   LDA VX1+1,X
+   ORA VX2+1,X
+   ORA zp_seg_sx1_hi
+   ORA zp_seg_sx2_hi
+   BNE dclh_rslow
+   LDA zp_seg_sx2_lo
+   STA zp_line_xl_lo
+   LDA zp_seg_sx1_lo
+   STA zp_line_xr_lo
+   LDA VX2,X
+   STA zp_line_yl_lo
+   LDA VX1,X
+   STA zp_line_yr_lo
+   JMP dcl16_fastu8
+dclh_rslow:
+   LDA zp_seg_sx2_lo
+   STA zp_line_xl_lo
+   LDA zp_seg_sx2_hi
+   STA zp_line_xl_hi
+   LDA zp_seg_sx1_lo
+   STA zp_line_xr_lo
+   LDA zp_seg_sx1_hi
+   STA zp_line_xr_hi
+   LDA VX2,X
+   STA zp_line_yl_lo
+   LDA VX2+1,X
+   STA zp_line_yl_hi
+   LDA VX1,X
+   STA zp_line_yr_lo
+   LDA VX1+1,X
    STA zp_line_yr_hi
    JMP dcl16_mainclip
 
@@ -585,10 +622,11 @@ draw_clipped_line_s16:
    ORA zp_line_yr_hi
    BNE main_clip
 ::dcl16_fastu8:
+; input contract: xl <= xr (seg layer / wrapper ordered) — equality is
+; the only case left to classify (vertical vs zero-length point)
    LDA zp_line_xl_lo
    CMP zp_line_xr_lo
    BEQ fp_x_eq
-   BCS fp_swap
    JMP draw_clipped_line
 fp_x_eq:
 ; x1 == x2: vertical unless y1 == y2 (zero-length point → reject)
@@ -598,29 +636,21 @@ fp_x_eq:
    JMP draw_clipped_line
 fp_degen:
    RTS
-fp_swap:
-; x1 > x2: swap the endpoints (u8 — hi bytes are all zero here)
-   LDA zp_line_xl_lo
-   LDX zp_line_xr_lo
-   STX zp_line_xl_lo
-   STA zp_line_xr_lo
-   LDA zp_line_yl_lo
-   LDX zp_line_yr_lo
-   STX zp_line_yl_lo
-   STA zp_line_yr_lo
-   JMP draw_clipped_line
 
 main_clip:
 ::dcl16_mainclip:
-; ---- Slow path: same contract on full s16 values, BEFORE the clip
-; (the wrapper swapped before clipping; clipping a reversed line and
-; re-ordering afterwards is NOT rounding-identical) ----
+; ---- Slow path. INPUT CONTRACT: x1 <= x2 as s16 — ordering is owned
+; by the CALLERS now (the seg layer stages via zp_sx_ord, the Python
+; wrapper orders in its prelude, verticals are trivially ordered).
+; The old in-clipper swap existed for the 8F.1F 1px edge-on reversal;
+; that case now arrives pre-mirrored from draw_clipped_line_s16_h.
+; Only the zero-length reject remains ----
    LDA zp_line_xl_lo
    CMP zp_line_xr_lo
-   BNE mc_x_ne
+   BNE mc_ordered
    LDA zp_line_xl_hi
    CMP zp_line_xr_hi
-   BNE mc_x_ne
+   BNE mc_ordered
 ; x1 == x2 (s16): degenerate iff y1 == y2 too
    LDA zp_line_yl_lo
    CMP zp_line_yr_lo
@@ -629,33 +659,6 @@ main_clip:
    CMP zp_line_yr_hi
    BNE mc_ordered
    RTS                                     ; zero-length point → reject
-mc_x_ne:
-; sign of x1 - x2 (s16): lo CMP has set C; standard SBC/V idiom on hi
-   LDA zp_line_xl_lo
-   CMP zp_line_xr_lo
-   LDA zp_line_xl_hi
-   SBC zp_line_xr_hi
-   BVC mc_sign_ok
-   EOR #$80
-mc_sign_ok:
-   BMI mc_ordered                          ; x1 < x2 → already ordered
-; x1 > x2: swap endpoints (lo aliases + hi bytes)
-   LDA zp_line_xl_lo
-   LDX zp_line_xr_lo
-   STX zp_line_xl_lo
-   STA zp_line_xr_lo
-   LDA zp_line_yl_lo
-   LDX zp_line_yr_lo
-   STX zp_line_yl_lo
-   STA zp_line_yr_lo
-   LDA zp_line_xl_hi
-   LDX zp_line_xr_hi
-   STX zp_line_xl_hi
-   STA zp_line_xr_hi
-   LDA zp_line_yl_hi
-   LDX zp_line_yr_hi
-   STX zp_line_yl_hi
-   STA zp_line_yr_hi
 mc_ordered:
 ; ---- Quick reject: both endpoints on the same side of any edge ----
 ; Both x < 0?  hi byte negative for both means both < 0 (s16).
