@@ -48,9 +48,15 @@ plot_bmask:
 ;       Y += 8; byte |= rmask[x1&7]                # right partial
 ; ======================================================================
 ; --- plot_h: y = Y0 (== Y1), x from X0 to X1 --------------------------------
+; BIASED form (2026-07-11, same philosophy as plot_v's rewrite): the row
+; bits (y&7) fold into the base pointer, so byte-column offsets are pure
+; multiples of 8 — and the column DIFF (x1&$F8)-(x0&$F8) IS the right
+; partial's Y offset. Both >>3 chains, the middle-count register and the
+; Y+=8 walks cease to exist. Middles walk DESCENDING (TXA keeps N set
+; through STA, so BMI is an always-taken loop-back); write order is
+; left, right, then middles right-to-left — OR-writes commute.
 plot_h:
 .scope
-; screen ptr: lo = x0 & $F8, hi = scrstrt + (y>>3); Y = y & 7
    LDA RASTER_ZP_Y0
    LSR A
    LSR A
@@ -60,24 +66,48 @@ plot_h:
    STA zp_tmp1
    LDA RASTER_ZP_X0
    AND #$F8
-   STA zp_tmp0
+   STA zp_tmp2                              ; pure column base (for the diff)
    LDA RASTER_ZP_Y0
    AND #7
-   TAY
-; byte-count = (x1>>3) - (x0>>3); same byte -> combined mask
+   ORA zp_tmp2
+   STA zp_tmp0                              ; base = column | row bits
    LDA RASTER_ZP_X1
-   LSR A
-   LSR A
-   LSR A
-   STA zp_tmp2
+   AND #$F8
+   SEC
+   SBC zp_tmp2
+   BEQ ph_single                            ; one byte: combined mask
+   STA zp_plot_i                            ; diff = right partial's offset
+; left partial at Y = 0
    LDA RASTER_ZP_X0
-   LSR A
-   LSR A
-   LSR A
-   STA zp_plot_i                             ; current byte index (x>>3)
-   CMP zp_tmp2
-   BNE ph_multi
-; single byte: mask = lmask[x0&7] & rmask[x1&7]
+   AND #7
+   TAX
+   LDY #0
+   LDA plot_lmask,X
+   ORA (zp_tmp0),Y
+   STA (zp_tmp0),Y
+; right partial at Y = diff
+   LDA RASTER_ZP_X1
+   AND #7
+   TAX
+   LDY zp_plot_i
+   LDA plot_rmask,X
+   ORA (zp_tmp0),Y
+   STA (zp_tmp0),Y
+; middles at Y = diff-8 .. 8 (Y multiples of 8: SBC never borrows until 0)
+   LDX #$FF
+   SEC
+ph_mid:
+   TYA
+   SBC #8
+   TAY
+   BEQ ph_done
+   TXA
+   STA (zp_tmp0),Y
+   BMI ph_mid                               ; always: N=1 from TXA ($FF)
+ph_done:
+   RTS
+ph_single:
+; single byte: mask = lmask[x0&7] & rmask[x1&7], at Y = 0
    LDA RASTER_ZP_X0
    AND #7
    TAX
@@ -88,45 +118,7 @@ plot_h:
    TAX
    LDA plot_rmask,X
    AND zp_tmp2
-   ORA (zp_tmp0),Y
-   STA (zp_tmp0),Y
-   RTS
-ph_multi:
-; middle-byte count -> zp_plot_i (bytes strictly between first and last)
-   LDA zp_tmp2
-   SEC
-   SBC zp_plot_i
-   STA zp_plot_i                           ; = last-first (>=1); middles = n-1
-; left partial byte
-   LDA RASTER_ZP_X0
-   AND #7
-   TAX
-   LDA plot_lmask,X
-   ORA (zp_tmp0),Y
-   STA (zp_tmp0),Y
-; middle full bytes: same y&7 in every cell, cells 8 bytes apart -> walk Y
-   LDX zp_plot_i
-   DEX
-   BEQ ph_right                            ; no middles
-   CLC                                     ; Y+8 sums never carry (max $FF)
-ph_mid:
-   TYA
-   ADC #8
-   TAY
-   LDA #$FF                                ; OR with $FF == unconditional set
-   STA (zp_tmp0),Y
-   DEX
-   BNE ph_mid
-ph_right:
-; right partial byte (advance Y one more cell)
-   TYA
-   CLC
-   ADC #8
-   TAY
-   LDA RASTER_ZP_X1
-   AND #7
-   TAX
-   LDA plot_rmask,X
+   LDY #0
    ORA (zp_tmp0),Y
    STA (zp_tmp0),Y
    RTS
