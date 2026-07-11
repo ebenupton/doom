@@ -156,31 +156,29 @@ vc_miss:
 ; (cache base ptr already at zp_seg_v_cache_lo/hi — computed at entry)
 
 ; --- Read s16 vertex x, y from ROM_VERTS + idx*4 ---
-   LDA zp_seg_v_idx_lo
-   STA zp_br_t2
    LDA zp_seg_v_idx_hi
    STA zp_br_t3
-   ASL zp_br_t2
+   LDA zp_seg_v_idx_lo
+   ASL A
    ROL zp_br_t3
-   ASL zp_br_t2
+   ASL A
    ROL zp_br_t3
    CLC
-   LDA #<ROM_VERTS_C                       ; layout.inc constant
-   ADC zp_br_t2
+   ADC #<ROM_VERTS_C                       ; layout.inc constant
    STA zp_br_p
-   LDA #>ROM_VERTS_C
-   ADC zp_br_t3
+   LDA zp_br_t3
+   ADC #>ROM_VERTS_C
    STA zp_br_p_h
    LDY #0
    LDA (zp_br_p),Y
    STA zp_br_dxlo
-   LDY #1
+   INY
    LDA (zp_br_p),Y
    STA zp_br_dxhi
-   LDY #2
+   INY
    LDA (zp_br_p),Y
    STA zp_br_dylo
-   LDY #3
+   INY
    LDA (zp_br_p),Y
    STA zp_br_dyhi
 
