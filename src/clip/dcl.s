@@ -492,9 +492,25 @@ dv_cy2_ok:
    BCC dv_emit
    RTS                                     ; line clipped away
 dv_emit:
-; Write the 4-byte segment (x, cy1, x, cy2) to LINE_OUT_BUF and the
-; rasteriser ZP args, un-biasing Y (biased [48,207] -> screen [0,159]),
-; then tail-call the dedicated vertical plotter.
+; Stage the rasteriser ZP args (x, cy1, x, cy2), un-biasing Y (biased
+; [48,207] -> screen [0,159]) and tail-call the vertical plotter.
+; LINE_OUT capture is wrapper-only (LINE_OUT_EN — see arith.s): the
+; native path skips the buffer entirely.
+   LDA LINE_OUT_EN
+   BNE dv_emit_cap
+   LDA zp_line_xl_lo
+   STA RASTER_ZP_X0
+   STA RASTER_ZP_X1
+   LDA zp_cb_cy1
+   SEC
+   SBC #Y_BIAS
+   STA RASTER_ZP_Y0
+   LDA zp_cb_cy2
+   SEC
+   SBC #Y_BIAS
+   STA RASTER_ZP_Y1
+   JMP plot_v
+dv_emit_cap:
    LDY LINE_OUT_COUNT
    LDA zp_line_xl_lo
    STA LINE_OUT_BUF,Y
@@ -1108,6 +1124,24 @@ dcl_es_record:
    BUMP
    STA (zp_dcl_rec_buf),Y
 dcl_es_no_record:
+; LINE_OUT capture is wrapper-only (LINE_OUT_EN): native emits stage the
+; rasteriser args directly.
+   LDA LINE_OUT_EN
+   BNE des_cap
+   LDA zp_seg_start_x
+   STA RASTER_ZP_X0
+   LDA zp_seg_start_y
+   SEC
+   SBC #Y_BIAS
+   STA RASTER_ZP_Y0
+   LDA zp_ox1
+   STA RASTER_ZP_X1
+   LDA zp_tmp0
+   SEC
+   SBC #Y_BIAS
+   STA RASTER_ZP_Y1
+   JMP des_dispatch
+des_cap:
    LDY LINE_OUT_COUNT
    LDA zp_seg_start_x
    STA LINE_OUT_BUF,Y
@@ -1130,6 +1164,7 @@ dcl_es_no_record:
    STA RASTER_ZP_Y1
    INY
    STY LINE_OUT_COUNT
+des_dispatch:
 ; --- axis dispatch: ~70% of rasterised pixels are in horizontal or
 ; vertical segments (gradient census 2026-07-05) — route them to the
 ; dedicated plotters instead of the generic NJ machinery ---

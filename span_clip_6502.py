@@ -70,6 +70,7 @@ READ_BUF = 0x0300
 
 # Line output buffer (written by 6502 during tighten/mark_solid)
 LINE_OUT_COUNT = _sym('LINE_OUT_COUNT')
+LINE_OUT_EN    = _sym('LINE_OUT_EN')
 LINE_OUT_BUF   = _sym('LINE_OUT_BUF')
 
 
@@ -218,7 +219,9 @@ class SpanClip6502:
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
         mem[ZP_MS_EMIT] = 0x00
+        mem[LINE_OUT_EN] = 1
         self._run(ENTRY_MARK_SOLID)
+        mem[LINE_OUT_EN] = 0
         if self.capture is not None:
             self.capture.extend(self.drain_lines())
 
@@ -274,7 +277,9 @@ class SpanClip6502:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
+        mem[LINE_OUT_EN] = 1
         self._run(ENTRY_TIGHTEN_FROM_RECORDS)
+        mem[LINE_OUT_EN] = 0
         if self.capture is not None:
             self.capture.extend(self.drain_lines())
 
@@ -545,7 +550,9 @@ class SpanClip6502:
             mem[ZP_DCL_REC_BUF_H] = (records_buf >> 8) & 0xFF
         else:
             mem[ZP_DCL_REC_BUF_H] = 0
+        mem[LINE_OUT_EN] = 1
         self._run(ENTRY_DRAW_CLIP_S16)
+        mem[LINE_OUT_EN] = 0
         if records_buf is not None:
             mem[ZP_DCL_REC_BUF]   = 0
             mem[ZP_DCL_REC_BUF_H] = 0

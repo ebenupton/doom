@@ -145,14 +145,11 @@ seg_loop:
    JMP defq_drain                          ; subsector done — apply deferred ops
 seg_proc:
    PAGE BANK_L0                            ; re-page L0 each seg (prev seg ended in bank C)
-; Reset DCL records buffers (used by portal tighten). Python's
-; packed_render_seg calls _span_clip_6502.reset_records() at the
-; top of each seg, mirrored here.
-   LDA #0
-   STA $0700                               ; TOP_RECORDS count
-   STA $0800                               ; BOT_RECORDS count
-   STA zp_dcl_rec_buf                                 ; ZP_DCL_REC_BUF lo
-   STA zp_dcl_rec_buf_h                                 ; ZP_DCL_REC_BUF hi (= "no records buffer")
+; (Records reset MOVED to hg_pass 2026-07-11: the count bytes' only
+; reader is ms_dispatch, which runs post-visibility — culled segs paid
+; four dead stores each. rec_buf lo is zeroed once per frame in
+; br_init_frame (nothing ever writes it non-zero) and the per-seg _h
+; disarm is gone: every DCL call site arms/disarms explicitly.)
 
 ; --- seg header via the persistent pointer. Back-face inputs first
 ; (offsets 4-10: lv1x/lv1y/ldx/ldy/flags); v1/v2 (offsets 0-3) are only
@@ -386,6 +383,11 @@ hg_query:
    BNE hg_pass
    JMP s_advance
 hg_pass:
+; Records reset for THIS seg (moved from seg_proc): ms_dispatch reads
+; the counts only for segs that got here; armed draws re-init them.
+   LDA #0
+   STA $0700                               ; TOP_RECORDS count
+   STA $0800                               ; BOT_RECORDS count
 ; --- DEFERRED Y PROJECTION (2026-07-11): ALL sy pairs are projected
 ; HERE, only for segs that passed has_gap — the transform phase now
 ; computes evy/evx/clip/sx/recip only (measured 11.5k cyc/frame of

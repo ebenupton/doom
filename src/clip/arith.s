@@ -171,6 +171,12 @@ sqr2_hi = SQR2_HI
 ; Drained by Python after each tighten/mark_solid call.
 LINE_OUT_COUNT = $0200
 LINE_OUT_BUF = $0201
+; LINE_OUT capture is HARNESS-ONLY (2026-07-11): the native frame never
+; reads the buffer — and worse, $0201-$02FC OVERLAPS the D-cache
+; ($0210-$03F7), so on-disc emits were silently clobbering cache
+; entries. The Python wrapper sets LINE_OUT_EN around its calls; native
+; emits take the direct RASTER_ZP-only path.
+LINE_OUT_EN = $0BE8                     ; (freed ROM-pointer block byte)
 
 ; === Tighten records buffers ($0700, $0800) ===
 ; clip_line_records writes per-span sub-records here; tighten_from_records
