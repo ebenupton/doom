@@ -80,9 +80,13 @@ br_seg_xform_vertex:
    ROR A
    LSR A
    LSR A                                   ; A = idx >> 3
-   STA zp_br_p
-   LDA #>VCACHE_VALID_BASE
-   STA zp_br_p_h
+   TAY                                     ; Y = bitmap byte index. The page
+                                        ; is a constant, so the bitmap is
+                                        ; addressed abs,Y — the zp_br_p
+                                        ; pointer staging is gone
+                                        ; (2026-07-11). Y RIDES to the
+                                        ; vc_miss set-bit (PAGE between is
+                                        ; A/flags only).
 ; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
    TXA
    AND #7
@@ -92,11 +96,10 @@ br_seg_xform_vertex:
    LDX zp_seg_ep                           ; X = struct offset from here on
    LDA #0
    STA VX1+2,X                             ; clip = 0 (struct)
-   TAY                                     ; Y = 0 for the bitmap read
-   LDA (zp_br_p),Y
+   LDA VCACHE_VALID_BASE,Y
    AND zp_seg_v_bitm
    BEQ vc_miss
-; (was BNE+JMP)
+   LDY #0                                  ; hit reads the entry from Y = 0
 vc_hit:
 ; --- Cache hit: every field goes STRAIGHT from the cache entry into the
 ; endpoint struct (X = zp_seg_ep) — no staging. rhi/rlo also land in the
@@ -145,11 +148,10 @@ vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
 ; a usable entry). ---
-; --- Set valid bit ---
-   LDY #0
-   LDA (zp_br_p),Y
+; --- Set valid bit (Y = bitmap byte index, carried from the check) ---
+   LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
-   STA (zp_br_p),Y
+   STA VCACHE_VALID_BASE,Y
 
 ; (cache base ptr already at zp_seg_v_cache_lo/hi — computed at entry)
 
@@ -223,17 +225,15 @@ vxc_jsr_site:
    JSR ev_clamp_evy16
 
 ; Pre-write evy/evx into cache (offsets 0/1) — needed on any future
-; cache hit, including the near-clipped path.
-   LDA zp_seg_v_cache_lo
-   STA zp_br_p
-   LDA zp_seg_v_cache_hi
-   STA zp_br_p_h
+; cache hit, including the near-clipped path. Written through the cache
+; pair itself, exactly as the hit path reads it — the zp_br_p copy was a
+; pure channel (2026-07-11).
    LDY #0
    LDA VX1+0,X
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
    INY
    LDA VX1+1,X
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
 
 ; Near-clip on full s24: clipped iff total_vy < NEAR_88 (= 128 in 8.8).
 ;   vyext < 0 → clipped (very negative)
@@ -249,7 +249,7 @@ nc_fail:
 ; Mark near-clipped in cache AND the struct (same byte value, one load).
    LDY #6
    LDA #1
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
    STA VX1+2,X                             ; clip = 1
    RTS
 nc_ok:
@@ -286,26 +286,23 @@ nc_ok:
    STA VX1+14,X
 
 ; --- Cache the per-vertex results (rhi, rlo, sx, near-clip=0) — from the
-; working regs, no struct readback ---
-   LDA zp_seg_v_cache_lo
-   STA zp_br_p
-   LDA zp_seg_v_cache_hi
-   STA zp_br_p_h
+; working regs, no struct readback. Straight through the cache pair
+; (the second zp_br_p copy died with the first, 2026-07-11). ---
    LDY #2
    LDA zp_br_rhi
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
    INY
    LDA zp_br_rlo
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
    INY
    LDA zp_br_resl
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
    INY
    LDA zp_br_resh
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
    INY
    LDA #0
-   STA (zp_br_p),Y
+   STA (zp_seg_v_cache_lo),Y
 ; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
    RTS
 .endscope
