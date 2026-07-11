@@ -188,8 +188,8 @@ seg_proc:
 ; is behind the near plane, else writes sx/sy straight into this endpoint's
 ; slots via zp_seg_ep). Transform v1. Always copy evy/evx/clipped so both
 ; endpoints are available for near-plane crossing math even when clipped.
-   LDA #0
-   STA zp_seg_ep                            ; v1 → struct VX1
+   LDY #0
+   STY zp_seg_ep                            ; v1 → struct VX1
 ; --- VERTEX CHAIN (2026-07-10): if this seg's v1 is the vertex the LAST
 ; transform produced (zp_seg_v_idx still holds it, and VX2 still holds
 ; its outputs), reuse VX2 wholesale: evy/evx/clip always; sx, the front
@@ -197,7 +197,6 @@ seg_proc:
 ; The packer chain-orders subsector segs, so this hits ~80% of
 ; consecutive front-facing pairs. zp_seg_v_idx_hi is invalidated at the
 ; subsector boundary and when a crossing overwrites VX2.
-   LDY #0
    LDA (zp_seg_hdr_p),Y
    CMP zp_seg_v_idx_lo
    BNE ch_miss
@@ -212,12 +211,11 @@ seg_proc:
    JSR chain_reuse_v1
    LDA #0
    STA zp_ys_done                           ; consumed (chain) — reset for
-   JMP ch_v1_done                           ; THIS seg's own y stage
+   BEQ ch_v1_done                           ; THIS seg's own y stage
 ch_miss:
-   LDA #0
-   STA zp_ys_done                           ; prev-seg donation dies here
-   STA zp_ys_v1ok
    LDY #0
+   STY zp_ys_done                           ; prev-seg donation dies here
+   STY zp_ys_v1ok
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_lo
    INY
