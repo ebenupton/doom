@@ -8,13 +8,14 @@
 ; Loaded as part of LOW; !BOOT just *SRLOADs the banks, *LOADs LOW, MODE 4, and
 ; JMP $2000. No separate DRV file.
 
-angidx = &2180          ; frame index 0..63
-ptlo   = &2181          ; running table pointer
-pthi   = &2182
-backhi = &2183          ; hidden-buffer page hi ($58 or $6C)
-tabbase = &2200         ; sincos table (build-overlaid): 64 x 8 bytes
+INCLUDE "abi_beeb.inc"\ cross-file addresses from the ABI table
+angidx = DV_ANGIDX          ; frame index 0..63
+ptlo   = DRV_VARS+1          ; running table pointer
+pthi   = DRV_VARS+2
+backhi = DRV_VARS+3          ; hidden-buffer page hi ($58 or $6C)
+tabbase = DRV_TAB         ; sincos table (build-overlaid): 64 x 8 bytes
 
-ORG &2000
+ORG DRV_ORG
 ; ---------------------------------------------------------------------------
 ; drv — one-time boot init, then falls through into the frame loop.
 ; Entry: JMP $3C00 from !BOOT (banks loaded, LOW loaded, MODE 4). Never
@@ -105,13 +106,13 @@ ORG &2000
     INY:LDA (&EC),Y:STA &08                         ; c_mag
     INY:LDA (&EC),Y:STA &09                         ; c_neg
     INY:LDA (&EC),Y:STA &0A                         ; c_one
-    INY:LDA (&EC),Y:STA &1B6F                       ; bca_ab (view angle; BCA_WS+$2F)
+    INY:LDA (&EC),Y:STA BCA_AB                      ; view angle byte
     ; --- render one frame into the hidden buffer (cleared for us by the
     ;     previous iteration's flip scheduler) ---
     LDA backhi:STA &70                              ; rasteriser scrstrt hi
-    LDA #4 :STA &FE30 : JSR &2C09                   ; br_view_setup
+    LDA #BANK_L0 :STA &FE30 : JSR JT_VIEW_SETUP     ; br_view_setup
     LDA #6 :STA &FE30 : JSR &8000                   ; span_init / pool
-    LDA #4 :STA &FE30 : JSR &2C1B : JSR &2C15       ; init_frame + render_frame
+    LDA #BANK_L0 :STA &FE30 : JSR JT_INIT_FRAME : JSR JT_RENDER_FRAME
     ; --- flip + beam-scheduled clear of the buffer coming off display ---
     JSR flip_sched                                  ; toggles backhi
     ; --- advance to next frame (wrap at 64) ---
@@ -130,7 +131,7 @@ ORG &2000
 ;     scheduler can clear the beam-passed top half early. STA abs,Y = 5cyc.
 ;     clr58t/clr58b = top/bottom of FB0 ($5800); clr6Ct/clr6Cb = FB1 ($6C00).
 ;     Each clobbers A,Y. ---
-ORG &2400
+ORG DRV_CLR
 .clr58t
     LDA #0 : TAY
 .c0t
@@ -258,4 +259,4 @@ ALIGN &100
       ENDIF
     NEXT
 .clr_end
-SAVE "ANIMDRV", &2000, clr_end, &2000
+SAVE "ANIMDRV", DRV_ORG, clr_end, DRV_ORG

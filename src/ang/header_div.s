@@ -195,12 +195,7 @@ pa_sign:
 ; ============================================================================
 ; bca workspace block ($FA10-$FA32) — flat sits in the BBOX-vars region; banked
 ; (BBC) relocates it to low RAM (the $FA00 page is MOS/IO on a real Model B).
-.if BANKED
-BCA_WS = $1B40                          ; KEEP IN SYNC: twin in the other
-; header AND vxc_ab in bsp/vxcache.s (the triplet cost a broken disc 2026-07-10)
-.else
-BCA_WS = $FA00
-.endif
+; (BCA_WS comes from abi.inc — the old triplet is dead)
 bca_top = BCA_WS+$10                    ; s16; bot $8A, left $8C, right $8E (contiguous = val[])
 bca_bot = BCA_WS+$12
 bca_left = BCA_WS+$14

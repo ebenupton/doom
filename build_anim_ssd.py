@@ -16,8 +16,9 @@ from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 SECTOR = 256
 TOTAL_SECTORS = 800
 SSD_SIZE = TOTAL_SECTORS * SECTOR
-DRV_ADDR = 0x2000
-TAB_ADDR = 0x2200
+import abi
+DRV_ADDR = abi.DRV_ORG
+TAB_ADDR = abi.DRV_TAB
 N_FRAMES = 64
 ANGLE_STEP = 256 // N_FRAMES        # 4
 
@@ -98,7 +99,7 @@ BOOT_TEXT = (
     "*SRLOAD BANK2 8000 7\r"
     "*LOAD LOW 1B40\r"
     "MODE 4\r"
-    "CALL &2000\r"
+    f"CALL &{abi.DRV_ORG:X}\r"
 ).encode('ascii')
 
 

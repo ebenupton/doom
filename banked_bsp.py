@@ -21,9 +21,10 @@ import doom_wireframe as dw
 from banked_mem import BankedMemory
 from bsp_render_6502 import BspRender6502, ROM_MAIN_BASE, ROM_FHCH_BASE
 
-BANK_L0, BANK_C, BANK_L2 = 4, 6, 7
+import abi
+BANK_L0, BANK_C, BANK_L2 = abi.BANK_L0, abi.BANK_C, abi.BANK_L2
 FHCH_LOW = 0x2400
-SQR_LOW = 0x1C00
+SQR_LOW = abi.SQR_BASE
 RASTER_OFF = 0xA900            # rasteriser window addr in bank C
 
 
@@ -95,7 +96,7 @@ def build_banked(flatr):
 
     # --- sqr tables -> low $1C00 (copy from flat $A500) ---
     for i in range(0x400):
-        bm[SQR_LOW + i] = fmem[0xA500 + i]
+        bm[SQR_LOW + i] = fmem[abi.SQR_BASE_FLAT + i]
 
     # --- bank L2 = relocated $C000+ data (window offsets must match the asm) ---
     # TA_LO $8000, TA_HI $8400, VATOX $8800, bbox $8D00, recip $9C00,
@@ -169,7 +170,7 @@ class BankedBspRender(BspRender6502):
 
     def render_frame(self, px, py, ab, floor_z=0):
         # bca_ab relocated from $FA2F to $1B6F (BCA_WS+$2F) in the banked build.
-        self.bm[0x1B6F] = ab & 0xFF
+        self.bm[abi.BCA_AB] = ab & 0xFF
         # 2026-07-10 one-region merge: banked jt is at $2C00 (flat stays at
         # $4800), so the inherited render_frame's flat entry constants no
         # longer apply. Swap in the banked-map addresses around the call.

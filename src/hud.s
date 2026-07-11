@@ -46,14 +46,14 @@ zp_hud_src = $EB                        ; font glyph pointer
 zp_hud_dst = $ED                        ; framebuffer cell pointer
 HUD_VAL    = $F0                        ; byte being hexed
 
-HUD_ANGIDX = $2180
-HUD_BACKHI = $2181
-HUD_XFRAC  = $2182
-HUD_XLO    = $2183
-HUD_XHI    = $2184
-HUD_YFRAC  = $2185
-HUD_YLO    = $2186
-HUD_YHI    = $2187
+HUD_ANGIDX = DV_ANGIDX                  ; driver vars via abi.inc —
+HUD_BACKHI = DV_BACKHI                  ; no private address copies
+HUD_XFRAC  = DV_PXF
+HUD_XLO    = DV_PXL
+HUD_XHI    = DV_PXH
+HUD_YFRAC  = DV_PYF
+HUD_YLO    = DV_PYL
+HUD_YHI    = DV_PYH
 
 OS_FONT    = $C000                      ; OS 1.2 glyphs, chars 32..127
 

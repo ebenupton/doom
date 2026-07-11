@@ -42,9 +42,7 @@ ina
 
 ; --- BBC banked port (path B), selected by beebasm -D BANKED=0|1 ---
 ; Sideways-RAM bank numbers (RAM banks confirmed on jsbeeb B; loader copies here)
-BANK_L0 = 4                             ; nodes, ss, seg_hdr, verts
-BANK_C = 6                              ; clipper + rasteriser
-BANK_L2 = 7                             ; angle tables, bbox, recip, VWH, VWHC cache ($C000+ relocated)
+; (BANK_L0/C/L2 come from abi.inc via zp.inc — one table, no copies)
 ; PAGE b : page sideways bank b ($FE30). No-op in the flat build, so flat stays
 ; bit-exact. A is clobbered — only invoke at A-dead points.
 ; --- Node/subsector SoA pages (head of ROM_MAIN; see wad_packed.py).
@@ -193,12 +191,15 @@ jt_anim_tick: JMP anim_tick                          ; +$1E  (driver: PAGE BANK_
 jt_anim_init: JMP anim_init                          ; +$21
 ; (anim_tick/anim_init are same-unit labels — anim.s is part of this link unit)
 .export jt_anim_tick, jt_anim_init
-.if ::BANKED
-; The drivers hardcode these addresses (walk_drv/anim_drv JSR &2C09 etc);
-; MAIN must stay FIRST in the CODE region and the table must not move.
-.assert jt_br_umul8 = $2C00, error, "banked jump table moved off $2C00 (driver ABI)"
-.assert jt_anim_tick = $2C1E, error, "jt_anim_tick moved off $2C1E (driver ABI)"
-.endif
+; The drivers reach these via the abi.inc constants (JT_*); MAIN must
+; stay FIRST in the CODE region and the table must not move. Asserted
+; in BOTH builds — ENGINE_JT carries the per-build base.
+.assert jt_br_umul8 = ENGINE_JT, error, "jump table moved off ENGINE_JT (driver ABI)"
+.assert jt_br_view_setup = JT_VIEW_SETUP, error
+.assert jt_br_render_frame = JT_RENDER_FRAME, error
+.assert jt_br_init_frame = JT_INIT_FRAME, error
+.assert jt_anim_tick = JT_ANIM_TICK, error
+.assert jt_anim_init = JT_ANIM_INIT, error
 
 ; ============================================================================
 ; Aliases for span_clip's exported routines
@@ -220,18 +221,11 @@ SC_TIGHTEN_FROM_RECORDS = jt_tighten_from_records
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites
-.if ::BANKED
-; low RAM (KEEP IN SYNC with src/clip/arith.s — same tables, twin equates)
-sqr_lo = $1C00
-sqr_hi = $1D00
-sqr2_lo = $1E00
-sqr2_hi = $1F00
-.else
-sqr_lo = $A500
-sqr_hi = $A600
-sqr2_lo = $A700
-sqr2_hi = $A800
-.endif
+; abi.inc owns the table base (SQR_BASE, flat/banked variants there)
+sqr_lo = SQR_LO
+sqr_hi = SQR_HI
+sqr2_lo = SQR2_LO
+sqr2_hi = SQR2_HI
 
 ; span_clip's line ZP (zp_line_* lo bytes + zp_line_*_hi for the s16 clipper)
 

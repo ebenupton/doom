@@ -31,7 +31,9 @@ RCACHE_COMPUTED = RCACHE + $760         ; 59 bytes
 RCACHE_FULL = RCACHE + $7A0             ; 59 bytes
 bca_prevpos = RCACHE + $7E0             ; 4 bytes: last frame's int position
 bca_cachepos = RCACHE + $7E4            ; 4 bytes: position RCACHE_COMPUTED is valid for
-RCACHE_ENABLE = RCACHE + $7E8           ; nonzero -> cache may engage (drivers set it;
+.assert RCACHE + $7E8 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
+.assert RCACHE + $760 = RCACHE_STATE, error, "rcache state head drifted from abi.inc"
+; RCACHE_ENABLE comes from abi.inc; nonzero -> cache may engage (drivers set it;
                                         ; harness default 0 keeps every existing test
                                         ; on the original path, byte- and cycle-exact)
 ; scratch for the cached routine (dead outside a check)

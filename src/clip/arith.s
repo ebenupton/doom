@@ -120,21 +120,13 @@ VIS_YMAX = Y_BIAS + 159                 ; = 207: maximum biased visible Y
 ; Quarter-square multiply tables (pre-loaded by the Python harness).
 ; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
 ; used when a+b overflows u8.
-.if ::BANKED
-; low RAM at $1C00-$1FFF (one-region merge 2026-07-10: the old LOWA code
-; area; drivers sit above at $2000). Above vcache ($0C00-$1B3A) and BCA_WS
-; ($1B40). Reachable from the bank-C clipper AND from bsp_render's local
-; umul8 (both read sqr). Loader-seeded; nothing else may live in the page.
-sqr_lo = $1C00
-sqr_hi = $1D00
-sqr2_lo = $1E00
-sqr2_hi = $1F00
-.else
-sqr_lo = $A500
-sqr_hi = $A600
-sqr2_lo = $A700
-sqr2_hi = $A800
-.endif
+; abi.inc owns the table base (SQR_BASE; banked $1C00 low RAM — above
+; BCA_WS $1B40, below the drivers at $2000; reachable from the bank-C
+; clipper AND bsp_render's local umul8. Loader-seeded page).
+sqr_lo = SQR_LO
+sqr_hi = SQR_HI
+sqr2_lo = SQR2_LO
+sqr2_hi = SQR2_HI
 
 ; === Seg value cache ($A0-$A4) — separate from crossover working set ===
 ; Caches the right-endpoint new-seg values from the previous overlapping span

@@ -415,12 +415,7 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
 .import jt_bca_check, jt_bca_frame
 BCA_CHECK = jt_bca_check                ; JSR -> bbox_check_angle (point_to_angle inlined out)
-.if ::BANKED
-BCA_WS = $1B40                          ; KEEP IN SYNC: twin in the other
-; header AND vxc_ab in bsp/vxcache.s (the triplet cost a broken disc 2026-07-10)
-.else
-BCA_WS = $FA00
-.endif
+; (BCA_WS comes from abi.inc — the old triplet is dead)
 bca_top = BCA_WS+$10                    ; box input: top,bot,left,right = +$10,$12,$14,$16
 bca_ilo = $BB                           ; output: left column (u8) — ZP
 bca_ihi = $BF                           ; output: right column (u8) — ZP

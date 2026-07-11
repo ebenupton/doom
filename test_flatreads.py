@@ -14,8 +14,9 @@ from banked_mem import BankedMemory
 from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 from span_clip_6502 import SpanClip6502
 
-ENTRY_VIEW, ENTRY_RENDER, ENTRY_INIT_FRAME = 0x2C09, 0x2C15, 0x2C1B
-ENTRY_SPAN_INIT = 0x8000
+import abi
+ENTRY_VIEW, ENTRY_RENDER, ENTRY_INIT_FRAME = abi.JT_VIEW_SETUP, abi.JT_RENDER_FRAME, abi.JT_INIT_FRAME
+ENTRY_SPAN_INIT = abi.CLIP_JT
 ZP = {0x00:0x00,0x01:0xEE,0x02:0x40,0x03:0xD2,0x04:0x06,0x05:0,0x06:0,0x07:0,
       0x08:0,0x09:1,0x0A:1,0x90:0x70,0x91:0xFF,0x92:0x92,0x93:0xFE, 0x70:0x58,
       0x9D:0xFF,0x9E:0xFF}   # incl. s16 int-hi bytes (spawn negative both axes)
@@ -51,7 +52,7 @@ def main():
     # RNS vectoring block: staged in L2 $A100 -> stack page (drivers' stkcpy)
     bare.select(BANK_L2)
     for i in range(0xC0): bare[0x0100+i]=bare[0xA100+i]
-    bare[0x1B6F]=0x80; bare[0xFF00]=0x00
+    bare[abi.BCA_AB]=0x80; bare[0xFF00]=0x00
     bare.select(BANK_L0)
     sc.mpu.memory = bare; bare.mpu = sc.mpu
 

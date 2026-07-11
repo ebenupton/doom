@@ -79,8 +79,8 @@ D_PREV_AB = $0212
 D_PREVP  = $0213                        ; 6 bytes (full 8.8 x/y position)
 D_CODE_R = $0220                        ; 236 bytes (right-child codes by node)
 D_CODE_L = $030C                        ; 236 bytes (ends $03F7)
-D_ENABLE = $05FE                        ; unbanked (driver/harness writes)
-D_FWD    = $05FF                        ; unbanked: 1 = this frame's move was
+; (D_ENABLE/D_FWD come from abi.inc — driver/harness write them;
+; D_FWD: 1 = this frame's move was
                                         ; forward-only (driver-asserted)
 .export D_ENABLE, D_FWD, D_MODE, D_FRAME
 

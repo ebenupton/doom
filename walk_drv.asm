@@ -12,28 +12,29 @@
 ; Keyboard: direct System VIA scan (IC32 addr 3 low = manual scan, key number
 ; written to $FE4F, bit 7 read back). No OS.
 
-angidx = &2180          ; view angle index 0..63 (angle byte = idx*4)
-backhi = &2181          ; hidden-buffer page hi ($58 or $6C)
-pxf    = &2182          ; player x: 8.8 prescaled, 24-bit (frac, lo, hi)
-pxl    = &2183
-pxh    = &2184
-pyf    = &2185
-pyl    = &2186
-pyh    = &2187
-jidx   = &2188          ; vsync journal index (0..62)
-hud_en   = &2189        ; debug HUD on/off (H key toggles)
-hud_prev = &218A        ; H-key state last frame (press-edge debounce)
-D_ENABLE = &05FE        ; forward-coherence bbox cache master switch (bbox.s)
-D_FWD    = &05FF        ; per-frame flag: this frame's move was forward-only
+INCLUDE "abi_beeb.inc"\ every cross-file address comes from the ABI table
+angidx = DV_ANGIDX          ; view angle index 0..63 (angle byte = idx*4)
+backhi = DV_BACKHI          ; hidden-buffer page hi ($58 or $6C)
+pxf    = DV_PXF          ; player x: 8.8 prescaled, 24-bit (frac, lo, hi)
+pxl    = DV_PXL
+pxh    = DV_PXH
+pyf    = DV_PYF
+pyl    = DV_PYL
+pyh    = DV_PYH
+jidx   = DV_JIDX          ; vsync journal index (0..62)
+hud_en   = DV_HUD_EN        ; debug HUD on/off (H key toggles)
+hud_prev = DV_HUD_PREV        ; H-key state last frame (press-edge debounce)
+; (D_ENABLE/D_FWD from the ABI include)        ; forward-coherence bbox cache master switch (bbox.s)
+; ---        ; per-frame flag: this frame's move was forward-only
 ; vsync journal: 64 x 4 bytes at $0300 (dead OS workspace; no OS after boot):
 ;   +0 class taken (0/1/2)   +1 T1 hi at classify
 ;   +2 T1 hi after the vsync wait ($FF = class 2, no wait)
 ;   +3 T1 hi after clears done
-jbase  = &1A00          ; RELOCATED 2026-07-08 from $0300: the forward-coherence
+jbase  = JBASE          ; RELOCATED 2026-07-08 from $0300: the forward-coherence
                         ; bbox cache owns $0210-$03F7 (bbox.s); $1A00 is dead
                         ; boot-loader memory (loader stages below $1B40, never
                         ; touched after boot)
-tabbase = &2200         ; sincos table (build-overlaid): 64 x 8 bytes
+tabbase = DRV_TAB         ; sincos table (build-overlaid): 64 x 8 bytes
 
 SPEED = 12              ; world units per frame of forward motion
 
@@ -44,7 +45,7 @@ RAWX_MAX = &0A10        ;  2576
 RAWY_MIN = &F9D2        ; -1582
 RAWY_MAX = &0492        ;  1170
 
-ORG &2000
+ORG DRV_ORG
 ; ---------------------------------------------------------------------------
 ; drv — one-time boot init, then falls through into the frame loop.
 ; Entry: JMP $2000 from the !BOOT loader (banks 4/6/7 = L0/C/L2 already
@@ -102,12 +103,12 @@ ORG &2000
     LDA #0
     TAX
 .rcinit
-    STA &B460,X
+    STA RCACHE_STATE,X
     INX
-    CPX #&89
+    CPX #RCACHE_STATE_LEN
     BNE rcinit
     LDA #1
-    STA &B4E8                                       ; RCACHE_ENABLE
+    STA RCACHE_ENABLE
     ; --- translation-coherence vertex cache (VXC): zero valid bitmap +
     ;     state ($05A0-$05FF, unbanked), then enable. Zero-init is safe:
     ;     first enabled frame is cold (prev_ab sentinel path) and every
@@ -115,12 +116,12 @@ ORG &2000
     LDA #0
     TAX
 .vxinit
-    STA &05A0,X
+    STA VXC_STATE,X
     INX
-    CPX #&60
+    CPX #VXC_STATE_LEN
     BNE vxinit
     LDA #1
-    STA &05DB                                       ; VXC_ENABLE
+    STA VXC_ENABLE
     ; --- animated sectors: init state machines + lazy patch hook (glue
     ;     at $3DA0 pages bank L2; must run AFTER vxinit's $05xx zeroing) ---
     JSR anim_glue_init
@@ -169,13 +170,13 @@ ORG &2000
     INY:LDA (&EC),Y:STA &08
     INY:LDA (&EC),Y:STA &09
     INY:LDA (&EC),Y:STA &0A
-    INY:LDA (&EC),Y:STA &1B6F                       ; bca_ab (BCA_WS+$2F)
+    INY:LDA (&EC),Y:STA BCA_AB                      ; view angle byte
     JSR anim_glue_tick                              ; advance movers (lazy patch)
     ; --- render into hidden buffer (cleared by previous flip_sched) ---
     LDA backhi:STA &70
-    LDA #4 :STA &FE30 : JSR &2C09                   ; br_view_setup
-    LDA #6 :STA &FE30 : JSR &8000                   ; span_init / pool
-    LDA #4 :STA &FE30 : JSR &2C1B : JSR &2C15       ; init_frame + render_frame
+    LDA #BANK_L0 :STA &FE30 : JSR JT_VIEW_SETUP     ; br_view_setup
+    LDA #BANK_C :STA &FE30 : JSR CLIP_JT            ; span_init / pool
+    LDA #BANK_L0 :STA &FE30 : JSR JT_INIT_FRAME : JSR JT_RENDER_FRAME
     JSR flip_sched
     JMP frame
 
@@ -184,8 +185,8 @@ ORG &2000
 ; An extra init block once pushed it INTO the variables - the engine's
 ; table pointers then got clobbered at runtime by angidx/jidx stores and
 ; every frame rendered pixel-free while the loop ran happily. Pin it.
-ASSERT P% <= &2180
-ORG &2190
+ASSERT P% <= DRV_VARS
+ORG DRV_VARS + &10
 ; (.ptrtab retired 2026-07-10 — the engine assembles its ROM bases from
 ; src/layout.inc; the $0BE8 block is dead. $3D90-$3D9F freed.)
 .drv_end
@@ -193,7 +194,7 @@ ORG &2190
 ; --- unrolled framebuffer clears + flip scheduler: identical to anim_drv --
 ; --- animated-sector glue: page bank L2 and enter the anim jump table
 ;     ($3DA0-$3DBF pocket between ptrtab and the sincos table at $3E00) ---
-ORG &21A0
+ORG DRV_GLUE
 ; anim_glue_init: one-time mover-state init + SMC-installs the per-subsector
 ; visibility hook in the renderer. anim_glue_tick: per-frame logical advance
 ; of every mover's height state machine (no table writes; the hook patches
@@ -211,15 +212,15 @@ ORG &21A0
     ; into $0100-$01BF, the region the engine reserves (SP floor $F1).
     LDX #0
 .stkcpy
-    LDA &A100,X
+    LDA STK_STAGE,X
     STA &0100,X
     INX
-    CPX #&C0
+    CPX #STK_LEN
     BNE stkcpy
-    JMP &2C21                                       ; jt_anim_init (pinned jt)
+    JMP JT_ANIM_INIT
 .anim_glue_tick
     LDA #7:STA &FE30
-    JMP &2C1E                                       ; jt_anim_tick (pinned jt)
+    JMP JT_ANIM_TICK
 .key_hud
     ; H key: toggle the debug HUD on the press edge only (hud_prev holds
     ; last frame's state, so holding the key flips it exactly once).
@@ -239,11 +240,11 @@ ORG &21A0
     RTS
 .hg_on
     LDA #6:STA &FE30                                ; HUD code lives in bank C
-    JSR &A400                                       ; hud_draw
+    JSR HUD_ENTRY                                   ; hud_draw
     LDA #4:STA &FE30                                ; restore a render bank
     RTS
 
-ORG &2400
+ORG DRV_CLR
 ; ---------------------------------------------------------------------------
 ; clr58t/clr58b/clr6Ct/clr6Cb — unrolled clears of framebuffer half-screens.
 ; Each 20-page buffer ($5800 or $6C00) splits at the 80-row midline into a
@@ -637,5 +638,5 @@ FOR n, 0, 21
     EQUB HI(n * 36)
 NEXT
 .clr_end
-ASSERT clr_end <= &2C00     ; MUST NOT touch the engine at $2C00 (jump table!)
-SAVE "WALKDRV", &2000, clr_end, &2000
+ASSERT clr_end <= ENGINE_JT ; MUST NOT touch the engine jump table
+SAVE "WALKDRV", DRV_ORG, clr_end, DRV_ORG

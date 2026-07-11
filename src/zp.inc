@@ -1,3 +1,4 @@
+.include "abi.inc"          ; cross-language ABI constants (generated)
 ; ============================================================================
 ; ZERO PAGE REGISTRY — single source of truth for every ZP assignment in the
 ; engine (span_clip + bsp_render + angle module). Included first by all three

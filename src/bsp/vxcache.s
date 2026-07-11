@@ -35,7 +35,7 @@
 
 ; --- data equates (unbanked) ---
 VXC_VALID   = $05A0                     ; 59 bytes (467 vertices)
-VXC_ENABLE  = $05DB
+; (VXC_ENABLE comes from abi.inc)
 vxc_prev_ab = $05DC
 vxc_cacc_x  = $05DD                     ; s24
 vxc_cacc_y  = $05E0                     ; s24
@@ -59,16 +59,9 @@ VXC_YHI  = $B200
 VXC_YEXT = $B400
 .endif
 
-; local duplicate (slope_div.s precedent): angle byte written per frame.
-; KEEP IN SYNC with BCA_WS in ang/header_div.s AND bsp/backface.s — this
-; TRIPLET missed the 2026-07-10 $3A00->$1B40 move and shipped a disc
-; where VXC never saw the angle change: every turn reused translation-
-; telescoped vertices (geometry collapse on rotation, forward fine).
-.if ::BANKED
-vxc_ab = $1B40+$2F                      ; = bca_ab (BCA_WS+$2F)
-.else
-vxc_ab = $FA00+$2F
-.endif
+; the frame angle byte: abi.inc's BCA_AB (the old private vxc_ab copy
+; shipped the 2026-07-10 broken-turn disc)
+vxc_ab = BCA_AB
 
 ; ============================================================================
 ; Resident stub — replaces br_to_view via the vxc_jsr_site SMC when enabled.

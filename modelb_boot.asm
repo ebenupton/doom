@@ -11,6 +11,7 @@
 ; driver's SEI at $2000 is where the OS goes away). The $3000 staging
 ; area is plain user RAM under the boot-time MODE 7, and LOW ($1B40+)
 ; only lands after the last bank copy has consumed the staging.
+INCLUDE "abi_beeb.inc"
 ORG &1900
 .ldr
     LDX #LO(c_b0): LDY #HI(c_b0): JSR &FFF7      ; *LOAD BANK0 3000  (L0)
@@ -21,7 +22,7 @@ ORG &1900
     LDA #7:  JSR copy                            ; -> bank 7
     LDX #LO(c_low):LDY #HI(c_low):JSR &FFF7      ; *LOAD LOW 1B40
     LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4
-    JMP &2000                                    ; -> animation driver
+    JMP DRV_ORG                                  ; -> animation driver
 
 ; copy — copy the 16K staged at $3000-$6FFF into sideways bank A.
 ; In: A = target bank number (4/6/7). Uses ZP $80-$83 as src/dst pointers.

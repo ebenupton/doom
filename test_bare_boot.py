@@ -22,7 +22,8 @@ from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 from span_clip_6502 import SpanClip6502
 
 SPAWN = (1056, -3616, 128)
-DRV_ADDR = 0x2000
+import abi
+DRV_ADDR = abi.DRV_ORG
 # SPIN (.spin JMP self, see banked_boot.asm DRV) is found by scanning DRV
 # for the self-jump — the driver shrinks/moves with layout work.
 FB_LO, FB_HI = 0x5800, 0x6C00     # true 256x160 mode-4 framebuffer = 5K (20 pages)
