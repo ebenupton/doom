@@ -137,7 +137,7 @@ zp_seg_ep = $26                   ; [bsp]; per-endpoint SEG_PROJ_BUF offset
 zp_ri_dlo = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
 ; from header+14 via (zp_seg_hdr_p),Y (rule 2b; solids never touch it).
-zp_ri_neg = $2A                   ; [bsp]
+; $2A free (was zp_ri_neg — trig sign seeds zp_br_t1 via thunk SMC, 2026-07-11)
 ; $2B FREE (2026-07-09): zp_seg_bch retired — back ceil read on demand
 ; from header+15 via (zp_seg_hdr_p),Y.
 zp_ri_dhi = $2C                   ; [bsp]; (was unused; s16 hi byte of d)

@@ -259,7 +259,7 @@ ft_zero:
 ;
 ;   Inputs:  zp_ri_dlo, zp_ri_dhi (s16 integer delta — was s8, now s16)
 ;            zp_ri_mag (u8 trig magnitude)
-;            zp_ri_neg (1 if trig negative)
+;            zp_br_t1 (seeded 1 if trig negative — thunk SMC)
 ;            zp_ri_one (1 if |trig| == 1)
 ;   Output:  zp_br_resl/resh (s16)
 ;
@@ -273,7 +273,7 @@ ft_zero:
 ; delta (wx - px_int), so the result is s24 in resl/resh/resext — the
 ; 8.8 view coordinate plus a sign/overflow extension byte. Called 4× per
 ; vertex-cache miss by br_to_view (view.s): dx·sin, dy·cos, dx·cos,
-; dy·sin. Clobbers zp_ri_dlo/dhi (replaced by |d|), zp_ri_neg, zp_br_t1,
+; dy·sin. Clobbers zp_ri_dlo/dhi (replaced by |d|), zp_br_t1,
 ; zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
 ; ============================================================================
 ; ($29, $2B were unused zp_ri_mag/zp_ri_one -> reclaimed for zp_seg_bfh/bch)
@@ -329,14 +329,14 @@ rot_gen_sin:
    LDA #0                                  ; SMC +1: |sin| mag (rot_select)
    STA zp_mul_b
    LDA #0                                  ; SMC +5: sin neg flag
-   STA zp_ri_neg
+   STA zp_br_t1                            ; SEEDS the core's sign tracker
    JMP rot_core
 
 rot_gen_cos:
    LDA #0                                  ; SMC +1: |cos| mag (rot_select)
    STA zp_mul_b
    LDA #0                                  ; SMC +5: cos neg flag
-   STA zp_ri_neg
+   STA zp_br_t1                            ; SEEDS the core's sign tracker
    JMP rot_core
 
 .if ::BANKED
@@ -344,7 +344,7 @@ rot_gen_cos:
 .endif
 ; rot_core — the general |d|*mag s24 path (the old br_rot_int body).
 ; In: zp_ri_dlo/dhi = d (s16), zp_mul_b = mag (staged by the thunk),
-;     zp_ri_neg = trig sign (staged). Out: resl/resh/resext (s24).
+;     zp_br_t1 = trig sign seed (thunk). Out: resl/resh/resext (s24).
 ; Clobbers as before (|d| written back to zp_ri_dlo/dhi).
 rot_core:
 .scope
@@ -359,10 +359,13 @@ ri_d_nz:
 ;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
 ; First product: (lo,hi) → resl, resh; resext starts 0.
 ; Second product: (lo,hi) added to resh, resext.
-   ZERO zp_br_t1                           ; sign tracker (1 if d was -ve)
+; zp_br_t1 arrives SEEDED with the trig sign (thunk SMC immediate); a
+; negative d FLIPS it — the d-sign and trig-sign negations XOR-fold into
+; one tail negate (they used to double-negate when both fired).
    LDA zp_ri_dhi
    BPL ri_d_pos
-   LDA #1
+   LDA zp_br_t1
+   EOR #1
    STA zp_br_t1
    LDA #0
    SEC
@@ -446,8 +449,8 @@ um2_done:
    ADC zp_br_resext
    STA zp_br_resext
    LDA zp_br_t1
-   BEQ ri_apply_neg
-; d was negative → negate s24 result.
+   BEQ ri_done                             ; t1 = (d<0) XOR (trig<0)
+; net sign negative -> negate the s24 result ONCE.
    LDA #0
    SEC
    SBC zp_br_resl
@@ -458,22 +461,7 @@ um2_done:
    LDA #0
    SBC zp_br_resext
    STA zp_br_resext
-ri_apply_neg:
-   LDA zp_ri_neg
-   BNE ri_do_neg                           ; rare (trig negative); common case
-ri_done:                                ; falls straight through to RTS
-   RTS
-ri_do_neg:
-   LDA #0
-   SEC
-   SBC zp_br_resl
-   STA zp_br_resl
-   LDA #0
-   SBC zp_br_resh
-   STA zp_br_resh
-   LDA #0
-   SBC zp_br_resext
-   STA zp_br_resext
+ri_done:
    RTS
 ri_zero:
    LDA #0
