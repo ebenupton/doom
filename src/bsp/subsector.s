@@ -125,15 +125,14 @@ anim_ss_cont:
 ; Invalidate the vertex-chain key at the subsector boundary: chained
 ; front-sy reuse needs the SAME front heights, only guaranteed within
 ; one subsector. idx < 481, so $FF never matches a real hi byte.
-   LDA #$FF
-   STA zp_seg_v_idx_hi
-   LDA #0
-   STA zp_ys_done                           ; no cross-subsector sy donation
-   STA zp_ys_v1ok
+   LDX #$FF
+   STX zp_seg_v_idx_hi
+   INX
+   STX zp_ys_done                           ; no cross-subsector sy donation
+   STX zp_ys_v1ok
 
 ; Reset deferred op queue for this subsector.
-   LDA #0
-   STA DEFQ_TAIL
+   STX DEFQ_TAIL
 
 ; --- Loop over segs ---
 seg_loop:
