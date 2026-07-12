@@ -10,7 +10,7 @@
 ;                             rns re-select (see project.s RNS banner).
 ;   br_frac_rot_term          per-frame fractional rotation term
 ;                             (br_view_setup only).
-;   rot_zero/unity_pos/unity_neg/rot_gen_sin/rot_gen_cos + rot_core
+;   rot_zero/unity_pos/unity_neg/rot_gen_sin/rot_gen_cos + rot_core_sin/_cos
 ;                             the SMC-specialized rotation variants:
 ;                             rot_select (view.s SEL segment) patches the
 ;                             four rot_s1..s4 call-site operands in
@@ -327,7 +327,7 @@ zp_ri_d = zp_ri_dlo                     ; backwards-compat alias
 ;   rot_unity_neg   |trig| == 1, -ve    result := -(d << 8)
 ;   rot_gen_sin/cos general             thunk stages the frame's mag/neg
 ;                                       as SMC'd immediates, falls into
-;                                       rot_core (the old mul body)
+;                                       rot_core_sin/_cos (per-trig: SMC sum bases)
 ; Same pattern as the jt_bca_check / vxc_jsr_site / D-cache frame hooks.
 ; All variants are bit-exact with the old in-body branches.
 .if ::BANKED
@@ -368,40 +368,38 @@ rot_gen_sin:
    STA zp_mul_b
    LDA #0                                  ; SMC +5: sin neg flag
    STA zp_br_t1                            ; SEEDS the core's sign tracker
-   JMP rot_core
+   JMP rot_core_sin
 
 rot_gen_cos:
    LDA #0                                  ; SMC +1: |cos| mag (rot_select)
    STA zp_mul_b
    LDA #0                                  ; SMC +5: cos neg flag
    STA zp_br_t1                            ; SEEDS the core's sign tracker
-   JMP rot_core
+   JMP rot_core_cos
 
 .if ::BANKED
 .segment "MAIN"
 .endif
-; rot_core — the general |d|*mag s24 path (the old br_rot_int body).
-; In: zp_ri_dlo/dhi = d (s16), zp_mul_b = mag (staged by the thunk),
-;     zp_br_t1 = trig sign seed (thunk). Out: resl/resh/resext (s24).
-; Clobbers as before (|d| written back to zp_ri_dlo/dhi).
-rot_core:
+; rot_core_sin/_cos — the general |d|*mag s24 path, ONE CORE PER TRIG
+; because the sum-side quarter-square lookups carry the frame's mag in
+; their SMC'd table-base operands (sin and cos have different mags).
+; In: zp_ri_dlo/dhi = d (s16), zp_mul_b = mag (staged by the thunk; the
+;     DIFF side still needs it), zp_br_t1 = trig sign seed (thunk).
+; Out: resl/resh/resext (s24). |d| written back to zp_ri_dlo/dhi.
+rot_core_sin:
 .scope
 ; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
 ; common on E1M1's grid geometry) — skip the two multiplies.
    LDA zp_ri_dlo
    ORA zp_ri_dhi
-   BNE ri_d_nz
+   BNE d_nz
    JMP ri_zero
-ri_d_nz:
-; |d| × mag → s24, with sign restoration. Compute as
-;   res = |d|.lo * mag + (|d|.hi * mag) << 8.
-; First product: (lo,hi) → resl, resh; resext starts 0.
-; Second product: (lo,hi) added to resh, resext.
+d_nz:
 ; zp_br_t1 arrives SEEDED with the trig sign (thunk SMC immediate); a
 ; negative d FLIPS it — the d-sign and trig-sign negations XOR-fold into
-; one tail negate (they used to double-negate when both fired).
+; one tail negate.
    LDA zp_ri_dhi
-   BPL ri_d_pos
+   BPL d_pos
    LDA zp_br_t1
    EOR #1
    STA zp_br_t1
@@ -412,12 +410,16 @@ ri_d_nz:
    LDA #0
    SBC zp_ri_dhi
    STA zp_ri_dhi
-ri_d_pos:
-; --- inlined umul8(zp_ri_dlo, mag) — saves JSR/RTS in the hot rotation ---
-; Quarter-square multiply: a*b = f(a+b) - f(|a-b|), f(x) = x²/4 tables.
-; X = a+b (sqr2_* tables when the sum carries past 255), Y = |a-b|.
+d_pos:
+; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
+; The sum side f(x+mag) is one LDA abs,X with X = raw x: rot_select
+; patches the operand LO byte to mag (SQR pages are page-aligned so the
+; hi byte is static; the abs,X page-cross walks into the second lo/hi
+; page — pages are CONTIGUOUS per gen_abi's 2026-07-12 reorder). No sum
+; add, no TAX, no carry-window branch. Diff side is classic: |x-mag|
+; always fits the first window.
    LDA zp_ri_dlo
-   TAX                                     ; stash in X (was zp_tmp0)
+   TAX                                     ; X = raw x (base carries +mag)
    SEC
    SBC zp_mul_b
    BCS um1_pos
@@ -425,32 +427,19 @@ ri_d_pos:
    ADC #1
 um1_pos:
    TAY
-   TXA
-   CLC
-   ADC zp_mul_b
-   TAX
-   BCS um1_uo
-   LDA sqr_lo,X
+::rot_sqs1l:
+   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
    SEC
    SBC sqr_lo,Y
    STA zp_br_resl
-   LDA sqr_hi,X
+::rot_sqs1h:
+   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_hi,Y
    STA zp_br_resh
-   JMP um1_done
-um1_uo:
-   LDA sqr2_lo,X
-   SBC sqr_lo,Y
-   STA zp_br_resl
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
-   STA zp_br_resh
-um1_done:
    ZERO zp_br_resext
-; --- inlined umul8(zp_ri_dhi, mag) — same quarter-square pattern; its
-; u16 product lands one byte up: added into resh (lo) and resext (hi). ---
+; --- hi*mag, same shape; u16 product lands one byte up ---
    LDA zp_ri_dhi
-   TAX                                     ; stash in X (was zp_tmp0)
+   TAX
    SEC
    SBC zp_mul_b
    BCS um2_pos
@@ -458,27 +447,94 @@ um1_done:
    ADC #1
 um2_pos:
    TAY
-   TXA
-   CLC
-   ADC zp_mul_b
-   TAX
-   BCS um2_uo
-   LDA sqr_lo,X
+::rot_sqs2l:
+   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
    SEC
    SBC sqr_lo,Y
    STA zp_prod_lo
-   LDA sqr_hi,X
+::rot_sqs2h:
+   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_hi,Y
    STA zp_prod_hi
-   JMP um2_done
-um2_uo:
-   LDA sqr2_lo,X
+   JMP ri_finish
+.endscope
+
+rot_core_cos:
+.scope
+; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
+; common on E1M1's grid geometry) — skip the two multiplies.
+   LDA zp_ri_dlo
+   ORA zp_ri_dhi
+   BNE d_nz
+   JMP ri_zero
+d_nz:
+; zp_br_t1 arrives SEEDED with the trig sign (thunk SMC immediate); a
+; negative d FLIPS it — the d-sign and trig-sign negations XOR-fold into
+; one tail negate.
+   LDA zp_ri_dhi
+   BPL d_pos
+   LDA zp_br_t1
+   EOR #1
+   STA zp_br_t1
+   LDA #0
+   SEC
+   SBC zp_ri_dlo
+   STA zp_ri_dlo
+   LDA #0
+   SBC zp_ri_dhi
+   STA zp_ri_dhi
+d_pos:
+; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
+; The sum side f(x+mag) is one LDA abs,X with X = raw x: rot_select
+; patches the operand LO byte to mag (SQR pages are page-aligned so the
+; hi byte is static; the abs,X page-cross walks into the second lo/hi
+; page — pages are CONTIGUOUS per gen_abi's 2026-07-12 reorder). No sum
+; add, no TAX, no carry-window branch. Diff side is classic: |x-mag|
+; always fits the first window.
+   LDA zp_ri_dlo
+   TAX                                     ; X = raw x (base carries +mag)
+   SEC
+   SBC zp_mul_b
+   BCS um1_pos
+   EOR #$FF
+   ADC #1
+um1_pos:
+   TAY
+::rot_sqc1l:
+   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
+   SEC
+   SBC sqr_lo,Y
+   STA zp_br_resl
+::rot_sqc1h:
+   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_hi,Y
+   STA zp_br_resh
+   ZERO zp_br_resext
+; --- hi*mag, same shape; u16 product lands one byte up ---
+   LDA zp_ri_dhi
+   TAX
+   SEC
+   SBC zp_mul_b
+   BCS um2_pos
+   EOR #$FF
+   ADC #1
+um2_pos:
+   TAY
+::rot_sqc2l:
+   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
+   SEC
    SBC sqr_lo,Y
    STA zp_prod_lo
-   LDA sqr2_hi,X
+::rot_sqc2h:
+   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_hi,Y
    STA zp_prod_hi
-um2_done:
+; falls through to ri_finish
+.endscope
+
+; shared accumulate/negate tail: res += prod << 8, then one net negate
+; if the XOR-folded sign says so.
+ri_finish:
    CLC
    LDA zp_prod_lo
    ADC zp_br_resh
@@ -488,7 +544,6 @@ um2_done:
    STA zp_br_resext
    LDA zp_br_t1
    BEQ ri_done                             ; t1 = (d<0) XOR (trig<0)
-; net sign negative -> negate the s24 result ONCE.
    LDA #0
    SEC
    SBC zp_br_resl
@@ -507,4 +562,3 @@ ri_zero:
    STA zp_br_resh
    STA zp_br_resext
    RTS
-.endscope

@@ -648,6 +648,10 @@ sin_notone:
    BNE sin_have
 sin_gen:
    STA rot_gen_sin+1                       ; mag immediate
+   STA rot_sqs1l+1                         ; sum-side table bases: lo byte
+   STA rot_sqs1h+1                         ; = mag (SQR pages page-aligned,
+   STA rot_sqs2l+1                         ; hi byte static; abs,X crosses
+   STA rot_sqs2h+1                         ; into the contiguous 2nd page)
    LDA zp_br_sneg
    STA rot_gen_sin+5                       ; neg immediate
    LDA #<rot_gen_sin
@@ -677,6 +681,10 @@ cos_notone:
    BNE cos_have
 cos_gen:
    STA rot_gen_cos+1
+   STA rot_sqc1l+1                         ; cos sum-side bases (see sin)
+   STA rot_sqc1h+1
+   STA rot_sqc2l+1
+   STA rot_sqc2h+1
    LDA zp_br_cneg
    STA rot_gen_cos+5
    LDA #<rot_gen_cos

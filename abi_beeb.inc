@@ -15,10 +15,10 @@ HUD_ENTRY = &A400                       \ hud_draw (bank C window)
 BCA_WS = &1B40                          \ angle-module bbox workspace (box vals at +$10..$17)
 BCA_AB = BCA_WS+&2F                     \ view angle byte, poked per frame by driver/harness
 SQR_BASE = &1C00                        \ quarter-square tables: lo,hi,2lo,2hi = 4 pages
-SQR_LO = SQR_BASE+&000                  \ qsqr lo bytes
-SQR_HI = SQR_BASE+&100                  \ qsqr hi bytes
-SQR2_LO = SQR_BASE+&200                 \ qsqr(n+256) lo bytes
-SQR2_HI = SQR_BASE+&300                 \ qsqr(n+256) hi bytes
+SQR_LO = SQR_BASE+&000                  \ qsqr lo bytes (f 0..255)
+SQR2_LO = SQR_BASE+&100                 \ qsqr lo bytes (f 256..510)
+SQR_HI = SQR_BASE+&200                  \ qsqr hi bytes (f 0..255)
+SQR2_HI = SQR_BASE+&300                 \ qsqr hi bytes (f 256..510)
 DRV_ORG = &2000                         \ walk/anim driver entry (!BOOT CALLs this)
 DRV_VARS = &2180                        \ walk driver variable block (layout below)
 DV_ANGIDX = DRV_VARS+0                  \ view angle index 0..63 (angle byte = idx*4)

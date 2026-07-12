@@ -18,10 +18,10 @@ BCA_WS_FLAT = 0xFA00
 BCA_AB = 0x1B6F  # view angle byte, poked per frame by driver/harness
 SQR_BASE = 0x1C00  # quarter-square tables: lo,hi,2lo,2hi = 4 pages
 SQR_BASE_FLAT = 0xA500
-SQR_LO = 0x1C00  # qsqr lo bytes
-SQR_HI = 0x1D00  # qsqr hi bytes
-SQR2_LO = 0x1E00  # qsqr(n+256) lo bytes
-SQR2_HI = 0x1F00  # qsqr(n+256) hi bytes
+SQR_LO = 0x1C00  # qsqr lo bytes (f 0..255)
+SQR2_LO = 0x1D00  # qsqr lo bytes (f 256..510)
+SQR_HI = 0x1E00  # qsqr hi bytes (f 0..255)
+SQR2_HI = 0x1F00  # qsqr hi bytes (f 256..510)
 DRV_ORG = 0x2000  # walk/anim driver entry (!BOOT CALLs this)
 DRV_VARS = 0x2180  # walk driver variable block (layout below)
 DV_ANGIDX = 0x2180  # view angle index 0..63 (angle byte = idx*4)

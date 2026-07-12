@@ -108,10 +108,10 @@ class SpanClip6502:
         import abi as _abi
         _sq = _abi.SQR_BASE_FLAT
         sqr_lo, sqr_hi, sqr2_lo, sqr2_hi = _gen_quarter_square()
-        mem[_sq + 0x000:_sq + 0x100] = sqr_lo
-        mem[_sq + 0x100:_sq + 0x200] = sqr_hi
-        mem[_sq + 0x200:_sq + 0x300] = sqr2_lo
-        mem[_sq + 0x300:_sq + 0x400] = sqr2_hi
+        mem[_sq + 0x000:_sq + 0x100] = sqr_lo    # lo pages contiguous
+        mem[_sq + 0x100:_sq + 0x200] = sqr2_lo   # (2026-07-12 reorder —
+        mem[_sq + 0x200:_sq + 0x300] = sqr_hi    #  keep in lockstep with
+        mem[_sq + 0x300:_sq + 0x400] = sqr2_hi   #  gen_abi SQR_* offsets)
 
         # Build + load every engine region (clipper, renderer regions, angle
         # module) at the addresses in the ld65 config — one loader, no
