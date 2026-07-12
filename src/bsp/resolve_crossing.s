@@ -78,11 +78,15 @@ VWHC_LO = $B800
 VWHC_HI = $B900
 .segment "W_BK"
 .else
-; ($D4C0 page freed 2026-07-10: VWHC_VALID retired — RLO doubles as valid)
-VWHC_RHI = $D5C0
-VWHC_RLO = $D6C0
-VWHC_H = $D7C0
-VWHC_LO = $D8C0
-VWHC_HI = $D9C0
+; PAGE-ALIGNED 2026-07-12 (were $D5C0-$D9C0: the $C0 offset made ~75% of
+; abs,X probes pay the page-cross +1 — flat build only; banked was
+; already aligned, so the harness metric overcharged the y-cache).
+; BSS window $D4C0-$DABF: aligned tables span $D500-$D9FF, $D4C0-$D4FF
+; and $DA00-$DABF free.
+VWHC_RHI = $D500
+VWHC_RLO = $D600
+VWHC_H = $D700
+VWHC_LO = $D800
+VWHC_HI = $D900
 .segment "W"
 .endif
