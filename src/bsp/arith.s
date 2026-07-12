@@ -148,15 +148,27 @@ c_hi_ok:
    STA zp_br_t0
 c_lo_ok:
 
-; --- M8 = RECIP_M8[idx]: page = >RECIP_BASE + idx.hi, offset = idx.lo ---
-   LDA #0
-   STA zp_br_p
-   LDA zp_br_t1
-   CLC
-   ADC #>RECIP_BASE
-   STA zp_br_p_h
+; --- M8 = RECIP_M8[idx]: 4-way page dispatch on idx.hi (clamped to
+; [0,3] above) instead of building a ZP pointer — abs,Y beats (zp),Y by
+; ~10 cycles on the dominant t1=0 page (idx < 256 covers S <= 8ish;
+; measured S histogram peaks 7-9). zp_br_p no longer touched here. ---
    LDY zp_br_t0
-   LDA (zp_br_p),Y
+   LDA zp_br_t1
+   BEQ rcp_p0                              ; page 0: the common case
+   LSR A                                   ; 1,2,3 -> 0,1,1 with C = bit 0
+   BEQ rcp_p1                              ; t1 = 1
+   BCS rcp_p3                              ; t1 = 3
+   LDA RECIP_BASE+$200,Y                   ; t1 = 2
+   JMP rcp_have                            ; (JMP, not BNE: M8 can be 0)
+rcp_p3:
+   LDA RECIP_BASE+$300,Y
+   JMP rcp_have
+rcp_p1:
+   LDA RECIP_BASE+$100,Y
+   JMP rcp_have
+rcp_p0:
+   LDA RECIP_BASE,Y
+rcp_have:
    STA zp_br_rhi                           ; M8
 
 ; --- S = bit_length(idx - 1); idx >= 2 so idx-1 >= 1 ---
