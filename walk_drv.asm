@@ -207,16 +207,8 @@ ORG DRV_GLUE
     STA jidx                                        ; (init spill: main is full)
     STA hud_en : STA hud_prev                       ; HUD off at boot
     LDA #7:STA &FE30
-    ; RNS vectoring block -> stack page: staged in bank L2 @ $A100 (page 1
-    ; cannot be *LOADed — the OS owns the stack during loading). $C0 bytes
-    ; into $0100-$01BF, the region the engine reserves (SP floor $F1).
-    LDX #0
-.stkcpy
-    LDA STK_STAGE,X
-    STA &0100,X
-    INX
-    CPX #STK_LEN
-    BNE stkcpy
+    ; (RNS stack-page copy retired 2026-07-12: the vectoring block lives
+    ; in engine CODE now; page 1 is reserved headroom.)
     JMP JT_ANIM_INIT
 .anim_glue_tick
     LDA #7:STA &FE30

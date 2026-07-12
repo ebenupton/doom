@@ -53,10 +53,17 @@ VXC_YLO  = $9D00
 VXC_YHI  = $9F00
 VXC_YEXT = $A100
 .else
-VXC_XLO  = $4000
-VXC_XHI  = $4200
-VXC_XEXT = $4400
-VXC_YLO  = $4600
+; (flat planes relocated 2026-07-12: $4000-$47D3 vacated for the one
+; flat CODE region; each plane needs pages k,k+1 for the +$100 split.
+; Verified-free pairs: $98/$99 $9A/$9B (above the header tail $9740),
+; $1C-$1F (the freed LO island's tail; flat sqr lives at $A500),
+; $B2-$B5 (below the node SoA at $B600). Page $09 holds live DEFQ vars
+; at $09FB and $A900-$B1EE is the NJ rasteriser — both are traps that
+; caught the first placement attempt.)
+VXC_XLO  = $9800
+VXC_XHI  = $9A00
+VXC_XEXT = $1C00
+VXC_YLO  = $1E00
 VXC_YHI  = $B200
 VXC_YEXT = $B400
 .endif

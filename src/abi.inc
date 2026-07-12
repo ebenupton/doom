@@ -8,7 +8,7 @@ BANK_L2 = 7                             ; sideways bank: angle/bbox/recip/verts/
 .if ::BANKED
 ENGINE_JT = $2C00          ; driver-facing jump table = MAIN segment head (link-asserted)
 .else
-ENGINE_JT = $4800
+ENGINE_JT = $3670
 .endif
 JT_VIEW_SETUP = ENGINE_JT+$09           ; br_view_setup
 JT_RENDER_FRAME = ENGINE_JT+$15         ; br_render_frame
@@ -60,17 +60,14 @@ VXC_ENABLE = $05DB                      ; translation vertex cache switch
 .if ::BANKED
 RCACHE_STATE = $B460       ; rotation cache header+bitmaps (RCACHE+$760)
 .else
-RCACHE_STATE = $3F60
+RCACHE_STATE = $5760
 .endif
 RCACHE_STATE_LEN = $0089                ; bytes to zero at boot
 .if ::BANKED
 RCACHE_ENABLE = $B4E8      ; rotation-coherence bca cache switch (RCACHE+$7E8)
 .else
-RCACHE_ENABLE = $3FE8
+RCACHE_ENABLE = $57E8
 .endif
-STK_STAGE = $A100                       ; RNS vectoring block staged in L2 (page 1 unloadable)
-STK_DST = $0100                         ; stack-page home of the RNS block
-STK_LEN = $00C0                         ; RNS block length
 JBASE = $1A00                           ; vsync journal (dead boot-loader memory)
 SCREEN0 = $5800                         ; framebuffer 0
 SCREEN1 = $6C00                         ; framebuffer 1

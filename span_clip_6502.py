@@ -104,12 +104,15 @@ class SpanClip6502:
         self.capture = None
         mem = self.mpu.memory
 
-        # Load quarter-square tables
+        # Load quarter-square tables (base from the generated ABI — the flat
+        # base moved $A500 -> $A400 in the 2026-07-12 one-region merge)
+        import abi as _abi
+        _sq = _abi.SQR_BASE_FLAT
         sqr_lo, sqr_hi, sqr2_lo, sqr2_hi = _gen_quarter_square()
-        mem[0xA500:0xA600] = sqr_lo
-        mem[0xA600:0xA700] = sqr_hi
-        mem[0xA700:0xA800] = sqr2_lo
-        mem[0xA800:0xA900] = sqr2_hi
+        mem[_sq + 0x000:_sq + 0x100] = sqr_lo
+        mem[_sq + 0x100:_sq + 0x200] = sqr_hi
+        mem[_sq + 0x200:_sq + 0x300] = sqr2_lo
+        mem[_sq + 0x300:_sq + 0x400] = sqr2_hi
 
         # Build + load every engine region (clipper, renderer regions, angle
         # module) at the addresses in the ld65 config — one loader, no

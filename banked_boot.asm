@@ -75,16 +75,7 @@ ORG DRV_ORG
     LDA #10:STA &FE00: LDA #&20:STA &FE01
     LDA #12:STA &FE00: LDA #&0B:STA &FE01           ; R12 = $5800>>3 hi
     LDA #13:STA &FE00: LDA #&00:STA &FE01           ; R13
-    ; --- RNS vectoring block -> stack page (staged in bank L2 @ $A100;
-    ;     page 1 cannot be *LOADed while the OS still owns the stack) ---
-    LDA #7 :STA &FE30
-    LDX #0
-.stkcpy
-    LDA STK_STAGE,X
-    STA &0100,X
-    INX
-    CPX #&C0
-    BNE stkcpy
+    ; (RNS stack-page copy retired 2026-07-12: block lives in CODE)
     ; --- canonical order (matches render_frame): view_setup BEFORE span_init ---
     LDA #4 :STA &FE30 : JSR JT_VIEW_SETUP           ; br_view_setup (pages L0/L2)
     LDA #6 :STA &FE30 : JSR CLIP_JT                 ; span_init / pool (bank C)

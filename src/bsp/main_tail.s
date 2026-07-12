@@ -9,7 +9,11 @@
 ; that MAIN could no longer afford; abs,X reads cost the same anywhere.)
 
 end_code:
-.assert end_code <= $5800, error
+.if ::BANKED
+.assert end_code <= $5800, error        ; banked: FB at $5800
+.else
+.assert end_code <= $5000, error        ; flat: RCACHE carve $5000-$57E8
+.endif
 .if ::BANKED
 ; (ld65 writes this: SAVE "bsp_render_bk.bin", $4800, end_code, $4800)
 .else

@@ -12,6 +12,7 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 
 from span_clip_6502 import SpanClip6502
 import fp
+import abi
 
 from symmap import sym as _sym
 ENTRY_BR_UMUL8 = _sym('jt_br_umul8')
@@ -235,8 +236,8 @@ def test_to_view():
     return fail
 
 
-ENTRY_BR_PROJECT_X = 0x480F
-ENTRY_BR_PROJECT_Y = 0x4812
+ENTRY_BR_PROJECT_X = abi.ENGINE_JT_FLAT + 0x0F   # jt slots (were hardcoded $480F/
+ENTRY_BR_PROJECT_Y = abi.ENGINE_JT_FLAT + 0x12   # $4812 pre one-region merge)
 
 
 # One recip sample per shift value S=1..10 (idx chosen mid-range for each

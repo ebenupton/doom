@@ -261,22 +261,25 @@ py_shift:
 ; freed by evicting the verticals block to CEMIT — the debug HUD's bank C
 ; window), rns_s8/s9 in resolve_crossing.s, generic rns24 (ANG) for the
 ; rare S in [1,5]. All bodies are bit-exact floor((P + 2^(S-1)) / 2^S).
-; The whole vectoring block lives in the STK region — the bottom of the
-; hardware stack page ($0100-$01BF, resident in every build; measured SP
-; floor is $F1 so the stack never comes near). Pure leaf routines: no
-; JSRs inside, so they add nothing to the stack depth they live under.
+; EVICTED from the stack page 2026-07-12 (the $0100-$01BF STK region is
+; retired in all builds — page 1 is reserved headroom now, and the whole
+; banked staging/boot-copy machinery died with it). The dispatch is a
+; DIRECT JMP whose operand IS the live shifter: rns_select (and the
+; inlined selects in subsector.s) SMC rns_go+1/+2 instead of consuming
+; the old zp_rns_vec pair ($C6/$C7 freed) — and each dispatch saves the
+; indirect-jump surcharge (JMP abs 3 vs JMP (zp) 5).
 ; ============================================================================
-.segment "STK"
+.segment "LO"
 rns_go:
-   JMP (zp_rns_vec)
+   JMP rns24                               ; operand = live shifter (SMC)
 
 rns_select:
 .scope
    LDX zp_br_rlo
    LDA rns_vec_lo-1,X
-   STA zp_rns_vec
+   STA rns_go+1
    LDA rns_vec_hi-1,X
-   STA zp_rns_vec_hi
+   STA rns_go+2
    RTS
 .endscope
 rns_vec_lo:

@@ -314,12 +314,7 @@ vc_bit_mask:
    .byte 1, 2, 4, 8, 16, 32, 64, 128       ; 1 << (idx & 7) for the vertex cache
                                         ; (from main_tail.s; MAIN at ceiling)
 bsp_b_end:
-.if ::BANKED
-; (ld65 writes this: SAVE "bsp_render_b_bk.bin", $3A40, bsp_b_end, $3A40)
-.else
-.assert bsp_b_end <= $0C00, error
-; (ld65 writes this: SAVE "bsp_render_b.bin", $0AA0, bsp_b_end, $0AA0)
-.endif
+; (B-region ceiling retired 2026-07-12: B floats in the one CODE region.)
 
 ; ============================================================================
 ; D REGION ($0978-$09FF) — near-plane edge-crossing math for bbox

@@ -66,8 +66,8 @@ zp_bca_val_hi = $CF               ; [ang]
 ; unregistered squatter; registered 2026-07-10. Do not allocate.
 zp_rcache_c4 = $C4                ; [bsp]; rcache internal (see ang/rcache.s)
 zp_rcache_c5 = $C5                ; [bsp]; rcache internal
-zp_rns_vec = $C6                  ; [bsp]; RNS shifter vector lo (per-vertex,
-zp_rns_vec_hi = $C7               ; [bsp]; set by rns_select from S; JMP (ind))
+; $C6/$C7 free (was zp_rns_vec pair — rns_select SMCs rns_go's JMP
+; operand directly, 2026-07-12)
 ; --- $C4/$C5: rc_psilo/rc_psihi (ang/rcache.s) — UNREGISTERED SQUATTER,
 ; registered 2026-07-08 after zp_rns_vec landed on them and the walk disc
 ; jammed (cached-bbox frames clobbered the vector). anim.s similarly owns

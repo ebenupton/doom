@@ -106,12 +106,7 @@ vc_loop:
 
 
 bsp_w_end:
-.assert bsp_w_end <= $DC00, error       ; stay below angle TA_LO (was RPC_VALID, removed)
-.if ::BANKED
-; (ld65 writes this: SAVE "bsp_render_w_bk.bin", $3900, bsp_w_end, $3900)
-.else
-; (ld65 writes this: SAVE "bsp_render_w.bin", $DAC0, bsp_w_end, $DAC0)
-.endif
+; (W-region ceiling retired 2026-07-12: W floats in the one CODE region.)
 
 ; ============================================================================
 ; OVERFLOW REGION — bsp_render.bin is bound to $4800-$57FF (4096 bytes max,

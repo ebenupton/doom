@@ -22,7 +22,11 @@ RCACHE      = $AD00                     ; bank L2 window, free tail after the VW
                                         ; WRONG: sqr tables $2000-$23FF + FHCH
                                         ; $2400-$3377 live there in the banked map.)
 .else
-RCACHE      = $3800                     ; CLIP-reserved tail (flat harness); zero RAM
+RCACHE      = $5000                     ; flat: fixed carve at the TAIL of the one
+                                        ; CODE region (2026-07-12; was $3800). The
+                                        ; link asserts end_code <= $5000 (main_tail)
+                                        ; so code growth into the carve is a LINK
+                                        ; ERROR, not a silent collision.
 .endif
 ; rom_bbox base pointer (set per frame by the loader; BSP-unit zp $0BEA/$0BEB)
 ; (zp_rom_bbox retired 2026-07-10 — ROM_BBOX_C in layout.inc)
