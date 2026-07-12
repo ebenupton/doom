@@ -37,10 +37,12 @@
 VXC_VALID   = $05A0                     ; 59 bytes (467 vertices)
 ; (VXC_ENABLE comes from abi.inc)
 vxc_prev_ab = $05DC
-vxc_cacc_x  = $05DD                     ; s24
-vxc_cacc_y  = $05E0                     ; s24
-vxc_refc_x  = $05E3                     ; s24 ref_cold
-vxc_refc_y  = $05E6                     ; s24
+vxc_ref_x   = $05DD                     ; s24 this frame's ref = to_view(0,0)
+vxc_ref_y   = $05E0                     ; s24 (origin normalization 2026-07-12:
+                                        ;  base' = total - ref stored once per
+                                        ;  epoch; warm read = base' + ref.
+                                        ;  ref_cold/CACC are gone - $05E3-$05E8
+                                        ;  free)
 
 ; --- plane bases (467 bytes each; page-aligned so hi-page access is +$100) ---
 .if ::BANKED
@@ -79,12 +81,12 @@ vxc_ab = BCA_AB
 .endif
 
 
-; --- vxc_cold_store: base = total - CACC (inverse of vxc_warm_load) ---------
+; --- vxc_cold_store: base' = total - ref (= L(w), translation-invariant) ---
 ;   in : zp_br_vx/vy lo/hi/ext (totals just computed by br_to_view),
-;        zp_seg_v_idx_lo/hi, vxc_cacc_x/y
-;   out: this vertex's 6 plane bytes. Telescoping: base + ANY later frame's
-;        CACC reconstructs that frame's exact totals, so entries never go
-;        stale within an angle epoch (see file header).
+;        zp_seg_v_idx_lo/hi, vxc_ref_x/y
+;   out: this vertex's 6 plane bytes. base' + ANY later frame's ref
+;        reconstructs that frame's exact totals (L is exactly linear), so
+;        entries never go stale within an angle epoch.
 vxc_cold_store:
 .scope
    LDY zp_seg_v_idx_lo
@@ -93,45 +95,45 @@ vxc_cold_store:
    BNE vs_hi
    SEC
    LDA zp_br_vxlo
-   SBC vxc_cacc_x+0
+   SBC vxc_ref_x+0
    STA VXC_XLO,Y
    LDA zp_br_vxhi
-   SBC vxc_cacc_x+1
+   SBC vxc_ref_x+1
    STA VXC_XHI,Y
    LDA zp_br_vxext
-   SBC vxc_cacc_x+2
+   SBC vxc_ref_x+2
    STA VXC_XEXT,Y
    SEC
    LDA zp_br_vylo
-   SBC vxc_cacc_y+0
+   SBC vxc_ref_y+0
    STA VXC_YLO,Y
    LDA zp_br_vyhi
-   SBC vxc_cacc_y+1
+   SBC vxc_ref_y+1
    STA VXC_YHI,Y
    LDA zp_br_vyext
-   SBC vxc_cacc_y+2
+   SBC vxc_ref_y+2
    STA VXC_YEXT,Y
    RTS
 vs_hi:
    SEC
    LDA zp_br_vxlo
-   SBC vxc_cacc_x+0
+   SBC vxc_ref_x+0
    STA VXC_XLO+$100,Y
    LDA zp_br_vxhi
-   SBC vxc_cacc_x+1
+   SBC vxc_ref_x+1
    STA VXC_XHI+$100,Y
    LDA zp_br_vxext
-   SBC vxc_cacc_x+2
+   SBC vxc_ref_x+2
    STA VXC_XEXT+$100,Y
    SEC
    LDA zp_br_vylo
-   SBC vxc_cacc_y+0
+   SBC vxc_ref_y+0
    STA VXC_YLO+$100,Y
    LDA zp_br_vyhi
-   SBC vxc_cacc_y+1
+   SBC vxc_ref_y+1
    STA VXC_YHI+$100,Y
    LDA zp_br_vyext
-   SBC vxc_cacc_y+2
+   SBC vxc_ref_y+2
    STA VXC_YEXT+$100,Y
    RTS
 .endscope
@@ -150,7 +152,7 @@ vs_hi:
 ;   in : VXC_ENABLE; vxc_ab (this frame's angle byte — alias of bca_ab,
 ;        written per frame by the caller); vxc_prev_ab; the frame view
 ;        context (read by br_to_view)
-;   out: vxc_jsr_site operand patched; vxc_cacc_x/y, vxc_refc_x/y,
+;   out: vxc_jsr_site operand patched; vxc_ref_x/y, vxc_refc_x/y,
 ;        vxc_prev_ab and VXC_VALID maintained
 ; pseudocode:
 ;   if not ENABLE: restore JSR br_to_view_fetch; return
@@ -178,58 +180,33 @@ vf_on:
    STA zp_br_dylo
    STA zp_br_dyhi
    JSR br_to_view
+; --- publish this frame's ref (ORIGIN NORMALIZATION: stored bases are
+; total - ref, i.e. the exactly-linear L(w); the warm arm adds the
+; current ref back. No ref_cold, no CACC - the epoch anchor was a
+; historical artifact, not a numerical need.) ---
+   LDA zp_br_vxlo
+   STA vxc_ref_x+0
+   LDA zp_br_vxhi
+   STA vxc_ref_x+1
+   LDA zp_br_vxext
+   STA vxc_ref_x+2
+   LDA zp_br_vylo
+   STA vxc_ref_y+0
+   LDA zp_br_vyhi
+   STA vxc_ref_y+1
+   LDA zp_br_vyext
+   STA vxc_ref_y+2
    LDA vxc_ab
    CMP vxc_prev_ab
-   BEQ vf_warm
-; --- cold frame: re-anchor ref_cold, zero CACC, wipe the valid bitmap ---
+   BEQ vf_patch
+; --- angle changed: new epoch - wipe the valid bitmap ---
    STA vxc_prev_ab
-   LDA zp_br_vxlo
-   STA vxc_refc_x+0
-   LDA zp_br_vxhi
-   STA vxc_refc_x+1
-   LDA zp_br_vxext
-   STA vxc_refc_x+2
-   LDA zp_br_vylo
-   STA vxc_refc_y+0
-   LDA zp_br_vyhi
-   STA vxc_refc_y+1
-   LDA zp_br_vyext
-   STA vxc_refc_y+2
-   LDA #0
-   LDX #5
-vf_zc:
-   STA vxc_cacc_x,X                        ; cacc_x/y are contiguous (6 bytes)
-   DEX
-   BPL vf_zc
    LDX #58
    LDA #0
 vf_wipe:
    STA VXC_VALID,X
    DEX
    BPL vf_wipe
-   JMP vf_patch
-vf_warm:
-; --- warm frame: CACC = ref - ref_cold (s24 x2) ---
-   SEC
-   LDA zp_br_vxlo
-   SBC vxc_refc_x+0
-   STA vxc_cacc_x+0
-   LDA zp_br_vxhi
-   SBC vxc_refc_x+1
-   STA vxc_cacc_x+1
-   LDA zp_br_vxext
-   SBC vxc_refc_x+2
-   STA vxc_cacc_x+2
-   SEC
-   LDA zp_br_vylo
-   SBC vxc_refc_y+0
-   STA vxc_cacc_y+0
-   LDA zp_br_vyhi
-   SBC vxc_refc_y+1
-   STA vxc_cacc_y+1
-   LDA zp_br_vyext
-   SBC vxc_refc_y+2
-   STA vxc_cacc_y+2
 vf_patch:
    LDA #<vxc_arm
    STA vxc_jsr_site+1

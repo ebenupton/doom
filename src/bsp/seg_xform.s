@@ -285,9 +285,9 @@ nc_ok:
 ; zero overhead). Ends RTS; the caller falls into the evy/evx compute.
 ;
 ; In:  zp_seg_v_idx_lo/b (vertex key), zp_seg_v_bitm (1 << (idx&7)),
-;      vxc_cacc_x/y (frame translation delta, s24 each)
+;      vxc_ref_x/y (this frame's to_view(0,0), s24 each)
 ; Out: zp_br_vx/vy lo/hi/ext = exact view totals (bit-identical to
-;      br_to_view: base + CACC telescopes, see vxcache.s header)
+;      br_to_view: base' = L(w) is translation-invariant, see vxcache.s)
 ; ============================================================================
 vxc_arm:
 .scope
@@ -296,53 +296,53 @@ vxc_arm:
    LDA VXC_VALID,X
    AND zp_seg_v_bitm
    BEQ va_cold
-; --- warm: total = base + CACC, two s24 adds (page-split on B bit 5) ---
+; --- warm: total = base + ref, two s24 adds (page-split on B bit 5) ---
    LDY zp_seg_v_idx_lo
    LDA zp_seg_v_idx_b
    AND #$20                                ; idx >= 256  <=>  B >= 32 (B<=58)
    BNE va_hi
    CLC
    LDA VXC_XLO,Y
-   ADC vxc_cacc_x+0
+   ADC vxc_ref_x+0
    STA zp_br_vxlo
    LDA VXC_XHI,Y
-   ADC vxc_cacc_x+1
+   ADC vxc_ref_x+1
    STA zp_br_vxhi
    LDA VXC_XEXT,Y
-   ADC vxc_cacc_x+2
+   ADC vxc_ref_x+2
    STA zp_br_vxext
    CLC
    LDA VXC_YLO,Y
-   ADC vxc_cacc_y+0
+   ADC vxc_ref_y+0
    STA zp_br_vylo
    LDA VXC_YHI,Y
-   ADC vxc_cacc_y+1
+   ADC vxc_ref_y+1
    STA zp_br_vyhi
    LDA VXC_YEXT,Y
-   ADC vxc_cacc_y+2
+   ADC vxc_ref_y+2
    STA zp_br_vyext
    PAGE BANK_L0
    RTS
 va_hi:
    CLC
    LDA VXC_XLO+$100,Y
-   ADC vxc_cacc_x+0
+   ADC vxc_ref_x+0
    STA zp_br_vxlo
    LDA VXC_XHI+$100,Y
-   ADC vxc_cacc_x+1
+   ADC vxc_ref_x+1
    STA zp_br_vxhi
    LDA VXC_XEXT+$100,Y
-   ADC vxc_cacc_x+2
+   ADC vxc_ref_x+2
    STA zp_br_vxext
    CLC
    LDA VXC_YLO+$100,Y
-   ADC vxc_cacc_y+0
+   ADC vxc_ref_y+0
    STA zp_br_vylo
    LDA VXC_YHI+$100,Y
-   ADC vxc_cacc_y+1
+   ADC vxc_ref_y+1
    STA zp_br_vyhi
    LDA VXC_YEXT+$100,Y
-   ADC vxc_cacc_y+2
+   ADC vxc_ref_y+2
    STA zp_br_vyext
    PAGE BANK_L0
    RTS
@@ -353,7 +353,7 @@ va_cold:
    STA VXC_VALID,X
    JSR br_to_view_fetch                    ; pages L2 itself
    PAGE BANK_C
-   JSR vxc_cold_store                      ; leaf (vxcache.s): base = total-CACC
+   JSR vxc_cold_store                      ; leaf (vxcache.s): base = total-ref
    PAGE BANK_L0
    RTS
 .endscope
