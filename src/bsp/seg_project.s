@@ -33,26 +33,18 @@
 ; names are globally unique)
 do_project_y:
 ; --- Project Y for top edge (height = ch - vz) ---
-   LDA zp_seg_top_dlt
-   STA zp_br_t0
-   JSR br_project_y
+   LDA zp_seg_top_dlt                       ; h rides A into the cache front
+   JSR br_project_y                        ; -> Y = sy lo, A = sy hi
    LDX zp_seg_ep                            ; re-establish endpoint offset
-   LDA zp_br_resl
-   STA VX1+5,X                              ; sy_top (struct)
-   LDA zp_br_resh
-   STA VX1+6,X
-
-; --- Project Y for bottom edge (height = fh - vz) ---
-   LDA zp_seg_bot_dlt
-   STA zp_br_t0
-   JSR br_project_y
+   STA VX1+6,X ; --- Project Y for bottom edge (height = fh - vz) ---
+   TYA
+   STA VX1+5,X ; sy_top (struct)
+   LDA zp_seg_bot_dlt                       ; h rides A into the cache front
+   JSR br_project_y                        ; -> Y = sy lo, A = sy hi
    LDX zp_seg_ep
-   LDA zp_br_resl
-   STA VX1+7,X                              ; sy_bot
-   LDA zp_br_resh
-   STA VX1+8,X
-
-; --- Back-pair projections only when a consumer exists: every use of
+   STA VX1+8,X ; --- Back-pair projections only when a consumer exists: every use of
+   TYA
+   STA VX1+7,X ; sy_bot
 ; sy_btop/sy_bbot is gated on (SOLID & APEDGE1) — the APV1 aperture
 ; vertical — or (portal & NEEDBT/NEEDBB). Skipping unused projections
 ; is output-identical and saves 2 projections (4 muls) per vertex on
@@ -77,14 +69,12 @@ dpy_back:
 ; NEEDBT?
 dpy_btop:
 ; --- Project Y for back ceiling (height = bch - vz) ---
-   LDA zp_seg_btop_dlt
-   STA zp_br_t0
-   JSR br_project_y
+   LDA zp_seg_btop_dlt                       ; h rides A into the cache front
+   JSR br_project_y                        ; -> Y = sy lo, A = sy hi
    LDX zp_seg_ep
-   LDA zp_br_resl
-   STA VX1+9,X                              ; sy_btop
-   LDA zp_br_resh
-   STA VX1+10,X
+   STA VX1+10,X ;
+   TYA
+   STA VX1+9,X ; sy_btop
 dpy_chk_bb:
    LDA zp_seg_flags
    AND #$08
@@ -92,14 +82,12 @@ dpy_chk_bb:
 ; NEEDBB?
 dpy_bbot:
 ; --- Project Y for back floor (height = bfh - vz) ---
-   LDA zp_seg_bbot_dlt
-   STA zp_br_t0
-   JSR br_project_y
+   LDA zp_seg_bbot_dlt                       ; h rides A into the cache front
+   JSR br_project_y                        ; -> Y = sy lo, A = sy hi
    LDX zp_seg_ep
-   LDA zp_br_resl
-   STA VX1+11,X                             ; sy_bbot
-   LDA zp_br_resh
-   STA VX1+12,X
+   STA VX1+12,X ;
+   TYA
+   STA VX1+11,X ; sy_bbot
 dpy_done:
    RTS
 dpy_done_s:

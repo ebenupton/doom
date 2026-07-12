@@ -241,12 +241,11 @@ nc_ok:
 ; off-screen) and their mark_solid and clipped draws still count —
 ; skipping the seg loses occlusion (e.g. mark_solid(0,81) at
 ; (800,-3400,96)) and over-emits behind it.
-   JSR br_project_x_auto
+   JSR br_project_x_auto                   ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; (recip/project clobbered X)
-   LDA zp_br_resl
-   STA VX1+3,X                             ; sx_lo
-   LDA zp_br_resh
-   STA VX1+4,X                             ; sx_hi
+   STA VX1+4,X                             ; sx_hi (from A)
+   TYA
+   STA VX1+3,X                             ; sx_lo                             ; sx_hi
    LDA zp_br_rhi
    STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
    LDA zp_br_rlo

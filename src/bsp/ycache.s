@@ -49,10 +49,16 @@ bsp_w_start:
 ; re-page for nothing). Harness/jt users go through br_project_y_paged.
 br_project_y_paged:
    PAGE BANK_L2
+   LDA zp_br_t0                            ; jt/harness contract: h staged in
+                                        ; ZP; native callers enter below
+                                        ; with h in A (REG CONTRACT
+                                        ; 2026-07-12) — saves the STA/LDA
+                                        ; round-trip at every call site
 br_project_y:
 .scope
-; probe: idx = h ^ rhi
-   LDA zp_br_t0
+; probe: idx = h ^ rhi (h arrives in A; store it for the tag compare +
+; the raw body's h<<8 / sign reads)
+   STA zp_br_t0
    EOR zp_br_rhi
    TAX
    LDA VWHC_RLO,X                          ; RLO doubles as the valid flag:
@@ -64,10 +70,10 @@ br_project_y:
    LDA VWHC_H,X
    CMP zp_br_t0
    BNE pyc_miss
-   LDA VWHC_LO,X
-   STA zp_br_resl
-   LDA VWHC_HI,X
-   STA zp_br_resh
+   LDY VWHC_LO,X                           ; REG CONTRACT: Y = lo, A = hi at
+   STY zp_br_resl                          ; RTS (ZP still written: the
+   LDA VWHC_HI,X                           ; harness/tests read memory, and
+   STA zp_br_resh                          ; px staging reuses the slots)
    RTS
 pyc_miss:
    STX zp_pyc_idx
@@ -79,10 +85,10 @@ pyc_miss:
    STA VWHC_RLO,X
    LDA zp_br_t0
    STA VWHC_H,X
-   LDA zp_br_resl
-   STA VWHC_LO,X
+   TYA                                     ; raw returned Y = lo, A = hi;
+   STA VWHC_LO,X                           ; the key stores above spared Y
    LDA zp_br_resh
-   STA VWHC_HI,X
+   STA VWHC_HI,X                           ; (and re-establish A = hi)
    RTS
 .endscope
 

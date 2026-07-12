@@ -38,12 +38,11 @@ reproject_at_crossing:
    STA zp_v_xext
    LDA #0
    STA zp_v_xfrac
-   JSR br_project_x_auto
+   JSR br_project_x_auto                   ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; struct offset (0/15)
-   LDA zp_br_resl
-   STA VX1+3,X                             ; sx → the clipped endpoint's
-   LDA zp_br_resh                          ; struct slots, in place
-   STA VX1+4,X
+   STA VX1+4,X                             ; sx → the clipped endpoint's
+   TYA                                     ; struct slots, in place
+   STA VX1+3,X
    LDA zp_br_rhi                           ; bank recip(NEAR) = (M8=0, S=1)
    STA VX1+13,X                            ; into the struct: the deferred
    LDA zp_br_rlo                           ; y stage (and apv_stage) project
@@ -574,7 +573,9 @@ w_e_pos:
    LDA zp_br_resext
    ADC #0
    STA zp_br_resext
-   RTS
+   LDY zp_br_resl                          ; REG CONTRACT: Y = lo, A = hi
+   LDA zp_br_resh                          ; (wide is a handful of calls a
+   RTS                                     ; frame — uniformity over cycles)
 .endscope
 
 ; ============================================================================
@@ -787,30 +788,29 @@ as_one:
    JSR rns_select
    PAGE BANK_L0
    LDY as_y
+   DEY
+   LDA (zp_seg_hdr_p),Y                    ; APV ch FIRST (staged for the
+   SEC                                     ; second projection)
+   SBC zp_br_vz
+   STA zp_ap2_dlt
+   INY
    LDA (zp_seg_hdr_p),Y                    ; APV fh
    SEC
    SBC zp_br_vz
-   STA zp_br_t0
-   DEY
-   LDA (zp_seg_hdr_p),Y                    ; APV ch — delta waits across
-   SEC                                     ; the first projection
-   SBC zp_br_vz
-   STA zp_ap2_dlt
-   PAGE BANK_L2                             ; both projections below (they
-   JSR br_project_y                         ; no longer page themselves)
+   TAX                                     ; fh delta RIDES X across the
+   PAGE BANK_L2                            ; A-clobbering PAGE (projections
+   TXA                                     ; run under L2)
+   JSR br_project_y                        ; h in A -> Y = lo, A = hi
    LDX as_x
-   LDA zp_br_resl
-   STA VX1+9,X                             ; FH projection
-   LDA zp_br_resh
-   STA VX1+10,X
-   LDA zp_ap2_dlt
-   STA zp_br_t0
+   STA VX1+10,X                            ; FH projection hi (from A)
+   TYA
+   STA VX1+9,X                             ; FH projection lo
+   LDA zp_ap2_dlt                          ; h in A
    JSR br_project_y
    LDX as_x
-   LDA zp_br_resl
-   STA VX1+11,X                            ; CH projection
-   LDA zp_br_resh
-   STA VX1+12,X
+   STA VX1+12,X                            ; CH projection hi (from A)
+   TYA
+   STA VX1+11,X                            ; CH projection lo
    RTS
 as_x: .byte 0
 as_y: .byte 0

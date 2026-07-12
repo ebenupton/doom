@@ -95,6 +95,10 @@ px_i_pos:
    CLC
    ADC #128
    STA zp_br_resl
+   TAY                                     ; REG CONTRACT (2026-07-12): every
+                                        ; projection RTSes with Y = res lo,
+                                        ; A = res hi (ZP resl/resh still
+                                        ; written — regs are the fast lane)
    LDA zp_br_resh
    ADC #0
    STA zp_br_resh
@@ -246,6 +250,7 @@ py_shift:
    SEC
    SBC zp_br_resl
    STA zp_br_resl
+   TAY                                     ; REG CONTRACT: Y = sy lo, A = sy hi
    LDA #0
    SBC zp_br_resh
    STA zp_br_resh
