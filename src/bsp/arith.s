@@ -437,8 +437,14 @@ um1_pos:
    SBC sqr_hi,Y
    STA zp_br_resh
    ZERO zp_br_resext
-; --- hi*mag, same shape; u16 product lands one byte up ---
+; --- hi partial: |d| hi byte is 0..2 on this map (10-bit world coords;
+; measured 87% zero, ~13% one) — multiply-by-0/1 dispatch to trivial
+; arms; the general quarter-square stays as the >=2 fallback so NO
+; delta-range fence is needed (any map/position stays exact). ---
    LDA zp_ri_dhi
+   BEQ um2_z                               ; x0: resh/resext untouched
+   CMP #1
+   BEQ um2_one                             ; x1: product == mag
    TAX
    SEC
    SBC zp_mul_b
@@ -457,6 +463,15 @@ um2_pos:
    SBC sqr_hi,Y
    STA zp_prod_hi
    JMP ri_finish
+um2_one:
+   LDA zp_mul_b                            ; resh += mag, carry -> resext
+   CLC
+   ADC zp_br_resh
+   STA zp_br_resh
+   BCC um2_z
+   INC zp_br_resext
+um2_z:
+   JMP ri_sign                             ; skip ri_finish's dead adds
 .endscope
 
 rot_core_cos:
@@ -510,8 +525,14 @@ um1_pos:
    SBC sqr_hi,Y
    STA zp_br_resh
    ZERO zp_br_resext
-; --- hi*mag, same shape; u16 product lands one byte up ---
+; --- hi partial: |d| hi byte is 0..2 on this map (10-bit world coords;
+; measured 87% zero, ~13% one) — multiply-by-0/1 dispatch to trivial
+; arms; the general quarter-square stays as the >=2 fallback so NO
+; delta-range fence is needed (any map/position stays exact). ---
    LDA zp_ri_dhi
+   BEQ um2_z                               ; x0: resh/resext untouched
+   CMP #1
+   BEQ um2_one                             ; x1: product == mag
    TAX
    SEC
    SBC zp_mul_b
@@ -529,7 +550,16 @@ um2_pos:
    LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_hi,Y
    STA zp_prod_hi
-; falls through to ri_finish
+   JMP ri_finish
+um2_one:
+   LDA zp_mul_b                            ; resh += mag, carry -> resext
+   CLC
+   ADC zp_br_resh
+   STA zp_br_resh
+   BCC um2_z
+   INC zp_br_resext
+um2_z:
+   JMP ri_sign                             ; skip ri_finish's dead adds
 .endscope
 
 ; shared accumulate/negate tail: res += prod << 8, then one net negate
@@ -542,6 +572,7 @@ ri_finish:
    LDA zp_prod_hi
    ADC zp_br_resext
    STA zp_br_resext
+ri_sign:                                    ; entry for the x0/x1 arms
    LDA zp_br_t1
    BEQ ri_done                             ; t1 = (d<0) XOR (trig<0)
    LDA #0
