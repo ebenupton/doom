@@ -1,38 +1,44 @@
 
 ; ============================================================================
-; Translation-coherence vertex cache (VXC).
+; Translation-coherence vertex cache (VXC) — DATA + frame hook + cold-store
+; leaf. THE PER-VERTEX HOT PATH IS NOT HERE: it lives in seg_xform.s
+; (vxc_arm — coherence probe + inline warm reconstruction), so the whole
+; vertex pipeline reads top-to-bottom in one file. This file keeps what
+; is per-FRAME or storage.
 ;
-; The view transform is EXACTLY linear in the integer world deltas (br_rot_int
-; products are exact integer multiplies), and the per-frame fractional terms
-; are position-only constants. So between two frames with the SAME angle byte,
-; every vertex's raw s24 view totals shift by the SAME per-frame constant —
-; the shift of any one fixed reference point. We transform world (0,0) each
-; frame; with ref_cold captured at the last cold frame,
+; PRINCIPLE (origin normalization, 2026-07-12): the view transform is
+; EXACTLY linear in the integer world deltas (rot products are exact
+; integer multiplies) and the per-frame fractional terms are position-
+; only constants. So for a fixed angle byte,
 ;
-;   CACC        = ref_now - ref_cold            (per-frame, s24 x2)
-;   store (cold): base = total - CACC           (per vertex, on first visit)
-;   load (warm):  total = base + CACC           (replaces br_to_view: ~1130cyc)
+;   total(w, frame m) = L(w) + ref_m,   ref_m = to_view(0,0) at frame m
 ;
-; The telescoping identity makes staleness a non-issue: a vertex last visited
-; k frames ago still reconstructs its exact total from base + today's CACC.
-; Any translation qualifies (forward/back/strafe/diagonal, fractional steps);
-; a changed angle byte is a cold frame (bitmap wiped, ref_cold re-anchored).
+; with L exactly linear. We store base' = total - ref = L(w) ONCE per
+; vertex per angle epoch (vxc_cold_store below), and every warm read is
+; base' + this frame's ref (two s24 adds, inline in seg_xform's vxc_arm)
+; — bit-identical to br_to_view by the linearity, verified by
+; tools/vxcache_check.py (both builds, warm + rotation legs). Staleness
+; is structurally impossible within an epoch; an angle change wipes
+; VXC_VALID and that is the ONLY invalidation. (The earlier CACC/
+; ref_cold epoch-anchor formulation was equivalent; origin form needs no
+; anchor state — $05E3-$05E8 freed.)
 ;
-; Dispatch: vxc_frame (called from br_view_setup) SMC-patches the operand of
-; seg_xform's `JSR br_to_view_fetch` (vxc_jsr_site+1) between br_to_view_fetch (disabled —
-; zero cost, byte-identical path) and vxc_to_view. VXC_ENABLE lives in low
-; RAM ($05DB) so drivers set it without paging.
+; DISPATCH: vxc_frame (JSR'd from br_view_setup's tail, view.s) publishes
+; ref into vxc_ref_x/y and SMC-patches the operand of seg_xform's
+; vxc_jsr_site JSR between br_to_view_fetch (disabled — zero cost,
+; byte-identical path) and vxc_arm (enabled). VXC_ENABLE lives in low
+; RAM ($05DB, abi.inc) so drivers set it without paging.
 ;
-; Memory: valid bitmap + state at $05A0-$05FF (unbanked, both builds).
-; Planes (467 bytes each, page-aligned): banked -> bank C free space
-; ($9700-$A2D3; clipper ends ~$9594, rasteriser starts $A900); flat ->
-; $4000/$4200/$4400/$4600 (RCACHE..MAIN gap) + $B200/$B400 (raster..FHCH gap).
-; Fat load/store code: banked -> VXCODE segment (bank C $A300; runs with
-; BANK_C paged, touches only low RAM + its own bank); flat -> ANG segment
-; (NOT $D4C0-$DABF - that gap is the flat VWHC cache BSS). Resident stub
-; (vxc_to_view) -> MAIN.
+; MEMORY: valid bitmap + state $05A0-$05FF (unbanked, both builds).
+; Six planes, 467 entries each, PAGE-SPLIT (entry idx<256 in page k,
+; idx>=256 in page k+1 — each plane needs two consecutive pages):
+;   banked -> bank C $9700-$A2D3 (clipper ends below, rasteriser $A900+)
+;   flat   -> $9800/$9A00, $1C00/$1E00, $B200/$B400 (2026-07-12 merge;
+;             see the trap notes below — the first placement hit both
+;             the DEFQ vars at $09FB and the $A900 rasteriser)
+; Plane index = the vertex KEY: Y = idx&255 (= header key byte A), page
+; select = B & $20 (B = idx>>3, header key byte B; B >= 32 <=> idx >= 256).
 ; ============================================================================
-
 ; --- data equates (unbanked) ---
 VXC_VALID   = $05A0                     ; 59 bytes (467 vertices)
 ; (VXC_ENABLE comes from abi.inc)

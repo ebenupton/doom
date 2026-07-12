@@ -1,4 +1,29 @@
 ; ============================================================================
+; bsp/arith.s — renderer-local arithmetic primitives.
+;
+; CONTEXT: everything here is a leaf (or thunk) under the seg pipeline.
+;   br_umul8 / br_smul8       u8xu8 / s8xs8 via the shared quarter-square
+;                             core SC_UMUL8 (clip/arith.s, sqr tables —
+;                             banked $1C00 / flat $A500, abi SQR_*).
+;   br_recip                  (M8,S) reciprocal from the 9.1 depth index;
+;                             every zp_br_rlo write is followed by an
+;                             rns re-select (see project.s RNS banner).
+;   br_frac_rot_term          per-frame fractional rotation term
+;                             (br_view_setup only).
+;   rot_zero/unity_pos/unity_neg/rot_gen_sin/rot_gen_cos + rot_core
+;                             the SMC-specialized rotation variants:
+;                             rot_select (view.s SEL segment) patches the
+;                             four rot_s1..s4 call-site operands in
+;                             br_to_view once per frame, plus the general
+;                             thunks' mag + sign immediates. The trig
+;                             sign SEEDS zp_br_t1 (thunk SMC); a negative
+;                             d flips it; ONE tail negate (XOR fold,
+;                             2026-07-11 — the old code double-negated).
+; Callers: br_to_view (view.s) for the rot variants; seg_xform/lo/project
+; for the muls; crossing + recip sites as documented per routine.
+; ============================================================================
+
+; ============================================================================
 ; br_umul8 — unsigned u8 × u8 → u16.
 ;   Inputs:  zp_br_a, zp_br_b (u8 each)
 ;   Output:  zp_br_resl/resh (u16)

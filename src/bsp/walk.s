@@ -202,7 +202,7 @@ bv_site_near:                           ; operand SMC-patched by br_dcache_frame
 
 ; (bsp_resolve_child lives in resolve_crossing.s.)
 
-; (br_node_setup moved to bsp_render_lo.bin overflow region — see end of file)
+; (br_node_setup lives in lo.s — LO segment, one CODE region both builds)
 
 ; --- Children-id slots (set per bsp_node visit, used after bbox checks).
 ; Raw WAD 16-bit child ids (bit 15 = subsector), NEAR = children[zp_side],

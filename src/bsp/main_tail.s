@@ -21,10 +21,10 @@ end_code:
 .endif
 
 ; ============================================================================
-; B REGION ($0AA0-$0BFF) — deferred-op queue + helpers. This space is the
-; unused tail of the old 384-byte SS_VISITED_BITMAP allocation (237
-; subsectors need only 30 bytes, $0A80-$0A9D). Loaded as a separate binary
-; (bsp_render_b.bin) by span_clip_6502.py.
+; B SEGMENT — deferred-op queue helpers + small tables. Historically its
+; own low-RAM island ($0AA0, the unused tail of the SS_VISITED_BITMAP
+; allocation); since the 2026-07-12 flat merge it floats inside the one
+; CODE region in both builds (no separate bin). Name = link order only.
 ; ============================================================================
 .if ::BANKED
 .segment "B_BK"                         ; above PAGE (directly *LOAD-able; avoids relocate-down)

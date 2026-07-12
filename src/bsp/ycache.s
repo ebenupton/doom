@@ -111,8 +111,9 @@ bsp_w_end:
 ; (W-region ceiling retired 2026-07-12: W floats in the one CODE region.)
 
 ; ============================================================================
-; OVERFLOW REGION — bsp_render.bin is bound to $4800-$57FF (4096 bytes max,
-; framebuffer starts at $5800). Helpers that don't fit live here at $1C00 and
-; are loaded as a separate binary by span_clip_6502.py (bsp_render_lo.bin).
+; LO SEGMENT — historically the "overflow region" for code that outgrew
+; MAIN's old 4K island; since the 2026-07-12 flat merge it simply floats
+; inside the one CODE region in both builds (no separate bin, no ceiling).
+; The name survives as a link-order label only.
 ; ============================================================================
 .segment "LO"

@@ -47,7 +47,7 @@ bsp_d_end:
 ; (ld65 writes this: SAVE "bsp_render_d_bk.bin", $3BC0, bsp_d_end, $3BC0)
 .else
 ; (D-region ceiling retired 2026-07-12: D floats in the one CODE region.)
-; (ld65 writes this: SAVE "bsp_render_d.bin", $0978, bsp_d_end, $0978)
+; (D segment floats in the one CODE region — no separate bin since 2026-07-12)
 .endif
 
 

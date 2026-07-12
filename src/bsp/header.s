@@ -1,3 +1,16 @@
+; ============================================================================
+; bsp/header.s — build flags, macros, THE JUMP TABLE, cross-unit imports.
+;
+; CONTEXT: included FIRST by src/bsp_render.s (after zp.inc). The jump
+; table below is the driver/harness ABI: it must sit at the very start
+; of the MAIN segment, which the cfgs pin first in the CODE region —
+; banked $2C00, flat $3670 (= abi ENGINE_JT, link-asserted both builds;
+; gen_abi.py owns the constants). PAGE is the bank-select macro: LDA
+; #bank / STA $FE30 banked, NOTHING flat — so PAGE clobbers A + flags
+; only (X/Y ride through), and flat builds CANNOT catch a missing PAGE
+; (jsbeeb/bare-boot are the catchers).
+; ============================================================================
+
 ; --- CPU target: every builder MUST pass -D C02=0 (plain 6502) or -D C02=1
 ;     (enable 65C02 opcodes). STZ/INC A/PHX/etc are gated on C02 throughout. ---
 .if ::C02
@@ -214,7 +227,10 @@ jt_anim_init: JMP anim_init                          ; +$21
 .import jt_draw_clip_s16_h
 SC_DRAW_S16 = jt_draw_clip_s16
 SC_DRAW_S16_H = jt_draw_clip_s16_h        ; horizontal: x read from zp_seg_sx1/2
-SC_DRAW_U8 = jt_draw_clip                ; standalone DCL (u8 input, no clipper prelude)
+SC_DRAW_U8 = jt_draw_clip                ; standalone DCL (u8 input, no clipper
+; prelude). NO NATIVE CALLER (verified 2026-07-12): production lines all
+; enter through the s16 front (SC_DRAW_S16/_H); this alias exists for
+; harness parity tests only — keep unless the clipper jt slot itself dies.
 SC_MARK_SOLID = jt_mark_solid
 SC_TIGHTEN_FROM_RECORDS = jt_tighten_from_records
 
