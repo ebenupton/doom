@@ -197,14 +197,8 @@ br_project_y_raw:
    BNE py_have_m8
    STA zp_br_t2
    LDA zp_br_t0
-   STA zp_br_t3
-   LDA #0
-   STA zp_br_vxext
-   LDA zp_br_t0
-   BPL py_go
-   DEC zp_br_vxext
-py_go:
-   JMP py_shift
+   STA zp_br_t3                            ; P = h<<8 (s16; no ext — see
+   JMP py_shift                            ; the fence note at py_shift)
 py_have_m8:
 ; --- h*M8 inlined (br_smul_s8_u8 body, de-larded): lo lands straight in
 ; t2 and the hi byte stays in A for the mid add — saves the a/b staging,
@@ -280,8 +274,8 @@ pym_nneg:
    EOR #$FF
    ADC #0                                  ; hi = ~|hi| + (lo == 0)
 pym_join:
-; --- P24 mid: A = hi(h*M8). |h| <= 64 is PACK-ASSERTED (the projection
-; bound fence in doom_wireframe.py, 2026-07-12): |h*m9| <= 64*511 < 2^15,
+; --- P24 mid: A = hi(h*M8). |h| <= 63 is PACK-ASSERTED (the projection
+; bound fence in doom_wireframe.py, 2026-07-12): |h*m9| <= 63*511 = 32193; + the worst round constant ($200) = 32705 < 2^15,
 ; so P24 fits s16 and the ext byte is PURE SIGN of the mid byte — the
 ; old carry + two sign-extension terms (the senior-byte bookkeeping)
 ; cancel by construction and are gone (~12 cycles/raw call). A violating
@@ -289,15 +283,15 @@ pym_join:
    CLC
    ADC zp_br_t0                            ; mid = hi(h*M8) + h
    STA zp_br_t3
-   ASL A                                   ; C = sign of t3 (A dead after);
-   LDA #0                                  ; branchless sign spread — NOTE
-   ADC #$FF                                ; the first cut used LDX #0/BPL
-   EOR #$FF                                ; and LDX had already clobbered
-   STA zp_br_vxext                         ; the ADC's N flag: ext was
-py_shift:                                  ; always 0. C survives LDA/STA.
+py_shift:
+; (no ext byte AT ALL on the Y side, 2026-07-12: under the |h| <= 63
+; pack fence, P + the worst round constant ($200) stays s16, so the
+; dedicated 16-bit Y kernels below never look past t3 — the X kernels
+; keep the s24 path they genuinely need. DON'T SHARE WHAT ONE SIDE
+; DOESN'T NEED.)
 
 ; --- sy = 128 - rns(P24, S) (per-vertex vectored shifter) ---
-   JSR rns_go
+   JSR rns_go_y                            ; 16-bit Y kernels (own page)
    LDA #128
    SEC
    SBC zp_br_resl
@@ -550,6 +544,175 @@ rn_rloop:
 .assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+
+; ============================================================================
+; Y-SIDE RNS KERNELS — 16-bit, own page (RNSPGY, align $100 in both cfgs).
+; P arrives s16 in (t2, t3); under the pack fence (|h| <= 63, checked in
+; doom_wireframe.py) P + the worst round constant stays s16, so there is
+; NO ext byte anywhere on this path. resh is the result's sign spread.
+; The X kernels above keep the full s24 machinery br_project_x needs —
+; the two sides no longer share what only one side uses (2026-07-12).
+; SELECT SPLIT: each rlo writer patches exactly ONE dispatcher —
+; br_recip's tails patch rns_go (the px that follows them); vc_hit /
+; chain / y_stage / apv patch rns_go_y (the Y projections they precede).
+; Same one-byte SMC cost per select as before: ZERO tax.
+; ============================================================================
+.segment "RNSPGY"
+rns_go_y:
+   JMP rns24_y                             ; operand lo = live Y shifter (SMC)
+
+rns_select_y:
+.scope
+   LDX zp_br_rlo
+   LDA rns_vec_y_lo-1,X
+   STA rns_go_y+1
+   RTS
+.endscope
+rns_vec_y_lo:
+   .byte <rns24_y, <rns24_y, <rns24_y, <rns24_y, <rns24_y
+   .byte <rns_y6, <rns_y7, <rns_y8, <rns_y9, <rns_y10
+
+rns_y6:
+.scope
+; floor((P + $20) / 64) = ((P + $20) << 2) >> 8, sign via a ROL'd spread
+   LDA zp_br_t2
+   CLC
+   ADC #$20
+   STA zp_br_t2
+   BCC y6_nc
+   INC zp_br_t3
+y6_nc:
+   LDA zp_br_t3
+   BPL y6_pos
+   LDA #$FF
+   BNE y6_sh
+y6_pos:
+   LDA #0
+y6_sh:
+   ASL zp_br_t2
+   ROL zp_br_t3
+   ROL A                                   ; sign byte rides A through the
+   ASL zp_br_t2                            ; two shifts -> resh
+   ROL zp_br_t3
+   ROL A
+   STA zp_br_resh
+   LDA zp_br_t3
+   STA zp_br_resl
+   RTS
+.endscope
+rns_y7:
+.scope
+; floor((P + $40) / 128) = ((P + $40) << 1) >> 8
+   LDA zp_br_t2
+   CLC
+   ADC #$40
+   STA zp_br_t2
+   BCC y7_nc
+   INC zp_br_t3
+y7_nc:
+   LDA zp_br_t3
+   BPL y7_pos
+   LDA #$FF
+   BNE y7_sh
+y7_pos:
+   LDA #0
+y7_sh:
+   ASL zp_br_t2
+   ROL zp_br_t3
+   ROL A
+   STA zp_br_resh
+   LDA zp_br_t3
+   STA zp_br_resl
+   RTS
+.endscope
+rns_y8:
+.scope
+; floor((P + $80) / 256): resl = t3 + lo-carry; resh = its sign (s16 in,
+; s8-range out — the fence keeps the +$80 from ever leaving s16)
+   LDA zp_br_t2
+   CLC
+   ADC #$80
+   LDA zp_br_t3
+   ADC #0
+   STA zp_br_resl
+   BMI y8_neg                              ; N from the ADC (STA preserves)
+   LDA #0
+   BEQ y8_st
+y8_neg:
+   LDA #$FF
+y8_st:
+   STA zp_br_resh
+   RTS
+.endscope
+rns_y9:
+.scope
+; floor((P + $100) / 512): t3 += 1, then asr 1
+   LDA zp_br_t3
+   CLC
+   ADC #1
+   CMP #$80                                ; C = sign -> arithmetic ROR
+   ROR A
+   STA zp_br_resl
+   BMI y9_neg
+   LDA #0
+   BEQ y9_st
+y9_neg:
+   LDA #$FF
+y9_st:
+   STA zp_br_resh
+   RTS
+.endscope
+rns_y10:
+.scope
+; floor((P + $200) / 1024): t3 += 2, then asr 2
+   LDA zp_br_t3
+   CLC
+   ADC #2
+   CMP #$80
+   ROR A
+   CMP #$80
+   ROR A
+   STA zp_br_resl
+   BMI y10_neg
+   LDA #0
+   BEQ y10_st
+y10_neg:
+   LDA #$FF
+y10_st:
+   STA zp_br_resh
+   RTS
+.endscope
+rns24_y:
+.scope
+; generic S in [1,5], 16-bit: round-add rns_half (resolve_crossing.s
+; tables, lo/mid bytes only) then S arithmetic right shifts
+   LDX zp_br_rlo
+   LDA zp_br_t2
+   CLC
+   ADC rns_half_lo-1,X
+   STA zp_br_t2
+   LDA zp_br_t3
+   ADC rns_half_mid-1,X
+   STA zp_br_t3
+y24_lp:
+   LDA zp_br_t3
+   CMP #$80                                ; C = sign
+   ROR zp_br_t3
+   ROR zp_br_t2
+   DEX
+   BNE y24_lp
+   LDA zp_br_t2
+   STA zp_br_resl
+   LDA zp_br_t3
+   STA zp_br_resh
+   RTS
+.endscope
+.assert >rns_y6 = >rns24_y, error, "Y kernels must share one page (1-byte SMC)"
+.assert >rns_y7 = >rns24_y, error, "Y kernels must share one page (1-byte SMC)"
+.assert >rns_y8 = >rns24_y, error, "Y kernels must share one page (1-byte SMC)"
+.assert >rns_y9 = >rns24_y, error, "Y kernels must share one page (1-byte SMC)"
+.assert >rns_y10 = >rns24_y, error, "Y kernels must share one page (1-byte SMC)"
+.segment "MAIN"
 
 
 .if ::BANKED

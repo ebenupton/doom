@@ -122,7 +122,8 @@ vc_hit_ok:
    LDA (zp_seg_v_cache_lo),Y
    STA zp_br_rlo
    STA VX1+14,X                            ; rlo
-   JSR rns_select                          ; cached S → re-pick the shifter
+   JSR rns_select_y                        ; cached S → re-pick the Y shifter
+                                        ; (X untouched: hits never re-project sx)
                                         ; (preserves Y; CLOBBERS X — the
                                         ; vector belongs to whoever wrote
                                         ; rlo LAST)

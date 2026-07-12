@@ -1043,7 +1043,7 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
     vert_covered_by_solid_ap=_vert_covered_by_solid_ap,
     anim_vert_set=(_anim_verts if ANIM_SECTORS else None))
 
-# ---- |h| <= 64 PROJECTION BOUND FENCE (2026-07-12) -------------------------
+# ---- |h| <= 63 PROJECTION BOUND FENCE (2026-07-12) -------------------------
 # br_project_y_raw's tail (src/bsp/project.s) assumes |height - vz| <= 64 for
 # every height the renderer can project: then |h*m9| < 2^15, the s24 ext byte
 # is pure sign of the s16 product, and the old carry/sign bookkeeping is gone.
@@ -1077,8 +1077,8 @@ def _projection_bound_fence():
             consumed.add(_prescale_height(srec[0]))
     vzs = {_prescale_height(srec[0] + 41) for srec in sectors}
     worst = max(abs(h - v) for h in consumed for v in vzs)
-    assert worst <= 64, (
-        f"projection |h| bound violated: worst |height-vz| = {worst} > 64 — "
+    assert worst <= 63, (
+        f"projection |h| bound violated: worst |height-vz| = {worst} > 63 — "
         f"restore the full s24 ext bookkeeping in br_project_y_raw "
         f"(src/bsp/project.s pym_join) before shipping this map")
 _projection_bound_fence()
