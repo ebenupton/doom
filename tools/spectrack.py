@@ -8,7 +8,9 @@ tracker cannot see these (the slots are read on OTHER executions); this
 tool tracks liveness PER VALUE INSTANCE and aggregates per producer.
 
 Model (py65 step loop over render_frame, flat build):
-  - A JSR pushes an INVOCATION (target, inclusive-cycle start); RTS pops.
+  - A JSR pushes an INVOCATION (target, inclusive-cycle start); pops are
+    SP-WATERMARK driven, not RTS-opcode driven — the PLA/PLA/JMP escape
+    idiom (box_classify's inside-exit) desyncs any RTS-counting model.
   - Every RAM write is an OUTPUT INSTANCE of the innermost invocation.
   - A read of a live instance from a DIFFERENT invocation marks the
     producer invocation USEFUL (self-reads are scratch, not results).
@@ -29,6 +31,12 @@ KNOWN NOISE CLASSES (triaged 2026-07-12 — check before believing):
   - Cache/coherence writes (hg cache, D-cache, VWHC keys) are
     cross-frame value stores; single-frame flush marks the last
     frame's tail dead.
+  - VERDICT PRODUCERS (br_bbox_visible/_d, bca, is_full, has_gap):
+    the product is the A/Z verdict — their inclusive cycles dominate
+    section A on warm frames (bv_d ~53k/frame) but the calls are the
+    walk's live work, not speculation.
+  - PURE DISPATCHERS (ap_edges post-gate): no direct outputs; children
+    earn the credit, the dispatcher always reads 'wasted'.
   - Span-pool mutation credit is unreliable (mark_solid/tg_append
     show wasted despite live consumers) — suspected cause: node
     fields rewritten by later pool ops before the reader arrives;
@@ -55,8 +63,14 @@ import doom_wireframe as dw
 from bsp_render_6502 import BspRender6502
 from symmap import sym, _load
 
-POSITIONS = [(1056, -3616, 64), (845, -3084, 215), (800, -3400, 96),
-             (1056, -3328, 14), (1308, -3289, 252)]
+# Deep/long views included deliberately (2026-07-12, corpus-measured by
+# FB coverage): the zigzag-room area (3000,-2900,128 — deepest frame
+# found, 914 nz FB bytes) and the reversed-seg-bug position (1452,-3545
+# = ZP signature 8F.1F/0F.DB; angle 0 is its deep view — the original
+# AB=$84 view faces a wall now that the over-draw bug is fixed).
+POSITIONS = [(3000, -2900, 128), (1984, -2496, 240), (1900, -2500, 0),
+             (1452, -3545, 0), (1600, -2700, 32),
+             (1056, -3616, 64), (845, -3084, 215)]
 
 table, _ = _load(banked=0)
 _syms = sorted((v, k) for k, v in table.items() if 0x200 <= v <= 0xFFFF)
@@ -88,14 +102,16 @@ class Tracker(list):
         self.inv_wcount = collections.Counter()
         self.pending = {}                          # addr -> (inv_id, site_pc)
         self.inv_closed = {}                       # popped, awaiting verdict
+        self.inv_sp = {}                           # SP watermark per invocation
         self.site_dead = collections.Counter()
         self.site_live = collections.Counter()
 
-    def push(self, target):
+    def push(self, target, sp):
         self.inv_seq += 1
         i = self.inv_seq
         parent = self.inv_stack[-1]
         self.inv_stack.append(i)
+        self.inv_sp[i] = sp                # SP after the JSR push
         self.inv_target[i] = target + ' <- ' + self.inv_target.get(parent, '?').split(' <- ')[0]
         self.inv_start[i] = self.cycles()
         self.inv_useful[i] = False
@@ -106,6 +122,7 @@ class Tracker(list):
         i = self.inv_stack.pop()
         t = self.inv_target.pop(i)
         cyc = self.cycles() - self.inv_start.pop(i)
+        self.inv_sp.pop(i, None)
         self.inv_cycles[t] += cyc
         self.inv_count[t] += 1
         # verdict DEFERRED: results are usually consumed after the
@@ -180,10 +197,14 @@ def main():
             if op == 0x20:                                    # JSR
                 tgt = (list.__getitem__(m, mpu.pc + 1)
                        | (list.__getitem__(m, mpu.pc + 2) << 8))
-                m.push(attr(tgt))
-            elif op == 0x60:                                  # RTS
-                m.pop()
+                m.push(attr(tgt), (mpu.sp - 2) & 0xFF)
             mpu.step()
+            # SP-watermark pop: an invocation is DEAD once SP rises past
+            # its entry (covers RTS, and the PLA/PLA/JMP escape idiom —
+            # box_classify's inside-exit desynced the RTS-opcode model)
+            while (len(m.inv_stack) > depth0
+                   and mpu.sp > m.inv_sp.get(m.inv_stack[-1], -1)):
+                m.pop()
         m.armed = False
         while len(m.inv_stack) > depth0: m.pop()
         return mpu.processorCycles
@@ -200,7 +221,7 @@ def main():
         list.__setitem__(m, abi.VXC_ENABLE, 1)
         list.__setitem__(m, sym('RCACHE_ENABLE'), 1)
         D_FWD = sym('D_FWD')
-        px, py, ab = 1056.0, -3616.0, 65
+        px, py, ab = 3000.0, -2900.0, 129     # walk INTO the zigzag depth
         for k in range(4 + n):
             if k >= 4: m.arm_next = True
             v = pg.math.Vector2(1, 0).rotate(ab * 360 / 256)
