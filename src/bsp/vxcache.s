@@ -74,17 +74,8 @@ vxc_ab = BCA_AB
 .segment "MAIN"
 vxc_to_view:
 .scope
-   LDA zp_seg_v_idx_lo
-   LSR A
-   LSR A
-   LSR A
-   LDX zp_seg_v_idx_hi
-   BEQ vt_xok
-; idx in 256..466: idx>>3 = 32 + ((idx&255)>>3), and (idx&255)>>3 <= 26 < 32,
-; so ORA #32 is the exact add (no carry into bit 5 possible).
-   ORA #32                                 ; idx>>3 for idx in 256..466 (r>>3<=26)
-vt_xok:
-   TAX
+   LDX zp_seg_v_idx_b                      ; VXC_VALID index = B, straight
+                                        ; from the header key (2026-07-12)
    PAGE BANK_C
    LDA VXC_VALID,X
    AND zp_seg_v_bitm
@@ -124,7 +115,8 @@ vt_cold:
 vxc_warm_load:
 .scope
    LDY zp_seg_v_idx_lo
-   LDA zp_seg_v_idx_hi
+   LDA zp_seg_v_idx_b
+   AND #$20                                ; idx >= 256  <=>  B >= 32 (B<=58)
    BNE vw_hi
    CLC
    LDA VXC_XLO,Y
@@ -180,7 +172,8 @@ vw_hi:
 vxc_cold_store:
 .scope
    LDY zp_seg_v_idx_lo
-   LDA zp_seg_v_idx_hi
+   LDA zp_seg_v_idx_b
+   AND #$20                                ; idx >= 256  <=>  B >= 32
    BNE vs_hi
    SEC
    LDA zp_br_vxlo

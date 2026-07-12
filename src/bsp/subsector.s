@@ -124,9 +124,9 @@ anim_ss_cont:
    STA zp_seg_bot_dlt                       ; bot_dlt = fh - vz
 ; Invalidate the vertex-chain key at the subsector boundary: chained
 ; front-sy reuse needs the SAME front heights, only guaranteed within
-; one subsector. idx < 481, so $FF never matches a real hi byte.
+; one subsector. B = idx>>3 <= 58, so $FF never matches a real B byte.
    LDX #$FF
-   STX zp_seg_v_idx_hi
+   STX zp_seg_v_idx_b
    INX
    STX zp_ys_done                           ; no cross-subsector sy donation
    STX zp_ys_v1ok
@@ -195,14 +195,14 @@ seg_proc:
 ; its outputs), reuse VX2 wholesale: evy/evx/clip always; sx, the front
 ; sy pair (same subsector => same fh/ch) and rhi/rlo when unclipped.
 ; The packer chain-orders subsector segs, so this hits ~80% of
-; consecutive front-facing pairs. zp_seg_v_idx_hi is invalidated at the
+; consecutive front-facing pairs. zp_seg_v_idx_b is invalidated at the
 ; subsector boundary and when a crossing overwrites VX2.
    LDA (zp_seg_hdr_p),Y
    CMP zp_seg_v_idx_lo
    BNE ch_miss
    INY
    LDA (zp_seg_hdr_p),Y
-   CMP zp_seg_v_idx_hi
+   CMP zp_seg_v_idx_b
    BNE ch_miss
 ; chain hit: the copy + back-pair body lives in LO (MAIN is at its
 ; ceiling); ~12 cyc JSR/RTS tax. chain_reuse_v1 consumes zp_ys_done
@@ -220,7 +220,7 @@ ch_miss:
    STA zp_seg_v_idx_lo
    INY
    LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
+   STA zp_seg_v_idx_b                      ; CONTRACT: A = B at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
 ; (no marshalling: evy/evx/clip/sx/recip all landed in VX1 directly)
 ch_v1_done:
@@ -236,7 +236,7 @@ ch_v1_done:
    STA zp_seg_v_idx_lo
    INY
    LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v_idx_hi                      ; CONTRACT: A = idx_hi at entry —
+   STA zp_seg_v_idx_b                      ; CONTRACT: A = B at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
 ; (no marshalling — see v1)
 
@@ -268,7 +268,7 @@ s_v2_was_clipped:
    STA zp_seg_ep                            ; reproject into v2 (struct VX2)
    JSR reproject_at_crossing
    LDA #$FF
-   STA zp_seg_v_idx_hi                      ; VX2 now holds the CROSSING, not
+   STA zp_seg_v_idx_b                      ; VX2 now holds the CROSSING, not
                                         ; the vertex — kill the chain key
 s_both_have_proj:
 
@@ -873,7 +873,7 @@ sw_loop:
    ORA zp_br_t0
    STA zp_seg_flags
    LDA #$FF
-   STA zp_seg_v_idx_hi                     ; chain key dies with the swap
+   STA zp_seg_v_idx_b                     ; chain key dies with the swap
    RTS
 .endscope
 

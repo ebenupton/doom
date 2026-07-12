@@ -46,7 +46,7 @@
 br_seg_xform_vertex:
 .scope
 ; ENTRY CONTRACT: A = idx_hi — both callers end LDA vN_hi / STA
-; zp_seg_v_idx_hi immediately before the JSR (mirrored at the call sites
+; zp_seg_v_idx_b immediately before the JSR (mirrored at the call sites
 ; in subsector.s). No PAGE anywhere in this routine (2026-07-11): the
 ; ROM vert fetch and its PAGE L2 moved to br_to_view_fetch (view.s);
 ; the hit path touches main-RAM VCACHE + rns vectors only, and
@@ -54,42 +54,38 @@ br_seg_xform_vertex:
 ; A before the shift chain consumes it.
 ;
 ; LAYOUT INVARIANT: idx < 481 — VCACHE $0C00..$1AFF holds 480 8-byte
-; entries and the valid bitmap is 59 bytes. Hence idx_hi ∈ {0,1},
-; idx>>3 fits one byte (valid ptr hi = >VCACHE_VALID_BASE constant), and
-; the idx*8 hi byte is ≤ $0F, so no carry survives either shift chain.
+; entries and the valid bitmap is 59 bytes. B = idx>>3 <= 58 fits one
+; byte (valid ptr hi = >VCACHE_VALID_BASE constant) and the idx*8 hi
+; byte is <= $0F.
 ;
 ; --- Cache entry base = VCACHE_BASE + idx*8, computed ONCE for both
 ; paths (hit reads the entry, miss writes it): 16-bit <<3 with the hi
 ; byte riding in A — the page-aligned base add lands on the hi byte only,
-; and A = idx_hi is already in hand from the caller.
-   LDX zp_seg_v_idx_lo
-   STX zp_seg_v_cache_lo
-   ASL zp_seg_v_cache_lo
-   ROL A
-   ASL zp_seg_v_cache_lo
-   ROL A
-   ASL zp_seg_v_cache_lo
-   ROL A
-   ADC #>VCACHE_BASE                       ; C = 0: last ROL shifted a 0 out
-   STA zp_seg_v_cache_hi
-
-; --- Check valid bit: byte = idx >> 3 (single byte per the invariant,
-; so the hi byte is the constant bitmap page) ---
-   LDA zp_seg_v_idx_hi
-   LSR A                                   ; C = idx bit 8, A = 0
-   TXA                                     ; X = idx_lo (C untouched)
-   ROR A
+; and A = B (idx>>3) is already in hand from the caller.
+;
+; KEY ENCODING (2026-07-12): the header stores (A = idx&255, B = idx>>3)
+; instead of (lo, hi) — B is consumed RAW as the bitmap/VXC_VALID byte
+; index, and the scaled forms rebuild in pure A-register shifts:
+;   idx*8: lo = idx_lo << 3 (mod 256), hi = B >> 2
+;   idx*4: lo = idx_lo << 2 (mod 256), hi = B >> 3  (br_to_view_fetch)
+;
+; --- Cache entry base = VCACHE_BASE + idx*8 (A = B from the caller) ---
    LSR A
-   LSR A                                   ; A = idx >> 3
-   TAY                                     ; Y = bitmap byte index. The page
-                                        ; is a constant, so the bitmap is
-                                        ; addressed abs,Y — the zp_br_p
-                                        ; pointer staging is gone
-                                        ; (2026-07-11). Y RIDES to the
-                                        ; vc_miss set-bit (PAGE between is
-                                        ; A/flags only).
-; bit mask = 1 << (idx_lo & 7), via table (was a 0..7-iteration shift loop)
-   TXA
+   LSR A                                   ; A = B>>2 = (idx*8) hi byte
+   CLC
+   ADC #>VCACHE_BASE
+   STA zp_seg_v_cache_hi
+   LDA zp_seg_v_idx_lo
+   ASL A
+   ASL A
+   ASL A                                   ; (idx*8) lo byte (mod 256)
+   STA zp_seg_v_cache_lo
+
+; --- Check valid bit: byte = B, straight from the header key ---
+   LDY zp_seg_v_idx_b                      ; Y RIDES to the vc_miss set-bit
+                                        ; (PAGE between is A/flags only)
+; bit mask = 1 << (idx_lo & 7), via table
+   LDA zp_seg_v_idx_lo
    AND #7
    TAX
    LDA vc_bit_mask,X

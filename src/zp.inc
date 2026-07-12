@@ -217,7 +217,8 @@ zp_buf = $62                      ; [clip]; u16 pointer $62/$63 (from $E3/$E4)
 RASTER_ZP_SCRSTRT = $70           ; [clip]
 pa_sx = $73                       ; [ang]
 zp_seg_v_idx_lo = $77             ; [bsp]; cached: vertex index (u16)
-zp_seg_v_idx_hi = $78             ; [bsp]
+zp_seg_v_idx_b = $78              ; [bsp]; B = idx>>3 (bitmap/VXC byte
+; index, stored pre-derived in the header; idx = B*8 + (lo&7))
 zp_seg_v_bitm = $79               ; [bsp]; valid-bitmap mask (1 << (idx & 7))
 zp_seg_v_cache_lo = $7A           ; [bsp]; cached: pointer to this vertex's cache entry
 zp_seg_v_cache_hi = $7B           ; [bsp]

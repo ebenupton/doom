@@ -46,7 +46,7 @@ VWH_SIZE     = 1     # identity: s8 height
 
 # ── Offsets within seg header ───────────────────────────────────────────
 
-SH_V1 = 0; SH_V2 = 2             # u16 vertex indices
+SH_V1 = 0; SH_V2 = 2             # vertex keys: lo=idx&255, hi=idx>>3 (see pack site)
 SH_FORM = 4; SH_C = 5           # back-face C-form (see SEG_HDR_SIZE note)
 # (lv1x/lv1y/ldx/ldy retired 2026-07-11: the C-form + DIR tables replace them)
 SH_FLAGS = 8                     # u8 flags
@@ -390,7 +390,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             rom_main[off_dirs + MAX_DIRS + did] = abs(pdy)
             rom_main[off_dirs + 2 * MAX_DIRS + did] = \
                 ((0x80 if pdy < 0 else 0) | (0x40 if pdx < 0 else 0))
-        struct.pack_into('<HH', rom_main, o, s[0], s[1])
+        # v1/v2 stored as (A = idx & 255, B = idx >> 3) — 2026-07-12: B is
+        # the valid-bitmap byte index AND the VXC_VALID index, consumed raw
+        # by the 6502; idx*8 (vcache) and idx*4 (verts) rebuild from A/B in
+        # pure A-register shifts. Bijective: idx = B*8 + (A & 7).
+        _vk = lambda v: (v & 0xFF) | ((v >> 3) << 8)
+        struct.pack_into('<HH', rom_main, o, _vk(s[0]), _vk(s[1]))
         rom_main[o + 4] = form
         if form >= 4:
             rom_main[o + 5] = lv1[0] & 0xFF

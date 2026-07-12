@@ -227,19 +227,18 @@ vs_pym_pos:
 ; now costs only the paths that actually rotate. Callers with dx/dy
 ; already staged (jt harness, vxc_frame's ref probe) enter at br_to_view.
 br_to_view_fetch:
+.assert <ROM_VERTS_C = 0, error, "vertex fetch assumes page-aligned ROM_VERTS_C"
    PAGE BANK_L2                            ; verts live in the L2 window
-   LDA zp_seg_v_idx_hi
-   STA zp_br_t3
    LDA zp_seg_v_idx_lo
    ASL A
-   ROL zp_br_t3
-   ASL A
-   ROL zp_br_t3
+   ASL A                                   ; (idx*4) lo = lo<<2 mod 256 —
+   STA zp_br_p                             ; page-aligned base: no lo add
+   LDA zp_seg_v_idx_b
+   LSR A
+   LSR A
+   LSR A                                   ; B>>3 = idx>>6 = (idx*4) hi
    CLC
-   ADC #<ROM_VERTS_C                       ; layout.inc constant
-   STA zp_br_p
-   LDA zp_br_t3
-   ADC #>ROM_VERTS_C
+   ADC #>ROM_VERTS_C                       ; layout.inc constant
    STA zp_br_p_h
    LDY #0
    LDA (zp_br_p),Y

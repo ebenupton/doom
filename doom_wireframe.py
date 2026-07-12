@@ -2173,8 +2173,10 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
     # ── Read seg header from rom_main ──
     seg_off = layout['off_seg_hdr'] + si * SEG_HDR_SIZE
-    v1_idx = read_u16(rom, seg_off + SH_V1)
-    v2_idx = read_u16(rom, seg_off + SH_V2)
+    _w1 = read_u16(rom, seg_off + SH_V1)    # (A=idx&255, B=idx>>3) key form
+    _w2 = read_u16(rom, seg_off + SH_V2)
+    v1_idx = (_w1 >> 8) * 8 + (_w1 & 7)
+    v2_idx = (_w2 >> 8) * 8 + (_w2 & 7)
     bf_form = rom[seg_off + 4]              # 0-3 axis, >=4 diagonal dir_id+4
     flags  = read_u8(rom,  seg_off + SH_FLAGS)
 
