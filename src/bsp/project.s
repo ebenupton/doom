@@ -282,7 +282,10 @@ pyc_miss:
 ;   the projection, so results come out PRE-BIASED. Same final values.
 ;   Clobbers zp_br_t2/t3, zp_br_vxext, zp_br_a/b, mul workspace.
 ; ============================================================================
-br_project_y_raw:
+; (label deleted 2026-07-12: NO ENTRY EXISTS — the body is reached only
+; by falling through the cache front's miss path above, which set
+; zp_pyc_idx for the tail's VWHC writeback. A direct JSR here would
+; store the result into a stale cache slot: the label was a loaded gun.)
 .scope
 ; --- P24 = h*M8 + (h << 8), s24 in (t2, t3, vxext) ---
 ; M8 == 0 (m9 = 256 exactly: the near-plane crossing recip and every
@@ -423,7 +426,7 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ; VWHC valid flag) is a per-vertex constant, so the shifter is selected
 ; ONCE per reciprocal and each projection dispatches with a single JSR:
 ;
-;   rns_go:  JSR'd by br_project_x and br_project_y_raw (both this
+;   rns_go:  JSR'd by br_project_x and br_project_y's raw body (both this
 ;            file). It is ONE instruction — JMP <body> — whose OPERAND is
 ;            the live shifter (SMC, 2026-07-12): rns_select below and the
 ;            three INLINED selects in subsector.s's y_stage write

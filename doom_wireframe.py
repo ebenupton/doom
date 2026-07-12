@@ -1044,7 +1044,7 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
     anim_vert_set=(_anim_verts if ANIM_SECTORS else None))
 
 # ---- |h| <= 64 PROJECTION BOUND FENCE (2026-07-12) -------------------------
-# br_project_y_raw's tail (src/bsp/project.s) assumes |height - vz| <= 64 for
+# br_project_y's raw tail (src/bsp/project.s) assumes |height - vz| <= 64 for
 # every height the renderer can project: then |h*m9| < 2^15, the s24 ext byte
 # is pure sign of the s16 product, and the old carry/sign bookkeeping is gone.
 # This fence makes that a PACK-TIME contract: a map (or mover travel) that
@@ -1079,7 +1079,7 @@ def _projection_bound_fence():
     worst = max(abs(h - v) for h in consumed for v in vzs)
     assert worst <= 64, (
         f"projection |h| bound violated: worst |height-vz| = {worst} > 64 — "
-        f"restore the full s24 ext bookkeeping in br_project_y_raw "
+        f"restore the full s24 ext bookkeeping in br_project_y's raw body "
         f"(src/bsp/project.s pym_join) before shipping this map")
 _projection_bound_fence()
 

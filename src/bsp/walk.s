@@ -52,7 +52,7 @@ br_init_frame:
    STA zp_dcl_rec_buf
    STA zp_dcl_rec_buf_h
 ; The VWH projection cache is self-validating: its key is the COMPLETE
-; input (rhi,rlo,h) to br_project_y_raw, a pure function — so a hit is
+; input (rhi,rlo,h) to br_project_y's raw body, a pure function — a hit is
 ; correct regardless of age (stale key -> mismatch -> miss). Per-frame
 ; invalidation is therefore unnecessary; we skip the 256-byte clear and
 ; let entries persist (a free cross-frame hit-rate bonus under motion).
