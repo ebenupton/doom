@@ -44,36 +44,85 @@ px_have_m8:
    STA zp_br_t2
    BEQ px_no_frac
 px_have_frac:
-   LDA zp_br_rhi
-   STA zp_mul_b
-   LDA zp_br_t1
-   JSR SC_UMUL8                            ; A = prod_hi (umul8 contract)
+; frac*M8, HI BYTE ONLY — quarter-square INLINED (2026-07-12: the JSR'd
+; core stored a 16-bit product whose lo byte this caller never reads;
+; the lo-table subtract survives only as a CMP for its borrow into the
+; hi subtract). A = frac on entry.
+   TAX
+   SEC
+   SBC zp_br_rhi
+   BCS pxf_pd
+   EOR #$FF
+   ADC #1
+pxf_pd:
+   TAY                                     ; Y = |frac - M8|
+   TXA
+   CLC
+   ADC zp_br_rhi
+   TAX                                     ; X = frac + M8
+   BCS pxf_uo
+   LDA sqr_lo,X
+   CMP sqr_lo,Y                            ; C = lo borrow (hi-only: no store)
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   JMP pxf_have
+pxf_uo:
+   LDA sqr2_lo,X
+   CMP sqr_lo,Y
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+pxf_have:
    CLC
    ADC zp_br_t1
    STA zp_br_t2
-   LDA #0
-   ADC #0
-   STA zp_br_t3
+   BCC px_no_frac
+   INC zp_br_t3                            ; t3 pre-zeroed at entry
 px_no_frac:
 
-; --- += smul(vx, M8) (s16, sign-extended into vxext) ---
-   LDA zp_br_rhi
-   STA zp_mul_b
+; --- += smul(vx, M8), SIGN FUSED INTO THE ACCUMULATE (inlined
+; 2026-07-12): positive vx ADDS the unsigned product, negative vx
+; SUBTRACTS it (arm below the tail) — the signed product never
+; materialises, so the old two-fixup ext dance (carry bump + product-
+; sign correction) is one carry/borrow bump per arm. ---
    LDA zp_br_t0
-   JSR br_smul_am                          ; a in A (N live), b in zp_mul_b
-   LDA zp_br_resl
+   BMI pxm_neg
+   TAX
+   SEC
+   SBC zp_br_rhi
+   BCS pxm_pd
+   EOR #$FF
+   ADC #1
+pxm_pd:
+   TAY                                     ; Y = ||vx| - M8|
+   TXA
+   CLC
+   ADC zp_br_rhi
+   TAX                                     ; X = |vx| + M8
+   BCS pxm_puo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_br_a                             ; prod lo (scratch)
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   JMP pxm_pacc
+pxm_puo:
+   LDA sqr2_lo,X
+   SBC sqr_lo,Y                            ; C set on this arm
+   STA zp_br_a
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+pxm_pacc:
+   TAX                                     ; X = prod hi
+   LDA zp_br_a
    CLC
    ADC zp_br_t2
    STA zp_br_t2
-   LDA zp_br_resh
+   TXA
    ADC zp_br_t3
    STA zp_br_t3
-   BCC px_p_nc                             ; BCC/INC ext bump (carry ~50%)
-   INC zp_br_vxext
-px_p_nc:
-   LDA zp_br_resh
-   BPL px_p_pos
-   DEC zp_br_vxext
+   BCC px_p_pos                            ; ext += carry (unsigned product:
+   INC zp_br_vxext                         ; no sign fixup exists)
 px_p_pos:
 
 ; --- += vx << 8 (sign-extended) ---
@@ -103,6 +152,51 @@ px_i_pos:
    ADC #0
    STA zp_br_resh
    RTS
+
+pxm_neg:
+; negative vx: b123 -= |vx|*M8 (unsigned product, subtractive accumulate)
+   EOR #$FF
+   BUMP                                    ; A = |vx|
+   TAX
+   SEC
+   SBC zp_br_rhi
+   BCS pxm_nd
+   EOR #$FF
+   ADC #1
+pxm_nd:
+   TAY
+   TXA
+   CLC
+   ADC zp_br_rhi
+   TAX
+   BCS pxm_nuo
+   LDA sqr_lo,X
+   SEC
+   SBC sqr_lo,Y
+   STA zp_br_a                             ; prod lo
+   LDA sqr_hi,X
+   SBC sqr_hi,Y
+   JMP pxm_nacc
+pxm_nuo:
+   LDA sqr2_lo,X
+   SBC sqr_lo,Y
+   STA zp_br_a
+   LDA sqr2_hi,X
+   SBC sqr_hi,Y
+pxm_nacc:
+   STA zp_mul_b                            ; prod hi (scratch — the mul that
+                                        ; owned this byte is inlined now)
+   SEC
+   LDA zp_br_t2
+   SBC zp_br_a
+   STA zp_br_t2
+   LDA zp_br_t3
+   SBC zp_mul_b
+   STA zp_br_t3
+   BCS pxm_njoin                           ; ext -= borrow
+   DEC zp_br_vxext
+pxm_njoin:
+   JMP px_p_pos
 .endscope
 
 
