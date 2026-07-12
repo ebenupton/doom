@@ -171,8 +171,8 @@ seg_proc:
 ; the test JMPs straight to bf_seg_front / bf_seg_back instead of
 ; returning a Z verdict — no JSR/RTS, no verdict LDA, no re-branch.
    JMP br_back_face_test
-::bf_seg_back:
-   JMP s_advance
+; (bf_seg_back trampoline deleted 2026-07-12: back-exits in backface.s
+; JMP ::s_advance directly — one hop, not two, per back-facing seg)
 ::bf_seg_front:
 ; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
 
@@ -800,7 +800,7 @@ ms_skip:
 ; --- Advance to the next seg: clear the skip flag, bump the seg index
 ;     (u16) and the two persistent ROM cursors (+12 header, +6 FHCH). ---
 
-s_advance:
+::s_advance:                            ; global: backface.s back-exits land here
 ; (no zp_seg_skip reset needed: the back-face test returns in A now, and
 ; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
 ; (zp_seg_first is NOT advanced per seg: its only reader is the subsector

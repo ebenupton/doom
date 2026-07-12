@@ -81,7 +81,7 @@ br_back_face_test:
 ;   +0*MAX |dx'| , +1*MAX |dy'| , +2*MAX sign byte (b7 dy'<0, b6 dx'<0)
 ; |px|/|py| are staged per frame by br_view_setup (zp_bf_p?m_*); signs
 ; read live from px_e/py_e bit7. Ties (dot == 0) are BACK, as always.
-; TAIL-DISPATCHED: exits JMP bf_seg_front / bf_seg_back (no RTS).
+; TAIL-DISPATCHED: exits JMP bf_seg_front / s_advance (no RTS).
 ; Ranges: |P1|,|P2| <= 127*2600 < 2^19; |dot|+|C| < 2^21 — s24 exact,
 ; no overflow handling needed anywhere.
 ; ============================================================================
@@ -121,7 +121,7 @@ bf_ax_px_lt:
    BVS bf_ax_lt_ovf
    BMI bf_ax_front                         ; diff < 0
 bf_ax_back:
-   JMP bf_seg_back
+   JMP s_advance
 bf_ax_lt_ovf:
    BPL bf_ax_front                         ; V:N inverted — N clear = negative
    BMI bf_ax_back
@@ -211,7 +211,7 @@ bf_g_both:
    BMI bfd_back_j
    JMP bf_seg_front
 bfd_back_j:
-   JMP bf_seg_back
+   JMP s_advance
 ; dx == 0: dot = -P2 = -(dx'*dy); need dy for its sign (P2 = 0 handled:
 ; dy==0 too -> dot = 0 -> back)
 bfd_dx0:
@@ -230,7 +230,7 @@ bfd_dx0:
    ASL A                                   ; b7 = sgn dx'
    EOR zp_br_dyhi                          ; b7 = sign(P2)
    BMI bfd_front_j                         ; dot = -P2 > 0 iff P2 < 0
-   JMP bf_seg_back
+   JMP s_advance
 bfd_front_j:
    JMP bf_seg_front
 ; dy == 0: dot = P1 = dy'*dx (nonzero: dx != 0 here)
@@ -345,7 +345,7 @@ bfm_lt_dec:
    BCS bfm_back                            ; |P1| >= |P2| -> back
    JMP bf_seg_front
 bfm_back:
-   JMP bf_seg_back
+   JMP s_advance
 .endscope
 
 ; ============================================================================
