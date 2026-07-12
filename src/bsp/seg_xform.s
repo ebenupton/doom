@@ -189,7 +189,20 @@ vxc_jsr_site:
 ; vyext=$FF is NORMAL for negative vy (s24 sign extension), not an
 ; overflow. Helper consumes the carry-out of the rounding add and
 ; clamps VX1+0,X in place (preserves X).
-   JSR ev_clamp_evy16
+; --- evy16 clamp, common case inline (spectrack 2026-07-12: 88% of the
+; old ev_clamp_evy16 calls did nothing). C is the rounding add's carry —
+; still consumed here, the carry-chain contract just moved to the site.
+   LDA zp_br_vyext
+   ADC #0                                  ; rounded evy16 hi byte
+   BNE ec_hi_nz                            ; hi != 0 → rare, full logic
+   LDA VX1+0,X
+   BPL ec_done                             ; fits s8: no call, no store
+   LDA #$7F                                ; 128..255 → clamp
+   STA VX1+0,X
+   BNE ec_done                             ; (A = $7F: always taken)
+ec_hi_nz:
+   JSR ev_clamp_hi_nz
+ec_done:
 
 ; Pre-write evy/evx into cache (offsets 0/1) — needed on any future
 ; cache hit, including the near-clipped path. Written through the cache

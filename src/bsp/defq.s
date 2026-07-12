@@ -231,12 +231,11 @@ dd_done:
 ;     hi == $FF: lo >= $80 fits, else clamp to -$80  (-256..-129)
 ;     hi other:  clamp to +$7F / -$80 by sign of hi.
 ; ============================================================================
-ev_clamp_evy16:
+; (entry split 2026-07-12, spectrack find: 88% of calls were complete
+; no-ops — the hi==0/evy-positive common case is INLINED at the single
+; call site in seg_xform.s; only hi != 0 calls in here now, A = hi.)
+ev_clamp_hi_nz:
 .scope
-   LDA zp_br_vyext
-   ADC #0
-; hi byte of rounded evy16
-   BEQ ev_case_zero
    CMP #$FF
    BEQ ev_case_ff
    ASL A
@@ -254,11 +253,6 @@ ev_case_ff:
    LDA #$80
    BNE ev_store
 ; -256..-129 → clamp
-ev_case_zero:
-   LDA VX1+0,X
-   BPL ev_done
-; $00:%0xxxxxxx → fits s8
-   LDA #$7F                                ; 128..255 → clamp
 ev_store:
    STA VX1+0,X
 ev_done:

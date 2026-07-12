@@ -780,6 +780,12 @@ as_done:
    RTS
 ; as_one: X = struct offset, Y = header offset of the FH byte (CH = Y-1)
 as_one:
+   LDA VX1+4,X                             ; sx_hi: off-screen endpoint →
+   BEQ as_on                               ; ap_edge_one skips its vertical,
+   RTS                                     ; so DON'T project the pair
+                                        ; (spectrack 2026-07-12: every
+                                        ; wasted apv_stage call was this)
+as_on:
    STX as_x
    STY as_y
    LDA VX1+13,X                            ; endpoint recip
