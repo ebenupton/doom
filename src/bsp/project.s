@@ -280,23 +280,21 @@ pym_nneg:
    EOR #$FF
    ADC #0                                  ; hi = ~|hi| + (lo == 0)
 pym_join:
-; --- P24 mid/hi: A = hi(h*M8) throughout ---
-   TAX                                     ; X = hi (sign check below)
+; --- P24 mid: A = hi(h*M8). |h| <= 64 is PACK-ASSERTED (the projection
+; bound fence in doom_wireframe.py, 2026-07-12): |h*m9| <= 64*511 < 2^15,
+; so P24 fits s16 and the ext byte is PURE SIGN of the mid byte — the
+; old carry + two sign-extension terms (the senior-byte bookkeeping)
+; cancel by construction and are gone (~12 cycles/raw call). A violating
+; map fails the PACK, not the render. ---
    CLC
    ADC zp_br_t0                            ; mid = hi(h*M8) + h
    STA zp_br_t3
-   LDA #0
-   ADC #0                                  ; carry from the mid add
-   STA zp_br_vxext
-   TXA
-   BPL py_p_pos
-   DEC zp_br_vxext                         ; + sign extension of h*M8
-py_p_pos:
-   LDA zp_br_t0
-   BPL py_h_pos
-   DEC zp_br_vxext                         ; + sign extension of h<<8
-py_h_pos:
-py_shift:
+   ASL A                                   ; C = sign of t3 (A dead after);
+   LDA #0                                  ; branchless sign spread — NOTE
+   ADC #$FF                                ; the first cut used LDX #0/BPL
+   EOR #$FF                                ; and LDX had already clobbered
+   STA zp_br_vxext                         ; the ADC's N flag: ext was
+py_shift:                                  ; always 0. C survives LDA/STA.
 
 ; --- sy = 128 - rns(P24, S) (per-vertex vectored shifter) ---
    JSR rns_go

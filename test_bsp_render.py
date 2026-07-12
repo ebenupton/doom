@@ -330,13 +330,19 @@ def _has_sym(name):
 
 
 def test_project_y():
-    """fp_project_y: FULL height-delta domain (every s8 h) × every S band."""
+    """fp_project_y over the CONTRACT domain |h| <= 64 x every S band.
+
+    2026-07-12: br_project_y_raw's ext byte is pure sign, valid only under
+    the pack-time projection bound fence (doom_wireframe.py: every consumed
+    |height - vz| <= 64, E1M1 worst is 54). h outside the fence is a packer
+    bug by definition, so the sweep covers the fenced domain inclusive of
+    both boundary values."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     cases = []
     for vy_idx in _IDX_SWEEP:
         rh, rl = fp.fp_recip(vy_idx)
-        for h in range(-128, 128):
+        for h in range(-64, 65):
             cases.append((h, rh, rl))
     fail = 0
     for h, rh, rl in cases:

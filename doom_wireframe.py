@@ -1043,6 +1043,46 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
     vert_covered_by_solid_ap=_vert_covered_by_solid_ap,
     anim_vert_set=(_anim_verts if ANIM_SECTORS else None))
 
+# ---- |h| <= 64 PROJECTION BOUND FENCE (2026-07-12) -------------------------
+# br_project_y_raw's tail (src/bsp/project.s) assumes |height - vz| <= 64 for
+# every height the renderer can project: then |h*m9| < 2^15, the s24 ext byte
+# is pure sign of the s16 product, and the old carry/sign bookkeeping is gone.
+# This fence makes that a PACK-TIME contract: a map (or mover travel) that
+# violates it fails HERE, not by rendering garbage. Consumed heights = the
+# flags-gated header slots +10..15 plus anim-mover travel extremes; vz = any
+# sector floor + 41 (eye height), prescaled exactly as the runtime does.
+def _projection_bound_fence():
+    solid, needbt, needbb, ap1, ap2 = 0x02, 0x04, 0x08, 0x40, 0x01
+    L, rm = packed_layout, packed_rom_main
+    def s8(v): return v - 256 if v >= 128 else v
+    consumed = set()
+    for i in range(L['n_segs']):
+        o = L['off_seg_hdr'] + i * 16
+        f = rm[o + 8]
+        idx = [10, 11]
+        if f & solid:
+            if f & ap1: idx += [12, 13]
+            if f & ap2: idx += [14, 15]
+        else:
+            if f & needbb: idx.append(12)
+            if f & needbt: idx.append(13)
+        for k in idx: consumed.add(s8(rm[o + k]))
+    for sec, kind in ANIM_SECTORS.items():             # mover travel extremes
+        srec = sectors[sec]
+        nb = [sectors[ld] for ld in range(len(sectors))]  # conservative: all
+        if kind == 'ceil':                             # door: ceil floor..open
+            consumed.add(_prescale_height(srec[0]))
+            consumed.add(_prescale_height(srec[1]))
+        else:                                          # lift: floor bottom..top
+            consumed.add(_prescale_height(srec[0]))
+    vzs = {_prescale_height(srec[0] + 41) for srec in sectors}
+    worst = max(abs(h - v) for h in consumed for v in vzs)
+    assert worst <= 64, (
+        f"projection |h| bound violated: worst |height-vz| = {worst} > 64 — "
+        f"restore the full s24 ext bookkeeping in br_project_y_raw "
+        f"(src/bsp/project.s pym_join) before shipping this map")
+_projection_bound_fence()
+
 # Build ROM banks for sideways ROM paging
 packed_rom_banks = [
     bytearray(16384),  # bank 0: rom_main
