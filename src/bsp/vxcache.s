@@ -64,38 +64,10 @@ VXC_YEXT = $B400
 vxc_ab = BCA_AB
 
 ; ============================================================================
-; Resident stub — replaces br_to_view via the vxc_jsr_site SMC when enabled.
-; In: zp_seg_v_idx_lo/hi (vertex index), zp_seg_v_bitm (1 << (idx&7), already
-;     computed by the per-frame VCACHE check). The world coords are NOT an
-;     input (2026-07-11): the cold path fetches them itself through
-;     br_to_view_fetch — warm hits never touch them.
-; Out: zp_br_vx/vy lo/hi/ext = exact view totals.
+; (vxc_to_view + vxc_warm_load flattened into seg_xform.s as vxc_arm,
+; 2026-07-12 — the per-vertex hot path lives in ONE file now. This file
+; keeps the data planes, the cold-store leaf and the per-frame hook.)
 ; ============================================================================
-.segment "MAIN"
-vxc_to_view:
-.scope
-   LDX zp_seg_v_idx_b                      ; VXC_VALID index = B, straight
-                                        ; from the header key (2026-07-12)
-   PAGE BANK_C
-   LDA VXC_VALID,X
-   AND zp_seg_v_bitm
-   BEQ vt_cold
-   JSR vxc_warm_load                       ; VXCODE: total = base + CACC -> zp
-   PAGE BANK_L0
-   RTS
-vt_cold:
-; cold: mark the vertex valid, run fetch + real transform (the fetch
-; entry pages L2 itself), then snapshot base = total - CACC for future
-; warm frames.
-   LDA VXC_VALID,X
-   ORA zp_seg_v_bitm
-   STA VXC_VALID,X
-   JSR br_to_view_fetch
-   PAGE BANK_C
-   JSR vxc_cold_store                      ; VXCODE: base = total - CACC
-   PAGE BANK_L0
-   RTS
-.endscope
 
 ; ============================================================================
 ; Fat paths — run with BANK_C paged (flat: plain resident code in ANG).
@@ -106,62 +78,6 @@ vt_cold:
 .segment "ANG"
 .endif
 
-; --- vxc_warm_load: total = base + CACC (two s24 adds) ----------------------
-;   in : zp_seg_v_idx_lo/hi (vertex index 0..466), vxc_cacc_x/y (s24)
-;   out: zp_br_vx/vy lo/hi/ext = the exact view totals br_to_view would give
-; Plane arrays are page-aligned with 467 entries: idx < 256 indexes the base
-; page, idx >= 256 the +$100 page (Y = idx low byte either way — hence the
-; duplicated body). One CLC per axis; the carry rides the 3-byte ADC chain.
-vxc_warm_load:
-.scope
-   LDY zp_seg_v_idx_lo
-   LDA zp_seg_v_idx_b
-   AND #$20                                ; idx >= 256  <=>  B >= 32 (B<=58)
-   BNE vw_hi
-   CLC
-   LDA VXC_XLO,Y
-   ADC vxc_cacc_x+0
-   STA zp_br_vxlo
-   LDA VXC_XHI,Y
-   ADC vxc_cacc_x+1
-   STA zp_br_vxhi
-   LDA VXC_XEXT,Y
-   ADC vxc_cacc_x+2
-   STA zp_br_vxext
-   CLC
-   LDA VXC_YLO,Y
-   ADC vxc_cacc_y+0
-   STA zp_br_vylo
-   LDA VXC_YHI,Y
-   ADC vxc_cacc_y+1
-   STA zp_br_vyhi
-   LDA VXC_YEXT,Y
-   ADC vxc_cacc_y+2
-   STA zp_br_vyext
-   RTS
-vw_hi:
-   CLC
-   LDA VXC_XLO+$100,Y
-   ADC vxc_cacc_x+0
-   STA zp_br_vxlo
-   LDA VXC_XHI+$100,Y
-   ADC vxc_cacc_x+1
-   STA zp_br_vxhi
-   LDA VXC_XEXT+$100,Y
-   ADC vxc_cacc_x+2
-   STA zp_br_vxext
-   CLC
-   LDA VXC_YLO+$100,Y
-   ADC vxc_cacc_y+0
-   STA zp_br_vylo
-   LDA VXC_YHI+$100,Y
-   ADC vxc_cacc_y+1
-   STA zp_br_vyhi
-   LDA VXC_YEXT+$100,Y
-   ADC vxc_cacc_y+2
-   STA zp_br_vyext
-   RTS
-.endscope
 
 ; --- vxc_cold_store: base = total - CACC (inverse of vxc_warm_load) ---------
 ;   in : zp_br_vx/vy lo/hi/ext (totals just computed by br_to_view),
@@ -315,9 +231,9 @@ vf_warm:
    SBC vxc_refc_y+2
    STA vxc_cacc_y+2
 vf_patch:
-   LDA #<vxc_to_view
+   LDA #<vxc_arm
    STA vxc_jsr_site+1
-   LDA #>vxc_to_view
+   LDA #>vxc_arm
    STA vxc_jsr_site+2
    RTS
 .endscope
