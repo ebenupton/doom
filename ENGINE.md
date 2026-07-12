@@ -32,6 +32,22 @@ with pure shifts. Lines are clipped by the DCL (draw-clipped-line) walk
 against the span list and rasterised by the vendored NJ line drawer, with
 dedicated axis plotters taking ~70% of pixels.
 
+## The multiply doctrine (re-evaluated 2026-07-12)
+
+The 8x8 unsigned quarter-square lookup (sqr tables, a*b = f(a+b)-f(a-b))
+is the only arithmetic SUBSTRATE. Wide multiplies are site-specialized
+COMPOSITIONS of it, fused into the surrounding dataflow, each mirrored
+one-to-one in fp.py — exactness stays compositional, which is why local
+fusions can be proven locally. Measured both ways on the same day:
+de-inlining py's mul costs ~44/call; inlining px's two saved ~55/call —
+the call boundary is what forbids hi-only products and sign-fused
+accumulates. Signed-native tables were evaluated and REJECTED: nearly
+every wide multiply here is X*m9 with m9 UNSIGNED (the recip mantissa),
+and re-biasing costs more than the sign arms do post-fusion (the sign
+folds into the accumulate direction for free). If code space ever
+binds, re-JSR-ify the COLD quarter-square copies first; if derivation
+bugs recur, codify the sum/diff/window + fusion idioms as macros.
+
 ## The per-seg pipeline (hot path, in execution order)
 
 For every seg of every visited subsector (`bsp/subsector.s` owns the
