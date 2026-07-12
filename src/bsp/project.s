@@ -344,12 +344,11 @@ rns_s6:
    CLC
    ADC #$20
    STA zp_br_t2
-   LDA zp_br_t3
-   ADC #0
-   STA zp_br_t3
-   LDA zp_br_vxext
-   ADC #0
-   STA zp_br_vxext
+   BCC rc_done_s6                     ; round-carry: BCC/INC wrap chain
+   INC zp_br_t3                            ; (carry set ~12%, wrap rarer —
+   BNE rc_done_s6                     ; beats the 16-cycle ADC ladder
+   INC zp_br_vxext                         ; on every path)
+rc_done_s6:
    ASL zp_br_t2
    ROL zp_br_t3
    ROL zp_br_vxext
@@ -370,12 +369,11 @@ rns_s7:
    CLC
    ADC #$40
    STA zp_br_t2
-   LDA zp_br_t3
-   ADC #0
-   STA zp_br_t3
-   LDA zp_br_vxext
-   ADC #0
-   STA zp_br_vxext
+   BCC rc_done_s7                     ; round-carry: BCC/INC wrap chain
+   INC zp_br_t3                            ; (carry set ~12%, wrap rarer —
+   BNE rc_done_s7                     ; beats the 16-cycle ADC ladder
+   INC zp_br_vxext                         ; on every path)
+rc_done_s7:
    ASL zp_br_t2
    LDA zp_br_t3
    ROL A

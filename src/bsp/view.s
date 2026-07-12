@@ -366,14 +366,12 @@ tv_add_fracs:
    STA zp_br_vxhi
    LDA zp_br_fvxhi
    BMI bv_fvxneg
-   LDA zp_br_vxext
-   ADC #0
-   STA zp_br_vxext
-   JMP bv_fvx_done
+   BCC bv_fvx_done                         ; +frac: ext += hi-add carry
+   INC zp_br_vxext                         ; (BCC/INC beats LDA/ADC/STA/JMP
+   JMP bv_fvx_done                         ; on both carry outcomes)
 bv_fvxneg:
-   LDA zp_br_vxext
-   ADC #$FF
-   STA zp_br_vxext
+   BCS bv_fvx_done                         ; -frac: ADC #$FF == ext-1+C, so
+   DEC zp_br_vxext                         ; carry SET is a no-op
 bv_fvx_done:
 
    LDA zp_br_vylo
@@ -385,14 +383,12 @@ bv_fvx_done:
    STA zp_br_vyhi
    LDA zp_br_fvyhi
    BMI bv_fvyneg
-   LDA zp_br_vyext
-   ADC #0
-   STA zp_br_vyext
-   JMP bv_fvy_done
+   BCC bv_fvy_done                         ; +frac: ext += hi-add carry
+   INC zp_br_vyext                         ; (BCC/INC beats LDA/ADC/STA/JMP
+   JMP bv_fvy_done                         ; on both carry outcomes)
 bv_fvyneg:
-   LDA zp_br_vyext
-   ADC #$FF
-   STA zp_br_vyext
+   BCS bv_fvy_done                         ; -frac: ADC #$FF == ext-1+C, so
+   DEC zp_br_vyext                         ; carry SET is a no-op
 bv_fvy_done:
    RTS
 .endscope
@@ -580,9 +576,8 @@ bb_pos:
    LDA zp_prod_hi
    ADC zp_br_t2
    STA zp_br_t2
-   LDA zp_br_t3
-   ADC #0
-   STA zp_br_t3
+   BCC *+4                                 ; t3 += carry (BCC/INC)
+   INC zp_br_t3
 
 ; ah × bl → add to t1:t2:t3
    LDA zp_br_dylo
@@ -596,9 +591,8 @@ bb_pos:
    LDA zp_prod_hi
    ADC zp_br_t2
    STA zp_br_t2
-   LDA zp_br_t3
-   ADC #0
-   STA zp_br_t3
+   BCC *+4                                 ; t3 += carry (BCC/INC)
+   INC zp_br_t3
 
 ; Apply sign (negate s32 if negative)
    LDA zp_br_sign
