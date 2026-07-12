@@ -33,9 +33,15 @@ KNOWN NOISE CLASSES (triaged 2026-07-12 — check before believing):
     show wasted despite live consumers) — suspected cause: node
     fields rewritten by later pool ops before the reader arrives;
     refine before trusting clipper-side verdicts.
-FINDS SO FAR: ev_clamp_evy16 (88% no-op -> call-site inline) and
-apv_stage projecting off-screen aperture pairs (sx gate hoisted into
-as_one) — both landed 2026-07-12, -0.13%%.
+FINDS LANDED (2026-07-12): ev_clamp_evy16 88% no-op -> call-site
+inline; apv_stage off-screen gate -> as_one head; ap_edges 28-cycle
+no-op call -> AND #$41 gate at the call site; view-x saves deferred
+past the near-clip verdict. OPEN LEADS (parent-attributed): px's
+frac*M8 mul never reads prod_lo (a dup-tail SC_UMUL8_HI variant would
+save ~3/call, ~270/frame — marginal); emit_vert_sx1/2 ~35% of vertical
+DCL walks clip to nothing (~5k/frame warm, no pre-test cheaper than
+the walk found yet). umul_round_div/interp/tighten 'waste' is A-return
+noise.
 Usage: python3 tools/spectrack.py [n_positions] [warm]
   warm: fixed-angle walk sequence, VXC+RCACHE+D enabled, warmup skipped.
 """
@@ -88,8 +94,9 @@ class Tracker(list):
     def push(self, target):
         self.inv_seq += 1
         i = self.inv_seq
+        parent = self.inv_stack[-1]
         self.inv_stack.append(i)
-        self.inv_target[i] = target
+        self.inv_target[i] = target + ' <- ' + self.inv_target.get(parent, '?').split(' <- ')[0]
         self.inv_start[i] = self.cycles()
         self.inv_useful[i] = False
         return i
