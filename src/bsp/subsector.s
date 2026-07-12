@@ -14,7 +14,7 @@
 ;     4. Fused has_gap range prelude + cull (clipper jt) — culled segs
 ;        stop HERE: Y is never projected for them (deferral, 2026-07-11).
 ;     5. y_stage below: PAGE L2 once, project flag-gated sy pairs via
-;        do_project_y [seg_project.s] through the VWHC memo [ycache.s];
+;        do_project_y [seg_project.s] through the VWHC memo [project.s];
 ;        chain donates the previous v2's front pair when valid.
 ;     6. apv_stage [lo.s]: aperture-vertical pairs, post-visibility.
 ;     7. Endpoint canonicalization: THE SEG LAYER OWNS LEFT-TO-RIGHT —

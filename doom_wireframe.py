@@ -67,7 +67,7 @@ import fp as fp_module
 from endpoint_spans import EndpointClipSpans
 from fp import (fp_mul8, fp_div8, s8,
                 fp_sin, fp_cos, fp_sincos,
-                fp_recip, fp_project_x, fp_project_x_subpx, fp_project_y,
+                fp_recip, fp_project_x, fp_project_y,
                 fp_linfn, fp_eval, fp_eval_88, fp_view_context, fp_to_view, fp_near_clip,
                 FP7, FP8, HALF_W, HALF_H, NEAR_FP, RECIP_FRAC_BITS,
                 FP_RENDER_W, FP_RENDER_H, FP_FOCAL_X,
@@ -1464,7 +1464,7 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
                 sxs.append(_view_col(vx0, vy0))
             else:
                 rxh, rxl = _fp_recip(vy_idx0)
-                sxs.append(_fp_project_x(vx0, rxh, rxl))
+                sxs.append(_fp_project_x(vx0, 0, rxh, rxl))
         # Edge crossing NEAR plane → project the crossing point at NEAR.
         if (vy0 < _NEAR) != (vy1 < _NEAR):
             dvy = vy1 - vy0
@@ -1489,7 +1489,7 @@ def fp_bbox_visible_fixed(node, far_side, ctx):
                     # raw integer index with averaging flag = 0.  In fp_recip's
                     # 9.1 convention that's NEAR_FP << 1 (even → no averaging).
                     rxh, rxl = _fp_recip(_NEAR << 1)
-                    sxs.append(_fp_project_x(cx, rxh, rxl))
+                    sxs.append(_fp_project_x(cx, 0, rxh, rxl))
 
     if not sxs:
         return None
@@ -1735,7 +1735,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         sx1, rxh1, rxl1 = vc1[5], vc1[6], vc1[7]
     else:
         fvx1_c = fvx1 if ey1 == evy1 else 0
-        sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
+        sx1 = fp_project_x(ex1, fvx1_c, rxh1, rxl1)
         if ey1 == evy1:
             vcache[v1_idx] = vc1 + (sx1, rxh1, rxl1)
     vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
@@ -1746,7 +1746,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         sx2, rxh2, rxl2 = vc2[5], vc2[6], vc2[7]
     else:
         fvx2_c = fvx2 if ey2 == evy2 else 0
-        sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
+        sx2 = fp_project_x(ex2, fvx2_c, rxh2, rxl2)
         if ey2 == evy2:
             vcache[v2_idx] = vc2 + (sx2, rxh2, rxl2)
     vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
@@ -2286,7 +2286,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             sx1 = _packed_read_vcache(ram, v1_idx)[3]
         else:
             fvx1_c = fvx1 if ey1 == evy1 else 0
-            sx1 = fp_project_x_subpx(ex1, fvx1_c, rxh1, rxl1)
+            sx1 = fp_project_x(ex1, fvx1_c, rxh1, rxl1)
             if ey1 == evy1:
                 # Update vcache with sx
                 base = _p_layout['ram_vcache'] + v1_idx * VCACHE_ENTRY
@@ -2297,7 +2297,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             sx2 = _packed_read_vcache(ram, v2_idx)[3]
         else:
             fvx2_c = fvx2 if ey2 == evy2 else 0
-            sx2 = fp_project_x_subpx(ex2, fvx2_c, rxh2, rxl2)
+            sx2 = fp_project_x(ex2, fvx2_c, rxh2, rxl2)
             if ey2 == evy2:
                 base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
                 write_s16(ram, base + VC_SX, sx2)

@@ -17,5 +17,4 @@
 .include "bsp/main_tail.s"
 .include "bsp/defq.s"
 .include "bsp/resolve_crossing.s"
-.include "bsp/ycache.s"
 .include "bsp/lo.s"

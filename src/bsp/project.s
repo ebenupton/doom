@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; br_project_x_subpx — project view-space X to screen X with sub-pixel.
+; br_project_x — project view-space X to screen X with sub-pixel.
 ;
 ;   Inputs (zp):
 ;     zp_br_t0 = vx (s8, truncated view-space x)
@@ -26,7 +26,7 @@
 ;   to br_project_x_wide (lo.s, 3 muls) on the s16 view-x sign extension.
 ;   Clobbers zp_br_t2/t3, zp_br_vxext, zp_br_a/b, mul workspace.
 ; ============================================================================
-br_project_x_subpx:
+br_project_x:
 .scope
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    LDA #0
@@ -105,6 +105,60 @@ px_i_pos:
    RTS
 .endscope
 
+
+; ============================================================================
+; br_project_y — project height delta to screen Y, through the VWHC memo.
+; (Consolidated 2026-07-12: the cache front moved here from the deleted
+; ycache.s and the raw body below is INLINED — the miss path FALLS
+; THROUGH into it, and the writeback rides the raw tail. One routine,
+; one file, no JSR/RTS between front and body.)
+;
+;   Native entry (br_project_y): h in A (REG CONTRACT — also stored to
+;     zp_br_t0 here), zp_br_rhi/rlo = (M8, S) recip.
+;   jt/harness entry (br_project_y_paged): pages L2, loads h from
+;     zp_br_t0 (the wrapper contract predates the register pass).
+;   Output: zp_br_resl/h = sy (s16, pre-biased by Y_BIAS folded into the
+;     128 constant); RTSes with Y = sy lo, A = sy hi (REG CONTRACT).
+;   Preserves the input set; clobbers X, Y, zp_pyc_idx + raw scratch on
+;     a miss. CALLER pages BANK_L2 (y_stage/apv page once per run).
+;
+; VWHC: direct-mapped, 256 entries, five parallel arrays (equates in
+; resolve_crossing.s; flat $D500-$D9FF page-aligned, banked L2 $B500-).
+; Probe = h ^ rhi (corpus-searched 2026-07-12: the ~140-key working set
+; sits AT the birthday bound — S-boxes and 2-way associativity measured
+; no better; only probe COST was free). Key = the COMPLETE input tuple
+; (rhi, rlo, h) of a pure function, so entries survive frames/positions
+; and a hit is bit-identical to the raw body by construction. RLO
+; doubles as the valid flag (live S is never 0). Never cleared: the
+; bank/harness images arrive zeroed (the old boot-only vwhc_clear had
+; no callers and was GC'd).
+; ============================================================================
+br_project_y_paged:
+   PAGE BANK_L2
+   LDA zp_br_t0
+br_project_y:
+.scope
+   STA zp_br_t0                            ; h (tag compare + raw body reads)
+   EOR zp_br_rhi
+   TAX                                     ; probe idx = h ^ rhi
+   LDA VWHC_RLO,X                          ; RLO doubles as the valid flag
+   CMP zp_br_rlo
+   BNE pyc_miss
+   LDA VWHC_RHI,X
+   CMP zp_br_rhi
+   BNE pyc_miss
+   LDA VWHC_H,X
+   CMP zp_br_t0
+   BNE pyc_miss
+   LDY VWHC_LO,X                           ; REG CONTRACT: Y = lo, A = hi
+   STY zp_br_resl
+   LDA VWHC_HI,X
+   STA zp_br_resh
+   RTS
+pyc_miss:
+   STX zp_pyc_idx                          ; slot for the tail writeback;
+.endscope                                  ; FALLS THROUGH into the raw body
+
 ; ============================================================================
 ; br_project_y — project height delta to screen Y.
 ;
@@ -125,7 +179,7 @@ px_i_pos:
 ;   sy = 128 - (h<<7) exactly: the mul degenerates to zero.
 ;
 ;   This label is br_project_y_RAW: the uncached projection body.
-;   Production callers go through br_project_y (ycache.s), a memoising
+;   Production callers go through br_project_y (the cache front ABOVE),
 ;   front keyed on the full (M8, S, h) input tuple; only that front
 ;   calls _raw.
 ;
@@ -254,6 +308,19 @@ py_shift:
    LDA #0
    SBC zp_br_resh
    STA zp_br_resh
+; --- VWHC writeback (the raw body is only ever entered through the
+; cache front's miss path above) ---
+   LDX zp_pyc_idx
+   LDA zp_br_rhi
+   STA VWHC_RHI,X
+   LDA zp_br_rlo
+   STA VWHC_RLO,X
+   LDA zp_br_t0
+   STA VWHC_H,X
+   TYA
+   STA VWHC_LO,X
+   LDA zp_br_resh
+   STA VWHC_HI,X                           ; (A = hi, Y = lo at RTS)
    RTS
 .endscope
 
@@ -264,7 +331,7 @@ py_shift:
 ; VWHC valid flag) is a per-vertex constant, so the shifter is selected
 ; ONCE per reciprocal and each projection dispatches with a single JSR:
 ;
-;   rns_go:  JSR'd by br_project_x_subpx and br_project_y_raw (both this
+;   rns_go:  JSR'd by br_project_x and br_project_y_raw (both this
 ;            file). It is ONE instruction — JMP <body> — whose OPERAND is
 ;            the live shifter (SMC, 2026-07-12): rns_select below and the
 ;            three INLINED selects in subsector.s's y_stage write

@@ -57,7 +57,7 @@ loop; one 16-byte header cursor `zp_seg_hdr_p` rides the whole loop):
    in subsector.s; culled segs stop here — Y is never projected for them.
 5. **y_stage** (subsector.s): pages L2 once, projects the flag-gated sy
    pairs per endpoint via `do_project_y` (seg_project.s) through the
-   VWHC memo (`ycache.s` front over `project.s` raw body). The chain
+   VWHC memo (project.s — front + inlined body, one routine). The chain
    donates the previous seg's front sy pair when valid (zp_ys_* flags).
 6. **apv_stage** (`bsp/lo.s`): aperture-vertical pairs for solid segs
    with APEDGE flags, projected post-visibility.
@@ -132,7 +132,7 @@ vxcache.s.
       bsp/view.s           br_view_setup (frame hooks fan out from its
                            tail), br_to_view_fetch/br_to_view (s24),
                            br_smul_s8_u8/_am, rot_select target comments
-      bsp/project.s        br_project_x_subpx, br_project_y_raw, the RNS
+      bsp/project.s        br_project_x, br_project_y_raw, the RNS
                            block (rns_go SMC'd JMP + rns_select + unrolled
                            shifter bodies s6-s10 + generic rns24)
       bsp/walk.s           br_init_frame, br_render_frame (BSP stack @
@@ -149,8 +149,6 @@ vxcache.s.
                            fence; banked $5800 = FB)
       bsp/defq.s           deferred solid/tighten op queue ($0600)
       bsp/resolve_crossing.s  crossing resolver + VWHC array equates
-      bsp/ycache.s         VWHC — Y-projection memo (probe = h ^ rhi,
-                           corpus-searched; see header for the search)
       bsp/lo.s             br_node_setup (SoA reads), chain_reuse_v1,
                            apv_stage, reproject_at_crossing, wide X
                            projection (rns32), ap-edge verticals

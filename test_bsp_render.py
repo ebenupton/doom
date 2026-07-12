@@ -248,7 +248,7 @@ _IDX_SWEEP = [2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32, 33, 48, 64, 65, 100,
 
 
 def test_project_x():
-    """fp_project_x_subpx (narrow): vx, vx_frac, (M8, S) → sx. Dense sweep:
+    """fp_project_x (narrow): vx, vx_frac, (M8, S) → sx. Dense sweep:
     every S band × full-range vx (s8) × frac corners."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
@@ -267,7 +267,7 @@ def test_project_x():
         sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
         sc._run(ENTRY_BR_PROJECT_X)
         got = s16_from_zp(mem, 0x17)
-        want = fp.fp_project_x_subpx(vx, vx_frac, rh, rl)
+        want = fp.fp_project_x(vx, vx_frac, rh, rl)
         ok = got == want
         if not ok:
             fail += 1
@@ -283,7 +283,7 @@ def test_project_x():
 
 def test_project_x_wide():
     """br_project_x_auto wide dispatch: s16 view-x beyond s8, mod-2^16
-    exact vs Python's full-width fp_project_x_subpx."""
+    exact vs Python's full-width fp_project_x."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     ZP_XINT = _sym('zp_v_xint')
@@ -307,7 +307,7 @@ def test_project_x_wide():
         sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
         sc._run(ENTRY_AUTO)
         got = mem[0x17] | (mem[0x18] << 8)
-        want = fp.fp_project_x_subpx(vx, vx_frac, rh, rl) & 0xFFFF
+        want = fp.fp_project_x(vx, vx_frac, rh, rl) & 0xFFFF
         ok = got == want
         if not ok:
             fail += 1

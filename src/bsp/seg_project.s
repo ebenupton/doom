@@ -14,8 +14,8 @@
 ;   Outputs: the endpoint struct sy pairs (VX1+5..12,X, X = zp_seg_ep):
 ;            top/bot always, btop/bbot when the flags gate them in
 ;            All s16 screen y, pre-biased by Y_BIAS (br_project_y folds it).
-;   Uses:    br_project_y — the VWHC-cached front (ycache.s) over
-;            br_project_y_raw; mirrors Python's per-endpoint _py(h) =
+;   Uses:    br_project_y (project.s) — the VWHC-memoised projection
+;            (raw body inlined 2026-07-12); mirrors Python's _py(h) =
 ;            fp_project_y(h - vz, ryh, ryl) with the VWH cache in
 ;            packed_render_seg.
 ;

@@ -187,7 +187,7 @@ jt_br_smul8: JMP br_smul8                            ; $4803   signed s8 × s8 �
 jt_br_recip: JMP br_recip                            ; $4806   reciprocal lookup
 jt_br_view_setup: JMP br_view_setup                       ; $4809   compute frac_vx/frac_vy
 jt_br_to_view: JMP br_to_view                          ; $480C   world (zp_br_dx/dy_input) → view (zp_br_vxlo..vyhi)
-jt_br_project_x_subpx: JMP br_project_x_subpx                  ; $480F   view vx → screen sx
+jt_br_project_x: JMP br_project_x                  ; $480F   view vx → screen sx
 jt_br_project_y: JMP br_project_y_paged                  ; $4812   height_delta → screen sy (pages L2)
 jt_br_render_frame: JMP br_render_frame                     ; $4815   walk BSP, dispatch subsector renderer
 jt_br_render_subsector: JMP br_render_subsector                 ; $4818  process one subsector's segs (caller sets

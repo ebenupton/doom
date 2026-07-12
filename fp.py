@@ -224,15 +224,9 @@ fp_recip_y = fp_recip
 
 # -- Projection helpers (two 8x8 multiplies each) ----------------------------
 
-def fp_project_x(vx, recip_m8, recip_s):
-    """Project view-space X to screen X (integer, no fraction).
-
-    sx = 128 + rns(vx*m9 << 8, S+8)  with m9 = 256 + M8.
-    One 8x8 multiply (the m9 implicit-1 term is a shift-add).
-    """
-    return HALF_W + rns((m8(vx, recip_m8) + (vx << 8)) << 8, recip_s + 8)
-
-def fp_project_x_subpx(vx, vx_frac, recip_m8, recip_s):
+def fp_project_x(vx, vx_frac, recip_m8, recip_s):
+    # (the truncating fp_project_x was GC'd 2026-07-12: it was exactly
+    #  this with vx_frac=0 — rns(256a, S+8) == rns(a, S) identically)
     """Project with sub-pixel correction from fractional view-space X.
 
     sx = 128 + rns(X88 * m9, S+8),  X88 = vx*256 + vx_frac (8.8 view x)
@@ -430,91 +424,6 @@ def fp_near_clip(vx1, vy1, vx2, vy2):
     return (vx1, vy1, cx, NEAR_FP)
 
 # -- Cyrus-Beck clipper (8-bit screen coords) ---------------------------------
-
-def fp_clip_to_trap(x1, y1, x2, y2, xlo, xhi, tfn, bfn):
-    """Clip line to trapezoid [xlo, xhi) with linear top/bot.
-
-    All screen coords are 8.0 integers.
-    tfn/bfn are (slope_8, intercept) pairs.
-    Returns clipped (x1, y1, x2, y2) in 8.0, or None.
-
-    Cyrus-Beck with 0.8 parametric t.
-    t = (q << 8) / p: 16/8 division -> 0.8.
-    Clipped coord: x + (dx * t) >> 8, all 8x8.
-    """
-    dxs = xhi - xlo
-    if dxs < 1:
-        return None
-    dx = x2 - x1
-    dy = y2 - y1
-    ta, tb = tfn   # top: y >= ta*x + tb
-    ba, bb = bfn   # bot: y <= ba*x + bb
-
-    T_ONE = 1 << FP8  # 1.0 in 0.8 = 256
-    t0, t1 = 0, T_ONE
-
-    # Half-plane constraints: (p, q) pairs
-    # Short-circuit slope muls when slope is 0 (flat spans — very common)
-    ta_dx = fp_mul8(ta, dx) if ta else 0
-    ba_dx = fp_mul8(ba, dx) if ba else 0
-    ta_x1 = fp_mul8(ta, x1) if ta else 0
-    ba_x1 = fp_mul8(ba, x1) if ba else 0
-
-    constraints = (
-        (-dx,        x1 - xlo),
-        ( dx,        xhi - x1),
-        ( ta_dx - dy, y1 - ta_x1 - tb),
-        ( dy - ba_dx, ba_x1 + bb - y1),
-    )
-
-    for p, q in constraints:
-        if abs(p) < 1:
-            if q < -1:
-                return None
-        else:
-            # t = (q << 8) / p in 0.8
-            t = fp_div8(q, p)
-            if p < 0:
-                if t > t1:
-                    return None
-                if t > t0:
-                    t0 = t
-            else:
-                if t < t0:
-                    return None
-                if t < t1:
-                    t1 = t
-
-    if t0 > t1:
-        return None
-
-    # Clipped coordinates: x_out = x1 + (t * dx) >> 8
-    cx1 = x1 + fp_mul8(t0, dx)
-    cy1 = y1 + fp_mul8(t0, dy)
-    cx2 = x1 + fp_mul8(t1, dx)
-    cy2 = y1 + fp_mul8(t1, dy)
-
-    # Integer division truncation can place endpoints outside the trapezoid.
-    # Clamp X to [xlo, xhi-1].
-    if cx1 < xlo:
-        cx1 = xlo
-    if cx2 >= xhi:
-        cx2 = xhi - 1
-    if cx1 > cx2:
-        return None
-
-    # Clamp Y to top/bot boundaries for vertical lines (dx==0).  The X
-    # coordinate is unchanged, so boundary values at x1 are exact — reuse
-    # ta_x1/ba_x1 already computed above (zero extra multiplies).
-    if dx == 0:
-        top_y = ta_x1 + tb
-        bot_y = ba_x1 + bb
-        cy1 = max(cy1, top_y)
-        cy1 = min(cy1, bot_y)
-        cy2 = max(cy2, top_y)
-        cy2 = min(cy2, bot_y)
-
-    return (cx1, cy1, cx2, cy2)
 
 # -- Prescaling constants (used by doom_wireframe.py at load time) ------------
 

@@ -295,7 +295,7 @@ br_project_x_auto:
    STA zp_br_t0
    LDA zp_v_xfrac
    STA zp_br_t1
-   JSR br_project_x_subpx
+   JSR br_project_x
 ; Narrow sx always fits s16 (|evx|<=127, rxh<=127 → |sx|<=16383);
 ; set the s24 extension byte so callers can classify uniformly.
    LDX #0
