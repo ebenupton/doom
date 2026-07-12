@@ -448,8 +448,6 @@ ys_deltas_done:
    STX zp_br_rlo
    LDA rns_vec_lo-1,X
    STA rns_go+1
-   LDA rns_vec_hi-1,X
-   STA rns_go+2
    JSR dpy_back
    JMP ys_v2
 ys_v1_full:
@@ -461,8 +459,6 @@ ys_v1_full:
    STX zp_br_rlo
    LDA rns_vec_lo-1,X
    STA rns_go+1
-   LDA rns_vec_hi-1,X
-   STA rns_go+2
    JSR do_project_y
 ys_v2:
    LDA #VX_STRIDE
@@ -473,8 +469,6 @@ ys_v2:
    STX zp_br_rlo
    LDA rns_vec_lo-1,X
    STA rns_go+1
-   LDA rns_vec_hi-1,X
-   STA rns_go+2
    JSR do_project_y
    LDA #1
    STA zp_ys_done                           ; this seg's VX2 sy is live for

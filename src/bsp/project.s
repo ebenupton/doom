@@ -353,25 +353,33 @@ py_shift:
 ; projection's caller — pure leaves, bit-exact vs Python's rns().
 ; ============================================================================
 .segment "LO"
+.segment "RNSPG"                        ; page-ALIGNED segment (cfg align=$100):
+                                        ; guarantees all kernel entries share
+                                        ; the JMP operand's high byte
 rns_go:
-   JMP rns24                               ; operand = live shifter (SMC)
+   JMP rns24                               ; operand LO byte = live shifter
+                                        ; (SMC by rns_select + the inlined
+                                        ; selects; the HI byte is CONSTANT
+                                        ; — all six kernel entries share
+                                        ; one 256-byte window, asserted
+                                        ; below — so a select patches ONE
+                                        ; byte, 2026-07-12)
 
 rns_select:
 .scope
    LDX zp_br_rlo
    LDA rns_vec_lo-1,X
    STA rns_go+1
-   LDA rns_vec_hi-1,X
-   STA rns_go+2
    RTS
 .endscope
 rns_vec_lo:
    .byte <rns24, <rns24, <rns24, <rns24, <rns24
    .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10
-rns_vec_hi:
-   .byte >rns24, >rns24, >rns24, >rns24, >rns24
-   .byte >rns_s6, >rns_s7, >rns_s8, >rns_s9, >rns_s10
+; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
 
+; --- the six kernels: entries must stay inside the first 256 bytes of
+; this aligned segment (bodies may spill past); the fence asserts catch
+; any growth that pushes an entry over the edge ---
 rns_s8:
 .scope
 ; floor((P + $80) / 256): carry out of the b0 half-add, then drop b0
@@ -471,18 +479,9 @@ rns_s10:
    STA zp_br_resl
    RTS
 .endscope
-.segment "MAIN"
-
-; (rns24 lives below in this file's RNS block; its rns_half rounding-
-; constant tables are in resolve_crossing.s — both LO/D segments float
-; inside the one CODE region in both builds.)
-
-
-.if ::BANKED
-.segment "ANG_BK"
-.else
-.segment "ANG"
-.endif
+; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
+; 2026-07-12 so all six kernel entries share the JMP hi byte; its
+; rns_half rounding-constant tables stay in resolve_crossing.s.)
 ; ============================================================================
 rns24:
 .scope
@@ -548,6 +547,11 @@ rn_rloop:
    STA zp_br_resh
    RTS
 .endscope
+.assert >rns_s6 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s7 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 
 
 .if ::BANKED
