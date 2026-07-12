@@ -31,8 +31,10 @@ bsp_w_start:
 ; _packed_write_vwh in packed_render_seg): Python keys by VWH table index
 ; per frame, the 6502 keys by the complete input tuple (rhi, rlo, h) —
 ; either way each distinct projection is computed once. Measured
-; (2026-07-10): ~202 projections/frame, ~112 unique, 46.5% hit rate,
-; conflict misses only ~1.2/frame; raw ~322 cycles, hit ~64.
+; 2026-07-12 (post Y-deferral): ~118 probes/frame, ~79 unique; steady-
+; state recurring conflicts ~24/frame = the birthday bound (see HASH
+; SEARCH above); raw ~322 cycles, hit ~64. (The old '1.2 conflicts/
+; frame' note was measured before deferral changed the mix.)
 ;
 ;   Pseudocode:
 ;     i = h ^ rhi

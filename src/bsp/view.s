@@ -189,18 +189,17 @@ vs_pym_pos:
 ; br_to_view — world (wx, wy) → view (vx_88, vy_88).
 ;
 ;   Inputs (zp):
-;     zp_br_dx = wx (s8 prescaled vertex world X — caller has already
-;                    computed wx - px_int, OR set zp_br_dx = wx and we'll
-;                    do the subtract here)
-;     zp_br_dy = wy
-;     ... and view-context state in zp_br_*.
+;     zp_br_dxlo/dxhi = wx (s16 RAW prescaled vertex world X — the s16
+;                       player-relative subtract happens HERE)
+;     zp_br_dylo/dyhi = wy (s16)
+;     ... and view-context state in zp_br_* (br_view_setup ran).
 ;
-;   To match Python's call site exactly: the caller writes RAW wx/wy into
-;   zp_br_dx / zp_br_dy and we subtract px_int/py_int here.
+;   To match Python's call site exactly: the caller writes RAW wx/wy and
+;   this routine subtracts px_int/py_int (s16, zp_br_px_h/px_e etc).
 ;
 ;   Outputs (zp):
-;     zp_br_vxlo/hi = total_vx (s16, 8.8)
-;     zp_br_vylo/hi = total_vy (s16, 8.8)
+;     zp_br_vxlo/vxhi/vxext = total_vx (s24: 8.8 + sign/overflow ext)
+;     zp_br_vylo/vyhi/vyext = total_vy (s24)
 ;
 ;   Python:
 ;     dx_hi = wx - px_int

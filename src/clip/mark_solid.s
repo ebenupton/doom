@@ -1,4 +1,10 @@
 
+; ============================================================================
+; clip/mark_solid.s — clipper fragment 5 of 10 (module map: clip/header.s).
+; Contents: span_mark_solid (jt_mark_solid) only. Uses alloc_span /
+; free_span from clip/pool.s; POOL_* field equates from clip/arith.s.
+; ============================================================================
+
 ; (interp_span removed — mark_solid no longer interpolates)
 
 ; (interp_span removed — padding removed to preserve page alignment of later code)
@@ -24,6 +30,9 @@
 ; Output: every active column in [ilo,ihi] removed; freed slots pushed
 ;         on the free list; zp_head updated; zp_hg_cache invalidated.
 ;         Clobbers A,X,Y, zp_prev, zp_tmp0.
+;
+; Callers: bsp/defq.s (deferred solid ops) via jt_mark_solid — bank C
+; must be paged in the banked build — and the harness's mark_solid.
 ;
 ; Python mirror: EndpointClipSpans.mark_solid (lazy, line-preserving).
 ; pseudocode (per span s, walked left to right):

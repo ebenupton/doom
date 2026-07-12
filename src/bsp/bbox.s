@@ -11,9 +11,10 @@
 ; Inputs:
 ;   zp_node_chlo        = node id (u8 — n_nodes <= 256, asserted at pack time)
 ;   zp_bbox_side        = 0 → right child's box, 1 → left child's box
-;   zp_rom_bbox_lo/hi   = box-table base (page-aligned, asserted by loaders):
-;                         16 bytes/node = two 8-byte records (right box then
-;                         left box), each (top, bot, left, right) as 4 × s16.
+;   Box table base is the ROM_BBOX_C layout.inc CONSTANT (the zp_rom_bbox
+;   pointer pair was retired 2026-07-10): 16 bytes/node = two 8-byte
+;   records (right box then left box), each (top, bot, left, right) s16,
+;   page-aligned (corner loads build the pointer byte-at-a-time).
 ;   Per-frame presets (written by view/render setup, constant per frame):
 ;     bca_pxs/bca_pys   = player x/y sign-extended s16 ($8D/$8E, $9B/$9C)
 ;     bca_ab            = view angle byte; bca_afn = ab<<4 (hoisted fine angle)
@@ -215,9 +216,10 @@ dv_fresh:
    RTS
 .endscope
 
-; ---- D-cache cold code: once-per-frame classifier + per-fresh-check store.
-; MAIN has no headroom; these live in the W region (flat) / RCCODE (banked
-; L2 window — both call sites hold L2 paged). Data is resident ($02xx). ----
+; ---- D-cache cold code: once-per-frame classifier + per-fresh-check
+; store. W/RCCODE segments — both float inside the one CODE region in
+; both builds (the old placement constraints are history); both call
+; sites hold L2 paged. Data is resident main RAM ($0210-$03F7). ----
 .if ::BANKED
 .segment "RCCODE"
 .else

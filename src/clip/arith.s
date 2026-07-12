@@ -1,3 +1,13 @@
+; ============================================================================
+; clip/arith.s — clipper fragment 2 of 10 (see clip/header.s for the module
+; map and entry contracts). Contents: the pinned umul8 primitive (FIRST code
+; in the CLIP segment so the flat build lands it at $2030 — ABI pin), the
+; span-pool field equates (POOL_*), Y_BIAS, sqr table aliases, the records /
+; LINE_OUT / rasteriser interface constants, and the ZP layout notes.
+; Sibling cross-refs: pool.s (allocator + udiv16_8), interp.s (interp_store),
+; dcl.s (records + LINE_OUT writers), tfr.s (records consumer).
+; ============================================================================
+
 ; ======================================================================
 ; UMUL8: unsigned 8x8 -> 16 multiply via quarter-square identity
 ;
@@ -128,47 +138,39 @@ sqr_hi = SQR_HI
 sqr2_lo = SQR2_LO
 sqr2_hi = SQR2_HI
 
-; === Seg value cache ($A0-$A4) — separate from crossover working set ===
-; Caches the right-endpoint new-seg values from the previous overlapping span
-; for reuse when the next span shares the boundary column (abutting model).
-; === Running seg bounds ($A5-$A7) — progressively tighter seg extremes ===
-; Initialized at tg_go with clamped max(yt1,yt2) and min(yb1,yb2); narrowed
-; after each non-old-dom span. Used by the unified tiered dominance check.
+; === RETIRED tighten ZP notes (rewritten 2026-07-12) ===
+; The blocks that lived here — "seg value cache $A0-$A4", "running seg
+; bounds $A5-$A7", "static seg Y bbox $A8-$AB", "tighten pre-dominance
+; flags $B6", "tighten secondary seg params $B2-$B5" — all described
+; the RETIRED per-span tighten (tg_go / mel / span_tighten; see the
+; retirement note in clip/query.s).  None of those symbols exist in
+; src/zp.inc any more, and $A0-$A7 belong to the bsp/ang modules today.
+; src/zp.inc is the single source of truth for the live map.
 
-; === Static seg Y bbox ($A8-$AB) — set once per mel/tg_go call ===
-; Aliased onto the DCL line ZP slots: mel runs only inside mark_solid and
-; tighten runs only inside span_tighten, neither overlaps DCL. mel reuses
-; zp_ms_emit's slot ($A8) since that flag is consumed at mark_solid entry.
-; Sentinels disable the per-span bbox check when seg values aren't u8:
-;   seg_top_max=$FF, seg_top_min=$00, seg_bot_max=$FF, seg_bot_min=$00.
-
-; === Draw-clipped-line ZP ($A8-$B9) — reuses $A8 (ms_emit) since non-overlapping ===
-; Caller sets xl/yl/xr/yr; routine computes dx/dy/ylo/yhi.
-; ===== DCL records hook ($BC-$BF) =====
-; When zp_dcl_rec_buf+1 (high byte) is non-zero, DCL writes per-span records
-; to the buffer at zp_dcl_rec_buf during its existing per-span walk. Caller
-; sets to TOP_RECORDS or BOT_RECORDS to enable; sets high byte to 0 to disable.
-; Buffer format matches clip_line_records: byte 0 = count, then 6-byte records
-; (si, sox0, sox1, verdict, cy0, cy1). DCL initializes count=0 and offset=1
-; on entry when records enabled.
-;   $03 = both (default), $01 = top only, $02 = bot only, $00 = none
-; CB clip working set ($B2-$B9)
-
-; === Tighten pre-dominance flags ($B6 — reuses CB clip slot, non-overlapping) ===
-; Set per-span at post-old-interp dom check. Drives gating in new interp paths
-; so we skip top or bot interps when one side is dominated by the old span.
-;   bit 0 = top_dom (zp_nt_l/r preset to 0 sentinels — max(ot,nt) = ot)
-;   bit 1 = bot_dom (zp_nb_l/r preset to $FF sentinels — min(ob,nb) = ob)
-
-; === Tighten secondary seg params ($B2-$B5) — reuses DCL CB slots ===
-; Passed by the wrapper when emit_sec_top/emit_sec_bot flags are set.
-; Secondary values are the front ceiling/floor y at sx1/sx2 (u8 post-remap).
-; Used by ncf to emit the ft/fb line alongside the primary bt/bb line.
+; === Draw-clipped-line ZP ($A8-$B9) ===
+; Caller sets zp_line_xl/yl/xr/yr ($A8-$AB); DCL computes dx/dy/ylo/yhi
+; ($AC-$AF); seg_start $B0/$B1; CB-clip working set $B2-$B9 (overlaid
+; with the s16 line HI bytes — phase-disjoint, see zp.inc).  $A8 also
+; overlays the vestigial zp_ms_emit flag: no 6502 code reads that flag
+; any more (the harness pins it to 0).
+; ===== DCL records hook ($BC-$BE) =====
+; When zp_dcl_rec_buf_h ($BD) is non-zero, dcl_emit_segment appends ONE
+; 4-byte record (xl, yl, xr, yr — biased Y) per SURVIVING segment to the
+; buffer at (zp_dcl_rec_buf), bumping the count in byte 0;
+; zp_dcl_rec_off ($BE) is the 1-based write offset. Callers arm with hi
+; byte $07 (TOP_RECORDS) or $08 (BOT_RECORDS) and disarm with $00.
+; br_init_frame grounds the pointer once per frame; every DCL call site
+; arms/disarms explicitly.  (An older note here described the legacy
+; 6-byte clip_line_records format and a $03/$01/$02 side mask — both
+; retired; see the LEGACY note under TOP_RECORDS below.)
 
 ; === Line output buffer ($0200) ===
-; Lines emitted during tighten (portal edges) and mark_solid (wall edges).
-; Format: byte count at $0200, then x1,y1,x2,y2 tuples at $0201+.
-; Drained by Python after each tighten/mark_solid call.
+; Segments captured by the DCL emit paths (dcl_emit_segment and
+; dcl_vertical's dv_emit in clip/dcl.s) — nothing else writes it since
+; the per-span tighten retired.
+; Format: byte count at $0200, then x1,y1,x2,y2 tuples at $0201+
+; (Y already un-biased).  Drained by the Python wrapper after each
+; draw call.
 LINE_OUT_COUNT = $0200
 LINE_OUT_BUF = $0201
 ; LINE_OUT capture is HARNESS-ONLY (2026-07-11): the native frame never
@@ -201,16 +203,28 @@ REC_VERDICT_INSIDE = 1
 REC_VERDICT_BELOW = 2
 
 ; === NJ rasteriser integration ===
-; When rasteriser is loaded at $A900, emit_line calls it directly.
+; The NJ rasteriser is NOT part of this link — the flat build loads its
+; binary at $A900 (see nj_raster.py for the pixel-exact reference).
+; dcl.s's emit dispatch (des_dispatch / dv_emit) tail-calls it for
+; diagonal segments; axis-aligned ones (~70% of pixels) go to the local
+; plot_h / plot_v in clip/plot_axis.s instead.
 ; ZP $82-$85 = x0,y0,x1,y1 (rasteriser inputs, no conflict with clipper ZP).
-; ZP $70 = screen start hi byte (set once by Python before frame).
+; ZP $70 = screen start hi byte, set per frame by the caller (the walk
+; driver stores the back-buffer page; the Python harness sets it in
+; flat tests).
 RASTER_ENTRY = $A900
 
-; === Zero-page workspace ($C0-$FF) ===
-; Layout: list management (head, free), input params (seg coords s16),
-; interpolation temps (i_x, i_y0, mul_b, prod, div), scratch (tmp0-3),
-; and tighten state (overlap bounds, crossover X, boundary values).
+; === Zero-page workspace ===
+; src/zp.inc is the single source of truth (one registry shared by the
+; whole link).  Clipper-owned highlights (2026-07-12): list head/free +
+; query range $C0-$C3, has_gap cache $D0, interp workspace $D1-$D5,
+; mul/div set $D9-$DD, tmps $DE-$E0, DCL line + CB clip $A8-$B9,
+; records pointer $BC-$BE, save/tfr scratch $6A-$6F, prev/buf $61-$63,
+; rasteriser args $70 + $82-$85.  ($E2-$FF is the bsp module's packed
+; vertex structs — NOT clipper space; the old "$C0-$FF" claim predates
+; that carve-out.)
 ; Note: prod_lo aliases div_lo -- multiply output feeds directly into
 ; division input, saving two loads per interp call.
-; Seg parameters: 16-bit (lo/hi pairs). Values can be outside [0,255].
-; s16 Y for seg interp
+; s16 line endpoints for the s16 clipper enter through zp_line_*_lo/_hi
+; (hi bytes overlay the CB-clip slots); the LC_* absolute working set
+; for s16 math is declared in clip/tfr.s ($0938-$0958).

@@ -129,14 +129,15 @@ zp_seg_sy2_bbot_lo = VX2+11
 zp_seg_sy2_bbot_hi = VX2+12
 zp_seg_v2_rhi = VX2+13
 zp_seg_v2_rlo = VX2+14
-zp_seg_ep = $26                   ; [bsp]; per-endpoint SEG_PROJ_BUF offset
-; (0 = v1, 4 = v2): the generators write sx/sy DIRECTLY into the endpoint
-; dedicated so the two magnitude products get 6 clean bytes and never reuse
-; the live dx/dy delta slots (2026-07-09). $26-$27 still FREE (were the
-; lv1x/lv1y stage). $27 still FREE.
+zp_seg_ep = $26                   ; [bsp]; per-endpoint STRUCT offset into
+; VX1 (0 = v1, 15 = VX_STRIDE = v2): the generators write evy/evx/sx/sy/
+; recip DIRECTLY into the endpoint structs via ,X = this offset. Set by
+; the seg loop before each transform / projection / reprojection.
+; $27 still FREE.
 zp_ri_dlo = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
-; from header+14 via (zp_seg_hdr_p),Y (rule 2b; solids never touch it).
+; from header+12 via (zp_seg_hdr_p),Y (stride-16 heights; solids never
+; touch it).
 ; $2A free (was zp_ri_neg — trig sign seeds zp_br_t1 via thunk SMC, 2026-07-11)
 ; $2B FREE (2026-07-09): zp_seg_bch retired — back ceil read on demand
 ; from header+15 via (zp_seg_hdr_p),Y.

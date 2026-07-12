@@ -11,9 +11,9 @@
 ; ($01/$9D/$03/$9E) unchanged since last frame. First stable frame at a new
 ; position clears RCACHE_COMPUTED so entries repopulate lazily.
 .if BANKED
-RCACHE      = $AD00                     ; bank L2 window, free tail after the VWHC
-                                        ; cache arrays ($A700-$ACFF; VWHC_HI ends
-                                        ; $ACFF — see resolve_crossing.s). Every
+RCACHE      = $AD00                     ; bank L2 window, below the VWHC arrays
+                                        ; ($B500-$B9FF — see resolve_crossing.s;
+                                        ; RCACHE spans $AD00-$B4E8). Every
                                         ; consumer runs
                                         ; with L2 paged: the bbox path pages L2 in
                                         ; br_bbox_visible, bca_frame is paged in by

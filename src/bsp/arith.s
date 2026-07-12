@@ -9,8 +9,9 @@
 ; ============================================================================
 .if ::BANKED
 .segment "W_BK"
-; (banked: the thin jt adapter rides in the space br_smul_s8_s16 vacated;
-; stays below the $3A00 BCA_WS line. MAIN is at its ceiling.)
+; (historical segment split: W_BK floats inside the one CODE region in
+; both builds since the 2026-07 merges — the placement notes that used
+; to live here are obsolete; the segment name only orders the link.)
 .endif
 br_umul8:
    LDA zp_br_b

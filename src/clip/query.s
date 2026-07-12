@@ -1,4 +1,11 @@
 
+; ============================================================================
+; clip/query.s — clipper fragment 6 of 10 (module map: clip/header.s).
+; Contents: span_has_gap (jt_has_gap), span_is_full (jt_is_full),
+; span_read (jt_read, harness serializer), plus the retirement note for
+; the old per-span tighten whose site this was.
+; ============================================================================
+
 ; ======================================================================
 ; HAS_GAP: fast visibility check for column range [ilo, ihi]
 ;
@@ -11,6 +18,8 @@
 ; Input:  zp_ilo, zp_ihi (closed range; caller pre-clamps to [0,255]).
 ; Output: A = 1/0 (Z reflects result).  Clobbers X,Y; may update
 ;         zp_hg_cache (slot of the hit span, for the next call).
+; Callers: bsp/bbox.s (bbox visibility probe) and bsp/subsector.s (seg
+; prelude) via jt_has_gap (bank C paged in the banked build); harness.
 ;
 ; Python mirror: EndpointClipSpans.has_gap — a pure X-overlap test:
 ; every live span is treated as having aperture (no top/bot check).
@@ -95,6 +104,8 @@ hg_cy_yes:
 ; IS_FULL: check if screen is completely occluded (active list empty)
 ; Returns A=1 if head==0 (all columns solid), A=0 otherwise.
 ; Input: zp_head only.  No clobbers besides A (X,Y preserved).
+; Callers: bsp/walk.s (per stack pop) and bsp/defq.s (after each
+; deferred op) via jt_is_full; harness.
 ; Python mirror: EndpointClipSpans.is_full (== not self.spans).
 ; ======================================================================
 span_is_full:

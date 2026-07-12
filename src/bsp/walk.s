@@ -200,7 +200,7 @@ bv_site_near:                           ; operand SMC-patched by br_dcache_frame
    JMP bsp_loop
 .endscope
 
-; (bsp_resolve_child lives in the D region.)
+; (bsp_resolve_child lives in resolve_crossing.s.)
 
 ; (br_node_setup moved to bsp_render_lo.bin overflow region — see end of file)
 

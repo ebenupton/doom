@@ -2,16 +2,14 @@
 
 6502 DOOM (E1M1 wireframe) for the BBC Micro. This file is the map: what
 lives where, how to build, how to verify, and the invariants that are not
-visible in the code. It is written so a fresh session can work safely
-without re-deriving tribal knowledge.
+visible in the code. It is written so a session with NO other context can
+work safely without re-deriving tribal knowledge. Every source file also
+carries a CONTEXT header stating its place in the pipeline, its callers,
+its register/ZP/bank contracts, and the layout pins it relies on — when
+in doubt, the source header is the local truth and this file is the map
+between them.
 
 ## The one-paragraph architecture
-
-> Data note: node and subsector tables live at the HEAD of ROM_MAIN as
-> page-aligned structure-of-arrays (13 node pages incl. a baked partition
-> type + 3 subsector pages; `NODE_SOA` in bsp/header.s). Every consumer
-> indexes them with a constant-base `LDA abs,X`; keep n_nodes, n_ss <= 256.
-
 
 Two lock-stepped pipelines over shared prescaled WAD data: a **Python
 packed reference** (`doom_wireframe.packed_render_bsp` + `fp.py`, all
@@ -28,24 +26,84 @@ screen X). The reciprocal FOCAL/vy is stored as (M8, S): m9 = 256+M8, a
 9-bit mantissa with implicit leading 1, R ≈ m9/2^S with S =
 bit_length(idx-1) computed, not stored (1024-byte table, 9.1 index).
 Relative error ≤ 2^-10 (≤1/8 px on screen — quarter-pixel is the design
-budget): Y projection is ONE 8x8 mul + a round-to-nearest shift
-(per-vertex VECTORED: rns_select picks an unrolled body S6-S10 through
-zp_rns_vec whenever zp_br_rlo changes; generic rns24/rns32 take the rest),
-X is two muls (wide three), and the near-plane crossing recip (M8=0,
-S=1) projects with pure shifts.
-Lines are clipped by the DCL (draw-clipped-line) walk against the span
-list and rasterised by the vendored NJ line drawer.
+budget). Y projection is ONE 8×8 mul + a round-to-nearest shift; X is two
+muls (wide three); the near-plane crossing recip (M8=0, S=1) projects
+with pure shifts. Lines are clipped by the DCL (draw-clipped-line) walk
+against the span list and rasterised by the vendored NJ line drawer, with
+dedicated axis plotters taking ~70% of pixels.
+
+## The per-seg pipeline (hot path, in execution order)
+
+For every seg of every visited subsector (`bsp/subsector.s` owns the
+loop; one 16-byte header cursor `zp_seg_hdr_p` rides the whole loop):
+
+1. **Back-face test** (`bsp/backface.s`, tail-dispatched: JMPs to
+   `bf_seg_front` or straight to `s_advance`). Axis-aligned segs are one
+   s16 compare against a pack-time constant (header form 0-3); diagonals
+   dot a DIR-table primitive direction with the player delta (sign
+   shortcut first, u24 magnitude compare only when signs agree).
+2. **Vertex pipeline**, per endpoint (`bsp/seg_xform.s`, ONE file
+   top-to-bottom): chain check (previous seg's v2 == this v1: reuse the
+   whole VX2 struct) → frame vertex-cache probe (VCACHE $0C00, valid
+   bitmap) → on miss, `vxc_jsr_site` dispatch: VXC translation cache
+   (warm: two s24 adds reconstruct view coords) or fetch+rotate
+   (`br_to_view_fetch` → `br_to_view`, view.s) → evy/evx, near-clip,
+   reciprocal, screen-X → results land in the endpoint struct (VX1/VX2)
+   AND the vcache entry.
+3. **Near-plane crossing** (`bsp/resolve_crossing.s` via subsector.s):
+   if exactly one endpoint is clipped, reproject from the vy=NEAR
+   crossing point into that endpoint's struct slots.
+4. **has_gap cull** (clipper query via jt): fused hi-byte range prelude
+   in subsector.s; culled segs stop here — Y is never projected for them.
+5. **y_stage** (subsector.s): pages L2 once, projects the flag-gated sy
+   pairs per endpoint via `do_project_y` (seg_project.s) through the
+   VWHC memo (`ycache.s` front over `project.s` raw body). The chain
+   donates the previous seg's front sy pair when valid (zp_ys_* flags).
+6. **apv_stage** (`bsp/lo.s`): aperture-vertical pairs for solid segs
+   with APEDGE flags, projected post-visibility.
+7. **Endpoint canonicalization**: the seg layer OWNS left-to-right —
+   `seg_swap_vx` deep-swaps the 15-byte endpoint structs on the rare
+   reversal (~1/frame) and kills the chain key.
+8. **Emission**: ft/fb/bt/bb horizontals via `SC_DRAW_S16_H` (X carries
+   the sy-pair struct offset), endpoint/aperture verticals per NOVT/
+   APEDGE flags, then a deferred solid/tighten op is queued (defq.s) and
+   applied at subsector end IN SEG ORDER.
+
+## Vertex key encoding (2026-07-12) — pervasive, easy to trip on
+
+Header v1/v2 slots store **(A = idx & 255, B = idx >> 3)**, NOT (lo, hi).
+B is consumed RAW as both the VCACHE valid-bitmap byte index and the
+VXC_VALID index; the scaled forms rebuild in pure A-register shifts
+(idx*8: lo = A<<3 mod 256, hi = B>>2 · idx*4: lo = A<<2, hi = B>>3); the
+VXC page split is `B & $20` (idx >= 256 ⇔ B >= 32; B ≤ 58). Bijective:
+idx = B*8 + (A & 7); the chain compare and the $FF-in-B invalidation work
+unchanged. Producers/consumers that MUST stay in lockstep: wad_packed.py
+`_vk` (pack), doom_wireframe.py packed_render_seg decode (~line 2176),
+subsector.s staging, seg_xform.s prologue, view.s br_to_view_fetch,
+vxcache.s.
 
 ## Source layout
 
     src/zp.inc           ZERO-PAGE REGISTRY — every ZP symbol, one file.
                          Overlay groups are deliberate; see "Zero page".
+    src/layout.inc       Generated (tools/gen_layout_inc.py): ROM data
+                         base constants per build, gated against
+                         dw.packed_layout on harness import.
+    src/abi.inc          Generated (tools/gen_abi.py): every cross-file
+                         ADDRESS CONSTANT (banks, jt bases, driver vars,
+                         cache switches, sqr bases). Also emits
+                         abi_beeb.inc (drivers) and abi.py (harness).
+                         "Private copies of addresses are forbidden" —
+                         if two files need an address, it goes here.
     src/slope_div.s      Angle unit = ordered .includes of src/ang/:
-      ang/header_div.s     jump table, workspace, SlopeDiv (exact, unrolled)
+      ang/header_div.s     jump table, SlopeDiv (exact, unrolled; the
+                           slope_div_le entry skips the num<den re-proof
+                           for corner_phi, which guarantees it)
       ang/bca.s            bbox_check_angle (angle-space visibility)
       ang/rcache.s         rotation-coherence psi cache (frame classifier,
-                           cached check path; RCCODE segment when banked)
-      ang/corner_phi.s     box_classify + corner_phi/point_to_angle
+                           cached check path)
+      ang/corner_phi.s     box_classify + corner_phi (point_to_angle
+                           inlined; returns phi hi in A, lo in Y)
     src/span_clip.s      Span clipper unit = ordered .includes of src/clip/:
       clip/header.s        build flags, jump table (+ .exports)
       clip/arith.s         umul8 (pinned $2030), udiv16_8
@@ -54,52 +112,122 @@ list and rasterised by the vendored NJ line drawer.
       clip/mark_solid.s    lazy column removal (split/truncate/shrink)
       clip/query.s         has_gap (+coherence cache), is_full, span_read
       clip/dcl.s           draw_clipped_line: per-span CB clip + emission
+                           (LINE_OUT capture is HARNESS-ONLY, gated on
+                           LINE_OUT_EN — the buffer overlaps the D-cache)
       clip/plot_axis.s     dedicated horizontal/vertical plotters (~70% of
-                           rasterised pixels; byte strips / constant mask)
+                           rasterised pixels; byte strips / constant mask,
+                           biased self-terminating descending runs)
       clip/tfr.s           tighten_from_records (3-cursor event walk,
                            tg_append_x merge) — THE production tighten
-      clip/dcl_s16.s       s16 front-end: clips to u8, tail-calls DCL
+      clip/dcl_s16.s       s16 front-end: clips to u8, tail-calls DCL.
+                           Callers guarantee x-order (seg layer owns it).
     src/bsp_render.s     Renderer unit = ordered .includes of src/bsp/:
-      bsp/header.s         equates, macros (ZERO/BUMP/PAGE), jump table,
+      bsp/header.s         equates, macros (ZERO/BUMP/PAGE), jump table
+                           (link-asserted vs abi ENGINE_JT both builds),
                            imports of clipper entries
-      bsp/arith.s          local umul/udiv copies, br_umul8/br_smul8, recip,
-                           rot variants (rot_zero/unity/gen thunks/rot_core)
-      bsp/view.s           br_view_setup, br_to_view (s24), rot_select
-                           (SEL region: per-frame SMC of the rot_s1..s4
-                           call sites — trig config is frame-constant, so
-                           the zero/unity/general variant choice and the
-                           general thunks' mag/neg immediates are patched
-                           once per frame, not tested ~200x; -0.86%)
-      bsp/project.s        br_project_x_subpx, br_project_y_raw
-      bsp/walk.s           br_init_frame, br_render_frame (BSP stack @ $0A00,
-                           deferred far children, is_full early-exit)
-      bsp/backface.s       back-face test (see "Known risks"), SC_/BCA imports
+      bsp/arith.s          br_umul8/br_smul8/br_smul_am, br_recip, rot
+                           variants (rot_zero/unity/gen thunks/rot_core —
+                           trig sign seeds zp_br_t1 via thunk SMC, one
+                           XOR-folded tail negate)
+      bsp/view.s           br_view_setup (frame hooks fan out from its
+                           tail), br_to_view_fetch/br_to_view (s24),
+                           br_smul_s8_u8/_am, rot_select target comments
+      bsp/project.s        br_project_x_subpx, br_project_y_raw, the RNS
+                           block (rns_go SMC'd JMP + rns_select + unrolled
+                           shifter bodies s6-s10 + generic rns24)
+      bsp/walk.s           br_init_frame, br_render_frame (BSP stack @
+                           $0A00, deferred far children, is_full exit)
+      bsp/backface.s       back-face test (C-form + DIR tables, u24 exact)
       bsp/bbox.s           br_bbox_visible -> angle module -> has_gap;
-                           br_bbox_visible_d = forward-coherence cache
-                           wrapper (walk JSRs SMC-patched per frame;
-                           D_ENABLE, data $0210-$03F7 in old OS space)
-      bsp/subsector.s      seg loop: stride-18 headers (heights inlined +12..17), emits, deferred ops
-      bsp/seg_xform.s      per-vertex transform + vertex cache ($0C00)
-      bsp/seg_project.s    do_project_y consumer gating
-      bsp/main_tail.s      vc_bit_mask + end_code assert
-      bsp/defq.s           deferred solid/tighten op queue ($0600) — B region
-      bsp/resolve_crossing.s  child resolver + rns_fast/half tables — D region
-                           (banked W_BK/D_BK: see the BCA_WS note below)
-      bsp/ycache.s         Y-projection cache (VWHC) — W region
-      bsp/lo.s             overflow region: br_node_setup (SoA node reads,
-                           baked partition types), reproject_at_crossing,
-                           ap-edge verticals, wide projection — LO region
-      bsp/vxcache.s        translation-coherence vertex cache (base+CACC
-                           telescoping; VXCODE segment = bank C when banked)
+                           br_bbox_visible_d = forward-coherence D cache
+      bsp/subsector.s      THE SEG LOOP (see pipeline above)
+      bsp/seg_xform.s      vertex pipeline: vcache probe + vxc_arm +
+                           compute tail (one file, one flow)
+      bsp/seg_project.s    do_project_y consumer gating (front always,
+                           back pairs flag-gated, solids RTS)
+      bsp/main_tail.s      end_code assert (flat $5000 = RCACHE carve
+                           fence; banked $5800 = FB)
+      bsp/defq.s           deferred solid/tighten op queue ($0600)
+      bsp/resolve_crossing.s  crossing resolver + VWHC array equates
+      bsp/ycache.s         VWHC — Y-projection memo (probe = h ^ rhi,
+                           corpus-searched; see header for the search)
+      bsp/lo.s             br_node_setup (SoA reads), chain_reuse_v1,
+                           apv_stage, reproject_at_crossing, wide X
+                           projection (rns32), ap-edge verticals
+      bsp/vxcache.s        VXC data planes + cold-store leaf + vxc_frame
+                           (the per-vertex hot path lives in seg_xform)
       bsp/anim.s           animated sectors: mover tick state machines +
-                           lazy visibility-driven table patching (ANIMH
-                           resident hub, ANIML0/ANIML2 bank workers)
+                           lazy visibility-driven table patching
+    src/hud.s            debug HUD (banked: bank C window $A400)
     src/engine_flat.cfg  ld65 config, flat build (harness/regression)
     src/engine_banked.cfg  ld65 config, BANKED build (Model B disc)
 
 The engine is **one ld65 link** of three objects; cross-module calls are
 `.import`ed jump-table labels (`jt_*`), so a reordered/removed entry is a
 link error, never a silent wrong address.
+
+## Memory maps (2026-07-12, post flat-merge — the current truth)
+
+Segment names describe WHAT code is; the per-build cfg decides WHERE it
+goes. There are no `.if BANKED` segment aliases left to add — placement
+belongs in the configs.
+
+**Flat** (harness/regression; 5 regions, was 13):
+
+    $0000-$00FF  ZP (src/zp.inc registry)
+    $0100-$01FF  RESERVED FREE (stack + future; do not squat — Eben)
+    $0200-$05FF  span pool / D-cache $0210-$03F7 / VXC state $05A0
+    $0600-$08FF  DEFQ queue / TOP+BOT_RECORDS
+    $09FB-$09FD  DEFQ_TAIL/OVF + corner idx  ** LIVE VARS, page 9 trap **
+    $0A00-$0BD2  VXC YEXT plane pair ($0BE8 = LINE_OUT_EN flag, clear)
+    $0C00-$1B3F  VCACHE (480×8) + valid bitmap $1B00
+    $1B40-$1BFF  free
+    $1C00-$1FFF  VXC XEXT/YLO plane pairs
+    $2000-$366F  CLIPJT+CLIP (jt $2000 + umul8 $2030 = ABI pins)
+    $3670-$4FFF  CODE: JT(=$3670, ENGINE_JT flat) MAIN LO B D W ANIML2
+                 (end_code <= $5000 link-asserted)
+    $5000-$57E8  RCACHE carve (the assert above is its fence)
+    $5800-$6BFF  framebuffer
+    $6C00-$973F  seg headers (stride 16) + DIR tables
+    $9800-$9BFF  VXC XLO/XHI plane pairs
+    $9C00-$A34B  verts
+    $A400-$A4FF  SEL island (rot_select; cold, once per frame)
+    $A500-$A8FF  sqr quarter-square tables (4 pages)
+    $A900-$B1EE  NJ rasteriser  ** loaded by span_clip_6502.py, NOT in
+                 any cfg — invisible to the linker, a placement trap **
+    $B200-$B5FF  VXC YHI/YEXT... (YHI/YLO pairs; see vxcache.s)
+    $B600-$C5FF  node/ss SoA pages
+    $C600-$D4BF  bbox corner table
+    $D500-$D9FF  VWHC arrays (page-aligned — the $C0 offset cost +1/probe)
+    $DC00-$DFFF  TA_LO   $E000-$E3FF recip M8
+    $E484-$E93F  anim tables ($E484 SSMASK..) + ACOLD island $E740
+    $E940-$F1FF  ANG region (angle module)
+    $F200-$FA01  TA_HI + VATOX    $FA10 BCA_WS    $FB00 VWH mover slots
+
+**Banked** (Model B disc; banks = DATA ONLY, one code region):
+
+    $0100-$01FF  RESERVED FREE (as flat)
+    $1B40-$1B7F  BCA_WS (bca_ab $1B6F, driver-poked)
+    $1C00-$1FFF  sqr tables (loader-seeded; TWIN equates in clip/arith.s
+                 and bsp/header.s — keep in sync)
+    $2000-$2BFF  beebasm drivers (drv $2000, vars $2180, glue $21A0,
+                 sincos $2200, clears+input $2400)
+    $2C00-$57FF  CODE: jt PINNED $2C00 (link-asserted), everything floats
+    $5800-$7FFF  screen (double-buffered $5800/$6C00)
+    $8000-$BFFF  sideways window; banks 4/6/7 = L0/C/L2:
+      L0: SoA $8000 / seg headers $9000 / TABL0 $BE90
+      C:  clipper $8000 / VXC planes $9700-$A2D3 / HUD $A400 window /
+          rasteriser $A900
+      L2: TA_LO $8000 / TA_HI $8400 / VATOX $8900 / bbox $8E00 / recip
+          $9D00 / verts $A200 / RCACHE $AD00-$B4E8 / VWHC $B500-$B9FF /
+          anim CFG $BA00
+    SSMASK $0A80 = documented main-RAM exception (read under any bank).
+
+RULES (absolute unless renegotiated): no level data in main RAM; no code
+in a sideways bank without explicit permission (only clipper/raster/HUD
+are blessed in C); page 1 stays free; validate ANY banked placement with
+FB lockstep + a jsbeeb disc boot — harness green alone is not evidence
+(PAGE is a no-op flat, so flat builds cannot catch wrong-bank calls).
 
 ## Building
 
@@ -108,209 +236,157 @@ link error, never a silent wrong address.
 
 - Everything goes through `asmbuild.py` (ca65 + ld65). It is fail-loud and
   memoized per session. NEVER call the assembler directly from new code.
-- Output binaries land in the repo root under their historical names
-  (span_clip.bin, bsp_render*.bin, bsp_render_ang.bin) — the py65
-  harnesses load those.
-- `DOOM_CPU=65c02` selects the C02=1 build AND the matching py65 core
-  everywhere (tests included).
-- Disc images: `build_modelb_ssd.py` (plain B + SWRAM, the main artifact),
-  `build_banked_ssd.py` (Master), `build_anim_ssd.py`. The tiny boot/anim
-  shims still use beebasm (vendored, stable); the engine does not.
+- Output binaries land in the repo root (span_clip.bin, bsp_render.bin,
+  bsp_render_ang.bin + the *_bk variants + tiny island bins); the py65
+  harnesses load them via `engine_load._regions`, which PARSES THE CFG —
+  a new MEMORY area can never be silently missing from the loaders.
+- `DOOM_CPU=65c02` selects the C02=1 build AND the matching py65 core.
+- Disc images: `build_walk_ssd.py` (the playable artifact — cursor keys),
+  `build_modelb_ssd.py` (retired rotating demo, kept building). Boot/anim
+  shims use beebasm (vendored, stable); the engine does not.
 
 ## Addresses: use the symbol map, never literals
 
 `symmap.sym('name')` returns the linked address of any label or equate
 (per build variant). The whole Python harness resolves entry points, ZP
-slots, and buffer bases this way. `python3 -c "import symmap; symmap.dump()"`
-writes `build/symbols.json` for browsing. If you find yourself typing a
-hex address into a Python file, stop and use the map.
+slots, and buffer bases this way. If you find yourself typing a hex
+address into a Python file, stop and use the map (or abi.py for the
+generated constants). Two hardcoded addresses cost half a day each on
+2026-07-12: span_clip's sqr seed and test_bsp_render's jt entries.
 
 ## Zero page
 
 `src/zp.inc` is the registry (included first by all three units).
-After the dead-code strip: 206 addresses claimed, **43 free slots**
-(run tools/zpcheck.py for the current map), 12 deliberate overlay groups.
+Currently 200 symbols on 189 addresses, **58 free slots**
+(`python3 tools/zpcheck.py` for the live map), 11 overlay groups.
 
 - New variable: declare `name = ?` in zp.inc, run
-  `python3 tools/zpcheck.py --alloc` (the build refuses while a `?` is
-  pending).
-- Overlay groups exist — multiple names on one address, deliberate
-  phase-disjoint reuse (e.g. bbox-visibility scratch overlays the seg-loop
-  block; both never live at once). Do not join a group without proving
-  phase-disjointness; the group comments say who the users are.
-- Reserved: $70-$76, $79-$7A, $80-$88 are **rasteriser-owned** scratch,
-  clobbered on every line draw. Engine symbols inside those ranges are
-  documented borrowings that are dead across every draw call.
-- `python3 tools/zpcheck.py --map` renders the full picture.
+  `python3 tools/zpcheck.py --alloc` (the build refuses while `?` pends).
+- Overlay groups are deliberate phase-disjoint reuse. Do not join one
+  without proving phase-disjointness; the group comments name the users.
+- $70-$76, $79-$7A, $80-$88 are **rasteriser-owned** scratch, clobbered
+  on every line draw.
+- Unregistered squatters exist OUTSIDE the registry: ang/rcache.s owns
+  $C4/$C5; bsp/anim.s owns $EB-$EE/$F0-$F1. zpcheck calls them "free".
+  Grep ang/, anim and the drivers before claiming a "free" slot.
 
 ## Verification (the contract for ANY change)
 
-    # The verification toolchain (run_regression, soak, cache gates,
-    # comparators, profilers) lives at the `full-toolchain` git tag —
-    # this minimal tree keeps only the build + play closure.
-    git checkout full-toolchain -- run_regression.py baseline.json  # to restore
     python3 run_regression.py              # must print ALL GREEN
-    python3 run_regression.py --rebaseline # after a DELIBERATE cycle/verify
+    python3 run_regression.py --rebaseline # after a DELIBERATE cycle
                                            # change, with justification
 
-GREEN means: unit tests (slope_div / bca / straddle / arithmetic) pass;
-`check_angle_calls` sees no in-frame corruption; `compare_traversal` and
-`compare_subsector` are 0px vs the Python packed reference; the two-sided
-ground-truth verify at 5 fixed positions has not worsened vs
-`baseline.json`; suite frame cycles have not regressed >0.25%.
+GREEN = unit tests pass, check_angle_calls clean, compare_traversal /
+compare_subsector 0px vs the Python packed reference, ground-truth verify
+not worsened vs baseline.json, suite cycles within 0.25% of baseline.
 
-- Cycle counts come from py65 execution only — never estimate.
-- Rasteriser/pixel changes: the differential suite renders BOTH sides
-  through the same 6502 rasteriser and cannot see a pixel change that
-  affects both equally — use fb_gate.py (capture golden framebuffers
-  before, byte-compare after).
-- `verify_6502_vs_python.py X Y AB` for one position; no args for the
-  147-position sweep.
-- `tools/walkseq_check.py` (in the regression) drives multi-frame WALK
-  sequences with the forward-coherence bbox cache enabled and demands
-  pixel equality vs the fresh reference each frame — the gate for any
-  cross-frame caching of walk decisions. Its metric is two-sided: `over` = 6502-only pixels,
-  `miss` = Python-only pixels. **Missing lines are bugs** — never dismiss
-  either direction as "BSP divergence".
-- The float `render_bsp` is ground truth; `render_bsp_fp` is a legacy
-  approximation used by the verifier as a proxy; the packed path is the
-  bit-exact spec the 6502 must match. When two fixed-point walks
-  disagree, arbitrate with the float renderer (this method found the
-  2026-07 corner-reference bugs).
-- Unit-test individual stages first (the per-primitive tests exist —
-  extend them); debug integrated frames only when isolation fails.
+- Cycle counts come from py65 execution only — NEVER estimate.
+- The standard landing chain for engine changes: run_regression ALL GREEN
+  → tools/vxcache_check.py (banked warm frames — THE warm-path metric;
+  prints warm cycles, currently ~9.0M/20f = -9.9% vs disabled) →
+  test_bare_boot.py → test_lockstep.py → tools/anim6502_check.py →
+  tools/walkseq_check.py → tools/rotcache_check.py → rebaseline → commit
+  → rebuild discs → push. Driver or region changes ADD a jsbeeb boot.
+- Cold-vs-warm skew: the regression corpus renders isolated frame-1s
+  (all caches cold, VXC off). It over-weights the angle pipeline (~12%
+  cold, RCACHE-served warm) and CANNOT see warm-path wins (the fetch
+  push-down measured -0.00% cold and -5% warm). Track both numbers.
+- verify_6502_vs_python.py: float render_bsp is ground truth. Standing
+  residue: 3px over at (911,-3366,13), 3px miss at (1057,-3809,135) —
+  pre-existing, do not chase into unrelated changes.
+- test_lockstep prints an FB nz mismatch line (model 4586 vs bare 557)
+  and a $0063 diff — PRE-EXISTING diagnostic noise; test_bare_boot is
+  the actual pass gate of that pair.
+- walkseq_check warns "no warm speedup" at (1500,-3700) — pre-existing.
+- Unit-test individual stages first; debug integrated frames only when
+  isolation fails. Contracts enforced only in Python wrapper preludes are
+  silent native traps — mirror them at the jt entry.
 
 ## Invariants you cannot see in the code
 
-- **Interval conventions differ by module** (all match the Python
-  reference): has_gap treats [xstart,xend] closed; tighten uses
-  pixel-centre strict overlap and fragments share boundary columns;
-  mark_solid removes closed [ilo,ihi] with ±1 fragment boundaries.
-- **Carry-chaining across JSRs**: mark_solid's middle split and the
-  ev_clamp_evy16 call rely on C surviving from flag-setting code through
-  JSR/STA sequences. Documented at the sites; inserting any instruction
-  there breaks them silently.
+- **Interval conventions differ by module** (all match Python): has_gap
+  closed [xstart,xend]; tighten pixel-centre strict overlap, fragments
+  share boundary columns; mark_solid closed removal with ±1 fragments.
+- **Carry-chaining across JSRs**: mark_solid's middle split and
+  ev_clamp_evy16 rely on C surviving JSR/STA sequences. Also
+  br_smul_am's entry consumes the N flag set by the CALLER's LDA
+  (flags survive JSR). Documented at the sites; inserting instructions
+  breaks them silently.
+- **Flags-through-PAGE**: PAGE clobbers A and flags ONLY — X/Y ride
+  through it (several dispatch sites depend on this).
 - **Phase-disjoint memory overlays**: BBOX_CORNERS ($0A40) overlays the
-  seg projection buffer; the crossing scratch overlays seg-loop ZP.
-  Both are safe only because bbox checks happen BETWEEN subsectors.
-- **Deferred op queue**: seg solid/tighten ops queue at $0600 and apply at
-  subsector end with records snapshots (later segs overwrite the records
-  buffers — the snapshot is load-bearing). DEFQ_OVF flags dropped ops.
-- **Records**: the format is 4-byte per surviving DCL segment
-  (xl,yl,xr,yr). (The old 6-byte verdict path was deleted; note the defq
-  snapshot code still STRIDES at 6 bytes on both sides — consistent,
-  exact, but wasteful of queue capacity. Fix both sides together.)
+  seg projection buffer; crossing scratch overlays seg-loop ZP. Safe only
+  because bbox checks happen BETWEEN subsectors.
+- **Deferred op queue**: solid/tighten ops queue at $0600, apply at
+  subsector end with records SNAPSHOTS (later segs overwrite the records
+  buffers — the snapshot is load-bearing). DEFQ_OVF flags drops.
 - The BSP stack entry encoding requires node ids < $2000 and subsector
-  hi-byte bit 6 clear (fine for E1M1; unstated elsewhere).
+  hi-byte bit 6 clear (fine for E1M1).
+- **VWHC purity**: the y-cache key is the complete input tuple of a pure
+  function — entries survive frames and positions by design; only boot
+  scrubs it. RLO doubles as the valid flag (live S is never 0).
+- **RNS invariants**: S ∈ [1,10], never 0 (also the VWHC valid flag);
+  the vector tables index `-1,X`; rns_select and the three INLINED
+  selects in subsector.s all SMC `rns_go+1/+2` — a new rlo writer must
+  re-vector or projections dispatch through a stale shifter.
+- **seg_swap_vx** must stay AFTER s_advance's .endscope (a mid-loop
+  splice once made ms_skip fall through into it).
+
+## Cross-frame caches (all exactness-gated)
+
+Three caches, driver-enabled (harness default off, byte-identical when
+off):
+
+- **VXC** (translation-coherent vertex transforms): ORIGIN-NORMALIZED
+  (2026-07-12): stored base' = total − ref = L(w), exactly linear in
+  integer arithmetic; warm read = base' + this frame's ref (published by
+  vxc_frame = to_view(0,0)); angle change wipes VXC_VALID. The per-vertex
+  path is IN seg_xform.s (vxc_arm); vxcache.s keeps planes + cold-store
+  leaf + vxc_frame. Warm frames -9.9% vs disabled (vxcache_check).
+- **RCACHE** (rotation-coherence bbox psi cache): position-keyed; caches
+  RAW pre-clip p1/p2 per box; stable-position frames re-derive phi from
+  cached psi (cp_havepsi). Flat data = the $5000 CODE-tail carve.
+- **D cache** (forward-coherence bbox verdicts+extents): serves while
+  movement stays in the view cone at fixed angle; 1/8 round-robin
+  refresh; pixel-preserving ONLY because of the 2026-07-08 rounding gate
+  (projection RN + outward-rounded/inflated packed bbox corners).
+  Walking -10..-19%.
+
+Also per-frame (not cross-frame): VCACHE (vertex results, $0C00, bitmap
+cleared per frame in br_init_frame) and VWHC (Y-projection memo, pure-
+function keyed, never cleared after boot).
 
 ## Known risks / open items
 
-- **SEL region ($A400)**: rot_select rides the HUD's bank C window slack
-  (banked; flat = the free page below the sqr tables). Runs once per frame
-  from br_view_setup with bank C paged; its stores all target resident
-  MAIN, so only the FETCH needs the bank.
-- **STK region ($0100-$01BF)**: the RNS vectoring block lives in the
-  BOTTOM OF THE HARDWARE STACK PAGE. Measured SP floor is $F1 (12 bytes
-  used); the region cap leaves $01C0-$01FF (64 bytes) for the stack. If
-  call depth ever grows (new nested JSR chains), re-measure — a stack
-  descending into $01BF silently corrupts these routines. The disc cannot
-  *LOAD page 1 (the OS owns the stack during loading): the image is staged
-  in bank L2 at $A100 and both drivers copy it down at boot (walk_drv
-  anim_glue_init / banked_boot init).
-- **Bank-window eviction hazard** (learned the hard way, then reverted):
-  code moved into a paged window is only correct if EVERY caller pages the
-  window first — an L2-paged call into a bank C routine executes table
-  bytes as code, and FLAT BUILDS CANNOT CATCH IT (PAGE is a no-op flat).
-  Grep every caller of every relocated label; validate with bare-boot +
-  jsbeeb. (The debug HUD's vacated $A400 bank C window is currently FREE.)
-- **Unregistered ZP squatters**: ang/rcache.s owns $C4/$C5 and bsp/anim.s
-  owns $EB-$EE/$F0-$F1 outside zp.inc's registry — tools/zpcheck.py calls
-  them "free". Grep ang/, anim, the drivers and the NJ reloc wrapper
-  before claiming a "free" slot (zp_rns_vec landed on $C4 first and the
-  rotation-cache clobbered it on stable frames).
-- **Banked main-RAM map (2026-07-10 one-region merge)**: ALL engine code
-  is ONE ld65 memory area, CODE $2C00-$57FF, with the MAIN segment first
-  so the driver-facing jump table is PINNED at $2C00 (link asserts in
-  bsp/header.s; jt_anim_tick/init live in the same table at +$1E/+$21).
-  Everything after MAIN floats — there is no more per-region byte-Tetris.
-  Data anchors below the code: BCA_WS $1B40-$1B7F (bca_ab = $1B6F, poked
-  by drivers/harness), sqr quarter-square tables $1C00-$1FFF (both
-  banks' code multiplies through them; TWIN equates in clip/arith.s AND
-  bsp/header.s — keep in sync), beebasm drivers $2000-$2BFF (drv $2000,
-  vars $2180, glue $21A0, sincos $2200, clears+input $2400; !BOOT CALLs
-  &2000). Level data lives in the banks (L0 = SoA $8000 / seg_hdr $9000 /
-  stride-18 seg headers with INLINED heights at +12..17, $9000-$BE8B /
-  TABL0 $BE90; L2 adds verts $A200, VWHC
-  $B500-$B9FF, CFG $BA00). SSMASK is a documented main-RAM exception at
-  $0A80 (per-subsector read under arbitrary banks). SEL+HUD remain in
-  the bank C window. RULE: no level data in main unless the banked
-  placement has a measured-unacceptable paging cost; validate any banked
-  placement with the flat-vs-banked FB lockstep AND a jsbeeb disc boot —
-  harness green alone is not evidence. (Historical black-screen classes
-  now retired by the merge: the W_BK/BCA_WS $3A00 overlay and the flat
-  $0BE8 ROM-pointer ceiling — the pointer block itself is gone; ROM
-  bases are src/layout.inc assembly-time constants gated against
-  dw.packed_layout on import.)
-
-- **Back-face test truncation**: `br_smul_s8_s16` keeps 16 bits; large
-  diagonal products can wrap sign and drop a front-facing seg. Latent,
-  data-dependent, invisible to self-consistency tests. Fix = s24 sign.
-- **Over-traversal robustness: RESOLVED (2026-07-05).** Over-descent
-  provably costs cycles only, never pixels (certificates:
-  overtraversal_probe.py — occluded visits must be perfect no-ops;
-  angle_race.py — angle walk vs corner walk). The apparent
-  non-robustness was two bugs in the Python corner REFERENCE (raw
-  product where 0.8-t needed >>8 in the near-plane crossing; missing
-  conservative ±1 on the extent). The angle bbox is now a faithful DOOM
-  R_CheckBBox (unsigned-BAM wraparound) on BOTH sides, bit-exact,
-  replacing the buggy signed-sort. Any future bbox change must keep the
-  test conservative: frustum rejects + never under-report the extent.
-- Pool exhaustion (32 span slots) silently drops visible fragments;
-  LINE_OUT_BUF wraps past 63 lines. Both are latent, not observed.
-- **Playable-area box: FIXED 2026-07-06** — player integer position is
-  now s16 (zp_br_px_e/py_e), the whole map is representable, and
-  doom_walk.ssd walks it (cursor keys). Historical note follows; the
-  remaining v1 limitation is spawn-constant VZ in the walk build.
-- **(historical) Playable area was a ±1023-unit box around MAP_CENTER
-  (measured 2026-07-05).** Player position is s16 8.8 fixed-point: after PRESCALE=8
-  the integer part must fit s8, so only positions within ±1023 world
-  units of MAP_CENTER (1200,-3250) are representable — 67% of walkable
-  E1M1 (489/729 grid samples) is OUT of range. Verified empirically:
-  6/6 far in-spec positions render pixel-exact (CLEAN even at prescaled
-  ±126, i.e. no distance-dependent accuracy loss inside the box), 3/3
-  out-of-spec positions are catastrophically wrong (wraparound; e.g.
-  (3648,-2368) → over 841px). This is the long-remembered "moves far
-  from start and breaks" symptom. PRESCALE=16 doubles the box to ±2047
-  but E1M1 spans 4576×2816, so full-map coverage needs a wider player
-  representation (s16.8 / per-region re-centering), not just prescale.
-  Far in-spec corners are in the standing suites since 2026-07-05.
-
-## Cross-frame caches
-
-Three caches, all driver-enabled (harness default off, byte-identical):
-VXC (translation-coherent vertex transforms), RCACHE (position-keyed bbox
-corner angles; rotation/stationary frames), and the D cache (forward-
-coherence bbox verdicts+extents, bbox.s: serves while movement stays in
-the view cone at a fixed angle; 1/8 round-robin refresh; invisible
-verdicts exact by the convex-cone theorem, extents FOE-opened supersets).
-The D cache is pixel-preserving ONLY because of the 2026-07-08 gate
-invariant: projection round-to-nearest + outward-rounded/inflated packed
-bbox corners make every seg's drawn columns lie inside its ancestors'
-gate extents (153-view sweep, 100%). Walking frames measured -10..-19%
-(deep views) / -16% (spawn); stationary -1..-4% on top of RCACHE.
+- **Pool exhaustion** (32 span slots) silently drops visible fragments;
+  latent, not observed.
+- **Flat placement traps** (all found the hard way 2026-07-12): page 9
+  tail holds live DEFQ vars ($09FB-$09FD); $A900-$B1EE is the NJ
+  rasteriser, loaded by span_clip_6502.py and INVISIBLE to the cfg; the
+  VXC plane pairs need pages k,k+1 free per plane. Consult the memory
+  map above before placing anything.
+- **Soak divergence backlog**: 272k-position soak found 2.67%
+  engine-vs-reference fails, engine UNDER-draws at far-west positions;
+  triage via soak_triage.py (toolchain tag). Not a crash class.
+- The walk build's VZ is spawn-constant (floor lookup TODO).
+- dcl_yband_clip is a band-aid: off-screen segments mean the span
+  clipper over-extends spans somewhere; find that bug, then re-evaluate.
 
 ## Performance
 
-Suite cycle counts are gated by baseline.json (currently ~4.74M total
-over 14 positions — 10 near-spawn + 4 far in-spec — ≈ 2 MHz). The cost structure and the
-optimisation history (measured-and-rejected ideas included — read before
-re-proposing one) are in BSP_RENDER_STATUS.md and CLIP_OPTIMISE.md.
+Suite cycles are gated by baseline.json: currently **4,359,539 total /
+242,196 mean** over 18 positions (cold frames). Warm-path metric:
+vxcache_check banked warm frames ~9.0M/20 (-9.9% vs disabled). The
+optimisation history INCLUDING measured-and-rejected ideas lives in the
+session memory notes and old commit messages — before re-proposing an
+idea, `git log --grep` for it: rejected ideas include per-frame product
+tables, y-cache associativity/S-boxes (birthday-bound), diagonal C-form
+on raw coords (4-mul regression), VWH interpolation, lip staging, D-cache
+gap-skips (angle-vs-Cartesian rounding), and slope_div skip chains.
 
 ## Legacy
 
-`doom_fe.asm` is the pre-BSP-renderer generation (magic line peripheral,
-Python raster). Its Python side (`fe6502.py` / `spans6502.py` /
-`build_ssd.py`, plus `doom_fe.bin` / `doom_loader.bin` /
-`clipper_bank2.bin` and the H/J/P/O modes in `doom_wireframe.py`) was
-garbage-collected 2026-07-07; recover from git history if ever needed.
-Not part of the regression; do not extend.
+`doom_fe.asm` is the pre-BSP-renderer generation; its Python side was
+garbage-collected 2026-07-07 (recover from git history). The rotating
+modelb disc is retired but still builds. The full verification toolchain
+(soak, profilers, comparators) lives at the `full-toolchain` git tag.

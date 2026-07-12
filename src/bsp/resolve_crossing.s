@@ -55,19 +55,23 @@ bsp_d_end:
 
 
 ; ============================================================================
-; W REGION ($DAC0-$DFFF) — Y-projection cache. Free RAM between the
-; harness-loaded bbox table (ends $D4BF) and the recip table ($E000);
-; the cache arrays occupy $D4C0-$DABF. Loaded as bsp_render_w.bin.
+; VWHC ARRAY EQUATES — the Y-projection memo's five parallel 256-byte
+; arrays (the CODE for the cache front is in ycache.s; only the DATA
+; addresses live here, historically, because this file owned the old W
+; region). Flat: $D500-$D9FF, the BSS window between the bbox table
+; (ends $D4BF) and TA_LO ($DC00). Banked: bank L2 window $B500-$B9FF.
+; Both builds page-aligned (2026-07-12 — the old flat $D5C0 offset made
+; ~75% of abs,X probes pay the page-cross +1, a harness-only tax).
+; The W segment itself floats inside the one CODE region in BOTH builds
+; (2026-07-12 flat merge); there is no W memory area any more.
 ;
-; br_project_y is now a caching front for br_project_y_raw: the key is
-; the COMPLETE input set (rhi, rlo, h), so a hit returns the previously
-; computed value — bit-identical by construction. 58-64%% of projections
-; repeat within a frame (measured); a raw projection costs ~315 cycles
-; end-to-end, a hit ~45.
+; br_project_y (ycache.s) is a memoising front for br_project_y_raw
+; (project.s): the key is the COMPLETE input tuple (rhi, rlo, h), so a
+; hit returns exactly the previously computed value — bit-identical by
+; construction. See ycache.s for the probe hash and its 2026-07-12
+; corpus search (~24 recurring conflicts/frame = the birthday bound;
+; raw ~322 cycles, hit ~64).
 ; ============================================================================
-; VWHC y-projection cache: flat @ $D4C0; banked -> bank L2 ($A600). br_project_y
-; (this code) -> banked low RAM ($3900, clipper-vacated space) since $DAC0 is in
-; MOS-ROM space on a real Model B.
 .if ::BANKED
 ; (VWHC pages moved $A800-$ACFF -> $B500-$B9FF in the 2026-07-10 reshuffle:
 ; verts now occupy $A200-$A95x. VALID retired earlier — RLO doubles as valid.)

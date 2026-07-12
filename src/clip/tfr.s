@@ -1,4 +1,13 @@
 
+; ============================================================================
+; clip/tfr.s — clipper fragment 8 of 10 (module map: clip/header.s).
+; Contents: tg_append_x (list builder + merge), the TFS_* state block,
+; tighten_from_records (jt_tighten_from_records) and its helpers, the
+; LC_* absolute working set for the s16 clipper (code in clip/dcl_s16.s),
+; and seg_zero_rec_solid (exported to bsp/subsector.s).
+; Consumes the 4-byte records written by dcl_emit_segment (clip/dcl.s).
+; ============================================================================
+
 ; --- TG_APPEND_X: append span X to the new list, with merge optimization ---
 ;
 ; Tries to merge X into the tail when both are constant-line spans
@@ -156,6 +165,10 @@ TFS_PEND_BID = $091B
 ; edge was clipped away (old boundary wins) and the pool value is
 ; kept. The all-records-clipped-away case (zero records) never reaches
 ; this routine: the wrapper resolves it via seg_zero_rec_solid below.
+;
+; Callers: bsp/defq.s (deferred portal ops, records copied back to
+; $0700/$0800 first) via jt_tighten_from_records — bank C paged in the
+; banked build — and the harness's tighten_from_records.
 ;
 ; Python mirror: EndpointClipSpans.tighten_from_records (older 6-byte
 ; verdict form; this 4-byte segment walk is state-equivalent — records
@@ -873,8 +886,10 @@ ues_fail:
 ; ===================================================================
 ; s16 line clipper — generic first cut
 ;
-; Wrapper writes 8 bytes of s16 input (4 endpoints × 2 bytes) to
-; zp_line_xl_lo..zp_line_yr_hi in scratch RAM, then JSRs $201E. Routine clips
+; Wrapper writes 8 bytes of s16 input (4 endpoints × 2 bytes) to the
+; zp_line_xl_lo..zp_line_yr_hi ZP slots, then JSRs jt_draw_clip_s16
+; (the "$201E" a previous note named here is a dead pre-relayout slot
+; number — resolve entries via the symbol map only). Routine clips the
 ; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl_lo/yl/xr/yr,
 ; then falls through to draw_clipped_line (existing DCL pipeline).
 ;
@@ -949,6 +964,8 @@ LC_TGT_HI = $0958
 ;      zp_seg_flags (SF_NEEDBT=$04, SF_NEEDBB=$08).
 ; Out: C=1 -> aperture band provably empty on screen (caller appends a
 ;      SOLID over [ilo,ihi]); C=0 -> genuine no-op (skip).
+; Caller: bsp/subsector.s seg-emit tail (direct .import, not a jt slot;
+; bank C paged in the banked build). Clobbers A,X.
 ;
 ; Band bottom = min(fb, bb when SF_NEEDBB); band top = max(ft, bt when
 ; SF_NEEDBT). Empty on screen iff bottom < Y_BIAS at BOTH endpoints

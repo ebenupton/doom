@@ -1,7 +1,19 @@
 
+; ============================================================================
+; clip/dcl.s — clipper fragment 7 of 10 (module map: clip/header.s).
+; Contents: draw_clipped_line (jt_draw_clip) + dcl_vertical, the CB
+; trapezoid clip, dcl_boundary_ix, dcl_emit_segment (records writer +
+; plot dispatch), dcl_yband_clip, and line_interp_store.
+; ============================================================================
+
 ; ======================================================================
-; DRAW_CLIPPED_LINE: clip a single line against the span list, emit
-; visible portions to LINE_OUT_BUF and call the NJ rasteriser.
+; DRAW_CLIPPED_LINE: clip a single line against the span list and plot
+; the visible portions (plot_h / plot_v / NJ rasteriser).
+;
+; Reached natively THROUGH dcl_s16.s (draw_clipped_line_s16[_h] falls
+; through / jumps here once coords are u8); the direct u8 entry
+; jt_draw_clip is used by the Python harness (and exists as SC_DRAW_U8
+; on the bsp side).  Banked build: bank C must already be paged.
 ;
 ; Phase 1: basic walk with outer bbox reject / inner bbox accept.
 ; No CB clip (ambiguous cases skipped), no portal continuation
@@ -14,11 +26,15 @@
 ;   zp_dcl_rec_buf(_h)     = segment-record buffer ptr; hi byte $00
 ;                            disables records mode entirely
 ;
-; Output: lines written to LINE_OUT_BUF (4 bytes each: x0,y0,x1,y1 with
-; Y un-biased), count at LINE_OUT_COUNT; each segment is also handed to
-; the rasteriser as it is produced.  In records mode, one 4-byte record
+; Output: each surviving segment is staged into RASTER_ZP_X0..Y1 (Y
+; un-biased) and dispatched to plot_h / plot_v / RASTER_ENTRY as it is
+; produced.  Only when LINE_OUT_EN is set (HARNESS-ONLY — the buffer
+; overlaps the D-cache; see the note in clip/arith.s) is each segment
+; also appended to LINE_OUT_BUF (4 bytes: x0,y0,x1,y1, Y un-biased,
+; count at LINE_OUT_COUNT).  In records mode, one 4-byte record
 ; (xl,yl,xr,yr — BIASED Y) per surviving segment is appended to the
-; record buffer (count in byte 0) for the records-driven tighten.
+; record buffer (count in byte 0) for the records-driven tighten
+; (consumer: tighten_from_records, clip/tfr.s).
 ; READ-ONLY walk — never modifies the span list.
 ;
 ; Python mirror: EndpointClipSpans.draw_clipped (endpoint_spans.py) —
@@ -1041,7 +1057,8 @@ dcl_bix_mid:
    ROR A
    RTS
 
-; --- dcl_emit_segment: write segment to LINE_OUT_BUF and call rasteriser ---
+; --- dcl_emit_segment: stage a segment to the rasteriser (plus the
+;     harness-only LINE_OUT capture and the optional tighten record) ---
 ; Input: zp_seg_start_x, zp_seg_start_y, zp_ox1 (end_x), zp_tmp0 (end_y)
 ; Clobbers: A, Y
 ;
@@ -1379,20 +1396,21 @@ lis_yr:
 .endscope
 
 ; ======================================================================
-; CLIP_LINE_RECORDS / TIGHTEN_FROM_RECORDS — Phase B records-driven tighten
+; RECORDS-DRIVEN TIGHTEN — architecture note (rewritten 2026-07-12)
 ;
-; Records-driven tighten architecture: clip_line_records walks the active
-; span list and writes per-span sub-records describing the line vs span
-; aperture relationship; tighten_from_records consumes the top+bot records
-; and applies the narrowing. Replaces the existing draw_clipped+tighten
-; pair for portal segs in records mode.
+; Shipping path: dcl_emit_segment (above) writes ONE 4-byte record
+; (xl, yl, xr, yr) per surviving DCL segment into TOP_RECORDS /
+; BOT_RECORDS — routed by zp_dcl_rec_buf (hi byte $07/$08, $00 = off) —
+; while the caller draws the portal's yt / yb edge lines;
+; tighten_from_records (clip/tfr.s, included next) consumes the two
+; buffers and applies the narrowing.  This replaced the old
+; draw_clipped + per-span tighten pair for portal segs.
 ;
-; Inputs (caller writes ZP):
-;   zp_line_xl_lo, zp_line_yl_lo, zp_line_xr_lo, zp_line_yr_lo  — line endpoints (u8)
-;   zp_ilo, zp_ihi                                  — clamp range (u8)
-; Output: records buffer pointed to by zp_buf is populated.
+; A separate clip_line_records ROUTINE (the Phase-A 6-byte verdict
+; records described in older notes) no longer exists in the 6502; the
+; name survives only in the Python reference
+; (endpoint_spans.clip_line_records), which remains the behavioural
+; mirror for what the records must capture.
 ; ======================================================================
-
-; ===== Records mode ZP aliases =====
-; Reuse tighten ZP slots since the two modes never run concurrently.
-; Per-sub-range scratch (overlap with tighten temps):
+; (End of file — no code below.  The tighten consumer and its TFS_*
+; state block are in clip/tfr.s.)

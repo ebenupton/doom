@@ -1,4 +1,6 @@
 ; ============================================================================
+; clip/plot_axis.s — clipper fragment 9 of 10 (module map: clip/header.s).
+;
 ; Axis-aligned plotters — the gradient census showed ~70% of all rasterised
 ; pixels live in perfectly horizontal or vertical segments, which the NJ
 ; rasteriser walks through its generic (per-pixel, error-tracked) machinery.
@@ -10,7 +12,11 @@
 ;
 ; Same interface as RASTER_ENTRY: RASTER_ZP_X0/Y0/X1/Y1 (unbiased screen
 ; coords, x0<=x1 guaranteed by the DCL emit), OR-mode writes, scrstrt in
-; RASTER_ZP_SCRSTRT. Pixel-exact vs the NJ output (fb_gate.py verifies).
+; RASTER_ZP_SCRSTRT. Pixel-exact vs the NJ output (reference:
+; nj_raster.py; the fb_gate.py harness named here previously is no
+; longer in the tree, 2026-07-12).
+; Callers: dcl.s only — the emit axis dispatch (des_dispatch) and the
+; vertical fast path (dv_emit tail-calls plot_v).
 ;
 ; Mode 4: addr = (scrstrt+ (y>>3)) : (x & $F8) + (y & 7); bit = $80 >> (x&7).
 ; ============================================================================

@@ -1,4 +1,12 @@
 
+; ============================================================================
+; clip/pool.s — clipper fragment 3 of 10 (module map: clip/header.s).
+; Contents: span_init (jt_init), the O(1) free-list allocator
+; (alloc_span / free_span), and the udiv16_8 division primitive.
+; Pool layout + field equates (POOL_*) are defined in clip/arith.s;
+; ZP names come from src/zp.inc.
+; ============================================================================
+
 ; ======================================================================
 ; SPAN_INIT: reset the clipper to one full-screen span
 ;
@@ -6,7 +14,10 @@
 ;   FREE LIST -- singly-linked chain of unused slots 2..31
 ;   ACTIVE LIST -- single span (slot 1) covering [0,255] x [0,159]
 ;
-; Called once per frame. Runtime is negligible (< 0.5% of total).
+; Called once per frame via jt_init: the walk driver (walk_drv.asm)
+; pages bank C and JSRs the jump-table slot before the render; the
+; Python harness calls it per test frame. Runtime is negligible
+; (< 0.5% of total).
 ;
 ; Input:  none.
 ; Output: zp_free = 2 (free chain 2->3->...->31->0),
@@ -112,6 +123,9 @@ free_span:
 ; The code + full I/O header now live in clip/arith.s (included right
 ; after clip/header.s so the pin lands at $2030 in the flat build).
 
+; NB (2026-07-12): the margin note on the pad below is historical —
+; umul8 moved to the pinned $2030 slot in clip/arith.s, so this byte no
+; longer aligns it; it is kept so all downstream code keeps its layout.
    .byte 0                                 ; 1-byte pad: optimal alignment for umul8
 
 ; (interp_core removed — inlined into interp_store below.)

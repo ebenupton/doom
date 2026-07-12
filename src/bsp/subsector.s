@@ -1,27 +1,40 @@
 
 ; ============================================================================
-; br_render_subsector — process one subsector.
+; br_render_subsector — THE SEG LOOP: process one subsector.
 ;   Input: zp_node_chlo:hi = subsector id (high bit cleared).
+;   Caller: the BSP walk (bsp/walk.s) through the anim_ss_hook JMP below.
 ;
-;   Reads subsector header (count, first_seg). Loops through segs:
-;     1. Mark visited (test instrumentation).
-;     2. Read seg header (v1/v2/lv1x/lv1y/ldx/ldy/flags).
-;     3. Read fh/ch from FHCH table; compute height deltas.
-;     4. Back-face test; skip if back-facing.
-;     5. Transform v1, v2; project to screen X and to Y for top+bot edges.
-;     6. Emit top + bottom horizontals (and L+R verticals).
+;   Per-seg order of battle (each stage's owner file in brackets):
+;     1. Back-face test [backface.s] — tail-dispatched: JMPs to
+;        ::bf_seg_front here or straight to ::s_advance on a back seg.
+;     2. Vertex pipeline per endpoint [seg_xform.s]: chain reuse, frame
+;        vcache, VXC coherence cache, or full fetch+rotate; results land
+;        in the endpoint structs VX1/VX2 (zp.inc, stride 15).
+;     3. Near-plane crossing resolution [resolve_crossing.s].
+;     4. Fused has_gap range prelude + cull (clipper jt) — culled segs
+;        stop HERE: Y is never projected for them (deferral, 2026-07-11).
+;     5. y_stage below: PAGE L2 once, project flag-gated sy pairs via
+;        do_project_y [seg_project.s] through the VWHC memo [ycache.s];
+;        chain donates the previous v2's front pair when valid.
+;     6. apv_stage [lo.s]: aperture-vertical pairs, post-visibility.
+;     7. Endpoint canonicalization: THE SEG LAYER OWNS LEFT-TO-RIGHT —
+;        seg_swap_vx deep-swaps the structs on the rare reversal and
+;        kills the chain key (the s16 clipper no longer sorts).
+;     8. Emission: ft/fb/bt/bb horizontals via SC_DRAW_S16_H (X = the
+;        sy-pair struct offset), NOVT/APEDGE-gated verticals, then a
+;        deferred solid/tighten op is queued [defq.s].
 ;
 ; Python mirror: packed_render_subsector + packed_render_seg
 ; (doom_wireframe.py). Per-subsector pseudocode:
 ;   count, first = SS_CNT[idx], SS_FLO/FHI[idx]
 ;   defq = []                                  # DEFQ op queue, seg order
 ;   for si in range(first, first + count):
-;     reset_records()                          # TOP/BOT_RECORDS counts = 0
-;     hdr = seg_hdr[si]                        # 12-byte header, ROM
+;     hdr = seg_hdr[si]                        # 16-byte header, ROM
 ;     if back_face(hdr): continue
 ;     xform v1, v2 (vcache'd); near-clip; project sx1/sx2 (s16)
 ;     if both endpoints off one screen side: continue
 ;     if not has_gap(clamp8(sx), clamp8(sx')): continue
+;     project sy pairs (deferred to here); swap endpoints if reversed
 ;     emit flag-gated lines (SC_DRAW_S16, records routed via $BC/$BD):
 ;       front top/bottom horizontals, back-step horizontals,
 ;       endpoint verticals, aperture-edge verticals
@@ -148,21 +161,29 @@ seg_proc:
 ; br_init_frame (nothing ever writes it non-zero) and the per-seg _h
 ; disarm is gone: every DCL call site arms/disarms explicitly.)
 
-; --- seg header via the persistent pointer. Back-face inputs first
-; (offsets 4-10: lv1x/lv1y/ldx/ldy/flags); v1/v2 (offsets 0-3) are only
-; read after the test passes — back-facing segs never need them. ---
-; 12-byte header layout (wad_packed.py SH_*): +0/+2 v1/v2 vertex idx u16,
-; +4/+6 linedef v1 x/y s16, +8/+9 linedef dx/dy s8, +10 flags, +11 len.
-; Flags: $80 SAMEDIR (INVERTED direction bit: set = seg runs with its
-; linedef; applied branchlessly by EOR/AND in the back-face test),
-; $02 SOLID, $04 NEEDBT (back ceil below front), $08 NEEDBB (back floor
-; above front), $10/$20 NOVT1/2 (suppress endpoint vertical),
-; $40/$01 APEDGE1/2 (aperture edge there).
+; --- seg header via the persistent pointer. Flags first; v1/v2 keys
+; (offsets 0-3) are only read after the back-face test passes —
+; back-facing segs never need them. ---
+; 16-byte header layout (wad_packed.py SH_*, stride 16 since 2026-07-11):
+;   +0/+1  v1 key: A = idx&255, B = idx>>3 (NOT lo/hi — see seg_xform.s)
+;   +2/+3  v2 key (same encoding)
+;   +4     back-face form: 0-3 = axis compare (px>C, px<C, py>C, py<C),
+;          >= 4 = diagonal, (form-4) indexes the DIR tables
+;   +5/+6  axis: C16 compare constant | diagonal: lv1x s16
+;   +7     diagonal: lv1y lo (hi is at +9 — split around flags)
+;   +8     flags (see below)
+;   +9     axis: unused pad | diagonal: lv1y hi
+;   +10..15 heights, baked by the packer: fh, ch, then per-form:
+;          solid+APEDGE: bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh
+;          portal:       bfh, bch (back floor/ceiling), rest unused
+; Flags: $80 SAMEDIR (folded into the DIR sign at PACK time — the test
+; itself never reads it), $02 SOLID, $04 NEEDBT (back ceil below front),
+; $08 NEEDBB (back floor above front), $10/$20 NOVT1/2 (suppress endpoint
+; vertical), $40/$01 APEDGE1/2 (aperture edge at that end).
 ; Stage ONLY flags (reused all over the seg loop AND across the DCL emit
-; calls that clobber registers — it must live in ZP). ldx/ldy AND lv1x/
-; lv1y are read ON DEMAND by the back-face test straight from the header
-; via (zp_seg_hdr_p),Y — the persistent cursor is already a ZP pointer, so
-; no copy into zp_br_p is needed (2026-07-09).
+; calls that clobber registers — it must live in ZP). Everything else is
+; read ON DEMAND via (zp_seg_hdr_p),Y — the persistent cursor is already
+; a ZP pointer, so no copy into zp_br_p is needed (2026-07-09).
    LDY #8
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_flags
@@ -176,11 +197,14 @@ seg_proc:
 ::bf_seg_front:
 ; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
 
-; --- FHCH per-seg: front fh/ch + deltas were HOISTED to the subsector
-; prologue (subsector-constant). Only the back heights remain per seg:
-;     [fh, ch, bfh|apv1_ch, bch|apv1_fh, apv2_ch, apv2_fh].
-; (Back-delta staging DEFERRED into the post-has_gap y stage 2026-07-11
-; — culled portals no longer pay the header reads + subtractions.)
+; --- Heights: front fh/ch + deltas were HOISTED to the subsector
+; prologue (subsector-constant; every seg fronts this sector). The back
+; heights live INLINE in the header at +12..15 (the separate FHCH
+; stream retired 2026-07-11):
+;     [+10 fh, +11 ch, +12 bfh|apv1_ch, +13 bch|apv1_fh,
+;      +14 apv2_ch, +15 apv2_fh].
+; Back-delta staging is DEFERRED into the post-has_gap y stage
+; (2026-07-11) — culled portals never pay the header reads. ---
 
 ; --- Transform + project both endpoints (br_seg_xform_vertex:
 ; vcache-backed br_to_view, near-plane test, X projection, Y projections
@@ -494,9 +518,9 @@ hgp_fwd:
    BEQ ft_skip
    JMP ft_emit
 ft_no_needbt:
-; bch > ch ? (bch on demand from FHCH+3 — FHCH lives in the L0 window
-; since the 2026-07-10 reshuffle and this path runs under BANK_C, so
-; page around the read; flat: no-ops)
+; bch > ch ? (bch on demand from header +13 — the header lives in the
+; L0 window and this path runs under BANK_C, so page around the read;
+; flat: no-ops)
    PAGE BANK_L0
    LDY #13
    LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
@@ -556,8 +580,8 @@ ft_skip:
    BEQ fb_skip
    JMP fb_emit
 fb_no_needbb:
-; bfh < fh ? (bfh on demand from FHCH+2 — L0-window read under BANK_C,
-; page around like ft_no_needbt; flat: no-ops)
+; bfh < fh ? (bfh on demand from header +12 — L0-window read under
+; BANK_C, page around like ft_no_needbt; flat: no-ops)
    PAGE BANK_L0
    LDY #12
    LDA zp_seg_fh
@@ -737,7 +761,7 @@ skip_rvert:
 ; A NOVT endpoint suppresses the seg's own vertical, but a colinear
 ; portal's aperture still needs its edge drawn there. ap_edges (lo.s)
 ; emits (sxK, aperture_top) → (sxK, aperture_bot) per flagged endpoint;
-; solid segs take the APV heights packed into FHCH bytes 2-5.
+; solid segs take the APV heights packed into header bytes +12..15.
    JSR ap_edges
 
 ; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and

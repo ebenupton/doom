@@ -1,23 +1,26 @@
 bsp_lo_start:
 
 ; ============================================================================
-; reproject_at_crossing — call cross_compute, then project sx + 4 sy values
-; using the reciprocal at NEAR. Writes sx (→ sx1/sx2 via zp_seg_ep) and the
-; four sy pairs (→ SEG_PROJ_BUF via zp_seg_ep) straight into the endpoint.
+; reproject_at_crossing — call cross_compute, then project sx at the
+; NEAR reciprocal, writing straight into the clipped endpoint's STRUCT
+; slots (VX1/VX2, zp.inc — stride 15; zp_seg_ep = 0 for v1, 15 for v2,
+; set by the caller). Y projection is NOT done here: it is deferred to
+; the post-has_gap y stage like every other endpoint (2026-07-11); this
+; routine banks recip(NEAR) into the struct's +13/+14 so that stage and
+; apv_stage read the right reciprocal.
 ;
 ; Called by the seg loop (subsector.s) when EXACTLY ONE endpoint of a
 ; front-facing seg is behind the near plane: that endpoint is replaced by
 ; the seg's crossing point with vy = NEAR, mirroring Python's fp_near_clip
 ; branch in packed_render_seg (idxK = eyK << 1 = 2 → recip at NEAR;
-; fvxK_c = 0 for clipped endpoints). zp_seg_ep selects the endpoint
-; (0=v1, 4=v2), set by the caller before the JSR.
+; fvxK_c = 0 for clipped endpoints).
 ;
-;   Inputs:  zp_seg_v1_evy/evx, zp_seg_v2_evy/evx (both endpoints' s8 view
-;              coords — always populated by br_seg_xform_vertex),
-;            zp_seg_*_dlt + zp_seg_flags (consumed by the do_project_y tail).
-;   Outputs: sx1/sx2 (via zp_seg_ep) = screen x of the crossing point (s16),
-;            SEG_PROJ_BUF sy (via zp_seg_ep) = heights at recip(NEAR),
-;            zp_br_rhi/rlo   = recip(NEAR) = (M8=0, S=1).
+;   Inputs:  VX1+0/+1 and VX2+0/+1 (both endpoints' s8 evy/evx — always
+;              populated by br_seg_xform_vertex, even when clipped),
+;            zp_seg_ep = the CLIPPED endpoint's struct offset (0 | 15).
+;   Outputs: struct +3/+4 = sx of the crossing point (s16),
+;            struct +13/+14 and zp_br_rhi/rlo = recip(NEAR) = (M8=0, S=1);
+;            chain key killed by the caller (VX2 no longer holds a vertex).
 ;
 ;   Pseudocode:
 ;     cx = cross_compute()             # view-x where the seg meets vy=NEAR
@@ -582,10 +585,10 @@ w_e_pos:
 ;            zp_br_resext = the next byte (s24 extension).
 ;   Clobbers A, X, and the B bytes.
 ;
-;   Same floor identity as rns24 (resolve_crossing.s), one byte wider,
+;   Same floor identity as rns24 (project.s RNS block), one byte wider,
 ;   implemented as a plain S-iteration 4-byte ASR: the wide path is a
 ;   handful of calls per frame, so loop cycles are noise — byte size
-;   (the LO region is nearly full) wins over the byte-drop fast paths.
+;   wins over the byte-drop fast paths.
 ; ============================================================================
 
 rns32:
@@ -635,16 +638,18 @@ r32_loop:
 ; ============================================================================
 ; ap_edges — NOVT aperture-edge verticals (SF_APEDGE1=$40 / SF_APEDGE2=$01).
 ; Mirrors the Python reference:
-;   SOLID seg, APEDGE_K: draw (sxK, bchK', sxK, bfhK') where (bch,bfh) are
-;     the colinear portal's aperture heights, projected with endpoint K's
-;     reciprocal. For K=1 the packer overlays them on the bfh/bch slots,
-;     so sy1_bbot/sy1_btop ALREADY hold the projections. For K=2 they sit
-;     in header bytes +16/17 and are projected by apv_stage (post-hg).
+;   SOLID seg, APEDGE_K: draw (sxK, apvK_ch', sxK, apvK_fh') where the
+;     apv heights are the colinear portal's aperture, projected with
+;     endpoint K's reciprocal by apv_stage (post-has_gap, this file).
+;     The packer bakes them into the 16-byte header: K=1 overlays the
+;     bfh/bch slots (+12/+13), K=2 owns +14/+15; apv_stage writes the
+;     projections into the endpoint structs' btop/bbot sy pairs.
 ;   PORTAL seg (has steps), APEDGE_K: draw (sxK, bt|ft, sxK, bb|fb) — all
-;     four projections already in the SEG_PROJ_BUF slots.
+;     four projections already in the endpoint struct's sy slots (the
+;     y stage filled them; SEG_PROJ_BUF is long retired).
 ; Off-screen endpoints (sx hi != 0) are skipped like the other verticals:
 ; Python computes then AP-skips or DCL-clips them; pixel output matches.
-; X = sy-slot offset (0=v1, 4=v2), Y = sx-slot offset (0=v1, 2=v2).
+; X = endpoint STRUCT offset (0 = v1, 15 = v2) for ap_edge_one.
 ; ============================================================================
 ap_edges:
 .scope

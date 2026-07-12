@@ -16,11 +16,13 @@
 ; { r<<=1; q<<=1; if r>=den { r-=den; q+=1 } } yields floor(num*2^10/den).
 
 
-; Integration build: loaded at $E940 (bsp_render_ang.bin). Tables: TA_LO in the
-; reclaimed rotation-cache RAM ($DC00-$DFFF, 1024 entries), TA_HI/VATOX in the
-; $E940 region after the code. Fixed entry jump table for bsp_render to call.
-; Angle module code: flat @ $E940 (above renderer); banked (BBC) -> low RAM
-; ($3400, in the clipper-vacated space) since $C000+ is MOS ROM on a Model B.
+; PLACEMENT: flat = the ANG region $E940-$F1FF (bsp_render_ang.bin; the
+; module physically cannot join the flat CODE region — total code
+; exceeds any contiguous flat window). Banked = the ANG segment floats
+; inside the one CODE region $2C00-$57FF like everything else. Tables:
+; flat TA_LO $DC00, TA_HI $F200, VATOX $F601 (harness-seeded); banked =
+; the L2 window ($8000/$8400/$8900, loader-seeded). Fixed entry jump
+; table below (jt_slope_div/jt_bca_check) for bsp_render to import.
 .if BANKED
 .segment "ANG_BK"
 .else

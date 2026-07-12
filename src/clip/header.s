@@ -25,15 +25,35 @@ ina
 .endif
 .endmacro
 
-; span_clip.asm -- Standalone 6502 span-clipper for a DOOM-style BSP renderer
+; span clipper (src/clip/*) -- 6502 span-clipper module for the DOOM-style
+; BSP renderer.  ONE MODULE of the single ld65 engine link (it was a
+; standalone beebasm unit historically; the old "span_clip.asm" name
+; survives as src/span_clip.s, the include shell that pulls in, in this
+; order: clip/header.s (this file), arith.s, pool.s, interp.s,
+; mark_solid.s, query.s, dcl.s, tfr.s, plot_axis.s, dcl_s16.s).
 ;
 ; This module manages a linked list of 'spans' representing the visible
 ; aperture on each horizontal column of the screen (0-255).  Each span stores
 ; a line definition (top/bot Y at two anchor X's) and an active column range.
 ; The BSP front-to-back traversal calls three main operations:
-;   has_gap    -- quick check whether any column in [lo,hi] is still open
-;   tighten    -- narrow the aperture top/bot using a new wall segment
-;   mark_solid -- remove a column range entirely (wall fully occludes)
+;   has_gap              -- quick check whether any column in [lo,hi] is open
+;   mark_solid           -- remove a column range entirely (wall occludes)
+;   tighten_from_records -- narrow apertures from DCL segment records
+; plus draw_clipped_line[_s16[_h]] -- clip a line to the spans and plot it.
+; (The old per-span "tighten" entry is retired — see the note in query.s.)
+;
+; Callers (2026-07-12):
+;   bsp module   -- imports jt_* / seg_zero_rec_solid; see the SC_* alias
+;                   block in src/bsp/header.s.  bbox.s + subsector.s call
+;                   has_gap; defq.s calls mark_solid / tighten_from_records
+;                   / is_full; walk.s calls is_full; subsector.s + lo.s
+;                   call draw_clip_s16(_h) and seg_zero_rec_solid.
+;   walk driver  -- walk_drv.asm pages bank C and JSRs the jt_init slot
+;                   once per frame (span pool reset).
+;   Python harness -- span_clip_6502.py, entry addresses via the ld65
+;                   symbol map (symmap.py).
+; BANKED build: the caller must page BANK_C (ROMSEL) before ANY entry
+; here; the flat build needs no paging.
 ;
 ; All arithmetic uses 8-bit fixed point with quarter-square lookup tables
 ; for multiply and restoring division loops for divide.  The span pool is
@@ -54,11 +74,15 @@ ina
 ; shared: mul output = div input
 
 ; --- BBC banked port (path B) ---
-; BANKED is passed via beebasm -D BANKED=0|1 (never assigned here).
-;   BANKED=0 : flat build (ORG $2000, sqr @ $A500) — regression oracle.
-;   BANKED=1 : clipper lives in sideways-RAM bank C @ $8000; sqr tables move
-;              to low RAM ($1000) so the bank-C clipper can reach them (the
-;              flat $A500 is inside the $8000-$BFFF bank window when paged).
+; BANKED is passed via ca65 -D BANKED=0|1 (never assigned here; C02 is
+; passed the same way).
+;   BANKED=0 : flat build — regions CLIPJT $2000-$202F + CLIP $2030-$366F
+;              (engine_flat.cfg), sqr tables @ $A500. Regression oracle.
+;   BANKED=1 : clipper lives in sideways-RAM bank C @ $8000 (CLIP_BK
+;              region, engine_banked.cfg); sqr tables move to low RAM
+;              ($1C00, abi.inc SQR_BASE) so the bank-C clipper can reach
+;              them (the flat $A500 is inside the $8000-$BFFF bank window
+;              when paged).
 .if ::BANKED
 .segment "CLIP_BK"
 .else
@@ -72,7 +96,8 @@ ina
 .export jt_tighten_from_records, jt_draw_clip_s16, jt_draw_clip_s16_h, jt_umul8, jt_udiv16_8
 
 ; --- Jump table: fixed entry points for each public operation ---
-; Callers (Python harness, game engine) JSR to $2000 + 3*N.
+; Callers (Python harness, game engine) JSR base + 3*N, where base =
+; $2000 (flat) or $8000 (banked, bank C paged in).
 ; JMP is 3 bytes, so entries are evenly spaced.
 ; NB: the "$20xx" end-of-line annotations below are HISTORICAL — they
 ; predate the removal of intermediate entries (e.g. the legacy
@@ -91,7 +116,12 @@ ina
 ;   jt_draw_clip            clip u8 line zp_line_* to spans, emit + records
 ;   jt_tighten_from_records narrow spans by consuming TOP/BOT_RECORDS
 ;   jt_draw_clip_s16        s16 line: pre-clip to u8 box, then DCL
-;   jt_umul8 / jt_udiv16_8  arithmetic primitives (shared with bsp_render)
+;   jt_umul8 / jt_udiv16_8  arithmetic primitives (harness/profiler only)
+; NB (2026-07-12): bsp_render no longer links against jt_umul8 /
+; jt_udiv16_8 — it carries LOCAL copies (see src/bsp/header.s and
+; bsp/arith.s), so those two slots now serve the Python harness and
+; profiler only.  The "(exported for bsp_render.asm)" margin notes
+; further down are historical.
 jt_init: JMP span_init                           ; $2000                                             ; |
 jt_mark_solid: JMP span_mark_solid                     ; $2003                                             ; |
 jt_has_gap: JMP span_has_gap                        ; $2009                                             ; |||

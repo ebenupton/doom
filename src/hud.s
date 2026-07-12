@@ -21,11 +21,13 @@
 ;       dst = back_fb + i*8                  # back_fb page from the driver
 ;       dst[0..7] = os_font[(ch-32)*8 .. +7]
 ;
-; Driver interface (walk_drv.asm — KEEP IN SYNC, the vars are raw
-; addresses on both sides; the 2026-07-10 driver move to $2180 left
-; these at $3D8x and HUD_BACKHI read an engine-code byte as the FB
-; page: every glyph blit sprayed 192 bytes over a random page — ZP
-; when it landed on page 0, corrupting the VZ easing state):
+; Driver interface (walk_drv.asm): BOTH sides now derive the variable
+; addresses from the abi.inc DV_* equates (DRV_VARS = $2180) — private
+; address copies are banned here because of the bug this caused: when
+; the driver vars moved (2026-07-10) this file's stale hardcoded $3D8x
+; copies survived, HUD_BACKHI read an engine-code byte as the FB page,
+; and every glyph blit sprayed 192 bytes over a random page — ZP when
+; it landed on page 0, corrupting the VZ easing state.  Current layout:
 ;   $2180 angidx (view angle byte = angidx*4), $2181 backhi (FB page),
 ;   $2182/85 = x/y fraction bytes, $2183/84 = x int lo/hi,
 ;   $2186/87 = y int lo/hi, $2189 hud_en, $218A hud_prev (toggle edge

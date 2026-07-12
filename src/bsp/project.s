@@ -253,21 +253,32 @@ py_shift:
 .endscope
 
 ; ============================================================================
-; RNS VECTORING — the shift S is a per-vertex constant, so the shifter is
-; selected ONCE per reciprocal (rns_select, called from every zp_br_rlo
-; writer: br_recip, the vcache hit path, ap2_solid_proj) and projections
-; jump straight to the right unrolled body through zp_rns_vec — no
-; per-projection dispatch, no loop. Bodies: rns_s6/s7/s10 here (MAIN space
-; freed by evicting the verticals block to CEMIT — the debug HUD's bank C
-; window), rns_s8/s9 in resolve_crossing.s, generic rns24 (ANG) for the
-; rare S in [1,5]. All bodies are bit-exact floor((P + 2^(S-1)) / 2^S).
-; EVICTED from the stack page 2026-07-12 (the $0100-$01BF STK region is
-; retired in all builds — page 1 is reserved headroom now, and the whole
-; banked staging/boot-copy machinery died with it). The dispatch is a
-; DIRECT JMP whose operand IS the live shifter: rns_select (and the
-; inlined selects in subsector.s) SMC rns_go+1/+2 instead of consuming
-; the old zp_rns_vec pair ($C6/$C7 freed) — and each dispatch saves the
-; indirect-jump surcharge (JMP abs 3 vs JMP (zp) 5).
+; RNS VECTORING — round-to-nearest shift dispatch for the projections.
+;
+; The shift S (zp_br_rlo, ALWAYS in [1,10], never 0 — it doubles as the
+; VWHC valid flag) is a per-vertex constant, so the shifter is selected
+; ONCE per reciprocal and each projection dispatches with a single JSR:
+;
+;   rns_go:  JSR'd by br_project_x_subpx and br_project_y_raw (both this
+;            file). It is ONE instruction — JMP <body> — whose OPERAND is
+;            the live shifter (SMC, 2026-07-12): rns_select below and the
+;            three INLINED selects in subsector.s's y_stage write
+;            rns_go+1/+2 from the rns_vec tables. No ZP vector (the old
+;            zp_rns_vec pair $C6/$C7 is freed), and JMP abs is 2 cycles
+;            cheaper than the old JMP (zp).
+;   INVARIANT: every writer of zp_br_rlo MUST re-select (JSR rns_select
+;            or the inlined form) before the next projection, or the
+;            dispatch runs a stale shifter. Current writers: br_recip
+;            (arith.s), the vcache hit path (seg_xform.s), chain_reuse_v1
+;            (lo.s), y_stage (subsector.s).
+;
+; ALL bodies live in this file, in the LO segment (one CODE region both
+; builds; evicted from the stack page 2026-07-12 — page 1 is reserved
+; headroom and the banked staging/boot-copy machinery died with it):
+; unrolled rns_s6..rns_s10 for the hot shifts, generic rns24 for the
+; rare S in [1,5]. Every body computes floor((P + 2^(S-1)) / 2^S) on the
+; s24 product in (t2, t3, vxext) and RTSes straight back to the
+; projection's caller — pure leaves, bit-exact vs Python's rns().
 ; ============================================================================
 .segment "LO"
 rns_go:
@@ -392,8 +403,9 @@ rns_s10:
 .endscope
 .segment "MAIN"
 
-; (rns24 generic + the rns_half tables live in the D region —
-; resolve_crossing.s — and LO; MAIN is at its $5800 ceiling.)
+; (rns24 lives below in this file's RNS block; its rns_half rounding-
+; constant tables are in resolve_crossing.s — both LO/D segments float
+; inside the one CODE region in both builds.)
 
 
 .if ::BANKED

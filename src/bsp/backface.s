@@ -1,73 +1,45 @@
 
 ; ============================================================================
-; br_back_face_test — test current seg for back-facing.
-;   Inputs (zp): zp_seg_hdr_p -> the 12-byte seg header (read on demand via
-;                (zp_seg_hdr_p),Y: linedef v1 x/y at +4..+7, delta ldx/ldy
-;                at +8/+9); zp_seg_flags staged by the caller (header +10;
-;                SF_SAMEDIR = $80, top bit, INVERTED: set = runs with ld).
-;                zp_br_px_h/px_e, zp_br_py_h/py_e = player px_int, py_int (s16).
-;   Output: Z FLAG — Z=1 (BEQ) back-facing, Z=0 (BNE) front-facing.
-;           A is scratch. 2026-07-09: inverted from A=1-means-back so the
-;           degenerate back exits (ldx/ldy/delta == 0) return STRAIGHT
-;           from the test that decided them — the zero just tested IS the
-;           verdict, no reload, no JMP to a stub. Sign-path exits load
-;           #0/#1 only to force Z; the mul tail's final LDA t2 IS the
-;           verdict. (Was zp_seg_skip before that; the slot now belongs
-;           to the near-clip flag alone.)
-;   Clobbers: A, X, Y; zp_br_dxlo/hi, zp_br_dylo/hi (the s16 deltas),
-;             zp_br_t2/t3, zp_br_a, and the mul workspace (via br_smul_s8_s16).
+; br_back_face_test — is the current seg back-facing?  [pipeline stage 1]
 ;
-;   dot = ldy * (px_int - lv1_x) - ldx * (py_int - lv1_y)
-;   if flags & SF_DIR: dot = -dot
-;   back-facing if dot <= 0.
+; CONTEXT: sole caller is the seg loop (subsector.s), which stages
+; zp_seg_flags and JMPs here (no JSR). TAIL-DISPATCHED exits:
+;   front  -> JMP ::bf_seg_front (subsector.s, the seg pipeline resumes)
+;   back   -> JMP ::s_advance    (subsector.s, next seg — one hop; the
+;                                 old bf_seg_back trampoline died 2026-07-12)
+; There is NO flag/return contract: control flow IS the verdict.
 ;
-;   (Python mirror: packed_render_seg's back-face block. dot is the 2D
-;   cross product of the linedef direction with the v1→player vector:
-;   > 0 → player on the seg's front side. SF_DIR marks segs running
-;   opposite their linedef, which flips the sign.)
+;   Inputs (zp): zp_seg_hdr_p -> the 16-byte seg header (form at +4, C16
+;                or lv1x at +5/+6, lv1y split lo +7 / hi +9);
+;                zp_br_px_h/px_e, zp_br_py_h/py_e = player int pos (s16);
+;                zp_bf_pxm_lo/hi, zp_bf_pym_lo/hi = |px|,|py| (staged
+;                once per frame by br_view_setup, view.s).
+;   Clobbers: A, X, Y; zp_br_dx/dy lo+hi, zp_br_t2..t5, zp_br_sign,
+;             zp_bf_dir, zp_br_a, the mul workspace (via SC_UMUL8).
+;   Bank state: caller holds BANK_L0 paged (header reads); no paging here.
 ;
-;   Structure — three tiers, cheapest first, all EXACT:
-;     1. axis-aligned linedefs (ldx==0 or ldy==0, ~76% of segs): dot is a
-;        single product; its sign is the XOR of the operand sign bits —
-;        no multiplies (any zero operand short-circuits to "back").
-;     2. general linedefs whose products P1=ldy*dx, P2=ldx*dy have
-;        OPPOSITE signs: sign(P1-P2) = sign(P1) — still no multiplies.
-;     3. same-sign products: full 2 × (s8×s16) multiply + s16 subtract.
+; ALGORITHM (uniform C-form, 2026-07-11 — see the banner inside the
+; scope for the full derivation): dot = dy'*px - dx'*py - C, with
+; (dx',dy') the seg's primitive linedef direction (gcd-reduced,
+; SF_SAMEDIR folded into its SIGN at pack time — the flag byte is never
+; read here) and C a pack-time constant.
+;   - Axis-aligned linedefs (form 0-3, ~76% of segs): dot's sign is ONE
+;     s16 compare of px or py against C16 (header +5/+6). Zero muls.
+;   - Diagonals (form >= 4): (form-4) indexes the DIR tables at
+;     ROM_DIRS_C (layout.inc; |dx'| / |dy'| / sign byte planes,
+;     MAX_DIRS=160 apart). Delta form: dot = dy'*(px-lv1x) - dx'*(py-lv1y)
+;     — the deltas stay SMALL, which keeps the products 1-mul most of
+;     the time (senior-byte-clear fast path). A C-form on raw coords was
+;     measured 4-mul WORSE — small operands are load-bearing here.
+;     Sign shortcut first (opposite product signs decide with no mul);
+;     |dx'|/|dy'| magnitudes load LAZILY in the mul tier via zp_bf_dir
+;     (sign-shortcut exits never read them, 2026-07-11).
+;   Ties (dot == 0) are BACK on every path.
+;
+; Python mirror: packed_render_seg's bf_form dispatch (doom_wireframe.py)
+; — bit-identical by construction; the packer (wad_packed.py) emits
+; form/C/DIR data in the same loop that sets the flags.
 ; ============================================================================
-; Pseudocode (each [label] tags the basic block below that implements it):
-;
-;   br_back_face_test():                        # Z=1 back, Z=0 front
-;      if ldx == 0:                             # vertical linedef
-;         if ldy == 0:            return BACK   # degenerate
-;         [bf_ldx0_ldy_nz] dx = px - lv1x       # the only delta needed
-;         if dx == 0:             return BACK
-;         [bf_ldx0_dx_nz]  return TAIL(sign(ldy) ^ sign(dx))       # dot = P1
-;      [bf_ldx_nz]
-;      if ldy == 0:                             # horizontal linedef
-;         dy = py - lv1y                        # the only delta needed
-;         if dy == 0:             return BACK
-;         [bf_ldy0_dy_nz]  return TAIL(~(sign(ldx) ^ sign(dy)))    # dot = -P2
-;      [bf_general]     dx = px - lv1x ; dy = py - lv1y
-;      if dx == 0:
-;         if dy == 0:             return BACK
-;         (shares [bf_ldy0_dy_nz])  TAIL(~(sign(ldx) ^ sign(dy)))  # dot = -P2
-;      [bf_g_dx_nz]
-;      if dy == 0:         return TAIL(sign(ldy) ^ sign(dx))       # dot = P1
-;      [bf_g_both]      X = sign(P1) = sign(ldy) ^ sign(dx)
-;      if X != sign(P2):   return TAIL(X)       # opposite signs decide
-;      [bf_g_mul]       |P1| = |ldy|*|dx|, |P2| = |ldx|*|dy|   # u24 EXACT
-;                       (high partial skipped when a senior byte is clear)
-;      mode = bit7(X ^ flags):                  # sign and SAMEDIR together
-;      [bfm_ge_dec] clear:  back iff |P1| >= |P2|
-;      [bfm_le]     set:    back iff |P1| <= |P2|   # equal -> dot 0 -> back
-;      [bfm_back]   shared Z-contract back exit
-;
-;   TAIL(s) = (s ^ flags) & $80                 # inlined at every producer:
-;                                               # SAMEDIR is the top flag bit,
-;                                               # packed INVERTED, so bit7 of
-;                                               # s^flags = FRONT; A=$80/Z=0
-;                                               # front, A=$00/Z=1 back.
-;
 br_back_face_test:
 .scope
 ; ============================================================================
