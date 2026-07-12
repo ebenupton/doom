@@ -161,14 +161,9 @@ vxc_jsr_site:
    JSR br_to_view_fetch
 .scope
 
-; Save view-space x (vxext:vxhi=int part s16, vxlo=frac part) before
-; project_y clobbers vxlo/hi.
-   LDA zp_br_vxhi
-   STA zp_v_xint
-   LDA zp_br_vxlo
-   STA zp_v_xfrac
-   LDA zp_br_vxext
-   STA zp_v_xext
+; (view-x saves MOVED below the near-clip verdict, spectrack warm find
+; 2026-07-12: clipped endpoints never read them — the sole consumer is
+; THIS vertex's br_project_x_auto; the crossing path stages its own.)
 
 ; Compute evx = vxhi (truncated s8) and evy = (vy + 128) >> 8 from the
 ; full s24 view-y (vyext, vyhi, vylo). Far-behind segs have negative
@@ -233,6 +228,15 @@ nc_fail:
    STA VX1+2,X                             ; clip = 1
    RTS
 nc_ok:
+; Save view-space x for br_project_x_auto below (deferred past the
+; near-clip test; vxlo/hi/ext are still intact — nothing above clobbers
+; them since the Y projection moved to the post-has_gap stage).
+   LDA zp_br_vxhi
+   STA zp_v_xint
+   LDA zp_br_vxlo
+   STA zp_v_xfrac
+   LDA zp_br_vxext
+   STA zp_v_xext
 ; --- Compute reciprocal: vy_idx = s24 total_vy >> 7 (9.1). The old
 ; code dropped vy_ext ('per s8 vx contract') — but wide-vx segs are
 ; projected now, and a vertex with vy >= 256 view units got an index

@@ -756,7 +756,11 @@ skip_rvert:
 ; portal's aperture still needs its edge drawn there. ap_edges (lo.s)
 ; emits (sxK, aperture_top) → (sxK, aperture_bot) per flagged endpoint;
 ; solid segs take the APV heights packed into header bytes +12..15.
+   LDA zp_seg_flags                        ; spectrack (warm) 2026-07-12:
+   AND #$41                                ; every seg paid a 28-cycle no-op
+   BEQ ape_skip                            ; call — gate APEDGE1|2 here
    JSR ap_edges
+ape_skip:
 
 ; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and
 ;     portal (tighten) cases.

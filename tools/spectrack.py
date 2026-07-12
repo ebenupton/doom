@@ -36,7 +36,8 @@ KNOWN NOISE CLASSES (triaged 2026-07-12 — check before believing):
 FINDS SO FAR: ev_clamp_evy16 (88% no-op -> call-site inline) and
 apv_stage projecting off-screen aperture pairs (sx gate hoisted into
 as_one) — both landed 2026-07-12, -0.13%%.
-Usage: python3 tools/spectrack.py [n_positions]
+Usage: python3 tools/spectrack.py [n_positions] [warm]
+  warm: fixed-angle walk sequence, VXC+RCACHE+D enabled, warmup skipped.
 """
 import os, sys, bisect, collections
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
@@ -163,7 +164,7 @@ def main():
         mpu.pc = entry; mpu.sp = 0xFD; mpu.p = 0x30
         m[0x01FF] = 0xFE; m[0x01FE] = 0xFF
         m.cycles = lambda: mpu.processorCycles
-        m.armed = True
+        m.armed = getattr(m, 'arm_next', True)
         depth0 = len(m.inv_stack)
         for _ in range(15_000_000):
             if mpu.pc == 0xFF00: break
@@ -181,9 +182,29 @@ def main():
         return mpu.processorCycles
 
     sc._run = run
-    for px, py, ab in POSITIONS[:n]:
-        r.render_frame(px, py, ab, dw.player_floor(px, py))
-        m.flush()
+    warm = len(sys.argv) > 2 and sys.argv[2] == 'warm'
+    if warm:
+        # fixed-angle walk with all three coherence caches enabled (the
+        # flat build honors the enable bytes); track from frame 4 on so
+        # VXC/RCACHE/D and the VWHC are genuinely warm.
+        import abi, pygame as pg
+        mem = sc.mpu.memory
+        list.__setitem__(m, abi.D_ENABLE, 1)
+        list.__setitem__(m, abi.VXC_ENABLE, 1)
+        list.__setitem__(m, sym('RCACHE_ENABLE'), 1)
+        D_FWD = sym('D_FWD')
+        px, py, ab = 1056.0, -3616.0, 65
+        for k in range(4 + n):
+            if k >= 4: m.arm_next = True
+            v = pg.math.Vector2(1, 0).rotate(ab * 360 / 256)
+            px, py = px + v.x * 8.0, py + v.y * 8.0
+            list.__setitem__(m, D_FWD, 1)
+            r.render_frame(int(px), int(py), ab, dw.player_floor(int(px), int(py)))
+            m.flush()
+    else:
+        for px, py, ab in POSITIONS[:n]:
+            r.render_frame(px, py, ab, dw.player_floor(px, py))
+            m.flush()
 
     print(f"== A. wasted invocations (zero externally-consumed outputs), {n} frames ==")
     print(f"{'routine':34s} {'calls':>6s} {'wasted':>7s} {'w%':>5s} {'wasted cyc':>10s}")
