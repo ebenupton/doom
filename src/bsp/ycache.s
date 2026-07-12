@@ -11,11 +11,21 @@ bsp_w_start:
 ; Direct-mapped, 256 entries, five parallel 256-byte arrays (RHI / RLO /
 ; H / LO / HI — see the W-region layout in resolve_crossing.s; RLO doubles
 ; as the valid flag since a live rlo is never 0).
-; Probe index = (rlo + h + rhi) & 255, a cheap hash of the key; a HIT
+; Probe index = h ^ rhi (2026-07-12: corpus-searched — see below); a HIT
 ; additionally requires all three key bytes to match, so the returned
 ; value is the one previously computed for exactly these inputs —
 ; bit-identical to calling _raw, by construction. Collisions just
 ; overwrite (miss path re-stores the new key+value).
+;
+; HASH SEARCH (2026-07-12, 10-frame key streams, steady-state replay):
+; the ~140-unique-key working set in 256 slots sits AT the birthday
+; bound — every decent mix (add/xor/shift combos, trained S-boxes,
+; 2-way i^1 with and without LRU) lands within noise of ~24 recurring
+; conflicts/frame, and S-boxes don't generalize across positions. So
+; the only real degree of freedom is probe COST: h ^ rhi drops rlo
+; from the mix (rlo stays in the tag compare — keys differing only in
+; rlo just collide, 16 of 150 colliding pairs) and the CLC, for 8
+; cycles vs 12. Steady conflicts 243 vs 265 per 10 frames — no worse.
 ;
 ; This plays the role of Python's VWH cache (_packed_read_vwh /
 ; _packed_write_vwh in packed_render_seg): Python keys by VWH table index
@@ -25,7 +35,7 @@ bsp_w_start:
 ; conflict misses only ~1.2/frame; raw ~322 cycles, hit ~64.
 ;
 ;   Pseudocode:
-;     i = (rlo + h + rhi) & 255
+;     i = h ^ rhi
 ;     if VALID[i] and RHI[i]==rhi and RLO[i]==rlo and H[i]==h:
 ;         return (LO[i], HI[i])                     # hit
 ;     res = br_project_y_raw(h, rhi, rlo)           # miss
@@ -39,11 +49,9 @@ br_project_y_paged:
    PAGE BANK_L2
 br_project_y:
 .scope
-; probe: idx = (rlo + h + rhi) & 255
-   LDA zp_br_rlo
-   CLC
-   ADC zp_br_t0
-   ADC zp_br_rhi
+; probe: idx = h ^ rhi
+   LDA zp_br_t0
+   EOR zp_br_rhi
    TAX
    LDA VWHC_RLO,X                          ; RLO doubles as the valid flag:
    CMP zp_br_rlo                           ; live rlo is always in [1,10]
