@@ -792,7 +792,7 @@ as_on:
    STA zp_br_rhi
    LDA VX1+14,X
    STA zp_br_rlo
-   JSR rns_select_y                        ; apv projections are Y-side
+   JSR rns_select
    PAGE BANK_L0
    LDY as_y
    DEY
