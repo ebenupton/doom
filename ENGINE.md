@@ -241,9 +241,10 @@ FB lockstep + a jsbeeb disc boot — harness green alone is not evidence
   harnesses load them via `engine_load._regions`, which PARSES THE CFG —
   a new MEMORY area can never be silently missing from the loaders.
 - `DOOM_CPU=65c02` selects the C02=1 build AND the matching py65 core.
-- Disc images: `build_walk_ssd.py` (the playable artifact — cursor keys),
-  `build_modelb_ssd.py` (retired rotating demo, kept building). Boot/anim
-  shims use beebasm (vendored, stable); the engine does not.
+- Disc image: `build_walk_ssd.py` (the playable artifact — cursor keys;
+  bank images from build_anim_ssd.build_images, boot from modelb_boot.asm).
+  The rotating spin/modelb discs were GC'd 2026-07-12 (git history has
+  them). Boot shims use beebasm (vendored, stable); the engine does not.
 
 ## Addresses: use the symbol map, never literals
 
@@ -387,6 +388,6 @@ gap-skips (angle-vs-Cartesian rounding), and slope_div skip chains.
 ## Legacy
 
 `doom_fe.asm` is the pre-BSP-renderer generation; its Python side was
-garbage-collected 2026-07-07 (recover from git history). The rotating
-modelb disc is retired but still builds. The full verification toolchain
+garbage-collected 2026-07-07; the rotating spin/modelb discs followed
+2026-07-12 (recover any of it from git history). The full verification toolchain
 (soak, profilers, comparators) lives at the `full-toolchain` git tag.

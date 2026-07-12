@@ -55,7 +55,6 @@ ZP_I_Y0  = _sym('zp_i_y0')
 ZP_I_Y1  = _sym('zp_i_y1')
 ZP_DIV_DEN = _sym('zp_div_den')
 ZP_BUF   = _sym('zp_buf')
-ZP_MS_EMIT = _sym('zp_ms_emit')
 ZP_LINE_XL = _sym('zp_line_xl_lo')
 ZP_LINE_YL = _sym('zp_line_yl_lo')
 ZP_LINE_XR = _sym('zp_line_xr_lo')
@@ -212,7 +211,7 @@ class SpanClip6502:
 
         Seg params are accepted for API compatibility but ignored — wall
         line emission is handled by draw_clipped_line (DCL), so the 6502's
-        internal ms_emit_lines path stays disabled (ZP_MS_EMIT = 0).
+        (the vestigial ms_emit flag was GC'd 2026-07-12.)
         """
         mem = self.mpu.memory
         ilo = max(0, lo)
@@ -221,7 +220,6 @@ class SpanClip6502:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
-        mem[ZP_MS_EMIT] = 0x00
         mem[LINE_OUT_EN] = 1
         self._run(ENTRY_MARK_SOLID)
         mem[LINE_OUT_EN] = 0

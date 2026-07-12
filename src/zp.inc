@@ -249,9 +249,8 @@ zp_bf_pxm_hi = $99                ; br_view_setup for the diagonal
 zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
 ; --- $A8: overlay group (3 phase-disjoint users) ---
-zp_ms_emit = $A8                  ; [clip]; mark_solid: $FF = emit wall edge lines, $00 = skip
-; (VESTIGIAL 2026-07-12: no 6502 reader; the harness pins it 0 — safe to
-; reclaim next ZP alloc)
+; ($A8 shared: zp_line_xl_lo below — the old zp_ms_emit flag was GC'd
+; 2026-07-12: no 6502 reader existed)
 zp_line_xl_lo = $A8                  ; [bsp+clip]; u8, left X (oriented left-to-right)
 ; --- $A9: overlay group (2 phase-disjoint users) ---
 zp_line_yl_lo = $A9                  ; [bsp+clip]; u8, Y at xl

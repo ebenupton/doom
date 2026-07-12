@@ -151,7 +151,7 @@ sqr2_hi = SQR2_HI
 ; Caller sets zp_line_xl/yl/xr/yr ($A8-$AB); DCL computes dx/dy/ylo/yhi
 ; ($AC-$AF); seg_start $B0/$B1; CB-clip working set $B2-$B9 (overlaid
 ; with the s16 line HI bytes — phase-disjoint, see zp.inc).  $A8 also
-; overlays the vestigial zp_ms_emit flag: no 6502 code reads that flag
+; overlaid the old zp_ms_emit flag (GC'd 2026-07-12: it had no 6502 reader)
 ; any more (the harness pins it to 0).
 ; ===== DCL records hook ($BC-$BE) =====
 ; When zp_dcl_rec_buf_h ($BD) is non-zero, dcl_emit_segment appends ONE
