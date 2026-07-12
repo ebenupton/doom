@@ -150,8 +150,8 @@ vxcache.s.
       bsp/defq.s           deferred solid/tighten op queue ($0600)
       bsp/resolve_crossing.s  crossing resolver + VWHC array equates
       bsp/lo.s             br_node_setup (SoA reads), chain_reuse_v1,
-                           apv_stage, reproject_at_crossing, wide X
-                           projection (rns32), ap-edge verticals
+                           apv_stage, reproject_at_crossing, rns32,
+                           ap-edge verticals
       bsp/vxcache.s        VXC data planes + cold-store leaf + vxc_frame
                            (the per-vertex hot path lives in seg_xform)
       bsp/anim.s           animated sectors: mover tick state machines +

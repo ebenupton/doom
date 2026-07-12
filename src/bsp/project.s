@@ -199,6 +199,170 @@ pxm_njoin:
    JMP px_p_pos
 .endscope
 
+; ============================================================================
+; br_project_x_auto — project saved view-x (zp_v_xext:zp_v_xint . zp_v_xfrac)
+; to screen X, choosing the 3-mul narrow path when the integer part fits
+; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
+;
+;   Inputs:  zp_v_xext:zp_v_xint = s16 integer view-x, zp_v_xfrac = u8
+;            fraction; zp_br_rhi/rlo = (M8, S) reciprocal.
+;   Output:  zp_br_resl/h = sx (s16), zp_br_resext = s24 extension so
+;            callers (bbox corner path) can classify off-screen sides
+;            uniformly whichever path ran.
+;   Both paths are bit-exact with Python's full-width fp_project_x_subpx
+;   (mod 2^16 at the s16 interface); wide-vx segs must still be projected
+;   — their mark_solid/draws count (see br_seg_xform_vertex notes).
+; ============================================================================
+br_project_x_auto:
+.scope
+; Narrow iff xext equals the sign-extension of xint's bit 7.
+   LDA zp_v_xint
+   ASL A
+; C = sign of int part
+   LDA #0
+   ADC #$FF
+   EOR #$FF
+; A = $FF if C else $00
+   CMP zp_v_xext
+   BNE a_wide
+   LDA zp_v_xint
+   STA zp_br_t0
+   LDA zp_v_xfrac
+   STA zp_br_t1
+   JSR br_project_x
+; Narrow sx always fits s16 (|evx|<=127, rxh<=127 → |sx|<=16383);
+; set the s24 extension byte so callers can classify uniformly.
+   LDX #0
+   LDA zp_br_resh
+   BPL a_pos
+   DEX
+a_pos:
+   STX zp_br_resext
+   RTS
+a_wide:
+   JMP br_project_x_wide
+.endscope
+
+; ============================================================================
+; br_project_x_wide — project a view-space X whose integer part is s16
+; (doesn't fit s8) to screen X, bit-exact (mod 2^16) with Python's
+; full-width fp_project_x_subpx:
+;   sx = 128 + rns(X88*m9, S+8),  X88 = (xext:xint).xfrac (s24 view x),
+;   m9 = 256 + M8 (floating-mantissa reciprocal, see br_recip).
+;
+; Byte decomposition (3 8x8 muls; was 5 with the 8.8 recip). Only
+; frac*M8 has bits below 2^8, so
+;   B = floor(X88*m9 / 256)
+;     = (frac*M8 >> 8) + frac + xint*M8
+;       + ((xext*M8 + xint) << 8) + (xext << 16)
+; is EXACT, accumulated as s32 in (t2,t3,vxext,t0) — |X88| < 2^23 and
+; m9 < 2^9 keep |B| < 2^25. rns32 then computes
+; floor((B + 2^(S-1)) / 2^S), which equals Python's rns(X88*m9, S+8) by
+; floor composition; the s16 interface takes the low 16 bits (mod 2^16,
+; same contract as before).
+;
+;   Inputs:  zp_v_xext/zp_v_xint/zp_v_xfrac, zp_br_rhi (M8), zp_br_rlo (S)
+;   Output:  zp_br_resl/h = sx (s16, mod 2^16 of Python's value);
+;            zp_br_resext = s24 extension for side classification.
+;   Clobbers: zp_br_a/b, zp_br_t0/t2/t3, zp_br_vxext, mul workspace.
+;   (t0/t1 are dead here: br_project_x_auto only stages them for the
+;   narrow path.)
+; ============================================================================
+br_project_x_wide:
+.scope
+; --- b0/b1 := (frac*M8 >> 8) + frac; b2/b3 := 0 ---
+   LDA zp_br_rhi
+   STA zp_mul_b
+   LDA zp_v_xfrac
+   JSR SC_UMUL8                            ; A = prod_hi (umul8 contract)
+   CLC
+   ADC zp_v_xfrac
+   STA zp_br_t2
+   LDA #0
+   ADC #0
+   STA zp_br_t3
+   LDA #0
+   STA zp_br_vxext
+   STA zp_br_t0
+
+; --- += xint*M8 (u8 x u8: xint is the unsigned middle byte) ---
+   LDA zp_br_rhi
+   STA zp_mul_b
+   LDA zp_v_xint
+   JSR SC_UMUL8
+   LDA zp_prod_lo
+   CLC
+   ADC zp_br_t2
+   STA zp_br_t2
+   LDA zp_prod_hi
+   ADC zp_br_t3
+   STA zp_br_t3
+   LDA #0
+   ADC zp_br_vxext
+   STA zp_br_vxext                         ; (b3 can't carry yet: b2 was 0)
+
+; --- += (xext*M8) << 8 (s16, sign-extended into b3) ---
+   LDA zp_br_rhi
+   STA zp_mul_b
+   LDA zp_v_xext
+   JSR br_smul_am                          ; a in A (N live), b in zp_mul_b
+   LDA zp_br_resl
+   CLC
+   ADC zp_br_t3
+   STA zp_br_t3
+   LDA zp_br_resh
+   ADC zp_br_vxext
+   STA zp_br_vxext
+   LDA #0
+   ADC zp_br_t0
+   STA zp_br_t0
+   LDA zp_br_resh
+   BPL w_m_pos
+   DEC zp_br_t0
+w_m_pos:
+
+; --- += xint << 8 ---
+   LDA zp_v_xint
+   CLC
+   ADC zp_br_t3
+   STA zp_br_t3
+   LDA #0
+   ADC zp_br_vxext
+   STA zp_br_vxext
+   LDA #0
+   ADC zp_br_t0
+   STA zp_br_t0
+
+; --- += xext << 16 (sign-extended into b3) ---
+   LDA zp_v_xext
+   CLC
+   ADC zp_br_vxext
+   STA zp_br_vxext
+   LDA #0
+   ADC zp_br_t0
+   STA zp_br_t0
+   LDA zp_v_xext
+   BPL w_e_pos
+   DEC zp_br_t0
+w_e_pos:
+
+; --- sx = 128 + rns32(B, S), carry propagated into the s24 extension ---
+   JSR rns32
+   CLC
+   LDA zp_br_resl
+   ADC #128
+   STA zp_br_resl
+   LDA zp_br_resh
+   ADC #0
+   STA zp_br_resh
+   LDA zp_br_resext
+   ADC #0
+   STA zp_br_resext
+   LDY zp_br_resl                          ; REG CONTRACT: Y = lo, A = hi
+   LDA zp_br_resh                          ; (wide is a handful of calls a
+   RTS                                     ; frame — uniformity over cycles)
+.endscope
+
 
 ; ============================================================================
 ; br_project_y — project height delta to screen Y, through the VWHC memo.

@@ -259,49 +259,9 @@ ev_done:
    RTS
 .endscope
 
-; ============================================================================
-; br_project_x_auto — project saved view-x (zp_v_xext:zp_v_xint . zp_v_xfrac)
-; to screen X, choosing the 3-mul narrow path when the integer part fits
-; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
-;
-;   Inputs:  zp_v_xext:zp_v_xint = s16 integer view-x, zp_v_xfrac = u8
-;            fraction; zp_br_rhi/rlo = (M8, S) reciprocal.
-;   Output:  zp_br_resl/h = sx (s16), zp_br_resext = s24 extension so
-;            callers (bbox corner path) can classify off-screen sides
-;            uniformly whichever path ran.
-;   Both paths are bit-exact with Python's full-width fp_project_x_subpx
-;   (mod 2^16 at the s16 interface); wide-vx segs must still be projected
-;   — their mark_solid/draws count (see br_seg_xform_vertex notes).
-; ============================================================================
-br_project_x_auto:
-.scope
-; Narrow iff xext equals the sign-extension of xint's bit 7.
-   LDA zp_v_xint
-   ASL A
-; C = sign of int part
-   LDA #0
-   ADC #$FF
-   EOR #$FF
-; A = $FF if C else $00
-   CMP zp_v_xext
-   BNE a_wide
-   LDA zp_v_xint
-   STA zp_br_t0
-   LDA zp_v_xfrac
-   STA zp_br_t1
-   JSR br_project_x
-; Narrow sx always fits s16 (|evx|<=127, rxh<=127 → |sx|<=16383);
-; set the s24 extension byte so callers can classify uniformly.
-   LDX #0
-   LDA zp_br_resh
-   BPL a_pos
-   DEX
-a_pos:
-   STX zp_br_resext
-   RTS
-a_wide:
-   JMP br_project_x_wide
-.endscope
+; (br_project_x_auto moved to project.s 2026-07-12 — the whole X
+; projection family lives in one file now.)
+
 
 
 vc_bit_mask:
