@@ -463,55 +463,8 @@ ns_back:
 ; round-to-nearest shifter — stays below.)
 
 
-; ============================================================================
-; rns32 — round-to-nearest arithmetic shift of an s32 value (wide path).
-;
-;   Inputs:  zp_br_t2/t3/vxext/t0 = B (s32, b0..b3), zp_br_rlo = S (1..10)
-;   Output:  zp_br_resl/h = floor((B + 2^(S-1)) / 2^S) low 16 bits,
-;            zp_br_resext = the next byte (s24 extension).
-;   Clobbers A, X, and the B bytes.
-;
-;   Same floor identity as rns24 (project.s RNS block), one byte wider,
-;   implemented as a plain S-iteration 4-byte ASR: the wide path is a
-;   handful of calls per frame, so loop cycles are noise — byte size
-;   wins over the byte-drop fast paths.
-; ============================================================================
-
-rns32:
-.scope
-   LDX zp_br_rlo
-; --- add half = 2^(S-1) (tables in resolve_crossing.s) ---
-   LDA rns_half_lo-1,X
-   CLC
-   ADC zp_br_t2
-   STA zp_br_t2
-   LDA rns_half_mid-1,X
-   ADC zp_br_t3
-   STA zp_br_t3
-   LDA #0
-   ADC zp_br_vxext
-   STA zp_br_vxext
-   LDA #0
-   ADC zp_br_t0
-   STA zp_br_t0
-; --- ASR the 4 bytes S times ---
-r32_loop:
-   LDA zp_br_t0
-   CMP #$80
-   ROR zp_br_t0
-   ROR zp_br_vxext
-   ROR zp_br_t3
-   ROR zp_br_t2
-   DEX
-   BNE r32_loop
-   LDA zp_br_t2
-   STA zp_br_resl
-   LDA zp_br_t3
-   STA zp_br_resh
-   LDA zp_br_vxext
-   STA zp_br_resext
-   RTS
-.endscope
+; (rns32 followed br_project_x_wide to project.s 2026-07-12 — its only
+; caller; the projection family is complete in one file.)
 
 ; (ev_clamp_evy16 moved to the B region.)
 
