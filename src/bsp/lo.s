@@ -32,14 +32,14 @@ reproject_at_crossing:
 .scope
    JSR cross_compute
 ; Project cx with frac=0 (Python passes fvx_c=0 for clipped endpoints).
-; cx is s16; br_project_x_auto dispatches narrow/wide on its hi byte.
+; cx is s16; br_project_x dispatches narrow/wide on its hi byte.
    LDA zp_clip_cx
    STA zp_v_xint
    LDA zp_clip_cx_hi
    STA zp_v_xext
    LDA #0
    STA zp_v_xfrac
-   JSR br_project_x_auto                   ; -> Y = sx lo, A = sx hi
+   JSR br_project_x                        ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; struct offset (0/15)
    STA VX1+4,X                             ; sx → the clipped endpoint's
    TYA                                     ; struct slots, in place
@@ -468,7 +468,7 @@ ns_back:
 
 ; (ev_clamp_evy16 moved to the B region.)
 
-; (br_project_x_auto moved to the B region.)
+
 
 ; (flat LO ceiling retired 2026-07-12: LO floats in the one CODE region
 ; in BOTH builds now.)

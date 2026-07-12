@@ -17,7 +17,7 @@
 ;             +13/+14 rhi/rlo (banked for ap2_solid_proj)
 ;           zp_br_rhi/rlo also hold the recip (projection working slots).
 ;           NOTHING is staged — every result stores once, struct-direct.
-;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x_auto.
+;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x.
 ;
 ; Vertex cache: VCACHE_BASE + idx*8, one 8-byte entry per vertex, plus a
 ; 1-bit-per-vertex valid bitmap at VCACHE_VALID_BASE (cleared per frame).
@@ -39,7 +39,7 @@
 ;       cache[0..1] = evy, evx              # pre-write: hit path needs them
 ;       if vy < NEAR (s24 test): cache[6] = 1; skip = 1; return
 ;       rhi, rlo = br_recip(vy >> 7)        # 9.1 index into recip table
-;       sx = br_project_x_auto(vx)          # narrow 3-mul / wide 5-mul
+;       sx = br_project_x(vx)          # narrow 3-mul / wide 5-mul
 ;       cache[2..6] = rhi, rlo, sx, 0
 ;   do_project_y()                          # per-seg heights, tail call
 ; ============================================================================
@@ -163,7 +163,7 @@ vxc_jsr_site:
 
 ; (view-x saves MOVED below the near-clip verdict, spectrack warm find
 ; 2026-07-12: clipped endpoints never read them — the sole consumer is
-; THIS vertex's br_project_x_auto; the crossing path stages its own.)
+; THIS vertex's br_project_x; the crossing path stages its own.)
 
 ; Compute evx = vxhi (truncated s8) and evy = (vy + 128) >> 8 from the
 ; full s24 view-y (vyext, vyhi, vylo). Far-behind segs have negative
@@ -228,7 +228,7 @@ nc_fail:
    STA VX1+2,X                             ; clip = 1
    RTS
 nc_ok:
-; Save view-space x for br_project_x_auto below (deferred past the
+; Save view-space x for br_project_x below (deferred past the
 ; near-clip test; vxlo/hi/ext are still intact — nothing above clobbers
 ; them since the Y projection moved to the post-has_gap stage).
    LDA zp_br_vxhi
@@ -253,12 +253,12 @@ nc_ok:
    JSR br_recip                            ; rhi/rlo = reciprocal
 
 ; --- Project X using saved view-x integer + fractional parts ---
-; br_project_x_auto goes wide when the s16 view-x (vxext:vxint)
+; br_project_x goes wide when the s16 view-x (vxext:vxint)
 ; doesn't fit s8: Python projects these full-width (sx far
 ; off-screen) and their mark_solid and clipped draws still count —
 ; skipping the seg loses occlusion (e.g. mark_solid(0,81) at
 ; (800,-3400,96)) and over-emits behind it.
-   JSR br_project_x_auto                   ; -> Y = sx lo, A = sx hi
+   JSR br_project_x                        ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; (recip/project clobbered X)
    STA VX1+4,X                             ; sx_hi (from A)
    TYA

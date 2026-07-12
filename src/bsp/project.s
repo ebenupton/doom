@@ -1,33 +1,43 @@
 
 ; ============================================================================
 ; br_project_x — project view-space X to screen X with sub-pixel.
+;   THE single X projector (2026-07-12: the old narrow/wide/_auto trio
+;   rolled up — narrow and wide each had exactly one caller, _auto, which
+;   staged v_x* into t0/t1 and post-staged resext; all of that is gone).
 ;
 ;   Inputs (zp):
-;     zp_br_t0 = vx (s8, truncated view-space x)
-;     zp_br_t1 = vx_frac (u8, fractional part)
+;     zp_v_xext:zp_v_xint = s16 integer view-x, zp_v_xfrac = u8 fraction
 ;     zp_br_rhi = M8 (recip mantissa), zp_br_rlo = S (recip shift)
 ;
 ;   Output:
-;     zp_br_resl/h = sx (s16 screen x)
+;     zp_br_resl/h = sx (s16 screen x); Y = sx lo, A = sx hi (REG
+;     CONTRACT); zp_br_resext = s24 extension so callers (bbox corner
+;     path) can classify off-screen sides uniformly whichever path ran.
 ;
-;   Python (fp_project_x_subpx):
+;   Python (fp_project_x):
 ;     sx = 128 + rns(X88*m9, S+8)  with X88 = vx*256 + frac, m9 = 256+M8.
 ;
-;   Two 8x8 multiplies (was 3 with the 8.8 recip — the third mul carried
-;   recip bits below quarter-pixel significance). Exact identity used:
+;   Dispatch: when the integer part fits s8 (xext == sign extension of
+;   xint, tested as xext + sign-carry == 0) fall through to the NARROW
+;   body — two 8x8 multiplies, exact identity
 ;     floor(X88*m9 / 256) = (frac*M8 >> 8) + frac
 ;                         + smul(vx, M8) + (vx << 8)
 ;   (only frac*M8 has bits below 2^8), accumulated as s24 in
 ;   (t2, t3, vxext) and handed to rns24 — bit-identical to Python's
-;   rns(P32, S+8) by floor composition.
-;
-;   This is the NARROW path — the integer view-x must fit s8. Callers go
-;   through br_project_x_auto (defq.s B region), which dispatches here or
-;   to br_project_x_wide (lo.s, 3 muls) on the s16 view-x sign extension.
+;   rns(P32, S+8) by floor composition. Otherwise JMP to the WIDE body
+;   below (3 muls, s32 accumulate, rns32). Wide-vx segs must still be
+;   projected — their mark_solid/draws count (see br_seg_xform_vertex).
 ;   Clobbers zp_br_t2/t3, zp_br_vxext, zp_br_a/b, mul workspace.
 ; ============================================================================
 br_project_x:
 .scope
+   LDA zp_v_xint
+   ASL A                                   ; C = sign bit of xint
+   LDA zp_v_xext
+   ADC #0                                  ; 0 iff xext == sign extension
+   BEQ px_narrow
+   JMP br_project_x_wide
+px_narrow:
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    LDA #0
    STA zp_br_t3
@@ -35,11 +45,11 @@ br_project_x:
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
    LDA zp_br_rhi
    BNE px_have_m8
-   LDA zp_br_t1
+   LDA zp_v_xfrac
    STA zp_br_t2
    JMP px_p_pos
 px_have_m8:
-   LDA zp_br_t1
+   LDA zp_v_xfrac
    BNE px_have_frac
    STA zp_br_t2
    BEQ px_no_frac
@@ -73,7 +83,7 @@ pxf_uo:
    SBC sqr_hi,Y
 pxf_have:
    CLC
-   ADC zp_br_t1
+   ADC zp_v_xfrac
    STA zp_br_t2
    BCC px_no_frac
    INC zp_br_t3                            ; t3 pre-zeroed at entry
@@ -84,7 +94,7 @@ px_no_frac:
 ; SUBTRACTS it (arm below the tail) — the signed product never
 ; materialises, so the old two-fixup ext dance (carry bump + product-
 ; sign correction) is one carry/borrow bump per arm. ---
-   LDA zp_br_t0
+   LDA zp_v_xint
    BMI pxm_neg
    TAX
    SEC
@@ -126,14 +136,14 @@ pxm_pacc:
 px_p_pos:
 
 ; --- += vx << 8 (sign-extended) ---
-   LDA zp_br_t0
+   LDA zp_v_xint
    CLC
    ADC zp_br_t3
    STA zp_br_t3
    BCC px_i_nc
    INC zp_br_vxext
 px_i_nc:
-   LDA zp_br_t0
+   LDA zp_v_xint
    BPL px_i_pos
    DEC zp_br_vxext
 px_i_pos:
@@ -148,9 +158,14 @@ px_i_pos:
                                         ; projection RTSes with Y = res lo,
                                         ; A = res hi (ZP resl/resh still
                                         ; written — regs are the fast lane)
+   LDX #0
    LDA zp_br_resh
    ADC #0
    STA zp_br_resh
+   BPL px_sx_pos                           ; narrow sx always fits s16
+   DEX                                     ; (|evx|<=127, rxh<=127 →
+px_sx_pos:                                  ; |sx|<=16383) — resext is pure
+   STX zp_br_resext                        ; sign, folded into the tail
    RTS
 
 pxm_neg:
@@ -200,50 +215,6 @@ pxm_njoin:
 .endscope
 
 ; ============================================================================
-; br_project_x_auto — project saved view-x (zp_v_xext:zp_v_xint . zp_v_xfrac)
-; to screen X, choosing the 3-mul narrow path when the integer part fits
-; s8 and the 5-mul wide path otherwise. Output: zp_br_resl/h = sx (s16).
-;
-;   Inputs:  zp_v_xext:zp_v_xint = s16 integer view-x, zp_v_xfrac = u8
-;            fraction; zp_br_rhi/rlo = (M8, S) reciprocal.
-;   Output:  zp_br_resl/h = sx (s16), zp_br_resext = s24 extension so
-;            callers (bbox corner path) can classify off-screen sides
-;            uniformly whichever path ran.
-;   Both paths are bit-exact with Python's full-width fp_project_x_subpx
-;   (mod 2^16 at the s16 interface); wide-vx segs must still be projected
-;   — their mark_solid/draws count (see br_seg_xform_vertex notes).
-; ============================================================================
-br_project_x_auto:
-.scope
-; Narrow iff xext equals the sign-extension of xint's bit 7.
-   LDA zp_v_xint
-   ASL A
-; C = sign of int part
-   LDA #0
-   ADC #$FF
-   EOR #$FF
-; A = $FF if C else $00
-   CMP zp_v_xext
-   BNE a_wide
-   LDA zp_v_xint
-   STA zp_br_t0
-   LDA zp_v_xfrac
-   STA zp_br_t1
-   JSR br_project_x
-; Narrow sx always fits s16 (|evx|<=127, rxh<=127 → |sx|<=16383);
-; set the s24 extension byte so callers can classify uniformly.
-   LDX #0
-   LDA zp_br_resh
-   BPL a_pos
-   DEX
-a_pos:
-   STX zp_br_resext
-   RTS
-a_wide:
-   JMP br_project_x_wide
-.endscope
-
-; ============================================================================
 ; br_project_x_wide — project a view-space X whose integer part is s16
 ; (doesn't fit s8) to screen X, bit-exact (mod 2^16) with Python's
 ; full-width fp_project_x_subpx:
@@ -265,8 +236,7 @@ a_wide:
 ;   Output:  zp_br_resl/h = sx (s16, mod 2^16 of Python's value);
 ;            zp_br_resext = s24 extension for side classification.
 ;   Clobbers: zp_br_a/b, zp_br_t0/t2/t3, zp_br_vxext, mul workspace.
-;   (t0/t1 are dead here: br_project_x_auto only stages them for the
-;   narrow path.)
+;   Sole caller: br_project_x's dispatch (cold arm — s16 view-x only).
 ; ============================================================================
 br_project_x_wide:
 .scope

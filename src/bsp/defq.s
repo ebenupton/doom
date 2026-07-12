@@ -259,7 +259,7 @@ ev_done:
    RTS
 .endscope
 
-; (br_project_x_auto moved to project.s 2026-07-12 — the whole X
+; (X-projector family moved to project.s 2026-07-12 — the whole X
 ; projection family lives in one file now.)
 
 

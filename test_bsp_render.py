@@ -259,9 +259,11 @@ def test_project_x():
             for vx_frac in [0, 1, 127, 128, 255]:
                 cases.append((vx, vx_frac, rh, rl))
     fail = 0
+    ZP_XINT, ZP_XEXT, ZP_XFRAC = _sym('zp_v_xint'), _sym('zp_v_xext'), _sym('zp_v_xfrac')
     for vx, vx_frac, rh, rl in cases:
-        mem[0x20] = vx & 0xFF       # zp_br_t0
-        mem[0x21] = vx_frac          # zp_br_t1
+        mem[ZP_XINT] = vx & 0xFF
+        mem[ZP_XEXT] = 0xFF if vx < 0 else 0   # narrow: ext = sign extension
+        mem[ZP_XFRAC] = vx_frac
         mem[0x1A] = rh               # zp_br_rhi (M8)
         mem[0x1B] = rl               # zp_br_rlo (S)
         sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
@@ -282,15 +284,14 @@ def test_project_x():
 
 
 def test_project_x_wide():
-    """br_project_x_auto wide dispatch: s16 view-x beyond s8, mod-2^16
+    """br_project_x wide dispatch: s16 view-x beyond s8, mod-2^16
     exact vs Python's full-width fp_project_x."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     ZP_XINT = _sym('zp_v_xint')
     ZP_XEXT = _sym('zp_v_xext')
     ZP_XFRAC = _sym('zp_v_xfrac')
-    ENTRY_AUTO = _sym('jt_br_project_x_auto') if _has_sym('jt_br_project_x_auto') \
-        else _sym('br_project_x_auto')
+    ENTRY_AUTO = ENTRY_BR_PROJECT_X          # unified entry dispatches itself
     cases = []
     for vy_idx in [2, 5, 17, 65, 200, 513, 1023]:
         rh, rl = fp.fp_recip(vy_idx)
@@ -383,7 +384,7 @@ if __name__ == '__main__':
     f6 = test_project_x()
     print("== br_project_y ==")
     f7 = test_project_y()
-    print("== br_project_x_auto (wide) ==")
+    print("== br_project_x (wide) ==")
     f8 = test_project_x_wide()
     total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
     print()
