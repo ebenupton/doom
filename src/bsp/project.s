@@ -222,17 +222,26 @@ px_shrink:
 ; rns32 and br_smul_am are DELETED, 2026-07-13). S floors at 1: below it
 ; the shrink is uncompensated — such endpoints (near-plane crossings
 ; with s16 cx) sit >= 64 screens off-screen; sign and ordering survive
-; ('physically reasonable' per Eben). The vertex's TRUE S is restored at
-; exit: every caller banks rhi/rlo into its endpoint record AFTER
-; projecting, and the deferred y stages project with the banked S.
+; ('physically reasonable' per Eben): the deficit is COUNTED and the
+; projected offset scaled back <<defc at exit — right magnitude on a
+; 2^defc-px grid (s16 wrap same as the old wide's mod-2^16 contract).
+; The vertex's TRUE S is restored at exit: every caller banks rhi/rlo
+; into its endpoint record AFTER projecting, and the deferred y stages
+; project with the banked S.
    LDA zp_br_rlo
    STA zp_px_s_save
+   LDA #0
+   STA zp_px_defc
 ps_loop:
    LDA zp_br_rlo
    CMP #2
-   BCC ps_nodec
+   BCS ps_dec
+   INC zp_px_defc                          ; S floored: quantise now,
+   BNE ps_shift                            ; scale back at exit (defc<=3:
+                                        ; never wraps — always taken)
+ps_dec:
    DEC zp_br_rlo
-ps_nodec:
+ps_shift:
    LDA zp_v_xext
    CMP #$80                                ; arithmetic >>1 of the s24 X88
    ROR zp_v_xext
@@ -245,6 +254,29 @@ ps_nodec:
    BNE ps_loop
    JSR rns_select                          ; dispatch with the shrunken S
    JSR px_narrow                           ; narrow-project the shrunk 8.8
+   LDX zp_px_defc
+   BEQ ps_res
+; scale the offset back: sx = 128 + ((sx - 128) << defc)
+   SEC
+   LDA zp_br_resl
+   SBC #128
+   STA zp_br_resl
+   LDA zp_br_resh
+   SBC #0
+   STA zp_br_resh
+ps_dl:
+   ASL zp_br_resl
+   ROL zp_br_resh
+   DEX
+   BNE ps_dl
+   CLC
+   LDA zp_br_resl
+   ADC #128
+   STA zp_br_resl
+   LDA zp_br_resh
+   ADC #0
+   STA zp_br_resh
+ps_res:
    LDA zp_px_s_save                        ; restore the TRUE S and
    STA zp_br_rlo                           ; re-select (rlo-writer
    JSR rns_select                          ; invariant); select clobbers

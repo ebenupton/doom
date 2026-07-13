@@ -244,14 +244,17 @@ def fp_project_x(vx, vx_frac, recip_m8, recip_s):
     full-width wide path this replaces is deleted on both sides.
     """
     X88 = vx * 256 + vx_frac
+    deficit = 0
     while not (-128 <= (X88 >> 8) <= 127):
         if recip_s >= 2:
             recip_s -= 1
+        else:
+            deficit += 1          # S floored: scale the offset back below
         X88 >>= 1
     vx, vx_frac = X88 >> 8, X88 & 0xFF
-    return HALF_W + rns(m8(vx_frac, recip_m8)
-                        + ((m8(vx, recip_m8) + vx_frac) << 8)
-                        + (vx << 16), recip_s + 8)
+    return HALF_W + (rns(m8(vx_frac, recip_m8)
+                         + ((m8(vx, recip_m8) + vx_frac) << 8)
+                         + (vx << 16), recip_s + 8) << deficit)
 
 def fp_project_y(height_delta, recip_m8, recip_s):
     """Project height delta to screen Y (integer).

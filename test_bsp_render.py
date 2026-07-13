@@ -293,7 +293,7 @@ def test_project_x_wide():
     ZP_XFRAC = _sym('zp_v_xfrac')
     ENTRY_AUTO = ENTRY_BR_PROJECT_X          # unified entry dispatches itself
     cases = []
-    for vy_idx in [2, 5, 17, 65, 200, 513, 1023]:
+    for vy_idx in [1, 2, 5, 17, 65, 200, 513, 1023]:   # 1 -> S=1: deficit arm
         rh, rl = fp.fp_recip(vy_idx)
         for vx in [-32768, -3000, -300, -129, -128, 127, 128, 300, 3000, 32767]:
             for vx_frac in [0, 128, 255]:

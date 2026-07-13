@@ -69,8 +69,9 @@ zp_rcache_c5 = $C5                ; [bsp]; rcache internal
 zp_px_s_save = $C6                ; [bsp]; br_project_x shrink path: the
                                   ; vertex's TRUE S across the shrunken
                                   ; projection (callers bank rlo AFTER)
-; $C7 free (was zp_rns_vec hi — rns_select SMCs rns_go's JMP operand
-; directly, 2026-07-12)
+zp_px_defc = $C7                  ; [bsp]; br_project_x shrink path: shifts
+                                  ; taken BELOW the S floor — result is
+                                  ; scaled back <<defc at exit (quantised)
 ; --- $C4/$C5: rc_psilo/rc_psihi (ang/rcache.s) — UNREGISTERED SQUATTER,
 ; registered 2026-07-08 after zp_rns_vec landed on them and the walk disc
 ; jammed (cached-bbox frames clobbered the vector). anim.s similarly owns
