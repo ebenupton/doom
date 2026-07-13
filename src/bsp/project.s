@@ -480,12 +480,10 @@ pyc_miss:
 ; power-of-two depth): the product is zero — skip the mul, P24 = h<<8.
    LDA zp_br_rhi
    BNE py_have_m8
-   STA zp_br_t2
-   LDA zp_br_t0
-   STA zp_br_resl
-   LDA #0
+   STA zp_br_t2                            ; A == 0 here (BNE fell through)
    STA zp_br_resh
-   LDA zp_br_t0
+   LDA zp_br_t0                            ; N flag survives the STA below
+   STA zp_br_resl
    BPL py_go
    DEC zp_br_resh
 py_go:
