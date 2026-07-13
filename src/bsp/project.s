@@ -636,6 +636,16 @@ py_shift:                                  ; always 0. C survives LDA/STA.
                                         ; guarantees all kernel entries share
                                         ; the JMP operand's high byte
 rns_go:
+   CLC                                     ; hoisted from every kernel: all
+                                        ; six bodies enter C=0 (their round
+                                        ; ADC is the first carry consumer;
+                                        ; rns32 is NOT dispatched here and
+                                        ; keeps its own CLC)
+rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
+                                        ; LO byte. ALL select sites store
+                                        ; here — NEVER rns_go+1, that is
+                                        ; the JMP opcode (the CLC above
+                                        ; shifted the encoding, 2026-07-13)
    JMP rns24                               ; operand LO byte = live shifter
                                         ; (SMC by rns_select + the inlined
                                         ; selects; the HI byte is CONSTANT
@@ -648,7 +658,7 @@ rns_select:
 .scope
    LDX zp_br_rlo
    LDA rns_vec_lo-1,X
-   STA rns_go+1
+   STA rns_go_op
    RTS
 .endscope
 rns_vec_lo:
@@ -663,7 +673,6 @@ rns_s8:
 .scope
 ; floor((P + $80) / 256): carry out of the b0 half-add, then drop b0
    LDA zp_br_t2
-   CLC
    ADC #$80
    LDA zp_br_t3
    ADC #0
@@ -677,7 +686,6 @@ rns_s9:
 .scope
 ; floor((P + $100) / 512): t3 += 1 (carry into ext), ASR the top pair
    LDA zp_br_t3
-   CLC
    ADC #1
    TAX
    LDA zp_br_vxext
@@ -695,7 +703,6 @@ rns_s6:
 .scope
 ; floor((P + $20) / 64) = ((P + $20) << 2) >> 8
    LDA zp_br_t2
-   CLC
    ADC #$20
    STA zp_br_t2
    BCC rc_done_s6                     ; round-carry: BCC/INC wrap chain
@@ -703,11 +710,11 @@ rns_s6:
    BNE rc_done_s6                     ; beats the 16-cycle ADC ladder
    INC zp_br_vxext                         ; on every path)
 rc_done_s6:
+   LDA zp_br_t3
    ASL zp_br_t2
-   ROL zp_br_t3
+   ROL A
    ROL zp_br_vxext
    ASL zp_br_t2
-   LDA zp_br_t3
    ROL A
    STA zp_br_resl
    LDA zp_br_vxext
@@ -720,7 +727,6 @@ rns_s7:
 .scope
 ; floor((P + $40) / 128) = ((P + $40) << 1) >> 8
    LDA zp_br_t2
-   CLC
    ADC #$40
    STA zp_br_t2
    BCC rc_done_s7                     ; round-carry: BCC/INC wrap chain
@@ -742,7 +748,6 @@ rns_s10:
 .scope
 ; floor((P + $200) / 1024): t3 += 2 (carry into ext), drop b0, ASR twice
    LDA zp_br_t3
-   CLC
    ADC #2
    STA zp_br_t3
    LDA zp_br_vxext
@@ -752,9 +757,9 @@ rns_s10:
    ROR zp_br_t3
    CMP #$80
    ROR A
-   ROR zp_br_t3
    STA zp_br_resh
    LDA zp_br_t3
+   ROR A
    STA zp_br_resl
    RTS
 .endscope
@@ -767,7 +772,6 @@ rns24:
    LDX zp_br_rlo
 ; --- add half = 2^(S-1): lo byte for S<=8, mid byte holds S=9,10 ---
    LDA rns_half_lo-1,X
-   CLC
    ADC zp_br_t2
    STA zp_br_t2
    LDA rns_half_mid-1,X

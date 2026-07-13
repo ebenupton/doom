@@ -447,7 +447,7 @@ ys_deltas_done:
    LDX zp_seg_v1_rlo                        ; inlined rns_select (hot site)
    STX zp_br_rlo
    LDA rns_vec_lo-1,X
-   STA rns_go+1
+   STA rns_go_op
    JSR dpy_back
    JMP ys_v2
 ys_v1_full:
@@ -458,7 +458,7 @@ ys_v1_full:
    LDX zp_seg_v1_rlo                        ; inlined rns_select
    STX zp_br_rlo
    LDA rns_vec_lo-1,X
-   STA rns_go+1
+   STA rns_go_op
    JSR do_project_y
 ys_v2:
    LDA #VX_STRIDE
@@ -468,7 +468,7 @@ ys_v2:
    LDX zp_seg_v2_rlo                        ; inlined rns_select
    STX zp_br_rlo
    LDA rns_vec_lo-1,X
-   STA rns_go+1
+   STA rns_go_op
    JSR do_project_y
    LDA #1
    STA zp_ys_done                           ; this seg's VX2 sy is live for
