@@ -297,6 +297,13 @@ def test_project_x_wide():
         rh, rl = fp.fp_recip(vy_idx)
         for vx in [-32768, -3000, -300, -129, -128, 127, 128, 300, 3000, 32767]:
             for vx_frac in [0, 128, 255]:
+                # engine domain: net shift >= -2 (k <= S+2). Beyond it the
+                # shrink would index off rns_vec_all — excluded by design.
+                X88, k = vx * 256 + vx_frac, 0
+                while not (-128 <= (X88 >> 8) <= 127):
+                    X88 >>= 1; k += 1
+                if k > rl + 2:
+                    continue
                 cases.append((vx, vx_frac, rh, rl))
     fail = 0
     for vx, vx_frac, rh, rl in cases:

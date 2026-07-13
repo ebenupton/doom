@@ -249,7 +249,8 @@ def fp_project_x(vx, vx_frac, recip_m8, recip_s):
         if recip_s >= 2:
             recip_s -= 1
         else:
-            deficit = min(deficit + 1, 3)   # S floored (clamp = 6502's)
+            deficit += 1     # DOMAIN: <= 3 in-engine (map diagonal);
+                             # beyond it the 6502 indexes garbage
         X88 >>= 1
     vx, vx_frac = X88 >> 8, X88 & 0xFF
     B = (m8(vx_frac, recip_m8)

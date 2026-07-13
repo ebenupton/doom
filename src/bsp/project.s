@@ -37,8 +37,10 @@ px_shrink:
 ; range). Halve the 8.8 X88, dropping the exponent per step, until the
 ; integer part fits s8 — err <= |vx|/(256*vy) px (corpus max 0.008px).
 ; The NET SHIFT (S minus shifts taken) is tracked in X as an index
-; into rns_vec_all, bias +3: X = net+3 in [1,13], floored at 1 (net
-; -2 — that floor IS the old deficit clamp). zp_br_rlo is written ONLY
+; into rns_vec_all, bias +3: X = net+3 in [1,13]. net >= -2 is a DOMAIN
+; PRECONDITION, not a runtime clamp (map diagonal 672 wu -> k <= 3;
+; S >= 1 — a violating input indexes garbage; the harness respects the
+; domain). zp_br_rlo is written ONLY
 ; on the rns24 arm (net in [1,4], the one kernel that reads it; unseen
 ; in corpus): every other arm patches rns_go_op straight from the ONE
 ; ordered table and TAIL-CALLS the narrow body — no S restore, no
@@ -51,8 +53,6 @@ px_shrink:
    INX
    INX                                     ; X = net+3 (starts at S+3)
 ps_loop:
-   CPX #2
-   BCC ps_shift                            ; floor: net -2 (clamp)
    DEX
 ps_shift:
    LDA zp_v_xext
