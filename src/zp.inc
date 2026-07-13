@@ -45,8 +45,8 @@ zp_br_b = $16                     ; [bsp]; multiplicand B
 zp_br_res_l = $17                  ; [bsp]; s24 result lo
 zp_br_res_h = $18                  ; [bsp]; s24 result mid (the s16 path stops here)
 zp_br_sign = $19                  ; [bsp]; 0 = positive, non-0 = negative
-zp_br_rhi = $1A                   ; [bsp]; u8 hi of reciprocal
-zp_br_rlo = $1B                   ; [bsp]; u8 lo
+zp_br_r_m8 = $1A                   ; [bsp]; u8 hi of reciprocal
+zp_br_r_s = $1B                   ; [bsp]; u8 lo
 ; --- BCA angle-module hot slots (moved from BCA_WS absolutes 2026-07-08;
 ; equates live in ang/header_div.s + bsp/backface.s, names kept there) ---
 ; $BB bca_ilo   $BF bca_ihi   $C8-$C9 bca_p1   $CA-$CB bca_p2
@@ -115,8 +115,8 @@ zp_seg_sy1_btop_l = VX1+9
 zp_seg_sy1_btop_h = VX1+10
 zp_seg_sy1_bbot_l = VX1+11
 zp_seg_sy1_bbot_h = VX1+12
-zp_seg_v1_rhi = VX1+13
-zp_seg_v1_rlo = VX1+14
+zp_seg_v1_r_m8 = VX1+13
+zp_seg_v1_r_s = VX1+14
 zp_seg_v2_evy = VX2+0
 zp_seg_v2_evx = VX2+1
 zp_seg_v2_clipped = VX2+2
@@ -130,8 +130,8 @@ zp_seg_sy2_btop_l = VX2+9
 zp_seg_sy2_btop_h = VX2+10
 zp_seg_sy2_bbot_l = VX2+11
 zp_seg_sy2_bbot_h = VX2+12
-zp_seg_v2_rhi = VX2+13
-zp_seg_v2_rlo = VX2+14
+zp_seg_v2_r_m8 = VX2+13
+zp_seg_v2_r_s = VX2+14
 zp_seg_ep = $26                   ; [bsp]; per-endpoint STRUCT offset into
 ; VX1 (0 = v1, 15 = VX_STRIDE = v2): the generators write evy/evx/sx/sy/
 ; recip DIRECTLY into the endpoint structs via ,X = this offset. Set by

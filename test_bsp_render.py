@@ -25,8 +25,8 @@ ZP_RESL = _sym('zp_br_res_l')
 ZP_RESH = _sym('zp_br_res_h')
 ZP_T0   = _sym('zp_br_t0')
 ZP_T1   = _sym('zp_br_t1')
-ZP_RHI  = _sym('zp_br_rhi')
-ZP_RLO  = _sym('zp_br_rlo')
+ZP_RHI  = _sym('zp_br_r_m8')
+ZP_RLO  = _sym('zp_br_r_s')
 
 
 def s8(v):
@@ -264,8 +264,8 @@ def test_project_x():
         mem[ZP_XINT] = vx & 0xFF
         mem[ZP_XEXT] = 0xFF if vx < 0 else 0   # narrow: ext = sign extension
         mem[ZP_XFRAC] = vx_frac
-        mem[0x1A] = rh               # zp_br_rhi (M8)
-        mem[0x1B] = rl               # zp_br_rlo (S)
+        mem[0x1A] = rh               # zp_br_r_m8 (M8)
+        mem[0x1B] = rl               # zp_br_r_s (S)
         sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
         sc._run(ENTRY_BR_PROJECT_X)
         got = s16_from_zp(mem, 0x17)

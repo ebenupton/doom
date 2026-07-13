@@ -7,7 +7,7 @@
 ;
 ;   Inputs (zp):
 ;     zp_v_x_x:zp_v_x_h = s16 integer view-x, zp_v_x_l = u8 fraction
-;     zp_br_rhi = M8 (recip mantissa), zp_br_rlo = S (recip shift)
+;     zp_br_r_m8 = M8 (recip mantissa), zp_br_r_s = S (recip shift)
 ;
 ;   Output:
 ;     zp_br_res_l/h = sx (s16 screen x); Y = sx lo, A = sx hi (REG
@@ -39,7 +39,7 @@ px_shrink:
 ; into rns_vec_all, bias +3: X = net+3 in [1,13]. net >= -2 is a DOMAIN
 ; PRECONDITION, not a runtime clamp (map diagonal 672 wu -> k <= 3;
 ; S >= 1 — a violating input indexes garbage; the harness respects the
-; domain). zp_br_rlo is written ONLY
+; domain). zp_br_r_s is written ONLY
 ; on the rns24 arm (net in [1,4], the one kernel that reads it; unseen
 ; in corpus): every other arm patches rns_go_op straight from the ONE
 ; ordered table and TAIL-CALLS the narrow body — no S restore, no
@@ -47,7 +47,7 @@ px_shrink:
 ; is fine BY the rlo-writer invariant: every dispatcher selects before
 ; its dispatch. Net<1 = the no-round kernels rns_s0/sm1/sm2 ('right
 ; magnitude on the shrink's truncation grid', per Eben).
-   LDX zp_br_rlo
+   LDX zp_br_r_s
    INX
    INX
    INX                                     ; X = net+3 (starts at S+3)
@@ -75,16 +75,16 @@ ps_patch:                                   ; (net <= 0 falls in here too)
    JMP px_narrow                           ; tail-call: narrow's RTS + REG
                                         ; contract return to the caller
 ps_rns24:
-   LDA zp_br_rlo                           ; the ONE arm that must write
+   LDA zp_br_r_s                           ; the ONE arm that must write
    STA zp_px_s_save                        ; rlo: save the TRUE S first
    TXA
    SEC
    SBC #3                                  ; unbias: rlo = net
-   STA zp_br_rlo
+   STA zp_br_r_s
    JSR rns_select
    JSR px_narrow
    LDA zp_px_s_save                        ; restore + re-select (rlo-
-   STA zp_br_rlo                           ; writer invariant); select
+   STA zp_br_r_s                           ; writer invariant); select
    JSR rns_select                          ; clobbers A/X -> re-establish
    LDY zp_br_res_l                          ; the REG CONTRACT from the ZP
    LDA zp_br_res_h                          ; results
@@ -101,7 +101,7 @@ px_narrow:                                  ; hot path FALLS THROUGH
    STA zp_br_res_l
    STA zp_br_res_h
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
-   LDA zp_br_rhi
+   LDA zp_br_r_m8
    BNE px_have_m8
    LDA zp_v_x_l
    STA zp_br_t2
@@ -118,7 +118,7 @@ px_have_frac:
 ; hi subtract). A = frac on entry.
    TAX
    SEC
-   SBC zp_br_rhi
+   SBC zp_br_r_m8
    BCS pxf_pd
    EOR #$FF
    ADC #1
@@ -126,7 +126,7 @@ pxf_pd:
    TAY                                     ; Y = |frac - M8|
    TXA
    CLC
-   ADC zp_br_rhi
+   ADC zp_br_r_m8
    TAX                                     ; X = frac + M8
    BCS pxf_uo
    LDA sqr_l,X
@@ -156,7 +156,7 @@ px_no_frac:
    BMI pxm_neg
    TAX
    SEC
-   SBC zp_br_rhi
+   SBC zp_br_r_m8
    BCS pxm_pd
    EOR #$FF
    ADC #1
@@ -164,7 +164,7 @@ pxm_pd:
    TAY                                     ; Y = ||vx| - M8|
    TXA
    CLC
-   ADC zp_br_rhi
+   ADC zp_br_r_m8
    TAX                                     ; X = |vx| + M8
    BCS pxm_puo
    LDA sqr_l,X
@@ -231,7 +231,7 @@ pxm_neg:
    BUMP                                    ; A = |vx|
    TAX
    SEC
-   SBC zp_br_rhi
+   SBC zp_br_r_m8
    BCS pxm_nd
    EOR #$FF
    ADC #1
@@ -239,7 +239,7 @@ pxm_nd:
    TAY
    TXA
    CLC
-   ADC zp_br_rhi
+   ADC zp_br_r_m8
    TAX
    BCS pxm_nuo
    LDA sqr_l,X
@@ -282,7 +282,7 @@ pxm_njoin:
 ; one file, no JSR/RTS between front and body.)
 ;
 ;   Native entry (br_project_y): h in A (REG CONTRACT — also stored to
-;     zp_br_t0 here), zp_br_rhi/rlo = (M8, S) recip.
+;     zp_br_t0 here), zp_br_r_m8/rlo = (M8, S) recip.
 ;   jt/harness entry (br_project_y_paged): pages L2, loads h from
 ;     zp_br_t0 (the wrapper contract predates the register pass).
 ;   Output: zp_br_res_l/h = sy (s16, pre-biased by Y_BIAS folded into the
@@ -307,20 +307,20 @@ br_project_y_paged:
 br_project_y:
 .scope
    STA zp_br_t0                            ; h (tag compare + raw body reads)
-   EOR zp_br_rhi
+   EOR zp_br_r_m8
    TAX                                     ; probe idx = h ^ rhi
-   LDA VWHC_RLO,X                          ; RLO doubles as the valid flag
-   CMP zp_br_rlo
+   LDA VWHC_R_S,X                          ; RLO doubles as the valid flag
+   CMP zp_br_r_s
    BNE pyc_miss
-   LDA VWHC_RHI,X
-   CMP zp_br_rhi
+   LDA VWHC_R_M8,X
+   CMP zp_br_r_m8
    BNE pyc_miss
-   LDA VWHC_H,X
+   LDA VWHC_KEY,X
    CMP zp_br_t0
    BNE pyc_miss
-   LDY VWHC_LO,X                           ; REG CONTRACT: Y = lo, A = hi
+   LDY VWHC_L,X                           ; REG CONTRACT: Y = lo, A = hi
    STY zp_br_res_l
-   LDA VWHC_HI,X
+   LDA VWHC_H,X
    STA zp_br_res_h
    RTS
 pyc_miss:
@@ -332,7 +332,7 @@ pyc_miss:
 ;
 ;   Inputs (zp):
 ;     zp_br_t0 = height_delta (s8)
-;     zp_br_rhi = M8 (recip mantissa), zp_br_rlo = S (recip shift)
+;     zp_br_r_m8 = M8 (recip mantissa), zp_br_r_s = S (recip shift)
 ;
 ;   Output:
 ;     zp_br_res_l/h = sy (s16)
@@ -364,7 +364,7 @@ pyc_miss:
 ; --- P24 = h*M8 + (h << 8), s24 in (t2, resl, resh) ---
 ; M8 == 0 (m9 = 256 exactly: the near-plane crossing recip and every
 ; power-of-two depth): the product is zero — skip the mul, P24 = h<<8.
-   LDA zp_br_rhi
+   LDA zp_br_r_m8
    BNE py_have_m8
    STA zp_br_t2                            ; A == 0 here (BNE fell through)
    STA zp_br_res_h
@@ -384,7 +384,7 @@ py_have_m8:
 ; positive h: unsigned quarter-square, result used as-is
    TAX
    SEC
-   SBC zp_br_rhi
+   SBC zp_br_r_m8
    BCS pym_pd
    EOR #$FF
    ADC #1
@@ -392,7 +392,7 @@ pym_pd:
    TAY                                     ; Y = |h - M8|
    TXA
    CLC
-   ADC zp_br_rhi
+   ADC zp_br_r_m8
    TAX                                     ; X = h + M8
    BCS pym_puo
    LDA sqr_l,X
@@ -415,7 +415,7 @@ pym_neg:
    BUMP                                    ; A = |h|
    TAX
    SEC
-   SBC zp_br_rhi
+   SBC zp_br_r_m8
    BCS pym_nd
    EOR #$FF
    ADC #1
@@ -423,7 +423,7 @@ pym_nd:
    TAY
    TXA
    CLC
-   ADC zp_br_rhi
+   ADC zp_br_r_m8
    TAX
    BCS pym_nuo
    LDA sqr_l,X
@@ -478,23 +478,23 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ; --- VWHC writeback (the raw body is only ever entered through the
 ; cache front's miss path above) ---
    LDX zp_pyc_idx
-   LDA zp_br_rhi
-   STA VWHC_RHI,X
-   LDA zp_br_rlo
-   STA VWHC_RLO,X
+   LDA zp_br_r_m8
+   STA VWHC_R_M8,X
+   LDA zp_br_r_s
+   STA VWHC_R_S,X
    LDA zp_br_t0
-   STA VWHC_H,X
+   STA VWHC_KEY,X
    TYA
-   STA VWHC_LO,X
+   STA VWHC_L,X
    LDA zp_br_res_h
-   STA VWHC_HI,X                           ; (A = hi, Y = lo at RTS)
+   STA VWHC_H,X                           ; (A = hi, Y = lo at RTS)
    RTS
 .endscope
 
 ; ============================================================================
 ; RNS VECTORING — round-to-nearest shift dispatch for the projections.
 ;
-; The shift S (zp_br_rlo, ALWAYS in [1,10], never 0 — it doubles as the
+; The shift S (zp_br_r_s, ALWAYS in [1,10], never 0 — it doubles as the
 ; VWHC valid flag) is a per-vertex constant, so the shifter is selected
 ; ONCE per reciprocal and each projection dispatches with a single JSR:
 ;
@@ -505,7 +505,7 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ;            rns_go+1/+2 from the rns_vec tables. No ZP vector (the old
 ;            zp_rns_vec pair $C6/$C7 is freed), and JMP abs is 2 cycles
 ;            cheaper than the old JMP (zp).
-;   INVARIANT: every writer of zp_br_rlo MUST re-select (JSR rns_select
+;   INVARIANT: every writer of zp_br_r_s MUST re-select (JSR rns_select
 ;            or the inlined form) before the next projection, or the
 ;            dispatch runs a stale shifter. Current writers: br_recip
 ;            (arith.s), the vcache hit path (seg_xform.s), chain_reuse_v1
@@ -544,7 +544,7 @@ rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
 
 rns_select:
 .scope
-   LDX zp_br_rlo
+   LDX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
    RTS
@@ -716,7 +716,7 @@ rns24:
 ; add is a carry propagate and the S=10 arm + CPX dispatch are gone
 ; (2026-07-13). S=1 is the near-plane crossing reciprocal — hot for
 ; clipped segs. Result lands one byte LOW (b0, b1): shuffle up at exit.
-   LDX zp_br_rlo
+   LDX zp_br_r_s
    LDA rns_half_l-1,X
    ADC zp_br_t2                            ; C=0 from rns_go
    STA zp_br_t2

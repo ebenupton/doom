@@ -15,7 +15,7 @@
 ;             +2 clip (1 = behind near plane; rest then undefined)
 ;             +3/+4 sx  +5..+12 the flag-gated sy pairs (do_project_y tail)
 ;             +13/+14 rhi/rlo (banked for ap2_solid_proj)
-;           zp_br_rhi/rlo also hold the recip (projection working slots).
+;           zp_br_r_m8/rlo also hold the recip (projection working slots).
 ;           NOTHING is staged — every result stores once, struct-direct.
 ;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x.
 ;
@@ -116,11 +116,11 @@ vc_hit:
 vc_hit_ok:
    LDY #2
    LDA (zp_seg_v_cache_l),Y
-   STA zp_br_rhi
+   STA zp_br_r_m8
    STA VX1+13,X                            ; rhi (for ap2_solid_proj)
    INY
    LDA (zp_seg_v_cache_l),Y
-   STA zp_br_rlo
+   STA zp_br_r_s
    STA VX1+14,X                            ; rlo
    JSR rns_select                          ; cached S → re-pick the shifter
                                         ; (preserves Y; CLOBBERS X — the
@@ -263,19 +263,19 @@ nc_ok:
    STA VX1+4,X                             ; sx_hi (from A)
    TYA
    STA VX1+3,X                             ; sx_lo                             ; sx_hi
-   LDA zp_br_rhi
+   LDA zp_br_r_m8
    STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
-   LDA zp_br_rlo
+   LDA zp_br_r_s
    STA VX1+14,X
 
 ; --- Cache the per-vertex results (rhi, rlo, sx, near-clip=0) — from the
 ; working regs, no struct readback. Straight through the cache pair
 ; (the second zp_br_p copy died with the first, 2026-07-11). ---
    LDY #2
-   LDA zp_br_rhi
+   LDA zp_br_r_m8
    STA (zp_seg_v_cache_l),Y
    INY
-   LDA zp_br_rlo
+   LDA zp_br_r_s
    STA (zp_seg_v_cache_l),Y
    INY
    LDA zp_br_res_l

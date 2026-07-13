@@ -4,7 +4,7 @@
 ; with the current reciprocal into the zp_seg_sy_* slots. Global so the
 ; crossing reprojection can tail-call it instead of duplicating it.
 ;
-;   Inputs:  zp_br_rhi/rlo    = current vertex's (M8, S) reciprocal
+;   Inputs:  zp_br_r_m8/rlo    = current vertex's (M8, S) reciprocal
 ;            zp_seg_top_dlt   = ch  - vz (s8)  front ceiling delta
 ;            zp_seg_bot_dlt   = fh  - vz (s8)  front floor delta
 ;            zp_seg_btop_dlt  = bch - vz (s8)  back ceiling (or APV1_FH)
@@ -52,7 +52,7 @@ do_project_y:
 ; dpy_back is ALSO a public entry (2026-07-10): the seg loop's vertex-
 ; CHAIN path reuses the previous v2's front sy pair verbatim (same
 ; vertex, same subsector heights) and calls in here for just the
-; flag-gated back pair, with the vertex's recip restored to zp_br_rhi/
+; flag-gated back pair, with the vertex's recip restored to zp_br_r_m8/
 ; rlo + rns_select re-vectored by the caller. ---
 dpy_back:
 ; SOLIDS: no aperture work here any more (2026-07-11). The APV pairs

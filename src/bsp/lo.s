@@ -20,7 +20,7 @@ bsp_lo_start:
 ;              populated by br_seg_xform_vertex, even when clipped),
 ;            zp_seg_ep = the CLIPPED endpoint's struct offset (0 | 15).
 ;   Outputs: struct +3/+4 = sx of the crossing point (s16),
-;            struct +13/+14 and zp_br_rhi/rlo = recip(NEAR) = (M8=0, S=1);
+;            struct +13/+14 and zp_br_r_m8/rlo = recip(NEAR) = (M8=0, S=1);
 ;            chain key killed by the caller (VX2 no longer holds a vertex).
 ;
 ;   Pseudocode:
@@ -44,9 +44,9 @@ reproject_at_crossing:
    STA VX1+4,X                             ; sx → the clipped endpoint's
    TYA                                     ; struct slots, in place
    STA VX1+3,X
-   LDA zp_br_rhi                           ; bank recip(NEAR) = (M8=0, S=1)
+   LDA zp_br_r_m8                           ; bank recip(NEAR) = (M8=0, S=1)
    STA VX1+13,X                            ; into the struct: the deferred
-   LDA zp_br_rlo                           ; y stage (and apv_stage) project
+   LDA zp_br_r_s                           ; y stage (and apv_stage) project
    STA VX1+14,X                            ; the crossing with THIS recip
    RTS
 .endscope
@@ -55,7 +55,7 @@ reproject_at_crossing:
 ; cross_compute — near-plane crossing point for a seg with one clipped vertex.
 ;   Inputs:  zp_clip_C_evy, zp_clip_C_evx (clipped, evy ≤ 0)
 ;            zp_clip_U_evy, zp_clip_U_evx (unclipped, evy ≥ 1)
-;   Outputs: zp_clip_cx (s8 crossing view-x), zp_br_rhi/rlo = (M8, S) at NEAR
+;   Outputs: zp_clip_cx (s8 crossing view-x), zp_br_r_m8/rlo = (M8, S) at NEAR
 ;
 ;   Mirrors fp_near_clip exactly:
 ;     t   = ((NEAR - vy_C) << 8) / (vy_U - vy_C)    (u8 truncated)
@@ -626,9 +626,9 @@ as_on:
    STX as_x
    STY as_y
    LDA VX1+13,X                            ; endpoint recip
-   STA zp_br_rhi
+   STA zp_br_r_m8
    LDA VX1+14,X
-   STA zp_br_rlo
+   STA zp_br_r_s
    JSR rns_select
    PAGE BANK_L0
    LDY as_y
@@ -686,10 +686,10 @@ chain_reuse_v1:
    STA zp_seg_sx1_h
 ; recip carried UNCONDITIONALLY (2026-07-11): the post-has_gap y stage
 ; projects from the struct-banked recips.
-   LDA zp_seg_v2_rhi
-   STA zp_seg_v1_rhi
-   LDA zp_seg_v2_rlo
-   STA zp_seg_v1_rlo
+   LDA zp_seg_v2_r_m8
+   STA zp_seg_v1_r_m8
+   LDA zp_seg_v2_r_s
+   STA zp_seg_v1_r_s
 ; CHAIN SY RECOVERY (2026-07-11): if the PREVIOUS seg ran its y stage
 ; (zp_ys_done — cleared by any culled/back-facing seg in between), VX2
 ; still holds its v2's projected FRONT pair, and this seg's v1 is that

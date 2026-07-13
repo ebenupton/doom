@@ -442,10 +442,10 @@ ys_deltas_done:
    BEQ ys_v2
    LDA #0
    STA zp_seg_ep
-   LDA zp_seg_v1_rhi
-   STA zp_br_rhi
-   LDX zp_seg_v1_rlo                        ; inlined rns_select (hot site)
-   STX zp_br_rlo
+   LDA zp_seg_v1_r_m8
+   STA zp_br_r_m8
+   LDX zp_seg_v1_r_s                        ; inlined rns_select (hot site)
+   STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
    JSR dpy_back
@@ -453,20 +453,20 @@ ys_deltas_done:
 ys_v1_full:
    LDA #0
    STA zp_seg_ep                            ; v1 -> struct VX1
-   LDA zp_seg_v1_rhi
-   STA zp_br_rhi
-   LDX zp_seg_v1_rlo                        ; inlined rns_select
-   STX zp_br_rlo
+   LDA zp_seg_v1_r_m8
+   STA zp_br_r_m8
+   LDX zp_seg_v1_r_s                        ; inlined rns_select
+   STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
    JSR do_project_y
 ys_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; v2 -> struct VX2
-   LDA zp_seg_v2_rhi
-   STA zp_br_rhi
-   LDX zp_seg_v2_rlo                        ; inlined rns_select
-   STX zp_br_rlo
+   LDA zp_seg_v2_r_m8
+   STA zp_br_r_m8
+   LDX zp_seg_v2_r_s                        ; inlined rns_select
+   STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
    JSR do_project_y

@@ -75,11 +75,11 @@ bsp_d_end:
 .if ::BANKED
 ; (VWHC pages moved $A800-$ACFF -> $B500-$B9FF in the 2026-07-10 reshuffle:
 ; verts now occupy $A200-$A95x. VALID retired earlier — RLO doubles as valid.)
-VWHC_RHI = $B500
-VWHC_RLO = $B600
-VWHC_H = $B700
-VWHC_LO = $B800
-VWHC_HI = $B900
+VWHC_R_M8 = $B500
+VWHC_R_S = $B600
+VWHC_KEY = $B700
+VWHC_L = $B800
+VWHC_H = $B900
 .segment "W_BK"
 .else
 ; PAGE-ALIGNED 2026-07-12 (were $D5C0-$D9C0: the $C0 offset made ~75% of
@@ -87,10 +87,10 @@ VWHC_HI = $B900
 ; already aligned, so the harness metric overcharged the y-cache).
 ; BSS window $D4C0-$DABF: aligned tables span $D500-$D9FF, $D4C0-$D4FF
 ; and $DA00-$DABF free.
-VWHC_RHI = $D500
-VWHC_RLO = $D600
-VWHC_H = $D700
-VWHC_LO = $D800
-VWHC_HI = $D900
+VWHC_R_M8 = $D500
+VWHC_R_S = $D600
+VWHC_KEY = $D700
+VWHC_L = $D800
+VWHC_H = $D900
 .segment "W"
 .endif

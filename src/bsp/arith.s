@@ -6,7 +6,7 @@
 ;                             core SC_UMUL8 (clip/arith.s, sqr tables —
 ;                             banked $1C00 / flat $A500, abi SQR_*).
 ;   br_recip                  (M8,S) reciprocal from the 9.1 depth index;
-;                             every zp_br_rlo write is followed by an
+;                             every zp_br_r_s write is followed by an
 ;                             rns re-select (see project.s RNS banner).
 ;   br_frac_rot_term          per-frame fractional rotation term
 ;                             (br_view_setup only).
@@ -108,7 +108,7 @@ pos:
 ; ============================================================================
 ; br_recip — floating-mantissa reciprocal lookup.
 ;   Input:  zp_br_t0:t1 = u16 vy_idx (9.1 format).
-;   Output: zp_br_rhi = M8 (mantissa byte), zp_br_rlo = S (shift, 1..10):
+;   Output: zp_br_r_m8 = M8 (mantissa byte), zp_br_r_s = S (shift, 1..10):
 ;           FOCAL/vy = 256/idx ≈ (256 + M8) / 2^S.
 ;
 ; Algorithm (mirrors fp_recip, fp.py):
@@ -169,7 +169,7 @@ rcp_p1:
 rcp_p0:
    LDA RECIP_BASE,Y
 rcp_have:
-   STA zp_br_rhi                           ; M8
+   STA zp_br_r_m8                           ; M8
 
 ; --- S = bit_length(idx - 1); idx >= 2 so idx-1 >= 1 ---
    LDA zp_br_t0
@@ -182,11 +182,11 @@ rcp_have:
    CMP #1
    BEQ s_9
    LDA #10                                 ; hi = 2 or 3 → top bit 9 → S = 10
-   STA zp_br_rlo
+   STA zp_br_r_s
    JMP rns_select                          ; pick the vectored shifter (RTSes)
 s_9:
    LDA #9                                  ; hi = 1 → top bit 8 → S = 9
-   STA zp_br_rlo
+   STA zp_br_r_s
    JMP rns_select
 s_scan_lo:
 ; bit_length of X (>= 1): descending compare cascade
@@ -213,7 +213,7 @@ s_scan_lo:
    BCS s_have
    LDA #1                                  ; X == 1
 s_have:
-   STA zp_br_rlo                           ; S
+   STA zp_br_r_s                           ; S
    JMP rns_select                          ; pick the vectored shifter (RTSes)
 .endscope
 
