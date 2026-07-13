@@ -34,11 +34,11 @@ reproject_at_crossing:
 ; Project cx with frac=0 (Python passes fvx_c=0 for clipped endpoints).
 ; cx is s16; br_project_x dispatches narrow/wide on its hi byte.
    LDA zp_clip_cx
-   STA zp_v_xint
+   STA zp_v_x_h
    LDA zp_clip_cx_hi
-   STA zp_v_xext
+   STA zp_v_x_x
    LDA #0
-   STA zp_v_xfrac
+   STA zp_v_x_l
    JSR br_project_x                        ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; struct offset (0/15)
    STA VX1+4,X                             ; sx → the clipped endpoint's
@@ -69,7 +69,7 @@ reproject_at_crossing:
 ; fp_near_clip does regardless of WHICH endpoint is the clipped one.
 ; Output is now s16: zp_clip_cx (lo) : zp_clip_cx_hi (hi); the tail JMPs
 ; to br_recip with vy_idx = 2 (9.1 for vy = NEAR), so (M8, S) = (0, 1).
-; Clobbers zp_div_lo/hi/den, zp_br_a, zp_br_dxlo/dxhi, zp_br_t2/t3,
+; Clobbers zp_div_l/hi/den, zp_br_a, zp_br_dx_l/dxhi, zp_br_t2/t3,
 ; zp_br_sign, plus SC_UDIV16_8 / SC_UMUL8 scratch.
 ; ============================================================================
 cross_compute:
@@ -105,8 +105,8 @@ c_normal:
    EOR #$FF
    BUMP
 c_num_ok:
-   STA zp_div_hi
-   ZERO zp_div_lo
+   STA zp_div_h
+   ZERO zp_div_l
 
 ; |den| = |v2_evy - v1_evy|
    LDA zp_seg_v2_evy
@@ -123,30 +123,30 @@ c_den_ok:
 
 ; dvx = v2_evx - v1_evx as s16 (sign-extend then subtract).
    LDA zp_seg_v2_evx
-   STA zp_br_dxlo
-   ZERO zp_br_dxhi
+   STA zp_br_dx_l
+   ZERO zp_br_dx_h
    LDA zp_seg_v2_evx
    BPL c_v2_pos
    LDA #$FF
-   STA zp_br_dxhi
+   STA zp_br_dx_h
 c_v2_pos:
    LDA zp_seg_v1_evx
    BPL c_v1_pos
-   LDA zp_br_dxlo
+   LDA zp_br_dx_l
    SEC
    SBC zp_seg_v1_evx
-   STA zp_br_dxlo
-   LDA zp_br_dxhi
+   STA zp_br_dx_l
+   LDA zp_br_dx_h
    SBC #$FF
-   STA zp_br_dxhi
+   STA zp_br_dx_h
    JMP c_have_dvx
 c_v1_pos:
-   LDA zp_br_dxlo
+   LDA zp_br_dx_l
    SEC
    SBC zp_seg_v1_evx
-   STA zp_br_dxlo
+   STA zp_br_dx_l
    BCS c_dvx_nb                            ; BCS/DEC borrow bump (-2 bytes)
-   DEC zp_br_dxhi
+   DEC zp_br_dx_h
 c_dvx_nb:
 c_have_dvx:
 
@@ -162,14 +162,14 @@ c_have_dvx:
    STA zp_br_t2
 c_cx_v1p:
    ZERO zp_br_t3
-   LDA zp_br_resh
+   LDA zp_br_res_h
    BPL c_cx_rp
    LDA #$FF
    STA zp_br_t3
 c_cx_rp:
    LDA zp_seg_v1_evx
    CLC
-   ADC zp_br_resh
+   ADC zp_br_res_h
    STA zp_clip_cx
    LDA zp_br_t2
    ADC zp_br_t3
@@ -184,59 +184,59 @@ c_set_recip:
 .endscope
 
 ; ============================================================================
-; cross_umul_u8_s16 — t (u8 in zp_br_a) × dx (s16 in zp_br_dxlo:dxhi) → s16
-; in zp_br_resl:resh. Caller takes resh as the (>>8) result.
+; cross_umul_u8_s16 — t (u8 in zp_br_a) × dx (s16 in zp_br_dx_l:dxhi) → s16
+; in zp_br_res_l:resh. Caller takes resh as the (>>8) result.
 ;
 ; Sign-magnitude: |dx| via 16-bit negate (sign in zp_br_sign), then
 ;   res = t*|dx|.lo  +  (t*|dx|.hi << 8)      (two u8×u8 muls; only the
 ;                                              low byte of the second
 ;                                              product fits — dx is s9
 ;                                              here so it never carries)
-; and negate the s16 result if dx was negative. Clobbers zp_br_dxlo/dxhi
-; (replaced by |dx|), zp_br_sign, zp_mul_b, zp_prod_lo/hi.
+; and negate the s16 result if dx was negative. Clobbers zp_br_dx_l/dxhi
+; (replaced by |dx|), zp_br_sign, zp_mul_b, zp_prod_l/hi.
 ; ============================================================================
 cross_umul_u8_s16:
 .scope
 ; |dx|: track sign in zp_br_sign.
    ZERO zp_br_sign
-   LDA zp_br_dxhi
+   LDA zp_br_dx_h
    BPL c2_dxp
    LDA #0
    SEC
-   SBC zp_br_dxlo
-   STA zp_br_dxlo
+   SBC zp_br_dx_l
+   STA zp_br_dx_l
    LDA #0
-   SBC zp_br_dxhi
-   STA zp_br_dxhi
+   SBC zp_br_dx_h
+   STA zp_br_dx_h
    INC zp_br_sign
 c2_dxp:
 ; t * |dx|_lo (u8 × u8 → u16 → resl:resh)
-   LDA zp_br_dxlo
+   LDA zp_br_dx_l
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
-   STA zp_br_resh                          ; A = prod_hi (umul8 contract)
-   LDA zp_prod_lo
-   STA zp_br_resl
+   STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
+   LDA zp_prod_l
+   STA zp_br_res_l
 ; t * |dx|_hi (u8 × u8 → contributes to resh)
-   LDA zp_br_dxhi
+   LDA zp_br_dx_h
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
-   LDA zp_br_resh
+   LDA zp_br_res_h
    CLC
-   ADC zp_prod_lo
-   STA zp_br_resh
+   ADC zp_prod_l
+   STA zp_br_res_h
 ; sign-flip if dx was negative
    LDA zp_br_sign
    BEQ c2_pos
    LDA #0
    SEC
-   SBC zp_br_resl
-   STA zp_br_resl
+   SBC zp_br_res_l
+   STA zp_br_res_l
    LDA #0
-   SBC zp_br_resh
-   STA zp_br_resh
+   SBC zp_br_res_h
+   STA zp_br_res_h
 c2_pos:
    RTS
 .endscope
@@ -245,8 +245,8 @@ c2_pos:
 ; br_node_setup — read node from ROM, compute side, set BSP_NEAR/FAR.
 ; Called twice per internal node (entry + post-near phases).
 ;
-;   Inputs:  zp_node_chlo = node id (u8 — n_nodes <= 256, pack-time assert)
-;            zp_br_pxraw_lo/hi, zp_br_pyraw_lo/hi = player position, RAW
+;   Inputs:  zp_node_ch_l = node id (u8 — n_nodes <= 256, pack-time assert)
+;            zp_br_pxraw_l/hi, zp_br_pyraw_l/hi = player position, RAW
 ;              map units relative to map_center (s16, NOT prescaled — the
 ;              side test must not lose a weak axis to /8 truncation).
 ;   Outputs: zp_side = 0 (right of partition) / 1 (left/on),
@@ -282,38 +282,38 @@ br_node_setup:
 ; Node index is u8 (n_nodes <= 256, asserted at pack time); the partition
 ; type is baked (page NODE_TYPE), so axis-aligned nodes — 73% on E1M1 —
 ; skip the classification and load only the two fields they need.
-   LDX zp_node_chlo
+   LDX zp_node_ch_l
    LDA NODE_TYPE,X
    BEQ ns_t_general
    CMP #1
    BEQ ns_t_dx0
 ; --- type 2: ndy==0 -> side from sign(dyraw) vs sign(ndx) ---
-   LDA zp_br_pyraw_lo
+   LDA zp_br_pyraw_l
    SEC
    SBC NODE_NYLO,X
-   STA zp_seg_dyraw_lo
-   LDA zp_br_pyraw_hi
+   STA zp_seg_dyraw_l
+   LDA zp_br_pyraw_h
    SBC NODE_NYHI,X
-   STA zp_seg_dyraw_hi
-   ORA zp_seg_dyraw_lo
+   STA zp_seg_dyraw_h
+   ORA zp_seg_dyraw_l
    BEQ ns_jmp_side1
    LDA NODE_DXHI,X
-   EOR zp_seg_dyraw_hi
+   EOR zp_seg_dyraw_h
    BPL ns_jmp_side1
    JMP ns_side0
 ns_t_dx0:
 ; --- type 1: ndx==0 -> side from sign(dxraw) vs sign(ndy) ---
-   LDA zp_br_pxraw_lo
+   LDA zp_br_pxraw_l
    SEC
    SBC NODE_NXLO,X
-   STA zp_seg_dxraw_lo
-   LDA zp_br_pxraw_hi
+   STA zp_seg_dxraw_l
+   LDA zp_br_pxraw_h
    SBC NODE_NXHI,X
-   STA zp_seg_dxraw_hi
-   ORA zp_seg_dxraw_lo
+   STA zp_seg_dxraw_h
+   ORA zp_seg_dxraw_l
    BEQ ns_jmp_side1
    LDA NODE_DYHI,X
-   EOR zp_seg_dxraw_hi
+   EOR zp_seg_dxraw_h
    BMI ns_jmp_side1
    JMP ns_side0
 ns_jmp_side1:
@@ -322,63 +322,63 @@ ns_t_general:
 ; --- general partition: both deltas + the dx/dy fields for the
 ;     sign-shortcut / multiply cascade below ---
    LDA NODE_DXLO,X
-   STA zp_node_dxlo
+   STA zp_node_dx_l
    LDA NODE_DXHI,X
-   STA zp_node_dxhi
+   STA zp_node_dx_h
    LDA NODE_DYLO,X
-   STA zp_node_dylo
+   STA zp_node_dy_l
    LDA NODE_DYHI,X
-   STA zp_node_dyhi
-   LDA zp_br_pxraw_lo
+   STA zp_node_dy_h
+   LDA zp_br_pxraw_l
    SEC
    SBC NODE_NXLO,X
-   STA zp_seg_dxraw_lo
-   LDA zp_br_pxraw_hi
+   STA zp_seg_dxraw_l
+   LDA zp_br_pxraw_h
    SBC NODE_NXHI,X
-   STA zp_seg_dxraw_hi
-   LDA zp_br_pyraw_lo
+   STA zp_seg_dxraw_h
+   LDA zp_br_pyraw_l
    SEC
    SBC NODE_NYLO,X
-   STA zp_seg_dyraw_lo
-   LDA zp_br_pyraw_hi
+   STA zp_seg_dyraw_l
+   LDA zp_br_pyraw_h
    SBC NODE_NYHI,X
-   STA zp_seg_dyraw_hi
+   STA zp_seg_dyraw_h
 ns_general:
 ; DOOM R_PointOnSide sign shortcut (EXACT — ndx and ndy are both nonzero
 ; on this path, so P1 = dxraw*ndy is zero iff dxraw==0, P2 = dyraw*ndx
 ; is zero iff dyraw==0, and sign(product) = XOR of the operand signs).
 ; side0 iff D = P1 - P2 > 0. Only same-sign nonzero products need the
 ; two s16*s16 multiplies below.
-   LDA zp_seg_dxraw_lo
-   ORA zp_seg_dxraw_hi
+   LDA zp_seg_dxraw_l
+   ORA zp_seg_dxraw_h
    BNE ns_dx_nz
 ; dxraw==0 -> P1=0 -> D=-P2 (dyraw==0 too -> D=0 -> side1)
-   LDA zp_seg_dyraw_lo
-   ORA zp_seg_dyraw_hi
+   LDA zp_seg_dyraw_l
+   ORA zp_seg_dyraw_h
    BEQ ns_sh_side1
-   LDA zp_seg_dyraw_hi
-   EOR zp_node_dxhi
+   LDA zp_seg_dyraw_h
+   EOR zp_node_dx_h
    BMI ns_sh_side0                         ; P2<0 -> D>0 -> side0
 ns_sh_side1:
    JMP ns_side1
 ns_sh_side0:
    JMP ns_side0
 ns_dx_nz:
-   LDA zp_seg_dyraw_lo
-   ORA zp_seg_dyraw_hi
+   LDA zp_seg_dyraw_l
+   ORA zp_seg_dyraw_h
    BNE ns_dy_nz
 ; dyraw==0 -> D=P1 -> side by sign(dxraw)^sign(ndy)
-   LDA zp_seg_dxraw_hi
-   EOR zp_node_dyhi
+   LDA zp_seg_dxraw_h
+   EOR zp_node_dy_h
    BMI ns_sh_side1
    JMP ns_side0
 ns_dy_nz:
 ; both products nonzero: opposite signs decide without multiplying
-   LDA zp_seg_dxraw_hi
-   EOR zp_node_dyhi                        ; sign(P1)
+   LDA zp_seg_dxraw_h
+   EOR zp_node_dy_h                        ; sign(P1)
    STA zp_br_t3
-   EOR zp_seg_dyraw_hi
-   EOR zp_node_dxhi                        ; sign(P1) ^ sign(P2)
+   EOR zp_seg_dyraw_h
+   EOR zp_node_dx_h                        ; sign(P1) ^ sign(P2)
    BPL ns_mul                              ; same sign -> full compare
    LDA zp_br_t3
    BMI ns_sh_side1                         ; P1<0<P2 -> D<0 -> side1
@@ -387,14 +387,14 @@ ns_mul:
 ; --- Full evaluation: P1 = dxraw*ndy → $0A50-52 (low 3 bytes of the s32
 ; product), then P2 = dyraw*ndx subtracted in place; sign/zero test on
 ; the 24-bit difference: D<0 or D==0 → side1, else side0. ---
-   LDA zp_seg_dxraw_lo
-   STA zp_br_dxlo
-   LDA zp_seg_dxraw_hi
-   STA zp_br_dxhi
-   LDA zp_node_dylo
-   STA zp_br_dylo
-   LDA zp_node_dyhi
-   STA zp_br_dyhi
+   LDA zp_seg_dxraw_l
+   STA zp_br_dx_l
+   LDA zp_seg_dxraw_h
+   STA zp_br_dx_h
+   LDA zp_node_dy_l
+   STA zp_br_dy_l
+   LDA zp_node_dy_h
+   STA zp_br_dy_h
    JSR br_smul_s16_s16_s32
    LDA zp_br_t0
    STA $0A50
@@ -402,14 +402,14 @@ ns_mul:
    STA $0A51
    LDA zp_br_t2
    STA $0A52
-   LDA zp_seg_dyraw_lo
-   STA zp_br_dxlo
-   LDA zp_seg_dyraw_hi
-   STA zp_br_dxhi
-   LDA zp_node_dxlo
-   STA zp_br_dylo
-   LDA zp_node_dxhi
-   STA zp_br_dyhi
+   LDA zp_seg_dyraw_l
+   STA zp_br_dx_l
+   LDA zp_seg_dyraw_h
+   STA zp_br_dx_h
+   LDA zp_node_dx_l
+   STA zp_br_dy_l
+   LDA zp_node_dx_h
+   STA zp_br_dy_h
    JSR br_smul_s16_s16_s32
    LDA $0A50
    SEC
@@ -435,7 +435,7 @@ ns_side1:
    STA zp_side
 ns_done:
 ; Children from the SoA pages (no pointer re-fetch needed).
-   LDX zp_node_chlo
+   LDX zp_node_ch_l
    LDA zp_side
    BNE ns_back
    LDA NODE_CRLO,X
@@ -528,50 +528,50 @@ ap_edge_one:
    AND #$04
    BEQ ap_top_ft
    LDA VX1+9,X                             ; sy_btop
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA VX1+10,X
-   STA zp_line_yl_hi
+   STA zp_line_yl_h
    JMP ap_bot
 ap_top_ft:
    LDA VX1+5,X                             ; sy_top
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA VX1+6,X
-   STA zp_line_yl_hi
+   STA zp_line_yl_h
 ap_bot:
    LDA zp_seg_flags
    AND #$08
    BEQ ap_bot_fb
    LDA VX1+11,X                            ; sy_bbot
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    LDA VX1+12,X
-   STA zp_line_yr_hi
+   STA zp_line_yr_h
    JMP ap_emit_y
 ap_bot_fb:
    LDA VX1+7,X                             ; sy_bot
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    LDA VX1+8,X
-   STA zp_line_yr_hi
+   STA zp_line_yr_h
    JMP ap_emit_y
 ap_solid:
 ; APV projections sit in the struct for BOTH endpoints now (apv_stage
 ; runs post-visibility, pre-swap — the ap2_solid_proj special case is
 ; dead): line from CH proj (+11/12) to FH proj (+9/10).
    LDA VX1+11,X
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA VX1+12,X
-   STA zp_line_yl_hi
+   STA zp_line_yl_h
    LDA VX1+9,X
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    LDA VX1+10,X
-   STA zp_line_yr_hi
+   STA zp_line_yr_h
 ap_emit_y:
 ; vertical at the endpoint's sx (struct slots)
    LDA VX1+3,X
-   STA zp_line_xl_lo
-   STA zp_line_xr_lo
+   STA zp_line_xl_l
+   STA zp_line_xr_l
    LDA VX1+4,X
-   STA zp_line_xl_hi
-   STA zp_line_xr_hi
+   STA zp_line_xl_h
+   STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h
    PAGE BANK_C
@@ -680,10 +680,10 @@ chain_reuse_v1:
    LDA zp_seg_v2_clipped
    STA zp_seg_v1_clipped
    BNE ch_rts                               ; clipped: rest undefined
-   LDA zp_seg_sx2_lo
-   STA zp_seg_sx1_lo
-   LDA zp_seg_sx2_hi
-   STA zp_seg_sx1_hi
+   LDA zp_seg_sx2_l
+   STA zp_seg_sx1_l
+   LDA zp_seg_sx2_h
+   STA zp_seg_sx1_h
 ; recip carried UNCONDITIONALLY (2026-07-11): the post-has_gap y stage
 ; projects from the struct-banked recips.
    LDA zp_seg_v2_rhi
@@ -697,14 +697,14 @@ chain_reuse_v1:
 ; the y stage skip v1's front projection (zp_ys_v1ok).
    LDA zp_ys_done
    BEQ ch_rts
-   LDA zp_seg_sy2_top_lo
-   STA zp_seg_sy1_top_lo
-   LDA zp_seg_sy2_top_hi
-   STA zp_seg_sy1_top_hi
-   LDA zp_seg_sy2_bot_lo
-   STA zp_seg_sy1_bot_lo
-   LDA zp_seg_sy2_bot_hi
-   STA zp_seg_sy1_bot_hi
+   LDA zp_seg_sy2_top_l
+   STA zp_seg_sy1_top_l
+   LDA zp_seg_sy2_top_h
+   STA zp_seg_sy1_top_h
+   LDA zp_seg_sy2_bot_l
+   STA zp_seg_sy1_bot_l
+   LDA zp_seg_sy2_bot_h
+   STA zp_seg_sy1_bot_h
    LDA #1
    STA zp_ys_v1ok
 ch_rts:

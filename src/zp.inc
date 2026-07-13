@@ -22,28 +22,28 @@ zp_br_py = $02                    ; [bsp]
 zp_br_py_h = $03                  ; [bsp]
 bca_py = $03                      ; [ang]; zp_br_py_h
 zp_br_vz = $04                    ; [bsp]; s8 eye-height (prescaled)
-zp_br_px_e = $9D                  ; [bsp]; s16 player int x HIGH byte (px_h is lo)
-zp_br_py_e = $9E                  ; [bsp]; s16 player int y HIGH byte (py_h is lo)
+zp_br_px_x = $9D                  ; [bsp]; s16 player int x HIGH byte (px_h is lo)
+zp_br_py_x = $9E                  ; [bsp]; s16 player int y HIGH byte (py_h is lo)
 zp_br_smag = $05                  ; [bsp]; u8 sin magnitude
 zp_br_sneg = $06                  ; [bsp]; 1 if sin negative
 zp_br_sone = $07                  ; [bsp]; 1 if |sin| == 1
 zp_br_cmag = $08                  ; [bsp]
 zp_br_cneg = $09                  ; [bsp]
 zp_br_cone = $0A                  ; [bsp]
-zp_br_fvxlo = $0B                 ; [bsp]; s16 frac_vx (0.8 contribution)
-zp_br_fvxhi = $0C                 ; [bsp]
-zp_br_fvylo = $0D                 ; [bsp]
-zp_br_fvyhi = $0E                 ; [bsp]
-zp_br_dxlo = $0F                  ; [bsp]
-zp_br_dylo = $10                  ; [bsp]
-zp_br_vxlo = $11                  ; [bsp]
-zp_br_vxhi = $12                  ; [bsp]
-zp_br_vylo = $13                  ; [bsp]
-zp_br_vyhi = $14                  ; [bsp]
+zp_br_fvx_l = $0B                 ; [bsp]; s16 frac_vx (0.8 contribution)
+zp_br_fvx_h = $0C                 ; [bsp]
+zp_br_fvy_l = $0D                 ; [bsp]
+zp_br_fvy_h = $0E                 ; [bsp]
+zp_br_dx_l = $0F                  ; [bsp]
+zp_br_dy_l = $10                  ; [bsp]
+zp_br_vx_l = $11                  ; [bsp]
+zp_br_vx_h = $12                  ; [bsp]
+zp_br_vy_l = $13                  ; [bsp]
+zp_br_vy_h = $14                  ; [bsp]
 zp_br_a = $15                     ; [bsp]; multiplicand A (s8 input)
 zp_br_b = $16                     ; [bsp]; multiplicand B
-zp_br_resl = $17                  ; [bsp]; s24 result lo
-zp_br_resh = $18                  ; [bsp]; s24 result mid (the s16 path stops here)
+zp_br_res_l = $17                  ; [bsp]; s24 result lo
+zp_br_res_h = $18                  ; [bsp]; s24 result mid (the s16 path stops here)
 zp_br_sign = $19                  ; [bsp]; 0 = positive, non-0 = negative
 zp_br_rhi = $1A                   ; [bsp]; u8 hi of reciprocal
 zp_br_rlo = $1B                   ; [bsp]; u8 lo
@@ -52,16 +52,16 @@ zp_br_rlo = $1B                   ; [bsp]; u8 lo
 ; $BB bca_ilo   $BF bca_ihi   $C8-$C9 bca_p1   $CA-$CB bca_p2
 ; $CC t0        $CD t1        $CE val_lo       $CF val_hi
 ; $F5 bca_vis   $F6 bca_ccsave                 $F7 DEFQ_TAIL
-zp_bca_ilo = $BB                  ; [ang]
-zp_bca_ihi = $BF                  ; [ang]
+zp_bca_i_l = $BB                  ; [ang]
+zp_bca_i_h = $BF                  ; [ang]
 zp_bca_p1 = $C8                   ; [ang]; s16 pair with $C9
-zp_bca_p1_hi = $C9                ; [ang]
+zp_bca_p1_h = $C9                ; [ang]
 zp_bca_p2 = $CA                   ; [ang]; s16 pair with $CB
-zp_bca_p2_hi = $CB                ; [ang]
+zp_bca_p2_h = $CB                ; [ang]
 zp_bca_t0 = $CC                   ; [ang]
 zp_bca_t1 = $CD                   ; [ang]
 ; $CE free (was zp_bca_val_lo, 2026-07-11)
-zp_bca_val_hi = $CF               ; [ang]
+zp_bca_val_h = $CF               ; [ang]
 ; $C4/$C5: OWNED by ang/rcache.s (position-keyed rotation cache) — was an
 ; unregistered squatter; registered 2026-07-10. Do not allocate.
 zp_rcache_c4 = $C4                ; [bsp]; rcache internal (see ang/rcache.s)
@@ -105,31 +105,31 @@ VX_STRIDE = 15
 zp_seg_v1_evy = VX1+0
 zp_seg_v1_evx = VX1+1
 zp_seg_v1_clipped = VX1+2
-zp_seg_sx1_lo = VX1+3
-zp_seg_sx1_hi = VX1+4
-zp_seg_sy1_top_lo = VX1+5
-zp_seg_sy1_top_hi = VX1+6
-zp_seg_sy1_bot_lo = VX1+7
-zp_seg_sy1_bot_hi = VX1+8
-zp_seg_sy1_btop_lo = VX1+9
-zp_seg_sy1_btop_hi = VX1+10
-zp_seg_sy1_bbot_lo = VX1+11
-zp_seg_sy1_bbot_hi = VX1+12
+zp_seg_sx1_l = VX1+3
+zp_seg_sx1_h = VX1+4
+zp_seg_sy1_top_l = VX1+5
+zp_seg_sy1_top_h = VX1+6
+zp_seg_sy1_bot_l = VX1+7
+zp_seg_sy1_bot_h = VX1+8
+zp_seg_sy1_btop_l = VX1+9
+zp_seg_sy1_btop_h = VX1+10
+zp_seg_sy1_bbot_l = VX1+11
+zp_seg_sy1_bbot_h = VX1+12
 zp_seg_v1_rhi = VX1+13
 zp_seg_v1_rlo = VX1+14
 zp_seg_v2_evy = VX2+0
 zp_seg_v2_evx = VX2+1
 zp_seg_v2_clipped = VX2+2
-zp_seg_sx2_lo = VX2+3
-zp_seg_sx2_hi = VX2+4
-zp_seg_sy2_top_lo = VX2+5
-zp_seg_sy2_top_hi = VX2+6
-zp_seg_sy2_bot_lo = VX2+7
-zp_seg_sy2_bot_hi = VX2+8
-zp_seg_sy2_btop_lo = VX2+9
-zp_seg_sy2_btop_hi = VX2+10
-zp_seg_sy2_bbot_lo = VX2+11
-zp_seg_sy2_bbot_hi = VX2+12
+zp_seg_sx2_l = VX2+3
+zp_seg_sx2_h = VX2+4
+zp_seg_sy2_top_l = VX2+5
+zp_seg_sy2_top_h = VX2+6
+zp_seg_sy2_bot_l = VX2+7
+zp_seg_sy2_bot_h = VX2+8
+zp_seg_sy2_btop_l = VX2+9
+zp_seg_sy2_btop_h = VX2+10
+zp_seg_sy2_bbot_l = VX2+11
+zp_seg_sy2_bbot_h = VX2+12
 zp_seg_v2_rhi = VX2+13
 zp_seg_v2_rlo = VX2+14
 zp_seg_ep = $26                   ; [bsp]; per-endpoint STRUCT offset into
@@ -137,24 +137,24 @@ zp_seg_ep = $26                   ; [bsp]; per-endpoint STRUCT offset into
 ; recip DIRECTLY into the endpoint structs via ,X = this offset. Set by
 ; the seg loop before each transform / projection / reprojection.
 ; $27 still FREE.
-zp_ri_dlo = $28                   ; [bsp]
+zp_ri_d_l = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
 ; from header+12 via (zp_seg_hdr_p),Y (stride-16 heights; solids never
 ; touch it).
 ; $2A free (was zp_ri_neg — trig sign seeds zp_br_t1 via thunk SMC, 2026-07-11)
 ; $2B FREE (2026-07-09): zp_seg_bch retired — back ceil read on demand
 ; from header+15 via (zp_seg_hdr_p),Y.
-zp_ri_dhi = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
-zp_br_resext = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
-zp_br_vxext = $2E                 ; [bsp]; total view-space x sign-extension byte
-zp_br_vyext = $2F                 ; [bsp]; total view-space y sign-extension byte
+zp_ri_d_h = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
+zp_br_res_x = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
+zp_br_vx_x = $2E                 ; [bsp]; total view-space x sign-extension byte
+zp_br_vy_x = $2F                 ; [bsp]; total view-space y sign-extension byte
 pa_dx = $30                       ; [ang]; s16 in ; w=2
 pa_dy = $32                       ; [ang]; s16 in ; w=2
 zp_bbox_side = $34                ; [bsp]
-zp_br_dxhi = $35                  ; [bsp]
-zp_br_dyhi = $36                  ; [bsp]
-zp_v_xint = $37                   ; [bsp]; saved integer view-x (s8)
-zp_v_xfrac = $38                  ; [bsp]; saved fractional view-x (u8)
+zp_br_dx_h = $35                  ; [bsp]
+zp_br_dy_h = $36                  ; [bsp]
+zp_v_x_h = $37                   ; [bsp]; saved integer view-x (s8)
+zp_v_x_l = $38                  ; [bsp]; saved fractional view-x (u8)
 pa_res = $39                      ; [ang]; u16 out (fineangle) ; w=2
 bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
 zp_bf_dir = $3D                   ; [bsp]; diagonal back-face DIR-table index;
@@ -176,21 +176,21 @@ sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
 zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
 ; between its two projections (one L0 page-in reads both header bytes)
-zp_bf_pym_lo = $4D                ; [bsp]; |py| u16 (pair with $5B; the
+zp_bf_pym_l = $4D                ; [bsp]; |py| u16 (pair with $5B; the
 ; back-face diagonal C-form reads both per call)
 zp_bsp_stack_sp = $4E             ; [bsp]; stack pointer (offset into BSP_STACK)
 zp_side = $4F                     ; [bsp]; 0 = front, 1 = back
-zp_node_dxlo = $50                ; [bsp]
-zp_node_dxhi = $51                ; [bsp]
-zp_node_dylo = $52                ; [bsp]
-zp_node_dyhi = $53                ; [bsp]
-zp_node_nxlo = $54                ; [bsp]
-zp_node_nxhi = $55                ; [bsp]
-zp_node_nylo = $56                ; [bsp]
-zp_node_nyhi = $57                ; [bsp]
-zp_node_chlo = $58                ; [bsp]; current child (lo, hi: 16-bit id)
-zp_node_chhi = $59                ; [bsp]
-zp_bf_pym_hi = $5B                ; [bsp]; |py| hi byte
+zp_node_dx_l = $50                ; [bsp]
+zp_node_dx_h = $51                ; [bsp]
+zp_node_dy_l = $52                ; [bsp]
+zp_node_dy_h = $53                ; [bsp]
+zp_node_nx_l = $54                ; [bsp]
+zp_node_nx_h = $55                ; [bsp]
+zp_node_ny_l = $56                ; [bsp]
+zp_node_ny_h = $57                ; [bsp]
+zp_node_ch_l = $58                ; [bsp]; current child (lo, hi: 16-bit id)
+zp_node_ch_h = $59                ; [bsp]
+zp_bf_pym_h = $5B                ; [bsp]; |py| hi byte
 zp_sx_ord = $5A                   ; [bsp]; reversal flag (0 = v1 already
 ; left, VX_STRIDE = reversed): latched by the has_gap prelude; its ONLY
 ; consumer is the hg_pass canonicalization gate (seg_swap_vx) — every
@@ -220,16 +220,16 @@ zp_buf = $62                      ; [clip]; u16 pointer $62/$63 (from $E3/$E4)
 ; unallocated while hunting the divergence)
 RASTER_ZP_SCRSTRT = $70           ; [clip]
 pa_sx = $73                       ; [ang]
-zp_seg_v_idx_lo = $77             ; [bsp]; cached: vertex index (u16)
+zp_seg_v_idx_l = $77             ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_b = $78              ; [bsp]; B = idx>>3 (bitmap/VXC byte
 ; index, stored pre-derived in the header; idx = B*8 + (lo&7))
 zp_seg_v_bitm = $79               ; [bsp]; valid-bitmap mask (1 << (idx & 7))
-zp_seg_v_cache_lo = $7A           ; [bsp]; cached: pointer to this vertex's cache entry
-zp_seg_v_cache_hi = $7B           ; [bsp]
-zp_seg_dxraw_lo = $7C             ; [bsp]
-zp_seg_dxraw_hi = $7D             ; [bsp]
-zp_seg_dyraw_lo = $7E             ; [bsp]
-zp_seg_dyraw_hi = $7F             ; [bsp]
+zp_seg_v_cache_l = $7A           ; [bsp]; cached: pointer to this vertex's cache entry
+zp_seg_v_cache_h = $7B           ; [bsp]
+zp_seg_dxraw_l = $7C             ; [bsp]
+zp_seg_dxraw_h = $7D             ; [bsp]
+zp_seg_dyraw_l = $7E             ; [bsp]
+zp_seg_dyraw_h = $7F             ; [bsp]
 RASTER_ZP_X0 = $82                ; [clip]
 RASTER_ZP_Y0 = $83                ; [clip]
 RASTER_ZP_X1 = $84                ; [clip]
@@ -239,46 +239,46 @@ pa_sy = $89                       ; [ang]
 ; $8A free (was pa_oct — oct rides X haveax->comb, 2026-07-11)
 ; $8B/$8C free (was bca_hi — folded into direct bca_p2 reads, 2026-07-11)
 bca_pxs = $8D                     ; [ang]; px sign-extended (s16) ; w=2
-zp_br_pxraw_lo = $90              ; [bsp]; s16 player x relative to map_center (raw)
-zp_br_pxraw_hi = $91              ; [bsp]
-zp_br_pyraw_lo = $92              ; [bsp]
-zp_br_pyraw_hi = $93              ; [bsp]
-zp_v_xext = $94                   ; [bsp]; saved view-x s24 extension byte (wide-vx path)
+zp_br_pxraw_l = $90              ; [bsp]; s16 player x relative to map_center (raw)
+zp_br_pxraw_h = $91              ; [bsp]
+zp_br_pyraw_l = $92              ; [bsp]
+zp_br_pyraw_h = $93              ; [bsp]
+zp_v_x_x = $94                   ; [bsp]; saved view-x s24 extension byte (wide-vx path)
 zp_seg_hdr_p = $96                ; [bsp]; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h = $97              ; [bsp]
-zp_bf_pxm_lo = $98                ; [bsp]; |px| u16, staged per frame by
-zp_bf_pxm_hi = $99                ; br_view_setup for the diagonal
+zp_bf_pxm_l = $98                ; [bsp]; |px| u16, staged per frame by
+zp_bf_pxm_h = $99                ; br_view_setup for the diagonal
 ; back-face C-form magnitudes (signs read live from px_e/py_e bit7)
 zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
 ; --- $A8: overlay group (3 phase-disjoint users) ---
-; ($A8 shared: zp_line_xl_lo below — the old zp_ms_emit flag was GC'd
+; ($A8 shared: zp_line_xl_l below — the old zp_ms_emit flag was GC'd
 ; 2026-07-12: no 6502 reader existed)
-zp_line_xl_lo = $A8                  ; [bsp+clip]; u8, left X (oriented left-to-right)
+zp_line_xl_l = $A8                  ; [bsp+clip]; u8, left X (oriented left-to-right)
 ; --- $A9: overlay group (2 phase-disjoint users) ---
-zp_line_yl_lo = $A9                  ; [bsp+clip]; u8, Y at xl
+zp_line_yl_l = $A9                  ; [bsp+clip]; u8, Y at xl
 ; --- $AA: overlay group (2 phase-disjoint users) ---
-zp_line_xr_lo = $AA                  ; [bsp+clip]; u8, right X
+zp_line_xr_l = $AA                  ; [bsp+clip]; u8, right X
 ; --- $AB: overlay group (2 phase-disjoint users) ---
-zp_line_yr_lo = $AB                  ; [bsp+clip]; u8, Y at xr
+zp_line_yr_l = $AB                  ; [bsp+clip]; u8, Y at xr
 zp_line_dx = $AC                  ; [clip]; u8, xr - xl (>= 0)
 zp_line_dy = $AD                  ; [clip]; s8, yr - yl
-zp_line_ylo = $AE                 ; [clip]; u8, min(yl, yr) — running Y bbox
-zp_line_yhi = $AF                 ; [clip]; u8, max(yl, yr) — running Y bbox
+zp_line_y_l = $AE                 ; [clip]; u8, min(yl, yr) — running Y bbox
+zp_line_y_h = $AF                 ; [clip]; u8, max(yl, yr) — running Y bbox
 zp_seg_start_x = $B0              ; [clip]; u8, $FF = NULL (no segment started)
 zp_seg_start_y = $B1              ; [clip]; u8, Y at seg_start_x
 ; --- $B2: overlay group (3 phase-disjoint users) ---
 zp_cb_cx1 = $B2                   ; [clip]; u8, clipped left X
-zp_line_xl_hi = $B2                    ; [clip]
+zp_line_xl_h = $B2                    ; [clip]
 ; --- $B3: overlay group (3 phase-disjoint users) ---
 zp_cb_cy1 = $B3                   ; [clip]; u8, clipped left Y (line Y at cx1)
-zp_line_yl_hi = $B3                    ; [clip]
+zp_line_yl_h = $B3                    ; [clip]
 ; --- $B4: overlay group (3 phase-disjoint users) ---
 zp_cb_cx2 = $B4                   ; [clip]; u8, clipped right X
-zp_line_xr_hi = $B4                    ; [clip]
+zp_line_xr_h = $B4                    ; [clip]
 ; --- $B5: overlay group (3 phase-disjoint users) ---
 zp_cb_cy2 = $B5                   ; [clip]; u8, clipped right Y (line Y at cx2)
-zp_line_yr_hi = $B5                    ; [clip]
+zp_line_yr_h = $B5                    ; [clip]
 ; --- $B6: overlay group (4 phase-disjoint users) ---
 zp_cb_top1 = $B6                  ; [clip]; u8, span top at cx1
 ; --- $B7: overlay group (3 phase-disjoint users) ---
@@ -293,8 +293,8 @@ zp_dcl_rec_buf_h = $BD            ; [clip]; hi byte of buffer ptr ($00 = records
 zp_dcl_rec_off = $BE              ; [clip]; current write offset (1-based) within buffer
 zp_head = $C0                     ; [clip]
 zp_free = $C1                     ; [clip]
-zp_ilo = $C2                      ; [clip]
-zp_ihi = $C3                      ; [clip]
+zp_i_l = $C2                      ; [clip]
+zp_i_h = $C3                      ; [clip]
 zp_hg_cache = $D0                 ; [clip]; has_gap coherence cache: last-matching span offset
 zp_i_x0 = $D1                     ; [clip]
 zp_i_y0 = $D2                     ; [clip]
@@ -307,11 +307,11 @@ zp_i_y1 = $D5                     ; [clip]
 ; --- $D8: overlay group (3 phase-disjoint users) ---
 zp_mul_b = $D9                    ; [bsp+clip]
 ; --- $DA: overlay group (2 phase-disjoint users) ---
-zp_prod_lo = $DA                  ; [bsp+clip]
-zp_div_lo = $DA                   ; [bsp+clip]
+zp_prod_l = $DA                  ; [bsp+clip]
+zp_div_l = $DA                   ; [bsp+clip]
 ; --- $DB: overlay group (2 phase-disjoint users) ---
-zp_prod_hi = $DB                  ; [bsp+clip]
-zp_div_hi = $DB                   ; [bsp+clip]
+zp_prod_h = $DB                  ; [bsp+clip]
+zp_div_h = $DB                   ; [bsp+clip]
 zp_div_den = $DC                  ; [bsp+clip]
 ; --- $DD: overlay group (2 phase-disjoint users) ---
 zp_div_rem = $DD                  ; [clip]

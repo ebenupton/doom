@@ -19,16 +19,16 @@
 ; truncation errors cancel.  sqr[n] = floor(n^2/4) covers n in [0,255];
 ; when a+b >= 256 the sum term uses sqr2[n] = floor((n+256)^2/4),
 ; indexed with (a+b) & $FF.  |a-b| < 256 always, so the difference term
-; always reads sqr_lo/hi.
+; always reads sqr_l/hi.
 ;
 ; Input:  A = a (u8), zp_mul_b = b (u8)
-; Output: zp_prod_lo:zp_prod_hi = a*b (u16).  Clobbers X,Y, zp_tmp0.
-;         CONTRACT (2026-07-09): A = zp_prod_hi on return AND the N/Z
-;         flags reflect it — BOTH exit paths end `STA zp_prod_hi`, which
+; Output: zp_prod_l:zp_prod_h = a*b (u16).  Clobbers X,Y, zp_tmp0.
+;         CONTRACT (2026-07-09): A = zp_prod_h on return AND the N/Z
+;         flags reflect it — BOTH exit paths end `STA zp_prod_h`, which
 ;         leaves A intact. Callers may take the product's HIGH byte
 ;         straight from A (backface's u24 magnitude products do). Preserve
 ;         this if you ever restructure the tail.
-;         zp_prod_lo/hi alias zp_div_lo/hi, so the product feeds
+;         zp_prod_l/hi alias zp_div_l/hi, so the product feeds
 ;         directly into udiv16_8 with no extra loads.
 ;
 ; pseudocode:
@@ -60,24 +60,24 @@ pos:
 ; X = sum; overflow if carry from ADC          ; ||
 ; sum < 256: sqr tables for sum
 ; prod = sqr[s] - sqr[d]  (16-bit table subtract)
-   LDA sqr_lo,X
+   LDA sqr_l,X
    SEC
-   SBC sqr_lo,Y
-   STA zp_prod_lo
+   SBC sqr_l,Y
+   STA zp_prod_l
 ; |||||
-   LDA sqr_hi,X
-   SBC sqr_hi,Y
-   STA zp_prod_hi
+   LDA sqr_h,X
+   SBC sqr_h,Y
+   STA zp_prod_h
    RTS
 ; |||||||
 uo:                                     ; sum >= 256: sqr2 tables for sum (carry already set from BCS)
 ; prod = sqr2[s & 255] - sqr[d]  (X already wrapped mod 256 by the ADC)
-   LDA sqr2_lo,X
-   SBC sqr_lo,Y
-   STA zp_prod_lo
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
-   STA zp_prod_hi
+   LDA sqr2_l,X
+   SBC sqr_l,Y
+   STA zp_prod_l
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   STA zp_prod_h
    RTS
 .endscope
 
@@ -133,10 +133,10 @@ VIS_YMAX = Y_BIAS + 159                 ; = 207: maximum biased visible Y
 ; abi.inc owns the table base (SQR_BASE; banked $1C00 low RAM — above
 ; BCA_WS $1B40, below the drivers at $2000; reachable from the bank-C
 ; clipper AND bsp_render's local umul8. Loader-seeded page).
-sqr_lo = SQR_LO
-sqr_hi = SQR_HI
-sqr2_lo = SQR2_LO
-sqr2_hi = SQR2_HI
+sqr_l = SQR_LO
+sqr_h = SQR_HI
+sqr2_l = SQR2_LO
+sqr2_h = SQR2_HI
 
 ; === RETIRED tighten ZP notes (rewritten 2026-07-12) ===
 ; The blocks that lived here — "seg value cache $A0-$A4", "running seg

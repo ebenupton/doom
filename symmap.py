@@ -8,7 +8,7 @@ and equates (ZP assignments, workspace addresses) are included.
 Usage:
     import symmap
     ENTRY_MARK_SOLID = symmap.sym('jt_mark_solid')  # linked address
-    ZP_ILO        = symmap.sym('zp_ilo')           # ZP equate
+    ZP_ILO        = symmap.sym('zp_i_l')           # ZP equate
 
 Symbols are per build variant (BANKED/C02 change addresses); the variant
 follows DOOM_CPU like the rest of the harness. Names must be unique

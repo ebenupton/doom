@@ -8,7 +8,7 @@
 ; per-frame VERTEX CACHE so a vertex shared by several segs is transformed
 ; and X-projected only once per frame.
 ;
-;   Input:  zp_seg_v_idx_lo/hi = vertex index (u16), written by the caller
+;   Input:  zp_seg_v_idx_l/hi = vertex index (u16), written by the caller
 ;             (doubles as the cache-write index — no staging copy).
 ;   Output: THE ENDPOINT STRUCT (zp.inc VX1/VX2, X = zp_seg_ep = 0/15):
 ;             +0 evy  +1 evx (ALWAYS — crossing math needs both endpoints)
@@ -74,18 +74,18 @@ br_seg_xform_vertex:
    LSR A                                   ; A = B>>2 = (idx*8) hi byte
    CLC
    ADC #>VCACHE_BASE
-   STA zp_seg_v_cache_hi
-   LDA zp_seg_v_idx_lo
+   STA zp_seg_v_cache_h
+   LDA zp_seg_v_idx_l
    ASL A
    ASL A
    ASL A                                   ; (idx*8) lo byte (mod 256)
-   STA zp_seg_v_cache_lo
+   STA zp_seg_v_cache_l
 
 ; --- Check valid bit: byte = B, straight from the header key ---
    LDY zp_seg_v_idx_b                      ; Y RIDES to the vc_miss set-bit
                                         ; (PAGE between is A/flags only)
 ; bit mask = 1 << (idx_lo & 7), via table
-   LDA zp_seg_v_idx_lo
+   LDA zp_seg_v_idx_l
    AND #7
    TAX
    LDA vc_bit_mask,X
@@ -102,24 +102,24 @@ vc_hit:
 ; endpoint struct (X = zp_seg_ep) — no staging. rhi/rlo also land in the
 ; zp_br working slots because rns_select / the projections consume them
 ; there (two consumers of the value in A, not a copy chain). ---
-   LDA (zp_seg_v_cache_lo),Y               ; Y = 0: evy
+   LDA (zp_seg_v_cache_l),Y               ; Y = 0: evy
    STA VX1+0,X
    INY
-   LDA (zp_seg_v_cache_lo),Y
+   LDA (zp_seg_v_cache_l),Y
    STA VX1+1,X                             ; evx
 ; Near-clip flag at offset 6 (cache stores 1 — reuse it as the clip byte)
    LDY #6
-   LDA (zp_seg_v_cache_lo),Y
+   LDA (zp_seg_v_cache_l),Y
    BEQ vc_hit_ok
    STA VX1+2,X                             ; clip = 1
    RTS
 vc_hit_ok:
    LDY #2
-   LDA (zp_seg_v_cache_lo),Y
+   LDA (zp_seg_v_cache_l),Y
    STA zp_br_rhi
    STA VX1+13,X                            ; rhi (for ap2_solid_proj)
    INY
-   LDA (zp_seg_v_cache_lo),Y
+   LDA (zp_seg_v_cache_l),Y
    STA zp_br_rlo
    STA VX1+14,X                            ; rlo
    JSR rns_select                          ; cached S → re-pick the shifter
@@ -128,10 +128,10 @@ vc_hit_ok:
                                         ; rlo LAST)
    LDX zp_seg_ep
    LDY #4
-   LDA (zp_seg_v_cache_lo),Y
+   LDA (zp_seg_v_cache_l),Y
    STA VX1+3,X                             ; sx_lo
    LDY #5
-   LDA (zp_seg_v_cache_lo),Y
+   LDA (zp_seg_v_cache_l),Y
    STA VX1+4,X                             ; sx_hi
    RTS                                     ; Y projection DEFERRED to the
                                         ; post-has_gap y stage (2026-07-11):
@@ -148,7 +148,7 @@ vc_miss:
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
 
-; (cache base ptr already at zp_seg_v_cache_lo/hi — computed at entry)
+; (cache base ptr already at zp_seg_v_cache_l/hi — computed at entry)
 
 ; Scope split: vxc_jsr_site must be a GLOBAL label — vxc_frame SMC-patches
 ; this JSR's operand between br_to_view_fetch (VXC disabled: the original
@@ -171,12 +171,12 @@ vxc_jsr_site:
 ; only vyhi misses the sign and lets clipped segs through.
    LDX zp_seg_ep                           ; struct offset (X survives to the
                                         ; cache pre-write + near-clip test)
-   LDA zp_br_vxhi
+   LDA zp_br_vx_h
    STA VX1+1,X                             ; evx
-   LDA zp_br_vylo
+   LDA zp_br_vy_l
    ASL A
 ; carry = bit 7 of vylo
-   LDA zp_br_vyhi
+   LDA zp_br_vy_h
    ADC #0
 ; A = (vyhi:vylo + 128) >> 8 low byte
    STA VX1+0,X                             ; evy
@@ -187,7 +187,7 @@ vxc_jsr_site:
 ; --- evy16 clamp, common case inline (spectrack 2026-07-12: 88% of the
 ; old ev_clamp_evy16 calls did nothing). C is the rounding add's carry —
 ; still consumed here, the carry-chain contract just moved to the site.
-   LDA zp_br_vyext
+   LDA zp_br_vy_x
    ADC #0                                  ; rounded evy16 hi byte
    BNE ec_hi_nz                            ; hi != 0 → rare, full logic
    LDA VX1+0,X
@@ -205,16 +205,16 @@ ec_done:
 ; pure channel (2026-07-11).
    LDY #0
    LDA VX1+0,X
-   STA (zp_seg_v_cache_lo),Y
+   STA (zp_seg_v_cache_l),Y
    INY
    LDA VX1+1,X
-   STA (zp_seg_v_cache_lo),Y
+   STA (zp_seg_v_cache_l),Y
 
 ; Near-clip on full s24: clipped iff total_vy < NEAR_88 (= 128 in 8.8).
 ;   vyext < 0 → clipped (very negative)
 ;   vyext > 0 → ok      (very positive, ≥ 256)
 ;   vyext = 0 → check (vyhi + carry from vylo bit 7) >= 1.
-   LDA zp_br_vyext
+   LDA zp_br_vy_x
    BMI nc_fail
    BNE nc_ok
    LDA VX1+0,X
@@ -224,30 +224,30 @@ nc_fail:
 ; Mark near-clipped in cache AND the struct (same byte value, one load).
    LDY #6
    LDA #1
-   STA (zp_seg_v_cache_lo),Y
+   STA (zp_seg_v_cache_l),Y
    STA VX1+2,X                             ; clip = 1
    RTS
 nc_ok:
 ; Save view-space x for br_project_x below (deferred past the
 ; near-clip test; vxlo/hi/ext are still intact — nothing above clobbers
 ; them since the Y projection moved to the post-has_gap stage).
-   LDA zp_br_vxhi
-   STA zp_v_xint
-   LDA zp_br_vxlo
-   STA zp_v_xfrac
-   LDA zp_br_vxext
-   STA zp_v_xext
+   LDA zp_br_vx_h
+   STA zp_v_x_h
+   LDA zp_br_vx_l
+   STA zp_v_x_l
+   LDA zp_br_vx_x
+   STA zp_v_x_x
 ; --- Compute reciprocal: vy_idx = s24 total_vy >> 7 (9.1). The old
 ; code dropped vy_ext ('per s8 vx contract') — but wide-vx segs are
 ; projected now, and a vertex with vy >= 256 view units got an index
 ; computed mod 65536 (e.g. vy=262 -> idx 10 instead of 524, recip 23x
 ; too big, sx=-2296 instead of 77). br_recip clamps to [2,1023]. ---
-   LDA zp_br_vylo
+   LDA zp_br_vy_l
    ASL A
-   LDA zp_br_vyhi
+   LDA zp_br_vy_h
    ROL A
    STA zp_br_t0
-   LDA zp_br_vyext
+   LDA zp_br_vy_x
    ROL A
    STA zp_br_t1
    JSR br_recip                            ; rhi/rlo = reciprocal
@@ -273,19 +273,19 @@ nc_ok:
 ; (the second zp_br_p copy died with the first, 2026-07-11). ---
    LDY #2
    LDA zp_br_rhi
-   STA (zp_seg_v_cache_lo),Y
+   STA (zp_seg_v_cache_l),Y
    INY
    LDA zp_br_rlo
-   STA (zp_seg_v_cache_lo),Y
+   STA (zp_seg_v_cache_l),Y
    INY
-   LDA zp_br_resl
-   STA (zp_seg_v_cache_lo),Y
+   LDA zp_br_res_l
+   STA (zp_seg_v_cache_l),Y
    INY
-   LDA zp_br_resh
-   STA (zp_seg_v_cache_lo),Y
+   LDA zp_br_res_h
+   STA (zp_seg_v_cache_l),Y
    INY
    LDA #0
-   STA (zp_seg_v_cache_lo),Y
+   STA (zp_seg_v_cache_l),Y
 ; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
    RTS
 .endscope
@@ -300,7 +300,7 @@ nc_ok:
 ; patches the operand; disabled frames call br_to_view_fetch directly,
 ; zero overhead). Ends RTS; the caller falls into the evy/evx compute.
 ;
-; In:  zp_seg_v_idx_lo/b (vertex key), zp_seg_v_bitm (1 << (idx&7)),
+; In:  zp_seg_v_idx_l/b (vertex key), zp_seg_v_bitm (1 << (idx&7)),
 ;      vxc_ref_x/y (this frame's to_view(0,0), s24 each)
 ; Out: zp_br_vx/vy lo/hi/ext = exact view totals (bit-identical to
 ;      br_to_view: base' = L(w) is translation-invariant, see vxcache.s)
@@ -313,53 +313,53 @@ vxc_arm:
    AND zp_seg_v_bitm
    BEQ va_cold
 ; --- warm: total = base + ref, two s24 adds (page-split on B bit 5) ---
-   LDY zp_seg_v_idx_lo
+   LDY zp_seg_v_idx_l
    LDA zp_seg_v_idx_b
    AND #$20                                ; idx >= 256  <=>  B >= 32 (B<=58)
    BNE va_hi
    CLC
    LDA VXC_XLO,Y
    ADC vxc_ref_x+0
-   STA zp_br_vxlo
+   STA zp_br_vx_l
    LDA VXC_XHI,Y
    ADC vxc_ref_x+1
-   STA zp_br_vxhi
+   STA zp_br_vx_h
    LDA VXC_XEXT,Y
    ADC vxc_ref_x+2
-   STA zp_br_vxext
+   STA zp_br_vx_x
    CLC
    LDA VXC_YLO,Y
    ADC vxc_ref_y+0
-   STA zp_br_vylo
+   STA zp_br_vy_l
    LDA VXC_YHI,Y
    ADC vxc_ref_y+1
-   STA zp_br_vyhi
+   STA zp_br_vy_h
    LDA VXC_YEXT,Y
    ADC vxc_ref_y+2
-   STA zp_br_vyext
+   STA zp_br_vy_x
    PAGE BANK_L0
    RTS
 va_hi:
    CLC
    LDA VXC_XLO+$100,Y
    ADC vxc_ref_x+0
-   STA zp_br_vxlo
+   STA zp_br_vx_l
    LDA VXC_XHI+$100,Y
    ADC vxc_ref_x+1
-   STA zp_br_vxhi
+   STA zp_br_vx_h
    LDA VXC_XEXT+$100,Y
    ADC vxc_ref_x+2
-   STA zp_br_vxext
+   STA zp_br_vx_x
    CLC
    LDA VXC_YLO+$100,Y
    ADC vxc_ref_y+0
-   STA zp_br_vylo
+   STA zp_br_vy_l
    LDA VXC_YHI+$100,Y
    ADC vxc_ref_y+1
-   STA zp_br_vyhi
+   STA zp_br_vy_h
    LDA VXC_YEXT+$100,Y
    ADC vxc_ref_y+2
-   STA zp_br_vyext
+   STA zp_br_vy_x
    PAGE BANK_L0
    RTS
 va_cold:

@@ -64,7 +64,7 @@ ANIM_WS     = $05EB                     ; per mover: pos_lo, pos_hi, state/timer
 
 ; ============================================================================
 ; Resident hub — anim_ss_hook (in subsector.s) is SMC-patched here by
-; anim_init. Entry: BANK_L0 paged, subsector index (u8) at zp_node_chlo.
+; anim_init. Entry: BANK_L0 paged, subsector index (u8) at zp_node_ch_l.
 ; A/X/Y are dead at the hook point (br_render_subsector reloads them).
 ; ============================================================================
 .if ::BANKED
@@ -81,7 +81,7 @@ ANIM_WS     = $05EB                     ; per mover: pos_lo, pos_hi, state/timer
 ;     DIRTY &= ~bit(m)                   # applied == logical again
 anim_hub:
 .scope
-   LDX zp_node_chlo
+   LDX zp_node_ch_l
    LDA ANIM_SSMASK,X                       ; movers with segs in this subsector
    AND ANIM_DIRTY
    BEQ ah_done

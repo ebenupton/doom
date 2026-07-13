@@ -82,7 +82,7 @@ br_render_frame:
    INX
    STX zp_bsp_stack_sp
 
-; --- Main loop: pop an entry into zp_node_chlo:chhi and dispatch on its
+; --- Main loop: pop an entry into zp_node_ch_l:chhi and dispatch on its
 ;     kind. Loop ends when the stack empties (or the screen fills). ---
 bsp_loop:
    LDA zp_bsp_stack_sp
@@ -92,11 +92,11 @@ bsp_pop:
    DEC zp_bsp_stack_sp                     ; pop hi byte
    LDX zp_bsp_stack_sp
    LDA BSP_STACK,X
-   STA zp_node_chhi
+   STA zp_node_ch_h
    DEC zp_bsp_stack_sp                     ; pop lo byte
    LDX zp_bsp_stack_sp
    LDA BSP_STACK,X
-   STA zp_node_chlo
+   STA zp_node_ch_l
 
 ; Screen full → nothing more can become visible; drain the stack and
 ; return (mirrors Python's `if clips.is_full(): return` at every level).
@@ -106,17 +106,17 @@ bsp_pop:
 bsp_dispatch:
 ; Entry kinds (hi byte): $80|sshi = subsector, $40|side<<5 = deferred
 ; far child (bbox-checked at pop time), else plain node id.
-   LDA zp_node_chhi
+   LDA zp_node_ch_h
    AND #$40
    BNE bsp_deferred
-   LDA zp_node_chhi
+   LDA zp_node_ch_h
    AND #$80
    BEQ bsp_node
 ; Subsector: strip the tag bit and render its segs. (WAD id $FFFF is
 ; pre-normalized to subsector 0 by the packer/wrapper.)
-   LDA zp_node_chhi
+   LDA zp_node_ch_h
    AND #$7F
-   STA zp_node_chhi
+   STA zp_node_ch_h
    JSR br_render_subsector
    JMP bsp_loop
 bsp_done_full:
@@ -132,7 +132,7 @@ bsp_deferred:
 ;   side = (chhi >> 5) & 1
 ;   if bbox_visible(node, side): ch = node.children[side]; dispatch(ch)
 ; Extract the far-side bit into zp_bbox_side.
-   LDA zp_node_chhi
+   LDA zp_node_ch_h
    AND #$20
    BEQ bsp_df_s0
    LDA #1
@@ -142,9 +142,9 @@ bsp_df_s0:
 bsp_df_have:
    STA zp_bbox_side
 ; Strip the tag+side bits, leaving the plain node id for the bbox read.
-   LDA zp_node_chhi
+   LDA zp_node_ch_h
    AND #$1F
-   STA zp_node_chhi
+   STA zp_node_ch_h
 bv_site_far:                            ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
    BEQ bsp_loop_j                          ; far side invisible/occluded → skip
@@ -164,7 +164,7 @@ bsp_node:
 ; bbox/has_gap runs at pop time, after the near subtree.
 ; Entry = (node_lo, $40 | farside<<5 | node_hi).
    LDX zp_bsp_stack_sp
-   LDA zp_node_chlo
+   LDA zp_node_ch_l
    STA BSP_STACK,X
    INX
    LDA zp_side
@@ -176,7 +176,7 @@ bsp_node:
    ASL A
 ; farside << 5
    ORA #$40
-   ORA zp_node_chhi
+   ORA zp_node_ch_h
    STA BSP_STACK,X
    INX
    STX zp_bsp_stack_sp
@@ -215,7 +215,7 @@ BSP_FAR_HI = $096E
 
 ; ============================================================================
 ; br_render_subsector — called per subsector during walk.
-;   Input: zp_node_chlo:hi = subsector id (with high bit cleared).
+;   Input: zp_node_ch_l:hi = subsector id (with high bit cleared).
 ;
 ; (Historical note: this banner predates the real implementation — the
 ; routine now lives in src/bsp/subsector.s and does exactly the steps

@@ -24,7 +24,7 @@
 ;   2. Left only (xend <= ihi): truncate xend = ilo - 1
 ;   3. Middle split: alloc sibling for right frag, truncate original
 ;
-; Input:  zp_ilo, zp_ihi = solid column range (closed, both inclusive,
+; Input:  zp_i_l, zp_i_h = solid column range (closed, both inclusive,
 ;         pre-clamped to [0,255] by the caller; ihi < ilo = no-op).
 ;         zp_head = active span list (sorted by XSTART).
 ; Output: every active column in [ilo,ihi] removed; freed slots pushed
@@ -61,8 +61,8 @@ span_mark_solid:
 ; return 1 against a pool whose only live span was (121,132)).
    ZERO zp_hg_cache
 ; Degenerate range (ihi < ilo) → no-op.
-   LDA zp_ihi
-   CMP zp_ilo
+   LDA zp_i_h
+   CMP zp_i_l
    BCS mss
 ; |
    RTS
@@ -88,7 +88,7 @@ ms_chk_after:
 ; Done if xstart > ihi (span starts after solid range).
 ; Load xstart once and reuse for both ihi and ilo comparisons.
    LDA POOL_XSTART,X                       ; |
-   CMP zp_ihi
+   CMP zp_i_h
    BEQ ms_overlap
    BCS ms_rts_x
 ; |||
@@ -96,13 +96,13 @@ ms_overlap:
 ; A = xstart (from ms_chk_after). Check left fragment.
 ; xstart < ilo  → keep a left fragment   (xend may need clip too)
 ; xstart >= ilo → no left fragment       (this span is entirely in or right of [ilo,ihi])
-   CMP zp_ilo
+   CMP zp_i_l
    BCC ms_has_left
 ; ||
 ; --- No left fragment ---
 ; xend > ihi  → shrink in place (BCC past ms_free)
 ; xend <= ihi → fully covered → fall through to ms_free
-   LDA zp_ihi
+   LDA zp_i_h
    CMP POOL_XEND,X
    BCC ms_shrink
 ; |
@@ -153,7 +153,7 @@ ms_shrink:
 msl:                                    ; X = current span — fall-through from shrink, branch target from free
 msl_x:
    LDA POOL_XEND,X
-   CMP zp_ilo
+   CMP zp_i_l
    BCS ms_chk_after
 ; ||||
    STX zp_prev
@@ -162,7 +162,7 @@ msl_x:
 ; ||
 msl_y:
    LDA POOL_XEND,Y
-   CMP zp_ilo
+   CMP zp_i_l
    BCS ms_chk_after_y
 ; ||||
    STY zp_prev
@@ -174,7 +174,7 @@ ms_rts_x:
 
 ms_has_left:
 ; xstart < ilo. Has right fragment? xend > ihi?
-   LDA zp_ihi
+   LDA zp_i_h
    CMP POOL_XEND,X
    BCS ms_left_only
 ; |
@@ -222,7 +222,7 @@ ms_has_left:
 ; |
 ; Sibling's active range = [ihi+1, original xend]
 ; carry already clear: BCS ms_left_only fell through (C=0) and alloc_span/STAs don't change C
-   LDA zp_ihi
+   LDA zp_i_h
    ADC #1
    STA POOL_XSTART,X
 ; |
@@ -238,7 +238,7 @@ ms_has_left:
 ; |
 ; Original (Y) now becomes the left fragment: xend = ilo - 1
 ; carry is clear: C=0 propagated from BCS fall-through, through alloc+copies+ADC(no overflow)
-   LDA zp_ilo
+   LDA zp_i_l
    SBC #0
    STA POOL_XEND,Y
 ; |
@@ -256,7 +256,7 @@ ms_left_only_after_fail:
    LDX zp_prev
 ms_left_only:
 ; xend = ilo - 1 (truncate to left fragment only)
-   LDA zp_ilo
+   LDA zp_i_l
    SEC
    SBC #1
    STA POOL_XEND,X

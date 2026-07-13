@@ -114,8 +114,8 @@ free_span:
 ;
 ; Computes A * zp_mul_b using: a*b = sqr(a+b) - sqr(a-b)
 ; where sqr(n) = floor(n^2/4).  Two table sets handle a+b < 256 vs
-; a+b >= 256.  |a-b| is always < 256 so uses sqr_lo/hi in both cases.
-; Result: zp_prod_lo:zp_prod_hi (u16).
+; a+b >= 256.  |a-b| is always < 256 so uses sqr_l/hi in both cases.
+; Result: zp_prod_l:zp_prod_h (u16).
 ;
 ; This is the hottest subroutine -- called by every interpolation.
 ; ======================================================================
@@ -135,7 +135,7 @@ free_span:
 ; ======================================================================
 ; UDIV16_8: unsigned 16/8 restoring division
 ;
-; Divides zp_div_lo:hi by zp_div_den, quotient returned in A.
+; Divides zp_div_l:hi by zp_div_den, quotient returned in A.
 ; FAST PATH (most common): div_hi < den => quot fits u8, 8 iterations.
 ; SLOW PATH: div_hi >= den (seg extrapolation), 16 iterations.
 ;
@@ -146,13 +146,13 @@ free_span:
 ; *** HOTTEST LOOP *** -- the 3-instruction shift chain (ASL/ROL/ROL)
 ; plus trial subtraction account for ~20% of all clipper cycles.
 ;
-; Input:  zp_div_lo:zp_div_hi = dividend (u16; aliases zp_prod_lo/hi so
+; Input:  zp_div_l:zp_div_h = dividend (u16; aliases zp_prod_l/hi so
 ;         umul8's product is already in place), zp_div_den = divisor
 ;         (u8, caller guarantees != 0).
 ; Output: A = quotient. Fast path: full u8 quotient. Slow path: LOW byte
-;         of the 16-bit quotient (high byte is left in zp_div_hi);
+;         of the 16-bit quotient (high byte is left in zp_div_h);
 ;         callers on that path only need the low 8 bits. Remainder is
-;         discarded. Clobbers X and zp_div_lo/hi; Y preserved.
+;         discarded. Clobbers X and zp_div_l/hi; Y preserved.
 ;
 ; pseudocode:
 ;   if div_hi < den:                      # quotient fits u8
@@ -165,7 +165,7 @@ free_span:
 udiv16_8:
 .scope
 ; Path select: den > div_hi ⇒ quotient < 256 ⇒ 8-iteration fast path.
-   LDA zp_div_hi
+   LDA zp_div_h
    CMP zp_div_den
    BCS d16
 ; FAST PATH: quotient fits in 8 bits.  Setup: rem = div_hi,
@@ -174,10 +174,10 @@ udiv16_8:
 ; time.  Each skip iteration (~19 cyc) is cheaper than the main
 ; loop iteration (~33 cyc when the trial subtract fails), saving
 ; ~14 cyc per skipped iteration.
-   LDX zp_div_lo
-   STX zp_div_hi
+   LDX zp_div_l
+   STX zp_div_h
    LDX #0
-   STX zp_div_lo
+   STX zp_div_l
 ; --- Unrolled skip: consume leading zero quotient bits ---
 ; 8 copies; each branches to its own per-copy commit handler that sets
 ; X directly (saves DEX per skipped copy: −2 cyc per skip iteration).
@@ -186,42 +186,42 @@ udiv16_8:
 ; While bits are 0 there's nothing to write (div_lo is already 0), so
 ; skipping is pure profit; the first 1 bit jumps to dskip_cN with
 ; X = iterations remaining (this one included).
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c8
    CMP zp_div_den
    BCS dskip_c8
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c7
    CMP zp_div_den
    BCS dskip_c7
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c6
    CMP zp_div_den
    BCS dskip_c6
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c5
    CMP zp_div_den
    BCS dskip_c5
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c4
    CMP zp_div_den
    BCS dskip_c4
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c3
    CMP zp_div_den
    BCS dskip_c3
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c2
    CMP zp_div_den
    BCS dskip_c2
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c1
    CMP zp_div_den
@@ -259,11 +259,11 @@ dskip_commit:
 ; rem>=den; via ROL-BCS the true 9-bit rem is 256+A, and 256+A-den
 ; still fits u8 with C=1.
    SBC zp_div_den                          ; carry already set (from BCS)
-   INC zp_div_lo                           ; set this quotient bit
+   INC zp_div_l                           ; set this quotient bit
    DEX
    BNE dl
 ; remaining iterations via main loop (rem in A)
-   LDA zp_div_lo
+   LDA zp_div_l
    RTS
 d16:
 ; SLOW PATH: quotient can exceed u8. Full 16-iteration restoring divide
@@ -276,8 +276,8 @@ d16:
 ; rem); if rem >= den (or a bit overflowed rem: dl_over) subtract den
 ; and set the vacated quotient bit via INC div_lo.
 dl:
-   ASL zp_div_lo
-   ROL zp_div_hi
+   ASL zp_div_l
+   ROL zp_div_h
    ROL A
 ; ||||||||||||||||||||||||||||||||||||||||
    BCS dl_over                             ; |||||
@@ -286,12 +286,12 @@ dl:
 ; |||||||||||||||||||||||||||||
    SBC zp_div_den                          ; |
 dl_commit:
-   INC zp_div_lo                           ; |||||
+   INC zp_div_l                           ; |||||
 ds:
    DEX
    BNE dl
 ; |||||||||||||
-   LDA zp_div_lo
+   LDA zp_div_l
    RTS
 ; |||
 dl_over:

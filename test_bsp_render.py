@@ -21,8 +21,8 @@ ENTRY_BR_RECIP = _sym('jt_br_recip')
 
 ZP_A    = _sym('zp_br_a')
 ZP_B    = _sym('zp_br_b')
-ZP_RESL = _sym('zp_br_resl')
-ZP_RESH = _sym('zp_br_resh')
+ZP_RESL = _sym('zp_br_res_l')
+ZP_RESH = _sym('zp_br_res_h')
 ZP_T0   = _sym('zp_br_t0')
 ZP_T1   = _sym('zp_br_t1')
 ZP_RHI  = _sym('zp_br_rhi')
@@ -119,11 +119,11 @@ ZP_PX    = _sym('zp_br_px');    ZP_PXH  = ZP_PX + 1
 ZP_PY    = _sym('zp_br_py');    ZP_PYH  = ZP_PY + 1
 ZP_SMAG  = _sym('zp_br_smag');  ZP_SNEG = _sym('zp_br_sneg'); ZP_SONE = _sym('zp_br_sone')
 ZP_CMAG  = _sym('zp_br_cmag');  ZP_CNEG = _sym('zp_br_cneg'); ZP_CONE = _sym('zp_br_cone')
-ZP_FVXLO = _sym('zp_br_fvxlo'); ZP_FVXHI = ZP_FVXLO + 1
-ZP_FVYLO = _sym('zp_br_fvylo'); ZP_FVYHI = ZP_FVYLO + 1
+ZP_FVXLO = _sym('zp_br_fvx_l'); ZP_FVXHI = ZP_FVXLO + 1
+ZP_FVYLO = _sym('zp_br_fvy_l'); ZP_FVYHI = ZP_FVYLO + 1
 ZP_DX    = _sym('zp_br_dx');    ZP_DY    = _sym('zp_br_dy')
-ZP_VXLO  = _sym('zp_br_vxlo');  ZP_VXHI  = _sym('zp_br_vxhi')
-ZP_VYLO  = _sym('zp_br_vylo');  ZP_VYHI  = _sym('zp_br_vyhi')
+ZP_VXLO  = _sym('zp_br_vx_l');  ZP_VXHI  = _sym('zp_br_vx_h')
+ZP_VYLO  = _sym('zp_br_vy_l');  ZP_VYHI  = _sym('zp_br_vy_h')
 
 
 def write_view_state(mem, vx_88, vy_88, sc_tuple):
@@ -133,8 +133,8 @@ def write_view_state(mem, vx_88, vy_88, sc_tuple):
     mem[ZP_PXH] = (vx_88 >> 8) & 0xFF
     mem[ZP_PY]  = vy_88 & 0xFF
     mem[ZP_PYH] = (vy_88 >> 8) & 0xFF
-    mem[_sym('zp_br_px_e')] = (vx_88 >> 16) & 0xFF
-    mem[_sym('zp_br_py_e')] = (vy_88 >> 16) & 0xFF
+    mem[_sym('zp_br_px_x')] = (vx_88 >> 16) & 0xFF
+    mem[_sym('zp_br_py_x')] = (vy_88 >> 16) & 0xFF
     mem[ZP_SMAG] = s_mag
     mem[ZP_SNEG] = 1 if s_neg else 0
     mem[ZP_SONE] = 1 if s_one else 0
@@ -259,7 +259,7 @@ def test_project_x():
             for vx_frac in [0, 1, 127, 128, 255]:
                 cases.append((vx, vx_frac, rh, rl))
     fail = 0
-    ZP_XINT, ZP_XEXT, ZP_XFRAC = _sym('zp_v_xint'), _sym('zp_v_xext'), _sym('zp_v_xfrac')
+    ZP_XINT, ZP_XEXT, ZP_XFRAC = _sym('zp_v_x_h'), _sym('zp_v_x_x'), _sym('zp_v_x_l')
     for vx, vx_frac, rh, rl in cases:
         mem[ZP_XINT] = vx & 0xFF
         mem[ZP_XEXT] = 0xFF if vx < 0 else 0   # narrow: ext = sign extension
@@ -288,9 +288,9 @@ def test_project_x_wide():
     the fp_project_x mirror (X88 >>= 1 with S-- until s8; S floors at 1)."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
-    ZP_XINT = _sym('zp_v_xint')
-    ZP_XEXT = _sym('zp_v_xext')
-    ZP_XFRAC = _sym('zp_v_xfrac')
+    ZP_XINT = _sym('zp_v_x_h')
+    ZP_XEXT = _sym('zp_v_x_x')
+    ZP_XFRAC = _sym('zp_v_x_l')
     ENTRY_AUTO = ENTRY_BR_PROJECT_X          # unified entry dispatches itself
     cases = []
     for vy_idx in [1, 2, 5, 17, 65, 200, 513, 1023]:   # 1 -> S=1: deficit arm

@@ -1,7 +1,7 @@
 
 ; ============================================================================
 ; br_render_subsector — THE SEG LOOP: process one subsector.
-;   Input: zp_node_chlo:hi = subsector id (high bit cleared).
+;   Input: zp_node_ch_l:hi = subsector id (high bit cleared).
 ;   Caller: the BSP walk (bsp/walk.s) through the anim_ss_hook JMP below.
 ;
 ;   Per-seg order of battle (each stage's owner file in brackets):
@@ -42,11 +42,11 @@
 ;   defq_drain()                               # mark_solid / tighten, in order
 ;
 ; Line emission contract (clipper interface):
-;   zp_line_xl_lo/yl/xr/yr ($A8-$AB) = endpoint lo bytes,
-;   $B2-$B5 (zp_line_xl_hi..zp_line_yr_hi)  = endpoint s16 hi bytes → SC_DRAW_S16.
+;   zp_line_xl_l/yl/xr/yr ($A8-$AB) = endpoint lo bytes,
+;   $B2-$B5 (zp_line_xl_h..zp_line_yr_h)  = endpoint s16 hi bytes → SC_DRAW_S16.
 ;   $BC/$BD (zp_dcl_rec_buf) = per-span records buffer: hi byte $00 =
 ;   records off, $07 → TOP_RECORDS ($0700), $08 → BOT_RECORDS ($0800).
-;   $C2/$C3 (zp_ilo/zp_ihi) = column range for has_gap / defq ops.
+;   $C2/$C3 (zp_i_l/zp_i_h) = column range for has_gap / defq ops.
 ;
 ; Deferral (why not apply at seg end): Python defers both mark_solid and
 ; tighten to subsector end IN SEG ORDER — applying a tighten immediately
@@ -68,9 +68,9 @@ anim_ss_cont:
 ; diff this against the Python walk's subsector set. The banked build
 ; compiles it out (nothing on the disc reads it; ~44 bytes of MAIN back).
 .if .not ::BANKED
-   LDA zp_node_chlo
+   LDA zp_node_ch_l
    STA zp_br_t0
-   LDA zp_node_chhi
+   LDA zp_node_ch_h
    STA zp_br_t1
    LSR zp_br_t1
    ROR zp_br_t0
@@ -78,7 +78,7 @@ anim_ss_cont:
    ROR zp_br_t0
    LSR zp_br_t1
    ROR zp_br_t0
-   LDA zp_node_chlo
+   LDA zp_node_ch_l
    AND #7
    TAX
    LDA #<SS_VISITED_BITMAP
@@ -95,7 +95,7 @@ anim_ss_cont:
 .endif
 
 ; --- Read subsector header (SoA pages: count / first_lo / first_hi) ---
-   LDX zp_node_chlo
+   LDX zp_node_ch_l
    LDA SS_CNT,X
    STA zp_seg_count
 
@@ -222,7 +222,7 @@ seg_proc:
 ; consecutive front-facing pairs. zp_seg_v_idx_b is invalidated at the
 ; subsector boundary and when a crossing overwrites VX2.
    LDA (zp_seg_hdr_p),Y
-   CMP zp_seg_v_idx_lo
+   CMP zp_seg_v_idx_l
    BNE ch_miss
    INY
    LDA (zp_seg_hdr_p),Y
@@ -241,7 +241,7 @@ ch_miss:
    STY zp_ys_done                           ; prev-seg donation dies here
    STY zp_ys_v1ok
    LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v_idx_lo
+   STA zp_seg_v_idx_l
    INY
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_b                      ; CONTRACT: A = B at entry —
@@ -257,7 +257,7 @@ ch_v1_done:
 ; needs the L0 window back. Flat: no-op.
    LDY #2
    LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v_idx_lo
+   STA zp_seg_v_idx_l
    INY
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_b                      ; CONTRACT: A = B at entry —
@@ -320,32 +320,32 @@ s_both_have_proj:
 ;              >= 256): bail, no clamps needed.
 ; Only page-straddling segs (hi bytes differ) take the full s16 order +
 ; per-endpoint ladder path below.
-   LDA zp_seg_sx1_hi
-   CMP zp_seg_sx2_hi
+   LDA zp_seg_sx1_h
+   CMP zp_seg_sx2_h
    BNE hg_hi_diff
    TAX                                     ; shared hi byte
    BNE hg_adv                              ; nonzero: off one side entirely
-   LDA zp_seg_sx1_lo
-   CMP zp_seg_sx2_lo
+   LDA zp_seg_sx1_l
+   CMP zp_seg_sx2_l
    BCS hg_fast_rev                         ; sx1 >= sx2 (ties -> rev, as before)
    LDX #0
-   STA zp_ilo                              ; A = sx1_lo
-   LDA zp_seg_sx2_lo
-   STA zp_ihi
+   STA zp_i_l                              ; A = sx1_lo
+   LDA zp_seg_sx2_l
+   STA zp_i_h
    JMP hg_query
 hg_fast_rev:
    LDX #VX_STRIDE
-   LDA zp_seg_sx2_lo
-   STA zp_ilo
-   LDA zp_seg_sx1_lo
-   STA zp_ihi
+   LDA zp_seg_sx2_l
+   STA zp_i_l
+   LDA zp_seg_sx1_l
+   STA zp_i_h
    JMP hg_query
 hg_hi_diff:
 ; hi bytes differ: signed hi-byte difference gives the order (lo bytes
 ; only ever break ties, and ties took the equal path above)
-   LDA zp_seg_sx1_hi
+   LDA zp_seg_sx1_h
    SEC
-   SBC zp_seg_sx2_hi
+   SBC zp_seg_sx2_h
    BVC hgd_v_ok
    EOR #$80
 hgd_v_ok:
@@ -353,17 +353,17 @@ hgd_v_ok:
 ; --- min = sx1, max = sx2 ---
 hg_min1:
    LDX #0
-   LDA zp_seg_sx2_hi                       ; max hi
+   LDA zp_seg_sx2_h                       ; max hi
    BMI hg_adv                              ; max < 0: off-screen left
    BNE hg_hi255_1                          ; max >= 256: ihi = 255
-   LDA zp_seg_sx2_lo
+   LDA zp_seg_sx2_l
 hg_hist1:
-   STA zp_ihi
-   LDA zp_seg_sx1_hi                       ; min hi
+   STA zp_i_h
+   LDA zp_seg_sx1_h                       ; min hi
    BNE hg_lock1                            ; nonzero: neg -> 0 / pos -> bail
-   LDA zp_seg_sx1_lo
+   LDA zp_seg_sx1_l
 hg_lost1:
-   STA zp_ilo
+   STA zp_i_l
    JMP hg_query
 hg_hi255_1:
    LDA #255
@@ -384,17 +384,17 @@ hg_lock2:
 ; --- min = sx2, max = sx1 ---
 hg_min2:
    LDX #VX_STRIDE
-   LDA zp_seg_sx1_hi                       ; max hi
+   LDA zp_seg_sx1_h                       ; max hi
    BMI hg_adv                              ; max < 0: off-screen left
    BNE hg_hi255_2                          ; max >= 256: ihi = 255
-   LDA zp_seg_sx1_lo
+   LDA zp_seg_sx1_l
 hg_hist2:
-   STA zp_ihi
-   LDA zp_seg_sx2_hi                       ; min hi
+   STA zp_i_h
+   LDA zp_seg_sx2_h                       ; min hi
    BNE hg_lock2                            ; nonzero: neg -> 0 / pos -> bail
-   LDA zp_seg_sx2_lo
+   LDA zp_seg_sx2_l
 hg_lost2:
-   STA zp_ilo
+   STA zp_i_l
 hg_query:
    STX zp_sx_ord                           ; latch min-endpoint offset
    PAGE BANK_C
@@ -446,7 +446,7 @@ ys_deltas_done:
    STA zp_br_rhi
    LDX zp_seg_v1_rlo                        ; inlined rns_select (hot site)
    STX zp_br_rlo
-   LDA rns_vec_lo-1,X
+   LDA rns_vec_l-1,X
    STA rns_go_op
    JSR dpy_back
    JMP ys_v2
@@ -457,7 +457,7 @@ ys_v1_full:
    STA zp_br_rhi
    LDX zp_seg_v1_rlo                        ; inlined rns_select
    STX zp_br_rlo
-   LDA rns_vec_lo-1,X
+   LDA rns_vec_l-1,X
    STA rns_go_op
    JSR do_project_y
 ys_v2:
@@ -467,7 +467,7 @@ ys_v2:
    STA zp_br_rhi
    LDX zp_seg_v2_rlo                        ; inlined rns_select
    STX zp_br_rlo
-   LDA rns_vec_lo-1,X
+   LDA rns_vec_l-1,X
    STA rns_go_op
    JSR do_project_y
    LDA #1
@@ -548,7 +548,7 @@ ft_set_line:
 ; zp_seg_sx1/sx2 and the y pair from VX1+X/VX2+X itself — no staging
 ; here at all (the zp_line_* slots don't survive the clipper's
 ; in-place normalization, so nothing can be seg-hoisted into them).
-   LDX #zp_seg_sy1_top_lo - VX1            ; sy pair offset (top)
+   LDX #zp_seg_sy1_top_l - VX1            ; sy pair offset (top)
    PAGE BANK_C
    JSR SC_DRAW_S16_H
 ; (no disarm: every later DCL entry in this seg sets _h itself, and the
@@ -601,7 +601,7 @@ fb_no_rec:
    LDA #0
    STA zp_dcl_rec_buf_h
 fb_set_line:
-   LDX #zp_seg_sy1_bot_lo - VX1            ; sy pair offset (bot)
+   LDX #zp_seg_sy1_bot_l - VX1            ; sy pair offset (bot)
    PAGE BANK_C
    JSR SC_DRAW_S16_H
 fb_skip:
@@ -622,7 +622,7 @@ step_cont:                              ;  pushed the branch out of range)
    LDA zp_seg_flags
    AND #$04
    BEQ step_no_top
-   LDX #zp_seg_sy1_btop_lo - VX1            ; sy pair offset (btop)
+   LDX #zp_seg_sy1_btop_l - VX1            ; sy pair offset (btop)
    LDA #$07
    STA zp_dcl_rec_buf_h
 ; TOP_RECORDS = $0700
@@ -634,7 +634,7 @@ step_no_top:
    LDA zp_seg_flags
    AND #$08
    BEQ step_no_bot
-   LDX #zp_seg_sy1_bbot_lo - VX1            ; sy pair offset (bbot)
+   LDX #zp_seg_sy1_bbot_l - VX1            ; sy pair offset (bbot)
    LDA #$08
    STA zp_dcl_rec_buf_h
 ; BOT_RECORDS = $0800
@@ -656,21 +656,21 @@ step_skip:
    LDA zp_seg_flags
    AND #$10
    BNE skip_lvert
-   LDA zp_seg_sx1_hi
+   LDA zp_seg_sx1_h
    BNE skip_lvert
 ; sx1 off-screen → skip vertical
    LDA zp_seg_flags
    AND #$02
    BEQ lvert_portal
 ; Solid: ft1 → fb1
-   LDA zp_seg_sy1_top_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy1_top_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy1_bot_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy1_bot_hi
-   STA zp_line_yr_hi
+   LDA zp_seg_sy1_top_l
+   STA zp_line_yl_l
+   LDA zp_seg_sy1_top_h
+   STA zp_line_yl_h
+   LDA zp_seg_sy1_bot_l
+   STA zp_line_yr_l
+   LDA zp_seg_sy1_bot_h
+   STA zp_line_yr_h
    JSR emit_vert_sx1
    JMP skip_lvert
 lvert_portal:
@@ -678,28 +678,28 @@ lvert_portal:
    LDA zp_seg_flags
    AND #$04
    BEQ lvert_no_top
-   LDA zp_seg_sy1_top_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy1_top_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy1_btop_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy1_btop_hi
-   STA zp_line_yr_hi
+   LDA zp_seg_sy1_top_l
+   STA zp_line_yl_l
+   LDA zp_seg_sy1_top_h
+   STA zp_line_yl_h
+   LDA zp_seg_sy1_btop_l
+   STA zp_line_yr_l
+   LDA zp_seg_sy1_btop_h
+   STA zp_line_yr_h
    JSR emit_vert_sx1
 lvert_no_top:
 ; NEEDBB? bottom piece bb1 → fb1
    LDA zp_seg_flags
    AND #$08
    BEQ skip_lvert
-   LDA zp_seg_sy1_bbot_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy1_bbot_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy1_bot_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy1_bot_hi
-   STA zp_line_yr_hi
+   LDA zp_seg_sy1_bbot_l
+   STA zp_line_yl_l
+   LDA zp_seg_sy1_bbot_h
+   STA zp_line_yl_h
+   LDA zp_seg_sy1_bot_l
+   STA zp_line_yr_l
+   LDA zp_seg_sy1_bot_h
+   STA zp_line_yr_h
    JSR emit_vert_sx1
 skip_lvert:
 
@@ -707,47 +707,47 @@ skip_lvert:
    LDA zp_seg_flags
    AND #$20
    BNE skip_rvert
-   LDA zp_seg_sx2_hi
+   LDA zp_seg_sx2_h
    BNE skip_rvert
 ; sx2 off-screen → skip vertical
    LDA zp_seg_flags
    AND #$02
    BEQ rvert_portal
-   LDA zp_seg_sy2_top_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy2_top_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy2_bot_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy2_bot_hi
-   STA zp_line_yr_hi
+   LDA zp_seg_sy2_top_l
+   STA zp_line_yl_l
+   LDA zp_seg_sy2_top_h
+   STA zp_line_yl_h
+   LDA zp_seg_sy2_bot_l
+   STA zp_line_yr_l
+   LDA zp_seg_sy2_bot_h
+   STA zp_line_yr_h
    JSR emit_vert_sx2
    JMP skip_rvert
 rvert_portal:
    LDA zp_seg_flags
    AND #$04
    BEQ rvert_no_top
-   LDA zp_seg_sy2_top_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy2_top_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy2_btop_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy2_btop_hi
-   STA zp_line_yr_hi
+   LDA zp_seg_sy2_top_l
+   STA zp_line_yl_l
+   LDA zp_seg_sy2_top_h
+   STA zp_line_yl_h
+   LDA zp_seg_sy2_btop_l
+   STA zp_line_yr_l
+   LDA zp_seg_sy2_btop_h
+   STA zp_line_yr_h
    JSR emit_vert_sx2
 rvert_no_top:
    LDA zp_seg_flags
    AND #$08
    BEQ skip_rvert
-   LDA zp_seg_sy2_bbot_lo
-   STA zp_line_yl_lo
-   LDA zp_seg_sy2_bbot_hi
-   STA zp_line_yl_hi
-   LDA zp_seg_sy2_bot_lo
-   STA zp_line_yr_lo
-   LDA zp_seg_sy2_bot_hi
-   STA zp_line_yr_hi
+   LDA zp_seg_sy2_bbot_l
+   STA zp_line_yl_l
+   LDA zp_seg_sy2_bbot_h
+   STA zp_line_yl_h
+   LDA zp_seg_sy2_bot_l
+   STA zp_line_yr_l
+   LDA zp_seg_sy2_bot_h
+   STA zp_line_yr_h
    JSR emit_vert_sx2
 skip_rvert:
 
@@ -770,16 +770,16 @@ ape_skip:
 ; CANONICALIZED at hg_pass (sx1 <= sx2 always), and the prelude's bails
 ; guarantee max >= 0 and min < 256 — one hi-byte test per endpoint,
 ; single path.
-   LDA zp_seg_sx2_hi                       ; max hi: 0 = in range
+   LDA zp_seg_sx2_h                       ; max hi: 0 = in range
    BNE ms_hi255                            ; >= 256 (BMI impossible): 255
-   LDA zp_seg_sx2_lo
+   LDA zp_seg_sx2_l
 ms_hist:
-   STA zp_ihi
-   LDA zp_seg_sx1_hi                       ; min hi: 0 = in range
+   STA zp_i_h
+   LDA zp_seg_sx1_h                       ; min hi: 0 = in range
    BMI ms_lo0                              ; < 0 (pos-nonzero impossible): 0
-   LDA zp_seg_sx1_lo
+   LDA zp_seg_sx1_l
 ms_lost:
-   STA zp_ilo
+   STA zp_i_l
    JMP ms_dispatch
 ms_hi255:
    LDA #255
@@ -903,7 +903,7 @@ sw_loop:
 
 ; ============================================================================
 ; emit_vert_sx1 / emit_vert_sx2 — draw a vertical at endpoint 1 / 2.
-; Caller has set yl/yh/yr/yh in zp_line_yl_lo/$B3/zp_line_yr_lo/$B5.
+; Caller has set yl/yh/yr/yh in zp_line_yl_l/$B3/zp_line_yr_l/$B5.
 ; Fills xl/xh/xr/xh from sx1 (resp. sx2), clears records hi byte
 ; (verticals never populate tighten records), pages bank C and
 ; tail-calls SC_DRAW_S16. Clobbers A.
@@ -911,14 +911,14 @@ sw_loop:
 ; loading the hi bytes here keeps the s16 fast path.
 ; ============================================================================
 emit_vert_sx1:
-   LDA zp_seg_sx1_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xl_hi
-   LDA zp_seg_sx1_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xr_hi
+   LDA zp_seg_sx1_l
+   STA zp_line_xl_l
+   LDA zp_seg_sx1_h
+   STA zp_line_xl_h
+   LDA zp_seg_sx1_l
+   STA zp_line_xr_l
+   LDA zp_seg_sx1_h
+   STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h
    PAGE BANK_C
@@ -926,14 +926,14 @@ emit_vert_sx1:
 
 ; (see banner above emit_vert_sx1)
 emit_vert_sx2:
-   LDA zp_seg_sx2_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xl_hi
-   LDA zp_seg_sx2_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xr_hi
+   LDA zp_seg_sx2_l
+   STA zp_line_xl_l
+   LDA zp_seg_sx2_h
+   STA zp_line_xl_h
+   LDA zp_seg_sx2_l
+   STA zp_line_xr_l
+   LDA zp_seg_sx2_h
+   STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h
    PAGE BANK_C

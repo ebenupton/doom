@@ -15,7 +15,7 @@
 ;                 zp_br_smag, zp_br_sneg, zp_br_sone,  (sin: u8 magnitude,
 ;                 zp_br_cmag, zp_br_cneg, zp_br_cone    neg flag, |t|=1 flag)
 ;                 bca_ab = view-angle byte (frame preset).
-;   Outputs (zp): zp_br_fvxlo/hi, zp_br_fvylo/hi (each s16);
+;   Outputs (zp): zp_br_fvx_l/hi, zp_br_fvy_l/hi (each s16);
 ;                 bca_afn ($3B/$3C) = ab<<4 fine angle (hoisted);
 ;                 bca_pxs/pys ($8D/$8E, $9B/$9C) = player pos s16 copies;
 ;                 jt_bca_check SMC-patched (cached vs original bbox check);
@@ -53,39 +53,39 @@ br_view_setup:
 ; also frame-constant; hoist it (was recomputed per bbox check).
    LDA zp_br_px_h
    STA $8D
-   LDA zp_br_px_e
+   LDA zp_br_px_x
    STA $8E
    LDA zp_br_py_h
    STA $9B
-   LDA zp_br_py_e
+   LDA zp_br_py_x
    STA $9C
 ; |px| / |py| magnitudes for the diagonal back-face C-form (frame-
 ; constant; signs are read live from px_e/py_e bit7 at test time)
    LDA zp_br_px_h
-   STA zp_bf_pxm_lo
-   LDA zp_br_px_e
-   STA zp_bf_pxm_hi
+   STA zp_bf_pxm_l
+   LDA zp_br_px_x
+   STA zp_bf_pxm_h
    BPL vs_pxm_pos
    LDA #0
    SEC
-   SBC zp_bf_pxm_lo
-   STA zp_bf_pxm_lo
+   SBC zp_bf_pxm_l
+   STA zp_bf_pxm_l
    LDA #0
-   SBC zp_bf_pxm_hi
-   STA zp_bf_pxm_hi
+   SBC zp_bf_pxm_h
+   STA zp_bf_pxm_h
 vs_pxm_pos:
    LDA zp_br_py_h
-   STA zp_bf_pym_lo
-   LDA zp_br_py_e
-   STA zp_bf_pym_hi
+   STA zp_bf_pym_l
+   LDA zp_br_py_x
+   STA zp_bf_pym_h
    BPL vs_pym_pos
    LDA #0
    SEC
-   SBC zp_bf_pym_lo
-   STA zp_bf_pym_lo
+   SBC zp_bf_pym_l
+   STA zp_bf_pym_l
    LDA #0
-   SBC zp_bf_pym_hi
-   STA zp_bf_pym_hi
+   SBC zp_bf_pym_h
+   STA zp_bf_pym_h
 vs_pym_pos:
 ; --- Fractional deltas: low byte of the NEGATED 8.8 player position
 ; (vertex frac is 0, so frac(vertex - player) = frac(-player)). ---
@@ -104,7 +104,7 @@ vs_pym_pos:
 
 ; --- frac_vx = ft(dx_lo, sin) - ft(dy_lo, cos) ---
 ; Each ft call stages (lo, mag, neg, one) into the zp_ft_* slots and
-; returns an s16 in zp_br_resl/resh.
+; returns an s16 in zp_br_res_l/resh.
    LDA zp_br_t2
    STA zp_ft_lo
    LDA zp_br_smag
@@ -114,10 +114,10 @@ vs_pym_pos:
    LDA zp_br_sone
    STA zp_ft_one
    JSR br_frac_rot_term
-   LDA zp_br_resl
-   STA zp_br_fvxlo
-   LDA zp_br_resh
-   STA zp_br_fvxhi
+   LDA zp_br_res_l
+   STA zp_br_fvx_l
+   LDA zp_br_res_h
+   STA zp_br_fvx_h
 
    LDA zp_br_t3
    STA zp_ft_lo
@@ -129,13 +129,13 @@ vs_pym_pos:
    STA zp_ft_one
    JSR br_frac_rot_term
 ; frac_vx -= result
-   LDA zp_br_fvxlo
+   LDA zp_br_fvx_l
    SEC
-   SBC zp_br_resl
-   STA zp_br_fvxlo
-   LDA zp_br_fvxhi
-   SBC zp_br_resh
-   STA zp_br_fvxhi
+   SBC zp_br_res_l
+   STA zp_br_fvx_l
+   LDA zp_br_fvx_h
+   SBC zp_br_res_h
+   STA zp_br_fvx_h
 
 ; --- frac_vy = ft(dx_lo, cos) + ft(dy_lo, sin) ---
    LDA zp_br_t2
@@ -147,10 +147,10 @@ vs_pym_pos:
    LDA zp_br_cone
    STA zp_ft_one
    JSR br_frac_rot_term
-   LDA zp_br_resl
-   STA zp_br_fvylo
-   LDA zp_br_resh
-   STA zp_br_fvyhi
+   LDA zp_br_res_l
+   STA zp_br_fvy_l
+   LDA zp_br_res_h
+   STA zp_br_fvy_h
 
    LDA zp_br_t3
    STA zp_ft_lo
@@ -161,13 +161,13 @@ vs_pym_pos:
    LDA zp_br_sone
    STA zp_ft_one
    JSR br_frac_rot_term
-   LDA zp_br_fvylo
+   LDA zp_br_fvy_l
    CLC
-   ADC zp_br_resl
-   STA zp_br_fvylo
-   LDA zp_br_fvyhi
-   ADC zp_br_resh
-   STA zp_br_fvyhi
+   ADC zp_br_res_l
+   STA zp_br_fvy_l
+   LDA zp_br_fvy_h
+   ADC zp_br_res_h
+   STA zp_br_fvy_h
 
 ; Rotation-coherence: choose cached vs original bbox_check_angle for this
 ; frame (SMC-patches jt_bca_check) by whether the integer player position
@@ -189,17 +189,17 @@ vs_pym_pos:
 ; br_to_view — world (wx, wy) → view (vx_88, vy_88).
 ;
 ;   Inputs (zp):
-;     zp_br_dxlo/dxhi = wx (s16 RAW prescaled vertex world X — the s16
+;     zp_br_dx_l/dxhi = wx (s16 RAW prescaled vertex world X — the s16
 ;                       player-relative subtract happens HERE)
-;     zp_br_dylo/dyhi = wy (s16)
+;     zp_br_dy_l/dyhi = wy (s16)
 ;     ... and view-context state in zp_br_* (br_view_setup ran).
 ;
 ;   To match Python's call site exactly: the caller writes RAW wx/wy and
 ;   this routine subtracts px_int/py_int (s16, zp_br_px_h/px_e etc).
 ;
 ;   Outputs (zp):
-;     zp_br_vxlo/vxhi/vxext = total_vx (s24: 8.8 + sign/overflow ext)
-;     zp_br_vylo/vyhi/vyext = total_vy (s24)
+;     zp_br_vx_l/vxhi/vxext = total_vx (s24: 8.8 + sign/overflow ext)
+;     zp_br_vy_l/vyhi/vyext = total_vy (s24)
 ;
 ;   Python:
 ;     dx_hi = wx - px_int
@@ -217,7 +217,7 @@ vs_pym_pos:
 ;   final sums are consumed as 8.8 (hi byte = integer view coord).
 ;   Mirrors fp_to_view (fp.py) up to the total_vx/total_vy sums; the
 ;   >>8 truncation/rounding happens in the caller (br_seg_xform_vertex).
-;   Clobbers: A, Y, zp_ri_dlo/dhi, mul workspace, zp_br_res*.
+;   Clobbers: A, Y, zp_ri_d_l/dhi, mul workspace, zp_br_res*.
 ; ============================================================================
 ; br_to_view_fetch — vertex-fetch entry (2026-07-11): pages L2, builds the
 ; ROM_VERTS pointer from zp_seg_v_idx and loads wx/wy into zp_br_dx/dy,
@@ -228,7 +228,7 @@ vs_pym_pos:
 br_to_view_fetch:
 .assert <ROM_VERTS_C = 0, error, "vertex fetch assumes page-aligned ROM_VERTS_C"
    PAGE BANK_L2                            ; verts live in the L2 window
-   LDA zp_seg_v_idx_lo
+   LDA zp_seg_v_idx_l
    ASL A
    ASL A                                   ; (idx*4) lo = lo<<2 mod 256 —
    STA zp_br_p                             ; page-aligned base: no lo add
@@ -241,100 +241,100 @@ br_to_view_fetch:
    STA zp_br_p_h
    LDY #0
    LDA (zp_br_p),Y
-   STA zp_br_dxlo
+   STA zp_br_dx_l
    INY
    LDA (zp_br_p),Y
-   STA zp_br_dxhi
+   STA zp_br_dx_h
    INY
    LDA (zp_br_p),Y
-   STA zp_br_dylo
+   STA zp_br_dy_l
    INY
    LDA (zp_br_p),Y
-   STA zp_br_dyhi
+   STA zp_br_dy_h
 br_to_view:
 ; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
 ; their operands — and the body has no local labels; same rule as
 ; vxc_jsr_site in seg_xform.s.)
 ; --- Integer deltas: d = vertex_world - player_int (both axes, s16). ---
 ; dx (s16) = wx - px_int (s16: px_h lo, px_e hi).
-   LDA zp_br_dxlo
+   LDA zp_br_dx_l
    SEC
    SBC zp_br_px_h
-   STA zp_br_dxlo
-   LDA zp_br_dxhi
-   SBC zp_br_px_e
-   STA zp_br_dxhi
-   LDA zp_br_dylo
+   STA zp_br_dx_l
+   LDA zp_br_dx_h
+   SBC zp_br_px_x
+   STA zp_br_dx_h
+   LDA zp_br_dy_l
    SEC
    SBC zp_br_py_h
-   STA zp_br_dylo
-   LDA zp_br_dyhi
-   SBC zp_br_py_e
-   STA zp_br_dyhi
+   STA zp_br_dy_l
+   LDA zp_br_dy_h
+   SBC zp_br_py_x
+   STA zp_br_dy_h
 
 ; int_vx = rot_int(dx, sin) - rot_int(dy, cos), as s24
 ; (rot_s1..rot_s4 are SMC call sites — rot_select points them at the
 ; per-frame trig variants in arith.s; result s24 in resl/resh/resext.)
-   LDA zp_br_dxlo
-   STA zp_ri_dlo
-   LDA zp_br_dxhi
-   STA zp_ri_dhi
+   LDA zp_br_dx_l
+   STA zp_ri_d_l
+   LDA zp_br_dx_h
+   STA zp_ri_d_h
 rot_s1:
    JSR rot_gen_sin                         ; operand SMC'd per frame (rot_select)
-   LDA zp_br_resl
-   STA zp_br_vxlo
-   LDA zp_br_resh
-   STA zp_br_vxhi
-   LDA zp_br_resext
-   STA zp_br_vxext
+   LDA zp_br_res_l
+   STA zp_br_vx_l
+   LDA zp_br_res_h
+   STA zp_br_vx_h
+   LDA zp_br_res_x
+   STA zp_br_vx_x
 
-   LDA zp_br_dylo
-   STA zp_ri_dlo
-   LDA zp_br_dyhi
-   STA zp_ri_dhi
+   LDA zp_br_dy_l
+   STA zp_ri_d_l
+   LDA zp_br_dy_h
+   STA zp_ri_d_h
 rot_s2:
    JSR rot_gen_cos                         ; operand SMC'd per frame
-   LDA zp_br_vxlo
+   LDA zp_br_vx_l
    SEC
-   SBC zp_br_resl
-   STA zp_br_vxlo
-   LDA zp_br_vxhi
-   SBC zp_br_resh
-   STA zp_br_vxhi
-   LDA zp_br_vxext
-   SBC zp_br_resext
-   STA zp_br_vxext
+   SBC zp_br_res_l
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+   SBC zp_br_res_h
+   STA zp_br_vx_h
+   LDA zp_br_vx_x
+   SBC zp_br_res_x
+   STA zp_br_vx_x
 
 ; int_vy = rot_int(dx, cos) + rot_int(dy, sin), as s24
-   LDA zp_br_dxlo
-   STA zp_ri_dlo
-   LDA zp_br_dxhi
-   STA zp_ri_dhi
+   LDA zp_br_dx_l
+   STA zp_ri_d_l
+   LDA zp_br_dx_h
+   STA zp_ri_d_h
 rot_s3:
    JSR rot_gen_cos                         ; operand SMC'd per frame
-   LDA zp_br_resl
-   STA zp_br_vylo
-   LDA zp_br_resh
-   STA zp_br_vyhi
-   LDA zp_br_resext
-   STA zp_br_vyext
+   LDA zp_br_res_l
+   STA zp_br_vy_l
+   LDA zp_br_res_h
+   STA zp_br_vy_h
+   LDA zp_br_res_x
+   STA zp_br_vy_x
 
-   LDA zp_br_dylo
-   STA zp_ri_dlo
-   LDA zp_br_dyhi
-   STA zp_ri_dhi
+   LDA zp_br_dy_l
+   STA zp_ri_d_l
+   LDA zp_br_dy_h
+   STA zp_ri_d_h
 rot_s4:
    JSR rot_gen_sin                         ; operand SMC'd per frame
-   LDA zp_br_vylo
+   LDA zp_br_vy_l
    CLC
-   ADC zp_br_resl
-   STA zp_br_vylo
-   LDA zp_br_vyhi
-   ADC zp_br_resh
-   STA zp_br_vyhi
-   LDA zp_br_vyext
-   ADC zp_br_resext
-   STA zp_br_vyext
+   ADC zp_br_res_l
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ADC zp_br_res_h
+   STA zp_br_vy_h
+   LDA zp_br_vy_x
+   ADC zp_br_res_x
+   STA zp_br_vy_x
 
 ; (falls through into tv_add_fracs — its RTS is br_to_view's return)
 
@@ -344,8 +344,8 @@ rot_s4:
 ; old second caller — the perspective bbox corner combine — is long
 ; retired; the JMP became fall-through 2026-07-11).
 ;
-;   Inputs (zp):  zp_br_vxlo/vxhi/vxext, zp_br_vylo/vyhi/vyext (s24
-;                 integer-rotation sums), zp_br_fvxlo/hi, zp_br_fvylo/hi
+;   Inputs (zp):  zp_br_vx_l/vxhi/vxext, zp_br_vy_l/vyhi/vyext (s24
+;                 integer-rotation sums), zp_br_fvx_l/hi, zp_br_fvy_l/hi
 ;                 (s16 per-frame fracs from br_view_setup).
 ;   Outputs (zp): the same accumulators, += sign-extended frac:
 ;                 total_v* = int_v* + frac_v*   (Python: fp_to_view's sums)
@@ -357,38 +357,38 @@ rot_s4:
 ; ============================================================================
 tv_add_fracs:
 .scope
-   LDA zp_br_vxlo
+   LDA zp_br_vx_l
    CLC
-   ADC zp_br_fvxlo
-   STA zp_br_vxlo
-   LDA zp_br_vxhi
-   ADC zp_br_fvxhi
-   STA zp_br_vxhi
-   LDA zp_br_fvxhi
+   ADC zp_br_fvx_l
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+   ADC zp_br_fvx_h
+   STA zp_br_vx_h
+   LDA zp_br_fvx_h
    BMI bv_fvxneg
    BCC bv_fvx_done                         ; +frac: ext += hi-add carry
-   INC zp_br_vxext                         ; (BCC/INC beats LDA/ADC/STA/JMP
+   INC zp_br_vx_x                         ; (BCC/INC beats LDA/ADC/STA/JMP
    JMP bv_fvx_done                         ; on both carry outcomes)
 bv_fvxneg:
    BCS bv_fvx_done                         ; -frac: ADC #$FF == ext-1+C, so
-   DEC zp_br_vxext                         ; carry SET is a no-op
+   DEC zp_br_vx_x                         ; carry SET is a no-op
 bv_fvx_done:
 
-   LDA zp_br_vylo
+   LDA zp_br_vy_l
    CLC
-   ADC zp_br_fvylo
-   STA zp_br_vylo
-   LDA zp_br_vyhi
-   ADC zp_br_fvyhi
-   STA zp_br_vyhi
-   LDA zp_br_fvyhi
+   ADC zp_br_fvy_l
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ADC zp_br_fvy_h
+   STA zp_br_vy_h
+   LDA zp_br_fvy_h
    BMI bv_fvyneg
    BCC bv_fvy_done                         ; +frac: ext += hi-add carry
-   INC zp_br_vyext                         ; (BCC/INC beats LDA/ADC/STA/JMP
+   INC zp_br_vy_x                         ; (BCC/INC beats LDA/ADC/STA/JMP
    JMP bv_fvy_done                         ; on both carry outcomes)
 bv_fvyneg:
    BCS bv_fvy_done                         ; -frac: ADC #$FF == ext-1+C, so
-   DEC zp_br_vyext                         ; carry SET is a no-op
+   DEC zp_br_vy_x                         ; carry SET is a no-op
 bv_fvy_done:
    RTS
 .endscope
@@ -405,9 +405,9 @@ bv_fvy_done:
 
 ; ============================================================================
 ; HELPER: br_smul_s16_s16_s32 — signed s16 × s16 → s32 (4-byte little-endian).
-;   Inputs:  zp_br_dxlo:dxhi (A, s16), zp_br_dylo:dyhi (B, s16).
+;   Inputs:  zp_br_dx_l:dxhi (A, s16), zp_br_dy_l:dyhi (B, s16).
 ;   Output:  zp_br_t0:t1:t2:t3 (s32).
-;   Clobbers: zp_br_dxlo:dxhi, zp_br_dylo:dyhi (negated for sign tracking),
+;   Clobbers: zp_br_dx_l:dxhi, zp_br_dy_l:dyhi (negated for sign tracking),
 ;             A, X, Y, zp_br_sign, mul workspace.
 ;
 ;   Algorithm: sign-magnitude schoolbook with 4 u8×u8 partial products —
@@ -422,75 +422,75 @@ br_smul_s16_s16_s32:
    ZERO zp_br_sign
 
 ; |A|
-   LDA zp_br_dxhi
+   LDA zp_br_dx_h
    BPL aa_pos
    LDA #0
    SEC
-   SBC zp_br_dxlo
-   STA zp_br_dxlo
+   SBC zp_br_dx_l
+   STA zp_br_dx_l
    LDA #0
-   SBC zp_br_dxhi
-   STA zp_br_dxhi
+   SBC zp_br_dx_h
+   STA zp_br_dx_h
    INC zp_br_sign
 aa_pos:
 ; |B|
-   LDA zp_br_dyhi
+   LDA zp_br_dy_h
    BPL bb_pos
    LDA #0
    SEC
-   SBC zp_br_dylo
-   STA zp_br_dylo
+   SBC zp_br_dy_l
+   STA zp_br_dy_l
    LDA #0
-   SBC zp_br_dyhi
-   STA zp_br_dyhi
+   SBC zp_br_dy_h
+   STA zp_br_dy_h
    LDA zp_br_sign
    EOR #1
    STA zp_br_sign
 bb_pos:
 
 ; al × bl → t0:t1
-   LDA zp_br_dxlo
+   LDA zp_br_dx_l
    STA zp_mul_b
-   LDA zp_br_dylo
+   LDA zp_br_dy_l
    JSR SC_UMUL8
    STA zp_br_t1                            ; A = prod_hi (umul8 contract)
-   LDA zp_prod_lo
+   LDA zp_prod_l
    STA zp_br_t0
 
 ; ah × bh → t2:t3
-   LDA zp_br_dxhi
+   LDA zp_br_dx_h
    STA zp_mul_b
-   LDA zp_br_dyhi
+   LDA zp_br_dy_h
    JSR SC_UMUL8
    STA zp_br_t3                            ; A = prod_hi (umul8 contract)
-   LDA zp_prod_lo
+   LDA zp_prod_l
    STA zp_br_t2
 
 ; al × bh → add to t1:t2:t3
-   LDA zp_br_dyhi
+   LDA zp_br_dy_h
    STA zp_mul_b
-   LDA zp_br_dxlo
+   LDA zp_br_dx_l
    JSR SC_UMUL8
    CLC
-   LDA zp_prod_lo
+   LDA zp_prod_l
    ADC zp_br_t1
    STA zp_br_t1
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC zp_br_t2
    STA zp_br_t2
    BCC *+4                                 ; t3 += carry (BCC/INC)
    INC zp_br_t3
 
 ; ah × bl → add to t1:t2:t3
-   LDA zp_br_dylo
+   LDA zp_br_dy_l
    STA zp_mul_b
-   LDA zp_br_dxhi
+   LDA zp_br_dx_h
    JSR SC_UMUL8
    CLC
-   LDA zp_prod_lo
+   LDA zp_prod_l
    ADC zp_br_t1
    STA zp_br_t1
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC zp_br_t2
    STA zp_br_t2
    BCC *+4                                 ; t3 += carry (BCC/INC)

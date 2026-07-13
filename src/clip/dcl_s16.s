@@ -14,7 +14,7 @@
 ; umul16x16 — u16 × u16 = u32
 ; Inputs:  LC_M_A_LO/HI, LC_M_B_LO/HI
 ; Output:  LC_M_R0..LC_M_R3 (LSB first)
-; Clobbers: A, X, Y, zp_mul_b, zp_prod_lo, zp_prod_hi
+; Clobbers: A, X, Y, zp_mul_b, zp_prod_l, zp_prod_h
 ;
 ; Schoolbook multiply from four u8×u8 partial products, each via the
 ; quarter-square umul8 primitive; hi-byte-zero factors skip their
@@ -32,7 +32,7 @@ umul16x16:
    LDA LC_M_A_LO
    JSR umul8
    STA LC_M_R1                             ; A = prod_hi (umul8 contract)
-   LDA zp_prod_lo
+   LDA zp_prod_l
    STA LC_M_R0
    LDA #0
    STA LC_M_R2
@@ -47,11 +47,11 @@ umul16x16:
    LDA LC_M_A_LO
    JSR umul8
 ; p2 = a_lo * b_hi
-   LDA zp_prod_lo
+   LDA zp_prod_l
    CLC
    ADC LC_M_R1
    STA LC_M_R1
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC LC_M_R2
    STA LC_M_R2
    LDA #0
@@ -67,11 +67,11 @@ skip_p2:
    LDA LC_M_A_HI
    JSR umul8
 ; p3 = a_hi * b_lo
-   LDA zp_prod_lo
+   LDA zp_prod_l
    CLC
    ADC LC_M_R1
    STA LC_M_R1
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC LC_M_R2
    STA LC_M_R2
    LDA #0
@@ -86,11 +86,11 @@ skip_p2:
    LDA LC_M_A_HI
    JSR umul8
 ; p4 = a_hi * b_hi
-   LDA zp_prod_lo
+   LDA zp_prod_l
    CLC
    ADC LC_M_R2
    STA LC_M_R2
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC LC_M_R3
    STA LC_M_R3
 skip_p3_p4:
@@ -389,11 +389,11 @@ si_dy_done:
    LDA LC_DEN_LO
    LSR A
    CLC
-   ADC zp_prod_lo
-   STA zp_div_lo
+   ADC zp_prod_l
+   STA zp_div_l
    LDA #0
-   ADC zp_prod_hi
-   STA zp_div_hi
+   ADC zp_prod_h
+   STA zp_div_h
    LDA LC_DEN_LO
    STA zp_div_den
    JSR udiv16_8                            ; A = u8 quotient
@@ -495,15 +495,15 @@ si_return_y1:
 
 ; ===================================================================
 ; draw_clipped_line_s16 — clip s16 line to u8 then dispatch to DCL.
-; Reads zp_line_xl_lo..zp_line_yr_hi (8 bytes of s16 input).
-; Writes u8 to zp_line_xl_lo, zp_line_yl_lo, zp_line_xr_lo, zp_line_yr_lo and
+; Reads zp_line_xl_l..zp_line_yr_h (8 bytes of s16 input).
+; Writes u8 to zp_line_xl_l, zp_line_yl_l, zp_line_xr_l, zp_line_yr_l and
 ; falls through to draw_clipped_line. If line fully off-screen,
 ; degenerate, or otherwise rejected, RTS without invoking DCL.
 ;
 ; Python mirror: the wrapper side of span_clip_6502.draw_clipped_line
 ; plus _clip_to_screen semantics.  The CALLER has already ordered the
 ; endpoints left-to-right (x1 <= x2), rejected zero-length input, and
-; written the LO bytes — which alias zp_line_xl_lo/yl/xr/yr — so the
+; written the LO bytes — which alias zp_line_xl_l/yl/xr/yr — so the
 ; all-in-u8 fast path is a single 4-byte OR test and a JMP.
 ;
 ; Pseudocode (slow path):
@@ -537,36 +537,36 @@ si_return_y1:
 draw_clipped_line_s16_h:
    LDA VX1+1,X                             ; y1 hi
    ORA VX2+1,X                             ; y2 hi
-   ORA zp_seg_sx1_hi
-   ORA zp_seg_sx2_hi
+   ORA zp_seg_sx1_h
+   ORA zp_seg_sx2_h
    BNE dclh_slow
-   LDA zp_seg_sx1_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx2_lo
-   STA zp_line_xr_lo
+   LDA zp_seg_sx1_l
+   STA zp_line_xl_l
+   LDA zp_seg_sx2_l
+   STA zp_line_xr_l
    LDA VX1,X
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA VX2,X
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    JMP dcl16_fastu8
 dclh_slow:
 ; some coord outside u8: stage the full s16 line for the classic clip
-   LDA zp_seg_sx1_lo
-   STA zp_line_xl_lo
-   LDA zp_seg_sx1_hi
-   STA zp_line_xl_hi
-   LDA zp_seg_sx2_lo
-   STA zp_line_xr_lo
-   LDA zp_seg_sx2_hi
-   STA zp_line_xr_hi
+   LDA zp_seg_sx1_l
+   STA zp_line_xl_l
+   LDA zp_seg_sx1_h
+   STA zp_line_xl_h
+   LDA zp_seg_sx2_l
+   STA zp_line_xr_l
+   LDA zp_seg_sx2_h
+   STA zp_line_xr_h
    LDA VX1,X
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA VX1+1,X
-   STA zp_line_yl_hi
+   STA zp_line_yl_h
    LDA VX2,X
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    LDA VX2+1,X
-   STA zp_line_yr_hi
+   STA zp_line_yr_h
    JMP dcl16_mainclip
 
 draw_clipped_line_s16:
@@ -587,24 +587,24 @@ draw_clipped_line_s16:
 ;
 ; ---- Fast path: all 4 endpoints already in u8 range ----
 ; HI bytes all zero ⇔ all coords in [0, 255]; u8 compares suffice for
-; the ordering contract here.  zp_line_xl_lo/yl/xr/yr (shared with the u8 path via
+; the ordering contract here.  zp_line_xl_l/yl/xr/yr (shared with the u8 path via
 ; alias) are already written by the caller.
-   LDA zp_line_xl_hi
-   ORA zp_line_yl_hi
-   ORA zp_line_xr_hi
-   ORA zp_line_yr_hi
+   LDA zp_line_xl_h
+   ORA zp_line_yl_h
+   ORA zp_line_xr_h
+   ORA zp_line_yr_h
    BNE main_clip
 ::dcl16_fastu8:
 ; input contract: xl <= xr (seg layer / wrapper ordered) — equality is
 ; the only case left to classify (vertical vs zero-length point)
-   LDA zp_line_xl_lo
-   CMP zp_line_xr_lo
+   LDA zp_line_xl_l
+   CMP zp_line_xr_l
    BEQ fp_x_eq
    JMP draw_clipped_line
 fp_x_eq:
 ; x1 == x2: vertical unless y1 == y2 (zero-length point → reject)
-   LDA zp_line_yl_lo
-   CMP zp_line_yr_lo
+   LDA zp_line_yl_l
+   CMP zp_line_yr_l
    BEQ fp_degen
    JMP draw_clipped_line
 fp_degen:
@@ -618,33 +618,33 @@ main_clip:
 ; The old in-clipper swap existed for the 8F.1F 1px edge-on reversal;
 ; that case now arrives pre-mirrored from draw_clipped_line_s16_h.
 ; Only the zero-length reject remains ----
-   LDA zp_line_xl_lo
-   CMP zp_line_xr_lo
+   LDA zp_line_xl_l
+   CMP zp_line_xr_l
    BNE mc_ordered
-   LDA zp_line_xl_hi
-   CMP zp_line_xr_hi
+   LDA zp_line_xl_h
+   CMP zp_line_xr_h
    BNE mc_ordered
 ; x1 == x2 (s16): degenerate iff y1 == y2 too
-   LDA zp_line_yl_lo
-   CMP zp_line_yr_lo
+   LDA zp_line_yl_l
+   CMP zp_line_yr_l
    BNE mc_ordered
-   LDA zp_line_yl_hi
-   CMP zp_line_yr_hi
+   LDA zp_line_yl_h
+   CMP zp_line_yr_h
    BNE mc_ordered
    RTS                                     ; zero-length point → reject
 mc_ordered:
 ; ---- Quick reject: both endpoints on the same side of any edge ----
 ; Both x < 0?  hi byte negative for both means both < 0 (s16).
-   LDA zp_line_xl_hi
+   LDA zp_line_xl_h
    BPL x1_in_or_big
-   LDA zp_line_xr_hi
+   LDA zp_line_xr_h
    BPL not_both_xneg
    JMP rejected
 x1_in_or_big:
-; zp_line_xl_hi ≥ 0. Check if zp_line_xl_lo/HI > 255 (i.e. HI != 0).
+; zp_line_xl_h ≥ 0. Check if zp_line_xl_l/HI > 255 (i.e. HI != 0).
    BEQ not_both_xbig                       ; HI = 0 → in [0, 255] (low byte)
 ; HI > 0 → x1 > 255. Is x2 also > 255?
-   LDA zp_line_xr_hi
+   LDA zp_line_xr_h
    BMI not_both_xbig
 ; x2 < 0 → not both > 255
    BEQ not_both_xbig                       ; x2 in [0, 255] → not both > 255
@@ -653,14 +653,14 @@ x1_in_or_big:
 not_both_xneg:
 not_both_xbig:
 ; same for y
-   LDA zp_line_yl_hi
+   LDA zp_line_yl_h
    BPL y1_in_or_big
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    BPL not_both_yneg
    JMP rejected
 y1_in_or_big:
    BEQ not_both_ybig
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    BMI not_both_ybig
    BEQ not_both_ybig
    JMP rejected
@@ -669,34 +669,34 @@ not_both_ybig:
 
 ; ---- Skip x-clip path entirely if both x already in u8 ----
 ; (We got here because at least one HI byte is non-zero; might be y.)
-   LDA zp_line_xl_hi
-   ORA zp_line_xr_hi
+   LDA zp_line_xl_h
+   ORA zp_line_xr_h
    BNE need_xclip
    JMP skip_xclip
 need_xclip:
 
 ; ---- Save originals for x-clip interp (only when needed) ----
-   LDA zp_line_xl_lo
+   LDA zp_line_xl_l
    STA LC_OX1_LO
-   LDA zp_line_xl_hi
+   LDA zp_line_xl_h
    STA LC_OX1_HI
-   LDA zp_line_yl_lo
+   LDA zp_line_yl_l
    STA LC_OY1_LO
-   LDA zp_line_yl_hi
+   LDA zp_line_yl_h
    STA LC_OY1_HI
-   LDA zp_line_xr_lo
+   LDA zp_line_xr_l
    STA LC_OX2_LO
-   LDA zp_line_xr_hi
+   LDA zp_line_xr_h
    STA LC_OX2_HI
-   LDA zp_line_yr_lo
+   LDA zp_line_yr_l
    STA LC_OY2_LO
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    STA LC_OY2_HI
 
 ; ---- X clip ----
 ; If x1 < 0, replace y1 with y at x=0; x1 = 0.
 ; Else if x1 > 255, replace y1 with y at x=255; x1 = 255.
-   LDA zp_line_xl_hi
+   LDA zp_line_xl_h
    BPL x1_not_neg
    LDA #0
    STA LC_TGT_LO
@@ -707,12 +707,12 @@ need_xclip:
 ; must still fire. Storing clamped A here zeroed Y_HI, skipped the y-clip,
 ; and emitted the screen CORNER (wrong slope) — 994,-3291,237 bottom seg.
    LDA LC_RES_LO
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA LC_RES_HI
-   STA zp_line_yl_hi
+   STA zp_line_yl_h
    LDA #0
-   STA zp_line_xl_lo
-   STA zp_line_xl_hi
+   STA zp_line_xl_l
+   STA zp_line_xl_h
    JMP x1_done
 x1_not_neg:
    BEQ x1_done                             ; HI=0 → in u8 range, no clip
@@ -726,29 +726,29 @@ x1_not_neg:
 ; must still fire. Storing clamped A here zeroed Y_HI, skipped the y-clip,
 ; and emitted the screen CORNER (wrong slope) — 994,-3291,237 bottom seg.
    LDA LC_RES_LO
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA LC_RES_HI
-   STA zp_line_yl_hi
+   STA zp_line_yl_h
    LDA #$FF
-   STA zp_line_xl_lo
+   STA zp_line_xl_l
    LDA #0
-   STA zp_line_xl_hi
+   STA zp_line_xl_h
 x1_done:
 ; same for x2
-   LDA zp_line_xr_hi
+   LDA zp_line_xr_h
    BPL x2_not_neg
    LDA #0
    STA LC_TGT_LO
    STA LC_TGT_HI
    JSR s16_interp
-; store UNCLAMPED crossing Y (see zp_line_yl_lo note above).
+; store UNCLAMPED crossing Y (see zp_line_yl_l note above).
    LDA LC_RES_LO
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    LDA LC_RES_HI
-   STA zp_line_yr_hi
+   STA zp_line_yr_h
    LDA #0
-   STA zp_line_xr_lo
-   STA zp_line_xr_hi
+   STA zp_line_xr_l
+   STA zp_line_xr_h
    JMP x2_done
 x2_not_neg:
    BEQ x2_done
@@ -757,27 +757,27 @@ x2_not_neg:
    LDA #0
    STA LC_TGT_HI
    JSR s16_interp
-; store UNCLAMPED crossing Y (see zp_line_yl_lo note above).
+; store UNCLAMPED crossing Y (see zp_line_yl_l note above).
    LDA LC_RES_LO
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    LDA LC_RES_HI
-   STA zp_line_yr_hi
+   STA zp_line_yr_h
    LDA #$FF
-   STA zp_line_xr_lo
+   STA zp_line_xr_l
    LDA #0
-   STA zp_line_xr_hi
+   STA zp_line_xr_h
 x2_done:
 skip_xclip:
 
 ; ---- Quick reject after x-clip (y might still be out same side) ----
-   LDA zp_line_yl_hi
+   LDA zp_line_yl_h
    BPL y1_after_in_or_big
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    BPL not_both_yneg2
    JMP rejected
 y1_after_in_or_big:
    BEQ not_both_ybig2
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    BMI not_both_ybig2
    BEQ not_both_ybig2
    JMP rejected
@@ -785,44 +785,44 @@ not_both_yneg2:
 not_both_ybig2:
 
 ; ---- If both y already in u8, skip y-clip ----
-   LDA zp_line_yl_hi
+   LDA zp_line_yl_h
    BNE need_yclip
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    BNE need_yclip
    JMP y_in_range
 need_yclip:
 ; Re-snap originals to post-x-clip values; for y-clip, axes swap:
 ; OX* now holds the FREE axis (y), OY* the TARGET (x).
-   LDA zp_line_yl_lo
+   LDA zp_line_yl_l
    STA LC_OX1_LO
-   LDA zp_line_yl_hi
+   LDA zp_line_yl_h
    STA LC_OX1_HI
-   LDA zp_line_xl_lo
+   LDA zp_line_xl_l
    STA LC_OY1_LO
-   LDA zp_line_xl_hi
+   LDA zp_line_xl_h
    STA LC_OY1_HI
-   LDA zp_line_yr_lo
+   LDA zp_line_yr_l
    STA LC_OX2_LO
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    STA LC_OX2_HI
-   LDA zp_line_xr_lo
+   LDA zp_line_xr_l
    STA LC_OY2_LO
-   LDA zp_line_xr_hi
+   LDA zp_line_xr_h
    STA LC_OY2_HI
 
 ; y1 clip
-   LDA zp_line_yl_hi
+   LDA zp_line_yl_h
    BPL y1c_not_neg
    LDA #0
    STA LC_TGT_LO
    STA LC_TGT_HI
    JSR s16_interp
-   STA zp_line_xl_lo
+   STA zp_line_xl_l
    LDA #0
-   STA zp_line_xl_hi
+   STA zp_line_xl_h
    LDA #0
-   STA zp_line_yl_lo
-   STA zp_line_yl_hi
+   STA zp_line_yl_l
+   STA zp_line_yl_h
    JMP y1c_done
 y1c_not_neg:
    BEQ y1c_done
@@ -831,27 +831,27 @@ y1c_not_neg:
    LDA #0
    STA LC_TGT_HI
    JSR s16_interp
-   STA zp_line_xl_lo
+   STA zp_line_xl_l
    LDA #0
-   STA zp_line_xl_hi
+   STA zp_line_xl_h
    LDA #$FF
-   STA zp_line_yl_lo
+   STA zp_line_yl_l
    LDA #0
-   STA zp_line_yl_hi
+   STA zp_line_yl_h
 y1c_done:
 ; y2 clip
-   LDA zp_line_yr_hi
+   LDA zp_line_yr_h
    BPL y2c_not_neg
    LDA #0
    STA LC_TGT_LO
    STA LC_TGT_HI
    JSR s16_interp
-   STA zp_line_xr_lo
+   STA zp_line_xr_l
    LDA #0
-   STA zp_line_xr_hi
+   STA zp_line_xr_h
    LDA #0
-   STA zp_line_yr_lo
-   STA zp_line_yr_hi
+   STA zp_line_yr_l
+   STA zp_line_yr_h
    JMP y2c_done
 y2c_not_neg:
    BEQ y2c_done
@@ -860,13 +860,13 @@ y2c_not_neg:
    LDA #0
    STA LC_TGT_HI
    JSR s16_interp
-   STA zp_line_xr_lo
+   STA zp_line_xr_l
    LDA #0
-   STA zp_line_xr_hi
+   STA zp_line_xr_h
    LDA #$FF
-   STA zp_line_yr_lo
+   STA zp_line_yr_l
    LDA #0
-   STA zp_line_yr_hi
+   STA zp_line_yr_h
 y2c_done:
 y_in_range:
 
@@ -878,25 +878,25 @@ y_in_range:
 ; NB the "bail" margin note on the BNE below is stale (2026-07-12):
 ; rejected_swap_after_clip SWAPS the endpoints and still emits — see
 ; its own comment.
-   LDA zp_line_xl_lo
-   CMP zp_line_xr_lo
+   LDA zp_line_xl_l
+   CMP zp_line_xr_l
    BCC dispatch_dcl
    BNE rejected_swap_after_clip            ; clipping reordered: bail (rare)
-   LDA zp_line_yl_lo
-   CMP zp_line_yr_lo
+   LDA zp_line_yl_l
+   CMP zp_line_yr_l
    BEQ rejected
 dispatch_dcl:
    JMP draw_clipped_line
 rejected_swap_after_clip:
 ; Post-clip x1 > x2 — would require swap; just emit reordered.
-   LDA zp_line_xl_lo
-   LDX zp_line_xr_lo
-   STX zp_line_xl_lo
-   STA zp_line_xr_lo
-   LDA zp_line_yl_lo
-   LDX zp_line_yr_lo
-   STX zp_line_yl_lo
-   STA zp_line_yr_lo
+   LDA zp_line_xl_l
+   LDX zp_line_xr_l
+   STX zp_line_xl_l
+   STA zp_line_xr_l
+   LDA zp_line_yl_l
+   LDX zp_line_yr_l
+   STX zp_line_yl_l
+   STA zp_line_yr_l
    JMP draw_clipped_line
 rejected:
    RTS

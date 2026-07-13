@@ -25,8 +25,8 @@ ZP_CNEG         = _sym('zp_br_cneg')
 ZP_CONE         = _sym('zp_br_cone')
 # Table base pointer slots (absolute RAM — the ZP scavenge moved most of
 # them out of ZP; the angle module owns the freed slots).
-ZP_PXRAW_LO     = _sym('zp_br_pxraw_lo')
-ZP_PYRAW_LO     = _sym('zp_br_pyraw_lo')
+ZP_PXRAW_LO     = _sym('zp_br_pxraw_l')
+ZP_PYRAW_LO     = _sym('zp_br_pyraw_l')
 
 ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup')
 ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame')
@@ -111,8 +111,8 @@ class BspRender6502:
         mem[ZP_PY + 1] = (py_88 >> 8) & 0xFF
         # s16 integer position: high bytes (whole-map support, not just
         # +/-127 prescaled units around MAP_CENTER)
-        mem[_sym('zp_br_px_e')] = (px_88 >> 16) & 0xFF
-        mem[_sym('zp_br_py_e')] = (py_88 >> 16) & 0xFF
+        mem[_sym('zp_br_px_x')] = (px_88 >> 16) & 0xFF
+        mem[_sym('zp_br_py_x')] = (py_88 >> 16) & 0xFF
 
         # Eye height (pre-scaled, s8). doom_wireframe normally does
         # vz = prescale_height(player_floor + 41); we get player_floor in.

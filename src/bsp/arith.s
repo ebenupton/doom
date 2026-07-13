@@ -26,10 +26,10 @@
 ; ============================================================================
 ; br_umul8 — unsigned u8 × u8 → u16.
 ;   Inputs:  zp_br_a, zp_br_b (u8 each)
-;   Output:  zp_br_resl/resh (u16)
+;   Output:  zp_br_res_l/resh (u16)
 ;   Uses:    SC_UMUL8, the shared quarter-square multiplier
 ;            (a*b = f(a+b) - f(a-b), f(x) = x^2/4 table lookup);
-;            clobbers zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
+;            clobbers zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
 ; Thin adapter from the br_a/br_b register convention onto SC_UMUL8.
 ; ============================================================================
 .if ::BANKED
@@ -43,9 +43,9 @@ br_umul8:
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
-   STA zp_br_resh                          ; A = prod_hi (umul8 contract)
-   LDA zp_prod_lo
-   STA zp_br_resl
+   STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
+   LDA zp_prod_l
+   STA zp_br_res_l
    RTS
 
 .if ::BANKED
@@ -53,7 +53,7 @@ br_umul8:
 .endif
 ; ============================================================================
 ; br_smul8 — signed s8 × s8 → s16. Inputs in zp_br_a, zp_br_b.
-; Result in zp_br_resl/resh (s16, 2's complement). ~80 cycles.
+; Result in zp_br_res_l/resh (s16, 2's complement). ~80 cycles.
 ;
 ; Sign-magnitude wrapper over the unsigned quarter-square core:
 ;   sign = (a < 0) ^ (b < 0);  a = |a|;  b = |b|
@@ -62,7 +62,7 @@ br_umul8:
 ; (br_smul_s8_u8 — a signed, b unsigned full 0..255 — is the clipper
 ; unit's variant; THIS one treats BOTH operands as s8.)
 ; Clobbers zp_br_a/b (replaced by magnitudes), zp_br_sign, zp_mul_b,
-; zp_prod_lo/hi, zp_tmp0, X, Y.
+; zp_prod_l/hi, zp_tmp0, X, Y.
 ; ============================================================================
 br_smul8:
 .scope
@@ -88,19 +88,19 @@ b_pos:
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
-   STA zp_br_resh                          ; A = prod_hi (umul8 contract)
-   LDA zp_prod_lo
-   STA zp_br_resl
+   STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
+   LDA zp_prod_l
+   STA zp_br_res_l
    LDA zp_br_sign
    BEQ pos
 ; Negate s16 result
    LDA #0
    SEC
-   SBC zp_br_resl
-   STA zp_br_resl
+   SBC zp_br_res_l
+   STA zp_br_res_l
    LDA #0
-   SBC zp_br_resh
-   STA zp_br_resh
+   SBC zp_br_res_h
+   STA zp_br_res_h
 pos:
    RTS
 .endscope
@@ -236,7 +236,7 @@ s_have:
 ; player position's fractional byte. Vertex fractions are always 0, so
 ; per-vertex work needs only the integer terms (br_rot_int below).
 ; unity = cardinal angle (|sin| or |cos| rounds to 1.0): exact copy of
-; lo, no multiply. Clobbers zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
+; lo, no multiply. Clobbers zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
 ; ============================================================================
 zp_ft_lo = $0BF8                        ; absolute (swapped with zp_seg_lv1x/y); cold
 zp_ft_mag = $0BF9
@@ -259,31 +259,31 @@ ft_not_one:
    LDA zp_ft_lo
    JSR SC_UMUL8                            ; prod_lo:hi = lo * mag
 ; val = (prod + 128) >> 8 — round-to-nearest, then take HI byte.
-   LDA zp_prod_lo
+   LDA zp_prod_l
    CLC
    ADC #128
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC #0
 ; A = HI byte after rounding
 ft_apply_neg:
-; A = u8 magnitude. Promote to s16 in zp_br_resl:resh.
-   STA zp_br_resl
-   ZERO zp_br_resh
+; A = u8 magnitude. Promote to s16 in zp_br_res_l:resh.
+   STA zp_br_res_l
+   ZERO zp_br_res_h
    LDA zp_ft_neg
    BEQ ft_done
    LDA #0
    SEC
-   SBC zp_br_resl
-   STA zp_br_resl
+   SBC zp_br_res_l
+   STA zp_br_res_l
    LDA #0
-   SBC zp_br_resh
-   STA zp_br_resh
+   SBC zp_br_res_h
+   STA zp_br_res_h
 ft_done:
    RTS
 ft_zero:
    LDA #0
-   STA zp_br_resl
-   STA zp_br_resh
+   STA zp_br_res_l
+   STA zp_br_res_h
    RTS
 .endscope
 
@@ -295,11 +295,11 @@ ft_zero:
 ; terms with sign cancellation, and the final sum (total_vx, total_vy)
 ; fits s16 in practice for reasonable map sizes.
 ;
-;   Inputs:  zp_ri_dlo, zp_ri_dhi (s16 integer delta — was s8, now s16)
+;   Inputs:  zp_ri_d_l, zp_ri_d_h (s16 integer delta — was s8, now s16)
 ;            zp_ri_mag (u8 trig magnitude)
 ;            zp_br_t1 (seeded 1 if trig negative — thunk SMC)
 ;            zp_ri_one (1 if |trig| == 1)
-;   Output:  zp_br_resl/resh (s16)
+;   Output:  zp_br_res_l/resh (s16)
 ;
 ;   Python:
 ;     if unity: val = d_hi << 8
@@ -311,11 +311,11 @@ ft_zero:
 ; delta (wx - px_int), so the result is s24 in resl/resh/resext — the
 ; 8.8 view coordinate plus a sign/overflow extension byte. Called 4× per
 ; vertex-cache miss by br_to_view (view.s): dx·sin, dy·cos, dx·cos,
-; dy·sin. Clobbers zp_ri_dlo/dhi (replaced by |d|), zp_br_t1,
-; zp_mul_b, zp_prod_lo/hi, zp_tmp0, X, Y.
+; dy·sin. Clobbers zp_ri_d_l/dhi (replaced by |d|), zp_br_t1,
+; zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
 ; ============================================================================
 ; ($29, $2B were unused zp_ri_mag/zp_ri_one -> reclaimed for zp_seg_bfh/bch)
-zp_ri_d = zp_ri_dlo                     ; backwards-compat alias
+zp_ri_d = zp_ri_d_l                     ; backwards-compat alias
 
 ; SMC rotation variants (2026-07-08): the trig config (one/mag/neg per
 ; sin/cos) is FRAME-CONSTANT, so the per-call tests and Y-indexed trig
@@ -337,30 +337,30 @@ zp_ri_d = zp_ri_dlo                     ; backwards-compat alias
 .endif
 rot_zero:
    LDA #0
-   STA zp_br_resl
-   STA zp_br_resh
-   STA zp_br_resext
+   STA zp_br_res_l
+   STA zp_br_res_h
+   STA zp_br_res_x
    RTS
 
 rot_unity_pos:
 ; val = d << 8 as s24: resl=0, resh=dlo, resext=dhi.
-   ZERO zp_br_resl
-   LDA zp_ri_dlo
-   STA zp_br_resh
-   LDA zp_ri_dhi
-   STA zp_br_resext
+   ZERO zp_br_res_l
+   LDA zp_ri_d_l
+   STA zp_br_res_h
+   LDA zp_ri_d_h
+   STA zp_br_res_x
    RTS
 
 rot_unity_neg:
 ; -(d << 8): byte 0 stays 0 (no borrow out of 0-0), negate the top pair.
-   ZERO zp_br_resl
+   ZERO zp_br_res_l
    LDA #0
    SEC
-   SBC zp_ri_dlo
-   STA zp_br_resh
+   SBC zp_ri_d_l
+   STA zp_br_res_h
    LDA #0
-   SBC zp_ri_dhi
-   STA zp_br_resext
+   SBC zp_ri_d_h
+   STA zp_br_res_x
    RTS
 
 rot_gen_sin:
@@ -383,33 +383,33 @@ rot_gen_cos:
 ; rot_core_sin/_cos — the general |d|*mag s24 path, ONE CORE PER TRIG
 ; because the sum-side quarter-square lookups carry the frame's mag in
 ; their SMC'd table-base operands (sin and cos have different mags).
-; In: zp_ri_dlo/dhi = d (s16), zp_mul_b = mag (staged by the thunk; the
+; In: zp_ri_d_l/dhi = d (s16), zp_mul_b = mag (staged by the thunk; the
 ;     DIFF side still needs it), zp_br_t1 = trig sign seed (thunk).
-; Out: resl/resh/resext (s24). |d| written back to zp_ri_dlo/dhi.
+; Out: resl/resh/resext (s24). |d| written back to zp_ri_d_l/dhi.
 rot_core_sin:
 .scope
 ; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
 ; common on E1M1's grid geometry) — skip the two multiplies.
-   LDA zp_ri_dlo
-   ORA zp_ri_dhi
+   LDA zp_ri_d_l
+   ORA zp_ri_d_h
    BNE d_nz
    JMP ri_zero
 d_nz:
 ; zp_br_t1 arrives SEEDED with the trig sign (thunk SMC immediate); a
 ; negative d FLIPS it — the d-sign and trig-sign negations XOR-fold into
 ; one tail negate.
-   LDA zp_ri_dhi
+   LDA zp_ri_d_h
    BPL d_pos
    LDA zp_br_t1
    EOR #1
    STA zp_br_t1
    LDA #0
    SEC
-   SBC zp_ri_dlo
-   STA zp_ri_dlo
+   SBC zp_ri_d_l
+   STA zp_ri_d_l
    LDA #0
-   SBC zp_ri_dhi
-   STA zp_ri_dhi
+   SBC zp_ri_d_h
+   STA zp_ri_d_h
 d_pos:
 ; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
 ; The sum side f(x+mag) is one LDA abs,X with X = raw x: rot_select
@@ -418,7 +418,7 @@ d_pos:
 ; page — pages are CONTIGUOUS per gen_abi's 2026-07-12 reorder). No sum
 ; add, no TAX, no carry-window branch. Diff side is classic: |x-mag|
 ; always fits the first window.
-   LDA zp_ri_dlo
+   LDA zp_ri_d_l
    TAX                                     ; X = raw x (base carries +mag)
    SEC
    SBC zp_mul_b
@@ -428,20 +428,20 @@ d_pos:
 um1_pos:
    TAY
 ::rot_sqs1l:
-   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
+   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
-   SBC sqr_lo,Y
-   STA zp_br_resl
+   SBC sqr_l,Y
+   STA zp_br_res_l
 ::rot_sqs1h:
-   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_hi,Y
-   STA zp_br_resh
-   ZERO zp_br_resext
+   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_br_res_h
+   ZERO zp_br_res_x
 ; --- hi partial: |d| hi byte is 0..2 on this map (10-bit world coords;
 ; measured 87% zero, ~13% one) — multiply-by-0/1 dispatch to trivial
 ; arms; the general quarter-square stays as the >=2 fallback so NO
 ; delta-range fence is needed (any map/position stays exact). ---
-   LDA zp_ri_dhi
+   LDA zp_ri_d_h
    BEQ um2_z                               ; x0: resh/resext untouched
    CMP #1
    BEQ um2_one                             ; x1: product == mag
@@ -454,22 +454,22 @@ um1_pos:
 um2_pos:
    TAY
 ::rot_sqs2l:
-   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
+   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
-   SBC sqr_lo,Y
-   STA zp_prod_lo
+   SBC sqr_l,Y
+   STA zp_prod_l
 ::rot_sqs2h:
-   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_hi,Y
-   STA zp_prod_hi
+   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_prod_h
    JMP ri_finish
 um2_one:
    LDA zp_mul_b                            ; resh += mag, carry -> resext
    CLC
-   ADC zp_br_resh
-   STA zp_br_resh
+   ADC zp_br_res_h
+   STA zp_br_res_h
    BCC um2_z
-   INC zp_br_resext
+   INC zp_br_res_x
 um2_z:
    JMP ri_sign                             ; skip ri_finish's dead adds
 .endscope
@@ -478,26 +478,26 @@ rot_core_cos:
 .scope
 ; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
 ; common on E1M1's grid geometry) — skip the two multiplies.
-   LDA zp_ri_dlo
-   ORA zp_ri_dhi
+   LDA zp_ri_d_l
+   ORA zp_ri_d_h
    BNE d_nz
    JMP ri_zero
 d_nz:
 ; zp_br_t1 arrives SEEDED with the trig sign (thunk SMC immediate); a
 ; negative d FLIPS it — the d-sign and trig-sign negations XOR-fold into
 ; one tail negate.
-   LDA zp_ri_dhi
+   LDA zp_ri_d_h
    BPL d_pos
    LDA zp_br_t1
    EOR #1
    STA zp_br_t1
    LDA #0
    SEC
-   SBC zp_ri_dlo
-   STA zp_ri_dlo
+   SBC zp_ri_d_l
+   STA zp_ri_d_l
    LDA #0
-   SBC zp_ri_dhi
-   STA zp_ri_dhi
+   SBC zp_ri_d_h
+   STA zp_ri_d_h
 d_pos:
 ; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
 ; The sum side f(x+mag) is one LDA abs,X with X = raw x: rot_select
@@ -506,7 +506,7 @@ d_pos:
 ; page — pages are CONTIGUOUS per gen_abi's 2026-07-12 reorder). No sum
 ; add, no TAX, no carry-window branch. Diff side is classic: |x-mag|
 ; always fits the first window.
-   LDA zp_ri_dlo
+   LDA zp_ri_d_l
    TAX                                     ; X = raw x (base carries +mag)
    SEC
    SBC zp_mul_b
@@ -516,20 +516,20 @@ d_pos:
 um1_pos:
    TAY
 ::rot_sqc1l:
-   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
+   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
-   SBC sqr_lo,Y
-   STA zp_br_resl
+   SBC sqr_l,Y
+   STA zp_br_res_l
 ::rot_sqc1h:
-   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_hi,Y
-   STA zp_br_resh
-   ZERO zp_br_resext
+   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_br_res_h
+   ZERO zp_br_res_x
 ; --- hi partial: |d| hi byte is 0..2 on this map (10-bit world coords;
 ; measured 87% zero, ~13% one) — multiply-by-0/1 dispatch to trivial
 ; arms; the general quarter-square stays as the >=2 fallback so NO
 ; delta-range fence is needed (any map/position stays exact). ---
-   LDA zp_ri_dhi
+   LDA zp_ri_d_h
    BEQ um2_z                               ; x0: resh/resext untouched
    CMP #1
    BEQ um2_one                             ; x1: product == mag
@@ -542,22 +542,22 @@ um1_pos:
 um2_pos:
    TAY
 ::rot_sqc2l:
-   LDA sqr_lo,X                            ; +1 SMC = mag (rot_select)
+   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
-   SBC sqr_lo,Y
-   STA zp_prod_lo
+   SBC sqr_l,Y
+   STA zp_prod_l
 ::rot_sqc2h:
-   LDA sqr_hi,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_hi,Y
-   STA zp_prod_hi
+   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_prod_h
    JMP ri_finish
 um2_one:
    LDA zp_mul_b                            ; resh += mag, carry -> resext
    CLC
-   ADC zp_br_resh
-   STA zp_br_resh
+   ADC zp_br_res_h
+   STA zp_br_res_h
    BCC um2_z
-   INC zp_br_resext
+   INC zp_br_res_x
 um2_z:
    JMP ri_sign                             ; skip ri_finish's dead adds
 .endscope
@@ -566,30 +566,30 @@ um2_z:
 ; if the XOR-folded sign says so.
 ri_finish:
    CLC
-   LDA zp_prod_lo
-   ADC zp_br_resh
-   STA zp_br_resh
-   LDA zp_prod_hi
-   ADC zp_br_resext
-   STA zp_br_resext
+   LDA zp_prod_l
+   ADC zp_br_res_h
+   STA zp_br_res_h
+   LDA zp_prod_h
+   ADC zp_br_res_x
+   STA zp_br_res_x
 ri_sign:                                    ; entry for the x0/x1 arms
    LDA zp_br_t1
    BEQ ri_done                             ; t1 = (d<0) XOR (trig<0)
    LDA #0
    SEC
-   SBC zp_br_resl
-   STA zp_br_resl
+   SBC zp_br_res_l
+   STA zp_br_res_l
    LDA #0
-   SBC zp_br_resh
-   STA zp_br_resh
+   SBC zp_br_res_h
+   STA zp_br_res_h
    LDA #0
-   SBC zp_br_resext
-   STA zp_br_resext
+   SBC zp_br_res_x
+   STA zp_br_res_x
 ri_done:
    RTS
 ri_zero:
    LDA #0
-   STA zp_br_resl
-   STA zp_br_resh
-   STA zp_br_resext
+   STA zp_br_res_l
+   STA zp_br_res_h
+   STA zp_br_res_x
    RTS

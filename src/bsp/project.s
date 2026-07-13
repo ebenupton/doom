@@ -6,11 +6,11 @@
 ;   staged v_x* into t0/t1 and post-staged resext; all of that is gone).
 ;
 ;   Inputs (zp):
-;     zp_v_xext:zp_v_xint = s16 integer view-x, zp_v_xfrac = u8 fraction
+;     zp_v_x_x:zp_v_x_h = s16 integer view-x, zp_v_x_l = u8 fraction
 ;     zp_br_rhi = M8 (recip mantissa), zp_br_rlo = S (recip shift)
 ;
 ;   Output:
-;     zp_br_resl/h = sx (s16 screen x); Y = sx lo, A = sx hi (REG
+;     zp_br_res_l/h = sx (s16 screen x); Y = sx lo, A = sx hi (REG
 ;     CONTRACT). (resext is NOT an output — no consumer, 2026-07-13.)
 ;
 ;   Python (fp_project_x):
@@ -54,14 +54,14 @@ px_shrink:
 ps_loop:
    DEX
 ps_shift:
-   LDA zp_v_xext
+   LDA zp_v_x_x
    CMP #$80                                ; arithmetic >>1 of the s24 X88
-   ROR zp_v_xext
-   ROR zp_v_xint
-   ROR zp_v_xfrac
-   LDA zp_v_xint
+   ROR zp_v_x_x
+   ROR zp_v_x_h
+   ROR zp_v_x_l
+   LDA zp_v_x_h
    ASL A
-   LDA zp_v_xext
+   LDA zp_v_x_x
    ADC #0
    BNE ps_loop
 ; --- dispatch the net shift and tail-call the narrow body ---
@@ -86,28 +86,28 @@ ps_rns24:
    LDA zp_px_s_save                        ; restore + re-select (rlo-
    STA zp_br_rlo                           ; writer invariant); select
    JSR rns_select                          ; clobbers A/X -> re-establish
-   LDY zp_br_resl                          ; the REG CONTRACT from the ZP
-   LDA zp_br_resh                          ; results
+   LDY zp_br_res_l                          ; the REG CONTRACT from the ZP
+   LDA zp_br_res_h                          ; results
    RTS
 ::br_project_x:
-   LDA zp_v_xint
+   LDA zp_v_x_h
    ASL A                                   ; C = sign bit of xint
-   LDA zp_v_xext
+   LDA zp_v_x_x
    ADC #0                                  ; 0 iff xext == sign extension
    BNE px_shrink                           ; cold (in range: block above);
 px_narrow:                                  ; hot path FALLS THROUGH
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    LDA #0
-   STA zp_br_resl
-   STA zp_br_resh
+   STA zp_br_res_l
+   STA zp_br_res_h
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
    LDA zp_br_rhi
    BNE px_have_m8
-   LDA zp_v_xfrac
+   LDA zp_v_x_l
    STA zp_br_t2
    JMP px_p_pos
 px_have_m8:
-   LDA zp_v_xfrac
+   LDA zp_v_x_l
    BNE px_have_frac
    STA zp_br_t2
    BEQ px_no_frac
@@ -129,22 +129,22 @@ pxf_pd:
    ADC zp_br_rhi
    TAX                                     ; X = frac + M8
    BCS pxf_uo
-   LDA sqr_lo,X
-   CMP sqr_lo,Y                            ; C = lo borrow (hi-only: no store)
-   LDA sqr_hi,X
-   SBC sqr_hi,Y
+   LDA sqr_l,X
+   CMP sqr_l,Y                            ; C = lo borrow (hi-only: no store)
+   LDA sqr_h,X
+   SBC sqr_h,Y
    JMP pxf_have
 pxf_uo:
-   LDA sqr2_lo,X
-   CMP sqr_lo,Y
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
+   LDA sqr2_l,X
+   CMP sqr_l,Y
+   LDA sqr2_h,X
+   SBC sqr_h,Y
 pxf_have:
    CLC
-   ADC zp_v_xfrac
+   ADC zp_v_x_l
    STA zp_br_t2
    BCC px_no_frac
-   INC zp_br_resl                            ; t3 pre-zeroed at entry
+   INC zp_br_res_l                            ; t3 pre-zeroed at entry
 px_no_frac:
 
 ; --- += smul(vx, M8), SIGN FUSED INTO THE ACCUMULATE (inlined
@@ -152,7 +152,7 @@ px_no_frac:
 ; SUBTRACTS it (arm below the tail) — the signed product never
 ; materialises, so the old two-fixup ext dance (carry bump + product-
 ; sign correction) is one carry/borrow bump per arm. ---
-   LDA zp_v_xint
+   LDA zp_v_x_h
    BMI pxm_neg
    TAX
    SEC
@@ -167,19 +167,19 @@ pxm_pd:
    ADC zp_br_rhi
    TAX                                     ; X = |vx| + M8
    BCS pxm_puo
-   LDA sqr_lo,X
+   LDA sqr_l,X
    SEC
-   SBC sqr_lo,Y
+   SBC sqr_l,Y
    STA zp_br_a                             ; prod lo (scratch)
-   LDA sqr_hi,X
-   SBC sqr_hi,Y
+   LDA sqr_h,X
+   SBC sqr_h,Y
    JMP pxm_pacc
 pxm_puo:
-   LDA sqr2_lo,X
-   SBC sqr_lo,Y                            ; C set on this arm
+   LDA sqr2_l,X
+   SBC sqr_l,Y                            ; C set on this arm
    STA zp_br_a
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
+   LDA sqr2_h,X
+   SBC sqr_h,Y
 pxm_pacc:
    TAX                                     ; X = prod hi
    LDA zp_br_a
@@ -187,38 +187,38 @@ pxm_pacc:
    ADC zp_br_t2
    STA zp_br_t2
    TXA
-   ADC zp_br_resl
-   STA zp_br_resl
+   ADC zp_br_res_l
+   STA zp_br_res_l
    BCC px_p_pos                            ; ext += carry (unsigned product:
-   INC zp_br_resh                         ; no sign fixup exists)
+   INC zp_br_res_h                         ; no sign fixup exists)
 px_p_pos:
 
 ; --- += vx << 8 (sign-extended) ---
-   LDA zp_v_xint
+   LDA zp_v_x_h
    CLC
-   ADC zp_br_resl
-   STA zp_br_resl
+   ADC zp_br_res_l
+   STA zp_br_res_l
    BCC px_i_nc
-   INC zp_br_resh
+   INC zp_br_res_h
 px_i_nc:
-   LDA zp_v_xint
+   LDA zp_v_x_h
    BPL px_i_pos
-   DEC zp_br_resh
+   DEC zp_br_res_h
 px_i_pos:
 
 ; --- sx = 128 + rns(b123, S) (per-vertex vectored shifter) ---
    JSR rns_go
-   LDA zp_br_resl
+   LDA zp_br_res_l
    CLC
    ADC #128
-   STA zp_br_resl
+   STA zp_br_res_l
    TAY                                     ; REG CONTRACT (2026-07-12): every
                                         ; projection RTSes with Y = res lo,
                                         ; A = res hi (ZP resl/resh still
                                         ; written — regs are the fast lane)
-   LDA zp_br_resh
+   LDA zp_br_res_h
    ADC #0
-   STA zp_br_resh
+   STA zp_br_res_h
    RTS                                     ; (resext staging deleted
                                         ; 2026-07-13: NO consumer reads it
                                         ; after a projection — the bbox-
@@ -242,19 +242,19 @@ pxm_nd:
    ADC zp_br_rhi
    TAX
    BCS pxm_nuo
-   LDA sqr_lo,X
+   LDA sqr_l,X
    SEC
-   SBC sqr_lo,Y
+   SBC sqr_l,Y
    STA zp_br_a                             ; prod lo
-   LDA sqr_hi,X
-   SBC sqr_hi,Y
+   LDA sqr_h,X
+   SBC sqr_h,Y
    JMP pxm_nacc
 pxm_nuo:
-   LDA sqr2_lo,X
-   SBC sqr_lo,Y
+   LDA sqr2_l,X
+   SBC sqr_l,Y
    STA zp_br_a
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
+   LDA sqr2_h,X
+   SBC sqr_h,Y
 pxm_nacc:
    STA zp_mul_b                            ; prod hi (scratch — the mul that
                                         ; owned this byte is inlined now)
@@ -262,11 +262,11 @@ pxm_nacc:
    LDA zp_br_t2
    SBC zp_br_a
    STA zp_br_t2
-   LDA zp_br_resl
+   LDA zp_br_res_l
    SBC zp_mul_b
-   STA zp_br_resl
+   STA zp_br_res_l
    BCS pxm_njoin                           ; ext -= borrow
-   DEC zp_br_resh
+   DEC zp_br_res_h
 pxm_njoin:
    JMP px_p_pos
 
@@ -285,7 +285,7 @@ pxm_njoin:
 ;     zp_br_t0 here), zp_br_rhi/rlo = (M8, S) recip.
 ;   jt/harness entry (br_project_y_paged): pages L2, loads h from
 ;     zp_br_t0 (the wrapper contract predates the register pass).
-;   Output: zp_br_resl/h = sy (s16, pre-biased by Y_BIAS folded into the
+;   Output: zp_br_res_l/h = sy (s16, pre-biased by Y_BIAS folded into the
 ;     128 constant); RTSes with Y = sy lo, A = sy hi (REG CONTRACT).
 ;   Preserves the input set; clobbers X, Y, zp_pyc_idx + raw scratch on
 ;     a miss. CALLER pages BANK_L2 (y_stage/apv page once per run).
@@ -319,9 +319,9 @@ br_project_y:
    CMP zp_br_t0
    BNE pyc_miss
    LDY VWHC_LO,X                           ; REG CONTRACT: Y = lo, A = hi
-   STY zp_br_resl
+   STY zp_br_res_l
    LDA VWHC_HI,X
-   STA zp_br_resh
+   STA zp_br_res_h
    RTS
 pyc_miss:
    STX zp_pyc_idx                          ; slot for the tail writeback;
@@ -335,7 +335,7 @@ pyc_miss:
 ;     zp_br_rhi = M8 (recip mantissa), zp_br_rlo = S (recip shift)
 ;
 ;   Output:
-;     zp_br_resl/h = sy (s16)
+;     zp_br_res_l/h = sy (s16)
 ;
 ;   Python (fp_project_y):
 ;     sy = HALF_H - rns(h*M8 + (h << 8), S)     [h*m9, m9 = 256+M8]
@@ -367,11 +367,11 @@ pyc_miss:
    LDA zp_br_rhi
    BNE py_have_m8
    STA zp_br_t2                            ; A == 0 here (BNE fell through)
-   STA zp_br_resh
+   STA zp_br_res_h
    LDA zp_br_t0                            ; N flag survives the STA below
-   STA zp_br_resl
+   STA zp_br_res_l
    BPL py_go
-   DEC zp_br_resh
+   DEC zp_br_res_h
 py_go:
    JMP py_shift
 py_have_m8:
@@ -395,19 +395,19 @@ pym_pd:
    ADC zp_br_rhi
    TAX                                     ; X = h + M8
    BCS pym_puo
-   LDA sqr_lo,X
+   LDA sqr_l,X
    SEC
-   SBC sqr_lo,Y
+   SBC sqr_l,Y
    STA zp_br_t2                            ; P24 lo
-   LDA sqr_hi,X
-   SBC sqr_hi,Y
+   LDA sqr_h,X
+   SBC sqr_h,Y
    JMP pym_join                            ; A = hi(h*M8)
 pym_puo:
-   LDA sqr2_lo,X                           ; f(x+y) overflowed into the
-   SBC sqr_lo,Y                            ; +256 window (carry in = 1)
+   LDA sqr2_l,X                           ; f(x+y) overflowed into the
+   SBC sqr_l,Y                            ; +256 window (carry in = 1)
    STA zp_br_t2
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
+   LDA sqr2_h,X
+   SBC sqr_h,Y
    JMP pym_join
 pym_neg:
 ; negative h: |h| through the quarter-square, negate during the copy-out
@@ -426,19 +426,19 @@ pym_nd:
    ADC zp_br_rhi
    TAX
    BCS pym_nuo
-   LDA sqr_lo,X
+   LDA sqr_l,X
    SEC
-   SBC sqr_lo,Y
+   SBC sqr_l,Y
    STA zp_br_t2                            ; |prod| lo (negated below)
-   LDA sqr_hi,X
-   SBC sqr_hi,Y
+   LDA sqr_h,X
+   SBC sqr_h,Y
    JMP pym_nneg
 pym_nuo:
-   LDA sqr2_lo,X
-   SBC sqr_lo,Y
+   LDA sqr2_l,X
+   SBC sqr_l,Y
    STA zp_br_t2
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
+   LDA sqr2_h,X
+   SBC sqr_h,Y
 pym_nneg:
    TAX                                     ; X = |prod| hi
    SEC
@@ -457,24 +457,24 @@ pym_join:
 ; map fails the PACK, not the render. ---
    CLC
    ADC zp_br_t0                            ; mid = hi(h*M8) + h
-   STA zp_br_resl
+   STA zp_br_res_l
    ASL A                                   ; C = sign of t3 (A dead after);
    LDA #0                                  ; branchless sign spread — NOTE
    ADC #$FF                                ; the first cut used LDX #0/BPL
    EOR #$FF                                ; and LDX had already clobbered
-   STA zp_br_resh                         ; the ADC's N flag: ext was
+   STA zp_br_res_h                         ; the ADC's N flag: ext was
 py_shift:                                  ; always 0. C survives LDA/STA.
 
 ; --- sy = 128 - rns(P24, S) (per-vertex vectored shifter) ---
    JSR rns_go
    LDA #128
    SEC
-   SBC zp_br_resl
-   STA zp_br_resl
+   SBC zp_br_res_l
+   STA zp_br_res_l
    TAY                                     ; REG CONTRACT: Y = sy lo, A = sy hi
    LDA #0
-   SBC zp_br_resh
-   STA zp_br_resh
+   SBC zp_br_res_h
+   STA zp_br_res_h
 ; --- VWHC writeback (the raw body is only ever entered through the
 ; cache front's miss path above) ---
    LDX zp_pyc_idx
@@ -486,7 +486,7 @@ py_shift:                                  ; always 0. C survives LDA/STA.
    STA VWHC_H,X
    TYA
    STA VWHC_LO,X
-   LDA zp_br_resh
+   LDA zp_br_res_h
    STA VWHC_HI,X                           ; (A = hi, Y = lo at RTS)
    RTS
 .endscope
@@ -545,13 +545,13 @@ rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
 rns_select:
 .scope
    LDX zp_br_rlo
-   LDA rns_vec_lo-1,X
+   LDA rns_vec_l-1,X
    STA rns_go_op
    RTS
 .endscope
 rns_vec_all:                               ; ONE table, net shift -2..10 in
    .byte <rns_sm2, <rns_sm1, <rns_s0      ; order; the shrink indexes it
-rns_vec_lo:                                ; with X = net+3, the regular
+rns_vec_l:                                ; with X = net+3, the regular
    .byte <rns24, <rns24, <rns24, <rns24, <rns_s5   ; selects at S (=net)
    .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10   ; via this alias
 ; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
@@ -567,9 +567,9 @@ rns_s8:
    LDA zp_br_t2
    ADC #$80                                ; C=0 from rns_go
    BCC s8_done
-   INC zp_br_resl
+   INC zp_br_res_l
    BNE s8_done
-   INC zp_br_resh
+   INC zp_br_res_h
 s8_done:
    RTS
 .endscope
@@ -577,15 +577,15 @@ rns_s9:
 .scope
 ; floor((P + $100) / 512): round is +1 into b1 (in place), then ASR the
 ; (resh, resl) pair once.
-   INC zp_br_resl
+   INC zp_br_res_l
    BNE s9_nc
-   INC zp_br_resh
+   INC zp_br_res_h
 s9_nc:
-   LDA zp_br_resh
+   LDA zp_br_res_h
    CMP #$80                                ; C = sign bit → arithmetic ROR
    ROR A
-   STA zp_br_resh
-   ROR zp_br_resl
+   STA zp_br_res_h
+   ROR zp_br_res_l
    RTS
 .endscope
 
@@ -596,16 +596,16 @@ rns_s6:
    LDA zp_br_t2
    ADC #$20                                ; C=0 from rns_go
    BCC s6_sh
-   INC zp_br_resl
+   INC zp_br_res_l
    BNE s6_sh
-   INC zp_br_resh
+   INC zp_br_res_h
 s6_sh:
    ASL A
-   ROL zp_br_resl
-   ROL zp_br_resh
+   ROL zp_br_res_l
+   ROL zp_br_res_h
    ASL A
-   ROL zp_br_resl
-   ROL zp_br_resh
+   ROL zp_br_res_l
+   ROL zp_br_res_h
    RTS
 .endscope
 
@@ -616,13 +616,13 @@ rns_s7:
    LDA zp_br_t2
    ADC #$40                                ; C=0 from rns_go
    BCC s7_sh
-   INC zp_br_resl
+   INC zp_br_res_l
    BNE s7_sh
-   INC zp_br_resh
+   INC zp_br_res_h
 s7_sh:
    ASL A
-   ROL zp_br_resl
-   ROL zp_br_resh
+   ROL zp_br_res_l
+   ROL zp_br_res_h
    RTS
 .endscope
 
@@ -633,19 +633,19 @@ rns_s5:
 LDA zp_br_t2
    ADC #$10                                ; C=0 from rns_go
    BCC s5_sh
-   INC zp_br_resl
+   INC zp_br_res_l
    BNE s5_sh
-   INC zp_br_resh
+   INC zp_br_res_h
 s5_sh:
    ASL A
-   ROL zp_br_resl
-   ROL zp_br_resh
+   ROL zp_br_res_l
+   ROL zp_br_res_h
    ASL A
-   ROL zp_br_resl
-   ROL zp_br_resh
+   ROL zp_br_res_l
+   ROL zp_br_res_h
    ASL A
-   ROL zp_br_resl
-   ROL zp_br_resh
+   ROL zp_br_res_l
+   ROL zp_br_res_h
    RTS
 .endscope
 ; --- deficit kernels (2026-07-13): a shrink that ran out of exponent
@@ -657,30 +657,30 @@ s5_sh:
 ; sweeps beyond it and the fp mirror clamps identically). ---
 rns_s0:
 ; deficit 1: net shift 0 — result = P exactly
-   LDA zp_br_resl
-   STA zp_br_resh
+   LDA zp_br_res_l
+   STA zp_br_res_h
    LDA zp_br_t2
-   STA zp_br_resl
+   STA zp_br_res_l
    RTS
 rns_sm1:
 ; deficit 2: net shift -1 — result = P << 1
    ASL zp_br_t2
-   ROL zp_br_resl
-   LDA zp_br_resl
-   STA zp_br_resh
+   ROL zp_br_res_l
+   LDA zp_br_res_l
+   STA zp_br_res_h
    LDA zp_br_t2
-   STA zp_br_resl
+   STA zp_br_res_l
    RTS
 rns_sm2:
 ; deficit 3: net shift -2 — result = P << 2
    ASL zp_br_t2
-   ROL zp_br_resl
+   ROL zp_br_res_l
    ASL zp_br_t2
-   ROL zp_br_resl
-   LDA zp_br_resl
-   STA zp_br_resh
+   ROL zp_br_res_l
+   LDA zp_br_res_l
+   STA zp_br_res_h
    LDA zp_br_t2
-   STA zp_br_resl
+   STA zp_br_res_l
    RTS
 
 rns_s10:
@@ -689,20 +689,20 @@ rns_s10:
 ; and ASR the (resh, resl) pair twice. Reinstated 2026-07-13 so rns24's
 ; domain is PURE S in [1,4] — where the rounding half fits the low byte
 ; and the mid-table add + CPX dispatch vanish.
-   LDA zp_br_resl
+   LDA zp_br_res_l
    ADC #2                                  ; C=0 from rns_go
-   STA zp_br_resl
+   STA zp_br_res_l
    BCC s10_sh
-   INC zp_br_resh
+   INC zp_br_res_h
 s10_sh:
-   LDA zp_br_resh
+   LDA zp_br_res_h
    CMP #$80                                ; C = sign bit → arithmetic ROR
    ROR A
-   ROR zp_br_resl
+   ROR zp_br_res_l
    CMP #$80
    ROR A
-   ROR zp_br_resl
-   STA zp_br_resh
+   ROR zp_br_res_l
+   STA zp_br_res_h
    RTS
 .endscope
 ; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
@@ -717,25 +717,25 @@ rns24:
 ; (2026-07-13). S=1 is the near-plane crossing reciprocal — hot for
 ; clipped segs. Result lands one byte LOW (b0, b1): shuffle up at exit.
    LDX zp_br_rlo
-   LDA rns_half_lo-1,X
+   LDA rns_half_l-1,X
    ADC zp_br_t2                            ; C=0 from rns_go
    STA zp_br_t2
    BCC rn_rloop
-   INC zp_br_resl
+   INC zp_br_res_l
    BNE rn_rloop
-   INC zp_br_resh
+   INC zp_br_res_h
 rn_rloop:
-   LDA zp_br_resh
+   LDA zp_br_res_h
    CMP #$80
-   ROR zp_br_resh
-   ROR zp_br_resl
+   ROR zp_br_res_h
+   ROR zp_br_res_l
    ROR zp_br_t2
    DEX
    BNE rn_rloop
-   LDA zp_br_resl
-   STA zp_br_resh
+   LDA zp_br_res_l
+   STA zp_br_res_h
    LDA zp_br_t2
-   STA zp_br_resl
+   STA zp_br_res_l
    RTS
 .endscope
 .assert >rns_s6 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"

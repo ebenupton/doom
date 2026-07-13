@@ -9,7 +9,7 @@
 ;   visible = (br is not None) and clips.has_gap(br[0], br[1])
 ;
 ; Inputs:
-;   zp_node_chlo        = node id (u8 — n_nodes <= 256, asserted at pack time)
+;   zp_node_ch_l        = node id (u8 — n_nodes <= 256, asserted at pack time)
 ;   zp_bbox_side        = 0 → right child's box, 1 → left child's box
 ;   Box table base is the ROM_BBOX_C layout.inc CONSTANT (the zp_rom_bbox
 ;   pointer pair was retired 2026-07-10): 16 bytes/node = two 8-byte
@@ -22,7 +22,7 @@
 ;   A = 1 (Z clear) if the box subtends visible screen columns AND
 ;       span_has_gap([bca_ilo, bca_ihi]) — subtree worth descending;
 ;   A = 0 (Z set) otherwise. Callers branch on Z (BEQ → skip subtree).
-; Clobbers: A, X, Y; $86/$87 (bca_boxp); $C2/$C3 (zp_ilo/zp_ihi);
+; Clobbers: A, X, Y; $86/$87 (bca_boxp); $C2/$C3 (zp_i_l/zp_i_h);
 ;   pages bank L2 then bank C in the banked build (caller re-pages after).
 ;
 ; Pseudocode:
@@ -92,7 +92,7 @@ br_bbox_visible:
 ; page alignment (asserted by the loaders): the record never straddles a
 ; page, so lo = (node & 15)<<4 | side<<3 and hi = base_hi + (node >> 4)
 ; — byte-at-a-time, no 16-bit shift chain. Node ids are u8. ---
-   LDA zp_node_chlo
+   LDA zp_node_ch_l
    LSR A
    LSR A
    LSR A
@@ -100,7 +100,7 @@ br_bbox_visible:
    CLC
    ADC #>ROM_BBOX_C                        ; layout.inc constant (page-aligned)
    STA $87
-   LDA zp_node_chlo
+   LDA zp_node_ch_l
    ASL A
    ASL A
    ASL A
@@ -129,11 +129,11 @@ bv_anglevis:
 ; have an open span. Tail-call: SC_HAS_GAP's A (1=gap, 0=fully
 ; occluded) and flags are our return value.
    LDA bca_ilo
-   STA zp_ilo
-; zp_ilo
+   STA zp_i_l
+; zp_i_l
    LDA bca_ihi
-   STA zp_ihi
-; zp_ihi
+   STA zp_i_h
+; zp_i_h
    PAGE BANK_C
    JMP SC_HAS_GAP
 
@@ -160,7 +160,7 @@ bv_anglevis:
 ; ============================================================================
 br_bbox_visible_d:
 .scope
-   LDX zp_node_chlo
+   LDX zp_node_ch_l
    LDA zp_bbox_side
    BNE dv_left
    LDA D_CODE_R,X
@@ -186,21 +186,21 @@ dv_have:
    BEQ dv_straddle
    BCS dv_right                            ; 132-255: right-of-centre
    LDY #0                                  ; 0-124: left-of-centre → (0, code+2)
-   STY zp_ilo
+   STY zp_i_l
    ADC #2                                  ; C clear here (CMP #127 not taken)
-   STA zp_ihi
+   STA zp_i_h
    JMP dv_gap
 dv_right:
    SBC #2                                  ; C set here (BCS taken) → code-2
-   STA zp_ilo                                 ; (code-2, 255)
+   STA zp_i_l                                 ; (code-2, 255)
    LDA #255
-   STA zp_ihi
+   STA zp_i_h
    JMP dv_gap
 dv_straddle:
    LDA #0
-   STA zp_ilo
+   STA zp_i_l
    LDA #255
-   STA zp_ihi
+   STA zp_i_h
 dv_gap:
    PAGE BANK_C
    JMP SC_HAS_GAP                          ; serve: A/Z is our return value
@@ -227,11 +227,11 @@ dv_fresh:
 .endif
 
 ; bv_dcache_store — encode the fresh BCA_CHECK outcome for (node, side).
-; In: bca_vis/bca_ilo/bca_ihi valid; zp_node_chlo/zp_bbox_side = entry.
+; In: bca_vis/bca_ilo/bca_ihi valid; zp_node_ch_l/zp_bbox_side = entry.
 ; Clobbers A, X, Y.
 bv_dcache_store:
 .scope
-   LDX zp_node_chlo
+   LDX zp_node_ch_l
    LDA bca_vis
    BNE st_vis
    LDA #126                                ; invisible
@@ -290,7 +290,7 @@ df_on:
    LDA zp_br_px_h
    CMP D_PREVP+1
    BNE df_moved
-   LDA zp_br_px_e
+   LDA zp_br_px_x
    CMP D_PREVP+2
    BNE df_moved
    LDA zp_br_py
@@ -299,7 +299,7 @@ df_on:
    LDA zp_br_py_h
    CMP D_PREVP+4
    BNE df_moved
-   LDA zp_br_py_e
+   LDA zp_br_py_x
    CMP D_PREVP+5
    BNE df_moved
 ; stationary — same angle?
@@ -335,13 +335,13 @@ df_save:
    STA D_PREVP+0
    LDA zp_br_px_h
    STA D_PREVP+1
-   LDA zp_br_px_e
+   LDA zp_br_px_x
    STA D_PREVP+2
    LDA zp_br_py
    STA D_PREVP+3
    LDA zp_br_py_h
    STA D_PREVP+4
-   LDA zp_br_py_e
+   LDA zp_br_py_x
    STA D_PREVP+5
    LDA bca_ab
    STA D_PREV_AB

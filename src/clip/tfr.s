@@ -148,7 +148,7 @@ TFS_PEND_BID = $091B
 ; (kind + id) match — this is the lossless-merge condition because
 ; same-source guarantees same line equation and hence same slope.
 ;
-; Input:  zp_ilo/zp_ihi = seg column range (closed, pre-clamped u8);
+; Input:  zp_i_l/zp_i_h = seg column range (closed, pre-clamped u8);
 ;         zp_head = old span list (consumed);
 ;         TOP_RECORDS/BOT_RECORDS = record buffers written by the
 ;         preceding draw_clipped_line(yt)/(yb) calls: byte 0 = count,
@@ -261,11 +261,11 @@ tfs_proc:
 ; the seg only at a shared endpoint column (xend == ilo or
 ; xstart == ihi) does NOT overlap; append it unchanged.
    LDA POOL_XEND,X
-   CMP zp_ilo
+   CMP zp_i_l
    BCC tfs_oor
    BEQ tfs_oor
    LDA POOL_XSTART,X
-   CMP zp_ihi
+   CMP zp_i_h
    BCC tfs_in_range
 tfs_oor:
 ; Relink the untouched span. Flush pending first to keep the output
@@ -294,16 +294,16 @@ tfs_pre_chk:
 ; Abutting: the fragment KEEPS ilo as its xend (shared boundary column
 ; with the swept region starting at cur_x = ilo). Line def preserved.
    LDA POOL_XSTART,X
-   CMP zp_ilo
+   CMP zp_i_l
    BCS tfs_no_pre
    JSR tfs_flush_pending
    LDX zp_clr_save_x
    LDA POOL_XSTART,X
    STA zp_ox0
-   LDA zp_ilo
+   LDA zp_i_l
    STA zp_ox1
    JSR emit_unchanged_subspan
-   LDA zp_ilo
+   LDA zp_i_l
    STA TFS_CUR_X
    JMP tfs_xhi_done
 tfs_no_pre:
@@ -315,9 +315,9 @@ tfs_xhi_done:
 ; x_hi = min(span.xend, ihi).
    LDX zp_clr_save_x
    LDA POOL_XEND,X
-   CMP zp_ihi
+   CMP zp_i_h
    BCC tfs_xhi_xend
-   LDA zp_ihi
+   LDA zp_i_h
    STA TFS_X_HI
    JMP tfs_xhi_set
 tfs_xhi_xend:
@@ -750,12 +750,12 @@ tfs_inner_done:
 ; Abutting: keeps ihi as its xstart (shared with the swept region).
    LDX zp_clr_save_x
    LDA POOL_XEND,X
-   CMP zp_ihi
+   CMP zp_i_h
    BCC tfs_no_post
    BEQ tfs_no_post
    JSR tfs_flush_pending
    LDX zp_clr_save_x
-   LDA zp_ihi
+   LDA zp_i_h
    STA zp_ox0
    LDA POOL_XEND,X
    STA zp_ox1
@@ -887,10 +887,10 @@ ues_fail:
 ; s16 line clipper — generic first cut
 ;
 ; Wrapper writes 8 bytes of s16 input (4 endpoints × 2 bytes) to the
-; zp_line_xl_lo..zp_line_yr_hi ZP slots, then JSRs jt_draw_clip_s16
+; zp_line_xl_l..zp_line_yr_h ZP slots, then JSRs jt_draw_clip_s16
 ; (the "$201E" a previous note named here is a dead pre-relayout slot
 ; number — resolve entries via the symbol map only). Routine clips the
-; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl_lo/yl/xr/yr,
+; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl_l/yl/xr/yr,
 ; then falls through to draw_clipped_line (existing DCL pipeline).
 ;
 ; The math is the slow generic version: u16×u16 = u32, u32÷u16 = u16.

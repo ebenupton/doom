@@ -96,56 +96,56 @@ vxc_ab = BCA_AB
 
 ; --- vxc_cold_store: base' = total - ref (= L(w), translation-invariant) ---
 ;   in : zp_br_vx/vy lo/hi/ext (totals just computed by br_to_view),
-;        zp_seg_v_idx_lo/hi, vxc_ref_x/y
+;        zp_seg_v_idx_l/hi, vxc_ref_x/y
 ;   out: this vertex's 6 plane bytes. base' + ANY later frame's ref
 ;        reconstructs that frame's exact totals (L is exactly linear), so
 ;        entries never go stale within an angle epoch.
 vxc_cold_store:
 .scope
-   LDY zp_seg_v_idx_lo
+   LDY zp_seg_v_idx_l
    LDA zp_seg_v_idx_b
    AND #$20                                ; idx >= 256  <=>  B >= 32
    BNE vs_hi
    SEC
-   LDA zp_br_vxlo
+   LDA zp_br_vx_l
    SBC vxc_ref_x+0
    STA VXC_XLO,Y
-   LDA zp_br_vxhi
+   LDA zp_br_vx_h
    SBC vxc_ref_x+1
    STA VXC_XHI,Y
-   LDA zp_br_vxext
+   LDA zp_br_vx_x
    SBC vxc_ref_x+2
    STA VXC_XEXT,Y
    SEC
-   LDA zp_br_vylo
+   LDA zp_br_vy_l
    SBC vxc_ref_y+0
    STA VXC_YLO,Y
-   LDA zp_br_vyhi
+   LDA zp_br_vy_h
    SBC vxc_ref_y+1
    STA VXC_YHI,Y
-   LDA zp_br_vyext
+   LDA zp_br_vy_x
    SBC vxc_ref_y+2
    STA VXC_YEXT,Y
    RTS
 vs_hi:
    SEC
-   LDA zp_br_vxlo
+   LDA zp_br_vx_l
    SBC vxc_ref_x+0
    STA VXC_XLO+$100,Y
-   LDA zp_br_vxhi
+   LDA zp_br_vx_h
    SBC vxc_ref_x+1
    STA VXC_XHI+$100,Y
-   LDA zp_br_vxext
+   LDA zp_br_vx_x
    SBC vxc_ref_x+2
    STA VXC_XEXT+$100,Y
    SEC
-   LDA zp_br_vylo
+   LDA zp_br_vy_l
    SBC vxc_ref_y+0
    STA VXC_YLO+$100,Y
-   LDA zp_br_vyhi
+   LDA zp_br_vy_h
    SBC vxc_ref_y+1
    STA VXC_YHI+$100,Y
-   LDA zp_br_vyext
+   LDA zp_br_vy_x
    SBC vxc_ref_y+2
    STA VXC_YEXT+$100,Y
    RTS
@@ -188,26 +188,26 @@ vxc_frame:
 vf_on:
 ; ref = view totals of world (0,0) under this frame's context
    LDA #0
-   STA zp_br_dxlo
-   STA zp_br_dxhi
-   STA zp_br_dylo
-   STA zp_br_dyhi
+   STA zp_br_dx_l
+   STA zp_br_dx_h
+   STA zp_br_dy_l
+   STA zp_br_dy_h
    JSR br_to_view
 ; --- publish this frame's ref (ORIGIN NORMALIZATION: stored bases are
 ; total - ref, i.e. the exactly-linear L(w); the warm arm adds the
 ; current ref back. No ref_cold, no CACC - the epoch anchor was a
 ; historical artifact, not a numerical need.) ---
-   LDA zp_br_vxlo
+   LDA zp_br_vx_l
    STA vxc_ref_x+0
-   LDA zp_br_vxhi
+   LDA zp_br_vx_h
    STA vxc_ref_x+1
-   LDA zp_br_vxext
+   LDA zp_br_vx_x
    STA vxc_ref_x+2
-   LDA zp_br_vylo
+   LDA zp_br_vy_l
    STA vxc_ref_y+0
-   LDA zp_br_vyhi
+   LDA zp_br_vy_h
    STA vxc_ref_y+1
-   LDA zp_br_vyext
+   LDA zp_br_vy_x
    STA vxc_ref_y+2
    LDA vxc_ab
    CMP vxc_prev_ab

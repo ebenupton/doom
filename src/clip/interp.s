@@ -24,7 +24,7 @@
 ;        (den = xhi - xlo; caller guarantees 0 <= x - x0 <= den, den > 0
 ;        except when x == x0, which early-exits before the divide)
 ; Output: A = interpolated Y (u8).  Clobbers X,Y and the mul/div ZP
-;        working set (zp_mul_b, zp_prod_lo/hi = zp_div_lo/hi).
+;        working set (zp_mul_b, zp_prod_l/hi = zp_div_l/hi).
 ;
 ; Python mirror: endpoint_spans._interp_store (verified bit-exact).
 ; Rounds to nearest, half AWAY FROM ZERO (the +den//2 bias is applied
@@ -98,7 +98,7 @@ is_y1:
 ;
 ; Input:  A = |dy| (u8), zp_mul_b = offset (u8), zp_div_den = den (u8)
 ; Output: A = quotient (u8). Product always positive.
-;         Clobbers X and zp_prod_lo/hi (= zp_div_lo/hi).
+;         Clobbers X and zp_prod_l/hi (= zp_div_l/hi).
 ; pseudocode:
 ;   prod = |dy| * offset          # umul8 -> zp_prod (u16)
 ;   prod += den >> 1              # round-to-nearest bias
@@ -112,10 +112,10 @@ umul_round_div:
    LDA zp_div_den
    LSR A
    CLC
-   ADC zp_prod_lo
-   STA zp_prod_lo
+   ADC zp_prod_l
+   STA zp_prod_l
    BCC ip_rn_nc                            ; BCC/INC round-carry (~50%)
-   INC zp_prod_hi
+   INC zp_prod_h
 ip_rn_nc:
    JMP udiv16_8                            ; tail-call
 .endscope

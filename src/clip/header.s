@@ -108,8 +108,8 @@ ina
 ;
 ; Entry contracts (full I/O headers at each routine):
 ;   jt_init                 reset pool: free chain + one full-screen span
-;   jt_mark_solid           remove closed range [zp_ilo, zp_ihi] (solid)
-;   jt_has_gap              A=1 iff any span overlaps [zp_ilo, zp_ihi]
+;   jt_mark_solid           remove closed range [zp_i_l, zp_i_h] (solid)
+;   jt_has_gap              A=1 iff any span overlaps [zp_i_l, zp_i_h]
 ;   jt_is_full              A=1 iff active list empty (screen occluded)
 ;   jt_read                 serialize span list to buffer at (zp_buf)
 ;   jt_interp_store         A = line y at column A (u8 round-to-nearest)

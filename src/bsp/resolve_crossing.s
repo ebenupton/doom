@@ -5,27 +5,27 @@ bsp_d_start:
 ;   (The line above describes the ORIGINAL AoS node reader; children now
 ;   come from the SoA pages NODE_CRLO/CRHI/CLLO/CLHI — one 256-byte page
 ;   per byte, indexed by node id — see wad_packed.build_packed.)
-;   Inputs:  zp_node_chlo = node id (u8), zp_bbox_side = 0 (right child)
+;   Inputs:  zp_node_ch_l = node id (u8), zp_bbox_side = 0 (right child)
 ;            or nonzero (left child).
-;   Output:  zp_node_chlo:chhi = child id (bit 15 set = subsector leaf).
+;   Output:  zp_node_ch_l:chhi = child id (bit 15 set = subsector leaf).
 ;   Used by the walk after a bbox-visibility verdict picks which child
 ;   of a deferred node to descend.
 bsp_resolve_child:
 .scope
    PAGE BANK_L0                            ; node SoA pages live in bank L0
-   LDX zp_node_chlo
+   LDX zp_node_ch_l
    LDA zp_bbox_side
    BNE rc_left
    LDA NODE_CRLO,X
-   STA zp_node_chlo
+   STA zp_node_ch_l
    LDA NODE_CRHI,X
-   STA zp_node_chhi
+   STA zp_node_ch_h
    RTS
 rc_left:
    LDA NODE_CLLO,X
-   STA zp_node_chlo
+   STA zp_node_ch_l
    LDA NODE_CLHI,X
-   STA zp_node_chhi
+   STA zp_node_ch_h
    RTS
 .endscope
 
@@ -38,7 +38,7 @@ rc_left:
 ;   half = 2^(S-1), S in [1,4] ONLY (rns24's whole domain since the s10
 ;   kernel returned and rns32 died, 2026-07-13): fits the low byte, so
 ;   the mid table is deleted and this one is 4 entries.
-rns_half_lo:
+rns_half_l:
    .byte $01, $02, $04, $08
 
 

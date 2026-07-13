@@ -34,10 +34,10 @@ defq_append_solid:
    LDA #0
    STA DEFQ_BASE,X
    INX
-   LDA zp_ilo
+   LDA zp_i_l
    STA DEFQ_BASE,X
    INX
-   LDA zp_ihi
+   LDA zp_i_h
    STA DEFQ_BASE,X
    INX
    STX DEFQ_TAIL
@@ -88,10 +88,10 @@ defq_append_tighten:
    LDA #1
    STA DEFQ_BASE,X
    INX
-   LDA zp_ilo
+   LDA zp_i_l
    STA DEFQ_BASE,X
    INX
-   LDA zp_ihi
+   LDA zp_i_h
    STA DEFQ_BASE,X
    INX
 
@@ -168,10 +168,10 @@ dd_loop:
 ; type
    LDA DEFQ_BASE,X
    INX
-   STA zp_ilo
+   STA zp_i_l
    LDA DEFQ_BASE,X
    INX
-   STA zp_ihi
+   STA zp_i_h
    LDA zp_br_t3
    BNE dd_tighten
 ; solid: mark_solid(ilo, ihi), no line emission.
@@ -223,7 +223,7 @@ dd_done:
 ; wall projected sx=-2560 instead of Python's -2176.)
 ;
 ;   Inputs:  C flag (carry-out of the rounding add — do NOT touch C
-;            before the ADC below), zp_br_vyext (s24 extension byte),
+;            before the ADC below), zp_br_vy_x (s24 extension byte),
 ;            X = zp_seg_ep (struct offset), VX1+0,X = rounded evy lo byte.
 ;   Output:  VX1+0,X clamped to [-128, 127] iff evy16 exceeds s8. X kept.
 ;   Case map (hi = vyext + C):

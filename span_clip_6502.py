@@ -36,10 +36,10 @@ BOT_RECORDS = _sym('BOT_RECORDS')
 REC_BYTES = 4   # one record per surviving DCL segment: (xl, yl, xr, yr)
 
 # s16 line clipper hi bytes (ZP, alias CB-clip / secondary-seg block).
-zp_line_xl_hi = _sym('zp_line_xl_hi')
-zp_line_yl_hi = _sym('zp_line_yl_hi')
-zp_line_xr_hi = _sym('zp_line_xr_hi')
-zp_line_yr_hi = _sym('zp_line_yr_hi')
+zp_line_xl_h = _sym('zp_line_xl_h')
+zp_line_yl_h = _sym('zp_line_yl_h')
+zp_line_xr_h = _sym('zp_line_xr_h')
+zp_line_yr_h = _sym('zp_line_yr_h')
 
 # DCL records-hook ZP slots
 ZP_DCL_REC_BUF   = _sym('zp_dcl_rec_buf')
@@ -48,17 +48,17 @@ ZP_DCL_REC_BUF_H = _sym('zp_dcl_rec_buf_h')
 # ZP addresses (linked equates)
 ZP_HEAD  = _sym('zp_head')
 ZP_FREE  = _sym('zp_free')
-ZP_ILO   = _sym('zp_ilo')
-ZP_IHI   = _sym('zp_ihi')
+ZP_ILO   = _sym('zp_i_l')
+ZP_IHI   = _sym('zp_i_h')
 ZP_I_X0  = _sym('zp_i_x0')
 ZP_I_Y0  = _sym('zp_i_y0')
 ZP_I_Y1  = _sym('zp_i_y1')
 ZP_DIV_DEN = _sym('zp_div_den')
 ZP_BUF   = _sym('zp_buf')
-ZP_LINE_XL = _sym('zp_line_xl_lo')
-ZP_LINE_YL = _sym('zp_line_yl_lo')
-ZP_LINE_XR = _sym('zp_line_xr_lo')
-ZP_LINE_YR = _sym('zp_line_yr_lo')
+ZP_LINE_XL = _sym('zp_line_xl_l')
+ZP_LINE_YL = _sym('zp_line_yl_l')
+ZP_LINE_XR = _sym('zp_line_xr_l')
+ZP_LINE_YR = _sym('zp_line_yr_l')
 # Secondary seg Y values (u8), also aliased as the s16 DCL input hi bytes
 
 # Pool
@@ -75,19 +75,19 @@ LINE_OUT_BUF   = _sym('LINE_OUT_BUF')
 
 def _gen_quarter_square():
     """Generate quarter-square tables (same as fe6502.py)."""
-    sqr_lo = bytearray(256)
-    sqr_hi = bytearray(256)
-    sqr2_lo = bytearray(256)
-    sqr2_hi = bytearray(256)
+    sqr_l = bytearray(256)
+    sqr_h = bytearray(256)
+    sqr2_l = bytearray(256)
+    sqr2_h = bytearray(256)
     for n in range(256):
         v = (n * n) >> 2
-        sqr_lo[n] = v & 0xFF
-        sqr_hi[n] = (v >> 8) & 0xFF
+        sqr_l[n] = v & 0xFF
+        sqr_h[n] = (v >> 8) & 0xFF
     for n in range(256):
         v = ((n + 256) * (n + 256)) >> 2
-        sqr2_lo[n] = v & 0xFF
-        sqr2_hi[n] = (v >> 8) & 0xFF
-    return sqr_lo, sqr_hi, sqr2_lo, sqr2_hi
+        sqr2_l[n] = v & 0xFF
+        sqr2_h[n] = (v >> 8) & 0xFF
+    return sqr_l, sqr_h, sqr2_l, sqr2_h
 
 
 class SpanClip6502:
@@ -107,11 +107,11 @@ class SpanClip6502:
         # base moved $A500 -> $A400 in the 2026-07-12 one-region merge)
         import abi as _abi
         _sq = _abi.SQR_BASE_FLAT
-        sqr_lo, sqr_hi, sqr2_lo, sqr2_hi = _gen_quarter_square()
-        mem[_sq + 0x000:_sq + 0x100] = sqr_lo    # lo pages contiguous
-        mem[_sq + 0x100:_sq + 0x200] = sqr2_lo   # (2026-07-12 reorder —
-        mem[_sq + 0x200:_sq + 0x300] = sqr_hi    #  keep in lockstep with
-        mem[_sq + 0x300:_sq + 0x400] = sqr2_hi   #  gen_abi SQR_* offsets)
+        sqr_l, sqr_h, sqr2_l, sqr2_h = _gen_quarter_square()
+        mem[_sq + 0x000:_sq + 0x100] = sqr_l    # lo pages contiguous
+        mem[_sq + 0x100:_sq + 0x200] = sqr2_l   # (2026-07-12 reorder —
+        mem[_sq + 0x200:_sq + 0x300] = sqr_h    #  keep in lockstep with
+        mem[_sq + 0x300:_sq + 0x400] = sqr2_h   #  gen_abi SQR_* offsets)
 
         # Build + load every engine region (clipper, renderer regions, angle
         # module) at the addresses in the ld65 config — one loader, no
@@ -423,7 +423,7 @@ class SpanClip6502:
         exclusion when line_xr = ihi. To preserve overlap [xstart, ihi]
         for spans crossing ihi, line_xr is set to ihi+1 (so DCL accepts
         spans with xstart=ihi as the last column).
-        Note: Phase A's clr_skip uses BCC zp_ihi → BCC + BEQ skip, so it
+        Note: Phase A's clr_skip uses BCC zp_i_h → BCC + BEQ skip, so it
         effectively skips when xstart >= ihi too; matched here.
         """
         from endpoint_spans import _interp_store
@@ -522,7 +522,7 @@ class SpanClip6502:
         Inputs are s16 (raw BSP/transform values, can be negative or > 255).
         The 6502 ENTRY_DRAW_CLIP_S16 entry checks if the line is already in
         u8 range; if so it tail-calls DCL directly (the wrapper has already
-        written zp_line_xl_lo/yl/xr/yr). Out-of-range lines hit the slow
+        written zp_line_xl_l/yl/xr/yr). Out-of-range lines hit the slow
         clipping path. Returns list of emitted (x1, y1, x2, y2) segments.
         """
         mem = self.mpu.memory
@@ -542,10 +542,10 @@ class SpanClip6502:
         mem[ZP_LINE_YL] = yl & 0xFF
         mem[ZP_LINE_XR] = xr & 0xFF
         mem[ZP_LINE_YR] = yr & 0xFF
-        mem[zp_line_xl_hi] = (xl >> 8) & 0xFF
-        mem[zp_line_yl_hi] = (yl >> 8) & 0xFF
-        mem[zp_line_xr_hi] = (xr >> 8) & 0xFF
-        mem[zp_line_yr_hi] = (yr >> 8) & 0xFF
+        mem[zp_line_xl_h] = (xl >> 8) & 0xFF
+        mem[zp_line_yl_h] = (yl >> 8) & 0xFF
+        mem[zp_line_xr_h] = (xr >> 8) & 0xFF
+        mem[zp_line_yr_h] = (yr >> 8) & 0xFF
         if records_buf is not None:
             mem[ZP_DCL_REC_BUF]   = records_buf & 0xFF
             mem[ZP_DCL_REC_BUF_H] = (records_buf >> 8) & 0xFF

@@ -85,8 +85,8 @@ def setup_view_zp(sc, px, py, ab):
     mem[2]     = py_88 & 0xFF
     mem[3]     = (py_88 >> 8) & 0xFF
     from symmap import sym as _sym
-    mem[_sym('zp_br_px_e')] = (px_88 >> 16) & 0xFF
-    mem[_sym('zp_br_py_e')] = (py_88 >> 16) & 0xFF
+    mem[_sym('zp_br_px_x')] = (px_88 >> 16) & 0xFF
+    mem[_sym('zp_br_py_x')] = (py_88 >> 16) & 0xFF
     fz = dw.player_floor(px, py)
     vz = dw._prescale_height(fz + 41)
     mem[4] = vz & 0xFF
@@ -114,7 +114,7 @@ def install_tracing_run(sc, trace, with_context=False):
     """Replace sc._run with a stepping version that records clipper calls.
 
     If with_context, each call tuple is (op, *args, ssid, seg_idx) where
-    ssid is zp_node_chlo:hi (subsector id, with $80 flag). seg_idx —
+    ssid is zp_node_ch_l:hi (subsector id, with $80 flag). seg_idx —
     NOTE (2026-07-10): zp_seg_first is RETIRED ($5A/$5B freed; the
     prologue derives both cursors from the SS SoA directly), so $5A/$5B
     read garbage. For per-seg attribution derive the offset from the

@@ -15,7 +15,7 @@
 ; Profile: ~14% of all clipper cycles despite trivial per-call cost,
 ; due to sheer call frequency.
 ;
-; Input:  zp_ilo, zp_ihi (closed range; caller pre-clamps to [0,255]).
+; Input:  zp_i_l, zp_i_h (closed range; caller pre-clamps to [0,255]).
 ; Output: A = 1/0 (Z reflects result).  Clobbers X,Y; may update
 ;         zp_hg_cache (slot of the hit span, for the next call).
 ; Callers: bsp/bbox.s (bbox visibility probe) and bsp/subsector.s (seg
@@ -41,10 +41,10 @@ span_has_gap:
    LDX zp_hg_cache
    BEQ hg_no_cache
    LDA POOL_XEND,X
-   CMP zp_ilo
+   CMP zp_i_l
    BCC hg_no_cache
 ; xend < ilo → miss
-   LDA zp_ihi
+   LDA zp_i_h
    CMP POOL_XSTART,X
    BCC hg_no_cache
 ; ihi < xstart → miss
@@ -59,7 +59,7 @@ hg_no_cache:
 ; --- X iteration: current span in X ---
 hgl_x:
    LDA POOL_XEND,X
-   CMP zp_ilo
+   CMP zp_i_l
    BCS hg_chk_x
 ; xend >= ilo → hit
    LDY POOL_NEXT,X
@@ -68,7 +68,7 @@ hgl_x:
 ; --- Y iteration: current span in Y ---
 hgl_y:
    LDA POOL_XEND,Y
-   CMP zp_ilo
+   CMP zp_i_l
    BCS hg_chk_y
 ; xend >= ilo → hit
    LDX POOL_NEXT,Y
@@ -79,13 +79,13 @@ hgn:
    RTS
 ; --- Hit checks (one copy per register, avoids TYX which doesn't exist) ---
 hg_chk_x:
-   LDA zp_ihi
+   LDA zp_i_h
    CMP POOL_XSTART,X
    BCS hg_cx_yes
    LDA #0
    RTS
 hg_chk_y:
-   LDA zp_ihi
+   LDA zp_i_h
    CMP POOL_XSTART,Y
    BCS hg_cy_yes
    LDA #0

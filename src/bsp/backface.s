@@ -12,7 +12,7 @@
 ;   Inputs (zp): zp_seg_hdr_p -> the 16-byte seg header (form at +4, C16
 ;                or lv1x at +5/+6, lv1y split lo +7 / hi +9);
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player int pos (s16);
-;                zp_bf_pxm_lo/hi, zp_bf_pym_lo/hi = |px|,|py| (staged
+;                zp_bf_pxm_l/hi, zp_bf_pym_l/hi = |px|,|py| (staged
 ;                once per frame by br_view_setup, view.s).
 ;   Clobbers: A, X, Y; zp_br_dx/dy lo+hi, zp_br_t2..t5, zp_br_sign,
 ;             zp_bf_dir, zp_br_a, the mul workspace (via SC_UMUL8).
@@ -72,7 +72,7 @@ br_back_face_test:
    SBC (zp_seg_hdr_p),Y
    STA zp_br_t2
    INY
-   LDA zp_br_px_e
+   LDA zp_br_px_x
    SBC (zp_seg_hdr_p),Y
    BVS bf_ax_gt_ovf
    BMI bf_ax_back                          ; diff < 0
@@ -88,7 +88,7 @@ bf_ax_px_lt:
    SEC
    SBC (zp_seg_hdr_p),Y
    INY
-   LDA zp_br_px_e
+   LDA zp_br_px_x
    SBC (zp_seg_hdr_p),Y
    BVS bf_ax_lt_ovf
    BMI bf_ax_front                         ; diff < 0
@@ -109,7 +109,7 @@ bf_ax_py:
    SBC (zp_seg_hdr_p),Y
    STA zp_br_t2
    INY
-   LDA zp_br_py_e
+   LDA zp_br_py_x
    SBC (zp_seg_hdr_p),Y
    BVS bf_ax_gt_ovf
    BMI bf_ax_back
@@ -122,7 +122,7 @@ bf_ax_py_lt:
    SEC
    SBC (zp_seg_hdr_p),Y
    INY
-   LDA zp_br_py_e
+   LDA zp_br_py_x
    SBC (zp_seg_hdr_p),Y
    BVS bf_ax_lt_ovf
    BMI bf_ax_front
@@ -148,33 +148,33 @@ bf_diag:
    SEC
    LDY #5
    SBC (zp_seg_hdr_p),Y
-   STA zp_br_dxlo
-   LDA zp_br_px_e
+   STA zp_br_dx_l
+   LDA zp_br_px_x
    INY
    SBC (zp_seg_hdr_p),Y
-   STA zp_br_dxhi
-   ORA zp_br_dxlo
+   STA zp_br_dx_h
+   ORA zp_br_dx_l
    BEQ bfd_dx0
 ; dy = py - lv1y (lo at +7, hi at +9 — the split around flags)
    LDA zp_br_py_h
    SEC
    INY                                     ; -> +7 (lv1y lo)
    SBC (zp_seg_hdr_p),Y
-   STA zp_br_dylo
-   LDA zp_br_py_e
+   STA zp_br_dy_l
+   LDA zp_br_py_x
    LDY #9                                  ; -> lv1y hi
    SBC (zp_seg_hdr_p),Y
-   STA zp_br_dyhi
-   ORA zp_br_dylo
+   STA zp_br_dy_h
+   ORA zp_br_dy_l
    BEQ bfd_dy0                             ; dy==0: dot = P1
 bf_g_both:
 ; sign(P1) = sgn(dy') ^ sgn(dxhi); sign(P2) = sgn(dx')<<1... build both:
    LDA zp_br_sign                          ; b7 = sgn dy'
-   EOR zp_br_dxhi                          ; b7 = sign(P1)
+   EOR zp_br_dx_h                          ; b7 = sign(P1)
    TAX                                     ; ride in X across the P2 sign
    LDA zp_br_sign
    ASL A                                   ; b6 (dx' sign) -> b7
-   EOR zp_br_dyhi                          ; b7 = sign(P2)
+   EOR zp_br_dy_h                          ; b7 = sign(P2)
    STA zp_br_t2
    TXA
    EOR zp_br_t2                            ; b7 set = opposite signs
@@ -191,16 +191,16 @@ bfd_dx0:
    SEC
    INY                                     ; -> +7
    SBC (zp_seg_hdr_p),Y
-   STA zp_br_dylo
-   LDA zp_br_py_e
+   STA zp_br_dy_l
+   LDA zp_br_py_x
    LDY #9
    SBC (zp_seg_hdr_p),Y
-   STA zp_br_dyhi
-   ORA zp_br_dylo
+   STA zp_br_dy_h
+   ORA zp_br_dy_l
    BEQ bfd_back_j                          ; dx==0 and dy==0 -> back
    LDA zp_br_sign
    ASL A                                   ; b7 = sgn dx'
-   EOR zp_br_dyhi                          ; b7 = sign(P2)
+   EOR zp_br_dy_h                          ; b7 = sign(P2)
    BMI bfd_front_j                         ; dot = -P2 > 0 iff P2 < 0
    JMP s_advance
 bfd_front_j:
@@ -208,7 +208,7 @@ bfd_front_j:
 ; dy == 0: dot = P1 = dy'*dx (nonzero: dx != 0 here)
 bfd_dy0:
    LDA zp_br_sign                          ; b7 = sgn dy'
-   EOR zp_br_dxhi                          ; b7 = sign(P1)
+   EOR zp_br_dx_h                          ; b7 = sign(P1)
    BMI bfd_back_j
    JMP bf_seg_front
 
@@ -222,45 +222,45 @@ bf_g_mul:
    LDA #0
    STA zp_br_t4                            ; |P1| hi = 0
    STA zp_br_t5                            ; |P2| hi = 0
-   LDX zp_br_dxhi
+   LDX zp_br_dx_h
    BPL bfm_dx_pos
    SEC
-   SBC zp_br_dxlo
-   STA zp_br_dxlo
+   SBC zp_br_dx_l
+   STA zp_br_dx_l
    LDA #0
-   SBC zp_br_dxhi
-   STA zp_br_dxhi
+   SBC zp_br_dx_h
+   STA zp_br_dx_h
 bfm_dx_pos:
-   LDX zp_br_dyhi
+   LDX zp_br_dy_h
    BPL bfm_dy_pos
    LDA #0
    SEC
-   SBC zp_br_dylo
-   STA zp_br_dylo
+   SBC zp_br_dy_l
+   STA zp_br_dy_l
    LDA #0
-   SBC zp_br_dyhi
-   STA zp_br_dyhi
+   SBC zp_br_dy_h
+   STA zp_br_dy_h
 bfm_dy_pos:
 ; --- |P1| = |dy'| * |dx| -> (t2, t3, t4) u24 (|dy'| pre-abs'd) ---
    LDX zp_bf_dir
    LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'| (lazy: only this tier pays)
    STA zp_br_a                             ; survives for the hi partial
-   LDX zp_br_dxlo
+   LDX zp_br_dx_l
    STX zp_mul_b
    JSR SC_UMUL8
    STA zp_br_t3
-   LDA zp_prod_lo
+   LDA zp_prod_l
    STA zp_br_t2
-   LDA zp_br_dxhi
+   LDA zp_br_dx_h
    BEQ bfm_p1_done                         ; senior byte clear: 1-mul product
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
-   LDA zp_prod_lo
+   LDA zp_prod_l
    CLC
    ADC zp_br_t3
    STA zp_br_t3
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC #0
    STA zp_br_t4
 bfm_p1_done:
@@ -268,22 +268,22 @@ bfm_p1_done:
    LDX zp_bf_dir
    LDA ROM_DIRS_C,X                        ; |dx'|
    STA zp_br_a
-   LDX zp_br_dylo
+   LDX zp_br_dy_l
    STX zp_mul_b
    JSR SC_UMUL8
    STA zp_br_t1
-   LDA zp_prod_lo
+   LDA zp_prod_l
    STA zp_br_t0
-   LDA zp_br_dyhi
+   LDA zp_br_dy_h
    BEQ bfm_p2_done
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
-   LDA zp_prod_lo
+   LDA zp_prod_l
    CLC
    ADC zp_br_t1
    STA zp_br_t1
-   LDA zp_prod_hi
+   LDA zp_prod_h
    ADC #0
    STA zp_br_t5
 bfm_p2_done:
@@ -330,7 +330,7 @@ bfm_back:
 ; the I/O contract and the scratch-layout documentation that follows.
 ;
 ;   Inputs:
-;     zp_node_chlo:hi = node id (used by caller; we read bbox by ourselves)
+;     zp_node_ch_l:hi = node id (used by caller; we read bbox by ourselves)
 ;     zp_bbox_side    = 0 for right child's bbox, 1 for left child's bbox.
 ;
 ;   Output: A = 1 if any visible gap in the bbox's screen-X range, else 0.

@@ -114,7 +114,7 @@ SS_FHI    = NODE_SOA + $F00
 ; but the priority right now is correctness, not portability).
 ;
 ; Note: umul8 needs $D9 (zp_mul_b) and uses $DA/$DB for product.
-; udiv16_8 needs zp_div_lo:hi ($DA:DB), zp_div_den ($DC).
+; udiv16_8 needs zp_div_l:hi ($DA:DB), zp_div_den ($DC).
 ; Both are clobbered across calls — bsp_render saves any zp data it
 ; needs across these calls into the BR_* slots below.
 ; ============================================================================
@@ -123,13 +123,13 @@ SS_FHI    = NODE_SOA + $F00
 ; Raw (un-prescaled) player position for BSP side test.
 ; NOTE: these lived at $71-$74, but the NJ rasteriser at $A900 uses
 ; $74-$76/$79-$7A/$80-$88 as scratch — every drawn line corrupted
-; zp_br_pyraw_hi and flipped point_on_side decisions mid-walk.
+; zp_br_pyraw_h and flipped point_on_side decisions mid-walk.
 ; $90-$9F is unclaimed by span_clip, the rasteriser, and this module.
 
 ; Per-vertex working state — dx/dy widened to s16 (vertex range can
 ; exceed s8 after prescale; e.g. ±400 in our test scene).
-zp_br_dx = zp_br_dxlo                   ; alias for the lo byte (backwards-compat)
-zp_br_dy = zp_br_dylo
+zp_br_dx = zp_br_dx_l                   ; alias for the lo byte (backwards-compat)
+zp_br_dy = zp_br_dy_l
 
 ; Multiply / divide / sign workspace
 
@@ -186,12 +186,12 @@ jt_br_umul8: JMP br_umul8                            ; $4800 + 0  = $4800   wrap
 jt_br_smul8: JMP br_smul8                            ; $4803   signed s8 × s8 → s16
 jt_br_recip: JMP br_recip                            ; $4806   reciprocal lookup
 jt_br_view_setup: JMP br_view_setup                       ; $4809   compute frac_vx/frac_vy
-jt_br_to_view: JMP br_to_view                          ; $480C   world (zp_br_dx/dy_input) → view (zp_br_vxlo..vyhi)
+jt_br_to_view: JMP br_to_view                          ; $480C   world (zp_br_dx/dy_input) → view (zp_br_vx_l..vyhi)
 jt_br_project_x: JMP br_project_x                  ; $480F   view vx → screen sx
 jt_br_project_y: JMP br_project_y_paged                  ; $4812   height_delta → screen sy (pages L2)
 jt_br_render_frame: JMP br_render_frame                     ; $4815   walk BSP, dispatch subsector renderer
 jt_br_render_subsector: JMP br_render_subsector                 ; $4818  process one subsector's segs (caller sets
-;        zp_node_chlo:hi to the subsector id). Used
+;        zp_node_ch_l:hi to the subsector id). Used
 ;        by the hybrid Python-BSP + 6502-seg harness
 ;        to isolate BSP-traversal vs seg-processor
 ;        divergence.
@@ -237,16 +237,16 @@ SC_TIGHTEN_FROM_RECORDS = jt_tighten_from_records
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites
 ; abi.inc owns the table base (SQR_BASE, flat/banked variants there)
-sqr_lo = SQR_LO
-sqr_hi = SQR_HI
-sqr2_lo = SQR2_LO
-sqr2_hi = SQR2_HI
+sqr_l = SQR_LO
+sqr_h = SQR_HI
+sqr2_l = SQR2_LO
+sqr2_h = SQR2_HI
 
 ; span_clip's line ZP (zp_line_* lo bytes + zp_line_*_hi for the s16 clipper)
 
 ; ============================================================================
 ; br_umul8 — wraps span_clip's umul8 for testing. Inputs in zp_br_a, zp_br_b.
-; Result in zp_br_resl/resh. ~50 cycles.
+; Result in zp_br_res_l/resh. ~50 cycles.
 ; ============================================================================
 ; Local copies of umul8 / udiv16_8 (was SC_UMUL8/SC_UDIV16_8 in span_clip).
 ; Decouples bsp_render's transform arithmetic from the clipper so the clipper
@@ -257,7 +257,7 @@ sqr2_hi = SQR2_HI
 ; ============================================================================
 ; SC_UMUL8 — u8 × u8 → u16 via quarter-square tables. ~50 cycles, no loop.
 ;   Inputs:  A = a, zp_mul_b = b.
-;   Output:  zp_prod_lo/hi = a * b (u16).
+;   Output:  zp_prod_l/hi = a * b (u16).
 ;   Clobbers: A, X, Y, zp_tmp0.
 ;
 ;   Identity: a*b = qsqr(a+b) - qsqr(|a-b|), where qsqr(n) = floor(n²/4).
@@ -285,29 +285,29 @@ pos:
    ADC zp_mul_b
    TAX
    BCS uo
-   LDA sqr_lo,X
+   LDA sqr_l,X
    SEC
-   SBC sqr_lo,Y
-   STA zp_prod_lo
-   LDA sqr_hi,X
-   SBC sqr_hi,Y
-   STA zp_prod_hi
+   SBC sqr_l,Y
+   STA zp_prod_l
+   LDA sqr_h,X
+   SBC sqr_h,Y
+   STA zp_prod_h
    RTS
 uo:
-   LDA sqr2_lo,X
-   SBC sqr_lo,Y
-   STA zp_prod_lo
-   LDA sqr2_hi,X
-   SBC sqr_hi,Y
-   STA zp_prod_hi
+   LDA sqr2_l,X
+   SBC sqr_l,Y
+   STA zp_prod_l
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   STA zp_prod_h
    RTS
 .endscope
 ; ============================================================================
 ; SC_UDIV16_8 — restoring shift-subtract division, u16 ÷ u8.
-;   Inputs:  zp_div_lo/hi = numerator (u16), zp_div_den = denominator (u8).
-;   Output:  A = quotient low byte (also in zp_div_lo; on the 16-bit path
-;            zp_div_hi holds the quotient high byte). Remainder discarded.
-;   Clobbers: A, X, zp_div_lo/hi.
+;   Inputs:  zp_div_l/hi = numerator (u16), zp_div_den = denominator (u8).
+;   Output:  A = quotient low byte (also in zp_div_l; on the 16-bit path
+;            zp_div_h holds the quotient high byte). Remainder discarded.
+;   Clobbers: A, X, zp_div_l/hi.
 ;
 ;   Two paths, selected on div_hi vs den:
 ;   - div_hi < den → quotient fits u8. The numerator is pre-shifted left 8
@@ -325,51 +325,51 @@ uo:
 ; ============================================================================
 SC_UDIV16_8:
 .scope
-   LDA zp_div_hi
+   LDA zp_div_h
    CMP zp_div_den
    BCS d16
 ; --- u8-quotient fast path: numerator <<= 8, then find the first
 ;     committing quotient bit with compare-only steps. ---
-   LDX zp_div_lo
-   STX zp_div_hi
+   LDX zp_div_l
+   STX zp_div_h
    LDX #0
-   STX zp_div_lo
-   ASL zp_div_hi
+   STX zp_div_l
+   ASL zp_div_h
    ROL A
    BCS dskip_c8
    CMP zp_div_den
    BCS dskip_c8
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c7
    CMP zp_div_den
    BCS dskip_c7
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c6
    CMP zp_div_den
    BCS dskip_c6
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c5
    CMP zp_div_den
    BCS dskip_c5
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c4
    CMP zp_div_den
    BCS dskip_c4
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c3
    CMP zp_div_den
    BCS dskip_c3
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c2
    CMP zp_div_den
    BCS dskip_c2
-   ASL zp_div_hi
+   ASL zp_div_h
    ROL A
    BCS dskip_c1
    CMP zp_div_den
@@ -406,10 +406,10 @@ dskip_commit:
 ; Commit the first quotient bit: remainder -= den, quotient bit → 1,
 ; then continue in the generic loop for the remaining X-1 bits.
    SBC zp_div_den
-   INC zp_div_lo
+   INC zp_div_l
    DEX
    BNE dl
-   LDA zp_div_lo
+   LDA zp_div_l
    RTS
 ; --- 16-bit path: A = remainder, X = 16 iterations; quotient shifts
 ;     into div_lo:div_hi behind the departing numerator bits. ---
@@ -417,19 +417,19 @@ d16:
    LDA #0
    LDX #16
 dl:
-   ASL zp_div_lo
-   ROL zp_div_hi
+   ASL zp_div_l
+   ROL zp_div_h
    ROL A
    BCS dl_over
    CMP zp_div_den
    BCC ds
    SBC zp_div_den
 dl_commit:
-   INC zp_div_lo
+   INC zp_div_l
 ds:
    DEX
    BNE dl
-   LDA zp_div_lo
+   LDA zp_div_l
    RTS
 dl_over:
 ; remainder bit 8 carried out of ROL → remainder >= 256 > den:
