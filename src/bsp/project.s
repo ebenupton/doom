@@ -215,6 +215,9 @@ pxm_nacc:
 pxm_njoin:
    JMP px_p_pos
 
+ps_dvec:
+   .byte <rns_s0, <rns_sm1, <rns_sm2      ; deficit 1..3 kernel entries
+
 px_shrink:
 ; s16 view-x: halve the 8.8 X88 and drop the exponent until the integer
 ; part fits s8 — sx error <= |vx|/(256*vy) px (corpus of 284 wide
@@ -223,8 +226,9 @@ px_shrink:
 ; the shrink is uncompensated — such endpoints (near-plane crossings
 ; with s16 cx) sit >= 64 screens off-screen; sign and ordering survive
 ; ('physically reasonable' per Eben): the deficit is COUNTED and the
-; projected offset scaled back <<defc at exit — right magnitude on a
-; 2^defc-px grid (s16 wrap same as the old wide's mod-2^16 contract).
+; projection dispatched to a net-shift<=0 kernel (rns_s0/sm1/sm2) —
+; right magnitude on the shrink's own truncation grid, no second
+; rounding stage (s16 wrap same as the old wide's mod-2^16 contract).
 ; The vertex's TRUE S is restored at exit: every caller banks rhi/rlo
 ; into its endpoint record AFTER projecting, and the deferred y stages
 ; project with the banked S.
@@ -236,9 +240,11 @@ ps_loop:
    LDA zp_br_rlo
    CMP #2
    BCS ps_dec
-   INC zp_px_defc                          ; S floored: quantise now,
-   BNE ps_shift                            ; scale back at exit (defc<=3:
-                                        ; never wraps — always taken)
+   LDA zp_px_defc                          ; S floored: count the deficit
+   CMP #3                                  ; (clamped — engine bound is 3,
+   BCS ps_shift                            ; the harness sweeps beyond)
+   INC zp_px_defc
+   BNE ps_shift                            ; (always: defc in 1..3)
 ps_dec:
    DEC zp_br_rlo
 ps_shift:
@@ -252,31 +258,15 @@ ps_shift:
    LDA zp_v_xext
    ADC #0
    BNE ps_loop
-   JSR rns_select                          ; dispatch with the shrunken S
-   JSR px_narrow                           ; narrow-project the shrunk 8.8
    LDX zp_px_defc
-   BEQ ps_res
-; scale the offset back: sx = 128 + ((sx - 128) << defc)
-   SEC
-   LDA zp_br_resl
-   SBC #128
-   STA zp_br_resl
-   LDA zp_br_resh
-   SBC #0
-   STA zp_br_resh
-ps_dl:
-   ASL zp_br_resl
-   ROL zp_br_resh
-   DEX
-   BNE ps_dl
-   CLC
-   LDA zp_br_resl
-   ADC #128
-   STA zp_br_resl
-   LDA zp_br_resh
-   ADC #0
-   STA zp_br_resh
-ps_res:
+   BEQ ps_sel
+   LDA ps_dvec-1,X                         ; deficit: dispatch the net-
+   STA rns_go_op                           ; shift<=0 kernel directly (the
+   BNE ps_run                              ; hi byte is shared — always)
+ps_sel:
+   JSR rns_select                          ; dispatch with the shrunken S
+ps_run:
+   JSR px_narrow                           ; narrow-project the shrunk 8.8
    LDA zp_px_s_save                        ; restore the TRUE S and
    STA zp_br_rlo                           ; re-select (rlo-writer
    JSR rns_select                          ; invariant); select clobbers
@@ -659,6 +649,41 @@ s5_sh:
    ROL zp_br_resh
    RTS
 .endscope
+; --- deficit kernels (2026-07-13): a shrink that ran out of exponent
+; (S floored at 1) dispatches HERE instead of rounding at S=1 and
+; scaling back in an epilogue — net shift <= 0, no rounding stage at
+; all (single quantisation: the shrink's own truncations). Result is
+; (b0,b1) scaled, shuffled up in place; overflow wraps mod 2^16 (the
+; old wide contract). defc is CLAMPED to 3 (engine bound; the harness
+; sweeps beyond it and the fp mirror clamps identically). ---
+rns_s0:
+; deficit 1: net shift 0 — result = P exactly
+   LDA zp_br_resl
+   STA zp_br_resh
+   LDA zp_br_t2
+   STA zp_br_resl
+   RTS
+rns_sm1:
+; deficit 2: net shift -1 — result = P << 1
+   ASL zp_br_t2
+   ROL zp_br_resl
+   LDA zp_br_resl
+   STA zp_br_resh
+   LDA zp_br_t2
+   STA zp_br_resl
+   RTS
+rns_sm2:
+; deficit 3: net shift -2 — result = P << 2
+   ASL zp_br_t2
+   ROL zp_br_resl
+   ASL zp_br_t2
+   ROL zp_br_resl
+   LDA zp_br_resl
+   STA zp_br_resh
+   LDA zp_br_t2
+   STA zp_br_resl
+   RTS
+
 rns_s10:
 .scope
 ; floor((P + $200) / 1024): round is +2 into b1 (in place), then drop b0
@@ -719,6 +744,9 @@ rn_rloop:
 .assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s0 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_sm1 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_sm2 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s5 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 
 

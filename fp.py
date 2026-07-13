@@ -249,12 +249,17 @@ def fp_project_x(vx, vx_frac, recip_m8, recip_s):
         if recip_s >= 2:
             recip_s -= 1
         else:
-            deficit += 1          # S floored: scale the offset back below
+            deficit = min(deficit + 1, 3)   # S floored (clamp = 6502's)
         X88 >>= 1
     vx, vx_frac = X88 >> 8, X88 & 0xFF
-    return HALF_W + (rns(m8(vx_frac, recip_m8)
-                         + ((m8(vx, recip_m8) + vx_frac) << 8)
-                         + (vx << 16), recip_s + 8) << deficit)
+    B = (m8(vx_frac, recip_m8)
+         + ((m8(vx, recip_m8) + vx_frac) << 8)
+         + (vx << 16))
+    if deficit:
+        # net shift <= 0: the deficit kernels take P = B>>8 with NO
+        # rounding stage (single quantisation, the shrink's truncations)
+        return HALF_W + ((B >> 8) << (deficit - 1))
+    return HALF_W + rns(B, recip_s + 8)
 
 def fp_project_y(height_delta, recip_m8, recip_s):
     """Project height delta to screen Y (integer).
