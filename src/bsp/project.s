@@ -30,16 +30,81 @@
 ;   still be projected — their mark_solid/draws count.
 ;   Clobbers zp_br_t2, zp_br_a/b, mul workspace.
 ; ============================================================================
-br_project_x:
 .scope
+px_shrink:
+; s16 view-x (cold; INLINED above the entry 2026-07-13 so the hot
+; dispatch below falls straight through and this block is in BNE
+; range). Halve the 8.8 X88, dropping the exponent per step, until the
+; integer part fits s8 — err <= |vx|/(256*vy) px (corpus max 0.008px).
+; S' is tracked IN X — zp_br_rlo is written ONLY on the rns24 arm
+; (S' <= 4, the one kernel that reads it; unseen in corpus): every
+; other arm patches rns_go_op from the vec table and TAIL-CALLS the
+; narrow body — no S restore, no re-select, no register reload. A
+; stale rns_go_op between projections is fine BY the rlo-writer
+; invariant: every dispatcher selects before its dispatch.
+; S floors at 1: further shifts count zp_px_defc (clamped 3) and
+; dispatch the net-shift<=0 kernels (rns_s0/sm1/sm2) — right magnitude
+; on the shrink's truncation grid ('physically reasonable' per Eben).
+   LDX zp_br_rlo                           ; X = S' (rlo itself untouched)
+   LDA #0
+   STA zp_px_defc
+ps_loop:
+   CPX #2
+   BCS ps_dec
+   LDA zp_px_defc                          ; S floored: count the deficit
+   CMP #3                                  ; (clamped — engine bound is 3,
+   BCS ps_shift                            ; the harness sweeps beyond)
+   INC zp_px_defc
+   BNE ps_shift                            ; (always: defc in 1..3)
+ps_dec:
+   DEX
+ps_shift:
+   LDA zp_v_xext
+   CMP #$80                                ; arithmetic >>1 of the s24 X88
+   ROR zp_v_xext
+   ROR zp_v_xint
+   ROR zp_v_xfrac
+   LDA zp_v_xint
+   ASL A
+   LDA zp_v_xext
+   ADC #0
+   BNE ps_loop
+; --- dispatch S' (or the deficit) and tail-call the narrow body ---
+   LDA zp_px_defc
+   BNE ps_defk
+   CPX #5
+   BCC ps_rns24                            ; S' in [1,4]: rns24 reads rlo
+   LDA rns_vec_lo-1,X
+   STA rns_go_op
+   JMP px_narrow                           ; tail-call: narrow's RTS + REG
+                                        ; contract return to the caller
+ps_defk:
+   TAX                                     ; X = defc (S'=1 here, unused)
+   LDA ps_dvec-1,X
+   STA rns_go_op
+   JMP px_narrow
+ps_rns24:
+   LDA zp_br_rlo                           ; the ONE arm that must write
+   STA zp_px_s_save                        ; rlo: save the TRUE S first
+   STX zp_br_rlo
+   JSR rns_select
+   JSR px_narrow
+   LDA zp_px_s_save                        ; restore + re-select (rlo-
+   STA zp_br_rlo                           ; writer invariant); select
+   JSR rns_select                          ; clobbers A/X -> re-establish
+   LDY zp_br_resl                          ; the REG CONTRACT from the ZP
+   LDA zp_br_resh                          ; results
+   RTS
+ps_dvec:
+   .byte <rns_s0, <rns_sm1, <rns_sm2      ; deficit 1..3 kernel entries
+
+::br_project_x:
    LDA zp_v_xint
    ASL A                                   ; C = sign bit of xint
    LDA zp_v_xext
    ADC #0                                  ; 0 iff xext == sign extension
-   BEQ px_narrow
-   JMP px_shrink                           ; cold: s16 view-x (block after
-                                        ; the tail — BNE can't reach)
-px_narrow:
+   BNE px_shrink                           ; cold (in range: block above);
+px_narrow:                                  ; hot path FALLS THROUGH
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    LDA #0
    STA zp_br_resl
@@ -215,64 +280,6 @@ pxm_nacc:
 pxm_njoin:
    JMP px_p_pos
 
-ps_dvec:
-   .byte <rns_s0, <rns_sm1, <rns_sm2      ; deficit 1..3 kernel entries
-
-px_shrink:
-; s16 view-x: halve the 8.8 X88 and drop the exponent until the integer
-; part fits s8 — sx error <= |vx|/(256*vy) px (corpus of 284 wide
-; projections: max 0.008px, one +-1 sx flip; the old 3-mul wide body,
-; rns32 and br_smul_am are DELETED, 2026-07-13). S floors at 1: below it
-; the shrink is uncompensated — such endpoints (near-plane crossings
-; with s16 cx) sit >= 64 screens off-screen; sign and ordering survive
-; ('physically reasonable' per Eben): the deficit is COUNTED and the
-; projection dispatched to a net-shift<=0 kernel (rns_s0/sm1/sm2) —
-; right magnitude on the shrink's own truncation grid, no second
-; rounding stage (s16 wrap same as the old wide's mod-2^16 contract).
-; The vertex's TRUE S is restored at exit: every caller banks rhi/rlo
-; into its endpoint record AFTER projecting, and the deferred y stages
-; project with the banked S.
-   LDA zp_br_rlo
-   STA zp_px_s_save
-   LDA #0
-   STA zp_px_defc
-ps_loop:
-   LDA zp_br_rlo
-   CMP #2
-   BCS ps_dec
-   LDA zp_px_defc                          ; S floored: count the deficit
-   CMP #3                                  ; (clamped — engine bound is 3,
-   BCS ps_shift                            ; the harness sweeps beyond)
-   INC zp_px_defc
-   BNE ps_shift                            ; (always: defc in 1..3)
-ps_dec:
-   DEC zp_br_rlo
-ps_shift:
-   LDA zp_v_xext
-   CMP #$80                                ; arithmetic >>1 of the s24 X88
-   ROR zp_v_xext
-   ROR zp_v_xint
-   ROR zp_v_xfrac
-   LDA zp_v_xint
-   ASL A
-   LDA zp_v_xext
-   ADC #0
-   BNE ps_loop
-   LDX zp_px_defc
-   BEQ ps_sel
-   LDA ps_dvec-1,X                         ; deficit: dispatch the net-
-   STA rns_go_op                           ; shift<=0 kernel directly (the
-   BNE ps_run                              ; hi byte is shared — always)
-ps_sel:
-   JSR rns_select                          ; dispatch with the shrunken S
-ps_run:
-   JSR px_narrow                           ; narrow-project the shrunk 8.8
-   LDA zp_px_s_save                        ; restore the TRUE S and
-   STA zp_br_rlo                           ; re-select (rlo-writer
-   JSR rns_select                          ; invariant); select clobbers
-   LDY zp_br_resl                          ; A/X -> re-establish the REG
-   LDA zp_br_resh                          ; CONTRACT from the ZP results
-   RTS
 .endscope
 
 
