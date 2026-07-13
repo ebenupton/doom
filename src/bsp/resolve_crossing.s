@@ -34,12 +34,12 @@ rc_left:
 .segment "D_BK"                         ; back for the region-end marker
 .endif
 
-; rns24 half constants, indexed S-1 (S in 1..10):
-;   half = 2^(S-1) = rns_half_lo + (rns_half_mid << 8)
+; rns24 half constants, indexed S-1:
+;   half = 2^(S-1), S in [1,4] ONLY (rns24's whole domain since the s10
+;   kernel returned and rns32 died, 2026-07-13): fits the low byte, so
+;   the mid table is deleted and this one is 4 entries.
 rns_half_lo:
-   .byte $01, $02, $04, $08, $10, $20, $40, $80, $00, $00
-rns_half_mid:
-   .byte $00, $00, $00, $00, $00, $00, $00, $00, $01, $02
+   .byte $01, $02, $04, $08
 
 
 bsp_d_end:

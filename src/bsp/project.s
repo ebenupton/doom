@@ -528,7 +528,7 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ; builds; evicted from the stack page 2026-07-12 — page 1 is reserved
 ; headroom and the banked staging/boot-copy machinery died with it):
 ; unrolled rns_s5..rns_s9 for the hot shifts, generic rns24 for the
-; rare S in [1,4] and S=10 (its S>=8 arm IS the s10 body). Every body computes floor((P + 2^(S-1)) / 2^S) on the
+; rare S in [1,4]. Every body computes floor((P + 2^(S-1)) / 2^S) on the
 ; s24 product in (t2, resl, resh) and RTSes straight back to the
 ; projection's caller — pure leaves, bit-exact vs Python's rns().
 ; ============================================================================
@@ -564,7 +564,7 @@ rns_select:
 .endscope
 rns_vec_lo:
    .byte <rns24, <rns24, <rns24, <rns24, <rns_s5
-   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns24
+   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10
 ; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
 
 ; --- the six kernels: entries must stay inside the first 256 bytes of
@@ -659,28 +659,18 @@ s5_sh:
    ROL zp_br_resh
    RTS
 .endscope
-; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
-; 2026-07-12 so all six kernel entries share the JMP hi byte; its
-; rns_half rounding-constant tables stay in resolve_crossing.s.)
-; ============================================================================
-rns24:
+rns_s10:
 .scope
-   LDX zp_br_rlo
-; --- add half = 2^(S-1): lo byte for S<=8, mid byte holds S=10 ---
-   LDA rns_half_lo-1,X
-   ADC zp_br_t2
-   STA zp_br_t2
-   LDA rns_half_mid-1,X
-   ADC zp_br_resl
+; floor((P + $200) / 1024): round is +2 into b1 (in place), then drop b0
+; and ASR the (resh, resl) pair twice. Reinstated 2026-07-13 so rns24's
+; domain is PURE S in [1,4] — where the rounding half fits the low byte
+; and the mid-table add + CPX dispatch vanish.
+   LDA zp_br_resl
+   ADC #2                                  ; C=0 from rns_go
    STA zp_br_resl
-   BCC rn_half_nc
+   BCC s10_sh
    INC zp_br_resh
-rn_half_nc:
-   CPX #8
-   BCC rn_right
-; --- S >= 8 here means S = 10 (8, 9 and now 5..7 all have unrolled
-; kernels — the old S in [5,7] LEFT-shift path was unreachable and is
-; deleted, 2026-07-13). Drop b0, ASR the in-place pair twice. ---
+s10_sh:
    LDA zp_br_resh
    CMP #$80                                ; C = sign bit → arithmetic ROR
    ROR A
@@ -690,10 +680,26 @@ rn_half_nc:
    ROR zp_br_resl
    STA zp_br_resh
    RTS
-rn_right:
-; --- S in [1,4]: ASR the s24 S times — 1..4 iterations. S=1 is the
-; near-plane crossing reciprocal, so this path is hot for clipped segs.
-; Result lands one byte LOW (b0, b1) — shuffle up at the end. ---
+.endscope
+; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
+; 2026-07-12 so all six kernel entries share the JMP hi byte; its
+; rns_half rounding-constant tables stay in resolve_crossing.s.)
+; ============================================================================
+rns24:
+.scope
+; Generic kernel, domain now PURE S in [1,4] (5..10 all have unrolled
+; kernels): half = 2^(S-1) <= 8 fits the LO byte, so the old mid-table
+; add is a carry propagate and the S=10 arm + CPX dispatch are gone
+; (2026-07-13). S=1 is the near-plane crossing reciprocal — hot for
+; clipped segs. Result lands one byte LOW (b0, b1): shuffle up at exit.
+   LDX zp_br_rlo
+   LDA rns_half_lo-1,X
+   ADC zp_br_t2                            ; C=0 from rns_go
+   STA zp_br_t2
+   BCC rn_rloop
+   INC zp_br_resl
+   BNE rn_rloop
+   INC zp_br_resh
 rn_rloop:
    LDA zp_br_resh
    CMP #$80
@@ -712,6 +718,7 @@ rn_rloop:
 .assert >rns_s7 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s5 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 
 
