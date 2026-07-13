@@ -11,8 +11,7 @@
 ;
 ;   Output:
 ;     zp_br_resl/h = sx (s16 screen x); Y = sx lo, A = sx hi (REG
-;     CONTRACT); zp_br_resext = s24 extension so callers (bbox corner
-;     path) can classify off-screen sides uniformly whichever path ran.
+;     CONTRACT). (resext is NOT an output — no consumer, 2026-07-13.)
 ;
 ;   Python (fp_project_x):
 ;     sx = 128 + rns(X88*m9, S+8)  with X88 = vx*256 + frac, m9 = 256+M8.
@@ -217,15 +216,14 @@ px_i_pos:
                                         ; projection RTSes with Y = res lo,
                                         ; A = res hi (ZP resl/resh still
                                         ; written — regs are the fast lane)
-   LDX #0
    LDA zp_br_resh
    ADC #0
    STA zp_br_resh
-   BPL px_sx_pos                           ; narrow sx always fits s16
-   DEX                                     ; (|evx|<=127, rxh<=127 →
-px_sx_pos:                                  ; |sx|<=16383) — resext is pure
-   STX zp_br_resext                        ; sign, folded into the tail
-   RTS
+   RTS                                     ; (resext staging deleted
+                                        ; 2026-07-13: NO consumer reads it
+                                        ; after a projection — the bbox-
+                                        ; classification story was legacy;
+                                        ; sx_hi in the records serves it)
 
 pxm_neg:
 ; negative vx: b123 -= |vx|*M8 (unsigned product, subtractive accumulate)
