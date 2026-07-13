@@ -23,11 +23,11 @@
 ;     floor(X88*m9 / 256) = (frac*M8 >> 8) + frac
 ;                         + smul(vx, M8) + (vx << 8)
 ;   (only frac*M8 has bits below 2^8), accumulated as s24 in
-;   (t2, t3, vxext) and handed to rns24 — bit-identical to Python's
+;   (t2, resl, resh) and handed to rns24 — bit-identical to Python's
 ;   rns(P32, S+8) by floor composition. Otherwise JMP to the WIDE body
 ;   below (3 muls, s32 accumulate, rns32). Wide-vx segs must still be
 ;   projected — their mark_solid/draws count (see br_seg_xform_vertex).
-;   Clobbers zp_br_t2/t3, zp_br_vxext, zp_br_a/b, mul workspace.
+;   Clobbers zp_br_t2, zp_br_a/b, mul workspace.
 ; ============================================================================
 br_project_x:
 .scope
@@ -40,8 +40,8 @@ br_project_x:
 px_narrow:
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    LDA #0
-   STA zp_br_t3
-   STA zp_br_vxext
+   STA zp_br_resl
+   STA zp_br_resh
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
    LDA zp_br_rhi
    BNE px_have_m8
@@ -86,7 +86,7 @@ pxf_have:
    ADC zp_v_xfrac
    STA zp_br_t2
    BCC px_no_frac
-   INC zp_br_t3                            ; t3 pre-zeroed at entry
+   INC zp_br_resl                            ; t3 pre-zeroed at entry
 px_no_frac:
 
 ; --- += smul(vx, M8), SIGN FUSED INTO THE ACCUMULATE (inlined
@@ -129,23 +129,23 @@ pxm_pacc:
    ADC zp_br_t2
    STA zp_br_t2
    TXA
-   ADC zp_br_t3
-   STA zp_br_t3
+   ADC zp_br_resl
+   STA zp_br_resl
    BCC px_p_pos                            ; ext += carry (unsigned product:
-   INC zp_br_vxext                         ; no sign fixup exists)
+   INC zp_br_resh                         ; no sign fixup exists)
 px_p_pos:
 
 ; --- += vx << 8 (sign-extended) ---
    LDA zp_v_xint
    CLC
-   ADC zp_br_t3
-   STA zp_br_t3
+   ADC zp_br_resl
+   STA zp_br_resl
    BCC px_i_nc
-   INC zp_br_vxext
+   INC zp_br_resh
 px_i_nc:
    LDA zp_v_xint
    BPL px_i_pos
-   DEC zp_br_vxext
+   DEC zp_br_resh
 px_i_pos:
 
 ; --- sx = 128 + rns(b123, S) (per-vertex vectored shifter) ---
@@ -205,11 +205,11 @@ pxm_nacc:
    LDA zp_br_t2
    SBC zp_br_a
    STA zp_br_t2
-   LDA zp_br_t3
+   LDA zp_br_resl
    SBC zp_mul_b
-   STA zp_br_t3
+   STA zp_br_resl
    BCS pxm_njoin                           ; ext -= borrow
-   DEC zp_br_vxext
+   DEC zp_br_resh
 pxm_njoin:
    JMP px_p_pos
 .endscope
@@ -226,7 +226,7 @@ pxm_njoin:
 ;   B = floor(X88*m9 / 256)
 ;     = (frac*M8 >> 8) + frac + xint*M8
 ;       + ((xext*M8 + xint) << 8) + (xext << 16)
-; is EXACT, accumulated as s32 in (t2,t3,vxext,t0) — |X88| < 2^23 and
+; is EXACT, accumulated as s32 in (t2, resl, resh, t0) — |X88| < 2^23 and
 ; m9 < 2^9 keep |B| < 2^25. rns32 then computes
 ; floor((B + 2^(S-1)) / 2^S), which equals Python's rns(X88*m9, S+8) by
 ; floor composition; the s16 interface takes the low 16 bits (mod 2^16,
@@ -235,7 +235,7 @@ pxm_njoin:
 ;   Inputs:  zp_v_xext/zp_v_xint/zp_v_xfrac, zp_br_rhi (M8), zp_br_rlo (S)
 ;   Output:  zp_br_resl/h = sx (s16, mod 2^16 of Python's value);
 ;            zp_br_resext = s24 extension for side classification.
-;   Clobbers: zp_br_a/b, zp_br_t0/t2/t3, zp_br_vxext, mul workspace.
+;   Clobbers: zp_br_a/b, zp_br_t0/t2/t3, zp_br_resh, mul workspace.
 ;   Sole caller: br_project_x's dispatch (cold arm — s16 view-x only).
 ; ============================================================================
 br_project_x_wide:
@@ -351,6 +351,10 @@ rns32:
 .scope
    LDX zp_br_rlo
 ; --- add half = 2^(S-1) (tables in resolve_crossing.s) ---
+; (rns32 keeps the STAGED accumulator (t2,t3,vxext,t0) + copy-out tail:
+; its caller br_project_x_wide JSRs br_smul_am, whose product RETURNS in
+; resl/resh — the in-place scheme the rns_go kernels use would collide,
+; 2026-07-13. Wide is the cold arm; the copies stay.)
    LDA rns_half_lo-1,X
    CLC
    ADC zp_br_t2
@@ -464,26 +468,26 @@ pyc_miss:
 ;   NOTE the constant loaded below is 128 = HALF_H (80) + Y_BIAS (48): the
 ;   screen-space Y bias every consumer used to add per-store is folded into
 ;   the projection, so results come out PRE-BIASED. Same final values.
-;   Clobbers zp_br_t2/t3, zp_br_vxext, zp_br_a/b, mul workspace.
+;   Clobbers zp_br_t2, zp_br_a/b, mul workspace.
 ; ============================================================================
 ; (label deleted 2026-07-12: NO ENTRY EXISTS — the body is reached only
 ; by falling through the cache front's miss path above, which set
 ; zp_pyc_idx for the tail's VWHC writeback. A direct JSR here would
 ; store the result into a stale cache slot: the label was a loaded gun.)
 .scope
-; --- P24 = h*M8 + (h << 8), s24 in (t2, t3, vxext) ---
+; --- P24 = h*M8 + (h << 8), s24 in (t2, resl, resh) ---
 ; M8 == 0 (m9 = 256 exactly: the near-plane crossing recip and every
 ; power-of-two depth): the product is zero — skip the mul, P24 = h<<8.
    LDA zp_br_rhi
    BNE py_have_m8
    STA zp_br_t2
    LDA zp_br_t0
-   STA zp_br_t3
+   STA zp_br_resl
    LDA #0
-   STA zp_br_vxext
+   STA zp_br_resh
    LDA zp_br_t0
    BPL py_go
-   DEC zp_br_vxext
+   DEC zp_br_resh
 py_go:
    JMP py_shift
 py_have_m8:
@@ -569,12 +573,12 @@ pym_join:
 ; map fails the PACK, not the render. ---
    CLC
    ADC zp_br_t0                            ; mid = hi(h*M8) + h
-   STA zp_br_t3
+   STA zp_br_resl
    ASL A                                   ; C = sign of t3 (A dead after);
    LDA #0                                  ; branchless sign spread — NOTE
    ADC #$FF                                ; the first cut used LDX #0/BPL
    EOR #$FF                                ; and LDX had already clobbered
-   STA zp_br_vxext                         ; the ADC's N flag: ext was
+   STA zp_br_resh                         ; the ADC's N flag: ext was
 py_shift:                                  ; always 0. C survives LDA/STA.
 
 ; --- sy = 128 - rns(P24, S) (per-vertex vectored shifter) ---
@@ -628,7 +632,7 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ; headroom and the banked staging/boot-copy machinery died with it):
 ; unrolled rns_s5..rns_s9 for the hot shifts, generic rns24 for the
 ; rare S in [1,4] and S=10 (its S>=8 arm IS the s10 body). Every body computes floor((P + 2^(S-1)) / 2^S) on the
-; s24 product in (t2, t3, vxext) and RTSes straight back to the
+; s24 product in (t2, resl, resh) and RTSes straight back to the
 ; projection's caller — pure leaves, bit-exact vs Python's rns().
 ; ============================================================================
 .segment "LO"
@@ -671,106 +675,91 @@ rns_vec_lo:
 ; any growth that pushes an entry over the edge ---
 rns_s8:
 .scope
-; floor((P + $80) / 256): carry out of the b0 half-add, then drop b0
+; floor((P + $80) / 256): the product's b1/b2 already LIVE in resl/resh
+; (2026-07-13 accumulator re-plumb) — the whole kernel is the b0 round
+; carry, propagated in place. No copies.
    LDA zp_br_t2
-   ADC #$80
-   LDA zp_br_t3
-   ADC #0
-   STA zp_br_resl
-   LDA zp_br_vxext
-   ADC #0
-   STA zp_br_resh
+   ADC #$80                                ; C=0 from rns_go
+   BCC s8_done
+   INC zp_br_resl
+   BNE s8_done
+   INC zp_br_resh
+s8_done:
    RTS
 .endscope
 rns_s9:
 .scope
-; floor((P + $100) / 512): t3 += 1 (carry into ext), ASR the top pair
-   LDA zp_br_t3
-   ADC #1
-   TAX
-   LDA zp_br_vxext
-   ADC #0
+; floor((P + $100) / 512): round is +1 into b1 (in place), then ASR the
+; (resh, resl) pair once.
+   INC zp_br_resl
+   BNE s9_nc
+   INC zp_br_resh
+s9_nc:
+   LDA zp_br_resh
    CMP #$80                                ; C = sign bit → arithmetic ROR
    ROR A
    STA zp_br_resh
-   TXA
-   ROR A
-   STA zp_br_resl
+   ROR zp_br_resl
    RTS
 .endscope
 
 rns_s6:
 .scope
-; floor((P + $20) / 64) = ((P + $20) << 2) >> 8
+; floor((P + $20) / 64) = ((P + $20) << 2) >> 8 — b0 rides in A, b1/b2
+; shift in place in resl/resh.
    LDA zp_br_t2
-   ADC #$20
-   STA zp_br_t2
-   BCC rc_done_s6                     ; round-carry: BCC/INC wrap chain
-   INC zp_br_t3                            ; (carry set ~12%, wrap rarer —
-   BNE rc_done_s6                     ; beats the 16-cycle ADC ladder
-   INC zp_br_vxext                         ; on every path)
-rc_done_s6:
-   LDA zp_br_t3
-   ASL zp_br_t2
-   ROL A
-   ROL zp_br_vxext
-   ASL zp_br_t2
-   ROL A
-   STA zp_br_resl
-   LDA zp_br_vxext
-   ROL A
-   STA zp_br_resh
+   ADC #$20                                ; C=0 from rns_go
+   BCC s6_sh
+   INC zp_br_resl
+   BNE s6_sh
+   INC zp_br_resh
+s6_sh:
+   ASL A
+   ROL zp_br_resl
+   ROL zp_br_resh
+   ASL A
+   ROL zp_br_resl
+   ROL zp_br_resh
    RTS
 .endscope
 
 rns_s7:
 .scope
-; floor((P + $40) / 128) = ((P + $40) << 1) >> 8
+; floor((P + $40) / 128) = ((P + $40) << 1) >> 8 — b0 rides in A, one
+; in-place shift of resl/resh.
    LDA zp_br_t2
-   ADC #$40
-   STA zp_br_t2
-   BCC rc_done_s7                     ; round-carry: BCC/INC wrap chain
-   INC zp_br_t3                            ; (carry set ~12%, wrap rarer —
-   BNE rc_done_s7                     ; beats the 16-cycle ADC ladder
-   INC zp_br_vxext                         ; on every path)
-rc_done_s7:
-   ASL zp_br_t2
-   LDA zp_br_t3
-   ROL A
-   STA zp_br_resl
-   LDA zp_br_vxext
-   ROL A
-   STA zp_br_resh
+   ADC #$40                                ; C=0 from rns_go
+   BCC s7_sh
+   INC zp_br_resl
+   BNE s7_sh
+   INC zp_br_resh
+s7_sh:
+   ASL A
+   ROL zp_br_resl
+   ROL zp_br_resh
    RTS
 .endscope
 
 rns_s5:
 .scope
 ; floor((P + $10) / 32) = ((P + $10) << 3) >> 8   (S=5: 59 dispatches/suite
-; vs rns24's 129-cycle loop path — the hottest band the generic kernel
-; served; S=10's 7 dispatches went BACK to rns24, whose S>=8 arm is
-; already exactly the S=10 body, to pay for this page space, 2026-07-13)
-   LDA zp_br_t2
+; vs rns24's 129-cycle loop path); b0 rides in A, three in-place shifts.
+LDA zp_br_t2
    ADC #$10                                ; C=0 from rns_go
-   STA zp_br_t2
-   BCC rc_done_s5                     ; round-carry: BCC/INC wrap chain
-   INC zp_br_t3
-   BNE rc_done_s5
-   INC zp_br_vxext
-rc_done_s5:
-   LDA zp_br_t3                            ; ride t3 in A (three ROLs)
-   ASL zp_br_t2
-   ROL A
-   ROL zp_br_vxext
-   ASL zp_br_t2
-   ROL A
-   ROL zp_br_vxext
-   ASL zp_br_t2
-   ROL A
-   STA zp_br_resl
-   LDA zp_br_vxext
-   ROL A
-   STA zp_br_resh
+   BCC s5_sh
+   INC zp_br_resl
+   BNE s5_sh
+   INC zp_br_resh
+s5_sh:
+   ASL A
+   ROL zp_br_resl
+   ROL zp_br_resh
+   ASL A
+   ROL zp_br_resl
+   ROL zp_br_resh
+   ASL A
+   ROL zp_br_resl
+   ROL zp_br_resh
    RTS
 .endscope
 ; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
@@ -780,64 +769,46 @@ rc_done_s5:
 rns24:
 .scope
    LDX zp_br_rlo
-; --- add half = 2^(S-1): lo byte for S<=8, mid byte holds S=9,10 ---
+; --- add half = 2^(S-1): lo byte for S<=8, mid byte holds S=10 ---
    LDA rns_half_lo-1,X
    ADC zp_br_t2
    STA zp_br_t2
    LDA rns_half_mid-1,X
-   ADC zp_br_t3
-   STA zp_br_t3
-   BCC rn_half_nc                          ; BCC/INC ext bump (-2 bytes, ANG is full)
-   INC zp_br_vxext
+   ADC zp_br_resl
+   STA zp_br_resl
+   BCC rn_half_nc
+   INC zp_br_resh
 rn_half_nc:
    CPX #8
-   BCC rn_small
-; --- S >= 8 here means S = 10: rns_fast (the only caller) intercepts
-; S = 8 and S = 9 with unrolled bodies. Drop b0, ASR twice. ---
-   LDA zp_br_vxext
+   BCC rn_right
+; --- S >= 8 here means S = 10 (8, 9 and now 5..7 all have unrolled
+; kernels — the old S in [5,7] LEFT-shift path was unreachable and is
+; deleted, 2026-07-13). Drop b0, ASR the in-place pair twice. ---
+   LDA zp_br_resh
    CMP #$80                                ; C = sign bit → arithmetic ROR
-   ROR zp_br_vxext
-   ROR zp_br_t3
-   LDA zp_br_vxext
+   ROR A
+   ROR zp_br_resl
    CMP #$80
-   ROR zp_br_vxext
-   ROR zp_br_t3
-rn_tail_mid:
-   LDA zp_br_t3
-   STA zp_br_resl
-   LDA zp_br_vxext
+   ROR A
+   ROR zp_br_resl
    STA zp_br_resh
    RTS
-rn_small:
-   CPX #5
-   BCC rn_right
-; --- S in [5,7]: shift LEFT (8-S) — 1..3 iterations — then drop b0 ---
-   LDA #8
-   SEC
-   SBC zp_br_rlo
-   TAX                                     ; X = 8-S in [1,3]
-rn_lloop:
-   ASL zp_br_t2
-   ROL zp_br_t3
-   ROL zp_br_vxext
-   DEX
-   BNE rn_lloop
-   BEQ rn_tail_mid                         ; (always) result = (t3, vxext)
 rn_right:
 ; --- S in [1,4]: ASR the s24 S times — 1..4 iterations. S=1 is the
 ; near-plane crossing reciprocal, so this path is hot for clipped segs.
+; Result lands one byte LOW (b0, b1) — shuffle up at the end. ---
 rn_rloop:
-   LDA zp_br_vxext
+   LDA zp_br_resh
    CMP #$80
-   ROR zp_br_vxext
-   ROR zp_br_t3
+   ROR zp_br_resh
+   ROR zp_br_resl
    ROR zp_br_t2
    DEX
    BNE rn_rloop
+   LDA zp_br_resl
+   STA zp_br_resh
    LDA zp_br_t2
    STA zp_br_resl
-   LDA zp_br_t3
-   STA zp_br_resh
    RTS
 .endscope
 .assert >rns_s6 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
