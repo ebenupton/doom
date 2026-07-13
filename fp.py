@@ -234,7 +234,21 @@ def fp_project_x(vx, vx_frac, recip_m8, recip_s):
       X88*m9 = frac*M8 + ((vx*M8 + frac) << 8) + (vx << 16)
     Two 8x8 multiplies (was 3; the old third mul carried recip bits
     below quarter-pixel significance).
+
+    SHRINK (2026-07-13, mirrors br_project_x's px_shrink): an s16 vx is
+    halved in 8.8 (arithmetic — Python >> is floor, same as the 6502
+    CMP/ROR chain) with S decremented (floor 1) until it fits s8. Screen
+    error <= |vx|/(256*vy) px (corpus max 0.008px); below the S floor
+    (near-plane crossings) the shrink is uncompensated — endpoints
+    >= 64 screens off-screen keep sign and ordering only. The 3-mul
+    full-width wide path this replaces is deleted on both sides.
     """
+    X88 = vx * 256 + vx_frac
+    while not (-128 <= (X88 >> 8) <= 127):
+        if recip_s >= 2:
+            recip_s -= 1
+        X88 >>= 1
+    vx, vx_frac = X88 >> 8, X88 & 0xFF
     return HALF_W + rns(m8(vx_frac, recip_m8)
                         + ((m8(vx, recip_m8) + vx_frac) << 8)
                         + (vx << 16), recip_s + 8)

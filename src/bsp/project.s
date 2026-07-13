@@ -24,9 +24,10 @@
 ;                         + smul(vx, M8) + (vx << 8)
 ;   (only frac*M8 has bits below 2^8), accumulated as s24 in
 ;   (t2, resl, resh) and handed to rns24 — bit-identical to Python's
-;   rns(P32, S+8) by floor composition. Otherwise JMP to the WIDE body
-;   below (3 muls, s32 accumulate, rns32). Wide-vx segs must still be
-;   projected — their mark_solid/draws count (see br_seg_xform_vertex).
+;   rns(P32, S+8) by floor composition. An s16 view-x is SHRUNK first:
+;   X88 >>= 1 with S-- until the integer part fits s8 (px_shrink below;
+;   err <= |vx|/(256*vy) px, ~0.008px measured max). Wide-vx segs must
+;   still be projected — their mark_solid/draws count.
 ;   Clobbers zp_br_t2, zp_br_a/b, mul workspace.
 ; ============================================================================
 br_project_x:
@@ -36,7 +37,8 @@ br_project_x:
    LDA zp_v_xext
    ADC #0                                  ; 0 iff xext == sign extension
    BEQ px_narrow
-   JMP br_project_x_wide
+   JMP px_shrink                           ; cold: s16 view-x (block after
+                                        ; the tail — BNE can't reach)
 px_narrow:
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    LDA #0
@@ -212,180 +214,45 @@ pxm_nacc:
    DEC zp_br_resh
 pxm_njoin:
    JMP px_p_pos
-.endscope
 
-; ============================================================================
-; br_project_x_wide — project a view-space X whose integer part is s16
-; (doesn't fit s8) to screen X, bit-exact (mod 2^16) with Python's
-; full-width fp_project_x_subpx:
-;   sx = 128 + rns(X88*m9, S+8),  X88 = (xext:xint).xfrac (s24 view x),
-;   m9 = 256 + M8 (floating-mantissa reciprocal, see br_recip).
-;
-; Byte decomposition (3 8x8 muls; was 5 with the 8.8 recip). Only
-; frac*M8 has bits below 2^8, so
-;   B = floor(X88*m9 / 256)
-;     = (frac*M8 >> 8) + frac + xint*M8
-;       + ((xext*M8 + xint) << 8) + (xext << 16)
-; is EXACT, accumulated as s32 in (t2, resl, resh, t0) — |X88| < 2^23 and
-; m9 < 2^9 keep |B| < 2^25. rns32 then computes
-; floor((B + 2^(S-1)) / 2^S), which equals Python's rns(X88*m9, S+8) by
-; floor composition; the s16 interface takes the low 16 bits (mod 2^16,
-; same contract as before).
-;
-;   Inputs:  zp_v_xext/zp_v_xint/zp_v_xfrac, zp_br_rhi (M8), zp_br_rlo (S)
-;   Output:  zp_br_resl/h = sx (s16, mod 2^16 of Python's value);
-;            zp_br_resext = s24 extension for side classification.
-;   Clobbers: zp_br_a/b, zp_br_t0/t2/t3, zp_br_resh, mul workspace.
-;   Sole caller: br_project_x's dispatch (cold arm — s16 view-x only).
-; ============================================================================
-br_project_x_wide:
-.scope
-; --- b0/b1 := (frac*M8 >> 8) + frac; b2/b3 := 0 ---
-   LDA zp_br_rhi
-   STA zp_mul_b
-   LDA zp_v_xfrac
-   JSR SC_UMUL8                            ; A = prod_hi (umul8 contract)
-   CLC
-   ADC zp_v_xfrac
-   STA zp_br_t2
-   LDA #0
-   ADC #0
-   STA zp_br_t3
-   LDA #0
-   STA zp_br_vxext
-   STA zp_br_t0
-
-; --- += xint*M8 (u8 x u8: xint is the unsigned middle byte) ---
-   LDA zp_br_rhi
-   STA zp_mul_b
+px_shrink:
+; s16 view-x: halve the 8.8 X88 and drop the exponent until the integer
+; part fits s8 — sx error <= |vx|/(256*vy) px (corpus of 284 wide
+; projections: max 0.008px, one +-1 sx flip; the old 3-mul wide body,
+; rns32 and br_smul_am are DELETED, 2026-07-13). S floors at 1: below it
+; the shrink is uncompensated — such endpoints (near-plane crossings
+; with s16 cx) sit >= 64 screens off-screen; sign and ordering survive
+; ('physically reasonable' per Eben). The vertex's TRUE S is restored at
+; exit: every caller banks rhi/rlo into its endpoint record AFTER
+; projecting, and the deferred y stages project with the banked S.
+   LDA zp_br_rlo
+   STA zp_px_s_save
+ps_loop:
+   LDA zp_br_rlo
+   CMP #2
+   BCC ps_nodec
+   DEC zp_br_rlo
+ps_nodec:
+   LDA zp_v_xext
+   CMP #$80                                ; arithmetic >>1 of the s24 X88
+   ROR zp_v_xext
+   ROR zp_v_xint
+   ROR zp_v_xfrac
    LDA zp_v_xint
-   JSR SC_UMUL8
-   LDA zp_prod_lo
-   CLC
-   ADC zp_br_t2
-   STA zp_br_t2
-   LDA zp_prod_hi
-   ADC zp_br_t3
-   STA zp_br_t3
-   LDA #0
-   ADC zp_br_vxext
-   STA zp_br_vxext                         ; (b3 can't carry yet: b2 was 0)
-
-; --- += (xext*M8) << 8 (s16, sign-extended into b3) ---
-   LDA zp_br_rhi
-   STA zp_mul_b
+   ASL A
    LDA zp_v_xext
-   JSR br_smul_am                          ; a in A (N live), b in zp_mul_b
-   LDA zp_br_resl
-   CLC
-   ADC zp_br_t3
-   STA zp_br_t3
-   LDA zp_br_resh
-   ADC zp_br_vxext
-   STA zp_br_vxext
-   LDA #0
-   ADC zp_br_t0
-   STA zp_br_t0
-   LDA zp_br_resh
-   BPL w_m_pos
-   DEC zp_br_t0
-w_m_pos:
-
-; --- += xint << 8 ---
-   LDA zp_v_xint
-   CLC
-   ADC zp_br_t3
-   STA zp_br_t3
-   LDA #0
-   ADC zp_br_vxext
-   STA zp_br_vxext
-   LDA #0
-   ADC zp_br_t0
-   STA zp_br_t0
-
-; --- += xext << 16 (sign-extended into b3) ---
-   LDA zp_v_xext
-   CLC
-   ADC zp_br_vxext
-   STA zp_br_vxext
-   LDA #0
-   ADC zp_br_t0
-   STA zp_br_t0
-   LDA zp_v_xext
-   BPL w_e_pos
-   DEC zp_br_t0
-w_e_pos:
-
-; --- sx = 128 + rns32(B, S), carry propagated into the s24 extension ---
-   JSR rns32
-   CLC
-   LDA zp_br_resl
-   ADC #128
-   STA zp_br_resl
-   LDA zp_br_resh
    ADC #0
-   STA zp_br_resh
-   LDA zp_br_resext
-   ADC #0
-   STA zp_br_resext
-   LDY zp_br_resl                          ; REG CONTRACT: Y = lo, A = hi
-   LDA zp_br_resh                          ; (wide is a handful of calls a
-   RTS                                     ; frame — uniformity over cycles)
-.endscope
-
-; ============================================================================
-; rns32 — round-to-nearest arithmetic shift of an s32 value (wide path).
-;
-;   Inputs:  zp_br_t2/t3/vxext/t0 = B (s32, b0..b3), zp_br_rlo = S (1..10)
-;   Output:  zp_br_resl/h = floor((B + 2^(S-1)) / 2^S) low 16 bits,
-;            zp_br_resext = the next byte (s24 extension).
-;   Clobbers A, X, and the B bytes.
-;
-;   Same floor identity as rns24 (project.s RNS block), one byte wider,
-;   implemented as a plain S-iteration 4-byte ASR: the wide path is a
-;   handful of calls per frame, so loop cycles are noise — byte size
-;   wins over the byte-drop fast paths.
-; ============================================================================
-
-rns32:
-.scope
-   LDX zp_br_rlo
-; --- add half = 2^(S-1) (tables in resolve_crossing.s) ---
-; (rns32 keeps the STAGED accumulator (t2,t3,vxext,t0) + copy-out tail:
-; its caller br_project_x_wide JSRs br_smul_am, whose product RETURNS in
-; resl/resh — the in-place scheme the rns_go kernels use would collide,
-; 2026-07-13. Wide is the cold arm; the copies stay.)
-   LDA rns_half_lo-1,X
-   CLC
-   ADC zp_br_t2
-   STA zp_br_t2
-   LDA rns_half_mid-1,X
-   ADC zp_br_t3
-   STA zp_br_t3
-   LDA #0
-   ADC zp_br_vxext
-   STA zp_br_vxext
-   LDA #0
-   ADC zp_br_t0
-   STA zp_br_t0
-; --- ASR the 4 bytes S times ---
-r32_loop:
-   LDA zp_br_t0
-   CMP #$80
-   ROR zp_br_t0
-   ROR zp_br_vxext
-   ROR zp_br_t3
-   ROR zp_br_t2
-   DEX
-   BNE r32_loop
-   LDA zp_br_t2
-   STA zp_br_resl
-   LDA zp_br_t3
-   STA zp_br_resh
-   LDA zp_br_vxext
-   STA zp_br_resext
+   BNE ps_loop
+   JSR rns_select                          ; dispatch with the shrunken S
+   JSR px_narrow                           ; narrow-project the shrunk 8.8
+   LDA zp_px_s_save                        ; restore the TRUE S and
+   STA zp_br_rlo                           ; re-select (rlo-writer
+   JSR rns_select                          ; invariant); select clobbers
+   LDY zp_br_resl                          ; A/X -> re-establish the REG
+   LDA zp_br_resh                          ; CONTRACT from the ZP results
    RTS
 .endscope
+
 
 
 ; ============================================================================

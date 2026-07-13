@@ -27,7 +27,9 @@ screen X). The reciprocal FOCAL/vy is stored as (M8, S): m9 = 256+M8, a
 bit_length(idx-1) computed, not stored (1024-byte table, 9.1 index).
 Relative error ≤ 2^-10 (≤1/8 px on screen — quarter-pixel is the design
 budget). Y projection is ONE 8×8 mul + a round-to-nearest shift; X is two
-muls (wide three); the near-plane crossing recip (M8=0, S=1) projects
+muls (an s16 view-x is SHRUNK to fit: X88 >>= 1 with S-- , floor
+S=1 — the 3-mul wide path was deleted 2026-07-13, err <= 0.008px
+measured); the near-plane crossing recip (M8=0, S=1) projects
 with pure shifts. Lines are clipped by the DCL (draw-clipped-line) walk
 against the span list and rasterised by the vendored NJ line drawer, with
 dedicated axis plotters taking ~70% of pixels.
@@ -141,7 +143,7 @@ vxcache.s.
       bsp/header.s         equates, macros (ZERO/BUMP/PAGE), jump table
                            (link-asserted vs abi ENGINE_JT both builds),
                            imports of clipper entries
-      bsp/arith.s          br_umul8/br_smul8/br_smul_am, br_recip, rot
+      bsp/arith.s          br_umul8/br_smul8, br_recip, rot
                            variants (rot_zero/unity/gen thunks/rot_core —
                            trig sign seeds zp_br_t1 via thunk SMC, one
                            XOR-folded tail negate)
@@ -166,7 +168,7 @@ vxcache.s.
       bsp/defq.s           deferred solid/tighten op queue ($0600)
       bsp/resolve_crossing.s  crossing resolver + VWHC array equates
       bsp/lo.s             br_node_setup (SoA reads), chain_reuse_v1,
-                           apv_stage, reproject_at_crossing, rns32,
+                           apv_stage, reproject_at_crossing,
                            ap-edge verticals
       bsp/vxcache.s        VXC data planes + cold-store leaf + vxc_frame
                            (the per-vertex hot path lives in seg_xform)
@@ -324,7 +326,7 @@ not worsened vs baseline.json, suite cycles within 0.25% of baseline.
   share boundary columns; mark_solid closed removal with ±1 fragments.
 - **Carry-chaining across JSRs**: mark_solid's middle split and
   ev_clamp_evy16 rely on C surviving JSR/STA sequences. Also
-  br_smul_am's entry consumes the N flag set by the CALLER's LDA
+  (br_smul_am deleted 2026-07-13 with the wide X projector.)
   (flags survive JSR). Documented at the sites; inserting instructions
   breaks them silently.
 - **Flags-through-PAGE**: PAGE clobbers A and flags ONLY — X/Y ride

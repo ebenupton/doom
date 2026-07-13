@@ -284,8 +284,8 @@ def test_project_x():
 
 
 def test_project_x_wide():
-    """br_project_x wide dispatch: s16 view-x beyond s8, mod-2^16
-    exact vs Python's full-width fp_project_x."""
+    """br_project_x shrink dispatch: s16 view-x beyond s8, bit-exact vs
+    the fp_project_x mirror (X88 >>= 1 with S-- until s8; S floors at 1)."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     ZP_XINT = _sym('zp_v_xint')
