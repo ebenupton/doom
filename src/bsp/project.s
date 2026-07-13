@@ -36,27 +36,23 @@ px_shrink:
 ; dispatch below falls straight through and this block is in BNE
 ; range). Halve the 8.8 X88, dropping the exponent per step, until the
 ; integer part fits s8 — err <= |vx|/(256*vy) px (corpus max 0.008px).
-; S' is tracked IN X — zp_br_rlo is written ONLY on the rns24 arm
-; (S' <= 4, the one kernel that reads it; unseen in corpus): every
-; other arm patches rns_go_op from the vec table and TAIL-CALLS the
-; narrow body — no S restore, no re-select, no register reload. A
-; stale rns_go_op between projections is fine BY the rlo-writer
-; invariant: every dispatcher selects before its dispatch.
-; S floors at 1: further shifts count zp_px_defc (clamped 3) and
-; dispatch the net-shift<=0 kernels (rns_s0/sm1/sm2) — right magnitude
-; on the shrink's truncation grid ('physically reasonable' per Eben).
-   LDX zp_br_rlo                           ; X = S' (rlo itself untouched)
-   LDA #0
-   STA zp_px_defc
+; The NET SHIFT (S minus shifts taken) is tracked in X as an index
+; into rns_vec_all, bias +3: X = net+3 in [1,13], floored at 1 (net
+; -2 — that floor IS the old deficit clamp). zp_br_rlo is written ONLY
+; on the rns24 arm (net in [1,4], the one kernel that reads it; unseen
+; in corpus): every other arm patches rns_go_op straight from the ONE
+; ordered table and TAIL-CALLS the narrow body — no S restore, no
+; re-select, no register reload. A stale rns_go_op between projections
+; is fine BY the rlo-writer invariant: every dispatcher selects before
+; its dispatch. Net<1 = the no-round kernels rns_s0/sm1/sm2 ('right
+; magnitude on the shrink's truncation grid', per Eben).
+   LDX zp_br_rlo
+   INX
+   INX
+   INX                                     ; X = net+3 (starts at S+3)
 ps_loop:
    CPX #2
-   BCS ps_dec
-   LDA zp_px_defc                          ; S floored: count the deficit
-   CMP #3                                  ; (clamped — engine bound is 3,
-   BCS ps_shift                            ; the harness sweeps beyond)
-   INC zp_px_defc
-   BNE ps_shift                            ; (always: defc in 1..3)
-ps_dec:
+   BCC ps_shift                            ; floor: net -2 (clamp)
    DEX
 ps_shift:
    LDA zp_v_xext
@@ -69,24 +65,23 @@ ps_shift:
    LDA zp_v_xext
    ADC #0
    BNE ps_loop
-; --- dispatch S' (or the deficit) and tail-call the narrow body ---
-   LDA zp_px_defc
-   BNE ps_defk
-   CPX #5
-   BCC ps_rns24                            ; S' in [1,4]: rns24 reads rlo
-   LDA rns_vec_lo-1,X
+; --- dispatch the net shift and tail-call the narrow body ---
+   CPX #8
+   BCS ps_patch                            ; net >= 5: rlo-free kernels
+   CPX #4
+   BCS ps_rns24                            ; net in [1,4]: rns24 reads rlo
+ps_patch:                                   ; (net <= 0 falls in here too)
+   LDA rns_vec_all-1,X
    STA rns_go_op
    JMP px_narrow                           ; tail-call: narrow's RTS + REG
                                         ; contract return to the caller
-ps_defk:
-   TAX                                     ; X = defc (S'=1 here, unused)
-   LDA ps_dvec-1,X
-   STA rns_go_op
-   JMP px_narrow
 ps_rns24:
    LDA zp_br_rlo                           ; the ONE arm that must write
    STA zp_px_s_save                        ; rlo: save the TRUE S first
-   STX zp_br_rlo
+   TXA
+   SEC
+   SBC #3                                  ; unbias: rlo = net
+   STA zp_br_rlo
    JSR rns_select
    JSR px_narrow
    LDA zp_px_s_save                        ; restore + re-select (rlo-
@@ -95,9 +90,6 @@ ps_rns24:
    LDY zp_br_resl                          ; the REG CONTRACT from the ZP
    LDA zp_br_resh                          ; results
    RTS
-ps_dvec:
-   .byte <rns_s0, <rns_sm1, <rns_sm2      ; deficit 1..3 kernel entries
-
 ::br_project_x:
    LDA zp_v_xint
    ASL A                                   ; C = sign bit of xint
@@ -559,9 +551,11 @@ rns_select:
    STA rns_go_op
    RTS
 .endscope
-rns_vec_lo:
-   .byte <rns24, <rns24, <rns24, <rns24, <rns_s5
-   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10
+rns_vec_all:                               ; ONE table, net shift -2..10 in
+   .byte <rns_sm2, <rns_sm1, <rns_s0      ; order; the shrink indexes it
+rns_vec_lo:                                ; with X = net+3, the regular
+   .byte <rns24, <rns24, <rns24, <rns24, <rns_s5   ; selects at S (=net)
+   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10   ; via this alias
 ; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
 
 ; --- the six kernels: entries must stay inside the first 256 bytes of
