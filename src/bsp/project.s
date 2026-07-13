@@ -626,8 +626,8 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ; ALL bodies live in this file, in the LO segment (one CODE region both
 ; builds; evicted from the stack page 2026-07-12 — page 1 is reserved
 ; headroom and the banked staging/boot-copy machinery died with it):
-; unrolled rns_s6..rns_s10 for the hot shifts, generic rns24 for the
-; rare S in [1,5]. Every body computes floor((P + 2^(S-1)) / 2^S) on the
+; unrolled rns_s5..rns_s9 for the hot shifts, generic rns24 for the
+; rare S in [1,4] and S=10 (its S>=8 arm IS the s10 body). Every body computes floor((P + 2^(S-1)) / 2^S) on the
 ; s24 product in (t2, t3, vxext) and RTSes straight back to the
 ; projection's caller — pure leaves, bit-exact vs Python's rns().
 ; ============================================================================
@@ -662,8 +662,8 @@ rns_select:
    RTS
 .endscope
 rns_vec_lo:
-   .byte <rns24, <rns24, <rns24, <rns24, <rns24
-   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10
+   .byte <rns24, <rns24, <rns24, <rns24, <rns_s5
+   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns24
 ; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
 
 ; --- the six kernels: entries must stay inside the first 256 bytes of
@@ -744,23 +744,33 @@ rc_done_s7:
    RTS
 .endscope
 
-rns_s10:
+rns_s5:
 .scope
-; floor((P + $200) / 1024): t3 += 2 (carry into ext), drop b0, ASR twice
-   LDA zp_br_t3
-   ADC #2
-   STA zp_br_t3
-   LDA zp_br_vxext
-   ADC #0
-   CMP #$80                                ; C = sign → arithmetic ROR
-   ROR A
-   ROR zp_br_t3
-   CMP #$80
-   ROR A
-   STA zp_br_resh
-   LDA zp_br_t3
-   ROR A
+; floor((P + $10) / 32) = ((P + $10) << 3) >> 8   (S=5: 59 dispatches/suite
+; vs rns24's 129-cycle loop path — the hottest band the generic kernel
+; served; S=10's 7 dispatches went BACK to rns24, whose S>=8 arm is
+; already exactly the S=10 body, to pay for this page space, 2026-07-13)
+   LDA zp_br_t2
+   ADC #$10                                ; C=0 from rns_go
+   STA zp_br_t2
+   BCC rc_done_s5                     ; round-carry: BCC/INC wrap chain
+   INC zp_br_t3
+   BNE rc_done_s5
+   INC zp_br_vxext
+rc_done_s5:
+   LDA zp_br_t3                            ; ride t3 in A (three ROLs)
+   ASL zp_br_t2
+   ROL A
+   ROL zp_br_vxext
+   ASL zp_br_t2
+   ROL A
+   ROL zp_br_vxext
+   ASL zp_br_t2
+   ROL A
    STA zp_br_resl
+   LDA zp_br_vxext
+   ROL A
+   STA zp_br_resh
    RTS
 .endscope
 ; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
@@ -834,7 +844,7 @@ rn_rloop:
 .assert >rns_s7 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s5 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 
 
 .if ::BANKED
