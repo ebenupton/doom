@@ -31,7 +31,7 @@
 ;
 ; The traversal is RECURSIVE on the hardware stack since 2026-07-14:
 ; rc_child renders one child id; internal nodes push (node_lo,
-; side<<5|node_hi) as locals, recurse on the near child, and tail-call
+; farside) as locals, recurse on the near child, and tail-call
 ; on the far. zp_bsp_stack_sp = the saved S for the is_full unwind.
 ; Child ids (hi byte):
 ;   $80 | ss_hi           : subsector id (bit 15 of the WAD child id)
@@ -109,17 +109,14 @@ rc_child_nc:
    BMI rc_subsector                        ; bit 15 = subsector leaf
 ; --- internal node ---
    JSR br_node_setup                       ; → zp_side, BSP_NEAR/FAR ids
-; push the continuation locals: node_lo, then side<<5 | node_hi
+; push the continuation locals: node_lo, then the FAR side, already
+; canonical 0/1 (node ids fit u8 — the packer asserts n_nodes <= 256 —
+; so the old side<<5|node_hi pack carried an identically-zero hi byte;
+; the resume-time decode/canonicalise is gone with it)
    LDA zp_node_ch_l
    PHA
    LDA zp_side
-   BNE rc_nf0
-   LDA #$20                                ; side 0 -> far 1
-   BNE rc_nftag
-rc_nf0:
-   LDA #$00                                ; side 1 -> far 0
-rc_nftag:
-   ORA zp_node_ch_h
+   EOR #1                                  ; far side = near side ^ 1
    PHA
 ; near child: bbox + has_gap NOW (Python checks near at visit time)
    LDA zp_side
@@ -134,18 +131,12 @@ bv_site_near:                           ; operand SMC-patched by br_dcache_frame
    JSR rc_child                            ; ← the recursion
 rc_near_skip:
 ; --- resume: the far side of the node whose locals are on top ---
-   PLA                                     ; side<<5 | node_hi
-   TAX                                     ; keep a copy for the hi strip
-   AND #$20
-   BEQ rc_df_have                          ; A already 0
-   LDA #1                                  ; (0/1 canonical: consumers
-rc_df_have:                                ;  index tables with it)
+   PLA                                     ; far side (0/1, canonical)
    STA zp_bbox_side
-   TXA
-   AND #$1F
-   STA zp_node_ch_h
    PLA
    STA zp_node_ch_l
+   LDA #0                                  ; node ids are u8 (the near
+   STA zp_node_ch_h                        ; subtree clobbered ch_h)
 ; is_full before the far dispatch — same checkpoint the old loop had
 ; after popping a deferred entry.
    PAGE BANK_C
