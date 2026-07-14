@@ -29,8 +29,9 @@
 ; has rendered — so it queries exactly the span/occlusion state the Python
 ; recursion sees at its second bbox_visible call.
 ;
-; BSP_STACK ($0A00, 32 × 2-byte entries, lo byte pushed first;
-; zp_bsp_stack_sp = byte offset of the next free slot). Entry kinds are
+; The traversal stack is the HARDWARE stack (page 1) since 2026-07-14:
+; (lo, tag/hi) entries pushed lo-first over a $FF empty-sentinel;
+; zp_bsp_stack_sp = the saved S for the is_full unwind. Entry kinds are
 ; tagged in the HI byte (see bsp_dispatch):
 ;   $80 | ss_hi           : subsector id (bit 15 of the WAD child id)
 ;   $40 | side<<5 | nd_hi : deferred far child of node (lo, hi & $1F)
@@ -71,35 +72,35 @@ br_render_frame:
 .scope bsp_walk                         ; named: br_dcache_frame SMC-patches
    JSR br_init_frame                       ; bsp_walk::bv_site_near/_far operands
 
-; --- Initialize BSP stack: push root node id (plain-node entry). ---
-   ZERO zp_bsp_stack_sp
-   LDX zp_bsp_stack_sp
+; --- BSP traversal on the HARDWARE stack (2026-07-14; was a software
+; stack at $0A00). Entries are (lo, tag/hi) pushed lo-first; a single
+; $FF sentinel byte underneath marks empty ($FF is unreachable as a
+; tag: nodes/ss <= 256 keeps every hi byte in $00/$01/$40/$41/$60/$61/
+; $80/$81). zp_bsp_stack_sp now holds the SAVED S for the is_full
+; unwind. Budget: <= depth x 2 + 1 bytes of entries under the deepest
+; JSR nesting — tens of bytes against the 256-byte page; the game loop
+; runs interrupt-free (no OS), so nothing else competes.
+   TSX
+   STX zp_bsp_stack_sp                     ; saved S (is_full unwind target)
+   LDA #$FF
+   PHA                                     ; empty sentinel
+; root node goes straight to dispatch — no push/pop round-trip
    LDA #<LAY_ROOT                          ; layout.inc constant
-   STA BSP_STACK,X
-   INX
+   STA zp_node_ch_l
    LDA #>LAY_ROOT
-   STA BSP_STACK,X
-   INX
-   STX zp_bsp_stack_sp
+   STA zp_node_ch_h
+   JMP bsp_chk
 
 ; --- Main loop: pop an entry into zp_node_ch_l:chhi and dispatch on its
 ;     kind. Loop ends when the stack empties (or the screen fills). ---
 bsp_loop:
-   LDA zp_bsp_stack_sp
-   BNE bsp_pop
-   RTS                                     ; stack empty → done
-bsp_pop:
-; sp rides X across both pops — the DEC-memory/LDX round-trips were
-; 6 cycles of dead work per node
-   LDX zp_bsp_stack_sp
-   DEX
-   LDA BSP_STACK,X
+   PLA                                     ; entry tag/hi ($FF = sentinel)
+   CMP #$FF
+   BEQ bsp_done                            ; stack empty → done
    STA zp_node_ch_h
-   DEX
-   LDA BSP_STACK,X
+   PLA
    STA zp_node_ch_l
-   STX zp_bsp_stack_sp
-
+bsp_chk:
 ; Screen full → nothing more can become visible; drain the stack and
 ; return (mirrors Python's `if clips.is_full(): return` at every level).
    PAGE BANK_C
@@ -121,11 +122,13 @@ bsp_dispatch:
    STA zp_node_ch_h
    JSR br_render_subsector
    JMP bsp_loop
+bsp_done:
+   RTS
 bsp_done_full:
-; Stack forced empty; return directly (bsp_loop's empty test would RTS
-; on the very next iteration anyway).
-   LDA #0
-   STA zp_bsp_stack_sp
+; Unwind every pending entry (and the sentinel) in one move: restore
+; the S saved at frame entry.
+   LDX zp_bsp_stack_sp
+   TXS
    RTS
 
 bsp_deferred:
@@ -180,10 +183,8 @@ bsp_node:
 ; Push the far child as a DEFERRED (node, farside) entry — its
 ; bbox/has_gap runs at pop time, after the near subtree.
 ; Entry = (node_lo, $40 | farside<<5 | node_hi).
-   LDX zp_bsp_stack_sp
    LDA zp_node_ch_l
-   STA BSP_STACK,X
-   INX
+   PHA
    LDA zp_side                             ; farside<<5 | $40 is a 2-value
    BNE bsp_nf0                             ; function of side — branch
    LDA #$60                                ; side 0 -> far 1 -> $40|$20
@@ -192,9 +193,7 @@ bsp_nf0:
    LDA #$40                                ; side 1 -> far 0
 bsp_nftag:
    ORA zp_node_ch_h
-   STA BSP_STACK,X
-   INX
-   STX zp_bsp_stack_sp
+   PHA
 ; Near child: bbox + has_gap NOW (Python checks near at visit time;
 ; the old walk pushed near unconditionally and over-visited).
    LDA zp_side
@@ -202,17 +201,14 @@ bsp_nftag:
 bv_site_near:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
    BEQ bsp_loop_j                          ; near side invisible → skip subtree
-; Near child visible → push it (already tagged: BSP_NEAR_HI carries the
-; WAD subsector bit if the child is a leaf).
-   LDX zp_bsp_stack_sp
+; Near child visible → straight to the is_full/dispatch join: the old
+; push was popped by the very next loop iteration (already tagged:
+; BSP_NEAR_HI carries the WAD subsector bit if the child is a leaf).
    LDA BSP_NEAR_LO
-   STA BSP_STACK,X
-   INX
+   STA zp_node_ch_l
    LDA BSP_NEAR_HI
-   STA BSP_STACK,X
-   INX
-   STX zp_bsp_stack_sp
-   JMP bsp_loop
+   STA zp_node_ch_h
+   JMP bsp_chk
 .endscope
 
 ; (bsp_resolve_child was inlined above, 2026-07-14.)

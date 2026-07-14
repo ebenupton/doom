@@ -775,7 +775,7 @@ zp_rom_detail_lo = $0BF6
 zp_rom_detail_hi = $0BF7
 
 ; BSP traversal state
-BSP_STACK = $0A00                       ; 32 entries × 2 bytes = 64-byte stack at $0A00-0A3F
+; (BSP_STACK retired 2026-07-14 — traversal runs on the hardware stack; $0A00-$0A3F free)
 
 ; Side-test result holder
 

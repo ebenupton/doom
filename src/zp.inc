@@ -182,7 +182,7 @@ zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
 ; between its two projections (one L0 page-in reads both header bytes)
 zp_bf_pym_l = $4D                ; [bsp]; |py| u16 (pair with $5B; the
 ; back-face diagonal C-form reads both per call)
-zp_bsp_stack_sp = $4E             ; [bsp]; stack pointer (offset into BSP_STACK)
+zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on the hardware stack; is_full unwinds via TXS)
 zp_side = $4F                     ; [bsp]; 0 = front, 1 = back
 zp_node_dx_l = $50                ; [bsp]
 zp_node_dx_h = $51                ; [bsp]
