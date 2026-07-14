@@ -148,7 +148,24 @@ bsp_df_have:                               ; load-bearing: consumers index
 bv_site_far:                            ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
    BEQ bsp_loop_j                          ; far side invisible/occluded → skip
-   JSR bsp_resolve_child                   ; ch := node.children[side]
+; ch := node.children[side] — bsp_resolve_child inlined here 2026-07-14
+; (this was its only caller: the JSR/RTS pair was 12 cycles per visible
+; deferred far child). Children come from the node SoA pages, one
+; 256-byte page per byte, indexed by node id.
+   PAGE BANK_L0                            ; node SoA pages live in bank L0
+   LDX zp_node_ch_l
+   LDA zp_bbox_side
+   BNE bsp_rc_left
+   LDA NODE_CRLO,X
+   STA zp_node_ch_l
+   LDA NODE_CRHI,X
+   STA zp_node_ch_h
+   JMP bsp_dispatch
+bsp_rc_left:
+   LDA NODE_CLLO,X
+   STA zp_node_ch_l
+   LDA NODE_CLHI,X
+   STA zp_node_ch_h
    JMP bsp_dispatch
 ; re-dispatch: child may be node OR subsector
 bsp_loop_j:
@@ -198,7 +215,7 @@ bv_site_near:                           ; operand SMC-patched by br_dcache_frame
    JMP bsp_loop
 .endscope
 
-; (bsp_resolve_child lives in resolve_crossing.s.)
+; (bsp_resolve_child was inlined above, 2026-07-14.)
 
 ; (br_node_setup lives in lo.s — LO segment, one CODE region both builds)
 

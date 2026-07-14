@@ -1,33 +1,7 @@
 bsp_d_start:
 
-; bsp_resolve_child — ch := children[zp_bbox_side] of node ch.
-;   ptr = rom_nodes + id*16; child_r at +8, child_l at +10.
-;   (The line above describes the ORIGINAL AoS node reader; children now
-;   come from the SoA pages NODE_CRLO/CRHI/CLLO/CLHI — one 256-byte page
-;   per byte, indexed by node id — see wad_packed.build_packed.)
-;   Inputs:  zp_node_ch_l = node id (u8), zp_bbox_side = 0 (right child)
-;            or nonzero (left child).
-;   Output:  zp_node_ch_l:chhi = child id (bit 15 set = subsector leaf).
-;   Used by the walk after a bbox-visibility verdict picks which child
-;   of a deferred node to descend.
-bsp_resolve_child:
-.scope
-   PAGE BANK_L0                            ; node SoA pages live in bank L0
-   LDX zp_node_ch_l
-   LDA zp_bbox_side
-   BNE rc_left
-   LDA NODE_CRLO,X
-   STA zp_node_ch_l
-   LDA NODE_CRHI,X
-   STA zp_node_ch_h
-   RTS
-rc_left:
-   LDA NODE_CLLO,X
-   STA zp_node_ch_l
-   LDA NODE_CLHI,X
-   STA zp_node_ch_h
-   RTS
-.endscope
+; (bsp_resolve_child inlined into walk.s bsp_deferred 2026-07-14 — it
+; had exactly one caller and the JSR/RTS pair was pure tax.)
 
 
 .if ::BANKED
