@@ -294,6 +294,95 @@ ssectors  = parse_lump(data, lumps, "SSECTORS",  "<HH")
 nodes     = parse_lump(data, lumps, "NODES",     "<hhhhhhhhhhhhHH")
 things    = parse_lump(data, lumps, "THINGS",    "<hhHHH")
 
+# ── Alternate-BSP override (DOOM_ALT_WAD=path) ──────────────────────────
+# Load a rebuilt map (zokumbsp on the PRE-SHRUNK map: coords already in
+# engine wu = (orig - MAP_CENTER)/PRESCALE) and substitute its geometry +
+# BSP lumps, UPSCALED back to original units (x8 + center). The normal
+# quantization below then reproduces the builder's wu coords bit-exactly
+# (integer roundtrip: _prescale_round(v*8, 8) == v), so the packer, the
+# float reference and the NOVT preprocessing all run unchanged. THINGS
+# (player spawn) stay from the original WAD — positions are given in
+# original units everywhere.
+_ALT_WAD = os.environ.get('DOOM_ALT_WAD')
+if _ALT_WAD:
+    _ad, _adir = load_wad(_ALT_WAD)
+    _al = find_map_lumps(_adir, "E1M1")
+    vertexes = [(v[0] * PRESCALE + MAP_CENTER_X,
+                 v[1] * PRESCALE + MAP_CENTER_Y)
+                for v in parse_lump(_ad, _al, "VERTEXES", "<hh")]
+    linedefs = parse_lump(_ad, _al, "LINEDEFS", "<HHHHHHH")
+    sidedefs = parse_lump(_ad, _al, "SIDEDEFS", "<hh8s8s8sH")
+    sectors  = parse_lump(_ad, _al, "SECTORS",  "<hh8s8sHHH")
+    segs     = parse_lump(_ad, _al, "SEGS",     "<HHhHHH")
+    ssectors = parse_lump(_ad, _al, "SSECTORS", "<HH")
+    # NODES: x,y,dx,dy, right bbox [top,bot,left,right] (y,y,x,x),
+    # left bbox [4], child_r, child_l
+    nodes = [(n[0] * PRESCALE + MAP_CENTER_X,
+              n[1] * PRESCALE + MAP_CENTER_Y,
+              n[2] * PRESCALE, n[3] * PRESCALE,
+              n[4] * PRESCALE + MAP_CENTER_Y,
+              n[5] * PRESCALE + MAP_CENTER_Y,
+              n[6] * PRESCALE + MAP_CENTER_X,
+              n[7] * PRESCALE + MAP_CENTER_X,
+              n[8] * PRESCALE + MAP_CENTER_Y,
+              n[9] * PRESCALE + MAP_CENTER_Y,
+              n[10] * PRESCALE + MAP_CENTER_X,
+              n[11] * PRESCALE + MAP_CENTER_X,
+              n[12], n[13])
+             for n in parse_lump(_ad, _al, "NODES", "<hhhhhhhhhhhhHH")]
+    # Optional sibling-leaf merges (DOOM_ALT_MERGE=N) to squeeze a tree
+    # under the engine's 256-node/256-ss SoA pages: a node whose children
+    # are both subsectors becomes a leaf (children's seg runs
+    # concatenated). Approximation note: the merged pair drains its
+    # deferred ops once instead of twice, so the second child's draws see
+    # spans the first child has not yet tightened — pairs are picked by
+    # smallest combined seg count to minimize that surface. Engine, pyref
+    # and the float reference all consume the same merged data, so every
+    # exactness gate still binds.
+    for _merge in range(int(os.environ.get('DOOM_ALT_MERGE', '0'))):
+        _best = None
+        for _ni, _n in enumerate(nodes):
+            _cr, _cl = _n[12], _n[13]
+            if (_cr & 0x8000) and (_cl & 0x8000):
+                _sr, _sl = _cr & 0x7FFF, _cl & 0x7FFF
+                _sz = ssectors[_sr][0] + ssectors[_sl][0]
+                if _best is None or _sz < _best[0]:
+                    _best = (_sz, _ni, _sr, _sl)
+        _sz, _ni, _sr, _sl = _best
+        # Rebuild the seg array with the left child's run appended to the
+        # right child's; recompute every ss (count, first).
+        _new_segs, _new_ss, _remap = [], [], {}
+        for _si, (_cnt, _first) in enumerate(ssectors):
+            if _si == _sl:
+                continue
+            _nf = len(_new_segs)
+            _new_segs.extend(segs[_first:_first + _cnt])
+            if _si == _sr:
+                _lc, _lf = ssectors[_sl]
+                _new_segs.extend(segs[_lf:_lf + _lc])
+            _remap[_si] = len(_new_ss)
+            _new_ss.append((len(_new_segs) - _nf, _nf))
+        segs, ssectors = _new_segs, _new_ss
+        # Drop node _ni, retarget its parent at the merged subsector,
+        # renumber node ids above it and remap every ss reference.
+        _new_nodes = []
+        for _i, _n in enumerate(nodes):
+            if _i == _ni:
+                continue
+            _ch = []
+            for _c in (_n[12], _n[13]):
+                if _c & 0x8000:
+                    _ch.append(0x8000 | _remap[_c & 0x7FFF])
+                elif _c == _ni:
+                    _ch.append(0x8000 | _remap[_sr])
+                else:
+                    _ch.append(_c - 1 if _c > _ni else _c)
+            _new_nodes.append(_n[:12] + tuple(_ch))
+        nodes = _new_nodes
+        print(f"ALT MERGE: node {_ni} -> merged ss ({_sz} segs combined)")
+    print(f"ALT BSP: {_ALT_WAD} — {len(vertexes)} verts, "
+          f"{len(nodes)} nodes, {len(ssectors)} ss, {len(segs)} segs")
+
 for t in things:
     if t[3] == 1:
         player_x, player_y, pangle = float(t[0]), float(t[1]), t[2]
@@ -649,8 +738,11 @@ def _layout_inc_gate():
         v = m.group(1)
         return int(v[1:], 16) if v.startswith('$') else int(v)
     _n_segs = len(fp_segs_vwh)
+    if _os_gate.environ.get('DOOM_LAYOUT_REGEN'):
+        return                              # gen_layout_inc.py bootstrap
     assert _val('LAY_N_SEGS') == _n_segs, \
         f"layout.inc stale: LAY_N_SEGS {_val('LAY_N_SEGS')} != {_n_segs} — run tools/gen_layout_inc.py and rebuild"
+import os as _os_gate
 _layout_inc_gate()
 
 
