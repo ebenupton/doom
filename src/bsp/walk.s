@@ -61,17 +61,41 @@ br_init_frame:
 ; (VWHC_VALID must be zeroed ONCE at boot; the key check is the backstop
 ;  for any residual garbage. The vcache below IS player-relative and must
 ;  still clear every frame.)
-   LDA #0
-   LDX #59
+; 60-byte clear (59 used + 1 pad — the bitmap sits in the vcache
+; reservation up to $1B3F), unrolled 4x; A is still 0 from above.
+   LDX #60
 bif_clr:
+   STA VCACHE_VALID_BASE-1,X
+   STA VCACHE_VALID_BASE-2,X
+   STA VCACHE_VALID_BASE-3,X
+   STA VCACHE_VALID_BASE-4,X
    DEX
-   STA VCACHE_VALID_BASE,X
+   DEX
+   DEX
+   DEX
    BNE bif_clr
    RTS
+; (this callable copy serves jt_br_init_frame — the harness inits
+; standalone; br_render_frame carries its own inline copy below)
 
 br_render_frame:
 .scope bsp_walk                         ; named: br_dcache_frame SMC-patches
-   JSR br_init_frame                       ; bsp_walk::bv_site_near/_far operands
+                                        ; bsp_walk::bv_site_near/_far operands
+; --- br_init_frame, inlined (the JSR/RTS was per-frame tax; the jt
+; copy above remains for the harness). Records-pointer ground state +
+; the per-frame vcache valid-bitmap clear (player-relative — see the
+; jt copy's banner). ---
+   LDA #0
+   STA zp_dcl_rec_buf
+   STA zp_dcl_rec_buf_h
+   LDX #14
+bif_clr2:
+   STA VCACHE_VALID_BASE,X
+   STA VCACHE_VALID_BASE+15,X
+   STA VCACHE_VALID_BASE+30,X
+   STA VCACHE_VALID_BASE+45,X
+   DEX
+   BPL bif_clr2
 
 ; --- RECURSIVE BSP traversal on the hardware stack (2026-07-14).
 ; The return address IS the continuation: rc_child renders one child id
