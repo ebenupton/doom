@@ -294,16 +294,22 @@ ssectors  = parse_lump(data, lumps, "SSECTORS",  "<HH")
 nodes     = parse_lump(data, lumps, "NODES",     "<hhhhhhhhhhhhHH")
 things    = parse_lump(data, lumps, "THINGS",    "<hhHHH")
 
-# ── Alternate-BSP override (DOOM_ALT_WAD=path) ──────────────────────────
-# Load a rebuilt map (zokumbsp on the PRE-SHRUNK map: coords already in
-# engine wu = (orig - MAP_CENTER)/PRESCALE) and substitute its geometry +
-# BSP lumps, UPSCALED back to original units (x8 + center). The normal
-# quantization below then reproduces the builder's wu coords bit-exactly
-# (integer roundtrip: _prescale_round(v*8, 8) == v), so the packer, the
-# float reference and the NOVT preprocessing all run unchanged. THINGS
-# (player spawn) stay from the original WAD — positions are given in
-# original units everywhere.
-_ALT_WAD = os.environ.get('DOOM_ALT_WAD')
+# ── BSP source (default: the checked-in zokumbsp depth tree) ────────────
+# e1m1_zkdepth.wad = zokumbsp -na=d on the PRE-SHRUNK map (coords already
+# in engine wu = (orig - MAP_CENTER)/PRESCALE): 220 nodes / 221 ss / 717
+# segs / 69 splits, measured -3.3%..-3.5% engine cycles vs the id BSP
+# (adopted 2026-07-14; bake-off in project_bsp_tree_algorithm). Geometry
+# + BSP lumps are substituted UPSCALED back to original units (x8 +
+# center); the normal quantization below then reproduces the builder's
+# wu coords bit-exactly (integer roundtrip: _prescale_round(v*8,8) == v),
+# so the packer, the float reference and the NOVT preprocessing all run
+# unchanged. THINGS (player spawn) stay from the original WAD.
+# Override: DOOM_ALT_WAD=<path> for another tree, DOOM_ALT_WAD=orig for
+# the id BSP. Known follow-up: the 31 residual quantized side violations
+# have a solved fixup (side-preserving split nudges, zk_fixup.json).
+_ALT_WAD = os.environ.get('DOOM_ALT_WAD', 'e1m1_zkdepth.wad')
+if _ALT_WAD in ('orig', 'none', '0', ''):
+    _ALT_WAD = None
 if _ALT_WAD:
     _ad, _adir = load_wad(_ALT_WAD)
     _al = find_map_lumps(_adir, "E1M1")
