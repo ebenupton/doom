@@ -223,11 +223,11 @@ seg_proc:
 ; subsector boundary and when a crossing overwrites VX2.
    LDA (zp_seg_hdr_p),Y
    CMP zp_seg_v_idx_l
-   BNE ch_miss
+   BNE ch_miss1                            ; A = header idx_l
    INY
    LDA (zp_seg_hdr_p),Y
    CMP zp_seg_v_idx_b
-   BNE ch_miss
+   BNE ch_miss2                            ; A = header idx_b; idx_l equal
 ; chain hit: the copy + back-pair body lives in LO (MAIN is at its
 ; ceiling); ~12 cyc JSR/RTS tax. chain_reuse_v1 consumes zp_ys_done
 ; (prev seg y-staged => VX2's front sy pair is live => copy it and set
@@ -236,14 +236,14 @@ seg_proc:
    LDA #0
    STA zp_ys_done                           ; consumed (chain) — reset for
    BEQ ch_v1_done                           ; THIS seg's own y stage
-ch_miss:
-   LDY #0
-   STY zp_ys_done                           ; prev-seg donation dies here
-   STY zp_ys_v1ok
-   LDA (zp_seg_hdr_p),Y
+ch_miss1:                                  ; A = header idx_l (Y = 0)
    STA zp_seg_v_idx_l
    INY
    LDA (zp_seg_hdr_p),Y
+ch_miss2:                                  ; A = header idx_b
+   LDX #0
+   STX zp_ys_done                           ; prev-seg donation dies here
+   STX zp_ys_v1ok
    STA zp_seg_v_idx_b                      ; CONTRACT: A = B at entry —
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
 ; (no marshalling: evy/evx/clip/sx/recip all landed in VX1 directly)
@@ -328,22 +328,21 @@ s_both_have_proj:
    LDA zp_seg_sx1_l
    CMP zp_seg_sx2_l
    BCS hg_fast_rev                         ; sx1 >= sx2 (ties -> rev, as before)
-   LDX #0
+; X = 0 already: the TAX above saw A = 0 (BNE not taken)
    STA zp_i_l                              ; A = sx1_lo
    LDA zp_seg_sx2_l
    STA zp_i_h
    JMP hg_query
 hg_fast_rev:
    LDX #VX_STRIDE
+   STA zp_i_h                              ; A = sx1_lo from the compare
    LDA zp_seg_sx2_l
    STA zp_i_l
-   LDA zp_seg_sx1_l
-   STA zp_i_h
    JMP hg_query
 hg_hi_diff:
 ; hi bytes differ: signed hi-byte difference gives the order (lo bytes
 ; only ever break ties, and ties took the equal path above)
-   LDA zp_seg_sx1_h
+; (A = sx1_h from the entry compare; SEC stays — CMP's carry varies)
    SEC
    SBC zp_seg_sx2_h
    BVC hgd_v_ok
@@ -535,6 +534,11 @@ ft_emit:
 ; SOLID or NEEDBT → no rec
    LDA #$07
    STA zp_dcl_rec_buf_h
+   LDA #0
+   TAY
+   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   LDA #1
+   STA zp_dcl_rec_off
 ; portal-lip → TOP_RECORDS
    JMP ft_set_line
 ft_no_rec:
@@ -595,6 +599,11 @@ fb_emit:
 ; SOLID or NEEDBB → no rec
    LDA #$08
    STA zp_dcl_rec_buf_h
+   LDA #0
+   TAY
+   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   LDA #1
+   STA zp_dcl_rec_off
 ; portal-lip → BOT_RECORDS
    JMP fb_set_line
 fb_no_rec:
@@ -625,6 +634,11 @@ step_cont:                              ;  pushed the branch out of range)
    LDX #zp_seg_sy1_btop_l - VX1            ; sy pair offset (btop)
    LDA #$07
    STA zp_dcl_rec_buf_h
+   LDA #0
+   TAY
+   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   LDA #1
+   STA zp_dcl_rec_off
 ; TOP_RECORDS = $0700
    PAGE BANK_C
    JSR SC_DRAW_S16_H
@@ -637,6 +651,11 @@ step_no_top:
    LDX #zp_seg_sy1_bbot_l - VX1            ; sy pair offset (bbot)
    LDA #$08
    STA zp_dcl_rec_buf_h
+   LDA #0
+   TAY
+   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   LDA #1
+   STA zp_dcl_rec_off
 ; BOT_RECORDS = $0800
    PAGE BANK_C
    JSR SC_DRAW_S16_H
@@ -836,7 +855,11 @@ ms_skip:
    INC zp_seg_hdr_p_h
 sa_h_nc:
    DEC zp_seg_count
-   JMP seg_loop
+   BEQ sa_drain                            ; loop rotation: seg_loop's
+   JMP seg_proc                            ; LDA/BNE re-test was dead
+sa_drain:
+   PAGE BANK_C
+   JMP defq_drain
 .endscope
 
 ; ============================================================================
@@ -940,3 +963,7 @@ emit_vert_sx2:
    JMP SC_DRAW_S16
 
 
+
+
+; (dcl_rec_arm inlined at the four arm sites — JSR/RTS tax on every
+; portal edge arm; semantics unchanged.)

@@ -31,3 +31,17 @@ end_code:
 .else
 .segment "B"
 .endif
+
+; ============================================================================
+; TRUE end-of-CODE marker (2026-07-13): ZZTAIL is linked LAST in the CODE
+; region in BOTH cfgs, so this assert covers EVERY segment — the old
+; end_code label sat mid-chain and let B/D/W/ANIML2 slide silently into
+; the RCACHE carve when LO grew (rotcache corruption, found the hard way).
+; ============================================================================
+.segment "ZZTAIL"
+code_true_end:
+.if ::BANKED
+.assert code_true_end <= $5800, error, "CODE overflows into the FB (banked)"
+.else
+.assert code_true_end <= $5000, error, "CODE overflows into the RCACHE carve (flat)"
+.endif

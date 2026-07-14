@@ -121,8 +121,9 @@ bv_side_done:
    JSR BCA_CHECK                           ; returns A/Z = bca_vis (byte
                                            ; still written for the D store)
    BNE bv_anglevis
-   LDA #0
-   RTS
+   RTS                                     ; A=0/Z=1 already: BCA_CHECK's cull
+                                           ; tail (bca.s) sets A=0 before RTS,
+                                           ; and both SMC targets share it
 ; box wholly outside view cone → invisible (A=0, Z set)
 bv_anglevis:
 ; Visible columns exist — ask the clipper whether any of them still

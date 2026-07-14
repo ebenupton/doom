@@ -194,16 +194,15 @@ pxm_pacc:
 px_p_pos:
 
 ; --- += vx << 8 (sign-extended) ---
+; Sign tested FIRST on the single load; the negative arm lives after
+; the RTS (its +1/-1 high-byte fixups mostly cancel via the add carry).
    LDA zp_v_x_h
+   BMI px_vx_n
    CLC
    ADC zp_br_res_l
    STA zp_br_res_l
-   BCC px_i_nc
+   BCC px_i_pos
    INC zp_br_res_h
-px_i_nc:
-   LDA zp_v_x_h
-   BPL px_i_pos
-   DEC zp_br_res_h
 px_i_pos:
 
 ; --- sx = 128 + rns(b123, S) (per-vertex vectored shifter) ---
@@ -224,6 +223,16 @@ px_i_pos:
                                         ; after a projection — the bbox-
                                         ; classification story was legacy;
                                         ; sx_hi in the records serves it)
+px_vx_n:
+; negative vx_h: lo add's carry (+1) and the $FF sign-extend (-1)
+; cancel; only the no-carry case decrements the high byte.
+   CLC
+   ADC zp_br_res_l
+   STA zp_br_res_l
+   BCS px_vxn_j
+   DEC zp_br_res_h
+px_vxn_j:
+   JMP px_i_pos
 
 pxm_neg:
 ; negative vx: b123 -= |vx|*M8 (unsigned product, subtractive accumulate)
@@ -564,9 +573,8 @@ rns_s8:
 ; floor((P + $80) / 256): the product's b1/b2 already LIVE in resl/resh
 ; (2026-07-13 accumulator re-plumb) — the whole kernel is the b0 round
 ; carry, propagated in place. No copies.
-   LDA zp_br_t2
-   ADC #$80                                ; C=0 from rns_go
-   BCC s8_done
+   BIT zp_br_t2                            ; round carry = bit 7 of b0
+   BPL s8_done
    INC zp_br_res_l
    BNE s8_done
    INC zp_br_res_h
@@ -663,21 +671,22 @@ rns_s0:
    STA zp_br_res_l
    RTS
 rns_sm1:
-; deficit 2: net shift -1 — result = P << 1
-   ASL zp_br_t2
-   ROL zp_br_res_l
+; deficit 2: net shift -1 — result = P << 1 (b1 rides in A: the
+; shifted res_l is only ever read back as the new res_h)
    LDA zp_br_res_l
+   ASL zp_br_t2
+   ROL A
    STA zp_br_res_h
    LDA zp_br_t2
    STA zp_br_res_l
    RTS
 rns_sm2:
-; deficit 3: net shift -2 — result = P << 2
-   ASL zp_br_t2
-   ROL zp_br_res_l
-   ASL zp_br_t2
-   ROL zp_br_res_l
+; deficit 3: net shift -2 — result = P << 2 (b1 rides in A, twice)
    LDA zp_br_res_l
+   ASL zp_br_t2
+   ROL A
+   ASL zp_br_t2
+   ROL A
    STA zp_br_res_h
    LDA zp_br_t2
    STA zp_br_res_l
@@ -692,10 +701,8 @@ rns_s10:
    LDA zp_br_res_l
    ADC #2                                  ; C=0 from rns_go
    STA zp_br_res_l
-   BCC s10_sh
-   INC zp_br_res_h
-s10_sh:
    LDA zp_br_res_h
+   ADC #0                                  ; carry folds into the load
    CMP #$80                                ; C = sign bit → arithmetic ROR
    ROR A
    ROR zp_br_res_l
@@ -720,14 +727,15 @@ rns24:
    LDA rns_half_l-1,X
    ADC zp_br_t2                            ; C=0 from rns_go
    STA zp_br_t2
-   BCC rn_rloop
+   BCC rn_enter
    INC zp_br_res_l
-   BNE rn_rloop
+   BNE rn_enter
    INC zp_br_res_h
-rn_rloop:
-   LDA zp_br_res_h
-   CMP #$80
-   ROR zp_br_res_h
+rn_enter:
+   LDA zp_br_res_h                         ; ride b2 in A: its shifted
+rn_rloop:                                  ; value is dead at exit (the
+   CMP #$80                                ; shuffle overwrites res_h)
+   ROR A
    ROR zp_br_res_l
    ROR zp_br_t2
    DEX

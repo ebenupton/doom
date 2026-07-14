@@ -89,16 +89,9 @@ dcl_yl_lo:
    STX zp_line_y_h
 dcl_bbox_done:
 
-; --- Records-mode init (if enabled) ---
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_records_off
-   LDA #0
-   LDY #0
-   STA (zp_dcl_rec_buf),Y
-; count = 0
-   LDA #1
-   STA zp_dcl_rec_off
-; first record at offset 1
+; (Records-mode init moved to ARM time — bsp/subsector.s dcl_rec_arm,
+; 2026-07-13: the s16 band clip appends verdict records before this
+; core runs, and rejected lines never reach it.)
 dcl_records_off:
 
 ; Reset output
@@ -209,7 +202,16 @@ dcl_ep_done:
    JMP dcl_cb_clip
 
 dcl_reject_above:
+   LDA zp_dcl_rec_buf_h                    ; records off: plain reject
+   BEQ dcl_outer_reject
+   LDA #0                                  ; verdict 'above' over [ox0,ox1]
+   BEQ dcl_rej_rec                         ; (always)
 dcl_reject_below:
+   LDA zp_dcl_rec_buf_h
+   BEQ dcl_outer_reject
+   LDA #$FF                                ; verdict 'below'
+dcl_rej_rec:
+   JSR dcl_rec_flat_span
 dcl_outer_reject:
 ; Outer reject → advance to next span (inline)
    LDA POOL_NEXT,X
@@ -586,6 +588,15 @@ dv_emit_cap:
 ;   if cx1 > cx2: reject
 dcl_cb_clip:
    STX zp_save0                            ; save span pointer
+; verdict-record housekeeping: no pending right verdict; stash the
+; span's true ox1 (the mid-span-exit path overwrites zp_ox1)
+   LDA zp_dcl_rec_buf_h
+   BEQ dcl_cb_nvrec
+   LDA #$80
+   STA DCLV_RVY
+   LDA zp_ox1
+   STA DCLV_OX1S
+dcl_cb_nvrec:
 
 ; Step 1: X-clip line to [xstart, xend] = [ox0, ox1]
 ; cx1 = ox0
@@ -727,6 +738,8 @@ dcl_cb_top_p1_ok:
 dcl_cb_top_cy2_const:
    LDA zp_cb_top1
    STA zp_cb_cy2
+   LDA #0                                  ; exit was through the TOP:
+   STA DCLV_RVY                            ; [cx2, orig ox1] pends 'above'
    JMP dcl_cb_top_done
 
 dcl_cb_top_clip:
@@ -757,6 +770,10 @@ dcl_cb_top_clip:
 dcl_cb_top_cy1_const:
    LDA zp_cb_top1
    STA zp_cb_cy1
+   LDA zp_dcl_rec_buf_h
+   BEQ dcl_cb_top_done
+   LDA #0                                  ; [ox0, cx1] was above the aperture
+   JSR dcl_rec_flat_left
 
 dcl_cb_top_done:
 ; Check cx1 > cx2 after top clip → reject
@@ -851,6 +868,8 @@ dcl_cb_bot_p1_ok:
 dcl_cb_bot_cy2_const:
    LDA zp_cb_bot1
    STA zp_cb_cy2
+   LDA #$FF                                ; exit through the BOTTOM:
+   STA DCLV_RVY                            ; [cx2, orig ox1] pends 'below'
    JMP dcl_cb_bot_done
 
 dcl_cb_bot_clip:
@@ -880,6 +899,10 @@ dcl_cb_bot_clip:
 dcl_cb_bot_cy1_const:
    LDA zp_cb_bot1
    STA zp_cb_cy1
+   LDA zp_dcl_rec_buf_h
+   BEQ dcl_cb_bot_done
+   LDA #$FF                                ; [ox0, cx1] was below the aperture
+   JSR dcl_rec_flat_left
 
 dcl_cb_bot_done:
 ; Check cx1 > cx2 after bot clip → reject
@@ -906,6 +929,7 @@ dcl_cb_bot_done:
    LDA zp_cb_cy2
    STA zp_tmp0
    JSR dcl_emit_segment
+   JSR dcl_rec_right                       ; pending [cx2, orig ox1] verdict
    LDA #$FF
    STA zp_seg_start_x
    LDX zp_save0
@@ -942,7 +966,16 @@ dcl_cb_bbox_done:
    JMP dcl_exit_check
 
 dcl_cb_reject_above:
+   LDA zp_dcl_rec_buf_h
+   BEQ dcl_cb_reject
+   LDA #0                                  ; whole overlap above the aperture
+   BEQ dcl_cb_rej_rec                      ; (always)
 dcl_cb_reject_below:
+   LDA zp_dcl_rec_buf_h
+   BEQ dcl_cb_reject
+   LDA #$FF
+dcl_cb_rej_rec:
+   JSR dcl_rec_flat_span
 dcl_cb_reject:
 ; CB clip rejected — skip this span
    LDX zp_save0
@@ -1414,3 +1447,119 @@ lis_yr:
 ; ======================================================================
 ; (End of file — no code below.  The tighten consumer and its TFS_*
 ; state block are in clip/tfr.s.)
+
+
+; ============================================================================
+; Verdict-record support (2026-07-13 off-screen-aperture fix). In MAIN:
+; the CLIP region is at its ceiling; main RAM is always mapped so the
+; bank-C clipper JSRs here freely. Absolutes DCLV_* live in tfr.s's block.
+; ============================================================================
+.segment "LOX"
+; dcl_rec_flat — append a FLAT VERDICT record (A = y: 0 'above',
+; $FF 'below') over [DCLV_X0, DCLV_X1] to the active record buffer.
+; No-op when records mode is off or the range is empty. MERGES into the
+; previous record when it is the same flat value and abuts/overlaps
+; (double-reject arms can re-cover a range — the merge absorbs it).
+; Capacity guard: a full buffer drops the append (never hit in corpus;
+; the harness counts). Preserves X. Clobbers A, Y.
+dcl_rec_flat:
+   STA DCLV_YV
+dcl_rec_flat_v:                            ; post-latch entry (DCLV_YV
+   LDA zp_dcl_rec_buf_h                    ; already written by wrappers)
+   BEQ rf_out
+   LDA DCLV_X0
+   CMP DCLV_X1
+   BCC rf_in                               ; X0 < X1: non-empty range
+rf_out:
+   RTS
+rf_in:
+.scope
+   STX DCLV_SX
+   LDY zp_dcl_rec_off
+   CPY #1
+   BEQ rf_app                              ; no previous record
+   DEY                                     ; prev.yr
+   LDA (zp_dcl_rec_buf),Y
+   CMP DCLV_YV
+   BNE rf_app
+   DEY
+   DEY                                     ; prev.yl
+   LDA (zp_dcl_rec_buf),Y
+   CMP DCLV_YV
+   BNE rf_app
+   INY                                     ; prev.xr
+   LDA (zp_dcl_rec_buf),Y
+   CMP DCLV_X0
+   BCC rf_app                              ; gap -> append fresh
+; merge: prev.xr = max(prev.xr, X1)
+   CMP DCLV_X1
+   BCS rf_restore
+   LDA DCLV_X1
+   STA (zp_dcl_rec_buf),Y
+   JMP rf_restore
+rf_app:
+   LDY zp_dcl_rec_off
+   CPY #$F9
+   BCS rf_restore                          ; buffer full -> drop
+   LDA DCLV_X0
+   STA (zp_dcl_rec_buf),Y
+   INY
+   LDA DCLV_YV
+   STA (zp_dcl_rec_buf),Y
+   INY
+   LDA DCLV_X1
+   STA (zp_dcl_rec_buf),Y
+   INY
+   LDA DCLV_YV
+   STA (zp_dcl_rec_buf),Y
+   INY
+   STY zp_dcl_rec_off
+   LDY #0
+   LDA (zp_dcl_rec_buf),Y
+   ADC #1                                  ; C=0 proven: BCS rf_restore
+   STA (zp_dcl_rec_buf),Y                  ; not taken, INY/LDA keep C
+rf_restore:
+   LDX DCLV_SX
+rf_done:
+   RTS
+.endscope
+
+; wrappers staging the range, so CLIP call sites stay 5 bytes
+dcl_rec_flat_span:                         ; whole overlap [zp_ox0, zp_ox1]
+   STA DCLV_YV
+   LDA zp_ox0
+   STA DCLV_X0
+   LDA zp_ox1
+   STA DCLV_X1
+   JMP dcl_rec_flat_v
+
+dcl_rec_flat_left:                         ; left clip-off [zp_ox0, zp_cb_cx1]
+   STA DCLV_YV
+   LDA zp_ox0
+   STA DCLV_X0
+   LDA zp_cb_cx1
+   STA DCLV_X1
+   JMP dcl_rec_flat_v
+
+; dcl_rec_right — flush the pending right-side verdict after the
+; mid-span-exit emit (zp_ox1 == cx2 there; DCLV_OX1S = the span's
+; original ox1, stashed at CB entry). $80 = no pending. The pending is
+; only armed under records mode, so a stale value can't leak: the
+; append itself is gated too.
+dcl_rec_right:
+   LDA DCLV_RVY
+   CMP #$80
+   BEQ rr_done
+   LDA zp_ox1
+   STA DCLV_X0
+   LDA DCLV_OX1S
+   STA DCLV_X1
+   LDA DCLV_RVY
+   JMP dcl_rec_flat
+rr_done:
+   RTS
+.if ::BANKED
+.segment "CLIP_BK"
+.else
+.segment "CLIP"
+.endif

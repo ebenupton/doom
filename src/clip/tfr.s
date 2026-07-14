@@ -31,6 +31,9 @@
 ;   else: tail.next = X; X.next = 0; tail = X
 ; (Non-constant co-linear pairs are rare — ~6/568 in scene 2 — and not
 ; worth a general slope check; see the Python mirror's note.)
+.segment "LOX"
+; (tg_append_x relocated to LO 2026-07-13 — CLIP at its ceiling; main
+; RAM is always mapped, so the bank-C sweep JSRs here at no cost.)
 tg_append_x:
 .scope
    LDA zp_new_tail
@@ -44,7 +47,7 @@ tg_append_x:
    RTS
 ; |
 ta_try_merge:
-   LDY zp_new_tail                         ; |
+   TAY                                     ; A = zp_new_tail from the gate
 ; Fail fast: tail Y must be a constant-line span (tl==tr AND bl==br).
    LDA POOL_TL,Y
    CMP POOL_TR,Y
@@ -93,6 +96,11 @@ ta_link:
    RTS
 ; |||
 .endscope
+.if ::BANKED
+.segment "CLIP_BK"
+.else
+.segment "CLIP"
+.endif
 
 ; TFS state block ($0900-$091B) — the 3-cursor event walk's working set.
 ; (Moved here from the deleted 6-byte-records legacy file.)
@@ -129,6 +137,16 @@ TFS_PEND_TKIND = $0918
 TFS_PEND_TID = $0919
 TFS_PEND_BKIND = $091A
 TFS_PEND_BID = $091B
+; --- verdict-record support (2026-07-13 off-screen-aperture fix) ---
+; $091C/$091D free (TFS_*_VERD retired — verdicts tested lazily at the
+; consumption points, 2026-07-13)
+DCLV_RVY = $091E                        ; pending right-side verdict y ($80 = none)
+DCLV_OX1S = $091F                       ; original ox1 stashed at CB entry
+DCLV_X0 = $0920                         ; dcl_rec_flat range args
+DCLV_X1 = $0921
+DCLV_SX = $0922                         ; X save across dcl_rec_flat
+DCLV_YV = $0923                         ; verdict y value latch
+DCLV_S16VY = $0924                      ; s16-clip pending right verdict ($80 = none)
 
 
 ; ===================================================================
@@ -195,8 +213,239 @@ TFS_PEND_BID = $091B
 ; Fragments and sweep intervals ABUT (shared boundary column), unlike
 ; mark_solid's ilo-1/ihi+1 — closed-interval seam-friendly model.
 ; ===================================================================
+; --- tfs value helpers (LO: CLIP is at its ceiling; called via JSR
+; from the sweep — main RAM always mapped) ---
+.segment "LOX"
+tfs_top_pool_interp:
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_TL,X
+   STA zp_i_y0
+   LDA POOL_TR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
+   RTS
+tfs_top_rec_interp:
+; record line -> TOP_L/R directly (pure-record path; setup inlined —
+; the JSR/RTS pair was per-interval tax on the hot extremes shortcut)
+   LDY TFS_T_CUR
+   LDA TOP_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
+   RTS
+tfs_top_vals_mixed:
+; mixed path in ONE call: pool line -> TOP_L/R, then record line MAXed
+; in (endpoint max = the model's rt = max(old_t, cy)). Replaces the old
+; JSR pool_interp + JSR rec_interp0 (+ its JSR setup) pair chain.
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_TL,X
+   STA zp_i_y0
+   LDA POOL_TR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
+; record line, MAXed into TOP_L/R
+; (pool-dominates pre-test measured-and-rejected 2026-07-13: +384 on
+; the reference corpus — mixed intervals mostly hold competing records)
+   LDY TFS_T_CUR
+   LDA TOP_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   CMP TFS_TOP_L
+   BCC tfs_tri_l
+   STA TFS_TOP_L
+tfs_tri_l:
+   LDA TFS_NEXT_X
+   JSR interp_store
+   CMP TFS_TOP_R
+   BCC tfs_tri_r
+   STA TFS_TOP_R
+tfs_tri_r:
+   RTS
+tfs_bot_pool_interp:
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_BL,X
+   STA zp_i_y0
+   LDA POOL_BR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
+   RTS
+tfs_bot_rec_interp:
+; (setup inlined — see tfs_top_rec_interp note)
+   LDY TFS_B_CUR
+   LDA BOT_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
+   RTS
+tfs_bot_vals_mixed:
+; mixed path in ONE call (mirror of tfs_top_vals_mixed, MIN instead)
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_BL,X
+   STA zp_i_y0
+   LDA POOL_BR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
+; record line, MINed into BOT_L/R
+   LDY TFS_B_CUR
+   LDA BOT_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   CMP TFS_BOT_L
+   BCS tfs_bri_l
+   STA TFS_BOT_L
+tfs_bri_l:
+   LDA TFS_NEXT_X
+   JSR interp_store
+   CMP TFS_BOT_R
+   BCS tfs_bri_r
+   STA TFS_BOT_R
+tfs_bri_r:
+   RTS
+.if ::BANKED
+.segment "CLIP_BK"
+.else
+.segment "CLIP"
+.endif
+
 tighten_from_records:
 .scope
+; ---- All-neutral fast-out ----
+; Every top record an 'above' flat (yl==0: pool stands) AND every bot
+; record a 'below' flat (yl==$FF: pool stands) makes this tighten a
+; provable no-op: no interval can change value and no solid verdict can
+; fire. Skip the sweep — and as importantly its span re-emission, which
+; would split spans at record seams and re-anchor them for nothing (the
+; reference model never runs these tightens at all). Real records
+; (yl in [Y_BIAS..VIS_YMAX]) and solid flats (top $FF / bot 0) fall
+; through to the full sweep. Empty side = vacuously neutral. Skipping
+; leaves the pool untouched, so zp_hg_cache stays valid too.
+   LDX TOP_RECORDS                         ; count
+   BEQ tfr_neu_top_ok
+   LDY #2                                  ; first record's yl (1 + 1)
+tfr_neu_top:
+   LDA TOP_RECORDS,Y
+   BNE tfr_do_sweep                        ; in-band value or solid flat
+   INY
+   INY
+   INY
+   INY
+   DEX
+   BNE tfr_neu_top
+tfr_neu_top_ok:
+   LDX BOT_RECORDS
+   BEQ tfr_neutral
+   LDY #2
+tfr_neu_bot:
+   LDA BOT_RECORDS,Y
+   CMP #$FF
+   BNE tfr_do_sweep
+   INY
+   INY
+   INY
+   INY
+   DEX
+   BNE tfr_neu_bot
+tfr_neutral:
+   RTS
+tfr_do_sweep:
 ; ---- Init: detach the old list and start the new one empty ----
 ; Invalidate the has_gap coherence cache (see span_mark_solid note).
    ZERO zp_hg_cache
@@ -460,6 +709,7 @@ tfs_bot_chk_xr:
    STA TFS_BOT_DOM
 tfs_bot_dom_done:
 
+
 ; ---- next_x = min(x_hi, top event, bot event) ----
 ; The next event for a side is where its dominance state CHANGES:
 ;   not yet dominating → the record's xl (segment starts there)
@@ -506,6 +756,32 @@ tfs_bot_evt_check:
    STA TFS_NEXT_X
 tfs_skip_bot_evt:
 
+; ---- Verdict SOLID (2026-07-13): flat 0/$FF records carry the
+; 'above'/'below' verdicts (real 'inside' records are in [Y_BIAS,
+; VIS_YMAX] inductively — 0/$FF are reserved). A dominating top record
+; with yl==$FF ('below') or bot record with yl==0 ('above') proves the
+; aperture empty on [cur_x, next_x]: emit NOTHING — the columns close
+; (occlusion restored; the far-west phantom fix). Mirror:
+; endpoint_spans.tighten_from_records.
+   LDA TFS_TOP_DOM
+   BEQ tfs_ns_top
+   LDY TFS_T_CUR
+   INY
+   LDA TOP_RECORDS,Y
+   CMP #$FF
+   BEQ tfs_solid_skip
+tfs_ns_top:
+   LDA TFS_BOT_DOM
+   BEQ tfs_not_solid
+   LDY TFS_B_CUR
+   INY
+   LDA BOT_RECORDS,Y
+   BNE tfs_not_solid
+tfs_solid_skip:
+   JSR tfs_flush_pending
+   JMP tfs_advance_curs
+tfs_not_solid:
+
 ; ---- Per-interval fast path: both sides from pool → emit unchanged.
 ; Saves the 4 interps the normal path would do for a pool/pool sub-
 ; fragment (the parts of a pool span that records don't dominate).
@@ -523,115 +799,84 @@ tfs_skip_bot_evt:
 tfs_compute_vals:
 
 ; ---- Compute top values for [cur_x, next_x] ----
-; TOP_L/TOP_R = top boundary y at the interval's two ends, plus the
-; (KIND, ID) source tag used by the pending-merge test below.
+; NARROW-ONLY (2026-07-13): pool line first, then a dominating record
+; RAISES the boundary per endpoint (max) — mirror of the model's
+; rt = max(old_t, cy). The old code REPLACED with the record line,
+; correct only when records were clipped inside the CURRENT aperture;
+; deferred ops of the same subsector move the pool between draw time
+; and apply time, so replace could WIDEN (the 1200,-3000,129 852-line
+; over-draw). Endpoint-max matches the model's approximation exactly.
    LDA TFS_TOP_DOM
    BEQ tfs_top_pool
-; top from record T_CUR: read (xl, yl, xr, yr) and interp.
-; Segment endpoints are on the original yt-line (DCL computes them with
-; the same interp_store used here), so interp between them recovers the
-; line's geometry. Small u8-rounding aliasing at sub-segment fragments
-; can shift a pixel; this is inherent to integer interp.
    LDY TFS_T_CUR
-   LDA TOP_RECORDS,Y
-   STA zp_i_x0
    INY
    LDA TOP_RECORDS,Y
-   STA zp_i_y0
+   BEQ tfs_top_pool                        ; 'above' verdict: pool stands
+; Extremes shortcut: record endpoints BOTH at-or-below the span's
+; tightest top (POOL_IT = max(tl,tr)) prove max(pool,rec) == rec on the
+; whole interval: pure record values at the OLD (pre-narrow-only) cost.
+   LDX zp_clr_save_x
+   CMP POOL_IT,X
+   BCC tfs_top_mixed
+   INY
    INY
    LDA TOP_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_TOP_R
+   CMP POOL_IT,X
+   BCC tfs_top_mixed
+   JSR tfs_top_rec_interp
+   JMP tfs_top_tag_rec
+tfs_top_mixed:
+   JSR tfs_top_vals_mixed
+   JMP tfs_top_tag_rec
+tfs_top_pool:
+   JSR tfs_top_pool_interp
+   ZERO TFS_TOP_KIND
+   LDA zp_clr_save_x
+   STA TFS_TOP_ID
+   JMP tfs_top_vals_done
+tfs_top_tag_rec:
    LDA #1
    STA TFS_TOP_KIND
    LDA TFS_T_CUR
    STA TFS_TOP_ID
-   JMP tfs_top_vals_done
-tfs_top_pool:
-; Top from the pool span's own line: interp (XLO,TL)-(XLO+DEN,TR) at
-; cur_x / next_x. Source tag = (kind 0, id = pool slot).
-   LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_TL,X
-   STA zp_i_y0
-   LDA POOL_TR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_TOP_R
-   ZERO TFS_TOP_KIND
-   LDA zp_clr_save_x
-   STA TFS_TOP_ID
 tfs_top_vals_done:
 
 ; ---- Compute bot values for [cur_x, next_x] ----
-; Mirror of the top block: bot record line if BOT_DOM, else the pool
-; span's (XLO,BL)-(XLO+DEN,BR) line; tag (KIND, ID) for merging.
+; Mirror of the top block (extremes shortcut vs POOL_IB = min(bl,br)).
    LDA TFS_BOT_DOM
    BEQ tfs_bot_pool
    LDY TFS_B_CUR
-   LDA BOT_RECORDS,Y
-   STA zp_i_x0
    INY
    LDA BOT_RECORDS,Y
-   STA zp_i_y0
+   CMP #$FF
+   BEQ tfs_bot_pool                        ; 'below' verdict: pool stands
+   LDX zp_clr_save_x
+   CMP POOL_IB,X
+   BEQ tfs_bot_fast
+   BCS tfs_bot_mixed                       ; yl > IB: might exceed pool bot
+tfs_bot_fast:
+   INY
    INY
    LDA BOT_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_BOT_R
+   CMP POOL_IB,X
+   BEQ tfs_bot_fast2
+   BCS tfs_bot_mixed
+tfs_bot_fast2:
+   JSR tfs_bot_rec_interp
+   JMP tfs_bot_tag_rec
+tfs_bot_mixed:
+   JSR tfs_bot_vals_mixed
+   JMP tfs_bot_tag_rec
+tfs_bot_pool:
+   JSR tfs_bot_pool_interp
+   ZERO TFS_BOT_KIND
+   LDA zp_clr_save_x
+   STA TFS_BOT_ID
+   JMP tfs_bot_vals_done
+tfs_bot_tag_rec:
    LDA #1
    STA TFS_BOT_KIND
    LDA TFS_B_CUR
-   STA TFS_BOT_ID
-   JMP tfs_bot_vals_done
-tfs_bot_pool:
-   LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_BL,X
-   STA zp_i_y0
-   LDA POOL_BR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_BOT_R
-   ZERO TFS_BOT_KIND
-   LDA zp_clr_save_x
    STA TFS_BOT_ID
 tfs_bot_vals_done:
 
@@ -949,6 +1194,10 @@ LC_TGT_LO = $0957                       ; clip target value (s16)
 LC_TGT_HI = $0958
 
 ; ---------------------------------------------------------------------------
+.segment "LOX"
+; (Relocated to the LO segment 2026-07-13: cold classifier, and the CLIP region is
+; at its ceiling — main RAM is always mapped, so bank-C callers are fine.
+; Slated for deletion by Part 2 of the aperture fix.)
 ; seg_zero_rec_solid — classify a portal whose aperture-edge DCL emissions
 ; produced ZERO records. That is ambiguous: either the opening covers the
 ; whole screen (the tighten is a genuine no-op -> skip), or the opening is
@@ -1070,3 +1319,8 @@ szr_closed:
    SEC
    RTS
 .endscope
+.if ::BANKED
+.segment "CLIP_BK"
+.else
+.segment "CLIP"
+.endif

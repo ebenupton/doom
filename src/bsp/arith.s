@@ -138,8 +138,10 @@ br_recip:
    LDA #3
    STA zp_br_t1
 c_hi_ok:
-   LDA zp_br_t1
-   BNE c_lo_ok
+; A = t1 on both arrival paths (BCC kept it / clamp set 3) — but the
+; FLAGS are the CMP's, not t1's: test explicitly (C set iff t1 >= 1)
+   CMP #1
+   BCS c_lo_ok
 ; HI > 0 → ≥ 256 ≥ 2, OK
    LDA zp_br_t0
    CMP #2
@@ -530,7 +532,7 @@ um1_pos:
 ; arms; the general quarter-square stays as the >=2 fallback so NO
 ; delta-range fence is needed (any map/position stays exact). ---
    LDA zp_ri_d_h
-   BEQ um2_z                               ; x0: resh/resext untouched
+   BEQ ri_sign                             ; x0: direct (in branch range)
    CMP #1
    BEQ um2_one                             ; x1: product == mag
    TAX
@@ -556,11 +558,10 @@ um2_one:
    CLC
    ADC zp_br_res_h
    STA zp_br_res_h
-   BCC um2_z
+   BCC ri_sign
    INC zp_br_res_x
-um2_z:
-   JMP ri_sign                             ; skip ri_finish's dead adds
-.endscope
+   JMP ri_sign                             ; carry arm can't fall into
+.endscope                                  ; ri_finish's (stale) adds
 
 ; shared accumulate/negate tail: res += prod << 8, then one net negate
 ; if the XOR-folded sign says so.

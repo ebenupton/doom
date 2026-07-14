@@ -200,7 +200,10 @@ _partial_aperture_count = 0
 #               tighten itself).
 # All three modes produce identical span state — verified by
 # test_unified_tighten.py against the 9 reference scenes.
-_TIGHTEN_MODE = 'normal'
+_TIGHTEN_MODE = 'records'   # 2026-07-13: the verdict spec is LIVE — the
+# 6502 transports 'above'/'below' as flat 0/$FF records and solid-drops
+# empty apertures (the off-screen-aperture fix); 'normal' mode kept a
+# clamped-endpoint APPROXIMATION (thin open wedge past the crossing).
 
 # Legacy boolean flag — retained as alias for back-compat. Set True ⇒
 # 'unified' mode. Read at tighten dispatch time, not import time.
@@ -461,10 +464,10 @@ class EndpointClipSpans:
                 emit_sec_top=False, emit_sec_bot=False,
                 yt_sec1=None, yt_sec2=None,
                 yb_sec1=None, yb_sec2=None):
-        # emit_top/emit_bot/emit_sec_top/emit_sec_bot and yt_sec/yb_sec
-        # are consumed by the 6502 shadow — ignored in Python state
-        # mutation (Python doesn't emit lines during tighten).
-        _ = emit_top, emit_bot, emit_sec_top, emit_sec_bot
+        # emit_sec_top/emit_sec_bot and yt_sec/yb_sec are consumed by the
+        # 6502 shadow; emit_top/emit_bot ALSO gate the records streams in
+        # records mode (2026-07-13 — the engine's records ride the draws).
+        _ = emit_sec_top, emit_sec_bot
         _ = yt_sec1, yt_sec2, yb_sec1, yb_sec2
         # Mode dispatch (legacy boolean still honoured).
         mode = _TIGHTEN_MODE
@@ -480,16 +483,30 @@ class EndpointClipSpans:
                 sx1, sx2 = sx2, sx1
                 yt1, yt2 = yt2, yt1
                 yb1, yb2 = yb2, yb1
-            sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
-                ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
-                clamp_u8=(self.y_display_offset != 0))
-            top_records = self.clip_line_records(sx1, yt1, sx2, yt2,
-                                                 ilo=ilo, ihi=ihi)
-            bot_records = self.clip_line_records(sx1, yb1, sx2, yb2,
-                                                 ilo=ilo, ihi=ihi)
-            return self.tighten_from_records(
-                lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                top_records, bot_records)
+            # DEFERRED-OP TIMING: the 6502's records were clipped against
+            # the pool AS OF DRAW TIME; ops of the same subsector applied
+            # since then have moved the spans. The renderer snapshots our
+            # records at append time (snapshot_tighten_records) — consume
+            # that if present; build here only for direct harness calls.
+            q = getattr(self, '_pending_records', None)
+            if q:
+                top_records, bot_records = q.pop(0)   # FIFO: ops apply
+            else:                                     # in append order
+                top_records, bot_records = self.build_tighten_records(
+                    lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                    emit_top, emit_bot)
+            if not top_records and not bot_records:
+                # Zero records is ambiguous (mirror of seg_zero_rec_solid
+                # + the 6502 wrapper's arm): the opening either covers the
+                # whole range (no-op) or is entirely OFF-screen (close).
+                b_vis_lo = self.y_display_offset
+                b_vis_hi = self.y_display_offset + FP_RENDER_H - 1
+                if ((yb1 < b_vis_lo and yb2 < b_vis_lo) or
+                        (yt1 > b_vis_hi and yt2 > b_vis_hi)):
+                    self.mark_solid(ilo, ihi)
+                return
+            return self.tighten_from_x_records(lo, hi,
+                                               top_records, bot_records)
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W - 1, hi)
         if ihi < ilo: return
@@ -730,6 +747,146 @@ class EndpointClipSpans:
                                     'verdict': 'inside',
                                     'cy0': cy_lo, 'cy1': cy_hi})
         return records
+
+    def tighten_from_x_records(self, lo, hi, top_recs, bot_recs):
+        """Faithful python mirror of the 6502 tighten_from_records sweep
+        (clip/tfr.s): x-keyed 4-tuple records, per-span event sweep with
+        top/bot cursors, saturated-flat verdicts (top yl at band-bottom
+        saturation => solid; bot yl at band-top => solid), endpoint
+        max/min narrow-only values, source-tagged pend merge."""
+        ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
+        if ihi < ilo:
+            return
+        b_lo = self.y_display_offset - Y_BIAS
+        SAT_A = b_lo
+        SAT_B = b_lo + 255
+        # All-neutral fast-out (mirror of the tfr.s entry guard): every
+        # top record an 'above' flat and every bot record a 'below' flat
+        # means pool stands on every interval and no solid verdict can
+        # fire — a provable no-op. Skip the sweep AND its span
+        # re-emission (re-anchoring/seam splits) exactly like the 6502.
+        # The guard tests yl only, like the machine: flats always carry
+        # yl == yr, and real records never touch the saturation values.
+        if (all(r[1] == SAT_A for r in top_recs) and
+                all(r[1] == SAT_B for r in bot_recs)):
+            return
+        new = []
+        pend = None   # [xl, xr, tl, tr, bl, br, tsrc, bsrc]
+        def flush():
+            nonlocal pend
+            if pend is not None:
+                _append_merge(new, (pend[0], pend[1], pend[0], pend[1],
+                                    pend[2], pend[4], pend[3], pend[5]))
+                pend = None
+        ti = 0; bi = 0
+        for sp in self.spans:
+            xs, xe = sp[0], sp[1]
+            if xe <= ilo or xs >= ihi:
+                flush(); _append_merge(new, sp); continue
+            cur = xs
+            if xs < ilo:
+                flush()
+                _append_merge(new, (xs, ilo, sp[2], sp[3],
+                                    sp[4], sp[5], sp[6], sp[7]))
+                cur = ilo
+            x_hi = min(xe, ihi)
+            single = (xs == xe)
+            while cur < x_hi or (single and cur == x_hi):
+                # consume stale records
+                while ti < len(top_recs) and top_recs[ti][2] <= cur:
+                    ti += 1
+                while bi < len(bot_recs) and bot_recs[bi][2] <= cur:
+                    bi += 1
+                t_dom = (ti < len(top_recs) and top_recs[ti][0] <= cur
+                         < top_recs[ti][2])
+                b_dom = (bi < len(bot_recs) and bot_recs[bi][0] <= cur
+                         < bot_recs[bi][2])
+                nxt = x_hi
+                if ti < len(top_recs):
+                    cand = top_recs[ti][2] if t_dom else top_recs[ti][0]
+                    if cand < nxt: nxt = cand
+                if bi < len(bot_recs):
+                    cand = bot_recs[bi][2] if b_dom else bot_recs[bi][0]
+                    if cand < nxt: nxt = cand
+                # verdict solid: aperture provably empty here
+                if (t_dom and top_recs[ti][1] == top_recs[ti][3] == SAT_B) or \
+                   (b_dom and bot_recs[bi][1] == bot_recs[bi][3] == SAT_A):
+                    flush()
+                    if t_dom and top_recs[ti][2] == nxt: ti += 1
+                    if b_dom and bot_recs[bi][2] == nxt: bi += 1
+                    if single: break
+                    cur = nxt; continue
+                # top values: pool, then record max (skip 'above' flats)
+                tl = _span_top_store(sp, cur); tr = _span_top_store(sp, nxt)
+                tsrc = ('p', id(sp))
+                if t_dom and not (top_recs[ti][1] == top_recs[ti][3]
+                                  == SAT_A):
+                    r = top_recs[ti]
+                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
+                    rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
+                    if rl > tl: tl = rl
+                    if rr > tr: tr = rr
+                    tsrc = ('t', ti)
+                bl = _span_bot_store(sp, cur); br = _span_bot_store(sp, nxt)
+                bsrc = ('p', id(sp))
+                if b_dom and not (bot_recs[bi][1] == bot_recs[bi][3]
+                                  == SAT_B):
+                    r = bot_recs[bi]
+                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
+                    rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
+                    if rl < bl: bl = rl
+                    if rr < br: br = rr
+                    bsrc = ('b', bi)
+                if tl >= bl and tr >= br:
+                    flush()   # inverted/empty interval -> closed
+                elif pend is not None and pend[1] == cur \
+                        and pend[6] == tsrc and pend[7] == bsrc:
+                    pend[1] = nxt; pend[3] = tr; pend[5] = br
+                else:
+                    flush()
+                    pend = [cur, nxt, tl, tr, bl, br, tsrc, bsrc]
+                if t_dom and ti < len(top_recs) and top_recs[ti][2] == nxt:
+                    ti += 1
+                if b_dom and bi < len(bot_recs) and bot_recs[bi][2] == nxt:
+                    bi += 1
+                if single: break
+                cur = nxt
+            if xe > ihi:
+                flush()
+                _append_merge(new, (ihi, xe, sp[2], sp[3],
+                                    sp[4], sp[5], sp[6], sp[7]))
+        flush()
+        self.spans = new
+        self._update_bbox()
+
+    def build_tighten_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                              emit_top=True, emit_bot=True):
+        """Per-line record build vs the CURRENT spans (mirrors the 6502
+        per-line clip; EMIT FLAGS mirror the records-ride-the-draws rule:
+        an undrawn aperture edge leaves its stream empty — the known
+        pre-existing under-tightening class at 1500,-3700)."""
+        ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
+        if ihi < ilo:
+            return [], []
+        if sx1 > sx2:
+            sx1, sx2 = sx2, sx1
+            yt1, yt2 = yt2, yt1
+            yb1, yb2 = yb2, yb1
+        top = (_line_records_x(self, sx1, yt1, sx2, yt2, ilo, ihi)
+               if emit_top else [])
+        bot = (_line_records_x(self, sx1, yb1, sx2, yb2, ilo, ihi)
+               if emit_bot else [])
+        return top, bot
+
+    def snapshot_tighten_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                                 top_dom=False, bot_dom=False,
+                                 emit_top=True, emit_bot=True, *rest):
+        """Capture records against the DRAW-TIME spans for a deferred
+        tighten (the python mirror of the 6502 __rec__ snapshot)."""
+        if getattr(self, '_pending_records', None) is None:
+            self._pending_records = []
+        self._pending_records.append(self.build_tighten_records(
+            lo, hi, sx1, sx2, yt1, yt2, yb1, yb2, emit_top, emit_bot))
 
     def tighten_from_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                              top_records, bot_records):
@@ -1270,6 +1427,186 @@ def _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2, yb1, yb2, out,
                         sx_lo, sx_hi,
                         rt_l, rb_l,
                         rt_r, rb_r))
+
+
+def _line_records_x(spans_obj, xl, yl, xr, yr, ilo, ihi):
+    """Build x-keyed 4-tuple records (xl, yl, xr, yr) for one aperture
+    edge, mirroring the 6502 exactly: the s16 x-clip and y-band clip
+    (dcl_s16, _interp_store_s16 crossings, saturated flats 0/255 for
+    band-clipped ranges) followed by the draw walk's per-span clipping
+    against the DRAW-TIME spans (inside pieces at the walk's crossings,
+    saturated flats for outside-window ranges). Saturated values make
+    the records TIMING-ROBUST: consumed later under min/max they give
+    the same verdicts against ANY aperture (the si-keyed dict records
+    they replace bound to stale span indices once earlier deferred ops
+    of the same subsector split the list)."""
+    recs = []
+    b_lo = spans_obj.y_display_offset - Y_BIAS
+    b_hi = b_lo + 255
+    SAT_A = b_lo          # 'above' saturation (band top)
+    SAT_B = b_lo + 255    # 'below' saturation (band bottom)
+    def emit(a, ya, b, yb):
+        if a >= b:
+            return
+        if recs and recs[-1][1] == recs[-1][3] == ya == yb \
+                and recs[-1][2] >= a:
+            if recs[-1][2] < b:
+                recs[-1] = (recs[-1][0], ya, b, ya)
+            return
+        recs.append((a, ya, b, yb))
+    if xl == xr:
+        return recs
+    if xl < 0:
+        yl = _interp_store_s16(0, xl, yl, xr, yr)
+        xl = 0
+    if xr > 255:
+        yr = _interp_store_s16(255, xl, yl, xr, yr)
+        xr = 255
+    if xl >= xr:
+        return recs
+    # y-band stage
+    if yl < b_lo and yr < b_lo:
+        emit(max(xl, ilo), SAT_A, min(xr, ihi), SAT_A)
+        return recs
+    if yl > b_hi and yr > b_hi:
+        emit(max(xl, ilo), SAT_B, min(xr, ihi), SAT_B)
+        return recs
+    cxl, cyl, cxr, cyr = xl, yl, xr, yr
+    right_flat = None
+    if yl < b_lo or yl > b_hi:
+        tgt = b_lo if yl < b_lo else b_hi
+        cx = _interp_store_s16(tgt, yl, xl, yr, xr)   # axes swapped
+        emit(max(xl, ilo), SAT_A if yl < b_lo else SAT_B,
+             min(cx, ihi), SAT_A if yl < b_lo else SAT_B)
+        cxl, cyl = cx, tgt
+    if yr < b_lo or yr > b_hi:
+        tgt = b_lo if yr < b_lo else b_hi
+        cx = _interp_store_s16(tgt, yl, xl, yr, xr)
+        right_flat = (max(cx, ilo), SAT_A if yr < b_lo else SAT_B,
+                      min(xr, ihi), SAT_A if yr < b_lo else SAT_B)
+        cxr, cyr = cx, tgt
+    # walk stage: per DRAW-TIME span, clip the in-band piece against the
+    # window; inside pieces at the walk's crossings, flats for outside.
+    if cxl < cxr:
+        lo_w = max(cxl, ilo); hi_w = min(cxr, ihi)
+        for sp in spans_obj.spans:
+            xs, xe = sp[0], sp[1]
+            if xe <= lo_w or xs >= hi_w:
+                continue
+            ox0 = max(xs, lo_w); ox1 = min(xe, hi_w)
+            if ox0 >= ox1:
+                continue
+            cy0 = _interp_store(ox0, cxl, cyl, cxr, cyr)
+            cy1 = _interp_store(ox1, cxl, cyl, cxr, cyr)
+            t0 = _span_top_store(sp, ox0); t1 = _span_top_store(sp, ox1)
+            btm0 = _span_bot_store(sp, ox0); btm1 = _span_bot_store(sp, ox1)
+            # wholly outside the window?
+            if cy0 <= t0 and cy1 <= t1:
+                emit(ox0, SAT_A, ox1, SAT_A); continue
+            if cy0 >= btm0 and cy1 >= btm1:
+                emit(ox0, SAT_B, ox1, SAT_B); continue
+            a, b = ox0, ox1
+            ya, yb2 = cy0, cy1
+            # entry clip (left end outside)
+            if cy0 < t0:
+                cx = _crossover_x_dir(ox0, ox1, cy0 - t0, cy1 - t1, True)
+                emit(ox0, SAT_A, cx, SAT_A)
+                a, ya = cx, _span_top_store(sp, cx)
+            elif cy0 > btm0:
+                cx = _crossover_x_dir(ox0, ox1, cy0 - btm0, cy1 - btm1, True)
+                emit(ox0, SAT_B, cx, SAT_B)
+                a, ya = cx, _span_bot_store(sp, cx)
+            # exit clip (right end outside)
+            if cy1 < t1:
+                cx = _crossover_x_dir(ox0, ox1, cy0 - t0, cy1 - t1, False)
+                if cx > a:
+                    emit(a, ya, cx, _span_top_store(sp, cx))
+                emit(cx, SAT_A, ox1, SAT_A)
+                continue
+            if cy1 > btm1:
+                cx = _crossover_x_dir(ox0, ox1, cy0 - btm0, cy1 - btm1, False)
+                if cx > a:
+                    emit(a, ya, cx, _span_bot_store(sp, cx))
+                emit(cx, SAT_B, ox1, SAT_B)
+                continue
+            emit(a, ya, b, yb2)
+    if right_flat is not None:
+        emit(*right_flat)
+    return recs
+
+
+def _crossover_x_dir(cx1, cx2, d1, d2, clip_p1):
+    """Mirror of dcl_boundary_ix: ix = cx1 + (cx2-cx1)*|d1| / (|d1|+|d2|),
+    ceiling when clipping the left end (clip_p1), floor otherwise;
+    clamped to [cx1, cx2]."""
+    den = abs(d1) + abs(d2)
+    if den == 0 or cx2 <= cx1:
+        return cx1
+    num = (cx2 - cx1) * abs(d1)
+    q = -(-num // den) if clip_p1 else num // den
+    return max(cx1, min(cx2, cx1 + q))
+
+
+def _records_for_line_impl(spans_obj, xl, yl, xr, yr, ilo, ihi):
+    """Mirror of the 6502 per-line record pipeline (2026-07-13 aperture
+    fix): x-clip to [0,255] then y-band clip, each crossing via
+    _interp_store_s16 (the s16_interp mirror, UNCLAMPED result), with
+    FLAT VERDICT records for the clipped-away ranges — the 6502
+    transports these as flat 0/$FF records. Replaces the old
+    _remap_seg_for_8bit shared-anchor remap in the records path: remap
+    re-anchored BOTH edge lines together, shifting in-band crossings by
+    a pixel vs the 6502's independent per-line clip (found at the
+    ff2c.c1 reproducer: py 152 vs 6502 151).
+
+    Band bounds follow the display offset: biased shadow (offset 48)
+    clips y to [0,255]; the unbiased reference (offset 0) to [-48,207].
+    Assumes xl < xr (caller ordered)."""
+    recs = []
+    b_lo = spans_obj.y_display_offset - Y_BIAS
+    b_hi = b_lo + 255
+    def flat(v, a, b):
+        if a >= b:
+            return
+        for si, sp in enumerate(spans_obj.spans):
+            if sp[1] <= a or sp[0] >= b:
+                continue
+            recs.append({'si': si, 'sox0': max(sp[0], a),
+                         'sox1': min(sp[1], b), 'verdict': v})
+    if xl == xr:
+        return recs
+    # x-clip to the record domain (u8 columns); crossing y UNCLAMPED so
+    # the y stage still sees out-of-band values (dcl_s16 stores LC_RES).
+    if xl < 0:
+        yl = _interp_store_s16(0, xl, yl, xr, yr)
+        xl = 0
+    if xr > 255:
+        yr = _interp_store_s16(255, xl, yl, xr, yr)
+        xr = 255
+    if xl >= xr:
+        return recs
+    # y-band handling
+    if yl < b_lo and yr < b_lo:
+        flat('above', max(xl, ilo), min(xr, ihi))
+        return recs
+    if yl > b_hi and yr > b_hi:
+        flat('below', max(xl, ilo), min(xr, ihi))
+        return recs
+    cxl, cyl, cxr, cyr = xl, yl, xr, yr
+    if yl < b_lo or yl > b_hi:
+        tgt = b_lo if yl < b_lo else b_hi
+        cx = _interp_store_s16(tgt, yl, xl, yr, xr)   # axes swapped
+        flat('above' if yl < b_lo else 'below', max(xl, ilo), min(cx, ihi))
+        cxl, cyl = cx, tgt
+    if yr < b_lo or yr > b_hi:
+        tgt = b_lo if yr < b_lo else b_hi
+        cx = _interp_store_s16(tgt, yl, xl, yr, xr)
+        flat('above' if yr < b_lo else 'below', max(cx, ilo), min(xr, ihi))
+        cxr, cyr = cx, tgt
+    if cxl < cxr:
+        recs += spans_obj.clip_line_records(cxl, cyl, cxr, cyr,
+                                            ilo=max(ilo, cxl),
+                                            ihi=min(ihi, cxr))
+    return recs
 
 
 def _crossover_x(x0, x1, d0, d1):

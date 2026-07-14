@@ -612,6 +612,9 @@ fp_degen:
 
 main_clip:
 ::dcl16_mainclip:
+; no pending right-side band verdict yet ($80 = none)
+   LDA #$80
+   STA DCLV_S16VY
 ; ---- Slow path. INPUT CONTRACT: x1 <= x2 as s16 — ordering is owned
 ; by the CALLERS now (the seg layer stages via zp_sx_ord, the Python
 ; wrapper orders in its prelude, verticals are trivially ordered).
@@ -652,17 +655,23 @@ x1_in_or_big:
    JMP rejected
 not_both_xneg:
 not_both_xbig:
-; same for y
+; same for y — RECORDS-OFF ONLY: with records on, a both-out line falls
+; through so the post-x-clip census emits its flat verdict record with
+; u8 x values (aperture fix part 2); records-off keeps the cheap reject.
    LDA zp_line_yl_h
    BPL y1_in_or_big
    LDA zp_line_yr_h
    BPL not_both_yneg
+   LDA zp_dcl_rec_buf_h
+   BNE not_both_yneg
    JMP rejected
 y1_in_or_big:
    BEQ not_both_ybig
    LDA zp_line_yr_h
    BMI not_both_ybig
    BEQ not_both_ybig
+   LDA zp_dcl_rec_buf_h
+   BNE not_both_ybig
    JMP rejected
 not_both_yneg:
 not_both_ybig:
@@ -774,12 +783,16 @@ skip_xclip:
    BPL y1_after_in_or_big
    LDA zp_line_yr_h
    BPL not_both_yneg2
+   LDA #0                                  ; whole line above the band
+   JSR dcl_rec_flat_line
    JMP rejected
 y1_after_in_or_big:
    BEQ not_both_ybig2
    LDA zp_line_yr_h
    BMI not_both_ybig2
    BEQ not_both_ybig2
+   LDA #$FF                                ; whole line below the band
+   JSR dcl_rec_flat_line
    JMP rejected
 not_both_yneg2:
 not_both_ybig2:
@@ -823,6 +836,10 @@ need_yclip:
    LDA #0
    STA zp_line_yl_l
    STA zp_line_yl_h
+   LDA zp_dcl_rec_buf_h
+   BEQ y1c_done
+   LDA #0                                  ; [orig xl, xl] exited via TOP
+   JSR dcl_rec_flat_y1
    JMP y1c_done
 y1c_not_neg:
    BEQ y1c_done
@@ -838,6 +855,10 @@ y1c_not_neg:
    STA zp_line_yl_l
    LDA #0
    STA zp_line_yl_h
+   LDA zp_dcl_rec_buf_h
+   BEQ y1c_done
+   LDA #$FF                                ; [orig xl, xl] exited via BOTTOM
+   JSR dcl_rec_flat_y1
 y1c_done:
 ; y2 clip
    LDA zp_line_yr_h
@@ -852,6 +873,8 @@ y1c_done:
    LDA #0
    STA zp_line_yr_l
    STA zp_line_yr_h
+   LDA #0                                  ; [xr, orig xr] exited via TOP:
+   STA DCLV_S16VY                          ; pend (order: after walk recs)
    JMP y2c_done
 y2c_not_neg:
    BEQ y2c_done
@@ -867,6 +890,8 @@ y2c_not_neg:
    STA zp_line_yr_l
    LDA #0
    STA zp_line_yr_h
+   LDA #$FF                                ; [xr, orig xr] exited via BOTTOM
+   STA DCLV_S16VY
 y2c_done:
 y_in_range:
 
@@ -886,7 +911,8 @@ y_in_range:
    CMP zp_line_yr_l
    BEQ rejected
 dispatch_dcl:
-   JMP draw_clipped_line
+   JSR draw_clipped_line
+   JMP dcl_rec_s16r_flush
 rejected_swap_after_clip:
 ; Post-clip x1 > x2 — would require swap; just emit reordered.
    LDA zp_line_xl_l
@@ -897,10 +923,59 @@ rejected_swap_after_clip:
    LDX zp_line_yr_l
    STX zp_line_yl_l
    STA zp_line_yr_l
-   JMP draw_clipped_line
+   JSR draw_clipped_line
+   JMP dcl_rec_s16r_flush
 rejected:
-   RTS
+   JMP dcl_rec_s16r_flush                  ; pending may be armed even when
+                                        ; the in-band piece degenerated
 .endscope
+
+; ============================================================================
+; Part 2 of the off-screen-aperture fix (2026-07-13): the s16 band clip
+; emits FLAT VERDICT records (0 'above' / $FF 'below') for the y-band-
+; clipped-away portions of an aperture edge, so the tighten keeps the
+; memory that the edge exists out there. Wrappers live in LO (main RAM,
+; always mapped); dcl_rec_flat gates on records mode and merges.
+; ============================================================================
+.segment "LOX"
+dcl_rec_flat_line:                         ; whole clipped line [xl_l, xr_l]
+   STA DCLV_YV
+   LDA zp_line_xl_l
+   STA DCLV_X0
+   LDA zp_line_xr_l
+   STA DCLV_X1
+   LDA DCLV_YV
+   JMP dcl_rec_flat
+
+dcl_rec_flat_y1:                           ; left clip-off [orig xl, new xl]
+   STA DCLV_YV
+   LDA LC_OY1_LO
+   STA DCLV_X0
+   LDA zp_line_xl_l
+   STA DCLV_X1
+   LDA DCLV_YV
+   JMP dcl_rec_flat
+
+dcl_rec_s16r_flush:                        ; right clip-off [new xr, orig xr]
+   LDA DCLV_S16VY
+   CMP #$80
+   BEQ s16r_done
+   STA DCLV_YV
+   LDA #$80
+   STA DCLV_S16VY                          ; consume the pending
+   LDA zp_line_xr_l
+   STA DCLV_X0
+   LDA LC_OY2_LO
+   STA DCLV_X1
+   LDA DCLV_YV
+   JMP dcl_rec_flat
+s16r_done:
+   RTS
+.if ::BANKED
+.segment "CLIP_BK"
+.else
+.segment "CLIP"
+.endif
 
 end_code:
 .if ::BANKED

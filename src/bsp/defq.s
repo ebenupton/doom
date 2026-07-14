@@ -62,6 +62,42 @@ dqs_ovf:
 ;   written, so a dropped op never leaves a partial entry in the queue.
 defq_append_tighten:
 .scope
+; All-neutral fast-out (twin of the tighten_from_records entry guard in
+; clip/tfr.s): every top record an 'above' flat (yl==0) and every bot
+; record a 'below' flat (yl==$FF) makes the drained tighten a provable
+; no-op — don't queue it at all. Saves the block copy here, the copy-
+; back at drain, and the call. Real records and solid flats abort the
+; scan on their first yl. Caller guarantees tc+bc > 0, so the vacuous
+; case (which must go through zero-record classification) can't occur.
+   LDX $0700                               ; top count
+   BEQ dqt_neu_top_ok
+   LDY #2                                  ; first record's yl (1 + 1)
+dqt_neu_top:
+   LDA $0700,Y
+   BNE dqt_do_append                       ; in-band value or solid flat
+   INY
+   INY
+   INY
+   INY
+   DEX
+   BNE dqt_neu_top
+dqt_neu_top_ok:
+   LDX $0800                               ; bot count
+   BEQ dqt_neutral
+   LDY #2
+dqt_neu_bot:
+   LDA $0800,Y
+   CMP #$FF
+   BNE dqt_do_append
+   INY
+   INY
+   INY
+   INY
+   DEX
+   BNE dqt_neu_bot
+dqt_neutral:
+   RTS
+dqt_do_append:
 ; size check: 5 + 4*(tc+bc) must fit in the remaining queue space.
    LDA $0700
    CLC
@@ -74,12 +110,10 @@ defq_append_tighten:
 ; 2n
    ASL A
    BCS dqt_ovf
-; 4n
-   CLC
+; 4n (C = 0: the BCS above fell through)
    ADC #5
    BCS dqt_ovf
-; entry size
-   CLC
+; entry size (C = 0 again)
    ADC DEFQ_TAIL
    BCS dqt_ovf
 ; tail + size > 255 → drop
@@ -162,17 +196,17 @@ defq_drain:
 dd_loop:
    CPX DEFQ_TAIL
    BCS dd_done
-   LDA DEFQ_BASE,X
-   INX
-   STA zp_br_t3
-; type
-   LDA DEFQ_BASE,X
-   INX
+; (type, ilo, ihi) read via +1/+2 offsets (DEFQ_BASE page-aligned,
+; entries start <= 251 so no page cross); type re-read last so the
+; dispatch tests it in A — the zp_br_t3 round-trip is gone.
+   LDA DEFQ_BASE+1,X
    STA zp_i_l
-   LDA DEFQ_BASE,X
-   INX
+   LDA DEFQ_BASE+2,X
    STA zp_i_h
-   LDA zp_br_t3
+   INX
+   INX
+   INX
+   LDA DEFQ_BASE-3,X
    BNE dd_tighten
 ; solid: mark_solid(ilo, ihi), no line emission.
    STX zp_br_t2

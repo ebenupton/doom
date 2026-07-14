@@ -43,6 +43,7 @@ zp_line_yr_h = _sym('zp_line_yr_h')
 
 # DCL records-hook ZP slots
 ZP_DCL_REC_BUF   = _sym('zp_dcl_rec_buf')
+ZP_DCL_REC_OFF   = _sym('zp_dcl_rec_off')
 ZP_DCL_REC_BUF_H = _sym('zp_dcl_rec_buf_h')
 
 # ZP addresses (linked equates)
@@ -549,6 +550,7 @@ class SpanClip6502:
         if records_buf is not None:
             mem[ZP_DCL_REC_BUF]   = records_buf & 0xFF
             mem[ZP_DCL_REC_BUF_H] = (records_buf >> 8) & 0xFF
+            mem[ZP_DCL_REC_OFF]   = 1   # arm-time reset (see dcl_rec_arm)
         else:
             mem[ZP_DCL_REC_BUF_H] = 0
         mem[LINE_OUT_EN] = 1

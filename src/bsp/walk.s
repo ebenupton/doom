@@ -134,13 +134,10 @@ bsp_deferred:
 ; Extract the far-side bit into zp_bbox_side.
    LDA zp_node_ch_h
    AND #$20
-   BEQ bsp_df_s0
-   LDA #1
-   BNE bsp_df_have
-bsp_df_s0:
-   LDA #0
-bsp_df_have:
-   STA zp_bbox_side
+   BEQ bsp_df_have                         ; A already 0
+   LDA #1                                  ; (0/1 canonical form is
+bsp_df_have:                               ; load-bearing: consumers index
+   STA zp_bbox_side                        ; tables with it)
 ; Strip the tag+side bits, leaving the plain node id for the bbox read.
    LDA zp_node_ch_h
    AND #$1F
@@ -167,15 +164,13 @@ bsp_node:
    LDA zp_node_ch_l
    STA BSP_STACK,X
    INX
-   LDA zp_side
-   EOR #1
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-; farside << 5
-   ORA #$40
+   LDA zp_side                             ; farside<<5 | $40 is a 2-value
+   BNE bsp_nf0                             ; function of side — branch
+   LDA #$60                                ; side 0 -> far 1 -> $40|$20
+   BNE bsp_nftag
+bsp_nf0:
+   LDA #$40                                ; side 1 -> far 0
+bsp_nftag:
    ORA zp_node_ch_h
    STA BSP_STACK,X
    INX

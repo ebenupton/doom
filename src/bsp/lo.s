@@ -419,25 +419,23 @@ ns_mul:
    SBC zp_br_t1
    STA $0A51
    LDA $0A52
-   SBC zp_br_t2
-   STA $0A52
-   LDA $0A52
-   BMI ns_side1
-   ORA $0A51
+   SBC zp_br_t2                            ; N from the SBC; the byte is
+   BMI ns_side1                            ; dead in memory (no reader
+   ORA $0A51                               ; past this test)
    ORA $0A50
    BEQ ns_side1
 ns_side0:
    LDA #0
    STA zp_side
-   JMP ns_done
+   LDX zp_node_ch_l
+   JMP ns_front
 ns_side1:
    LDA #1
    STA zp_side
-ns_done:
-; Children from the SoA pages (no pointer re-fetch needed).
    LDX zp_node_ch_l
-   LDA zp_side
-   BNE ns_back
+   JMP ns_back
+ns_front:
+; Children from the SoA pages (no pointer re-fetch needed).
    LDA NODE_CRLO,X
    STA BSP_NEAR_LO
    LDA NODE_CRHI,X

@@ -144,6 +144,14 @@ class Instrumented6502Spans(EndpointClipSpans):
         from endpoint_spans import Y_BIAS
         return tuple(y + Y_BIAS for y in ys)
 
+    def snapshot_tighten_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
+                                 top_dom=False, bot_dom=False,
+                                 emit_top=True, emit_bot=True, *rest):
+        yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
+        super().snapshot_tighten_records(lo, hi, sx1, sx2, yt1, yt2, yb1,
+                                         yb2, top_dom, bot_dom,
+                                         emit_top, emit_bot)
+
     def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
         if yt1 is not None:
             yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
@@ -1585,7 +1593,9 @@ def render_subsector(idx, clips, cos_a, sin_a, vx, vy, vz, surface):
     deferred = []
     for si in range(ssec[1], ssec[1] + ssec[0]):
         render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred)
-    # Apply clip updates after all draws in this subsector
+    # Apply clip updates after all draws in this subsector.
+    # (Records-mode deferred tightens snapshot their records at append
+    # time inside render_seg — the draw-time pool, like the 6502.)
     for op in deferred:
         if op[0] == 'solid':
             clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
@@ -1682,6 +1692,7 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
                              max(ft1, bt1), max(ft2, bt2),
                              min(fb1, bb1), min(fb2, bb2)))
+            clips.snapshot_tighten_records(*deferred[-1][1:])
         else:
             clips.tighten(x_lo, x_hi, sx1, sx2,
                            max(ft1, bt1), max(ft2, bt2),
@@ -2042,6 +2053,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                              yt1, yt2, yb1, yb2, top_dom, bot_dom,
                              emit_top, emit_bot, emit_sec_top, emit_sec_bot,
                              yt_sec1, yt_sec2, yb_sec1, yb_sec2))
+            clips.snapshot_tighten_records(*deferred[-1][1:])
         else:
             clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
                           top_dom, bot_dom,
@@ -2688,6 +2700,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                              yt1, yt2, yb1, yb2, top_dom, bot_dom,
                              emit_top, emit_bot, emit_sec_top, emit_sec_bot,
                              yt_sec1, yt_sec2, yb_sec1, yb_sec2))
+            clips.snapshot_tighten_records(*deferred[-1][1:])
         else:
             clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
                           top_dom, bot_dom,
@@ -3428,6 +3441,7 @@ def clip_and_draw_6502(commands, surface, vz_ps):
             # top_dom/bot_dom dead in this path — see notes in fp_render_seg.
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
                              yt1, yt2, yb1, yb2, False, False))
+            clips.snapshot_tighten_records(*deferred[-1][1:])
 
     return drawn
 

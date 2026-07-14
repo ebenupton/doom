@@ -314,7 +314,7 @@ vxc_arm:
    BEQ va_cold
 ; --- warm: total = base + ref, two s24 adds (page-split on B bit 5) ---
    LDY zp_seg_v_idx_l
-   LDA zp_seg_v_idx_b
+   TXA                                     ; X still = idx_b from entry
    AND #$20                                ; idx >= 256  <=>  B >= 32 (B<=58)
    BNE va_hi
    CLC

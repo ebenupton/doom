@@ -57,8 +57,8 @@ interp_store:
    BEQ is_y0
    BCC descending
 ; ||||
-; ASCENDING (y1 > y0): dy = y1 - y0 (unsigned)
-   SEC
+; ASCENDING (y1 > y0): dy = y1 - y0 (unsigned; C=1 proven — the
+; direction CMP took neither BEQ nor BCC)
    SBC zp_i_y0
 ; |
    JSR umul_round_div                      ; |
@@ -67,10 +67,11 @@ interp_store:
    RTS
 ; | y0 + quot
 descending:
-; DESCENDING (y1 < y0): |dy| = y0 - y1 (unsigned)
-   LDA zp_i_y0
+; DESCENDING (y1 < y0): |dy| = y0 - y1 via complement — A still holds
+; y1 from the direction CMP: ~y1 + y0 + 1
+   EOR #$FF
    SEC
-   SBC zp_i_y1
+   ADC zp_i_y0
 ; |
    JSR umul_round_div                      ; |
 ; y0 - quot via two's complement: A = ~quot, then ADC y0 with C=1

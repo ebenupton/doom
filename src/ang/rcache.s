@@ -174,7 +174,7 @@ bbox_check_angle_cached:
    AND rc_bit
    BEQ bcac_cold
 ; --- WARM: full (a_fine-independent) result cached? ---
-   LDX rc_bytehi
+; (X still = rc_bytehi: AND zp doesn't touch it)
    LDA RCACHE_FULL,X
    AND rc_bit
    BNE bcac_warm_full

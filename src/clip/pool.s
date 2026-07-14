@@ -280,12 +280,12 @@ dl:
    ROL zp_div_h
    ROL A
 ; ||||||||||||||||||||||||||||||||||||||||
-   BCS dl_over                             ; |||||
+   BCS dl_sub                              ; 9-bit overflow: subtract (C=1)
    CMP zp_div_den
    BCC ds
 ; |||||||||||||||||||||||||||||
-   SBC zp_div_den                          ; |
-dl_commit:
+dl_sub:
+   SBC zp_div_den                          ; C=1 on both arrival paths
    INC zp_div_l                           ; |||||
 ds:
    DEX
@@ -293,8 +293,4 @@ ds:
 ; |||||||||||||
    LDA zp_div_l
    RTS
-; |||
-dl_over:
-   SBC zp_div_den                          ; carry already set from BCS dl_over
-   JMP dl_commit
 .endscope
