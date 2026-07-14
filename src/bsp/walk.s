@@ -29,10 +29,11 @@
 ; has rendered — so it queries exactly the span/occlusion state the Python
 ; recursion sees at its second bbox_visible call.
 ;
-; The traversal stack is the HARDWARE stack (page 1) since 2026-07-14:
-; (lo, tag/hi) entries pushed lo-first over a $FF empty-sentinel;
-; zp_bsp_stack_sp = the saved S for the is_full unwind. Entry kinds are
-; tagged in the HI byte (see bsp_dispatch):
+; The traversal is RECURSIVE on the hardware stack since 2026-07-14:
+; rc_child renders one child id; internal nodes push (node_lo,
+; side<<5|node_hi) as locals, recurse on the near child, and tail-call
+; on the far. zp_bsp_stack_sp = the saved S for the is_full unwind.
+; Child ids (hi byte):
 ;   $80 | ss_hi           : subsector id (bit 15 of the WAD child id)
 ;   $40 | side<<5 | nd_hi : deferred far child of node (lo, hi & $1F)
 ;   otherwise             : plain node id
@@ -72,143 +73,117 @@ br_render_frame:
 .scope bsp_walk                         ; named: br_dcache_frame SMC-patches
    JSR br_init_frame                       ; bsp_walk::bv_site_near/_far operands
 
-; --- BSP traversal on the HARDWARE stack (2026-07-14; was a software
-; stack at $0A00). Entries are (lo, tag/hi) pushed lo-first; a single
-; $FF sentinel byte underneath marks empty ($FF is unreachable as a
-; tag: nodes/ss <= 256 keeps every hi byte in $00/$01/$40/$41/$60/$61/
-; $80/$81). zp_bsp_stack_sp now holds the SAVED S for the is_full
-; unwind. Budget: <= depth x 2 + 1 bytes of entries under the deepest
-; JSR nesting — tens of bytes against the 256-byte page; the game loop
-; runs interrupt-free (no OS), so nothing else competes.
+; --- RECURSIVE BSP traversal on the hardware stack (2026-07-14).
+; The return address IS the continuation: rc_child renders one child id
+; (subsector or node); an internal node pushes two locals — node_lo and
+; side<<5|node_hi, the old deferred-tag byte minus its now-redundant $40
+; marker — recurses on the visible near child, and on return decodes the
+; locals, bbox-checks the far side and TAIL-CALLS itself on it (so JSR
+; depth accrues only down near chains: depth x 4 bytes of frames under
+; the deepest render JSR nesting, against the 256-byte page; the game
+; loop runs interrupt-free). is_full is checked exactly where the old
+; loop checked it — before every child dispatch — and unwinds every
+; pending frame with one TXS to the S saved at frame entry.
    TSX
    STX zp_bsp_stack_sp                     ; saved S (is_full unwind target)
-   LDA #$FF
-   PHA                                     ; empty sentinel
-; root node goes straight to dispatch — no push/pop round-trip
    LDA #<LAY_ROOT                          ; layout.inc constant
    STA zp_node_ch_l
    LDA #>LAY_ROOT
    STA zp_node_ch_h
-   JMP bsp_chk
+; falls into rc_child; its terminal RTS returns to our caller
 
-; --- Main loop: pop an entry into zp_node_ch_l:chhi and dispatch on its
-;     kind. Loop ends when the stack empties (or the screen fills). ---
-bsp_loop:
-   PLA                                     ; entry tag/hi ($FF = sentinel)
-   CMP #$FF
-   BEQ bsp_done                            ; stack empty → done
-   STA zp_node_ch_h
-   PLA
-   STA zp_node_ch_l
-bsp_chk:
-; Screen full → nothing more can become visible; drain the stack and
-; return (mirrors Python's `if clips.is_full(): return` at every level).
+; --- rc_child: render the child id in zp_node_ch_l/h ---
+; rc_child checks is_full first (the old loop's per-pop checkpoint);
+; rc_child_nc skips it — the far tail-call path has just checked, and
+; the old flow dispatched resolved far children without a re-check, so
+; this keeps the is_full/bbox query sequence byte-identical (walkseq).
+rc_child:
+; Screen full → nothing more can become visible anywhere; unwind the
+; whole recursion (mirrors Python's `if clips.is_full(): return` at
+; every level).
    PAGE BANK_C
    JSR SC_IS_FULL
    BNE bsp_done_full
-bsp_dispatch:
-; Entry kinds (hi byte): $80|sshi = subsector, $40|side<<5 = deferred
-; far child (bbox-checked at pop time), else plain node id.
+rc_child_nc:
    LDA zp_node_ch_h
-   AND #$40
-   BNE bsp_deferred
-   LDA zp_node_ch_h
-   AND #$80
-   BEQ bsp_node
-; Subsector: strip the tag bit and render its segs. (WAD id $FFFF is
-; pre-normalized to subsector 0 by the packer/wrapper.)
-   LDA zp_node_ch_h
-   AND #$7F
-   STA zp_node_ch_h
-   JSR br_render_subsector
-   JMP bsp_loop
-bsp_done:
-   RTS
-bsp_done_full:
-; Unwind every pending entry (and the sentinel) in one move: restore
-; the S saved at frame entry.
-   LDX zp_bsp_stack_sp
-   TXS
-   RTS
-
-bsp_deferred:
-; Deferred far child of node (chlo, chhi&$1F), side = bit 5.
-; Python checks the far side AFTER the near subtree has rendered —
-; this pop-time check sees exactly that span state.
-;   side = (chhi >> 5) & 1
-;   if bbox_visible(node, side): ch = node.children[side]; dispatch(ch)
-; Extract the far-side bit into zp_bbox_side.
-   LDA zp_node_ch_h
-   AND #$20
-   BEQ bsp_df_have                         ; A already 0
-   LDA #1                                  ; (0/1 canonical form is
-bsp_df_have:                               ; load-bearing: consumers index
-   STA zp_bbox_side                        ; tables with it)
-; Strip the tag+side bits, leaving the plain node id for the bbox read.
-   LDA zp_node_ch_h
-   AND #$1F
-   STA zp_node_ch_h
-bv_site_far:                            ; operand SMC-patched by br_dcache_frame
-   JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
-   BEQ bsp_loop_j                          ; far side invisible/occluded → skip
-; ch := node.children[side] — bsp_resolve_child inlined here 2026-07-14
-; (this was its only caller: the JSR/RTS pair was 12 cycles per visible
-; deferred far child). Children come from the node SoA pages, one
-; 256-byte page per byte, indexed by node id.
-   PAGE BANK_L0                            ; node SoA pages live in bank L0
-   LDX zp_node_ch_l
-   LDA zp_bbox_side
-   BNE bsp_rc_left
-   LDA NODE_CRLO,X
-   STA zp_node_ch_l
-   LDA NODE_CRHI,X
-   STA zp_node_ch_h
-   JMP bsp_dispatch
-bsp_rc_left:
-   LDA NODE_CLLO,X
-   STA zp_node_ch_l
-   LDA NODE_CLHI,X
-   STA zp_node_ch_h
-   JMP bsp_dispatch
-; re-dispatch: child may be node OR subsector
-bsp_loop_j:
-   JMP bsp_loop
-
-bsp_node:
-; Plain node: br_node_setup reads the node's SoA fields, runs DOOM
-; R_PointOnSide on the raw player position → zp_side (0=right, 1=left,
-; = the NEAR child), and resolves both child ids into BSP_NEAR_LO/HI
-; (+ FAR slots).
-   JSR br_node_setup
-; Push the far child as a DEFERRED (node, farside) entry — its
-; bbox/has_gap runs at pop time, after the near subtree.
-; Entry = (node_lo, $40 | farside<<5 | node_hi).
+   BMI rc_subsector                        ; bit 15 = subsector leaf
+; --- internal node ---
+   JSR br_node_setup                       ; → zp_side, BSP_NEAR/FAR ids
+; push the continuation locals: node_lo, then side<<5 | node_hi
    LDA zp_node_ch_l
    PHA
-   LDA zp_side                             ; farside<<5 | $40 is a 2-value
-   BNE bsp_nf0                             ; function of side — branch
-   LDA #$60                                ; side 0 -> far 1 -> $40|$20
-   BNE bsp_nftag
-bsp_nf0:
-   LDA #$40                                ; side 1 -> far 0
-bsp_nftag:
+   LDA zp_side
+   BNE rc_nf0
+   LDA #$20                                ; side 0 -> far 1
+   BNE rc_nftag
+rc_nf0:
+   LDA #$00                                ; side 1 -> far 0
+rc_nftag:
    ORA zp_node_ch_h
    PHA
-; Near child: bbox + has_gap NOW (Python checks near at visit time;
-; the old walk pushed near unconditionally and over-visited).
+; near child: bbox + has_gap NOW (Python checks near at visit time)
    LDA zp_side
    STA zp_bbox_side
 bv_site_near:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
-   BEQ bsp_loop_j                          ; near side invisible → skip subtree
-; Near child visible → straight to the is_full/dispatch join: the old
-; push was popped by the very next loop iteration (already tagged:
-; BSP_NEAR_HI carries the WAD subsector bit if the child is a leaf).
+   BEQ rc_near_skip                        ; near side invisible → skip subtree
    LDA BSP_NEAR_LO
    STA zp_node_ch_l
    LDA BSP_NEAR_HI
    STA zp_node_ch_h
-   JMP bsp_chk
+   JSR rc_child                            ; ← the recursion
+rc_near_skip:
+; --- resume: the far side of the node whose locals are on top ---
+   PLA                                     ; side<<5 | node_hi
+   TAX                                     ; keep a copy for the hi strip
+   AND #$20
+   BEQ rc_df_have                          ; A already 0
+   LDA #1                                  ; (0/1 canonical: consumers
+rc_df_have:                                ;  index tables with it)
+   STA zp_bbox_side
+   TXA
+   AND #$1F
+   STA zp_node_ch_h
+   PLA
+   STA zp_node_ch_l
+; is_full before the far dispatch — same checkpoint the old loop had
+; after popping a deferred entry.
+   PAGE BANK_C
+   JSR SC_IS_FULL
+   BNE bsp_done_full
+bv_site_far:                            ; operand SMC-patched by br_dcache_frame
+   JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
+   BEQ rc_done                             ; far side invisible → done here
+; ch := node.children[side] — resolve from the SoA pages and tail-call
+   PAGE BANK_L0                            ; node SoA pages live in bank L0
+   LDX zp_node_ch_l
+   LDA zp_bbox_side
+   BNE rc_left
+   LDA NODE_CRLO,X
+   STA zp_node_ch_l
+   LDA NODE_CRHI,X
+   STA zp_node_ch_h
+   JMP rc_child_nc                         ; tail call — no frame accrues
+rc_left:
+   LDA NODE_CLLO,X
+   STA zp_node_ch_l
+   LDA NODE_CLHI,X
+   STA zp_node_ch_h
+   JMP rc_child_nc                         ; tail call
+rc_subsector:
+; Subsector: strip the tag bit and render its segs. (WAD id $FFFF is
+; pre-normalized to subsector 0 by the packer/wrapper.)
+   AND #$7F
+   STA zp_node_ch_h
+   JMP br_render_subsector                 ; tail call — its RTS is ours
+rc_done:
+   RTS
+bsp_done_full:
+; Unwind every pending recursion frame in one move: restore the S saved
+; at frame entry. (The caller's return address is back on top.)
+   LDX zp_bsp_stack_sp
+   TXS
+   RTS
 .endscope
 
 ; (bsp_resolve_child was inlined above, 2026-07-14.)
