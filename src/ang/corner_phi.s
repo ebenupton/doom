@@ -259,16 +259,16 @@ haveax:
 ; (num < den strictly here — pa_equal diverted the diagonal — so q fits
 ; the 1024-entry tantoangle and the old q==1024 check is gone.)
 pa_lookup:
-; ta = tantoangle[sd_q] via 16-bit index. TA_HI = TA_LO + (TA_HI-TA_LO),
-; so reach the hi-byte table by adding the page delta to the pointer high
-; byte instead of recomputing the whole pointer.
+; ta = tantoangle[sd_q] via 16-bit index. TA_LO is page-aligned
+; (asserted), so the pointer lo byte IS sd_q and the hi byte is a
+; single carefree add. TA_HI reached by adding the page delta.
+   .assert (TA_LO & $FF) = 0, error, "TA_LO must be page-aligned"
    LDY #0
-   CLC
-   LDA #<TA_LO
-   ADC sd_q
+   LDA sd_q
    STA pa_ptr
-   LDA #>TA_LO
-   ADC sd_q+1
+   LDA sd_q+1
+   CLC
+   ADC #>TA_LO
    STA pa_ptr+1
    LDA (pa_ptr),Y
    STA pa_res

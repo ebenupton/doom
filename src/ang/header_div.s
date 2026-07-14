@@ -82,14 +82,20 @@ den_fits:
    SBC sd_den
    ROL sd_q
 .endrepeat
-.repeat (2)-(1)+1                       ; phase B: both bytes of q
+; phase B iteration 1: remainder still feeds iteration 2
    ASL A
    CMP sd_den
    BCC *+4
    SBC sd_den
    ROL sd_q
    ROL sd_q+1
-.endrepeat
+; phase B iteration 2 (LAST): the remainder is dead after the final
+; quotient bit — the SBC that maintained it is gone; CMP's carry IS the
+; bit (2r < 256 always here, so ASL can't carry out)
+   ASL A
+   CMP sd_den
+   ROL sd_q
+   ROL sd_q+1
    RTS
 hi128:
 ; 128 <= den < 256: 2r can reach 9 bits, keep overflow handling. Unrolled:
@@ -104,7 +110,7 @@ hi128:
    SEC
    ROL sd_q
 .endrepeat
-.repeat (2)-(1)+1
+; iteration 9: remainder still feeds iteration 10
    ASL A
    BCS *+6
    CMP sd_den
@@ -113,7 +119,13 @@ hi128:
    SEC
    ROL sd_q
    ROL sd_q+1
-.endrepeat
+; iteration 10 (LAST): remainder dead — overflow's C=1 is already the
+; quotient bit (skip the CMP), otherwise CMP's carry is
+   ASL A
+   BCS *+4
+   CMP sd_den
+   ROL sd_q
+   ROL sd_q+1
    RTS
 slow:
 ; Generic path (den >= 256, ~2% of divides): classic 16-bit restoring divide

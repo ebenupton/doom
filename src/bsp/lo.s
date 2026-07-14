@@ -641,7 +641,7 @@ as_on:
    TYA
    STA VX1+11,X                            ; CH projection lo
    RTS
-as_x: .byte 0
+; (as_x promoted to ZP — zp.inc $A1 — 3 accesses per as_one)
 .endscope
 
 
