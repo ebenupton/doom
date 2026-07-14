@@ -127,10 +127,10 @@ vc_hit_ok:
                                         ; vector belongs to whoever wrote
                                         ; rlo LAST)
    LDX zp_seg_ep
-   LDY #4
+   INY                                     ; Y = 3 survived rns_select
    LDA (zp_seg_v_cache_l),Y
    STA VX1+3,X                             ; sx_lo
-   LDY #5
+   INY
    LDA (zp_seg_v_cache_l),Y
    STA VX1+4,X                             ; sx_hi
    RTS                                     ; Y projection DEFERRED to the
@@ -204,10 +204,10 @@ ec_done:
 ; pair itself, exactly as the hit path reads it — the zp_br_p copy was a
 ; pure channel (2026-07-11).
    LDY #0
-   LDA VX1+0,X
+   LDA VX1+0,X                             ; evy (post-clamp: must re-read)
    STA (zp_seg_v_cache_l),Y
    INY
-   LDA VX1+1,X
+   LDA zp_br_vx_h                          ; evx (zp source, unchanged)
    STA (zp_seg_v_cache_l),Y
 
 ; Near-clip on full s24: clipped iff total_vy < NEAR_88 (= 128 in 8.8).
@@ -262,20 +262,17 @@ nc_ok:
    LDX zp_seg_ep                           ; (recip/project clobbered X)
    STA VX1+4,X                             ; sx_hi (from A)
    TYA
-   STA VX1+3,X                             ; sx_lo                             ; sx_hi
-   LDA zp_br_r_m8
-   STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
-   LDA zp_br_r_s
-   STA VX1+14,X
+   STA VX1+3,X                             ; sx_lo
 
-; --- Cache the per-vertex results (rhi, rlo, sx, near-clip=0) — from the
-; working regs, no struct readback. Straight through the cache pair
-; (the second zp_br_p copy died with the first, 2026-07-11). ---
+; --- Struct + cache stores fanned from ONE load each (rhi, rlo, sx,
+; near-clip=0) — from the working regs, no struct readback. ---
    LDY #2
    LDA zp_br_r_m8
+   STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
    STA (zp_seg_v_cache_l),Y
    INY
    LDA zp_br_r_s
+   STA VX1+14,X
    STA (zp_seg_v_cache_l),Y
    INY
    LDA zp_br_res_l

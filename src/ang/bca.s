@@ -137,13 +137,12 @@ ck_left_out:
 ; tspan > 1024: left corner outside the FOV. Compute tspan-1024 (12-bit) and
 ; test it against span with a discard-result 16-bit compare (CMP lo / SBC hi:
 ; only the carry survives; C=1 iff tspan-1024 >= span -> wholly off the left).
-   STX pa_sx                               ; (corner_phi scratch, dead here)
    SEC
    SBC #4                                  ; tspan hi -= 4  (tspan - 1024)
-   STA pa_sy
-   LDA pa_sx
-   CMP t0
-   LDA pa_sy
+   TAY                                     ; hi rides Y, lo rides X — the
+   TXA                                     ; pa_sx/pa_sy stage-reload is gone
+   CMP t0                                  ; (Y is re-seeded at the VATOX tail)
+   TYA
    SBC t1
    BCC ck_left_clip
    JMP cull                                ; (tspan-2*CLIP) >= span: off left
@@ -170,13 +169,12 @@ ck_right:
    BEQ ck_done
 ck_right_out:
 ; mirror of ck_left_out: 16-bit (tspan-1024) >= span test, carry-only.
-   STX pa_sx
    SEC
    SBC #4
-   STA pa_sy
-   LDA pa_sx
+   TAY                                     ; (mirror of ck_left_out)
+   TXA
    CMP t0
-   LDA pa_sy
+   TYA
    SBC t1
    BCC ck_right_clip
    JMP cull                                ; off right
@@ -222,13 +220,9 @@ il1:
    CLC
    ADC #1
    BCC ih1
-   LDA #255
-ih1:
-   CMP #255
-   BCC ih2
-   LDA #255
-ih2:
-   STA bca_ihi
+   LDA #255                                ; (the old second min(255) was an
+ih1:                                       ; identity — A <= 255 by now on
+   STA bca_ihi                             ; every path)
 ; if ilo > ihi: cull
    LDA bca_ilo
    CMP bca_ihi

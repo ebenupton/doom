@@ -498,8 +498,7 @@ hgp_fwd:
 ; bch > ch portal-lip case draws ft with roles={0: TOP_RECORDS}.)
    LDA zp_seg_flags
    AND #$02
-   BNE ft_emit
-; SF_SOLID → emit
+   BNE ft_no_rec                           ; SOLID → emit, no records
    LDA zp_seg_flags
    AND #$04
    BEQ ft_no_needbt
@@ -509,7 +508,8 @@ hgp_fwd:
    SBC zp_br_vz
    BMI ft_skip
    BEQ ft_skip
-   JMP ft_emit
+   BNE ft_no_rec                           ; NEEDBT → emit, no records
+                                           ; (A > 0: always taken)
 ft_no_needbt:
 ; bch > ch ? (bch on demand from header +13 — the header lives in the
 ; L0 window and this path runs under BANK_C, so page around the read;
@@ -525,22 +525,18 @@ ft_no_needbt:
    BMI ft_skip
    BEQ ft_skip
 ft_emit:
-; If portal-lip case (!SOLID, !NEEDBT, bch>ch reached here), ft IS the
-; new top of the aperture and needs TOP_RECORDS. Solid walls and
-; NEEDBT segs (where bt has the role) get no records.
-   LDA zp_seg_flags
-   AND #$06
-   BNE ft_no_rec
-; SOLID or NEEDBT → no rec
+; Portal-lip (the only fall-in: !SOLID, !NEEDBT, bch>ch): ft IS the new
+; top of the aperture — arm TOP_RECORDS. The old AND #$06 re-test was
+; decidable at every entrant and is gone: solid/NEEDBT branch straight
+; to ft_no_rec above.
    LDA #$07
    STA zp_dcl_rec_buf_h
    LDA #0
-   TAY
-   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   STA $0700                               ; count = 0 (arm-time reset;
+                                           ; page-aligned → absolute)
    LDA #1
    STA zp_dcl_rec_off
-; portal-lip → TOP_RECORDS
-   JMP ft_set_line
+   BNE ft_set_line                         ; A = 1: always taken
 ft_no_rec:
    LDA #0
    STA zp_dcl_rec_buf_h
@@ -566,7 +562,7 @@ ft_skip:
 ; (Exact mirror of the top-horizontal logic with floor/bottom roles.)
    LDA zp_seg_flags
    AND #$02
-   BNE fb_emit
+   BNE fb_no_rec                           ; SOLID → emit, no records
    LDA zp_seg_flags
    AND #$08
    BEQ fb_no_needbb
@@ -576,7 +572,8 @@ ft_skip:
    SBC zp_seg_fh
    BMI fb_skip
    BEQ fb_skip
-   JMP fb_emit
+   BNE fb_no_rec                           ; NEEDBB → emit, no records
+                                           ; (A > 0: always taken)
 fb_no_needbb:
 ; bfh < fh ? (bfh on demand from header +12 — L0-window read under
 ; BANK_C, page around like ft_no_needbt; flat: no-ops)
@@ -591,21 +588,16 @@ fb_no_needbb:
    BMI fb_skip
    BEQ fb_skip
 fb_emit:
-; Mirror of ft_emit: fb gets BOT_RECORDS in the portal-lip case
-; (!SOLID, !NEEDBB, bfh<fh reached here).
-   LDA zp_seg_flags
-   AND #$0A
-   BNE fb_no_rec
-; SOLID or NEEDBB → no rec
+; Mirror of ft_emit: portal-lip only — arm BOT_RECORDS (the AND #$0A
+; re-test was decidable at every entrant; solid/NEEDBB branch straight
+; to fb_no_rec above).
    LDA #$08
    STA zp_dcl_rec_buf_h
    LDA #0
-   TAY
-   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   STA $0800                               ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
-; portal-lip → BOT_RECORDS
-   JMP fb_set_line
+   BNE fb_set_line                         ; A = 1: always taken
 fb_no_rec:
    LDA #0
    STA zp_dcl_rec_buf_h
@@ -635,8 +627,7 @@ step_cont:                              ;  pushed the branch out of range)
    LDA #$07
    STA zp_dcl_rec_buf_h
    LDA #0
-   TAY
-   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   STA $0700                               ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
 ; TOP_RECORDS = $0700
@@ -652,8 +643,7 @@ step_no_top:
    LDA #$08
    STA zp_dcl_rec_buf_h
    LDA #0
-   TAY
-   STA (zp_dcl_rec_buf),Y                  ; count = 0 (arm-time reset)
+   STA $0800                               ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
 ; BOT_RECORDS = $0800
@@ -799,13 +789,8 @@ ms_hist:
    LDA zp_seg_sx1_l
 ms_lost:
    STA zp_i_l
-   JMP ms_dispatch
-ms_hi255:
-   LDA #255
-   BNE ms_hist                             ; (always: A=255)
-ms_lo0:
-   LDA #0
-   BEQ ms_lost                             ; (always: A=0)
+; (clamp fixups relocated below ms_skip: the in-range path — every seg —
+; falls straight through; the rare saturations pay the branch back)
 ms_dispatch:
    LDA zp_seg_flags
    AND #$02
@@ -837,6 +822,14 @@ ms_solid_path:
 ;     and applies at the end). ---
    JSR defq_append_solid
 ms_skip:
+   JMP ms_advance
+ms_hi255:
+   LDA #255
+   BNE ms_hist                             ; (always: A=255)
+ms_lo0:
+   LDA #0
+   BEQ ms_lost                             ; (always: A=0)
+ms_advance:
 
 ; --- Advance to the next seg: clear the skip flag, bump the seg index
 ;     (u16) and the two persistent ROM cursors (+12 header, +6 FHCH). ---
@@ -936,11 +929,9 @@ sw_loop:
 emit_vert_sx1:
    LDA zp_seg_sx1_l
    STA zp_line_xl_l
-   LDA zp_seg_sx1_h
-   STA zp_line_xl_h
-   LDA zp_seg_sx1_l
    STA zp_line_xr_l
    LDA zp_seg_sx1_h
+   STA zp_line_xl_h
    STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h
@@ -951,11 +942,9 @@ emit_vert_sx1:
 emit_vert_sx2:
    LDA zp_seg_sx2_l
    STA zp_line_xl_l
-   LDA zp_seg_sx2_h
-   STA zp_line_xl_h
-   LDA zp_seg_sx2_l
    STA zp_line_xr_l
    LDA zp_seg_sx2_h
+   STA zp_line_xl_h
    STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h

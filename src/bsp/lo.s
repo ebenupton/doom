@@ -197,7 +197,10 @@ c_set_recip:
 ; ============================================================================
 cross_umul_u8_s16:
 .scope
-; |dx|: track sign in zp_br_sign.
+; dx = v2_evx - v1_evx with both endpoints s8 => |dx| <= 255: dx_h is
+; pure sign ($00/$FF) and |dx| fits the LO byte. The old second
+; multiply (t x |dx|_hi) was t x 0 — a whole SC_UMUL8 of dead work
+; (deleted 2026-07-14). |dx|_lo = -dx_l is exact: dx = -256 can't occur.
    ZERO zp_br_sign
    LDA zp_br_dx_h
    BPL c2_dxp
@@ -205,12 +208,9 @@ cross_umul_u8_s16:
    SEC
    SBC zp_br_dx_l
    STA zp_br_dx_l
-   LDA #0
-   SBC zp_br_dx_h
-   STA zp_br_dx_h
    INC zp_br_sign
 c2_dxp:
-; t * |dx|_lo (u8 × u8 → u16 → resl:resh)
+; t * |dx| (u8 × u8 → u16 → resl:resh)
    LDA zp_br_dx_l
    STA zp_mul_b
    LDA zp_br_a
@@ -218,15 +218,6 @@ c2_dxp:
    STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
    LDA zp_prod_l
    STA zp_br_res_l
-; t * |dx|_hi (u8 × u8 → contributes to resh)
-   LDA zp_br_dx_h
-   STA zp_mul_b
-   LDA zp_br_a
-   JSR SC_UMUL8
-   LDA zp_br_res_h
-   CLC
-   ADC zp_prod_l
-   STA zp_br_res_h
 ; sign-flip if dx was negative
    LDA zp_br_sign
    BEQ c2_pos
@@ -490,17 +481,16 @@ ns_back:
 ; ============================================================================
 ap_edges:
 .scope
-   LDA zp_seg_flags
-   AND #$40
-   BEQ ap_chk2
+   BIT zp_seg_flags                        ; V = bit 6 = APEDGE1
+   BVC ap_chk2
    LDX #0                                  ; v1 struct
    JSR ap_edge_one
 ap_chk2:
    LDA zp_seg_flags
-   AND #$01                                ; SF_APEDGE2 (swapped with DIR 2026-07-09)
-   BEQ ap_done
+   LSR A                                   ; C = bit 0 = SF_APEDGE2
+   BCC ap_done
    LDX #VX_STRIDE                          ; v2 struct
-   JSR ap_edge_one
+   JMP ap_edge_one                         ; tail call
 ap_done:
    RTS
 .endscope
@@ -598,19 +588,18 @@ ap_rts:
 ; ============================================================================
 apv_stage:
 .scope
-   LDA zp_seg_flags
-   AND #$40                                ; APEDGE1
-   BEQ as_chk2
+   BIT zp_seg_flags                        ; V = bit 6 = APEDGE1
+   BVC as_chk2
    LDX #0
    LDY #13                                 ; header +13 = apv1_fh (+12 ch)
    JSR as_one
 as_chk2:
    LDA zp_seg_flags
-   AND #$01                                ; APEDGE2
-   BEQ as_done
+   LSR A                                   ; C = bit 0 = APEDGE2
+   BCC as_done
    LDX #VX_STRIDE
    LDY #15                                 ; header +15 = apv2_fh (+14 ch)
-   JSR as_one
+   JMP as_one                              ; tail call
 as_done:
    RTS
 ; as_one: X = struct offset, Y = header offset of the FH byte (CH = Y-1)
@@ -622,14 +611,12 @@ as_one:
                                         ; wasted apv_stage call was this)
 as_on:
    STX as_x
-   STY as_y
    LDA VX1+13,X                            ; endpoint recip
    STA zp_br_r_m8
    LDA VX1+14,X
    STA zp_br_r_s
-   JSR rns_select
+   JSR rns_select                          ; (LDX/LDA/STA: Y survives)
    PAGE BANK_L0
-   LDY as_y
    DEY
    LDA (zp_seg_hdr_p),Y                    ; APV ch FIRST (staged for the
    SEC                                     ; second projection)
@@ -655,7 +642,6 @@ as_on:
    STA VX1+11,X                            ; CH projection lo
    RTS
 as_x: .byte 0
-as_y: .byte 0
 .endscope
 
 

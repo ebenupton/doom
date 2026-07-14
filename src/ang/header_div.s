@@ -66,8 +66,8 @@ lt:
 ; (trampoline: .slow now >127 away)
 den_fits:
    LDA #0
-   STA sd_q
-   STA sd_q+1
+   STA sd_q+1                              ; (sd_q low init was dead: phase
+                                           ; A's 8 ROLs flush every old bit)
 ; Second operand leading zero: if den < 128 too, then 2r < 256 always, so
 ; the bit-8 overflow case can't happen -- drop the BCS test and the SEC
 ; fixup (the SBC after CMP-ge already leaves carry set). 69% of divides.
@@ -131,10 +131,9 @@ loop:                                      ; preserve X (oct rides it)
    ASL sd_r
    ROL sd_r+1
 ; r <<= 1
-   ASL sd_q
-   ROL sd_q+1
-; q <<= 1 (bit0 = 0)
-; if r >= den: r -= den; q++
+; if r >= den: r -= den; the quotient bit rides CARRY into the bottom
+; ROL pair (BCC arms arrive C=0; the subtract leaves C=1 — both SECs
+; and the INC were dead)
    LDA sd_r+1
    CMP sd_den+1
    BCC no
@@ -144,14 +143,14 @@ loop:                                      ; preserve X (oct rides it)
    BCC no
 yes:
    LDA sd_r
-   SEC
-   SBC sd_den
+   SBC sd_den                              ; C=1 on both entries
    STA sd_r
    LDA sd_r+1
    SBC sd_den+1
-   STA sd_r+1
-   INC sd_q                                ; q |= 1
+   STA sd_r+1                              ; C=1 out (r >= den)
 no:
+   ROL sd_q                                ; q = q<<1 | bit
+   ROL sd_q+1
    DEY
    BNE loop
    RTS

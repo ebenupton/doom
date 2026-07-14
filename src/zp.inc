@@ -11,6 +11,9 @@
 ; a group unless you have proven phase-disjointness.
 ;
 ; Run tools/zpcheck.py for a rendered map + free-slot list.
+vxc_ref_x = $A2                   ; [bsp] s24 frame ref = to_view(0,0) (x)
+vxc_ref_y = $A5                   ; [bsp] s24 frame ref (y); was $05DD/$05E0
+                                  ; absolute — six warm-path ADCs per vertex
 ; ============================================================================
 
 zp_br_px = $00                    ; [bsp]; s16 player x_88 (8.8 fixed, prescaled)

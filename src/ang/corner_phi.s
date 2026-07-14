@@ -167,8 +167,6 @@ pa_entry:
 nz:
 ; |dx| -> sd_num, sx = (dx<0)  (abs written straight to the divide operands;
 ; if |dx|>|dy| we swap below so sd_num=min, sd_den=max -- no separate copy).
-   LDA #0
-   STA pa_sx
    LDA pa_dx+1
    BPL dxp
    LDA #4                                  ; sx pre-shifted for the oct fold
@@ -182,14 +180,14 @@ nz:
    STA sd_num+1
    JMP dxd
 dxp:
+   LDA #0
+   STA pa_sx
    LDA pa_dx
    STA sd_num
    LDA pa_dx+1
    STA sd_num+1
 dxd:
 ; |dy| -> sd_den, sy = (dy<0)
-   LDA #0
-   STA pa_sy
    LDA pa_dy+1
    BPL dyp
    LDA #2                                  ; sy pre-shifted for the oct fold
@@ -203,6 +201,8 @@ dxd:
    STA sd_den+1
    JMP dyd
 dyp:
+   LDA #0
+   STA pa_sy
    LDA pa_dy
    STA sd_den
    LDA pa_dy+1
@@ -281,14 +281,17 @@ pa_lookup:
 comb:
 ; res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
 ; (0/1024/2048/3072), so base_lo is always 0. X = oct (from haveax).
+; The 12-bit mask folds into each arm — the old shared mask block
+; re-loaded the byte the arm had just stored.
    LDA pa_sign,X
    BMI sub
 ; add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0
    CLC
    LDA pa_base_hi,X
    ADC pa_res+1
+   AND #$0F
    STA pa_res+1
-   JMP mask
+   JMP mask_done
 sub:
 ; sub: res = base - ta ; base_lo = 0
    SEC
@@ -297,11 +300,9 @@ sub:
    STA pa_res
    LDA pa_base_hi,X
    SBC pa_res+1
-   STA pa_res+1
-mask:
-   LDA pa_res+1
    AND #$0F
    STA pa_res+1
+mask_done:
 ; & 4095 (psi ready; was RTS->fall through)
 .endscope
 ; --- afn - psi, mask & sign-extend to s16 (file-global: reused by the

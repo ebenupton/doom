@@ -136,15 +136,14 @@ ms_unlink_span:
 
 ms_shrink:
 ; Shrink in place: xstart = ihi + 1 (span keeps its line + right part).
-; A holds ihi; carry clear from BCC
+; A holds ihi; carry clear from BCC.
+; TERMINAL: this span extends past ihi and the list is x-sorted &
+; disjoint — nothing after can intersect [ilo,ihi]. The old fall-through
+; scanned the rest of the list for nothing.
    ADC #1
    STA POOL_XSTART,X
-; |
-   STX zp_prev
-   LDA POOL_NEXT,X
-   TAX
-   BEQ ms_rts_x
-; Fall through to msl (common: continue scanning)
+   RTS
+
 
 ; --- Skip-ahead scan: chase NEXT while xend < ilo (span wholly left of
 ;     the solid range). Unrolled 2x ping-pong: the current slot
@@ -242,22 +241,17 @@ ms_has_left:
    SBC #0
    STA POOL_XEND,Y
 ; |
-; Continue from the span AFTER the new sibling
-   STX zp_prev
-   LDY POOL_NEXT,X
-   BEQ ms_rts_ms
-   JMP msl_y
-; |
-ms_rts_ms:
+; TERMINAL: the sibling covers (ihi, old xend] and the list is x-sorted
+; & disjoint — nothing after can intersect [ilo,ihi].
    RTS
 
 ms_left_only_after_fail:
 ; alloc failed → fall through and just truncate left fragment
    LDX zp_prev
-ms_left_only:
+   SEC                                     ; (the hot BCS entrant below
+ms_left_only:                              ; arrives with C=1 already)
 ; xend = ilo - 1 (truncate to left fragment only)
    LDA zp_i_l
-   SEC
    SBC #1
    STA POOL_XEND,X
 ; |

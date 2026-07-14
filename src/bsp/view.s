@@ -385,7 +385,7 @@ bv_fvx_done:
    BMI bv_fvyneg
    BCC bv_fvy_done                         ; +frac: ext += hi-add carry
    INC zp_br_vy_x                         ; (BCC/INC beats LDA/ADC/STA/JMP
-   JMP bv_fvy_done                         ; on both carry outcomes)
+   RTS                                     ; on both carry outcomes)
 bv_fvyneg:
    BCS bv_fvy_done                         ; -frac: ADC #$FF == ext-1+C, so
    DEC zp_br_vy_x                         ; carry SET is a no-op

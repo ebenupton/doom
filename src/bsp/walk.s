@@ -89,14 +89,16 @@ bsp_loop:
    BNE bsp_pop
    RTS                                     ; stack empty → done
 bsp_pop:
-   DEC zp_bsp_stack_sp                     ; pop hi byte
+; sp rides X across both pops — the DEC-memory/LDX round-trips were
+; 6 cycles of dead work per node
    LDX zp_bsp_stack_sp
+   DEX
    LDA BSP_STACK,X
    STA zp_node_ch_h
-   DEC zp_bsp_stack_sp                     ; pop lo byte
-   LDX zp_bsp_stack_sp
+   DEX
    LDA BSP_STACK,X
    STA zp_node_ch_l
+   STX zp_bsp_stack_sp
 
 ; Screen full → nothing more can become visible; drain the stack and
 ; return (mirrors Python's `if clips.is_full(): return` at every level).
@@ -120,10 +122,11 @@ bsp_dispatch:
    JSR br_render_subsector
    JMP bsp_loop
 bsp_done_full:
-; Force the stack empty so the next bsp_loop iteration RTSes.
+; Stack forced empty; return directly (bsp_loop's empty test would RTS
+; on the very next iteration anyway).
    LDA #0
    STA zp_bsp_stack_sp
-   JMP bsp_loop
+   RTS
 
 bsp_deferred:
 ; Deferred far child of node (chlo, chhi&$1F), side = bit 5.

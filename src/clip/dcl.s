@@ -74,20 +74,10 @@ dcl_not_vert:
    SBC zp_line_yl_l
    STA zp_line_dy
 
-; Y bounding box: ylo = min(yl, yr), yhi = max(yl, yr)
-   LDA zp_line_yl_l
-   LDX zp_line_yr_l
-   CMP zp_line_yr_l
-   BCC dcl_yl_lo
-; yl >= yr: yhi=yl, ylo=yr
-   STA zp_line_y_h
-   STX zp_line_y_l
-   JMP dcl_bbox_done
-dcl_yl_lo:
-; yl < yr: ylo=yl, yhi=yr
-   STA zp_line_y_l
-   STX zp_line_y_h
-dcl_bbox_done:
+; (initial ylo/yhi min-max deleted 2026-07-14: dcl_entry_path recomputes
+; the full-line bbox before every Tier read, and the continuation path
+; only narrows values the entry pass wrote — the block was dead work on
+; every non-vertical line)
 
 ; (Records-mode init moved to ARM time — bsp/subsector.s dcl_rec_arm,
 ; 2026-07-13: the s16 band clip appends verdict records before this
@@ -192,13 +182,14 @@ dcl_ep_done:
 ; --- Tier 2: inner bbox accept ---
    LDA zp_line_y_l
    CMP POOL_IT,X
-   BCC dcl_ambiguous
+   BCC dcl_amb_jmp
 ; ylo < max(tl,tr) → CB clip
    LDA POOL_IB,X
    CMP zp_line_y_h
    BCS dcl_accept
 ; min(bl,br) >= yhi → accept
 ; yhi > ib → ambiguous
+dcl_amb_jmp:
    JMP dcl_cb_clip
 
 dcl_reject_above:
@@ -218,8 +209,6 @@ dcl_outer_reject:
    TAX
    BNE dcl_walk2
    JMP dcl_flush
-dcl_ambiguous:
-   JMP dcl_cb_clip                         ; trampoline → Phase 4 CB clip
 
 ; ── dcl_accept: record seg_start for an inner-bbox-accepted entry ──
 ; Sets seg_start = (ox0, line_y_at(ox0)).
@@ -288,18 +277,17 @@ dcl_is_abutting:
 ; -> off-screen; the 845,-3084,215 over-draw and the 1056,-3291,34 crash).
 ; ly = line_y at the shared boundary (= current.XEND)
    LDX zp_save0
-   LDA zp_line_dy
+   LDY zp_line_dy
    BEQ dcl_pp_use_yr
    LDA POOL_XEND,X
    CMP zp_line_xr_l
    BEQ dcl_pp_use_yr
-   LDA POOL_XEND,X
-   JSR dcl_line_y_at_a
+   JSR dcl_line_y_at_a                     ; A = xend already
    .byte $2C                               ; BIT abs: skip LDA yr
 dcl_pp_use_yr:
    LDA zp_line_yr_l
 ; bbox of the line over [boundary, xr] = [min(ly,yr), max(ly,yr)].
-   STA zp_tmp2                             ; ly (A)
+; (A = ly rides both arms — the zp_tmp2 shuttle is gone)
    CMP zp_line_yr_l
    BCS dcl_pp_ly_ge
    STA zp_tmp0
@@ -308,10 +296,9 @@ dcl_pp_use_yr:
 ; ly < yr: lo=ly, hi=yr
    JMP dcl_pp_bbox
 dcl_pp_ly_ge:
+   STA zp_tmp1
    LDA zp_line_yr_l
    STA zp_tmp0
-   LDA zp_tmp2
-   STA zp_tmp1
 ; ly >= yr: lo=yr, hi=ly
 dcl_pp_bbox:
    LDX zp_save0
@@ -348,11 +335,10 @@ dcl_exit_no_portal:
    STA zp_ox1                              ; end_x = xend of current span
    CMP zp_line_xr_l
    BEQ dcl_exit_use_yr
-   LDA zp_line_dy
+   LDY zp_line_dy
    BEQ dcl_exit_use_yr
 ; dy==0 → yr (== yl for flat lines)
-; xend < xr, sloped: interp
-   LDA zp_ox1
+; xend < xr, sloped: interp (A = xend still)
    JSR dcl_line_y_at_a
    .byte $2C                               ; BIT abs: skip LDA yr
 dcl_exit_use_yr:
@@ -372,7 +358,7 @@ dcl_exit_emit:
 
 dcl_line_ends:
 ; Line ends within this span. Emit seg_start → (xr, yr)
-   STX zp_save0
+; (STX zp_save0 deleted: the tail-call consumes the line; no reader)
    LDA zp_line_yr_l
    STA zp_tmp0
 ; end_y = yr
@@ -392,7 +378,7 @@ dcl_flush:
    STA zp_tmp0
    LDA zp_line_xr_l
    STA zp_ox1
-   JSR dcl_emit_segment
+   JMP dcl_emit_segment                    ; tail call
 dcl_done:
    RTS
 
@@ -454,7 +440,7 @@ dv_in:
    CMP POOL_TR,X
    BNE dv_top_interp
    STA zp_cb_top1
-   JMP dv_top_done
+   BEQ dv_top_done                         ; Z=1 from the TL==TR CMP
 dv_top_interp:
    LDA POOL_XLO,X
    STA zp_i_x0
@@ -474,7 +460,7 @@ dv_top_done:
    CMP POOL_BR,X
    BNE dv_bot_interp
    STA zp_cb_bot1
-   JMP dv_bot_done
+   BEQ dv_bot_done                         ; Z=1 from the BL==BR CMP
 dv_bot_interp:
    LDA POOL_XLO,X
    STA zp_i_x0
@@ -503,11 +489,10 @@ dv_cy1_ok:
    LDA zp_cb_bot1
 dv_cy2_ok:
    STA zp_cb_cy2
-; Emit if cy1 <= cy2
-   LDA zp_cb_cy1
-   CMP zp_cb_cy2
-   BEQ dv_emit
-   BCC dv_emit
+; Emit if cy1 <= cy2  (swapped compare: cy2 >= cy1 is one BCS)
+   LDA zp_cb_cy2
+   CMP zp_cb_cy1
+   BCS dv_emit
    RTS                                     ; line clipped away
 dv_emit:
 ; Stage the rasteriser ZP args (x, cy1, x, cy2), un-biasing Y (biased
@@ -524,8 +509,7 @@ dv_emit:
    SBC #Y_BIAS
    STA RASTER_ZP_Y0
    LDA zp_cb_cy2
-   SEC
-   SBC #Y_BIAS
+   SBC #Y_BIAS                             ; C=1 from the in-band SBC
    STA RASTER_ZP_Y1
    JMP plot_v
 dv_emit_cap:
@@ -606,10 +590,18 @@ dcl_cb_nvrec:
    LDA zp_ox1
    STA zp_cb_cx2
 
-; Pre-set interp workspace to line-mode so all line_y_at calls
-; within CB clip can call interp_store directly (no shuffle).
-; Span eval (top/bot) clobbers the workspace; dcl_cb_line_mode
-; restores it afterward.
+; Step 2: Compute line Y at clipped X endpoints
+; dy==0 fast path: flat line → cy1 = cy2 = yl (skips the line-mode
+; preset below — its only consumers are the two interps in cy_slow)
+   LDA zp_line_dy
+   BNE dcl_cb_cy_slow
+   LDA zp_line_yl_l
+   STA zp_cb_cy1
+   STA zp_cb_cy2
+   JMP dcl_cb_cy_done
+dcl_cb_cy_slow:
+; Pre-set interp workspace to line-mode so both cy interps can call
+; interp_store directly (no shuffle).
    LDA zp_line_xl_l
    STA zp_i_x0
    LDA zp_line_yl_l
@@ -618,16 +610,6 @@ dcl_cb_nvrec:
    STA zp_i_y1
    LDA zp_line_dx
    STA zp_div_den
-
-; Step 2: Compute line Y at clipped X endpoints
-; dy==0 fast path: flat line → cy1 = cy2 = yl
-   LDA zp_line_dy
-   BNE dcl_cb_cy_slow
-   LDA zp_line_yl_l
-   STA zp_cb_cy1
-   STA zp_cb_cy2
-   JMP dcl_cb_cy_done
-dcl_cb_cy_slow:
 ; cy1 = line_y_at(cx1). CMP preserves A, so interp reuses it.
 ; Interp workspace already in line-mode — call interp_store directly.
    LDA zp_cb_cx1
@@ -657,10 +639,9 @@ dcl_cb_cy_done:
 ; (cy >= IT = max(tl,tr) for both endpoints), the line can't cross
 ; the top boundary anywhere.  Skip top eval + clip entirely.
    LDX zp_save0
-   LDA zp_cb_cy1
-   CMP POOL_IT,X
+   CMP POOL_IT,X                           ; A = cy2 from both cy paths
    BCC dcl_cb_top_eval
-   LDA zp_cb_cy2
+   LDA zp_cb_cy1
    CMP POOL_IT,X
    BCC dcl_cb_top_eval
    JMP dcl_cb_top_done                     ; both >= IT → skip top
@@ -673,7 +654,7 @@ dcl_cb_top_eval:
    BNE dcl_cb_top_interp
    STA zp_cb_top1
    STA zp_cb_top2
-   JMP dcl_cb_top_evaled
+   BEQ dcl_cb_top_evaled                   ; Z=1 from the TL==TR CMP
 dcl_cb_top_interp:
 ; Setup interp and evaluate
    LDA POOL_XLO,X
@@ -713,9 +694,8 @@ dcl_cb_top_p1_ok:
    SEC
    SBC zp_cb_top1
    STA zp_tmp0
-; d1 = cy1 - top1 >= 0
+; d1 = cy1 - top1 >= 0  (=> C=1: no SEC for the next subtract)
    LDA zp_cb_cy2
-   SEC
    SBC zp_cb_top2
    STA zp_tmp1
 ; d2 = cy2 - top2 < 0
@@ -734,18 +714,15 @@ dcl_cb_top_p1_ok:
    STA zp_div_den
    LDA zp_cb_cx2
    JSR interp_store
-   .byte $2C
-dcl_cb_top_cy2_const:
-   LDA zp_cb_top1
+dcl_cb_top_cy2_const:                      ; BEQ lands here with A = top1
    STA zp_cb_cy2
    LDA #0                                  ; exit was through the TOP:
    STA DCLV_RVY                            ; [cx2, orig ox1] pends 'above'
    JMP dcl_cb_top_done
 
 dcl_cb_top_clip:
-; cy1 < top1, cy2 >= top2: clip at p1 end
+; cy1 < top1, cy2 >= top2: clip at p1 end (entered via BCS => C=1)
    LDA zp_cb_cy1
-   SEC
    SBC zp_cb_top1
    STA zp_tmp0
 ; d1 < 0
@@ -766,9 +743,7 @@ dcl_cb_top_clip:
    STA zp_div_den
    LDA zp_cb_cx1
    JSR interp_store
-   .byte $2C
-dcl_cb_top_cy1_const:
-   LDA zp_cb_top1
+dcl_cb_top_cy1_const:                      ; BEQ lands here with A = top1
    STA zp_cb_cy1
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_top_done
@@ -791,8 +766,7 @@ dcl_cb_top_ok:
    LDA POOL_IB,X
    CMP zp_cb_cy1
    BCC dcl_cb_bot_eval
-   LDA POOL_IB,X
-   CMP zp_cb_cy2
+   CMP zp_cb_cy2                           ; A = IB still
    BCC dcl_cb_bot_eval
    JMP dcl_cb_bot_done                     ; both <= IB → skip bot
 
@@ -804,7 +778,7 @@ dcl_cb_bot_eval:
    BNE dcl_cb_bot_interp
    STA zp_cb_bot1
    STA zp_cb_bot2
-   JMP dcl_cb_bot_eval_done
+   BEQ dcl_cb_bot_eval_done                ; Z=1 from the BL==BR CMP
 dcl_cb_bot_interp:
    LDA POOL_XLO,X
    STA zp_i_x0
@@ -864,23 +838,19 @@ dcl_cb_bot_p1_ok:
    STA zp_div_den
    LDA zp_cb_cx2
    JSR interp_store
-   .byte $2C
-dcl_cb_bot_cy2_const:
-   LDA zp_cb_bot1
+dcl_cb_bot_cy2_const:                      ; BEQ lands here with A = bot1
    STA zp_cb_cy2
    LDA #$FF                                ; exit through the BOTTOM:
    STA DCLV_RVY                            ; [cx2, orig ox1] pends 'below'
    JMP dcl_cb_bot_done
 
 dcl_cb_bot_clip:
-; bot1 < cy1, bot2 >= cy2: clip p1 end
+; bot1 < cy1, bot2 >= cy2: clip p1 end (entered via BCS => C=1)
    LDA zp_cb_cy1
-   SEC
    SBC zp_cb_bot1
    STA zp_tmp0
-; d1 > 0
+; d1 > 0  (=> C=1 again)
    LDA zp_cb_cy2
-   SEC
    SBC zp_cb_bot2
    STA zp_tmp1
 ; d2 <= 0
@@ -895,9 +865,7 @@ dcl_cb_bot_clip:
    STA zp_div_den
    LDA zp_cb_cx1
    JSR interp_store
-   .byte $2C
-dcl_cb_bot_cy1_const:
-   LDA zp_cb_bot1
+dcl_cb_bot_cy1_const:                      ; BEQ lands here with A = bot1
    STA zp_cb_cy1
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_bot_done
@@ -915,8 +883,7 @@ dcl_cb_bot_done:
 ; and reset seg_start — no portal continuation possible since the line
 ; left the aperture mid-span. dcl_line_ends / dcl_exit_no_portal both
 ; use xr/yr or line_y_at(xend) for the exit, which would be wrong here.
-   LDA zp_cb_cx2
-   CMP zp_ox1
+   CMP zp_ox1                              ; A = cx2 from the reject test
    BCS dcl_cb_no_exit_clip
 ; cx2 < ox1 → emit clipped fragment (segment record written by emit).
    LDX zp_save0
@@ -946,8 +913,7 @@ dcl_cb_no_exit_clip:
    STA zp_seg_start_x
    LDA zp_cb_cy1
    STA zp_seg_start_y
-; Update Y bbox for portal checks
-   LDA zp_cb_cy1
+; Update Y bbox for portal checks (A = cy1 still)
    CMP zp_cb_cy2
    BCC dcl_cb_ylo_ok
 ; cy1 >= cy2
@@ -961,8 +927,7 @@ dcl_cb_ylo_ok:
    LDA zp_cb_cy2
    STA zp_line_y_h
 dcl_cb_bbox_done:
-; Restore span pointer and continue with exit check
-   LDX zp_save0
+; (X = save0 still: nothing above touched it since the entry load)
    JMP dcl_exit_check
 
 dcl_cb_reject_above:
@@ -1046,20 +1011,15 @@ dcl_bix_d2_pos:
 ; (ceiling division). If !clip_p1, just floor division.
    LDA zp_save1
    BEQ dcl_bix_no_round
-; Add (denom - 1) to product for ceiling
-   LDA zp_prod_l
+; Add (denom - 1) in one pass: den + $FF with C=0 in (the guards above
+; fell through) = den-1 with C=1 out (den >= 1), then + prod_l.
+   LDA zp_div_den
+   ADC #$FF
    CLC
-   ADC zp_div_den
+   ADC zp_prod_l
    STA zp_div_l
-   BCC dcl_bix_den_nc                      ; BCC/INC carry bump (prod_hi
-   INC zp_div_h                           ; aliases div_hi — same cell)
-dcl_bix_den_nc:
-; Subtract 1: borrow only when the low byte is zero (BNE/DEC pre-check)
-   LDA zp_div_l
-   BNE dcl_bix_m1_nb
-   DEC zp_div_h
-dcl_bix_m1_nb:
-   DEC zp_div_l
+   BCC dcl_bix_no_round
+   INC zp_div_h
 dcl_bix_no_round:
 ; prod already in div_lo:hi (aliases — fall through to divide)
    JSR udiv16_8                            ; A = quotient = num / denom
@@ -1071,9 +1031,7 @@ dcl_bix_no_round:
    CMP zp_cb_cx1
    BCC dcl_bix_cx1
    CMP zp_cb_cx2
-   BEQ dcl_bix_ok
-   BCS dcl_bix_cx2
-dcl_bix_ok:
+   BCS dcl_bix_cx2                         ; == returns cx2 (same value)
    RTS
 
 dcl_bix_cx1:
@@ -1156,8 +1114,7 @@ dcl_es_record:
    CMP zp_ox1
    BCS dcl_es_no_record
    LDY zp_dcl_rec_off
-   LDA zp_seg_start_x
-   STA (zp_dcl_rec_buf),Y
+   STA (zp_dcl_rec_buf),Y                  ; A = start_x still
    INY
    LDA zp_seg_start_y
    STA (zp_dcl_rec_buf),Y
@@ -1187,10 +1144,34 @@ dcl_es_no_record:
    LDA zp_ox1
    STA RASTER_ZP_X1
    LDA zp_tmp0
-   SEC
-   SBC #Y_BIAS
+   SBC #Y_BIAS                             ; C=1 from the Y0 unbias
    STA RASTER_ZP_Y1
-   JMP des_dispatch
+; native path falls straight into des_dispatch (the wrapper-only
+; capture path, below the dispatcher, pays the join JMP instead)
+des_dispatch:
+; --- axis dispatch: ~70% of rasterised pixels are in horizontal or
+; vertical segments (gradient census 2026-07-05) — route them to the
+; dedicated plotters instead of the generic NJ machinery ---
+; (A = Y1 on both entry paths)
+   CMP RASTER_ZP_Y0
+   BNE des_not_h
+   JMP plot_h
+des_not_h:
+   LDA RASTER_ZP_X0
+   CMP RASTER_ZP_X1
+   BNE des_diag
+   JMP plot_v
+des_diag:
+; (A run-slice plotter for shallow diagonals was measured-and-rejected
+; here 2026-07-05: pixel-exact — proven by a 16k-sequence oracle check
+; and a 15,872-draw framebuffer battery — but slower: NJ's shallow path
+; is already run-accumulating at ~11 cyc/px and E1M1 lacks enough
+; sub-1:33 lines to amortize even the dispatch test. See the
+; 'experiment: run-slice' commit to revive.)
+   JMP RASTER_ENTRY                        ; tail-call rasteriser
+
+; wrapper-only capture path (LINE_OUT_EN): moved below the dispatcher so
+; the native path falls straight through; this path pays the join JMP.
 des_cap:
    LDY LINE_OUT_COUNT
    LDA zp_seg_start_x
@@ -1214,27 +1195,7 @@ des_cap:
    STA RASTER_ZP_Y1
    INY
    STY LINE_OUT_COUNT
-des_dispatch:
-; --- axis dispatch: ~70% of rasterised pixels are in horizontal or
-; vertical segments (gradient census 2026-07-05) — route them to the
-; dedicated plotters instead of the generic NJ machinery ---
-   LDA RASTER_ZP_Y0
-   CMP RASTER_ZP_Y1
-   BNE des_not_h
-   JMP plot_h
-des_not_h:
-   LDA RASTER_ZP_X0
-   CMP RASTER_ZP_X1
-   BNE des_diag
-   JMP plot_v
-des_diag:
-; (A run-slice plotter for shallow diagonals was measured-and-rejected
-; here 2026-07-05: pixel-exact — proven by a 16k-sequence oracle check
-; and a 15,872-draw framebuffer battery — but slower: NJ's shallow path
-; is already run-accumulating at ~11 cyc/px and E1M1 lacks enough
-; sub-1:33 lines to amortize even the dispatch test. See the
-; 'experiment: run-slice' commit to revive.)
-   JMP RASTER_ENTRY                        ; tail-call rasteriser
+   JMP des_dispatch
 
 .endscope
 
@@ -1271,6 +1232,7 @@ dcl_yband_clip:
    STA LC_OX2_HI
    STA LC_OY1_HI
    STA LC_OY2_HI
+   STA LC_TGT_HI                           ; hoisted from all 4 clip arms
 ; --- Outcode census: X = #endpoints above band (y < Y_BIAS),
 ; Y = #endpoints below band (y > VIS_YMAX) ---
    LDX #0
@@ -1313,8 +1275,6 @@ yb_decide:
    BCC yb_c1_done
    LDA #VIS_YMAX
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
    JSR s16_interp
    STA zp_seg_start_x
    LDA #VIS_YMAX
@@ -1323,8 +1283,6 @@ yb_decide:
 yb_c1_lo:
    LDA #Y_BIAS
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
    JSR s16_interp
    STA zp_seg_start_x
    LDA #Y_BIAS
@@ -1338,8 +1296,6 @@ yb_c1_done:
    BCC yb_c2_done
    LDA #VIS_YMAX
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
    JSR s16_interp
    STA zp_ox1
    LDA #VIS_YMAX
@@ -1348,8 +1304,6 @@ yb_c1_done:
 yb_c2_lo:
    LDA #Y_BIAS
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
    JSR s16_interp
    STA zp_ox1
    LDA #Y_BIAS
@@ -1550,12 +1504,11 @@ dcl_rec_right:
    LDA DCLV_RVY
    CMP #$80
    BEQ rr_done
-   LDA zp_ox1
-   STA DCLV_X0
-   LDA DCLV_OX1S
-   STA DCLV_X1
-   LDA DCLV_RVY
-   JMP dcl_rec_flat
+   LDY zp_ox1
+   STY DCLV_X0
+   LDX DCLV_OX1S
+   STX DCLV_X1
+   JMP dcl_rec_flat                        ; A = RVY still
 rr_done:
    RTS
 .if ::BANKED

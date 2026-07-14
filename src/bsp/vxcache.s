@@ -43,8 +43,11 @@
 VXC_VALID   = $05A0                     ; 59 bytes (467 vertices)
 ; (VXC_ENABLE comes from abi.inc)
 vxc_prev_ab = $05DC
-vxc_ref_x   = $05DD                     ; s24 this frame's ref = to_view(0,0)
-vxc_ref_y   = $05E0                     ; s24 (origin normalization 2026-07-12:
+; (vxc_ref_x/y promoted to ZP 2026-07-14 — defined in zp.inc so the
+; forward references in seg_xform.s assemble as zero-page: the warm
+; path does six ADCs against them per vertex.)
+;                                        ; s24 this frame's ref = to_view(0,0)
+;                                        ; s24 (origin normalization 2026-07-12:
                                         ;  base' = total - ref stored once per
                                         ;  epoch; warm read = base' + ref.
                                         ;  ref_cold/CACC are gone - $05E3-$05E8

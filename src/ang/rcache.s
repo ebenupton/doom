@@ -307,7 +307,7 @@ bcac_cold:
    AND #$0F
    CMP #8
    BCC bcac_notfull                        ; span < 2048
-   LDX rc_bytehi
+; (X = rc_bytehi still — nothing since the COMPUTED store touched it)
    LDA RCACHE_FULL,X
    ORA rc_bit
    STA RCACHE_FULL,X
@@ -317,8 +317,7 @@ bcac_notfull:
 ; bit must be knocked down since warm reads it once COMPUTED is set).
    LDA rc_bit
    EOR #$FF
-   LDX rc_bytehi
-   AND RCACHE_FULL,X
+   AND RCACHE_FULL,X                       ; (X = rc_bytehi still)
    STA RCACHE_FULL,X
    JMP bca_tail
 
