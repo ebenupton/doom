@@ -74,7 +74,8 @@ ina
 ;           test AND the unused field loads — 73% of E1M1 nodes are
 ;           axis-aligned); bit 7 NF_RLEAF / bit 6 NF_LLEAF
 ;   pg 11   subsector seg count
-;   pg 12/13 subsector first-seg index lo/hi
+;   pg 12/13 subsector seg-header pointer lo/hi (first*16 in ROM,
+;            loader-rebased onto the build's ROM_SEG_HDR page)
 .include "layout.inc"
 
 ; NODE_SOA comes from layout.inc (NODE_SOA_C): banked = L0 window head,
@@ -93,8 +94,11 @@ NODE_CRLO = NODE_SOA + $800             ; right child id (side 0 = near)
 NODE_CLLO = NODE_SOA + $900             ; left child id
 NODE_TYPE = NODE_SOA + $A00             ; bits 0-1 type; bit 7/6 leaf flags
 SS_CNT    = NODE_SOA + $B00
-SS_FLO    = NODE_SOA + $C00
-SS_FHI    = NODE_SOA + $D00
+SS_PLO    = NODE_SOA + $C00             ; seg-header pointer lo
+SS_PHI    = NODE_SOA + $D00             ; ... hi. ROM ships first*16
+                                        ; offsets; the LOADERS rebase this
+                                        ; page onto >ROM_SEG_HDR_C, so
+                                        ; serve time is two indexed loads
 
 ; TYPE-byte fields. NF_RLEAF sits at bit 7 so one ASL drops it into C
 ; (NF_LLEAF takes two) — the walk's child-follow gets id + leaf bit

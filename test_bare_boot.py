@@ -99,7 +99,7 @@ def main():
         # diagnostics: did the walk visit anything? check table pointers
         # ($42/$43 + $0BE8 pointer diagnostics retired 2026-07-10:
         #  ROM bases are layout.inc constants now)
-        print(f"  visited $0A80 = {' '.join('%02X'%bare[0xA80+i] for i in range(8))}")
+        print(f"  ssmask $0A80 = {' '.join('%02X'%bare[0xA80+i] for i in range(8))}")
 
 
 if __name__ == '__main__':

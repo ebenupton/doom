@@ -223,7 +223,8 @@ rc_done:
 ; subsectors. Useful for verifying traversal in isolation.
 ; ============================================================================
 ; --- Test instrumentation: subsector visit bitmap at $0A80 ---
-SS_VISITED_BITMAP = $0A80               ; 30 bytes used (237 subsectors); B-region code starts at $0AA0
+; ($0A80-$0A9F free, 2026-07-15: the write-only visited bitmap is gone;
+;  B-region code starts at $0AA0. Banked $0A80 = ANIM_SSMASK as before.)
 ; (Deferred mark_solid buffer replaced by the unified DEFQ op queue at
 ; $0600 — see DEFQ_BASE above. It preserves seg ORDER across solid and
 ; tighten ops, matching Python's deferred list.)
@@ -240,7 +241,7 @@ zp_seg_sy_bbot_lo = $0A7E
 zp_seg_sy_bbot_hi = $0A7F
 ; Per-seg saved vertex projections live in RAM (ZP $70+ is rasteriser
 ; territory: RASTER_ZP_SCRSTRT=$70, RASTER_ZP_X0..Y1=$82-$85). Use the
-; gap between BSP_STACK ($0A00-$0A3F) and SS_VISITED_BITMAP ($0A80).
+; gap left of the B-region code at $0AA0 ($0A00-$0A9F all free now).
 ; (SEG_PROJ_BUF retired 2026-07-10: the per-endpoint sy pairs live in the
 ; packed ZP vertex structs (zp.inc VX1/VX2) — written by do_project_y via
 ; zp_seg_ep, read by emit through the same zp_seg_sy* names, now 1 cycle

@@ -265,11 +265,21 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         if cl & 0x8000: typ |= NF_LLEAF
         _npg(10, i, typ)
 
-    # Subsectors (SoA pages 11-13: count, first_lo, first_hi)
+    # Subsectors (SoA pages 11-13: count, hdr-offset lo, hdr-offset hi).
+    # The offset pages hold first_seg*16 — the seg-header BYTE offset.
+    # The loaders rebase the hi page onto the per-build ROM_SEG_HDR base
+    # (page-aligned), so the engine serves a subsector with two plain
+    # indexed loads: no address generation at run time. n_segs <= 1024
+    # keeps the offset in 14 bits (the real ceilings are tighter and
+    # layout-asserted: flat headers reach verts at ~768, banked reach
+    # TABL0 at ~745).
+    assert n_segs <= 1024, \
+        "SS hdr-offset pages assume seg-header offsets fit 14 bits"
     for i, ss in enumerate(fp_ssectors):
+        off16 = ss[1] * 16
         rom_main[off_ss + i] = ss[0] & 0xFF
-        rom_main[off_ss + 256 + i] = ss[1] & 0xFF
-        rom_main[off_ss + 512 + i] = (ss[1] >> 8) & 0xFF
+        rom_main[off_ss + 256 + i] = off16 & 0xFF
+        rom_main[off_ss + 512 + i] = (off16 >> 8) & 0xFF
 
     # Build the set of "linedef-endpoint" vertices. Any vertex not in this
     # set is a BSP-inserted split point; segs whose v1 or v2 is such a

@@ -26,7 +26,7 @@
 ;
 ; Python mirror: packed_render_subsector + packed_render_seg
 ; (doom_wireframe.py). Per-subsector pseudocode:
-;   count, first = SS_CNT[idx], SS_FLO/FHI[idx]
+;   count, hdr_ptr = SS_CNT[idx], SS_PLO/PHI[idx] (baked pointer)
 ;   defq = []                                  # DEFQ op queue, seg order
 ;   for si in range(first, first + count):
 ;     hdr = seg_hdr[si]                        # 16-byte header, ROM
@@ -63,54 +63,23 @@ anim_ss_hook:
    JMP anim_ss_cont
 anim_ss_cont:
 .scope
-; --- Mark visited (test instrumentation, FLAT BUILD ONLY) ---
-; SS_VISITED_BITMAP[id >> 3] |= bit_mask[id & 7] — regression harnesses
-; diff this against the Python walk's subsector set. The banked build
-; compiles it out (nothing on the disc reads it; ~44 bytes of MAIN back).
-.if .not ::BANKED
-   LDA zp_node_ch_l                        ; ss id is u8 (2026-07-15)
-   LSR
-   LSR
-   LSR
-   CLC
-   ADC #<SS_VISITED_BITMAP
-   STA zp_br_p
-   LDA #>SS_VISITED_BITMAP
-   ADC #0
-   STA zp_br_p_h
-   LDA zp_node_ch_l
-   AND #7
-   TAX
-   LDY #0
-   LDA vc_bit_mask,X                       ; X survived the pointer build —
-   ORA (zp_br_p),Y                         ; reload beats the old PHA/PLA
-   STA (zp_br_p),Y
-.endif
+; (The write-only visited-bitmap instrumentation is GONE, 2026-07-15:
+; nothing anywhere read it — dead scaffolding taxing every flat
+; subsector serve, and the reason $0A80 meant two things across
+; builds.)
 
-; --- Read subsector header (SoA pages: count / first_lo / first_hi) ---
+; --- Read subsector header (SoA pages: count / seg-header pointer) ---
    LDX zp_node_ch_l
    LDA SS_CNT,X
    STA zp_seg_count
 
-; Persistent per-seg pointer, computed once here and advanced by the
-; loop (+16). si*16 = FOUR pure shift/rotate pairs riding A — the
-; stride-18 add-chain died with the C-form header (2026-07-11).
-   LDA SS_FHI,X
-   STA zp_br_t0
-   LDA SS_FLO,X
-   ASL A
-   ROL zp_br_t0
-   ASL A
-   ROL zp_br_t0
-   ASL A
-   ROL zp_br_t0
-   ASL A
-   ROL zp_br_t0
-   CLC
-   ADC #<ROM_SEG_HDR_C                     ; ONE cursor: heights ride the
-   STA zp_seg_hdr_p                        ; stream + its second cursor
-   LDA zp_br_t0                            ; retired 2026-07-11)
-   ADC #>ROM_SEG_HDR_C
+; Persistent per-seg pointer, advanced by the loop (+16). The si*16
+; shift chain is baked into the SS pointer pages at pack time (first*16,
+; loader-rebased onto ROM_SEG_HDR): two indexed loads, no address
+; generation (2026-07-15).
+   LDA SS_PLO,X
+   STA zp_seg_hdr_p
+   LDA SS_PHI,X
    STA zp_seg_hdr_p_h
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so read fh/ch + compute the front deltas ONCE

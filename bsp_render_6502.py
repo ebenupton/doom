@@ -91,6 +91,10 @@ class BspRender6502:
         off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
         for i in range(off_verts):                       # SoA pages (14: 11 node + 3 ss)
             mem[NODE_SOA_BASE + i] = rom_main[i]
+        # SS_PHI page ships first*16 offsets — rebase onto the flat
+        # seg-header base so the engine reads ready pointers
+        for i in range(0xD00, 0xE00):
+            mem[NODE_SOA_BASE + i] = (rom_main[i] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
         for i in range(off_verts, off_hdr):              # verts
             mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
         for i in range(off_hdr, len(rom_main)):          # stride-18 headers

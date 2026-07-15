@@ -2818,9 +2818,11 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     """Render a subsector reading from packed ROM arrays."""
     layout = _p_layout
     rom = _p_rom_main
-    ss_off = layout['off_ss']              # SoA pages: count, first_lo, first_hi
+    ss_off = layout['off_ss']              # SoA pages: count, hdr-off lo/hi
     count     = rom[ss_off + idx]
-    first_seg = rom[ss_off + 256 + idx] | (rom[ss_off + 512 + idx] << 8)
+    # pages hold first_seg*16 (the loaders rebase the hi page into a real
+    # pointer for the 6502; python just shifts the offset back down)
+    first_seg = (rom[ss_off + 256 + idx] | (rom[ss_off + 512 + idx] << 8)) >> 4
 
     deferred = []
     import span_clip_6502 as _scmod
