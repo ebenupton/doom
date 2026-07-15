@@ -94,10 +94,11 @@ bif_clr2:
 rc_node:
 ; Screen full → nothing more can become visible anywhere; unwind the
 ; whole recursion (mirrors Python's `if clips.is_full(): return` at
-; every level).
-   PAGE BANK_C
-   JSR SC_IS_FULL
-   BNE bsp_done_full
+; every level). is_full is INLINE (2026-07-15): the clipper's truth is
+; just zp_head == 0 (active span list empty) and ZP is unbanked — no
+; JSR, and no bank-C swap in the traversal at all.
+   LDA zp_head
+   BEQ bsp_done_full
 rc_node_nc:
    JSR br_node_setup                       ; → zp_side (0 right / 1 left)
 ; push the continuation locals: node id, then the FAR side (0/1)
@@ -152,10 +153,9 @@ rc_near_skip:
    PLA
    STA zp_node_ch_l                        ; node id (u8)
 ; is_full before the far dispatch — same checkpoint the old loop had
-; after popping a deferred entry.
-   PAGE BANK_C
-   JSR SC_IS_FULL
-   BNE bsp_done_full
+; after popping a deferred entry. (inline: zp_head == 0, unbanked)
+   LDA zp_head
+   BEQ bsp_done_full
 bv_site_far:                            ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (↔ br_bbox_visible_d when D active)
    BEQ rc_done                             ; far side invisible → done here
@@ -185,10 +185,9 @@ rc_f_leaf:
    JMP br_render_subsector                 ; tail call — its RTS is ours
 rc_leaf:
 ; near-side subsector: same is_full checkpoint the old dispatch gave
-; every near child before rendering.
-   PAGE BANK_C
-   JSR SC_IS_FULL
-   BNE bsp_done_full
+; every near child before rendering. (inline: zp_head == 0, unbanked)
+   LDA zp_head
+   BEQ bsp_done_full
    JMP br_render_subsector
 rc_done:
    RTS
