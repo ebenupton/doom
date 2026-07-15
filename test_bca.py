@@ -33,7 +33,13 @@ def run(top, bot, left, right, px, py, ab):
     mpu.memory[sym('bca_pxs') + 1] = 0xFF if px < 0 else 0
     mpu.memory[sym('bca_pys')] = py & 0xFF
     mpu.memory[sym('bca_pys') + 1] = 0xFF if py < 0 else 0
-    w16(sym('bca_boxp'), BOX)                       # box pointer -> bca_top
+    # box -> corner planes at node 0, side 0 (the boxp pointer is gone)
+    mpu.memory[sym('zp_node_ch_l')] = 0
+    mpu.memory[sym('zp_bbox_side')] = 0
+    for lo, v in ((sym('BBP_T_LO'), top), (sym('BBP_B_LO'), bot),
+                  (sym('BBP_L_LO'), left), (sym('BBP_R_LO'), right)):
+        mpu.memory[lo] = v & 0xFF
+        mpu.memory[lo + 0x200] = (v >> 8) & 0xFF
     mpu.pc = BCA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0

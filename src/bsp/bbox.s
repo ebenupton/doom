@@ -88,28 +88,9 @@ D_CODE_L = $030C                        ; 236 bytes (ends $03F7)
 br_bbox_visible:
 .scope
    PAGE BANK_L2                            ; bbox + angle tables (TA/VATOX) live in bank L2
-; --- bca_boxp = ROM_BBOX + node_id*16 + side*8, exploiting the base's
-; page alignment (asserted by the loaders): the record never straddles a
-; page, so lo = (node & 15)<<4 | side<<3 and hi = base_hi + (node >> 4)
-; — byte-at-a-time, no 16-bit shift chain. Node ids are u8. ---
-   LDA zp_node_ch_l
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   CLC
-   ADC #>ROM_BBOX_C                        ; layout.inc constant (page-aligned)
-   STA $87
-   LDA zp_node_ch_l
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   LDX zp_bbox_side
-   BEQ bv_side_done
-   ORA #8
-bv_side_done:
-   STA $86
+; (The bca_boxp pointer build is GONE, 2026-07-15: corners live in
+; page-split planes read abs,Y by the angle module's side/zone arms —
+; zp_node_ch_l and zp_bbox_side ARE the box identity.)
 
 ; --- Angle-space visibility (px=$01, py=$03, ab=$FA2F preset per frame) ---
 ; BCA_CHECK = bbox_check_angle (angle module, DOOM R_CheckBBox in the

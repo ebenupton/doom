@@ -105,8 +105,8 @@ def build_banked(flatr):
     cpy(0x0000, 0xDC00, 1024)            # TA_LO  -> $8000
     cpy(0x0400, 0xF200, 1025)            # TA_HI  -> $8400
     cpy(0x0900, 0xF601, 1025)            # VATOX  -> $8900
-    cpy(0x0E00, 0xC600, len(flatr.bbox_table))   # bbox -> $8E00
-    cpy(0x1D00, 0xE000, 1024)            # recip  -> $9D00 (M8[1024] mantissas)
+    cpy(0x0E00, 0xC400, len(flatr.bbox_table))   # bbox planes -> $8E00-$9DFF
+    cpy(0x1E00, 0xE000, 1024)            # recip  -> $9E00 (M8[1024]; moved +$100 for the bbox planes)
     # (VWH heights table stripped 2026-07-10: no 6502 reader)
     # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
     # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays

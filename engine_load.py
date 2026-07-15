@@ -44,7 +44,15 @@ def load_angle_module(mem, c02=None):
     code @ jt_slope_div, tantoangle lo/hi @ TA_LO/TA_HI, viewangletox
     (centre-column, phi+512 index, u8-clamped) @ VATOX."""
     import angle_bbox as A
-    asmbuild.build('slope_div', banked=0, c02=c02)
+    # Build the ENGINE link (not the slope_div-only link): the ZC segment
+    # (bbox corner zone arms, 2026-07-15) lives in the CODE region, and a
+    # standalone slope_div link would place it at a different address than
+    # the JSRs inside the ang bin expect. One link, one truth: load the
+    # engine's CODE bin and its ang bin.
+    asmbuild.build('engine', banked=0, c02=c02)
+    code = open(os.path.join(_ROOT, 'bsp_render.bin'), 'rb').read()
+    cbase = sym('jt_br_umul8')              # CODE region head ($3670 flat)
+    mem[cbase:cbase + len(code)] = code
     base = sym('jt_slope_div')
     code = open(os.path.join(_ROOT, 'bsp_render_ang.bin'), 'rb').read()
     mem[base:base + len(code)] = code

@@ -32,60 +32,11 @@ bbox_check_angle:
 ; unit-test callers (test_bca, check_angle_calls) set bca_afn themselves.
 ; inside test + boxx/boxy classification share one set of subtractions:
    JSR box_classify                        ; -> X = boxpos (inside: full-exit)
-; cc = checkcoord + boxpos*4
-   TXA
-   ASL A
-   ASL A
-   TAX
-; corner1 = (val[cc0], val[cc1]); load_val inlined -> cx/cy directly
-; (Y = val index*2 into the box at bca_top; X unchanged by the load).
-; corner load folds straight into the phi subtraction: pa_dx = box[cc0]-pxs,
-; pa_dy = box[cc1]-pys (the bca_cx/cy staging is gone).
-   LDY bca_cc,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pxs
-   STA pa_dx
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pxs+1
-   STA pa_dx+1
-   LDY bca_cc+1,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pys
-   STA pa_dy
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pys+1
-   STA pa_dy+1
-   STX bca_ccsave
-   JSR corner_phi                          ; -> phi hi in A, lo in Y
-   STA bca_p1+1
-   STY bca_p1
-   LDX bca_ccsave
-; corner2 = (val[cc2], val[cc3])
-   LDY bca_cc+2,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pxs
-   STA pa_dx
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pxs+1
-   STA pa_dx+1
-   LDY bca_cc+3,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pys
-   STA pa_dy
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pys+1
-   STA pa_dy+1
-   JSR corner_phi                          ; -> phi hi in A, lo in Y
-   STA bca_p2+1
-   STY bca_p2
+; corners: zone/side arms with baked plane operands (zc_corners, ZC
+; segment in corner_phi.s) — the cc indirection, the box pointer and
+; the ccsave shuttle are gone (2026-07-15). X = boxpos in; raw phi1/2
+; land in bca_p1/p2.
+   JSR zc_corners
 ; --- Faithful DOOM R_CheckBBox, unsigned-BAM wraparound (FINEANGLES=4096).
 ; Our phi = -(DOOM view-relative angle), so DOOM angle1=-p1 (p1 = LEFT
 ; silhouette, checkcoord order), angle2=-p2 (RIGHT). All arithmetic is

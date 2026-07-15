@@ -30,7 +30,7 @@ _E_HAS_GAP    = _sym('jt_has_gap')
 _E_IS_FULL    = _sym('jt_is_full')
 _E_DCL_S16    = _sym('jt_draw_clip_s16')
 ROM_DETAIL_BASE = 0xB600
-ROM_BBOX_BASE   = 0xC600
+ROM_BBOX_BASE   = 0xC400
 
 
 import angle_bbox as _A

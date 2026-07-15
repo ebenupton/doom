@@ -535,9 +535,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES})")
     print(f"  RAM:         {ram_size}")
 
-    # Build prescaled bbox table (separate from rom_main so NODE_SIZE stays 16).
-    # 16 bytes per node: right side (top,bot,left,right as s16) then left side.
-    bbox_table = bytearray(n_nodes * 16)
+    # Build prescaled bbox table as 16 page-split SoA planes (4KB):
+    # field f (T_LO,T_HI,B_LO,B_HI,L_LO,L_HI,R_LO,R_HI) at f*$200, side
+    # (0 = right child box, 1 = left) at +$100 — node ids are u8, so the
+    # engine reads corners with plain abs,Y and NO pointer build; the
+    # side is an arm dimension (BBP_* equates, layout.inc).
+    bbox_table = bytearray(16 * 256)
     for i, n in enumerate(nodes):
         o = i * 16
         for side_base in (4, 8):  # right bbox, left bbox
@@ -555,9 +558,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             p_bot   = (raw_bot   - map_center_y) // prescale - 1
             p_left  = (raw_left  - map_center_x) // prescale - 1
             p_right = -((-(raw_right - map_center_x)) // prescale) + 1
-            side_off = o + (side_base - 4) * 2  # +0 for right, +8 for left
-            struct.pack_into('<hhhh', bbox_table, side_off,
-                             p_top, p_bot, p_left, p_right)
+            sb = ((side_base - 4) // 4) * 256   # +0 right, +$100 left
+            for f, v in enumerate((p_top, p_bot, p_left, p_right)):
+                bbox_table[f * 0x400 + sb + i] = v & 0xFF
+                bbox_table[f * 0x400 + 0x200 + sb + i] = (v >> 8) & 0xFF
     layout['bbox_table_size'] = len(bbox_table)
 
     return rom_main, rom_detail, rom_recip, bbox_table, layout

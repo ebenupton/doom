@@ -180,7 +180,8 @@ zp_br_dy = zp_br_dy_l
 .if ::BANKED
 ; L2 window (no overlaps): TA_LO$8000 TA_HI$8400 VATOX$8900 bbox$8E00
 ;   recip$9D00 VWH$A200 VWHC$A700
-RECIP_BASE = $9D00                      ; bank L2
+RECIP_BASE = $9E00                      ; bank L2 (moved +$100 2026-07-15:
+                                        ; bbox planes own $8E00-$9DFF)
 L2_BBOX = $8E00                         ; bank L2 (harness/loader points zp_rom_bbox here)
 .else
 RECIP_BASE = $E000                      ; recip table (HI bytes first, then LO)

@@ -42,7 +42,7 @@ ROM_DETAIL_BASE = 0xB600
 ROM_SEG_HDR_BASE = 0x6C00       # stride-18 headers, heights at +12..17
 ROM_VERTS_BASE   = 0x9C00
 NODE_SOA_BASE    = 0xB600       # node/ss SoA pages (old FHCH hole)
-ROM_BBOX_BASE   = 0xC600   # MUST stay page-aligned: br_bbox_visible/bcac_index
+ROM_BBOX_BASE   = 0xC400   # 16 corner planes $C400-$D3FF (page-split SoA)
                            # build/split the bbox pointer byte-at-a-time
 
 

@@ -253,56 +253,10 @@ bcac_cold:
 ; psi cache — the bug that produced wrong warm results at other angles.
    PLA
    PLA
-   TXA
-   ASL A
-   ASL A
-   TAX
-; corner1 -> bca_p1  (same corner load as bbox_check_angle)
-   LDY bca_cc,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pxs
-   STA pa_dx
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pxs+1
-   STA pa_dx+1
-   LDY bca_cc+1,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pys
-   STA pa_dy
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pys+1
-   STA pa_dy+1
-   STX bca_ccsave
-   JSR corner_phi                          ; -> phi hi in A, lo in Y
-   STA bca_p1+1
-   STY bca_p1
-   LDX bca_ccsave
-; corner2 -> bca_p2
-   LDY bca_cc+2,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pxs
-   STA pa_dx
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pxs+1
-   STA pa_dx+1
-   LDY bca_cc+3,X
-   SEC
-   LDA (bca_boxp),Y
-   SBC bca_pys
-   STA pa_dy
-   INY
-   LDA (bca_boxp),Y
-   SBC bca_pys+1
-   STA pa_dy+1
-   JSR corner_phi                          ; -> phi hi in A, lo in Y
-   STA bca_p2+1
-   STY bca_p2
+; corners via the shared zone/side arms — RAW phis (pre-clip), exactly
+; what the psi snapshot below needs (the old inline duplicate of the
+; corner block is gone, 2026-07-15)
+   JSR zc_corners
 ; --- populate cache from RAW bca_p1/p2 (pre-clip), then run the tail once ---
    JSR bcac_index                          ; (bitmap byte/bit only now)
 ; psi1/psi2 = (a_fine - pK) & 4095, staged in pa_dx/pa_dy (dead here),

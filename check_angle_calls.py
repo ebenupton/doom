@@ -16,7 +16,15 @@ def s8(v):  return v-0x100 if v>=0x80 else v
 BCA=sym('jt_bca_check'); BOX=sym('bca_top')
 B_PX,B_PY,B_AB=sym('bca_px'),sym('bca_py'),sym('bca_ab')
 B_AFN,B_PXS,B_PYS=sym('bca_afn'),sym('bca_pxs'),sym('bca_pys')
-B_BOXP,B_ILO,B_IHI,B_VIS=sym('bca_boxp'),sym('bca_ilo'),sym('bca_ihi'),sym('bca_vis')
+B_ILO,B_IHI,B_VIS=sym('bca_ilo'),sym('bca_ihi'),sym('bca_vis')
+# corner planes (the boxp pointer is gone, 2026-07-15): field f at
+# BBP_*, side at +$100, node = the Y index
+BBP=[sym(n) for n in ('BBP_T_LO','BBP_T_HI','BBP_B_LO','BBP_B_HI',
+                      'BBP_L_LO','BBP_L_HI','BBP_R_LO','BBP_R_HI')]
+ZNODE,ZSIDE=sym('zp_node_ch_l'),sym('zp_bbox_side')
+# the ZC corner arms run BELOW $C000 mid-check — exclude them from the
+# 'returned to main code' probe (they'd read bca_vis while it's still 0)
+ZC_LO=sym('zc_corners'); ZC_HI=sym('zc_tab_hi')+22
 
 # fresh standalone module
 _st=MPU()
@@ -29,7 +37,9 @@ def standalone(top,bot,left,right,px,py,ab):
     _afn=(ab<<4)&0xFFFF; m[B_AFN]=_afn&0xFF; m[B_AFN+1]=(_afn>>8)&0xFF
     m[B_PXS]=px&0xFF; m[B_PXS+1]=0xFF if px<0 else 0
     m[B_PYS]=py&0xFF; m[B_PYS+1]=0xFF if py<0 else 0
-    m[B_BOXP]=BOX&0xFF; m[B_BOXP+1]=BOX>>8
+    m[ZNODE]=0; m[ZSIDE]=0                 # box -> planes at node 0, side 0
+    for f,val in enumerate((top,bot,left,right)):
+        m[BBP[2*f]]=val&0xFF; m[BBP[2*f+1]]=(val>>8)&0xFF
     _st.pc=BCA;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
@@ -49,11 +59,11 @@ def check(px,py,ab):
             pc=mpu.pc
             if pc==0xFF00: break
             if pc==BCA and armed is None:
-                bp=mem[B_BOXP]|(mem[B_BOXP+1]<<8)    # bca_boxp -> ROM box (top,bot,left,right)
-                armed=(s16(mem[bp]|(mem[bp+1]<<8)),s16(mem[bp+2]|(mem[bp+3]<<8)),
-                       s16(mem[bp+4]|(mem[bp+5]<<8)),s16(mem[bp+6]|(mem[bp+7]<<8)),
+                nd,sd=mem[ZNODE],mem[ZSIDE]          # planes: field + side*$100 + node
+                def _f(k): return s16(mem[BBP[2*k]+sd*0x100+nd]|(mem[BBP[2*k+1]+sd*0x100+nd]<<8))
+                armed=(_f(0),_f(1),_f(2),_f(3),
                        s8(mem[B_PX]),s8(mem[B_PY]),mem[B_AB])
-            elif armed is not None and pc<0xC000:
+            elif armed is not None and pc<0xC000 and not (ZC_LO<=pc<ZC_HI):
                 got=(mem[B_ILO],mem[B_IHI]) if mem[B_VIS] else None
                 n+=1
                 if got!=A.bbox_check_angle(*armed) and len(vs_py)<4: vs_py.append((armed,got,A.bbox_check_angle(*armed)))
