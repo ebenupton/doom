@@ -241,7 +241,7 @@ c2_pos:
 ;            zp_br_pxraw_l/hi, zp_br_pyraw_l/hi = player position, RAW
 ;              map units relative to map_center (s16, NOT prescaled — the
 ;              side test must not lose a weak axis to /8 truncation).
-;   Outputs: zp_side = 0 (right of partition) / 1 (left/on).
+;   Outputs: A = 0 (right of partition) / 1 (left/on).
 ;   Scratch: zp_seg_dxraw/dyraw (player - node origin), zp_node_dx/dy,
 ;            $0A50-$0A52 (s24 cross-product accumulator), zp_br_dx/dy*.
 ;
@@ -420,14 +420,12 @@ ns_mul:
    BEQ ns_side1
 ; (2026-07-15: the BSP_NEAR/FAR staging is gone — the walk follows
 ; children straight from the SoA pages at dispatch time, near and far
-; alike, so setup's whole output is zp_side.)
+; alike, so setup's whole output is A.)
 ns_side0:
    LDA #0
-   STA zp_side
    RTS
 ns_side1:
    LDA #1
-   STA zp_side
    RTS
 .endscope
 

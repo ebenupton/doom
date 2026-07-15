@@ -144,12 +144,11 @@ rc_node:
 ; descend(internal node): id in zp_node_ch_l.
    IS_FULL_B bsp_done_full
 rc_node_nc:                             ; far tail re-entry (is_full done)
-   JSR br_node_setup                       ; -> zp_side
+   JSR br_node_setup                       ; -> A = side (0 right / 1 left)
+   PHA                                     ; push this side
+   STA zp_bbox_side
    LDA zp_node_ch_l
    PHA                                     ; push id
-   LDA zp_side
-   PHA                                     ; push far side
-   STA zp_bbox_side
 bv_site_near:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (<-> br_bbox_visible_d when D active)
    BEQ rc_resume                           ; near invisible: skip subtree
@@ -180,10 +179,10 @@ rcn_leaf:
 rc_resume:
 ; the continuation: pop the locals, do the far half
    PLA
+   STA zp_node_ch_l                        ; id
+   PLA
    EOR #1
    STA zp_bbox_side                        ; far side
-   PLA
-   STA zp_node_ch_l                        ; id
    IS_FULL_B bsp_done_full
 bv_site_far:                            ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
