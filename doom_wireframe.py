@@ -2518,6 +2518,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     if not clips.has_gap(x_lo, x_hi):
         return
 
+    # Reversed projection (the 1px edge-on 8F.1F class): DROPPED rather
+    # than canonicalized (2026-07-15, Eben's call): measured cost is the
+    # degenerate slivers only (5px at 1/18 suite positions), no
+    # occlusion damage — the zero-records arm covers the aperture.
+    if sx2 < sx1:
+        return
+
     # ── Read seg detail from rom_detail ──
     dtl_off = si * SEG_DTL_SIZE
     fh  = read_s8(rom_d, dtl_off + SD_FH)

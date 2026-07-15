@@ -291,7 +291,12 @@ s_both_have_proj:
    BNE hg_adv                              ; nonzero: off one side entirely
    LDA zp_seg_sx1_l
    CMP zp_seg_sx2_l
-   BCS hg_fast_rev                         ; sx1 >= sx2 (ties -> rev, as before)
+   BEQ hg_fast_fwd                         ; TIE: a one-column seg is NOT
+                                        ; reversed (it must draw + record;
+                                        ; the old ties->rev was harmless
+                                        ; only while rev meant SWAP)
+   BCS hg_fast_rev                         ; sx1 > sx2: reversed -> DROP
+hg_fast_fwd:
 ; X = 0 already: the TAX above saw A = 0 (BNE not taken)
    STA zp_i_l                              ; A = sx1_lo
    LDA zp_seg_sx2_l
@@ -449,7 +454,9 @@ hgp_can:
 ; every emit path below is single-path (no ord dispatch anywhere).
    LDA zp_sx_ord
    BEQ hgp_fwd
-   JSR seg_swap_vx
+   JMP s_advance                           ; reversed 1px projection: DROP
+                                        ; (2026-07-15: seg_swap_vx retired;
+                                        ; python mirror returns likewise)
 hgp_fwd:
 
 ; --- Emit top horizontal (front-sector ceiling): (sx1,ft1)→(sx2,ft2) ---
@@ -817,65 +824,9 @@ sa_drain:
    JMP defq_drain
 .endscope
 
-; ============================================================================
-; seg_swap_vx — canonicalize endpoint order: make VX1 the LEFT endpoint.
-; RARE (~1/frame): only the 1px edge-on projection reversal (the 8F.1F
-; class) lands here. Deep swap deliberately (measured eval 2026-07-11):
-; ~350 cycles once a frame vs pointer-indirection taxing every one of
-; ~200 static struct references on the hot paths (+2 cyc or worse each,
-; thousands of accesses per frame) AND killing the zp,X endpoint idioms.
-; Swaps the whole structs, exchanges the endpoint-bound flag bits
-; (APEDGE1<->APEDGE2, NOVT1<->NOVT2 — seg-level bits pass through), and
-; kills the vertex-chain key: VX2 no longer holds the last-transformed
-; vertex, exactly like a crossing.
-; ============================================================================
-seg_swap_vx:
-.scope
-   LDX #VX_STRIDE-1
-sw_loop:
-   LDA VX1,X
-   LDY VX2,X
-   STA VX2,X
-   STY VX1,X
-   DEX
-   BPL sw_loop
-   LDA zp_seg_flags
-   AND #$8E                                ; pass SOLID/NEEDBT/NEEDBB/$80
-   STA zp_br_t0
-   LDA zp_seg_flags
-   AND #$40                                ; APEDGE1 -> APEDGE2
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   ORA zp_br_t0
-   STA zp_br_t0
-   LDA zp_seg_flags
-   AND #$01                                ; APEDGE2 -> APEDGE1
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   ORA zp_br_t0
-   STA zp_br_t0
-   LDA zp_seg_flags
-   AND #$10                                ; NOVT1 -> NOVT2
-   ASL A
-   ORA zp_br_t0
-   STA zp_br_t0
-   LDA zp_seg_flags
-   AND #$20                                ; NOVT2 -> NOVT1
-   LSR A
-   ORA zp_br_t0
-   STA zp_seg_flags
-   LDA #$FF
-   STA zp_seg_v_idx_b                     ; chain key dies with the swap
-   RTS
-.endscope
+; (seg_swap_vx retired 2026-07-15: reversed 1px projections are DROPPED
+; at the hg_query prelude — Eben's call, measured: the only cost is the
+; degenerate slivers themselves; no aperture/occlusion regressions.)
 
 ; (drain_deferred_ms replaced by defq_drain — see the $0B00 region.)
 
