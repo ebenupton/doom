@@ -1,50 +1,52 @@
-; Per-bbox cache (indexed by (boxp - rom_bbox) i.e. node*16+side*8, so the
-; 4-byte psi slot is at RCACHE_PSI + (diff>>1)):
-;   RCACHE_PSI[idx]   : psi1, psi2 (2 bytes each, the raw point_to_angle)
-;   RCACHE_COMPUTED   : 1 bit/bbox — psi valid for the cache position
-;   RCACHE_FULL       : 1 bit/bbox — result is a_fine-INDEPENDENT full
-;                       (viewer inside box, OR span>=ANG180); warm returns full
+; Per-bbox cache, keyed by k = node*2 + side (the box ordinal):
+;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
+;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
+;   RCACHE_FULL          : 1 bit/bbox — result is a_fine-INDEPENDENT full
+;                          (viewer inside box, OR span>=ANG180); warm returns full
 ;
 ; bca_frame (per frame, from br_view_setup) SMC-patches jt_bca_check between
 ; bbox_check_angle (moved frame: verbatim, zero overhead) and
 ; bbox_check_angle_cached (stable frame). Stability = integer position
 ; ($01/$9D/$03/$9E) unchanged since last frame. First stable frame at a new
 ; position clears RCACHE_COMPUTED so entries repopulate lazily.
+
+; PSI store = page-split SoA planes (2026-07-15): entry ordinal
+; k = node*2 + side (u9; senior page = node bit 7, which falls out of
+; the k-derivation ASL as the CARRY). psi values are 12-bit, so the two
+; hi nibbles PACK into one plane: PH = psi1_hi | psi2_hi<<4. Three
+; planes x 2 pages; junior/senior pages are independently placed, so
+; the flat set scatters over audited free fragments and the $5000
+; CODE-tail carve is GONE (flat CODE now runs to $5800 — main_tail).
 .if BANKED
-RCACHE      = $AD00                     ; bank L2 window, below the VWHC arrays
-                                        ; ($B500-$B9FF — see resolve_crossing.s;
-                                        ; RCACHE spans $AD00-$B4E8). Every
-                                        ; consumer runs
-                                        ; with L2 paged: the bbox path pages L2 in
-                                        ; br_bbox_visible, bca_frame is paged in by
-                                        ; its caller (view.s), and the drivers page
-                                        ; bank 7 before the init clear. ($2000 was
-                                        ; WRONG: sqr tables $2000-$23FF + FHCH
-                                        ; $2400-$3377 live there in the banked map.)
+RC_P1L_J = $AD00                        ; bank L2 (old PSI head; $B300-$B45F freed)
+RC_P1L_S = $AE00
+RC_P2L_J = $AF00
+RC_P2L_S = $B000
+RC_PH_J  = $B100
+RC_PH_S  = $B200
 .else
-RCACHE      = $5000                     ; flat: fixed carve at the TAIL of the one
-                                        ; CODE region (2026-07-12; was $3800). The
-                                        ; link asserts end_code <= $5000 (main_tail)
-                                        ; so code growth into the carve is a LINK
-                                        ; ERROR, not a silent collision.
+RC_P1L_J = $1A00                        ; flat fragments (audited free):
+RC_P1L_S = $9700                        ; below the VXC planes (DIRs
+RC_P2L_J = $D400                        ;   asserted <= $9700 now)
+RC_P2L_S = $DA00                        ; after VWHC
+RC_PH_J  = $DB00
+RC_PH_S  = $F000                        ; below the old TA_HI shadow
 .endif
-; rom_bbox base pointer (set per frame by the loader; BSP-unit zp $0BEA/$0BEB)
-; (zp_rom_bbox retired 2026-07-10 — ROM_BBOX_C in layout.inc)
-RCACHE_PSI  = RCACHE                    ; 472*4 = 1888 bytes ($760)
-RCACHE_COMPUTED = RCACHE + $760         ; 59 bytes
-RCACHE_FULL = RCACHE + $7A0             ; 59 bytes
-bca_prevpos = RCACHE + $7E0             ; 4 bytes: last frame's int position
-bca_cachepos = RCACHE + $7E4            ; 4 bytes: position RCACHE_COMPUTED is valid for
-.assert RCACHE + $7E8 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
-.assert RCACHE + $760 = RCACHE_STATE, error, "rcache state head drifted from abi.inc"
+; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
+; flat base moved $5760 -> $F100 with the carve release:
+RCACHE_COMPUTED = RCACHE_STATE          ; 59 bytes (bit per k>>3 group)
+RCACHE_FULL = RCACHE_STATE + $40        ; 59 bytes
+bca_prevpos = RCACHE_STATE + $80        ; 4 bytes: last frame's int position
+bca_cachepos = RCACHE_STATE + $84       ; 4 bytes: position COMPUTED is valid for
+.assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
 ; RCACHE_ENABLE comes from abi.inc; nonzero -> cache may engage (drivers set it;
                                         ; harness default 0 keeps every existing test
                                         ; on the original path, byte- and cycle-exact)
 ; scratch for the cached routine (dead outside a check)
 rc_idxlo    = t0                        ; index-calc scratch (t0/t1 free at entry)
 rc_idxhi    = t1
-rc_psilo    = $C4                       ; ZP ptr into RCACHE_PSI (for (),Y — idx>>1
-rc_psihi    = $C5                       ; spans 0..1887, needs a full 16-bit ptr)
+; ($C4/$C5 freed 2026-07-15: the PSI pointer died with the plane
+;  conversion — k rides Y and the senior page is an arm.)
 rc_bytehi   = val_hi                    ; bitmap byte offset idx>>6 (<=58, fits u8)
 rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 
@@ -178,23 +180,54 @@ bbox_check_angle_cached:
    LDA RCACHE_FULL,X
    AND rc_bit
    BNE bcac_warm_full
-; load psi1, psi2 and re-apply a_fine (cp_havepsi) -> phi
-   LDY #0
-   LDA (rc_psilo),Y
+; load psi1, psi2 from the planes and re-apply a_fine (cp_havepsi).
+; k = node*2+side rides Y; the ASL's carry IS the senior-page select.
+   LDA zp_node_ch_l
+   ASL A
+   ORA zp_bbox_side
+   STA rc_idxlo                            ; k & 255 (cp_havepsi eats Y)
+   TAY
+   BCS bw_hi
+   LDA RC_P1L_J,Y
    STA pa_res
-   INY
-   LDA (rc_psilo),Y
+   LDA RC_PH_J,Y
+   AND #$0F
    STA pa_res+1
    JSR cp_havepsi                          ; -> phi hi in A, lo in Y
    STA bca_p1+1
    STY bca_p1
-   LDY #2
-   LDA (rc_psilo),Y
+   LDY rc_idxlo
+   LDA RC_P2L_J,Y
    STA pa_res
-   INY
-   LDA (rc_psilo),Y
+   LDA RC_PH_J,Y
+   LSR A
+   LSR A
+   LSR A
+   LSR A
    STA pa_res+1
-   JSR cp_havepsi                          ; -> phi hi in A, lo in Y
+   JSR cp_havepsi
+   STA bca_p2+1
+   STY bca_p2
+   JMP bca_tail
+bw_hi:
+   LDA RC_P1L_S,Y
+   STA pa_res
+   LDA RC_PH_S,Y
+   AND #$0F
+   STA pa_res+1
+   JSR cp_havepsi
+   STA bca_p1+1
+   STY bca_p1
+   LDY rc_idxlo
+   LDA RC_P2L_S,Y
+   STA pa_res
+   LDA RC_PH_S,Y
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   STA pa_res+1
+   JSR cp_havepsi
    STA bca_p2+1
    STY bca_p2
    JMP bca_tail
@@ -271,28 +304,49 @@ bcac_cold:
    STA bca_p2+1
    STY bca_p2
 ; --- populate cache from RAW bca_p1/p2 (pre-clip), then run the tail once ---
-   JSR bcac_index
-; store psi1 = (a_fine - p1) & 4095, psi2 = (a_fine - p2) & 4095
+   JSR bcac_index                          ; (bitmap byte/bit only now)
+; psi1/psi2 = (a_fine - pK) & 4095, staged in pa_dx/pa_dy (dead here),
+; hi nibbles packed for the PH plane; one armed 3-store drop.
    SEC
    LDA bca_afn
    SBC bca_p1
-   LDY #0
-   STA (rc_psilo),Y
+   STA pa_dx
    LDA bca_afn+1
    SBC bca_p1+1
    AND #$0F
-   INY
-   STA (rc_psilo),Y
+   STA pa_dx+1
    SEC
    LDA bca_afn
    SBC bca_p2
-   LDY #2
-   STA (rc_psilo),Y
+   STA pa_dy
    LDA bca_afn+1
    SBC bca_p2+1
-   AND #$0F
-   INY
-   STA (rc_psilo),Y
+   ASL A
+   ASL A
+   ASL A
+   ASL A                                   ; psi2 hi nibble << 4 (top bits shed)
+   ORA pa_dx+1
+   STA pa_dx+1                             ; packed PH byte
+   LDA zp_node_ch_l
+   ASL A
+   ORA zp_bbox_side
+   TAY                                     ; k & 255; C = senior
+   BCS bcs_hi
+   LDA pa_dx
+   STA RC_P1L_J,Y
+   LDA pa_dy
+   STA RC_P2L_J,Y
+   LDA pa_dx+1
+   STA RC_PH_J,Y
+   JMP bcs_done
+bcs_hi:
+   LDA pa_dx
+   STA RC_P1L_S,Y
+   LDA pa_dy
+   STA RC_P2L_S,Y
+   LDA pa_dx+1
+   STA RC_PH_S,Y
+bcs_done:
 ; set computed bit
    LDX rc_bytehi
    LDA RCACHE_COMPUTED,X
@@ -333,42 +387,22 @@ bcac_cold_inside:
    STA RCACHE_FULL,X
    JMP full_vis                            ; canonical tail (bca.s)
 
-; bcac_index: from bca_boxp derive rc_psilo/hi (16-bit ptr = RCACHE_PSI +
-; idx>>1), rc_bytehi (bitmap byte idx>>6), rc_bit (mask for (idx>>3)&7).
-; idx = boxp - rom_bbox = node*16 + side*8 (0..3768).
 bcac_index:
-; ROM_BBOX is page-aligned (loaders assert), so idx = boxp - base is just
-; the boxp low byte plus a single hi-byte subtract.
-   LDA bca_boxp
-   STA rc_idxlo
-   SEC
-   LDA bca_boxp+1
-   SBC #>ROM_BBOX_C                        ; layout.inc constant
-   STA rc_idxhi
-   LSR rc_idxhi                             ; idx>>1 (11-bit)
-   ROR rc_idxlo
-   CLC
-   LDA rc_idxlo
-   ADC #<RCACHE_PSI
-   STA rc_psilo
-   LDA rc_idxhi
-   ADC #>RCACHE_PSI
-   STA rc_psihi
-   LSR rc_idxhi                             ; idx>>2
-   ROR rc_idxlo
-   LSR rc_idxhi                             ; idx>>3 (9-bit: rc_idxhi is 0/1)
-   ROR rc_idxlo
-   LDA rc_idxlo
-   AND #7
+; Bitmap byte/bit from (zp_node_ch_l, zp_bbox_side) — the PSI pointer
+; died with the plane conversion (2026-07-15):
+;   byte = k>>3 = node>>2 (exact: side and node bit 0 shift out)
+;   bit  = 1 << (k & 7) = 1 << (((node & 3) << 1) | side)
+   LDA zp_node_ch_l
+   LSR A
+   LSR A
+   STA rc_bytehi
+   LDA zp_node_ch_l
+   AND #3
+   ASL A
+   ORA zp_bbox_side
    TAX
    LDA rc_bitmask,X
    STA rc_bit
-   LSR rc_idxhi                             ; idx>>4 (rc_idxhi -> 0)
-   ROR rc_idxlo
-   LSR rc_idxlo                             ; idx>>5
-   LSR rc_idxlo                             ; idx>>6 (<=58)
-   LDA rc_idxlo
-   STA rc_bytehi
    RTS
 
 rc_bitmask:

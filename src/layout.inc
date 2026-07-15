@@ -30,7 +30,7 @@ ROM_VERTS_C   = $9C00                   ; flat verts (ends $A34B, below SEL $A40
 ROM_BBOX_C    = $C600                   ; flat bbox (page-aligned)
 NODE_SOA_C    = $B600                   ; flat SoA: the old FHCH hole (16 pages)
 ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
-.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $9800, error, "DIR tables reach the VXC planes at $9800 (the invisible squatter that caught the first slotting attempt)"
+.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $9700, error, "DIR tables reach the RCACHE plane at $9700 (VXC planes right after at $9800)"
 .assert ROM_VERTS_C + $800 <= $A400, error, "flat vertex planes reach SEL"
 .endif
 .assert (ROM_BBOX_C & $FF) = 0, error, "bbox base must stay page-aligned"

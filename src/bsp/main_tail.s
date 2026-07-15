@@ -12,7 +12,7 @@ end_code:
 .if ::BANKED
 .assert end_code <= $5800, error        ; banked: FB at $5800
 .else
-.assert end_code <= $5000, error        ; flat: RCACHE carve $5000-$57E8
+.assert end_code <= $5800, error        ; flat: FB at $5800 (RCACHE carve freed 2026-07-15)
 .endif
 .if ::BANKED
 ; (ld65 writes this: SAVE "bsp_render_bk.bin", $4800, end_code, $4800)
@@ -43,5 +43,5 @@ code_true_end:
 .if ::BANKED
 .assert code_true_end <= $5800, error, "CODE overflows into the FB (banked)"
 .else
-.assert code_true_end <= $5000, error, "CODE overflows into the RCACHE carve (flat)"
+.assert code_true_end <= $5800, error, "CODE overflows into the FB (flat; RCACHE carve freed 2026-07-15)"
 .endif

@@ -57,15 +57,15 @@ VXC_STATE = $05A0                       ; VXC valid bitmap + state block
 VXC_STATE_LEN = $0060                   ; bytes to zero at boot
 VXC_ENABLE = $05DB                      ; translation vertex cache switch
 .if ::BANKED
-RCACHE_STATE = $B460       ; rotation cache header+bitmaps (RCACHE+$760)
+RCACHE_STATE = $B460       ; rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 .else
-RCACHE_STATE = $5760
+RCACHE_STATE = $F100
 .endif
 RCACHE_STATE_LEN = $0089                ; bytes to zero at boot
 .if ::BANKED
-RCACHE_ENABLE = $B4E8      ; rotation-coherence bca cache switch (RCACHE+$7E8)
+RCACHE_ENABLE = $B4E8      ; rotation-coherence bca cache switch (STATE+$88)
 .else
-RCACHE_ENABLE = $57E8
+RCACHE_ENABLE = $F188
 .endif
 JBASE = $1A00                           ; vsync journal (dead boot-loader memory)
 SCREEN0 = $5800                         ; framebuffer 0
