@@ -183,11 +183,11 @@ zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
 zp_bf_pym_l = $4D                ; [bsp]; |py| u16 (pair with $5B; the
 ; back-face diagonal C-form reads both per call)
 zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on the hardware stack; is_full unwinds via TXS)
-zp_side = $4F                     ; [bsp]; 0 = front, 1 = back
-zp_node_dx_l = $50                ; [bsp]
-zp_node_dx_h = $51                ; [bsp]
-zp_node_dy_l = $52                ; [bsp]
-zp_node_dy_h = $53                ; [bsp]
+; FREE 2026-07-15 (cross-core unification): zp_side = $4F
+; FREE 2026-07-15 (cross-core unification): zp_node_dx_l = $50
+; FREE 2026-07-15 (cross-core unification): zp_node_dx_h = $51
+; FREE 2026-07-15 (cross-core unification): zp_node_dy_l = $52
+; FREE 2026-07-15 (cross-core unification): zp_node_dy_h = $53
 zp_node_nx_l = $54                ; [bsp]
 zp_node_nx_h = $55                ; [bsp]
 zp_node_ny_l = $56                ; [bsp]
@@ -231,10 +231,10 @@ zp_seg_v_bitm = $79               ; [bsp]; valid-bitmap mask (1 << (idx & 7))
 ; $7A free for bsp use (was zp_seg_v_cache_l; NB the NJ rasteriser
 ; scratches $7A as errs — phase-disjoint). $7B free (was _cache_h) —
 ; the vcache is page-split SoA with baked senior arms, no pointer.
-zp_seg_dxraw_l = $7C             ; [bsp]
-zp_seg_dxraw_h = $7D             ; [bsp]
-zp_seg_dyraw_l = $7E             ; [bsp]
-zp_seg_dyraw_h = $7F             ; [bsp]
+; FREE 2026-07-15 (cross-core unification): zp_seg_dxraw_l = $7C
+; FREE 2026-07-15 (cross-core unification): zp_seg_dxraw_h = $7D
+; FREE 2026-07-15 (cross-core unification): zp_seg_dyraw_l = $7E
+; FREE 2026-07-15 (cross-core unification): zp_seg_dyraw_h = $7F
 RASTER_ZP_X0 = $82                ; [clip]
 RASTER_ZP_Y0 = $83                ; [clip]
 RASTER_ZP_X1 = $84                ; [clip]

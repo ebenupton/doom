@@ -95,16 +95,17 @@ NODE_NXLO = NODE_SOA + $000
 NODE_NXHI = NODE_SOA + $100
 NODE_NYLO = NODE_SOA + $200
 NODE_NYHI = NODE_SOA + $300
-NODE_DXLO = NODE_SOA + $400
-NODE_DXHI = NODE_SOA + $500
-NODE_DYLO = NODE_SOA + $600
-NODE_DYHI = NODE_SOA + $700
-NODE_CRLO = NODE_SOA + $800             ; right child id (side 0 = near)
-NODE_CLLO = NODE_SOA + $900             ; left child id
-NODE_TYPE = NODE_SOA + $A00             ; bits 0-1 type; bit 7/6 leaf flags
-SS_CNT    = NODE_SOA + $B00
-SS_PLO    = NODE_SOA + $C00             ; seg-header pointer lo
-SS_PHI    = NODE_SOA + $D00             ; ... hi. ROM ships first*16
+NODE_DIRID = NODE_SOA + $400            ; general: DIR-table index
+NODE_DSGN  = NODE_SOA + $500            ; general: sign byte (b7 ndy neg,
+                                        ;  b6 ndx neg); axis nodes ignore
+; (raw dy pages RECLAIMED 2026-07-15: no reader on either side — the
+;  SoA is 12 pages now and the 2 pages before ROM_BBOX_C are free)
+NODE_CRLO = NODE_SOA + $600             ; right child id (side 0 = near)
+NODE_CLLO = NODE_SOA + $700             ; left child id
+NODE_TYPE = NODE_SOA + $800             ; bits 0-2 type; bit 7/6 leaf flags
+SS_CNT    = NODE_SOA + $900
+SS_PLO    = NODE_SOA + $A00             ; seg-header pointer lo
+SS_PHI    = NODE_SOA + $B00             ; ... hi. ROM ships first*16
                                         ; offsets; the LOADERS rebase this
                                         ; page onto >ROM_SEG_HDR_C, so
                                         ; serve time is two indexed loads

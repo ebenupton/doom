@@ -345,16 +345,16 @@ ns_py_lt:
    BPL ns_x1
 ns_t_general:
 ; --- general partition: DIR delta form (2026-07-15) — the packer bakes
-; the gcd-reduced primitive direction as (NODE_DXLO = dir id,
-; NODE_DXHI = sign byte, b7 ndy neg / b6 ndx neg), sharing the seg DIR
+; the gcd-reduced primitive direction as (NODE_DIRID, NODE_DSGN —
+; b7 ndy neg / b6 ndx neg), sharing the seg DIR
 ; tables. Deltas against the origin planes stage into the SHARED cross
 ; slots, the sign shortcut mirrors bf_g_both, and the magnitude tier is
 ; the SAME CROSS_MAG_DECIDE core the back-face test expands: side0 is
 ; "front" (D = ndy*dx - ndx*dy > 0), ties side1. The old raw s16 x s16
 ; double-smul cascade (and br_smul_s16_s16_s32) is gone.
-   LDA NODE_DXHI,X
+   LDA NODE_DSGN,X
    STA zp_br_sign                          ; b7 = sgn ndy, b6 = sgn ndx
-   LDA NODE_DXLO,X
+   LDA NODE_DIRID,X
    STA zp_bf_dir                           ; DIR-table index
 ; dx = pxraw - nx (s16); hi rides A for the zero test
    LDA zp_br_pxraw_l

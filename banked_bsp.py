@@ -59,7 +59,7 @@ def build_banked(flatr):
     l0[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages (14)
     # SS_PHI page ships first*16 offsets — rebase onto the banked
     # seg-header base ($9000 = window $8000 + the $1000 header offset)
-    for i in range(0xD00, 0xE00):
+    for i in range(0xB00, 0xC00):
         l0[i] = (rom_main[i] + 0x90) & 0xFF
     l0[0x1000:0x1000 + hdr_len] = bytes(rom_main[off_hdr:off_hdr + hdr_len])
     assert 0x1000 + hdr_len <= 0x3E90, "seg headers + DIRs reach TABL0 at $BE90"

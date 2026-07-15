@@ -93,7 +93,7 @@ class BspRender6502:
             mem[NODE_SOA_BASE + i] = rom_main[i]
         # SS_PHI page ships first*16 offsets — rebase onto the flat
         # seg-header base so the engine reads ready pointers
-        for i in range(0xD00, 0xE00):
+        for i in range(0xB00, 0xC00):
             mem[NODE_SOA_BASE + i] = (rom_main[i] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
         for i in range(off_verts, off_hdr):              # verts
             mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]

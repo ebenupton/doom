@@ -27,7 +27,7 @@ SSECTOR_SIZE = 4     # (legacy)
 # Ids are u8 EVERYWHERE (n_nodes, n_ss <= 256 asserted): no child hi
 # bytes; "child is a subsector" lives in the parent's TYPE byte
 # (NF_RLEAF/NF_LLEAF), not in the link.
-NODE_SOA_PAGES = 11
+NODE_SOA_PAGES = 9    # DY pages dropped 2026-07-15 (no 6502 reader)
 SS_SOA_PAGES   = 3
 NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
 # Node partition TYPE (bits 0-2): axis-aligned partitions bake the
@@ -266,13 +266,14 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"node {i} degenerate (dx==dy==0) — type bake can't represent it"
         _npg(0, i, raw_nx); _npg(1, i, raw_nx >> 8)
         _npg(2, i, raw_ny); _npg(3, i, raw_ny >> 8)
-        _npg(4, i, raw_dx); _npg(5, i, raw_dx >> 8)
-        _npg(6, i, raw_dy); _npg(7, i, raw_dy >> 8)
+        _npg(4, i, raw_dx); _npg(5, i, raw_dx >> 8)   # general nodes: over-
+        # written by the DIR bake below (dir id / sign byte); raw dy has
+        # no reader on either side -> its pages are GONE (14 -> 12 SoA)
         cr, cl = n[12], n[13]
         assert (cr & 0x7FFF) < 256 and (cl & 0x7FFF) < 256, \
             f"node {i} child id exceeds u8 — format is specialised to 256"
-        _npg(8, i, cr)
-        _npg(9, i, cl)
+        _npg(6, i, cr)
+        _npg(7, i, cl)
         if raw_dx == 0:                      # vertical: D = ndy*(px-nx)
             typ = 0 if raw_dy > 0 else 1     # side0 iff px>nx : px<nx
         elif raw_dy == 0:                    # horizontal: D = -ndx*(py-ny)
@@ -281,7 +282,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             typ = NT_GEN
         if cr & 0x8000: typ |= NF_RLEAF
         if cl & 0x8000: typ |= NF_LLEAF
-        _npg(10, i, typ)
+        _npg(8, i, typ)
 
     # Subsectors (SoA pages 11-13: count, hdr-offset lo, hdr-offset hi).
     # The offset pages hold first_seg*16 — the seg-header BYTE offset.

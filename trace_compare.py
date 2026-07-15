@@ -65,7 +65,7 @@ def setup_wad(sc):
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     for i in range(off_verts):
         mem[NODE_SOA_BASE + i] = rom_main[i]
-    for i in range(0xD00, 0xE00):        # SS_PHI: offsets -> flat pointers
+    for i in range(0xB00, 0xC00):        # SS_PHI: offsets -> flat pointers
         mem[NODE_SOA_BASE + i] = (rom_main[i] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
     for i in range(off_verts, off_hdr):
         mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
