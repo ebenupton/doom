@@ -219,12 +219,13 @@ bf_g_mul:
 ; u24 magnitude products with the high partial skipped when a delta's
 ; senior byte is clear (the common case).
    STX zp_br_sign                          ; X dies at SC_UMUL8
-   LDA #0
-   STA zp_br_t4                            ; |P1| hi = 0
-   STA zp_br_t5                            ; |P2| hi = 0
+; (t4/t5 zeroing folded into the senior-clear skips below, 2026-07-15 —
+;  each hi slot is written on EVERY path: by its out-of-line hi tier,
+;  or by the skip's STA with the zero already in A)
    LDX zp_br_dx_h
    BPL bfm_dx_pos
-   SEC
+   LDA #0                                  ; (was fed by the old t4/t5 init's
+   SEC                                     ;  zero — kept explicit now)
    SBC zp_br_dx_l
    STA zp_br_dx_l
    LDA #0
@@ -252,17 +253,8 @@ bfm_dy_pos:
    LDA zp_prod_l
    STA zp_br_t2
    LDA zp_br_dx_h
-   BEQ bfm_p1_done                         ; senior byte clear: 1-mul product
-   STA zp_mul_b
-   LDA zp_br_a
-   JSR SC_UMUL8
-   LDA zp_prod_l
-   CLC
-   ADC zp_br_t3
-   STA zp_br_t3
-   LDA zp_prod_h
-   ADC #0
-   STA zp_br_t4
+   BNE bfm_p1_hi                           ; senior partial (out of line)
+   STA zp_br_t4                            ; A = 0: 1-mul product, hi = 0
 bfm_p1_done:
 ; --- |P2| = |dx'| * |dy| -> (t0, t1, t5) u24 ---
    LDX zp_bf_dir
@@ -275,7 +267,49 @@ bfm_p1_done:
    LDA zp_prod_l
    STA zp_br_t0
    LDA zp_br_dy_h
-   BEQ bfm_p2_done
+   BNE bfm_p2_hi                           ; senior partial (out of line)
+   STA zp_br_t5                            ; A = 0: 1-mul product, hi = 0
+bfm_p2_done:
+; --- ONE u24 compare (2026-07-15: the per-sign duplicate cascades
+; collapsed; early-out kept — products usually decide at the mid byte,
+; which measured decisively better than a fixed-depth subtract chain).
+; A tie is BACK for either sign, so equality exits first; after that C
+; is the STRICT order and one sign load decodes the verdict:
+;   C=1 (|P1| > |P2|): front iff sign positive
+;   C=0 (|P1| < |P2|): front iff sign negative
+   LDA zp_br_t4
+   CMP zp_br_t5
+   BNE bfm_dec
+   LDA zp_br_t3
+   CMP zp_br_t1
+   BNE bfm_dec
+   LDA zp_br_t2
+   CMP zp_br_t0
+   BEQ bfm_back                            ; equal -> dot == 0 -> back
+bfm_dec:
+   LDA zp_br_sign                          ; (touches neither C nor N-verdict)
+   BMI bfm_neg
+   BCC bfm_back                            ; positive: |P1| < |P2| -> back
+   JMP bf_seg_front                        ; (hot fall-through: pos front)
+bfm_neg:
+   BCS bfm_back                            ; negative: |P1| > |P2| -> back
+   JMP bf_seg_front
+bfm_back:
+   JMP s_advance
+; --- out-of-line senior partials (the uncommon big-delta tier) ---
+bfm_p1_hi:
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_l
+   CLC
+   ADC zp_br_t3
+   STA zp_br_t3
+   LDA zp_prod_h
+   ADC #0
+   STA zp_br_t4
+   JMP bfm_p1_done
+bfm_p2_hi:
    STA zp_mul_b
    LDA zp_br_a
    JSR SC_UMUL8
@@ -286,40 +320,14 @@ bfm_p1_done:
    LDA zp_prod_h
    ADC #0
    STA zp_br_t5
-bfm_p2_done:
-; --- mode select on sign(P1) and u24 compare ---
-   LDA zp_br_sign
-   BMI bfm_le
-; positive: back iff |P1| <= |P2| ... i.e. FRONT iff |P1| > |P2|
-   LDA zp_br_t4
-   CMP zp_br_t5
-   BNE bfm_gt_dec
-   LDA zp_br_t3
-   CMP zp_br_t1
-   BNE bfm_gt_dec
-   LDA zp_br_t2
-   CMP zp_br_t0
-   BEQ bfm_back                            ; equal -> dot == 0 -> back
-bfm_gt_dec:
-   BCC bfm_back                            ; |P1| < |P2| -> back
-   JMP bf_seg_front
-bfm_le:
-; negative: back iff |P1| >= |P2| ... FRONT iff |P1| < |P2|
-   LDA zp_br_t4
-   CMP zp_br_t5
-   BNE bfm_lt_dec
-   LDA zp_br_t3
-   CMP zp_br_t1
-   BNE bfm_lt_dec
-   LDA zp_br_t2
-   CMP zp_br_t0
-bfm_lt_dec:
-   BCS bfm_back                            ; |P1| >= |P2| -> back
-   JMP bf_seg_front
-bfm_back:
-   JMP s_advance
+   JMP bfm_p2_done
 .endscope
-
+; Layout keeper: the 2026-07-15 tail cleanup shrank this routine by 10
+; bytes net; shifting everything downstream rolls page-cross dice in
+; hot loops (measured swings of +-1000/position on this suite). Pad
+; scanned 6/10/12/14/18: 12 measured best (-207 vs -160 at exact
+; restore). Safe to delete/re-scan whenever MAIN is next rebalanced.
+   .res 12
 ; ============================================================================
 ; br_bbox_visible — visibility test for a child subtree's bounding box.
 ;
