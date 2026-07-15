@@ -110,22 +110,20 @@ bif_clr2:
 .macro FETCH_CHILD leaf_target, node_target
    LDA zp_bbox_side
    BNE :+
-   LDA NODE_TYPE,X
-   ASL                                     ; C = NF_RLEAF
-   LDY NODE_CRLO,X
-   STY zp_node_ch_l
-   BCS leaf_target
+   LDA NODE_CRLO,X
+   STA zp_node_ch_l
+   LDA NODE_TYPE,X                         ; N = NF_RLEAF
+   BMI leaf_target
 .ifblank node_target
-   BCC :++                                 ; right internal: skip left arm
+   BPL :++                                 ; right internal: skip left arm
 .else
    JMP node_target                         ; right internal: direct tail
 .endif
-:  LDA NODE_TYPE,X
-   ASL
-   ASL                                     ; C = NF_LLEAF
-   LDY NODE_CLLO,X
-   STY zp_node_ch_l
-   BCS leaf_target
+:  LDA NODE_CLLO,X
+   STA zp_node_ch_l
+   LDA NODE_TYPE,X
+   ASL                                     ; N = NF_LLEAF
+   BMI leaf_target
 .ifblank node_target
 :
 .else
@@ -150,9 +148,7 @@ rc_node_nc:                             ; far tail re-entry (is_full done)
    LDA zp_node_ch_l
    PHA                                     ; push id
    LDA zp_side
-   EOR #1
    PHA                                     ; push far side
-   LDA zp_side
    STA zp_bbox_side
 bv_site_near:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (<-> br_bbox_visible_d when D active)
@@ -184,6 +180,7 @@ rcn_leaf:
 rc_resume:
 ; the continuation: pop the locals, do the far half
    PLA
+   EOR #1
    STA zp_bbox_side                        ; far side
    PLA
    STA zp_node_ch_l                        ; id
