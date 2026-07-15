@@ -156,7 +156,8 @@ br_recip:
    LDA #9
 rcp_s:
    STA zp_br_r_s
-   JMP rns_select                          ; pick the vectored shifter (RTSes)
+   RNS_SELECT                              ; (A = S per the macro contract)
+   RTS
 rcp_clamp:
    LDY #$FF                                ; idx := 1023 (t1 -> page 3)
 rcp_p3:
@@ -179,7 +180,8 @@ rcp_p0:
    STA zp_br_r_m8
    LDA srecip_tab,Y
    STA zp_br_r_s
-   JMP rns_select
+   RNS_SELECT
+   RTS
 
 ; SRECIP: 256-byte junior-page S table — ASSEMBLED data in the CODE
 ; region (main RAM: bank-independent, no loader involvement; the first

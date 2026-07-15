@@ -127,6 +127,17 @@ NF_LLEAF = $40                          ; left child is a subsector
 .endif
 .endmacro
 
+; RNS_SELECT — pick the vectored round-to-nearest shifter and patch
+; rns_go_op (project.s RNSPG). CONTRACT: A = S (every select site has
+; just stored zp_br_r_s from A — the old JSR routine's LDX zp_br_r_s
+; was a pure reload). Clobbers X (A becomes the vector byte). Retired
+; the rns_select subroutine 2026-07-15.
+.macro RNS_SELECT
+   TAX
+   LDA rns_vec_l-1,X
+   STA rns_go_op
+.endmacro
+
 .segment "MAIN"
 
 ; ============================================================================

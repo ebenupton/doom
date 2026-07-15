@@ -598,7 +598,7 @@ as_on:
    STA zp_br_r_m8
    LDA VX1+14,X
    STA zp_br_r_s
-   JSR rns_select                          ; (LDX/LDA/STA: Y survives)
+   RNS_SELECT                              ; (A = S; Y survives, X dies)
    PAGE BANK_L0
    DEY
    LDA (zp_seg_hdr_p),Y                    ; APV ch FIRST (staged for the

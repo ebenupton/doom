@@ -81,11 +81,11 @@ ps_rns24:
    SEC
    SBC #3                                  ; unbias: rlo = net
    STA zp_br_r_s
-   JSR rns_select
+   RNS_SELECT                              ; (A = net S)
    JSR px_narrow
    LDA zp_px_s_save                        ; restore + re-select (rlo-
-   STA zp_br_r_s                           ; writer invariant); select
-   JSR rns_select                          ; clobbers A/X -> re-establish
+   STA zp_br_r_s                           ; writer invariant); the macro
+   RNS_SELECT                              ; clobbers A/X -> re-establish
    LDY zp_br_res_l                          ; the REG CONTRACT from the ZP
    LDA zp_br_res_h                          ; results
    RTS
@@ -514,7 +514,7 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ;            rns_go+1/+2 from the rns_vec tables. No ZP vector (the old
 ;            zp_rns_vec pair $C6/$C7 is freed), and JMP abs is 2 cycles
 ;            cheaper than the old JMP (zp).
-;   INVARIANT: every writer of zp_br_r_s MUST re-select (JSR rns_select
+;   INVARIANT: every writer of zp_br_r_s MUST re-select (RNS_SELECT
 ;            or the inlined form) before the next projection, or the
 ;            dispatch runs a stale shifter. Current writers: br_recip
 ;            (arith.s), the vcache hit path (seg_xform.s), chain_reuse_v1
@@ -551,13 +551,9 @@ rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
                                         ; below — so a select patches ONE
                                         ; byte, 2026-07-12)
 
-rns_select:
-.scope
-   LDX zp_br_r_s
-   LDA rns_vec_l-1,X
-   STA rns_go_op
-   RTS
-.endscope
+; (the rns_select SUBROUTINE is retired 2026-07-15: RNS_SELECT macro
+; in bsp/header.s expands at every select site — each already had S in
+; A, so the JSR/RTS and the zp_br_r_s reload were pure tax.)
 rns_vec_all:                               ; ONE table, net shift -2..10 in
    .byte <rns_sm2, <rns_sm1, <rns_s0      ; order; the shrink indexes it
 rns_vec_l:                                ; with X = net+3, the regular

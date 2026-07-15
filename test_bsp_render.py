@@ -247,6 +247,12 @@ _IDX_SWEEP = [2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32, 33, 48, 64, 65, 100,
               128, 129, 200, 256, 257, 400, 512, 513, 800, 1023]
 
 
+
+def _rns_reselect(sc, mem):
+    """Mirror the RNS_SELECT macro (the rns_select subroutine is retired):
+    patch rns_go_op from rns_vec_l[S-1], S = zp_br_r_s ($1B)."""
+    mem[_sym('rns_go_op')] = mem[_sym('rns_vec_l') - 1 + mem[0x1B]]
+
 def test_project_x():
     """fp_project_x (narrow): vx, vx_frac, (M8, S) → sx. Dense sweep:
     every S band × full-range vx (s8) × frac corners."""
@@ -266,7 +272,7 @@ def test_project_x():
         mem[ZP_XFRAC] = vx_frac
         mem[0x1A] = rh               # zp_br_r_m8 (M8)
         mem[0x1B] = rl               # zp_br_r_s (S)
-        sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
+        _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
         sc._run(ENTRY_BR_PROJECT_X)
         got = s16_from_zp(mem, 0x17)
         want = fp.fp_project_x(vx, vx_frac, rh, rl)
@@ -312,7 +318,7 @@ def test_project_x_wide():
         mem[ZP_XFRAC] = vx_frac
         mem[0x1A] = rh
         mem[0x1B] = rl
-        sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
+        _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
         sc._run(ENTRY_AUTO)
         got = mem[0x17] | (mem[0x18] << 8)
         want = fp.fp_project_x(vx, vx_frac, rh, rl) & 0xFFFF
@@ -357,7 +363,7 @@ def test_project_y():
         mem[0x20] = h & 0xFF
         mem[0x1A] = rh
         mem[0x1B] = rl
-        sc._run(_sym('rns_select'))  # refresh the per-vertex shifter vector
+        _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
         sc._run(ENTRY_BR_PROJECT_Y)
         got = s16_from_zp(mem, 0x17)
         # br_project_y outputs HALF_H + Y_BIAS based values (the bias the

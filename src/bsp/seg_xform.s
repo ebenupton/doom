@@ -101,8 +101,8 @@ vch0_ok:
    STA VX1+13,X                            ; rhi (for ap2_solid_proj)
    LDA VC_RLO,Y
    STA zp_br_r_s
-   STA VX1+14,X                            ; rlo
-   JSR rns_select                          ; cached S → re-pick the shifter
+   STA VX1+14,X                            ; rlo (= S; A still holds it)
+   RNS_SELECT                              ; cached S → re-pick the shifter
                                         ; (preserves Y; CLOBBERS X — the
                                         ; vector belongs to whoever wrote
                                         ; rlo LAST)
@@ -132,7 +132,7 @@ vch1_ok:
    LDA VC_RLO+$100,Y
    STA zp_br_r_s
    STA VX1+14,X
-   JSR rns_select
+   RNS_SELECT
    LDX zp_seg_ep
    LDA VC_SXL+$100,Y
    STA VX1+3,X
