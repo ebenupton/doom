@@ -19,7 +19,7 @@ import math
 
 # ── Struct sizes (all powers of 2) ──────────────────────────────────────
 
-VERTEX_SIZE  = 4     # shift 2:  s16 x, s16 y
+VERTEX_SIZE  = 4     # s16 x, s16 y (SoA planes in rom_main; python-side stride)
 NODE_SIZE    = 16    # (legacy AoS reader stride — packed data is now SoA)
 SSECTOR_SIZE = 4     # (legacy)
 # SoA pages at the head of rom_main (see build_packed): 11 node pages
@@ -216,7 +216,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     off_nodes = 0
     off_ss = NODE_SOA_PAGES * 256
     off_verts = NODE_SOA_SIZE
-    off_seg_hdr = off_verts + n_verts * VERTEX_SIZE
+    off_seg_hdr = off_verts + 0x800   # 4 page-split vertex planes (fixed)
     # DIR tables tail the headers: 3 parallel u8 arrays, one entry per
     # distinct primitive diagonal direction (filled during the seg loop).
     _dirs = {}          # (dx', dy') -> id  (0-based; header stores id+4)
@@ -230,9 +230,16 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     rom_main = bytearray(rom_main_size)
 
-    # Vertices
+    # Vertices — page-split SoA planes (XLO/XHI/YLO/YHI, 512 bytes each;
+    # n_verts <= 512 asserted above): junior page idx 0-255, senior 256+.
+    # br_to_view_fetch reads them through senior-bit arms (header key
+    # B & $20) with the plane page baked — no idx*4 pointer build.
     for i, v in enumerate(fp_vertexes):
-        struct.pack_into('<hh', rom_main, off_verts + i * VERTEX_SIZE, v[0], v[1])
+        pg, off = (i >> 8) * 256, i & 0xFF
+        rom_main[off_verts + 0x000 + pg + off] = v[0] & 0xFF
+        rom_main[off_verts + 0x200 + pg + off] = (v[0] >> 8) & 0xFF
+        rom_main[off_verts + 0x400 + pg + off] = v[1] & 0xFF
+        rom_main[off_verts + 0x600 + pg + off] = (v[1] >> 8) & 0xFF
 
     # BSP nodes — point_on_side uses raw s16 values so the prescale rounding
     # doesn't lose a weak axis (nodes where, e.g., raw dx=0 dy=8 would
@@ -519,7 +526,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"Packed WAD: {rom_main_size} ROM main, "
           f"{len(rom_detail)} ROM detail, {rom_recip_size} ROM recip, "
           f"{ram_size} RAM")
-    print(f"  Vertices:    {n_verts} × {VERTEX_SIZE} = {n_verts * VERTEX_SIZE}")
+    print(f"  Vertices:    {n_verts} in 4 page-split planes = 2048")
     print(f"  Nodes:       {n_nodes} × {NODE_SIZE} = {n_nodes * NODE_SIZE}")
     print(f"  Subsectors:  {n_ss} × {SSECTOR_SIZE} = {n_ss * SSECTOR_SIZE}")
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = {n_segs * SEG_HDR_SIZE}")

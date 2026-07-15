@@ -78,6 +78,15 @@ ina
 ;            loader-rebased onto the build's ROM_SEG_HDR page)
 .include "layout.inc"
 
+; Vertex planes (page-split SoA, 2026-07-15): 512 bytes per field,
+; junior page idx 0-255, senior 256+ (select = header key B & $20).
+; ROM_VERTS_C: flat $9C00 (planes end EXACTLY at SEL $A400), banked
+; L2 $A200 (end $A9FF; next resident RCACHE $AD00 — symmap-audited).
+VP_XLO = ROM_VERTS_C + $000
+VP_XHI = ROM_VERTS_C + $200
+VP_YLO = ROM_VERTS_C + $400
+VP_YHI = ROM_VERTS_C + $600
+
 ; NODE_SOA comes from layout.inc (NODE_SOA_C): banked = L0 window head,
 ; flat = $B600 (the hole the retired FHCH stream vacated 2026-07-11 —
 ; the stride-16 headers with inlined heights at +10..15 own $6C00 now).

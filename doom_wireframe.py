@@ -2401,12 +2401,18 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if dot <= 0:
             return
 
-    # ── Read vertex positions from rom_main ──
+    # ── Read vertex positions from rom_main (page-split SoA planes:
+    # XLO/XHI/YLO/YHI, 512 bytes each — mirrors br_to_view_fetch) ──
     verts_off = layout['off_verts']
-    wx1 = read_s16(rom, verts_off + v1_idx * VERTEX_SIZE)
-    wy1 = read_s16(rom, verts_off + v1_idx * VERTEX_SIZE + 2)
-    wx2 = read_s16(rom, verts_off + v2_idx * VERTEX_SIZE)
-    wy2 = read_s16(rom, verts_off + v2_idx * VERTEX_SIZE + 2)
+    def _vplane(plane, i):
+        return rom[verts_off + plane + (i >> 8) * 256 + (i & 0xFF)]
+    def _vs16(lo, hi):
+        v = lo | (hi << 8)
+        return v - 0x10000 if v & 0x8000 else v
+    wx1 = _vs16(_vplane(0x000, v1_idx), _vplane(0x200, v1_idx))
+    wy1 = _vs16(_vplane(0x400, v1_idx), _vplane(0x600, v1_idx))
+    wx2 = _vs16(_vplane(0x000, v2_idx), _vplane(0x200, v2_idx))
+    wy2 = _vs16(_vplane(0x400, v2_idx), _vplane(0x600, v2_idx))
 
     if _USE_ANGLE_SEG:
         # ── Angle-space 2b projection (mirrors 6502 seg_c + seg_project) ──

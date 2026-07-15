@@ -226,31 +226,34 @@ vs_pym_pos:
 ; now costs only the paths that actually rotate. Callers with dx/dy
 ; already staged (jt harness, vxc_frame's ref probe) enter at br_to_view.
 br_to_view_fetch:
-.assert <ROM_VERTS_C = 0, error, "vertex fetch assumes page-aligned ROM_VERTS_C"
-   PAGE BANK_L2                            ; verts live in the L2 window
-   LDA zp_seg_v_idx_l
-   ASL A
-   ASL A                                   ; (idx*4) lo = lo<<2 mod 256 —
-   STA zp_br_p                             ; page-aligned base: no lo add
+.assert <ROM_VERTS_C = 0, error, "vertex planes assume page-aligned ROM_VERTS_C"
+; Page-split vertex planes (VP_*, header.s): senior-bit arm with the
+; plane page BAKED — the idx*4 pointer build is gone (2026-07-15).
+   PAGE BANK_L2                            ; vert planes live in the L2 window
    LDA zp_seg_v_idx_b
-   LSR A
-   LSR A
-   LSR A                                   ; B>>3 = idx>>6 = (idx*4) hi
-   CLC
-   ADC #>ROM_VERTS_C                       ; layout.inc constant
-   STA zp_br_p_h
-   LDY #0
-   LDA (zp_br_p),Y
+   AND #$20                                ; senior: idx >= 256 (B >= 32)
+   BNE vf_hi
+   LDY zp_seg_v_idx_l
+   LDA VP_XLO,Y
    STA zp_br_dx_l
-   INY
-   LDA (zp_br_p),Y
+   LDA VP_XHI,Y
    STA zp_br_dx_h
-   INY
-   LDA (zp_br_p),Y
+   LDA VP_YLO,Y
    STA zp_br_dy_l
-   INY
-   LDA (zp_br_p),Y
+   LDA VP_YHI,Y
    STA zp_br_dy_h
+   JMP br_to_view
+vf_hi:
+   LDY zp_seg_v_idx_l
+   LDA VP_XLO+$100,Y
+   STA zp_br_dx_l
+   LDA VP_XHI+$100,Y
+   STA zp_br_dx_h
+   LDA VP_YLO+$100,Y
+   STA zp_br_dy_l
+   LDA VP_YHI+$100,Y
+   STA zp_br_dy_h
+; falls into br_to_view
 br_to_view:
 ; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
 ; their operands — and the body has no local labels; same rule as
