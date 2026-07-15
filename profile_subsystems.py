@@ -43,7 +43,8 @@ def profile(px, py, ab):
     sc = dw._span_clip_6502
     tc.setup_wad(sc); tc.setup_view_zp(sc, px, py, ab)
     sc._run(tc.ENTRY_BR_VIEW_SETUP)
-    sc.init(); sc.clear_screen(); sc._run(sym('jt_br_init_frame'))
+    sc.init(); sc.clear_screen()
+    from bsp_render_6502 import poke_init_frame_state; poke_init_frame_state(sc.mpu.memory)
     mpu = sc.mpu; mem = mpu.memory
     mpu.pc = sym('jt_br_render_frame'); mpu.sp = 0xFD; mpu.p = 0x30
     mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF

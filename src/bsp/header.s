@@ -203,7 +203,6 @@ jt_br_render_subsector: JMP br_render_subsector                 ; $4818  process
 ;        by the hybrid Python-BSP + 6502-seg harness
 ;        to isolate BSP-traversal vs seg-processor
 ;        divergence.
-jt_br_init_frame: JMP br_init_frame                       ; $481B   clear vcache valid bitmap (for hybrid mode)
 ; Animated-sector entries (bodies in anim.s): kept in THIS table so the
 ; beebasm drivers see one pinned dispatch block and everything after the
 ; MAIN segment can float freely inside the CODE region.
@@ -217,7 +216,6 @@ jt_anim_init: JMP anim_init                          ; +$21
 .assert jt_br_umul8 = ENGINE_JT, error, "jump table moved off ENGINE_JT (driver ABI)"
 .assert jt_br_view_setup = JT_VIEW_SETUP, error
 .assert jt_br_render_frame = JT_RENDER_FRAME, error
-.assert jt_br_init_frame = JT_INIT_FRAME, error
 .assert jt_anim_tick = JT_ANIM_TICK, error
 .assert jt_anim_init = JT_ANIM_INIT, error
 

@@ -176,7 +176,7 @@ ORG DRV_ORG
     LDA backhi:STA &70
     LDA #BANK_L0 :STA &FE30 : JSR JT_VIEW_SETUP     ; br_view_setup
     LDA #BANK_C :STA &FE30 : JSR CLIP_JT            ; span_init / pool
-    LDA #BANK_L0 :STA &FE30 : JSR JT_INIT_FRAME : JSR JT_RENDER_FRAME
+    LDA #BANK_L0 :STA &FE30 : JSR JT_RENDER_FRAME  ; (init is inline at render entry)
     JSR flip_sched
     JMP frame
 

@@ -26,7 +26,6 @@ import trace_compare as tc
 
 from symmap import sym as _sym
 ENTRY_BR_RENDER_SUBSECTOR = _sym('jt_br_render_subsector')
-ENTRY_BR_INIT_FRAME       = _sym('jt_br_init_frame')
 _E_MARK_SOLID = _sym('jt_mark_solid')
 _E_TFR        = _sym('jt_tighten_from_records')
 _E_DCL_S16    = _sym('jt_draw_clip_s16')
@@ -119,7 +118,8 @@ def run_position(px, py, ab, verbose=False):
     sc._run(tc.ENTRY_BR_VIEW_SETUP)
     sc.init()
     sc.clear_screen()
-    sc._run(ENTRY_BR_INIT_FRAME)
+    from bsp_render_6502 import poke_init_frame_state
+    poke_init_frame_state(sc.mpu.memory)
 
     trace_all = []
     install_tracing(sc, trace_all)

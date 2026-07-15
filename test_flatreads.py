@@ -15,7 +15,7 @@ from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 from span_clip_6502 import SpanClip6502
 
 import abi
-ENTRY_VIEW, ENTRY_RENDER, ENTRY_INIT_FRAME = abi.JT_VIEW_SETUP, abi.JT_RENDER_FRAME, abi.JT_INIT_FRAME
+ENTRY_VIEW, ENTRY_RENDER = abi.JT_VIEW_SETUP, abi.JT_RENDER_FRAME
 ENTRY_SPAN_INIT = abi.CLIP_JT
 ZP = {0x00:0x00,0x01:0xEE,0x02:0x40,0x03:0xD2,0x04:0x06,0x05:0,0x06:0,0x07:0,
       0x08:0,0x09:1,0x0A:1,0x90:0x70,0x91:0xFF,0x92:0x92,0x93:0xFE, 0x70:0x58,
@@ -66,8 +66,7 @@ def main():
     bare.select(BANK_C); run(ENTRY_SPAN_INIT)
     for a in range(0x5800,0x6C00): bare[a]=0
     bare.select(BANK_L0)
-    bare.hits.clear()              # only log during INIT_FRAME + RENDER
-    run(ENTRY_INIT_FRAME)
+    bare.hits.clear()              # only log during RENDER (init is inline)
     run(ENTRY_RENDER)
 
     if not bare.hits:

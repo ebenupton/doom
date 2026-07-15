@@ -30,7 +30,6 @@ ZP_PYRAW_LO     = _sym('zp_br_pyraw_l')
 
 ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup')
 ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame')
-ENTRY_BR_INIT_FRAME   = _sym('jt_br_init_frame')
 
 # Table load addresses: harness-owned placement decisions (the engine reads
 # these tables only through the pointer slots above), NOT engine symbols.
@@ -45,6 +44,17 @@ ROM_VERTS_BASE   = 0x9C00
 NODE_SOA_BASE    = 0xB600       # node/ss SoA pages (old FHCH hole)
 ROM_BBOX_BASE   = 0xC600   # MUST stay page-aligned: br_bbox_visible/bcac_index
                            # build/split the bbox pointer byte-at-a-time
+
+
+def poke_init_frame_state(mem):
+    """Mirror br_render_frame's inline per-frame init for partial-flow
+    harnesses (the standalone jt_br_init_frame entry retired 2026-07-15):
+    records-pointer ground state + the 60-byte vcache valid clear."""
+    mem[_sym('zp_dcl_rec_buf')] = 0
+    mem[_sym('zp_dcl_rec_buf_h')] = 0
+    base = _sym('VCACHE_VALID_BASE')
+    for i in range(60):
+        mem[base + i] = 0
 
 
 class BspRender6502:
@@ -141,7 +151,6 @@ class BspRender6502:
         sc._run(ENTRY_BR_VIEW_SETUP)
         sc.init()
         sc.clear_screen()
-        sc._run(ENTRY_BR_INIT_FRAME)
         cyc = sc._run(ENTRY_BR_RENDER_FRAME, max_cycles=10000000)
         self.last_cycles = cyc
         return cyc

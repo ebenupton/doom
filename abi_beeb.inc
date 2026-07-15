@@ -7,9 +7,8 @@ BANK_L2 = 7                             \ sideways bank: angle/bbox/recip/verts/
 ENGINE_JT = &2C00                       \ driver-facing jump table = MAIN segment head (link-asserted)
 JT_VIEW_SETUP = ENGINE_JT+&09           \ br_view_setup
 JT_RENDER_FRAME = ENGINE_JT+&15         \ br_render_frame
-JT_INIT_FRAME = ENGINE_JT+&1B           \ br_init_frame
-JT_ANIM_TICK = ENGINE_JT+&1E            \ anim_tick (PAGE BANK_L2 first)
-JT_ANIM_INIT = ENGINE_JT+&21            \ anim_init (PAGE BANK_L2 first)
+JT_ANIM_TICK = ENGINE_JT+&1B            \ anim_tick (PAGE BANK_L2 first)
+JT_ANIM_INIT = ENGINE_JT+&1E            \ anim_init (PAGE BANK_L2 first)
 CLIP_JT = &8000                         \ clipper jump table; entry 0 = span_init
 HUD_ENTRY = &A400                       \ hud_draw (bank C window)
 BCA_WS = &1B40                          \ angle-module bbox workspace (box vals at +$10..$17)

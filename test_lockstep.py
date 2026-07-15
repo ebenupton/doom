@@ -13,7 +13,7 @@ from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 from span_clip_6502 import SpanClip6502
 
 import abi
-ENTRY_VIEW, ENTRY_RENDER, ENTRY_INIT_FRAME = abi.JT_VIEW_SETUP, abi.JT_RENDER_FRAME, abi.JT_INIT_FRAME
+ENTRY_VIEW, ENTRY_RENDER = abi.JT_VIEW_SETUP, abi.JT_RENDER_FRAME
 ENTRY_SPAN_INIT = abi.CLIP_JT
 ZP = {0x00:0x00,0x01:0xEE,0x02:0x40,0x03:0xD2,0x04:0x06,0x05:0,0x06:0,0x07:0,
       0x08:0,0x09:1,0x0A:1,0x90:0x70,0x91:0xFF,0x92:0x92,0x93:0xFE, 0x70:0x58,
@@ -55,12 +55,12 @@ def run_entry(sc, entry, maxc=10_000_000):
     return False
 
 def setup_common(sc, bare_mode):
-    # both: VIEW_SETUP, span_init(bank C), clear FB, INIT_FRAME
+    # both: VIEW_SETUP, span_init(bank C), clear FB (per-frame init is
+    # inline at RENDER entry since 2026-07-15)
     run_entry(sc, ENTRY_VIEW)
     sc.mpu.memory.select(BANK_C); run_entry(sc, ENTRY_SPAN_INIT)
     for a in range(0x5800,0x6C00): sc.mpu.memory[a]=0
     sc.mpu.memory.select(BANK_L0)
-    run_entry(sc, ENTRY_INIT_FRAME)
 
 def main():
     # model: drive the BankedBspRender's own sc with the spawn ZP set
@@ -73,7 +73,7 @@ def main():
     setup_common(bsc, True)
 
     # before RENDER: diff persistent low-RAM state ($00-$1B40). Both ran the same
-    # VIEW+init+INIT_FRAME, so any difference here is initial state bare lacks.
+    # VIEW+init, so any difference here is initial state bare lacks.
     # exclude dead flat code blobs the banked build never calls: bsp_d $0900-$09FF,
     # bsp_b $0A00-$0BE7 (BSP_STACK/visited live here too but are per-frame), focus
     # on ZP and the ROM-pointer/data region.

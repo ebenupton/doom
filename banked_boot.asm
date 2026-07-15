@@ -86,7 +86,7 @@ ORG DRV_ORG
     STA (&EE),Y : INY : BNE clr : INC &EF : DEX : BNE clr
     ; --- render one frame (entries page banks internally) ---
     LDA #4 :STA &FE30
-    JSR JT_INIT_FRAME                               ; br_init_frame
+    ; (per-frame init is inline at JT_RENDER_FRAME entry, 2026-07-15)
     JSR JT_RENDER_FRAME                             ; br_render_frame
 .spin
     JMP spin

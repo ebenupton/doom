@@ -7,9 +7,8 @@ ENGINE_JT = 0x2C00  # driver-facing jump table = MAIN segment head (link-asserte
 ENGINE_JT_FLAT = 0x3670
 JT_VIEW_SETUP = 0x2C09  # br_view_setup
 JT_RENDER_FRAME = 0x2C15  # br_render_frame
-JT_INIT_FRAME = 0x2C1B  # br_init_frame
-JT_ANIM_TICK = 0x2C1E  # anim_tick (PAGE BANK_L2 first)
-JT_ANIM_INIT = 0x2C21  # anim_init (PAGE BANK_L2 first)
+JT_ANIM_TICK = 0x2C1B  # anim_tick (PAGE BANK_L2 first)
+JT_ANIM_INIT = 0x2C1E  # anim_init (PAGE BANK_L2 first)
 CLIP_JT = 0x8000  # clipper jump table; entry 0 = span_init
 CLIP_JT_FLAT = 0x2000
 HUD_ENTRY = 0xA400  # hud_draw (bank C window)

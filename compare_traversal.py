@@ -27,7 +27,6 @@ import trace_compare as tc
 
 from symmap import sym as _sym
 ENTRY_BR_RENDER_SUBSECTOR = _sym('jt_br_render_subsector')
-ENTRY_BR_INIT_FRAME       = _sym('jt_br_init_frame')
 ENTRY_BR_RENDER_FRAME     = _sym('jt_br_render_frame')
 _E_HAS_GAP = _sym('jt_has_gap')
 
@@ -50,7 +49,8 @@ def setup(sc, px, py, ab):
     sc._run(tc.ENTRY_BR_VIEW_SETUP)
     sc.init()
     sc.clear_screen()
-    sc._run(ENTRY_BR_INIT_FRAME)
+    from bsp_render_6502 import poke_init_frame_state
+    poke_init_frame_state(sc.mpu.memory)
 
 
 def install_tracing(sc, trace_all):

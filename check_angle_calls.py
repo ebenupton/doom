@@ -37,7 +37,8 @@ def standalone(top,bot,left,right,px,py,ab):
 
 def check(px,py,ab):
     sc=SpanClip6502(); tc.setup_wad(sc); tc.setup_view_zp(sc,px,py,ab)
-    sc._run(tc.ENTRY_BR_VIEW_SETUP); sc.init(); sc.clear_screen(); sc._run(sym('jt_br_init_frame'))
+    sc._run(tc.ENTRY_BR_VIEW_SETUP); sc.init(); sc.clear_screen()
+    from bsp_render_6502 import poke_init_frame_state; poke_init_frame_state(sc.mpu.memory)
     mem=sc.mpu.memory; mpu=sc.mpu
     vs_py=[]; vs_st=[]; n=0
     armed=None

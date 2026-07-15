@@ -35,54 +35,22 @@
 ; zp_bsp_stack_sp = the saved S for the is_full unwind. Ids are u8
 ; end to end (2026-07-15) — a child's subsector-ness lives in its
 ; PARENT's TYPE byte (NF_RLEAF/NF_LLEAF), not in the link.
-; ============================================================================
-; br_init_frame — clear vcache valid bitmap (so a fresh frame rebuilds
-; vertex transforms). Exposed so the hybrid Python-BSP harness can call
-; it before its first subsector pass.
-;   Inputs:  none (VCACHE_VALID_BASE fixed at $1B00).
-;   Output:  VCACHE_VALID_BASE[0..58] = 0 (one valid bit per vertex,
-;            59 bytes covering 467 vertices).
-;   Clobbers: A, X.
-br_init_frame:
-; once-per-frame records-pointer ground state (2026-07-11): the lo byte
-; is never written non-zero anywhere (record pages are page-aligned) and
-; every draw site arms/disarms the hi byte explicitly — the old per-seg
-; zeroing was dead stores on culled segs.
-   LDA #0
-   STA zp_dcl_rec_buf
-   STA zp_dcl_rec_buf_h
-; The VWH projection cache is self-validating: its key is the COMPLETE
-; input (rhi,rlo,h) to br_project_y's raw body, a pure function — a hit is
-; correct regardless of age (stale key -> mismatch -> miss). Per-frame
-; invalidation is therefore unnecessary; we skip the 256-byte clear and
-; let entries persist (a free cross-frame hit-rate bonus under motion).
-; (VWHC_VALID must be zeroed ONCE at boot; the key check is the backstop
-;  for any residual garbage. The vcache below IS player-relative and must
-;  still clear every frame.)
-; 60-byte clear (59 used + 1 pad — the bitmap sits in the vcache
-; reservation up to $1B3F), unrolled 4x; A is still 0 from above.
-   LDX #60
-bif_clr:
-   STA VCACHE_VALID_BASE-1,X
-   STA VCACHE_VALID_BASE-2,X
-   STA VCACHE_VALID_BASE-3,X
-   STA VCACHE_VALID_BASE-4,X
-   DEX
-   DEX
-   DEX
-   DEX
-   BNE bif_clr
-   RTS
-; (this callable copy serves jt_br_init_frame — the harness inits
-; standalone; br_render_frame carries its own inline copy below)
+; (br_init_frame retired 2026-07-15: the per-frame init lives inline at
+; br_render_frame entry below; the jt slot and its harness/driver
+; callers are gone — partial-flow harnesses poke the state from Python,
+; see bsp_render_6502.poke_init_frame_state.)
 
 br_render_frame:
 .scope bsp_walk                         ; named: br_dcache_frame SMC-patches
                                         ; bsp_walk::bv_site_near/_far operands
-; --- br_init_frame, inlined (the JSR/RTS was per-frame tax; the jt
-; copy above remains for the harness). Records-pointer ground state +
-; the per-frame vcache valid-bitmap clear (player-relative — see the
-; jt copy's banner). ---
+; --- Per-frame init (the standalone br_init_frame is retired).
+; Records-pointer ground state: the lo byte is never written non-zero
+; anywhere (record pages are page-aligned) and every draw site
+; arms/disarms the hi byte explicitly. Then the vcache valid-bitmap
+; clear — entries are player-relative, so every frame starts cold
+; (the VWH projection cache, by contrast, is self-validating and
+; persists). 60-byte clear (59 used + 1 pad, inside the vcache
+; reservation up to $1B3F), four 15-byte stripes off one X. ---
    LDA #0
    STA zp_dcl_rec_buf
    STA zp_dcl_rec_buf_h

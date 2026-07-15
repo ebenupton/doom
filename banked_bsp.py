@@ -167,16 +167,13 @@ class BankedBspRender(BspRender6502):
         # longer apply. Swap in the banked-map addresses around the call.
         import bsp_render_6502 as _br
         from symmap import sym as _sym
-        saved = (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_INIT_FRAME,
-                 _br.ENTRY_BR_RENDER_FRAME)
+        saved = (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_RENDER_FRAME)
         _br.ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup', banked=1)
-        _br.ENTRY_BR_INIT_FRAME   = _sym('jt_br_init_frame', banked=1)
         _br.ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame', banked=1)
         try:
             return super().render_frame(px, py, ab, floor_z)
         finally:
-            (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_INIT_FRAME,
-             _br.ENTRY_BR_RENDER_FRAME) = saved
+            (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_RENDER_FRAME) = saved
 
 
 def fb_mask(r):
