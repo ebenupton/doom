@@ -101,22 +101,24 @@ def C(v): return ('c', v & 0xFF)
 def M(a): return ('m', a)
 
 class St:
-    __slots__ = ('r', 'f', 'mem', 'zn', 'cmpm')
+    __slots__ = ('r', 'f', 'mem', 'zn', 'cmpm', 'bank')
     def __init__(s):
         s.r = {'A': U, 'X': U, 'Y': U}
         s.f = {'C': None, 'Z': None, 'N': None, 'V': None}
         s.mem = {}
         s.zn = None            # 'A'/'X'/'Y': Z,N reflect that register
         s.cmpm = None          # (reg, imm): Z is (reg == imm)
+        s.bank = None          # ROMSEL ($FE30) state: paged bank or unknown
     def clone(s):
         t = St.__new__(St)
         t.r = dict(s.r); t.f = dict(s.f); t.mem = dict(s.mem)
-        t.zn = s.zn; t.cmpm = s.cmpm
+        t.zn = s.zn; t.cmpm = s.cmpm; t.bank = s.bank
         return t
     def havoc(s):
         s.r = {'A': U, 'X': U, 'Y': U}
         s.f = {'C': None, 'Z': None, 'N': None, 'V': None}
         s.mem = {}; s.zn = None; s.cmpm = None
+        # NB: bank survives havoc-by-JSR only via transfer()'s own rule
     def join(s, o):
         ch = False
         for k in 'AXY':
@@ -132,10 +134,12 @@ class St:
             s.zn = None; ch = True
         if s.cmpm != o.cmpm and s.cmpm is not None:
             s.cmpm = None; ch = True
+        if s.bank != o.bank and s.bank is not None:
+            s.bank = None; ch = True
         return ch
     def key(s):
         return (tuple(sorted(s.r.items())), tuple(sorted(s.f.items())),
-                tuple(sorted(s.mem.items())), s.zn, s.cmpm)
+                tuple(sorted(s.mem.items())), s.zn, s.cmpm, s.bank)
 
 def setZN(st, val, src):
     if val != U and val[0] == 'c':
@@ -177,6 +181,10 @@ def transfer(st, ins, volatile):
             return M(a)
         return U
 
+    if mn in ('STA',) and mode == 'abs' and opnd == 0xFE30:
+        v = st.r['A']
+        st.bank = v[1] if (v != U and v[0] == 'c') else None
+        return st
     if mn in ('LDA', 'LDX', 'LDY'):
         reg = mn[2]
         v = read_val()
@@ -332,6 +340,7 @@ def transfer(st, ins, volatile):
         pass
     elif mn == 'JSR':
         st.havoc()
+        st.bank = None         # callee may page
     # JMP/branches/RTS/RTI/BRK handled by CFG
     return st
 
@@ -356,18 +365,21 @@ def refine(st, mn, taken):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--quick', action='store_true')
+    ap.add_argument('--banked', action='store_true',
+                    help='trace the BANKED model (PAGE ops visible)')
     ap.add_argument('--json', default=None)
     args = ap.parse_args()
 
     import pygame; pygame.init()
     import doom_wireframe as dw, compare_renders as CR, fp
-    from bsp_render_6502 import (BspRender6502, ENTRY_BR_RENDER_FRAME,
-                                 ENTRY_BR_VIEW_SETUP,
+    from bsp_render_6502 import (BspRender6502,
                                  ZP_PX, ZP_PY, ZP_VZ, ZP_PXRAW_LO,
                                  ZP_PYRAW_LO, ZP_SMAG, ZP_SNEG, ZP_SONE,
                                  ZP_CMAG, ZP_CNEG, ZP_CONE)
-    from symmap import sym, _load
-    table, _amb = _load(banked=0)
+    from symmap import sym as _sym0, _load
+    BK = 1 if args.banked else 0
+    def sym(n): return _sym0(n, banked=BK)
+    table, _amb = _load(banked=BK)
     code_syms = sorted((v, k) for k, v in table.items() if 0x1000 <= v <= 0xFE00)
     import bisect
     def sym_near(pc):
@@ -378,7 +390,7 @@ def main():
 
     # code segments from the linker map
     segs = []
-    mapf = os.path.join('build', 'engine_b0c0.map')
+    mapf = os.path.join('build', f'engine_b{1 if args.banked else 0}c0.map')
     with open(mapf) as f:
         inseg = False
         for ln in f:
@@ -396,14 +408,22 @@ def main():
     def in_code(pc):
         return any(lo <= pc <= hi for lo, hi in segs)
 
-    r = BspRender6502(dw.packed_layout, dw.packed_rom_main,
-                      dw.packed_rom_detail, dw.packed_bbox_table,
-                      dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+    if args.banked:
+        from banked_bsp import BankedBspRender as _RC
+    else:
+        _RC = BspRender6502
+    r = _RC(dw.packed_layout, dw.packed_rom_main,
+            dw.packed_rom_detail, dw.packed_bbox_table,
+            dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+    ENTRY_VIEW = sym('jt_br_view_setup')
+    ENTRY_RENDER = sym('jt_br_render_frame')
     sc = r.sc; mpu = sc.mpu; mem = mpu.memory
 
     # ── trace ────────────────────────────────────────────────────────────
     count = {}
     seen = {}
+    pagew = {}      # pc -> [same_bank, total] for STA $FE30 sites (banked)
+    curbank = [None]
     positions = CR.POSITIONS[:3] if args.quick else CR.POSITIONS
     for (px, py, ab) in positions:
         fl = dw.player_floor(px, py)
@@ -424,8 +444,8 @@ def main():
         mem[ZP_CMAG] = cm; mem[ZP_CNEG] = 1 if cn else 0
         mem[ZP_CONE] = 1 if co else 0
         mem[sym('bca_ab')] = ab & 0xFF
-        sc._run(ENTRY_BR_VIEW_SETUP); sc.init(); sc.clear_screen()
-        mpu.pc = ENTRY_BR_RENDER_FRAME; mpu.sp = 0xFD; mpu.p = 0x30
+        sc._run(ENTRY_VIEW); sc.init(); sc.clear_screen()
+        mpu.pc = ENTRY_RENDER; mpu.sp = 0xFD; mpu.p = 0x30
         mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF
         for _ in range(10000000):
             pc = mpu.pc
@@ -436,6 +456,12 @@ def main():
             else:
                 count[pc] = 1
                 seen[pc] = (mem[pc], mem[pc+1], mem[pc+2])
+            if seen[pc][0] == 0x8D and seen[pc][1] == 0x30 and seen[pc][2] == 0xFE:
+                st = pagew.setdefault(pc, [0, 0])
+                st[1] += 1
+                if mpu.a == curbank[0]:
+                    st[0] += 1
+                curbank[0] = mpu.a
             mpu.step()
     print(f"trace: {len(positions)} frames, {sum(count.values())} steps, "
           f"{len(seen)} distinct PCs", file=sys.stderr)
@@ -586,7 +612,7 @@ def main():
 
     # ── forward fixpoint ────────────────────────────────────────────────
     IN = {}
-    entries = set(jsr_targets & set(blocks)) | {ENTRY_BR_RENDER_FRAME}
+    entries = set(jsr_targets & set(blocks)) | {ENTRY_RENDER}
     for lead in blocks:
         if lead not in has_pred:
             entries.add(lead)
@@ -757,6 +783,15 @@ def main():
                                              txt=f"{mn} ${opnd:04X} — slot "
                                                  f"already holds "
                                                  f"${st.r[reg][1]:02X}"))
+                # F9: redundant PAGE — STA $FE30 with the bank already
+                # current on every modeled path (LDA #bank + STA pair)
+                if mn == 'STA' and mode == 'abs' and opnd == 0xFE30:
+                    v = st.r['A']
+                    if v != U and v[0] == 'c' and st.bank == v[1]:
+                        findings.append(dict(cat='page_same', pc=pc, n=n,
+                                             save=6 * n,
+                                             txt=f"PAGE {v[1]} — bank "
+                                                 f"already {v[1]}"))
                 # F5: dead register write (rewritten in-block, unread,
                 #     flags unconsumed)
                 if mn in ('LDA', 'LDX', 'LDY', 'TXA', 'TYA', 'TAX', 'TAY') \
@@ -798,6 +833,13 @@ def main():
         except Exception:
             return "?"
 
+    if pagew:
+        print("\nPAGE sites (dynamic same-bank rate; 100% = elision candidate "
+              "pending caller audit):")
+        for pc, (same, tot) in sorted(pagew.items(), key=lambda kv: -kv[1][0]):
+            if same:
+                print(f"  ${pc:04X} {near(pc):34} same {same}/{tot}"
+                      f" ({100*same/tot:.0f}%)  save {6*same}")
     total = sum(f['save'] for f in findings if f['cat'] != 'known_store')
     print(f"\n{len(findings)} findings; est. cycle savings (excl. "
           f"known_store): {total} on the traced suite\n")

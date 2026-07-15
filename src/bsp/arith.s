@@ -128,95 +128,65 @@ pos:
 .assert (RECIP_BASE & $FF) = 0, error   ; 4-page table indexed (page | t1)
 br_recip:
 .scope
-   PAGE BANK_L2                            ; recip table lives in bank L2
-; --- Clamp vy_idx to [2, 1023] ---
-   LDA zp_br_t1
-   CMP #4
-   BCC c_hi_ok
-   LDA #$FF
-   STA zp_br_t0
-   LDA #3
-   STA zp_br_t1
-c_hi_ok:
-; A = t1 on both arrival paths (BCC kept it / clamp set 3) — but the
-; FLAGS are the CMP's, not t1's: test explicitly (C set iff t1 >= 1)
-   CMP #1
-   BCS c_lo_ok
-; HI > 0 → ≥ 256 ≥ 2, OK
-   LDA zp_br_t0
-   CMP #2
-   BCS c_lo_ok
-   LDA #2
-   STA zp_br_t0
-c_lo_ok:
-
-; --- M8 = RECIP_M8[idx]: 4-way page dispatch on idx.hi (clamped to
-; [0,3] above) instead of building a ZP pointer — abs,Y beats (zp),Y by
-; ~10 cycles on the dominant t1=0 page (idx < 256 covers S <= 8ish;
-; measured S histogram peaks 7-9). zp_br_p no longer touched here. ---
+; (M8, S) for vy_idx in zp_br_t0/t1 (9.1 fixed point), then rns_select.
+; S = bit_length(idx-1) ships as DATA now (2026-07-15): the junior page
+; (idx < 256 — the measured-dominant case) reads SRECIP[lo] (low clamp
+; BAKED: S[0..2] = 1, matching the M8 table's baked [0..2] entries);
+; the hi pages have CONSTANT S (9 / 10) with exactly two one-off
+; exceptions (idx 256 -> 8, idx 512 -> 9) handled in their arms. The
+; old low clamp, the idx-1 subtract and the bit-length compare cascade
+; are all gone (~30 cycles on the common path).
+   PAGE BANK_L2                            ; recip + SRECIP live in L2
+                                        ; (LOAD-BEARING: the VXC warm path
+                                        ; arrives bank-C paged)
    LDY zp_br_t0
    LDA zp_br_t1
-   BEQ rcp_p0                              ; page 0: the common case
-   LSR A                                   ; 1,2,3 -> 0,1,1 with C = bit 0
+   BEQ rcp_p0                              ; idx < 256: dominant
+   CMP #4
+   BCS rcp_clamp                           ; idx >= 1024 -> clamp to 1023
+   LSR A
    BEQ rcp_p1                              ; t1 = 1
    BCS rcp_p3                              ; t1 = 3
-   LDA RECIP_BASE+$200,Y                   ; t1 = 2
-   JMP rcp_have                            ; (JMP, not BNE: M8 can be 0)
+; t1 = 2: S = 10 except idx == 512 (Y == 0) -> 9
+   LDA RECIP_BASE+$200,Y
+   STA zp_br_r_m8
+   LDA #10
+   CPY #0
+   BNE rcp_s
+   LDA #9
+rcp_s:
+   STA zp_br_r_s
+   JMP rns_select                          ; pick the vectored shifter (RTSes)
+rcp_clamp:
+   LDY #$FF                                ; idx := 1023 (t1 -> page 3)
 rcp_p3:
+; t1 = 3: S = 10 always
    LDA RECIP_BASE+$300,Y
-   JMP rcp_have
+   STA zp_br_r_m8
+   LDA #10
+   BNE rcp_s                               ; (A = 10: always)
 rcp_p1:
+; t1 = 1: S = 9 except idx == 256 (Y == 0) -> 8
    LDA RECIP_BASE+$100,Y
-   JMP rcp_have
+   STA zp_br_r_m8
+   LDA #9
+   CPY #0
+   BNE rcp_s
+   LDA #8
+   BNE rcp_s                               ; (A = 8: always)
 rcp_p0:
    LDA RECIP_BASE,Y
-rcp_have:
-   STA zp_br_r_m8                           ; M8
-
-; --- S = bit_length(idx - 1); idx >= 2 so idx-1 >= 1 ---
-   LDA zp_br_t0
-   SEC
-   SBC #1
-   TAX                                     ; X = lo(idx-1)
-   LDA zp_br_t1
-   SBC #0                                  ; A = hi(idx-1), in [0,3]
-   BEQ s_scan_lo
-   CMP #1
-   BEQ s_9
-   LDA #10                                 ; hi = 2 or 3 → top bit 9 → S = 10
-   STA zp_br_r_s
-   JMP rns_select                          ; pick the vectored shifter (RTSes)
-s_9:
-   LDA #9                                  ; hi = 1 → top bit 8 → S = 9
+   STA zp_br_r_m8
+   LDA srecip_tab,Y
    STA zp_br_r_s
    JMP rns_select
-s_scan_lo:
-; bit_length of X (>= 1): descending compare cascade
-   LDA #8
-   CPX #128
-   BCS s_have
-   LDA #7
-   CPX #64
-   BCS s_have
-   LDA #6
-   CPX #32
-   BCS s_have
-   LDA #5
-   CPX #16
-   BCS s_have
-   LDA #4
-   CPX #8
-   BCS s_have
-   LDA #3
-   CPX #4
-   BCS s_have
-   LDA #2
-   CPX #2
-   BCS s_have
-   LDA #1                                  ; X == 1
-s_have:
-   STA zp_br_r_s                           ; S
-   JMP rns_select                          ; pick the vectored shifter (RTSes)
+
+; SRECIP: 256-byte junior-page S table — ASSEMBLED data in the CODE
+; region (main RAM: bank-independent, no loader involvement; the first
+; flat placement at $1A00 sat on the RCACHE psi plane and rotcache
+; caught it). Static and map-independent (src/srecip.inc, generated).
+srecip_tab:
+.include "srecip.inc"
 .endscope
 
 ; ============================================================================
