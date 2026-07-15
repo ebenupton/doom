@@ -617,7 +617,13 @@ step_no_top:
    LDA #1
    STA zp_dcl_rec_off
 ; BOT_RECORDS = $0800
-   PAGE BANK_C
+; (no PAGE: entry here is provably bank-C. !NEEDBT paths paged C at
+;  ft_no_needbt and every fb path preserves it; NEEDBT means the
+;  step-top emit just paged C. The ONLY non-C corridor into the
+;  cascade — portal + NEEDBT + ch<=vz skipping ft in bank L2 — dies at
+;  step-top's PAGE. That corridor is exactly why the step-top and
+;  fb_set_line PAGEs above are LOAD-BEARING: do not elide them.
+;  Audited 2026-07-15.)
    JSR SC_DRAW_S16_H
 step_no_bot:
 step_skip:
@@ -848,7 +854,9 @@ emit_vert_sx1:
    STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h
-   PAGE BANK_C
+; (no PAGE: verticals run strictly after the horizontal cascade, which
+;  ends bank-C on every path — see the step-bot audit note — and the
+;  clipper never re-pages)
    JMP SC_DRAW_S16
 
 ; (see banner above emit_vert_sx1)
@@ -861,7 +869,7 @@ emit_vert_sx2:
    STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h
-   PAGE BANK_C
+; (no PAGE: same audit as sx1 above)
    JMP SC_DRAW_S16
 
 
