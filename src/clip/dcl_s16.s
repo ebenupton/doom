@@ -627,14 +627,77 @@ main_clip:
    LDA zp_line_xl_h
    CMP zp_line_xr_h
    BNE mc_ordered
-; x1 == x2 (s16): degenerate iff y1 == y2 too
+; x1 == x2 (s16): degenerate iff y1 == y2 too, else a VERTICAL — the
+; clamp fast path below (the generic path staged anchors and ran
+; s16_interp twice just to hand back x unchanged)
    LDA zp_line_yl_l
    CMP zp_line_yr_l
-   BNE mc_ordered
+   BNE mc_vertical
    LDA zp_line_yl_h
    CMP zp_line_yr_h
-   BNE mc_ordered
+   BNE mc_vertical
    RTS                                     ; zero-length point → reject
+
+mc_vertical:
+; Vertical clamp (2026-07-15). Clipping a vertical to the u8 box is a
+; y-clamp: the x at any y-boundary IS x (s16_interp's dy==0 early-out
+; returned exactly that, ~700 cycles later). Bit-exact vs the generic
+; path by construction; the engine's vertical emitters are the only
+; live callers of this entry and always arrive disarmed. ARMED lines
+; (harness wrapper only) keep the generic path — its y-census emits
+; flat verdict records this fast path doesn't model.
+   LDA zp_dcl_rec_buf_h
+   BNE mc_ordered
+; x1 == x2, so off-screen x is same-side by definition: reject unless
+; x in [0,255] (hi == 0)
+   LDA zp_line_xl_h
+   BNE mcv_rej
+; clamp y1 (s16: in-band iff hi == 0; hi < 0 → above; hi > 0 → below),
+; rejecting the same-side-out pairs the generic quick-reject catches
+   LDA zp_line_yl_h
+   BEQ mcv_y1_done                         ; y1 in band
+   BMI mcv_y1_neg
+   LDA zp_line_yr_h                        ; y1 below: y2 also below → out
+   BMI mcv_y1_cl
+   BNE mcv_rej
+mcv_y1_cl:
+   LDA #$FF
+   STA zp_line_yl_l
+   LDA #0
+   STA zp_line_yl_h
+   BEQ mcv_y1_done                         ; always
+mcv_y1_neg:
+   LDA zp_line_yr_h                        ; y1 above: y2 also above → out
+   BMI mcv_rej
+   LDA #0
+   STA zp_line_yl_l
+   STA zp_line_yl_h
+mcv_y1_done:
+; clamp y2
+   LDA zp_line_yr_h
+   BEQ mcv_y2_done
+   BMI mcv_y2_neg
+   LDA #$FF
+   STA zp_line_yr_l
+   LDA #0
+   STA zp_line_yr_h
+   BEQ mcv_y2_done                         ; always
+mcv_y2_neg:
+   LDA #0
+   STA zp_line_yr_l
+   STA zp_line_yr_h
+mcv_y2_done:
+; clamped to a point (one end was AT the boundary) → reject, exactly
+; as the generic post-clip degen check does
+   LDA zp_line_yl_l
+   CMP zp_line_yr_l
+   BEQ mcv_rej
+; all-u8 vertical; disarmed, so no flush is owed (DCLV_S16VY holds the
+; $80 written at entry — same state the fast-u8 path leaves)
+   JMP draw_clipped_line
+mcv_rej:
+   RTS
+
 mc_ordered:
 ; ---- Quick reject: both endpoints on the same side of any edge ----
 ; Both x < 0?  hi byte negative for both means both < 0 (s16).
