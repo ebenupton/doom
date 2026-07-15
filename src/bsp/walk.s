@@ -112,8 +112,8 @@ bif_clr2:
    BNE :+
    LDA NODE_TYPE,X
    ASL                                     ; C = NF_RLEAF
-   LDA NODE_CRLO,X
-   STA zp_node_ch_l
+   LDY NODE_CRLO,X
+   STY zp_node_ch_l
    BCS leaf_target
 .ifblank node_target
    BCC :++                                 ; right internal: skip left arm
@@ -123,8 +123,8 @@ bif_clr2:
 :  LDA NODE_TYPE,X
    ASL
    ASL                                     ; C = NF_LLEAF
-   LDA NODE_CLLO,X
-   STA zp_node_ch_l
+   LDY NODE_CLLO,X
+   STY zp_node_ch_l
    BCS leaf_target
 .ifblank node_target
 :
