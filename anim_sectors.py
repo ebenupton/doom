@@ -82,7 +82,9 @@ class Mover:
         # patch lists over the FINAL (merged) packed seg list
         self.front_segs = [i for i, sv in enumerate(dw.fp_segs_vwh) if sv[1] == sec]
         self.back_segs = [i for i, sv in enumerate(dw.fp_segs_vwh) if sv[2] == sec]
-        self.touch_segs = sorted(set(self.front_segs) | set(self.back_segs))
+        self.touch_segs = sorted(
+            i for i in set(self.front_segs) | set(self.back_segs)
+            if i in _seg_to_ss)     # drop page-slotting pad clones
         # remember each private VWH slot's vertex (table entries are tuples)
         self.vwh_f = [(i, dw.vwh_table[i][0]) for i in dw.ANIM_VWH_SLOTS.get((sec, 'f'), ())]
         self.vwh_c = [(i, dw.vwh_table[i][0]) for i in dw.ANIM_VWH_SLOTS.get((sec, 'c'), ())]
@@ -210,13 +212,18 @@ class Mover:
         self.flush()
 
 
-MOVERS = {sec: Mover(sec) for sec in dw.ANIM_SECTORS}
-
-# ── subsector -> movers mask (which movers a visited ss can reveal) ─────
+# ── seg -> subsector membership. Built BEFORE the movers: page-slotting
+# pads the header array with clones that belong to NO subsector run
+# (never rendered, never revealed) — every mover seg scan must ignore
+# those slots, so Mover.__init__ filters touch_segs through this map.
 _seg_to_ss = {}
 for _ssi, (_cnt, _first) in enumerate(dw.fp_ssectors):
     for _k in range(_first, _first + _cnt):
         _seg_to_ss[_k] = _ssi
+
+MOVERS = {sec: Mover(sec) for sec in dw.ANIM_SECTORS}
+
+# ── subsector -> movers mask (which movers a visited ss can reveal) ─────
 SS_MOVERS = {}
 for _sec, _m in MOVERS.items():
     for _i in _m.touch_segs:

@@ -805,10 +805,9 @@ ms_advance:
    CLC
    LDA zp_seg_hdr_p
    ADC #16
-   STA zp_seg_hdr_p
-   BCC sa_h_nc                             ; BCC/INC: page cross every 16 segs
-   INC zp_seg_hdr_p_h
-sa_h_nc:
+   STA zp_seg_hdr_p                        ; page-slotted (packer assert):
+                                        ; a run never crosses its page, so
+                                        ; the hi byte is ss-constant
    DEC zp_seg_count
    BEQ sa_drain                            ; loop rotation: seg_loop's
    JMP seg_proc                            ; LDA/BNE re-test was dead

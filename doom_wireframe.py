@@ -732,6 +732,49 @@ fp_segs = [svwh[0] for svwh in _merged_segs]
 fp_ssectors = _merged_ssectors
 print(f"Merged {_merge_count} colinear seg pair(s) "
       f"({len(_stripped_segs)} → {len(_merged_segs)} segs)")
+
+# ── Page-slotting (2026-07-15): every subsector's seg-header run must sit
+# inside ONE 256-byte page (16 header slots of 16 bytes), so the engine's
+# seg loop never crosses a page and the header base page is a
+# subsector-level constant. Best-fit-decreasing bin packing (runs are
+# located purely through the SS pointer pages, so run order in the
+# header array is free): ~7 pads on E1M1 vs 38 sequential — the array
+# must stay clear of the flat VXC planes at $9800 (layout.inc asserts).
+# Pads clone a neighbouring seg — valid data that no subsector run
+# references (DIR dedupe absorbs the duplicates). This runs BEFORE every
+# per-seg derivation (NOVT, anim, packing), so slot indices ARE the seg
+# indices everywhere downstream.
+_pages = []          # each: [space_left, [(ss_index, run)...]]
+for _ssi in sorted(range(len(fp_ssectors)),
+                   key=lambda i: -fp_ssectors[i][0]):
+    _cnt, _first = fp_ssectors[_ssi]
+    assert _cnt <= 16, f"subsector run of {_cnt} segs cannot fit one page"
+    if _cnt == 0:
+        continue
+    _best = -1
+    for _j, _pg in enumerate(_pages):
+        if _pg[0] >= _cnt and (_best < 0 or _pg[0] < _pages[_best][0]):
+            _best = _j
+    if _best < 0:
+        _pages.append([16, []])
+        _best = len(_pages) - 1
+    _pages[_best][0] -= _cnt
+    _pages[_best][1].append((_ssi, fp_segs_vwh[_first:_first + _cnt]))
+_slotted = []
+_slot_first = {}
+for _pi, (_left, _runs) in enumerate(_pages):
+    for _ssi, _run in _runs:
+        _slot_first[_ssi] = len(_slotted)
+        _slotted.extend(_run)
+    if _pi != len(_pages) - 1 and _left:
+        _slotted.extend([_slotted[-1]] * _left)   # pad page to 16 slots
+_slotted_ss = [(fp_ssectors[_i][0], _slot_first.get(_i, 0))
+               for _i in range(len(fp_ssectors))]
+print(f"Page-slotted seg headers: {len(fp_segs_vwh)} → {len(_slotted)} "
+      f"slots ({len(_slotted) - len(fp_segs_vwh)} pads)")
+fp_segs_vwh = _slotted
+fp_segs = [svwh[0] for svwh in _slotted]
+fp_ssectors = _slotted_ss
 # ── layout.inc drift gate (2026-07-10): the engine assembles against the
 # GENERATED constants in src/layout.inc; if the packed layout ever moves,
 # fail HERE (first harness import), never silently in the binary. ──

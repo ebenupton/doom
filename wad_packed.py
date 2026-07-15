@@ -277,6 +277,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         "SS hdr-offset pages assume seg-header offsets fit 14 bits"
     for i, ss in enumerate(fp_ssectors):
         off16 = ss[1] * 16
+        # page-slotting invariant (doom_wireframe): a run never crosses
+        # its 256-byte page — the engine's +16 advance carries no page
+        # handling and the header page is subsector-constant
+        assert (off16 & 0xFF) + ss[0] * 16 <= 256, \
+            f"subsector {i} seg run crosses a page (slotting broken)"
         rom_main[off_ss + i] = ss[0] & 0xFF
         rom_main[off_ss + 256 + i] = off16 & 0xFF
         rom_main[off_ss + 512 + i] = (off16 >> 8) & 0xFF
