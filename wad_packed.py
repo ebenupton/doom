@@ -210,6 +210,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     #   pg 11-13 subsector count, first_lo, first_hi
     # Everything else follows at NODE_SOA_SIZE.
     assert n_nodes <= 256 and n_ss <= 256
+    assert n_verts <= 512, \
+        "VCACHE planes are page-split on the senior bit (B & 0x20)"
 
     off_nodes = 0
     off_ss = NODE_SOA_PAGES * 256

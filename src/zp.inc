@@ -228,8 +228,9 @@ zp_seg_v_idx_l = $77             ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_b = $78              ; [bsp]; B = idx>>3 (bitmap/VXC byte
 ; index, stored pre-derived in the header; idx = B*8 + (lo&7))
 zp_seg_v_bitm = $79               ; [bsp]; valid-bitmap mask (1 << (idx & 7))
-zp_seg_v_cache_l = $7A           ; [bsp]; cached: pointer to this vertex's cache entry
-zp_seg_v_cache_h = $7B           ; [bsp]
+; $7A free for bsp use (was zp_seg_v_cache_l; NB the NJ rasteriser
+; scratches $7A as errs — phase-disjoint). $7B free (was _cache_h) —
+; the vcache is page-split SoA with baked senior arms, no pointer.
 zp_seg_dxraw_l = $7C             ; [bsp]
 zp_seg_dxraw_h = $7D             ; [bsp]
 zp_seg_dyraw_l = $7E             ; [bsp]

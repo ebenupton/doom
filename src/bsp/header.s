@@ -180,14 +180,22 @@ SINCOS_BASE = $E480                     ; sin_mag[0..63], sin_unity[0..63] (128 
 
 ; Vertex transform cache: per-vertex saved view + projection results.
 ; Skip redundant transforms when multiple segs share a vertex.
-;   8 bytes per entry (shift 3 for indexing).
-;   +0 vx_int (s8)   +1 vx_frac (u8)
-;   +2 rhi (u8)      +3 rlo (u8)
-;   +4 sx_lo (u8)    +5 sx_hi (u8)   (s16 projected screen X)
-;   +6 near_clip_flag (non-zero = vertex was near-clipped, skip seg)
-;   +7 pad
+; Fields: evy, evx, rhi, rlo, sx_lo, sx_hi (s16 projected screen X),
+; near-clip flag — one plane each (see below).
 ; Valid bitmap: 1 bit per vertex; cleared at the start of each frame.
-VCACHE_BASE = $0C00
+; VCACHE is page-split SoA (2026-07-15): one 512-byte plane per field,
+; junior page = idx 0-255, senior page = idx 256+ (n_verts <= 512,
+; pack-time assert). The senior bit is header key byte B & $20 — the
+; reader dispatches to an arm with the page BAKED, so there is no
+; address generation anywhere in the vertex frame cache.
+VCACHE_BASE = $0C00                     ; planes span $0C00-$19FF; $1A00 free
+VC_EVY  = VCACHE_BASE + $000
+VC_EVX  = VCACHE_BASE + $200
+VC_RHI  = VCACHE_BASE + $400
+VC_RLO  = VCACHE_BASE + $600
+VC_SXL  = VCACHE_BASE + $800
+VC_SXH  = VCACHE_BASE + $A00
+VC_CLIP = VCACHE_BASE + $C00
 VCACHE_VALID_BASE = $1B00               ; 59 bytes for 467 vertices
 
 

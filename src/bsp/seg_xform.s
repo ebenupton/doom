@@ -53,33 +53,15 @@ br_seg_xform_vertex:
 ; br_project_y / br_recip page L2 themselves. Nothing here may touch
 ; A before the shift chain consumes it.
 ;
-; LAYOUT INVARIANT: idx < 481 — VCACHE $0C00..$1AFF holds 480 8-byte
-; entries and the valid bitmap is 59 bytes. B = idx>>3 <= 58 fits one
-; byte (valid ptr hi = >VCACHE_VALID_BASE constant) and the idx*8 hi
-; byte is <= $0F.
-;
-; --- Cache entry base = VCACHE_BASE + idx*8, computed ONCE for both
-; paths (hit reads the entry, miss writes it): 16-bit <<3 with the hi
-; byte riding in A — the page-aligned base add lands on the hi byte only,
-; and A = B (idx>>3) is already in hand from the caller.
+; LAYOUT INVARIANT: idx < 512 — each plane is two pages and the valid
+; bitmap is 64 bytes max. B = idx>>3 <= 63 fits one byte (valid ptr hi =
+; >VCACHE_VALID_BASE constant); the senior page select is B & $20.
 ;
 ; KEY ENCODING (2026-07-12): the header stores (A = idx&255, B = idx>>3)
 ; instead of (lo, hi) — B is consumed RAW as the bitmap/VXC_VALID byte
-; index, and the scaled forms rebuild in pure A-register shifts:
-;   idx*8: lo = idx_lo << 3 (mod 256), hi = B >> 2
-;   idx*4: lo = idx_lo << 2 (mod 256), hi = B >> 3  (br_to_view_fetch)
-;
-; --- Cache entry base = VCACHE_BASE + idx*8 (A = B from the caller) ---
-   LSR A
-   LSR A                                   ; A = B>>2 = (idx*8) hi byte
-   CLC
-   ADC #>VCACHE_BASE
-   STA zp_seg_v_cache_h
-   LDA zp_seg_v_idx_l
-   ASL A
-   ASL A
-   ASL A                                   ; (idx*8) lo byte (mod 256)
-   STA zp_seg_v_cache_l
+; index and the senior bit. (The idx*8 entry-pointer build died with the
+; AoS cache, 2026-07-15 — no scaled forms remain here; br_to_view_fetch
+; still builds idx*4 for the ROM vert fetch.)
 
 ; --- Check valid bit: byte = B, straight from the header key ---
    LDY zp_seg_v_idx_b                      ; Y RIDES to the vc_miss set-bit
@@ -96,30 +78,28 @@ br_seg_xform_vertex:
    LDA VCACHE_VALID_BASE,Y
    AND zp_seg_v_bitm
    BEQ vc_miss
-   LDY #0                                  ; hit reads the entry from Y = 0
-vc_hit:
-; --- Cache hit: every field goes STRAIGHT from the cache entry into the
-; endpoint struct (X = zp_seg_ep) — no staging. rhi/rlo also land in the
-; zp_br working slots because rns_select / the projections consume them
-; there (two consumers of the value in A, not a copy chain). ---
-   LDA (zp_seg_v_cache_l),Y               ; Y = 0: evy
+; --- Cache hit: senior-bit arm (plane page BAKED), Y = idx&255 for every
+; field — no address generation, no Y navigation. Fields go STRAIGHT
+; from the planes into the endpoint struct (X = zp_seg_ep); rhi/rlo also
+; land in the zp_br working slots because rns_select / the projections
+; consume them there (two consumers of the value in A, not a copy). ---
+   LDA zp_seg_v_idx_b
+   AND #$20                                ; senior: idx >= 256 (B >= 32)
+   BNE vc_hit_hi
+   LDY zp_seg_v_idx_l
+   LDA VC_EVY,Y
    STA VX1+0,X
-   INY
-   LDA (zp_seg_v_cache_l),Y
-   STA VX1+1,X                             ; evx
-; Near-clip flag at offset 6 (cache stores 1 — reuse it as the clip byte)
-   LDY #6
-   LDA (zp_seg_v_cache_l),Y
-   BEQ vc_hit_ok
+   LDA VC_EVX,Y
+   STA VX1+1,X
+   LDA VC_CLIP,Y                           ; cached near-clip verdict
+   BEQ vch0_ok
    STA VX1+2,X                             ; clip = 1
    RTS
-vc_hit_ok:
-   LDY #2
-   LDA (zp_seg_v_cache_l),Y
+vch0_ok:
+   LDA VC_RHI,Y
    STA zp_br_r_m8
    STA VX1+13,X                            ; rhi (for ap2_solid_proj)
-   INY
-   LDA (zp_seg_v_cache_l),Y
+   LDA VC_RLO,Y
    STA zp_br_r_s
    STA VX1+14,X                            ; rlo
    JSR rns_select                          ; cached S → re-pick the shifter
@@ -127,15 +107,38 @@ vc_hit_ok:
                                         ; vector belongs to whoever wrote
                                         ; rlo LAST)
    LDX zp_seg_ep
-   INY                                     ; Y = 3 survived rns_select
-   LDA (zp_seg_v_cache_l),Y
+   LDA VC_SXL,Y
    STA VX1+3,X                             ; sx_lo
-   INY
-   LDA (zp_seg_v_cache_l),Y
+   LDA VC_SXH,Y
    STA VX1+4,X                             ; sx_hi
    RTS                                     ; Y projection DEFERRED to the
                                         ; post-has_gap y stage (2026-07-11):
                                         ; culled segs never project.
+vc_hit_hi:
+; (senior twin — pages +$100 baked; body identical)
+   LDY zp_seg_v_idx_l
+   LDA VC_EVY+$100,Y
+   STA VX1+0,X
+   LDA VC_EVX+$100,Y
+   STA VX1+1,X
+   LDA VC_CLIP+$100,Y
+   BEQ vch1_ok
+   STA VX1+2,X
+   RTS
+vch1_ok:
+   LDA VC_RHI+$100,Y
+   STA zp_br_r_m8
+   STA VX1+13,X
+   LDA VC_RLO+$100,Y
+   STA zp_br_r_s
+   STA VX1+14,X
+   JSR rns_select
+   LDX zp_seg_ep
+   LDA VC_SXL+$100,Y
+   STA VX1+3,X
+   LDA VC_SXH+$100,Y
+   STA VX1+4,X
+   RTS
 vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
@@ -147,8 +150,6 @@ vc_miss:
    LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
-
-; (cache base ptr already at zp_seg_v_cache_l/hi — computed at entry)
 
 ; Scope split: vxc_jsr_site must be a GLOBAL label — vxc_frame SMC-patches
 ; this JSR's operand between br_to_view_fetch (VXC disabled: the original
@@ -199,16 +200,9 @@ ec_hi_nz:
    JSR ev_clamp_hi_nz
 ec_done:
 
-; Pre-write evy/evx into cache (offsets 0/1) — needed on any future
-; cache hit, including the near-clipped path. Written through the cache
-; pair itself, exactly as the hit path reads it — the zp_br_p copy was a
-; pure channel (2026-07-11).
-   LDY #0
-   LDA VX1+0,X                             ; evy (post-clamp: must re-read)
-   STA (zp_seg_v_cache_l),Y
-   INY
-   LDA zp_br_vx_h                          ; evx (zp source, unchanged)
-   STA (zp_seg_v_cache_l),Y
+; (Cache writes are deferred to the two exits — each does ONE armed
+; fill from the struct/working regs; the miss path has no cache
+; pointer at all, 2026-07-15.)
 
 ; Near-clip on full s24: clipped iff total_vy < NEAR_88 (= 128 in 8.8).
 ;   vyext < 0 → clipped (very negative)
@@ -221,11 +215,29 @@ ec_done:
    BMI nc_fail
    BNE nc_ok                               ; evy>0 -> ok (was BEQ+JMP)
 nc_fail:
-; Mark near-clipped in cache AND the struct (same byte value, one load).
-   LDY #6
+; Near-clipped: armed cache fill (evy/evx from the struct — usable on
+; any future hit — plus the clip verdict), and the struct clip byte.
+   LDA zp_seg_v_idx_b
+   AND #$20
+   BNE ncf_hi
+   LDY zp_seg_v_idx_l
+   LDA VX1+0,X
+   STA VC_EVY,Y
+   LDA VX1+1,X
+   STA VC_EVX,Y
    LDA #1
-   STA (zp_seg_v_cache_l),Y
+   STA VC_CLIP,Y
    STA VX1+2,X                             ; clip = 1
+   RTS
+ncf_hi:
+   LDY zp_seg_v_idx_l
+   LDA VX1+0,X
+   STA VC_EVY+$100,Y
+   LDA VX1+1,X
+   STA VC_EVX+$100,Y
+   LDA #1
+   STA VC_CLIP+$100,Y
+   STA VX1+2,X
    RTS
 nc_ok:
 ; Save view-space x for br_project_x below (deferred past the
@@ -264,26 +276,49 @@ nc_ok:
    TYA
    STA VX1+3,X                             ; sx_lo
 
-; --- Struct + cache stores fanned from ONE load each (rhi, rlo, sx,
-; near-clip=0) — from the working regs, no struct readback. ---
-   LDY #2
+; --- Struct stores from the working regs, then ONE armed fill drops
+; the whole cache entry (evy/evx via the struct, the rest from the
+; regs — sx still lives in zp_br_res_l/h from br_project_x). ---
    LDA zp_br_r_m8
    STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
-   STA (zp_seg_v_cache_l),Y
-   INY
    LDA zp_br_r_s
    STA VX1+14,X
-   STA (zp_seg_v_cache_l),Y
-   INY
+   LDA zp_seg_v_idx_b
+   AND #$20
+   BNE vcf_hi
+   LDY zp_seg_v_idx_l
+   LDA VX1+0,X
+   STA VC_EVY,Y
+   LDA VX1+1,X
+   STA VC_EVX,Y
+   LDA zp_br_r_m8
+   STA VC_RHI,Y
+   LDA zp_br_r_s
+   STA VC_RLO,Y
    LDA zp_br_res_l
-   STA (zp_seg_v_cache_l),Y
-   INY
+   STA VC_SXL,Y
    LDA zp_br_res_h
-   STA (zp_seg_v_cache_l),Y
-   INY
+   STA VC_SXH,Y
    LDA #0
-   STA (zp_seg_v_cache_l),Y
+   STA VC_CLIP,Y
 ; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
+   RTS
+vcf_hi:
+   LDY zp_seg_v_idx_l
+   LDA VX1+0,X
+   STA VC_EVY+$100,Y
+   LDA VX1+1,X
+   STA VC_EVX+$100,Y
+   LDA zp_br_r_m8
+   STA VC_RHI+$100,Y
+   LDA zp_br_r_s
+   STA VC_RLO+$100,Y
+   LDA zp_br_res_l
+   STA VC_SXL+$100,Y
+   LDA zp_br_res_h
+   STA VC_SXH+$100,Y
+   LDA #0
+   STA VC_CLIP+$100,Y
    RTS
 .endscope
 
