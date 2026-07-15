@@ -238,8 +238,7 @@ dd_cp_bot:
    STX zp_br_t2
    JSR SC_TIGHTEN_FROM_RECORDS             ; (bank C paged by caller)
 dd_after:
-   LDA zp_head                             ; is_full inline: active list
-   BEQ dd_done                             ; empty (zp, unbanked)
+   IS_FULL_B dd_done                       ; is_full (macro, zp.inc)
    LDX zp_br_t2
    JMP dd_loop
 dd_done:

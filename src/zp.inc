@@ -297,6 +297,13 @@ zp_dcl_rec_buf = $BC              ; [clip]; lo byte of buffer ptr ; w=2
 zp_dcl_rec_buf_h = $BD            ; [clip]; hi byte of buffer ptr ($00 = records disabled)
 zp_dcl_rec_off = $BE              ; [clip]; current write offset (1-based) within buffer
 zp_head = $C0                     ; [clip]
+; is_full, inline (2026-07-15): the clipper's whole occlusion truth is
+; zp_head == 0 (active span list empty) and ZP is unbanked — no JSR, no
+; bank-C page. Branches to `target` when the screen is fully solid.
+.macro IS_FULL_B target
+   LDA zp_head
+   BEQ target
+.endmacro
 zp_free = $C1                     ; [clip]
 zp_i_l = $C2                      ; [clip]
 zp_i_h = $C3                      ; [clip]
