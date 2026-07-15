@@ -509,6 +509,29 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     vcache_valid = (n_verts + 7) // 8
     vwh_cache_size = n_vwh * VWHCACHE_ENTRY
     vwh_valid = (n_vwh + 7) // 8
+    # Node general partitions -> DIR delta form (2026-07-15): repurpose
+    # NODE_DXLO/DXHI as (dir id, sign byte) — the 6502 general arm shares
+    # the backface CROSS_MAG_DECIDE core and the same DIR tables (56/60
+    # of E1M1's general partitions are seg-primitive directions already).
+    # DYLO/DYHI keep the raw values (no 6502 reader; the Python mirror
+    # uses the fp node data). Runs AFTER the seg loop so _dirs is final.
+    for i, n in enumerate(nodes):
+        raw_dx, raw_dy = n[2], n[3]
+        if raw_dx == 0 or raw_dy == 0:
+            continue
+        g = math.gcd(abs(raw_dx), abs(raw_dy))
+        pdx, pdy = raw_dx // g, raw_dy // g
+        assert abs(pdx) <= 255 and abs(pdy) <= 255,             f"node {i} reduced dir {pdx},{pdy} exceeds u8"
+        did = _dirs.setdefault((pdx, pdy), len(_dirs))
+        assert len(_dirs) <= MAX_DIRS, "DIR table overflow (nodes+segs)"
+        rom_main[off_dirs + did] = abs(pdx)
+        rom_main[off_dirs + MAX_DIRS + did] = abs(pdy)
+        rom_main[off_dirs + 2 * MAX_DIRS + did] = \
+            ((0x80 if pdy < 0 else 0) | (0x40 if pdx < 0 else 0))
+        _npg(4, i, did)                      # NODE_DXLO := dir id
+        _npg(5, i, (0x80 if pdy < 0 else 0)  # NODE_DXHI := sign byte
+                   | (0x40 if pdx < 0 else 0))
+
     spans_offset = vcache_size + vcache_valid + vwh_cache_size + vwh_valid
     ram_size = spans_offset + SPAN_TOTAL
 

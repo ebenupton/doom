@@ -142,6 +142,124 @@ NF_LLEAF = $40                          ; left child is a subsector
    STA rns_go_op
 .endmacro
 
+; ============================================================================
+; CROSS_MAG_DECIDE front, back — the shared cross-product magnitude
+; comparator: sign(dot) when the two products dy'*dx and dx'*dy share a
+; sign. ONE source, TWO expansions: the seg back-face test
+; (backface.s: front/back = bf_seg_front / s_advance) and the node
+; point-on-side general arm (lo.s: front/back = side 0 / side 1) — the
+; algebra is identical (dot = dy'*dx - dx'*dy; ties lose).
+;   in : X = shared product sign (bit 7), zp_br_dx/dy = SIGNED nonzero
+;        deltas, zp_bf_dir = DIR-table index (gcd-reduced primitives).
+;   out: control flow — JMP front (dot > 0) / JMP back (dot <= 0).
+;   Clobbers A, X, deltas (abs-folded in place), t0-t5, mul workspace.
+; ============================================================================
+.macro CROSS_MAG_DECIDE front, back
+.local cm_dx_pos, cm_dy_pos, cm_p1_done, cm_p2_done, cm_p1_hi, cm_p2_hi
+.local cm_dec, cm_neg, cm_back
+   STX zp_br_sign                          ; X dies at SC_UMUL8
+; (t4/t5 zeroing lives in the senior-clear skips — each hi slot is
+;  written on EVERY path: by its out-of-line hi tier, or by the skip's
+;  STA with the zero already in A)
+   LDX zp_br_dx_h
+   BPL cm_dx_pos
+   LDA #0                                  ; explicit zero: the negate
+   SEC                                     ; seed (mirror-idiom lesson)
+   SBC zp_br_dx_l
+   STA zp_br_dx_l
+   LDA #0
+   SBC zp_br_dx_h
+   STA zp_br_dx_h
+cm_dx_pos:
+   LDX zp_br_dy_h
+   BPL cm_dy_pos
+   LDA #0
+   SEC
+   SBC zp_br_dy_l
+   STA zp_br_dy_l
+   LDA #0
+   SBC zp_br_dy_h
+   STA zp_br_dy_h
+cm_dy_pos:
+; --- |P1| = |dy'| * |dx| -> (t2, t3, t4) u24 ---
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'| (lazy: only this tier pays)
+   STA zp_br_a                             ; survives for the hi partial
+   LDX zp_br_dx_l
+   STX zp_mul_b
+   JSR SC_UMUL8
+   STA zp_br_t3
+   LDA zp_prod_l
+   STA zp_br_t2
+   LDA zp_br_dx_h
+   BNE cm_p1_hi                            ; senior partial (out of line)
+   STA zp_br_t4                            ; A = 0: 1-mul product, hi = 0
+cm_p1_done:
+; --- |P2| = |dx'| * |dy| -> (t0, t1, t5) u24 ---
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C,X                        ; |dx'|
+   STA zp_br_a
+   LDX zp_br_dy_l
+   STX zp_mul_b
+   JSR SC_UMUL8
+   STA zp_br_t1
+   LDA zp_prod_l
+   STA zp_br_t0
+   LDA zp_br_dy_h
+   BNE cm_p2_hi                            ; senior partial (out of line)
+   STA zp_br_t5                            ; A = 0: 1-mul product, hi = 0
+cm_p2_done:
+; --- ONE u24 compare, early-out (products usually decide at the mid
+; byte). A tie loses for either sign, so equality exits first; after
+; that C is the STRICT order and one sign load decodes the verdict:
+;   C=1 (|P1| > |P2|): front iff sign positive
+;   C=0 (|P1| < |P2|): front iff sign negative
+   LDA zp_br_t4
+   CMP zp_br_t5
+   BNE cm_dec
+   LDA zp_br_t3
+   CMP zp_br_t1
+   BNE cm_dec
+   LDA zp_br_t2
+   CMP zp_br_t0
+   BEQ cm_back                             ; equal -> dot == 0 -> back
+cm_dec:
+   LDA zp_br_sign                          ; (touches neither C nor N-verdict)
+   BMI cm_neg
+   BCC cm_back                             ; positive: |P1| < |P2| -> back
+   JMP front                               ; (hot fall-through: pos front)
+cm_neg:
+   BCS cm_back                             ; negative: |P1| > |P2| -> back
+   JMP front
+cm_back:
+   JMP back
+; --- out-of-line senior partials (the uncommon big-delta tier) ---
+cm_p1_hi:
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_l
+   CLC
+   ADC zp_br_t3
+   STA zp_br_t3
+   LDA zp_prod_h
+   ADC #0
+   STA zp_br_t4
+   JMP cm_p1_done
+cm_p2_hi:
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR SC_UMUL8
+   LDA zp_prod_l
+   CLC
+   ADC zp_br_t1
+   STA zp_br_t1
+   LDA zp_prod_h
+   ADC #0
+   STA zp_br_t5
+   JMP cm_p2_done
+.endmacro
+
 .segment "MAIN"
 
 ; ============================================================================

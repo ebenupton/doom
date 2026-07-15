@@ -344,114 +344,85 @@ ns_py_lt:
    BMI ns_x0
    BPL ns_x1
 ns_t_general:
-; --- general partition: both deltas + the dx/dy fields for the
-;     sign-shortcut / multiply cascade below ---
-   LDA NODE_DXLO,X
-   STA zp_node_dx_l
+; --- general partition: DIR delta form (2026-07-15) — the packer bakes
+; the gcd-reduced primitive direction as (NODE_DXLO = dir id,
+; NODE_DXHI = sign byte, b7 ndy neg / b6 ndx neg), sharing the seg DIR
+; tables. Deltas against the origin planes stage into the SHARED cross
+; slots, the sign shortcut mirrors bf_g_both, and the magnitude tier is
+; the SAME CROSS_MAG_DECIDE core the back-face test expands: side0 is
+; "front" (D = ndy*dx - ndx*dy > 0), ties side1. The old raw s16 x s16
+; double-smul cascade (and br_smul_s16_s16_s32) is gone.
    LDA NODE_DXHI,X
-   STA zp_node_dx_h
-   LDA NODE_DYLO,X
-   STA zp_node_dy_l
-   LDA NODE_DYHI,X
-   STA zp_node_dy_h
+   STA zp_br_sign                          ; b7 = sgn ndy, b6 = sgn ndx
+   LDA NODE_DXLO,X
+   STA zp_bf_dir                           ; DIR-table index
+; dx = pxraw - nx (s16); hi rides A for the zero test
    LDA zp_br_pxraw_l
    SEC
    SBC NODE_NXLO,X
-   STA zp_seg_dxraw_l
+   STA zp_br_dx_l
    LDA zp_br_pxraw_h
    SBC NODE_NXHI,X
-   STA zp_seg_dxraw_h
+   STA zp_br_dx_h
+   ORA zp_br_dx_l
+   BEQ nsd_dx0
+; dy = pyraw - ny (s16)
    LDA zp_br_pyraw_l
    SEC
    SBC NODE_NYLO,X
-   STA zp_seg_dyraw_l
+   STA zp_br_dy_l
    LDA zp_br_pyraw_h
    SBC NODE_NYHI,X
-   STA zp_seg_dyraw_h
-ns_general:
-; DOOM R_PointOnSide sign shortcut (EXACT — ndx and ndy are both nonzero
-; on this path, so P1 = dxraw*ndy is zero iff dxraw==0, P2 = dyraw*ndx
-; is zero iff dyraw==0, and sign(product) = XOR of the operand signs).
-; side0 iff D = P1 - P2 > 0. Only same-sign nonzero products need the
-; two s16*s16 multiplies below.
-   LDA zp_seg_dxraw_l
-   ORA zp_seg_dxraw_h
-   BNE ns_dx_nz
-; dxraw==0 -> P1=0 -> D=-P2 (dyraw==0 too -> D=0 -> side1)
-   LDA zp_seg_dyraw_l
-   ORA zp_seg_dyraw_h
-   BEQ ns_sh_side1
-   LDA zp_seg_dyraw_h
-   EOR zp_node_dx_h
-   BMI ns_sh_side0                         ; P2<0 -> D>0 -> side0
-ns_sh_side1:
-   JMP ns_side1
-ns_sh_side0:
-   JMP ns_side0
-ns_dx_nz:
-   LDA zp_seg_dyraw_l
-   ORA zp_seg_dyraw_h
-   BNE ns_dy_nz
-; dyraw==0 -> D=P1 -> side by sign(dxraw)^sign(ndy)
-   LDA zp_seg_dxraw_h
-   EOR zp_node_dy_h
-   BMI ns_sh_side1
-   JMP ns_side0
-ns_dy_nz:
-; both products nonzero: opposite signs decide without multiplying
-   LDA zp_seg_dxraw_h
-   EOR zp_node_dy_h                        ; sign(P1)
-   STA zp_br_t3
-   EOR zp_seg_dyraw_h
-   EOR zp_node_dx_h                        ; sign(P1) ^ sign(P2)
-   BPL ns_mul                              ; same sign -> full compare
-   LDA zp_br_t3
-   BMI ns_sh_side1                         ; P1<0<P2 -> D<0 -> side1
-   JMP ns_side0
-ns_mul:
-; --- Full evaluation: P1 = dxraw*ndy → $0A50-52 (low 3 bytes of the s32
-; product), then P2 = dyraw*ndx subtracted in place; sign/zero test on
-; the 24-bit difference: D<0 or D==0 → side1, else side0. ---
-   LDA zp_seg_dxraw_l
-   STA zp_br_dx_l
-   LDA zp_seg_dxraw_h
-   STA zp_br_dx_h
-   LDA zp_node_dy_l
-   STA zp_br_dy_l
-   LDA zp_node_dy_h
    STA zp_br_dy_h
-   JSR br_smul_s16_s16_s32
-   LDA zp_br_t0
-   STA $0A50
-   LDA zp_br_t1
-   STA $0A51
-   LDA zp_br_t2
-   STA $0A52
-   LDA zp_seg_dyraw_l
-   STA zp_br_dx_l
-   LDA zp_seg_dyraw_h
-   STA zp_br_dx_h
-   LDA zp_node_dx_l
-   STA zp_br_dy_l
-   LDA zp_node_dx_h
-   STA zp_br_dy_h
-   JSR br_smul_s16_s16_s32
-   LDA $0A50
+   ORA zp_br_dy_l
+   BEQ nsd_dy0                             ; dy==0: D = P1
+; sign shortcut (mirror of bf_g_both): opposite product signs decide
+; with no multiply; sign(D) = sign(P1)
+   LDA zp_br_sign                          ; b7 = sgn ndy
+   EOR zp_br_dx_h                          ; b7 = sign(P1)
+   TAX                                     ; ride in X across the P2 sign
+   LDA zp_br_sign
+   ASL A                                   ; b6 (ndx sign) -> b7
+   EOR zp_br_dy_h                          ; b7 = sign(P2)
+   STA zp_br_t2
+   TXA
+   EOR zp_br_t2                            ; b7 set = opposite signs
+   BPL nsd_mul                             ; same sign -> magnitude core
+   TXA                                     ; opposite: sign(D) = sign(P1)
+   BMI nsd_s1
+   BPL nsd_s0                              ; (always)
+; dx == 0: D = -P2 = -(ndx*dy); side0 iff P2 < 0
+; (dy == 0 too -> D = 0 -> side1)
+nsd_dx0:
+   LDA zp_br_pyraw_l
    SEC
-   SBC zp_br_t0
-   STA $0A50
-   LDA $0A51
-   SBC zp_br_t1
-   STA $0A51
-   LDA $0A52
-   SBC zp_br_t2                            ; N from the SBC; the byte is
-   BMI ns_side1                            ; dead in memory (no reader
-   ORA $0A51                               ; past this test)
-   ORA $0A50
-   BEQ ns_side1
-; (2026-07-15: the BSP_NEAR/FAR staging is gone — the walk follows
-; children straight from the SoA pages at dispatch time, near and far
-; alike, so setup's whole output is A.)
+   SBC NODE_NYLO,X
+   STA zp_br_dy_l
+   LDA zp_br_pyraw_h
+   SBC NODE_NYHI,X
+   STA zp_br_dy_h
+   ORA zp_br_dy_l
+   BEQ nsd_s1                              ; dx==0 and dy==0 -> side1
+   LDA zp_br_sign
+   ASL A                                   ; b7 = sgn ndx
+   EOR zp_br_dy_h                          ; b7 = sign(P2)
+   BMI nsd_s0                              ; D = -P2 > 0 iff P2 < 0
+   BPL nsd_s1                              ; (always)
+; dy == 0: D = P1 = ndy*dx (nonzero: dx != 0 here)
+nsd_dy0:
+   LDA zp_br_sign                          ; b7 = sgn ndy
+   EOR zp_br_dx_h                          ; b7 = sign(P1)
+   BMI nsd_s1
+   BPL nsd_s0                              ; (always)
+; local verdict stubs (the branches above can't reach past the macro)
+nsd_s0:
+   LDA #0
+   RTS
+nsd_s1:
+   LDA #1
+   RTS
+nsd_mul:
+   CROSS_MAG_DECIDE ns_side0, ns_side1
 ns_side0:
    LDA #0
    RTS
