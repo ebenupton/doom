@@ -134,8 +134,7 @@ bv_anglevis:
 ; zp_i_l
    LDA bca_ihi
    STA zp_i_h
-; zp_i_h
-   PAGE BANK_C
+; zp_i_h (has_gap is main-resident — no PAGE)
    JMP SC_HAS_GAP
 
 .endscope
@@ -203,8 +202,8 @@ dv_straddle:
    LDA #255
    STA zp_i_h
 dv_gap:
-   PAGE BANK_C
    JMP SC_HAS_GAP                          ; serve: A/Z is our return value
+                                        ; (main-resident — no PAGE)
 dv_invis:
    LDA #0
    RTS

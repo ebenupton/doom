@@ -346,7 +346,7 @@ bfm_back:
 ;     6. If ilo > ihi → return 0.
 ;     7. JSR span_has_gap → return its A.
 ; ============================================================================
-SC_HAS_GAP = jt_has_gap
+SC_HAS_GAP = span_has_gap               ; main-resident (no PAGE needed)
 SC_IS_FULL = jt_is_full
 
 ; Per-corner storage (5 bytes × 4 = 20) — legacy perspective-path scratch

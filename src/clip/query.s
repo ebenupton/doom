@@ -29,6 +29,19 @@
 ;     return 1 if s.xstart <= ihi else 0  # first candidate decides
 ;   return 0
 ; ======================================================================
+; MOVED TO MAIN (2026-07-15): has_gap touches ONLY main-RAM state
+; (POOL_* $04xx/$05xx + zp) — hosting the code in bank C forced a
+; PAGE BANK_C round-trip at every probe (~174 calls/frame, and the
+; hottest cross-bank transition on the audit: bbox's angle work L2 ->
+; C -> back). It lives in the B segment (CODE region, unbanked) so
+; callers just JSR/JMP. jt_has_gap (bank C) still thunks here for the
+; harness.
+.export span_has_gap
+.if ::BANKED
+.segment "B_BK"
+.else
+.segment "B"
+.endif
 span_has_gap:
 .scope
 ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
@@ -99,6 +112,11 @@ hg_cy_yes:
    LDA #1
    RTS
 .endscope
+.if ::BANKED
+.segment "CLIP_BK"                      ; back to the clipper's bank-C home
+.else
+.segment "CLIP"
+.endif
 
 ; ======================================================================
 ; IS_FULL: check if screen is completely occluded (active list empty)

@@ -54,8 +54,10 @@
 ; span anchors. Records are snapshotted into the queue because later
 ; segs' DCL emission overwrites TOP/BOT_RECORDS before the drain.
 ; ============================================================================
-br_render_subsector:
+br_render_subsector_jt:                 ; harness entry: bank unknown
    PAGE BANK_L0                            ; ss / seg_hdr / verts / sincos live in bank L0
+br_render_subsector:
+; (walk callers arrive L0-paged — near/far child follows page L0)
 ; Animated-sector hook: anim_init retargets this JMP at anim_hub, which
 ; lazily patches any dirty mover with segs in this subsector (see
 ; src/bsp/anim.s). Disabled (default) it falls straight through: 3 cycles.
@@ -358,8 +360,7 @@ hg_lost2:
    STA zp_i_l
 hg_query:
    STX zp_sx_ord                           ; latch min-endpoint offset
-   PAGE BANK_C
-   JSR SC_HAS_GAP
+   JSR SC_HAS_GAP                          ; (main-resident — no PAGE)
    BNE hg_pass
    JMP s_advance
 hg_pass:

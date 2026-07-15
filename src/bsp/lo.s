@@ -269,7 +269,9 @@ c2_pos:
 ; ============================================================================
 br_node_setup:
 .scope
-   PAGE BANK_L0                            ; node SoA pages live in bank L0
+; (entry PAGE L0 elided 2026-07-15: every caller arrives L0-paged —
+; the near/far child follows page L0, and br_render_frame anchors L0
+; at frame entry for the seed path. dfscan-style caller audit.)
 ; Node index is u8 (n_nodes <= 256, asserted at pack time); the partition
 ; type is baked (page NODE_TYPE), so axis-aligned nodes — 73% on E1M1 —
 ; skip the classification and load only the two fields they need.

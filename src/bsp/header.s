@@ -219,7 +219,7 @@ jt_br_to_view: JMP br_to_view                          ; $480C   world (zp_br_dx
 jt_br_project_x: JMP br_project_x                  ; $480F   view vx → screen sx
 jt_br_project_y: JMP br_project_y_paged                  ; $4812   height_delta → screen sy (pages L2)
 jt_br_render_frame: JMP br_render_frame                     ; $4815   walk BSP, dispatch subsector renderer
-jt_br_render_subsector: JMP br_render_subsector                 ; $4818  process one subsector's segs (caller sets
+jt_br_render_subsector: JMP br_render_subsector_jt              ; $4818  process one subsector's segs (caller sets
 ;        zp_node_ch_l:hi to the subsector id). Used
 ;        by the hybrid Python-BSP + 6502-seg harness
 ;        to isolate BSP-traversal vs seg-processor
@@ -249,6 +249,7 @@ jt_anim_init: JMP anim_init                          ; +$21
 ; Imported from span_clip (same link; the jump-table indirection is kept so
 ; entries stay uniformly callable from the harness).
 .import jt_mark_solid, jt_has_gap, jt_is_full
+.import span_has_gap                    ; has_gap body (main B segment)
 .import seg_zero_rec_solid
 .import jt_tighten_from_records, jt_draw_clip, jt_draw_clip_s16
 .import jt_draw_clip_s16_h

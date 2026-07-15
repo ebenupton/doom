@@ -43,6 +43,12 @@
 br_render_frame:
 .scope bsp_walk                         ; named: br_dcache_frame SMC-patches
                                         ; bsp_walk::bv_site_near/_far operands
+; L0 anchor: the traversal's bank invariant (node_setup and the
+; subsector serve no longer page — every path keeps L0 until the
+; clipper/angle modules page for themselves and the child follows
+; restore it). One PAGE per frame covers the seed.
+   PAGE BANK_L0
+
 ; --- Per-frame init (the standalone br_init_frame is retired).
 ; Records-pointer ground state: the lo byte is never written non-zero
 ; anywhere (record pages are page-aligned) and every draw site
