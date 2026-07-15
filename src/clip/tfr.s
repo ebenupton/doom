@@ -556,7 +556,7 @@ tfs_pre_chk:
    STA TFS_CUR_X
    JMP tfs_xhi_done
 tfs_no_pre:
-   LDX zp_clr_save_x
+; (X = clr_save_x rides in from the BCS site)
    LDA POOL_XSTART,X
    STA TFS_CUR_X
 tfs_xhi_done:
@@ -1313,8 +1313,8 @@ szr_t1:
    JSR szr_gt
    BCS szr_closed
 szr_open:
-   CLC
-   RTS
+   RTS                                     ; C=0 — both szr_gt exits arrive
+                                        ; via BCS-not-taken
 szr_closed:
    SEC
    RTS

@@ -84,8 +84,8 @@ bf_ax_gt_ovf:
    BPL bf_ax_back
 bf_ax_px_lt:
 ; form 1: front iff px < C16  <=>  (px - C) < 0
+; (C=1 = the LSR's strict-side bit — the BCS that got us here)
    INY
-   SEC
    SBC (zp_seg_hdr_p),Y
    INY
    LDA zp_br_px_x
@@ -118,8 +118,8 @@ bf_ax_py:
    JMP bf_seg_front
 bf_ax_py_lt:
 ; form 3: front iff py < C16
+; (C=1 = the LSR's strict-side bit — the BCS that got us here)
    INY
-   SEC
    SBC (zp_seg_hdr_p),Y
    INY
    LDA zp_br_py_x

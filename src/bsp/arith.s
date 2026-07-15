@@ -589,7 +589,7 @@ ri_sign:                                    ; entry for the x0/x1 arms
 ri_done:
    RTS
 ri_zero:
-   LDA #0
+; A = 0 on both entries (the d==0 BNE-not-taken paths)
    STA zp_br_res_l
    STA zp_br_res_h
    STA zp_br_res_x

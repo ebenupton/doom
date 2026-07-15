@@ -119,7 +119,7 @@ ENDIF
     STA b21+1:STA b31+1
     STA b41+1:STA b51+1
     STA b61+1:STA b71+1
-    SEC:JMP (x1)
+    JMP (x1)                \ C=1: the backh BCC didn't take (leftward)
     ; dy == 0: one run of dx+1 pixels. Re-enter the shallow core with
     ; err=dx and dy:=1, so err borrows only after exactly dx+1 bits;
     ; cnt=ls=1 makes that first y-step attempt end the line. The row
@@ -185,7 +185,7 @@ IF STEEP_COMPACT
     STX sl_dx+1              \ SMC: core's SBC #dx
     LDA dy:STA sl_dy+1       \ SMC: core's ADC #dy
     LDA y0:AND #7:TAY
-    LDX errs:SEC:JMP sl_loop
+    LDX errs:JMP sl_loop     \ C=1: the BCS that chose the left arm
 ELSE
     LDA strt3,Y:STA x1
     LDA strt3+8,Y:STA y1

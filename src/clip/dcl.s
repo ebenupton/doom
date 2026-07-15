@@ -276,7 +276,7 @@ dcl_is_abutting:
 ; WITHIN the next span was emitted across the whole span (over-extension
 ; -> off-screen; the 845,-3084,215 over-draw and the 1056,-3291,34 crash).
 ; ly = line_y at the shared boundary (= current.XEND)
-   LDX zp_save0
+; (X = save0 rides in from the abutting test — no reload)
    LDY zp_line_dy
    BEQ dcl_pp_use_yr
    LDA POOL_XEND,X
@@ -321,8 +321,9 @@ dcl_pp_bbox:
    TAX
    JMP dcl_walk
 
-dcl_exit_no_portal_a:
-; Restore for emit path (ly check failed, need save0)
+; (dcl_exit_no_portal_a — the 'restore X for emit' alias — is retired:
+; no caller remained, and every entry below arrives with X = save0
+; already, dfscan-proven.)
 dcl_exit_no_portal:
 ; Portal failed or closed: emit current segment and reset.
 ; Compute exit point Y — three cases converge at dcl_exit_emit via
@@ -330,7 +331,6 @@ dcl_exit_no_portal:
 ;   xend == xr → A = yr
 ;   dy == 0    → A = yl
 ;   else       → A = line_y_at(xend)
-   LDX zp_save0
    LDA POOL_XEND,X
    STA zp_ox1                              ; end_x = xend of current span
    CMP zp_line_xr_l
@@ -489,8 +489,8 @@ dv_cy1_ok:
    LDA zp_cb_bot1
 dv_cy2_ok:
    STA zp_cb_cy2
-; Emit if cy1 <= cy2  (swapped compare: cy2 >= cy1 is one BCS)
-   LDA zp_cb_cy2
+; Emit if cy1 <= cy2  (swapped compare: cy2 >= cy1 is one BCS;
+; A = cy2 rides out of both min() arms)
    CMP zp_cb_cy1
    BCS dv_emit
    RTS                                     ; line clipped away
@@ -505,8 +505,7 @@ dv_emit:
    STA RASTER_ZP_X0
    STA RASTER_ZP_X1
    LDA zp_cb_cy1
-   SEC
-   SBC #Y_BIAS
+   SBC #Y_BIAS                             ; C=1 from the BCS dv_emit guard
    STA RASTER_ZP_Y0
    LDA zp_cb_cy2
    SBC #Y_BIAS                             ; C=1 from the in-band SBC
@@ -1128,7 +1127,7 @@ dcl_es_record:
    STY zp_dcl_rec_off
    LDY #0
    LDA (zp_dcl_rec_buf),Y
-   BUMP
+   ADC #1                                  ; C=0 from the xl>=xr BCS guard
    STA (zp_dcl_rec_buf),Y
 dcl_es_no_record:
 ; LINE_OUT capture is wrapper-only (LINE_OUT_EN): native emits stage the
@@ -1357,8 +1356,7 @@ line_interp_store:
    BEQ lis_yl
    BCC lis_desc
 ; |||
-; ASCENDING: dy = yr - yl (unsigned)
-   SEC
+; ASCENDING: dy = yr - yl (unsigned; C=1 — the BCC above didn't take)
    SBC zp_line_yl_l
    JSR umul_round_div
    CLC

@@ -42,8 +42,7 @@ umul16x16:
    LDA LC_M_B_HI
    BEQ skip_p2
 
-   LDA LC_M_B_HI
-   STA zp_mul_b
+   STA zp_mul_b                            ; A = b_hi from the test above
    LDA LC_M_A_LO
    JSR umul8
 ; p2 = a_lo * b_hi
@@ -81,8 +80,7 @@ skip_p2:
    LDA LC_M_B_HI
    BEQ skip_p3_p4
 ; if b fits u8, p4 = a_hi * 0 = 0
-   LDA LC_M_B_HI
-   STA zp_mul_b
+   STA zp_mul_b                            ; A = b_hi from the test above
    LDA LC_M_A_HI
    JSR umul8
 ; p4 = a_hi * b_hi
@@ -160,14 +158,10 @@ u16_loop:
    STA LC_TMP_LO
    LDA LC_REM_HI
    SBC LC_DEN_HI
-   BCC u16_no_sub
+   BCC u16_set                             ; no-sub: C=0 rides into the ROL
    STA LC_REM_HI
    LDA LC_TMP_LO
-   STA LC_REM_LO
-   SEC
-   JMP u16_set
-u16_no_sub:
-   CLC
+   STA LC_REM_LO                           ; sub taken: C=1 from the SBC
 u16_set:
    ROL LC_QUOT_LO
    ROL LC_QUOT_HI
@@ -305,8 +299,8 @@ s16_interp:
    LDA LC_OX2_HI
    SBC LC_OX1_HI
    STA LC_DEN_HI
-; If den < 0, negate both offset and den.
-   LDA LC_DEN_HI
+; If den < 0, negate both offset and den. (A and N are the SBC's — no
+; reload needed for the sign test.)
    BPL si_den_pos
    LDA #0
    SEC
@@ -896,8 +890,7 @@ need_yclip:
    STA zp_line_xl_l
    LDA #0
    STA zp_line_xl_h
-   LDA #0
-   STA zp_line_yl_l
+   STA zp_line_yl_l                        ; A still 0
    STA zp_line_yl_h
    LDA zp_dcl_rec_buf_h
    BEQ y1c_done
@@ -933,11 +926,10 @@ y1c_done:
    STA zp_line_xr_l
    LDA #0
    STA zp_line_xr_h
-   LDA #0
-   STA zp_line_yr_l
+   STA zp_line_yr_l                        ; A still 0...
    STA zp_line_yr_h
-   LDA #0                                  ; [xr, orig xr] exited via TOP:
-   STA DCLV_S16VY                          ; pend (order: after walk recs)
+   STA DCLV_S16VY                          ; [xr, orig xr] exited via TOP:
+                                        ; pend 0 (order: after walk recs)
    JMP y2c_done
 y2c_not_neg:
    BEQ y2c_done
