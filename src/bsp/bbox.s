@@ -342,11 +342,15 @@ df_plain:
    LDA #<br_bbox_visible
    LDY #>br_bbox_visible
 df_write:
-   STA bsp_walk::bv_site_near+1
-   STA bsp_walk::bv_site_far+1
+   STA bsp_walk::bv_site_near0+1
+   STA bsp_walk::bv_site_far0+1
+   STA bsp_walk::bv_site_near1+1
+   STA bsp_walk::bv_site_far1+1
    TYA
-   STA bsp_walk::bv_site_near+2
-   STA bsp_walk::bv_site_far+2
+   STA bsp_walk::bv_site_near0+2
+   STA bsp_walk::bv_site_far0+2
+   STA bsp_walk::bv_site_near1+2
+   STA bsp_walk::bv_site_far1+2
    RTS
 .endscope
 

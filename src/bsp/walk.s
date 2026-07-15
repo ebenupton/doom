@@ -97,39 +97,8 @@ bif_clr2:
 ; loop checked it, so the serve/bbox query sequence is walkseq-
 ; identical; it reads zp_head directly (unbanked — no paging).
 
-; FETCH_CHILD — descend into child[id][side]: stores the child id and
-; branches to leaf_target if it is a subsector; falls through if it is
-; an internal node.
-;   in : X = node id, zp_bbox_side = side (0 right / 1 left)
-;   out: zp_node_ch_l = child id (leaf bit baked in the parent's TYPE
-;        byte: NF_RLEAF bit 7 / NF_LLEAF bit 6 — one ASL per side drops
-;        it into carry). Bank L0 must be paged.
-; Each side arm stores and dispatches off its OWN carry — the v1 macro
-; re-joined the arms first, and the right side's join hop measured as
-; the whole gap to the old specialized-arm walk (+3/right fetch).
-.macro FETCH_CHILD leaf_target, node_target
-   LDA zp_bbox_side
-   BNE :+
-   LDA NODE_CRLO,X
-   STA zp_node_ch_l
-   LDA NODE_TYPE,X                         ; N = NF_RLEAF
-   BMI leaf_target
-.ifblank node_target
-   BPL :++                                 ; right internal: skip left arm
-.else
-   JMP node_target                         ; right internal: direct tail
-.endif
-:  LDA NODE_CLLO,X
-   STA zp_node_ch_l
-   LDA NODE_TYPE,X
-   ASL                                     ; N = NF_LLEAF
-   BMI leaf_target
-.ifblank node_target
-:
-.else
-   JMP node_target
-.endif
-.endmacro
+; (FETCH_CHILD retired 2026-07-15: the side-specialised rc_node bodies
+; inline each arm directly — see rc_node below.)
 
 ; --- seed: rc_node(ROOT) ---
    TSX
@@ -142,28 +111,60 @@ bif_clr2:
 
 rc_node:
 ; descend(internal node): id in zp_node_ch_l.
+; SIDE-SPECIALISED (2026-07-15): node_setup returns side in A with Z
+; live (every exit is LDA #imm / RTS), so ONE dispatch selects a
+; right-then-left or left-then-right body with the child fetches
+; INLINED per arm — no runtime side test in the fetches, no side on
+; the stack (the continuation's side is its code position; only the id
+; is pushed), and the bbox side stores reuse A / a bare immediate.
    IS_FULL_B bsp_done_full
 rc_node_nc:                             ; far tail re-entry (is_full done)
-   JSR br_node_setup                       ; -> A = side (0 right / 1 left)
-   PHA                                     ; push this side
-   STA zp_bbox_side
+   JSR br_node_setup                       ; -> A = side, Z = (side == 0)
+   BNE rc_n1                               ; side 1: LEFT first
+; === side 0: near = RIGHT child, far = LEFT child ===
+   STA zp_bbox_side                        ; A = 0
    LDA zp_node_ch_l
-   PHA                                     ; push id
-bv_site_near:                           ; operand SMC-patched by br_dcache_frame
+   PHA                                     ; push id (side is implicit)
+bv_site_near0:                          ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (<-> br_bbox_visible_d when D active)
-   BEQ rc_resume                           ; near invisible: skip subtree
+   BEQ r0_far                              ; near invisible: skip subtree
    PAGE BANK_L0                            ; node SoA pages live in bank L0
    LDX zp_node_ch_l
-   FETCH_CHILD rcn_leaf                    ; (zp_bbox_side survives bbox —
-                                        ;  audited: no writer outside
-                                        ;  this file + node_setup)
+   LDA NODE_CRLO,X                         ; inline RIGHT fetch
+   STA zp_node_ch_l
+   LDA NODE_TYPE,X                         ; N = NF_RLEAF
+   BMI r0_leaf
    JSR rc_node                             ; <- the recursion
-   JMP rc_resume
+   JMP r0_far
+r0_leaf:
+   JSR rc_leaf
+r0_far:
+   PLA
+   STA zp_node_ch_l                        ; id
+   LDA #1
+   STA zp_bbox_side                        ; far = LEFT
+   IS_FULL_B bsp_done_full
+bv_site_far0:                           ; operand SMC-patched by br_dcache_frame
+   JSR br_bbox_visible
+   BEQ rc_ret                              ; far invisible: this node is done
+   PAGE BANK_L0
+   LDX zp_node_ch_l
+   LDA NODE_CLLO,X                         ; inline LEFT fetch
+   STA zp_node_ch_l
+   LDA NODE_TYPE,X
+   ASL A                                   ; N = NF_LLEAF
+   BMI r0_fleaf
+   JMP rc_node_nc                          ; far node: TAIL call
+r0_fleaf:
+   JMP br_render_subsector                 ; far leaf: TAIL call
+rc_ret:
+   RTS
 
 bsp_done_full:
 ; unwind(): restore the frame-entry S — every pending frame is gone
-; and the caller's return address is back on top. (Parked mid-block:
-; see the seed note.)
+; and the caller's return address is back on top. (Parked mid-block,
+; between the two side variants: keeps every IS_FULL_B in range and
+; the seed fall-in.)
    LDX zp_bsp_stack_sp
    TXS
    RTS
@@ -174,25 +175,44 @@ rc_leaf:
    IS_FULL_B bsp_done_full
    JMP br_render_subsector
 
-rcn_leaf:
-   JSR rc_leaf
-rc_resume:
-; the continuation: pop the locals, do the far half
-   PLA
-   STA zp_node_ch_l                        ; id
-   PLA
-   EOR #1
-   STA zp_bbox_side                        ; far side
-   IS_FULL_B bsp_done_full
-bv_site_far:                            ; operand SMC-patched by br_dcache_frame
+rc_n1:
+; === side 1: near = LEFT child, far = RIGHT child === (mirror)
+   STA zp_bbox_side                        ; A = 1
+   LDA zp_node_ch_l
+   PHA
+bv_site_near1:                          ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
-   BEQ rc_ret                              ; far invisible: this node is done
+   BEQ r1_far
    PAGE BANK_L0
    LDX zp_node_ch_l
-   FETCH_CHILD @leaf, rc_node_nc           ; far node: TAIL call per arm
-@leaf:
+   LDA NODE_CLLO,X                         ; inline LEFT fetch
+   STA zp_node_ch_l
+   LDA NODE_TYPE,X
+   ASL A                                   ; N = NF_LLEAF
+   BMI r1_leaf
+   JSR rc_node
+   JMP r1_far
+r1_leaf:
+   JSR rc_leaf
+r1_far:
+   PLA
+   STA zp_node_ch_l
+   LDA #0
+   STA zp_bbox_side                        ; far = RIGHT
+   IS_FULL_B bsp_done_full
+bv_site_far1:                           ; operand SMC-patched by br_dcache_frame
+   JSR br_bbox_visible
+   BEQ rc_ret1
+   PAGE BANK_L0
+   LDX zp_node_ch_l
+   LDA NODE_CRLO,X                         ; inline RIGHT fetch
+   STA zp_node_ch_l
+   LDA NODE_TYPE,X                         ; N = NF_RLEAF
+   BMI r1_fleaf
+   JMP rc_node_nc                          ; far node: TAIL call
+r1_fleaf:
    JMP br_render_subsector                 ; far leaf: TAIL call
-rc_ret:
+rc_ret1:
    RTS
 .endscope
 
