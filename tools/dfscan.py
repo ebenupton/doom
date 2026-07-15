@@ -21,7 +21,12 @@ builds a CFG, and runs:
 
   JSR is modeled as full havoc (registers, flags, memory, meta) — the
   cross-call register contracts are NOT assumed, so every finding is
-  sound under any callee behavior. SMC sites (any instruction whose
+  sound under any callee behavior. EXCEPTION (2026-07-15): the ROMSEL
+  bank crosses calls via interprocedural summaries — per JSR target,
+  'id' (provably never writes $FE30) or 'const k' (every RTS path exits
+  bank k), computed by a fixpoint over the call graph with stack-game
+  and model-exit guards; unknown callees still havoc the bank. This is
+  what lets page_same findings survive a JSR. SMC sites (any instruction whose
   operand bytes are the target of a store into a code segment) are
   excluded from findings and treated as unknown loads.
 
@@ -78,7 +83,12 @@ F8 SED imp|F9 SBC aby|FD SBC abx|FE INC abx
 _LEN = {'imp': 1, 'acc': 1, 'imm': 2, 'zp': 2, 'zpx': 2, 'zpy': 2,
         'inx': 2, 'iny': 2, 'rel': 2, 'abs': 3, 'abx': 3, 'aby': 3, 'ind': 3}
 OPTAB = {}
-for ent in _SPEC.split('|'):
+# NB: split on newlines as well as '|' — the spec lines have no trailing
+# '|', and the old split('|') glued each line's last entry to the next
+# line's first, silently DROPPING 21 opcodes (TAX, BMI, CMP #imm, ADC zp,
+# ...) from the table: every block containing one ended early as
+# "off-model". Found 2026-07-15 by the bank-summary guards.
+for ent in _SPEC.replace('\n', '|').split('|'):
     ent = ent.strip()
     if not ent:
         continue
@@ -340,9 +350,20 @@ def transfer(st, ins, volatile):
         pass
     elif mn == 'JSR':
         st.havoc()
-        st.bank = None         # callee may page
+        # interprocedural bank summary (pass 2; pass 1 has none -> UNK):
+        # 'id' = callee provably never writes ROMSEL on any RTS path,
+        # ('const', k) = every RTS path exits with bank k paged.
+        eff = _BANK_SUM.get(opnd)
+        if eff == ('id',):
+            pass                            # st.bank survives the call
+        elif eff is not None and eff[0] == 'const':
+            st.bank = eff[1]
+        else:
+            st.bank = None                  # unknown callee effect
     # JMP/branches/RTS/RTI/BRK handled by CFG
     return st
+
+_BANK_SUM = {}    # JSR target -> ('id',) | ('const', k); absent = unknown
 
 _BR = {'BPL': ('N', 0), 'BMI': ('N', 1), 'BVC': ('V', 0), 'BVS': ('V', 1),
        'BCC': ('C', 0), 'BCS': ('C', 1), 'BNE': ('Z', 0), 'BEQ': ('Z', 1)}
@@ -611,36 +632,182 @@ def main():
         blk_succ[lead] = [(t, e) for (t, e) in ss if t in blocks]
 
     # ── forward fixpoint ────────────────────────────────────────────────
-    IN = {}
     entries = set(jsr_targets & set(blocks)) | {ENTRY_RENDER}
     for lead in blocks:
         if lead not in has_pred:
             entries.add(lead)
-    wl = []
-    for e in entries:
-        if e in blocks:
-            IN[e] = St()
-            wl.append(e)
-    it = 0
-    while wl:
-        it += 1
-        if it > 400000:
-            print("fixpoint budget exceeded", file=sys.stderr)
-            break
-        lead = wl.pop()
-        st = IN[lead].clone()
-        for i in blocks[lead]:
-            transfer(st, i, volatile)
-        for (t, edge) in blk_succ[lead]:
-            ts = st.clone()
-            if edge is not None:
-                refine(ts, edge[0], edge[1])
-            if t not in IN:
-                IN[t] = ts
-                wl.append(t)
-            else:
-                if IN[t].join(ts):
+
+    def run_fixpoint():
+        IN = {}
+        wl = []
+        for e in entries:
+            if e in blocks:
+                IN[e] = St()
+                wl.append(e)
+        it = 0
+        while wl:
+            it += 1
+            if it > 400000:
+                print("fixpoint budget exceeded", file=sys.stderr)
+                break
+            lead = wl.pop()
+            st = IN[lead].clone()
+            for i in blocks[lead]:
+                transfer(st, i, volatile)
+            for (t, edge) in blk_succ[lead]:
+                ts = st.clone()
+                if edge is not None:
+                    refine(ts, edge[0], edge[1])
+                if t not in IN:
+                    IN[t] = ts
                     wl.append(t)
+                else:
+                    if IN[t].join(ts):
+                        wl.append(t)
+        return IN
+
+    if os.environ.get('DFSCAN_PROBE'):
+        for hx in os.environ['DFSCAN_PROBE'].split(','):
+            P = int(hx, 16)
+            inb = [l for l, blk in blocks.items()
+                   if any(i['pc'] == P for i in blk)]
+            print(f"PROBE ${P:04X}: in ins={P in ins} "
+                  f"decode={ins.get(P)} leader={P in leaders} "
+                  f"haspred={P in has_pred} inblocks={[hex(x) for x in inb]}")
+            print(f"  count={count.get(P)} seen={seen.get(P)} "
+                  f"mem[{P-2:04X}..]={' '.join(f'{mem[P-2+k]:02X}' for k in range(8))}")
+            if inb:
+                l = inb[0]
+                print(f"  block ${l:04X}: " + " ".join(
+                    f"{i['mn']}@{i['pc']:04X}" for i in blocks[l])
+                    + f"  succ={[(hex(t), e) for t, e in blk_succ[l]]}")
+
+    _BANK_SUM.clear()
+    IN = run_fixpoint()          # pass 1: every JSR is bank-unknown
+
+    # ── interprocedural bank summaries ──────────────────────────────────
+    # Per JSR target: ('id',) = provably never writes ROMSEL on any
+    # entry->RTS path; ('const', k) = every RTS path exits bank k; None =
+    # unknown. Computed on pass-1 states (A-const facts at STA $FE30
+    # sites don't depend on bank state, so one summary round + one global
+    # re-run reaches the fixpoint). Soundness guards below refuse any
+    # body that plays stack games (RTS-dispatch pushes / return-drop
+    # pops: PHA/PLA imbalance over the body union) or leaves the modeled
+    # CFG (RTI/BRK/indirect JMP/edges filtered out of blk_succ). NB a
+    # JMP abs whose operand is SMC follows the STATIC image — sound
+    # today because the one such site (rns_go) only dispatches RNS
+    # kernels, which are pure ('id',) leaves; a new SMC JMP into paging
+    # code would need a volatile check here.
+
+    _SUMWHY = {}
+
+    def _compose(pre, c):
+        if c is None:
+            return None
+        if c == ('id',):
+            return pre
+        return c                            # ('const', k)
+
+    def _join_eff(a, b):
+        if a == 'bot':
+            return b
+        if b == 'bot' or a == b:
+            return a
+        return None
+
+    _EXP = {'RTS': 0, 'RTI': 0, 'BRK': 0}
+
+    def _eval(entry, sums):
+        seen = set()
+        stk = [entry]
+        while stk:                          # intraprocedural body (RTS=exit,
+            b = stk.pop()                   # JSR = fall-through edge only)
+            if b in seen or b not in blocks:
+                continue
+            seen.add(b)
+            for (t, _e) in blk_succ[b]:
+                stk.append(t)
+        pha = pla = 0
+        for b in seen:
+            for i in blocks[b]:
+                if i['mn'] == 'PHA':
+                    pha += 1
+                elif i['mn'] == 'PLA':
+                    pla += 1
+            last = blocks[b][-1]
+            if last['mn'] in ('RTI', 'BRK') or last['mode'] == 'ind':
+                _SUMWHY[entry] = f"exit-insn {last['mn']}/{last['mode']} at ${last['pc']:04X}"
+                return None
+            exp = _EXP.get(last['mn'], 2 if last['mode'] == 'rel' else 1)
+            if len(blk_succ[b]) < exp:
+                _SUMWHY[entry] = f"edge off-model at ${last['pc']:04X} {last['mn']}"
+                return None                 # an edge left the model
+        if pha != pla:
+            _SUMWHY[entry] = f"PHA/PLA imbalance {pha}/{pla}"
+            return None                     # RTS-dispatch / return-drop
+        EFF = {entry: ('id',)}
+        wl = [entry]
+        res = 'bot'
+        it = 0
+        while wl:
+            it += 1
+            if it > 100000:
+                return None
+            b = wl.pop()
+            eff = EFF[b]
+            st = IN[b].clone() if b in IN else None
+            for i in blocks[b]:
+                if (i['mn'] == 'STA' and i['mode'] == 'abs'
+                        and i['opnd'] == 0xFE30):
+                    v = st.r['A'] if st is not None else U
+                    eff = (('const', v[1]) if (v != U and v[0] == 'c')
+                           else None)
+                elif i['mn'] == 'JSR':
+                    eff = _compose(eff, sums.get(i['opnd']))
+                if st is not None:
+                    transfer(st, i, volatile)
+            if blocks[b][-1]['mn'] == 'RTS':
+                res = _join_eff(res, eff)
+                continue
+            for (t, _e) in blk_succ[b]:
+                if t not in EFF:
+                    EFF[t] = eff
+                    wl.append(t)
+                elif EFF[t] != eff:
+                    j = EFF[t] if EFF[t] == eff else (
+                        eff if EFF[t] == 'bot' else
+                        (EFF[t] if eff == 'bot' else None))
+                    if j != EFF[t]:
+                        EFF[t] = j
+                        wl.append(t)
+        if res == 'bot':
+            _SUMWHY[entry] = "no RTS reached"
+            return None
+        if res is None:
+            _SUMWHY[entry] = "conflicting/unknown paths"
+        return res
+
+    subs = sorted(jsr_targets & set(blocks))
+    sums = {e: ('id',) for e in subs}       # optimistic init, iterate to fix
+    for _round in range(30):
+        new = {e: _eval(e, sums) for e in subs}
+        if new == sums:
+            break
+        sums = new
+    _BANK_SUM.update({e: v for e, v in sums.items() if v is not None})
+    n_id = sum(1 for v in _BANK_SUM.values() if v == ('id',))
+    n_ct = len(_BANK_SUM) - n_id
+    print(f"bank summaries: {len(subs)} subroutines -> "
+          f"{n_id} id, {n_ct} const-exit, {len(subs)-len(_BANK_SUM)} unknown")
+    if os.environ.get('DFSCAN_SUMS'):
+        for e in subs:
+            v = sums.get(e)
+            why = '' if v is not None else '  [' + _SUMWHY.get(e, '?') + ']'
+            sn, so = sym_near(e)
+            lbl = f"{sn}+{so}" if so else sn
+            print(f"  ${e:04X} {lbl:34s} {v!r}{why}")
+
+    IN = run_fixpoint()          # pass 2: JSRs consult the summaries
 
     # ── findings ────────────────────────────────────────────────────────
     findings = []
