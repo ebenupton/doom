@@ -7,9 +7,9 @@
 LAY_N_SEGS   = 649
 LAY_N_NODES   = 220
 LAY_ROOT   = 219                      ; n_nodes - 1
-LAY_OFF_VERTS   = $1000
-LAY_OFF_SS   = $0D00
-LAY_OFF_SEG_HDR   = $1718
+LAY_OFF_VERTS   = $0E00
+LAY_OFF_SS   = $0B00
+LAY_OFF_SEG_HDR   = $1518
 
 LAY_HDR_STRIDE  = 16                    ; heights INLINED at +10..15
 ; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —

@@ -84,7 +84,6 @@ class SubsectorDiffer:
         # --- 6502 run ---
         a0 = len(ta)
         mem[0x58] = idx & 0xFF
-        mem[0x59] = (idx >> 8) & 0xFF
         sc._run(ENTRY_BR_RENDER_SUBSECTOR)
         asm_trace = ta[a0:]
         del ta[a0:]

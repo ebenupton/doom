@@ -22,12 +22,16 @@ import math
 VERTEX_SIZE  = 4     # shift 2:  s16 x, s16 y
 NODE_SIZE    = 16    # (legacy AoS reader stride — packed data is now SoA)
 SSECTOR_SIZE = 4     # (legacy)
-# SoA pages at the head of rom_main (see build_packed): 13 node pages
-# (8 field bytes + 4 children bytes + type) then 3 subsector pages.
-NODE_SOA_PAGES = 13
+# SoA pages at the head of rom_main (see build_packed): 11 node pages
+# (8 field bytes + 2 child-id bytes + type) then 3 subsector pages.
+# Ids are u8 EVERYWHERE (n_nodes, n_ss <= 256 asserted): no child hi
+# bytes; "child is a subsector" lives in the parent's TYPE byte
+# (NF_RLEAF/NF_LLEAF), not in the link.
+NODE_SOA_PAGES = 11
 SS_SOA_PAGES   = 3
 NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
 NT_GENERAL, NT_DX0, NT_DY0 = 0, 1, 2
+NF_RLEAF, NF_LLEAF = 0x80, 0x40   # child-is-subsector flags, baked into the TYPE byte
 SEG_HDR_SIZE = 16    # idx<<4 (pure shifts). Uniform back-face C-FORM:
                      # +4 form/dir_id: 0 front iff px>C16, 1 px<C16,
                      #    2 py>C16, 3 py<C16; >=4 diagonal (id-4 indexes
@@ -199,9 +203,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # arithmetic, and br_node_setup reads only the fields its (baked)
     # partition type needs. Layout (offset = page*256):
     #   pg 0-7  node nx_lo,nx_hi,ny_lo,ny_hi,dx_lo,dx_hi,dy_lo,dy_hi
-    #   pg 8-11 node children right_lo,right_hi,left_lo,left_hi
-    #   pg 12   node type: 0 general, 1 dx==0 (vertical), 2 dy==0
-    #   pg 13-15 subsector count, first_lo, first_hi
+    #   pg 8/9  node children right_id, left_id (u8 — no hi bytes)
+    #   pg 10   node type: bits 0-1 = 0 general, 1 dx==0 (vertical),
+    #           2 dy==0; bit 7 (NF_RLEAF) / bit 6 (NF_LLEAF) = that
+    #           child is a subsector (leaf-ness is the parent's property)
+    #   pg 11-13 subsector count, first_lo, first_hi
     # Everything else follows at NODE_SOA_SIZE.
     assert n_nodes <= 256 and n_ss <= 256
 
@@ -249,11 +255,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         _npg(2, i, raw_ny); _npg(3, i, raw_ny >> 8)
         _npg(4, i, raw_dx); _npg(5, i, raw_dx >> 8)
         _npg(6, i, raw_dy); _npg(7, i, raw_dy >> 8)
-        _npg(8, i, n[12]);  _npg(9, i, n[12] >> 8)
-        _npg(10, i, n[13]); _npg(11, i, n[13] >> 8)
-        _npg(12, i, NT_DX0 if raw_dx == 0 else (NT_DY0 if raw_dy == 0 else NT_GENERAL))
+        cr, cl = n[12], n[13]
+        assert (cr & 0x7FFF) < 256 and (cl & 0x7FFF) < 256, \
+            f"node {i} child id exceeds u8 — format is specialised to 256"
+        _npg(8, i, cr)
+        _npg(9, i, cl)
+        typ = NT_DX0 if raw_dx == 0 else (NT_DY0 if raw_dy == 0 else NT_GENERAL)
+        if cr & 0x8000: typ |= NF_RLEAF
+        if cl & 0x8000: typ |= NF_LLEAF
+        _npg(10, i, typ)
 
-    # Subsectors (SoA pages 13-15: count, first_lo, first_hi)
+    # Subsectors (SoA pages 11-13: count, first_lo, first_hi)
     for i, ss in enumerate(fp_ssectors):
         rom_main[off_ss + i] = ss[0] & 0xFF
         rom_main[off_ss + 256 + i] = ss[1] & 0xFF

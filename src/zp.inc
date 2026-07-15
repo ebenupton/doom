@@ -193,7 +193,7 @@ zp_node_nx_h = $55                ; [bsp]
 zp_node_ny_l = $56                ; [bsp]
 zp_node_ny_h = $57                ; [bsp]
 zp_node_ch_l = $58                ; [bsp]; current child (lo, hi: 16-bit id)
-zp_node_ch_h = $59                ; [bsp]
+; $59 free (was zp_node_ch_h — ids are u8 end to end, 2026-07-15)
 zp_bf_pym_h = $5B                ; [bsp]; |py| hi byte
 zp_sx_ord = $5A                   ; [bsp]; reversal flag (0 = v1 already
 ; left, VX_STRIDE = reversed): latched by the has_gap prelude; its ONLY

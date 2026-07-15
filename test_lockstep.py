@@ -94,9 +94,16 @@ def main():
     prev_m=prev_b=ENTRY_RENDER
     for i in range(10_000_000):
         if m.pc==0xFF00 or b.pc==0xFF00:
-            mnz=sum(1 for k in range(0x5800,0x8000) if m.memory[k])
-            bnz=sum(1 for k in range(0x5800,0x8000) if bare[k])
-            print(f"both finished at step {i}; model FB nz={mnz} bare FB nz={bnz}"); break
+            # compare the actual FB ($5800-$6C00). $6C00-$7FFF is NOT
+            # framebuffer: the model instance's constructor leaves boot
+            # junk there that bare (built from clean images) never has —
+            # counting it made identical frames look divergent.
+            fbd=sum(1 for k in range(0x5800,0x6C00) if m.memory[k]!=bare[k])
+            mnz=sum(1 for k in range(0x5800,0x6C00) if m.memory[k])
+            print(f"both finished at step {i}; FB nz={mnz}, model-vs-bare differing bytes={fbd}")
+            print("lockstep: PASS" if fbd==0 else "lockstep: FAIL")
+            if fbd: import sys; sys.exit(1)
+            break
         if m.pc != b.pc:
             mm=m.memory; bm=bare
             print(f"DIVERGE at step {i}: model PC=${m.pc:04X} bare PC=${b.pc:04X}")

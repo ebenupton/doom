@@ -68,26 +68,19 @@ anim_ss_cont:
 ; diff this against the Python walk's subsector set. The banked build
 ; compiles it out (nothing on the disc reads it; ~44 bytes of MAIN back).
 .if .not ::BANKED
-   LDA zp_node_ch_l
-   STA zp_br_t0
-   LDA zp_node_ch_h
-   STA zp_br_t1
-   LSR zp_br_t1
-   ROR zp_br_t0
-   LSR zp_br_t1
-   ROR zp_br_t0
-   LSR zp_br_t1
-   ROR zp_br_t0
+   LDA zp_node_ch_l                        ; ss id is u8 (2026-07-15)
+   LSR
+   LSR
+   LSR
+   CLC
+   ADC #<SS_VISITED_BITMAP
+   STA zp_br_p
+   LDA #>SS_VISITED_BITMAP
+   ADC #0
+   STA zp_br_p_h
    LDA zp_node_ch_l
    AND #7
    TAX
-   LDA #<SS_VISITED_BITMAP
-   CLC
-   ADC zp_br_t0
-   STA zp_br_p
-   LDA #>SS_VISITED_BITMAP
-   ADC zp_br_t1
-   STA zp_br_p_h
    LDY #0
    LDA vc_bit_mask,X                       ; X survived the pointer build —
    ORA (zp_br_p),Y                         ; reload beats the old PHA/PLA

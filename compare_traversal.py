@@ -75,7 +75,7 @@ def install_tracing(sc, trace_all):
             if pc == _E_HAS_GAP:
                 trace_all.append(('has_gap', mem[0xC2], mem[0xC3]))
             elif pc == ss_real:
-                trace_all.append(('ss', mem[0x58] | (mem[0x59] << 8)))
+                trace_all.append(('ss', mem[0x58]))
             mpu.step()
         sc.last_cycles = mpu.processorCycles
         sc.total_cycles += sc.last_cycles
@@ -106,7 +106,6 @@ def trace_hybrid(px, py, ab):
         # (the traced_run pc watch records the ss entry — no explicit append)
         mem = sc.mpu.memory
         mem[0x58] = idx & 0xFF
-        mem[0x59] = (idx >> 8) & 0xFF
         sc._run(ENTRY_BR_RENDER_SUBSECTOR)
 
     orig = dw.packed_render_subsector

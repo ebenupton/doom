@@ -233,24 +233,24 @@ c2_pos:
 .endscope
 
 ; ============================================================================
-; br_node_setup — read node from ROM, compute side, set BSP_NEAR/FAR.
-; Called twice per internal node (entry + post-near phases).
+; br_node_setup — read node from ROM, compute the player's side. Once
+; per internal node visit; the walk follows children (id + leaf flag)
+; straight from the SoA pages, so side is the whole contract.
 ;
 ;   Inputs:  zp_node_ch_l = node id (u8 — n_nodes <= 256, pack-time assert)
 ;            zp_br_pxraw_l/hi, zp_br_pyraw_l/hi = player position, RAW
 ;              map units relative to map_center (s16, NOT prescaled — the
 ;              side test must not lose a weak axis to /8 truncation).
-;   Outputs: zp_side = 0 (right of partition) / 1 (left/on),
-;            BSP_NEAR_LO/HI = child on the player's side (walk descends
-;              this first), BSP_FAR_LO/HI = the other child.
+;   Outputs: zp_side = 0 (right of partition) / 1 (left/on).
 ;   Scratch: zp_seg_dxraw/dyraw (player - node origin), zp_node_dx/dy,
 ;            $0A50-$0A52 (s24 cross-product accumulator), zp_br_dx/dy*.
 ;
 ; Node data comes from the SoA pages built by wad_packed.build_packed:
-; one 256-byte page per field byte (NODE_NXLO..NODE_DYHI, children
-; NODE_CRLO..NODE_CLHI, and NODE_TYPE), indexed with constant-base
+; one 256-byte page per field byte (NODE_NXLO..NODE_DYHI, child ids
+; NODE_CRLO/NODE_CLLO, and NODE_TYPE), indexed with constant-base
 ; LDA abs,X — no pointer arithmetic. The partition TYPE is baked at pack
-; time (NT_GENERAL=0, NT_DX0=1 vertical, NT_DY0=2 horizontal) so the 73%
+; time (bits 0-1: NT_GENERAL=0, NT_DX0=1 vertical, NT_DY0=2 horizontal;
+; bits 7/6 are the child leaf flags, masked off here) so the 73%
 ; of E1M1 nodes that are axis-aligned skip the classification AND load
 ; only the one delta they need.
 ;
@@ -275,6 +275,7 @@ br_node_setup:
 ; skip the classification and load only the two fields they need.
    LDX zp_node_ch_l
    LDA NODE_TYPE,X
+   AND #NT_MASK                            ; bits 7/6 are the child leaf flags
    BEQ ns_t_general
    CMP #1
    BEQ ns_t_dx0
@@ -415,36 +416,16 @@ ns_mul:
    ORA $0A51                               ; past this test)
    ORA $0A50
    BEQ ns_side1
+; (2026-07-15: the BSP_NEAR/FAR staging is gone — the walk follows
+; children straight from the SoA pages at dispatch time, near and far
+; alike, so setup's whole output is zp_side.)
 ns_side0:
    LDA #0
    STA zp_side
-   LDX zp_node_ch_l
-   JMP ns_front
+   RTS
 ns_side1:
    LDA #1
    STA zp_side
-   LDX zp_node_ch_l
-   JMP ns_back
-ns_front:
-; Children from the SoA pages (no pointer re-fetch needed).
-   LDA NODE_CRLO,X
-   STA BSP_NEAR_LO
-   LDA NODE_CRHI,X
-   STA BSP_NEAR_HI
-   LDA NODE_CLLO,X
-   STA BSP_FAR_LO
-   LDA NODE_CLHI,X
-   STA BSP_FAR_HI
-   RTS
-ns_back:
-   LDA NODE_CLLO,X
-   STA BSP_NEAR_LO
-   LDA NODE_CLHI,X
-   STA BSP_NEAR_HI
-   LDA NODE_CRLO,X
-   STA BSP_FAR_LO
-   LDA NODE_CRHI,X
-   STA BSP_FAR_HI
    RTS
 .endscope
 

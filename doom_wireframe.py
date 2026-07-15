@@ -2882,9 +2882,13 @@ def packed_render_bsp(nid, clips, ctx, vz,
     # Read children from packed ROM
     layout = _p_layout
     rom = _p_rom_main
-    nb = layout['off_nodes']               # SoA pages; children at pg 8-11
-    child_r = rom[nb + 8*256 + nid] | (rom[nb + 9*256 + nid] << 8)
-    child_l = rom[nb + 10*256 + nid] | (rom[nb + 11*256 + nid] << 8)
+    nb = layout['off_nodes']               # SoA pages; child ids at pg 8/9 (u8)
+    # Leaf-ness is the parent's property (TYPE byte bit 7 = right child
+    # is a subsector, bit 6 = left) — re-synthesize the WAD-style tag
+    # bit for the recursive dispatch above.
+    typ = rom[nb + 10*256 + nid]
+    child_r = rom[nb + 8*256 + nid] | ((typ & 0x80) << 8)
+    child_l = rom[nb + 9*256 + nid] | ((typ & 0x40) << 9)
 
     # point_on_side uses un-prescaled node data (matches render_bsp_fp exactly)
     node = nodes[nid]

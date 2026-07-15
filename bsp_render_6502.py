@@ -79,7 +79,7 @@ class BspRender6502:
         # retired FHCH stream vacated). The packer bakes the height bytes
         # (former load-time FHCH synthesis) into the header at +12..17.
         off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
-        for i in range(0x1000):                          # SoA pages
+        for i in range(off_verts):                       # SoA pages (14: 11 node + 3 ss)
             mem[NODE_SOA_BASE + i] = rom_main[i]
         for i in range(off_verts, off_hdr):              # verts
             mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]

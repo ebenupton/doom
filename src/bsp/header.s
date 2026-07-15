@@ -59,19 +59,22 @@ ina
 ; PAGE b : page sideways bank b ($FE30). No-op in the flat build, so flat stays
 ; bit-exact. A is clobbered — only invoke at A-dead points.
 ; --- Node/subsector SoA pages (head of ROM_MAIN; see wad_packed.py).
-; n_nodes, n_ss <= 256, so every field is a constant-base LDA abs,X.
-; Layout mirrors wad_packed.build_packed: 13 node pages (one page per
+; n_nodes, n_ss <= 256 (asserted at pack time): ids are u8 EVERYWHERE,
+; every field a constant-base LDA abs,X. Child links carry no hi byte;
+; "this child is a subsector" is baked into the parent's TYPE byte
+; (NF_RLEAF/NF_LLEAF) — leaf-ness is a property of the node, not the link.
+; Layout mirrors wad_packed.build_packed: 11 node pages (one page per
 ; field byte, index X = node id) then 3 subsector pages (index X = ss id):
 ;   pg 0/1  nx lo/hi   partition-line origin, map-centre-relative raw s16
 ;   pg 2/3  ny lo/hi
 ;   pg 4/5  dx lo/hi   partition-line direction (raw s16)
 ;   pg 6/7  dy lo/hi
-;   pg 8/9  right child id lo/hi   (WAD encoding: bit 15 set = subsector)
-;   pg 10/11 left child id lo/hi
-;   pg 12   baked partition type (NT_*: skips the axis test AND the
-;           unused field loads — 73% of E1M1 nodes are axis-aligned)
-;   pg 13   subsector seg count
-;   pg 14/15 subsector first-seg index lo/hi
+;   pg 8/9  right child id, left child id (u8)
+;   pg 10   TYPE: bits 0-1 baked partition type (NT_*: skips the axis
+;           test AND the unused field loads — 73% of E1M1 nodes are
+;           axis-aligned); bit 7 NF_RLEAF / bit 6 NF_LLEAF
+;   pg 11   subsector seg count
+;   pg 12/13 subsector first-seg index lo/hi
 .include "layout.inc"
 
 ; NODE_SOA comes from layout.inc (NODE_SOA_C): banked = L0 window head,
@@ -86,14 +89,19 @@ NODE_DXLO = NODE_SOA + $400
 NODE_DXHI = NODE_SOA + $500
 NODE_DYLO = NODE_SOA + $600
 NODE_DYHI = NODE_SOA + $700
-NODE_CRLO = NODE_SOA + $800             ; right child (side 0 = near)
-NODE_CRHI = NODE_SOA + $900
-NODE_CLLO = NODE_SOA + $A00             ; left child
-NODE_CLHI = NODE_SOA + $B00
-NODE_TYPE = NODE_SOA + $C00             ; 0 general, 1 dx==0, 2 dy==0
-SS_CNT    = NODE_SOA + $D00
-SS_FLO    = NODE_SOA + $E00
-SS_FHI    = NODE_SOA + $F00
+NODE_CRLO = NODE_SOA + $800             ; right child id (side 0 = near)
+NODE_CLLO = NODE_SOA + $900             ; left child id
+NODE_TYPE = NODE_SOA + $A00             ; bits 0-1 type; bit 7/6 leaf flags
+SS_CNT    = NODE_SOA + $B00
+SS_FLO    = NODE_SOA + $C00
+SS_FHI    = NODE_SOA + $D00
+
+; TYPE-byte fields. NF_RLEAF sits at bit 7 so one ASL drops it into C
+; (NF_LLEAF takes two) — the walk's child-follow gets id + leaf bit
+; with no AND mask on the id.
+NT_MASK  = $03                          ; 0 general, 1 dx==0, 2 dy==0
+NF_RLEAF = $80                          ; right child is a subsector
+NF_LLEAF = $40                          ; left child is a subsector
 
 ; Page-alignment contracts for the byte-at-a-time pointer builds
 ; (br_bbox_visible, bcac_index, the seg_xform vcache indexers):
