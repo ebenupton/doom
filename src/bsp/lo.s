@@ -274,44 +274,75 @@ br_node_setup:
 ; at frame entry for the seed path. dfscan-style caller audit.)
 ; Node index is u8 (n_nodes <= 256, asserted at pack time); the partition
 ; type is baked (page NODE_TYPE), so axis-aligned nodes — 73% on E1M1 —
-; skip the classification and load only the two fields they need.
+; run ONE strict s16 compare (backface C-form lesson, 2026-07-15).
    LDX zp_node_ch_l
    LDA NODE_TYPE,X
    AND #NT_MASK                            ; bits 7/6 are the child leaf flags
-   BEQ ns_t_general
-   CMP #1
-   BEQ ns_t_dx0
-; --- type 2: ndy==0 -> side from sign(dyraw) vs sign(ndx) ---
-   LDA zp_br_pyraw_l
+   CMP #NT_GEN
+   BCS ns_t_general                        ; 4 = general (only value >= 4)
+; --- axis forms 0-3, backface C-form style (2026-07-15): the packer
+; folded the partition-direction SIGN into the form, so each arm is ONE
+; strict s16 compare against the origin plane — the old delta staging,
+; zero test and runtime sign-EOR are gone. side0 iff the compare holds
+; STRICTLY; ties fall to side1 (D == 0 -> side 1, the mirror's rule).
+   LSR A                                   ; A = axis (0 px / 1 py),
+   BNE ns_ax_py                            ; C = 1 '<' / 0 '>'
+   BCS ns_px_lt
+; form 0: side0 iff px > nx
    SEC
-   SBC NODE_NYLO,X
-   STA zp_seg_dyraw_l
-   LDA zp_br_pyraw_h
-   SBC NODE_NYHI,X
-   STA zp_seg_dyraw_h
-   ORA zp_seg_dyraw_l
-   BEQ ns_jmp_side1
-   LDA NODE_DXHI,X
-   EOR zp_seg_dyraw_h
-   BPL ns_jmp_side1
-   JMP ns_side0
-ns_t_dx0:
-; --- type 1: ndx==0 -> side from sign(dxraw) vs sign(ndy) ---
    LDA zp_br_pxraw_l
-   SEC
    SBC NODE_NXLO,X
-   STA zp_seg_dxraw_l
+   STA zp_br_t2
    LDA zp_br_pxraw_h
    SBC NODE_NXHI,X
-   STA zp_seg_dxraw_h
-   ORA zp_seg_dxraw_l
-   BEQ ns_jmp_side1
-   LDA NODE_DYHI,X
-   EOR zp_seg_dxraw_h
-   BMI ns_jmp_side1
-   JMP ns_side0
-ns_jmp_side1:
-   JMP ns_side1
+   BVS ns_gt_ovf
+   BMI ns_x1
+   ORA zp_br_t2
+   BEQ ns_x1                               ; tie -> side1
+ns_x0:
+   LDA #0
+   RTS
+ns_gt_ovf:                                 ; V set: N inverted (diff != 0)
+   BMI ns_x0
+ns_x1:
+   LDA #1
+   RTS
+ns_px_lt:
+; form 1: side0 iff px < nx  (C = 1 from the LSR seeds the borrow)
+   LDA zp_br_pxraw_l
+   SBC NODE_NXLO,X
+   LDA zp_br_pxraw_h
+   SBC NODE_NXHI,X
+   BVS ns_lt_ovf
+   BMI ns_x0
+   BPL ns_x1                               ; (tie: diff 0 -> side1)
+ns_lt_ovf:                                 ; V set: N inverted
+   BPL ns_x0
+   BMI ns_x1
+ns_ax_py:
+   BCS ns_py_lt
+; form 2: side0 iff py > ny
+   SEC
+   LDA zp_br_pyraw_l
+   SBC NODE_NYLO,X
+   STA zp_br_t2
+   LDA zp_br_pyraw_h
+   SBC NODE_NYHI,X
+   BVS ns_gt_ovf
+   BMI ns_x1
+   ORA zp_br_t2
+   BEQ ns_x1                               ; tie -> side1
+   LDA #0
+   RTS
+ns_py_lt:
+; form 3: side0 iff py < ny  (borrow pre-seeded)
+   LDA zp_br_pyraw_l
+   SBC NODE_NYLO,X
+   LDA zp_br_pyraw_h
+   SBC NODE_NYHI,X
+   BVS ns_lt_ovf
+   BMI ns_x0
+   BPL ns_x1
 ns_t_general:
 ; --- general partition: both deltas + the dx/dy fields for the
 ;     sign-shortcut / multiply cascade below ---

@@ -30,7 +30,11 @@ SSECTOR_SIZE = 4     # (legacy)
 NODE_SOA_PAGES = 11
 SS_SOA_PAGES   = 3
 NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
-NT_GENERAL, NT_DX0, NT_DY0 = 0, 1, 2
+# Node partition TYPE (bits 0-2): axis-aligned partitions bake the
+# direction SIGN into a bf_ax-style strict-compare form (side0 iff the
+# compare holds strictly; ties -> side1, matching D=0 -> side 1):
+#   0: px > nx   1: px < nx   2: py > ny   3: py < ny   4: general
+NT_GEN = 4
 NF_RLEAF, NF_LLEAF = 0x80, 0x40   # child-is-subsector flags, baked into the TYPE byte
 SEG_HDR_SIZE = 16    # idx<<4 (pure shifts). Uniform back-face C-FORM:
                      # +4 form/dir_id: 0 front iff px>C16, 1 px<C16,
@@ -269,7 +273,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"node {i} child id exceeds u8 — format is specialised to 256"
         _npg(8, i, cr)
         _npg(9, i, cl)
-        typ = NT_DX0 if raw_dx == 0 else (NT_DY0 if raw_dy == 0 else NT_GENERAL)
+        if raw_dx == 0:                      # vertical: D = ndy*(px-nx)
+            typ = 0 if raw_dy > 0 else 1     # side0 iff px>nx : px<nx
+        elif raw_dy == 0:                    # horizontal: D = -ndx*(py-ny)
+            typ = 3 if raw_dx > 0 else 2     # side0 iff py<ny : py>ny
+        else:
+            typ = NT_GEN
         if cr & 0x8000: typ |= NF_RLEAF
         if cl & 0x8000: typ |= NF_LLEAF
         _npg(10, i, typ)

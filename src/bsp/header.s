@@ -112,7 +112,11 @@ SS_PHI    = NODE_SOA + $D00             ; ... hi. ROM ships first*16
 ; TYPE-byte fields. NF_RLEAF sits at bit 7 so one ASL drops it into C
 ; (NF_LLEAF takes two) — the walk's child-follow gets id + leaf bit
 ; with no AND mask on the id.
-NT_MASK  = $03                          ; 0 general, 1 dx==0, 2 dy==0
+NT_MASK  = $07                          ; 0-3 axis strict-compare forms
+                                        ; (0 px>nx, 1 px<nx, 2 py>ny,
+                                        ;  3 py<ny — direction sign baked
+                                        ;  at pack time), 4 general
+NT_GEN   = $04
 NF_RLEAF = $80                          ; right child is a subsector
 NF_LLEAF = $40                          ; left child is a subsector
 
