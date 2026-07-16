@@ -86,14 +86,15 @@ ck_left:
    BEQ ck_right                            ; tspan == 1024 exactly -> in range
 ck_left_out:
 ; tspan > 1024: left corner outside the FOV. Compute tspan-1024 (12-bit) and
-; test it against span with a discard-result 16-bit compare (CMP lo / SBC hi:
+; test it against span with a discard-result 16-bit compare (CPX lo / SBC hi:
 ; only the carry survives; C=1 iff tspan-1024 >= span -> wholly off the left).
+; The lo byte rides X, so CPX seeds the borrow WITHOUT touching A (2026-07-16
+; hand edit: the old TAY/TXA/CMP/TYA shuffle parked A in Y just to run the
+; lo compare through A — 6 cycles of choreography for one flag. Y is dead
+; here: ck_done re-seeds it with LDY #0, cull never reads it).
    SEC
    SBC #4                                  ; tspan hi -= 4  (tspan - 1024)
-   TAY                                     ; hi rides Y, lo rides X — the
-   TXA                                     ; pa_sx/pa_sy stage-reload is gone
-   CMP t0                                  ; (Y is re-seeded at the VATOX tail)
-   TYA
+   CPX t0                                  ; C = ((tspan-1024).lo >= span.lo)
    SBC t1
    BCC ck_left_clip
    JMP cull                                ; (tspan-2*CLIP) >= span: off left
@@ -119,13 +120,11 @@ ck_right:
    CPX #0
    BEQ ck_done
 ck_right_out:
-; mirror of ck_left_out: 16-bit (tspan-1024) >= span test, carry-only.
+; mirror of ck_left_out: 16-bit (tspan-1024) >= span test, carry-only
+; (same CPX trick — lo rides X from the LDX bca_p2 above, Y dead).
    SEC
    SBC #4
-   TAY                                     ; (mirror of ck_left_out)
-   TXA
-   CMP t0
-   TYA
+   CPX t0
    SBC t1
    BCC ck_right_clip
    JMP cull                                ; off right
