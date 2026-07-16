@@ -108,6 +108,171 @@ bif_clr2:
    JMP rc_node_nc                          ; frame start is provably not
                                         ; full — skip the is_full entry
 
+
+; ============================================================================
+; NODE_SETUP_DISPATCH s0, s1 — point-on-side, inlined (moved from lo.s
+; 2026-07-16; the walk is the single caller). Tests the player against
+; node zp_node_ch_l's partition and JMPs s0 (right of line) / s1
+; (left/on) DIRECTLY — no A verdict, no RTS round trip.
+;   Inputs:  zp_node_ch_l = node id (u8); zp_br_pxraw/pyraw = player
+;            position, RAW map units (s16 — the side test must not lose
+;            a weak axis to /8 truncation). Bank L0 paged (callers all
+;            hold it).
+;   Axis nodes (TYPE forms 0-3, 73%): ONE strict s16 compare against
+;   the NX/NY origin plane, direction sign baked at pack time.
+;   General (TYPE 4): DIR delta form sharing CROSS_MAG_DECIDE with the
+;   back-face test. Ties -> s1 everywhere (the mirror's D==0 rule).
+;   Python mirror: doom_wireframe.point_on_side (raw s16 values).
+;   Clobbers A, X; the shared cross slots + t0-t5 on the general path.
+; ============================================================================
+.macro NODE_SETUP_DISPATCH s0, s1
+.local ns_t_general, ns_ax_py, ns_px_lt, ns_py_lt, ns_x0, ns_x1
+.local ns_gt_ovf, ns_lt_ovf, nsd_dx0, nsd_dy0, nsd_s0, nsd_s1, nsd_mul
+   LDX zp_node_ch_l
+   LDA NODE_TYPE,X
+   AND #NT_MASK                            ; bits 7/6 are the child leaf flags
+   CMP #NT_GEN
+   BCS ns_t_general                        ; 4 = general (only value >= 4)
+; --- axis forms 0-3, backface C-form style (2026-07-15): the packer
+; folded the partition-direction SIGN into the form, so each arm is ONE
+; strict s16 compare against the origin plane — the old delta staging,
+; zero test and runtime sign-EOR are gone. side0 iff the compare holds
+; STRICTLY; ties fall to side1 (D == 0 -> side 1, the mirror's rule).
+   LSR A                                   ; A = axis (0 px / 1 py),
+   BNE ns_ax_py                            ; C = 1 '<' / 0 '>'
+   BCS ns_px_lt
+; form 0: side0 iff px > nx
+   SEC
+   LDA zp_br_pxraw_l
+   SBC NODE_NXLO,X
+   STA zp_br_t2
+   LDA zp_br_pxraw_h
+   SBC NODE_NXHI,X
+   BVS ns_gt_ovf
+   BMI ns_x1
+   ORA zp_br_t2
+   BEQ ns_x1                               ; tie -> side1
+ns_x0:
+   JMP s0
+ns_gt_ovf:                                 ; V set: N inverted (diff != 0)
+   BMI ns_x0
+ns_x1:
+   JMP s1
+ns_px_lt:
+; form 1: side0 iff px < nx  (C = 1 from the LSR seeds the borrow)
+   LDA zp_br_pxraw_l
+   SBC NODE_NXLO,X
+   LDA zp_br_pxraw_h
+   SBC NODE_NXHI,X
+   BVS ns_lt_ovf
+   BMI ns_x0
+   BPL ns_x1                               ; (tie: diff 0 -> side1)
+ns_lt_ovf:                                 ; V set: N inverted
+   BPL ns_x0
+   BMI ns_x1
+ns_ax_py:
+   BCS ns_py_lt
+; form 2: side0 iff py > ny
+   SEC
+   LDA zp_br_pyraw_l
+   SBC NODE_NYLO,X
+   STA zp_br_t2
+   LDA zp_br_pyraw_h
+   SBC NODE_NYHI,X
+   BVS ns_gt_ovf
+   BMI ns_x1
+   ORA zp_br_t2
+   BEQ ns_x1                               ; tie -> side1
+   BNE ns_x0                               ; (always)
+ns_py_lt:
+; form 3: side0 iff py < ny  (borrow pre-seeded)
+   LDA zp_br_pyraw_l
+   SBC NODE_NYLO,X
+   LDA zp_br_pyraw_h
+   SBC NODE_NYHI,X
+   BVS ns_lt_ovf
+   BMI ns_x0
+   BPL ns_x1
+ns_t_general:
+; --- general partition: DIR delta form (2026-07-15) — the packer bakes
+; the gcd-reduced primitive direction as (NODE_DIRID, NODE_DSGN —
+; b7 ndy neg / b6 ndx neg), sharing the seg DIR
+; tables. Deltas against the origin planes stage into the SHARED cross
+; slots, the sign shortcut mirrors bf_g_both, and the magnitude tier is
+; the SAME CROSS_MAG_DECIDE core the back-face test expands: side0 is
+; "front" (D = ndy*dx - ndx*dy > 0), ties side1. The old raw s16 x s16
+; double-smul cascade (and br_smul_s16_s16_s32) is gone.
+   LDA NODE_DSGN,X
+   STA zp_br_sign                          ; b7 = sgn ndy, b6 = sgn ndx
+   LDA NODE_DIRID,X
+   STA zp_bf_dir                           ; DIR-table index
+; dx = pxraw - nx (s16); hi rides A for the zero test
+   LDA zp_br_pxraw_l
+   SEC
+   SBC NODE_NXLO,X
+   STA zp_br_dx_l
+   LDA zp_br_pxraw_h
+   SBC NODE_NXHI,X
+   STA zp_br_dx_h
+   ORA zp_br_dx_l
+   BEQ nsd_dx0
+; dy = pyraw - ny (s16)
+   LDA zp_br_pyraw_l
+   SEC
+   SBC NODE_NYLO,X
+   STA zp_br_dy_l
+   LDA zp_br_pyraw_h
+   SBC NODE_NYHI,X
+   STA zp_br_dy_h
+   ORA zp_br_dy_l
+   BEQ nsd_dy0                             ; dy==0: D = P1
+; sign shortcut (mirror of bf_g_both): opposite product signs decide
+; with no multiply; sign(D) = sign(P1)
+   LDA zp_br_sign                          ; b7 = sgn ndy
+   EOR zp_br_dx_h                          ; b7 = sign(P1)
+   TAX                                     ; ride in X across the P2 sign
+   LDA zp_br_sign
+   ASL A                                   ; b6 (ndx sign) -> b7
+   EOR zp_br_dy_h                          ; b7 = sign(P2)
+   STA zp_br_t2
+   TXA
+   EOR zp_br_t2                            ; b7 set = opposite signs
+   BPL nsd_mul                             ; same sign -> magnitude core
+   TXA                                     ; opposite: sign(D) = sign(P1)
+   BMI nsd_s1
+   BPL nsd_s0                              ; (always)
+; dx == 0: D = -P2 = -(ndx*dy); side0 iff P2 < 0
+; (dy == 0 too -> D = 0 -> side1)
+nsd_dx0:
+   LDA zp_br_pyraw_l
+   SEC
+   SBC NODE_NYLO,X
+   STA zp_br_dy_l
+   LDA zp_br_pyraw_h
+   SBC NODE_NYHI,X
+   STA zp_br_dy_h
+   ORA zp_br_dy_l
+   BEQ nsd_s1                              ; dx==0 and dy==0 -> side1
+   LDA zp_br_sign
+   ASL A                                   ; b7 = sgn ndx
+   EOR zp_br_dy_h                          ; b7 = sign(P2)
+   BMI nsd_s0                              ; D = -P2 > 0 iff P2 < 0
+   BPL nsd_s1                              ; (always)
+; dy == 0: D = P1 = ndy*dx (nonzero: dx != 0 here)
+nsd_dy0:
+   LDA zp_br_sign                          ; b7 = sgn ndy
+   EOR zp_br_dx_h                          ; b7 = sign(P1)
+   BMI nsd_s1
+   BPL nsd_s0                              ; (always)
+; local verdict stubs (the branches above can't reach past the macro)
+nsd_s0:
+   JMP s0
+nsd_s1:
+   JMP s1
+nsd_mul:
+   CROSS_MAG_DECIDE s0, s1
+.endmacro
+
 ; descend: id in zp_node_ch_l, N = the child's leaf bit (staged by the
 ; caller's TYPE load, +ASL for left arms — flags ride through JSR/JMP).
 ; ONE leaf test per class (2026-07-16, was 4 site copies); near and far
@@ -116,8 +281,20 @@ bif_clr2:
 ; — its node path is the hottest of the four.
 rc_descend_near:
    BMI rc_leaf                             ; near leaf: is_full + render
-   IS_FULL_B bsp_done_full
+   IS_FULL_B bsp_done_full2
    JMP rc_node_nc                          ; near node: the recursion
+bsp_done_full2:
+; unwind() twin: the inlined node_setup expansion below pushed the
+; original out of branch range of this cluster — 5 bytes buys locality.
+   LDX zp_bsp_stack_sp
+   TXS
+   RTS
+rc_leaf:
+; descend(subsector), near side (far leaves skip is_full — theirs ran
+; just before the far bbox check).
+   IS_FULL_B bsp_done_full2
+rdf_leaf:
+   JMP br_render_subsector
 rc_descend_far:
    BMI rdf_leaf                            ; far leaf: straight to render
 ; SIDE-SPECIALISED (2026-07-15): node_setup returns side in A with Z
@@ -127,10 +304,13 @@ rc_descend_far:
 ; the stack (the continuation's side is its code position; only the id
 ; is pushed), and the bbox side stores reuse A / a bare immediate.
 rc_node_nc:                             ; far-node fall-in (is_full done)
-   JSR br_node_setup                       ; -> A = side, Z = (side == 0)
-   BNE rc_n1                               ; side 1: LEFT first
+   NODE_SETUP_DISPATCH rc_s0, rc_n1        ; point-on-side: JMPs straight
+                                        ; to the side body (no verdict
+                                        ; register, no return trip)
+rc_s0:
 ; === side 0: near = RIGHT child, far = LEFT child ===
-   STA zp_bbox_side                        ; A = 0
+   LDA #0
+   STA zp_bbox_side
    LDA zp_node_ch_l
    PHA                                     ; push id (side is implicit)
 bv_site_near0:                          ; operand SMC-patched by br_dcache_frame
@@ -170,16 +350,10 @@ bsp_done_full:
    TXS
    RTS
 
-rc_leaf:
-; descend(subsector), near side (far leaves tail straight into the
-; render below — their is_full ran just before the far bbox check).
-   IS_FULL_B bsp_done_full
-rdf_leaf:
-   JMP br_render_subsector
-
 rc_n1:
 ; === side 1: near = LEFT child, far = RIGHT child === (mirror)
-   STA zp_bbox_side                        ; A = 1
+   LDA #1
+   STA zp_bbox_side
    LDA zp_node_ch_l
    PHA
 bv_site_near1:                          ; operand SMC-patched by br_dcache_frame
