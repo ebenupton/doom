@@ -218,7 +218,7 @@ bf_g_mul:
 ; NOTE: the routine itself lives in src/bsp/bbox.s. The algorithm sketch
 ; below (steps 1-7) describes the RETIRED perspective corner-projection
 ; implementation; the live code dispatches to the angle-space BCA module
-; instead (see the banner near BCA_CHECK below). This block is kept for
+; instead (see the banner near the ang-module imports below). This block is kept for
 ; the I/O contract and the scratch-layout documentation that follows.
 ;
 ;   Inputs:
@@ -239,7 +239,6 @@ bf_g_mul:
 ;     7. JSR span_has_gap → return its A.
 ; ============================================================================
 SC_HAS_GAP = span_has_gap               ; main-resident (no PAGE needed)
-SC_IS_FULL = jt_is_full
 
 ; Per-corner storage (5 bytes × 4 = 20) — legacy perspective-path scratch
 ; (dead with the angle module; layout retained). bv_proj_one writes here so
@@ -282,8 +281,9 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 ;     Replaces the perspective corner-projection path below (now dead code).
 ; angle module + bca workspace relocate when banked (must match slope_div.asm:
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
-.import jt_bca_check, jt_bca_frame
-BCA_CHECK = jt_bca_check                ; JSR -> bbox_check_angle (point_to_angle inlined out)
+.import bbox_check_angle, bca_frame     ; direct (linker-resolved); the bbox.s
+                                        ; call site bca_check_op is SMC-
+                                        ; retargeted by bca_frame (rcache.s)
 ; (BCA_WS comes from abi.inc — the old triplet is dead)
 bca_top = BCA_WS+$10                    ; box input: top,bot,left,right = +$10,$12,$14,$16
 bca_ilo = $BB                           ; output: left column (u8) — ZP

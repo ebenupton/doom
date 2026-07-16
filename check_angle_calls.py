@@ -13,7 +13,7 @@ from symmap import sym
 def s16(v): return v-0x10000 if v>=0x8000 else v
 def s8(v):  return v-0x100 if v>=0x80 else v
 
-BCA=sym('jt_bca_check'); BOX=sym('bca_top')
+BCA=sym('bbox_check_angle'); BOX=sym('bca_top')
 B_PX,B_PY,B_AB=sym('bca_px'),sym('bca_py'),sym('bca_ab')
 B_AFN,B_PXS,B_PYS=sym('bca_afn'),sym('bca_pxs'),sym('bca_pys')
 B_ILO,B_IHI,B_VIS=sym('bca_ilo'),sym('bca_ihi'),sym('bca_vis')
@@ -70,7 +70,7 @@ def check(px,py,ab):
                 if got!=standalone(*armed) and len(vs_st)<4: vs_st.append((armed,got,standalone(*armed)))
                 armed=None
             mpu.step()
-    sc._run=traced; sc._run(sym('jt_br_render_frame'))
+    sc._run=traced; sc._run(sym('br_render_frame'))
     return n,vs_py,vs_st
 
 tp=ts=nc=0

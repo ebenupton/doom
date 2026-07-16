@@ -9,6 +9,7 @@
 ; (legacy equates from an earlier copy-loop bootloader; nothing below uses
 ; them — the driver stores scrstrt to $70 directly)
 INCLUDE "abi_beeb.inc"\ cross-file addresses from the ABI table
+INCLUDE "engine_syms.inc"\ engine entries from the ld65 map (asmbuild.gen_engine_syms)
 zp_src = &70
 zp_dst = &72
 zp_save = &74
@@ -77,8 +78,8 @@ ORG DRV_ORG
     LDA #13:STA &FE00: LDA #&00:STA &FE01           ; R13
     ; (RNS stack-page copy retired 2026-07-12: block lives in CODE)
     ; --- canonical order (matches render_frame): view_setup BEFORE span_init ---
-    LDA #4 :STA &FE30 : JSR JT_VIEW_SETUP           ; br_view_setup (pages L0/L2)
-    LDA #6 :STA &FE30 : JSR CLIP_JT                 ; span_init / pool (bank C)
+    LDA #4 :STA &FE30 : JSR ENG_VIEW_SETUP          ; br_view_setup (pages L0/L2)
+    LDA #6 :STA &FE30 : JSR ENG_SPAN_INIT           ; span_init / pool (bank C)
     ; --- clear framebuffer $5800-$6BFF (20 pages) using $EE/$EF ptr ---
     LDA #0 :STA &EE : LDA #&58:STA &EF
     LDX #20 : LDY #0 : LDA #0
@@ -86,8 +87,8 @@ ORG DRV_ORG
     STA (&EE),Y : INY : BNE clr : INC &EF : DEX : BNE clr
     ; --- render one frame (entries page banks internally) ---
     LDA #4 :STA &FE30
-    ; (per-frame init is inline at JT_RENDER_FRAME entry, 2026-07-15)
-    JSR JT_RENDER_FRAME                             ; br_render_frame
+    ; (per-frame init is inline at the render_frame entry, 2026-07-15)
+    JSR ENG_RENDER_FRAME                            ; br_render_frame
 .spin
     JMP spin
 .drv_end

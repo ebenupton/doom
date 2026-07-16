@@ -1,7 +1,7 @@
 
 ; ============================================================================
 ; clip/pool.s — clipper fragment 3 of 10 (module map: clip/header.s).
-; Contents: span_init (jt_init), the O(1) free-list allocator
+; Contents: span_init, the O(1) free-list allocator
 ; (alloc_span / free_span), and the udiv16_8 division primitive.
 ; Pool layout + field equates (POOL_*) are defined in clip/arith.s;
 ; ZP names come from src/zp.inc.
@@ -14,7 +14,7 @@
 ;   FREE LIST -- singly-linked chain of unused slots 2..31
 ;   ACTIVE LIST -- single span (slot 1) covering [0,255] x [0,159]
 ;
-; Called once per frame via jt_init: the walk driver (walk_drv.asm)
+; Called once per frame (linker-resolved; harness calls span_init by symbol)
 ; pages bank C and JSRs the jump-table slot before the render; the
 ; Python harness calls it per test frame. Runtime is negligible
 ; (< 0.5% of total).

@@ -13,6 +13,7 @@
 ; written to $FE4F, bit 7 read back). No OS.
 
 INCLUDE "abi_beeb.inc"\ every cross-file address comes from the ABI table
+INCLUDE "engine_syms.inc"\ engine entry addresses, generated from the ld65 map by build_walk_ssd.py
 angidx = DV_ANGIDX          ; view angle index 0..63 (angle byte = idx*4)
 backhi = DV_BACKHI          ; hidden-buffer page hi ($58 or $6C)
 pxf    = DV_PXF          ; player x: 8.8 prescaled, 24-bit (frac, lo, hi)
@@ -174,9 +175,9 @@ ORG DRV_ORG
     JSR anim_glue_tick                              ; advance movers (lazy patch)
     ; --- render into hidden buffer (cleared by previous flip_sched) ---
     LDA backhi:STA &70
-    LDA #BANK_L0 :STA &FE30 : JSR JT_VIEW_SETUP     ; br_view_setup
-    LDA #BANK_C :STA &FE30 : JSR CLIP_JT            ; span_init / pool
-    LDA #BANK_L0 :STA &FE30 : JSR JT_RENDER_FRAME  ; (init is inline at render entry)
+    LDA #BANK_L0 :STA &FE30 : JSR ENG_VIEW_SETUP    ; br_view_setup (real address, from the map)
+    LDA #BANK_C :STA &FE30 : JSR ENG_SPAN_INIT      ; span_init / pool
+    LDA #BANK_L0 :STA &FE30 : JSR ENG_RENDER_FRAME ; (init is inline at render entry)
     JSR flip_sched
     JMP frame
 
@@ -209,10 +210,10 @@ ORG DRV_GLUE
     LDA #7:STA &FE30
     ; (RNS stack-page copy retired 2026-07-12: the vectoring block lives
     ; in engine CODE now; page 1 is reserved headroom.)
-    JMP JT_ANIM_INIT
+    JMP ENG_ANIM_INIT
 .anim_glue_tick
     LDA #7:STA &FE30
-    JMP JT_ANIM_TICK
+    JMP ENG_ANIM_TICK
 .key_hud
     ; H key: toggle the debug HUD on the press edge only (hud_prev holds
     ; last frame's state, so holding the key flips it exactly once).
@@ -630,5 +631,5 @@ FOR n, 0, 21
     EQUB HI(n * 36)
 NEXT
 .clr_end
-ASSERT clr_end <= ENGINE_JT ; MUST NOT touch the engine jump table
+ASSERT clr_end <= MAIN_BASE ; MUST NOT touch the engine CODE region
 SAVE "WALKDRV", DRV_ORG, clr_end, DRV_ORG

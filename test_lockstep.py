@@ -13,8 +13,10 @@ from banked_bsp import BankedBspRender, BANK_L0, BANK_C, BANK_L2
 from span_clip_6502 import SpanClip6502
 
 import abi
-ENTRY_VIEW, ENTRY_RENDER = abi.JT_VIEW_SETUP, abi.JT_RENDER_FRAME
-ENTRY_SPAN_INIT = abi.CLIP_JT
+import symmap
+ENTRY_VIEW = symmap.sym('br_view_setup', banked=1)
+ENTRY_RENDER = symmap.sym('br_render_frame', banked=1)
+ENTRY_SPAN_INIT = symmap.sym('span_init', banked=1)
 ZP = {0x00:0x00,0x01:0xEE,0x02:0x40,0x03:0xD2,0x04:0x06,0x05:0,0x06:0,0x07:0,
       0x08:0,0x09:1,0x0A:1,0x90:0x70,0x91:0xFF,0x92:0x92,0x93:0xFE, 0x70:0x58,
       0x9D:0xFF,0x9E:0xFF}   # incl. s16 int-hi bytes (spawn negative both axes)

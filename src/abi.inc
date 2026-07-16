@@ -6,18 +6,9 @@ BANK_L0 = 4                             ; sideways bank: level data (SoA, seg_hd
 BANK_C = 6                              ; sideways bank: clipper + rasteriser + HUD
 BANK_L2 = 7                             ; sideways bank: angle/bbox/recip/verts/RCACHE/VWHC/CFG
 .if ::BANKED
-ENGINE_JT = $2C00          ; driver-facing jump table = MAIN segment head (link-asserted)
+MAIN_BASE = $2C00          ; engine CODE region head (cfg-anchored; MAIN first)
 .else
-ENGINE_JT = $3670
-.endif
-JT_VIEW_SETUP = ENGINE_JT+$06           ; br_view_setup
-JT_RENDER_FRAME = ENGINE_JT+$12         ; br_render_frame
-JT_ANIM_TICK = ENGINE_JT+$18            ; anim_tick (PAGE BANK_L2 first)
-JT_ANIM_INIT = ENGINE_JT+$1B            ; anim_init (PAGE BANK_L2 first)
-.if ::BANKED
-CLIP_JT = $8000            ; clipper jump table; entry 0 = span_init
-.else
-CLIP_JT = $2000
+MAIN_BASE = $3670
 .endif
 HUD_ENTRY = $A400                       ; hud_draw (bank C window)
 .if ::BANKED

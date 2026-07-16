@@ -26,9 +26,9 @@ from wad_packed import spans_init_full
 import trace_compare as tc
 
 from symmap import sym as _sym
-ENTRY_BR_RENDER_SUBSECTOR = _sym('jt_br_render_subsector')
-ENTRY_BR_RENDER_FRAME     = _sym('jt_br_render_frame')
-_E_HAS_GAP = _sym('jt_has_gap')
+ENTRY_BR_RENDER_SUBSECTOR = _sym('br_render_subsector_entry')
+ENTRY_BR_RENDER_FRAME     = _sym('br_render_frame')
+_E_HAS_GAP = _sym('span_has_gap')
 
 
 class Asm6502Clips:

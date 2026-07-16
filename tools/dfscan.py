@@ -436,8 +436,8 @@ def main():
     r = _RC(dw.packed_layout, dw.packed_rom_main,
             dw.packed_rom_detail, dw.packed_bbox_table,
             dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
-    ENTRY_VIEW = sym('jt_br_view_setup')
-    ENTRY_RENDER = sym('jt_br_render_frame')
+    ENTRY_VIEW = sym('br_view_setup')
+    ENTRY_RENDER = sym('br_render_frame')
     sc = r.sc; mpu = sc.mpu; mem = mpu.memory
 
     # ── trace ────────────────────────────────────────────────────────────

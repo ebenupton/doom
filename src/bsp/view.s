@@ -18,7 +18,7 @@
 ;   Outputs (zp): zp_br_fvx_l/hi, zp_br_fvy_l/hi (each s16);
 ;                 bca_afn ($3B/$3C) = ab<<4 fine angle (hoisted);
 ;                 bca_pxs/pys ($8D/$8E, $9B/$9C) = player pos s16 copies;
-;                 jt_bca_check SMC-patched (cached vs original bbox check);
+;                 bca_check_op SMC-patched (cached vs original bbox check);
 ;                 per-frame vertex-cache mode chosen (vxc_frame).
 ;   Clobbers: A, X, Y, zp_br_t2/t3, zp_ft_* staging, mul workspace.
 ;
@@ -145,7 +145,7 @@ br_view_setup:
    STA zp_br_fvy_h
 
 ; Rotation-coherence: choose cached vs original bbox_check_angle for this
-; frame (SMC-patches jt_bca_check) by whether the integer player position
+; frame (SMC-patches bca_check_op) by whether the integer player position
 ; moved. Cheap (~40 cyc/frame); zero per-check overhead on moved frames.
 ; Banked: the cache code+data live in the bank L2 window — page it in
 ; (no-op macro on flat; callers re-page before their next engine call).
@@ -154,7 +154,7 @@ br_view_setup:
                                         ; frame's trig (SEL, main $2C00 —
                                         ; runs under any bank)
    PAGE BANK_L2
-   JSR jt_bca_frame
+   JSR bca_frame                           ; per-frame rcache dispatch patch (rcache.s)
    JSR br_dcache_frame                     ; forward-coherence bbox cache (bbox.s)
    JSR vxc_frame                           ; translation-coherence vertex cache
    RTS

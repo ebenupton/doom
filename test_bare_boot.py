@@ -53,6 +53,8 @@ def main():
     import os as _os
     LOW = bytes(src.bm[0x1B40:0x2C00 + _os.path.getsize('bsp_render_bk.bin')])
     import subprocess as _sp
+    import asmbuild
+    asmbuild.gen_engine_syms()              # driver entries from the ld65 map
     _sp.run(['./beebasm', '-i', 'banked_boot.asm'], check=True)  # fresh DRV
     DRV = open('DRV', 'rb').read()
 

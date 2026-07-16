@@ -41,7 +41,7 @@ def load_engine(mem, banked=0, c02=None):
 
 def load_angle_module(mem, c02=None):
     """Build + load the flat angle module (slope_div) and its tables:
-    code @ jt_slope_div, tantoangle lo/hi @ TA_LO/TA_HI, viewangletox
+    code @ slope_div, tantoangle lo/hi @ TA_LO/TA_HI, viewangletox
     (centre-column, phi+512 index, u8-clamped) @ VATOX."""
     import angle_bbox as A
     # Build the ENGINE link (not the slope_div-only link): the ZC segment
@@ -51,9 +51,9 @@ def load_angle_module(mem, c02=None):
     # engine's CODE bin and its ang bin.
     asmbuild.build('engine', banked=0, c02=c02)
     code = open(os.path.join(_ROOT, 'bsp_render.bin'), 'rb').read()
-    cbase = sym('jt_br_umul8')              # CODE region head ($3670 flat)
+    cbase = sym('code_head')                # CODE region head ($3670 flat)
     mem[cbase:cbase + len(code)] = code
-    base = sym('jt_slope_div')
+    base = sym('ang_head')                  # ANG region head
     code = open(os.path.join(_ROOT, 'bsp_render_ang.bin'), 'rb').read()
     mem[base:base + len(code)] = code
     ta_lo, ta_hi, vatox = sym('TA_LO'), sym('TA_HI'), sym('VATOX')

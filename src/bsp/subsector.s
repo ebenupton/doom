@@ -54,7 +54,7 @@
 ; span anchors. Records are snapshotted into the queue because later
 ; segs' DCL emission overwrites TOP/BOT_RECORDS before the drain.
 ; ============================================================================
-br_render_subsector_jt:                 ; harness entry: bank unknown
+br_render_subsector_entry:                 ; harness entry: bank unknown
    PAGE BANK_L0                            ; ss / seg_hdr / verts / sincos live in bank L0
 br_render_subsector:
 ; (walk callers arrive L0-paged — near/far child follows page L0)

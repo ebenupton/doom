@@ -21,3 +21,4 @@ line-test*/
 *.zip
 doom_debug.txt
 virus/
+engine_syms.inc

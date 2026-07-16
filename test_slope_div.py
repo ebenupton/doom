@@ -21,7 +21,7 @@ SD_NUM, SD_DEN, SD_Q = sym('sd_num'), sym('sd_den'), sym('sd_q')
 def run(num, den):
     mpu.memory[SD_NUM] = num & 0xFF; mpu.memory[SD_NUM + 1] = (num >> 8) & 0xFF
     mpu.memory[SD_DEN] = den & 0xFF; mpu.memory[SD_DEN + 1] = (den >> 8) & 0xFF
-    mpu.pc = sym('jt_slope_div')
+    mpu.pc = sym('slope_div')
     mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF  # RTS -> $0000
     steps = 0

@@ -3,8 +3,7 @@
 ; clip/dcl_s16.s — clipper fragment 10 of 10, last in the link (module
 ; map: clip/header.s). Contents: the wide-arithmetic primitives
 ; (umul16x16, udiv32_16, s16_interp) and the s16 pre-clip entries
-; draw_clipped_line_s16 (jt_draw_clip_s16) / draw_clipped_line_s16_h
-; (jt_draw_clip_s16_h), which clip to the u8 box and dispatch into
+; draw_clipped_line_s16 / draw_clipped_line_s16_h, which clip to the u8 box and dispatch into
 ; draw_clipped_line (clip/dcl.s). LC_* working-set addresses are
 ; declared in clip/tfr.s; s16_interp is also reused by dcl_yband_clip
 ; (clip/dcl.s) with swapped axes.

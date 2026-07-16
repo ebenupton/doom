@@ -4,12 +4,7 @@
 BANK_L0 = 4                             \ sideways bank: level data (SoA, seg_hdr, FHCH, TABL0)
 BANK_C = 6                              \ sideways bank: clipper + rasteriser + HUD
 BANK_L2 = 7                             \ sideways bank: angle/bbox/recip/verts/RCACHE/VWHC/CFG
-ENGINE_JT = &2C00                       \ driver-facing jump table = MAIN segment head (link-asserted)
-JT_VIEW_SETUP = ENGINE_JT+&06           \ br_view_setup
-JT_RENDER_FRAME = ENGINE_JT+&12         \ br_render_frame
-JT_ANIM_TICK = ENGINE_JT+&18            \ anim_tick (PAGE BANK_L2 first)
-JT_ANIM_INIT = ENGINE_JT+&1B            \ anim_init (PAGE BANK_L2 first)
-CLIP_JT = &8000                         \ clipper jump table; entry 0 = span_init
+MAIN_BASE = &2C00                       \ engine CODE region head (cfg-anchored; MAIN first)
 HUD_ENTRY = &A400                       \ hud_draw (bank C window)
 BCA_WS = &1B40                          \ angle-module bbox workspace (box vals at +$10..$17)
 BCA_AB = BCA_WS+&2F                     \ view angle byte, poked per frame by driver/harness

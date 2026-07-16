@@ -70,6 +70,7 @@ def build_floor_grid():
 def main():
     import asmbuild
     asmbuild.build_all(banked=1, c02=0)
+    asmbuild.gen_engine_syms()
     # The drivers' ptrtab EQUBs are hardcoded window addresses — assert they
     # match the packed layout so a layout change can't ship a stale table.
     import doom_wireframe as dw

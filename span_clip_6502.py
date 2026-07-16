@@ -20,15 +20,15 @@ else:
 from symmap import sym as _sym
 
 # Entry points (span_clip jump table labels)
-ENTRY_INIT       = _sym('jt_init')
-ENTRY_MARK_SOLID = _sym('jt_mark_solid')
-ENTRY_HAS_GAP    = _sym('jt_has_gap')
-ENTRY_IS_FULL    = _sym('jt_is_full')
-ENTRY_READ       = _sym('jt_read')
-ENTRY_INTERP_ST  = _sym('jt_interp_store')
-ENTRY_DRAW_CLIP  = _sym('jt_draw_clip')
-ENTRY_TIGHTEN_FROM_RECORDS = _sym('jt_tighten_from_records')
-ENTRY_DRAW_CLIP_S16 = _sym('jt_draw_clip_s16')
+ENTRY_INIT       = _sym('span_init')
+ENTRY_MARK_SOLID = _sym('span_mark_solid')
+ENTRY_HAS_GAP    = _sym('span_has_gap')
+ENTRY_IS_FULL    = _sym('span_is_full')
+ENTRY_READ       = _sym('span_read')
+ENTRY_INTERP_ST  = _sym('interp_store')
+ENTRY_DRAW_CLIP  = _sym('draw_clipped_line')
+ENTRY_TIGHTEN_FROM_RECORDS = _sym('tighten_from_records')
+ENTRY_DRAW_CLIP_S16 = _sym('draw_clipped_line_s16')
 
 # Records buffers
 TOP_RECORDS = _sym('TOP_RECORDS')

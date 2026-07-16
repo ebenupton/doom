@@ -4,7 +4,7 @@
 ;   RCACHE_FULL          : 1 bit/bbox — result is a_fine-INDEPENDENT full
 ;                          (viewer inside box, OR span>=ANG180); warm returns full
 ;
-; bca_frame (per frame, from br_view_setup) SMC-patches jt_bca_check between
+; bca_frame (per frame, from br_view_setup) SMC-patches the bbox.s call site (bca_check_op) between
 ; bbox_check_angle (moved frame: verbatim, zero overhead) and
 ; bbox_check_angle_cached (stable frame). Stability = integer position
 ; ($01/$9D/$03/$9E) unchanged since last frame. First stable frame at a new
@@ -63,25 +63,27 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; Called by br_view_setup after it has set the integer player position ZP.
 ;   in : RCACHE_ENABLE; player int position ZP $01/$9D (x lo/hi), $03/$9E
 ;        (y lo/hi); bca_prevpos/bca_cachepos (persistent across frames)
-;   out: jt_bca_check operand SMC-patched to bbox_check_angle (moved frame or
-;        cache disabled: verbatim original, zero per-check overhead) or to
-;        bbox_check_angle_cached (stable frame); COMPUTED bitmap cleared on
-;        the first stable frame at a new position (new cache epoch).
+;   out: bca_check_op (the bbox.s call-site JSR) operand SMC-patched to
+;        bbox_check_angle (moved frame or cache disabled: verbatim original,
+;        zero per-check overhead) or to bbox_check_angle_cached (stable
+;        frame); COMPUTED bitmap cleared on the first stable frame at a new
+;        position (new cache epoch).
 ; pseudocode:
 ;   if not ENABLE:        patch original; return
 ;   if pos != prevpos:    prevpos = pos; patch original; return    # moved
 ;   if pos != cachepos:   cachepos = pos; COMPUTED[:] = 0          # new epoch
 ;   patch cached                                                   # stable
-.export jt_bca_frame
-jt_bca_frame: JMP bca_frame
+.export bca_frame
+.import bca_check_op                    ; the SMC JSR site in bsp/bbox.s (MAIN —
+                                        ; always visible, patchable from any bank)
 bca_frame:
    LDA RCACHE_ENABLE
    BNE bcf_enabled
 ; disabled: force the original routine (idempotent re-patch, ~20 cyc)
    LDA #<bbox_check_angle
-   STA jt_bca_check+1
+   STA bca_check_op+1
    LDA #>bbox_check_angle
-   STA jt_bca_check+2
+   STA bca_check_op+2
    RTS
 bcf_enabled:
 ; stable = ($01,$9D,$03,$9E) == bca_prevpos ?
@@ -108,9 +110,9 @@ bcf_moved:
    LDA $9E
    STA bca_prevpos+3
    LDA #<bbox_check_angle
-   STA jt_bca_check+1
+   STA bca_check_op+1
    LDA #>bbox_check_angle
-   STA jt_bca_check+2
+   STA bca_check_op+2
    RTS
 bcf_stable:
 ; same position as last frame. If the computed bitmap belongs to a DIFFERENT
@@ -144,9 +146,9 @@ bcf_clr:
    BNE bcf_clr
 bcf_enable:
    LDA #<bbox_check_angle_cached
-   STA jt_bca_check+1
+   STA bca_check_op+1
    LDA #>bbox_check_angle_cached
-   STA jt_bca_check+2
+   STA bca_check_op+2
    RTS
 
 ; --- bbox_check_angle_cached: rotation-coherent bbox visibility ---------------

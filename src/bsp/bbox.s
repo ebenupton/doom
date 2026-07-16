@@ -27,7 +27,7 @@
 ;
 ; Pseudocode:
 ;   boxp = rom_bbox + node*16 + side*8
-;   vis, ilo, ihi = bbox_check_angle(boxp, px, py, ab)   # BCA_CHECK
+;   vis, ilo, ihi = bbox_check_angle(boxp, px, py, ab)   # bca_check_op
 ;   if not vis: return 0                                 # culled/behind
 ;   return span_has_gap(ilo, ihi)                        # occlusion query
 ; ============================================================================
@@ -84,6 +84,7 @@ D_CODE_L = $030C                        ; 236 bytes (ends $03F7)
 ; D_FWD: 1 = this frame's move was
                                         ; forward-only (driver-asserted)
 .export D_ENABLE, D_FWD, D_MODE, D_FRAME
+.export bca_check_op                    ; SMC site — operand patched by bca_frame
 
 br_bbox_visible:
 .scope
@@ -93,18 +94,21 @@ br_bbox_visible:
 ; zp_node_ch_l and zp_bbox_side ARE the box identity.)
 
 ; --- Angle-space visibility (px=$01, py=$03, ab=$FA2F preset per frame) ---
-; BCA_CHECK = bbox_check_angle (angle module, DOOM R_CheckBBox in the
-; unsigned-BAM phi convention; angle_bbox.py mirror): picks the 2
-; silhouette corners for the player's zone, converts their angles to a
-; conservative column extent, clips against the view cone. Writes
-; bca_vis (1=some columns visible, 0=cull) and bca_ilo/bca_ihi (u8
-; column extent, ±1 conservative).
-   JSR BCA_CHECK                           ; returns A/Z = bca_vis (byte
+; bbox_check_angle (angle module, DOOM R_CheckBBox in the unsigned-BAM
+; phi convention; angle_bbox.py mirror): picks the 2 silhouette corners
+; for the player's zone, converts their angles to a conservative column
+; extent, clips against the view cone. Writes bca_vis (1=some columns
+; visible, 0=cull) and bca_ilo/bca_ihi (u8 column extent, ±1
+; conservative). SMC: bca_frame (rcache.s) retargets the operand each
+; frame — bbox_check_angle (moved/disabled) or bbox_check_angle_cached
+; (stable frame). Genuine dynamic dispatch, patched at the call site.
+::bca_check_op:
+   JSR bbox_check_angle                    ; returns A/Z = bca_vis (byte
                                            ; still written for the D store)
    BNE bv_anglevis
-   RTS                                     ; A=0/Z=1 already: BCA_CHECK's cull
-                                           ; tail (bca.s) sets A=0 before RTS,
-                                           ; and both SMC targets share it
+   RTS                                     ; A=0/Z=1 already: bbox_check_angle's
+                                           ; cull tail (bca.s) sets A=0 before
+                                           ; RTS, and both SMC targets share it
 ; box wholly outside view cone → invisible (A=0, Z set)
 bv_anglevis:
 ; Visible columns exist — ask the clipper whether any of them still
@@ -207,7 +211,7 @@ dv_fresh:
 .segment "W"
 .endif
 
-; bv_dcache_store — encode the fresh BCA_CHECK outcome for (node, side).
+; bv_dcache_store — encode the fresh bbox-check outcome for (node, side).
 ; In: bca_vis/bca_ilo/bca_ihi valid; zp_node_ch_l/zp_bbox_side = entry.
 ; Clobbers A, X, Y.
 bv_dcache_store:
@@ -243,7 +247,7 @@ st_left:
 
 ; ============================================================================
 ; br_dcache_frame — per-frame D-cache classifier (called from br_view_setup
-; with BANK_L2 paged, right after jt_bca_frame).
+; with BANK_L2 paged, right after bca_frame).
 ;
 ;   D_ENABLE == 0                    → D_MODE = 0 (all hooks inert)
 ;   position (full 8.8) + angle same → D_MODE = 2 (serve; no drift, no

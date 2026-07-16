@@ -2,7 +2,7 @@
 ; ============================================================================
 ; clip/tfr.s — clipper fragment 8 of 10 (module map: clip/header.s).
 ; Contents: tg_append_x (list builder + merge), the TFS_* state block,
-; tighten_from_records (jt_tighten_from_records) and its helpers, the
+; tighten_from_records and its helpers, the
 ; LC_* absolute working set for the s16 clipper (code in clip/dcl_s16.s),
 ; and seg_zero_rec_solid (exported to bsp/subsector.s).
 ; Consumes the 4-byte records written by dcl_emit_segment (clip/dcl.s).
@@ -185,7 +185,7 @@ DCLV_S16VY = $0924                      ; s16-clip pending right verdict ($80 = 
 ; this routine: the wrapper resolves it via seg_zero_rec_solid below.
 ;
 ; Callers: bsp/defq.s (deferred portal ops, records copied back to
-; $0700/$0800 first) via jt_tighten_from_records — bank C paged in the
+; $0700/$0800 first) via a direct JSR — bank C paged in the
 ; banked build — and the harness's tighten_from_records.
 ;
 ; Python mirror: EndpointClipSpans.tighten_from_records (older 6-byte
@@ -1132,7 +1132,7 @@ ues_fail:
 ; s16 line clipper — generic first cut
 ;
 ; Wrapper writes 8 bytes of s16 input (4 endpoints × 2 bytes) to the
-; zp_line_xl_l..zp_line_yr_h ZP slots, then JSRs jt_draw_clip_s16
+; zp_line_xl_l..zp_line_yr_h ZP slots, then JSRs draw_clipped_line_s16
 ; (the "$201E" a previous note named here is a dead pre-relayout slot
 ; number — resolve entries via the symbol map only). Routine clips the
 ; line to u8 [0,255]×[0,255], writes u8 result to zp_line_xl_l/yl/xr/yr,

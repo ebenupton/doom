@@ -21,12 +21,13 @@ ABI = [
     ('BANK_L0',        4,      None, 'sideways bank: level data (SoA, seg_hdr, FHCH, TABL0)'),
     ('BANK_C',         6,      None, 'sideways bank: clipper + rasteriser + HUD'),
     ('BANK_L2',        7,      None, 'sideways bank: angle/bbox/recip/verts/RCACHE/VWHC/CFG'),
-    ('ENGINE_JT',      0x2C00, 0x3670, 'driver-facing jump table = MAIN segment head (link-asserted)'),
-    ('JT_VIEW_SETUP',  'ENGINE_JT+$06', None, 'br_view_setup'),
-    ('JT_RENDER_FRAME','ENGINE_JT+$12', None, 'br_render_frame'),
-    ('JT_ANIM_TICK',   'ENGINE_JT+$18', None, 'anim_tick (PAGE BANK_L2 first)'),
-    ('JT_ANIM_INIT',   'ENGINE_JT+$1B', None, 'anim_init (PAGE BANK_L2 first)'),
-    ('CLIP_JT',        0x8000, 0x2000, 'clipper jump table; entry 0 = span_init'),
+    # Jump tables are GONE (2026-07-16, forbidden): engine entry points
+    # (br_view_setup / br_render_frame / anim_tick / anim_init / clipper
+    # entries) are resolved by SYMBOL from the linker map — beebasm via
+    # the generated engine_syms.inc (build_walk_ssd.py), Python via
+    # symmap. Only the cfg-anchored region head stays an ABI constant
+    # (the driver clear-overlay assert needs it before the engine links).
+    ('MAIN_BASE',      0x2C00, 0x3670, 'engine CODE region head (cfg-anchored; MAIN first)'),
     ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
     ('BCA_WS',         0x1B40, 0xFA00, 'angle-module bbox workspace (box vals at +$10..$17)'),
     ('BCA_AB',         'BCA_WS+$2F', None, 'view angle byte, poked per frame by driver/harness'),

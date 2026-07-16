@@ -132,7 +132,7 @@ def build_banked(flatr):
     # --- banked bsp_render code (_bk variants) into low RAM ---
     # Region list comes FROM THE LD65 CONFIG (engine_load._regions) so a new
     # MEMORY area can never be silently missing here (a hardcoded list once
-    # dropped the RCCODE rotation-cache region -> jt_bca_frame jumped into
+    # dropped the RCCODE rotation-cache region -> bca_frame jumped into
     # garbage and the disc hung at boot). Skip the clipper bank (loaded into
     # BANK_C above, not main RAM).
     from engine_load import _regions
@@ -155,11 +155,13 @@ class BankedBspRender(BspRender6502):
         super().__init__(*a, **k)
         self.bm = build_banked(self)
         self.sc.mpu.memory = self.bm     # swap in banked memory
-        # span_init (pool reset) lives in the clipper -> bank C @ $8000, not $2000.
+        # span_init (pool reset) lives in the clipper -> bank C, by symbol.
         sc = self.sc
+        from symmap import sym as _sym
+        _span_init = _sym('span_init', banked=1)
         def banked_init():
             self.bm.select(BANK_C)
-            sc._run(0x8000)              # ENTRY_INIT (jump table entry 0) in bank C
+            sc._run(_span_init)
             sc.total_cycles = 0
         sc.init = banked_init
 
@@ -172,8 +174,8 @@ class BankedBspRender(BspRender6502):
         import bsp_render_6502 as _br
         from symmap import sym as _sym
         saved = (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_RENDER_FRAME)
-        _br.ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup', banked=1)
-        _br.ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame', banked=1)
+        _br.ENTRY_BR_VIEW_SETUP   = _sym('br_view_setup', banked=1)
+        _br.ENTRY_BR_RENDER_FRAME = _sym('br_render_frame', banked=1)
         try:
             return super().render_frame(px, py, ab, floor_z)
         finally:

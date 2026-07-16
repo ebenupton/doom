@@ -263,7 +263,7 @@ zp_ri_d = zp_ri_d_l                     ; backwards-compat alias
 ;   rot_gen_sin/cos general             thunk stages the frame's mag/neg
 ;                                       as SMC'd immediates, falls into
 ;                                       rot_core_sin/_cos (per-trig: SMC sum bases)
-; Same pattern as the jt_bca_check / vxc_jsr_site / D-cache frame hooks.
+; Same pattern as the bca_check_op / vxc_jsr_site / D-cache frame hooks.
 ; All variants are bit-exact with the old in-body branches.
 .if ::BANKED
 .segment "B_BK"

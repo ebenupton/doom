@@ -28,8 +28,8 @@ ZP_CONE         = _sym('zp_br_cone')
 ZP_PXRAW_LO     = _sym('zp_br_pxraw_l')
 ZP_PYRAW_LO     = _sym('zp_br_pyraw_l')
 
-ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup')
-ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame')
+ENTRY_BR_VIEW_SETUP   = _sym('br_view_setup')
+ENTRY_BR_RENDER_FRAME = _sym('br_render_frame')
 
 # Table load addresses: harness-owned placement decisions (the engine reads
 # these tables only through the pointer slots above), NOT engine symbols.

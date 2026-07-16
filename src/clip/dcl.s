@@ -1,7 +1,7 @@
 
 ; ============================================================================
 ; clip/dcl.s — clipper fragment 7 of 10 (module map: clip/header.s).
-; Contents: draw_clipped_line (jt_draw_clip) + dcl_vertical, the CB
+; Contents: draw_clipped_line + dcl_vertical, the CB
 ; trapezoid clip, dcl_boundary_ix, dcl_emit_segment (records writer +
 ; plot dispatch), dcl_yband_clip, and line_interp_store.
 ; ============================================================================
@@ -12,7 +12,7 @@
 ;
 ; Reached natively THROUGH dcl_s16.s (draw_clipped_line_s16[_h] falls
 ; through / jumps here once coords are u8); the direct u8 entry
-; jt_draw_clip is used by the Python harness (and exists as SC_DRAW_U8
+; draw_clipped_line is used by the Python harness (by symbol
 ; on the bsp side).  Banked build: bank C must already be paged.
 ;
 ; Phase 1: basic walk with outer bbox reject / inner bbox accept.

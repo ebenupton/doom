@@ -9,7 +9,7 @@ Three layers:
  2. STALENESS — change a mover's height while the camera is at spawn
     (mover invisible: its dirty bit must survive the frame untouched),
     then return to the mover: the first frame back must match python.
- 3. TICK LOCKSTEP — run jt_anim_tick N times and compare every mover's
+ 3. TICK LOCKSTEP — run anim_tick N times and compare every mover's
     (pos, state/timer) trajectory against a python simulation of the
     same integer state machine over the same CFG bytes.
 """
@@ -54,7 +54,7 @@ def main():
                         dw.PRESCALE)
     mem = eng.sc.mpu.memory
     an.install_6502_tables(mem, flat=True)
-    eng.sc._run(sym('jt_anim_init'))
+    eng.sc._run(sym('anim_init'))
     assert mem[ANIM_ENABLE] == 1
 
     bad = 0
@@ -107,7 +107,7 @@ def main():
     tabs = an.gen_6502_tables(flat=True)
     cfg = tabs[0xE680]
     # reset engine state machines to CFG start
-    eng.sc._run(sym('jt_anim_init'))
+    eng.sc._run(sym('anim_init'))
     sim = []
     for mi2 in range(6):
         c = struct.unpack_from('<hhHBBhBB', cfg, mi2 * 12)
@@ -115,7 +115,7 @@ def main():
                     'wb': c[4], 'pos': c[5], 'st': c[6]})
     tick_bad = 0
     for step in range(400):
-        eng.sc._run(sym('jt_anim_tick'))
+        eng.sc._run(sym('anim_tick'))
         for mi2, s in enumerate(sim):
             state, timer = s['st'] & 0xC0, s['st'] & 0x3F
             if state in (0x00, 0x80):

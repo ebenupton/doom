@@ -1,11 +1,10 @@
 ; ============================================================================
-; bsp/header.s — build flags, macros, THE JUMP TABLE, cross-unit imports.
+; bsp/header.s — build flags, macros, cross-unit imports.
 ;
-; CONTEXT: included FIRST by src/bsp_render.s (after zp.inc). The jump
-; table below is the driver/harness ABI: it must sit at the very start
-; of the MAIN segment, which the cfgs pin first in the CODE region —
-; banked $2C00, flat $3670 (= abi ENGINE_JT, link-asserted both builds;
-; gen_abi.py owns the constants). PAGE is the bank-select macro: LDA
+; CONTEXT: included FIRST by src/bsp_render.s (after zp.inc). MAIN sits
+; first in the CODE region — banked $2C00, flat $3670 (= abi MAIN_BASE;
+; gen_abi.py owns the constant). Jump tables are GONE (2026-07-16):
+; drivers/harness resolve engine entries by symbol from the linker map. PAGE is the bank-select macro: LDA
 ; #bank / STA $FE30 banked, NOTHING flat — so PAGE clobbers A + flags
 ; only (X/Y ride through), and flat builds CANNOT catch a missing PAGE
 ; (jsbeeb/bare-boot are the catchers).
@@ -42,16 +41,10 @@ ina
 ; projection. Feeds lines into the existing s16 clipper / DCL pipeline
 ; in span_clip.asm.
 ;
-; Builds standalone (its own .bin) but calls into span_clip via the
-; published jump-table entries:
-;   $2021  umul8       (u8 × u8 → u16, quarter-square table)
-;   $2024  udiv16_8    (u16 ÷ u8 → u8 quotient)
-;   $201E  draw_clipped_line_s16  (s16 line → DCL)
-;   $200C  span_is_full
-;   $2009  span_has_gap
-;   $2003  span_mark_solid
-;   $2006  span_tighten      (legacy; records mode dispatches differently)
-;   $201B  tighten_from_records
+; One object of the single engine link; calls into span_clip's exported
+; routines DIRECTLY (draw_clipped_line_s16(_h), span_has_gap,
+; span_mark_solid, tighten_from_records, seg_zero_rec_solid — see the
+; SC_* alias block below). Arithmetic primitives are LOCAL copies.
 
 ; --- BBC banked port (path B), selected by beebasm -D BANKED=0|1 ---
 ; Sideways-RAM bank numbers (RAM banks confirmed on jsbeeb B; loader copies here)
@@ -346,57 +339,33 @@ VCACHE_VALID_BASE = $1B00               ; 59 bytes for 467 vertices
 
 
 ; ============================================================================
-; Jump-table entries (Python wrapper JSRs to these fixed addresses)
+; CODE region head. The driver-facing jump table that lived here is
+; GONE (2026-07-16): jump tables are forbidden — the beebasm drivers
+; take real entry addresses (br_view_setup / br_render_frame /
+; anim_tick / anim_init) from the linker map via the generated
+; engine_syms.inc, and the Python harness resolves every entry by
+; symbol (symmap). MAIN still sits FIRST in the CODE region (cfg
+; anchor $2C00/$3670 = MAIN_BASE in the ABI table): code_head marks it
+; for engine_load.py's CODE-bin placement.
 ; ============================================================================
-jt_br_umul8: JMP br_umul8                            ; $4800 + 0  = $4800   wraps span_clip's umul8 for testing
-jt_br_recip: JMP br_recip                            ; $4803   reciprocal lookup
-jt_br_view_setup: JMP br_view_setup                       ; $4806   compute frac_vx/frac_vy
-jt_br_to_view: JMP br_to_view                          ; $4809   world (zp_br_dx/dy_input) → view (zp_br_vx_l..vyhi)
-jt_br_project_x: JMP br_project_x                  ; $480C   view vx → screen sx
-jt_br_project_y: JMP br_project_y_paged                  ; $480F   height_delta → screen sy (pages L2)
-jt_br_render_frame: JMP br_render_frame                     ; $4812   walk BSP, dispatch subsector renderer
-jt_br_render_subsector: JMP br_render_subsector_jt              ; $4815  process one subsector's segs (caller sets
-;        zp_node_ch_l:hi to the subsector id). Used
-;        by the hybrid Python-BSP + 6502-seg harness
-;        to isolate BSP-traversal vs seg-processor
-;        divergence.
-; Animated-sector entries (bodies in anim.s): kept in THIS table so the
-; beebasm drivers see one pinned dispatch block and everything after the
-; MAIN segment can float freely inside the CODE region.
-jt_anim_tick: JMP anim_tick                          ; +$18  (driver: PAGE BANK_L2, JSR)
-jt_anim_init: JMP anim_init                          ; +$1B
-; (anim_tick/anim_init are same-unit labels — anim.s is part of this link unit)
-.export jt_anim_tick, jt_anim_init
-; The drivers reach these via the abi.inc constants (JT_*); MAIN must
-; stay FIRST in the CODE region and the table must not move. Asserted
-; in BOTH builds — ENGINE_JT carries the per-build base.
-.assert jt_br_umul8 = ENGINE_JT, error, "jump table moved off ENGINE_JT (driver ABI)"
-.assert jt_br_view_setup = JT_VIEW_SETUP, error
-.assert jt_br_render_frame = JT_RENDER_FRAME, error
-.assert jt_anim_tick = JT_ANIM_TICK, error
-.assert jt_anim_init = JT_ANIM_INIT, error
+code_head:
 
 ; ============================================================================
 ; Aliases for span_clip's exported routines
 ; ============================================================================
 ; SC_UMUL8 / SC_UDIV16_8 are now local labels (see .SC_UMUL8 / .SC_UDIV16_8
 ; in the $4800 region) — banked port decouples them from span_clip.
-; Clipper jump table is at $2000 (flat) or $8000 (bank C). SC_BASE offsets all.
-; Imported from span_clip (same link; the jump-table indirection is kept so
-; entries stay uniformly callable from the harness).
-.import jt_mark_solid, jt_has_gap, jt_is_full
+; Imported from span_clip (same link) and called DIRECTLY — the linker
+; resolves them; no jump-table hop.
+.import span_mark_solid
 .import span_has_gap                    ; has_gap body (main B segment)
 .import seg_zero_rec_solid
-.import jt_tighten_from_records, jt_draw_clip, jt_draw_clip_s16
-.import jt_draw_clip_s16_h
-SC_DRAW_S16 = jt_draw_clip_s16
-SC_DRAW_S16_H = jt_draw_clip_s16_h        ; horizontal: x read from zp_seg_sx1/2
-SC_DRAW_U8 = jt_draw_clip                ; standalone DCL (u8 input, no clipper
-; prelude). NO NATIVE CALLER (verified 2026-07-12): production lines all
-; enter through the s16 front (SC_DRAW_S16/_H); this alias exists for
-; harness parity tests only — keep unless the clipper jt slot itself dies.
-SC_MARK_SOLID = jt_mark_solid
-SC_TIGHTEN_FROM_RECORDS = jt_tighten_from_records
+.import tighten_from_records
+.import draw_clipped_line_s16, draw_clipped_line_s16_h
+SC_DRAW_S16 = draw_clipped_line_s16
+SC_DRAW_S16_H = draw_clipped_line_s16_h   ; horizontal: x read from zp_seg_sx1/2
+SC_MARK_SOLID = span_mark_solid
+SC_TIGHTEN_FROM_RECORDS = tighten_from_records
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites

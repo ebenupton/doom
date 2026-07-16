@@ -15,8 +15,8 @@ import fp
 import abi
 
 from symmap import sym as _sym
-ENTRY_BR_UMUL8 = _sym('jt_br_umul8')
-ENTRY_BR_RECIP = _sym('jt_br_recip')
+ENTRY_BR_UMUL8 = _sym('br_umul8')
+ENTRY_BR_RECIP = _sym('br_recip')
 
 ZP_A    = _sym('zp_br_a')
 ZP_B    = _sym('zp_br_b')
@@ -91,8 +91,8 @@ def test_recip():
     return fail
 
 
-ENTRY_BR_VIEW_SETUP = _sym('jt_br_view_setup')
-ENTRY_BR_TO_VIEW    = _sym('jt_br_to_view')
+ENTRY_BR_VIEW_SETUP = _sym('br_view_setup')
+ENTRY_BR_TO_VIEW    = _sym('br_to_view')
 
 # zp slots (linked equates; hi bytes are lo+1)
 ZP_PX    = _sym('zp_br_px');    ZP_PXH  = ZP_PX + 1
@@ -216,8 +216,8 @@ def test_to_view():
     return fail
 
 
-ENTRY_BR_PROJECT_X = _sym('jt_br_project_x')   # by symbol — jt offsets shift
-ENTRY_BR_PROJECT_Y = _sym('jt_br_project_y')
+ENTRY_BR_PROJECT_X = _sym('br_project_x')   # by symbol — jt offsets shift
+ENTRY_BR_PROJECT_Y = _sym('br_project_y_paged')
 
 
 # One recip sample per shift value S=1..10 (idx chosen mid-range for each

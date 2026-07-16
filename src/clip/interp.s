@@ -1,6 +1,6 @@
 ; ============================================================================
 ; clip/interp.s — clipper fragment 4 of 10 (module map: clip/header.s).
-; Contents: interp_store (jt_interp_store) — u8 round-to-nearest line
+; Contents: interp_store — u8 round-to-nearest line
 ; interpolation — and its umul_round_div helper. Builds on umul8
 ; (clip/arith.s, pinned $2030) and udiv16_8 (clip/pool.s).
 ; ============================================================================
@@ -18,7 +18,7 @@
 ; for all 4 boundary interps (tl, tr, bl, br).
 ; Callers (2026-07-12): dcl.s (dcl_vertical top/bot eval + the CB-clip
 ; boundary evals), tfr.s (record-line and pool-line interps), and the
-; harness via jt_interp_store.
+; harness (by symbol).
 ;
 ; Input: A = x (eval point), zp_i_x0, zp_i_y0, zp_i_y1, zp_div_den
 ;        (den = xhi - xlo; caller guarantees 0 <= x - x0 <= den, den > 0

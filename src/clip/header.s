@@ -43,13 +43,14 @@ ina
 ; (The old per-span "tighten" entry is retired — see the note in query.s.)
 ;
 ; Callers (2026-07-12):
-;   bsp module   -- imports jt_* / seg_zero_rec_solid; see the SC_* alias
-;                   block in src/bsp/header.s.  bbox.s + subsector.s call
-;                   has_gap; defq.s calls mark_solid / tighten_from_records
-;                   / is_full; walk.s calls is_full; subsector.s + lo.s
-;                   call draw_clip_s16(_h) and seg_zero_rec_solid.
-;   walk driver  -- walk_drv.asm pages bank C and JSRs the jt_init slot
-;                   once per frame (span pool reset).
+;   bsp module   -- .imports the routines directly (linker-resolved); see
+;                   the SC_* alias block in src/bsp/header.s.  bbox.s +
+;                   subsector.s call span_has_gap; subsector.s calls
+;                   span_mark_solid / tighten_from_records; subsector.s +
+;                   lo.s call draw_clipped_line_s16(_h) and
+;                   seg_zero_rec_solid.
+;   walk driver  -- walk_drv.asm pages bank C and JSRs span_init (real
+;                   address via engine_syms.inc) once per frame.
 ;   Python harness -- span_clip_6502.py, entry addresses via the ld65
 ;                   symbol map (symmap.py).
 ; BANKED build: the caller must page BANK_C (ROMSEL) before ANY entry
@@ -69,15 +70,13 @@ ina
 ; --- Build flags ---
 
 ; --- Code origin: $2000 in BBC Micro memory map ---
-; (hoisted: the pinned umul8 at $2030 references these before the main
-; equate block)
 ; shared: mul output = div input
 
 ; --- BBC banked port (path B) ---
 ; BANKED is passed via ca65 -D BANKED=0|1 (never assigned here; C02 is
 ; passed the same way).
-;   BANKED=0 : flat build — regions CLIPJT $2000-$202F + CLIP $2030-$366F
-;              (engine_flat.cfg), sqr tables @ $A500. Regression oracle.
+;   BANKED=0 : flat build — region CLIP $2000-$366F (engine_flat.cfg),
+;              sqr tables @ $A500. Regression oracle.
 ;   BANKED=1 : clipper lives in sideways-RAM bank C @ $8000 (CLIP_BK
 ;              region, engine_banked.cfg); sqr tables move to low RAM
 ;              ($1C00, abi.inc SQR_BASE) so the bank-C clipper can reach
@@ -86,62 +85,30 @@ ina
 .if ::BANKED
 .segment "CLIP_BK"
 .else
-.segment "CLIPJT"
-.endif
-
-; Public entry points for other engine modules (bsp_render links against
-; these; the Python harness finds them through the symbol map).
-.export jt_init, jt_mark_solid, jt_has_gap, jt_is_full
-.export jt_read, jt_interp_store, jt_draw_clip
-.export jt_tighten_from_records, jt_draw_clip_s16, jt_draw_clip_s16_h, jt_umul8, jt_udiv16_8
-
-; --- Jump table: fixed entry points for each public operation ---
-; Callers (Python harness, game engine) JSR base + 3*N, where base =
-; $2000 (flat) or $8000 (banked, bank C paged in).
-; JMP is 3 bytes, so entries are evenly spaced.
-; NB: the "$20xx" end-of-line annotations below are HISTORICAL — they
-; predate the removal of intermediate entries (e.g. the legacy
-; jt_tighten slot), so several are off by one or two entries. Nothing
-; resolves entries by these numbers any more: the engine links against
-; the jt_* symbols and the Python harness reads them from the ld65
-; symbol map (symmap.py). Kept as-is per house rule on old notes.
-;
-; Entry contracts (full I/O headers at each routine):
-;   jt_init                 reset pool: free chain + one full-screen span
-;   jt_mark_solid           remove closed range [zp_i_l, zp_i_h] (solid)
-;   jt_has_gap              A=1 iff any span overlaps [zp_i_l, zp_i_h]
-;   jt_is_full              A=1 iff active list empty (screen occluded)
-;   jt_read                 serialize span list to buffer at (zp_buf)
-;   jt_interp_store         A = line y at column A (u8 round-to-nearest)
-;   jt_draw_clip            clip u8 line zp_line_* to spans, emit + records
-;   jt_tighten_from_records narrow spans by consuming TOP/BOT_RECORDS
-;   jt_draw_clip_s16        s16 line: pre-clip to u8 box, then DCL
-;   jt_umul8 / jt_udiv16_8  arithmetic primitives (harness/profiler only)
-; NB (2026-07-12): bsp_render no longer links against jt_umul8 /
-; jt_udiv16_8 — it carries LOCAL copies (see src/bsp/header.s and
-; bsp/arith.s), so those two slots now serve the Python harness and
-; profiler only.  The "(exported for bsp_render.asm)" margin notes
-; further down are historical.
-jt_init: JMP span_init                           ; $2000                                             ; |
-jt_mark_solid: JMP span_mark_solid                     ; $2003                                             ; |
-jt_has_gap: JMP span_has_gap                        ; $2009                                             ; |||
-jt_is_full: JMP span_is_full                        ; $200C
-jt_read: JMP span_read                           ; $200F
-jt_interp_store: JMP interp_store                        ; $2012  (kept for test_interp verification)
-jt_draw_clip: JMP draw_clipped_line                   ; $2015
-jt_tighten_from_records: JMP tighten_from_records                ; $201B
-jt_draw_clip_s16: JMP draw_clipped_line_s16               ; $201E
-jt_umul8: JMP umul8                               ; $2021  (exported for bsp_render.asm)
-jt_udiv16_8: JMP udiv16_8                            ; $2024  (exported for bsp_render.asm)
-jt_draw_clip_s16_h: JMP draw_clipped_line_s16_h             ; $2027  (x from seg struct)
-
-; umul8 pin: flat build pins it at $2030 (legacy; bsp_render now has its own
-; local copy so the pin is no longer strictly needed, but kept to keep the flat
-; build byte-identical). In the banked build the clipper is at $8000 and umul8
-; just floats after the jump table — the pin must NOT fire (it would move the
-; ORG backwards out of the bank window).
-.if ::BANKED
-; banked: umul8 floats after the jump table at $8000 (no pin)
-.else
 .segment "CLIP"
 .endif
+
+; Public entry points for other engine modules (bsp_render .imports
+; these — the linker resolves the calls directly; the Python harness
+; finds them through the symbol map). The fixed-slot jump table that
+; used to sit here is GONE (2026-07-16): jump tables are forbidden as
+; cross-module glue — cross-module calls are direct JSRs to these
+; symbols. (span_has_gap / seg_zero_rec_solid are exported at their
+; definitions in query.s / tfr.s.)
+;
+; Entry contracts (full I/O headers at each routine):
+;   span_init               reset pool: free chain + one full-screen span
+;   span_mark_solid         remove closed range [zp_i_l, zp_i_h] (solid)
+;   span_has_gap            A=1 iff any span overlaps [zp_i_l, zp_i_h]
+;   span_is_full            A=1 iff active list empty (screen occluded)
+;   span_read               serialize span list to buffer at (zp_buf)
+;   interp_store            A = line y at column A (u8 round-to-nearest)
+;   draw_clipped_line       clip u8 line zp_line_* to spans, emit + records
+;   tighten_from_records    narrow spans by consuming TOP/BOT_RECORDS
+;   draw_clipped_line_s16   s16 line: pre-clip to u8 box, then DCL
+;   umul8 / udiv16_8        arithmetic primitives (harness/profiler only —
+;                           bsp_render carries LOCAL copies, 2026-07-12)
+.export span_init, span_mark_solid, span_is_full
+.export span_read, interp_store, draw_clipped_line
+.export tighten_from_records, draw_clipped_line_s16, draw_clipped_line_s16_h
+.export umul8, udiv16_8

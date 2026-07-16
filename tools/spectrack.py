@@ -178,7 +178,7 @@ def main():
     sc = r.sc
     m = Tracker(sc.mpu.memory)
     sc.mpu.memory = m
-    RF = sym('jt_br_render_frame')
+    RF = sym('br_render_frame')
     orig = sc._run
 
     def run(entry, max_cycles=30_000_000):

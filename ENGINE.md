@@ -71,7 +71,7 @@ loop; one 16-byte header cursor `zp_seg_hdr_p` rides the whole loop):
 3. **Near-plane crossing** (`bsp/resolve_crossing.s` via subsector.s):
    if exactly one endpoint is clipped, reproject from the vy=NEAR
    crossing point into that endpoint's struct slots.
-4. **has_gap cull** (clipper query via jt): fused hi-byte range prelude
+4. **has_gap cull** (clipper query, direct JSR): fused hi-byte range prelude
    in subsector.s; culled segs stop here — Y is never projected for them.
 5. **y_stage** (subsector.s): pages L2 once, projects the flag-gated sy
    pairs per endpoint via `do_project_y` (seg_project.s) through the
@@ -108,13 +108,13 @@ vxcache.s.
                          base constants per build, gated against
                          dw.packed_layout on harness import.
     src/abi.inc          Generated (tools/gen_abi.py): every cross-file
-                         ADDRESS CONSTANT (banks, jt bases, driver vars,
+                         ADDRESS CONSTANT (banks, region heads, driver vars,
                          cache switches, sqr bases). Also emits
                          abi_beeb.inc (drivers) and abi.py (harness).
                          "Private copies of addresses are forbidden" —
                          if two files need an address, it goes here.
     src/slope_div.s      Angle unit = ordered .includes of src/ang/:
-      ang/header_div.s     jump table, SlopeDiv (exact, unrolled; the
+      ang/header_div.s     ang_head + exports, SlopeDiv (exact, unrolled; the
                            slope_div_le entry skips the num<den re-proof
                            for corner_phi, which guarantees it)
       ang/bca.s            bbox_check_angle (angle-space visibility)
@@ -123,7 +123,7 @@ vxcache.s.
       ang/corner_phi.s     box_classify + corner_phi (point_to_angle
                            inlined; returns phi hi in A, lo in Y)
     src/span_clip.s      Span clipper unit = ordered .includes of src/clip/:
-      clip/header.s        build flags, jump table (+ .exports)
+      clip/header.s        build flags, entry .exports (no jump table)
       clip/arith.s         umul8 (pinned $2030), udiv16_8
       clip/pool.s          span_init, alloc/free (32 slots @ $0400)
       clip/interp.s        interp_store (round-to-nearest lerp)
@@ -140,8 +140,8 @@ vxcache.s.
       clip/dcl_s16.s       s16 front-end: clips to u8, tail-calls DCL.
                            Callers guarantee x-order (seg layer owns it).
     src/bsp_render.s     Renderer unit = ordered .includes of src/bsp/:
-      bsp/header.s         equates, macros (ZERO/BUMP/PAGE), jump table
-                           (link-asserted vs abi ENGINE_JT both builds),
+      bsp/header.s         equates, macros (ZERO/BUMP/PAGE), code_head
+                           (= MAIN_BASE, first in the CODE region),
                            imports of clipper entries
       bsp/arith.s          br_umul8/br_smul8, br_recip, rot
                            variants (rot_zero/unity/gen thunks/rot_core —
@@ -179,7 +179,8 @@ vxcache.s.
     src/engine_banked.cfg  ld65 config, BANKED build (Model B disc)
 
 The engine is **one ld65 link** of three objects; cross-module calls are
-`.import`ed jump-table labels (`jt_*`), so a reordered/removed entry is a
+`.import`ed real routine labels (jump tables are FORBIDDEN, 2026-07-16 —
+the linker resolves cross-module calls), so a renamed/removed routine is a
 link error, never a silent wrong address.
 
 ## Memory maps (2026-07-12, post flat-merge — the current truth)
@@ -199,8 +200,8 @@ belongs in the configs.
     $0C00-$1B3F  VCACHE (480×8) + valid bitmap $1B00
     $1B40-$1BFF  free
     $1C00-$1FFF  VXC XEXT/YLO plane pairs
-    $2000-$366F  CLIPJT+CLIP (jt $2000 + umul8 $2030 = ABI pins)
-    $3670-$4FFF  CODE: JT(=$3670, ENGINE_JT flat) MAIN LO B D W ANIML2
+    $2000-$366F  CLIP (no jt; symbols resolved from the map)
+    $3670-$4FFF  CODE: MAIN first (code_head = $3670, MAIN_BASE flat), LO B D W ANIML2
                  (end_code <= $5000 link-asserted)
     $5000-$57E8  RCACHE carve (the assert above is its fence)
     $5800-$6BFF  framebuffer
@@ -228,7 +229,8 @@ belongs in the configs.
                  and bsp/header.s — keep in sync)
     $2000-$2BFF  beebasm drivers (drv $2000, vars $2180, glue $21A0,
                  sincos $2200, clears+input $2400)
-    $2C00-$57FF  CODE: jt PINNED $2C00 (link-asserted), everything floats
+    $2C00-$57FF  CODE: MAIN first at $2C00 (MAIN_BASE); drivers take real
+                 entry addresses from the generated engine_syms.inc
     $5800-$7FFF  screen (double-buffered $5800/$6C00)
     $8000-$BFFF  sideways window; banks 4/6/7 = L0/C/L2:
       L0: SoA $8000 / seg headers $9000 / TABL0 $BE90
@@ -269,7 +271,7 @@ FB lockstep + a jsbeeb disc boot — harness green alone is not evidence
 slots, and buffer bases this way. If you find yourself typing a hex
 address into a Python file, stop and use the map (or abi.py for the
 generated constants). Two hardcoded addresses cost half a day each on
-2026-07-12: span_clip's sqr seed and test_bsp_render's jt entries.
+2026-07-12: span_clip's sqr seed and test_bsp_render's entry constants.
 
 ## Zero page
 
@@ -317,7 +319,7 @@ not worsened vs baseline.json, suite cycles within 0.25% of baseline.
 - walkseq_check warns "no warm speedup" at (1500,-3700) — pre-existing.
 - Unit-test individual stages first; debug integrated frames only when
   isolation fails. Contracts enforced only in Python wrapper preludes are
-  silent native traps — mirror them at the jt entry.
+  silent native traps — mirror them at the native entry.
 
 ## Invariants you cannot see in the code
 

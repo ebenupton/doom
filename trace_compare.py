@@ -23,12 +23,12 @@ from wad_packed import (SEG_DTL_SIZE, SD_FH, SD_CH, SD_BFH, SD_BCH,
                         spans_init_full)
 
 from symmap import sym as _sym
-ENTRY_BR_VIEW_SETUP   = _sym('jt_br_view_setup')
-ENTRY_BR_RENDER_FRAME = _sym('jt_br_render_frame')
-_E_MARK_SOLID = _sym('jt_mark_solid')
-_E_HAS_GAP    = _sym('jt_has_gap')
-_E_IS_FULL    = _sym('jt_is_full')
-_E_DCL_S16    = _sym('jt_draw_clip_s16')
+ENTRY_BR_VIEW_SETUP   = _sym('br_view_setup')
+ENTRY_BR_RENDER_FRAME = _sym('br_render_frame')
+_E_MARK_SOLID = _sym('span_mark_solid')
+_E_HAS_GAP    = _sym('span_has_gap')
+_E_IS_FULL    = _sym('span_is_full')
+_E_DCL_S16    = _sym('draw_clipped_line_s16')
 ROM_DETAIL_BASE = 0xB600
 ROM_BBOX_BASE   = 0xC400
 

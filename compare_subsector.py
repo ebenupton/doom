@@ -25,10 +25,10 @@ from wad_packed import spans_init_full
 import trace_compare as tc
 
 from symmap import sym as _sym
-ENTRY_BR_RENDER_SUBSECTOR = _sym('jt_br_render_subsector')
-_E_MARK_SOLID = _sym('jt_mark_solid')
-_E_TFR        = _sym('jt_tighten_from_records')
-_E_DCL_S16    = _sym('jt_draw_clip_s16')
+ENTRY_BR_RENDER_SUBSECTOR = _sym('br_render_subsector_entry')
+_E_MARK_SOLID = _sym('span_mark_solid')
+_E_TFR        = _sym('tighten_from_records')
+_E_DCL_S16    = _sym('draw_clipped_line_s16')
 
 
 def install_tracing(sc, trace_all):

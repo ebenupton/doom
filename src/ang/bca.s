@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; bbox_check_angle — angle-space bbox visibility (jt_bca_check target).
+; bbox_check_angle — angle-space bbox visibility (bca_check_op default target).
 ; Mirrors angle_bbox.bbox_check_angle exactly: faithful DOOM R_CheckBBox in
 ; our negated-phi convention, conservative screen-column extent, no rotation
 ; (0 muls; per corner: octant fold + 1 SlopeDiv + tantoangle lookup).

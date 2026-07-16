@@ -21,16 +21,17 @@
 ; exceeds any contiguous flat window). Banked = the ANG segment floats
 ; inside the one CODE region $2C00-$57FF like everything else. Tables:
 ; flat TA_LO $DC00, TA_HI $F200, VATOX $F601 (harness-seeded); banked =
-; the L2 window ($8000/$8400/$8900, loader-seeded). Fixed entry jump
-; table below (jt_slope_div/jt_bca_check) for bsp_render to import.
+; the L2 window ($8000/$8400/$8900, loader-seeded). The entry jump
+; table that lived here is GONE (2026-07-16): bsp_render .imports
+; slope_div / bbox_check_angle directly (linker-resolved); ang_head
+; marks the region head for engine_load.py's ang-bin placement.
 .if BANKED
 .segment "ANG_BK"
 .else
 .segment "ANG"
 .endif
-.export jt_slope_div, jt_bca_check
-jt_slope_div: JMP slope_div                           ; entry+0
-jt_bca_check: JMP bbox_check_angle                    ; entry+3   (point_to_angle inlined into corner_phi -> 1 fewer entry)
+.export slope_div, bbox_check_angle
+ang_head:
 slope_div:
 .scope
 ; if num >= den -> SLOPERANGE (1024)

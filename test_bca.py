@@ -13,7 +13,7 @@ from symmap import sym
 
 mpu = MPU()
 load_angle_module(mpu.memory)
-BCA = sym('jt_bca_check')
+BCA = sym('bbox_check_angle')
 BOX = sym('bca_top')
 
 
