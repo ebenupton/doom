@@ -105,20 +105,28 @@ bif_clr2:
    STX zp_bsp_stack_sp                     ; unwind target
    LDA #<LAY_ROOT                          ; layout.inc constant (u8)
    STA zp_node_ch_l
-; (falls straight into rc_node — its RTS is ours; bsp_done_full and
-;  rc_leaf are parked mid-block below, old-walk style, which both buys
-;  the fall-in and keeps every IS_FULL_B branch in range)
+   JMP rc_node_nc                          ; frame start is provably not
+                                        ; full — skip the is_full entry
 
-rc_node:
-; descend(internal node): id in zp_node_ch_l.
+; descend: id in zp_node_ch_l, N = the child's leaf bit (staged by the
+; caller's TYPE load, +ASL for left arms — flags ride through JSR/JMP).
+; ONE leaf test per class (2026-07-16, was 4 site copies); near and far
+; stay separate entries because their is_full contracts differ (far ran
+; is_full just before its bbox check). Far owns the rc_node_nc fall-in
+; — its node path is the hottest of the four.
+rc_descend_near:
+   BMI rc_leaf                             ; near leaf: is_full + render
+   IS_FULL_B bsp_done_full
+   JMP rc_node_nc                          ; near node: the recursion
+rc_descend_far:
+   BMI rdf_leaf                            ; far leaf: straight to render
 ; SIDE-SPECIALISED (2026-07-15): node_setup returns side in A with Z
 ; live (every exit is LDA #imm / RTS), so ONE dispatch selects a
 ; right-then-left or left-then-right body with the child fetches
 ; INLINED per arm — no runtime side test in the fetches, no side on
 ; the stack (the continuation's side is its code position; only the id
 ; is pushed), and the bbox side stores reuse A / a bare immediate.
-   IS_FULL_B bsp_done_full
-rc_node_nc:                             ; far tail re-entry (is_full done)
+rc_node_nc:                             ; far-node fall-in (is_full done)
    JSR br_node_setup                       ; -> A = side, Z = (side == 0)
    BNE rc_n1                               ; side 1: LEFT first
 ; === side 0: near = RIGHT child, far = LEFT child ===
@@ -133,11 +141,7 @@ bv_site_near0:                          ; operand SMC-patched by br_dcache_frame
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
-   BMI r0_leaf
-   JSR rc_node                             ; <- the recursion
-   JMP r0_far
-r0_leaf:
-   JSR rc_leaf
+   JSR rc_descend_near
 r0_far:
    PLA
    STA zp_node_ch_l                        ; id
@@ -153,10 +157,7 @@ bv_site_far0:                           ; operand SMC-patched by br_dcache_frame
    STA zp_node_ch_l
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
-   BMI r0_fleaf
-   JMP rc_node_nc                          ; far node: TAIL call
-r0_fleaf:
-   JMP br_render_subsector                 ; far leaf: TAIL call
+   JMP rc_descend_far                      ; TAIL call either way
 rc_ret:
    RTS
 
@@ -174,6 +175,8 @@ rc_leaf:
 ; render below — their is_full ran just before the far bbox check).
    IS_FULL_B bsp_done_full
    JMP br_render_subsector
+rdf_leaf:
+   JMP br_render_subsector                 ; far leaf (no is_full)
 
 rc_n1:
 ; === side 1: near = LEFT child, far = RIGHT child === (mirror)
@@ -189,11 +192,7 @@ bv_site_near1:                          ; operand SMC-patched by br_dcache_frame
    STA zp_node_ch_l
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
-   BMI r1_leaf
-   JSR rc_node
-   JMP r1_far
-r1_leaf:
-   JSR rc_leaf
+   JSR rc_descend_near
 r1_far:
    PLA
    STA zp_node_ch_l
@@ -208,10 +207,7 @@ bv_site_far1:                           ; operand SMC-patched by br_dcache_frame
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
-   BMI r1_fleaf
-   JMP rc_node_nc                          ; far node: TAIL call
-r1_fleaf:
-   JMP br_render_subsector                 ; far leaf: TAIL call
+   JMP rc_descend_far                      ; TAIL call either way
 rc_ret1:
    RTS
 .endscope
