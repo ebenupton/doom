@@ -171,9 +171,10 @@ ck_done:
    ADC bca_p1+1                            ; C=0 (inbound invariant)
    STA pa_ptr+1
    LDA (pa_ptr),Y
-; vatox[lo]
-   SEC
-   SBC #1
+; vatox[lo]. The pointer ADC's carry-out is CONSTANT 0 (post-clip
+; r_hi <= 4 and >VATOX+4 never wraps — link-asserted), so SBC #0 with
+; that borrow IS v-1; the SEC died with the bias trick.
+   SBC #0
    BCS il1                                 ; C=1: v >= 1
    LDA #0
    SEC                                     ; v == 0 clamp: re-supply the carry
@@ -183,9 +184,8 @@ il1:
    LDA #>VATOX-1                           ; C=1 on both il1 entries:
    ADC bca_p2+1                            ; base-1 + r2_hi + 1 = base + r2_hi
    STA pa_ptr+1
-   LDA (pa_ptr),Y                          ; vatox[hi]
-   CLC
-   ADC #1
+   LDA (pa_ptr),Y                          ; vatox[hi]. C=0 again (same
+   ADC #1                                  ; constant carry-out): the CLC died
    BCC ih1
    LDA #255                                ; (the old second min(255) was an
 ih1:                                       ; identity — A <= 255 by now on

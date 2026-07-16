@@ -235,6 +235,7 @@ bca_ab = BCA_WS+$2F
 bca_ilo = $BB
 bca_ihi = $BF
 .assert (VATOX & $FF) = 0, error, "VATOX must be page-aligned (bca_tail rides the index lo byte in Y)"
+.assert (VATOX >> 8) + 4 <= $FF, error, "VATOX hi +4 must not wrap (bca_tail's pointer ADCs assume carry-out 0)"
 bca_vis = $64                           ; sole owner (see zp.inc $64 note)
 bca_p1 = $C8                            ; r1 = phi1+512 (s16 pair $C8/$C9; afn pre-biased, view.s)
 bca_p2 = $CA                            ; r2 = phi2+512 (s16 pair $CA/$CB)
