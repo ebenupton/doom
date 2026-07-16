@@ -84,29 +84,44 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
    CMP #8
    BCS full_vis                            ; span >= 2048
 ck_left:
-; left clip: bca_p1/p2 hold r = phi+512 (the afn hoist is pre-biased,
-; view.s 2026-07-16). The window test runs on r1 DIRECTLY — the same
-; shape as the right side: tspan = (1024-r1) & 4095 <= 1024 <=> r1 in
-; [0,1024], and negative/wrapped r1 folds to hi nibble >= $E via the
-; mask. Only the rare outside path materializes tspan-1024 (= -r1).
+; INTERLEAVED clip+lookup (2026-07-16): left window test -> left VATOX
+; lookup -> right window test -> right VATOX lookup. Each window test
+; leaves EXACTLY the lookup's operands in registers (A = r hi12 after
+; the mask, Y = r lo), so the pointer build is one immediate ADC — the
+; bca_p1/p2 reloads AND both clamps' memory stores are gone (the
+; lookups were the only post-clip readers; span and the rcache psi
+; snapshots read the raw values before the tail).
+;
+; bca_p1/p2 hold r = phi+512 (the afn hoist is pre-biased, view.s).
+; Window: tspan = (1024-r) & 4095 <= 1024 <=> r in [0,1024]; negative/
+; wrapped r folds to hi nibble >= $E via the mask. Only the rare
+; outside paths do 16-bit arithmetic.
+;
+; Carry choreography (all proven, nothing incidental):
+;   every lk_* entry has C=0 — BCC arrivals, the ==1024 arms' CLC, and
+;   the left clamp's BCC+LDA/TAY; the pointer ADCs' carry-out is
+;   CONSTANT 0 (r_hi <= 4, >VATOX+4 never wraps — link-asserted), which
+;   LDA (ptr),Y carries into the +-1 adjusts (SBC #0 / ADC #1, no
+;   seeds); the out-arms' 16-bit ops inherit C=1 from CMP >= 4 or CPY.
    LDY bca_p1
    LDA bca_p1+1
    AND #$0F                                ; r1 hi (12-bit)
    CMP #4
-   BCC ck_right                            ; r1 < 1024 -> in range
+   BCC lk_left                             ; r1 < 1024: C=0, A/Y = operands
    BNE ck_left_out
    CPY #0
-   BEQ ck_right                            ; r1 == 1024 exactly -> in range
+   BNE ck_left_out
+   CLC                                     ; r1 == 1024 exactly: in range —
+   BEQ lk_left                             ; re-supply C=0 (Z from CPY rides)
 ck_left_out:
 ; r1 outside [0,1024]: left corner outside the FOV. tspan-1024 =
 ; (0 - r1) & 4095 (r1 in [1025,4095] as u12, so tspan = 5120-r1 and
-; tspan-1024 = 4096-r1 — the negate IS the -1024 fold; the old SBC #4
-; died with it). Discard-result 16-bit compare vs span: CPX seeds the
-; borrow (2026-07-16 hand edit), only the final carry survives; C=1
-; iff tspan-1024 >= span -> wholly off the left.
+; tspan-1024 = 4096-r1 — the negate IS the -1024 fold). Discard-result
+; 16-bit compare vs span (CPX seeds the borrow; only the final carry
+; survives): C=1 iff tspan-1024 >= span -> wholly off the left.
    LDA #0
    SBC bca_p1                              ; lo of -r1 (C=1 inbound: CMP >= 4
-   TAX                                     ; or CPX fall-through)
+   TAX                                     ; or CPY fall-through)
    LDA #0
    SBC bca_p1+1
    AND #$0F                                ; hi of (-r1) & 4095 = tspan-1024
@@ -114,77 +129,47 @@ ck_left_out:
    SBC t1
    BCS cull                                ; (tspan-2*CLIP) >= span: off left
 ck_left_clip:
-   LDY #0                                  ; r1 = 0 (phi1 = -CLIPANGLE)
-                                           ; the clamped lo RIDES Y into the
-   STY bca_p1+1                            ; tail (2026-07-16 hand edit: Y is
-                                           ; loaded at ck_left and must track
-                                           ; the clamp); the lo MEMORY store
-                                           ; is dead — the tail's LDY was its
-                                           ; only post-clip reader
+   LDA #0                                  ; r1 = 0 (phi1 = -CLIPANGLE): pure
+   TAY                                     ; register clamp — A = hi, Y = lo,
+                                           ; C=0 from the BCC that got us here
+lk_left:
+   ADC #>VATOX                             ; C=0 (inbound invariant)
+   STA pa_ptr+1
+   LDA (pa_ptr),Y                          ; vatox[r1]
+   SBC #0                                  ; C=0 (constant carry-out) -> v-1
+   BCS il1                                 ; C=1: v >= 1
+   LDA #0                                  ; v == 0: ilo clamps to 0 (no SEC:
+il1:                                       ; the right window test re-seeds C)
+   STA bca_ilo
 ck_right:
-; right clip: tspan = (CLIPANGLE + phi2) & 4095 = r2 — the stored value
-; IS the right tspan (that's the bias trick's payoff on this side: the
-; CLC/ADC #>512 pair is GONE; the mask alone re-folds the s16 sign
-; extension back to 12 bits).
-   LDX bca_p2                              ; tspan lo = r2 lo
+; right window test: r2 IS the right tspan (bias trick) — same shape.
+   LDY bca_p2
    LDA bca_p2+1
-   AND #$0F                                ; tspan hi (12-bit)
+   AND #$0F                                ; r2 hi (12-bit)
    CMP #4
-   BCC ck_done                             ; (C=0 rides into the tail's hi ADC)
+   BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
    BNE ck_right_out
-   CPX #0
+   CPY #0
    BNE ck_right_out
-   CLC                                     ; tspan == 1024 exactly: in range —
-   BEQ ck_done                             ; re-supply the tail's C=0 (Z from
-                                           ; CPX rides the CLC: always taken)
+   CLC                                     ; r2 == 1024 exactly: in range
+   BEQ lk_right
 ck_right_out:
-; mirror of ck_left_out: 16-bit (tspan-1024) >= span test, carry-only
-; (same CPX trick — lo rides X from the LDX bca_p2 above, Y dead).
-   SEC
+; mirror of ck_left_out, minus the negate (r2 already IS tspan):
+; tspan-1024 vs span, carry-only. C=1 inbound (CMP >= 4 / CPY) seeds
+; the SBC #4 — the explicit SEC died with the interleave.
    SBC #4
-   CPX t0
+   CPY t0
    SBC t1
    BCS cull                                ; off right
 ck_right_clip:
-   LDA #<1024                              ; r2 = 1024 (phi2 = +CLIPANGLE)
-   STA bca_p2
-   LDA #>1024
-   STA bca_p2+1
-ck_done:
-; the VATOX tail reads the clipped p1 (left) / p2 (right) directly, both
-; in [-512,512] — the old bca_lo/bca_hi staging copies were pure channels
-; (dead-write tracker, 2026-07-11) and are gone.
-; ilo = VATOX[r1]-1 ; ihi = VATOX[r2]+1 ; clamp [0,255].
-; The +512 index bias is ALREADY IN r (afn hoist): the clip above
-; guarantees r in [0,1024], so r IS the de-biased table index and the
-; base is plain VATOX.
-; VATOX is PAGE-ALIGNED (asserted, header_div.s): pa_ptr's lo byte is
-; PERMANENTLY ZERO (br_view_setup; the TA lookup keeps the invariant
-; too) and the index lo rides Y — the 16-bit lo add was pure channel.
-; Carries are KNOWN (2026-07-16), so neither hi ADC needs a CLC:
-;   here C=0 — every ck_done arrival is via BCC or the ==1024 arm's CLC;
-;   below C=1 — BCS il1 means v>=1, and the v==0 clamp re-supplies SEC —
-;   consumed against a base-1 operand. (The carries OUT are sign(p1)/
-;   sign(p2) — NOT constant — so the SEC/CLC of the ±1 adjusts stay.)
-   LDA #>VATOX
-   ADC bca_p1+1                            ; C=0 (inbound invariant)
+   LDY #0                                  ; r2 = 1024 (phi2 = +CLIPANGLE):
+   LDA #4                                  ; register clamp — hi12 = 4, lo = 0,
+                                           ; C=0 from the BCC that got us here
+lk_right:
+   ADC #>VATOX                             ; C=0 (inbound invariant)
    STA pa_ptr+1
-   LDA (pa_ptr),Y
-; vatox[lo]. The pointer ADC's carry-out is CONSTANT 0 (post-clip
-; r_hi <= 4 and >VATOX+4 never wraps — link-asserted), so SBC #0 with
-; that borrow IS v-1; the SEC died with the bias trick.
-   SBC #0
-   BCS il1                                 ; C=1: v >= 1
-   LDA #0
-   SEC                                     ; v == 0 clamp: re-supply the carry
-il1:
-   STA bca_ilo
-   LDY bca_p2
-   LDA #>VATOX-1                           ; C=1 on both il1 entries:
-   ADC bca_p2+1                            ; base-1 + r2_hi + 1 = base + r2_hi
-   STA pa_ptr+1
-   LDA (pa_ptr),Y                          ; vatox[hi]. C=0 again (same
-   ADC #1                                  ; constant carry-out): the CLC died
+   LDA (pa_ptr),Y                          ; vatox[r2]
+   ADC #1                                  ; C=0 (constant carry-out) -> v+1
    BCC ih1
    LDA #255                                ; (the old second min(255) was an
 ih1:                                       ; identity — A <= 255 by now on
