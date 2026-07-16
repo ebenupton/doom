@@ -170,8 +170,7 @@ bcf_enable:
 ;     FULL := (span = (p2-p1) & 4095) >= 2048    # a_fine cancels in span
 ;     goto bca_tail
 bbox_check_angle_cached:
-   LDA #0
-   STA bca_vis
+; (no bca_vis entry preset — every exit tail stores it; see bca.s)
    JSR bcac_index                          ; -> rc_psilo/hi, rc_bytehi, rc_bit
    LDX rc_bytehi
    LDA RCACHE_COMPUTED,X

@@ -34,8 +34,9 @@ bbox_check_angle:
 ; (scope opened out to file level so the rotation cache — bbox_check_angle_cached
 ;  + bca_frame below — can share box_classify, corner_phi and the bca_tail
 ;  span/clip/column code. Tail labels ck_*/full_vis/cull are unique file-wide.)
-   LDA #0
-   STA bca_vis
+; (No bca_vis entry preset: EVERY exit stores the verdict — full_vis/cull/
+;  cull_far/visok, and box_classify's inside-escape goes through full_vis —
+;  so the old LDA #0/STA preset was 5 dead cycles per check, 2026-07-16.)
 ; bca_pxs/bca_pys (px,py sign-extended to s16) are precomputed once/frame
 ; by br_view_setup — frame-constant. Direct unit-test callers set them.
 ; bca_px/bca_py (s8) are still read below by ins_test/box_pos.
