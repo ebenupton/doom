@@ -10,248 +10,13 @@
 ; (clip/dcl.s) with swapped axes.
 ; ============================================================================
 
-; ===================================================================
-; umul16x16 — u16 × u16 = u32
-; Inputs:  LC_M_A_LO/HI, LC_M_B_LO/HI
-; Output:  LC_M_R0..LC_M_R3 (LSB first)
-; Clobbers: A, X, Y, zp_mul_b, zp_prod_l, zp_prod_h
-;
-; Schoolbook multiply from four u8×u8 partial products, each via the
-; quarter-square umul8 primitive; hi-byte-zero factors skip their
-; partial products entirely (u8×u8 costs 1 mul, u8×u16 costs 2).
-; Pseudocode:
-;   R = a_lo * b_lo                       # p1, always
-;   if b_hi: R += (a_lo * b_hi) << 8      # p2
-;   if a_hi: R += (a_hi * b_lo) << 8      # p3
-;            if b_hi: R += (a_hi * b_hi) << 16   # p4
-umul16x16:
-.scope
-; Always need p1 = a_lo * b_lo.
-   LDA LC_M_B_LO
-   STA zp_mul_b
-   LDA LC_M_A_LO
-   JSR umul8
-   STA LC_M_R1                             ; A = prod_hi (umul8 contract)
-   LDA zp_prod_l
-   STA LC_M_R0
-   LDA #0
-   STA LC_M_R2
-   STA LC_M_R3
+; (umul16x16 inlined+specialised into si_general 2026-07-16 —
+; single caller; operands read straight from LC_OFF/LC_DY, the
+; LC_M_A/B staging slots are dead.)
 
-; Fast paths: skip multiplies whose factor is zero.
-   LDA LC_M_B_HI
-   BEQ skip_p2
 
-   STA zp_mul_b                            ; A = b_hi from the test above
-   LDA LC_M_A_LO
-   JSR umul8
-; p2 = a_lo * b_hi
-   LDA zp_prod_l
-   CLC
-   ADC LC_M_R1
-   STA LC_M_R1
-   LDA zp_prod_h
-   ADC LC_M_R2
-   STA LC_M_R2
-   LDA #0
-   ADC LC_M_R3
-   STA LC_M_R3
-skip_p2:
+; (udiv32_16 inlined into si_general 2026-07-16 — single caller.)
 
-   LDA LC_M_A_HI
-   BEQ skip_p3_p4
-
-   LDA LC_M_B_LO
-   STA zp_mul_b
-   LDA LC_M_A_HI
-   JSR umul8
-; p3 = a_hi * b_lo
-   LDA zp_prod_l
-   CLC
-   ADC LC_M_R1
-   STA LC_M_R1
-   LDA zp_prod_h
-   ADC LC_M_R2
-   STA LC_M_R2
-   LDA #0
-   ADC LC_M_R3
-   STA LC_M_R3
-
-   LDA LC_M_B_HI
-   BEQ skip_p3_p4
-; if b fits u8, p4 = a_hi * 0 = 0
-   STA zp_mul_b                            ; A = b_hi from the test above
-   LDA LC_M_A_HI
-   JSR umul8
-; p4 = a_hi * b_hi
-   LDA zp_prod_l
-   CLC
-   ADC LC_M_R2
-   STA LC_M_R2
-   LDA zp_prod_h
-   ADC LC_M_R3
-   STA LC_M_R3
-skip_p3_p4:
-   RTS
-.endscope
-
-; ===================================================================
-; udiv32_16 — u32 ÷ u16 = u16 quotient (low 16 bits, with rounding
-; pre-applied by caller)
-; Inputs:  LC_M_R0..R3 (dividend, modified); LC_DEN_LO/HI (divisor)
-; Output:  LC_QUOT_LO/HI, LC_REM_LO/HI
-; Clobbers: A, X, dividend bytes
-;
-; Fast path (per project_clip_arithmetic_fastpath): byte-level skip of
-; leading-zero dividend bytes. Each skipped byte saves 8 iterations
-; (~240 cycles). Typical s16 clipper inputs produce a u20-u22 product
-; from umul16x16, so R3 is always 0 and we always save ≥8 iterations.
-;
-; Algorithm: restoring long division (shift dividend left into the
-; remainder; if remainder >= den, subtract and shift a 1 into the
-; quotient, else shift a 0).  Two variants:
-;   - u16 fast path: if the top 16 dividend bits < den, the quotient
-;     fits u16; preload rem = R3:R2 and run only 16 iterations over
-;     R1:R0.
-;   - slow path: full 32-iteration loop, minus 8 iterations per
-;     leading-zero dividend BYTE (repeated 8-bit left shifts of
-;     R0..R3) and minus further no-op iterations until the dividend
-;     MSB is set (bit-level skip).
-; Pseudocode:
-;   quot = 0; rem = 0
-;   for i in remaining_iterations:
-;       rem = (rem << 1) | msb(dividend); dividend <<= 1
-;       if rem >= den: rem -= den; bit = 1 else bit = 0
-;       quot = (quot << 1) | bit
-udiv32_16:
-.scope
-   LDA #0
-   STA LC_QUOT_LO
-   STA LC_QUOT_HI
-
-; ---- Fast path: quotient fits u16 ----
-; True iff top 16 bits of dividend < den. Pre-load rem = R3:R2 and
-; run 16 iterations on the low 16 bits (skip the first 16 no-op
-; iterations the standard loop would do). For typical s16 clipper
-; inputs (product u20-u22, den u12) this is always true.
-   LDA LC_M_R3
-   CMP LC_DEN_HI
-   BCC u16_quot
-   BNE no_u16_quot
-   LDA LC_M_R2
-   CMP LC_DEN_LO
-   BCS no_u16_quot
-u16_quot:
-   LDA LC_M_R3
-   STA LC_REM_HI
-   LDA LC_M_R2
-   STA LC_REM_LO
-   LDX #16
-u16_loop:
-   ASL LC_M_R0
-   ROL LC_M_R1
-   ROL LC_REM_LO
-   ROL LC_REM_HI
-   LDA LC_REM_LO
-   SEC
-   SBC LC_DEN_LO
-   STA LC_TMP_LO
-   LDA LC_REM_HI
-   SBC LC_DEN_HI
-   BCC u16_set                             ; no-sub: C=0 rides into the ROL
-   STA LC_REM_HI
-   LDA LC_TMP_LO
-   STA LC_REM_LO                           ; sub taken: C=1 from the SBC
-u16_set:
-   ROL LC_QUOT_LO
-   ROL LC_QUOT_HI
-   DEX
-   BNE u16_loop
-   RTS
-
-no_u16_quot:
-; ---- Slow path: u32 ÷ u16 → up to u17 quotient ----
-; (Rare for s16 clipper; kept for correctness.) Use byte-level skip
-; + bit-level skip to trim no-op iterations.
-   LDA #0
-   STA LC_REM_LO
-   STA LC_REM_HI
-; Byte-level skip: while the top dividend byte (R3) is zero, shift the
-; dividend left 8 bits in one move (R2->R3, R1->R2, R0->R1, 0->R0) and
-; drop the iteration count by 8.  X = 32/24/16/8 iterations remaining.
-   LDX #32
-   LDA LC_M_R3
-   BNE bit_skip
-   LDA LC_M_R2
-   STA LC_M_R3
-   LDA LC_M_R1
-   STA LC_M_R2
-   LDA LC_M_R0
-   STA LC_M_R1
-   ZERO LC_M_R0
-   LDX #24
-   LDA LC_M_R3
-   BNE bit_skip
-   LDA LC_M_R2
-   STA LC_M_R3
-   LDA LC_M_R1
-   STA LC_M_R2
-   LDA #0
-   STA LC_M_R0
-   STA LC_M_R1
-   LDX #16
-   LDA LC_M_R3
-   BNE bit_skip
-   LDA LC_M_R2
-   STA LC_M_R3
-   LDA #0
-   STA LC_M_R0
-   STA LC_M_R1
-   STA LC_M_R2
-   LDX #8
-   LDA LC_M_R3
-   BNE bit_skip
-   RTS                                     ; dividend == 0 → quot = rem = 0
-bit_skip:
-; Bit-level skip: shift left until the dividend MSB is set (those
-; iterations can never make rem >= den since rem stays 0).
-   BMI div_loop
-bs_loop:
-   ASL LC_M_R0
-   ROL LC_M_R1
-   ROL LC_M_R2
-   ROL LC_M_R3
-   DEX
-   LDA LC_M_R3
-   BPL bs_loop
-div_loop:
-   ASL LC_M_R0
-   ROL LC_M_R1
-   ROL LC_M_R2
-   ROL LC_M_R3
-   ROL LC_REM_LO
-   ROL LC_REM_HI
-   LDA LC_REM_LO
-   SEC
-   SBC LC_DEN_LO
-   STA LC_TMP_LO
-   LDA LC_REM_HI
-   SBC LC_DEN_HI
-   BCC div_no_sub
-   STA LC_REM_HI
-   LDA LC_TMP_LO
-   STA LC_REM_LO
-   SEC
-   JMP div_setbit
-div_no_sub:
-   CLC
-div_setbit:
-   ROL LC_QUOT_LO
-   ROL LC_QUOT_HI
-   DEX
-   BNE div_loop
-   RTS
-.endscope
 
 ; ===================================================================
 ; s16_interp — find target axis at given free-axis value
@@ -411,17 +176,78 @@ si_u8_sub:
    STA LC_RES_HI
    JMP si_clamp
 si_general:
-; multiply: |offset| × |dy| → u32 (umul16x16 also has a_hi=0/b_hi=0
-; fast paths internally).
-   LDA LC_OFF_LO
-   STA LC_M_A_LO
-   LDA LC_OFF_HI
-   STA LC_M_A_HI
+; multiply: |offset| × |dy| → u32, INLINE (was umul16x16 — single
+; caller): operands read straight from LC_OFF/LC_DY, no staging; the
+; a_hi=0/b_hi=0 fast paths survive.
+.scope
+
+; Always need p1 = a_lo * b_lo.
    LDA LC_DY_LO
-   STA LC_M_B_LO
+   STA zp_mul_b
+   LDA LC_OFF_LO
+   JSR umul8
+   STA LC_M_R1                             ; A = prod_hi (umul8 contract)
+   LDA zp_prod_l
+   STA LC_M_R0
+   LDA #0
+   STA LC_M_R2
+   STA LC_M_R3
+
+; Fast paths: skip multiplies whose factor is zero.
    LDA LC_DY_HI
-   STA LC_M_B_HI
-   JSR umul16x16
+   BEQ skip_p2
+
+   STA zp_mul_b                            ; A = b_hi from the test above
+   LDA LC_OFF_LO
+   JSR umul8
+; p2 = a_lo * b_hi
+   LDA zp_prod_l
+   CLC
+   ADC LC_M_R1
+   STA LC_M_R1
+   LDA zp_prod_h
+   ADC LC_M_R2
+   STA LC_M_R2
+   LDA #0
+   ADC LC_M_R3
+   STA LC_M_R3
+skip_p2:
+
+   LDA LC_OFF_HI
+   BEQ skip_p3_p4
+
+   LDA LC_DY_LO
+   STA zp_mul_b
+   LDA LC_OFF_HI
+   JSR umul8
+; p3 = a_hi * b_lo
+   LDA zp_prod_l
+   CLC
+   ADC LC_M_R1
+   STA LC_M_R1
+   LDA zp_prod_h
+   ADC LC_M_R2
+   STA LC_M_R2
+   LDA #0
+   ADC LC_M_R3
+   STA LC_M_R3
+
+   LDA LC_DY_HI
+   BEQ skip_p3_p4
+; if b fits u8, p4 = a_hi * 0 = 0
+   STA zp_mul_b                            ; A = b_hi from the test above
+   LDA LC_OFF_HI
+   JSR umul8
+; p4 = a_hi * b_hi
+   LDA zp_prod_l
+   CLC
+   ADC LC_M_R2
+   STA LC_M_R2
+   LDA zp_prod_h
+   ADC LC_M_R3
+   STA LC_M_R3
+skip_p3_p4:
+.endscope
 ; round-to-nearest: add (den / 2) before divide
    LDA LC_DEN_HI
    LSR A
@@ -441,7 +267,135 @@ si_general:
    BNE m_r_nc
    INC LC_M_R3
 m_r_nc:
-   JSR udiv32_16
+.scope
+
+   LDA #0
+   STA LC_QUOT_LO
+   STA LC_QUOT_HI
+
+; ---- Fast path: quotient fits u16 ----
+; True iff top 16 bits of dividend < den. Pre-load rem = R3:R2 and
+; run 16 iterations on the low 16 bits (skip the first 16 no-op
+; iterations the standard loop would do). For typical s16 clipper
+; inputs (product u20-u22, den u12) this is always true.
+   LDA LC_M_R3
+   CMP LC_DEN_HI
+   BCC u16_quot
+   BNE no_u16_quot
+   LDA LC_M_R2
+   CMP LC_DEN_LO
+   BCS no_u16_quot
+u16_quot:
+   LDA LC_M_R3
+   STA LC_REM_HI
+   LDA LC_M_R2
+   STA LC_REM_LO
+   LDX #16
+u16_loop:
+   ASL LC_M_R0
+   ROL LC_M_R1
+   ROL LC_REM_LO
+   ROL LC_REM_HI
+   LDA LC_REM_LO
+   SEC
+   SBC LC_DEN_LO
+   STA LC_TMP_LO
+   LDA LC_REM_HI
+   SBC LC_DEN_HI
+   BCC u16_set                             ; no-sub: C=0 rides into the ROL
+   STA LC_REM_HI
+   LDA LC_TMP_LO
+   STA LC_REM_LO                           ; sub taken: C=1 from the SBC
+u16_set:
+   ROL LC_QUOT_LO
+   ROL LC_QUOT_HI
+   DEX
+   BNE u16_loop
+   JMP udv_done
+
+no_u16_quot:
+; ---- Slow path: u32 ÷ u16 → up to u17 quotient ----
+; (Rare for s16 clipper; kept for correctness.) Use byte-level skip
+; + bit-level skip to trim no-op iterations.
+   LDA #0
+   STA LC_REM_LO
+   STA LC_REM_HI
+; Byte-level skip: while the top dividend byte (R3) is zero, shift the
+; dividend left 8 bits in one move (R2->R3, R1->R2, R0->R1, 0->R0) and
+; drop the iteration count by 8.  X = 32/24/16/8 iterations remaining.
+   LDX #32
+   LDA LC_M_R3
+   BNE bit_skip
+   LDA LC_M_R2
+   STA LC_M_R3
+   LDA LC_M_R1
+   STA LC_M_R2
+   LDA LC_M_R0
+   STA LC_M_R1
+   ZERO LC_M_R0
+   LDX #24
+   LDA LC_M_R3
+   BNE bit_skip
+   LDA LC_M_R2
+   STA LC_M_R3
+   LDA LC_M_R1
+   STA LC_M_R2
+   LDA #0
+   STA LC_M_R0
+   STA LC_M_R1
+   LDX #16
+   LDA LC_M_R3
+   BNE bit_skip
+   LDA LC_M_R2
+   STA LC_M_R3
+   LDA #0
+   STA LC_M_R0
+   STA LC_M_R1
+   STA LC_M_R2
+   LDX #8
+   LDA LC_M_R3
+   BNE bit_skip
+   JMP udv_done                                     ; dividend == 0 → quot = rem = 0
+bit_skip:
+; Bit-level skip: shift left until the dividend MSB is set (those
+; iterations can never make rem >= den since rem stays 0).
+   BMI div_loop
+bs_loop:
+   ASL LC_M_R0
+   ROL LC_M_R1
+   ROL LC_M_R2
+   ROL LC_M_R3
+   DEX
+   LDA LC_M_R3
+   BPL bs_loop
+div_loop:
+   ASL LC_M_R0
+   ROL LC_M_R1
+   ROL LC_M_R2
+   ROL LC_M_R3
+   ROL LC_REM_LO
+   ROL LC_REM_HI
+   LDA LC_REM_LO
+   SEC
+   SBC LC_DEN_LO
+   STA LC_TMP_LO
+   LDA LC_REM_HI
+   SBC LC_DEN_HI
+   BCC div_no_sub
+   STA LC_REM_HI
+   LDA LC_TMP_LO
+   STA LC_REM_LO
+   SEC
+   JMP div_setbit
+div_no_sub:
+   CLC
+div_setbit:
+   ROL LC_QUOT_LO
+   ROL LC_QUOT_HI
+   DEX
+   BNE div_loop
+udv_done:
+.endscope
 ; result = y0 ± quot
    LDA LC_DY_NEG
    BNE si_sub
