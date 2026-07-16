@@ -91,7 +91,9 @@ zp_br_t5 = $25                    ; [bsp]; |P1|=(t2,t3,t4) |P2|=(t0,t1,t5),
 ANIM_VAL = $27                    ; [bsp]; anim: patch value (registered
 ;   2026-07-10 — was an unregistered squatter at $F0)
 ANIM_CUR = $29                    ; [bsp]; anim: mover index (was $F1)
-; FREE 2026-07-16 (deferral removed): zp_defq_tail = $2B
+zp_defq_tail = $2B                ; [bsp] DEFQ tail (one-seg-lag queue)
+zp_defq_head = $59                ; [bsp] DEFQ head (first un-applied op)
+zp_defq_nops = $5B                ; [bsp] DEFQ op count (lag test: >= 2)
 ; ============================================================
 ; $E2-$FF: the two PACKED PER-ENDPOINT VERTEX STRUCTS (2026-07-10).
 ; br_seg_xform_vertex + do_project_y write every vertex output

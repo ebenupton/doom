@@ -1748,12 +1748,34 @@ def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
     if br is not None and clips.has_gap(br[0], br[1]):
         render_bsp(ch[far], clips, cos_a, sin_a, vx, vy, vz, surface)
 
+
+def _apply_clip_op(clips, op):
+    """Apply one staged clip op (the one-seg-lag pending slot)."""
+    if op[0] == 'solid':
+        clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
+                         sx2=op[4] if len(op) > 4 else None,
+                         yt1=op[5] if len(op) > 5 else None,
+                         yt2=op[6] if len(op) > 6 else None,
+                         yb1=op[7] if len(op) > 7 else None,
+                         yb2=op[8] if len(op) > 8 else None)
+    else:
+        clips.tighten(*op[1:])
+
+
 def render_subsector(idx, clips, cos_a, sin_a, vx, vy, vz, surface):
     ssec = ssectors[idx]
-    # Deferral removed 2026-07-16: clip ops apply at seg end (the
-    # deferred=None immediate branches inside render_seg).
+    # ONE-SEG-LAG deferral (2026-07-16): at most one pending op. A seg's
+    # op applies after the NEXT sibling's draws — adjacent siblings are
+    # the only column-sharers in a convex subsector, so shared-edge
+    # verticals draw before the neighbour's occlusion lands, while
+    # everything further lagged behaves like immediate application.
+    deferred = []
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, None)
+        render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred)
+        while len(deferred) > 1:
+            _apply_clip_op(clips, deferred.pop(0))
+    for op in deferred:
+        _apply_clip_op(clips, op)
 
 def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
     s = segs[si]
@@ -2225,9 +2247,14 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
     # Both caches are lazily populated by fp_render_seg:
     # vcache (frame-global): view transforms, computed on first access per vertex
     # vwh_cache (frame-global): Y projections indexed by VWH
-    # Deferral removed 2026-07-16: ops apply at seg end (deferred=None).
+    # ONE-SEG-LAG deferral (2026-07-16; see render_subsector).
+    deferred = []
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, None)
+        fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred)
+        while len(deferred) > 1:
+            _apply_clip_op(clips, deferred.pop(0))
+    for op in deferred:
+        _apply_clip_op(clips, op)
 
 
 def render_bsp_fp(nid, clips, ctx, vz,
@@ -2873,11 +2900,71 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     # pointer for the 6502; python just shifts the offset back down)
     first_seg = (rom[ss_off + 256 + idx] | (rom[ss_off + 512 + idx] << 8)) >> 4
 
-    # Deferral removed 2026-07-16: packed_render_seg's deferred=None
-    # branches call clips.mark_solid / clips.tighten at seg end with the
-    # records LIVE in $0700/$0800 — the snapshot machinery is gone.
+    # ONE-SEG-LAG deferral (2026-07-16): at most one pending op; a seg's
+    # op applies after the NEXT sibling's draws (see render_subsector).
+    # Records mode: the pending tighten's records are snapshotted at
+    # stage time (the next seg's DCL emission overwrites the buffers)
+    # and restored at apply — the single-slot version of the old DEFQ.
+    deferred = []
+    import span_clip_6502 as _scmod
+    dw_FP_RENDER_H = FP_RENDER_H
+
+    def _apply_packed_op(op):
+        if op[0] == 'solid':
+            if len(op) > 3:
+                clips.mark_solid(op[1], op[2], sx1=op[3], sx2=op[4],
+                                 yt1=op[5], yt2=op[6], yb1=op[7], yb2=op[8])
+            else:
+                clips.mark_solid(op[1], op[2])   # zero-rec plain solid
+        else:
+            if op and isinstance(op[-1], tuple) and op[-1] and op[-1][0] == '__rec__':
+                _, top_snap, bot_snap = op[-1]
+                mem = _span_clip_6502.mpu.memory
+                mem[_scmod.TOP_RECORDS] = 0
+                mem[_scmod.BOT_RECORDS] = 0
+                for i, b in enumerate(top_snap):
+                    mem[_scmod.TOP_RECORDS + i] = b
+                for i, b in enumerate(bot_snap):
+                    mem[_scmod.BOT_RECORDS + i] = b
+                clips.tighten(*op[1:-1])
+            else:
+                clips.tighten(*op[1:])
+
     for si in range(first_seg, first_seg + count):
-        packed_render_seg(si, clips, ctx, vz, surface, ram, None)
+        prev_len = len(deferred)
+        packed_render_seg(si, clips, ctx, vz, surface, ram, deferred)
+        if len(deferred) > prev_len and deferred[-1][0] == 'tighten':
+            mem = _span_clip_6502.mpu.memory
+            tc = mem[_scmod.TOP_RECORDS]
+            bc = mem[_scmod.BOT_RECORDS]
+            top_snap = bytes(mem[_scmod.TOP_RECORDS:_scmod.TOP_RECORDS + 1 + tc * 4])
+            bot_snap = bytes(mem[_scmod.BOT_RECORDS:_scmod.BOT_RECORDS + 1 + bc * 4])
+            # QUEUE-ADMISSION MIRROR (one-seg-lag needs COUNT sync with
+            # the 6502 queue, not just state sync):
+            op = deferred[-1]
+            if tc == 0 and bc == 0:
+                # zero records — seg_zero_rec_solid verdict, value-based:
+                # solid iff the aperture is wholly off-screen (defq
+                # queues a plain solid), else the 6502 queues NOTHING.
+                from endpoint_spans import Y_BIAS
+                lo_v, hi_v = Y_BIAS, Y_BIAS + dw_FP_RENDER_H - 1
+                yt1, yt2, yb1, yb2 = op[5], op[6], op[7], op[8]
+                deferred.pop()
+                if ((yb1 < lo_v and yb2 < lo_v) or
+                        (yt1 > hi_v and yt2 > hi_v)):
+                    deferred.append(('solid', op[1], op[2]))
+            else:
+                # all-neutral fast-out mirror (dqt_neutral): top flats at
+                # yl==0 and bot flats at yl==$FF queue nothing.
+                if (all(top_snap[2 + 4 * k] == 0 for k in range(tc)) and
+                        all(bot_snap[2 + 4 * k] == 0xFF for k in range(bc))):
+                    deferred.pop()
+                else:
+                    deferred[-1] = op + (('__rec__', top_snap, bot_snap),)
+        while len(deferred) > 1:
+            _apply_packed_op(deferred.pop(0))
+    for op in deferred:
+        _apply_packed_op(op)
 
 
 def packed_render_bsp(nid, clips, ctx, vz,

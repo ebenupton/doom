@@ -108,10 +108,10 @@ anim_ss_cont:
    STX zp_ys_done                           ; no cross-subsector sy donation
    STX zp_ys_v1ok
 
-; (DEFQ retired 2026-07-16: clip ops apply IMMEDIATELY at seg end —
-;  convex siblings only collide at shared edge columns, which is
-;  exactly the portal-edge-vertical artifact this fixes; the record
-;  snapshots died with it. Eben's call.)
+; Reset the one-seg-lag op queue (defq.s; X = 0 from the cluster above).
+   STX DEFQ_TAIL
+   STX DEFQ_HEAD
+   STX zp_defq_nops
 
 ; --- Loop over segs ---
 seg_loop:
@@ -769,30 +769,44 @@ ms_lost:
 ; (clamp fixups relocated below ms_skip: the in-range path — every seg —
 ; falls straight through; the rare saturations pay the branch back)
 ms_dispatch:
+; --- ONE-SEG-LAG (2026-07-16): append our op to the queue (the append
+;     SNAPSHOTS the records, so the collision between restoring the
+;     previous op and preserving our fresh records never exists), then
+;     apply the PREVIOUS sibling's op if one is pending. Our draws are
+;     done, so shared-edge verticals (window corners / jambs at the
+;     boundary column) drew against the pre-op state; adjacent siblings
+;     are the only column-sharers in a convex subsector, so this
+;     reproduces full-deferral pixels with queue depth <= 2. Bank C
+;     guaranteed here (emit-cascade audit). Mirrors: the deferred lists
+;     drained to length 1 in doom_wireframe's three renderers.
    LDA zp_seg_flags
    AND #$02
    BNE ms_solid_path
-; --- Portal: apply the records tighten IMMEDIATELY (bank C is
-;     guaranteed here — the emit-cascade audit — and the records are
-;     LIVE in $0700/$0800: consumed in place, no snapshot). Skip if no
-;     records were populated — mirrors Python's wrapper test.
    LDA $0700
    ORA $0800
    BEQ ms_zero_rec
-   JSR SC_TIGHTEN_FROM_RECORDS
-   JMP ms_skip
+   JSR defq_append_tighten
+   JMP ms_lag
 ms_zero_rec:
 ; Zero records: skip only when the aperture genuinely covers the whole
 ; screen; a wholly off-screen aperture means the columns are all wall ->
 ; close them (aligns with endpoint_spans' record verdicts; see
 ; seg_zero_rec_solid in clip/tfr.s).
    JSR seg_zero_rec_solid
-   BCC ms_skip
-   JSR SC_MARK_SOLID
-   JMP ms_skip
+   BCC ms_lag
+   JSR defq_append_solid
+   JMP ms_lag
 ms_solid_path:
-; --- Solid wall: mark_solid NOW (bank C held; ilo/ihi staged above) ---
-   JSR SC_MARK_SOLID
+; --- Solid wall: queue mark_solid ---
+   JSR defq_append_solid
+ms_lag:
+; apply the older sibling's op iff one is still queued BEHIND ours:
+; after our append, head < tail means ops exist; if head equals the
+; PRE-append tail there was none older. Cheapest test: two ops exist
+; iff head != tail after append AND head != our own entry — our entry
+; offset is unknown here, so track it the simple way: apply while MORE
+; THAN ONE op is queued (mirrors python's `while len(deferred) > 1`).
+   JSR defq_lag_drain
 ms_skip:
    JMP ms_advance
 ms_hi255:
@@ -822,7 +836,9 @@ ms_advance:
    BEQ sa_done                             ; loop rotation: seg_loop's
    JMP seg_proc                            ; LDA/BNE re-test was dead
 sa_done:
-   RTS                                     ; ops already applied per seg
+   PAGE BANK_C                             ; the last seg may have exited
+                                        ; via the backface cull (bank L0)
+   JMP defq_drain                          ; the last pending op (tail call)
 .endscope
 
 ; (seg_swap_vx retired 2026-07-15: reversed 1px projections are DROPPED
