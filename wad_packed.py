@@ -253,6 +253,16 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # the unused field loads (73% of E1M1 nodes are axis-aligned).
     def _npg(pg, i, v):
         rom_main[off_nodes + pg * 256 + i] = v & 0xFF
+    # Axis-extent guarantee (2026-07-16): every s16 point-vs-point
+    # subtract in the side tests (node axis arms, backface axis arms,
+    # and BOTH general paths' delta stagings) decodes the sign WITHOUT
+    # V-overflow handling — sound iff any two engine-visible points are
+    # < 32768 apart per axis. The player is wall-confined inside the
+    # vertex hull, so the map bounding box bounds everything.
+    _xs = [v[0] for v in vertexes] + [n[0] for n in nodes]
+    _ys = [v[1] for v in vertexes] + [n[1] for n in nodes]
+    assert max(_xs) - min(_xs) < 32768 and max(_ys) - min(_ys) < 32768, \
+        "map axis extent >= 32768: side tests need V-overflow decode back"
     for i, n in enumerate(nodes):
         raw_nx = n[0] - map_center_x
         raw_ny = n[1] - map_center_y

@@ -75,7 +75,8 @@ br_back_face_test:
    INY
    LDA (zp_seg_hdr_p),Y
    SBC zp_br_px_x                          ; C16 - px
-   BVS bf_ax_lt_ovf
+; (no V decode: pack-time axis-extent assert — see wad_packed; N IS the
+;  sign on all four arms)
    BMI bf_ax_front                         ; C16 < px -> front
    BPL bf_ax_back                          ; tie/less -> back (always)
 bf_ax_px_lt:
@@ -87,13 +88,9 @@ bf_ax_px_lt:
    INY
    LDA zp_br_px_x
    SBC (zp_seg_hdr_p),Y
-   BVS bf_ax_lt_ovf
    BMI bf_ax_front                         ; diff < 0
 bf_ax_back:
    JMP s_advance
-bf_ax_lt_ovf:
-   BPL bf_ax_front                         ; V:N inverted — N clear = negative
-   BMI bf_ax_back
 bf_ax_front:
    JMP bf_seg_front
 ; --- py vs C16 (forms 2/3) ---
@@ -106,7 +103,6 @@ bf_ax_py:
    INY
    LDA (zp_seg_hdr_p),Y
    SBC zp_br_py_x
-   BVS bf_ax_lt_ovf
    BMI bf_ax_front
    BPL bf_ax_back                          ; (always)
 bf_ax_py_lt:
@@ -118,7 +114,6 @@ bf_ax_py_lt:
    INY
    LDA zp_br_py_x
    SBC (zp_seg_hdr_p),Y
-   BVS bf_ax_lt_ovf
    BMI bf_ax_front
    BPL bf_ax_back
 
@@ -215,9 +210,9 @@ bf_g_mul:
 ; Layout keeper: the 2026-07-15 tail cleanup shrank this routine by 10
 ; bytes net; shifting everything downstream rolls page-cross dice in
 ; hot loops (measured swings of +-1000/position on this suite). Pad
-; scanned 6/10/12/14/18: 12 measured best (-207 vs -160 at exact
+; re-scanned 2026-07-16 after the V-strip: 24 best
 ; restore). Safe to delete/re-scan whenever MAIN is next rebalanced.
-   .res 12
+   .res 24
 ; ============================================================================
 ; br_bbox_visible — visibility test for a child subtree's bounding box.
 ;

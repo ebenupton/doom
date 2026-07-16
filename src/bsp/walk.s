@@ -127,7 +127,7 @@ bif_clr2:
 ; ============================================================================
 .macro NODE_SETUP_DISPATCH s0, s1
 .local ns_t_general, ns_ax_py, ns_px_lt, ns_py_lt, ns_x0, ns_x1
-.local ns_lt_ovf, nsd_dx0, nsd_dy0, nsd_s0, nsd_s1, nsd_mul
+.local nsd_dx0, nsd_dy0, nsd_s0, nsd_s1, nsd_mul
    LDX zp_node_ch_l
    LDA NODE_TYPE,X
    AND #NT_MASK                            ; bits 7/6 are the child leaf flags
@@ -149,7 +149,8 @@ bif_clr2:
    CMP zp_br_pxraw_l                       ; borrow seed (result dead)
    LDA NODE_NXHI,X
    SBC zp_br_pxraw_h                       ; diff' = nx - px
-   BVS ns_lt_ovf                           ; (same decode as the '<' arms)
+; (no V decode: the packer asserts map axis extent < 32768, so the s16
+;  diff never overflows and N IS the sign — all four arms alike)
    BMI ns_x0                               ; nx < px -> side0
    JMP s1                                  ; tie or less -> side1 (always)
 ns_x0:
@@ -160,12 +161,8 @@ ns_px_lt:
    SBC NODE_NXLO,X
    LDA zp_br_pxraw_h
    SBC NODE_NXHI,X
-   BVS ns_lt_ovf
    BMI ns_x0
    JMP s1                                  ; (tie: diff 0 -> side1)
-ns_lt_ovf:                                 ; V set: N inverted
-   BPL ns_x0
-   JMP s1                                  
 ns_ax_py:
    BCS ns_py_lt
 ; form 2: side0 iff py > ny — reversed like form 0
@@ -173,7 +170,6 @@ ns_ax_py:
    CMP zp_br_pyraw_l
    LDA NODE_NYHI,X
    SBC zp_br_pyraw_h
-   BVS ns_lt_ovf
    BMI ns_x0                               ; ny < py -> side0
    JMP s1                                  
 ns_py_lt:
@@ -182,7 +178,6 @@ ns_py_lt:
    SBC NODE_NYLO,X
    LDA zp_br_pyraw_h
    SBC NODE_NYHI,X
-   BVS ns_lt_ovf
    BMI ns_x0
    JMP s1                                  
 ns_t_general:
