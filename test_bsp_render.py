@@ -16,7 +16,6 @@ import abi
 
 from symmap import sym as _sym
 ENTRY_BR_UMUL8 = _sym('jt_br_umul8')
-ENTRY_BR_SMUL8 = _sym('jt_br_smul8')
 ENTRY_BR_RECIP = _sym('jt_br_recip')
 
 ZP_A    = _sym('zp_br_a')
@@ -62,26 +61,7 @@ def test_umul8():
     return fail
 
 
-def test_smul8():
-    """s8 × s8 → s16."""
-    sc = SpanClip6502()
-    mem = sc.mpu.memory
-    cases = [(0, 0), (1, 1), (-1, 1), (1, -1), (-1, -1),
-             (127, -128), (-128, -128), (50, -50), (100, 100), (-100, 100)]
-    fail = 0
-    for a, b in cases:
-        mem[ZP_A] = a & 0xFF
-        mem[ZP_B] = b & 0xFF
-        sc._run(ENTRY_BR_SMUL8)
-        got = s16_from_zp(mem, ZP_RESL)
-        want = a * b
-        ok = got == want
-        if not ok:
-            fail += 1
-            print(f"  FAIL smul8({a}, {b}): got={got}, want={want}")
-        else:
-            print(f"  OK   smul8({a}, {b}) = {got}")
-    return fail
+# (test_smul8 removed 2026-07-16: br_smul8 deleted — no engine callers)
 
 
 def test_recip():
@@ -236,8 +216,8 @@ def test_to_view():
     return fail
 
 
-ENTRY_BR_PROJECT_X = abi.ENGINE_JT_FLAT + 0x0F   # jt slots (were hardcoded $480F/
-ENTRY_BR_PROJECT_Y = abi.ENGINE_JT_FLAT + 0x12   # $4812 pre one-region merge)
+ENTRY_BR_PROJECT_X = _sym('jt_br_project_x')   # by symbol — jt offsets shift
+ENTRY_BR_PROJECT_Y = _sym('jt_br_project_y')
 
 
 # One recip sample per shift value S=1..10 (idx chosen mid-range for each
@@ -385,8 +365,7 @@ def test_project_y():
 if __name__ == '__main__':
     print("== br_umul8 ==")
     f1 = test_umul8()
-    print("== br_smul8 ==")
-    f2 = test_smul8()
+    f2 = 0   # (br_smul8 retired)
     print("== br_recip ==")
     f3 = test_recip()
     print("== br_view_setup ==")

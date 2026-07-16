@@ -63,47 +63,8 @@ br_umul8:
 ; unit's variant; THIS one treats BOTH operands as s8.)
 ; Clobbers zp_br_a/b (replaced by magnitudes), zp_br_sign, zp_mul_b,
 ; zp_prod_l/hi, zp_tmp0, X, Y.
-; ============================================================================
-br_smul8:
-.scope
-   ZERO zp_br_sign
-; |a|, track sign
-   LDA zp_br_a
-   BPL a_pos
-   EOR #$FF
-   BUMP
-   STA zp_br_a
-   INC zp_br_sign
-a_pos:
-   LDA zp_br_b
-   BPL b_pos
-   EOR #$FF
-   BUMP
-   STA zp_br_b
-   LDA zp_br_sign
-   EOR #1
-   STA zp_br_sign
-b_pos:
-   LDA zp_br_b
-   STA zp_mul_b
-   LDA zp_br_a
-   JSR SC_UMUL8
-   STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
-   LDA zp_prod_l
-   STA zp_br_res_l
-   LDA zp_br_sign
-   BEQ pos
-; Negate s16 result
-   LDA #0
-   SEC
-   SBC zp_br_res_l
-   STA zp_br_res_l
-   LDA #0
-   SBC zp_br_res_h
-   STA zp_br_res_h
-pos:
-   RTS
-.endscope
+; (br_smul8 deleted 2026-07-16: zero engine callers — the last one
+; died with the raw-product point_on_side cascade.)
 
 ; ============================================================================
 ; br_recip — floating-mantissa reciprocal lookup.

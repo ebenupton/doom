@@ -347,14 +347,13 @@ VCACHE_VALID_BASE = $1B00               ; 59 bytes for 467 vertices
 ; Jump-table entries (Python wrapper JSRs to these fixed addresses)
 ; ============================================================================
 jt_br_umul8: JMP br_umul8                            ; $4800 + 0  = $4800   wraps span_clip's umul8 for testing
-jt_br_smul8: JMP br_smul8                            ; $4803   signed s8 × s8 → s16
-jt_br_recip: JMP br_recip                            ; $4806   reciprocal lookup
-jt_br_view_setup: JMP br_view_setup                       ; $4809   compute frac_vx/frac_vy
-jt_br_to_view: JMP br_to_view                          ; $480C   world (zp_br_dx/dy_input) → view (zp_br_vx_l..vyhi)
-jt_br_project_x: JMP br_project_x                  ; $480F   view vx → screen sx
-jt_br_project_y: JMP br_project_y_paged                  ; $4812   height_delta → screen sy (pages L2)
-jt_br_render_frame: JMP br_render_frame                     ; $4815   walk BSP, dispatch subsector renderer
-jt_br_render_subsector: JMP br_render_subsector_jt              ; $4818  process one subsector's segs (caller sets
+jt_br_recip: JMP br_recip                            ; $4803   reciprocal lookup
+jt_br_view_setup: JMP br_view_setup                       ; $4806   compute frac_vx/frac_vy
+jt_br_to_view: JMP br_to_view                          ; $4809   world (zp_br_dx/dy_input) → view (zp_br_vx_l..vyhi)
+jt_br_project_x: JMP br_project_x                  ; $480C   view vx → screen sx
+jt_br_project_y: JMP br_project_y_paged                  ; $480F   height_delta → screen sy (pages L2)
+jt_br_render_frame: JMP br_render_frame                     ; $4812   walk BSP, dispatch subsector renderer
+jt_br_render_subsector: JMP br_render_subsector_jt              ; $4815  process one subsector's segs (caller sets
 ;        zp_node_ch_l:hi to the subsector id). Used
 ;        by the hybrid Python-BSP + 6502-seg harness
 ;        to isolate BSP-traversal vs seg-processor
@@ -362,8 +361,8 @@ jt_br_render_subsector: JMP br_render_subsector_jt              ; $4818  process
 ; Animated-sector entries (bodies in anim.s): kept in THIS table so the
 ; beebasm drivers see one pinned dispatch block and everything after the
 ; MAIN segment can float freely inside the CODE region.
-jt_anim_tick: JMP anim_tick                          ; +$1E  (driver: PAGE BANK_L2, JSR)
-jt_anim_init: JMP anim_init                          ; +$21
+jt_anim_tick: JMP anim_tick                          ; +$18  (driver: PAGE BANK_L2, JSR)
+jt_anim_init: JMP anim_init                          ; +$1B
 ; (anim_tick/anim_init are same-unit labels — anim.s is part of this link unit)
 .export jt_anim_tick, jt_anim_init
 ; The drivers reach these via the abi.inc constants (JT_*); MAIN must

@@ -5,10 +5,10 @@ BANK_C = 6  # sideways bank: clipper + rasteriser + HUD
 BANK_L2 = 7  # sideways bank: angle/bbox/recip/verts/RCACHE/VWHC/CFG
 ENGINE_JT = 0x2C00  # driver-facing jump table = MAIN segment head (link-asserted)
 ENGINE_JT_FLAT = 0x3670
-JT_VIEW_SETUP = 0x2C09  # br_view_setup
-JT_RENDER_FRAME = 0x2C15  # br_render_frame
-JT_ANIM_TICK = 0x2C1B  # anim_tick (PAGE BANK_L2 first)
-JT_ANIM_INIT = 0x2C1E  # anim_init (PAGE BANK_L2 first)
+JT_VIEW_SETUP = 0x2C06  # br_view_setup
+JT_RENDER_FRAME = 0x2C12  # br_render_frame
+JT_ANIM_TICK = 0x2C18  # anim_tick (PAGE BANK_L2 first)
+JT_ANIM_INIT = 0x2C1B  # anim_init (PAGE BANK_L2 first)
 CLIP_JT = 0x8000  # clipper jump table; entry 0 = span_init
 CLIP_JT_FLAT = 0x2000
 HUD_ENTRY = 0xA400  # hud_draw (bank C window)
