@@ -237,8 +237,8 @@ bca_ihi = $BF
 .assert (VATOX & $FF) = 0, error, "VATOX must be page-aligned (bca_tail rides the index lo byte in Y)"
 .assert (VATOX >> 8) + 4 <= $FF, error, "VATOX hi +4 must not wrap (bca_tail's pointer ADCs assume carry-out 0)"
 bca_vis = $64                           ; sole owner (see zp.inc $64 note)
-bca_p1 = $C8                            ; r1 = phi1+512 (s16 pair $C8/$C9; afn pre-biased, view.s)
-bca_p2 = $CA                            ; r2 = phi2+512 (s16 pair $CA/$CB)
+bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 (afn pre-biased; NOT sign-extended)
+bca_p2 = $CA                            ; r2 = (phi2+512)&4095 u12 pair $CA/$CB
 ; Hottest body vars in spare scavenged ZP (conflict-free) to cut the
 ; absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 ; (top,bot,left,right s16) and we read via (bca_boxp),Y

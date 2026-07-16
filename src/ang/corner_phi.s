@@ -226,7 +226,7 @@ cx_inside:
 ; corner_phi — signed view-relative angle (phi) of one box corner.
 ;   in : pa_dx/pa_dy (s16 = corner - viewer int pos, loaded by the caller),
 ;        bca_afn (a_fine, frame-constant)
-;   out: pa_res = phi (s16 in [-2048,2048))
+;   out: pa_res = r (u12; see cp_havepsi)
 ;        clobbers sd_num/sd_den/sd_q, pa_sx/pa_sy/pa_ptr (oct rides X)
 ;   phi = sign_extend((a_fine - psi) & 4095), psi = point_to_angle(dx,dy).
 ; point_to_angle (angle_bbox.py) is INLINED below — corner_phi is its sole
@@ -396,14 +396,17 @@ sub:
 mask_done:
 ; & 4095 (psi ready; was RTS->fall through)
 .endscope
-; --- afn - psi, mask & sign-extend to s16 (file-global: reused by the
-;     rotation cache's warm path to re-derive phi from cached psi) ---
-;   in : pa_res = psi (u12 fineangle), bca_afn = a_fine (frame-constant)
-;   out: pa_res = phi (s16 in [-2048,2048))
-;   phi = (a_fine - psi) & 4095 ; if phi >= 2048: phi -= 4096
-; The AND #$0F masks to 12 bits; hi-nibble >= 8 means phi >= 2048, and
-; SBC #$10 (carry known set from the CMP) subtracts 4096 from the hi byte.
-; RETURNS phi hi in A, lo in Y (dead-write tracker 2026-07-11: every
+; --- afn - psi, mask to u12 (file-global: reused by the rotation
+;     cache's warm path to re-derive r from cached psi) ---
+;   in : pa_res = psi (u12 fineangle), bca_afn = a_fine+512 (frame-
+;        constant, pre-biased — view.s)
+;   out: pa_res = r = (phi+512) & 4095, PURE U12 (hi in [0,$0F])
+; NOT sign-extended (2026-07-16): every consumer does mod-4096
+; arithmetic — bca_tail's window tests compare the u12 hi directly
+; (their AND #$0F re-folds died with the extension), the span/negate/
+; psi-store chains mask or nibble-shift their own hi — so the old
+; CMP #8 / SBC #$10 wrap was 4 dead cycles per corner.
+; RETURNS r hi in A, lo in Y (dead-write tracker 2026-07-11: every
 ; caller immediately copied pa_res out — the register return drops both
 ; loads at all six sites). pa_res is STILL stored: the test hooks
 ; (test_slope_div) read it from memory, and psi-hi feeds the SBC below.
@@ -412,16 +415,11 @@ cp_havepsi:
    LDA bca_afn
    SBC pa_res
    STA pa_res
-   TAY                                     ; phi lo rides Y to the caller
+   TAY                                     ; r lo rides Y to the caller
    LDA bca_afn+1
    SBC pa_res+1
-   AND #$0F                                ; phi & 4095 (hi nibble)
-   CMP #8
-   BCC cp_store
-; < 2048 -> keep; else C=1 for the wrap
-   SBC #$10                                ; -= 4096 (hi -= $10) -> signed [-2048,2048)
-cp_store:
-   STA pa_res+1                            ; (A still = phi hi at RTS)
+   AND #$0F                                ; r & 4095 (hi nibble) — u12, done
+   STA pa_res+1                            ; (A still = r hi at RTS)
    RTS
 
 ; checkcoord[boxpos*4]: indices into (top=0,bot=1,left=2,right=3).

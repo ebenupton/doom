@@ -93,8 +93,9 @@ ck_left:
 ; snapshots read the raw values before the tail).
 ;
 ; bca_p1/p2 hold r = phi+512 (the afn hoist is pre-biased, view.s).
-; Window: tspan = (1024-r) & 4095 <= 1024 <=> r in [0,1024]; negative/
-; wrapped r folds to hi nibble >= $E via the mask. Only the rare
+; Window: tspan = (1024-r) & 4095 <= 1024 <=> r in [0,1024]; r is PURE
+; U12 (cp_havepsi stopped sign-extending 2026-07-16), so wrapped phi
+; lands at hi in [8,15] and the raw hi compare decides. Only the rare
 ; outside paths do 16-bit arithmetic.
 ;
 ; Carry choreography (all proven, nothing incidental):
@@ -104,9 +105,8 @@ ck_left:
 ;   LDA (ptr),Y carries into the +-1 adjusts (SBC #0 / ADC #1, no
 ;   seeds); the out-arms' 16-bit ops inherit C=1 from CMP >= 4 or CPY.
    LDY bca_p1
-   LDA bca_p1+1
-   AND #$0F                                ; r1 hi (12-bit)
-   CMP #4
+   LDA bca_p1+1                            ; r1 hi — PURE U12 (cp_havepsi no
+   CMP #4                                  ; longer sign-extends: the AND died)
    BCC lk_left                             ; r1 < 1024: C=0, A/Y = operands
    BNE ck_left_out
    CPY #0
@@ -150,8 +150,7 @@ il1:                                       ; the right window test re-seeds C)
 ck_right:
 ; right window test: r2 IS the right tspan (bias trick) — same shape.
    LDY bca_p2
-   LDA bca_p2+1
-   AND #$0F                                ; r2 hi (12-bit)
+   LDA bca_p2+1                            ; r2 hi (u12 — no mask needed)
    CMP #4
    BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
    BNE ck_right_out
