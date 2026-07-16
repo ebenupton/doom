@@ -174,9 +174,8 @@ rc_leaf:
 ; descend(subsector), near side (far leaves tail straight into the
 ; render below — their is_full ran just before the far bbox check).
    IS_FULL_B bsp_done_full
-   JMP br_render_subsector
 rdf_leaf:
-   JMP br_render_subsector                 ; far leaf (no is_full)
+   JMP br_render_subsector
 
 rc_n1:
 ; === side 1: near = LEFT child, far = RIGHT child === (mirror)
