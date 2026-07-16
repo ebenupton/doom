@@ -127,7 +127,7 @@ bif_clr2:
 ; ============================================================================
 .macro NODE_SETUP_DISPATCH s0, s1
 .local ns_t_general, ns_ax_py, ns_px_lt, ns_py_lt, ns_x0, ns_x1
-.local ns_gt_ovf, ns_lt_ovf, nsd_dx0, nsd_dy0, nsd_s0, nsd_s1, nsd_mul
+.local ns_lt_ovf, nsd_dx0, nsd_dy0, nsd_s0, nsd_s1, nsd_mul
    LDX zp_node_ch_l
    LDA NODE_TYPE,X
    AND #NT_MASK                            ; bits 7/6 are the child leaf flags
@@ -141,21 +141,19 @@ bif_clr2:
    LSR A                                   ; A = axis (0 px / 1 py),
    BNE ns_ax_py                            ; C = 1 '<' / 0 '>'
    BCS ns_px_lt
-; form 0: side0 iff px > nx
-   SEC
-   LDA zp_br_pxraw_l
-   SBC NODE_NXLO,X
-   STA zp_br_t2
-   LDA zp_br_pxraw_h
-   SBC NODE_NXHI,X
-   BVS ns_gt_ovf
-   BMI ns_x1
-   ORA zp_br_t2
-   BEQ ns_x1                               ; tie -> side1
+; form 0: side0 iff px > nx — REVERSED subtract (2026-07-16): testing
+; nx - px puts the tie on the fall-through side for free (side0 iff
+; the diff is strictly negative), so the old STA/ORA/BEQ tie chain is
+; gone. Same rule for form 2; the '<' arms always worked this way.
+   LDA NODE_NXLO,X
+   CMP zp_br_pxraw_l                       ; borrow seed (result dead)
+   LDA NODE_NXHI,X
+   SBC zp_br_pxraw_h                       ; diff' = nx - px
+   BVS ns_lt_ovf                           ; (same decode as the '<' arms)
+   BMI ns_x0                               ; nx < px -> side0
+   BPL ns_x1                               ; tie or less -> side1 (always)
 ns_x0:
    JMP s0
-ns_gt_ovf:                                 ; V set: N inverted (diff != 0)
-   BMI ns_x0
 ns_x1:
    JMP s1
 ns_px_lt:
@@ -172,18 +170,14 @@ ns_lt_ovf:                                 ; V set: N inverted
    BMI ns_x1
 ns_ax_py:
    BCS ns_py_lt
-; form 2: side0 iff py > ny
-   SEC
-   LDA zp_br_pyraw_l
-   SBC NODE_NYLO,X
-   STA zp_br_t2
-   LDA zp_br_pyraw_h
-   SBC NODE_NYHI,X
-   BVS ns_gt_ovf
-   BMI ns_x1
-   ORA zp_br_t2
-   BEQ ns_x1                               ; tie -> side1
-   BNE ns_x0                               ; (always)
+; form 2: side0 iff py > ny — reversed like form 0
+   LDA NODE_NYLO,X
+   CMP zp_br_pyraw_l
+   LDA NODE_NYHI,X
+   SBC zp_br_pyraw_h
+   BVS ns_lt_ovf
+   BMI ns_x0                               ; ny < py -> side0
+   BPL ns_x1                               ; (always)
 ns_py_lt:
 ; form 3: side0 iff py < ny  (borrow pre-seeded)
    LDA zp_br_pyraw_l

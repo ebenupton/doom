@@ -64,27 +64,24 @@ br_back_face_test:
    LSR A                                   ; C = strict-side (0 '>', 1 '<')
    BNE bf_ax_py                            ; A = 0 px : 1 py
 ; --- px vs C16 ---
-   LDA zp_br_px_h
    BCS bf_ax_px_lt
-; form 0: front iff px > C16  <=>  (px - C) > 0
+; form 0: front iff px > C16 — REVERSED subtract (2026-07-16): C16 - px
+; is strictly negative iff front, so ties fall to BACK on the sign test
+; alone and the old STA/ORA/BEQ tie chain is gone ('<' arms always
+; worked this way; the reversed decode shares their overflow stub).
    INY                                     ; -> C lo (+5)
-   SEC
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_t2
+   LDA (zp_seg_hdr_p),Y
+   CMP zp_br_px_h                          ; borrow seed (result dead)
    INY
-   LDA zp_br_px_x
-   SBC (zp_seg_hdr_p),Y
-   BVS bf_ax_gt_ovf
-   BMI bf_ax_back                          ; diff < 0
-   ORA zp_br_t2
-   BEQ bf_ax_back                          ; diff == 0 (tie -> back)
-   JMP bf_seg_front
-bf_ax_gt_ovf:
-   BMI bf_ax_front                         ; V:N inverted — N set = positive
-   BPL bf_ax_back
+   LDA (zp_seg_hdr_p),Y
+   SBC zp_br_px_x                          ; C16 - px
+   BVS bf_ax_lt_ovf
+   BMI bf_ax_front                         ; C16 < px -> front
+   BPL bf_ax_back                          ; tie/less -> back (always)
 bf_ax_px_lt:
 ; form 1: front iff px < C16  <=>  (px - C) < 0
 ; (C=1 = the LSR's strict-side bit — the BCS that got us here)
+   LDA zp_br_px_h
    INY
    SBC (zp_seg_hdr_p),Y
    INY
@@ -101,24 +98,21 @@ bf_ax_front:
    JMP bf_seg_front
 ; --- py vs C16 (forms 2/3) ---
 bf_ax_py:
-   LDA zp_br_py_h
    BCS bf_ax_py_lt
-; form 2: front iff py > C16
+; form 2: front iff py > C16 — reversed like form 0
    INY
-   SEC
-   SBC (zp_seg_hdr_p),Y
-   STA zp_br_t2
+   LDA (zp_seg_hdr_p),Y
+   CMP zp_br_py_h
    INY
-   LDA zp_br_py_x
-   SBC (zp_seg_hdr_p),Y
-   BVS bf_ax_gt_ovf
-   BMI bf_ax_back
-   ORA zp_br_t2
-   BEQ bf_ax_back
-   JMP bf_seg_front
+   LDA (zp_seg_hdr_p),Y
+   SBC zp_br_py_x
+   BVS bf_ax_lt_ovf
+   BMI bf_ax_front
+   BPL bf_ax_back                          ; (always)
 bf_ax_py_lt:
 ; form 3: front iff py < C16
 ; (C=1 = the LSR's strict-side bit — the BCS that got us here)
+   LDA zp_br_py_h
    INY
    SBC (zp_seg_hdr_p),Y
    INY
