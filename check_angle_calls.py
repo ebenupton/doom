@@ -34,7 +34,7 @@ def standalone(top,bot,left,right,px,py,ab):
     for off,val in enumerate((top,bot,left,right)):
         m[BOX+2*off]=val&0xFF; m[BOX+2*off+1]=(val>>8)&0xFF
     m[B_PX]=px&0xFF;m[B_PY]=py&0xFF;m[B_AB]=ab&0xFF
-    _afn=(ab<<4)&0xFFFF; m[B_AFN]=_afn&0xFF; m[B_AFN+1]=(_afn>>8)&0xFF
+    _afn=((ab<<4)+512)&0x0FFF; m[B_AFN]=_afn&0xFF; m[B_AFN+1]=(_afn>>8)&0xFF  # pre-biased (view.s hoist)
     m[B_PXS]=px&0xFF; m[B_PXS+1]=0xFF if px<0 else 0
     m[B_PYS]=py&0xFF; m[B_PYS+1]=0xFF if py<0 else 0
     m[ZNODE]=0; m[ZSIDE]=0                 # box -> planes at node 0, side 0

@@ -84,13 +84,15 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
    CMP #8
    BCS full_vis                            ; span >= 2048
 ck_left:
-; left clip: tspan = (CLIPANGLE - p1) & 4095 ; if tspan > 2*CLIPANGLE:
-;   wholly off left when tspan - 2*CLIPANGLE >= span, else p1 = -CLIPANGLE
+; left clip: bca_p1/p2 hold r = phi+512 (the afn hoist is pre-biased,
+; view.s 2026-07-16), so tspan = (CLIPANGLE - phi1) & 4095 = (1024 - r1)
+; & 4095; if tspan > 2*CLIPANGLE: wholly off left when tspan - 2*CLIP
+; >= span, else clamp r1 = 0 (phi1 = -CLIPANGLE).
    SEC
-   LDA #<512
+   LDA #<1024
    SBC bca_p1
    TAX                                     ; tspan lo
-   LDA #>512
+   LDA #>1024
    SBC bca_p1+1
    AND #$0F                                ; tspan hi (12-bit)
    CMP #4
@@ -112,21 +114,17 @@ ck_left_out:
    SBC t1
    BCS cull                                ; (tspan-2*CLIP) >= span: off left
 ck_left_clip:
-   LDA #$00                                ; p1 = -CLIPANGLE = -512 = $FE00
-   STA bca_p1
-   LDA #$FE
-   STA bca_p1+1
+   LDA #0                                  ; r1 = 0 (phi1 = -CLIPANGLE): the
+   STA bca_p1                              ; bias turns the $FE00 clamp into
+   STA bca_p1+1                            ; two zero stores
 ck_right:
-; right clip: tspan = (CLIPANGLE + p2) & 4095 ; same, clamping p2 = +512.
-; 512's low byte is 0, so the low-byte "add" is just p2's low byte (no
-; carry possible) and only the high byte needs the +2 — unlike the left
-; side, where 0 - p1_lo genuinely borrows. (Was CLC / LDA #<512 /
-; ADC lo / TAX / LDA #>512 / ADC hi: 4 cycles of adding zero.)
-   LDX bca_p2                              ; tspan lo = p2 lo
+; right clip: tspan = (CLIPANGLE + phi2) & 4095 = r2 — the stored value
+; IS the right tspan (that's the bias trick's payoff on this side: the
+; CLC/ADC #>512 pair is GONE; the mask alone re-folds the s16 sign
+; extension back to 12 bits).
+   LDX bca_p2                              ; tspan lo = r2 lo
    LDA bca_p2+1
-   CLC
-   ADC #>512                               ; tspan hi = p2 hi + 2
-   AND #$0F
+   AND #$0F                                ; tspan hi (12-bit)
    CMP #4
    BCC ck_done                             ; (C=0 rides into the tail's hi ADC)
    BNE ck_right_out
@@ -144,21 +142,19 @@ ck_right_out:
    SBC t1
    BCS cull                                ; off right
 ck_right_clip:
-   LDA #<512                               ; p2 = +CLIPANGLE
+   LDA #<1024                              ; r2 = 1024 (phi2 = +CLIPANGLE)
    STA bca_p2
-   LDA #>512
+   LDA #>1024
    STA bca_p2+1
 ck_done:
 ; the VATOX tail reads the clipped p1 (left) / p2 (right) directly, both
 ; in [-512,512] — the old bca_lo/bca_hi staging copies were pure channels
 ; (dead-write tracker, 2026-07-11) and are gone.
-; ilo = VATOX[p1+512]-1 ; ihi = VATOX[p2+512]+1 ; clamp [0,255].
-; VATOX holds only the used range (phi in [-512,512] -> index [0,1024]),
-; so the bias is +512 (not +1024); the R_CheckBBox clip above guarantees
-; lo/hi land in [-512,512].
-; address = (VATOX+512) + lo : fold the +512 bias into the base so it's a
-; single add (lo is signed s16; two's-complement add lands in range).
-   LDA #0                                  ; (VATOX+512) is PAGE-ALIGNED
+; ilo = VATOX[r1]-1 ; ihi = VATOX[r2]+1 ; clamp [0,255].
+; The +512 index bias is ALREADY IN r (afn hoist): the clip above
+; guarantees r in [0,1024], so r IS the de-biased table index and the
+; base is plain VATOX.
+   LDA #0                                  ; VATOX is PAGE-ALIGNED
    STA pa_ptr                              ; (asserted, header_div.s): ptr lo
                                            ; is 0 for BOTH lookups and the
                                            ; index lo rides Y — the 16-bit lo
@@ -171,7 +167,7 @@ ck_done:
 ;   consumed against a base-1 operand. (The carries OUT are sign(p1)/
 ;   sign(p2) — NOT constant — so the SEC/CLC of the ±1 adjusts stay.)
    LDY bca_p1
-   LDA #>(VATOX+512)
+   LDA #>VATOX
    ADC bca_p1+1                            ; C=0 (inbound invariant)
    STA pa_ptr+1
    LDA (pa_ptr),Y
@@ -184,8 +180,8 @@ ck_done:
 il1:
    STA bca_ilo
    LDY bca_p2
-   LDA #>(VATOX+512)-1                     ; C=1 on both il1 entries:
-   ADC bca_p2+1                            ; base-1 + p2_hi + 1 = base + p2_hi
+   LDA #>VATOX-1                           ; C=1 on both il1 entries:
+   ADC bca_p2+1                            ; base-1 + r2_hi + 1 = base + r2_hi
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[hi]
    CLC

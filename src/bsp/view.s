@@ -16,7 +16,7 @@
 ;                 zp_br_cmag, zp_br_cneg, zp_br_cone    neg flag, |t|=1 flag)
 ;                 bca_ab = view-angle byte (frame preset).
 ;   Outputs (zp): zp_br_fvx_l/hi, zp_br_fvy_l/hi (each s16);
-;                 bca_afn ($3B/$3C) = ab<<4 fine angle (hoisted);
+;                 bca_afn ($3B/$3C) = ab<<4 + 512 fine angle (hoisted, biased);
 ;                 bca_pxs/pys ($8D/$8E, $9B/$9C) = player pos s16 copies;
 ;                 bca_check_op SMC-patched (cached vs original bbox check);
 ;                 per-frame vertex-cache mode chosen (vxc_frame).
@@ -40,8 +40,15 @@ br_view_setup:
    LSR A
    LSR A
    LSR A
-   STA $3C
-; bca_afn+1 = ab>>4
+   CLC
+   ADC #2                                  ; BIAS TRICK (2026-07-16): afn +=
+   AND #$0F                                ; 512 (mod 4096) at the hoist, so
+   STA $3C                                 ; corner_phi emits r = phi+512
+; bca_afn+1 = (ab>>4 + 2) & $0F            ; directly: the FOV window becomes
+;                                          ; r in [0,1024] (right test = raw
+;                                          ; compare, VATOX index = r), and
+;                                          ; the bias CANCELS in the rcache
+;                                          ; psi stores (afn' - r = afn - phi)
    LDA bca_ab
    ASL A
    ASL A

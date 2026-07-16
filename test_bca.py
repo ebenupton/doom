@@ -27,8 +27,8 @@ def run(top, bot, left, right, px, py, ab):
     mpu.memory[sym('bca_px')] = px & 0xFF
     mpu.memory[sym('bca_py')] = py & 0xFF
     mpu.memory[sym('bca_ab')] = ab & 0xFF
-    afn = (ab << 4) & 0xFFFF          # a_fine now precomputed by the caller
-    w16(sym('bca_afn'), afn)
+    afn = ((ab << 4) + 512) & 0x0FFF  # a_fine, PRE-BIASED +512 (bias trick:
+    w16(sym('bca_afn'), afn)          # the hoist in view.s does the same)
     mpu.memory[sym('bca_pxs')] = px & 0xFF
     mpu.memory[sym('bca_pxs') + 1] = 0xFF if px < 0 else 0
     mpu.memory[sym('bca_pys')] = py & 0xFF
