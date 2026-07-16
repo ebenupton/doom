@@ -25,10 +25,6 @@ full_vis:                               ; span >= ANG180: full width
    LDA #1                                  ; vis LAST: A/Z = verdict at RTS
    STA bca_vis
    RTS
-cull:
-   LDA #0                                  ; A=0/Z=1: culled
-   STA bca_vis
-   RTS
 
 bbox_check_angle:
 ; (scope opened out to file level so the rotation cache — bbox_check_angle_cached
@@ -155,7 +151,6 @@ ck_right:
    BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
    BNE ck_right_out
    CPY #0
-   BNE ck_right_out
    BEQ lk_r255                             ; r2 == 1024 exactly: ihi is the
                                            ; CONSTANT VATOX[1024]+1 clamped =
                                            ; 255 — ride lk_right's own LDA
@@ -186,7 +181,7 @@ ih1:                                       ; identity — A <= 255 by now on
 ; ihi >= ilo (visible, tie included — the old BEQ was a third copy of
 ; the same verdict), C=0 iff ihi < ilo.
    CMP bca_ilo
-   BCC cull_far                            ; ihi < ilo -> cull
+   BCC cull                                ; ihi < ilo -> cull
 ; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
 ; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
 ; stays for the D-cache store, but callers branch without reloading.
@@ -196,10 +191,10 @@ visok:
    LDA #1                                  ; A=1/Z=0: visible
    STA bca_vis
    RTS
-cull_far:                               ; 3-instruction twin of cull (file
-   LDA #0                                  ; head): the shared tail is out of
-   STA bca_vis                             ; branch range (-167) from here
-   RTS                                     ; after the 2026-07-16 exit hoist
+cull:                                      ; THE cull exit (the file-head twin
+   LDA #0                                  ; is gone, 2026-07-17: every BCS/BCC
+   STA bca_vis                             ; cull now reaches FORWARD to here —
+   RTS                                     ; ranges link-checked); A=0/Z=1
 
 ; ============================================================================
 ; ROTATION COHERENCE CACHE
