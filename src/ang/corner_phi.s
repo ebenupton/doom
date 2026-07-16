@@ -350,21 +350,21 @@ haveax:
 ; (num < den strictly here — pa_equal diverted the diagonal — so q fits
 ; the 1024-entry tantoangle and the old q==1024 check is gone.)
 pa_lookup:
-; ta = tantoangle[sd_q] via 16-bit index. TA_LO is page-aligned
-; (asserted), so the pointer lo byte IS sd_q and the hi byte is a
-; single carefree add. TA_HI reached by adding the page delta.
+; ta = tantoangle[sd_q]. TA_LO/TA_HI are page-aligned (asserted), so
+; the index lo byte rides Y and pa_ptr's lo byte is PERMANENTLY ZERO
+; (established once per frame in br_view_setup; the VATOX tail rides
+; the same invariant). q_hi <= 3, so neither hi add can wrap — the
+; page-delta hop's carry-in is the first add's known-0 carry-out.
    .assert (TA_LO & $FF) = 0, error, "TA_LO must be page-aligned"
-   LDY #0
-   LDA sd_q
-   STA pa_ptr
+   .assert (TA_HI & $FF) = 0, error, "TA_HI must be page-aligned"
+   LDY sd_q
    LDA sd_q+1
    CLC
    ADC #>TA_LO
    STA pa_ptr+1
    LDA (pa_ptr),Y
    STA pa_res
-   LDA pa_ptr+1
-   CLC
+   LDA pa_ptr+1                            ; (C=0: >TA_LO + q_hi can't wrap)
    ADC #(>TA_HI - >TA_LO)
    STA pa_ptr+1
    LDA (pa_ptr),Y

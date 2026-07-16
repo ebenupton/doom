@@ -56,6 +56,12 @@ br_view_setup:
    ASL A
    STA $3B
 ; bca_afn = (ab<<4)&FF
+   LDA #0
+   STA pa_ptr                              ; pa_ptr lo is 0 FOREVER: the TA and
+                                           ; VATOX lookups ride Y against page-
+                                           ; aligned bases and only ever write
+                                           ; the hi byte (re-assert per frame,
+                                           ; belt and braces)
 ; Player px,py sign-extended to s16 (bca_pxs $8D/$8E, bca_pys $9B/$9C) is
 ; also frame-constant; hoist it (was recomputed per bbox check).
    LDA zp_br_px_h

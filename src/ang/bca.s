@@ -85,31 +85,31 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
    BCS full_vis                            ; span >= 2048
 ck_left:
 ; left clip: bca_p1/p2 hold r = phi+512 (the afn hoist is pre-biased,
-; view.s 2026-07-16), so tspan = (CLIPANGLE - phi1) & 4095 = (1024 - r1)
-; & 4095; if tspan > 2*CLIPANGLE: wholly off left when tspan - 2*CLIP
-; >= span, else clamp r1 = 0 (phi1 = -CLIPANGLE).
-   SEC
-   LDA #<1024
-   SBC bca_p1
-   TAX                                     ; tspan lo
-   LDA #>1024
-   SBC bca_p1+1
-   AND #$0F                                ; tspan hi (12-bit)
+; view.s 2026-07-16). The window test runs on r1 DIRECTLY — the same
+; shape as the right side: tspan = (1024-r1) & 4095 <= 1024 <=> r1 in
+; [0,1024], and negative/wrapped r1 folds to hi nibble >= $E via the
+; mask. Only the rare outside path materializes tspan-1024 (= -r1).
+   LDX bca_p1
+   LDA bca_p1+1
+   AND #$0F                                ; r1 hi (12-bit)
    CMP #4
-   BCC ck_right                            ; tspan < 1024 -> in range
+   BCC ck_right                            ; r1 < 1024 -> in range
    BNE ck_left_out
    CPX #0
-   BEQ ck_right                            ; tspan == 1024 exactly -> in range
+   BEQ ck_right                            ; r1 == 1024 exactly -> in range
 ck_left_out:
-; tspan > 1024: left corner outside the FOV. Compute tspan-1024 (12-bit) and
-; test it against span with a discard-result 16-bit compare (CPX lo / SBC hi:
-; only the carry survives; C=1 iff tspan-1024 >= span -> wholly off the left).
-; The lo byte rides X, so CPX seeds the borrow WITHOUT touching A (2026-07-16
-; hand edit: the old TAY/TXA/CMP/TYA shuffle parked A in Y just to run the
-; lo compare through A — 6 cycles of choreography for one flag. Y is dead
-; here: ck_done re-seeds it with LDY #0, cull never reads it).
-   SEC
-   SBC #4                                  ; tspan hi -= 4  (tspan - 1024)
+; r1 outside [0,1024]: left corner outside the FOV. tspan-1024 =
+; (0 - r1) & 4095 (r1 in [1025,4095] as u12, so tspan = 5120-r1 and
+; tspan-1024 = 4096-r1 — the negate IS the -1024 fold; the old SBC #4
+; died with it). Discard-result 16-bit compare vs span: CPX seeds the
+; borrow (2026-07-16 hand edit), only the final carry survives; C=1
+; iff tspan-1024 >= span -> wholly off the left.
+   LDA #0
+   SBC bca_p1                              ; lo of -r1 (C=1 inbound: CMP >= 4
+   TAX                                     ; or CPX fall-through)
+   LDA #0
+   SBC bca_p1+1
+   AND #$0F                                ; hi of (-r1) & 4095 = tspan-1024
    CPX t0                                  ; C = ((tspan-1024).lo >= span.lo)
    SBC t1
    BCS cull                                ; (tspan-2*CLIP) >= span: off left
@@ -154,13 +154,9 @@ ck_done:
 ; The +512 index bias is ALREADY IN r (afn hoist): the clip above
 ; guarantees r in [0,1024], so r IS the de-biased table index and the
 ; base is plain VATOX.
-   LDA #0                                  ; VATOX is PAGE-ALIGNED
-   STA pa_ptr                              ; (asserted, header_div.s): ptr lo
-                                           ; is 0 for BOTH lookups and the
-                                           ; index lo rides Y — the 16-bit lo
-                                           ; add was pure channel. (pa_ptr is
-                                           ; corner_phi scratch: re-zero per
-                                           ; tail, not per frame.)
+; VATOX is PAGE-ALIGNED (asserted, header_div.s): pa_ptr's lo byte is
+; PERMANENTLY ZERO (br_view_setup; the TA lookup keeps the invariant
+; too) and the index lo rides Y — the 16-bit lo add was pure channel.
 ; Carries are KNOWN (2026-07-16), so neither hi ADC needs a CLC:
 ;   here C=0 — every ck_done arrival is via BCC or the ==1024 arm's CLC;
 ;   below C=1 — BCS il1 means v>=1, and the v==0 clamp re-supplies SEC —
