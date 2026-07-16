@@ -89,13 +89,13 @@ ck_left:
 ; shape as the right side: tspan = (1024-r1) & 4095 <= 1024 <=> r1 in
 ; [0,1024], and negative/wrapped r1 folds to hi nibble >= $E via the
 ; mask. Only the rare outside path materializes tspan-1024 (= -r1).
-   LDX bca_p1
+   LDY bca_p1
    LDA bca_p1+1
    AND #$0F                                ; r1 hi (12-bit)
    CMP #4
    BCC ck_right                            ; r1 < 1024 -> in range
    BNE ck_left_out
-   CPX #0
+   CPY #0
    BEQ ck_right                            ; r1 == 1024 exactly -> in range
 ck_left_out:
 ; r1 outside [0,1024]: left corner outside the FOV. tspan-1024 =
@@ -114,9 +114,13 @@ ck_left_out:
    SBC t1
    BCS cull                                ; (tspan-2*CLIP) >= span: off left
 ck_left_clip:
-   LDA #0                                  ; r1 = 0 (phi1 = -CLIPANGLE): the
-   STA bca_p1                              ; bias turns the $FE00 clamp into
-   STA bca_p1+1                            ; two zero stores
+   LDA #0                                  ; r1 = 0 (phi1 = -CLIPANGLE)
+   TAY                                     ; the clamped lo RIDES Y into the
+   STA bca_p1+1                            ; tail (2026-07-16 hand edit: Y is
+                                           ; loaded at ck_left and must track
+                                           ; the clamp); the lo MEMORY store
+                                           ; is dead — the tail's LDY was its
+                                           ; only post-clip reader
 ck_right:
 ; right clip: tspan = (CLIPANGLE + phi2) & 4095 = r2 — the stored value
 ; IS the right tspan (that's the bias trick's payoff on this side: the
@@ -162,7 +166,6 @@ ck_done:
 ;   below C=1 — BCS il1 means v>=1, and the v==0 clamp re-supplies SEC —
 ;   consumed against a base-1 operand. (The carries OUT are sign(p1)/
 ;   sign(p2) — NOT constant — so the SEC/CLC of the ±1 adjusts stay.)
-   LDY bca_p1
    LDA #>VATOX
    ADC bca_p1+1                            ; C=0 (inbound invariant)
    STA pa_ptr+1
