@@ -59,34 +59,9 @@ br_view_setup:
    STA $9B
    LDA zp_br_py_x
    STA $9C
-; |px| / |py| magnitudes for the diagonal back-face C-form (frame-
-; constant; signs are read live from px_e/py_e bit7 at test time)
-   LDA zp_br_px_h
-   STA zp_bf_pxm_l
-   LDA zp_br_px_x
-   STA zp_bf_pxm_h
-   BPL vs_pxm_pos
-   LDA #0
-   SEC
-   SBC zp_bf_pxm_l
-   STA zp_bf_pxm_l
-   LDA #0
-   SBC zp_bf_pxm_h
-   STA zp_bf_pxm_h
-vs_pxm_pos:
-   LDA zp_br_py_h
-   STA zp_bf_pym_l
-   LDA zp_br_py_x
-   STA zp_bf_pym_h
-   BPL vs_pym_pos
-   LDA #0
-   SEC
-   SBC zp_bf_pym_l
-   STA zp_bf_pym_l
-   LDA #0
-   SBC zp_bf_pym_h
-   STA zp_bf_pym_h
-vs_pym_pos:
+; (the |px|/|py| staging died with the delta-form conversion of the
+; diagonal back-face test, 2026-07-11 — write-only since; deleted
+; 2026-07-16 and the four zp_bf_p?m slots freed)
 ; --- Fractional deltas: low byte of the NEGATED 8.8 player position
 ; (vertex frac is 0, so frac(vertex - player) = frac(-player)). ---
 ; dx_lo = (-zp_br_px) & 0xFF

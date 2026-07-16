@@ -180,7 +180,7 @@ sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
 zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
 ; between its two projections (one L0 page-in reads both header bytes)
-zp_bf_pym_l = $4D                ; [bsp]; |py| u16 (pair with $5B; the
+; FREE 2026-07-16 (write-only since the C-form): zp_bf_pym_l = $4D
 ; back-face diagonal C-form reads both per call)
 zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on the hardware stack; is_full unwinds via TXS)
 ; FREE 2026-07-15 (cross-core unification): zp_side = $4F
@@ -194,7 +194,7 @@ zp_node_ny_l = $56                ; [bsp]
 zp_node_ny_h = $57                ; [bsp]
 zp_node_ch_l = $58                ; [bsp]; current child (lo, hi: 16-bit id)
 ; $59 free (was zp_node_ch_h — ids are u8 end to end, 2026-07-15)
-zp_bf_pym_h = $5B                ; [bsp]; |py| hi byte
+; FREE 2026-07-16 (write-only since the C-form): zp_bf_pym_h = $5B
 zp_sx_ord = $5A                   ; [bsp]; reversal flag (0 = v1 already
 ; left, VX_STRIDE = reversed): latched by the has_gap prelude; its ONLY
 ; consumer is the hg_pass canonicalization gate (seg_swap_vx) — every
@@ -251,8 +251,8 @@ zp_br_pyraw_h = $93              ; [bsp]
 zp_v_x_x = $94                   ; [bsp]; saved view-x s24 extension byte (wide-vx path)
 zp_seg_hdr_p = $96                ; [bsp]; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h = $97              ; [bsp]
-zp_bf_pxm_l = $98                ; [bsp]; |px| u16, staged per frame by
-zp_bf_pxm_h = $99                ; br_view_setup for the diagonal
+; FREE 2026-07-16 (write-only since the C-form): zp_bf_pxm_l = $98
+; FREE 2026-07-16 (write-only since the C-form): zp_bf_pxm_h = $99
 ; back-face C-form magnitudes (signs read live from px_e/py_e bit7)
 zp_pyc_idx = $9A                  ; [bsp]; projection-cache probe index (X save)
 bca_pys = $9B                     ; [ang]; py sign-extended (s16) ; w=2
