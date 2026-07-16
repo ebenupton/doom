@@ -116,8 +116,10 @@ SS_PHI    = NODE_SOA + $B00             ; ... hi. ROM ships first*16
 NT_MASK  = $03                          ; sense-normalized axis forms
                                         ; (0 px>nx, 1 py>ny — the packer
                                         ;  child-swaps '<' nodes away),
-                                        ;  2 general
-NT_GEN   = $02
+                                        ;  3 general (LSR leaves C=1 =
+                                        ;  the delta staging's borrow
+                                        ;  seed)
+NT_GEN   = $03
 NF_RLEAF = $80                          ; right child is a subsector
 NF_LLEAF = $40                          ; left child is a subsector
 

@@ -286,7 +286,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         _npg(7, i, cl)
         # Sense-normalized axis nodes (doom_wireframe swaps children on
         # load): only the '>' forms exist. 0 = px>nx, 1 = py>ny,
-        # 2 = general — the walk dispatch is LSR / BNE gen / BCS py.
+        # 3 = general — the walk dispatch is LSR / BNE gen / BCS py,
+        # and 3 (not 2) leaves C=1 in the LSR: the general arm's first
+        # delta SBC needs no SEC.
         if raw_dx == 0:                      # vertical: D = ndy*(px-nx)
             assert raw_dy > 0, f"node {i}: '<' sense survived normalization"
             typ = 0                          # side0 iff px > nx

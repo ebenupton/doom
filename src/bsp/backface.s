@@ -126,7 +126,7 @@ bf_ax_py_lt:
 ; folded into the primitive signs at pack time, so the old flags-EOR
 ; mode twist is gone.
 bf_diag:
-   SEC
+; (no SEC: the CMP #4 / BCS that got us here left C=1)
    SBC #4
    TAX                                     ; X = dir index
    LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; sign byte (b7 dy', b6 dx')
@@ -134,9 +134,8 @@ bf_diag:
    STX zp_bf_dir                           ; mags load lazily in the mul tier
 ; dx = px - lv1x (s16, header +5/6); dxhi rides A for the zero test
    LDA zp_br_px_h
-   SEC
-   LDY #5
-   SBC (zp_seg_hdr_p),Y
+   LDY #5                                  ; (no SEC: SBC #4 with A >= 4
+   SBC (zp_seg_hdr_p),Y                    ;  above left C=1)
    STA zp_br_dx_l
    LDA zp_br_px_x
    INY
@@ -176,8 +175,8 @@ bfd_back_j:
 ; dx == 0: dot = -P2 = -(dx'*dy); need dy for its sign (P2 = 0 handled:
 ; dy==0 too -> dot = 0 -> back)
 bfd_dx0:
+; (no SEC: entered iff dx == 0 — zero subtract result, no borrow, C=1)
    LDA zp_br_py_h
-   SEC
    INY                                     ; -> +7
    SBC (zp_seg_hdr_p),Y
    STA zp_br_dy_l

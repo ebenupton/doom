@@ -172,9 +172,10 @@ ns_t_general:
    STA zp_br_sign                          ; b7 = sgn ndy, b6 = sgn ndx
    LDA NODE_DIRID,X
    STA zp_bf_dir                           ; DIR-table index
-; dx = pxraw - nx (s16); hi rides A for the zero test
+; dx = pxraw - nx (s16); hi rides A for the zero test. NO SEC: the
+; dispatch LSR of NT_GEN=3 left C=1 (the same known-carry audit that
+; freed the axis arms' ties).
    LDA zp_br_pxraw_l
-   SEC
    SBC NODE_NXLO,X
    STA zp_br_dx_l
    LDA zp_br_pxraw_h
@@ -210,8 +211,9 @@ ns_t_general:
 ; dx == 0: D = -P2 = -(ndx*dy); side0 iff P2 < 0
 ; (dy == 0 too -> D = 0 -> side1)
 nsd_dx0:
+; (no SEC: entered iff dx == 0 — a zero subtract result means no
+;  borrow, C is already 1)
    LDA zp_br_pyraw_l
-   SEC
    SBC NODE_NYLO,X
    STA zp_br_dy_l
    LDA zp_br_pyraw_h
