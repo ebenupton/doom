@@ -151,11 +151,9 @@ bif_clr2:
    SBC zp_br_pxraw_h                       ; diff' = nx - px
    BVS ns_lt_ovf                           ; (same decode as the '<' arms)
    BMI ns_x0                               ; nx < px -> side0
-   BPL ns_x1                               ; tie or less -> side1 (always)
+   JMP s1                                  ; tie or less -> side1 (always)
 ns_x0:
    JMP s0
-ns_x1:
-   JMP s1
 ns_px_lt:
 ; form 1: side0 iff px < nx  (C = 1 from the LSR seeds the borrow)
    LDA zp_br_pxraw_l
@@ -164,10 +162,10 @@ ns_px_lt:
    SBC NODE_NXHI,X
    BVS ns_lt_ovf
    BMI ns_x0
-   BPL ns_x1                               ; (tie: diff 0 -> side1)
+   JMP s1                                  ; (tie: diff 0 -> side1)
 ns_lt_ovf:                                 ; V set: N inverted
    BPL ns_x0
-   BMI ns_x1
+   JMP s1                                  
 ns_ax_py:
    BCS ns_py_lt
 ; form 2: side0 iff py > ny — reversed like form 0
@@ -177,7 +175,7 @@ ns_ax_py:
    SBC zp_br_pyraw_h
    BVS ns_lt_ovf
    BMI ns_x0                               ; ny < py -> side0
-   BPL ns_x1                               ; (always)
+   JMP s1                                  
 ns_py_lt:
 ; form 3: side0 iff py < ny  (borrow pre-seeded)
    LDA zp_br_pyraw_l
@@ -186,7 +184,7 @@ ns_py_lt:
    SBC NODE_NYHI,X
    BVS ns_lt_ovf
    BMI ns_x0
-   BPL ns_x1
+   JMP s1                                  
 ns_t_general:
 ; --- general partition: DIR delta form (2026-07-15) — the packer bakes
 ; the gcd-reduced primitive direction as (NODE_DIRID, NODE_DSGN —
@@ -234,7 +232,7 @@ ns_t_general:
    BPL nsd_mul                             ; same sign -> magnitude core
    TXA                                     ; opposite: sign(D) = sign(P1)
    BMI nsd_s1
-   BPL nsd_s0                              ; (always)
+   JMP s0
 ; dx == 0: D = -P2 = -(ndx*dy); side0 iff P2 < 0
 ; (dy == 0 too -> D = 0 -> side1)
 nsd_dx0:
@@ -257,7 +255,6 @@ nsd_dy0:
    LDA zp_br_sign                          ; b7 = sgn ndy
    EOR zp_br_dx_h                          ; b7 = sign(P1)
    BMI nsd_s1
-   BPL nsd_s0                              ; (always)
 ; local verdict stubs (the branches above can't reach past the macro)
 nsd_s0:
    JMP s0
