@@ -1750,23 +1750,10 @@ def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
 
 def render_subsector(idx, clips, cos_a, sin_a, vx, vy, vz, surface):
     ssec = ssectors[idx]
-    deferred = []
+    # Deferral removed 2026-07-16: clip ops apply at seg end (the
+    # deferred=None immediate branches inside render_seg).
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred)
-    # Apply clip updates after all draws in this subsector.
-    # (Records-mode deferred tightens snapshot their records at append
-    # time inside render_seg — the draw-time pool, like the 6502.)
-    for op in deferred:
-        if op[0] == 'solid':
-            clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
-                             sx2=op[4] if len(op) > 4 else None,
-                             yt1=op[5] if len(op) > 5 else None,
-                             yt2=op[6] if len(op) > 6 else None,
-                             yb1=op[7] if len(op) > 7 else None,
-                             yb2=op[8] if len(op) > 8 else None)
-        else:
-            clips.tighten(*op[1:])
-        if clips.is_full(): return
+        render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, None)
 
 def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
     s = segs[si]
@@ -2238,22 +2225,9 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
     # Both caches are lazily populated by fp_render_seg:
     # vcache (frame-global): view transforms, computed on first access per vertex
     # vwh_cache (frame-global): Y projections indexed by VWH
-    deferred = []
+    # Deferral removed 2026-07-16: ops apply at seg end (deferred=None).
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred)
-    # Apply clip updates after all draws in this subsector
-    for op in deferred:
-        if op[0] == 'solid':
-            clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
-                             sx2=op[4] if len(op) > 4 else None,
-                             yt1=op[5] if len(op) > 5 else None,
-                             yt2=op[6] if len(op) > 6 else None,
-                             yb1=op[7] if len(op) > 7 else None,
-                             yb2=op[8] if len(op) > 8 else None)
-        else:
-            clips.tighten(*op[1:])
-        if clips.is_full():
-            return
+        fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, None)
 
 
 def render_bsp_fp(nid, clips, ctx, vz,
@@ -2899,46 +2873,11 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     # pointer for the 6502; python just shifts the offset back down)
     first_seg = (rom[ss_off + 256 + idx] | (rom[ss_off + 512 + idx] << 8)) >> 4
 
-    deferred = []
-    import span_clip_6502 as _scmod
-    records_mode = True    # records-driven tighten is the only 6502 path
+    # Deferral removed 2026-07-16: packed_render_seg's deferred=None
+    # branches call clips.mark_solid / clips.tighten at seg end with the
+    # records LIVE in $0700/$0800 — the snapshot machinery is gone.
     for si in range(first_seg, first_seg + count):
-        prev_len = len(deferred)
-        packed_render_seg(si, clips, ctx, vz, surface, ram, deferred)
-        # If records mode is on and the seg appended a tighten op, snapshot
-        # the records buffers right now — subsequent segs' DCL emission will
-        # overwrite them before the deferred tighten runs.
-        if (records_mode and len(deferred) > prev_len
-                and deferred[-1][0] == 'tighten'):
-            mem = _span_clip_6502.mpu.memory
-            tc = mem[_scmod.TOP_RECORDS]
-            bc = mem[_scmod.BOT_RECORDS]
-            top_snap = bytes(mem[_scmod.TOP_RECORDS:_scmod.TOP_RECORDS + 1 + tc * 4])
-            bot_snap = bytes(mem[_scmod.BOT_RECORDS:_scmod.BOT_RECORDS + 1 + bc * 4])
-            deferred[-1] = deferred[-1] + (('__rec__', top_snap, bot_snap),)
-    for op in deferred:
-        if op[0] == 'solid':
-            clips.mark_solid(op[1], op[2], sx1=op[3] if len(op) > 3 else None,
-                             sx2=op[4] if len(op) > 4 else None,
-                             yt1=op[5] if len(op) > 5 else None,
-                             yt2=op[6] if len(op) > 6 else None,
-                             yb1=op[7] if len(op) > 7 else None,
-                             yb2=op[8] if len(op) > 8 else None)
-        else:
-            if op and isinstance(op[-1], tuple) and op[-1] and op[-1][0] == '__rec__':
-                _, top_snap, bot_snap = op[-1]
-                mem = _span_clip_6502.mpu.memory
-                mem[_scmod.TOP_RECORDS] = 0
-                mem[_scmod.BOT_RECORDS] = 0
-                for i, b in enumerate(top_snap):
-                    mem[_scmod.TOP_RECORDS + i] = b
-                for i, b in enumerate(bot_snap):
-                    mem[_scmod.BOT_RECORDS + i] = b
-                clips.tighten(*op[1:-1])
-            else:
-                clips.tighten(*op[1:])
-        if clips.is_full():
-            return
+        packed_render_seg(si, clips, ctx, vz, surface, ram, None)
 
 
 def packed_render_bsp(nid, clips, ctx, vz,

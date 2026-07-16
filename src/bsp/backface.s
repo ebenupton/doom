@@ -265,11 +265,8 @@ BBOX_CORNER_IDX = $09FD                 ; offset into BBOX_CORNERS for current c
 ;   (Correction: records are 4 bytes each now — blocks are
 ;   (count, 4*count bytes); see defq_append_tighten in defq.s and the
 ;   Python snapshot `TOP_RECORDS : TOP_RECORDS + 1 + tc*4`.)
-DEFQ_BASE = $0600                       ; 256 bytes (free: span pool ends $059F)
-DEFQ_TAIL = $2B                         ; queue tail offset (u8) — moved from
-; $F7 (2026-07-10: $F7 is now inside the VX2 vertex struct); zp.inc
-; registers this address as zp_defq_tail — keep in sync
-DEFQ_OVF = $09FC                        ; set if an op was dropped (queue full) — debug
+; (DEFQ_BASE/TAIL/OVF deleted 2026-07-16 with the deferral itself:
+;  $0600 is a FREE page again, zp $2B free, $09FC free.)
 
 ; Near-plane edge-crossing scratch. Reuses the per-seg ZP block — bbox
 ; visibility runs during node processing, when the seg-loop variables

@@ -108,15 +108,16 @@ anim_ss_cont:
    STX zp_ys_done                           ; no cross-subsector sy donation
    STX zp_ys_v1ok
 
-; Reset deferred op queue for this subsector.
-   STX DEFQ_TAIL
+; (DEFQ retired 2026-07-16: clip ops apply IMMEDIATELY at seg end —
+;  convex siblings only collide at shared edge columns, which is
+;  exactly the portal-edge-vertical artifact this fixes; the record
+;  snapshots died with it. Eben's call.)
 
 ; --- Loop over segs ---
 seg_loop:
    LDA zp_seg_count
    BNE seg_proc
-   PAGE BANK_C                             ; defq_drain only does clip ops (bank C)
-   JMP defq_drain                          ; subsector done — apply deferred ops
+   RTS                                     ; empty subsector
 seg_proc:
    PAGE BANK_L0                            ; re-page L0 each seg (prev seg ended in bank C)
 ; (Records reset MOVED to hg_pass 2026-07-11: the count bytes' only
@@ -771,18 +772,14 @@ ms_dispatch:
    LDA zp_seg_flags
    AND #$02
    BNE ms_solid_path
-; --- Portal: DEFER the tighten to the subsector drain (Python defers
-;     both solids and tightens in seg order — applying the tighten at
-;     seg end mutates spans BEFORE an earlier sibling's mark_solid,
-;     producing off-by-one span anchors). Records are snapshotted into
-;     the queue because later segs' DCL emission overwrites
-;     TOP_RECORDS/BOT_RECORDS before the drain. Skip if no records
-;     were populated — mirrors Python's wrapper test
-;     `if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0: return`.
+; --- Portal: apply the records tighten IMMEDIATELY (bank C is
+;     guaranteed here — the emit-cascade audit — and the records are
+;     LIVE in $0700/$0800: consumed in place, no snapshot). Skip if no
+;     records were populated — mirrors Python's wrapper test.
    LDA $0700
    ORA $0800
    BEQ ms_zero_rec
-   JSR defq_append_tighten
+   JSR SC_TIGHTEN_FROM_RECORDS
    JMP ms_skip
 ms_zero_rec:
 ; Zero records: skip only when the aperture genuinely covers the whole
@@ -791,12 +788,11 @@ ms_zero_rec:
 ; seg_zero_rec_solid in clip/tfr.s).
    JSR seg_zero_rec_solid
    BCC ms_skip
-   JSR defq_append_solid
+   JSR SC_MARK_SOLID
    JMP ms_skip
 ms_solid_path:
-; --- Solid wall: defer mark_solid (Python collects them per subsector
-;     and applies at the end). ---
-   JSR defq_append_solid
+; --- Solid wall: mark_solid NOW (bank C held; ilo/ihi staged above) ---
+   JSR SC_MARK_SOLID
 ms_skip:
    JMP ms_advance
 ms_hi255:
@@ -823,11 +819,10 @@ ms_advance:
                                         ; a run never crosses its page, so
                                         ; the hi byte is ss-constant
    DEC zp_seg_count
-   BEQ sa_drain                            ; loop rotation: seg_loop's
+   BEQ sa_done                             ; loop rotation: seg_loop's
    JMP seg_proc                            ; LDA/BNE re-test was dead
-sa_drain:
-   PAGE BANK_C
-   JMP defq_drain
+sa_done:
+   RTS                                     ; ops already applied per seg
 .endscope
 
 ; (seg_swap_vx retired 2026-07-15: reversed 1px projections are DROPPED
