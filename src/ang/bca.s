@@ -114,9 +114,9 @@ ck_left_out:
    SBC t1
    BCS cull                                ; (tspan-2*CLIP) >= span: off left
 ck_left_clip:
-   LDA #0                                  ; r1 = 0 (phi1 = -CLIPANGLE)
-   TAY                                     ; the clamped lo RIDES Y into the
-   STA bca_p1+1                            ; tail (2026-07-16 hand edit: Y is
+   LDY #0                                  ; r1 = 0 (phi1 = -CLIPANGLE)
+                                           ; the clamped lo RIDES Y into the
+   STY bca_p1+1                            ; tail (2026-07-16 hand edit: Y is
                                            ; loaded at ck_left and must track
                                            ; the clamp); the lo MEMORY store
                                            ; is dead — the tail's LDY was its
@@ -189,11 +189,11 @@ il1:
    LDA #255                                ; (the old second min(255) was an
 ih1:                                       ; identity — A <= 255 by now on
    STA bca_ihi                             ; every path)
-; if ilo > ihi: cull
-   LDA bca_ilo
-   CMP bca_ihi
-   BEQ visok
-   BCS cull_far
+; if ilo > ihi: cull. A still holds ihi — compare DOWNWARD: C=1 iff
+; ihi >= ilo (visible, tie included — the old BEQ was a third copy of
+; the same verdict), C=0 iff ihi < ilo.
+   CMP bca_ilo
+   BCC cull_far                            ; ihi < ilo -> cull
 ; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
 ; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
 ; stays for the D-cache store, but callers branch without reloading.
