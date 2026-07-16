@@ -126,25 +126,21 @@ bif_clr2:
 ;   Clobbers A, X; the shared cross slots + t0-t5 on the general path.
 ; ============================================================================
 .macro NODE_SETUP_DISPATCH s0, s1
-.local ns_t_general, ns_ax_py, ns_px_lt, ns_py_lt, ns_x0, ns_x1
+.local ns_t_general, ns_py_gt, ns_x0, ns_x1
 .local nsd_dx0, nsd_dy0, nsd_s0, nsd_s1, nsd_mul
    LDX zp_node_ch_l
    LDA NODE_TYPE,X
    AND #NT_MASK                            ; bits 7/6 are the child leaf flags
-   CMP #NT_GEN
-   BCS ns_t_general                        ; 4 = general (only value >= 4)
-; --- axis forms 0-3, backface C-form style (2026-07-15): the packer
-; folded the partition-direction SIGN into the form, so each arm is ONE
-; strict s16 compare against the origin plane — the old delta staging,
-; zero test and runtime sign-EOR are gone. side0 iff the compare holds
-; STRICTLY; ties fall to side1 (D == 0 -> side 1, the mirror's rule).
-   LSR A                                   ; A = axis (0 px / 1 py),
-   BNE ns_ax_py                            ; C = 1 '<' / 0 '>'
-   BCS ns_px_lt
+; --- sense-normalized dispatch (2026-07-16): the packer child-swaps
+; every '<' axis node into the '>' sense at load, so only TWO axis
+; forms exist and the dispatch is 3-way: 0 px> (fall), 1 py>, 2 general.
+   LSR A                                   ; 0:(A0 C0) 1:(A0 C1) 2:(A1 C0)
+   BNE ns_t_general
+   BCS ns_py_gt
 ; form 0: side0 iff px > nx — REVERSED subtract (2026-07-16): testing
 ; nx - px puts the tie on the fall-through side for free (side0 iff
-; the diff is strictly negative), so the old STA/ORA/BEQ tie chain is
-; gone. Same rule for form 2; the '<' arms always worked this way.
+; the diff is strictly negative). Same rule for form 1 (py). Ties fall
+; to side1 (D == 0 -> side 1, the mirror's rule, post-normalization).
    LDA NODE_NXLO,X
    CMP zp_br_pxraw_l                       ; borrow seed (result dead)
    LDA NODE_NXHI,X
@@ -155,31 +151,14 @@ bif_clr2:
    JMP s1                                  ; tie or less -> side1 (always)
 ns_x0:
    JMP s0
-ns_px_lt:
-; form 1: side0 iff px < nx  (C = 1 from the LSR seeds the borrow)
-   LDA zp_br_pxraw_l
-   SBC NODE_NXLO,X
-   LDA zp_br_pxraw_h
-   SBC NODE_NXHI,X
-   BMI ns_x0
-   JMP s1                                  ; (tie: diff 0 -> side1)
-ns_ax_py:
-   BCS ns_py_lt
-; form 2: side0 iff py > ny — reversed like form 0
+ns_py_gt:
+; form 1: side0 iff py > ny — reversed like form 0
    LDA NODE_NYLO,X
    CMP zp_br_pyraw_l
    LDA NODE_NYHI,X
    SBC zp_br_pyraw_h
    BMI ns_x0                               ; ny < py -> side0
-   JMP s1                                  
-ns_py_lt:
-; form 3: side0 iff py < ny  (borrow pre-seeded)
-   LDA zp_br_pyraw_l
-   SBC NODE_NYLO,X
-   LDA zp_br_pyraw_h
-   SBC NODE_NYHI,X
-   BMI ns_x0
-   JMP s1                                  
+   JMP s1                                  ; tie or less -> side1
 ns_t_general:
 ; --- general partition: DIR delta form (2026-07-15) — the packer bakes
 ; the gcd-reduced primitive direction as (NODE_DIRID, NODE_DSGN —

@@ -394,6 +394,25 @@ for t in things:
         player_x, player_y, pangle = float(t[0]), float(t[1]), t[2]
         break
 
+# ── Axis-node sense normalization (2026-07-16) ──────────────────────────
+# Swapping a node's children is BSP-equivalent to negating its partition
+# direction (D flips sign, the side flips, children + per-side bboxes
+# swap), so every axis-aligned node is normalized to the '>' sense:
+# dx==0 -> dy>0 (side0 iff px>nx), dy==0 -> dx<0 (side0 iff py>ny). The
+# '<' forms cease to exist and the 6502 dispatch is 3-way. Ties flip on
+# swapped nodes (D==0 -> side1 -> what used to be the right child) —
+# an arbitrary-tie decision by decree; every consumer (float arbiter,
+# fp/packed mirrors, packer bbox + leaf-flag bakes) reads THIS list, so
+# all implementations move together.
+nodes = [
+    (n[0], n[1], -n[2], -n[3],
+     n[8], n[9], n[10], n[11],           # left bbox -> right slot
+     n[4], n[5], n[6], n[7],             # right bbox -> left slot
+     n[13], n[12])                       # children swap
+    if ((n[2] == 0 and n[3] < 0) or (n[3] == 0 and n[2] > 0))
+    else tuple(n)
+    for n in nodes]
+
 # ── Prescaled data for 8-bit fixed-point path ───────────────────────────
 #
 # Center on map and divide by 8 so all vertex/height values fit in 8 bits.
