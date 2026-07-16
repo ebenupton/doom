@@ -16,6 +16,20 @@
 ;   p2 = phi(box[cc2]-px, box[cc3]-py)                # RIGHT silhouette corner
 ;   -> bca_tail (span / FOV clip / column lookup, shared with the rot cache)
 ; ============================================================================
+
+full_vis:                               ; span >= ANG180: full width
+   LDA #0
+   STA bca_ilo
+   LDA #255
+   STA bca_ihi
+   LDA #1                                  ; vis LAST: A/Z = verdict at RTS
+   STA bca_vis
+   RTS
+cull:
+   LDA #0                                  ; A=0/Z=1: culled
+   STA bca_vis
+   RTS
+
 bbox_check_angle:
 ; (scope opened out to file level so the rotation cache — bbox_check_angle_cached
 ;  + bca_frame below — can share box_classify, corner_phi and the bca_tail
@@ -67,8 +81,7 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
    AND #$0F
    STA t1
    CMP #8
-   BCC ck_left
-   JMP full_vis                            ; span >= 2048
+   BCS full_vis                            ; span >= 2048
 ck_left:
 ; left clip: tspan = (CLIPANGLE - p1) & 4095 ; if tspan > 2*CLIPANGLE:
 ;   wholly off left when tspan - 2*CLIPANGLE >= span, else p1 = -CLIPANGLE
@@ -96,8 +109,7 @@ ck_left_out:
    SBC #4                                  ; tspan hi -= 4  (tspan - 1024)
    CPX t0                                  ; C = ((tspan-1024).lo >= span.lo)
    SBC t1
-   BCC ck_left_clip
-   JMP cull                                ; (tspan-2*CLIP) >= span: off left
+   BCS cull                                ; (tspan-2*CLIP) >= span: off left
 ck_left_clip:
    LDA #$00                                ; p1 = -CLIPANGLE = -512 = $FE00
    STA bca_p1
@@ -126,8 +138,7 @@ ck_right_out:
    SBC #4
    CPX t0
    SBC t1
-   BCC ck_right_clip
-   JMP cull                                ; off right
+   BCS cull                                ; off right
 ck_right_clip:
    LDA #<512                               ; p2 = +CLIPANGLE
    STA bca_p2
@@ -177,7 +188,7 @@ ih1:                                       ; identity — A <= 255 by now on
    LDA bca_ilo
    CMP bca_ihi
    BEQ visok
-   BCS cull
+   BCS cull_far
 ; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
 ; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
 ; stays for the D-cache store, but callers branch without reloading.
@@ -187,18 +198,10 @@ visok:
    LDA #1                                  ; A=1/Z=0: visible
    STA bca_vis
    RTS
-full_vis:                               ; span >= ANG180: full width
-   LDA #0
-   STA bca_ilo
-   LDA #255
-   STA bca_ihi
-   LDA #1                                  ; vis LAST: A/Z = verdict at RTS
-   STA bca_vis
-   RTS
-cull:
-   LDA #0                                  ; A=0/Z=1: culled
-   STA bca_vis
-   RTS
+cull_far:                               ; 3-instruction twin of cull (file
+   LDA #0                                  ; head): the shared tail is out of
+   STA bca_vis                             ; branch range (-167) from here
+   RTS                                     ; after the 2026-07-16 exit hoist
 
 ; ============================================================================
 ; ROTATION COHERENCE CACHE
