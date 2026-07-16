@@ -64,3 +64,8 @@ def load_angle_module(mem, c02=None):
     for k in range(1025):
         c = (A._vatox_lo[k + 512] + A._vatox_hi[k + 512]) // 2
         mem[vatox + k] = max(0, min(255, c))
+    # bca_tail bakes the table ends as constants (clamp/==1024 arms skip
+    # the lookup): ilo(r=0) = VATOX[0]-1 -> 0, ihi(r=1024) = VATOX[1024]+1
+    # -> 255. Seed must match the baked immediates.
+    assert mem[vatox] == 0 and mem[vatox + 1024] == 255, \
+        'VATOX ends drifted from bca_tail baked constants (0/255)'

@@ -111,8 +111,12 @@ ck_left:
    BNE ck_left_out
    CPY #0
    BNE ck_left_out
-   CLC                                     ; r1 == 1024 exactly: in range —
-   BEQ lk_left                             ; re-supply C=0 (Z from CPY rides)
+   LDA #254                                ; r1 == 1024 exactly: ilo is the
+   BNE il1                                 ; CONSTANT VATOX[1024]-1 = 254
+                                           ; (table ends seed-asserted;
+                                           ; A != 0 so BNE always takes —
+                                           ; no lookup, and lk_* now reads
+                                           ; r <= 1023 only)
 ck_left_out:
 ; r1 outside [0,1024]: left corner outside the FOV. tspan-1024 =
 ; (0 - r1) & 4095 (r1 in [1025,4095] as u12, so tspan = 5120-r1 and
@@ -129,15 +133,17 @@ ck_left_out:
    SBC t1
    BCS cull                                ; (tspan-2*CLIP) >= span: off left
 ck_left_clip:
-   LDA #0                                  ; r1 = 0 (phi1 = -CLIPANGLE): pure
-   TAY                                     ; register clamp — A = hi, Y = lo,
-                                           ; C=0 from the BCC that got us here
+   BCC lk_lzero                            ; r1 = 0: ilo is the CONSTANT
+                                           ; VATOX[0]-1 clamped = 0 — reuse
+                                           ; lk_left's own LDA #0 (C=0: the
+                                           ; BCS above fell; always taken)
 lk_left:
    ADC #>VATOX                             ; C=0 (inbound invariant)
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[r1]
    SBC #0                                  ; C=0 (constant carry-out) -> v-1
    BCS il1                                 ; C=1: v >= 1
+lk_lzero:
    LDA #0                                  ; v == 0: ilo clamps to 0 (no SEC:
 il1:                                       ; the right window test re-seeds C)
    STA bca_ilo
@@ -151,8 +157,10 @@ ck_right:
    BNE ck_right_out
    CPY #0
    BNE ck_right_out
-   CLC                                     ; r2 == 1024 exactly: in range
-   BEQ lk_right
+   BEQ lk_r255                             ; r2 == 1024 exactly: ihi is the
+                                           ; CONSTANT VATOX[1024]+1 clamped =
+                                           ; 255 — ride lk_right's own LDA
+                                           ; #255 (Z=1 from CPY: always taken)
 ck_right_out:
 ; mirror of ck_left_out, minus the negate (r2 already IS tspan):
 ; tspan-1024 vs span, carry-only. C=1 inbound (CMP >= 4 / CPY) seeds
@@ -162,15 +170,16 @@ ck_right_out:
    SBC t1
    BCS cull                                ; off right
 ck_right_clip:
-   LDY #0                                  ; r2 = 1024 (phi2 = +CLIPANGLE):
-   LDA #4                                  ; register clamp — hi12 = 4, lo = 0,
-                                           ; C=0 from the BCC that got us here
+   BCC lk_r255                             ; r2 = 1024: ihi is the CONSTANT
+                                           ; 255 — reuse lk_right's LDA #255
+                                           ; (C=0: the BCS above fell)
 lk_right:
    ADC #>VATOX                             ; C=0 (inbound invariant)
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[r2]
    ADC #1                                  ; C=0 (constant carry-out) -> v+1
    BCC ih1
+lk_r255:
    LDA #255                                ; (the old second min(255) was an
 ih1:                                       ; identity — A <= 255 by now on
    STA bca_ihi                             ; every path)
