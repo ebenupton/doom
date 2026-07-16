@@ -128,10 +128,13 @@ ck_right:
    ADC #>512                               ; tspan hi = p2 hi + 2
    AND #$0F
    CMP #4
-   BCC ck_done
+   BCC ck_done                             ; (C=0 rides into the tail's hi ADC)
    BNE ck_right_out
    CPX #0
-   BEQ ck_done
+   BNE ck_right_out
+   CLC                                     ; tspan == 1024 exactly: in range —
+   BEQ ck_done                             ; re-supply the tail's C=0 (Z from
+                                           ; CPX rides the CLC: always taken)
 ck_right_out:
 ; mirror of ck_left_out: 16-bit (tspan-1024) >= span test, carry-only
 ; (same CPX trick — lo rides X from the LDX bca_p2 above, Y dead).
@@ -162,23 +165,27 @@ ck_done:
                                            ; add was pure channel. (pa_ptr is
                                            ; corner_phi scratch: re-zero per
                                            ; tail, not per frame.)
+; Carries are KNOWN (2026-07-16), so neither hi ADC needs a CLC:
+;   here C=0 — every ck_done arrival is via BCC or the ==1024 arm's CLC;
+;   below C=1 — BCS il1 means v>=1, and the v==0 clamp re-supplies SEC —
+;   consumed against a base-1 operand. (The carries OUT are sign(p1)/
+;   sign(p2) — NOT constant — so the SEC/CLC of the ±1 adjusts stay.)
    LDY bca_p1
    LDA #>(VATOX+512)
-   CLC
-   ADC bca_p1+1
+   ADC bca_p1+1                            ; C=0 (inbound invariant)
    STA pa_ptr+1
    LDA (pa_ptr),Y
 ; vatox[lo]
    SEC
    SBC #1
-   BCS il1
+   BCS il1                                 ; C=1: v >= 1
    LDA #0
+   SEC                                     ; v == 0 clamp: re-supply the carry
 il1:
    STA bca_ilo
    LDY bca_p2
-   LDA #>(VATOX+512)
-   CLC
-   ADC bca_p2+1
+   LDA #>(VATOX+512)-1                     ; C=1 on both il1 entries:
+   ADC bca_p2+1                            ; base-1 + p2_hi + 1 = base + p2_hi
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[hi]
    CLC
