@@ -20,7 +20,7 @@
 ; module physically cannot join the flat CODE region — total code
 ; exceeds any contiguous flat window). Banked = the ANG segment floats
 ; inside the one CODE region $2C00-$57FF like everything else. Tables:
-; flat TA_LO $DC00, TA_HI $F200, VATOX $F601 (harness-seeded); banked =
+; flat TA_LO $DC00, TA_HI $F200, VATOX $F600 (harness-seeded); banked =
 ; the L2 window ($8000/$8400/$8900, loader-seeded). The entry jump
 ; table that lived here is GONE (2026-07-16): bsp_render .imports
 ; slope_div / bbox_check_angle directly (linker-resolved); ang_head
@@ -179,7 +179,13 @@ TA_LO = $8000                           ; bank L2 window: tantoangle lo (1024)
 TA_HI = $8400                           ; bank L2: tantoangle hi (1025)
 .else
 TA_LO = $DC00                           ; 1024 entries (reclaimed rotation-cache RAM)
-TA_HI = $F200                           ; 1025 entries ($F200-$F600, above the grown code <$F200)
+TA_HI = $F200                           ; 1024 USED entries ($F200-$F5FF, above
+                                        ; the grown code <$F200). Slot 1024
+                                        ; ($F600) is NEVER read (corner_phi
+                                        ; diverts num==den to ANG45, so
+                                        ; slope_div_le's q <= 1023; the
+                                        ; harness seeds 1024) — the byte is
+                                        ; ceded to VATOX's page alignment.
 .endif
 
 ; point_to_angle: INLINED into corner_phi (its sole caller); see below.
@@ -228,6 +234,7 @@ bca_ab = BCA_WS+$2F
 ; straight 1-cycle-per-access cut). Registered in zp.inc.
 bca_ilo = $BB
 bca_ihi = $BF
+.assert (VATOX & $FF) = 0, error, "VATOX must be page-aligned (bca_tail rides the index lo byte in Y)"
 bca_vis = $64                           ; sole owner (see zp.inc $64 note)
 bca_p1 = $C8                            ; phi1 (s16, pair $C8/$C9)
 bca_p2 = $CA                            ; phi2 (s16, pair $CA/$CB)
@@ -243,5 +250,10 @@ bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
 .if BANKED
 VATOX = $8900                           ; bank L2: viewangletox, 1025 entries (phi+512)
 .else
-VATOX = $F601                           ; viewangletox, 1025 entries (phi+512), $F601-$FA01
+VATOX = $F600                           ; viewangletox, 1025 entries (phi+512),
+                                        ; $F600-$FA00 (moved down 1 into the
+                                        ; TA_HI gap byte 2026-07-16: page-
+                                        ; aligned so bca_tail rides the index
+                                        ; lo byte in Y; overlap with the dead
+                                        ; BCA_WS byte 0 shrinks to $FA00 only)
 .endif

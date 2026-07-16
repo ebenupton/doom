@@ -155,14 +155,18 @@ ck_done:
 ; lo/hi land in [-512,512].
 ; address = (VATOX+512) + lo : fold the +512 bias into the base so it's a
 ; single add (lo is signed s16; two's-complement add lands in range).
-   CLC
-   LDA #<(VATOX+512)
-   ADC bca_p1
-   STA pa_ptr
+   LDA #0                                  ; (VATOX+512) is PAGE-ALIGNED
+   STA pa_ptr                              ; (asserted, header_div.s): ptr lo
+                                           ; is 0 for BOTH lookups and the
+                                           ; index lo rides Y — the 16-bit lo
+                                           ; add was pure channel. (pa_ptr is
+                                           ; corner_phi scratch: re-zero per
+                                           ; tail, not per frame.)
+   LDY bca_p1
    LDA #>(VATOX+512)
+   CLC
    ADC bca_p1+1
    STA pa_ptr+1
-   LDY #0
    LDA (pa_ptr),Y
 ; vatox[lo]
    SEC
@@ -171,11 +175,9 @@ ck_done:
    LDA #0
 il1:
    STA bca_ilo
-   CLC
-   LDA #<(VATOX+512)
-   ADC bca_p2
-   STA pa_ptr
+   LDY bca_p2
    LDA #>(VATOX+512)
+   CLC
    ADC bca_p2+1
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[hi]
