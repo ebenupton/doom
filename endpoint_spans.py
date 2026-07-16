@@ -779,16 +779,23 @@ class EndpointClipSpans:
                                     pend[2], pend[4], pend[3], pend[5]))
                 pend = None
         ti = 0; bi = 0
+        # MODE A (2026-07-16): the tighten CLAIMS its ilo column. Interval
+        # anchors are left-exclusive ((a, b] column ownership), so the
+        # claimed range anchors at ilo-1: the left remnant ends there and
+        # record dominance/event boundaries shift one anchor left. The
+        # right side was already correct under this convention (which is
+        # why only LEFT portal jambs escaped clipping).
+        ilo_a = ilo - 1
         for sp in self.spans:
             xs, xe = sp[0], sp[1]
-            if xe <= ilo or xs >= ihi:
+            if xe <= ilo_a or xs >= ihi:
                 flush(); _append_merge(new, sp); continue
             cur = xs
-            if xs < ilo:
+            if xs < ilo_a:
                 flush()
-                _append_merge(new, (xs, ilo, sp[2], sp[3],
+                _append_merge(new, (xs, ilo_a, sp[2], sp[3],
                                     sp[4], sp[5], sp[6], sp[7]))
-                cur = ilo
+                cur = ilo_a
             x_hi = min(xe, ihi)
             single = (xs == xe)
             while cur < x_hi or (single and cur == x_hi):
@@ -797,16 +804,18 @@ class EndpointClipSpans:
                     ti += 1
                 while bi < len(bot_recs) and bot_recs[bi][2] <= cur:
                     bi += 1
-                t_dom = (ti < len(top_recs) and top_recs[ti][0] <= cur
+                t_dom = (ti < len(top_recs) and top_recs[ti][0] - 1 <= cur
                          < top_recs[ti][2])
-                b_dom = (bi < len(bot_recs) and bot_recs[bi][0] <= cur
+                b_dom = (bi < len(bot_recs) and bot_recs[bi][0] - 1 <= cur
                          < bot_recs[bi][2])
                 nxt = x_hi
                 if ti < len(top_recs):
-                    cand = top_recs[ti][2] if t_dom else top_recs[ti][0]
+                    cand = (top_recs[ti][2] if t_dom
+                            else top_recs[ti][0] - 1)
                     if cand < nxt: nxt = cand
                 if bi < len(bot_recs):
-                    cand = bot_recs[bi][2] if b_dom else bot_recs[bi][0]
+                    cand = (bot_recs[bi][2] if b_dom
+                            else bot_recs[bi][0] - 1)
                     if cand < nxt: nxt = cand
                 # verdict solid: aperture provably empty here
                 if (t_dom and top_recs[ti][1] == top_recs[ti][3] == SAT_B) or \
@@ -822,7 +831,9 @@ class EndpointClipSpans:
                 if t_dom and not (top_recs[ti][1] == top_recs[ti][3]
                                   == SAT_A):
                     r = top_recs[ti]
-                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
+                    # left anchor may be r.xl-1 (Mode A): clamp to the
+                    # record start — interp there yields exactly y0
+                    rl = _interp_store(max(cur, r[0]), r[0], r[1], r[2], r[3])
                     rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
                     if rl > tl: tl = rl
                     if rr > tr: tr = rr
@@ -832,7 +843,7 @@ class EndpointClipSpans:
                 if b_dom and not (bot_recs[bi][1] == bot_recs[bi][3]
                                   == SAT_B):
                     r = bot_recs[bi]
-                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
+                    rl = _interp_store(max(cur, r[0]), r[0], r[1], r[2], r[3])
                     rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
                     if rl < bl: bl = rl
                     if rr < br: br = rr

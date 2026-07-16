@@ -305,6 +305,8 @@ zp_head = $C0                     ; [clip]
    BEQ target
 .endmacro
 zp_free = $C1                     ; [clip]
+zp_ilo_m1 = $C7                   ; [clip] tighten sweep: saturating ilo-1
+;   (Mode A left-exclusive claimed-range anchor, 2026-07-16)
 zp_i_l = $C2                      ; [clip]
 zp_i_h = $C3                      ; [clip]
 zp_hg_cache = $D0                 ; [clip]; has_gap coherence cache: last-matching span offset

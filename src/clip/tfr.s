@@ -227,7 +227,10 @@ tfs_top_pool_interp:
    LDA POOL_DEN,X
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    STA TFS_TOP_L
    LDA TFS_NEXT_X
    JSR interp_store
@@ -253,7 +256,10 @@ tfs_top_rec_interp:
    SBC zp_i_x0
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    STA TFS_TOP_L
    LDA TFS_NEXT_X
    JSR interp_store
@@ -273,7 +279,10 @@ tfs_top_vals_mixed:
    LDA POOL_DEN,X
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    STA TFS_TOP_L
    LDA TFS_NEXT_X
    JSR interp_store
@@ -298,7 +307,10 @@ tfs_top_vals_mixed:
    SBC zp_i_x0
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    CMP TFS_TOP_L
    BCC tfs_tri_l
    STA TFS_TOP_L
@@ -321,7 +333,10 @@ tfs_bot_pool_interp:
    LDA POOL_DEN,X
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    STA TFS_BOT_L
    LDA TFS_NEXT_X
    JSR interp_store
@@ -346,7 +361,10 @@ tfs_bot_rec_interp:
    SBC zp_i_x0
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    STA TFS_BOT_L
    LDA TFS_NEXT_X
    JSR interp_store
@@ -364,7 +382,10 @@ tfs_bot_vals_mixed:
    LDA POOL_DEN,X
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    STA TFS_BOT_L
    LDA TFS_NEXT_X
    JSR interp_store
@@ -387,7 +408,10 @@ tfs_bot_vals_mixed:
    SBC zp_i_x0
    STA zp_div_den
    LDA TFS_CUR_X
-   JSR interp_store
+   CMP zp_i_x0                             ; Mode A: cur may be xl-1 —
+   BCS :+                                  ; clamp to the record start
+   LDA zp_i_x0                             ; (interp there is exactly y0)
+:  JSR interp_store
    CMP TFS_BOT_L
    BCS tfs_bri_l
    STA TFS_BOT_L
@@ -447,6 +471,16 @@ tfr_neutral:
    RTS
 tfr_do_sweep:
 ; ---- Init: detach the old list and start the new one empty ----
+; MODE A (2026-07-16): the tighten CLAIMS its ilo column — anchors are
+; left-exclusive ((a,b] ownership), so the claimed range anchors at
+; ilo-1 (saturating: ilo=0 keeps 0, which reproduces the old behaviour
+; exactly at the screen edge, mirroring python's ilo_a=-1).
+   LDA zp_i_l
+   BEQ tfr_m1_sat
+   SEC
+   SBC #1
+tfr_m1_sat:
+   STA zp_ilo_m1
 ; Invalidate the has_gap coherence cache (see span_mark_solid note).
    ZERO zp_hg_cache
    LDA zp_head
@@ -510,10 +544,9 @@ tfs_proc:
 ; the seg only at a shared endpoint column (xend == ilo or
 ; xstart == ihi) does NOT overlap; append it unchanged.
    LDA POOL_XEND,X
-   CMP zp_i_l
-   BCC tfs_oor
-   BEQ tfs_oor
-   LDA POOL_XSTART,X
+   CMP zp_i_l                              ; Mode A: xend == ilo OVERLAPS
+   BCC tfs_oor                             ; (the claimed column) — only
+   LDA POOL_XSTART,X                       ; strictly-left spans skip
    CMP zp_i_h
    BCC tfs_in_range
 tfs_oor:
@@ -539,20 +572,21 @@ tfs_in_range:
    JMP tfs_body
 tfs_pre_chk:
 
-; Pre-fragment [span.xstart, ilo] if span.xstart < ilo.
-; Abutting: the fragment KEEPS ilo as its xend (shared boundary column
-; with the swept region starting at cur_x = ilo). Line def preserved.
+; Pre-fragment [span.xstart, ilo-1] if span.xstart < ilo-1 (Mode A:
+; the fragment ends at the exclusive anchor — the swept region OWNS
+; column ilo; the old shared-ilo fragment was the unclipped-left-jamb
+; bug). Line def preserved.
    LDA POOL_XSTART,X
-   CMP zp_i_l
+   CMP zp_ilo_m1
    BCS tfs_no_pre
    JSR tfs_flush_pending
    LDX zp_clr_save_x
    LDA POOL_XSTART,X
    STA zp_ox0
-   LDA zp_i_l
+   LDA zp_ilo_m1
    STA zp_ox1
    JSR emit_unchanged_subspan
-   LDA zp_i_l
+   LDA zp_ilo_m1
    STA TFS_CUR_X
    JMP tfs_xhi_done
 tfs_no_pre:
@@ -673,8 +707,10 @@ tfs_st_bot_done:
    BEQ tfs_top_dom_done
    TAY
    LDA TOP_RECORDS,Y
-; T.xl
-   CMP TFS_CUR_X
+; T.xl: dominance from xl-1 (Mode A) — dominant iff xl <= cur+1:
+; CLC/SBC computes xl-cur-1: Z -> xl == cur+1, C=0 -> xl <= cur.
+   CLC
+   SBC TFS_CUR_X
    BEQ tfs_top_chk_xr
    BCS tfs_top_dom_done
 tfs_top_chk_xr:
@@ -695,7 +731,8 @@ tfs_top_dom_done:
    BEQ tfs_bot_dom_done
    TAY
    LDA BOT_RECORDS,Y
-   CMP TFS_CUR_X
+   CLC                                     ; (Mode A dominance — see top)
+   SBC TFS_CUR_X
    BEQ tfs_bot_chk_xr
    BCS tfs_bot_dom_done
 tfs_bot_chk_xr:
@@ -723,7 +760,10 @@ tfs_bot_dom_done:
    BNE tfs_top_evt_xr
    LDY TFS_T_CUR
    LDA TOP_RECORDS,Y
-; not yet dom: candidate = T.xl
+   SEC
+   SBC #1                                  ; not yet dom: candidate = T.xl-1
+                                        ; (xl >= 1 here: xl == 0 is always
+                                        ;  dominant under the Mode A rule)
    JMP tfs_top_evt_check
 tfs_top_evt_xr:
    LDA TFS_T_CUR
@@ -743,6 +783,8 @@ tfs_skip_top_evt:
    BNE tfs_bot_evt_xr
    LDY TFS_B_CUR
    LDA BOT_RECORDS,Y
+   SEC
+   SBC #1                                  ; (Mode A: candidate = B.xl-1)
    JMP tfs_bot_evt_check
 tfs_bot_evt_xr:
    LDA TFS_B_CUR
