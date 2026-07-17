@@ -384,43 +384,48 @@ mask_done:
 ; in the CODE region like everything else.
 ; ============================================================================
 .macro CPM_ENTRY name, negx, negy, obase
-   .local cmiss, czx, czy
+   .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy
 name:
    LDA pa_dx
    EOR pa_dy
    AND #$7F
    TAX
    STX zp_cpm_slot
-   LDA CPM_KDXH,X
-   CMP pa_dx+1
-   BNE cmiss
-   LDA CPM_KDXL,X
-   CMP pa_dx
-   BNE cmiss
-   LDA CPM_KDYL,X
-   CMP pa_dy
-   BNE cmiss
-   LDA CPM_KDYH,X
-   CMP pa_dy+1
-   BNE cmiss
+   LDA pa_dx
+   CMP CPM_KDXL,X
+   BNE cmiss0
+   LDA pa_dx+1
+   CMP CPM_KDXH,X
+   BNE cmiss1
+   LDA pa_dy
+   CMP CPM_KDYL,X
+   BNE cmiss2
+   LDA pa_dy+1
+   CMP CPM_KDYH,X
+   BNE cmiss3
    LDA CPM_PSIL,X
    STA pa_res
    LDA CPM_PSIH,X
    STA pa_res+1
    JMP cp_havepsi
-cmiss:
 ; Bank the RAW key first (X = slot, still live from the probe): sd_num
 ; ALIASES pa_dx and sd_den pa_dy (2026-07-19), so P-axes need no
 ; staging at all and N-axes negate IN PLACE — which would destroy the
 ; key. mask_done stores only psi now; this KDXH write is the validity
 ; mark, made good when the psi lands (single-threaded, no early outs).
-   LDA pa_dx
+; (Staggered entries, Eben 2026-07-19: a miss at stage k arrives with
+; the mismatched byte in A, and the bytes BEFORE stage k matched — the
+; table already holds them, so their stores are skipped entirely.)
+cmiss0:
    STA CPM_KDXL,X
    LDA pa_dx+1
+cmiss1:
    STA CPM_KDXH,X
    LDA pa_dy
+cmiss2:
    STA CPM_KDYL,X
    LDA pa_dy+1
+cmiss3:
    STA CPM_KDYH,X
 .if negx
    LDA #0                                  ; |dx| = -dx in place (dx <= 0)
