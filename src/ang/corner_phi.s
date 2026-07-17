@@ -748,7 +748,10 @@ lf_ns:
    SEC
    SBC pa_sx                               ; s = L8[|dy|] - L8[|dx|]
    BCC ns_neg                              ; s < 0: |dx| > |dy|
-   BEQ ns_tie_j                            ; s == 0: exact compare decides
+; (s == 0 falls straight through: ATANEXP[0] is FORCED to 512, where
+;  every octant pair collapses — base+512 == base'-512 mod 4096 — so
+;  ties and the exact diagonal need no fallback compare. The cert
+;  verifies the one-sided bucket-0 error stays inside EPSILON.)
 ns_khave:
    TAY                                     ; k = |s|
    LDA AE_LO,Y
@@ -776,9 +779,6 @@ ns_ta0:
    JMP comb
 ns_00:
    JMP pa_zero                             ; (0,0) -> psi = 0
-ns_tie_j:
-   JMP ns_tie                              ; (the tie block sits past the
-                                           ;  16-bit arms — branch range)
 ns_x16:
    LDA sd_den+1
    BNE ns_x16y16
@@ -860,33 +860,11 @@ ns_x16y16:
    SEC
    SBC pa_sx
    BCC ns_neg_j                            ; (trampolines: ns_neg/ns_khave sit
-   BNE ns_khave_j                          ;  ~200 B up with the 8-bit arm)
-; (falls into ns_tie: reduced-L8 tie — the exact compare decides)
-ns_tie:
-   LDA sd_den+1                            ; exact 16-bit magnitude compare
-   CMP sd_num+1                            ; (only on L8 ties)
-   BCC ns_t_gt
-   BNE ns_t_le
-   LDA sd_den
-   CMP sd_num
-   BEQ ns_t_eq
-   BCS ns_t_le
-ns_t_gt:
-   INX                                     ; |dx| > |dy|
-ns_t_le:
-   LDA #0                                  ; k = 0 -> AE[0]
-   BEQ ns_khave_j                          ; (always; trampoline — ns_khave is
-                                           ;  out of branch range from here)
-ns_t_eq:
-   LDA #<512                               ; exact diagonal: ta = ANG45
-   STA pa_res                              ; (the mirror's equality rule)
-   LDA #>512
-   STA pa_res+1
-   JMP comb
+   JMP ns_khave                            ;  ~200 B up with the 8-bit arm;
+                                           ;  s == 0 ties ride k = 0 like the
+                                           ;  8-bit arm — AE[0] = 512)
 ns_neg_j:
    JMP ns_neg                              ; C=0 rides the JMP (ns_neg's ADC #1)
-ns_khave_j:
-   JMP ns_khave
 .endscope
 .if ::BANKED = 0
 .segment "ANG"

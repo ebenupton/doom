@@ -65,6 +65,8 @@ def load_angle_module(mem, c02=None):
     # mirror loads the same json). Seed-time contract asserts:
     assert A.EPSILON_F == 15, 'EPSILON drifted from the baked bca_tail bias'
     assert A._TA0 == 0, 'TA0 drifted from the baked num==0 arm'
+    assert A._ATANEXP[0] == 512, \
+        'AE[0] must be 512: lf_ns ties ride k=0 with no fallback compare'
     for i in range(256):
         mem[l8 + i] = A._L8[i] & 0xFF
         mem[ae_lo + i] = A._ATANEXP[i] & 0xFF

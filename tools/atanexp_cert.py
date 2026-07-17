@@ -62,6 +62,16 @@ for k in range(0, 256):
         eps = max(eps, ATANEXP[k] - lo[k], hi[k] - ATANEXP[k])
     else:
         ATANEXP[k] = 0          # beyond kmax: ta ~ 0 (num << den)
+# FORCED: ATANEXP[0] = 512 (2026-07-19). Bucket 0's mid is ~506, but at
+# ta = 512 every octant PAIR collapses (base+512 == base'-512 mod 4096
+# for all four quadrants), which lets the 6502's sign-dispatched
+# pipeline treat s == 0 ties (L8-equal, magnitudes unequal) exactly
+# like the diagonal — no 16-bit fallback compare. Costs a one-sided
+# bucket-0 error (512 - lo[0], verified <= EPSILON below); the superset
+# certificate is unchanged as long as eps stays within the baked bias.
+ATANEXP[0] = 512
+eps = max(eps, 512 - lo[0], hi[0] - 512)
+assert 512 - lo[0] <= 15, f'bucket-0 error {512 - lo[0]} busts the baked bias'
 # k can exceed 255? L range: L(2047)-L(1) = 96+L8[255] = 96+255 = 351!?
 print("kmax =", kmax, " (table clamps above 255: verify those buckets)")
 over = [k for k in lo if k > 255]
