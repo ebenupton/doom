@@ -49,12 +49,13 @@ bbox_check_angle:
 ; (br_view_setup), not recomputed here — it is frame-constant. Direct
 ; unit-test callers (test_bca, check_angle_calls) set bca_afn themselves.
 ; inside test + boxx/boxy classification share one set of subtractions:
-   JSR box_classify                        ; -> X = boxpos (inside: full-exit)
-; corners: zone/side arms with baked plane operands (zc_corners, ZC
-; segment in corner_phi.s) — the cc indirection, the box pointer and
-; the ccsave shuttle are gone (2026-07-15). X = boxpos in; raw phi1/2
-; land in bca_p1/p2.
-   JSR zc_corners
+; JMP-THREADED CHAIN (2026-07-18, enabled by the cold-route
+; unification making classify/corners single-caller): classify exits
+; dispatch straight to the corner arm (push-push-RTS with the zone-
+; composed index), the arm falls into bca_tail via JMP, and the tail's
+; exits return to OUR caller — the JSR/RTS shuttles at every stage are
+; gone. Inside boxes escape via cx_inside -> full_vis directly.
+   JMP box_classify
 ; --- Faithful DOOM R_CheckBBox, unsigned-BAM wraparound (FINEANGLES=4096).
 ; Our phi = -(DOOM view-relative angle), so DOOM angle1=-p1 (p1 = LEFT
 ; silhouette, checkcoord order), angle2=-p2 (RIGHT). All arithmetic is

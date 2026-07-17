@@ -52,8 +52,11 @@ box_classify:
    TAX
    LDA t1
    STA zp_bca_zone                         ; publish = the inherited bits
-   RTS                                     ; (strict bits => outside: the
-                                           ; inside escape is unreachable)
+   LDA zc_tab_hi,X                         ; CHAINED DISPATCH (2026-07-18):
+   PHA                                     ; classify exits jump straight to
+   LDA zc_tab_lo,X                         ; the corner arm; the arm ends
+   PHA                                     ; JMP bca_tail — no JSR/RTS
+   RTS                                     ; shuttle through bbox_check_angle
 bc_ladders:
    LDA zp_bbox_side
    BNE bcls_s1_j
@@ -298,6 +301,10 @@ cx_compose_s1:
    LDA t1
    STA zp_bca_zone
    BEQ cx_inside
+   LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
+   PHA
+   LDA zc_tab_lo,X
+   PHA
    RTS
 cx_compose_s0:
    ASL A
@@ -308,12 +315,15 @@ cx_compose_s0:
    LDA t1
    STA zp_bca_zone                         ; publish the strict bits (the walk
    BEQ cx_inside                           ; hands them to this box's children)
+   LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
+   PHA
+   LDA zc_tab_lo,X
+   PHA
    RTS
 cx_inside:
-; inside -> full result; discard box_classify's return, exit to
-; bbox_check_angle's caller through the canonical tail (A/Z = verdict).
-   PLA
-   PLA
+; inside -> full: bbox_check_angle is JMP-threaded now (no classify
+; frame to discard — the old PLA/PLA died with it); full_vis chains
+; has_gap and returns to the check's caller.
    JMP full_vis
 .endscope
 
@@ -323,16 +333,17 @@ cx_inside:
 ; corner_phi — signed view-relative angle (phi) of one box corner.
 ;   in : pa_dx/pa_dy (s16 = corner - viewer int pos, loaded by the caller),
 ;        bca_afn (a_fine, frame-constant)
-;   out: pa_res = r (u12; see cp_havepsi)
-;        clobbers sd_num/sd_den/sd_q, pa_sx/pa_sy/pa_ptr (oct rides X)
-;   phi = sign_extend((a_fine - psi) & 4095), psi = point_to_angle(dx,dy).
-; point_to_angle (angle_bbox.py) is INLINED below — corner_phi is its sole
-; caller. pseudocode:
+;   out: r in A (hi) / Y (lo), u12; pa_res holds psi (see cp_havepsi)
+;        clobbers sd_num/sd_den, pa_sx/pa_sy (oct rides X)
+;   r = (a_fine - psi) & 4095, psi = point_to_angle_f(dx,dy).
+; point_to_angle_f (angle_bbox.py) is INLINED below — the divide died
+; with option F (2026-07-17). pseudocode:
 ;   if dx == 0 and dy == 0: psi = 0
 ;   num = min(|dx|,|dy|) ; den = max(|dx|,|dy|)       # first-octant fold
 ;   oct = (dx<0)*4 | (dy<0)*2 | (|dx|>|dy|)
-;   ta  = tantoangle[slope_div(num,den)]              # sd_q==1024 -> ANG45
-;   psi = (base[oct] +/- ta) & 4095                   # tables in header_div.s
+;   ta  = ATANEXP[L8[den] - L8[num]]                  # log2 pipeline; the
+;   psi = (base[oct] +/- ta) & 4095                   # old slope_div +
+;                                                     # tantoangle are GONE
 ; ============================================================================
 ; corner_phi: dx=cx-pxs, dy=cy-pys; point_to_angle; pa_res=(afn-psi)&MASK signed
 ; corner_phi: callers load pa_dx/pa_dy directly (box corner minus viewer).
@@ -382,7 +393,7 @@ pa_entry:
    BNE cpm_miss
    LDA CPM_PSIL,X                          ; HIT: cached psi -> pa_res and
    STA pa_res                              ; straight to the afr tail — the
-   LDA CPM_PSIH,X                          ; whole abs/oct/slope_div/tanto
+   LDA CPM_PSIH,X                          ; whole abs/oct/log2/atanexp
    STA pa_res+1                            ; core is skipped
    JMP cp_havepsi
 cpm_miss:
@@ -465,10 +476,10 @@ axgt:
    LDA #1
    JMP haveax
 pa_equal:
-; |dx| == |dy|: sd_q would be exactly 1024 -> ta = ANG45 = 512 directly,
-; no divide, no table. This divert is what lets haveax call slope_div_le
-; (strict num<den) and drop the old post-divide q==1024 check. Ties fold
-; as |dx|<=|dy| (axgt=0), matching the BCS the equal case used to take.
+; |dx| == |dy|: ta = ANG45 = 512 directly, no lookup. (Historically this
+; divert let the divide assume strict num < den; under option F it also
+; keeps the log2 pipeline out of the k==L8-equal corner.) Ties fold as
+; |dx|<=|dy| (axgt=0), matching the BCS the equal case used to take.
    LDA pa_sy
    ORA pa_sx
    TAX
@@ -482,9 +493,9 @@ axle:
    LDA #0
 haveax:
 ; oct = sx(0/4) | sy(0/2) | axgt(0/1) — signs stored pre-shifted.
-; oct RIDES X to comb (dead-write tracker, 2026-07-11): slope_div's fast
-; paths never touch X (the slow path's counter moved to Y to keep this
-; contract) and neither does the tantoangle lookup.
+; oct RIDES X to comb: nothing in the option-F log2/atanexp pipeline
+; below touches X (the divide whose slow arm once needed the counter
+; is gone).
    ORA pa_sy
    ORA pa_sx
    TAX
@@ -837,7 +848,7 @@ cp_havepsi:
    JSR e2
    STA bca_p2+1
    STY bca_p2
-   RTS
+   JMP bca_tail                            ; chained: no return trip
 .endmacro
 .macro ZARM_SX s, x1, y1, y2, e1, e2      ; corners share the x plane
    ZCF s, x1, y1
@@ -848,7 +859,7 @@ cp_havepsi:
    JSR e2
    STA bca_p2+1
    STY bca_p2
-   RTS
+   JMP bca_tail                            ; chained
 .endmacro
 .macro ZARM_SY s, x1, y1, x2, e1, e2      ; corners share the y plane
    ZCF s, x1, y1
@@ -859,14 +870,12 @@ cp_havepsi:
    JSR e2
    STA bca_p2+1
    STY bca_p2
-   RTS
+   JMP bca_tail                            ; chained
 .endmacro
+; (the zc_corners dispatch routine died 2026-07-18 — classify exits
+; push-push-RTS to the arm themselves. The label below marks the ZC
+; window start for check_angle_calls' PC classifier.)
 zc_corners:
-   LDA zc_tab_hi,X                         ; X = dispatch index from
-   PHA                                     ; box_classify (boxpos*2 + side —
-   LDA zc_tab_lo,X                         ; composed carry-free at the
-   PHA                                     ; classify exit)
-   RTS                                     ; dispatch; arm RTSes to our caller
 ; checkcoord rows (x = L/R plane, y = T/B plane); rows 3/5/7 unused
 ; Sign classes per corner (P = delta >= 0, N = delta <= 0), derived from
 ; the row's viewer zone (boxx/boxy) and each corner's plane:
