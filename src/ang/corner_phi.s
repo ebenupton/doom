@@ -536,18 +536,19 @@ ns_dy0:
    INX                                     ; |dy| = 0: ta = 0, axgt = 1
 ns_dx0:
    LDA #0
-ns_ta0:
    STA pa_res
    STA pa_res+1
    JMP comb
 ns_x16:
-   LDA sd_den+1
+   LDY sd_den+1
    BNE ns_x16y16
 ; --- |dx| 16-bit, |dy| 8-bit: axgt STATIC; k = L8[dx>>3] + 96 - L8[dy]
 ;     (>= 1: L8r(16-bit) >= 256 > 255 >= L8[8-bit]) ---
    INX
-   LDA sd_num+1                            ; >>3 NON-destructive: HI copies to
-   STA t0                                  ; t0 (dead classify temp), lo rides
+; (no LDA: A = sd_num+1 from the entry dispatch — the LDY/INX above
+;  preserve it. Eben 2026-07-19.)
+   STA t0                                  ; >>3 NON-destructive: HI to t0
+                                           ; (dead classify temp), lo rides
    LDA sd_num                              ; A so the index ends in-register
    LSR t0                                  ; (TAY, no reload) — sd_num ALIASES
    ROR A                                   ; pa_dx, which rows 4/9's shared-
@@ -572,7 +573,7 @@ ns_k255:
    BNE ns_khave                            ; (always)
 ns_x8y16:
 ; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
-   LDA sd_den+1
+; (no LDA: A = sd_den+1 from the entry's second dispatch line)
    STA t0
    LDA sd_den
    LSR t0
@@ -601,8 +602,8 @@ ns_x16y16:
    ROR t0
    LSR A
    ROR t0
-   LDA sd_den+1
-   STA t1
+   STY t1                                  ; Y = sd_den+1 (banked at the ns_x16
+                                           ; dispatch; reducer 1 leaves Y alone)
    LDA sd_den
    LSR t1
    ROR A
