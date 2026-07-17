@@ -58,6 +58,18 @@ RCACHE_ENABLE = $B4E8      ; rotation-coherence bca cache switch (STATE+$88)
 .else
 RCACHE_ENABLE = $F188
 .endif
+.if ::BANKED
+CPM_BASE = $8E00           ; corner-phi memo: 128-slot xor hash, 3.5 pages ending EXACTLY at $5800 flat (banked: L2 window gap after VATOX; flat: CODE-tail BSS carve, link-asserted)
+.else
+CPM_BASE = $5480
+.endif
+CPM_KDXL = CPM_BASE+$000                ; memo key: corner dx lo
+CPM_KDXH = CPM_BASE+$080                ; ... dx hi
+CPM_KDYL = CPM_BASE+$100                ; ... dy lo
+CPM_KDYH = CPM_BASE+$180                ; ... dy hi
+CPM_PSIL = CPM_BASE+$200                ; memo value: psi lo
+CPM_PSIH = CPM_BASE+$280                ; ... psi hi
+CPM_EP = CPM_BASE+$300                  ; per-slot epoch tag vs zp_cpm_frame
 JBASE = $1A00                           ; vsync journal (dead boot-loader memory)
 SCREEN0 = $5800                         ; framebuffer 0
 SCREEN1 = $6C00                         ; framebuffer 1

@@ -245,6 +245,42 @@ corner_phi:
 ; .pa_entry: unit-test hook -- jump here with pa_dx/pa_dy set and
 ; bca_afn=0 to read back (-psi)&signed in pa_res (see test_slope_div).
 pa_entry:
+; --- corner-phi MEMO probe (2026-07-17 prototype): within a frame the
+; same box corner (same pa_dx/pa_dy against the fixed viewer) recurs on
+; ~34% of calls — parents and siblings share box corners. 128-slot xor
+; hash (98% of ideal hits on the suite corpus); EXACT by construction:
+; a hit requires the full 4-byte key match, collisions just evict.
+; Tables via abi.inc (banked $8E00 L2 window / flat $5400 CODE-tail
+; carve); per-slot epoch tag vs zp_cpm_frame (view_setup increments and
+; wipes the tag page on the 256-frame wrap). Bare-boot note: tag pages
+; ship zeroed in the bank image; a garbage frame counter can only
+; false-hit the all-zero key (corner 0,0), whose cached psi 0 IS the
+; exact answer — benign by coincidence, exact either way.
+   LDA pa_dx
+   EOR pa_dy
+   AND #$7F
+   TAX
+   LDA CPM_EP,X
+   CMP zp_cpm_frame
+   BNE cpm_miss
+   LDA CPM_KDXL,X
+   CMP pa_dx
+   BNE cpm_miss
+   LDA CPM_KDXH,X
+   CMP pa_dx+1
+   BNE cpm_miss
+   LDA CPM_KDYL,X
+   CMP pa_dy
+   BNE cpm_miss
+   LDA CPM_KDYH,X
+   CMP pa_dy+1
+   BNE cpm_miss
+   LDA CPM_PSIL,X                          ; HIT: cached psi -> pa_res and
+   STA pa_res                              ; straight to the afr tail — the
+   LDA CPM_PSIH,X                          ; whole abs/oct/slope_div/tanto
+   STA pa_res+1                            ; core is skipped
+   JMP cp_havepsi
+cpm_miss:
    LDA pa_dx
    ORA pa_dx+1
    ORA pa_dy
@@ -395,6 +431,25 @@ sub:
    STA pa_res+1
 mask_done:
 ; & 4095 (psi ready; was RTS->fall through)
+; --- memo STORE (X = oct is dead after comb; recompute the slot) ---
+   LDA pa_dx
+   EOR pa_dy
+   AND #$7F
+   TAX
+   LDA pa_dx
+   STA CPM_KDXL,X
+   LDA pa_dx+1
+   STA CPM_KDXH,X
+   LDA pa_dy
+   STA CPM_KDYL,X
+   LDA pa_dy+1
+   STA CPM_KDYH,X
+   LDA pa_res
+   STA CPM_PSIL,X
+   LDA pa_res+1
+   STA CPM_PSIH,X
+   LDA zp_cpm_frame
+   STA CPM_EP,X
 .endscope
 ; --- afn - psi, mask to u12 (file-global: reused by the rotation
 ;     cache's warm path to re-derive r from cached psi) ---
