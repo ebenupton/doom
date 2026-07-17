@@ -112,14 +112,10 @@ br_bbox_visible:
 ; box wholly outside view cone → invisible (A=0, Z set)
 bv_anglevis:
 ; Visible columns exist — ask the clipper whether any of them still
-; have an open span. Tail-call: SC_HAS_GAP's A (1=gap, 0=fully
-; occluded) and flags are our return value.
-   LDA bca_ilo
-   STA zp_i_l
-; zp_i_l
-   LDA bca_ihi
-   STA zp_i_h
-; zp_i_h (has_gap is main-resident — no PAGE)
+; have an open span. bca_ilo/ihi ARE zp_i_l/h now (the tail writes the
+; has_gap operands directly; the staging copy died 2026-07-18).
+; Tail-call: SC_HAS_GAP's A (1=gap, 0=occluded) and flags are our
+; return value. (has_gap is main-resident — no PAGE.)
    JMP SC_HAS_GAP
 
 .endscope

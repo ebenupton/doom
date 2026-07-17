@@ -98,8 +98,16 @@ bca_ab = BCA_WS+$2F
 ; Outputs + hottest body vars now in ZERO PAGE (2026-07-08: measured
 ; ~3,650 absolute accesses/frame across these slots — the ZP move is a
 ; straight 1-cycle-per-access cut). Registered in zp.inc.
-bca_ilo = $BB
-bca_ihi = $BF
+bca_ilo = zp_i_l                        ; ALIASED to the clipper interval
+bca_ihi = zp_i_h                        ; (2026-07-18): the tail writes the
+                                        ; has_gap operands DIRECTLY — the
+                                        ; bv_anglevis staging copy is gone.
+                                        ; Safe: every consumer (has_gap,
+                                        ; the D store, the SAP serve) runs
+                                        ; against a freshly-written pair;
+                                        ; culls may leave a torn pair but
+                                        ; every read follows a visible
+                                        ; check. $BB/$BF freed.
 .assert (VATOX & $FF) = 0, error, "VATOX must be page-aligned (bca_tail rides the index lo byte in Y)"
 .assert (VATOX >> 8) + 4 <= $FF, error, "VATOX hi +4 must not wrap (bca_tail's pointer ADCs assume carry-out 0)"
 bca_vis = $64                           ; sole owner (see zp.inc $64 note)

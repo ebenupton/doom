@@ -286,8 +286,8 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
                                         ; retargeted by bca_frame (rcache.s)
 ; (BCA_WS comes from abi.inc — the old triplet is dead)
 bca_top = BCA_WS+$10                    ; box input: top,bot,left,right = +$10,$12,$14,$16
-bca_ilo = $BB                           ; output: left column (u8) — ZP
-bca_ihi = $BF                           ; output: right column (u8) — ZP
+bca_ilo = zp_i_l                        ; output: left column (u8) — ALIASED
+bca_ihi = zp_i_h                        ; to zp_i_l/h (2026-07-18, see ang)
 bca_vis = $64                           ; output: 1=visible, 0=cull — ZP
 ; (2026-07-10: $F5 is inside the VX2 vertex struct now; keep in sync with
 ; ang/header_div.s — BOTH define this)

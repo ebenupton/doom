@@ -64,12 +64,20 @@ br_render_frame:
    LDA #0
    STA zp_dcl_rec_buf
    STA zp_dcl_rec_buf_h
-   LDX #14
-bif_clr2:
-   STA VCACHE_VALID_BASE,X
+   LDX #4
+bif_clr2:                               ; 12 stripes x 5: 325 cyc (was 4x15
+   STA VCACHE_VALID_BASE,X              ; = 375; +24 B for -50/frame)
+   STA VCACHE_VALID_BASE+5,X
+   STA VCACHE_VALID_BASE+10,X
    STA VCACHE_VALID_BASE+15,X
+   STA VCACHE_VALID_BASE+20,X
+   STA VCACHE_VALID_BASE+25,X
    STA VCACHE_VALID_BASE+30,X
+   STA VCACHE_VALID_BASE+35,X
+   STA VCACHE_VALID_BASE+40,X
    STA VCACHE_VALID_BASE+45,X
+   STA VCACHE_VALID_BASE+50,X
+   STA VCACHE_VALID_BASE+55,X
    DEX
    BPL bif_clr2
 
@@ -280,8 +288,6 @@ rc_node_nc:                             ; far-node fall-in (is_full done)
                                         ; register, no return trip)
 rc_s0:
 ; === side 0: near = RIGHT child, far = LEFT child ===
-   LDA #0
-   STA zp_bbox_side
    LDA zp_node_ch_l
    PHA                                     ; push id (side is implicit)
 ; SAME-AS-PARENT serve (2026-07-17): DSGN b0 = this node's RIGHT box is
@@ -294,6 +300,8 @@ rc_s0:
    LDA NODE_DSGN,X
    LSR A                                   ; b0 -> C
    BCS sp_serve0
+   LDA #0                                  ; side store sunk past the serve
+   STA zp_bbox_side                        ; branch (serves never read it)
 bv_site_near0:                          ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (<-> br_bbox_visible_d when D active)
    BEQ r0_far                              ; near invisible: skip subtree
@@ -320,12 +328,7 @@ r0_far:
 bv_site_far0:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
    BEQ rc_ret                              ; far invisible: this node is done
-   JMP r0_far_vis
-sp_serve0:
-   JSR SC_HAS_GAP                          ; parent's interval, main-resident
-   BNE r0_vis                              ; open columns: descend as visible
-   BEQ r0_far                              ; occluded: skip subtree (always)
-r0_far_vis:
+r0_far_vis:                             ; (falls in: the serve stub moved below)
    PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
@@ -335,6 +338,10 @@ r0_far_vis:
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
    JMP rc_descend_far                      ; TAIL call either way
+sp_serve0:
+   JSR SC_HAS_GAP                          ; parent's interval, main-resident
+   BNE r0_vis                              ; open columns: descend as visible
+   BEQ r0_far                              ; occluded: skip subtree (always)
 rc_ret:
    RTS
 
@@ -349,14 +356,14 @@ bsp_done_full:
 
 rc_n1:
 ; === side 1: near = LEFT child, far = RIGHT child === (mirror)
-   LDA #1
-   STA zp_bbox_side
    LDA zp_node_ch_l
    PHA
    TAX                                     ; SAME-AS-PARENT serve, mirror:
    LDA NODE_DSGN,X                         ; b1 = LEFT box == parent box
    AND #$02
    BNE sp_serve1
+   LDA #1                                  ; side store sunk past the serve
+   STA zp_bbox_side                        ; branch (mirror)
 bv_site_near1:                          ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
    BEQ r1_far

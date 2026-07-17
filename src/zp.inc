@@ -311,8 +311,9 @@ zp_head = $C0                     ; [clip]
    BEQ target
 .endmacro
 zp_free = $C1                     ; [clip]
-zp_i_l = $C2                      ; [clip]
-zp_i_h = $C3                      ; [clip]
+zp_i_l = $C2                      ; [clip]; ALSO bca_ilo (aliased 2026-07-18
+zp_i_h = $C3                      ; [clip]; — the bca tail writes these
+                                  ; directly; $BB/$BF freed)
 zp_hg_cache = $D0                 ; [clip]; has_gap coherence cache: last-matching span offset
 zp_i_x0 = $D1                     ; [clip]
 zp_i_y0 = $D2                     ; [clip]
