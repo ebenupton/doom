@@ -24,7 +24,10 @@ box_classify:
 ; Side-armed plane reads (2026-07-15): the box pointer is gone — each
 ; arm bakes its side's plane pages and reads abs,Y with Y = node,
 ; reloaded per field pair (Y doubles as the raw-hi ride between).
-; Logic, flags and exits are byte-for-byte the old classify.
+; Logic, flags and exits are byte-for-byte the old classify — MINUS
+; the BVC/EOR V-correction (2026-07-17): the deltas are bounded by the
+; prescaled map (~+-1400), s16 never overflows (the ZCF corner
+; subtracts never corrected either), so N IS the sign.
    LDA #0
    STA t1                                  ; outside flag
    LDA zp_bbox_side
@@ -44,9 +47,6 @@ bcls_s0:
    LDA bca_pxs+1
    SBC BBP_L_HI,Y
    TAY                                     ; raw hi (zero test; Y re-seeds below)
-   BVC c1_s0
-   EOR #$80
-c1_s0:
    BMI cx_x0_out_s0
    CPY #0
    BNE cx_x_pos_s0
@@ -65,9 +65,6 @@ cx_x_pos_s0:
    SBC bca_pxs
    LDA BBP_R_HI,Y
    SBC bca_pxs+1
-   BVC c2_s0
-   EOR #$80
-c2_s0:
    BMI cx_x2_out_s0
    LDA #1
    BNE cx_have_x_s0
@@ -85,9 +82,6 @@ cx_have_x_s0:
    LDA bca_pys+1
    SBC BBP_T_HI,Y
    TAY                                     ; raw hi
-   BVC c3_s0
-   EOR #$80
-c3_s0:
    BMI cx_y_low_s0
    CPY #0
    BNE cx_y0_out_s0
@@ -106,9 +100,6 @@ cx_y_low_s0:
    SBC BBP_B_LO,Y
    LDA bca_pys+1
    SBC BBP_B_HI,Y
-   BVC c4_s0
-   EOR #$80
-c4_s0:
    BMI cx_y2_out_s0
    LDA #1
    BNE cx_have_y_s0
@@ -129,9 +120,6 @@ bcls_s1:
    LDA bca_pxs+1
    SBC BBP_L_HI+$100,Y
    TAY                                     ; raw hi (zero test; Y re-seeds below)
-   BVC c1_s1
-   EOR #$80
-c1_s1:
    BMI cx_x0_out_s1
    CPY #0
    BNE cx_x_pos_s1
@@ -150,9 +138,6 @@ cx_x_pos_s1:
    SBC bca_pxs
    LDA BBP_R_HI+$100,Y
    SBC bca_pxs+1
-   BVC c2_s1
-   EOR #$80
-c2_s1:
    BMI cx_x2_out_s1
    LDA #1
    BNE cx_have_x_s1
@@ -170,9 +155,6 @@ cx_have_x_s1:
    LDA bca_pys+1
    SBC BBP_T_HI+$100,Y
    TAY                                     ; raw hi
-   BVC c3_s1
-   EOR #$80
-c3_s1:
    BMI cx_y_low_s1
    CPY #0
    BNE cx_y0_out_s1
@@ -191,9 +173,6 @@ cx_y_low_s1:
    SBC BBP_B_LO+$100,Y
    LDA bca_pys+1
    SBC BBP_B_HI+$100,Y
-   BVC c4_s1
-   EOR #$80
-c4_s1:
    BMI cx_y2_out_s1
    LDA #1
    BNE cx_have_y_s1
