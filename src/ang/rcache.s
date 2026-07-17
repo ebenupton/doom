@@ -243,30 +243,22 @@ bcac_warm_full:
    JMP full_vis                            ; canonical tail (bca.s): sets
                                            ; ilo/ihi/vis, A/Z = verdict
 
-; --- COLD: compute fresh (box_classify + 2 corner_phi), then populate cache ---
+; --- COLD: ONE ROUTE (2026-07-18) — run the pristine bbox_check_angle
+; whole, then populate the cache from what it left behind. Two facts
+; make this possible now: (1) the bias fold made bca_tail READ-ONLY on
+; bca_p1/p2, so the RAW pre-clip phis survive the whole check (the old
+; split classify/corners route existed only to snapshot before the
+; tail's clamp write-backs — a clipped value baked the angle-dependent
+; clip into the position-only psi cache); (2) zp_bca_zone == 0 IS the
+; inside signal (classify publishes the strict-bit mask; the inside
+; escape is exactly the zone-empty case), so the fake-return
+; interposer that caught box_classify's PLA/PLA escape is gone too.
 bcac_cold:
-; box_classify escapes via PLA PLA RTS when the viewer is INSIDE the box.
-; Push a fake return so that escape lands in bcac_cold_inside; the outside
-; path returns after the JSR and we pop the fake return.
-   LDA #>(bcac_cold_inside-1)
-   PHA
-   LDA #<(bcac_cold_inside-1)
-   PHA
-   JSR box_classify
-; --- OUTSIDE path: X = boxpos. Drop the fake inside-return we pushed. ---
-; Corners are computed INLINE (duplicating the original block) because the
-; raw bca_p1/p2 must be snapshotted into the cache BEFORE bca_tail runs:
-; the tail CLIPS p1/p2 to +/-CLIPANGLE for corners outside the FOV, and a
-; clipped value bakes the (angle-dependent) clip into the position-only
-; psi cache — the bug that produced wrong warm results at other angles.
-   PLA
-   PLA
-; corners via the shared zone/side arms — RAW phis (pre-clip), exactly
-; what the psi snapshot below needs (the old inline duplicate of the
-; corner block is gone, 2026-07-15)
-   JSR zc_corners
-; --- populate cache from RAW bca_p1/p2 (pre-clip), then run the tail once ---
+   JSR bbox_check_angle                    ; verdict in bca_vis, raw p1/p2 intact
    JSR bcac_index                          ; (bitmap byte/bit only now)
+   LDA zp_bca_zone
+   BEQ bcac_cold_inside                    ; inside: computed+full, no snapshot
+                                           ; (psi planes are never read under FULL)
 ; psi1/psi2 = (a_fine - pK) & 4095, staged in pa_dx/pa_dy (dead here),
 ; hi nibbles packed for the PH plane; one armed 3-store drop.
    SEC
@@ -324,10 +316,12 @@ bcs_done:
    CMP #8
    BCC bcac_notfull                        ; span < 2048
 ; (X = rc_bytehi still — nothing since the COMPUTED store touched it)
+bcac_setfull:
    LDA RCACHE_FULL,X
    ORA rc_bit
    STA RCACHE_FULL,X
-   JMP bca_tail
+   LDA bca_vis                             ; the tail already ran inside
+   RTS                                     ; bbox_check_angle: A/Z = verdict
 bcac_notfull:
 ; clear the FULL bit (RCACHE_FULL is not cleared at epoch start; a stale set
 ; bit must be knocked down since warm reads it once COMPUTED is set).
@@ -335,19 +329,19 @@ bcac_notfull:
    EOR #$FF
    AND RCACHE_FULL,X                       ; (X = rc_bytehi still)
    STA RCACHE_FULL,X
-   JMP bca_tail
+   LDA bca_vis
+   RTS
 
-; inside -> a_fine-independent full. Set computed+full, return full.
+; inside -> a_fine-independent full: computed + FORCED full (p1/p2 are
+; stale here — the span test would read garbage; FULL means the psi
+; planes are never consulted). Verdict (full) already staged by the
+; check's full_vis exit.
 bcac_cold_inside:
-   JSR bcac_index
    LDX rc_bytehi
    LDA RCACHE_COMPUTED,X
    ORA rc_bit
    STA RCACHE_COMPUTED,X
-   LDA RCACHE_FULL,X
-   ORA rc_bit
-   STA RCACHE_FULL,X
-   JMP full_vis                            ; canonical tail (bca.s)
+   JMP bcac_setfull                        ; (X = rc_bytehi holds)
 
 bcac_index:
 ; Bitmap byte/bit from (zp_node_ch_l, zp_bbox_side) — the PSI pointer
