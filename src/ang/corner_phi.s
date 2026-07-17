@@ -517,12 +517,14 @@ lf_ns:
    LDY sd_num
    SEC
    SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|] — Y
-   BCC ns_neg                              ; re-pointed, no staging byte
-                                           ; (Eben: mutate/read in place)
-; (s == 0 falls straight through: ATANEXP[0] is FORCED to 512, where
-;  every octant pair collapses — base+512 == base'-512 mod 4096 — so
-;  ties and the exact diagonal need no fallback compare. The cert
-;  verifies the one-sided bucket-0 error stays inside EPSILON.)
+   BCS ns_khave                            ; s >= 0 (ties included: k = 0 and
+                                           ; ATANEXP[0] is FORCED to 512 where
+                                           ; every octant pair collapses — no
+                                           ; fallback compare; cert-bounded)
+ns_neg:                                    ; s < 0 falls in with C = 0
+   EOR #$FF                                ; -s (the ADC supplies exactly +1;
+   ADC #1                                  ; ns_neg_j arrives via BCC too)
+   INX                                     ; axgt — falls into the lookup
 ns_khave:
    TAY                                     ; k = |s|
    LDA AE_LO,Y
@@ -530,16 +532,9 @@ ns_khave:
    LDA AE_HI,Y
    STA pa_res+1
    JMP comb
-ns_neg:
-   EOR #$FF                                ; -s (C = 0 from the BCC: the ADC
-   ADC #1                                  ; supplies exactly +1)
-   INX                                     ; axgt
-   BNE ns_khave                            ; (always: k >= 1)
-ns_dx0:
-   LDA #0                                  ; |dx| = 0: ta = 0, axgt = 0
-   BEQ ns_ta0                              ; (always)
 ns_dy0:
    INX                                     ; |dy| = 0: ta = 0, axgt = 1
+ns_dx0:
    LDA #0
 ns_ta0:
    STA pa_res
@@ -551,16 +546,16 @@ ns_x16:
 ; --- |dx| 16-bit, |dy| 8-bit: axgt STATIC; k = L8[dx>>3] + 96 - L8[dy]
 ;     (>= 1: L8r(16-bit) >= 256 > 255 >= L8[8-bit]) ---
    INX
-   LDA sd_num                              ; >>3 NON-destructive: lo copies to
-   STA t0                                  ; t0 (dead classify temp), hi rides
-   LDA sd_num+1                            ; A — sd_num ALIASES pa_dx, which
-   LSR A                                   ; rows 4/9's shared-axis carryover
-   ROR t0                                  ; still needs RAW (the in-frame
-   LSR A                                   ; gate caught the in-place version)
-   ROR t0
-   LSR A
-   ROR t0
-   LDY t0
+   LDA sd_num+1                            ; >>3 NON-destructive: HI copies to
+   STA t0                                  ; t0 (dead classify temp), lo rides
+   LDA sd_num                              ; A so the index ends in-register
+   LSR t0                                  ; (TAY, no reload) — sd_num ALIASES
+   ROR A                                   ; pa_dx, which rows 4/9's shared-
+   LSR t0                                  ; axis carryover still needs RAW
+   ROR A                                   ; (the in-frame gate caught the
+   LSR t0                                  ; in-place version)
+   ROR A
+   TAY
    LDA L8_TAB,Y                            ; L8[|dx| >> 3]
    LDY sd_den
    SEC
@@ -577,16 +572,16 @@ ns_k255:
    BNE ns_khave                            ; (always)
 ns_x8y16:
 ; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
-   LDA sd_den
-   STA t0
    LDA sd_den+1
-   LSR A
-   ROR t0
-   LSR A
-   ROR t0
-   LSR A
-   ROR t0
-   LDY t0
+   STA t0
+   LDA sd_den
+   LSR t0
+   ROR A
+   LSR t0
+   ROR A
+   LSR t0
+   ROR A
+   TAY
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
    LDY sd_num
    SEC
@@ -606,16 +601,16 @@ ns_x16y16:
    ROR t0
    LSR A
    ROR t0
-   LDA sd_den
-   STA t1
    LDA sd_den+1
-   LSR A
-   ROR t1
-   LSR A
-   ROR t1
-   LSR A
-   ROR t1
-   LDY t1
+   STA t1
+   LDA sd_den
+   LSR t1
+   ROR A
+   LSR t1
+   ROR A
+   LSR t1
+   ROR A
+   TAY
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
    LDY t0
    SEC
