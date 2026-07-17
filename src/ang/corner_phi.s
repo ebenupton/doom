@@ -508,14 +508,13 @@ lf_ns:
    LDA sd_den+1
    BNE ns_x8y16
 ; --- both 8-bit (the common case) ---
-   LDY sd_num
-   LDA L8_TAB,Y
-   STA pa_sx                               ; L8[|dx|]
    LDY sd_den
-   LDA L8_TAB,Y
+   LDA L8_TAB,Y                            ; L8[|dy|]
+   LDY sd_num
    SEC
-   SBC pa_sx                               ; s = L8[|dy|] - L8[|dx|]
-   BCC ns_neg                              ; s < 0: |dx| > |dy|
+   SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|] — Y
+   BCC ns_neg                              ; re-pointed, no staging byte
+                                           ; (Eben: mutate/read in place)
 ; (s == 0 falls straight through: ATANEXP[0] is FORCED to 512, where
 ;  every octant pair collapses — base+512 == base'-512 mod 4096 — so
 ;  ties and the exact diagonal need no fallback compare. The cert
@@ -548,22 +547,20 @@ ns_x16:
 ; --- |dx| 16-bit, |dy| 8-bit: axgt STATIC; k = L8[dx>>3] + 96 - L8[dy]
 ;     (>= 1: L8r(16-bit) >= 256 > 255 >= L8[8-bit]) ---
    INX
-   LDY sd_den
-   LDA L8_TAB,Y
-   STA pa_sx                               ; L8[|dy|]
-   LDA sd_num+1
-   STA pa_sy
-   LDA sd_num
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   TAY
+   LDA sd_num                              ; >>3 NON-destructive: lo copies to
+   STA t0                                  ; t0 (dead classify temp), hi rides
+   LDA sd_num+1                            ; A — sd_num ALIASES pa_dx, which
+   LSR A                                   ; rows 4/9's shared-axis carryover
+   ROR t0                                  ; still needs RAW (the in-frame
+   LSR A                                   ; gate caught the in-place version)
+   ROR t0
+   LSR A
+   ROR t0
+   LDY t0
    LDA L8_TAB,Y                            ; L8[|dx| >> 3]
+   LDY sd_den
    SEC
-   SBC pa_sx
+   SBC L8_TAB,Y                            ; - L8[|dy|], direct
    BCS ns_pos96
    ADC #96                                 ; C=0: wraps to diff+96 exactly
    JMP ns_khave                            ; (diff >= -95 here: k >= 1)
@@ -576,52 +573,49 @@ ns_k255:
    BNE ns_khave                            ; (always)
 ns_x8y16:
 ; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
-   LDY sd_num
-   LDA L8_TAB,Y
-   STA pa_sx                               ; L8[|dx|]
-   LDA sd_den+1
-   STA pa_sy
    LDA sd_den
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   TAY
+   STA t0
+   LDA sd_den+1
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
+   LDY t0
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+   LDY sd_num
    SEC
-   SBC pa_sx
+   SBC L8_TAB,Y                            ; - L8[|dx|], direct
    BCS ns_pos96
    ADC #96
    JMP ns_khave
 ns_x16y16:
-; --- both 16-bit: reduce both (the +96s cancel), then sign/tie as 8-bit ---
-   LDA sd_num+1
-   STA pa_sy
+; --- both 16-bit: reduce both into t0/t1 (the +96s cancel), then the
+;     8-bit shape — indices from the temps, no L8-value staging ---
    LDA sd_num
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   TAY
-   LDA L8_TAB,Y
-   STA pa_sx                               ; L8[|dx| >> 3]
-   LDA sd_den+1
-   STA pa_sy
+   STA t0
+   LDA sd_num+1
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
    LDA sd_den
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   TAY
+   STA t1
+   LDA sd_den+1
+   LSR A
+   ROR t1
+   LSR A
+   ROR t1
+   LSR A
+   ROR t1
+   LDY t1
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+   LDY t0
    SEC
-   SBC pa_sx
+   SBC L8_TAB,Y                            ; - L8[|dx| >> 3], direct
    BCC ns_neg_j                            ; (trampolines: ns_neg/ns_khave sit
    JMP ns_khave                            ;  ~200 B up with the 8-bit arm;
                                            ;  s == 0 ties ride k = 0 like the

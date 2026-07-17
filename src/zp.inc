@@ -238,7 +238,7 @@ zp_buf = $62                      ; [clip]; u16 pointer $62/$63 (from $E3/$E4)
 ; ($6A-$6F retired 2026-07-10 — sy/sx staging dead; BISECT: temporarily
 ; unallocated while hunting the divergence)
 RASTER_ZP_SCRSTRT = $70           ; [clip]
-pa_sx = $73                       ; [ang]
+; $73 free (was pa_sx — lf_ns reads L8_TAB,Y direct, 2026-07-19)
 zp_seg_v_idx_l = $77             ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_b = $78              ; [bsp]; B = idx>>3 (bitmap/VXC byte
 ; index, stored pre-derived in the header; idx = B*8 + (lo&7))
@@ -255,7 +255,7 @@ RASTER_ZP_Y0 = $83                ; [clip]
 RASTER_ZP_X1 = $84                ; [clip]
 RASTER_ZP_Y1 = $85                ; [clip]
 bca_boxp = $86                    ; [ang]; ROM box pointer: caller points this at the 8-byte box
-pa_sy = $89                       ; [ang]
+; $89 free (was pa_sy — the >>3 reducers ride hi in A, lo in place)
 ; $8A free (was pa_oct — oct rides X haveax->comb, 2026-07-11)
 ; $8B/$8C free (was bca_hi — folded into direct bca_p2 reads, 2026-07-11)
 bca_pxs = $8D                     ; [ang]; px sign-extended (s16) ; w=2
