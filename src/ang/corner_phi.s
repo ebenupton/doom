@@ -93,11 +93,9 @@ inhx_run_s0:
    TAX                                     ; d lo rides X
    LDA bca_pxs+1
    SBC BBP_L_HI,Y
-   TAY                                     ; raw hi (zero test; Y re-seeds below)
-   BMI cx_x0_out_s0
-   CPY #0
-   BNE cx_x_pos_s0
-   TXA
+   BMI cx_x0_out_s0                        ; N and Z from the SBC survive the
+   BNE cx_x_pos_s0                         ; BMI — the old TAY + CPY #0 were
+   TXA                                     ; 4 dead cycles (Eben's catch)
    BNE cx_x_pos_s0
    BEQ cx_have_x_s0
 cx_x0_out_s0:
@@ -146,9 +144,7 @@ inhy_run_s0:
    TAX                                     ; f lo rides X
    LDA bca_pys+1
    SBC BBP_T_HI,Y
-   TAY                                     ; raw hi
-   BMI cx_y_low_s0
-   CPY #0
+   BMI cx_y_low_s0                         ; N/Z from the SBC (see the x arm)
    BNE cx_y0_out_s0
    TXA
    BNE cx_y0_out_s0
@@ -202,11 +198,9 @@ inhx_run_s1:
    TAX                                     ; d lo rides X
    LDA bca_pxs+1
    SBC BBP_L_HI+$100,Y
-   TAY                                     ; raw hi (zero test; Y re-seeds below)
-   BMI cx_x0_out_s1
-   CPY #0
-   BNE cx_x_pos_s1
-   TXA
+   BMI cx_x0_out_s1                        ; N and Z from the SBC survive the
+   BNE cx_x_pos_s1                         ; BMI — the old TAY + CPY #0 were
+   TXA                                     ; 4 dead cycles (Eben's catch)
    BNE cx_x_pos_s1
    BEQ cx_have_x_s1
 cx_x0_out_s1:
@@ -255,9 +249,7 @@ inhy_run_s1:
    TAX                                     ; f lo rides X
    LDA bca_pys+1
    SBC BBP_T_HI+$100,Y
-   TAY                                     ; raw hi
-   BMI cx_y_low_s1
-   CPY #0
+   BMI cx_y_low_s1                         ; N/Z from the SBC (see the x arm)
    BNE cx_y0_out_s1
    TXA
    BNE cx_y0_out_s1
@@ -649,7 +641,7 @@ mask_done:
 ; in the CODE region like everything else.
 ; ============================================================================
 .macro CPM_ENTRY name, negx, negy, obase
-   .local cmiss, cnz, cgt, cle, ceq
+   .local cmiss
 name:
    LDA pa_dx
    EOR pa_dy
@@ -674,13 +666,6 @@ name:
    STA pa_res+1
    JMP cp_havepsi
 cmiss:
-   LDA pa_dx
-   ORA pa_dx+1
-   ORA pa_dy
-   ORA pa_dy+1
-   BNE cnz
-   JMP pa_zero                             ; (0,0) -> psi = 0 (rare)
-cnz:
 .if negx
    LDA #0                                  ; |dx| = -dx (class: dx <= 0)
    SEC
@@ -709,35 +694,10 @@ cnz:
    LDA pa_dy+1
    STA sd_den+1
 .endif
-   LDA sd_den+1                            ; axgt = |dx| > |dy|
-   CMP sd_num+1
-   BCC cgt
-   BNE cle
-   LDA sd_den
-   CMP sd_num
-   BEQ ceq
-   BCS cle
-cgt:
-   LDA sd_num                              ; swap: num=min, den=max
-   LDX sd_den
-   STA sd_den
-   STX sd_num
-   LDA sd_num+1
-   LDX sd_den+1
-   STA sd_den+1
-   STX sd_num+1
-   LDX #obase+1
-   JMP lf_entry
-cle:
-   LDX #obase
-   JMP lf_entry
-ceq:
-   LDX #obase                              ; diagonal: ta = ANG45 exactly
-   LDA #<512
-   STA pa_res
-   LDA #>512
-   STA pa_res+1
-   JMP comb
+   LDX #obase                              ; no compare, no swap: lf_ns reads
+   JMP lf_ns                               ; the axgt bit off the SIGN of the
+                                           ; L8 difference (Eben's negate-the-
+                                           ; ATANEXP-input idea, 2026-07-18)
 .endmacro
 ; oct base = (dx<0)*4 + (dy<0)*2 (P = delta >= 0, N = delta <= 0)
 .if ::BANKED = 0
@@ -748,6 +708,186 @@ CPM_ENTRY corner_phi_pp, 0, 0, 0
 CPM_ENTRY corner_phi_pn, 0, 1, 2
 CPM_ENTRY corner_phi_np, 1, 0, 4
 CPM_ENTRY corner_phi_nn, 1, 1, 6
+
+; ============================================================================
+; lf_ns — the NO-SWAP log2/atanexp pipeline (2026-07-18). sd_num = |dx|,
+; sd_den = |dy| AS LOADED; the min/max swap is gone. The signed L8
+; difference s = L8r(|dy|) - L8r(|dx|) carries everything:
+;   - L8 is MONOTONE, so sign(s) IS the exact axgt whenever s != 0
+;     (strict L8 order implies strict magnitude order);
+;   - mixed widths fix the sign statically (a 16-bit magnitude always
+;     beats an 8-bit one: dy >= 256 > 255 >= dx), so those arms bake
+;     the axgt bit and never test a sign;
+;   - s == 0 is an L8 TIE, where AE[0] = 506 != 512 means the branch
+;     matters: fall back to the exact 16-bit compare (and the exact-
+;     equality diagonal diverts to ta = ANG45 = 512, the mirror's rule).
+; The negate is the ATANEXP-input negation: k = |s|, oct = class|(s<0).
+; Zero magnitudes short out first (L8[0] = L8[1] = 0 would poison the
+; sign trick): min == 0 -> ta = 0; both zero -> psi = 0.
+;   in : X = octant class base (axgt clear), sd_num/sd_den = |dx|/|dy|
+;   out: joins comb (ANG) with X = oct, pa_res = ta
+; ============================================================================
+lf_ns:
+.scope
+   LDA sd_num
+   ORA sd_num+1
+   BEQ ns_dx0
+   LDA sd_den
+   ORA sd_den+1
+   BEQ ns_dy0
+   LDA sd_num+1
+   BNE ns_x16
+   LDA sd_den+1
+   BNE ns_x8y16
+; --- both 8-bit (the common case) ---
+   LDY sd_num
+   LDA L8_TAB,Y
+   STA pa_sx                               ; L8[|dx|]
+   LDY sd_den
+   LDA L8_TAB,Y
+   SEC
+   SBC pa_sx                               ; s = L8[|dy|] - L8[|dx|]
+   BCC ns_neg                              ; s < 0: |dx| > |dy|
+   BEQ ns_tie_j                            ; s == 0: exact compare decides
+ns_khave:
+   TAY                                     ; k = |s|
+   LDA AE_LO,Y
+   STA pa_res
+   LDA AE_HI,Y
+   STA pa_res+1
+   JMP comb
+ns_neg:
+   EOR #$FF                                ; -s (C = 0 from the BCC: the ADC
+   ADC #1                                  ; supplies exactly +1)
+   INX                                     ; axgt
+   BNE ns_khave                            ; (always: k >= 1)
+ns_dx0:
+   LDA sd_den
+   ORA sd_den+1
+   BEQ ns_00
+   LDA #0                                  ; |dx| = 0: ta = 0, axgt = 0
+   BEQ ns_ta0                              ; (always)
+ns_dy0:
+   INX                                     ; |dy| = 0: ta = 0, axgt = 1
+   LDA #0
+ns_ta0:
+   STA pa_res
+   STA pa_res+1
+   JMP comb
+ns_00:
+   JMP pa_zero                             ; (0,0) -> psi = 0
+ns_tie_j:
+   JMP ns_tie                              ; (the tie block sits past the
+                                           ;  16-bit arms — branch range)
+ns_x16:
+   LDA sd_den+1
+   BNE ns_x16y16
+; --- |dx| 16-bit, |dy| 8-bit: axgt STATIC; k = L8[dx>>3] + 96 - L8[dy]
+;     (>= 1: L8r(16-bit) >= 256 > 255 >= L8[8-bit]) ---
+   INX
+   LDY sd_den
+   LDA L8_TAB,Y
+   STA pa_sx                               ; L8[|dy|]
+   LDA sd_num+1
+   STA pa_sy
+   LDA sd_num
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   TAY
+   LDA L8_TAB,Y                            ; L8[|dx| >> 3]
+   SEC
+   SBC pa_sx
+   BCS ns_pos96
+   ADC #96                                 ; C=0: wraps to diff+96 exactly
+   JMP ns_khave                            ; (diff >= -95 here: k >= 1)
+ns_pos96:
+   ADC #95                                 ; C=1: diff+96
+   BCS ns_k255
+   JMP ns_khave
+ns_k255:
+   LDA #255
+   BNE ns_khave                            ; (always)
+ns_x8y16:
+; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
+   LDY sd_num
+   LDA L8_TAB,Y
+   STA pa_sx                               ; L8[|dx|]
+   LDA sd_den+1
+   STA pa_sy
+   LDA sd_den
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   TAY
+   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+   SEC
+   SBC pa_sx
+   BCS ns_pos96
+   ADC #96
+   JMP ns_khave
+ns_x16y16:
+; --- both 16-bit: reduce both (the +96s cancel), then sign/tie as 8-bit ---
+   LDA sd_num+1
+   STA pa_sy
+   LDA sd_num
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   TAY
+   LDA L8_TAB,Y
+   STA pa_sx                               ; L8[|dx| >> 3]
+   LDA sd_den+1
+   STA pa_sy
+   LDA sd_den
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   TAY
+   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+   SEC
+   SBC pa_sx
+   BCC ns_neg_j                            ; (trampolines: ns_neg/ns_khave sit
+   BNE ns_khave_j                          ;  ~200 B up with the 8-bit arm)
+; (falls into ns_tie: reduced-L8 tie — the exact compare decides)
+ns_tie:
+   LDA sd_den+1                            ; exact 16-bit magnitude compare
+   CMP sd_num+1                            ; (only on L8 ties)
+   BCC ns_t_gt
+   BNE ns_t_le
+   LDA sd_den
+   CMP sd_num
+   BEQ ns_t_eq
+   BCS ns_t_le
+ns_t_gt:
+   INX                                     ; |dx| > |dy|
+ns_t_le:
+   LDA #0                                  ; k = 0 -> AE[0]
+   BEQ ns_khave_j                          ; (always; trampoline — ns_khave is
+                                           ;  out of branch range from here)
+ns_t_eq:
+   LDA #<512                               ; exact diagonal: ta = ANG45
+   STA pa_res                              ; (the mirror's equality rule)
+   LDA #>512
+   STA pa_res+1
+   JMP comb
+ns_neg_j:
+   JMP ns_neg                              ; C=0 rides the JMP (ns_neg's ADC #1)
+ns_khave_j:
+   JMP ns_khave
+.endscope
 .if ::BANKED = 0
 .segment "ANG"
 .endif
