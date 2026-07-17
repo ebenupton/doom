@@ -333,17 +333,21 @@ comb:
 ; (0/1024/2048/3072), so base_lo is always 0. X = oct (from lf_ns).
 ; The 12-bit mask folds into each arm — the old shared mask block
 ; re-loaded the byte the arm had just stored.
-   LDA pa_sign,X
+   LDY pa_sign,X
    BMI sub
-; add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0
+; add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0.
+; NO mask (2026-07-19, Eben's question): ta <= 512 (AE table range,
+; seed-asserted) so hi <= 2, no lo add means no carry, and the largest
+; add base is 3072 (hi 12) — the sum tops out at $0E, never wraps.
    CLC
-   LDA pa_base_hi,X
-   ADC pa_res+1
-   AND #$0F
+   ADC pa_base_hi,X
    STA pa_res+1
    JMP mask_done
 sub:
-; sub: res = base - ta ; base_lo = 0
+; sub: res = base - ta ; base_lo = 0. The mask HERE is load-bearing
+; for exactly one octant: oct 3 is 0 - ta, negative for any ta > 0 —
+; the AND is the mod-4096 wrap (psi = 4096 - ta). The other sub bases
+; (1024/2048/3072) can't go negative with ta <= 512.
    SEC
    LDA #0
    SBC pa_res
@@ -358,10 +362,9 @@ mask_done:
 ; stashed at the probe; the KEY was banked at miss entry, before the
 ; in-place negations destroyed the raw deltas) ---
    LDX zp_cpm_slot
+   STA CPM_PSIH,X                          ; valid forever: psi is a pure
    LDA pa_res
    STA CPM_PSIL,X
-   LDA pa_res+1
-   STA CPM_PSIH,X                          ; valid forever: psi is a pure
                                            ; function of (dx,dy); the KDXH
                                            ; write at miss entry IS the
                                            ; validity mark
