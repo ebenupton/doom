@@ -134,6 +134,9 @@ def build_banked(flatr):
             elif 0x0A80 <= addr < 0x0C00:        # SSMASK -> staging @ $BB00
                 assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $BB00 staging page'
                 l2[0x3B00:0x3B00 + len(blob)] = blob
+    # corner-phi memo validity: KDXH plane ($8380) ships $80-filled — the
+    # probe's KDXH compare doubles as the never-written test (no EP plane).
+    l2[abi.CPM_KDXH - 0x8000:abi.CPM_KDXH - 0x8000 + 128] = b'\x80' * 128
     bm.define_bank(BANK_L2, l2)
 
 

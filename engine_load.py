@@ -56,6 +56,9 @@ def load_angle_module(mem, c02=None):
     base = sym('ang_head')                  # ANG region head
     code = open(os.path.join(_ROOT, 'bsp_render_ang.bin'), 'rb').read()
     mem[base:base + len(code)] = code
+    base = sym('angx_head')                 # ANGX window (sign-class entries)
+    code = open(os.path.join(_ROOT, 'bsp_render_angx.bin'), 'rb').read()
+    mem[base:base + len(code)] = code
     l8, ae_lo, ae_hi = sym('L8_TAB'), sym('AE_LO'), sym('AE_HI')
     vatox = sym('VATOX')
     # option F tables (tools/atanexp_cert.py is the one source; the
@@ -74,3 +77,9 @@ def load_angle_module(mem, c02=None):
     # -> 255. Seed must match the baked immediates.
     assert mem[vatox] == 0 and mem[vatox + 1024] == 255, \
         'VATOX ends drifted from bca_tail baked constants (0/255)'
+    # Corner-phi memo validity: the KDXH plane ships $80-filled ($80 is an
+    # impossible dx hi byte, |corner - px| < 2048) — the probe's KDXH
+    # compare doubles as the never-written test; the EP plane is gone.
+    import abi
+    for i in range(128):
+        mem[abi.CPM_BASE_FLAT + 0x80 + i] = 0x80

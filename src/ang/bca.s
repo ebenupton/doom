@@ -73,33 +73,27 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
 ; tools/atanexp_cert.py): r1 -= EPS, r2 += EPS — every downstream
 ; verdict (span/full, the clip windows, the cull tests, the extents)
 ; becomes a SUPERSET of the exact convention's, so the framebuffer is
-; bit-identical. Applied HERE, not in cp_havepsi: the rcache psi
-; snapshots read the arms' RAW r values (pre-tail), stay bias-free,
-; and warm rebuilds re-enter this tail to re-bias consistently.
-   SEC
-   LDA bca_p1
-   SBC #15
-   STA bca_p1
-   LDA bca_p1+1
-   SBC #0
-   AND #$0F
-   STA bca_p1+1
-   CLC
-   LDA bca_p2
-   ADC #15
-   STA bca_p2
-   LDA bca_p2+1
-   ADC #0
-   AND #$0F
-   STA bca_p2+1
+; bit-identical. FOLDED (2026-07-18): the bias never lands in memory —
+; span carries it as the +30 constant ((r2+15)-(r1-15) = r2-r1+30
+; mod 4096, exact by modular arithmetic), and each window test builds
+; its biased operands in registers. bca_p1/p2 now stay RAW through the
+; tail (the rcache psi snapshots always wanted that), and the full-vis
+; exit skips the whole bias.
    SEC
    LDA bca_p2
    SBC bca_p1
-   STA t0
+   STA t0                                  ; raw diff lo (pre +30)
    LDA bca_p2+1
    SBC bca_p1+1
+   TAX                                     ; raw diff hi rides X
+   LDA t0
+   CLC
+   ADC #30
+   STA t0                                  ; span' lo
+   TXA
+   ADC #0
    AND #$0F
-   STA t1
+   STA t1                                  ; span' hi (u12 fold)
    CMP #8
    BCS full_vis                            ; span >= 2048
 ck_left:
@@ -123,10 +117,15 @@ ck_left:
 ;   CONSTANT 0 (r_hi <= 4, >VATOX+4 never wraps — link-asserted), which
 ;   LDA (ptr),Y carries into the +-1 adjusts (SBC #0 / ADC #1, no
 ;   seeds); the out-arms' 16-bit ops inherit C=1 from CMP >= 4 or CPY.
-   LDY bca_p1
-   LDA bca_p1+1                            ; r1 hi — PURE U12 (cp_havepsi no
-   CMP #4                                  ; longer sign-extends: the AND died)
-   BCC lk_left                             ; r1 < 1024: C=0, A/Y = operands
+   LDA bca_p1                              ; r1' = (r1 - 15) & 4095, built in
+   SEC                                     ; registers (raw r1 stays in memory
+   SBC #15                                 ; for the -r1' fold + the snapshots)
+   TAY
+   LDA bca_p1+1
+   SBC #0
+   AND #$0F
+   CMP #4
+   BCC lk_left                             ; r1' < 1024: C=0, A/Y = operands
    BNE ck_left_out
    CPY #0
    BNE ck_left_out
@@ -137,17 +136,17 @@ ck_left:
                                            ; no lookup, and lk_* now reads
                                            ; r <= 1023 only)
 ck_left_out:
-; r1 outside [0,1024]: left corner outside the FOV. tspan-1024 =
-; (0 - r1) & 4095 (r1 in [1025,4095] as u12, so tspan = 5120-r1 and
-; tspan-1024 = 4096-r1 — the negate IS the -1024 fold). Discard-result
-; 16-bit compare vs span (CPX seeds the borrow; only the final carry
-; survives): C=1 iff tspan-1024 >= span -> wholly off the left.
-   LDA #0
-   SBC bca_p1                              ; lo of -r1 (C=1 inbound: CMP >= 4
+; r1' outside [0,1024]: left corner outside the FOV. tspan-1024 =
+; (0 - r1') & 4095 = (15 - r1) & 4095 — the bias folds into the negate
+; CONSTANT (raw r1 still in memory). Discard-result 16-bit compare vs
+; span (CPX seeds the borrow; only the final carry survives): C=1 iff
+; tspan-1024 >= span -> wholly off the left.
+   LDA #15
+   SBC bca_p1                              ; lo of 15-r1 (C=1 inbound: CMP >= 4
    TAX                                     ; or CPY fall-through)
    LDA #0
    SBC bca_p1+1
-   AND #$0F                                ; hi of (-r1) & 4095 = tspan-1024
+   AND #$0F                                ; hi of (15-r1) & 4095 = tspan-1024
    CPX t0                                  ; C = ((tspan-1024).lo >= span.lo)
    SBC t1
    BCS cull                                ; (tspan-2*CLIP) >= span: off left
@@ -168,8 +167,13 @@ il1:                                       ; the right window test re-seeds C)
    STA bca_ilo
 ck_right:
 ; right window test: r2 IS the right tspan (bias trick) — same shape.
-   LDY bca_p2
-   LDA bca_p2+1                            ; r2 hi (u12 — no mask needed)
+   LDA bca_p2                              ; r2' = (r2 + 15) & 4095, built in
+   CLC                                     ; registers (raw r2 stays in memory)
+   ADC #15
+   TAY
+   LDA bca_p2+1
+   ADC #0
+   AND #$0F
    CMP #4
    BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
    BNE ck_right_out

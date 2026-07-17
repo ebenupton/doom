@@ -41,15 +41,14 @@ RCACHE_STATE_FLAT = 0xF100
 RCACHE_STATE_LEN = 0x0089  # bytes to zero at boot
 RCACHE_ENABLE = 0xB4E8  # rotation-coherence bca cache switch (STATE+$88)
 RCACHE_ENABLE_FLAT = 0xF188
-CPM_BASE = 0x8300  # corner-phi memo: 128-slot xor hash, 3.5 pages ending EXACTLY at $5800 flat. BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
+CPM_BASE = 0x8300  # corner-phi memo: 128-slot xor hash, 3 pages ($5480-$577F flat; $5780-$57FF free). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
 CPM_BASE_FLAT = 0x5480
 CPM_KDXL = 0x8300  # memo key: corner dx lo
-CPM_KDXH = 0x8380  # ... dx hi
+CPM_KDXH = 0x8380  # ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane
 CPM_KDYL = 0x8400  # ... dy lo
 CPM_KDYH = 0x8480  # ... dy hi
 CPM_PSIL = 0x8500  # memo value: psi lo
-CPM_PSIH = 0x8580  # ... psi hi
-CPM_EP = 0x8600  # per-slot validity byte (0 = never written; the memo is persistent)
+CPM_PSIH = 0x8580  # ... psi hi (last plane: memo ends at CPM_BASE+$300)
 JBASE = 0x1A00  # vsync journal (dead boot-loader memory)
 SCREEN0 = 0x5800  # framebuffer 0
 SCREEN1 = 0x6C00  # framebuffer 1

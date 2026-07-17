@@ -167,8 +167,10 @@ bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx
 zp_bf_dir = $3D                   ; [bsp]; diagonal back-face DIR-table index;
 ; the |dx'|/|dy'| magnitudes load lazily in the mul tier via this stash
 ; (dead-write tracker 2026-07-11: sign-shortcut exits never read them).
-; $3E free again (zp_cpm_frame retired 2026-07-17: the corner memo is
-;   PERSISTENT — psi is a pure function of the delta key)
+zp_cpm_slot = $3E                 ; [ang]; memo hash slot, probe -> store
+; (was zp_cpm_frame; briefly free 2026-07-17 when the epoch died — the
+;  slot stash saves the store-side hash recompute, X dies in the miss
+;  pipeline)
 zp_seg_flags = $3F                ; [bsp]; u8
 pa_ptr = $40                      ; [ang]; 16-bit table pointer ; w=2
 zp_ys_done = $42                  ; [bsp]; 1 = the PREVIOUS seg ran the

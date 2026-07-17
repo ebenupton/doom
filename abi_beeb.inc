@@ -37,14 +37,13 @@ VXC_ENABLE = &05DB                      \ translation vertex cache switch
 RCACHE_STATE = &B460                    \ rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 RCACHE_STATE_LEN = &0089                \ bytes to zero at boot
 RCACHE_ENABLE = &B4E8                   \ rotation-coherence bca cache switch (STATE+$88)
-CPM_BASE = &8300                        \ corner-phi memo: 128-slot xor hash, 3.5 pages ending EXACTLY at $5800 flat. BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
+CPM_BASE = &8300                        \ corner-phi memo: 128-slot xor hash, 3 pages ($5480-$577F flat; $5780-$57FF free). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
 CPM_KDXL = CPM_BASE+&000                \ memo key: corner dx lo
-CPM_KDXH = CPM_BASE+&080                \ ... dx hi
+CPM_KDXH = CPM_BASE+&080                \ ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane
 CPM_KDYL = CPM_BASE+&100                \ ... dy lo
 CPM_KDYH = CPM_BASE+&180                \ ... dy hi
 CPM_PSIL = CPM_BASE+&200                \ memo value: psi lo
-CPM_PSIH = CPM_BASE+&280                \ ... psi hi
-CPM_EP = CPM_BASE+&300                  \ per-slot validity byte (0 = never written; the memo is persistent)
+CPM_PSIH = CPM_BASE+&280                \ ... psi hi (last plane: memo ends at CPM_BASE+$300)
 JBASE = &1A00                           \ vsync journal (dead boot-loader memory)
 SCREEN0 = &5800                         \ framebuffer 0
 SCREEN1 = &6C00                         \ framebuffer 1

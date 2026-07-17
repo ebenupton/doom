@@ -40,9 +40,29 @@ box_classify:
 ; pass down.
    LDA zp_par_zone
    STA t1                                  ; inherited bits seed the mask
+   BEQ bc_ladders                          ; nothing inherited (38%): ladders
+; BOTH axes strict-inherited (27% of classifies): the whole result is a
+; 16-byte table of the zone bits — no plane reads at all. Single-axis
+; zones read $FF and fall to the ladders (whose inh arms serve the
+; known half). zone <= $0F by construction (4 ORA bits).
+   TAX
+   LDA bc_zone_idx,X
+   BMI bc_ladders
+   ORA zp_bbox_side
+   TAX
+   LDA t1
+   STA zp_bca_zone                         ; publish = the inherited bits
+   RTS                                     ; (strict bits => outside: the
+                                           ; inside escape is unreachable)
+bc_ladders:
    LDA zp_bbox_side
    BNE bcls_s1_j
    JMP bcls_s0
+bc_zone_idx:
+; zone bits (b0 = strictly-left, b1 = right, b2 = above, b3 = below) ->
+; ZC dispatch index (boxy*8 | boxx*2, side ORed in above); $FF = not
+; fully inherited. L|A=5 -> row0*2, R|A=6 -> boxx2, L|B=9, R|B=$0A.
+   .byte $FF,$FF,$FF,$FF, $FF,$00,$04,$FF, $FF,$10,$14,$FF, $FF,$FF,$FF,$FF
 bcls_s1_j:
    JMP bcls_s1
 ; ---- side s0 arm (plane operands baked; Y = node per read pair,
@@ -54,7 +74,7 @@ bcls_s0:
    BEQ inhx_run_s0                      ; nothing strict: run the ladder
    LSR A                                   ; bit0 -> C (strictly left)
    BCS inhx_l_s0
-   LDA #2                                  ; strictly right: boxx = 2
+   LDA #4                                  ; strictly right: boxx = 2 (stored pre-doubled)
    BNE inhx_have_s0
 inhx_l_s0:
    LDA #0                                  ; strictly left: boxx = 0
@@ -92,13 +112,13 @@ cx_x_pos_s0:
    LDA BBP_R_HI,Y
    SBC bca_pxs+1
    BMI cx_x2_out_s0
-   LDA #1
+   LDA #2                                  ; boxx = 1 (pre-doubled)
    BNE cx_have_x_s0
 cx_x2_out_s0:
    LDA t1
    ORA #$02                                ; strictly right
    STA t1
-   LDA #2
+   LDA #4                                  ; boxx = 2 (pre-doubled)
 cx_have_x_s0:
    STA t0                                  ; boxx
 inhy_s0:
@@ -113,7 +133,7 @@ inhy_s0:
 inhy_a_s0:
    LDA #0                                  ; strictly above: boxy = 0
 inhy_have_s0:
-   JMP cx_compose
+   JMP cx_compose_s0
 inhy_run_s0:
 ; --- f = py - top ---
    LDY zp_node_ch_l
@@ -153,7 +173,7 @@ cx_y2_out_s0:
    STA t1
    LDA #2
 cx_have_y_s0:
-   JMP cx_compose
+   JMP cx_compose_s0
 ; ---- side s1 arm (plane operands baked; Y = node per read pair,
 ; then freed for the raw-hi ride exactly as before) ----
 bcls_s1:
@@ -163,7 +183,7 @@ bcls_s1:
    BEQ inhx_run_s1                      ; nothing strict: run the ladder
    LSR A                                   ; bit0 -> C (strictly left)
    BCS inhx_l_s1
-   LDA #2                                  ; strictly right: boxx = 2
+   LDA #4                                  ; strictly right: boxx = 2 (stored pre-doubled)
    BNE inhx_have_s1
 inhx_l_s1:
    LDA #0                                  ; strictly left: boxx = 0
@@ -201,13 +221,13 @@ cx_x_pos_s1:
    LDA BBP_R_HI+$100,Y
    SBC bca_pxs+1
    BMI cx_x2_out_s1
-   LDA #1
+   LDA #2                                  ; boxx = 1 (pre-doubled)
    BNE cx_have_x_s1
 cx_x2_out_s1:
    LDA t1
    ORA #$02                                ; strictly right
    STA t1
-   LDA #2
+   LDA #4                                  ; boxx = 2 (pre-doubled)
 cx_have_x_s1:
    STA t0                                  ; boxx
 inhy_s1:
@@ -222,7 +242,7 @@ inhy_s1:
 inhy_a_s1:
    LDA #0                                  ; strictly above: boxy = 0
 inhy_have_s1:
-   JMP cx_compose
+   JMP cx_compose_s1
 inhy_run_s1:
 ; --- f = py - top ---
    LDY zp_node_ch_l
@@ -262,13 +282,28 @@ cx_y2_out_s1:
    STA t1
    LDA #2
 cx_have_y_s1:
-   JMP cx_compose
-cx_compose:
-; X = boxy*4 + boxx
+   JMP cx_compose_s1
+; X = the ZC dispatch index directly: (boxy*4 + boxx)*2 + side =
+; boxy*8 | boxx*2 | side (bits disjoint: boxy*8 = bits 3-4, pre-doubled
+; boxx = bits 1-2, side = bit 0 — ORA composes carry-free). The old
+; boxpos*4-row value never leaves this unit, so the caller-side
+; TXA/ASL/ORA preamble in zc_corners is gone with it.
+cx_compose_s1:
    ASL A
    ASL A
-   CLC
-   ADC t0
+   ASL A
+   ORA t0
+   ORA #1
+   TAX
+   LDA t1
+   STA zp_bca_zone
+   BEQ cx_inside
+   RTS
+cx_compose_s0:
+   ASL A
+   ASL A
+   ASL A
+   ORA t0
    TAX
    LDA t1
    STA zp_bca_zone                         ; publish the strict bits (the walk
@@ -302,7 +337,8 @@ cx_inside:
 ; corner_phi: dx=cx-pxs, dy=cy-pys; point_to_angle; pa_res=(afn-psi)&MASK signed
 ; corner_phi: callers load pa_dx/pa_dy directly (box corner minus viewer).
 corner_phi:
-.scope
+; (the .scope died 2026-07-18: the sign-class entries below need the
+;  internal labels; everything here is file-scoped, no exports)
 ; --- inlined point_to_angle(pa_dx,pa_dy) -> pa_res (psi) ---
 ; .pa_entry: unit-test hook -- jump here with pa_dx/pa_dy set and
 ; bca_afn=0 to read back (-psi)&signed in pa_res (see test_slope_div).
@@ -325,15 +361,18 @@ pa_entry:
    EOR pa_dy
    AND #$7F
    TAX
-   LDA CPM_EP,X
-   BEQ cpm_miss                            ; 0 = never written (tables ship
-                                           ; zeroed in the bank image / flat
-                                           ; harness RAM)
-   LDA CPM_KDXL,X
-   CMP pa_dx
-   BNE cpm_miss
+   STX zp_cpm_slot                         ; store side reuses the slot (X is
+                                           ; clobbered by the miss pipeline)
+; The KDXH compare doubles as the validity test: the plane ships
+; $80-filled (bank image / engine_load), and $80 is an impossible dx hi
+; byte (|corner - px| < 2048 -> hi in [$F8..$07]) — the old EP plane
+; (a byte read + branch per probe, a store per miss, and a whole
+; 128-byte plane) is gone.
    LDA CPM_KDXH,X
    CMP pa_dx+1
+   BNE cpm_miss
+   LDA CPM_KDXL,X
+   CMP pa_dx
    BNE cpm_miss
    LDA CPM_KDYL,X
    CMP pa_dy
@@ -352,11 +391,12 @@ cpm_miss:
    ORA pa_dy
    ORA pa_dy+1
    BNE nz
+pa_zero:
    LDA #0
    STA pa_res
    STA pa_res+1
    JMP cp_havepsi
-; zero -> psi=0 (was RTS)
+; zero -> psi=0 (was RTS; the sign-class converters JMP pa_zero)
 nz:
 ; |dx| -> sd_num, sx = (dx<0)  (abs written straight to the divide operands;
 ; if |dx|>|dy| we swap below so sd_num=min, sd_den=max -- no separate copy).
@@ -448,6 +488,8 @@ haveax:
    ORA pa_sy
    ORA pa_sx
    TAX
+lf_entry:                                  ; X = oct (sign-class entries JMP
+                                           ; here with the base baked)
 ; --- option F (2026-07-17): ta' = ATANEXP[L(den) - L(num)] — two byte
 ; lookups and a subtract replace the restoring divide AND tantoangle.
 ; Certified by tools/atanexp_cert.py (exhaustive over den <= 2047):
@@ -561,11 +603,8 @@ sub:
    STA pa_res+1
 mask_done:
 ; & 4095 (psi ready; was RTS->fall through)
-; --- memo STORE (X = oct is dead after comb; recompute the slot) ---
-   LDA pa_dx
-   EOR pa_dy
-   AND #$7F
-   TAX
+; --- memo STORE (X = oct is dead after comb; slot stashed at the probe) ---
+   LDX zp_cpm_slot
    LDA pa_dx
    STA CPM_KDXL,X
    LDA pa_dx+1
@@ -577,11 +616,130 @@ mask_done:
    LDA pa_res
    STA CPM_PSIL,X
    LDA pa_res+1
-   STA CPM_PSIH,X
-   LDA #1
-   STA CPM_EP,X                            ; valid forever: psi is a pure
-                                           ; function of (dx,dy)
-.endscope
+   STA CPM_PSIH,X                          ; valid forever: psi is a pure
+                                           ; function of (dx,dy); the KDXH
+                                           ; store above IS the validity mark
+
+; ============================================================================
+; Sign-class corner_phi entries (2026-07-18). Every ZC arm knows BOTH
+; corners' delta signs at assembly time (the zone puts the viewer on a
+; known side of each corner plane: boxx=0 -> dx>=0 for both corners,
+; boxx=2 -> dx<=0, boxx=1 -> per-corner by plane; same for y). So each
+; arm calls a class entry whose miss converter dead-codes the sign
+; tests: |delta| by a fixed-direction move/negate, oct base an
+; immediate. Boundary zeros are exact: delta=0 folds to ta=0, where
+; base+ta == base-ta — psi is IDENTICAL to the generic path (and the
+; mirror) in every case, so memo entries stay interchangeable.
+; The probe is duplicated per class (a shared probe would need a
+; dynamic miss target = the dispatch this kills). Generic corner_phi
+; stays for the unit-test hook (test_slope_div drives arbitrary deltas).
+; PLACEMENT: flat = the ANGX window ($F200 — the TA_HI page option F
+; killed; ANG itself is at its $F100 ceiling). Banked = ANG_BK floats
+; in the CODE region like everything else.
+; ============================================================================
+.macro CPM_ENTRY name, negx, negy, obase
+   .local cmiss, cnz, cgt, cle, ceq
+name:
+   LDA pa_dx
+   EOR pa_dy
+   AND #$7F
+   TAX
+   STX zp_cpm_slot
+   LDA CPM_KDXH,X
+   CMP pa_dx+1
+   BNE cmiss
+   LDA CPM_KDXL,X
+   CMP pa_dx
+   BNE cmiss
+   LDA CPM_KDYL,X
+   CMP pa_dy
+   BNE cmiss
+   LDA CPM_KDYH,X
+   CMP pa_dy+1
+   BNE cmiss
+   LDA CPM_PSIL,X
+   STA pa_res
+   LDA CPM_PSIH,X
+   STA pa_res+1
+   JMP cp_havepsi
+cmiss:
+   LDA pa_dx
+   ORA pa_dx+1
+   ORA pa_dy
+   ORA pa_dy+1
+   BNE cnz
+   JMP pa_zero                             ; (0,0) -> psi = 0 (rare)
+cnz:
+.if negx
+   LDA #0                                  ; |dx| = -dx (class: dx <= 0)
+   SEC
+   SBC pa_dx
+   STA sd_num
+   LDA #0
+   SBC pa_dx+1
+   STA sd_num+1
+.else
+   LDA pa_dx                               ; |dx| = dx (class: dx >= 0)
+   STA sd_num
+   LDA pa_dx+1
+   STA sd_num+1
+.endif
+.if negy
+   LDA #0                                  ; |dy| = -dy (class: dy <= 0)
+   SEC
+   SBC pa_dy
+   STA sd_den
+   LDA #0
+   SBC pa_dy+1
+   STA sd_den+1
+.else
+   LDA pa_dy                               ; |dy| = dy (class: dy >= 0)
+   STA sd_den
+   LDA pa_dy+1
+   STA sd_den+1
+.endif
+   LDA sd_den+1                            ; axgt = |dx| > |dy|
+   CMP sd_num+1
+   BCC cgt
+   BNE cle
+   LDA sd_den
+   CMP sd_num
+   BEQ ceq
+   BCS cle
+cgt:
+   LDA sd_num                              ; swap: num=min, den=max
+   LDX sd_den
+   STA sd_den
+   STX sd_num
+   LDA sd_num+1
+   LDX sd_den+1
+   STA sd_den+1
+   STX sd_num+1
+   LDX #obase+1
+   JMP lf_entry
+cle:
+   LDX #obase
+   JMP lf_entry
+ceq:
+   LDX #obase                              ; diagonal: ta = ANG45 exactly
+   LDA #<512
+   STA pa_res
+   LDA #>512
+   STA pa_res+1
+   JMP comb
+.endmacro
+; oct base = (dx<0)*4 + (dy<0)*2 (P = delta >= 0, N = delta <= 0)
+.if ::BANKED = 0
+.segment "ANGX"
+angx_head:
+.endif
+CPM_ENTRY corner_phi_pp, 0, 0, 0
+CPM_ENTRY corner_phi_pn, 0, 1, 2
+CPM_ENTRY corner_phi_np, 1, 0, 4
+CPM_ENTRY corner_phi_nn, 1, 1, 6
+.if ::BANKED = 0
+.segment "ANG"
+.endif
 ; --- afn - psi, mask to u12 (file-global: reused by the rotation
 ;     cache's warm path to re-derive r from cached psi) ---
 ;   in : pa_res = psi (u12 fineangle), bca_afn = a_fine+512 (frame-
@@ -643,44 +801,96 @@ cp_havepsi:
    SBC bca_pys+1
    STA pa_dy+1
 .endmacro
-.macro ZARM s, x1, y1, x2, y2
+; partial fetches for the axis-sharing rows (1/4/6/9): the two corners
+; sit on one shared plane, and pa_dx/pa_dy SURVIVE corner_phi (probe,
+; converters and store only read them) — so the second corner reloads
+; just its own axis.
+.macro ZCF_DX s, xl
+   LDY zp_node_ch_l
+   SEC
+   LDA xl+(s)*$100,Y
+   SBC bca_pxs
+   STA pa_dx
+   LDA xl+$200+(s)*$100,Y
+   SBC bca_pxs+1
+   STA pa_dx+1
+.endmacro
+.macro ZCF_DY s, yl
+   LDY zp_node_ch_l
+   SEC
+   LDA yl+(s)*$100,Y
+   SBC bca_pys
+   STA pa_dy
+   LDA yl+$200+(s)*$100,Y
+   SBC bca_pys+1
+   STA pa_dy+1
+.endmacro
+.macro ZARM s, x1, y1, x2, y2, e1, e2
    ZCF s, x1, y1
-   JSR corner_phi
+   JSR e1                                  ; sign-class corner_phi entry —
+   STA bca_p1+1                            ; the arm's zone fixes each
+   STY bca_p1                              ; corner's delta signs statically
+   ZCF s, x2, y2
+   JSR e2
+   STA bca_p2+1
+   STY bca_p2
+   RTS
+.endmacro
+.macro ZARM_SX s, x1, y1, y2, e1, e2      ; corners share the x plane
+   ZCF s, x1, y1
+   JSR e1
    STA bca_p1+1
    STY bca_p1
-   ZCF s, x2, y2
-   JSR corner_phi
+   ZCF_DY s, y2                            ; pa_dx carried over
+   JSR e2
+   STA bca_p2+1
+   STY bca_p2
+   RTS
+.endmacro
+.macro ZARM_SY s, x1, y1, x2, e1, e2      ; corners share the y plane
+   ZCF s, x1, y1
+   JSR e1
+   STA bca_p1+1
+   STY bca_p1
+   ZCF_DX s, x2                            ; pa_dy carried over
+   JSR e2
    STA bca_p2+1
    STY bca_p2
    RTS
 .endmacro
 zc_corners:
-   TXA                                     ; X = boxpos
-   ASL A
-   ORA zp_bbox_side
-   TAX
-   LDA zc_tab_hi,X
-   PHA
-   LDA zc_tab_lo,X
-   PHA
+   LDA zc_tab_hi,X                         ; X = dispatch index from
+   PHA                                     ; box_classify (boxpos*2 + side —
+   LDA zc_tab_lo,X                         ; composed carry-free at the
+   PHA                                     ; classify exit)
    RTS                                     ; dispatch; arm RTSes to our caller
 ; checkcoord rows (x = L/R plane, y = T/B plane); rows 3/5/7 unused
-zc0_0:  ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO
-zc0_1:  ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO
-zc1_0:  ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_T_LO
-zc1_1:  ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_T_LO
-zc2_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO
-zc2_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO
-zc4_0:  ZARM 0, BBP_L_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO
-zc4_1:  ZARM 1, BBP_L_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO
-zc6_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO
-zc6_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO
-zc8_0:  ZARM 0, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO
-zc8_1:  ZARM 1, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO
-zc9_0:  ZARM 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_B_LO
-zc9_1:  ZARM 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_B_LO
-zc10_0: ZARM 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO
-zc10_1: ZARM 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO
+; Sign classes per corner (P = delta >= 0, N = delta <= 0), derived from
+; the row's viewer zone (boxx/boxy) and each corner's plane:
+;   row 0 (NW):  c1=(R,T) dx>=0 dy<=0 PN   c2=(L,B) PN
+;   row 1 (N):   c1=(R,T) PN              c2=(L,T) dx<=0 NN
+;   row 2 (NE):  c1=(R,B) NN              c2=(L,T) NN
+;   row 4 (W):   c1=(L,T) dy>=0 PP        c2=(L,B) dy<=0 PN
+;   row 6 (E):   c1=(R,B) NN              c2=(R,T) NP
+;   row 8 (SW):  c1=(L,T) PP              c2=(R,B) PP
+;   row 9 (S):   c1=(L,B) NP              c2=(R,B) PP
+;   row 10 (SE): c1=(L,B) NP              c2=(R,T) NP
+zc0_0:  ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
+zc0_1:  ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
+zc1_0:  ZARM_SY 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
+zc1_1:  ZARM_SY 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
+zc2_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
+zc2_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
+zc4_0:  ZARM_SX 0, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
+zc4_1:  ZARM_SX 1, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
+zc6_0:  ZARM_SX 0, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+zc6_1:  ZARM_SX 1, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+zc8_0:  ZARM 0, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
+zc8_1:  ZARM 1, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
+zc9_0:  ZARM_SY 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
+zc9_1:  ZARM_SY 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
+zc10_0: ZARM 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
+zc10_1: ZARM 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
 zc_tab_lo:
    .byte <(zc0_0-1),<(zc0_1-1),<(zc1_0-1),<(zc1_1-1),<(zc2_0-1),<(zc2_1-1)
    .byte <(zc0_0-1),<(zc0_1-1)             ; row 3 unused
