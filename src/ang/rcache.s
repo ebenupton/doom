@@ -30,7 +30,11 @@ RC_P1L_S = $9700                        ; below the VXC planes (DIRs
 RC_P2L_J = $D400                        ;   asserted <= $9700 now)
 RC_P2L_S = $DA00                        ; after VWHC
 RC_PH_J  = $DB00
-RC_PH_S  = $F000                        ; below the old TA_HI shadow
+RC_PH_S  = $0600                        ; the DEFQ page (FREE since d541b80;
+                                        ; moved from $F000 2026-07-17 — the
+                                        ; unrolled slope_div slow arm grew
+                                        ; flat ANG past $F000 and CORRUPTED
+                                        ; this plane: rotcache caught it)
 .endif
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:

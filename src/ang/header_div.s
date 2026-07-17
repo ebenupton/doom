@@ -129,43 +129,45 @@ hi128:
    ROL sd_q+1
    RTS
 slow:
-; Generic path (den >= 256, ~2% of divides): classic 16-bit restoring divide
-; with the remainder in ZP (sd_r). 10 iterations of
-;   { r<<=1; q<<=1; if r>=den { r-=den; q|=1 } }  ->  q = floor(num*1024/den).
-   LDA sd_num
-   STA sd_r
-   LDA sd_num+1
-   STA sd_r+1
+; Generic path (den >= 256, ~2% of divides but ~430 cycles each = a
+; real rock). UNROLLED register-ride (2026-07-17): the remainder's lo
+; byte lives in A, the hi in sd_r+1, and with the counter gone Y is
+; scratch for the subtract shuffle — the old ASL zp/ROL zp shifting and
+; LDA-heavy compares drop ~15 cycles per iteration. Hi compares go
+; through Y (CPY zp: A stays the lo byte); the quotient bit is the
+; carry as before (failing compares arrive C=0, the hi SBC leaves
+; C=1). q fits its lo byte through iteration 8 (q <= 1023), so the
+; sd_q+1 ROL joins for the last two only. X (oct) untouched.
    LDA #0
    STA sd_q
    STA sd_q+1
-   LDY #10                                 ; counter in Y: slope_div must
-loop:                                      ; preserve X (oct rides it)
-   ASL sd_r
-   ROL sd_r+1
-; r <<= 1
-; if r >= den: r -= den; the quotient bit rides CARRY into the bottom
-; ROL pair (BCC arms arrive C=0; the subtract leaves C=1 — both SECs
-; and the INC were dead)
-   LDA sd_r+1
-   CMP sd_den+1
+   LDA sd_num+1
+   STA sd_r+1
+   LDA sd_num                              ; r lo rides A throughout
+.repeat 10, I
+.scope
+   ASL A
+   ROL sd_r+1                              ; r <<= 1 (r < den <= ~1400: fits)
+   LDY sd_r+1
+   CPY sd_den+1
    BCC no
    BNE yes
-   LDA sd_r
-   CMP sd_den
+   CMP sd_den                              ; hi equal: lo decides (A = r lo)
    BCC no
 yes:
-   LDA sd_r
-   SBC sd_den                              ; C=1 on both entries
-   STA sd_r
+   SBC sd_den                              ; C=1 on both entries: lo -= den lo
+   TAY                                     ; park the lo result
    LDA sd_r+1
    SBC sd_den+1
    STA sd_r+1                              ; C=1 out (r >= den)
+   TYA
 no:
-   ROL sd_q                                ; q = q<<1 | bit
+   ROL sd_q                                ; q = q<<1 | carry
+.if I >= 8
    ROL sd_q+1
-   DEY
-   BNE loop
+.endif
+.endscope
+.endrepeat
    RTS
 .endscope
 

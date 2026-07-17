@@ -641,7 +641,12 @@ end:
 .if BANKED
 ; (ld65 writes this: SAVE "bsp_render_ang_bk.bin", $3400, end, $3400)
 .else
-.assert end <= TA_HI, error             ; code must not grow into the relocated tables ($F200+)
+.assert end <= $F100, error             ; flat ANG ceiling: RCACHE_STATE $F100
+                                        ; (abi) is the next squatter above —
+                                        ; RC_PH_S vacated $F000 (2026-07-17)
+                                        ; after ANG growth CORRUPTED it (the
+                                        ; old TA_HI bound was too loose;
+                                        ; rotcache caught the overlap)
 ; (ld65 writes this: SAVE "bsp_render_ang.bin", $E940, end, $E940)
 .endif
 
