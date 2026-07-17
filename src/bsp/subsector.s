@@ -197,7 +197,7 @@ seg_proc:
 ; ceiling); ~12 cyc JSR/RTS tax. chain_reuse_v1 consumes zp_ys_done
 ; (prev seg y-staged => VX2's front sy pair is live => copy it and set
 ; zp_ys_v1ok so the y stage skips v1's front projection).
-   JSR chain_reuse_v1
+   chain_reuse_v1
    LDA #0
    STA zp_ys_done                           ; consumed (chain) — reset for
    BEQ ch_v1_done                           ; THIS seg's own y stage
@@ -449,7 +449,7 @@ ys_v2:
    LDA zp_seg_flags
    AND #$41                                ; APEDGE1|APEDGE2
    BEQ hgp_can
-   JSR apv_stage
+   apv_stage
 hgp_can:
 ; Canonicalize: after this point VX1 is ALWAYS the left endpoint, and
 ; every emit path below is single-path (no ord dispatch anywhere).
@@ -745,7 +745,7 @@ skip_rvert:
    LDA zp_seg_flags                        ; spectrack (warm) 2026-07-12:
    AND #$41                                ; every seg paid a 28-cycle no-op
    BEQ ape_skip                            ; call — gate APEDGE1|2 here
-   JSR ap_edges
+   ap_edges
 ape_skip:
 
 ; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and

@@ -8,30 +8,8 @@ bsp_b_start:
 ; (entry split 2026-07-12, spectrack find: 88% of calls were complete
 ; no-ops — the hi==0/evy-positive common case is INLINED at the single
 ; call site in seg_xform.s; only hi != 0 calls in here now, A = hi.)
-ev_clamp_hi_nz:
-.scope
-   CMP #$FF
-   BEQ ev_case_ff
-   ASL A
-   BCS ev_clamp_neg
-; carry = sign of hi byte
-   LDA #$7F
-   BNE ev_store
-ev_clamp_neg:
-   LDA #$80
-   BNE ev_store
-ev_case_ff:
-   LDA VX1+0,X
-   BMI ev_done
-; $FF:%1xxxxxxx → fits s8
-   LDA #$80
-   BNE ev_store
-; -256..-129 → clamp
-ev_store:
-   STA VX1+0,X
-ev_done:
-   RTS
-.endscope
+; (ev_clamp_hi_nz is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 
 ; (X-projector family moved to project.s 2026-07-12 — the whole X
 ; projection family lives in one file now.)

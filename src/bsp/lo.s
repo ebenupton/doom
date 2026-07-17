@@ -30,7 +30,7 @@ bsp_lo_start:
 ; ============================================================================
 reproject_at_crossing:
 .scope
-   JSR cross_compute
+   cross_compute
 ; Project cx with frac=0 (Python passes fvx_c=0 for clipped endpoints).
 ; cx is s16; br_project_x dispatches narrow/wide on its hi byte.
    LDA zp_clip_cx
@@ -72,116 +72,8 @@ reproject_at_crossing:
 ; Clobbers zp_div_l/hi/den, zp_br_a, zp_br_dx_l/dxhi, zp_br_t2/t3,
 ; zp_br_sign, plus SC_UDIV16_8 / SC_UMUL8 scratch.
 ; ============================================================================
-cross_compute:
-.scope
-; Compute cx = v1_evx + (t * (v2_evx - v1_evx)) >> 8 where
-;   t = ((NEAR - v1_evy) << 8) / (v2_evy - v1_evy)
-; matching Python's fp_near_clip path. Both num and den always share
-; sign in our cases (one vertex clipped, one not), so t is non-negative.
-; Use unsigned division on magnitudes; sign of the t*dvx term comes
-; from dvx alone.
-
-; Special case: v2_evy = NEAR. Then |num| = |den|, t would be 256 and
-; wrap to 0 in u8. Crossing point is v2 itself.
-   LDA zp_seg_v2_evy
-   CMP #1
-   BNE c_normal
-   LDA zp_seg_v2_evx
-   STA zp_clip_cx
-   ZERO zp_clip_cx_hi
-   LDA zp_seg_v2_evx
-   BPL c_sc_done
-   LDA #$FF
-   STA zp_clip_cx_hi
-c_sc_done:
-   JMP c_set_recip
-c_normal:
-
-; |num| = |1 - v1_evy| via signed abs of (1 - v1_evy).
-   LDA #1
-   SEC
-   SBC zp_seg_v1_evy
-   BPL c_num_ok
-   EOR #$FF
-   BUMP
-c_num_ok:
-   STA zp_div_h
-   ZERO zp_div_l
-
-; |den| = |v2_evy - v1_evy|
-   LDA zp_seg_v2_evy
-   SEC
-   SBC zp_seg_v1_evy
-   BPL c_den_ok
-   EOR #$FF
-   BUMP
-c_den_ok:
-   STA zp_div_den
-
-   JSR SC_UDIV16_8                         ; A = t (u8)
-   STA zp_br_a
-
-; dvx = v2_evx - v1_evx as s16 (sign-extend then subtract).
-   LDA zp_seg_v2_evx
-   STA zp_br_dx_l
-   ZERO zp_br_dx_h
-   LDA zp_seg_v2_evx
-   BPL c_v2_pos
-   LDA #$FF
-   STA zp_br_dx_h
-c_v2_pos:
-   LDA zp_seg_v1_evx
-   BPL c_v1_pos
-   LDA zp_br_dx_l
-   SEC
-   SBC zp_seg_v1_evx
-   STA zp_br_dx_l
-   LDA zp_br_dx_h
-   SBC #$FF
-   STA zp_br_dx_h
-   JMP c_have_dvx
-c_v1_pos:
-   LDA zp_br_dx_l
-   SEC
-   SBC zp_seg_v1_evx
-   STA zp_br_dx_l
-   BCS c_dvx_nb                            ; BCS/DEC borrow bump (-2 bytes)
-   DEC zp_br_dx_h
-c_dvx_nb:
-c_have_dvx:
-
-   JSR cross_umul_u8_s16
-; cx (s16) = sext(v1_evx) + sext(resh). With both endpoint evx in s8
-; and t in [0,256], cx lies between them so s16 always holds it; cx
-; itself can still fall outside s8 (sum of two s8) — the caller
-; dispatches narrow/wide projection on the hi byte.
-   ZERO zp_br_t2
-   LDA zp_seg_v1_evx
-   BPL c_cx_v1p
-   LDA #$FF
-   STA zp_br_t2
-c_cx_v1p:
-   ZERO zp_br_t3
-   LDA zp_br_res_h
-   BPL c_cx_rp
-   LDA #$FF
-   STA zp_br_t3
-c_cx_rp:
-   LDA zp_seg_v1_evx
-   CLC
-   ADC zp_br_res_h
-   STA zp_clip_cx
-   LDA zp_br_t2
-   ADC zp_br_t3
-   STA zp_clip_cx_hi
-
-c_set_recip:
-   LDA #2
-   STA zp_br_t0
-   LDA #0
-   STA zp_br_t1
-   JMP br_recip
-.endscope
+; (cross_compute is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 
 ; ============================================================================
 ; cross_umul_u8_s16 — t (u8 in zp_br_a) × dx (s16 in zp_br_dx_l:dxhi) → s16
@@ -195,42 +87,8 @@ c_set_recip:
 ; and negate the s16 result if dx was negative. Clobbers zp_br_dx_l/dxhi
 ; (replaced by |dx|), zp_br_sign, zp_mul_b, zp_prod_l/hi.
 ; ============================================================================
-cross_umul_u8_s16:
-.scope
-; dx = v2_evx - v1_evx with both endpoints s8 => |dx| <= 255: dx_h is
-; pure sign ($00/$FF) and |dx| fits the LO byte. The old second
-; multiply (t x |dx|_hi) was t x 0 — a whole SC_UMUL8 of dead work
-; (deleted 2026-07-14). |dx|_lo = -dx_l is exact: dx = -256 can't occur.
-   ZERO zp_br_sign
-   LDA zp_br_dx_h
-   BPL c2_dxp
-   LDA #0
-   SEC
-   SBC zp_br_dx_l
-   STA zp_br_dx_l
-   INC zp_br_sign
-c2_dxp:
-; t * |dx| (u8 × u8 → u16 → resl:resh)
-   LDA zp_br_dx_l
-   STA zp_mul_b
-   LDA zp_br_a
-   JSR SC_UMUL8
-   STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
-   LDA zp_prod_l
-   STA zp_br_res_l
-; sign-flip if dx was negative
-   LDA zp_br_sign
-   BEQ c2_pos
-   LDA #0
-   SEC
-   SBC zp_br_res_l
-   STA zp_br_res_l
-   LDA #0
-   SBC zp_br_res_h
-   STA zp_br_res_h
-c2_pos:
-   RTS
-.endscope
+; (cross_umul_u8_s16 is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 
 ; (br_node_setup moved to walk.s as the NODE_SETUP_DISPATCH macro,
 ; 2026-07-16 — single caller, inlined; exits JMP straight to the side
@@ -268,21 +126,8 @@ c2_pos:
 ; Python computes then AP-skips or DCL-clips them; pixel output matches.
 ; X = endpoint STRUCT offset (0 = v1, 15 = v2) for ap_edge_one.
 ; ============================================================================
-ap_edges:
-.scope
-   BIT zp_seg_flags                        ; V = bit 6 = APEDGE1
-   BVC ap_chk2
-   LDX #0                                  ; v1 struct
-   JSR ap_edge_one
-ap_chk2:
-   LDA zp_seg_flags
-   LSR A                                   ; C = bit 0 = SF_APEDGE2
-   BCC ap_done
-   LDX #VX_STRIDE                          ; v2 struct
-   JMP ap_edge_one                         ; tail call
-ap_done:
-   RTS
-.endscope
+; (ap_edges is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 
 ; ap_edge_one — emit ONE aperture-edge vertical at endpoint K.
 ;   X = vertex struct offset (0 = v1, VX_STRIDE = v2); everything (sx,
@@ -375,63 +220,8 @@ ap_rts:
 ; Arrives under BANK_C; pages L0 for the header reads; br_project_y
 ; pages L2 itself; the emits re-page C per draw as always.
 ; ============================================================================
-apv_stage:
-.scope
-   BIT zp_seg_flags                        ; V = bit 6 = APEDGE1
-   BVC as_chk2
-   LDX #0
-   LDY #13                                 ; header +13 = apv1_fh (+12 ch)
-   JSR as_one
-as_chk2:
-   LDA zp_seg_flags
-   LSR A                                   ; C = bit 0 = APEDGE2
-   BCC as_done
-   LDX #VX_STRIDE
-   LDY #15                                 ; header +15 = apv2_fh (+14 ch)
-   JMP as_one                              ; tail call
-as_done:
-   RTS
-; as_one: X = struct offset, Y = header offset of the FH byte (CH = Y-1)
-as_one:
-   LDA VX1+4,X                             ; sx_hi: off-screen endpoint →
-   BEQ as_on                               ; ap_edge_one skips its vertical,
-   RTS                                     ; so DON'T project the pair
-                                        ; (spectrack 2026-07-12: every
-                                        ; wasted apv_stage call was this)
-as_on:
-   STX as_x
-   LDA VX1+13,X                            ; endpoint recip
-   STA zp_br_r_m8
-   LDA VX1+14,X
-   STA zp_br_r_s
-   RNS_SELECT                              ; (A = S; Y survives, X dies)
-   PAGE BANK_L0
-   DEY
-   LDA (zp_seg_hdr_p),Y                    ; APV ch FIRST (staged for the
-   SEC                                     ; second projection)
-   SBC zp_br_vz
-   STA zp_ap2_dlt
-   INY
-   LDA (zp_seg_hdr_p),Y                    ; APV fh
-   SEC
-   SBC zp_br_vz
-   TAX                                     ; fh delta RIDES X across the
-   PAGE BANK_L2                            ; A-clobbering PAGE (projections
-   TXA                                     ; run under L2)
-   JSR br_project_y                        ; h in A -> Y = lo, A = hi
-   LDX as_x
-   STA VX1+10,X                            ; FH projection hi (from A)
-   TYA
-   STA VX1+9,X                             ; FH projection lo
-   LDA zp_ap2_dlt                          ; h in A
-   JSR br_project_y
-   LDX as_x
-   STA VX1+12,X                            ; CH projection hi (from A)
-   TYA
-   STA VX1+11,X                            ; CH projection lo
-   RTS
-; (as_x promoted to ZP — zp.inc $A1 — 3 accesses per as_one)
-.endscope
+; (apv_stage is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 
 
 
@@ -444,45 +234,8 @@ as_on:
 ; the flag-gated back pair with the vertex's recip restored. ep = 0 set
 ; by the caller. Replaces the whole VCACHE hit path + 2 VWHC lookups.
 ; ============================================================================
-chain_reuse_v1:
-.scope
-   LDA zp_seg_v2_evy
-   STA zp_seg_v1_evy
-   LDA zp_seg_v2_evx
-   STA zp_seg_v1_evx
-   LDA zp_seg_v2_clipped
-   STA zp_seg_v1_clipped
-   BNE ch_rts                               ; clipped: rest undefined
-   LDA zp_seg_sx2_l
-   STA zp_seg_sx1_l
-   LDA zp_seg_sx2_h
-   STA zp_seg_sx1_h
-; recip carried UNCONDITIONALLY (2026-07-11): the post-has_gap y stage
-; projects from the struct-banked recips.
-   LDA zp_seg_v2_r_m8
-   STA zp_seg_v1_r_m8
-   LDA zp_seg_v2_r_s
-   STA zp_seg_v1_r_s
-; CHAIN SY RECOVERY (2026-07-11): if the PREVIOUS seg ran its y stage
-; (zp_ys_done — cleared by any culled/back-facing seg in between), VX2
-; still holds its v2's projected FRONT pair, and this seg's v1 is that
-; same vertex under the same subsector heights: copy the pair and let
-; the y stage skip v1's front projection (zp_ys_v1ok).
-   LDA zp_ys_done
-   BEQ ch_rts
-   LDA zp_seg_sy2_top_l
-   STA zp_seg_sy1_top_l
-   LDA zp_seg_sy2_top_h
-   STA zp_seg_sy1_top_h
-   LDA zp_seg_sy2_bot_l
-   STA zp_seg_sy1_bot_l
-   LDA zp_seg_sy2_bot_h
-   STA zp_seg_sy1_bot_h
-   LDA #1
-   STA zp_ys_v1ok
-ch_rts:
-   RTS
-.endscope
+; (chain_reuse_v1 is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 
 bsp_lo_end:
 .if ::BANKED

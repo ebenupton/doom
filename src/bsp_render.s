@@ -2,6 +2,7 @@
 ; emitted in include order; segments are set inside the parts).
 .include "zp.inc"
 .include "bsp/header.s"
+.include "bsp/inline.s"
 .include "bsp/arith.s"
 .include "bsp/view.s"
 .include "bsp/project.s"

@@ -197,7 +197,7 @@ vxc_jsr_site:
    STA VX1+0,X
    BNE ec_done                             ; (A = $7F: always taken)
 ec_hi_nz:
-   JSR ev_clamp_hi_nz
+   ev_clamp_hi_nz
 ec_done:
 
 ; (Cache writes are deferred to the two exits — each does ONE armed
@@ -401,7 +401,7 @@ va_cold:
    STA VXC_VALID,X
    JSR br_to_view_fetch                    ; pages L2 itself
    PAGE BANK_C
-   JSR vxc_cold_store                      ; leaf (vxcache.s): base = total-ref
+   vxc_cold_store                      ; leaf (vxcache.s): base = total-ref
    PAGE BANK_L0
    RTS
 .endscope

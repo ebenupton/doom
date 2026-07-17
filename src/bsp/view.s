@@ -163,13 +163,13 @@ br_view_setup:
 ; Banked: the cache code+data live in the bank L2 window — page it in
 ; (no-op macro on flat; callers re-page before their next engine call).
    PAGE BANK_C
-   JSR rot_select                          ; SMC: specialize rot_s1..s4 for this
+   rot_select                          ; SMC: specialize rot_s1..s4 for this
                                         ; frame's trig (SEL, main $2C00 —
                                         ; runs under any bank)
    PAGE BANK_L2
    JSR bca_frame                           ; per-frame rcache dispatch patch (rcache.s)
    JSR br_dcache_frame                     ; forward-coherence bbox cache (bbox.s)
-   JSR vxc_frame                           ; translation-coherence vertex cache
+   vxc_frame                           ; translation-coherence vertex cache
    RTS
 .endscope
 
@@ -423,74 +423,6 @@ bv_fvy_done:
 ; Clobbers A, X.
 ; ============================================================================
 .segment "SEL"
-rot_select:
-.scope
-; --- sin variant -> A/X = lo/hi ---
-   LDA zp_br_sone
-   BEQ sin_notone
-   LDA zp_br_sneg
-   BEQ sin_up
-   LDA #<rot_unity_neg
-   LDX #>rot_unity_neg
-   BNE sin_have                            ; (hi byte never 0 — always taken)
-sin_up:
-   LDA #<rot_unity_pos
-   LDX #>rot_unity_pos
-   BNE sin_have
-sin_notone:
-   LDA zp_br_smag
-   BNE sin_gen
-   LDA #<rot_zero
-   LDX #>rot_zero
-   BNE sin_have
-sin_gen:
-   STA rot_gen_sin+1                       ; mag immediate
-   STA rot_sqs1l+1                         ; sum-side table bases: lo byte
-   STA rot_sqs1h+1                         ; = mag (SQR pages page-aligned,
-   STA rot_sqs2l+1                         ; hi byte static; abs,X crosses
-   STA rot_sqs2h+1                         ; into the contiguous 2nd page)
-   LDA zp_br_sneg
-   STA rot_gen_sin+5                       ; neg immediate
-   LDA #<rot_gen_sin
-   LDX #>rot_gen_sin
-sin_have:
-   STA rot_s1+1
-   STX rot_s1+2
-   STA rot_s4+1
-   STX rot_s4+2
-; --- cos variant -> rot_s2 / rot_s3 ---
-   LDA zp_br_cone
-   BEQ cos_notone
-   LDA zp_br_cneg
-   BEQ cos_up
-   LDA #<rot_unity_neg
-   LDX #>rot_unity_neg
-   BNE cos_have
-cos_up:
-   LDA #<rot_unity_pos
-   LDX #>rot_unity_pos
-   BNE cos_have
-cos_notone:
-   LDA zp_br_cmag
-   BNE cos_gen
-   LDA #<rot_zero
-   LDX #>rot_zero
-   BNE cos_have
-cos_gen:
-   STA rot_gen_cos+1
-   STA rot_sqc1l+1                         ; cos sum-side bases (see sin)
-   STA rot_sqc1h+1
-   STA rot_sqc2l+1
-   STA rot_sqc2h+1
-   LDA zp_br_cneg
-   STA rot_gen_cos+5
-   LDA #<rot_gen_cos
-   LDX #>rot_gen_cos
-cos_have:
-   STA rot_s2+1
-   STX rot_s2+2
-   STA rot_s3+1
-   STX rot_s3+2
-   RTS
-.endscope
+; (rot_select is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 .segment "MAIN"

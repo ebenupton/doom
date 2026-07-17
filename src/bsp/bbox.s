@@ -196,7 +196,7 @@ dv_fresh:
    JSR br_bbox_visible                     ; pristine core (pages L2/C itself)
    PHA                                     ; A = verdict (has_gap already run)
    PAGE BANK_L2                            ; store code lives in the L2 window
-   JSR bv_dcache_store                     ; encode bca_vis/ilo/ihi → code byte
+   bv_dcache_store                     ; encode bca_vis/ilo/ihi → code byte
    PLA                                     ; restore verdict; Z tracks A
    RTS
 .endscope
@@ -214,36 +214,8 @@ dv_fresh:
 ; bv_dcache_store — encode the fresh bbox-check outcome for (node, side).
 ; In: bca_vis/bca_ilo/bca_ihi valid; zp_node_ch_l/zp_bbox_side = entry.
 ; Clobbers A, X, Y.
-bv_dcache_store:
-.scope
-   LDX zp_node_ch_l
-   LDA bca_vis
-   BNE st_vis
-   LDA #126                                ; invisible
-   BNE st_put                              ; (always)
-st_vis:
-; Classification needs a GUARD BAND around the pivot: extent endpoints
-; are conservative-wide and viewangletox rounds, so a bound within a few
-; columns of centre can include points on the OTHER side of the true
-; optical axis — which migrate the other way. 4 columns on each side
-; (left class ends at 124, right class starts at 132); anything nearer
-; the pivot is treated as straddling (0,255) — always safe.
-   LDA bca_ilo
-   CMP #132
-   BCS st_put                              ; right of centre: code = ilo (>=132)
-   LDA bca_ihi
-   CMP #125
-   BCC st_put                              ; left of centre: code = ihi (0-124)
-   LDA #127                                ; near-pivot / straddle
-st_put:
-   LDY zp_bbox_side
-   BNE st_left
-   STA D_CODE_R,X
-   RTS
-st_left:
-   STA D_CODE_L,X
-   RTS
-.endscope
+; (bv_dcache_store is a MACRO now — bsp/inline.s — expanded at its single
+;  call site, 2026-07-17.)
 
 ; ============================================================================
 ; br_dcache_frame — per-frame D-cache classifier (called from br_view_setup
