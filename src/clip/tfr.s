@@ -1229,18 +1229,16 @@ SZR_PROJ = $E2                          ; = VX1 (zp.inc vertex structs).
 
 ; --- s16 threshold helpers for seg_zero_rec_solid ---------------------
 ; X = lo-byte offset of a projection in SZR_PROJ. C=1 iff value < Y_BIAS.
-; s16 compare via full SBC pair: the sign of (value - Y_BIAS) is the
-; N flag of the hi-byte SBC, corrected for signed overflow by EOR #$80
-; when V is set (standard 6502 signed-compare idiom). Clobbers A.
+; s16 compare via full SBC pair — NO V-correction (2026-07-17 sweep):
+; projections are bounded by construction (sy = HALF_H - rns(h*m9, S),
+; |h*m9| <= 127*511, S >= 1 -> |sy| <= 32,577), so value-6 and
+; 165-value both stay inside s16 (margins 191 / 26) and N IS the sign.
 szr_lt:
    LDA SZR_PROJ,X
    SEC
    SBC #Y_BIAS
    LDA SZR_PROJ+1,X
    SBC #0
-   BVC szr_lt_nv
-   EOR #$80
-szr_lt_nv:
    BMI szr_yes
    CLC
    RTS
@@ -1252,9 +1250,6 @@ szr_gt:
    SBC SZR_PROJ,X
    LDA #>(Y_BIAS+159)
    SBC SZR_PROJ+1,X
-   BVC szr_gt_nv
-   EOR #$80
-szr_gt_nv:
    BMI szr_yes
    CLC
    RTS

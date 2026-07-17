@@ -313,6 +313,9 @@ hg_hi_diff:
 ; hi bytes differ: signed hi-byte difference gives the order (lo bytes
 ; only ever break ties, and ties took the equal path above)
 ; (A = sx1_h from the entry compare; SEC stays — CMP's carry varies)
+; V-correction KEPT (2026-07-17 sweep): |sx| reaches +-32,577 (rns
+; bound), so the hi bytes span +-127 and their s8 difference CAN
+; overflow for a near wall with endpoints at opposite extremes.
    SEC
    SBC zp_seg_sx2_h
    BVC hgd_v_ok
