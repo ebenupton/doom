@@ -64,7 +64,7 @@ ABI = [
     ('RCACHE_STATE',   0xB460, 0xF100, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
     ('RCACHE_ENABLE',  0xB4E8, 0xF188, 'rotation-coherence bca cache switch (STATE+$88)'),
-    ('CPM_BASE',       0x8E00, 0x5480, 'corner-phi memo: 128-slot xor hash, 3.5 pages ending EXACTLY at $5800 flat (banked: L2 window gap after VATOX; flat: CODE-tail BSS carve, link-asserted)'),
+    ('CPM_BASE',       0x8300, 0x5480, 'corner-phi memo: 128-slot xor hash, 3.5 pages ending EXACTLY at $5800 flat. BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
     ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
     ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi'),
     ('CPM_KDYL',       'CPM_BASE+$100', None, '... dy lo'),
