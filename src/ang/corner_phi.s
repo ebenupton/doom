@@ -322,267 +322,15 @@ cx_inside:
 ; (load_val removed: inlined at the corner loads.)
 
 ; ============================================================================
-; corner_phi — signed view-relative angle (phi) of one box corner.
-;   in : pa_dx/pa_dy (s16 = corner - viewer int pos, loaded by the caller),
-;        bca_afn (a_fine, frame-constant)
-;   out: r in A (hi) / Y (lo), u12; pa_res holds psi (see cp_havepsi)
-;        clobbers sd_num/sd_den, pa_sx/pa_sy (oct rides X)
-;   r = (a_fine - psi) & 4095, psi = point_to_angle_f(dx,dy).
-; point_to_angle_f (angle_bbox.py) is INLINED below — the divide died
-; with option F (2026-07-17). pseudocode:
-;   if dx == 0 and dy == 0: psi = 0
-;   num = min(|dx|,|dy|) ; den = max(|dx|,|dy|)       # first-octant fold
-;   oct = (dx<0)*4 | (dy<0)*2 | (|dx|>|dy|)
-;   ta  = ATANEXP[L8[den] - L8[num]]                  # log2 pipeline; the
-;   psi = (base[oct] +/- ta) & 4095                   # old slope_div +
-;                                                     # tantoangle are GONE
-; ============================================================================
-; corner_phi: dx=cx-pxs, dy=cy-pys; point_to_angle; pa_res=(afn-psi)&MASK signed
-; corner_phi: callers load pa_dx/pa_dy directly (box corner minus viewer).
-corner_phi:
-; (the .scope died 2026-07-18: the sign-class entries below need the
-;  internal labels; everything here is file-scoped, no exports)
-; --- inlined point_to_angle(pa_dx,pa_dy) -> pa_res (psi) ---
-; .pa_entry: unit-test hook -- jump here with pa_dx/pa_dy set and
-; bca_afn=0 to read back (-psi)&signed in pa_res (see test_slope_div).
-pa_entry:
-; --- corner-phi MEMO probe (2026-07-17 prototype): within a frame the
-; same box corner (same pa_dx/pa_dy against the fixed viewer) recurs on
-; ~34% of calls — parents and siblings share box corners. 128-slot xor
-; hash (98% of ideal hits on the suite corpus); EXACT by construction:
-; a hit requires the full 4-byte key match, collisions just evict.
-; Tables via abi.inc (banked $8E00 L2 window / flat $5480 CODE-tail
-; carve). PERSISTENT (2026-07-17, the option-E investigation's real
-; find): psi = point_to_angle(dx,dy) is a PURE FUNCTION of the delta
-; key — no viewer, no angle, no frame in it — so entries are valid
-; FOREVER and hits span frames (rotation changes afn only: the whole
-; corner set stays warm). The old per-frame epoch (built for an
-; r-caching variant that never landed) is now a boot-validity byte:
-; 0 = never written; the tables ship zeroed in the bank image and the
-; flat harness zeroes RAM.
-   LDA pa_dx
-   EOR pa_dy
-   AND #$7F
-   TAX
-   STX zp_cpm_slot                         ; store side reuses the slot (X is
-                                           ; clobbered by the miss pipeline)
-; The KDXH compare doubles as the validity test: the plane ships
-; $80-filled (bank image / engine_load), and $80 is an impossible dx hi
-; byte (|corner - px| < 2048 -> hi in [$F8..$07]) — the old EP plane
-; (a byte read + branch per probe, a store per miss, and a whole
-; 128-byte plane) is gone.
-   LDA CPM_KDXH,X
-   CMP pa_dx+1
-   BNE cpm_miss
-   LDA CPM_KDXL,X
-   CMP pa_dx
-   BNE cpm_miss
-   LDA CPM_KDYL,X
-   CMP pa_dy
-   BNE cpm_miss
-   LDA CPM_KDYH,X
-   CMP pa_dy+1
-   BNE cpm_miss
-   LDA CPM_PSIL,X                          ; HIT: cached psi -> pa_res and
-   STA pa_res                              ; straight to the afr tail — the
-   LDA CPM_PSIH,X                          ; whole abs/oct/log2/atanexp
-   STA pa_res+1                            ; core is skipped
-   JMP cp_havepsi
-cpm_miss:
-   LDA pa_dx
-   ORA pa_dx+1
-   ORA pa_dy
-   ORA pa_dy+1
-   BNE nz
-pa_zero:
-   LDA #0
-   STA pa_res
-   STA pa_res+1
-   JMP cp_havepsi
-; zero -> psi=0 (was RTS; the sign-class converters JMP pa_zero)
-nz:
-; |dx| -> sd_num, sx = (dx<0)  (abs written straight to the divide operands;
-; if |dx|>|dy| we swap below so sd_num=min, sd_den=max -- no separate copy).
-   LDA pa_dx+1
-   BPL dxp
-   LDA #4                                  ; sx pre-shifted for the oct fold
-   STA pa_sx
-   LDA #0
-   SEC
-   SBC pa_dx
-   STA sd_num
-   LDA #0
-   SBC pa_dx+1
-   STA sd_num+1
-   JMP dxd
-dxp:
-   LDA #0
-   STA pa_sx
-   LDA pa_dx
-   STA sd_num
-   LDA pa_dx+1
-   STA sd_num+1
-dxd:
-; |dy| -> sd_den, sy = (dy<0)
-   LDA pa_dy+1
-   BPL dyp
-   LDA #2                                  ; sy pre-shifted for the oct fold
-   STA pa_sy
-   LDA #0
-   SEC
-   SBC pa_dy
-   STA sd_den
-   LDA #0
-   SBC pa_dy+1
-   STA sd_den+1
-   JMP dyd
-dyp:
-   LDA #0
-   STA pa_sy
-   LDA pa_dy
-   STA sd_den
-   LDA pa_dy+1
-   STA sd_den+1
-dyd:
-; axgt = (|dx| > |dy|): now sd_num=|dx|, sd_den=|dy|.
-   LDA sd_den+1
-   CMP sd_num+1
-   BCC axgt
-; |dy|<|dx| -> |dx|>|dy|
-   BNE axle
-   LDA sd_den
-   CMP sd_num
-   BEQ pa_equal                            ; |dx|==|dy|: exact diagonal
-   BCS axle
-; |dy|>=|dx| -> not axgt
-axgt:
-; |dx| > |dy|: swap so sd_num=|dy|(min), sd_den=|dx|(max); axgt bit=1
-   LDA sd_num
-   LDX sd_den
-   STA sd_den
-   STX sd_num
-   LDA sd_num+1
-   LDX sd_den+1
-   STA sd_den+1
-   STX sd_num+1
-   LDA #1
-   JMP haveax
-pa_equal:
-; |dx| == |dy|: ta = ANG45 = 512 directly, no lookup. (Historically this
-; divert let the divide assume strict num < den; under option F it also
-; keeps the log2 pipeline out of the k==L8-equal corner.) Ties fold as
-; |dx|<=|dy| (axgt=0), matching the BCS the equal case used to take.
-   LDA pa_sy
-   ORA pa_sx
-   TAX
-   LDA #<512
-   STA pa_res
-   LDA #>512
-   STA pa_res+1
-   JMP comb
-axle:
-; |dx| <= |dy|: sd_num=|dx|(min), sd_den=|dy|(max) already; axgt bit=0
-   LDA #0
-haveax:
-; oct = sx(0/4) | sy(0/2) | axgt(0/1) — signs stored pre-shifted.
-; oct RIDES X to comb: nothing in the option-F log2/atanexp pipeline
-; below touches X (the divide whose slow arm once needed the counter
-; is gone).
-   ORA pa_sy
-   ORA pa_sx
-   TAX
-lf_entry:                                  ; X = oct (sign-class entries JMP
-                                           ; here with the base baked)
-; --- option F (2026-07-17): ta' = ATANEXP[L(den) - L(num)] — two byte
-; lookups and a subtract replace the restoring divide AND tantoangle.
-; Certified by tools/atanexp_cert.py (exhaustive over den <= 2047):
-; EPSILON = 15 fine units; bca_tail applies the +-EPS role bias so
-; every verdict is a SUPERSET of the exact convention's — pixels are
-; bit-identical. num == 0 -> ta = 0 (TA0, seed-asserted). X = oct
-; rides through untouched; 16-bit operands (den >= 256, rare) reduce
-; via >>3 (+96/octave-triple, cancelling when both reduce — the
-; cert models the identical reduction).
-   LDA sd_num+1
-   BNE lf_num16
-   LDA sd_num
-   BEQ lf_ta0
-   TAY
-   LDA L8_TAB,Y
-   STA pa_sx                               ; L(num) (pa_sx/pa_sy are dead
-                                        ; after the haveax oct fold)
-   LDA sd_den+1
-   BNE lf_d16n8
-   LDY sd_den
-   LDA L8_TAB,Y
-   SEC
-   SBC pa_sx                                  ; k = L8[den] - L8[num]
-   BCC lf_k0                               ; defensive (cert: kmin = 0)
-lf_khave:
-   TAY
-   LDA AE_LO,Y
-   STA pa_res
-   LDA AE_HI,Y
-   STA pa_res+1
-   JMP comb
-lf_k0:
-   LDA #0
-   BEQ lf_khave                            ; (always)
-lf_ta0:
-   STA pa_res                              ; ta = 0 (A = 0 here)
-   STA pa_res+1
-   JMP comb
-lf_d16n8:
-; den 16-bit, num 8-bit: k = (L8[den>>3] - L8[num]) + 96, clamped 255
-   JSR lf_dred
-   SEC
-   SBC pa_sx
-   BCS lf_d16n8_pos
-   ADC #96                                 ; C=0: wraps to diff+96 exactly
-   JMP lf_khave
-lf_d16n8_pos:
-   ADC #95                                 ; C=1: diff+96
-   BCS lf_k255
-   JMP lf_khave
-lf_k255:
-   LDA #255
-   JMP lf_khave
-lf_num16:
-; num 16-bit (so den is too: den > num): the +96s cancel
-   LDA sd_num+1
-   STA pa_sy
-   LDA sd_num
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   TAY
-   LDA L8_TAB,Y
-   STA pa_sx                                  ; L8[num>>3]
-   JSR lf_dred
-   SEC
-   SBC pa_sx
-   BCC lf_k0
-   JMP lf_khave
-lf_dred:
-; A = L8[den>>3] (den 16-bit; clobbers Y, pa_sy)
-   LDA sd_den+1
-   STA pa_sy
-   LDA sd_den
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   LSR pa_sy
-   ROR A
-   TAY
-   LDA L8_TAB,Y
-   RTS
+; (The GENERIC corner_phi entry and its sign/oct/swap/log2 path died
+; 2026-07-19: every runtime corner comes through the four sign-class
+; entries + lf_ns (ANGX, below), and the exhaustive pa sweep in
+; test_slope_div drives those directly. What follows is the SHARED
+; tail: comb (octant compose), the memo store, and cp_havepsi.)
 lf_join:
 comb:
 ; res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
-; (0/1024/2048/3072), so base_lo is always 0. X = oct (from haveax).
+; (0/1024/2048/3072), so base_lo is always 0. X = oct (from lf_ns).
 ; The 12-bit mask folds into each arm — the old shared mask block
 ; re-loaded the byte the arm had just stored.
    LDA pa_sign,X
@@ -641,7 +389,7 @@ mask_done:
 ; in the CODE region like everything else.
 ; ============================================================================
 .macro CPM_ENTRY name, negx, negy, obase
-   .local cmiss
+   .local cmiss, czx, czy
 name:
    LDA pa_dx
    EOR pa_dy
@@ -680,6 +428,8 @@ cmiss:
    LDA pa_dx+1
    STA sd_num+1
 .endif
+   ORA sd_num                              ; zero-out folded into the abs (A =
+   BEQ czx                                 ; |dx| hi): |dx| = 0 -> ta = 0
 .if negy
    LDA #0                                  ; |dy| = -dy (class: dy <= 0)
    SEC
@@ -694,10 +444,18 @@ cmiss:
    LDA pa_dy+1
    STA sd_den+1
 .endif
+   ORA sd_den
+   BEQ czy                                 ; |dy| = 0 -> ta = 0, axgt
    LDX #obase                              ; no compare, no swap: lf_ns reads
    JMP lf_ns                               ; the axgt bit off the SIGN of the
                                            ; L8 difference (Eben's negate-the-
                                            ; ATANEXP-input idea, 2026-07-18)
+czx:
+   LDX #obase
+   JMP ns_dx0
+czy:
+   LDX #obase
+   JMP ns_dy0
 .endmacro
 ; oct base = (dx<0)*4 + (dy<0)*2 (P = delta >= 0, N = delta <= 0)
 .if ::BANKED = 0
@@ -727,14 +485,13 @@ CPM_ENTRY corner_phi_nn, 1, 1, 6
 ;   in : X = octant class base (axgt clear), sd_num/sd_den = |dx|/|dy|
 ;   out: joins comb (ANG) with X = oct, pa_res = ta
 ; ============================================================================
+; (the zero-outs live in the converters now — folded into the abs
+; blocks where the hi byte is already in A. And (0,0) is UNREACHABLE
+; at runtime: a zero pair means the viewer IS the tested box's corner,
+; and the closed inside test exits through full_vis before any arm
+; runs; inherited zones are strict, so at least one axis is nonzero.
+; The old pa_zero arm died with it — the pa sweep skips (0,0).)
 lf_ns:
-.scope
-   LDA sd_num
-   ORA sd_num+1
-   BEQ ns_dx0
-   LDA sd_den
-   ORA sd_den+1
-   BEQ ns_dy0
    LDA sd_num+1
    BNE ns_x16
    LDA sd_den+1
@@ -765,9 +522,6 @@ ns_neg:
    INX                                     ; axgt
    BNE ns_khave                            ; (always: k >= 1)
 ns_dx0:
-   LDA sd_den
-   ORA sd_den+1
-   BEQ ns_00
    LDA #0                                  ; |dx| = 0: ta = 0, axgt = 0
    BEQ ns_ta0                              ; (always)
 ns_dy0:
@@ -777,8 +531,6 @@ ns_ta0:
    STA pa_res
    STA pa_res+1
    JMP comb
-ns_00:
-   JMP pa_zero                             ; (0,0) -> psi = 0
 ns_x16:
    LDA sd_den+1
    BNE ns_x16y16
@@ -865,7 +617,6 @@ ns_x16y16:
                                            ;  8-bit arm — AE[0] = 512)
 ns_neg_j:
    JMP ns_neg                              ; C=0 rides the JMP (ns_neg's ADC #1)
-.endscope
 .if ::BANKED = 0
 .segment "ANG"
 .endif

@@ -430,13 +430,6 @@ rc_ret1:
 ; This stub just RTS's; the BSP walker still works and visits all
 ; subsectors. Useful for verifying traversal in isolation.
 ; ============================================================================
-; --- Test instrumentation: subsector visit bitmap at $0A80 ---
-; ($0A80-$0A9F free, 2026-07-15: the write-only visited bitmap is gone;
-;  B-region code starts at $0AA0. Banked $0A80 = ANIM_SSMASK as before.)
-; (Deferred mark_solid buffer replaced by the unified DEFQ op queue at
-; $0600 — see DEFQ_BASE above. It preserves seg ORDER across solid and
-; tighten ops, matching Python's deferred list.)
-
 ; --- Per-seg working state ---
 ; Per-vertex helper outputs (set by br_seg_xform_vertex)
 ; Back-sector heights (s8 each) — only meaningful for portal segs.

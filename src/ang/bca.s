@@ -220,8 +220,8 @@ ih1:                                       ; identity — A <= 255 by now on
 ; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
 ; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
 ; stays for the D-cache store, but callers branch without reloading.
-; full_vis is the CANONICAL full-visibility tail (rcache's two warm/store
-; paths and corner_phi's inside-escape JMP here instead of local copies).
+; full_vis is the CANONICAL full-visibility tail (the rcache warm-full
+; path and box_classify's inside case JMP here instead of local copies).
 visok:
    LDA #1                                  ; visible: bca_vis for the D store,
    STA bca_vis                             ; then the fused has_gap exit — the
