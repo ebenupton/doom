@@ -318,22 +318,35 @@ br_project_y:
    STA zp_br_t0                            ; h (tag compare + raw body reads)
    EOR zp_br_r_m8
    TAX                                     ; probe idx = h ^ rhi
-   LDA VWHC_R_S,X                          ; RLO doubles as the valid flag
-   CMP zp_br_r_s
-   BNE pyc_miss
-   LDA VWHC_R_M8,X
-   CMP zp_br_r_m8
-   BNE pyc_miss
-   LDA VWHC_KEY,X
-   CMP zp_br_t0
-   BNE pyc_miss
+; Staggered partial-key update (the CPM_ENTRY idiom, 2026-07-19):
+; compares run LDA zp / CMP plane, so a miss at stage k arrives with
+; the mismatched zp byte in A and enters the key-store ladder there —
+; the stages BEFORE k matched, the planes already hold them, their
+; stores are skipped. R_S still doubles as the valid flag (a real S is
+; never 0, so fresh slots always miss at stage 0 and write everything).
+   LDA zp_br_r_s
+   CMP VWHC_R_S,X
+   BNE pym0
+   LDA zp_br_r_m8
+   CMP VWHC_R_M8,X
+   BNE pym1
+   LDA zp_br_t0
+   CMP VWHC_KEY,X
+   BNE pym2
    LDY VWHC_L,X                           ; REG CONTRACT: Y = lo, A = hi
    STY zp_br_res_l
    LDA VWHC_H,X
    STA zp_br_res_h
    RTS
-pyc_miss:
-   STX zp_pyc_idx                          ; slot for the tail writeback;
+pym0:
+   STA VWHC_R_S,X
+   LDA zp_br_r_m8
+pym1:
+   STA VWHC_R_M8,X
+   LDA zp_br_t0
+pym2:
+   STA VWHC_KEY,X
+   STX zp_pyc_idx                          ; slot for the tail's VALUE stores;
 .endscope                                  ; FALLS THROUGH into the raw body
 
 ; ============================================================================
@@ -484,15 +497,10 @@ py_shift:                                  ; always 0. C survives LDA/STA.
    LDA #0
    SBC zp_br_res_h
    STA zp_br_res_h
-; --- VWHC writeback (the raw body is only ever entered through the
-; cache front's miss path above) ---
+; --- VWHC writeback, VALUE half (the raw body is only ever entered
+; through the cache front's miss path above, which already wrote the
+; key bytes via the staggered ladder) ---
    LDX zp_pyc_idx
-   LDA zp_br_r_m8
-   STA VWHC_R_M8,X
-   LDA zp_br_r_s
-   STA VWHC_R_S,X
-   LDA zp_br_t0
-   STA VWHC_KEY,X
    TYA
    STA VWHC_L,X
    LDA zp_br_res_h
