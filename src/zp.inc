@@ -73,8 +73,10 @@ zp_rcache_c5 = $C5                ; [bsp]; rcache internal
 zp_px_s_save = $C6                ; [bsp]; br_project_x shrink path: the
                                   ; vertex's TRUE S across the shrunken
                                   ; projection (callers bank rlo AFTER)
-; $C7 free (was zp_px_defc — the shrink's net-shift index in X subsumed
-; the deficit counter, 2026-07-13)
+zp_vxc_on = $C7                   ; [bsp]; VXC gate flag (vxc_frame sets it
+                                  ; from VXC_ENABLE; the vertex-fetch entry
+                                  ; branches — vxc_jsr_site SMC retired
+                                  ; 2026-07-18)
 ; --- $C4/$C5: rc_psilo/rc_psihi (ang/rcache.s) — UNREGISTERED SQUATTER,
 ; registered 2026-07-08 after zp_rns_vec landed on them and the walk disc
 ; jammed (cached-bbox frames clobbered the vector). anim.s similarly owns
@@ -84,7 +86,10 @@ zp_br_p_h = $1D                   ; [bsp]
 zp_bca_zone = $1E                 ; [ang]; classify STRICT-bit mask (b0 px<left,
                                   ;   b1 px>right, b2 py>top, b3 py<bot) — the
                                   ;   outside flag AND the child-inheritable zone
-; $1F free (was bca_lo hi — folded into direct bca_p1 reads, 2026-07-11)
+zp_bv_mode = $1F                  ; [bsp]; bbox-cache dispatch bits: b0 = D
+                                  ; wrapper, b1 = rotation cache (set per
+                                  ; frame by br_dcache_frame / bca_frame;
+                                  ; SMC dispatch retired 2026-07-18)
 zp_br_t0 = $20                    ; [bsp]
 zp_br_t1 = $21                    ; [bsp]
 zp_br_t2 = $22                    ; [bsp]

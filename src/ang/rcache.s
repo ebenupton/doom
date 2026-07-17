@@ -78,16 +78,17 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ;   if pos != cachepos:   cachepos = pos; COMPUTED[:] = 0          # new epoch
 ;   patch cached                                                   # stable
 .export bca_frame
-.import bca_check_op                    ; the SMC JSR site in bsp/bbox.s (MAIN —
-                                        ; always visible, patchable from any bank)
+.export bbox_check_angle_cached
+; (SMC dispatch retired 2026-07-18: bca_frame now sets/clears bit 1 of
+; zp_bv_mode and br_bbox_visible branches on it — cache and non-cache
+; paths are plain code, selected by data.)
 bca_frame:
    LDA RCACHE_ENABLE
    BNE bcf_enabled
-; disabled: force the original routine (idempotent re-patch, ~20 cyc)
-   LDA #<bbox_check_angle
-   STA bca_check_op+1
-   LDA #>bbox_check_angle
-   STA bca_check_op+2
+bcf_off:
+   LDA zp_bv_mode
+   AND #$FD                                ; clear the rc bit
+   STA zp_bv_mode
    RTS
 bcf_enabled:
 ; stable = ($01,$9D,$03,$9E) == bca_prevpos ?
@@ -113,11 +114,7 @@ bcf_moved:
    STA bca_prevpos+2
    LDA $9E
    STA bca_prevpos+3
-   LDA #<bbox_check_angle
-   STA bca_check_op+1
-   LDA #>bbox_check_angle
-   STA bca_check_op+2
-   RTS
+   JMP bcf_off
 bcf_stable:
 ; same position as last frame. If the computed bitmap belongs to a DIFFERENT
 ; position, clear it (new stable epoch).
@@ -149,10 +146,9 @@ bcf_clr:
    STA RCACHE_COMPUTED,X
    BNE bcf_clr
 bcf_enable:
-   LDA #<bbox_check_angle_cached
-   STA bca_check_op+1
-   LDA #>bbox_check_angle_cached
-   STA bca_check_op+2
+   LDA zp_bv_mode
+   ORA #$02                                ; set the rc bit
+   STA zp_bv_mode
    RTS
 
 ; --- bbox_check_angle_cached: rotation-coherent bbox visibility ---------------
@@ -254,8 +250,9 @@ bcac_warm_full:
 ; escape is exactly the zone-empty case), so the fake-return
 ; interposer that caught box_classify's PLA/PLA escape is gone too.
 bcac_cold:
-   JSR bbox_check_angle                    ; verdict in bca_vis, raw p1/p2 intact
-   JSR bcac_index                          ; (bitmap byte/bit only now)
+   JSR bbox_check_angle                    ; COMBINED verdict in A (the fused
+   PHA                                     ; exits ran has_gap); raw p1/p2 and
+   JSR bcac_index                          ; zp_bca_zone intact for the store
    LDA zp_bca_zone
    BEQ bcac_cold_inside                    ; inside: computed+full, no snapshot
                                            ; (psi planes are never read under FULL)
@@ -320,8 +317,8 @@ bcac_setfull:
    LDA RCACHE_FULL,X
    ORA rc_bit
    STA RCACHE_FULL,X
-   LDA bca_vis                             ; the tail already ran inside
-   RTS                                     ; bbox_check_angle: A/Z = verdict
+   PLA                                     ; the combined check+has_gap verdict
+   RTS                                     ; (A/Z) banked at bcac_cold entry
 bcac_notfull:
 ; clear the FULL bit (RCACHE_FULL is not cleared at epoch start; a stale set
 ; bit must be knocked down since warm reads it once COMPUTED is set).
@@ -329,7 +326,7 @@ bcac_notfull:
    EOR #$FF
    AND RCACHE_FULL,X                       ; (X = rc_bytehi still)
    STA RCACHE_FULL,X
-   LDA bca_vis
+   PLA
    RTS
 
 ; inside -> a_fine-independent full: computed + FORCED full (p1/p2 are

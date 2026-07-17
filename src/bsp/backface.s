@@ -282,6 +282,8 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 ; angle module + bca workspace relocate when banked (must match slope_div.asm:
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
 .import bbox_check_angle, bca_frame     ; direct (linker-resolved); the bbox.s
+.import bbox_check_angle_cached         ; rc tier (br_bbox_visible dispatches
+                                        ; on zp_bv_mode — SMC retired)
                                         ; call site bca_check_op is SMC-
                                         ; retargeted by bca_frame (rcache.s)
 ; (BCA_WS comes from abi.inc — the old triplet is dead)

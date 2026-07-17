@@ -151,15 +151,10 @@ vc_miss:
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
 
-; Scope split: vxc_jsr_site must be a GLOBAL label — vxc_frame SMC-patches
-; this JSR's operand between br_to_view_fetch (VXC disabled: the original
-; fetch+rotate path) and vxc_to_view (translation-coherent vertex cache,
-; which reaches the fetch through its own cold path).
-; No local labels cross this boundary (verified: vc_* live above, nc_*
-; below in their own scope).
+; (vxc_jsr_site SMC retired 2026-07-18: vertex_fetch (view.s) gates on
+; zp_vxc_on and falls into the plain fetch when the cache is off.)
 .endscope
-vxc_jsr_site:
-   JSR br_to_view_fetch
+   JSR vertex_fetch
 .scope
 
 ; (view-x saves MOVED below the near-clip verdict, spectrack warm find

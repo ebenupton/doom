@@ -213,6 +213,15 @@ br_view_setup:
 ; VXC warm path never reads the world coords, so the fetch (and its PAGE)
 ; now costs only the paths that actually rotate. Callers with dx/dy
 ; already staged (jt harness, vxc_frame's ref probe) enter at br_to_view.
+; vertex_fetch — THE vertex-transform entry (2026-07-18, SMC-free): one
+; 5-cycle gate on zp_vxc_on replaces vxc_frame's patching of the old
+; vxc_jsr_site. Off (the flat suite / rotation frames): falls straight
+; into the fetch below. On: the translation-coherent cache tier
+; (vxc_arm, seg_xform.s) — canonical probe/serve/compute+store.
+vertex_fetch:
+   LDA zp_vxc_on
+   BEQ br_to_view_fetch                    ; off: fall into the plain fetch
+   JMP vxc_arm
 br_to_view_fetch:
 .assert <ROM_VERTS_C = 0, error, "vertex planes assume page-aligned ROM_VERTS_C"
 ; Page-split vertex planes (VP_*, header.s): senior-bit arm with the

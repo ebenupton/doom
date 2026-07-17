@@ -31,6 +31,8 @@
 .segment "ANG"
 .endif
 .export bbox_check_angle
+.import span_has_gap                    ; fused visible exits (bca.s) chain
+SC_HAS_GAP = span_has_gap               ; into has_gap (main-resident)
 ang_head:
 ; (slope_div is GONE — option F, 2026-07-17: the corner pipeline reads
 ;  ATANEXP[L8[den]-L8[num]] instead of dividing; tools/atanexp_cert.py

@@ -490,12 +490,8 @@ inl_end:
 .macro vxc_frame
 .scope
    LDA VXC_ENABLE
-   BNE vf_on
-; disabled: restore the original fetch+rotate target (byte-identical path)
-   LDA #<br_to_view_fetch
-   STA vxc_jsr_site+1
-   LDA #>br_to_view_fetch
-   STA vxc_jsr_site+2
+   STA zp_vxc_on                           ; the vertex_fetch gate (SMC retired
+   BNE vf_on                               ; 2026-07-18; ENABLE is 0/1)
    JMP inl_end
 vf_on:
 ; ref = view totals of world (0,0) under this frame's context
@@ -533,10 +529,6 @@ vf_wipe:
    DEX
    BPL vf_wipe
 vf_patch:
-   LDA #<vxc_arm
-   STA vxc_jsr_site+1
-   LDA #>vxc_arm
-   STA vxc_jsr_site+2
 inl_end:
 .endscope
 .endmacro

@@ -41,8 +41,8 @@
 ; see bsp_render_6502.poke_init_frame_state.)
 
 br_render_frame:
-.scope bsp_walk                         ; named: br_dcache_frame SMC-patches
-                                        ; bsp_walk::bv_site_near/_far operands
+.scope bsp_walk                         ; (named scope: historical — the
+                                        ; bv_site SMC patching is retired)
 ; L0 anchor: the traversal's bank invariant (node_setup and the
 ; subsector serve no longer page — every path keeps L0 until the
 ; clipper/angle modules page for themselves and the child follows
@@ -302,8 +302,7 @@ rc_s0:
    BCS sp_serve0
    LDA #0                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (serves never read it)
-bv_site_near0:                          ; operand SMC-patched by br_dcache_frame
-   JSR br_bbox_visible                     ; (<-> br_bbox_visible_d when D active)
+   JSR br_bbox_visible                     ; mode-dispatched inside (zp_bv_mode)
    BEQ r0_far                              ; near invisible: skip subtree
 r0_vis:
    PAGE BANK_L0                            ; node SoA pages live in bank L0
@@ -325,7 +324,6 @@ r0_far:
    LDA #1
    STA zp_bbox_side                        ; far = LEFT
    IS_FULL_B bsp_done_full
-bv_site_far0:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
    BEQ rc_ret                              ; far invisible: this node is done
 r0_far_vis:                             ; (falls in: the serve stub moved below)
@@ -364,7 +362,6 @@ rc_n1:
    BNE sp_serve1
    LDA #1                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (mirror)
-bv_site_near1:                          ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
    BEQ r1_far
 r1_vis:
@@ -387,7 +384,6 @@ r1_far:
    LDA #0
    STA zp_bbox_side                        ; far = RIGHT
    IS_FULL_B bsp_done_full
-bv_site_far1:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
    BEQ rc_ret1
    PAGE BANK_L0

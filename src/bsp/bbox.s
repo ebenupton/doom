@@ -84,40 +84,35 @@ D_CODE_L = $030C                        ; 236 bytes (ends $03F7)
 ; D_FWD: 1 = this frame's move was
                                         ; forward-only (driver-asserted)
 .export D_ENABLE, D_FWD, D_MODE, D_FRAME
-.export bca_check_op                    ; SMC site — operand patched by bca_frame
 
+; ============================================================================
+; br_bbox_visible — THE walk-facing bbox entry (2026-07-18, SMC-free).
+; Canonical cache shape end to end: this dispatcher branches on
+; zp_bv_mode (b0 = D wrapper active, b1 = rotation cache active — set
+; per frame by br_dcache_frame / bca_frame as plain data), and every
+; cache below is probe -> valid? -> serve : compute + store + return.
+; The old per-frame SMC patching of this site and of bca_check_op is
+; gone. The mode test costs 5 cycles on cache-off frames, MORE than
+; repaid by the fused exits: bbox_check_angle's visible exits chain
+; straight into has_gap (bca.s), so the JSR/BNE/JMP shuttle this
+; wrapper used to run is gone too.
+;   in : zp_node_ch_l/zp_bbox_side = box identity; frame ZP preset
+;   out: A/Z = combined verdict (has_gap over the check's extent);
+;        bca_vis/zp_i_l/h staged for the D store
+; ============================================================================
 br_bbox_visible:
 .scope
-   PAGE BANK_L2                            ; bbox + angle tables (TA/VATOX) live in bank L2
-; (The bca_boxp pointer build is GONE, 2026-07-15: corners live in
-; page-split planes read abs,Y by the angle module's side/zone arms —
-; zp_node_ch_l and zp_bbox_side ARE the box identity.)
-
-; --- Angle-space visibility (px=$01, py=$03, ab=$FA2F preset per frame) ---
-; bbox_check_angle (angle module, DOOM R_CheckBBox in the unsigned-BAM
-; phi convention; angle_bbox.py mirror): picks the 2 silhouette corners
-; for the player's zone, converts their angles to a conservative column
-; extent, clips against the view cone. Writes bca_vis (1=some columns
-; visible, 0=cull) and bca_ilo/bca_ihi (u8 column extent, ±1
-; conservative). SMC: bca_frame (rcache.s) retargets the operand each
-; frame — bbox_check_angle (moved/disabled) or bbox_check_angle_cached
-; (stable frame). Genuine dynamic dispatch, patched at the call site.
-::bca_check_op:
-   JSR bbox_check_angle                    ; returns A/Z = bca_vis (byte
-                                           ; still written for the D store)
-   BNE bv_anglevis
-   RTS                                     ; A=0/Z=1 already: bbox_check_angle's
-                                           ; cull tail (bca.s) sets A=0 before
-                                           ; RTS, and both SMC targets share it
-; box wholly outside view cone → invisible (A=0, Z set)
-bv_anglevis:
-; Visible columns exist — ask the clipper whether any of them still
-; have an open span. bca_ilo/ihi ARE zp_i_l/h now (the tail writes the
-; has_gap operands directly; the staging copy died 2026-07-18).
-; Tail-call: SC_HAS_GAP's A (1=gap, 0=occluded) and flags are our
-; return value. (has_gap is main-resident — no PAGE.)
-   JMP SC_HAS_GAP
-
+   LDA zp_bv_mode
+   BNE bv_special
+   PAGE BANK_L2                            ; angle tables live in bank L2
+   JMP bbox_check_angle                    ; pristine; exits return to OUR caller
+bv_special:
+   LSR A
+   BCS bv_d                                ; b0: D wrapper (may serve w/o check)
+   PAGE BANK_L2
+   JMP bbox_check_angle_cached             ; b1 alone: rotation cache
+bv_d:
+   JMP br_bbox_visible_d
 .endscope
 
 ; ============================================================================
@@ -193,10 +188,23 @@ dv_invis:
    LDA #0
    RTS
 dv_fresh:
-   JSR br_bbox_visible                     ; pristine core (pages L2/C itself)
-   PHA                                     ; A = verdict (has_gap already run)
-   PAGE BANK_L2                            ; store code lives in the L2 window
-   bv_dcache_store                     ; encode bca_vis/ilo/ihi → code byte
+; compute: the check (through the rotation cache when its bit is up —
+; the two caches compose, D outer / rc inner), then store, then return
+; the banked verdict. The fused exits ran has_gap already.
+   PAGE BANK_L2
+   LDA zp_bv_mode
+   AND #$02
+   BNE dvf_rc
+   JSR bbox_check_angle
+   JMP dvf_store
+dvf_rc:
+   JSR bbox_check_angle_cached
+dvf_store:
+   PHA                                     ; A = combined verdict
+   PAGE BANK_L2                            ; (has_gap left the bank alone, but
+                                           ; the rc cold path pages C via the
+                                           ; clipper — re-anchor for the store)
+   bv_dcache_store                     ; encode bca_vis/zp_i → code byte
    PLA                                     ; restore verdict; Z tracks A
    RTS
 .endscope
@@ -303,30 +311,20 @@ df_save:
    LDA bca_ab
    STA D_PREV_AB
 ; fall through to df_patch
-; --- SMC: point the walk's two bbox-check JSRs at the D wrapper when
-; the cache is active this frame, at the pristine core when not — the
-; disabled engine is byte-identical to pre-D code, zero per-check cost
-; (the vxc_frame / bca_frame idiom). Operands are resident MAIN bytes,
-; writable regardless of banking. ---
+; --- publish the D bit of zp_bv_mode (SMC patching retired 2026-07-18:
+; br_bbox_visible branches on the mode byte; disabled frames cost one
+; 5-cycle test, repaid by the fused exits). ---
 df_patch:
    LDA D_MODE
-   BEQ df_plain
-   LDA #<br_bbox_visible_d
-   LDY #>br_bbox_visible_d
-   BNE df_write                            ; (always: page byte nonzero)
-df_plain:
-   LDA #<br_bbox_visible
-   LDY #>br_bbox_visible
-df_write:
-   STA bsp_walk::bv_site_near0+1
-   STA bsp_walk::bv_site_far0+1
-   STA bsp_walk::bv_site_near1+1
-   STA bsp_walk::bv_site_far1+1
-   TYA
-   STA bsp_walk::bv_site_near0+2
-   STA bsp_walk::bv_site_far0+2
-   STA bsp_walk::bv_site_near1+2
-   STA bsp_walk::bv_site_far1+2
+   BEQ df_off
+   LDA zp_bv_mode
+   ORA #$01
+   STA zp_bv_mode
+   RTS
+df_off:
+   LDA zp_bv_mode
+   AND #$FE
+   STA zp_bv_mode
    RTS
 .endscope
 

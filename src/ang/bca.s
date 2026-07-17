@@ -22,9 +22,16 @@ full_vis:                               ; span >= ANG180: full width
    STA bca_ilo
    LDA #255
    STA bca_ihi
-   LDA #1                                  ; vis LAST: A/Z = verdict at RTS
+   LDA #1
    STA bca_vis
-   RTS
+   JMP SC_HAS_GAP                          ; FUSED EXIT (2026-07-18): every
+                                           ; visible exit chains straight into
+                                           ; has_gap on the freshly-written
+                                           ; zp_i interval — the caller gets
+                                           ; the COMBINED verdict in A/Z, and
+                                           ; the bv wrapper's JSR/BNE/JMP
+                                           ; round trip is gone. Cull exits
+                                           ; still RTS (A=0/Z=1).
 
 bbox_check_angle:
 ; (scope opened out to file level so the rotation cache — bbox_check_angle_cached
@@ -215,9 +222,9 @@ ih1:                                       ; identity — A <= 255 by now on
 ; full_vis is the CANONICAL full-visibility tail (rcache's two warm/store
 ; paths and corner_phi's inside-escape JMP here instead of local copies).
 visok:
-   LDA #1                                  ; A=1/Z=0: visible
-   STA bca_vis
-   RTS
+   LDA #1                                  ; visible: bca_vis for the D store,
+   STA bca_vis                             ; then the fused has_gap exit — the
+   JMP SC_HAS_GAP                          ; walk consumes has_gap's A/Z
 cull:                                      ; THE cull exit (the file-head twin
    LDA #0                                  ; is gone, 2026-07-17: every BCS/BCC
    STA bca_vis                             ; cull now reaches FORWARD to here —
