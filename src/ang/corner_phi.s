@@ -365,6 +365,10 @@ mask_done:
                                            ; function of (dx,dy); the KDXH
                                            ; write at miss entry IS the
                                            ; validity mark
+; *** FALLS THROUGH into cp_havepsi. *** The macro definition and the
+; ANGX-segment entry expansions between here and there emit NOTHING
+; into this (ANG) segment — in the assembled image the psi store's
+; last byte is immediately followed by cp_havepsi (link-adjacent).
 
 ; ============================================================================
 ; Sign-class corner_phi entries (2026-07-18). Every ZC arm knows BOTH
