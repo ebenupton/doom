@@ -354,22 +354,17 @@ sub:
    STA pa_res+1
 mask_done:
 ; & 4095 (psi ready; was RTS->fall through)
-; --- memo STORE (X = oct is dead after comb; slot stashed at the probe) ---
+; --- memo STORE, psi half (X = oct is dead after comb; the slot was
+; stashed at the probe; the KEY was banked at miss entry, before the
+; in-place negations destroyed the raw deltas) ---
    LDX zp_cpm_slot
-   LDA pa_dx
-   STA CPM_KDXL,X
-   LDA pa_dx+1
-   STA CPM_KDXH,X
-   LDA pa_dy
-   STA CPM_KDYL,X
-   LDA pa_dy+1
-   STA CPM_KDYH,X
    LDA pa_res
    STA CPM_PSIL,X
    LDA pa_res+1
    STA CPM_PSIH,X                          ; valid forever: psi is a pure
                                            ; function of (dx,dy); the KDXH
-                                           ; store above IS the validity mark
+                                           ; write at miss entry IS the
+                                           ; validity mark
 
 ; ============================================================================
 ; Sign-class corner_phi entries (2026-07-18). Every ZC arm knows BOTH
@@ -414,38 +409,49 @@ name:
    STA pa_res+1
    JMP cp_havepsi
 cmiss:
-.if negx
-   LDA #0                                  ; |dx| = -dx (class: dx <= 0)
-   SEC
-   SBC pa_dx
-   STA sd_num
-   LDA #0
-   SBC pa_dx+1
-   STA sd_num+1
-.else
-   LDA pa_dx                               ; |dx| = dx (class: dx >= 0)
-   STA sd_num
+; Bank the RAW key first (X = slot, still live from the probe): sd_num
+; ALIASES pa_dx and sd_den pa_dy (2026-07-19), so P-axes need no
+; staging at all and N-axes negate IN PLACE — which would destroy the
+; key. mask_done stores only psi now; this KDXH write is the validity
+; mark, made good when the psi lands (single-threaded, no early outs).
+   LDA pa_dx
+   STA CPM_KDXL,X
    LDA pa_dx+1
-   STA sd_num+1
-.endif
-   ORA sd_num                              ; zero-out folded into the abs (A =
-   BEQ czx                                 ; |dx| hi): |dx| = 0 -> ta = 0
-.if negy
-   LDA #0                                  ; |dy| = -dy (class: dy <= 0)
+   STA CPM_KDXH,X
+   LDA pa_dy
+   STA CPM_KDYL,X
+   LDA pa_dy+1
+   STA CPM_KDYH,X
+.if negx
+   LDA #0                                  ; |dx| = -dx in place (dx <= 0)
    SEC
-   SBC pa_dy
+   SBC sd_num
+   STA sd_num
+   LDA #0
+   SBC sd_num+1
+   STA sd_num+1
+   ORA sd_num                              ; zero-out folded into the abs
+   BEQ czx
+.else
+   LDA sd_num+1                            ; |dx| = dx already (dx >= 0):
+   ORA sd_num                              ; nothing to stage, just the
+   BEQ czx                                 ; zero-out
+.endif
+.if negy
+   LDA #0                                  ; |dy| = -dy in place (dy <= 0)
+   SEC
+   SBC sd_den
    STA sd_den
    LDA #0
-   SBC pa_dy+1
+   SBC sd_den+1
    STA sd_den+1
-.else
-   LDA pa_dy                               ; |dy| = dy (class: dy >= 0)
-   STA sd_den
-   LDA pa_dy+1
-   STA sd_den+1
-.endif
    ORA sd_den
-   BEQ czy                                 ; |dy| = 0 -> ta = 0, axgt
+   BEQ czy
+.else
+   LDA sd_den+1                            ; |dy| = dy already (dy >= 0)
+   ORA sd_den
+   BEQ czy
+.endif
    LDX #obase                              ; no compare, no swap: lf_ns reads
    JMP lf_ns                               ; the axgt bit off the SIGN of the
                                            ; L8 difference (Eben's negate-the-
@@ -684,10 +690,11 @@ cp_havepsi:
    SBC bca_pys+1
    STA pa_dy+1
 .endmacro
-; partial fetches for the axis-sharing rows (1/4/6/9): the two corners
-; sit on one shared plane, and pa_dx/pa_dy SURVIVE corner_phi (probe,
-; converters and store only read them) — so the second corner reloads
-; just its own axis.
+; partial fetches for the axis-sharing rows 4/9: the two corners sit on
+; one shared plane whose class is P for BOTH corners — pa_dx/pa_dy
+; survive c1's call ONLY when its class doesn't negate in place (the
+; sd alias, 2026-07-19), so rows 1/6 (N-class shared axis) went back
+; to full fetches.
 .macro ZCF_DX s, xl
    LDY zp_node_ch_l
    SEC
@@ -758,14 +765,14 @@ zc_corners:
 ;   row 10 (SE): c1=(L,B) NP              c2=(R,T) NP
 zc0_0:  ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
 zc0_1:  ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
-zc1_0:  ZARM_SY 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
-zc1_1:  ZARM_SY 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
+zc1_0:  ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_T_LO, corner_phi_pn, corner_phi_nn
+zc1_1:  ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_T_LO, corner_phi_pn, corner_phi_nn
 zc2_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
 zc2_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
 zc4_0:  ZARM_SX 0, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
 zc4_1:  ZARM_SX 1, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
-zc6_0:  ZARM_SX 0, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
-zc6_1:  ZARM_SX 1, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+zc6_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+zc6_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
 zc8_0:  ZARM 0, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
 zc8_1:  ZARM 1, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
 zc9_0:  ZARM_SY 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp

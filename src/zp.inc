@@ -185,8 +185,12 @@ zp_ys_v1ok = $43                  ; [bsp]; 1 = this seg's chained v1
 ; already carries a valid front sy pair (copied from an emitted prev
 ; seg) — the y stage skips v1's front projection
 ; constant-base abs,X; layout constants live in layout.inc)
-sd_num = $44                      ; [ang] ; w=2
-sd_den = $46                      ; [ang] ; w=2
+sd_num = pa_dx                    ; [ang]; ALIASED (2026-07-19): the class
+sd_den = pa_dy                    ;   converters negate N-axes IN PLACE and
+                                  ;   P-axes need no staging at all — the
+                                  ;   memo key is banked at miss entry
+                                  ;   before the raws are destroyed.
+                                  ;   $44-$47 freed.
 sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
 zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
