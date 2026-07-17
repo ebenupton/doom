@@ -71,7 +71,7 @@ ABI = [
     ('CPM_KDYH',       'CPM_BASE+$180', None, '... dy hi'),
     ('CPM_PSIL',       'CPM_BASE+$200', None, 'memo value: psi lo'),
     ('CPM_PSIH',       'CPM_BASE+$280', None, '... psi hi'),
-    ('CPM_EP',         'CPM_BASE+$300', None, 'per-slot epoch tag vs zp_cpm_frame'),
+    ('CPM_EP',         'CPM_BASE+$300', None, 'per-slot validity byte (0 = never written; the memo is persistent)'),
     ('JBASE',          0x1A00, None, 'vsync journal (dead boot-loader memory)'),
     ('SCREEN0',        0x5800, None, 'framebuffer 0'),
     ('SCREEN1',        0x6C00, None, 'framebuffer 1'),

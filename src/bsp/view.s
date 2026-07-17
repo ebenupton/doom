@@ -167,16 +167,6 @@ br_view_setup:
                                         ; frame's trig (SEL, main $2C00 —
                                         ; runs under any bank)
    PAGE BANK_L2
-   INC zp_cpm_frame                        ; corner-phi memo epoch (L2 paged
-   BNE cpmf_ok                             ; here: the wrap wipe touches the
-   LDA #0                                  ; banked tag page). Wrap every 256
-   LDX #$7F                                ; frames: wipe the tags and skip
-cpmf_w:                                    ; the wiped value 0
-   STA CPM_EP,X
-   DEX
-   BPL cpmf_w
-   INC zp_cpm_frame
-cpmf_ok:
    JSR bca_frame                           ; per-frame rcache dispatch patch (rcache.s)
    JSR br_dcache_frame                     ; forward-coherence bbox cache (bbox.s)
    vxc_frame                           ; translation-coherence vertex cache

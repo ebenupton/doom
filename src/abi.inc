@@ -69,7 +69,7 @@ CPM_KDYL = CPM_BASE+$100                ; ... dy lo
 CPM_KDYH = CPM_BASE+$180                ; ... dy hi
 CPM_PSIL = CPM_BASE+$200                ; memo value: psi lo
 CPM_PSIH = CPM_BASE+$280                ; ... psi hi
-CPM_EP = CPM_BASE+$300                  ; per-slot epoch tag vs zp_cpm_frame
+CPM_EP = CPM_BASE+$300                  ; per-slot validity byte (0 = never written; the memo is persistent)
 JBASE = $1A00                           ; vsync journal (dead boot-loader memory)
 SCREEN0 = $5800                         ; framebuffer 0
 SCREEN1 = $6C00                         ; framebuffer 1

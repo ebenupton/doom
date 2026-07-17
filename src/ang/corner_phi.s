@@ -312,19 +312,23 @@ pa_entry:
 ; ~34% of calls — parents and siblings share box corners. 128-slot xor
 ; hash (98% of ideal hits on the suite corpus); EXACT by construction:
 ; a hit requires the full 4-byte key match, collisions just evict.
-; Tables via abi.inc (banked $8E00 L2 window / flat $5400 CODE-tail
-; carve); per-slot epoch tag vs zp_cpm_frame (view_setup increments and
-; wipes the tag page on the 256-frame wrap). Bare-boot note: tag pages
-; ship zeroed in the bank image; a garbage frame counter can only
-; false-hit the all-zero key (corner 0,0), whose cached psi 0 IS the
-; exact answer — benign by coincidence, exact either way.
+; Tables via abi.inc (banked $8E00 L2 window / flat $5480 CODE-tail
+; carve). PERSISTENT (2026-07-17, the option-E investigation's real
+; find): psi = point_to_angle(dx,dy) is a PURE FUNCTION of the delta
+; key — no viewer, no angle, no frame in it — so entries are valid
+; FOREVER and hits span frames (rotation changes afn only: the whole
+; corner set stays warm). The old per-frame epoch (built for an
+; r-caching variant that never landed) is now a boot-validity byte:
+; 0 = never written; the tables ship zeroed in the bank image and the
+; flat harness zeroes RAM.
    LDA pa_dx
    EOR pa_dy
    AND #$7F
    TAX
    LDA CPM_EP,X
-   CMP zp_cpm_frame
-   BNE cpm_miss
+   BEQ cpm_miss                            ; 0 = never written (tables ship
+                                           ; zeroed in the bank image / flat
+                                           ; harness RAM)
    LDA CPM_KDXL,X
    CMP pa_dx
    BNE cpm_miss
@@ -510,8 +514,9 @@ mask_done:
    STA CPM_PSIL,X
    LDA pa_res+1
    STA CPM_PSIH,X
-   LDA zp_cpm_frame
-   STA CPM_EP,X
+   LDA #1
+   STA CPM_EP,X                            ; valid forever: psi is a pure
+                                           ; function of (dx,dy)
 .endscope
 ; --- afn - psi, mask to u12 (file-global: reused by the rotation
 ;     cache's warm path to re-derive r from cached psi) ---

@@ -49,7 +49,7 @@ CPM_KDYL = 0x8F00  # ... dy lo
 CPM_KDYH = 0x8F80  # ... dy hi
 CPM_PSIL = 0x9000  # memo value: psi lo
 CPM_PSIH = 0x9080  # ... psi hi
-CPM_EP = 0x9100  # per-slot epoch tag vs zp_cpm_frame
+CPM_EP = 0x9100  # per-slot validity byte (0 = never written; the memo is persistent)
 JBASE = 0x1A00  # vsync journal (dead boot-loader memory)
 SCREEN0 = 0x5800  # framebuffer 0
 SCREEN1 = 0x6C00  # framebuffer 1
