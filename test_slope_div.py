@@ -45,30 +45,39 @@ print(f"slope_div: checked {checked} (num,den) pairs, {fails} mismatches")
 
 # ---- point_to_angle ----
 # (tantoangle tables already loaded by load_angle_module.)
-# point_to_angle is INLINED into corner_phi; pa_entry is the test hook.
-# Calling it with bca_afn=0 makes corner_phi's tail compute
-# pa_res = signed12(0 - psi), from which psi = (-pa_res) % 4096.
-PA = sym('pa_entry')
-
-
+# point_to_angle is FUSED (2026-07-17): stage_c consumes the classify
+# stash, so the test drives stage_c itself — poke the CABS stash the
+# way box_classify would for a single corner (slots 0/2 = |dx|/|dy|
+# with the corner-sign bytes) and dispatch. bca_afn=0 makes the tail
+# compute pa_res = u12(0 - psi), so psi = (-pa_res) % 4096.
 def s16(v):
     return v & 0xFFFF
 
 
-PA_DX, PA_DY = sym('pa_dx'), sym('pa_dy')
+STAGE_C = sym('stage_c')
+CABS = 0x0A40
 PA_RES, BCA_AFN = sym('pa_res'), sym('bca_afn')
+ZP_CPMF = sym('zp_cpm_frame')
 
 
 def run_pa(dx, dy):
-    mpu.memory[PA_DX] = dx & 0xFF; mpu.memory[PA_DX + 1] = (dx >> 8) & 0xFF
-    mpu.memory[PA_DY] = dy & 0xFF; mpu.memory[PA_DY + 1] = (dy >> 8) & 0xFF
-    mpu.memory[BCA_AFN] = 0; mpu.memory[BCA_AFN + 1] = 0  # afn=0 -> pa_res = -psi
-    mpu.pc = PA; mpu.sp = 0xFD
-    mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
+    m = mpu.memory
+    if dx >= 0x8000: dx -= 0x10000         # callers pass u16 via s16()
+    if dy >= 0x8000: dy -= 0x10000
+    adx, ady = abs(dx), abs(dy)
+    m[CABS + 0] = adx & 0xFF; m[CABS + 4] = adx >> 8      # |dx| -> x slot 0
+    m[CABS + 2] = ady & 0xFF; m[CABS + 6] = ady >> 8      # |dy| -> y slot 2
+    m[CABS + 8] = 4 if dx < 0 else 0                      # sx (pre-shifted)
+    m[CABS + 10] = 2 if dy < 0 else 0                     # sy
+    m[BCA_AFN] = 0; m[BCA_AFN + 1] = 0     # afn=0 -> pa_res = -psi
+    m[ZP_CPMF] = (m[ZP_CPMF] + 1) & 0xFF   # new epoch: no stale memo hits
+    mpu.pc = STAGE_C; mpu.sp = 0xFD
+    mpu.x, mpu.y = 0, 2                    # corner = (slot 0, slot 2)
+    m[0x01FF] = 0xFF; m[0x01FE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 5000:
         mpu.step(); steps += 1
-    raw = mpu.memory[PA_RES] | (mpu.memory[PA_RES + 1] << 8)  # signed12(-psi)
+    raw = m[PA_RES] | (m[PA_RES + 1] << 8)
     if raw >= 0x8000:
         raw -= 0x10000
     return (-raw) % 4096                                 # recover psi in [0,4096)

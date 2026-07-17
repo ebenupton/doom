@@ -24,7 +24,7 @@ BBP=[sym(n) for n in ('BBP_T_LO','BBP_T_HI','BBP_B_LO','BBP_B_HI',
 ZNODE,ZSIDE=sym('zp_node_ch_l'),sym('zp_bbox_side')
 # the ZC corner arms run BELOW $C000 mid-check — exclude them from the
 # 'returned to main code' probe (they'd read bca_vis while it's still 0)
-ZC_LO=sym('zc_corners'); ZC_HI=sym('zc_tab_hi')+22
+ZC_LO=sym('stage_c'); ZC_HI=sym('zc_tab_hi')+22  # stage_c is FIRST in ZC (2026-07-17)
 
 # fresh standalone module
 _st=MPU()
