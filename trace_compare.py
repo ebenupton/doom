@@ -37,18 +37,14 @@ import angle_bbox as _A
 
 
 def load_angle_module(mem):
-    """Load the angle-space bbox module + tables into 6502 memory.
-    Code @ $E940; TA_LO $DC00, TA_HI $EF00 (tantoangle); VATOX $F300 (1025)."""
-    code = open('bsp_render_ang.bin', 'rb').read()
-    for i, b in enumerate(code):
-        mem[0xE940 + i] = b
-    for i in range(1024):
-        v = _A._tantoangle[i]
-        mem[0xDC00 + i] = v & 0xFF
-        mem[0xF200 + i] = (v >> 8) & 0xFF
-    for k in range(1025):            # VATOX shrunk: phi+512 index, $F300
-        _vt = (_A._vatox_lo[k + 512] + _A._vatox_hi[k + 512]) // 2
-        mem[_sym('VATOX') + k] = max(0, min(255, _vt))
+    """Canonical loader ONLY (2026-07-17): this used to be a PRIVATE
+    seeder copy and it silently seeded tantoangle into the pages the F
+    tables took over — every in-frame harness ran the corner pipeline
+    on garbage while the standalone path was correct (check_angle_calls
+    caught it, 20/732). Private copies of table seeds are as forbidden
+    as private address copies."""
+    from engine_load import load_angle_module as _canonical
+    _canonical(mem)
 
 
 def setup_wad(sc):

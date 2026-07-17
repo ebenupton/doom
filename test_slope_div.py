@@ -1,4 +1,4 @@
-"""Unit-test the 6502 slope_div against angle_bbox.slope_div (Python)."""
+"""Unit-test the 6502 F corner pipeline against the angle_bbox F mirror."""
 import sys
 import angle_bbox as A
 import asmbuild
@@ -15,33 +15,9 @@ mpu = MPU()
 load_angle_module(mpu.memory)
 mpu.memory[0xFFFE] = 0x00; mpu.memory[0xFFFF] = 0xFF  # IRQ vec sink
 mpu.memory[0xFF00] = 0x00  # BRK lands here -> we detect via PC
-SD_NUM, SD_DEN, SD_Q = sym('sd_num'), sym('sd_den'), sym('sd_q')
-
-
-def run(num, den):
-    mpu.memory[SD_NUM] = num & 0xFF; mpu.memory[SD_NUM + 1] = (num >> 8) & 0xFF
-    mpu.memory[SD_DEN] = den & 0xFF; mpu.memory[SD_DEN + 1] = (den >> 8) & 0xFF
-    mpu.pc = sym('slope_div')
-    mpu.sp = 0xFD
-    mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF  # RTS -> $0000
-    steps = 0
-    while mpu.pc != 0x0000 and steps < 2000:
-        mpu.step(); steps += 1
-    return mpu.memory[SD_Q] | (mpu.memory[SD_Q + 1] << 8)
-
-
-fails = 0
-checked = 0
-for den in range(1, 661):
-    for num in range(0, den + 1):
-        exp = A.slope_div(num, den)
-        got = run(num, den)
-        checked += 1
-        if got != exp:
-            fails += 1
-            if fails <= 10:
-                print(f"  MISMATCH num={num} den={den}: 6502={got} py={exp}")
-print(f"slope_div: checked {checked} (num,den) pairs, {fails} mismatches")
+# (The slope_div sweep died with the routine — option F, 2026-07-17:
+# the corner pipeline is table-based; the point_to_angle sweep below
+# now exercises L8/ATANEXP + the octant fold against the F mirror.)
 
 # ---- point_to_angle ----
 # (tantoangle tables already loaded by load_angle_module.)
@@ -77,7 +53,7 @@ def run_pa(dx, dy):
 pafails = pachecked = 0
 for dx in range(-660, 661, 11):
     for dy in range(-660, 661, 11):
-        exp = A.point_to_angle(dx, dy)
+        exp = A.point_to_angle_f(dx, dy)
         got = run_pa(s16(dx), s16(dy))
         pachecked += 1
         if got != exp:
@@ -85,5 +61,5 @@ for dx in range(-660, 661, 11):
             if pafails <= 12:
                 print(f"  PA MISMATCH dx={dx} dy={dy}: 6502={got} py={exp}")
 print(f"point_to_angle: checked {pachecked} (dx,dy), {pafails} mismatches")
-print("PASS" if (fails == 0 and pafails == 0) else "FAIL")
-sys.exit(1 if (fails or pafails) else 0)
+print("PASS" if pafails == 0 else "FAIL")
+sys.exit(1 if pafails else 0)

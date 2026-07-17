@@ -102,8 +102,10 @@ def build_banked(flatr):
     l2 = bytearray(16384)
     def cpy(dst_off, src, n):
         l2[dst_off:dst_off + n] = bytes(fmem[src:src + n])
-    cpy(0x0000, 0xDC00, 1024)            # TA_LO  -> $8000
-    cpy(0x0400, 0xF200, 1025)            # TA_HI  -> $8400
+    cpy(0x0000, 0xDC00, 256)             # L8_TAB -> $8000 (F tables; the
+    cpy(0x0100, 0xDD00, 256)             # AE_LO  -> $8100  tantoangle pair
+    cpy(0x0200, 0xDE00, 256)             # AE_HI  -> $8200  died with option
+                                         # F: $8300-$88FF freed banked)
     from symmap import sym as _vsym
     cpy(0x0900, _vsym('VATOX'), 1025)    # VATOX (flat, by symbol) -> $8900
     cpy(0x0E00, 0xC400, len(flatr.bbox_table))   # bbox planes -> $8E00-$9DFF

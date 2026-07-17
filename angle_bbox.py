@@ -90,11 +90,79 @@ _CHECKCOORD = [
 ]
 
 
+# ---- option F (2026-07-17): the BBOX path only uses the log2/atanexp
+# approximation, certified exhaustively by tools/atanexp_cert.py
+# (EPSILON = max |ta' - ta_exact| in fine units). The seg-side users of
+# point_to_angle (angle_seg pack data) stay EXACT. The +-EPSILON role
+# bias below makes every bbox verdict a SUPERSET of the exact
+# convention's -> the framebuffer is bit-identical, only cycles change.
+import json as _json, os as _os
+try:
+    _FT = _json.load(open(_os.path.join(
+        _os.path.dirname(_os.path.abspath(__file__)),
+        'tools', 'atanexp_tables.json')))
+    _L8, _ATANEXP, _TA0 = _FT['L8'], _FT['ATANEXP'], _FT['TA0']
+    EPSILON_F = _FT['EPSILON']
+except FileNotFoundError:                  # bootstrap: the cert tool imports
+    _L8 = _ATANEXP = None                  # this module to reach _tantoangle
+    _TA0 = 0
+    EPSILON_F = 0
+
+
+def _lf(v):
+    return _L8[v] if v < 256 else _L8[v >> 3] + 96
+
+
+def _ta_f(num, den):
+    """tantoangle[slope_div(num,den)] via the F tables (num < den)."""
+    if num == 0:
+        return _TA0
+    k = _lf(den) - _lf(num)
+    if k < 0:
+        k = 0                    # rounding jitter near num~den (cert: kmin=0)
+    elif k > 255:
+        k = 255                  # far-ratio tail (cert folds these buckets)
+    return _ATANEXP[k]
+
+
+def point_to_angle_f(dx, dy):
+    """point_to_angle with the F ta — 6502 corner_phi's convention."""
+    if dx == 0 and dy == 0:
+        return 0
+    if dx >= 0:
+        if dy >= 0:
+            if dx > dy:
+                return _ta_f(dy, dx)
+            if dx == dy:
+                return ANG45
+            return ANG90 - _ta_f(dx, dy)
+        ady = -dy
+        if dx > ady:
+            return (-_ta_f(ady, dx)) & ANGMASK
+        if dx == ady:
+            return ANG270 + ANG45
+        return ANG270 + _ta_f(dx, ady)
+    adx = -dx
+    if dy >= 0:
+        if adx > dy:
+            return ANG180 - _ta_f(dy, adx)
+        if adx == dy:
+            return ANG90 + ANG45
+        return ANG90 + _ta_f(adx, dy)
+    ady = -dy
+    if adx > ady:
+        return ANG180 + _ta_f(ady, adx)
+    if adx == ady:
+        return ANG180 + ANG45
+    return ANG270 - _ta_f(adx, ady)
+
+
 def _phi(cx, cy, px, py, a_fine):
-    """View-relative signed angle phi = a_fine - atan2(dy,dx), in [-ANG180,ANG180).
-    Same convention as view_col (phi>0 == right of centre). Validated vs float.
+    """View-relative signed angle phi = a_fine - atan2_F(dy,dx), in
+    [-ANG180,ANG180). Same convention as view_col (phi>0 == right of
+    centre). F tables since 2026-07-17 (bbox path only).
     """
-    phi = (a_fine - point_to_angle(cx - px, cy - py)) & ANGMASK
+    phi = (a_fine - point_to_angle_f(cx - px, cy - py)) & ANGMASK
     return phi - FINEANGLES if phi >= ANG180 else phi
 
 
@@ -129,8 +197,10 @@ def bbox_check_angle(top, bot, left, right, px, py, ab):
         return 0, VIS_W - 1
     val = (top, bot, left, right)
     a_fine = (ab * (FINEANGLES // 256)) & ANGMASK
-    p1 = _phi(val[cc[0]], val[cc[1]], px, py, a_fine)   # left silhouette
-    p2 = _phi(val[cc[2]], val[cc[3]], px, py, a_fine)   # right silhouette
+    p1 = _phi(val[cc[0]], val[cc[1]], px, py, a_fine) - EPSILON_F   # left,
+    p2 = _phi(val[cc[2]], val[cc[3]], px, py, a_fine) + EPSILON_F   # right —
+    # the certified role bias: every verdict is a SUPERSET of the exact
+    # convention's (6502: the twin pre-biased afr constants, view.s)
     span = (p2 - p1) & ANGMASK                          # DOOM angle1-angle2
     if span >= ANG180:
         return 0, VIS_W - 1            # viewer within the box's angular span

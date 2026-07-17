@@ -41,7 +41,7 @@ def load_engine(mem, banked=0, c02=None):
 
 def load_angle_module(mem, c02=None):
     """Build + load the flat angle module (slope_div) and its tables:
-    code @ slope_div, tantoangle lo/hi @ TA_LO/TA_HI, viewangletox
+    code @ ang_head, F tables @ L8_TAB/AE_LO/AE_HI, viewangletox
     (centre-column, phi+512 index, u8-clamped) @ VATOX."""
     import angle_bbox as A
     # Build the ENGINE link (not the slope_div-only link): the ZC segment
@@ -56,11 +56,16 @@ def load_angle_module(mem, c02=None):
     base = sym('ang_head')                  # ANG region head
     code = open(os.path.join(_ROOT, 'bsp_render_ang.bin'), 'rb').read()
     mem[base:base + len(code)] = code
-    ta_lo, ta_hi, vatox = sym('TA_LO'), sym('TA_HI'), sym('VATOX')
-    for i in range(1024):
-        v = A._tantoangle[i]
-        mem[ta_lo + i] = v & 0xFF
-        mem[ta_hi + i] = (v >> 8) & 0xFF
+    l8, ae_lo, ae_hi = sym('L8_TAB'), sym('AE_LO'), sym('AE_HI')
+    vatox = sym('VATOX')
+    # option F tables (tools/atanexp_cert.py is the one source; the
+    # mirror loads the same json). Seed-time contract asserts:
+    assert A.EPSILON_F == 15, 'EPSILON drifted from the baked bca_tail bias'
+    assert A._TA0 == 0, 'TA0 drifted from the baked num==0 arm'
+    for i in range(256):
+        mem[l8 + i] = A._L8[i] & 0xFF
+        mem[ae_lo + i] = A._ATANEXP[i] & 0xFF
+        mem[ae_hi + i] = (A._ATANEXP[i] >> 8) & 0xFF
     for k in range(1025):
         c = (A._vatox_lo[k + 512] + A._vatox_hi[k + 512]) // 2
         mem[vatox + k] = max(0, min(255, c))

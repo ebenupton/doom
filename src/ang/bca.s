@@ -69,6 +69,29 @@ bbox_check_angle:
 ;   ilo = max(0, vatox[p1+512] - 1) ; ihi = min(255, vatox[p2+512] + 1)
 ;   cull if ilo > ihi else visible
 bca_tail:                               ; shared by bbox_check_angle + _cached
+; F role bias (option F, 2026-07-17; EPSILON = 15 certified by
+; tools/atanexp_cert.py): r1 -= EPS, r2 += EPS — every downstream
+; verdict (span/full, the clip windows, the cull tests, the extents)
+; becomes a SUPERSET of the exact convention's, so the framebuffer is
+; bit-identical. Applied HERE, not in cp_havepsi: the rcache psi
+; snapshots read the arms' RAW r values (pre-tail), stay bias-free,
+; and warm rebuilds re-enter this tail to re-bias consistently.
+   SEC
+   LDA bca_p1
+   SBC #15
+   STA bca_p1
+   LDA bca_p1+1
+   SBC #0
+   AND #$0F
+   STA bca_p1+1
+   CLC
+   LDA bca_p2
+   ADC #15
+   STA bca_p2
+   LDA bca_p2+1
+   ADC #0
+   AND #$0F
+   STA bca_p2+1
    SEC
    LDA bca_p2
    SBC bca_p1

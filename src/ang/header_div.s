@@ -30,164 +30,28 @@
 .else
 .segment "ANG"
 .endif
-.export slope_div, bbox_check_angle
+.export bbox_check_angle
 ang_head:
-slope_div:
-.scope
-; if num >= den -> SLOPERANGE (1024)
-   LDA sd_num+1
-   CMP sd_den+1
-   BCC lt
-   BNE ge
-   LDA sd_num
-   CMP sd_den
-   BCC lt
-ge:
-   LDA #<1024
-   STA sd_q
-   LDA #>1024
-   STA sd_q+1
-   RTS
-; slope_div_le — entry for callers that GUARANTEE num < den strictly
-; (corner_phi: the axgt fold swaps to num<=den and diverts the num==den
-; diagonal to ANG45 before calling). Skips the 16-bit num>=den entry
-; proof above (~19 cycles when both hi bytes match). q <= 1023 here, so
-; the caller needs no q==1024 check either. Preserves X.
-::slope_div_le:
-lt:
-; 98% of divides have den < 256 (so num < den < 256): 8-bit restoring
-; divide, r in A, no high byte. The quotient is <= 1024 (11 bits); after 8
-; iterations q holds the top 8 bits (quotient>>2 <= 255), so q's high byte
-; is only needed for the last 2 iterations -- phase A shifts the low byte
-; only, phase B both. The quotient bit (carry = "2r >= den") is folded into
-; q via ROL, so no INC.
-   LDA sd_den+1
-   BEQ den_fits
-   JMP slow
-; (trampoline: .slow now >127 away)
-den_fits:
-   LDA #0
-   STA sd_q+1                              ; (sd_q low init was dead: phase
-                                           ; A's 8 ROLs flush every old bit)
-; Second operand leading zero: if den < 128 too, then 2r < 256 always, so
-; the bit-8 overflow case can't happen -- drop the BCS test and the SEC
-; fixup (the SBC after CMP-ge already leaves carry set). 69% of divides.
-   LDA sd_den
-   BMI hi128
-; Unrolled (no DEX:BNE). BCC P%+4 skips the 2-byte SBC with no label.
-   LDA sd_num                              ; r in A
-.repeat (8)-(1)+1                       ; phase A: low byte of q only
-   ASL A
-   CMP sd_den
-   BCC *+4
-   SBC sd_den
-   ROL sd_q
-.endrepeat
-; phase B iteration 1: remainder still feeds iteration 2
-   ASL A
-   CMP sd_den
-   BCC *+4
-   SBC sd_den
-   ROL sd_q
-   ROL sd_q+1
-; phase B iteration 2 (LAST): the remainder is dead after the final
-; quotient bit — the SBC that maintained it is gone; CMP's carry IS the
-; bit (2r < 256 always here, so ASL can't carry out)
-   ASL A
-   CMP sd_den
-   ROL sd_q
-   ROL sd_q+1
-   RTS
-hi128:
-; 128 <= den < 256: 2r can reach 9 bits, keep overflow handling. Unrolled:
-; BCS P%+6 -> SBC (overflow, qbit=1); BCC P%+5 -> ROL (r<den, qbit=0).
-   LDA sd_num                              ; remainder r lives in A throughout
-.repeat (8)-(1)+1
-   ASL A
-   BCS *+6
-   CMP sd_den
-   BCC *+5
-   SBC sd_den
-   SEC
-   ROL sd_q
-.endrepeat
-; iteration 9: remainder still feeds iteration 10
-   ASL A
-   BCS *+6
-   CMP sd_den
-   BCC *+5
-   SBC sd_den
-   SEC
-   ROL sd_q
-   ROL sd_q+1
-; iteration 10 (LAST): remainder dead — overflow's C=1 is already the
-; quotient bit (skip the CMP), otherwise CMP's carry is
-   ASL A
-   BCS *+4
-   CMP sd_den
-   ROL sd_q
-   ROL sd_q+1
-   RTS
-slow:
-; Generic path (den >= 256, ~2% of divides but ~430 cycles each = a
-; real rock). UNROLLED register-ride (2026-07-17): the remainder's lo
-; byte lives in A, the hi in sd_r+1, and with the counter gone Y is
-; scratch for the subtract shuffle — the old ASL zp/ROL zp shifting and
-; LDA-heavy compares drop ~15 cycles per iteration. Hi compares go
-; through Y (CPY zp: A stays the lo byte); the quotient bit is the
-; carry as before (failing compares arrive C=0, the hi SBC leaves
-; C=1). q fits its lo byte through iteration 8 (q <= 1023), so the
-; sd_q+1 ROL joins for the last two only. X (oct) untouched.
-   LDA #0
-   STA sd_q
-   STA sd_q+1
-   LDA sd_num+1
-   STA sd_r+1
-   LDA sd_num                              ; r lo rides A throughout
-.repeat 10, I
-.scope
-   ASL A
-   ROL sd_r+1                              ; r <<= 1 (r < den <= ~1400: fits)
-   LDY sd_r+1
-   CPY sd_den+1
-   BCC no
-   BNE yes
-   CMP sd_den                              ; hi equal: lo decides (A = r lo)
-   BCC no
-yes:
-   SBC sd_den                              ; C=1 on both entries: lo -= den lo
-   TAY                                     ; park the lo result
-   LDA sd_r+1
-   SBC sd_den+1
-   STA sd_r+1                              ; C=1 out (r >= den)
-   TYA
-no:
-   ROL sd_q                                ; q = q<<1 | carry
-.if I >= 8
-   ROL sd_q+1
-.endif
-.endscope
-.endrepeat
-   RTS
-.endscope
+; (slope_div is GONE — option F, 2026-07-17: the corner pipeline reads
+;  ATANEXP[L8[den]-L8[num]] instead of dividing; tools/atanexp_cert.py
+;  certifies the tables and EPSILON. ~450 bytes of ANG freed, and the
+;  tantoangle tables died with it.)
 
-; point_to_angle(dx,dy) -> fineangle [0,4096). 8 octants; each does
-; slope_div(min(|dx|,|dy|), max(...)) -> tantoangle, then base +/- ta.
-; tantoangle table: TA_LO/TA_HI (1025 entries) loaded by the harness.
+; point_to_angle(dx,dy) -> fineangle [0,4096). 8 octants; each stages
+; min/max magnitudes and reads ta' = ATANEXP[L8[max] - L8[min]] (option
+; F). Tables harness/loader-seeded from tools/atanexp_cert.py output.
 ; ($3B/$3C, $71/$72 freed: abs now writes the divide operands directly --
 ;  reused below for bca_afn / bca_cy)
 .if BANKED
-TA_LO = $8000                           ; bank L2 window: tantoangle lo (1024)
-TA_HI = $8400                           ; bank L2: tantoangle hi (1025)
+L8_TAB = $8000                          ; bank L2 window (old TA_LO home):
+AE_LO  = $8100                          ; L8[v] = round(32*log2 v); atanexp
+AE_HI  = $8200                          ; ta' lo/hi (tools/atanexp_cert.py —
+                                        ; ONE source for tables + EPSILON;
+                                        ; $8300-$88FF FREED: tantoangle died)
 .else
-TA_LO = $DC00                           ; 1024 entries (reclaimed rotation-cache RAM)
-TA_HI = $F200                           ; 1024 USED entries ($F200-$F5FF, above
-                                        ; the grown code <$F200). Slot 1024
-                                        ; ($F600) is NEVER read (corner_phi
-                                        ; diverts num==den to ANG45, so
-                                        ; slope_div_le's q <= 1023; the
-                                        ; harness seeds 1024) — the byte is
-                                        ; ceded to VATOX's page alignment.
+L8_TAB = $DC00                          ; old TA_LO home (flat)
+AE_LO  = $DD00
+AE_HI  = $DE00
 .endif
 
 ; point_to_angle: INLINED into corner_phi (its sole caller); see below.

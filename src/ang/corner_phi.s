@@ -448,29 +448,93 @@ haveax:
    ORA pa_sy
    ORA pa_sx
    TAX
-   JSR slope_div_le                        ; -> sd_q (0..1023); preserves X
-; (num < den strictly here — pa_equal diverted the diagonal — so q fits
-; the 1024-entry tantoangle and the old q==1024 check is gone.)
-pa_lookup:
-; ta = tantoangle[sd_q]. TA_LO/TA_HI are page-aligned (asserted), so
-; the index lo byte rides Y and pa_ptr's lo byte is PERMANENTLY ZERO
-; (established once per frame in br_view_setup; the VATOX tail rides
-; the same invariant). q_hi <= 3, so neither hi add can wrap — the
-; page-delta hop's carry-in is the first add's known-0 carry-out.
-   .assert (TA_LO & $FF) = 0, error, "TA_LO must be page-aligned"
-   .assert (TA_HI & $FF) = 0, error, "TA_HI must be page-aligned"
-   LDY sd_q
-   LDA sd_q+1
-   CLC
-   ADC #>TA_LO
-   STA pa_ptr+1
-   LDA (pa_ptr),Y
+; --- option F (2026-07-17): ta' = ATANEXP[L(den) - L(num)] — two byte
+; lookups and a subtract replace the restoring divide AND tantoangle.
+; Certified by tools/atanexp_cert.py (exhaustive over den <= 2047):
+; EPSILON = 15 fine units; bca_tail applies the +-EPS role bias so
+; every verdict is a SUPERSET of the exact convention's — pixels are
+; bit-identical. num == 0 -> ta = 0 (TA0, seed-asserted). X = oct
+; rides through untouched; 16-bit operands (den >= 256, rare) reduce
+; via >>3 (+96/octave-triple, cancelling when both reduce — the
+; cert models the identical reduction).
+   LDA sd_num+1
+   BNE lf_num16
+   LDA sd_num
+   BEQ lf_ta0
+   TAY
+   LDA L8_TAB,Y
+   STA pa_sx                               ; L(num) (pa_sx/pa_sy are dead
+                                        ; after the haveax oct fold)
+   LDA sd_den+1
+   BNE lf_d16n8
+   LDY sd_den
+   LDA L8_TAB,Y
+   SEC
+   SBC pa_sx                                  ; k = L8[den] - L8[num]
+   BCC lf_k0                               ; defensive (cert: kmin = 0)
+lf_khave:
+   TAY
+   LDA AE_LO,Y
    STA pa_res
-   LDA pa_ptr+1                            ; (C=0: >TA_LO + q_hi can't wrap)
-   ADC #(>TA_HI - >TA_LO)
-   STA pa_ptr+1
-   LDA (pa_ptr),Y
+   LDA AE_HI,Y
    STA pa_res+1
+   JMP comb
+lf_k0:
+   LDA #0
+   BEQ lf_khave                            ; (always)
+lf_ta0:
+   STA pa_res                              ; ta = 0 (A = 0 here)
+   STA pa_res+1
+   JMP comb
+lf_d16n8:
+; den 16-bit, num 8-bit: k = (L8[den>>3] - L8[num]) + 96, clamped 255
+   JSR lf_dred
+   SEC
+   SBC pa_sx
+   BCS lf_d16n8_pos
+   ADC #96                                 ; C=0: wraps to diff+96 exactly
+   JMP lf_khave
+lf_d16n8_pos:
+   ADC #95                                 ; C=1: diff+96
+   BCS lf_k255
+   JMP lf_khave
+lf_k255:
+   LDA #255
+   JMP lf_khave
+lf_num16:
+; num 16-bit (so den is too: den > num): the +96s cancel
+   LDA sd_num+1
+   STA pa_sy
+   LDA sd_num
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   TAY
+   LDA L8_TAB,Y
+   STA pa_sx                                  ; L8[num>>3]
+   JSR lf_dred
+   SEC
+   SBC pa_sx
+   BCC lf_k0
+   JMP lf_khave
+lf_dred:
+; A = L8[den>>3] (den 16-bit; clobbers Y, pa_sy)
+   LDA sd_den+1
+   STA pa_sy
+   LDA sd_den
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   LSR pa_sy
+   ROR A
+   TAY
+   LDA L8_TAB,Y
+   RTS
+lf_join:
 comb:
 ; res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
 ; (0/1024/2048/3072), so base_lo is always 0. X = oct (from haveax).
