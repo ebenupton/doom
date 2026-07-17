@@ -44,7 +44,7 @@ def run_pa(dx, dy):
     steps = 0
     while mpu.pc != 0x0000 and steps < 5000:
         mpu.step(); steps += 1
-    raw = mpu.memory[PA_RES] | (mpu.memory[PA_RES + 1] << 8)  # signed12(-psi)
+    raw = mpu.y | (mpu.a << 8)  # r returned in A/Y (store-backs died 2026-07-18)
     if raw >= 0x8000:
         raw -= 0x10000
     return (-raw) % 4096                                 # recover psi in [0,4096)

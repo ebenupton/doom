@@ -758,13 +758,16 @@ cp_havepsi:
    SEC
    LDA bca_afn
    SBC pa_res
-   STA pa_res
    TAY                                     ; r lo rides Y to the caller
    LDA bca_afn+1
    SBC pa_res+1
    AND #$0F                                ; r & 4095 (hi nibble) — u12, done
-   STA pa_res+1                            ; (A still = r hi at RTS)
-   RTS
+   RTS                                     ; (A = r hi; the pa_res store-backs
+                                           ; died 2026-07-18 — every runtime
+                                           ; caller consumes A/Y, and the unit
+                                           ; test reads the registers now.
+                                           ; pa_res keeps holding PSI, which
+                                           ; is what the memo store wants.)
 
 ; checkcoord[boxpos*4]: indices into (top=0,bot=1,left=2,right=3).
 ; rows 3,7,11 and 5 unused (5=inside handled earlier).
