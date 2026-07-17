@@ -119,16 +119,21 @@ def build_banked(flatr):
     n_verts_b = layout['off_nodes'] and 0  # (offsets: verts span off_verts..off_seg_hdr)
     vlen = layout['off_seg_hdr'] - layout['off_verts']
     l2[0x2200:0x2200 + vlen] = bytes(rom_main[layout['off_verts']:layout['off_seg_hdr']])
-    # Animated sectors (DOOM_ANIM builds): VWH worker -> L2 @ $BA00; tick
-    # tables TABL2/CFG @ $B900/$B980; L0 gets the FHCH+flags worker @ $BE00
-    # plus SSMASK/TABL0 @ $BB00/$BC00 (seeded before define_bank below via
-    # the l0 image; L2 seeded here).
+    # Animated sectors (DOOM_ANIM builds): CFG @ $BA00 (L2); TABL0 @ $BE90
+    # (L0, seeded into the l0 image above). SSMASK is consumed from MAIN
+    # $0A80 (pageless hub reads) but main below $1B40 never reaches the
+    # disc — so it ALSO stages at L2 $BB00 (ANIM_SSMASK_SRC) and anim_init
+    # copies the page down at boot. The direct bm[] seed above keeps
+    # harnesses that never call anim_init working; the bytes are identical.
     # (STK staging retired 2026-07-12: RNS lives in CODE; page 1 is free)
     if dw.ANIM_SECTORS:
         import anim_sectors as _an
         for addr, blob in _an.gen_6502_tables(flat=False).items():
             if 0xBA00 <= addr < 0xBB00:          # L2-side table (CFG @ $BA00)
                 l2[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
+            elif 0x0A80 <= addr < 0x0C00:        # SSMASK -> staging @ $BB00
+                assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $BB00 staging page'
+                l2[0x3B00:0x3B00 + len(blob)] = blob
     bm.define_bank(BANK_L2, l2)
 
 

@@ -35,6 +35,10 @@ ANIM_SSMASK = $0A80                     ; MAIN: u8 mover bitmask per subsector
                                         ; under any bank; main = zero paging)
 ANIM_TABL0  = $BE90                     ; L0: 6 u16 ptrs -> per-mover blocks
 ANIM_CFG    = $BA00                     ; L2: 12 B per mover (bounds/speed/waits)
+ANIM_SSMASK_SRC = $BB00                 ; L2: staging page for SSMASK — the
+                                        ; disc can only ship bank contents
+                                        ; (LOW loads at $1B40), so anim_init
+                                        ; copies this page down to $0A80
 .else
 ANIM_SSMASK = $E484
 ANIM_TABL0  = $E580
@@ -414,10 +418,26 @@ alw_f:   .byte 0
 ;   in : ANIM_CFG (+8 start88, +10 packed start state/timer)
 ;   out: ANIM_WS seeded (all 6 movers), ANIM_DIRTY = $3F (every mover patches
 ;        on first visibility, even before any motion), ANIM_ENABLE = 1,
-;        anim_ss_hook operand SMC-patched -> anim_hub.
+;        anim_ss_hook operand SMC-patched -> anim_hub, ANIM_SSMASK copied
+;        down from its L2 staging page (banked only — see below).
 .segment "ANIML2"
 anim_init:
 .scope
+.if ::BANKED
+; SSMASK lives in MAIN ($0A80) so the hub can read it under any bank —
+; but main RAM below $1B40 is NOT covered by the disc's LOW image, so
+; the mask must ship inside a bank and be copied down here (L2 is
+; paged). The 355c126 reshuffle moved it to $0A80 without this copy:
+; the model harness pokes main RAM directly, so every banked gate
+; passed while the DISC ran against OS boot junk and doors froze
+; (found 2026-07-17 — anim coverage is flat-only, jsbeeb is the catcher).
+   LDX #0
+ai_cp:
+   LDA ANIM_SSMASK_SRC,X
+   STA ANIM_SSMASK,X
+   INX
+   BNE ai_cp                               ; 256 bytes (staged page is padded)
+.endif
    LDA #5
    STA ai_midx
 ai_m:
