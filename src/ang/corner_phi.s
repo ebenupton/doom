@@ -28,8 +28,18 @@ box_classify:
 ; the BVC/EOR V-correction (2026-07-17): the deltas are bounded by the
 ; prescaled map (~+-1400), s16 never overflows (the ZCF corner
 ; subtracts never corrected either), so N IS the sign.
-   LDA #0
-   STA t1                                  ; outside flag
+; ZONE INHERITANCE (2026-07-17): child box is a subset of the parent
+; box (seg-bound nesting survives the monotone prescale+inflate), so a
+; STRICT outside verdict inherits: px < left_p => px < left_c, etc.
+; zp_par_zone carries the parent box's strict bits (walk-stacked); an
+; inherited axis skips its compare ladder ENTIRELY and reproduces the
+; old ladder's class + flag byte-exactly (only STRICT bits inherit —
+; the d==0/f==0 edge cases never set bits, so the inside test is
+; untouched). t1 is now the strict-bit MASK (nonzero == outside, same
+; inside test); classify publishes it as zp_bca_zone for the walk to
+; pass down.
+   LDA zp_par_zone
+   STA t1                                  ; inherited bits seed the mask
    LDA zp_bbox_side
    BNE bcls_s1_j
    JMP bcls_s0
@@ -38,6 +48,20 @@ bcls_s1_j:
 ; ---- side s0 arm (plane operands baked; Y = node per read pair,
 ; then freed for the raw-hi ride exactly as before) ----
 bcls_s0:
+; --- inherited strict-x? (bits 0/1) ---
+   LDA zp_par_zone
+   AND #$03
+   BEQ inhx_run_s0                      ; nothing strict: run the ladder
+   LSR A                                   ; bit0 -> C (strictly left)
+   BCS inhx_l_s0
+   LDA #2                                  ; strictly right: boxx = 2
+   BNE inhx_have_s0
+inhx_l_s0:
+   LDA #0                                  ; strictly left: boxx = 0
+inhx_have_s0:
+   STA t0
+   JMP inhy_s0
+inhx_run_s0:
 ; --- d = px - left ---
    LDY zp_node_ch_l
    SEC
@@ -54,7 +78,9 @@ bcls_s0:
    BNE cx_x_pos_s0
    BEQ cx_have_x_s0
 cx_x0_out_s0:
-   INC t1
+   LDA t1
+   ORA #$01                                ; strictly left of the box
+   STA t1
    LDA #0
    BEQ cx_have_x_s0
 cx_x_pos_s0:
@@ -69,10 +95,26 @@ cx_x_pos_s0:
    LDA #1
    BNE cx_have_x_s0
 cx_x2_out_s0:
-   INC t1
+   LDA t1
+   ORA #$02                                ; strictly right
+   STA t1
    LDA #2
 cx_have_x_s0:
    STA t0                                  ; boxx
+inhy_s0:
+; --- inherited strict-y? (bits 2/3) ---
+   LDA zp_par_zone
+   AND #$0C
+   BEQ inhy_run_s0
+   AND #$04                                ; strictly above?
+   BNE inhy_a_s0
+   LDA #2                                  ; strictly below: boxy = 2
+   BNE inhy_have_s0
+inhy_a_s0:
+   LDA #0                                  ; strictly above: boxy = 0
+inhy_have_s0:
+   JMP cx_compose
+inhy_run_s0:
 ; --- f = py - top ---
    LDY zp_node_ch_l
    SEC
@@ -89,7 +131,9 @@ cx_have_x_s0:
    BNE cx_y0_out_s0
    BEQ cx_have_y_s0
 cx_y0_out_s0:
-   INC t1
+   LDA t1
+   ORA #$04                                ; strictly above
+   STA t1
    LDA #0
    BEQ cx_have_y_s0
 cx_y_low_s0:
@@ -104,13 +148,29 @@ cx_y_low_s0:
    LDA #1
    BNE cx_have_y_s0
 cx_y2_out_s0:
-   INC t1
+   LDA t1
+   ORA #$08                                ; strictly below
+   STA t1
    LDA #2
 cx_have_y_s0:
    JMP cx_compose
 ; ---- side s1 arm (plane operands baked; Y = node per read pair,
 ; then freed for the raw-hi ride exactly as before) ----
 bcls_s1:
+; --- inherited strict-x? (bits 0/1) ---
+   LDA zp_par_zone
+   AND #$03
+   BEQ inhx_run_s1                      ; nothing strict: run the ladder
+   LSR A                                   ; bit0 -> C (strictly left)
+   BCS inhx_l_s1
+   LDA #2                                  ; strictly right: boxx = 2
+   BNE inhx_have_s1
+inhx_l_s1:
+   LDA #0                                  ; strictly left: boxx = 0
+inhx_have_s1:
+   STA t0
+   JMP inhy_s1
+inhx_run_s1:
 ; --- d = px - left ---
    LDY zp_node_ch_l
    SEC
@@ -127,7 +187,9 @@ bcls_s1:
    BNE cx_x_pos_s1
    BEQ cx_have_x_s1
 cx_x0_out_s1:
-   INC t1
+   LDA t1
+   ORA #$01                                ; strictly left of the box
+   STA t1
    LDA #0
    BEQ cx_have_x_s1
 cx_x_pos_s1:
@@ -142,10 +204,26 @@ cx_x_pos_s1:
    LDA #1
    BNE cx_have_x_s1
 cx_x2_out_s1:
-   INC t1
+   LDA t1
+   ORA #$02                                ; strictly right
+   STA t1
    LDA #2
 cx_have_x_s1:
    STA t0                                  ; boxx
+inhy_s1:
+; --- inherited strict-y? (bits 2/3) ---
+   LDA zp_par_zone
+   AND #$0C
+   BEQ inhy_run_s1
+   AND #$04                                ; strictly above?
+   BNE inhy_a_s1
+   LDA #2                                  ; strictly below: boxy = 2
+   BNE inhy_have_s1
+inhy_a_s1:
+   LDA #0                                  ; strictly above: boxy = 0
+inhy_have_s1:
+   JMP cx_compose
+inhy_run_s1:
 ; --- f = py - top ---
    LDY zp_node_ch_l
    SEC
@@ -162,7 +240,9 @@ cx_have_x_s1:
    BNE cx_y0_out_s1
    BEQ cx_have_y_s1
 cx_y0_out_s1:
-   INC t1
+   LDA t1
+   ORA #$04                                ; strictly above
+   STA t1
    LDA #0
    BEQ cx_have_y_s1
 cx_y_low_s1:
@@ -177,7 +257,9 @@ cx_y_low_s1:
    LDA #1
    BNE cx_have_y_s1
 cx_y2_out_s1:
-   INC t1
+   LDA t1
+   ORA #$08                                ; strictly below
+   STA t1
    LDA #2
 cx_have_y_s1:
    JMP cx_compose
@@ -189,7 +271,8 @@ cx_compose:
    ADC t0
    TAX
    LDA t1
-   BEQ cx_inside
+   STA zp_bca_zone                         ; publish the strict bits (the walk
+   BEQ cx_inside                           ; hands them to this box's children)
    RTS
 cx_inside:
 ; inside -> full result; discard box_classify's return, exit to

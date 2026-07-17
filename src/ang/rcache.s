@@ -171,6 +171,9 @@ bcf_enable:
 ;     goto bca_tail
 bbox_check_angle_cached:
 ; (no bca_vis entry preset — every exit tail stores it; see bca.s)
+   LDA #0                                  ; warm paths skip classify — kill
+   STA zp_bca_zone                         ; the strict bits so children run
+                                        ; their own ladders (cold re-writes)
    JSR bcac_index                          ; -> rc_psilo/hi, rc_bytehi, rc_bit
    LDX rc_bytehi
    LDA RCACHE_COMPUTED,X

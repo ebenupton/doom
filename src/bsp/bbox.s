@@ -187,6 +187,10 @@ dv_straddle:
    LDA #255
    STA zp_i_h
 dv_gap:
+   LDA #0                                  ; D-serve skipped classify: the
+   STA zp_bca_zone                         ; children must not inherit stale
+                                        ; strict bits (exactness, not just
+                                        ; pixel-safety — wrong corners)
    JMP SC_HAS_GAP                          ; serve: A/Z is our return value
                                         ; (main-resident — no PAGE)
 dv_invis:

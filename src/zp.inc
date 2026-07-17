@@ -81,7 +81,10 @@ zp_px_s_save = $C6                ; [bsp]; br_project_x shrink path: the
 ; $EB-$EE/$F0-$F1. Do not trust "free" without grepping ang/anim/drivers.
 zp_br_p = $1C                     ; [bsp]
 zp_br_p_h = $1D                   ; [bsp]
-; $1E/$1F free (was bca_lo — folded into direct bca_p1 reads, 2026-07-11)
+zp_bca_zone = $1E                 ; [ang]; classify STRICT-bit mask (b0 px<left,
+                                  ;   b1 px>right, b2 py>top, b3 py<bot) — the
+                                  ;   outside flag AND the child-inheritable zone
+; $1F free (was bca_lo hi — folded into direct bca_p1 reads, 2026-07-11)
 zp_br_t0 = $20                    ; [bsp]
 zp_br_t1 = $21                    ; [bsp]
 zp_br_t2 = $22                    ; [bsp]
@@ -145,7 +148,7 @@ zp_ri_d_l = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
 ; from header+12 via (zp_seg_hdr_p),Y (stride-16 heights; solids never
 ; touch it).
-; $2A free (was zp_ri_neg — trig sign seeds zp_br_t1 via thunk SMC, 2026-07-11)
+zp_par_zone = $2A                 ; [bsp/ang]; parent box's strict bits at descend (walk-saves/restores around near subtrees)
 ; $2B FREE (2026-07-09): zp_seg_bch retired — back ceil read on demand
 ; from header+15 via (zp_seg_hdr_p),Y.
 zp_ri_d_h = $2C                   ; [bsp]; (was unused; s16 hi byte of d)

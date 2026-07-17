@@ -48,6 +48,10 @@ br_render_frame:
 ; clipper/angle modules page for themselves and the child follows
 ; restore it). One PAGE per frame covers the seed.
    PAGE BANK_L0
+   LDA #0
+   STA zp_par_zone                         ; root inherits nothing
+   STA zp_bca_zone                         ; (and nothing stale can leak into
+                                        ; the first descend)
 
 ; --- Per-frame init (the standalone br_init_frame is retired).
 ; Records-pointer ground state: the lo byte is never written non-zero
@@ -298,8 +302,15 @@ r0_vis:
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
+   LDA zp_par_zone                         ; ZONE stack: save ours; the near
+   PHA                                     ; subtree inherits the box we just
+   LDA zp_bca_zone                         ; classified (SAP serves keep
+   STA zp_par_zone                         ; zp_bca_zone = the identical
+                                        ; parent's bits — the chain holds)
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
    JSR rc_descend_near
+   PLA
+   STA zp_par_zone                         ; restore for OUR far check
 r0_far:
    PLA
    STA zp_node_ch_l                        ; id
@@ -319,6 +330,8 @@ r0_far_vis:
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
    STA zp_node_ch_l
+   LDA zp_bca_zone                         ; hand the zone down (tail call:
+   STA zp_par_zone                         ; our frame is done, no save)
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
    JMP rc_descend_far                      ; TAIL call either way
@@ -352,9 +365,15 @@ r1_vis:
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
    STA zp_node_ch_l
+   LDA zp_par_zone                         ; ZONE stack (mirror)
+   PHA
+   LDA zp_bca_zone
+   STA zp_par_zone
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
    JSR rc_descend_near
+   PLA
+   STA zp_par_zone
 r1_far:
    PLA
    STA zp_node_ch_l
@@ -368,6 +387,8 @@ bv_site_far1:                           ; operand SMC-patched by br_dcache_frame
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
+   LDA zp_bca_zone                         ; hand the zone down (tail)
+   STA zp_par_zone
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
    JMP rc_descend_far                      ; TAIL call either way
 sp_serve1:
