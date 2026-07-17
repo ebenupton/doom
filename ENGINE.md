@@ -140,6 +140,8 @@ vxcache.s.
       clip/dcl_s16.s       s16 front-end: clips to u8, tail-calls DCL.
                            Callers guarantee x-order (seg layer owns it).
     src/bsp_render.s     Renderer unit = ordered .includes of src/bsp/:
+      bsp/inline.s         single-caller bodies as macros (2026-07-17
+                           sweep; exclusion list in its banner)
       bsp/header.s         equates, macros (ZERO/BUMP/PAGE), code_head
                            (= MAIN_BASE, first in the CODE region),
                            imports of clipper entries
