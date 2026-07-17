@@ -276,9 +276,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"node {i} degenerate (dx==dy==0) — type bake can't represent it"
         _npg(0, i, raw_nx); _npg(1, i, raw_nx >> 8)
         _npg(2, i, raw_ny); _npg(3, i, raw_ny >> 8)
-        _npg(4, i, raw_dx); _npg(5, i, raw_dx >> 8)   # general nodes: over-
-        # written by the DIR bake below (dir id / sign byte); raw dy has
-        # no reader on either side -> its pages are GONE (14 -> 12 SoA)
+        _npg(4, i, raw_dx)                   # general nodes: over-written by
+        _npg(5, i, 0)                        # the DIR bake below (dir id /
+        # sign byte); raw dy has no reader on either side -> its pages
+        # are GONE (14 -> 12 SoA). DSGN (pg 5) starts CLEAN for every
+        # node (was raw_dx>>8 for axis nodes — garbage bits 0/1 would
+        # trip the 2026-07-17 SAME-AS-PARENT box flags OR'd in below).
         cr, cl = n[12], n[13]
         assert (cr & 0x7FFF) < 256 and (cl & 0x7FFF) < 256, \
             f"node {i} child id exceeds u8 — format is specialised to 256"
@@ -549,6 +552,29 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         _npg(4, i, did)                      # NODE_DXLO := dir id
         _npg(5, i, (0x80 if pdy < 0 else 0)  # NODE_DXHI := sign byte
                    | (0x40 if pdx < 0 else 0))
+
+    # SAME-AS-PARENT box flags (2026-07-17): DSGN bit 0 (right box) /
+    # bit 1 (left box) set on child node c when box(c,side) is byte-
+    # identical to the parent box the walk descended through — the
+    # walk's NEAR-side check then serves the parent's has_gap interval
+    # (still staged in zp_i_l/h) and skips the whole angle check; the
+    # result is EXACT (same box, same viewer, same frame). The root has
+    # no parent and keeps clear bits; far-side flags are baked but only
+    # the near-side site tests them (interveners clobber the staging).
+    for i, n in enumerate(nodes):
+        for s_, sb in ((0, 4), (1, 8)):
+            c = n[12 + s_]
+            if c & 0x8000:
+                continue                     # leaf child: no DSGN byte
+            cn = nodes[c]
+            fl = 0
+            if tuple(cn[4:8]) == tuple(n[sb:sb+4]):
+                fl |= 0x01                   # child's RIGHT box == parent box
+            if tuple(cn[8:12]) == tuple(n[sb:sb+4]):
+                fl |= 0x02                   # child's LEFT box == parent box
+            if fl:
+                pg5 = off_nodes + 5 * 256 + c
+                rom_main[pg5] |= fl
 
     spans_offset = vcache_size + vcache_valid + vwh_cache_size + vwh_valid
     ram_size = spans_offset + SPAN_TOTAL

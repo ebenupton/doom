@@ -280,9 +280,20 @@ rc_s0:
    STA zp_bbox_side
    LDA zp_node_ch_l
    PHA                                     ; push id (side is implicit)
+; SAME-AS-PARENT serve (2026-07-17): DSGN b0 = this node's RIGHT box is
+; byte-identical to the parent box we just descended through. The
+; parent's has_gap interval is STILL staged in zp_i_l/h (node_setup and
+; is_full touch neither), and identical box => identical angle verdict
+; — has_gap alone decides. NEAR side only: any other check clobbers the
+; staging before a far test could serve.
+   TAX                                     ; A = id (L0 anchored: SoA readable)
+   LDA NODE_DSGN,X
+   LSR A                                   ; b0 -> C
+   BCS sp_serve0
 bv_site_near0:                          ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible                     ; (<-> br_bbox_visible_d when D active)
    BEQ r0_far                              ; near invisible: skip subtree
+r0_vis:
    PAGE BANK_L0                            ; node SoA pages live in bank L0
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
@@ -298,6 +309,12 @@ r0_far:
 bv_site_far0:                           ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
    BEQ rc_ret                              ; far invisible: this node is done
+   JMP r0_far_vis
+sp_serve0:
+   JSR SC_HAS_GAP                          ; parent's interval, main-resident
+   BNE r0_vis                              ; open columns: descend as visible
+   BEQ r0_far                              ; occluded: skip subtree (always)
+r0_far_vis:
    PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
@@ -323,9 +340,14 @@ rc_n1:
    STA zp_bbox_side
    LDA zp_node_ch_l
    PHA
+   TAX                                     ; SAME-AS-PARENT serve, mirror:
+   LDA NODE_DSGN,X                         ; b1 = LEFT box == parent box
+   AND #$02
+   BNE sp_serve1
 bv_site_near1:                          ; operand SMC-patched by br_dcache_frame
    JSR br_bbox_visible
    BEQ r1_far
+r1_vis:
    PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
@@ -348,6 +370,10 @@ bv_site_far1:                           ; operand SMC-patched by br_dcache_frame
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
    JMP rc_descend_far                      ; TAIL call either way
+sp_serve1:
+   JSR SC_HAS_GAP                          ; parent's interval (mirror stub)
+   BNE r1_vis
+   BEQ r1_far                              ; (always)
 rc_ret1:
    RTS
 .endscope
