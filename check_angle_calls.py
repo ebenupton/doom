@@ -35,11 +35,11 @@ def standalone(top,bot,left,right,px,py,ab):
         m[BOX+2*off]=val&0xFF; m[BOX+2*off+1]=(val>>8)&0xFF
     m[B_PX]=px&0xFF;m[B_PY]=py&0xFF;m[B_AB]=ab&0xFF
     _afn=((ab<<4)+512)&0x0FFF; m[B_AFN]=_afn&0xFF; m[B_AFN+1]=(_afn>>8)&0xFF  # pre-biased (view.s hoist)
-    m[B_PXS]=px&0xFF; m[B_PXS+1]=0xFF if px<0 else 0
-    m[B_PYS]=py&0xFF; m[B_PYS+1]=0xFF if py<0 else 0
+    m[B_PXS]=px&0xFF; m[B_PXS+1]=(0xFF if px<0 else 0)^0x80  # offset-binned (view.s)
+    m[B_PYS]=py&0xFF; m[B_PYS+1]=(0xFF if py<0 else 0)^0x80
     m[ZNODE]=0; m[ZSIDE]=0                 # box -> planes at node 0, side 0
     for f,val in enumerate((top,bot,left,right)):
-        m[BBP[2*f]]=val&0xFF; m[BBP[2*f+1]]=(val>>8)&0xFF
+        m[BBP[2*f]]=val&0xFF; m[BBP[2*f+1]]=((val>>8)^0x80)&0xFF  # offset-binned hi
     _st.pc=BCA;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
@@ -60,7 +60,7 @@ def check(px,py,ab):
             if pc==0xFF00: break
             if pc==BCA and armed is None:
                 nd,sd=mem[ZNODE],mem[ZSIDE]          # planes: field + side*$100 + node
-                def _f(k): return s16(mem[BBP[2*k]+sd*0x100+nd]|(mem[BBP[2*k+1]+sd*0x100+nd]<<8))
+                def _f(k): return s16(mem[BBP[2*k]+sd*0x100+nd]|((mem[BBP[2*k+1]+sd*0x100+nd]^0x80)<<8))  # un-bias the offset-binned hi (wad_packed)
                 armed=(_f(0),_f(1),_f(2),_f(3),
                        s8(mem[B_PX]),s8(mem[B_PY]),mem[B_AB])
             elif armed is not None and pc<0xC000 and not (ZC_LO<=pc<ZC_HI):

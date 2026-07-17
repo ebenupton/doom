@@ -39,7 +39,11 @@ box_classify:
 ; inside test); classify publishes it as zp_bca_zone for the walk to
 ; pass down.
    LDA zp_par_zone
-   STA t1                                  ; inherited bits seed the mask
+   STA zp_bca_zone                         ; the mask accumulates DIRECTLY in
+                                           ; its published home (2026-07-19:
+                                           ; t1 staging + the publish copy are
+                                           ; gone; nothing reads the zone
+                                           ; between here and the compose)
    BEQ bc_ladders                          ; nothing inherited (38%): ladders
 ; BOTH axes strict-inherited (27% of classifies): the whole result is a
 ; 16-byte table of the zone bits — no plane reads at all. Single-axis
@@ -49,9 +53,7 @@ box_classify:
    LDA bc_zone_idx,X
    BMI bc_ladders
    ORA zp_bbox_side
-   TAX
-   LDA t1
-   STA zp_bca_zone                         ; publish = the inherited bits
+   TAX                                     ; (zone already published: the seed)
    LDA zc_tab_hi,X                         ; CHAINED DISPATCH (2026-07-18):
    PHA                                     ; classify exits jump straight to
    LDA zc_tab_lo,X                         ; the corner arm; the arm ends
@@ -85,41 +87,42 @@ inhx_have_s0:
    STA t0
    JMP inhy_s0
 inhx_run_s0:
-; --- d = px - left ---
+; --- d = px - L, HI-FIRST (2026-07-19): the coords are offset-binned,
+; so one unsigned hi compare decides unless the hi bytes tie ---
    LDY zp_node_ch_l
-   SEC
-   LDA bca_pxs
-   SBC BBP_L_LO,Y
-   TAX                                     ; d lo rides X
    LDA bca_pxs+1
-   SBC BBP_L_HI,Y
-   BMI cx_x0_out_s0                        ; N and Z from the SBC survive the
-   BNE cx_x_pos_s0                         ; BMI — the old TAY + CPY #0 were
-   TXA                                     ; 4 dead cycles (Eben's catch)
-   BNE cx_x_pos_s0
-   BEQ cx_have_x_s0
-cx_x0_out_s0:
-   LDA t1
-   ORA #$01                                ; strictly left of the box
-   STA t1
-   LDA #0
-   BEQ cx_have_x_s0
-cx_x_pos_s0:
-; --- e = right - px (sign only) ---
-   LDY zp_node_ch_l
-   SEC
-   LDA BBP_R_LO,Y
-   SBC bca_pxs
-   LDA BBP_R_HI,Y
-   SBC bca_pxs+1
-   BMI cx_x2_out_s0
-   LDA #2                                  ; boxx = 1 (pre-doubled)
-   BNE cx_have_x_s0
+   CMP BBP_L_HI,Y
+   BCC cx_x0_out_s0                        ; px < L strictly (hi decides)
+   BNE cx_x_gel_s0                         ; px > L strictly (hi decides)
+   LDA bca_pxs
+   CMP BBP_L_LO,Y
+   BCC cx_x0_out_s0                        ; px < L strictly (lo decides)
+   BEQ cx_have_x0_s0                       ; d == 0: boxx = 0, NO bit
+cx_x_gel_s0:
+; px > L strictly --- e = R - px: mid unless px >= R ---
+   LDA bca_pxs+1
+   CMP BBP_R_HI,Y
+   BCC cx_x_mid_s0                         ; px < R (hi): boxx = 1
+   BNE cx_x2_out_s0                        ; px > R strictly (hi)
+   LDA bca_pxs
+   CMP BBP_R_LO,Y
+   BCC cx_x_mid_s0                         ; px < R (lo)
+   BEQ cx_x_mid_s0                         ; px == R: boxx = 1 (e == 0)
 cx_x2_out_s0:
-   LDA t1
+   LDA zp_bca_zone
    ORA #$02                                ; strictly right
-   STA t1
+   STA zp_bca_zone
    LDA #4                                  ; boxx = 2 (pre-doubled)
+   BNE cx_have_x_s0                        ; (always)
+cx_x0_out_s0:
+   LDA zp_bca_zone
+   ORA #$01                                ; strictly left of the box
+   STA zp_bca_zone
+cx_have_x0_s0:
+   LDA #0                                  ; boxx = 0
+   BEQ cx_have_x_s0                        ; (always)
+cx_x_mid_s0:
+   LDA #2                                  ; boxx = 1 (pre-doubled)
 cx_have_x_s0:
    STA t0                                  ; boxx
 inhy_s0:
@@ -136,41 +139,40 @@ inhy_a_s0:
 inhy_have_s0:
    JMP cx_compose_s0
 inhy_run_s0:
-; --- f = py - top ---
+; --- f = py - T, hi-first (boxy: 0 iff py >= T; bit iff py > T) ---
    LDY zp_node_ch_l
-   SEC
-   LDA bca_pys
-   SBC BBP_T_LO,Y
-   TAX                                     ; f lo rides X
    LDA bca_pys+1
-   SBC BBP_T_HI,Y
-   BMI cx_y_low_s0                         ; N/Z from the SBC (see the x arm)
-   BNE cx_y0_out_s0
-   TXA
-   BNE cx_y0_out_s0
-   BEQ cx_have_y_s0
+   CMP BBP_T_HI,Y
+   BCC cx_y_low_s0                         ; py < T (hi): test the bottom
+   BNE cx_y0_out_s0                        ; py > T strictly (hi)
+   LDA bca_pys
+   CMP BBP_T_LO,Y
+   BCC cx_y_low_s0                         ; py < T (lo)
+   BEQ cx_have_y0_s0                       ; f == 0: boxy = 0, NO bit
 cx_y0_out_s0:
-   LDA t1
+   LDA zp_bca_zone
    ORA #$04                                ; strictly above
-   STA t1
-   LDA #0
-   BEQ cx_have_y_s0
+   STA zp_bca_zone
+cx_have_y0_s0:
+   LDA #0                                  ; boxy = 0
+   BEQ cx_have_y_s0                        ; (always)
 cx_y_low_s0:
-; --- g = py - bot (sign only) ---
-   LDY zp_node_ch_l
-   SEC
-   LDA bca_pys
-   SBC BBP_B_LO,Y
+; --- g = py - B, hi-first (boxy = 2 iff py < B strictly) ---
    LDA bca_pys+1
-   SBC BBP_B_HI,Y
-   BMI cx_y2_out_s0
-   LDA #1
-   BNE cx_have_y_s0
+   CMP BBP_B_HI,Y
+   BCC cx_y2_out_s0                        ; py < B strictly (hi)
+   BNE cx_y_mid_s0                         ; py > B (hi): boxy = 1
+   LDA bca_pys
+   CMP BBP_B_LO,Y
+   BCS cx_y_mid_s0                         ; py >= B: boxy = 1 (g >= 0)
 cx_y2_out_s0:
-   LDA t1
+   LDA zp_bca_zone
    ORA #$08                                ; strictly below
-   STA t1
+   STA zp_bca_zone
    LDA #2
+   BNE cx_have_y_s0                        ; (always)
+cx_y_mid_s0:
+   LDA #1
 cx_have_y_s0:
    JMP cx_compose_s0
 ; ---- side s1 arm (plane operands baked; Y = node per read pair,
@@ -190,41 +192,42 @@ inhx_have_s1:
    STA t0
    JMP inhy_s1
 inhx_run_s1:
-; --- d = px - left ---
+; --- d = px - L, HI-FIRST (2026-07-19): the coords are offset-binned,
+; so one unsigned hi compare decides unless the hi bytes tie ---
    LDY zp_node_ch_l
-   SEC
-   LDA bca_pxs
-   SBC BBP_L_LO+$100,Y
-   TAX                                     ; d lo rides X
    LDA bca_pxs+1
-   SBC BBP_L_HI+$100,Y
-   BMI cx_x0_out_s1                        ; N and Z from the SBC survive the
-   BNE cx_x_pos_s1                         ; BMI — the old TAY + CPY #0 were
-   TXA                                     ; 4 dead cycles (Eben's catch)
-   BNE cx_x_pos_s1
-   BEQ cx_have_x_s1
-cx_x0_out_s1:
-   LDA t1
-   ORA #$01                                ; strictly left of the box
-   STA t1
-   LDA #0
-   BEQ cx_have_x_s1
-cx_x_pos_s1:
-; --- e = right - px (sign only) ---
-   LDY zp_node_ch_l
-   SEC
-   LDA BBP_R_LO+$100,Y
-   SBC bca_pxs
-   LDA BBP_R_HI+$100,Y
-   SBC bca_pxs+1
-   BMI cx_x2_out_s1
-   LDA #2                                  ; boxx = 1 (pre-doubled)
-   BNE cx_have_x_s1
+   CMP BBP_L_HI+$100,Y
+   BCC cx_x0_out_s1                        ; px < L strictly (hi decides)
+   BNE cx_x_gel_s1                         ; px > L strictly (hi decides)
+   LDA bca_pxs
+   CMP BBP_L_LO+$100,Y
+   BCC cx_x0_out_s1                        ; px < L strictly (lo decides)
+   BEQ cx_have_x0_s1                       ; d == 0: boxx = 0, NO bit
+cx_x_gel_s1:
+; px > L strictly --- e = R - px: mid unless px >= R ---
+   LDA bca_pxs+1
+   CMP BBP_R_HI+$100,Y
+   BCC cx_x_mid_s1                         ; px < R (hi): boxx = 1
+   BNE cx_x2_out_s1                        ; px > R strictly (hi)
+   LDA bca_pxs
+   CMP BBP_R_LO+$100,Y
+   BCC cx_x_mid_s1                         ; px < R (lo)
+   BEQ cx_x_mid_s1                         ; px == R: boxx = 1 (e == 0)
 cx_x2_out_s1:
-   LDA t1
+   LDA zp_bca_zone
    ORA #$02                                ; strictly right
-   STA t1
+   STA zp_bca_zone
    LDA #4                                  ; boxx = 2 (pre-doubled)
+   BNE cx_have_x_s1                        ; (always)
+cx_x0_out_s1:
+   LDA zp_bca_zone
+   ORA #$01                                ; strictly left of the box
+   STA zp_bca_zone
+cx_have_x0_s1:
+   LDA #0                                  ; boxx = 0
+   BEQ cx_have_x_s1                        ; (always)
+cx_x_mid_s1:
+   LDA #2                                  ; boxx = 1 (pre-doubled)
 cx_have_x_s1:
    STA t0                                  ; boxx
 inhy_s1:
@@ -241,41 +244,40 @@ inhy_a_s1:
 inhy_have_s1:
    JMP cx_compose_s1
 inhy_run_s1:
-; --- f = py - top ---
+; --- f = py - T, hi-first (boxy: 0 iff py >= T; bit iff py > T) ---
    LDY zp_node_ch_l
-   SEC
-   LDA bca_pys
-   SBC BBP_T_LO+$100,Y
-   TAX                                     ; f lo rides X
    LDA bca_pys+1
-   SBC BBP_T_HI+$100,Y
-   BMI cx_y_low_s1                         ; N/Z from the SBC (see the x arm)
-   BNE cx_y0_out_s1
-   TXA
-   BNE cx_y0_out_s1
-   BEQ cx_have_y_s1
+   CMP BBP_T_HI+$100,Y
+   BCC cx_y_low_s1                         ; py < T (hi): test the bottom
+   BNE cx_y0_out_s1                        ; py > T strictly (hi)
+   LDA bca_pys
+   CMP BBP_T_LO+$100,Y
+   BCC cx_y_low_s1                         ; py < T (lo)
+   BEQ cx_have_y0_s1                       ; f == 0: boxy = 0, NO bit
 cx_y0_out_s1:
-   LDA t1
+   LDA zp_bca_zone
    ORA #$04                                ; strictly above
-   STA t1
-   LDA #0
-   BEQ cx_have_y_s1
+   STA zp_bca_zone
+cx_have_y0_s1:
+   LDA #0                                  ; boxy = 0
+   BEQ cx_have_y_s1                        ; (always)
 cx_y_low_s1:
-; --- g = py - bot (sign only) ---
-   LDY zp_node_ch_l
-   SEC
-   LDA bca_pys
-   SBC BBP_B_LO+$100,Y
+; --- g = py - B, hi-first (boxy = 2 iff py < B strictly) ---
    LDA bca_pys+1
-   SBC BBP_B_HI+$100,Y
-   BMI cx_y2_out_s1
-   LDA #1
-   BNE cx_have_y_s1
+   CMP BBP_B_HI+$100,Y
+   BCC cx_y2_out_s1                        ; py < B strictly (hi)
+   BNE cx_y_mid_s1                         ; py > B (hi): boxy = 1
+   LDA bca_pys
+   CMP BBP_B_LO+$100,Y
+   BCS cx_y_mid_s1                         ; py >= B: boxy = 1 (g >= 0)
 cx_y2_out_s1:
-   LDA t1
+   LDA zp_bca_zone
    ORA #$08                                ; strictly below
-   STA t1
+   STA zp_bca_zone
    LDA #2
+   BNE cx_have_y_s1                        ; (always)
+cx_y_mid_s1:
+   LDA #1
 cx_have_y_s1:
    JMP cx_compose_s1
 ; X = the ZC dispatch index directly: (boxy*4 + boxx)*2 + side =
@@ -290,8 +292,7 @@ cx_compose_s1:
    ORA t0
    ORA #1
    TAX
-   LDA t1
-   STA zp_bca_zone
+   LDA zp_bca_zone                         ; (already published — Z test only)
    BEQ cx_inside
    LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
    PHA
@@ -304,9 +305,8 @@ cx_compose_s0:
    ASL A
    ORA t0
    TAX
-   LDA t1
-   STA zp_bca_zone                         ; publish the strict bits (the walk
-   BEQ cx_inside                           ; hands them to this box's children)
+   LDA zp_bca_zone                         ; already published (the walk hands
+   BEQ cx_inside                           ; it to this box's children); Z only
    LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
    PHA
    LDA zc_tab_lo,X

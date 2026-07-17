@@ -64,13 +64,18 @@ br_view_setup:
                                            ; belt and braces)
 ; Player px,py sign-extended to s16 (bca_pxs $8D/$8E, bca_pys $9B/$9C) is
 ; also frame-constant; hoist it (was recomputed per bbox check).
+; HI bytes OFFSET-BINNED (^$80, 2026-07-19) to match the biased BBP
+; plane hi bytes (wad_packed): classify compares go UNSIGNED hi-first;
+; the ZCF subtractions cancel the bias — deltas stay bit-identical.
    LDA zp_br_px_h
    STA $8D
    LDA zp_br_px_x
+   EOR #$80
    STA $8E
    LDA zp_br_py_h
    STA $9B
    LDA zp_br_py_x
+   EOR #$80
    STA $9C
 ; (the |px|/|py| staging died with the delta-form conversion of the
 ; diagonal back-face test, 2026-07-11 — write-only since; deleted

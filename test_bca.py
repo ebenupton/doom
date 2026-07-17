@@ -30,16 +30,17 @@ def run(top, bot, left, right, px, py, ab):
     afn = ((ab << 4) + 512) & 0x0FFF  # a_fine, PRE-BIASED +512 (bias trick:
     w16(sym('bca_afn'), afn)          # the hoist in view.s does the same)
     mpu.memory[sym('bca_pxs')] = px & 0xFF
-    mpu.memory[sym('bca_pxs') + 1] = 0xFF if px < 0 else 0
+    mpu.memory[sym('bca_pxs') + 1] = (0xFF if px < 0 else 0) ^ 0x80  # offset-binned
     mpu.memory[sym('bca_pys')] = py & 0xFF
-    mpu.memory[sym('bca_pys') + 1] = 0xFF if py < 0 else 0
+    mpu.memory[sym('bca_pys') + 1] = (0xFF if py < 0 else 0) ^ 0x80  # (see view.s)
     # box -> corner planes at node 0, side 0 (the boxp pointer is gone)
     mpu.memory[sym('zp_node_ch_l')] = 0
     mpu.memory[sym('zp_bbox_side')] = 0
     for lo, v in ((sym('BBP_T_LO'), top), (sym('BBP_B_LO'), bot),
                   (sym('BBP_L_LO'), left), (sym('BBP_R_LO'), right)):
         mpu.memory[lo] = v & 0xFF
-        mpu.memory[lo + 0x200] = (v >> 8) & 0xFF
+        mpu.memory[lo + 0x200] = ((v >> 8) ^ 0x80) & 0xFF  # offset-binned hi
+                                                           # (wad_packed rule)
     mpu.pc = BCA; mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0

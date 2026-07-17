@@ -64,7 +64,7 @@ ABI = [
     ('RCACHE_STATE',   0xB460, 0xF100, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
     ('RCACHE_ENABLE',  0xB4E8, 0xF188, 'rotation-coherence bca cache switch (STATE+$88)'),
-    ('CPM_BASE',       0x8300, 0x5480, 'corner-phi memo: 128-slot xor hash, 3 pages ($5480-$577F flat; $5780-$57FF free). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
+    ('CPM_BASE',       0x8300, 0x5500, 'corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
     ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
     ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane'),
     ('CPM_KDYL',       'CPM_BASE+$100', None, '... dy lo'),

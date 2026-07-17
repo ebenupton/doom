@@ -43,5 +43,5 @@ code_true_end:
 .if ::BANKED
 .assert code_true_end <= $5800, error, "CODE overflows into the FB (banked)"
 .else
-.assert code_true_end <= $5480, error, "CODE overflows into the CPM carve (flat corner-phi memo $5480-$57FF, abi.inc)"
+.assert code_true_end <= CPM_BASE, error, "CODE overflows into the CPM carve (flat corner-phi memo, 3 pages ending at the screen — CPM_BASE in abi.inc)"
 .endif

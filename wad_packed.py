@@ -637,7 +637,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             sb = ((side_base - 4) // 4) * 256   # +0 right, +$100 left
             for f, v in enumerate((p_top, p_bot, p_left, p_right)):
                 bbox_table[f * 0x400 + sb + i] = v & 0xFF
-                bbox_table[f * 0x400 + 0x200 + sb + i] = (v >> 8) & 0xFF
+                # HI bytes ship OFFSET-BINNED (^0x80, 2026-07-19): the
+                # classify ladders compare them UNSIGNED hi-first against
+                # the equally-biased bca_pxs/pys (view.s). Every consumer
+                # that SUBTRACTS (the ZCF corner deltas) cancels the bias
+                # exactly — values downstream are bit-identical.
+                bbox_table[f * 0x400 + 0x200 + sb + i] = ((v >> 8) ^ 0x80) & 0xFF
     layout['bbox_table_size'] = len(bbox_table)
 
     return rom_main, rom_detail, rom_recip, bbox_table, layout

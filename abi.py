@@ -41,8 +41,8 @@ RCACHE_STATE_FLAT = 0xF100
 RCACHE_STATE_LEN = 0x0089  # bytes to zero at boot
 RCACHE_ENABLE = 0xB4E8  # rotation-coherence bca cache switch (STATE+$88)
 RCACHE_ENABLE_FLAT = 0xF188
-CPM_BASE = 0x8300  # corner-phi memo: 128-slot xor hash, 3 pages ($5480-$577F flat; $5780-$57FF free). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
-CPM_BASE_FLAT = 0x5480
+CPM_BASE = 0x8300  # corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
+CPM_BASE_FLAT = 0x5500
 CPM_KDXL = 0x8300  # memo key: corner dx lo
 CPM_KDXH = 0x8380  # ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane
 CPM_KDYL = 0x8400  # ... dy lo
