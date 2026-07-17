@@ -593,17 +593,18 @@ ns_x8y16:
 ns_x16y16:
 ; --- both 16-bit: reduce both into t0/t1 (the +96s cancel), then the
 ;     8-bit shape — indices from the temps, no L8-value staging ---
-   LDA sd_num
-   STA t0
-   LDA sd_num+1
-   LSR A
-   ROR t0
-   LSR A
-   ROR t0
-   LSR A
-   ROR t0
    STY t1                                  ; Y = sd_den+1 (banked at the ns_x16
-                                           ; dispatch; reducer 1 leaves Y alone)
+                                           ; dispatch — MUST land before the
+                                           ; LDY below reuses Y)
+   LDY sd_num
+   STY t0                                  ; lo staged via Y: A stays untouched
+; (no LDA: A = sd_num+1 from the entry dispatch — LDY/BNE/STY preserve it)
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
    LDA sd_den
    LSR t1
    ROR A
