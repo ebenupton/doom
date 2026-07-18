@@ -599,18 +599,26 @@ cp_havepsi:
    RTS                                     ; (A = r hi)
 comb_sub:
 ; sub: res = base - ta ; base_lo = 0 (BMI arrives with A = ta hi).
-; The AND is oct 3's mod-4096 wrap (psi = 4096 - ta); the other sub
-; bases can't go negative with ta <= 512.
+; X/Y SWAP (Eben 2026-07-19): base_hi banks into Y while X = oct is
+; live, then X takes the SLOT — so the PSIL store FUSES with the
+; negate (psi lo is in A right there) and the store index doubles as
+; the X = slot return-contract restore (mask_done's double duty,
+; preserved). Loads don't touch C: the borrow rides LDY/LDX/STA into
+; the hi SBC. The AND is oct 3's mod-4096 wrap (psi = 4096 - ta).
    STA pa_res+1
+   LDY pa_base_hi,X
+   LDX zp_cpm_slot
    SEC
    LDA #0
    SBC pa_res
    STA pa_res
-   LDA pa_base_hi,X
+   STA CPM_PSIL,X
+   TYA
    SBC pa_res+1
    AND #$0F
    STA pa_res+1
-   JMP mask_done
+   STA CPM_PSIH,X
+   JMP cp_havepsi
 .if ::BANKED = 0
 .segment "ANG"
 .endif
