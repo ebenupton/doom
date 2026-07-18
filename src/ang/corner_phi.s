@@ -102,6 +102,7 @@
    STY bca_p1
    LDY zp_node_ch_l
    ZCF_DX s, x2                            ; pa_dy carried over
+   LDA pa_dy+1                             ; entry A-contract: dy hi
    JSR e2
    JMP bca_tail                            ; p2 rides A/Y (tail stores it)                            ; chained
 .endmacro
@@ -113,6 +114,7 @@
    ZCF_MEMO_DY                             ; c1's slot read FIRST — the
    LDY zp_node_ch_l                        ; hashing ZCF_DX then computes
    ZCF_DX s, x2                            ; c2's slot into X
+   LDA pa_dy+1                             ; entry A-contract: dy hi
    JSR e2
    JMP bca_tail                            ; p2 rides A/Y (tail stores it)
 .endmacro
@@ -406,17 +408,20 @@ name:
 ; RETURN CONTRACT: X = slot again — the hit serve preserves it and the
 ; miss path's mask_done reloads it, so the slot is banked to zp ONLY
 ; on the miss path (ladder end below); hits never store it (Eben).
-   LDA pa_dx
-   CMP CPM_KDXL,X
+; A CONTRACT (Eben 2026-07-19): every fetch macro ends with pa_dy+1 in
+; A (ZARM_SY/SYM's c2 re-load it after their x-hash fetch), so stage 0
+; compares KDYH with NO load. Stage order is correctness-free: the $80
+; sentinel in KDXH can't match a real dx hi wherever it sits.
+   CMP CPM_KDYH,X
    BNE cmiss0
-   LDA pa_dx+1
-   CMP CPM_KDXH,X
-   BNE cmiss1
    LDA pa_dy
    CMP CPM_KDYL,X
+   BNE cmiss1
+   LDA pa_dx
+   CMP CPM_KDXL,X
    BNE cmiss2
-   LDA pa_dy+1
-   CMP CPM_KDYH,X
+   LDA pa_dx+1
+   CMP CPM_KDXH,X
    BNE cmiss3
    LDA CPM_PSIL,X
    STA pa_res
@@ -432,16 +437,16 @@ name:
 ; the mismatched byte in A, and the bytes BEFORE stage k matched — the
 ; table already holds them, so their stores are skipped entirely.)
 cmiss0:
+   STA CPM_KDYH,X
+   LDA pa_dy
+cmiss1:
+   STA CPM_KDYL,X
+   LDA pa_dx
+cmiss2:
    STA CPM_KDXL,X
    LDA pa_dx+1
-cmiss1:
-   STA CPM_KDXH,X
-   LDA pa_dy
-cmiss2:
-   STA CPM_KDYL,X
-   LDA pa_dy+1
 cmiss3:
-   STA CPM_KDYH,X
+   STA CPM_KDXH,X
    STX zp_cpm_slot                         ; slot banked on the MISS path
                                            ; only (mask_done's psi store —
                                            ; X becomes the octant next)

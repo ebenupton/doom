@@ -45,6 +45,7 @@ def run_pa(dx, dy):
     # entry contract (2026-07-19): X = memo slot, hashed by the fetch
     # macros in the real callers — mirror it here
     mpu.x = (dx ^ dy) & 0x7F
+    mpu.a = (dy >> 8) & 0xFF   # entry A-contract: pa_dy+1 (stage-0 compare)
     mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0
