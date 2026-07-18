@@ -1,45 +1,25 @@
 
 ; ============================================================================
 ; box_classify — PURE DIVERGING CONTROL FLOW (Eben's design, 2026-07-18).
-; No boxy accumulator, no t0, no compose, no table dispatch on ladder
-; paths: the x phase picks one of four columns (Lb strict-left / L0
-; left-edge / M mid / Rb strict-right), each column owns a COPY of the
-; y ladder, and every LEAF knows (row, side, zone mask) statically —
-; it publishes the full mask as an immediate and JMPs its corner arm
-; directly. The mask-0 leaves are exactly the closed-inside cases
-; (edge-on-one-axis + mid/edge on the other), so zone == 0 <=> inside
-; holds by construction; inherited axes divert to their column/leaf
-; and the published mask still equals this box's true strict bits
-; (inherited bits are true for the child by the inheritance theorem).
-; The both-axes-inherited fast path keeps its 16-byte table + zc_ptr
-; dispatch (entry below); everything else is branches.
-;   in : zp_par_zone (walk-stacked), zp_node_ch_l, zp_bbox_side,
-;        bca_pxs/pys (offset-binned hi)
-;   out: control at the corner arm (or full_vis), zp_bca_zone published
+; No boxy accumulator, no t0, no compose, no table dispatch: the x
+; phase picks one of four columns (Lb strict-left / L0 left-edge / M
+; mid / Rb strict-right), each column owns a COPY of the hi-first y
+; ladder, and every LEAF knows (row, side, zone mask) statically — it
+; loads the mask and JMPs its corner arm, which banks it (ZCF1). The
+; mask-0 leaves are exactly the closed-inside cases, so zone == 0 <=>
+; inside holds by construction.
+; ZONE INHERITANCE REMOVED (2026-07-18, measured -649): with hi-first
+; ladders this cheap, the walk's zone stack + the entry checks + the
+; both-axes table + the serve-path zeroing cost MORE than the skipped
+; compares saved. zp_bca_zone survives with ONE consumer: the rotation
+; cache's cold path reads zone == 0 as the inside signal (always fresh
+; — it follows this classify's own run).
+;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
+;   out: control at the corner arm (or full_vis), zp_bca_zone = mask
 ; ============================================================================
 box_classify:
-   LDA zp_par_zone
-   BEQ bc_sides                            ; nothing inherited: ladders
-   TAX
-   LDA bc_zone_idx,X
-   BMI bc_sides                            ; single-axis: the column diverts
-; both-axes fast path: the ARM stores the zone now — hand it the
-; inherited bits in A (X = par) and the node in Y (the arm's first
-; fetch relies on it, like every classify leaf)
-   ORA zp_bbox_side
-   TAY
-   LDA zc_tab_lo,Y
-   STA zc_ptr
-   LDA zc_tab_hi,Y
-   STA zc_ptr+1
-   LDY zp_node_ch_l
-   TXA
-   JMP (zc_ptr)
-bc_zone_idx:
-; zone bits (b0 strictly-left, b1 right, b2 above, b3 below) -> ZC
-; dispatch index (boxy*8 | boxx*2); $FF = not fully inherited.
-   .byte $FF,$FF,$FF,$FF, $FF,$00,$04,$FF, $FF,$10,$14,$FF, $FF,$FF,$FF,$FF
-bc_sides:
+; (NO-INHERITANCE EXPERIMENT: par test, both-axes table and fast-path
+; dispatch removed — every classify runs fresh ladders.)
    LDA zp_bbox_side
    BNE bcls_s1_j
    JMP bcls_s0
@@ -54,14 +34,6 @@ bcls_s0:
                                            ; clobbers Y, and the leaves hand it
                                            ; to the arms (whose first fetch
                                            ; drops its own LDY)
-   LDA zp_par_zone
-   AND #$03
-   BEQ xr_s0
-   LSR A                                   ; bit0 -> C (strictly left)
-   BCS xLbj_s0
-   JMP yRb_s0                             ; strictly right (inherited)
-xLbj_s0:
-   JMP yLb_s0                             ; strictly left (inherited)
 xr_s0:
    LDA bca_pxs+1
    CMP BBP_L_HI0,Y
@@ -86,12 +58,6 @@ xge_s0:
 xRbj_s0:
    JMP yRb_s0
 yM_s0:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yMr_s0                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yMAb_s0                     ; inherited-above == the strict-above leaf
-   BEQ yMBb_s0                     ; (always) inherited-below
 yMr_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
@@ -122,12 +88,6 @@ yMM_s0:
    STA zp_bca_zone                         ; case (zone 0 == inside holds
    JMP full_vis                            ; by construction)
 yLb_s0:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yLbr_s0                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yLbAb_s0                     ; inherited-above == the strict-above leaf
-   BEQ yLbBb_s0                     ; (always) inherited-below
 yLbr_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
@@ -157,12 +117,6 @@ yLbM_s0:
    LDA #$01
    JMP zc4_0
 yL0_s0:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yL0r_s0                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yL0Ab_s0                     ; inherited-above == the strict-above leaf
-   BEQ yL0Bb_s0                     ; (always) inherited-below
 yL0r_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
@@ -192,12 +146,6 @@ yL0M_s0:
    LDA #$00
    JMP zc4_0
 yRb_s0:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yRbr_s0                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yRbAb_s0                     ; inherited-above == the strict-above leaf
-   BEQ yRbBb_s0                     ; (always) inherited-below
 yRbr_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
@@ -235,14 +183,6 @@ bcls_s1:
                                            ; clobbers Y, and the leaves hand it
                                            ; to the arms (whose first fetch
                                            ; drops its own LDY)
-   LDA zp_par_zone
-   AND #$03
-   BEQ xr_s1
-   LSR A                                   ; bit0 -> C (strictly left)
-   BCS xLbj_s1
-   JMP yRb_s1                             ; strictly right (inherited)
-xLbj_s1:
-   JMP yLb_s1                             ; strictly left (inherited)
 xr_s1:
    LDA bca_pxs+1
    CMP BBP_L_HI1,Y
@@ -267,12 +207,6 @@ xge_s1:
 xRbj_s1:
    JMP yRb_s1
 yM_s1:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yMr_s1                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yMAb_s1                     ; inherited-above == the strict-above leaf
-   BEQ yMBb_s1                     ; (always) inherited-below
 yMr_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
@@ -303,12 +237,6 @@ yMM_s1:
    STA zp_bca_zone                         ; case (zone 0 == inside holds
    JMP full_vis                            ; by construction)
 yLb_s1:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yLbr_s1                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yLbAb_s1                     ; inherited-above == the strict-above leaf
-   BEQ yLbBb_s1                     ; (always) inherited-below
 yLbr_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
@@ -338,12 +266,6 @@ yLbM_s1:
    LDA #$01
    JMP zc4_1
 yL0_s1:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yL0r_s1                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yL0Ab_s1                     ; inherited-above == the strict-above leaf
-   BEQ yL0Bb_s1                     ; (always) inherited-below
 yL0r_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
@@ -373,12 +295,6 @@ yL0M_s1:
    LDA #$00
    JMP zc4_1
 yRb_s1:
-   LDA zp_par_zone
-   AND #$0C
-   BEQ yRbr_s1                      ; y not inherited: run the ladder
-   AND #$04
-   BNE yRbAb_s1                     ; inherited-above == the strict-above leaf
-   BEQ yRbBb_s1                     ; (always) inherited-below
 yRbr_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y

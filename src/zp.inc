@@ -83,9 +83,10 @@ zp_vxc_on = $C7                   ; [bsp]; VXC gate flag (vxc_frame sets it
 ; $EB-$EE/$F0-$F1. Do not trust "free" without grepping ang/anim/drivers.
 zp_br_p = $1C                     ; [bsp]
 zp_br_p_h = $1D                   ; [bsp]
-zp_bca_zone = $1E                 ; [ang]; classify STRICT-bit mask (b0 px<left,
-                                  ;   b1 px>right, b2 py>top, b3 py<bot) — the
-                                  ;   outside flag AND the child-inheritable zone
+zp_bca_zone = $1E                 ; [ang]; classify strict-bit mask; SOLE
+                                  ;   consumer = rcache cold's inside signal
+                                  ;   (zone == 0). Inheritance REMOVED
+                                  ;   2026-07-18 (measured -649).
 zp_bv_mode = $1F                  ; [bsp]; bbox-cache dispatch bits: b0 = D
                                   ; wrapper, b1 = rotation cache (set per
                                   ; frame by br_dcache_frame / bca_frame;
@@ -153,9 +154,7 @@ zp_ri_d_l = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
 ; from header+12 via (zp_seg_hdr_p),Y (stride-16 heights; solids never
 ; touch it).
-zp_par_zone = $2A                 ; [bsp/ang]; parent box's strict bits at descend (walk-saves/restores around near subtrees)
-; $2B FREE (2026-07-09): zp_seg_bch retired — back ceil read on demand
-; from header+15 via (zp_seg_hdr_p),Y.
+; $2A free (was zp_par_zone — zone inheritance removed 2026-07-18)
 zp_ri_d_h = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
 zp_br_res_x = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
 zp_br_vx_x = $2E                 ; [bsp]; total view-space x sign-extension byte
