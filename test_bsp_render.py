@@ -345,7 +345,10 @@ def test_project_y():
         mem[0x1B] = rl
         _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
         sc._run(ENTRY_BR_PROJECT_Y)
-        got = s16_from_zp(mem, 0x17)
+        # register contract (2026-07-19): Y = sy lo, A = sy hi (the zp
+        # store-backs were test-only and died — cp_havepsi precedent)
+        got = sc.mpu.y | (sc.mpu.a << 8)
+        if got >= 0x8000: got -= 0x10000
         # br_project_y outputs HALF_H + Y_BIAS based values (the bias the
         # emission paths used to add per store is folded into the constant).
         want = fp.fp_project_y(h, rh, rl) + 48

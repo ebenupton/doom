@@ -334,10 +334,10 @@ br_project_y:
    CMP VWHC_KEY,X
    BNE pym2
    LDY VWHC_L,X                           ; REG CONTRACT: Y = lo, A = hi
-   STY zp_br_res_l
-   LDA VWHC_H,X
-   STA zp_br_res_h
-   RTS
+   LDA VWHC_H,X                           ; (zp_br_res store-backs dropped
+   RTS                                     ; 2026-07-19: every engine caller
+                                           ; consumes the registers; the unit
+                                           ; test reads mpu.a/mpu.y now)
 pym0:
    STA VWHC_R_S,X
    LDA zp_br_r_m8
@@ -492,11 +492,13 @@ py_shift:                                  ; always 0. C survives LDA/STA.
    LDA #128
    SEC
    SBC zp_br_res_l
-   STA zp_br_res_l
    TAY                                     ; REG CONTRACT: Y = sy lo, A = sy hi
+                                           ; (the lo store-back died with the
+                                           ; register pass — Y carries it)
    LDA #0
    SBC zp_br_res_h
-   STA zp_br_res_h
+   STA zp_br_res_h                         ; hi store stays: the writeback
+                                           ; below re-reads it after TYA
 ; --- VWHC writeback, VALUE half (the raw body is only ever entered
 ; through the cache front's miss path above, which already wrote the
 ; key bytes via the staggered ladder) ---
