@@ -293,23 +293,11 @@ zc_end:
 ; entries + lf_ns (ANGX, below), and the exhaustive pa sweep in
 ; test_slope_div drives those directly. What follows is the SHARED
 ; tail: comb (octant compose), the memo store, and cp_havepsi.)
-lf_join:
-comb:
-; res = base[oct] +/- ta  (& MASK). The octant bases are multiples of 256
-; (0/1024/2048/3072), so base_lo is always 0. X = oct (from lf_ns).
-; The 12-bit mask folds into each arm — the old shared mask block
-; re-loaded the byte the arm had just stored.
-   LDY pa_sign,X
-   BMI sub
-; add: res = base + ta ; low byte (= ta) unchanged since base_lo = 0.
-; NO mask (2026-07-19, Eben's question): ta <= 512 (AE table range,
-; seed-asserted) so hi <= 2, no lo add means no carry, and the largest
-; add base is 3072 (hi 12) — the sum tops out at $0E, never wraps.
-   CLC
-   ADC pa_base_hi,X
-   STA pa_res+1
-   JMP mask_done
-sub:
+; (comb moved INLINE to ns_khave, its hot caller, 2026-07-19 — Eben;
+; lf_join deleted. Only the SUB arm stays here, entered by the stub's
+; JMP with pa_res+1 = ta hi freshly stored; it falls into mask_done
+; as always.)
+comb_sub:
 ; sub: res = base - ta ; base_lo = 0. The mask HERE is load-bearing
 ; for exactly one octant: oct 3 is 0 - ta, negative for any ta > 0 —
 ; the AND is the mod-4096 wrap (psi = 4096 - ta). The other sub bases
@@ -555,9 +543,23 @@ ns_khave:
    TAY                                     ; k = |s|
    LDA AE_LO,Y
    STA pa_res
-   LDA AE_HI,Y
+   LDA AE_HI,Y                             ; ta hi RIDES A into comb — the
+comb:                                      ; add arm's ADC consumes it
+; res = base[oct] +/- ta. Bases are multiples of 256 (0/1024/2048/
+; 3072), so base_lo = 0 and the lo byte is ta unchanged. X = oct.
+; INLINED at khave (2026-07-19): the khave JMP and the add path's
+; pa_res+1 store both died. The zero paths JMP here with A = 0 = ta
+; hi (contract holds). NO mask on add: ta <= 512 (seed-asserted), the
+; largest add base is 3072 — the sum tops out at $0E, never wraps.
+   LDY pa_sign,X
+   BMI comb_sub_j
+   CLC
+   ADC pa_base_hi,X
    STA pa_res+1
-   JMP comb
+   JMP mask_done
+comb_sub_j:
+   STA pa_res+1                            ; the sub arm (ANG) reads ta hi
+   JMP comb_sub                            ; from memory; store it only here
 ns_x16y16:
 ; --- both 16-bit: reduce both into t0/t1 (the +96s cancel), then the
 ;     8-bit shape — indices from the temps, no L8-value staging.
