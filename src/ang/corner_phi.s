@@ -15,6 +15,11 @@
    LDA yl+(s)*$100,Y
    SBC bca_pys
    STA pa_dy
+   EOR pa_dx                               ; memo slot hashed HERE (Eben
+   AND #$7F                                ; 2026-07-19): dy lo is in A and
+   TAX                                     ; dx is banked — the entries'
+                                           ; reload-and-rehash head died.
+                                           ; EOR/AND/TAX keep C for the SBC.
    LDA yl+$200+(s)*$100,Y
    SBC bca_pys+1
    STA pa_dy+1
@@ -34,6 +39,9 @@
    LDA xl+(s)*$100,Y
    SBC bca_pxs
    STA pa_dx
+   EOR pa_dy                               ; slot hash (pa_dy carried or
+   AND #$7F                                ; memo-reloaded FIRST — order
+   TAX                                     ; matters in the SYM/SXM arms)
    LDA xl+$200+(s)*$100,Y
    SBC bca_pxs+1
    STA pa_dx+1
@@ -43,6 +51,9 @@
    LDA yl+(s)*$100,Y
    SBC bca_pys
    STA pa_dy
+   EOR pa_dx                               ; slot hash (pa_dx carried)
+   AND #$7F
+   TAX
    LDA yl+$200+(s)*$100,Y
    SBC bca_pys+1
    STA pa_dy+1
@@ -98,9 +109,9 @@
    JSR e1
    STA bca_p1+1
    STY bca_p1
-   LDY zp_node_ch_l
-   ZCF_DX s, x2
-   ZCF_MEMO_DY
+   ZCF_MEMO_DY                             ; c1's slot read FIRST — the
+   LDY zp_node_ch_l                        ; hashing ZCF_DX then computes
+   ZCF_DX s, x2                            ; c2's slot into X
    JSR e2
    JMP bca_tail                            ; p2 rides A/Y (tail stores it)
 .endmacro
@@ -109,9 +120,9 @@
    JSR e1
    STA bca_p1+1
    STY bca_p1
+   ZCF_MEMO_DX                             ; c1's slot read FIRST
    LDY zp_node_ch_l
    ZCF_DY s, y2
-   ZCF_MEMO_DX
    JSR e2
    JMP bca_tail                            ; p2 rides A/Y (tail stores it)
 .endmacro
@@ -387,10 +398,10 @@ czy:
    JMP ns_dy0
 .endif
 name:
-   LDA pa_dx
-   EOR pa_dy
-   AND #$7F
-   TAX
+; ENTRY CONTRACT: X = memo slot = (pa_dx ^ pa_dy) & $7F, hashed by the
+; fetch macros where the delta bytes were already in A (the old reload-
+; and-rehash head died 2026-07-19). Harness drivers must mirror this
+; (test_slope_div sets mpu.x — the wrapper-contract-gap rule).
    STX zp_cpm_slot
    LDA pa_dx
    CMP CPM_KDXL,X

@@ -42,6 +42,9 @@ def run_pa(dx, dy):
     mpu.memory[PA_DY] = dy & 0xFF; mpu.memory[PA_DY + 1] = (dy >> 8) & 0xFF
     mpu.memory[BCA_AFN] = 0; mpu.memory[BCA_AFN + 1] = 0  # afn=0 -> r = -psi
     mpu.pc = ENTRY[(1 if dx & 0x8000 else 0, 1 if dy & 0x8000 else 0)]
+    # entry contract (2026-07-19): X = memo slot, hashed by the fetch
+    # macros in the real callers — mirror it here
+    mpu.x = (dx ^ dy) & 0x7F
     mpu.sp = 0xFD
     mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
     steps = 0
