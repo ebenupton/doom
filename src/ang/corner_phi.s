@@ -2,212 +2,84 @@
 ; ============================================================================
 ; box_classify — PURE DIVERGING CONTROL FLOW (Eben's design, 2026-07-18).
 ; No boxy accumulator, no t0, no compose, no table dispatch: the x
-; phase picks one of four columns (Lb strict-left / L0 left-edge / M
-; mid / Rb strict-right), each column owns a COPY of the hi-first y
-; ladder, and every LEAF knows (row, side, zone mask) statically — it
-; loads the mask and JMPs its corner arm, which banks it (ZCF1). The
-; mask-0 leaves are exactly the closed-inside cases, so zone == 0 <=>
-; inside holds by construction.
-; ZONE INHERITANCE REMOVED (2026-07-18, measured -649): with hi-first
-; ladders this cheap, the walk's zone stack + the entry checks + the
-; both-axes table + the serve-path zeroing cost MORE than the skipped
-; compares saved. zp_bca_zone survives with ONE consumer: the rotation
-; cache's cold path reads zone == 0 as the inside signal (always fresh
-; — it follows this classify's own run).
+; phase picks one of four columns (Lb strict-left / L0 edge / M mid /
+; Rb strict-right), each column owns a COPY of the hi-first y ladder,
+; and every LEAF knows (row, side, zone mask) statically — it loads
+; the mask and JMPs its corner arm, which banks it (ZCF1). The mask-0
+; leaves are the closed-boundary/inside cases; zone == 0 <=> the box
+; subtends >= a half-plane (rcache reads it as the FULL/inside signal).
+; BRANCH-TENSIONED (2026-07-19): each side tree is laid out
+; [yLb][entry+ladder][yM][yRb][yL0] so every ladder exit lands by
+; DIRECT branch — yLb backward, yM adjacent, yRb forward; the old
+; xLbj2/xRbj trampolines died. box_classify itself FALLS into the s1
+; tree (52% measured); s0 rides one JMP via the head stub. Only the
+; d == 0 edge column (rare) still rides a JMP.
+; ZONE INHERITANCE REMOVED (2026-07-18, measured -649).
 ;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
 ;   out: control at the corner arm (or full_vis), zp_bca_zone = mask
 ; ============================================================================
-box_classify:
-; (NO-INHERITANCE EXPERIMENT: par test, both-axes table and fast-path
-; dispatch removed — every classify runs fresh ladders.)
-   LDA zp_bbox_side
-   BNE bcls_s1_j
-   JMP bcls_s0
-bcls_s1_j:
-   JMP bcls_s1
+bcls_s0_j:
+   JMP bcls_s0                             ; (data precedes — no fall-in)
 
-bcls_s0:
-; --- x phase: inherited bits divert to their column; else the
-; hi-first ladder picks one of four (Lb strict / L0 edge / M / Rb) ---
-   LDY zp_node_ch_l                        ; HOISTED (2026-07-18): loaded ONCE;
-                                           ; nothing below or in the y blocks
-                                           ; clobbers Y, and the leaves hand it
-                                           ; to the arms (whose first fetch
-                                           ; drops its own LDY)
-xr_s0:
-   LDA bca_pxs+1
-   CMP BBP_L_HI0,Y
-   BCC xLbj2_s0                           ; px < L strictly (hi)
-   BNE xge_s0
-   LDA bca_pxs
-   CMP BBP_L_LO0,Y
-   BCC xLbj2_s0
-   BNE xge_s0                             ; px > L strictly (lo)
-   JMP yL0_s0                             ; d == 0: boxx 0, NO x bit
-xLbj2_s0:
-   JMP yLb_s0
-xge_s0:
-   LDA bca_pxs+1
-   CMP BBP_R_HI0,Y
-   BCC yM_s0                              ; px < R (hi): MID (adjacent: short
-   BNE xRbj_s0                            ; branch reaches the yM block below)
-   LDA bca_pxs
-   CMP BBP_R_LO0,Y
-   BCC yM_s0
-   BEQ yM_s0                              ; px == R: mid
-xRbj_s0:
-   JMP yRb_s0
-yM_s0:
-yMr_s0:
+; --- side 1 tree ---
+yLb_s1:
    LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yMlo_s0                     ; py < T (hi): test the bottom
-   BNE yMAb_s0                     ; py > T strictly (hi)
+   CMP BBP_T_HI1,Y
+   BCC yLblo_s1                     ; py < T (hi): test the bottom
+   BNE yLbAb_s1                     ; py > T strictly (hi)
    LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yMlo_s0
-   BNE yMAb_s0                     ; py > T strictly (lo)
-   LDA #$00                          ; f == 0: boxy 0, NO y bit
-   JMP zc1_0
-yMAb_s0:
-   LDA #$04                          ; strictly above
-   JMP zc1_0
-yMlo_s0:
-   LDA bca_pys+1
-   CMP BBP_B_HI0,Y
-   BCC yMBb_s0                     ; py < B strictly (hi)
-   BNE yMM_s0                      ; py > B (hi): mid
-   LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yMM_s0                      ; py >= B: mid (g >= 0)
-yMBb_s0:
-   LDA #$08                          ; strictly below
-   JMP zc9_0
-yMM_s0:
-   LDA #0                                  ; mid/mid: the CLOSED inside
-   STA zp_bca_zone                         ; case (zone 0 == inside holds
-   JMP full_vis                            ; by construction)
-yLb_s0:
-yLbr_s0:
-   LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yLblo_s0                     ; py < T (hi): test the bottom
-   BNE yLbAb_s0                     ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yLblo_s0
-   BNE yLbAb_s0                     ; py > T strictly (lo)
+   CMP BBP_T_LO1,Y
+   BCC yLblo_s1
+   BNE yLbAb_s1                     ; py > T strictly (lo)
    LDA #$01                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_0
-yLbAb_s0:
+   JMP zc0_1
+yLbAb_s1:
    LDA #$05                          ; strictly above
-   JMP zc0_0
-yLblo_s0:
+   JMP zc0_1
+yLblo_s1:
    LDA bca_pys+1
-   CMP BBP_B_HI0,Y
-   BCC yLbBb_s0                     ; py < B strictly (hi)
-   BNE yLbM_s0                      ; py > B (hi): mid
+   CMP BBP_B_HI1,Y
+   BCC yLbBb_s1                     ; py < B strictly (hi)
+   BNE yLbM_s1                      ; py > B (hi): mid
    LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yLbM_s0                      ; py >= B: mid (g >= 0)
-yLbBb_s0:
+   CMP BBP_B_LO1,Y
+   BCS yLbM_s1                      ; py >= B: mid (g >= 0)
+yLbBb_s1:
    LDA #$09                          ; strictly below
-   JMP zc8_0
-yLbM_s0:
+   JMP zc8_1
+yLbM_s1:
    LDA #$01
-   JMP zc4_0
-yL0_s0:
-yL0r_s0:
-   LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yL0lo_s0                     ; py < T (hi): test the bottom
-   BNE yL0Ab_s0                     ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yL0lo_s0
-   BNE yL0Ab_s0                     ; py > T strictly (lo)
-   LDA #$00                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_0
-yL0Ab_s0:
-   LDA #$04                          ; strictly above
-   JMP zc0_0
-yL0lo_s0:
-   LDA bca_pys+1
-   CMP BBP_B_HI0,Y
-   BCC yL0Bb_s0                     ; py < B strictly (hi)
-   BNE yL0M_s0                      ; py > B (hi): mid
-   LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yL0M_s0                      ; py >= B: mid (g >= 0)
-yL0Bb_s0:
-   LDA #$08                          ; strictly below
-   JMP zc8_0
-yL0M_s0:
-   LDA #$00
-   JMP zc4_0
-yRb_s0:
-yRbr_s0:
-   LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yRblo_s0                     ; py < T (hi): test the bottom
-   BNE yRbAb_s0                     ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yRblo_s0
-   BNE yRbAb_s0                     ; py > T strictly (lo)
-   LDA #$02                          ; f == 0: boxy 0, NO y bit
-   JMP zc2_0
-yRbAb_s0:
-   LDA #$06                          ; strictly above
-   JMP zc2_0
-yRblo_s0:
-   LDA bca_pys+1
-   CMP BBP_B_HI0,Y
-   BCC yRbBb_s0                     ; py < B strictly (hi)
-   BNE yRbM_s0                      ; py > B (hi): mid
-   LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yRbM_s0                      ; py >= B: mid (g >= 0)
-yRbBb_s0:
-   LDA #$0A                          ; strictly below
-   JMP zc10_0
-yRbM_s0:
-   LDA #$02
-   JMP zc6_0
+   JMP zc4_1
 
+box_classify:
+   LDA zp_bbox_side
+   BEQ bcls_s0_j                           ; s1 falls in; s0 rides the stub
 bcls_s1:
-; --- x phase: inherited bits divert to their column; else the
-; hi-first ladder picks one of four (Lb strict / L0 edge / M / Rb) ---
-   LDY zp_node_ch_l                        ; HOISTED (2026-07-18): loaded ONCE;
-                                           ; nothing below or in the y blocks
-                                           ; clobbers Y, and the leaves hand it
-                                           ; to the arms (whose first fetch
-                                           ; drops its own LDY)
+   LDY zp_node_ch_l                        ; HOISTED: loaded ONCE — nothing
+                                           ; in the tree clobbers Y; the
+                                           ; leaves hand it to the arms
 xr_s1:
    LDA bca_pxs+1
    CMP BBP_L_HI1,Y
-   BCC xLbj2_s1                           ; px < L strictly (hi)
+   BCC yLb_s1                              ; px < L strictly (hi) — DIRECT
    BNE xge_s1
    LDA bca_pxs
    CMP BBP_L_LO1,Y
-   BCC xLbj2_s1
-   BNE xge_s1                             ; px > L strictly (lo)
-   JMP yL0_s1                             ; d == 0: boxx 0, NO x bit
-xLbj2_s1:
-   JMP yLb_s1
+   BCC yLb_s1                              ; px < L strictly (lo) — DIRECT
+   BNE xge_s1                              ; px > L strictly (lo)
+   JMP yL0_s1                              ; d == 0: boxx 0, NO x bit (rare)
 xge_s1:
    LDA bca_pxs+1
    CMP BBP_R_HI1,Y
-   BCC yM_s1                              ; px < R (hi): MID (adjacent: short
-   BNE xRbj_s1                            ; branch reaches the yM block below)
+   BCC yM_s1                               ; px < R (hi): MID (adjacent)
+   BNE yRb_s1                              ; px > R strictly (hi) — DIRECT
    LDA bca_pxs
    CMP BBP_R_LO1,Y
    BCC yM_s1
-   BEQ yM_s1                              ; px == R: mid
-xRbj_s1:
-   JMP yRb_s1
+   BEQ yM_s1                               ; px == R: mid
+   BNE yRb_s1                              ; ALWAYS taken (Z = 0): the
+                                           ; strict-right lo fall-through
 yM_s1:
-yMr_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
    BCC yMlo_s1                     ; py < T (hi): test the bottom
@@ -236,66 +108,7 @@ yMM_s1:
    LDA #0                                  ; mid/mid: the CLOSED inside
    STA zp_bca_zone                         ; case (zone 0 == inside holds
    JMP full_vis                            ; by construction)
-yLb_s1:
-yLbr_s1:
-   LDA bca_pys+1
-   CMP BBP_T_HI1,Y
-   BCC yLblo_s1                     ; py < T (hi): test the bottom
-   BNE yLbAb_s1                     ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO1,Y
-   BCC yLblo_s1
-   BNE yLbAb_s1                     ; py > T strictly (lo)
-   LDA #$01                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_1
-yLbAb_s1:
-   LDA #$05                          ; strictly above
-   JMP zc0_1
-yLblo_s1:
-   LDA bca_pys+1
-   CMP BBP_B_HI1,Y
-   BCC yLbBb_s1                     ; py < B strictly (hi)
-   BNE yLbM_s1                      ; py > B (hi): mid
-   LDA bca_pys
-   CMP BBP_B_LO1,Y
-   BCS yLbM_s1                      ; py >= B: mid (g >= 0)
-yLbBb_s1:
-   LDA #$09                          ; strictly below
-   JMP zc8_1
-yLbM_s1:
-   LDA #$01
-   JMP zc4_1
-yL0_s1:
-yL0r_s1:
-   LDA bca_pys+1
-   CMP BBP_T_HI1,Y
-   BCC yL0lo_s1                     ; py < T (hi): test the bottom
-   BNE yL0Ab_s1                     ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO1,Y
-   BCC yL0lo_s1
-   BNE yL0Ab_s1                     ; py > T strictly (lo)
-   LDA #$00                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_1
-yL0Ab_s1:
-   LDA #$04                          ; strictly above
-   JMP zc0_1
-yL0lo_s1:
-   LDA bca_pys+1
-   CMP BBP_B_HI1,Y
-   BCC yL0Bb_s1                     ; py < B strictly (hi)
-   BNE yL0M_s1                      ; py > B (hi): mid
-   LDA bca_pys
-   CMP BBP_B_LO1,Y
-   BCS yL0M_s1                      ; py >= B: mid (g >= 0)
-yL0Bb_s1:
-   LDA #$08                          ; strictly below
-   JMP zc8_1
-yL0M_s1:
-   LDA #$00
-   JMP zc4_1
 yRb_s1:
-yRbr_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
    BCC yRblo_s1                     ; py < T (hi): test the bottom
@@ -323,6 +136,175 @@ yRbBb_s1:
 yRbM_s1:
    LDA #$02
    JMP zc6_1
+yL0_s1:
+   LDA bca_pys+1
+   CMP BBP_T_HI1,Y
+   BCC yL0lo_s1                     ; py < T (hi): test the bottom
+   BNE yL0Ab_s1                     ; py > T strictly (hi)
+   LDA bca_pys
+   CMP BBP_T_LO1,Y
+   BCC yL0lo_s1
+   BNE yL0Ab_s1                     ; py > T strictly (lo)
+   LDA #$00                          ; f == 0: boxy 0, NO y bit
+   JMP zc0_1
+yL0Ab_s1:
+   LDA #$04                          ; strictly above
+   JMP zc0_1
+yL0lo_s1:
+   LDA bca_pys+1
+   CMP BBP_B_HI1,Y
+   BCC yL0Bb_s1                     ; py < B strictly (hi)
+   BNE yL0M_s1                      ; py > B (hi): mid
+   LDA bca_pys
+   CMP BBP_B_LO1,Y
+   BCS yL0M_s1                      ; py >= B: mid (g >= 0)
+yL0Bb_s1:
+   LDA #$08                          ; strictly below
+   JMP zc8_1
+yL0M_s1:
+   LDA #$00
+   JMP zc4_1
+
+; --- side 0 tree ---
+yLb_s0:
+   LDA bca_pys+1
+   CMP BBP_T_HI0,Y
+   BCC yLblo_s0                     ; py < T (hi): test the bottom
+   BNE yLbAb_s0                     ; py > T strictly (hi)
+   LDA bca_pys
+   CMP BBP_T_LO0,Y
+   BCC yLblo_s0
+   BNE yLbAb_s0                     ; py > T strictly (lo)
+   LDA #$01                          ; f == 0: boxy 0, NO y bit
+   JMP zc0_0
+yLbAb_s0:
+   LDA #$05                          ; strictly above
+   JMP zc0_0
+yLblo_s0:
+   LDA bca_pys+1
+   CMP BBP_B_HI0,Y
+   BCC yLbBb_s0                     ; py < B strictly (hi)
+   BNE yLbM_s0                      ; py > B (hi): mid
+   LDA bca_pys
+   CMP BBP_B_LO0,Y
+   BCS yLbM_s0                      ; py >= B: mid (g >= 0)
+yLbBb_s0:
+   LDA #$09                          ; strictly below
+   JMP zc8_0
+yLbM_s0:
+   LDA #$01
+   JMP zc4_0
+
+bcls_s0:
+   LDY zp_node_ch_l                        ; HOISTED: loaded ONCE — nothing
+                                           ; in the tree clobbers Y; the
+                                           ; leaves hand it to the arms
+xr_s0:
+   LDA bca_pxs+1
+   CMP BBP_L_HI0,Y
+   BCC yLb_s0                              ; px < L strictly (hi) — DIRECT
+   BNE xge_s0
+   LDA bca_pxs
+   CMP BBP_L_LO0,Y
+   BCC yLb_s0                              ; px < L strictly (lo) — DIRECT
+   BNE xge_s0                              ; px > L strictly (lo)
+   JMP yL0_s0                              ; d == 0: boxx 0, NO x bit (rare)
+xge_s0:
+   LDA bca_pxs+1
+   CMP BBP_R_HI0,Y
+   BCC yM_s0                               ; px < R (hi): MID (adjacent)
+   BNE yRb_s0                              ; px > R strictly (hi) — DIRECT
+   LDA bca_pxs
+   CMP BBP_R_LO0,Y
+   BCC yM_s0
+   BEQ yM_s0                               ; px == R: mid
+   BNE yRb_s0                              ; ALWAYS taken (Z = 0): the
+                                           ; strict-right lo fall-through
+yM_s0:
+   LDA bca_pys+1
+   CMP BBP_T_HI0,Y
+   BCC yMlo_s0                     ; py < T (hi): test the bottom
+   BNE yMAb_s0                     ; py > T strictly (hi)
+   LDA bca_pys
+   CMP BBP_T_LO0,Y
+   BCC yMlo_s0
+   BNE yMAb_s0                     ; py > T strictly (lo)
+   LDA #$00                          ; f == 0: boxy 0, NO y bit
+   JMP zc1_0
+yMAb_s0:
+   LDA #$04                          ; strictly above
+   JMP zc1_0
+yMlo_s0:
+   LDA bca_pys+1
+   CMP BBP_B_HI0,Y
+   BCC yMBb_s0                     ; py < B strictly (hi)
+   BNE yMM_s0                      ; py > B (hi): mid
+   LDA bca_pys
+   CMP BBP_B_LO0,Y
+   BCS yMM_s0                      ; py >= B: mid (g >= 0)
+yMBb_s0:
+   LDA #$08                          ; strictly below
+   JMP zc9_0
+yMM_s0:
+   LDA #0                                  ; mid/mid: the CLOSED inside
+   STA zp_bca_zone                         ; case (zone 0 == inside holds
+   JMP full_vis                            ; by construction)
+yRb_s0:
+   LDA bca_pys+1
+   CMP BBP_T_HI0,Y
+   BCC yRblo_s0                     ; py < T (hi): test the bottom
+   BNE yRbAb_s0                     ; py > T strictly (hi)
+   LDA bca_pys
+   CMP BBP_T_LO0,Y
+   BCC yRblo_s0
+   BNE yRbAb_s0                     ; py > T strictly (lo)
+   LDA #$02                          ; f == 0: boxy 0, NO y bit
+   JMP zc2_0
+yRbAb_s0:
+   LDA #$06                          ; strictly above
+   JMP zc2_0
+yRblo_s0:
+   LDA bca_pys+1
+   CMP BBP_B_HI0,Y
+   BCC yRbBb_s0                     ; py < B strictly (hi)
+   BNE yRbM_s0                      ; py > B (hi): mid
+   LDA bca_pys
+   CMP BBP_B_LO0,Y
+   BCS yRbM_s0                      ; py >= B: mid (g >= 0)
+yRbBb_s0:
+   LDA #$0A                          ; strictly below
+   JMP zc10_0
+yRbM_s0:
+   LDA #$02
+   JMP zc6_0
+yL0_s0:
+   LDA bca_pys+1
+   CMP BBP_T_HI0,Y
+   BCC yL0lo_s0                     ; py < T (hi): test the bottom
+   BNE yL0Ab_s0                     ; py > T strictly (hi)
+   LDA bca_pys
+   CMP BBP_T_LO0,Y
+   BCC yL0lo_s0
+   BNE yL0Ab_s0                     ; py > T strictly (lo)
+   LDA #$00                          ; f == 0: boxy 0, NO y bit
+   JMP zc0_0
+yL0Ab_s0:
+   LDA #$04                          ; strictly above
+   JMP zc0_0
+yL0lo_s0:
+   LDA bca_pys+1
+   CMP BBP_B_HI0,Y
+   BCC yL0Bb_s0                     ; py < B strictly (hi)
+   BNE yL0M_s0                      ; py > B (hi): mid
+   LDA bca_pys
+   CMP BBP_B_LO0,Y
+   BCS yL0M_s0                      ; py >= B: mid (g >= 0)
+yL0Bb_s0:
+   LDA #$08                          ; strictly below
+   JMP zc8_0
+yL0M_s0:
+   LDA #$00
+   JMP zc4_0
 
 
 ; (load_val removed: inlined at the corner loads.)
@@ -430,8 +412,16 @@ cp_havepsi:
 ; killed; ANG itself is at its $F100 ceiling). Banked = ANG_BK floats
 ; in the CODE region like everything else.
 ; ============================================================================
-.macro CPM_ENTRY name, negx, negy, obase
+.macro CPM_ENTRY name, negx, negy, obase, tail
    .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy
+.if tail
+; TAIL instance (the hottest class, pp = 54% measured): the zero stubs
+; sit ABOVE the entry so the main path FALLS straight into lf_ns.
+czx:
+   JMP ns_dx0
+czy:
+   JMP ns_dy0
+.endif
 name:
    LDA pa_dx
    EOR pa_dy
@@ -474,6 +464,9 @@ cmiss2:
    LDA pa_dy+1
 cmiss3:
    STA CPM_KDYH,X
+   LDX #obase                              ; HOISTED (tension pass): the slot
+                                           ; in X is dead once the key is
+                                           ; banked; czx/czy shed their LDX
 .if negx
    LDA #0                                  ; |dx| = -dx in place (dx <= 0)
    SEC
@@ -504,26 +497,29 @@ cmiss3:
    ORA sd_den
    BEQ czy
 .endif
-   LDX #obase                              ; no compare, no swap: lf_ns reads
-   JMP lf_ns                               ; the axgt bit off the SIGN of the
-                                           ; L8 difference (Eben's negate-the-
-                                           ; ATANEXP-input idea, 2026-07-18)
+.if tail
+; *** FALLS THROUGH into lf_ns *** — corner_phi_pp must stay the LAST
+; entry, immediately above lf_ns (mask_done-landmine rule: assembly
+; adjacency is load-bearing).
+.else
+   JMP lf_ns                               ; no compare, no swap: lf_ns reads
+                                           ; the axgt bit off the SIGN of the
+                                           ; L8 difference
 czx:
-   LDX #obase
    JMP ns_dx0
 czy:
-   LDX #obase
    JMP ns_dy0
+.endif
 .endmacro
 ; oct base = (dx<0)*4 + (dy<0)*2 (P = delta >= 0, N = delta <= 0)
 .if ::BANKED = 0
 .segment "ANGX"
 angx_head:
 .endif
-CPM_ENTRY corner_phi_pp, 0, 0, 0
-CPM_ENTRY corner_phi_pn, 0, 1, 2
-CPM_ENTRY corner_phi_np, 1, 0, 4
-CPM_ENTRY corner_phi_nn, 1, 1, 6
+CPM_ENTRY corner_phi_nn, 1, 1, 6, 0
+CPM_ENTRY corner_phi_pn, 0, 1, 2, 0
+CPM_ENTRY corner_phi_np, 1, 0, 4, 0
+CPM_ENTRY corner_phi_pp, 0, 0, 0, 1       ; TAIL: falls into lf_ns
 
 ; ============================================================================
 ; lf_ns — the NO-SWAP log2/atanexp pipeline (2026-07-18). sd_num = |dx|,
@@ -566,7 +562,7 @@ lf_ns:
                                            ; fallback compare; cert-bounded)
 ns_neg:                                    ; s < 0 falls in with C = 0
    EOR #$FF                                ; -s (the ADC supplies exactly +1;
-   ADC #1                                  ; ns_neg_j arrives via BCC too)
+   ADC #1                                  ; the x16y16 BCC arrives via C=0 too)
    INX                                     ; axgt — falls into the lookup
 ns_khave:
    TAY                                     ; k = |s|
@@ -575,13 +571,56 @@ ns_khave:
    LDA AE_HI,Y
    STA pa_res+1
    JMP comb
-ns_dy0:
-   INX                                     ; |dy| = 0: ta = 0, axgt = 1
-ns_dx0:
-   LDA #0
-   STA pa_res
-   STA pa_res+1
-   JMP comb
+ns_x16y16:
+; --- both 16-bit: reduce both into t0/t1 (the +96s cancel), then the
+;     8-bit shape — indices from the temps, no L8-value staging.
+;     TENSIONED (2026-07-19): placed right after the 8-bit arm so the
+;     BCC reaches ns_neg DIRECTLY — the ns_neg_j trampoline died. ---
+   STY t1                                  ; Y = sd_den+1 (banked at the ns_x16
+                                           ; dispatch — MUST land before the
+                                           ; LDY below reuses Y)
+   LDY sd_num
+   STY t0                                  ; lo staged via Y: A stays untouched
+; (no LDA: A = sd_num+1 from the entry dispatch — LDY/BNE/STY preserve it)
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
+   LSR A
+   ROR t0
+   LDA sd_den
+   LSR t1
+   ROR A
+   LSR t1
+   ROR A
+   LSR t1
+   ROR A
+   TAY
+   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+   LDY t0
+   SEC
+   SBC L8_TAB,Y                            ; - L8[|dx| >> 3], direct
+   BCC ns_neg                              ; DIRECT (C=0 rides into the ADC #1;
+   JMP ns_khave                            ; s == 0 ties ride k = 0, AE[0]=512)
+ns_x8y16:
+; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
+; (no LDA: A = sd_den+1 from the entry's second dispatch line)
+   STA t0
+   LDA sd_den
+   LSR t0
+   ROR A
+   LSR t0
+   ROR A
+   LSR t0
+   ROR A
+   TAY
+   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+   LDY sd_num
+   SEC
+   SBC L8_TAB,Y                            ; - L8[|dx|], direct
+   BCS ns_pos96
+   ADC #96
+   JMP ns_khave
 ns_x16:
    LDY sd_den+1
    BNE ns_x16y16
@@ -613,59 +652,15 @@ ns_pos96:
    JMP ns_khave
 ns_k255:
    LDA #255
-   BNE ns_khave                            ; (always)
-ns_x8y16:
-; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
-; (no LDA: A = sd_den+1 from the entry's second dispatch line)
-   STA t0
-   LDA sd_den
-   LSR t0
-   ROR A
-   LSR t0
-   ROR A
-   LSR t0
-   ROR A
-   TAY
-   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
-   LDY sd_num
-   SEC
-   SBC L8_TAB,Y                            ; - L8[|dx|], direct
-   BCS ns_pos96
-   ADC #96
-   JMP ns_khave
-ns_x16y16:
-; --- both 16-bit: reduce both into t0/t1 (the +96s cancel), then the
-;     8-bit shape — indices from the temps, no L8-value staging ---
-   STY t1                                  ; Y = sd_den+1 (banked at the ns_x16
-                                           ; dispatch — MUST land before the
-                                           ; LDY below reuses Y)
-   LDY sd_num
-   STY t0                                  ; lo staged via Y: A stays untouched
-; (no LDA: A = sd_num+1 from the entry dispatch — LDY/BNE/STY preserve it)
-   LSR A
-   ROR t0
-   LSR A
-   ROR t0
-   LSR A
-   ROR t0
-   LDA sd_den
-   LSR t1
-   ROR A
-   LSR t1
-   ROR A
-   LSR t1
-   ROR A
-   TAY
-   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
-   LDY t0
-   SEC
-   SBC L8_TAB,Y                            ; - L8[|dx| >> 3], direct
-   BCC ns_neg_j                            ; (trampolines: ns_neg/ns_khave sit
-   JMP ns_khave                            ;  ~200 B up with the 8-bit arm;
-                                           ;  s == 0 ties ride k = 0 like the
-                                           ;  8-bit arm — AE[0] = 512)
-ns_neg_j:
-   JMP ns_neg                              ; C=0 rides the JMP (ns_neg's ADC #1)
+   JMP ns_khave                            ; (khave slid out of branch range
+                                           ; in the tension reorder)
+ns_dy0:
+   INX                                     ; |dy| = 0: ta = 0, axgt = 1
+ns_dx0:
+   LDA #0
+   STA pa_res
+   STA pa_res+1
+   JMP comb
 .if ::BANKED = 0
 .segment "ANG"
 .endif
@@ -820,24 +815,9 @@ zc9_0:  ZARM_SY 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 zc9_1:  ZARM_SY 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 zc10_0: ZARM 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
 zc10_1: ZARM 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
-; REAL addresses (2026-07-18: the JMP (zc_ptr) dispatch ended the
-; RTS-trick's -1 bias)
-zc_tab_lo:
-   .byte <zc0_0,<zc0_1,<zc1_0,<zc1_1,<zc2_0,<zc2_1
-   .byte <zc0_0,<zc0_1                     ; row 3 unused
-   .byte <zc4_0,<zc4_1
-   .byte <zc0_0,<zc0_1                     ; row 5 unused
-   .byte <zc6_0,<zc6_1
-   .byte <zc0_0,<zc0_1                     ; row 7 unused
-   .byte <zc8_0,<zc8_1,<zc9_0,<zc9_1,<zc10_0,<zc10_1
-zc_tab_hi:
-   .byte >zc0_0,>zc0_1,>zc1_0,>zc1_1,>zc2_0,>zc2_1
-   .byte >zc0_0,>zc0_1
-   .byte >zc4_0,>zc4_1
-   .byte >zc0_0,>zc0_1
-   .byte >zc6_0,>zc6_1
-   .byte >zc0_0,>zc0_1
-   .byte >zc8_0,>zc8_1,>zc9_0,>zc9_1,>zc10_0,>zc10_1
+; (zc_tab_lo/hi deleted 2026-07-19: engine-dead since the inheritance
+; fast path died — check_angle_calls' ZC window now ends at zc_end.)
+zc_end:
 
 .if BANKED
 .segment "ANG_BK"                       ; back to the angle-module segment
