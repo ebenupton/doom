@@ -35,11 +35,16 @@
    SBC bca_pys+1
    STA pa_dy+1
 .endmacro
-; partial fetches for the axis-sharing rows 4/9: the two corners sit on
-; one shared plane whose class is P for BOTH corners — pa_dx/pa_dy
-; survive c1's call ONLY when its class doesn't negate in place (the
-; sd alias, 2026-07-19), so rows 1/6 (N-class shared axis) went back
-; to full fetches.
+; partial fetches for the axis-sharing rows. Rows 4/9 (P-class shared
+; axis): pa_dx/pa_dy survive c1's call untouched — the carried value
+; is free. Rows 1/6 (N-class shared axis): c1's entry negates the
+; shared slot in place on a memo MISS — but the miss just BANKED the
+; raw key into the CPM planes, and on a HIT the planes matched the
+; key, so either way CPM_KD*[zp_cpm_slot] holds c1's RAW deltas after
+; the call (mask_done stores psi only; nothing else touches the slot).
+; The shared axis therefore reloads from the MEMO (ZCF_MEMO_*): no
+; BBP fetch, no subtract, class-independent — the full-fetch fallback
+; died 2026-07-19.
 .macro ZCF_DX s, xl
    LDY zp_node_ch_l
    SEC
@@ -58,6 +63,22 @@
    STA pa_dy
    LDA yl+$200+(s)*$100,Y
    SBC bca_pys+1
+   STA pa_dy+1
+.endmacro
+; shared-axis reload from the memo key planes (see the note above):
+; valid after ANY class entry, hit or miss.
+.macro ZCF_MEMO_DX
+   LDX zp_cpm_slot
+   LDA CPM_KDXL,X
+   STA pa_dx
+   LDA CPM_KDXH,X
+   STA pa_dx+1
+.endmacro
+.macro ZCF_MEMO_DY
+   LDX zp_cpm_slot
+   LDA CPM_KDYL,X
+   STA pa_dy
+   LDA CPM_KDYH,X
    STA pa_dy+1
 .endmacro
 .macro ZARM s, x1, y1, x2, y2, e1, e2
@@ -92,6 +113,30 @@
    STA bca_p2+1
    STY bca_p2
    JMP bca_tail                            ; chained
+.endmacro
+.macro ZARM_SYM s, x1, y1, x2, e1, e2     ; shared y, N-class c1: the raw
+   ZCF1 s, x1, y1                          ; dy comes back from the MEMO
+   JSR e1
+   STA bca_p1+1
+   STY bca_p1
+   ZCF_DX s, x2
+   ZCF_MEMO_DY
+   JSR e2
+   STA bca_p2+1
+   STY bca_p2
+   JMP bca_tail
+.endmacro
+.macro ZARM_SXM s, x1, y1, y2, e1, e2     ; shared x, N-class c1: the raw
+   ZCF1 s, x1, y1                          ; dx comes back from the MEMO
+   JSR e1
+   STA bca_p1+1
+   STY bca_p1
+   ZCF_DY s, y2
+   ZCF_MEMO_DX
+   JSR e2
+   STA bca_p2+1
+   STY bca_p2
+   JMP bca_tail
 .endmacro
 
 ; ============================================================================
@@ -727,12 +772,12 @@ zc_corners:
 ;   row 8 (SW):  c1=(L,T) PP              c2=(R,B) PP
 ;   row 9 (S):   c1=(L,B) NP              c2=(R,B) PP
 ;   row 10 (SE): c1=(L,B) NP              c2=(R,T) NP
-zc1_0:  ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_T_LO, corner_phi_pn, corner_phi_nn
-zc1_1:  ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_T_LO, corner_phi_pn, corner_phi_nn
+zc1_0:  ZARM_SYM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
+zc1_1:  ZARM_SYM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
 zc2_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
 zc2_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
-zc6_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
-zc6_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+zc6_0:  ZARM_SXM 0, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+zc6_1:  ZARM_SXM 1, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
 zc9_0:  ZARM_SY 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 zc9_1:  ZARM_SY 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 zc10_0: ZARM 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
