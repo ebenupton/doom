@@ -190,7 +190,10 @@ sd_den = pa_dy                    ;   converters negate N-axes IN PLACE and
                                   ;   P-axes need no staging at all — the
                                   ;   memo key is banked at miss entry
                                   ;   before the raws are destroyed.
-                                  ;   $44-$47 freed.
+zc_ptr = $44                      ; [ang]; ZC arm dispatch pointer (JMP (zp)
+                                  ;   beats push-push-RTS by 1 cycle and the
+                                  ;   arm table holds REAL addresses; $46/$47
+                                  ;   still free)
 sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
 zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash

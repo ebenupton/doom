@@ -54,11 +54,11 @@ box_classify:
    BMI bc_ladders
    ORA zp_bbox_side
    TAX                                     ; (zone already published: the seed)
-   LDA zc_tab_hi,X                         ; CHAINED DISPATCH (2026-07-18):
-   PHA                                     ; classify exits jump straight to
-   LDA zc_tab_lo,X                         ; the corner arm; the arm ends
-   PHA                                     ; JMP bca_tail — no JSR/RTS
-   RTS                                     ; shuttle through bbox_check_angle
+   LDA zc_tab_lo,X                         ; CHAINED DISPATCH via zc_ptr
+   STA zc_ptr                              ; (2026-07-18: JMP (zp) is a cycle
+   LDA zc_tab_hi,X                         ; cheaper than push-push-RTS and
+   STA zc_ptr+1                            ; the table holds REAL addresses);
+   JMP (zc_ptr)                            ; the arm ends JMP bca_tail
 bc_ladders:
    LDA zp_bbox_side
    BNE bcls_s1_j
@@ -290,21 +290,21 @@ cx_compose_s1:
    ORA t0                                  ; A arrives PRE-SHIFTED (boxy<<3
    ORA #1                                  ; from every y arm) — the three
    TAX                                     ; ASLs are gone (Eben 2026-07-18)
-   LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
-   PHA
-   LDA zc_tab_lo,X
-   PHA
-   RTS
+   LDA zc_tab_lo,X                         ; chained dispatch (see fast path)
+   STA zc_ptr
+   LDA zc_tab_hi,X
+   STA zc_ptr+1
+   JMP (zc_ptr)
 cx_compose_s0:
    LDX zp_bca_zone                         ; already published (the walk hands
    BEQ cx_inside                           ; it to this box's children); Z only
    ORA t0                                  ; pre-shifted boxy (see s1)
    TAX
-   LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
-   PHA
-   LDA zc_tab_lo,X
-   PHA
-   RTS
+   LDA zc_tab_lo,X                         ; chained dispatch (see fast path)
+   STA zc_ptr
+   LDA zc_tab_hi,X
+   STA zc_ptr+1
+   JMP (zc_ptr)
 cx_inside:
 ; inside -> full: bbox_check_angle is JMP-threaded now (no classify
 ; frame to discard — the old PLA/PLA died with it); full_vis chains
@@ -786,22 +786,24 @@ zc9_0:  ZARM_SY 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 zc9_1:  ZARM_SY 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 zc10_0: ZARM 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
 zc10_1: ZARM 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
+; REAL addresses (2026-07-18: the JMP (zc_ptr) dispatch ended the
+; RTS-trick's -1 bias)
 zc_tab_lo:
-   .byte <(zc0_0-1),<(zc0_1-1),<(zc1_0-1),<(zc1_1-1),<(zc2_0-1),<(zc2_1-1)
-   .byte <(zc0_0-1),<(zc0_1-1)             ; row 3 unused
-   .byte <(zc4_0-1),<(zc4_1-1)
-   .byte <(zc0_0-1),<(zc0_1-1)             ; row 5 unused
-   .byte <(zc6_0-1),<(zc6_1-1)
-   .byte <(zc0_0-1),<(zc0_1-1)             ; row 7 unused
-   .byte <(zc8_0-1),<(zc8_1-1),<(zc9_0-1),<(zc9_1-1),<(zc10_0-1),<(zc10_1-1)
+   .byte <zc0_0,<zc0_1,<zc1_0,<zc1_1,<zc2_0,<zc2_1
+   .byte <zc0_0,<zc0_1                     ; row 3 unused
+   .byte <zc4_0,<zc4_1
+   .byte <zc0_0,<zc0_1                     ; row 5 unused
+   .byte <zc6_0,<zc6_1
+   .byte <zc0_0,<zc0_1                     ; row 7 unused
+   .byte <zc8_0,<zc8_1,<zc9_0,<zc9_1,<zc10_0,<zc10_1
 zc_tab_hi:
-   .byte >(zc0_0-1),>(zc0_1-1),>(zc1_0-1),>(zc1_1-1),>(zc2_0-1),>(zc2_1-1)
-   .byte >(zc0_0-1),>(zc0_1-1)
-   .byte >(zc4_0-1),>(zc4_1-1)
-   .byte >(zc0_0-1),>(zc0_1-1)
-   .byte >(zc6_0-1),>(zc6_1-1)
-   .byte >(zc0_0-1),>(zc0_1-1)
-   .byte >(zc8_0-1),>(zc8_1-1),>(zc9_0-1),>(zc9_1-1),>(zc10_0-1),>(zc10_1-1)
+   .byte >zc0_0,>zc0_1,>zc1_0,>zc1_1,>zc2_0,>zc2_1
+   .byte >zc0_0,>zc0_1
+   .byte >zc4_0,>zc4_1
+   .byte >zc0_0,>zc0_1
+   .byte >zc6_0,>zc6_1
+   .byte >zc0_0,>zc0_1
+   .byte >zc8_0,>zc8_1,>zc9_0,>zc9_1,>zc10_0,>zc10_1
 
 .if BANKED
 .segment "ANG_BK"                       ; back to the angle-module segment
