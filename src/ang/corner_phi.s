@@ -279,28 +279,27 @@ cx_y2_out_s1:
 cx_y_mid_s1:
    LDA #8                                  ; boxy = 1 (pre-shifted)
 cx_have_y_s1:
-   JMP cx_compose_s1
 ; X = the ZC dispatch index directly: (boxy*4 + boxx)*2 + side =
 ; boxy*8 | boxx*2 | side (bits disjoint: boxy*8 = bits 3-4, pre-doubled
 ; boxx = bits 1-2, side = bit 0 — ORA composes carry-free). The old
 ; boxpos*4-row value never leaves this unit, so the caller-side
 ; TXA/ASL/ORA preamble in zc_corners is gone with it.
 cx_compose_s1:
+   LDX zp_bca_zone                         ; (already published — Z test only)
+   BEQ cx_inside
    ORA t0                                  ; A arrives PRE-SHIFTED (boxy<<3
    ORA #1                                  ; from every y arm) — the three
    TAX                                     ; ASLs are gone (Eben 2026-07-18)
-   LDA zp_bca_zone                         ; (already published — Z test only)
-   BEQ cx_inside
    LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
    PHA
    LDA zc_tab_lo,X
    PHA
    RTS
 cx_compose_s0:
+   LDX zp_bca_zone                         ; already published (the walk hands
+   BEQ cx_inside                           ; it to this box's children); Z only
    ORA t0                                  ; pre-shifted boxy (see s1)
    TAX
-   LDA zp_bca_zone                         ; already published (the walk hands
-   BEQ cx_inside                           ; it to this box's children); Z only
    LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
    PHA
    LDA zc_tab_lo,X
