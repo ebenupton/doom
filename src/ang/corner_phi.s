@@ -573,19 +573,27 @@ ns_dx0:
    JMP mask_done                           ; (A = psi hi for the store)
 
 ; ============================================================================
-; lf_ns — the no-swap pipeline: ta = atanexp(min/max) without ever
-; computing min/max. pa_dx/pa_dy hold |dx|/|dy| (the converters
-; negated N-axes in place). The signed L8 difference
+; lf_ns — the no-swap pipeline: from |dx|,|dy| all the way to a
+; STORED psi, in one run. No min/max is ever computed: the signed L8
+; difference
 ;      s = L8[|dy|] - L8[|dx|]
-; carries everything: L8 is MONOTONE, so sign(s) is exactly axgt
-; (strict L8 order implies strict magnitude order), and k = |s| feeds
-; the AE tables. Ties (s = 0) need no fallback: AE[0] is forced to
-; 512, where the octant pairs collapse (certified within EPSILON).
-; L8[0] = L8[1] = 0 would poison the sign trick, which is why zero
-; deltas short out in the converters before arriving here.
+; carries everything — L8 is MONOTONE, so sign(s) is exactly axgt
+; (strict L8 order implies strict magnitude order), and k = |s|
+; indexes the AE tables. Ties (s = 0) need no fallback: AE[0] is
+; forced to 512, where the octant pairs collapse (certified within
+; EPSILON). L8[0] = L8[1] = 0 would poison the sign trick, which is
+; why zero deltas short out in the converters before arriving here.
+;
+; The dispatch sends 16-bit widths BACKWARD to the reduction arms
+; with the tested hi byte riding A; the 8-bit body falls through.
+; Every arm converges on ns_khave, which composes psi = base +/- ta
+; DIRECTLY from the tables: the octant's sign is tested before the
+; AE reads, so each compose arm loads ta already combining — ta is
+; never staged anywhere.
 ;   in : X = octant class base, pa_dx/pa_dy = |dx|/|dy|,
 ;        A = pa_dy+1 (the dispatch re-tests it)
-;   out: falls through comb with X = oct, pa_res = ta
+;   out: psi in pa_res and the memo (via mask_done), then falls
+;        through cp_havepsi: A = r hi, Y = r lo, X = slot
 ; ============================================================================
 lf_ns:
    LDA pa_dx+1
@@ -603,17 +611,24 @@ ns_neg:
    EOR #$FF                                ; k = -s (C = 0 on every
    ADC #1                                  ; arrival: the ADC supplies
    INX                                     ; exactly +1); axgt
+; ---------------------------------------------------------------------------
+; ns_khave — compose psi = base[oct] +/- ta, mod 4096, straight off
+; the AE tables. The sign is tested BEFORE the reads (N flag off the
+; pa_sign load), so the arms never stage ta:
+;   add:  psi = (AE_LO[k], base + AE_HI[k])       — bases are multiples
+;         of 256, so the lo byte is the table byte untouched; the hi
+;         sum never wraps (ta <= 512 seed-asserted, largest add base
+;         3072: tops out at $0E) — no mask. Falls into the store.
+;   sub:  psi = (0 - AE_LO[k], base - AE_HI[k] - b) — the borrow rides
+;         the two SBCs; the AND is octant 3's mod-4096 wrap
+;         (psi = 4096 - ta); the other sub bases can't go negative.
+;         Sits past cp_havepsi's RTS, exits through mask_done.
+; The zero-delta paths bypass the compose entirely (base +/- 0 is the
+; base either way) and enter at mask_done with psi = base staged.
+; ---------------------------------------------------------------------------
 ns_khave:
-; psi = base[oct] +/- ta, mod 4096, composed STRAIGHT from the AE
-; tables: the sign test runs BEFORE the reads, so each arm loads ta
-; already composing — the sub needs no ta staging at all (its old
-; store-ta-then-negate round trip is gone). Bases are multiples of
-; 256, so the lo byte is ta (or its negation) and only the hi byte
-; adds. The add arm never wraps (ta <= 512 seed-asserted, largest add
-; base 3072: tops out at $0E) — no mask; it FALLS through the psi
-; store into cp_havepsi.
    TAY                                     ; k
-   LDA pa_sign,X                           ; sign FIRST (N off the load)
+   LDA pa_sign,X                           ; octant sign, N off the load
    BMI khave_sub
    LDA AE_LO,Y
    STA pa_res                              ; psi lo = ta lo
@@ -622,9 +637,11 @@ ns_khave:
    ADC pa_base_hi,X                        ; psi hi = base + ta hi
    STA pa_res+1
 mask_done:
-; psi memo store. The LDX does double duty: store index AND the
-; X = slot return contract (the octant chain repurposed X). Entries
-; persist forever — psi is a pure function of the key.
+; psi memo store; entries persist forever (psi is a pure function of
+; the key). The LDX does double duty: store index AND the X = slot
+; return contract (the octant chain repurposed X) — both mask_done
+; and khave_sub's exit depend on it, so list its duties before
+; touching it.
    LDX zp_cpm_slot
    STA CPM_PSIH,X
    LDA pa_res
@@ -644,19 +661,13 @@ cp_havepsi:
    AND #$0F
    RTS
 khave_sub:
-; psi = base - ta, straight off the tables (Y = k, X = oct, both
-; still live): lo = 0 - AE_LO[k] with the borrow riding into
-; hi = base - AE_HI[k] - b. The AND is octant 3's mod-4096 wrap
-; (psi = 4096 - ta); the other sub bases can't go negative with
-; ta <= 512. Exits through mask_done for the psi store + the
-; X = slot contract.
    SEC
    LDA #0
-   SBC AE_LO,Y
+   SBC AE_LO,Y                             ; psi lo = -ta lo, borrow out
    STA pa_res
    LDA pa_base_hi,X
-   SBC AE_HI,Y
-   AND #$0F
+   SBC AE_HI,Y                             ; psi hi = base - ta hi - b
+   AND #$0F                                ; octant 3's mod-4096 wrap
    STA pa_res+1
    JMP mask_done
 .if ::BANKED = 0
