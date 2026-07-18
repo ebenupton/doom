@@ -566,10 +566,11 @@ ns_k255:
 ns_dy0:
    INX                                     ; |dy| = 0: ta = 0, axgt set
 ns_dx0:
-   LDA #0                                  ; zero-delta axis: ta = 0
-   STA pa_res                              ; (psi = octant base exactly;
-   STA pa_res+1                            ; A = 0 = ta-hi satisfies
-   JMP comb                                ; comb's entry contract)
+   LDA #0                                  ; zero-delta axis: ta = 0, so
+   STA pa_res                              ; psi = octant base EXACTLY in
+   LDA pa_base_hi,X                        ; both sign conventions (base
+   STA pa_res+1                            ; +/- 0) — skip the compose
+   JMP mask_done                           ; (A = psi hi for the store)
 
 ; ============================================================================
 ; lf_ns — the no-swap pipeline: ta = atanexp(min/max) without ever
@@ -603,20 +604,22 @@ ns_neg:
    ADC #1                                  ; arrival: the ADC supplies
    INX                                     ; exactly +1); axgt
 ns_khave:
+; psi = base[oct] +/- ta, mod 4096, composed STRAIGHT from the AE
+; tables: the sign test runs BEFORE the reads, so each arm loads ta
+; already composing — the sub needs no ta staging at all (its old
+; store-ta-then-negate round trip is gone). Bases are multiples of
+; 256, so the lo byte is ta (or its negation) and only the hi byte
+; adds. The add arm never wraps (ta <= 512 seed-asserted, largest add
+; base 3072: tops out at $0E) — no mask; it FALLS through the psi
+; store into cp_havepsi.
    TAY                                     ; k
+   LDA pa_sign,X                           ; sign FIRST (N off the load)
+   BMI khave_sub
    LDA AE_LO,Y
-   STA pa_res                              ; ta lo (= psi lo: the bases
-   LDA AE_HI,Y                             ; are multiples of 256); ta hi
-comb:                                      ; RIDES A into the add
-; psi = base[oct] +/- ta, mod 4096. Bases are 0/1024/2048/3072, so
-; the lo byte is ta unchanged and only the hi byte composes. The add
-; arm never wraps (ta <= 512 seed-asserted, largest add base 3072:
-; tops out at $0E) — no mask; it FALLS through the psi store into
-; cp_havepsi. The zero paths JMP comb with A = 0 = ta-hi.
-   LDY pa_sign,X
-   BMI comb_sub
+   STA pa_res                              ; psi lo = ta lo
+   LDA AE_HI,Y
    CLC
-   ADC pa_base_hi,X
+   ADC pa_base_hi,X                        ; psi hi = base + ta hi
    STA pa_res+1
 mask_done:
 ; psi memo store. The LDX does double duty: store index AND the
@@ -640,29 +643,22 @@ cp_havepsi:
    SBC pa_res+1
    AND #$0F
    RTS
-comb_sub:
-; psi = base - ta (the BMI arrives with A = ta-hi). The X-consumers
-; sequence: base-hi banks into Y while X is still the octant, then X
-; takes the slot — so the PSIL store fuses with the negate (psi-lo is
-; in A at the STA) and the store index doubles as the X = slot
-; contract restore, mirroring mask_done. Loads don't touch C: the
-; lo-negate's borrow rides LDY/LDX/STA into the TYA-form hi subtract.
-; The AND is octant 3's mod-4096 wrap (psi = 4096 - ta); the other
-; sub bases can't go negative with ta <= 512.
-   STA pa_res+1
-   LDY pa_base_hi,X
-   LDX zp_cpm_slot
+khave_sub:
+; psi = base - ta, straight off the tables (Y = k, X = oct, both
+; still live): lo = 0 - AE_LO[k] with the borrow riding into
+; hi = base - AE_HI[k] - b. The AND is octant 3's mod-4096 wrap
+; (psi = 4096 - ta); the other sub bases can't go negative with
+; ta <= 512. Exits through mask_done for the psi store + the
+; X = slot contract.
    SEC
    LDA #0
-   SBC pa_res
+   SBC AE_LO,Y
    STA pa_res
-   STA CPM_PSIL,X
-   TYA
-   SBC pa_res+1
+   LDA pa_base_hi,X
+   SBC AE_HI,Y
    AND #$0F
    STA pa_res+1
-   STA CPM_PSIH,X
-   JMP cp_havepsi
+   JMP mask_done
 .if ::BANKED = 0
 .segment "ANG"
 .endif
