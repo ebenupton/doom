@@ -293,74 +293,12 @@ zc_end:
 ; entries + lf_ns (ANGX, below), and the exhaustive pa sweep in
 ; test_slope_div drives those directly. What follows is the SHARED
 ; tail: comb (octant compose), the memo store, and cp_havepsi.)
-; (comb moved INLINE to ns_khave, its hot caller, 2026-07-19 — Eben;
-; lf_join deleted. Only the SUB arm stays here, entered by the stub's
-; JMP with pa_res+1 = ta hi freshly stored; it falls into mask_done
-; as always.)
-comb_sub:
-; sub: res = base - ta ; base_lo = 0. The mask HERE is load-bearing
-; for exactly one octant: oct 3 is 0 - ta, negative for any ta > 0 —
-; the AND is the mod-4096 wrap (psi = 4096 - ta). The other sub bases
-; (1024/2048/3072) can't go negative with ta <= 512.
-   SEC
-   LDA #0
-   SBC pa_res
-   STA pa_res
-   LDA pa_base_hi,X
-   SBC pa_res+1
-   AND #$0F
-   STA pa_res+1
-mask_done:
-; & 4095 (psi ready; was RTS->fall through)
-; --- memo STORE, psi half (X = oct is dead after comb; the slot was
-; stashed at the probe; the KEY was banked at miss entry, before the
-; in-place negations destroyed the raw deltas) ---
-   LDX zp_cpm_slot
-   STA CPM_PSIH,X                          ; valid forever: psi is a pure
-   LDA pa_res
-   STA CPM_PSIL,X
-                                           ; function of (dx,dy); the KDXH
-                                           ; write at miss entry IS the
-                                           ; validity mark
-; *** FALLS THROUGH into cp_havepsi. *** The macro definition and the
-; ANGX-segment entry expansions between here and there emit NOTHING
-; into this (ANG) segment — in the assembled image the psi store's
-; last byte is immediately followed by cp_havepsi (link-adjacent).
+; (The whole shared tail — comb, the psi store, cp_havepsi, the sub
+; arm — lives at the END of the ANGX section since 2026-07-19: one
+; source run, so the mask_done -> cp_havepsi fall is adjacent in both
+; builds by construction. Nothing of the corner pipeline remains in
+; this segment.)
 
-
-; --- afn - psi, mask to u12 (file-global: reused by the rotation
-;     cache's warm path to re-derive r from cached psi) ---
-;   in : pa_res = psi (u12 fineangle), bca_afn = a_fine+512 (frame-
-;        constant, pre-biased — view.s)
-;   out: pa_res = r = (phi+512) & 4095, PURE U12 (hi in [0,$0F])
-; NOT sign-extended (2026-07-16): every consumer does mod-4096
-; arithmetic — bca_tail's window tests compare the u12 hi directly
-; (their AND #$0F re-folds died with the extension), the span/negate/
-; psi-store chains mask or nibble-shift their own hi — so the old
-; CMP #8 / SBC #$10 wrap was 4 dead cycles per corner.
-; RETURNS r hi in A, lo in Y (dead-write tracker 2026-07-11: every
-; caller immediately copied pa_res out — the register return drops both
-; loads at all six sites). pa_res is STILL stored: the test hooks
-; (test_slope_div) read it from memory, and psi-hi feeds the SBC below.
-cp_havepsi:
-   SEC
-   LDA bca_afn
-   SBC pa_res
-   TAY                                     ; r lo rides Y to the caller
-   LDA bca_afn+1
-   SBC pa_res+1
-   AND #$0F                                ; r & 4095 (hi nibble) — u12, done
-   RTS                                     ; (A = r hi; the pa_res store-backs
-
-; (The sign-class entries + lf_ns are placed AFTER cp_havepsi's RTS —
-; 2026-07-18 REGRESSION FIX: they used to sit between mask_done and
-; cp_havepsi, where the flat build's .segment "ANGX" diversion hid a
-; BANKED landmine: with no segment switch, mask_done's load-bearing
-; fall-through landed in corner_phi_pp instead of cp_havepsi. Pre-
-; alias that was latent (the fall-in probe re-hit the just-stored key
-; and produced the right answer, slowly); the in-place negations made
-; the fall-in probe MISS on the mutated key and compute a wrong-class
-; psi — the banked-vs-flat FB gate now guards this class.)
 ; ============================================================================
 ; Sign-class corner_phi entries (2026-07-18). Every ZC arm knows BOTH
 ; corners' delta signs at assembly time (the zone puts the viewer on a
@@ -378,16 +316,8 @@ cp_havepsi:
 ; killed; ANG itself is at its $F100 ceiling). Banked = ANG_BK floats
 ; in the CODE region like everything else.
 ; ============================================================================
-.macro CPM_ENTRY name, negx, negy, obase, tail
+.macro CPM_ENTRY name, negx, negy, obase
    .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy
-.if tail
-; TAIL instance (the hottest class, pp = 54% measured): the zero stubs
-; sit ABOVE the entry so the main path FALLS straight into lf_ns.
-czx:
-   JMP ns_dx0
-czy:
-   JMP ns_dy0
-.endif
 name:
 ; ENTRY CONTRACT: X = memo slot = (pa_dx ^ pa_dy) & $7F, hashed by the
 ; fetch macros where the delta bytes were already in A (the old reload-
@@ -472,11 +402,6 @@ cmiss3:
    ORA sd_den
    BEQ czy
 .endif
-.if tail
-; *** FALLS THROUGH into lf_ns *** — corner_phi_pp must stay the LAST
-; entry, immediately above lf_ns (mask_done-landmine rule: assembly
-; adjacency is load-bearing).
-.else
    JMP lf_ns                               ; no compare, no swap: lf_ns reads
                                            ; the axgt bit off the SIGN of the
                                            ; L8 difference
@@ -484,17 +409,19 @@ czx:
    JMP ns_dx0
 czy:
    JMP ns_dy0
-.endif
 .endmacro
 ; oct base = (dx<0)*4 + (dy<0)*2 (P = delta >= 0, N = delta <= 0)
 .if ::BANKED = 0
 .segment "ANGX"
 angx_head:
 .endif
-CPM_ENTRY corner_phi_nn, 1, 1, 6, 0
-CPM_ENTRY corner_phi_pn, 0, 1, 2, 0
-CPM_ENTRY corner_phi_np, 1, 0, 4, 0
-CPM_ENTRY corner_phi_pp, 0, 0, 0, 1       ; TAIL: falls into lf_ns
+CPM_ENTRY corner_phi_nn, 1, 1, 6
+CPM_ENTRY corner_phi_pn, 0, 1, 2
+CPM_ENTRY corner_phi_np, 1, 0, 4
+CPM_ENTRY corner_phi_pp, 0, 0, 0
+; (the pp tail fall-through died 2026-07-19 with the x16-above-lf_ns
+; restructure — the fall bought 3 cycles on pp misses; the chain's
+; fall-into-mask_done buys them back on every add.)
 
 ; ============================================================================
 ; lf_ns — the NO-SWAP log2/atanexp pipeline (2026-07-18). sd_num = |dx|,
@@ -520,51 +447,11 @@ CPM_ENTRY corner_phi_pp, 0, 0, 0, 1       ; TAIL: falls into lf_ns
 ; and the closed inside test exits through full_vis before any arm
 ; runs; inherited zones are strict, so at least one axis is nonzero.
 ; The old pa_zero arm died with it — the pa sweep skips (0,0).)
-lf_ns:
-   LDA sd_num+1
-   BNE ns_x16
-   LDA sd_den+1
-   BNE ns_x8y16
-; --- both 8-bit (the common case) ---
-   LDY sd_den
-   LDA L8_TAB,Y                            ; L8[|dy|]
-   LDY sd_num
-   SEC
-   SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|] — Y
-   BCS ns_khave                            ; s >= 0 (ties included: k = 0 and
-                                           ; ATANEXP[0] is FORCED to 512 where
-                                           ; every octant pair collapses — no
-                                           ; fallback compare; cert-bounded)
-ns_neg:                                    ; s < 0 falls in with C = 0
-   EOR #$FF                                ; -s (the ADC supplies exactly +1;
-   ADC #1                                  ; the x16y16 BCC arrives via C=0 too)
-   INX                                     ; axgt — falls into the lookup
-ns_khave:
-   TAY                                     ; k = |s|
-   LDA AE_LO,Y
-   STA pa_res
-   LDA AE_HI,Y                             ; ta hi RIDES A into comb — the
-comb:                                      ; add arm's ADC consumes it
-; res = base[oct] +/- ta. Bases are multiples of 256 (0/1024/2048/
-; 3072), so base_lo = 0 and the lo byte is ta unchanged. X = oct.
-; INLINED at khave (2026-07-19): the khave JMP and the add path's
-; pa_res+1 store both died. The zero paths JMP here with A = 0 = ta
-; hi (contract holds). NO mask on add: ta <= 512 (seed-asserted), the
-; largest add base is 3072 — the sum tops out at $0E, never wraps.
-   LDY pa_sign,X
-   BMI comb_sub_j
-   CLC
-   ADC pa_base_hi,X
-   STA pa_res+1
-   JMP mask_done
-comb_sub_j:
-   STA pa_res+1                            ; the sub arm (ANG) reads ta hi
-   JMP comb_sub                            ; from memory; store it only here
 ns_x16y16:
 ; --- both 16-bit: reduce both into t0/t1 (the +96s cancel), then the
 ;     8-bit shape — indices from the temps, no L8-value staging.
-;     TENSIONED (2026-07-19): placed right after the 8-bit arm so the
-;     BCC reaches ns_neg DIRECTLY — the ns_neg_j trampoline died. ---
+;     (x16 group lives ABOVE lf_ns since the restructure — the BCC
+;     reaches ns_neg FORWARD, still direct, no trampoline.) ---
    STY t1                                  ; Y = sd_den+1 (banked at the ns_x16
                                            ; dispatch — MUST land before the
                                            ; LDY below reuses Y)
@@ -650,6 +537,78 @@ ns_dx0:
    STA pa_res
    STA pa_res+1
    JMP comb
+lf_ns:
+   LDA sd_num+1
+   BNE ns_x16
+   LDA sd_den+1
+   BNE ns_x8y16
+; --- both 8-bit (the common case) ---
+   LDY sd_den
+   LDA L8_TAB,Y                            ; L8[|dy|]
+   LDY sd_num
+   SEC
+   SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|] — Y
+   BCS ns_khave                            ; s >= 0 (ties included: k = 0 and
+                                           ; ATANEXP[0] is FORCED to 512 where
+                                           ; every octant pair collapses — no
+                                           ; fallback compare; cert-bounded)
+ns_neg:                                    ; s < 0 falls in with C = 0
+   EOR #$FF                                ; -s (the ADC supplies exactly +1;
+   ADC #1                                  ; the x16y16 BCC arrives via C=0 too)
+   INX                                     ; axgt — falls into the lookup
+ns_khave:
+   TAY                                     ; k = |s|
+   LDA AE_LO,Y
+   STA pa_res
+   LDA AE_HI,Y                             ; ta hi RIDES A into comb — the
+comb:                                      ; add arm's ADC consumes it
+; res = base[oct] +/- ta. Bases are multiples of 256 (0/1024/2048/
+; 3072), so base_lo = 0 and the lo byte is ta unchanged. X = oct.
+; The zero paths JMP here with A = 0 = ta hi (contract holds). NO
+; mask on add: ta <= 512 (seed-asserted), the largest add base is
+; 3072 — the sum tops out at $0E, never wraps. The add FALLS into
+; mask_done (the x16-above restructure freed the forward budget —
+; Eben 2026-07-19); the sub arm sits past cp_havepsi's RTS.
+   LDY pa_sign,X
+   BMI comb_sub
+   CLC
+   ADC pa_base_hi,X
+   STA pa_res+1
+mask_done:
+; --- memo STORE, psi half (X = oct is dead; the slot was banked at
+; the miss ladder) — falls into cp_havepsi (source-adjacent in BOTH
+; builds now: the whole chain lives in this section) ---
+   LDX zp_cpm_slot
+   STA CPM_PSIH,X                          ; valid forever: psi is a pure
+   LDA pa_res                              ; function of (dx,dy); the KDXH
+   STA CPM_PSIL,X                          ; write at the miss ladder IS the
+                                           ; validity mark
+; --- afn - psi, mask to u12 (also the rotation cache warm path's
+; re-derive). RETURNS r hi in A, lo in Y; pa_res stays stored (the
+; test hooks read it; psi-hi feeds the SBC).
+cp_havepsi:
+   SEC
+   LDA bca_afn
+   SBC pa_res
+   TAY                                     ; r lo rides Y to the caller
+   LDA bca_afn+1
+   SBC pa_res+1
+   AND #$0F                                ; r & 4095 (hi nibble) — u12, done
+   RTS                                     ; (A = r hi)
+comb_sub:
+; sub: res = base - ta ; base_lo = 0 (BMI arrives with A = ta hi).
+; The AND is oct 3's mod-4096 wrap (psi = 4096 - ta); the other sub
+; bases can't go negative with ta <= 512.
+   STA pa_res+1
+   SEC
+   LDA #0
+   SBC pa_res
+   STA pa_res
+   LDA pa_base_hi,X
+   SBC pa_res+1
+   AND #$0F
+   STA pa_res+1
+   JMP mask_done
 .if ::BANKED = 0
 .segment "ANG"
 .endif
