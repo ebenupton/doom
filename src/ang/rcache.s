@@ -243,17 +243,14 @@ bcac_warm_full:
 ; bca_p1/p2, so the RAW pre-clip phis survive the whole check (the old
 ; split classify/corners route existed only to snapshot before the
 ; tail's clamp write-backs — a clipped value baked the angle-dependent
-; clip into the position-only psi cache); (2) zp_bca_zone == 0 IS the
-; inside signal (classify publishes the strict-bit mask; the inside
-; escape is exactly the zone-empty case), so the fake-return
-; interposer that caught box_classify's PLA/PLA escape is gone too.
+; clip into the position-only psi cache); (2) the inside escape now
+; publishes the p1/p2 FULL-span SENTINEL (cx_inside, corner_phi.s), so
+; the ordinary span test below marks it FULL — the zone flag and the
+; forced-inside route died with the zone byte (2026-07-19).
 bcac_cold:
    JSR bbox_check_angle                    ; COMBINED verdict in A (the fused
-   PHA                                     ; exits ran has_gap); raw p1/p2 and
-   JSR bcac_index                          ; zp_bca_zone intact for the store
-   LDA zp_bca_zone
-   BEQ bcac_cold_inside                    ; inside: computed+full, no snapshot
-                                           ; (psi planes are never read under FULL)
+   PHA                                     ; exits ran has_gap); raw p1/p2
+   JSR bcac_index                          ; survive for the store
 ; psi1/psi2 = (a_fine - pK) & 4095, staged in pa_dx/pa_dy (dead here),
 ; hi nibbles packed for the PH plane; one armed 3-store drop.
    SEC
@@ -327,16 +324,6 @@ bcac_notfull:
    PLA
    RTS
 
-; inside -> a_fine-independent full: computed + FORCED full (p1/p2 are
-; stale here — the span test would read garbage; FULL means the psi
-; planes are never consulted). Verdict (full) already staged by the
-; check's full_vis exit.
-bcac_cold_inside:
-   LDX rc_bytehi
-   LDA RCACHE_COMPUTED,X
-   ORA rc_bit
-   STA RCACHE_COMPUTED,X
-   JMP bcac_setfull                        ; (X = rc_bytehi holds)
 
 bcac_index:
 ; Bitmap byte/bit from (zp_node_ch_l, zp_bbox_side) — the PSI pointer

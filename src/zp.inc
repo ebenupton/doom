@@ -83,10 +83,8 @@ zp_vxc_on = $C7                   ; [bsp]; VXC gate flag (vxc_frame sets it
 ; $EB-$EE/$F0-$F1. Do not trust "free" without grepping ang/anim/drivers.
 zp_br_p = $1C                     ; [bsp]
 zp_br_p_h = $1D                   ; [bsp]
-zp_bca_zone = $1E                 ; [ang]; classify strict-bit mask; SOLE
-                                  ;   consumer = rcache cold's inside signal
-                                  ;   (zone == 0). Inheritance REMOVED
-                                  ;   2026-07-18 (measured -649).
+; $1E free (was zp_bca_zone — zone byte killed 2026-07-19: the inside
+;   signal rides the p1/p2 full-span sentinel now)
 zp_bv_mode = $1F                  ; [bsp]; bbox-cache dispatch bits: b0 = D
                                   ; wrapper, b1 = rotation cache (set per
                                   ; frame by br_dcache_frame / bca_frame;

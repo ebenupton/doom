@@ -1,54 +1,50 @@
 
 ; ============================================================================
 ; box_classify — PURE DIVERGING CONTROL FLOW (Eben's design, 2026-07-18).
-; No boxy accumulator, no t0, no compose, no table dispatch: the x
-; phase picks one of four columns (Lb strict-left / L0 edge / M mid /
-; Rb strict-right), each column owns a COPY of the hi-first y ladder,
-; and every LEAF knows (row, side, zone mask) statically — it loads
-; the mask and JMPs its corner arm, which banks it (ZCF1). The mask-0
-; leaves are the closed-boundary/inside cases; zone == 0 <=> the box
-; subtends >= a half-plane (rcache reads it as the FULL/inside signal).
-; BRANCH-TENSIONED (2026-07-19): each side tree is laid out
-; [yLb][entry+ladder][yM][yRb][yL0] so every ladder exit lands by
-; DIRECT branch — yLb backward, yM adjacent, yRb forward; the old
-; xLbj2/xRbj trampolines died. box_classify itself FALLS into the s1
-; tree (52% measured); s0 rides one JMP via the head stub. Only the
-; d == 0 edge column (rare) still rides a JMP.
-; ZONE INHERITANCE REMOVED (2026-07-18, measured -649).
+; The x phase picks a column (Left / Mid / Right), each column owns a
+; copy of the hi-first y ladder, and every LEAF is a bare JMP to its
+; corner arm — (row, side) are static at the leaf.
+; ZONE BYTE KILLED (2026-07-19, Eben): zp_bca_zone is GONE. The masks
+; only ever fed the rcache cold inside test (zone == 0), and every
+; zone-0 case — interior OR on-boundary viewer — has span >= 2048 by
+; construction, so the inside band now publishes a p1/p2 SENTINEL
+; (span exactly 2048) and the rcache span test subsumes the flag.
+; The kill cascaded: the strict-left and edge-left columns differed
+; only by mask, so they MERGED (3 columns per side, not 4) and the
+; d == 0 edge JMP died; leaves shrank to bare JMPs; the arms shed
+; their zone store.
+; BRANCH-TENSIONED: [yL][entry+ladder][yM][yR] per side — every
+; ladder exit lands by DIRECT branch. box_classify FALLS into the s1
+; tree (52% measured); s0 rides the head stub. s1 mid/mid FALLS into
+; cx_inside; s0 rides one JMP.
 ;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
-;   out: control at the corner arm (or full_vis), zp_bca_zone = mask
+;   out: control at the corner arm, or cx_inside -> full_vis
 ; ============================================================================
 bcls_s0_j:
    JMP bcls_s0                             ; (data precedes — no fall-in)
 
 ; --- side 1 tree ---
-yLb_s1:
+yL_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
-   BCC yLblo_s1                     ; py < T (hi): test the bottom
-   BNE yLbAb_s1                     ; py > T strictly (hi)
+   BCC yLlo_s1                     ; py < T (hi): test the bottom
+   BNE yLtop_s1                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO1,Y
-   BCC yLblo_s1
-   BNE yLbAb_s1                     ; py > T strictly (lo)
-   LDA #$01                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_1
-yLbAb_s1:
-   LDA #$05                          ; strictly above
-   JMP zc0_1
-yLblo_s1:
+   BCC yLlo_s1
+yLtop_s1:
+   JMP zc0_1                            ; py >= T: top-corner arm
+yLlo_s1:
    LDA bca_pys+1
    CMP BBP_B_HI1,Y
-   BCC yLbBb_s1                     ; py < B strictly (hi)
-   BNE yLbM_s1                      ; py > B (hi): mid
+   BCC yLbot_s1                     ; py < B strictly (hi)
+   BNE yLmid_s1                     ; py > B (hi): mid band
    LDA bca_pys
    CMP BBP_B_LO1,Y
-   BCS yLbM_s1                      ; py >= B: mid (g >= 0)
-yLbBb_s1:
-   LDA #$09                          ; strictly below
-   JMP zc8_1
-yLbM_s1:
-   LDA #$01
+   BCS yLmid_s1                     ; py >= B: mid band
+yLbot_s1:
+   JMP zc8_1                            ; py < B: bottom-corner arm
+yLmid_s1:
    JMP zc4_1
 
 box_classify:
@@ -61,138 +57,103 @@ bcls_s1:
 xr_s1:
    LDA bca_pxs+1
    CMP BBP_L_HI1,Y
-   BCC yLb_s1                              ; px < L strictly (hi) — DIRECT
+   BCC yL_s1                               ; px < L (hi) — DIRECT
    BNE xge_s1
    LDA bca_pxs
    CMP BBP_L_LO1,Y
-   BCC yLb_s1                              ; px < L strictly (lo) — DIRECT
-   BNE xge_s1                              ; px > L strictly (lo)
-   JMP yL0_s1                              ; d == 0: boxx 0, NO x bit (rare)
+   BCC yL_s1                               ; px < L (lo) — DIRECT
+   BEQ yL_s1                               ; px == L: edge, SAME column now
 xge_s1:
    LDA bca_pxs+1
    CMP BBP_R_HI1,Y
    BCC yM_s1                               ; px < R (hi): MID (adjacent)
-   BNE yRb_s1                              ; px > R strictly (hi) — DIRECT
+   BNE yR_s1                               ; px > R strictly (hi) — DIRECT
    LDA bca_pxs
    CMP BBP_R_LO1,Y
    BCC yM_s1
    BEQ yM_s1                               ; px == R: mid
-   BNE yRb_s1                              ; ALWAYS taken (Z = 0): the
+   BNE yR_s1                               ; ALWAYS taken (Z = 0): the
                                            ; strict-right lo fall-through
 yM_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
    BCC yMlo_s1                     ; py < T (hi): test the bottom
-   BNE yMAb_s1                     ; py > T strictly (hi)
+   BNE yMtop_s1                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO1,Y
    BCC yMlo_s1
-   BNE yMAb_s1                     ; py > T strictly (lo)
-   LDA #$00                          ; f == 0: boxy 0, NO y bit
-   JMP zc1_1
-yMAb_s1:
-   LDA #$04                          ; strictly above
-   JMP zc1_1
+yMtop_s1:
+   JMP zc1_1                            ; py >= T: top-corner arm
 yMlo_s1:
    LDA bca_pys+1
    CMP BBP_B_HI1,Y
-   BCC yMBb_s1                     ; py < B strictly (hi)
-   BNE yMM_s1                      ; py > B (hi): mid
+   BCC yMbot_s1                     ; py < B strictly (hi)
+   BNE yMmid_s1                     ; py > B (hi): mid band
    LDA bca_pys
    CMP BBP_B_LO1,Y
-   BCS yMM_s1                      ; py >= B: mid (g >= 0)
-yMBb_s1:
-   LDA #$08                          ; strictly below
-   JMP zc9_1
-yMM_s1:
-   LDA #0                                  ; mid/mid: the CLOSED inside
-   STA zp_bca_zone                         ; case (zone 0 == inside holds
-   JMP full_vis                            ; by construction)
-yRb_s1:
+   BCS yMmid_s1                     ; py >= B: mid band
+yMbot_s1:
+   JMP zc9_1                            ; py < B: bottom-corner arm
+yMmid_s1:
+; (falls into cx_inside — the closed viewer-in-box band)
+cx_inside:
+; Viewer inside (or on the boundary of) the CLOSED box: publish the
+; FULL-span sentinel — p1 = 0, p2 = $0800, span = 2048 — so the
+; rcache cold snapshot marks FULL off its ordinary span test (psi
+; planes are never consulted under FULL; the old zone flag + forced-
+; inside route died with it).
+   LDA #0
+   STA bca_p1
+   STA bca_p1+1
+   STA bca_p2
+   LDA #8
+   STA bca_p2+1
+   JMP full_vis
+yR_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
-   BCC yRblo_s1                     ; py < T (hi): test the bottom
-   BNE yRbAb_s1                     ; py > T strictly (hi)
+   BCC yRlo_s1                     ; py < T (hi): test the bottom
+   BNE yRtop_s1                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO1,Y
-   BCC yRblo_s1
-   BNE yRbAb_s1                     ; py > T strictly (lo)
-   LDA #$02                          ; f == 0: boxy 0, NO y bit
-   JMP zc2_1
-yRbAb_s1:
-   LDA #$06                          ; strictly above
-   JMP zc2_1
-yRblo_s1:
+   BCC yRlo_s1
+yRtop_s1:
+   JMP zc2_1                            ; py >= T: top-corner arm
+yRlo_s1:
    LDA bca_pys+1
    CMP BBP_B_HI1,Y
-   BCC yRbBb_s1                     ; py < B strictly (hi)
-   BNE yRbM_s1                      ; py > B (hi): mid
+   BCC yRbot_s1                     ; py < B strictly (hi)
+   BNE yRmid_s1                     ; py > B (hi): mid band
    LDA bca_pys
    CMP BBP_B_LO1,Y
-   BCS yRbM_s1                      ; py >= B: mid (g >= 0)
-yRbBb_s1:
-   LDA #$0A                          ; strictly below
-   JMP zc10_1
-yRbM_s1:
-   LDA #$02
+   BCS yRmid_s1                     ; py >= B: mid band
+yRbot_s1:
+   JMP zc10_1                            ; py < B: bottom-corner arm
+yRmid_s1:
    JMP zc6_1
-yL0_s1:
-   LDA bca_pys+1
-   CMP BBP_T_HI1,Y
-   BCC yL0lo_s1                     ; py < T (hi): test the bottom
-   BNE yL0Ab_s1                     ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO1,Y
-   BCC yL0lo_s1
-   BNE yL0Ab_s1                     ; py > T strictly (lo)
-   LDA #$00                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_1
-yL0Ab_s1:
-   LDA #$04                          ; strictly above
-   JMP zc0_1
-yL0lo_s1:
-   LDA bca_pys+1
-   CMP BBP_B_HI1,Y
-   BCC yL0Bb_s1                     ; py < B strictly (hi)
-   BNE yL0M_s1                      ; py > B (hi): mid
-   LDA bca_pys
-   CMP BBP_B_LO1,Y
-   BCS yL0M_s1                      ; py >= B: mid (g >= 0)
-yL0Bb_s1:
-   LDA #$08                          ; strictly below
-   JMP zc8_1
-yL0M_s1:
-   LDA #$00
-   JMP zc4_1
 
 ; --- side 0 tree ---
-yLb_s0:
+yL_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
-   BCC yLblo_s0                     ; py < T (hi): test the bottom
-   BNE yLbAb_s0                     ; py > T strictly (hi)
+   BCC yLlo_s0                     ; py < T (hi): test the bottom
+   BNE yLtop_s0                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO0,Y
-   BCC yLblo_s0
-   BNE yLbAb_s0                     ; py > T strictly (lo)
-   LDA #$01                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_0
-yLbAb_s0:
-   LDA #$05                          ; strictly above
-   JMP zc0_0
-yLblo_s0:
+   BCC yLlo_s0
+yLtop_s0:
+   JMP zc0_0                            ; py >= T: top-corner arm
+yLlo_s0:
    LDA bca_pys+1
    CMP BBP_B_HI0,Y
-   BCC yLbBb_s0                     ; py < B strictly (hi)
-   BNE yLbM_s0                      ; py > B (hi): mid
+   BCC yLbot_s0                     ; py < B strictly (hi)
+   BNE yLmid_s0                     ; py > B (hi): mid band
    LDA bca_pys
    CMP BBP_B_LO0,Y
-   BCS yLbM_s0                      ; py >= B: mid (g >= 0)
-yLbBb_s0:
-   LDA #$09                          ; strictly below
-   JMP zc8_0
-yLbM_s0:
-   LDA #$01
+   BCS yLmid_s0                     ; py >= B: mid band
+yLbot_s0:
+   JMP zc8_0                            ; py < B: bottom-corner arm
+yLmid_s0:
    JMP zc4_0
 
 bcls_s0:
@@ -202,109 +163,67 @@ bcls_s0:
 xr_s0:
    LDA bca_pxs+1
    CMP BBP_L_HI0,Y
-   BCC yLb_s0                              ; px < L strictly (hi) — DIRECT
+   BCC yL_s0                               ; px < L (hi) — DIRECT
    BNE xge_s0
    LDA bca_pxs
    CMP BBP_L_LO0,Y
-   BCC yLb_s0                              ; px < L strictly (lo) — DIRECT
-   BNE xge_s0                              ; px > L strictly (lo)
-   JMP yL0_s0                              ; d == 0: boxx 0, NO x bit (rare)
+   BCC yL_s0                               ; px < L (lo) — DIRECT
+   BEQ yL_s0                               ; px == L: edge, SAME column now
 xge_s0:
    LDA bca_pxs+1
    CMP BBP_R_HI0,Y
    BCC yM_s0                               ; px < R (hi): MID (adjacent)
-   BNE yRb_s0                              ; px > R strictly (hi) — DIRECT
+   BNE yR_s0                               ; px > R strictly (hi) — DIRECT
    LDA bca_pxs
    CMP BBP_R_LO0,Y
    BCC yM_s0
    BEQ yM_s0                               ; px == R: mid
-   BNE yRb_s0                              ; ALWAYS taken (Z = 0): the
+   BNE yR_s0                               ; ALWAYS taken (Z = 0): the
                                            ; strict-right lo fall-through
 yM_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
    BCC yMlo_s0                     ; py < T (hi): test the bottom
-   BNE yMAb_s0                     ; py > T strictly (hi)
+   BNE yMtop_s0                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO0,Y
    BCC yMlo_s0
-   BNE yMAb_s0                     ; py > T strictly (lo)
-   LDA #$00                          ; f == 0: boxy 0, NO y bit
-   JMP zc1_0
-yMAb_s0:
-   LDA #$04                          ; strictly above
-   JMP zc1_0
+yMtop_s0:
+   JMP zc1_0                            ; py >= T: top-corner arm
 yMlo_s0:
    LDA bca_pys+1
    CMP BBP_B_HI0,Y
-   BCC yMBb_s0                     ; py < B strictly (hi)
-   BNE yMM_s0                      ; py > B (hi): mid
+   BCC yMbot_s0                     ; py < B strictly (hi)
+   BNE yMmid_s0                     ; py > B (hi): mid band
    LDA bca_pys
    CMP BBP_B_LO0,Y
-   BCS yMM_s0                      ; py >= B: mid (g >= 0)
-yMBb_s0:
-   LDA #$08                          ; strictly below
-   JMP zc9_0
-yMM_s0:
-   LDA #0                                  ; mid/mid: the CLOSED inside
-   STA zp_bca_zone                         ; case (zone 0 == inside holds
-   JMP full_vis                            ; by construction)
-yRb_s0:
+   BCS yMmid_s0                     ; py >= B: mid band
+yMbot_s0:
+   JMP zc9_0                            ; py < B: bottom-corner arm
+yMmid_s0:
+   JMP cx_inside                          ; closed viewer-in-box band
+yR_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
-   BCC yRblo_s0                     ; py < T (hi): test the bottom
-   BNE yRbAb_s0                     ; py > T strictly (hi)
+   BCC yRlo_s0                     ; py < T (hi): test the bottom
+   BNE yRtop_s0                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO0,Y
-   BCC yRblo_s0
-   BNE yRbAb_s0                     ; py > T strictly (lo)
-   LDA #$02                          ; f == 0: boxy 0, NO y bit
-   JMP zc2_0
-yRbAb_s0:
-   LDA #$06                          ; strictly above
-   JMP zc2_0
-yRblo_s0:
+   BCC yRlo_s0
+yRtop_s0:
+   JMP zc2_0                            ; py >= T: top-corner arm
+yRlo_s0:
    LDA bca_pys+1
    CMP BBP_B_HI0,Y
-   BCC yRbBb_s0                     ; py < B strictly (hi)
-   BNE yRbM_s0                      ; py > B (hi): mid
+   BCC yRbot_s0                     ; py < B strictly (hi)
+   BNE yRmid_s0                     ; py > B (hi): mid band
    LDA bca_pys
    CMP BBP_B_LO0,Y
-   BCS yRbM_s0                      ; py >= B: mid (g >= 0)
-yRbBb_s0:
-   LDA #$0A                          ; strictly below
-   JMP zc10_0
-yRbM_s0:
-   LDA #$02
+   BCS yRmid_s0                     ; py >= B: mid band
+yRbot_s0:
+   JMP zc10_0                            ; py < B: bottom-corner arm
+yRmid_s0:
    JMP zc6_0
-yL0_s0:
-   LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yL0lo_s0                     ; py < T (hi): test the bottom
-   BNE yL0Ab_s0                     ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yL0lo_s0
-   BNE yL0Ab_s0                     ; py > T strictly (lo)
-   LDA #$00                          ; f == 0: boxy 0, NO y bit
-   JMP zc0_0
-yL0Ab_s0:
-   LDA #$04                          ; strictly above
-   JMP zc0_0
-yL0lo_s0:
-   LDA bca_pys+1
-   CMP BBP_B_HI0,Y
-   BCC yL0Bb_s0                     ; py < B strictly (hi)
-   BNE yL0M_s0                      ; py > B (hi): mid
-   LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yL0M_s0                      ; py >= B: mid (g >= 0)
-yL0Bb_s0:
-   LDA #$08                          ; strictly below
-   JMP zc8_0
-yL0M_s0:
-   LDA #$00
-   JMP zc4_0
 
 
 ; (load_val removed: inlined at the corner loads.)
@@ -688,12 +607,10 @@ ns_dx0:
 ; RTS-dispatch: the arm's RTS returns to zc_corners' caller.
 ; ============================================================================
 .segment "ZC"
-; ZCF1: the FIRST corner fetch — the classify leaves/fast path deliver
-; Y = node and the zone in A; the arm banks the zone and fetches with
-; no LDY. (The SECOND fetch keeps its LDY: corner_phi returns r lo
-; in Y.)
+; ZCF1: the FIRST corner fetch — the classify leaves deliver Y = node,
+; so no LDY. (The SECOND fetch keeps its LDY: corner_phi returns r lo
+; in Y. The zone store died with the zone byte, 2026-07-19.)
 .macro ZCF1 s, xl, yl
-   STA zp_bca_zone                         ; the kernel owns the zone store
    SEC
    LDA xl+(s)*$100,Y
    SBC bca_pxs
