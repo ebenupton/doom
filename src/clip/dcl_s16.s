@@ -416,7 +416,8 @@ si_sub:
    SBC LC_QUOT_HI
    STA LC_RES_HI
 si_clamp:
-   LDA LC_RES_HI
+; (no load: ALL six inbound paths — add/sub, u8 fast pair, return_y0/
+; y1 — end STA LC_RES_HI, so A converges holding it; regscan 2026-07-19)
    BMI si_clamp_zero
    BNE si_clamp_max
    LDA LC_RES_LO

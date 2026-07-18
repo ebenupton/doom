@@ -395,8 +395,11 @@ alw_solid:
    ORA #$02                                ; SF_SOLID
    STA alw_f
 alw_wf:
-   LDA alw_f
-   STA (zp_anim_w),Y
+   LDA alw_f                               ; NEEDED: the BPL alw_nobb path
+   STA (zp_anim_w),Y                       ; arrives with the SBC result in A
+                                           ; (regscan false positive 2026-07-19
+                                           ; — its meet missed the mid-chain
+                                           ; branch; anim6502 caught it)
    LDY alw_y
    DEC alw_ng
    JMP alw_flags
