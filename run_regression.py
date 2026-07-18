@@ -63,6 +63,7 @@ run('compare_subsector', ['compare_subsector.py'], lambda o: re.search(r'TOTAL:.
 run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('vxcache_check', ['tools/vxcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('walkseq_check', ['tools/walkseq_check.py'], lambda o: 'walkseq_check: OK' in o)
+run('bankedcmp_check', ['tools/bankedcmp_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 
 baseline = None
 if os.path.exists(BASELINE_PATH):

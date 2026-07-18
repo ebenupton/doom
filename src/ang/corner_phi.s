@@ -373,6 +373,40 @@ mask_done:
 ; into this (ANG) segment — in the assembled image the psi store's
 ; last byte is immediately followed by cp_havepsi (link-adjacent).
 
+
+; --- afn - psi, mask to u12 (file-global: reused by the rotation
+;     cache's warm path to re-derive r from cached psi) ---
+;   in : pa_res = psi (u12 fineangle), bca_afn = a_fine+512 (frame-
+;        constant, pre-biased — view.s)
+;   out: pa_res = r = (phi+512) & 4095, PURE U12 (hi in [0,$0F])
+; NOT sign-extended (2026-07-16): every consumer does mod-4096
+; arithmetic — bca_tail's window tests compare the u12 hi directly
+; (their AND #$0F re-folds died with the extension), the span/negate/
+; psi-store chains mask or nibble-shift their own hi — so the old
+; CMP #8 / SBC #$10 wrap was 4 dead cycles per corner.
+; RETURNS r hi in A, lo in Y (dead-write tracker 2026-07-11: every
+; caller immediately copied pa_res out — the register return drops both
+; loads at all six sites). pa_res is STILL stored: the test hooks
+; (test_slope_div) read it from memory, and psi-hi feeds the SBC below.
+cp_havepsi:
+   SEC
+   LDA bca_afn
+   SBC pa_res
+   TAY                                     ; r lo rides Y to the caller
+   LDA bca_afn+1
+   SBC pa_res+1
+   AND #$0F                                ; r & 4095 (hi nibble) — u12, done
+   RTS                                     ; (A = r hi; the pa_res store-backs
+
+; (The sign-class entries + lf_ns are placed AFTER cp_havepsi's RTS —
+; 2026-07-18 REGRESSION FIX: they used to sit between mask_done and
+; cp_havepsi, where the flat build's .segment "ANGX" diversion hid a
+; BANKED landmine: with no segment switch, mask_done's load-bearing
+; fall-through landed in corner_phi_pp instead of cp_havepsi. Pre-
+; alias that was latent (the fall-in probe re-hit the just-stored key
+; and produced the right answer, slowly); the in-place negations made
+; the fall-in probe MISS on the mutated key and compute a wrong-class
+; psi — the banked-vs-flat FB gate now guards this class.)
 ; ============================================================================
 ; Sign-class corner_phi entries (2026-07-18). Every ZC arm knows BOTH
 ; corners' delta signs at assembly time (the zone puts the viewer on a
@@ -629,29 +663,6 @@ ns_neg_j:
 .if ::BANKED = 0
 .segment "ANG"
 .endif
-; --- afn - psi, mask to u12 (file-global: reused by the rotation
-;     cache's warm path to re-derive r from cached psi) ---
-;   in : pa_res = psi (u12 fineangle), bca_afn = a_fine+512 (frame-
-;        constant, pre-biased — view.s)
-;   out: pa_res = r = (phi+512) & 4095, PURE U12 (hi in [0,$0F])
-; NOT sign-extended (2026-07-16): every consumer does mod-4096
-; arithmetic — bca_tail's window tests compare the u12 hi directly
-; (their AND #$0F re-folds died with the extension), the span/negate/
-; psi-store chains mask or nibble-shift their own hi — so the old
-; CMP #8 / SBC #$10 wrap was 4 dead cycles per corner.
-; RETURNS r hi in A, lo in Y (dead-write tracker 2026-07-11: every
-; caller immediately copied pa_res out — the register return drops both
-; loads at all six sites). pa_res is STILL stored: the test hooks
-; (test_slope_div) read it from memory, and psi-hi feeds the SBC below.
-cp_havepsi:
-   SEC
-   LDA bca_afn
-   SBC pa_res
-   TAY                                     ; r lo rides Y to the caller
-   LDA bca_afn+1
-   SBC pa_res+1
-   AND #$0F                                ; r & 4095 (hi nibble) — u12, done
-   RTS                                     ; (A = r hi; the pa_res store-backs
                                            ; died 2026-07-18 — every runtime
                                            ; caller consumes A/Y, and the unit
                                            ; test reads the registers now.
