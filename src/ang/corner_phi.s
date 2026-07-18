@@ -193,12 +193,12 @@ yMmid_s1:
    JMP cx_inside                          ; closed viewer-in-box band
 
 box_classify:
-   LDA zp_bbox_side
-   BEQ bcls_s0_j                           ; s1 falls in; s0 rides the stub
-bcls_s1:
    LDY zp_node_ch_l                        ; HOISTED: loaded ONCE — nothing
                                            ; in the tree clobbers Y; the
                                            ; leaves hand it to the arms
+   LDA zp_bbox_side
+   BEQ bcls_s0_j                           ; s1 falls in; s0 rides the stub
+bcls_s1:
 xr_s1:
    LDA bca_pxs+1
    CMP BBP_L_HI1,Y
@@ -296,9 +296,6 @@ yMmid_s0:
    JMP cx_inside                          ; closed viewer-in-box band
 
 bcls_s0:
-   LDY zp_node_ch_l                        ; HOISTED: loaded ONCE — nothing
-                                           ; in the tree clobbers Y; the
-                                           ; leaves hand it to the arms
 xr_s0:
    LDA bca_pxs+1
    CMP BBP_L_HI0,Y
