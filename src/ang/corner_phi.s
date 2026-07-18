@@ -1,7 +1,39 @@
-; ZCF: one corner fetch — the CALLER owns Y = node. Classify leaves
-; deliver it for the first fetch; the second fetch re-loads it at the
-; use site (corner_phi returns r lo in Y). One macro, no ZCF1 split
-; (2026-07-19). The zone store died with the zone byte.
+
+; ============================================================================
+; corner_phi.s — the bbox corner/angle subsystem, end to end:
+;
+;   box_classify     locate the viewer against a child box (ZC segment)
+;   CLASSIFY_TREE    one side's classifier: x ladder + L/M/R columns,
+;                    every corner arm inlined at its leaf
+;   corner_phi_*     four sign-class entries: corner-phi memo probe +
+;                    |delta| converters (ANGX window flat, linear banked)
+;   lf_ns            the no-swap log2/atanexp pipeline (ta from |dx|,|dy|)
+;   comb .. cp_havepsi  octant compose, psi memo store, r = afn - psi
+;
+; The whole pipeline is ONE source run: entries, width arms, lf_ns and
+; the compose chain sit in a single section, so every load-bearing
+; fall-through is adjacent in both builds by construction.
+;
+; Register discipline (the contracts that make the hot path load-free):
+;   Y = node        owned by the classify caller; survives the whole
+;                   tree; the arms re-load it only after corner_phi
+;                   returns r-lo in Y
+;   X = memo slot   hashed by the fetch macros ((dx^dy)&$7F), consumed
+;                   by the probe, RETURNED as the slot on both exits
+;                   (the hit serve preserves it; the miss path's psi
+;                   store reloads it) — the memo-shared rows read the
+;                   key planes X-direct on the strength of this
+;   A = pa_dy+1     every fetch macro exits with the y-delta hi byte
+;                   in A; probe stage 0 compares KDYH with no load
+; ============================================================================
+
+; ---------------------------------------------------------------------------
+; ZCF — one corner fetch: delta = plane - viewer, both axes, s16.
+; The CALLER owns Y = node. The memo slot hash is computed mid-macro,
+; where dy-lo is in A and dx is already banked: EOR/AND/TAX preserve
+; the carry the following y-hi SBC needs, so the hash rides for free.
+; Exits with A = pa_dy+1 (the entry A-contract).
+; ---------------------------------------------------------------------------
 .macro ZCF s, xl, yl
    SEC
    LDA xl+(s)*$100,Y
@@ -14,33 +46,25 @@
    LDA yl+(s)*$100,Y
    SBC bca_pys
    STA pa_dy
-   EOR pa_dx                               ; memo slot hashed HERE (Eben
-   AND #$7F                                ; 2026-07-19): dy lo is in A and
-   TAX                                     ; dx is banked — the entries'
-                                           ; reload-and-rehash head died.
-                                           ; EOR/AND/TAX keep C for the SBC.
+   EOR pa_dx                               ; slot = (dx ^ dy) & $7F, hashed
+   AND #$7F                                ; here where dy-lo is in A —
+   TAX                                     ; EOR/AND/TAX keep C for the SBC
    LDA yl+$200+(s)*$100,Y
    SBC bca_pys+1
    STA pa_dy+1
 .endmacro
-; partial fetches for the axis-sharing rows. Rows 4/9 (P-class shared
-; axis): pa_dx/pa_dy survive c1's call untouched — the carried value
-; is free. Rows 1/6 (N-class shared axis): c1's entry negates the
-; shared slot in place on a memo MISS — but the miss just BANKED the
-; raw key into the CPM planes, and on a HIT the planes matched the
-; key, so either way CPM_KD*[c1's slot] holds c1's RAW deltas after
-; the call (mask_done stores psi only; nothing else touches the slot).
-; The shared axis therefore reloads from the MEMO (ZCF_MEMO_*): no
-; BBP fetch, no subtract, class-independent — the full-fetch fallback
-; died 2026-07-19.
+; Partial fetches for the axis-sharing rows: the OTHER delta must
+; already be valid (carried over, or memo-reloaded first) — the hash
+; reads it. ZCF_DX exits with A = pa_dx+1, so its users re-load dy-hi
+; before the JSR to honour the entry A-contract.
 .macro ZCF_DX s, xl
    SEC
    LDA xl+(s)*$100,Y
    SBC bca_pxs
    STA pa_dx
-   EOR pa_dy                               ; slot hash (pa_dy carried or
-   AND #$7F                                ; memo-reloaded FIRST — order
-   TAX                                     ; matters in the SYM/SXM arms)
+   EOR pa_dy                               ; slot hash (pa_dy already valid)
+   AND #$7F
+   TAX
    LDA xl+$200+(s)*$100,Y
    SBC bca_pxs+1
    STA pa_dx+1
@@ -50,19 +74,22 @@
    LDA yl+(s)*$100,Y
    SBC bca_pys
    STA pa_dy
-   EOR pa_dx                               ; slot hash (pa_dx carried)
+   EOR pa_dx                               ; slot hash (pa_dx carried over)
    AND #$7F
    TAX
    LDA yl+$200+(s)*$100,Y
    SBC bca_pys+1
    STA pa_dy+1
 .endmacro
-; shared-axis reload from the memo key planes (see the note above):
-; valid after ANY class entry, hit or miss.
-; X-DIRECT (Eben 2026-07-19): corner_phi RETURNS X = slot on BOTH
-; paths — the hit serve never touches X after the probe, and the miss
-; path's mask_done reloads it for the psi store. The arms run the
-; memo reload FIRST (before the hashing fetch overwrites X).
+; ---------------------------------------------------------------------------
+; ZCF_MEMO_* — reload a shared-axis RAW delta from the memo key planes,
+; X-direct. Sound on both of c1's exits: a miss just BANKED the raw key
+; at the slot, and a hit means the planes MATCHED it — either way
+; CPM_KD*[c1's slot] holds c1's raw deltas, and X = that slot by the
+; return contract. Must run BEFORE the hashing fetch overwrites X with
+; c2's slot. This is what un-does the N-class in-place negation for the
+; rows whose corners share a plane.
+; ---------------------------------------------------------------------------
 .macro ZCF_MEMO_DX
    LDA CPM_KDXL,X
    STA pa_dx
@@ -75,17 +102,31 @@
    LDA CPM_KDYH,X
    STA pa_dy+1
 .endmacro
+; ---------------------------------------------------------------------------
+; ZARM family — a corner arm: fetch corner 1, take its phi, fetch
+; corner 2, take its phi, chain into bca_tail (which receives p2 in
+; A/Y and owns the bca_p2 stores; p1 is stored here). corner_phi
+; returns r-hi in A, r-lo in Y, so the second fetch re-establishes
+; Y = node itself.
+;   ZARM      independent corners (full fetch both)
+;   ZARM_SX   corners share the x plane, P-class: pa_dx survives c1
+;   ZARM_SY   corners share the y plane, P-class: pa_dy survives c1
+;   ZARM_SYM  shared y, N-class c1: the raw dy comes back from the MEMO
+;   ZARM_SXM  shared x, N-class c1: the raw dx comes back from the MEMO
+; SY/SYM's hashing fetch is ZCF_DX (exits A = dx-hi): they re-load
+; dy-hi for the entry A-contract.
+; ---------------------------------------------------------------------------
 .macro ZARM s, x1, y1, x2, y2, e1, e2
-   ZCF s, x1, y1                           ; Y = node from the classify leaf
-   JSR e1                                  ; sign-class corner_phi entry —
-   STA bca_p1+1                            ; the arm's zone fixes each
-   STY bca_p1                              ; corner's delta signs statically
-   LDY zp_node_ch_l                        ; (corner_phi returned r lo in Y)
+   ZCF s, x1, y1
+   JSR e1
+   STA bca_p1+1
+   STY bca_p1
+   LDY zp_node_ch_l                        ; (r-lo clobbered Y)
    ZCF s, x2, y2
    JSR e2
-   JMP bca_tail                            ; p2 rides A/Y (tail stores it)                            ; chained: no return trip
+   JMP bca_tail                            ; p2 rides A/Y; no return trip
 .endmacro
-.macro ZARM_SX s, x1, y1, y2, e1, e2      ; corners share the x plane
+.macro ZARM_SX s, x1, y1, y2, e1, e2
    ZCF s, x1, y1
    JSR e1
    STA bca_p1+1
@@ -93,9 +134,9 @@
    LDY zp_node_ch_l
    ZCF_DY s, y2                            ; pa_dx carried over
    JSR e2
-   JMP bca_tail                            ; p2 rides A/Y (tail stores it)                            ; chained
+   JMP bca_tail
 .endmacro
-.macro ZARM_SY s, x1, y1, x2, e1, e2      ; corners share the y plane
+.macro ZARM_SY s, x1, y1, x2, e1, e2
    ZCF s, x1, y1
    JSR e1
    STA bca_p1+1
@@ -104,10 +145,10 @@
    ZCF_DX s, x2                            ; pa_dy carried over
    LDA pa_dy+1                             ; entry A-contract: dy hi
    JSR e2
-   JMP bca_tail                            ; p2 rides A/Y (tail stores it)                            ; chained
+   JMP bca_tail
 .endmacro
-.macro ZARM_SYM s, x1, y1, x2, e1, e2     ; shared y, N-class c1: the raw
-   ZCF s, x1, y1                           ; dy comes back from the MEMO
+.macro ZARM_SYM s, x1, y1, x2, e1, e2
+   ZCF s, x1, y1
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -116,10 +157,10 @@
    ZCF_DX s, x2                            ; c2's slot into X
    LDA pa_dy+1                             ; entry A-contract: dy hi
    JSR e2
-   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
+   JMP bca_tail
 .endmacro
-.macro ZARM_SXM s, x1, y1, y2, e1, e2     ; shared x, N-class c1: the raw
-   ZCF s, x1, y1                           ; dx comes back from the MEMO
+.macro ZARM_SXM s, x1, y1, y2, e1, e2
+   ZCF s, x1, y1
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -127,28 +168,53 @@
    LDY zp_node_ch_l
    ZCF_DY s, y2
    JSR e2
-   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
+   JMP bca_tail
 .endmacro
 
 ; ============================================================================
-; CLASSIFY_TREE — ONE side's complete classifier (2026-07-19, Eben's
-; restructure): x ladder, then the three columns sorted LEFT / MID /
-; RIGHT, each column top-to-bottom (T test, top arm, B test, bottom
-; arm, mid arm), with EVERY corner arm inlined at its leaf — the ZC
-; out-of-line arms and their leaf JMPs died. Instantiated twice
-; (side 1 falls in from box_classify, side 0 rides the head stub);
-; every label is .local and the side is baked into every plane
-; operand at expansion time.
-; The M/R columns sit past the fat L column, out of short-branch
-; reach of the ladder, so their ladder exits ride JMP stubs — the
-; same 6 cycles as the old direct-branch + leaf-JMP pair, while the
-; top/bot/mid leaves now FALL straight into their arms (-3 per run).
-; Corner rows per column (checkcoord baked; sign classes P = >=0,
-; N = <=0 derived from the column/band):
-;   L: top=row 0 (NW)  bot=row 8 (SW)   mid=row 4 (W, shared L plane)
-;   M: top=row 1 (N, shared T via MEMO) bot=row 9 (S, shared B)
-;      mid=closed inside band -> cx sentinel
-;   R: top=row 2 (NE)  bot=row 10 (SE)  mid=row 6 (E, shared R via MEMO)
+; CLASSIFY_TREE — one side's complete classifier, pure diverging
+; control flow: the x ladder picks a column (L / M / R), each column
+; owns a copy of the hi-first y ladder, and every leaf IS its corner
+; arm, inlined — (row, side) are static at the leaf, so the corner
+; planes and both corners' delta sign classes are baked into the
+; operands and the entry choice. Instantiated once per side (all
+; labels .local); the side is the +$100 term in every plane operand.
+;
+; Corner rows per column (checkcoord baked; classes P = delta >= 0,
+; N = delta <= 0, both CLOSED — a zero delta is legal in either):
+;   L: top = row 0 (NW)   bot = row 8 (SW)   mid = row 4 (W, shared L)
+;   M: top = row 1 (N, T shared via MEMO)    bot = row 9 (S, shared B)
+;      mid = closed viewer-in-box band -> cx sentinel
+;   R: top = row 2 (NE)   bot = row 10 (SE)  mid = row 6 (E, shared R)
+;
+; Geometry: the fat L column (the majority of arm runs) is ladder-
+; adjacent — its exits are direct branches. M and R sit beyond
+; short-branch reach, so their ladder exits ride JMP stubs (the same
+; cost a direct branch + an out-of-line leaf JMP would be), and their
+; leaves fall straight into their inlined arms. Every internal branch
+; skips at most one arm body (~90 B), well inside range.
+;
+; Compare discipline (all four two-tier tests share it):
+;   - hi tier first: one 8-bit compare decides unless the hi bytes tie
+;     (coordinates are offset-binned, so the compares are unsigned)
+;   - a branch that lands past the next tier's reload enters at the
+;     _nr label: the hi-decided path still holds the operand in A
+;   - lo tiers that need "<=" load the PLANE and compare the value —
+;     carry alone covers < and =, one branch (a "<=" test wants the
+;     table in A; a strict "<" wants the value in A)
+;
+; Boundary semantics: the box test is CLOSED. px == L joins the left
+; column, px == R joins mid, py == T joins top, py >= B joins mid.
+; The mid/mid case is the viewer inside-or-on the closed box: cx
+; publishes p1 = 0, p2 = $0800 (span exactly 2048), and the check's
+; ordinary span test reads that as full visibility — which is also
+; geometrically exact for on-boundary viewers (a closed-boundary
+; viewer sees the box subtend at least a half-plane). The routing
+; also guarantees no arm ever fetches a corner coinciding with the
+; viewer, so a (0,0) delta pair is unreachable downstream.
+;   in : Y = node (from box_classify), zp_bbox_side baked as s,
+;        bca_pxs/pys = viewer, offset-binned hi bytes
+;   out: control at a corner arm (-> bca_tail) or cx (-> full_vis)
 ; ============================================================================
 .macro CLASSIFY_TREE s
    .local xge, xge_nr, ymj, yrj
@@ -158,47 +224,49 @@
 ; --- x ladder ---
    LDA bca_pxs+1
    CMP BBP_L_HI+(s)*$100,Y
-   BCC yL                                  ; px <= L: LEFT (fat, forward)
-   BNE xge_nr
-   LDA BBP_L_LO+(s)*$100,Y                 ; hi tie: INVERTED (plane in A) —
-   CMP bca_pxs                             ; C = L_lo >= px_lo: <= decided
-   BCS yL                                  ; by ONE branch
+   BCC yL                                  ; px < L (hi): LEFT, direct
+   BNE xge_nr                              ; px > L (hi): right-of tests,
+                                           ; pxs+1 still live
+   LDA BBP_L_LO+(s)*$100,Y                 ; hi tie: plane in A —
+   CMP bca_pxs                             ; C = L_lo >= px_lo, so ONE
+   BCS yL                                  ; branch covers px <= L
 xge:
-   LDA bca_pxs+1                           ; (inverted-lo fall only: the hi
-xge_nr:                                    ; BNE arrives with pxs+1 live)
+   LDA bca_pxs+1                           ; (inverted-lo fall only)
+xge_nr:
    CMP BBP_R_HI+(s)*$100,Y
    BCC ymj                                 ; px < R (hi): MID via stub
-   BNE yrj                                 ; px > R strictly (hi): RIGHT stub
-   LDA BBP_R_LO+(s)*$100,Y                 ; hi tie: INVERTED —
-   CMP bca_pxs                             ; C = R_lo >= px_lo: px <= R
-   BCS ymj                                 ; is mid; fall = strict right
+   BNE yrj                                 ; px > R (hi): RIGHT via stub
+   LDA BBP_R_LO+(s)*$100,Y                 ; hi tie: px <= R is mid,
+   CMP bca_pxs                             ; one BCS; fall = strict
+   BCS ymj                                 ; right
 yrj:
    JMP yR
 ymj:
    JMP yM
-; --- LEFT column ---
+; --- LEFT column (ladder-adjacent, all exits direct) ---
 yL:
    LDA bca_pys+1
    CMP BBP_T_HI+(s)*$100,Y
-   BCC yLlo_nr                             ; py < T (hi): bottom test
+   BCC yLlo_nr                             ; py < T (hi): bottom test,
+                                           ; pys+1 still live
    BNE yLtop                               ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO+(s)*$100,Y
    BCC yLlo
-yLtop:                                     ; py >= T: row 0 (NW) INLINE
+yLtop:                                     ; py >= T: row 0 (NW)
    ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
 yLlo:
-   LDA bca_pys+1                           ; (lo-tier arrivals only: the hi
-yLlo_nr:                                   ; BCC arrives with pys+1 live)
+   LDA bca_pys+1                           ; (lo-tier arrivals only)
+yLlo_nr:
    CMP BBP_B_HI+(s)*$100,Y
    BCC yLbot                               ; py < B strictly (hi)
    BNE yLmid                               ; py > B (hi): mid band
    LDA bca_pys
    CMP BBP_B_LO+(s)*$100,Y
    BCS yLmid                               ; py >= B: mid band
-yLbot:                                     ; row 8 (SW) INLINE
+yLbot:                                     ; py < B: row 8 (SW)
    ZARM s, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
-yLmid:                                     ; row 4 (W) INLINE
+yLmid:                                     ; row 4 (W): corners share L
    ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
 ; --- MID column ---
 yM:
@@ -209,7 +277,8 @@ yM:
    LDA bca_pys
    CMP BBP_T_LO+(s)*$100,Y
    BCC yMlo
-yMtop:                                     ; row 1 (N) INLINE, memo-shared T
+yMtop:                                     ; row 1 (N): corners share T,
+                                           ; c1 negates it -> memo reload
    ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
 yMlo:
    LDA bca_pys+1
@@ -220,12 +289,13 @@ yMlo_nr:
    LDA bca_pys
    CMP BBP_B_LO+(s)*$100,Y
    BCS cxi
-yMbot:                                     ; row 9 (S) INLINE
+yMbot:                                     ; row 9 (S): corners share B
    ZARM_SY s, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 cxi:
-; closed viewer-in-box band: publish the FULL-span sentinel (p1 = 0,
-; p2 = $0800, span 2048) — rcache cold's ordinary span test marks
-; FULL off it; psi planes are never consulted under FULL.
+; viewer inside (or on the boundary of) the CLOSED box: publish the
+; full-span sentinel — the rcache cold snapshot marks FULL off its
+; ordinary span test, and the psi planes are never consulted under
+; FULL, so the stale pa state is unread.
    LDA #0
    STA bca_p1
    STA bca_p1+1
@@ -242,7 +312,7 @@ yR:
    LDA bca_pys
    CMP BBP_T_LO+(s)*$100,Y
    BCC yRlo
-yRtop:                                     ; row 2 (NE) INLINE
+yRtop:                                     ; py >= T: row 2 (NE)
    ZARM s, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
 yRlo:
    LDA bca_pys+1
@@ -253,27 +323,30 @@ yRlo_nr:
    LDA bca_pys
    CMP BBP_B_LO+(s)*$100,Y
    BCS yRmid
-yRbot:                                     ; row 10 (SE) INLINE
+yRbot:                                     ; py < B: row 10 (SE)
    ZARM s, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
-yRmid:                                     ; row 6 (E) INLINE, memo-shared R
+yRmid:                                     ; row 6 (E): corners share R,
+                                           ; c1 negates it -> memo reload
    ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
 .endmacro
 
 ; ============================================================================
-; box_classify — the whole classifier lives in the ZC segment (flat:
-; CODE region — it no longer fits ANG with every arm inline; banked:
-; CODE as always). zc_corners/zc_end bound the harness PC window.
+; box_classify — THE bbox visibility check body (bbox_check_angle is a
+; JMP here). One LDY serves both side trees; the side picks a fully
+; side-baked instantiation and is never consulted again.
 ;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
-;   out: control at a corner arm (JMP bca_tail) or cx -> full_vis
+;   out: control at a corner arm or full_vis; bca_p1/p2 = raw phis
+;        (via the arms' JSRs + bca_tail) — the rcache cold snapshot
+;        reads them from memory after the check
+; zc_corners/zc_end bound the harness PC window (check_angle_calls).
 ; ============================================================================
 .segment "ZC"
 zc_corners:                                ; harness window start
-bcls_s0_j:
-   JMP bcls_s0                             ; (no fall-in: data precedes)
 box_classify:
    LDY zp_node_ch_l                        ; ONE LDY serves both trees
    LDA zp_bbox_side
-   BEQ bcls_s0_j                           ; s1 falls in; s0 rides the stub
+   BNE bcls_s1
+   JMP bcls_s0
 bcls_s1:
    CLASSIFY_TREE 1
 bcls_s0:
@@ -285,52 +358,46 @@ zc_end:
 .segment "ANG"
 .endif
 
-; (load_val removed: inlined at the corner loads.)
-
 ; ============================================================================
-; (The GENERIC corner_phi entry and its sign/oct/swap/log2 path died
-; 2026-07-19: every runtime corner comes through the four sign-class
-; entries + lf_ns (ANGX, below), and the exhaustive pa sweep in
-; test_slope_div drives those directly. What follows is the SHARED
-; tail: comb (octant compose), the memo store, and cp_havepsi.)
-; (The whole shared tail — comb, the psi store, cp_havepsi, the sub
-; arm — lives at the END of the ANGX section since 2026-07-19: one
-; source run, so the mask_done -> cp_havepsi fall is adjacent in both
-; builds by construction. Nothing of the corner pipeline remains in
-; this segment.)
-
-; ============================================================================
-; Sign-class corner_phi entries (2026-07-18). Every ZC arm knows BOTH
-; corners' delta signs at assembly time (the zone puts the viewer on a
-; known side of each corner plane: boxx=0 -> dx>=0 for both corners,
-; boxx=2 -> dx<=0, boxx=1 -> per-corner by plane; same for y). So each
-; arm calls a class entry whose miss converter dead-codes the sign
-; tests: |delta| by a fixed-direction move/negate, oct base an
-; immediate. Boundary zeros are exact: delta=0 folds to ta=0, where
-; base+ta == base-ta — psi is IDENTICAL to the generic path (and the
-; mirror) in every case, so memo entries stay interchangeable.
-; The probe is duplicated per class (a shared probe would need a
-; dynamic miss target = the dispatch this kills). Generic corner_phi
-; stays for the unit-test hook (test_slope_div drives arbitrary deltas).
-; PLACEMENT: flat = the ANGX window ($F200 — the TA_HI page option F
-; killed; ANG itself is at its $F100 ceiling). Banked = ANG_BK floats
-; in the CODE region like everything else.
+; CPM_ENTRY — one sign-class corner_phi entry: probe the corner-phi
+; memo, and on a miss bank the key, convert to |dx|/|dy| and jump into
+; the shared lf_ns pipeline. Four instances, one per (sign dx, sign dy)
+; class: each arm's row fixes both corners' delta signs statically, so
+; the converters dead-code the sign tests — P-axes are already their
+; own absolute value, N-axes negate pa_dx/pa_dy IN PLACE.
+;
+; ENTRY CONTRACT: X = memo slot (hashed by the fetch macros),
+;                 A = pa_dy+1 (the fetch's exit state).
+; RETURN CONTRACT: r-hi in A, r-lo in Y, X = slot again — the hit
+;                 serve never touches X, and the miss path's psi store
+;                 reloads it. Harness drivers must mirror the entry
+;                 registers (test_slope_div sets mpu.x/mpu.a).
+;
+; Probe: stage 0 compares KDYH against the A the fetch left — no load.
+; A miss at stage k enters the store ladder AT k with the mismatched
+; byte in A; the bytes before k matched, so the planes already hold
+; them and their stores are skipped. Stage order is correctness-free:
+; a compare-match means the plane holds that key byte, and the $80
+; sentinel in KDXH (an impossible delta hi — |deltas| <= 2047) keeps
+; a never-written slot from fully matching at any position, so KDXH
+; doubles as the validity plane. The slot is banked to zp ONLY on the
+; miss path (the psi store is its sole zp consumer; hits keep it in X).
+;
+; The key must be banked BEFORE the converters run: the N-class
+; in-place negation destroys the raw values the key is made of (the
+; memo-shared rows read them back from the key planes).
+;
+; The x zero-out is load-free: every cmiss path converges on it with
+; A = pa_dx+1 (a stage-3 miss carries it from the probe; earlier
+; stages exit through the ladder's final LDA pa_dx+1). A zero delta
+; skips its negate entirely (-0 = 0, and the ta = 0 paths never read
+; the delta again). (0,0) is unreachable — the classify routing
+; excludes viewer-coincident corners.
 ; ============================================================================
 .macro CPM_ENTRY name, negx, negy, obase
    .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy
 name:
-; ENTRY CONTRACT: X = memo slot = (pa_dx ^ pa_dy) & $7F, hashed by the
-; fetch macros where the delta bytes were already in A (the old reload-
-; and-rehash head died 2026-07-19). Harness drivers must mirror this
-; (test_slope_div sets mpu.x — the wrapper-contract-gap rule).
-; RETURN CONTRACT: X = slot again — the hit serve preserves it and the
-; miss path's mask_done reloads it, so the slot is banked to zp ONLY
-; on the miss path (ladder end below); hits never store it (Eben).
-; A CONTRACT (Eben 2026-07-19): every fetch macro ends with pa_dy+1 in
-; A (ZARM_SY/SYM's c2 re-load it after their x-hash fetch), so stage 0
-; compares KDYH with NO load. Stage order is correctness-free: the $80
-; sentinel in KDXH can't match a real dx hi wherever it sits.
-   CMP CPM_KDYH,X
+   CMP CPM_KDYH,X                          ; stage 0: A = dy hi, no load
    BNE cmiss0
    LDA pa_dy
    CMP CPM_KDYL,X
@@ -341,44 +408,29 @@ name:
    LDA pa_dx+1
    CMP CPM_KDXH,X
    BNE cmiss3
-   LDA CPM_PSIL,X
-   STA pa_res
+   LDA CPM_PSIL,X                          ; HIT: serve psi; X = slot
+   STA pa_res                              ; rides through untouched
    LDA CPM_PSIH,X
    STA pa_res+1
    JMP cp_havepsi
-; Bank the RAW key first (X = slot, still live from the probe): the
-; converters work on pa_dx/pa_dy DIRECTLY (the sd_* alias names died
-; 2026-07-19) — P-axes need no staging at all and N-axes negate IN
-; PLACE, which would destroy the key. mask_done stores only psi; this
-; KDXH write is the validity mark, made good when the psi lands
-; (single-threaded, no early outs).
-; (Staggered entries, Eben 2026-07-19: a miss at stage k arrives with
-; the mismatched byte in A, and the bytes BEFORE stage k matched — the
-; table already holds them, so their stores are skipped entirely.)
 cmiss0:
-   STA CPM_KDYH,X
-   LDA pa_dy
+   STA CPM_KDYH,X                          ; staggered key bank: enter at
+   LDA pa_dy                               ; the missed stage, store the
 cmiss1:
-   STA CPM_KDYL,X
-   LDA pa_dx
+   STA CPM_KDYL,X                          ; byte in A, load-store the
+   LDA pa_dx                               ; rest; matched bytes are
 cmiss2:
-   STA CPM_KDXL,X
+   STA CPM_KDXL,X                          ; already in the planes
    LDA pa_dx+1
 cmiss3:
-   STA CPM_KDXH,X
-   STX zp_cpm_slot                         ; slot banked on the MISS path
-                                           ; only (mask_done's psi store —
-                                           ; X becomes the octant next)
-   LDX #obase                              ; HOISTED (tension pass): the slot
-                                           ; in X is dead once the key is
-                                           ; banked; czx/czy shed their LDX
-; ALL cmiss paths converge here with A = pa_dx+1 (stage-3 misses carry
-; it from the probe; earlier stages pass through the ladder's final
-; LDA pa_dx+1; STX/LDX leave A alone) — so the x zero-out needs NO
-; load, and the N-class negate runs only on nonzero dx (Eben
-; 2026-07-19; -0 = 0, so skipping it on the zero path is identical).
-   ORA pa_dx
-   BEQ czx
+   STA CPM_KDXH,X                          ; the validity mark (made good
+                                           ; when the psi lands; single-
+                                           ; threaded, no early outs)
+   STX zp_cpm_slot                         ; slot to zp on the MISS path
+                                           ; only — X becomes the octant
+   LDX #obase
+   ORA pa_dx                               ; A = pa_dx+1 (converged): the
+   BEQ czx                                 ; x zero-out costs no load
 .if negx
    LDA #0                                  ; |dx| = -dx in place (dx <= 0)
    SEC
@@ -389,9 +441,9 @@ cmiss3:
    STA pa_dx+1
 .endif
 .if negy
-   LDA #0                                  ; |dy| = -dy in place (dy <= 0)
-   SEC
-   SBC pa_dy
+   LDA #0                                  ; |dy| = -dy in place (dy <= 0);
+   SEC                                     ; the zero-out folds into the
+   SBC pa_dy                               ; negate's final ORA
    STA pa_dy
    LDA #0
    SBC pa_dy+1
@@ -399,19 +451,20 @@ cmiss3:
    ORA pa_dy
    BEQ czy
 .else
-   LDA pa_dy+1                            ; |dy| = dy already (dy >= 0)
-   ORA pa_dy
+   LDA pa_dy+1                             ; |dy| = dy already (dy >= 0):
+   ORA pa_dy                               ; just the zero-out
    BEQ czy
 .endif
-   JMP lf_ns                               ; no compare, no swap: lf_ns reads
-                                           ; the axgt bit off the SIGN of the
-                                           ; L8 difference
+   JMP lf_ns
 czx:
    JMP ns_dx0
 czy:
    JMP ns_dy0
 .endmacro
-; oct base = (dx<0)*4 + (dy<0)*2 (P = delta >= 0, N = delta <= 0)
+; octant class base = (dx<0)*4 + (dy<0)*2; lf_ns adds axgt.
+; PLACEMENT: flat = the ANGX window; banked = linear in ANG_BK. Either
+; way the entries, the width arms, lf_ns and the compose chain below
+; are one contiguous run.
 .if ::BANKED = 0
 .segment "ANGX"
 angx_head:
@@ -420,47 +473,31 @@ CPM_ENTRY corner_phi_nn, 1, 1, 6
 CPM_ENTRY corner_phi_pn, 0, 1, 2
 CPM_ENTRY corner_phi_np, 1, 0, 4
 CPM_ENTRY corner_phi_pp, 0, 0, 0
-; (the pp tail fall-through died 2026-07-19 with the x16-above-lf_ns
-; restructure — the fall bought 3 cycles on pp misses; the chain's
-; fall-into-mask_done buys them back on every add.)
 
 ; ============================================================================
-; lf_ns — the NO-SWAP log2/atanexp pipeline (2026-07-18). pa_dx/pa_dy
-; hold |dx|/|dy| (the converters negated N-axes in place; the old
-; sd_num/sd_den alias names died 2026-07-19); the min/max swap is gone. The signed L8
-; difference s = L8r(|dy|) - L8r(|dx|) carries everything:
-;   - L8 is MONOTONE, so sign(s) IS the exact axgt whenever s != 0
-;     (strict L8 order implies strict magnitude order);
-;   - mixed widths fix the sign statically (a 16-bit magnitude always
-;     beats an 8-bit one: dy >= 256 > 255 >= dx), so those arms bake
-;     the axgt bit and never test a sign;
-;   - s == 0 is an L8 TIE, where AE[0] = 506 != 512 means the branch
-;     matters: fall back to the exact 16-bit compare (and the exact-
-;     equality diagonal diverts to ta = ANG45 = 512, the mirror's rule).
-; The negate is the ATANEXP-input negation: k = |s|, oct = class|(s<0).
-; Zero magnitudes short out first (L8[0] = L8[1] = 0 would poison the
-; sign trick): min == 0 -> ta = 0; both zero -> psi = 0.
-;   in : X = octant class base (axgt clear), pa_dx/pa_dy = |dx|/|dy|
-;   out: joins comb (ANG) with X = oct, pa_res = ta
+; Width arms — the 16-bit reductions, placed ABOVE lf_ns so its
+; dispatch reaches them with short backward branches and the forward
+; space below lf_ns holds the whole compose chain. All are entered
+; from lf_ns's dispatch with the tested hi byte still in A (the
+; dispatch loads it; LDY/BNE/INX preserve it), so none re-load.
+;
+; k for mixed widths = L8[big >> 3] + 96 - L8[small]: the >> 3 halves
+; the log argument three times and +96 = 3 * 32 re-biases (L8 is a
+; 32/octave fixed-point log). A 16-bit magnitude always beats an
+; 8-bit one, so axgt is STATIC in the mixed arms (the INX baked in or
+; out); both-16-bit reduces both sides and the +96s cancel. The
+; reducers shift COPIES in t0/t1 — pa_dx/pa_dy must stay raw-valued
+; for the shared-axis rows' carryover.
 ; ============================================================================
-; (the zero-outs live in the converters now — folded into the abs
-; blocks where the hi byte is already in A. And (0,0) is UNREACHABLE
-; at runtime: a zero pair means the viewer IS the tested box's corner,
-; and the closed inside test exits through full_vis before any arm
-; runs; inherited zones are strict, so at least one axis is nonzero.
-; The old pa_zero arm died with it — the pa sweep skips (0,0).)
 ns_x16y16:
-; --- both 16-bit: reduce both into t0/t1 (the +96s cancel), then the
-;     8-bit shape — indices from the temps, no L8-value staging.
-;     (x16 group lives ABOVE lf_ns since the restructure — the BCC
-;     reaches ns_neg FORWARD, still direct, no trampoline.) ---
-   STY t1                                  ; Y = pa_dy+1 (banked at the ns_x16
-                                           ; dispatch — MUST land before the
-                                           ; LDY below reuses Y)
+; both 16-bit: reduce both >> 3 into (A:t0)/(A:t1), then the 8-bit
+; shape on the reduced values.
+   STY t1                                  ; Y = pa_dy+1 (banked at the
+                                           ; ns_x16 dispatch) — must land
+                                           ; before the LDY below
    LDY pa_dx
-   STY t0                                  ; lo staged via Y: A stays untouched
-; (no LDA: A = pa_dx+1 from the entry dispatch — LDY/BNE/STY preserve it)
-   LSR A
+   STY t0                                  ; lo staged via Y: A untouched
+   LSR A                                   ; A = pa_dx+1 (from lf_ns)
    ROR t0
    LSR A
    ROR t0
@@ -477,13 +514,12 @@ ns_x16y16:
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
    LDY t0
    SEC
-   SBC L8_TAB,Y                            ; - L8[|dx| >> 3], direct
-   BCC ns_neg                              ; DIRECT (C=0 rides into the ADC #1;
-   JMP ns_khave                            ; s == 0 ties ride k = 0, AE[0]=512)
+   SBC L8_TAB,Y                            ; - L8[|dx| >> 3]
+   BCC ns_neg                              ; s < 0: forward, direct (C=0
+   JMP ns_khave                            ; rides into ns_neg's ADC #1)
 ns_x8y16:
-; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
-; (no LDA: A = pa_dy+1 from the entry's second dispatch line)
-   STA t0
+; |dx| 8-bit, |dy| 16-bit: axgt static clear.
+   STA t0                                  ; A = pa_dy+1 (from lf_ns)
    LDA pa_dy
    LSR t0
    ROR A
@@ -495,116 +531,124 @@ ns_x8y16:
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
    LDY pa_dx
    SEC
-   SBC L8_TAB,Y                            ; - L8[|dx|], direct
+   SBC L8_TAB,Y                            ; - L8[|dx|]
    BCS ns_pos96
-   ADC #96
-   JMP ns_khave
+   ADC #96                                 ; C=0: wraps to diff+96 exactly
+   JMP ns_khave                            ; (diff >= -95: k >= 1)
 ns_x16:
    LDY pa_dy+1
    BNE ns_x16y16
-; --- |dx| 16-bit, |dy| 8-bit: axgt STATIC; k = L8[dx>>3] + 96 - L8[dy]
-;     (>= 1: L8r(16-bit) >= 256 > 255 >= L8[8-bit]) ---
+; |dx| 16-bit, |dy| 8-bit: axgt static SET.
    INX
-; (no LDA: A = pa_dx+1 from the entry dispatch — the LDY/INX above
-;  preserve it. Eben 2026-07-19.)
-   STA t0                                  ; >>3 NON-destructive: HI to t0
-                                           ; (dead classify temp), lo rides
-   LDA pa_dx                              ; A so the index ends in-register
-   LSR t0                                  ; (TAY, no reload) — pa_dx must
-   ROR A                                   ; stay RAW-valued for rows 4/9's shared-
-   LSR t0                                  ; axis carryover still needs RAW
-   ROR A                                   ; (the in-frame gate caught the
-   LSR t0                                  ; in-place version)
+   STA t0                                  ; A = pa_dx+1 (LDY/INX kept it)
+   LDA pa_dx
+   LSR t0
+   ROR A
+   LSR t0
+   ROR A
+   LSR t0
    ROR A
    TAY
    LDA L8_TAB,Y                            ; L8[|dx| >> 3]
    LDY pa_dy
    SEC
-   SBC L8_TAB,Y                            ; - L8[|dy|], direct
+   SBC L8_TAB,Y                            ; - L8[|dy|]
    BCS ns_pos96
-   ADC #96                                 ; C=0: wraps to diff+96 exactly
-   JMP ns_khave                            ; (diff >= -95 here: k >= 1)
+   ADC #96
+   JMP ns_khave
 ns_pos96:
    ADC #95                                 ; C=1: diff+96
    BCS ns_k255
    JMP ns_khave
 ns_k255:
-   LDA #255
-   JMP ns_khave                            ; (khave slid out of branch range
-                                           ; in the tension reorder)
+   LDA #255                                ; k clamp (the AE tail is flat
+   JMP ns_khave                            ; there — certified exact)
 ns_dy0:
-   INX                                     ; |dy| = 0: ta = 0, axgt = 1
+   INX                                     ; |dy| = 0: ta = 0, axgt set
 ns_dx0:
-   LDA #0
-   STA pa_res
-   STA pa_res+1
-   JMP comb
+   LDA #0                                  ; zero-delta axis: ta = 0
+   STA pa_res                              ; (psi = octant base exactly;
+   STA pa_res+1                            ; A = 0 = ta-hi satisfies
+   JMP comb                                ; comb's entry contract)
+
+; ============================================================================
+; lf_ns — the no-swap pipeline: ta = atanexp(min/max) without ever
+; computing min/max. pa_dx/pa_dy hold |dx|/|dy| (the converters
+; negated N-axes in place). The signed L8 difference
+;      s = L8[|dy|] - L8[|dx|]
+; carries everything: L8 is MONOTONE, so sign(s) is exactly axgt
+; (strict L8 order implies strict magnitude order), and k = |s| feeds
+; the AE tables. Ties (s = 0) need no fallback: AE[0] is forced to
+; 512, where the octant pairs collapse (certified within EPSILON).
+; L8[0] = L8[1] = 0 would poison the sign trick, which is why zero
+; deltas short out in the converters before arriving here.
+;   in : X = octant class base, pa_dx/pa_dy = |dx|/|dy|,
+;        A = pa_dy+1 (the dispatch re-tests it)
+;   out: falls through comb with X = oct, pa_res = ta
+; ============================================================================
 lf_ns:
    LDA pa_dx+1
-   BNE ns_x16
-   LDA pa_dy+1
-   BNE ns_x8y16
-; --- both 8-bit (the common case) ---
+   BNE ns_x16                              ; 16-bit widths: backward, the
+   LDA pa_dy+1                             ; tested hi byte rides A into
+   BNE ns_x8y16                            ; the arm
+; both 8-bit (the common case): direct table reads, no reduction
    LDY pa_dy
    LDA L8_TAB,Y                            ; L8[|dy|]
    LDY pa_dx
    SEC
-   SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|] — Y
-   BCS ns_khave                            ; s >= 0 (ties included: k = 0 and
-                                           ; ATANEXP[0] is FORCED to 512 where
-                                           ; every octant pair collapses — no
-                                           ; fallback compare; cert-bounded)
-ns_neg:                                    ; s < 0 falls in with C = 0
-   EOR #$FF                                ; -s (the ADC supplies exactly +1;
-   ADC #1                                  ; the x16y16 BCC arrives via C=0 too)
-   INX                                     ; axgt — falls into the lookup
+   SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|]
+   BCS ns_khave                            ; s >= 0 (ties ride k = 0)
+ns_neg:
+   EOR #$FF                                ; k = -s (C = 0 on every
+   ADC #1                                  ; arrival: the ADC supplies
+   INX                                     ; exactly +1); axgt
 ns_khave:
-   TAY                                     ; k = |s|
+   TAY                                     ; k
    LDA AE_LO,Y
-   STA pa_res
-   LDA AE_HI,Y                             ; ta hi RIDES A into comb — the
-comb:                                      ; add arm's ADC consumes it
-; res = base[oct] +/- ta. Bases are multiples of 256 (0/1024/2048/
-; 3072), so base_lo = 0 and the lo byte is ta unchanged. X = oct.
-; The zero paths JMP here with A = 0 = ta hi (contract holds). NO
-; mask on add: ta <= 512 (seed-asserted), the largest add base is
-; 3072 — the sum tops out at $0E, never wraps. The add FALLS into
-; mask_done (the x16-above restructure freed the forward budget —
-; Eben 2026-07-19); the sub arm sits past cp_havepsi's RTS.
+   STA pa_res                              ; ta lo (= psi lo: the bases
+   LDA AE_HI,Y                             ; are multiples of 256); ta hi
+comb:                                      ; RIDES A into the add
+; psi = base[oct] +/- ta, mod 4096. Bases are 0/1024/2048/3072, so
+; the lo byte is ta unchanged and only the hi byte composes. The add
+; arm never wraps (ta <= 512 seed-asserted, largest add base 3072:
+; tops out at $0E) — no mask; it FALLS through the psi store into
+; cp_havepsi. The zero paths JMP comb with A = 0 = ta-hi.
    LDY pa_sign,X
    BMI comb_sub
    CLC
    ADC pa_base_hi,X
    STA pa_res+1
 mask_done:
-; --- memo STORE, psi half (X = oct is dead; the slot was banked at
-; the miss ladder) — falls into cp_havepsi (source-adjacent in BOTH
-; builds now: the whole chain lives in this section) ---
+; psi memo store. The LDX does double duty: store index AND the
+; X = slot return contract (the octant chain repurposed X). Entries
+; persist forever — psi is a pure function of the key.
    LDX zp_cpm_slot
-   STA CPM_PSIH,X                          ; valid forever: psi is a pure
-   LDA pa_res                              ; function of (dx,dy); the KDXH
-   STA CPM_PSIL,X                          ; write at the miss ladder IS the
-                                           ; validity mark
-; --- afn - psi, mask to u12 (also the rotation cache warm path's
-; re-derive). RETURNS r hi in A, lo in Y; pa_res stays stored (the
-; test hooks read it; psi-hi feeds the SBC).
+   STA CPM_PSIH,X
+   LDA pa_res
+   STA CPM_PSIL,X
 cp_havepsi:
+; r = (afn - psi) & 4095, pure u12 (consumers do mod-4096 arithmetic
+; on the hi nibble directly). Also the rotation cache warm path's
+; re-derive (JSR). pa_res stays stored: the psi-hi SBC and the test
+; hooks read it.
+;   out: A = r hi, Y = r lo, X = slot
    SEC
    LDA bca_afn
    SBC pa_res
    TAY                                     ; r lo rides Y to the caller
    LDA bca_afn+1
    SBC pa_res+1
-   AND #$0F                                ; r & 4095 (hi nibble) — u12, done
-   RTS                                     ; (A = r hi)
+   AND #$0F
+   RTS
 comb_sub:
-; sub: res = base - ta ; base_lo = 0 (BMI arrives with A = ta hi).
-; X/Y SWAP (Eben 2026-07-19): base_hi banks into Y while X = oct is
-; live, then X takes the SLOT — so the PSIL store FUSES with the
-; negate (psi lo is in A right there) and the store index doubles as
-; the X = slot return-contract restore (mask_done's double duty,
-; preserved). Loads don't touch C: the borrow rides LDY/LDX/STA into
-; the hi SBC. The AND is oct 3's mod-4096 wrap (psi = 4096 - ta).
+; psi = base - ta (the BMI arrives with A = ta-hi). The X-consumers
+; sequence: base-hi banks into Y while X is still the octant, then X
+; takes the slot — so the PSIL store fuses with the negate (psi-lo is
+; in A at the STA) and the store index doubles as the X = slot
+; contract restore, mirroring mask_done. Loads don't touch C: the
+; lo-negate's borrow rides LDY/LDX/STA into the TYA-form hi subtract.
+; The AND is octant 3's mod-4096 wrap (psi = 4096 - ta); the other
+; sub bases can't go negative with ta <= 512.
    STA pa_res+1
    LDY pa_base_hi,X
    LDX zp_cpm_slot
@@ -622,26 +666,11 @@ comb_sub:
 .if ::BANKED = 0
 .segment "ANG"
 .endif
-                                           ; died 2026-07-18 — every runtime
-                                           ; caller consumes A/Y, and the unit
-                                           ; test reads the registers now.
-                                           ; pa_res keeps holding PSI, which
-                                           ; is what the memo store wants.)
-
-
-
-
 
 end:
 .if BANKED
-; (ld65 writes this: SAVE "bsp_render_ang_bk.bin", $3400, end, $3400)
+; (ld65 writes this: SAVE "bsp_render_ang_bk.bin")
 .else
-.assert end <= $F100, error             ; flat ANG ceiling: RCACHE_STATE $F100
-                                        ; (abi) is the next squatter above —
-                                        ; RC_PH_S vacated $F000 (2026-07-17)
-                                        ; after ANG growth CORRUPTED it (the
-                                        ; old TA_HI bound was too loose;
-                                        ; rotcache caught the overlap)
-; (ld65 writes this: SAVE "bsp_render_ang.bin", $E940, end, $E940)
+.assert end <= $F100, error             ; flat ANG ceiling: RCACHE_STATE
+                                        ; squats at $F100 (abi)
 .endif
-
