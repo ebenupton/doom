@@ -170,19 +170,17 @@ xr_s1:
    CMP BBP_L_HI1,Y
    BCC yL_s1                               ; px <= L: LEFT (fat, forward)
    BNE xge_s1
-   LDA bca_pxs
-   CMP BBP_L_LO1,Y
-   BCC yL_s1
-   BEQ yL_s1                               ; px == L: edge, same column
+   LDA BBP_L_LO1,Y                         ; hi tie: INVERTED compare (plane
+   CMP bca_pxs                             ; vs value) — C = L_lo >= px_lo,
+   BCS yL_s1                               ; so ONE branch covers < and ==
 xge_s1:
    LDA bca_pxs+1
    CMP BBP_R_HI1,Y
    BCC yM_s1                               ; px < R (hi): MID — backward
    BNE yR_s1                               ; px > R strictly (hi) — backward
-   LDA bca_pxs
-   CMP BBP_R_LO1,Y
-   BCC yM_s1
-   BEQ yM_s1                               ; px == R: mid
+   LDA BBP_R_LO1,Y                         ; hi tie: INVERTED compare —
+   CMP bca_pxs                             ; C = R_lo >= px_lo: px <= R
+   BCS yM_s1                               ; is mid in ONE branch
    JMP yR_s1                               ; strict-right lo fall (was the
                                            ; always-taken BNE: same 3 cyc,
                                            ; unlimited range)
@@ -268,19 +266,17 @@ xr_s0:
    CMP BBP_L_HI0,Y
    BCC yL_s0                               ; px <= L: LEFT (fat, forward)
    BNE xge_s0
-   LDA bca_pxs
-   CMP BBP_L_LO0,Y
-   BCC yL_s0
-   BEQ yL_s0                               ; px == L: edge, same column
+   LDA BBP_L_LO0,Y                         ; hi tie: INVERTED compare (plane
+   CMP bca_pxs                             ; vs value) — C = L_lo >= px_lo,
+   BCS yL_s0                               ; so ONE branch covers < and ==
 xge_s0:
    LDA bca_pxs+1
    CMP BBP_R_HI0,Y
    BCC yM_s0                               ; px < R (hi): MID — backward
    BNE yR_s0                               ; px > R strictly (hi) — backward
-   LDA bca_pxs
-   CMP BBP_R_LO0,Y
-   BCC yM_s0
-   BEQ yM_s0                               ; px == R: mid
+   LDA BBP_R_LO0,Y                         ; hi tie: INVERTED compare —
+   CMP bca_pxs                             ; C = R_lo >= px_lo: px <= R
+   BCS yM_s0                               ; is mid in ONE branch
    JMP yR_s0                               ; strict-right lo fall (was the
                                            ; always-taken BNE: same 3 cyc,
                                            ; unlimited range)
