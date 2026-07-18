@@ -1,25 +1,9 @@
 
-; ZCF1: the FIRST corner fetch — the classify leaves deliver Y = node,
-; so no LDY. (The SECOND fetch keeps its LDY: corner_phi returns r lo
-; in Y. The zone store died with the zone byte, 2026-07-19.)
-.macro ZCF1 s, xl, yl
-   SEC
-   LDA xl+(s)*$100,Y
-   SBC bca_pxs
-   STA pa_dx
-   LDA xl+$200+(s)*$100,Y
-   SBC bca_pxs+1
-   STA pa_dx+1
-   SEC
-   LDA yl+(s)*$100,Y
-   SBC bca_pys
-   STA pa_dy
-   LDA yl+$200+(s)*$100,Y
-   SBC bca_pys+1
-   STA pa_dy+1
-.endmacro
+; ZCF: one corner fetch — the CALLER owns Y = node. Classify leaves
+; deliver it for the first fetch; the second fetch re-loads it at the
+; use site (corner_phi returns r lo in Y). One macro, no ZCF1 split
+; (2026-07-19). The zone store died with the zone byte.
 .macro ZCF s, xl, yl
-   LDY zp_node_ch_l
    SEC
    LDA xl+(s)*$100,Y
    SBC bca_pxs
@@ -46,7 +30,6 @@
 ; BBP fetch, no subtract, class-independent — the full-fetch fallback
 ; died 2026-07-19.
 .macro ZCF_DX s, xl
-   LDY zp_node_ch_l
    SEC
    LDA xl+(s)*$100,Y
    SBC bca_pxs
@@ -56,7 +39,6 @@
    STA pa_dx+1
 .endmacro
 .macro ZCF_DY s, yl
-   LDY zp_node_ch_l
    SEC
    LDA yl+(s)*$100,Y
    SBC bca_pys
@@ -82,10 +64,11 @@
    STA pa_dy+1
 .endmacro
 .macro ZARM s, x1, y1, x2, y2, e1, e2
-   ZCF1 s, x1, y1
+   ZCF s, x1, y1                           ; Y = node from the classify leaf
    JSR e1                                  ; sign-class corner_phi entry —
    STA bca_p1+1                            ; the arm's zone fixes each
    STY bca_p1                              ; corner's delta signs statically
+   LDY zp_node_ch_l                        ; (corner_phi returned r lo in Y)
    ZCF s, x2, y2
    JSR e2
    STA bca_p2+1
@@ -93,10 +76,11 @@
    JMP bca_tail                            ; chained: no return trip
 .endmacro
 .macro ZARM_SX s, x1, y1, y2, e1, e2      ; corners share the x plane
-   ZCF1 s, x1, y1
+   ZCF s, x1, y1
    JSR e1
    STA bca_p1+1
    STY bca_p1
+   LDY zp_node_ch_l
    ZCF_DY s, y2                            ; pa_dx carried over
    JSR e2
    STA bca_p2+1
@@ -104,10 +88,11 @@
    JMP bca_tail                            ; chained
 .endmacro
 .macro ZARM_SY s, x1, y1, x2, e1, e2      ; corners share the y plane
-   ZCF1 s, x1, y1
+   ZCF s, x1, y1
    JSR e1
    STA bca_p1+1
    STY bca_p1
+   LDY zp_node_ch_l
    ZCF_DX s, x2                            ; pa_dy carried over
    JSR e2
    STA bca_p2+1
@@ -115,10 +100,11 @@
    JMP bca_tail                            ; chained
 .endmacro
 .macro ZARM_SYM s, x1, y1, x2, e1, e2     ; shared y, N-class c1: the raw
-   ZCF1 s, x1, y1                          ; dy comes back from the MEMO
+   ZCF s, x1, y1                           ; dy comes back from the MEMO
    JSR e1
    STA bca_p1+1
    STY bca_p1
+   LDY zp_node_ch_l
    ZCF_DX s, x2
    ZCF_MEMO_DY
    JSR e2
@@ -127,10 +113,11 @@
    JMP bca_tail
 .endmacro
 .macro ZARM_SXM s, x1, y1, y2, e1, e2     ; shared x, N-class c1: the raw
-   ZCF1 s, x1, y1                          ; dx comes back from the MEMO
+   ZCF s, x1, y1                           ; dx comes back from the MEMO
    JSR e1
    STA bca_p1+1
    STY bca_p1
+   LDY zp_node_ch_l
    ZCF_DY s, y2
    ZCF_MEMO_DX
    JSR e2
