@@ -1067,7 +1067,7 @@ dcl_emit_segment:
    BNE dcl_es_ok
    LDA zp_seg_start_y
    CMP zp_tmp0
-   BNE dcl_es_ok
+   BNE dcl_es_ok_noreload
    RTS                                     ; degenerate
 dcl_es_ok:
 ; --- Y-band safety clip: clamp biased Y to [Y_BIAS, VIS_YMAX] so the
@@ -1077,7 +1077,8 @@ dcl_es_ok:
 ; aperture clip can still hand us an off-screen segment (e.g. the BL=241
 ; span at 1000,-3160,156).  Needed until the tighten clamps apertures to
 ; [Y_BIAS,VIS_YMAX].  In-band segments are byte-identical (4 compares).
-   LDA zp_seg_start_y
+   LDA zp_seg_start_y                      ; (x-differ path only: the y-differ
+dcl_es_ok_noreload:                        ; BNE arrives with start_y live)
    CMP #Y_BIAS
    BCC dcl_es_yband
    CMP #(VIS_YMAX + 1)

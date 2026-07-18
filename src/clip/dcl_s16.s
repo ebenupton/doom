@@ -279,13 +279,14 @@ m_r_nc:
 ; inputs (product u20-u22, den u12) this is always true.
    LDA LC_M_R3
    CMP LC_DEN_HI
-   BCC u16_quot
+   BCC u16_quot_noreload
    BNE no_u16_quot
    LDA LC_M_R2
    CMP LC_DEN_LO
    BCS no_u16_quot
 u16_quot:
-   LDA LC_M_R3
+   LDA LC_M_R3                             ; (lo-tier fall only: the hi BCC
+u16_quot_noreload:                         ; arrives with R3 live)
    STA LC_REM_HI
    LDA LC_M_R2
    STA LC_REM_LO
@@ -573,7 +574,7 @@ main_clip:
    BNE mc_ordered
    LDA zp_line_xl_h
    CMP zp_line_xr_h
-   BNE mc_ordered
+   BNE mc_ordered_noreload
 ; x1 == x2 (s16): degenerate iff y1 == y2 too, else a VERTICAL — the
 ; clamp fast path below (the generic path staged anchors and ran
 ; s16_interp twice just to hand back x unchanged)
@@ -648,7 +649,8 @@ mcv_rej:
 mc_ordered:
 ; ---- Quick reject: both endpoints on the same side of any edge ----
 ; Both x < 0?  hi byte negative for both means both < 0 (s16).
-   LDA zp_line_xl_h
+   LDA zp_line_xl_h                        ; (lo-differ path reloads; the
+mc_ordered_noreload:                       ; hi-differ BNE has xl_h live)
    BPL x1_in_or_big
    LDA zp_line_xr_h
    BPL not_both_xneg
@@ -914,7 +916,7 @@ y_in_range:
    LDA zp_line_xl_l
    CMP zp_line_xr_l
    BCC dispatch_dcl
-   BNE rejected_swap_after_clip            ; clipping reordered: bail (rare)
+   BNE rsac_noreload                       ; clipping reordered: bail (rare)
    LDA zp_line_yl_l
    CMP zp_line_yr_l
    BEQ rejected
@@ -923,7 +925,8 @@ dispatch_dcl:
    JMP dcl_rec_s16r_flush
 rejected_swap_after_clip:
 ; Post-clip x1 > x2 — would require swap; just emit reordered.
-   LDA zp_line_xl_l
+   LDA zp_line_xl_l                        ; (xl_l live at the BNE site)
+rsac_noreload:
    LDX zp_line_xr_l
    STX zp_line_xl_l
    STA zp_line_xr_l

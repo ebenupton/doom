@@ -94,7 +94,7 @@ bcf_enabled:
 ; stable = ($01,$9D,$03,$9E) == bca_prevpos ?
    LDA $01
    CMP bca_prevpos
-   BNE bcf_moved
+   BNE bcf_moved_noreload
    LDA $9D
    CMP bca_prevpos+1
    BNE bcf_moved
@@ -106,7 +106,8 @@ bcf_enabled:
    BEQ bcf_stable
 bcf_moved:
 ; record this position, disable the cache (original routine).
-   LDA $01
+   LDA $01                                 ; (stage-0 miss arrives with $01 live)
+bcf_moved_noreload:
    STA bca_prevpos
    LDA $9D
    STA bca_prevpos+1
@@ -120,7 +121,7 @@ bcf_stable:
 ; position, clear it (new stable epoch).
    LDA $01
    CMP bca_cachepos
-   BNE bcf_newpos
+   BNE bcf_newpos_noreload
    LDA $9D
    CMP bca_cachepos+1
    BNE bcf_newpos
@@ -131,7 +132,8 @@ bcf_stable:
    CMP bca_cachepos+3
    BEQ bcf_enable
 bcf_newpos:
-   LDA $01
+   LDA $01                                 ; (stage-0 miss arrives with $01 live)
+bcf_newpos_noreload:
    STA bca_cachepos
    LDA $9D
    STA bca_cachepos+1

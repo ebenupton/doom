@@ -116,7 +116,7 @@ bcls_s0_j:
 yR_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
-   BCC yRlo_s1                     ; py < T (hi): test the bottom
+   BCC yRlo_s1_noreload                ; py < T (hi): test the bottom
    BNE yRtop_s1                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO1,Y
@@ -124,7 +124,8 @@ yR_s1:
 yRtop_s1:
    JMP zc2_1                            ; py >= T: top-corner arm
 yRlo_s1:
-   LDA bca_pys+1
+   LDA bca_pys+1                           ; (lo-tier arrivals only: the hi
+yRlo_s1_noreload:                          ; BCC comes in with pys+1 live)
    CMP BBP_B_HI1,Y
    BCC yRbot_s1                     ; py < B strictly (hi)
    BNE yRmid_s1                     ; py > B (hi): mid band
@@ -138,7 +139,7 @@ yRmid_s1:
 yM_s1:
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
-   BCC yMlo_s1                     ; py < T (hi): test the bottom
+   BCC yMlo_s1_noreload                ; py < T (hi): test the bottom
    BNE yMtop_s1                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO1,Y
@@ -146,7 +147,8 @@ yM_s1:
 yMtop_s1:
    JMP zc1_1                            ; py >= T: top-corner arm
 yMlo_s1:
-   LDA bca_pys+1
+   LDA bca_pys+1                           ; (lo-tier arrivals only: the hi
+yMlo_s1_noreload:                          ; BCC comes in with pys+1 live)
    CMP BBP_B_HI1,Y
    BCC yMbot_s1                     ; py < B strictly (hi)
    BNE yMmid_s1                     ; py > B (hi): mid band
@@ -169,12 +171,13 @@ xr_s1:
    LDA bca_pxs+1
    CMP BBP_L_HI1,Y
    BCC yL_s1                               ; px <= L: LEFT (fat, forward)
-   BNE xge_s1
+   BNE xge_s1_noreload
    LDA BBP_L_LO1,Y                         ; hi tie: INVERTED compare (plane
    CMP bca_pxs                             ; vs value) — C = L_lo >= px_lo,
    BCS yL_s1                               ; so ONE branch covers < and ==
 xge_s1:
-   LDA bca_pxs+1
+   LDA bca_pxs+1                           ; (inverted-lo fall only: the hi
+xge_s1_noreload:                             ; BNE comes in with pxs+1 live)
    CMP BBP_R_HI1,Y
    BCC yM_s1                               ; px < R (hi): MID — backward
    BNE yR_s1                               ; px > R strictly (hi) — backward
@@ -191,7 +194,7 @@ yL_s1:
 ; body — all in short range.
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
-   BCC yLlo_s1                          ; py < T (hi): test the bottom
+   BCC yLlo_s1_noreload                 ; py < T (hi): test the bottom
    BNE yLtop_s1                         ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO1,Y
@@ -199,7 +202,8 @@ yL_s1:
 yLtop_s1:                                 ; py >= T: row 0 (NW) INLINE
    ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
 yLlo_s1:
-   LDA bca_pys+1
+   LDA bca_pys+1                           ; (lo-tier arrivals only)
+yLlo_s1_noreload:
    CMP BBP_B_HI1,Y
    BCC yLbot_s1                         ; py < B strictly (hi)
    BNE yLmid_s1                         ; py > B (hi): mid band
@@ -215,7 +219,7 @@ yLmid_s1:                                 ; mid: row 4 (W) INLINE
 yR_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
-   BCC yRlo_s0                     ; py < T (hi): test the bottom
+   BCC yRlo_s0_noreload                ; py < T (hi): test the bottom
    BNE yRtop_s0                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO0,Y
@@ -224,6 +228,7 @@ yRtop_s0:
    JMP zc2_0                            ; py >= T: top-corner arm
 yRlo_s0:
    LDA bca_pys+1
+yRlo_s0_noreload:
    CMP BBP_B_HI0,Y
    BCC yRbot_s0                     ; py < B strictly (hi)
    BNE yRmid_s0                     ; py > B (hi): mid band
@@ -237,7 +242,7 @@ yRmid_s0:
 yM_s0:
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
-   BCC yMlo_s0                     ; py < T (hi): test the bottom
+   BCC yMlo_s0_noreload                ; py < T (hi): test the bottom
    BNE yMtop_s0                    ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO0,Y
@@ -245,7 +250,8 @@ yM_s0:
 yMtop_s0:
    JMP zc1_0                            ; py >= T: top-corner arm
 yMlo_s0:
-   LDA bca_pys+1
+   LDA bca_pys+1                           ; (lo-tier arrivals only: the hi
+yMlo_s0_noreload:                          ; BCC comes in with pys+1 live)
    CMP BBP_B_HI0,Y
    BCC yMbot_s0                     ; py < B strictly (hi)
    BNE yMmid_s0                     ; py > B (hi): mid band
@@ -265,12 +271,13 @@ xr_s0:
    LDA bca_pxs+1
    CMP BBP_L_HI0,Y
    BCC yL_s0                               ; px <= L: LEFT (fat, forward)
-   BNE xge_s0
+   BNE xge_s0_noreload
    LDA BBP_L_LO0,Y                         ; hi tie: INVERTED compare (plane
    CMP bca_pxs                             ; vs value) — C = L_lo >= px_lo,
    BCS yL_s0                               ; so ONE branch covers < and ==
 xge_s0:
-   LDA bca_pxs+1
+   LDA bca_pxs+1                           ; (inverted-lo fall only: the hi
+xge_s0_noreload:                             ; BNE comes in with pxs+1 live)
    CMP BBP_R_HI0,Y
    BCC yM_s0                               ; px < R (hi): MID — backward
    BNE yR_s0                               ; px > R strictly (hi) — backward
@@ -287,7 +294,7 @@ yL_s0:
 ; body — all in short range.
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
-   BCC yLlo_s0                          ; py < T (hi): test the bottom
+   BCC yLlo_s0_noreload                 ; py < T (hi): test the bottom
    BNE yLtop_s0                         ; py > T strictly (hi)
    LDA bca_pys
    CMP BBP_T_LO0,Y
@@ -295,7 +302,8 @@ yL_s0:
 yLtop_s0:                                 ; py >= T: row 0 (NW) INLINE
    ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
 yLlo_s0:
-   LDA bca_pys+1
+   LDA bca_pys+1                           ; (lo-tier arrivals only)
+yLlo_s0_noreload:
    CMP BBP_B_HI0,Y
    BCC yLbot_s0                         ; py < B strictly (hi)
    BNE yLmid_s0                         ; py > B (hi): mid band

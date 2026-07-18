@@ -514,7 +514,9 @@ tfs_proc:
    BCS tfs_oor                             ; pair
    LDA POOL_XSTART,X
    CMP zp_i_h
-   BCC tfs_in_range
+   BCC tfs_in_range_noreload               ; (XSTART rides A through the whole
+                                           ; prologue: in_range -> pre_chk ->
+                                           ; no_pre all skip their reloads)
 tfs_oor:
 ; Relink the untouched span. Flush pending first to keep the output
 ; list in x order (pending always precedes this span).
@@ -531,8 +533,9 @@ tfs_in_range:
 ; Enter the loop body directly with CUR_X = X_HI = x: the body evaluates
 ; record dominance at x, emits the one column, and the loop test exits.
    LDA POOL_XSTART,X
+tfs_in_range_noreload:
    CMP POOL_XEND,X
-   BNE tfs_pre_chk
+   BNE tfs_pre_chk_noreload
    STA TFS_CUR_X
    STA TFS_X_HI
    JMP tfs_body
@@ -542,8 +545,9 @@ tfs_pre_chk:
 ; Abutting: the fragment KEEPS ilo as its xend (shared boundary column
 ; with the swept region starting at cur_x = ilo). Line def preserved.
    LDA POOL_XSTART,X
+tfs_pre_chk_noreload:
    CMP zp_i_l
-   BCS tfs_no_pre
+   BCS tfs_no_pre_noreload
    JSR tfs_flush_pending
    LDX zp_clr_save_x
    LDA POOL_XSTART,X
@@ -557,6 +561,7 @@ tfs_pre_chk:
 tfs_no_pre:
 ; (X = clr_save_x rides in from the BCS site)
    LDA POOL_XSTART,X
+tfs_no_pre_noreload:
    STA TFS_CUR_X
 tfs_xhi_done:
 
