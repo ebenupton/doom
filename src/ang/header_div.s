@@ -8,7 +8,8 @@
 ; Computes floor(num * 2^SLOPEBITS / den) clamped to SLOPERANGE, for num <= den.
 ; SLOPEBITS=10, SLOPERANGE=1024. num,den are u16 (bbox/seg deltas, <= ~660).
 ;
-;   in : sd_num (u16 $70/$71), sd_den (u16 $72/$73)   [caller ensures num<=den]
+;   in : (historical: the retired slope_div took num/den here; the
+;        sd_* names died 2026-07-19 — corners use pa_dx/pa_dy direct)
 ;   out: sd_q   (u16 $74/$75)  in [0, 1024]
 ;
 ; num>=den -> 1024 (the exact-divide remainder never reaches 0; matches the

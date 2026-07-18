@@ -346,11 +346,12 @@ name:
    LDA CPM_PSIH,X
    STA pa_res+1
    JMP cp_havepsi
-; Bank the RAW key first (X = slot, still live from the probe): sd_num
-; ALIASES pa_dx and sd_den pa_dy (2026-07-19), so P-axes need no
-; staging at all and N-axes negate IN PLACE — which would destroy the
-; key. mask_done stores only psi now; this KDXH write is the validity
-; mark, made good when the psi lands (single-threaded, no early outs).
+; Bank the RAW key first (X = slot, still live from the probe): the
+; converters work on pa_dx/pa_dy DIRECTLY (the sd_* alias names died
+; 2026-07-19) — P-axes need no staging at all and N-axes negate IN
+; PLACE, which would destroy the key. mask_done stores only psi; this
+; KDXH write is the validity mark, made good when the psi lands
+; (single-threaded, no early outs).
 ; (Staggered entries, Eben 2026-07-19: a miss at stage k arrives with
 ; the mismatched byte in A, and the bytes BEFORE stage k matched — the
 ; table already holds them, so their stores are skipped entirely.)
@@ -376,30 +377,30 @@ cmiss3:
 ; LDA pa_dx+1; STX/LDX leave A alone) — so the x zero-out needs NO
 ; load, and the N-class negate runs only on nonzero dx (Eben
 ; 2026-07-19; -0 = 0, so skipping it on the zero path is identical).
-   ORA sd_num
+   ORA pa_dx
    BEQ czx
 .if negx
    LDA #0                                  ; |dx| = -dx in place (dx <= 0)
    SEC
-   SBC sd_num
-   STA sd_num
+   SBC pa_dx
+   STA pa_dx
    LDA #0
-   SBC sd_num+1
-   STA sd_num+1
+   SBC pa_dx+1
+   STA pa_dx+1
 .endif
 .if negy
    LDA #0                                  ; |dy| = -dy in place (dy <= 0)
    SEC
-   SBC sd_den
-   STA sd_den
+   SBC pa_dy
+   STA pa_dy
    LDA #0
-   SBC sd_den+1
-   STA sd_den+1
-   ORA sd_den
+   SBC pa_dy+1
+   STA pa_dy+1
+   ORA pa_dy
    BEQ czy
 .else
-   LDA sd_den+1                            ; |dy| = dy already (dy >= 0)
-   ORA sd_den
+   LDA pa_dy+1                            ; |dy| = dy already (dy >= 0)
+   ORA pa_dy
    BEQ czy
 .endif
    JMP lf_ns                               ; no compare, no swap: lf_ns reads
@@ -424,8 +425,9 @@ CPM_ENTRY corner_phi_pp, 0, 0, 0
 ; fall-into-mask_done buys them back on every add.)
 
 ; ============================================================================
-; lf_ns — the NO-SWAP log2/atanexp pipeline (2026-07-18). sd_num = |dx|,
-; sd_den = |dy| AS LOADED; the min/max swap is gone. The signed L8
+; lf_ns — the NO-SWAP log2/atanexp pipeline (2026-07-18). pa_dx/pa_dy
+; hold |dx|/|dy| (the converters negated N-axes in place; the old
+; sd_num/sd_den alias names died 2026-07-19); the min/max swap is gone. The signed L8
 ; difference s = L8r(|dy|) - L8r(|dx|) carries everything:
 ;   - L8 is MONOTONE, so sign(s) IS the exact axgt whenever s != 0
 ;     (strict L8 order implies strict magnitude order);
@@ -438,7 +440,7 @@ CPM_ENTRY corner_phi_pp, 0, 0, 0
 ; The negate is the ATANEXP-input negation: k = |s|, oct = class|(s<0).
 ; Zero magnitudes short out first (L8[0] = L8[1] = 0 would poison the
 ; sign trick): min == 0 -> ta = 0; both zero -> psi = 0.
-;   in : X = octant class base (axgt clear), sd_num/sd_den = |dx|/|dy|
+;   in : X = octant class base (axgt clear), pa_dx/pa_dy = |dx|/|dy|
 ;   out: joins comb (ANG) with X = oct, pa_res = ta
 ; ============================================================================
 ; (the zero-outs live in the converters now — folded into the abs
@@ -452,19 +454,19 @@ ns_x16y16:
 ;     8-bit shape — indices from the temps, no L8-value staging.
 ;     (x16 group lives ABOVE lf_ns since the restructure — the BCC
 ;     reaches ns_neg FORWARD, still direct, no trampoline.) ---
-   STY t1                                  ; Y = sd_den+1 (banked at the ns_x16
+   STY t1                                  ; Y = pa_dy+1 (banked at the ns_x16
                                            ; dispatch — MUST land before the
                                            ; LDY below reuses Y)
-   LDY sd_num
+   LDY pa_dx
    STY t0                                  ; lo staged via Y: A stays untouched
-; (no LDA: A = sd_num+1 from the entry dispatch — LDY/BNE/STY preserve it)
+; (no LDA: A = pa_dx+1 from the entry dispatch — LDY/BNE/STY preserve it)
    LSR A
    ROR t0
    LSR A
    ROR t0
    LSR A
    ROR t0
-   LDA sd_den
+   LDA pa_dy
    LSR t1
    ROR A
    LSR t1
@@ -480,9 +482,9 @@ ns_x16y16:
    JMP ns_khave                            ; s == 0 ties ride k = 0, AE[0]=512)
 ns_x8y16:
 ; --- |dx| 8-bit, |dy| 16-bit: axgt STATIC clear; k = L8[dy>>3] + 96 - L8[dx] ---
-; (no LDA: A = sd_den+1 from the entry's second dispatch line)
+; (no LDA: A = pa_dy+1 from the entry's second dispatch line)
    STA t0
-   LDA sd_den
+   LDA pa_dy
    LSR t0
    ROR A
    LSR t0
@@ -491,32 +493,32 @@ ns_x8y16:
    ROR A
    TAY
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
-   LDY sd_num
+   LDY pa_dx
    SEC
    SBC L8_TAB,Y                            ; - L8[|dx|], direct
    BCS ns_pos96
    ADC #96
    JMP ns_khave
 ns_x16:
-   LDY sd_den+1
+   LDY pa_dy+1
    BNE ns_x16y16
 ; --- |dx| 16-bit, |dy| 8-bit: axgt STATIC; k = L8[dx>>3] + 96 - L8[dy]
 ;     (>= 1: L8r(16-bit) >= 256 > 255 >= L8[8-bit]) ---
    INX
-; (no LDA: A = sd_num+1 from the entry dispatch — the LDY/INX above
+; (no LDA: A = pa_dx+1 from the entry dispatch — the LDY/INX above
 ;  preserve it. Eben 2026-07-19.)
    STA t0                                  ; >>3 NON-destructive: HI to t0
                                            ; (dead classify temp), lo rides
-   LDA sd_num                              ; A so the index ends in-register
-   LSR t0                                  ; (TAY, no reload) — sd_num ALIASES
-   ROR A                                   ; pa_dx, which rows 4/9's shared-
+   LDA pa_dx                              ; A so the index ends in-register
+   LSR t0                                  ; (TAY, no reload) — pa_dx must
+   ROR A                                   ; stay RAW-valued for rows 4/9's shared-
    LSR t0                                  ; axis carryover still needs RAW
    ROR A                                   ; (the in-frame gate caught the
    LSR t0                                  ; in-place version)
    ROR A
    TAY
    LDA L8_TAB,Y                            ; L8[|dx| >> 3]
-   LDY sd_den
+   LDY pa_dy
    SEC
    SBC L8_TAB,Y                            ; - L8[|dy|], direct
    BCS ns_pos96
@@ -538,14 +540,14 @@ ns_dx0:
    STA pa_res+1
    JMP comb
 lf_ns:
-   LDA sd_num+1
+   LDA pa_dx+1
    BNE ns_x16
-   LDA sd_den+1
+   LDA pa_dy+1
    BNE ns_x8y16
 ; --- both 8-bit (the common case) ---
-   LDY sd_den
+   LDY pa_dy
    LDA L8_TAB,Y                            ; L8[|dy|]
-   LDY sd_num
+   LDY pa_dx
    SEC
    SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|] — Y
    BCS ns_khave                            ; s >= 0 (ties included: k = 0 and

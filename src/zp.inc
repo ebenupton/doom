@@ -182,11 +182,8 @@ zp_ys_v1ok = $43                  ; [bsp]; 1 = this seg's chained v1
 ; already carries a valid front sy pair (copied from an emitted prev
 ; seg) — the y stage skips v1's front projection
 ; constant-base abs,X; layout constants live in layout.inc)
-sd_num = pa_dx                    ; [ang]; ALIASED (2026-07-19): the class
-sd_den = pa_dy                    ;   converters negate N-axes IN PLACE and
-                                  ;   P-axes need no staging at all — the
-                                  ;   memo key is banked at miss entry
-                                  ;   before the raws are destroyed.
+; (sd_num/sd_den alias names DELETED 2026-07-19 — the converters use
+;  pa_dx/pa_dy directly; the fossil slope_div naming was confusing.)
 zc_ptr = $44                      ; [ang]; ZC arm dispatch pointer (JMP (zp)
                                   ;   beats push-push-RTS by 1 cycle and the
                                   ;   arm table holds REAL addresses; $46/$47
