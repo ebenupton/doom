@@ -110,9 +110,9 @@ si_off_lt_den:
    LDA LC_OY2_HI
    SBC LC_OY1_HI
    STA LC_DY_HI
-; Trivial: dy == 0 (horizontal line) → return y0
-   LDA LC_DY_LO
-   ORA LC_DY_HI
+; Trivial: dy == 0 (horizontal line) → return y0. dy-hi is still in
+; A from the store — ORA the lo byte instead of reloading both.
+   ORA LC_DY_LO
    BNE si_dy_nz
    JMP si_return_y0
 si_dy_nz:
@@ -253,11 +253,9 @@ skip_p3_p4:
    STA LC_TMP_HI
    LDA LC_DEN_LO
    ROR A
-   STA LC_TMP_LO
-   LDA LC_M_R0
-   CLC
-   ADC LC_TMP_LO
-   STA LC_M_R0
+   CLC                                     ; (ROR left bit 0 in C)
+   ADC LC_M_R0                             ; den/2 lo rides A into the
+   STA LC_M_R0                             ; add — no TMP_LO staging
    LDA LC_M_R1
    ADC LC_TMP_HI
    STA LC_M_R1
