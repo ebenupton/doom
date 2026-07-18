@@ -423,10 +423,9 @@ dv_check:
    CMP zp_line_xl_l
    BCC dv_next
 ; Done if xstart > xl (span entirely right of column; list sorted)
-   LDA POOL_XSTART,X
-   CMP zp_line_xl_l
-   BEQ dv_in
-   BCC dv_in
+   LDA zp_line_xl_l                        ; INVERTED (audit 2026-07-19):
+   CMP POOL_XSTART,X                       ; C = xl >= xstart — one BCS
+   BCS dv_in                               ; replaces the BEQ/BCC pair
    RTS
 dv_next:
    LDA POOL_NEXT,X

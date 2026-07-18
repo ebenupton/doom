@@ -509,10 +509,9 @@ tfs_proc:
 ; Out-of-range check: pixel-center overlap semantics — a span touching
 ; the seg only at a shared endpoint column (xend == ilo or
 ; xstart == ihi) does NOT overlap; append it unchanged.
-   LDA POOL_XEND,X
-   CMP zp_i_l
-   BCC tfs_oor
-   BEQ tfs_oor
+   LDA zp_i_l                              ; INVERTED: C = ilo >= xend —
+   CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ
+   BCS tfs_oor                             ; pair
    LDA POOL_XSTART,X
    CMP zp_i_h
    BCC tfs_in_range
@@ -627,10 +626,9 @@ tfs_st_top:
    CLC
    ADC #2
    TAY
-   LDA TOP_RECORDS,Y
-   CMP TFS_CUR_X
-   BEQ tfs_st_top_stale
-   BCS tfs_st_top_done
+   LDA TFS_CUR_X                           ; INVERTED: C = cur >= T.xr
+   CMP TOP_RECORDS,Y                       ; (stale) — one BCC replaces
+   BCC tfs_st_top_done                     ; the BEQ/BCS pair
 tfs_st_top_stale:
    LDA TFS_T_CUR
    CLC
@@ -649,10 +647,9 @@ tfs_st_bot:
    CLC
    ADC #2
    TAY
-   LDA BOT_RECORDS,Y
-   CMP TFS_CUR_X
-   BEQ tfs_st_bot_stale
-   BCS tfs_st_bot_done
+   LDA TFS_CUR_X                           ; INVERTED (mirror of st_top)
+   CMP BOT_RECORDS,Y
+   BCC tfs_st_bot_done
 tfs_st_bot_stale:
    LDA TFS_B_CUR
    CLC
@@ -672,19 +669,15 @@ tfs_st_bot_done:
    LDA TFS_T_CUR
    BEQ tfs_top_dom_done
    TAY
-   LDA TOP_RECORDS,Y
-; T.xl
-   CMP TFS_CUR_X
-   BEQ tfs_top_chk_xr
-   BCS tfs_top_dom_done
-tfs_top_chk_xr:
-   INY
-   INY
-   LDA TOP_RECORDS,Y
+   LDA TFS_CUR_X                           ; INVERTED double fold: cur in
+   CMP TOP_RECORDS,Y                       ; A — C = cur >= T.xl kills the
+; T.xl                                     ; BEQ/BCS pair, and cur RIDES A
+   BCC tfs_top_dom_done                    ; through the INYs so the T.xr
+   INY                                     ; test is a bare CMP (its LDA
+   INY                                     ; and BEQ died too)
+   CMP TOP_RECORDS,Y
 ; T.xr
-   CMP TFS_CUR_X
-   BCC tfs_top_dom_done
-   BEQ tfs_top_dom_done
+   BCS tfs_top_dom_done                    ; cur >= xr: not dominating
    LDA #1
    STA TFS_TOP_DOM
 tfs_top_dom_done:
@@ -694,17 +687,13 @@ tfs_top_dom_done:
    LDA TFS_B_CUR
    BEQ tfs_bot_dom_done
    TAY
-   LDA BOT_RECORDS,Y
-   CMP TFS_CUR_X
-   BEQ tfs_bot_chk_xr
-   BCS tfs_bot_dom_done
-tfs_bot_chk_xr:
-   INY
-   INY
-   LDA BOT_RECORDS,Y
-   CMP TFS_CUR_X
+   LDA TFS_CUR_X                           ; INVERTED double fold (mirror)
+   CMP BOT_RECORDS,Y
    BCC tfs_bot_dom_done
-   BEQ tfs_bot_dom_done
+   INY
+   INY
+   CMP BOT_RECORDS,Y
+   BCS tfs_bot_dom_done
    LDA #1
    STA TFS_BOT_DOM
 tfs_bot_dom_done:
@@ -851,16 +840,13 @@ tfs_top_vals_done:
    CMP #$FF
    BEQ tfs_bot_pool                        ; 'below' verdict: pool stands
    LDX zp_clr_save_x
-   CMP POOL_IB,X
-   BEQ tfs_bot_fast
-   BCS tfs_bot_mixed                       ; yl > IB: might exceed pool bot
-tfs_bot_fast:
-   INY
-   INY
-   LDA BOT_RECORDS,Y
-   CMP POOL_IB,X
-   BEQ tfs_bot_fast2
-   BCS tfs_bot_mixed
+   LDA POOL_IB,X                           ; INVERTED double fold: IB in A —
+   CMP BOT_RECORDS,Y                       ; C = IB >= y folds both BEQ/BCS
+   BCC tfs_bot_mixed                       ; pairs, and IB rides A through
+   INY                                     ; the INYs (the yr LDA died). The
+   INY                                     ; TOP twin keeps value-in-A: its
+   CMP BOT_RECORDS,Y                       ; predicate is strict-<, which
+   BCC tfs_bot_mixed                       ; carry alone already decides.
 tfs_bot_fast2:
    JSR tfs_bot_rec_interp
    JMP tfs_bot_tag_rec
@@ -994,10 +980,9 @@ tfs_inner_done:
 ; Post-fragment [ihi, span.xend] if span.xend > ihi.
 ; Abutting: keeps ihi as its xstart (shared with the swept region).
    LDX zp_clr_save_x
-   LDA POOL_XEND,X
-   CMP zp_i_h
-   BCC tfs_no_post
-   BEQ tfs_no_post
+   LDA zp_i_h                              ; INVERTED: C = ihi >= xend —
+   CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ
+   BCS tfs_no_post                         ; pair
    JSR tfs_flush_pending
    LDX zp_clr_save_x
    LDA zp_i_h
