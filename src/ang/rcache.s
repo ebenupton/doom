@@ -210,9 +210,7 @@ bbox_check_angle_cached:
    LSR A
    STA pa_res+1
    JSR cp_havepsi
-   STA bca_p2+1
-   STY bca_p2
-   JMP bca_tail
+   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
 bw_hi:
    LDA RC_P1L_S,Y
    STA pa_res
@@ -232,9 +230,7 @@ bw_hi:
    LSR A
    STA pa_res+1
    JSR cp_havepsi
-   STA bca_p2+1
-   STY bca_p2
-   JMP bca_tail
+   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
 bcac_warm_full:
    JMP full_vis                            ; canonical tail (bca.s): sets
                                            ; ilo/ihi/vis, A/Z = verdict

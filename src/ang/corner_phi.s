@@ -71,9 +71,7 @@
    LDY zp_node_ch_l                        ; (corner_phi returned r lo in Y)
    ZCF s, x2, y2
    JSR e2
-   STA bca_p2+1
-   STY bca_p2
-   JMP bca_tail                            ; chained: no return trip
+   JMP bca_tail                            ; p2 rides A/Y (tail stores it)                            ; chained: no return trip
 .endmacro
 .macro ZARM_SX s, x1, y1, y2, e1, e2      ; corners share the x plane
    ZCF s, x1, y1
@@ -83,9 +81,7 @@
    LDY zp_node_ch_l
    ZCF_DY s, y2                            ; pa_dx carried over
    JSR e2
-   STA bca_p2+1
-   STY bca_p2
-   JMP bca_tail                            ; chained
+   JMP bca_tail                            ; p2 rides A/Y (tail stores it)                            ; chained
 .endmacro
 .macro ZARM_SY s, x1, y1, x2, e1, e2      ; corners share the y plane
    ZCF s, x1, y1
@@ -95,9 +91,7 @@
    LDY zp_node_ch_l
    ZCF_DX s, x2                            ; pa_dy carried over
    JSR e2
-   STA bca_p2+1
-   STY bca_p2
-   JMP bca_tail                            ; chained
+   JMP bca_tail                            ; p2 rides A/Y (tail stores it)                            ; chained
 .endmacro
 .macro ZARM_SYM s, x1, y1, x2, e1, e2     ; shared y, N-class c1: the raw
    ZCF s, x1, y1                           ; dy comes back from the MEMO
@@ -108,9 +102,7 @@
    ZCF_DX s, x2
    ZCF_MEMO_DY
    JSR e2
-   STA bca_p2+1
-   STY bca_p2
-   JMP bca_tail
+   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
 .endmacro
 .macro ZARM_SXM s, x1, y1, y2, e1, e2     ; shared x, N-class c1: the raw
    ZCF s, x1, y1                           ; dx comes back from the MEMO
@@ -121,9 +113,7 @@
    ZCF_DY s, y2
    ZCF_MEMO_DX
    JSR e2
-   STA bca_p2+1
-   STY bca_p2
-   JMP bca_tail
+   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
 .endmacro
 
 ; ============================================================================

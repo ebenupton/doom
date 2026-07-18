@@ -76,6 +76,13 @@ bbox_check_angle:
 ;   if tspan > 1024: cull if tspan-1024 >= span else p2 = +512
 ;   ilo = max(0, vatox[p1+512] - 1) ; ihi = min(255, vatox[p2+512] + 1)
 ;   cull if ilo > ihi else visible
+; ENTRY CONTRACT (2026-07-19, Eben's convention flip, adjusted): the
+; caller hands p2 IN REGISTERS — A = p2 hi, Y = p2 lo, exactly what
+; cp_havepsi returns — and the TAIL owns the bca_p2 stores (the
+; rcache cold snapshot still reads them from memory after the check).
+; Every entry site dropped its STA/STY pair. NB hi-in-A is pinned by
+; cp_havepsi's borrow direction (hi computes last); a lo-in-A flip
+; costs a +4 shuffle per corner call — measured worse.
 bca_tail:                               ; shared by bbox_check_angle + _cached
 ; F role bias (option F, 2026-07-17; EPSILON = 15 certified by
 ; tools/atanexp_cert.py): r1 -= EPS, r2 += EPS — every downstream
@@ -87,12 +94,15 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
 ; its biased operands in registers. bca_p1/p2 now stay RAW through the
 ; tail (the rcache psi snapshots always wanted that), and the full-vis
 ; exit skips the whole bias.
+   STA bca_p2+1                            ; the tail owns the p2 stores
+   TAX                                     ; p2 hi rides X past the lo math
+   TYA
+   STA bca_p2
    SEC
-   LDA bca_p2
    SBC bca_p1
    STA t0                                  ; raw diff lo (pre +30)
-   LDA bca_p2+1
-   SBC bca_p1+1
+   TXA
+   SBC bca_p1+1                            ; (TYA/TXA/STA preserve the borrow)
    TAX                                     ; raw diff hi rides X
    LDA t0
    CLC
