@@ -23,13 +23,17 @@ box_classify:
    TAX
    LDA bc_zone_idx,X
    BMI bc_sides                            ; single-axis: the column diverts
-   STX zp_bca_zone                         ; both-axes fast path: publish =
-   ORA zp_bbox_side                        ; the inherited bits (X = par)
-   TAX
-   LDA zc_tab_lo,X
+; both-axes fast path: the ARM stores the zone now — hand it the
+; inherited bits in A (X = par) and the node in Y (the arm's first
+; fetch relies on it, like every classify leaf)
+   ORA zp_bbox_side
+   TAY
+   LDA zc_tab_lo,Y
    STA zc_ptr
-   LDA zc_tab_hi,X
+   LDA zc_tab_hi,Y
    STA zc_ptr+1
+   LDY zp_node_ch_l
+   TXA
    JMP (zc_ptr)
 bc_zone_idx:
 ; zone bits (b0 strictly-left, b1 right, b2 above, b3 below) -> ZC
@@ -45,6 +49,11 @@ bcls_s1_j:
 bcls_s0:
 ; --- x phase: inherited bits divert to their column; else the
 ; hi-first ladder picks one of four (Lb strict / L0 edge / M / Rb) ---
+   LDY zp_node_ch_l                        ; HOISTED (2026-07-18): loaded ONCE;
+                                           ; nothing below or in the y blocks
+                                           ; clobbers Y, and the leaves hand it
+                                           ; to the arms (whose first fetch
+                                           ; drops its own LDY)
    LDA zp_par_zone
    AND #$03
    BEQ xr_s0
@@ -54,7 +63,6 @@ bcls_s0:
 xLbj_s0:
    JMP yLb_s0                             ; strictly left (inherited)
 xr_s0:
-   LDY zp_node_ch_l
    LDA bca_pxs+1
    CMP BBP_L_HI0,Y
    BCC xLbj2_s0                           ; px < L strictly (hi)
@@ -85,7 +93,6 @@ yM_s0:
    BNE yMAb_s0                     ; inherited-above == the strict-above leaf
    BEQ yMBb_s0                     ; (always) inherited-below
 yMr_s0:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
    BCC yMlo_s0                     ; py < T (hi): test the bottom
@@ -95,11 +102,9 @@ yMr_s0:
    BCC yMlo_s0
    BNE yMAb_s0                     ; py > T strictly (lo)
    LDA #$00                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc1_0
 yMAb_s0:
    LDA #$04                          ; strictly above
-   STA zp_bca_zone
    JMP zc1_0
 yMlo_s0:
    LDA bca_pys+1
@@ -111,7 +116,6 @@ yMlo_s0:
    BCS yMM_s0                      ; py >= B: mid (g >= 0)
 yMBb_s0:
    LDA #$08                          ; strictly below
-   STA zp_bca_zone
    JMP zc9_0
 yMM_s0:
    LDA #0                                  ; mid/mid: the CLOSED inside
@@ -125,7 +129,6 @@ yLb_s0:
    BNE yLbAb_s0                     ; inherited-above == the strict-above leaf
    BEQ yLbBb_s0                     ; (always) inherited-below
 yLbr_s0:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
    BCC yLblo_s0                     ; py < T (hi): test the bottom
@@ -135,11 +138,9 @@ yLbr_s0:
    BCC yLblo_s0
    BNE yLbAb_s0                     ; py > T strictly (lo)
    LDA #$01                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc0_0
 yLbAb_s0:
    LDA #$05                          ; strictly above
-   STA zp_bca_zone
    JMP zc0_0
 yLblo_s0:
    LDA bca_pys+1
@@ -151,11 +152,9 @@ yLblo_s0:
    BCS yLbM_s0                      ; py >= B: mid (g >= 0)
 yLbBb_s0:
    LDA #$09                          ; strictly below
-   STA zp_bca_zone
    JMP zc8_0
 yLbM_s0:
    LDA #$01
-   STA zp_bca_zone
    JMP zc4_0
 yL0_s0:
    LDA zp_par_zone
@@ -165,7 +164,6 @@ yL0_s0:
    BNE yL0Ab_s0                     ; inherited-above == the strict-above leaf
    BEQ yL0Bb_s0                     ; (always) inherited-below
 yL0r_s0:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
    BCC yL0lo_s0                     ; py < T (hi): test the bottom
@@ -175,11 +173,9 @@ yL0r_s0:
    BCC yL0lo_s0
    BNE yL0Ab_s0                     ; py > T strictly (lo)
    LDA #$00                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc0_0
 yL0Ab_s0:
    LDA #$04                          ; strictly above
-   STA zp_bca_zone
    JMP zc0_0
 yL0lo_s0:
    LDA bca_pys+1
@@ -191,11 +187,9 @@ yL0lo_s0:
    BCS yL0M_s0                      ; py >= B: mid (g >= 0)
 yL0Bb_s0:
    LDA #$08                          ; strictly below
-   STA zp_bca_zone
    JMP zc8_0
 yL0M_s0:
    LDA #$00
-   STA zp_bca_zone
    JMP zc4_0
 yRb_s0:
    LDA zp_par_zone
@@ -205,7 +199,6 @@ yRb_s0:
    BNE yRbAb_s0                     ; inherited-above == the strict-above leaf
    BEQ yRbBb_s0                     ; (always) inherited-below
 yRbr_s0:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI0,Y
    BCC yRblo_s0                     ; py < T (hi): test the bottom
@@ -215,11 +208,9 @@ yRbr_s0:
    BCC yRblo_s0
    BNE yRbAb_s0                     ; py > T strictly (lo)
    LDA #$02                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc2_0
 yRbAb_s0:
    LDA #$06                          ; strictly above
-   STA zp_bca_zone
    JMP zc2_0
 yRblo_s0:
    LDA bca_pys+1
@@ -231,16 +222,19 @@ yRblo_s0:
    BCS yRbM_s0                      ; py >= B: mid (g >= 0)
 yRbBb_s0:
    LDA #$0A                          ; strictly below
-   STA zp_bca_zone
    JMP zc10_0
 yRbM_s0:
    LDA #$02
-   STA zp_bca_zone
    JMP zc6_0
 
 bcls_s1:
 ; --- x phase: inherited bits divert to their column; else the
 ; hi-first ladder picks one of four (Lb strict / L0 edge / M / Rb) ---
+   LDY zp_node_ch_l                        ; HOISTED (2026-07-18): loaded ONCE;
+                                           ; nothing below or in the y blocks
+                                           ; clobbers Y, and the leaves hand it
+                                           ; to the arms (whose first fetch
+                                           ; drops its own LDY)
    LDA zp_par_zone
    AND #$03
    BEQ xr_s1
@@ -250,7 +244,6 @@ bcls_s1:
 xLbj_s1:
    JMP yLb_s1                             ; strictly left (inherited)
 xr_s1:
-   LDY zp_node_ch_l
    LDA bca_pxs+1
    CMP BBP_L_HI1,Y
    BCC xLbj2_s1                           ; px < L strictly (hi)
@@ -281,7 +274,6 @@ yM_s1:
    BNE yMAb_s1                     ; inherited-above == the strict-above leaf
    BEQ yMBb_s1                     ; (always) inherited-below
 yMr_s1:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
    BCC yMlo_s1                     ; py < T (hi): test the bottom
@@ -291,11 +283,9 @@ yMr_s1:
    BCC yMlo_s1
    BNE yMAb_s1                     ; py > T strictly (lo)
    LDA #$00                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc1_1
 yMAb_s1:
    LDA #$04                          ; strictly above
-   STA zp_bca_zone
    JMP zc1_1
 yMlo_s1:
    LDA bca_pys+1
@@ -307,7 +297,6 @@ yMlo_s1:
    BCS yMM_s1                      ; py >= B: mid (g >= 0)
 yMBb_s1:
    LDA #$08                          ; strictly below
-   STA zp_bca_zone
    JMP zc9_1
 yMM_s1:
    LDA #0                                  ; mid/mid: the CLOSED inside
@@ -321,7 +310,6 @@ yLb_s1:
    BNE yLbAb_s1                     ; inherited-above == the strict-above leaf
    BEQ yLbBb_s1                     ; (always) inherited-below
 yLbr_s1:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
    BCC yLblo_s1                     ; py < T (hi): test the bottom
@@ -331,11 +319,9 @@ yLbr_s1:
    BCC yLblo_s1
    BNE yLbAb_s1                     ; py > T strictly (lo)
    LDA #$01                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc0_1
 yLbAb_s1:
    LDA #$05                          ; strictly above
-   STA zp_bca_zone
    JMP zc0_1
 yLblo_s1:
    LDA bca_pys+1
@@ -347,11 +333,9 @@ yLblo_s1:
    BCS yLbM_s1                      ; py >= B: mid (g >= 0)
 yLbBb_s1:
    LDA #$09                          ; strictly below
-   STA zp_bca_zone
    JMP zc8_1
 yLbM_s1:
    LDA #$01
-   STA zp_bca_zone
    JMP zc4_1
 yL0_s1:
    LDA zp_par_zone
@@ -361,7 +345,6 @@ yL0_s1:
    BNE yL0Ab_s1                     ; inherited-above == the strict-above leaf
    BEQ yL0Bb_s1                     ; (always) inherited-below
 yL0r_s1:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
    BCC yL0lo_s1                     ; py < T (hi): test the bottom
@@ -371,11 +354,9 @@ yL0r_s1:
    BCC yL0lo_s1
    BNE yL0Ab_s1                     ; py > T strictly (lo)
    LDA #$00                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc0_1
 yL0Ab_s1:
    LDA #$04                          ; strictly above
-   STA zp_bca_zone
    JMP zc0_1
 yL0lo_s1:
    LDA bca_pys+1
@@ -387,11 +368,9 @@ yL0lo_s1:
    BCS yL0M_s1                      ; py >= B: mid (g >= 0)
 yL0Bb_s1:
    LDA #$08                          ; strictly below
-   STA zp_bca_zone
    JMP zc8_1
 yL0M_s1:
    LDA #$00
-   STA zp_bca_zone
    JMP zc4_1
 yRb_s1:
    LDA zp_par_zone
@@ -401,7 +380,6 @@ yRb_s1:
    BNE yRbAb_s1                     ; inherited-above == the strict-above leaf
    BEQ yRbBb_s1                     ; (always) inherited-below
 yRbr_s1:
-   LDY zp_node_ch_l
    LDA bca_pys+1
    CMP BBP_T_HI1,Y
    BCC yRblo_s1                     ; py < T (hi): test the bottom
@@ -411,11 +389,9 @@ yRbr_s1:
    BCC yRblo_s1
    BNE yRbAb_s1                     ; py > T strictly (lo)
    LDA #$02                          ; f == 0: boxy 0, NO y bit
-   STA zp_bca_zone
    JMP zc2_1
 yRbAb_s1:
    LDA #$06                          ; strictly above
-   STA zp_bca_zone
    JMP zc2_1
 yRblo_s1:
    LDA bca_pys+1
@@ -427,11 +403,9 @@ yRblo_s1:
    BCS yRbM_s1                      ; py >= B: mid (g >= 0)
 yRbBb_s1:
    LDA #$0A                          ; strictly below
-   STA zp_bca_zone
    JMP zc10_1
 yRbM_s1:
    LDA #$02
-   STA zp_bca_zone
    JMP zc6_1
 
 
@@ -803,6 +777,27 @@ ns_neg_j:
 ; RTS-dispatch: the arm's RTS returns to zc_corners' caller.
 ; ============================================================================
 .segment "ZC"
+; ZCF1: the FIRST corner fetch — the classify leaves/fast path deliver
+; Y = node and the zone in A; the arm banks the zone and fetches with
+; no LDY. (The SECOND fetch keeps its LDY: corner_phi returns r lo
+; in Y.)
+.macro ZCF1 s, xl, yl
+   STA zp_bca_zone                         ; the kernel owns the zone store
+   SEC
+   LDA xl+(s)*$100,Y
+   SBC bca_pxs
+   STA pa_dx
+   LDA xl+$200+(s)*$100,Y
+   SBC bca_pxs+1
+   STA pa_dx+1
+   SEC
+   LDA yl+(s)*$100,Y
+   SBC bca_pys
+   STA pa_dy
+   LDA yl+$200+(s)*$100,Y
+   SBC bca_pys+1
+   STA pa_dy+1
+.endmacro
 .macro ZCF s, xl, yl
    LDY zp_node_ch_l
    SEC
@@ -846,7 +841,7 @@ ns_neg_j:
    STA pa_dy+1
 .endmacro
 .macro ZARM s, x1, y1, x2, y2, e1, e2
-   ZCF s, x1, y1
+   ZCF1 s, x1, y1
    JSR e1                                  ; sign-class corner_phi entry —
    STA bca_p1+1                            ; the arm's zone fixes each
    STY bca_p1                              ; corner's delta signs statically
@@ -857,7 +852,7 @@ ns_neg_j:
    JMP bca_tail                            ; chained: no return trip
 .endmacro
 .macro ZARM_SX s, x1, y1, y2, e1, e2      ; corners share the x plane
-   ZCF s, x1, y1
+   ZCF1 s, x1, y1
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -868,7 +863,7 @@ ns_neg_j:
    JMP bca_tail                            ; chained
 .endmacro
 .macro ZARM_SY s, x1, y1, x2, e1, e2      ; corners share the y plane
-   ZCF s, x1, y1
+   ZCF1 s, x1, y1
    JSR e1
    STA bca_p1+1
    STY bca_p1
