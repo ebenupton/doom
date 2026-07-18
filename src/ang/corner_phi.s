@@ -127,227 +127,101 @@
 .endmacro
 
 ; ============================================================================
-; box_classify — PURE DIVERGING CONTROL FLOW (Eben's design, 2026-07-18).
-; The x phase picks a column (Left / Mid / Right), each column owns a
-; copy of the hi-first y ladder. LEFT (52% of arm runs, census
-; 2026-07-19) is the FAT column: its three arms are INLINED at their
-; leaves — no transfer at all between classify and corner fetch. MID /
-; RIGHT stay skinny with bare-JMP leaves to the ZC arms (the ladder
-; cannot short-branch past a fat column, so only the ladder-adjacent
-; column can take inlined arms).
-; Layout per side: [yR][yM][entry+ladder][yL-fat] — M/R exits branch
-; BACKWARD (worst site -123), L exits branch FORWARD into the fat
-; column. Zone byte dead; inside rides the cx_inside p1/p2 sentinel.
-;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
-;   out: control at a corner arm (inline or ZC), or cx_inside -> full_vis
+; CLASSIFY_TREE — ONE side's complete classifier (2026-07-19, Eben's
+; restructure): x ladder, then the three columns sorted LEFT / MID /
+; RIGHT, each column top-to-bottom (T test, top arm, B test, bottom
+; arm, mid arm), with EVERY corner arm inlined at its leaf — the ZC
+; out-of-line arms and their leaf JMPs died. Instantiated twice
+; (side 1 falls in from box_classify, side 0 rides the head stub);
+; every label is .local and the side is baked into every plane
+; operand at expansion time.
+; The M/R columns sit past the fat L column, out of short-branch
+; reach of the ladder, so their ladder exits ride JMP stubs — the
+; same 6 cycles as the old direct-branch + leaf-JMP pair, while the
+; top/bot/mid leaves now FALL straight into their arms (-3 per run).
+; Corner rows per column (checkcoord baked; sign classes P = >=0,
+; N = <=0 derived from the column/band):
+;   L: top=row 0 (NW)  bot=row 8 (SW)   mid=row 4 (W, shared L plane)
+;   M: top=row 1 (N, shared T via MEMO) bot=row 9 (S, shared B)
+;      mid=closed inside band -> cx sentinel
+;   R: top=row 2 (NE)  bot=row 10 (SE)  mid=row 6 (E, shared R via MEMO)
 ; ============================================================================
-bcls_s0_j:
-   JMP bcls_s0                             ; (data precedes — no fall-in)
-
-; --- side 1 tree ---
-yR_s1:
-   LDA bca_pys+1
-   CMP BBP_T_HI1,Y
-   BCC yRlo_s1_noreload                ; py < T (hi): test the bottom
-   BNE yRtop_s1                    ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO1,Y
-   BCC yRlo_s1
-yRtop_s1:
-   JMP zc2_1                            ; py >= T: top-corner arm
-yRlo_s1:
-   LDA bca_pys+1                           ; (lo-tier arrivals only: the hi
-yRlo_s1_noreload:                          ; BCC comes in with pys+1 live)
-   CMP BBP_B_HI1,Y
-   BCC yRbot_s1                     ; py < B strictly (hi)
-   BNE yRmid_s1                     ; py > B (hi): mid band
-   LDA bca_pys
-   CMP BBP_B_LO1,Y
-   BCS yRmid_s1                     ; py >= B: mid band
-yRbot_s1:
-   JMP zc10_1                            ; py < B: bottom-corner arm
-yRmid_s1:
-   JMP zc6_1
-yM_s1:
-   LDA bca_pys+1
-   CMP BBP_T_HI1,Y
-   BCC yMlo_s1_noreload                ; py < T (hi): test the bottom
-   BNE yMtop_s1                    ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO1,Y
-   BCC yMlo_s1
-yMtop_s1:
-   JMP zc1_1                            ; py >= T: top-corner arm
-yMlo_s1:
-   LDA bca_pys+1                           ; (lo-tier arrivals only: the hi
-yMlo_s1_noreload:                          ; BCC comes in with pys+1 live)
-   CMP BBP_B_HI1,Y
-   BCC yMbot_s1                     ; py < B strictly (hi)
-   BNE yMmid_s1                     ; py > B (hi): mid band
-   LDA bca_pys
-   CMP BBP_B_LO1,Y
-   BCS yMmid_s1                     ; py >= B: mid band
-yMbot_s1:
-   JMP zc9_1                            ; py < B: bottom-corner arm
-yMmid_s1:
-   JMP cx_inside                          ; closed viewer-in-box band
-
-box_classify:
-   LDY zp_node_ch_l                        ; HOISTED: loaded ONCE — nothing
-                                           ; in the tree clobbers Y; the
-                                           ; leaves hand it to the arms
-   LDA zp_bbox_side
-   BEQ bcls_s0_j                           ; s1 falls in; s0 rides the stub
-bcls_s1:
-xr_s1:
+.macro CLASSIFY_TREE s
+   .local xge, xge_nr, ymj, yrj
+   .local yL, yLlo, yLlo_nr, yLtop, yLbot, yLmid
+   .local yM, yMlo, yMlo_nr, yMtop, yMbot, cxi
+   .local yR, yRlo, yRlo_nr, yRtop, yRbot, yRmid
+; --- x ladder ---
    LDA bca_pxs+1
-   CMP BBP_L_HI1,Y
-   BCC yL_s1                               ; px <= L: LEFT (fat, forward)
-   BNE xge_s1_noreload
-   LDA BBP_L_LO1,Y                         ; hi tie: INVERTED compare (plane
-   CMP bca_pxs                             ; vs value) — C = L_lo >= px_lo,
-   BCS yL_s1                               ; so ONE branch covers < and ==
-xge_s1:
+   CMP BBP_L_HI+(s)*$100,Y
+   BCC yL                                  ; px <= L: LEFT (fat, forward)
+   BNE xge_nr
+   LDA BBP_L_LO+(s)*$100,Y                 ; hi tie: INVERTED (plane in A) —
+   CMP bca_pxs                             ; C = L_lo >= px_lo: <= decided
+   BCS yL                                  ; by ONE branch
+xge:
    LDA bca_pxs+1                           ; (inverted-lo fall only: the hi
-xge_s1_noreload:                             ; BNE comes in with pxs+1 live)
-   CMP BBP_R_HI1,Y
-   BCC yM_s1                               ; px < R (hi): MID — backward
-   BNE yR_s1                               ; px > R strictly (hi) — backward
-   LDA BBP_R_LO1,Y                         ; hi tie: INVERTED compare —
+xge_nr:                                    ; BNE arrives with pxs+1 live)
+   CMP BBP_R_HI+(s)*$100,Y
+   BCC ymj                                 ; px < R (hi): MID via stub
+   BNE yrj                                 ; px > R strictly (hi): RIGHT stub
+   LDA BBP_R_LO+(s)*$100,Y                 ; hi tie: INVERTED —
    CMP bca_pxs                             ; C = R_lo >= px_lo: px <= R
-   BCS yM_s1                               ; is mid in ONE branch
-   JMP yR_s1                               ; strict-right lo fall (was the
-                                           ; always-taken BNE: same 3 cyc,
-                                           ; unlimited range)
-yL_s1:
-; LEFT column — 52%% of arm classifies (census 2026-07-19), so its
-; three arms are INLINED at their leaves (single-use since the zone
-; kill): no leaf JMP. Each branch below skips at most one ~87 B arm
-; body — all in short range.
+   BCS ymj                                 ; is mid; fall = strict right
+yrj:
+   JMP yR
+ymj:
+   JMP yM
+; --- LEFT column ---
+yL:
    LDA bca_pys+1
-   CMP BBP_T_HI1,Y
-   BCC yLlo_s1_noreload                 ; py < T (hi): test the bottom
-   BNE yLtop_s1                         ; py > T strictly (hi)
+   CMP BBP_T_HI+(s)*$100,Y
+   BCC yLlo_nr                             ; py < T (hi): bottom test
+   BNE yLtop                               ; py > T strictly (hi)
    LDA bca_pys
-   CMP BBP_T_LO1,Y
-   BCC yLlo_s1
-yLtop_s1:                                 ; py >= T: row 0 (NW) INLINE
-   ZARM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
-yLlo_s1:
-   LDA bca_pys+1                           ; (lo-tier arrivals only)
-yLlo_s1_noreload:
-   CMP BBP_B_HI1,Y
-   BCC yLbot_s1                         ; py < B strictly (hi)
-   BNE yLmid_s1                         ; py > B (hi): mid band
-   LDA bca_pys
-   CMP BBP_B_LO1,Y
-   BCS yLmid_s1                         ; py >= B: mid band
-yLbot_s1:                                 ; py < B: row 8 (SW) INLINE
-   ZARM 1, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
-yLmid_s1:                                 ; mid: row 4 (W) INLINE
-   ZARM_SX 1, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
-
-; --- side 0 tree ---
-yR_s0:
-   LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yRlo_s0_noreload                ; py < T (hi): test the bottom
-   BNE yRtop_s0                    ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yRlo_s0
-yRtop_s0:
-   JMP zc2_0                            ; py >= T: top-corner arm
-yRlo_s0:
-   LDA bca_pys+1
-yRlo_s0_noreload:
-   CMP BBP_B_HI0,Y
-   BCC yRbot_s0                     ; py < B strictly (hi)
-   BNE yRmid_s0                     ; py > B (hi): mid band
-   LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yRmid_s0                     ; py >= B: mid band
-yRbot_s0:
-   JMP zc10_0                            ; py < B: bottom-corner arm
-yRmid_s0:
-   JMP zc6_0
-yM_s0:
-   LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yMlo_s0_noreload                ; py < T (hi): test the bottom
-   BNE yMtop_s0                    ; py > T strictly (hi)
-   LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yMlo_s0
-yMtop_s0:
-   JMP zc1_0                            ; py >= T: top-corner arm
-yMlo_s0:
+   CMP BBP_T_LO+(s)*$100,Y
+   BCC yLlo
+yLtop:                                     ; py >= T: row 0 (NW) INLINE
+   ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
+yLlo:
    LDA bca_pys+1                           ; (lo-tier arrivals only: the hi
-yMlo_s0_noreload:                          ; BCC comes in with pys+1 live)
-   CMP BBP_B_HI0,Y
-   BCC yMbot_s0                     ; py < B strictly (hi)
-   BNE yMmid_s0                     ; py > B (hi): mid band
+yLlo_nr:                                   ; BCC arrives with pys+1 live)
+   CMP BBP_B_HI+(s)*$100,Y
+   BCC yLbot                               ; py < B strictly (hi)
+   BNE yLmid                               ; py > B (hi): mid band
    LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yMmid_s0                     ; py >= B: mid band
-yMbot_s0:
-   JMP zc9_0                            ; py < B: bottom-corner arm
-yMmid_s0:
-   JMP cx_inside                          ; closed viewer-in-box band
-
-bcls_s0:
-xr_s0:
-   LDA bca_pxs+1
-   CMP BBP_L_HI0,Y
-   BCC yL_s0                               ; px <= L: LEFT (fat, forward)
-   BNE xge_s0_noreload
-   LDA BBP_L_LO0,Y                         ; hi tie: INVERTED compare (plane
-   CMP bca_pxs                             ; vs value) — C = L_lo >= px_lo,
-   BCS yL_s0                               ; so ONE branch covers < and ==
-xge_s0:
-   LDA bca_pxs+1                           ; (inverted-lo fall only: the hi
-xge_s0_noreload:                             ; BNE comes in with pxs+1 live)
-   CMP BBP_R_HI0,Y
-   BCC yM_s0                               ; px < R (hi): MID — backward
-   BNE yR_s0                               ; px > R strictly (hi) — backward
-   LDA BBP_R_LO0,Y                         ; hi tie: INVERTED compare —
-   CMP bca_pxs                             ; C = R_lo >= px_lo: px <= R
-   BCS yM_s0                               ; is mid in ONE branch
-   JMP yR_s0                               ; strict-right lo fall (was the
-                                           ; always-taken BNE: same 3 cyc,
-                                           ; unlimited range)
-yL_s0:
-; LEFT column — 52%% of arm classifies (census 2026-07-19), so its
-; three arms are INLINED at their leaves (single-use since the zone
-; kill): no leaf JMP. Each branch below skips at most one ~87 B arm
-; body — all in short range.
+   CMP BBP_B_LO+(s)*$100,Y
+   BCS yLmid                               ; py >= B: mid band
+yLbot:                                     ; row 8 (SW) INLINE
+   ZARM s, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
+yLmid:                                     ; row 4 (W) INLINE
+   ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
+; --- MID column ---
+yM:
    LDA bca_pys+1
-   CMP BBP_T_HI0,Y
-   BCC yLlo_s0_noreload                 ; py < T (hi): test the bottom
-   BNE yLtop_s0                         ; py > T strictly (hi)
+   CMP BBP_T_HI+(s)*$100,Y
+   BCC yMlo_nr
+   BNE yMtop
    LDA bca_pys
-   CMP BBP_T_LO0,Y
-   BCC yLlo_s0
-yLtop_s0:                                 ; py >= T: row 0 (NW) INLINE
-   ZARM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
-yLlo_s0:
-   LDA bca_pys+1                           ; (lo-tier arrivals only)
-yLlo_s0_noreload:
-   CMP BBP_B_HI0,Y
-   BCC yLbot_s0                         ; py < B strictly (hi)
-   BNE yLmid_s0                         ; py > B (hi): mid band
+   CMP BBP_T_LO+(s)*$100,Y
+   BCC yMlo
+yMtop:                                     ; row 1 (N) INLINE, memo-shared T
+   ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
+yMlo:
+   LDA bca_pys+1
+yMlo_nr:
+   CMP BBP_B_HI+(s)*$100,Y
+   BCC yMbot
+   BNE cxi
    LDA bca_pys
-   CMP BBP_B_LO0,Y
-   BCS yLmid_s0                         ; py >= B: mid band
-yLbot_s0:                                 ; py < B: row 8 (SW) INLINE
-   ZARM 0, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
-yLmid_s0:                                 ; mid: row 4 (W) INLINE
-   ZARM_SX 0, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
-cx_inside:
-; Viewer inside (or on the boundary of) the CLOSED box: publish the
-; FULL-span sentinel — p1 = 0, p2 = $0800, span = 2048 — so the
-; rcache cold snapshot marks FULL off its ordinary span test (psi
-; planes are never consulted under FULL).
+   CMP BBP_B_LO+(s)*$100,Y
+   BCS cxi
+yMbot:                                     ; row 9 (S) INLINE
+   ZARM_SY s, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
+cxi:
+; closed viewer-in-box band: publish the FULL-span sentinel (p1 = 0,
+; p2 = $0800, span 2048) — rcache cold's ordinary span test marks
+; FULL off it; psi planes are never consulted under FULL.
    LDA #0
    STA bca_p1
    STA bca_p1+1
@@ -355,7 +229,57 @@ cx_inside:
    LDA #8
    STA bca_p2+1
    JMP full_vis
+; --- RIGHT column ---
+yR:
+   LDA bca_pys+1
+   CMP BBP_T_HI+(s)*$100,Y
+   BCC yRlo_nr
+   BNE yRtop
+   LDA bca_pys
+   CMP BBP_T_LO+(s)*$100,Y
+   BCC yRlo
+yRtop:                                     ; row 2 (NE) INLINE
+   ZARM s, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
+yRlo:
+   LDA bca_pys+1
+yRlo_nr:
+   CMP BBP_B_HI+(s)*$100,Y
+   BCC yRbot
+   BNE yRmid
+   LDA bca_pys
+   CMP BBP_B_LO+(s)*$100,Y
+   BCS yRmid
+yRbot:                                     ; row 10 (SE) INLINE
+   ZARM s, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
+yRmid:                                     ; row 6 (E) INLINE, memo-shared R
+   ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+.endmacro
 
+; ============================================================================
+; box_classify — the whole classifier lives in the ZC segment (flat:
+; CODE region — it no longer fits ANG with every arm inline; banked:
+; CODE as always). zc_corners/zc_end bound the harness PC window.
+;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
+;   out: control at a corner arm (JMP bca_tail) or cx -> full_vis
+; ============================================================================
+.segment "ZC"
+zc_corners:                                ; harness window start
+bcls_s0_j:
+   JMP bcls_s0                             ; (no fall-in: data precedes)
+box_classify:
+   LDY zp_node_ch_l                        ; ONE LDY serves both trees
+   LDA zp_bbox_side
+   BEQ bcls_s0_j                           ; s1 falls in; s0 rides the stub
+bcls_s1:
+   CLASSIFY_TREE 1
+bcls_s0:
+   CLASSIFY_TREE 0
+zc_end:
+.if BANKED
+.segment "ANG_BK"
+.else
+.segment "ANG"
+.endif
 
 ; (load_val removed: inlined at the corner loads.)
 
@@ -720,61 +644,7 @@ ns_dx0:
                                            ; pa_res keeps holding PSI, which
                                            ; is what the memo store wants.)
 
-; checkcoord[boxpos*4]: indices into (top=0,bot=1,left=2,right=3).
-; rows 3,7,11 and 5 unused (5=inside handled earlier).
-; checkcoord indices PRE-DOUBLED (byte offsets into the s16 box: top=0,
-; bot=2, left=4, right=6) so the corner loads index (bca_boxp),Y directly.
-; (bca_cc retired 2026-07-15: the checkcoord rows are BAKED into the
-; zone/side corner arms below.)
 
-; ============================================================================
-; zc_corners — raw silhouette corner phis via zone/side arms (ZC segment
-; in the CODE region — the carve freed by the RCACHE plane conversion).
-;   in : X = boxpos (0..10, box_classify), zp_bbox_side, zp_node_ch_l,
-;        bca_pxs/pys, bca_afn
-;   out: bca_p1/p2 = RAW phi1/phi2 (pre-clip — rcache snapshots these)
-; Each arm is the old cc-row corner block with the four plane operands
-; baked (checkcoord: corner1 = LEFT silhouette, corner2 = RIGHT).
-; RTS-dispatch: the arm's RTS returns to zc_corners' caller.
-; ============================================================================
-.segment "ZC"
-; (the zc_corners dispatch routine died 2026-07-18 — classify exits
-; push-push-RTS to the arm themselves. The label below marks the ZC
-; window start for check_angle_calls' PC classifier.)
-zc_corners:
-; checkcoord rows (x = L/R plane, y = T/B plane); rows 3/5/7 unused.
-; The LEFT-column arms (rows 0/4/8, both sides) moved INLINE into the
-; classify trees 2026-07-19 — single-use since the zone kill; only the
-; MID/RIGHT arms remain here as leaf-JMP targets.
-; Sign classes per corner (P = delta >= 0, N = delta <= 0), derived from
-; the row's viewer zone (boxx/boxy) and each corner's plane:
-;   row 0 (NW):  c1=(R,T) dx>=0 dy<=0 PN   c2=(L,B) PN
-;   row 1 (N):   c1=(R,T) PN              c2=(L,T) dx<=0 NN
-;   row 2 (NE):  c1=(R,B) NN              c2=(L,T) NN
-;   row 4 (W):   c1=(L,T) dy>=0 PP        c2=(L,B) dy<=0 PN
-;   row 6 (E):   c1=(R,B) NN              c2=(R,T) NP
-;   row 8 (SW):  c1=(L,T) PP              c2=(R,B) PP
-;   row 9 (S):   c1=(L,B) NP              c2=(R,B) PP
-;   row 10 (SE): c1=(L,B) NP              c2=(R,T) NP
-zc1_0:  ZARM_SYM 0, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
-zc1_1:  ZARM_SYM 1, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
-zc2_0:  ZARM 0, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
-zc2_1:  ZARM 1, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
-zc6_0:  ZARM_SXM 0, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
-zc6_1:  ZARM_SXM 1, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
-zc9_0:  ZARM_SY 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
-zc9_1:  ZARM_SY 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
-zc10_0: ZARM 0, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
-zc10_1: ZARM 1, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
-; (zc_tab_lo/hi deleted 2026-07-19: engine-dead since the inheritance
-; fast path died — check_angle_calls' ZC window now ends at zc_end.)
-zc_end:
-
-.if BANKED
-.segment "ANG_BK"                       ; back to the angle-module segment
-.else
-.segment "ANG"
-.endif
 
 
 
