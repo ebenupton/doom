@@ -91,21 +91,21 @@ inhx_run_s0:
 ; so one unsigned hi compare decides unless the hi bytes tie ---
    LDY zp_node_ch_l
    LDA bca_pxs+1
-   CMP BBP_L_HI,Y
+   CMP BBP_L_HI0,Y
    BCC cx_x0_out_s0                        ; px < L strictly (hi decides)
    BNE cx_x_gel_s0                         ; px > L strictly (hi decides)
    LDA bca_pxs
-   CMP BBP_L_LO,Y
+   CMP BBP_L_LO0,Y
    BCC cx_x0_out_s0                        ; px < L strictly (lo decides)
    BEQ cx_have_x0_s0                       ; d == 0: boxx = 0, NO bit
 cx_x_gel_s0:
 ; px > L strictly --- e = R - px: mid unless px >= R ---
    LDA bca_pxs+1
-   CMP BBP_R_HI,Y
+   CMP BBP_R_HI0,Y
    BCC cx_x_mid_s0                         ; px < R (hi): boxx = 1
    BNE cx_x2_out_s0                        ; px > R strictly (hi)
    LDA bca_pxs
-   CMP BBP_R_LO,Y
+   CMP BBP_R_LO0,Y
    BCC cx_x_mid_s0                         ; px < R (lo)
    BEQ cx_x_mid_s0                         ; px == R: boxx = 1 (e == 0)
 cx_x2_out_s0:
@@ -142,11 +142,11 @@ inhy_run_s0:
 ; --- f = py - T, hi-first (boxy: 0 iff py >= T; bit iff py > T) ---
    LDY zp_node_ch_l
    LDA bca_pys+1
-   CMP BBP_T_HI,Y
+   CMP BBP_T_HI0,Y
    BCC cx_y_low_s0                         ; py < T (hi): test the bottom
    BNE cx_y0_out_s0                        ; py > T strictly (hi)
    LDA bca_pys
-   CMP BBP_T_LO,Y
+   CMP BBP_T_LO0,Y
    BCC cx_y_low_s0                         ; py < T (lo)
    BEQ cx_have_y0_s0                       ; f == 0: boxy = 0, NO bit
 cx_y0_out_s0:
@@ -159,11 +159,11 @@ cx_have_y0_s0:
 cx_y_low_s0:
 ; --- g = py - B, hi-first (boxy = 2 iff py < B strictly) ---
    LDA bca_pys+1
-   CMP BBP_B_HI,Y
+   CMP BBP_B_HI0,Y
    BCC cx_y2_out_s0                        ; py < B strictly (hi)
    BNE cx_y_mid_s0                         ; py > B (hi): boxy = 1
    LDA bca_pys
-   CMP BBP_B_LO,Y
+   CMP BBP_B_LO0,Y
    BCS cx_y_mid_s0                         ; py >= B: boxy = 1 (g >= 0)
 cx_y2_out_s0:
    LDA zp_bca_zone
@@ -196,21 +196,21 @@ inhx_run_s1:
 ; so one unsigned hi compare decides unless the hi bytes tie ---
    LDY zp_node_ch_l
    LDA bca_pxs+1
-   CMP BBP_L_HI+$100,Y
+   CMP BBP_L_HI1,Y
    BCC cx_x0_out_s1                        ; px < L strictly (hi decides)
    BNE cx_x_gel_s1                         ; px > L strictly (hi decides)
    LDA bca_pxs
-   CMP BBP_L_LO+$100,Y
+   CMP BBP_L_LO1,Y
    BCC cx_x0_out_s1                        ; px < L strictly (lo decides)
    BEQ cx_have_x0_s1                       ; d == 0: boxx = 0, NO bit
 cx_x_gel_s1:
 ; px > L strictly --- e = R - px: mid unless px >= R ---
    LDA bca_pxs+1
-   CMP BBP_R_HI+$100,Y
+   CMP BBP_R_HI1,Y
    BCC cx_x_mid_s1                         ; px < R (hi): boxx = 1
    BNE cx_x2_out_s1                        ; px > R strictly (hi)
    LDA bca_pxs
-   CMP BBP_R_LO+$100,Y
+   CMP BBP_R_LO1,Y
    BCC cx_x_mid_s1                         ; px < R (lo)
    BEQ cx_x_mid_s1                         ; px == R: boxx = 1 (e == 0)
 cx_x2_out_s1:
@@ -247,11 +247,11 @@ inhy_run_s1:
 ; --- f = py - T, hi-first (boxy: 0 iff py >= T; bit iff py > T) ---
    LDY zp_node_ch_l
    LDA bca_pys+1
-   CMP BBP_T_HI+$100,Y
+   CMP BBP_T_HI1,Y
    BCC cx_y_low_s1                         ; py < T (hi): test the bottom
    BNE cx_y0_out_s1                        ; py > T strictly (hi)
    LDA bca_pys
-   CMP BBP_T_LO+$100,Y
+   CMP BBP_T_LO1,Y
    BCC cx_y_low_s1                         ; py < T (lo)
    BEQ cx_have_y0_s1                       ; f == 0: boxy = 0, NO bit
 cx_y0_out_s1:
@@ -264,11 +264,11 @@ cx_have_y0_s1:
 cx_y_low_s1:
 ; --- g = py - B, hi-first (boxy = 2 iff py < B strictly) ---
    LDA bca_pys+1
-   CMP BBP_B_HI+$100,Y
+   CMP BBP_B_HI1,Y
    BCC cx_y2_out_s1                        ; py < B strictly (hi)
    BNE cx_y_mid_s1                         ; py > B (hi): boxy = 1
    LDA bca_pys
-   CMP BBP_B_LO+$100,Y
+   CMP BBP_B_LO1,Y
    BCS cx_y_mid_s1                         ; py >= B: boxy = 1 (g >= 0)
 cx_y2_out_s1:
    LDA zp_bca_zone

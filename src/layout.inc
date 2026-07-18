@@ -45,4 +45,24 @@ BBP_L_LO = ROM_BBOX_C + $800
 BBP_L_HI = ROM_BBOX_C + $A00
 BBP_R_LO = ROM_BBOX_C + $C00
 BBP_R_HI = ROM_BBOX_C + $E00
+; Per-side aliases (2026-07-18): suffix 0 = RIGHT child box, 1 = LEFT.
+; Same pages as base+$100 — these just NAME the side dimension so the
+; per-side classify ladders read as intent instead of arithmetic.
+; (The ZC arms reach the same pages through ZCF's `s` parameter.)
+BBP_T_LO0 = BBP_T_LO
+BBP_T_LO1 = BBP_T_LO + $100
+BBP_T_HI0 = BBP_T_HI
+BBP_T_HI1 = BBP_T_HI + $100
+BBP_B_LO0 = BBP_B_LO
+BBP_B_LO1 = BBP_B_LO + $100
+BBP_B_HI0 = BBP_B_HI
+BBP_B_HI1 = BBP_B_HI + $100
+BBP_L_LO0 = BBP_L_LO
+BBP_L_LO1 = BBP_L_LO + $100
+BBP_L_HI0 = BBP_L_HI
+BBP_L_HI1 = BBP_L_HI + $100
+BBP_R_LO0 = BBP_R_LO
+BBP_R_LO1 = BBP_R_LO + $100
+BBP_R_HI0 = BBP_R_HI
+BBP_R_HI1 = BBP_R_HI + $100
 .assert (NODE_SOA_C & $FF) = 0, error, "node SoA must stay page-aligned"
