@@ -453,6 +453,13 @@ cmiss3:
    LDX #obase                              ; HOISTED (tension pass): the slot
                                            ; in X is dead once the key is
                                            ; banked; czx/czy shed their LDX
+; ALL cmiss paths converge here with A = pa_dx+1 (stage-3 misses carry
+; it from the probe; earlier stages pass through the ladder's final
+; LDA pa_dx+1; STX/LDX leave A alone) — so the x zero-out needs NO
+; load, and the N-class negate runs only on nonzero dx (Eben
+; 2026-07-19; -0 = 0, so skipping it on the zero path is identical).
+   ORA sd_num
+   BEQ czx
 .if negx
    LDA #0                                  ; |dx| = -dx in place (dx <= 0)
    SEC
@@ -461,12 +468,6 @@ cmiss3:
    LDA #0
    SBC sd_num+1
    STA sd_num+1
-   ORA sd_num                              ; zero-out folded into the abs
-   BEQ czx
-.else
-   LDA sd_num+1                            ; |dx| = dx already (dx >= 0):
-   ORA sd_num                              ; nothing to stage, just the
-   BEQ czx                                 ; zero-out
 .endif
 .if negy
    LDA #0                                  ; |dy| = -dy in place (dy <= 0)
