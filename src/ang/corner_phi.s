@@ -132,8 +132,8 @@ inhy_s0:
    BEQ inhy_run_s0
    AND #$04                                ; strictly above?
    BNE inhy_a_s0
-   LDA #2                                  ; strictly below: boxy = 2
-   BNE inhy_have_s0
+   LDA #16                                 ; strictly below: boxy = 2, PRE-
+   BNE inhy_have_s0                        ; SHIFTED <<3 (Eben 2026-07-18)
 inhy_a_s0:
    LDA #0                                  ; strictly above: boxy = 0
 inhy_have_s0:
@@ -169,10 +169,10 @@ cx_y2_out_s0:
    LDA zp_bca_zone
    ORA #$08                                ; strictly below
    STA zp_bca_zone
-   LDA #2
+   LDA #16                                 ; boxy = 2 (pre-shifted <<3)
    BNE cx_have_y_s0                        ; (always)
 cx_y_mid_s0:
-   LDA #1
+   LDA #8                                  ; boxy = 1 (pre-shifted)
 cx_have_y_s0:
    JMP cx_compose_s0
 ; ---- side s1 arm (plane operands baked; Y = node per read pair,
@@ -237,8 +237,8 @@ inhy_s1:
    BEQ inhy_run_s1
    AND #$04                                ; strictly above?
    BNE inhy_a_s1
-   LDA #2                                  ; strictly below: boxy = 2
-   BNE inhy_have_s1
+   LDA #16                                 ; strictly below: boxy = 2, PRE-
+   BNE inhy_have_s1                        ; SHIFTED <<3 (Eben 2026-07-18)
 inhy_a_s1:
    LDA #0                                  ; strictly above: boxy = 0
 inhy_have_s1:
@@ -274,10 +274,10 @@ cx_y2_out_s1:
    LDA zp_bca_zone
    ORA #$08                                ; strictly below
    STA zp_bca_zone
-   LDA #2
+   LDA #16                                 ; boxy = 2 (pre-shifted <<3)
    BNE cx_have_y_s1                        ; (always)
 cx_y_mid_s1:
-   LDA #1
+   LDA #8                                  ; boxy = 1 (pre-shifted)
 cx_have_y_s1:
    JMP cx_compose_s1
 ; X = the ZC dispatch index directly: (boxy*4 + boxx)*2 + side =
@@ -286,12 +286,9 @@ cx_have_y_s1:
 ; boxpos*4-row value never leaves this unit, so the caller-side
 ; TXA/ASL/ORA preamble in zc_corners is gone with it.
 cx_compose_s1:
-   ASL A
-   ASL A
-   ASL A
-   ORA t0
-   ORA #1
-   TAX
+   ORA t0                                  ; A arrives PRE-SHIFTED (boxy<<3
+   ORA #1                                  ; from every y arm) — the three
+   TAX                                     ; ASLs are gone (Eben 2026-07-18)
    LDA zp_bca_zone                         ; (already published — Z test only)
    BEQ cx_inside
    LDA zc_tab_hi,X                         ; chained dispatch (see fast path)
@@ -300,10 +297,7 @@ cx_compose_s1:
    PHA
    RTS
 cx_compose_s0:
-   ASL A
-   ASL A
-   ASL A
-   ORA t0
+   ORA t0                                  ; pre-shifted boxy (see s1)
    TAX
    LDA zp_bca_zone                         ; already published (the walk hands
    BEQ cx_inside                           ; it to this box's children); Z only
