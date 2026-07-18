@@ -1,4 +1,3 @@
-
 ; ZCF: one corner fetch — the CALLER owns Y = node. Classify leaves
 ; deliver it for the first fetch; the second fetch re-loads it at the
 ; use site (corner_phi returns r lo in Y). One macro, no ZCF1 split
@@ -29,7 +28,7 @@
 ; is free. Rows 1/6 (N-class shared axis): c1's entry negates the
 ; shared slot in place on a memo MISS — but the miss just BANKED the
 ; raw key into the CPM planes, and on a HIT the planes matched the
-; key, so either way CPM_KD*[zp_cpm_slot] holds c1's RAW deltas after
+; key, so either way CPM_KD*[c1's slot] holds c1's RAW deltas after
 ; the call (mask_done stores psi only; nothing else touches the slot).
 ; The shared axis therefore reloads from the MEMO (ZCF_MEMO_*): no
 ; BBP fetch, no subtract, class-independent — the full-fetch fallback
@@ -60,15 +59,17 @@
 .endmacro
 ; shared-axis reload from the memo key planes (see the note above):
 ; valid after ANY class entry, hit or miss.
+; X-DIRECT (Eben 2026-07-19): corner_phi RETURNS X = slot on BOTH
+; paths — the hit serve never touches X after the probe, and the miss
+; path's mask_done reloads it for the psi store. The arms run the
+; memo reload FIRST (before the hashing fetch overwrites X).
 .macro ZCF_MEMO_DX
-   LDX zp_cpm_slot
    LDA CPM_KDXL,X
    STA pa_dx
    LDA CPM_KDXH,X
    STA pa_dx+1
 .endmacro
 .macro ZCF_MEMO_DY
-   LDX zp_cpm_slot
    LDA CPM_KDYL,X
    STA pa_dy
    LDA CPM_KDYH,X
@@ -402,7 +403,9 @@ name:
 ; fetch macros where the delta bytes were already in A (the old reload-
 ; and-rehash head died 2026-07-19). Harness drivers must mirror this
 ; (test_slope_div sets mpu.x — the wrapper-contract-gap rule).
-   STX zp_cpm_slot
+; RETURN CONTRACT: X = slot again — the hit serve preserves it and the
+; miss path's mask_done reloads it, so the slot is banked to zp ONLY
+; on the miss path (ladder end below); hits never store it (Eben).
    LDA pa_dx
    CMP CPM_KDXL,X
    BNE cmiss0
@@ -439,6 +442,9 @@ cmiss2:
    LDA pa_dy+1
 cmiss3:
    STA CPM_KDYH,X
+   STX zp_cpm_slot                         ; slot banked on the MISS path
+                                           ; only (mask_done's psi store —
+                                           ; X becomes the octant next)
    LDX #obase                              ; HOISTED (tension pass): the slot
                                            ; in X is dead once the key is
                                            ; banked; czx/czy shed their LDX
