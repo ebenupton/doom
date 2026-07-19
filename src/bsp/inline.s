@@ -171,9 +171,10 @@ c_normal:
    BUMP
 c_num_ok:
    STA zp_div_h
-   ZERO zp_div_l
 
-; |den| = |v2_evy - v1_evy|
+; |den| = |v2_evy - v1_evy|; den/2 seeds the dividend low byte for a
+; ROUND-TO-NEAREST t (2026-07-19 — was ZERO: truncation). num < den
+; here (num == den is the special case above), so t stays u8.
    LDA zp_seg_v2_evy
    SEC
    SBC zp_seg_v1_evy
@@ -182,8 +183,10 @@ c_num_ok:
    BUMP
 c_den_ok:
    STA zp_div_den
+   LSR A
+   STA zp_div_l
 
-   SC_UDIV16_8                         ; A = t (u8)
+   SC_UDIV16_8                         ; A = t (u8, RN)
    STA zp_br_a
 
 ; dvx = v2_evx - v1_evx as s16 (sign-extend then subtract).
@@ -216,6 +219,17 @@ c_dvx_nb:
 c_have_dvx:
 
    cross_umul_u8_s16
+; ROUND the product before consuming its hi byte (2026-07-19): the
+; low byte's bit 7 is the (P + 128) carry — ASL lifts it into C and
+; ADC folds it into resh BEFORE the sign extension (the increment can
+; legitimately flip the sign byte, so the sext below must see the
+; rounded value). This is where the near-clip's precision lived: the
+; truncated product cost ~0.36 view units of mean crossing error.
+   LDA zp_br_res_l
+   ASL A
+   LDA zp_br_res_h
+   ADC #0
+   STA zp_br_res_h
 ; cx (s16) = sext(v1_evx) + sext(resh). With both endpoint evx in s8
 ; and t in [0,256], cx lies between them so s16 always holds it; cx
 ; itself can still fall outside s8 (sum of two s8) — the caller

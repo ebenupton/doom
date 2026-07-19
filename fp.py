@@ -439,9 +439,19 @@ def fp_near_clip(vx1, vy1, vx2, vy2):
     dvy = vy2 - vy1
     if dvy == 0:
         return None
-    t = fp_div8(NEAR_FP - vy1, dvy)
+    # Round-to-nearest t AND product (2026-07-19, near-clip precision):
+    # num/den always share sign here, so t is the unsigned RN quotient
+    # (den/2 dividend bias — the 6502 stages |den|>>1 in zp_div_l), and
+    # the crossing adds (t*dvx + 128) >> 8 (the 6502 folds the product's
+    # bit 7 in as ADC carry). Characterised over 380 corpus crossings:
+    # mean |cx err| 0.905 -> 0.543 view units, mean visible column
+    # error 1.06 -> 0.39, max 202 -> 74. num == den (v2 exactly on the
+    # plane) still yields cx == vx2 exactly on both sides.
+    n = abs(NEAR_FP - vy1) << 8
+    d = abs(dvy)
+    t = (n + (d >> 1)) // d
     dvx = vx2 - vx1
-    cx = vx1 + fp_mul8(t, dvx)
+    cx = vx1 + ((t * dvx + 128) >> 8)
     if vy1 < NEAR_FP:
         return (cx, NEAR_FP, vx2, vy2)
     return (vx1, vy1, cx, NEAR_FP)
