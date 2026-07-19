@@ -589,15 +589,21 @@ sin_gen:
    STA rot_sqs1h+1                         ; = mag (SQR pages page-aligned,
    STA rot_sqs2l+1                         ; hi byte static; abs,X crosses
    STA rot_sqs2h+1                         ; into the contiguous 2nd page)
+   STA rgp_smag+1                          ; ... and the fused pair's twins
+   STA rgp_sq1l+1
+   STA rgp_sq1h+1
+   STA rgp_sq2l+1
+   STA rgp_sq2h+1
    LDA zp_br_sneg
    STA rot_gen_sin+5                       ; neg immediate
+   STA rgp_sneg+1
    LDA #<rot_gen_sin
    LDX #>rot_gen_sin
 sin_have:
-   STA rot_s1+1
-   STX rot_s1+2
-   STA rot_s4+1
+   STA rot_s4+1                            ; (rot_s1 died in the pair fusion)
    STX rot_s4+2
+   STA rpt_jsr+1                           ; thunk sin target (maintained
+   STX rpt_jsr+2                           ; every frame; used on non-gen)
 ; --- cos variant -> rot_s2 / rot_s3 ---
    LDA zp_br_cone
    BEQ cos_notone
@@ -622,15 +628,41 @@ cos_gen:
    STA rot_sqc1h+1
    STA rot_sqc2l+1
    STA rot_sqc2h+1
+   STA rgp_cmag+1                          ; the fused pair's cos staging
    LDA zp_br_cneg
    STA rot_gen_cos+5
+   STA rgp_cneg+1
    LDA #<rot_gen_cos
    LDX #>rot_gen_cos
 cos_have:
-   STA rot_s2+1
+   STA rot_s2+1                            ; (rot_s3 died in the pair fusion)
    STX rot_s2+2
-   STA rot_s3+1
-   STX rot_s3+2
+   STA rpt_jmp+1                           ; thunk cos target
+   STX rpt_jmp+2
+; --- pair-site select: general sin AND general cos -> the fused
+; variant; anything else -> the thunk (runs the two selected variants
+; back to back; +3 cycles, axis-aligned frames only). ---
+   LDA rot_s4+1
+   CMP #<rot_gen_sin
+   BNE psel_thunk
+   LDA rot_s4+2
+   CMP #>rot_gen_sin
+   BNE psel_thunk
+   LDA rot_s2+1
+   CMP #<rot_gen_cos
+   BNE psel_thunk
+   LDA rot_s2+2
+   CMP #>rot_gen_cos
+   BNE psel_thunk
+   LDA #<rot_gen_pair
+   LDX #>rot_gen_pair
+   BNE psel_have                           ; (hi never 0 — always taken)
+psel_thunk:
+   LDA #<rot_pair_thunk
+   LDX #>rot_pair_thunk
+psel_have:
+   STA rot_s13+1
+   STX rot_s13+2
 inl_end:
 .endscope
 .endmacro

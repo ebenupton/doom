@@ -448,6 +448,8 @@ rot_core_cos:
    BNE d_nz
    JMP ri_zero
 d_nz:
+::rot_core_cos_nz:                      ; pair-variant entry: d != 0 already
+                                        ; established, staging done (t1/mul_b)
 ; ri_d arrives as |d| (caller-staged; d-sign folded into t1 by the
 ; thunk's EOR zp_ri_sgn) — the old in-place abs died 2026-07-19.
 ; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
@@ -576,3 +578,128 @@ ris_zero:
    STA zp_rs_h
    STA zp_rs_x
    RTS
+
+
+; ============================================================================
+; rot_gen_pair — the FUSED dx-pair rotate (2026-07-19): one JSR runs
+; sin*d -> zp_rs AND cos*d -> zp_br_res, sharing the d==0 test and one
+; call/return round (was two JSR/RTS pairs and two tests). rot_select
+; patches the rot_s13 site to this variant when BOTH trigs are general;
+; axis-aligned frames get rot_pair_thunk below (+3 cycles, rare). The
+; sin half is a private copy of rot_core_sin (rgp_* SMC operands, local
+; finish/sign tails that FALL THROUGH); the cos half stages and enters
+; the SHARED core past its d==0 test — its RTS returns to our caller.
+; Segment RPAIR: flat loads in the ANG region (resident, cycle-neutral
+; — flat has no banking), banked in CODE.
+; ============================================================================
+.segment "RPAIR"
+rot_gen_pair:
+.scope
+   LDA zp_ri_d_l
+   ORA zp_ri_d_h
+   BNE p_nz
+   STA zp_rs_l                             ; A = 0: zero BOTH result sets
+   STA zp_rs_h
+   STA zp_rs_x
+   STA zp_br_res_l
+   STA zp_br_res_h
+   STA zp_br_res_x
+   RTS
+p_nz:
+; --- sin half: gen_sin's staging + core body, rs dests ---
+::rgp_smag:
+   LDA #0                                  ; +1 SMC: |sin| mag (rot_select)
+   STA zp_mul_b
+::rgp_sneg:
+   LDA #0                                  ; +1 SMC: sin neg flag
+   EOR zp_ri_sgn
+   STA zp_br_t1
+   LDA zp_ri_d_l
+   TAX                                     ; X = raw x (base carries +mag)
+   SEC
+   SBC zp_mul_b
+   BCS p_um1_pos
+   EOR #$FF
+   ADC #1
+p_um1_pos:
+   TAY
+::rgp_sq1l:
+   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
+   SEC
+   SBC sqr_l,Y
+   STA zp_rs_l
+::rgp_sq1h:
+   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_rs_h
+   ZERO zp_rs_x
+   LDA zp_ri_d_h
+   BEQ p_sgn                               ; x0: rs_h/rs_x untouched
+   CMP #1
+   BEQ p_one                               ; x1: product == mag
+   TAX
+   SEC
+   SBC zp_mul_b
+   BCS p_um2_pos
+   EOR #$FF
+   ADC #1
+p_um2_pos:
+   TAY
+::rgp_sq2l:
+   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
+   SEC
+   SBC sqr_l,Y
+   STA zp_prod_l
+::rgp_sq2h:
+   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_prod_h
+; local ris_finish
+   CLC
+   LDA zp_prod_l
+   ADC zp_rs_h
+   STA zp_rs_h
+   LDA zp_prod_h
+   ADC zp_rs_x
+   STA zp_rs_x
+   JMP p_sgn
+p_one:
+   LDA zp_mul_b                            ; rs_h += mag, carry -> rs_x
+   CLC
+   ADC zp_rs_h
+   STA zp_rs_h
+   BCC p_sgn
+   INC zp_rs_x
+p_sgn:
+; local ris_sign, FALLING THROUGH to the cos half
+   LDA zp_br_t1
+   BEQ p_cos                               ; t1 = (d<0) XOR (sin<0)
+   LDA #0
+   SEC
+   SBC zp_rs_l
+   STA zp_rs_l
+   LDA #0
+   SBC zp_rs_h
+   STA zp_rs_h
+   LDA #0
+   SBC zp_rs_x
+   STA zp_rs_x
+p_cos:
+; --- cos half: gen_cos's staging, then the shared core past its test ---
+::rgp_cmag:
+   LDA #0                                  ; +1 SMC: |cos| mag (rot_select)
+   STA zp_mul_b
+::rgp_cneg:
+   LDA #0                                  ; +1 SMC: cos neg flag
+   EOR zp_ri_sgn
+   STA zp_br_t1
+   JMP rot_core_cos_nz
+.endscope
+
+rot_pair_thunk:
+; non-gen frames: run the two selected variants in sequence — JSR the
+; sin one, JMP the cos one (its RTS returns to the pair site's caller).
+::rpt_jsr:
+   JSR rot_gen_sin                         ; +1/+2 SMC: the frame's sinvar
+::rpt_jmp:
+   JMP rot_gen_cos                         ; +1/+2 SMC: the frame's cosvar

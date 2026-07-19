@@ -311,14 +311,13 @@ btv_dx_signed:                          ; fetch enters here, N = delta sign
    SBC zp_ri_d_h
    STA zp_ri_d_h
 dx_abs_ok:
-rot_s1:
-   JSR rot_gen_sin                         ; dx*sin -> zp_rs (variant SMC'd
-                                           ; per frame; sin side owns the rs
-                                           ; slots, so the old res->vx copy
-                                           ; is GONE — s2 combines from both
-                                           ; slots below)
-rot_s3:
-   JSR rot_gen_cos                         ; dx*cos (|dx|/sign still staged)
+rot_s13:
+   JSR rot_gen_pair                        ; dx pair, ONE call (2026-07-19):
+                                           ; sin*dx -> zp_rs, cos*dx ->
+                                           ; zp_br_res, shared d==0 test.
+                                           ; rot_select patches this site:
+                                           ; gen+gen = the fused variant,
+                                           ; else rot_pair_thunk (rare)
    LDA zp_br_res_l
    STA zp_br_vy_l
    LDA zp_br_res_h
