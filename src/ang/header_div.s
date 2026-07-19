@@ -115,7 +115,8 @@ bca_ihi = zp_i_h                        ; (2026-07-18): the tail writes the
 .assert (VATOX >> 8) + 4 <= $FF, error, "VATOX hi +4 must not wrap (bca_tail's pointer ADCs assume carry-out 0)"
 ; (EPSILON_F moved to zp.inc 2026-07-19: the afn hoist in view.s —
 ;  a different assembly unit — folds +EPS once per frame.)
-bca_vis = $64                           ; sole owner (see zp.inc $64 note)
+; (bca_vis RETIRED 2026-07-20: the verdict rides the A/Z/C exit
+;  signature — $64 is FREE)
 bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 (afn pre-biased; NOT sign-extended)
 zp_cpm_s2 = $CA                         ; corner 2's memo slot, banked by
                                         ; bca_tail (X = slot on armed entries);

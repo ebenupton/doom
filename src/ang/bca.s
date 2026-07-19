@@ -492,15 +492,20 @@ ct_il:
 ; corner within +-EPS), and the left -2*EPS bias plus the -1/+1
 ; adjusts restore ilo <= ihi; every other cell emits constants in
 ; order. The python mirror keeps its tripwire.
-; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
-; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
-; stays for the D-cache store, but callers branch without reloading.
+; A/Z/C-CONTRACT (bca_vis retired 2026-07-20): every exit returns the
+; combined verdict in A (Z valid) and the ANGLE verdict in C — gap
+; A=1/C=1, visible-but-gap-closed A=0/C=0 (has_gap's C==A contract),
+; angle cull A=0/C=1 (the SEC below). The walk branches on Z alone;
+; the D store tells 126 from extent by C via the dvf_store ROL/LSR
+; encode.
 ; full_vis is the CANONICAL full-visibility tail (the rcache warm-full
 ; path and box_classify's inside case JMP here instead of local copies).
 visok:
-   LDA #1                                  ; visible: bca_vis for the D store,
-   STA bca_vis                             ; then the fused has_gap exit — the
-   JMP SC_HAS_GAP                          ; walk consumes has_gap's A/Z
+   JMP SC_HAS_GAP                          ; the fused exit IS the verdict:
+                                           ; A/Z from has_gap, C == A by its
+                                           ; contract (bca_vis died 2026-07-20
+                                           ; — the D store reads the encoded
+                                           ; A/C signature instead)
 
 ; --- out-of-line cells (rarer paths) ---------------------------------
 ct_r1out_r2f:
@@ -530,16 +535,17 @@ ct_r2have:
    CPX #0
    BEQ full_vis                           ; (L,R): full
 cull:                                      ; THE cull exit — (L,L) FALLS in
-   LDA #0                                  ; off the untaken BEQ above; the
-   STA bca_vis                             ; other cull cells branch direct
-   RTS                                     ; (hand edit 2026-07-20). A=0/Z=1
+   SEC                                     ; off the untaken BEQ above; the
+   LDA #0                                  ; others branch direct. Signature
+   RTS                                     ; A=0/Z=1/C=1: to the walk it IS a
+                                           ; no-gap return; C=1 tells the D
+                                           ; store 'angle cull' (code 126)
+                                           ; apart from no-gap (C=0)
 full_vis:
    LDA #0
    STA bca_ilo
    LDA #255
    STA bca_ihi
-   LDA #1
-   STA bca_vis
    JMP SC_HAS_GAP                          ; FUSED EXIT (2026-07-18): every
                                            ; visible exit chains straight into
                                            ; has_gap on the freshly-written

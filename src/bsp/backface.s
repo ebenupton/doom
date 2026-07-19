@@ -290,7 +290,7 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
 bca_top = BCA_WS+$10                    ; box input: top,bot,left,right = +$10,$12,$14,$16
 bca_ilo = zp_i_l                        ; output: left column (u8) — ALIASED
 bca_ihi = zp_i_h                        ; to zp_i_l/h (2026-07-18, see ang)
-bca_vis = $64                           ; output: 1=visible, 0=cull — ZP
+; (bca_vis retired 2026-07-20 — verdict = A/Z/C exit signature; $64 free)
 ; (2026-07-10: $F5 is inside the VX2 vertex struct now; keep in sync with
 ; ang/header_div.s — BOTH define this)
 bca_ab = BCA_WS+$2F                     ; per-frame view angle (set by render setup)

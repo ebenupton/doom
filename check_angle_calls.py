@@ -16,15 +16,16 @@ def s8(v):  return v-0x100 if v>=0x80 else v
 BCA=sym('bbox_check_angle'); BOX=sym('bca_top')
 B_PX,B_PY,B_AB=sym('bca_px'),sym('bca_py'),sym('bca_ab')
 B_AFN,B_PXS,B_PYS=sym('bca_afn'),sym('bca_pxs'),sym('bca_pys')
-B_ILO,B_IHI,B_VIS=sym('bca_ilo'),sym('bca_ihi'),sym('bca_vis')
+B_ILO,B_IHI=sym('bca_ilo'),sym('bca_ihi')  # bca_vis retired: A/C signature
 # corner planes (the boxp pointer is gone, 2026-07-15): field f at
 # BBP_*, side at +$100, node = the Y index
 BBP=[sym(n) for n in ('BBP_T_LO','BBP_T_HI','BBP_B_LO','BBP_B_HI',
                       'BBP_L_LO','BBP_L_HI','BBP_R_LO','BBP_R_HI')]
 ZNODE,ZSIDE=sym('zp_node_ch_l'),sym('zp_bbox_side')
 # the ZC corner arms run BELOW $C000 mid-check — exclude them from the
-# 'returned to main code' probe (they'd read bca_vis while it's still 0)
+# 'returned to main code' probe (mid-check A/C aren't the verdict yet)
 ZC_LO=sym('zc_corners'); ZC_HI=sym('zc_end')
+HG_LO=sym('span_has_gap'); HG_HI=HG_LO+0x60  # the fused exit runs INSIDE the probe window (B segment); A/C aren't the verdict until it returns
 
 # fresh standalone module
 _st=MPU()
@@ -43,7 +44,8 @@ def standalone(top,bot,left,right,px,py,ab):
     _st.pc=BCA;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
-    return (m[B_ILO],m[B_IHI]) if m[B_VIS] else None
+    _vis = _st.a == 1 or (_st.p & 1) == 0   # A/C signature (bca_vis retired)
+    return (m[B_ILO],m[B_IHI]) if _vis else None
 
 def check(px,py,ab):
     sc=SpanClip6502(); tc.setup_wad(sc); tc.setup_view_zp(sc,px,py,ab)
@@ -63,8 +65,8 @@ def check(px,py,ab):
                 def _f(k): return s16(mem[BBP[2*k]+sd*0x100+nd]|((mem[BBP[2*k+1]+sd*0x100+nd]^0x80)<<8))  # un-bias the offset-binned hi (wad_packed)
                 armed=(_f(0),_f(1),_f(2),_f(3),
                        s8(mem[B_PX]),s8(mem[B_PY]),mem[B_AB])
-            elif armed is not None and pc<0xC000 and not (ZC_LO<=pc<ZC_HI):
-                got=(mem[B_ILO],mem[B_IHI]) if mem[B_VIS] else None
+            elif armed is not None and 0x3600<=pc<0xC000 and not (ZC_LO<=pc<ZC_HI) and not (HG_LO<=pc<HG_HI):
+                got=(mem[B_ILO],mem[B_IHI]) if (mpu.a == 1 or (mpu.p & 1) == 0) else None
                 n+=1
                 if got!=A.bbox_check_angle(*armed) and len(vs_py)<4: vs_py.append((armed,got,A.bbox_check_angle(*armed)))
                 if got!=standalone(*armed) and len(vs_st)<4: vs_st.append((armed,got,standalone(*armed)))

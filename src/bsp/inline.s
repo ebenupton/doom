@@ -548,8 +548,8 @@ inl_end:
 .macro bv_dcache_store
 .scope
    LDX zp_node_ch_l
-   LDA bca_vis
-   BNE st_vis
+   CPY #1                                  ; Y = the dvf_store encode: 1 =
+   BNE st_vis                              ; angle cull, 0/3 = visible
    LDA #126                                ; invisible
    BNE st_put                              ; (always)
 st_vis:

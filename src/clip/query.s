@@ -68,7 +68,7 @@ hg_no_cache:
 ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
 ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
    LDX zp_head
-   BEQ hgn
+   BEQ hgn0
 ; --- X iteration: current span in X ---
 hgl_x:
    LDA POOL_XEND,X
@@ -87,6 +87,14 @@ hgl_y:
    LDX POOL_NEXT,Y
    BNE hgl_x
 ; advance via X
+hgn0:
+   CLC                                     ; empty active list: C is the
+                                           ; caller's — normalize for the
+                                           ; C-CONTRACT (2026-07-20): every
+                                           ; exit returns C == A (C=1 gap,
+                                           ; C=0 none); bca's cull fakes a
+                                           ; no-gap return DISTINGUISHED by
+                                           ; C=1 — the D store reads it
 hgn:
    LDA #0
    RTS

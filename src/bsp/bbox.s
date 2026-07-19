@@ -196,13 +196,19 @@ dv_fresh:
 dvf_rc:
    JSR bbox_check_angle_cached
 dvf_store:
-   PHA                                     ; A = combined verdict
+   ROL A                                   ; encode (verdict, C): 0 = visible
+                                           ; but gap-closed, 1 = angle cull,
+                                           ; 3 = visible+gap (bca_vis died —
+                                           ; the A/C signature carries it)
+   PHA                                     ; the macro CLOBBERS Y at st_put
+   TAY                                     ; (side test) — bank the encode
    PAGE BANK_L2                            ; (has_gap left the bank alone, but
                                            ; the rc cold path pages C via the
                                            ; clipper — re-anchor for the store)
-   bv_dcache_store                     ; encode bca_vis/zp_i → code byte
-   PLA                                     ; restore verdict; Z tracks A
-   RTS
+   bv_dcache_store                     ; classifies from Y (head only)
+   PLA
+   LSR A                                   ; A/Z = walk verdict, C = the angle
+   RTS                                     ; bit — the FULL signature survives
 .endscope
 
 ; ---- D-cache cold code: once-per-frame classifier + per-fresh-check

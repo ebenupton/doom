@@ -250,9 +250,10 @@ bcac_warm_full:
 ; algebra. The inside escape publishes the $80 marker in zp_cpm_s2
 ; (no corners ran) and short-circuits to COMPUTED+FULL.
 bcac_cold:
-   JSR bbox_check_angle                    ; COMBINED verdict in A (the fused
-   PHA                                     ; exits ran has_gap); raw p1 + the
-   JSR bcac_index                          ; corner-2 slot survive for the store
+   JSR bbox_check_angle                    ; COMBINED verdict in A + the angle
+   PHP                                     ; bit in C (the A/Z/C contract) —
+   PHA                                     ; bank BOTH across the snapshot;
+   JSR bcac_index                          ; raw p1 + the corner-2 slot survive
    BIT zp_cpm_s2
    BPL bcs_corners
 ; inside-escape: no psi to snapshot (the planes are never read under
@@ -323,7 +324,8 @@ bcac_setfull:
    ORA rc_bit
    STA RCACHE_FULL,X
    PLA                                     ; the combined check+has_gap verdict
-   RTS                                     ; (A/Z) banked at bcac_cold entry
+   PLP                                     ; + its C signature, banked at
+   RTS                                     ; bcac_cold entry (Z: A unchanged)
 bcac_notfull:
 ; clear the FULL bit (RCACHE_FULL is not cleared at epoch start; a stale set
 ; bit must be knocked down since warm reads it once COMPUTED is set).
@@ -332,6 +334,7 @@ bcac_notfull:
    AND RCACHE_FULL,X                       ; (X = rc_bytehi still)
    STA RCACHE_FULL,X
    PLA
+   PLP
    RTS
 
 

@@ -48,7 +48,9 @@ def run(top, bot, left, right, px, py, ab):
     steps = 0
     while mpu.pc != 0x0000 and steps < 20000:
         mpu.step(); steps += 1
-    vis = mpu.memory[sym('bca_vis')]
+    # bca_vis retired 2026-07-20: angle verdict = A/C exit signature
+    # (A=1 gap-visible; A=0/C=0 visible-but-gap-closed; A=0/C=1 cull)
+    vis = 1 if (mpu.a == 1 or (mpu.p & 1) == 0) else 0
     return (mpu.memory[sym('bca_ilo')], mpu.memory[sym('bca_ihi')]) if vis else None
 
 
