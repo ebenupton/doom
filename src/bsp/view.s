@@ -472,7 +472,7 @@ bv_fvy_done:
 ;   frame's mag/neg poked into their immediates (offsets +1 / +5).
 ; Clobbers A, X.
 ; ============================================================================
-.segment "SEL"
+SEG_HIGH
 ; (rot_select is a MACRO now — bsp/inline.s — expanded at its single
 ;  call site, 2026-07-17.)
-.segment "MAIN"
+SEG_CODE

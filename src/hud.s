@@ -166,6 +166,6 @@ hexdig:
    .byte "0123456789ABCDEF"
 
 ; restore the segment for subsequently-included parts (they inherit)
-.segment "MAIN"
+SEG_CODE
 
 .endif

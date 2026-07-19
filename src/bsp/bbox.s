@@ -215,12 +215,7 @@ dvf_store:
 ; store. W/RCCODE segments — both float inside the one CODE region in
 ; both builds (the old placement constraints are history); both call
 ; sites hold L2 paged. Data is resident main RAM ($0210-$03F7). ----
-.if ::BANKED
-.segment "RCCODE"
-.else
-.segment "W"
-.endif
-
+SEG_HIGHX
 ; bv_dcache_store — encode the fresh bbox-check outcome for (node, side).
 ; In: bca_vis/bca_ilo/bca_ihi valid; zp_node_ch_l/zp_bbox_side = entry.
 ; Clobbers A, X, Y.
@@ -330,4 +325,4 @@ df_off:
    RTS
 .endscope
 
-.segment "MAIN"                         ; restore for subsequently-included parts
+SEG_CODE                         ; restore for subsequently-included parts

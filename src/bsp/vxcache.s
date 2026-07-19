@@ -90,13 +90,7 @@ vxc_ab = BCA_AB
 ; ============================================================================
 ; Fat paths — run with BANK_C paged (flat: plain resident code in ANG).
 ; ============================================================================
-.if ::BANKED
-.segment "VXCODE"
-.else
-.segment "ANG"
-.endif
-
-
+SEG_HIGH
 ; --- vxc_cold_store: base' = total - ref (= L(w), translation-invariant) ---
 ;   in : zp_br_vx/vy lo/hi/ext (totals just computed by br_to_view),
 ;        zp_seg_v_idx_l/hi, vxc_ref_x/y
@@ -111,12 +105,7 @@ vxc_ab = BCA_AB
 ; is built. Banked: runs from the L2 window (caller paged BANK_L2); touches
 ; only low RAM, ZP and resident MAIN (br_to_view, the SMC site).
 ; ============================================================================
-.if ::BANKED
-.segment "RCCODE"
-.else
-.segment "ANG"
-.endif
-
+SEG_HIGH
 ;   in : VXC_ENABLE; vxc_ab (this frame's angle byte — alias of bca_ab,
 ;        written per frame by the caller); vxc_prev_ab; the frame view
 ;        context (read by br_to_view)
@@ -134,4 +123,4 @@ vxc_ab = BCA_AB
 ;  call site, 2026-07-17.)
 
 ; restore the segment for subsequently-included parts (they inherit)
-.segment "MAIN"
+SEG_CODE

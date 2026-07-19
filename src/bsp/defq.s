@@ -4,11 +4,7 @@
 ; assert, and the day the code end crossed CPM_BASE-8 the corner-memo
 ; stores shredded them (vertex-cache valid tests went garbage). The
 ; fall-through-across-.segment landmine, again.
-.if ::BANKED
-.segment "B_BK"
-.else
-.segment "B"
-.endif
+SEG_CODE
 bsp_b_start:
 
 ; (the DEFERRED OP QUEUE lived here until 2026-07-16 — clip ops now
@@ -38,8 +34,4 @@ bsp_b_end:
 ; visibility. Free space after span_clip's LC_* scratch ($0958) and the
 ; BBOX_CORNERS/DEFQ vars ($0960-$0976). Loaded as bsp_render_d.bin.
 ; ============================================================================
-.if ::BANKED
-.segment "D_BK"                         ; above PAGE (directly *LOAD-able)
-.else
-.segment "D"
-.endif
+SEG_CODE

@@ -4,10 +4,7 @@ bsp_d_start:
 ; had exactly one caller and the JSR/RTS pair was pure tax.)
 
 
-.if ::BANKED
-.segment "D_BK"                         ; back for the region-end marker
-.endif
-
+SEG_CODE
 ; rns24 half constants, indexed S-1:
 ;   half = 2^(S-1), S in [1,4] ONLY (rns24's whole domain since the s10
 ;   kernel returned and rns32 died, 2026-07-13): fits the low byte, so
@@ -54,7 +51,7 @@ VWHC_R_S = $B600
 VWHC_KEY = $B700
 VWHC_L = $B800
 VWHC_H = $B900
-.segment "W_BK"
+SEG_CODE
 .else
 ; PAGE-ALIGNED 2026-07-12 (were $D5C0-$D9C0: the $C0 offset made ~75% of
 ; abs,X probes pay the page-cross +1 — flat build only; banked was
@@ -66,5 +63,5 @@ VWHC_R_S = $D600
 VWHC_KEY = $D700
 VWHC_L = $D800
 VWHC_H = $D900
-.segment "W"
+SEG_HIGHX
 .endif

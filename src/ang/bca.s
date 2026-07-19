@@ -377,7 +377,7 @@ yRmid:                                     ; row 6 (E): corners share R,
 ; exits return to OUR caller — the JSR/RTS shuttles at every stage are
 ; gone. Inside boxes escape via cx_inside -> full_vis directly.
    ; ============================================================================
-.segment "ZC"
+SEG_CODE
 zc_corners:                                ; harness window start
 bbox_check_angle:                          ; the check IS the classifier —
 box_classify:                              ; the old JMP stub died 2026-07-19
@@ -391,9 +391,9 @@ bcls_s0:
    CLASSIFY_TREE 0
 zc_end:
 .if BANKED
-.segment "ANG_BK"
+SEG_CODE
 .else
-.segment "ANG"
+SEG_HIGH
 .endif
 ; --- Faithful DOOM R_CheckBBox, unsigned-BAM wraparound (FINEANGLES=4096).
 ; Our phi = -(DOOM view-relative angle), so DOOM angle1=-p1 (p1 = LEFT
@@ -685,7 +685,7 @@ czy:
 ; way the entries, the width arms, lf_ns and the compose chain below
 ; are one contiguous run.
 .if ::BANKED = 0
-.segment "ANGX"
+SEG_HIGHX
 angx_head:
 .endif
 CPM_ENTRY corner_phi_nn, 1, 1, 6
@@ -946,6 +946,6 @@ khave_sub:
    STA pa_res+1
    JMP mask_done
 .if ::BANKED = 0
-.segment "ANG"
+SEG_HIGH
 .endif
 

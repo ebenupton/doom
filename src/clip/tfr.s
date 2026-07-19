@@ -31,7 +31,7 @@
 ;   else: tail.next = X; X.next = 0; tail = X
 ; (Non-constant co-linear pairs are rare — ~6/568 in scene 2 — and not
 ; worth a general slope check; see the Python mirror's note.)
-.segment "LOX"
+SEG_HIGH
 ; (tg_append_x relocated to LO 2026-07-13 — CLIP at its ceiling; main
 ; RAM is always mapped, so the bank-C sweep JSRs here at no cost.)
 tg_append_x:
@@ -96,12 +96,7 @@ ta_link:
    RTS
 ; |||
 .endscope
-.if ::BANKED
-.segment "CLIP_BK"
-.else
-.segment "CLIP"
-.endif
-
+SEG_BANKC
 ; TFS state block ($0900-$091B) — the 3-cursor event walk's working set.
 ; (Moved here from the deleted 6-byte-records legacy file.)
 ; Plain RAM rather than ZP: all accesses are absolute (non-indexed), and
@@ -215,7 +210,7 @@ DCLV_S16VY = $0924                      ; s16-clip pending right verdict ($80 = 
 ; ===================================================================
 ; --- tfs value helpers (LO: CLIP is at its ceiling; called via JSR
 ; from the sweep — main RAM always mapped) ---
-.segment "LOX"
+SEG_HIGH
 tfs_top_pool_interp:
    LDX zp_clr_save_x
    LDA POOL_XLO,X
@@ -399,12 +394,7 @@ tfs_bri_l:
    STA TFS_BOT_R
 tfs_bri_r:
    RTS
-.if ::BANKED
-.segment "CLIP_BK"
-.else
-.segment "CLIP"
-.endif
-
+SEG_BANKC
 tighten_from_records:
 .scope
 ; ---- All-neutral fast-out ----
@@ -1187,7 +1177,7 @@ LC_TGT_LO = $0957                       ; clip target value (s16)
 LC_TGT_HI = $0958
 
 ; ---------------------------------------------------------------------------
-.segment "LOX"
+SEG_HIGH
 ; (Relocated to the LO segment 2026-07-13: cold classifier, and the CLIP region is
 ; at its ceiling — main RAM is always mapped, so bank-C callers are fine.
 ; Slated for deletion by Part 2 of the aperture fix.)
@@ -1307,8 +1297,4 @@ szr_closed:
    SEC
    RTS
 .endscope
-.if ::BANKED
-.segment "CLIP_BK"
-.else
-.segment "CLIP"
-.endif
+SEG_BANKC

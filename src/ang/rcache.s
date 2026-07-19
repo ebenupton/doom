@@ -61,7 +61,7 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; (RCACHE); all resolved by the linker. Banked: code AND data live in the
 ; bank L2 window (callers guarantee L2 is paged — see RCACHE note above). ---
 .if BANKED
-.segment "RCCODE"
+SEG_CODE
 .endif
 ; --- bca_frame: per-frame stability check + dispatch patch --------------------
 ; Called by br_view_setup after it has set the integer player position ZP.
@@ -359,7 +359,7 @@ bcac_index:
 rc_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
 .if BANKED
-.segment "ANG_BK"                       ; back to the angle-module segment
+SEG_CODE                       ; back to the angle-module segment
 .endif
 
 end:

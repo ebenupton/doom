@@ -32,12 +32,7 @@
 ;            clobbers zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
 ; Thin adapter from the br_a/br_b register convention onto SC_UMUL8.
 ; ============================================================================
-.if ::BANKED
-.segment "W_BK"
-; (historical segment split: W_BK floats inside the one CODE region in
-; both builds since the 2026-07 merges — the placement notes that used
-; to live here are obsolete; the segment name only orders the link.)
-.endif
+SEG_CODE
 br_umul8:
    LDA zp_br_b
    STA zp_mul_b
@@ -48,9 +43,7 @@ br_umul8:
    STA zp_br_res_l
    RTS
 
-.if ::BANKED
-.segment "MAIN"
-.endif
+SEG_CODE
 ; ============================================================================
 ; br_smul8 — signed s8 × s8 → s16. Inputs in zp_br_a, zp_br_b.
 ; Result in zp_br_res_l/resh (s16, 2's complement). ~80 cycles.
@@ -267,11 +260,7 @@ zp_ri_d = zp_ri_d_l                     ; backwards-compat alias
 ;                                       rot_core_sin/_cos (per-trig: SMC sum bases)
 ; Same pattern as the bca_check_op / vxc_jsr_site / D-cache frame hooks.
 ; All variants are bit-exact with the old in-body branches.
-.if ::BANKED
-.segment "B_BK"
-; (banked: the rot variants live in B_BK — MAIN hit its ceiling when the
-; back-face mul arm grew; they are vector/SMC targets, resident anywhere.)
-.endif
+SEG_CODE
 rot_zero:
    LDA #0
    STA zp_br_res_l
@@ -356,9 +345,7 @@ rot_gen_cos:
    STA zp_br_t1
    JMP rot_core_cos
 
-.if ::BANKED
-.segment "MAIN"
-.endif
+SEG_CODE
 ; rot_core_sin/_cos — the general |d|*mag s24 path, ONE CORE PER TRIG
 ; because the sum-side quarter-square lookups carry the frame's mag in
 ; their SMC'd table-base operands (sin and cos have different mags).
@@ -592,7 +579,7 @@ ris_zero:
 ; Segment RPAIR: flat loads in the ANG region (resident, cycle-neutral
 ; — flat has no banking), banked in CODE.
 ; ============================================================================
-.segment "RPAIR"
+SEG_CODE
 rot_gen_pair:
 .scope
    LDA zp_ri_d_l

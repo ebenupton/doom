@@ -82,12 +82,7 @@ ina
 ;              ($1C00, abi.inc SQR_BASE) so the bank-C clipper can reach
 ;              them (the flat $A500 is inside the $8000-$BFFF bank window
 ;              when paged).
-.if ::BANKED
-.segment "CLIP_BK"
-.else
-.segment "CLIP"
-.endif
-
+SEG_BANKC
 ; Public entry points for other engine modules (bsp_render .imports
 ; these — the linker resolves the calls directly; the Python harness
 ; finds them through the symbol map). The fixed-slot jump table that

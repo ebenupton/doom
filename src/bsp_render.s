@@ -19,3 +19,4 @@
 .include "bsp/defq.s"
 .include "bsp/resolve_crossing.s"
 .include "bsp/lo.s"
+.include "bsp/zzz_end.s"

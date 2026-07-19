@@ -259,7 +259,7 @@ cm_p2_hi:
    JMP cm_p2_done
 .endmacro
 
-.segment "MAIN"
+SEG_CODE
 
 ; ============================================================================
 ; ZP layout (kept tight to avoid colliding with span_clip's $A0-$FF)

@@ -1434,7 +1434,7 @@ lis_yr:
 ; the CLIP region is at its ceiling; main RAM is always mapped so the
 ; bank-C clipper JSRs here freely. Absolutes DCLV_* live in tfr.s's block.
 ; ============================================================================
-.segment "LOX"
+SEG_HIGH
 ; dcl_rec_flat — append a FLAT VERDICT record (A = y: 0 'above',
 ; $FF 'below') over [DCLV_X0, DCLV_X1] to the active record buffer.
 ; No-op when records mode is off or the range is empty. MERGES into the
@@ -1537,8 +1537,4 @@ dcl_rec_right:
    JMP dcl_rec_flat                        ; A = RVY still
 rr_done:
    RTS
-.if ::BANKED
-.segment "CLIP_BK"
-.else
-.segment "CLIP"
-.endif
+SEG_BANKC

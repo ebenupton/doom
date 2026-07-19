@@ -37,11 +37,7 @@
 ; callers just JSR/JMP span_has_gap directly (linker-resolved) — the
 ; harness.
 .export span_has_gap
-.if ::BANKED
-.segment "B_BK"
-.else
-.segment "B"
-.endif
+SEG_CODE
 span_has_gap:
 .scope
 ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
@@ -120,12 +116,7 @@ hg_cy_yes:
    LDA #1
    RTS
 .endscope
-.if ::BANKED
-.segment "CLIP_BK"                      ; back to the clipper's bank-C home
-.else
-.segment "CLIP"
-.endif
-
+SEG_BANKC
 ; ======================================================================
 ; IS_FULL: check if screen is completely occluded (active list empty)
 ; Returns A=1 if head==0 (all columns solid), A=0 otherwise.

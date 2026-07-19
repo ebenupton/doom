@@ -538,10 +538,12 @@ py_shift:                                  ; always 0. C survives LDA/STA.
 ; s24 product in (t2, resl, resh) and RTSes straight back to the
 ; projection's caller — pure leaves, bit-exact vs Python's rns().
 ; ============================================================================
-.segment "LO"
-.segment "RNSPG"                        ; page-ALIGNED segment (cfg align=$100):
-                                        ; guarantees all kernel entries share
-                                        ; the JMP operand's high byte
+SEG_CODE
+.align $100                             ; the rns kernel window must sit in
+                                        ; ONE page (the vector patches only
+                                        ; the JMP operand LO byte) — the CODE
+                                        ; segment carries align=$100 in both
+                                        ; cfgs so this .align is honoured
 rns_go:
    CLC                                     ; hoisted from every kernel: all
                                         ; six bodies enter C=0 (their round
@@ -763,12 +765,7 @@ rn_rloop:                                  ; value is dead at exit (the
 .assert >rns_s5 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 
 
-.if ::BANKED
-.segment "MAIN"
-.else
-.segment "MAIN"
-.endif
-
+SEG_CODE
 ; ============================================================================
 ; ROM/RAM base addresses (Python wrapper writes these into ZP at frame start)
 ; "zp_"-named for history but these live in the $0BEC-$0BF7 absolute page —

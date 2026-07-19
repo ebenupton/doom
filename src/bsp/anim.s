@@ -71,12 +71,7 @@ ANIM_WS     = $05EB                     ; per mover: pos_lo, pos_hi, state/timer
 ; anim_init. Entry: BANK_L0 paged, subsector index (u8) at zp_node_ch_l.
 ; A/X/Y are dead at the hook point (br_render_subsector reloads them).
 ; ============================================================================
-.if ::BANKED
-.segment "ANIMH"
-.else
-.segment "ANIMH"
-.endif
-
+SEG_HIGH
 ; pseudocode:
 ;   pend = SSMASK[ss] & DIRTY            # dirty movers revealable via this ss
 ;   for m in 5..0 where pend has bit m:
@@ -126,7 +121,7 @@ ah_pend:
 ; BANK_L0-context code: jump table (fixed entry addrs for the driver),
 ; per-frame tick, init, and the FHCH+flags patch worker.
 ; ============================================================================
-.segment "ANIML2"
+SEG_HIGH
 
 ; (jt_anim_tick/jt_anim_init moved into the pinned MAIN jump table at
 ;  $2C1E/$2C21 — see bsp/header.s; the one-region merge lets ANIML2 float.)
@@ -285,7 +280,7 @@ anim_bit2:
 ;     if bch <= fh or bfh >= ch: f |= SOLID
 ;     else: if bch < ch: f |= NEEDBT ; if bfh > fh: f |= NEEDBB
 ;     *hdr = f
-.segment "ANIML0"
+SEG_HIGH
 anim_l0_worker:
 .scope
    LDA ANIM_CUR
@@ -423,7 +418,7 @@ alw_f:   .byte 0
 ;        on first visibility, even before any motion), ANIM_ENABLE = 1,
 ;        anim_ss_hook operand SMC-patched -> anim_hub, ANIM_SSMASK copied
 ;        down from its L2 staging page (banked only — see below).
-.segment "ANIML2"
+SEG_HIGH
 anim_init:
 .scope
 .if ::BANKED
@@ -479,4 +474,4 @@ ai_midx: .byte 0
 .endscope
 
 
-.segment "MAIN"
+SEG_CODE

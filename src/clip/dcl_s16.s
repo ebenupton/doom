@@ -990,7 +990,7 @@ rejected:
 ; memory that the edge exists out there. Wrappers live in LO (main RAM,
 ; always mapped); dcl_rec_flat gates on records mode and merges.
 ; ============================================================================
-.segment "LOX"
+SEG_HIGH
 dcl_rec_flat_line:                         ; whole clipped line [xl_l, xr_l]
    STA DCLV_YV
    LDA zp_line_xl_l
@@ -1024,12 +1024,7 @@ dcl_rec_s16r_flush:                        ; right clip-off [new xr, orig xr]
    JMP dcl_rec_flat
 s16r_done:
    RTS
-.if ::BANKED
-.segment "CLIP_BK"
-.else
-.segment "CLIP"
-.endif
-
+SEG_BANKC
 end_code:
 .if ::BANKED
 ; (output file: ld65 writes the CLIP_BK region ($8000) to

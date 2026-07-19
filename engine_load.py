@@ -50,15 +50,11 @@ def load_angle_module(mem, c02=None):
     # the JSRs inside the ang bin expect. One link, one truth: load the
     # engine's CODE bin and its ang bin.
     asmbuild.build('engine', banked=0, c02=c02)
-    code = open(os.path.join(_ROOT, 'bsp_render.bin'), 'rb').read()
-    cbase = sym('code_head')                # CODE region head ($3670 flat)
-    mem[cbase:cbase + len(code)] = code
-    base = sym('ang_head')                  # ANG region head
-    code = open(os.path.join(_ROOT, 'bsp_render_ang.bin'), 'rb').read()
-    mem[base:base + len(code)] = code
-    base = sym('angx_head')                 # ANGX window (sign-class entries)
-    code = open(os.path.join(_ROOT, 'bsp_render_angx.bin'), 'rb').read()
-    mem[base:base + len(code)] = code
+    # one loader path: every flat region from the cfg (2026-07-20 — the
+    # segment consolidation left CODE/HIGH/HIGHX; addresses can't drift)
+    for start, fname in _regions(0):
+        code = open(os.path.join(_ROOT, fname), 'rb').read()
+        mem[start:start + len(code)] = code
     l8, ae_lo, ae_hi = sym('L8_TAB'), sym('AE_LO'), sym('AE_HI')
     vatox = sym('VATOX')
     # option F tables (tools/atanexp_cert.py is the one source; the

@@ -65,7 +65,7 @@ def check(px,py,ab):
                 def _f(k): return s16(mem[BBP[2*k]+sd*0x100+nd]|((mem[BBP[2*k+1]+sd*0x100+nd]^0x80)<<8))  # un-bias the offset-binned hi (wad_packed)
                 armed=(_f(0),_f(1),_f(2),_f(3),
                        s8(mem[B_PX]),s8(mem[B_PY]),mem[B_AB])
-            elif armed is not None and 0x3600<=pc<0xC000 and not (ZC_LO<=pc<ZC_HI) and not (HG_LO<=pc<HG_HI):
+            elif armed is not None and 0x2000<=pc<0xC000 and not (ZC_LO<=pc<ZC_HI) and not (HG_LO<=pc<HG_HI):  # CODE is one $2000 blob now
                 got=(mem[B_ILO],mem[B_IHI]) if (mpu.a == 1 or (mpu.p & 1) == 0) else None
                 n+=1
                 if got!=A.bbox_check_angle(*armed) and len(vs_py)<4: vs_py.append((armed,got,A.bbox_check_angle(*armed)))

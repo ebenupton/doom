@@ -27,9 +27,9 @@
 ; slope_div / bbox_check_angle directly (linker-resolved); ang_head
 ; marks the region head for engine_load.py's ang-bin placement.
 .if BANKED
-.segment "ANG_BK"
+SEG_CODE
 .else
-.segment "ANG"
+SEG_HIGH
 .endif
 .export bbox_check_angle
 .import span_has_gap                    ; fused visible exits (bca.s) chain

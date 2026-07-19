@@ -389,3 +389,43 @@ zp_clr_save_x = $D7               ; [clip]; tighten X-save (tfr.s; the name
 ; against the pre-biased p1'. Lives here because BOTH assembly units
 ; consume it.
 EPSILON_F = 12
+
+; ============================================================================
+; SEGMENT MAP (2026-07-20, the great consolidation): THREE segments.
+;   SEG_CODE  — the one code blob. Flat: $2000-$54FF (CPM at $5500).
+;               Banked: $2C00-$57FF.
+;   SEG_HIGH  — flat-only high island $E740-$F0FF (RCACHE_STATE pins
+;               $F100); banked: folds into CODE.
+;   SEG_HIGHX — flat-only high island $F200-$F5FF (VATOX pins $F600);
+;               banked: folds into CODE.
+;   SEG_BANKC — span_clip: bank C window banked ($8000), CODE flat.
+; Content order within a segment = object order (slope_div, span_clip,
+; bsp_render) then include order — ONE file to read for layout. The
+; old 25-name zoo (MAIN/LO/B/D/W/ZC/RNSPG/RPAIR/ZZTAIL/SEL/LOX/ANG/
+; ANGX/ANIM*/RCCODE/VXCODE/.._BK twins) died here; so did its landmine
+; class (ZZTAIL fall-through, cfg-order region shifts).
+; ============================================================================
+.macro SEG_CODE
+.segment "CODE"
+.endmacro
+.macro SEG_HIGH
+.if ::BANKED
+.segment "CODE"
+.else
+.segment "HIGH"
+.endif
+.endmacro
+.macro SEG_HIGHX
+.if ::BANKED
+.segment "CODE"
+.else
+.segment "HIGHX"
+.endif
+.endmacro
+.macro SEG_BANKC
+.if ::BANKED
+.segment "BANKC"
+.else
+.segment "CODE"
+.endif
+.endmacro
