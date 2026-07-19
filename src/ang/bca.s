@@ -444,163 +444,70 @@ zc_end:
 ; last); a lo-in-A flip costs a +4 shuffle per corner call — measured
 ; worse.
 bca_tail:                               ; shared by bbox_check_angle + _cached
-; F role bias (option F; EPSILON_F = 12 certified by
-; tools/atanexp_cert.py since the 2026-07-19 half-bit recovery):
-; r1 -= EPS, r2 += EPS — every downstream verdict (span/full, the
-; clip windows, the cull tests, the extents) becomes a SUPERSET of
-; the exact convention's, so the framebuffer is bit-identical.
-; FOLDED twice over: the afn hoist (view.s) carries +EPS, so p1/p2
-; arrive as r+EPS and the span keeps the one explicit +2*EPS constant
-; ((p2+E)-(p1+E)+2E = p2-p1+2E mod 4096, exact). The rcache psi
-; snapshot is bias-invariant (afn' - p1' cancels the +EPS), and the
-; full-vis exit skips the window arithmetic entirely.
+; REGION-CELL TAIL (2026-07-20, born from Eben's 'why the faff with
+; spans?'): the old span + windows factoring was a 1-bit
+; approximation of a 3x3 region table over the biased corners —
+; F = in-FOV r in [0,1024) strict, R = off-right [1024,2560),
+; L = wrapping-left [2560,4096) — and the span >= 2048 pre-test
+; existed ONLY to screen the (L,R) cell from the windows' one-bit
+; cull test. Classifying each corner directly retires the whole span
+; computation (t0/t1 are FREE again):
+;        r2: F           R            L
+;    r1: F  lookups      [col1,255]   [col1,255]
+;        R  [0,col2]     cull         cull
+;        L  [0,col2]     FULL         cull
+; r1-out with r2 in-FOV = the box wraps in from the left edge
+; (coverage [0,col2]) whichever side r1 sits; mirrored for r2-out;
+; (L,R) = viewer inside the box's arc = full; same-side and (R,L)
+; miss the FOV = cull. ==1024 folds into the out-cells (right: 255,
+; identical to the old constant arm; left: ilo 0 supersedes the old
+; 254). Verdicts are supersets of exact (per-corner +-EPS through
+; monotone vatox); every difference from the span tail is a pure
+; TIGHTENING of its span>=2048 -> full blanket. Biased forms: r2'' =
+; p2' as delivered (the afn hoist carries +EPS), r1'' = p1' - 2*EPS;
+; bca_p1 stays RAW for the rcache snapshot. The python mirror
+; implements the SAME table cell for cell.
    STX zp_cpm_s2                           ; corner 2's memo slot -> the
                                            ; rcache cold snapshot's psi2 key
-; The EPS bias now arrives IN the values (the afn hoist carries +EPS,
-; view.s): p1/p2 are r+EPS, so the right window's biased operand is
-; the register pair AS DELIVERED and the span's +2*EPS is the one
-; explicit constant left ((p2+E)-(p1+E)+2E = p2-p1+2E). p2' stays
-; pinned in Y/X across the span math (diff staged through t1) so
-; ck_right needs only the mask.
-   TAX                                     ; p2' hi (pinned; TXA below copies)
-   TYA
-   SEC
-   SBC bca_p1
-   STA t0                                  ; raw diff lo
-   TXA
-   SBC bca_p1+1                            ; (TYA/TXA/STA preserve the borrow)
-   STA t1
-   LDA t0
-   CLC
-   ADC #(2*EPSILON_F)
-   STA t0                                  ; span' lo
-   LDA t1
-   ADC #0
-   AND #$0F
-   STA t1                                  ; span' hi (u12 fold)
-   CMP #8
-   BCS full_vis                            ; span >= 2048
-ck_right:
-; INTERLEAVED clip+lookup (2026-07-16): window test -> VATOX lookup
-; per end. Each window test leaves EXACTLY the lookup's operands in
-; registers (A = r hi12 after the mask, Y = r lo), so the pointer
-; build is one immediate ADC. RIGHT WINDOW FIRST (2026-07-19): p2 is
-; still live in X/Y from the span math, so the r2' build is
-; register-only and p2 never touches memory. The windows are
-; independent and each can only cull the check or clamp its own end,
-; so the order swap is verdict-neutral; ilo/ihi are read only on
-; visible checks, so the store-order flip is unobservable.
-;
-; bca_p1 holds r = phi+512 (the afn hoist is pre-biased, view.s).
-; Window: tspan = (1024-r) & 4095 <= 1024 <=> r in [0,1024]; r is PURE
-; U12 (cp_havepsi stopped sign-extending 2026-07-16), so wrapped phi
-; lands at hi in [8,15] and the raw hi compare decides. Only the rare
-; outside paths do 16-bit arithmetic.
-;
-; Carry choreography (all proven, nothing incidental):
-;   every lk_* entry has C=0 — BCC arrivals and the clip arms' BCC;
-;   the pointer ADCs' carry-out is CONSTANT 0 (r_hi <= 4, >VATOX+4
-;   never wraps — link-asserted), which LDA (ptr),Y carries into the
-;   +-1 adjusts (SBC #0 / ADC #1, no seeds); the out-arms' 16-bit ops
-;   inherit C=1 from CMP >= 4 or CPY.
-;
-; right window test: r2 IS the right tspan (bias trick), and the
-; register pair IS the biased operand (afn hoist) — bare compare: the
-; hi ARRIVES masked (cp_havepsi's AND #$0F exit) and the span math
-; never writes X, so the old mask here was an identity (audit
-; 2026-07-20; the other three tail masks are load-bearing — the span
-; diff, the left -2*EPS and the left negate all borrow 16-bit).
-   TXA
+; classify r2: A = p2' hi (masked by cp_havepsi's exit), Y = p2' lo
    CMP #4
-   BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
-   BNE ck_right_out
-   CPY #0
-   BEQ lk_r255                             ; r2 == 1024 exactly: ihi is the
-                                           ; CONSTANT VATOX[1024]+1 clamped =
-                                           ; 255 — ride lk_right's own LDA
-                                           ; #255 (Z=1 from CPY: always taken)
-ck_right_out:
-; right corner outside the FOV (like ck_left_out below, minus the
-; negate — r2 already IS tspan): tspan-1024 vs span, carry-only. C=1
-; inbound (CMP >= 4 / CPY) seeds the SBC #4.
-   SBC #4
-   CPY t0
-   SBC t1
-   BCS cull                                ; off right
-ck_right_clip:
-   BCC lk_r255                             ; r2 = 1024: ihi is the CONSTANT
-                                           ; 255 — reuse lk_right's LDA #255
-                                           ; (C=0: the BCS above fell)
-lk_right:
-   ADC #>VATOX                             ; C=0 (inbound invariant)
+   BCS ct_r2out                            ; r2 >= 1024: R or L
+; --- (F,*): ihi = vatox[r2]+1. C=0 (the BCS fell); the pointer ADC's
+; carry-out is CONSTANT 0 (r_hi <= 4, link-asserted) and rides into
+; the +1 adjust; overflow clamps to 255. ---
+   ADC #>VATOX
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[r2]
-   ADC #1                                  ; C=0 (constant carry-out) -> v+1
-   BCC ih1
-lk_r255:
-   LDA #255                                ; (the old second min(255) was an
-ih1:                                       ; identity — A <= 255 by now on
-   STA bca_ihi                             ; every path)
-ck_left:
-; left window test, same shape, sourced from bca_p1 in memory (the
-; arms store p1 — six values are live across the span math, more than
-; three registers can carry).
-   LDA bca_p1                              ; r1' = (r1 - EPS) & 4095 = p1' -
-   SEC                                     ; 2*EPS (p1' carries +EPS from the
-   SBC #(2*EPSILON_F)                      ; afn hoist; raw p1' stays in memory
-                                           ; for the -r1' fold + the snapshot)
+   ADC #1
+   BCC ct_ih
+   LDA #255
+ct_ih:
+   STA bca_ihi
+ct_left:
+; r1'' = (p1' - 2*EPS) & 4095 in registers (raw p1' stays in memory)
+   LDA bca_p1
+   SEC
+   SBC #(2*EPSILON_F)
    TAY
    LDA bca_p1+1
    SBC #0
    AND #$0F
    CMP #4
-   BCC lk_left                             ; r1' < 1024: C=0, A/Y = operands
-   BNE ck_left_out
-   CPY #0
-   BNE ck_left_out
-   LDA #254                                ; r1 == 1024 exactly: ilo is the
-   BNE il1                                 ; CONSTANT VATOX[1024]-1 = 254
-                                           ; (table ends seed-asserted;
-                                           ; A != 0 so BNE always takes —
-                                           ; no lookup, and lk_* now reads
-                                           ; r <= 1023 only)
-ck_left_out:
-; r1' outside [0,1024]: left corner outside the FOV. tspan-1024 =
-; (0 - r1') & 4095 = (EPS - r1) & 4095 = (2*EPS - p1') & 4095 — the
-; bias folds into the negate CONSTANT (raw p1' still in memory).
-; Discard-result 16-bit compare vs span (CPX seeds the borrow; only
-; the final carry survives): C=1 iff tspan-1024 >= span -> wholly
-; off the left.
-   LDA #(2*EPSILON_F)
-   SBC bca_p1                              ; lo of 2*EPS-p1' (C=1 inbound:
-   TAX                                     ; CMP >= 4 or CPY fall-through;
-   LDA #0                                  ; X = p2 hi died with the right
-   SBC bca_p1+1                            ; window)
-   AND #$0F                                ; hi of (15-r1) & 4095 = tspan-1024
-   CPX t0                                  ; C = ((tspan-1024).lo >= span.lo)
-   SBC t1
-   BCS cull                                ; (tspan-2*CLIP) >= span: off left
-ck_left_clip:
-   BCC lk_lzero                            ; r1 = 0: ilo is the CONSTANT
-                                           ; VATOX[0]-1 clamped = 0 — reuse
-                                           ; lk_left's own LDA #0 (C=0: the
-                                           ; BCS above fell; always taken)
+   BCS ct_r1out_r2f                        ; r1 out, r2 in: ilo = 0
 lk_left:
-   ADC #>VATOX                             ; C=0 (inbound invariant)
-   STA pa_ptr+1
-   LDA (pa_ptr),Y                          ; vatox[r1]
+   ADC #>VATOX                             ; C=0 (BCS fell / ct_f_r2out's
+   STA pa_ptr+1                            ; BCC — both arrive C=0)
+   LDA (pa_ptr),Y                          ; vatox[r1'']
    SBC #0                                  ; C=0 (constant carry-out) -> v-1
-   BCS il1                                 ; C=1: v >= 1
-lk_lzero:
-   LDA #0                                  ; v == 0: ilo clamps to 0 (no carry
-il1:                                       ; contract past here — visok's exit
-   STA bca_ilo                             ; tolerates any C, as ih1's did)
-; NO ilo > ihi cull (2026-07-19): it is unreachable by construction —
-; the arms emit p1 <= p2 (left-to-right silhouette order), the window
-; clamps only raise p1 to -512 / cap p2 at +512 (order preserved),
-; vatox is monotone, and the -1/+1 adjusts EXPAND the interval, so
-; ilo <= ihi always (0/255 clamps included). The python mirror keeps
-; its check: any violation would fail check_angle per-call.
+   BCS ct_il                               ; C=1: v >= 1
+   LDA #0                                  ; v == 0: ilo clamps to 0
+ct_il:
+   STA bca_ilo
+; falls into visok. NO ilo > ihi check: in (F,F) the corners can
+; invert by at most 2*EPS (true span < 2048 outside the box, each
+; corner within +-EPS), and the left -2*EPS bias plus the -1/+1
+; adjusts restore ilo <= ihi; every other cell emits constants in
+; order. The python mirror keeps its tripwire.
 ; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
 ; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
 ; stays for the D-cache store, but callers branch without reloading.
@@ -614,6 +521,47 @@ cull:                                      ; THE cull exit (the file-head twin
    LDA #0                                  ; is gone, 2026-07-17: every BCS/BCC
    STA bca_vis                             ; cull now reaches FORWARD to here —
    RTS                                     ; ranges link-checked); A=0/Z=1
+
+; --- out-of-line cells (rarer paths) ---------------------------------
+ct_r1out_r2f:
+   LDA #0                                  ; (R,F)/(L,F): the box wraps in
+   STA bca_ilo                             ; from the left edge — ilo = 0
+   JMP visok
+ct_r2out:
+; A = r2 hi in [4,15]. X is free (the slot store above consumed it):
+; bank r2's R/L class there, then classify r1.
+   LDX #0
+   CMP #10
+   BCC ct_r2have                           ; hi < 10: R (X = 0)
+   INX                                     ; else L (X = 1)
+ct_r2have:
+   LDA bca_p1                              ; r1'' build (same as ct_left)
+   SEC
+   SBC #(2*EPSILON_F)
+   TAY
+   LDA bca_p1+1
+   SBC #0
+   AND #$0F
+   CMP #4
+   BCC ct_f_r2out                          ; r1 in F: [col1, 255]
+; both corners out: (L,R) -> full, everything else -> cull
+   CMP #10
+   BCC ct_cull_j                           ; r1 = R: (R,R)/(R,L) cull
+   CPX #0
+   BEQ ct_full_j                           ; (L,R): full
+ct_cull_j:
+   JMP cull                                ; (L,L) falls here too
+ct_full_j:
+   JMP full_vis
+ct_f_r2out:
+; (F,R)/(F,L): ihi = 255, then the ordinary left lookup. A = r1'' hi,
+; Y = r1'' lo, C=0 from the BCC — TAX/LDA/STA/TXA/JMP preserve it
+; into lk_left's pointer ADC.
+   TAX
+   LDA #255
+   STA bca_ihi
+   TXA
+   JMP lk_left
 
 ; ============================================================================
 ; ROTATION COHERENCE CACHE

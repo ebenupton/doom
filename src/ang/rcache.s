@@ -171,7 +171,8 @@ bcf_enable:
 ;     psi1 = (a_fine - p1) & 4095 ; psi2 = CPM_PSI[slot2] (identical
 ;       by the cp_havepsi algebra: memo[slot2] IS corner 2's psi)
 ;     store both ; set COMPUTED
-;     FULL := (span = (psi1-psi2) & 4095) >= 2048  # == (p2-p1) & 4095
+;     FULL: inside-escape only (2026-07-20 — cell-table verdicts
+;       for corner boxes are angle-dependent, so no corner FULL bit)
 ;     goto bca_tail
 bbox_check_angle_cached:
 ; (no bca_vis entry preset — every exit tail stores it; see bca.s)
@@ -262,12 +263,13 @@ bcac_cold:
    STA RCACHE_COMPUTED,X
    JMP bcac_setfull
 bcs_corners:
-; psi1/psi2 staged in pa_dx/pa_dy (dead here). The FULL verdict —
-; span = (psi1 - psi2) & 4095 >= 2048, identical to (p2-p1) & 4095
-; (a_fine cancels) — is decided NOW while both raw hi nibbles are to
-; hand, and banked on the stack across the plane stores (bit 3 of a
-; difference depends only on bits 0-3 of its operands, so any sheddable
-; top bits in the his are harmless).
+; psi1/psi2 staged in pa_dx/pa_dy (dead here). NO span-FULL test any
+; more (2026-07-20, the region-cell tail): corner-derived span >= 2048
+; verdicts are angle-DEPENDENT under the cell table (a halo box can
+; answer [col,255] at one angle and full at another), so the
+; a_fine-independent FULL bit retreats to the inside-escape marker
+; only — the corner path always leaves FULL clear and warm entries
+; recompute the cells from the cached psi.
    SEC
    LDA bca_afn
    SBC bca_p1
@@ -279,17 +281,8 @@ bcs_corners:
    LDX zp_cpm_s2
    LDA CPM_PSIL,X
    STA pa_dy                               ; psi2 lo
-   LDA CPM_PSIH,X
-   STA pa_dy+1                             ; psi2 hi
-   SEC
-   LDA pa_dx
-   SBC pa_dy
-   LDA pa_dx+1
-   SBC pa_dy+1
-   AND #$08                                ; span bit 11 = the FULL verdict
-   PHA
 ; pack the PH byte: psi2 hi << 4 (top bits shed by the shifts) | psi1 hi
-   LDA pa_dy+1
+   LDA CPM_PSIH,X
    ASL A
    ASL A
    ASL A
@@ -321,11 +314,10 @@ bcs_done:
    LDA RCACHE_COMPUTED,X
    ORA rc_bit
    STA RCACHE_COMPUTED,X
-; full (a_fine-independent) iff span bit 11 — decided above, banked
-; on the stack across the plane stores.
-   PLA
-   BEQ bcac_notfull                        ; span < 2048
-; (X = rc_bytehi still — nothing since the COMPUTED store touched it)
+; corner path: FULL is inside-only now — always knock the stale bit
+; down. (X = rc_bytehi still — nothing since the COMPUTED store
+; touched it.)
+   JMP bcac_notfull
 bcac_setfull:
    LDA RCACHE_FULL,X
    ORA rc_bit

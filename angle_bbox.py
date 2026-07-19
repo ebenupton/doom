@@ -211,25 +211,39 @@ def bbox_check_angle(top, bot, left, right, px, py, ab):
     p2 = _phi(val[cc[2]], val[cc[3]], px, py, a_fine) + EPSILON_F   # right —
     # the certified role bias: every verdict is a SUPERSET of the exact
     # convention's (6502: the twin pre-biased afr constants, view.s)
-    span = (p2 - p1) & ANGMASK                          # DOOM angle1-angle2
-    if span >= ANG180:
-        return 0, VIS_W - 1            # viewer within the box's angular span
-    twoclip = 2 * CLIPANGLE
-    tspan = (-p1 + CLIPANGLE) & ANGMASK                 # clip left corner
-    if tspan > twoclip:
-        if (tspan - twoclip) >= span:
-            return None                                 # wholly off the left
-        p1 = -CLIPANGLE
-    tspan = (CLIPANGLE + p2) & ANGMASK                  # clip right corner
-    if tspan > twoclip:
-        if (tspan - twoclip) >= span:
-            return None                                 # wholly off the right
-        p2 = CLIPANGLE
-    lo = max(0, _phi_col(p1) - 1)                       # conservative +/-1
-    hi = min(VIS_W - 1, _phi_col(p2) + 1)
-    if lo > hi:
-        return None
-    return lo, hi
+    # REGION-CELL TAIL (2026-07-20): the span + tspan windows were a
+    # factored 1-bit approximation of a 3x3 region table over the
+    # biased corners; classifying each corner directly kills the span.
+    # r'' = (phi_biased + CLIPANGLE) & 4095; F = [0,1024) strictly,
+    # R = [1024,2560), L = [2560,4096). Cells:
+    #        r2: F           R            L
+    #    r1: F  lookups      [col1,255]   [col1,255]
+    #        R  [0,col2]     cull         cull
+    #        L  [0,col2]     FULL         cull
+    # r1-out with r2 in-FOV = the box wraps in from the left edge
+    # (coverage [0,col2]) whichever side r1 sits; mirrored for r2-out;
+    # (L,R) = viewer inside the box's arc = full; same-side and (R,L)
+    # intervals miss the FOV = cull. The ==1024 boundary folds into
+    # the out-cells (right: 255, identical to the old constant arm;
+    # left: ilo 0, a superset of the old 254). MUST match the 6502's
+    # bca_tail cell for cell.
+    r1 = (p1 + CLIPANGLE) & ANGMASK
+    r2 = (p2 + CLIPANGLE) & ANGMASK
+    c1 = 0 if r1 < 1024 else (1 if r1 < 2560 else 2)
+    c2 = 0 if r2 < 1024 else (1 if r2 < 2560 else 2)
+    if c1 == 0:
+        if c2 == 0:
+            lo = max(0, _phi_col(p1) - 1)               # conservative +/-1
+            hi = min(VIS_W - 1, _phi_col(p2) + 1)
+            if lo > hi:
+                return None                             # tripwire: unreachable
+            return lo, hi
+        return max(0, _phi_col(p1) - 1), VIS_W - 1      # (F,R)/(F,L)
+    if c2 == 0:
+        return 0, min(VIS_W - 1, _phi_col(p2) + 1)      # (R,F)/(L,F)
+    if c1 == 2 and c2 == 1:
+        return 0, VIS_W - 1                             # (L,R): full
+    return None                                         # (R,R)/(L,L)/(R,L)
 
 
 def view_col(vx, vy):
