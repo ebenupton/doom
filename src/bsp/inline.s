@@ -565,7 +565,15 @@ st_vis:
    LDA bca_ihi
    CMP #125
    BCC st_put                              ; left of centre: code = ihi (0-124)
-   LDA #127                                ; near-pivot / straddle
+   LDA #125                                ; near-pivot / straddle: STORE
+                                           ; INVALID (2026-07-20, Eben) —
+                                           ; a centre-spanning box always
+                                           ; RECOMPUTES instead of serving
+                                           ; (0,255): the full-width serve
+                                           ; defeated the has_gap gate on
+                                           ; exactly the most expensive
+                                           ; central subtrees (the coded-
+                                           ; extent over-descent class)
 st_put:
    LDY zp_bbox_side
    BNE st_left

@@ -158,9 +158,11 @@ dv_have:
    AND #7
    BEQ dv_fresh                            ; this entry's refresh slot
    LDA zp_br_t0
-   CMP #127
-   BEQ dv_straddle
-   BCS dv_right                            ; 132-255: right-of-centre
+   CMP #127                                ; (127 is never stored since
+   BCS dv_right                            ; 2026-07-20 — straddlers write
+                                           ; 125 and RECOMPUTE, see the
+                                           ; store macro — so this split is
+                                           ; pure left/right: C=1 -> >=132)
    LDY #0                                  ; 0-124: left-of-centre → (0, code+2)
    STY zp_i_l
    ADC #2                                  ; C clear here (CMP #127 not taken)
@@ -169,12 +171,6 @@ dv_have:
 dv_right:
    SBC #2                                  ; C set here (BCS taken) → code-2
    STA zp_i_l                                 ; (code-2, 255)
-   LDA #255
-   STA zp_i_h
-   JMP dv_gap
-dv_straddle:
-   LDA #0
-   STA zp_i_l
    LDA #255
    STA zp_i_h
 dv_gap:
