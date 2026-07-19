@@ -277,17 +277,23 @@ rot_zero:
    STA zp_br_res_x
    RTS
 
+; unity variants, SIGN-EXTERNAL (2026-07-19): ri_d arrives as |d| with
+; the d-sign banked in zp_ri_sgn by the caller's operand staging — the
+; product sign is trig-neg XOR d-neg, so pos and neg share two arms.
 rot_unity_pos:
-; val = d << 8 as s24: resl=0, resh=dlo, resext=dhi.
+   LDA zp_ri_sgn
+   BNE ru_neg
+ru_pass:
    ZERO zp_br_res_l
    LDA zp_ri_d_l
    STA zp_br_res_h
    LDA zp_ri_d_h
    STA zp_br_res_x
    RTS
-
 rot_unity_neg:
-; -(d << 8): byte 0 stays 0 (no borrow out of 0-0), negate the top pair.
+   LDA zp_ri_sgn
+   BNE ru_pass
+ru_neg:
    ZERO zp_br_res_l
    LDA #0
    SEC
@@ -302,14 +308,16 @@ rot_gen_sin:
    LDA #0                                  ; SMC +1: |sin| mag (rot_select)
    STA zp_mul_b
    LDA #0                                  ; SMC +5: sin neg flag
-   STA zp_br_t1                            ; SEEDS the core's sign tracker
+   EOR zp_ri_sgn                           ; XOR the operand's banked sign
+   STA zp_br_t1                            ; (the cores' in-place abs died)
    JMP rot_core_sin
 
 rot_gen_cos:
    LDA #0                                  ; SMC +1: |cos| mag (rot_select)
    STA zp_mul_b
    LDA #0                                  ; SMC +5: cos neg flag
-   STA zp_br_t1                            ; SEEDS the core's sign tracker
+   EOR zp_ri_sgn
+   STA zp_br_t1
    JMP rot_core_cos
 
 .if ::BANKED
@@ -330,22 +338,8 @@ rot_core_sin:
    BNE d_nz
    JMP ri_zero
 d_nz:
-; zp_br_t1 arrives SEEDED with the trig sign (thunk SMC immediate); a
-; negative d FLIPS it — the d-sign and trig-sign negations XOR-fold into
-; one tail negate.
-   LDA zp_ri_d_h
-   BPL d_pos
-   LDA zp_br_t1
-   EOR #1
-   STA zp_br_t1
-   LDA #0
-   SEC
-   SBC zp_ri_d_l
-   STA zp_ri_d_l
-   LDA #0
-   SBC zp_ri_d_h
-   STA zp_ri_d_h
-d_pos:
+; ri_d arrives as |d| (caller-staged; d-sign folded into t1 by the
+; thunk's EOR zp_ri_sgn) — the old in-place abs died 2026-07-19.
 ; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
 ; The sum side f(x+mag) is one LDA abs,X with X = raw x: rot_select
 ; patches the operand LO byte to mag (SQR pages are page-aligned so the
@@ -418,22 +412,8 @@ rot_core_cos:
    BNE d_nz
    JMP ri_zero
 d_nz:
-; zp_br_t1 arrives SEEDED with the trig sign (thunk SMC immediate); a
-; negative d FLIPS it — the d-sign and trig-sign negations XOR-fold into
-; one tail negate.
-   LDA zp_ri_d_h
-   BPL d_pos
-   LDA zp_br_t1
-   EOR #1
-   STA zp_br_t1
-   LDA #0
-   SEC
-   SBC zp_ri_d_l
-   STA zp_ri_d_l
-   LDA #0
-   SBC zp_ri_d_h
-   STA zp_ri_d_h
-d_pos:
+; ri_d arrives as |d| (caller-staged; d-sign folded into t1 by the
+; thunk's EOR zp_ri_sgn) — the old in-place abs died 2026-07-19.
 ; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
 ; The sum side f(x+mag) is one LDA abs,X with X = raw x: rot_select
 ; patches the operand LO byte to mag (SQR pages are page-aligned so the

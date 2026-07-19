@@ -162,7 +162,7 @@ pa_dy = $32                       ; [ang]; s16 in ; w=2
 zp_bbox_side = $34                ; [bsp]
 zp_br_dx_h = $35                  ; [bsp]
 zp_br_dy_h = $36                  ; [bsp]
-; $37 free (was zp_v_x_h — vx ABI unified on zp_br_vx 2026-07-19)
+zp_ri_sgn = $37                   ; [bsp]; rotate operand sign (|d| staging)
 ; $38 free (was zp_v_x_l)
 pa_res = $39                      ; [ang]; u16 out (fineangle) ; w=2
 bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2

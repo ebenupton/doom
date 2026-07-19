@@ -277,28 +277,64 @@ br_to_view:
    SBC zp_br_py_x
    STA zp_br_dy_h
 
-; int_vx = rot_int(dx, sin) - rot_int(dy, cos), as s24
-; (rot_s1..rot_s4 are SMC call sites — rot_select points them at the
-; per-frame trig variants in arith.s; result s24 in resl/resh/resext.)
+; OPERAND-PAIRED rotate (2026-07-19): each delta is staged as |d| ONCE
+; (sign banked in zp_ri_sgn) and feeds BOTH its trig calls — the four
+; per-call stagings and the cores' in-place abs died. rot_select's
+; wiring is unchanged: s1/s4 = the sin variant, s2/s3 = cos; the call
+; ORDER regroups by operand (dx: s1 sin -> vx, s3 cos -> vy;
+; dy: s2 cos -> vx -=, s4 sin -> vy +=) — same formulas:
+;   int_vx = dx*sin - dy*cos ; int_vy = dx*cos + dy*sin  (s24)
+   LDA #0
+   STA zp_ri_sgn
    LDA zp_br_dx_l
    STA zp_ri_d_l
    LDA zp_br_dx_h
    STA zp_ri_d_h
+   BPL dx_abs_ok
+   INC zp_ri_sgn
+   SEC
+   LDA #0
+   SBC zp_ri_d_l
+   STA zp_ri_d_l
+   LDA #0
+   SBC zp_ri_d_h
+   STA zp_ri_d_h
+dx_abs_ok:
 rot_s1:
-   JSR rot_gen_sin                         ; operand SMC'd per frame (rot_select)
+   JSR rot_gen_sin                         ; dx*sin (variant SMC'd per frame)
    LDA zp_br_res_l
    STA zp_br_vx_l
    LDA zp_br_res_h
    STA zp_br_vx_h
    LDA zp_br_res_x
    STA zp_br_vx_x
+rot_s3:
+   JSR rot_gen_cos                         ; dx*cos (|dx|/sign still staged)
+   LDA zp_br_res_l
+   STA zp_br_vy_l
+   LDA zp_br_res_h
+   STA zp_br_vy_h
+   LDA zp_br_res_x
+   STA zp_br_vy_x
 
+   LDA #0
+   STA zp_ri_sgn
    LDA zp_br_dy_l
    STA zp_ri_d_l
    LDA zp_br_dy_h
    STA zp_ri_d_h
+   BPL dy_abs_ok
+   INC zp_ri_sgn
+   SEC
+   LDA #0
+   SBC zp_ri_d_l
+   STA zp_ri_d_l
+   LDA #0
+   SBC zp_ri_d_h
+   STA zp_ri_d_h
+dy_abs_ok:
 rot_s2:
-   JSR rot_gen_cos                         ; operand SMC'd per frame
+   JSR rot_gen_cos                         ; dy*cos
    LDA zp_br_vx_l
    SEC
    SBC zp_br_res_l
@@ -309,27 +345,8 @@ rot_s2:
    LDA zp_br_vx_x
    SBC zp_br_res_x
    STA zp_br_vx_x
-
-; int_vy = rot_int(dx, cos) + rot_int(dy, sin), as s24
-   LDA zp_br_dx_l
-   STA zp_ri_d_l
-   LDA zp_br_dx_h
-   STA zp_ri_d_h
-rot_s3:
-   JSR rot_gen_cos                         ; operand SMC'd per frame
-   LDA zp_br_res_l
-   STA zp_br_vy_l
-   LDA zp_br_res_h
-   STA zp_br_vy_h
-   LDA zp_br_res_x
-   STA zp_br_vy_x
-
-   LDA zp_br_dy_l
-   STA zp_ri_d_l
-   LDA zp_br_dy_h
-   STA zp_ri_d_h
 rot_s4:
-   JSR rot_gen_sin                         ; operand SMC'd per frame
+   JSR rot_gen_sin                         ; dy*sin
    LDA zp_br_vy_l
    CLC
    ADC zp_br_res_l
