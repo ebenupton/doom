@@ -505,9 +505,12 @@ ck_right:
 ;   inherit C=1 from CMP >= 4 or CPY.
 ;
 ; right window test: r2 IS the right tspan (bias trick), and the
-; register pair IS the biased operand (afn hoist) — mask and compare.
+; register pair IS the biased operand (afn hoist) — bare compare: the
+; hi ARRIVES masked (cp_havepsi's AND #$0F exit) and the span math
+; never writes X, so the old mask here was an identity (audit
+; 2026-07-20; the other three tail masks are load-bearing — the span
+; diff, the left -2*EPS and the left negate all borrow 16-bit).
    TXA
-   AND #$0F
    CMP #4
    BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
    BNE ck_right_out
