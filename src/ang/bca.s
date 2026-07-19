@@ -807,17 +807,16 @@ nsxx_dxdone:
    LDA L8_TAB,Y
    ADC L8_TAB+1,Y
    ROR A
-   SEC
-   SBC t0                                  ; s = L(dy) - L(dx)
-   BCC nsxx_neg
-   JMP ns_khave
+   JMP nsxx_sub                            ; join the flat tail (space-
+                                           ; recovery fold: one compose)
 nsxx_neg:
    JMP ns_neg                              ; (range; C=0 rides the JMP
                                            ; into ns_neg's ADC #1)
 nsxx_dyflat:
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+nsxx_sub:
    SEC
-   SBC t0
+   SBC t0                                  ; s = L(dy) - L(dx)
    BCC nsxx_neg                            ; s < 0 (C=0 preserved)
    JMP ns_khave
 ns_x8y16:

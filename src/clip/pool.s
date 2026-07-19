@@ -123,10 +123,9 @@ free_span:
 ; The code + full I/O header now live in clip/arith.s (included right
 ; after clip/header.s so the pin lands at $2030 in the flat build).
 
-; NB (2026-07-12): the margin note on the pad below is historical —
-; umul8 moved to the pinned $2030 slot in clip/arith.s, so this byte no
-; longer aligns it; it is kept so all downstream code keeps its layout.
-   .byte 0                                 ; 1-byte pad: optimal alignment for umul8
+; (the historical umul8 alignment pad byte was deleted 2026-07-19 —
+; umul8 has been at the pinned $2030 slot in clip/arith.s since
+; 2026-07-12 and nothing anchors to the layout below.)
 
 ; (interp_core removed — inlined into interp_store below.)
 
