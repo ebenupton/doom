@@ -260,23 +260,6 @@ br_to_view:
 ; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
 ; their operands — and the body has no local labels; same rule as
 ; vxc_jsr_site in seg_xform.s.)
-; --- Integer deltas: d = vertex_world - player_int (both axes, s16). ---
-; dx (s16) = wx - px_int (s16: px_h lo, px_e hi).
-   LDA zp_br_dx_l
-   SEC
-   SBC zp_br_px_h
-   STA zp_br_dx_l
-   LDA zp_br_dx_h
-   SBC zp_br_px_x
-   STA zp_br_dx_h
-   LDA zp_br_dy_l
-   SEC
-   SBC zp_br_py_h
-   STA zp_br_dy_l
-   LDA zp_br_dy_h
-   SBC zp_br_py_x
-   STA zp_br_dy_h
-
 ; OPERAND-PAIRED rotate (2026-07-19): each delta is staged as |d| ONCE
 ; (sign banked in zp_ri_sgn) and feeds BOTH its trig calls — the four
 ; per-call stagings and the cores' in-place abs died. rot_select's
@@ -284,11 +267,21 @@ br_to_view:
 ; ORDER regroups by operand (dx: s1 sin -> vx, s3 cos -> vy;
 ; dy: s2 cos -> vx -=, s4 sin -> vy +=) — same formulas:
 ;   int_vx = dx*sin - dy*cos ; int_vy = dx*cos + dy*sin  (s24)
+;
+; The delta d = vertex_world - player_int SUBTRACTS STRAIGHT INTO the
+; rotate staging (2026-07-19): the old in-place zp_br_dx delta + copy
+; round is gone — zp_br_dx/dy keep the RAW world coords (dead after;
+; walk/backface stage their own deltas there), the SBC's N flag is the
+; sign test, and the dy subtract waits until its pair (the cores don't
+; touch zp_br_dy).
    LDA #0
    STA zp_ri_sgn
    LDA zp_br_dx_l
+   SEC
+   SBC zp_br_px_h
    STA zp_ri_d_l
    LDA zp_br_dx_h
+   SBC zp_br_px_x
    STA zp_ri_d_h
    BPL dx_abs_ok
    INC zp_ri_sgn
@@ -320,8 +313,11 @@ rot_s3:
    LDA #0
    STA zp_ri_sgn
    LDA zp_br_dy_l
+   SEC
+   SBC zp_br_py_h
    STA zp_ri_d_l
    LDA zp_br_dy_h
+   SBC zp_br_py_x
    STA zp_ri_d_h
    BPL dy_abs_ok
    INC zp_ri_sgn
