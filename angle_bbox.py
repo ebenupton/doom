@@ -227,6 +227,16 @@ def bbox_check_angle(top, bot, left, right, px, py, ab):
     # the out-cells (right: 255, identical to the old constant arm;
     # left: ilo 0, a superset of the old 254). MUST match the 6502's
     # bca_tail cell for cell.
+    # REACHABILITY TRIPWIRE (2026-07-20): the cell table (and the
+    # 6502's) is exhaustively verified over the band (p2-p1) & 4095 in
+    # [0, 2048+2E) u (4096-2E, 4096) — everything the arms can emit
+    # (true span < 2048 strictly outside the box; each corner within
+    # +-EPSILON_F). Outside the band the 6502 emits inverted (F,F)
+    # intervals and this mirror culls — a silent divergence — so any
+    # real call landing there means the certificate premise broke.
+    _d = (p2 - p1) & ANGMASK
+    assert _d < ANG180 + 2 * EPSILON_F or _d > ANGMASK - 2 * EPSILON_F, (
+        f'bbox corner pair outside the verified band: span {_d}')
     r1 = (p1 + CLIPANGLE) & ANGMASK
     r2 = (p2 + CLIPANGLE) & ANGMASK
     c1 = 0 if r1 < 1024 else (1 if r1 < 2560 else 2)
