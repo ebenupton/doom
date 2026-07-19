@@ -1,8 +1,6 @@
 ; Per-bbox cache, keyed by k = node*2 + side (the box ordinal):
 ;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
 ;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
-;   RCACHE_FULL          : 1 bit/bbox — result is a_fine-INDEPENDENT full
-;                          (viewer inside box, OR span>=ANG180); warm returns full
 ;
 ; bca_frame (per frame, from br_view_setup) SMC-patches the bbox.s call site (bca_check_op) between
 ; bbox_check_angle (moved frame: verbatim, zero overhead) and
@@ -39,7 +37,8 @@ RC_PH_S  = $0600                        ; the DEFQ page (FREE since d541b80;
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:
 RCACHE_COMPUTED = RCACHE_STATE          ; 59 bytes (bit per k>>3 group)
-RCACHE_FULL = RCACHE_STATE + $40        ; 59 bytes
+; RCACHE_STATE+$40..+$7A FREE (RCACHE_FULL died 2026-07-20 — inside
+;  boxes just recompute; 59 bytes reclaimed)
 bca_prevpos = RCACHE_STATE + $80        ; 4 bytes: last frame's int position
 bca_cachepos = RCACHE_STATE + $84       ; 4 bytes: position COMPUTED is valid for
 .assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
@@ -161,18 +160,15 @@ bcf_enable:
 ; pseudocode:
 ;   idx = bca_boxp - rom_bbox                    # node*16 + side*8
 ;   if COMPUTED[idx]:                            # --- WARM ---
-;     if FULL[idx]: return full (0,255)          # a_fine-independent result
 ;     p1 = sgnext((a_fine - psi1) & 4095)        # cp_havepsi
 ;     p2 = sgnext((a_fine - psi2) & 4095)
 ;     goto bca_tail
 ;   else:                                        # --- COLD ---
-;     if viewer inside box: set COMPUTED+FULL; return full
+;     if viewer inside box: return full (UNCACHED — recomputes)
 ;     box_classify + 2x corner_phi -> RAW p1 (pre-clip) + memo slot 2
 ;     psi1 = (a_fine - p1) & 4095 ; psi2 = CPM_PSI[slot2] (identical
 ;       by the cp_havepsi algebra: memo[slot2] IS corner 2's psi)
 ;     store both ; set COMPUTED
-;     FULL: inside-escape only (2026-07-20 — cell-table verdicts
-;       for corner boxes are angle-dependent, so no corner FULL bit)
 ;     goto bca_tail
 bbox_check_angle_cached:
 ; (no bca_vis entry preset — every exit tail stores it; see bca.s)
@@ -182,12 +178,11 @@ bbox_check_angle_cached:
    LDA RCACHE_COMPUTED,X
    AND rc_bit
    BEQ bcac_cold
-; --- WARM: full (a_fine-independent) result cached? ---
-; (X still = rc_bytehi: AND zp doesn't touch it)
-   LDA RCACHE_FULL,X
-   AND rc_bit
-   BNE bcac_warm_full
-; load psi1, psi2 from the planes and re-apply a_fine (cp_havepsi).
+; --- WARM: psi1/psi2 from the planes, re-apply a_fine (cp_havepsi).
+; (The FULL bit died 2026-07-20: its only remaining constituency was
+; inside-boxes, which never set COMPUTED now — they re-run the plain
+; path each frame, whose classify ladder detects inside almost as
+; cheaply as the FULL probe cost EVERY warm hit here.)
 ; k = node*2+side rides Y; the ASL's carry IS the senior-page select.
    LDA zp_node_ch_l
    ASL A
@@ -234,10 +229,6 @@ bw_hi:
    STA pa_res+1
    JSR cp_havepsi
    JMP bca_tail                            ; p2 rides A/Y, register-only
-bcac_warm_full:
-   JMP full_vis                            ; canonical tail (bca.s): sets
-                                           ; ilo/ihi/vis, A/Z = verdict
-
 ; --- COLD: ONE ROUTE (2026-07-18) — run the pristine bbox_check_angle
 ; whole, then populate the cache from what it left behind. The two psi
 ; sources (2026-07-19, the bca_p2 kill): (1) raw p1 survives in memory
@@ -252,17 +243,15 @@ bcac_warm_full:
 bcac_cold:
    JSR bbox_check_angle                    ; COMBINED verdict in A + the angle
    PHP                                     ; bit in C (the A/Z/C contract) —
-   PHA                                     ; bank BOTH across the snapshot;
-   JSR bcac_index                          ; raw p1 + the corner-2 slot survive
+   PHA                                     ; bank BOTH across the snapshot
    BIT zp_cpm_s2
-   BPL bcs_corners
-; inside-escape: no psi to snapshot (the planes are never read under
-; FULL) — set COMPUTED here, then ride the shared FULL-set exit.
-   LDX rc_bytehi
-   LDA RCACHE_COMPUTED,X
-   ORA rc_bit
-   STA RCACHE_COMPUTED,X
-   JMP bcac_setfull
+   BMI bcs_uncacheable                     ; inside-escape ($80 marker): no
+                                           ; corners ran, nothing to cache —
+                                           ; COMPUTED stays clear and the box
+                                           ; re-runs the plain path each frame
+                                           ; (the classify ladder's inside
+                                           ; detect is the cheap case)
+   JSR bcac_index                          ; raw p1 + the corner-2 slot survive
 bcs_corners:
 ; psi1/psi2 staged in pa_dx/pa_dy (dead here). NO span-FULL test any
 ; more (2026-07-20, the region-cell tail): corner-derived span >= 2048
@@ -310,32 +299,16 @@ bcs_hi:
    LDA pa_dx+1
    STA RC_PH_S,Y
 bcs_done:
-; set computed bit
+; set computed bit (no FULL bit any more — and with it went the whole
+; stale-bit-clearing dance: COMPUTED is the only epoch state)
    LDX rc_bytehi
    LDA RCACHE_COMPUTED,X
    ORA rc_bit
    STA RCACHE_COMPUTED,X
-; corner path: FULL is inside-only now — always knock the stale bit
-; down. (X = rc_bytehi still — nothing since the COMPUTED store
-; touched it.)
-   JMP bcac_notfull
-bcac_setfull:
-   LDA RCACHE_FULL,X
-   ORA rc_bit
-   STA RCACHE_FULL,X
+bcs_uncacheable:
    PLA                                     ; the combined check+has_gap verdict
    PLP                                     ; + its C signature, banked at
    RTS                                     ; bcac_cold entry (Z: A unchanged)
-bcac_notfull:
-; clear the FULL bit (RCACHE_FULL is not cleared at epoch start; a stale set
-; bit must be knocked down since warm reads it once COMPUTED is set).
-   LDA rc_bit
-   EOR #$FF
-   AND RCACHE_FULL,X                       ; (X = rc_bytehi still)
-   STA RCACHE_FULL,X
-   PLA
-   PLP
-   RTS
 
 
 bcac_index:
