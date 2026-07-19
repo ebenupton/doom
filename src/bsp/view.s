@@ -232,30 +232,47 @@ br_to_view_fetch:
 ; Page-split vertex planes (VP_*, header.s): senior-bit arm with the
 ; plane page BAKED — the idx*4 pointer build is gone (2026-07-15).
    PAGE BANK_L2                            ; vert planes live in the L2 window
+; The dx subtract is MERGED into the fetch (2026-07-19): wx never
+; lands in zp_br_dx — the plane loads feed the SBC directly and the
+; arm's last SBC leaves N for the sign branch (STA/JMP preserve it),
+; entering br_to_view past its dx staging. wy still stages raw in
+; zp_br_dy (its subtract waits for the operand pair, so a fetch-side
+; pre-subtract just moves the copy back). Direct br_to_view callers
+; (chain path, harness, vxc ref probe) keep the staged-dx entry.
    LDA zp_seg_v_idx_b
    AND #$20                                ; senior: idx >= 256 (B >= 32)
    BNE vf_hi
    LDY zp_seg_v_idx_l
-   LDA VP_XLO,Y
-   STA zp_br_dx_l
-   LDA VP_XHI,Y
-   STA zp_br_dx_h
    LDA VP_YLO,Y
    STA zp_br_dy_l
    LDA VP_YHI,Y
    STA zp_br_dy_h
-   JMP br_to_view
+   LDA #0
+   STA zp_ri_sgn
+   LDA VP_XLO,Y
+   SEC
+   SBC zp_br_px_h
+   STA zp_ri_d_l
+   LDA VP_XHI,Y
+   SBC zp_br_px_x
+   STA zp_ri_d_h
+   JMP btv_dx_signed
 vf_hi:
    LDY zp_seg_v_idx_l
-   LDA VP_XLO+$100,Y
-   STA zp_br_dx_l
-   LDA VP_XHI+$100,Y
-   STA zp_br_dx_h
    LDA VP_YLO+$100,Y
    STA zp_br_dy_l
    LDA VP_YHI+$100,Y
    STA zp_br_dy_h
-; falls into br_to_view
+   LDA #0
+   STA zp_ri_sgn
+   LDA VP_XLO+$100,Y
+   SEC
+   SBC zp_br_px_h
+   STA zp_ri_d_l
+   LDA VP_XHI+$100,Y
+   SBC zp_br_px_x
+   STA zp_ri_d_h
+   JMP btv_dx_signed
 br_to_view:
 ; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
 ; their operands — and the body has no local labels; same rule as
@@ -283,6 +300,7 @@ br_to_view:
    LDA zp_br_dx_h
    SBC zp_br_px_x
    STA zp_ri_d_h
+btv_dx_signed:                          ; fetch enters here, N = delta sign
    BPL dx_abs_ok
    INC zp_ri_sgn
    SEC

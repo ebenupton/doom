@@ -150,6 +150,43 @@ NF_LLEAF = $40                          ; left child is a subsector
 ;   out: control flow — JMP front (dot > 0) / JMP back (dot <= 0).
 ;   Clobbers A, X, deltas (abs-folded in place), t0-t5, mul workspace.
 ; ============================================================================
+; UMUL8_INLINE — SC_UMUL8's body opened at a call site (2026-07-19):
+; kills the JSR/RTS pair AND the zp_prod_h store (the low-partial
+; sites' sole hi consumer is A — only the senior-partial adders read
+; zp_prod_h, and they run their own JSR mul). A = a in, zp_mul_b = b;
+; out A = prod hi, zp_prod_l = prod lo. Clobbers X, Y, zp_tmp0 (same
+; as the subroutine).
+.macro UMUL8_INLINE
+.local pos, uo, done
+   STA zp_tmp0
+   SEC
+   SBC zp_mul_b
+   BCS pos
+   EOR #$FF
+   ADC #1
+pos:
+   TAY
+   LDA zp_tmp0
+   CLC
+   ADC zp_mul_b
+   TAX
+   BCS uo
+   LDA sqr_l,X
+   SEC
+   SBC sqr_l,Y
+   STA zp_prod_l
+   LDA sqr_h,X
+   SBC sqr_h,Y
+   JMP done
+uo:
+   LDA sqr2_l,X
+   SBC sqr_l,Y
+   STA zp_prod_l
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+done:
+.endmacro
+
 .macro CROSS_MAG_DECIDE front, back
 .local cm_dx_pos, cm_dy_pos, cm_p1_done, cm_p2_done, cm_p1_hi, cm_p2_hi
 .local cm_dec, cm_neg, cm_back
@@ -183,7 +220,7 @@ cm_dy_pos:
    STA zp_br_a                             ; survives for the hi partial
    LDX zp_br_dx_l
    STX zp_mul_b
-   JSR SC_UMUL8
+   UMUL8_INLINE
    STA zp_br_t3
    LDA zp_prod_l
    STA zp_br_t2
@@ -197,7 +234,7 @@ cm_p1_done:
    STA zp_br_a
    LDX zp_br_dy_l
    STX zp_mul_b
-   JSR SC_UMUL8
+   UMUL8_INLINE
    STA zp_br_t1
    LDA zp_prod_l
    STA zp_br_t0

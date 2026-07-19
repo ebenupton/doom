@@ -1,3 +1,14 @@
+; EXPLICIT segment (2026-07-19): this file inherited whatever segment
+; main_tail.s left active — which is ZZTAIL, the true-end marker. The
+; 8 vc_bit_mask bytes rode PAST code_true_end, invisible to the tail
+; assert, and the day the code end crossed CPM_BASE-8 the corner-memo
+; stores shredded them (vertex-cache valid tests went garbage). The
+; fall-through-across-.segment landmine, again.
+.if ::BANKED
+.segment "B_BK"
+.else
+.segment "B"
+.endif
 bsp_b_start:
 
 ; (the DEFERRED OP QUEUE lived here until 2026-07-16 — clip ops now
