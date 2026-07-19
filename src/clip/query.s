@@ -40,6 +40,10 @@
 SEG_CODE
 span_has_gap:
 .scope
+; ABI (formalized 2026-07-20): in = THE interval pair zp_i_l/zp_i_h
+; (closed [lo, hi] — see the zp.inc contract block: loop-operand +
+; multi-consumer persistence make ZP strictly better than registers
+; here); out = A/Z verdict with C == A. The pair is read-only here.
 ; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
 ; range, 0 otherwise. Spans are sorted by xstart.
 ; Coherence cache: check last-matching span first (saves full walk).

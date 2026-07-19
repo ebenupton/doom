@@ -324,8 +324,25 @@ zp_head = $C0                     ; [clip]
    BEQ target
 .endmacro
 zp_free = $C1                     ; [clip]
-zp_i_l = $C2                      ; [clip]; ALSO bca_ilo (aliased 2026-07-18
-zp_i_h = $C3                      ; [clip]; — the bca tail writes these
+; --- THE INTERVAL ABI ($C2/$C3) -------------------------------------
+; zp_i_l/zp_i_h is the CANONICAL closed column interval [lo, hi] —
+; the argument pair of span_has_gap, span_mark_solid and
+; tighten_from_records, and the OUTPUT slots of the bbox check
+; (bca_ilo/bca_ihi alias here, 2026-07-18: the tail's lookups store
+; STRAIGHT into the argument slots, so the fused JMP SC_HAS_GAP exit
+; carries zero marshalling). WHY ZP AND NOT REGISTERS (audited
+; 2026-07-20, Eben's ABI question): (1) the consumers' inner loops
+; use the pair as COMPARE OPERANDS every iteration (CMP zp — there is
+; no CMP vs Y/abs,X on 6502), so a register entry just moves the two
+; stores inside the callee; (2) the pair must SURVIVE has_gap for the
+; second and third consumers (the D-cache store classifies from it,
+; mark_solid re-reads it), which registers cannot promise across
+; PAGE/flag traffic. Writers: the bca tail cells, the D-serve arms
+; (dv_left/right/straddle), the seg emit path, mark_solid callers.
+; RETURN ABI: A/Z = verdict, C == A (query.s contract; bca's cull
+; forges A=0/C=1 — see the tail).
+zp_i_l = $C2                      ; [clip+ang]; interval lo (= bca_ilo)
+zp_i_h = $C3                      ; [clip+ang]; interval hi (= bca_ihi)
                                   ; directly; $BB/$BF freed)
 zp_hg_cache = $D0                 ; [clip]; has_gap coherence cache: last-matching span offset
 zp_i_x0 = $D1                     ; [clip]
