@@ -63,7 +63,7 @@ def load_angle_module(mem, c02=None):
     vatox = sym('VATOX')
     # option F tables (tools/atanexp_cert.py is the one source; the
     # mirror loads the same json). Seed-time contract asserts:
-    assert A.EPSILON_F == 15, 'EPSILON drifted from the baked bca_tail bias'
+    assert A.EPSILON_F == 12, 'EPSILON drifted from the baked bca_tail bias (EPSILON_F equate, ang/header_div.s)'
     assert A._TA0 == 0, 'TA0 drifted from the baked num==0 arm'
     assert A._ATANEXP[0] == 512, \
         'AE[0] must be 512: lf_ns ties ride k=0 with no fallback compare'

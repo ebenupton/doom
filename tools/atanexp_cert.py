@@ -29,7 +29,17 @@ L8 = [0] + [min(255, round(math.log2(v) * 32)) for v in range(1, 256)]
 #  seed masked it to 0 and the top-mantissa corners went wild; the cert
 #  models the SAME clamp so epsilon covers it. L8[0] unused.)
 def L(v):
-    return L8[v] if v < 256 else L8[v >> 3] + 96
+    # >=256: >>3 with HALF-BIT RECOVERY (2026-07-19, Eben): when the
+    # last shifted-out bit is 1, average the two neighbouring L8
+    # entries (round-to-nearest) instead of truncating — the 6502 does
+    # (L8[i] + L8[i+1] + C) >> 1 with the shifted-out carry as the +1.
+    # Index 255 has no neighbour: flat (the 6502 guards identically).
+    if v < 256:
+        return L8[v]
+    i = v >> 3
+    if (v & 4) and i < 255:
+        return ((L8[i] + L8[i + 1] + 1) >> 1) + 96
+    return L8[i] + 96
 
 TA0 = A._tantoangle[0]
 
@@ -71,7 +81,7 @@ for k in range(0, 256):
 # certificate is unchanged as long as eps stays within the baked bias.
 ATANEXP[0] = 512
 eps = max(eps, 512 - lo[0], hi[0] - 512)
-assert 512 - lo[0] <= 15, f'bucket-0 error {512 - lo[0]} busts the baked bias'
+assert 512 - lo[0] <= 12, f'bucket-0 error {512 - lo[0]} busts the baked bias (EPSILON_F must cover it)'
 # k can exceed 255? L range: L(2047)-L(1) = 96+L8[255] = 96+255 = 351!?
 print("kmax =", kmax, " (table clamps above 255: verify those buckets)")
 over = [k for k in lo if k > 255]

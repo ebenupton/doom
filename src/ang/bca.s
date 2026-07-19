@@ -449,22 +449,22 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
 ; verdict (span/full, the clip windows, the cull tests, the extents)
 ; becomes a SUPERSET of the exact convention's, so the framebuffer is
 ; bit-identical. FOLDED (2026-07-18): the bias never lands in memory —
-; span carries it as the +30 constant ((r2+15)-(r1-15) = r2-r1+30
+; span carries it as the +2*EPS constant ((r2+EPS)-(r1-EPS) = r2-r1+2*EPS
 ; mod 4096, exact by modular arithmetic), and each window test builds
 ; its biased operands in registers. bca_p1 stays RAW through the tail
 ; (the rcache psi snapshot always wanted that), and the full-vis exit
 ; skips the whole bias.
    STX zp_cpm_s2                           ; corner 2's memo slot -> the
                                            ; rcache cold snapshot's psi2 key
-; The +30 bias lands on p2 BEFORE the p1 subtraction (associative,
-; exact mod 4096): span' = (p2+30) - p1 in ONE borrow chain, and the
-; biased p2 rides Y/X to the right window, whose r2' = p2+15 is now a
-; -15 at identical cost. This kills the stage-then-reload round the
+; The +2*EPS bias lands on p2 BEFORE the p1 subtraction (associative,
+; exact mod 4096): span' = (p2+2*EPS) - p1 in ONE borrow chain, and the
+; biased p2 rides Y/X to the right window, whose r2' = p2+EPS is now a
+; -EPS at identical cost. This kills the stage-then-reload round the
 ; after-the-subtract fold needed.
    TAX                                     ; p2 hi
    TYA
    CLC
-   ADC #30
+   ADC #(2*EPSILON_F)
    TAY                                     ; Y = (p2+30) lo, rides to ck_right
    TXA
    ADC #0
@@ -507,7 +507,7 @@ ck_right:
 ; p2+30, so r2' = (r2 + 15) & 4095 is a -15.
    TYA                                     ; r2' = (p2+30) - 15, built
    SEC                                     ; from Y/X — no memory operand
-   SBC #15
+   SBC #EPSILON_F
    TAY
    TXA
    SBC #0
@@ -548,7 +548,7 @@ ck_left:
 ; three registers can carry).
    LDA bca_p1                              ; r1' = (r1 - 15) & 4095, built in
    SEC                                     ; registers (raw r1 stays in memory
-   SBC #15                                 ; for the -r1' fold + the snapshot)
+   SBC #EPSILON_F                          ; for the -r1' fold + the snapshot)
    TAY
    LDA bca_p1+1
    SBC #0
@@ -570,7 +570,7 @@ ck_left_out:
 ; CONSTANT (raw r1 still in memory). Discard-result 16-bit compare vs
 ; span (CPX seeds the borrow; only the final carry survives): C=1 iff
 ; tspan-1024 >= span -> wholly off the left.
-   LDA #15
+   LDA #EPSILON_F
    SBC bca_p1                              ; lo of 15-r1 (C=1 inbound: CMP >= 4
    TAX                                     ; or CPY fall-through; X = p2 hi
    LDA #0                                  ; died with the right window)
@@ -758,9 +758,17 @@ CPM_ENTRY corner_phi_pp, 0, 0, 0
 ; reducers shift COPIES in t0/t1 — pa_dx/pa_dy must stay raw-valued
 ; for the shared-axis rows' carryover.
 ; ============================================================================
+; HALF-BIT RECOVERY (2026-07-19, Eben's averaging idea): the >>3
+; reductions no longer truncate — the third shift's carried-out bit
+; gates a two-entry average, (L8[i] + L8[i+1] + C) >> 1, with the
+; SHIFTED-OUT CARRY ITSELF as the round-to-nearest +1 and the 9-bit
+; overflow riding back in through ROR. Index 255 has no neighbour:
+; the EOR #$FF test (C-neutral — CPY would eat the carry) skips to
+; the flat load, exactly the cert/mirror guard. EPSILON drops 15->12
+; certified; only the memoised MISS path pays the ~9 odd-path cycles.
 ns_x16y16:
-; both 16-bit: reduce both >> 3 into (A:t0)/(A:t1), then the 8-bit
-; shape on the reduced values.
+; both 16-bit: reduce and LOOK UP dx first (its half-bit carry is
+; fresh), bank L(dx) in t0, then reduce+look up dy and subtract.
    STY t1                                  ; Y = pa_dy+1 (banked at the
                                            ; ns_x16 dispatch) — must land
                                            ; before the LDY below
@@ -771,21 +779,47 @@ ns_x16y16:
    LSR A
    ROR t0
    LSR A
-   ROR t0
+   ROR t0                                  ; C = dx's shifted-out half bit
+   LDA t0
+   TAY
+   BCC nsxx_dxflat
+   EOR #$FF
+   BEQ nsxx_dxflat                         ; index 255: no neighbour
+   LDA L8_TAB,Y
+   ADC L8_TAB+1,Y                          ; + neighbour + C(=1)
+   ROR A                                   ; 9-bit round-to-nearest mean
+   JMP nsxx_dxdone
+nsxx_dxflat:
+   LDA L8_TAB,Y                            ; L8[|dx| >> 3]
+nsxx_dxdone:
+   STA t0                                  ; t0 = L(dx) (index dead)
    LDA pa_dy
    LSR t1
    ROR A
    LSR t1
    ROR A
    LSR t1
-   ROR A
+   ROR A                                   ; C = dy's half bit
    TAY
-   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
-   LDY t0
+   BCC nsxx_dyflat
+   EOR #$FF
+   BEQ nsxx_dyflat
+   LDA L8_TAB,Y
+   ADC L8_TAB+1,Y
+   ROR A
    SEC
-   SBC L8_TAB,Y                            ; - L8[|dx| >> 3]
-   BCC ns_neg                              ; s < 0: forward, direct (C=0
-   JMP ns_khave                            ; rides into ns_neg's ADC #1)
+   SBC t0                                  ; s = L(dy) - L(dx)
+   BCC nsxx_neg
+   JMP ns_khave
+nsxx_neg:
+   JMP ns_neg                              ; (range; C=0 rides the JMP
+                                           ; into ns_neg's ADC #1)
+nsxx_dyflat:
+   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+   SEC
+   SBC t0
+   BCC nsxx_neg                            ; s < 0 (C=0 preserved)
+   JMP ns_khave
 ns_x8y16:
 ; |dx| 8-bit, |dy| 16-bit: axgt static clear.
    STA t0                                  ; A = pa_dy+1 (from lf_ns)
@@ -795,18 +829,29 @@ ns_x8y16:
    LSR t0
    ROR A
    LSR t0
-   ROR A
+   ROR A                                   ; C = half bit
    TAY
+   BCC nsxy_flat
+   EOR #$FF
+   BEQ nsxy_flat
+   LDA L8_TAB,Y
+   ADC L8_TAB+1,Y
+   ROR A
+   JMP nsxy_have
+nsxy_flat:
    LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+nsxy_have:
    LDY pa_dx
    SEC
    SBC L8_TAB,Y                            ; - L8[|dx|]
    BCS ns_pos96
    ADC #96                                 ; C=0: wraps to diff+96 exactly
    JMP ns_khave                            ; (diff >= -95: k >= 1)
+ns_x16y16_j:
+   JMP ns_x16y16                           ; (range: the arms grew)
 ns_x16:
    LDY pa_dy+1
-   BNE ns_x16y16
+   BNE ns_x16y16_j
 ; |dx| 16-bit, |dy| 8-bit: axgt static SET.
    INX
    STA t0                                  ; A = pa_dx+1 (LDY/INX kept it)
@@ -816,9 +861,18 @@ ns_x16:
    LSR t0
    ROR A
    LSR t0
-   ROR A
+   ROR A                                   ; C = half bit
    TAY
+   BCC nsyx_flat
+   EOR #$FF
+   BEQ nsyx_flat
+   LDA L8_TAB,Y
+   ADC L8_TAB+1,Y
+   ROR A
+   JMP nsyx_have
+nsyx_flat:
    LDA L8_TAB,Y                            ; L8[|dx| >> 3]
+nsyx_have:
    LDY pa_dy
    SEC
    SBC L8_TAB,Y                            ; - L8[|dy|]
@@ -864,11 +918,14 @@ ns_dx0:
 ;   out: psi in pa_res and the memo (via mask_done), then falls
 ;        through cp_havepsi: A = r hi, Y = r lo, X = slot
 ; ============================================================================
+ns_x8y16_j:
+   JMP ns_x8y16                            ; (the half-bit recovery grew the
+                                           ; arms past branch range)
 lf_ns:
    LDA pa_dx+1
    BNE ns_x16                              ; 16-bit widths: backward, the
    LDA pa_dy+1                             ; tested hi byte rides A into
-   BNE ns_x8y16                            ; the arm
+   BNE ns_x8y16_j                          ; the arm
 ; both 8-bit (the common case): direct table reads, no reduction
    LDY pa_dy
    LDA L8_TAB,Y                            ; L8[|dy|]

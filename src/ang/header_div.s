@@ -113,6 +113,14 @@ bca_ihi = zp_i_h                        ; (2026-07-18): the tail writes the
                                         ; check. $BB/$BF freed.
 .assert (VATOX & $FF) = 0, error, "VATOX must be page-aligned (bca_tail rides the index lo byte in Y)"
 .assert (VATOX >> 8) + 4 <= $FF, error, "VATOX hi +4 must not wrap (bca_tail's pointer ADCs assume carry-out 0)"
+; EPSILON_F — the certified worst-case atanexp error (fine units).
+; ONE SOURCE: tools/atanexp_cert.py prints it and writes it into
+; tools/atanexp_tables.json (the mirror reads it from there); these
+; immediates must match. 15 -> 12 on 2026-07-19 (half-bit recovery in
+; the >>3 L reductions — Eben's carry-average). Every tail bias below
+; derives from it: span' carries +2*EPSILON_F, each window builds its
+; operand +-EPSILON_F.
+EPSILON_F = 12
 bca_vis = $64                           ; sole owner (see zp.inc $64 note)
 bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 (afn pre-biased; NOT sign-extended)
 zp_cpm_s2 = $CA                         ; corner 2's memo slot, banked by

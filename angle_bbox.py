@@ -110,7 +110,17 @@ except FileNotFoundError:                  # bootstrap: the cert tool imports
 
 
 def _lf(v):
-    return _L8[v] if v < 256 else _L8[v >> 3] + 96
+    # >= 256: >>3 with half-bit recovery (2026-07-19): odd half-steps
+    # average the two neighbouring L8 entries, round-to-nearest — the
+    # 6502 folds the shifted-out carry in as the +1 of (a + b + 1) >> 1.
+    # Index 255 has no neighbour: flat (6502 guards identically).
+    # MUST match tools/atanexp_cert.py's L() bit for bit.
+    if v < 256:
+        return _L8[v]
+    i = v >> 3
+    if (v & 4) and i < 255:
+        return ((_L8[i] + _L8[i + 1] + 1) >> 1) + 96
+    return _L8[i] + 96
 
 
 def _ta_f(num, den):
