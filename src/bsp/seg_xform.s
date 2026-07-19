@@ -250,10 +250,10 @@ nc_ok:
    ASL A
    LDA zp_br_vy_h
    ROL A
-   STA zp_br_t0
+   TAY                                     ; idx lo rides Y (register ABI)
    LDA zp_br_vy_x
    ROL A
-   STA zp_br_t1
+   TAX                                     ; idx hi rides X
    JSR br_recip                            ; rhi/rlo = reciprocal
 
 ; --- Project X using saved view-x integer + fractional parts ---

@@ -97,11 +97,13 @@ br_recip:
 ; exceptions (idx 256 -> 8, idx 512 -> 9) handled in their arms. The
 ; old low clamp, the idx-1 subtract and the bit-length compare cascade
 ; are all gone (~30 cycles on the common path).
+; REGISTER ABI (2026-07-19): idx arrives Y = lo, X = hi (X, not A —
+; the PAGE clobbers A). The old zp_br_t0/t1 staging round-trip died
+; at both callers and here.
    PAGE BANK_L2                            ; recip + SRECIP live in L2
                                         ; (LOAD-BEARING: the VXC warm path
                                         ; arrives bank-C paged)
-   LDY zp_br_t0
-   LDA zp_br_t1
+   TXA
    BEQ rcp_p0                              ; idx < 256: dominant
    CMP #4
    BCS rcp_clamp                           ; idx >= 1024 -> clamp to 1023

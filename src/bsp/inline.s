@@ -241,10 +241,8 @@ c_cx_rp:
    STA zp_clip_cx_hi
 
 c_set_recip:
-   LDA #2
-   STA zp_br_t0
-   LDA #0
-   STA zp_br_t1
+   LDY #2                                  ; idx = 2 (register ABI)
+   LDX #0
    JSR br_recip
    JMP inl_end
 inl_end:

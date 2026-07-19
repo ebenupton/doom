@@ -72,8 +72,9 @@ def test_recip():
     cases = list(range(2, 1024)) + [0, 1, 1024, 2048, 65535]
     fail = 0
     for vy_idx in cases:
-        mem[ZP_T0] = vy_idx & 0xFF
-        mem[ZP_T1] = (vy_idx >> 8) & 0xFF
+        # register ABI (2026-07-19): idx rides Y = lo, X = hi
+        sc.mpu.y = vy_idx & 0xFF
+        sc.mpu.x = (vy_idx >> 8) & 0xFF
         sc._run(ENTRY_BR_RECIP)
         got_hi = mem[ZP_RHI]
         got_lo = mem[ZP_RLO]
