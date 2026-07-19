@@ -445,7 +445,8 @@ dv_check:
 dv_next:
    LDA POOL_NEXT,X
    TAX
-   JMP dv_walk
+   BNE dv_check                            ; direct loop-back (the head's
+   RTS                                     ; BNE is the entry test only)
 dv_in:
 ; Span contains column xl. Compute top_y and bot_y at xl.
    STX zp_save0
