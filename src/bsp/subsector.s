@@ -419,7 +419,7 @@ ys_deltas_done:
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   JSR dpy_back
+   JSR dpy_back_v1                         ; (chained v1 = struct VX1)
    JMP ys_v2
 ys_v1_full:
    LDA #0
@@ -430,7 +430,7 @@ ys_v1_full:
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   JSR do_project_y
+   JSR do_project_y_v1
 ys_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; v2 -> struct VX2
@@ -440,7 +440,7 @@ ys_v2:
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   JSR do_project_y
+   JSR do_project_y_v2
    LDA #1
    STA zp_ys_done                           ; this seg's VX2 sy is live for
    LDA #0                                   ; the next seg's chain
