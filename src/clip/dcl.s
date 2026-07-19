@@ -101,15 +101,26 @@ dcl_walk:
 dcl_walk2:
 
 ; --- Skip spans entirely left of line ---
-; Skip if xend <= xl (strict: pixel-center model)
+; Skip if xend <= xl (strict: pixel-center model). xl is LOOP-
+; INVARIANT: it rides A across the whole skip walk via an X/Y
+; ping-pong advance (the has_gap idiom) — the old inline advance
+; reloaded it every span because LDA POOL_NEXT/TAX consumed A.
    LDA zp_line_xl_l
+dclw_x:
    CMP POOL_XEND,X
    BCC dcl_not_left
-; xl >= xend → skip this span (inline advance)
-   LDA POOL_NEXT,X
-   TAX
-   BNE dcl_walk2
+   LDY POOL_NEXT,X
+   BEQ dclw_flush
+   CMP POOL_XEND,Y
+   BCC dclw_found_y
+   LDX POOL_NEXT,Y
+   BNE dclw_x
+dclw_flush:
    JMP dcl_flush
+dclw_found_y:
+   TYA
+   TAX                                     ; canonicalize: span rides X into
+                                           ; the right-skip test below
 dcl_not_left:
 
 ; --- Skip spans entirely right of line ---
@@ -204,10 +215,14 @@ dcl_reject_below:
 dcl_rej_rec:
    JSR dcl_rec_flat_span
 dcl_outer_reject:
-; Outer reject → advance to next span (inline)
+; Outer reject → advance to next span (inline; JMP — the ping-pong
+; walk pushed dcl_walk2 out of branch range, and an always-guarded
+; BNE+JMP pair costs the same as the test+JMP form)
    LDA POOL_NEXT,X
    TAX
-   BNE dcl_walk2
+   BEQ dclor_flush
+   JMP dcl_walk2
+dclor_flush:
    JMP dcl_flush
 
 ; ── dcl_accept: record seg_start for an inner-bbox-accepted entry ──
