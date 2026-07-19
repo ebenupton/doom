@@ -444,16 +444,16 @@ zc_end:
 ; last); a lo-in-A flip costs a +4 shuffle per corner call — measured
 ; worse.
 bca_tail:                               ; shared by bbox_check_angle + _cached
-; F role bias (option F, 2026-07-17; EPSILON = 15 certified by
-; tools/atanexp_cert.py): r1 -= EPS, r2 += EPS — every downstream
-; verdict (span/full, the clip windows, the cull tests, the extents)
-; becomes a SUPERSET of the exact convention's, so the framebuffer is
-; bit-identical. FOLDED (2026-07-18): the bias never lands in memory —
-; span carries it as the +2*EPS constant ((r2+EPS)-(r1-EPS) = r2-r1+2*EPS
-; mod 4096, exact by modular arithmetic), and each window test builds
-; its biased operands in registers. bca_p1 stays RAW through the tail
-; (the rcache psi snapshot always wanted that), and the full-vis exit
-; skips the whole bias.
+; F role bias (option F; EPSILON_F = 12 certified by
+; tools/atanexp_cert.py since the 2026-07-19 half-bit recovery):
+; r1 -= EPS, r2 += EPS — every downstream verdict (span/full, the
+; clip windows, the cull tests, the extents) becomes a SUPERSET of
+; the exact convention's, so the framebuffer is bit-identical.
+; FOLDED twice over: the afn hoist (view.s) carries +EPS, so p1/p2
+; arrive as r+EPS and the span keeps the one explicit +2*EPS constant
+; ((p2+E)-(p1+E)+2E = p2-p1+2E mod 4096, exact). The rcache psi
+; snapshot is bias-invariant (afn' - p1' cancels the +EPS), and the
+; full-vis exit skips the window arithmetic entirely.
    STX zp_cpm_s2                           ; corner 2's memo slot -> the
                                            ; rcache cold snapshot's psi2 key
 ; The EPS bias now arrives IN the values (the afn hoist carries +EPS,
@@ -563,15 +563,16 @@ ck_left:
                                            ; r <= 1023 only)
 ck_left_out:
 ; r1' outside [0,1024]: left corner outside the FOV. tspan-1024 =
-; (0 - r1') & 4095 = (15 - r1) & 4095 — the bias folds into the negate
-; CONSTANT (raw r1 still in memory). Discard-result 16-bit compare vs
-; span (CPX seeds the borrow; only the final carry survives): C=1 iff
-; tspan-1024 >= span -> wholly off the left.
+; (0 - r1') & 4095 = (EPS - r1) & 4095 = (2*EPS - p1') & 4095 — the
+; bias folds into the negate CONSTANT (raw p1' still in memory).
+; Discard-result 16-bit compare vs span (CPX seeds the borrow; only
+; the final carry survives): C=1 iff tspan-1024 >= span -> wholly
+; off the left.
    LDA #(2*EPSILON_F)
-   SBC bca_p1                              ; (EPS - r1 = 2*EPS - p1')                              ; lo of 15-r1 (C=1 inbound: CMP >= 4
-   TAX                                     ; or CPY fall-through; X = p2 hi
-   LDA #0                                  ; died with the right window)
-   SBC bca_p1+1
+   SBC bca_p1                              ; lo of 2*EPS-p1' (C=1 inbound:
+   TAX                                     ; CMP >= 4 or CPY fall-through;
+   LDA #0                                  ; X = p2 hi died with the right
+   SBC bca_p1+1                            ; window)
    AND #$0F                                ; hi of (15-r1) & 4095 = tspan-1024
    CPX t0                                  ; C = ((tspan-1024).lo >= span.lo)
    SBC t1
