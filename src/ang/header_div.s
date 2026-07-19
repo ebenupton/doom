@@ -115,7 +115,13 @@ bca_ihi = zp_i_h                        ; (2026-07-18): the tail writes the
 .assert (VATOX >> 8) + 4 <= $FF, error, "VATOX hi +4 must not wrap (bca_tail's pointer ADCs assume carry-out 0)"
 bca_vis = $64                           ; sole owner (see zp.inc $64 note)
 bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 (afn pre-biased; NOT sign-extended)
-bca_p2 = $CA                            ; r2 = (phi2+512)&4095 u12 pair $CA/$CB
+zp_cpm_s2 = $CA                         ; corner 2's memo slot, banked by
+                                        ; bca_tail (X = slot on armed entries);
+                                        ; $80 = the inside-escape marker (no
+                                        ; corners ran). The rcache cold
+                                        ; snapshot's psi2 key. $CB FREE
+                                        ; (bca_p2 died 2026-07-19: p2 rides
+                                        ; registers through the whole tail)
 ; Hottest body vars in spare scavenged ZP (conflict-free) to cut the
 ; absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 ; (top,bot,left,right s16) and we read via (bca_boxp),Y

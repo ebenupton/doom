@@ -105,9 +105,9 @@
 ; ---------------------------------------------------------------------------
 ; ZARM family — a corner arm: fetch corner 1, take its phi, fetch
 ; corner 2, take its phi, chain into bca_tail (which receives p2 in
-; A/Y and owns the bca_p2 stores; p1 is stored here). corner_phi
-; returns r-hi in A, r-lo in Y, so the second fetch re-establishes
-; Y = node itself.
+; A/Y and banks X = corner 2's memo slot for the rcache cold
+; snapshot; p1 is stored here). corner_phi returns r-hi in A, r-lo
+; in Y, so the second fetch re-establishes Y = node itself.
 ;   ZARM      independent corners (full fetch both)
 ;   ZARM_SX   corners share the x plane, P-class: pa_dx survives c1
 ;   ZARM_SY   corners share the y plane, P-class: pa_dy survives c1
@@ -292,16 +292,13 @@ yMlo_nr:
 yMbot:                                     ; row 9 (S): corners share B
    ZARM_SY s, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 cxi:
-; viewer inside (or on the boundary of) the CLOSED box: publish the
-; full-span sentinel — the rcache cold snapshot marks FULL off its
-; ordinary span test, and the psi planes are never consulted under
-; FULL, so the stale pa state is unread.
-   LDA #0
-   STA bca_p1
-   STA bca_p1+1
-   STA bca_p2
-   LDA #8
-   STA bca_p2+1
+; viewer inside (or on the boundary of) the CLOSED box: no corners
+; ran, so corner 2's memo slot is stale — publish the $80 marker
+; instead (slots are 0-127; bit 7 is the impossible flag). The rcache
+; cold snapshot sees it and sets COMPUTED+FULL directly, never
+; touching the psi planes.
+   LDA #$80
+   STA zp_cpm_s2
    JMP full_vis
 ; --- RIGHT column ---
 yR:
@@ -335,9 +332,9 @@ yRmid:                                     ; row 6 (E): corners share R,
 ; JMP here). One LDY serves both side trees; the side picks a fully
 ; side-baked instantiation and is never consulted again.
 ;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
-;   out: control at a corner arm or full_vis; bca_p1/p2 = raw phis
-;        (via the arms' JSRs + bca_tail) — the rcache cold snapshot
-;        reads them from memory after the check
+;   out: control at a corner arm or full_vis; bca_p1 = raw phi 1 in
+;        memory, zp_cpm_s2 = corner 2's memo slot (or the $80 inside
+;        marker) — the rcache cold snapshot's two psi sources
 ; zc_corners/zc_end bound the harness PC window (check_angle_calls).
 
 ; ============================================================================
@@ -436,11 +433,16 @@ zc_end:
 ;   cull if ilo > ihi else visible
 ; ENTRY CONTRACT (2026-07-19, Eben's convention flip, adjusted): the
 ; caller hands p2 IN REGISTERS — A = p2 hi, Y = p2 lo, exactly what
-; cp_havepsi returns — and the TAIL owns the bca_p2 stores (the
-; rcache cold snapshot still reads them from memory after the check).
-; Every entry site dropped its STA/STY pair. NB hi-in-A is pinned by
-; cp_havepsi's borrow direction (hi computes last); a lo-in-A flip
-; costs a +4 shuffle per corner call — measured worse.
+; cp_havepsi returns. p2 NEVER LANDS IN MEMORY (bca_p2 died
+; 2026-07-19): the span math keeps it live in X/Y and the right window
+; runs first, register-sourced. The rcache cold snapshot gets psi2
+; from the corner memo instead, via zp_cpm_s2 — armed entries arrive
+; with X = corner 2's slot (the corner_phi return contract) and the
+; tail banks it below; warm entries write junk there, which is
+; harmless (the cold path reads only its own check's value). NB
+; hi-in-A is pinned by cp_havepsi's borrow direction (hi computes
+; last); a lo-in-A flip costs a +4 shuffle per corner call — measured
+; worse.
 bca_tail:                               ; shared by bbox_check_angle + _cached
 ; F role bias (option F, 2026-07-17; EPSILON = 15 certified by
 ; tools/atanexp_cert.py): r1 -= EPS, r2 += EPS — every downstream
@@ -449,53 +451,98 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
 ; bit-identical. FOLDED (2026-07-18): the bias never lands in memory —
 ; span carries it as the +30 constant ((r2+15)-(r1-15) = r2-r1+30
 ; mod 4096, exact by modular arithmetic), and each window test builds
-; its biased operands in registers. bca_p1/p2 now stay RAW through the
-; tail (the rcache psi snapshots always wanted that), and the full-vis
-; exit skips the whole bias.
-   STA bca_p2+1                            ; the tail owns the p2 stores
-   TAX                                     ; p2 hi rides X past the lo math
+; its biased operands in registers. bca_p1 stays RAW through the tail
+; (the rcache psi snapshot always wanted that), and the full-vis exit
+; skips the whole bias.
+   STX zp_cpm_s2                           ; corner 2's memo slot -> the
+                                           ; rcache cold snapshot's psi2 key
+   TAX                                     ; p2 hi rides X to the right window
    TYA
-   STA bca_p2
    SEC
    SBC bca_p1
    STA t0                                  ; raw diff lo (pre +30)
    TXA
    SBC bca_p1+1                            ; (TYA/TXA/STA preserve the borrow)
-   TAX                                     ; raw diff hi rides X
+   STA t1                                  ; raw diff hi staged (X stays p2 hi)
    LDA t0
    CLC
    ADC #30
    STA t0                                  ; span' lo
-   TXA
+   LDA t1
    ADC #0
    AND #$0F
    STA t1                                  ; span' hi (u12 fold)
    CMP #8
    BCS full_vis                            ; span >= 2048
-ck_left:
-; INTERLEAVED clip+lookup (2026-07-16): left window test -> left VATOX
-; lookup -> right window test -> right VATOX lookup. Each window test
-; leaves EXACTLY the lookup's operands in registers (A = r hi12 after
-; the mask, Y = r lo), so the pointer build is one immediate ADC — the
-; bca_p1/p2 reloads AND both clamps' memory stores are gone (the
-; lookups were the only post-clip readers; span and the rcache psi
-; snapshots read the raw values before the tail).
+ck_right:
+; INTERLEAVED clip+lookup (2026-07-16): window test -> VATOX lookup
+; per end. Each window test leaves EXACTLY the lookup's operands in
+; registers (A = r hi12 after the mask, Y = r lo), so the pointer
+; build is one immediate ADC. RIGHT WINDOW FIRST (2026-07-19): p2 is
+; still live in X/Y from the span math, so the r2' build is
+; register-only and p2 never touches memory. The windows are
+; independent and each can only cull the check or clamp its own end,
+; so the order swap is verdict-neutral; ilo/ihi are read only on
+; visible checks, so the store-order flip is unobservable.
 ;
-; bca_p1/p2 hold r = phi+512 (the afn hoist is pre-biased, view.s).
+; bca_p1 holds r = phi+512 (the afn hoist is pre-biased, view.s).
 ; Window: tspan = (1024-r) & 4095 <= 1024 <=> r in [0,1024]; r is PURE
 ; U12 (cp_havepsi stopped sign-extending 2026-07-16), so wrapped phi
 ; lands at hi in [8,15] and the raw hi compare decides. Only the rare
 ; outside paths do 16-bit arithmetic.
 ;
 ; Carry choreography (all proven, nothing incidental):
-;   every lk_* entry has C=0 — BCC arrivals, the ==1024 arms' CLC, and
-;   the left clamp's BCC+LDA/TAY; the pointer ADCs' carry-out is
-;   CONSTANT 0 (r_hi <= 4, >VATOX+4 never wraps — link-asserted), which
-;   LDA (ptr),Y carries into the +-1 adjusts (SBC #0 / ADC #1, no
-;   seeds); the out-arms' 16-bit ops inherit C=1 from CMP >= 4 or CPY.
+;   every lk_* entry has C=0 — BCC arrivals and the clip arms' BCC;
+;   the pointer ADCs' carry-out is CONSTANT 0 (r_hi <= 4, >VATOX+4
+;   never wraps — link-asserted), which LDA (ptr),Y carries into the
+;   +-1 adjusts (SBC #0 / ADC #1, no seeds); the out-arms' 16-bit ops
+;   inherit C=1 from CMP >= 4 or CPY.
+;
+; right window test: r2 IS the right tspan (bias trick).
+   TYA                                     ; r2' = (r2 + 15) & 4095, built
+   CLC                                     ; from Y/X — no memory operand
+   ADC #15
+   TAY
+   TXA
+   ADC #0
+   AND #$0F
+   CMP #4
+   BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
+   BNE ck_right_out
+   CPY #0
+   BEQ lk_r255                             ; r2 == 1024 exactly: ihi is the
+                                           ; CONSTANT VATOX[1024]+1 clamped =
+                                           ; 255 — ride lk_right's own LDA
+                                           ; #255 (Z=1 from CPY: always taken)
+ck_right_out:
+; right corner outside the FOV (like ck_left_out below, minus the
+; negate — r2 already IS tspan): tspan-1024 vs span, carry-only. C=1
+; inbound (CMP >= 4 / CPY) seeds the SBC #4.
+   SBC #4
+   CPY t0
+   SBC t1
+   BCS cull                                ; off right
+ck_right_clip:
+   BCC lk_r255                             ; r2 = 1024: ihi is the CONSTANT
+                                           ; 255 — reuse lk_right's LDA #255
+                                           ; (C=0: the BCS above fell)
+lk_right:
+   ADC #>VATOX                             ; C=0 (inbound invariant)
+   STA pa_ptr+1
+   LDA (pa_ptr),Y                          ; vatox[r2]
+   ADC #1                                  ; C=0 (constant carry-out) -> v+1
+   BCC ih1
+lk_r255:
+   LDA #255                                ; (the old second min(255) was an
+ih1:                                       ; identity — A <= 255 by now on
+   STA bca_ihi                             ; every path)
+ck_left:
+; left window test, same shape, sourced from bca_p1 in memory (the
+; arms store p1 — six values are live across the span math, more than
+; three registers can carry).
    LDA bca_p1                              ; r1' = (r1 - 15) & 4095, built in
    SEC                                     ; registers (raw r1 stays in memory
-   SBC #15                                 ; for the -r1' fold + the snapshots)
+   SBC #15                                 ; for the -r1' fold + the snapshot)
    TAY
    LDA bca_p1+1
    SBC #0
@@ -519,8 +566,8 @@ ck_left_out:
 ; tspan-1024 >= span -> wholly off the left.
    LDA #15
    SBC bca_p1                              ; lo of 15-r1 (C=1 inbound: CMP >= 4
-   TAX                                     ; or CPY fall-through)
-   LDA #0
+   TAX                                     ; or CPY fall-through; X = p2 hi
+   LDA #0                                  ; died with the right window)
    SBC bca_p1+1
    AND #$0F                                ; hi of (15-r1) & 4095 = tspan-1024
    CPX t0                                  ; C = ((tspan-1024).lo >= span.lo)
@@ -538,48 +585,9 @@ lk_left:
    SBC #0                                  ; C=0 (constant carry-out) -> v-1
    BCS il1                                 ; C=1: v >= 1
 lk_lzero:
-   LDA #0                                  ; v == 0: ilo clamps to 0 (no SEC:
-il1:                                       ; the right window test re-seeds C)
-   STA bca_ilo
-ck_right:
-; right window test: r2 IS the right tspan (bias trick) — same shape.
-   LDA bca_p2                              ; r2' = (r2 + 15) & 4095, built in
-   CLC                                     ; registers (raw r2 stays in memory)
-   ADC #15
-   TAY
-   LDA bca_p2+1
-   ADC #0
-   AND #$0F
-   CMP #4
-   BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
-   BNE ck_right_out
-   CPY #0
-   BEQ lk_r255                             ; r2 == 1024 exactly: ihi is the
-                                           ; CONSTANT VATOX[1024]+1 clamped =
-                                           ; 255 — ride lk_right's own LDA
-                                           ; #255 (Z=1 from CPY: always taken)
-ck_right_out:
-; mirror of ck_left_out, minus the negate (r2 already IS tspan):
-; tspan-1024 vs span, carry-only. C=1 inbound (CMP >= 4 / CPY) seeds
-; the SBC #4 — the explicit SEC died with the interleave.
-   SBC #4
-   CPY t0
-   SBC t1
-   BCS cull                                ; off right
-ck_right_clip:
-   BCC lk_r255                             ; r2 = 1024: ihi is the CONSTANT
-                                           ; 255 — reuse lk_right's LDA #255
-                                           ; (C=0: the BCS above fell)
-lk_right:
-   ADC #>VATOX                             ; C=0 (inbound invariant)
-   STA pa_ptr+1
-   LDA (pa_ptr),Y                          ; vatox[r2]
-   ADC #1                                  ; C=0 (constant carry-out) -> v+1
-   BCC ih1
-lk_r255:
-   LDA #255                                ; (the old second min(255) was an
-ih1:                                       ; identity — A <= 255 by now on
-   STA bca_ihi                             ; every path)
+   LDA #0                                  ; v == 0: ilo clamps to 0 (no carry
+il1:                                       ; contract past here — visok's exit
+   STA bca_ilo                             ; tolerates any C, as ih1's did)
 ; NO ilo > ihi cull (2026-07-19): it is unreachable by construction —
 ; the arms emit p1 <= p2 (left-to-right silhouette order), the window
 ; clamps only raise p1 to -512 / cap p2 at +512 (order preserved),

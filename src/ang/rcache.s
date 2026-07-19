@@ -167,9 +167,11 @@ bcf_enable:
 ;     goto bca_tail
 ;   else:                                        # --- COLD ---
 ;     if viewer inside box: set COMPUTED+FULL; return full
-;     box_classify + 2x corner_phi -> RAW p1/p2 (pre-clip!)
-;     psi_k = (a_fine - p_k) & 4095 ; store ; set COMPUTED
-;     FULL := (span = (p2-p1) & 4095) >= 2048    # a_fine cancels in span
+;     box_classify + 2x corner_phi -> RAW p1 (pre-clip) + memo slot 2
+;     psi1 = (a_fine - p1) & 4095 ; psi2 = CPM_PSI[slot2] (identical
+;       by the cp_havepsi algebra: memo[slot2] IS corner 2's psi)
+;     store both ; set COMPUTED
+;     FULL := (span = (psi1-psi2) & 4095) >= 2048  # == (p2-p1) & 4095
 ;     goto bca_tail
 bbox_check_angle_cached:
 ; (no bca_vis entry preset — every exit tail stores it; see bca.s)
@@ -210,7 +212,7 @@ bbox_check_angle_cached:
    LSR A
    STA pa_res+1
    JSR cp_havepsi
-   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
+   JMP bca_tail                            ; p2 rides A/Y, register-only
 bw_hi:
    LDA RC_P1L_S,Y
    STA pa_res
@@ -230,45 +232,68 @@ bw_hi:
    LSR A
    STA pa_res+1
    JSR cp_havepsi
-   JMP bca_tail                            ; p2 rides A/Y (tail stores it)
+   JMP bca_tail                            ; p2 rides A/Y, register-only
 bcac_warm_full:
    JMP full_vis                            ; canonical tail (bca.s): sets
                                            ; ilo/ihi/vis, A/Z = verdict
 
 ; --- COLD: ONE ROUTE (2026-07-18) — run the pristine bbox_check_angle
-; whole, then populate the cache from what it left behind. Two facts
-; make this possible now: (1) the bias fold made bca_tail READ-ONLY on
-; bca_p1/p2, so the RAW pre-clip phis survive the whole check (the old
-; split classify/corners route existed only to snapshot before the
-; tail's clamp write-backs — a clipped value baked the angle-dependent
-; clip into the position-only psi cache); (2) the inside escape now
-; publishes the p1/p2 FULL-span SENTINEL (cx_inside, corner_phi.s), so
-; the ordinary span test below marks it FULL — the zone flag and the
-; forced-inside route died with the zone byte (2026-07-19).
+; whole, then populate the cache from what it left behind. The two psi
+; sources (2026-07-19, the bca_p2 kill): (1) raw p1 survives in memory
+; (the bias fold made bca_tail read-only on it), so psi1 = (a_fine -
+; p1) & 4095 as before; (2) p2 never lands in memory now — instead
+; bca_tail banked corner 2's memo slot in zp_cpm_s2, and CPM_PSI at
+; that slot IS corner 2's psi (the serve/store invariant holds on both
+; corner_phi exits, and nothing runs between the arm and here to evict
+; it). Bit-identical: (a_fine - p2) & 4095 == psi2 by the cp_havepsi
+; algebra. The inside escape publishes the $80 marker in zp_cpm_s2
+; (no corners ran) and short-circuits to COMPUTED+FULL.
 bcac_cold:
    JSR bbox_check_angle                    ; COMBINED verdict in A (the fused
-   PHA                                     ; exits ran has_gap); raw p1/p2
-   JSR bcac_index                          ; survive for the store
-; psi1/psi2 = (a_fine - pK) & 4095, staged in pa_dx/pa_dy (dead here),
-; hi nibbles packed for the PH plane; one armed 3-store drop.
+   PHA                                     ; exits ran has_gap); raw p1 + the
+   JSR bcac_index                          ; corner-2 slot survive for the store
+   BIT zp_cpm_s2
+   BPL bcs_corners
+; inside-escape: no psi to snapshot (the planes are never read under
+; FULL) — set COMPUTED here, then ride the shared FULL-set exit.
+   LDX rc_bytehi
+   LDA RCACHE_COMPUTED,X
+   ORA rc_bit
+   STA RCACHE_COMPUTED,X
+   JMP bcac_setfull
+bcs_corners:
+; psi1/psi2 staged in pa_dx/pa_dy (dead here). The FULL verdict —
+; span = (psi1 - psi2) & 4095 >= 2048, identical to (p2-p1) & 4095
+; (a_fine cancels) — is decided NOW while both raw hi nibbles are to
+; hand, and banked on the stack across the plane stores (bit 3 of a
+; difference depends only on bits 0-3 of its operands, so any sheddable
+; top bits in the his are harmless).
    SEC
    LDA bca_afn
    SBC bca_p1
-   STA pa_dx
+   STA pa_dx                               ; psi1 lo
    LDA bca_afn+1
    SBC bca_p1+1
    AND #$0F
-   STA pa_dx+1
+   STA pa_dx+1                             ; psi1 hi (0-15)
+   LDX zp_cpm_s2
+   LDA CPM_PSIL,X
+   STA pa_dy                               ; psi2 lo
+   LDA CPM_PSIH,X
+   STA pa_dy+1                             ; psi2 hi
    SEC
-   LDA bca_afn
-   SBC bca_p2
-   STA pa_dy
-   LDA bca_afn+1
-   SBC bca_p2+1
+   LDA pa_dx
+   SBC pa_dy
+   LDA pa_dx+1
+   SBC pa_dy+1
+   AND #$08                                ; span bit 11 = the FULL verdict
+   PHA
+; pack the PH byte: psi2 hi << 4 (top bits shed by the shifts) | psi1 hi
+   LDA pa_dy+1
    ASL A
    ASL A
    ASL A
-   ASL A                                   ; psi2 hi nibble << 4 (top bits shed)
+   ASL A
    ORA pa_dx+1
    STA pa_dx+1                             ; packed PH byte
    LDA zp_node_ch_l
@@ -296,15 +321,10 @@ bcs_done:
    LDA RCACHE_COMPUTED,X
    ORA rc_bit
    STA RCACHE_COMPUTED,X
-; full (a_fine-independent) iff span = (p2-p1)&4095 >= 2048 (a_fine cancels).
-   SEC
-   LDA bca_p2
-   SBC bca_p1
-   LDA bca_p2+1
-   SBC bca_p1+1
-   AND #$0F
-   CMP #8
-   BCC bcac_notfull                        ; span < 2048
+; full (a_fine-independent) iff span bit 11 — decided above, banked
+; on the stack across the plane stores.
+   PLA
+   BEQ bcac_notfull                        ; span < 2048
 ; (X = rc_bytehi still — nothing since the COMPUTED store touched it)
 bcac_setfull:
    LDA RCACHE_FULL,X
