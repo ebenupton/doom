@@ -769,33 +769,6 @@ nsxx_sub:
    SBC t0                                  ; s = L(dy) - L(dx)
    BCC nsxx_neg                            ; s < 0 (C=0 preserved)
    JMP ns_khave
-ns_x8y16:
-; |dx| 8-bit, |dy| 16-bit: axgt static clear.
-   STA t0                                  ; A = pa_dy+1 (from lf_ns)
-   LDA pa_dy
-   LSR t0
-   ROR A
-   LSR t0
-   ROR A
-   LSR t0
-   ROR A                                   ; C = half bit
-   TAY
-   BCC nsxy_flat
-   EOR #$FF
-   BEQ nsxy_flat
-   LDA L8_TAB,Y
-   ADC L8_TAB+1,Y
-   ROR A
-   JMP nsxy_have
-nsxy_flat:
-   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
-nsxy_have:
-   LDY pa_dx
-   SEC
-   SBC L8_TAB,Y                            ; - L8[|dx|]
-   BCS ns_pos96
-   ADC #96                                 ; C=0: wraps to diff+96 exactly
-   JMP ns_khave                            ; (diff >= -95: k >= 1)
 ns_x16y16_j:
    JMP ns_x16y16                           ; (range: the arms grew)
 ns_x16:
@@ -867,14 +840,14 @@ ns_dx0:
 ;   out: psi in pa_res and the memo (via mask_done), then falls
 ;        through cp_havepsi: A = r hi, Y = r lo, X = slot
 ; ============================================================================
-ns_x8y16_j:
-   JMP ns_x8y16                            ; (the half-bit recovery grew the
-                                           ; arms past branch range)
 lf_ns:
    LDA pa_dx+1
    BNE ns_x16                              ; 16-bit widths: backward, the
    LDA pa_dy+1                             ; tested hi byte rides A into
-   BNE ns_x8y16_j                          ; the arm
+   BNE ns_x8y16                            ; the arm (FORWARD now: it
+                                           ; lives after khave_sub, in BNE
+                                           ; range — trampoline retired,
+                                           ; Eben 2026-07-20)
 ; both 8-bit (the common case): direct table reads, no reduction
    LDY pa_dy
    LDA L8_TAB,Y                            ; L8[|dy|]
@@ -945,6 +918,43 @@ khave_sub:
    AND #$0F                                ; octant 3's mod-4096 wrap
    STA pa_res+1
    JMP mask_done
+ns_x8y16:
+; |dx| 8-bit, |dy| 16-bit: axgt static clear.
+; (relocated below khave_sub 2026-07-20: puts the arm in FORWARD BNE
+; range of lf_ns's dispatch — the ns_x8y16_j trampoline died. Its own
+; exits: JMP ns_khave is absolute; BCS ns_pos96 reaches backward.)
+   STA t0                                  ; A = pa_dy+1 (from lf_ns)
+   LDA pa_dy
+   LSR t0
+   ROR A
+   LSR t0
+   ROR A
+   LSR t0
+   ROR A                                   ; C = half bit
+   TAY
+   BCC nsxy_flat
+   EOR #$FF
+   BEQ nsxy_flat
+   LDA L8_TAB,Y
+   ADC L8_TAB+1,Y
+   ROR A
+   JMP nsxy_have
+nsxy_flat:
+   LDA L8_TAB,Y                            ; L8[|dy| >> 3]
+nsxy_have:
+   LDY pa_dx
+   SEC
+   SBC L8_TAB,Y                            ; - L8[|dx|]
+   BCS nsxy_pos96                          ; (local copy of the pos96 tail:
+   ADC #96                                 ; ns_pos96 is out of branch range
+   JMP ns_khave                            ; from down here, and BCS is the
+nsxy_pos96:                                ; COMMON direction — no trampoline)
+   ADC #95                                 ; C=1: diff+96
+   BCS nsxy_k255
+   JMP ns_khave
+nsxy_k255:
+   LDA #255                                ; k clamp (AE tail flat there)
+   JMP ns_khave
 .if ::BANKED = 0
 SEG_HIGH
 .endif

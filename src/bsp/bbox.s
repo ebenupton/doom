@@ -77,6 +77,16 @@
 D_MODE   = $0210                        ; 0 off / 1 store-only / 2 serve
 D_FRAME  = $0211                        ; forward-run frame counter (mod 8 used)
 D_PREV_AB = $0212
+D_SMODE  = $0219                        ; straddle policy for THIS frame
+                                        ; (2026-07-20): 0 = serve (0,255) —
+                                        ; forward runs, where a central
+                                        ; straddler is visible and the serve
+                                        ; skips a check that would say
+                                        ; descend anyway; 1 = fresh —
+                                        ; stationary frames, where the
+                                        ; full-width serve is pure coded-
+                                        ; extent over-descent (the measured
+                                        ; walk3/stand class)
 D_PREVP  = $0213                        ; 6 bytes (full 8.8 x/y position)
 D_CODE_R = $0220                        ; 236 bytes (right-child codes by node)
 D_CODE_L = $030C                        ; 236 bytes (ends $03F7)
@@ -173,6 +183,8 @@ dv_right:
    STA zp_i_h
    JMP dv_gap
 dv_straddle:
+   LDA D_SMODE
+   BNE dv_fresh_j                          ; stationary frame: recompute
    LDA #0
    STA zp_i_l
    LDA #255
@@ -183,6 +195,8 @@ dv_gap:
 dv_invis:
    LDA #0
    RTS
+dv_fresh_j:
+   JMP dv_fresh                            ; (branch-range stub)
 dv_fresh:
 ; compute: the check (through the rotation cache when its bit is up —
 ; the two caches compose, D outer / rc inner), then store, then return
@@ -268,6 +282,12 @@ df_on:
    LDA bca_ab
    CMP D_PREV_AB
    BNE df_wipe                             ; rotated in place → extents invalid
+   LDA #1
+   STA D_SMODE                             ; stationary: straddles RECOMPUTE
+                                           ; (their full-width serve is the
+                                           ; over-descent class here; L/R
+                                           ; serves stay — wholesale inert
+                                           ; measured as suite-overfit)
    LDA #2
    STA D_MODE
    BNE df_patch                            ; (always) prevs unchanged, no advance
@@ -278,6 +298,9 @@ df_moved:
    CMP D_PREV_AB
    BNE df_wipe                             ; move + turn in one frame → wipe
    INC D_FRAME
+   LDA #0
+   STA D_SMODE                             ; forward: straddles serve (they
+                                           ; would descend anyway, ahead)
    LDA #2
    STA D_MODE
    BNE df_save                             ; (always)
