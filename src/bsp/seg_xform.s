@@ -238,12 +238,9 @@ nc_ok:
 ; Save view-space x for br_project_x below (deferred past the
 ; near-clip test; vxlo/hi/ext are still intact — nothing above clobbers
 ; them since the Y projection moved to the post-has_gap stage).
-   LDA zp_br_vx_h
-   STA zp_v_x_h
-   LDA zp_br_vx_l
-   STA zp_v_x_l
-   LDA zp_br_vx_x
-   STA zp_v_x_x
+; (the zp_v_x staging copy died 2026-07-19: nothing clobbers
+; zp_br_vx_* after the rotate — view.s is the sole writer — so
+; br_project_x and the chain path read/write zp_br_vx directly)
 ; --- Compute reciprocal: vy_idx = s24 total_vy >> 7 (9.1). The old
 ; code dropped vy_ext ('per s8 vx contract') — but wide-vx segs are
 ; projected now, and a vertex with vy >= 256 view units got an index

@@ -34,11 +34,11 @@ reproject_at_crossing:
 ; Project cx with frac=0 (Python passes fvx_c=0 for clipped endpoints).
 ; cx is s16; br_project_x dispatches narrow/wide on its hi byte.
    LDA zp_clip_cx
-   STA zp_v_x_h
+   STA zp_br_vx_h
    LDA zp_clip_cx_hi
-   STA zp_v_x_x
+   STA zp_br_vx_x
    LDA #0
-   STA zp_v_x_l
+   STA zp_br_vx_l
    JSR br_project_x                        ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; struct offset (0/15)
    STA VX1+4,X                             ; sx → the clipped endpoint's

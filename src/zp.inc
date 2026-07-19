@@ -162,8 +162,8 @@ pa_dy = $32                       ; [ang]; s16 in ; w=2
 zp_bbox_side = $34                ; [bsp]
 zp_br_dx_h = $35                  ; [bsp]
 zp_br_dy_h = $36                  ; [bsp]
-zp_v_x_h = $37                   ; [bsp]; saved integer view-x (s8)
-zp_v_x_l = $38                  ; [bsp]; saved fractional view-x (u8)
+; $37 free (was zp_v_x_h — vx ABI unified on zp_br_vx 2026-07-19)
+; $38 free (was zp_v_x_l)
 pa_res = $39                      ; [ang]; u16 out (fineangle) ; w=2
 bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
 zp_bf_dir = $3D                   ; [bsp]; diagonal back-face DIR-table index;
@@ -260,7 +260,7 @@ zp_br_pxraw_l = $90              ; [bsp]; s16 player x relative to map_center (r
 zp_br_pxraw_h = $91              ; [bsp]
 zp_br_pyraw_l = $92              ; [bsp]
 zp_br_pyraw_h = $93              ; [bsp]
-zp_v_x_x = $94                   ; [bsp]; saved view-x s24 extension byte (wide-vx path)
+; $94 free (was zp_v_x_x)
 zp_seg_hdr_p = $96                ; [bsp]; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h = $97              ; [bsp]
 ; FREE 2026-07-16 (write-only since the C-form): zp_bf_pxm_l = $98

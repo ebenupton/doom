@@ -245,7 +245,7 @@ def test_project_x():
             for vx_frac in [0, 1, 127, 128, 255]:
                 cases.append((vx, vx_frac, rh, rl))
     fail = 0
-    ZP_XINT, ZP_XEXT, ZP_XFRAC = _sym('zp_v_x_h'), _sym('zp_v_x_x'), _sym('zp_v_x_l')
+    ZP_XINT, ZP_XEXT, ZP_XFRAC = _sym('zp_br_vx_h'), _sym('zp_br_vx_x'), _sym('zp_br_vx_l')
     for vx, vx_frac, rh, rl in cases:
         mem[ZP_XINT] = vx & 0xFF
         mem[ZP_XEXT] = 0xFF if vx < 0 else 0   # narrow: ext = sign extension
@@ -274,9 +274,9 @@ def test_project_x_wide():
     the fp_project_x mirror (X88 >>= 1 with S-- until s8; S floors at 1)."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
-    ZP_XINT = _sym('zp_v_x_h')
-    ZP_XEXT = _sym('zp_v_x_x')
-    ZP_XFRAC = _sym('zp_v_x_l')
+    ZP_XINT = _sym('zp_br_vx_h')
+    ZP_XEXT = _sym('zp_br_vx_x')
+    ZP_XFRAC = _sym('zp_br_vx_l')
     ENTRY_AUTO = ENTRY_BR_PROJECT_X          # unified entry dispatches itself
     cases = []
     for vy_idx in [1, 2, 5, 17, 65, 200, 513, 1023]:   # 1 -> S=1: deficit arm

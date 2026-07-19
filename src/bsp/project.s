@@ -6,7 +6,7 @@
 ;   staged v_x* into t0/t1 and post-staged resext; all of that is gone).
 ;
 ;   Inputs (zp):
-;     zp_v_x_x:zp_v_x_h = s16 integer view-x, zp_v_x_l = u8 fraction
+;     zp_br_vx_x:zp_br_vx_h = s16 integer view-x, zp_br_vx_l = u8 fraction
 ;     zp_br_r_m8 = M8 (recip mantissa), zp_br_r_s = S (recip shift)
 ;
 ;   Output:
@@ -54,14 +54,14 @@ px_shrink:
 ps_loop:
    DEX
 ps_shift:
-   LDA zp_v_x_x
+   LDA zp_br_vx_x
    CMP #$80                                ; arithmetic >>1 of the s24 X88
-   ROR zp_v_x_x
-   ROR zp_v_x_h
-   ROR zp_v_x_l
-   LDA zp_v_x_h
+   ROR zp_br_vx_x
+   ROR zp_br_vx_h
+   ROR zp_br_vx_l
+   LDA zp_br_vx_h
    ASL A
-   LDA zp_v_x_x
+   LDA zp_br_vx_x
    ADC #0
    BNE ps_loop
 ; --- dispatch the net shift and tail-call the narrow body ---
@@ -90,9 +90,9 @@ ps_rns24:
    LDA zp_br_res_h                          ; results
    RTS
 ::br_project_x:
-   LDA zp_v_x_h
+   LDA zp_br_vx_h
    ASL A                                   ; C = sign bit of xint
-   LDA zp_v_x_x
+   LDA zp_br_vx_x
    ADC #0                                  ; 0 iff xext == sign extension
    BNE px_shrink                           ; cold (in range: block above);
 px_narrow:                                  ; hot path FALLS THROUGH
@@ -103,11 +103,11 @@ px_narrow:                                  ; hot path FALLS THROUGH
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
    LDA zp_br_r_m8
    BNE px_have_m8
-   LDA zp_v_x_l
+   LDA zp_br_vx_l
    STA zp_br_t2
    JMP px_p_pos
 px_have_m8:
-   LDA zp_v_x_l
+   LDA zp_br_vx_l
    BNE px_have_frac
    STA zp_br_t2
    BEQ px_no_frac
@@ -141,7 +141,7 @@ pxf_uo:
    SBC sqr_h,Y
 pxf_have:
    CLC
-   ADC zp_v_x_l
+   ADC zp_br_vx_l
    STA zp_br_t2
    BCC px_no_frac
    INC zp_br_res_l                            ; t3 pre-zeroed at entry
@@ -152,7 +152,7 @@ px_no_frac:
 ; SUBTRACTS it (arm below the tail) — the signed product never
 ; materialises, so the old two-fixup ext dance (carry bump + product-
 ; sign correction) is one carry/borrow bump per arm. ---
-   LDA zp_v_x_h
+   LDA zp_br_vx_h
    BMI pxm_neg
    TAX
    SEC
@@ -196,7 +196,7 @@ px_p_pos:
 ; --- += vx << 8 (sign-extended) ---
 ; Sign tested FIRST on the single load; the negative arm lives after
 ; the RTS (its +1/-1 high-byte fixups mostly cancel via the add carry).
-   LDA zp_v_x_h
+   LDA zp_br_vx_h
    BMI px_vx_n
    CLC
    ADC zp_br_res_l
