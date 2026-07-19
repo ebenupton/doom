@@ -222,11 +222,12 @@ lk_r255:
    LDA #255                                ; (the old second min(255) was an
 ih1:                                       ; identity — A <= 255 by now on
    STA bca_ihi                             ; every path)
-; if ilo > ihi: cull. A still holds ihi — compare DOWNWARD: C=1 iff
-; ihi >= ilo (visible, tie included — the old BEQ was a third copy of
-; the same verdict), C=0 iff ihi < ilo.
-   CMP bca_ilo
-   BCC cull                                ; ihi < ilo -> cull
+; NO ilo > ihi cull (2026-07-19): it is unreachable by construction —
+; the arms emit p1 <= p2 (left-to-right silhouette order), the window
+; clamps only raise p1 to -512 / cap p2 at +512 (order preserved),
+; vatox is monotone, and the -1/+1 adjusts EXPAND the interval, so
+; ilo <= ihi always (0/255 clamps included). The python mirror keeps
+; its check: any violation would fail check_angle per-call.
 ; A-CONTRACT (2026-07-09, backface rule 1): every bbox_check_angle exit
 ; returns the verdict in A (Z valid) AS WELL AS in bca_vis — the byte
 ; stays for the D-cache store, but callers branch without reloading.
