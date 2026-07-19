@@ -83,8 +83,8 @@ br_seg_xform_vertex:
 ; from the planes into the endpoint struct (X = zp_seg_ep); rhi/rlo also
 ; land in the zp_br working slots because rns_select / the projections
 ; consume them there (two consumers of the value in A, not a copy). ---
-   LDA zp_seg_v_idx_b
-   AND #$20                                ; senior: idx >= 256 (B >= 32)
+   TYA                                     ; Y still holds idx_b from the
+   AND #$20                                ; bitmap check; senior: idx >= 256
    BNE vc_hit_hi
    LDY zp_seg_v_idx_l
    LDA VC_EVY,Y
@@ -96,6 +96,13 @@ br_seg_xform_vertex:
    STA VX1+2,X                             ; clip = 1
    RTS
 vch0_ok:
+; sx first, rlo LAST: RNS_SELECT clobbers X (its vector index), so the
+; select runs after the final struct store and the old LDX zp_seg_ep
+; reload is gone. The vector belongs to whoever wrote rlo last.
+   LDA VC_SXL,Y
+   STA VX1+3,X                             ; sx_lo
+   LDA VC_SXH,Y
+   STA VX1+4,X                             ; sx_hi
    LDA VC_RHI,Y
    STA zp_br_r_m8
    STA VX1+13,X                            ; rhi (for ap2_solid_proj)
@@ -103,14 +110,6 @@ vch0_ok:
    STA zp_br_r_s
    STA VX1+14,X                            ; rlo (= S; A still holds it)
    RNS_SELECT                              ; cached S → re-pick the shifter
-                                        ; (preserves Y; CLOBBERS X — the
-                                        ; vector belongs to whoever wrote
-                                        ; rlo LAST)
-   LDX zp_seg_ep
-   LDA VC_SXL,Y
-   STA VX1+3,X                             ; sx_lo
-   LDA VC_SXH,Y
-   STA VX1+4,X                             ; sx_hi
    RTS                                     ; Y projection DEFERRED to the
                                         ; post-has_gap y stage (2026-07-11):
                                         ; culled segs never project.
@@ -126,6 +125,10 @@ vc_hit_hi:
    STA VX1+2,X
    RTS
 vch1_ok:
+   LDA VC_SXL+$100,Y
+   STA VX1+3,X
+   LDA VC_SXH+$100,Y
+   STA VX1+4,X
    LDA VC_RHI+$100,Y
    STA zp_br_r_m8
    STA VX1+13,X
@@ -133,11 +136,6 @@ vch1_ok:
    STA zp_br_r_s
    STA VX1+14,X
    RNS_SELECT
-   LDX zp_seg_ep
-   LDA VC_SXL+$100,Y
-   STA VX1+3,X
-   LDA VC_SXH+$100,Y
-   STA VX1+4,X
    RTS
 vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are

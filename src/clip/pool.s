@@ -164,10 +164,56 @@ free_span:
 ; ======================================================================
 udiv16_8:
 .scope
-; Path select: den > div_hi ⇒ quotient < 256 ⇒ 8-iteration fast path.
+; Cell classify (2026-07-19, measured: 69% of calls have a u8
+; dividend, 19% a zero quotient, 88% den >= 16 — and the d16 path
+; never fires in the corpus):
+;   div_h == 0, num < den            → q = 0, one compare (was 8 paid
+;                                      skip iterations, 139 cycles)
+;   div_h == 0, den >= 16            → q < 16 PROVABLY (num <= 255 <
+;                                      16*den), so the first 4 skip
+;                                      iterations can never commit —
+;                                      replace them with direct 4-bit
+;                                      shifts and enter the unroll at
+;                                      its last four copies
+;   anything else                    → the original routes, unchanged
    LDA zp_div_h
+   BNE dv_wide                             ; 16-bit dividend: original route
+   LDA zp_div_den
+   CMP #16
+   BCC dv_u8_z                             ; small den: full 8-copy walk
+   LDA zp_div_l
+   CMP zp_div_den
+   BCC dv_zero                             ; num < den → quotient 0
+; u8 num, den >= 16: rem:shifter = (num >> 4):(num << 4), quotient
+; accumulator zeroed, then the last four skip copies finish the job.
+; rem = num>>4 <= 15 < den, so no commit is lost by the pre-shift —
+; bit-identical to walking all 8 copies.
+   TAX                                     ; num banked across the shifts
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   STA zp_div_h                            ; shifter = num << 4
+   LDA #0
+   STA zp_div_l                            ; quotient accumulator
+   TXA
+   LSR A
+   LSR A
+   LSR A
+   LSR A                                   ; rem = num >> 4
+   JMP dskip4
+dv_zero:
+   LDA #0
+   RTS
+dv_u8_z:
+   LDA #0                                  ; A = initial rem = div_h (known 0
+   BEQ dv_u8_all                           ; on this route; always taken)
+dv_wide:
+; Path select: den > div_hi ⇒ quotient < 256 ⇒ 8-iteration fast path.
+; (A = div_h on arrival — it seeds the remainder in the setup below.)
    CMP zp_div_den
    BCS d16
+dv_u8_all:
 ; FAST PATH: quotient fits in 8 bits.  Setup: rem = div_hi,
 ; div_hi = div_lo, div_lo = 0.  Then skip leading zero-bit
 ; iterations: shift rem:div_hi left, checking rem vs den each
@@ -206,7 +252,8 @@ udiv16_8:
    BCS dskip_c5
    CMP zp_div_den
    BCS dskip_c5
-   ASL zp_div_h
+dskip4:                                    ; the den>=16 u8 cell enters here
+   ASL zp_div_h                            ; (4 copies left: q < 16)
    ROL A
    BCS dskip_c4
    CMP zp_div_den

@@ -278,13 +278,56 @@ m_r_nc:
    LDA LC_M_R3
    CMP LC_DEN_HI
    BCC u16_quot_noreload
-   BNE no_u16_quot
+   BNE nq_j
    LDA LC_M_R2
    CMP LC_DEN_LO
-   BCS no_u16_quot
+   BCC u16_quot
+nq_j:
+   JMP no_u16_quot                         ; (the u8 tier pushed the slow
+                                           ; path out of branch range)
 u16_quot:
    LDA LC_M_R3                             ; (lo-tier fall only: the hi BCC
 u16_quot_noreload:                         ; arrives with R3 live)
+; ---- u8-quotient tier (2026-07-19, measured: every corpus call lands
+; here): quot < 256 iff D>>8 = R3:R2:R1 < den, i.e. R3 == 0 and
+; R2:R1 < DEN_HI:DEN_LO. Then rem preloads from R2:R1 (< den = u12,
+; fits u16) and EIGHT iterations over R0 finish — half the loop, and
+; each iteration drops the R1 ROL and the QUOT_HI ROL. ----
+   BNE u16_full                            ; R3 != 0 → 16-bit quotient
+   LDA LC_M_R2
+   CMP LC_DEN_HI
+   BCC u8_tier                             ; R2 < den hi → q < 256
+   BNE u16_full
+   LDA LC_M_R1
+   CMP LC_DEN_LO
+   BCS u16_full                            ; R2:R1 >= den → q >= 256
+u8_tier:
+   LDA LC_M_R2
+   STA LC_REM_HI
+   LDA LC_M_R1
+   STA LC_REM_LO
+   LDX #8
+u8_loop:
+   ASL LC_M_R0
+   ROL LC_REM_LO
+   ROL LC_REM_HI
+   LDA LC_REM_LO
+   SEC
+   SBC LC_DEN_LO
+   STA LC_TMP_LO
+   LDA LC_REM_HI
+   SBC LC_DEN_HI
+   BCC u8_set                              ; no-sub: C=0 rides into the ROL
+   STA LC_REM_HI
+   LDA LC_TMP_LO
+   STA LC_REM_LO                           ; sub taken: C=1 from the SBC
+u8_set:
+   ROL LC_QUOT_LO                          ; QUOT_HI stays its pre-zeroed 0
+   DEX
+   BNE u8_loop
+   JMP udv_done
+u16_full:
+   LDA LC_M_R3
    STA LC_REM_HI
    LDA LC_M_R2
    STA LC_REM_LO

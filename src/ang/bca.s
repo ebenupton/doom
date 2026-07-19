@@ -456,20 +456,25 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
 ; skips the whole bias.
    STX zp_cpm_s2                           ; corner 2's memo slot -> the
                                            ; rcache cold snapshot's psi2 key
-   TAX                                     ; p2 hi rides X to the right window
+; The +30 bias lands on p2 BEFORE the p1 subtraction (associative,
+; exact mod 4096): span' = (p2+30) - p1 in ONE borrow chain, and the
+; biased p2 rides Y/X to the right window, whose r2' = p2+15 is now a
+; -15 at identical cost. This kills the stage-then-reload round the
+; after-the-subtract fold needed.
+   TAX                                     ; p2 hi
+   TYA
+   CLC
+   ADC #30
+   TAY                                     ; Y = (p2+30) lo, rides to ck_right
+   TXA
+   ADC #0
+   TAX                                     ; X = (p2+30) hi, rides to ck_right
    TYA
    SEC
    SBC bca_p1
-   STA t0                                  ; raw diff lo (pre +30)
+   STA t0                                  ; span' lo
    TXA
    SBC bca_p1+1                            ; (TYA/TXA/STA preserve the borrow)
-   STA t1                                  ; raw diff hi staged (X stays p2 hi)
-   LDA t0
-   CLC
-   ADC #30
-   STA t0                                  ; span' lo
-   LDA t1
-   ADC #0
    AND #$0F
    STA t1                                  ; span' hi (u12 fold)
    CMP #8
@@ -498,13 +503,14 @@ ck_right:
 ;   +-1 adjusts (SBC #0 / ADC #1, no seeds); the out-arms' 16-bit ops
 ;   inherit C=1 from CMP >= 4 or CPY.
 ;
-; right window test: r2 IS the right tspan (bias trick).
-   TYA                                     ; r2' = (r2 + 15) & 4095, built
-   CLC                                     ; from Y/X — no memory operand
-   ADC #15
+; right window test: r2 IS the right tspan (bias trick). Y/X carry
+; p2+30, so r2' = (r2 + 15) & 4095 is a -15.
+   TYA                                     ; r2' = (p2+30) - 15, built
+   SEC                                     ; from Y/X — no memory operand
+   SBC #15
    TAY
    TXA
-   ADC #0
+   SBC #0
    AND #$0F
    CMP #4
    BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
