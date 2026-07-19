@@ -346,3 +346,12 @@ rc_bitmask:
 .if BANKED
 .segment "ANG_BK"                       ; back to the angle-module segment
 .endif
+
+end:
+.if BANKED
+; (ld65 writes this: SAVE "bsp_render_ang_bk.bin")
+.else
+.assert end <= $F100, error             ; flat ANG ceiling: RCACHE_STATE
+                                        ; squats at $F100 (abi)
+.endif
+

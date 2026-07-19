@@ -6,8 +6,6 @@
 ;                 cache-off path; bca_check_op dispatches here)
 ;   rcache.s      rotation-coherence psi cache: per-frame classifier,
 ;                 cached check path, RCACHE data map (RCCODE when banked)
-;   corner_phi.s  box_classify + corner_phi/point_to_angle + cp_havepsi
 .include "ang/header_div.s"
 .include "ang/bca.s"
 .include "ang/rcache.s"
-.include "ang/corner_phi.s"
