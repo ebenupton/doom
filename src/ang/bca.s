@@ -355,22 +355,6 @@ yRmid:                                     ; row 6 (E): corners share R,
 ;   -> bca_tail (span / FOV clip / column lookup, shared with the rot cache)
 ; ============================================================================
 
-full_vis:                               ; span >= ANG180: full width
-   LDA #0
-   STA bca_ilo
-   LDA #255
-   STA bca_ihi
-   LDA #1
-   STA bca_vis
-   JMP SC_HAS_GAP                          ; FUSED EXIT (2026-07-18): every
-                                           ; visible exit chains straight into
-                                           ; has_gap on the freshly-written
-                                           ; zp_i interval — the caller gets
-                                           ; the COMBINED verdict in A/Z, and
-                                           ; the bv wrapper's JSR/BNE/JMP
-                                           ; round trip is gone. Cull exits
-                                           ; still RTS (A=0/Z=1).
-
 ; (scope opened out to file level so the rotation cache — bbox_check_angle_cached
 ;  + bca_frame below — can share box_classify, corner_phi and the bca_tail
 ;  span/clip/column code. Tail labels ck_*/full_vis/cull are unique file-wide.)
@@ -517,10 +501,6 @@ visok:
    LDA #1                                  ; visible: bca_vis for the D store,
    STA bca_vis                             ; then the fused has_gap exit — the
    JMP SC_HAS_GAP                          ; walk consumes has_gap's A/Z
-cull:                                      ; THE cull exit (the file-head twin
-   LDA #0                                  ; is gone, 2026-07-17: every BCS/BCC
-   STA bca_vis                             ; cull now reaches FORWARD to here —
-   RTS                                     ; ranges link-checked); A=0/Z=1
 
 ; --- out-of-line cells (rarer paths) ---------------------------------
 ct_r1out_r2f:
@@ -546,13 +526,28 @@ ct_r2have:
    BCC ct_f_r2out                          ; r1 in F: [col1, 255]
 ; both corners out: (L,R) -> full, everything else -> cull
    CMP #10
-   BCC ct_cull_j                           ; r1 = R: (R,R)/(R,L) cull
+   BCC cull                           ; r1 = R: (R,R)/(R,L) cull
    CPX #0
-   BEQ ct_full_j                           ; (L,R): full
-ct_cull_j:
-   JMP cull                                ; (L,L) falls here too
-ct_full_j:
-   JMP full_vis
+   BEQ full_vis                           ; (L,R): full
+cull:                                      ; THE cull exit — (L,L) FALLS in
+   LDA #0                                  ; off the untaken BEQ above; the
+   STA bca_vis                             ; other cull cells branch direct
+   RTS                                     ; (hand edit 2026-07-20). A=0/Z=1
+full_vis:
+   LDA #0
+   STA bca_ilo
+   LDA #255
+   STA bca_ihi
+   LDA #1
+   STA bca_vis
+   JMP SC_HAS_GAP                          ; FUSED EXIT (2026-07-18): every
+                                           ; visible exit chains straight into
+                                           ; has_gap on the freshly-written
+                                           ; zp_i interval — the caller gets
+                                           ; the COMBINED verdict in A/Z, and
+                                           ; the bv wrapper's JSR/BNE/JMP
+                                           ; round trip is gone. Cull exits
+                                           ; still RTS (A=0/Z=1).
 ct_f_r2out:
 ; (F,R)/(F,L): ihi = 255, then the ordinary left lookup. A = r1'' hi,
 ; Y = r1'' lo, C=0 from the BCC — TAX/LDA/STA/TXA/JMP preserve it
