@@ -570,18 +570,18 @@ inl_end:
    BEQ sin_notone
    LDA zp_br_sneg
    BEQ sin_up
-   LDA #<rot_unity_neg
-   LDX #>rot_unity_neg
-   BNE sin_have                            ; (hi byte never 0 — always taken)
+   LDA #<rot_unity_neg_s                   ; the _s twins write zp_rs (res-
+   LDX #>rot_unity_neg_s                   ; slot split): the sin slot must
+   BNE sin_have                            ; never target zp_br_res
 sin_up:
-   LDA #<rot_unity_pos
-   LDX #>rot_unity_pos
+   LDA #<rot_unity_pos_s
+   LDX #>rot_unity_pos_s
    BNE sin_have
 sin_notone:
    LDA zp_br_smag
    BNE sin_gen
-   LDA #<rot_zero
-   LDX #>rot_zero
+   LDA #<rot_zero_s
+   LDX #>rot_zero_s
    BNE sin_have
 sin_gen:
    STA rot_gen_sin+1                       ; mag immediate

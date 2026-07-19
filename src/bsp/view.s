@@ -312,13 +312,11 @@ btv_dx_signed:                          ; fetch enters here, N = delta sign
    STA zp_ri_d_h
 dx_abs_ok:
 rot_s1:
-   JSR rot_gen_sin                         ; dx*sin (variant SMC'd per frame)
-   LDA zp_br_res_l
-   STA zp_br_vx_l
-   LDA zp_br_res_h
-   STA zp_br_vx_h
-   LDA zp_br_res_x
-   STA zp_br_vx_x
+   JSR rot_gen_sin                         ; dx*sin -> zp_rs (variant SMC'd
+                                           ; per frame; sin side owns the rs
+                                           ; slots, so the old res->vx copy
+                                           ; is GONE — s2 combines from both
+                                           ; slots below)
 rot_s3:
    JSR rot_gen_cos                         ; dx*cos (|dx|/sign still staged)
    LDA zp_br_res_l
@@ -348,28 +346,31 @@ rot_s3:
    STA zp_ri_d_h
 dy_abs_ok:
 rot_s2:
-   JSR rot_gen_cos                         ; dy*cos
-   LDA zp_br_vx_l
+   JSR rot_gen_cos                         ; dy*cos -> zp_br_res
+; vx = dx*sin - dy*cos, straight from the two result slots (rs still
+; holds s1's product — s3 wrote zp_br_res and s2 overwrote it, neither
+; touches rs).
+   LDA zp_rs_l
    SEC
    SBC zp_br_res_l
    STA zp_br_vx_l
-   LDA zp_br_vx_h
+   LDA zp_rs_h
    SBC zp_br_res_h
    STA zp_br_vx_h
-   LDA zp_br_vx_x
+   LDA zp_rs_x
    SBC zp_br_res_x
    STA zp_br_vx_x
 rot_s4:
-   JSR rot_gen_sin                         ; dy*sin
+   JSR rot_gen_sin                         ; dy*sin -> zp_rs
    LDA zp_br_vy_l
    CLC
-   ADC zp_br_res_l
+   ADC zp_rs_l
    STA zp_br_vy_l
    LDA zp_br_vy_h
-   ADC zp_br_res_h
+   ADC zp_rs_h
    STA zp_br_vy_h
    LDA zp_br_vy_x
-   ADC zp_br_res_x
+   ADC zp_rs_x
    STA zp_br_vy_x
 
 ; (falls through into tv_add_fracs — its RTS is br_to_view's return)

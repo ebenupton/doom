@@ -306,6 +306,40 @@ ru_neg:
    STA zp_br_res_x
    RTS
 
+; --- sin-side twins (res-slot split 2026-07-19): the sin slot of a
+; frame can hold unity/zero too, and those shared bodies can't serve
+; two dests — so the sin side gets its own copies writing zp_rs_*.
+; rot_select's sin arm picks these; the cos arm keeps the originals.
+rot_zero_s:
+   LDA #0
+   STA zp_rs_l
+   STA zp_rs_h
+   STA zp_rs_x
+   RTS
+rot_unity_pos_s:
+   LDA zp_ri_sgn
+   BNE rus_neg
+rus_pass:
+   ZERO zp_rs_l
+   LDA zp_ri_d_l
+   STA zp_rs_h
+   LDA zp_ri_d_h
+   STA zp_rs_x
+   RTS
+rot_unity_neg_s:
+   LDA zp_ri_sgn
+   BNE rus_pass
+rus_neg:
+   ZERO zp_rs_l
+   LDA #0
+   SEC
+   SBC zp_ri_d_l
+   STA zp_rs_h
+   LDA #0
+   SBC zp_ri_d_h
+   STA zp_rs_x
+   RTS
+
 rot_gen_sin:
    LDA #0                                  ; SMC +1: |sin| mag (rot_select)
    STA zp_mul_b
@@ -338,7 +372,7 @@ rot_core_sin:
    LDA zp_ri_d_l
    ORA zp_ri_d_h
    BNE d_nz
-   JMP ri_zero
+   JMP ris_zero
 d_nz:
 ; ri_d arrives as |d| (caller-staged; d-sign folded into t1 by the
 ; thunk's EOR zp_ri_sgn) — the old in-place abs died 2026-07-19.
@@ -362,12 +396,12 @@ um1_pos:
    LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
    SBC sqr_l,Y
-   STA zp_br_res_l
+   STA zp_rs_l                             ; sin side -> the rs slots
 ::rot_sqs1h:
    LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_h,Y
-   STA zp_br_res_h
-   ZERO zp_br_res_x
+   STA zp_rs_h
+   ZERO zp_rs_x
 ; --- hi partial: |d| hi byte is 0..2 on this map (10-bit world coords;
 ; measured 87% zero, ~13% one) — multiply-by-0/1 dispatch to trivial
 ; arms; the general quarter-square stays as the >=2 fallback so NO
@@ -393,16 +427,16 @@ um2_pos:
    LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_h,Y
    STA zp_prod_h
-   JMP ri_finish
+   JMP ris_finish
 um2_one:
-   LDA zp_mul_b                            ; resh += mag, carry -> resext
+   LDA zp_mul_b                            ; rs_h += mag, carry -> rs_x
    CLC
-   ADC zp_br_res_h
-   STA zp_br_res_h
+   ADC zp_rs_h
+   STA zp_rs_h
    BCC um2_z
-   INC zp_br_res_x
+   INC zp_rs_x
 um2_z:
-   JMP ri_sign                             ; skip ri_finish's dead adds
+   JMP ris_sign                            ; skip ris_finish's dead adds
 .endscope
 
 rot_core_cos:
@@ -508,4 +542,37 @@ ri_zero:
    STA zp_br_res_l
    STA zp_br_res_h
    STA zp_br_res_x
+   RTS
+
+; sin twins of the shared tails (res-slot split): same bodies, rs dests.
+; Duplication, not SMC — both cores run within one frame, so a patched
+; dest can't serve them.
+ris_finish:
+   CLC
+   LDA zp_prod_l
+   ADC zp_rs_h
+   STA zp_rs_h
+   LDA zp_prod_h
+   ADC zp_rs_x
+   STA zp_rs_x
+ris_sign:
+   LDA zp_br_t1
+   BEQ ris_done                            ; t1 = (d<0) XOR (trig<0)
+   LDA #0
+   SEC
+   SBC zp_rs_l
+   STA zp_rs_l
+   LDA #0
+   SBC zp_rs_h
+   STA zp_rs_h
+   LDA #0
+   SBC zp_rs_x
+   STA zp_rs_x
+ris_done:
+   RTS
+ris_zero:
+; A = 0 on entry (the d==0 BNE-not-taken path)
+   STA zp_rs_l
+   STA zp_rs_h
+   STA zp_rs_x
    RTS

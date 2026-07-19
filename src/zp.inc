@@ -84,7 +84,11 @@ zp_vxc_on = $C7                   ; [bsp]; VXC gate flag (vxc_frame sets it
 ; $EB-$EE/$F0-$F1. Do not trust "free" without grepping ang/anim/drivers.
 zp_br_p = $1C                     ; [bsp]
 zp_br_p_h = $1D                   ; [bsp]
-; $1E free (was zp_bca_zone — zone byte killed 2026-07-19: the inside
+zp_rs_l = $1E                     ; [bsp] sin-side rotate result lo (res-slot
+                                  ; split 2026-07-19: sin cores/variants write
+                                  ; rs_*, cos keeps zp_br_res — the s1 res->vx
+                                  ; copy died; s2 combines from both slots)
+; (was zp_bca_zone — zone byte killed 2026-07-19: the inside
 ;   signal rides the p1/p2 full-span sentinel now)
 zp_bv_mode = $1F                  ; [bsp]; bbox-cache dispatch bits: b0 = D
                                   ; wrapper, b1 = rotation cache (set per
@@ -153,7 +157,8 @@ zp_ri_d_l = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
 ; from header+12 via (zp_seg_hdr_p),Y (stride-16 heights; solids never
 ; touch it).
-; $2A free (was zp_par_zone — zone inheritance removed 2026-07-18)
+zp_rs_h = $2A                     ; [bsp] sin-side rotate result hi (pairs $1E)
+; (was zp_par_zone — zone inheritance removed 2026-07-18)
 zp_ri_d_h = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
 zp_br_res_x = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
 zp_br_vx_x = $2E                 ; [bsp]; total view-space x sign-extension byte
@@ -164,7 +169,8 @@ zp_bbox_side = $34                ; [bsp]
 zp_br_dx_h = $35                  ; [bsp]
 zp_br_dy_h = $36                  ; [bsp]
 zp_ri_sgn = $37                   ; [bsp]; rotate operand sign (|d| staging)
-; $38 free (was zp_v_x_l)
+zp_rs_x = $38                     ; [bsp] sin-side rotate result ext (with $1E/$2A)
+; (was zp_v_x_l)
 pa_res = $39                      ; [ang]; u16 out (fineangle) ; w=2
 bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
 zp_bf_dir = $3D                   ; [bsp]; diagonal back-face DIR-table index;
