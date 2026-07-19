@@ -456,25 +456,26 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
 ; skips the whole bias.
    STX zp_cpm_s2                           ; corner 2's memo slot -> the
                                            ; rcache cold snapshot's psi2 key
-; The +2*EPS bias lands on p2 BEFORE the p1 subtraction (associative,
-; exact mod 4096): span' = (p2+2*EPS) - p1 in ONE borrow chain, and the
-; biased p2 rides Y/X to the right window, whose r2' = p2+EPS is now a
-; -EPS at identical cost. This kills the stage-then-reload round the
-; after-the-subtract fold needed.
-   TAX                                     ; p2 hi
-   TYA
-   CLC
-   ADC #(2*EPSILON_F)
-   TAY                                     ; Y = (p2+30) lo, rides to ck_right
-   TXA
-   ADC #0
-   TAX                                     ; X = (p2+30) hi, rides to ck_right
+; The EPS bias now arrives IN the values (the afn hoist carries +EPS,
+; view.s): p1/p2 are r+EPS, so the right window's biased operand is
+; the register pair AS DELIVERED and the span's +2*EPS is the one
+; explicit constant left ((p2+E)-(p1+E)+2E = p2-p1+2E). p2' stays
+; pinned in Y/X across the span math (diff staged through t1) so
+; ck_right needs only the mask.
+   TAX                                     ; p2' hi (pinned; TXA below copies)
    TYA
    SEC
    SBC bca_p1
-   STA t0                                  ; span' lo
+   STA t0                                  ; raw diff lo
    TXA
    SBC bca_p1+1                            ; (TYA/TXA/STA preserve the borrow)
+   STA t1
+   LDA t0
+   CLC
+   ADC #(2*EPSILON_F)
+   STA t0                                  ; span' lo
+   LDA t1
+   ADC #0
    AND #$0F
    STA t1                                  ; span' hi (u12 fold)
    CMP #8
@@ -503,14 +504,9 @@ ck_right:
 ;   +-1 adjusts (SBC #0 / ADC #1, no seeds); the out-arms' 16-bit ops
 ;   inherit C=1 from CMP >= 4 or CPY.
 ;
-; right window test: r2 IS the right tspan (bias trick). Y/X carry
-; p2+30, so r2' = (r2 + 15) & 4095 is a -15.
-   TYA                                     ; r2' = (p2+30) - 15, built
-   SEC                                     ; from Y/X — no memory operand
-   SBC #EPSILON_F
-   TAY
+; right window test: r2 IS the right tspan (bias trick), and the
+; register pair IS the biased operand (afn hoist) — mask and compare.
    TXA
-   SBC #0
    AND #$0F
    CMP #4
    BCC lk_right                            ; r2 < 1024: C=0, A/Y = operands
@@ -546,9 +542,10 @@ ck_left:
 ; left window test, same shape, sourced from bca_p1 in memory (the
 ; arms store p1 — six values are live across the span math, more than
 ; three registers can carry).
-   LDA bca_p1                              ; r1' = (r1 - 15) & 4095, built in
-   SEC                                     ; registers (raw r1 stays in memory
-   SBC #EPSILON_F                          ; for the -r1' fold + the snapshot)
+   LDA bca_p1                              ; r1' = (r1 - EPS) & 4095 = p1' -
+   SEC                                     ; 2*EPS (p1' carries +EPS from the
+   SBC #(2*EPSILON_F)                      ; afn hoist; raw p1' stays in memory
+                                           ; for the -r1' fold + the snapshot)
    TAY
    LDA bca_p1+1
    SBC #0
@@ -570,8 +567,8 @@ ck_left_out:
 ; CONSTANT (raw r1 still in memory). Discard-result 16-bit compare vs
 ; span (CPX seeds the borrow; only the final carry survives): C=1 iff
 ; tspan-1024 >= span -> wholly off the left.
-   LDA #EPSILON_F
-   SBC bca_p1                              ; lo of 15-r1 (C=1 inbound: CMP >= 4
+   LDA #(2*EPSILON_F)
+   SBC bca_p1                              ; (EPS - r1 = 2*EPS - p1')                              ; lo of 15-r1 (C=1 inbound: CMP >= 4
    TAX                                     ; or CPY fall-through; X = p2 hi
    LDA #0                                  ; died with the right window)
    SBC bca_p1+1

@@ -378,3 +378,14 @@ zp_clr_save_x = $D7               ; [clip]; tighten X-save (tfr.s; the name
 ; --- $F5: overlay group (2 phase-disjoint users) ---
 ; --- $F7: overlay group (2 phase-disjoint users) ---
 ; --- $F8: overlay group (2 phase-disjoint users) ---
+
+; EPSILON_F — the certified worst-case atanexp error (fine units).
+; ONE SOURCE: tools/atanexp_cert.py prints it and writes it into
+; tools/atanexp_tables.json (the mirror reads it from there);
+; engine_load.py pins the drift guard. 15 -> 12 on 2026-07-19 (half-
+; bit recovery in the >>3 L reductions). The afn hoist (view.s)
+; carries +EPSILON_F, so corner_phi emits r = phi+512+EPS and the
+; bca_tail biases are: span +2*EPSILON_F, left window -2*EPSILON_F
+; against the pre-biased p1'. Lives here because BOTH assembly units
+; consume it.
+EPSILON_F = 12

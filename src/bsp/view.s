@@ -54,8 +54,13 @@ br_view_setup:
    ASL A
    ASL A
    ASL A
-   STA $3B
-; bca_afn = (ab<<4)&FF
+   ORA #EPSILON_F                          ; +EPS rides the hoist FREE (the
+   STA $3B                                 ; low nibble of ab<<4 is empty, so
+; bca_afn = ((ab<<4)&FF) + EPS             ; ORA = add, no carry): corner_phi
+;                                          ; now emits r = phi+512+EPS, the
+;                                          ; right window's biased operand
+;                                          ; ITSELF — its 16-cycle build in
+;                                          ; bca_tail collapsed to a mask
    LDA #0
    STA pa_ptr                              ; pa_ptr lo is 0 FOREVER: the TA and
                                            ; VATOX lookups ride Y against page-
