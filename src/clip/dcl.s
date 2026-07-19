@@ -334,7 +334,10 @@ dcl_pp_bbox:
    STA zp_line_y_h
    TYA
    TAX
-   JMP dcl_walk
+   BEQ dclwb_flush0                        ; (entry guard bypassed: TAX's Z
+   JMP dcl_walk2                           ; answers the null test here)
+dclwb_flush0:
+   JMP dcl_flush
 
 ; (dcl_exit_no_portal_a — the 'restore X for emit' alias — is retired:
 ; no caller remained, and every entry below arrives with X = save0
@@ -369,7 +372,10 @@ dcl_exit_emit:
 ; Advance to next span (inline)
    LDA POOL_NEXT,X
    TAX
-   JMP dcl_walk
+   BEQ dclwb_flush1                        ; (entry guard bypassed: TAX's Z
+   JMP dcl_walk2                           ; answers the null test here)
+dclwb_flush1:
+   JMP dcl_flush
 
 dcl_line_ends:
 ; Line ends within this span. Emit seg_start → (xr, yr)
@@ -916,7 +922,10 @@ dcl_cb_bot_done:
    LDX zp_save0
    LDA POOL_NEXT,X
    TAX
-   JMP dcl_walk
+   BEQ dclwb_flush2                        ; (entry guard bypassed: TAX's Z
+   JMP dcl_walk2                           ; answers the null test here)
+dclwb_flush2:
+   JMP dcl_flush
 
 dcl_cb_no_exit_clip:
 ; cx2 == ox1: CB did not clip the exit. Set seg_start = (cx1, cy1)
@@ -960,7 +969,10 @@ dcl_cb_reject:
    LDX zp_save0
    LDA POOL_NEXT,X
    TAX
-   JMP dcl_walk
+   BEQ dclwb_flush3                        ; (entry guard bypassed: TAX's Z
+   JMP dcl_walk2                           ; answers the null test here)
+dclwb_flush3:
+   JMP dcl_flush
 
 ; --- dcl_boundary_ix: compute intersection X for CB clip ---
 ; Input: zp_tmp0 = d1 (s8), zp_tmp1 = d2 (s8), A = clip_p1 flag (0 or 1)

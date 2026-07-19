@@ -1004,7 +1004,10 @@ tfs_no_post:
 tfs_continue:
    LDA zp_old_cur
    TAX
-   JMP tfs_walk
+   BEQ tfsc_finish                         ; (entry guard bypassed)
+   JMP tfs_proc
+tfsc_finish:
+   JMP tfs_finish
 
 tfs_finish:
    JMP tfs_flush_pending                   ; tail call (was JSR+RTS): -9 cyc
