@@ -1,3 +1,60 @@
+.import vc_bit_mask                     ; defq.s: 1 << (n & 7) table
+; Per-bbox cache, keyed by k = node*2 + side (the box ordinal):
+;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
+;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
+;
+; Frame classing is the zp_bv_entry/zp_tail_vec vector pair (set in
+; bca_frame, consumed by indirect JMPs): moving frames dispatch
+; straight to box_classify — no probe, no stores, bitmap
+; stale-but-unread. The moved->stationary edge clears RCACHE_COMPUTED
+; and arms the vectors; standing frames then probe here and entries
+; repopulate lazily.
+
+; PSI store = page-split SoA planes (2026-07-15; re-keyed by SIDE
+; 2026-07-20): page = zp_bbox_side (0/1), byte index = node (u8,
+; n_nodes <= 256 asserted at pack time) — no k derivation, no carry
+; games. psi values are 12-bit, so the two
+; hi nibbles PACK into one plane: PH = psi1_hi | psi2_hi<<4. Three
+; planes x 2 pages; the side pages are independently placed, so
+; the flat set scatters over audited free fragments and the $5000
+; CODE-tail carve is GONE (flat CODE now runs to $5800 — main_tail).
+.if BANKED
+RC_P1L_0 = $AD00                        ; bank L2 (old PSI head; $B300-$B45F freed)
+RC_P1L_1 = $AE00
+RC_P2L_0 = $AF00
+RC_P2L_1 = $B000
+RC_PH_0  = $B100
+RC_PH_1  = $B200
+.else
+RC_P1L_0 = $1A00                        ; flat fragments (audited free):
+RC_P1L_1 = $9700                        ; below the VXC planes (DIRs
+RC_P2L_0 = $D400                        ;   asserted <= $9700 now)
+RC_P2L_1 = $DA00                        ; after VWHC
+RC_PH_0  = $DB00
+RC_PH_1  = $0600                        ; the DEFQ page (FREE since d541b80;
+                                        ; moved from $F000 2026-07-17 — the
+                                        ; unrolled slope_div slow arm grew
+                                        ; flat ANG past $F000 and CORRUPTED
+                                        ; this plane: rotcache caught it)
+.endif
+; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
+; flat base moved $5760 -> $F100 with the carve release:
+RCACHE_COMPUTED = RCACHE_STATE          ; 59 bytes (bit per k>>3 group)
+; RCACHE_STATE+$40..+$7A FREE (RCACHE_FULL died 2026-07-20 — inside
+;  boxes just recompute; 59 bytes reclaimed)
+bca_prevpos = RCACHE_STATE + $80        ; 4 bytes: last frame's int position
+bca_cachepos = RCACHE_STATE + $84       ; 4 bytes: position COMPUTED is valid for
+.assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
+; RCACHE_ENABLE comes from abi.inc; nonzero -> cache may engage (drivers set it;
+                                        ; harness default 0 keeps every existing test
+                                        ; on the original path, byte- and cycle-exact)
+; scratch for the cached routine (dead outside a check)
+rc_idxhi    = t1
+; ($C4/$C5 freed 2026-07-15: the PSI pointer died with the plane
+;  conversion — k rides Y and the senior page is an arm.)
+rc_bytehi   = val_hi                    ; bitmap byte offset idx>>6 (<=58, fits u8)
+rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
+
 
 ; ============================================================================
 ; corner_phi.s — the bbox corner/angle subsystem, end to end:
@@ -376,6 +433,137 @@ yRmid:                                     ; row 6 (E): corners share R,
 ; exits return to OUR caller — the JSR/RTS shuttles at every stage are
 ; gone. Inside boxes escape via cx_inside -> full_vis directly.
    ; ============================================================================
+.if ::BANKED
+SEG_CODE
+.else
+SEG_HIGH                                   ; flat: the probe/serve block lives
+                                           ; in the HIGH island (CODE has no
+                                           ; room — the 75-byte overflow was
+                                           ; measured, not guessed) and the
+                                           ; miss bridges with one JMP
+.endif
+; --- bbox_check_angle: rotation-coherent bbox visibility ----------------------
+; Same contract as box_classify (in: zp_node_ch_l/zp_bbox_side, bca_pxs/
+; pys, bca_afn; out: the A/Z/C verdict + bca_ilo/ihi) and bit-identical
+; results — only cycles change. Warm hits skip the per-corner abs/octant/SlopeDiv/tantoangle work
+; and re-derive phi with one subtraction; FULL hits skip the tail entirely.
+; pseudocode:
+;   idx = bca_boxp - rom_bbox                    # node*16 + side*8
+;   if COMPUTED[idx]:                            # --- HIT ---
+;     p1 = sgnext((a_fine - psi1) & 4095)        # cp_havepsi
+;     p2 = sgnext((a_fine - psi2) & 4095)
+;     goto bca_tail
+;   else:                                        # --- MISS ---
+;     stash offset/mask ; FALL THROUGH into box_classify — bca_tail's
+;     bt_store derives psi1/psi2 from p1/p2 and sets COMPUTED (an
+;     inside box never reaches the tail, fires no stores, stays
+;     naturally uncacheable)
+bbox_check_angle:
+; THE bbox entry, every check, every frame (2026-07-20). Valid block
+; offset + bit mask computed INLINE (bcac_index retired):
+;   k = node*2 + side ; byte = k>>3 = node>>2 ; bit = 1 << (k & 7)
+; and the bit table is vc_bit_mask (defq.s) — same 8 bytes the vertex
+; cache uses. Check it always; on a miss the offset/mask pair is
+; stashed ($CF/$65 are rcache-owned, they survive the full check) for
+; bca_tail's bt_store block inside the check.
+   LDA zp_node_ch_l
+   LSR A
+   LSR A
+   TAX                                     ; X = valid block offset (node>>2)
+   LDA zp_node_ch_l
+   AND #3
+   ASL A
+   ORA zp_bbox_side
+   TAY                                     ; Y = k & 7
+   LDA vc_bit_mask,Y
+   AND RCACHE_COMPUTED,X
+   BEQ bcac_miss
+; --- HIT: psi1/psi2 from the planes, re-apply a_fine — the exact
+; cp_havepsi algebra r = (afn - psi) & 4095, INLINED plane-direct
+; (max-squeeze 2026-07-20: the pa_res staging and the JSR/RTS tax
+; both died; Y stays node through the whole serve, so the old
+; second-lookup reload died with them). t0/t1 are scratch here.
+; (The FULL bit died 2026-07-20: its only remaining constituency was
+; inside-boxes, which never set COMPUTED now — they re-run the plain
+; path each frame, whose classify ladder detects inside almost as
+; cheaply as the FULL probe cost EVERY warm hit here.)
+   LDY zp_node_ch_l
+   LDA zp_bbox_side
+   BNE bw_s1
+   LDA RC_PH_0,Y
+   AND #$0F
+   STA t1                                  ; psi1 hi
+   SEC
+   LDA bca_afn
+   SBC RC_P1L_0,Y
+   STA bca_p1                              ; r1 lo straight to memory
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F
+   STA bca_p1+1
+   LDA RC_PH_0,Y
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   STA t1                                  ; psi2 hi
+   SEC
+   LDA bca_afn
+   SBC RC_P2L_0,Y
+   STA t0                                  ; r2 lo (Y is still node)
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F                                ; A = r2 hi
+   LDY t0                                  ; Y = r2 lo
+   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
+bw_s1:
+   LDA RC_PH_1,Y
+   AND #$0F
+   STA t1
+   SEC
+   LDA bca_afn
+   SBC RC_P1L_1,Y
+   STA bca_p1
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F
+   STA bca_p1+1
+   LDA RC_PH_1,Y
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   STA t1
+   SEC
+   LDA bca_afn
+   SBC RC_P2L_1,Y
+   STA t0
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F
+   LDY t0
+   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
+; --- MISS: store-at-birth (2026-07-20, Eben's 'insert the cache into
+; the workings') — stash the probe's offset/mask for the check to
+; publish, then FALL THROUGH into the pristine check. The stores live where
+; the psi values are born: bca_tail's bt_store derives BOTH psis from
+; the tail's own inputs (p1 in memory, p2 in registers — the exact
+; cp_havepsi algebra) and sets COMPUTED from
+; the stash. No verdict banking, no residue scavenging, no memo-slot
+; coupling, no $80 marker: an inside box runs no corners, fires no
+; stores, and stays naturally uncacheable. The A/Z/C verdict flows
+; straight through to the walk.
+bcac_miss:
+   STX rc_bytehi                           ; stash the probe's offset + mask
+   LDA vc_bit_mask,Y                       ; (Y intact from the probe) for
+   STA rc_bit                              ; bca_tail's publish
+; ... and FALL THROUGH into box_classify (2026-07-21: probe at the top,
+; classify below — the reading order of the algorithm. Banked: true
+; fall-through, one CODE region. Flat: the island boundary forces one
+; bridge JMP on the miss path.)
+.if ::BANKED = 0
+   JMP box_classify
+.endif
 SEG_CODE
 zc_corners:                                ; harness window start
 box_classify:                              ; the check IS the classifier (the
@@ -1030,62 +1218,6 @@ nsxy_k255:
 SEG_HIGH
 .endif
 
-.import vc_bit_mask                     ; defq.s: 1 << (n & 7) table
-; Per-bbox cache, keyed by k = node*2 + side (the box ordinal):
-;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
-;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
-;
-; Frame classing is the zp_bv_entry/zp_tail_vec vector pair (set in
-; bca_frame, consumed by indirect JMPs): moving frames dispatch
-; straight to box_classify — no probe, no stores, bitmap
-; stale-but-unread. The moved->stationary edge clears RCACHE_COMPUTED
-; and arms the vectors; standing frames then probe here and entries
-; repopulate lazily.
-
-; PSI store = page-split SoA planes (2026-07-15; re-keyed by SIDE
-; 2026-07-20): page = zp_bbox_side (0/1), byte index = node (u8,
-; n_nodes <= 256 asserted at pack time) — no k derivation, no carry
-; games. psi values are 12-bit, so the two
-; hi nibbles PACK into one plane: PH = psi1_hi | psi2_hi<<4. Three
-; planes x 2 pages; the side pages are independently placed, so
-; the flat set scatters over audited free fragments and the $5000
-; CODE-tail carve is GONE (flat CODE now runs to $5800 — main_tail).
-.if BANKED
-RC_P1L_0 = $AD00                        ; bank L2 (old PSI head; $B300-$B45F freed)
-RC_P1L_1 = $AE00
-RC_P2L_0 = $AF00
-RC_P2L_1 = $B000
-RC_PH_0  = $B100
-RC_PH_1  = $B200
-.else
-RC_P1L_0 = $1A00                        ; flat fragments (audited free):
-RC_P1L_1 = $9700                        ; below the VXC planes (DIRs
-RC_P2L_0 = $D400                        ;   asserted <= $9700 now)
-RC_P2L_1 = $DA00                        ; after VWHC
-RC_PH_0  = $DB00
-RC_PH_1  = $0600                        ; the DEFQ page (FREE since d541b80;
-                                        ; moved from $F000 2026-07-17 — the
-                                        ; unrolled slope_div slow arm grew
-                                        ; flat ANG past $F000 and CORRUPTED
-                                        ; this plane: rotcache caught it)
-.endif
-; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
-; flat base moved $5760 -> $F100 with the carve release:
-RCACHE_COMPUTED = RCACHE_STATE          ; 59 bytes (bit per k>>3 group)
-; RCACHE_STATE+$40..+$7A FREE (RCACHE_FULL died 2026-07-20 — inside
-;  boxes just recompute; 59 bytes reclaimed)
-bca_prevpos = RCACHE_STATE + $80        ; 4 bytes: last frame's int position
-bca_cachepos = RCACHE_STATE + $84       ; 4 bytes: position COMPUTED is valid for
-.assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
-; RCACHE_ENABLE comes from abi.inc; nonzero -> cache may engage (drivers set it;
-                                        ; harness default 0 keeps every existing test
-                                        ; on the original path, byte- and cycle-exact)
-; scratch for the cached routine (dead outside a check)
-rc_idxhi    = t1
-; ($C4/$C5 freed 2026-07-15: the PSI pointer died with the plane
-;  conversion — k rides Y and the senior page is an arm.)
-rc_bytehi   = val_hi                    ; bitmap byte offset idx>>6 (<=58, fits u8)
-rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 
 ; --- The cache half of the check (2026-07-20: fully subsumed into this
 ; file — src/ang/rcache.s died): bca_frame is the per-frame epoch keeper,
@@ -1179,122 +1311,6 @@ bcf_arm:
 .assert <bt_store <> <bca_tail_postrc, error, "tail-vec lo bytes collide: bca_frame's armed-edge test needs them distinct"
 .export bca_tail_postrc
 
-; --- bbox_check_angle: rotation-coherent bbox visibility ----------------------
-; Same contract as bbox_check_angle (in: bca_boxp, bca_pxs/pys, bca_afn;
-; out: bca_vis, bca_ilo/bca_ihi) and bit-identical results — only cycles
-; change. Warm hits skip the per-corner abs/octant/SlopeDiv/tantoangle work
-; and re-derive phi with one subtraction; FULL hits skip the tail entirely.
-; pseudocode:
-;   idx = bca_boxp - rom_bbox                    # node*16 + side*8
-;   if COMPUTED[idx]:                            # --- HIT ---
-;     p1 = sgnext((a_fine - psi1) & 4095)        # cp_havepsi
-;     p2 = sgnext((a_fine - psi2) & 4095)
-;     goto bca_tail
-;   else:                                        # --- MISS ---
-;     stash offset/mask ; tail-call bbox_check_angle — bca_tail's
-;     bt_store derives psi1/psi2 from p1/p2 and sets COMPUTED (an
-;     inside box never reaches the tail, fires no stores, stays
-;     naturally uncacheable)
-bbox_check_angle:
-; THE bbox entry, every check, every frame (2026-07-20). Valid block
-; offset + bit mask computed INLINE (bcac_index retired):
-;   k = node*2 + side ; byte = k>>3 = node>>2 ; bit = 1 << (k & 7)
-; and the bit table is vc_bit_mask (defq.s) — same 8 bytes the vertex
-; cache uses. Check it always; on a miss the offset/mask pair is
-; stashed ($CF/$65 are rcache-owned, they survive the full check) for
-; bca_tail's bt_store block inside the check.
-   LDA zp_node_ch_l
-   LSR A
-   LSR A
-   TAX                                     ; X = valid block offset (node>>2)
-   LDA zp_node_ch_l
-   AND #3
-   ASL A
-   ORA zp_bbox_side
-   TAY                                     ; Y = k & 7
-   LDA vc_bit_mask,Y
-   AND RCACHE_COMPUTED,X
-   BEQ bcac_miss
-; --- HIT: psi1/psi2 from the planes, re-apply a_fine — the exact
-; cp_havepsi algebra r = (afn - psi) & 4095, INLINED plane-direct
-; (max-squeeze 2026-07-20: the pa_res staging and the JSR/RTS tax
-; both died; Y stays node through the whole serve, so the old
-; second-lookup reload died with them). t0/t1 are scratch here.
-; (The FULL bit died 2026-07-20: its only remaining constituency was
-; inside-boxes, which never set COMPUTED now — they re-run the plain
-; path each frame, whose classify ladder detects inside almost as
-; cheaply as the FULL probe cost EVERY warm hit here.)
-   LDY zp_node_ch_l
-   LDA zp_bbox_side
-   BNE bw_s1
-   LDA RC_PH_0,Y
-   AND #$0F
-   STA t1                                  ; psi1 hi
-   SEC
-   LDA bca_afn
-   SBC RC_P1L_0,Y
-   STA bca_p1                              ; r1 lo straight to memory
-   LDA bca_afn+1
-   SBC t1
-   AND #$0F
-   STA bca_p1+1
-   LDA RC_PH_0,Y
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   STA t1                                  ; psi2 hi
-   SEC
-   LDA bca_afn
-   SBC RC_P2L_0,Y
-   STA t0                                  ; r2 lo (Y is still node)
-   LDA bca_afn+1
-   SBC t1
-   AND #$0F                                ; A = r2 hi
-   LDY t0                                  ; Y = r2 lo
-   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
-bw_s1:
-   LDA RC_PH_1,Y
-   AND #$0F
-   STA t1
-   SEC
-   LDA bca_afn
-   SBC RC_P1L_1,Y
-   STA bca_p1
-   LDA bca_afn+1
-   SBC t1
-   AND #$0F
-   STA bca_p1+1
-   LDA RC_PH_1,Y
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   STA t1
-   SEC
-   LDA bca_afn
-   SBC RC_P2L_1,Y
-   STA t0
-   LDA bca_afn+1
-   SBC t1
-   AND #$0F
-   LDY t0
-   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
-; --- MISS: store-at-birth (2026-07-20, Eben's 'insert the cache into
-; the workings') — stash the probe's offset/mask for the check to
-; publish, then TAIL-CALL the pristine check. The stores live where
-; the psi values are born: bca_tail's bt_store derives BOTH psis from
-; the tail's own inputs (p1 in memory, p2 in registers — the exact
-; cp_havepsi algebra) and sets COMPUTED from
-; the stash. No verdict banking, no residue scavenging, no memo-slot
-; coupling, no $80 marker: an inside box runs no corners, fires no
-; stores, and stays naturally uncacheable. The A/Z/C verdict flows
-; straight through to the walk.
-bcac_miss:
-   STX rc_bytehi                           ; stash the probe's offset + mask
-   LDA vc_bit_mask,Y                       ; (Y intact from the probe) for
-   STA rc_bit                              ; bca_tail's publish
-   JMP box_classify                        ; miss: run the pristine check
 
 ; (bcac_index retired 2026-07-20: the offset/mask build is inlined at
 ;  the one entry and stashed across the check on misses.)
