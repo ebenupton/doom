@@ -8,4 +8,3 @@
 ;                 cached check path, RCACHE data map (RCCODE when banked)
 .include "ang/header_div.s"
 .include "ang/bca.s"
-.include "ang/rcache.s"

@@ -13,7 +13,7 @@ from symmap import sym
 def s16(v): return v-0x10000 if v>=0x8000 else v
 def s8(v):  return v-0x100 if v>=0x80 else v
 
-BCA=sym('bbox_check_angle'); BOX=sym('bca_top')
+BCA=sym('box_classify'); BOX=sym('bca_top')  # pristine check (moving path)
 B_PX,B_PY,B_AB=sym('bca_px'),sym('bca_py'),sym('bca_ab')
 B_AFN,B_PXS,B_PYS=sym('bca_afn'),sym('bca_pxs'),sym('bca_pys')
 B_ILO,B_IHI=sym('bca_ilo'),sym('bca_ihi')  # bca_vis retired: A/C signature

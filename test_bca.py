@@ -13,7 +13,7 @@ from symmap import sym
 
 mpu = MPU()
 load_angle_module(mpu.memory)
-BCA = sym('bbox_check_angle')
+BCA = sym('box_classify')  # the pristine check (engine moving-frame path)
 BOX = sym('bca_top')
 
 

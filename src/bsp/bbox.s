@@ -122,9 +122,9 @@ br_bbox_visible:
    PAGE BANK_L2                            ; angle tables live in bank L2
    LDA zp_rc_moved
    BNE bv_moving
-   JMP bbox_check_angle_cached             ; stationary: probe/serve/store
+   JMP bbox_check_angle                    ; stationary: probe/serve/store
 bv_moving:
-   JMP bbox_check_angle                    ; exits return to OUR caller
+   JMP box_classify                        ; pristine: exits return to OUR caller
 
 ; ============================================================================
 ; br_bbox_visible_d — D-cache wrapper around the pristine check above.
@@ -206,10 +206,10 @@ dv_fresh:
    LDA zp_bv_mode
    AND #$02
    BNE dvf_rc
-   JSR bbox_check_angle
+   JSR box_classify
    JMP dvf_store
 dvf_rc:
-   JSR bbox_check_angle_cached
+   JSR bbox_check_angle
 dvf_store:
    ROL A                                   ; encode (verdict, C): 0 = visible
                                            ; but gap-closed, 1 = angle cull,

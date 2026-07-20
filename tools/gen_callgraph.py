@@ -74,7 +74,7 @@ jsr_targets = {t for _, op, t in raw if op == 0x20 and t in addr2names}
 KNOWN = ['span_has_gap', 'bca_tail', 'cp_havepsi', 'full_vis', 'cull',
          'draw_clipped_line_s16', 'draw_clipped_line_s16_h', 'span_mark_solid',
          'tighten_from_records', 'br_render_frame', 'bbox_check_angle',
-         'bbox_check_angle_cached', 'span_init', 'ns_khave', 'mask_done',
+         'bbox_check_angle', 'span_init', 'ns_khave', 'mask_done',
          'lf_ns', 'br_bbox_visible', 'vertex_fetch', 'rot_gen_pair',
          'rot_core_cos_nz', 'rns_go', 'udiv16_8', 'umul8', 'SC_UMUL8',
          'br_view_setup', 'br_to_view', 'br_to_view_fetch', 'br_recip',
