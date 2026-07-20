@@ -23,6 +23,7 @@ bsp_b_start:
 
 
 
+.export vc_bit_mask                     ; shared with the rcache probe
 vc_bit_mask:
    .byte 1, 2, 4, 8, 16, 32, 64, 128       ; 1 << (idx & 7) for the vertex cache
                                         ; (from main_tail.s; MAIN at ceiling)

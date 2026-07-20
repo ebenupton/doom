@@ -111,19 +111,14 @@ D_CODE_L = $030C                        ; 236 bytes (ends $03F7)
 ;        bca_vis/zp_i_l/h staged for the D store
 ; ============================================================================
 br_bbox_visible:
-.scope
-   LDA zp_bv_mode
-   BNE bv_special
+; ONE PATH (2026-07-20, Eben's redesign): the rotation cache runs
+; EVERY frame — no mode byte, no per-frame dispatch. Epochs are kept
+; by bca_frame (position change -> unrolled valid-bit wipe). The
+; walk-forward D cache is DISABLED for now: its serve/store/classifier
+; code below stays assembled but nothing reaches it (br_dcache_frame
+; is no longer called from br_view_setup).
    PAGE BANK_L2                            ; angle tables live in bank L2
-   JMP bbox_check_angle                    ; pristine; exits return to OUR caller
-bv_special:
-   LSR A
-   BCS bv_d                                ; b0: D wrapper (may serve w/o check)
-   PAGE BANK_L2
-   JMP bbox_check_angle_cached             ; b1 alone: rotation cache
-bv_d:
-   JMP br_bbox_visible_d
-.endscope
+   JMP bbox_check_angle_cached             ; exits return to OUR caller
 
 ; ============================================================================
 ; br_bbox_visible_d — D-cache wrapper around the pristine check above.

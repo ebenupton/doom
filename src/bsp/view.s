@@ -177,8 +177,9 @@ br_view_setup:
                                         ; frame's trig (SEL, main $2C00 —
                                         ; runs under any bank)
    PAGE BANK_L2
-   JSR bca_frame                           ; per-frame rcache dispatch patch (rcache.s)
-   JSR br_dcache_frame                     ; forward-coherence bbox cache (bbox.s)
+   JSR bca_frame                           ; rcache epoch keeper (rcache.s);
+                                           ; the D-cache classifier call is
+                                           ; gone — D disabled 2026-07-20
    vxc_frame                           ; translation-coherence vertex cache
    RTS
 .endscope

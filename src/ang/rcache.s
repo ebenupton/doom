@@ -1,3 +1,4 @@
+.import vc_bit_mask                     ; defq.s: 1 << (n & 7) table
 ; Per-bbox cache, keyed by k = node*2 + side (the box ordinal):
 ;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
 ;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
@@ -62,77 +63,32 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 .if BANKED
 SEG_CODE
 .endif
-; --- bca_frame: per-frame stability check + dispatch patch --------------------
-; Called by br_view_setup after it has set the integer player position ZP.
-;   in : RCACHE_ENABLE; player int position ZP $01/$9D (x lo/hi), $03/$9E
-;        (y lo/hi); bca_prevpos/bca_cachepos (persistent across frames)
-;   out: bca_check_op (the bbox.s call-site JSR) operand SMC-patched to
-;        bbox_check_angle (moved frame or cache disabled: verbatim original,
-;        zero per-check overhead) or to bbox_check_angle_cached (stable
-;        frame); COMPUTED bitmap cleared on the first stable frame at a new
-;        position (new cache epoch).
-; pseudocode:
-;   if not ENABLE:        patch original; return
-;   if pos != prevpos:    prevpos = pos; patch original; return    # moved
-;   if pos != cachepos:   cachepos = pos; COMPUTED[:] = 0          # new epoch
-;   patch cached                                                   # stable
 .export bca_frame
 .export bbox_check_angle_cached
-; (SMC dispatch retired 2026-07-18: bca_frame now sets/clears bit 1 of
-; zp_bv_mode and br_bbox_visible branches on it — cache and non-cache
-; paths are plain code, selected by data.)
 bca_frame:
-   LDA RCACHE_ENABLE
-   BNE bcf_enabled
-bcf_off:
-   LDA zp_bv_mode
-   AND #$FD                                ; clear the rc bit
-   STA zp_bv_mode
-   RTS
-bcf_enabled:
-; stable = ($01,$9D,$03,$9E) == bca_prevpos ?
-   LDA $01
-   CMP bca_prevpos
-   BNE bcf_moved_noreload
-   LDA $9D
-   CMP bca_prevpos+1
-   BNE bcf_moved
-   LDA $03
-   CMP bca_prevpos+2
-   BNE bcf_moved
-   LDA $9E
-   CMP bca_prevpos+3
-   BEQ bcf_stable
-bcf_moved:
-; record this position, disable the cache (original routine).
-   LDA $01                                 ; (stage-0 miss arrives with $01 live)
-bcf_moved_noreload:
-   STA bca_prevpos
-   LDA $9D
-   STA bca_prevpos+1
-   LDA $03
-   STA bca_prevpos+2
-   LDA $9E
-   STA bca_prevpos+3
-   JMP bcf_off
-bcf_stable:
-; same position as last frame. If the computed bitmap belongs to a DIFFERENT
-; position, clear it (new stable epoch).
+; Per-frame EPOCH KEEPER (2026-07-20 redesign): the cache runs every
+; frame — this routine's only job is detecting an integer-position
+; change and starting a new epoch by clearing every valid bit with an
+; unrolled static STA block (59 bitmap bytes, 4 cycles each — no
+; loop bookkeeping; runs only on moved frames). bca_prevpos and the
+; enable/mode machinery died with the dispatch; RCACHE_ENABLE remains
+; as inert RAM (drivers still poke it).
    LDA $01
    CMP bca_cachepos
-   BNE bcf_newpos_noreload
+   BNE bcf_new
    LDA $9D
    CMP bca_cachepos+1
-   BNE bcf_newpos
+   BNE bcf_new
    LDA $03
    CMP bca_cachepos+2
-   BNE bcf_newpos
+   BNE bcf_new
    LDA $9E
    CMP bca_cachepos+3
-   BEQ bcf_enable
-bcf_newpos:
-   LDA $01                                 ; (stage-0 miss arrives with $01 live)
-bcf_newpos_noreload:
+   BNE bcf_new
+bcf_same:
+   RTS
+bcf_new:
+   LDA $01
    STA bca_cachepos
    LDA $9D
    STA bca_cachepos+1
@@ -141,15 +97,9 @@ bcf_newpos_noreload:
    LDA $9E
    STA bca_cachepos+3
    LDA #0
-   LDX #59
-bcf_clr:
-   DEX
-   STA RCACHE_COMPUTED,X
-   BNE bcf_clr
-bcf_enable:
-   LDA zp_bv_mode
-   ORA #$02                                ; set the rc bit
-   STA zp_bv_mode
+.repeat 59, I
+   STA RCACHE_COMPUTED+I
+.endrepeat
    RTS
 
 ; --- bbox_check_angle_cached: rotation-coherent bbox visibility ---------------
@@ -171,12 +121,24 @@ bcf_enable:
 ;     store both ; set COMPUTED
 ;     goto bca_tail
 bbox_check_angle_cached:
-; (no bca_vis entry preset — every exit tail stores it; see bca.s)
-                                        ; their own ladders (cold re-writes)
-   JSR bcac_index                          ; -> rc_psilo/hi, rc_bytehi, rc_bit
-   LDX rc_bytehi
-   LDA RCACHE_COMPUTED,X
-   AND rc_bit
+; THE bbox entry, every check, every frame (2026-07-20). Valid block
+; offset + bit mask computed INLINE (bcac_index retired):
+;   k = node*2 + side ; byte = k>>3 = node>>2 ; bit = 1 << (k & 7)
+; and the bit table is vc_bit_mask (defq.s) — same 8 bytes the vertex
+; cache uses. Check it always; on a miss the offset/mask pair is
+; stashed ($CF/$65 are rcache-owned, they survive the full check) and
+; the cache line is written on the way out.
+   LDA zp_node_ch_l
+   LSR A
+   LSR A
+   TAX                                     ; X = valid block offset (node>>2)
+   LDA zp_node_ch_l
+   AND #3
+   ASL A
+   ORA zp_bbox_side
+   TAY                                     ; Y = k & 7
+   LDA vc_bit_mask,Y
+   AND RCACHE_COMPUTED,X
    BEQ bcac_cold
 ; --- WARM: psi1/psi2 from the planes, re-apply a_fine (cp_havepsi).
 ; (The FULL bit died 2026-07-20: its only remaining constituency was
@@ -241,6 +203,9 @@ bw_hi:
 ; algebra. The inside escape publishes the $80 marker in zp_cpm_s2
 ; (no corners ran) and short-circuits to COMPUTED+FULL.
 bcac_cold:
+   STX rc_bytehi                           ; stash the probe's offset + mask
+   LDA vc_bit_mask,Y                       ; (Y intact from the probe) for
+   STA rc_bit                              ; the write-back after the check
    JSR bbox_check_angle                    ; COMBINED verdict in A + the angle
    PHP                                     ; bit in C (the A/Z/C contract) —
    PHA                                     ; bank BOTH across the snapshot
@@ -251,7 +216,6 @@ bcac_cold:
                                            ; re-runs the plain path each frame
                                            ; (the classify ladder's inside
                                            ; detect is the cheap case)
-   JSR bcac_index                          ; raw p1 + the corner-2 slot survive
 bcs_corners:
 ; psi1/psi2 staged in pa_dx/pa_dy (dead here). NO span-FULL test any
 ; more (2026-07-20, the region-cell tail): corner-derived span >= 2048
@@ -311,23 +275,8 @@ bcs_uncacheable:
    RTS                                     ; bcac_cold entry (Z: A unchanged)
 
 
-bcac_index:
-; Bitmap byte/bit from (zp_node_ch_l, zp_bbox_side) — the PSI pointer
-; died with the plane conversion (2026-07-15):
-;   byte = k>>3 = node>>2 (exact: side and node bit 0 shift out)
-;   bit  = 1 << (k & 7) = 1 << (((node & 3) << 1) | side)
-   LDA zp_node_ch_l
-   LSR A
-   LSR A
-   STA rc_bytehi
-   LDA zp_node_ch_l
-   AND #3
-   ASL A
-   ORA zp_bbox_side
-   TAX
-   LDA rc_bitmask,X
-   STA rc_bit
-   RTS
+; (bcac_index retired 2026-07-20: the offset/mask build is inlined at
+;  the one entry and stashed across the check on misses.)
 
 rc_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
