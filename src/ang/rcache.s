@@ -3,33 +3,34 @@
 ;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
 ;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
 ;
-; bca_frame (per frame, from br_view_setup) SMC-patches the bbox.s call site (bca_check_op) between
-; bbox_check_angle (moved frame: verbatim, zero overhead) and
-; bbox_check_angle_cached (stable frame). Stability = integer position
-; ($01/$9D/$03/$9E) unchanged since last frame. First stable frame at a new
-; position clears RCACHE_COMPUTED so entries repopulate lazily.
+;Frame classing is the zp_rc_moved flag (set here in bca_frame, read by
+; bbox.s br_bbox_visible): moving frames dispatch straight to
+; bbox_check_angle — no probe, no stores, bitmap stale-but-unread.
+; The moved->stationary edge clears RCACHE_COMPUTED and arms the probe;
+; standing frames then come here and entries repopulate lazily.
 
-; PSI store = page-split SoA planes (2026-07-15): entry ordinal
-; k = node*2 + side (u9; senior page = node bit 7, which falls out of
-; the k-derivation ASL as the CARRY). psi values are 12-bit, so the two
+; PSI store = page-split SoA planes (2026-07-15; re-keyed by SIDE
+; 2026-07-20): page = zp_bbox_side (0/1), byte index = node (u8,
+; n_nodes <= 256 asserted at pack time) — no k derivation, no carry
+; games. psi values are 12-bit, so the two
 ; hi nibbles PACK into one plane: PH = psi1_hi | psi2_hi<<4. Three
-; planes x 2 pages; junior/senior pages are independently placed, so
+; planes x 2 pages; the side pages are independently placed, so
 ; the flat set scatters over audited free fragments and the $5000
 ; CODE-tail carve is GONE (flat CODE now runs to $5800 — main_tail).
 .if BANKED
-RC_P1L_J = $AD00                        ; bank L2 (old PSI head; $B300-$B45F freed)
-RC_P1L_S = $AE00
-RC_P2L_J = $AF00
-RC_P2L_S = $B000
-RC_PH_J  = $B100
-RC_PH_S  = $B200
+RC_P1L_0 = $AD00                        ; bank L2 (old PSI head; $B300-$B45F freed)
+RC_P1L_1 = $AE00
+RC_P2L_0 = $AF00
+RC_P2L_1 = $B000
+RC_PH_0  = $B100
+RC_PH_1  = $B200
 .else
-RC_P1L_J = $1A00                        ; flat fragments (audited free):
-RC_P1L_S = $9700                        ; below the VXC planes (DIRs
-RC_P2L_J = $D400                        ;   asserted <= $9700 now)
-RC_P2L_S = $DA00                        ; after VWHC
-RC_PH_J  = $DB00
-RC_PH_S  = $0600                        ; the DEFQ page (FREE since d541b80;
+RC_P1L_0 = $1A00                        ; flat fragments (audited free):
+RC_P1L_1 = $9700                        ; below the VXC planes (DIRs
+RC_P2L_0 = $D400                        ;   asserted <= $9700 now)
+RC_P2L_1 = $DA00                        ; after VWHC
+RC_PH_0  = $DB00
+RC_PH_1  = $0600                        ; the DEFQ page (FREE since d541b80;
                                         ; moved from $F000 2026-07-17 — the
                                         ; unrolled slope_div slow arm grew
                                         ; flat ANG past $F000 and CORRUPTED
@@ -47,7 +48,6 @@ bca_cachepos = RCACHE_STATE + $84       ; 4 bytes: position COMPUTED is valid fo
                                         ; harness default 0 keeps every existing test
                                         ; on the original path, byte- and cycle-exact)
 ; scratch for the cached routine (dead outside a check)
-rc_idxlo    = t0                        ; index-calc scratch (t0/t1 free at entry)
 rc_idxhi    = t1
 ; ($C4/$C5 freed 2026-07-15: the PSI pointer died with the plane
 ;  conversion — k rides Y and the senior page is an arm.)
@@ -126,11 +126,11 @@ bcf_arm:
 ; and re-derive phi with one subtraction; FULL hits skip the tail entirely.
 ; pseudocode:
 ;   idx = bca_boxp - rom_bbox                    # node*16 + side*8
-;   if COMPUTED[idx]:                            # --- WARM ---
+;   if COMPUTED[idx]:                            # --- HIT ---
 ;     p1 = sgnext((a_fine - psi1) & 4095)        # cp_havepsi
 ;     p2 = sgnext((a_fine - psi2) & 4095)
 ;     goto bca_tail
-;   else:                                        # --- COLD ---
+;   else:                                        # --- MISS ---
 ;     if viewer inside box: return full (UNCACHED — recomputes)
 ;     box_classify + 2x corner_phi -> RAW p1 (pre-clip) + memo slot 2
 ;     psi1 = (a_fine - p1) & 4095 ; psi2 = CPM_PSI[slot2] (identical
@@ -156,31 +156,29 @@ bbox_check_angle_cached:
    TAY                                     ; Y = k & 7
    LDA vc_bit_mask,Y
    AND RCACHE_COMPUTED,X
-   BEQ bcac_cold
-; --- WARM: psi1/psi2 from the planes, re-apply a_fine (cp_havepsi).
+   BEQ bcac_miss
+; --- HIT: psi1/psi2 from the planes, re-apply a_fine (cp_havepsi).
 ; (The FULL bit died 2026-07-20: its only remaining constituency was
 ; inside-boxes, which never set COMPUTED now — they re-run the plain
 ; path each frame, whose classify ladder detects inside almost as
 ; cheaply as the FULL probe cost EVERY warm hit here.)
-; k = node*2+side rides Y; the ASL's carry IS the senior-page select.
-   LDA zp_node_ch_l
-   ASL A
-   ORA zp_bbox_side
-   STA rc_idxlo                            ; k & 255 (cp_havepsi eats Y)
-   TAY
-   BCS bw_hi
-   LDA RC_P1L_J,Y
+; page = zp_bbox_side, index = node (cp_havepsi eats Y; zp_node_ch_l
+; is stable across it, so the second lookup just reloads it).
+   LDY zp_node_ch_l
+   LDA zp_bbox_side
+   BNE bw_s1
+   LDA RC_P1L_0,Y
    STA pa_res
-   LDA RC_PH_J,Y
+   LDA RC_PH_0,Y
    AND #$0F
    STA pa_res+1
    JSR cp_havepsi                          ; -> phi hi in A, lo in Y
    STA bca_p1+1
    STY bca_p1
-   LDY rc_idxlo
-   LDA RC_P2L_J,Y
+   LDY zp_node_ch_l
+   LDA RC_P2L_0,Y
    STA pa_res
-   LDA RC_PH_J,Y
+   LDA RC_PH_0,Y
    LSR A
    LSR A
    LSR A
@@ -188,19 +186,19 @@ bbox_check_angle_cached:
    STA pa_res+1
    JSR cp_havepsi
    JMP bca_tail                            ; p2 rides A/Y, register-only
-bw_hi:
-   LDA RC_P1L_S,Y
+bw_s1:
+   LDA RC_P1L_1,Y
    STA pa_res
-   LDA RC_PH_S,Y
+   LDA RC_PH_1,Y
    AND #$0F
    STA pa_res+1
    JSR cp_havepsi
    STA bca_p1+1
    STY bca_p1
-   LDY rc_idxlo
-   LDA RC_P2L_S,Y
+   LDY zp_node_ch_l
+   LDA RC_P2L_1,Y
    STA pa_res
-   LDA RC_PH_S,Y
+   LDA RC_PH_1,Y
    LSR A
    LSR A
    LSR A
@@ -208,7 +206,7 @@ bw_hi:
    STA pa_res+1
    JSR cp_havepsi
    JMP bca_tail                            ; p2 rides A/Y, register-only
-; --- COLD: ONE ROUTE (2026-07-18) — run the pristine bbox_check_angle
+; --- MISS: ONE ROUTE (2026-07-18) — run the pristine bbox_check_angle
 ; whole, then populate the cache from what it left behind. The two psi
 ; sources (2026-07-19, the bca_p2 kill): (1) raw p1 survives in memory
 ; (the bias fold made bca_tail read-only on it), so psi1 = (a_fine -
@@ -219,7 +217,7 @@ bw_hi:
 ; it). Bit-identical: (a_fine - p2) & 4095 == psi2 by the cp_havepsi
 ; algebra. The inside escape publishes the $80 marker in zp_cpm_s2
 ; (no corners ran) and short-circuits to COMPUTED+FULL.
-bcac_cold:
+bcac_miss:
    STX rc_bytehi                           ; stash the probe's offset + mask
    LDA vc_bit_mask,Y                       ; (Y intact from the probe) for
    STA rc_bit                              ; the write-back after the check
@@ -260,25 +258,23 @@ bcs_corners:
    ASL A
    ORA pa_dx+1
    STA pa_dx+1                             ; packed PH byte
-   LDA zp_node_ch_l
-   ASL A
-   ORA zp_bbox_side
-   TAY                                     ; k & 255; C = senior
-   BCS bcs_hi
+   LDY zp_node_ch_l
+   LDA zp_bbox_side
+   BNE bcs_s1
    LDA pa_dx
-   STA RC_P1L_J,Y
+   STA RC_P1L_0,Y
    LDA pa_dy
-   STA RC_P2L_J,Y
+   STA RC_P2L_0,Y
    LDA pa_dx+1
-   STA RC_PH_J,Y
+   STA RC_PH_0,Y
    JMP bcs_done
-bcs_hi:
+bcs_s1:
    LDA pa_dx
-   STA RC_P1L_S,Y
+   STA RC_P1L_1,Y
    LDA pa_dy
-   STA RC_P2L_S,Y
+   STA RC_P2L_1,Y
    LDA pa_dx+1
-   STA RC_PH_S,Y
+   STA RC_PH_1,Y
 bcs_done:
 ; set computed bit (no FULL bit any more — and with it went the whole
 ; stale-bit-clearing dance: COMPUTED is the only epoch state)
@@ -289,7 +285,7 @@ bcs_done:
 bcs_uncacheable:
    PLA                                     ; the combined check+has_gap verdict
    PLP                                     ; + its C signature, banked at
-   RTS                                     ; bcac_cold entry (Z: A unchanged)
+   RTS                                     ; bcac_miss entry (Z: A unchanged)
 
 
 ; (bcac_index retired 2026-07-20: the offset/mask build is inlined at
