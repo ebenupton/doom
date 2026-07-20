@@ -131,20 +131,18 @@ bcf_arm:
 ;     p2 = sgnext((a_fine - psi2) & 4095)
 ;     goto bca_tail
 ;   else:                                        # --- MISS ---
-;     if viewer inside box: return full (UNCACHED — recomputes)
-;     box_classify + 2x corner_phi -> RAW p1 (pre-clip) + memo slot 2
-;     psi1 = (a_fine - p1) & 4095 ; psi2 = CPM_PSI[slot2] (identical
-;       by the cp_havepsi algebra: memo[slot2] IS corner 2's psi)
-;     store both ; set COMPUTED
-;     goto bca_tail
+;     stash offset/mask ; tail-call bbox_check_angle — the stores
+;     fire at birth inside it (corner2_* banks psi1, bca_tail banks
+;     psi2 + sets COMPUTED; an inside box runs no corners, fires no
+;     stores, stays naturally uncacheable)
 bbox_check_angle_cached:
 ; THE bbox entry, every check, every frame (2026-07-20). Valid block
 ; offset + bit mask computed INLINE (bcac_index retired):
 ;   k = node*2 + side ; byte = k>>3 = node>>2 ; bit = 1 << (k & 7)
 ; and the bit table is vc_bit_mask (defq.s) — same 8 bytes the vertex
 ; cache uses. Check it always; on a miss the offset/mask pair is
-; stashed ($CF/$65 are rcache-owned, they survive the full check) and
-; the cache line is written on the way out.
+; stashed ($CF/$65 are rcache-owned, they survive the full check) for
+; the store-at-birth hooks inside the check (corner2_*/bca_tail).
    LDA zp_node_ch_l
    LSR A
    LSR A
@@ -185,7 +183,7 @@ bbox_check_angle_cached:
    LSR A
    STA pa_res+1
    JSR cp_havepsi
-   JMP bca_tail                            ; p2 rides A/Y, register-only
+   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
 bw_s1:
    LDA RC_P1L_1,Y
    STA pa_res
@@ -205,94 +203,24 @@ bw_s1:
    LSR A
    STA pa_res+1
    JSR cp_havepsi
-   JMP bca_tail                            ; p2 rides A/Y, register-only
-; --- MISS: ONE ROUTE (2026-07-18) — run the pristine bbox_check_angle
-; whole, then populate the cache from what it left behind. The two psi
-; sources (2026-07-19, the bca_p2 kill): (1) raw p1 survives in memory
-; (the bias fold made bca_tail read-only on it), so psi1 = (a_fine -
-; p1) & 4095 as before; (2) p2 never lands in memory now — instead
-; bca_tail banked corner 2's memo slot in zp_cpm_s2, and CPM_PSI at
-; that slot IS corner 2's psi (the serve/store invariant holds on both
-; corner_phi exits, and nothing runs between the arm and here to evict
-; it). Bit-identical: (a_fine - p2) & 4095 == psi2 by the cp_havepsi
-; algebra. The inside escape publishes the $80 marker in zp_cpm_s2
-; (no corners ran) and short-circuits to COMPUTED+FULL.
+   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
+; --- MISS: store-at-birth (2026-07-20, Eben's 'insert the cache into
+; the workings') — stash the probe's offset/mask for the check to
+; publish, then TAIL-CALL the pristine check. The stores live where
+; the psi values are born: corner2_* (bca.s) banks psi1 while it is
+; still live in pa_res, and bca_tail banks psi2 + sets COMPUTED from
+; the stash. No verdict banking, no residue scavenging, no memo-slot
+; coupling, no $80 marker: an inside box runs no corners, fires no
+; stores, and stays naturally uncacheable. The A/Z/C verdict flows
+; straight through to the walk.
 bcac_miss:
    STX rc_bytehi                           ; stash the probe's offset + mask
    LDA vc_bit_mask,Y                       ; (Y intact from the probe) for
-   STA rc_bit                              ; the write-back after the check
-   JSR bbox_check_angle                    ; COMBINED verdict in A + the angle
-   PHP                                     ; bit in C (the A/Z/C contract) —
-   PHA                                     ; bank BOTH across the snapshot
-   BIT zp_cpm_s2
-   BMI bcs_uncacheable                     ; inside-escape ($80 marker): no
-                                           ; corners ran, nothing to cache —
-                                           ; COMPUTED stays clear and the box
-                                           ; re-runs the plain path each frame
-                                           ; (the classify ladder's inside
-                                           ; detect is the cheap case)
-bcs_corners:
-; psi1/psi2 staged in pa_dx/pa_dy (dead here). NO span-FULL test any
-; more (2026-07-20, the region-cell tail): corner-derived span >= 2048
-; verdicts are angle-DEPENDENT under the cell table (a halo box can
-; answer [col,255] at one angle and full at another), so the
-; a_fine-independent FULL bit retreats to the inside-escape marker
-; only — the corner path always leaves FULL clear and warm entries
-; recompute the cells from the cached psi.
-   SEC
-   LDA bca_afn
-   SBC bca_p1
-   STA pa_dx                               ; psi1 lo
-   LDA bca_afn+1
-   SBC bca_p1+1
-   AND #$0F
-   STA pa_dx+1                             ; psi1 hi (0-15)
-   LDX zp_cpm_s2
-   LDA CPM_PSIL,X
-   STA pa_dy                               ; psi2 lo
-; pack the PH byte: psi2 hi << 4 (top bits shed by the shifts) | psi1 hi
-   LDA CPM_PSIH,X
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   ORA pa_dx+1
-   STA pa_dx+1                             ; packed PH byte
-   LDY zp_node_ch_l
-   LDA zp_bbox_side
-   BNE bcs_s1
-   LDA pa_dx
-   STA RC_P1L_0,Y
-   LDA pa_dy
-   STA RC_P2L_0,Y
-   LDA pa_dx+1
-   STA RC_PH_0,Y
-   JMP bcs_done
-bcs_s1:
-   LDA pa_dx
-   STA RC_P1L_1,Y
-   LDA pa_dy
-   STA RC_P2L_1,Y
-   LDA pa_dx+1
-   STA RC_PH_1,Y
-bcs_done:
-; set computed bit (no FULL bit any more — and with it went the whole
-; stale-bit-clearing dance: COMPUTED is the only epoch state)
-   LDX rc_bytehi
-   LDA RCACHE_COMPUTED,X
-   ORA rc_bit
-   STA RCACHE_COMPUTED,X
-bcs_uncacheable:
-   PLA                                     ; the combined check+has_gap verdict
-   PLP                                     ; + its C signature, banked at
-   RTS                                     ; bcac_miss entry (Z: A unchanged)
-
+   STA rc_bit                              ; bca_tail's publish
+   JMP bbox_check_angle
 
 ; (bcac_index retired 2026-07-20: the offset/mask build is inlined at
 ;  the one entry and stashed across the check on misses.)
-
-rc_bitmask:
-   .byte $01,$02,$04,$08,$10,$20,$40,$80
 .if BANKED
 SEG_CODE                       ; back to the angle-module segment
 .endif

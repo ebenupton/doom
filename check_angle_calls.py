@@ -39,6 +39,7 @@ def standalone(top,bot,left,right,px,py,ab):
     m[B_PXS]=px&0xFF; m[B_PXS+1]=(0xFF if px<0 else 0)^0x80  # offset-binned (view.s)
     m[B_PYS]=py&0xFF; m[B_PYS+1]=(0xFF if py<0 else 0)^0x80
     m[ZNODE]=0; m[ZSIDE]=0                 # box -> planes at node 0, side 0
+    m[sym('zp_rc_moved')]=0xFF             # moving contract: no store hooks
     for f,val in enumerate((top,bot,left,right)):
         m[BBP[2*f]]=val&0xFF; m[BBP[2*f+1]]=((val>>8)^0x80)&0xFF  # offset-binned hi
     _st.pc=BCA;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF

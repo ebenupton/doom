@@ -254,7 +254,7 @@ yL:
    CMP BBP_T_LO+(s)*$100,Y
    BCC yLlo
 yLtop:                                     ; py >= T: row 0 (NW)
-   ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
+   ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner2_pn
 yLlo:
    LDA bca_pys+1                           ; (lo-tier arrivals only)
 yLlo_nr:
@@ -265,9 +265,9 @@ yLlo_nr:
    CMP BBP_B_LO+(s)*$100,Y
    BCS yLmid                               ; py >= B: mid band
 yLbot:                                     ; py < B: row 8 (SW)
-   ZARM s, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
+   ZARM s, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner2_pp
 yLmid:                                     ; row 4 (W): corners share L
-   ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
+   ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner2_pn
 ; --- MID column ---
 yM:
    LDA bca_pys+1
@@ -279,7 +279,7 @@ yM:
    BCC yMlo
 yMtop:                                     ; row 1 (N): corners share T,
                                            ; c1 negates it -> memo reload
-   ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
+   ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner2_nn
 yMlo:
    LDA bca_pys+1
 yMlo_nr:
@@ -290,15 +290,13 @@ yMlo_nr:
    CMP BBP_B_LO+(s)*$100,Y
    BCS cxi
 yMbot:                                     ; row 9 (S): corners share B
-   ZARM_SY s, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
+   ZARM_SY s, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner2_pp
 cxi:
 ; viewer inside (or on the boundary of) the CLOSED box: no corners
-; ran, so corner 2's memo slot is stale — publish the $80 marker
-; instead (slots are 0-127; bit 7 is the impossible flag). The rcache
-; cold snapshot sees it and sets COMPUTED+FULL directly, never
-; touching the psi planes.
-   LDA #$80
-   STA zp_cpm_s2
+; ran, so no store-at-birth hooks fire and COMPUTED stays clear — the
+; box is naturally uncacheable and re-runs the plain path each frame
+; (the classify ladder's inside detect is the cheap case). The old
+; $80-marker protocol died with the wrapper scavenge (2026-07-20).
    JMP full_vis
 ; --- RIGHT column ---
 yR:
@@ -310,7 +308,7 @@ yR:
    CMP BBP_T_LO+(s)*$100,Y
    BCC yRlo
 yRtop:                                     ; py >= T: row 2 (NE)
-   ZARM s, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
+   ZARM s, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner2_nn
 yRlo:
    LDA bca_pys+1
 yRlo_nr:
@@ -321,10 +319,10 @@ yRlo_nr:
    CMP BBP_B_LO+(s)*$100,Y
    BCS yRmid
 yRbot:                                     ; py < B: row 10 (SE)
-   ZARM s, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
+   ZARM s, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner2_np
 yRmid:                                     ; row 6 (E): corners share R,
                                            ; c1 negates it -> memo reload
-   ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+   ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner2_np
 .endmacro
 
 ; ============================================================================
@@ -333,8 +331,9 @@ yRmid:                                     ; row 6 (E): corners share R,
 ; side-baked instantiation and is never consulted again.
 ;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
 ;   out: control at a corner arm or full_vis; bca_p1 = raw phi 1 in
-;        memory, zp_cpm_s2 = corner 2's memo slot (or the $80 inside
-;        marker) — the rcache cold snapshot's two psi sources
+;        memory. Armed frames (zp_rc_moved = 0) also leave the psi
+;        planes populated: the store-at-birth hooks (corner2_* +
+;        bca_tail) fire along the way
 ; zc_corners/zc_end bound the harness PC window (check_angle_calls).
 
 ; ============================================================================
@@ -418,15 +417,13 @@ SEG_HIGH
 ; ENTRY CONTRACT (2026-07-19, Eben's convention flip, adjusted): the
 ; caller hands p2 IN REGISTERS — A = p2 hi, Y = p2 lo, exactly what
 ; cp_havepsi returns. p2 NEVER LANDS IN MEMORY (bca_p2 died
-; 2026-07-19): the span math keeps it live in X/Y and the right window
-; runs first, register-sourced. The rcache cold snapshot gets psi2
-; from the corner memo instead, via zp_cpm_s2 — armed entries arrive
-; with X = corner 2's slot (the corner_phi return contract) and the
-; tail banks it below; warm entries write junk there, which is
-; harmless (the cold path reads only its own check's value). NB
-; hi-in-A is pinned by cp_havepsi's borrow direction (hi computes
-; last); a lo-in-A flip costs a +4 shuffle per corner call — measured
-; worse.
+; 2026-07-19). TWO ENTRIES since store-at-birth (2026-07-20):
+; bca_tail is for the corner arms (an armed miss banks psi2 + sets
+; COMPUTED on the way in); bca_tail_postrc is for the rcache warm
+; serves, whose plane entry is already complete and whose probe
+; stash is stale. NB hi-in-A is pinned by cp_havepsi's borrow
+; direction (hi computes last); a lo-in-A flip costs a +4 shuffle
+; per corner call — measured worse.
 bca_tail:                               ; shared by bbox_check_angle + _cached
 ; REGION-CELL TAIL (2026-07-20, born from Eben's 'why the faff with
 ; spans?'): the old span + windows factoring was a 1-bit
@@ -451,8 +448,48 @@ bca_tail:                               ; shared by bbox_check_angle + _cached
 ; p2' as delivered (the afn hoist carries +EPS), r1'' = p1' - 2*EPS;
 ; bca_p1 stays RAW for the rcache snapshot. The python mirror
 ; implements the SAME table cell for cell.
-   STX zp_cpm_s2                           ; corner 2's memo slot -> the
-                                           ; rcache cold snapshot's psi2 key
+; STORE-AT-BIRTH, corner 2 (2026-07-20, Eben's 'insert the cache into
+; the workings'): psi2 is live in pa_res RIGHT HERE (corner 2's
+; cp_havepsi leaves it stored), so an armed miss completes its plane
+; entry NOW — the P2L byte, psi2's PH nibble ORA'd over the psi1
+; nibble corner2_* wrote, and the COMPUTED bit from the probe's
+; rc_bytehi/rc_bit stash. p2 (the A/Y entry contract) rides t0/t1
+; across the block. Moving frames BIT/BMI past it (flags only).
+   BIT zp_rc_moved
+   BMI bca_tail_postrc                     ; moving: nothing to store
+   STY t0                                  ; bank p2 lo
+   STA t1                                  ; bank p2 hi
+   LDY zp_node_ch_l
+   LDA zp_bbox_side
+   BNE bt_s1
+   LDA pa_res
+   STA RC_P2L_0,Y
+   LDA pa_res+1
+   ASL A
+   ASL A
+   ASL A
+   ASL A                                   ; psi2 hi -> high nibble (top
+   ORA RC_PH_0,Y                           ; bits shed by the shifts)
+   STA RC_PH_0,Y
+   JMP bt_bit
+bt_s1:
+   LDA pa_res
+   STA RC_P2L_1,Y
+   LDA pa_res+1
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ORA RC_PH_1,Y
+   STA RC_PH_1,Y
+bt_bit:
+   LDX rc_bytehi                           ; entry complete: publish the
+   LDA RCACHE_COMPUTED,X                   ; valid bit from the probe's
+   ORA rc_bit                              ; stash
+   STA RCACHE_COMPUTED,X
+   LDA t1                                  ; restore p2 hi/lo
+   LDY t0
+bca_tail_postrc:
 ; classify r2: A = p2' hi (masked by cp_havepsi's exit), Y = p2' lo
    CMP #4
    BCS ct_r2out                            ; r2 >= 1024: R or L
@@ -513,7 +550,7 @@ ct_r1out_r2f:
    STA bca_ilo                             ; from the left edge — ilo = 0
    JMP visok
 ct_r2out:
-; A = r2 hi in [4,15]. X is free (the slot store above consumed it):
+; A = r2 hi in [4,15]. X is free (the tail entry owns it):
 ; bank r2's R/L class there, then classify r1.
    LDX #0
    CMP #10
@@ -680,6 +717,53 @@ czx:
 czy:
    JMP ns_dy0
 .endmacro
+; ============================================================================
+; CORNER2 — the second corner's entry prologues: psi1's store-at-birth
+; (2026-07-20). The first corner's psi is still live in pa_res here —
+; the last shared point before corner 2's serve/compute overwrites it
+; — so an armed frame banks it into the P1L/PH planes NOW and the
+; rcache miss path stops scavenging residue after the fact. The PH
+; byte is written psi1-only (masked; psi2's nibble lands by ORA at
+; bca_tail — every armed arm reaches the tail, so the pair always
+; completes). Contracts: A = the entry dy-hi (BIT preserves it on the
+; moving path; the store arms re-establish it from pa_dy+1, current
+; in memory for every ZARM variant); X = corner 2's memo slot, NOT
+; touched; Y is dead (the fetch is done) — free for the plane index.
+; ============================================================================
+rc_put1:
+; the shared psi1 store body (armed misses only — JSR'd from the four
+; prologues; X = corner 2's memo slot rides through untouched)
+   LDY zp_node_ch_l
+   LDA zp_bbox_side
+   BNE rcp1_s1
+   LDA pa_res
+   STA RC_P1L_0,Y
+   LDA pa_res+1
+   AND #$0F
+   STA RC_PH_0,Y
+   RTS
+rcp1_s1:
+   LDA pa_res
+   STA RC_P1L_1,Y
+   LDA pa_res+1
+   AND #$0F
+   STA RC_PH_1,Y
+   RTS
+.macro CORNER2 name, target
+   .local c2go
+name:
+   BIT zp_rc_moved
+   BMI c2go                                ; moving: nothing stored, A rides
+   JSR rc_put1
+   LDA pa_dy+1                             ; re-establish the entry
+c2go:                                      ; A-contract (the store spent A)
+   JMP target
+.endmacro
+CORNER2 corner2_nn, corner_phi_nn
+CORNER2 corner2_pn, corner_phi_pn
+CORNER2 corner2_np, corner_phi_np
+CORNER2 corner2_pp, corner_phi_pp
+
 ; octant class base = (dx<0)*4 + (dy<0)*2; lf_ns adds axgt.
 ; PLACEMENT: flat = the ANGX window; banked = linear in ANG_BK. Either
 ; way the entries, the width arms, lf_ns and the compose chain below

@@ -118,13 +118,9 @@ bca_ihi = zp_i_h                        ; (2026-07-18): the tail writes the
 ; (bca_vis RETIRED 2026-07-20: the verdict rides the A/Z/C exit
 ;  signature — $64 is FREE)
 bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 (afn pre-biased; NOT sign-extended)
-zp_cpm_s2 = $CA                         ; corner 2's memo slot, banked by
-                                        ; bca_tail (X = slot on armed entries);
-                                        ; $80 = the inside-escape marker (no
-                                        ; corners ran). The rcache cold
-                                        ; snapshot's psi2 key. $CB FREE
-                                        ; (bca_p2 died 2026-07-19: p2 rides
-                                        ; registers through the whole tail)
+; $CA FREE (zp_cpm_s2 died 2026-07-20: store-at-birth ended the
+; rcache's memo-slot scavenge; bca_p2 died 2026-07-19: p2 rides
+; registers through the whole tail). $CB = zp_rc_moved (zp.inc)
 ; Hottest body vars in spare scavenged ZP (conflict-free) to cut the
 ; absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 ; (top,bot,left,right s16) and we read via (bca_boxp),Y

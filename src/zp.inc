@@ -53,15 +53,14 @@ zp_br_r_m8 = $1A                   ; [bsp]; u8 hi of reciprocal
 zp_br_r_s = $1B                   ; [bsp]; u8 lo
 ; --- BCA angle-module hot slots (moved from BCA_WS absolutes 2026-07-08;
 ; equates live in ang/header_div.s + bsp/backface.s, names kept there) ---
-; $BB bca_ilo   $BF bca_ihi   $C8-$C9 bca_p1   $CA zp_cpm_s2 ($CB free)
+; $BB bca_ilo   $BF bca_ihi   $C8-$C9 bca_p1   $CA FREE   $CB zp_rc_moved
 ; $CC t0        $CD t1        $CE val_lo       $CF val_hi
 ; $F5 bca_vis   $F6 bca_ccsave                 $F7 DEFQ_TAIL
 zp_bca_i_l = $BB                  ; [ang]
 zp_bca_i_h = $BF                  ; [ang]
 zp_bca_p1 = $C8                   ; [ang]; s16 pair with $C9
 zp_bca_p1_h = $C9                ; [ang]
-; $CA = zp_cpm_s2 (header_div.s): corner 2's memo slot for the rcache
-; cold snapshot; $80 = inside marker.
+; $CA FREE (zp_cpm_s2 died with the rcache wrapper scavenge 2026-07-20).
 zp_rc_moved = $CB                 ; [ang] rcache frame class: 0 = stationary
                                   ; (valid bits armed, probe+serve+store);
                                   ; nonzero = moving/unknown (pristine
