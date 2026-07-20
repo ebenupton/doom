@@ -110,10 +110,14 @@ ORG DRV_ORG
     BNE rcinit
     LDA #1
     STA RCACHE_ENABLE
-    LDA #$FF                    \ rcache frame-class flag (zp $CB, zp.inc
-    STA $CB                     \ zp_rc_moved): boot garbage safety — any
-                                \ nonzero = passthru until the first stop
-                                \ edge wipes the bitmap and arms the probe
+    LDA #LO(ENG_TAIL_POSTRC)    \ frame-class VECTORS (zp.inc zp_tail_vec
+    STA &CA                     \ $CA/$CB + zp_bv_entry $63/$64): seed the
+    LDA #HI(ENG_TAIL_POSTRC)    \ moving targets so the first frame is sane
+    STA &CB                     \ even before bca_frame runs — boot garbage
+    LDA #LO(ENG_BOX_CLASSIFY)   \ in a vector would be a wild indirect JMP,
+    STA &63                     \ not a soft mis-class
+    LDA #HI(ENG_BOX_CLASSIFY)
+    STA &64
     ; --- translation-coherence vertex cache (VXC): zero valid bitmap +
     ;     state ($05A0-$05FF, unbanked), then enable. Zero-init is safe:
     ;     first enabled frame is cold (prev_ab sentinel path) and every

@@ -124,7 +124,7 @@
    LDY zp_node_ch_l                        ; (r-lo clobbered Y)
    ZCF s, x2, y2
    JSR e2
-   JMP bca_tail                            ; p2 rides A/Y; no return trip
+   JMP (zp_tail_vec)                       ; p2 rides A/Y; no return trip
 .endmacro
 .macro ZARM_SX s, x1, y1, y2, e1, e2
    ZCF s, x1, y1
@@ -134,7 +134,7 @@
    LDY zp_node_ch_l
    ZCF_DY s, y2                            ; pa_dx carried over
    JSR e2
-   JMP bca_tail
+   JMP (zp_tail_vec)
 .endmacro
 .macro ZARM_SY s, x1, y1, x2, e1, e2
    ZCF s, x1, y1
@@ -145,7 +145,7 @@
    ZCF_DX s, x2                            ; pa_dy carried over
    LDA pa_dy+1                             ; entry A-contract: dy hi
    JSR e2
-   JMP bca_tail
+   JMP (zp_tail_vec)
 .endmacro
 .macro ZARM_SYM s, x1, y1, x2, e1, e2
    ZCF s, x1, y1
@@ -157,7 +157,7 @@
    ZCF_DX s, x2                            ; c2's slot into X
    LDA pa_dy+1                             ; entry A-contract: dy hi
    JSR e2
-   JMP bca_tail
+   JMP (zp_tail_vec)
 .endmacro
 .macro ZARM_SXM s, x1, y1, y2, e1, e2
    ZCF s, x1, y1
@@ -168,7 +168,7 @@
    LDY zp_node_ch_l
    ZCF_DY s, y2
    JSR e2
-   JMP bca_tail
+   JMP (zp_tail_vec)
 .endmacro
 
 ; ============================================================================
@@ -331,9 +331,9 @@ yRmid:                                     ; row 6 (E): corners share R,
 ; side-baked instantiation and is never consulted again.
 ;   in : zp_node_ch_l, zp_bbox_side, bca_pxs/pys (offset-binned hi)
 ;   out: control at a corner arm or full_vis; bca_p1 = raw phi 1 in
-;        memory. Armed frames (zp_rc_moved = 0) also leave the psi
-;        planes populated: bca_tail's bt_store block fires on the
-;        way through
+;        memory. Armed frames (tail vector -> bt_store) also leave
+;        the psi planes populated: the store block fires on the way
+;        through
 ; zc_corners/zc_end bound the harness PC window (check_angle_calls).
 
 ; ============================================================================
@@ -432,8 +432,10 @@ SEG_HIGH
 ; direction (hi computes last); a lo-in-A flip costs a +4 shuffle
 ; per corner call — measured worse.
 ; ---------------------------------------------------------------------------
-; bt_store — the armed-miss store block (out of line so the moving
-; hook below is branch-NOT-taken on the common case). MAX-SQUEEZE
+; bt_store — the armed-miss store block, entered ONLY via the frame's
+; tail vector (zp_tail_vec, set by bca_frame): the per-check class
+; test died with the vector — a moving frame's arms JMP (zp_tail_vec)
+; straight to bca_tail_postrc below. MAX-SQUEEZE
 ; INSIGHT (2026-07-20): both psis are derivable RIGHT HERE from
 ; values the tail already owns — p1 is the tail's own working input
 ; (bca_p1, read by ct_left below), and p2 is the A/Y entry contract —
@@ -492,11 +494,13 @@ bts_bit:
    LDA t1                                  ; restore p2 hi/lo
    LDY t0
    JMP bca_tail_postrc
-bca_tail:                               ; shared by bbox_check_angle + _cached
-   BIT zp_rc_moved
-   BPL bt_store                            ; armed miss: store out of line;
-bca_tail_postrc:                           ; moving falls through (5 cycles,
-                                           ; the whole store-at-birth tax)
+bca_tail_postrc:                           ; the tail proper — reached from
+                                           ; the arms via JMP (zp_tail_vec)
+                                           ; when moving, from bt_store when
+                                           ; armed, and from the warm serves
+                                           ; directly (their entry is already
+                                           ; complete, so they must NOT ride
+                                           ; the vector)
 ; REGION-CELL TAIL (2026-07-20, born from Eben's 'why the faff with
 ; spans?'): the old span + windows factoring was a 1-bit
 ; approximation of a 3x3 region table over the biased corners —
@@ -1031,11 +1035,12 @@ SEG_HIGH
 ;   RC_P1L/P2L/PH planes : psi1/psi2 (12-bit; hi nibbles packed in PH)
 ;   RCACHE_COMPUTED      : 1 bit/bbox — psi valid for the cache position
 ;
-;Frame classing is the zp_rc_moved flag (set here in bca_frame, read by
-; bbox.s br_bbox_visible): moving frames dispatch straight to
-; bbox_check_angle — no probe, no stores, bitmap stale-but-unread.
-; The moved->stationary edge clears RCACHE_COMPUTED and arms the probe;
-; standing frames then come here and entries repopulate lazily.
+; Frame classing is the zp_bv_entry/zp_tail_vec vector pair (set in
+; bca_frame, consumed by indirect JMPs): moving frames dispatch
+; straight to box_classify — no probe, no stores, bitmap
+; stale-but-unread. The moved->stationary edge clears RCACHE_COMPUTED
+; and arms the vectors; standing frames then probe here and entries
+; repopulate lazily.
 
 ; PSI store = page-split SoA planes (2026-07-15; re-keyed by SIDE
 ; 2026-07-20): page = zp_bbox_side (0/1), byte index = node (u8,
@@ -1086,27 +1091,38 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; file — src/ang/rcache.s died): bca_frame is the per-frame epoch keeper,
 ; and bbox_check_angle below is the ONE public entry — probe at the top,
 ; serve-and-skip-classify on a hit, stash-and-fall-into-box_classify on a
-; miss. Moving frames enter at box_classify (br_bbox_visible dispatches on
-; zp_rc_moved) and never see the probe. Callers guarantee L2 is paged. ---
+; miss. Moving frames enter at box_classify (br_bbox_visible's indirect
+; JMP through zp_bv_entry) and never see the probe. Callers guarantee L2
+; is paged. ---
 .if BANKED
 SEG_CODE
 .endif
 .export bca_frame
 .export box_classify
 bca_frame:
-; Per-frame EPOCH KEEPER (lazy refinement 2026-07-20): compare the
-; integer position against bca_cachepos.
-;   moved      -> record it, zp_rc_moved := $FF. No wipe, no stores
-;                 anywhere this frame (the dispatcher routes every
-;                 check to the pristine path) — and since nothing
-;                 stores while moving, the bitmap needs wiping only
-;                 ONCE, at the stop edge, not per moving frame.
+; Per-frame EPOCH KEEPER (vectored 2026-07-20, Eben's design): the
+; frame class lives in TWO ZP VECTORS, not a flag —
+;   zp_bv_entry: br_bbox_visible is JMP (zp_bv_entry)
+;                -> bbox_check_angle (standing: probe first)
+;                -> box_classify     (moving: pristine, no probe)
+;   zp_tail_vec: the corner arms end JMP (zp_tail_vec)
+;                -> bt_store         (armed: store psis + COMPUTED)
+;                -> bca_tail_postrc  (moving: nothing stored)
+; so no per-check class test survives ANYWHERE: the 6502 pays the
+; 2-cycle indirect-JMP premium instead of a 5-cycle BIT/BPL and an
+; 8-9 cycle load/branch/jump dispatcher.
+;   moved      -> record position, point both vectors at the moving
+;                 targets. No wipe (nothing stores while moving, so
+;                 the bitmap needs wiping only once, at the stop edge).
 ;   stationary -> on the moved->stationary EDGE, wipe every valid bit
-;                 (unrolled static STA block, 59 x 4 cycles) and arm
-;                 the probe (zp_rc_moved := 0); thereafter 4 compares
-;                 + a flag test per frame.
-; Boot: cachepos/flag garbage resolves safely — any nonzero flag means
-; passthru; the driver init seeds $FF so the first stop always wipes.
+;                 (unrolled static STA block, 59 x 4 cycles) and point
+;                 both vectors at the armed targets. The edge detect
+;                 reads the tail vector's lo byte (the asserted-
+;                 distinct <bt_store); thereafter 4 compares + one
+;                 lo-byte compare per frame.
+; Boot: the driver zeroes the state block (cachepos 0 != spawn) AND
+; seeds both vectors to the moving targets, so the first frame is
+; sane even before this runs.
    LDA $01
    CMP bca_cachepos
    BNE bcf_new
@@ -1130,12 +1146,19 @@ bcf_new:
    STA bca_cachepos+2
    LDA $9E
    STA bca_cachepos+3
-   LDA #$FF
-   STA zp_rc_moved
+   LDA #<bca_tail_postrc
+   STA zp_tail_vec
+   LDA #>bca_tail_postrc
+   STA zp_tail_vec+1
+   LDA #<box_classify
+   STA zp_bv_entry
+   LDA #>box_classify
+   STA zp_bv_entry+1
    RTS
 bcf_stat:
-; arm on the moved->stationary edge only
-   LDA zp_rc_moved
+; arm on the moved->stationary edge only (tail-vec lo IS the class)
+   LDA zp_tail_vec
+   CMP #<bt_store
    BNE bcf_arm
    RTS                                     ; already armed: the common
                                            ; standing-frame exit
@@ -1144,8 +1167,17 @@ bcf_arm:
 .repeat 59, I
    STA RCACHE_COMPUTED+I
 .endrepeat
-   STA zp_rc_moved                         ; A = 0: probe armed
+   LDA #<bt_store
+   STA zp_tail_vec
+   LDA #>bt_store
+   STA zp_tail_vec+1
+   LDA #<bbox_check_angle
+   STA zp_bv_entry
+   LDA #>bbox_check_angle
+   STA zp_bv_entry+1
    RTS
+.assert <bt_store <> <bca_tail_postrc, error, "tail-vec lo bytes collide: bca_frame's armed-edge test needs them distinct"
+.export bca_tail_postrc
 
 ; --- bbox_check_angle: rotation-coherent bbox visibility ----------------------
 ; Same contract as bbox_check_angle (in: bca_boxp, bca_pxs/pys, bca_afn;

@@ -115,16 +115,13 @@ br_bbox_visible:
 ; rotation cache serves and populates only on STATIONARY frames;
 ; moving frames go straight to the pristine check — no probe and,
 ; crucially, NO STORES, which is what lets the stop-edge carry the
-; single bitmap wipe. zp_rc_moved is written once per frame by
-; bca_frame; this test is the entire residual moving-frame cost
-; (~1 cycle/check over the old pristine dispatch). The walk-forward
-; D cache stays disabled: code below assembled but unreached.
+; single bitmap wipe. zp_bv_entry is written once per frame by
+; bca_frame (vectored 2026-07-20: the flag test died — the frame
+; class IS the vector): standing -> bbox_check_angle (probe first),
+; moving -> box_classify (pristine). The walk-forward D cache stays
+; disabled: code below assembled but unreached.
    PAGE BANK_L2                            ; angle tables live in bank L2
-   LDA zp_rc_moved
-   BNE bv_moving
-   JMP bbox_check_angle                    ; stationary: probe/serve/store
-bv_moving:
-   JMP box_classify                        ; pristine: exits return to OUR caller
+   JMP (zp_bv_entry)                       ; exits return to OUR caller
 
 ; ============================================================================
 ; br_bbox_visible_d — D-cache wrapper around the pristine check above.

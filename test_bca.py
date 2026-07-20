@@ -38,10 +38,10 @@ def run(top, bot, left, right, px, py, ab):
     # box -> corner planes at node 0, side 0 (the boxp pointer is gone)
     mpu.memory[sym('zp_node_ch_l')] = 0
     mpu.memory[sym('zp_bbox_side')] = 0
-    mpu.memory[sym('zp_rc_moved')] = 0xFF  # moving-frame contract: direct
-                                           # bbox_check_angle calls must not
-                                           # fire the store-at-birth hooks
-                                           # (no probe stash is set up)
+    _pr = sym('bca_tail_postrc')           # moving-frame contract: the arms
+    mpu.memory[sym('zp_tail_vec')] = _pr & 0xFF      # JMP (zp_tail_vec); point
+    mpu.memory[sym('zp_tail_vec') + 1] = _pr >> 8    # it past bt_store (no
+                                           # probe stash is set up)
     for lo, v in ((sym('BBP_T_LO'), top), (sym('BBP_B_LO'), bot),
                   (sym('BBP_L_LO'), left), (sym('BBP_R_LO'), right)):
         mpu.memory[lo] = v & 0xFF
