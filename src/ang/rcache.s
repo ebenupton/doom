@@ -131,10 +131,10 @@ bcf_arm:
 ;     p2 = sgnext((a_fine - psi2) & 4095)
 ;     goto bca_tail
 ;   else:                                        # --- MISS ---
-;     stash offset/mask ; tail-call bbox_check_angle — the stores
-;     fire at birth inside it (corner2_* banks psi1, bca_tail banks
-;     psi2 + sets COMPUTED; an inside box runs no corners, fires no
-;     stores, stays naturally uncacheable)
+;     stash offset/mask ; tail-call bbox_check_angle — bca_tail's
+;     bt_store derives psi1/psi2 from p1/p2 and sets COMPUTED (an
+;     inside box never reaches the tail, fires no stores, stays
+;     naturally uncacheable)
 bbox_check_angle_cached:
 ; THE bbox entry, every check, every frame (2026-07-20). Valid block
 ; offset + bit mask computed INLINE (bcac_index retired):
@@ -142,7 +142,7 @@ bbox_check_angle_cached:
 ; and the bit table is vc_bit_mask (defq.s) — same 8 bytes the vertex
 ; cache uses. Check it always; on a miss the offset/mask pair is
 ; stashed ($CF/$65 are rcache-owned, they survive the full check) for
-; the store-at-birth hooks inside the check (corner2_*/bca_tail).
+; bca_tail's bt_store block inside the check.
    LDA zp_node_ch_l
    LSR A
    LSR A
@@ -155,60 +155,77 @@ bbox_check_angle_cached:
    LDA vc_bit_mask,Y
    AND RCACHE_COMPUTED,X
    BEQ bcac_miss
-; --- HIT: psi1/psi2 from the planes, re-apply a_fine (cp_havepsi).
+; --- HIT: psi1/psi2 from the planes, re-apply a_fine — the exact
+; cp_havepsi algebra r = (afn - psi) & 4095, INLINED plane-direct
+; (max-squeeze 2026-07-20: the pa_res staging and the JSR/RTS tax
+; both died; Y stays node through the whole serve, so the old
+; second-lookup reload died with them). t0/t1 are scratch here.
 ; (The FULL bit died 2026-07-20: its only remaining constituency was
 ; inside-boxes, which never set COMPUTED now — they re-run the plain
 ; path each frame, whose classify ladder detects inside almost as
 ; cheaply as the FULL probe cost EVERY warm hit here.)
-; page = zp_bbox_side, index = node (cp_havepsi eats Y; zp_node_ch_l
-; is stable across it, so the second lookup just reloads it).
    LDY zp_node_ch_l
    LDA zp_bbox_side
    BNE bw_s1
-   LDA RC_P1L_0,Y
-   STA pa_res
    LDA RC_PH_0,Y
    AND #$0F
-   STA pa_res+1
-   JSR cp_havepsi                          ; -> phi hi in A, lo in Y
+   STA t1                                  ; psi1 hi
+   SEC
+   LDA bca_afn
+   SBC RC_P1L_0,Y
+   STA bca_p1                              ; r1 lo straight to memory
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F
    STA bca_p1+1
-   STY bca_p1
-   LDY zp_node_ch_l
-   LDA RC_P2L_0,Y
-   STA pa_res
    LDA RC_PH_0,Y
    LSR A
    LSR A
    LSR A
    LSR A
-   STA pa_res+1
-   JSR cp_havepsi
+   STA t1                                  ; psi2 hi
+   SEC
+   LDA bca_afn
+   SBC RC_P2L_0,Y
+   STA t0                                  ; r2 lo (Y is still node)
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F                                ; A = r2 hi
+   LDY t0                                  ; Y = r2 lo
    JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
 bw_s1:
-   LDA RC_P1L_1,Y
-   STA pa_res
    LDA RC_PH_1,Y
    AND #$0F
-   STA pa_res+1
-   JSR cp_havepsi
+   STA t1
+   SEC
+   LDA bca_afn
+   SBC RC_P1L_1,Y
+   STA bca_p1
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F
    STA bca_p1+1
-   STY bca_p1
-   LDY zp_node_ch_l
-   LDA RC_P2L_1,Y
-   STA pa_res
    LDA RC_PH_1,Y
    LSR A
    LSR A
    LSR A
    LSR A
-   STA pa_res+1
-   JSR cp_havepsi
+   STA t1
+   SEC
+   LDA bca_afn
+   SBC RC_P2L_1,Y
+   STA t0
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F
+   LDY t0
    JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
 ; --- MISS: store-at-birth (2026-07-20, Eben's 'insert the cache into
 ; the workings') — stash the probe's offset/mask for the check to
 ; publish, then TAIL-CALL the pristine check. The stores live where
-; the psi values are born: corner2_* (bca.s) banks psi1 while it is
-; still live in pa_res, and bca_tail banks psi2 + sets COMPUTED from
+; the psi values are born: bca_tail's bt_store derives BOTH psis from
+; the tail's own inputs (p1 in memory, p2 in registers — the exact
+; cp_havepsi algebra) and sets COMPUTED from
 ; the stash. No verdict banking, no residue scavenging, no memo-slot
 ; coupling, no $80 marker: an inside box runs no corners, fires no
 ; stores, and stays naturally uncacheable. The A/Z/C verdict flows
