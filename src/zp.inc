@@ -61,8 +61,14 @@ zp_bca_i_h = $BF                  ; [ang]
 zp_bca_p1 = $C8                   ; [ang]; s16 pair with $C9
 zp_bca_p1_h = $C9                ; [ang]
 ; $CA = zp_cpm_s2 (header_div.s): corner 2's memo slot for the rcache
-; cold snapshot; $80 = inside marker. $CB FREE (bca_p2 died 2026-07-19
-; — p2 rides registers through the whole bca_tail).
+; cold snapshot; $80 = inside marker.
+zp_rc_moved = $CB                 ; [ang] rcache frame class: 0 = stationary
+                                  ; (valid bits armed, probe+serve+store);
+                                  ; nonzero = moving/unknown (pristine
+                                  ; passthru, no probe, no stores). Written
+                                  ; by bca_frame; the stop EDGE wipes the
+                                  ; bitmap and clears this. Driver init
+                                  ; seeds $FF (boot garbage safety).
 zp_bca_t0 = $CC                   ; [ang]
 zp_bca_t1 = $CD                   ; [ang]
 ; $CE free (was zp_bca_val_lo, 2026-07-11)

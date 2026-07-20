@@ -66,13 +66,19 @@ SEG_CODE
 .export bca_frame
 .export bbox_check_angle_cached
 bca_frame:
-; Per-frame EPOCH KEEPER (2026-07-20 redesign): the cache runs every
-; frame — this routine's only job is detecting an integer-position
-; change and starting a new epoch by clearing every valid bit with an
-; unrolled static STA block (59 bitmap bytes, 4 cycles each — no
-; loop bookkeeping; runs only on moved frames). bca_prevpos and the
-; enable/mode machinery died with the dispatch; RCACHE_ENABLE remains
-; as inert RAM (drivers still poke it).
+; Per-frame EPOCH KEEPER (lazy refinement 2026-07-20): compare the
+; integer position against bca_cachepos.
+;   moved      -> record it, zp_rc_moved := $FF. No wipe, no stores
+;                 anywhere this frame (the dispatcher routes every
+;                 check to the pristine path) — and since nothing
+;                 stores while moving, the bitmap needs wiping only
+;                 ONCE, at the stop edge, not per moving frame.
+;   stationary -> on the moved->stationary EDGE, wipe every valid bit
+;                 (unrolled static STA block, 59 x 4 cycles) and arm
+;                 the probe (zp_rc_moved := 0); thereafter 4 compares
+;                 + a flag test per frame.
+; Boot: cachepos/flag garbage resolves safely — any nonzero flag means
+; passthru; the driver init seeds $FF so the first stop always wipes.
    LDA $01
    CMP bca_cachepos
    BNE bcf_new
@@ -84,9 +90,9 @@ bca_frame:
    BNE bcf_new
    LDA $9E
    CMP bca_cachepos+3
-   BNE bcf_new
-bcf_same:
-   RTS
+   BEQ bcf_stat                            ; stationary: forward, past the
+                                           ; moved block (nothing may branch
+                                           ; across the 177-byte wipe)
 bcf_new:
    LDA $01
    STA bca_cachepos
@@ -96,10 +102,21 @@ bcf_new:
    STA bca_cachepos+2
    LDA $9E
    STA bca_cachepos+3
+   LDA #$FF
+   STA zp_rc_moved
+   RTS
+bcf_stat:
+; arm on the moved->stationary edge only
+   LDA zp_rc_moved
+   BNE bcf_arm
+   RTS                                     ; already armed: the common
+                                           ; standing-frame exit
+bcf_arm:
    LDA #0
 .repeat 59, I
    STA RCACHE_COMPUTED+I
 .endrepeat
+   STA zp_rc_moved                         ; A = 0: probe armed
    RTS
 
 ; --- bbox_check_angle_cached: rotation-coherent bbox visibility ---------------

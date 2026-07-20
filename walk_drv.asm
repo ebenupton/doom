@@ -110,6 +110,10 @@ ORG DRV_ORG
     BNE rcinit
     LDA #1
     STA RCACHE_ENABLE
+    LDA #$FF                    \ rcache frame-class flag (zp $CB, zp.inc
+    STA $CB                     \ zp_rc_moved): boot garbage safety — any
+                                \ nonzero = passthru until the first stop
+                                \ edge wipes the bitmap and arms the probe
     ; --- translation-coherence vertex cache (VXC): zero valid bitmap +
     ;     state ($05A0-$05FF, unbanked), then enable. Zero-init is safe:
     ;     first enabled frame is cold (prev_ab sentinel path) and every
