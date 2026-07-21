@@ -87,8 +87,14 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; the carry the following y-hi SBC needs, so the hash rides for free.
 ; Exits with A = pa_dy+1 (the entry A-contract).
 ; ---------------------------------------------------------------------------
-.macro ZCF s, xl, yl
-   SEC
+.macro ZCF s, xl, yl, ck
+.ifblank ck
+   SEC                                     ; ck set = the leaf's entry arc
+.endif                                     ; proves C=1 (BNE-after-BCC-untaken
+                                           ; or BCS — see the ladder analysis
+                                           ; at each ZARM below); bot-row
+                                           ; leaves arrive via BCC (C=0) and
+                                           ; keep the SEC
    LDA xl+(s)*$100,Y
    SBC bca_pxs
    STA pa_dx
@@ -169,8 +175,8 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; SY/SYM's hashing fetch is ZCF_DX (exits A = dx-hi): they re-load
 ; dy-hi for the entry A-contract.
 ; ---------------------------------------------------------------------------
-.macro ZARM s, x1, y1, x2, y2, e1, e2
-   ZCF s, x1, y1
+.macro ZARM s, x1, y1, x2, y2, e1, e2, ck
+   ZCF s, x1, y1, ck
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -179,8 +185,8 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    JSR e2
    JMP (zp_tail_vec)                       ; p2 rides A/Y; no return trip
 .endmacro
-.macro ZARM_SX s, x1, y1, y2, e1, e2
-   ZCF s, x1, y1
+.macro ZARM_SX s, x1, y1, y2, e1, e2, ck
+   ZCF s, x1, y1, ck
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -189,8 +195,8 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    JSR e2
    JMP (zp_tail_vec)
 .endmacro
-.macro ZARM_SY s, x1, y1, x2, e1, e2
-   ZCF s, x1, y1
+.macro ZARM_SY s, x1, y1, x2, e1, e2, ck
+   ZCF s, x1, y1, ck
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -200,8 +206,8 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    JSR e2
    JMP (zp_tail_vec)
 .endmacro
-.macro ZARM_SYM s, x1, y1, x2, e1, e2
-   ZCF s, x1, y1
+.macro ZARM_SYM s, x1, y1, x2, e1, e2, ck
+   ZCF s, x1, y1, ck
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -212,8 +218,8 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    JSR e2
    JMP (zp_tail_vec)
 .endmacro
-.macro ZARM_SXM s, x1, y1, y2, e1, e2
-   ZCF s, x1, y1
+.macro ZARM_SXM s, x1, y1, y2, e1, e2, ck
+   ZCF s, x1, y1, ck
    JSR e1
    STA bca_p1+1
    STY bca_p1
@@ -307,7 +313,7 @@ yL:
    CMP BBP_T_LO+(s)*$100,Y
    BCC yLlo
 yLtop:                                     ; py >= T: row 0 (NW)
-   ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn
+   ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn, 1
 yLlo:
    LDA bca_pys+1                           ; (lo-tier arrivals only)
 yLlo_nr:
@@ -320,7 +326,7 @@ yLlo_nr:
 yLbot:                                     ; py < B: row 8 (SW)
    ZARM s, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
 yLmid:                                     ; row 4 (W): corners share L
-   ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn
+   ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn, 1
 ; --- MID column ---
 yM:
    LDA bca_pys+1
@@ -332,7 +338,7 @@ yM:
    BCC yMlo
 yMtop:                                     ; row 1 (N): corners share T,
                                            ; c1 negates it -> memo reload
-   ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn
+   ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn, 1
 yMlo:
    LDA bca_pys+1
 yMlo_nr:
@@ -361,7 +367,7 @@ yR:
    CMP BBP_T_LO+(s)*$100,Y
    BCC yRlo
 yRtop:                                     ; py >= T: row 2 (NE)
-   ZARM s, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn
+   ZARM s, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn, 1
 yRlo:
    LDA bca_pys+1
 yRlo_nr:
@@ -375,7 +381,7 @@ yRbot:                                     ; py < B: row 10 (SE)
    ZARM s, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
 yRmid:                                     ; row 6 (E): corners share R,
                                            ; c1 negates it -> memo reload
-   ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np
+   ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np, 1
 .endmacro
 
 ; ============================================================================
@@ -576,8 +582,14 @@ box_classify:                              ; the check IS the classifier (the
    JMP bcls_s0
 bcls_s1:
    CLASSIFY_TREE 1
+   .res 5                                  ; keep bcls_s0 + downstream at
+                                           ; their pre-ck addresses (the 5
+                                           ; elided SECs shifted branch
+                                           ; page-crossings; padding beats
+                                           ; re-measuring every arc)
 bcls_s0:
    CLASSIFY_TREE 0
+   .res 5
 zc_end:
 .if BANKED
 SEG_CODE

@@ -32,7 +32,8 @@ ORDER = sorted(dw.ANIM_SECTORS)
 
 
 def fb_of(r):
-    return bytes(r.sc.mpu.memory[0x5800:0x5800 + 5120])
+    fb = r.sc.SCREEN_START
+    return bytes(r.sc.mpu.memory[fb:fb + 5120])
 
 
 def set_engine_phase(mem, mi, world_h):
@@ -105,7 +106,7 @@ def main():
 
     # ── 3. tick trajectory lockstep ──────────────────────────────────
     tabs = an.gen_6502_tables(flat=True)
-    cfg = tabs[0xE680]
+    cfg = tabs[0xE700]
     # reset engine state machines to CFG start
     eng.sc._run(sym('anim_init'))
     sim = []
