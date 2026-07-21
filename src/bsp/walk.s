@@ -57,9 +57,9 @@ br_render_frame:
 ; (the VWH projection cache, by contrast, is self-validating and
 ; persists). 60-byte clear (59 used + 1 pad, inside the vcache
 ; reservation up to $1B3F), four 15-byte stripes off one X. ---
-   LDA #0
-   STA zp_dcl_rec_buf
-   STA zp_dcl_rec_buf_h
+   LDA #0                               ; A = 0 RIDES into the bif_clr2
+   STA zp_dcl_rec_buf                   ; stripe wipe below — NOT a C02/STZ
+   STA zp_dcl_rec_buf_h                 ; candidate (the loop consumes A)
    LDX #4
 bif_clr2:                               ; 12 stripes x 5: 325 cyc (was 4x15
    STA VCACHE_VALID_BASE,X              ; = 375; +24 B for -50/frame)
@@ -362,8 +362,7 @@ r1_vis:
 r1_far:
    PLA
    STA zp_node_ch_l
-   LDA #0
-   STA zp_bbox_side                        ; far = RIGHT
+   ZERO zp_bbox_side                      ; far = RIGHT
    IS_FULL_B bsp_done_full
    JSR br_bbox_visible
    BEQ rc_ret1

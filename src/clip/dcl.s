@@ -1254,12 +1254,20 @@ dcl_yband_clip:
    STA LC_OY1_LO
    LDA zp_ox1
    STA LC_OY2_LO
+.if ::C02
+   STZ LC_OX1_HI
+   STZ LC_OX2_HI
+   STZ LC_OY1_HI
+   STZ LC_OY2_HI
+   STZ LC_TGT_HI                           ; hoisted from all 4 clip arms
+.else
    LDA #0
    STA LC_OX1_HI
    STA LC_OX2_HI
    STA LC_OY1_HI
    STA LC_OY2_HI
    STA LC_TGT_HI                           ; hoisted from all 4 clip arms
+.endif
 ; --- Outcode census: X = #endpoints above band (y < Y_BIAS),
 ; Y = #endpoints below band (y > VIS_YMAX) ---
    LDX #0

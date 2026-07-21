@@ -44,8 +44,9 @@ il:
 ; ||
    BNE il                                  ; always taken                               ; |
 id:
-   LDA #0
-   STA POOL_NEXT,X
+   LDA #0                                  ; A = 0 RIDES into slot 1's
+   STA POOL_NEXT,X                         ; NEXT/XLO/XSTART stores below —
+                                        ; NOT a C02/STZ candidate
 ; |
 ; Active list: slot 1 = full screen with biased Y [Y_BIAS, Y_BIAS+159].
    LDX #1                                  ; slot 1 (index 1)                           ; |
@@ -193,8 +194,7 @@ udiv16_8:
    ASL A
    ASL A
    STA zp_div_h                            ; shifter = num << 4
-   LDA #0
-   STA zp_div_l                            ; quotient accumulator
+   ZERO zp_div_l                          ; quotient accumulator
    TXA
    LSR A
    LSR A

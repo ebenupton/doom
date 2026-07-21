@@ -119,8 +119,10 @@ si_dy_nz:
 ; |dy|, sign tracked in LC_DY_NEG
    LDA LC_DY_HI
    BPL si_dy_pos
-   LDA #1
-   STA LC_DY_NEG
+   STA LC_DY_NEG                           ; A = dy hi, BPL-proven negative:
+                                        ; the flag is zero/nonzero only
+                                        ; (LDX/BNE, LDA/BNE), so the old
+                                        ; LDA #1 coercion was dead weight
    LDA #0
    SEC
    SBC LC_DY_LO
@@ -130,8 +132,7 @@ si_dy_nz:
    STA LC_DY_HI
    JMP si_dy_done
 si_dy_pos:
-   LDA #0
-   STA LC_DY_NEG
+   ZERO LC_DY_NEG
 si_dy_done:
 ; Fast path: |offset|, |den|, |dy| all fit u8 → use existing
 ; umul8 + udiv16_8 (one multiply, one divide-with-skip-zeros).
@@ -188,9 +189,14 @@ si_general:
    STA LC_M_R1                             ; A = prod_hi (umul8 contract)
    LDA zp_prod_l
    STA LC_M_R0
+.if ::C02
+   STZ LC_M_R2
+   STZ LC_M_R3
+.else
    LDA #0
    STA LC_M_R2
    STA LC_M_R3
+.endif
 
 ; Fast paths: skip multiplies whose factor is zero.
    LDA LC_DY_HI
@@ -266,9 +272,14 @@ skip_p3_p4:
 m_r_nc:
 .scope
 
+.if ::C02
+   STZ LC_QUOT_LO
+   STZ LC_QUOT_HI
+.else
    LDA #0
    STA LC_QUOT_LO
    STA LC_QUOT_HI
+.endif
 
 ; ---- Fast path: quotient fits u16 ----
 ; True iff top 16 bits of dividend < den. Pre-load rem = R3:R2 and
@@ -358,9 +369,14 @@ no_u16_quot:
 ; ---- Slow path: u32 ÷ u16 → up to u17 quotient ----
 ; (Rare for s16 clipper; kept for correctness.) Use byte-level skip
 ; + bit-level skip to trim no-op iterations.
+.if ::C02
+   STZ LC_REM_LO
+   STZ LC_REM_HI
+.else
    LDA #0
    STA LC_REM_LO
    STA LC_REM_HI
+.endif
 ; Byte-level skip: while the top dividend byte (R3) is zero, shift the
 ; dividend left 8 bits in one move (R2->R3, R1->R2, R0->R1, 0->R0) and
 ; drop the iteration count by 8.  X = 32/24/16/8 iterations remaining.
@@ -381,18 +397,29 @@ no_u16_quot:
    STA LC_M_R3
    LDA LC_M_R1
    STA LC_M_R2
+.if ::C02
+   STZ LC_M_R0
+   STZ LC_M_R1
+.else
    LDA #0
    STA LC_M_R0
    STA LC_M_R1
+.endif
    LDX #16
    LDA LC_M_R3
    BNE bit_skip
    LDA LC_M_R2
    STA LC_M_R3
+.if ::C02
+   STZ LC_M_R0
+   STZ LC_M_R1
+   STZ LC_M_R2
+.else
    LDA #0
    STA LC_M_R0
    STA LC_M_R1
    STA LC_M_R2
+.endif
    LDX #8
    LDA LC_M_R3
    BNE bit_skip
@@ -653,15 +680,25 @@ mc_vertical:
 mcv_y1_cl:
    LDA #$FF
    STA zp_line_yl_l
+.if ::C02
+   STZ zp_line_yl_h
+   BRA mcv_y1_done                        ; always
+.else
    LDA #0
    STA zp_line_yl_h
-   BEQ mcv_y1_done                         ; always
+   BEQ mcv_y1_done
+.endif
 mcv_y1_neg:
    LDA zp_line_yr_h                        ; y1 above: y2 also above → out
    BMI mcv_rej
+.if ::C02
+   STZ zp_line_yl_l
+   STZ zp_line_yl_h
+.else
    LDA #0
    STA zp_line_yl_l
    STA zp_line_yl_h
+.endif
 mcv_y1_done:
 ; clamp y2
    LDA zp_line_yr_h
@@ -669,13 +706,23 @@ mcv_y1_done:
    BMI mcv_y2_neg
    LDA #$FF
    STA zp_line_yr_l
+.if ::C02
+   STZ zp_line_yr_h
+   BRA mcv_y2_done                        ; always
+.else
    LDA #0
    STA zp_line_yr_h
-   BEQ mcv_y2_done                         ; always
+   BEQ mcv_y2_done
+.endif
 mcv_y2_neg:
+.if ::C02
+   STZ zp_line_yr_l
+   STZ zp_line_yr_h
+.else
    LDA #0
    STA zp_line_yr_l
    STA zp_line_yr_h
+.endif
 mcv_y2_done:
 ; clamped to a point (one end was AT the boundary) → reject, exactly
 ; as the generic post-clip degen check does
@@ -761,9 +808,14 @@ need_xclip:
 ; Else if x1 > 255, replace y1 with y at x=255; x1 = 255.
    LDA zp_line_xl_h
    BPL x1_not_neg
+.if ::C02
+   STZ LC_TGT_LO
+   STZ LC_TGT_HI
+.else
    LDA #0
    STA LC_TGT_LO
    STA LC_TGT_HI
+.endif
    JSR s16_interp
 ; store the UNCLAMPED crossing Y (LC_RES), not the u8-clamped A: if the
 ; y-crossing at the x-boundary is itself out of [0,255] the later y-clip
@@ -773,16 +825,20 @@ need_xclip:
    STA zp_line_yl_l
    LDA LC_RES_HI
    STA zp_line_yl_h
+.if ::C02
+   STZ zp_line_xl_l
+   STZ zp_line_xl_h
+.else
    LDA #0
    STA zp_line_xl_l
    STA zp_line_xl_h
+.endif
    JMP x1_done
 x1_not_neg:
    BEQ x1_done                             ; HI=0 → in u8 range, no clip
    LDA #$FF
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
+   ZERO LC_TGT_HI
    JSR s16_interp
 ; store the UNCLAMPED crossing Y (LC_RES), not the u8-clamped A: if the
 ; y-crossing at the x-boundary is itself out of [0,255] the later y-clip
@@ -794,31 +850,39 @@ x1_not_neg:
    STA zp_line_yl_h
    LDA #$FF
    STA zp_line_xl_l
-   LDA #0
-   STA zp_line_xl_h
+   ZERO zp_line_xl_h
 x1_done:
 ; same for x2
    LDA zp_line_xr_h
    BPL x2_not_neg
+.if ::C02
+   STZ LC_TGT_LO
+   STZ LC_TGT_HI
+.else
    LDA #0
    STA LC_TGT_LO
    STA LC_TGT_HI
+.endif
    JSR s16_interp
 ; store UNCLAMPED crossing Y (see zp_line_yl_l note above).
    LDA LC_RES_LO
    STA zp_line_yr_l
    LDA LC_RES_HI
    STA zp_line_yr_h
+.if ::C02
+   STZ zp_line_xr_l
+   STZ zp_line_xr_h
+.else
    LDA #0
    STA zp_line_xr_l
    STA zp_line_xr_h
+.endif
    JMP x2_done
 x2_not_neg:
    BEQ x2_done
    LDA #$FF
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
+   ZERO LC_TGT_HI
    JSR s16_interp
 ; store UNCLAMPED crossing Y (see zp_line_yl_l note above).
    LDA LC_RES_LO
@@ -827,8 +891,7 @@ x2_not_neg:
    STA zp_line_yr_h
    LDA #$FF
    STA zp_line_xr_l
-   LDA #0
-   STA zp_line_xr_h
+   ZERO zp_line_xr_h
 x2_done:
 skip_xclip:
 
@@ -880,15 +943,26 @@ need_yclip:
 ; y1 clip
    LDA zp_line_yl_h
    BPL y1c_not_neg
+.if ::C02
+   STZ LC_TGT_LO
+   STZ LC_TGT_HI
+.else
    LDA #0
    STA LC_TGT_LO
    STA LC_TGT_HI
+.endif
    JSR s16_interp
    STA zp_line_xl_l
+.if ::C02
+   STZ zp_line_xl_h
+   STZ zp_line_yl_l                       ; A still 0
+   STZ zp_line_yl_h
+.else
    LDA #0
    STA zp_line_xl_h
-   STA zp_line_yl_l                        ; A still 0
+   STA zp_line_yl_l
    STA zp_line_yl_h
+.endif
    LDA zp_dcl_rec_buf_h
    BEQ y1c_done
    LDA #0                                  ; [orig xl, xl] exited via TOP
@@ -898,16 +972,13 @@ y1c_not_neg:
    BEQ y1c_done
    LDA #$FF
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
+   ZERO LC_TGT_HI
    JSR s16_interp
    STA zp_line_xl_l
-   LDA #0
-   STA zp_line_xl_h
+   ZERO zp_line_xl_h
    LDA #$FF
    STA zp_line_yl_l
-   LDA #0
-   STA zp_line_yl_h
+   ZERO zp_line_yl_h
    LDA zp_dcl_rec_buf_h
    BEQ y1c_done
    LDA #$FF                                ; [orig xl, xl] exited via BOTTOM
@@ -916,32 +987,41 @@ y1c_done:
 ; y2 clip
    LDA zp_line_yr_h
    BPL y2c_not_neg
+.if ::C02
+   STZ LC_TGT_LO
+   STZ LC_TGT_HI
+.else
    LDA #0
    STA LC_TGT_LO
    STA LC_TGT_HI
+.endif
    JSR s16_interp
    STA zp_line_xr_l
+.if ::C02
+   STZ zp_line_xr_h
+   STZ zp_line_yr_l                       ; A still 0...
+   STZ zp_line_yr_h
+   STZ DCLV_S16VY                         ; [xr, orig xr] exited via TOP:
+.else
    LDA #0
    STA zp_line_xr_h
-   STA zp_line_yr_l                        ; A still 0...
+   STA zp_line_yr_l
    STA zp_line_yr_h
-   STA DCLV_S16VY                          ; [xr, orig xr] exited via TOP:
+   STA DCLV_S16VY
+.endif
                                         ; pend 0 (order: after walk recs)
    JMP y2c_done
 y2c_not_neg:
    BEQ y2c_done
    LDA #$FF
    STA LC_TGT_LO
-   LDA #0
-   STA LC_TGT_HI
+   ZERO LC_TGT_HI
    JSR s16_interp
    STA zp_line_xr_l
-   LDA #0
-   STA zp_line_xr_h
+   ZERO zp_line_xr_h
    LDA #$FF
    STA zp_line_yr_l
-   LDA #0
-   STA zp_line_yr_h
+   ZERO zp_line_yr_h
    LDA #$FF                                ; [xr, orig xr] exited via BOTTOM
    STA DCLV_S16VY
 y2c_done:

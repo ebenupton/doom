@@ -236,8 +236,7 @@ at_wait:
    CLC
    ADC #$40
    STA at_state
-   LDA #0
-   STA at_timer
+   ZERO at_timer
 
 at_done:
    LDA at_state

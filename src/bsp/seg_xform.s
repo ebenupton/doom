@@ -80,8 +80,7 @@ br_seg_xform_vertex:
    LDA vc_bit_mask,X
    STA zp_seg_v_bitm
    LDX zp_seg_ep                           ; X = struct offset from here on
-   LDA #0
-   STA VX1+2,X                             ; clip = 0 (struct)
+   ZERO {VX1+2,X}                         ; clip = 0 (struct)
    LDA VCACHE_VALID_BASE,Y
    AND zp_seg_v_bitm
    BEQ vc_miss

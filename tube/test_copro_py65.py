@@ -16,7 +16,7 @@ import pygame; pygame.init()
 import doom_wireframe as dw
 from bsp_render_6502 import BspRender6502
 import symmap
-from py65.devices.mpu6502 import MPU
+from py65.devices.mpu65c02 import MPU     # the copro is a 65C02
 from py65.memory import ObservableMemory
 
 FRAMES = int(os.environ.get('TUBE_FRAMES', '5'))
@@ -24,6 +24,7 @@ MASKS = [0, 0, 0, 1, 1, 8, 8, 0]        # still, fwd, turn — exercise movement
 
 
 def build_image():
+    os.environ['DOOM_CPU'] = '65c02'    # parasite build: C02=1 opcodes; the
     r = BspRender6502(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                       dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
                       dw.PRESCALE)
@@ -40,6 +41,11 @@ def build_image():
                    capture_output=True)
     cop = open('COPROT', 'rb').read(); os.remove('COPROT')
     mem[0xEA00:0xEA00 + len(cop)] = cop
+    os.environ['DOOM_CPU'] = ''         # restore AFTER the symbol pokes —
+                                        # symmap must read the C02 map for
+                                        # the plot_h/plot_v addresses (they
+                                        # move between CPU variants); later
+                                        # NMOS builds in-process stay NMOS
     return mem                            # (HITAB staging retired: 2026-07-21 map)
 
 

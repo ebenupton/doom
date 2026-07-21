@@ -410,6 +410,10 @@ inl_end:
 ; the y stage skip v1's front projection (zp_ys_v1ok).
    LDA zp_ys_done
    BEQ ch_rts
+   STA zp_ys_v1ok                          ; A = ys_done, BEQ-proven nonzero:
+                                        ; v1ok is zero/nonzero only (the ys
+                                        ; stage LDA/BEQs it) — the old
+                                        ; trailing LDA #1 coercion died
    LDA zp_seg_sy2_top_l
    STA zp_seg_sy1_top_l
    LDA zp_seg_sy2_top_h
@@ -418,8 +422,6 @@ inl_end:
    STA zp_seg_sy1_bot_l
    LDA zp_seg_sy2_bot_h
    STA zp_seg_sy1_bot_h
-   LDA #1
-   STA zp_ys_v1ok
 ch_rts:
 inl_end:
 .endscope
@@ -511,11 +513,18 @@ inl_end:
    JMP inl_end
 vf_on:
 ; ref = view totals of world (0,0) under this frame's context
+.if ::C02
+   STZ zp_br_dx_l
+   STZ zp_br_dx_h
+   STZ zp_br_dy_l
+   STZ zp_br_dy_h
+.else
    LDA #0
    STA zp_br_dx_l
    STA zp_br_dx_h
    STA zp_br_dy_l
    STA zp_br_dy_h
+.endif
    JSR br_to_view
 ; --- publish this frame's ref (ORIGIN NORMALIZATION: stored bases are
 ; total - ref, i.e. the exactly-linear L(w); the warm arm adds the

@@ -86,8 +86,7 @@ ta_try_merge:
    JMP free_span                           ; frees X (via tail-call), returns
 ta_link:
 ; X becomes new tail — write POOL_NEXT,X = 0 (deferred from entry).
-   LDA #0
-   STA POOL_NEXT,X
+   ZERO {POOL_NEXT,X}
 ; ||
    TXA
    STA POOL_NEXT,Y
@@ -441,9 +440,14 @@ tfr_do_sweep:
    ZERO zp_hg_cache
    LDA zp_head
    STA zp_old_cur
+.if ::C02
+   STZ zp_new_tail
+   STZ zp_head
+.else
    LDA #0
    STA zp_new_tail
    STA zp_head
+.endif
 ; Reset DCL's portal-continuation state ($FF = inactive) so the next
 ; draw_clipped_line starts clean. (Write-only from this module.)
    LDA #$FF
@@ -458,8 +462,7 @@ tfr_do_sweep:
    STA TFS_T_CUR
    JMP tfs_top_be
 tfs_no_top:
-   LDA #0
-   STA TFS_T_CUR
+   ZERO TFS_T_CUR
 tfs_top_be:
    LDA TOP_RECORDS
    ASL A
@@ -472,8 +475,7 @@ tfs_top_be:
    STA TFS_B_CUR
    JMP tfs_bot_be
 tfs_no_bot:
-   LDA #0
-   STA TFS_B_CUR
+   ZERO TFS_B_CUR
 tfs_bot_be:
    LDA BOT_RECORDS
    ASL A
@@ -673,8 +675,8 @@ tfs_st_bot_done:
    CMP TOP_RECORDS,Y
 ; T.xr
    BCS tfs_top_dom_done                    ; cur >= xr: not dominating
-   LDA #1
-   STA TFS_TOP_DOM
+   STY TFS_TOP_DOM                         ; Y = cur+2 >= 3: any nonzero —
+                                        ; every reader is BNE/BEQ/ORA-BNE
 tfs_top_dom_done:
 
 ; ---- Determine bot_dom ----
@@ -689,8 +691,7 @@ tfs_top_dom_done:
    INY
    CMP BOT_RECORDS,Y
    BCS tfs_bot_dom_done
-   LDA #1
-   STA TFS_BOT_DOM
+   STY TFS_BOT_DOM                         ; Y = cur+2 >= 3 (mirror)
 tfs_bot_dom_done:
 
 
@@ -1019,8 +1020,7 @@ tfs_flush_pending:
    BNE flush_do
    RTS
 flush_do:
-   LDA #0
-   STA TFS_PEND_ACT
+   ZERO TFS_PEND_ACT
    JSR alloc_span
    BEQ flush_fail
    LDA TFS_PEND_XL

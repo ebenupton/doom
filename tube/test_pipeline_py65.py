@@ -20,6 +20,7 @@ import doom_wireframe as dw
 from bsp_render_6502 import BspRender6502
 import symmap
 from py65.devices.mpu6502 import MPU
+from py65.devices.mpu65c02 import MPU as MPU_C02
 from py65.memory import ObservableMemory
 
 SPAWN = (1056, -3616, 64)
@@ -55,7 +56,7 @@ def copro_frame_commands():
     base.subscribe_to_read([0xFEF8], r1s)
     base.subscribe_to_read([0xFEF9], r1d)
     base.subscribe_to_write([0xFEF9], r1w)
-    mpu = MPU(memory=base)
+    mpu = MPU_C02(memory=base)              # the copro is a 65C02
     mpu.pc = 0xEA03
     mpu.sp = 0xFD
     steps = 0

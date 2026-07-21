@@ -97,9 +97,14 @@ ps_rns24:
    BNE px_shrink                           ; cold (in range: block above);
 px_narrow:                                  ; hot path FALLS THROUGH
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
+.if ::C02
+   STZ zp_br_res_l
+   STZ zp_br_res_h
+.else
    LDA #0
    STA zp_br_res_l
    STA zp_br_res_h
+.endif
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
    LDA zp_br_r_m8
    BNE px_have_m8

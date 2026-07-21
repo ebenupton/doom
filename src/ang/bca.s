@@ -798,8 +798,7 @@ cull:                                      ; THE cull exit — (L,L) FALLS in
                                            ; store 'angle cull' (code 126)
                                            ; apart from no-gap (C=0)
 full_vis:
-   LDA #0
-   STA bca_ilo
+   ZERO bca_ilo
    LDA #255
    STA bca_ihi
    JMP SC_HAS_GAP                          ; FUSED EXIT (2026-07-18): every
@@ -1292,10 +1291,16 @@ bcf_stat:
    RTS                                     ; already armed: the common
                                            ; standing-frame exit
 bcf_arm:
+.if ::C02
+.repeat 59, I
+   STZ RCACHE_COMPUTED+I
+.endrepeat
+.else
    LDA #0
 .repeat 59, I
    STA RCACHE_COMPUTED+I
 .endrepeat
+.endif
    LDA #<bt_store
    STA zp_tail_vec
    LDA #>bt_store

@@ -61,8 +61,7 @@ br_view_setup:
 ;                                          ; right window's biased operand
 ;                                          ; ITSELF — its 16-cycle build in
 ;                                          ; bca_tail collapsed to a mask
-   LDA #0
-   STA pa_ptr                              ; pa_ptr lo is 0 FOREVER: the TA and
+   ZERO pa_ptr                            ; pa_ptr lo is 0 FOREVER: the TA and
                                            ; VATOX lookups ride Y against page-
                                            ; aligned bases and only ever write
                                            ; the hi byte (re-assert per frame,
@@ -253,8 +252,7 @@ br_to_view_fetch:
    STA zp_br_dy_l
    LDA VP_YHI,Y
    STA zp_br_dy_h
-   LDA #0
-   STA zp_ri_sgn
+   ZERO zp_ri_sgn
    LDA VP_XLO,Y
    SEC
    SBC zp_br_px_h
@@ -269,8 +267,7 @@ vf_hi:
    STA zp_br_dy_l
    LDA VP_YHI+$100,Y
    STA zp_br_dy_h
-   LDA #0
-   STA zp_ri_sgn
+   ZERO zp_ri_sgn
    LDA VP_XLO+$100,Y
    SEC
    SBC zp_br_px_h
@@ -297,8 +294,7 @@ br_to_view:
 ; walk/backface stage their own deltas there), the SBC's N flag is the
 ; sign test, and the dy subtract waits until its pair (the cores don't
 ; touch zp_br_dy).
-   LDA #0
-   STA zp_ri_sgn
+   ZERO zp_ri_sgn
    LDA zp_br_dx_l
    SEC
    SBC zp_br_px_h
@@ -331,8 +327,7 @@ rot_s13:
    LDA zp_br_res_x
    STA zp_br_vy_x
 
-   LDA #0
-   STA zp_ri_sgn
+   ZERO zp_ri_sgn
    LDA zp_br_dy_l
    SEC
    SBC zp_br_py_h

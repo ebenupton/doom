@@ -19,6 +19,12 @@ import subprocess
 
 _ROOT = os.path.dirname(os.path.abspath(__file__)) or '.'
 _built = set()
+_on_disk = {}    # banked -> c02 variant whose bins currently sit on disk.
+                 # The two CPU variants share output filenames, so a
+                 # memoized (banked,c02) build is only skippable when the
+                 # OTHER variant hasn't overwritten the bins since — else a
+                 # harness silently loads the wrong CPU's code (the 2026-07-21
+                 # tube walk-gate bug: FlatRef read C02 bins via a memo hit).
 
 # The engine is ONE link: three objects (angle module, span clipper, bsp
 # renderer) resolved together, so cross-module calls are linker symbols.
@@ -56,7 +62,7 @@ def build(asm, banked=0, c02=None, out=None, force=False):
     c02 = int(c02)
     banked = int(banked)
     key = ('engine', banked, c02)
-    if key in _built and not force:
+    if key in _built and _on_disk.get(banked) == c02 and not force:
         return ''
     # refuse to build with unallocated ZP declarations (name = ?) pending —
     # run tools/zpcheck.py --alloc to assign them
@@ -80,6 +86,7 @@ def build(asm, banked=0, c02=None, out=None, force=False):
                  ['-m', os.path.join(objdir, f'engine_b{banked}c{c02}.map'),
                   '--dbgfile', os.path.join(objdir, f'engine_b{banked}c{c02}.dbg')])
     _built.add(key)
+    _on_disk[banked] = c02
     return text
 
 

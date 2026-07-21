@@ -73,6 +73,12 @@ def asm(src, out):
 
 def main():
     import pygame; pygame.init()
+    os.environ['DOOM_CPU'] = '65c02'    # the copro IS a 65C02 (3MHz): the
+                                        # parasite engine assembles with
+                                        # C02=1 (STZ/BRA/ZERO sites live).
+                                        # The WALK side rides along from the
+                                        # pre-built doom_walk.ssd, so the
+                                        # host stays NMOS.
     import doom_wireframe as dw
     from bsp_render_6502 import BspRender6502
     import symmap, abi

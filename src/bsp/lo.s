@@ -37,8 +37,7 @@ reproject_at_crossing:
    STA zp_br_vx_h
    LDA zp_clip_cx_hi
    STA zp_br_vx_x
-   LDA #0
-   STA zp_br_vx_l
+   ZERO zp_br_vx_l
    JSR br_project_x                        ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; struct offset (0/15)
    STA VX1+4,X                             ; sx → the clipped endpoint's
@@ -194,8 +193,7 @@ ap_emit_y:
    LDA VX1+4,X
    STA zp_line_xl_h
    STA zp_line_xr_h
-   LDA #0
-   STA zp_dcl_rec_buf_h
+   ZERO zp_dcl_rec_buf_h
 ; (no PAGE: ap_edges expands in the verticals section of the seg loop,
 ;  strictly after hgp_fwd's emit-cascade PAGE C; every in-ladder L0
 ;  excursion re-pages C — bank C is the ladder invariant here. dfscan

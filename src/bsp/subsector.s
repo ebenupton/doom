@@ -201,9 +201,14 @@ seg_proc:
 ; (prev seg y-staged => VX2's front sy pair is live => copy it and set
 ; zp_ys_v1ok so the y stage skips v1's front projection).
    chain_reuse_v1
+.if ::C02
+   STZ zp_ys_done                         ; consumed (chain) — reset for
+   BRA ch_v1_done                         ; THIS seg's own y stage
+.else
    LDA #0
-   STA zp_ys_done                           ; consumed (chain) — reset for
-   BEQ ch_v1_done                           ; THIS seg's own y stage
+   STA zp_ys_done
+   BEQ ch_v1_done
+.endif
 ch_miss1:                                  ; A = header idx_l (Y = 0)
    STA zp_seg_v_idx_l
    INY
@@ -249,8 +254,7 @@ ch_v1_done:
    BEQ s_v2_was_clipped
    LDA zp_seg_v2_clipped
    BNE s_advance_jmp                       ; both clipped
-   LDA #0
-   STA zp_seg_ep                            ; reproject into v1 (struct VX1)
+   ZERO zp_seg_ep                         ; reproject into v1 (struct VX1)
    JSR reproject_at_crossing
    JMP s_both_have_proj
 s_advance_jmp:
@@ -378,9 +382,14 @@ hg_query:
 hg_pass:
 ; Records reset for THIS seg (moved from seg_proc): ms_dispatch reads
 ; the counts only for segs that got here; armed draws re-init them.
+.if ::C02
+   STZ $0700                              ; TOP_RECORDS count
+   STZ $0800                              ; BOT_RECORDS count
+.else
    LDA #0
-   STA $0700                               ; TOP_RECORDS count
-   STA $0800                               ; BOT_RECORDS count
+   STA $0700
+   STA $0800
+.endif
 ; --- DEFERRED Y PROJECTION (2026-07-11): ALL sy pairs are projected
 ; HERE, only for segs that passed has_gap — the transform phase now
 ; computes evy/evx/clip/sx/recip only (measured 11.5k cyc/frame of
@@ -418,8 +427,7 @@ ys_deltas_done:
    LDA zp_seg_flags
    AND #$0C
    BEQ ys_v2
-   LDA #0
-   STA zp_seg_ep
+   ZERO zp_seg_ep
    LDA zp_seg_v1_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v1_r_s                        ; inlined rns_select (hot site)
@@ -429,8 +437,7 @@ ys_deltas_done:
    JSR dpy_back_v1                         ; (chained v1 = struct VX1)
    JMP ys_v2
 ys_v1_full:
-   LDA #0
-   STA zp_seg_ep                            ; v1 -> struct VX1
+   ZERO zp_seg_ep                         ; v1 -> struct VX1
    LDA zp_seg_v1_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v1_r_s                        ; inlined rns_select
@@ -519,15 +526,13 @@ ft_emit:
 ; to ft_no_rec above.
    LDA #$07
    STA zp_dcl_rec_buf_h
-   LDA #0
-   STA $0700                               ; count = 0 (arm-time reset;
+   ZERO $0700                             ; count = 0 (arm-time reset;
                                            ; page-aligned → absolute)
    LDA #1
    STA zp_dcl_rec_off
    BNE ft_set_line                         ; A = 1: always taken
 ft_no_rec:
-   LDA #0
-   STA zp_dcl_rec_buf_h
+   ZERO zp_dcl_rec_buf_h
 ft_set_line:
 ; (rec_buf lo is never non-zero — both record pages are page-aligned;
 ;  the per-seg prologue zeroes it once. Only _h arms/disarms.)
@@ -580,14 +585,12 @@ fb_emit:
 ; to fb_no_rec above).
    LDA #$08
    STA zp_dcl_rec_buf_h
-   LDA #0
-   STA $0800                               ; count = 0 (arm-time reset)
+   ZERO $0800                             ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
    BNE fb_set_line                         ; A = 1: always taken
 fb_no_rec:
-   LDA #0
-   STA zp_dcl_rec_buf_h
+   ZERO zp_dcl_rec_buf_h
 fb_set_line:
    LDX #zp_seg_sy1_bot_l - VX1            ; sy pair offset (bot)
    JSR SC_DRAW_S16_H
@@ -612,8 +615,7 @@ step_cont:                              ;  pushed the branch out of range)
    LDX #zp_seg_sy1_btop_l - VX1            ; sy pair offset (btop)
    LDA #$07
    STA zp_dcl_rec_buf_h
-   LDA #0
-   STA $0700                               ; count = 0 (arm-time reset)
+   ZERO $0700                             ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
 ; TOP_RECORDS = $0700
@@ -627,8 +629,7 @@ step_no_top:
    LDX #zp_seg_sy1_bbot_l - VX1            ; sy pair offset (bbot)
    LDA #$08
    STA zp_dcl_rec_buf_h
-   LDA #0
-   STA $0800                               ; count = 0 (arm-time reset)
+   ZERO $0800                             ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
 ; BOT_RECORDS = $0800
@@ -878,8 +879,7 @@ emit_vert_sx1:
    LDA zp_seg_sx1_h
    STA zp_line_xl_h
    STA zp_line_xr_h
-   LDA #0
-   STA zp_dcl_rec_buf_h
+   ZERO zp_dcl_rec_buf_h
 ; (no PAGE: verticals run strictly after the horizontal cascade, which
 ;  ends bank-C on every path — see the step-bot audit note — and the
 ;  clipper never re-pages)
@@ -893,8 +893,7 @@ emit_vert_sx2:
    LDA zp_seg_sx2_h
    STA zp_line_xl_h
    STA zp_line_xr_h
-   LDA #0
-   STA zp_dcl_rec_buf_h
+   ZERO zp_dcl_rec_buf_h
 ; (no PAGE: same audit as sx1 above)
    JMP SC_DRAW_S16
 

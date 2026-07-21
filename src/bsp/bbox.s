@@ -183,8 +183,7 @@ dv_right:
 dv_straddle:
    LDA D_SMODE
    BNE dv_fresh_j                          ; stationary frame: recompute
-   LDA #0
-   STA zp_i_l
+   ZERO zp_i_l
    LDA #255
    STA zp_i_h
 dv_gap:
@@ -296,8 +295,7 @@ df_moved:
    CMP D_PREV_AB
    BNE df_wipe                             ; move + turn in one frame → wipe
    INC D_FRAME
-   LDA #0
-   STA D_SMODE                             ; forward: straddles serve (they
+   ZERO D_SMODE                           ; forward: straddles serve (they
                                            ; would descend anyway, ahead)
    LDA #2
    STA D_MODE

@@ -4,6 +4,17 @@
 .if C02
 .setcpu "65C02"
 .endif
+; ZERO addr: zero a byte. 65C02 = STZ (A preserved); 6502 = LDA #0:STA (A
+; clobbered) — only use where A is dead afterwards. (Same macro as the
+; bsp/clip headers; the angle module grew C02 sites 2026-07-21.)
+.macro ZERO addr
+.if ::C02
+STZ addr
+.else
+   LDA #0
+   STA addr
+.endif
+.endmacro
 ; SlopeDiv for the angle-space pipeline (M3 primitive, unit-tested standalone).
 ; Computes floor(num * 2^SLOPEBITS / den) clamped to SLOPERANGE, for num <= den.
 ; SLOPEBITS=10, SLOPERANGE=1024. num,den are u16 (bbox/seg deltas, <= ~660).

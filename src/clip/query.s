@@ -157,8 +157,7 @@ span_read:
 ; Output: 1 byte count, then 8 bytes per span:
 ;   xstart, xend, xlo, xhi, tl, bl, tr, br
    LDY #1
-   LDA #0
-   STA zp_tmp0
+   ZERO zp_tmp0
    LDX zp_head
    BEQ srd
 srl:
