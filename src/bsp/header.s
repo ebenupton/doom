@@ -319,8 +319,8 @@ L2_BBOX = $8C00                         ; bank L2 (harness/loader points zp_rom_
 .else
 RECIP_BASE = $D500                      ; flat LEVEL block (2026-07-21 map)
 .endif
-SINCOS_BASE = $E480                     ; sin_mag/sin_unity (VATOX tail page —
-                                        ; $E402-$E4FF free in the 2026-07-21 map)
+; (SINCOS_BASE deleted 2026-07-21: no reader — the engine takes sincos
+;  via the ZP contract ($05-$0A), the driver owns its own DRV_TAB.)
 
 ; Vertex transform cache: per-vertex saved view + projection results.
 ; Skip redundant transforms when multiple segs share a vertex.

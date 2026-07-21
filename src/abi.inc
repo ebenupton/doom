@@ -11,11 +11,7 @@ MAIN_BASE = $2C00          ; engine CODE region head (cfg-anchored; MAIN first)
 MAIN_BASE = $3670
 .endif
 HUD_ENTRY = $A400                       ; hud_draw (bank C window)
-.if ::BANKED
-BCA_WS = $1B40             ; angle-module bbox workspace (box vals at +$10..$17)
-.else
-BCA_WS = $7190
-.endif
+BCA_WS = $1B40                          ; angle-module bbox workspace (box vals at +$10..$17; UNFORKED 2026-07-21 — flat $1B40-$1BFF was free, ex-home $7190 returned to the RCACHE_STATE page)
 BCA_AB = BCA_WS+$2F                     ; view angle byte, poked per frame by driver/harness
 SQR_BASE = $1C00                        ; quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)
 SQR_LO = SQR_BASE+$000                  ; qsqr lo bytes (f 0..255)

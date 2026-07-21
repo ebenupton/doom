@@ -203,11 +203,11 @@ seg_proc:
    chain_reuse_v1
 .if ::C02
    STZ zp_ys_done                         ; consumed (chain) — reset for
-   BRA ch_v1_done                         ; THIS seg's own y stage
-.else
-   LDA #0
-   STA zp_ys_done
-   BEQ ch_v1_done
+   BRA ch_v1_done_l0                      ; THIS seg's own y stage; the
+.else                                    ; chain body is pure ZP — this
+   LDA #0                                ; arc NEVER left L0, so it skips
+   STA zp_ys_done                        ; the transform-arc re-page
+   BEQ ch_v1_done_l0
 .endif
 ch_miss1:                                  ; A = header idx_l (Y = 0)
    STA zp_seg_v_idx_l
@@ -221,13 +221,14 @@ ch_miss2:                                  ; A = header idx_b
    JSR br_seg_xform_vertex                  ; keep this STA immediately before
 ; (no marshalling: evy/evx/clip/sx/recip all landed in VX1 directly)
 ch_v1_done:
+   PAGE BANK_L0                             ; transform arc: br_seg_xform_
+; vertex exits L2 on EVERY path (2026-07-21 contract) — the header read
+; below needs the L0 window back. Flat: no-op.
+ch_v1_done_l0:
 
 ; Transform v2.
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; v2 → struct VX2
-   PAGE BANK_L0                             ; v1's projection paged L2 (br_
-; project_y / br_recip) unless v1 was near-clipped — the header read below
-; needs the L0 window back. Flat: no-op.
    LDY #2
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_l

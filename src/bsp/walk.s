@@ -299,7 +299,13 @@ rc_s0:
    LDA #0                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (serves never read it)
    JSR br_bbox_visible                     ; vector-dispatched (zp_bv_entry)
+.if ::BANKED
+   BEQ r0_far_i                            ; near invisible: far check enters
+                                        ; ALREADY L2 (bca exit) — the clone
+                                        ; below calls the no-page entry
+.else
    BEQ r0_far                              ; near invisible: skip subtree
+.endif
 r0_vis:
    PAGE BANK_L0                            ; node SoA pages live in bank L0
    LDX zp_node_ch_l
@@ -323,6 +329,17 @@ r0_far_vis:                             ; (falls in: the serve stub moved below)
    LDA NODE_TYPE,X
    ASL A                                   ; N = NF_LLEAF
    JMP rc_descend_far                      ; TAIL call either way
+.if ::BANKED
+r0_far_i:                               ; near-invisible arc ONLY: bank is
+   PLA                                  ; L2-proven (bca exit; nothing here
+   STA zp_node_ch_l                     ; touches banked data), so the far
+   LDA #1                               ; check skips br_bbox_visible's
+   STA zp_bbox_side                     ; blind PAGE. Post-descend and
+   IS_FULL_B bsp_done_full              ; serve arcs keep the paged entry
+   JSR br_bbox_visible_l2               ; via r0_far above.
+   BEQ rc_ret
+   JMP r0_far_vis
+.endif
 sp_serve0:
    JSR SC_HAS_GAP                          ; parent's interval, main-resident
    BNE r0_vis                              ; open columns: descend as visible
@@ -350,7 +367,11 @@ rc_n1:
    LDA #1                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (mirror)
    JSR br_bbox_visible
+.if ::BANKED
+   BEQ r1_far_i                            ; near invisible: L2-proven (mirror)
+.else
    BEQ r1_far
+.endif
 r1_vis:
    PAGE BANK_L0
    LDX zp_node_ch_l
@@ -366,12 +387,23 @@ r1_far:
    IS_FULL_B bsp_done_full
    JSR br_bbox_visible
    BEQ rc_ret1
+r1_far_vis:
    PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
    LDA NODE_TYPE,X                         ; N = NF_RLEAF
    JMP rc_descend_far                      ; TAIL call either way
+.if ::BANKED
+r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
+   PLA
+   STA zp_node_ch_l
+   ZERO zp_bbox_side                    ; far = RIGHT
+   IS_FULL_B bsp_done_full
+   JSR br_bbox_visible_l2
+   BEQ rc_ret1
+   JMP r1_far_vis
+.endif
 sp_serve1:
    JSR SC_HAS_GAP                          ; parent's interval (mirror stub)
    BNE r1_vis

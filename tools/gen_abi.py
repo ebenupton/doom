@@ -29,7 +29,7 @@ ABI = [
     # (the driver clear-overlay assert needs it before the engine links).
     ('MAIN_BASE',      0x2C00, 0x3670, 'engine CODE region head (cfg-anchored; MAIN first)'),
     ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
-    ('BCA_WS',         0x1B40, 0x7190, 'angle-module bbox workspace (box vals at +$10..$17)'),
+    ('BCA_WS',         0x1B40, None, 'angle-module bbox workspace (box vals at +$10..$17; UNFORKED 2026-07-21 — flat $1B40-$1BFF was free, ex-home $7190 returned to the RCACHE_STATE page)'),
     ('BCA_AB',         'BCA_WS+$2F', None, 'view angle byte, poked per frame by driver/harness'),
     ('SQR_BASE',       0x1C00, None, 'quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)'),
     # REORDERED 2026-07-12: lo pages CONTIGUOUS (f(0..510) linear), then

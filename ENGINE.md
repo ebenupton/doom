@@ -195,33 +195,24 @@ belongs in the configs.
 
     $0000-$00FF  ZP (src/zp.inc registry)
     $0100-$01FF  RESERVED FREE (stack + future; do not squat — Eben)
-    $0200-$05FF  span pool / D-cache $0210-$03F7 / VXC state $05A0
-    $0600-$08FF  DEFQ queue / TOP+BOT_RECORDS
-    $09FB-$09FD  DEFQ_TAIL/OVF + corner idx  ** LIVE VARS, page 9 trap **
-    $0A00-$0BD2  VXC YEXT plane pair ($0BE8 = LINE_OUT_EN flag, clear)
-    $0C00-$1B3F  VCACHE (480×8) + valid bitmap $1B00
-    $1B40-$1BFF  free
-    $1C00-$1FFF  VXC XEXT/YLO plane pairs
-    $2000-$366F  CLIP (no jt; symbols resolved from the map)
-    $3670-$4FFF  CODE: MAIN first (code_head = $3670, MAIN_BASE flat), LO B D W ANIML2
-                 (end_code <= $5000 link-asserted)
-    $5000-$57E8  RCACHE carve (the assert above is its fence)
-    $5800-$6BFF  framebuffer
-    $6C00-$973F  seg headers (stride 16) + DIR tables
-    $9800-$9BFF  VXC XLO/XHI plane pairs
-    $9C00-$A34B  verts
-    $A400-$A4FF  SEL island (rot_select; cold, once per frame)
-    $A500-$A8FF  sqr quarter-square tables (4 pages)
-    $A900-$B1EE  NJ rasteriser  ** loaded by span_clip_6502.py, NOT in
-                 any cfg — invisible to the linker, a placement trap **
-    $B200-$B5FF  VXC YHI/YEXT... (YHI/YLO pairs; see vxcache.s)
-    $B600-$C5FF  node/ss SoA pages
-    $C600-$D4BF  bbox corner table
-    $D500-$D9FF  VWHC arrays (page-aligned — the $C0 offset cost +1/probe)
-    $DC00-$DFFF  TA_LO   $E000-$E3FF recip M8
-    $E484-$E93F  anim tables ($E484 SSMASK..) + ACOLD island $E740
-    $E940-$F1FF  ANG region (angle module)
-    $F200-$FA01  TA_HI + VATOX    $FA10 BCA_WS    $FB00 VWH mover slots
+    $0200-$0AFF  pools/records/workspaces (identical layout to banked;
+                 ANIM_SSMASK runtime copy $0A80 — unforked 2026-07-21)
+    $0C00-$1B3F  VCACHE planes (7×512) + valid bitmap
+    $1B40-$1B7F  BCA_WS (bca_ab $1B6F) — unforked with banked 2026-07-21
+    $1C00-$1FFF  sqr quarter-square tables (unforked, one address)
+    $2000-$61FF  ALL CODE, one segment (islands died in the 2026-07-21 map)
+    $6200-$6AFF  NJ rasteriser blob (RASTER_ENTRY $6200)  ** loaded by
+                 span_clip_6502.py, NOT in any cfg — a placement trap **
+    $6B00-$85FF  CACHE block: rc psi planes $6B00, RCACHE_STATE $7100
+                 (+$90-$FF free since BCA_WS left), CPM $7200, VXC planes
+                 $7500-$7F00, VWHC $8100-$8500
+    $8600-$D8FF  LEVEL block: seg hdrs+DIRs $8600, verts $B100, node SoA
+                 $B900, bbox corners $C500, recip $D500
+    $D900-$DBFF  L8_TAB / AE_LO / AE_HI
+    $E000-$E401  VATOX ($E402-$E4FF free)
+    $E500-$E7FF  anim: SSMASK_SRC $E500 (boot-copied to $0A80), TABL0
+                 $E600, CFG $E700
+    $EA00-$FDFF  framebuffer (harness/copro)
 
 **Banked** (Model B disc; banks = DATA ONLY, one code region):
 

@@ -121,6 +121,10 @@ br_bbox_visible:
 ; moving -> box_classify (pristine). The walk-forward D cache stays
 ; disabled: code below assembled but unreached.
    PAGE BANK_L2                            ; angle tables live in bank L2
+::br_bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
+                                        ; walk's near-invisible -> far-check
+                                        ; arc: bca exits L2 and PLA/stores/
+                                        ; IS_FULL_B touch no banked data)
    JMP (zp_bv_entry)                       ; exits return to OUR caller
 
 ; ============================================================================
