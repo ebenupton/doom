@@ -35,8 +35,8 @@ def write_ssd(files, path='doom_walk.ssd'):
         disc[m+0] = load & 0xFF; disc[m+1] = (load >> 8) & 0xFF
         disc[m+2] = exe & 0xFF;  disc[m+3] = (exe >> 8) & 0xFF
         disc[m+4] = len(data) & 0xFF; disc[m+5] = (len(data) >> 8) & 0xFF
-        disc[m+6] = (((exe>>16)&3)) | (((len(data)>>16)&3)<<2) | \
-                    (((load>>16)&3)<<4) | (((ss>>8)&3)<<6)
+        disc[m+6] = ((ss>>8)&3) | (((load>>16)&3)<<2) | \
+                    (((len(data)>>16)&3)<<4) | (((exe>>16)&3)<<6)
         disc[m+7] = ss & 0xFF
         disc[ss*SECTOR: ss*SECTOR + len(data)] = data
     open(path, 'wb').write(disc)
