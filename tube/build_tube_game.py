@@ -156,7 +156,10 @@ def main():
                      ('T_SPAN_INIT', 'span_init'),
                      ('T_RENDER_FRAME', 'br_render_frame'),
                      ('T_TAIL_POSTRC', 'bca_tail_postrc'),
-                     ('T_BOX_CLASSIFY', 'box_classify')):
+                     ('T_BOX_CLASSIFY', 'box_classify'),
+                     ('T_ANIM_INIT', 'anim_init'),
+                     ('T_ANIM_TICK', 'anim_tick'),
+                     ('T_ANIM_ENABLE', 'ANIM_ENABLE')):
             f.write(f"{t} = &{fsym(s):04X}\n")
         f.write(f"T_RCACHE_STATE = &{0xF100:04X}\n")
         f.write(f"T_RCACHE_LEN = &{abi.RCACHE_STATE_LEN & 0xFF:02X}\n")

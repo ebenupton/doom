@@ -60,6 +60,30 @@ ORG &5800                       \ the FB region: 5K the copro never
     EQUB 0
 .boot
     SEI
+    LDA #0                      \ REAL-HW hardening: the engine's runtime
+    STA &6C                     \ arenas ($0400-$1AFF: pool/records/TFS/
+    LDA #4                      \ LC/VCACHE planes) and the CPM memo
+    STA &6D                     \ ($5500-$57FF) assume the py65-zeros
+    LDY #0                      \ ground state; parasite RAM is only
+    TYA                         \ zeroed by luck on emulators. Zero them
+.pz1                            \ BEFORE the loads (D2 then restores the
+    STA (&6C),Y                 \ CPM KDXH $80-sentinel plane on top).
+    INY
+    BNE pz1
+    INC &6D
+    LDX &6D
+    CPX #&1B
+    BNE pz1
+    LDA #&55
+    STA &6D
+.pz2
+    STA (&6C),Y
+    INY
+    BNE pz2
+    INC &6D
+    LDX &6D
+    CPX #&58
+    BNE pz2
     LDX #0                      \ *LOAD every engine/data file: strings
 .ldloop                         \ are CR-terminated, list ends with 0
     LDA loads,X
@@ -134,6 +158,9 @@ ORG &5800                       \ the FB region: 5K the copro never
     BNE vxinit
     LDA #1
     STA T_VXC_ENABLE
+    LDA #1                      \ animated sectors (doors/lifts): engine
+    STA T_ANIM_ENABLE           \ anim, no driver glue needed on the
+    JSR T_ANIM_INIT             \ copro (flat build: no banking)
 \ (CPM memo: NOT zeroed here — its ground state is not all-zeros: the
 \  KDXH validity plane ships as a data file full of $80 sentinels, and
 \  a wipe after the load would destroy it. The other five planes rely
@@ -253,6 +280,7 @@ ORG &5800                       \ the FB region: 5K the copro never
     INY
     LDA (&EC),Y
     STA T_BCA_AB                \ view angle byte
+    JSR T_ANIM_TICK             \ advance door/lift movers
     JSR T_VIEW_SETUP            \ br_view_setup (flat: no banking)
     JSR T_SPAN_INIT             \ span_init / pool
     JSR T_RENDER_FRAME          \ lines leave via the &A900 emitters

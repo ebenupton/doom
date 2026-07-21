@@ -20,6 +20,10 @@ pend=&61
 draw=&62
 free=&63
 mask=&64
+wrl=&66
+wrh=&67
+rdl=&68
+rdh=&69
 ptr=&6C
 tmpc=&6E
 
@@ -114,13 +118,28 @@ ORG &1900
     STA &FE00
     LDA crtc13
     STA &FE01
+    LDA #0                      \ FIFO ring $3000-$3FFF empty
+    STA wrl
+    STA rdl
+    LDA #&30
+    STA wrh
+    STA rdh
     LDA #LO(irq)
     STA &204
     LDA #HI(irq)
     STA &205
-    LDA #2                      \ clear stale vsync, enable CA1 only
+    LDA &FE4B                   \ ACR: T1 continuous, PB7 off
+    AND #&3F
+    ORA #&40
+    STA &FE4B
+    LDA #&E8                    \ T1 = 1000us: the ISR FIFO-drain tick —
+    STA &FE46                   \ the host must never leave the copro
+    LDA #&03                    \ blocked on a full FIFO while it clears
+    STA &FE47                   \ or draws (Eben: unload in the ISR)
+    STA &FE45                   \ start T1 (write hi counter)
+    LDA #&42                    \ clear stale vsync + T1
     STA &FE4D
-    LDA #&82
+    LDA #&C2                    \ enable CA1 + T1
     STA &FE4E
     CLI
 .main
@@ -182,17 +201,65 @@ ORG &1900
     JSR clearbuf
     JMP main
 .rd
-    LDA &FEE0
-    BPL rd
-    LDA &FEE1
+    LDA rdl                     \ ring empty? (ISR only appends: a stale
+    CMP wrl                     \ read of wr just looks briefly empty)
+    BNE rdhave
+    LDA rdh
+    CMP wrh
+    BEQ rd
+.rdhave
+    STY &6D
+    LDY #0
+    LDA (rdl),Y
+    LDY &6D
+    INC rdl
+    BNE rdok
+    PHA
+    LDA rdh
+    CLC
+    ADC #1
+    AND #&0F
+    ORA #&30
+    STA rdh
+    PLA
+.rdok
     RTS
 .irq
-    LDA &FE4D
-    AND #2
-    BEQ iout
-    STA &FE4D
     TXA
     PHA
+    TYA
+    PHA
+\ drain the Tube FIFO into the ring FIRST, on EVERY interrupt (T1 tick
+\ or vsync): the copro must never block on a full FIFO while the main
+\ loop is busy clearing/drawing. Bounded at 48 bytes per entry.
+    LDX #48
+    LDY #0
+.dr1
+    LDA &FEE0
+    BPL drdone
+    LDA &FEE1
+    STA (wrl),Y
+    INC wrl
+    BNE drnext
+    LDA wrh
+    CLC
+    ADC #1
+    AND #&0F
+    ORA #&30
+    STA wrh
+.drnext
+    DEX
+    BNE dr1
+.drdone
+    LDA &FE4D                   \ T1 tick? clear by reading T1CL
+    AND #&40
+    BEQ notick
+    LDA &FE44
+.notick
+    LDA &FE4D
+    AND #2
+    BEQ ipop                    \ no vsync: drain-only entry
+    STA &FE4D
     LDX pend
     BMI nopres
     LDA #12
@@ -249,9 +316,11 @@ ORG &1900
     LDA mask
     STA &FEE1
 .nosend
+.ipop
+    PLA
+    TAY
     PLA
     TAX
-.iout
     LDA &FC
     RTI
 .clearbuf
@@ -264,6 +333,20 @@ ORG &1900
     LDY #0
     TYA
 .cb
+    STA (ptr),Y
+    INY
+    STA (ptr),Y
+    INY
+    STA (ptr),Y
+    INY
+    STA (ptr),Y
+    INY
+    STA (ptr),Y
+    INY
+    STA (ptr),Y
+    INY
+    STA (ptr),Y
+    INY
     STA (ptr),Y
     INY
     BNE cb
