@@ -20,6 +20,11 @@ pend=&61
 draw=&62
 free=&63
 mask=&64
+eofs=&65                        \ complete frames currently queued in the
+                                \ ring (ISR increments at each EOF; the
+                                \ main loop decrements per frame consumed)
+ffrun=&71                       \ ISR: consecutive-FF run length (EOF detect)
+skpd=&72                        \ diagnostics: frames skipped (latency cap)
 wrl=&66
 wrh=&67
 rdl=&68
@@ -119,6 +124,9 @@ ORG &1900
     LDA crtc13
     STA &FE01
     LDA #0                      \ FIFO ring $3000-$3FFF empty
+    STA eofs
+    STA ffrun
+    STA skpd
     STA wrl
     STA rdl
     LDA #&30
@@ -173,6 +181,9 @@ ORG &1900
 .diag
     JMP linedraw4               \ the real NJ rasteriser
 .eof
+    SEI                         \ one complete frame consumed
+    DEC eofs
+    CLI
     LDA &6F                     \ publish the frame's command count
     STA &6A
     LDA #0
@@ -199,7 +210,39 @@ ORG &1900
     LDA bufhi,X
     STA scrstrt                 \ retarget the raster
     JSR clearbuf
+\ ---- SKIP-AHEAD (latency cap): while at least TWO complete frames sit
+\ in the ring, the next one is already stale — consume it tuple-aligned
+\ (an x-byte can be FF, so byte-hunting can misalign; the 4-tuple test
+\ is exact) without drawing, and re-check. The frame that finally gets
+\ drawn is always the NEWEST complete one; the partial behind it
+\ streams normally.
+.skipchk
+    SEI
+    LDA eofs
+    CLI
+    CMP #2
+    BCS skipfrm
     JMP main
+.skipfrm
+    JSR rd
+    STA x0
+    JSR rd
+    STA y0
+    JSR rd
+    STA x1
+    JSR rd
+    STA y1
+    LDA x0
+    AND y0
+    AND x1
+    AND y1
+    CMP #&FF
+    BNE skipfrm
+    SEI
+    DEC eofs
+    CLI
+    INC skpd                    \ diagnostics: skipped-frame counter
+    JMP skipchk
 .rd
     LDA rdl                     \ ring empty? (ISR only appends: a stale
     CMP wrl                     \ read of wr just looks briefly empty)
@@ -239,6 +282,20 @@ ORG &1900
     BPL drdone
     LDA &FEE1
     STA (wrl),Y
+    CMP #&FF                    \ EOF tally: y-bytes are <160 except in
+    BEQ drff                    \ the FF,FF,FF,FF marker, so a run of 4
+    LDA #0                      \ consecutive FFs IS an EOF (an x-byte FF
+    STA ffrun                   \ can extend a run to 5+ but never fake 4)
+    BEQ drnf                    \ (always)
+.drff
+    INC ffrun
+    LDA ffrun
+    CMP #4
+    BNE drnf
+    INC eofs                    \ a complete frame is now fully queued
+    LDA #0
+    STA ffrun
+.drnf
     INC wrl
     BNE drnext
     LDA wrh

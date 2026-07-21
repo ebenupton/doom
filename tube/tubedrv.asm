@@ -187,6 +187,7 @@ ORG &EA00                       \ the FB region: the copro never
 .wm
     BIT R1S                     \ N = key mask waiting
     BPL wm
+.mloop
     LDA R1D
     STA mask
     AND #4                      \ b2 LEFT: turn
@@ -218,6 +219,10 @@ ORG &EA00                       \ the FB region: the copro never
     JSR step_back
     JSR bounds_or_revert_back
 .ndn
+    BIT R1S                     \ SKIP-AHEAD: if more masks are already
+    BMI mloop                   \ queued (the render ran behind vsync),
+                                \ apply them all before drawing — input
+                                \ stays realtime and no latency accrues
     LDA pxf                     \ position -> engine ZP
     STA &00
     LDA pxl
