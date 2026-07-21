@@ -42,7 +42,7 @@ bca_cach_ab = RCACHE_STATE + $80        ; last frame's angle byte (the D
                                         ; class needs 'angle unchanged';
                                         ; ex-bca_prevpos, which was dead)
 bca_dfrm    = RCACHE_STATE + $81        ; D refresh counter: ++ per forward
-                                        ; frame; entry (node+dfrm)&7 == 0
+                                        ; frame; entry (node+dfrm)&15 == 0
                                         ; is that frame's recompute slot
 bca_cachepos = RCACHE_STATE + $84       ; 4 bytes: position COMPUTED is valid for
 .assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
@@ -1379,7 +1379,10 @@ rc_wipe:
 ; straddling (0,255) — always a SUPERSET of the true extent (+2 covers
 ; the check's +-1 rounding wobble), and a superset only over-descends,
 ; which the gate invariant proves pixel-free. Entries recompute every
-; 8th forward frame, round-robin by (node + bca_dfrm) & 7.
+; 16th forward frame, round-robin by (node + bca_dfrm) & 15 (period
+; swept over {2,4,8,16} on the 4-view bench 2026-07-21: recompute cost
+; dominates staleness cost — 16 wins the mean, 5.3% vs 8's 5.0%; the
+; serve is a SUPERSET at any staleness, so the period is pure tuning).
 ; MISS/refresh: stash the probe's byte+bit (rc_bytehi/rc_bit), JSR the
 ; side's pristine tree (its fused exits run has_gap and RTS the full
 ; A/Z/C signature), store at return from the freshly-born bca_ilo/ihi
@@ -1413,7 +1416,7 @@ dcap_s1:
    TYA                                     ; visible: refresh slot?
    CLC
    ADC bca_dfrm
-   AND #7
+   AND #15
    BEQ dcap_s1_fresh
    LDA RC_P2L_1,Y                          ; ihi
    CMP #125                                ; GUARD BAND (from the retired
@@ -1496,7 +1499,7 @@ dcap_s0:
    TYA
    CLC
    ADC bca_dfrm
-   AND #7
+   AND #15
    BEQ dcap_s0_fresh
    LDA RC_P2L_0,Y
    CMP #125                                ; guard band (see side 1)
