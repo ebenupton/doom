@@ -310,11 +310,12 @@ zp_br_dy = zp_br_dy_l
 ;   TA_LO $8000 TA_HI $8400 VATOX $8800 (angle tables, slope_div.asm)
 ;   bbox $8D00  recip $9C00  VWH $A100  VWHC cache $A600
 .if ::BANKED
-; L2 window (no overlaps): TA_LO$8000 TA_HI$8400 VATOX$8900 bbox$8E00
-;   recip$9D00 VWH$A200 VWHC$A700
-RECIP_BASE = $9E00                      ; bank L2 (moved +$100 2026-07-15:
-                                        ; bbox planes own $8E00-$9DFF)
-L2_BBOX = $8E00                         ; bank L2 (harness/loader points zp_rom_bbox here)
+; L2 window (2026-07-21 regroup, no overlaps): TABLES $8000-$8BFF
+; (L8/AE/VATOX/recip) | LEVEL $8C00-$A3FF (bbox 16p, verts $800) |
+; CACHES $A400-$B2FF (CPM, rc psi planes, RCACHE_STATE, VWHC) |
+; ANIM $B300/$B400 | FREE $B500-$BFFF contiguous.
+RECIP_BASE = $8800                      ; bank L2 TABLES group
+L2_BBOX = $8C00                         ; bank L2 (harness/loader points zp_rom_bbox here; = ROM_BBOX_C)
 .else
 RECIP_BASE = $D500                      ; flat LEVEL block (2026-07-21 map)
 .endif

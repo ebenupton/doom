@@ -107,9 +107,13 @@ def build_banked(flatr):
     cpy(0x0100, _vsym('AE_LO'), 256)     # AE_LO  -> $8100  source by symbol —
     cpy(0x0200, _vsym('AE_HI'), 256)     # AE_HI  -> $8200  2026-07-21 map)
                                          # F: $8300-$88FF freed banked)
-    cpy(0x0900, _vsym('VATOX'), 1025)    # VATOX (flat, by symbol) -> $8900
-    cpy(0x0E00, 0xC500, len(flatr.bbox_table))   # bbox planes (flat $C500) -> $8E00-$9DFF
-    cpy(0x1E00, 0xD500, 1024)            # recip (flat $D500) -> $9E00 (M8[1024])
+    def bdst(name):
+        return _vsym(name, banked=1) - 0x8000    # dst offsets BY SYMBOL —
+                                                 # the .s equates are the
+                                                 # single source (2026-07-21)
+    cpy(bdst('VATOX'), _vsym('VATOX'), 1025)
+    cpy(bdst('L2_BBOX'), _vsym('ROM_BBOX_C'), len(flatr.bbox_table))
+    cpy(bdst('RECIP_BASE'), _vsym('RECIP_BASE'), 1024)
     # (VWH heights table stripped 2026-07-10: no 6502 reader)
     # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
     # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays
@@ -118,7 +122,8 @@ def build_banked(flatr):
     # reader is vc_miss, which now pages L2 for the fetch)
     n_verts_b = layout['off_nodes'] and 0  # (offsets: verts span off_verts..off_seg_hdr)
     vlen = layout['off_seg_hdr'] - layout['off_verts']
-    l2[0x2200:0x2200 + vlen] = bytes(rom_main[layout['off_verts']:layout['off_seg_hdr']])
+    vdst = _vsym('ROM_VERTS_C', banked=1) - 0x8000
+    l2[vdst:vdst + vlen] = bytes(rom_main[layout['off_verts']:layout['off_seg_hdr']])
     # Animated sectors (DOOM_ANIM builds): CFG @ $BA00 (L2); TABL0 @ $BE90
     # (L0, seeded into the l0 image above). SSMASK is consumed from MAIN
     # $0A80 (pageless hub reads) but main below $1B40 never reaches the
@@ -129,11 +134,11 @@ def build_banked(flatr):
     if dw.ANIM_SECTORS:
         import anim_sectors as _an
         for addr, blob in _an.gen_6502_tables(flat=False).items():
-            if 0xBA00 <= addr < 0xBB00:          # L2-side table (CFG @ $BA00)
+            if 0xB300 <= addr < 0xB400:          # L2-side table (CFG @ $B300)
                 l2[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
-            elif 0x0A80 <= addr < 0x0C00:        # SSMASK -> staging @ $BB00
-                assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $BB00 staging page'
-                l2[0x3B00:0x3B00 + len(blob)] = blob
+            elif 0x0A80 <= addr < 0x0C00:        # SSMASK -> staging @ $B400
+                assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $B400 staging page'
+                l2[0x3400:0x3400 + len(blob)] = blob
     # corner-phi memo validity: KDXH plane ($8380) ships $80-filled — the
     # probe's KDXH compare doubles as the never-written test (no EP plane).
     l2[abi.CPM_KDXH - 0x8000:abi.CPM_KDXH - 0x8000 + 128] = b'\x80' * 128

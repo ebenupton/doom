@@ -44,13 +44,13 @@ bsp_d_end:
 ; raw ~322 cycles, hit ~64).
 ; ============================================================================
 .if ::BANKED
-; (VWHC pages moved $A800-$ACFF -> $B500-$B9FF in the 2026-07-10 reshuffle:
-; verts now occupy $A200-$A95x. VALID retired earlier — RLO doubles as valid.)
-VWHC_R_M8 = $B500
-VWHC_R_S = $B600
-VWHC_KEY = $B700
-VWHC_L = $B800
-VWHC_H = $B900
+; (VWHC lives in the L2 CACHES group since the 2026-07-21 regroup.
+; VALID retired earlier — RLO doubles as valid.)
+VWHC_R_M8 = $AE00
+VWHC_R_S = $AF00
+VWHC_KEY = $B000
+VWHC_L = $B100
+VWHC_H = $B200
 SEG_CODE
 .else
 ; PAGE-ALIGNED 2026-07-12 (were $D5C0-$D9C0: the $C0 offset made ~75% of

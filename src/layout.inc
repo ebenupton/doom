@@ -19,8 +19,8 @@ LAY_MAX_DIRS   = 160                   ; DIR table stride (3 arrays)
 
 .if ::BANKED
 ROM_SEG_HDR_C = $9000                   ; 662*16 = 10592 + DIR tables
-ROM_VERTS_C   = $A200                   ; bank L2
-ROM_BBOX_C    = $8E00                   ; bank L2 (page-aligned)
+ROM_VERTS_C   = $9C00                   ; bank L2 LEVEL group (2026-07-21
+ROM_BBOX_C    = $8C00                   ; regroup: bbox 16p then verts $800)
 NODE_SOA_C    = $8000                   ; bank L0 window head
 ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
 .assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $BE90, error, "DIR tables reach TABL0"

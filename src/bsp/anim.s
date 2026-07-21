@@ -34,8 +34,8 @@ ANIM_SSMASK = $0A80                     ; MAIN: u8 mover bitmask per subsector
                                         ; (rule exception: read per subsector
                                         ; under any bank; main = zero paging)
 ANIM_TABL0  = $BE90                     ; L0: 6 u16 ptrs -> per-mover blocks
-ANIM_CFG    = $BA00                     ; L2: 12 B per mover (bounds/speed/waits)
-ANIM_SSMASK_SRC = $BB00                 ; L2: staging page for SSMASK — the
+ANIM_CFG    = $B300                     ; L2: 12 B per mover (bounds/speed/waits)
+ANIM_SSMASK_SRC = $B400                 ; L2: staging page for SSMASK — the
                                         ; disc can only ship bank contents
                                         ; (LOW loads at $1B40), so anim_init
                                         ; copies this page down to $0A80
