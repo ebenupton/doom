@@ -195,6 +195,9 @@ ORG &EA00                       \ the FB region: the copro never
     STA mask
     LDA #0                      \ D_FWD: 1 iff this frame's net move is
     STA T_D_FWD                 \ forward-only (walk_drv's rule)
+    LDA mask                    \ (the D_FWD clear clobbered A — the
+                                \ LEFT arm was the one consumer that
+                                \ relied on the mask riding in A)
     AND #4                      \ b2 LEFT: turn
     BEQ nlf
     LDA angidx

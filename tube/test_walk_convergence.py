@@ -33,7 +33,13 @@ from py65.devices.mpu65c02 import MPU as MPU_C02
 from py65.memory import ObservableMemory
 
 FRAMES = int(os.environ.get('TUBE_WALK_FRAMES', '30'))
-MASKS = [0, 0] + [1] * (FRAMES - 2)          # settle, then UP held
+MASKS = ([0, 0] + [1] * (FRAMES - 12)        # settle, UP held, then turn
+         + [4] * 4 + [8] * 3 + [2] * 3)      # LEFT/RIGHT/DOWN coverage (the
+                                             # 2026-07-22 LEFT regression —
+                                             # an A-clobber before the one
+                                             # mask test that rode in A —
+                                             # shipped through an UP-only
+                                             # mask diet)
 SPEED = 12
 DRVVARS = 0xEA06                             # angidx..pyh (after the two JMPs)
 ZPSET = list(range(0x00, 0x0B)) + [0x90, 0x91, 0x92, 0x93, 0x9D, 0x9E]
