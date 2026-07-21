@@ -107,7 +107,7 @@ class SpanClip6502:
         # Load quarter-square tables (base from the generated ABI — the flat
         # base moved $A500 -> $A400 in the 2026-07-12 one-region merge)
         import abi as _abi
-        _sq = _abi.SQR_BASE_FLAT
+        _sq = _abi.SQR_BASE          # unforked 2026-07-21
         sqr_l, sqr_h, sqr2_l, sqr2_h = _gen_quarter_square()
         mem[_sq + 0x000:_sq + 0x100] = sqr_l    # lo pages contiguous
         mem[_sq + 0x100:_sq + 0x200] = sqr2_l   # (2026-07-12 reorder —

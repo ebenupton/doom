@@ -8,7 +8,7 @@ MAIN_BASE = &2C00                       \ engine CODE region head (cfg-anchored;
 HUD_ENTRY = &A400                       \ hud_draw (bank C window)
 BCA_WS = &1B40                          \ angle-module bbox workspace (box vals at +$10..$17)
 BCA_AB = BCA_WS+&2F                     \ view angle byte, poked per frame by driver/harness
-SQR_BASE = &1C00                        \ quarter-square tables: lo,hi,2lo,2hi = 4 pages
+SQR_BASE = &1C00                        \ quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)
 SQR_LO = SQR_BASE+&000                  \ qsqr lo bytes (f 0..255)
 SQR2_LO = SQR_BASE+&100                 \ qsqr lo bytes (f 256..510)
 SQR_HI = SQR_BASE+&200                  \ qsqr hi bytes (f 0..255)

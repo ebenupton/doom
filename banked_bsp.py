@@ -94,7 +94,7 @@ def build_banked(flatr):
 
     # --- sqr tables -> low $1C00 (copy from flat $A500) ---
     for i in range(0x400):
-        bm[SQR_LOW + i] = fmem[abi.SQR_BASE_FLAT + i]
+        bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
 
     # --- bank L2 = relocated $C000+ data (window offsets must match the asm) ---
     # TA_LO $8000, TA_HI $8400, VATOX $8800, bbox $8D00, recip $9C00,

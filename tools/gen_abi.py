@@ -31,7 +31,7 @@ ABI = [
     ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
     ('BCA_WS',         0x1B40, 0x7190, 'angle-module bbox workspace (box vals at +$10..$17)'),
     ('BCA_AB',         'BCA_WS+$2F', None, 'view angle byte, poked per frame by driver/harness'),
-    ('SQR_BASE',       0x1C00, 0xDC00, 'quarter-square tables: lo,hi,2lo,2hi = 4 pages'),
+    ('SQR_BASE',       0x1C00, None, 'quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)'),
     # REORDERED 2026-07-12: lo pages CONTIGUOUS (f(0..510) linear), then
     # hi pages — rot_core's frame-constant-mag SMC bases index across the
     # 255 boundary without a window branch. Classic sqr/sqr2 split users

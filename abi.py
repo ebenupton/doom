@@ -9,8 +9,7 @@ HUD_ENTRY = 0xA400  # hud_draw (bank C window)
 BCA_WS = 0x1B40  # angle-module bbox workspace (box vals at +$10..$17)
 BCA_WS_FLAT = 0x7190
 BCA_AB = 0x1B6F  # view angle byte, poked per frame by driver/harness
-SQR_BASE = 0x1C00  # quarter-square tables: lo,hi,2lo,2hi = 4 pages
-SQR_BASE_FLAT = 0xDC00
+SQR_BASE = 0x1C00  # quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)
 SQR_LO = 0x1C00  # qsqr lo bytes (f 0..255)
 SQR2_LO = 0x1D00  # qsqr lo bytes (f 256..510)
 SQR_HI = 0x1E00  # qsqr hi bytes (f 0..255)

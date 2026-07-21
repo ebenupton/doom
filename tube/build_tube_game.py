@@ -102,7 +102,7 @@ def main():
     # ---- TWO LOADS (Eben's spec): CODE = engine + NJ/emitters,
     # DATA = level + tables (+anim/sincos). The 2026-07-21 map makes both
     # contiguous; the cache block is runtime-only and never shipped.
-    CODE_LO, CODE_HI = 0x2000, 0x6B00
+    CODE_LO, CODE_HI = 0x1C00, 0x6B00   # sqr tables ride in the CODE file
     DATA_LO, DATA_HI = 0x8600, 0xEA00
     # guard: nothing nonzero outside the shipped spans + runtime regions
     for a in range(0x0400, 0xF7F0):
