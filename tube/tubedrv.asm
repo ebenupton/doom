@@ -141,6 +141,9 @@ ORG &EA00                       \ the FB region: the copro never
     LDA #1                      \ animated sectors (doors/lifts): engine
     STA T_ANIM_ENABLE           \ anim, no driver glue needed on the
     JSR T_ANIM_INIT             \ copro (flat build: no banking)
+    LDA #1                      \ forward-coherence bbox cache (dbox):
+    STA T_D_ENABLE              \ the engine classifies frames itself,
+                                \ the driver just asserts D_FWD below
 \ CPM sentinel: the KDXH validity plane is $80-filled ($80 = impossible
 \ dx hi) — initialized HERE now (the cache block is never loaded)
     LDA #&80
@@ -190,6 +193,8 @@ ORG &EA00                       \ the FB region: the copro never
 .mloop
     LDA R1D
     STA mask
+    LDA #0                      \ D_FWD: 1 iff this frame's net move is
+    STA T_D_FWD                 \ forward-only (walk_drv's rule)
     AND #4                      \ b2 LEFT: turn
     BEQ nlf
     LDA angidx
@@ -212,12 +217,18 @@ ORG &EA00                       \ the FB region: the copro never
     BEQ nup
     JSR step_fwd
     JSR bounds_or_revert_fwd
+    LDA #1                      \ walk_drv's rule: UP flags forward;
+    STA T_D_FWD                 \ turns need no clear (the engine
+                                \ compares the angle byte); DOWN
+                                \ clears below
 .nup
     LDA mask
     AND #2                      \ b1 DOWN: back + bounds
     BEQ ndn
     JSR step_back
     JSR bounds_or_revert_back
+    LDA #0                      \ net-backward frame is NOT forward
+    STA T_D_FWD
 .ndn
     BIT R1S                     \ SKIP-AHEAD: if more masks are already
     BMI mloop                   \ queued (the render ran behind vsync),

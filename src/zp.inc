@@ -103,10 +103,8 @@ zp_rs_l = $1E                     ; [bsp] sin-side rotate result lo (res-slot
                                   ; copy died; s2 combines from both slots)
 ; (was zp_bca_zone — zone byte killed 2026-07-19: the inside
 ;   signal rides the p1/p2 full-span sentinel now)
-zp_bv_mode = $1F                  ; [bsp]; bbox-cache dispatch bits: b0 = D
-                                  ; wrapper, b1 = rotation cache (set per
-                                  ; frame by br_dcache_frame / bca_frame;
-                                  ; SMC dispatch retired 2026-07-18)
+; $1F FREE (zp_bv_mode retired 2026-07-21: the frame class IS the
+;  zp_bv_entry vector — pristine/rcache/dcache all dispatch through it)
 zp_br_t0 = $20                    ; [bsp]
 zp_br_t1 = $21                    ; [bsp]
 zp_br_t2 = $22                    ; [bsp]

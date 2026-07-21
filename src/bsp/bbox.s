@@ -32,320 +32,33 @@
 ;   return span_has_gap(ilo, ihi)                        # occlusion query
 ; ============================================================================
 ; ============================================================================
-; Forward-coherence bbox cache ("D cache", 2026-07-08).
-;
-; While the player only moves FORWARD (any movement vector inside the
-; closed 90-degree view cone, angle byte unchanged), three theorems make
-; last frame's bbox verdicts reusable with zero risk of missing pixels:
-;   1. INVISIBLE persists: the forward-translated view wedge is a subset
-;      of the previous wedge (sum of two vectors in a convex cone stays
-;      in the cone), so a box wholly outside stays wholly outside. Exact.
-;   2. VISIBLE may be served stale: treating an invisible box as visible
-;      only over-descends, and over-traversal is pixel-safe (subtree
-;      draws nothing). Entries re-check every 8th qualifying frame
-;      (round-robin by node id) so staleness is bounded.
-;   3. Extents open away from the focus of expansion: moving forward,
-;      every point right of screen centre migrates right, left migrates
-;      left (|bearing| grows monotonically; off-frustum points stay
-;      off on their side). So a cached extent wholly right of centre
-;      serves as (x0,255), wholly left as (0,x1), straddling as (0,255)
-;      -- always a superset of the true extent, keeping the has_gap
-;      column gate on the centre-facing edge where the apertures are.
-;
-; One code byte per (node, side):
-;   0-124   left-of-centre box: serve (0, code)
-;   125     invalid (recompute)
-;   126     invisible: serve reject (exempt from refresh -- theorem 1)
-;   127     straddles centre: serve (0, 255)
-;   128-255 right-of-centre box: serve (code, 255)
-;
-; br_dcache_frame (below, called per frame from br_view_setup) classifies
-; the frame: stationary same-angle or forward-move same-angle (driver
-; asserts D_FWD; a bounds-reverted step nets to stationary) -> serve;
-; anything else -> wipe to 125s and rebuild. Measured (phase-0 sim,
-; 32-frame walks): ~90% of checks served at 1/8 refresh, subsector
-; over-descent +6-17/frame, ZERO pixel divergence (and provably none).
-; Default OFF (D_ENABLE=0): every existing test/frame is byte-identical.
+; Forward-coherence bbox cache ("D"): REVIVED 2026-07-21 on the rcache
+; architecture and moved into src/ang/bca.s (dbox_check) — the frame
+; class is a vector (zp_bv_entry), the storage is the rotation cache's
+; planes + COMPUTED bitmap (one class live at a time, wiped on entry),
+; and the store wraps the pristine per-side tree call at the probe's
+; miss (serve-or-compute+store, "cache at birth" for (ilo, ihi)).
+; The old wrapper generation (br_bbox_visible_d, br_dcache_frame, the
+; $0210-$03F7 code planes, D_MODE/D_SMODE/zp_bv_mode) died with this —
+; $0210-$03F7 are FREE again. D_ENABLE/D_FWD (abi.inc) remain the
+; driver contract: D_FWD = this frame's move was forward-only.
 ; ============================================================================
-; Data home (BOTH builds): the old OS workspace pages at $0210-$03F7.
-; The engine owns OS space after boot (feedback_no_os_calls: the OS is
-; never re-entered), DFS only needs these pages DURING boot — before the
-; driver sets D_ENABLE — and the flat py65 harness provably never touches
-; them (empirical full-memory write/read map, 2026-07-08). Garbage
-; contents at first enable are safe: the first classified frame has no
-; matching D_PREVP, takes the wipe path, and rebuilds.
-D_MODE   = $0210                        ; 0 off / 1 store-only / 2 serve
-D_FRAME  = $0211                        ; forward-run frame counter (mod 8 used)
-D_PREV_AB = $0212
-D_SMODE  = $0219                        ; straddle policy for THIS frame
-                                        ; (2026-07-20): 0 = serve (0,255) —
-                                        ; forward runs, where a central
-                                        ; straddler is visible and the serve
-                                        ; skips a check that would say
-                                        ; descend anyway; 1 = fresh —
-                                        ; stationary frames, where the
-                                        ; full-width serve is pure coded-
-                                        ; extent over-descent (the measured
-                                        ; walk3/stand class)
-D_PREVP  = $0213                        ; 6 bytes (full 8.8 x/y position)
-D_CODE_R = $0220                        ; 236 bytes (right-child codes by node)
-D_CODE_L = $030C                        ; 236 bytes (ends $03F7)
-; (D_ENABLE/D_FWD come from abi.inc — driver/harness write them;
-; D_FWD: 1 = this frame's move was
-                                        ; forward-only (driver-asserted)
-.export D_ENABLE, D_FWD, D_MODE, D_FRAME
+.export D_ENABLE, D_FWD
 
 ; ============================================================================
-; br_bbox_visible — THE walk-facing bbox entry (2026-07-18, SMC-free).
-; Canonical cache shape end to end: this dispatcher branches on
-; zp_bv_mode (b0 = D wrapper active, b1 = rotation cache active — set
-; per frame by br_dcache_frame / bca_frame as plain data), and every
-; cache below is probe -> valid? -> serve : compute + store + return.
-; The old per-frame SMC patching of this site and of bca_check_op is
-; gone. The mode test costs 5 cycles on cache-off frames, MORE than
-; repaid by the fused exits: bbox_check_angle's visible exits chain
-; straight into has_gap (bca.s), so the JSR/BNE/JMP shuttle this
-; wrapper used to run is gone too.
+; br_bbox_visible — THE walk-facing bbox entry (2026-07-18, SMC-free;
+; vectored 2026-07-20). bca_frame points zp_bv_entry at the frame
+; class's entry: bbox_check_angle (standing: rotation-cache probe),
+; dbox_check (forward run: D probe), box_classify (pristine).
 ;   in : zp_node_ch_l/zp_bbox_side = box identity; frame ZP preset
-;   out: A/Z = combined verdict (has_gap over the check's extent);
-;        bca_vis/zp_i_l/h staged for the D store
+;   out: A/Z = combined verdict (has_gap over the check's extent)
 ; ============================================================================
 br_bbox_visible:
-; ONE CACHE, TWO FRAME CLASSES (lazy refinement 2026-07-20): the
-; rotation cache serves and populates only on STATIONARY frames;
-; moving frames go straight to the pristine check — no probe and,
-; crucially, NO STORES, which is what lets the stop-edge carry the
-; single bitmap wipe. zp_bv_entry is written once per frame by
-; bca_frame (vectored 2026-07-20: the flag test died — the frame
-; class IS the vector): standing -> bbox_check_angle (probe first),
-; moving -> box_classify (pristine). The walk-forward D cache stays
-; disabled: code below assembled but unreached.
    PAGE BANK_L2                            ; angle tables live in bank L2
 ::br_bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
                                         ; walk's near-invisible -> far-check
                                         ; arc: bca exits L2 and PLA/stores/
                                         ; IS_FULL_B touch no banked data)
    JMP (zp_bv_entry)                       ; exits return to OUR caller
-
-; ============================================================================
-; br_bbox_visible_d — D-cache wrapper around the pristine check above.
-; The walk's two JSR operands are SMC-patched here by br_dcache_frame on
-; frames where the cache is active (and back to br_bbox_visible when not,
-; so the disabled path is byte-identical to the original engine).
-;
-; Serve rule: decode the (node, side) code byte; invisible → exact reject
-; (convex-cone theorem: forward-cone movement keeps truly-outside boxes
-; outside). Visible → serve the FOE-opened extent (a proven SUPERSET of
-; the fresh extent: points migrate away from the screen-centre focus of
-; expansion under forward motion; +2 columns of slack covers the check's
-; ±1 rounding wobble) straight into has_gap. Pixel-preserving via the
-; gate invariant (2026-07-08, fp_project_x / wad_packed notes): every
-; seg's drawn columns lie inside its ancestors' gate extents, so a
-; served descend of a fresh-gapless subtree is a no-op and a served skip
-; implies the fresh skip. Guarded by tools/walkseq_check.py.
-; Entries recompute every 8th active frame (round-robin by node id);
-; invisible entries are exempt (exact under forward motion).
-; ============================================================================
-br_bbox_visible_d:
-.scope
-   LDX zp_node_ch_l
-   LDA zp_bbox_side
-   BNE dv_left
-   LDA D_CODE_R,X
-   JMP dv_have
-dv_left:
-   LDA D_CODE_L,X
-dv_have:
-   CMP #125
-   BEQ dv_fresh                            ; invalid → recompute + store
-   CMP #126
-   BEQ dv_invis                            ; invisible: exact, no refresh needed
-; (no D_MODE test needed: on store-only frames the wipe has set every
-; code to 125, and the tree walk never re-reads an entry stored earlier
-; in the same frame, so only the two branches above can fire there)
-   STA zp_br_t0                            ; code (visible entry)
-   TXA
-   CLC
-   ADC D_FRAME
-   AND #7
-   BEQ dv_fresh                            ; this entry's refresh slot
-   LDA zp_br_t0
-   CMP #127
-   BEQ dv_straddle
-   BCS dv_right                            ; 132-255: right-of-centre
-   LDY #0                                  ; 0-124: left-of-centre → (0, code+2)
-   STY zp_i_l
-   ADC #2                                  ; C clear here (CMP #127 not taken)
-   STA zp_i_h
-   JMP dv_gap
-dv_right:
-   SBC #2                                  ; C set here (BCS taken) → code-2
-   STA zp_i_l                                 ; (code-2, 255)
-   LDA #255
-   STA zp_i_h
-   JMP dv_gap
-dv_straddle:
-   LDA D_SMODE
-   BNE dv_fresh_j                          ; stationary frame: recompute
-   ZERO zp_i_l
-   LDA #255
-   STA zp_i_h
-dv_gap:
-   JMP SC_HAS_GAP                          ; serve: A/Z is our return value
-                                        ; (main-resident — no PAGE)
-dv_invis:
-   LDA #0
-   RTS
-dv_fresh_j:
-   JMP dv_fresh                            ; (branch-range stub)
-dv_fresh:
-; compute: the check (through the rotation cache when its bit is up —
-; the two caches compose, D outer / rc inner), then store, then return
-; the banked verdict. The fused exits ran has_gap already.
-   PAGE BANK_L2
-   LDA zp_bv_mode
-   AND #$02
-   BNE dvf_rc
-   JSR box_classify
-   JMP dvf_store
-dvf_rc:
-   JSR bbox_check_angle
-dvf_store:
-   ROL A                                   ; encode (verdict, C): 0 = visible
-                                           ; but gap-closed, 1 = angle cull,
-                                           ; 3 = visible+gap (bca_vis died —
-                                           ; the A/C signature carries it)
-   PHA                                     ; the macro CLOBBERS Y at st_put
-   TAY                                     ; (side test) — bank the encode
-   PAGE BANK_L2                            ; (has_gap left the bank alone, but
-                                           ; the rc cold path pages C via the
-                                           ; clipper — re-anchor for the store)
-   bv_dcache_store                     ; classifies from Y (head only)
-   PLA
-   LSR A                                   ; A/Z = walk verdict, C = the angle
-   RTS                                     ; bit — the FULL signature survives
-.endscope
-
-; ---- D-cache cold code: once-per-frame classifier + per-fresh-check
-; store. W/RCCODE segments — both float inside the one CODE region in
-; both builds (the old placement constraints are history); both call
-; sites hold L2 paged. Data is resident main RAM ($0210-$03F7). ----
-SEG_HIGHX
-; bv_dcache_store — encode the fresh bbox-check outcome for (node, side).
-; In: bca_vis/bca_ilo/bca_ihi valid; zp_node_ch_l/zp_bbox_side = entry.
-; Clobbers A, X, Y.
-; (bv_dcache_store is a MACRO now — bsp/inline.s — expanded at its single
-;  call site, 2026-07-17.)
-
-; ============================================================================
-; br_dcache_frame — per-frame D-cache classifier (called from br_view_setup
-; with BANK_L2 paged, right after bca_frame).
-;
-;   D_ENABLE == 0                    → D_MODE = 0 (all hooks inert)
-;   position (full 8.8) + angle same → D_MODE = 2 (serve; no drift, no
-;                                      refresh advance — exact)
-;   moved + D_FWD + angle same       → D_MODE = 2, D_FRAME++ (forward run;
-;                                      the theorems chain over the summed
-;                                      movement, which stays in the cone)
-;   anything else (turn/backward/    → wipe codes to 125, D_MODE = 1
-;     sideways/unflagged move)         (store-only rebuild frame)
-;
-; The 6-byte position compare includes the fraction bytes: a sub-integer
-; backward step must NOT classify as stationary.  D_FWD is consumed
-; per frame (driver re-asserts it each frame it applies a forward step).
-; ============================================================================
-br_dcache_frame:
-.scope
-   LDA D_ENABLE
-   BNE df_on
-   STA D_MODE                              ; A = 0
-   JMP df_patch                            ; point sites at the pristine core
-df_on:
-   LDA zp_br_px
-   CMP D_PREVP+0
-   BNE df_moved
-   LDA zp_br_px_h
-   CMP D_PREVP+1
-   BNE df_moved
-   LDA zp_br_px_x
-   CMP D_PREVP+2
-   BNE df_moved
-   LDA zp_br_py
-   CMP D_PREVP+3
-   BNE df_moved
-   LDA zp_br_py_h
-   CMP D_PREVP+4
-   BNE df_moved
-   LDA zp_br_py_x
-   CMP D_PREVP+5
-   BNE df_moved
-; stationary — same angle?
-   LDA bca_ab
-   CMP D_PREV_AB
-   BNE df_wipe                             ; rotated in place → extents invalid
-   LDA #1
-   STA D_SMODE                             ; stationary: straddles RECOMPUTE
-                                           ; (their full-width serve is the
-                                           ; over-descent class here; L/R
-                                           ; serves stay — wholesale inert
-                                           ; measured as suite-overfit)
-   LDA #2
-   STA D_MODE
-   BNE df_patch                            ; (always) prevs unchanged, no advance
-df_moved:
-   LDA D_FWD
-   BEQ df_wipe
-   LDA bca_ab
-   CMP D_PREV_AB
-   BNE df_wipe                             ; move + turn in one frame → wipe
-   INC D_FRAME
-   ZERO D_SMODE                           ; forward: straddles serve (they
-                                           ; would descend anyway, ahead)
-   LDA #2
-   STA D_MODE
-   BNE df_save                             ; (always)
-df_wipe:
-   LDA #125                                ; invalid code
-   LDX #0
-df_wl:
-   STA D_CODE_R,X
-   STA D_CODE_L,X
-   INX
-   CPX #236
-   BNE df_wl
-   LDA #1
-   STA D_MODE                              ; store-only rebuild frame
-df_save:
-   LDA zp_br_px
-   STA D_PREVP+0
-   LDA zp_br_px_h
-   STA D_PREVP+1
-   LDA zp_br_px_x
-   STA D_PREVP+2
-   LDA zp_br_py
-   STA D_PREVP+3
-   LDA zp_br_py_h
-   STA D_PREVP+4
-   LDA zp_br_py_x
-   STA D_PREVP+5
-   LDA bca_ab
-   STA D_PREV_AB
-; fall through to df_patch
-; --- publish the D bit of zp_bv_mode (SMC patching retired 2026-07-18:
-; br_bbox_visible branches on the mode byte; disabled frames cost one
-; 5-cycle test, repaid by the fused exits). ---
-df_patch:
-   LDA D_MODE
-   BEQ df_off
-   LDA zp_bv_mode
-   ORA #$01
-   STA zp_bv_mode
-   RTS
-df_off:
-   LDA zp_bv_mode
-   AND #$FE
-   STA zp_bv_mode
-   RTS
-.endscope
 
 SEG_CODE                         ; restore for subsequently-included parts

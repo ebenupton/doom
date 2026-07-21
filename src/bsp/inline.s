@@ -558,37 +558,9 @@ inl_end:
 .endscope
 .endmacro
 
-.macro bv_dcache_store
-.scope
-   LDX zp_node_ch_l
-   CPY #1                                  ; Y = the dvf_store encode: 1 =
-   BNE st_vis                              ; angle cull, 0/3 = visible
-   LDA #126                                ; invisible
-   BNE st_put                              ; (always)
-st_vis:
-; Classification needs a GUARD BAND around the pivot: extent endpoints
-; are conservative-wide and viewangletox rounds, so a bound within a few
-; columns of centre can include points on the OTHER side of the true
-; optical axis — which migrate the other way. 4 columns on each side
-; (left class ends at 124, right class starts at 132); anything nearer
-; the pivot is treated as straddling (0,255) — always safe.
-   LDA bca_ilo
-   CMP #132
-   BCS st_put                              ; right of centre: code = ilo (>=132)
-   LDA bca_ihi
-   CMP #125
-   BCC st_put                              ; left of centre: code = ihi (0-124)
-   LDA #127                                ; near-pivot / straddle
-st_put:
-   LDY zp_bbox_side
-   BNE st_left
-   STA D_CODE_R,X
-   JMP inl_end
-st_left:
-   STA D_CODE_L,X
-inl_end:
-.endscope
-.endmacro
+; (bv_dcache_store retired 2026-07-21: the forward cache lives in
+;  src/ang/bca.s on the rcache architecture — dbox_check stores raw
+;  ilo/ihi at birth; the guard-band trick moved into its SERVE.)
 
 .macro rot_select
 .scope

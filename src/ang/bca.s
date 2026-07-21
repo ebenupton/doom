@@ -38,7 +38,12 @@ RC_PH_1  = $7000                        ; neighbours, all planes adjacent
 RCACHE_COMPUTED = RCACHE_STATE          ; 59 bytes (bit per k>>3 group)
 ; RCACHE_STATE+$40..+$7A FREE (RCACHE_FULL died 2026-07-20 — inside
 ;  boxes just recompute; 59 bytes reclaimed)
-bca_prevpos = RCACHE_STATE + $80        ; 4 bytes: last frame's int position
+bca_cach_ab = RCACHE_STATE + $80        ; last frame's angle byte (the D
+                                        ; class needs 'angle unchanged';
+                                        ; ex-bca_prevpos, which was dead)
+bca_dfrm    = RCACHE_STATE + $81        ; D refresh counter: ++ per forward
+                                        ; frame; entry (node+dfrm)&7 == 0
+                                        ; is that frame's recompute slot
 bca_cachepos = RCACHE_STATE + $84       ; 4 bytes: position COMPUTED is valid for
 .assert RCACHE_STATE + $88 = RCACHE_ENABLE, error, "rcache layout drifted from abi.inc"
 ; RCACHE_ENABLE comes from abi.inc; nonzero -> cache may engage (drivers set it;
@@ -579,6 +584,7 @@ bcap_s0_miss:
    LDY zp_node_ch_l
 bcls_s0:
    CLASSIFY_TREE 0
+
 zc_end:
 .if BANKED
 SEG_CODE
@@ -1264,8 +1270,11 @@ bca_frame:
    CMP bca_cachepos+3
    BEQ bcf_stat                            ; stationary: forward, past the
                                            ; moved block (nothing may branch
-                                           ; across the 177-byte wipe)
+                                           ; across the wipe)
 bcf_new:
+; MOVED. Record the position, then classify the move: a forward-only
+; step (driver-asserted D_FWD) with the SAME angle byte is the D class
+; — the forward-coherence bbox cache serves; anything else is pristine.
    LDA $01
    STA bca_cachepos
    LDA $9D
@@ -1274,6 +1283,37 @@ bcf_new:
    STA bca_cachepos+2
    LDA $9E
    STA bca_cachepos+3
+   LDA D_ENABLE
+   BEQ bcf_mov
+   LDA D_FWD
+   BEQ bcf_mov
+   LDA bca_ab
+   CMP bca_cach_ab
+   BNE bcf_mov
+; D CLASS (forward run, angle unchanged): probe entry = dbox_check,
+; tail = the PLAIN tail (the D store wraps the pristine call in the
+; probe's miss path — psis are never stored here).
+   INC bca_dfrm                            ; advance the refresh wheel
+   LDA zp_bv_entry
+   CMP #<dbox_check
+   BEQ bcf_ret                             ; continuing run: bitmap is OURS
+   JSR rc_wipe                             ; entering: the shared bitmap may
+                                           ; hold the OTHER cache's entries
+   LDA #<bca_tail_postrc
+   STA zp_tail_vec
+   LDA #>bca_tail_postrc
+   STA zp_tail_vec+1
+   LDA #<dbox_check
+   STA zp_bv_entry
+   LDA #>dbox_check
+   STA zp_bv_entry+1
+bcf_ret:
+   RTS
+bcf_mov:
+; PRISTINE moving frame. Latch the angle (next frame's D test compares
+; against THIS frame's view) and point both vectors at the plain core.
+   LDA bca_ab
+   STA bca_cach_ab
    LDA #<bca_tail_postrc
    STA zp_tail_vec
    LDA #>bca_tail_postrc
@@ -1284,13 +1324,30 @@ bcf_new:
    STA zp_bv_entry+1
    RTS
 bcf_stat:
-; arm on the moved->stationary edge only (tail-vec lo IS the class)
+; stationary -> rotation cache; arm on the entry edge only (tail-vec
+; lo IS the class: bt_store means already armed). A stop out of a D
+; run arrives with tail = bca_tail_postrc, so the edge fires and the
+; wipe clears the D entries before the first psi store.
    LDA zp_tail_vec
    CMP #<bt_store
    BNE bcf_arm
    RTS                                     ; already armed: the common
                                            ; standing-frame exit
 bcf_arm:
+   JSR rc_wipe
+   LDA #<bt_store
+   STA zp_tail_vec
+   LDA #>bt_store
+   STA zp_tail_vec+1
+   LDA #<bbox_check_angle
+   STA zp_bv_entry
+   LDA #>bbox_check_angle
+   STA zp_bv_entry+1
+   RTS
+rc_wipe:
+; clear every COMPUTED bit (the bitmap is SHARED by the rotation and
+; forward caches — only one class is ever live, so any class ENTRY
+; wipes; 59 x 4 cycles + the JSR, on edge frames only)
 .if ::C02
 .repeat 59, I
    STZ RCACHE_COMPUTED+I
@@ -1301,16 +1358,203 @@ bcf_arm:
    STA RCACHE_COMPUTED+I
 .endrepeat
 .endif
-   LDA #<bt_store
-   STA zp_tail_vec
-   LDA #>bt_store
-   STA zp_tail_vec+1
-   LDA #<bbox_check_angle
-   STA zp_bv_entry
-   LDA #>bbox_check_angle
-   STA zp_bv_entry+1
    RTS
 .assert <bt_store <> <bca_tail_postrc, error, "tail-vec lo bytes collide: bca_frame's armed-edge test needs them distinct"
+.assert <dbox_check <> <box_classify, error, "bv-entry lo bytes collide: bca_frame's D-run edge test needs dbox_check distinct"
+.assert <dbox_check <> <bbox_check_angle, error, "bv-entry lo bytes collide (dbox vs rcache probe)"
+
+; ============================================================================
+; dbox_check — the FORWARD-COHERENCE bbox cache ("D", revived 2026-07-21
+; on the rcache architecture; the old br_bbox_visible_d wrapper died).
+; zp_bv_entry points here on D-class frames (bca_frame: moved + D_FWD +
+; angle unchanged). Storage is SHARED with the rotation cache (only one
+; class is live; any class entry wipes COMPUTED):
+;   RC_P1L_s,node = ilo    RC_P2L_s,node = ihi    (raw, stored at birth)
+;   RC_PH_s,node  = code: 0 = extent valid, 1 = angle-culled
+; SERVE (hit): invisible -> exact reject (theorem 1: the forward-
+; translated view wedge is a subset of the previous one — EXEMPT from
+; refresh). Visible -> the FOE-OPENED extent: under forward motion every
+; point migrates AWAY from the screen-centre focus of expansion, so a
+; box wholly left of centre serves (0, ihi+2), wholly right (ilo-2,255),
+; straddling (0,255) — always a SUPERSET of the true extent (+2 covers
+; the check's +-1 rounding wobble), and a superset only over-descends,
+; which the gate invariant proves pixel-free. Entries recompute every
+; 8th forward frame, round-robin by (node + bca_dfrm) & 7.
+; MISS/refresh: stash the probe's byte+bit (rc_bytehi/rc_bit), JSR the
+; side's pristine tree (its fused exits run has_gap and RTS the full
+; A/Z/C signature), store at return from the freshly-born bca_ilo/ihi
+; (ROL A encodes (verdict,C): 1 = angle cull; 0/3 = extent), publish
+; the bit, and hand the untouched signature to the walk.
+; (Inside boxes DO store here — their (0,255) birth is a straddle serve,
+; itself a superset under forward motion.)
+; ============================================================================
+dbox_check:
+   LDY zp_node_ch_l                        ; Y = node for probe AND tree
+   LDA zp_bbox_side
+   BNE dcap_s1
+   JMP dcap_s0
+; --- side 1 ---
+dcap_s1:
+   TYA
+   LSR A
+   LSR A
+   TAX                                     ; X = valid byte (node>>2)
+   TYA
+   AND #3
+   ASL A
+   ORA #1                                  ; k & 7, side BAKED
+   TAY
+   LDA vc_bit_mask,Y
+   AND RCACHE_COMPUTED,X
+   BEQ dcap_s1_miss
+   LDY zp_node_ch_l
+   LDA RC_PH_1,Y
+   BNE dcv_invis                           ; culled: exact, refresh-exempt
+   TYA                                     ; visible: refresh slot?
+   CLC
+   ADC bca_dfrm
+   AND #7
+   BEQ dcap_s1_fresh
+   LDA RC_P2L_1,Y                          ; ihi
+   CMP #125                                ; GUARD BAND (from the retired
+   BCC dcv_left_1                          ; store macro): endpoints within
+   LDA RC_P1L_1,Y                          ; 4 columns of the pivot can sit
+   CMP #132                                ; optically on the OTHER side
+   BCS dcv_right_1                         ; (rounding) and migrate the
+                                        ; other way — treat as straddle
+   ZERO bca_ilo                            ; straddles centre: (0,255)
+   LDA #255
+   STA bca_ihi
+   JMP SC_HAS_GAP
+dcv_left_1:
+   ADC #2                                  ; (0, ihi+2): C=0, ihi<128 — no clamp
+   STA bca_ihi
+   ZERO bca_ilo
+   JMP SC_HAS_GAP
+dcv_right_1:
+   SBC #2                                  ; (ilo-2, 255): C=1, ilo>=128 — no wrap
+   STA bca_ilo
+   LDA #255
+   STA bca_ihi
+   JMP SC_HAS_GAP
+dcv_invis:
+   SEC                                     ; cull signature (A=0/Z=1/C=1)
+   LDA #0
+   RTS
+dcap_s1_fresh:                             ; refresh: X survives; re-derive
+   LDA zp_node_ch_l                        ; the bit for the stash
+   AND #3
+   ASL A
+   ORA #1
+   TAY
+dcap_s1_miss:
+   STX rc_bytehi
+   LDA vc_bit_mask,Y
+   STA rc_bit
+   LDY zp_node_ch_l
+   JSR bcls_s1                             ; the uncached variant (fused exits)
+   ROL A                                   ; encode (verdict,C): 1 = cull
+   PHA
+   CMP #1
+   BNE dst1_ext
+   LDA #1
+   LDY zp_node_ch_l
+   STA RC_PH_1,Y                           ; code 1 = invisible
+   BNE dst1_bit                            ; (A=1: always)
+dst1_ext:
+   LDY zp_node_ch_l
+   LDA bca_ilo
+   STA RC_P1L_1,Y
+   LDA bca_ihi
+   STA RC_P2L_1,Y
+   LDA #0
+   STA RC_PH_1,Y                           ; code 0 = extent
+dst1_bit:
+   LDX rc_bytehi
+   LDA RCACHE_COMPUTED,X
+   ORA rc_bit
+   STA RCACHE_COMPUTED,X
+   PLA
+   LSR A                                   ; the walk's A/Z/C, untouched
+   RTS
+; --- side 0 (mirror; k & 7 has no ORA) ---
+dcap_s0:
+   TYA
+   LSR A
+   LSR A
+   TAX
+   TYA
+   AND #3
+   ASL A
+   TAY
+   LDA vc_bit_mask,Y
+   AND RCACHE_COMPUTED,X
+   BEQ dcap_s0_miss
+   LDY zp_node_ch_l
+   LDA RC_PH_0,Y
+   BNE dcv_invis
+   TYA
+   CLC
+   ADC bca_dfrm
+   AND #7
+   BEQ dcap_s0_fresh
+   LDA RC_P2L_0,Y
+   CMP #125                                ; guard band (see side 1)
+   BCC dcv_left_0
+   LDA RC_P1L_0,Y
+   CMP #132
+   BCS dcv_right_0
+   ZERO bca_ilo
+   LDA #255
+   STA bca_ihi
+   JMP SC_HAS_GAP
+dcv_left_0:
+   ADC #2
+   STA bca_ihi
+   ZERO bca_ilo
+   JMP SC_HAS_GAP
+dcv_right_0:
+   SBC #2
+   STA bca_ilo
+   LDA #255
+   STA bca_ihi
+   JMP SC_HAS_GAP
+dcap_s0_fresh:
+   LDA zp_node_ch_l
+   AND #3
+   ASL A
+   TAY
+dcap_s0_miss:
+   STX rc_bytehi
+   LDA vc_bit_mask,Y
+   STA rc_bit
+   LDY zp_node_ch_l
+   JSR bcls_s0
+   ROL A
+   PHA
+   CMP #1
+   BNE dst0_ext
+   LDA #1
+   LDY zp_node_ch_l
+   STA RC_PH_0,Y
+   BNE dst0_bit
+dst0_ext:
+   LDY zp_node_ch_l
+   LDA bca_ilo
+   STA RC_P1L_0,Y
+   LDA bca_ihi
+   STA RC_P2L_0,Y
+   LDA #0
+   STA RC_PH_0,Y
+dst0_bit:
+   LDX rc_bytehi
+   LDA RCACHE_COMPUTED,X
+   ORA rc_bit
+   STA RCACHE_COMPUTED,X
+   PLA
+   LSR A
+   RTS
+
 .export bca_tail_postrc
 
 

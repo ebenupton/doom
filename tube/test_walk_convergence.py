@@ -86,7 +86,8 @@ def copro_walk():
             mpu.step()
         steps += 50000
     assert len(st['frames']) >= FRAMES, f"only {len(st['frames'])} frames"
-    return st['frames']
+    return st['frames'][:FRAMES]           # a fast copro can overshoot the
+                                           # final step burst by a frame
 
 
 class HostRaster:

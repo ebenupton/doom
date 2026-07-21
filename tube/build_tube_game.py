@@ -143,6 +143,8 @@ def main():
                      ('T_ANIM_INIT', 'anim_init'),
                      ('T_ANIM_TICK', 'anim_tick'),
                      ('T_ANIM_ENABLE', 'ANIM_ENABLE'),
+                     ('T_D_ENABLE', 'D_ENABLE'),
+                     ('T_D_FWD', 'D_FWD'),
                      ('T_CPM_KDXH', 'CPM_KDXH')):
             f.write(f"{t} = &{fsym(s):04X}\n")
         f.write(f"T_RCACHE_STATE = &{0xF100:04X}\n")
