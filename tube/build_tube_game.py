@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Build doom_tube.ssd — the Tube (6502 second processor) game disc.
+"""Build doom_walk.ssd — THE dual-mode game disc (2026-07-21: the
+separate doom_tube.ssd is gone; !BOOT detects a 6502 copro and loads
+the Tube version, else chains the banked WALK loader).
 
 The parasite runs the FLAT engine build VERBATIM: this script constructs
 the full py65 64K image exactly as the regression harness does
@@ -14,8 +16,9 @@ bootstrap (tube/tubedrv.asm) *LOADs across the Tube via the parasite OS
 before killing the host OS with its raw RUN HOSTT.
 
 Files: !BOOT (tube/detect.asm), COPROT (tubedrv: bootstrap + driver +
-tables), HOSTT (tube/hostg.asm: carousel + plot_h/v + real NJ), D0..Dn
-(parasite image chunks).
+tables), HOSTT (tube/hostg.asm: carousel + plot_h/v + real NJ), CODE +
+DATA (the two parasite loads), then the banked side from
+build_walk_ssd.banked_files() (WALK/BANK0-2/LOW).
 """
 import os, subprocess, sys
 
@@ -73,17 +76,22 @@ def asm(src, out):
 
 def main():
     import pygame; pygame.init()
-    os.environ['DOOM_CPU'] = '65c02'    # the copro IS a 65C02 (3MHz): the
-                                        # parasite engine assembles with
-                                        # C02=1 (STZ/BRA/ZERO sites live).
-                                        # The WALK side rides along from the
-                                        # pre-built doom_walk.ssd, so the
-                                        # host stays NMOS.
     import doom_wireframe as dw
     from bsp_render_6502 import BspRender6502
     import symmap, abi
     import build_anim_ssd as anim
     import build_walk_ssd as walkbuild
+
+    # ---- banked (plain Model B) side FIRST, under a clean NMOS env:
+    # banked_files() runs the banked build + model images — DOOM_CPU must
+    # not be 65c02 yet or the banked engine would silently assemble C02
+    # opcodes for the NMOS host.
+    walk_files = walkbuild.banked_files()
+
+    os.environ['DOOM_CPU'] = '65c02'    # NOW the copro side: it IS a 65C02
+                                        # (3MHz) — the parasite engine
+                                        # assembles with C02=1 (STZ/BRA/
+                                        # ZERO sites live). Host stays NMOS.
 
     def fsym(name):
         return symmap.sym(name)          # flat build (banked=0 default)
@@ -168,28 +176,14 @@ def main():
     coprot = asm('tube/tubedrv.asm', 'COPROT')
     hostt = asm('tube/hostg.asm', 'HOSTT')
 
-    # ---- the regular (no-tube) game rides along: files lifted from
-    # doom_walk.ssd (its !BOOT loader becomes WALK; detect chains it) ----
-    walk = open(os.path.join(ROOT, 'doom_walk.ssd'), 'rb').read()
-    nfiles = walk[0x105] // 8
-    walk_files = []
-    for i in range(nfiles):
-        off = (i + 1) * 8
-        name = walk[off:off+7].decode().rstrip()
-        m = 0x100 + (i + 1) * 8
-        load = walk[m] | (walk[m+1] << 8) | (((walk[m+6] >> 2) & 3) << 16)
-        exe = walk[m+2] | (walk[m+3] << 8) | (((walk[m+6] >> 6) & 3) << 16)
-        ln = walk[m+4] | (walk[m+5] << 8) | (((walk[m+6] >> 4) & 3) << 16)
-        sec = walk[m+7] | ((walk[m+6] & 3) << 8)
-        data = walk[sec*256: sec*256 + ln]
-        walk_files.append(('WALK' if name == '!BOOT' else name, load, exe, data))
+    # ---- assemble the ONE dual-mode disc (banked side built above) ----
     files = [('!BOOT', 0x30900, 0x30900, detect),
              ('COPROT', 0x0EA00, 0x0EA00, coprot),
              ('HOSTT', 0x31900, 0x31900, hostt),
              ('CODE', CODE_LO, CODE_LO, bytes(mem[CODE_LO:CODE_HI])),
              ('DATA', DATA_LO, DATA_LO, bytes(mem[DATA_LO:DATA_HI]))]
     files += walk_files
-    write_ssd(files, os.path.join(ROOT, 'doom_tube.ssd'))
+    write_ssd(files, os.path.join(ROOT, 'doom_walk.ssd'))
 
 
 if __name__ == '__main__':

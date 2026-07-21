@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Build doom_walk.ssd: an autobooting WALKABLE E1M1 wireframe for a plain
-Model B + SWRAM (machine-code ROMSEL boot via modelb_boot.asm), with
-walk_drv (keyboard-driven position/angle) overlaid at $2000 instead of the
-spin driver. Cursor keys: Left/Right turn, Up/Down move forward/back."""
+"""Build doom_walk.ssd — THE game disc, DUAL-MODE since 2026-07-21:
+!BOOT is the Tube detector (tube/detect.asm); a 6502 copro gets the
+Tube version (COPROT/HOSTT/CODE/DATA), a plain Model B + SWRAM chains
+the banked WALK loader (machine-code ROMSEL boot via modelb_boot.asm),
+walk_drv at $2000. Cursor keys: Left/Right turn, Up/Down move.
+
+This file OWNS the banked side (banked_files()); the disc itself is
+written by tube/build_tube_game.py, which main() delegates to — either
+entry point produces the same single artifact."""
 import os, subprocess, builtins
 os.environ.setdefault('DOOM_ANIM', '1')     # animated doors/lifts on the disc
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
@@ -67,7 +72,12 @@ def build_floor_grid():
     open('FLOORGRD.bin', 'wb').write(bytes(grid))
 
 
-def main():
+def banked_files():
+    """Build the banked (plain Model B) side and return its DFS file list.
+    The boot loader is named WALK here — the dual disc's !BOOT is the
+    Tube detector, which chains *RUN WALK on a machine with no copro.
+    MUST run with DOOM_CPU unset/NMOS: the banked build targets the
+    host's NMOS 6502 (the tube builder sets 65c02 only AFTER this)."""
     import asmbuild
     asmbuild.build_all(banked=1, c02=0)
     asmbuild.gen_engine_syms()
@@ -91,14 +101,18 @@ def main():
     finally:
         builtins.open = orig
     BOOT = orig('!BOOT', 'rb').read()
-    files = [
-        ('!BOOT', 0x1900, 0x1900, BOOT),
+    return [
+        ('WALK',  0x1900, 0x1900, BOOT),
         ('BANK0', 0x3000, 0x3000, L0),
         ('BANK1', 0x3000, 0x3000, C),
         ('BANK2', 0x3000, 0x3000, L2),
         ('LOW',   0x1B40, 0x1B40, LOW),
     ]
-    write_ssd(files, path='doom_walk.ssd')
+
+
+def main():
+    import subprocess as sp, sys
+    sp.run([sys.executable, 'tube/build_tube_game.py'], check=True)
 
 
 if __name__ == '__main__':
