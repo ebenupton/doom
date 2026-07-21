@@ -102,14 +102,14 @@ def build_banked(flatr):
     l2 = bytearray(16384)
     def cpy(dst_off, src, n):
         l2[dst_off:dst_off + n] = bytes(fmem[src:src + n])
-    cpy(0x0000, 0xDC00, 256)             # L8_TAB -> $8000 (F tables; the
-    cpy(0x0100, 0xDD00, 256)             # AE_LO  -> $8100  tantoangle pair
-    cpy(0x0200, 0xDE00, 256)             # AE_HI  -> $8200  died with option
-                                         # F: $8300-$88FF freed banked)
     from symmap import sym as _vsym
+    cpy(0x0000, _vsym('L8_TAB'), 256)    # L8_TAB -> $8000 (F tables; flat
+    cpy(0x0100, _vsym('AE_LO'), 256)     # AE_LO  -> $8100  source by symbol —
+    cpy(0x0200, _vsym('AE_HI'), 256)     # AE_HI  -> $8200  2026-07-21 map)
+                                         # F: $8300-$88FF freed banked)
     cpy(0x0900, _vsym('VATOX'), 1025)    # VATOX (flat, by symbol) -> $8900
-    cpy(0x0E00, 0xC400, len(flatr.bbox_table))   # bbox planes -> $8E00-$9DFF
-    cpy(0x1E00, 0xE000, 1024)            # recip  -> $9E00 (M8[1024]; moved +$100 for the bbox planes)
+    cpy(0x0E00, 0xC500, len(flatr.bbox_table))   # bbox planes (flat $C500) -> $8E00-$9DFF
+    cpy(0x1E00, 0xD500, 1024)            # recip (flat $D500) -> $9E00 (M8[1024])
     # (VWH heights table stripped 2026-07-10: no 6502 reader)
     # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
     # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays
@@ -166,6 +166,8 @@ class BankedBspRender(BspRender6502):
         super().__init__(*a, **k)
         self.bm = build_banked(self)
         self.sc.mpu.memory = self.bm     # swap in banked memory
+        self.sc.SCREEN_START = 0x5800    # hw screens (the flat harness FB
+        self.bm[0x70] = 0x58             # moved to $EA00, 2026-07-21 map)
         # span_init (pool reset) lives in the clipper -> bank C, by symbol.
         sc = self.sc
         from symmap import sym as _sym

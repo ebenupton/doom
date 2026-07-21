@@ -33,16 +33,16 @@ ENTRY_BR_RENDER_FRAME = _sym('br_render_frame')
 
 # Table load addresses: harness-owned placement decisions (the engine reads
 # these tables only through the pointer slots above), NOT engine symbols.
-ROM_MAIN_BASE   = 0x6C00
+ROM_MAIN_BASE   = 0x8600
                            # mover slots (1248 total) overflowed the old slot below
                            # ANG at $E940; $FB00-$FFF9 is unused in the flat harness.
                            # $E484-$E93F now hosts the flat ANIM tables + workers.
-ROM_DETAIL_BASE = 0xB600
-# flat bases (KEEP IN SYNC with src/layout.inc flat branch):
-ROM_SEG_HDR_BASE = 0x6C00       # stride-18 headers, heights at +12..17
-ROM_VERTS_BASE   = 0x9C00
-NODE_SOA_BASE    = 0xB600       # node/ss SoA pages (old FHCH hole)
-ROM_BBOX_BASE   = 0xC400   # 16 corner planes $C400-$D3FF (page-split SoA)
+ROM_DETAIL_BASE = 0xB900
+# flat bases (KEEP IN SYNC with src/layout.inc flat branch; 2026-07-21 map):
+ROM_SEG_HDR_BASE = 0x8600       # stride-18 headers, heights at +12..17
+ROM_VERTS_BASE   = 0xB100
+NODE_SOA_BASE    = 0xB900       # node/ss SoA pages
+ROM_BBOX_BASE   = 0xC500   # 16 corner planes $C500-$D4FF (page-split SoA)
                            # build/split the bbox pointer byte-at-a-time
 
 
@@ -163,7 +163,7 @@ class BspRender6502:
         """Render the 256×160 BBC mode-4 framebuffer at $5800 into surface."""
         import pygame
         mem = self.sc.mpu.memory
-        start = 0x5800
+        start = 0xEA00
         surface.fill((0, 0, 0))
         pix = pygame.PixelArray(surface)
         for cy in range(20):

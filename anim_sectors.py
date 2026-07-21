@@ -315,7 +315,7 @@ def gen_6502_tables(flat=True):
     import struct as _st
     if flat:
         import bsp_render_6502 as br
-        A = dict(ssmask=0xE484, tabl0=0xE580, cfg=0xE680,
+        A = dict(ssmask=0xE500, tabl0=0xE600, cfg=0xE700,
                  hdr=br.ROM_SEG_HDR_BASE)
     else:
         A = dict(ssmask=0x0A80, tabl0=0xBE90, cfg=0xBA00, hdr=0x9000)

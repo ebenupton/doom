@@ -58,10 +58,10 @@ SEG_CODE
 ; already aligned, so the harness metric overcharged the y-cache).
 ; BSS window $D4C0-$DABF: aligned tables span $D500-$D9FF, $D4C0-$D4FF
 ; and $DA00-$DABF free.
-VWHC_R_M8 = $D500
-VWHC_R_S = $D600
-VWHC_KEY = $D700
-VWHC_L = $D800
-VWHC_H = $D900
+VWHC_R_M8 = $8100
+VWHC_R_S = $8200
+VWHC_KEY = $8300
+VWHC_L = $8400
+VWHC_H = $8500
 SEG_HIGHX
 .endif

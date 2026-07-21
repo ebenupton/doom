@@ -316,9 +316,10 @@ RECIP_BASE = $9E00                      ; bank L2 (moved +$100 2026-07-15:
                                         ; bbox planes own $8E00-$9DFF)
 L2_BBOX = $8E00                         ; bank L2 (harness/loader points zp_rom_bbox here)
 .else
-RECIP_BASE = $E000                      ; recip table (HI bytes first, then LO)
+RECIP_BASE = $D500                      ; flat LEVEL block (2026-07-21 map)
 .endif
-SINCOS_BASE = $E480                     ; sin_mag[0..63], sin_unity[0..63] (128 bytes)
+SINCOS_BASE = $E480                     ; sin_mag/sin_unity (VATOX tail page —
+                                        ; $E402-$E4FF free in the 2026-07-21 map)
 
 ; Vertex transform cache: per-vertex saved view + projection results.
 ; Skip redundant transforms when multiple segs share a vertex.

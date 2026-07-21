@@ -1,8 +1,8 @@
-\ emit.asm — parasite-side line-command emitters, ORG &A900 (the NJ
+\ emit.asm — parasite-side line-command emitters, ORG &6200 (the NJ
 \ rasteriser's home in the flat map: the copro build loads THIS instead
 \ of linedraw_or_reloc.bin, so dcl's des_diag "JMP RASTER_ENTRY" lands
 \ on the diagonal emitter with no engine change at all; plot_h/plot_v's
-\ entry bytes are poked to JMP &A910/&A920 by build_tube_game.py — the
+\ entry bytes are poked to JMP &6210/&6220 by build_tube_game.py — the
 \ only two patches distinguishing the parasite image from the flat
 \ build).
 \
@@ -18,17 +18,17 @@ X0=&82
 Y0=&83
 X1=&84
 Y1=&85
-ORG &A900
+ORG &6200
 .entry_diag                     \ = RASTER_ENTRY (des_diag JMPs here)
     JMP diag
 .pad1
-FOR n, 1, &A910 - pad1
+FOR n, 1, &6210 - pad1
     EQUB 0
 NEXT
 .entry_h                        \ plot_h's poked JMP lands here
     JMP ph
 .pad2
-FOR n, 1, &A920 - pad2
+FOR n, 1, &6220 - pad2
     EQUB 0
 NEXT
 .entry_v                        \ plot_v's poked JMP lands here

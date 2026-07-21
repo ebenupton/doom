@@ -90,7 +90,7 @@ def trace_asm(px, py, ab):
     trace = []
     install_tracing(sc, trace)
     sc._run(ENTRY_BR_RENDER_FRAME)
-    fb = bytes(sc.mpu.memory[0x5800:0x6C00])
+    fb = bytes(sc.mpu.memory[0xEA00:0xFE00])
     return trace, fb
 
 
@@ -132,7 +132,7 @@ def trace_hybrid(px, py, ab):
     finally:
         dw.packed_render_subsector = orig
         dw._USE_ANGLE_BBOX, dw._VIEW_AB = orig_use, orig_ab
-    fb = bytes(sc.mpu.memory[0x5800:0x6C00])
+    fb = bytes(sc.mpu.memory[0xEA00:0xFE00])
     return trace, fb
 
 

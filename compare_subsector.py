@@ -87,7 +87,7 @@ class SubsectorDiffer:
         asm_trace = ta[a0:]
         del ta[a0:]
         asm_spans = sc.read_spans()
-        asm_fb = bytes(mem[0x5800:0x6C00])
+        asm_fb = bytes(mem[0xEA00:0xFE00])
         mem[0x0000:0x10000] = snap
 
         # --- Python reference run (this is the state we continue from) ---
@@ -96,7 +96,7 @@ class SubsectorDiffer:
         py_trace = ta[p0:]
         del ta[p0:]
         py_spans = sc.read_spans()
-        py_fb = bytes(mem[0x5800:0x6C00])
+        py_fb = bytes(mem[0xEA00:0xFE00])
 
         self.n_compared += 1
         spans_match = (asm_spans == py_spans)

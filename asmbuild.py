@@ -88,11 +88,13 @@ def _build_raster():
     the banked images). beebasm is vendored; output is deterministic."""
     import subprocess
     src = os.path.join(_ROOT, 'linedraw_or_reloc.asm')
-    out = os.path.join(_ROOT, 'linedraw_or_reloc.bin')
-    if (not os.path.exists(out)
-            or os.path.getmtime(out) < os.path.getmtime(src)):
-        subprocess.run([os.path.join(_ROOT, 'beebasm'), '-i', src],
-                       cwd=_ROOT, check=True, capture_output=True)
+    for out, flag in ((os.path.join(_ROOT, 'linedraw_or_reloc.bin'), '0'),
+                      (os.path.join(_ROOT, 'linedraw_or_flat.bin'), '1')):
+        if (not os.path.exists(out)
+                or os.path.getmtime(out) < os.path.getmtime(src)):
+            subprocess.run([os.path.join(_ROOT, 'beebasm'), '-i', src,
+                            '-D', f'FLATORG={flag}'],
+                           cwd=_ROOT, check=True, capture_output=True)
 
 
 def build_all(banked=0, c02=None, force=False):

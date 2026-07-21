@@ -52,9 +52,9 @@ AE_HI  = $8200                          ; ta' lo/hi (tools/atanexp_cert.py —
                                         ; ONE source for tables + EPSILON;
                                         ; $8300-$88FF FREED: tantoangle died)
 .else
-L8_TAB = $DC00                          ; old TA_LO home (flat)
-AE_LO  = $DD00
-AE_HI  = $DE00
+L8_TAB = $D900                          ; flat TABLES block (2026-07-21 map)
+AE_LO  = $DA00
+AE_HI  = $DB00
 .endif
 
 ; point_to_angle: INLINED into corner_phi (its sole caller); see below.
@@ -133,7 +133,7 @@ bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
 .if BANKED
 VATOX = $8900                           ; bank L2: viewangletox, 1025 entries (phi+512)
 .else
-VATOX = $F600                           ; viewangletox, 1025 entries (phi+512),
+VATOX = $E000                           ; viewangletox, 1025 entries (phi+512),
                                         ; $F600-$FA00 (moved down 1 into the
                                         ; TA_HI gap byte 2026-07-16: page-
                                         ; aligned so bca_tail rides the index

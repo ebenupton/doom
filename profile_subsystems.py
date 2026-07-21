@@ -32,7 +32,7 @@ BBOX   = {sym('br_bbox_visible')}    # sub-slice of BSP traversal
 GATE = {a: 'VERTEX' for a in VERTEX}
 GATE.update({a: 'CLIP' for a in CLIP})
 GATE.update({a: 'BBOX' for a in BBOX})
-RASTER_LO, RASTER_HI = 0xA900, 0xB560
+RASTER_LO, RASTER_HI = 0x6200, 0x6B00
 
 POS = [(1056,-3616,65),(1500,-3700,1),(1024,-3500,65),
        (800,-3400,96),(1200,-3000,129),(1056,-3616,129)]

@@ -34,7 +34,7 @@ from py65.memory import ObservableMemory
 FRAMES = int(os.environ.get('TUBE_WALK_FRAMES', '30'))
 MASKS = [0, 0] + [1] * (FRAMES - 2)          # settle, then UP held
 SPEED = 12
-DRVVARS = 0x5806                             # angidx..pyh (after the two JMPs)
+DRVVARS = 0xEA06                             # angidx..pyh (after the two JMPs)
 ZPSET = list(range(0x00, 0x0B)) + [0x90, 0x91, 0x92, 0x93, 0x9D, 0x9E]
 
 
@@ -77,7 +77,7 @@ def copro_walk():
     base.subscribe_to_read([0xFEF9], r1d)
     base.subscribe_to_write([0xFEF9], r1w)
     mpu = MPU(memory=base)
-    mpu.pc = 0x5803
+    mpu.pc = 0xEA03
     mpu.sp = 0xFD
     steps = 0
     while len(st['frames']) < FRAMES and steps < 3_000_000 * FRAMES:
@@ -96,7 +96,7 @@ class HostRaster:
         os.remove('HOSTT')
         self.mpu = MPU()
         self.mpu.memory[0x1900:0x1900 + len(host)] = list(host)
-        self.mpu.memory[0x70] = 0x58
+        self.mpu.memory[0x70] = 0x58  # HOST fb
 
     def frame(self, cmds):
         m = self.mpu.memory
@@ -120,7 +120,7 @@ class FlatRef:
                                dw.packed_rom_detail, dw.packed_bbox_table,
                                dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
         self.m = self.r.sc.mpu.memory
-        self.m[0x70] = 0x58
+        self.m[0x70] = 0xEA
         self.entries = [symmap.sym('anim_tick'), symmap.sym('br_view_setup'),
                         symmap.sym('span_init'), symmap.sym('br_render_frame')]
         self.m[symmap.sym('ANIM_ENABLE')] = 1
@@ -139,7 +139,7 @@ class FlatRef:
 
     def frame(self, zp):
         m = self.m
-        for i in range(0x5800, 0x6C00):
+        for i in range(0xEA00, 0xFE00):
             m[i] = 0
         for a, v in zp.items():
             if a == 'bca_ab':
@@ -148,7 +148,7 @@ class FlatRef:
                 m[a] = v
         for e in self.entries:
             self._call(e)
-        return bytes(m[0x5800:0x6C00])
+        return bytes(m[0xEA00:0xFE00])
 
 
 def movement_mirror():

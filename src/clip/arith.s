@@ -212,7 +212,12 @@ REC_VERDICT_BELOW = 2
 ; ZP $70 = screen start hi byte, set per frame by the caller (the walk
 ; driver stores the back-buffer page; the Python harness sets it in
 ; flat tests).
-RASTER_ENTRY = $A900
+.if ::BANKED
+RASTER_ENTRY = $A900                    ; bank C window
+.else
+RASTER_ENTRY = $6200                    ; flat: right after the CODE blob —
+                                        ; all code together at one end
+.endif
 
 ; === Zero-page workspace ===
 ; src/zp.inc is the single source of truth (one registry shared by the

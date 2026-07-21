@@ -26,16 +26,12 @@ RC_P2L_1 = $B000
 RC_PH_0  = $B100
 RC_PH_1  = $B200
 .else
-RC_P1L_0 = $1A00                        ; flat fragments (audited free):
-RC_P1L_1 = $9700                        ; below the VXC planes (DIRs
-RC_P2L_0 = $D400                        ;   asserted <= $9700 now)
-RC_P2L_1 = $DA00                        ; after VWHC
-RC_PH_0  = $DB00
-RC_PH_1  = $0600                        ; the DEFQ page (FREE since d541b80;
-                                        ; moved from $F000 2026-07-17 — the
-                                        ; unrolled slope_div slow arm grew
-                                        ; flat ANG past $F000 and CORRUPTED
-                                        ; this plane: rotcache caught it)
+RC_P1L_0 = $6B00                        ; flat: the CACHE BLOCK ($6B00-$85FF,
+RC_P1L_1 = $6C00                        ; 2026-07-21 map reshuffle): all six
+RC_P2L_0 = $6D00                        ; psi planes CONTIGUOUS, rcache first,
+RC_P2L_1 = $6E00                        ; then RCACHE_STATE+BCA_WS/CPM/VXC/
+RC_PH_0  = $6F00                        ; VWHC — every cache beside its
+RC_PH_1  = $7000                        ; neighbours, all planes adjacent
 .endif
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:
@@ -1322,7 +1318,7 @@ end:
 .if BANKED
 ; (ld65 writes this: SAVE "bsp_render_ang_bk.bin")
 .else
-.assert end <= $F100, error             ; flat ANG ceiling: RCACHE_STATE
-                                        ; squats at $F100 (abi)
+.assert end <= $6200, error             ; flat CODE ceiling: the NJ blob
+                                        ; loads at $6200 (map reshuffle)
 .endif
 

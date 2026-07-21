@@ -69,12 +69,12 @@ VXC_YEXT = $A100
 ; $B2-$B5 (below the node SoA at $B600). Page $09 holds live DEFQ vars
 ; at $09FB and $A900-$B1EE is the NJ rasteriser — both are traps that
 ; caught the first placement attempt.)
-VXC_XLO  = $9800
-VXC_XHI  = $9A00
-VXC_XEXT = $1C00
-VXC_YLO  = $1E00
-VXC_YHI  = $B200
-VXC_YEXT = $B400
+VXC_XLO  = $7500
+VXC_XHI  = $7700
+VXC_XEXT = $7900
+VXC_YLO  = $7B00
+VXC_YHI  = $7D00
+VXC_YEXT = $7F00
 .endif
 
 ; the frame angle byte: abi.inc's BCA_AB (the old private vxc_ab copy

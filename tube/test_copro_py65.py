@@ -31,17 +31,16 @@ def build_image():
     subprocess.run(['./beebasm', '-i', 'tube/emit.asm'], check=True,
                    capture_output=True)
     emit = open('EMIT', 'rb').read(); os.remove('EMIT')
-    mem[0xA900:0xB600] = bytes(0xB600 - 0xA900)
-    mem[0xA900:0xA900 + len(emit)] = emit
-    for name, target in (('plot_h', 0xA910), ('plot_v', 0xA920)):
+    mem[0x6200:0x6B00] = bytes(0x6B00 - 0x6200)
+    mem[0x6200:0x6200 + len(emit)] = emit
+    for name, target in (('plot_h', 0x6210), ('plot_v', 0x6220)):
         a = symmap.sym(name)
         mem[a] = 0x4C; mem[a+1] = target & 0xFF; mem[a+2] = target >> 8
     subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,
                    capture_output=True)
     cop = open('COPROT', 'rb').read(); os.remove('COPROT')
-    mem[0x5800:0x5800 + len(cop)] = cop
-    mem[0x6400:0x6700] = mem[0xF800:0xFB00]   # stage the high table like
-    return mem                                # the disc (driver copies up)
+    mem[0xEA00:0xEA00 + len(cop)] = cop
+    return mem                            # (HITAB staging retired: 2026-07-21 map)
 
 
 def main():
@@ -86,7 +85,7 @@ def main():
     base.subscribe_to_write([0xFEF9], r1d_write)
 
     mpu = MPU(memory=base)
-    mpu.pc = 0x5803                      # harness entry: init + frame loop
+    mpu.pc = 0xEA03                      # harness entry: init + frame loop
     mpu.sp = 0xFD
     steps = 0
     ring = [0] * 64

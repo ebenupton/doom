@@ -14,13 +14,13 @@ HUD_ENTRY = $A400                       ; hud_draw (bank C window)
 .if ::BANKED
 BCA_WS = $1B40             ; angle-module bbox workspace (box vals at +$10..$17)
 .else
-BCA_WS = $FA00
+BCA_WS = $7190
 .endif
 BCA_AB = BCA_WS+$2F                     ; view angle byte, poked per frame by driver/harness
 .if ::BANKED
 SQR_BASE = $1C00           ; quarter-square tables: lo,hi,2lo,2hi = 4 pages
 .else
-SQR_BASE = $A500
+SQR_BASE = $DC00
 .endif
 SQR_LO = SQR_BASE+$000                  ; qsqr lo bytes (f 0..255)
 SQR2_LO = SQR_BASE+$100                 ; qsqr lo bytes (f 256..510)
@@ -50,18 +50,18 @@ VXC_ENABLE = $05DB                      ; translation vertex cache switch
 .if ::BANKED
 RCACHE_STATE = $B460       ; rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 .else
-RCACHE_STATE = $F100
+RCACHE_STATE = $7100
 .endif
 RCACHE_STATE_LEN = $0089                ; bytes to zero at boot
 .if ::BANKED
 RCACHE_ENABLE = $B4E8      ; rotation-coherence bca cache switch (STATE+$88)
 .else
-RCACHE_ENABLE = $F188
+RCACHE_ENABLE = $7188
 .endif
 .if ::BANKED
 CPM_BASE = $8300           ; corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
 .else
-CPM_BASE = $5500
+CPM_BASE = $7200
 .endif
 CPM_KDXL = CPM_BASE+$000                ; memo key: corner dx lo
 CPM_KDXH = CPM_BASE+$080                ; ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane
@@ -70,6 +70,14 @@ CPM_KDYH = CPM_BASE+$180                ; ... dy hi
 CPM_PSIL = CPM_BASE+$200                ; memo value: psi lo
 CPM_PSIH = CPM_BASE+$280                ; ... psi hi (last plane: memo ends at CPM_BASE+$300)
 JBASE = $1A00                           ; vsync journal (dead boot-loader memory)
-SCREEN0 = $5800                         ; framebuffer 0
-SCREEN1 = $6C00                         ; framebuffer 1
+.if ::BANKED
+SCREEN0 = $5800            ; framebuffer 0 (flat: harness FB $EA00-$FDFF)
+.else
+SCREEN0 = $EA00
+.endif
+.if ::BANKED
+SCREEN1 = $6C00            ; framebuffer 1 (flat: single buffer)
+.else
+SCREEN1 = $EA00
+.endif
 .endif

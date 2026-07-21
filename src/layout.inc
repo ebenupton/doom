@@ -25,13 +25,13 @@ NODE_SOA_C    = $8000                   ; bank L0 window head
 ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
 .assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $BE90, error, "DIR tables reach TABL0"
 .else
-ROM_SEG_HDR_C = $6C00                   ; flat: stride-18 stream, ends $9B8B
-ROM_VERTS_C   = $9C00                   ; flat verts (ends $A34B, below SEL $A400)
-ROM_BBOX_C    = $C400                   ; flat bbox planes $C400-$D3FF (16 pages)
-NODE_SOA_C    = $B600                   ; flat SoA: the old FHCH hole (16 pages)
+ROM_SEG_HDR_C = $8600                   ; flat LEVEL block (2026-07-21 map):
+ROM_VERTS_C   = $B100                   ; hdrs+dirs, verts, SoA, bbox, recip
+ROM_BBOX_C    = $C500                   ; all contiguous
+NODE_SOA_C    = $B900
 ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
-.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $9700, error, "DIR tables reach the RCACHE plane at $9700 (VXC planes right after at $9800)"
-.assert ROM_VERTS_C + $800 <= $A400, error, "flat vertex planes reach SEL"
+.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= ROM_VERTS_C, error, "DIR tables reach the vertex planes"
+.assert ROM_VERTS_C + $800 <= NODE_SOA_C, error, "flat vertex planes reach the node SoA"
 .endif
 .assert (ROM_BBOX_C & $FF) = 0, error, "bbox base must stay page-aligned"
 ; Bbox corner planes (16 x 256, page-split SoA): field at f*$200, side

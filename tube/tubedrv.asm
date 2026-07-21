@@ -31,7 +31,7 @@ RAWY_MAX = &0492                \  1170
 \ shares its zero page with the whole flat engine, and $63/$64 are the
 \ zp_bv_entry vector — a driver var there would be a wild indirect JMP.
 \ Access count is ~30/frame; absolute vs zp is noise on a 3MHz copro.
-ORG &5800                       \ the FB region: 5K the copro never
+ORG &EA00                       \ the FB region: the copro never
                                 \ touches (the rasteriser IS what the
                                 \ Tube port removed). Everything below
                                 \ $2000 is claimed by runtime arenas —
@@ -74,15 +74,16 @@ ORG &5800                       \ the FB region: 5K the copro never
     LDX &6D
     CPX #&1B
     BNE pz1
-    LDA #&55
-    STA &6D
+    LDA #&6B                    \ the cache block $6B00-$85FF (2026-07-21
+    STA &6D                     \ map: all caches contiguous)
+    LDA #0
 .pz2
     STA (&6C),Y
     INY
     BNE pz2
     INC &6D
     LDX &6D
-    CPX #&58
+    CPX #&86
     BNE pz2
     LDX #0                      \ *LOAD every engine/data file: strings
 .ldloop                         \ are CR-terminated, list ends with 0
@@ -121,27 +122,6 @@ ORG &5800                       \ the FB region: 5K the copro never
     BNE cli
 .cdone
 .init
-\ ---- high table: copy the staged $F800+ block into place (the client
-\      OS executed from up there during the loads; it is dead now) ----
-    LDA #LO(HITAB_STAGE)
-    STA &6C
-    LDA #HI(HITAB_STAGE)
-    STA &6D
-    LDA #LO(HITAB_DST)
-    STA &6E
-    LDA #HI(HITAB_DST)
-    STA &6F
-    LDX #HI(HITAB_LEN)+1        \ whole pages (+ tail page)
-    LDY #0
-.hcopy
-    LDA (&6C),Y
-    STA (&6E),Y
-    INY
-    BNE hcopy
-    INC &6D
-    INC &6F
-    DEX
-    BNE hcopy
 \ ---- engine state init (walk_drv's rcinit block, flat addresses) ----
     LDA #0
     TAX
@@ -161,11 +141,14 @@ ORG &5800                       \ the FB region: 5K the copro never
     LDA #1                      \ animated sectors (doors/lifts): engine
     STA T_ANIM_ENABLE           \ anim, no driver glue needed on the
     JSR T_ANIM_INIT             \ copro (flat build: no banking)
-\ (CPM memo: NOT zeroed here — its ground state is not all-zeros: the
-\  KDXH validity plane ships as a data file full of $80 sentinels, and
-\  a wipe after the load would destroy it. The other five planes rely
-\  on zeroed RAM — true in jsbeeb; REAL-HW TODO: zero $5500-$57FF
-\  BEFORE the D-file loads, i.e. in a pre-load stub.)
+\ CPM sentinel: the KDXH validity plane is $80-filled ($80 = impossible
+\ dx hi) — initialized HERE now (the cache block is never loaded)
+    LDA #&80
+    LDX #&7F
+.cpms
+    STA T_CPM_KDXH,X
+    DEX
+    BPL cpms
     LDA #LO(T_TAIL_POSTRC)      \ frame-class vectors: moving targets
     STA &CA
     LDA #HI(T_TAIL_POSTRC)
@@ -549,5 +532,5 @@ FOR n, 0, 21
     EQUB HI(n * 36)
 NEXT
 .drvend
-ASSERT drvend <= &6C00          \ the FB region ends at $6C00 (flat map)
-SAVE "COPROT", &5800, drvend, &5800
+ASSERT drvend <= &F800          \ loads must stay below the client OS
+SAVE "COPROT", &EA00, drvend, &EA00

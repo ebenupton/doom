@@ -29,8 +29,7 @@ _E_MARK_SOLID = _sym('span_mark_solid')
 _E_HAS_GAP    = _sym('span_has_gap')
 _E_IS_FULL    = _sym('span_is_full')
 _E_DCL_S16    = _sym('draw_clipped_line_s16')
-ROM_DETAIL_BASE = 0xB600
-ROM_BBOX_BASE   = 0xC400
+from bsp_render_6502 import ROM_DETAIL_BASE, ROM_BBOX_BASE  # one truth (2026-07-21 map)
 
 
 import angle_bbox as _A
@@ -94,7 +93,8 @@ def setup_view_zp(sc, px, py, ab):
     mem[0x91] = (raw_px >> 8) & 0xFF
     mem[0x92] = raw_py & 0xFF
     mem[0x93] = (raw_py >> 8) & 0xFF
-    mem[0xFA2F] = ab & 0xFF        # bca_ab: angle-space bbox view angle (u8)
+    from symmap import sym as _s
+    mem[_s('bca_ab')] = ab & 0xFF  # bca_ab: angle-space bbox view angle (u8)
     sc_t = fp.fp_sincos(ab)
     mem[5] = sc_t[0]
     mem[6] = 1 if sc_t[1] else 0

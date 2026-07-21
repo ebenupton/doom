@@ -439,18 +439,10 @@ EPSILON_F = 12
 .segment "CODE"
 .endmacro
 .macro SEG_HIGH
-.if ::BANKED
+.segment "CODE"                   ; (islands merged 2026-07-21: ONE code
+.endmacro                         ;  region both builds — the map reshuffle
+.macro SEG_HIGHX                  ;  moved CPM/FB out of CODE's way)
 .segment "CODE"
-.else
-.segment "HIGH"
-.endif
-.endmacro
-.macro SEG_HIGHX
-.if ::BANKED
-.segment "CODE"
-.else
-.segment "HIGHX"
-.endif
 .endmacro
 .macro SEG_BANKC
 .if ::BANKED

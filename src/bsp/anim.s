@@ -40,9 +40,9 @@ ANIM_SSMASK_SRC = $BB00                 ; L2: staging page for SSMASK — the
                                         ; (LOW loads at $1B40), so anim_init
                                         ; copies this page down to $0A80
 .else
-ANIM_SSMASK = $E484
-ANIM_TABL0  = $E580
-ANIM_CFG    = $E680
+ANIM_SSMASK = $E500
+ANIM_TABL0  = $E600
+ANIM_CFG    = $E700
 .endif
 ; CFG record layout (12 B/mover, anim_sectors.gen_6502_tables; heights are
 ; prescaled 8.8 fixed point — hi byte = the packer's prescaled s8 height):

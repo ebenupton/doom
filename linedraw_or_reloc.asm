@@ -9,7 +9,11 @@
 ;   STEEP_COMPACT   compact loop steep core ON (replaces the 16 unrolled
 ;                   steep blocks; pixel-identical)
 ;   HAMILTONIAN_23  2:3-band module OFF (measured +0.036% only)
-ORG &A900
+IF FLATORG
+ORG &6200                       \ flat map 2026-07-21: blob right after CODE
+ELSE
+ORG &A900                       \ banked: the bank C window home
+ENDIF
 
 ; ZP interface (must match the engine's zp map):
 ;   scrstrt      in: framebuffer page hi ($58/$6C)
@@ -39,4 +43,8 @@ IF HAMILTONIAN_23
 INCLUDE "raster/shallow_23_hamiltonian-or.asm"
 ENDIF
 
+IF FLATORG
+SAVE "linedraw_or_flat.bin", &6200, P%
+ELSE
 SAVE "linedraw_or_reloc.bin", &A900, P%
+ENDIF

@@ -56,7 +56,7 @@ def copro_frame_commands():
     base.subscribe_to_read([0xFEF9], r1d)
     base.subscribe_to_write([0xFEF9], r1w)
     mpu = MPU(memory=base)
-    mpu.pc = 0x5803
+    mpu.pc = 0xEA03
     mpu.sp = 0xFD
     steps = 0
     while (len(state['out']) < 4 or state['out'][-4:] != [0xFF] * 4) \
@@ -96,7 +96,7 @@ def main():
                       dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     px, py, ab = SPAWN
     r.render_frame(px, py, ab, dw.player_floor(px, py))
-    ref = bytes(r.sc.mpu.memory[0x5800:0x6C00])
+    ref = bytes(r.sc.mpu.memory[0xEA00:0xFE00])
 
     cmds = copro_frame_commands()
     got = host_rasterize(cmds)

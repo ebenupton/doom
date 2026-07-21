@@ -29,9 +29,9 @@ ABI = [
     # (the driver clear-overlay assert needs it before the engine links).
     ('MAIN_BASE',      0x2C00, 0x3670, 'engine CODE region head (cfg-anchored; MAIN first)'),
     ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
-    ('BCA_WS',         0x1B40, 0xFA00, 'angle-module bbox workspace (box vals at +$10..$17)'),
+    ('BCA_WS',         0x1B40, 0x7190, 'angle-module bbox workspace (box vals at +$10..$17)'),
     ('BCA_AB',         'BCA_WS+$2F', None, 'view angle byte, poked per frame by driver/harness'),
-    ('SQR_BASE',       0x1C00, 0xA500, 'quarter-square tables: lo,hi,2lo,2hi = 4 pages'),
+    ('SQR_BASE',       0x1C00, 0xDC00, 'quarter-square tables: lo,hi,2lo,2hi = 4 pages'),
     # REORDERED 2026-07-12: lo pages CONTIGUOUS (f(0..510) linear), then
     # hi pages — rot_core's frame-constant-mag SMC bases index across the
     # 255 boundary without a window branch. Classic sqr/sqr2 split users
@@ -61,10 +61,10 @@ ABI = [
     ('VXC_STATE',      0x05A0, None, 'VXC valid bitmap + state block'),
     ('VXC_STATE_LEN',  0x60,   None, 'bytes to zero at boot'),
     ('VXC_ENABLE',     0x05DB, None, 'translation vertex cache switch'),
-    ('RCACHE_STATE',   0xB460, 0xF100, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
+    ('RCACHE_STATE',   0xB460, 0x7100, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
-    ('RCACHE_ENABLE',  0xB4E8, 0xF188, 'rotation-coherence bca cache switch (STATE+$88)'),
-    ('CPM_BASE',       0x8300, 0x5500, 'corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
+    ('RCACHE_ENABLE',  0xB4E8, 0x7188, 'rotation-coherence bca cache switch (STATE+$88)'),
+    ('CPM_BASE',       0x8300, 0x7200, 'corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
     ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
     ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane'),
     ('CPM_KDYL',       'CPM_BASE+$100', None, '... dy lo'),
@@ -72,8 +72,8 @@ ABI = [
     ('CPM_PSIL',       'CPM_BASE+$200', None, 'memo value: psi lo'),
     ('CPM_PSIH',       'CPM_BASE+$280', None, '... psi hi (last plane: memo ends at CPM_BASE+$300)'),
     ('JBASE',          0x1A00, None, 'vsync journal (dead boot-loader memory)'),
-    ('SCREEN0',        0x5800, None, 'framebuffer 0'),
-    ('SCREEN1',        0x6C00, None, 'framebuffer 1'),
+    ('SCREEN0',        0x5800, 0xEA00, 'framebuffer 0 (flat: harness FB $EA00-$FDFF)'),
+    ('SCREEN1',        0x6C00, 0xEA00, 'framebuffer 1 (flat: single buffer)'),
 ]
 
 

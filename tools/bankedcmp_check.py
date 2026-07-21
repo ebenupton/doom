@@ -45,7 +45,7 @@ for (px, py, ab) in POSITIONS:
     fz = dw.player_floor(px, py)
     rf.render_frame(px, py, ab, fz)
     rb.render_frame(px, py, ab, fz)
-    fb_f = bytes(rf.sc.mpu.memory[0x5800:0x6C00])
+    fb_f = bytes(rf.sc.mpu.memory[0xEA00:0xFE00])
     fb_b = bytes(rb.bm[0x5800:0x6C00])
     diff = sum(1 for a, b in zip(fb_f, fb_b) if a != b)
     tag = 'OK' if diff == 0 else 'MISMATCH'

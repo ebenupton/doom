@@ -87,7 +87,7 @@ def main():
     for (px, py, ab) in positions:
         fz = dw.player_floor(px, py)
         eng.render_frame(px, py, ab, fz)
-        eng_fb = bytes(eng.sc.mpu.memory[0x5800:0x5800 + 5120])
+        eng_fb = bytes(eng.sc.mpu.memory[0xEA00:0xEA00 + 5120])
         ref_fb, clip_ok = render_ref_fb(px, py, ab)
         same = ref_fb == eng_fb
         ndiff = sum(1 for a, b in zip(ref_fb, eng_fb) if a != b)

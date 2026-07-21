@@ -125,21 +125,21 @@ class SpanClip6502:
         # index (4 pages; S = bit_length(idx-1) is computed, not stored).
         from fp import _RECIP_M8
         for i in range(1024):
-            mem[0xE000 + i] = _RECIP_M8[i]
+            mem[0xD500 + i] = _RECIP_M8[i]
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
-        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_reloc.bin')
+        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_flat.bin')
         if os.path.exists(raster_path):
             with open(raster_path, 'rb') as f:
                 raster_code = f.read()
             for i, b in enumerate(raster_code):
-                mem[0xA900 + i] = b
+                mem[0x6200 + i] = b
             self._has_rasteriser = True
         else:
             self._has_rasteriser = False
 
         # Screen buffer at $5800 (5120 bytes)
-        self.SCREEN_START = 0x5800
+        self.SCREEN_START = 0xEA00
         self.SCREEN_SIZE = 5120
         mem[0x70] = self.SCREEN_START >> 8  # rasteriser scrstrt ZP
 
