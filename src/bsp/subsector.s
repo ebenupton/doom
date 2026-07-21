@@ -462,6 +462,13 @@ hgp_can:
                                         ; (2026-07-15: seg_swap_vx retired;
                                         ; python mirror returns likewise)
 hgp_fwd:
+   PAGE BANK_C                             ; THE emit-cascade page (2026-07-21
+                                           ; PAGE grind): one page dominates
+                                           ; every arc below — the old per-emit
+                                           ; pages at ft/fb/step-top (and the
+                                           ; L2 corridor they guarded) die; the
+                                           ; two header reads inside re-page
+                                           ; around themselves as before.
 
 ; --- Emit top horizontal (front-sector ceiling): (sx1,ft1)→(sx2,ft2) ---
 ; Solid wall:        always.
@@ -523,7 +530,6 @@ ft_set_line:
 ; here at all (the zp_line_* slots don't survive the clipper's
 ; in-place normalization, so nothing can be seg-hoisted into them).
    LDX #zp_seg_sy1_top_l - VX1            ; sy pair offset (top)
-   PAGE BANK_C
    JSR SC_DRAW_S16_H
 ; (no disarm: every later DCL entry in this seg sets _h itself, and the
 ;  defq snapshot reads the $0700/$0800 COUNTS, not the pointer)
@@ -577,7 +583,6 @@ fb_no_rec:
    STA zp_dcl_rec_buf_h
 fb_set_line:
    LDX #zp_seg_sy1_bot_l - VX1            ; sy pair offset (bot)
-   PAGE BANK_C
    JSR SC_DRAW_S16_H
 fb_skip:
 
@@ -605,7 +610,6 @@ step_cont:                              ;  pushed the branch out of range)
    LDA #1
    STA zp_dcl_rec_off
 ; TOP_RECORDS = $0700
-   PAGE BANK_C
    JSR SC_DRAW_S16_H
 step_no_top:
 
@@ -621,7 +625,9 @@ step_no_top:
    LDA #1
    STA zp_dcl_rec_off
 ; BOT_RECORDS = $0800
-; (no PAGE: entry here is provably bank-C. !NEEDBT paths paged C at
+; (no PAGE: entry here is provably bank-C — since 2026-07-21 the
+;  hgp_fwd cascade page dominates everything. Historical note kept:
+;  !NEEDBT paths paged C at
 ;  ft_no_needbt and every fb path preserves it; NEEDBT means the
 ;  step-top emit just paged C. The ONLY non-C corridor into the
 ;  cascade — portal + NEEDBT + ch<=vz skipping ft in bank L2 — dies at
