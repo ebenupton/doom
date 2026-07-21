@@ -298,7 +298,7 @@ rc_s0:
    BCS sp_serve0
    LDA #0                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (serves never read it)
-   JSR br_bbox_visible                     ; mode-dispatched inside (zp_bv_mode)
+   JSR br_bbox_visible                     ; vector-dispatched (zp_bv_entry)
    BEQ r0_far                              ; near invisible: skip subtree
 r0_vis:
    PAGE BANK_L0                            ; node SoA pages live in bank L0
