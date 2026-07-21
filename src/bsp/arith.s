@@ -285,9 +285,9 @@ rot_unity_neg:
    LDA zp_ri_sgn
    BNE ru_pass
 ru_neg:
-   ZERO zp_br_res_l
-   LDA #0
-   SEC
+   LDA #0                                  ; doubles as the res_l zero (the
+   STA zp_br_res_l                         ; old ZERO+LDA#0 pair re-loaded a
+   SEC                                     ; value NMOS ZERO already left)
    SBC zp_ri_d_l
    STA zp_br_res_h
    LDA #0
@@ -319,8 +319,8 @@ rot_unity_neg_s:
    LDA zp_ri_sgn
    BNE rus_pass
 rus_neg:
-   ZERO zp_rs_l
-   LDA #0
+   LDA #0                                  ; (mirror of ru_neg's fold)
+   STA zp_rs_l
    SEC
    SBC zp_ri_d_l
    STA zp_rs_h
