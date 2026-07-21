@@ -90,7 +90,7 @@ bf_ax_px_lt:
    SBC (zp_seg_hdr_p),Y
    BMI bf_ax_front                         ; diff < 0
 bf_ax_back:
-   JMP s_advance
+   JMP s_advance_l0
 bf_ax_front:
    JMP bf_seg_front
 ; --- py vs C16 (forms 2/3) ---
@@ -171,7 +171,7 @@ bf_g_both:
    BMI bfd_back_j
    JMP bf_seg_front
 bfd_back_j:
-   JMP s_advance
+   JMP s_advance_l0
 ; dx == 0: dot = -P2 = -(dx'*dy); need dy for its sign (P2 = 0 handled:
 ; dy==0 too -> dot = 0 -> back)
 bfd_dx0:
@@ -190,7 +190,7 @@ bfd_dx0:
    ASL A                                   ; b7 = sgn dx'
    EOR zp_br_dy_h                          ; b7 = sign(P2)
    BMI bfd_front_j                         ; dot = -P2 > 0 iff P2 < 0
-   JMP s_advance
+   JMP s_advance_l0
 bfd_front_j:
    JMP bf_seg_front
 ; dy == 0: dot = P1 = dy'*dx (nonzero: dx != 0 here)
@@ -204,7 +204,7 @@ bf_g_mul:
 ; both deltas nonzero, products same sign (X = shared sign, bit7):
 ; the magnitude comparator is the shared CROSS_MAG_DECIDE macro
 ; (header.s) — same core serves br_node_setup's general arm (lo.s).
-   CROSS_MAG_DECIDE bf_seg_front, s_advance
+   CROSS_MAG_DECIDE bf_seg_front, s_advance_l0
 .endscope
 ; Layout keeper: the 2026-07-15 tail cleanup shrank this routine by 10
 ; bytes net; shifting everything downstream rolls page-cross dice in

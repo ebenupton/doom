@@ -47,7 +47,14 @@ br_seg_xform_vertex:
 .scope
 ; ENTRY CONTRACT: A = idx_hi — both callers end LDA vN_hi / STA
 ; zp_seg_v_idx_b immediately before the JSR (mirrored at the call sites
-; in subsector.s). No PAGE anywhere in this routine (2026-07-11): the
+; in subsector.s).
+; EXIT CONTRACT (2026-07-21): every exit leaves BANK_L2 paged. The
+; miss/near-clip exits already ended L2 (vertex_fetch/vxc_arm/br_recip);
+; the four vc-hit exits page it explicitly. This makes the caller-side
+; bank state exit-invariant: ys_deltas_done's blind re-page and
+; c_set_recip's guard page both died against it (the off-bank arcs
+; they defended were exactly these hit exits).
+; No other PAGE in this routine (2026-07-11): the
 ; ROM vert fetch and its PAGE L2 moved to br_to_view_fetch (view.s);
 ; the hit path touches main-RAM VCACHE + rns vectors only, and
 ; br_project_y / br_recip page L2 themselves. Nothing here may touch
@@ -94,7 +101,9 @@ br_seg_xform_vertex:
    LDA VC_CLIP,Y                           ; cached near-clip verdict
    BEQ vch0_ok
    STA VX1+2,X                             ; clip = 1
-   RTS
+   BNE vch0_pg                             ; (A = clip, nonzero: always)
+                                        ; share the normal exit's page —
+                                        ; keeps vc_miss in branch range
 vch0_ok:
 ; sx first, rlo LAST: RNS_SELECT clobbers X (its vector index), so the
 ; select runs after the final struct store and the old LDX zp_seg_ep
@@ -110,6 +119,8 @@ vch0_ok:
    STA zp_br_r_s
    STA VX1+14,X                            ; rlo (= S; A still holds it)
    RNS_SELECT                              ; cached S → re-pick the shifter
+vch0_pg:
+   PAGE BANK_L2                            ; exit contract (see head)
    RTS                                     ; Y projection DEFERRED to the
                                         ; post-has_gap y stage (2026-07-11):
                                         ; culled segs never project.
@@ -123,6 +134,7 @@ vc_hit_hi:
    LDA VC_CLIP+$100,Y
    BEQ vch1_ok
    STA VX1+2,X
+   PAGE BANK_L2                            ; exit contract (see head)
    RTS
 vch1_ok:
    LDA VC_SXL+$100,Y
@@ -136,6 +148,7 @@ vch1_ok:
    STA zp_br_r_s
    STA VX1+14,X
    RNS_SELECT
+   PAGE BANK_L2                            ; exit contract (see head)
    RTS
 vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are

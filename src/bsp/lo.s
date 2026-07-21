@@ -196,7 +196,10 @@ ap_emit_y:
    STA zp_line_xr_h
    LDA #0
    STA zp_dcl_rec_buf_h
-   PAGE BANK_C
+; (no PAGE: ap_edges expands in the verticals section of the seg loop,
+;  strictly after hgp_fwd's emit-cascade PAGE C; every in-ladder L0
+;  excursion re-pages C — bank C is the ladder invariant here. dfscan
+;  11/11 same-bank; caller audit 2026-07-21.)
    JMP SC_DRAW_S16
 ap_rts:
    RTS

@@ -255,9 +255,12 @@ c_cx_rp:
    STA zp_clip_cx_hi
 
 c_set_recip:
-   PAGE BANK_L2                            ; br_recip's caller-holds-L2
-   LDY #2                                  ; contract (this path can arrive
-   LDX #0                                  ; off-bank at a crossing)
+; (no PAGE: br_recip's caller-holds-L2 contract is met by arrival —
+;  reproject_at_crossing's only callers sit right after the v2
+;  transform, and br_seg_xform_vertex exits L2 on EVERY path since
+;  2026-07-21; cross_compute touches only ZP/main tables.)
+   LDY #2
+   LDX #0
    JSR br_recip
    JMP inl_end
 inl_end:

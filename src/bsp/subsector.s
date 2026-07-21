@@ -119,7 +119,10 @@ seg_loop:
    BNE seg_proc
    RTS                                     ; empty subsector
 seg_proc:
-   PAGE BANK_L0                            ; re-page L0 each seg (prev seg ended in bank C)
+; (no PAGE: every arrival is L0-proven — the prologue paged L0 for the
+;  first seg; s_advance pages L0 on its off-bank arcs; backface culls
+;  (the majority back-edge, 57% of iterations) read headers under L0
+;  and enter via s_advance_l0 without ever leaving. 2026-07-21 grind.)
 ; (Records reset MOVED to hg_pass 2026-07-11: the count bytes' only
 ; reader is ms_dispatch, which runs post-visibility — culled segs paid
 ; four dead stores each. rec_buf lo is zeroed once per frame in
@@ -400,10 +403,14 @@ hg_pass:
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
+   PAGE BANK_L2                             ; restore for the projections
+                                        ; below (br_project_y no longer
+                                        ; re-pages per call)
 ys_deltas_done:
-   PAGE BANK_L2                             ; ONE page-in serves every
-                                        ; projection below (br_project_y
-                                        ; no longer re-pages per call)
+; (no PAGE: solid arcs arrive L2 — br_seg_xform_vertex's exit contract
+;  is L2-always since 2026-07-21, and nothing between v2's JSR and here
+;  pages away (reproject/br_recip end L2; SC_HAS_GAP is main-resident).
+;  The portal block above restores L2 itself after its L0 excursion.)
    LDA zp_ys_v1ok
    BEQ ys_v1_full
 ; chained v1 with a LIVE front sy pair (copied from the emitted prev
@@ -815,7 +822,11 @@ ms_advance:
 ; --- Advance to the next seg: clear the skip flag, bump the seg index
 ;     (u16) and the two persistent ROM cursors (+12 header, +6 FHCH). ---
 
-::s_advance:                            ; global: backface.s back-exits land here
+::s_advance:                            ; arrivals that left L0 (emit path
+; ends bank C; the mid-loop culls — both-clipped, off-screen, has_gap
+; fail, 1px drop — end bank L2): re-page L0 for the next seg's header
+; reads, but only on the loop-back arc so the RTS keeps the old
+; caller-sees-last-seg's-bank contract.
 ; (no zp_seg_skip reset needed: the back-face test returns in A now, and
 ; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
 ; (zp_seg_first is NOT advanced per seg: its only reader is the subsector
@@ -827,6 +838,17 @@ ms_advance:
    STA zp_seg_hdr_p                        ; page-slotted (packer assert):
                                         ; a run never crosses its page, so
                                         ; the hi byte is ss-constant
+   DEC zp_seg_count
+   BEQ sa_done
+   PAGE BANK_L0                            ; the old loop-top page, moved to
+   JMP seg_proc                            ; the arcs that actually left L0
+::s_advance_l0:                         ; backface back-exits: header reads
+; never paged away — the advance tail is duplicated (12 bytes) so the
+; majority arc pays no PAGE at all (57% of iterations per dfscan).
+   CLC
+   LDA zp_seg_hdr_p
+   ADC #16
+   STA zp_seg_hdr_p
    DEC zp_seg_count
    BEQ sa_done                             ; loop rotation: seg_loop's
    JMP seg_proc                            ; LDA/BNE re-test was dead
