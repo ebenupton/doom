@@ -448,77 +448,57 @@ SEG_HIGH                                   ; flat: the probe/serve block lives
 ; Same contract as box_classify (in: zp_node_ch_l/zp_bbox_side, bca_pxs/
 ; pys, bca_afn; out: the A/Z/C verdict + bca_ilo/ihi) and bit-identical
 ; results — only cycles change. Warm hits skip the per-corner abs/octant/SlopeDiv/tantoangle work
-; and re-derive phi with one subtraction; FULL hits skip the tail entirely.
-; pseudocode:
-;   idx = bca_boxp - rom_bbox                    # node*16 + side*8
-;   if COMPUTED[idx]:                            # --- HIT ---
-;     p1 = sgnext((a_fine - psi1) & 4095)        # cp_havepsi
-;     p2 = sgnext((a_fine - psi2) & 4095)
-;     goto bca_tail
-;   else:                                        # --- MISS ---
-;     stash offset/mask ; FALL THROUGH into box_classify — bca_tail's
-;     bt_store derives psi1/psi2 from p1/p2 and sets COMPUTED (an
-;     inside box never reaches the tail, fires no stores, stays
-;     naturally uncacheable)
+; and re-derive phi with one subtraction.
+;
+; PER-SIDE rcaches (2026-07-21, Eben: 'replace rcache with a pair of
+; per-side rcaches: lookup moves down next to the two CLASSIFY macro
+; uses'): the entry dispatches the side ONCE, and each side owns a
+; fully side-baked probe+serve block sitting immediately above its
+; classify tree — a probe miss FALLS into its tree, so the old shape's
+; two side dispatches (hit -> serve reload, miss -> box_classify head)
+; are one. The COMPUTED bitmap keeps the interleaved k = node*2 + side
+; encoding — bt_store is untouched — and each probe bakes its side
+; into the k & 7 arithmetic (ORA #1 / nothing) instead of ORAing
+; zp_bbox_side.
+; pseudocode (per side s):
+;   k = node*2 + s
+;   if COMPUTED[k]: p1 = sgnext((a_fine - psi1_s[node]) & 4095) ...
+;   else: stash byte/bit ; fall into CLASSIFY_TREE s (bt_store
+;         publishes at birth; an inside box never reaches the tail,
+;         fires no stores, stays naturally uncacheable)
 bbox_check_angle:
-; THE bbox entry, every check, every frame (2026-07-20). Valid block
-; offset + bit mask computed INLINE (bcac_index retired):
-;   k = node*2 + side ; byte = k>>3 = node>>2 ; bit = 1 << (k & 7)
-; and the bit table is vc_bit_mask (defq.s) — same 8 bytes the vertex
-; cache uses. Check it always; on a miss the offset/mask pair is
-; stashed ($CF/$65 are rcache-owned, they survive the full check) for
-; bca_tail's bt_store block inside the check.
-   LDA zp_node_ch_l
+   LDY zp_node_ch_l                        ; Y = node: probe AND tree index
+   LDA zp_bbox_side
+   BNE bcap_s1
+   JMP bcap_s0
+SEG_CODE
+zc_corners:                                ; harness window start
+box_classify:                              ; THE MOVING-FRAME ENTRY (pristine:
+                                           ; no probe, no stores). Standing
+                                           ; frames enter at bbox_check_angle
+                                           ; above (zp_bv_entry vector).
+   LDY zp_node_ch_l                        ; ONE LDY serves both trees
+   LDA zp_bbox_side
+   BNE bcls_s1
+   JMP bcls_s0
+; --- side 1: probe (side baked), serve, or fall into the tree ---
+bcap_s1:
+   TYA
    LSR A
    LSR A
-   TAX                                     ; X = valid block offset (node>>2)
-   LDA zp_node_ch_l
+   TAX                                     ; X = valid byte (node>>2)
+   TYA
    AND #3
    ASL A
-   ORA zp_bbox_side
-   TAY                                     ; Y = k & 7
+   ORA #1                                  ; k & 7, side BAKED
+   TAY
    LDA vc_bit_mask,Y
    AND RCACHE_COMPUTED,X
-   BEQ bcac_miss
-; --- HIT: psi1/psi2 from the planes, re-apply a_fine — the exact
-; cp_havepsi algebra r = (afn - psi) & 4095, INLINED plane-direct
-; (max-squeeze 2026-07-20: the pa_res staging and the JSR/RTS tax
-; both died; Y stays node through the whole serve, so the old
-; second-lookup reload died with them). t0/t1 are scratch here.
-; (The FULL bit died 2026-07-20: its only remaining constituency was
-; inside-boxes, which never set COMPUTED now — they re-run the plain
-; path each frame, whose classify ladder detects inside almost as
-; cheaply as the FULL probe cost EVERY warm hit here.)
+   BEQ bcap_s1_miss
+; HIT: psi1/psi2 from the side-1 planes, re-apply a_fine — the exact
+; cp_havepsi algebra r = (afn - psi) & 4095, INLINED plane-direct.
+; t0/t1 are scratch here.
    LDY zp_node_ch_l
-   LDA zp_bbox_side
-   BNE bw_s1
-   LDA RC_PH_0,Y
-   AND #$0F
-   STA t1                                  ; psi1 hi
-   SEC
-   LDA bca_afn
-   SBC RC_P1L_0,Y
-   STA bca_p1                              ; r1 lo straight to memory
-   LDA bca_afn+1
-   SBC t1
-   AND #$0F
-   STA bca_p1+1
-   LDA RC_PH_0,Y
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   STA t1                                  ; psi2 hi
-   SEC
-   LDA bca_afn
-   SBC RC_P2L_0,Y
-   STA t0                                  ; r2 lo (Y is still node)
-   LDA bca_afn+1
-   SBC t1
-   AND #$0F                                ; A = r2 hi
-   LDY t0                                  ; Y = r2 lo
-   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
-bw_s1:
    LDA RC_PH_1,Y
    AND #$0F
    STA t1
@@ -545,51 +525,60 @@ bw_s1:
    AND #$0F
    LDY t0
    JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
-; --- MISS: store-at-birth (2026-07-20, Eben's 'insert the cache into
-; the workings') — stash the probe's offset/mask for the check to
-; publish, then FALL THROUGH into the pristine check. The stores live where
-; the psi values are born: bca_tail's bt_store derives BOTH psis from
-; the tail's own inputs (p1 in memory, p2 in registers — the exact
-; cp_havepsi algebra) and sets COMPUTED from
-; the stash. No verdict banking, no residue scavenging, no memo-slot
-; coupling, no $80 marker: an inside box runs no corners, fires no
-; stores, and stays naturally uncacheable. The A/Z/C verdict flows
-; straight through to the walk.
-bcac_miss:
-   STX rc_bytehi                           ; stash the probe's offset + mask
-   LDA vc_bit_mask,Y                       ; (Y intact from the probe) for
-   STA rc_bit                              ; bca_tail's publish
-; ... and FALL THROUGH into box_classify (2026-07-21: probe at the top,
-; classify below — the reading order of the algorithm. Banked: true
-; fall-through, one CODE region. Flat: the island boundary forces one
-; bridge JMP on the miss path.)
-.if ::BANKED = 0
-   JMP box_classify
-.endif
-SEG_CODE
-zc_corners:                                ; harness window start
-box_classify:                              ; the check IS the classifier (the
-                                           ; old JMP stub died 2026-07-19).
-                                           ; THE MOVING-FRAME ENTRY, and the
-                                           ; armed-miss continuation: the
-                                           ; probe at bbox_check_angle (below)
-                                           ; is the one public entry, and it
-                                           ; falls here when the cache can't
-                                           ; serve (2026-07-20 subsumption)
-   LDY zp_node_ch_l                        ; ONE LDY serves both trees
-   LDA zp_bbox_side
-   BNE bcls_s1
-   JMP bcls_s0
+bcap_s1_miss:
+   STX rc_bytehi                           ; stash byte + bit for bt_store's
+   LDA vc_bit_mask,Y                       ; store-at-birth publish
+   STA rc_bit
+   LDY zp_node_ch_l                        ; the tree indexes planes by Y
 bcls_s1:
    CLASSIFY_TREE 1
-   .res 5                                  ; keep bcls_s0 + downstream at
-                                           ; their pre-ck addresses (the 5
-                                           ; elided SECs shifted branch
-                                           ; page-crossings; padding beats
-                                           ; re-measuring every arc)
+; --- side 0: mirror (k & 7 = (node & 3)*2, no ORA at all) ---
+bcap_s0:
+   TYA
+   LSR A
+   LSR A
+   TAX
+   TYA
+   AND #3
+   ASL A
+   TAY
+   LDA vc_bit_mask,Y
+   AND RCACHE_COMPUTED,X
+   BEQ bcap_s0_miss
+   LDY zp_node_ch_l
+   LDA RC_PH_0,Y
+   AND #$0F
+   STA t1                                  ; psi1 hi
+   SEC
+   LDA bca_afn
+   SBC RC_P1L_0,Y
+   STA bca_p1                              ; r1 lo straight to memory
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F
+   STA bca_p1+1
+   LDA RC_PH_0,Y
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   STA t1                                  ; psi2 hi
+   SEC
+   LDA bca_afn
+   SBC RC_P2L_0,Y
+   STA t0                                  ; r2 lo (Y is still node)
+   LDA bca_afn+1
+   SBC t1
+   AND #$0F                                ; A = r2 hi
+   LDY t0                                  ; Y = r2 lo
+   JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
+bcap_s0_miss:
+   STX rc_bytehi
+   LDA vc_bit_mask,Y
+   STA rc_bit
+   LDY zp_node_ch_l
 bcls_s0:
    CLASSIFY_TREE 0
-   .res 5
 zc_end:
 .if BANKED
 SEG_CODE
