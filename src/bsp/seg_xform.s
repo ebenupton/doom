@@ -359,8 +359,10 @@ vxc_arm:
    LDA VXC_YEXT,Y
    ADC vxc_ref_y+2
    STA zp_br_vy_x
-   PAGE BANK_L0
-   RTS
+   PAGE BANK_L2                            ; exit L2 = the OFF-path's exit
+   RTS                                     ; state (br_to_view_fetch): one
+                                           ; contract, and br_recip's
+                                           ; per-call PAGE dies (2026-07-21)
 va_hi:
    CLC
    LDA VXC_XLO+$100,Y
@@ -382,8 +384,10 @@ va_hi:
    LDA VXC_YEXT+$100,Y
    ADC vxc_ref_y+2
    STA zp_br_vy_x
-   PAGE BANK_L0
-   RTS
+   PAGE BANK_L2                            ; exit L2 = the OFF-path's exit
+   RTS                                     ; state (br_to_view_fetch): one
+                                           ; contract, and br_recip's
+                                           ; per-call PAGE dies (2026-07-21)
 va_cold:
 ; --- cold: mark valid, fetch + rotate for real, snapshot the base ---
    LDA VXC_VALID,X
@@ -392,6 +396,6 @@ va_cold:
    JSR br_to_view_fetch                    ; pages L2 itself
    PAGE BANK_C
    vxc_cold_store                      ; leaf (vxcache.s): base = total-ref
-   PAGE BANK_L0
+   PAGE BANK_L2                        ; (same exit contract as the warm arms)
    RTS
 .endscope

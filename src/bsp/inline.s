@@ -255,8 +255,9 @@ c_cx_rp:
    STA zp_clip_cx_hi
 
 c_set_recip:
-   LDY #2                                  ; idx = 2 (register ABI)
-   LDX #0
+   PAGE BANK_L2                            ; br_recip's caller-holds-L2
+   LDY #2                                  ; contract (this path can arrive
+   LDX #0                                  ; off-bank at a crossing)
    JSR br_recip
    JMP inl_end
 inl_end:

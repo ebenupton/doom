@@ -93,9 +93,14 @@ br_recip:
 ; REGISTER ABI (2026-07-19): idx arrives Y = lo, X = hi (X, not A —
 ; the PAGE clobbers A). The old zp_br_t0/t1 staging round-trip died
 ; at both callers and here.
-   PAGE BANK_L2                            ; recip + SRECIP live in L2
-                                        ; (LOAD-BEARING: the VXC warm path
-                                        ; arrives bank-C paged)
+; ENTRY CONTRACT (2026-07-21 PAGE grind, round 2): the CALLER holds L2.
+; All arrivals proven: vxc-off = br_to_view_fetch exits L2 (trace:
+; nc_ok 128/128); vxc-on warm/cold = vxc_arm's exits now page L2 (the
+; same state as the off path — anything downstream needing L0 already
+; re-pages, by existing correctness of the off path); the near-plane
+; crossing macro (c_set_recip) pages L2 itself. Round 1 died on the
+; warm arc because the attribution trace ran VXC-off — vxcache_check
+; is the gate that catches it.
    TXA
    BEQ rcp_p0                              ; idx < 256: dominant
    CMP #4
