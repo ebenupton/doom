@@ -40,7 +40,8 @@ def build_image():
                    capture_output=True)
     cop = open('COPROT', 'rb').read(); os.remove('COPROT')
     mem[0x5800:0x5800 + len(cop)] = cop
-    return mem
+    mem[0x6400:0x6700] = mem[0xF800:0xFB00]   # stage the high table like
+    return mem                                # the disc (driver copies up)
 
 
 def main():

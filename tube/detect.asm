@@ -19,15 +19,9 @@ ORG &900
     JSR OSBYTE
     TXA
     BNE tube
-    LDX #0
-.msg
-    LDA notube,X
-    BEQ msgdone
-    JSR OSWRCH
-    INX
-    BNE msg
-.msgdone
-    JMP OSNEWL                  \ back to the CLI
+    LDX #LO(runwalk)            \ no copro: chain the regular banked game
+    LDY #HI(runwalk)
+    JMP OSCLI
 .tube
     LDA #22                     \ VDU 22,4: host MODE 4 (HOSTT then narrows
     JSR OSWRCH                  \ the CRTC window itself, like walk_drv)
@@ -39,8 +33,8 @@ ORG &900
 .runco
     EQUS "RUN COPROT"
     EQUB 13
-.notube
-    EQUS "NO TUBE: LOAD REGULAR VERSION"
-    EQUB 0
+.runwalk
+    EQUS "RUN WALK"
+    EQUB 13
 .end
 SAVE "DETECT", start, end

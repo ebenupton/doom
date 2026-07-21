@@ -189,6 +189,49 @@ for (const cmd of script.split(";").map((s) => s.trim()).filter(Boolean)) {
             console.log(JSON.stringify(session.registers()));
             break;
         }
+        case "memdump": {
+            const addr = parseInt(rest[0], 16), len = parseInt(rest[1], 16);
+            const out = Buffer.alloc(len);
+            for (let i = 0; i < len; i += 256) {
+                const b = session.readMemory(addr + i, Math.min(256, len - i));
+                const arr = b.bytes || b;
+                for (let j = 0; j < arr.length; j++) out[i + j] = arr[j];
+            }
+            fs.writeFileSync(rest[2], out);
+            console.log("dumped", len, "bytes to", rest[2]);
+            break;
+        }
+        case "pemit": {
+            // ring-log parasite writes to $FEF9 with pc attribution
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par) throw new Error("no parasite");
+            const ring = [];
+            const origW2 = par.writemem.bind(par);
+            par.writemem = (addr, b) => {
+                if ((addr & 0xffff) === 0xfef9) {
+                    ring.push([par.pc, b]);
+                    if (ring.length > 700) ring.shift();
+                }
+                return origW2(addr, b);
+            };
+            globalThis.__emitRing = ring;
+            break;
+        }
+        case "pemitdump": {
+            const ring = globalThis.__emitRing || [];
+            console.log(ring.map(([pc, b]) => pc.toString(16) + ":" + b.toString(16)).join(" "));
+            break;
+        }
+        case "pdump": {
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par) throw new Error("no parasite");
+            const addr = parseInt(rest[0], 16), len = parseInt(rest[1], 16);
+            const out = Buffer.alloc(len);
+            for (let i = 0; i < len; i++) out[i] = par.readmem(addr + i);
+            fs.writeFileSync(rest[2], out);
+            console.log("pdumped", len, "bytes");
+            break;
+        }
         case "text": {
             const out = session.drainOutput();
             process.stdout.write((out.screenText || "") + "\n");

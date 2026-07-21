@@ -47,6 +47,9 @@ HAMILTONIAN_23 = FALSE
 
 ORG &1900
 .start
+    JMP realstart
+    JMP drawcmd                 \ &1903: py65 pipeline-gate entry
+.realstart
     SEI
     LDA #&7F                    \ every VIA interrupt source off
     STA &FE4E
@@ -135,21 +138,27 @@ ORG &1900
     AND y1
     CMP #&FF
     BEQ eof
-    LDA y0                      \ dcl's des_dispatch, replicated
-    CMP y1
-    BNE noth
-    JSR plot_h
+    INC &6F                     \ diagnostics: commands this frame (cheap;
+    JSR drawcmd                 \ &6A = last frame's count, &6B = EOFs)
     JMP main
+.drawcmd                        \ x0..y1 in $82-$85: dcl's des_dispatch,
+    LDA y0                      \ replicated (JSR-able: the py65 pipeline
+    CMP y1                      \ gate drives this directly)
+    BNE noth
+    JMP plot_h
 .noth
     LDA x0
     CMP x1
     BNE diag
-    JSR plot_v
-    JMP main
+    JMP plot_v
 .diag
-    JSR linedraw4               \ the real NJ rasteriser
-    JMP main
+    JMP linedraw4               \ the real NJ rasteriser
 .eof
+    LDA &6F                     \ publish the frame's command count
+    STA &6A
+    LDA #0
+    STA &6F
+    INC &6B                     \ EOF counter
     SEI                         \ swap races the presenter
     LDA pend
     BMI nopend

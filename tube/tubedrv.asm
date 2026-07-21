@@ -97,6 +97,27 @@ ORG &5800                       \ the FB region: 5K the copro never
     BNE cli
 .cdone
 .init
+\ ---- high table: copy the staged $F800+ block into place (the client
+\      OS executed from up there during the loads; it is dead now) ----
+    LDA #LO(HITAB_STAGE)
+    STA &6C
+    LDA #HI(HITAB_STAGE)
+    STA &6D
+    LDA #LO(HITAB_DST)
+    STA &6E
+    LDA #HI(HITAB_DST)
+    STA &6F
+    LDX #HI(HITAB_LEN)+1        \ whole pages (+ tail page)
+    LDY #0
+.hcopy
+    LDA (&6C),Y
+    STA (&6E),Y
+    INY
+    BNE hcopy
+    INC &6D
+    INC &6F
+    DEX
+    BNE hcopy
 \ ---- engine state init (walk_drv's rcinit block, flat addresses) ----
     LDA #0
     TAX
