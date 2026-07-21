@@ -105,11 +105,88 @@ for (const cmd of script.split(";").map((s) => s.trim()).filter(Boolean)) {
         }
         case "pmem": {
             const addr = parseInt(rest[0], 16), len = Number(rest[1] || 16);
-            const par = proc.tube && proc.tube.cpu;
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
             if (!par) throw new Error("no parasite");
             const out = [];
             for (let i = 0; i < len; i++) out.push(par.readmem(addr + i));
             console.log(out.map((v) => v.toString(16).padStart(2, "0")).join(" "));
+            break;
+        }
+        case "pregs": {
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par) throw new Error("no parasite");
+            console.log("parasite pc=" + par.pc.toString(16), "a=" + par.a.toString(16),
+                        "s=" + par.s.toString(16));
+            break;
+        }
+        case "ptrace": {
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par) throw new Error("no parasite");
+            const n = Number(rest[0] || 20), cyc = Number(rest[1] || 100000);
+            const seen = [];
+            for (let i = 0; i < n; i++) {
+                await session.runFor(cyc);
+                seen.push(par.pc.toString(16));
+            }
+            console.log(seen.join(" "));
+            break;
+        }
+        case "pverify": {
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par) throw new Error("no parasite");
+            const spec = JSON.parse(fs.readFileSync(rest[0], "utf8"));
+            let bad = 0;
+            for (const [addrStr, hex] of Object.entries(spec)) {
+                const addr = parseInt(addrStr, 16);
+                const want = Buffer.from(hex, "hex");
+                for (let i = 0; i < want.length; i++) {
+                    const got = par.readmem(addr + i);
+                    if (got !== want[i]) {
+                        if (bad < 12)
+                            console.log(`MISMATCH &${(addr + i).toString(16)}: got ${got.toString(16)} want ${want[i].toString(16)}`);
+                        bad++;
+                    }
+                }
+            }
+            console.log(bad ? `pverify: ${bad} bad bytes` : "pverify: ALL MATCH");
+            break;
+        }
+        case "pwatch": {
+            // watch parasite writes to an address; print pc of each writer
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par) throw new Error("no parasite");
+            const waddr = parseInt(rest[0], 16);
+            let count = 0;
+            const origW = par.writemem.bind(par);
+            par.writemem = (addr, b) => {
+                if ((addr & 0xffff) === waddr && count < 20) {
+                    console.log(`write &${waddr.toString(16)} = ${b.toString(16)} at parasite pc=&${par.pc.toString(16)}`);
+                    count++;
+                }
+                return origW(addr, b);
+            };
+            break;
+        }
+        case "pbrk": {
+            // trap parasite BRK/IRQ vector fetches; dump pc + stack context
+            const par = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par) throw new Error("no parasite");
+            let hits = 0;
+            const origR = par.readmem.bind(par);
+            par.readmem = (addr) => {
+                if ((addr & 0xffff) === 0xfffe && hits < 4) {
+                    hits++;
+                    const st = [];
+                    for (let i = par.s + 1; i <= 0xff && st.length < 12; i++)
+                        st.push(origR(0x100 + i).toString(16).padStart(2, "0"));
+                    console.log(`VECTOR &FFFE fetch #${hits}: pc=&${par.pc.toString(16)} s=&${par.s.toString(16)} p=&${par.p ? par.p.asByte?.() ?? "?" : "?"} stack: ${st.join(" ")}`);
+                }
+                return origR(addr);
+            };
+            break;
+        }
+        case "regs": {
+            console.log(JSON.stringify(session.registers()));
             break;
         }
         case "text": {

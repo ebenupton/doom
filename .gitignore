@@ -22,3 +22,6 @@ line-test*/
 doom_debug.txt
 virus/
 engine_syms.inc
+tube/tube_syms.inc
+tube/tube_loads.inc
+SINCOS.bin
