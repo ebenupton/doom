@@ -1,159 +1,151 @@
 #!/usr/bin/env python3
-"""Engine call-graph generator: disassembles the LINKED flat image
-(so macro expansions and fused JMP interfaces are captured), maps
-JSR/JMP sites to owning routines via the ld65 symbol table, clusters
-by defining source file, and emits graphviz -> PDF.
+"""Engine call-graph generator — SOURCE-PARSE style (the useful one,
+2026-07-12 lineage; this replaced a linked-image disassembly variant
+that drowned the structure in raw addresses, 2026-07-22).
 
-Solid edges = JSR. Dashed = JMP tail-call/fused interface (only when
-the target is a known routine head). SMC-dispatched sites (rot_s13,
-rns_go, bca_check_op) show their static default operand, dotted.
+Parses every JSR/JMP in src/{bsp,ang,clip}/*.s + hud.s, resolves
+symbol aliases (SC_* equates), clusters routines by defining source
+file, and emits graphviz -> build/callgraph.{dot,pdf}.
+
+Reading: solid = JSR (aliases resolved) - bold dashed = tail JMP -
+red dashed = vector/SMC dispatch (zp_bv_entry / zp_tail_vec frame-
+class vectors, rns_go, rot_select) - bold border = hot path.
+
+HAND-CURATED sections (update when the architecture moves):
+  extra   — roots + interfaces reached only via vectors/fall-through
+  vec     — the vector/SMC dispatch fan-outs
+  MACRO_OWNERS — macro-generated labels with no textual definition
+  HOT     — the hot-path emphasis set
 """
-import os, re, sys, subprocess, glob, bisect
+import re, glob, os, subprocess
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-sys.path.insert(0, '.')
-os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
-os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
-import pygame; pygame.init(); pygame.display.set_mode((1, 1))
-import doom_wireframe as dw
-from bsp_render_6502 import BspRender6502
 
-r = BspRender6502(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
-                  dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
-mem = r.sc.mpu.memory
+files = sorted(glob.glob('src/bsp/*.s') + glob.glob('src/ang/*.s')
+               + glob.glob('src/clip/*.s') + ['src/hud.s'])
+label_re = re.compile(r'^(?:::)?([A-Za-z_][A-Za-z0-9_]*):(.*)$')
+call_re  = re.compile(r'\b(JSR|JMP)\s+([A-Za-z_][A-Za-z0-9_]*)\b')
+equ_re   = re.compile(r'^\s*(?:::)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*(;.*)?$')
 
-# --- symbols ---
-syms = {}
-for line in open('build/engine_b0c0.dbg'):
-    if line.startswith('sym') and 'type=lab' in line:      # LABELS only —
-        m = re.search(r'name="([^"]+)".*?val=0x([0-9A-Fa-f]+)', line)
-        if m and not m.group(1).startswith(('LOCAL', '.')):  # equates (DRV_ORG
-            syms.setdefault(m.group(1), int(m.group(2), 16)) # etc) poison ownership
-addr2names = {}
-for n, v in syms.items():
-    addr2names.setdefault(v, []).append(n)
-
-# --- defining file per label (for clustering) ---
-label_file = {}
-for f in glob.glob('src/**/*.s', recursive=True):
-    short = os.path.basename(f).replace('.s', '')
-    src = open(f).read()
-    for m in re.finditer(r'^(?:::)?([A-Za-z_][A-Za-z0-9_]*):', src, re.M):
-        label_file.setdefault(m.group(1), short)
-# macro-generated labels (CPM_ENTRY instances, thunk sites) have no
-# textual definition — hand-map them to their generating file
-for n in ('corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp'):
-    label_file[n] = 'bca'
-for n in ('rpt_jsr','rpt_jmp','d_nz'):
-    label_file[n] = 'arith'
-label_file.setdefault('dpy_back_v1', 'seg_project')
-label_file.setdefault('do_project_y_v1', 'seg_project')
-label_file.setdefault('do_project_y_v2', 'seg_project')
-label_file.setdefault('br_project_x', 'project')
-
-# --- code regions from the cfg (flat) ---
-cfg = open('src/engine_flat.cfg').read()
-regions = [(int(m.group(1), 16), int(m.group(1), 16) + int(m.group(2), 16))
-           for m in re.finditer(r'start\s*=\s*\$([0-9A-Fa-f]+),\s*size\s*=\s*\$([0-9A-Fa-f]+)', cfg)]
-
-# --- scan for JSR/JMP; collect raw edges by address ---
-raw = []   # (site_addr, opcode, target_addr)
-for lo, hi in regions:
-    a = lo
-    while a < hi - 2:
-        op = mem[a]
-        if op in (0x20, 0x4C):
-            tgt = mem[a+1] | (mem[a+2] << 8)
-            if any(l <= tgt < h for l, h in regions):
-                raw.append((a, op, tgt))
-        a += 1   # byte-wise scan: ok for edge harvesting (operand bytes
-                 # that decode as 20/4C give targets outside regions or
-                 # non-symbol addresses and are filtered below)
-
-# routine heads = all JSR targets that ARE symbols, plus known interfaces
-jsr_targets = {t for _, op, t in raw if op == 0x20 and t in addr2names}
-KNOWN = ['span_has_gap', 'bca_tail', 'cp_havepsi', 'full_vis', 'cull',
-         'draw_clipped_line_s16', 'draw_clipped_line_s16_h', 'span_mark_solid',
-         'tighten_from_records', 'br_render_frame', 'bbox_check_angle',
-         'bbox_check_angle', 'span_init', 'ns_khave', 'mask_done',
-         'lf_ns', 'br_bbox_visible', 'vertex_fetch', 'rot_gen_pair',
-         'rot_core_cos_nz', 'rns_go', 'udiv16_8', 'umul8', 'SC_UMUL8',
-         'br_view_setup', 'br_to_view', 'br_to_view_fetch', 'br_recip',
-         'br_project_x', 'br_project_y', 'do_project_y_v1', 'do_project_y_v2',
-         'dpy_back_v1', 'br_seg_xform_vertex', 'br_dcache_frame', 'bca_frame',
-         'br_back_face_test', 'reproject_at_crossing', 'anim_hub', 'anim_tick',
-         'rot_pair_thunk', 'angx_head', 'ang_head']
-heads = set(jsr_targets) | {syms[k] for k in KNOWN if k in syms}
-head_list = sorted(heads)
-def region_of(a):
-    for i, (lo, hi) in enumerate(regions):
-        if lo <= a < hi: return i
-    return None
-def owner(a):
-    i = bisect.bisect_right(head_list, a) - 1
-    if i < 0: return None
-    h = head_list[i]
-    return h if region_of(h) == region_of(a) else None    # no cross-region bleed
-def best_name(addr):
-    names = addr2names.get(addr, [])
-    if not names: return None
-    return sorted(names, key=len)[0]
-
-SMC_SITES = {syms[k] for k in ('rot_s13', 'rot_s2', 'rot_s4', 'bca_check_op') if k in syms}
-edges = {}
-for a, op, tgt in raw:
-    if tgt not in heads: continue
-    src = owner(a)
-    if src is None or src == tgt: continue
-    sn, tn = best_name(src), best_name(tgt)
-    if not sn or not tn: continue
-    style = 'dashed' if op == 0x4C else 'solid'
-    if any(abs(a - s) <= 2 for s in SMC_SITES): style = 'dotted'
-    key = (sn, tn, style)
-    edges[key] = edges.get(key, 0) + 1
-
-# drop pure-solid duplicates of dotted/dashed pairs, keep strongest
-CLUSTER_COLOR = {
-    'bca': '#2f6f4f', 'rcache': '#2f6f4f', 'header_div': '#2f6f4f',
-    'walk': '#31456e', 'bbox': '#31456e', 'view': '#31456e', 'arith': '#31456e',
-    'project': '#31456e', 'seg_project': '#31456e', 'seg_xform': '#31456e',
-    'subsector': '#31456e', 'backface': '#31456e', 'lo': '#31456e',
-    'inline': '#31456e', 'vxcache': '#31456e', 'anim': '#7a5a2f',
-    'resolve_crossing': '#31456e', 'defq': '#31456e',
-    'dcl': '#6e3140', 'dcl_s16': '#6e3140', 'tfr': '#6e3140',
-    'interp': '#6e3140', 'mark_solid': '#6e3140', 'pool': '#6e3140',
-    'query': '#6e3140', 'plot_axis': '#6e3140', 'header': '#6e3140',
-    'hud': '#7a5a2f',
+MACRO_OWNERS = {                      # CPM_ENTRY expansions (ang/bca.s)
+    'corner_phi_nn': 'src/ang/bca.s', 'corner_phi_pn': 'src/ang/bca.s',
+    'corner_phi_np': 'src/ang/bca.s', 'corner_phi_pp': 'src/ang/bca.s',
 }
-GROUP = {'bca':'angle','rcache':'angle','header_div':'angle','slope_div':'angle',
-         'dcl':'clipper','dcl_s16':'clipper','tfr':'clipper','interp':'clipper',
-         'mark_solid':'clipper','pool':'clipper','query':'clipper','plot_axis':'clipper',
-         'anim':'anim','hud':'anim'}
-nodes = {}
-for (sn, tn, _), _n in edges.items():
-    for n in (sn, tn):
-        f = label_file.get(n, '?')
-        nodes[n] = GROUP.get(f, 'traversal' if f != '?' else 'other')
 
+owner, jsr_targets, alias = dict(MACRO_OWNERS), set(), {}
+for f in files:
+    for ln in open(f):
+        code = ln.split(';')[0].rstrip()
+        m = label_re.match(code)
+        if m:
+            owner.setdefault(m.group(1), f)
+            code = m.group(2)
+        me = equ_re.match(ln.split(';')[0].rstrip())
+        if me and not me.group(2)[0].isdigit():
+            alias[me.group(1)] = me.group(2)
+        for kind, tgt in call_re.findall(code):
+            if kind == 'JSR':
+                jsr_targets.add(tgt)
+
+def resolve(n, d=0):
+    if d > 5 or n in owner and n not in alias:
+        return n
+    if n in alias and (alias[n] in owner or alias[n] in alias):
+        return resolve(alias[n], d + 1)
+    return n
+
+extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss',
+ 'vxc_arm','br_to_view_fetch','br_to_view','bbox_check_angle','box_classify',
+ 'dbox_check','bt_store','bca_tail_postrc','br_render_subsector',
+ 'br_project_x','br_project_y','rns_go','slope_div_le','cp_havepsi',
+ 'br_render_frame','br_view_setup','br_init_frame','anim_tick','anim_init',
+ 'span_init','span_has_gap','span_is_full','span_mark_solid','ev_clamp_hi_nz',
+ 'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
+ 'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
+ 'umul8','udiv16_8','interp_store','vertex_fetch','bca_frame','rc_wipe',
+ 'bcls_s0','bcls_s1','emit_vert_sx1','emit_vert_sx2','ap_edge_one',
+ 'reproject_at_crossing','br_recip','hud_draw',
+ 'corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp',
+ 'rot_core_sin','rot_core_cos','rot_gen_pair','dpy_back_v1',
+ 'do_project_y_v1','do_project_y_v2'}
+routines = ({resolve(t) for t in jsr_targets} | extra) & set(owner)
+
+edges = set()
+for f in files:
+    cur = None
+    for ln in open(f):
+        code = ln.split(';')[0].rstrip()
+        m = label_re.match(code)
+        if m:
+            if m.group(1) in routines:
+                cur = m.group(1)
+            code = m.group(2)
+        if not cur:
+            continue
+        for kind, tgt0 in call_re.findall(code):
+            tgt = resolve(tgt0)
+            if tgt in routines and tgt != cur:
+                edges.add((cur, tgt, kind))
+
+vec = [('zp_bv_entry (vector)','bbox_check_angle'),
+       ('zp_bv_entry (vector)','box_classify'),
+       ('zp_bv_entry (vector)','dbox_check'),
+       ('zp_tail_vec (vector)','bt_store'),
+       ('zp_tail_vec (vector)','bca_tail_postrc'),
+       ('rns_go (SMC)','interp_store'),
+       ('rot_select (SMC)','rot_core_sin'),('rot_select (SMC)','rot_core_cos'),
+       ('rot_select (SMC)','rot_gen_pair')]
+edges.add(('br_bbox_visible','zp_bv_entry (vector)','JMP'))
+for cp in ('corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp'):
+    edges.add((cp,'zp_tail_vec (vector)','JMP'))
+edges = {(a,b,k) for a,b,k in edges if (a,b) not in [(x,y) for x,y in vec]}
+edges = {(a,b,k) for a,b,k in edges if not b.startswith('rns_s')}
+
+MOD = lambda f: ('bsp' if '/bsp/' in f else 'ang' if '/ang/' in f
+                 else 'clip' if '/clip/' in f else 'hud')
+COLORS = {'bsp':'#dbe9ff','ang':'#ffe9d6','clip':'#e2f5df','hud':'#f2e2f5'}
+HOT = {'br_render_subsector','br_seg_xform_vertex','br_back_face_test',
+ 'br_to_view','br_project_y','br_project_x','vxc_arm','umul8','interp_store',
+ 'rns_go','br_render_frame','span_has_gap','draw_clipped_line_s16',
+ 'draw_clipped_line_s16_h','bf_seg_front','bbox_check_angle','box_classify',
+ 'dbox_check','bcls_s0','bcls_s1',
+ 'corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp'}
+
+nodes = set()
+for a,b,k in edges: nodes.update((a,b))
+for a,b in vec: nodes.update((a,b))
+import datetime
+today = datetime.date.today().isoformat()
 out = ['digraph engine {',
-       '  rankdir=LR; fontname="Helvetica"; fontsize=10;',
-       '  node [fontname="Helvetica", fontsize=9, shape=box, style="rounded,filled", fillcolor="#f5f2ea", color="#555555"];',
-       '  edge [fontname="Helvetica", fontsize=7, color="#666666", arrowsize=0.6];',
-       '  label="BBC DOOM engine call graph — linked flat image, ' +
-       'solid=JSR dashed=JMP(fused/tail) dotted=SMC-dispatched (static default) — 2026-07-20"; labelloc=t;']
-GCOLOR = {'angle': '#e4efe7', 'traversal': '#e6eaf3', 'clipper': '#f3e6ea', 'anim': '#f3eede', 'other': '#eeeeee'}
-for g in sorted(set(nodes.values())):
-    out.append(f'  subgraph cluster_{g} {{ label="{g}"; style=filled; color="#bbbbbb"; fillcolor="{GCOLOR[g]}";')
-    for n, ng in sorted(nodes.items()):
-        if ng == g:
-            f = label_file.get(n, '')
-            disp = 'corner arms' if n == 'angx_head' else n
-            out.append(f'    "{n}" [label="{disp}\\n({f}.s)"];')
+ '  rankdir=LR; fontname="Helvetica"; concentrate=true; ranksep=1.1;',
+ '  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=9];',
+ '  edge [color="#666666", arrowsize=0.6];',
+ f'  label="6502 DOOM engine call graph - {today}\\nsolid = JSR (aliases resolved) - bold dashed = tail JMP - red dashed = vector/SMC dispatch - bold border = hot path";',
+ '  labelloc=top; fontsize=12;']
+byfile = {}
+for n in sorted(nodes):
+    byfile.setdefault(owner.get(n), []).append(n)
+ci = 0
+for f, ns in sorted(byfile.items(), key=lambda kv: str(kv[0])):
+    if f is None:
+        for n in ns:
+            out.append(f'  "{n}" [fillcolor="#ffd6d6", shape=diamond];')
+        continue
+    ci += 1
+    out.append(f'  subgraph cluster_{ci} {{ label="{f.replace("src/","")}"; '
+               'style=filled; fillcolor="#f7f7f7"; color="#cccccc";')
+    for n in ns:
+        pen = ',penwidth=2.2' if n in HOT else ''
+        out.append(f'    "{n}" [fillcolor="{COLORS[MOD(f)]}"{pen}];')
     out.append('  }')
-for (sn, tn, style), cnt in sorted(edges.items()):
-    pen = min(3.0, 0.6 + 0.25 * cnt)
-    lbl = f' xlabel="{cnt}"' if cnt > 1 else ''
-    out.append(f'  "{sn}" -> "{tn}" [style={style}, penwidth={pen:.2f}{lbl}];')
+for a,b,k in sorted(edges):
+    st = '' if k=='JSR' else ' [style=dashed,penwidth=1.5,color="#333333"]'
+    out.append(f'  "{a}" -> "{b}"{st};')
+for a,b in vec:
+    out.append(f'  "{a}" -> "{b}" [style=dashed,color="#cc2222"];')
 out.append('}')
-open('build/callgraph.dot', 'w').write('\n'.join(out))
-subprocess.run(['dot', '-Tpdf', 'build/callgraph.dot', '-o', 'build/callgraph.pdf'], check=True)
-print(f'nodes: {len(nodes)}  edges: {len(edges)}  -> build/callgraph.pdf')
+os.makedirs('build', exist_ok=True)
+open('build/callgraph.dot','w').write('\n'.join(out))
+print('nodes:', len(nodes), 'edges:', len(edges)+len(vec))
+subprocess.run(['dot','-Tpdf','build/callgraph.dot','-o','build/callgraph.pdf'],
+               check=True)
+print('build/callgraph.pdf')
