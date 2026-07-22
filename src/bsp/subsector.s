@@ -867,36 +867,24 @@ sa_done:
 ; ============================================================================
 ; emit_vert_sx1 / emit_vert_sx2 — draw a vertical at endpoint 1 / 2.
 ; Caller has set yl/yh/yr/yh in zp_line_yl_l/$B3/zp_line_yr_l/$B5.
-; Fills xl/xh/xr/xh from sx1 (resp. sx2), clears records hi byte
-; (verticals never populate tighten records), pages bank C and
-; tail-calls SC_DRAW_S16. Clobbers A.
-; NOTE: callers have already verified sx_hi == 0 (on-screen column), so
-; loading the hi bytes here keeps the s16 fast path.
-; ============================================================================
-emit_vert_sx1:
-   LDA zp_seg_sx1_l
-   STA zp_line_xl_l
-   STA zp_line_xr_l
-   LDA zp_seg_sx1_h
-   STA zp_line_xl_h
-   STA zp_line_xr_h
-   ZERO zp_dcl_rec_buf_h
+; VERTICAL FASTPATH (2026-07-22): column rides A, senior byte rides Y —
+; SC_DCL_VERT discards off-screen, clamps y to the band and enters the
+; span query directly. The xl/xr/hi staging, the rec disarm (nothing on
+; the vertical path reads it; every DCL site arms/disarms explicitly)
+; and the general entry's rediscovery tests all died.
 ; (no PAGE: verticals run strictly after the horizontal cascade, which
 ;  ends bank-C on every path — see the step-bot audit note — and the
 ;  clipper never re-pages)
-   JMP SC_DRAW_S16
+; ============================================================================
+emit_vert_sx1:
+   LDY zp_seg_sx1_h
+   LDA zp_seg_sx1_l
+   JMP SC_DCL_VERT
 
-; (see banner above emit_vert_sx1)
 emit_vert_sx2:
+   LDY zp_seg_sx2_h
    LDA zp_seg_sx2_l
-   STA zp_line_xl_l
-   STA zp_line_xr_l
-   LDA zp_seg_sx2_h
-   STA zp_line_xl_h
-   STA zp_line_xr_h
-   ZERO zp_dcl_rec_buf_h
-; (no PAGE: same audit as sx1 above)
-   JMP SC_DRAW_S16
+   JMP SC_DCL_VERT
 
 
 

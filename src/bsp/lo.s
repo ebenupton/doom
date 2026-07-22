@@ -186,19 +186,16 @@ ap_solid:
    LDA VX1+10,X
    STA zp_line_yr_h
 ap_emit_y:
-; vertical at the endpoint's sx (struct slots)
-   LDA VX1+3,X
-   STA zp_line_xl_l
-   STA zp_line_xr_l
-   LDA VX1+4,X
-   STA zp_line_xl_h
-   STA zp_line_xr_h
-   ZERO zp_dcl_rec_buf_h
+; vertical at the endpoint's sx: the entry check (sx_hi != 0 -> ap_rts)
+; verified the column, so the pre-verified fastpath entry serves — one
+; load, no staging (2026-07-22; the rec disarm died with it — nothing
+; on the vertical path reads the rec bytes).
 ; (no PAGE: ap_edges expands in the verticals section of the seg loop,
 ;  strictly after hgp_fwd's emit-cascade PAGE C; every in-ladder L0
 ;  excursion re-pages C — bank C is the ladder invariant here. dfscan
 ;  11/11 same-bank; caller audit 2026-07-21.)
-   JMP SC_DRAW_S16
+   LDA VX1+3,X
+   JMP SC_DCL_VERT_ON
 ap_rts:
    RTS
 .endscope

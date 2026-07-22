@@ -420,6 +420,59 @@ dcl_done:
 ;       cy1 = max(ylo, top); cy2 = min(yhi, bot)
 ;       if cy1 <= cy2: emit vertical (xl, cy1)-(xl, cy2)
 ;       return                           # first containing span only
+; ----------------------------------------------------------------------------
+; dcl_vert / dcl_vert_on — the VERTICAL FASTPATH (2026-07-22, Eben's
+; spec: senior-byte discard, u8 y-clamp, straight into the span query,
+; no staging). Contract: A = column lo, Y = column hi (dcl_vert) or
+; column verified on-screen (dcl_vert_on); zp_line_yl/yr staged s16;
+; DISARMED (verticals never record — the general entry keeps the
+; armed/wrapper path). Bit-exact vs the old trajectory by construction:
+; the y-clamp replicates mc_vertical's arithmetic (same-side rejects,
+; boundary-degenerate reject); the senior discard equals mcv_rej; the
+; survivors enter the SAME dcl_vertical walk. xr/x-hi/rec staging and
+; the general entry's rediscovery tests are gone (~55 cyc/vertical).
+; ----------------------------------------------------------------------------
+::dcl_vert:
+   CPY #0                                  ; senior byte: off-screen left
+   BEQ dcl_vert_on                         ; (neg) or right (>=256) discards
+   RTS
+::dcl_vert_on:
+   STA zp_line_xl_l                        ; THE column (dv_* reads only this)
+; clamp y1 into the u8 band (mc_vertical's exact ladder, lo-only:
+; nothing downstream reads the y hi bytes)
+   LDA zp_line_yl_h
+   BEQ dvc_y1_done                         ; y1 in band
+   BMI dvc_y1_neg
+   LDA zp_line_yr_h                        ; y1 below the band
+   BMI dvc_y1_cl                           ; y2 above: crossing — clamp
+   BNE dvc_rej                             ; y2 also below: nothing visible
+dvc_y1_cl:
+   LDA #$FF
+   STA zp_line_yl_l
+   BNE dvc_y1_done                         ; (always: A = $FF)
+dvc_y1_neg:
+   LDA zp_line_yr_h                        ; y1 above the band
+   BMI dvc_rej                             ; y2 also above: nothing visible
+   ZERO zp_line_yl_l
+dvc_y1_done:
+; clamp y2 (same-side pairs already rejected above)
+   LDA zp_line_yr_h
+   BEQ dvc_y2_done
+   BMI dvc_y2_neg
+   LDA #$FF
+   STA zp_line_yr_l
+   BNE dvc_y2_done                         ; (always)
+dvc_y2_neg:
+   ZERO zp_line_yr_l
+dvc_y2_done:
+; clamped to a point (one end AT the boundary) -> reject, exactly as
+; the generic post-clip degen check does; else FALL INTO the span query
+   LDA zp_line_yl_l
+   CMP zp_line_yr_l
+   BNE dcl_vertical
+dvc_rej:
+   RTS
+
 dcl_vertical:
 ; Compute ylo/yhi (dx/dy not needed for verticals)
    LDA zp_line_yl_l

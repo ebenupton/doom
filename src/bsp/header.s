@@ -367,6 +367,9 @@ code_head:
 .import seg_zero_rec_solid
 .import tighten_from_records
 .import draw_clipped_line_s16, draw_clipped_line_s16_h
+.import dcl_vert, dcl_vert_on           ; vertical fastpath (senior-byte
+SC_DCL_VERT = dcl_vert                  ; discard + y clamp + span query;
+SC_DCL_VERT_ON = dcl_vert_on            ; _ON = column pre-verified u8)
 SC_DRAW_S16 = draw_clipped_line_s16
 SC_DRAW_S16_H = draw_clipped_line_s16_h   ; horizontal: x read from zp_seg_sx1/2
 SC_MARK_SOLID = span_mark_solid

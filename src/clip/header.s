@@ -106,4 +106,5 @@ SEG_BANKC
 .export span_init, span_mark_solid, span_is_full
 .export span_read, interp_store, draw_clipped_line
 .export tighten_from_records, draw_clipped_line_s16, draw_clipped_line_s16_h
+.export dcl_vert, dcl_vert_on           ; vertical fastpath (dcl.s)
 .export umul8, udiv16_8
