@@ -524,11 +524,13 @@ bcap_s1:
    SEC
    LDA bca_afn
    SBC RC_P2L_1,Y
-   STA t0
+   TAY                                     ; Y: node -> r2 lo (that SBC was
+                                        ; the last plane read; TAY leaves
+                                        ; C intact for the hi-byte SBC —
+                                        ; the t0 bounce died, Eben's spot)
    LDA bca_afn+1
    SBC t1
    AND #$0F
-   LDY t0
    JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
 bcap_s1_miss:
    STX rc_bytehi                           ; stash byte + bit for bt_store's
@@ -571,11 +573,10 @@ bcap_s0:
    SEC
    LDA bca_afn
    SBC RC_P2L_0,Y
-   STA t0                                  ; r2 lo (Y is still node)
+   TAY                                     ; Y: node -> r2 lo (see side 1)
    LDA bca_afn+1
    SBC t1
    AND #$0F                                ; A = r2 hi
-   LDY t0                                  ; Y = r2 lo
    JMP bca_tail_postrc                     ; p2 rides A/Y, register-only
 bcap_s0_miss:
    STX rc_bytehi
