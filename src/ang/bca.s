@@ -893,7 +893,11 @@ name:
    STA pa_res                              ; rides through untouched
    LDA CPM_PSIH,X
    STA pa_res+1
-   JMP cp_havepsi
+   JMP cp_havepsi_hit                      ; C=1 PROVEN: all four probe
+                                        ; CMPs matched (equality sets C),
+                                        ; the serve preserves it — skip
+                                        ; the SEC (carry-flow audit
+                                        ; 2026-07-22)
 cmiss0:
    STA CPM_KDYH,X                          ; staggered key bank: enter at
    LDA pa_dy                               ; the missed stage, store the
@@ -1158,11 +1162,17 @@ mask_done:
    STA CPM_PSIL,X
 cp_havepsi:
 ; r = (afn - psi) & 4095, pure u12 (consumers do mod-4096 arithmetic
-; on the hi nibble directly). Also the rotation cache warm path's
-; re-derive (JSR). pa_res stays stored: the psi-hi SBC and the test
-; hooks read it.
+; on the hi nibble directly). pa_res stays stored: the psi-hi SBC and
+; the test hooks read it. (The 'rotation cache warm re-derive (JSR)'
+; note died with the per-side probes — the serve algebra is inlined
+; there; the memo HIT serve is the only other arrival, at _hit.)
 ;   out: A = r hi, Y = r lo, X = slot
+; CARRY FLOW (audit 2026-07-22): the mask_done fall-through arrives
+; MIXED — add-compose C=0 (the no-wrap ADC), khave_sub C=1 (sub bases
+; can't borrow), zero-delta arms inherit the classify's C — so the
+; SEC stays for the fall-through; memo hits enter past it.
    SEC
+cp_havepsi_hit:
    LDA bca_afn
    SBC pa_res
    TAY                                     ; r lo rides Y to the caller
