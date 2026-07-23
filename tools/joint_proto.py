@@ -116,6 +116,7 @@ def _symdiff(fa, fb):
 # mode B: joint evaluation at first meeting
 # ---------------------------------------------------------------------------
 _done = set()                     # (vertex, front) groups evaluated this frame
+_prov = []                        # mode-B emissions: (sx, y_a, y_b, vertex, front)
 _emitted = {}                     # vertex -> interval list already drawn (any
                                   # front): the cross-front dedup mode A gets
                                   # from _vert_covered_by_solid_ap yielding
@@ -193,10 +194,18 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
         # cross-front dedup: never redraw coverage another group at this
         # vertex already emitted this frame
         prev = _emitted.get(vidx, [])
-        bits = _setminus(bits, prev)
+        bits2 = _setminus(bits, prev)
+        if prev:
+            # dedup REMAINDER slivers: the two fronts' aperture chains
+            # can disagree by ~1px in projection; the protruding lip is
+            # sub-informative — drop pieces the dedup shaved below 2px
+            bits2 = [p for p in bits2 if p[1] - p[0] >= 2]
+        bits = bits2
         _emitted[vidx] = _union(prev + bits)
         lines = [(sx, a, sx, b) for a, b in bits if b - a >= 1]
         if lines:
+            for l in lines:
+                _prov.append((l[0], l[1], l[3], vidx, front))
             EndpointClipSpans.draw_clipped(clips, lines, (0, 255, 0), surface)
 
 
@@ -226,6 +235,7 @@ def _reset_trace():
 def render_frame(px, py, ab):
     _done.clear()
     _emitted.clear()
+    del _prov[:]
     _reset_trace()
     dw.fp_module.mul_reset()
     es._drawn_lines = []
@@ -260,10 +270,76 @@ def accumulate(drawn):
     return accum, over
 
 
+def vertical_labels(drawn):
+    """[(label, x, y1, y2, provenance-or-None)] for drawn verticals, in
+    draw order. Provenance = (vertex, front) when a mode-B emission at
+    that column contains the clipped range."""
+    out = []
+    n = 0
+    for (_i, x1, y1, x2, y2) in drawn:
+        if x1 != x2 or abs(y2 - y1) < 1:
+            continue              # (1px x1==x2 fragments of clipped
+                                  #  diagonals are not verticals)
+        n += 1
+        lo, hi = min(y1, y2), max(y1, y2)
+        prov = None
+        for (sx, a, b, vtx, fr) in _prov:   # exact interval first
+            if sx == x1 and abs(a - lo) <= 1 and abs(b - hi) <= 1:
+                prov = (vtx, fr)
+                break
+        if prov is None:
+            for (sx, a, b, vtx, fr) in _prov:
+                if sx == x1 and a - 1 <= lo and hi <= b + 1:
+                    prov = (vtx, fr)
+                    break
+        out.append((n, x1, lo, hi, prov))
+    return out
+
+
+def print_label_table(labels, mode_b):
+    print(f'--- verticals ({"B joint" if mode_b else "A current"}) ---')
+    for (n, x, lo, hi, prov) in labels:
+        src = f'v{prov[0]}/f{prov[1]}' if prov else ('seg-emitted' if not mode_b else '?')
+        print(f'  #{n:<3d} x={x:<3d} y={lo:.0f}-{hi:.0f}  {src}')
+
+
+_DIGITS = {                     # 3x5 bitmap font (font subsystem-proof)
+ '0':'111101101101111','1':'010110010010111','2':'111001111100111',
+ '3':'111001111001111','4':'101101111001001','5':'111100111001111',
+ '6':'111100111101111','7':'111001010010010','8':'111101111101111',
+ '9':'111101111001111'}
+
+def _blit_num(screen, n, x, y, color, px=2):
+    for i, ch in enumerate(str(n)):
+        bm = _DIGITS[ch]
+        for r in range(5):
+            for c in range(3):
+                if bm[r * 3 + c] == '1':
+                    screen.fill(color, (x + i * 4 * px + c * px,
+                                        y + r * px, px, px))
+
+def draw_labels(screen, labels, font=None):
+    placed = []
+    for (n, x, lo, hi, _prov_) in labels:
+        w = len(str(n)) * 4 * 2
+        lx = x * SCALE + 3
+        if lx + w > W * SCALE:
+            lx = x * SCALE - w - 3
+        ly = int((lo + hi) / 2 * SCALE) - 5
+        ly = max(0, min(H * SCALE - 12, ly))
+        for _ in range(20):                    # nudge below colliders
+            if not any(abs(ly - py) < 12 and lx < px + pw and px < lx + w
+                       for (px, py, pw) in placed):
+                break
+            ly += 12
+        placed.append((lx, ly, w))
+        _blit_num(screen, n, lx, ly, (255, 220, 60))
+
+
 def main():
     pygame.init()
     screen = pygame.display.set_mode((W * SCALE, H * SCALE + 24))
-    font = pygame.font.SysFont('Menlo,monospace', 14)
+    font = pygame.font.Font(None, 16)
     px, py, ab = 1056.0, -3616.0, 64
     dirty = True
     clock = pygame.time.Clock()
@@ -289,12 +365,14 @@ def main():
         if dirty:
             drawn = render_frame(px, py, ab)
             accum, over = accumulate(drawn)
-            nvert = sum(1 for d in drawn if d[1] == d[3])
+            labels = vertical_labels(drawn)
+            print_label_table(labels, MODE_B[0])
             screen.fill((0, 0, 0))
             screen.blit(pygame.transform.scale(accum, (W * SCALE, H * SCALE)),
                         (0, 0))
+            draw_labels(screen, labels, font)
             mode = 'B: JOINT RULE' if MODE_B[0] else 'A: CURRENT (NOVT/APEDGE)'
-            txt = (f'{mode}   segs={len(drawn)}  verts={nvert}  '
+            txt = (f'{mode}   segs={len(drawn)}  verts={len(labels)}  '
                    f'overdraw px={over}   ({px:.0f},{py:.0f},{ab})  '
                    f'TAB=toggle')
             screen.blit(font.render(txt, True, (255, 255, 160)),
@@ -319,6 +397,17 @@ if __name__ == '__main__':
             sb, ob = accumulate(b_drawn)
             va = sum(1 for d in a_drawn if d[1] == d[3])
             vb = sum(1 for d in b_drawn if d[1] == d[3])
+            font = pygame.font.Font(None, 15)
+            for tag, dr, surf, mb in (('A', a_drawn, sa, False),
+                                      ('B', b_drawn, sb, True)):
+                MODE_B[0] = mb
+                # re-render for provenance capture (cheap, deterministic)
+                dr2 = render_frame(px, py, ab)
+                labels = vertical_labels(dr2)
+                print_label_table(labels, mb)
+                big = pygame.transform.scale(surf, (W * SCALE, H * SCALE))
+                draw_labels(big, labels, font)
+                pygame.image.save(big, f'/tmp/jpl_{tag}_{px}_{py}_{ab}.png')
             print(f'({px},{py},{ab}): A segs={len(a_drawn)} verts={va} '
                   f'overdraw={oa} | B segs={len(b_drawn)} verts={vb} '
                   f'overdraw={ob}')
