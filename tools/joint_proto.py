@@ -63,12 +63,15 @@ def _colinear(si, sj):
     (bx, by) = segs[sj][13], segs[sj][14]
     return ax * by - ay * bx == 0
 
-# (vertex, front) -> list of seg indices with an endpoint there
+# vertex -> list of seg indices with an endpoint there (ALL fronts:
+# the wall plane continues across front-sector boundaries — Eben's
+# staircase report: the step-side wall of the NEXT sector is the
+# colinear partner that stops the edge at the step top)
 groups = {}
 for _i, _svwh in enumerate(segs):
     _s = _svwh[0]
     for _v in (_s[0], _s[1]):
-        groups.setdefault((_v, _svwh[1]), []).append(_i)
+        groups.setdefault(_v, []).append(_i)
 
 
 def _front_facing(si, ctx):
@@ -130,10 +133,9 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
     s = svwh[0]
     if not _front_facing(si, ctx):
         return
-    fh, ch = svwh[3], svwh[4]
     front = svwh[1]
     for vidx in (s[0], s[1]):
-        key = (vidx, front)
+        key = vidx
         if key in _done:
             continue
         _done.add(key)
@@ -155,23 +157,26 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
             vcache[vidx] = vc + (sx, rxh, rxl)
         if sx < 0 or sx > 255:
             continue              # off-screen column (engine parity)
-        T = dw.fp_project_y(ch - vz, rxh, rxl)
-        B = dw.fp_project_y(fh - vz, rxh, rxl)
-        # face sets of ALL members (facing recorded, not filtered:
-        # a COLINEAR partner continues the surface whichever way it
-        # faces — its coverage is static; only CORNER contributions
-        # are silhouette-gated on facing)
+        # face sets of ALL members at this vertex, EACH from its own
+        # front heights (cross-front: the wall plane continues across
+        # sector boundaries). Facing recorded, not filtered — a
+        # colinear partner continues the surface whichever way it
+        # faces; whole runs are silhouette-gated below.
         members = []
         for sj in groups[key]:
-            if _solid(segs[sj]):
-                F = [(T, B)]
+            svj = segs[sj]
+            fh_j, ch_j = svj[3], svj[4]
+            T_j = dw.fp_project_y(ch_j - vz, rxh, rxl)
+            B_j = dw.fp_project_y(fh_j - vz, rxh, rxl)
+            if _solid(svj):
+                F = [(T_j, B_j)]
             else:
-                bs = sectors[segs[sj][2]]
+                bs = sectors[svj[2]]
                 F = []
-                if bs[1] < ch:    # NEEDBT
-                    F.append((T, dw.fp_project_y(bs[1] - vz, rxh, rxl)))
-                if bs[0] > fh:    # NEEDBB
-                    F.append((dw.fp_project_y(bs[0] - vz, rxh, rxl), B))
+                if bs[1] < ch_j:  # NEEDBT
+                    F.append((T_j, dw.fp_project_y(bs[1] - vz, rxh, rxl)))
+                if bs[0] > fh_j:  # NEEDBB
+                    F.append((dw.fp_project_y(bs[0] - vz, rxh, rxl), B_j))
             members.append((sj, _union(F), _front_facing(sj, ctx)))
         # colinear runs (geometry only); a run is LIVE if any member
         # front-faces. Per run: edge E = Δ of its two members' coverage
