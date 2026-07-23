@@ -254,10 +254,9 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
         bits = bits2
         _emitted[vidx] = _union(prev + bits)
         lines = [(sx, a, sx, b) for a, b in bits if b - a >= 1]
-        if lines:
-            for l in lines:
-                _prov.append((l[0], l[1], l[3], vidx, front))
-            EndpointClipSpans.draw_clipped(clips, lines, (0, 255, 0), surface)
+        for l in lines:
+            _prov.append((l[0], l[1], l[3], vidx, front))
+            clips._draw_vertical_fixed(l[0], l[1], l[3], surface)
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +266,49 @@ class ProtoClips(EndpointClipSpans):
     def draw_clipped(self, lines, color, surface, stats=None, roles=None):
         if MODE_B[0]:
             lines = [l for l in lines if abs(l[0] - l[2]) >= 0.5]
-        super().draw_clipped(lines, color, surface, stats)
+        verts = [l for l in lines if abs(l[0] - l[2]) < 1]
+        rest = [l for l in lines if abs(l[0] - l[2]) >= 1]
+        for (x1, y1, x2, y2) in verts:
+            self._draw_vertical_fixed(x1, y1, y2, surface)
+        if rest:
+            super().draw_clipped(rest, color, surface, stats)
+
+    # TFIX (Eben's longstanding-bug find, 2026-07-24): the shared
+    # vertical clip picks the span serving a column with a doubly-
+    # INCLUSIVE first-match (xs <= ix <= xe) — boundary columns are
+    # always served by the LEFTMOST touching span, so a portal's left
+    # jamb column reads the stale pre-tighten aperture (spawn door:
+    # left jamb drew [26,116], right [62,107]; both should be the
+    # aperture). Correct serving at a shared boundary column is the
+    # MORE RESTRICTIVE touching span: the jamb vertical (inside both
+    # apertures) still draws; the transom/sill leak is blocked.
+    # PROTOTYPE-LOCAL: the engine fix (dcl_vertical's dv_check + the
+    # python spans + rebaseline) is its own landing.
+    def _draw_vertical_fixed(self, ix, y1, y2, surface):
+        import endpoint_spans as _es
+        best = None
+        for s in self.spans:
+            if s[0] <= ix <= s[1]:
+                top_y = _es._span_top_ceil(s, ix)
+                bot_y = _es._span_bot(s, ix)
+                if top_y >= bot_y:
+                    continue
+                if best is None or (bot_y - top_y) < (best[1] - best[0]):
+                    best = (top_y, bot_y)
+            elif s[0] > ix:
+                break
+        if best is None:
+            return
+        y_min, y_max = min(y1, y2), max(y1, y2)
+        cy1, cy2 = max(y_min, best[0]), min(y_max, best[1])
+        if cy1 > cy2:
+            return
+        p1 = (ix, cy1 - self.y_display_offset)
+        p2 = (ix, cy2 - self.y_display_offset)
+        if _es._drawn_lines is not None:
+            _es._drawn_lines.append((len(_es._drawn_lines),
+                                     p1[0], p1[1], p2[0], p2[1]))
+        pygame.draw.line(surface, (0, 255, 0), p1, p2, 1)
 
 _orig_seg = dw.fp_render_seg
 def _seg_hook(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
