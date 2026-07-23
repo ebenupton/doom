@@ -51,12 +51,16 @@ def _solid(svwh):
     bs = sectors[bi]
     return bs[1] <= svwh[3] or bs[0] >= svwh[4]
 
-def _dir(si):
-    s = segs[si][0]
-    return (fpv[s[1]][0] - fpv[s[0]][0], fpv[s[1]][1] - fpv[s[0]][1])
-
 def _colinear(si, sj):
-    (ax, ay), (bx, by) = _dir(si), _dir(sj)
+    # LINEDEF-identity/direction colinearity (matches mode A's rules):
+    # a BSP split vertex is QUANTIZED off the parent line, so seg-delta
+    # cross products see a phantom 1-2 degree corner (v437's bogus
+    # full-height vertical, Eben 2026-07-23). Same linedef = colinear
+    # by identity; distinct linedefs compare the s8 linedef dirs.
+    if segs[si][0][3] == segs[sj][0][3]:
+        return True
+    (ax, ay) = segs[si][13], segs[si][14]
+    (bx, by) = segs[sj][13], segs[sj][14]
     return ax * by - ay * bx == 0
 
 # (vertex, front) -> list of seg indices with an endpoint there
@@ -184,8 +188,19 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
         for run in runs:
             if not any(ff for _, _, ff in run):
                 continue          # fully back-facing surface: no silhouette
-            E = run[0][1] if len(run) == 1 else _symdiff(run[0][1], run[1][1])
-            edges.extend(E)
+            # side-split edge: members leave V along +dir or -dir of the
+            # run's line; coverage per side = union, edge = where the
+            # two sides' coverage DIFFERS (single member: far side empty
+            # -> its whole F, the wall-end silhouette)
+            rdx, rdy = segs[run[0][0]][13], segs[run[0][0]][14]
+            pos, neg = [], []
+            for sj, F, _ff in run:
+                sv = segs[sj][0]
+                other = sv[1] if sv[0] == vidx else sv[0]
+                dd = ((fpv[other][0] - fpv[vidx][0]) * rdx +
+                      (fpv[other][1] - fpv[vidx][1]) * rdy)
+                (pos if dd >= 0 else neg).extend(F)
+            edges.extend(_symdiff(_union(pos), _union(neg)))
         # snap to the pixel grid BEFORE dedup: two front groups derive
         # the same world edge through different height chains, and the
         # float projections differ in the fraction — sub-pixel slivers
