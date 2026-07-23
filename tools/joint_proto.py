@@ -73,6 +73,29 @@ for _i, _svwh in enumerate(segs):
     for _v in (_s[0], _s[1]):
         groups.setdefault(_v, []).append(_i)
 
+# static run partition per vertex: run = maximal colinear cluster.
+# EMISSION IS PER RUN, triggered by the first RENDERED member of that
+# run reaching the vertex (Eben's v15 report: first-meet-per-vertex
+# emitted a far wall's edge while the near corridor rendered — before
+# the occluders between them had marked solid. Mode A's timing is
+# per-seg; per-run triggering restores it edge-for-edge.)
+run_of = {}                       # (vertex, seg) -> run id
+run_members = {}                  # (vertex, rid) -> [seg, ...]
+for _v, _sjs in groups.items():
+    rid = 0
+    assigned = {}
+    for _sj in _sjs:
+        for _sk, _r in assigned.items():
+            if _colinear(_sj, _sk):
+                assigned[_sj] = _r
+                break
+        else:
+            assigned[_sj] = rid
+            rid += 1
+    for _sj, _r in assigned.items():
+        run_of[(_v, _sj)] = _r
+        run_members.setdefault((_v, _r), []).append(_sj)
+
 
 def _front_facing(si, ctx):
     svwh = segs[si]
@@ -96,6 +119,16 @@ def _union(iv):
         else:
             out.append((a, b))
     return out
+
+def _inter(fa, fb):
+    ys = sorted({y for p in fa + fb for y in p})
+    out = []
+    for a, b in zip(ys, ys[1:]):
+        m = (a + b) / 2
+        if any(p[0] <= m < p[1] for p in fa) and \
+           any(p[0] <= m < p[1] for p in fb):
+            out.append((a, b))
+    return _union(out)
 
 def _setminus(fa, fb):
     ys = sorted({y for p in fa + fb for y in p})
@@ -135,7 +168,8 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
         return
     front = svwh[1]
     for vidx in (s[0], s[1]):
-        key = vidx
+        rid = run_of[(vidx, si)]
+        key = (vidx, si)
         if key in _done:
             continue
         _done.add(key)
@@ -163,7 +197,7 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
         # colinear partner continues the surface whichever way it
         # faces; whole runs are silhouette-gated below.
         members = []
-        for sj in groups[key]:
+        for sj in run_members[(vidx, rid)]:
             svj = segs[sj]
             fh_j, ch_j = svj[3], svj[4]
             T_j = dw.fp_project_y(ch_j - vz, rxh, rxl)
@@ -178,34 +212,31 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
                 if bs[0] > fh_j:  # NEEDBB
                     F.append((dw.fp_project_y(bs[0] - vz, rxh, rxl), B_j))
             members.append((sj, _union(F), _front_facing(sj, ctx)))
-        # colinear runs (geometry only); a run is LIVE if any member
-        # front-faces. Per run: edge E = Δ of its two members' coverage
-        # (single member: the wall ends here — E = its whole F).
-        runs = []
-        for m in members:
-            for run in runs:
-                if _colinear(m[0], run[0][0]):
-                    run.append(m)
-                    break
-            else:
-                runs.append([m])
-        edges = []
-        for run in runs:
-            if not any(ff for _, _, ff in run):
-                continue          # fully back-facing surface: no silhouette
-            # side-split edge: members leave V along +dir or -dir of the
-            # run's line; coverage per side = union, edge = where the
-            # two sides' coverage DIFFERS (single member: far side empty
-            # -> its whole F, the wall-end silhouette)
-            rdx, rdy = segs[run[0][0]][13], segs[run[0][0]][14]
-            pos, neg = [], []
-            for sj, F, _ff in run:
-                sv = segs[sj][0]
-                other = sv[1] if sv[0] == vidx else sv[0]
-                dd = ((fpv[other][0] - fpv[vidx][0]) * rdx +
-                      (fpv[other][1] - fpv[vidx][1]) * rdy)
-                (pos if dd >= 0 else neg).extend(F)
-            edges.extend(_symdiff(_union(pos), _union(neg)))
+        # THIS run's side-split edge (we are here because one of its
+        # members is rendering — the run is live by construction):
+        # members leave V along +dir or -dir of the run's line;
+        # coverage per side = union, edge = where the two sides'
+        # coverage DIFFERS (single member: far side empty -> its
+        # whole F, the wall-end silhouette)
+        rdx, rdy = segs[si][13], segs[si][14]
+        pos, neg = [], []
+        for sj, F, _ff in members:
+            sv = segs[sj][0]
+            other = sv[1] if sv[0] == vidx else sv[0]
+            dd = ((fpv[other][0] - fpv[vidx][0]) * rdx +
+                  (fpv[other][1] - fpv[vidx][1]) * rdy)
+            (pos if dd >= 0 else neg).extend(F)
+        edges = _symdiff(_union(pos), _union(neg))
+        # OWNERSHIP TIMING (Eben's v15 report, round 2): a Δ piece is
+        # emitted when a member whose face COVERS it renders — mode A
+        # timing, piece for piece. (The doorframe's transom band derives
+        # from the room-side face; emitting it when the corridor-side
+        # face rendered predated the corridor portal's tighten and leaked
+        # through columns the aperture caps.) Pieces covered only by
+        # never-rendered members never emit — matching A, where an
+        # undrawn seg draws nothing.
+        F_self = next(F for sj, F, _ff in members if sj == si)
+        edges = _inter(edges, F_self)
         # snap to the pixel grid BEFORE dedup: two front groups derive
         # the same world edge through different height chains, and the
         # float projections differ in the fraction — sub-pixel slivers
