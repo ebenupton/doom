@@ -449,9 +449,12 @@ def main():
     pygame.init()
     screen = pygame.display.set_mode((W * SCALE, H * SCALE + 24))
     font = pygame.font.Font(None, 16)
-    # start at the residue view: B #2 (v43/f20) full-height vertical at
-    # x=36 — the open clamp question (spawn = 1056.0, -3616.0, 64)
-    px, py, ab = 1500.0, -3700.0, 0
+    # (1500,-3700) turned out to be IN THE VOID (Eben's catch — BSP
+    # assigns a subsector but the point is outside its boundary; the
+    # old '#2 residue' there was a from-outside-the-map artifact, not
+    # clamp evidence). Start INSIDE sector 20 looking at the same
+    # geometry (v43 area); --spawn for the spawn room.
+    px, py, ab = 1400.0, -3650.0, 16
     if '--spawn' in sys.argv:
         px, py, ab = 1056.0, -3616.0, 64
     dirty = True
@@ -500,8 +503,10 @@ if __name__ == '__main__':
         os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
         pygame.init()
         pygame.display.set_mode((1, 1))
-        for (px, py, ab) in [(1056, -3616, 64), (1500, -3700, 0),
-                             (800, -3400, 96), (1200, -3000, 129)]:
+        # all poses verified INSIDE the map (two old views were void:
+        # 1500,-3700 and 1200,-3000 — Eben's catch, 2026-07-24)
+        for (px, py, ab) in [(1056, -3616, 64), (1400, -3650, 16),
+                             (800, -3400, 96), (2345, -3123, 132)]:
             MODE_B[0] = False
             a_drawn = render_frame(px, py, ab)
             sa, oa = accumulate(a_drawn)
