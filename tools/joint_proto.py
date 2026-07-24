@@ -258,9 +258,18 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
             vcache[vidx] = vc + (sx, rxh, rxl)
         if sx < 0 or sx > 255:
             continue
+        # Eben 2026-07-24: clamp each span IN WORLD HEIGHTS to the
+        # triggering seg's front sector's [floor, ceiling] before
+        # projection — the trigger's sector is where the sightline
+        # lives, and its planes bound what can be seen at this column.
+        fh_t, ch_t = segs[si][3], segs[si][4]
         for (h_lo, h_hi) in VERTEX_SPANS[vidx]:
-            y_top = dw.fp_project_y(h_hi - vz, rxh, rxl)
-            y_bot = dw.fp_project_y(h_lo - vz, rxh, rxl)
+            c_lo = max(h_lo, fh_t)
+            c_hi = min(h_hi, ch_t)
+            if c_hi <= c_lo:
+                continue
+            y_top = dw.fp_project_y(c_hi - vz, rxh, rxl)
+            y_bot = dw.fp_project_y(c_lo - vz, rxh, rxl)
             if y_bot - y_top < 1:
                 continue
             _prov.append((sx, y_top, y_bot, vidx, front))
@@ -440,7 +449,11 @@ def main():
     pygame.init()
     screen = pygame.display.set_mode((W * SCALE, H * SCALE + 24))
     font = pygame.font.Font(None, 16)
-    px, py, ab = 1056.0, -3616.0, 64
+    # start at the residue view: B #2 (v43/f20) full-height vertical at
+    # x=36 — the open clamp question (spawn = 1056.0, -3616.0, 64)
+    px, py, ab = 1500.0, -3700.0, 0
+    if '--spawn' in sys.argv:
+        px, py, ab = 1056.0, -3616.0, 64
     dirty = True
     clock = pygame.time.Clock()
     while True:
