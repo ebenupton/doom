@@ -169,6 +169,69 @@ for _v, _sjs in groups.items():
         VERTEX_SPANS[_v] = _spans
 
 
+# ---------------------------------------------------------------------------
+# DESCRIPTOR SCHEME (Eben, 2026-07-24): one byte per vertex.
+#   $00        no spans
+#   $01        fh->ch   (full corner / wall-end)
+#   $02        fh->bfh  (bottom step)
+#   $03        bch->ch  (top step)
+#   $04        doorframe pair ($03 + $02)
+#   $80|i      explicit: EXPLICIT_TAB[i] = (h_lo, h_hi, cont); cont ->
+#              also consume entry i+1 (the 9 double-explicit vertices)
+# Codes evaluate against the TRIGGER seg's four heights with the solid
+# alias bfh=fh, bch=ch — a step code on a solid trigger yields an empty
+# interval, which the census proved is exactly the correct clamp.
+# Explicit spans keep the world-height clamp against the trigger.
+# ---------------------------------------------------------------------------
+def _t_heights(t):
+    sv = segs[t]
+    fh, ch = sv[3], sv[4]
+    if sv[2] is None:
+        return {'fh': fh, 'ch': ch, 'bfh': fh, 'bch': ch}
+    bs = sectors[sv[2]]
+    return {'fh': fh, 'ch': ch, 'bfh': bs[0], 'bch': bs[1]}
+
+def _code_of(v, span):
+    for code in (('fh', 'ch'), ('fh', 'bfh'), ('bch', 'ch')):
+        rl, rh = code
+        ok = True
+        for t in groups[v]:
+            H = _t_heights(t)
+            c_lo = max(span[0], segs[t][3])
+            c_hi = min(span[1], segs[t][4])
+            if c_hi <= c_lo:
+                if H[rh] > H[rl]:
+                    ok = False; break
+            elif (H[rl], H[rh]) != (c_lo, c_hi):
+                ok = False; break
+        if ok:
+            return code
+    return None
+
+VDESC = {}                        # vertex -> byte
+EXPLICIT_TAB = []                 # [(h_lo, h_hi, cont), ...]
+_CODE_NUM = {('fh', 'ch'): 1, ('fh', 'bfh'): 2, ('bch', 'ch'): 3}
+for _v, _spans in VERTEX_SPANS.items():
+    _codes = [_code_of(_v, _sp) for _sp in _spans]
+    if all(_codes):
+        if len(_codes) == 1:
+            VDESC[_v] = _CODE_NUM[_codes[0]]
+        else:
+            assert sorted(_codes) == [('bch', 'ch'), ('fh', 'bfh')], (_v, _codes)
+            VDESC[_v] = 4
+    else:
+        assert not any(_codes), f'mixed coded/explicit at v{_v}'
+        _i = len(EXPLICIT_TAB)
+        assert _i < 0x80
+        for _k, _sp in enumerate(_spans):
+            EXPLICIT_TAB.append((_sp[0], _sp[1], _k + 1 < len(_spans)))
+        VDESC[_v] = 0x80 | _i
+
+_CODE_SPANS = {1: [('fh', 'ch')], 2: [('fh', 'bfh')], 3: [('bch', 'ch')],
+               4: [('bch', 'ch'), ('fh', 'bfh')]}
+_CODE_NAME = {1: 'fh-ch', 2: 'fh-bfh', 3: 'bch-ch', 4: 'frame'}
+
+
 def _front_facing(si, ctx):
     svwh = segs[si]
     s = svwh[0]
@@ -234,12 +297,15 @@ _emitted = {}                     # vertex -> interval list already drawn (any
                                   # from _vert_covered_by_solid_ap yielding
 
 def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
-    """STATIC scheme: first rendering seg to touch a vertex draws that
-    vertex's entire static span list. Nothing else."""
+    """DESCRIPTOR runtime: first rendering seg to touch a vertex reads
+    one descriptor byte; coded spans evaluate role pairs against the
+    trigger's own four heights (no table, no clamp — the code IS the
+    clamp); explicit spans clamp world heights to the trigger front."""
     s = segs[si][0]
     front = segs[si][1]
     for vidx in (s[0], s[1]):
-        if vidx in _done or vidx not in VERTEX_SPANS:
+        d = VDESC.get(vidx, 0)
+        if not d or vidx in _done:
             continue
         _done.add(vidx)
         dw.fp_module.mul_cat("view")
@@ -247,7 +313,7 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
             vcache[vidx] = dw.fp_to_view(fpv[vidx][0], fpv[vidx][1], ctx)
         evx_t, evx_r, evy, fvx, vy_idx = vcache[vidx][:5]
         if evy < 1:
-            continue              # behind the near plane
+            continue
         dw.fp_module.mul_cat("proj")
         rxh, rxl = dw.fp_recip(vy_idx)
         vc = vcache[vidx]
@@ -258,21 +324,29 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
             vcache[vidx] = vc + (sx, rxh, rxl)
         if sx < 0 or sx > 255:
             continue
-        # Eben 2026-07-24: clamp each span IN WORLD HEIGHTS to the
-        # triggering seg's front sector's [floor, ceiling] before
-        # projection — the trigger's sector is where the sightline
-        # lives, and its planes bound what can be seen at this column.
-        fh_t, ch_t = segs[si][3], segs[si][4]
-        for (h_lo, h_hi) in VERTEX_SPANS[vidx]:
-            c_lo = max(h_lo, fh_t)
-            c_hi = min(h_hi, ch_t)
+        H = _t_heights(si)
+        if d & 0x80:
+            i = d & 0x7F
+            fh_t, ch_t = segs[si][3], segs[si][4]
+            ivs = []
+            while True:
+                h_lo, h_hi, cont = EXPLICIT_TAB[i]
+                ivs.append((max(h_lo, fh_t), min(h_hi, ch_t)))
+                if not cont:
+                    break
+                i += 1
+            kind = 'expl'
+        else:
+            ivs = [(H[rl], H[rh]) for (rl, rh) in _CODE_SPANS[d]]
+            kind = _CODE_NAME[d]
+        for (c_lo, c_hi) in ivs:
             if c_hi <= c_lo:
                 continue
             y_top = dw.fp_project_y(c_hi - vz, rxh, rxl)
             y_bot = dw.fp_project_y(c_lo - vz, rxh, rxl)
             if y_bot - y_top < 1:
                 continue
-            _prov.append((sx, y_top, y_bot, vidx, front))
+            _prov.append((sx, y_top, y_bot, vidx, front, kind))
             clips._draw_vertical_fixed(sx, y_top, y_bot, surface)
 
 
@@ -392,14 +466,14 @@ def vertical_labels(drawn):
         n += 1
         lo, hi = min(y1, y2), max(y1, y2)
         prov = None
-        for (sx, a, b, vtx, fr) in _prov:   # exact interval first
+        for (sx, a, b, vtx, fr, kd) in _prov:   # exact interval first
             if sx == x1 and abs(a - lo) <= 1 and abs(b - hi) <= 1:
-                prov = (vtx, fr)
+                prov = (vtx, fr, kd)
                 break
         if prov is None:
-            for (sx, a, b, vtx, fr) in _prov:
+            for (sx, a, b, vtx, fr, kd) in _prov:
                 if sx == x1 and a - 1 <= lo and hi <= b + 1:
-                    prov = (vtx, fr)
+                    prov = (vtx, fr, kd)
                     break
         out.append((n, x1, lo, hi, prov))
     return out
@@ -408,7 +482,8 @@ def vertical_labels(drawn):
 def print_label_table(labels, mode_b):
     print(f'--- verticals ({"B joint" if mode_b else "A current"}) ---')
     for (n, x, lo, hi, prov) in labels:
-        src = f'v{prov[0]}/f{prov[1]}' if prov else ('seg-emitted' if not mode_b else '?')
+        src = (f'v{prov[0]}/f{prov[1]} [{prov[2]}]' if prov
+               else ('seg-emitted' if not mode_b else '?'))
         print(f'  #{n:<3d} x={x:<3d} y={lo:.0f}-{hi:.0f}  {src}')
 
 
