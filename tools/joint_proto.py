@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Joint-rule vertical prototype (Eben's spec, 2026-07-23).
+"""STATIC VERTEX SPANS prototype (Eben's spec, 2026-07-24; supersedes
+the joint-rule/ownership design — see git history for that version).
+
+Mode B: each vertex carries a STATIC, pose-independent list of
+vertical spans (world-height pairs), computed once at load from the
+run/side-split Δ algebra with NO facing gates. At render time the
+FIRST rendering seg to touch a vertex projects and draws the whole
+list; a per-frame done-set stops re-draws. That is the entire runtime
+mechanism, by design — issues are worked through by Eben.
+
+(original header follows)
+
 
 Interactive visualizer over the float reference pipeline comparing:
   mode A — CURRENT verticals: per-seg emission + NOVT/APEDGE rule web
@@ -97,6 +108,67 @@ for _v, _sjs in groups.items():
         run_members.setdefault((_v, _r), []).append(_sj)
 
 
+# STATIC per-vertex span lists (world heights, pose-independent):
+# runs by linedef colinearity; per run side-split Δ of the members'
+# static face sets; union across runs, merged.
+def _w_faceset(sj):
+    sv = segs[sj]
+    fh, ch = sv[3], sv[4]
+    if _solid(sv):
+        return [(fh, ch)]
+    bs = sectors[sv[2]]
+    F = []
+    if bs[1] < ch:
+        F.append((bs[1], ch))
+    if bs[0] > fh:
+        F.append((fh, bs[0]))
+    return F
+
+def _w_union(iv):
+    iv = sorted(p for p in iv if p[1] > p[0])
+    out = []
+    for a, b in iv:
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+def _w_symdiff(fa, fb):
+    ys = sorted({y for p in fa + fb for y in p})
+    out = []
+    for a, b in zip(ys, ys[1:]):
+        m = (a + b) / 2
+        if (any(p[0] <= m < p[1] for p in fa)) != \
+           (any(p[0] <= m < p[1] for p in fb)):
+            out.append((a, b))
+    return _w_union(out)
+
+VERTEX_SPANS = {}                 # vertex -> [(h_lo, h_hi), ...] world heights
+for _v, _sjs in groups.items():
+    _runs = []
+    for _sj in _sjs:
+        for _r in _runs:
+            if _colinear(_sj, _r[0]):
+                _r.append(_sj)
+                break
+        else:
+            _runs.append([_sj])
+    _spans = []
+    for _r in _runs:
+        _pos, _neg = [], []
+        for _sj in _r:
+            _s = segs[_sj][0]
+            _other = _s[1] if _s[0] == _v else _s[0]
+            _d = ((fpv[_other][0] - fpv[_v][0]) * segs[_r[0]][13] +
+                  (fpv[_other][1] - fpv[_v][1]) * segs[_r[0]][14])
+            (_pos if _d >= 0 else _neg).extend(_w_faceset(_sj))
+        _spans.extend(_w_symdiff(_w_union(_pos), _w_union(_neg)))
+    _spans = _w_union(_spans)
+    if _spans:
+        VERTEX_SPANS[_v] = _spans
+
+
 def _front_facing(si, ctx):
     svwh = segs[si]
     s = svwh[0]
@@ -162,25 +234,20 @@ _emitted = {}                     # vertex -> interval list already drawn (any
                                   # from _vert_covered_by_solid_ap yielding
 
 def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
-    svwh = segs[si]
-    s = svwh[0]
-    if not _front_facing(si, ctx):
-        return
-    front = svwh[1]
+    """STATIC scheme: first rendering seg to touch a vertex draws that
+    vertex's entire static span list. Nothing else."""
+    s = segs[si][0]
+    front = segs[si][1]
     for vidx in (s[0], s[1]):
-        rid = run_of[(vidx, si)]
-        key = (vidx, si)
-        if key in _done:
+        if vidx in _done or vidx not in VERTEX_SPANS:
             continue
-        _done.add(key)
-        # vertex transform + projection, EXACTLY the seg's own recipe
-        # (and cached, so the seg reuses these values verbatim)
+        _done.add(vidx)
         dw.fp_module.mul_cat("view")
         if vcache[vidx] is None:
             vcache[vidx] = dw.fp_to_view(fpv[vidx][0], fpv[vidx][1], ctx)
         evx_t, evx_r, evy, fvx, vy_idx = vcache[vidx][:5]
         if evy < 1:
-            continue              # near-clipped: the seg draws no vertical here either
+            continue              # behind the near plane
         dw.fp_module.mul_cat("proj")
         rxh, rxl = dw.fp_recip(vy_idx)
         vc = vcache[vidx]
@@ -190,73 +257,14 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
             sx = dw.fp_project_x(evx_t, fvx, rxh, rxl)
             vcache[vidx] = vc + (sx, rxh, rxl)
         if sx < 0 or sx > 255:
-            continue              # off-screen column (engine parity)
-        # face sets of ALL members at this vertex, EACH from its own
-        # front heights (cross-front: the wall plane continues across
-        # sector boundaries). Facing recorded, not filtered — a
-        # colinear partner continues the surface whichever way it
-        # faces; whole runs are silhouette-gated below.
-        members = []
-        for sj in run_members[(vidx, rid)]:
-            svj = segs[sj]
-            fh_j, ch_j = svj[3], svj[4]
-            T_j = dw.fp_project_y(ch_j - vz, rxh, rxl)
-            B_j = dw.fp_project_y(fh_j - vz, rxh, rxl)
-            if _solid(svj):
-                F = [(T_j, B_j)]
-            else:
-                bs = sectors[svj[2]]
-                F = []
-                if bs[1] < ch_j:  # NEEDBT
-                    F.append((T_j, dw.fp_project_y(bs[1] - vz, rxh, rxl)))
-                if bs[0] > fh_j:  # NEEDBB
-                    F.append((dw.fp_project_y(bs[0] - vz, rxh, rxl), B_j))
-            members.append((sj, _union(F), _front_facing(sj, ctx)))
-        # THIS run's side-split edge (we are here because one of its
-        # members is rendering — the run is live by construction):
-        # members leave V along +dir or -dir of the run's line;
-        # coverage per side = union, edge = where the two sides'
-        # coverage DIFFERS (single member: far side empty -> its
-        # whole F, the wall-end silhouette)
-        rdx, rdy = segs[si][13], segs[si][14]
-        pos, neg = [], []
-        for sj, F, _ff in members:
-            sv = segs[sj][0]
-            other = sv[1] if sv[0] == vidx else sv[0]
-            dd = ((fpv[other][0] - fpv[vidx][0]) * rdx +
-                  (fpv[other][1] - fpv[vidx][1]) * rdy)
-            (pos if dd >= 0 else neg).extend(F)
-        edges = _symdiff(_union(pos), _union(neg))
-        # OWNERSHIP TIMING (Eben's v15 report, round 2): a Δ piece is
-        # emitted when a member whose face COVERS it renders — mode A
-        # timing, piece for piece. (The doorframe's transom band derives
-        # from the room-side face; emitting it when the corridor-side
-        # face rendered predated the corridor portal's tighten and leaked
-        # through columns the aperture caps.) Pieces covered only by
-        # never-rendered members never emit — matching A, where an
-        # undrawn seg draws nothing.
-        F_self = next(F for sj, F, _ff in members if sj == si)
-        edges = _inter(edges, F_self)
-        # snap to the pixel grid BEFORE dedup: two front groups derive
-        # the same world edge through different height chains, and the
-        # float projections differ in the fraction — sub-pixel slivers
-        # would survive setminus as 1px dots
-        bits = _union([(round(a), round(b)) for a, b in edges])
-        # cross-front dedup: never redraw coverage another group at this
-        # vertex already emitted this frame
-        prev = _emitted.get(vidx, [])
-        bits2 = _setminus(bits, prev)
-        if prev:
-            # dedup REMAINDER slivers: the two fronts' aperture chains
-            # can disagree by ~1px in projection; the protruding lip is
-            # sub-informative — drop pieces the dedup shaved below 2px
-            bits2 = [p for p in bits2 if p[1] - p[0] >= 2]
-        bits = bits2
-        _emitted[vidx] = _union(prev + bits)
-        lines = [(sx, a, sx, b) for a, b in bits if b - a >= 1]
-        for l in lines:
-            _prov.append((l[0], l[1], l[3], vidx, front))
-            clips._draw_vertical_fixed(l[0], l[1], l[3], surface)
+            continue
+        for (h_lo, h_hi) in VERTEX_SPANS[vidx]:
+            y_top = dw.fp_project_y(h_hi - vz, rxh, rxl)
+            y_bot = dw.fp_project_y(h_lo - vz, rxh, rxl)
+            if y_bot - y_top < 1:
+                continue
+            _prov.append((sx, y_top, y_bot, vidx, front))
+            clips._draw_vertical_fixed(sx, y_top, y_bot, surface)
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +471,7 @@ def main():
             screen.blit(pygame.transform.scale(accum, (W * SCALE, H * SCALE)),
                         (0, 0))
             draw_labels(screen, labels, font)
-            mode = 'B: JOINT RULE' if MODE_B[0] else 'A: CURRENT (NOVT/APEDGE)'
+            mode = 'B: STATIC VERTEX SPANS' if MODE_B[0] else 'A: CURRENT (NOVT/APEDGE)'
             txt = (f'{mode}   segs={len(drawn)}  verts={len(labels)}  '
                    f'overdraw px={over}   ({px:.0f},{py:.0f},{ab})  '
                    f'TAB=toggle')
