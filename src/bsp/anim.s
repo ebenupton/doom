@@ -436,6 +436,22 @@ ai_cp:
    STA ANIM_SSMASK,X
    INX
    BNE ai_cp                               ; 256 bytes (staged page is padded)
+; VDESC planes -> MAIN $1800/$1900 (VC_CLIP's reclaimed pages): the
+; live planes are runtime-only memory that NO disc ships (banked LOW
+; starts at $1B40; the copro two-load map ships $1C00+/$8600+, and its
+; bootstrap zeroes $0400-$1AFF). Staged at VDESC_SRC (banked: bank C
+; $B200/$B300; flat: $DC00/$DD00 in the DATA span) and copied down
+; here, both builds — the PAGEs compile out flat (2026-07-25).
+   PAGE BANK_C
+   LDX #0
+ai_vd:
+   LDA VDESC_SRC,X
+   STA VDESC_LO,X
+   LDA VDESC_SRC+$100,X
+   STA VDESC_HI,X
+   INX
+   BNE ai_vd
+   PAGE BANK_L2                            ; ANIML2's ambient bank back
    LDA #5
    STA ai_midx
 ai_m:

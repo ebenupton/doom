@@ -1329,19 +1329,14 @@ _vspan_done = set()
 def vspan_frame_reset():
     _vspan_done.clear()
 
-def emit_vertex_spans(vidx, sx, proj, H, clips, surface, draw_stats,
-                      on_screen):
-    """First-touch descriptor emission for one endpoint. proj(h) -> y
-    at this vertex's reciprocal; H = trigger's four heights dict
-    (solid-aliased); on_screen = endpoint usable (not near-clipped,
-    column in [0,255])."""
+def _emit_desc_spans(vidx, sx, proj, H, clips, surface, draw_stats):
+    """Descriptor span emission for one SERVED vertex (the caller owns
+    the once-per-frame serve decision — SERVE AT FIRST TRANSFORM, Eben
+    2026-07-25: the first front-facing seg to touch the vertex).
+    proj(h) -> y at this vertex's reciprocal; H = the trigger's four
+    heights dict (solid-aliased)."""
     d = vspan_desc[vidx]
-    if vidx in _vspan_done:
-        return
-    _vspan_done.add(vidx)          # marks desc-0 too (6502 parity: the
-    if not d:                      # bit upgrades later touches to the
-        return                     # inline fast exit)
-    if not on_screen:
+    if not d:
         return
     lines = []
     if d & 0x80:
@@ -1947,8 +1942,34 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
 
     front_idx, back_idx = seg_sectors(s)
 
-    nc = near_clip(*to_view(v1[0], v1[1], vx, vy, cos_a, sin_a),
-                   *to_view(v2[0], v2[1], vx, vy, cos_a, sin_a))
+    tv1 = to_view(v1[0], v1[1], vx, vy, cos_a, sin_a)
+    tv2 = to_view(v2[0], v2[1], vx, vy, cos_a, sin_a)
+
+    # SERVE AT FIRST TRANSFORM (float arbiter; per-frame seen-set since
+    # this path has no vcache). Gates are vertex facts: behind near
+    # plane / column off-screen serve nothing but still consume the
+    # vertex. Descriptor tables are PRESCALED — un-prescale in the
+    # projection.
+    _half_w, _half_h = WIDTH * 0.5, HEIGHT * 0.5
+    _UNPRE = PRESCALE * ASPECT_DEN / ASPECT_NUM
+    _cH = None
+    for _vidx, (_ex, _ey) in ((s[0], tv1), (s[1], tv2)):
+        if _vidx in _vspan_done:
+            continue
+        _vspan_done.add(_vidx)
+        if not vspan_desc[_vidx] or _ey < 1:
+            continue
+        _sxv = _half_w + _ex * (FOCAL_X / _ey)
+        if not (0 <= _sxv <= 255):
+            continue
+        if _cH is None:
+            _cH = _vs_heights(si)
+        _fyv = FOCAL_Y / _ey
+        _emit_desc_spans(_vidx, _sxv,
+                         lambda hp, _f=_fyv: _half_h - (hp * _UNPRE - vz) * _f,
+                         _cH, clips, surface, draw_stats)
+
+    nc = near_clip(*tv1, *tv2)
     if nc is None: return
     ex1, ey1, ex2, ey2 = nc
 
@@ -1978,24 +1999,10 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
     # The step surface is the visible geometry; the tighten constrains
     # future geometry behind it.
 
-    # classic float path works in RAW world heights but the descriptor
-    # tables are PRESCALED — evaluate in prescaled space and un-prescale
-    # inside the projection (visual-only path; not gate-relevant)
-    _cH = _vs_heights(si)
-    _cs = s
-    _UNPRE = PRESCALE * ASPECT_DEN / ASPECT_NUM
-    def _c_emit():
-        emit_vertex_spans(_cs[0], sx1,
-                          lambda hp: half_h - (hp * _UNPRE - vz) * fy1,
-                          _cH, clips, surface, draw_stats, 0 <= sx1 <= 255)
-        emit_vertex_spans(_cs[1], sx2,
-                          lambda hp: half_h - (hp * _UNPRE - vz) * fy2,
-                          _cH, clips, surface, draw_stats, 0 <= sx2 <= 255)
     if solid:
         clips.draw_clipped([
             (sx1, ft1, sx2, ft2), (sx1, fb1, sx2, fb2),
         ], GREEN, surface, draw_stats)
-        _c_emit()
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
@@ -2019,7 +2026,6 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
-        _c_emit()
         if deferred is not None:
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
                              max(ft1, bt1), max(ft2, bt2),
@@ -2040,6 +2046,27 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
 
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
+
+def _fp_serve_vertex(vidx, si, clips, vz, surface, vcache):
+    """SERVE AT FIRST TRANSFORM: the caller just filled vcache[vidx]
+    (this frame's first touch, by a front-facing seg). Emit the
+    vertex's descriptor spans with THIS seg as trigger. Near-clipped /
+    off-screen columns serve nothing — vertex facts; the vcache fill
+    itself is the once-per-frame mark (no separate done-set)."""
+    d = vspan_desc[vidx]
+    if not d:
+        return
+    vc = vcache[vidx]
+    if vc[2] < 1:                       # evy: behind the near plane
+        return
+    rxh, rxl = fp_recip(vc[4])
+    sx = fp_project_x(vc[0], vc[3], rxh, rxl)
+    vcache[vidx] = vc + (sx, rxh, rxl)  # eager extend (6502 vc parity)
+    if sx < 0 or sx > 255:
+        return
+    _emit_desc_spans(vidx, sx, lambda h: fp_project_y(h - vz, rxh, rxl),
+                     _vs_heights(si), clips, surface, draw_stats)
+
 
 def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
     """Render a seg from the stripped fp_segs table.
@@ -2086,9 +2113,11 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         vcache[v1_idx] = fp_to_view(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
         vm[v1_idx][0] += fp_module.mul_counts["view"] - v_before
         v_before = fp_module.mul_counts["view"]
+        _fp_serve_vertex(v1_idx, si, clips, vz, surface, vcache)
     if vcache[v2_idx] is None:
         vcache[v2_idx] = fp_to_view(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
         vm[v2_idx][0] += fp_module.mul_counts["view"] - v_before
+        _fp_serve_vertex(v2_idx, si, clips, vz, surface, vcache)
     vc1_full = vcache[v1_idx]
     evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vc1_full[:5]
     vc2_full = vcache[v2_idx]
@@ -2208,22 +2237,12 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     _RED = (255, 0, 0)
 
     fp_module.mul_cat("clip")
-    _sH = _vs_heights(si)               # trigger heights (solid-aliased)
-    _s0 = svwh[0]
     if solid:
         clips.draw_clipped([
             (sx1, ft1, sx2, ft2),
             (sx1, fb1, sx2, fb2),
         ], GREEN, surface, draw_stats)
-        # VERTEX-SPAN DESCRIPTORS replace per-seg verticals + APEDGE
-        emit_vertex_spans(_s0[0], sx1,
-                          lambda h: fp_project_y(h - vz, ryh1, ryl1),
-                          _sH, clips, surface, draw_stats,
-                          ey1 == evy1 and 0 <= sx1 <= 255)
-        emit_vertex_spans(_s0[1], sx2,
-                          lambda h: fp_project_y(h - vz, ryh2, ryl2),
-                          _sH, clips, surface, draw_stats,
-                          ey2 == evy2 and 0 <= sx2 <= 255)
+        # (vertex-span emission moved to _fp_serve_vertex: first transform)
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
@@ -2287,16 +2306,6 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             from span_clip_6502 import BOT_RECORDS as _BOT_REC
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
                                draw_stats, roles={0: _BOT_REC})
-
-        # VERTEX-SPAN DESCRIPTORS replace frame verticals + APEDGE
-        emit_vertex_spans(_s0[0], sx1,
-                          lambda h: fp_project_y(h - vz, ryh1, ryl1),
-                          _sH, clips, surface, draw_stats,
-                          ey1 == evy1 and 0 <= sx1 <= 255)
-        emit_vertex_spans(_s0[1], sx2,
-                          lambda h: fp_project_y(h - vz, ryh2, ryl2),
-                          _sH, clips, surface, draw_stats,
-                          ey2 == evy2 and 0 <= sx2 <= 255)
 
         # Tighten: use back heights only if computed, otherwise front = tighter
         tt1 = bt1 if need_bt else ft1
@@ -2477,6 +2486,40 @@ def _packed_write_vwh(ram, wi, sy):
     set_valid(ram, _p_layout['ram_vwh_valid'], wi)
 
 
+def _packed_serve_vertex(vidx, si, clips, vz, surface, ram,
+                         evx_t, fvx, evy, vy_idx):
+    """SERVE AT FIRST TRANSFORM (packed mirror of the 6502 vc_miss
+    tail): caller just wrote the RAM vcache entry. Projects sx eagerly
+    (6502 parity) and emits the descriptor spans with THIS seg as
+    trigger. Heights mirror the 6502's zp fh/ch + header +12/13 with
+    the solid alias (runtime-solid segs never consume back heights:
+    the H compare == the NEEDBT/NEEDBB flag gates)."""
+    d = vspan_desc[vidx]
+    if not d:
+        return
+    if evy < 1:                          # behind the near plane
+        return
+    rxh, rxl = fp_recip(vy_idx)
+    sx = fp_project_x(evx_t, fvx, rxh, rxl)
+    base = _p_layout['ram_vcache'] + vidx * VCACHE_ENTRY
+    write_s16(ram, base + VC_SX, sx)     # eager fill (6502 vc parity)
+    if sx < 0 or sx > 255:
+        return
+    dtl = si * SEG_DTL_SIZE
+    fh = read_s8(_p_rom_detail, dtl + SD_FH)
+    ch = read_s8(_p_rom_detail, dtl + SD_CH)
+    hdr = _p_layout['off_seg_hdr'] + si * SEG_HDR_SIZE
+    flags = _p_rom_main[hdr + 8]
+    if flags & SF_SOLID:
+        H = {'fh': fh, 'ch': ch, 'bfh': fh, 'bch': ch}
+    else:
+        H = {'fh': fh, 'ch': ch,
+             'bfh': read_s8(_p_rom_detail, dtl + SD_BFH),
+             'bch': read_s8(_p_rom_detail, dtl + SD_BCH)}
+    _emit_desc_spans(vidx, sx, lambda h: fp_project_y(h - vz, rxh, rxl),
+                     H, clips, surface, draw_stats)
+
+
 def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     """Render seg #si reading geometry from packed ROM, caching in RAM.
 
@@ -2566,7 +2609,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             result = fp_to_view(wx1, wy1, ctx)
             evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
             _packed_write_vcache(ram, v1_idx, evx1_t, fvx1, evy1, vy_idx1, 0)
-            _vc1_has_sx = False
+            _packed_serve_vertex(v1_idx, si, clips, vz, surface, ram,
+                                 evx1_t, fvx1, evy1, vy_idx1)
+            _vc1_has_sx = (_packed_read_vcache(ram, v1_idx)[3] != 0)
         else:
             evx1_t = vc1[0]
             evy1   = vc1[1]
@@ -2580,7 +2625,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             result = fp_to_view(wx2, wy2, ctx)
             evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
             _packed_write_vcache(ram, v2_idx, evx2_t, fvx2, evy2, vy_idx2, 0)
-            _vc2_has_sx = False
+            _packed_serve_vertex(v2_idx, si, clips, vz, surface, ram,
+                                 evx2_t, fvx2, evy2, vy_idx2)
+            _vc2_has_sx = (_packed_read_vcache(ram, v2_idx)[3] != 0)
         else:
             evx2_t = vc2[0]
             evy2   = vc2[1]
@@ -2697,15 +2744,6 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     solid = bool(flags & SF_SOLID)
     no_vt1 = bool(flags & SF_NOVT1)
     no_vt2 = bool(flags & SF_NOVT2)
-    # trigger heights for the vertex-span descriptors (solid alias;
-    # dtl_off is assigned later — index the detail stream directly)
-    if solid:
-        _pH = {'fh': fh, 'ch': ch, 'bfh': fh, 'bch': ch}
-    else:
-        _pH = {'fh': fh, 'ch': ch,
-               'bfh': read_s8(rom_d, si * SEG_DTL_SIZE + SD_BFH),
-               'bch': read_s8(rom_d, si * SEG_DTL_SIZE + SD_BCH)}
-
     # Annotation: record verticals for the V-key overlay (mirrors
     # fp_render_seg).  Rule string here is approximate — packed flags
     # don't preserve which rule fired, so we just say "Rn" if suppressed.
@@ -2737,11 +2775,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             lines.append((sx1, fb1, sx2, fb2))
         if lines:
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
-        # VERTEX-SPAN DESCRIPTORS replace per-seg verticals + APEDGE
-        emit_vertex_spans(v1_idx, sx1, _py1, _pH, clips, surface, draw_stats,
-                          ey1 == evy1 and 0 <= sx1 <= 255)
-        emit_vertex_spans(v2_idx, sx2, _py2, _pH, clips, surface, draw_stats,
-                          ey2 == evy2 and 0 <= sx2 <= 255)
+        # (vertex-span emission moved to _packed_serve_vertex)
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
@@ -2856,12 +2890,6 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 from span_clip_6502 import BOT_RECORDS as _BOT_REC
                 clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
                                    draw_stats, roles={0: _BOT_REC})
-
-        # VERTEX-SPAN DESCRIPTORS replace frame verticals + APEDGE
-        emit_vertex_spans(v1_idx, sx1, _py1, _pH, clips, surface, draw_stats,
-                          ey1 == evy1 and 0 <= sx1 <= 255)
-        emit_vertex_spans(v2_idx, sx2, _py2, _pH, clips, surface, draw_stats,
-                          ey2 == evy2 and 0 <= sx2 <= 255)
 
         # Tighten
         tt1 = bt1 if need_bt else ft1

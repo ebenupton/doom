@@ -330,20 +330,35 @@ RECIP_BASE = $D500                      ; flat LEVEL block (2026-07-21 map)
 ; bfh/bch = fh/ch at pack time, so the step codes self-annul via the
 ; NEEDBB/NEEDBT gates). Explicit entries are world s8 height pairs,
 ; clamped to the trigger's zp_seg_fh/ch, projected at the endpoint
-; recip. VDONE = the once-per-frame first-touch bitmap (byte index =
-; the header key's B byte = idx>>3, bit = vc_bit_mask[idx&7]).
+; recip. Serve-once = the vc valid bit (first transform this frame).
+; VDESC lives in MAIN RAM in BOTH builds (2026-07-25, serve at first
+; transform: the serve runs under BANK_L2 inside the vc-miss tail, so
+; the descriptor read must not depend on the paged window). Banked
+; boot: the disc ships the planes in bank C at $B200/$B300 (staging)
+; and anim_init copies them down. VDONE is GONE — the vc valid bit is
+; the once-per-frame mark.
+VDESC_LO   = $1800                      ; ids 0-255 (VC_CLIP's freed page:
+VDESC_HI   = $1900                      ; ids 256+   runtime-only memory —
+                                        ; $0600 stayed free; $1A00 is the
+                                        ; DRIVER's live vsync journal
+                                        ; (JBASE) — the bare-boot catch)
 .if ::BANKED
-VDESC      = $B200                      ; bank C (verticals run under C)
-VEXPL_LO   = $B400
+VDESC_SRC  = $B200                      ; staging: bank C (banked disc)
+.else
+VDESC_SRC  = $DC00                      ; staging: flat TABLES block (the
+                                        ; copro's two-load DATA span —
+                                        ; $1800 is runtime-only and never
+                                        ; shipped; anim_init copies down)
+.endif
+.if ::BANKED
+VEXPL_LO   = $B400                      ; bank C (explicit serve pages C)
 VEXPL_HI   = $B460
 VEXPL_CONT = $B500
 .else
-VDESC      = $DC00                      ; flat TABLES block
-VEXPL_LO   = $DE00
+VEXPL_LO   = $DE00                      ; flat TABLES block
 VEXPL_HI   = $DE60
 VEXPL_CONT = $DF00
 .endif
-VDONE = $0600                           ; main (DEFQ's freed page)
 
 ; Vertex transform cache: per-vertex saved view + projection results.
 ; Skip redundant transforms when multiple segs share a vertex.
@@ -362,7 +377,8 @@ VC_RHI  = VCACHE_BASE + $400
 VC_RLO  = VCACHE_BASE + $600
 VC_SXL  = VCACHE_BASE + $800
 VC_SXH  = VCACHE_BASE + $A00
-VC_CLIP = VCACHE_BASE + $C00
+; (VC_CLIP retired 2026-07-25: VC_RLO==0 is the cached clip verdict —
+; a live S is never 0 — freeing $1800-$19FF for the VDESC planes)
 VCACHE_VALID_BASE = $1B00               ; 59 bytes for 467 vertices
 
 

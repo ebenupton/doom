@@ -83,7 +83,9 @@ br_seg_xform_vertex:
    ZERO {VX1+2,X}                         ; clip = 0 (struct)
    LDA VCACHE_VALID_BASE,Y
    AND zp_seg_v_bitm
-   BEQ vc_miss
+   BNE vc_hit_c                            ; (the fold's clip blocks grew
+   JMP vc_miss                             ; the hit arms past branch
+vc_hit_c:                                  ; range: miss pays the JMP)
 ; --- Cache hit: senior-bit arm (plane page BAKED), Y = idx&255 for every
 ; field — no address generation, no Y navigation. Fields go STRAIGHT
 ; from the planes into the endpoint struct (X = zp_seg_ep); rhi/rlo also
@@ -97,16 +99,14 @@ br_seg_xform_vertex:
    STA VX1+0,X
    LDA VC_EVX,Y
    STA VX1+1,X
-   LDA VC_CLIP,Y                           ; cached near-clip verdict
-   BEQ vch0_ok
-   STA VX1+2,X                             ; clip = 1
-   BNE vch0_pg                             ; (A = clip, nonzero: always)
-                                        ; share the normal exit's page —
-                                        ; keeps vc_miss in branch range
-vch0_ok:
+   LDA VC_RLO,Y                            ; rlo DOUBLES as the cached
+   BEQ vch0_clip                           ; near-clip verdict (a live S
+                                        ; is never 0) — VC_CLIP retired
+                                        ; 2026-07-25, its page is VDESC's
 ; sx first, rlo LAST: RNS_SELECT clobbers X (its vector index), so the
 ; select runs after the final struct store and the old LDX zp_seg_ep
-; reload is gone. The vector belongs to whoever wrote rlo last.
+; reload is gone. The vector belongs to whoever wrote rlo last (the
+; clip test above re-reads rlo at the tail for exactly this reason).
    LDA VC_SXL,Y
    STA VX1+3,X                             ; sx_lo
    LDA VC_SXH,Y
@@ -123,6 +123,10 @@ vch0_pg:
    RTS                                     ; Y projection DEFERRED to the
                                         ; post-has_gap y stage (2026-07-11):
                                         ; culled segs never project.
+vch0_clip:
+   LDA #1
+   STA VX1+2,X                             ; clip = 1
+   BNE vch0_pg                             ; (always)
 vc_hit_hi:
 ; (senior twin — pages +$100 baked; body identical)
    LDY zp_seg_v_idx_l
@@ -130,8 +134,9 @@ vc_hit_hi:
    STA VX1+0,X
    LDA VC_EVX+$100,Y
    STA VX1+1,X
-   LDA VC_CLIP+$100,Y
-   BEQ vch1_ok
+   LDA VC_RLO+$100,Y                       ; rlo==0 = cached clip verdict
+   BNE vch1_ok
+   LDA #1
    STA VX1+2,X
    PAGE BANK_L2                            ; exit contract (see head)
    RTS
@@ -230,8 +235,9 @@ nc_fail:
    STA VC_EVY,Y
    LDA VX1+1,X
    STA VC_EVX,Y
+   LDA #0
+   STA VC_RLO,Y                            ; rlo = 0 = the clip verdict
    LDA #1
-   STA VC_CLIP,Y
    STA VX1+2,X                             ; clip = 1
    RTS
 ncf_hi:
@@ -240,8 +246,9 @@ ncf_hi:
    STA VC_EVY+$100,Y
    LDA VX1+1,X
    STA VC_EVX+$100,Y
+   LDA #0
+   STA VC_RLO+$100,Y                       ; rlo = 0 = the clip verdict
    LDA #1
-   STA VC_CLIP+$100,Y
    STA VX1+2,X
    RTS
 nc_ok:
@@ -301,10 +308,9 @@ nc_ok:
    STA VC_SXL,Y
    LDA zp_br_res_h
    STA VC_SXH,Y
-   LDA #0
-   STA VC_CLIP,Y
-; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
-   RTS
+; (clip verdict = the NONZERO rlo just stored; VC_CLIP retired)
+   JMP vs_serve                            ; SERVE AT FIRST TRANSFORM —
+                                        ; tail; RTSes to our caller
 vcf_hi:
    LDY zp_seg_v_idx_l
    LDA VX1+0,X
@@ -319,9 +325,7 @@ vcf_hi:
    STA VC_SXL+$100,Y
    LDA zp_br_res_h
    STA VC_SXH+$100,Y
-   LDA #0
-   STA VC_CLIP+$100,Y
-   RTS
+   JMP vs_serve                            ; SERVE AT FIRST TRANSFORM (tail)
 .endscope
 
 
@@ -409,5 +413,192 @@ va_cold:
    PAGE BANK_C
    vxc_cold_store                      ; leaf (vxcache.s): base = total-ref
    PAGE BANK_L2                        ; (same exit contract as the warm arms)
+   RTS
+.endscope
+
+
+; ============================================================================
+; vs_serve — vertex-span descriptor service AT FIRST TRANSFORM
+; (2026-07-25, Eben's serve-at-transform). Tail of br_seg_xform_vertex's
+; ok-miss exits ONLY: a vc hit means the vertex was already transformed
+; (and served) this frame — later touches cost NOTHING; the near-clip
+; miss exits skip this tail (nothing can draw at a clipped vertex). The
+; vc valid bit IS the once-per-frame mark: the VDONE bitmap, its wipe
+; and the emit-cascade probe sites are all retired.
+;   Entry: BANK_L2; X = zp_seg_ep (struct); zp_br_r_m8/r_s = this
+;   vertex's recip (shifter selected by br_recip); VX+3/4 = sx; vertex
+;   key in zp_seg_v_idx; trigger heights zp_seg_fh/ch (subsector
+;   prologue) + header +12/13 (bfh/bch, read under L0 only when a step
+;   code actually fires). Exit: RTS under BANK_L2 (the xform exit
+;   contract). Clobbers A/X/Y + zp_vs_* + projection scratch.
+;   Spans project via br_project_y at the endpoint recip — the same
+;   (M8,S,h) tuples the seg's own y stage will use, so the VWHC takes
+;   the miss here and the hit there: projection work is conserved.
+; ============================================================================
+vs_serve:
+.scope
+   LDA VX1+4,X                             ; column off-screen (sx_h)?
+   BNE srv_rts                             ; (near-clip impossible here)
+; re-select the rns shifter for THIS vertex's S: br_project_x just
+; patched rns_go for its own net shift (the "every consumer re-selects"
+; invariant, project.s). Projecting without this POISONS the VWHC — a
+; wrong value under a correct (M8,S,h) key, and the seg's own y stage
+; later serves the poison (the 1500-pose 107-vs-117 catch).
+; (measured: at-entry beats after-the-desc-read — desc-live serves
+; dominate, so the A-preservation ride costs more than the desc-0 skip
+; saves: 2,930,385 vs 2,931,104 suite total)
+   LDA zp_br_r_s
+   RNS_SELECT                              ; (clobbers A/X; srv paths
+                                        ; reload X from zp_seg_ep)
+   LDY zp_seg_v_idx_l
+   LDA zp_seg_v_idx_b
+   AND #$20                                ; senior plane (ids 256+)
+   BNE srv_hi
+   LDA VDESC_LO,Y
+   BNE srv_on
+srv_rts:
+   RTS
+srv_hi:
+   LDA VDESC_HI,Y
+   BNE srv_on
+   RTS
+srv_on:
+   CMP #$80
+   BCC srv_coded
+   JMP vsx_expl                            ; $80|i: explicit table ref
+srv_coded:
+   CMP #2
+   BCC srv_c1                              ; $01: fh->ch
+   BEQ srv_c2                              ; $02: fh->bfh
+   CMP #4
+   BCC srv_c3                              ; $03: bch->ch
+; $04 frame pair: top piece then bottom piece
+   JSR srv_do_c3
+srv_c2:                                    ; fh -> bfh, NEEDBB-gated (a
+   LDA zp_seg_flags                        ; solid or stepless trigger
+   AND #$08                                ; self-annuls the code)
+   BEQ srv_rts
+   PAGE BANK_L0                            ; bfh: header byte +12
+   LDY #12
+   LDA (zp_seg_hdr_p),Y
+   STA zp_vs_hh                            ; span hi = bfh
+   LDA zp_seg_fh
+   STA zp_vs_hl                            ; span lo = fh
+   JMP srv_span                            ; (srv_span re-pages L2)
+srv_c3:
+   JMP srv_do_c3                           ; tail: its RTS exits vs_serve
+srv_c1:                                    ; full corner: fh -> ch
+   LDA zp_seg_ch
+   STA zp_vs_hh
+   LDA zp_seg_fh
+   STA zp_vs_hl
+   JMP srv_span
+srv_do_c3:                                 ; bch -> ch, NEEDBT-gated
+   LDA zp_seg_flags
+   AND #$04
+   BEQ srv_c3rts
+   PAGE BANK_L0                            ; bch: header byte +13
+   LDY #13
+   LDA (zp_seg_hdr_p),Y
+   STA zp_vs_hl                            ; span lo = bch
+   LDA zp_seg_ch
+   STA zp_vs_hh                            ; span hi = ch
+; falls into srv_span; when JSR'd (frame pair) its RTS returns to the
+; dispatch, which falls into srv_c2 for the bottom piece
+srv_span:
+   PAGE BANK_L2                            ; br_project_y's VWHC planes
+   LDA zp_vs_hh
+   SEC
+   SBC zp_br_vz
+   JSR br_project_y                        ; -> Y = lo, A = hi
+   STA zp_line_yl_h
+   STY zp_line_yl_l
+   LDA zp_vs_hl
+   SEC
+   SBC zp_br_vz
+   JSR br_project_y
+   STA zp_line_yr_h
+   STY zp_line_yr_l
+   PAGE BANK_C
+   LDX zp_seg_ep
+   LDA VX1+3,X                             ; column (sx_h gated zero)
+   JSR SC_DCL_VERT_ON
+   PAGE BANK_L2                            ; xform exit contract
+   LDX zp_seg_ep
+srv_c3rts:
+   RTS
+
+vsx_expl:
+; explicit table walk: clamp world heights to this trigger's front
+; sector, project at the endpoint recip (already staged + shifter
+; selected — br_recip ran moments ago), emit. VEXPL planes live in the
+; C window; clamps are pure ZP; projections excurse to L2.
+   AND #$7F
+   STA zp_vs_i
+   PAGE BANK_C
+vsx_exl:
+   LDY zp_vs_i
+; c_lo = max(h_lo, fh)  [signed s8]
+   LDA VEXPL_LO,Y
+   SEC
+   SBC zp_seg_fh
+   BVC vsx_lo1
+   EOR #$80
+vsx_lo1:
+   BMI vsx_lofh
+   LDA VEXPL_LO,Y
+   JMP vsx_lohave
+vsx_lofh:
+   LDA zp_seg_fh
+vsx_lohave:
+   STA zp_vs_hl
+; c_hi = min(h_hi, ch)  [signed s8]
+   LDA VEXPL_HI,Y
+   SEC
+   SBC zp_seg_ch
+   BVC vsx_hi1
+   EOR #$80
+vsx_hi1:
+   BPL vsx_hich
+   LDA VEXPL_HI,Y
+   JMP vsx_hihave
+vsx_hich:
+   LDA zp_seg_ch
+vsx_hihave:
+   STA zp_vs_hh
+; empty? (c_hi <= c_lo, signed) — A rides from the STA above
+   SEC
+   SBC zp_vs_hl
+   BVC vsx_em1
+   EOR #$80
+vsx_em1:
+   BMI vsx_enext
+   BEQ vsx_enext
+   PAGE BANK_L2
+   LDA zp_vs_hh
+   SEC
+   SBC zp_br_vz
+   JSR br_project_y
+   STA zp_line_yl_h
+   STY zp_line_yl_l
+   LDA zp_vs_hl
+   SEC
+   SBC zp_br_vz
+   JSR br_project_y
+   STA zp_line_yr_h
+   STY zp_line_yr_l
+   PAGE BANK_C
+   LDX zp_seg_ep
+   LDA VX1+3,X
+   JSR SC_DCL_VERT_ON
+vsx_enext:
+   LDY zp_vs_i
+   LDA VEXPL_CONT,Y
+   BEQ vsx_edone
+   INC zp_vs_i
+   JMP vsx_exl
+vsx_edone:
+   PAGE BANK_L2                            ; xform exit contract
+   LDX zp_seg_ep
    RTS
 .endscope

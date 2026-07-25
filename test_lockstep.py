@@ -17,6 +17,7 @@ import symmap
 ENTRY_VIEW = symmap.sym('br_view_setup', banked=1)
 ENTRY_RENDER = symmap.sym('br_render_frame', banked=1)
 ENTRY_SPAN_INIT = symmap.sym('span_init', banked=1)
+ENTRY_ANIM_INIT = symmap.sym('anim_init', banked=1)
 ZP = {0x00:0x00,0x01:0xEE,0x02:0x40,0x03:0xD2,0x04:0x06,0x05:0,0x06:0,0x07:0,
       0x08:0,0x09:1,0x0A:1,0x90:0x70,0x91:0xFF,0x92:0x92,0x93:0xFE, 0x70:0x58,
       0x9D:0xFF,0x9E:0xFF}   # incl. s16 int-hi bytes (spawn negative both axes)
@@ -57,8 +58,12 @@ def run_entry(sc, entry, maxc=10_000_000):
     return False
 
 def setup_common(sc, bare_mode):
-    # both: VIEW_SETUP, span_init(bank C), clear FB (per-frame init is
-    # inline at RENDER entry since 2026-07-15)
+    # both: ANIM_INIT (copies the below-$1B40 staged tables down —
+    # SSMASK + the VDESC planes; mirrors the boot drivers), VIEW_SETUP,
+    # span_init(bank C), clear FB (per-frame init is inline at RENDER)
+    sc.mpu.memory.select(BANK_L2)
+    run_entry(sc, ENTRY_ANIM_INIT)
+    sc.mpu.memory.select(BANK_L0)
     run_entry(sc, ENTRY_VIEW)
     sc.mpu.memory.select(BANK_C); run_entry(sc, ENTRY_SPAN_INIT)
     for a in range(0x5800,0x6C00): sc.mpu.memory[a]=0
