@@ -196,13 +196,49 @@ seg_proc:
    LDA (zp_seg_hdr_p),Y
    CMP zp_seg_v_idx_b
    BNE ch_miss2                            ; A = header idx_b; idx_l equal
-; chain hit: chain_reuse_v1 expands INLINE here (macro since
-; 2026-07-17 — the old LO-resident body and its ~12 cyc JSR/RTS tax
-; died with it; the MAIN/LO split itself died in the one-region
-; reshuffle). It consumes zp_ys_done (prev seg y-staged => VX2's front
-; sy pair is live => copy it and set zp_ys_v1ok so the y stage skips
-; v1's front projection).
-   chain_reuse_v1
+; chain hit: the VX2 -> VX1 wholesale copy, IN PLACE (the macro
+; indirection retired 2026-07-26 — this is its only site; the LO body
+; + JSR tax died 2026-07-17, the MAIN/LO split died in the reshuffle).
+.scope
+   LDA zp_seg_v2_evy
+   STA zp_seg_v1_evy
+   LDA zp_seg_v2_evx
+   STA zp_seg_v1_evx
+   LDA zp_seg_v2_clipped
+   STA zp_seg_v1_clipped
+   BNE ch_reuse_done                       ; clipped: rest undefined
+   LDA zp_seg_sx2_l
+   STA zp_seg_sx1_l
+   LDA zp_seg_sx2_h
+   STA zp_seg_sx1_h
+; recip carried UNCONDITIONALLY (2026-07-11): the post-has_gap y stage
+; projects from the struct-banked recips.
+   LDA zp_seg_v2_r_m8
+   STA zp_seg_v1_r_m8
+   LDA zp_seg_v2_r_s
+   STA zp_seg_v1_r_s
+; CHAIN SY RECOVERY (2026-07-11): if the PREVIOUS seg ran its y stage
+; (zp_ys_done — consumed on chain hits, cleared by chain misses and by
+; the cull funnel's v1ok clear regime), VX2 still holds its v2's
+; projected FRONT pair, and this seg's v1 is that same vertex under
+; the same subsector heights: copy the pair and let the y stage skip
+; v1's front projection (zp_ys_v1ok).
+   LDA zp_ys_done
+   BEQ ch_reuse_done
+   STA zp_ys_v1ok                          ; A = ys_done, BEQ-proven nonzero:
+                                        ; v1ok is zero/nonzero only (the ys
+                                        ; stage LDA/BEQs it) — the old
+                                        ; trailing LDA #1 coercion died
+   LDA zp_seg_sy2_top_l
+   STA zp_seg_sy1_top_l
+   LDA zp_seg_sy2_top_h
+   STA zp_seg_sy1_top_h
+   LDA zp_seg_sy2_bot_l
+   STA zp_seg_sy1_bot_l
+   LDA zp_seg_sy2_bot_h
+   STA zp_seg_sy1_bot_h
+ch_reuse_done:
+.endscope
 .if ::C02
    STZ zp_ys_done                         ; consumed (chain) — reset for
    BRA ch_v1_done_l0                      ; THIS seg's own y stage; the

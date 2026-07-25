@@ -145,8 +145,9 @@ reproject_at_crossing:
 ; the flag-gated back pair with the vertex's recip restored. ep = 0 set
 ; by the caller. Replaces the whole VCACHE hit path + 2 VWHC lookups.
 ; ============================================================================
-; (chain_reuse_v1 is a MACRO now — bsp/inline.s — expanded at its single
-;  call site, 2026-07-17.)
+; (History: LO-resident body until 2026-07-17, then a macro in
+; inline.s; moved BODILY into subsector.s at its single site
+; 2026-07-26 — the doc block above describes the semantics.)
 
 bsp_lo_end:
 .if ::BANKED
