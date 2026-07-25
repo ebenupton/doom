@@ -62,21 +62,22 @@ br_render_frame:
    STA zp_dcl_rec_buf_h
 ; VDONE wipe (vertex-span first-touch bitmap at $0600): only bytes
 ; 0-47 — the packer asserts every desc!=0 vertex id is < 384 (E1M1 max
-; 382), so higher bytes only ever hold desc-0 marks, which may persist:
-; a stale desc-0 "served" bit just keeps suppressing a no-op call.
-; 3-wide strided loop, 16 iterations = 384 cyc (the full unroll is
-; cheaper still but +164 bytes; banked CODE has no room).
-   LDX #45                              ; VDONE: vertex-span first-touch
-bif_vdone:                              ; bitmap (48 wiped of 57)
-   STA VDONE,X
-   STA VDONE+1,X
-   STA VDONE+2,X
-   DEX
-   DEX
-   DEX
-   BPL bif_vdone
+; 382), so higher bytes only ever hold desc-0 marks, which may persist.
+; FOLDED into the vcache-valid stripe loop below (2026-07-25): ten more
+; 5-byte stripes off the same X = 48-50 bytes wiped for +250 cyc inside
+; a loop we already pay — the separate 3-wide loop was 384.
    LDX #4
-bif_clr2:                               ; 12 stripes x 5: 325 cyc (was 4x15
+bif_clr2:                               ; 12+10 stripes x 5 (was 12x5 + the
+   STA VDONE,X                          ; VDONE loop)
+   STA VDONE+5,X
+   STA VDONE+10,X
+   STA VDONE+15,X
+   STA VDONE+20,X
+   STA VDONE+25,X
+   STA VDONE+30,X
+   STA VDONE+35,X
+   STA VDONE+40,X
+   STA VDONE+45,X
    STA VCACHE_VALID_BASE,X              ; = 375; +24 B for -50/frame)
    STA VCACHE_VALID_BASE+5,X
    STA VCACHE_VALID_BASE+10,X

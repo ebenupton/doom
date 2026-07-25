@@ -267,7 +267,15 @@ RASTER_ZP_SCRSTRT = $70           ; [clip]
 zp_seg_v_idx_l = $77             ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_b = $78              ; [bsp]; B = idx>>3 (bitmap/VXC byte
 ; index, stored pre-derived in the header; idx = B*8 + (lo&7))
-zp_seg_v_bitm = $79               ; [bsp]; valid-bitmap mask (1 << (idx & 7))
+; $79 free — INSIDE THE RASTERIZER'S SCRATCH RANGE (measured 2026-07-25:
+; RASTER_ENTRY writes it mid-frame; nothing may live here across draws)
+zp_seg_v_bitm = $47               ; [bsp]; valid-bitmap mask (1 << (idx & 7));
+                                  ; SURVIVES DRAWS (the old $79 home was
+                                  ; raster scratch — reads were only safe
+                                  ; adjacent to the store); the vs2 serve
+                                  ; site + vs_fresh2 now reuse it across
+                                  ; the emit cascade ($47 = zp_vs_d's
+                                  ; slot, freed 98fc1b3)
 ; $7A free for bsp use (was zp_seg_v_cache_l; NB the NJ rasteriser
 ; scratches $7A as errs — phase-disjoint). $7B free (was _cache_h) —
 ; the vcache is page-split SoA with baked senior arms, no pointer.

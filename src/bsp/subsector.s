@@ -454,6 +454,10 @@ ys_v1_full:
    STA rns_go_op
    JSR do_project_y_v1
 ys_v2:
+; (v2-first + select-only fast arc MEASURED 2026-07-25: the crossing
+; test + arc split cost what the elided recip loads saved — wash;
+; reverted to the single-path restage. The rns vector NEVER survives
+; the xform: br_project_x re-patches rns_go on miss arcs.)
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; v2 -> struct VX2
    LDA zp_seg_v2_r_m8
@@ -667,10 +671,11 @@ step_skip:
    BNE vs1_done
    JSR vs_fresh1
 vs1_done:
-   LDA zp_seg_v_idx_l
-   AND #7
-   TAY
-   LDA vc_bit_mask,Y
+; v2's bit mask is STILL LIVE in zp_seg_v_bitm (stored by its transform;
+; nothing between writes it — chain v1 hits skip the store, leaving the
+; previous seg's v2 = a different vertex, but v2's own xform ALWAYS ran
+; last). Saves the AND/TAY/table reload the v1 site still needs.
+   LDA zp_seg_v_bitm
    LDX zp_seg_v_idx_b
    AND VDONE,X
    BNE vs2_done
@@ -826,7 +831,7 @@ f1_go:
    LDX #0
    BEQ vs_go                               ; (always: Z from LDX #0)
 ::vs_fresh2:                                ; v2 endpoint (struct VX_STRIDE)
-   LDA vc_bit_mask,Y
+   LDA zp_seg_v_bitm                        ; (v2's mask — see the site)
    ORA VDONE,X
    STA VDONE,X
    LDA VX1+VX_STRIDE+2
@@ -889,9 +894,8 @@ vsx_c1:                                    ; full corner: top -> bot
    LDA VX1+8,X
    STA zp_line_yr_h
 vsx_emit:
-   LDY #0                                  ; sx_h: gated zero at vs_go
-   LDA VX1+3,X                             ; column
-   JMP SC_DCL_VERT
+   LDA VX1+3,X                             ; column (pre-gated on-screen:
+   JMP SC_DCL_VERT_ON                      ; skip the senior-byte check)
 
 vsx_do_c3:                                 ; top step: top -> btop,
    LDA zp_seg_flags                        ; gated on NEEDBT
@@ -905,9 +909,8 @@ vsx_do_c3:                                 ; top step: top -> btop,
    STA zp_line_yr_l
    LDA VX1+10,X
    STA zp_line_yr_h
-   LDY #0                                  ; sx_h: gated zero at vs_go
-   LDA VX1+3,X
-   JMP SC_DCL_VERT                         ; tail: RTS to OUR caller
+   LDA VX1+3,X                             ; (pre-gated on-screen)
+   JMP SC_DCL_VERT_ON                      ; tail: RTS to OUR caller
 vsx_c3rts:
    RTS
 
@@ -984,9 +987,8 @@ vsx_em1:
    STY zp_line_yr_l
    PAGE BANK_C
    LDX zp_vs_x
-   LDY #0                                  ; sx_h: gated zero at vs_go
-   LDA VX1+3,X
-   JSR SC_DCL_VERT
+   LDA VX1+3,X                             ; (pre-gated on-screen)
+   JSR SC_DCL_VERT_ON
 vsx_enext:
    LDY zp_vs_i
    LDA VEXPL_CONT,Y

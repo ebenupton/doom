@@ -104,20 +104,20 @@ br_seg_xform_vertex:
                                         ; share the normal exit's page —
                                         ; keeps vc_miss in branch range
 vch0_ok:
-; sx first, rlo LAST: RNS_SELECT clobbers X (its vector index), so the
-; select runs after the final struct store and the old LDX zp_seg_ep
-; reload is gone. The vector belongs to whoever wrote rlo last.
+; HIT ARM DE-LARDED (2026-07-25 grind): the working-recip stores and
+; the RNS_SELECT had NO live consumer — every projector downstream
+; restages from the STRUCT copies and re-selects itself (y stage arms,
+; the explicit serve hoist, reproject via cross_compute; project_x
+; only runs on miss arcs). 17 cycles/hit died; the old "rlo LAST"
+; ordering note died with the select.
    LDA VC_SXL,Y
    STA VX1+3,X                             ; sx_lo
    LDA VC_SXH,Y
    STA VX1+4,X                             ; sx_hi
    LDA VC_RHI,Y
-   STA zp_br_r_m8
    STA VX1+13,X                            ; rhi (for ap2_solid_proj)
    LDA VC_RLO,Y
-   STA zp_br_r_s
-   STA VX1+14,X                            ; rlo (= S; A still holds it)
-   RNS_SELECT                              ; cached S → re-pick the shifter
+   STA VX1+14,X                            ; rlo (= S)
 vch0_pg:
    PAGE BANK_L2                            ; exit contract (see head)
    RTS                                     ; Y projection DEFERRED to the
@@ -141,13 +141,10 @@ vch1_ok:
    LDA VC_SXH+$100,Y
    STA VX1+4,X
    LDA VC_RHI+$100,Y
-   STA zp_br_r_m8
    STA VX1+13,X
    LDA VC_RLO+$100,Y
-   STA zp_br_r_s
-   STA VX1+14,X
-   RNS_SELECT
-   PAGE BANK_L2                            ; exit contract (see head)
+   STA VX1+14,X                            ; (working-recip stores + select
+   PAGE BANK_L2                            ; de-larded — see the lo twin)
    RTS
 vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
@@ -281,22 +278,24 @@ nc_ok:
 ; --- Struct stores from the working regs, then ONE armed fill drops
 ; the whole cache entry (evy/evx via the struct, the rest from the
 ; regs — sx still lives in zp_br_res_l/h from br_project_x). ---
-   LDA zp_br_r_m8
-   STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
-   LDA zp_br_r_s
-   STA VX1+14,X
+; recip bytes load ONCE for both consumers (2026-07-25 grind): the
+; struct stores moved inside the senior split so each value feeds its
+; VX slot and its plane store off a single LDA (was: two extra zp
+; reloads per miss in the armed fill)
    LDA zp_seg_v_idx_b
    AND #$20
    BNE vcf_hi
    LDY zp_seg_v_idx_l
+   LDA zp_br_r_m8
+   STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
+   STA VC_RHI,Y
+   LDA zp_br_r_s
+   STA VX1+14,X
+   STA VC_RLO,Y
    LDA VX1+0,X
    STA VC_EVY,Y
    LDA VX1+1,X
    STA VC_EVX,Y
-   LDA zp_br_r_m8
-   STA VC_RHI,Y
-   LDA zp_br_r_s
-   STA VC_RLO,Y
    LDA zp_br_res_l
    STA VC_SXL,Y
    LDA zp_br_res_h
@@ -307,14 +306,16 @@ nc_ok:
    RTS
 vcf_hi:
    LDY zp_seg_v_idx_l
+   LDA zp_br_r_m8
+   STA VX1+13,X
+   STA VC_RHI+$100,Y
+   LDA zp_br_r_s
+   STA VX1+14,X
+   STA VC_RLO+$100,Y
    LDA VX1+0,X
    STA VC_EVY+$100,Y
    LDA VX1+1,X
    STA VC_EVX+$100,Y
-   LDA zp_br_r_m8
-   STA VC_RHI+$100,Y
-   LDA zp_br_r_s
-   STA VC_RLO+$100,Y
    LDA zp_br_res_l
    STA VC_SXL+$100,Y
    LDA zp_br_res_h
