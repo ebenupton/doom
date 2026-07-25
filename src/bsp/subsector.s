@@ -310,8 +310,8 @@ ch_v1_done_l0:
    BEQ s_v2_was_clipped
    LDA zp_seg_v2_clipped
    BNE s_advance_jmp                       ; both clipped
-   ZERO zp_seg_ep                         ; reproject into v1 (struct VX1)
-   JSR reproject_at_crossing
+   STA zp_seg_ep                            ; = 0 (the BNE above proves A=0):
+   JSR reproject_at_crossing                ; reproject into v1 (struct VX1)
    JMP s_both_have_proj
 s_advance_jmp:
    JMP s_advance
