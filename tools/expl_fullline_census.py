@@ -46,10 +46,13 @@ for (px,py) in [(1056,-3616),(1500,-3700),(2345,-3123)]:
 # per-vertex tallies: [serves, drawn-serves, equal, near(<1 row), diff, worst_rows]
 T = {}
 
-_orig = dw._emit_desc_spans
-def census(vidx, sx, proj, H, clips, surface, draw_stats):
+# EMIT-SERVE hook (post-revert 0b62b47): emit_vertex_spans owns the
+# done-set + on_screen gates — census only the call that actually
+# serves and draws, at the DRAW-SITE clip state.
+_orig = dw.emit_vertex_spans
+def census(vidx, sx, proj, H, clips, surface, draw_stats, on_screen):
     d = dw.vspan_desc[vidx]
-    if d & 0x80:
+    if (d & 0x80) and vidx not in dw._vspan_done and on_screen:
         t = T.setdefault(vidx, [0,0,0,0,0,0.0])
         t[0] += 1
         ix = sx
@@ -86,8 +89,8 @@ def census(vidx, sx, proj, H, clips, surface, draw_stats):
             elif uncovered < 1.0: t[3] += 1
             else: t[4] += 1
             t[5] = max(t[5], uncovered)
-    return _orig(vidx, sx, proj, H, clips, surface, draw_stats)
-dw._emit_desc_spans = census
+    return _orig(vidx, sx, proj, H, clips, surface, draw_stats, on_screen)
+dw.emit_vertex_spans = census
 
 def render(px, py, ab):
     p8 = int((px - dw.MAP_CENTER_X) * 256 / dw.PRESCALE)
