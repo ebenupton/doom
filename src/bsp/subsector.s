@@ -551,14 +551,15 @@ hgp_fwd:
    LDA zp_seg_flags
    AND #$04
    BEQ ft_no_needbt
-; NEEDBT: emit only if ch > vz (s8 compare via signed test on ch - vz).
-   LDA zp_seg_ch
-   SEC
-   SBC zp_br_vz
-   BMI ft_skip
-   BEQ ft_skip
-   BNE ft_no_rec                           ; NEEDBT → emit, no records
-                                           ; (A > 0: always taken)
+; NEEDBT: emit only if ch > vz. FLIPPED + CMP (Eben, 2026-07-26): the
+; old SEC/SBC materialized a diff nobody consumed and needed BMI+BEQ;
+; testing vz - ch makes "skip" one BPL (vz >= ch, Z included). Same
+; s8 no-overflow assumption as the original sign test.
+   LDA zp_br_vz
+   CMP zp_seg_ch
+   BPL ft_skip
+   BMI ft_no_rec                           ; NEEDBT → emit, no records
+                                           ; (N = 1: always taken)
 ft_no_needbt:
 ; bch > ch ? (bch on demand from header +13 — the header lives in the
 ; L0 window and this path runs under BANK_C, so page around the read;
@@ -612,14 +613,13 @@ ft_skip:
    LDA zp_seg_flags
    AND #$08
    BEQ fb_no_needbb
-; NEEDBB: emit only if fh < vz (vz - fh > 0).
-   LDA zp_br_vz
-   SEC
-   SBC zp_seg_fh
-   BMI fb_skip
-   BEQ fb_skip
-   BNE fb_no_rec                           ; NEEDBB → emit, no records
-                                           ; (A > 0: always taken)
+; NEEDBB: emit only if fh < vz. FLIPPED + CMP (mirror of the ft test):
+; skip iff fh >= vz = one BPL.
+   LDA zp_seg_fh
+   CMP zp_br_vz
+   BPL fb_skip
+   BMI fb_no_rec                           ; NEEDBB → emit, no records
+                                           ; (N = 1: always taken)
 fb_no_needbb:
 ; bfh < fh ? (bfh on demand from header +12 — L0-window read under
 ; BANK_C, page around like ft_no_needbt; flat: no-ops)
