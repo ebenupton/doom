@@ -60,8 +60,21 @@ br_render_frame:
    LDA #0                               ; A = 0 RIDES into the wipes below
    STA zp_dcl_rec_buf                   ; — NOT a C02/STZ candidate
    STA zp_dcl_rec_buf_h
-; (VDONE wipe retired 2026-07-25: vertex spans serve at first
-; transform — the VCACHE_VALID wipe below is the once-per-frame mark.)
+; VDONE wipe (vertex-span first-touch bitmap at $0600): only bytes
+; 0-47 — the packer asserts every desc!=0 vertex id is < 384 (E1M1 max
+; 382), so higher bytes only ever hold desc-0 marks, which may persist:
+; a stale desc-0 "served" bit just keeps suppressing a no-op call.
+; 3-wide strided loop, 16 iterations = 384 cyc (the full unroll is
+; cheaper still but +164 bytes; banked CODE has no room).
+   LDX #45                              ; VDONE: vertex-span first-touch
+bif_vdone:                              ; bitmap (48 wiped of 57)
+   STA VDONE,X
+   STA VDONE+1,X
+   STA VDONE+2,X
+   DEX
+   DEX
+   DEX
+   BPL bif_vdone
    LDX #4
 bif_clr2:                               ; 12 stripes x 5: 325 cyc (was 4x15
    STA VCACHE_VALID_BASE,X              ; = 375; +24 B for -50/frame)

@@ -70,8 +70,7 @@ def setup_wad(sc):
         mem[ROM_BBOX_BASE + i] = b
     # vertex-span descriptor planes (flat homes; mirror of _load_wad)
     for i, d in enumerate(dw.vspan_desc):
-        mem[(0x1800 + i) if i < 256 else (0x1900 + i - 256)] = d
-        mem[(0xDC00 + i) if i < 256 else (0xDD00 + i - 256)] = d
+        mem[0xDC00 + i] = d
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
         mem[0xDE00 + i] = lo & 0xFF
         mem[0xDE60 + i] = hi & 0xFF

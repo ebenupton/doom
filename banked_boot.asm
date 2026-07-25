@@ -77,10 +77,7 @@ ORG DRV_ORG
     LDA #12:STA &FE00: LDA #&0B:STA &FE01           ; R12 = $5800>>3 hi
     LDA #13:STA &FE00: LDA #&00:STA &FE01           ; R13
     ; (RNS stack-page copy retired 2026-07-12: block lives in CODE)
-    ; --- canonical order (matches walk_drv): anim_init (copies the
-    ; below-$1B40 staged tables down: SSMASK + the VDESC planes — the
-    ; disc can only ship banks + LOW), then view_setup, span_init ---
-    LDA #7 :STA &FE30 : JSR ENG_ANIM_INIT           ; anim_init (L2 ambient)
+    ; --- canonical order (matches render_frame): view_setup BEFORE span_init ---
     LDA #4 :STA &FE30 : JSR ENG_VIEW_SETUP          ; br_view_setup (pages L0/L2)
     LDA #6 :STA &FE30 : JSR ENG_SPAN_INIT           ; span_init / pool (bank C)
     ; --- clear framebuffer $5800-$6BFF (20 pages) using $EE/$EF ptr ---

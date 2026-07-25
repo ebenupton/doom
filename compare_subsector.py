@@ -26,10 +26,6 @@ import trace_compare as tc
 
 from symmap import sym as _sym
 ENTRY_BR_RENDER_SUBSECTOR = _sym('br_render_subsector_entry')
-_VCACHE_VALID = _sym('VCACHE_VALID_BASE')
-_VC_EVY = _sym('VC_EVY'); _VC_EVX = _sym('VC_EVX')
-_VC_RHI = _sym('VC_RHI'); _VC_RLO = _sym('VC_RLO')
-_VC_SXL = _sym('VC_SXL'); _VC_SXH = _sym('VC_SXH')
 _E_MARK_SOLID = _sym('span_mark_solid')
 _E_TFR        = _sym('tighten_from_records')
 _E_DCL_S16    = _sym('draw_clipped_line_s16')
@@ -102,33 +98,14 @@ class SubsectorDiffer:
         py_spans = sc.read_spans()
         py_fb = bytes(mem[0xEA00:0xFE00])
 
-        # The state we continue from is the python run — but the 6502's
-        # vertex-cache fills were snapped away, and the vc valid bit IS
-        # the vertex-span serve-once mark now (serve-at-first-transform,
-        # VDONE retired). Re-sync valid bits + planes from the python
-        # RAM vcache so later 6502 subsectors neither re-serve nor read
-        # garbage planes on a hit.
-        VB = _VCACHE_VALID
-        for i in range(60):
-            mem[VB + i] = 0
-        for vi in range(len(dw.vertexes)):
-            e = dw._packed_read_vcache(ram, vi)
-            if e is None:
-                continue
-            evx_t, vy, vyi, sxv, fvx = e
-            mem[VB + (vi >> 3)] |= 1 << (vi & 7)
-            mem[_VC_EVY + vi] = vy & 0xFF
-            mem[_VC_EVX + vi] = evx_t & 0xFF
-            if vy < 1:
-                mem[_VC_RLO + vi] = 0    # rlo==0 = cached clip verdict
-                continue
-            rxh, rxl = dw.fp_recip(vyi)
-            if sxv == 0:                     # packed lazy-sx sentinel:
-                sxv = dw.fp_project_x(evx_t, fvx, rxh, rxl)   # recompute
-            mem[_VC_RHI + vi] = rxh & 0xFF
-            mem[_VC_RLO + vi] = rxl & 0xFF
-            mem[_VC_SXL + vi] = sxv & 0xFF
-            mem[_VC_SXH + vi] = (sxv >> 8) & 0xFF
+        # The state we continue from is the python run — but the vertex
+        # done-bits the 6502 set were snapped away with the rest of its
+        # state. Re-sync VDONE from the python done-set so the next
+        # 6502 subsector sees the served-vertex history python does.
+        for i in range(64):
+            mem[0x0600 + i] = 0
+        for vi in dw._vspan_done:
+            mem[0x0600 + (vi >> 3)] |= 1 << (vi & 7)
 
         self.n_compared += 1
         spans_match = (asm_spans == py_spans)

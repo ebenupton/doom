@@ -88,11 +88,8 @@ def build_banked(flatr):
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
         c[0x2400:0x2400 + len(hud)] = hud   # debug HUD @ $A400
-    # vertex-span descriptor tables. VDESC: bank C $B200/$B300 is disc
-    # STAGING (anim_init copies down at boot); the LIVE planes are main
-    # $0600/$1A00 (serve-at-transform runs under L2) — the model pokes
-    # main directly below, mirroring what the boot copy produces.
-    # VEXPL stays bank C (the explicit serve pages C for the reads).
+    # vertex-span descriptor tables (banked homes: bank C $B200/$B400 —
+    # the verticals section runs under C, zero paging on the code path)
     for i, d in enumerate(dw.vspan_desc):
         c[0x3200 + i] = d
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
@@ -100,10 +97,6 @@ def build_banked(flatr):
         c[0x3460 + i] = hi & 0xFF
         c[0x3500 + i] = 1 if cont else 0
     bm.define_bank(BANK_C, c)
-
-    # live VDESC planes in main (what the anim_init boot copy produces)
-    for i, d in enumerate(dw.vspan_desc):
-        bm[(0x1800 + i) if i < 256 else (0x1900 + i - 256)] = d
 
     # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)
 
