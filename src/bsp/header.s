@@ -322,6 +322,29 @@ RECIP_BASE = $D500                      ; flat LEVEL block (2026-07-21 map)
 ; (SINCOS_BASE deleted 2026-07-21: no reader — the engine takes sincos
 ;  via the ZP contract ($05-$0A), the driver owns its own DRV_TAB.)
 
+; --- VERTEX-SPAN DESCRIPTORS (Eben's scheme, 2026-07-24) ---
+; One byte per vertex, page-split (junior ids 0-255, senior 256+):
+;   $00 none / $01 fh->ch / $02 fh->bfh (gate NEEDBB) / $03 bch->ch
+;   (gate NEEDBT) / $04 frame pair / $80|i explicit table ref.
+; Codes read the trigger's ALREADY-PROJECTED sy slots (solids alias
+; bfh/bch = fh/ch at pack time, so the step codes self-annul via the
+; NEEDBB/NEEDBT gates). Explicit entries are world s8 height pairs,
+; clamped to the trigger's zp_seg_fh/ch, projected at the endpoint
+; recip. VDONE = the once-per-frame first-touch bitmap (byte index =
+; the header key's B byte = idx>>3, bit = vc_bit_mask[idx&7]).
+.if ::BANKED
+VDESC      = $B200                      ; bank C (verticals run under C)
+VEXPL_LO   = $B400
+VEXPL_HI   = $B460
+VEXPL_CONT = $B500
+.else
+VDESC      = $DC00                      ; flat TABLES block
+VEXPL_LO   = $DE00
+VEXPL_HI   = $DE60
+VEXPL_CONT = $DF00
+.endif
+VDONE = $0600                           ; main (DEFQ's freed page)
+
 ; Vertex transform cache: per-vertex saved view + projection results.
 ; Skip redundant transforms when multiple segs share a vertex.
 ; Fields: evy, evx, rhi, rlo, sx_lo, sx_hi (s16 projected screen X),

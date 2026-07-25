@@ -364,60 +364,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             else:
                 if bs[1] < ch: flags |= SF_NEEDBT
                 if bs[0] > fh: flags |= SF_NEEDBB
-        # Suppress verticals at BSP-internal split points (RULE 1).
-        if s[0] not in ld_endpoint_verts:
-            flags |= SF_NOVT1
-        if s[1] not in ld_endpoint_verts:
-            flags |= SF_NOVT2
-        # RULE 2 contributions from the caller (colinear solid neighbour).
-        if seg_novt_flags is not None:
-            flags |= seg_novt_flags[i] & (SF_NOVT1 | SF_NOVT2)
-        # Mover-adjacent segs (DOOM_ANIM): heights are runtime inputs, so
-        # every vertical is drawn unconditionally (rule 1 included) and no
-        # aperture edges are baked — the APV overlay slots stay portal
-        # bfh/bch/VWH data for the runtime patcher.
-        if anim_vert_set is not None and (s[0] in anim_vert_set or s[1] in anim_vert_set):
-            flags &= ~(SF_NOVT1 | SF_NOVT2)
+        # (NOVT/APEDGE flag baking RETIRED 2026-07-24: verticals come
+        # from the per-vertex span descriptors — SF_NOVT1/2 and
+        # SF_APEDGE1/2 ship as ZERO; the constants remain for old
+        # tooling that masks them out.)
 
-        # APEDGE flags: emit an aperture edge at NOVT endpoints where
-        # the opening would otherwise have no visible boundary.
-        #   Portals: the portal's own step vertical is suppressed but
-        #     there is no colinear solid covering the aperture range,
-        #     so the portal must draw the (bt|ft)→(bb|fb) edge itself.
-        #   Solids: this solid is suppressed by RULE 2 Case C and has
-        #     recorded aperture heights from the colinear portal —
-        #     draw the opening frame so the suppressed side remains
-        #     visible.
-        # RULE 4 NOVTs never emit aperture edges (owner seg's step
-        # vertical already covers the same column-range).
-        if back_idx is None or (flags & SF_SOLID):
-            # Solid: APEDGE driven by seg_novt_aperture entries.
-            if seg_novt_aperture is not None:
-                if (i, 1) in seg_novt_aperture and (flags & SF_NOVT1):
-                    flags |= SF_APEDGE1
-                if (i, 2) in seg_novt_aperture and (flags & SF_NOVT2):
-                    flags |= SF_APEDGE2
-        else:
-            # Portal with visible opening: APEDGE iff NOVT AND at a
-            # linedef endpoint AND not yielded to a solid AND not a
-            # Rule-4 suppression AND the portal actually has steps
-            # (need_bt OR need_bb).  Portal-plain segs don't emit
-            # aperture edges in the Python reference — their opening
-            # has no step boundary to frame, so the ft/fb horizontals
-            # suffice.
-            novt_rule4 = novt_rule4 if novt_rule4 is not None else set()
-            solid_ap = vert_covered_by_solid_ap if vert_covered_by_solid_ap is not None else set()
-            has_steps = bool(flags & (SF_NEEDBT | SF_NEEDBB))
-            if (has_steps
-                    and (flags & SF_NOVT1) and s[0] in ld_endpoint_verts
-                    and s[0] not in solid_ap
-                    and (i, 1) not in novt_rule4):
-                flags |= SF_APEDGE1
-            if (has_steps
-                    and (flags & SF_NOVT2) and s[1] in ld_endpoint_verts
-                    and s[1] not in solid_ap
-                    and (i, 2) not in novt_rule4):
-                flags |= SF_APEDGE2
 
         # L = round(seg length) in the formerly-pad byte (offset 11), for the
         # option-2b angle-space seg projection: c = (cross<<4)/L. u8 (<=89 for
@@ -475,31 +426,33 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             rom_main[o + 9] = seg_L          # fossil pad (no 6502 reader)
         rom_main[o + 8] = flags
 
-        # For solids with aperture edges, overlay APV heights onto the
-        # unused portal-only slots in seg detail.
-        if (flags & SF_SOLID) and seg_novt_aperture is not None:
-            o_det = i * SEG_DTL_SIZE
-            ap1 = seg_novt_aperture.get((i, 1))
-            if ap1 is not None and (flags & SF_APEDGE1):
-                bch1, bfh1 = ap1
-                rom_detail[o_det + SD_APV1_CH] = bch1 & 0xFF
-                rom_detail[o_det + SD_APV1_FH] = bfh1 & 0xFF
-            ap2 = seg_novt_aperture.get((i, 2))
-            if ap2 is not None and (flags & SF_APEDGE2):
-                bch2, bfh2 = ap2
-                rom_detail[o_det + SD_APV2_CH] = bch2 & 0xFF
-                rom_detail[o_det + SD_APV2_FH] = bfh2 & 0xFF
-
-        # Heights INLINED into the header (post-APV overlay, exactly the
-        # bytes the old load-time FHCH synthesis emitted): the separate
-        # FHCH stream is gone — one cursor walks everything.
+        # Heights INLINED into the header. SOLID ALIAS (2026-07-24,
+        # descriptor scheme): a solid's +12/+13 carry fh/ch so the
+        # descriptor role codes bfh/bch evaluate with NO runtime branch
+        # (the APV overlay died with APEDGE); +14/+15 ship zero.
         od = i * SEG_DTL_SIZE
         rom_main[o + 10] = rom_detail[od + SD_FH]
         rom_main[o + 11] = rom_detail[od + SD_CH]
-        rom_main[o + 12] = rom_detail[od + SD_BFH]
-        rom_main[o + 13] = rom_detail[od + SD_BCH]
-        rom_main[o + 14] = rom_detail[od + SD_APV2_CH]
-        rom_main[o + 15] = rom_detail[od + SD_APV2_FH]
+        back_idx = svwh[2]
+        if back_idx is None:
+            # ONE-SIDED solid: fh/ch alias — the descriptor role codes
+            # bfh/bch evaluate with no runtime branch (never consumed
+            # live: c2/c3 are NEEDBB/NEEDBT-gated, forever clear here)
+            rom_main[o + 12] = rom_detail[od + SD_FH]
+            rom_main[o + 13] = rom_detail[od + SD_CH]
+        else:
+            # TWO-SIDED — portal now or potentially at runtime (a closed
+            # door is pack-time SOLID): TRUE back heights, NOT the alias.
+            # The anim flag worker re-derives SOLID/NEEDBT/NEEDBB from
+            # this quad; an alias here poisons it into SOLID forever
+            # (the anim6502 phase-lockstep catch, 2026-07-25). While the
+            # SOLID flag holds, c2/c3 gate off, so the alias is not
+            # missed; detail SD_BFH/BCH stay 0 for pack-time solids.
+            bs = fp_sectors[back_idx]
+            rom_main[o + 12] = bs[0] & 0xFF
+            rom_main[o + 13] = bs[1] & 0xFF
+        rom_main[o + 14] = 0
+        rom_main[o + 15] = 0
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 

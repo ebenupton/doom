@@ -105,6 +105,16 @@ zp_rs_l = $1E                     ; [bsp] sin-side rotate result lo (res-slot
 ;   signal rides the p1/p2 full-span sentinel now)
 ; $1F FREE (zp_bv_mode retired 2026-07-21: the frame class IS the
 ;  zp_bv_entry vector — pristine/rcache/dcache all dispatch through it)
+zp_v1i_l = $45                    ; [bsp]; v1 vertex key lo (idx & 255) banked
+zp_v1i_b = $46                    ; [bsp]; ... key B (idx >> 3) across the v2
+                                  ; transform for the vertex-span emitter
+; $52/$53 free (zp_vs_il/ib retired 2026-07-25: call sites probe VDONE
+; inline and the fresh path re-reads the key from its home pair)
+; $47 free (zp_vs_d retired 2026-07-25: vs_go dispatches on A directly)
+zp_vs_x  = $4D                    ; [bsp]; vs_vertex: struct offset save
+zp_vs_i  = $4F                    ; [bsp]; vs_vertex: explicit-table cursor
+zp_vs_hl = $50                    ; [bsp]; vs_vertex: clamped span lo height
+zp_vs_hh = $51                    ; [bsp]; vs_vertex: clamped span hi height
 zp_br_t0 = $20                    ; [bsp]
 zp_br_t1 = $21                    ; [bsp]
 zp_br_t2 = $22                    ; [bsp]

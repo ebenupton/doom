@@ -169,9 +169,15 @@ class Mover:
             o = i * SEG_DTL_SIZE
             _ROM_DETAIL[o + SD_FH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_CH] = ch_ps & 0xFF
+            one_sided = dw.fp_segs_vwh[i][2] is None
             for mem, base in _attached:
                 mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 10] = fh_ps & 0xFF
                 mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 11] = ch_ps & 0xFF
+                if one_sided:
+                    # +12/13 alias (bfh:=fh, bch:=ch) must track — the
+                    # mover's own side walls (descriptor scheme)
+                    mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 12] = fh_ps & 0xFF
+                    mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 13] = ch_ps & 0xFF
             nbytes += 2
         for i in self.back_segs:
             o = i * SEG_DTL_SIZE
@@ -337,12 +343,17 @@ def gen_6502_tables(flat=True):
         _st.pack_into('<H', ptrs, mi * 2, addr)
         fhch_addrs = []
         H = lambda i, k: A['hdr'] + i * SEG_HDR_SIZE + 10 + k
+        solid = lambda i: dw.fp_segs_vwh[i][2] is None
         if m.kind == 'ceil':
             fhch_addrs += [H(i, 1) for i in m.front_segs]  # ch
             fhch_addrs += [H(i, 3) for i in m.back_segs]   # bch
+            # SOLID front segs (the mover's own side walls): +13 is the
+            # descriptor-scheme alias (bch := ch) and must track too
+            fhch_addrs += [H(i, 3) for i in m.front_segs if solid(i)]
         else:
             fhch_addrs += [H(i, 0) for i in m.front_segs]  # fh
             fhch_addrs += [H(i, 2) for i in m.back_segs]   # bfh
+            fhch_addrs += [H(i, 2) for i in m.front_segs if solid(i)]
         flag_segs = [i for i in m.touch_segs if dw.fp_segs_vwh[i][2] is not None]
         blk = bytearray([len(fhch_addrs), len(flag_segs)])
         for a in fhch_addrs:

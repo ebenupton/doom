@@ -88,6 +88,14 @@ def build_banked(flatr):
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
         c[0x2400:0x2400 + len(hud)] = hud   # debug HUD @ $A400
+    # vertex-span descriptor tables (banked homes: bank C $B200/$B400 —
+    # the verticals section runs under C, zero paging on the code path)
+    for i, d in enumerate(dw.vspan_desc):
+        c[0x3200 + i] = d
+    for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
+        c[0x3400 + i] = lo & 0xFF
+        c[0x3460 + i] = hi & 0xFF
+        c[0x3500 + i] = 1 if cont else 0
     bm.define_bank(BANK_C, c)
 
     # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)

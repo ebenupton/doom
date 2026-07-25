@@ -225,6 +225,13 @@ ch_v1_done:
 ; vertex exits L2 on EVERY path (2026-07-21 contract) — the header read
 ; below needs the L0 window back. Flat: no-op.
 ch_v1_done_l0:
+; bank v1's vertex key across the v2 transform (the vertex-span emitter
+; needs BOTH keys; chain hits leave zp_seg_v_idx == v1's key, misses
+; stored it — either way it is v1's here)
+   LDA zp_seg_v_idx_l
+   STA zp_v1i_l
+   LDA zp_seg_v_idx_b
+   STA zp_v1i_b
 
 ; Transform v2.
    LDA #VX_STRIDE
@@ -460,14 +467,8 @@ ys_v2:
    STA zp_ys_done                           ; this seg's VX2 sy is live for
    LDA #0                                   ; the next seg's chain
    STA zp_ys_v1ok
-; --- Post-visibility APV staging, then endpoint canonicalization ---
-   LDA zp_seg_flags
-   AND #$02
-   BEQ hgp_can                             ; portal: pairs staged above
-   LDA zp_seg_flags
-   AND #$41                                ; APEDGE1|APEDGE2
-   BEQ hgp_can
-   apv_stage
+; (apv_stage RETIRED 2026-07-24: the APV overload died with the vertex-
+;  span descriptors — solids' +12/+13 now carry the fh/ch alias)
 hgp_can:
 ; Canonicalize: after this point VX1 is ALWAYS the left endpoint, and
 ; every emit path below is single-path (no ord dispatch anywhere).
@@ -647,124 +648,34 @@ step_no_top:
 step_no_bot:
 step_skip:
 
-; --- Emit verticals ---
-; Solid wall: full ft-to-fb on both sides.
-; Portal: ft-to-bt for NEEDBT (top doorframe edge),
-;         bb-to-fb for NEEDBB (bottom doorframe edge).
-;         Both for NEEDBT+NEEDBB. Otherwise no vertical.
-; SF_NOVT1/NOVT2 still suppress verticals at BSP-internal split vertices.
-; (Back inline in MAIN since the RNS vectoring moved to the stack page —
-; the CEMIT eviction and its per-seg PAGE+JSR cost are gone.)
-
-; Left vertical (sx1).
-   LDA zp_seg_flags
-   AND #$10
-   BNE skip_lvert
-   LDA zp_seg_sx1_h
-   BNE skip_lvert
-; sx1 off-screen → skip vertical
-   LDA zp_seg_flags
-   AND #$02
-   BEQ lvert_portal
-; Solid: ft1 → fb1
-   LDA zp_seg_sy1_top_l
-   STA zp_line_yl_l
-   LDA zp_seg_sy1_top_h
-   STA zp_line_yl_h
-   LDA zp_seg_sy1_bot_l
-   STA zp_line_yr_l
-   LDA zp_seg_sy1_bot_h
-   STA zp_line_yr_h
-   JSR emit_vert_sx1
-   JMP skip_lvert
-lvert_portal:
-; NEEDBT? top piece ft1 → bt1
-   LDA zp_seg_flags
-   AND #$04
-   BEQ lvert_no_top
-   LDA zp_seg_sy1_top_l
-   STA zp_line_yl_l
-   LDA zp_seg_sy1_top_h
-   STA zp_line_yl_h
-   LDA zp_seg_sy1_btop_l
-   STA zp_line_yr_l
-   LDA zp_seg_sy1_btop_h
-   STA zp_line_yr_h
-   JSR emit_vert_sx1
-lvert_no_top:
-; NEEDBB? bottom piece bb1 → fb1
-   LDA zp_seg_flags
-   AND #$08
-   BEQ skip_lvert
-   LDA zp_seg_sy1_bbot_l
-   STA zp_line_yl_l
-   LDA zp_seg_sy1_bbot_h
-   STA zp_line_yl_h
-   LDA zp_seg_sy1_bot_l
-   STA zp_line_yr_l
-   LDA zp_seg_sy1_bot_h
-   STA zp_line_yr_h
-   JSR emit_vert_sx1
-skip_lvert:
-
-; Right vertical (sx2).
-   LDA zp_seg_flags
-   AND #$20
-   BNE skip_rvert
-   LDA zp_seg_sx2_h
-   BNE skip_rvert
-; sx2 off-screen → skip vertical
-   LDA zp_seg_flags
-   AND #$02
-   BEQ rvert_portal
-   LDA zp_seg_sy2_top_l
-   STA zp_line_yl_l
-   LDA zp_seg_sy2_top_h
-   STA zp_line_yl_h
-   LDA zp_seg_sy2_bot_l
-   STA zp_line_yr_l
-   LDA zp_seg_sy2_bot_h
-   STA zp_line_yr_h
-   JSR emit_vert_sx2
-   JMP skip_rvert
-rvert_portal:
-   LDA zp_seg_flags
-   AND #$04
-   BEQ rvert_no_top
-   LDA zp_seg_sy2_top_l
-   STA zp_line_yl_l
-   LDA zp_seg_sy2_top_h
-   STA zp_line_yl_h
-   LDA zp_seg_sy2_btop_l
-   STA zp_line_yr_l
-   LDA zp_seg_sy2_btop_h
-   STA zp_line_yr_h
-   JSR emit_vert_sx2
-rvert_no_top:
-   LDA zp_seg_flags
-   AND #$08
-   BEQ skip_rvert
-   LDA zp_seg_sy2_bbot_l
-   STA zp_line_yl_l
-   LDA zp_seg_sy2_bbot_h
-   STA zp_line_yl_h
-   LDA zp_seg_sy2_bot_l
-   STA zp_line_yr_l
-   LDA zp_seg_sy2_bot_h
-   STA zp_line_yr_h
-   JSR emit_vert_sx2
-skip_rvert:
-
-; --- NOVT aperture-edge verticals (SF_APEDGE1/2) ---
-; A NOVT endpoint suppresses the seg's own vertical, but a colinear
-; portal's aperture still needs its edge drawn there. ap_edges (lo.s)
-; emits (sxK, aperture_top) → (sxK, aperture_bot) per flagged endpoint;
-; solid segs take the APV heights packed into header bytes +12..15.
-   LDA zp_seg_flags                        ; spectrack (warm) 2026-07-12:
-   AND #$41                                ; every seg paid a 28-cycle no-op
-   BEQ ape_skip                            ; call — gate APEDGE1|2 here
-   ap_edges
-ape_skip:
+; --- Emit verticals: PER-VERTEX SPAN DESCRIPTORS (2026-07-24) ---
+; The per-seg solid/portal ladders, NOVT tests and the whole APEDGE
+; exception path (ap_edges/apv_stage/ap_emit_y) are RETIRED: each
+; endpoint's vertex is served ONCE per frame (VDONE bit) by the first
+; rendering seg to touch it, from a one-byte descriptor. Codes read
+; this seg's already-projected sy slots; explicit refs clamp world
+; heights to this seg's front and project at the endpoint recip.
+; Probe-first (2026-07-25 lean rework): the VDONE bit is tested INLINE —
+; a served (or marked-desc-0) vertex exits in the site's ~20 cycles with
+; no JSR and no ZP staging. Only unmarked vertices call the fresh path.
+   LDA zp_v1i_l
+   AND #7
+   TAY
+   LDA vc_bit_mask,Y
+   LDX zp_v1i_b                            ; B byte IS the bitmap index
+   AND VDONE,X
+   BNE vs1_done
+   JSR vs_fresh1
+vs1_done:
+   LDA zp_seg_v_idx_l
+   AND #7
+   TAY
+   LDA vc_bit_mask,Y
+   LDX zp_seg_v_idx_b
+   AND VDONE,X
+   BNE vs2_done
+   JSR vs_fresh2
+vs2_done:
 
 ; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and
 ;     portal (tighten) cases.
@@ -865,26 +776,217 @@ sa_done:
 ; (drain_deferred_ms replaced by defq_drain — see the $0B00 region.)
 
 ; ============================================================================
-; emit_vert_sx1 / emit_vert_sx2 — draw a vertical at endpoint 1 / 2.
-; Caller has set yl/yh/yr/yh in zp_line_yl_l/$B3/zp_line_yr_l/$B5.
-; VERTICAL FASTPATH (2026-07-22): column rides A, senior byte rides Y —
-; SC_DCL_VERT discards off-screen, clamps y to the band and enters the
-; span query directly. The xl/xr/hi staging, the rec disarm (nothing on
-; the vertical path reads it; every DCL site arms/disarms explicitly)
-; and the general entry's rediscovery tests all died.
-; (no PAGE: verticals run strictly after the horizontal cascade, which
-;  ends bank-C on every path — see the step-bot audit note — and the
-;  clipper never re-pages)
+; vs_fresh1/vs_fresh2 — serve a FRESH endpoint vertex (2026-07-25 lean
+; rework; the staged vs_vertex entry retired). The call sites probe the
+; VDONE bit inline, so only unmarked vertices arrive here.
+;   in : Y = idx&7 (bit select), X = idx>>3 (bitmap byte); the vertex
+;        key is re-read from its home ZP pair (v1: zp_v1i, v2:
+;        zp_seg_v_idx) — no staging slots.
+;   The mark is FIRST and unconditional: desc-0 vertices get marked too
+;   (nothing can ever draw there — the mark just upgrades every later
+;   touch to the site's fast exit; python mirrors this). Clip/column
+;   gates are vertex facts (trigger-invariant), so mark-before-gate is
+;   safe. Bank C throughout; the explicit path excurses to L2 around
+;   br_project_y (VWHC planes) and returns to C.
 ; ============================================================================
-emit_vert_sx1:
-   LDY zp_seg_sx1_h
-   LDA zp_seg_sx1_l
+.scope
+::vs_fresh1:                                ; v1 endpoint (struct 0)
+   LDA vc_bit_mask,Y
+   ORA VDONE,X
+   STA VDONE,X
+; gates BEFORE the descriptor read (both exits are draw-free and the
+; mark is already down, so order is unobservable): STATIC zp
+; addressing — this entry IS struct 0, no index needed.
+   LDA VX1+2                               ; near-clipped endpoint
+   BNE f1_rts
+   LDA VX1+4                               ; column off-screen
+   BNE f1_rts
+   LDY zp_v1i_l
+   LDA zp_v1i_b
+   AND #$20                                ; senior plane (ids 256+)
+   BNE f1_hi
+   LDA VDESC,Y
+   BNE f1_go
+f1_rts:
+   RTS                                     ; no spans, ever (marked)
+f1_hi:
+   LDA VDESC+$100,Y
+   BNE f1_go
+   RTS
+f1_go:
+   LDX #0
+   BEQ vs_go                               ; (always: Z from LDX #0)
+::vs_fresh2:                                ; v2 endpoint (struct VX_STRIDE)
+   LDA vc_bit_mask,Y
+   ORA VDONE,X
+   STA VDONE,X
+   LDA VX1+VX_STRIDE+2
+   BNE f2_rts
+   LDA VX1+VX_STRIDE+4
+   BNE f2_rts
+   LDY zp_seg_v_idx_l
+   LDA zp_seg_v_idx_b
+   AND #$20
+   BNE f2_hi
+   LDA VDESC,Y
+   BNE f2_go
+f2_rts:
+   RTS
+f2_hi:
+   LDA VDESC+$100,Y
+   BNE f2_go
+   RTS
+f2_go:
+   LDX #VX_STRIDE
+vs_go:                                      ; A = descriptor (nonzero),
+   STX zp_vs_x                             ; X = struct (dcl/project
+                                           ; clobber X; STX keeps flags)
+; dispatch on A directly (zp_vs_d retired) — the incoming N/Z are from
+; the LDX above, so test explicitly:
+   CMP #$80
+   BCS vsx_expl                            ; $80|i: explicit table ref
+   CMP #2
+   BCC vsx_c1                              ; $01: fh->ch
+   BEQ vsx_c2                              ; $02: fh->bfh
+   CMP #4
+   BCC vsx_c3                              ; $03: bch->ch
+; $04 frame pair: top piece then bottom piece
+   JSR vsx_do_c3
+   LDX zp_vs_x
+vsx_c2:                                    ; bottom step: bbot -> bot,
+   LDA zp_seg_flags                        ; gated on NEEDBB (a solid or
+   AND #$08                                ; stepless trigger self-annuls
+   BEQ vsx_rts                             ; the code — world bfh <= fh)
+   LDA VX1+11,X
+   STA zp_line_yl_l
+   LDA VX1+12,X
+   STA zp_line_yl_h
+   LDA VX1+7,X
+   STA zp_line_yr_l
+   LDA VX1+8,X
+   STA zp_line_yr_h
+   JMP vsx_emit
+vsx_c3:
+   JSR vsx_do_c3
+vsx_rts:
+   RTS
+vsx_c1:                                    ; full corner: top -> bot
+   LDA VX1+5,X
+   STA zp_line_yl_l
+   LDA VX1+6,X
+   STA zp_line_yl_h
+   LDA VX1+7,X
+   STA zp_line_yr_l
+   LDA VX1+8,X
+   STA zp_line_yr_h
+vsx_emit:
+   LDY #0                                  ; sx_h: gated zero at vs_go
+   LDA VX1+3,X                             ; column
    JMP SC_DCL_VERT
 
-emit_vert_sx2:
-   LDY zp_seg_sx2_h
-   LDA zp_seg_sx2_l
-   JMP SC_DCL_VERT
+vsx_do_c3:                                 ; top step: top -> btop,
+   LDA zp_seg_flags                        ; gated on NEEDBT
+   AND #$04
+   BEQ vsx_c3rts
+   LDA VX1+5,X
+   STA zp_line_yl_l
+   LDA VX1+6,X
+   STA zp_line_yl_h
+   LDA VX1+9,X
+   STA zp_line_yr_l
+   LDA VX1+10,X
+   STA zp_line_yr_h
+   LDY #0                                  ; sx_h: gated zero at vs_go
+   LDA VX1+3,X
+   JMP SC_DCL_VERT                         ; tail: RTS to OUR caller
+vsx_c3rts:
+   RTS
+
+vsx_expl:
+; explicit table walk: clamp world heights to this trigger's front
+; sector, project at the endpoint's own recip, emit. Rare (86 refs
+; map-wide). Lean layout (2026-07-25): recip staging + RNS_SELECT are
+; hoisted out of the span loop (every span at this vertex projects at
+; the same endpoint recip) and are BANK-FREE (rns tables + the SMC site
+; live in CODE, VX is zp); the VEXPL reads + clamps run under the
+; ambient bank C; only the two br_project_y calls need the L2 window
+; (VWHC planes) — an empty span pays no PAGE at all.
+   AND #$7F
+   STA zp_vs_i
+   LDA VX1+13,X                            ; endpoint recip -> projector
+   STA zp_br_r_m8
+   LDA VX1+14,X
+   STA zp_br_r_s
+   RNS_SELECT                              ; (A = S rides in; clobbers X)
+vsx_exl:
+; VEXPL reads under the ambient bank C (the planes live beside VDESC in
+; the C window); the clamp is pure ZP.
+   LDY zp_vs_i
+; c_lo = max(h_lo, fh)  [signed s8]
+   LDA VEXPL_LO,Y
+   SEC
+   SBC zp_seg_fh
+   BVC vsx_lo1
+   EOR #$80
+vsx_lo1:
+   BMI vsx_lofh
+   LDA VEXPL_LO,Y
+   JMP vsx_lohave
+vsx_lofh:
+   LDA zp_seg_fh
+vsx_lohave:
+   STA zp_vs_hl
+; c_hi = min(h_hi, ch)  [signed s8]
+   LDA VEXPL_HI,Y
+   SEC
+   SBC zp_seg_ch
+   BVC vsx_hi1
+   EOR #$80
+vsx_hi1:
+   BPL vsx_hich
+   LDA VEXPL_HI,Y
+   JMP vsx_hihave
+vsx_hich:
+   LDA zp_seg_ch
+vsx_hihave:
+   STA zp_vs_hh
+; empty? (c_hi <= c_lo, signed) — A rides from the STA above (valid
+; again: the RNS hoist removed the clobber between clamp and test)
+   SEC
+   SBC zp_vs_hl
+   BVC vsx_em1
+   EOR #$80
+vsx_em1:
+   BMI vsx_enext
+   BEQ vsx_enext
+; project both ends (deltas vs eye height), emit
+   PAGE BANK_L2                            ; br_project_y's VWHC planes
+   LDA zp_vs_hh
+   SEC
+   SBC zp_br_vz
+   JSR br_project_y                        ; -> Y = lo, A = hi
+   STA zp_line_yl_h
+   STY zp_line_yl_l
+   LDA zp_vs_hl
+   SEC
+   SBC zp_br_vz
+   JSR br_project_y
+   STA zp_line_yr_h
+   STY zp_line_yr_l
+   PAGE BANK_C
+   LDX zp_vs_x
+   LDY #0                                  ; sx_h: gated zero at vs_go
+   LDA VX1+3,X
+   JSR SC_DCL_VERT
+vsx_enext:
+   LDY zp_vs_i
+   LDA VEXPL_CONT,Y
+   BEQ vsx_edone
+   INC zp_vs_i
+   JMP vsx_exl
+vsx_edone:
+   RTS
+.endscope
 
 
 

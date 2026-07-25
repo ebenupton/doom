@@ -1189,7 +1189,178 @@ if ANIM_SECTORS:
 _n_novt1 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT1)
 _n_novt2 = sum(1 for f in _seg_novt_flags if f & _SF_NOVT2)
 print(f"NOVT flags: {_n_novt1} v1 + {_n_novt2} v2 "
-      f"= {_n_novt1 + _n_novt2} verticals suppressed")
+      f"= {_n_novt1 + _n_novt2} verticals suppressed (RETIRED by descriptors)")
+
+
+# ============================================================================
+# STATIC VERTEX-SPAN DESCRIPTORS (Eben's scheme, 2026-07-24). Replaces
+# per-seg verticals + the NOVT/APEDGE rule web in ALL renderers (and in
+# the 6502 engine). One byte per vertex:
+#   $00 none / $01 fh->ch / $02 fh->bfh / $03 bch->ch / $04 frame pair
+#   $80|i explicit -> vspan_expl[i] = (h_lo, h_hi, cont)
+# Codes evaluate against the TRIGGERING seg's four heights with the
+# solid alias bfh=fh, bch=ch (the code subsumes the runtime clamp);
+# explicit spans clamp world heights to the trigger's [fh, ch]. Drawn
+# once per vertex per frame at FIRST TOUCH by a rendering seg.
+# Mover-adjacent explicit vertices are FORCED to code $01 (their
+# heights are runtime values; $01 reads the live header heights).
+# ============================================================================
+def _vs_faceset(sj):
+    sv = fp_segs_vwh[sj]
+    fh_, ch_ = sv[3], sv[4]
+    bi_ = sv[2]
+    if bi_ is None or fp_sectors[bi_][1] <= fh_ or fp_sectors[bi_][0] >= ch_:
+        return [(fh_, ch_)]
+    bs_ = fp_sectors[bi_]
+    F = []
+    if bs_[1] < ch_: F.append((bs_[1], ch_))
+    if bs_[0] > fh_: F.append((fh_, bs_[0]))
+    return F
+
+def _vs_union(iv):
+    iv = sorted(p for p in iv if p[1] > p[0])
+    out = []
+    for a, b in iv:
+        if out and a <= out[-1][1]: out[-1] = (out[-1][0], max(out[-1][1], b))
+        else: out.append((a, b))
+    return out
+
+def _vs_symdiff(fa, fb):
+    ys = sorted({y for p in fa + fb for y in p})
+    out = []
+    for a, b in zip(ys, ys[1:]):
+        m = (a + b) / 2
+        if (any(p[0] <= m < p[1] for p in fa)) != \
+           (any(p[0] <= m < p[1] for p in fb)):
+            out.append((a, b))
+    return _vs_union(out)
+
+def _vs_colinear(i, j):
+    if fp_segs_vwh[i][0][3] == fp_segs_vwh[j][0][3]:
+        return True
+    return (fp_segs_vwh[i][13] * fp_segs_vwh[j][14]
+            - fp_segs_vwh[i][14] * fp_segs_vwh[j][13]) == 0
+
+def _vs_heights(t):
+    sv = fp_segs_vwh[t]
+    fh_, ch_ = sv[3], sv[4]
+    bi_ = sv[2]
+    if bi_ is None or fp_sectors[bi_][1] <= fh_ or fp_sectors[bi_][0] >= ch_:
+        return {'fh': fh_, 'ch': ch_, 'bfh': fh_, 'bch': ch_}
+    bs_ = fp_sectors[bi_]
+    return {'fh': fh_, 'ch': ch_, 'bfh': bs_[0], 'bch': bs_[1]}
+
+_vs_groups = {}
+for _i, _svwh in enumerate(fp_segs_vwh):
+    for _v in (_svwh[0][0], _svwh[0][1]):
+        _vs_groups.setdefault(_v, []).append(_i)
+
+VSPAN_CODES = {1: (('fh', 'ch'),), 2: (('fh', 'bfh'),), 3: (('bch', 'ch'),),
+               4: (('bch', 'ch'), ('fh', 'bfh'))}
+vspan_desc = [0] * 512
+vspan_expl = []
+_vs_forced = 0
+for _v, _sjs in _vs_groups.items():
+    _runs = []
+    for _sj in _sjs:
+        for _r in _runs:
+            if _vs_colinear(_sj, _r[0]): _r.append(_sj); break
+        else:
+            _runs.append([_sj])
+    _spans = []
+    for _r in _runs:
+        _pos, _neg = [], []
+        for _sj in _r:
+            _s0 = fp_segs_vwh[_sj][0]
+            _oth = _s0[1] if _s0[0] == _v else _s0[0]
+            _dd = ((fp_vertexes[_oth][0] - fp_vertexes[_v][0]) * fp_segs_vwh[_r[0]][13]
+                   + (fp_vertexes[_oth][1] - fp_vertexes[_v][1]) * fp_segs_vwh[_r[0]][14])
+            (_pos if _dd >= 0 else _neg).extend(_vs_faceset(_sj))
+        _spans.extend(_vs_symdiff(_vs_union(_pos), _vs_union(_neg)))
+    _spans = _vs_union(_spans)
+    if not _spans:
+        continue
+    def _code_of(span):
+        for _cn, _pairs in ((1, ('fh', 'ch')), (2, ('fh', 'bfh')), (3, ('bch', 'ch'))):
+            _ok = True
+            for _t in _sjs:
+                _H = _vs_heights(_t)
+                _cl = max(span[0], fp_segs_vwh[_t][3])
+                _chh = min(span[1], fp_segs_vwh[_t][4])
+                _el, _eh = _H[_pairs[0]], _H[_pairs[1]]
+                if _chh <= _cl:
+                    if _eh > _el: _ok = False; break
+                elif (_el, _eh) != (_cl, _chh):
+                    _ok = False; break
+            if _ok:
+                return _cn
+        return None
+    _codes = [_code_of(_sp) for _sp in _spans]
+    if all(_codes):
+        if len(_codes) == 1:
+            vspan_desc[_v] = _codes[0]
+        else:
+            assert sorted(_codes) == [2, 3], (_v, _codes)
+            vspan_desc[_v] = 4
+    else:
+        assert not any(_codes), f"mixed coded/explicit at v{_v}"
+        if ANIM_SECTORS and any(
+                fp_segs_vwh[_t][1] in ANIM_SECTORS or
+                (fp_segs_vwh[_t][2] is not None and fp_segs_vwh[_t][2] in ANIM_SECTORS)
+                for _t in _sjs):
+            vspan_desc[_v] = 1          # mover joint: live header heights
+            _vs_forced += 1
+            continue
+        _ix = len(vspan_expl)
+        assert _ix < 0x80
+        for _k, _sp in enumerate(_spans):
+            vspan_expl.append((_sp[0], _sp[1], _k + 1 < len(_spans)))
+        vspan_desc[_v] = 0x80 | _ix
+print(f"VSPANS: {sum(1 for d in vspan_desc if d)} vertices, "
+      f"{len(vspan_expl)} explicit entries, {_vs_forced} mover-forced")
+# VDONE wipe bound (walk.s wipes bitmap bytes 0-47 only): every vertex
+# with a descriptor must have id < 384; higher ids may only ever carry
+# desc-0 marks, which legally persist across frames.
+assert max((_i for _i, _d in enumerate(vspan_desc) if _d), default=0) < 384, \
+    'VDONE wipe bound: desc!=0 vertex id >= 384 (widen the 48-byte wipe in walk.s)'
+
+_vspan_done = set()
+
+def vspan_frame_reset():
+    _vspan_done.clear()
+
+def emit_vertex_spans(vidx, sx, proj, H, clips, surface, draw_stats,
+                      on_screen):
+    """First-touch descriptor emission for one endpoint. proj(h) -> y
+    at this vertex's reciprocal; H = trigger's four heights dict
+    (solid-aliased); on_screen = endpoint usable (not near-clipped,
+    column in [0,255])."""
+    d = vspan_desc[vidx]
+    if vidx in _vspan_done:
+        return
+    _vspan_done.add(vidx)          # marks desc-0 too (6502 parity: the
+    if not d:                      # bit upgrades later touches to the
+        return                     # inline fast exit)
+    if not on_screen:
+        return
+    lines = []
+    if d & 0x80:
+        i = d & 0x7F
+        while True:
+            h_lo, h_hi, cont = vspan_expl[i]
+            c_lo, c_hi = max(h_lo, H['fh']), min(h_hi, H['ch'])
+            if c_hi > c_lo:
+                lines.append((sx, proj(c_hi), sx, proj(c_lo)))
+            if not cont:
+                break
+            i += 1
+    else:
+        for rl, rh in VSPAN_CODES[d]:
+            lo, hi = H[rl], H[rh]
+            if hi > lo:
+                lines.append((sx, proj(hi), sx, proj(lo)))
+    if lines:
+        clips.draw_clipped(lines, GREEN, surface, draw_stats)
 
 
 # Annotation mode: when True, suppressed verticals are drawn in RED and
@@ -1730,6 +1901,8 @@ def _cycle_drawline(surface, color, p1, p2, w=1):
     return _real_drawline(surface, color, p1, p2, w)
 
 def render_bsp(nid, clips, cos_a, sin_a, vx, vy, vz, surface):
+    if nid == len(nodes) - 1:
+        vspan_frame_reset()                 # root call = new frame
     if clips.is_full(): return
     if nid & NF_SUBSECTOR:
         ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
@@ -1805,19 +1978,31 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
     # The step surface is the visible geometry; the tighten constrains
     # future geometry behind it.
 
+    # classic float path works in RAW world heights but the descriptor
+    # tables are PRESCALED — evaluate in prescaled space and un-prescale
+    # inside the projection (visual-only path; not gate-relevant)
+    _cH = _vs_heights(si)
+    _cs = s
+    _UNPRE = PRESCALE * ASPECT_DEN / ASPECT_NUM
+    def _c_emit():
+        emit_vertex_spans(_cs[0], sx1,
+                          lambda hp: half_h - (hp * _UNPRE - vz) * fy1,
+                          _cH, clips, surface, draw_stats, 0 <= sx1 <= 255)
+        emit_vertex_spans(_cs[1], sx2,
+                          lambda hp: half_h - (hp * _UNPRE - vz) * fy2,
+                          _cH, clips, surface, draw_stats, 0 <= sx2 <= 255)
     if solid:
         clips.draw_clipped([
             (sx1, ft1, sx2, ft2), (sx1, fb1, sx2, fb2),
-            (sx1, ft1, sx1, fb1), (sx2, ft2, sx2, fb2),
         ], GREEN, surface, draw_stats)
+        _c_emit()
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
             clips.mark_solid(x_lo, x_hi, sx1=sx1, sx2=sx2, yt1=ft1, yt2=ft2, yb1=fb1, yb2=fb2)
     elif back:
         if back[1] < ch:
-            lines = [(sx1, bt1, sx2, bt2),
-                     (sx1, ft1, sx1, bt1), (sx2, ft2, sx2, bt2)]
+            lines = [(sx1, bt1, sx2, bt2)]
             if ch <= vz:  # face below eyeline: top edge (ft) always clipped
                 pass      # ft already omitted
             else:
@@ -1826,8 +2011,7 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
         elif back[1] > ch:
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface, draw_stats)
         if back[0] > fh:
-            lines = [(sx1, bb1, sx2, bb2),
-                     (sx1, bb1, sx1, fb1), (sx2, bb2, sx2, fb2)]
+            lines = [(sx1, bb1, sx2, bb2)]
             if fh >= vz:  # face above eyeline: bottom edge (fb) always clipped
                 pass      # fb already omitted
             else:
@@ -1835,6 +2019,7 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
         elif back[0] < fh:
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface, draw_stats)
+        _c_emit()
         if deferred is not None:
             deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
                              max(ft1, bt1), max(ft2, bt2),
@@ -2023,36 +2208,22 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     _RED = (255, 0, 0)
 
     fp_module.mul_cat("clip")
+    _sH = _vs_heights(si)               # trigger heights (solid-aliased)
+    _s0 = svwh[0]
     if solid:
-        lines = [
+        clips.draw_clipped([
             (sx1, ft1, sx2, ft2),
             (sx1, fb1, sx2, fb2),
-        ]
-        if not no_vt1:
-            lines.append((sx1, ft1, sx1, fb1))
-        if not no_vt2:
-            lines.append((sx2, ft2, sx2, fb2))
-        # Solid seg draws aperture edge at NOVT endpoints where a
-        # colinear portal-with-steps exists.  Drawn HERE (in the solid's
-        # draw phase, before mark_solid) so it survives even when the
-        # portal is in a different subsector rendered later.
-        _ap = _seg_novt_aperture.get((si, 1))
-        if _ap and no_vt1:
-            _bch1 = fp_project_y(_ap[0] - vz, ryh1, ryl1)
-            _bfh1 = fp_project_y(_ap[1] - vz, ryh1, ryl1)
-            lines.append((sx1, _bch1, sx1, _bfh1))
-        _ap = _seg_novt_aperture.get((si, 2))
-        if _ap and no_vt2:
-            _bch2 = fp_project_y(_ap[0] - vz, ryh2, ryl2)
-            _bfh2 = fp_project_y(_ap[1] - vz, ryh2, ryl2)
-            lines.append((sx2, _bch2, sx2, _bfh2))
-        clips.draw_clipped(lines, GREEN, surface, draw_stats)
-        # Annotation: show suppressed solid verticals in red
-        if _novt_annotate:
-            if no_vt1:
-                _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, fb1))
-            if no_vt2:
-                _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, fb2))
+        ], GREEN, surface, draw_stats)
+        # VERTEX-SPAN DESCRIPTORS replace per-seg verticals + APEDGE
+        emit_vertex_spans(_s0[0], sx1,
+                          lambda h: fp_project_y(h - vz, ryh1, ryl1),
+                          _sH, clips, surface, draw_stats,
+                          ey1 == evy1 and 0 <= sx1 <= 255)
+        emit_vertex_spans(_s0[1], sx2,
+                          lambda h: fp_project_y(h - vz, ryh2, ryl2),
+                          _sH, clips, surface, draw_stats,
+                          ey2 == evy2 and 0 <= sx2 <= 255)
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
@@ -2077,12 +2248,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                 if ey2 == evy2: vwh_cache[_vbt2] = bt2
             fp_module.mul_cat("clip")
             lines = [(sx1, bt1, sx2, bt2)]
-            if not no_vt1:
-                lines.append((sx1, ft1, sx1, bt1))
-            if not no_vt2:
-                lines.append((sx2, ft2, sx2, bt2))
             if ch <= vz:  # face below eyeline: top edge (ft) always clipped
-                pass
                 yt_idx = 0  # bt at index 0
             else:
                 lines.insert(0, (sx1, ft1, sx2, ft2))
@@ -2090,11 +2256,6 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             from span_clip_6502 import TOP_RECORDS as _TOP_REC
             clips.draw_clipped(lines, GREEN, surface, draw_stats,
                                roles={yt_idx: _TOP_REC})
-            if _novt_annotate:
-                if no_vt1:
-                    _real_drawline(surface, _RED, (sx1, ft1), (sx1, bt1))
-                if no_vt2:
-                    _real_drawline(surface, _RED, (sx2, ft2), (sx2, bt2))
         elif back[1] > ch:
             from span_clip_6502 import TOP_RECORDS as _TOP_REC
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface,
@@ -2115,10 +2276,6 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                 if ey2 == evy2: vwh_cache[_vbb2] = bb2
             fp_module.mul_cat("clip")
             lines = [(sx1, bb1, sx2, bb2)]
-            if not no_vt1:
-                lines.append((sx1, bb1, sx1, fb1))
-            if not no_vt2:
-                lines.append((sx2, bb2, sx2, fb2))
             if fh >= vz:  # face above eyeline: bottom edge (fb) always clipped
                 pass
             else:
@@ -2126,46 +2283,20 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             from span_clip_6502 import BOT_RECORDS as _BOT_REC
             clips.draw_clipped(lines, GREEN, surface, draw_stats,
                                roles={0: _BOT_REC})  # bb is yb-line at idx 0
-            if _novt_annotate:
-                if no_vt1:
-                    _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
-                if no_vt2:
-                    _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
         elif back[0] < fh:
             from span_clip_6502 import BOT_RECORDS as _BOT_REC
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
                                draw_stats, roles={0: _BOT_REC})
 
-        # Aperture edge at Rule 2 NOVT endpoints: when step extensions
-        # are suppressed at a colinear solid joint, draw the aperture
-        # boundary (bt→bb) so the opening edge remains visible.
-        # NOT drawn at Rule 1 (BSP-internal) endpoints — the aperture
-        # is continuous through the split point, no real boundary.
-        # Aperture edge at Rule 2 NOVT endpoints: when step extensions
-        # are suppressed at a colinear solid joint, draw the aperture
-        # boundary (bt→bb) so the opening edge remains visible.
-        # NOT drawn at Rule 1 (BSP-internal) endpoints.
-        if need_bt or need_bb:
-            _ap_top1 = bt1 if need_bt else ft1
-            _ap_top2 = bt2 if need_bt else ft2
-            _ap_bot1 = bb1 if need_bb else fb1
-            _ap_bot2 = bb2 if need_bb else fb2
-            s = svwh[0]
-            _ap_lines = []
-            # Yield to a solid neighbour that will draw the same aperture
-            # edge at the shared vertex (avoids double-emit).
-            _need_ap1 = (no_vt1 and s[0] in _ld_endpoint_verts
-                         and s[0] not in _vert_covered_by_solid_ap
-                         and (si, 1) not in _novt_rule4)
-            _need_ap2 = (no_vt2 and s[1] in _ld_endpoint_verts
-                         and s[1] not in _vert_covered_by_solid_ap
-                         and (si, 2) not in _novt_rule4)
-            if _need_ap1:
-                _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
-            if _need_ap2:
-                _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
-            if _ap_lines:
-                clips.draw_clipped(_ap_lines, GREEN, surface, draw_stats)
+        # VERTEX-SPAN DESCRIPTORS replace frame verticals + APEDGE
+        emit_vertex_spans(_s0[0], sx1,
+                          lambda h: fp_project_y(h - vz, ryh1, ryl1),
+                          _sH, clips, surface, draw_stats,
+                          ey1 == evy1 and 0 <= sx1 <= 255)
+        emit_vertex_spans(_s0[1], sx2,
+                          lambda h: fp_project_y(h - vz, ryh2, ryl2),
+                          _sH, clips, surface, draw_stats,
+                          ey2 == evy2 and 0 <= sx2 <= 255)
 
         # Tighten: use back heights only if computed, otherwise front = tighter
         tt1 = bt1 if need_bt else ft1
@@ -2233,6 +2364,8 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
 def render_bsp_fp(nid, clips, ctx, vz,
                    wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache):
     """BSP traversal for the 8-bit fixed-point path."""
+    if nid == len(nodes) - 1:
+        vspan_frame_reset()                 # root call = new frame
     if clips.is_full():
         return
     if nid & NF_SUBSECTOR:
@@ -2564,6 +2697,14 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     solid = bool(flags & SF_SOLID)
     no_vt1 = bool(flags & SF_NOVT1)
     no_vt2 = bool(flags & SF_NOVT2)
+    # trigger heights for the vertex-span descriptors (solid alias;
+    # dtl_off is assigned later — index the detail stream directly)
+    if solid:
+        _pH = {'fh': fh, 'ch': ch, 'bfh': fh, 'bch': ch}
+    else:
+        _pH = {'fh': fh, 'ch': ch,
+               'bfh': read_s8(rom_d, si * SEG_DTL_SIZE + SD_BFH),
+               'bch': read_s8(rom_d, si * SEG_DTL_SIZE + SD_BCH)}
 
     # Annotation: record verticals for the V-key overlay (mirrors
     # fp_render_seg).  Rule string here is approximate — packed flags
@@ -2594,46 +2735,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             _ap_skip_stats['solid_bot_skipped'] += 1
         else:
             lines.append((sx1, fb1, sx2, fb2))
-        if not no_vt1:
-            if (_AP_SKIP_ENABLE and
-                    clips.vertical_outside_spans(sx1, min(ft1,fb1), max(ft1,fb1))):
-                _ap_skip_stats['solid_v1_skipped'] += 1
-            else:
-                lines.append((sx1, ft1, sx1, fb1))
-        if not no_vt2:
-            if (_AP_SKIP_ENABLE and
-                    clips.vertical_outside_spans(sx2, min(ft2,fb2), max(ft2,fb2))):
-                _ap_skip_stats['solid_v2_skipped'] += 1
-            else:
-                lines.append((sx2, ft2, sx2, fb2))
-        # Solid seg draws aperture edge at NOVT endpoints (see fp_render_seg)
-        _ap = _seg_novt_aperture.get((si, 1))
-        if _ap and no_vt1:
-            _bch1 = _py1(_ap[0])
-            _bfh1 = _py1(_ap[1])
-            if (_AP_SKIP_ENABLE and
-                    clips.vertical_outside_spans(sx1, min(_bch1,_bfh1), max(_bch1,_bfh1))):
-                _ap_skip_stats['apv_skipped'] += 1
-            else:
-                lines.append((sx1, _bch1, sx1, _bfh1))
-        _ap = _seg_novt_aperture.get((si, 2))
-        if _ap and no_vt2:
-            _bch2 = _py2(_ap[0])
-            _bfh2 = _py2(_ap[1])
-            if (_AP_SKIP_ENABLE and
-                    clips.vertical_outside_spans(sx2, min(_bch2,_bfh2), max(_bch2,_bfh2))):
-                _ap_skip_stats['apv_skipped'] += 1
-            else:
-                lines.append((sx2, _bch2, sx2, _bfh2))
         if lines:
             clips.draw_clipped(lines, GREEN, surface, draw_stats)
-        # V-key annotation: draw suppressed verticals in red so the user
-        # can spot them and reference the seg/vertex label.
-        if _novt_annotate:
-            if no_vt1:
-                _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, fb1))
-            if no_vt2:
-                _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, fb2))
+        # VERTEX-SPAN DESCRIPTORS replace per-seg verticals + APEDGE
+        emit_vertex_spans(v1_idx, sx1, _py1, _pH, clips, surface, draw_stats,
+                          ey1 == evy1 and 0 <= sx1 <= 255)
+        emit_vertex_spans(v2_idx, sx2, _py2, _pH, clips, surface, draw_stats,
+                          ey2 == evy2 and 0 <= sx2 <= 255)
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
         else:
@@ -2682,18 +2790,6 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 _ap_skip_stats['bt_lines_saved'] += _saved
             else:
                 lines = [(sx1, bt1, sx2, bt2)]
-                if not no_vt1:
-                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
-                            sx1, min(ft1, bt1), max(ft1, bt1))):
-                        _ap_skip_stats['step_v_skipped'] += 1
-                    else:
-                        lines.append((sx1, ft1, sx1, bt1))
-                if not no_vt2:
-                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
-                            sx2, min(ft2, bt2), max(ft2, bt2))):
-                        _ap_skip_stats['step_v_skipped'] += 1
-                    else:
-                        lines.append((sx2, ft2, sx2, bt2))
                 yt_idx = 0  # bt is yt-line, currently at index 0
                 if ch <= vz:
                     pass
@@ -2706,11 +2802,6 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 from span_clip_6502 import TOP_RECORDS as _TOP_REC
                 clips.draw_clipped(lines, GREEN, surface, draw_stats,
                                    roles={yt_idx: _TOP_REC})
-                if _novt_annotate:
-                    if no_vt1:
-                        _real_drawline(surface, (255, 0, 0), (sx1, ft1), (sx1, bt1))
-                    if no_vt2:
-                        _real_drawline(surface, (255, 0, 0), (sx2, ft2), (sx2, bt2))
         elif bch > ch:
             if _AP_SKIP_ENABLE and clips.line_above_spans(sx1, ft1, sx2, ft2):
                 _ap_skip_stats['pp_top_skipped'] += 1
@@ -2748,18 +2839,6 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 _ap_skip_stats['bb_lines_saved'] += _saved
             else:
                 lines = [(sx1, bb1, sx2, bb2)]
-                if not no_vt1:
-                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
-                            sx1, min(bb1, fb1), max(bb1, fb1))):
-                        _ap_skip_stats['step_v_skipped'] += 1
-                    else:
-                        lines.append((sx1, bb1, sx1, fb1))
-                if not no_vt2:
-                    if (_AP_SKIP_ENABLE and clips.vertical_outside_spans(
-                            sx2, min(bb2, fb2), max(bb2, fb2))):
-                        _ap_skip_stats['step_v_skipped'] += 1
-                    else:
-                        lines.append((sx2, bb2, sx2, fb2))
                 if fh >= vz:
                     pass
                 elif (_AP_SKIP_ENABLE and
@@ -2770,11 +2849,6 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 from span_clip_6502 import BOT_RECORDS as _BOT_REC
                 clips.draw_clipped(lines, GREEN, surface, draw_stats,
                                    roles={0: _BOT_REC})  # bb is yb-line at idx 0
-                if _novt_annotate:
-                    if no_vt1:
-                        _real_drawline(surface, (255, 0, 0), (sx1, bb1), (sx1, fb1))
-                    if no_vt2:
-                        _real_drawline(surface, (255, 0, 0), (sx2, bb2), (sx2, fb2))
         elif bfh < fh:
             if _AP_SKIP_ENABLE and clips.line_below_spans(sx1, fb1, sx2, fb2):
                 _ap_skip_stats['pp_bot_skipped'] += 1
@@ -2783,37 +2857,11 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
                 clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
                                    draw_stats, roles={0: _BOT_REC})
 
-        # Aperture edge (see fp_render_seg for rationale)
-        if need_bt or need_bb:
-            _ap_top1 = bt1 if need_bt else ft1
-            _ap_top2 = bt2 if need_bt else ft2
-            _ap_bot1 = bb1 if need_bb else fb1
-            _ap_bot2 = bb2 if need_bb else fb2
-            _ap_lines = []
-            # Yield to a solid neighbour that will draw the same aperture
-            # edge at the shared vertex (avoids double-emit).
-            _need_ap1 = (no_vt1 and v1_idx in _ld_endpoint_verts
-                         and v1_idx not in _vert_covered_by_solid_ap
-                         and (si, 1) not in _novt_rule4)
-            _need_ap2 = (no_vt2 and v2_idx in _ld_endpoint_verts
-                         and v2_idx not in _vert_covered_by_solid_ap
-                         and (si, 2) not in _novt_rule4)
-            if _need_ap1:
-                if (_AP_SKIP_ENABLE and
-                        clips.vertical_outside_spans(sx1,
-                            min(_ap_top1, _ap_bot1), max(_ap_top1, _ap_bot1))):
-                    _ap_skip_stats['apv_skipped'] += 1
-                else:
-                    _ap_lines.append((sx1, _ap_top1, sx1, _ap_bot1))
-            if _need_ap2:
-                if (_AP_SKIP_ENABLE and
-                        clips.vertical_outside_spans(sx2,
-                            min(_ap_top2, _ap_bot2), max(_ap_top2, _ap_bot2))):
-                    _ap_skip_stats['apv_skipped'] += 1
-                else:
-                    _ap_lines.append((sx2, _ap_top2, sx2, _ap_bot2))
-            if _ap_lines:
-                clips.draw_clipped(_ap_lines, GREEN, surface, draw_stats)
+        # VERTEX-SPAN DESCRIPTORS replace frame verticals + APEDGE
+        emit_vertex_spans(v1_idx, sx1, _py1, _pH, clips, surface, draw_stats,
+                          ey1 == evy1 and 0 <= sx1 <= 255)
+        emit_vertex_spans(v2_idx, sx2, _py2, _pH, clips, surface, draw_stats,
+                          ey2 == evy2 and 0 <= sx2 <= 255)
 
         # Tighten
         tt1 = bt1 if need_bt else ft1
@@ -2882,6 +2930,8 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
 
 def packed_render_bsp(nid, clips, ctx, vz,
                       wx_full, wy_full, cos_f, sin_f, surface, ram):
+    if nid == len(nodes) - 1:
+        vspan_frame_reset()                 # root call = new frame
     """BSP traversal reading nodes from packed ROM.
 
     Node children are read from rom_main.  point_on_side and bbox visibility

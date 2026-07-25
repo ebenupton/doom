@@ -68,6 +68,13 @@ def setup_wad(sc):
         mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
     for i, b in enumerate(dw.packed_bbox_table):
         mem[ROM_BBOX_BASE + i] = b
+    # vertex-span descriptor planes (flat homes; mirror of _load_wad)
+    for i, d in enumerate(dw.vspan_desc):
+        mem[0xDC00 + i] = d
+    for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
+        mem[0xDE00 + i] = lo & 0xFF
+        mem[0xDE60 + i] = hi & 0xFF
+        mem[0xDF00 + i] = 1 if cont else 0
     def w16(addr_lo, val):
         mem[addr_lo]     = val & 0xFF
         mem[addr_lo + 1] = (val >> 8) & 0xFF

@@ -55,6 +55,8 @@ def poke_init_frame_state(mem):
     base = _sym('VCACHE_VALID_BASE')
     for i in range(60):
         mem[base + i] = 0
+    for i in range(57):                     # vertex-span served bitmap
+        mem[_sym('VDONE') + i] = 0
 
 
 class BspRender6502:
@@ -102,6 +104,15 @@ class BspRender6502:
 
         for i, b in enumerate(bbox):
             mem[ROM_BBOX_BASE + i] = b
+
+        # vertex-span descriptor tables (flat homes: bsp/header.s equates)
+        import doom_wireframe as dw
+        for i, d in enumerate(dw.vspan_desc):
+            mem[0xDC00 + i] = d
+        for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
+            mem[0xDE00 + i] = lo & 0xFF
+            mem[0xDE60 + i] = hi & 0xFF
+            mem[0xDF00 + i] = 1 if cont else 0
 
         def w16(addr_lo, val):
             mem[addr_lo]     = val & 0xFF

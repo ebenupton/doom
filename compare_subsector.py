@@ -98,6 +98,15 @@ class SubsectorDiffer:
         py_spans = sc.read_spans()
         py_fb = bytes(mem[0xEA00:0xFE00])
 
+        # The state we continue from is the python run — but the vertex
+        # done-bits the 6502 set were snapped away with the rest of its
+        # state. Re-sync VDONE from the python done-set so the next
+        # 6502 subsector sees the served-vertex history python does.
+        for i in range(64):
+            mem[0x0600 + i] = 0
+        for vi in dw._vspan_done:
+            mem[0x0600 + (vi >> 3)] |= 1 << (vi & 7)
+
         self.n_compared += 1
         spans_match = (asm_spans == py_spans)
         # Pixel diff: XOR popcount over the 1bpp framebuffer.
