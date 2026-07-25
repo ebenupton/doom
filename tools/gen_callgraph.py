@@ -136,28 +136,34 @@ for a, b, k in edges:
     _adj.setdefault(a, set()).add(b)
 for a, b in vec:
     _adj.setdefault(a, set()).add(b)
-_depth = {}
-_roots = [n for n in nodes if n in ('br_render_frame',)] or list(nodes)[:1]
-_frontier = list(_roots)
-for r in _roots:
-    _depth[r] = 0
-while _frontier:
-    nxt = []
-    for n in _frontier:
-        for m in _adj.get(n, ()):  # BFS: shortest depth wins (stable bands)
-            if m not in _depth:
-                _depth[m] = _depth[n] + 1
-                nxt.append(m)
-    _frontier = nxt
-for n in nodes:
-    _depth.setdefault(n, 0)
-BAND = 2                              # depths per band: coarse enough to
-                                      # keep same-stage siblings together
+# LONGEST-path depth (BFS-shortest measured useless: everything lands
+# 4 levels deep off br_render_frame). Iterative relaxation, capped to
+# survive the few call cycles; the cap never binds on the real graph.
+_depth = {n: 0 for n in nodes}
+for _pass in range(24):
+    changed = False
+    for a in _adj:
+        for b in _adj[a]:
+            want = min(_depth.get(a, 0) + 1, 23)
+            if _depth.get(b, 0) < want:
+                _depth[b] = want
+                changed = True
+    if not changed:
+        break
+BAND = 1                              # one depth per band: maximal L-R
+                                      # (BAND=2 measured: nothing split —
+                                      # BFS depths compress to ~4 levels)
 bykey = {}
 for n in sorted(nodes):
     f = owner.get(n)
     key = None if f is None else (f, _depth[n] // BAND)
     bykey.setdefault(key, []).append(n)
+import sys as _sys
+_bands = {}
+for k2 in bykey:
+    if k2: _bands.setdefault(k2[0], set()).add(k2[1])
+print('split files:', {f.replace('src/',''): sorted(b) for f, b in _bands.items() if len(b) > 1}, file=_sys.stderr)
+print('depth reach:', len(_depth), 'of', len(nodes), file=_sys.stderr)
 _percount = {}
 ci = 0
 for key, ns in sorted(bykey.items(), key=lambda kv: (str(kv[0]),)):
