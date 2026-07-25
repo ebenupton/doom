@@ -15,16 +15,16 @@ mechanism, by design — issues are worked through by Eben.
 Interactive visualizer over the float reference pipeline comparing:
   mode A — CURRENT verticals: per-seg emission + NOVT/APEDGE rule web
            (fp_render_seg untouched);
-  mode B — JOINT RULE: all per-seg verticals suppressed; at each
-           (vertex, front-sector) group, met once per frame, the
-           vertical bits are F_A Δ F_B (colinear joint) or F_A ∪ F_B
-           (corner), where F = the seg's static face-interval set:
-             solid          [T, B]
-             portal         [T, bt] if NEEDBT  ∪  [bb, B] if NEEDBB
-             back-facing    ∅
-           (T/B/bt/bb projected at THIS vertex with the shared recip,
-           so every y is bit-identical to what the seg itself would
-           project.)
+  mode B — DESCRIPTOR runtime, SERVE AT FIRST TRANSFORM (Eben,
+           2026-07-25): all per-seg verticals suppressed; a vertex is
+           served by the FIRST FRONT-FACING seg that touches it — the
+           engine's transform population (post-backface,
+           pre-visibility: br_seg_xform_vertex time), NOT the landed
+           first-RENDERING-seg rule. A culled/occluded front seg can
+           be the trigger: its heights drive the clamps, and the
+           vertical still clips against the span state AT SERVE TIME
+           (earlier = looser than render-serve). Those two deltas are
+           exactly what this mode is for eyeballing.
 
 Every drawn (post-clip) segment renders at ~50% additive gray, so
 overdraw = brighter pixels; the status bar counts overdrawn pixels.
@@ -297,10 +297,15 @@ _emitted = {}                     # vertex -> interval list already drawn (any
                                   # from _vert_covered_by_solid_ap yielding
 
 def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
-    """DESCRIPTOR runtime: first rendering seg to touch a vertex reads
-    one descriptor byte; coded spans evaluate role pairs against the
-    trigger's own four heights (no table, no clamp — the code IS the
-    clamp); explicit spans clamp world heights to the trigger front."""
+    """DESCRIPTOR runtime, serve-at-first-TRANSFORM: the first
+    FRONT-FACING seg to touch a vertex serves it (the engine transform
+    population — backfacing segs never transform endpoints, so they
+    never trigger; visibility outcomes don't matter). Coded spans
+    evaluate role pairs against the trigger's own four heights (the
+    code IS the clamp); explicit spans clamp world heights to the
+    trigger front."""
+    if not _front_facing(si, ctx):
+        return                        # backfacing: transforms nothing
     s = segs[si][0]
     front = segs[si][1]
     for vidx in (s[0], s[1]):
