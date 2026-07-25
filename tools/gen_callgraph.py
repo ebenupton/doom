@@ -2,6 +2,9 @@
 """Engine call-graph generator — SOURCE-PARSE style (the useful one,
 2026-07-12 lineage; this replaced a linked-image disassembly variant
 that drowned the structure in raw addresses, 2026-07-22).
+2026-07-25: vertex-span descriptors era — emit_vert_sx*/ap_edge_one
+died with the NOVT web; vs_fresh1/2 (the emit-serve descriptor entries)
+and the dcl vertical fastpath join the curated set.
 
 Parses every JSR/JMP in src/{bsp,ang,clip}/*.s + hud.s, resolves
 symbol aliases (SC_* equates), clusters routines by defining source
@@ -62,7 +65,8 @@ extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss'
  'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
  'umul8','udiv16_8','interp_store','vertex_fetch','bca_frame','rc_wipe',
- 'bcls_s0','bcls_s1','emit_vert_sx1','emit_vert_sx2','ap_edge_one',
+ 'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vsx_do_c3',
+ 'dcl_vert','dcl_vert_on','dcl_vertical',
  'reproject_at_crossing','br_recip','hud_draw',
  'corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp',
  'rot_core_sin','rot_core_cos','rot_gen_pair','dpy_back_v1',
