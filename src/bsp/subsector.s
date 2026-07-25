@@ -180,8 +180,6 @@ seg_proc:
 ; is behind the near plane, else writes sx/sy straight into this endpoint's
 ; slots via zp_seg_ep). Transform v1. Always copy evy/evx/clipped so both
 ; endpoints are available for near-plane crossing math even when clipped.
-   LDY #0
-   STY zp_seg_ep                            ; v1 → struct VX1
 ; --- VERTEX CHAIN (2026-07-10): if this seg's v1 is the vertex the LAST
 ; transform produced (zp_seg_v_idx still holds it, and VX2 still holds
 ; its outputs), reuse VX2 wholesale: evy/evx/clip always; sx, the front
@@ -189,13 +187,19 @@ seg_proc:
 ; The packer chain-orders subsector segs, so this hits ~80% of
 ; consecutive front-facing pairs. zp_seg_v_idx_b is invalidated at the
 ; subsector boundary and when a crossing overwrites VX2.
-   LDA (zp_seg_hdr_p),Y
-   CMP zp_seg_v_idx_l
-   BNE ch_miss1                            ; A = header idx_l
-   INY
+; BYTE ORDER REVERSED (Eben, 2026-07-26): compare B (+1) first, then
+; A (+0), walking Y DOWN — every exit arrives with Y = 0, which then
+; feeds zp_seg_ep / zp_ys_done / zp_ys_v1ok: the LDY#0/LDX#0/LDA#0
+; constants die and the NMOS/C02 hit tails unify. The hit arm stores
+; no ep at all (v2's staging overwrites it before any consumer).
+   LDY #1
    LDA (zp_seg_hdr_p),Y
    CMP zp_seg_v_idx_b
-   BNE ch_miss2                            ; A = header idx_b; idx_l equal
+   BNE ch_miss_b                           ; A = header idx_b
+   DEY                                     ; Y = 0
+   LDA (zp_seg_hdr_p),Y
+   CMP zp_seg_v_idx_l
+   BNE ch_miss_a                           ; A = header idx_l; B equal
 ; chain hit: the VX2 -> VX1 wholesale copy, IN PLACE (the macro
 ; indirection retired 2026-07-26 — this is its only site; the LO body
 ; + JSR tax died 2026-07-17, the MAIN/LO split died in the reshuffle).
@@ -239,24 +243,25 @@ seg_proc:
    STA zp_seg_sy1_bot_h
 ch_reuse_done:
 .endscope
-.if ::C02
-   STZ zp_ys_done                         ; consumed (chain) — reset for
-   BRA ch_v1_done_l0                      ; THIS seg's own y stage; the
-.else                                    ; chain body is pure ZP — this
-   LDA #0                                ; arc NEVER left L0, so it skips
-   STA zp_ys_done                        ; the transform-arc re-page
-   BEQ ch_v1_done_l0
-.endif
-ch_miss1:                                  ; A = header idx_l (Y = 0)
-   STA zp_seg_v_idx_l
-   INY
-   LDA (zp_seg_hdr_p),Y
-ch_miss2:                                  ; A = header idx_b
-   LDX #0
-   STX zp_ys_done                           ; prev-seg donation dies here
-   STX zp_ys_v1ok
-   STA zp_seg_v_idx_b                      ; CONTRACT: A = B at entry —
-   JSR br_seg_xform_vertex                  ; keep this STA immediately before
+   STY zp_ys_done                          ; consumed (chain; Y = 0) — reset
+   JMP ch_v1_done_l0                       ; for THIS seg's own y stage; the
+                                        ; chain body is pure ZP — this arc
+                                        ; NEVER left L0, skips the re-page
+                                        ; (STY+JMP: the NMOS/C02 fork died
+                                        ; with the reversed-order Y=0)
+ch_miss_b:                                 ; A = header idx_b (Y = 1)
+   STA zp_seg_v_idx_b
+   DEY                                     ; Y = 0
+   LDA (zp_seg_hdr_p),Y                    ; header idx_l
+ch_miss_a:                                 ; (B-differs falls in; A-differs
+   STA zp_seg_v_idx_l                      ;  arrives with B already correct)
+   STY zp_seg_ep                            ; v1 → struct VX1 (Y = 0)
+   STY zp_ys_done                           ; prev-seg donation dies here
+   STY zp_ys_v1ok
+   JSR br_seg_xform_vertex                  ; (the old 'A = B at entry'
+                                        ; contract is a FOSSIL: the entry
+                                        ; reloads both key bytes from zp —
+                                        ; audited 2026-07-26)
 ; (no marshalling: evy/evx/clip/sx/recip all landed in VX1 directly)
 ch_v1_done:
    PAGE BANK_L0                             ; transform arc: br_seg_xform_
@@ -279,8 +284,8 @@ ch_v1_done_l0:
    STA zp_seg_v_idx_l
    INY
    LDA (zp_seg_hdr_p),Y
-   STA zp_seg_v_idx_b                      ; CONTRACT: A = B at entry —
-   JSR br_seg_xform_vertex                  ; keep this STA immediately before
+   STA zp_seg_v_idx_b
+   JSR br_seg_xform_vertex                  ; (entry reloads the key from zp)
 ; (no marshalling — see v1)
 
 ; --- Near-plane clip resolution (mirrors fp_near_clip in fp.py) ---

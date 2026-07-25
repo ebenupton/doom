@@ -45,9 +45,9 @@
 ; ============================================================================
 br_seg_xform_vertex:
 .scope
-; ENTRY CONTRACT: A = idx_hi — both callers end LDA vN_hi / STA
-; zp_seg_v_idx_b immediately before the JSR (mirrored at the call sites
-; in subsector.s).
+; ENTRY: zp_seg_v_idx_l/b = the vertex key (both bytes reloaded from
+; zp below — the old 'A = idx_hi at entry' contract is retired
+; 2026-07-26; incoming registers are dead).
 ; EXIT CONTRACT (2026-07-21): every exit leaves BANK_L2 paged. The
 ; miss/near-clip exits already ended L2 (vertex_fetch/vxc_arm/br_recip);
 ; the four vc-hit exits page it explicitly. This makes the caller-side
