@@ -43,6 +43,78 @@
 ;       cache[2..6] = rhi, rlo, sx, 0
 ;   do_project_y()                          # per-seg heights, tail call
 ; ============================================================================
+
+; ============================================================================
+; LO/HI PLANE-ARM MACROS (2026-07-26, the bca CROSS_MAG_DECIDE lesson:
+; ONE source, TWO expansions). Every vertex-plane twin below is
+; generated from a single body with the senior page offset as the
+; parameter — the pairs cannot drift (the hi hit-clip arm already had:
+; it carried a private PAGE/RTS where the lo shared its exit branch).
+; ============================================================================
+.macro VC_HIT_ARM pg
+.local ok, pgx
+   LDY zp_seg_v_idx_l
+   LDA VC_EVY+pg,Y
+   STA VX1+0,X
+   LDA VC_EVX+pg,Y
+   STA VX1+1,X
+   LDA VC_CLIP+pg,Y                        ; cached near-clip verdict
+   BEQ ok
+   STA VX1+2,X                             ; clip = 1
+   BNE pgx                                 ; (A = clip, nonzero: always)
+ok:
+; (hit arm de-larded 2026-07-25: no working-recip stores, no select —
+; every projector downstream restages from the STRUCT copies)
+   LDA VC_SXL+pg,Y
+   STA VX1+3,X                             ; sx_lo
+   LDA VC_SXH+pg,Y
+   STA VX1+4,X                             ; sx_hi
+   LDA VC_RHI+pg,Y
+   STA VX1+13,X                            ; rhi (for ap2_solid_proj)
+   LDA VC_RLO+pg,Y
+   STA VX1+14,X                            ; rlo (= S)
+pgx:
+   PAGE BANK_L2                            ; exit contract (see head)
+   RTS
+.endmacro
+
+.macro VC_FILL_ARM pg
+; ok-miss armed fill: recip bytes load once for both consumers
+; (struct + plane); sx from zp_br_res; clip = 0.
+   LDY zp_seg_v_idx_l
+   LDA zp_br_r_m8
+   STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
+   STA VC_RHI+pg,Y
+   LDA zp_br_r_s
+   STA VX1+14,X
+   STA VC_RLO+pg,Y
+   LDA VX1+0,X
+   STA VC_EVY+pg,Y
+   LDA VX1+1,X
+   STA VC_EVX+pg,Y
+   LDA zp_br_res_l
+   STA VC_SXL+pg,Y
+   LDA zp_br_res_h
+   STA VC_SXH+pg,Y
+   LDA #0
+   STA VC_CLIP+pg,Y
+; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
+   RTS
+.endmacro
+
+.macro NC_FILL_ARM pg
+; near-clipped: evy/evx (usable on any future hit) + the clip verdict
+   LDY zp_seg_v_idx_l
+   LDA VX1+0,X
+   STA VC_EVY+pg,Y
+   LDA VX1+1,X
+   STA VC_EVX+pg,Y
+   LDA #1
+   STA VC_CLIP+pg,Y
+   STA VX1+2,X                             ; clip = 1
+   RTS
+.endmacro
+
 br_seg_xform_vertex:
 .scope
 ; ENTRY: zp_seg_v_idx_l/b = the vertex key (both bytes reloaded from
@@ -92,60 +164,10 @@ br_seg_xform_vertex:
    TYA                                     ; Y still holds idx_b from the
    AND #$20                                ; bitmap check; senior: idx >= 256
    BNE vc_hit_hi
-   LDY zp_seg_v_idx_l
-   LDA VC_EVY,Y
-   STA VX1+0,X
-   LDA VC_EVX,Y
-   STA VX1+1,X
-   LDA VC_CLIP,Y                           ; cached near-clip verdict
-   BEQ vch0_ok
-   STA VX1+2,X                             ; clip = 1
-   BNE vch0_pg                             ; (A = clip, nonzero: always)
-                                        ; share the normal exit's page —
-                                        ; keeps vc_miss in branch range
-vch0_ok:
-; HIT ARM DE-LARDED (2026-07-25 grind): the working-recip stores and
-; the RNS_SELECT had NO live consumer — every projector downstream
-; restages from the STRUCT copies and re-selects itself (y stage arms,
-; the explicit serve hoist, reproject via cross_compute; project_x
-; only runs on miss arcs). 17 cycles/hit died; the old "rlo LAST"
-; ordering note died with the select.
-   LDA VC_SXL,Y
-   STA VX1+3,X                             ; sx_lo
-   LDA VC_SXH,Y
-   STA VX1+4,X                             ; sx_hi
-   LDA VC_RHI,Y
-   STA VX1+13,X                            ; rhi (for ap2_solid_proj)
-   LDA VC_RLO,Y
-   STA VX1+14,X                            ; rlo (= S)
-vch0_pg:
-   PAGE BANK_L2                            ; exit contract (see head)
-   RTS                                     ; Y projection DEFERRED to the
-                                        ; post-has_gap y stage (2026-07-11):
-                                        ; culled segs never project.
+   VC_HIT_ARM 0
 vc_hit_hi:
-; (senior twin — pages +$100 baked; body identical)
-   LDY zp_seg_v_idx_l
-   LDA VC_EVY+$100,Y
-   STA VX1+0,X
-   LDA VC_EVX+$100,Y
-   STA VX1+1,X
-   LDA VC_CLIP+$100,Y
-   BEQ vch1_ok
-   STA VX1+2,X
-   PAGE BANK_L2                            ; exit contract (see head)
-   RTS
-vch1_ok:
-   LDA VC_SXL+$100,Y
-   STA VX1+3,X
-   LDA VC_SXH+$100,Y
-   STA VX1+4,X
-   LDA VC_RHI+$100,Y
-   STA VX1+13,X
-   LDA VC_RLO+$100,Y
-   STA VX1+14,X                            ; (working-recip stores + select
-   PAGE BANK_L2                            ; de-larded — see the lo twin)
-   RTS
+; (senior twin — same macro, +$100 pages)
+   VC_HIT_ARM $100
 vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
@@ -222,25 +244,9 @@ nc_fail:
    LDA zp_seg_v_idx_b
    AND #$20
    BNE ncf_hi
-   LDY zp_seg_v_idx_l
-   LDA VX1+0,X
-   STA VC_EVY,Y
-   LDA VX1+1,X
-   STA VC_EVX,Y
-   LDA #1
-   STA VC_CLIP,Y
-   STA VX1+2,X                             ; clip = 1
-   RTS
+   NC_FILL_ARM 0
 ncf_hi:
-   LDY zp_seg_v_idx_l
-   LDA VX1+0,X
-   STA VC_EVY+$100,Y
-   LDA VX1+1,X
-   STA VC_EVX+$100,Y
-   LDA #1
-   STA VC_CLIP+$100,Y
-   STA VX1+2,X
-   RTS
+   NC_FILL_ARM $100
 nc_ok:
 ; Save view-space x for br_project_x below (deferred past the
 ; near-clip test; vxlo/hi/ext are still intact — nothing above clobbers
@@ -278,53 +284,42 @@ nc_ok:
 ; --- Struct stores from the working regs, then ONE armed fill drops
 ; the whole cache entry (evy/evx via the struct, the rest from the
 ; regs — sx still lives in zp_br_res_l/h from br_project_x). ---
-; recip bytes load ONCE for both consumers (2026-07-25 grind): the
-; struct stores moved inside the senior split so each value feeds its
-; VX slot and its plane store off a single LDA (was: two extra zp
-; reloads per miss in the armed fill)
    LDA zp_seg_v_idx_b
    AND #$20
    BNE vcf_hi
-   LDY zp_seg_v_idx_l
-   LDA zp_br_r_m8
-   STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
-   STA VC_RHI,Y
-   LDA zp_br_r_s
-   STA VX1+14,X
-   STA VC_RLO,Y
-   LDA VX1+0,X
-   STA VC_EVY,Y
-   LDA VX1+1,X
-   STA VC_EVX,Y
-   LDA zp_br_res_l
-   STA VC_SXL,Y
-   LDA zp_br_res_h
-   STA VC_SXH,Y
-   LDA #0
-   STA VC_CLIP,Y
-; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
-   RTS
+   VC_FILL_ARM 0
 vcf_hi:
-   LDY zp_seg_v_idx_l
-   LDA zp_br_r_m8
-   STA VX1+13,X
-   STA VC_RHI+$100,Y
-   LDA zp_br_r_s
-   STA VX1+14,X
-   STA VC_RLO+$100,Y
-   LDA VX1+0,X
-   STA VC_EVY+$100,Y
-   LDA VX1+1,X
-   STA VC_EVX+$100,Y
-   LDA zp_br_res_l
-   STA VC_SXL+$100,Y
-   LDA zp_br_res_h
-   STA VC_SXH+$100,Y
-   LDA #0
-   STA VC_CLIP+$100,Y
-   RTS
+   VC_FILL_ARM $100
 .endscope
 
+
+.macro VXC_WARM_ARM pg
+; warm: total = base + ref, two s24 adds (senior page baked)
+   CLC
+   LDA VXC_XLO+pg,Y
+   ADC vxc_ref_x+0
+   STA zp_br_vx_l
+   LDA VXC_XHI+pg,Y
+   ADC vxc_ref_x+1
+   STA zp_br_vx_h
+   LDA VXC_XEXT+pg,Y
+   ADC vxc_ref_x+2
+   STA zp_br_vx_x
+   CLC
+   LDA VXC_YLO+pg,Y
+   ADC vxc_ref_y+0
+   STA zp_br_vy_l
+   LDA VXC_YHI+pg,Y
+   ADC vxc_ref_y+1
+   STA zp_br_vy_h
+   LDA VXC_YEXT+pg,Y
+   ADC vxc_ref_y+2
+   STA zp_br_vy_x
+   PAGE BANK_L2                            ; exit L2 = the OFF-path's exit
+   RTS                                     ; state (br_to_view_fetch): one
+                                           ; contract, and br_recip's
+                                           ; per-call PAGE dies (2026-07-21)
+.endmacro
 
 ; ============================================================================
 ; vxc_arm — the coherence-cache tier of the vertex pipeline (2026-07-12:
@@ -352,55 +347,9 @@ vxc_arm:
    TXA                                     ; X still = idx_b from entry
    AND #$20                                ; idx >= 256  <=>  B >= 32 (B<=58)
    BNE va_hi
-   CLC
-   LDA VXC_XLO,Y
-   ADC vxc_ref_x+0
-   STA zp_br_vx_l
-   LDA VXC_XHI,Y
-   ADC vxc_ref_x+1
-   STA zp_br_vx_h
-   LDA VXC_XEXT,Y
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
-   CLC
-   LDA VXC_YLO,Y
-   ADC vxc_ref_y+0
-   STA zp_br_vy_l
-   LDA VXC_YHI,Y
-   ADC vxc_ref_y+1
-   STA zp_br_vy_h
-   LDA VXC_YEXT,Y
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x
-   PAGE BANK_L2                            ; exit L2 = the OFF-path's exit
-   RTS                                     ; state (br_to_view_fetch): one
-                                           ; contract, and br_recip's
-                                           ; per-call PAGE dies (2026-07-21)
+   VXC_WARM_ARM 0
 va_hi:
-   CLC
-   LDA VXC_XLO+$100,Y
-   ADC vxc_ref_x+0
-   STA zp_br_vx_l
-   LDA VXC_XHI+$100,Y
-   ADC vxc_ref_x+1
-   STA zp_br_vx_h
-   LDA VXC_XEXT+$100,Y
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
-   CLC
-   LDA VXC_YLO+$100,Y
-   ADC vxc_ref_y+0
-   STA zp_br_vy_l
-   LDA VXC_YHI+$100,Y
-   ADC vxc_ref_y+1
-   STA zp_br_vy_h
-   LDA VXC_YEXT+$100,Y
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x
-   PAGE BANK_L2                            ; exit L2 = the OFF-path's exit
-   RTS                                     ; state (br_to_view_fetch): one
-                                           ; contract, and br_recip's
-                                           ; per-call PAGE dies (2026-07-21)
+   VXC_WARM_ARM $100
 va_cold:
 ; --- cold: mark valid, fetch + rotate for real, snapshot the base ---
    LDA VXC_VALID,X

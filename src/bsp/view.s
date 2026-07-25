@@ -232,6 +232,25 @@ vertex_fetch:
    LDA zp_vxc_on
    BEQ br_to_view_fetch                    ; off: fall into the plain fetch
    JMP vxc_arm
+.macro VF_FETCH_ARM pg
+; plane fetch + merged dx subtract (2026-07-19): the last SBC leaves N
+; for the sign branch (STA/JMP preserve it)
+   LDY zp_seg_v_idx_l
+   LDA VP_YLO+pg,Y
+   STA zp_br_dy_l
+   LDA VP_YHI+pg,Y
+   STA zp_br_dy_h
+   ZERO zp_ri_sgn
+   LDA VP_XLO+pg,Y
+   SEC
+   SBC zp_br_px_h
+   STA zp_ri_d_l
+   LDA VP_XHI+pg,Y
+   SBC zp_br_px_x
+   STA zp_ri_d_h
+   JMP btv_dx_signed
+.endmacro
+
 br_to_view_fetch:
 .assert <ROM_VERTS_C = 0, error, "vertex planes assume page-aligned ROM_VERTS_C"
 ; Page-split vertex planes (VP_*, header.s): senior-bit arm with the
@@ -247,35 +266,10 @@ br_to_view_fetch:
    LDA zp_seg_v_idx_b
    AND #$20                                ; senior: idx >= 256 (B >= 32)
    BNE vf_hi
-   LDY zp_seg_v_idx_l
-   LDA VP_YLO,Y
-   STA zp_br_dy_l
-   LDA VP_YHI,Y
-   STA zp_br_dy_h
-   ZERO zp_ri_sgn
-   LDA VP_XLO,Y
-   SEC
-   SBC zp_br_px_h
-   STA zp_ri_d_l
-   LDA VP_XHI,Y
-   SBC zp_br_px_x
-   STA zp_ri_d_h
-   JMP btv_dx_signed
+   VF_FETCH_ARM 0
 vf_hi:
-   LDY zp_seg_v_idx_l
-   LDA VP_YLO+$100,Y
-   STA zp_br_dy_l
-   LDA VP_YHI+$100,Y
-   STA zp_br_dy_h
-   ZERO zp_ri_sgn
-   LDA VP_XLO+$100,Y
-   SEC
-   SBC zp_br_px_h
-   STA zp_ri_d_l
-   LDA VP_XHI+$100,Y
-   SBC zp_br_px_x
-   STA zp_ri_d_h
-   JMP btv_dx_signed
+   VF_FETCH_ARM $100
+
 br_to_view:
 ; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
 ; their operands — and the body has no local labels; same rule as
