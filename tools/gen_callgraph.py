@@ -125,17 +125,54 @@ out = ['digraph engine {',
  '  edge [color="#666666", arrowsize=0.6];',
  f'  label="6502 DOOM engine call graph - {today}\\nsolid = JSR (aliases resolved) - bold dashed = tail JMP - red dashed = vector/SMC dispatch - bold border = hot path";',
  '  labelloc=top; fontsize=12;']
-byfile = {}
+# --- L-R FLOW RULE (Eben 2026-07-25): maximise left-to-right call
+# edges. One box per file forces back-edges whenever a file holds both
+# early- and late-stage routines, so clusters BREAK: nodes group by
+# (file, call-depth band) — "subsector.s (2)" etc. Depth = BFS from the
+# roots over the call edges (vector edges included so dispatch targets
+# rank right of their dispatchers).
+_adj = {}
+for a, b, k in edges:
+    _adj.setdefault(a, set()).add(b)
+for a, b in vec:
+    _adj.setdefault(a, set()).add(b)
+_depth = {}
+_roots = [n for n in nodes if n in ('br_render_frame',)] or list(nodes)[:1]
+_frontier = list(_roots)
+for r in _roots:
+    _depth[r] = 0
+while _frontier:
+    nxt = []
+    for n in _frontier:
+        for m in _adj.get(n, ()):  # BFS: shortest depth wins (stable bands)
+            if m not in _depth:
+                _depth[m] = _depth[n] + 1
+                nxt.append(m)
+    _frontier = nxt
+for n in nodes:
+    _depth.setdefault(n, 0)
+BAND = 2                              # depths per band: coarse enough to
+                                      # keep same-stage siblings together
+bykey = {}
 for n in sorted(nodes):
-    byfile.setdefault(owner.get(n), []).append(n)
+    f = owner.get(n)
+    key = None if f is None else (f, _depth[n] // BAND)
+    bykey.setdefault(key, []).append(n)
+_percount = {}
 ci = 0
-for f, ns in sorted(byfile.items(), key=lambda kv: str(kv[0])):
-    if f is None:
+for key, ns in sorted(bykey.items(), key=lambda kv: (str(kv[0]),)):
+    if key is None:
         for n in ns:
             out.append(f'  "{n}" [fillcolor="#ffd6d6", shape=diamond];')
         continue
+    f, band = key
     ci += 1
-    out.append(f'  subgraph cluster_{ci} {{ label="{f.replace("src/","")}"; '
+    _percount[f] = _percount.get(f, 0) + 1
+    nbands = sum(1 for k2 in bykey if k2 and k2[0] == f)
+    lbl = f.replace("src/", "")
+    if nbands > 1:
+        lbl += f' ({_percount[f]})'
+    out.append(f'  subgraph cluster_{ci} {{ label="{lbl}"; '
                'style=filled; fillcolor="#f7f7f7"; color="#cccccc";')
     for n in ns:
         pen = ',penwidth=2.2' if n in HOT else ''
