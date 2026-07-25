@@ -26,6 +26,27 @@ STZ addr
 .endif
 .endmacro
 
+; ZERO_X / ZERO_Y: as ZERO but the NMOS arm clobbers X / Y instead of
+; A (65C02 STZ clobbers nothing either way). Pick by which register is
+; dead at the site.
+.macro ZERO_X addr
+.if ::C02
+STZ addr
+.else
+   LDX #0
+   STX addr
+.endif
+.endmacro
+
+.macro ZERO_Y addr
+.if ::C02
+STZ addr
+.else
+   LDY #0
+   STY addr
+.endif
+.endmacro
+
 ; BUMP: A = A + 1. 65C02 = INC A (no carry); 6502 = CLC : ADC #1. Use only
 ; where the carry/overflow OUT is dead (negate, single-byte increments).
 .macro BUMP
@@ -124,6 +145,23 @@ NF_LLEAF = $40                          ; left child is a subsector
 .if ::BANKED
    LDA #bank
    STA $FE30
+.endif
+.endmacro
+
+; PAGE_X / PAGE_Y: as PAGE but clobber X / Y instead of A — lets a
+; value RIDE A across a bank switch (flags still die: the immediate
+; load sets N/Z — compute verdicts AFTER the page, not before).
+.macro PAGE_X bank
+.if ::BANKED
+   LDX #bank
+   STX $FE30
+.endif
+.endmacro
+
+.macro PAGE_Y bank
+.if ::BANKED
+   LDY #bank
+   STY $FE30
 .endif
 .endmacro
 

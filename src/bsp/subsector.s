@@ -567,13 +567,11 @@ ft_no_needbt:
    PAGE BANK_L0
    LDY #13
    LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
-   SEC
-   SBC zp_seg_ch
-   TAX                                     ; verdict rides in X: PAGE (banked)
-   PAGE BANK_C                             ; is LDA #bank — clobbers A + flags
-   TXA
-   BMI ft_skip
-   BEQ ft_skip
+   PAGE_X BANK_C                            ; back to C with bch RIDING A
+   CMP zp_seg_ch                            ; verdict AFTER the page (its
+   BMI ft_skip                              ; immediate load killed flags);
+   BEQ ft_skip                              ; the SEC/TAX/TXA ride died
+                                           ; (Eben, 2026-07-26)
 ft_emit:
 ; Portal-lip (the only fall-in: !SOLID, !NEEDBT, bch>ch): ft IS the new
 ; top of the aperture — arm TOP_RECORDS. The old AND #$06 re-test was
@@ -625,14 +623,11 @@ fb_no_needbb:
 ; BANK_C, page around like ft_no_needbt; flat: no-ops)
    PAGE BANK_L0
    LDY #12
-   LDA zp_seg_fh
-   SEC
-   SBC (zp_seg_hdr_p),Y                     ; bfh (header +12)
-   TAX                                     ; verdict rides in X across the
-   PAGE BANK_C                             ; A-clobbering PAGE (see ft above)
-   TXA
-   BMI fb_skip
-   BEQ fb_skip
+   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
+   PAGE_X BANK_C                            ; back to C with bfh RIDING A
+   CMP zp_seg_fh                            ; bfh - fh: skip iff bfh >= fh —
+   BPL fb_skip                              ; the operand flip makes it ONE
+                                           ; branch (emit iff bfh < fh)
 fb_emit:
 ; Mirror of ft_emit: portal-lip only — arm BOT_RECORDS (the AND #$0A
 ; re-test was decidable at every entrant; solid/NEEDBB branch straight
