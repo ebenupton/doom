@@ -196,10 +196,12 @@ seg_proc:
    LDA (zp_seg_hdr_p),Y
    CMP zp_seg_v_idx_b
    BNE ch_miss2                            ; A = header idx_b; idx_l equal
-; chain hit: the copy + back-pair body lives in LO (MAIN is at its
-; ceiling); ~12 cyc JSR/RTS tax. chain_reuse_v1 consumes zp_ys_done
-; (prev seg y-staged => VX2's front sy pair is live => copy it and set
-; zp_ys_v1ok so the y stage skips v1's front projection).
+; chain hit: chain_reuse_v1 expands INLINE here (macro since
+; 2026-07-17 — the old LO-resident body and its ~12 cyc JSR/RTS tax
+; died with it; the MAIN/LO split itself died in the one-region
+; reshuffle). It consumes zp_ys_done (prev seg y-staged => VX2's front
+; sy pair is live => copy it and set zp_ys_v1ok so the y stage skips
+; v1's front projection).
    chain_reuse_v1
 .if ::C02
    STZ zp_ys_done                         ; consumed (chain) — reset for
