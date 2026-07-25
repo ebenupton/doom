@@ -76,7 +76,8 @@ new_baseline = {'verify': {}, 'cycles': {}, 'total_cycles': 0}
 # Miss-direction: pixels Python lit that the 6502 didn't (missing lines are
 # bugs). Both gated against the recorded baseline so neither can creep.
 print('== verify vs Python (two-sided) ==')
-VERIFY_POSITIONS = [(1056, -3616, 64), (1500, -3700, 0), (800, -3400, 96),
+VERIFY_POSITIONS = [(1792.34375, -3351.375, 108),
+                    (1056, -3616, 64), (1500, -3700, 0), (800, -3400, 96),
                     (1056, -3328, 14), (1200, -3000, 129),
                     # far-from-spawn, in-spec (+/-1023 units of MAP_CENTER)
                     (2112, -2368, 35), (1984, -2496, 67),

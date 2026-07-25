@@ -53,7 +53,7 @@ def _py_mask(px, py, ab):
     ar = ab * 2 * math.pi / 256
     _reset_trace()
     s = pygame.Surface((W, H)); s.fill((0, 0, 0))
-    dw.render_bsp_fp(len(dw.nodes) - 1, _FFS(), ctx, vz, int(px), int(py),
+    dw.render_bsp_fp(len(dw.nodes) - 1, _FFS(), ctx, vz, px, py,
                      math.cos(ar), math.sin(ar), s,
                      [None] * len(dw.vertexes), [None] * len(dw.vwh_table))
     return pygame.surfarray.array3d(s).sum(2) > 0

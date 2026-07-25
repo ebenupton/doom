@@ -35,6 +35,10 @@ POSITIONS = [
     # zero-record off-screen-aperture portal (screen-wide wall just behind
     # the viewer) — the sixth clipper bug's reproducer
     (-486, -3307, 243),
+    # FRACTIONAL walker-grid pose (engine 8.8: 004A.0B FFF3.54 ang 6C) —
+    # the zp_ys_v1ok cull-leak reproducer (6509a23). Walker positions
+    # live on this grid; integer poses never sample it.
+    (1792.34375, -3351.375, 108),
 ]
 
 

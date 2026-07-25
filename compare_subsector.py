@@ -211,6 +211,8 @@ if __name__ == '__main__':
             # beyond the old +/-1023-unit box (s16 player int)
             (3648, -2368, 35), (2500, -2600, 67), (3648, -4800, 131),
             (-486, -3307, 243),
+            # fractional walker-grid pose (the v1ok cull-leak reproducer)
+            (1792.34375, -3351.375, 108),
         ]
         detail = 3
 

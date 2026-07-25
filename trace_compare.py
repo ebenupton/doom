@@ -94,8 +94,8 @@ def setup_view_zp(sc, px, py, ab):
     fz = dw.player_floor(px, py)
     vz = dw._prescale_height(fz + 41)
     mem[4] = vz & 0xFF
-    raw_px = px - dw.MAP_CENTER_X
-    raw_py = py - dw.MAP_CENTER_Y
+    raw_px = int(round(px - dw.MAP_CENTER_X))   # fractional poses: the raw
+    raw_py = int(round(py - dw.MAP_CENTER_Y))   # ints feed the corner pipeline
     mem[0x90] = raw_px & 0xFF
     mem[0x91] = (raw_px >> 8) & 0xFF
     mem[0x92] = raw_py & 0xFF
