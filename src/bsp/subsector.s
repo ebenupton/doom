@@ -192,12 +192,19 @@ seg_proc:
 ; feeds zp_seg_ep / zp_ys_done / zp_ys_v1ok: the LDY#0/LDX#0/LDA#0
 ; constants die and the NMOS/C02 hit tails unify. The hit arm stores
 ; no ep at all (v2's staging overwrites it before any consumer).
+; KEY LANDS IN zp_v1i_* AS IT IS READ (Eben, 2026-07-26): the serve
+; sites need v1's key banked across the v2 transform anyway — storing
+; during the compare kills the 4-op banking block at ch_v1_done_l0 on
+; EVERY front-seg arc; zp_seg_v_idx_* is only written on the miss arcs
+; (the transform's input — on a hit it already equals the key).
    LDY #1
    LDA (zp_seg_hdr_p),Y
+   STA zp_v1i_b
    CMP zp_seg_v_idx_b
    BNE ch_miss_b                           ; A = header idx_b
    DEY                                     ; Y = 0
    LDA (zp_seg_hdr_p),Y
+   STA zp_v1i_l
    CMP zp_seg_v_idx_l
    BNE ch_miss_a                           ; A = header idx_l; B equal
 ; chain hit: the VX2 -> VX1 wholesale copy, IN PLACE (the macro
@@ -249,12 +256,14 @@ ch_reuse_done:
                                         ; NEVER left L0, skips the re-page
                                         ; (STY+JMP: the NMOS/C02 fork died
                                         ; with the reversed-order Y=0)
-ch_miss_b:                                 ; A = header idx_b (Y = 1)
-   STA zp_seg_v_idx_b
+ch_miss_b:                                 ; A = header idx_b (Y = 1;
+   STA zp_seg_v_idx_b                      ;  v1i_b already stored above)
    DEY                                     ; Y = 0
    LDA (zp_seg_hdr_p),Y                    ; header idx_l
+   STA zp_v1i_l
 ch_miss_a:                                 ; (B-differs falls in; A-differs
-   STA zp_seg_v_idx_l                      ;  arrives with B already correct)
+   STA zp_seg_v_idx_l                      ;  arrives with B already correct
+                                        ;  and both v1i bytes stored)
    STY zp_seg_ep                            ; v1 → struct VX1 (Y = 0)
    STY zp_ys_done                           ; prev-seg donation dies here
    STY zp_ys_v1ok
@@ -268,13 +277,9 @@ ch_v1_done:
 ; vertex exits L2 on EVERY path (2026-07-21 contract) — the header read
 ; below needs the L0 window back. Flat: no-op.
 ch_v1_done_l0:
-; bank v1's vertex key across the v2 transform (the vertex-span emitter
-; needs BOTH keys; chain hits leave zp_seg_v_idx == v1's key, misses
-; stored it — either way it is v1's here)
-   LDA zp_seg_v_idx_l
-   STA zp_v1i_l
-   LDA zp_seg_v_idx_b
-   STA zp_v1i_b
+; (the v1-key banking block died 2026-07-26: the chain test stores the
+; key into zp_v1i_* as it reads it — the serve sites' banked copy is
+; ready before the v2 transform ever overwrites zp_seg_v_idx)
 
 ; Transform v2.
    LDA #VX_STRIDE
