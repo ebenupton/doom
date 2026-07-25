@@ -740,6 +740,15 @@ ms_advance:
 ; fail, 1px drop — end bank L2): re-page L0 for the next seg's header
 ; reads, but only on the loop-back arc so the RTS keeps the old
 ; caller-sees-last-seg's-bank contract.
+; ZP_YS_V1OK LEAK (2026-07-25, the 004A.0B jump): a seg that CHAIN-HIT
+; (v1ok=1, ys_done consumed) and then culled here never ran its y
+; stage — the stale v1ok leaked into the NEXT seg, whose y stage then
+; skipped v1's front projection and emitted whatever sy the chain copy
+; brought (two-seg-old values: the 21-row wrong ft). Emitted segs
+; cleared v1ok in the y stage; ONLY the cull arcs leaked. The backface
+; arc (s_advance_l0) never touches the chain and must PRESERVE it.
+   LDA #0
+   STA zp_ys_v1ok
 ; (no zp_seg_skip reset needed: the back-face test returns in A now, and
 ; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
 ; (zp_seg_first is NOT advanced per seg: its only reader is the subsector
