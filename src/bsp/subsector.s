@@ -305,34 +305,9 @@ ch_v1_done_l0:
 ; (800,-3400,96); bailing solids loses that occlusion entirely).
    LDA zp_seg_v1_clipped
    ORA zp_seg_v2_clipped
-   BEQ s_both_have_proj
-   LDA zp_seg_v1_clipped
-   BEQ s_v2_was_clipped
-   LDA zp_seg_v2_clipped
-   BNE s_advance_jmp                       ; both clipped
-   STA zp_seg_ep                            ; = 0 (the BNE above proves A=0):
-   JSR reproject_at_crossing                ; reproject into v1 (struct VX1)
-   JMP s_both_have_proj
-s_advance_jmp:
-   JMP s_advance
-s_v2_was_clipped:
-   LDA #VX_STRIDE
-   STA zp_seg_ep                            ; reproject into v2 (struct VX2)
-   JSR reproject_at_crossing
-   LDA #$80
-   STA zp_seg_v_idx_b                      ; VX2 now holds the CROSSING, not
-                                        ; the vertex — kill the chain key.
-                                        ; $80, NOT $FF (2026-07-26): the
-                                        ; sentinel is also the v2 VDONE
-                                        ; probe/mark INDEX — VDONE+$80 =
-                                        ; $1BBC sits in the free ex-BCA_WS
-                                        ; tail, the sandbox the old $0600
-                                        ; page provided ($FF would read
-                                        ; AND CORRUPT SQR_LO+$3B — the
-                                        ; walkseq phantom-line bug). Any
-                                        ; value > 58 kills the chain CMP;
-                                        ; keep base+sentinel inside
-                                        ; $1B78-$1BFF.
+   BNE s_some_clipped                      ; rare (15%, census 2026-07-27):
+                                           ; the resolution block lives in
+                                           ; an island past the hg fast arms
 s_both_have_proj:
 
 ; Match Python's has_gap wrapper:
@@ -381,6 +356,36 @@ hg_fast_rev:
    LDY zp_seg_sx2_l                        ; ilo = sx2_lo via Y (dead here —
    STY zp_i_l                              ; has_gap clobbers it); A = sx1_lo
    JMP hg_query                            ; = ihi rides through (A-hi ABI)
+; --- near-clip resolution island (census 2026-07-27) ---
+s_some_clipped:
+   LDA zp_seg_v1_clipped
+   BEQ s_v2_was_clipped
+   LDA zp_seg_v2_clipped
+   BNE s_advance_jmp                       ; both clipped
+   STA zp_seg_ep                            ; = 0 (the BNE above proves A=0):
+   JSR reproject_at_crossing                ; reproject into v1 (struct VX1)
+   JMP s_both_have_proj
+s_advance_jmp:
+   JMP s_advance
+s_v2_was_clipped:
+   LDA #VX_STRIDE
+   STA zp_seg_ep                            ; reproject into v2 (struct VX2)
+   JSR reproject_at_crossing
+   LDA #$80
+   STA zp_seg_v_idx_b                      ; VX2 now holds the CROSSING, not
+                                        ; the vertex — kill the chain key.
+                                        ; $80, NOT $FF (2026-07-26): the
+                                        ; sentinel is also the v2 VDONE
+                                        ; probe/mark INDEX — VDONE+$80 =
+                                        ; $1BBC sits in the free ex-BCA_WS
+                                        ; tail, the sandbox the old $0600
+                                        ; page provided ($FF would read
+                                        ; AND CORRUPT SQR_LO+$3B — the
+                                        ; walkseq phantom-line bug). Any
+                                        ; value > 58 kills the chain CMP;
+                                        ; keep base+sentinel inside
+                                        ; $1B78-$1BFF.
+   JMP s_both_have_proj
 hg_hi_diff:
 ; hi bytes differ: signed hi-byte difference gives the order (lo bytes
 ; only ever break ties, and ties took the equal path above)
@@ -444,8 +449,10 @@ hg_query:
                                            ; register-only — ms/tfr get
                                            ; their pair from the emit-path
                                            ; clamp); main-resident — no PAGE
-   BCS hg_pass                             ; C-only verdict (2026-07-26):
-   JMP s_advance                           ; C=1 gap -> process the seg
+   BCC hg_adv                              ; C-only verdict: C=0 skip ->
+                                           ; borrow hg_adv's JMP backward;
+                                           ; C=1 gap FALLS THROUGH (was an
+                                           ; 80%-taken BCS — census)
 hg_pass:
 ; Records reset for THIS seg (moved from seg_proc): ms_dispatch reads
 ; the counts only for segs that got here; armed draws re-init them.

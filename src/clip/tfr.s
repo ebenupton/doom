@@ -37,15 +37,9 @@ SEG_HIGH
 tg_append_x:
 .scope
    LDA zp_new_tail
-   BNE ta_try_merge
-; ||
-; First span: set head. POOL_NEXT,X = 0 (end of list).
-; A is already 0 from the LDA above (BNE not taken ↔ A=0).
-   STA POOL_NEXT,X                         ; |
-   STX zp_head
-   STX zp_new_tail
-   RTS
-; |
+   BEQ ta_first                            ; empty list rare (24%, census
+                                           ; 2026-07-27): island at the
+                                           ; scope tail — merge path falls
 ta_try_merge:
    TAY                                     ; A = zp_new_tail from the gate
 ; Fail fast: tail Y must be a constant-line span (tl==tr AND bl==br).
@@ -94,6 +88,13 @@ ta_link:
    STX zp_new_tail
    RTS
 ; |||
+ta_first:
+; First span: set head. POOL_NEXT,X = 0 (end of list).
+; A is already 0 from the LDA above (BEQ taken ↔ A=0).
+   STA POOL_NEXT,X                         ; |
+   STX zp_head
+   STX zp_new_tail
+   RTS
 .endscope
 SEG_BANKC
 ; TFS state block ($0900-$091B) — the 3-cursor event walk's working set.

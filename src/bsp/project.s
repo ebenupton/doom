@@ -101,6 +101,9 @@ px_m8_zero:
    DEX                                     ; py_m8_zero idiom, 2026-07-26)
 pxz_go:
    JMP px_shift
+px_frac_z:
+   STA zp_br_t2                            ; A = 0 (the BEQ's operand)
+   JMP px_no_frac
 
 ::br_project_x:
    LDA zp_br_vx_h
@@ -127,10 +130,9 @@ px_narrow:                                  ; hot path FALLS THROUGH
                                            ; entry (2026-07-26) — the common
                                            ; mul path falls through
    LDA zp_br_vx_l
-   BNE px_have_frac
-   STA zp_br_t2
-   BEQ px_no_frac
-px_have_frac:
+   BEQ px_frac_z                           ; frac==0 rare (18%, census
+                                           ; 2026-07-27): island above the
+                                           ; entry — frac path falls through
 ; frac*M8, HI BYTE ONLY — quarter-square INLINED (2026-07-12: the JSR'd
 ; core stored a 16-bit product whose lo byte this caller never reads;
 ; the lo-table subtract survives only as a CMP for its borrow into the

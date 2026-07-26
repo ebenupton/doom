@@ -354,14 +354,22 @@ u16_loop:
    STA LC_TMP_LO
    LDA LC_REM_HI
    SBC LC_DEN_HI
-   BCC u16_set                             ; no-sub: C=0 rides into the ROL
-   STA LC_REM_HI
-   LDA LC_TMP_LO
-   STA LC_REM_LO                           ; sub taken: C=1 from the SBC
+   BCS u16_sub                             ; sub arm out of the fall path
+                                           ; (census 2026-07-27: no-sub is
+                                           ; 76.6% — C=0 rides into the ROL)
 u16_set:
    ROL LC_QUOT_LO
    ROL LC_QUOT_HI
    DEX
+   BNE u16_loop
+   JMP udv_done
+u16_sub:
+   STA LC_REM_HI
+   LDA LC_TMP_LO
+   STA LC_REM_LO                           ; C=1 from the SBC rides the ROLs
+   ROL LC_QUOT_LO                          ; (duplicated tail: a jump back
+   ROL LC_QUOT_HI                          ; to u16_set costs more than it
+   DEX                                     ; saves at 23% sub rate)
    BNE u16_loop
    JMP udv_done
 
