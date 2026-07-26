@@ -302,16 +302,20 @@ rc_s0:
 ; === side 0: near = RIGHT child, far = LEFT child ===
    LDA zp_node_ch_l
    PHA                                     ; push id (side is implicit)
-; SAME-AS-PARENT serve (2026-07-17): DSGN b0 = this node's RIGHT box is
-; byte-identical to the parent box we just descended through. The
-; parent's has_gap interval is STILL staged in zp_i_l/h (node_setup and
-; is_full touch neither), and identical box => identical angle verdict
-; — has_gap alone decides. NEAR side only: any other check clobbers the
-; staging before a far test could serve.
+; SAME-AS-PARENT serve (2026-07-17; has_gap re-query retired 2026-07-26):
+; DSGN b0 = this node's RIGHT box is byte-identical to the parent box we
+; just descended through — identical box => identical angle verdict. The
+; has_gap half is inherited too: the descent itself proves the parent's
+; fused exit returned 1 for this exact interval, and nothing between that
+; verdict and this check touches the spans (descent is node fetches,
+; is_full and point-on-side — no leaf renders, so no mark_solid/tighten).
+; Same interval + same spans => the re-query is deterministically 1:
+; descend as visible, no call. NEAR side only: a far test runs after the
+; near subtree drew, so its verdict must be fresh.
    TAX                                     ; A = id (L0 anchored: SoA readable)
    LDA NODE_DSGN,X
    LSR A                                   ; b0 -> C
-   BCS sp_serve0
+   BCS r0_vis                              ; serve: verdict inherited (1)
    LDA #0                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (serves never read it)
    JSR br_bbox_visible                     ; vector-dispatched (zp_bv_entry)
@@ -337,7 +341,7 @@ r0_far:
    IS_FULL_B bsp_done_full
    JSR br_bbox_visible
    BEQ rc_ret                              ; far invisible: this node is done
-r0_far_vis:                             ; (falls in: the serve stub moved below)
+r0_far_vis:
    PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
@@ -356,10 +360,6 @@ r0_far_i:                               ; near-invisible arc ONLY: bank is
    BEQ rc_ret
    JMP r0_far_vis
 .endif
-sp_serve0:
-   JSR SC_HAS_GAP                          ; parent's interval, main-resident
-   BNE r0_vis                              ; open columns: descend as visible
-   BEQ r0_far                              ; occluded: skip subtree (always)
 rc_ret:
    RTS
 
@@ -379,7 +379,7 @@ rc_n1:
    TAX                                     ; SAME-AS-PARENT serve, mirror:
    LDA NODE_DSGN,X                         ; b1 = LEFT box == parent box
    AND #$02
-   BNE sp_serve1
+   BNE r1_vis                              ; serve: verdict inherited (1)
    LDA #1                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (mirror)
    JSR br_bbox_visible
@@ -420,10 +420,6 @@ r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
    BEQ rc_ret1
    JMP r1_far_vis
 .endif
-sp_serve1:
-   JSR SC_HAS_GAP                          ; parent's interval (mirror stub)
-   BNE r1_vis
-   BEQ r1_far                              ; (always)
 rc_ret1:
    RTS
 .endscope

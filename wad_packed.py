@@ -509,11 +509,13 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # SAME-AS-PARENT box flags (2026-07-17): DSGN bit 0 (right box) /
     # bit 1 (left box) set on child node c when box(c,side) is byte-
     # identical to the parent box the walk descended through — the
-    # walk's NEAR-side check then serves the parent's has_gap interval
-    # (still staged in zp_i_l/h) and skips the whole angle check; the
-    # result is EXACT (same box, same viewer, same frame). The root has
-    # no parent and keeps clear bits; far-side flags are baked but only
-    # the near-side site tests them (interveners clobber the staging).
+    # walk's NEAR-side check then inherits the parent's WHOLE verdict
+    # (angle AND has_gap: the descent proves has_gap returned 1 for the
+    # same interval, and no leaf renders between, so the spans are
+    # unchanged) and descends with no call at all; EXACT (same box, same
+    # viewer, same spans). The root has no parent and keeps clear bits;
+    # far-side flags are baked but only the near-side site tests them
+    # (the near subtree's draws invalidate a far inheritance).
     for i, n in enumerate(nodes):
         for s_, sb in ((0, 4), (1, 8)):
             c = n[12 + s_]
