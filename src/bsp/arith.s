@@ -102,7 +102,15 @@ br_recip:
 ; warm arc because the attribution trace ran VXC-off — vxcache_check
 ; is the gate that catches it.
    TXA
-   BEQ rcp_p0                              ; idx < 256: dominant
+   BNE rcp_pnz                             ; idx >= 256: rare ladder below
+; idx < 256: DOMINANT (85% on suite) — falls through (census 2026-07-27)
+   LDA RECIP_BASE,Y
+   STA zp_br_r_m8
+   LDA srecip_tab,Y
+   STA zp_br_r_s
+   RNS_SELECT
+   RTS
+rcp_pnz:
    CMP #4
    BCS rcp_clamp                           ; idx >= 1024 -> clamp to 1023
    LSR A
@@ -136,13 +144,6 @@ rcp_p1:
    BNE rcp_s
    LDA #8
    BNE rcp_s                               ; (A = 8: always)
-rcp_p0:
-   LDA RECIP_BASE,Y
-   STA zp_br_r_m8
-   LDA srecip_tab,Y
-   STA zp_br_r_s
-   RNS_SELECT
-   RTS
 
 ; SRECIP: 256-byte junior-page S table — ASSEMBLED data in the CODE
 ; region (main RAM: bank-independent, no loader involvement; the first
@@ -363,9 +364,10 @@ rot_core_sin:
 ; common on E1M1's grid geometry) — skip the two multiplies.
    LDA zp_ri_d_l
    ORA zp_ri_d_h
-   BNE d_nz
-   JMP ris_zero
-d_nz:
+   BEQ ris_zero                            ; d==0 rare (census 0.4%): direct
+                                           ; hop to the zero tail below; the
+                                           ; common case FALLS THROUGH
+                                           ; (branch census 2026-07-27)
 ; ri_d arrives as |d| (caller-staged; d-sign folded into t1 by the
 ; thunk's EOR zp_ri_sgn) — the old in-place abs died 2026-07-19.
 ; --- lo*mag via quarter-squares, mag FOLDED INTO THE TABLE BASE ---
@@ -399,16 +401,49 @@ um1_pos:
 ; arms; the general quarter-square stays as the >=2 fallback so NO
 ; delta-range fence is needed (any map/position stays exact). ---
    LDA zp_ri_d_h
-   BEQ um2_z                               ; x0: resh/resext untouched
+   BNE s_hi_nz                             ; x1/x>=2 rare (13% claimed, 0 on
+                                           ; suite): block hoisted past the
+                                           ; tails. x0 FALLS INTO ris_sign —
+                                           ; the old BEQ+JMP paid 6 cycles
+                                           ; on a 100%-taken path (census)
+.endscope
+
+; sin negate/zero tails — MOVED ABOVE the cores' rare blocks 2026-07-27
+; so the dominant x0 hi-partial falls straight in (branch census).
+ris_sign:
+   LDA zp_br_t1
+   BEQ ris_done                            ; t1 = (d<0) XOR (trig<0)
+   LDA #0
+   SEC
+   SBC zp_rs_l
+   STA zp_rs_l
+   LDA #0
+   SBC zp_rs_h
+   STA zp_rs_h
+   LDA #0
+   SBC zp_rs_x
+   STA zp_rs_x
+ris_done:
+   RTS
+ris_zero:
+; A = 0 on entry (the d==0 BEQ path)
+   STA zp_rs_l
+   STA zp_rs_h
+   STA zp_rs_x
+   RTS
+
+; --- sin hi-partial rare block (x != 0), hoisted below the tails.
+; File-local labels: the core's scope ends at the dispatch above. ---
+s_hi_nz:
    CMP #1
-   BEQ um2_one                             ; x1: product == mag
+   BEQ s_one                               ; x1: product == mag
    TAX
    SEC
    SBC zp_mul_b
-   BCS um2_pos
+   BCS s_um2_pos
    EOR #$FF
    ADC #1
-um2_pos:
+s_um2_pos:
    TAY
 ::rot_sqs2l:
    LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
@@ -419,17 +454,24 @@ um2_pos:
    LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_h,Y
    STA zp_prod_h
-   JMP ris_finish
-um2_one:
+ris_finish:                                 ; general arm falls in
+   CLC
+   LDA zp_prod_l
+   ADC zp_rs_h
+   STA zp_rs_h
+   LDA zp_prod_h
+   ADC zp_rs_x
+   STA zp_rs_x
+   JMP ris_sign
+s_one:
    LDA zp_mul_b                            ; rs_h += mag, carry -> rs_x
    CLC
    ADC zp_rs_h
    STA zp_rs_h
-   BCC um2_z
+   BCC s_z1
    INC zp_rs_x
-um2_z:
+s_z1:
    JMP ris_sign                            ; skip ris_finish's dead adds
-.endscope
 
 rot_core_cos:
 .scope
@@ -437,9 +479,9 @@ rot_core_cos:
 ; common on E1M1's grid geometry) — skip the two multiplies.
    LDA zp_ri_d_l
    ORA zp_ri_d_h
-   BNE d_nz
-   JMP ri_zero
-d_nz:
+   BEQ ri_zero                             ; d==0 rare: direct hop to the
+                                           ; zero tail; common FALLS THROUGH
+                                           ; (branch census 2026-07-27)
 ::rot_core_cos_nz:                      ; pair-variant entry: d != 0 already
                                         ; established, staging done (t1/mul_b)
 ; ri_d arrives as |d| (caller-staged; d-sign folded into t1 by the
@@ -475,47 +517,13 @@ um1_pos:
 ; arms; the general quarter-square stays as the >=2 fallback so NO
 ; delta-range fence is needed (any map/position stays exact). ---
    LDA zp_ri_d_h
-   BEQ ri_sign                             ; x0: direct (in branch range)
-   CMP #1
-   BEQ um2_one                             ; x1: product == mag
-   TAX
-   SEC
-   SBC zp_mul_b
-   BCS um2_pos
-   EOR #$FF
-   ADC #1
-um2_pos:
-   TAY
-::rot_sqc2l:
-   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
-   SEC
-   SBC sqr_l,Y
-   STA zp_prod_l
-::rot_sqc2h:
-   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_h,Y
-   STA zp_prod_h
-   JMP ri_finish
-um2_one:
-   LDA zp_mul_b                            ; resh += mag, carry -> resext
-   CLC
-   ADC zp_br_res_h
-   STA zp_br_res_h
-   BCC ri_sign
-   INC zp_br_res_x
-   JMP ri_sign                             ; carry arm can't fall into
-.endscope                                  ; ri_finish's (stale) adds
+   BNE c_hi_nz                             ; x1/x>=2 rare: block hoisted
+                                           ; past the tails. x0 FALLS INTO
+                                           ; ri_sign — the old BEQ was a
+                                           ; 100%-taken page-crossing hop
+.endscope                                  ; (branch census 2026-07-27)
 
-; shared accumulate/negate tail: res += prod << 8, then one net negate
-; if the XOR-folded sign says so.
-ri_finish:
-   CLC
-   LDA zp_prod_l
-   ADC zp_br_res_h
-   STA zp_br_res_h
-   LDA zp_prod_h
-   ADC zp_br_res_x
-   STA zp_br_res_x
+; cos negate/zero tails: the dominant x0 hi-partial falls straight in.
 ri_sign:                                    ; entry for the x0/x1 arms
    LDA zp_br_t1
    BEQ ri_done                             ; t1 = (d<0) XOR (trig<0)
@@ -532,44 +540,53 @@ ri_sign:                                    ; entry for the x0/x1 arms
 ri_done:
    RTS
 ri_zero:
-; A = 0 on both entries (the d==0 BNE-not-taken paths)
+; A = 0 on entry (the d==0 BEQ path)
    STA zp_br_res_l
    STA zp_br_res_h
    STA zp_br_res_x
    RTS
 
-; sin twins of the shared tails (res-slot split): same bodies, rs dests.
-; Duplication, not SMC — both cores run within one frame, so a patched
-; dest can't serve them.
-ris_finish:
+; --- cos hi-partial rare block (x != 0), hoisted below the tails.
+; (The sin twins moved up beside the sin core — res-slot split means
+; duplication, not SMC: both cores run within one frame.) ---
+c_hi_nz:
+   CMP #1
+   BEQ c_one                               ; x1: product == mag
+   TAX
+   SEC
+   SBC zp_mul_b
+   BCS c_um2_pos
+   EOR #$FF
+   ADC #1
+c_um2_pos:
+   TAY
+::rot_sqc2l:
+   LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
+   SEC
+   SBC sqr_l,Y
+   STA zp_prod_l
+::rot_sqc2h:
+   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_prod_h
+ri_finish:                                  ; general arm falls in
    CLC
    LDA zp_prod_l
-   ADC zp_rs_h
-   STA zp_rs_h
+   ADC zp_br_res_h
+   STA zp_br_res_h
    LDA zp_prod_h
-   ADC zp_rs_x
-   STA zp_rs_x
-ris_sign:
-   LDA zp_br_t1
-   BEQ ris_done                            ; t1 = (d<0) XOR (trig<0)
-   LDA #0
-   SEC
-   SBC zp_rs_l
-   STA zp_rs_l
-   LDA #0
-   SBC zp_rs_h
-   STA zp_rs_h
-   LDA #0
-   SBC zp_rs_x
-   STA zp_rs_x
-ris_done:
-   RTS
-ris_zero:
-; A = 0 on entry (the d==0 BNE-not-taken path)
-   STA zp_rs_l
-   STA zp_rs_h
-   STA zp_rs_x
-   RTS
+   ADC zp_br_res_x
+   STA zp_br_res_x
+   JMP ri_sign
+c_one:
+   LDA zp_mul_b                            ; resh += mag, carry -> resext
+   CLC
+   ADC zp_br_res_h
+   STA zp_br_res_h
+   BCC c_z1
+   INC zp_br_res_x
+c_z1:
+   JMP ri_sign                             ; skip ri_finish's dead adds
 
 
 ; ============================================================================
@@ -589,15 +606,9 @@ rot_gen_pair:
 .scope
    LDA zp_ri_d_l
    ORA zp_ri_d_h
-   BNE p_nz
-   STA zp_rs_l                             ; A = 0: zero BOTH result sets
-   STA zp_rs_h
-   STA zp_rs_x
-   STA zp_br_res_l
-   STA zp_br_res_h
-   STA zp_br_res_x
-   RTS
-p_nz:
+   BEQ p_zero                              ; d==0 rare: zero block sits
+                                           ; past p_cos; common FALLS
+                                           ; THROUGH (census 2026-07-27)
 ; --- sin half: gen_sin's staging + core body, rs dests ---
 ::rgp_smag:
    LDA #0                                  ; +1 SMC: |sin| mag (rot_select)
@@ -626,7 +637,45 @@ p_um1_pos:
    STA zp_rs_h
    ZERO zp_rs_x
    LDA zp_ri_d_h
-   BEQ p_sgn                               ; x0: rs_h/rs_x untouched
+   BNE p_hi_nz                             ; x1/x>=2 rare: block below
+                                           ; p_zero; x0 FALLS INTO p_sgn
+                                           ; (branch census 2026-07-27)
+p_sgn:
+; local ris_sign, FALLING THROUGH to the cos half
+   LDA zp_br_t1
+   BEQ p_cos                               ; t1 = (d<0) XOR (sin<0)
+   LDA #0
+   SEC
+   SBC zp_rs_l
+   STA zp_rs_l
+   LDA #0
+   SBC zp_rs_h
+   STA zp_rs_h
+   LDA #0
+   SBC zp_rs_x
+   STA zp_rs_x
+p_cos:
+; --- cos half: gen_cos's staging, then the shared core past its test ---
+::rgp_cmag:
+   LDA #0                                  ; +1 SMC: |cos| mag (rot_select)
+   STA zp_mul_b
+::rgp_cneg:
+   LDA #0                                  ; +1 SMC: cos neg flag
+   EOR zp_ri_sgn
+   STA zp_br_t1
+   JMP rot_core_cos_nz
+
+p_zero:
+   STA zp_rs_l                             ; A = 0: zero BOTH result sets
+   STA zp_rs_h
+   STA zp_rs_x
+   STA zp_br_res_l
+   STA zp_br_res_h
+   STA zp_br_res_x
+   RTS
+
+; --- pair sin-half hi-partial rare block (x != 0) ---
+p_hi_nz:
    CMP #1
    BEQ p_one                               ; x1: product == mag
    TAX
@@ -660,32 +709,9 @@ p_one:
    CLC
    ADC zp_rs_h
    STA zp_rs_h
-   BCC p_sgn
+   BCC p_sgn                               ; (backward, in range)
    INC zp_rs_x
-p_sgn:
-; local ris_sign, FALLING THROUGH to the cos half
-   LDA zp_br_t1
-   BEQ p_cos                               ; t1 = (d<0) XOR (sin<0)
-   LDA #0
-   SEC
-   SBC zp_rs_l
-   STA zp_rs_l
-   LDA #0
-   SBC zp_rs_h
-   STA zp_rs_h
-   LDA #0
-   SBC zp_rs_x
-   STA zp_rs_x
-p_cos:
-; --- cos half: gen_cos's staging, then the shared core past its test ---
-::rgp_cmag:
-   LDA #0                                  ; +1 SMC: |cos| mag (rot_select)
-   STA zp_mul_b
-::rgp_cneg:
-   LDA #0                                  ; +1 SMC: cos neg flag
-   EOR zp_ri_sgn
-   STA zp_br_t1
-   JMP rot_core_cos_nz
+   JMP p_sgn
 .endscope
 
 rot_pair_thunk:
