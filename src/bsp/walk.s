@@ -60,25 +60,14 @@ br_render_frame:
    LDA #0                               ; A = 0 RIDES into the wipes below
    STA zp_dcl_rec_buf                   ; — NOT a C02/STZ candidate
    STA zp_dcl_rec_buf_h
-; VDONE wipe (vertex-span first-touch bitmap at $0600): only bytes
-; 0-47 — the packer asserts every desc!=0 vertex id is < 384 (E1M1 max
-; 382), so higher bytes only ever hold desc-0 marks, which may persist.
-; FOLDED into the vcache-valid stripe loop below (2026-07-25): ten more
-; 5-byte stripes off the same X = 48-50 bytes wiped for +250 cyc inside
-; a loop we already pay — the separate 3-wide loop was 384.
+; VCACHE_VALID + VDONE wipe, COMBINED (2026-07-26, Eben): the two
+; bitmaps are adjacent 60-byte blocks at $1B00 (see bsp/header.s), so
+; the wipe is one 120-byte run of 24 uniform 5-byte stripes off one X.
+; VDONE now clears ALL 59 live bytes (467 ids) — the old partial wipe's
+; ids<384 assert-dependence is gone.
    LDX #4
-bif_clr2:                               ; 12+10 stripes x 5 (was 12x5 + the
-   STA VDONE,X                          ; VDONE loop)
-   STA VDONE+5,X
-   STA VDONE+10,X
-   STA VDONE+15,X
-   STA VDONE+20,X
-   STA VDONE+25,X
-   STA VDONE+30,X
-   STA VDONE+35,X
-   STA VDONE+40,X
-   STA VDONE+45,X
-   STA VCACHE_VALID_BASE,X              ; = 375; +24 B for -50/frame)
+bif_clr2:                               ; 24 stripes x 5 = 120 bytes
+   STA VCACHE_VALID_BASE,X
    STA VCACHE_VALID_BASE+5,X
    STA VCACHE_VALID_BASE+10,X
    STA VCACHE_VALID_BASE+15,X
@@ -90,6 +79,18 @@ bif_clr2:                               ; 12+10 stripes x 5 (was 12x5 + the
    STA VCACHE_VALID_BASE+45,X
    STA VCACHE_VALID_BASE+50,X
    STA VCACHE_VALID_BASE+55,X
+   STA VDONE,X
+   STA VDONE+5,X
+   STA VDONE+10,X
+   STA VDONE+15,X
+   STA VDONE+20,X
+   STA VDONE+25,X
+   STA VDONE+30,X
+   STA VDONE+35,X
+   STA VDONE+40,X
+   STA VDONE+45,X
+   STA VDONE+50,X
+   STA VDONE+55,X
    DEX
    BPL bif_clr2
 
@@ -272,7 +273,8 @@ nsd_mul:
 ; — its node path is the hottest of the four.
 rc_descend_near:
    BMI rc_leaf                             ; near leaf: is_full + render
-   IS_FULL_B bsp_done_full2
+   SPAN_IS_NOT_FULL
+   BEQ bsp_done_full2
    JMP rc_node_nc                          ; near node: the recursion
 bsp_done_full2:
 ; unwind() twin: the inlined node_setup expansion below pushed the
@@ -283,7 +285,8 @@ bsp_done_full2:
 rc_leaf:
 ; descend(subsector), near side (far leaves skip is_full — theirs ran
 ; just before the far bbox check).
-   IS_FULL_B bsp_done_full2
+   SPAN_IS_NOT_FULL
+   BEQ bsp_done_full2
 rdf_leaf:
    JMP br_render_subsector
 rc_descend_far:
@@ -320,11 +323,11 @@ rc_s0:
    STA zp_bbox_side                        ; branch (serves never read it)
    JSR br_bbox_visible                     ; vector-dispatched (zp_bv_entry)
 .if ::BANKED
-   BEQ r0_far_i                            ; near invisible: far check enters
+   BCC r0_far_i                            ; near invisible: far check enters
                                         ; ALREADY L2 (bca exit) — the clone
                                         ; below calls the no-page entry
 .else
-   BEQ r0_far                              ; near invisible: skip subtree
+   BCC r0_far                              ; near invisible: skip subtree
 .endif
 r0_vis:
    PAGE BANK_L0                            ; node SoA pages live in bank L0
@@ -338,9 +341,10 @@ r0_far:
    STA zp_node_ch_l                        ; id
    LDA #1
    STA zp_bbox_side                        ; far = LEFT
-   IS_FULL_B bsp_done_full
+   SPAN_IS_NOT_FULL
+   BEQ bsp_done_full
    JSR br_bbox_visible
-   BEQ rc_ret                              ; far invisible: this node is done
+   BCC rc_ret                              ; far invisible: this node is done
 r0_far_vis:
    PAGE BANK_L0
    LDX zp_node_ch_l
@@ -355,9 +359,10 @@ r0_far_i:                               ; near-invisible arc ONLY: bank is
    STA zp_node_ch_l                     ; touches banked data), so the far
    LDA #1                               ; check skips br_bbox_visible's
    STA zp_bbox_side                     ; blind PAGE. Post-descend and
-   IS_FULL_B bsp_done_full              ; serve arcs keep the paged entry
+   SPAN_IS_NOT_FULL              ; serve arcs keep the paged entry
+   BEQ bsp_done_full
    JSR br_bbox_visible_l2               ; via r0_far above.
-   BEQ rc_ret
+   BCC rc_ret
    JMP r0_far_vis
 .endif
 rc_ret:
@@ -384,9 +389,9 @@ rc_n1:
    STA zp_bbox_side                        ; branch (mirror)
    JSR br_bbox_visible
 .if ::BANKED
-   BEQ r1_far_i                            ; near invisible: L2-proven (mirror)
+   BCC r1_far_i                            ; near invisible: L2-proven (mirror)
 .else
-   BEQ r1_far
+   BCC r1_far
 .endif
 r1_vis:
    PAGE BANK_L0
@@ -400,9 +405,10 @@ r1_far:
    PLA
    STA zp_node_ch_l
    ZERO zp_bbox_side                      ; far = RIGHT
-   IS_FULL_B bsp_done_full
+   SPAN_IS_NOT_FULL
+   BEQ bsp_done_full
    JSR br_bbox_visible
-   BEQ rc_ret1
+   BCC rc_ret1
 r1_far_vis:
    PAGE BANK_L0
    LDX zp_node_ch_l
@@ -415,9 +421,10 @@ r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
    PLA
    STA zp_node_ch_l
    ZERO zp_bbox_side                    ; far = RIGHT
-   IS_FULL_B bsp_done_full
+   SPAN_IS_NOT_FULL
+   BEQ bsp_done_full
    JSR br_bbox_visible_l2
-   BEQ rc_ret1
+   BCC rc_ret1
    JMP r1_far_vis
 .endif
 rc_ret1:

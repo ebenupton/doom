@@ -52,11 +52,11 @@ def poke_init_frame_state(mem):
     records-pointer ground state + the 60-byte vcache valid clear."""
     mem[_sym('zp_dcl_rec_buf')] = 0
     mem[_sym('zp_dcl_rec_buf_h')] = 0
+    # VCACHE_VALID (60) + VDONE (60) are ADJACENT since 2026-07-26 —
+    # one 120-byte wipe, mirroring the engine's combined stripe loop
     base = _sym('VCACHE_VALID_BASE')
-    for i in range(60):
+    for i in range(120):
         mem[base + i] = 0
-    for i in range(57):                     # vertex-span served bitmap
-        mem[_sym('VDONE') + i] = 0
 
 
 class BspRender6502:

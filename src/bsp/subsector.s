@@ -319,9 +319,20 @@ s_v2_was_clipped:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; reproject into v2 (struct VX2)
    JSR reproject_at_crossing
-   LDA #$FF
+   LDA #$80
    STA zp_seg_v_idx_b                      ; VX2 now holds the CROSSING, not
-                                        ; the vertex — kill the chain key
+                                        ; the vertex — kill the chain key.
+                                        ; $80, NOT $FF (2026-07-26): the
+                                        ; sentinel is also the v2 VDONE
+                                        ; probe/mark INDEX — VDONE+$80 =
+                                        ; $1BBC sits in the free ex-BCA_WS
+                                        ; tail, the sandbox the old $0600
+                                        ; page provided ($FF would read
+                                        ; AND CORRUPT SQR_LO+$3B — the
+                                        ; walkseq phantom-line bug). Any
+                                        ; value > 58 kills the chain CMP;
+                                        ; keep base+sentinel inside
+                                        ; $1B78-$1BFF.
 s_both_have_proj:
 
 ; Match Python's has_gap wrapper:
@@ -362,16 +373,14 @@ s_both_have_proj:
    BCS hg_fast_rev                         ; sx1 > sx2: reversed -> DROP
 hg_fast_fwd:
 ; X = 0 already: the TAX above saw A = 0 (BNE not taken)
-   STA zp_i_l                              ; A = sx1_lo
-   LDA zp_seg_sx2_l
-   STA zp_i_h
+   STA zp_i_l                              ; A = sx1_lo = ilo
+   LDA zp_seg_sx2_l                        ; ihi rides in A (A-hi ABI)
    JMP hg_query
 hg_fast_rev:
    LDX #VX_STRIDE
-   STA zp_i_h                              ; A = sx1_lo from the compare
-   LDA zp_seg_sx2_l
-   STA zp_i_l
-   JMP hg_query
+   LDY zp_seg_sx2_l                        ; ilo = sx2_lo via Y (dead here —
+   STY zp_i_l                              ; has_gap clobbers it); A = sx1_lo
+   JMP hg_query                            ; = ihi rides through (A-hi ABI)
 hg_hi_diff:
 ; hi bytes differ: signed hi-byte difference gives the order (lo bytes
 ; only ever break ties, and ties took the equal path above)
@@ -385,24 +394,25 @@ hg_hi_diff:
    EOR #$80
 hgd_v_ok:
    BPL hg_min2                             ; sx1 >= sx2
-; --- min = sx1, max = sx2 ---
+; --- min = sx1, max = sx2 --- (A-hi ABI: min lands in zp_i_l first,
+; max is computed LAST so ihi ends in A at hg_query. Bail outcomes are
+; order-independent: off-right (min >= 256) now bails before the max
+; test; off-left (max < 0) pays a dead ilo=0 store first — rare.)
 hg_min1:
    LDX #0
-   LDA zp_seg_sx2_h                       ; max hi
-   BMI hg_adv                              ; max < 0: off-screen left
-   BNE hg_hi255_1                          ; max >= 256: ihi = 255
-   LDA zp_seg_sx2_l
-hg_hist1:
-   STA zp_i_h
    LDA zp_seg_sx1_h                       ; min hi
    BNE hg_lock1                            ; nonzero: neg -> 0 / pos -> bail
    LDA zp_seg_sx1_l
 hg_lost1:
    STA zp_i_l
-   JMP hg_query
+   LDA zp_seg_sx2_h                       ; max hi
+   BMI hg_adv                              ; max < 0: off-screen left
+   BNE hg_hi255_1                          ; max >= 256: ihi = 255
+   LDA zp_seg_sx2_l
+   JMP hg_query                            ; ihi rides in A (A-hi ABI)
 hg_hi255_1:
    LDA #255
-   BNE hg_hist1                            ; (always: A=255)
+   BNE hg_query                            ; (always: A=255)
 hg_lock1:
    BPL hg_adv                              ; min >= 256: off-screen right
    LDA #0
@@ -411,7 +421,7 @@ hg_adv:
    JMP s_advance
 hg_hi255_2:
    LDA #255
-   BNE hg_hist2                            ; (always: A=255)
+   BNE hg_query                            ; (always: A=255)
 hg_lock2:
    BPL hg_adv                              ; min >= 256: off-screen right
    LDA #0
@@ -419,22 +429,23 @@ hg_lock2:
 ; --- min = sx2, max = sx1 ---
 hg_min2:
    LDX #VX_STRIDE
-   LDA zp_seg_sx1_h                       ; max hi
-   BMI hg_adv                              ; max < 0: off-screen left
-   BNE hg_hi255_2                          ; max >= 256: ihi = 255
-   LDA zp_seg_sx1_l
-hg_hist2:
-   STA zp_i_h
    LDA zp_seg_sx2_h                       ; min hi
    BNE hg_lock2                            ; nonzero: neg -> 0 / pos -> bail
    LDA zp_seg_sx2_l
 hg_lost2:
    STA zp_i_l
+   LDA zp_seg_sx1_h                       ; max hi
+   BMI hg_adv                              ; max < 0: off-screen left
+   BNE hg_hi255_2                          ; max >= 256: ihi = 255
+   LDA zp_seg_sx1_l
 hg_query:
    STX zp_sx_ord                           ; latch min-endpoint offset
-   JSR SC_HAS_GAP                          ; (main-resident — no PAGE)
-   BNE hg_pass
-   JMP s_advance
+   JSR SC_HAS_GAP                          ; A = ihi (A-hi ABI; ihi stays
+                                           ; register-only — ms/tfr get
+                                           ; their pair from the emit-path
+                                           ; clamp); main-resident — no PAGE
+   BCS hg_pass                             ; C-only verdict (2026-07-26):
+   JMP s_advance                           ; C=1 gap -> process the seg
 hg_pass:
 ; Records reset for THIS seg (moved from seg_proc): ms_dispatch reads
 ; the counts only for segs that got here; armed draws re-init them.

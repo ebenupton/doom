@@ -2,7 +2,7 @@
 ; standalone DOOM E1M1 renderer. Proves the banked build runs on real hardware.
 ;
 ; Disc files: !BOOT (this, $0900) ; BANK0/1/2 (16K -> sideways banks 4/6/7) ;
-; LOW (low code+tables $1B40-...) ; DRV (driver, $2000).
+; LOW (low code+tables $1C00-...) ; DRV (driver, $2000).
 ; Boot: copy banks, load LOW, MODE 4, JMP driver. Driver: SEI, set spawn ZP +
 ; CRTC, span_init (bank C), clear FB, render (bank L0->...), display, spin.
 
@@ -27,7 +27,7 @@ ORG &0900
     LDX #LO(cmd_b0): LDY #HI(cmd_b0): JSR &FFF7      ; SRLOAD BANK0 8000 4 (L0)
     LDX #LO(cmd_b1): LDY #HI(cmd_b1): JSR &FFF7      ; SRLOAD BANK1 8000 6 (C)
     LDX #LO(cmd_b2): LDY #HI(cmd_b2): JSR &FFF7      ; SRLOAD BANK2 8000 7 (L2)
-    LDX #LO(cmd_low):LDY #HI(cmd_low):JSR &FFF7      ; *LOAD LOW 1B40
+    LDX #LO(cmd_low):LDY #HI(cmd_low):JSR &FFF7      ; *LOAD LOW 1C00
     LDX #LO(cmd_drv):LDY #HI(cmd_drv):JSR &FFF7      ; *LOAD DRV 2000
     LDA #22 : JSR &FFEE : LDA #4 : JSR &FFEE          ; MODE 4
     JMP DRV_ORG                                      ; -> driver
@@ -35,7 +35,7 @@ ORG &0900
 .cmd_b0  EQUS "SRLOAD BANK0 8000 4" : EQUB 13
 .cmd_b1  EQUS "SRLOAD BANK1 8000 6" : EQUB 13
 .cmd_b2  EQUS "SRLOAD BANK2 8000 7" : EQUB 13
-.cmd_low EQUS "LOAD LOW 1B40"   : EQUB 13
+.cmd_low EQUS "LOAD LOW 1C00"   : EQUB 13
 .cmd_drv EQUS "LOAD DRV 2000"   : EQUB 13
 .boot_end
 SAVE "BOOT", &0900, boot_end, &0900

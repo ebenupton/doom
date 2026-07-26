@@ -73,7 +73,8 @@ def install_tracing(sc, trace_all):
                 break
             pc = mpu.pc
             if pc == _E_HAS_GAP:
-                trace_all.append(('has_gap', mem[0xC2], mem[0xC3]))
+                # A-hi ABI: hi byte is in A at entry, not yet in $C3
+                trace_all.append(('has_gap', mem[0xC2], mpu.a))
             elif pc == ss_real:
                 trace_all.append(('ss', mem[0x58]))
             mpu.step()

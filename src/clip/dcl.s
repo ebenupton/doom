@@ -84,9 +84,6 @@ dcl_not_vert:
 ; core runs, and rejected lines never reach it.)
 dcl_records_off:
 
-; Reset output
-   ZERO LINE_OUT_COUNT
-
 ; seg_start = NULL
    LDA #$FF
    STA zp_seg_start_x
@@ -486,7 +483,6 @@ dv_yl_lo:
    STA zp_line_y_l
    STX zp_line_y_h
 dv_bbox_done:
-   ZERO LINE_OUT_COUNT
    LDX zp_head
 dv_walk:
    BNE dv_check
@@ -571,10 +567,9 @@ dv_cy2_ok:
 dv_emit:
 ; Stage the rasteriser ZP args (x, cy1, x, cy2), un-biasing Y (biased
 ; [48,207] -> screen [0,159]) and tail-call the vertical plotter.
-; LINE_OUT capture is wrapper-only (LINE_OUT_EN — see arith.s): the
-; native path skips the buffer entirely.
-   LDA LINE_OUT_EN
-   BNE dv_emit_cap
+; (LINE_OUT capture RETIRED 2026-07-26: the harness PC-traps the plot
+; entries and reads RASTER_ZP_* directly — the engine no longer pays
+; a gate test per emitted line.)
    LDA zp_line_xl_l
    STA RASTER_ZP_X0
    STA RASTER_ZP_X1
@@ -584,30 +579,6 @@ dv_emit:
    LDA zp_cb_cy2
    SBC #Y_BIAS                             ; C=1 from the in-band SBC
    STA RASTER_ZP_Y1
-   JMP plot_v
-dv_emit_cap:
-   LDY LINE_OUT_COUNT
-   LDA zp_line_xl_l
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_X0
-   INY
-   LDA zp_cb_cy1
-   SEC
-   SBC #Y_BIAS
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_Y0
-   INY
-   LDA zp_line_xl_l
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_X1
-   INY
-   LDA zp_cb_cy2
-   SEC
-   SBC #Y_BIAS
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_Y1
-   INY
-   STY LINE_OUT_COUNT
    JMP plot_v                              ; always vertical on this path
 
 ; ========== Phase 4: CB clip (clip_to_span) ==========
@@ -1211,10 +1182,7 @@ dcl_es_record:
    ADC #1                                  ; C=0 from the xl>=xr BCS guard
    STA (zp_dcl_rec_buf),Y
 dcl_es_no_record:
-; LINE_OUT capture is wrapper-only (LINE_OUT_EN): native emits stage the
-; rasteriser args directly.
-   LDA LINE_OUT_EN
-   BNE des_cap
+; (LINE_OUT capture RETIRED 2026-07-26 — see the vertical emit note.)
    LDA zp_seg_start_x
    STA RASTER_ZP_X0
    LDA zp_seg_start_y
@@ -1226,8 +1194,6 @@ dcl_es_no_record:
    LDA zp_tmp0
    SBC #Y_BIAS                             ; C=1 from the Y0 unbias
    STA RASTER_ZP_Y1
-; native path falls straight into des_dispatch (the wrapper-only
-; capture path, below the dispatcher, pays the join JMP instead)
 des_dispatch:
 ; --- axis dispatch: ~70% of rasterised pixels are in horizontal or
 ; vertical segments (gradient census 2026-07-05) — route them to the
@@ -1249,33 +1215,6 @@ des_diag:
 ; sub-1:33 lines to amortize even the dispatch test. See the
 ; 'experiment: run-slice' commit to revive.)
    JMP RASTER_ENTRY                        ; tail-call rasteriser
-
-; wrapper-only capture path (LINE_OUT_EN): moved below the dispatcher so
-; the native path falls straight through; this path pays the join JMP.
-des_cap:
-   LDY LINE_OUT_COUNT
-   LDA zp_seg_start_x
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_X0
-   INY
-   LDA zp_seg_start_y
-   SEC
-   SBC #Y_BIAS
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_Y0
-   INY
-   LDA zp_ox1
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_X1
-   INY
-   LDA zp_tmp0
-   SEC
-   SBC #Y_BIAS
-   STA LINE_OUT_BUF,Y
-   STA RASTER_ZP_Y1
-   INY
-   STY LINE_OUT_COUNT
-   JMP des_dispatch
 
 .endscope
 

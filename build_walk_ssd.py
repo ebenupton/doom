@@ -72,24 +72,17 @@ def build_floor_grid():
     open('FLOORGRD.bin', 'wb').write(bytes(grid))
 
 
-def banked_files():
-    """Build the banked (plain Model B) side and return its DFS file list.
-    The boot loader is named WALK here — the dual disc's !BOOT is the
-    Tube detector, which chains *RUN WALK on a machine with no copro.
-    MUST run with DOOM_CPU unset/NMOS: the banked build targets the
-    host's NMOS 6502 (the tube builder sets 65c02 only AFTER this)."""
+def _emit_variant_images():
+    """Subprocess worker (--variant): build THIS process's DOOM_CPU
+    variant end-to-end — engine link, engine_syms (symbol addresses
+    DRIFT between the NMOS and C02 links, so WALKDRV must be
+    re-assembled against each variant's map), driver, bank images —
+    and write them to build/walk_{L0,C,L2,LOW}.bin for the parent."""
     import asmbuild
-    asmbuild.build_all(banked=1, c02=0)
+    c02 = 1 if os.environ.get('DOOM_CPU', '').lower() in ('65c02', 'c02', '1') else 0
+    asmbuild.build_all(banked=1, c02=c02)
     asmbuild.gen_engine_syms()
-    # The drivers' ptrtab EQUBs are hardcoded window addresses — assert they
-    # match the packed layout so a layout change can't ship a stale table.
-    import doom_wireframe as dw
-    lay = dw.packed_layout
-    # (ptrtab asserts retired 2026-07-10: layout drift is gated by
-    # doom_wireframe's layout.inc check on import)
-    build_floor_grid()
     subprocess.run(['./beebasm', '-i', 'walk_drv.asm', '-D', 'BANKED=1'], check=True)
-    subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)
     orig = builtins.open
     def swap(path, *a, **k):
         if path == 'ANIMDRV':
@@ -100,13 +93,61 @@ def banked_files():
         L0, C, L2, LOW = anim.build_images()
     finally:
         builtins.open = orig
-    BOOT = orig('!BOOT', 'rb').read()
+    for name, data in (('L0', L0), ('C', C), ('L2', L2), ('LOW', LOW)):
+        with orig(f'build/walk_{name}.bin', 'wb') as f:
+            f.write(data)
+
+
+def _banked_variant(c02):
+    """Run the variant worker in a SUBPROCESS with DOOM_CPU set: the py65
+    model, load_engine and asmbuild all key off that env at import time —
+    flipping it in-process would silently re-link the wrong CPU (the same
+    reason the tube builder sets 65c02 only in its own step)."""
+    import sys
+    env = dict(os.environ)
+    if c02:
+        env['DOOM_CPU'] = '65c02'
+    else:
+        env.pop('DOOM_CPU', None)
+    subprocess.run([sys.executable, os.path.abspath(__file__), '--variant'],
+                   env=env, check=True)
+    out = []
+    for name in ('L0', 'C', 'L2', 'LOW'):
+        with builtins.open(f'build/walk_{name}.bin', 'rb') as f:
+            out.append(f.read())
+    return out
+
+
+def banked_files():
+    """Build the banked (plain Model B) side and return its DFS file list.
+    The boot loader is named WALK here — the dual disc's !BOOT is the
+    Tube detector, which chains *RUN WALK on a machine with no copro.
+    WALK itself then CPU-probes (opcode &1A: INC A on a 65C02, NOP on
+    NMOS) and loads LOWC/BANK1C instead of LOW/BANK1 on a C02 host —
+    the L0/L2 banks are data-only and ship once (asserted below).
+    MUST run with DOOM_CPU unset/NMOS: the banked build targets the
+    host CPU per variant (the tube builder sets 65c02 only AFTER this)."""
+    # (ptrtab asserts retired 2026-07-10: layout drift is gated by
+    # doom_wireframe's layout.inc check on import)
+    build_floor_grid()
+    L0c, Cc, L2c, LOWc = _banked_variant(c02=1)      # C02 first: leave the
+    L0, C, L2, LOW = _banked_variant(c02=0)          # NMOS artifacts (WALKDRV,
+                                                     # engine_syms) as the
+                                                     # repo's resting state
+    assert L0c == L0 and L2c == L2, \
+        'L0/L2 bank images differ between CPU variants — banks are data-only ' \
+        '(code in banks is forbidden outside C); a CPU-dependent byte in ' \
+        'L0/L2 means the variants need their own copies AND a loader change'
+    subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)
+    BOOT = builtins.open('!BOOT', 'rb').read()
     return [
         ('WALK',  0x1900, 0x1900, BOOT),
         ('BANK0', 0x3000, 0x3000, L0),
         ('BANK1', 0x3000, 0x3000, C),
         ('BANK2', 0x3000, 0x3000, L2),
-        ('LOW',   0x1B40, 0x1B40, LOW),
+        ('LOW',   0x1C00, 0x1C00, LOW),
+        ('BANK1C', 0x3000, 0x3000, Cc),
+        ('LOWC',  0x1C00, 0x1C00, LOWc),
     ]
 
 
@@ -116,4 +157,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    if '--variant' in sys.argv:
+        _emit_variant_images()
+    else:
+        main()

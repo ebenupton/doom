@@ -165,20 +165,14 @@ sqr2_h = SQR2_HI
 ; retired; see the LEGACY note under TOP_RECORDS below.)
 
 ; === Line output buffer ($0200) ===
-; Segments captured by the DCL emit paths (dcl_emit_segment and
-; dcl_vertical's dv_emit in clip/dcl.s) — nothing else writes it since
-; the per-span tighten retired.
-; Format: byte count at $0200, then x1,y1,x2,y2 tuples at $0201+
-; (Y already un-biased).  Drained by the Python wrapper after each
-; draw call.
-LINE_OUT_COUNT = $0200
-LINE_OUT_BUF = $0201
-; LINE_OUT capture is HARNESS-ONLY (2026-07-11): the native frame never
-; reads the buffer — and worse, $0201-$02FC OVERLAPS the D-cache
-; ($0210-$03F7), so on-disc emits were silently clobbering cache
-; entries. The Python wrapper sets LINE_OUT_EN around its calls; native
-; emits take the direct RASTER_ZP-only path.
-LINE_OUT_EN = $0BE8                     ; (freed ROM-pointer block byte)
+; (LINE_OUT capture RETIRED 2026-07-26: it was harness-only, and the
+; engine paid a LINE_OUT_EN gate test on EVERY emitted line (41/frame
+; measured) plus two per-call count-zeroings for it. The harness now
+; PC-traps the plot entries (plot_h / plot_v / RASTER_ENTRY) and reads
+; the staged RASTER_ZP_X0/Y0/X1/Y1 directly — same tuples, zero engine
+; cost. Freed: $0200-$02xx scratch (which had OVERLAPPED the D-cache
+; range $0210-$03F7 whenever a stray emit ran with EN garbage) and the
+; $0BE8 flag byte.)
 
 ; === Tighten records buffers ($0700, $0800) ===
 ; clip_line_records writes per-span sub-records here; tighten_from_records

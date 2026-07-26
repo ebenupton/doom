@@ -13,7 +13,7 @@ from symmap import sym
 def s16(v): return v-0x10000 if v>=0x8000 else v
 def s8(v):  return v-0x100 if v>=0x80 else v
 
-BCA=sym('box_classify'); BOX=sym('bca_top')  # pristine check (moving path)
+BCA=sym('box_classify')  # pristine check (moving path); BCA_WS/bca_top retired 2026-07-26
 B_PX,B_PY,B_AB=sym('bca_px'),sym('bca_py'),sym('bca_ab')
 B_AFN,B_PXS,B_PYS=sym('bca_afn'),sym('bca_pxs'),sym('bca_pys')
 B_ILO,B_IHI=sym('bca_ilo'),sym('bca_ihi')  # bca_vis retired: A/C signature
@@ -32,8 +32,6 @@ _st=MPU()
 load_angle_module(_st.memory)
 def standalone(top,bot,left,right,px,py,ab):
     m=_st.memory
-    for off,val in enumerate((top,bot,left,right)):
-        m[BOX+2*off]=val&0xFF; m[BOX+2*off+1]=(val>>8)&0xFF
     m[B_PX]=px&0xFF;m[B_PY]=py&0xFF;m[B_AB]=ab&0xFF
     _afn=((ab<<4)+512+12)&0x0FFF; m[B_AFN]=_afn&0xFF; m[B_AFN+1]=(_afn>>8)&0xFF  # pre-biased +512+EPS (view.s hoist)
     m[B_PXS]=px&0xFF; m[B_PXS+1]=(0xFF if px<0 else 0)^0x80  # offset-binned (view.s)
@@ -46,7 +44,10 @@ def standalone(top,bot,left,right,px,py,ab):
     _st.pc=BCA;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
-    _vis = _st.a == 1 or (_st.p & 1) == 0   # A/C signature (bca_vis retired)
+    _vis = (_st.p & 0x40) == 0   # C/V signature (2026-07-26): V=1 = angle
+                                 # cull; V=0 = extent valid (gap or no-gap).
+                                 # V is defined here because standalone runs
+                                 # are always the uncached classify path.
     return (m[B_ILO],m[B_IHI]) if _vis else None
 
 def check(px,py,ab):
@@ -69,7 +70,7 @@ def check(px,py,ab):
                        s8(mem[B_PX]),s8(mem[B_PY]),mem[B_AB])
                 ret=((mem[0x100+((mpu.sp+1)&0xFF)]|(mem[0x100+((mpu.sp+2)&0xFF)]<<8))+1)&0xFFFF  # the walk's JSR return: the check is JMP-threaded, so THIS pc is the one true exit (the 2026-07-21 one-blob map retired the window heuristic)
             elif armed is not None and pc==ret:
-                got=(mem[B_ILO],mem[B_IHI]) if (mpu.a == 1 or (mpu.p & 1) == 0) else None
+                got=(mem[B_ILO],mem[B_IHI]) if (mpu.p & 0x40) == 0 else None  # V=0: extent (cold frame => always classify path, V defined)
                 n+=1
                 if got!=A.bbox_check_angle(*armed) and len(vs_py)<4: vs_py.append((armed,got,A.bbox_check_angle(*armed)))
                 if got!=standalone(*armed) and len(vs_st)<4: vs_st.append((armed,got,standalone(*armed)))

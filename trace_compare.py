@@ -7,8 +7,7 @@ in the 6502 front-end. This harness records and diffs the streams.
 
 Captured calls (per clipper entry, with args read from ZP at PC = entry):
   $2003 mark_solid   (ilo, ihi)            from $C2, $C3
-  $2009 has_gap      (ilo, ihi)            from $C2, $C3
-  $200C is_full      ()
+  $2009 has_gap      (ilo, ihi)            from $C2, A (A-hi ABI)
   $201E draw_s16     (xl, yl, xr, yr)      from $A8|$B2, $A9|$B3, $AA|$B4, $AB|$B5
 """
 import os, sys
@@ -27,7 +26,6 @@ ENTRY_BR_VIEW_SETUP   = _sym('br_view_setup')
 ENTRY_BR_RENDER_FRAME = _sym('br_render_frame')
 _E_MARK_SOLID = _sym('span_mark_solid')
 _E_HAS_GAP    = _sym('span_has_gap')
-_E_IS_FULL    = _sym('span_is_full')
 _E_DCL_S16    = _sym('draw_clipped_line_s16')
 from bsp_render_6502 import ROM_DETAIL_BASE, ROM_BBOX_BASE  # one truth (2026-07-21 map)
 
@@ -142,9 +140,9 @@ def install_tracing_run(sc, trace, with_context=False):
             if pc == _E_MARK_SOLID:
                 evt = ('mark_solid', mem[0xC2], mem[0xC3])
             elif pc == _E_HAS_GAP:
-                evt = ('has_gap', mem[0xC2], mem[0xC3])
-            elif pc == _E_IS_FULL:
-                evt = ('is_full', mem[0x58], mem[0x59])
+                # A-hi ABI: at entry the hi byte is still in A ($C3 is
+                # written by the routine itself)
+                evt = ('has_gap', mem[0xC2], mpu.a)
             elif pc == _E_DCL_S16:
                 xl = s16(mem[0xA8] | (mem[0xB2] << 8))
                 yl = s16(mem[0xA9] | (mem[0xB3] << 8))

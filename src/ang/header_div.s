@@ -99,16 +99,11 @@ pa_sign:
 ;        bca_ab (u8)
 ;   out: bca_vis (1=visible/0=cull), bca_ilo, bca_ihi (u8 columns)
 ; ============================================================================
-; bca workspace block ($FA10-$FA32) — flat sits in the BBOX-vars region; banked
-; (BBC) relocates it to low RAM (the $FA00 page is MOS/IO on a real Model B).
-; (BCA_WS comes from abi.inc — the old triplet is dead)
-bca_top = BCA_WS+$10                    ; s16; bot $8A, left $8C, right $8E (contiguous = val[])
-bca_bot = BCA_WS+$12
-bca_left = BCA_WS+$14
-bca_right = BCA_WS+$16
-; px/py aliased to the live renderer's player-int ZP (frame-persistent);
-; ab + outputs in the BBOX-vars region the old br_bbox_visible freed.
-bca_ab = BCA_WS+$2F
+; (BCA_WS RETIRED 2026-07-26: the bca_top/bot/left/right val[] slots
+; were engine-dead — the classify reads the BBP corner planes; only
+; stale harness pokes wrote them — and bca_ab moved to ZP $64
+; (zp.inc; the generated BCA_AB constant carries it to the drivers).
+; px/py stay aliased to the live renderer's player-int ZP.)
 ; Outputs + hottest body vars now in ZERO PAGE (2026-07-08: measured
 ; ~3,650 absolute accesses/frame across these slots — the ZP move is a
 ; straight 1-cycle-per-access cut). Registered in zp.inc.
@@ -126,8 +121,8 @@ bca_ihi = zp_i_h                        ; (2026-07-18): the tail writes the
 .assert (VATOX >> 8) + 4 <= $FF, error, "VATOX hi +4 must not wrap (bca_tail's pointer ADCs assume carry-out 0)"
 ; (EPSILON_F moved to zp.inc 2026-07-19: the afn hoist in view.s —
 ;  a different assembly unit — folds +EPS once per frame.)
-; (bca_vis RETIRED 2026-07-20: the verdict rides the A/Z/C exit
-;  signature — $64 is FREE)
+; (bca_vis RETIRED 2026-07-20: the verdict rides the exit flags —
+;  C/V since 2026-07-26, see bca.s's C/V-CONTRACT — $64 is FREE)
 bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 (afn pre-biased; NOT sign-extended)
 ; $CA FREE (zp_cpm_s2 died 2026-07-20: store-at-birth ended the
 ; rcache's memo-slot scavenge; bca_p2 died 2026-07-19: p2 rides

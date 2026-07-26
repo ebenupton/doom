@@ -29,8 +29,11 @@ ABI = [
     # (the driver clear-overlay assert needs it before the engine links).
     ('MAIN_BASE',      0x2C00, 0x3670, 'engine CODE region head (cfg-anchored; MAIN first)'),
     ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
-    ('BCA_WS',         0x1B40, None, 'angle-module bbox workspace (box vals at +$10..$17; UNFORKED 2026-07-21 — flat $1B40-$1BFF was free, ex-home $7190 returned to the RCACHE_STATE page)'),
-    ('BCA_AB',         'BCA_WS+$2F', None, 'view angle byte, poked per frame by driver/harness'),
+    # (BCA_WS RETIRED 2026-07-26: the workspace block is gone — the box
+    # val[] slots were engine-dead (the classify reads BBP planes; only
+    # stale harness pokes touched them) and bca_ab moved to ZP. $1B40-
+    # $1BFF is free in both builds and LOW now loads at $1C00.)
+    ('BCA_AB',         0x62,   None, 'view angle byte — ZP (zp_buf\'s slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry\'s HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB'),
     ('SQR_BASE',       0x1C00, None, 'quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)'),
     # REORDERED 2026-07-12: lo pages CONTIGUOUS (f(0..510) linear), then
     # hi pages — rot_core's frame-constant-mag SMC bases index across the

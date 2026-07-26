@@ -381,7 +381,8 @@ VEXPL_LO   = $DE00
 VEXPL_HI   = $DE60
 VEXPL_CONT = $DF00
 .endif
-VDONE = $0600                           ; main (DEFQ's freed page)
+; (VDONE moved next to VCACHE_VALID 2026-07-26 — see below; $0600 is
+; fully FREE again.)
 
 ; Vertex transform cache: per-vertex saved view + projection results.
 ; Skip redundant transforms when multiple segs share a vertex.
@@ -401,7 +402,14 @@ VC_RLO  = VCACHE_BASE + $600
 VC_SXL  = VCACHE_BASE + $800
 VC_SXH  = VCACHE_BASE + $A00
 VC_CLIP = VCACHE_BASE + $C00
-VCACHE_VALID_BASE = $1B00               ; 59 bytes for 467 vertices
+VCACHE_VALID_BASE = $1B00               ; 60 bytes (59 used, 467 vertices)
+; VDONE adjacent (2026-07-26, Eben: 'combine the reset loops — 60 bytes
+; each'): the per-frame wipe below clears BOTH as one 120-byte block of
+; uniform stripes off one base. 60 >= 59 bytes covers ALL vertex ids —
+; the old $0600 home cleared only 0-49 and leaned on the packer's
+; ids<384 assert for the tail; that dependence is gone. $1B78-$1BFF
+; stays free (ex-BCA_WS).
+VDONE = VCACHE_VALID_BASE + 60
 
 
 ; ============================================================================

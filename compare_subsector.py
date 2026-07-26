@@ -102,10 +102,14 @@ class SubsectorDiffer:
         # done-bits the 6502 set were snapped away with the rest of its
         # state. Re-sync VDONE from the python done-set so the next
         # 6502 subsector sees the served-vertex history python does.
+        # (By symbol since 2026-07-26 — VDONE moved from $0600 to the
+        # block adjacent to VCACHE_VALID; the hardcoded page was a
+        # private address copy, exactly the forbidden kind.)
+        vdone = _sym('VDONE')
         for i in range(64):
-            mem[0x0600 + i] = 0
+            mem[vdone + i] = 0
         for vi in dw._vspan_done:
-            mem[0x0600 + (vi >> 3)] |= 1 << (vi & 7)
+            mem[vdone + (vi >> 3)] |= 1 << (vi & 7)
 
         self.n_compared += 1
         spans_match = (asm_spans == py_spans)

@@ -94,8 +94,9 @@ SEG_BANKC
 ; Entry contracts (full I/O headers at each routine):
 ;   span_init               reset pool: free chain + one full-screen span
 ;   span_mark_solid         remove closed range [zp_i_l, zp_i_h] (solid)
-;   span_has_gap            A=1 iff any span overlaps [zp_i_l, zp_i_h]
-;   span_is_full            A=1 iff active list empty (screen occluded)
+;   span_has_gap            C=1 iff any span overlaps [zp_i_l, A] (A-hi,
+;                           C-only verdict; A returns ihi untouched)
+;   (span_is_full retired — SPAN_IS_NOT_FULL macro tests zp_head inline)
 ;   span_read               serialize span list to buffer at (zp_buf)
 ;   interp_store            A = line y at column A (u8 round-to-nearest)
 ;   draw_clipped_line       clip u8 line zp_line_* to spans, emit + records
@@ -103,8 +104,8 @@ SEG_BANKC
 ;   draw_clipped_line_s16   s16 line: pre-clip to u8 box, then DCL
 ;   umul8 / udiv16_8        arithmetic primitives (harness/profiler only —
 ;                           bsp_render carries LOCAL copies, 2026-07-12)
-.export span_init, span_mark_solid, span_is_full
-.export span_read, interp_store, draw_clipped_line
+.export span_init, span_mark_solid
+.export interp_store, draw_clipped_line
 .export tighten_from_records, draw_clipped_line_s16, draw_clipped_line_s16_h
 .export dcl_vert, dcl_vert_on           ; vertical fastpath (dcl.s)
 .export umul8, udiv16_8

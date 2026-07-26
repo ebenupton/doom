@@ -1,23 +1,26 @@
 
 ; ============================================================================
 ; clip/query.s — clipper fragment 6 of 10 (module map: clip/header.s).
-; Contents: span_has_gap, span_is_full,
-; span_read (harness serializer), plus the retirement note for
-; the old per-span tighten whose site this was.
+; Contents: span_has_gap, plus the retirement notes for the old
+; per-span tighten whose site this was, span_is_full and span_read.
 ; ============================================================================
 
 ; ======================================================================
 ; HAS_GAP: fast visibility check for column range [ilo, ihi]
 ;
-; Returns A=1 if ANY active span overlaps the query range, A=0 otherwise.
+; Returns C=1 if ANY active span overlaps the query range, C=0 otherwise.
 ; Most-called entry point (~174 calls/frame).  The inner loop is just
 ; 3 compares + linked-list chase, so it's very fast per iteration.
 ; Profile: ~14% of all clipper cycles despite trivial per-call cost,
 ; due to sheer call frequency.
 ;
-; Input:  zp_i_l, zp_i_h (closed range; caller pre-clamps to [0,255]).
-; Output: A = 1/0 (Z reflects result).  Clobbers X,Y; may update
-;         zp_hg_cache (slot of the hit span, for the next call).
+; Input:  A = interval hi, zp_i_l = interval lo (closed range; caller
+;         pre-clamps to [0,255]).  zp_i_h is NOT touched: ihi lives in
+;         A for the whole routine (Eben's 2026-07-26 rewrite).
+; Output: C = verdict (C=1 gap / C=0 none) — C-ONLY since 2026-07-26;
+;         A returns the caller's ihi UNTOUCHED (no exit materializes
+;         a 0/1 any more); Z, N and V are UNDEFINED here. Clobbers
+;         X,Y; may update zp_hg_cache (slot of the hit span).
 ; Callers: bsp/bbox.s (bbox visibility probe) and bsp/subsector.s (seg
 ; prelude) — direct JSR (bank C paged in the banked build); harness.
 ;
@@ -40,30 +43,64 @@
 SEG_CODE
 span_has_gap:
 .scope
-; ABI (formalized 2026-07-20): in = THE interval pair zp_i_l/zp_i_h
-; (closed [lo, hi] — see the zp.inc contract block: loop-operand +
-; multi-consumer persistence make ZP strictly better than registers
-; here); out = A/Z verdict with C == A. The pair is read-only here.
-; Range [ilo, ihi] (closed). Return 1 if any active span overlaps the
-; range, 0 otherwise. Spans are sorted by xstart.
-; Coherence cache: check last-matching span first (saves full walk).
-; Cache probe: if the cached slot still overlaps [ilo,ihi], answer 1
-; without walking. Only a positive answer is cacheable — cache misses
-; fall through to the full walk. (mark_solid / tighten zero the cache,
-; so a live cached slot always holds current XSTART/XEND.)
+; ABI (A-hi pure-register + C-ONLY RETURN, 2026-07-26; supersedes the
+; same-day A-lo and entry-STA cuts, and the 2026-07-20 "A/Z with
+; C == A" contract):
+;
+;   in:  A = interval hi, zp_i_l = interval lo (closed [lo, hi])
+;   out: C = verdict. C=1 -> some active span overlaps [lo, hi]
+;                     C=0 -> none does (range fully solid)
+;        A = ihi, UNTOUCHED (every instruction below is a load, a
+;            compare, CLC or a store — nothing writes A)
+;        Z/N = undefined (last compare's leftovers)
+;        V   = untouched (no instruction here affects it) — this is
+;            LOAD-BEARING: the bca classify tail runs CLV before its
+;            fused JMPs here, and the dcap record store reads V=0
+;            (extent) vs V=1 (cull) AFTER this routine returns. Do
+;            not add ADC/SBC/BIT/PLP to this routine.
+;
+; ihi NEVER lands in memory here — A carries it through the probe
+; (xstart test first; the two probe tests are independent), the walk
+; (xend compares ride Y/X via CPY/CPX zp_i_l, scratching the idle
+; cursor register — safe, each advance reloads it), and the hit
+; checks (CMP POOL_XSTART off A). zp_i_h is neither read nor written:
+; its post-call consumers have their own writers (mark_solid/tfr get
+; the emit-path clamp; the dst*_ext record store reads bca_ihi landed
+; by the bca classify tail).
+;
+; C provenance, per exit (no exit executes a flag instruction except
+; hgn0's CLC — the verdict IS the last compare's carry):
+;   probe hit        CPY zp_i_l fell through BCC  -> C=1
+;   hg_chk_x/y       CMP POOL_XSTART's carry, returned RAW (branch-
+;                    free: the cache store precedes the compare)
+;   hgn (list ran out) CPY/CPX zp_i_l, BCS not taken -> C=0
+;   hgn0 (empty list) explicit CLC (C is caller junk on this entry)
+;
+; Consumers of C: subsector's seg gate (BCS hg_pass), the walk's six
+; bbox branches (BCC skip), the dcap record stores (C rides through
+; their loads/stores back to the walk), and the harness (reads P.C).
+; The old A=0/1 materialization had exactly one non-redundant reader
+; (the ROL A encode in the dcap stores) — that decode now reads V, so
+; the four LDA #0/#1 exit loads died with it.
+; Return 1 if any active span overlaps the range, 0 otherwise. Spans
+; are sorted by xstart.
+; Coherence cache: check last-CANDIDATE span first (saves full walk).
+; Cache probe: if the cached slot overlaps [ilo,ihi], answer 1 without
+; walking. The walk stores its candidate slot unconditionally (hit OR
+; fail — see the hit checks); only a positive PROBE shortcuts, so a
+; cached non-overlapper is harmless. (mark_solid / tighten zero the
+; cache, so a live cached slot always holds current XSTART/XEND.)
    LDX zp_hg_cache
    BEQ hg_no_cache
-   LDA POOL_XEND,X
-   CMP zp_i_l
-   BCC hg_no_cache
-; xend < ilo → miss
-   LDA zp_i_h
-   CMP POOL_XSTART,X
+   CMP POOL_XSTART,X                       ; A = ihi, straight off the entry
    BCC hg_no_cache
 ; ihi < xstart → miss
-   LDA #1
-   RTS
-; cache hit → return 1 (avoids page-cross)
+   LDY POOL_XEND,X
+   CPY zp_i_l
+   BCC hg_no_cache
+; xend < ilo → miss
+   RTS                                     ; cache hit: C=1 from the CPY
+                                           ; (BCC fell); A still = ihi
 hg_no_cache:
 ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
 ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
@@ -71,8 +108,8 @@ hg_no_cache:
    BEQ hgn0
 ; --- X iteration: current span in X ---
 hgl_x:
-   LDA POOL_XEND,X
-   CMP zp_i_l
+   LDY POOL_XEND,X
+   CPY zp_i_l
    BCS hg_chk_x
 ; xend >= ilo → hit
    LDY POOL_NEXT,X
@@ -80,123 +117,57 @@ hgl_x:
 ; advance via Y
 ; --- Y iteration: current span in Y ---
 hgl_y:
-   LDA POOL_XEND,Y
-   CMP zp_i_l
+   LDX POOL_XEND,Y
+   CPX zp_i_l
    BCS hg_chk_y
 ; xend >= ilo → hit
    LDX POOL_NEXT,Y
    BNE hgl_x
-; advance via X
-hgn0:
-   CLC                                     ; empty active list: C is the
-                                           ; caller's — normalize for the
-                                           ; C-CONTRACT (2026-07-20): every
-                                           ; exit returns C == A (C=1 gap,
-                                           ; C=0 none); bca's cull fakes a
-                                           ; no-gap return DISTINGUISHED by
-                                           ; C=1 — the D store reads it
+; advance via X; chain end FALLS INTO hgn (C=0 from the CPX above —
+; no CLC needed; Eben's catch: hgn0 moved out of line 2026-07-26)
 hgn:
-   LDA #0
+   RTS                                     ; no gap: C=0, A = ihi untouched
+hgn0:
+   CLC                                     ; empty active list ONLY: C is
+                                           ; the caller's junk on this entry
+                                           ; (the one compare-free path) —
+                                           ; normalize to the C=0 no-gap
+                                           ; verdict. Out of line: the hot
+                                           ; chain-end exits above never
+                                           ; execute it.
    RTS
 ; --- Hit checks (one copy per register, avoids TYX which doesn't exist) ---
+; BRANCH-FREE (2026-07-26, Eben's 'always update the cache'): the
+; candidate slot is stored UNCONDITIONALLY before the compare, so the
+; old BCS + separate yes-exits (whose only job was to skip the store
+; on a no) are gone. Caching a FAILING candidate is sound: it is
+; still a live span (mark_solid/tighten zero the cache on any
+; mutation), and the probe only ever shortcuts POSITIVE overlaps — a
+; cached non-overlapper just falls through to the walk. A = ihi
+; throughout; the CMP's carry IS the returned verdict (C=0: xstart >
+; ihi — first candidate starts past the range, and the list is
+; sorted, so no later span can overlap either). -3 cycles on the gap
+; verdict, +1 on the no-gap one; hits dominate.
 hg_chk_x:
-   LDA zp_i_h
+   STX zp_hg_cache
    CMP POOL_XSTART,X
-   BCS hg_cx_yes
-   LDA #0
    RTS
 hg_chk_y:
-   LDA zp_i_h
-   CMP POOL_XSTART,Y
-   BCS hg_cy_yes
-   LDA #0
-   RTS
-hg_cx_yes:
-   STX zp_hg_cache
-   LDA #1
-   RTS
-hg_cy_yes:
    STY zp_hg_cache
-   LDA #1
+   CMP POOL_XSTART,Y
    RTS
 .endscope
 SEG_BANKC
-; ======================================================================
-; IS_FULL: check if screen is completely occluded (active list empty)
-; Returns A=1 if head==0 (all columns solid), A=0 otherwise.
-; Input: zp_head only.  No clobbers besides A (X,Y preserved).
-; Callers: bsp/walk.s (per stack pop) and bsp/defq.s (after each
-; deferred op); harness (by symbol).
-; Python mirror: EndpointClipSpans.is_full (== not self.spans).
-; ======================================================================
-span_is_full:
-   LDA zp_head
-   BEQ sif_yes
-   LDA #0
-   RTS
-sif_yes:
-   LDA #1
-   RTS
+; (span_is_full RETIRED 2026-07-26: the walk inlines SPAN_IS_NOT_FULL
+; — LDA zp_head, Z = solid — and the harness reads zp_head directly.
+; Python mirror: EndpointClipSpans.is_full == not self.spans.)
+; (ballast stripped same day with the rest of the perf pads — free
+; space now consolidates at the CODE segment end)
 
-; ======================================================================
-; SPAN_READ: serialize active span list to buffer at (zp_buf)
-; Output: byte 0 = count, then 8 bytes per span (xstart, xend, xlo,
-; xhi, tl, bl, tr, br).  Used by test harness for state comparison.
-;
-; Input:  zp_buf = u16 pointer to output buffer (harness sets $0300);
-;         zp_head = active list.
-; Output: buffer filled as above; xhi is RECONSTRUCTED as xlo + den
-;         (the pool stores DEN, not XHI); count written last at offset
-;         0.  Clobbers A,X,Y, zp_tmp0 (running count).
-; Consumed by SpanClip6502.read_spans (span_clip_6502.py), which
-; returns the same 8-tuples as EndpointClipSpans.spans.
-; NB: no overflow guard — 31 spans max * 8 + 1 = 249 bytes, fits a page.
-; ======================================================================
-span_read:
-.scope
-; Output: 1 byte count, then 8 bytes per span:
-;   xstart, xend, xlo, xhi, tl, bl, tr, br
-   LDY #1
-   ZERO zp_tmp0
-   LDX zp_head
-   BEQ srd
-srl:
-   INC zp_tmp0
-   LDA POOL_XSTART,X
-   STA (zp_buf),Y
-   INY
-   LDA POOL_XEND,X
-   STA (zp_buf),Y
-   INY
-   LDA POOL_XLO,X
-   STA (zp_buf),Y
-   INY
-   CLC
-   ADC POOL_DEN,X
-   STA (zp_buf),Y
-   INY
-; xhi = xlo + den
-   LDA POOL_TL,X
-   STA (zp_buf),Y
-   INY
-   LDA POOL_BL,X
-   STA (zp_buf),Y
-   INY
-   LDA POOL_TR,X
-   STA (zp_buf),Y
-   INY
-   LDA POOL_BR,X
-   STA (zp_buf),Y
-   INY
-   LDA POOL_NEXT,X
-   TAX
-   BNE srl
-srd:
-   LDA zp_tmp0
-   LDY #0
-   STA (zp_buf),Y
-   RTS
-.endscope
+; (span_read RETIRED 2026-07-26: the serializer was harness-only —
+; SpanClip6502.read_spans now walks zp_head/POOL_* directly in Python
+; and reconstructs xhi = xlo + den itself. zp_buf ($62) died with it;
+; $63 was only ever zp_bv_entry's lo byte wearing a second hat.)
 
 ; ======================================================================
 ; TIGHTEN: the core visibility-narrowing operation
@@ -226,4 +197,5 @@ srd:
 ; Extra ZP for tighten (zp_new_tail aliases zp_save2 — tighten doesn't use mark_solid scratch)
 ; Crossover divide working set ($FA-$FF)
 
-.word 0                                 ; 2-byte alignment pad for tighten hot loop page optimization
+; (2-byte tighten hot-loop page pad stripped 2026-07-26 with the rest
+; of the perf padding)

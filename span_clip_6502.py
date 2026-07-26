@@ -23,8 +23,6 @@ from symmap import sym as _sym
 ENTRY_INIT       = _sym('span_init')
 ENTRY_MARK_SOLID = _sym('span_mark_solid')
 ENTRY_HAS_GAP    = _sym('span_has_gap')
-ENTRY_IS_FULL    = _sym('span_is_full')
-ENTRY_READ       = _sym('span_read')
 ENTRY_INTERP_ST  = _sym('interp_store')
 ENTRY_DRAW_CLIP  = _sym('draw_clipped_line')
 ENTRY_TIGHTEN_FROM_RECORDS = _sym('tighten_from_records')
@@ -55,7 +53,6 @@ ZP_I_X0  = _sym('zp_i_x0')
 ZP_I_Y0  = _sym('zp_i_y0')
 ZP_I_Y1  = _sym('zp_i_y1')
 ZP_DIV_DEN = _sym('zp_div_den')
-ZP_BUF   = _sym('zp_buf')
 ZP_LINE_XL = _sym('zp_line_xl_l')
 ZP_LINE_YL = _sym('zp_line_yl_l')
 ZP_LINE_XR = _sym('zp_line_xr_l')
@@ -64,14 +61,30 @@ ZP_LINE_YR = _sym('zp_line_yr_l')
 
 # Pool
 POOL_BASE = _sym('POOL')
+# Pool field planes (linked symbols — one truth with the .s layout;
+# hoisted 2026-07-26 when read_spans went direct, replacing two
+# method-local magic-number blocks)
+POOL_NEXT   = _sym('POOL_NEXT')
+POOL_XLO    = _sym('POOL_XLO')
+POOL_DEN    = _sym('POOL_DEN')
+POOL_TL     = _sym('POOL_TL')
+POOL_BL     = _sym('POOL_BL')
+POOL_TR     = _sym('POOL_TR')
+POOL_BR     = _sym('POOL_BR')
+POOL_XSTART = _sym('POOL_XSTART')
+POOL_XEND   = _sym('POOL_XEND')
+POOL_OT     = _sym('POOL_OT')
+POOL_OB     = _sym('POOL_OB')
+POOL_IT     = _sym('POOL_IT')
+POOL_IB     = _sym('POOL_IB')
 
-# Buffer for span_read output (harness-owned scratch, not an engine symbol)
-READ_BUF = 0x0300
-
-# Line output buffer (written by 6502 during tighten/mark_solid)
-LINE_OUT_COUNT = _sym('LINE_OUT_COUNT')
-LINE_OUT_EN    = _sym('LINE_OUT_EN')
-LINE_OUT_BUF   = _sym('LINE_OUT_BUF')
+# Plot-entry PCs for line capture (LINE_OUT retired 2026-07-26: _run
+# traps these PCs and reads the staged RASTER_ZP args directly — the
+# engine-side buffer, EN gate and per-call count zeroing are gone).
+# Every emitted line reaches exactly one of these three entries.
+PLOT_PCS = frozenset((_sym('plot_h'), _sym('plot_v'), _sym('RASTER_ENTRY')))
+RZ_X0 = _sym('RASTER_ZP_X0'); RZ_Y0 = _sym('RASTER_ZP_Y0')
+RZ_X1 = _sym('RASTER_ZP_X1'); RZ_Y1 = _sym('RASTER_ZP_Y1')
 
 
 def _gen_quarter_square():
@@ -99,9 +112,13 @@ class SpanClip6502:
         self.total_cycles = 0
         self.last_cycles = 0
         # When set to a list, every emitted (x0,y0,x1,y1) raster segment is
-        # appended (drained from LINE_OUT after each entry that can emit).
+        # appended (plot-entry PC traps in _run collect them per call).
         # Feeds the pixel-exact pure-Python reference (tools/pyref_render.py).
         self.capture = None
+        # lines emitted by the most recent _run (plot-entry PC traps);
+        # a traced-run override (trace_compare) bypasses the traps, so
+        # this can be stale there — those flows never read it.
+        self.last_lines = []
         mem = self.mpu.memory
 
         # Load quarter-square tables (base from the generated ABI — the flat
@@ -146,10 +163,6 @@ class SpanClip6502:
         # BRK at halt address
         mem[0xFF00] = 0x00
 
-        # Set up read buffer pointer
-        mem[ZP_BUF] = READ_BUF & 0xFF
-        mem[ZP_BUF + 1] = (READ_BUF >> 8) & 0xFF
-
     def _run(self, entry, max_cycles=500000):
         """Run from entry point until BRK at $FF00."""
         mpu = self.mpu
@@ -161,9 +174,13 @@ class SpanClip6502:
         mem[0x01FF] = 0xFE
         mem[0x01FE] = 0xFF
         mpu.processorCycles = 0
+        lines = self.last_lines = []
         for _ in range(max_cycles):
-            if mpu.pc == 0xFF00:
+            pc = mpu.pc
+            if pc == 0xFF00:
                 break
+            if pc in PLOT_PCS:
+                lines.append((mem[RZ_X0], mem[RZ_Y0], mem[RZ_X1], mem[RZ_Y1]))
             mpu.step()
         self.last_cycles = mpu.processorCycles
         self.total_cycles += self.last_cycles
@@ -221,11 +238,9 @@ class SpanClip6502:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
-        mem[LINE_OUT_EN] = 1
         self._run(ENTRY_MARK_SOLID)
-        mem[LINE_OUT_EN] = 0
         if self.capture is not None:
-            self.capture.extend(self.drain_lines())
+            self.capture.extend(self.last_lines)
 
     def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                 emit_top=True, emit_bot=True,
@@ -279,11 +294,9 @@ class SpanClip6502:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
-        mem[LINE_OUT_EN] = 1
         self._run(ENTRY_TIGHTEN_FROM_RECORDS)
-        mem[LINE_OUT_EN] = 0
         if self.capture is not None:
-            self.capture.extend(self.drain_lines())
+            self.capture.extend(self.last_lines)
 
     _reset_count = [0]
     def reset_records(self):
@@ -297,15 +310,6 @@ class SpanClip6502:
     def _read_span_at_slot(self, slot):
         """Read a single span from pool by slot number."""
         mem = self.mpu.memory
-        POOL_NEXT = 0x0400
-        POOL_XLO = 0x0420
-        POOL_DEN = 0x0440
-        POOL_TL = 0x0460
-        POOL_BL = 0x0480
-        POOL_TR = 0x04A0
-        POOL_BR = 0x04C0
-        POOL_XSTART = 0x04E0
-        POOL_XEND = 0x0500
         xlo = mem[POOL_XLO + slot]
         den = mem[POOL_DEN + slot]
         return (mem[POOL_XSTART + slot], mem[POOL_XEND + slot],
@@ -317,19 +321,6 @@ class SpanClip6502:
         """Write spans list to 6502 pool, replacing current state.
         Spans must be in xstart order, non-overlapping. Up to 31 spans."""
         mem = self.mpu.memory
-        POOL_NEXT = 0x0400
-        POOL_XLO = 0x0420
-        POOL_DEN = 0x0440
-        POOL_TL = 0x0460
-        POOL_BL = 0x0480
-        POOL_TR = 0x04A0
-        POOL_BR = 0x04C0
-        POOL_XSTART = 0x04E0
-        POOL_XEND = 0x0500
-        POOL_OT = 0x0520
-        POOL_OB = 0x0540
-        POOL_IT = 0x0560
-        POOL_IB = 0x0580
         n = len(spans)
         if n > 31:
             raise RuntimeError(f"too many spans for pool ({n} > 31)")
@@ -366,51 +357,43 @@ class SpanClip6502:
         ihi = min(255, hi)
         if ihi < ilo:
             return False
+        # A-hi ABI (2026-07-26): hi rides in A, lo in zp_i_l; zp_i_h is
+        # untouched. C-only return (same day): the verdict is the carry
+        # bit — A comes back holding ihi, not a 0/1.
         mem[ZP_ILO] = ilo & 0xFF
-        mem[ZP_IHI] = ihi & 0xFF
+        self.mpu.a = ihi & 0xFF
         self._run(ENTRY_HAS_GAP)
-        return self.mpu.a != 0
+        return (self.mpu.p & 0x01) != 0
 
     def is_full(self):
-        """is_full() → bool."""
-        self._run(ENTRY_IS_FULL)
-        return self.mpu.a != 0
+        """is_full() → bool. (span_is_full retired 2026-07-26: the truth
+        is zp_head == 0; the walk inlines SPAN_IS_NOT_FULL.)"""
+        return self.mpu.memory[ZP_HEAD] == 0
 
     def read_spans(self):
         """Read span list. Returns list of 8-tuples in the new format:
         (xstart, xend, xlo, xhi, tl, bl, tr, br)
         where (xlo, xhi, tl, bl, tr, br) is the line definition (immutable
         once a span is created) and (xstart, xend) is the active range.
+
+        span_read RETIRED 2026-07-26: this walks zp_head/POOL_* directly
+        (the 6502 serializer only existed to marshal this exact walk
+        through a buffer). xhi is reconstructed as (xlo + den) & 0xFF —
+        the pool stores DEN, not XHI — matching the old CLC/ADC exactly.
         """
         mem = self.mpu.memory
-        mem[ZP_BUF] = READ_BUF & 0xFF
-        mem[ZP_BUF + 1] = (READ_BUF >> 8) & 0xFF
-        self._run(ENTRY_READ)
-        count = mem[READ_BUF]
         spans = []
-        off = READ_BUF + 1
-        for i in range(count):
-            xstart = mem[off];   xend = mem[off+1]
-            xlo    = mem[off+2]; xhi  = mem[off+3]
-            tl     = mem[off+4]; bl   = mem[off+5]
-            tr     = mem[off+6]; br   = mem[off+7]
-            spans.append((xstart, xend, xlo, xhi, tl, bl, tr, br))
-            off += 8
-        return spans
-
-    def drain_lines(self):
-        """Read and clear line output buffer. Returns list of (x1,y1,x2,y2) tuples."""
-        mem = self.mpu.memory
-        count = mem[LINE_OUT_COUNT]  # byte count
-        lines = []
-        for i in range(0, count, 4):
-            x1 = mem[LINE_OUT_BUF + i]
-            y1 = mem[LINE_OUT_BUF + i + 1]
-            x2 = mem[LINE_OUT_BUF + i + 2]
-            y2 = mem[LINE_OUT_BUF + i + 3]
-            lines.append((x1, y1, x2, y2))
-        mem[LINE_OUT_COUNT] = 0
-        return lines
+        slot = mem[ZP_HEAD]
+        for _ in range(64):                 # 31 spans max; a longer chase
+            if slot == 0:                   # means pool corruption
+                return spans
+            xlo = mem[POOL_XLO + slot]
+            spans.append((mem[POOL_XSTART + slot], mem[POOL_XEND + slot],
+                          xlo, (xlo + mem[POOL_DEN + slot]) & 0xFF,
+                          mem[POOL_TL + slot], mem[POOL_BL + slot],
+                          mem[POOL_TR + slot], mem[POOL_BR + slot]))
+            slot = mem[POOL_NEXT + slot]
+        raise RuntimeError('read_spans: NEXT chain exceeds pool size')
 
     @staticmethod
     def _clip_x_range(x1, y1, x2, y2, xlo, xhi):
@@ -553,13 +536,11 @@ class SpanClip6502:
             mem[ZP_DCL_REC_OFF]   = 1   # arm-time reset (see dcl_rec_arm)
         else:
             mem[ZP_DCL_REC_BUF_H] = 0
-        mem[LINE_OUT_EN] = 1
         self._run(ENTRY_DRAW_CLIP_S16)
-        mem[LINE_OUT_EN] = 0
         if records_buf is not None:
             mem[ZP_DCL_REC_BUF]   = 0
             mem[ZP_DCL_REC_BUF_H] = 0
-        lines = self.drain_lines()
+        lines = self.last_lines
         if self.capture is not None:
             self.capture.extend(lines)
         return lines

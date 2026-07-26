@@ -45,11 +45,11 @@ def main():
     src = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                           dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     L0,C,L2 = (bytes(src.bm._banks[b]) for b in (BANK_L0,BANK_C,BANK_L2))
-    LOW = bytes(src.bm[0x1B40:0x2C00+os.path.getsize('bsp_render_bk.bin')])
+    LOW = bytes(src.bm[0x1C00:0x2C00+os.path.getsize('bsp_render_bk.bin')])
     sc = SpanClip6502()
     bare = LogMem([0]*65536)
     for n,img in [(BANK_L0,L0),(BANK_C,C),(BANK_L2,L2)]: bare.define_bank(n,img)
-    for i,b in enumerate(LOW): bare[0x1B40+i]=b
+    for i,b in enumerate(LOW): bare[0x1C00+i]=b
     for a,v in ZP.items(): bare[a]=v
     # RNS vectoring block: staged in L2 $A100 -> stack page (drivers' stkcpy)
     bare.select(BANK_L2)

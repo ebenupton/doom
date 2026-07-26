@@ -61,7 +61,7 @@ extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss'
  'dbox_check','bt_store','bca_tail_postrc','br_render_subsector',
  'br_project_x','br_project_y','rns_go','slope_div_le','cp_havepsi',
  'br_render_frame','br_view_setup','br_init_frame','anim_tick','anim_init',
- 'span_init','span_has_gap','span_is_full','span_mark_solid','ev_clamp_hi_nz',
+ 'span_init','span_has_gap','span_mark_solid','ev_clamp_hi_nz',
  'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
  'umul8','udiv16_8','interp_store','vertex_fetch','bca_frame','rc_wipe',

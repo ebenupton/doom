@@ -256,10 +256,22 @@ zp_seg_top_dlt = $68              ; [bsp]; s8 ch - vz (height delta for top edge
 ; --- $69: overlay group (2 phase-disjoint users) ---
 zp_seg_bot_dlt = $69              ; [bsp]; s8 fh - vz (height delta for bottom edge)
 zp_prev = $61                     ; [clip]; pool-walk prev (from $E2 — structs)
-zp_buf = $62                      ; [clip]; u16 pointer $62/$63 (from $E3/$E4)
-; $64/$65: bca_vis / bca_ccsave live here via LOCAL equates in
-; ang/header_div.s (keep in sync) — persistent across checks, so they
-; get sole ownership (from the old $F5/$F6 squat inside the structs).
+bca_ab = BCA_AB                   ; [ang+bsp]; = $62 (zp_buf's slot, freed
+                                  ; with span_read 2026-07-26): per-frame
+                                  ; view angle byte (was BCA_WS+$2F). ONE
+                                  ; truth: the value lives in the generated
+                                  ; abi.inc (included above) — drivers
+                                  ; poke the same constant. vxc_ab aliases.
+                                  ; NOT $64: despite the old 'bca_vis $64
+                                  ; free' note, $64 is zp_bv_entry's HI
+                                  ; byte ($63/$64 pair, w=2) — the drivers
+                                  ; seed it and bca_frame rewrites it per
+                                  ; frame (the 2026-07-26 black-screen
+                                  ; lesson: trust widths, not free-notes).
+.assert BCA_AB < $100, error, "bca_ab must stay ZP (drivers STA it zp; engine reads assume 3-cycle)"
+; $65: bca_ccsave lives here via a LOCAL equate in
+; ang/header_div.s (keep in sync) — sole owner
+; (from the old $F5/$F6 squat inside the structs).
 ; ($6A-$6F retired 2026-07-10 — sy/sx staging dead; BISECT: temporarily
 ; unallocated while hunting the divergence)
 RASTER_ZP_SCRSTRT = $70           ; [clip]
@@ -345,31 +357,44 @@ zp_dcl_rec_buf = $BC              ; [clip]; lo byte of buffer ptr ; w=2
 zp_dcl_rec_buf_h = $BD            ; [clip]; hi byte of buffer ptr ($00 = records disabled)
 zp_dcl_rec_off = $BE              ; [clip]; current write offset (1-based) within buffer
 zp_head = $C0                     ; [clip]
-; is_full, inline (2026-07-15): the clipper's whole occlusion truth is
-; zp_head == 0 (active span list empty) and ZP is unbanked — no JSR, no
-; bank-C page. Branches to `target` when the screen is fully solid.
-.macro IS_FULL_B target
+; SPAN_IS_NOT_FULL (2026-07-26, replaces IS_FULL_B and the retired
+; span_is_full routine): the clipper's whole occlusion truth is
+; zp_head == 0 (active span list empty) and ZP is unbanked — no JSR,
+; no bank-C page, no materialized 0/1. The macro JUST TESTS zp_head:
+; A = zp_head, Z = screen fully solid. Callers branch themselves
+; (BEQ done / BNE continue).
+.macro SPAN_IS_NOT_FULL
    LDA zp_head
-   BEQ target
 .endmacro
 zp_free = $C1                     ; [clip]
 ; --- THE INTERVAL ABI ($C2/$C3) -------------------------------------
 ; zp_i_l/zp_i_h is the CANONICAL closed column interval [lo, hi] —
-; the argument pair of span_has_gap, span_mark_solid and
-; tighten_from_records, and the OUTPUT slots of the bbox check
-; (bca_ilo/bca_ihi alias here, 2026-07-18: the tail's lookups store
-; STRAIGHT into the argument slots, so the fused JMP SC_HAS_GAP exit
-; carries zero marshalling). WHY ZP AND NOT REGISTERS (audited
-; 2026-07-20, Eben's ABI question): (1) the consumers' inner loops
-; use the pair as COMPARE OPERANDS every iteration (CMP zp — there is
-; no CMP vs Y/abs,X on 6502), so a register entry just moves the two
-; stores inside the callee; (2) the pair must SURVIVE has_gap for the
-; second and third consumers (the D-cache store classifies from it,
-; mark_solid re-reads it), which registers cannot promise across
-; PAGE/flag traffic. Writers: the bca tail cells, the D-serve arms
-; (dv_left/right/straddle), the seg emit path, mark_solid callers.
-; RETURN ABI: A/Z = verdict, C == A (query.s contract; bca's cull
-; forges A=0/C=1 — see the tail).
+; the argument pair of span_mark_solid and tighten_from_records, and
+; the OUTPUT slots of the bbox check (bca_ilo/bca_ihi alias here,
+; 2026-07-18). span_has_gap A-hi ABI (2026-07-26, Eben's call —
+; supersedes the 2026-07-20 ZP-only audit and the same-day A-lo cut):
+; has_gap takes HI IN A and LO in zp_i_l; zp_i_h is NEITHER READ NOR
+; WRITTEN by has_gap (Eben's pure-register rewrite: A carries ihi
+; through probe, walk and hit checks — the lo compares ride the idle
+; cursor register via CPY/CPX zp_i_l). Post-call consumers of $C3 own
+; their writes: mark_solid/tfr read the seg emit-path clamp (ms_hist),
+; and the dst*_ext record store reads bca_ihi landed by the bca
+; classify tail (ct_ih / ct_f_r2out / full_vis). The dcv serve arms
+; leave bca_ihi stale BY DESIGN — serves feed no record store and
+; pass ihi to has_gap in A. Writers of zp_i_l stay as before: bca
+; tail cells, D-serve arms, seg emit path, mark_solid callers.
+; RETURN ABI (C-only, 2026-07-26 — the A=0/1 materialization is
+; retired): C = has_gap's verdict (C=1 gap / C=0 none); A returns the
+; caller's ihi untouched; Z/N undefined. The bca classify exits add
+; V = record kind for the dcap store (V=0 extent / V=1 angle cull:
+; CLV at visok/full_vis, CLC + BIT-an-RTS-opcode at cull — $60 has
+; bit6 set and can never change). Three states, two flags:
+;   gap C=1/V=0, no-gap C=0/V=0, cull C=0/V=1.
+; The walk and the seg gate branch BCS/BCC and never read V; V is
+; DEFINED ONLY at uncached-classify (bcls_*) exits — serve arms
+; return C alone (full scope note at bca.s's C/V-CONTRACT block).
+; has_gap itself must never gain an instruction that writes V (the
+; CLV has to survive the fused call) — asserted in its header.
 zp_i_l = $C2                      ; [clip+ang]; interval lo (= bca_ilo)
 zp_i_h = $C3                      ; [clip+ang]; interval hi (= bca_ihi)
                                   ; directly; $BB/$BF freed)

@@ -51,14 +51,16 @@
 ; class's entry: bbox_check_angle (standing: rotation-cache probe),
 ; dbox_check (forward run: D probe), box_classify (pristine).
 ;   in : zp_node_ch_l/zp_bbox_side = box identity; frame ZP preset
-;   out: A/Z = combined verdict (has_gap over the check's extent)
+;   out: C = combined verdict (has_gap over the check's extent) —
+;        C-only since 2026-07-26; the walk branches BCS/BCC
 ; ============================================================================
 br_bbox_visible:
    PAGE BANK_L2                            ; angle tables live in bank L2
 ::br_bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
                                         ; walk's near-invisible -> far-check
                                         ; arc: bca exits L2 and PLA/stores/
-                                        ; IS_FULL_B touch no banked data)
+                                        ; SPAN_IS_NOT_FULL touch no banked
+                                        ; data)
    JMP (zp_bv_entry)                       ; exits return to OUR caller
 
 SEG_CODE                         ; restore for subsequently-included parts

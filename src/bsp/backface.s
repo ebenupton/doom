@@ -206,12 +206,9 @@ bf_g_mul:
 ; (header.s) — same core serves br_node_setup's general arm (lo.s).
    CROSS_MAG_DECIDE bf_seg_front, s_advance_l0
 .endscope
-; Layout keeper: the 2026-07-15 tail cleanup shrank this routine by 10
-; bytes net; shifting everything downstream rolls page-cross dice in
-; hot loops (measured swings of +-1000/position on this suite). Pad
-; re-scanned 2026-07-16 after the V-strip: 24 best
-; restore). Safe to delete/re-scan whenever MAIN is next rebalanced.
-   .res 24
+; (24-byte layout-keeper pad stripped 2026-07-26 in the all-pads
+; sweep: free space consolidates at the CODE segment end; page-cross
+; dice re-rolled and measured as one lump.)
 ; ============================================================================
 ; br_bbox_visible — visibility test for a child subtree's bounding box.
 ;
@@ -286,11 +283,9 @@ BBOX_IHI = $096A                        ; running max sx clamped (u8)
                                         ; on zp_bv_mode — SMC retired)
                                         ; call site bca_check_op is SMC-
                                         ; retargeted by bca_frame (rcache.s)
-; (BCA_WS comes from abi.inc — the old triplet is dead)
-bca_top = BCA_WS+$10                    ; box input: top,bot,left,right = +$10,$12,$14,$16
+; (BCA_WS retired 2026-07-26 — the val[] slots were engine-dead and
+; bca_ab is ZP $64 now, registered in zp.inc for both units.)
 bca_ilo = zp_i_l                        ; output: left column (u8) — ALIASED
 bca_ihi = zp_i_h                        ; to zp_i_l/h (2026-07-18, see ang)
-; (bca_vis retired 2026-07-20 — verdict = A/Z/C exit signature; $64 free)
-; (2026-07-10: $F5 is inside the VX2 vertex struct now; keep in sync with
-; ang/header_div.s — BOTH define this)
-bca_ab = BCA_WS+$2F                     ; per-frame view angle (set by render setup)
+; (bca_vis retired 2026-07-20 — verdict rides the exit flags. Its old
+; $64 'slot' was never reusable: $64 is zp_bv_entry's HI byte.)

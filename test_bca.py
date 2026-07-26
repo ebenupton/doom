@@ -14,7 +14,8 @@ from symmap import sym
 mpu = MPU()
 load_angle_module(mpu.memory)
 BCA = sym('box_classify')  # the pristine check (engine moving-frame path)
-BOX = sym('bca_top')
+# (bca_top/bot/left/right pokes removed 2026-07-26 with BCA_WS: the
+# classify reads ONLY the BBP corner planes — those pokes were dead.)
 
 
 def w16(addr, v):
@@ -22,8 +23,6 @@ def w16(addr, v):
 
 
 def run(top, bot, left, right, px, py, ab):
-    w16(sym('bca_top'), top); w16(sym('bca_bot'), bot)
-    w16(sym('bca_left'), left); w16(sym('bca_right'), right)
     mpu.memory[sym('bca_px')] = px & 0xFF
     mpu.memory[sym('bca_py')] = py & 0xFF
     mpu.memory[sym('bca_ab')] = ab & 0xFF
@@ -52,9 +51,10 @@ def run(top, bot, left, right, px, py, ab):
     steps = 0
     while mpu.pc != 0x0000 and steps < 20000:
         mpu.step(); steps += 1
-    # bca_vis retired 2026-07-20: angle verdict = A/C exit signature
-    # (A=1 gap-visible; A=0/C=0 visible-but-gap-closed; A=0/C=1 cull)
-    vis = 1 if (mpu.a == 1 or (mpu.p & 1) == 0) else 0
+    # C/V exit signature (2026-07-26): C=1 gap, C=0/V=0 visible-but-
+    # gap-closed, C=0/V=1 angle cull. Standalone = classify path, so
+    # V is defined; angle-visible == not culled == V clear.
+    vis = 1 if (mpu.p & 0x40) == 0 else 0
     return (mpu.memory[sym('bca_ilo')], mpu.memory[sym('bca_ihi')]) if vis else None
 
 

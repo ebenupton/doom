@@ -451,7 +451,7 @@ SEG_HIGH                                   ; flat: the probe/serve block lives
 .endif
 ; --- bbox_check_angle: rotation-coherent bbox visibility ----------------------
 ; Same contract as box_classify (in: zp_node_ch_l/zp_bbox_side, bca_pxs/
-; pys, bca_afn; out: the A/Z/C verdict + bca_ilo/ihi) and bit-identical
+; pys, bca_afn; out: the C/V verdict + bca_ilo/ihi) and bit-identical
 ; results — only cycles change. Warm hits skip the per-corner abs/octant/SlopeDiv/tantoangle work
 ; and re-derive phi with one subtraction.
 ;
@@ -729,7 +729,12 @@ bca_tail_postrc:                           ; the tail proper — reached from
    BCC ct_ih
    LDA #255
 ct_ih:
-   STA bca_ihi
+   STA bca_ihi                             ; ihi lands HERE, not in has_gap
+                                           ; (pure-A since Eben's 2026-07-26
+                                           ; rewrite): the dst*_ext record
+                                           ; store snapshots bca_ilo/bca_ihi
+                                           ; after bcls_* returns — visok
+                                           ; reloads it for the A-hi call
 ct_left:
 ; r1'' = (p1' - 2*EPS) & 4095 in registers (raw p1' stays in memory)
    LDA bca_p1
@@ -750,31 +755,61 @@ lk_left:
    LDA #0                                  ; v == 0: ilo clamps to 0
 ct_il:
    STA bca_ilo
-; falls into visok. NO ilo > ihi check: in (F,F) the corners can
+; falls into visok, which recovers ihi from X into A (A-hi ABI
+; 2026-07-26: has_gap's entry lands bca_ihi/zp_i_h — the pair is
+; still the persistent state). NO ilo > ihi check: in (F,F) the
+; corners can
 ; invert by at most 2*EPS (true span < 2048 outside the box, each
 ; corner within +-EPS), and the left -2*EPS bias plus the -1/+1
 ; adjusts restore ilo <= ihi; every other cell emits constants in
 ; order. The python mirror keeps its tripwire.
-; A/Z/C-CONTRACT (bca_vis retired 2026-07-20): every exit returns the
-; combined verdict in A (Z valid) and the ANGLE verdict in C — gap
-; A=1/C=1, visible-but-gap-closed A=0/C=0 (has_gap's C==A contract),
-; angle cull A=0/C=1 (the SEC below). The walk branches on Z alone;
-; the D store tells 126 from extent by C via the dvf_store ROL/LSR
-; encode.
+; C/V-CONTRACT (2026-07-26, supersedes the 2026-07-20 A/Z/C form —
+; the A=0/1 materialization is gone from has_gap and from these
+; exits). Every CLASSIFY exit returns:
+;
+;   C = the walk's verdict     C=1 descend (visible + gap)
+;                              C=0 skip    (no gap, or angle cull)
+;   V = the record-store bit   V=0 extent  (store bca_ilo/bca_ihi)
+;                              V=1 angle cull (store code 1)
+;   A = ihi on visible exits (has_gap preserves it); undefined on cull
+;   Z/N = undefined
+;
+; The three states: gap C=1/V=0, no-gap C=0/V=0, cull C=0/V=1. The
+; walk branches BCS/BCC and never looks at V; the dcap stores branch
+; BVS and let C ride through their loads/stores untouched (this
+; killed their ROL A/PHA/CMP #1 ... PLA/LSR A encode/restore dance).
+;
+; WHY V WORKS: no instruction in has_gap touches V (loads, compares,
+; CLC, stores only — asserted in its header), so a CLV issued at the
+; visible exits below survives the fused call; the tail's own ADC/SBC
+; arithmetic is exactly why the CLV must sit HERE, after the last
+; V-disturbing op, not at the classify entry.
+;
+; V SCOPE (read this before adding a consumer): V is defined ONLY at
+; the exits of the uncached classify (bcls_* / box_classify) — i.e.
+; the paths below. The dcv_* WARM-SERVE arms return C only, V is
+; garbage there: serves feed no record store, the walk ignores V, and
+; the check_angle harness probes cold frames only (every bbox
+; classifies — serves cannot fire). If a new V consumer ever sees
+; serve exits, the arms need their own CLV/BIT tails.
+;
 ; full_vis is the CANONICAL full-visibility tail (the rcache warm-full
 ; path and box_classify's inside case JMP here instead of local copies).
 visok:
+   CLV                                     ; V=0: extent verdict for the
+                                           ; dcap store (survives has_gap —
+                                           ; see the C/V-CONTRACT above)
+   LDA bca_ihi                             ; A-hi ABI (stored at ct_ih /
+                                           ; ct_f_r2out)
    JMP SC_HAS_GAP                          ; the fused exit IS the verdict:
-                                           ; A/Z from has_gap, C == A by its
-                                           ; contract (bca_vis died 2026-07-20
-                                           ; — the D store reads the encoded
-                                           ; A/C signature instead)
+                                           ; C from has_gap, V=0 from the
+                                           ; CLV, A = ihi preserved
 
 ; --- out-of-line cells (rarer paths) ---------------------------------
 ct_r1out_r2f:
    LDA #0                                  ; (R,F)/(L,F): the box wraps in
    STA bca_ilo                             ; from the left edge — ilo = 0
-   JMP visok
+   JMP visok                               ; (bca_ihi stored at ct_ih)
 ct_r2out:
 ; A = r2 hi in [4,15]. X is free (the tail entry owns it):
 ; bank r2's R/L class there, then classify r1.
@@ -798,32 +833,43 @@ ct_r2have:
    CPX #0
    BEQ full_vis                           ; (L,R): full
 cull:                                      ; THE cull exit — (L,L) FALLS in
-   SEC                                     ; off the untaken BEQ above; the
-   LDA #0                                  ; others branch direct. Signature
-   RTS                                     ; A=0/Z=1/C=1: to the walk it IS a
-                                           ; no-gap return; C=1 tells the D
-                                           ; store 'angle cull' (code 126)
-                                           ; apart from no-gap (C=0)
+                                           ; off the untaken BEQ above; the
+                                           ; others branch direct.
+   CLC                                     ; C=0: to the walk a cull IS a
+                                           ; no-gap return (BCC skips)
+   BIT cull_rts                            ; V=1 tells the dcap store 'angle
+                                           ; cull' (code 1) apart from
+                                           ; no-gap (V=0 via visok's CLV).
+                                           ; The operand is the RTS below:
+                                           ; opcode $60 has bit6 SET, and an
+                                           ; RTS opcode can never change —
+                                           ; a self-certifying constant
+                                           ; (6502 has no SEV instruction).
+                                           ; (BIT also sets Z from A AND $60
+                                           ; and N from bit7 — both already
+                                           ; undefined in the contract.)
+cull_rts:
+   RTS                                     ; signature C=0/V=1; A undefined
 full_vis:
    ZERO bca_ilo
-   LDA #255
-   STA bca_ihi
+   CLV                                     ; V=0: extent verdict (see the
+                                           ; C/V-CONTRACT at visok)
+   LDA #255                                ; ihi rides in A (A-hi ABI) AND
+   STA bca_ihi                             ; lands for the dst*_ext record
    JMP SC_HAS_GAP                          ; FUSED EXIT (2026-07-18): every
                                            ; visible exit chains straight into
                                            ; has_gap on the freshly-written
-                                           ; zp_i interval — the caller gets
-                                           ; the COMBINED verdict in A/Z, and
-                                           ; the bv wrapper's JSR/BNE/JMP
-                                           ; round trip is gone. Cull exits
-                                           ; still RTS (A=0/Z=1).
+                                           ; interval — the caller gets the
+                                           ; combined verdict in C (V=0 rides
+                                           ; from the CLV). Cull exits still
+                                           ; RTS with C=0/V=1.
 ct_f_r2out:
-; (F,R)/(F,L): ihi = 255, then the ordinary left lookup. A = r1'' hi,
-; Y = r1'' lo, C=0 from the BCC — TAX/LDA/STA/TXA/JMP preserve it
-; into lk_left's pointer ADC.
-   TAX
-   LDA #255
-   STA bca_ihi
-   TXA
+; (F,R)/(F,L): ihi = 255 via X (A holds r1'' hi, Y holds r1'' lo —
+; both live into lk_left; the old TAX/LDA/STA/TXA dance is dead).
+; C=0 from the BCC — LDX/STX/JMP preserve it into lk_left's pointer
+; ADC. The store feeds the dst*_ext record + visok's reload.
+   LDX #255
+   STX bca_ihi
    JMP lk_left
 
 ; ============================================================================
@@ -1395,10 +1441,10 @@ rc_wipe:
 ; dominates staleness cost — 16 wins the mean, 5.3% vs 8's 5.0%; the
 ; serve is a SUPERSET at any staleness, so the period is pure tuning).
 ; MISS/refresh: stash the probe's byte+bit (rc_bytehi/rc_bit), JSR the
-; side's pristine tree (its fused exits run has_gap and RTS the full
-; A/Z/C signature), store at return from the freshly-born bca_ilo/ihi
-; (ROL A encodes (verdict,C): 1 = angle cull; 0/3 = extent), publish
-; the bit, and hand the untouched signature to the walk.
+; side's pristine tree (its fused exits run has_gap and RTS the C/V
+; signature), store at return from the freshly-born bca_ilo/ihi
+; (BVS picks cull code 1 vs extent code 0; C rides through the store
+; loads untouched), publish the bit, and hand C to the walk.
 ; (Inside boxes DO store here — their (0,255) birth is a straddle serve,
 ; itself a superset under forward motion.)
 ; ============================================================================
@@ -1437,24 +1483,29 @@ dcap_s1:
    BCS dcv_right_1                         ; (rounding) and migrate the
                                         ; other way — treat as straddle
    ZERO bca_ilo                            ; straddles centre: (0,255)
-   LDA #255
-   STA bca_ihi
+   LDA #255                                ; ihi rides in A (A-hi ABI)
    JMP SC_HAS_GAP
 dcv_left_1:
    ADC #2                                  ; (0, ihi+2): C=0, ihi<128 — no clamp
-   STA bca_ihi
-   ZERO bca_ilo
+.if ::C02
+   STZ bca_ilo                             ; ihi stays in A (A-hi ABI)
+.else
+   LDY #0                                  ; ihi stays in A (A-hi ABI); Y is
+   STY bca_ilo                             ; dead here (has_gap clobbers it)
+.endif
    JMP SC_HAS_GAP
 dcv_right_1:
    SBC #2                                  ; (ilo-2, 255): C=1, ilo>=128 — no wrap
    STA bca_ilo
-   LDA #255
-   STA bca_ihi
+   LDA #255                                ; ihi rides in A (A-hi ABI)
    JMP SC_HAS_GAP
 dcv_invis:
-   SEC                                     ; cull signature (A=0/Z=1/C=1)
-   LDA #0
-   RTS
+   CLC                                     ; serve-path cull: C=0, the walk
+   RTS                                     ; skips (BCC). V is DELIBERATELY
+                                           ; undefined here — serves feed no
+                                           ; record store and the walk never
+                                           ; reads V (scope note at the
+                                           ; C/V-CONTRACT block, visok)
 dcap_s1_fresh:                             ; refresh: X survives; re-derive
    LDA zp_node_ch_l                        ; the bit for the stash
    AND #3
@@ -1467,30 +1518,31 @@ dcap_s1_miss:
    STA rc_bit
    LDY zp_node_ch_l
    JSR bcls_s1                             ; the uncached variant (fused exits)
-   ROL A                                   ; encode (verdict,C): 1 = cull
-   PHA
-   CMP #1
-   BNE dst1_ext
-   LDA #1
+; STORE-AT-BIRTH decode (C/V contract, 2026-07-26): V picks the record
+; kind, C is the walk's verdict and RIDES THROUGH untouched — every
+; instruction between here and the RTS is a load, store or ORA, none
+; of which affect C. The old 3-state ROL A/PHA/CMP #1 encode and its
+; PLA/LSR A signature-restore are gone (-13 cycles per store, and the
+; stack byte with them).
+   BVS dst1_cull                           ; V=1: angle cull -> code 1
    LDY zp_node_ch_l
-   STA RC_PH_1,Y                           ; code 1 = invisible
-   BNE dst1_bit                            ; (A=1: always)
-dst1_ext:
-   LDY zp_node_ch_l
-   LDA bca_ilo
-   STA RC_P1L_1,Y
+   LDA bca_ilo                             ; V=0: extent record from the
+   STA RC_P1L_1,Y                          ; freshly-born bca_ilo/bca_ihi
    LDA bca_ihi
    STA RC_P2L_1,Y
    LDA #0
    STA RC_PH_1,Y                           ; code 0 = extent
+   BEQ dst1_bit                            ; (A=0: always)
+dst1_cull:
+   LDA #1
+   LDY zp_node_ch_l
+   STA RC_PH_1,Y                           ; code 1 = invisible
 dst1_bit:
    LDX rc_bytehi
    LDA RCACHE_COMPUTED,X
-   ORA rc_bit
+   ORA rc_bit                              ; (ORA: N,Z only — C intact)
    STA RCACHE_COMPUTED,X
-   PLA
-   LSR A                                   ; the walk's A/Z/C, untouched
-   RTS
+   RTS                                     ; C = bcls verdict, untouched
 ; --- side 0 (mirror; k & 7 has no ORA) ---
 dcap_s0:
    TYA
@@ -1519,19 +1571,21 @@ dcap_s0:
    CMP #132
    BCS dcv_right_0
    ZERO bca_ilo
-   LDA #255
-   STA bca_ihi
+   LDA #255                                ; ihi rides in A (A-hi ABI)
    JMP SC_HAS_GAP
 dcv_left_0:
    ADC #2
-   STA bca_ihi
-   ZERO bca_ilo
+.if ::C02
+   STZ bca_ilo                             ; ihi stays in A (A-hi ABI)
+.else
+   LDY #0                                  ; ihi stays in A (A-hi ABI)
+   STY bca_ilo
+.endif
    JMP SC_HAS_GAP
 dcv_right_0:
    SBC #2
    STA bca_ilo
-   LDA #255
-   STA bca_ihi
+   LDA #255                                ; ihi rides in A (A-hi ABI)
    JMP SC_HAS_GAP
 dcap_s0_fresh:
    LDA zp_node_ch_l
@@ -1544,30 +1598,25 @@ dcap_s0_miss:
    STA rc_bit
    LDY zp_node_ch_l
    JSR bcls_s0
-   ROL A
-   PHA
-   CMP #1
-   BNE dst0_ext
-   LDA #1
-   LDY zp_node_ch_l
-   STA RC_PH_0,Y
-   BNE dst0_bit
-dst0_ext:
-   LDY zp_node_ch_l
+   BVS dst0_cull                           ; C/V decode — see the side-1
+   LDY zp_node_ch_l                        ; mirror for the full story
    LDA bca_ilo
    STA RC_P1L_0,Y
    LDA bca_ihi
    STA RC_P2L_0,Y
    LDA #0
    STA RC_PH_0,Y
+   BEQ dst0_bit                            ; (A=0: always)
+dst0_cull:
+   LDA #1
+   LDY zp_node_ch_l
+   STA RC_PH_0,Y
 dst0_bit:
    LDX rc_bytehi
    LDA RCACHE_COMPUTED,X
-   ORA rc_bit
+   ORA rc_bit                              ; (ORA: N,Z only — C intact)
    STA RCACHE_COMPUTED,X
-   PLA
-   LSR A
-   RTS
+   RTS                                     ; C = bcls verdict, untouched
 
 .export bca_tail_postrc
 
