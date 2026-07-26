@@ -397,12 +397,8 @@ tv_add_fracs:
    STA zp_br_vx_h
    LDA zp_br_fvx_h
    BMI bv_fvxneg
-   BCC bv_fvx_done                         ; +frac: ext += hi-add carry
-   INC zp_br_vx_x                         ; (BCC/INC beats LDA/ADC/STA/JMP
-   JMP bv_fvx_done                         ; on both carry outcomes)
-bv_fvxneg:
-   BCS bv_fvx_done                         ; -frac: ADC #$FF == ext-1+C, so
-   DEC zp_br_vx_x                         ; carry SET is a no-op
+   BCS bv_fvx_c                            ; +frac carry rare (census
+                                           ; 2026-07-27): island below
 bv_fvx_done:
 
    LDA zp_br_vy_l
@@ -414,13 +410,25 @@ bv_fvx_done:
    STA zp_br_vy_h
    LDA zp_br_fvy_h
    BMI bv_fvyneg
-   BCC bv_fvy_done                         ; +frac: ext += hi-add carry
-   INC zp_br_vy_x                         ; (BCC/INC beats LDA/ADC/STA/JMP
-   RTS                                     ; on both carry outcomes)
-bv_fvyneg:
-   BCS bv_fvy_done                         ; -frac: ADC #$FF == ext-1+C, so
-   DEC zp_br_vy_x                         ; carry SET is a no-op
+   BCS bv_fvy_c                            ; +frac carry rare: below
 bv_fvy_done:
+   RTS
+bv_fvy_c:
+   INC zp_br_vy_x
+   RTS
+bv_fvx_c:
+   INC zp_br_vx_x
+   JMP bv_fvx_done
+bv_fvxneg:
+   BCS bv_fvx_nod                          ; -frac: carry SET is a no-op
+   DEC zp_br_vx_x                          ; (ADC #$FF == ext-1+C)
+bv_fvx_nod:
+   JMP bv_fvx_done
+bv_fvyneg:
+   BCC bv_fvy_b                            ; -frac borrow: rare (carry SET
+   RTS                                     ; is a no-op — ADC #$FF == ext-1+C)
+bv_fvy_b:
+   DEC zp_br_vy_x
    RTS
 .endscope
 

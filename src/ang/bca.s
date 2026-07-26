@@ -726,8 +726,9 @@ bca_tail_postrc:                           ; the tail proper — reached from
    STA pa_ptr+1
    LDA (pa_ptr),Y                          ; vatox[r2]
    ADC #1
-   BCC ct_ih
-   LDA #255
+   BCS ct_ih_cl                            ; overflow clamp: rare (0.2%,
+                                           ; census 2026-07-27, island
+                                           ; past visok's fused exit)
 ct_ih:
    STA bca_ihi                             ; ihi lands HERE, not in has_gap
                                            ; (pure-A since Eben's 2026-07-26
@@ -751,8 +752,8 @@ lk_left:
    STA pa_ptr+1                            ; BCC — both arrive C=0)
    LDA (pa_ptr),Y                          ; vatox[r1'']
    SBC #0                                  ; C=0 (constant carry-out) -> v-1
-   BCS ct_il                               ; C=1: v >= 1
-   LDA #0                                  ; v == 0: ilo clamps to 0
+   BCC ct_il_z                             ; v == 0: rare clamp (island);
+                                           ; C rides identically both ways
 ct_il:
    STA bca_ilo
 ; falls into visok, which recovers ihi from X into A (A-hi ABI
@@ -806,6 +807,15 @@ visok:
                                            ; CLV, A = ihi preserved
 
 ; --- out-of-line cells (rarer paths) ---------------------------------
+; ihi/ilo clamp arms (census 2026-07-27: BCS/BCC re-enter with the SAME
+; carry state the old inline fall produced — C=1 into ct_ih, C=0 into
+; ct_il — so the downstream carry contracts are untouched)
+ct_ih_cl:
+   LDA #255
+   BNE ct_ih                               ; (always: A = 255)
+ct_il_z:
+   LDA #0
+   BEQ ct_il                               ; (always: A = 0)
 ct_r1out_r2f:
    LDA #0                                  ; (R,F)/(L,F): the box wraps in
    STA bca_ilo                             ; from the left edge — ilo = 0

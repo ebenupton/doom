@@ -115,8 +115,10 @@ umul_round_div:
    CLC
    ADC zp_prod_l
    STA zp_prod_l
-   BCC ip_rn_nc                            ; BCC/INC round-carry (~50%)
+   BCS ip_rn_c                             ; round-carry rare (3.6% —
+ip_rn_nc:                                  ; census 2026-07-27; the old
+   JMP udiv16_8                            ; comment's ~50% was wrong)
+ip_rn_c:
    INC zp_prod_h
-ip_rn_nc:
    JMP udiv16_8                            ; tail-call
 .endscope

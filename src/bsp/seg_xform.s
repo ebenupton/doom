@@ -168,6 +168,16 @@ br_seg_xform_vertex:
 vc_hit_hi:
 ; (senior twin — same macro, +$100 pages)
    VC_HIT_ARM $100
+; --- rare-arm island (census 2026-07-27): evy16-clamp arms out of the
+; hot fall path; the hit arms above RTS so nothing falls in ---
+ec_clamp:
+   LDA #$7F                                ; 128..255 → clamp
+   STA VX1+0,X
+   BNE ec_done                             ; (A = $7F: always taken)
+ec_hi_nz:
+   JMP ec_hi_nz_far                        ; rare trampoline (the full
+                                           ; clamp body is past the fill
+                                           ; arms, out of BNE range)
 vc_miss:
 ; --- Cache miss: mark valid now (entry bytes are filled as they are
 ; computed below — evy/evx first, so even the near-clipped path leaves
@@ -182,9 +192,10 @@ vc_miss:
 
 ; (vxc_jsr_site SMC retired 2026-07-18: vertex_fetch (view.s) gates on
 ; zp_vxc_on and falls into the plain fetch when the cache is off.)
-.endscope
+; (scopes merged 2026-07-27: the census islands above — ec_clamp /
+; ec_hi_nz — are referenced from the transform below; label sets are
+; disjoint)
    JSR vertex_fetch
-.scope
 
 ; (view-x saves MOVED below the near-clip verdict, spectrack warm find
 ; 2026-07-12: clipped endpoints never read them — the sole consumer is
@@ -214,15 +225,11 @@ vc_miss:
 ; still consumed here, the carry-chain contract just moved to the site.
    LDA zp_br_vy_x
    ADC #0                                  ; rounded evy16 hi byte
-   BNE ec_hi_nz                            ; hi != 0 → rare, full logic
+   BNE ec_hi_nz                            ; hi != 0 → rare (island above)
    LDA VX1+0,X
-   BPL ec_done                             ; fits s8: no call, no store
-   LDA #$7F                                ; 128..255 → clamp
-   STA VX1+0,X
-   BNE ec_done                             ; (A = $7F: always taken)
-ec_hi_nz:
-   ev_clamp_hi_nz
-ec_done:
+   BMI ec_clamp                            ; 128..255 → rare clamp (island);
+ec_done:                                   ; fits-s8 FALLS THROUGH (was an
+                                           ; 85%-taken BPL — census)
 
 ; (Cache writes are deferred to the two exits — each does ONE armed
 ; fill from the struct/working regs; the miss path has no cache
@@ -237,17 +244,11 @@ ec_done:
    BNE nc_ok
    LDA VX1+0,X
    BMI nc_fail
-   BNE nc_ok                               ; evy>0 -> ok (was BEQ+JMP)
-nc_fail:
-; Near-clipped: armed cache fill (evy/evx from the struct — usable on
-; any future hit — plus the clip verdict), and the struct clip byte.
-   LDA zp_seg_v_idx_b
-   AND #$20
-   BNE ncf_hi
-   NC_FILL_ARM 0
-ncf_hi:
-   NC_FILL_ARM $100
-nc_ok:
+   BEQ nc_fail                             ; evy == 0 -> below NEAR (never
+                                           ; on suite): visible seg FALLS
+nc_ok:                                     ; THROUGH (was 100%-taken BNE —
+                                           ; census 2026-07-27; nc_fail
+                                           ; block moved past the fill arms)
 ; Save view-space x for br_project_x below (deferred past the
 ; near-clip test; vxlo/hi/ext are still intact — nothing above clobbers
 ; them since the Y projection moved to the post-has_gap stage).
@@ -290,6 +291,18 @@ nc_ok:
    VC_FILL_ARM 0
 vcf_hi:
    VC_FILL_ARM $100
+nc_fail:
+; Near-clipped: armed cache fill (evy/evx from the struct — usable on
+; any future hit — plus the clip verdict), and the struct clip byte.
+   LDA zp_seg_v_idx_b
+   AND #$20
+   BNE ncf_hi
+   NC_FILL_ARM 0
+ncf_hi:
+   NC_FILL_ARM $100
+ec_hi_nz_far:
+   ev_clamp_hi_nz
+   JMP ec_done
 .endscope
 
 
