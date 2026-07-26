@@ -89,6 +89,19 @@ ps_rns24:
    LDY zp_br_res_l                          ; the REG CONTRACT from the ZP
    LDA zp_br_res_h                          ; results
    RTS
+; --- M8 == 0 rare cell (2026-07-26, Eben: same mostly-taken BNE as the
+; y-side; zero M8 = crossing recip / power-of-two depths only). Hoisted
+; above the entry, still inside the scope; the head BEQs back here.
+px_m8_zero:
+   LDA zp_br_vx_l
+   STA zp_br_t2
+   LDX #0                                  ; ext = sign(vx): b123 = vx<<8
+   LDA zp_br_vx_h                          ; mid = vx_h rides A into the
+   BPL pxz_go                              ; shared px_shift stores (the
+   DEX                                     ; py_m8_zero idiom, 2026-07-26)
+pxz_go:
+   JMP px_shift
+
 ::br_project_x:
    LDA zp_br_vx_h
    ASL A                                   ; C = sign bit of xint
@@ -99,19 +112,20 @@ px_narrow:                                  ; hot path FALLS THROUGH
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
 .if ::C02
    STZ zp_br_res_l
-   STZ zp_br_res_h
 .else
    LDA #0
    STA zp_br_res_l
-   STA zp_br_res_h
 .endif
+; (res_h zeroing DELETED 2026-07-26, py insight ported: on the narrow
+; path b123 = vx*m9 with |vx| < 128, m9 <= 511 => |b123| < 65408 fits
+; s16 — the ext byte is the PURE SIGN of the arm and each arm delivers
+; it as a constant in X to px_shift. res_l seeds the frac carry only;
+; the mid byte rides A into the shared store.)
 ; M8 == 0 (m9 = 256 exactly): both products are zero — b123 = frac + vx<<8.
    LDA zp_br_r_m8
-   BNE px_have_m8
-   LDA zp_br_vx_l
-   STA zp_br_t2
-   JMP px_p_pos
-px_have_m8:
+   BEQ px_m8_zero                          ; rare cell hoisted above the
+                                           ; entry (2026-07-26) — the common
+                                           ; mul path falls through
    LDA zp_br_vx_l
    BNE px_have_frac
    STA zp_br_t2
@@ -191,24 +205,21 @@ pxm_pacc:
    CLC
    ADC zp_br_t2
    STA zp_br_t2
+; --- POSITIVE TAIL (px_p_pos/px_vx_n dispatch DELETED 2026-07-26, py
+; insight ported): the vx<<8 add folds into the mid chain in A — the
+; arm already knows the sign, so the re-load/BMI re-dispatch was lard.
+; Carry proof (unsigned-only): prod_hi = hi(vx*M8) <= hi(127*255) =
+; $7E; res_l <= 1 (frac carry only); C(lo add) <= 1 => first sum <=
+; $80, carry-out 0. Then + vx_h <= $7F => <= $FF: no carry either —
+; both old INC-ext sites were provably dead, and no CLC is needed
+; between the adds. Ext = CONSTANT 0 (b123 in [0, 65407]). ---
    TXA
-   ADC zp_br_res_l
-   STA zp_br_res_l
-   BCC px_p_pos                            ; ext += carry (unsigned product:
-   INC zp_br_res_h                         ; no sign fixup exists)
-px_p_pos:
-
-; --- += vx << 8 (sign-extended) ---
-; Sign tested FIRST on the single load; the negative arm lives after
-; the RTS (its +1/-1 high-byte fixups mostly cancel via the add carry).
-   LDA zp_br_vx_h
-   BMI px_vx_n
-   CLC
-   ADC zp_br_res_l
-   STA zp_br_res_l
-   BCC px_i_pos
-   INC zp_br_res_h
-px_i_pos:
+   ADC zp_br_res_l                         ; mid = prod_hi + frac_c + C(lo)
+   ADC zp_br_vx_h                          ; += vx (the <<8 fold); C=0 proven
+   LDX #0                                  ; ext = sign of the arm
+px_shift:
+   STA zp_br_res_l                         ; single shared store pair — all
+   STX zp_br_res_h                         ; three arms deliver (A=mid, X=ext)
 
 ; --- sx = 128 + rns(b123, S) (per-vertex vectored shifter) ---
    JSR rns_go
@@ -228,22 +239,12 @@ px_i_pos:
                                         ; after a projection — the bbox-
                                         ; classification story was legacy;
                                         ; sx_hi in the records serves it)
-px_vx_n:
-; negative vx_h: lo add's carry (+1) and the $FF sign-extend (-1)
-; cancel; only the no-carry case decrements the high byte.
-   CLC
-   ADC zp_br_res_l
-   STA zp_br_res_l
-   BCS px_vxn_j
-   DEC zp_br_res_h
-px_vxn_j:
-   JMP px_i_pos
-
 pxm_neg:
 ; negative vx: b123 -= |vx|*M8 (unsigned product, subtractive accumulate)
    EOR #$FF
-   BUMP                                    ; A = |vx|
-   TAX
+   BUMP_TAX                                ; A = X = |vx| (CPU-forked pair:
+                                           ; NMOS TAX/INX/TXA saves a byte,
+                                           ; C02 keeps INA/TAX — Eben)
    SEC
    SBC zp_br_r_m8
    BCS pxm_nd
@@ -276,13 +277,19 @@ pxm_nacc:
    LDA zp_br_t2
    SBC zp_br_a
    STA zp_br_t2
+; --- NEGATIVE TAIL (py insight ported, 2026-07-26): vx < 0 => b123 =
+; vx*m9 in [-65408, -2] (|vx| <= 128, m9 <= 511, vx <= -1/256) — the
+; ext byte is the CONSTANT $FF, so the borrow-out of the mid subtract
+; (the old BCS/DEC pair) and the old <<8-arm DEC are both discarded:
+; mod-2^16 arithmetic on (t2, mid) is exact regardless. The vx<<8 add
+; folds into the mid chain in A (CLC needed: the SBC's borrow-out is
+; data-dependent); mid rides A to the shared px_shift stores. ---
    LDA zp_br_res_l
-   SBC zp_mul_b
-   STA zp_br_res_l
-   BCS pxm_njoin                           ; ext -= borrow
-   DEC zp_br_res_h
-pxm_njoin:
-   JMP px_p_pos
+   SBC zp_mul_b                            ; mid partial (borrow-out dropped)
+   CLC
+   ADC zp_br_vx_h                          ; += vx (the <<8 fold)
+   LDX #$FF                                ; ext = sign of the arm
+   JMP px_shift
 
 .endscope
 
@@ -315,9 +322,24 @@ pxm_njoin:
 ; bank/harness images arrive zeroed (the old boot-only vwhc_clear had
 ; no callers and was GC'd).
 ; ============================================================================
-br_project_y_paged:
-   PAGE BANK_L2
-   LDA zp_br_t0
+; --- M8 == 0 rare cell (2026-07-26, Eben's catch at :397: the BNE at
+; the mul head is almost always taken — zero M8 is only the near-plane
+; crossing recip and power-of-two depths). Hoisted ABOVE the entries so
+; the hot path falls straight into the inlined mul; the head BEQs back
+; up here. Contract: A == 0 on arrival (it IS the BEQ's operand).
+py_m8_zero:
+   STA zp_br_t2
+   TAX
+   LDA zp_br_t0                            ; mid = h rides A to py_shift
+   BPL pymz_go
+   DEX
+pymz_go:
+   JMP py_shift
+
+; (br_project_y_paged RETIRED 2026-07-26, Eben's question: ZERO
+; callers anywhere — every caller pages L2 itself per the y_stage/apv
+; once-per-run contract and enters with A = h. It was a vestige of
+; the pre-2026-07-21 caller-pages era.)
 br_project_y:
 .scope
    STA zp_br_t0                            ; h (tag compare + raw body reads)
@@ -329,12 +351,17 @@ br_project_y:
 ; the stages BEFORE k matched, the planes already hold them, their
 ; stores are skipped. R_S still doubles as the valid flag (a real S is
 ; never 0, so fresh slots always miss at stage 0 and write everything).
+; R_M8 IS IMPLIED (2026-07-26, Eben's hot-sequence pass): the probe
+; index is h ^ rhi, so once the KEY plane confirms h, rhi = X ^ h is
+; DETERMINED — two entries can only share a slot with the same h if
+; they also share rhi. The R_M8 plane and its compare are redundant
+; and retired (equate + plane freed in resolve_crossing.s); collision
+; safety: same slot + same h => same rhi, and rlo (the valid flag —
+; a real S is never 0) is still compared. Zero-filled fresh slots
+; miss at the R_S stage exactly as before.
    LDA zp_br_r_s
    CMP VWHC_R_S,X
    BNE pym0
-   LDA zp_br_r_m8
-   CMP VWHC_R_M8,X
-   BNE pym1
    LDA zp_br_t0
    CMP VWHC_KEY,X
    BNE pym2
@@ -345,9 +372,6 @@ br_project_y:
                                            ; test reads mpu.a/mpu.y now)
 pym0:
    STA VWHC_R_S,X
-   LDA zp_br_r_m8
-pym1:
-   STA VWHC_R_M8,X
    LDA zp_br_t0
 pym2:
    STA VWHC_KEY,X
@@ -392,16 +416,9 @@ pym2:
 ; M8 == 0 (m9 = 256 exactly: the near-plane crossing recip and every
 ; power-of-two depth): the product is zero — skip the mul, P24 = h<<8.
    LDA zp_br_r_m8
-   BNE py_have_m8
-   STA zp_br_t2                            ; A == 0 here (BNE fell through)
-   STA zp_br_res_h
-   LDA zp_br_t0                            ; N flag survives the STA below
-   STA zp_br_res_l
-   BPL py_go
-   DEC zp_br_res_h
-py_go:
-   JMP py_shift
-py_have_m8:
+   BEQ py_m8_zero                          ; rare cell hoisted above the
+                                           ; entries (2026-07-26) — the
+                                           ; common mul path falls through
 ; --- h*M8 inlined (br_smul_s8_u8 body, de-larded): lo lands straight in
 ; t2 and the hi byte stays in A for the mid add — saves the a/b staging,
 ; the JSR/RTS, the prod->res copy and both resh reloads (~44 cyc/call).
@@ -428,19 +445,25 @@ pym_pd:
    STA zp_br_t2                            ; P24 lo
    LDA sqr_h,X
    SBC sqr_h,Y
-   JMP pym_join                            ; A = hi(h*M8)
+   JMP pym_ptail                           ; A = hi(h*M8) — positive tail
 pym_puo:
    LDA sqr2_l,X                           ; f(x+y) overflowed into the
    SBC sqr_l,Y                            ; +256 window (carry in = 1)
    STA zp_br_t2
    LDA sqr2_h,X
    SBC sqr_h,Y
-   JMP pym_join
+; --- POSITIVE TAIL: h > 0 => P24 >= 257 => mid in [1,127]: ext is the
+; CONSTANT 0 (same fence). The puo arm falls in; the no-overflow arm
+; JMPs here. Ext rides X into py_shift's shared STX (hand edit).
+pym_ptail:
+   CLC
+   ADC zp_br_t0                            ; mid = hi(h*M8) + h
+   LDX #0
+   JMP py_shift
 pym_neg:
 ; negative h: |h| through the quarter-square, negate during the copy-out
    EOR #$FF
-   BUMP                                    ; A = |h|
-   TAX
+   BUMP_TAX                                ; A = X = |h| (CPU-forked pair)
    SEC
    SBC zp_br_r_m8
    BCS pym_nd
@@ -474,43 +497,45 @@ pym_nneg:
    STA zp_br_t2                            ; lo = -|prod| lo
    TXA
    EOR #$FF
-   ADC #0                                  ; hi = ~|hi| + (lo == 0)
-pym_join:
-; --- P24 mid: A = hi(h*M8). |h| <= 64 is PACK-ASSERTED (the projection
-; bound fence in doom_wireframe.py, 2026-07-12): |h*m9| <= 64*511 < 2^15,
-; so P24 fits s16 and the ext byte is PURE SIGN of the mid byte — the
-; old carry + two sign-extension terms (the senior-byte bookkeeping)
-; cancel by construction and are gone (~12 cycles/raw call). A violating
-; map fails the PACK, not the render. ---
-   CLC
-   ADC zp_br_t0                            ; mid = hi(h*M8) + h
+; --- NEGATIVE TAIL (pym_join split into pure divergent flow,
+; 2026-07-26, Eben). |h| <= 64 is PACK-ASSERTED (the projection bound
+; fence in doom_wireframe.py, 2026-07-12): |h*m9| <= 64*511 < 2^15, so
+; P24 fits s16 and the ext byte is PURE SIGN of the mid byte. On THIS
+; arm h < 0 => P24 <= -257 => mid = P24>>8 in [-128,-2]: the sign is
+; the CONSTANT $FF — the branchless spread (ASL/ADC/EOR, 11 cyc)
+; constant-folds away. A violating map fails the PACK, not the render.
+; FUSED (Eben, 2026-07-26): the old ADC #0 (hi = ~|hi| + (lo==0)) and
+; CLC/ADC t0 collapse into ONE add — C here is STILL the lo-negate's
+; (lo==0) carry, and the intermediate carry-out was provably 0
+; (product = |h|*M8 >= 1 on this arm), so ~|hi| + h + C in one ADC is
+; byte-identical. -4 bytes, -4 cycles.
+   ADC zp_br_t0                            ; mid = ~|hi| + h + (lo==0)
+   LDX #$FF
+::py_shift:                                ; (:: 2026-07-26: the hoisted
+                                           ; M8==0 cell JMPs here from
+                                           ; outside the raw-body scope)
    STA zp_br_res_l
-   ASL A                                   ; C = sign of t3 (A dead after);
-   LDA #0                                  ; branchless sign spread — NOTE
-   ADC #$FF                                ; the first cut used LDX #0/BPL
-   EOR #$FF                                ; and LDX had already clobbered
-   STA zp_br_res_h                         ; the ADC's N flag: ext was
-py_shift:                                  ; always 0. C survives LDA/STA.
+   STX zp_br_res_h
 
 ; --- sy = 128 - rns(P24, S) (per-vertex vectored shifter) ---
+; De-larded 2026-07-26 (Eben's hot-sequence pass): X = slot BEFORE the
+; subtract, lo rides A through TAY into its plane store (TAY preserves
+; A), hi goes straight from the SBC to its plane — the res_h
+; write-back/reload and the TYA shuttle were staged-then-copied lard.
+; (zp_br_res_h is NOT an output: the hit path never writes it, so no
+; caller may rely on it — the register contract is the whole truth.)
    JSR rns_go
+   LDX zp_pyc_idx
    LDA #128
    SEC
    SBC zp_br_res_l
    TAY                                     ; REG CONTRACT: Y = sy lo, A = sy hi
-                                           ; (the lo store-back died with the
-                                           ; register pass — Y carries it)
-   LDA #0
-   SBC zp_br_res_h
-   STA zp_br_res_h                         ; hi store stays: the writeback
-                                           ; below re-reads it after TYA
 ; --- VWHC writeback, VALUE half (the raw body is only ever entered
 ; through the cache front's miss path above, which already wrote the
 ; key bytes via the staggered ladder) ---
-   LDX zp_pyc_idx
-   TYA
-   STA VWHC_L,X
-   LDA zp_br_res_h
+   STA VWHC_L,X                           ; A still = lo (TAY preserves)
+   LDA #0
+   SBC zp_br_res_h
    STA VWHC_H,X                           ; (A = hi, Y = lo at RTS)
    RTS
 .endscope

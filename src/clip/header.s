@@ -25,6 +25,14 @@ ina
 .endif
 .endmacro
 
+; BUMP_CC: A = A + 1 at a site where C is PROVEN CLEAR (document the
+; proof at each use — Eben's carry survey, 2026-07-26). Both CPUs:
+; ADC #1, 2 cyc — the NMOS arm's CLC dies. Writes C/V like BUMP's ADC,
+; so the out-flags must be dead.
+.macro BUMP_CC
+   ADC #1
+.endmacro
+
 ; span clipper (src/clip/*) -- 6502 span-clipper module for the DOOM-style
 ; BSP renderer.  ONE MODULE of the single ld65 engine link (it was a
 ; standalone beebasm unit historically; the old "span_clip.asm" name

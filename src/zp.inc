@@ -272,8 +272,13 @@ bca_ab = BCA_AB                   ; [ang+bsp]; = $62 (zp_buf's slot, freed
 ; $65: bca_ccsave lives here via a LOCAL equate in
 ; ang/header_div.s (keep in sync) — sole owner
 ; (from the old $F5/$F6 squat inside the structs).
-; ($6A-$6F retired 2026-07-10 — sy/sx staging dead; BISECT: temporarily
-; unallocated while hunting the divergence)
+; $6A-$6F: OWNED BY THE CLIP UNIT — zp_save0/1/2, zp_old_cur,
+; zp_ox0/zp_ox1 live here via clip-local equates (REGISTERED
+; 2026-07-26: the old 'retired/unallocated' note here described the
+; BSP unit's dead sy/sx staging, not the addresses — the vclip-memo
+; experiment allocated on top of them and read the span walk's ox0 as
+; its arm flag. Grep the MERGED dbg, not this registry, before
+; claiming ZP.)
 RASTER_ZP_SCRSTRT = $70           ; [clip]
 ; $73 free (was pa_sx — lf_ns reads L8_TAB,Y direct, 2026-07-19)
 zp_seg_v_idx_l = $77             ; [bsp]; cached: vertex index (u16)

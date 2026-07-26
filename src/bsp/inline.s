@@ -168,7 +168,11 @@ c_normal:
    SBC zp_seg_v1_evy
    BPL c_num_ok
    EOR #$FF
-   BUMP
+   BUMP                                    ; (BUMP_CC reverted 2026-07-26:
+                                           ; N=1 does NOT prove the SBC
+                                           ; borrowed — signed-negative vs
+                                           ; unsigned-borrow are different
+                                           ; predicates; verify caught it)
 c_num_ok:
    STA zp_div_h
 
@@ -180,7 +184,8 @@ c_num_ok:
    SBC zp_seg_v1_evy
    BPL c_den_ok
    EOR #$FF
-   BUMP
+   BUMP                                    ; (BUMP_CC reverted — same false
+                                           ; borrow proof as c_num above)
 c_den_ok:
    STA zp_div_den
    LSR A

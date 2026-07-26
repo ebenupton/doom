@@ -46,7 +46,9 @@ bsp_d_end:
 .if ::BANKED
 ; (VWHC lives in the L2 CACHES group since the 2026-07-21 regroup.
 ; VALID retired earlier — RLO doubles as valid.)
-VWHC_R_M8 = $AE00
+; (VWHC_R_M8 plane RETIRED 2026-07-26: the probe index is h ^ rhi, so
+; the KEY plane's h implies rhi = idx ^ h — the compare was redundant.
+; $AE00 is a FREE L2 page.)
 VWHC_R_S = $AF00
 VWHC_KEY = $B000
 VWHC_L = $B100
@@ -58,7 +60,7 @@ SEG_CODE
 ; already aligned, so the harness metric overcharged the y-cache).
 ; BSS window $D4C0-$DABF: aligned tables span $D500-$D9FF, $D4C0-$D4FF
 ; and $DA00-$DABF free.
-VWHC_R_M8 = $8100
+; (VWHC_R_M8 retired 2026-07-26 — $8100 free; see the banked note.)
 VWHC_R_S = $8200
 VWHC_KEY = $8300
 VWHC_L = $8400

@@ -467,7 +467,8 @@ tfs_top_be:
    LDA TOP_RECORDS
    ASL A
    ASL A
-   BUMP
+   BUMP_CC                                 ; C=0: count <= 63 (1+4n <= 255)
+                                           ; so both ASLs shift out 0
    STA TFS_TOP_BUFEND
    LDA BOT_RECORDS
    BEQ tfs_no_bot
@@ -480,7 +481,7 @@ tfs_bot_be:
    LDA BOT_RECORDS
    ASL A
    ASL A
-   BUMP
+   BUMP_CC                                 ; C=0: same count-bound proof
    STA TFS_BOT_BUFEND
 
 ; No pending output span yet.

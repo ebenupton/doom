@@ -218,7 +218,7 @@ def test_to_view():
 
 
 ENTRY_BR_PROJECT_X = _sym('br_project_x')   # by symbol — jt offsets shift
-ENTRY_BR_PROJECT_Y = _sym('br_project_y_paged')
+ENTRY_BR_PROJECT_Y = _sym('br_project_y')  # paged entry retired 2026-07-26: zero callers; naked contract = A = h
 
 
 # One recip sample per shift value S=1..10 (idx chosen mid-range for each
@@ -341,10 +341,11 @@ def test_project_y():
             cases.append((h, rh, rl))
     fail = 0
     for h, rh, rl in cases:
-        mem[0x20] = h & 0xFF
         mem[0x1A] = rh
         mem[0x1B] = rl
         _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
+        sc.mpu.a = h & 0xFF          # naked-entry REG contract: A = h (the
+                                     # entry stores zp_br_t0 itself)
         sc._run(ENTRY_BR_PROJECT_Y)
         # register contract (2026-07-19): Y = sy lo, A = sy hi (the zp
         # store-backs were test-only and died — cp_havepsi precedent)

@@ -58,6 +58,29 @@ ina
 .endif
 .endmacro
 
+; BUMP_CC: A = A + 1 at a site where C is PROVEN CLEAR (document the
+; proof at each use — Eben's carry survey, 2026-07-26). Both CPUs:
+; ADC #1, 2 cyc — the NMOS arm's CLC dies. Writes C/V like BUMP's ADC,
+; so the out-flags must be dead.
+.macro BUMP_CC
+   ADC #1
+.endmacro
+
+; BUMP_TAX: A = X = A + 1 (the BUMP/TAX pair, CPU-forked to each
+; core's best form — Eben, 2026-07-26). C02: INA:TAX (4 cyc, 2 B).
+; NMOS: TAX:INX:TXA (6 cyc, 3 B — ties CLC:ADC#1:TAX on cycles, saves
+; a byte, and never writes C/V, unlike BUMP's ADC).
+.macro BUMP_TAX
+.if ::C02
+ina
+TAX
+.else
+   TAX
+   INX
+   TXA
+.endif
+.endmacro
+
 ; bsp_render.asm — fresh 6502 BSP traversal + vertex transform + seg
 ; projection. Feeds lines into the existing s16 clipper / DCL pipeline
 ; in span_clip.asm.

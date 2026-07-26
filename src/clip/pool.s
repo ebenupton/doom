@@ -33,9 +33,12 @@ span_init:
 ; Free list: slots 2..31 (indices 2,3,...,31).
    LDX #2                                  ; slot 2                                     ; |
    STX zp_free                             ; |
+   CLC                                     ; loop C=0 invariant seed (the
+                                           ; CMP below re-clears on every
+                                           ; continue: BCS not taken)
 il:
    TXA
-   BUMP
+   BUMP_CC                                 ; C=0: seeded + CMP invariant
 ; ||
    CMP #NUM_SLOTS                          ; reached end? (= 32)                        ; |
    BCS id                                  ; |
