@@ -61,9 +61,9 @@ draw_clipped_line:
 ; --- Vertical fast path: xl == xr (trampoline — dcl_vertical out of BEQ range) ---
    LDA zp_line_xl_l
    CMP zp_line_xr_l
-   BNE dcl_not_vert
-   JMP dcl_vertical
-dcl_not_vert:
+   BEQ dcl_to_vert                         ; verticals rare here (0.7%,
+                                           ; census 2026-07-27): trampoline
+                                           ; in the dclw_flush island
 ; --- Compute dx, dy, ylo, yhi ---
    LDA zp_line_xr_l
    SEC
@@ -92,9 +92,9 @@ dcl_records_off:
    LDX zp_head
 
 dcl_walk:
-; End of list?
-   BNE dcl_walk2
-   JMP dcl_flush
+; End of list? (inverted 2026-07-27: non-empty 100% on suite — the
+; empty case borrows the dclw_flush island)
+   BEQ dclw_flush
 dcl_walk2:
 
 ; --- Skip spans entirely left of line ---
@@ -114,6 +114,8 @@ dclw_x:
    BNE dclw_x
 dclw_flush:
    JMP dcl_flush
+dcl_to_vert:
+   JMP dcl_vertical
 dclw_found_y:
    TYA
    TAX                                     ; canonicalize: span rides X into
@@ -124,9 +126,9 @@ dcl_not_left:
 ; Done if xstart >= xr (all remaining spans are further right)
    LDA POOL_XSTART,X
    CMP zp_line_xr_l
-   BCC dcl_in_range
-   JMP dcl_flush                           ; xstart >= xr → done
-dcl_in_range:
+   BCS dclw_flush                          ; xstart >= xr → done (18%;
+                                           ; backward to the flush island —
+                                           ; common case falls, census)
 
 ; --- Compute overlap ---
 ; ox0 = max(xstart, xl) — A already holds POOL_XSTART,X from skip check
@@ -190,38 +192,13 @@ dcl_ep_done:
 ; --- Tier 2: inner bbox accept ---
    LDA zp_line_y_l
    CMP POOL_IT,X
-   BCC dcl_amb_jmp
-; ylo < max(tl,tr) → CB clip
+   BCC dcl_amb_jmp                         ; ylo < max(tl,tr) → CB clip
    LDA POOL_IB,X
    CMP zp_line_y_h
-   BCS dcl_accept
-; min(bl,br) >= yhi → accept
-; yhi > ib → ambiguous
-dcl_amb_jmp:
-   JMP dcl_cb_clip
-
-dcl_reject_above:
-   LDA zp_dcl_rec_buf_h                    ; records off: plain reject
-   BEQ dcl_outer_reject
-   LDA #0                                  ; verdict 'above' over [ox0,ox1]
-   BEQ dcl_rej_rec                         ; (always)
-dcl_reject_below:
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_outer_reject
-   LDA #$FF                                ; verdict 'below'
-dcl_rej_rec:
-   JSR dcl_rec_flat_span
-dcl_outer_reject:
-; Outer reject → advance to next span (inline; JMP — the ping-pong
-; walk pushed dcl_walk2 out of branch range, and an always-guarded
-; BNE+JMP pair costs the same as the test+JMP form)
-   LDA POOL_NEXT,X
-   TAX
-   BEQ dclor_flush
-   JMP dcl_walk2
-dclor_flush:
-   JMP dcl_flush
-
+   BCC dcl_amb_jmp                         ; yhi > ib → ambiguous (12%)
+; min(bl,br) >= yhi → accept FALLS IN (was a page-crossing BCS taken
+; 88% — census 2026-07-27; the amb/reject island moved below
+; dcl_exit_check's JMP boundary)
 ; ── dcl_accept: record seg_start for an inner-bbox-accepted entry ──
 ; Sets seg_start = (ox0, line_y_at(ox0)).
 ; Three cases converge at STA zp_seg_start_y:
@@ -259,6 +236,32 @@ dcl_exit_check:
 ; xend < xr → extends past
 ; xend >= xr: line ends within this span
    JMP dcl_line_ends
+
+; --- rare-arm island (census 2026-07-27): tier-1/2 targets out of the
+; hot fall path; all within branch range of the tiers above ---
+dcl_amb_jmp:
+   JMP dcl_cb_clip
+dcl_reject_above:
+   LDA zp_dcl_rec_buf_h                    ; records off: plain reject
+   BEQ dcl_outer_reject
+   LDA #0                                  ; verdict 'above' over [ox0,ox1]
+   BEQ dcl_rej_rec                         ; (always)
+dcl_reject_below:
+   LDA zp_dcl_rec_buf_h
+   BEQ dcl_outer_reject
+   LDA #$FF                                ; verdict 'below'
+dcl_rej_rec:
+   JSR dcl_rec_flat_span
+dcl_outer_reject:
+; Outer reject → advance to next span (inline; JMP — the ping-pong
+; walk pushed dcl_walk2 out of branch range, and an always-guarded
+; BNE+JMP pair costs the same as the test+JMP form)
+   LDA POOL_NEXT,X
+   TAX
+   BEQ dclor_flush
+   JMP dcl_walk2
+dclor_flush:
+   JMP dcl_flush
 
 dcl_extends_past:
 ; ========== Line extends past this span — Phase 2 portal check ==========
@@ -391,14 +394,16 @@ dcl_flush:
 ; final segment to (xr, yr).
    LDA zp_seg_start_x
    CMP #$FF
-   BEQ dcl_done
+   BNE dcl_fl_emit                         ; open seg rare at flush (0% on
+                                           ; suite, census 2026-07-27)
+dcl_done:
+   RTS
+dcl_fl_emit:
    LDA zp_line_yr_l
    STA zp_tmp0
    LDA zp_line_xr_l
    STA zp_ox1
    JMP dcl_emit_segment                    ; tail call
-dcl_done:
-   RTS
 
 ; ========== Vertical line handler ==========
 ; For xl == xr: find the first span containing column xl, compute
@@ -438,55 +443,32 @@ dcl_done:
 ; clamp y1 into the u8 band (mc_vertical's exact ladder, lo-only:
 ; nothing downstream reads the y hi bytes)
    LDA zp_line_yl_h
-   BEQ dvc_y1_done                         ; y1 in band
-   BMI dvc_y1_neg
-   LDA zp_line_yr_h                        ; y1 below the band
-   BMI dvc_y1_cl                           ; y2 above: crossing — clamp
-   BNE dvc_rej                             ; y2 also below: nothing visible
-dvc_y1_cl:
-   LDA #$FF
-   STA zp_line_yl_l
-   BNE dvc_y1_done                         ; (always: A = $FF)
-dvc_y1_neg:
-   LDA zp_line_yr_h                        ; y1 above the band
-   BMI dvc_rej                             ; y2 also above: nothing visible
-   ZERO zp_line_yl_l
+   BNE dvc_y1_clamp                        ; rare (3%, census 2026-07-27):
+                                           ; clamp arms in the island below
 dvc_y1_done:
 ; clamp y2 (same-side pairs already rejected above)
    LDA zp_line_yr_h
-   BEQ dvc_y2_done
-   BMI dvc_y2_neg
-   LDA #$FF
-   STA zp_line_yr_l
-   BNE dvc_y2_done                         ; (always)
-dvc_y2_neg:
-   ZERO zp_line_yr_l
+   BNE dvc_y2_clamp                        ; rare (1.4%): island below
 dvc_y2_done:
 ; clamped to a point (one end AT the boundary) -> reject, exactly as
 ; the generic post-clip degen check does; else FALL INTO the span query
    LDA zp_line_yl_l
    CMP zp_line_yr_l
-   BNE dcl_vertical
-dvc_rej:
-   RTS
-
+   BEQ dvc_rej                             ; degen: rare — non-degen FALLS
+                                           ; INTO the span query (was a
+                                           ; 99.3%-taken BNE hop)
 dcl_vertical:
 ; Compute ylo/yhi (dx/dy not needed for verticals)
    LDA zp_line_yl_l
    LDX zp_line_yr_l
    CMP zp_line_yr_l
-   BCC dv_yl_lo
-   STA zp_line_y_h
-   STX zp_line_y_l
-   JMP dv_bbox_done
-dv_yl_lo:
+   BCS dv_yl_ge                            ; yl >= yr never on suite: swap
+                                           ; arm in the island (census)
    STA zp_line_y_l
    STX zp_line_y_h
 dv_bbox_done:
    LDX zp_head
-dv_walk:
-   BNE dv_check
-   RTS                                     ; span list exhausted
+   BEQ dvc_rej                             ; empty list (island RTS)
 dv_check:
 ; Skip if xend < xl (span entirely left of column — strict)
    LDA POOL_XEND,X
@@ -500,8 +482,39 @@ dv_check:
 dv_next:
    LDA POOL_NEXT,X
    TAX
-   BNE dv_check                            ; direct loop-back (the head's
-   RTS                                     ; BNE is the entry test only)
+   BNE dv_check                            ; direct loop-back
+   RTS
+
+; --- rare-arm island (census 2026-07-27): the vert clamp arms, degen/
+; empty RTS and the yl>=yr swap arm, out of the hot fall path ---
+dvc_y1_clamp:
+   BMI dvc_y1_neg
+   LDA zp_line_yr_h                        ; y1 below the band
+   BMI dvc_y1_cl                           ; y2 above: crossing — clamp
+   BNE dvc_rej                             ; y2 also below: nothing visible
+dvc_y1_cl:
+   LDA #$FF
+   STA zp_line_yl_l
+   BNE dvc_y1_done                         ; (always: A = $FF)
+dvc_y1_neg:
+   LDA zp_line_yr_h                        ; y1 above the band
+   BMI dvc_rej                             ; y2 also above: nothing visible
+   ZERO zp_line_yl_l
+   JMP dvc_y1_done                         ; (ZERO = STZ on C02: no flags)
+dvc_y2_clamp:
+   BMI dvc_y2_neg
+   LDA #$FF
+   STA zp_line_yr_l
+   BNE dvc_y2_done                         ; (always)
+dvc_y2_neg:
+   ZERO zp_line_yr_l
+   JMP dvc_y2_done                         ; (ZERO = STZ on C02: no flags)
+dvc_rej:
+   RTS
+dv_yl_ge:
+   STA zp_line_y_h
+   STX zp_line_y_l
+   JMP dv_bbox_done
 dv_in:
 ; Span contains column xl. Compute top_y and bot_y at xl.
    STX zp_save0
@@ -1112,15 +1125,18 @@ dcl_bix_mid:
 ;   append (xl, yl-Y_BIAS, xr, yr-Y_BIAS) to LINE_OUT_BUF and the
 ;   rasteriser ZP args; bump LINE_OUT_COUNT
 ;   tail-call plot_h / plot_v / RASTER_ENTRY by segment axis
-dcl_emit_segment:
-; Skip degenerate segments (zero-length).
-   LDA zp_seg_start_x
-   CMP zp_ox1
-   BNE dcl_es_ok
+dcl_es_degen:
+; maybe-degenerate: same x — degenerate iff same y too (rare: 2.6%)
    LDA zp_seg_start_y
    CMP zp_tmp0
    BNE dcl_es_ok_noreload
    RTS                                     ; degenerate
+dcl_emit_segment:
+; Skip degenerate segments (zero-length). Common case falls through
+; (was a 97.4%-taken BNE — census 2026-07-27).
+   LDA zp_seg_start_x
+   CMP zp_ox1
+   BEQ dcl_es_degen
 dcl_es_ok:
 ; --- Y-band safety clip: clamp biased Y to [Y_BIAS, VIS_YMAX] so the
 ; un-bias below can't wrap an off-screen Y into a wild row address.  The
@@ -1202,12 +1218,14 @@ des_dispatch:
    CMP RASTER_ZP_Y0
    BNE des_not_h
    JMP plot_h
+des_to_v:
+   JMP plot_v
 des_not_h:
    LDA RASTER_ZP_X0
    CMP RASTER_ZP_X1
-   BNE des_diag
-   JMP plot_v
-des_diag:
+   BEQ des_to_v                            ; verticals never here on suite
+                                           ; (census 2026-07-27): diagonal
+des_diag:                                  ; FALLS THROUGH
 ; (A run-slice plotter for shallow diagonals was measured-and-rejected
 ; here 2026-07-05: pixel-exact — proven by a 16k-sequence oracle check
 ; and a 15,872-draw framebuffer battery — but slower: NJ's shallow path
