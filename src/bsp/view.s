@@ -247,20 +247,12 @@ br_view_setup:
    JMP btv_dx_signed
 .endmacro
 
-; SIDE-SPLIT entries (2026-07-27 hoist): the caller knows the senior
-; side; each entry bakes its fetch arm. The VXC path keeps vxc_arm's
-; internal side test (translation walks only — 0 exec on the suite).
-vertex_fetch_0:
-   LDA zp_vxc_on
-   BEQ vf_plain0
-   JMP vxc_arm_lo
+; (vertex_fetch_0/_1 gate entries DIED 2026-07-27: the plain fetch is
+; INLINED in SXV_BODY, JSR-ing btv_dx_signed. These standalone arms
+; remain for vxc_arm_lo/hi's COLD path only — JMP-form tail-call.)
 ::vf_plain0:
    PAGE BANK_L2                            ; vert planes live in the L2 window
    VF_FETCH_ARM 0
-vertex_fetch_1:
-   LDA zp_vxc_on
-   BEQ vf_plain1
-   JMP vxc_arm_hi
 ::vf_plain1:
    PAGE BANK_L2
    VF_FETCH_ARM $100

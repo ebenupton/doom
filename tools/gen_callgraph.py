@@ -64,7 +64,7 @@ extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss'
  'span_init','span_has_gap','span_mark_solid','ev_clamp_hi_nz',
  'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
- 'umul8','udiv16_8','interp_store','vertex_fetch_0','vertex_fetch_1','bca_frame','rc_wipe',
+ 'umul8','udiv16_8','interp_store','vf_plain0','vf_plain1','bca_frame','rc_wipe',
  'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vsx_do_c3',
  'dcl_vert','dcl_vert_on','dcl_vertical',
  'reproject_at_crossing','br_recip','hud_draw',

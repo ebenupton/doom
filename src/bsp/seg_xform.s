@@ -107,6 +107,13 @@ ec_clamp:
 ec_hi_nz:
    ev_clamp_hi_nz
    JMP ec_done
+vxcgo:
+.if pg = 0
+   JSR vxc_arm_lo                          ; translation-walk path; its
+.else                                      ; RTS state matches the plain
+   JSR vxc_arm_hi                          ; fetch (L2-exit contract)
+.endif
+   JMP fetch_done
 vmiss:
 ; mark valid now (fill lands the bytes below; even a near-clipped
 ; path leaves a usable evy/evx entry; clip lands in the fills — both
@@ -114,11 +121,30 @@ vmiss:
    LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
-.if pg = 0
-   JSR vertex_fetch_0                      ; side-baked plain fetch (vxc
-.else                                      ; path keeps its internal test —
-   JSR vertex_fetch_1                      ; 0 exec on the suite)
-.endif
+; --- plain fetch INLINED (Eben, 2026-07-27: "convert the JMPs to JSRs
+; and pull the whole thing through") — the arm's old JMP btv_dx_signed
+; tail-call became a JSR, so the rotate's RTS returns HERE and the
+; vertex_fetch layer died. The last SBC's N flag rides the JSR into
+; btv's sign branch. vf_plain0/1 keep the JMP-form for vxc's cold arm.
+   LDA zp_vxc_on
+   BNE vxcgo                               ; translation cache on: island
+                                           ; above (0 exec on the suite)
+   PAGE BANK_L2                            ; vert planes live in L2
+   LDY zp_seg_v_idx_l
+   LDA VP_YLO+pg,Y
+   STA zp_br_dy_l
+   LDA VP_YHI+pg,Y
+   STA zp_br_dy_h
+   ZERO zp_ri_sgn
+   LDA VP_XLO+pg,Y
+   SEC
+   SBC zp_br_px_h
+   STA zp_ri_d_l
+   LDA VP_XHI+pg,Y
+   SBC zp_br_px_x
+   STA zp_ri_d_h
+   JSR btv_dx_signed                       ; rotate; RTS returns here
+fetch_done:
    LDX zp_seg_ep                           ; struct offset
    LDA zp_br_vx_h
    STA VX1+1,X                             ; evx
