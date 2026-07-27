@@ -260,13 +260,19 @@ c_cx_rp:
    STA zp_clip_cx_hi
 
 c_set_recip:
-; (no PAGE: br_recip's caller-holds-L2 contract is met by arrival —
-;  reproject_at_crossing's only callers sit right after the v2
-;  transform, and br_seg_xform_vertex exits L2 on EVERY path since
-;  2026-07-21; cross_compute touches only ZP/main tables.)
-   LDY #2
-   LDX #0
-   JSR br_recip
+; CONSTANT-FOLDED (2026-07-27, recip split): the crossing reciprocal is
+; br_recip(2) — vy == NEAR exactly — and (M8, S) = (0, 1) are the M8
+; table's baked [0..2] entries (see br_recip's banner; lo.s documents
+; the same contract). The select collapses to one absolute load of the
+; S=1 kernel vector. r_m8/r_s stores stay: r_s doubles as the VWHC rlo
+; key and the rlo-writer invariant requires the true value.
+; (no PAGE: arrival state unchanged from the old JSR path.)
+   LDA #0
+   STA zp_br_r_m8
+   LDA #1
+   STA zp_br_r_s
+   LDA rns_vec_l                           ; = rns_vec_l-1+S with S = 1
+   STA rns_go_op
    JMP inl_end
 inl_end:
 .endscope

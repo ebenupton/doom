@@ -264,11 +264,20 @@ nc_ok:                                     ; THROUGH (was 100%-taken BNE —
    ASL A
    LDA zp_br_vy_h
    ROL A
-   TAY                                     ; idx lo rides Y (register ABI)
+   TAY                                     ; idx lo rides Y
    LDA zp_br_vy_x
    ROL A
-   TAX                                     ; idx hi rides X
-   JSR br_recip                            ; rhi/rlo = reciprocal
+   BNE ncr_far                             ; idx >= 256: rare (15% — the
+                                           ; ladder keeps its br_recip_hi
+                                           ; entry; island below)
+; idx < 256 DOMINANT: br_recip's junior arm INLINED (recip split
+; 2026-07-27 — kills the JSR/RTS round and the hi-byte dispatch)
+   LDA RECIP_BASE,Y
+   STA zp_br_r_m8
+   LDA srecip_tab,Y
+   STA zp_br_r_s
+   RNS_SELECT
+ncr_done:
 
 ; --- Project X using saved view-x integer + fractional parts ---
 ; br_project_x goes wide when the s16 view-x (vxext:vxint)
@@ -289,8 +298,6 @@ nc_ok:                                     ; THROUGH (was 100%-taken BNE —
    AND #$20
    BNE vcf_hi
    VC_FILL_ARM 0
-vcf_hi:
-   VC_FILL_ARM $100
 nc_fail:
 ; Near-clipped: armed cache fill (evy/evx from the struct — usable on
 ; any future hit — plus the clip verdict), and the struct clip byte.
@@ -300,9 +307,19 @@ nc_fail:
    NC_FILL_ARM 0
 ncf_hi:
    NC_FILL_ARM $100
+ncr_far:
+   JSR br_recip_hi                         ; A = idx hi, Y = idx lo
+   JMP ncr_done
 ec_hi_nz_far:
    ev_clamp_hi_nz
    JMP ec_done
+vcf_hi:
+   VC_FILL_ARM $100                        ; (moved to the scope tail
+                                           ; 2026-07-27: the recip inline
+                                           ; squeezed the nc_fail branch
+                                           ; spans — this arm is branch-
+                                           ; entered and RTS-terminated,
+                                           ; range-free either side)
 .endscope
 
 

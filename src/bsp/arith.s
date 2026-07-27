@@ -110,8 +110,10 @@ br_recip:
    STA zp_br_r_s
    RNS_SELECT
    RTS
-rcp_pnz:
-   CMP #4
+::br_recip_hi:                             ; caller-split entry (2026-07-27):
+rcp_pnz:                                    ; A = idx hi (>= 1), Y = idx lo —
+   CMP #4                                  ; the junior arm is inlined at
+                                           ; nc_ok (seg_xform)
    BCS rcp_clamp                           ; idx >= 1024 -> clamp to 1023
    LSR A
    BEQ rcp_p1                              ; t1 = 1
@@ -149,8 +151,8 @@ rcp_p1:
 ; region (main RAM: bank-independent, no loader involvement; the first
 ; flat placement at $1A00 sat on the RCACHE psi plane and rotcache
 ; caught it). Static and map-independent (src/srecip.inc, generated).
-srecip_tab:
-.include "srecip.inc"
+::srecip_tab:                              ; (:: 2026-07-27: read by the
+.include "srecip.inc"                       ; inlined junior arm at nc_ok)
 .endscope
 
 ; ============================================================================
