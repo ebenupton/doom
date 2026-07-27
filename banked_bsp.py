@@ -91,11 +91,15 @@ def build_banked(flatr):
     # vertex-span descriptor tables (banked homes: bank C $B200/$B400 —
     # the verticals section runs under C, zero paging on the code path)
     for i, d in enumerate(dw.vspan_desc):
-        c[0x3200 + i] = d
+        c[0x2500 + i] = d                # VDESC @ $A500 (moved 2026-07-27)
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
-        c[0x3400 + i] = lo & 0xFF
-        c[0x3460 + i] = hi & 0xFF
-        c[0x3500 + i] = 1 if cont else 0
+        c[0x2700 + i] = lo & 0xFF        # VEXPL @ $A700/$A760/$A800
+        c[0x2760 + i] = hi & 0xFF
+        c[0x2800 + i] = 1 if cont else 0
+    # unrolled vertical plot columns + tables ($B200-$BFFF, cfg VPLOTC)
+    vp = open('engine_vplot_bankc.bin', 'rb').read()
+    assert len(vp) <= 0x0E00, f'vplot {len(vp)} bytes overruns bank C'
+    c[0x3200:0x3200 + len(vp)] = vp
     bm.define_bank(BANK_C, c)
 
     # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)

@@ -394,10 +394,10 @@ RECIP_BASE = $D500                      ; flat LEVEL block (2026-07-21 map)
 ; recip. VDONE = the once-per-frame first-touch bitmap (byte index =
 ; the header key's B byte = idx>>3, bit = vc_bit_mask[idx&7]).
 .if ::BANKED
-VDESC      = $B200                      ; bank C (verticals run under C)
-VEXPL_LO   = $B400
-VEXPL_HI   = $B460
-VEXPL_CONT = $B500
+VDESC      = $A500                      ; bank C (verticals run under C;
+VEXPL_LO   = $A700                      ; moved from $B200/$B400 2026-07-27
+VEXPL_HI   = $A760                      ; — the vplot unrolled column owns
+VEXPL_CONT = $A800                      ; $B200-$BFFF now)
 .else
 VDESC      = $DC00                      ; flat TABLES block
 VEXPL_LO   = $DE00

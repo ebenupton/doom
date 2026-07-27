@@ -159,6 +159,11 @@ ph_single:
 ; exactly at the run's top pixel; full middle cells are an unrolled
 ; Y=7..0 ladder. Write order is reversed vs the old top-down walk —
 ; OR-writes commute, so the framebuffer is bit-identical.
+.if (! ::BANKED)
+; (BANKED plot_v is the unrolled-column dispatcher in clip/vplot.s,
+; 2026-07-27 — Eben's design. This loop body stays for the flat build:
+; the flat map has no 1.7K contiguous hole for the unroll; output is
+; pixel-identical either way, gated by bankedcmp/verify.)
 plot_v:
 .scope
    LDA RASTER_ZP_Y0
@@ -259,3 +264,4 @@ pv_lp3:
    BPL pv_lp3
    RTS
 .endscope
+.endif                                     ; ! ::BANKED (flat plot_v)
