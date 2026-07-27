@@ -223,10 +223,16 @@ zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
 ; FREE 2026-07-16 (write-only since the C-form): zp_bf_pym_l = $4D
 ; back-face diagonal C-form reads both per call)
 zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on the hardware stack; is_full unwinds via TXS)
-; FREE 2026-07-15 (cross-core unification): zp_side = $4F
-; FREE 2026-07-15 (cross-core unification): zp_node_dx_l = $50
-; FREE 2026-07-15 (cross-core unification): zp_node_dx_h = $51
-; FREE 2026-07-15 (cross-core unification): zp_node_dy_l = $52
+; $4F-$51 = zp_vs_i / zp_vs_hl / zp_vs_hh — the vertex-span descriptor
+; walk's variables (98fc1b3, defined locally in subsector.s): the 2026-
+; 07-15 'FREE' comments here were STALE and cost a corrupted-vector
+; hang on 2026-07-27. $52-$53 remain free (symmap + zpcheck agree).
+zp_vf_vec0 = $7B                  ; [bsp]; VXC fetch vector, junior side —
+                                  ; vxc_frame aims it at sxv0_vfoff (off)
+                                  ; or sxv0_vxcon (on); bca VECTORED idiom.
+                                  ; $7B-$7E were the boot-time tube-detect
+                                  ; scratch (coprot/hostt) — phase-disjoint
+zp_vf_vec1 = $7D                  ; [bsp]; senior-side twin ($7D/$7E)
 ; FREE 2026-07-15 (cross-core unification): zp_node_dy_h = $53
 zp_node_nx_l = $54                ; [bsp]
 zp_node_nx_h = $55                ; [bsp]

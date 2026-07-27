@@ -93,7 +93,7 @@ pgx:
 ; NC_FILL_ARM, all RTS-terminated, all leaving BANK_L2 paged (the
 ; L2-exit contract is per-arm, unchanged by the hoist).
 ; ============================================================================
-.macro SXV_BODY pg
+.macro SXV_BODY pg, vfoff, vxcon
 .scope
    LDA VCACHE_VALID_BASE,Y
    AND zp_seg_v_bitm
@@ -107,12 +107,12 @@ ec_clamp:
 ec_hi_nz:
    ev_clamp_hi_nz
    JMP ec_done
-vxcgo:
+::vxcon:
 .if pg = 0
-   JSR vxc_arm_lo                          ; translation-walk path; its
-.else                                      ; RTS state matches the plain
-   JSR vxc_arm_hi                          ; fetch (L2-exit contract)
-.endif
+   JSR vxc_serve_lo                        ; probe + warm serve; COLD tail-
+.else                                      ; calls the plain fetch (base
+   JSR vxc_serve_hi                        ; fill happens at BIRTH via the
+.endif                                     ; fill vector)
    JMP fetch_done
 vmiss:
 ; mark valid now (fill lands the bytes below; even a near-clipped
@@ -121,14 +121,18 @@ vmiss:
    LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
-; --- plain fetch INLINED (Eben, 2026-07-27: "convert the JMPs to JSRs
-; and pull the whole thing through") — the arm's old JMP btv_dx_signed
-; tail-call became a JSR, so the rotate's RTS returns HERE and the
-; vertex_fetch layer died. The last SBC's N flag rides the JSR into
-; btv's sign branch. vf_plain0/1 keep the JMP-form for vxc's cold arm.
-   LDA zp_vxc_on
-   BNE vxcgo                               ; translation cache on: island
-                                           ; above (0 exec on the suite)
+; --- VECTORED fetch dispatch (Eben, 2026-07-27: the bca-cache idiom —
+; pointer, not flag; vxc_frame aims it once per frame). Cache off:
+; straight into the inline plain fetch below. Cache on: the vxcon
+; stub (island above) probes/serves the translation cache. ---
+.if pg = 0
+   JMP (zp_vf_vec0)
+.else
+   JMP (zp_vf_vec1)
+.endif
+::vfoff:
+; plain fetch INLINE (JMP-to-JSR pull-through, 2026-07-27): the
+; rotate's RTS returns into the body; the SBC's N flag rides the JSR.
    PAGE BANK_L2                            ; vert planes live in L2
    LDY zp_seg_v_idx_l
    LDA VP_YLO+pg,Y
@@ -211,7 +215,13 @@ fill_tail:
    STA VC_EVY+pg,Y                         ; (shared by both verdicts)
    LDA VX1+1,X
    STA VC_EVX+pg,Y
-   RTS
+   RTS                                     ; (a fill_tail birth-fill hook
+                                           ; was tried 2026-07-27 and is
+                                           ; IMPOSSIBLE: px_shrink halves
+                                           ; wide zp_br_vx in place during
+                                           ; projection — bases must
+                                           ; snapshot PRE-projection, i.e.
+                                           ; in the vxc cold arm = birth)
 nc_fail:
    LDY zp_seg_v_idx_l
    LDA #1                                  ; clip = 1 (plane + struct)
@@ -242,10 +252,17 @@ ncr_far:
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
    SXV_HEAD                                ; tried 2026-07-27: the ~370 pad
-   SXV_BODY 0                              ; bytes overflow BOTH regions —
+   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon      ; bytes overflow BOTH regions —
 ::sx_vert_hi:                              ; unaligned round-2 form kept)
    SXV_HEAD
-   SXV_BODY $100
+   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon
+
+; --- shared cold store tail (both serve sides JMP here post-fetch) ---
+vxc_store_tail:
+   PAGE BANK_C
+   vxc_cold_store
+   PAGE BANK_L2
+   RTS
 
 
 
@@ -291,30 +308,28 @@ ncr_far:
 ; Out: zp_br_vx/vy lo/hi/ext = exact view totals (bit-identical to
 ;      br_to_view: base' = L(w) is translation-invariant, see vxcache.s)
 ; ============================================================================
-.macro VXC_ARM_SIDE pg, vfp
+.macro VXC_SERVE_SIDE pg, vfp
 .scope
    LDX zp_seg_v_idx_b                      ; VXC_VALID index = B (header key)
    PAGE BANK_C
    LDA VXC_VALID,X
    AND zp_seg_v_bitm
-   BEQ va_cold
-; warm: total = base + ref, two s24 adds — side page BAKED (the
-; internal TXA/AND #$20 dispatch died with the caller-side hoist)
+   BEQ vs_cold
+; warm: total = base + ref, two s24 adds — side page BAKED
    LDY zp_seg_v_idx_l
    VXC_WARM_ARM pg
-va_cold:
-; cold: mark valid, fetch + rotate for real, snapshot the base
+vs_cold:
+; cold = BIRTH: mark valid, fetch+rotate, snapshot the base via the
+; ONE shared store tail (store must run PRE-projection: px_shrink
+; corrupts wide vx totals in place)
    LDA VXC_VALID,X
    ORA zp_seg_v_bitm
    STA VXC_VALID,X
-   JSR vfp                                 ; the side's plain fetch (pages L2)
-   PAGE BANK_C
-   vxc_cold_store                      ; leaf (vxcache.s): base = total-ref
-   PAGE BANK_L2                        ; (same exit contract as the warm arm)
-   RTS
+   JSR vfp                                 ; pages L2; fetch+rotate
+   JMP vxc_store_tail
 .endscope
 .endmacro
-vxc_arm_lo:
-   VXC_ARM_SIDE 0, vf_plain0
-vxc_arm_hi:
-   VXC_ARM_SIDE $100, vf_plain1
+vxc_serve_lo:
+   VXC_SERVE_SIDE 0, vf_plain0
+vxc_serve_hi:
+   VXC_SERVE_SIDE $100, vf_plain1

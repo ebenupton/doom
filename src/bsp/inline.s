@@ -480,10 +480,29 @@ inl_end:
 .macro vxc_frame
 .scope
    LDA VXC_ENABLE
-   STA zp_vxc_on                           ; the vertex_fetch gate (SMC retired
-   BNE vf_on                               ; 2026-07-18; ENABLE is 0/1)
+   STA zp_vxc_on                           ; kept for harness/tools; the
+   BNE vf_on                               ; ENGINE dispatch is the VECTORS
+; cache OFF: fetch vectors -> the plain arms; fill vector -> bare RTS
+   LDA #<sxv0_vfoff
+   STA zp_vf_vec0
+   LDA #>sxv0_vfoff
+   STA zp_vf_vec0+1
+   LDA #<sxv1_vfoff
+   STA zp_vf_vec1
+   LDA #>sxv1_vfoff
+   STA zp_vf_vec1+1
    JMP inl_end
 vf_on:
+; cache ON: fetch vectors -> the serve stubs; fill -> the birth fill
+   LDA #<sxv0_vxcon
+   STA zp_vf_vec0
+   LDA #>sxv0_vxcon
+   STA zp_vf_vec0+1
+   LDA #<sxv1_vxcon
+   STA zp_vf_vec1
+   LDA #>sxv1_vxcon
+   STA zp_vf_vec1+1
+
 ; ref = view totals of world (0,0) under this frame's context
 .if ::C02
    STZ zp_br_dx_l
