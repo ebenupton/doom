@@ -79,6 +79,9 @@ SEG_CODE
 ; One reciprocal serves both X and Y projection: the 1.2 aspect ratio
 ; is baked into height prescaling. Clobbers A, X, Y, zp_br_p/p_h.
 ; ============================================================================
+.segment "LCODE"                            ; $1E00 island (banked; ex sqr-HI
+                                            ; pages, 2026-07-27) — flat folds
+                                            ; to the CODE tail. JSR-only.
 .assert (RECIP_BASE & $FF) = 0, error   ; 4-page table indexed (page | t1)
 br_recip:
 .scope
@@ -154,6 +157,7 @@ rcp_p1:
 ::srecip_tab:                              ; (:: 2026-07-27: read by the
 .include "srecip.inc"                       ; inlined junior arm at nc_ok)
 .endscope
+SEG_CODE
 
 ; ============================================================================
 ; HELPER: br_frac_rot_term — fractional rotation contribution.
@@ -269,7 +273,7 @@ zp_ri_d = zp_ri_d_l                     ; backwards-compat alias
 ;                                       rot_core_sin/_cos (per-trig: SMC sum bases)
 ; Same pattern as the bca_check_op / vxc_jsr_site / D-cache frame hooks.
 ; All variants are bit-exact with the old in-body branches.
-SEG_CODE
+.segment "LCODE"                            ; variant entries: SMC-called
 rot_zero:
    LDA #0
    STA zp_br_res_l
@@ -805,6 +809,7 @@ p_one:
    JMP p_sgn
 .endscope
 
+.segment "LCODE"
 rot_pair_thunk:
 ; non-gen frames: run the two selected variants in sequence, then ADAPT
 ; the cos result into vy (the variants keep their generic res dests;
@@ -821,3 +826,4 @@ rot_pair_thunk:
    LDA zp_br_res_x
    STA zp_br_vy_x
    RTS
+SEG_CODE

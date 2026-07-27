@@ -10,8 +10,10 @@ BCA_AB = 0x0062  # view angle byte — ZP (zp_buf's slot, freed with span_read 2
 SQR_BASE = 0x1C00  # quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)
 SQR_LO = 0x1C00  # qsqr lo bytes (f 0..255)
 SQR2_LO = 0x1D00  # qsqr lo bytes (f 256..510)
-SQR_HI = 0x1E00  # qsqr hi bytes (f 0..255)
-SQR2_HI = 0x1F00  # qsqr hi bytes (f 256..510)
+SQRH_BASE = 0x0200  # quarter-square HI pages base — BANKED moved $1E00 -> $0200 (2026-07-27) to open the $1E00-$1FFF LCODE island; FLAT stays inside the $1C00 quad (the tube parasite client owns page 2 — never move flat data there)
+SQRH_BASE_FLAT = 0x1E00
+SQR_HI = 0x0200  # qsqr hi bytes (f 0..255)
+SQR2_HI = 0x0300  # qsqr hi bytes (f 256..510)
 DRV_ORG = 0x2000  # walk/anim driver entry (!BOOT CALLs this)
 DRV_VARS = 0x2180  # walk driver variable block (layout below)
 DV_ANGIDX = 0x2180  # view angle index 0..63 (angle byte = idx*4)

@@ -40,7 +40,26 @@ ORG &1900
     LDX #LO(c_lowc): LDY #HI(c_lowc)
 .ld_lowgo
     JSR &FFF7                                    ; *LOAD LOW|LOWC 1C00
-    LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4
+    LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4 (FIRST: its clear
+                                                 ; wipes $5800-$7FFF — the
+                                                 ; $7000 staging must load
+                                                 ; AFTER; banks stage $3000,
+                                                 ; below the screen, safe)
+    LDX #LO(c_sqrh): LDY #HI(c_sqrh)
+    JSR &FFF7                                    ; *LOAD SQRH 7000 (staged —
+                                                 ; NOT $3000: LOW spans
+                                                 ; $1C00-$57FF and the first
+                                                 ; cut stomped engine code)
+; sqr HI pages -> $0200/$0300 (banked SQRH_BASE, 2026-07-27). The OS
+; vector page dies here: interrupts OFF first (the driver's own SEI
+; would be too late — an IRQ through half-copied vectors is a crash),
+; and NO OS calls after this point (MODE 4 above was the last).
+    SEI
+    LDX #0
+.sqh
+    LDA &7000,X : STA &200,X
+    LDA &7100,X : STA &300,X
+    INX : BNE sqh
     JMP DRV_ORG                                  ; -> animation driver
 .cpuflag EQUB 0
 
@@ -71,6 +90,7 @@ ORG &1900
 .c_b1  EQUS "LOAD BANK1 3000" : EQUB 13
 .c_b2  EQUS "LOAD BANK2 3000" : EQUB 13
 .c_low EQUS "LOAD LOW 1C00"   : EQUB 13
+.c_sqrh EQUS "LOAD SQRH 7000" : EQUB 13
 .c_b1c EQUS "LOAD BANK1C 3000": EQUB 13          ; 65C02 clipper/raster/HUD bank
 .c_lowc EQUS "LOAD LOWC 1C00": EQUB 13          ; 65C02 engine CODE image
 .ldr_end

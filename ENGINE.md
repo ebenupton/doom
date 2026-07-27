@@ -224,9 +224,13 @@ belongs in the configs.
 **Banked** (Model B disc; banks = DATA ONLY, one code region):
 
     $0100-$01FF  RESERVED FREE (as flat)
+    $0200-$03FF  sqr HI pages (SQRH_BASE, 2026-07-27; boot: SQRH staged
+                 $7000 AFTER MODE 4, SEI-copied down — the OS vector page
+                 dies at that copy)
     $1B40-$1B7F  BCA_WS (bca_ab $1B6F, driver-poked)
-    $1C00-$1FFF  sqr tables (loader-seeded; TWIN equates in clip/arith.s
-                 and bsp/header.s — keep in sync)
+    $1C00-$1DFF  sqr LO pages (TWIN equates in clip/arith.s + bsp/header.s)
+    $1E00-$1FFF  LCODE island: br_recip cluster + srecip_tab + rot
+                 variant entries + pair thunk (472 B; JSR/SMC-linked only)
     $2000-$2BFF  beebasm drivers (drv $2000, vars $2180, glue $21A0,
                  sincos $2200, clears+input $2400)
     $2C00-$57FF  CODE: MAIN first at $2C00 (MAIN_BASE); drivers take real

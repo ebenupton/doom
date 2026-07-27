@@ -104,9 +104,11 @@ def build_banked(flatr):
 
     # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)
 
-    # --- sqr tables -> low $1C00 (copy from flat $A500) ---
-    for i in range(0x400):
+    # --- sqr tables: lo pages -> $1C00, HI pages -> $0200 (banked
+    # SQRH_BASE, 2026-07-27 — $1E00 is the LCODE island now) ---
+    for i in range(0x200):
         bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
+        bm[abi.SQRH_BASE + i] = fmem[abi.SQR_BASE + 0x200 + i]
 
     # --- bank L2 = relocated $C000+ data (window offsets must match the asm) ---
     # TA_LO $8000, TA_HI $8400, VATOX $8800, bbox $8D00, recip $9C00,
