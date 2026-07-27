@@ -58,10 +58,10 @@
    STA VX1+0,X
    LDA VC_EVX+pg,Y
    STA VX1+1,X
-   LDA VC_CLIP+pg,Y                        ; cached near-clip verdict
-   BEQ ok
-   STA VX1+2,X                             ; clip = 1
-   BNE pgx                                 ; (A = clip, nonzero: always)
+   LDA VC_CLIP+pg,Y                        ; cached near-clip verdict —
+   STA VX1+2,X                             ; served UNCONDITIONALLY (the
+   BNE pgx                                 ; head's ZERO died 2026-07-27);
+                                           ; clipped: skip the dead serves
 ok:
 ; (hit arm de-larded 2026-07-25: no working-recip stores, no select —
 ; every projector downstream restages from the STRUCT copies)
@@ -108,6 +108,8 @@ ec_hi_nz:
    ev_clamp_hi_nz
    JMP ec_done
 vmiss:
+   STA VX1+2,X                             ; clip = 0: A IS the probe's
+                                           ; zero (the failed AND), X = ep
 ; mark valid now (fill lands the bytes below; even a near-clipped
 ; path leaves a usable evy/evx entry)
    LDA VCACHE_VALID_BASE,Y
@@ -204,8 +206,11 @@ ncr_far:
    LDA vc_bit_mask,X                       ; bit mask = 1 << (idx_lo & 7)
    STA zp_seg_v_bitm
    LDX zp_seg_ep                           ; X = struct offset from here on
-   ZERO {VX1+2,X}                         ; clip = 0 (struct)
-.endmacro
+.endmacro                                  ; (clip zeroing moved OUT of the
+                                           ; head 2026-07-27, Eben: the hit
+                                           ; arm serves it unconditionally,
+                                           ; the miss arm stores the probe's
+                                           ; own zero — see vmiss)
 
 ; CALLER-SIDE DISPATCH (Eben, 2026-07-27 round 2): the side test lives
 ; at the CALL SITES (subsector stages idx_b with the byte in A — the
