@@ -228,10 +228,12 @@ ENDIF
     .b00 SBC #dy:BCS b10:ADC dx :STA err    ; (dy/dx immediates SMC-patched)
     LDA #&80:ORA (scr),Y:STA (scr),Y        ; plot run [bit 0..bit 0]
     DEC cnt:BEQ e00:.f00 DEY:BPL a10        ; row step; new run at bit 1
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a10:DEC scr+1:SEC:BCS a10    ; char-row wrap (scr -= 256)
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a10                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e00 DEC ls:BEQ d00:LDA err:SBC errs    ; ls tail: final half-step test
     STA err:INC cnt:BCS f00
     .d00 RTS
@@ -243,10 +245,12 @@ ENDIF
     .b10 SBC #dy:BCS b20:ADC dx :STA err
     TXA:AND #&C0:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e10:.f10 DEY:BPL a20
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a20:DEC scr+1:SEC:BCS a20
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a20                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e10 DEC ls:BEQ d10:LDA err:SBC errs
     STA err:INC cnt:BCS f10
     .d10 RTS
@@ -255,10 +259,12 @@ ENDIF
     .b20 SBC #dy:BCS b30:ADC dx :STA err
     TXA:AND #&E0:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e20:.f20 DEY:BPL a30
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a30:DEC scr+1:SEC:BCS a30
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a30                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e20 DEC ls:BEQ d20:LDA err:SBC errs
     STA err:INC cnt:BCS f20
     .d20 RTS
@@ -267,10 +273,12 @@ ENDIF
     .b30 SBC #dy:BCS b40:ADC dx :STA err
     TXA:AND #&F0:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e30:.f30 DEY:BPL a40
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a40:DEC scr+1:SEC:BCS a40
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a40                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e30 DEC ls:BEQ d30:LDA err:SBC errs
     STA err:INC cnt:BCS f30
     .d30 RTS
@@ -279,10 +287,12 @@ ENDIF
     .b40 SBC #dy:BCS b50:ADC dx :STA err
     TXA:AND #&F8:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e40:.f40 DEY:BPL a50
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a50:DEC scr+1:SEC:BCS a50
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a50                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e40 DEC ls:BEQ d40:LDA err:SBC errs
     STA err:INC cnt:BCS f40
     .d40 RTS
@@ -291,10 +301,12 @@ ENDIF
     .b50 SBC #dy:BCS b60:ADC dx :STA err
     TXA:AND #&FC:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e50:.f50 DEY:BPL a60
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a60:DEC scr+1:SEC:BCS a60
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a60                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e50 DEC ls:BEQ d50:LDA err:SBC errs
     STA err:INC cnt:BCS f50
     .d50 RTS
@@ -303,10 +315,12 @@ ENDIF
     .b60 SBC #dy:BCS b70:ADC dx :STA err
     TXA:AND #&FE:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e60:.f60 DEY:BPL a70
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a70:DEC scr+1:SEC:BCS a70
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a70                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e60 DEC ls:BEQ d60:LDA err:SBC errs
     STA err:INC cnt:BCS f60
     .d60 RTS
@@ -335,10 +349,12 @@ ENDIF
     .b01 SBC #dy:BCS b11:ADC dx :STA err
     LDA #1:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e01:.f01 DEY:BPL a11
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a11:DEC scr+1:SEC:BCS a11
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a11                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e01 DEC ls:BEQ d01:LDA err:SBC errs
     STA err:INC cnt:BCS f01
     .d01 RTS
@@ -347,10 +363,12 @@ ENDIF
     .b11 SBC #dy:BCS b21:ADC dx :STA err
     TXA:AND #3:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e11:.f11 DEY:BPL a21
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a21:DEC scr+1:SEC:BCS a21
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a21                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e11 DEC ls:BEQ d11:LDA err:SBC errs
     STA err:INC cnt:BCS f11
     .d11 RTS
@@ -359,10 +377,12 @@ ENDIF
     .b21 SBC #dy:BCS b31:ADC dx :STA err
     TXA:AND #7:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e21:.f21 DEY:BPL a31
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a31:DEC scr+1:SEC:BCS a31
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a31                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e21 DEC ls:BEQ d21:LDA err:SBC errs
     STA err:INC cnt:BCS f21
     .d21 RTS
@@ -371,10 +391,12 @@ ENDIF
     .b31 SBC #dy:BCS b41:ADC dx :STA err
     TXA:AND #&F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e31:.f31 DEY:BPL a41
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a41:DEC scr+1:SEC:BCS a41
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a41                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e31 DEC ls:BEQ d31:LDA err:SBC errs
     STA err:INC cnt:BCS f31
     .d31 RTS
@@ -383,10 +405,12 @@ ENDIF
     .b41 SBC #dy:BCS b51:ADC dx :STA err
     TXA:AND #&1F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e41:.f41 DEY:BPL a51
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a51:DEC scr+1:SEC:BCS a51
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a51                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e41 DEC ls:BEQ d41:LDA err:SBC errs
     STA err:INC cnt:BCS f41
     .d41 RTS
@@ -395,10 +419,12 @@ ENDIF
     .b51 SBC #dy:BCS b61:ADC dx :STA err
     TXA:AND #&3F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e51:.f51 DEY:BPL a61
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a61:DEC scr+1:SEC:BCS a61
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a61                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e51 DEC ls:BEQ d51:LDA err:SBC errs
     STA err:INC cnt:BCS f51
     .d51 RTS
@@ -407,10 +433,12 @@ ENDIF
     .b61 SBC #dy:BCS b71:ADC dx :STA err
     TXA:AND #&7F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e61:.f61 DEY:BPL a71
-    LDA scr
-	SBC #LO(SCREEN_WIDTH)
-	STA scr:DEC scr+1
-    LDY #7:BCS a71:DEC scr+1:SEC:BCS a71
+    DEC scr+1                               \ char-row descend: scr -= 256
+    LDY #7:BCS a71                          \ (256-wide: the LO() subtract was
+                                            \  an 8-cycle no-op under the C=1
+                                            \  invariant and the BCS is always
+                                            \  taken — 320-wide relic, 2026-07-27;
+                                            \  blocks 7 keep the LIVE -248 form)
     .e61 DEC ls:BEQ d61:LDA err:SBC errs
     STA err:INC cnt:BCS f61
     .d61 RTS
