@@ -806,8 +806,8 @@ SEG_CODE
 ; subsector SoA pages, seg headers, VWH heights, seg detail).
 ; ============================================================================
 ; ($0BF4/$0BF5 freed 2026-07-10: zp_rom_vwh retired — no 6502 reader)
-zp_rom_detail_lo = $0BF6
-zp_rom_detail_hi = $0BF7
+; (zp_rom_detail_lo/hi $0BF6/7 RETIRED 2026-07-27: zero readers —
+; canary-proven dead across the full suite; $0B00 is now a psi plane)
 
 ; BSP traversal state
 ; (BSP_STACK retired 2026-07-14 — traversal runs on the hardware stack; $0A00-$0A3F free)

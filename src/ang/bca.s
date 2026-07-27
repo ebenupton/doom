@@ -26,12 +26,16 @@ RC_P2L_1 = $AA00                        ; VWHC $AE00-$B2FF — every cache
 RC_PH_0  = $AB00                        ; beside its neighbours, free tail
 RC_PH_1  = $AC00                        ; $B500-$BFFF contiguous
 .else
-RC_P1L_0 = $6B00                        ; flat: the CACHE BLOCK ($6B00-$85FF,
-RC_P1L_1 = $6C00                        ; 2026-07-21 map reshuffle): all six
-RC_P2L_0 = $6D00                        ; psi planes CONTIGUOUS, rcache first,
-RC_P2L_1 = $6E00                        ; then RCACHE_STATE+BCA_WS/CPM/VXC/
-RC_PH_0  = $6F00                        ; VWHC — every cache beside its
-RC_PH_1  = $7000                        ; neighbours, all planes adjacent
+RC_P1L_0 = $0600                        ; flat RECOVERY 2026-07-27: five psi
+RC_P1L_1 = $0B00                        ; planes shuffled DOWN into canary-
+RC_P2L_0 = $8100                        ; proven-free pages ($0600 ex-DEFQ,
+RC_P2L_1 = $E800                        ; $0B00 ex-zp_ft block, $8100 ex-
+RC_PH_0  = $E900                        ; VWHC_R_M8, $E800/$E900 pre-FB gap);
+RC_PH_1  = $7000                        ; PH_1 + RCACHE_STATE ($7100) stay —
+                                        ; $6B00-$6FFF (1,280 B) is FREE
+                                        ; contiguous (flat-vplot candidate;
+                                        ; planes are independent abs,Y —
+                                        ; adjacency was cosmetic)
 .endif
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:

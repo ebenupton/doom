@@ -174,10 +174,11 @@ srecip_tab:
 ; unity = cardinal angle (|sin| or |cos| rounds to 1.0): exact copy of
 ; lo, no multiply. Clobbers zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
 ; ============================================================================
-zp_ft_lo = $0BF8                        ; absolute (swapped with zp_seg_lv1x/y); cold
-zp_ft_mag = $0BF9
-zp_ft_neg = $0BFA
-zp_ft_one = $0BFB
+zp_ft_lo = $E4F8                        ; absolute (swapped with zp_seg_lv1x/y); cold
+zp_ft_mag = $E4F9                       ; (moved from $0BF8 2026-07-27: the
+zp_ft_neg = $E4FA                       ; flat recovery — $0B00 is now the
+zp_ft_one = $E4FB                       ; RC_P1L_1 psi plane; $E4F8-$E4FB
+                                        ; sits in the proven-free VATOX tail)
 
 br_frac_rot_term:
 .scope

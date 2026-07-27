@@ -196,22 +196,29 @@ belongs in the configs.
     $0000-$00FF  ZP (src/zp.inc registry)
     $0100-$01FF  RESERVED FREE (stack + future; do not squat — Eben)
     $0200-$0AFF  pools/records/workspaces (identical layout to banked;
-                 ANIM_SSMASK runtime copy $0A80 — unforked 2026-07-21)
+                 ANIM_SSMASK runtime copy $0A80 — unforked 2026-07-21;
+                 $0600 = RC_P1L_0 since the 2026-07-27 recovery)
+    $0B00-$0BFF  RC_P1L_1 (2026-07-27; zp_ft args moved to $E4F8,
+                 zp_rom_detail $0BF6/7 retired dead)
     $0C00-$1B3F  VCACHE planes (7×512) + valid bitmap
     $1B40-$1B7F  BCA_WS (bca_ab $1B6F) — unforked with banked 2026-07-21
     $1C00-$1FFF  sqr quarter-square tables (unforked, one address)
     $2000-$61FF  ALL CODE, one segment (islands died in the 2026-07-21 map)
     $6200-$6AFF  NJ rasteriser blob (RASTER_ENTRY $6200)  ** loaded by
                  span_clip_6502.py, NOT in any cfg — a placement trap **
-    $6B00-$85FF  CACHE block: rc psi planes $6B00, RCACHE_STATE $7100
-                 (+$90-$FF free since BCA_WS left), CPM $7200, VXC planes
-                 $7500-$7F00, VWHC $8100-$8500
+    $6B00-$6FFF  FREE (1,280 contiguous — the 2026-07-27 recovery:
+                 five psi planes shuffled down to $0600/$0B00/$8100/
+                 $E800/$E900; flat-vplot candidate window)
+    $7000-$85FF  CACHE block: RC_PH_1 $7000, RCACHE_STATE $7100
+                 (+$90-$FF free), CPM $7200, VXC planes $7500-$7F00,
+                 RC_P2L_0 $8100, VWHC $8200-$8500
     $8600-$D8FF  LEVEL block: seg hdrs+DIRs $8600, verts $B100, node SoA
                  $B900, bbox corners $C500, recip $D500
     $D900-$DBFF  L8_TAB / AE_LO / AE_HI
-    $E000-$E401  VATOX ($E402-$E4FF free)
+    $E000-$E401  VATOX ($E402-$E4F7 free; zp_ft args $E4F8-$E4FB)
     $E500-$E7FF  anim: SSMASK_SRC $E500 (boot-copied to $0A80), TABL0
                  $E600, CFG $E700
+    $E800-$E9FF  RC_P2L_1 $E800, RC_PH_0 $E900 (2026-07-27 recovery)
     $EA00-$FDFF  framebuffer (harness/copro)
 
 **Banked** (Model B disc; banks = DATA ONLY, one code region):
