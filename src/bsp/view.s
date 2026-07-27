@@ -228,10 +228,6 @@ br_view_setup:
 ; vxc_jsr_site. Off (the flat suite / rotation frames): falls straight
 ; into the fetch below. On: the translation-coherent cache tier
 ; (vxc_arm, seg_xform.s) — canonical probe/serve/compute+store.
-vertex_fetch:
-   LDA zp_vxc_on
-   BEQ br_to_view_fetch                    ; off: fall into the plain fetch
-   JMP vxc_arm
 .macro VF_FETCH_ARM pg
 ; plane fetch + merged dx subtract (2026-07-19): the last SBC leaves N
 ; for the sign branch (STA/JMP preserve it)
@@ -251,24 +247,28 @@ vertex_fetch:
    JMP btv_dx_signed
 .endmacro
 
-br_to_view_fetch:
-.assert <ROM_VERTS_C = 0, error, "vertex planes assume page-aligned ROM_VERTS_C"
-; Page-split vertex planes (VP_*, header.s): senior-bit arm with the
-; plane page BAKED — the idx*4 pointer build is gone (2026-07-15).
+; SIDE-SPLIT entries (2026-07-27 hoist): the caller knows the senior
+; side; each entry bakes its fetch arm. The VXC path keeps vxc_arm's
+; internal side test (translation walks only — 0 exec on the suite).
+vertex_fetch_0:
+   LDA zp_vxc_on
+   BEQ vf_plain0
+   JMP vxc_arm_lo
+::vf_plain0:
    PAGE BANK_L2                            ; vert planes live in the L2 window
-; The dx subtract is MERGED into the fetch (2026-07-19): wx never
-; lands in zp_br_dx — the plane loads feed the SBC directly and the
-; arm's last SBC leaves N for the sign branch (STA/JMP preserve it),
-; entering br_to_view past its dx staging. wy still stages raw in
-; zp_br_dy (its subtract waits for the operand pair, so a fetch-side
-; pre-subtract just moves the copy back). Direct br_to_view callers
-; (chain path, harness, vxc ref probe) keep the staged-dx entry.
-   LDA zp_seg_v_idx_b
-   AND #$20                                ; senior: idx >= 256 (B >= 32)
-   BNE vf_hi
    VF_FETCH_ARM 0
-vf_hi:
+vertex_fetch_1:
+   LDA zp_vxc_on
+   BEQ vf_plain1
+   JMP vxc_arm_hi
+::vf_plain1:
+   PAGE BANK_L2
    VF_FETCH_ARM $100
+
+
+; (br_to_view_fetch fully retired 2026-07-27 round 2: the vxc cold
+; arms JSR their side's vf_plain directly.)
+.assert <ROM_VERTS_C = 0, error, "vertex planes assume page-aligned ROM_VERTS_C"
 
 br_to_view:
 ; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches

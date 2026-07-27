@@ -57,14 +57,14 @@ def resolve(n, d=0):
     return n
 
 extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss',
- 'vxc_arm','br_to_view_fetch','br_to_view','bbox_check_angle','box_classify',
+ 'vxc_arm_lo','vxc_arm_hi','br_to_view','bbox_check_angle','box_classify',
  'dbox_check','bt_store','bca_tail_postrc','br_render_subsector',
  'br_project_x','br_project_y','rns_go','slope_div_le','cp_havepsi',
  'br_render_frame','br_view_setup','br_init_frame','anim_tick','anim_init',
  'span_init','span_has_gap','span_mark_solid','ev_clamp_hi_nz',
  'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
- 'umul8','udiv16_8','interp_store','vertex_fetch','bca_frame','rc_wipe',
+ 'umul8','udiv16_8','interp_store','vertex_fetch_0','vertex_fetch_1','bca_frame','rc_wipe',
  'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vsx_do_c3',
  'dcl_vert','dcl_vert_on','dcl_vertical',
  'reproject_at_crossing','br_recip','hud_draw',
@@ -107,7 +107,7 @@ edges = {(a,b,k) for a,b,k in edges if not b.startswith('rns_s')}
 MOD = lambda f: ('bsp' if '/bsp/' in f else 'ang' if '/ang/' in f
                  else 'clip' if '/clip/' in f else 'hud')
 COLORS = {'bsp':'#dbe9ff','ang':'#ffe9d6','clip':'#e2f5df','hud':'#f2e2f5'}
-HOT = {'br_render_subsector','br_seg_xform_vertex','br_back_face_test',
+HOT = {'br_render_subsector','sx_vert_lo','sx_vert_hi','br_back_face_test',
  'br_to_view','br_project_y','br_project_x','vxc_arm','umul8','interp_store',
  'rns_go','br_render_frame','span_has_gap','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','bf_seg_front','bbox_check_angle','box_classify',

@@ -256,6 +256,9 @@ ch_reuse_done:
                                         ; NEVER left L0, skips the re-page
                                         ; (STY+JMP: the NMOS/C02 fork died
                                         ; with the reversed-order Y=0)
+sxv1_hi:
+   JSR sx_vert_hi
+   JMP sxv1_done
 ch_miss_b:                                 ; A = header idx_b (Y = 1;
    STA zp_seg_v_idx_b                      ;  v1i_b already stored above)
    DEY                                     ; Y = 0
@@ -267,7 +270,11 @@ ch_miss_a:                                 ; (B-differs falls in; A-differs
    STY zp_seg_ep                            ; v1 → struct VX1 (Y = 0)
    STY zp_ys_done                           ; prev-seg donation dies here
    STY zp_ys_v1ok
-   JSR br_seg_xform_vertex                  ; (the old 'A = B at entry'
+   LDA zp_seg_v_idx_b                       ; side test at the CALLER
+   AND #$20                                 ; (2026-07-27 round 2)
+   BNE sxv1_hi                              ; senior: island above
+   JSR sx_vert_lo
+sxv1_done:                                  ; (the old 'A = B at entry'
                                         ; contract is a FOSSIL: the entry
                                         ; reloads both key bytes from zp —
                                         ; audited 2026-07-26)
@@ -290,7 +297,10 @@ ch_v1_done_l0:
    INY
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_v_idx_b
-   JSR br_seg_xform_vertex                  ; (entry reloads the key from zp)
+   AND #$20                                 ; side rides the just-loaded byte
+   BNE sxv2_hi                              ; senior ~35%: island below
+   JSR sx_vert_lo
+sxv2_done:
 ; (no marshalling — see v1)
 
 ; --- Near-plane clip resolution (mirrors fp_near_clip in fp.py) ---
@@ -367,6 +377,9 @@ s_some_clipped:
    JMP s_both_have_proj
 s_advance_jmp:
    JMP s_advance
+sxv2_hi:
+   JSR sx_vert_hi
+   JMP sxv2_done
 s_v2_was_clipped:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; reproject into v2 (struct VX2)
