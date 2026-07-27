@@ -440,6 +440,12 @@ dcl_fl_emit:
    RTS
 ::dcl_vert_on:
    STA zp_line_xl_l                        ; THE column (dv_* reads only this)
+; (corner ±1 shrink REVERTED 2026-07-27: walkseq found 48 frames with
+; 2-6 px gaps — portal-edge verticals whose ft/fb horizontals were
+; tightened away have NO join to cover the shrunk corners, and the s16
+; shrink tax ate the plot saving anyway. Revisit PRODUCER-SIDE: the
+; descriptor pack knows which ends are clamped-to-frame — ±1 there is
+; free and provably joined. See project_vplot memory.)
 ; clamp y1 into the u8 band (mc_vertical's exact ladder, lo-only:
 ; nothing downstream reads the y hi bytes)
    LDA zp_line_yl_h
@@ -1219,6 +1225,13 @@ des_dispatch:
    BNE des_not_h
    JMP plot_h
 des_to_v:
+   LDA RASTER_ZP_Y0                        ; this path's segments have no
+   CMP RASTER_ZP_Y1                        ; y-order guarantee — normalize
+   BCC dtv_ord                             ; HERE (0 on suite): plot_v's
+   LDX RASTER_ZP_Y1                        ; swap moved out for the ordered
+   STA RASTER_ZP_Y1                        ; hot producers (corner-shrink
+   STX RASTER_ZP_Y0                        ; arc, 2026-07-27)
+dtv_ord:
    JMP plot_v
 des_not_h:
    LDA RASTER_ZP_X0

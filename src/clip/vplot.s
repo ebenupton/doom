@@ -51,13 +51,9 @@
 ; one dispatch body per copy (per-copy SMC restore state + hi table)
 .macro VPLOT_DISPATCH hitab, blk
 .scope
-   LDA RASTER_ZP_Y0
-   CMP RASTER_ZP_Y1
-   BCC vpd_ord                             ; dv emits ordered; the des
-   LDX RASTER_ZP_Y1                        ; path may not — keep the swap
-   STA RASTER_ZP_Y1
-   STX RASTER_ZP_Y0
-vpd_ord:
+; CONTRACT (2026-07-27): Y0 <= Y1 REQUIRED. dv and the descriptor walk
+; emit ordered by construction; the des trampoline (dcl.s des_to_v)
+; normalizes its own rare arrivals. Equal draws one pixel.
    LDA #$98                                ; TYA: un-arm the previous stop
 vpd_rst:
    STA blk + 7*160                         ; SMC operand; init = trailing
