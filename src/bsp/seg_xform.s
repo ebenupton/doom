@@ -80,43 +80,11 @@ pgx:
    RTS
 .endmacro
 
-.macro VC_FILL_ARM pg
-; ok-miss armed fill: recip bytes load once for both consumers
-; (struct + plane); sx from zp_br_res; clip = 0.
-   LDY zp_seg_v_idx_l
-   LDA zp_br_r_m8
-   STA VX1+13,X                            ; rhi/rlo: the endpoint's own
-                                           ; recip for apv_stage / y-stage
-   STA VC_RHI+pg,Y
-   LDA zp_br_r_s
-   STA VX1+14,X
-   STA VC_RLO+pg,Y
-   LDA VX1+0,X
-   STA VC_EVY+pg,Y
-   LDA VX1+1,X
-   STA VC_EVX+pg,Y
-   LDA zp_br_res_l
-   STA VC_SXL+pg,Y
-   LDA zp_br_res_h
-   STA VC_SXH+pg,Y
-   LDA #0
-   STA VC_CLIP+pg,Y
-; near_clip = 0. (Y projection deferred to the post-has_gap y stage.)
-   RTS
-.endmacro
+; (VC_FILL_ARM macro ABSORBED into SXV_BODY 2026-07-27 — the fills
+; fused around one shared evy/evx tail per side.)
 
-.macro NC_FILL_ARM pg
-; near-clipped: evy/evx (usable on any future hit) + the clip verdict
-   LDY zp_seg_v_idx_l
-   LDA VX1+0,X
-   STA VC_EVY+pg,Y
-   LDA VX1+1,X
-   STA VC_EVX+pg,Y
-   LDA #1
-   STA VC_CLIP+pg,Y
-   STA VX1+2,X                             ; clip = 1
-   RTS
-.endmacro
+; (NC_FILL_ARM macro ABSORBED into SXV_BODY 2026-07-27 — the fills
+; fused around one shared evy/evx tail per side.)
 
 ; ============================================================================
 ; SXV_BODY — one full SIDE (senior page BAKED) of the vertex transform:
@@ -191,9 +159,37 @@ ncr_done:
    LDX zp_seg_ep                           ; (recip/project clobbered X)
    STA VX1+4,X                             ; sx_hi
    STY VX1+3,X                             ; sx_lo (STY zp,X)
-   VC_FILL_ARM pg
+; --- armed fills, FUSED (Eben, 2026-07-27): the ok-miss part carries
+; only what a near-clipped entry must not get (recip, sx, clip=0) and
+; FALLS INTO the shared evy/evx tail; the near-clip prelude (rare)
+; re-enters it with a branch-always. One copy of the shared stores
+; per side instead of two. ---
+   LDY zp_seg_v_idx_l
+   LDA zp_br_r_m8
+   STA VX1+13,X                            ; rhi/rlo: the endpoint's own
+                                           ; recip for apv_stage / y-stage
+   STA VC_RHI+pg,Y
+   LDA zp_br_r_s
+   STA VX1+14,X
+   STA VC_RLO+pg,Y
+   LDA zp_br_res_l                         ; sx from ZP (the store-backs'
+   STA VC_SXL+pg,Y                         ; consumer)
+   LDA zp_br_res_h
+   STA VC_SXH+pg,Y
+   LDA #0
+   STA VC_CLIP+pg,Y
+fill_tail:
+   LDA VX1+0,X                             ; evy/evx: struct -> plane
+   STA VC_EVY+pg,Y                         ; (shared by both verdicts)
+   LDA VX1+1,X
+   STA VC_EVX+pg,Y
+   RTS
 nc_fail:
-   NC_FILL_ARM pg
+   LDY zp_seg_v_idx_l
+   LDA #1                                  ; clip = 1 (plane + struct)
+   STA VC_CLIP+pg,Y
+   STA VX1+2,X
+   BNE fill_tail                           ; (A = 1: always taken)
 ncr_far:
    JSR br_recip_hi                         ; A = idx hi, Y = idx lo
    JMP ncr_done
