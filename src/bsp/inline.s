@@ -599,6 +599,10 @@ cos_gen:
    STA rot_sqc1h+1
    STA rot_sqc2l+1
    STA rot_sqc2h+1
+   STA rot_sqcv1l+1                        ; the pair's VY-dest cos twin
+   STA rot_sqcv1h+1                        ; (rot_core_cosv_nz, 2026-07-27)
+   STA rot_sqcv2l+1
+   STA rot_sqcv2h+1
    STA rgp_cmag+1                          ; the fused pair's cos staging
    LDA zp_br_cneg
    STA rot_gen_cos+5

@@ -314,13 +314,8 @@ rot_s13:
                                            ; rot_select patches this site:
                                            ; gen+gen = the fused variant,
                                            ; else rot_pair_thunk (rare)
-   LDA zp_br_res_l
-   STA zp_br_vy_l
-   LDA zp_br_res_h
-   STA zp_br_vy_h
-   LDA zp_br_res_x
-   STA zp_br_vy_x
-
+; (res->vy copy DELETED 2026-07-27: the fused pair writes vy directly
+;  via rot_core_cosv_nz; the thunk adapts internally on rare frames)
    ZERO zp_ri_sgn
    LDA zp_br_dy_l
    SEC

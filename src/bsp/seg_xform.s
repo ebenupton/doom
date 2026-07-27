@@ -288,8 +288,8 @@ ncr_done:
    JSR br_project_x                        ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; (recip/project clobbered X)
    STA VX1+4,X                             ; sx_hi (from A)
-   TYA
-   STA VX1+3,X                             ; sx_lo
+   STY VX1+3,X                             ; sx_lo (STY zp,X — the TYA
+                                           ; shuttle died 2026-07-27)
 
 ; --- Struct stores from the working regs, then ONE armed fill drops
 ; the whole cache entry (evy/evx via the struct, the rest from the

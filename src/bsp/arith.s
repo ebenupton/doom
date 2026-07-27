@@ -591,6 +591,92 @@ c_one:
 c_z1:
    JMP ri_sign                             ; skip ri_finish's dead adds
 
+; ============================================================================
+; rot_core_cosv_nz — the fused pair's cos half, VY DESTINATIONS
+; (2026-07-27 direct-write: res-slot-split precedent — duplication,
+; not SMC; the standalone cos core keeps zp_br_res for the s2 site).
+; Entered ONLY from rot_gen_pair's p_cos (d != 0 already established,
+; mul_b/t1 staged). rot_select patches the four rot_sqcv* operands
+; alongside the sqc ones. Same x0-falls-into-sign arrangement as the
+; parent (branch census 2026-07-27).
+; ============================================================================
+.scope
+::rot_core_cosv_nz:
+   LDA zp_ri_d_l
+   TAX
+   SEC
+   SBC zp_mul_b
+   BCS cv1_pos
+   EOR #$FF
+   ADC #1
+cv1_pos:
+   TAY
+::rot_sqcv1l:
+   LDA sqr_l,X                            ; +1 SMC = |cos| mag (rot_select)
+   SEC
+   SBC sqr_l,Y
+   STA zp_br_vy_l
+::rot_sqcv1h:
+   LDA sqr_h,X                            ; +1 SMC = |cos| mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_br_vy_h
+   ZERO zp_br_vy_x
+   LDA zp_ri_d_h
+   BNE cv_hi_nz                            ; x1/x>=2 rare: block below
+rivsign:
+   LDA zp_br_t1
+   BEQ rivdone                             ; t1 = (d<0) XOR (trig<0)
+   LDA #0
+   SEC
+   SBC zp_br_vy_l
+   STA zp_br_vy_l
+   LDA #0
+   SBC zp_br_vy_h
+   STA zp_br_vy_h
+   LDA #0
+   SBC zp_br_vy_x
+   STA zp_br_vy_x
+rivdone:
+   RTS
+cv_hi_nz:
+   CMP #1
+   BEQ cv_one                              ; x1: product == mag
+   TAX
+   SEC
+   SBC zp_mul_b
+   BCS cv2_pos
+   EOR #$FF
+   ADC #1
+cv2_pos:
+   TAY
+::rot_sqcv2l:
+   LDA sqr_l,X                            ; +1 SMC = |cos| mag (rot_select)
+   SEC
+   SBC sqr_l,Y
+   STA zp_prod_l
+::rot_sqcv2h:
+   LDA sqr_h,X                            ; +1 SMC = |cos| mag (rot_select)
+   SBC sqr_h,Y
+   STA zp_prod_h
+   CLC
+   LDA zp_prod_l
+   ADC zp_br_vy_h
+   STA zp_br_vy_h
+   LDA zp_prod_h
+   ADC zp_br_vy_x
+   STA zp_br_vy_x
+   JMP rivsign
+cv_one:
+   LDA zp_mul_b                            ; vy_h += mag, carry -> vy_x
+   CLC
+   ADC zp_br_vy_h
+   STA zp_br_vy_h
+   BCC cv_z1
+   INC zp_br_vy_x
+cv_z1:
+   JMP rivsign
+.endscope
+
 
 ; ============================================================================
 ; rot_gen_pair — the FUSED dx-pair rotate (2026-07-19): one JSR runs
@@ -666,15 +752,17 @@ p_cos:
    LDA #0                                  ; +1 SMC: cos neg flag
    EOR zp_ri_sgn
    STA zp_br_t1
-   JMP rot_core_cos_nz
+   JMP rot_core_cosv_nz                    ; VY-dest twin (2026-07-27): the
+                                           ; fused pair writes vy DIRECTLY —
+                                           ; the rot_s13 call-site copy died
 
 p_zero:
    STA zp_rs_l                             ; A = 0: zero BOTH result sets
-   STA zp_rs_h
-   STA zp_rs_x
-   STA zp_br_res_l
-   STA zp_br_res_h
-   STA zp_br_res_x
+   STA zp_rs_h                             ; (cos side = vy since the
+   STA zp_rs_x                             ; direct-write, 2026-07-27)
+   STA zp_br_vy_l
+   STA zp_br_vy_h
+   STA zp_br_vy_x
    RTS
 
 ; --- pair sin-half hi-partial rare block (x != 0) ---
@@ -718,9 +806,18 @@ p_one:
 .endscope
 
 rot_pair_thunk:
-; non-gen frames: run the two selected variants in sequence — JSR the
-; sin one, JMP the cos one (its RTS returns to the pair site's caller).
+; non-gen frames: run the two selected variants in sequence, then ADAPT
+; the cos result into vy (the variants keep their generic res dests;
+; the pair contract is rs + vy since the direct-write, 2026-07-27 —
+; this copy runs only on axis-aligned-trig frames, rare).
 ::rpt_jsr:
    JSR rot_gen_sin                         ; +1/+2 SMC: the frame's sinvar
 ::rpt_jmp:
-   JMP rot_gen_cos                         ; +1/+2 SMC: the frame's cosvar
+   JSR rot_gen_cos                         ; +1/+2 SMC: the frame's cosvar
+   LDA zp_br_res_l
+   STA zp_br_vy_l
+   LDA zp_br_res_h
+   STA zp_br_vy_h
+   LDA zp_br_res_x
+   STA zp_br_vy_x
+   RTS

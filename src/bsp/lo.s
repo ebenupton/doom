@@ -41,8 +41,8 @@ reproject_at_crossing:
    JSR br_project_x                        ; -> Y = sx lo, A = sx hi
    LDX zp_seg_ep                           ; struct offset (0/15)
    STA VX1+4,X                             ; sx → the clipped endpoint's
-   TYA                                     ; struct slots, in place
-   STA VX1+3,X
+   STY VX1+3,X                             ; struct slots, in place (STY
+                                           ; zp,X — TYA died 2026-07-27)
    LDA zp_br_r_m8                           ; bank recip(NEAR) = (M8=0, S=1)
    STA VX1+13,X                            ; into the struct: the deferred
    LDA zp_br_r_s                           ; y stage (and apv_stage) project
