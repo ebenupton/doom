@@ -36,13 +36,9 @@
 ;   Placement: cfg region VPLOTC, bank C $B200-$BFFF (the vertex-span
 ;   descriptor tables moved to the $A500-$A8FF HUD-blob gap to free
 ;   this window; verticals already run under ambient bank C, zero
-;   paging). Flat build: NO EMISSION (the flat map has no 1.7K hole —
-;   flat keeps the loop plot_v in plot_axis.s; outputs are
-;   pixel-identical, gated by bankedcmp_check).
+;   paging). Flat build (2026-07-27 recovery): ONE copy in VPLOTF
+;   ($6B00), tables+dispatch CODE-resident — see the .else arm.
 ; ============================================================================
-.if ::BANKED
-.segment "VPLOTC"
-
 .macro VPLOT_COL fb
 .repeat 160, R
    TYA
@@ -51,28 +47,6 @@
 .endrepeat
    RTS                                     ; entry-160 target (y1 = 159)
 .endmacro
-
-.align $100
-vpblk0:
-   VPLOT_COL $5800                         ; SCREEN0 copy
-.align $100
-vpblk1:
-   VPLOT_COL $6C00                         ; SCREEN1 copy
-; the shared lo table REQUIRES page congruence between the copies
-.assert <vpblk0 = <vpblk1, error, "vplot copies not page-congruent"
-
-vptab_lo:                                   ; shared: <(block addr - 1)
-.repeat 161, R
-   .byte <(vpblk0 + 7*R - 1)
-.endrepeat
-vptab0_hi:
-.repeat 161, R
-   .byte >(vpblk0 + 7*R - 1)
-.endrepeat
-vptab1_hi:
-.repeat 161, R
-   .byte >(vpblk1 + 7*R - 1)
-.endrepeat
 
 ; one dispatch body per copy (per-copy SMC restore state + hi table)
 .macro VPLOT_DISPATCH hitab, blk
@@ -119,6 +93,31 @@ vpd_rst:
 .endscope
 .endmacro
 
+.if ::BANKED
+.segment "VPLOTC"
+.align $100
+vpblk0:
+   VPLOT_COL $5800                         ; SCREEN0 copy
+.align $100
+vpblk1:
+   VPLOT_COL $6C00                         ; SCREEN1 copy
+; the shared lo table REQUIRES page congruence between the copies
+.assert <vpblk0 = <vpblk1, error, "vplot copies not page-congruent"
+
+vptab_lo:                                   ; shared: <(block addr - 1)
+.repeat 161, R
+   .byte <(vpblk0 + 7*R - 1)
+.endrepeat
+vptab0_hi:
+.repeat 161, R
+   .byte >(vpblk0 + 7*R - 1)
+.endrepeat
+vptab1_hi:
+.repeat 161, R
+   .byte >(vpblk1 + 7*R - 1)
+.endrepeat
+
+
 plot_v:
    LDA RASTER_ZP_SCRSTRT
    AND #$20                                ; $58 -> 0, $6C -> $20
@@ -126,5 +125,28 @@ plot_v:
    VPLOT_DISPATCH vptab0_hi, vpblk0
 vp_fb1:
    VPLOT_DISPATCH vptab1_hi, vpblk1
+
+.else
+; ============================================================================
+; FLAT build (2026-07-27, after the $6B00 recovery): ONE framebuffer
+; ($EA00), ONE copy in the VPLOTF region ($6B00-$6F60), tables and the
+; single dispatch as CODE-resident data/code (the srecip_tab precedent
+; — CODE tail had 858 B free). No copy select: plot_v IS the dispatch.
+; ============================================================================
+.segment "VPLOTF"
+.align $100
+vpblk0:
+   VPLOT_COL $EA00                         ; the flat/copro framebuffer
+SEG_CODE
+vptab_lo:                                   ; <(block addr - 1)
+.repeat 161, R
+   .byte <(vpblk0 + 7*R - 1)
+.endrepeat
+vptab0_hi:
+.repeat 161, R
+   .byte >(vpblk0 + 7*R - 1)
+.endrepeat
+plot_v:
+   VPLOT_DISPATCH vptab0_hi, vpblk0
 
 .endif                                     ; ::BANKED
