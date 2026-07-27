@@ -204,9 +204,9 @@ ncr_done:
    LDA zp_br_res_h
    STA VC_SXH+pg,Y
    LDA #0                                  ; clip = 0 (plane + struct —
+fill_tail:
    STA VC_CLIP+pg,Y                        ; the nc prelude's mirror)
    STA VX1+2,X
-fill_tail:
    LDA VX1+0,X                             ; evy/evx: struct -> plane
    STA VC_EVY+pg,Y                         ; (shared by both verdicts)
    LDA VX1+1,X
@@ -215,8 +215,6 @@ fill_tail:
 nc_fail:
    LDY zp_seg_v_idx_l
    LDA #1                                  ; clip = 1 (plane + struct)
-   STA VC_CLIP+pg,Y
-   STA VX1+2,X
    BNE fill_tail                           ; (A = 1: always taken)
 ncr_far:
    JSR br_recip_hi                         ; A = idx hi, Y = idx lo
