@@ -14,7 +14,7 @@
 ;             +0 evy  +1 evx (ALWAYS — crossing math needs both endpoints)
 ;             +2 clip (1 = behind near plane; rest then undefined)
 ;             +3/+4 sx  +5..+12 the flag-gated sy pairs (do_project_y tail)
-;             +13/+14 rhi/rlo (banked for ap2_solid_proj)
+;             +13/+14 rhi/rlo (banked for apv_stage / the y-stage)
 ;           zp_br_r_m8/rlo also hold the recip (projection working slots).
 ;           NOTHING is staged — every result stores once, struct-direct.
 ;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x.
@@ -70,7 +70,9 @@ ok:
    LDA VC_SXH+pg,Y
    STA VX1+4,X                             ; sx_hi
    LDA VC_RHI+pg,Y
-   STA VX1+13,X                            ; rhi (for ap2_solid_proj)
+   STA VX1+13,X                            ; rhi (apv_stage / the y-stage
+                                           ; read the endpoint's own recip
+                                           ; from +13/14)
    LDA VC_RLO+pg,Y
    STA VX1+14,X                            ; rlo (= S)
 pgx:
@@ -83,7 +85,8 @@ pgx:
 ; (struct + plane); sx from zp_br_res; clip = 0.
    LDY zp_seg_v_idx_l
    LDA zp_br_r_m8
-   STA VX1+13,X                            ; rhi/rlo for ap2_solid_proj
+   STA VX1+13,X                            ; rhi/rlo: the endpoint's own
+                                           ; recip for apv_stage / y-stage
    STA VC_RHI+pg,Y
    LDA zp_br_r_s
    STA VX1+14,X
