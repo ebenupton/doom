@@ -108,10 +108,9 @@ ec_hi_nz:
    ev_clamp_hi_nz
    JMP ec_done
 vmiss:
-   STA VX1+2,X                             ; clip = 0: A IS the probe's
-                                           ; zero (the failed AND), X = ep
 ; mark valid now (fill lands the bytes below; even a near-clipped
-; path leaves a usable evy/evx entry)
+; path leaves a usable evy/evx entry; clip lands in the fills — both
+; verdicts store plane+struct symmetrically, 2026-07-27)
    LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
@@ -178,8 +177,9 @@ ncr_done:
    STA VC_SXL+pg,Y                         ; consumer)
    LDA zp_br_res_h
    STA VC_SXH+pg,Y
-   LDA #0
-   STA VC_CLIP+pg,Y
+   LDA #0                                  ; clip = 0 (plane + struct —
+   STA VC_CLIP+pg,Y                        ; the nc prelude's mirror)
+   STA VX1+2,X
 fill_tail:
    LDA VX1+0,X                             ; evy/evx: struct -> plane
    STA VC_EVY+pg,Y                         ; (shared by both verdicts)
