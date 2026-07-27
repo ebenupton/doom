@@ -66,21 +66,18 @@ SCREEN_WIDTH=256
     ; (the commented-out lines are NJ's original 320-wide address math —
     ;  (y>>3)*320 with a +&80 base; at 256 wide a char row is one whole
     ;  page, so hi = scrstrt + (y0>>3) and lo is just the byte column)
-;    LDA #&80:STA scr
-    LDA #&00:STA scr            \\ KCHACK
-    LDA y0:LSR A:LSR A:LSR A:STA scr+1
-;    LSR A:ROR scr:LSR A:ROR scr
-;    ADC scr+1:STA scr+1
-    CLC
-    LDA x0:AND #&F8:ADC scr:STA scr
-    LDA scrstrt:ADC scr+1:STA scr+1
+    \ (address chain rewritten 2026-07-27: 256-wide char rows are
+    \  page-aligned, so lo = x0&F8 directly and hi = scrstrt + y0>>3;
+    \  the old staged zero + double ADC was the 320-wide relic)
+    LDA x0:AND #&F8:STA scr
+    LDA y0:LSR A:LSR A:LSR A:CLC:ADC scrstrt:STA scr+1
     LDA x0:AND #7:TAY           ; Y = start bit -> strtN dispatch index
-    CPX dy:BCS notsteep:JMP steep
+    CPX dy:BCC steep_hop        ; steep rare (0 on suite): hop below
 
     ; ==================== shallow dispatch (dx >= dy) ====================
     .notsteep
+    STX dx                 ; ZP dx: hamiltonian entry + the cores' ADC dx
 IF HAMILTONIAN_12
-    STX dx                 ; store dx to ZP for hamiltonian entry
     TXA:LSR A:CMP dy
     BCS skip_ham           ; dx/2 >= dy -> not in 1:2 band (excludes 2:1)
     JMP entry_12_nj        ; hamiltonian path (do_dispatch PLPs direction)
@@ -110,10 +107,9 @@ ENDIF
     LDA strt1,Y:STA x1
     LDA strt1+8,Y:STA y1
     LDA y0:AND #7:TAY
-    STX b01+5:STX b11+5
-    STX b21+5:STX b31+5
-    STX b41+5:STX b51+5
-    STX b61+5:STX b71+5
+    \ (dx pokes RETIRED 2026-07-27: the cores' ADC reads ZP dx —
+    \  +1 cycle per y-step vs -32 of pokes per line; dy stays SMC,
+    \  it runs every pixel)
     LDA dy
     STA b01+1:STA b11+1
     STA b21+1:STA b31+1
@@ -127,14 +123,14 @@ ENDIF
     .horizontal STX err
     LDA #1:STA ls:STA cnt:STA dy
     BNE backh                   ; (A=1, always taken)
+    .steep_hop JMP steep
     .right
     LDA strt0,Y:STA x1
     LDA strt0+8,Y:STA y1
     LDA y0:AND #7:TAY
-    STX b00+5:STX b10+5
-    STX b20+5:STX b30+5
-    STX b40+5:STX b50+5
-    STX b60+5:STX b70+5
+    \ (dx pokes RETIRED 2026-07-27: the cores' ADC reads ZP dx —
+    \  +1 cycle per y-step vs -32 of pokes per line; dy stays SMC,
+    \  it runs every pixel)
     LDA dy
     STA b00+1:STA b10+1
     STA b20+1:STA b30+1
@@ -229,7 +225,7 @@ ENDIF
     ; =====================================================================
     ; --- right-going blocks: masks &80,&40..&01; scr steps right ---
     .a00 LDA err:LDX #&FF       ; run starts at bit 0: seed mask = all 8 bits
-    .b00 SBC #dy:BCS b10:ADC #dx:STA err    ; (dy/dx immediates SMC-patched)
+    .b00 SBC #dy:BCS b10:ADC dx :STA err    ; (dy/dx immediates SMC-patched)
     LDA #&80:ORA (scr),Y:STA (scr),Y        ; plot run [bit 0..bit 0]
     DEC cnt:BEQ e00:.f00 DEY:BPL a10        ; row step; new run at bit 1
     LDA scr
@@ -244,7 +240,7 @@ ENDIF
     ; LDX #&FF>>N, plot mask X AND (bits 0..N); run [M..N] plots as
     ; (&FF>>M) AND ~(&FF>>(N+1))
     .a10 LDA err:LDX #&7F
-    .b10 SBC #dy:BCS b20:ADC #dx:STA err
+    .b10 SBC #dy:BCS b20:ADC dx :STA err
     TXA:AND #&C0:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e10:.f10 DEY:BPL a20
     LDA scr
@@ -256,7 +252,7 @@ ENDIF
     .d10 RTS
 
     .a20 LDA err:LDX #&3F
-    .b20 SBC #dy:BCS b30:ADC #dx:STA err
+    .b20 SBC #dy:BCS b30:ADC dx :STA err
     TXA:AND #&E0:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e20:.f20 DEY:BPL a30
     LDA scr
@@ -268,7 +264,7 @@ ENDIF
     .d20 RTS
 
     .a30 LDA err:LDX #&1F
-    .b30 SBC #dy:BCS b40:ADC #dx:STA err
+    .b30 SBC #dy:BCS b40:ADC dx :STA err
     TXA:AND #&F0:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e30:.f30 DEY:BPL a40
     LDA scr
@@ -280,7 +276,7 @@ ENDIF
     .d30 RTS
 
     .a40 LDA err:LDX #&F
-    .b40 SBC #dy:BCS b50:ADC #dx:STA err
+    .b40 SBC #dy:BCS b50:ADC dx :STA err
     TXA:AND #&F8:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e40:.f40 DEY:BPL a50
     LDA scr
@@ -292,7 +288,7 @@ ENDIF
     .d40 RTS
 
     .a50 LDA err:LDX #7
-    .b50 SBC #dy:BCS b60:ADC #dx:STA err
+    .b50 SBC #dy:BCS b60:ADC dx :STA err
     TXA:AND #&FC:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e50:.f50 DEY:BPL a60
     LDA scr
@@ -304,7 +300,7 @@ ENDIF
     .d50 RTS
 
     .a60 LDA err:LDX #3
-    .b60 SBC #dy:BCS b70:ADC #dx:STA err
+    .b60 SBC #dy:BCS b70:ADC dx :STA err
     TXA:AND #&FE:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e60:.f60 DEY:BPL a70
     LDA scr
@@ -318,7 +314,7 @@ ENDIF
     ; block 7 (rightmost pixel): every continuation crosses into the next
     ; byte to the right
     .a70 LDA err:LDX #1
-    .b70 SBC #dy:BCS by0:ADC #dx:STA err
+    .b70 SBC #dy:BCS by0:ADC dx :STA err
     TXA:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e70:.f70 DEY:BPL ad0        ; y-step: next byte (same rows)
     LDA scr:SBC #LO(SCREEN_WIDTH-8):LDY #7:STA scr      ; combined char-row
@@ -336,7 +332,7 @@ ENDIF
     ; --- left-going blocks: masks &01,&02..&80; scr steps left (mirror of
     ;     the above; block digit still = distance along drawing direction) ---
     .a01 LDA err:LDX #&FF
-    .b01 SBC #dy:BCS b11:ADC #dx:STA err
+    .b01 SBC #dy:BCS b11:ADC dx :STA err
     LDA #1:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e01:.f01 DEY:BPL a11
     LDA scr
@@ -348,7 +344,7 @@ ENDIF
     .d01 RTS
 
     .a11 LDA err:LDX #&FE
-    .b11 SBC #dy:BCS b21:ADC #dx:STA err
+    .b11 SBC #dy:BCS b21:ADC dx :STA err
     TXA:AND #3:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e11:.f11 DEY:BPL a21
     LDA scr
@@ -360,7 +356,7 @@ ENDIF
     .d11 RTS
 
     .a21 LDA err:LDX #&FC
-    .b21 SBC #dy:BCS b31:ADC #dx:STA err
+    .b21 SBC #dy:BCS b31:ADC dx :STA err
     TXA:AND #7:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e21:.f21 DEY:BPL a31
     LDA scr
@@ -372,7 +368,7 @@ ENDIF
     .d21 RTS
 
     .a31 LDA err:LDX #&F8
-    .b31 SBC #dy:BCS b41:ADC #dx:STA err
+    .b31 SBC #dy:BCS b41:ADC dx :STA err
     TXA:AND #&F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e31:.f31 DEY:BPL a41
     LDA scr
@@ -384,7 +380,7 @@ ENDIF
     .d31 RTS
 
     .a41 LDA err:LDX #&F0
-    .b41 SBC #dy:BCS b51:ADC #dx:STA err
+    .b41 SBC #dy:BCS b51:ADC dx :STA err
     TXA:AND #&1F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e41:.f41 DEY:BPL a51
     LDA scr
@@ -396,7 +392,7 @@ ENDIF
     .d41 RTS
 
     .a51 LDA err:LDX #&E0
-    .b51 SBC #dy:BCS b61:ADC #dx:STA err
+    .b51 SBC #dy:BCS b61:ADC dx :STA err
     TXA:AND #&3F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e51:.f51 DEY:BPL a61
     LDA scr
@@ -408,7 +404,7 @@ ENDIF
     .d51 RTS
 
     .a61 LDA err:LDX #&C0
-    .b61 SBC #dy:BCS b71:ADC #dx:STA err
+    .b61 SBC #dy:BCS b71:ADC dx :STA err
     TXA:AND #&7F:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e61:.f61 DEY:BPL a71
     LDA scr
@@ -422,7 +418,7 @@ ENDIF
     ; block 7 of the left core (leftmost pixel, mask &80): continuations
     ; cross into the next byte to the LEFT
     .a71 LDA err:LDX #&80
-    .b71 SBC #dy:BCS by1:ADC #dx:STA err
+    .b71 SBC #dy:BCS by1:ADC dx :STA err
     TXA:ORA (scr),Y:STA (scr),Y
     DEC cnt:BEQ e71:.f71 DEY:BPL sb1        ; y-step: next byte (same rows)
     LDA scr:SBC #LO(SCREEN_WIDTH+8):LDY #7:STA scr      ; combined char-row
