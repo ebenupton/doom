@@ -236,14 +236,25 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     # Vertices — page-split SoA planes (XLO/XHI/YLO/YHI, 512 bytes each;
     # n_verts <= 512 asserted above): junior page idx 0-255, senior 256+.
-    # br_to_view_fetch reads them through senior-bit arms (header key
-    # B & $20) with the plane page baked — no idx*4 pointer build.
+    # SIGN-MAGNITUDE since V16 (2026-08-09): lo = |w| & 255, hi =
+    # (|w| >> 8) | ($80 if w < 0) — |w| <= 511 so bit 7 is free. The
+    # fetch reads the sign as the hi-byte load's N flag and the abs-
+    # negate ladder dies (the rotate wants |d| + sign anyway, and w is
+    # static — only V16's pure-w operand makes this bakeable).
+    # V16 RANGE ASSERT: base = rot(w) must fit s16 in 1/64 units for
+    # EVERY angle; |rot(w)| <= hypot(w) (trig magnitudes <= 1), so
+    # hypot(w) <= 32767/64 = 511.98 is sound over all angles.
     for i, v in enumerate(fp_vertexes):
+        assert v[0] * v[0] + v[1] * v[1] <= 511 * 511, \
+            f"V16 base range: vertex {i} {v} exceeds s16 1/64-unit storage"
         pg, off = (i >> 8) * 256, i & 0xFF
-        rom_main[off_verts + 0x000 + pg + off] = v[0] & 0xFF
-        rom_main[off_verts + 0x200 + pg + off] = (v[0] >> 8) & 0xFF
-        rom_main[off_verts + 0x400 + pg + off] = v[1] & 0xFF
-        rom_main[off_verts + 0x600 + pg + off] = (v[1] >> 8) & 0xFF
+        ax, ay = abs(v[0]), abs(v[1])
+        rom_main[off_verts + 0x000 + pg + off] = ax & 0xFF
+        rom_main[off_verts + 0x200 + pg + off] = ((ax >> 8)
+                                                 | (0x80 if v[0] < 0 else 0))
+        rom_main[off_verts + 0x400 + pg + off] = ay & 0xFF
+        rom_main[off_verts + 0x600 + pg + off] = ((ay >> 8)
+                                                 | (0x80 if v[1] < 0 else 0))
 
     # BSP nodes — point_on_side uses raw s16 values so the prescale rounding
     # doesn't lose a weak axis (nodes where, e.g., raw dx=0 dy=8 would

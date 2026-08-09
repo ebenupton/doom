@@ -187,12 +187,16 @@ vmiss:
    LDA VP_YLO+pg,Y
    STA zp_br_dy_l
    LDA VP_YHI+pg,Y
-   STA zp_br_dy_h
+   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
    ZERO zp_ri_sgn
    LDA VP_XLO+pg,Y
    STA zp_ri_d_l
-   LDA VP_XHI+pg,Y
-   STA zp_ri_d_h                           ; N = wx sign rides the JSR
+   LDA VP_XHI+pg,Y                         ; sign-mag: N = wx sign, bit 7
+   BPL vfx_p                               ; free off the load; the abs
+   INC zp_ri_sgn                           ; ladder DIED (packed |w|)
+   AND #$7F
+vfx_p:
+   STA zp_ri_d_h
    JSR rot_w_signed                        ; widened q64 base in the s24
    JMP vxq_add                             ; slots -> just add ref, rejoin
 fetch_done:
@@ -309,12 +313,16 @@ vs_cold:
    LDA VP_YLO+pg,Y
    STA zp_br_dy_l
    LDA VP_YHI+pg,Y
-   STA zp_br_dy_h
+   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
    ZERO zp_ri_sgn
    LDA VP_XLO+pg,Y
    STA zp_ri_d_l
-   LDA VP_XHI+pg,Y
-   STA zp_ri_d_h                           ; N = wx sign rides the JSR
+   LDA VP_XHI+pg,Y                         ; sign-mag: N = wx sign, bit 7
+   BPL vcx_p                               ; free off the load; the abs
+   INC zp_ri_sgn                           ; ladder DIED (packed |w|)
+   AND #$7F
+vcx_p:
+   STA zp_ri_d_h
    JSR rot_w_signed                        ; widened q64 base in the s24 slots
 ; birth store: >>2 in place to the s16 form (exact — low 2 bits are 0),
 ; store 4 planes, << 2 back, fall into the add. The shifts live ONLY

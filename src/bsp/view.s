@@ -218,6 +218,8 @@ br_to_view:
 ; each frame (s13/s2/s4 and s13w/s2w/s4w).
 .macro ROT_CORE s13, s2, s4, wmode
 .local dx_ok, dy_ok
+.if wmode = 0
+; position path: d1's sign is dynamic (subtract) — abs-negate ladder
    BPL dx_ok
    INC zp_ri_sgn
    SEC
@@ -228,6 +230,9 @@ br_to_view:
    SBC zp_ri_d_h
    STA zp_ri_d_h
 dx_ok:
+.endif
+; (pure path: |wx| + sign arrive PRE-RESOLVED from the sign-magnitude
+;  planes — the caller staged zp_ri_d = |wx| and zp_ri_sgn; no ladder)
 s13:
    JSR rot_gen_pair                        ; dx pair, ONE call (2026-07-19):
                                            ; sin*dx -> zp_rs, cos*dx ->
@@ -239,10 +244,16 @@ s13:
 ;  via rot_core_cosv_nz; the thunk adapts internally on rare frames)
    ZERO zp_ri_sgn
 .if wmode
-   LDA zp_br_dy_l                          ; pure path: d2 = wy verbatim
-   STA zp_ri_d_l
+; pure path: wy is SIGN-MAGNITUDE from the packed planes — resolve the
+; sign off the hi byte, no negate ladder
    LDA zp_br_dy_h
-   STA zp_ri_d_h                           ; N = wy sign
+   BPL dy_ok                               ; bit 7 = sign
+   INC zp_ri_sgn
+   AND #$7F
+dy_ok:
+   STA zp_ri_d_h
+   LDA zp_br_dy_l
+   STA zp_ri_d_l
 .else
    LDA zp_br_dy_l
    SEC
@@ -251,7 +262,6 @@ s13:
    LDA zp_br_dy_h
    SBC zp_br_py_x
    STA zp_ri_d_h
-.endif
    BPL dy_ok
    INC zp_ri_sgn
    SEC
@@ -262,6 +272,7 @@ s13:
    SBC zp_ri_d_h
    STA zp_ri_d_h
 dy_ok:
+.endif
 s2:
    JSR rot_gen_cos                         ; d2*cos -> zp_br_res
 ; vx = d1*sin - d2*cos, straight from the two result slots (rs still
