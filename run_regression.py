@@ -64,6 +64,10 @@ run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MI
 run('vxcache_check', ['tools/vxcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('walkseq_check', ['tools/walkseq_check.py'], lambda o: 'walkseq_check: OK' in o)
 run('bankedcmp_check', ['tools/bankedcmp_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
+# The call graph is a FIRST-CLASS OUTPUT (Eben, 2026-08-09): always
+# rebuilt with the gates — this also runs its file-DAG acyclicity check,
+# so a reintroduced call cycle fails the regression here.
+run('callgraph', ['tools/gen_callgraph.py'], lambda o: 'build/callgraph.pdf' in o and 'CYCLE' not in o)
 
 baseline = None
 if os.path.exists(BASELINE_PATH):
