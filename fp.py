@@ -365,7 +365,19 @@ def fp_view_context(vx_88, vy_88, sc):
     frac_vy = (_frac_rot_term(dx_lo, c_mag, c_neg, c_unity)
                + _frac_rot_term(dy_lo, s_mag, s_neg, s_unity))
 
-    return (px_int, py_int, sc, frac_vx, frac_vy)
+    # V16 (2026-08-09): the pipeline is total := widen(q64(rot(w))) + ref,
+    # where ref = rot(-p_int) + frac is the per-frame origin term (the
+    # 6502's vxc_ref, staged once by vxc_frame). rot is exactly linear
+    # (integer operands, exact products), so this equals the old
+    # rot(w - p_int) + frac up to q64's rounding of the vertex term —
+    # corpus-proven pixel-identical (v16_proof: 0 differing FB bytes,
+    # max |base| 326 prescaled -> s16 in 1/64 units, 1.57x headroom).
+    ref_vx = (_rot_int(-px_int, s_mag, s_neg, s_unity)
+              - _rot_int(-py_int, c_mag, c_neg, c_unity) + frac_vx)
+    ref_vy = (_rot_int(-px_int, c_mag, c_neg, c_unity)
+              + _rot_int(-py_int, s_mag, s_neg, s_unity) + frac_vy)
+
+    return (px_int, py_int, sc, frac_vx, frac_vy, ref_vx, ref_vy)
 
 def _rot_int(d_hi, mag, neg, unity):
     """Compute integer-part rotation term: d_hi * trig_component.
@@ -396,24 +408,19 @@ def fp_to_view(wx, wy, ctx):
     Returns (vx_trunc, vx_round, vy, vx_frac, vy_idx).
     4 multiplies max (integer part only; fractional precomputed in context).
     """
-    px_int, py_int, sc, frac_vx, frac_vy = ctx
-    dx_hi = wx - px_int
-    dy_hi = wy - py_int
+    px_int, py_int, sc, frac_vx, frac_vy, ref_vx, ref_vy = ctx
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
 
-    # Integer part: 4 x _rot_int calls (4 muls max)
-    # vx = dx * sin - dy * cos  (each term in 8.8)
-    # vy = dx * cos + dy * sin
-    t_dx_sin = _rot_int(dx_hi, s_mag, s_neg, s_unity)
-    t_dy_cos = _rot_int(dy_hi, c_mag, c_neg, c_unity)
-    t_dx_cos = _rot_int(dx_hi, c_mag, c_neg, c_unity)
-    t_dy_sin = _rot_int(dy_hi, s_mag, s_neg, s_unity)
-    int_vx = t_dx_sin - t_dy_cos
-    int_vy = t_dx_cos + t_dy_sin
-
-    # Add precomputed fractional rotation from context
-    total_vx = int_vx + frac_vx
-    total_vy = int_vy + frac_vy
+    # V16 base: pure rotation of the VERTEX (position-independent) —
+    # exactly what the 6502 VXC memoizes — quantized RN to 1/64
+    # prescaled (s16 storage), then the per-frame ref carries ALL the
+    # position terms (integer + fractional) at full precision.
+    base_vx = (_rot_int(wx, s_mag, s_neg, s_unity)
+               - _rot_int(wy, c_mag, c_neg, c_unity))
+    base_vy = (_rot_int(wx, c_mag, c_neg, c_unity)
+               + _rot_int(wy, s_mag, s_neg, s_unity))
+    total_vx = (((base_vx + 2) >> 2) << 2) + ref_vx
+    total_vy = (((base_vy + 2) >> 2) << 2) + ref_vy
 
     evx_trunc = total_vx >> 8          # truncated (for sub-pixel mode)
     evx_round = (total_vx + 128) >> 8  # rounded (for non-sub-pixel mode)

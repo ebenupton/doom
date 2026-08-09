@@ -408,30 +408,6 @@ inl_end:
 
 .macro vxc_frame
 .scope
-   LDA VXC_ENABLE
-   STA zp_vxc_on                           ; kept for harness/tools; the
-   BNE vf_on                               ; ENGINE dispatch is the VECTORS
-; cache OFF: fetch vectors -> the plain arms; fill vector -> bare RTS
-   LDA #<sxv0_vfoff
-   STA zp_vf_vec0
-   LDA #>sxv0_vfoff
-   STA zp_vf_vec0+1
-   LDA #<sxv1_vfoff
-   STA zp_vf_vec1
-   LDA #>sxv1_vfoff
-   STA zp_vf_vec1+1
-   JMP inl_end
-vf_on:
-; cache ON: fetch vectors -> the serve stubs; fill -> the birth fill
-   LDA #<sxv0_vxcon
-   STA zp_vf_vec0
-   LDA #>sxv0_vxcon
-   STA zp_vf_vec0+1
-   LDA #<sxv1_vxcon
-   STA zp_vf_vec1
-   LDA #>sxv1_vxcon
-   STA zp_vf_vec1+1
-
 ; ref = view totals of world (0,0) under this frame's context
 .if ::C02
    STZ zp_br_dx_l
@@ -462,6 +438,32 @@ vf_on:
    STA vxc_ref_y+1
    LDA zp_br_vy_x
    STA vxc_ref_y+2
+   LDA VXC_ENABLE
+   STA zp_vxc_on                           ; kept for harness/tools; the
+   BNE vf_on                               ; ENGINE dispatch is the VECTORS
+; cache OFF: fetch vectors -> the plain arms; fill vector -> bare RTS
+   LDA #<sxv0_vfoff
+   STA zp_vf_vec0
+   LDA #>sxv0_vfoff
+   STA zp_vf_vec0+1
+   LDA #<sxv1_vfoff
+   STA zp_vf_vec1
+   LDA #>sxv1_vfoff
+   STA zp_vf_vec1+1
+   JMP inl_end
+vf_on:
+; cache ON: fetch vectors -> the serve stubs; fill -> the birth fill
+   LDA #<sxv0_vxcon
+   STA zp_vf_vec0
+   LDA #>sxv0_vxcon
+   STA zp_vf_vec0+1
+   LDA #<sxv1_vxcon
+   STA zp_vf_vec1
+   LDA #>sxv1_vxcon
+   STA zp_vf_vec1+1
+
+; (ref staging HOISTED above the enable test 2026-08-09: V16 makes the
+;  ref load-bearing on EVERY path — the plain fetch adds it too.)
    LDA vxc_ab
    CMP vxc_prev_ab
    BEQ vf_patch
@@ -521,6 +523,8 @@ sin_gen:
 sin_have:
    STA rot_s4+1                            ; (rot_s1 died in the pair fusion)
    STX rot_s4+2
+   STA rot_s4w+1                           ; V16 twin (rot_w_signed core)
+   STX rot_s4w+2
    STA rpt_jsr+1                           ; thunk sin target (maintained
    STX rpt_jsr+2                           ; every frame; used on non-gen)
 ; --- cos variant -> rot_s2 / rot_s3 ---
@@ -560,6 +564,8 @@ cos_gen:
 cos_have:
    STA rot_s2+1                            ; (rot_s3 died in the pair fusion)
    STX rot_s2+2
+   STA rot_s2w+1                           ; V16 twin
+   STX rot_s2w+2
    STA rpt_jmp+1                           ; thunk cos target
    STX rpt_jmp+2
 ; --- pair-site select: general sin AND general cos -> the fused
@@ -586,6 +592,8 @@ psel_thunk:
 psel_have:
    STA rot_s13+1
    STX rot_s13+2
+   STA rot_s13w+1                          ; V16 twin
+   STX rot_s13w+2
 inl_end:
 .endscope
 .endmacro

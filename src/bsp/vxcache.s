@@ -56,12 +56,13 @@ vxc_prev_ab = $05DC
 
 ; --- plane bases (467 bytes each; page-aligned so hi-page access is +$100) ---
 .if ::BANKED
+; V16 (2026-08-09): base16 = q64(rot(w)) s16 — XEXT/YEXT DIED with the
+; 1/64-unit format (range-proved s16); planes repacked contiguous:
+; $9F00-$A2FF (1KB) FREED before the HUD window.
 VXC_XLO  = $9700                        ; bank C
 VXC_XHI  = $9900
-VXC_XEXT = $9B00
-VXC_YLO  = $9D00
-VXC_YHI  = $9F00
-VXC_YEXT = $A100
+VXC_YLO  = $9B00
+VXC_YHI  = $9D00
 .else
 ; (flat planes relocated 2026-07-12: $4000-$47D3 vacated for the one
 ; flat CODE region; each plane needs pages k,k+1 for the +$100 split.
@@ -72,11 +73,10 @@ VXC_YEXT = $A100
 ; caught the first placement attempt.)
 VXC_XLO  = $7500
 VXC_XHI  = $7700
-VXC_XEXT = $7900
-VXC_YLO  = $7B00
-VXC_YHI  = $7D00
-VXC_YEXT = $7F00
-.endif
+VXC_YLO  = $7900
+VXC_YHI  = $7B00
+.endif                                  ; (V16: XEXT/YEXT died; flat
+                                        ;  $7D00-$80FF freed)
 
 ; the frame angle byte: abi.inc's BCA_AB (the old private vxc_ab copy
 ; shipped the 2026-07-10 broken-turn disc)

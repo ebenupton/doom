@@ -210,16 +210,15 @@ br_to_view:
 ; walk/backface stage their own deltas there), the SBC's N flag is the
 ; sign test, and the dy subtract waits until its pair (the cores don't
 ; touch zp_br_dy).
-   ZERO zp_ri_sgn
-   LDA zp_br_dx_l
-   SEC
-   SBC zp_br_px_h
-   STA zp_ri_d_l
-   LDA zp_br_dx_h
-   SBC zp_br_px_x
-   STA zp_ri_d_h
-btv_dx_signed:                          ; fetch enters here, N = delta sign
-   BPL dx_abs_ok
+; --- ROT_CORE: the operand-paired rotate, ONE source TWO expansions
+; (V16, 2026-08-09): the position path (br_to_view below — dy gets the
+; py subtract) and the pure-vertex path (rot_w_signed — dy is wy
+; verbatim; the base must be position-independent). The three JSR
+; operands are per-expansion SMC sites: rot_select patches BOTH sets
+; each frame (s13/s2/s4 and s13w/s2w/s4w).
+.macro ROT_CORE s13, s2, s4, wmode
+.local dx_ok, dy_ok
+   BPL dx_ok
    INC zp_ri_sgn
    SEC
    LDA #0
@@ -228,8 +227,8 @@ btv_dx_signed:                          ; fetch enters here, N = delta sign
    LDA #0
    SBC zp_ri_d_h
    STA zp_ri_d_h
-dx_abs_ok:
-rot_s13:
+dx_ok:
+s13:
    JSR rot_gen_pair                        ; dx pair, ONE call (2026-07-19):
                                            ; sin*dx -> zp_rs, cos*dx ->
                                            ; zp_br_res, shared d==0 test.
@@ -239,6 +238,12 @@ rot_s13:
 ; (res->vy copy DELETED 2026-07-27: the fused pair writes vy directly
 ;  via rot_core_cosv_nz; the thunk adapts internally on rare frames)
    ZERO zp_ri_sgn
+.if wmode
+   LDA zp_br_dy_l                          ; pure path: d2 = wy verbatim
+   STA zp_ri_d_l
+   LDA zp_br_dy_h
+   STA zp_ri_d_h                           ; N = wy sign
+.else
    LDA zp_br_dy_l
    SEC
    SBC zp_br_py_h
@@ -246,7 +251,8 @@ rot_s13:
    LDA zp_br_dy_h
    SBC zp_br_py_x
    STA zp_ri_d_h
-   BPL dy_abs_ok
+.endif
+   BPL dy_ok
    INC zp_ri_sgn
    SEC
    LDA #0
@@ -255,10 +261,10 @@ rot_s13:
    LDA #0
    SBC zp_ri_d_h
    STA zp_ri_d_h
-dy_abs_ok:
-rot_s2:
-   JSR rot_gen_cos                         ; dy*cos -> zp_br_res
-; vx = dx*sin - dy*cos, straight from the two result slots (rs still
+dy_ok:
+s2:
+   JSR rot_gen_cos                         ; d2*cos -> zp_br_res
+; vx = d1*sin - d2*cos, straight from the two result slots (rs still
 ; holds s1's product — s3 wrote zp_br_res and s2 overwrote it, neither
 ; touches rs).
    LDA zp_rs_l
@@ -271,8 +277,8 @@ rot_s2:
    LDA zp_rs_x
    SBC zp_br_res_x
    STA zp_br_vx_x
-rot_s4:
-   JSR rot_gen_sin                         ; dy*sin -> zp_rs
+s4:
+   JSR rot_gen_sin                         ; d2*sin -> zp_rs
    LDA zp_br_vy_l
    CLC
    ADC zp_rs_l
@@ -283,6 +289,23 @@ rot_s4:
    LDA zp_br_vy_x
    ADC zp_rs_x
    STA zp_br_vy_x
+.endmacro
+
+; (V16Q retired same-day: the quantize fused into rot_w_signed as
+;  (v+2) & ~3 — see there.)
+
+   ZERO zp_ri_sgn
+   LDA zp_br_dx_l
+   SEC
+   SBC zp_br_px_h
+   STA zp_ri_d_l
+   LDA zp_br_dx_h
+   SBC zp_br_px_x
+   STA zp_ri_d_h
+btv_dx_signed:                          ; N = delta sign (internal only
+                                        ; since V16 — the vertex fetch
+                                        ; goes to rot_w_signed)
+   ROT_CORE rot_s13, rot_s2, rot_s4, 0
 
 ; (falls through into tv_add_fracs — its RTS is br_to_view's return)
 
@@ -348,6 +371,91 @@ bv_fvy_b:
    DEC zp_br_vy_x
    RTS
 .endscope
+
+; ============================================================================
+; rot_w_signed — V16 pure-vertex rotate + q64 (2026-08-09).
+;   In:  zp_ri_d_l/h = wx (N staged by the caller's last load),
+;        zp_br_dy_l/h = wy, zp_ri_sgn zeroed.
+;   Out: zp_br_vx_l/h, zp_br_vy_l/h = base16 = ((rot(w) + 2) >> 2), the
+;        RN 1/64-unit s16 base (ext bytes dead — range-proved s16).
+;        Position-independent: NO py subtract, NO frac terms — those
+;        live entirely in vxc_ref (= rot(-p_int) + fracs, staged once
+;        per frame). total := (base16 << 2) + ref at the callers' join.
+;   Callers: seg_xform vfoff + vxcon cold arms (both sides).
+; ============================================================================
+; vxq_shr2 / vxq_shl2 — V16 cold-store shift pair (side-independent,
+; shared by both SXV sides; cold arc only — once per vertex per angle
+; epoch). >>2 takes the widened-masked s24 base to its s16 stored form
+; (exact: low 2 bits are 0); <<2 restores it for the ref add.
+; ============================================================================
+vxq_shr2:
+   LDA zp_br_vx_x
+   CMP #$80
+   ROR zp_br_vx_x
+   ROR zp_br_vx_h
+   ROR zp_br_vx_l
+   LDA zp_br_vx_x
+   CMP #$80
+   ROR zp_br_vx_x
+   ROR zp_br_vx_h
+   ROR zp_br_vx_l
+   LDA zp_br_vy_x
+   CMP #$80
+   ROR zp_br_vy_x
+   ROR zp_br_vy_h
+   ROR zp_br_vy_l
+   LDA zp_br_vy_x
+   CMP #$80
+   ROR zp_br_vy_x
+   ROR zp_br_vy_h
+   ROR zp_br_vy_l
+   RTS
+vxq_shl2:
+   ASL zp_br_vx_l
+   ROL zp_br_vx_h
+   ROL zp_br_vx_x
+   ASL zp_br_vx_l
+   ROL zp_br_vx_h
+   ROL zp_br_vx_x
+   ASL zp_br_vy_l
+   ROL zp_br_vy_h
+   ROL zp_br_vy_x
+   ASL zp_br_vy_l
+   ROL zp_br_vy_h
+   ROL zp_br_vy_x
+   RTS
+
+; ============================================================================
+rot_w_signed:
+   ROT_CORE rot_s13w, rot_s2w, rot_s4w, 1
+; RN-quantize FUSED with the widen (2026-08-09 round 2): the consumer
+; adds widen(q64(v)) = ((v+2)>>2)<<2 = (v+2) & ~3 — a ripple +2 and one
+; AND, NO shifts. The s24 slots exit holding the widened quantized base
+; (low 2 bits zero, ext byte LIVE); only the cold store pays a real
+; shift pair (>>2 to the s16 planes, <<2 back — exact: low bits are 0).
+   CLC
+   LDA zp_br_vx_l
+   ADC #2
+   AND #$FC
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+   ADC #0
+   STA zp_br_vx_h
+   LDA zp_br_vx_x
+   ADC #0
+   STA zp_br_vx_x
+   CLC
+   LDA zp_br_vy_l
+   ADC #2
+   AND #$FC
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ADC #0
+   STA zp_br_vy_h
+   LDA zp_br_vy_x
+   ADC #0
+   STA zp_br_vy_x
+   RTS
 
 ; (br_smul_s8_u8 + its br_smul_am register entry deleted 2026-07-13:
 ; the py projector inlined the body 2026-07-12 and the wide X projector

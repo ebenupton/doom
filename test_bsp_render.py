@@ -183,12 +183,11 @@ def test_to_view():
         sc._run(ENTRY_BR_TO_VIEW)
         got_vx = s16_from_zp(mem, ZP_VXLO)
         got_vy = s16_from_zp(mem, ZP_VYLO)
-        evx_t, evx_r, evy, evx_frac, evy_idx = fp.fp_to_view(wx, wy, ctx)
-        # fp_to_view returns truncated/rounded; we want the FULL s16 total_vx/vy.
-        # Re-derive: total_vx = (evx_t << 8) | evx_frac (truncated),
-        # but Python computes (rounded vy = (total_vy + 128) >> 8).
-        # Cleanest: recompute total directly.
-        px_int, py_int, _, frac_vx, frac_vy = ctx
+        # br_to_view is the POSITION path (ref staging) — V16 moved the
+        # per-vertex compute to q64(rot(w)) + ref (fp_to_view mirrors
+        # THAT), so the expected value here is built from _rot_int
+        # directly: rot(w - p_int) + fracs, the unchanged old formula.
+        px_int, py_int, _, frac_vx, frac_vy = ctx[:5]
         dx = (wx - px_int) & 0xFF
         dy = (wy - py_int) & 0xFF
         # Use the Python helpers that compute integer parts.

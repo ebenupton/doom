@@ -178,8 +178,10 @@ vmiss:
    JMP (zp_vf_vec1)
 .endif
 ::vfoff:
-; plain fetch INLINE (JMP-to-JSR pull-through, 2026-07-27): the
-; rotate's RTS returns into the body; the SBC's N flag rides the JSR.
+; V16 plain fetch (2026-08-09): stage the VERTEX verbatim (the px/py
+; subtract DIED — all position terms live in vxc_ref), pure-rotate +
+; q64, then the shared widen+ref join in the island. Bit-identical to
+; the cached path by construction: both compute q64(rot(w)) + ref.
    PAGE BANK_L2                            ; vert planes live in L2
    LDY zp_seg_v_idx_l
    LDA VP_YLO+pg,Y
@@ -188,13 +190,11 @@ vmiss:
    STA zp_br_dy_h
    ZERO zp_ri_sgn
    LDA VP_XLO+pg,Y
-   SEC
-   SBC zp_br_px_h
    STA zp_ri_d_l
    LDA VP_XHI+pg,Y
-   SBC zp_br_px_x
-   STA zp_ri_d_h
-   JSR btv_dx_signed                       ; rotate; RTS returns here
+   STA zp_ri_d_h                           ; N = wx sign rides the JSR
+   JSR rot_w_signed                        ; widened q64 base in the s24
+   JMP vxq_add                             ; slots -> just add ref, rejoin
 fetch_done:
    LDX zp_seg_ep                           ; struct offset
    LDA zp_br_vx_h
@@ -277,53 +277,34 @@ ncr_far:
    JSR br_recip_hi                         ; A = idx hi, Y = idx lo
    JMP ncr_done
 ::vxcon:
-; --- VXC serve INLINE (vxc_serve_lo/hi discarded 2026-08-09): probe +
-; warm serve; cold = BIRTH. Warm exits inside VXC_WARM_ARM (PAGE L2 +
-; JMP fetch_done: the old JSR/RTS/JMP glue — 12 cyc/warm serve — dies).
-; Cold marks valid, fetches via the side's vf_plain (pages L2), then
-; snapshots the base through the ONE shared store tail — JSR'd, since
-; one tail serves both sides and fetch_done binds per side. The store
-; must run PRE-projection: px_shrink corrupts wide vx totals in place.
+; --- VXC serve, V16 (2026-08-09): the cache memoizes base16 =
+; q64(rot(w)) — a pure function of (vertex, angle epoch) — in FOUR s16
+; planes (XEXT/YEXT died; 1KB of bank C freed). Warm = 4 loads; cold =
+; birth: pure rotate + q64 (pages L2), 4-plane store (pages C). Both
+; fall into vxq_join, as does the plain vfoff path: every tier
+; computes total := (base16 << 2) + vxc_ref, so cache-on == cache-off
+; == Python bit-exactly BY CONSTRUCTION.
    LDX zp_seg_v_idx_b                      ; VXC_VALID index = B (header key)
    PAGE BANK_C
    LDA VXC_VALID,X
    AND zp_seg_v_bitm
    BEQ vs_cold
    LDY zp_seg_v_idx_l
-; warm: total = base + ref, two s24 adds (senior page baked; was
-; VXC_WARM_ARM, folded 2026-08-09)
-   CLC
-   LDA VXC_XLO+pg,Y
-   ADC vxc_ref_x+0
+   LDA VXC_XLO+pg,Y                        ; warm: base16 -> the vx/vy slots
    STA zp_br_vx_l
    LDA VXC_XHI+pg,Y
-   ADC vxc_ref_x+1
    STA zp_br_vx_h
-   LDA VXC_XEXT+pg,Y
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
-   CLC
    LDA VXC_YLO+pg,Y
-   ADC vxc_ref_y+0
    STA zp_br_vy_l
    LDA VXC_YHI+pg,Y
-   ADC vxc_ref_y+1
    STA zp_br_vy_h
-   LDA VXC_YEXT+pg,Y
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x
-   PAGE BANK_L2                            ; exit L2 = the fetch path's exit
-   JMP fetch_done                          ; state
+   JMP vxq_join
 vs_cold:
    LDA VXC_VALID,X
    ORA zp_seg_v_bitm
    STA VXC_VALID,X
-; plain fetch INLINE (vf_plain0/1 discarded 2026-08-09 — single caller
-; each, so the standalone arms in view.s die; their tail JMP
-; btv_dx_signed becomes a JSR so the birth store below runs on return).
-; Plane fetch + merged dx subtract: the last SBC leaves N for btv's
-; sign branch (STA/JSR preserve it).
-   PAGE BANK_L2                            ; vert planes live in L2
+; birth: fetch + pure rotate + q64 (the same stage as vfoff, side baked)
+   PAGE BANK_L2
    LDY zp_seg_v_idx_l
    LDA VP_YLO+pg,Y
    STA zp_br_dy_l
@@ -331,42 +312,76 @@ vs_cold:
    STA zp_br_dy_h
    ZERO zp_ri_sgn
    LDA VP_XLO+pg,Y
-   SEC
-   SBC zp_br_px_h
    STA zp_ri_d_l
    LDA VP_XHI+pg,Y
-   SBC zp_br_px_x
-   STA zp_ri_d_h
-   JSR btv_dx_signed                       ; rotate; RTS returns here
-; birth store INLINE, side baked (2026-08-09: was JSR vxc_store_tail →
-; the generic vxc_cold_store macro — its senior test, hi-half JMP and
-; the JSR/RTS all die with the side parameter; banked -4 B / flat -14 B
-; net). base' = total - ref = L(w), translation-invariant (vxcache.s);
-; the store must run PRE-projection: px_shrink corrupts wide vx totals
-; in place.
+   STA zp_ri_d_h                           ; N = wx sign rides the JSR
+   JSR rot_w_signed                        ; widened q64 base in the s24 slots
+; birth store: >>2 in place to the s16 form (exact — low 2 bits are 0),
+; store 4 planes, << 2 back, fall into the add. The shifts live ONLY
+; here: once per vertex per angle epoch.
+   JSR vxq_shr2                            ; shared: both axes >> 2
    PAGE BANK_C
    LDY zp_seg_v_idx_l
-   SEC
    LDA zp_br_vx_l
-   SBC vxc_ref_x+0
    STA VXC_XLO+pg,Y
    LDA zp_br_vx_h
-   SBC vxc_ref_x+1
    STA VXC_XHI+pg,Y
-   LDA zp_br_vx_x
-   SBC vxc_ref_x+2
-   STA VXC_XEXT+pg,Y
-   SEC
    LDA zp_br_vy_l
-   SBC vxc_ref_y+0
    STA VXC_YLO+pg,Y
    LDA zp_br_vy_h
-   SBC vxc_ref_y+1
    STA VXC_YHI+pg,Y
+   JSR vxq_shl2                            ; shared: both axes << 2 back
+   JMP vxq_add
+vxq_join:
+; warm entry: widen base16 << 2 (sign-extended into the ext slots),
+; then FALL into the shared ref add. BIT reads the hi sign sans A.
+   LDA #0
+   BIT zp_br_vx_h
+   BPL vxw_xp
+   LDA #$FF
+vxw_xp:
+   ASL zp_br_vx_l
+   ROL zp_br_vx_h
+   ROL A
+   ASL zp_br_vx_l
+   ROL zp_br_vx_h
+   ROL A
+   STA zp_br_vx_x
+   LDA #0
+   BIT zp_br_vy_h
+   BPL vxw_yp
+   LDA #$FF
+vxw_yp:
+   ASL zp_br_vy_l
+   ROL zp_br_vy_h
+   ROL A
+   ASL zp_br_vy_l
+   ROL zp_br_vy_h
+   ROL A
+   STA zp_br_vy_x
+vxq_add:
+; shared tail: totals := (widened base) + ref, all three bytes
+   CLC
+   LDA zp_br_vx_l
+   ADC vxc_ref_x+0
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+   ADC vxc_ref_x+1
+   STA zp_br_vx_h
+   LDA zp_br_vx_x
+   ADC vxc_ref_x+2
+   STA zp_br_vx_x
+   CLC
+   LDA zp_br_vy_l
+   ADC vxc_ref_y+0
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ADC vxc_ref_y+1
+   STA zp_br_vy_h
    LDA zp_br_vy_x
-   SBC vxc_ref_y+2
-   STA VXC_YEXT+pg,Y
-   PAGE BANK_L2
+   ADC vxc_ref_y+2
+   STA zp_br_vy_x
+   PAGE BANK_L2                            ; exit contract
    JMP fetch_done
 .endscope
 .endmacro
