@@ -212,16 +212,18 @@ nc_ok:
    STA zp_br_r_s
    RNS_SELECT
 ncr_done:
-   JSR br_project_x                        ; -> Y = sx lo, A = sx hi
-   LDX zp_seg_ep                           ; (recip/project clobbered X)
-   STA VX1+4,X                             ; sx_hi
-   STY VX1+3,X                             ; sx_lo (STY zp,X)
-   LDY zp_seg_v_idx_l                      ; (hoisted from the fills below)
-   STA VC_SXH+pg,Y                         ; sx_hi -> plane while it still
-                                           ; RIDES A (Eben, 2026-08-09: the
-                                           ; res_h reload died; res_l still
-                                           ; reloads — Y/X are both spoken
-                                           ; for, nothing can carry the lo)
+   JSR br_project_x                        ; -> zp_br_res_l/h = sx (the reg
+                                           ; contract died: one load feeds
+                                           ; BOTH copies below — Eben's
+                                           ; symmetric-store form)
+   LDX zp_seg_ep                           ; struct offset
+   LDY zp_seg_v_idx_l                      ; plane index
+   LDA zp_br_res_h
+   STA VX1+4,X                             ; sx_hi -> struct
+   STA VC_SXH+pg,Y                         ; sx_hi -> plane
+   LDA zp_br_res_l
+   STA VX1+3,X                             ; sx_lo -> struct
+   STA VC_SXL+pg,Y                         ; sx_lo -> plane
 ; --- armed fills, FUSED (Eben, 2026-07-27): the ok-miss part carries
 ; only what a near-clipped entry must not get (recip, sx, clip=0) and
 ; FALLS INTO the shared evy/evx tail; the near-clip prelude (rare)
@@ -234,8 +236,6 @@ ncr_done:
    LDA zp_br_r_s
    STA VX1+14,X
    STA VC_RLO+pg,Y
-   LDA zp_br_res_l                         ; sx lo: the one reload left
-   STA VC_SXL+pg,Y                         ; (hi went up with the A-ride)
    LDA #0                                  ; clip = 0 (plane + struct —
 fill_tail:
    STA VC_CLIP+pg,Y                        ; the nc prelude's mirror)

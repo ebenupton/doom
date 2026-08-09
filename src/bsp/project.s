@@ -10,7 +10,7 @@
 ;     zp_br_r_m8 = M8 (recip mantissa), zp_br_r_s = S (recip shift)
 ;
 ;   Output:
-;     zp_br_res_l/h = sx (s16 screen x); Y = sx lo, A = sx hi (REG
+;     zp_br_res_l/h = sx (s16 screen x) — ZP ONLY (the Y/A register
 ;     CONTRACT). (resext is NOT an output — no consumer, 2026-07-13.)
 ;
 ;   Python (fp_project_x):
@@ -85,10 +85,9 @@ ps_rns24:
    JSR px_narrow
    LDA zp_px_s_save                        ; restore + re-select (rlo-
    STA zp_br_r_s                           ; writer invariant); the macro
-   RNS_SELECT                              ; clobbers A/X -> re-establish
-   LDY zp_br_res_l                          ; the REG CONTRACT from the ZP
-   LDA zp_br_res_h                          ; results
-   RTS
+   RNS_SELECT                              ; clobbers A/X (fine: the REG
+   RTS                                     ; contract DIED 2026-08-09 —
+                                           ; callers read zp_br_res_l/h)
 ; --- M8 == 0 rare cell (2026-07-26, Eben: same mostly-taken BNE as the
 ; y-side; zero M8 = crossing recip / power-of-two depths only). Hoisted
 ; above the entry, still inside the scope; the head BEQs back here.
@@ -228,11 +227,12 @@ px_shift:
    LDA zp_br_res_l
    CLC
    ADC #128
-   STA zp_br_res_l
-   TAY                                     ; REG CONTRACT (2026-07-12): every
-                                        ; projection RTSes with Y = res lo,
-                                        ; A = res hi (ZP resl/resh still
-                                        ; written — regs are the fast lane)
+   STA zp_br_res_l                         ; (the REG CONTRACT died
+                                        ; 2026-08-09, Eben: both sx
+                                        ; consumers store struct+plane
+                                        ; symmetrically from ZP — the
+                                        ; TAY and the rns24 arm's reload
+                                        ; pair went with it)
    LDA zp_br_res_h
    ADC #0
    STA zp_br_res_h
