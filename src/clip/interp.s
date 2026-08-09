@@ -1,8 +1,8 @@
 ; ============================================================================
 ; clip/interp.s — clipper fragment 4 of 10 (module map: clip/header.s).
 ; Contents: interp_store — u8 round-to-nearest line
-; interpolation — and its umul_round_div helper. Builds on umul8
-; (clip/arith.s, pinned $2030) and udiv16_8 (clip/pool.s).
+; interpolation — and its umul_round_div helper (umul8 inlined there
+; 2026-08-09; the div still tail-calls udiv16_8 in clip/arith.s).
 ; ============================================================================
 
 ; (pad removed after udiv16_8)
@@ -91,7 +91,8 @@ is_y1:
 .endscope
 
 ; ======================================================================
-; UMUL_ROUND_DIV: shared helper — umul8 + round bias + udiv16_8 tail-call.
+; UMUL_ROUND_DIV: shared helper — inlined umul8 + round bias + udiv16_8
+; tail-call.
 ;
 ; Computes  quot = (|dy| * offset + den//2) / den  entirely unsigned.
 ; The caller's direction split (ascending/descending above) turns this
@@ -99,7 +100,7 @@ is_y1:
 ;
 ; Input:  A = |dy| (u8), zp_mul_b = offset (u8), zp_div_den = den (u8)
 ; Output: A = quotient (u8). Product always positive.
-;         Clobbers X and zp_prod_l/hi (= zp_div_l/hi).
+;         Clobbers X, Y and zp_prod_l/hi (= zp_div_l/hi).
 ; pseudocode:
 ;   prod = |dy| * offset          # umul8 -> zp_prod (u16)
 ;   prod += den >> 1              # round-to-nearest bias
@@ -108,7 +109,32 @@ is_y1:
 ; ======================================================================
 umul_round_div:
 .scope
-   JSR umul8
+; umul8 INLINED (2026-08-09 — this one site carries HALF of all umul8
+; traffic, 35 calls/frame; the JSR/RTS was 417 cyc/frame). Identical
+; quarter-square math on the same SQR_* tables (abi.inc — main RAM,
+; reachable from bank C). Each sum arm carries its own rounding tail so
+; the common sum<256 arm keeps umul8's zero-overhead fall-through; the
+; rare round-carry bump is shared (ip_rn_c).
+   TAX                                     ; stash |dy| in X
+   SEC
+   SBC zp_mul_b
+   BCS ip_pos
+   EOR #$FF
+   ADC #1                                  ; |dy - offset| (C=0 from SBC)
+ip_pos:
+   TAY                                     ; Y = |diff|
+   TXA
+   CLC
+   ADC zp_mul_b
+   TAX                                     ; X = sum & $FF
+   BCS ip_uo                               ; sum >= 256: sqr2 tables
+   LDA SQR_LO,X
+   SEC
+   SBC SQR_LO,Y
+   STA zp_prod_l
+   LDA SQR_HI,X
+   SBC SQR_HI,Y
+   STA zp_prod_h
 ; 16-bit add of den//2 into the product (prod aliases the div dividend)
    LDA zp_div_den
    LSR A
@@ -116,8 +142,21 @@ umul_round_div:
    ADC zp_prod_l
    STA zp_prod_l
    BCS ip_rn_c                             ; round-carry rare (3.6% —
-ip_rn_nc:                                  ; census 2026-07-27; the old
-   JMP udiv16_8                            ; comment's ~50% was wrong)
+   JMP udiv16_8                            ; census 2026-07-27)
+ip_uo:
+   LDA SQR2_LO,X                           ; (carry already set from BCS)
+   SBC SQR_LO,Y
+   STA zp_prod_l
+   LDA SQR2_HI,X
+   SBC SQR_HI,Y
+   STA zp_prod_h
+   LDA zp_div_den                          ; per-arm rounding tail (keeps
+   LSR A                                   ; the hot arm fall-through)
+   CLC
+   ADC zp_prod_l
+   STA zp_prod_l
+   BCS ip_rn_c
+   JMP udiv16_8
 ip_rn_c:
    INC zp_prod_h
    JMP udiv16_8                            ; tail-call
