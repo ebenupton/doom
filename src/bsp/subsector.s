@@ -491,8 +491,9 @@ hg_pass:
    PAGE BANK_L0
    LDY #13
    LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
-   SEC
-   SBC zp_br_vz
+   SBC zp_br_vz                             ; no SEC: hg_pass is entered only
+                                            ; by falling past BCC hg_adv (C=1)
+                                            ; and nothing above touches carry
    STA zp_seg_btop_dlt
    DEY
    LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
