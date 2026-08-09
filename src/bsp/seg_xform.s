@@ -51,34 +51,9 @@
 ; parameter — the pairs cannot drift (the hi hit-clip arm already had:
 ; it carried a private PAGE/RTS where the lo shared its exit branch).
 ; ============================================================================
-.macro VC_HIT_ARM pg
-.local ok, pgx
-   LDY zp_seg_v_idx_l
-   LDA VC_EVY+pg,Y
-   STA VX1+0,X
-   LDA VC_EVX+pg,Y
-   STA VX1+1,X
-   LDA VC_CLIP+pg,Y                        ; cached near-clip verdict —
-   STA VX1+2,X                             ; served UNCONDITIONALLY (the
-   BNE pgx                                 ; head's ZERO died 2026-07-27);
-                                           ; clipped: skip the dead serves
-ok:
-; (hit arm de-larded 2026-07-25: no working-recip stores, no select —
-; every projector downstream restages from the STRUCT copies)
-   LDA VC_SXL+pg,Y
-   STA VX1+3,X                             ; sx_lo
-   LDA VC_SXH+pg,Y
-   STA VX1+4,X                             ; sx_hi
-   LDA VC_RHI+pg,Y
-   STA VX1+13,X                            ; rhi (apv_stage / the y-stage
-                                           ; read the endpoint's own recip
-                                           ; from +13/14)
-   LDA VC_RLO+pg,Y
-   STA VX1+14,X                            ; rlo (= S)
-pgx:
-   PAGE BANK_L2                            ; exit contract (see head)
-   RTS
-.endmacro
+; (VC_HIT_ARM macro ABSORBED into SXV_BODY 2026-08-09 — its single
+; expansion point; the one-source-two-expansions anti-drift property
+; is carried by SXV_BODY itself, like the fills before it.)
 
 ; (VC_FILL_ARM macro ABSORBED into SXV_BODY 2026-07-27 — the fills
 ; fused around one shared evy/evx tail per side.)
@@ -95,10 +70,44 @@ pgx:
 ; ============================================================================
 .macro SXV_BODY pg, vfoff, vxcon
 .scope
+; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
+; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
+; unconditionally, the miss arm stores the probe's own zero — see vmiss)
+   LDY zp_seg_v_idx_b                      ; Y rides to the probe/set-bit
+   LDA zp_seg_v_idx_l
+   AND #7
+   TAX
+   LDA vc_bit_mask,X                       ; bit mask = 1 << (idx_lo & 7)
+   STA zp_seg_v_bitm
+   LDX zp_seg_ep                           ; X = struct offset from here on
    LDA VCACHE_VALID_BASE,Y
    AND zp_seg_v_bitm
    BEQ vmiss
-   VC_HIT_ARM pg
+; --- vcache hit serve (was VC_HIT_ARM, absorbed 2026-08-09) ---
+   LDY zp_seg_v_idx_l
+   LDA VC_EVY+pg,Y
+   STA VX1+0,X
+   LDA VC_EVX+pg,Y
+   STA VX1+1,X
+   LDA VC_CLIP+pg,Y                        ; cached near-clip verdict —
+   STA VX1+2,X                             ; served UNCONDITIONALLY (the
+   BNE vh_pgx                              ; head's ZERO died 2026-07-27);
+                                           ; clipped: skip the dead serves
+; (hit arm de-larded 2026-07-25: no working-recip stores, no select —
+; every projector downstream restages from the STRUCT copies)
+   LDA VC_SXL+pg,Y
+   STA VX1+3,X                             ; sx_lo
+   LDA VC_SXH+pg,Y
+   STA VX1+4,X                             ; sx_hi
+   LDA VC_RHI+pg,Y
+   STA VX1+13,X                            ; rhi (apv_stage / the y-stage
+                                           ; read the endpoint's own recip
+                                           ; from +13/14)
+   LDA VC_RLO+pg,Y
+   STA VX1+14,X                            ; rlo (= S)
+vh_pgx:
+   PAGE BANK_L2                            ; exit contract (see head)
+   RTS
 ; rare islands (side-local; the hit arm above exits, nothing falls in)
 ec_clamp:
    LDA #$7F                                ; 128..255 → clamp
@@ -232,30 +241,17 @@ ncr_far:
 .endscope
 .endmacro
 
-.macro SXV_HEAD
-   LDY zp_seg_v_idx_b                      ; Y rides to the probe/set-bit
-   LDA zp_seg_v_idx_l
-   AND #7
-   TAX
-   LDA vc_bit_mask,X                       ; bit mask = 1 << (idx_lo & 7)
-   STA zp_seg_v_bitm
-   LDX zp_seg_ep                           ; X = struct offset from here on
-.endmacro                                  ; (clip zeroing moved OUT of the
-                                           ; head 2026-07-27, Eben: the hit
-                                           ; arm serves it unconditionally,
-                                           ; the miss arm stores the probe's
-                                           ; own zero — see vmiss)
+; (SXV_HEAD folded into SXV_BODY 2026-08-09 — it was expanded exactly
+; once before each body and nothing could enter between them.)
 
 ; CALLER-SIDE DISPATCH (Eben, 2026-07-27 round 2): the side test lives
 ; at the CALL SITES (subsector stages idx_b with the byte in A — the
 ; test piggybacks); these are two complete side-baked routines with NO
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
-   SXV_HEAD                                ; tried 2026-07-27: the ~370 pad
-   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon      ; bytes overflow BOTH regions —
-::sx_vert_hi:                              ; unaligned round-2 form kept)
-   SXV_HEAD
-   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon
+   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon      ; tried 2026-07-27: the ~370 pad
+::sx_vert_hi:                              ; bytes overflow BOTH regions —
+   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon   ; unaligned round-2 form kept)
 
 ; --- shared cold store tail (both serve sides JMP here post-fetch) ---
 vxc_store_tail:
