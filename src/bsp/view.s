@@ -183,79 +183,9 @@ br_view_setup:
    RTS
 .endscope
 
-; ============================================================================
-; br_to_view — world (wx, wy) → view (vx_88, vy_88).
-;
-;   Inputs (zp):
-;     zp_br_dx_l/dxhi = wx (s16 RAW prescaled vertex world X — the s16
-;                       player-relative subtract happens HERE)
-;     zp_br_dy_l/dyhi = wy (s16)
-;     ... and view-context state in zp_br_* (br_view_setup ran).
-;
-;   To match Python's call site exactly: the caller writes RAW wx/wy and
-;   this routine subtracts px_int/py_int (s16, zp_br_px_h/px_e etc).
-;
-;   Outputs (zp):
-;     zp_br_vx_l/vxhi/vxext = total_vx (s24: 8.8 + sign/overflow ext)
-;     zp_br_vy_l/vyhi/vyext = total_vy (s24)
-;
-;   Python:
-;     dx_hi = wx - px_int
-;     dy_hi = wy - py_int
-;     int_vx = rot_int(dx_hi, sin) - rot_int(dy_hi, cos)
-;     int_vy = rot_int(dx_hi, cos) + rot_int(dy_hi, sin)
-;     total_vx = int_vx + frac_vx
-;     total_vy = int_vy + frac_vy
-;
-;   px_int = high byte of zp_br_px. The wrapper precomputes this and
-;   stores it at zp_br_px_h (we use the HI byte of the s16 player pos).
-;
-;   Accumulators are s24 (lo/hi/ext) — the intermediate rot_int terms are
-;   8.8 with an s16 integer delta, so single terms can exceed s16; the
-;   final sums are consumed as 8.8 (hi byte = integer view coord).
-;   Mirrors fp_to_view (fp.py) up to the total_vx/total_vy sums; the
-;   >>8 truncation/rounding happens in the caller (br_seg_xform_vertex).
-;   Clobbers: A, Y, zp_ri_d_l/dhi, mul workspace, zp_br_res*.
-; ============================================================================
-; br_to_view_fetch — vertex-fetch entry (2026-07-11): pages L2, builds the
-; ROM_VERTS pointer from zp_seg_v_idx and loads wx/wy into zp_br_dx/dy,
-; then falls into br_to_view. Pushed down from seg_xform's vc_miss: the
-; VXC warm path never reads the world coords, so the fetch (and its PAGE)
-; now costs only the paths that actually rotate. Callers with dx/dy
-; already staged (jt harness, vxc_frame's ref probe) enter at br_to_view.
-; vertex_fetch — THE vertex-transform entry (2026-07-18, SMC-free): one
-; 5-cycle gate on zp_vxc_on replaces vxc_frame's patching of the old
-; vxc_jsr_site. Off (the flat suite / rotation frames): falls straight
-; into the fetch below. On: the translation-coherent cache tier
-; (vxc_arm, seg_xform.s) — canonical probe/serve/compute+store.
-.macro VF_FETCH_ARM pg
-; plane fetch + merged dx subtract (2026-07-19): the last SBC leaves N
-; for the sign branch (STA/JMP preserve it)
-   LDY zp_seg_v_idx_l
-   LDA VP_YLO+pg,Y
-   STA zp_br_dy_l
-   LDA VP_YHI+pg,Y
-   STA zp_br_dy_h
-   ZERO zp_ri_sgn
-   LDA VP_XLO+pg,Y
-   SEC
-   SBC zp_br_px_h
-   STA zp_ri_d_l
-   LDA VP_XHI+pg,Y
-   SBC zp_br_px_x
-   STA zp_ri_d_h
-   JMP btv_dx_signed
-.endmacro
-
-; (vertex_fetch_0/_1 gate entries DIED 2026-07-27: the plain fetch is
-; INLINED in SXV_BODY, JSR-ing btv_dx_signed. These standalone arms
-; remain for vxc_arm_lo/hi's COLD path only — JMP-form tail-call.)
-::vf_plain0:
-   PAGE BANK_L2                            ; vert planes live in the L2 window
-   VF_FETCH_ARM 0
-::vf_plain1:
-   PAGE BANK_L2
-   VF_FETCH_ARM $100
+; (VF_FETCH_ARM + the vf_plain0/1 standalone arms RETIRED 2026-08-09 —
+;  the plain fetch lives inline in seg_xform.s SXV_BODY, both at the
+;  vfoff vector target and in the vxcon cold arms; single callers all.)
 
 
 ; (br_to_view_fetch fully retired 2026-07-27 round 2: the vxc cold

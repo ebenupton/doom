@@ -318,11 +318,26 @@ vs_cold:
    LDA VXC_VALID,X
    ORA zp_seg_v_bitm
    STA VXC_VALID,X
-.if pg = 0
-   JSR vf_plain0                           ; pages L2; fetch+rotate
-.else
-   JSR vf_plain1
-.endif
+; plain fetch INLINE (vf_plain0/1 discarded 2026-08-09 — single caller
+; each, so the standalone arms in view.s die; their tail JMP
+; btv_dx_signed becomes a JSR so the birth store below runs on return).
+; Plane fetch + merged dx subtract: the last SBC leaves N for btv's
+; sign branch (STA/JSR preserve it).
+   PAGE BANK_L2                            ; vert planes live in L2
+   LDY zp_seg_v_idx_l
+   LDA VP_YLO+pg,Y
+   STA zp_br_dy_l
+   LDA VP_YHI+pg,Y
+   STA zp_br_dy_h
+   ZERO zp_ri_sgn
+   LDA VP_XLO+pg,Y
+   SEC
+   SBC zp_br_px_h
+   STA zp_ri_d_l
+   LDA VP_XHI+pg,Y
+   SBC zp_br_px_x
+   STA zp_ri_d_h
+   JSR btv_dx_signed                       ; rotate; RTS returns here
 ; birth store INLINE, side baked (2026-08-09: was JSR vxc_store_tail →
 ; the generic vxc_cold_store macro — its senior test, hi-half JMP and
 ; the JSR/RTS all die with the side parameter; banked -4 B / flat -14 B
