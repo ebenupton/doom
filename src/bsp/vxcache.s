@@ -55,28 +55,19 @@ vxc_prev_ab = $05DC
                                         ;  free)
 
 ; --- plane bases (467 bytes each; page-aligned so hi-page access is +$100) ---
-.if ::BANKED
-; V16 (2026-08-09): base16 = q64(rot(w)) s16 — XEXT/YEXT DIED with the
-; 1/64-unit format (range-proved s16); planes repacked contiguous:
-; $9F00-$A2FF (1KB) FREED before the HUD window.
-VXC_XLO  = $9700                        ; bank C
-VXC_XHI  = $9900
-VXC_YLO  = $9B00
-VXC_YHI  = $9D00
-.else
-; (flat planes relocated 2026-07-12: $4000-$47D3 vacated for the one
-; flat CODE region; each plane needs pages k,k+1 for the +$100 split.
-; Verified-free pairs: $98/$99 $9A/$9B (above the header tail $9740),
-; $1C-$1F (the freed LO island's tail; flat sqr lives at $A500),
-; $B2-$B5 (below the node SoA at $B600). Page $09 holds live DEFQ vars
-; at $09FB and $A900-$B1EE is the NJ rasteriser — both are traps that
-; caught the first placement attempt.)
-VXC_XLO  = $7500
-VXC_XHI  = $7700
-VXC_YLO  = $7900
-VXC_YHI  = $7B00
-.endif                                  ; (V16: XEXT/YEXT died; flat
-                                        ;  $7D00-$80FF freed)
+; MAIN RAM since 2026-08-09 (Eben: all cache planes out of bank C) —
+; UNFORKED, one address both builds (bottom-22K identity). The homes
+; are the below-line frees: $0200-$03FF (ex-SQRH), $0600-$07FF ($0600
+; ex-flat-RC_P1L_0 + $0700 vacated by TOP_RECORDS -> $0B00), and the
+; EV16 pages $1600-$19FF. This spends the LAST free below-line pages.
+; Payoff: the vxcon serve and cr_recover lose ALL bank-C paging
+; (VXC_VALID was already main), banked frees $9700-$9EFF -> with the
+; clipper tail gap a ~2.7KB contiguous bank-C block; flat frees
+; $7500-$7CFF.
+VXC_XLO  = $0200
+VXC_XHI  = $0600
+VXC_YLO  = $1600
+VXC_YHI  = $1800
 
 ; the frame angle byte: abi.inc's BCA_AB (the old private vxc_ab copy
 ; shipped the 2026-07-10 broken-turn disc)

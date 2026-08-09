@@ -31,13 +31,13 @@ def rows():
     # (name, base, used_in_last_page, page_span_bytes, home)
     out = []
     # --- per-vertex 512-entry planes: hi page holds NHI of 256 ---
-    for n in ('VC_EVY', 'VC_EVX', 'VC_RHI', 'VC_RLO', 'VC_SXL', 'VC_SXH', 'VC_CLIP'):
+    for n in ('VC_RHI', 'VC_RLO', 'VC_SXL', 'VC_SXH', 'VC_CLIP'):
         out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'main runtime'))
     for n in ('VP_XLO', 'VP_XHI', 'VP_YLO', 'VP_YHI'):
         out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'L2/flat ROM'))
     try:
-        for n in ('VXC_XLO', 'VXC_XHI', 'VXC_XEXT', 'VXC_YLO', 'VXC_YHI', 'VXC_YEXT'):
-            out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'bank C runtime'))
+        for n in ('VXC_XLO', 'VXC_XHI', 'VXC_YLO', 'VXC_YHI'):
+            out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'main runtime'))
     except KeyError:
         pass
     # --- VDESC planes (bank C staging + flat TABLES) ---

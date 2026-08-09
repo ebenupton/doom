@@ -335,8 +335,10 @@ VIS_YMAX = Y_BIAS + 159                 ; = 207: maximum biased visible Y
 ; buffer is still the record COUNT; records start at offset 1.
 ; REC_BYTES/REC_VERDICT_* below are unreferenced (kept: equates emit no
 ; bytes and record the old scheme).
-TOP_RECORDS = $0700
-BOT_RECORDS = $0800
+; (TOP_RECORDS/BOT_RECORDS moved to zp.inc 2026-08-09 — the arm sites
+; in bsp/seg_emit.s used to HARDCODE #$07/$0700 because the equates
+; were clip-unit-local; the silent-collision that bit the VXC-planes
+; move. One registry now.)
 REC_BYTES = 6                           ; bytes per record
 REC_VERDICT_ABOVE = 0
 REC_VERDICT_INSIDE = 1
