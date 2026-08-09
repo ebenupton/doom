@@ -4,8 +4,8 @@
 ;
 ; CONTEXT: sole caller is the seg loop (subsector.s), which stages
 ; zp_seg_flags and JMPs here (no JSR). TAIL-DISPATCHED exits:
-;   front  -> JMP ::bf_seg_front (subsector.s, the seg pipeline resumes)
-;   back   -> JMP ::s_advance    (subsector.s, next seg — one hop; the
+;   front  -> JMP ::bf_seg_front (seg_emit.s, the seg pipeline resumes)
+;   back   -> JMP ::s_advance_l0 (seg_emit.s, next seg — one hop; the
 ;                                 old bf_seg_back trampoline died 2026-07-12)
 ; There is NO flag/return contract: control flow IS the verdict.
 ;

@@ -125,12 +125,17 @@ out = ['digraph engine {',
  '  edge [color="#666666", arrowsize=0.6];',
  f'  label="6502 DOOM engine call graph - {today}\\nsolid = JSR (aliases resolved) - bold dashed = tail JMP - red dashed = vector/SMC dispatch - bold border = hot path";',
  '  labelloc=top; fontsize=12;']
-# --- L-R FLOW RULE (Eben 2026-07-25): maximise left-to-right call
-# edges. One box per file forces back-edges whenever a file holds both
-# early- and late-stage routines, so clusters BREAK: nodes group by
-# (file, call-depth band) — "subsector.s (2)" etc. Depth = BFS from the
-# roots over the call edges (vector edges included so dispatch targets
-# rank right of their dispatchers).
+# --- L-R FLOW RULE (Eben 2026-07-25; PURE since 2026-08-09): the
+# SOURCE now enforces it — the file-level call graph is a DAG (the
+# subsector<->backface cycle died with the bsp/seg_emit.s split; the
+# dcl<->dcl_s16 cycle died when s16_interp moved to clip/arith.s), and
+# the drawn routine graph is acyclic too (checked at generation below).
+# So clusters are back to ONE PER FILE (BAND high = no banding) and
+# every edge flows left to right structurally, not by banding luck.
+# If a future change reintroduces a cycle, this script FAILS — restore
+# acyclicity in the source rather than re-enabling the bands.
+# Depth = longest path from the roots over the call edges (vector edges
+# included so dispatch targets rank right of their dispatchers).
 _adj = {}
 for a, b, k in edges:
     _adj.setdefault(a, set()).add(b)
@@ -150,9 +155,38 @@ for _pass in range(24):
                 changed = True
     if not changed:
         break
-BAND = 1                              # one depth per band: maximal L-R
-                                      # (BAND=2 measured: nothing split —
-                                      # BFS depths compress to ~4 levels)
+BAND = 99                             # no banding: the file graph is a
+                                      # DAG (2026-08-09 source reorg) —
+                                      # one cluster per file is pure L-R
+# acyclicity gate: the invariant is the FILE-level DAG (a file cycle is
+# what forces a backward edge between cluster boxes). Lift the routine
+# edges to (owner file -> owner file) and DFS for a cycle; fail loudly
+# and point at the offending routine pairs.
+_fadj = {}
+for _a, _bs in _adj.items():
+    _fa = owner.get(_a)
+    for _b in _bs:
+        _fb = owner.get(_b)
+        if _fa and _fb and _fa != _fb:
+            _fadj.setdefault(_fa, {}).setdefault(_fb, []).append((_a, _b))
+_done = set()
+def _cyc(v, path):
+    path.append(v)
+    for w in _fadj.get(v, ()):
+        if w in path:
+            loop = path[path.index(w):] + [w]
+            why = '; '.join(f'{a}->{b}' for x, y in zip(loop, loop[1:])
+                            for a, b in _fadj[x][y][:2])
+            raise SystemExit(f'FILE CYCLE reintroduced: {" -> ".join(loop)}\n'
+                             f'  via: {why}\n'
+                             'Move the offending routine (see the 2026-08-09 splits) — '
+                             'do not re-enable banding.')
+        if w not in _done:
+            _cyc(w, path)
+    path.pop(); _done.add(v)
+for _f in sorted(_fadj):
+    if _f not in _done:
+        _cyc(_f, [])
 bykey = {}
 for n in sorted(nodes):
     f = owner.get(n)
