@@ -15,7 +15,8 @@ bsp_b_start:
 ; (entry split 2026-07-12, spectrack find: 88% of calls were complete
 ; no-ops — the hi==0/evy-positive common case is INLINED at the single
 ; call site in seg_xform.s; only hi != 0 calls in here now, A = hi.)
-; (ev_clamp_hi_nz is a MACRO now — bsp/inline.s — expanded at its single
+; (ev_clamp_hi_nz was inlined at its single site 2026-08-09 — the
+; ec_hi_nz island in seg_xform.s SXV_BODY; it was previously a macro
 ;  call site, 2026-07-17.)
 
 ; (X-projector family moved to project.s 2026-07-12 — the whole X

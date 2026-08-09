@@ -116,7 +116,30 @@ ec_clamp:
    STA VX1+0,X
    BNE ec_done                             ; (A = $7F: always taken)
 ec_hi_nz:
-   ev_clamp_hi_nz
+; s8 saturate for out-of-range evy (was the ev_clamp_hi_nz macro —
+; inlined 2026-08-09, single use). A = rounded evy16 hi byte, != 0.
+; $FF-hi values may still fit s8: $FF:%1xxxxxxx = -128..-1 and the
+; stored low byte already IS the s8 value.
+   CMP #$FF
+   BEQ ev_case_ff
+   ASL A
+   BCS ev_clamp_neg
+; carry = sign of hi byte
+   LDA #$7F
+   BNE ev_store
+ev_clamp_neg:
+   LDA #$80
+   BNE ev_store
+ev_case_ff:
+   LDA VX1+0,X
+   BMI ev_done
+; $FF:%1xxxxxxx → fits s8
+   LDA #$80
+   BNE ev_store
+; -256..-129 → clamp
+ev_store:
+   STA VX1+0,X
+ev_done:
    JMP ec_done
 ; (vxcon island moved to the BODY END 2026-08-09: the inlined serve
 ;  outgrew the ec_clamp/ec_hi_nz branch spans here — it is vector-

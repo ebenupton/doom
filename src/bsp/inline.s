@@ -399,31 +399,8 @@ inl_end:
 ; site, no reason for the macro indirection.)
 
 
-.macro ev_clamp_hi_nz
-.scope
-   CMP #$FF
-   BEQ ev_case_ff
-   ASL A
-   BCS ev_clamp_neg
-; carry = sign of hi byte
-   LDA #$7F
-   BNE ev_store
-ev_clamp_neg:
-   LDA #$80
-   BNE ev_store
-ev_case_ff:
-   LDA VX1+0,X
-   BMI ev_done
-; $FF:%1xxxxxxx → fits s8
-   LDA #$80
-   BNE ev_store
-; -256..-129 → clamp
-ev_store:
-   STA VX1+0,X
-ev_done:
-inl_end:
-.endscope
-.endmacro
+; (ev_clamp_hi_nz macro RETIRED 2026-08-09 — inlined at its single use,
+;  the ec_hi_nz island in seg_xform.s SXV_BODY.)
 
 ; (vxc_cold_store macro RETIRED 2026-08-09 — the birth store is inlined
 ;  per side in the seg_xform.s vxcon islands, side baked; the generic
