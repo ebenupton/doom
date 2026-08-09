@@ -26,12 +26,16 @@ RC_P2L_1 = $AA00                        ; VWHC $AE00-$B2FF — every cache
 RC_PH_0  = $AB00                        ; beside its neighbours, free tail
 RC_PH_1  = $AC00                        ; $B500-$BFFF contiguous
 .else
-RC_P1L_0 = $8000                        ; flat psi planes RELOCATED 2026-08-09:
-RC_P1L_1 = $2900                        ; the bottom-22K map is IDENTICAL to
-RC_P2L_0 = $8100                        ; banked ($0600/$0B00 squats = the
-RC_P2L_1 = $E800                        ; page-6 trap). P1L_1 lives in the ONE
-RC_PH_0  = $E900                        ; documented exception region
-RC_PH_1  = $7300                        ; ($2000-$29FF: flat raster + this) —
+RC_P1L_0 = $7400                        ; flat psi planes: NODE-indexed
+RC_P1L_1 = $E402                        ; (Y = node id <= 219 -> 220 B
+RC_P2L_0 = $8100                        ; each; _0/_1 = SIDE arms, not
+RC_P2L_1 = $E800                        ; senior halves). P1L_1 lives in
+RC_PH_0  = $E900                        ; the $E402-$E4F7 fragment
+RC_PH_1  = $7300                        ; ($E402+219 = $E4DB — same page,
+                                        ; clear of zp_ft $E4F8). The
+                                        ; $2000-$29FF exception DIED:
+                                        ; P1L_1 left $2900, the flat
+                                        ; raster left $2000 (-> $7500) —
                                         ; $6B00-$6FFF (1,280 B) is FREE
                                         ; contiguous (flat-vplot candidate;
                                         ; planes are independent abs,Y —
@@ -39,7 +43,11 @@ RC_PH_1  = $7300                        ; ($2000-$29FF: flat raster + this) —
 .endif
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:
-RCACHE_COMPUTED = RCACHE_STATE          ; 59 bytes (bit per k>>3 group)
+RCACHE_COMPUTED = $07C0                 ; 59 bytes (bit per k>>3 group) —
+                                        ; on THE bitmap page (main, any
+                                        ; bank) since 2026-08-09; the
+                                        ; rest of RCACHE_STATE stays
+                                        ; per-build (flat $7400/L2 $AD00)
 ; RCACHE_STATE+$40..+$7A FREE (RCACHE_FULL died 2026-07-20 — inside
 ;  boxes just recompute; 59 bytes reclaimed)
 bca_cach_ab = RCACHE_STATE + $80        ; last frame's angle byte (the D

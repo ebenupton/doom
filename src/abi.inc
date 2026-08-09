@@ -32,24 +32,24 @@ DRV_TAB = $2200                         ; sincos table overlay: 64 x 8 bytes
 DRV_CLR = $2400                         ; unrolled clears + input block
 D_ENABLE = $05FE                        ; forward-coherence bbox cache master switch
 D_FWD = $05FF                           ; per-frame flag: move was forward-only
-VXC_STATE = $05A0                       ; VXC valid bitmap + state block
-VXC_STATE_LEN = $0060                   ; bytes to zero at boot
+VXC_STATE = $0700                       ; THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
+VXC_STATE_LEN = $0100                   ; bytes to zero at boot (the whole bitmap page)
 VXC_ENABLE = $05DB                      ; translation vertex cache switch
 .if ::BANKED
 RCACHE_STATE = $AD00       ; rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 .else
-RCACHE_STATE = $7400
+RCACHE_STATE = $7268
 .endif
 RCACHE_STATE_LEN = $0089                ; bytes to zero at boot
 .if ::BANKED
 RCACHE_ENABLE = $AD88      ; rotation-coherence bca cache switch (STATE+$88)
 .else
-RCACHE_ENABLE = $7488
+RCACHE_ENABLE = $72F0
 .endif
 .if ::BANKED
 CPM_BASE = $A400           ; corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
 .else
-CPM_BASE = $7D00
+CPM_BASE = $7E00
 .endif
 CPM_KDXL = CPM_BASE+$000                ; memo key: corner dx lo
 CPM_KDXH = CPM_BASE+$080                ; ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane

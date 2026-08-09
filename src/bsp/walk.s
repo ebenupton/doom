@@ -61,8 +61,9 @@ br_render_frame:
    STA zp_dcl_rec_buf                   ; — NOT a C02/STZ candidate
    STA zp_dcl_rec_buf_h
 ; VCACHE_VALID + VDONE wipe, COMBINED (2026-07-26, Eben): the two
-; bitmaps are adjacent 60-byte blocks at $1B00 (see bsp/header.s), so
-; the wipe is one 120-byte run of 24 uniform 5-byte stripes off one X.
+; bitmaps are adjacent 60-byte blocks heading THE BITMAP PAGE ($0700 —
+; see bsp/header.s), so the wipe is one 120-byte run of 24 uniform
+; 5-byte stripes off one X.
 ; VDONE now clears ALL 59 live bytes (467 ids) — the old partial wipe's
 ; ids<384 assert-dependence is gone.
    LDX #4
@@ -462,13 +463,13 @@ rc_ret1:
 ; --- Per-seg working state ---
 ; Per-vertex helper outputs (set by br_seg_xform_vertex)
 ; Back-sector heights (s8 each) — only meaningful for portal segs.
-zp_seg_btop_dlt = $0A7A                 ; bch - vz
-zp_seg_bbot_dlt = $0A7B                 ; bfh - vz
+zp_seg_btop_dlt = $067A                 ; bch - vz
+zp_seg_bbot_dlt = $067B                 ; bfh - vz
 ; Output of bv_proj_one's back-step projection (transient).
-zp_seg_sy_btop_lo = $0A7C
-zp_seg_sy_btop_hi = $0A7D
-zp_seg_sy_bbot_lo = $0A7E
-zp_seg_sy_bbot_hi = $0A7F
+zp_seg_sy_btop_lo = $067C
+zp_seg_sy_btop_hi = $067D
+zp_seg_sy_bbot_lo = $067E
+zp_seg_sy_bbot_hi = $067F
 ; Per-seg saved vertex projections live in RAM (ZP $70+ is rasteriser
 ; territory: RASTER_ZP_SCRSTRT=$70, RASTER_ZP_X0..Y1=$82-$85). Use the
 ; gap left of the B-region code at $0AA0 ($0A00-$0A9F all free now).

@@ -64,11 +64,10 @@
 ; SXV_BODY — one full SIDE (senior page BAKED) of the vertex transform:
 ; probe -> hit serve | miss: fetch/rotate -> evy clamp -> near-clip ->
 ; recip -> project -> armed fill. Exits: VC_HIT_ARM / VC_FILL_ARM /
-; NC_FILL_ARM, all RTS-terminated. BANKING (2026-08-09): the hit arm
-; is bank-preserving (its exit PAGE died with the planes-to-main move);
-; miss arms exit BANK_L2 as a side effect of their VP/recip paging.
-; Callers tolerate either (ch_v1_done pages L0; s_advance pages L0;
-; everything else pages explicitly).
+; NC_FILL_ARM, all RTS-terminated, ALL exiting BANK_L2 (the exit-L2
+; contract is LOAD-BEARING — two independent bisects (hit-arm PAGE,
+; the crossing's post-div restore) each break banked when removed,
+; consumer unidentified; see vh_pgx).
 ; ============================================================================
 .macro SXV_BODY pg, vfoff, vxcon
 .scope
@@ -105,17 +104,17 @@
    LDA VC_RLO+pg,Y
    STA VX1+12,X                            ; rlo (= S)
 vh_pgx:
-   PAGE BANK_L2                            ; BISECT: flip reverted
-   RTS                                     ; BANK-PRESERVING (2026-08-09:
-                                           ; the exit-L2 contract DIED —
-                                           ; the hit arm is pure main/zp,
-                                           ; and no post-transform consumer
-                                           ; assumes L2: has_gap + records
-                                           ; are main, the y-stage/emit
-                                           ; page explicitly, reproject
-                                           ; self-pages. Hits exit in the
-                                           ; caller's bank; miss arms still
-                                           ; exit L2 from their own PAGE.)
+   PAGE BANK_L2                            ; exit-L2 contract — LOAD-
+   RTS                                     ; BEARING (2026-08-09: removal
+                                           ; breaks banked at 2/7 bankedcmp
+                                           ; positions even with reproject
+                                           ; self-paged and the post-div
+                                           ; restore in place; the consumer
+                                           ; is NOT identified — has_gap +
+                                           ; records are main and the
+                                           ; y-stage/emits page explicitly.
+                                           ; Do NOT remove without root-
+                                           ; causing; bankedcmp catches.)
 ; (vxcon island lives at the BODY END — vector-entered and JMP-exited,
 ;  so placement is free)
 vmiss:

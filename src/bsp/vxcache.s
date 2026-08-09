@@ -41,7 +41,7 @@
 ; select = B & $20 (B = idx>>3, header key byte B; B >= 32 <=> idx >= 256).
 ; ============================================================================
 ; --- data equates (unbanked) ---
-VXC_VALID   = $05A0                     ; 59 bytes (467 vertices)
+VXC_VALID   = $0780                     ; 59 bytes — on THE bitmap page
 ; (VXC_ENABLE comes from abi.inc)
 vxc_prev_ab = $05DC
 ; (vxc_ref_x/y promoted to ZP 2026-07-14 — defined in zp.inc so the
@@ -64,8 +64,8 @@ vxc_prev_ab = $05DC
 ; (VXC_VALID was already main), banked frees $9700-$9EFF -> with the
 ; clipper tail gap a ~2.7KB contiguous bank-C block; flat frees
 ; $7500-$7CFF.
-VXC_XLO  = $0200
-VXC_XHI  = $0600
+VXC_XLO  = $1200
+VXC_XHI  = $1400
 VXC_YLO  = $1600
 VXC_YHI  = $1800
 

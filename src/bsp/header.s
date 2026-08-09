@@ -420,15 +420,23 @@ VEXPL_CONT = $DF00
 ; pack-time assert). The senior bit is header key byte B & $20 — the
 ; reader dispatches to an arm with the page BAKED, so there is no
 ; address generation anywhere in the vertex frame cache.
-VCACHE_BASE = $0C00                     ; planes span $0C00-$15FF;
-                                        ; $1600-$19FF freed by EV16
-                                        ; (both builds — bottom-22K map)
+VCACHE_BASE = $0800                     ; planes $0800-$11FF (cache
+                                        ; region shuffle 2026-08-09)
 VC_RHI  = VCACHE_BASE + $000
 VC_RLO  = VCACHE_BASE + $200
 VC_SXL  = VCACHE_BASE + $400
 VC_SXH  = VCACHE_BASE + $600
 VC_CLIP = VCACHE_BASE + $800
-VCACHE_VALID_BASE = $1F00               ; 60 bytes (59 used) + VDONE below
+VCACHE_VALID_BASE = $0700               ; THE BITMAP PAGE (2026-08-09,
+                                        ; Eben: every cache's valid
+                                        ; bitmap on ONE page, heading the
+                                        ; contiguous cache region
+                                        ; $0700-$19FF): VALID +$00,
+                                        ; VDONE +$3C, VXC_VALID +$80,
+                                        ; RCACHE_COMPUTED +$C0. The
+                                        ; VDONE $80-sentinel probe lands
+                                        ; at +$BC — inside the $BB-$BF
+                                        ; gap, KEEP IT FREE.
                                         ; — moved from $1B00 2026-08-09
                                         ; (the sqr quad took $1A00-$1DFF).
                                         ; NOT page 6: flat RC_P1L_0 owns

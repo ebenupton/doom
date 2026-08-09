@@ -132,9 +132,8 @@ ORG &EA00                       \ the FB region: the copro never
     BNE rcinit
     LDX #0
 .vxinit
-    STA T_VXC_STATE,X
-    INX
-    CPX #T_VXC_LEN
+    STA T_VXC_STATE,X           \ whole bitmap page (VALID+VDONE+
+    INX                         \ VXC_VALID+RCACHE_COMPUTED)
     BNE vxinit
     LDA #1
     STA T_VXC_ENABLE

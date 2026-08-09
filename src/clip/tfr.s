@@ -104,44 +104,44 @@ SEG_BANKC
 ; PEND_* is a 1-deep output buffer: the interval most recently produced
 ; by the sweep, held back so the next interval can extend it in place
 ; (same top/bot sources) instead of allocating a new pool span.
-TFS_CUR_X = $0900                       ; current x in inner loop
-TFS_X_HI = $0901                        ; right edge of in-range processing
-TFS_NEXT_X = $0902                      ; next event x
-TFS_TOP_DOM = $0903                     ; 1 if top dominated by record at cur_x, else 0
-TFS_BOT_DOM = $0904                     ; same for bot
-TFS_TOP_L = $0905                       ; top value at cur_x
-TFS_TOP_R = $0906                       ; top value at next_x
-TFS_BOT_L = $0907
-TFS_BOT_R = $0908
-TFS_TOP_KIND = $0909                    ; 0 = pool, 1 = top record
-TFS_TOP_ID = $090A                      ; pool slot or record offset
-TFS_BOT_KIND = $090B                    ; 0 = pool, 1 = bot record
-TFS_BOT_ID = $090C
-TFS_TOP_BUFEND = $090D                  ; 1 + top_count*4 (first invalid offset)
-TFS_BOT_BUFEND = $090E
-TFS_T_CUR = $090F                       ; top record cursor offset (0 = exhausted)
-TFS_B_CUR = $0910                       ; bot record cursor offset (0 = exhausted)
-TFS_PEND_ACT = $0911                    ; 1 if a pending output span is buffered
-TFS_PEND_XL = $0912
-TFS_PEND_XR = $0913
-TFS_PEND_TL = $0914
-TFS_PEND_TR = $0915
-TFS_PEND_BL = $0916
-TFS_PEND_BR = $0917
-TFS_PEND_TKIND = $0918
-TFS_PEND_TID = $0919
-TFS_PEND_BKIND = $091A
-TFS_PEND_BID = $091B
+TFS_CUR_X = $0600                       ; current x in inner loop
+TFS_X_HI = $0601                        ; right edge of in-range processing
+TFS_NEXT_X = $0602                      ; next event x
+TFS_TOP_DOM = $0603                     ; 1 if top dominated by record at cur_x, else 0
+TFS_BOT_DOM = $0604                     ; same for bot
+TFS_TOP_L = $0605                       ; top value at cur_x
+TFS_TOP_R = $0606                       ; top value at next_x
+TFS_BOT_L = $0607
+TFS_BOT_R = $0608
+TFS_TOP_KIND = $0609                    ; 0 = pool, 1 = top record
+TFS_TOP_ID = $060A                      ; pool slot or record offset
+TFS_BOT_KIND = $060B                    ; 0 = pool, 1 = bot record
+TFS_BOT_ID = $060C
+TFS_TOP_BUFEND = $060D                  ; 1 + top_count*4 (first invalid offset)
+TFS_BOT_BUFEND = $060E
+TFS_T_CUR = $060F                       ; top record cursor offset (0 = exhausted)
+TFS_B_CUR = $0610                       ; bot record cursor offset (0 = exhausted)
+TFS_PEND_ACT = $0611                    ; 1 if a pending output span is buffered
+TFS_PEND_XL = $0612
+TFS_PEND_XR = $0613
+TFS_PEND_TL = $0614
+TFS_PEND_TR = $0615
+TFS_PEND_BL = $0616
+TFS_PEND_BR = $0617
+TFS_PEND_TKIND = $0618
+TFS_PEND_TID = $0619
+TFS_PEND_BKIND = $061A
+TFS_PEND_BID = $061B
 ; --- verdict-record support (2026-07-13 off-screen-aperture fix) ---
 ; $091C/$091D free (TFS_*_VERD retired — verdicts tested lazily at the
 ; consumption points, 2026-07-13)
-DCLV_RVY = $091E                        ; pending right-side verdict y ($80 = none)
-DCLV_OX1S = $091F                       ; original ox1 stashed at CB entry
-DCLV_X0 = $0920                         ; dcl_rec_flat range args
-DCLV_X1 = $0921
-DCLV_SX = $0922                         ; X save across dcl_rec_flat
-DCLV_YV = $0923                         ; verdict y value latch
-DCLV_S16VY = $0924                      ; s16-clip pending right verdict ($80 = none)
+DCLV_RVY = $061E                        ; pending right-side verdict y ($80 = none)
+DCLV_OX1S = $061F                       ; original ox1 stashed at CB entry
+DCLV_X0 = $0620                         ; dcl_rec_flat range args
+DCLV_X1 = $0621
+DCLV_SX = $0622                         ; X save across dcl_rec_flat
+DCLV_YV = $0623                         ; verdict y value latch
+DCLV_S16VY = $0624                      ; s16-clip pending right verdict ($80 = none)
 
 
 ; ===================================================================
@@ -1143,40 +1143,40 @@ ues_fail:
 ; (LC_*_LO alias layer removed 2026-07-10: the s16 clipper reads the
 ; zp_line_* slots by their real names.)
 ; ---- saved originals for interp (snapped at start of x-clip / y-clip) ----
-LC_OX1_LO = $0938
-LC_OX1_HI = $0939
-LC_OY1_LO = $093A
-LC_OY1_HI = $093B
-LC_OX2_LO = $093C
-LC_OX2_HI = $093D
-LC_OY2_LO = $093E
-LC_OY2_HI = $093F
+LC_OX1_LO = $0638
+LC_OX1_HI = $0639
+LC_OY1_LO = $063A
+LC_OY1_HI = $063B
+LC_OX2_LO = $063C
+LC_OX2_HI = $063D
+LC_OY2_LO = $063E
+LC_OY2_HI = $063F
 ; ---- math working ----
-LC_OFF_LO = $0940
-LC_OFF_HI = $0941
-LC_DEN_LO = $0942
-LC_DEN_HI = $0943
-LC_DY_LO = $0944
-LC_DY_HI = $0945
-LC_DY_NEG = $0946
-LC_M_A_LO = $0947
-LC_M_A_HI = $0948
-LC_M_B_LO = $0949
-LC_M_B_HI = $094A
-LC_M_R0 = $094B
-LC_M_R1 = $094C
-LC_M_R2 = $094D
-LC_M_R3 = $094E
-LC_QUOT_LO = $094F
-LC_QUOT_HI = $0950
-LC_REM_LO = $0951
-LC_REM_HI = $0952
-LC_TMP_LO = $0953
-LC_TMP_HI = $0954
-LC_RES_LO = $0955
-LC_RES_HI = $0956
-LC_TGT_LO = $0957                       ; clip target value (s16)
-LC_TGT_HI = $0958
+LC_OFF_LO = $0640
+LC_OFF_HI = $0641
+LC_DEN_LO = $0642
+LC_DEN_HI = $0643
+LC_DY_LO = $0644
+LC_DY_HI = $0645
+LC_DY_NEG = $0646
+LC_M_A_LO = $0647
+LC_M_A_HI = $0648
+LC_M_B_LO = $0649
+LC_M_B_HI = $064A
+LC_M_R0 = $064B
+LC_M_R1 = $064C
+LC_M_R2 = $064D
+LC_M_R3 = $064E
+LC_QUOT_LO = $064F
+LC_QUOT_HI = $0650
+LC_REM_LO = $0651
+LC_REM_HI = $0652
+LC_TMP_LO = $0653
+LC_TMP_HI = $0654
+LC_RES_LO = $0655
+LC_RES_HI = $0656
+LC_TGT_LO = $0657                       ; clip target value (s16)
+LC_TGT_HI = $0658
 
 ; ---------------------------------------------------------------------------
 SEG_HIGH

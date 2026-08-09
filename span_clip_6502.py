@@ -150,7 +150,7 @@ class SpanClip6502:
             with open(raster_path, 'rb') as f:
                 raster_code = f.read()
             for i, b in enumerate(raster_code):
-                mem[0x2000 + i] = b   # flat RASTER_ENTRY (driver-hole exception)
+                mem[0x7500 + i] = b   # flat RASTER_ENTRY (above-line since 2026-08-09)
             self._has_rasteriser = True
         else:
             self._has_rasteriser = False

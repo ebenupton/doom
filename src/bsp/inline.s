@@ -294,14 +294,14 @@ vf_on:
    CMP vxc_prev_ab
    BEQ vf_patch
 ; --- angle changed: new epoch - wipe the valid bitmap ---
-; STRIPED (2026-08-09, the wipe-unroll audit): 11 5-byte stripes + a
-; 4-byte tail = 59 bytes exactly — the frame wipe's clean 60-byte
-; 12-stripe shape would hit VXC_ENABLE at $05DB. ~316 cyc vs the old
+; STRIPED (2026-08-09): 12 uniform 5-byte stripes = 60 bytes — byte 60
+; ($07BB) is the bitmap page's sentinel gap, safe to clear (the old
+; $05A0 home banned it: byte 60 was VXC_ENABLE). ~325 cyc vs the
 ; 1-byte loop's ~589, on every rotation frame.
    STA vxc_prev_ab
    LDA #0
    LDX #4
-vf_wipe:                                   ; offsets 0..54
+vf_wipe:                                   ; 12 stripes x 5 = 60 bytes
    STA VXC_VALID,X
    STA VXC_VALID+5,X
    STA VXC_VALID+10,X
@@ -313,12 +313,9 @@ vf_wipe:                                   ; offsets 0..54
    STA VXC_VALID+40,X
    STA VXC_VALID+45,X
    STA VXC_VALID+50,X
+   STA VXC_VALID+55,X
    DEX
    BPL vf_wipe
-   STA VXC_VALID+55                        ; the 55..58 tail
-   STA VXC_VALID+56
-   STA VXC_VALID+57
-   STA VXC_VALID+58
 vf_patch:
 inl_end:
 .endscope

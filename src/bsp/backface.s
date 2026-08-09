@@ -246,9 +246,9 @@ SC_HAS_GAP = span_has_gap               ; main-resident (no PAGE needed)
 ; ($0C00 + 8x467 = $1A98) — so every bbox visibility check corrupted the
 ; cached transforms of vertices ~64-66. $0960-$0974 is free scratch
 ; (span_clip's LC_* scratch ends at $0958).
-BBOX_CORNERS = $0A40                    ; 4 x 8: vx16, vy16, front, vy24 (lo,hi,ext)
+BBOX_CORNERS = $0620                    ; 4 x 8: vx16, vy16, front, vy24 (lo,hi,ext)
 ; (overlays the per-seg projection scratch — disjoint phases)
-BBOX_CORNER_IDX = $09FD                 ; offset into BBOX_CORNERS for current corner
+BBOX_CORNER_IDX = $06FD                 ; offset into BBOX_CORNERS for current corner
 
 ; Deferred per-subsector op queue (mirrors Python's packed_render_subsector
 ; `deferred` list): seg-ordered solid/tighten ops, applied at subsector end.
@@ -268,11 +268,11 @@ BBOX_CORNER_IDX = $09FD                 ; offset into BBOX_CORNERS for current c
 ; visibility runs during node processing, when the seg-loop variables
 ; ($5D-$6F) are dead.
 
-BBOX_SCRATCH = $0960                    ; 8 bytes: top_lo,top_hi,bot_lo,bot_hi,
+BBOX_SCRATCH = $0660                    ; 8 bytes: top_lo,top_hi,bot_lo,bot_hi,
 ;          left_lo,left_hi,right_lo,right_hi
-BBOX_FLAGS = $0968                      ; bit 0 = any_behind, bit 1 = any_front
-BBOX_ILO = $0969                        ; running min sx clamped (u8)
-BBOX_IHI = $096A                        ; running max sx clamped (u8)
+BBOX_FLAGS = $0668                      ; bit 0 = any_behind, bit 1 = any_front
+BBOX_ILO = $0669                        ; running min sx clamped (u8)
+BBOX_IHI = $066A                        ; running max sx clamped (u8)
 
 ; --- Angle-space bbox module (bsp_render_ang.bin @ $E940; tables $DC00/$E400/$F200).
 ;     Replaces the perspective corner-projection path below (now dead code).

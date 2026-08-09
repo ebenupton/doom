@@ -119,10 +119,9 @@ ORG DRV_ORG
     LDA #0
     TAX
 .vxinit
-    STA VXC_STATE,X
-    INX
-    CPX #VXC_STATE_LEN
-    BNE vxinit
+    STA VXC_STATE,X             \ the whole bitmap page ($0700: VALID+
+    INX                         \ VDONE+VXC_VALID+RCACHE_COMPUTED —
+    BNE vxinit                  \ boot-garbage safety, 256 bytes)
     LDA #1
     STA VXC_ENABLE
     ; --- animated sectors: init state machines + lazy patch hook (glue

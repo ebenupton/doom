@@ -57,7 +57,7 @@ def rows():
             pass
     # --- singletons ---
     out.append(('VDONE', sym('VDONE'), 57, 256, 'main <$1B40'))
-    out.append(('ANIM_SSMASK tail', 0x0A80, NS, 0x0BE8 - 0x0A80, 'main <$1B40'))
+    out.append(('ANIM_SSMASK tail', 0x1F00, NS, 0x1FE8 - 0x1F00, 'main bitmap-era home'))
     out.append(('VEXPL_LO/HI (packed @ $60)', sym('VEXPL_LO'), NEX, 0x60, 'already sub-page packed'))
     return out
 

@@ -68,7 +68,7 @@ def build_banked(flatr):
         for addr, blob in _an0.gen_6502_tables(flat=False).items():
             if 0xBE90 <= addr < 0x4000 + 0x8000:  # L0-side table (TABL0 @ $BE90)
                 l0[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
-            elif 0x0A80 <= addr < 0x0C00:         # SSMASK -> MAIN
+            elif 0x1F00 <= addr < 0x1FE0:         # SSMASK -> MAIN
                 for i, b in enumerate(blob):
                     bm[addr + i] = b
     bm.define_bank(BANK_L0, l0)
@@ -150,7 +150,7 @@ def build_banked(flatr):
         for addr, blob in _an.gen_6502_tables(flat=False).items():
             if 0xB300 <= addr < 0xB400:          # L2-side table (CFG @ $B300)
                 l2[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
-            elif 0x0A80 <= addr < 0x0C00:        # SSMASK -> staging @ $B400
+            elif 0x1F00 <= addr < 0x1FE0:        # SSMASK -> staging @ $B400
                 assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $B400 staging page'
                 l2[0x3400:0x3400 + len(blob)] = blob
     # corner-phi memo validity: KDXH plane ($8380) ships $80-filled — the

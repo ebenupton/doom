@@ -176,11 +176,12 @@ zp_seg_v2_r_s = VX2+12
 ; ARMED (hi byte + count reset) by bsp/seg_emit.s, read by clip/tfr.s.
 ; Registry home since 2026-08-09: the arm sites used to hardcode the
 ; page numbers (clip-local equate) — the trap that bit the VXC move.
-TOP_RECORDS = $0B00                     ; moved from $0700 2026-08-09: the
-                                        ; vacated page pairs with $0600 as
-                                        ; a contiguous VXC plane (planes
-                                        ; left bank C for main)
-BOT_RECORDS = $0800
+TOP_RECORDS = $0300                     ; cache-region shuffle 2026-08-09:
+BOT_RECORDS = $0200                     ; records lead the map, clear of
+                                        ; SSMASK ($0B00 sat INSIDE the
+                                        ; 221-byte $0A80 mask — the near
+                                        ; miss anim6502 didn't catch) and
+                                        ; of the $0700-$19FF cache region
 zp_seg_ep = $26                   ; [bsp]; per-endpoint STRUCT offset into
 ; VX1 (0 = v1, 15 = VX_STRIDE = v2): the generators write evy/evx/sx/sy/
 ; recip DIRECTLY into the endpoint structs via ,X = this offset. Set by

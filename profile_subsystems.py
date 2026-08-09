@@ -32,7 +32,7 @@ BBOX   = {sym('br_bbox_visible')}    # sub-slice of BSP traversal
 GATE = {a: 'VERTEX' for a in VERTEX}
 GATE.update({a: 'CLIP' for a in CLIP})
 GATE.update({a: 'BBOX' for a in BBOX})
-RASTER_LO, RASTER_HI = 0x2000, 0x2900   # flat raster in the driver-hole exception region (2026-08-09)
+RASTER_LO, RASTER_HI = 0x7500, 0x7E00   # flat raster above-line (2026-08-09 full alignment)
 
 POS = [(1056,-3616,65),(1500,-3700,1),(1024,-3500,65),
        (800,-3400,96),(1200,-3000,129),(1056,-3616,129)]

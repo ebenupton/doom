@@ -357,10 +357,10 @@ REC_VERDICT_BELOW = 2
 .if ::BANKED
 RASTER_ENTRY = $A900                    ; bank C window
 .else
-RASTER_ENTRY = $2000                    ; flat: the driver hole — the ONE
-                                        ; documented bottom-22K exception
-                                        ; (banked: WALKDRV lives here; the
-                                        ; raster is bank C's in banked)
+RASTER_ENTRY = $7500                    ; flat: above-line (2026-08-09 —
+                                        ; the $2000-$29FF exception DIED;
+                                        ; $2000-$2BFF is the shared driver
+                                        ; reservation in BOTH builds)
 .endif
 
 ; === Zero-page workspace ===
