@@ -108,7 +108,7 @@ zp_rs_l = $1E                     ; [bsp] sin-side rotate result lo (res-slot
 zp_v1i_l = $45                    ; [bsp]; v1 vertex key lo (idx & 255) banked
 zp_v1i_b = $46                    ; [bsp]; ... key B (idx >> 3) across the v2
                                   ; transform for the vertex-span emitter
-; $52/$53 free (zp_vs_il/ib retired 2026-07-25: call sites probe VDONE
+; $52/$53 TAKEN 2026-08-09: zp_cr_vx_x/vy_x (EV16). (zp_vs_il/ib retired 2026-07-25: call sites probe VDONE
 ; inline and the fresh path re-reads the key from its home pair)
 ; $47 free (zp_vs_d retired 2026-07-25: vs_go dispatches on A directly)
 zp_vs_x  = $4D                    ; [bsp]; vs_vertex: struct offset save
@@ -226,7 +226,7 @@ zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on 
 ; $4F-$51 = zp_vs_i / zp_vs_hl / zp_vs_hh — the vertex-span descriptor
 ; walk's variables (98fc1b3, defined locally in subsector.s): the 2026-
 ; 07-15 'FREE' comments here were STALE and cost a corrupted-vector
-; hang on 2026-07-27. $52-$53 remain free (symmap + zpcheck agree).
+; hang on 2026-07-27. $52-$53 now zp_cr ext bytes (2026-08-09).
 zp_vf_vec0 = $7B                  ; [bsp]; VXC fetch vector, junior side —
                                   ; vxc_frame aims it at sxv0_vfoff (off)
                                   ; or sxv0_vxcon (on); bca VECTORED idiom.
@@ -303,17 +303,16 @@ zp_seg_v_bitm = $47               ; [bsp]; valid-bitmap mask (1 << (idx & 7));
 ; scratches $7A as errs — phase-disjoint). $7B free (was _cache_h) —
 ; the vcache is page-split SoA with baked senior arms, no pointer.
 ; FREE 2026-07-15 (cross-core unification): zp_seg_dxraw_l = $7C
-; FREE 2026-07-15 (cross-core unification): zp_seg_dxraw_h = $7D
-; FREE 2026-07-15 (cross-core unification): zp_seg_dyraw_l = $7E
-; FREE 2026-07-15 (cross-core unification): zp_seg_dyraw_h = $7F
+; ($7D NOT free despite the old dxraw_h note: zp_vf_vec1 = $7D-$7E.)
+; $7E/$7F TAKEN 2026-08-09: zp_cr_vx_x/vy_x EV16 crossing scratch
+; (were the dyraw pair, free since the cross-core unification).
 RASTER_ZP_X0 = $82                ; [clip]
 RASTER_ZP_Y0 = $83                ; [clip]
 RASTER_ZP_X1 = $84                ; [clip]
 RASTER_ZP_Y1 = $85                ; [clip]
 bca_boxp = $86                    ; [ang]; ROM box pointer: caller points this at the 8-byte box
-; $89 free (was pa_sy — the >>3 reducers ride hi in A, lo in place)
-; $8A free (was pa_oct — oct rides X haveax->comb, 2026-07-11)
-; $8B/$8C free (was bca_hi — folded into direct bca_p2 reads, 2026-07-11)
+; $89-$8C TAKEN 2026-08-09: zp_cr_* EV16 crossing scratch (see the
+; block above the div slots) — were pa_sy / pa_oct / bca_hi frees.
 bca_pxs = $8D                     ; [ang]; px sign-extended (s16) ; w=2
 zp_br_pxraw_l = $90              ; [bsp]; s16 player x relative to map_center (raw)
 zp_br_pxraw_h = $91              ; [bsp]
@@ -435,7 +434,24 @@ zp_tmp2 = $E0                     ; [clip]
 zp_plot_i = $95                     ; [clip]; plot_h byte-index scratch
 ; --- $E1: overlay group (2 phase-disjoint users) ---
 
-; --- $E5: overlay group (3 phase-disjoint users) ---
+; EV16 crossing scratch (2026-08-09): the CLIPPED endpoint's recovered
+; s24 view totals, banked across the second cr_recover call (which
+; lands the unclipped endpoint in the zp_br_vx/vy working slots).
+; Live only inside reproject_at_crossing; free everywhere else.
+; ORDER MIRRORS the zp_br working slots ($11-$14 pair block + $2E/$2F
+; ext pair) so cr_recover_clipped's stash is an indexed loop.
+; NOT $E3+: that range sits INSIDE the VX1/VX2 endpoint structs
+; ($E2-$FF, stride 15) — zpcheck's free list does not expand w= struct
+; widths (the $64 trap, again). NOT $7E: zp_vf_vec1 spans $7D-$7E
+; (the dxraw_h 'free' note was stale — vector hi byte, VXC dispatch
+; corrupts). Homes: the ang module's registered free singles $89-$8C
+; + the twice-audited $52/$53 pair.
+zp_cr_vx_l = $89                  ; [bsp]; clipped total vx (8.8 lo)
+zp_cr_vx_h = $8A                  ; [bsp]
+zp_cr_vy_l = $8B                  ; [bsp]; clipped total vy (8.8 lo)
+zp_cr_vy_h = $8C                  ; [bsp]
+zp_cr_vx_x = $52                  ; [bsp]; ext bytes (mirror $2E/$2F)
+zp_cr_vy_x = $53                  ; [bsp]
 zp_save0 = $6A                    ; [clip]; DCL line-clip scratch (also
 ;   carries bca_vis's old duty? NO — bca_vis/ccsave own $64/$65 solo)
 zp_save1 = $6B                    ; [clip]

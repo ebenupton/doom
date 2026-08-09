@@ -409,22 +409,25 @@ VEXPL_CONT = $DF00
 
 ; Vertex transform cache: per-vertex saved view + projection results.
 ; Skip redundant transforms when multiple segs share a vertex.
-; Fields: evy, evx, rhi, rlo, sx_lo, sx_hi (s16 projected screen X),
-; near-clip flag — one plane each (see below).
+; Fields: rhi, rlo, sx_lo, sx_hi (s16 projected screen X), near-clip
+; flag — one plane each (see below). EV16 (2026-08-09): the s8 evy/evx
+; planes DIED — near verdicts serve from CLIP, and the crossing
+; recovers full s24 view totals via cr_recover instead of reading the
+; lossy s8 tier.
 ; Valid bitmap: 1 bit per vertex; cleared at the start of each frame.
 ; VCACHE is page-split SoA (2026-07-15): one 512-byte plane per field,
 ; junior page = idx 0-255, senior page = idx 256+ (n_verts <= 512,
 ; pack-time assert). The senior bit is header key byte B & $20 — the
 ; reader dispatches to an arm with the page BAKED, so there is no
 ; address generation anywhere in the vertex frame cache.
-VCACHE_BASE = $0C00                     ; planes span $0C00-$19FF; $1A00 free
-VC_EVY  = VCACHE_BASE + $000
-VC_EVX  = VCACHE_BASE + $200
-VC_RHI  = VCACHE_BASE + $400
-VC_RLO  = VCACHE_BASE + $600
-VC_SXL  = VCACHE_BASE + $800
-VC_SXH  = VCACHE_BASE + $A00
-VC_CLIP = VCACHE_BASE + $C00
+VCACHE_BASE = $0C00                     ; planes span $0C00-$15FF;
+                                        ; $1600-$19FF freed by EV16
+                                        ; (both builds — bottom-22K map)
+VC_RHI  = VCACHE_BASE + $000
+VC_RLO  = VCACHE_BASE + $200
+VC_SXL  = VCACHE_BASE + $400
+VC_SXH  = VCACHE_BASE + $600
+VC_CLIP = VCACHE_BASE + $800
 VCACHE_VALID_BASE = $1F00               ; 60 bytes (59 used) + VDONE below
                                         ; — moved from $1B00 2026-08-09
                                         ; (the sqr quad took $1A00-$1DFF).
@@ -461,6 +464,9 @@ code_head:
 ; 2026-08-09: THE copy lives below (main RAM, always mapped) and the
 ; clipper imports it — see the banner at its definition.
 .export umul8
+.import udiv16_8                        ; clip/arith.s — the crossing's t
+                                        ; divide (EV16 2026-08-09; rare
+                                        ; path, JSR beats the SC_ inline)
 .import br_recip_hi                     ; ex-LCODE code, clip/rotvar.s
 .import rot_zero, rot_unity_pos, rot_unity_neg
 .import rot_zero_s, rot_unity_pos_s, rot_unity_neg_s

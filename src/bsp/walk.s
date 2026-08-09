@@ -482,8 +482,7 @@ zp_seg_sy_bbot_hi = $0A7F
 ; computing the crossing point.
 ; Hot per-vertex view coords promoted to real ZP (were $0A50.. absolute) —
 ; safe-free ZP (0-access incl. rasteriser; not used by the angle module).
-; cross_compute reads zp_seg_v{1,2}_{evy,evx} directly. Output:
-zp_clip_cx = $0A5C                      ; output: crossing-point view-x (s16 lo)
-zp_clip_cx_hi = $0A5D                   ; output: crossing-point view-x (s16 hi)
+; ($0A5C/$0A5D FREE 2026-08-09: zp_clip_cx/_hi died with EV16 — the
+; crossing writes the projection input slots directly.)
 ; Working-saver for projecting X after project_y trashes vxlo/hi
 ; Per-seg back-face / linedef state

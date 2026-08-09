@@ -2,49 +2,244 @@ SEG_CODE
 bsp_lo_start:
 
 ; ============================================================================
-; reproject_at_crossing — call cross_compute, then project sx at the
-; NEAR reciprocal, writing straight into the clipped endpoint's STRUCT
+; reproject_at_crossing — EV16 full-precision near-plane crossing
+; (2026-08-09): recover BOTH endpoints' s24 view totals from their
+; vertex keys, compute the vy = NEAR crossing in 8.8, and project it
+; WITH ITS REAL FRACTION straight into the clipped endpoint's STRUCT
 ; slots (VX1/VX2, zp.inc — stride 15; zp_seg_ep = 0 for v1, 15 for v2,
 ; set by the caller). Y projection is NOT done here: it is deferred to
 ; the post-has_gap y stage like every other endpoint (2026-07-11); this
 ; routine banks recip(NEAR) into the struct's +13/+14 so that stage and
 ; apv_stage read the right reciprocal.
 ;
-; Called by the seg loop (subsector.s) when EXACTLY ONE endpoint of a
-; front-facing seg is behind the near plane: that endpoint is replaced by
-; the seg's crossing point with vy = NEAR, mirroring Python's fp_near_clip
-; branch in packed_render_seg (idxK = eyK << 1 = 2 → recip at NEAR;
-; fvxK_c = 0 for clipped endpoints).
+; Called by the seg loop (seg_emit.s) when EXACTLY ONE endpoint of a
+; front-facing seg is behind the near plane. Mirrors fp.fp_cross_88
+; bit-exactly (v1 arg = the CLIPPED endpoint):
+;     d = vy_u - vy_c; n = 256 - vy_c     (both positive; d >= 1)
+;     normalize d to u8 (floor-shift n and d together)
+;     t >= 256 (<=> n >= d) -> crossing = the unclipped endpoint EXACT
+;     t = (n<<8 + d>>1) / d               (u8, RN)
+;     cx = vx_c + sign(dvx)*((t*|dvx| + 128) >> 8)     (s24 8.8)
+; The old s8 evy/evx tier died with this: the crossing was its LAST
+; consumer, and its integer resolution (frac forced to 0) was the
+; near-clip's remaining precision loss — toward-float verdict
+; tools/nc88_verdict.py, gate PASSED 2026-08-09.
 ;
-;   Inputs:  VX1+0/+1 and VX2+0/+1 (both endpoints' s8 evy/evx — always
-;              populated by br_seg_xform_vertex, even when clipped),
-;            zp_seg_ep = the CLIPPED endpoint's struct offset (0 | 15).
+;   Inputs:  zp_seg_ep = the CLIPPED endpoint's struct offset (0 | 15),
+;            zp_v1i_l/b + zp_seg_v_idx_l/b = the endpoints' vertex keys
+;              (both live at crossing time — seg_emit banks v1's key in
+;              zp_v1i_* during the chain compare).
 ;   Outputs: struct +3/+4 = sx of the crossing point (s16),
 ;            struct +13/+14 and zp_br_r_m8/rlo = recip(NEAR) = (M8=0, S=1);
 ;            chain key killed by the caller (VX2 no longer holds a vertex).
-;
-;   Pseudocode:
-;     cx = cross_compute()             # view-x where the seg meets vy=NEAR
-;     sx = project_x(cx, frac=0)       # narrow/wide auto-dispatch
-;     do_project_y()                   # 4 heights at the NEAR reciprocal
+;   Clobbers: fetch/rot scratch (via cr_recover), zp_cr_*, zp_br_a,
+;            zp_br_sign, zp_br_t2, zp_div_*, umul8 scratch, A/X/Y.
+;   Banking: arrives AND leaves BANK_L2 (the sx_vert_* exit contract —
+;            v2 always transforms right before the resolution island).
+;            The VP plane reads need exactly that; the math + projection
+;            are main-RAM only. NO paging here (an exit PAGE BANK_L0
+;            was tried 2026-08-09 and broke the banked build's
+;            downstream bank state — bankedcmp caught it).
 ; ============================================================================
 reproject_at_crossing:
 .scope
-   cross_compute
-; Project cx with frac=0 (Python passes fvx_c=0 for clipped endpoints).
-; cx is s16; br_project_x dispatches narrow/wide on its hi byte.
-   LDA zp_clip_cx
-   STA zp_br_vx_h
-   LDA zp_clip_cx_hi
-   STA zp_br_vx_x
-   ZERO zp_br_vx_l
-   JSR br_project_x                        ; -> zp_br_res_l/h = sx (reg
-   LDX zp_seg_ep                           ; contract died 2026-08-09)
+; ---- recover totals: clipped endpoint -> zp_cr_*, unclipped -> the
+; zp_br_vx/vy working slots ----
+   LDA zp_seg_ep
+   BNE rp_v2c
+   LDA zp_v1i_l                            ; ep = 0: v1 is the clipped one
+   LDX zp_v1i_b
+   JSR cr_recover_clipped
+   LDA zp_seg_v_idx_l
+   LDX zp_seg_v_idx_b
+   JSR cr_recover
+   JMP rp_math
+rp_v2c:
+   LDA zp_seg_v_idx_l                      ; ep = 15: v2 is the clipped one
+   LDX zp_seg_v_idx_b
+   JSR cr_recover_clipped
+   LDA zp_v1i_l
+   LDX zp_v1i_b
+   JSR cr_recover
+rp_math:
+; ---- d = vy_u - vy_c (positive: the verdicts guarantee
+; vy_c < 128 <= vy_u; lands in the vy working slots) ----
+   SEC
+   LDA zp_br_vy_l
+   SBC zp_cr_vy_l
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   SBC zp_cr_vy_h
+   STA zp_br_vy_h
+   LDA zp_br_vy_x
+   SBC zp_cr_vy_x
+   STA zp_br_vy_x
+; ---- n = 256 - vy_c (positive; overwrites vy_c — dead) ----
+   SEC
+   LDA #$00
+   SBC zp_cr_vy_l
+   STA zp_cr_vy_l
+   LDA #$01
+   SBC zp_cr_vy_h
+   STA zp_cr_vy_h
+   LDA #$00
+   SBC zp_cr_vy_x
+   STA zp_cr_vy_x
+; ---- normalize d to u8: floor-shift n and d together ----
+rp_norm:
+   LDA zp_br_vy_h
+   ORA zp_br_vy_x
+   BEQ rp_norm_done
+   LSR zp_br_vy_x
+   ROR zp_br_vy_h
+   ROR zp_br_vy_l
+   LSR zp_cr_vy_x
+   ROR zp_cr_vy_h
+   ROR zp_cr_vy_l
+   JMP rp_norm                             ; (rare path: clarity over the
+rp_norm_done:                              ;  backward-branch save)
+; ---- t >= 256 <=> n >= d (proof: n>=d -> n<<8 >= 256d; n<d ->
+; n<<8 + d>>1 <= 256d - 256 + 127 < 256d): crossing degenerates to
+; the UNCLIPPED endpoint exactly (python: t >= 256 -> cx = vx2) ----
+   LDA zp_cr_vy_x
+   ORA zp_cr_vy_h
+   BNE rp_use_u_j
+   LDA zp_cr_vy_l
+   CMP zp_br_vy_l
+   BCC rp_t_ok
+rp_use_u_j:
+   JMP rp_use_u                            ; (math block outgrows the span)
+rp_t_ok:
+; ---- t = (n<<8 + d>>1) / d (u8, RN; n < d proven -> fast path) ----
+   STA zp_div_h                            ; A = n (CMP preserved it)
+   LDA zp_br_vy_l
+   STA zp_div_den
+   LSR A
+   STA zp_div_l                            ; d>>1 seeds the RN bias
+   PAGE BANK_C                             ; udiv16_8 lives in the CLIPPER
+   JSR udiv16_8                            ; segment = bank C when banked
+   STA zp_br_a                             ; (the JSR, not the SC_ inline:
+   PAGE BANK_L2                            ;  ~100 bytes for a rare path);
+                                           ; restore the L2 arrival state
+; ---- dvx = vx_u - vx_c: sign + u24 magnitude in the vy slots ----
+   ZERO zp_br_sign
+   SEC
+   LDA zp_br_vx_l
+   SBC zp_cr_vx_l
+   STA zp_br_vy_l
+   LDA zp_br_vx_h
+   SBC zp_cr_vx_h
+   STA zp_br_vy_h
+   LDA zp_br_vx_x
+   SBC zp_cr_vx_x
+   STA zp_br_vy_x
+   BPL rp_dvx_p                            ; N rides the last SBC byte
+   INC zp_br_sign
+   SEC
+   LDA #0
+   SBC zp_br_vy_l
+   STA zp_br_vy_l
+   LDA #0
+   SBC zp_br_vy_h
+   STA zp_br_vy_h
+   LDA #0
+   SBC zp_br_vy_x
+   STA zp_br_vy_x
+rp_dvx_p:
+; ---- prod = (t * |dvx| + 128) >> 8 (u8 x u24 -> u18: three umul8s,
+; the top one gated on |dvx|'s rare nonzero third byte). r0/r1/r2
+; accumulate the SHIFTED result: r0 = prod byte 1, etc — the +128
+; rounding bias contributes only its carry out of byte 0. ----
+   LDA zp_br_vy_l
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR umul8                               ; t*m0 -> A = hi, zp_prod_l = lo
+   TAX
+   LDA zp_prod_l
+   CLC
+   ADC #128                                ; bias: only C survives
+   TXA
+   ADC #0
+   STA zp_br_res_l                         ; r0 = p0h + c (p0h <= 254:
+                                           ;   no carry out)
+   LDA zp_br_vy_h
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR umul8                               ; t*m1
+   TAX
+   LDA zp_br_res_l
+   CLC
+   ADC zp_prod_l                           ; r0 += p1l
+   STA zp_br_res_l
+   TXA
+   ADC #0
+   STA zp_br_res_h                         ; r1 = p1h + c (<= 255)
+   ZERO zp_br_t2                           ; r2
+   LDA zp_br_vy_x                          ; m2 (nonzero only for view
+   BEQ rp_prod_done                        ;  spans past +-256 units)
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR umul8                               ; t*m2
+   TAX
    LDA zp_br_res_h
-   STA VX1+4,X                             ; sx → the clipped endpoint's
+   CLC
+   ADC zp_prod_l                           ; r1 += p2l
+   STA zp_br_res_h
+   TXA
+   ADC #0
+   STA zp_br_t2                            ; r2 = p2h + c
+rp_prod_done:
+; ---- cx = vx_c +- prod, STRAIGHT INTO the projection input slots:
+; zp_br_vx_l/h/x = frac/int-lo/int-hi is exactly the 8.8 layout
+; br_project_x consumes — the crossing's real frac flows through
+; where the old path forced 0 ----
+   LDA zp_br_sign
+   BNE rp_cx_sub
+   CLC
+   LDA zp_cr_vx_l
+   ADC zp_br_res_l
+   STA zp_br_vx_l
+   LDA zp_cr_vx_h
+   ADC zp_br_res_h
+   STA zp_br_vx_h
+   LDA zp_cr_vx_x
+   ADC zp_br_t2
+   STA zp_br_vx_x
+   JMP rp_recip
+rp_cx_sub:
+   SEC
+   LDA zp_cr_vx_l
+   SBC zp_br_res_l
+   STA zp_br_vx_l
+   LDA zp_cr_vx_h
+   SBC zp_br_res_h
+   STA zp_br_vx_h
+   LDA zp_cr_vx_x
+   SBC zp_br_t2
+   STA zp_br_vx_x
+rp_use_u:
+; (falls in; t >= 256 arrivals: the crossing IS the unclipped
+; endpoint, whose totals already sit in the projection input slots)
+rp_recip:
+; CONSTANT-FOLDED crossing reciprocal (recip split 2026-07-27): vy ==
+; NEAR exactly -> (M8, S) = (0, 1) are the M8 table's baked [0..2]
+; entries, and the select collapses to one absolute load of the S=1
+; kernel vector. r_m8/r_s stores stay: r_s doubles as the VWHC rlo key
+; and the rlo-writer invariant requires the true value.
+   LDA #0
+   STA zp_br_r_m8
+   LDA #1
+   STA zp_br_r_s
+   LDA rns_vec_l                           ; = rns_vec_l-1+S with S = 1
+   STA rns_go_op
+; ---- project + land in the clipped endpoint's struct ----
+   JSR br_project_x                        ; -> zp_br_res_l/h = sx
+   LDX zp_seg_ep
+   LDA zp_br_res_h
+   STA VX1+4,X                             ; sx -> the clipped endpoint's
    LDA zp_br_res_l                         ; struct slots
    STA VX1+3,X
-   LDA zp_br_r_m8                           ; bank recip(NEAR) = (M8=0, S=1)
+   LDA zp_br_r_m8                          ; bank recip(NEAR) = (M8=0, S=1)
    STA VX1+13,X                            ; into the struct: the deferred
    LDA zp_br_r_s                           ; y stage (and apv_stage) project
    STA VX1+14,X                            ; the crossing with THIS recip
@@ -52,43 +247,98 @@ reproject_at_crossing:
 .endscope
 
 ; ============================================================================
-; cross_compute — near-plane crossing point for a seg with one clipped vertex.
-;   Inputs:  zp_clip_C_evy, zp_clip_C_evx (clipped, evy ≤ 0)
-;            zp_clip_U_evy, zp_clip_U_evx (unclipped, evy ≥ 1)
-;   Outputs: zp_clip_cx (s8 crossing view-x), zp_br_r_m8/rlo = (M8, S) at NEAR
-;
-;   Mirrors fp_near_clip exactly:
-;     t   = ((NEAR - vy_C) << 8) / (vy_U - vy_C)    (u8 truncated)
-;     dvx = vx_U - vx_C                              (s9: -255..255)
-;     cx  = vx_C + (t * dvx) >> 8                    (s8 wraparound)
-;
-; CURRENT interface (the C/U slot names above are historical): the seg
-; loop copies both endpoints into zp_seg_v{1,2}_{evy,evx}; this routine
-; always parametrises from v1 — t = ((1 - v1_evy) << 8) / (v2_evy -
-; v1_evy), cx = v1_evx + (t * (v2_evx - v1_evx)) >> 8 — exactly as
-; fp_near_clip does regardless of WHICH endpoint is the clipped one.
-; Output is now s16: zp_clip_cx (lo) : zp_clip_cx_hi (hi); the tail JMPs
-; to br_recip with vy_idx = 2 (9.1 for vy = NEAR), so (M8, S) = (0, 1).
-; Clobbers zp_div_l/hi/den, zp_br_a, zp_br_dx_l/dxhi, zp_br_t2/t3,
-; zp_br_sign, plus SC_UDIV16_8 / umul8 scratch.
+; cr_recover — recover one endpoint's s24 view totals from its vertex
+; key (EV16 2026-08-09). total := widen(q64(rot(w))) + ref — the same
+; join every fetch tier computes (SXV_BODY vfoff / vxcon), so recovery
+; is bit-identical to the transform that produced the endpoint's clip
+; verdict, in BOTH vxc modes: the base is a pure function of (vertex,
+; angle epoch) and ref is staged unconditionally by vxc_frame.
+;   In:  A = idx_l, X = idx_b (senior side bit $20); BANK_L2 paged
+;        (reproject's arrival contract — never re-paged here).
+;   Out: zp_br_vx_l/h/x, zp_br_vy_l/h/x = totals (s24 8.8).
+;   Clobbers: A/X/Y, fetch scratch (zp_br_dy_*, zp_ri_*), rot scratch.
+; cr_recover_clipped: same, then banks the result into the zp_cr_*
+; slots — the clipped endpoint recovers FIRST, so the second call
+; lands the unclipped one in the working slots.
+; (Python mirror: fp.fp_to_view_totals — the _NC88 block recomputes
+; for both endpoints exactly like this, hit or miss.)
 ; ============================================================================
-; (cross_compute is a MACRO now — bsp/inline.s — expanded at its single
-;  call site, 2026-07-17.)
+cr_recover_clipped:
+.scope
+   JSR cr_recover
+   LDX #3                                  ; the $11-$14 pair block mirrors
+cr_cp:                                     ; $E3-$E6 (zp.inc order contract)
+   LDA zp_br_vx_l,X
+   STA zp_cr_vx_l,X
+   DEX
+   BPL cr_cp
+   LDA zp_br_vx_x                          ; + the $2E/$2F ext pair
+   STA zp_cr_vx_x
+   LDA zp_br_vy_x
+   STA zp_cr_vy_x
+   RTS
+.endscope
 
-; ============================================================================
-; cross_umul_u8_s16 — t (u8 in zp_br_a) × dx (s16 in zp_br_dx_l:dxhi) → s16
-; in zp_br_res_l:resh. Caller takes resh as the (>>8) result.
-;
-; Sign-magnitude: |dx| via 16-bit negate (sign in zp_br_sign), then
-;   res = t*|dx|.lo  +  (t*|dx|.hi << 8)      (two u8×u8 muls; only the
-;                                              low byte of the second
-;                                              product fits — dx is s9
-;                                              here so it never carries)
-; and negate the s16 result if dx was negative. Clobbers zp_br_dx_l/dxhi
-; (replaced by |dx|), zp_br_sign, zp_mul_b, zp_prod_l/hi.
-; ============================================================================
-; (cross_umul_u8_s16 is a MACRO now — bsp/inline.s — expanded at its single
-;  call site, 2026-07-17.)
+cr_recover:
+.scope
+   TAY                                     ; Y = plane index
+   TXA
+   AND #$20
+   BNE cr_hi
+   LDA VP_YLO,Y                            ; junior side (pg 0): stage the
+   STA zp_br_dy_l                          ; vertex verbatim, like vfoff
+   LDA VP_YHI,Y
+   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
+   ZERO zp_ri_sgn
+   LDA VP_XLO,Y
+   STA zp_ri_d_l
+   LDA VP_XHI,Y                            ; sign-mag: N = wx sign, bit 7
+   BPL cr_xp0
+   INC zp_ri_sgn
+   AND #$7F
+cr_xp0:
+   STA zp_ri_d_h
+   JMP cr_rot
+cr_hi:
+   LDA VP_YLO+$100,Y                       ; senior side (pg $100)
+   STA zp_br_dy_l
+   LDA VP_YHI+$100,Y
+   STA zp_br_dy_h
+   ZERO zp_ri_sgn
+   LDA VP_XLO+$100,Y
+   STA zp_ri_d_l
+   LDA VP_XHI+$100,Y
+   BPL cr_xp1
+   INC zp_ri_sgn
+   AND #$7F
+cr_xp1:
+   STA zp_ri_d_h
+cr_rot:
+   JSR rot_w_signed                        ; widened q64 base in the s24 slots
+; ref add — totals := base + ref (the vxq_add join; those expansions
+; live inside SXV_BODY's macro scopes, unreachable from here)
+   CLC
+   LDA zp_br_vx_l
+   ADC vxc_ref_x+0
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+   ADC vxc_ref_x+1
+   STA zp_br_vx_h
+   LDA zp_br_vx_x
+   ADC vxc_ref_x+2
+   STA zp_br_vx_x
+   CLC
+   LDA zp_br_vy_l
+   ADC vxc_ref_y+0
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ADC vxc_ref_y+1
+   STA zp_br_vy_h
+   LDA zp_br_vy_x
+   ADC vxc_ref_y+2
+   STA zp_br_vy_x
+   RTS
+.endscope
 
 ; (br_node_setup moved to walk.s as the NODE_SETUP_DISPATCH macro,
 ; 2026-07-16 — single caller, inlined; exits JMP straight to the side

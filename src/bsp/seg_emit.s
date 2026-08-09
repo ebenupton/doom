@@ -33,11 +33,12 @@
 ; vcache-backed br_to_view, near-plane test, X projection, Y projections
 ; for the edges this seg's flags need; sets zp_seg_skip=1 if the vertex
 ; is behind the near plane, else writes sx/sy straight into this endpoint's
-; slots via zp_seg_ep). Transform v1. Always copy evy/evx/clipped so both
-; endpoints are available for near-plane crossing math even when clipped.
+; slots via zp_seg_ep). Transform v1. Copy the clip verdict so crossing
+; dispatch sees both endpoints (crossing COORDS are recovered from the
+; vertex keys by cr_recover — EV16 2026-08-09, the s8 evy/evx tier died).
 ; --- VERTEX CHAIN (2026-07-10): if this seg's v1 is the vertex the LAST
 ; transform produced (zp_seg_v_idx still holds it, and VX2 still holds
-; its outputs), reuse VX2 wholesale: evy/evx/clip always; sx, the front
+; its outputs), reuse VX2 wholesale: clip always; sx, the front
 ; sy pair (same subsector => same fh/ch) and rhi/rlo when unclipped.
 ; The packer chain-orders subsector segs, so this hits ~80% of
 ; consecutive front-facing pairs. zp_seg_v_idx_b is invalidated at the
@@ -66,12 +67,8 @@
 ; indirection retired 2026-07-26 — this is its only site; the LO body
 ; + JSR tax died 2026-07-17, the MAIN/LO split died in the reshuffle).
 .scope
-   LDA zp_seg_v2_evy
-   STA zp_seg_v1_evy
-   LDA zp_seg_v2_evx
-   STA zp_seg_v1_evx
-   LDA zp_seg_v2_clipped
-   STA zp_seg_v1_clipped
+   LDA zp_seg_v2_clipped                   ; (the evy/evx copies DIED with
+   STA zp_seg_v1_clipped                   ;  the s8 tier — EV16 2026-08-09)
    BNE ch_reuse_done                       ; clipped: rest undefined
    LDA zp_seg_sx2_l
    STA zp_seg_sx1_l

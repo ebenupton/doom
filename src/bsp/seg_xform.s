@@ -11,36 +11,32 @@
 ;   Input:  zp_seg_v_idx_l/hi = vertex index (u16), written by the caller
 ;             (doubles as the cache-write index — no staging copy).
 ;   Output: THE ENDPOINT STRUCT (zp.inc VX1/VX2, X = zp_seg_ep = 0/15):
-;             +0 evy  +1 evx (ALWAYS — crossing math needs both endpoints)
 ;             +2 clip (1 = behind near plane; rest then undefined)
 ;             +3/+4 sx  +5..+12 the flag-gated sy pairs (do_project_y tail)
 ;             +13/+14 rhi/rlo (banked for apv_stage / the y-stage)
+;           (+0/+1 FREE since EV16 2026-08-09 — the s8 evy/evx tier
+;           died; crossing math recovers s24 totals via cr_recover.)
 ;           zp_br_r_m8/rlo also hold the recip (projection working slots).
 ;           NOTHING is staged — every result stores once, struct-direct.
 ;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x.
 ;
-; Vertex cache: VCACHE_BASE + idx*8, one 8-byte entry per vertex, plus a
-; 1-bit-per-vertex valid bitmap at VCACHE_VALID_BASE (cleared per frame).
-; 6502 entry layout (differs from Python's VCACHE_ENTRY, which stores
-; vx/vy/vy_idx/sx — here the post-recip results are cached instead):
-;   +0 evy (s8)  +1 evx (s8)  +2 rhi  +3 rlo  +4 sx_lo  +5 sx_hi
-;   +6 near-clip flag (1 = vertex behind near plane)  +7 unused
+; Vertex cache: five 512-byte SoA planes (CLIP, SXL, SXH, RHI, RLO —
+; header.s) plus a 1-bit-per-vertex valid bitmap at VCACHE_VALID_BASE
+; (cleared per frame). A clipped entry stores clip = 1 ONLY; the other
+; planes stay undefined for that vertex (nothing reads them).
 ;
 ; Pseudocode:
 ;   if valid[idx]:                          # cache hit
-;       evy, evx = cache[0..1]
-;       if cache[6]: skip = 1; return       # cached near-clip verdict
-;       rhi, rlo, sx = cache[2..5]
+;       if clip[idx]: skip = 1; return      # cached near-clip verdict
+;       rhi, rlo, sx = planes[idx]
 ;   else:                                   # cache miss
 ;       valid[idx] = 1
 ;       wx, wy = ROM_VERTS[idx]             # s16 prescaled world coords
-;       vx, vy = br_to_view(wx, wy)         # s24 view space (8.8 + ext)
-;       evx = vx >> 8 (trunc); evy = clamp_s8((vy + 128) >> 8)
-;       cache[0..1] = evy, evx              # pre-write: hit path needs them
-;       if vy < NEAR (s24 test): cache[6] = 1; skip = 1; return
+;       vx, vy = total view (s24 8.8)       # rot + q64-widen + ref add
+;       if vy < 128: clip[idx] = 1; skip = 1; return
 ;       rhi, rlo = br_recip(vy >> 7)        # 9.1 index into recip table
 ;       sx = br_project_x(vx)          # narrow 3-mul / wide 5-mul
-;       cache[2..6] = rhi, rlo, sx, 0
+;       planes[idx] = rhi, rlo, sx, clip=0
 ;   do_project_y()                          # per-seg heights, tail call
 ; ============================================================================
 
@@ -86,11 +82,9 @@
    AND zp_seg_v_bitm
    BEQ vmiss
 ; --- vcache hit serve (was VC_HIT_ARM, absorbed 2026-08-09) ---
+; EV16: the evy/evx serves DIED — clip is the whole near verdict, and
+; the crossing recovers s24 totals itself (cr_recover).
    LDY zp_seg_v_idx_l
-   LDA VC_EVY+pg,Y
-   STA VX1+0,X
-   LDA VC_EVX+pg,Y
-   STA VX1+1,X
    LDA VC_CLIP+pg,Y                        ; cached near-clip verdict —
    STA VX1+2,X                             ; served UNCONDITIONALLY (the
    BNE vh_pgx                              ; head's ZERO died 2026-07-27);
@@ -110,11 +104,8 @@
 vh_pgx:
    PAGE BANK_L2                            ; exit contract (see head)
    RTS
-; (the ec_clamp/ec_hi_nz rare islands moved BELOW fetch_done 2026-08-09:
-;  the inlined ref add stretched their branch spans from up here)
-; (vxcon island moved to the BODY END 2026-08-09: the inlined serve
-;  outgrew the ec_clamp/ec_hi_nz branch spans here — it is vector-
-;  entered and JMP-exited, so placement is free)
+; (vxcon island lives at the BODY END — vector-entered and JMP-exited,
+;  so placement is free)
 vmiss:
 ; mark valid now (fill lands the bytes below; even a near-clipped
 ; path leaves a usable evy/evx entry; clip lands in the fills — both
@@ -176,26 +167,18 @@ vfx_p:
    STA zp_br_vy_x
 fetch_done:
    LDX zp_seg_ep                           ; struct offset
-   LDA zp_br_vx_h
-   STA VX1+1,X                             ; evx
-   LDA zp_br_vy_l
-   ASL A                                   ; carry = bit 7 of vylo
+; near-clip DIRECT on the raw s24 total (EV16 2026-08-09): clipped iff
+; total_vy < 128 — bit-identical to the old rounded-evy <= 0 test
+; (evy = (vy+128)>>8 <= 0 <=> vy < 128), but the evy round, the evx
+; store and BOTH s8 saturate islands (ec_clamp/ec_hi_nz) are DEAD:
+; nothing consumes the s8 tier any more.
+   LDA zp_br_vy_x
+   BMI nc_fail                             ; negative -> behind
+   BNE nc_ok                               ; >= 256.0 -> visible
    LDA zp_br_vy_h
-   ADC #0
-   STA VX1+0,X                             ; evy = (vy + 128) >> 8
-   LDA zp_br_vy_x
-   ADC #0                                  ; rounded evy16 hi byte
-   BNE ec_hi_nz                            ; hi != 0 → rare (island above)
-   LDA VX1+0,X
-   BMI ec_clamp                            ; 128..255 → rare clamp (island)
-ec_done:
-; near-clip on full s24: clipped iff total_vy < NEAR_88
-   LDA zp_br_vy_x
-   BMI nc_fail
-   BNE nc_ok
-   LDA VX1+0,X
-   BMI nc_fail
-   BEQ nc_fail                             ; evy == 0 -> below NEAR
+   BNE nc_ok                               ; >= 1.0 -> visible
+   LDA zp_br_vy_l
+   BPL nc_fail                             ; < 0.5 -> behind
 nc_ok:
 ; recip: vy_idx = s24 total_vy >> 7 (9.1); junior arm inlined
    LDA zp_br_vy_l
@@ -240,10 +223,6 @@ ncr_done:
 fill_tail:
    STA VC_CLIP+pg,Y                        ; the nc prelude's mirror)
    STA VX1+2,X
-   LDA VX1+0,X                             ; evy/evx: struct -> plane
-   STA VC_EVY+pg,Y                         ; (shared by both verdicts)
-   LDA VX1+1,X
-   STA VC_EVX+pg,Y
    RTS                                     ; (a fill_tail birth-fill hook
                                            ; was tried 2026-07-27 and is
                                            ; IMPOSSIBLE: px_shrink halves
@@ -258,54 +237,8 @@ nc_fail:
 ncr_far:
    JSR br_recip_hi                         ; A = idx hi, Y = idx lo
    JMP ncr_done
-; rare islands (side-local; the hit arm above exits, nothing falls in)
-ec_clamp:
-   LDA #$7F                                ; 128..255 → clamp
-   STA VX1+0,X
-   BNE ec_done                             ; (A = $7F: always taken)
-ec_hi_nz:
-; --- s8 SATURATE for an out-of-range evy (was the ev_clamp_hi_nz
-; macro; inlined 2026-08-09 — the expansion had been paying 3-byte
-; abs,X for the two VX1 accesses, and its BNE-to-next died too).
-;
-; WHAT: evy is the rounded s24->s8 narrowing of view-Y — the main
-; path computed evy16 = (vy + 128) >> 8, stored its LOW byte in
-; VX1+0,X, and branched here because the rounded HI byte (in A) is
-; nonzero, i.e. the true value is outside 0..127. Every downstream
-; reader (near-clip, recip index, y projection) treats VX1+0 as s8,
-; so out-of-range values must SATURATE to +127/-128 — the Python
-; mirror clamps identically, and under-/over-shooting here shows up
-; directly as verify-vs-float divergence.
-;
-; HOW: case analysis on the hi byte, cheapest test first —
-;   hi = $FF        value in -256..-1: may still FIT s8. Re-read the
-;                   stored low byte: bit 7 set means -128..-1, and
-;                   the stored byte already IS the s8 answer (the
-;                   low 8 bits of a value that fits) -> exit, no
-;                   store. Bit 7 clear means -256..-129 -> $80.
-;   hi = $01..$7F   value >= +256 -> clamp $7F (+127).
-;   hi = $80..$FE   value <= -257 -> clamp $80 (-128).
-; The sign split needs no CMP: ASL A pushes the hi byte's sign bit
-; into C (BCS = negative). The clamp immediates are nonzero, so the
-; BNE-always idiom reaches the shared store without a JMP.
-   CMP #$FF
-   BEQ ev_case_ff
-   ASL A                                   ; C = hi sign
-   BCS ev_clamp_neg
-   LDA #$7F                                ; >= +256: clamp +127
-   BNE ev_store                            ; (always: A = $7F)
-ev_clamp_neg:
-   LDA #$80                                ; <= -257: clamp -128
-   BNE ev_store                            ; (always: A = $80)
-ev_case_ff:
-   LDA VX1+0,X                             ; hi = $FF: the stored low byte
-   BMI ev_done                             ; %1xxxxxxx = -128..-1, already
-                                           ; the s8 value -> keep it
-   LDA #$80                                ; %0xxxxxxx = -256..-129: clamp
-ev_store:                                  ; (falls in)
-   STA VX1+0,X
-ev_done:
-   JMP ec_done
+; (the ec_clamp/ec_hi_nz s8-saturate islands DIED with the evy/evx
+; tier — EV16 2026-08-09: no consumer treats anything as s8 any more)
 ::vxcon:
 ; --- VXC serve, V16 (2026-08-09): the cache memoizes base16 =
 ; q64(rot(w)) — a pure function of (vertex, angle epoch) — in FOUR s16
