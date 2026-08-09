@@ -29,7 +29,12 @@ _on_disk = {}    # banked -> c02 variant whose bins currently sit on disk.
 # The engine is ONE link: three objects (angle module, span clipper, bsp
 # renderer) resolved together, so cross-module calls are linker symbols.
 # All legacy per-module names alias the single 'engine' target.
-_SOURCES = ['src/slope_div.s', 'src/span_clip.s', 'src/bsp_render.s']
+# Link order = CODE layout. bsp_render FIRST (2026-08-09): it carries the
+# one .align $100 in CODE (the rns window), so ca65 page-aligns its whole
+# fragment — placed first it aligns for free at the region head and the
+# unaligned slope_div/span_clip fragments ABUT behind it: no join pads,
+# all spare CODE space aggregated at the END (Eben's rule).
+_SOURCES = ['src/bsp_render.s', 'src/slope_div.s', 'src/span_clip.s']
 _CFGS = {0: 'src/engine_flat.cfg', 1: 'src/engine_banked.cfg'}
 _TARGETS = {'engine': None, 'slope_div': None, 'span_clip': None,
             'bsp_render': None}

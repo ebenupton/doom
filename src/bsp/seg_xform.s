@@ -110,54 +110,8 @@
 vh_pgx:
    PAGE BANK_L2                            ; exit contract (see head)
    RTS
-; rare islands (side-local; the hit arm above exits, nothing falls in)
-ec_clamp:
-   LDA #$7F                                ; 128..255 → clamp
-   STA VX1+0,X
-   BNE ec_done                             ; (A = $7F: always taken)
-ec_hi_nz:
-; --- s8 SATURATE for an out-of-range evy (was the ev_clamp_hi_nz
-; macro; inlined 2026-08-09 — the expansion had been paying 3-byte
-; abs,X for the two VX1 accesses, and its BNE-to-next died too).
-;
-; WHAT: evy is the rounded s24->s8 narrowing of view-Y — the main
-; path computed evy16 = (vy + 128) >> 8, stored its LOW byte in
-; VX1+0,X, and branched here because the rounded HI byte (in A) is
-; nonzero, i.e. the true value is outside 0..127. Every downstream
-; reader (near-clip, recip index, y projection) treats VX1+0 as s8,
-; so out-of-range values must SATURATE to +127/-128 — the Python
-; mirror clamps identically, and under-/over-shooting here shows up
-; directly as verify-vs-float divergence.
-;
-; HOW: case analysis on the hi byte, cheapest test first —
-;   hi = $FF        value in -256..-1: may still FIT s8. Re-read the
-;                   stored low byte: bit 7 set means -128..-1, and
-;                   the stored byte already IS the s8 answer (the
-;                   low 8 bits of a value that fits) -> exit, no
-;                   store. Bit 7 clear means -256..-129 -> $80.
-;   hi = $01..$7F   value >= +256 -> clamp $7F (+127).
-;   hi = $80..$FE   value <= -257 -> clamp $80 (-128).
-; The sign split needs no CMP: ASL A pushes the hi byte's sign bit
-; into C (BCS = negative). The clamp immediates are nonzero, so the
-; BNE-always idiom reaches the shared store without a JMP.
-   CMP #$FF
-   BEQ ev_case_ff
-   ASL A                                   ; C = hi sign
-   BCS ev_clamp_neg
-   LDA #$7F                                ; >= +256: clamp +127
-   BNE ev_store                            ; (always: A = $7F)
-ev_clamp_neg:
-   LDA #$80                                ; <= -257: clamp -128
-   BNE ev_store                            ; (always: A = $80)
-ev_case_ff:
-   LDA VX1+0,X                             ; hi = $FF: the stored low byte
-   BMI ev_done                             ; %1xxxxxxx = -128..-1, already
-                                           ; the s8 value -> keep it
-   LDA #$80                                ; %0xxxxxxx = -256..-129: clamp
-ev_store:                                  ; (falls in)
-   STA VX1+0,X
-ev_done:
-   JMP ec_done
+; (the ec_clamp/ec_hi_nz rare islands moved BELOW fetch_done 2026-08-09:
+;  the inlined ref add stretched their branch spans from up here)
 ; (vxcon island moved to the BODY END 2026-08-09: the inlined serve
 ;  outgrew the ec_clamp/ec_hi_nz branch spans here — it is vector-
 ;  entered and JMP-exited, so placement is free)
@@ -197,8 +151,29 @@ vmiss:
    AND #$7F
 vfx_p:
    STA zp_ri_d_h
-   JSR rot_w_signed                        ; widened q64 base in the s24
-   JMP vxq_add                             ; slots -> just add ref, rejoin
+   JSR rot_w_signed                        ; widened q64 base in the s24 slots
+; ref add INLINE (2026-08-09: the vxq_add hop died — this path falls
+; straight into fetch_done again, as the old fetch did)
+   CLC
+   LDA zp_br_vx_l
+   ADC vxc_ref_x+0
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+   ADC vxc_ref_x+1
+   STA zp_br_vx_h
+   LDA zp_br_vx_x
+   ADC vxc_ref_x+2
+   STA zp_br_vx_x
+   CLC
+   LDA zp_br_vy_l
+   ADC vxc_ref_y+0
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ADC vxc_ref_y+1
+   STA zp_br_vy_h
+   LDA zp_br_vy_x
+   ADC vxc_ref_y+2
+   STA zp_br_vy_x
 fetch_done:
    LDX zp_seg_ep                           ; struct offset
    LDA zp_br_vx_h
@@ -280,6 +255,54 @@ nc_fail:
 ncr_far:
    JSR br_recip_hi                         ; A = idx hi, Y = idx lo
    JMP ncr_done
+; rare islands (side-local; the hit arm above exits, nothing falls in)
+ec_clamp:
+   LDA #$7F                                ; 128..255 → clamp
+   STA VX1+0,X
+   BNE ec_done                             ; (A = $7F: always taken)
+ec_hi_nz:
+; --- s8 SATURATE for an out-of-range evy (was the ev_clamp_hi_nz
+; macro; inlined 2026-08-09 — the expansion had been paying 3-byte
+; abs,X for the two VX1 accesses, and its BNE-to-next died too).
+;
+; WHAT: evy is the rounded s24->s8 narrowing of view-Y — the main
+; path computed evy16 = (vy + 128) >> 8, stored its LOW byte in
+; VX1+0,X, and branched here because the rounded HI byte (in A) is
+; nonzero, i.e. the true value is outside 0..127. Every downstream
+; reader (near-clip, recip index, y projection) treats VX1+0 as s8,
+; so out-of-range values must SATURATE to +127/-128 — the Python
+; mirror clamps identically, and under-/over-shooting here shows up
+; directly as verify-vs-float divergence.
+;
+; HOW: case analysis on the hi byte, cheapest test first —
+;   hi = $FF        value in -256..-1: may still FIT s8. Re-read the
+;                   stored low byte: bit 7 set means -128..-1, and
+;                   the stored byte already IS the s8 answer (the
+;                   low 8 bits of a value that fits) -> exit, no
+;                   store. Bit 7 clear means -256..-129 -> $80.
+;   hi = $01..$7F   value >= +256 -> clamp $7F (+127).
+;   hi = $80..$FE   value <= -257 -> clamp $80 (-128).
+; The sign split needs no CMP: ASL A pushes the hi byte's sign bit
+; into C (BCS = negative). The clamp immediates are nonzero, so the
+; BNE-always idiom reaches the shared store without a JMP.
+   CMP #$FF
+   BEQ ev_case_ff
+   ASL A                                   ; C = hi sign
+   BCS ev_clamp_neg
+   LDA #$7F                                ; >= +256: clamp +127
+   BNE ev_store                            ; (always: A = $7F)
+ev_clamp_neg:
+   LDA #$80                                ; <= -257: clamp -128
+   BNE ev_store                            ; (always: A = $80)
+ev_case_ff:
+   LDA VX1+0,X                             ; hi = $FF: the stored low byte
+   BMI ev_done                             ; %1xxxxxxx = -128..-1, already
+                                           ; the s8 value -> keep it
+   LDA #$80                                ; %0xxxxxxx = -256..-129: clamp
+ev_store:                                  ; (falls in)
+   STA VX1+0,X
+ev_done:
+   JMP ec_done
 ::vxcon:
 ; --- VXC serve, V16 (2026-08-09): the cache memoizes base16 =
 ; q64(rot(w)) — a pure function of (vertex, angle epoch) — in FOUR s16
