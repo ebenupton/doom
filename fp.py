@@ -429,9 +429,53 @@ def fp_to_view(wx, wy, ctx):
     evy_idx = max(2, total_vy >> (8 - RECIP_FRAC_BITS))
     return evx_trunc, evx_round, evy, evx_frac, evy_idx
 
+
+def fp_to_view_totals(wx, wy, ctx):
+    """EV16: the full s24 view totals only (position-independent V16
+    pipeline — recomputation is bit-identical to the original fetch;
+    the 6502 recovers the same values through the VXC serve)."""
+    px_int, py_int, sc, frac_vx, frac_vy, ref_vx, ref_vy = ctx
+    s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
+    base_vx = (_rot_int(wx, s_mag, s_neg, s_unity)
+               - _rot_int(wy, c_mag, c_neg, c_unity))
+    base_vy = (_rot_int(wx, c_mag, c_neg, c_unity)
+               + _rot_int(wy, s_mag, s_neg, s_unity))
+    return ((((base_vx + 2) >> 2) << 2) + ref_vx,
+            (((base_vy + 2) >> 2) << 2) + ref_vy)
+
 # -- Near clip (8-bit view coords) -------------------------------------------
 
 NEAR_FP = 1  # 8.0
+NEAR_88 = 256  # 8.8
+
+
+def fp_cross_88(vx1, vy1, vx2, vy2):
+    """Full-precision (8.8) near-plane crossing (EV16 prototype,
+    2026-08-09). Caller guarantees vy1 < 128 <= ... exactly one side
+    clipped; v1 is the CLIPPED endpoint (caller swaps). Returns cx
+    (s16 8.8) at vy = NEAR_88. Mirrors the planned 6502 exactly:
+      d = vy2 - vy1; n = 256 - vy1        (0 <= n <= d)
+      normalize d to u8 (floor-shift n and d together)
+      t = (n<<8 + d>>1) // d              (0.8, RN)
+      t == 256 -> cx = vx2 exactly
+      cx = vx1 + sign(dvx) * ((t*|dvx| + 128) >> 8)
+    """
+    d = vy2 - vy1
+    n = NEAR_88 - vy1
+    if d <= 0:
+        return None
+    while d > 255:
+        d >>= 1
+        n >>= 1
+    if d == 0:
+        return vx2
+    t = ((n << 8) + (d >> 1)) // d
+    if t >= 256:
+        return vx2
+    dvx = vx2 - vx1
+    if dvx >= 0:
+        return vx1 + ((t * dvx + 128) >> 8)
+    return vx1 - ((t * (-dvx) + 128) >> 8)
 
 def fp_near_clip(vx1, vy1, vx2, vy2):
     """Clip to vy >= NEAR.  All 8.0.  Returns (vx1,vy1,vx2,vy2) or None.

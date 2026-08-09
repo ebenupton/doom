@@ -1762,6 +1762,11 @@ _USE_ANGLE_COL = False
 # M2: full rotation-free angle-space bbox (2-corner checkcoord). Needs the
 # view angle byte, set per frame in _VIEW_AB by the render harness.
 _USE_ANGLE_BBOX = False
+_NC88 = False   # EV16 prototype (2026-08-09): full-precision 8.8 near-
+                # plane crossing + real-frac crossing projection (the
+                # evx/evy elimination proof). Verdicts are bit-identical
+                # (evy <= 0 <=> total_vy < 128); only crossing geometry
+                # changes. Flip via the probe harness.
 _VIEW_AB = 0
 # Option 2b: full angle-space SEG (no per-vertex rotation). X from world angle,
 # Y from wall-distance scale. Reference path in packed_render_seg. Mirrors the
@@ -2595,10 +2600,38 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         evx2 = evx2_t
 
         # ── Near clip ──
-        nc = fp_near_clip(evx1, evy1, evx2, evy2)
-        if nc is None:
-            return
-        ex1, ey1, ex2, ey2 = nc
+        cxf1 = cxf2 = None                  # crossing fracs (EV16 only)
+        if _NC88:
+            # full totals: miss path carries them; hits RECOMPUTE (the
+            # 6502 recovers via the VXC serve — position-independent,
+            # so recomputation is bit-identical to the original fetch)
+            tvx1, tvy1 = fp_module.fp_to_view_totals(wx1, wy1, ctx)
+            tvx2, tvy2 = fp_module.fp_to_view_totals(wx2, wy2, ctx)
+            c1 = tvy1 < 128
+            c2 = tvy2 < 128
+            if c1 and c2:
+                return
+            if not (c1 or c2):
+                ex1, ey1, ex2, ey2 = evx1, evy1, evx2, evy2
+            elif c1:
+                cx = fp_module.fp_cross_88(tvx1, tvy1, tvx2, tvy2)
+                if cx is None:
+                    return
+                ex1, ey1 = cx >> 8, 1
+                cxf1 = cx & 0xFF
+                ex2, ey2 = evx2, evy2
+            else:
+                cx = fp_module.fp_cross_88(tvx2, tvy2, tvx1, tvy1)
+                if cx is None:
+                    return
+                ex2, ey2 = cx >> 8, 1
+                cxf2 = cx & 0xFF
+                ex1, ey1 = evx1, evy1
+        else:
+            nc = fp_near_clip(evx1, evy1, evx2, evy2)
+            if nc is None:
+                return
+            ex1, ey1, ex2, ey2 = nc
 
         # ── Reciprocals + X projection ──
         idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
@@ -2612,7 +2645,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if ey1 == evy1 and _vc1_has_sx:
             sx1 = _packed_read_vcache(ram, v1_idx)[3]
         else:
-            fvx1_c = fvx1 if ey1 == evy1 else 0
+            fvx1_c = fvx1 if ey1 == evy1 else (cxf1 or 0)
             sx1 = fp_project_x(ex1, fvx1_c, rxh1, rxl1)
             if ey1 == evy1:
                 # Update vcache with sx
@@ -2623,7 +2656,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if ey2 == evy2 and _vc2_has_sx:
             sx2 = _packed_read_vcache(ram, v2_idx)[3]
         else:
-            fvx2_c = fvx2 if ey2 == evy2 else 0
+            fvx2_c = fvx2 if ey2 == evy2 else (cxf2 or 0)
             sx2 = fp_project_x(ex2, fvx2_c, rxh2, rxl2)
             if ey2 == evy2:
                 base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
