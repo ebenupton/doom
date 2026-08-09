@@ -444,28 +444,35 @@ rot_w_signed:
 ; AND, NO shifts. The s24 slots exit holding the widened quantized base
 ; (low 2 bits zero, ext byte LIVE); only the cold store pays a real
 ; shift pair (>>2 to the s16 planes, <<2 back — exact: low bits are 0).
+; RARE-RIPPLE RN (claw-back, 2026-08-09): the +2 only carries out of
+; the lo byte when lo >= $FE — the hi/ext ADC #0 chains become a
+; branch-guarded stub (bit-identical; the stub re-seeds C=0 for the
+; next axis / exit). Common path: 15 cyc/axis vs 28.
    CLC
    LDA zp_br_vx_l
    ADC #2
    AND #$FC
    STA zp_br_vx_l
-   LDA zp_br_vx_h
-   ADC #0
-   STA zp_br_vx_h
-   LDA zp_br_vx_x
-   ADC #0
-   STA zp_br_vx_x
-   CLC
-   LDA zp_br_vy_l
+   BCS vq_xrip
+vq_x_done:
+   LDA zp_br_vy_l                          ; C = 0 (BCC arc / stub CLC)
    ADC #2
    AND #$FC
    STA zp_br_vy_l
-   LDA zp_br_vy_h
-   ADC #0
-   STA zp_br_vy_h
-   LDA zp_br_vy_x
-   ADC #0
-   STA zp_br_vy_x
+   BCS vq_yrip
+   RTS
+vq_xrip:
+   INC zp_br_vx_h                          ; (INC leaves C — cleared below)
+   BNE vq_xr1
+   INC zp_br_vx_x
+vq_xr1:
+   CLC
+   BCC vq_x_done                           ; (always)
+vq_yrip:
+   INC zp_br_vy_h
+   BNE vq_yr1
+   INC zp_br_vy_x
+vq_yr1:
    RTS
 
 ; (br_smul_s8_u8 + its br_smul_am register entry deleted 2026-07-13:
