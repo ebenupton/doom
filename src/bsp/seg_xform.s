@@ -61,33 +61,7 @@
 ; (NC_FILL_ARM macro ABSORBED into SXV_BODY 2026-07-27 — the fills
 ; fused around one shared evy/evx tail per side.)
 
-.macro VXC_WARM_ARM pg
-; warm: total = base + ref, two s24 adds (senior page baked)
-   CLC
-   LDA VXC_XLO+pg,Y
-   ADC vxc_ref_x+0
-   STA zp_br_vx_l
-   LDA VXC_XHI+pg,Y
-   ADC vxc_ref_x+1
-   STA zp_br_vx_h
-   LDA VXC_XEXT+pg,Y
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
-   CLC
-   LDA VXC_YLO+pg,Y
-   ADC vxc_ref_y+0
-   STA zp_br_vy_l
-   LDA VXC_YHI+pg,Y
-   ADC vxc_ref_y+1
-   STA zp_br_vy_h
-   LDA VXC_YEXT+pg,Y
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x
-   PAGE BANK_L2                            ; exit L2 = the fetch path's exit
-   JMP fetch_done                          ; state; expands INSIDE SXV_BODY
-                                           ; (serve inlined 2026-08-09), so
-                                           ; fetch_done binds per side
-.endmacro
+; (VXC_WARM_ARM folded into the vxcon island 2026-08-09 — single use)
 
 ; ============================================================================
 ; SXV_BODY — one full SIDE (senior page BAKED) of the vertex transform:
@@ -276,7 +250,30 @@ ncr_far:
    AND zp_seg_v_bitm
    BEQ vs_cold
    LDY zp_seg_v_idx_l
-   VXC_WARM_ARM pg
+; warm: total = base + ref, two s24 adds (senior page baked; was
+; VXC_WARM_ARM, folded 2026-08-09)
+   CLC
+   LDA VXC_XLO+pg,Y
+   ADC vxc_ref_x+0
+   STA zp_br_vx_l
+   LDA VXC_XHI+pg,Y
+   ADC vxc_ref_x+1
+   STA zp_br_vx_h
+   LDA VXC_XEXT+pg,Y
+   ADC vxc_ref_x+2
+   STA zp_br_vx_x
+   CLC
+   LDA VXC_YLO+pg,Y
+   ADC vxc_ref_y+0
+   STA zp_br_vy_l
+   LDA VXC_YHI+pg,Y
+   ADC vxc_ref_y+1
+   STA zp_br_vy_h
+   LDA VXC_YEXT+pg,Y
+   ADC vxc_ref_y+2
+   STA zp_br_vy_x
+   PAGE BANK_L2                            ; exit L2 = the fetch path's exit
+   JMP fetch_done                          ; state
 vs_cold:
    LDA VXC_VALID,X
    ORA zp_seg_v_bitm
