@@ -283,7 +283,35 @@ vs_cold:
 .else
    JSR vf_plain1
 .endif
-   JSR vxc_store_tail                      ; PAGE C, birth store, PAGE L2
+; birth store INLINE, side baked (2026-08-09: was JSR vxc_store_tail →
+; the generic vxc_cold_store macro — its senior test, hi-half JMP and
+; the JSR/RTS all die with the side parameter; banked -4 B / flat -14 B
+; net). base' = total - ref = L(w), translation-invariant (vxcache.s);
+; the store must run PRE-projection: px_shrink corrupts wide vx totals
+; in place.
+   PAGE BANK_C
+   LDY zp_seg_v_idx_l
+   SEC
+   LDA zp_br_vx_l
+   SBC vxc_ref_x+0
+   STA VXC_XLO+pg,Y
+   LDA zp_br_vx_h
+   SBC vxc_ref_x+1
+   STA VXC_XHI+pg,Y
+   LDA zp_br_vx_x
+   SBC vxc_ref_x+2
+   STA VXC_XEXT+pg,Y
+   SEC
+   LDA zp_br_vy_l
+   SBC vxc_ref_y+0
+   STA VXC_YLO+pg,Y
+   LDA zp_br_vy_h
+   SBC vxc_ref_y+1
+   STA VXC_YHI+pg,Y
+   LDA zp_br_vy_x
+   SBC vxc_ref_y+2
+   STA VXC_YEXT+pg,Y
+   PAGE BANK_L2
    JMP fetch_done
 .endscope
 .endmacro
@@ -300,13 +328,8 @@ vs_cold:
 ::sx_vert_hi:                              ; bytes overflow BOTH regions —
    SXV_BODY $100, sxv1_vfoff, sxv1_vxcon   ; unaligned round-2 form kept)
 
-; --- shared cold store tail (JSR'd from both inlined cold arms
-;     post-fetch; one copy serves both sides) ---
-vxc_store_tail:
-   PAGE BANK_C
-   vxc_cold_store
-   PAGE BANK_L2
-   RTS
+; (vxc_store_tail deleted 2026-08-09 — birth store inlined per side in
+;  the vxcon islands, side baked)
 
 
 

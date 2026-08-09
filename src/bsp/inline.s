@@ -425,57 +425,9 @@ inl_end:
 .endscope
 .endmacro
 
-.macro vxc_cold_store
-.scope
-   LDY zp_seg_v_idx_l
-   LDA zp_seg_v_idx_b
-   AND #$20                                ; idx >= 256  <=>  B >= 32
-   BNE vs_hi
-   SEC
-   LDA zp_br_vx_l
-   SBC vxc_ref_x+0
-   STA VXC_XLO,Y
-   LDA zp_br_vx_h
-   SBC vxc_ref_x+1
-   STA VXC_XHI,Y
-   LDA zp_br_vx_x
-   SBC vxc_ref_x+2
-   STA VXC_XEXT,Y
-   SEC
-   LDA zp_br_vy_l
-   SBC vxc_ref_y+0
-   STA VXC_YLO,Y
-   LDA zp_br_vy_h
-   SBC vxc_ref_y+1
-   STA VXC_YHI,Y
-   LDA zp_br_vy_x
-   SBC vxc_ref_y+2
-   STA VXC_YEXT,Y
-   JMP inl_end
-vs_hi:
-   SEC
-   LDA zp_br_vx_l
-   SBC vxc_ref_x+0
-   STA VXC_XLO+$100,Y
-   LDA zp_br_vx_h
-   SBC vxc_ref_x+1
-   STA VXC_XHI+$100,Y
-   LDA zp_br_vx_x
-   SBC vxc_ref_x+2
-   STA VXC_XEXT+$100,Y
-   SEC
-   LDA zp_br_vy_l
-   SBC vxc_ref_y+0
-   STA VXC_YLO+$100,Y
-   LDA zp_br_vy_h
-   SBC vxc_ref_y+1
-   STA VXC_YHI+$100,Y
-   LDA zp_br_vy_x
-   SBC vxc_ref_y+2
-   STA VXC_YEXT+$100,Y
-inl_end:
-.endscope
-.endmacro
+; (vxc_cold_store macro RETIRED 2026-08-09 — the birth store is inlined
+;  per side in the seg_xform.s vxcon islands, side baked; the generic
+;  senior-test form died with it.)
 
 .macro vxc_frame
 .scope

@@ -14,7 +14,8 @@
 ;   total(w, frame m) = L(w) + ref_m,   ref_m = to_view(0,0) at frame m
 ;
 ; with L exactly linear. We store base' = total - ref = L(w) ONCE per
-; vertex per angle epoch (vxc_cold_store below), and every warm read is
+; vertex per angle epoch (the birth store, inlined per side in the
+; seg_xform.s vxcon islands), and every warm read is
 ; base' + this frame's ref (two s24 adds, inline in seg_xform's vxc_arm)
 ; — bit-identical to br_to_view by the linearity, verified by
 ; tools/vxcache_check.py (both builds, warm + rotation legs). Staleness
@@ -91,13 +92,14 @@ vxc_ab = BCA_AB
 ; Fat paths — run with BANK_C paged (flat: plain resident code in ANG).
 ; ============================================================================
 SEG_HIGH
-; --- vxc_cold_store: base' = total - ref (= L(w), translation-invariant) ---
+; --- birth store: base' = total - ref (= L(w), translation-invariant) ---
 ;   in : zp_br_vx/vy lo/hi/ext (totals just computed by br_to_view),
 ;        zp_seg_v_idx_l/hi, vxc_ref_x/y
 ;   out: this vertex's 6 plane bytes. base' + ANY later frame's ref
 ;        reconstructs that frame's exact totals (L is exactly linear), so
 ;        entries never go stale within an angle epoch.
-; (vxc_cold_store is a MACRO now — bsp/inline.s — expanded at its single
+; (the store lives INLINE in seg_xform.s vxcon islands 2026-08-09,
+; side baked; it was previously a macro expanded at its single
 ;  call site, 2026-07-17.)
 
 ; ============================================================================
