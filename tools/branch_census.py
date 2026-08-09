@@ -206,8 +206,8 @@ def main():
             klass = 'BACK-NT'
         else:
             klass = ''
-        if 0x6200 <= pc < 0x6C00 and pc not in addr2line:
-            label, off = '(raster-blob-SEALED)', pc - 0x6200
+        if 0x2000 <= pc < 0x2900 and pc not in addr2line:
+            label, off = '(raster-blob-SEALED)', pc - 0x2000
             fname, lno = '?', 0
         else:
             label, off = nearest_label(syms, pc)

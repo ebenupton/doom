@@ -500,6 +500,9 @@ EPSILON_F = 12
 .if ::BANKED
 .segment "BANKC"
 .else
-.segment "CODE"
+.segment "CLIPF"                        ; flat: the bank-C-equivalent lives
+                                        ; ABOVE the 22K line ($5800 area) —
+                                        ; the bottom-22K map is IDENTICAL
+                                        ; between builds (Eben, 2026-08-09)
 .endif
 .endmacro

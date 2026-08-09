@@ -133,7 +133,9 @@ vp_fb1:
 .align $100
 vpblk0:
    VPLOT_COL $EA00                         ; the flat/copro framebuffer
-SEG_CODE
+.segment "CLIPF"                            ; flat-only support: lives with
+                                            ; the bank-C-equivalent ABOVE the
+                                            ; 22K line (bottom-22K identity)
 vptab_lo:                                   ; <(block addr - 1)
 .repeat 161, R
    .byte <(vpblk0 + 7*R - 1)

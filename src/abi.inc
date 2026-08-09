@@ -5,11 +5,7 @@ ABI_INC_GUARD = 1
 BANK_L0 = 4                             ; sideways bank: level data (SoA, seg_hdr, FHCH, TABL0)
 BANK_C = 6                              ; sideways bank: clipper + rasteriser + HUD
 BANK_L2 = 7                             ; sideways bank: angle/bbox/recip/verts/RCACHE/VWHC/CFG
-.if ::BANKED
-MAIN_BASE = $2C00          ; engine CODE region head (cfg-anchored; MAIN first)
-.else
-MAIN_BASE = $3670
-.endif
+MAIN_BASE = $2C00                       ; engine CODE region head (cfg-anchored; MAIN first)
 HUD_ENTRY = $A400                       ; hud_draw (bank C window)
 BCA_AB = $0062                          ; view angle byte — ZP (zp_buf's slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry's HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB
 SQR_BASE = $1A00                        ; quarter-square tables, CONSOLIDATED $1A00-$1DFF 2026-08-09 (the retired vsync-journal page + the freed VCACHE_VALID page): lo,2lo then hi,2hi — one contiguous quad, one address, both builds
@@ -42,18 +38,18 @@ VXC_ENABLE = $05DB                      ; translation vertex cache switch
 .if ::BANKED
 RCACHE_STATE = $AD00       ; rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 .else
-RCACHE_STATE = $7100
+RCACHE_STATE = $7400
 .endif
 RCACHE_STATE_LEN = $0089                ; bytes to zero at boot
 .if ::BANKED
 RCACHE_ENABLE = $AD88      ; rotation-coherence bca cache switch (STATE+$88)
 .else
-RCACHE_ENABLE = $7188
+RCACHE_ENABLE = $7488
 .endif
 .if ::BANKED
 CPM_BASE = $A400           ; corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
 .else
-CPM_BASE = $7200
+CPM_BASE = $7D00
 .endif
 CPM_KDXL = CPM_BASE+$000                ; memo key: corner dx lo
 CPM_KDXH = CPM_BASE+$080                ; ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane

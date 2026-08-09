@@ -355,8 +355,10 @@ REC_VERDICT_BELOW = 2
 .if ::BANKED
 RASTER_ENTRY = $A900                    ; bank C window
 .else
-RASTER_ENTRY = $6200                    ; flat: right after the CODE blob —
-                                        ; all code together at one end
+RASTER_ENTRY = $2000                    ; flat: the driver hole — the ONE
+                                        ; documented bottom-22K exception
+                                        ; (banked: WALKDRV lives here; the
+                                        ; raster is bank C's in banked)
 .endif
 
 ; === Zero-page workspace ===

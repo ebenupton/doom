@@ -26,12 +26,12 @@ RC_P2L_1 = $AA00                        ; VWHC $AE00-$B2FF — every cache
 RC_PH_0  = $AB00                        ; beside its neighbours, free tail
 RC_PH_1  = $AC00                        ; $B500-$BFFF contiguous
 .else
-RC_P1L_0 = $0600                        ; flat RECOVERY 2026-07-27: five psi
-RC_P1L_1 = $0B00                        ; planes shuffled DOWN into canary-
-RC_P2L_0 = $8100                        ; proven-free pages ($0600 ex-DEFQ,
-RC_P2L_1 = $E800                        ; $0B00 ex-zp_ft block, $8100 ex-
-RC_PH_0  = $E900                        ; VWHC_R_M8, $E800/$E900 pre-FB gap);
-RC_PH_1  = $7000                        ; PH_1 + RCACHE_STATE ($7100) stay —
+RC_P1L_0 = $8000                        ; flat psi planes RELOCATED 2026-08-09:
+RC_P1L_1 = $2900                        ; the bottom-22K map is IDENTICAL to
+RC_P2L_0 = $8100                        ; banked ($0600/$0B00 squats = the
+RC_P2L_1 = $E800                        ; page-6 trap). P1L_1 lives in the ONE
+RC_PH_0  = $E900                        ; documented exception region
+RC_PH_1  = $7300                        ; ($2000-$29FF: flat raster + this) —
                                         ; $6B00-$6FFF (1,280 B) is FREE
                                         ; contiguous (flat-vplot candidate;
                                         ; planes are independent abs,Y —

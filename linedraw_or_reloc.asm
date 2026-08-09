@@ -10,7 +10,7 @@
 ;                   steep blocks; pixel-identical)
 ;   HAMILTONIAN_23  2:3-band module OFF (measured +0.036% only)
 IF FLATORG
-ORG &6200                       \ flat map 2026-07-21: blob right after CODE
+ORG &2000                       \ flat map 2026-07-21: blob right after CODE
 ELSE
 ORG &A900                       \ banked: the bank C window home
 ENDIF
@@ -44,7 +44,7 @@ INCLUDE "raster/shallow_23_hamiltonian-or.asm"
 ENDIF
 
 IF FLATORG
-SAVE "linedraw_or_flat.bin", &6200, P%
+SAVE "linedraw_or_flat.bin", &2000, P%
 ELSE
 SAVE "linedraw_or_reloc.bin", &A900, P%
 ENDIF

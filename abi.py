@@ -4,7 +4,6 @@ BANK_L0 = 4  # sideways bank: level data (SoA, seg_hdr, FHCH, TABL0)
 BANK_C = 6  # sideways bank: clipper + rasteriser + HUD
 BANK_L2 = 7  # sideways bank: angle/bbox/recip/verts/RCACHE/VWHC/CFG
 MAIN_BASE = 0x2C00  # engine CODE region head (cfg-anchored; MAIN first)
-MAIN_BASE_FLAT = 0x3670
 HUD_ENTRY = 0xA400  # hud_draw (bank C window)
 BCA_AB = 0x0062  # view angle byte — ZP (zp_buf's slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry's HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB
 SQR_BASE = 0x1A00  # quarter-square tables, CONSOLIDATED $1A00-$1DFF 2026-08-09 (the retired vsync-journal page + the freed VCACHE_VALID page): lo,2lo then hi,2hi — one contiguous quad, one address, both builds
@@ -35,12 +34,12 @@ VXC_STATE = 0x05A0  # VXC valid bitmap + state block
 VXC_STATE_LEN = 0x0060  # bytes to zero at boot
 VXC_ENABLE = 0x05DB  # translation vertex cache switch
 RCACHE_STATE = 0xAD00  # rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
-RCACHE_STATE_FLAT = 0x7100
+RCACHE_STATE_FLAT = 0x7400
 RCACHE_STATE_LEN = 0x0089  # bytes to zero at boot
 RCACHE_ENABLE = 0xAD88  # rotation-coherence bca cache switch (STATE+$88)
-RCACHE_ENABLE_FLAT = 0x7188
+RCACHE_ENABLE_FLAT = 0x7488
 CPM_BASE = 0xA400  # corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
-CPM_BASE_FLAT = 0x7200
+CPM_BASE_FLAT = 0x7D00
 CPM_KDXL = 0xA400  # memo key: corner dx lo
 CPM_KDXH = 0xA480  # ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane
 CPM_KDYL = 0xA500  # ... dy lo
