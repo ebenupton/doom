@@ -15,7 +15,7 @@
 ;                zp_bf_pxm_l/hi, zp_bf_pym_l/hi = |px|,|py| (staged
 ;                once per frame by br_view_setup, view.s).
 ;   Clobbers: A, X, Y; zp_br_dx/dy lo+hi, zp_br_t2..t5, zp_br_sign,
-;             zp_bf_dir, zp_br_a, the mul workspace (via SC_UMUL8).
+;             zp_bf_dir, zp_br_a, the mul workspace (via umul8).
 ;   Bank state: caller holds BANK_L0 paged (header reads); no paging here.
 ;
 ; ALGORITHM (uniform C-form, 2026-07-11 — see the banner inside the

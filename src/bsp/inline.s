@@ -282,7 +282,7 @@ inl_end:
 .scope
 ; dx = v2_evx - v1_evx with both endpoints s8 => |dx| <= 255: dx_h is
 ; pure sign ($00/$FF) and |dx| fits the LO byte. The old second
-; multiply (t x |dx|_hi) was t x 0 — a whole SC_UMUL8 of dead work
+; multiply (t x |dx|_hi) was t x 0 — a whole umul8 of dead work
 ; (deleted 2026-07-14). |dx|_lo = -dx_l is exact: dx = -256 can't occur.
    ZERO zp_br_sign
    LDA zp_br_dx_h
@@ -297,7 +297,7 @@ c2_dxp:
    LDA zp_br_dx_l
    STA zp_mul_b
    LDA zp_br_a
-   JSR SC_UMUL8
+   JSR umul8
    STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
    LDA zp_prod_l
    STA zp_br_res_l

@@ -217,7 +217,7 @@ NF_LLEAF = $40                          ; left child is a subsector
 .macro CROSS_MAG_DECIDE front, back
 .local cm_dx_pos, cm_dy_pos, cm_p1_done, cm_p2_done, cm_p1_hi, cm_p2_hi
 .local cm_dec, cm_neg, cm_back
-   STX zp_br_sign                          ; X dies at SC_UMUL8
+   STX zp_br_sign                          ; X dies at umul8
 ; (t4/t5 zeroing lives in the senior-clear skips — each hi slot is
 ;  written on EVERY path: by its out-of-line hi tier, or by the skip's
 ;  STA with the zero already in A)
@@ -247,7 +247,7 @@ cm_dy_pos:
    STA zp_br_a                             ; survives for the hi partial
    LDX zp_br_dx_l
    STX zp_mul_b
-   JSR SC_UMUL8
+   JSR umul8
    STA zp_br_t3
    LDA zp_prod_l
    STA zp_br_t2
@@ -261,7 +261,7 @@ cm_p1_done:
    STA zp_br_a
    LDX zp_br_dy_l
    STX zp_mul_b
-   JSR SC_UMUL8
+   JSR umul8
    STA zp_br_t1
    LDA zp_prod_l
    STA zp_br_t0
@@ -297,7 +297,7 @@ cm_back:
 cm_p1_hi:
    STA zp_mul_b
    LDA zp_br_a
-   JSR SC_UMUL8
+   JSR umul8
    LDA zp_prod_l
    CLC
    ADC zp_br_t3
@@ -309,7 +309,7 @@ cm_p1_hi:
 cm_p2_hi:
    STA zp_mul_b
    LDA zp_br_a
-   JSR SC_UMUL8
+   JSR umul8
    LDA zp_prod_l
    CLC
    ADC zp_br_t1
@@ -450,10 +450,11 @@ code_head:
 ; ============================================================================
 ; Aliases for span_clip's exported routines
 ; ============================================================================
-; SC_UMUL8 / SC_UDIV16_8 are now local labels (see .SC_UMUL8 / .SC_UDIV16_8
-; in the $4800 region) — banked port decouples them from span_clip.
 ; Imported from span_clip (same link) and called DIRECTLY — the linker
-; resolves them; no jump-table hop.
+; resolves them; no jump-table hop. umul8 flows the OTHER way since
+; 2026-08-09: THE copy lives below (main RAM, always mapped) and the
+; clipper imports it — see the banner at its definition.
+.export umul8
 .import span_mark_solid
 .import span_has_gap                    ; has_gap body (main B segment)
 .import seg_zero_rec_solid
@@ -478,20 +479,24 @@ sqr2_h = SQR2_HI
 ; span_clip's line ZP (zp_line_* lo bytes + zp_line_*_hi for the s16 clipper)
 
 ; ============================================================================
-; br_umul8 — wraps span_clip's umul8 for testing. Inputs in zp_br_a, zp_br_b.
-; Result in zp_br_res_l/resh. ~50 cycles.
-; ============================================================================
-; Local copies of umul8 / udiv16_8 (was SC_UMUL8/SC_UDIV16_8 in span_clip).
-; Decouples bsp_render's transform arithmetic from the clipper so the clipper
-; can move to a sideways-RAM bank: these stay in low RAM (always mapped),
-; reached during the data-bank phase. Bit-identical to span_clip's versions;
-; same ZP map + sqr tables. (BBC banked port.)
+; umul8 — THE quarter-square multiplier (unified 2026-08-09: the clipper's
+; bit-identical copy in clip/arith.s was discarded; this one is exported and
+; every caller — bsp transform code AND the bank-C clipper — JSRs here).
+; It lives in main RAM (always mapped), so it is reachable from any bank
+; phase: the data-bank transform arcs and the bank-C clipper alike. The sqr
+; tables sit at SQR_BASE ($1C00 banked) for the same reason.
 ;
 ; ============================================================================
-; SC_UMUL8 — u8 × u8 → u16 via quarter-square tables. ~50 cycles, no loop.
+; umul8 — u8 × u8 → u16 via quarter-square tables. ~50 cycles, no loop.
 ;   Inputs:  A = a, zp_mul_b = b.
 ;   Output:  zp_prod_l/hi = a * b (u16).
-;   Clobbers: A, X, Y, zp_tmp0.
+;   Clobbers: A, X, Y.
+;   CONTRACT (2026-07-09, carried from the clip copy): A = zp_prod_h on
+;   return AND the N/Z flags reflect it — BOTH exit paths end
+;   `STA zp_prod_h`. Callers may take the product's HIGH byte straight
+;   from A (backface's u24 magnitude products do). Preserve this if you
+;   ever restructure the tail. zp_prod_l/hi alias zp_div_l/hi, so the
+;   product feeds directly into udiv16_8 with no extra loads.
 ;
 ;   Identity: a*b = qsqr(a+b) - qsqr(|a-b|), where qsqr(n) = floor(n²/4).
 ;   Pseudocode:
@@ -503,17 +508,17 @@ sqr2_h = SQR2_HI
 ;   needed. (The uo path enters SBC with carry set from the ADC overflow,
 ;   which is exactly the required borrow-clear.)
 ; ============================================================================
-SC_UMUL8:
+umul8:
 .scope
-   STA zp_tmp0
-   SEC
+   TAX                                     ; stash a in X (was zp_tmp0: the
+   SEC                                     ; round-trip cost 6, TAX/TXA 4)
    SBC zp_mul_b
    BCS pos
    EOR #$FF
    ADC #1
 pos:
    TAY
-   LDA zp_tmp0
+   TXA
    CLC
    ADC zp_mul_b
    TAX

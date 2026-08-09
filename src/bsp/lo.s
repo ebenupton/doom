@@ -69,7 +69,7 @@ reproject_at_crossing:
 ; Output is now s16: zp_clip_cx (lo) : zp_clip_cx_hi (hi); the tail JMPs
 ; to br_recip with vy_idx = 2 (9.1 for vy = NEAR), so (M8, S) = (0, 1).
 ; Clobbers zp_div_l/hi/den, zp_br_a, zp_br_dx_l/dxhi, zp_br_t2/t3,
-; zp_br_sign, plus SC_UDIV16_8 / SC_UMUL8 scratch.
+; zp_br_sign, plus SC_UDIV16_8 / umul8 scratch.
 ; ============================================================================
 ; (cross_compute is a MACRO now — bsp/inline.s — expanded at its single
 ;  call site, 2026-07-17.)

@@ -1,8 +1,8 @@
 ; ============================================================================
 ; clip/arith.s — clipper fragment 2 of 10 (see clip/header.s for the module
-; map and entry contracts). Contents: the pinned umul8 primitive (FIRST code
-; in the CLIP segment so the flat build lands it at $2030 — ABI pin), the
-; udiv16_8 (moved from pool.s 2026-08-09 — the mul/div pair adjacent), the
+; map and entry contracts). Contents: udiv16_8 (first code in the CLIP
+; segment; umul8 unified into bsp/header.s 2026-08-09 — main RAM, imported
+; here — and the old $2030 first-code pin died with it), the
 ; span-pool field equates (POOL_*), Y_BIAS, sqr table aliases, the records /
 ; LINE_OUT / rasteriser interface constants, the ZP layout notes, and
 ; s16_interp (at the end — moved from dcl_s16.s 2026-08-09).
@@ -11,77 +11,13 @@
 ; ============================================================================
 
 ; ======================================================================
-; UMUL8: unsigned 8x8 -> 16 multiply via quarter-square identity
-;
-; The hottest arithmetic primitive — one call per boundary interpolation
-; (see feedback: all FP arithmetic is built on this 8x8 mul).
-;
-; Identity:  a*b = floor((a+b)^2/4) - floor((a-b)^2/4)
-; Exact because a+b and a-b have the same parity, so the two /4
-; truncation errors cancel.  sqr[n] = floor(n^2/4) covers n in [0,255];
-; when a+b >= 256 the sum term uses sqr2[n] = floor((n+256)^2/4),
-; indexed with (a+b) & $FF.  |a-b| < 256 always, so the difference term
-; always reads sqr_l/hi.
-;
-; Input:  A = a (u8), zp_mul_b = b (u8)
-; Output: zp_prod_l:zp_prod_h = a*b (u16).  Clobbers X,Y, zp_tmp0.
-;         CONTRACT (2026-07-09): A = zp_prod_h on return AND the N/Z
-;         flags reflect it — BOTH exit paths end `STA zp_prod_h`, which
-;         leaves A intact. Callers may take the product's HIGH byte
-;         straight from A (backface's u24 magnitude products do). Preserve
-;         this if you ever restructure the tail.
-;         zp_prod_l/hi alias zp_div_l/hi, so the product feeds
-;         directly into udiv16_8 with no extra loads.
-;
-; pseudocode:
-;   d = |a - b|; s = a + b
-;   if s < 256: prod = sqr[s]        - sqr[d]
-;   else:       prod = sqr2[s & 255] - sqr[d]
+; (umul8 UNIFIED into bsp/header.s 2026-08-09: the bit-identical local
+; copy there — main RAM, always mapped, reachable from the bank-C
+; clipper — is now THE multiplier; this file's copy and its $2030
+; first-code pin are gone. clip/header.s imports the symbol; callers
+; are unchanged. udiv16_8 below is now the first code in the CLIP
+; segment.)
 ; ======================================================================
-umul8_fixed:
-umul8:
-.scope
-   TAX                                     ; stash a in X (was zp_tmp0: the
-; d = a - b; negate if borrow            ; round-trip cost 6, TAX/TXA 4)
-   SEC
-   SBC zp_mul_b
-   BCS pos
-   EOR #$FF
-   ADC #1
-; |diff| (C was 0 from SBC, so ADC adds +0+1)
-pos:
-   TAY
-; Y = |diff|
-; s = a + b (carry out selects sqr vs sqr2 table for the sum term)
-   TXA
-   CLC
-   ADC zp_mul_b
-; ||||
-   TAX
-   BCS uo
-; X = sum; overflow if carry from ADC          ; ||
-; sum < 256: sqr tables for sum
-; prod = sqr[s] - sqr[d]  (16-bit table subtract)
-   LDA sqr_l,X
-   SEC
-   SBC sqr_l,Y
-   STA zp_prod_l
-; |||||
-   LDA sqr_h,X
-   SBC sqr_h,Y
-   STA zp_prod_h
-   RTS
-; |||||||
-uo:                                     ; sum >= 256: sqr2 tables for sum (carry already set from BCS)
-; prod = sqr2[s & 255] - sqr[d]  (X already wrapped mod 256 by the ADC)
-   LDA sqr2_l,X
-   SBC sqr_l,Y
-   STA zp_prod_l
-   LDA sqr2_h,X
-   SBC sqr_h,Y
-   STA zp_prod_h
-   RTS
-.endscope
 
 ; ======================================================================
 ; (udiv16_8 moved here from clip/pool.s 2026-08-09: the mul/div pair
@@ -344,16 +280,9 @@ NUM_SLOTS = 32
 Y_BIAS = 48                             ; bias Y so visible [0,159] maps to [48,207] within u8
 VIS_YMAX = Y_BIAS + 159                 ; = 207: maximum biased visible Y
 
-; Quarter-square multiply tables (pre-loaded by the Python harness).
-; sqr[n]  = floor(n^2/4) for n in [0,255]; sqr2[n] = floor((n+256)^2/4)
-; used when a+b overflows u8.
-; abi.inc owns the table base (SQR_BASE; banked $1C00 low RAM — above
-; BCA_WS $1B40, below the drivers at $2000; reachable from the bank-C
-; clipper AND bsp_render's local umul8. Loader-seeded page).
-sqr_l = SQR_LO
-sqr_h = SQR_HI
-sqr2_l = SQR2_LO
-sqr2_h = SQR2_HI
+; (sqr table aliases deleted with the unified umul8 2026-08-09 — the
+; quarter-square tables at SQR_BASE are read only by bsp/header.s's
+; umul8 now; abi.inc owns the base.)
 
 ; === RETIRED tighten ZP notes (rewritten 2026-07-12) ===
 ; The blocks that lived here — "seg value cache $A0-$A4", "running seg

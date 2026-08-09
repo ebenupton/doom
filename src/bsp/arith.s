@@ -3,7 +3,7 @@
 ;
 ; CONTEXT: everything here is a leaf (or thunk) under the seg pipeline.
 ;   br_umul8 / br_smul8       u8xu8 / s8xs8 via the shared quarter-square
-;                             core SC_UMUL8 (clip/arith.s, sqr tables —
+;                             core umul8 (bsp/header.s, sqr tables —
 ;                             banked $1C00 / flat $A500, abi SQR_*).
 ;   br_recip                  (M8,S) reciprocal from the 9.1 depth index;
 ;                             every zp_br_r_s write is followed by an
@@ -27,17 +27,17 @@
 ; br_umul8 — unsigned u8 × u8 → u16.
 ;   Inputs:  zp_br_a, zp_br_b (u8 each)
 ;   Output:  zp_br_res_l/resh (u16)
-;   Uses:    SC_UMUL8, the shared quarter-square multiplier
+;   Uses:    umul8, the shared quarter-square multiplier
 ;            (a*b = f(a+b) - f(a-b), f(x) = x^2/4 table lookup);
 ;            clobbers zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
-; Thin adapter from the br_a/br_b register convention onto SC_UMUL8.
+; Thin adapter from the br_a/br_b register convention onto umul8.
 ; ============================================================================
 SEG_CODE
 br_umul8:
    LDA zp_br_b
    STA zp_mul_b
    LDA zp_br_a
-   JSR SC_UMUL8
+   JSR umul8
    STA zp_br_res_h                          ; A = prod_hi (umul8 contract)
    LDA zp_prod_l
    STA zp_br_res_l
@@ -50,7 +50,7 @@ SEG_CODE
 ;
 ; Sign-magnitude wrapper over the unsigned quarter-square core:
 ;   sign = (a < 0) ^ (b < 0);  a = |a|;  b = |b|
-;   res  = SC_UMUL8(a, b)                        (u8 × u8 → u16)
+;   res  = umul8(a, b)                        (u8 × u8 → u16)
 ;   if sign: res = -res                          (16-bit negate)
 ; (br_smul_s8_u8 — a signed, b unsigned full 0..255 — is the clipper
 ; unit's variant; THIS one treats BOTH operands as s8.)
@@ -200,7 +200,7 @@ ft_not_one:
    LDA zp_ft_mag
    STA zp_mul_b
    LDA zp_ft_lo
-   JSR SC_UMUL8                            ; prod_lo:hi = lo * mag
+   JSR umul8                            ; prod_lo:hi = lo * mag
 ; val = (prod + 128) >> 8 — round-to-nearest, then take HI byte.
    LDA zp_prod_l
    CLC
