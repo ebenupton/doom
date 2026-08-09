@@ -116,28 +116,45 @@ ec_clamp:
    STA VX1+0,X
    BNE ec_done                             ; (A = $7F: always taken)
 ec_hi_nz:
-; s8 saturate for out-of-range evy (was the ev_clamp_hi_nz macro —
-; inlined 2026-08-09, single use). A = rounded evy16 hi byte, != 0.
-; $FF-hi values may still fit s8: $FF:%1xxxxxxx = -128..-1 and the
-; stored low byte already IS the s8 value.
+; --- s8 SATURATE for an out-of-range evy (was the ev_clamp_hi_nz
+; macro; inlined 2026-08-09 — the expansion had been paying 3-byte
+; abs,X for the two VX1 accesses, and its BNE-to-next died too).
+;
+; WHAT: evy is the rounded s24->s8 narrowing of view-Y — the main
+; path computed evy16 = (vy + 128) >> 8, stored its LOW byte in
+; VX1+0,X, and branched here because the rounded HI byte (in A) is
+; nonzero, i.e. the true value is outside 0..127. Every downstream
+; reader (near-clip, recip index, y projection) treats VX1+0 as s8,
+; so out-of-range values must SATURATE to +127/-128 — the Python
+; mirror clamps identically, and under-/over-shooting here shows up
+; directly as verify-vs-float divergence.
+;
+; HOW: case analysis on the hi byte, cheapest test first —
+;   hi = $FF        value in -256..-1: may still FIT s8. Re-read the
+;                   stored low byte: bit 7 set means -128..-1, and
+;                   the stored byte already IS the s8 answer (the
+;                   low 8 bits of a value that fits) -> exit, no
+;                   store. Bit 7 clear means -256..-129 -> $80.
+;   hi = $01..$7F   value >= +256 -> clamp $7F (+127).
+;   hi = $80..$FE   value <= -257 -> clamp $80 (-128).
+; The sign split needs no CMP: ASL A pushes the hi byte's sign bit
+; into C (BCS = negative). The clamp immediates are nonzero, so the
+; BNE-always idiom reaches the shared store without a JMP.
    CMP #$FF
    BEQ ev_case_ff
-   ASL A
+   ASL A                                   ; C = hi sign
    BCS ev_clamp_neg
-; carry = sign of hi byte
-   LDA #$7F
-   BNE ev_store
+   LDA #$7F                                ; >= +256: clamp +127
+   BNE ev_store                            ; (always: A = $7F)
 ev_clamp_neg:
-   LDA #$80
-   BNE ev_store
+   LDA #$80                                ; <= -257: clamp -128
+   BNE ev_store                            ; (always: A = $80)
 ev_case_ff:
-   LDA VX1+0,X
-   BMI ev_done
-; $FF:%1xxxxxxx → fits s8
-   LDA #$80
-   BNE ev_store
-; -256..-129 → clamp
-ev_store:
+   LDA VX1+0,X                             ; hi = $FF: the stored low byte
+   BMI ev_done                             ; %1xxxxxxx = -128..-1, already
+                                           ; the s8 value -> keep it
+   LDA #$80                                ; %0xxxxxxx = -256..-129: clamp
+ev_store:                                  ; (falls in)
    STA VX1+0,X
 ev_done:
    JMP ec_done
