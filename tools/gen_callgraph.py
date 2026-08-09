@@ -34,6 +34,20 @@ MACRO_OWNERS = {                      # CPM_ENTRY expansions (ang/bca.s)
     'corner_phi_np': 'src/ang/bca.s', 'corner_phi_pp': 'src/ang/bca.s',
 }
 
+# Calls INSIDE a .macro definition have no enclosing routine label, so
+# the edge scan used to drop them silently (vxq_shl2 vanished from the
+# graph when the fetch arms were absorbed into SXV_BODY — Eben's catch,
+# 2026-08-09). Attribute each known macro's body to the routine its
+# expansion lives in. Macros absent here still scan as before (their
+# calls attribute to the last label — fine for in-routine macros like
+# cross_compute was).
+MACRO_CALLERS = {
+    'SXV_BODY':  'sx_vert_lo',        # expanded as sx_vert_lo/hi
+    'vxc_frame': 'br_view_setup',     # single expansion (view setup)
+    'apv_stage': 'bf_seg_front',      # emit-cascade expansions
+    'ap_edges':  'bf_seg_front',
+}
+
 owner, jsr_targets, alias = dict(MACRO_OWNERS), set(), {}
 for f in files:
     for ln in open(f):
@@ -74,10 +88,24 @@ extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss'
 routines = ({resolve(t) for t in jsr_targets} | extra) & set(owner)
 
 edges = set()
+macro_re = re.compile(r'^\s*\.macro\s+([A-Za-z_][A-Za-z0-9_]*)', re.I)
+endm_re = re.compile(r'^\s*\.endmacro', re.I)
 for f in files:
     cur = None
+    macro_cur = None
     for ln in open(f):
         code = ln.split(';')[0].rstrip()
+        mm = macro_re.match(code)
+        if mm:
+            macro_cur = MACRO_CALLERS.get(mm.group(1))
+            if macro_cur is not None:
+                cur = macro_cur
+            continue
+        if endm_re.match(code):
+            if macro_cur is not None:
+                cur = None
+            macro_cur = None
+            continue
         m = label_re.match(code)
         if m:
             if m.group(1) in routines:

@@ -437,7 +437,30 @@ vxq_shl2:
    RTS
 
 ; ============================================================================
+; rot_w_signed — REGISTER ABI (Eben, 2026-08-09): the wx operand
+; arrives in registers and the sign-magnitude resolve lives HERE, once,
+; instead of at every fetch site (it was expanded 6x):
+;   A = VP_XHI raw (bit 7 = sign, low 7 = |wx| hi), X = VP_XLO,
+;   N = A's sign — callers ride the VP_XHI load's flags through the
+;   JSR (JSR/JMP/STX are flag-transparent; nothing may intervene).
+; wy stays zp-staged (zp_br_dy_l/h): Y is the plane index until the
+; last load, so no register is left to carry it — and ROT_CORE resolves
+; wy internally between the mul pairs anyway (the old caller-side wx /
+; core-side wy asymmetry was forced by the shared zp_ri_d mul slot:
+; wx occupies it during s13. This prologue keeps that slot discipline —
+; it IS the old call-site ladder, relocated).
 rot_w_signed:
+   STX zp_ri_d_l                           ; (STX: flags untouched)
+   BPL rws_pos                             ; N = wx sign (caller's load)
+   AND #$7F
+   STA zp_ri_d_h
+   LDA #1
+   STA zp_ri_sgn
+   BNE rws_go                              ; (A = 1: always)
+rws_pos:
+   STA zp_ri_d_h
+   ZERO zp_ri_sgn
+rws_go:
    ROT_CORE rot_s13w, rot_s2w, rot_s4w, 1
 ; RN-quantize FUSED with the widen (2026-08-09 round 2): the consumer
 ; adds widen(q64(v)) = ((v+2)>>2)<<2 = (v+2) & ~3 — a ripple +2 and one

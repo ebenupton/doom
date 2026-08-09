@@ -64,8 +64,11 @@
 ; SXV_BODY — one full SIDE (senior page BAKED) of the vertex transform:
 ; probe -> hit serve | miss: fetch/rotate -> evy clamp -> near-clip ->
 ; recip -> project -> armed fill. Exits: VC_HIT_ARM / VC_FILL_ARM /
-; NC_FILL_ARM, all RTS-terminated, all leaving BANK_L2 paged (the
-; L2-exit contract is per-arm, unchanged by the hoist).
+; NC_FILL_ARM, all RTS-terminated. BANKING (2026-08-09): the hit arm
+; is bank-preserving (its exit PAGE died with the planes-to-main move);
+; miss arms exit BANK_L2 as a side effect of their VP/recip paging.
+; Callers tolerate either (ch_v1_done pages L0; s_advance pages L0;
+; everything else pages explicitly).
 ; ============================================================================
 .macro SXV_BODY pg, vfoff, vxcon
 .scope
@@ -102,8 +105,17 @@
    LDA VC_RLO+pg,Y
    STA VX1+12,X                            ; rlo (= S)
 vh_pgx:
-   PAGE BANK_L2                            ; exit contract (see head)
-   RTS
+   PAGE BANK_L2                            ; BISECT: flip reverted
+   RTS                                     ; BANK-PRESERVING (2026-08-09:
+                                           ; the exit-L2 contract DIED —
+                                           ; the hit arm is pure main/zp,
+                                           ; and no post-transform consumer
+                                           ; assumes L2: has_gap + records
+                                           ; are main, the y-stage/emit
+                                           ; page explicitly, reproject
+                                           ; self-pages. Hits exit in the
+                                           ; caller's bank; miss arms still
+                                           ; exit L2 from their own PAGE.)
 ; (vxcon island lives at the BODY END — vector-entered and JMP-exited,
 ;  so placement is free)
 vmiss:
@@ -133,15 +145,10 @@ vmiss:
    STA zp_br_dy_l
    LDA VP_YHI+pg,Y
    STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
-   ZERO zp_ri_sgn
-   LDA VP_XLO+pg,Y
-   STA zp_ri_d_l
-   LDA VP_XHI+pg,Y                         ; sign-mag: N = wx sign, bit 7
-   BPL vfx_p                               ; free off the load; the abs
-   INC zp_ri_sgn                           ; ladder DIED (packed |w|)
-   AND #$7F
-vfx_p:
-   STA zp_ri_d_h
+   LDX VP_XLO+pg,Y                         ; wx rides the REGISTER ABI
+   LDA VP_XHI+pg,Y                         ; (2026-08-09): X = lo, A = raw
+                                           ; hi, N = sign — NOTHING may
+                                           ; touch flags before the JSR
    JSR rot_w_signed                        ; widened q64 base in the s24 slots
 ; ref add INLINE (2026-08-09: the vxq_add hop died — this path falls
 ; straight into fetch_done again, as the old fetch did)
@@ -164,14 +171,18 @@ vfx_p:
    STA zp_br_vy_h
    LDA zp_br_vy_x
    ADC vxc_ref_y+2
-   STA zp_br_vy_x
+   STA zp_br_vy_x                          ; A/N/Z = total_vy ext byte —
+                                           ; fetch_done RIDES these (the
+                                           ; ADC's flags describe the
+                                           ; stored value; STA is flag-
+                                           ; transparent)
 fetch_done:
 ; near-clip DIRECT on the raw s24 total (EV16 2026-08-09): clipped iff
-; total_vy < 128 — bit-identical to the old rounded-evy <= 0 test
-; (evy = (vy+128)>>8 <= 0 <=> vy < 128), but the evy round, the evx
-; store and BOTH s8 saturate islands (ec_clamp/ec_hi_nz) are DEAD:
-; nothing consumes the s8 tier any more.
-   LDA zp_br_vy_x
+; total_vy < 128 — bit-identical to the old rounded-evy <= 0 test.
+; ARRIVAL CONTRACT (register-out, 2026-08-09): A/N/Z = zp_br_vy_x from
+; the ref add's final ADC — BOTH arrivals (vfoff falls in, vxq_add
+; JMPs) end with that add, so the reload died. Nothing may slip
+; between the STA and here.
    BMI nc_fail                             ; negative -> behind
    BNE nc_ok                               ; >= 256.0 -> visible
    LDA zp_br_vy_h
@@ -278,15 +289,8 @@ vs_cold:
    STA zp_br_dy_l
    LDA VP_YHI+pg,Y
    STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
-   ZERO zp_ri_sgn
-   LDA VP_XLO+pg,Y
-   STA zp_ri_d_l
-   LDA VP_XHI+pg,Y                         ; sign-mag: N = wx sign, bit 7
-   BPL vcx_p                               ; free off the load; the abs
-   INC zp_ri_sgn                           ; ladder DIED (packed |w|)
-   AND #$7F
-vcx_p:
-   STA zp_ri_d_h
+   LDX VP_XLO+pg,Y                         ; wx rides the REGISTER ABI:
+   LDA VP_XHI+pg,Y                         ; X = lo, A = raw hi, N = sign
    JSR rot_w_signed                        ; widened q64 base in the s24 slots
 ; birth store: >>2 in place to the s16 form (exact — low 2 bits are 0),
 ; store 4 planes, << 2 back, fall into the add. The shifts live ONLY
@@ -351,9 +355,10 @@ vxq_add:
    STA zp_br_vy_h
    LDA zp_br_vy_x
    ADC vxc_ref_y+2
-   STA zp_br_vy_x
-   JMP fetch_done                          ; (exit-contract PAGE died: the
-                                           ; island never leaves L2 now)
+   STA zp_br_vy_x                          ; A/N/Z = vy ext — fetch_done's
+   JMP fetch_done                          ; arrival contract (JMP is flag-
+                                           ; transparent; exit-PAGE died:
+                                           ; the island never leaves L2)
 .endscope
 .endmacro
 

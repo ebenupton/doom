@@ -34,12 +34,14 @@ bsp_lo_start:
 ;            chain key killed by the caller (VX2 no longer holds a vertex).
 ;   Clobbers: fetch/rot scratch (via cr_recover), zp_cr_*, zp_br_a,
 ;            zp_br_sign, zp_br_t2, zp_div_*, umul8 scratch, A/X/Y.
-;   Banking: arrives AND leaves BANK_L2 (the sx_vert_* exit contract —
-;            v2 always transforms right before the resolution island).
-;            The VP plane reads need exactly that; the math + projection
-;            are main-RAM only. NO paging here (an exit PAGE BANK_L0
-;            was tried 2026-08-09 and broke the banked build's
-;            downstream bank state — bankedcmp caught it).
+;   Banking: SELF-CONTAINED (2026-08-09, exit-contract retirement):
+;            arrival bank is arbitrary (the transform's hit arm is
+;            bank-preserving now). cr_plain pages L2 for the VP reads;
+;            the t divide pages C (udiv16_8 = clipper segment); the
+;            math + projection are main-RAM only and the exit bank is
+;            whatever ran last — every downstream consumer pages
+;            explicitly. (History: an exit PAGE BANK_L0 under the OLD
+;            always-L2 contract broke banked — bankedcmp caught it.)
 ; ============================================================================
 reproject_at_crossing:
 .scope
@@ -119,8 +121,13 @@ rp_t_ok:
    PAGE BANK_C                             ; udiv16_8 lives in the CLIPPER
    JSR udiv16_8                            ; segment = bank C when banked
    STA zp_br_a                             ; (the JSR, not the SC_ inline:
-   PAGE BANK_L2                            ;  ~100 bytes for a rare path);
-                                           ; restore the L2 arrival state
+   PAGE BANK_L2                            ;  ~100B for a rare path)
+; ^ EMPIRICALLY LOAD-BEARING (2026-08-09): removing this restore
+; crashes banked on the crossing seg's SECOND draw (raster PC runs off
+; the blob end, misaligned) — some consumer between here and the next
+; explicit PAGE still wants L2, and the audit (has_gap main, y-stage
+; self-paged, emits PAGE_X C) has not identified it. Do NOT delete
+; without root-causing; bankedcmp is the catcher. (~6 cyc, ~1.7x/frame.)
 ; ---- dvx = vx_u - vx_c: sign + u24 magnitude in the vy slots ----
    ZERO zp_br_sign
    SEC
@@ -253,8 +260,8 @@ rp_recip:
 ; is bit-identical to the transform that produced the endpoint's clip
 ; verdict, in BOTH vxc modes: the base is a pure function of (vertex,
 ; angle epoch) and ref is staged unconditionally by vxc_frame.
-;   In:  A = idx_l, X = idx_b (senior side bit $20); BANK_L2 paged
-;        (reproject's arrival contract — never re-paged here).
+;   In:  A = idx_l, X = idx_b (senior side bit $20); any bank —
+;        cr_plain pages L2 itself (warm serves need no paging at all).
 ;   Out: zp_br_vx_l/h/x, zp_br_vy_l/h/x = totals (s24 8.8).
 ;   Clobbers: A/X/Y, fetch scratch (zp_br_dy_*, zp_ri_*), rot scratch.
 ; cr_recover_clipped: same, then banks the result into the zp_cr_*
@@ -350,6 +357,10 @@ cw_yp:
 cr_cold:
    LDA zp_div_l                            ; restore idx_l (X untouched)
 cr_plain:
+   PAGE_Y BANK_L2                          ; VP planes (self-paged since the
+                                           ; transform exit contract died —
+                                           ; arrival bank is now arbitrary;
+                                           ; Y dead, A = idx_l survives)
    TAY                                     ; Y = plane index
    TXA
    AND #$20
@@ -358,30 +369,16 @@ cr_plain:
    STA zp_br_dy_l                          ; vertex verbatim, like vfoff
    LDA VP_YHI,Y
    STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
-   ZERO zp_ri_sgn
-   LDA VP_XLO,Y
-   STA zp_ri_d_l
-   LDA VP_XHI,Y                            ; sign-mag: N = wx sign, bit 7
-   BPL cr_xp0
-   INC zp_ri_sgn
-   AND #$7F
-cr_xp0:
-   STA zp_ri_d_h
-   JMP cr_rot
+   LDX VP_XLO,Y                            ; wx rides the REGISTER ABI:
+   LDA VP_XHI,Y                            ; X = lo, A = raw hi, N = sign
+   JMP cr_rot                              ; (JMP is flag-transparent)
 cr_hi:
    LDA VP_YLO+$100,Y                       ; senior side (pg $100)
    STA zp_br_dy_l
    LDA VP_YHI+$100,Y
    STA zp_br_dy_h
-   ZERO zp_ri_sgn
-   LDA VP_XLO+$100,Y
-   STA zp_ri_d_l
-   LDA VP_XHI+$100,Y
-   BPL cr_xp1
-   INC zp_ri_sgn
-   AND #$7F
-cr_xp1:
-   STA zp_ri_d_h
+   LDX VP_XLO+$100,Y
+   LDA VP_XHI+$100,Y                       ; (register ABI — see junior)
 cr_rot:
    JSR rot_w_signed                        ; widened q64 base in the s24 slots
 cr_ref:
