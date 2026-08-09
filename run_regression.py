@@ -68,6 +68,7 @@ run('bankedcmp_check', ['tools/bankedcmp_check.py'], lambda o: 'PASS' in o and '
 # rebuilt with the gates — this also runs its file-DAG acyclicity check,
 # so a reintroduced call cycle fails the regression here.
 run('callgraph', ['tools/gen_callgraph.py'], lambda o: 'build/callgraph.pdf' in o and 'CYCLE' not in o)
+run('codescan', ['tools/codescan.py'], lambda o: 'CODESCAN: PASS' in o)
 
 baseline = None
 if os.path.exists(BASELINE_PATH):

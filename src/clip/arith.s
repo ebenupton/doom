@@ -517,7 +517,7 @@ si_dy_done:
    ORA LC_DY_HI
    BNE si_general
    LDA LC_DY_LO
-   STA zp_mul_b
+   STA z:zp_mul_b
    LDA LC_OFF_LO
    JSR umul8
 ; round: prod += (den / 2)
@@ -559,11 +559,11 @@ si_general:
 
 ; Always need p1 = a_lo * b_lo.
    LDA LC_DY_LO
-   STA zp_mul_b
+   STA z:zp_mul_b
    LDA LC_OFF_LO
    JSR umul8
    STA LC_M_R1                             ; A = prod_hi (umul8 contract)
-   LDA zp_prod_l
+   LDA z:zp_prod_l
    STA LC_M_R0
 .if ::C02
    STZ LC_M_R2
@@ -578,15 +578,15 @@ si_general:
    LDA LC_DY_HI
    BEQ skip_p2
 
-   STA zp_mul_b                            ; A = b_hi from the test above
+   STA z:zp_mul_b                            ; A = b_hi from the test above
    LDA LC_OFF_LO
    JSR umul8
 ; p2 = a_lo * b_hi
-   LDA zp_prod_l
+   LDA z:zp_prod_l
    CLC
    ADC LC_M_R1
    STA LC_M_R1
-   LDA zp_prod_h
+   LDA z:zp_prod_h
    ADC LC_M_R2
    STA LC_M_R2
    LDA #0
@@ -598,15 +598,15 @@ skip_p2:
    BEQ skip_p3_p4
 
    LDA LC_DY_LO
-   STA zp_mul_b
+   STA z:zp_mul_b
    LDA LC_OFF_HI
    JSR umul8
 ; p3 = a_hi * b_lo
-   LDA zp_prod_l
+   LDA z:zp_prod_l
    CLC
    ADC LC_M_R1
    STA LC_M_R1
-   LDA zp_prod_h
+   LDA z:zp_prod_h
    ADC LC_M_R2
    STA LC_M_R2
    LDA #0
@@ -616,15 +616,15 @@ skip_p2:
    LDA LC_DY_HI
    BEQ skip_p3_p4
 ; if b fits u8, p4 = a_hi * 0 = 0
-   STA zp_mul_b                            ; A = b_hi from the test above
+   STA z:zp_mul_b                            ; A = b_hi from the test above
    LDA LC_OFF_HI
    JSR umul8
 ; p4 = a_hi * b_hi
-   LDA zp_prod_l
+   LDA z:zp_prod_l
    CLC
    ADC LC_M_R2
    STA LC_M_R2
-   LDA zp_prod_h
+   LDA z:zp_prod_h
    ADC LC_M_R3
    STA LC_M_R3
 skip_p3_p4:

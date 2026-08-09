@@ -85,6 +85,7 @@ def build(asm, banked=0, c02=None, out=None, force=False):
         name = os.path.basename(src).replace('.s', '')
         obj = os.path.join(objdir, f'{name}_b{banked}c{c02}.o')
         text += _run(['ca65', '-g', '-D', f'C02={c02}', '-D', f'BANKED={banked}',
+                      '-l', os.path.join(objdir, f'{name}_b{banked}c{c02}.lst'),
                       os.path.join(_ROOT, src), '-o', obj])
         objs.append(obj)
     text += _run(['ld65', '-C', os.path.join(_ROOT, _CFGS[banked])] + objs +
