@@ -236,13 +236,13 @@ rp_recip:
    JSR br_project_x                        ; -> zp_br_res_l/h = sx
    LDX zp_seg_ep
    LDA zp_br_res_h
-   STA VX1+4,X                             ; sx -> the clipped endpoint's
+   STA VX1+2,X                             ; sx -> the clipped endpoint's
    LDA zp_br_res_l                         ; struct slots
-   STA VX1+3,X
+   STA VX1+1,X
    LDA zp_br_r_m8                          ; bank recip(NEAR) = (M8=0, S=1)
-   STA VX1+13,X                            ; into the struct: the deferred
+   STA VX1+11,X                            ; into the struct: the deferred
    LDA zp_br_r_s                           ; y stage (and apv_stage) project
-   STA VX1+14,X                            ; the crossing with THIS recip
+   STA VX1+12,X                            ; the crossing with THIS recip
    RTS
 .endscope
 
@@ -296,9 +296,9 @@ cr_recover:
    LDA vc_bit_mask,Y
    AND VXC_VALID,X                         ; VALID is main RAM — no paging
    BEQ cr_cold
-   PAGE_Y BANK_C                           ; planes live in bank C (banked);
-   LDY zp_div_l                            ; Y = idx_l (after the clobber)
-   TXA
+   LDY zp_div_l                            ; Y = idx_l (planes are MAIN
+   TXA                                     ; since 2026-08-09 — the PAGE_Y
+                                           ; BANK_C/L2 pair died)
    AND #$20
    BNE cr_w_hi
    LDA VXC_XLO,Y                           ; warm: base16 -> the working
@@ -320,8 +320,6 @@ cr_w_hi:
    LDA VXC_YHI+$100,Y
    STA zp_br_vy_h
 cr_widen:
-   PAGE_Y BANK_L2                          ; restore the L2 contract; the
-                                           ; widen below is pure zp
 ; widen base16 << 2, sign-extended into the ext bytes (the vxq_join
 ; form — BIT reads the hi sign without disturbing A's accumulator)
    LDA #0

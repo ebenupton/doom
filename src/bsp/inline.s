@@ -179,16 +179,16 @@ as_done:
    JMP inl_end
 ; as_one: X = struct offset, Y = header offset of the FH byte (CH = Y-1)
 as_one:
-   LDA VX1+4,X                             ; sx_hi: off-screen endpoint →
+   LDA VX1+2,X                             ; sx_hi: off-screen endpoint →
    BEQ as_on                               ; ap_edge_one skips its vertical,
    RTS                                     ; so DON'T project the pair
                                         ; (spectrack 2026-07-12: every
                                         ; wasted apv_stage call was this)
 as_on:
    STX as_x
-   LDA VX1+13,X                            ; endpoint recip
+   LDA VX1+11,X                            ; endpoint recip
    STA zp_br_r_m8
-   LDA VX1+14,X
+   LDA VX1+12,X
    STA zp_br_r_s
    RNS_SELECT                              ; (A = S; Y survives, X dies)
    PAGE BANK_L0
@@ -206,15 +206,15 @@ as_on:
    TXA                                     ; run under L2)
    JSR br_project_y                        ; h in A -> Y = lo, A = hi
    LDX as_x
-   STA VX1+10,X                            ; FH projection hi (from A)
+   STA VX1+8,X                            ; FH projection hi (from A)
    TYA
-   STA VX1+9,X                             ; FH projection lo
+   STA VX1+7,X                             ; FH projection lo
    LDA zp_ap2_dlt                          ; h in A
    JSR br_project_y
    LDX as_x
-   STA VX1+12,X                            ; CH projection hi (from A)
+   STA VX1+10,X                            ; CH projection hi (from A)
    TYA
-   STA VX1+11,X                            ; CH projection lo
+   STA VX1+9,X                            ; CH projection lo
    RTS
 ; (as_x promoted to ZP — zp.inc $A1 — 3 accesses per as_one)
 inl_end:

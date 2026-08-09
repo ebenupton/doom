@@ -132,43 +132,55 @@ ANIM_CUR = $29                    ; [bsp]; anim: mover index (was $F1)
 ; the clipped endpoint in place. X = zp_seg_ep = 0 (v1) / 15 (v2)
 ; indexes VX1+ofs,X. All legacy consumer names below are ALIASES
 ; into these structs — the emit/near-clip code is unchanged.
-;   +0 evy  +1 evx  +2 clip  +3 sx_lo  +4 sx_hi
-;   +5 sy_top_lo/hi +7 sy_bot_lo/hi +9 sy_btop_lo/hi +11 sy_bbot_lo/hi
-;   +13 rhi +14 rlo   (recip banked for ap2_solid_proj)
+;   +0 clip  +1 sx_lo  +2 sx_hi
+;   +3 sy_top_lo/hi +5 sy_bot_lo/hi +7 sy_btop_lo/hi +9 sy_bbot_lo/hi
+;   +11 rhi +12 rlo   (recip banked for apv_stage / the y-stage)
+; COMPACTED 2026-08-09 (Eben): the dead evy/evx head slots (EV16)
+; squeezed out — stride 15 -> 13, $FC-$FF freed. $EB-$F0 remain a
+; deliberate phase-disjoint overlay with hud.s scratch (HUD draws
+; between frames; the structs are per-seg).
 ; ============================================================
 VX1 = $E2
-VX2 = $F1
-VX_STRIDE = 15
-zp_seg_v1_evy = VX1+0
-zp_seg_v1_evx = VX1+1
-zp_seg_v1_clipped = VX1+2
-zp_seg_sx1_l = VX1+3
-zp_seg_sx1_h = VX1+4
-zp_seg_sy1_top_l = VX1+5
-zp_seg_sy1_top_h = VX1+6
-zp_seg_sy1_bot_l = VX1+7
-zp_seg_sy1_bot_h = VX1+8
-zp_seg_sy1_btop_l = VX1+9
-zp_seg_sy1_btop_h = VX1+10
-zp_seg_sy1_bbot_l = VX1+11
-zp_seg_sy1_bbot_h = VX1+12
-zp_seg_v1_r_m8 = VX1+13
-zp_seg_v1_r_s = VX1+14
-zp_seg_v2_evy = VX2+0
-zp_seg_v2_evx = VX2+1
-zp_seg_v2_clipped = VX2+2
-zp_seg_sx2_l = VX2+3
-zp_seg_sx2_h = VX2+4
-zp_seg_sy2_top_l = VX2+5
-zp_seg_sy2_top_h = VX2+6
-zp_seg_sy2_bot_l = VX2+7
-zp_seg_sy2_bot_h = VX2+8
-zp_seg_sy2_btop_l = VX2+9
-zp_seg_sy2_btop_h = VX2+10
-zp_seg_sy2_bbot_l = VX2+11
-zp_seg_sy2_bbot_h = VX2+12
-zp_seg_v2_r_m8 = VX2+13
-zp_seg_v2_r_s = VX2+14
+VX_STRIDE = 13
+VX2 = VX1+VX_STRIDE
+zp_seg_v1_clipped = VX1+0
+zp_seg_sx1_l = VX1+1
+zp_seg_sx1_h = VX1+2
+zp_seg_sy1_top_l = VX1+3
+zp_seg_sy1_top_h = VX1+4
+zp_seg_sy1_bot_l = VX1+5
+zp_seg_sy1_bot_h = VX1+6
+zp_seg_sy1_btop_l = VX1+7
+zp_seg_sy1_btop_h = VX1+8
+zp_seg_sy1_bbot_l = VX1+9
+zp_seg_sy1_bbot_h = VX1+10
+zp_seg_v1_r_m8 = VX1+11
+zp_seg_v1_r_s = VX1+12
+zp_seg_v2_clipped = VX2+0
+zp_seg_sx2_l = VX2+1
+zp_seg_sx2_h = VX2+2
+zp_seg_sy2_top_l = VX2+3
+zp_seg_sy2_top_h = VX2+4
+zp_seg_sy2_bot_l = VX2+5
+zp_seg_sy2_bot_h = VX2+6
+zp_seg_sy2_btop_l = VX2+7
+zp_seg_sy2_btop_h = VX2+8
+zp_seg_sy2_bbot_l = VX2+9
+zp_seg_sy2_bbot_h = VX2+10
+zp_seg_v2_r_m8 = VX2+11
+zp_seg_v2_r_s = VX2+12
+; $FC-$FF FREE (2026-08-09 struct compaction)
+
+; --- Tighten record buffers (4-byte records, count at byte 0) ---
+; CROSS-UNIT: written by clip/dcl.s via the zp_dcl_rec_buf pointer,
+; ARMED (hi byte + count reset) by bsp/seg_emit.s, read by clip/tfr.s.
+; Registry home since 2026-08-09: the arm sites used to hardcode the
+; page numbers (clip-local equate) — the trap that bit the VXC move.
+TOP_RECORDS = $0B00                     ; moved from $0700 2026-08-09: the
+                                        ; vacated page pairs with $0600 as
+                                        ; a contiguous VXC plane (planes
+                                        ; left bank C for main)
+BOT_RECORDS = $0800
 zp_seg_ep = $26                   ; [bsp]; per-endpoint STRUCT offset into
 ; VX1 (0 = v1, 15 = VX_STRIDE = v2): the generators write evy/evx/sx/sy/
 ; recip DIRECTLY into the endpoint structs via ,X = this offset. Set by

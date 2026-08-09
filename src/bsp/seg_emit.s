@@ -322,12 +322,12 @@ hg_pass:
 ; Records reset for THIS seg (moved from seg_proc): ms_dispatch reads
 ; the counts only for segs that got here; armed draws re-init them.
 .if ::C02
-   STZ $0700                              ; TOP_RECORDS count
-   STZ $0800                              ; BOT_RECORDS count
-.else
+   STZ TOP_RECORDS                        ; counts (symbolic 2026-08-09:
+   STZ BOT_RECORDS                        ;  TOP moved to $0B00 for the
+.else                                     ;  VXC-planes-to-main shuffle)
    LDA #0
-   STA $0700
-   STA $0800
+   STA TOP_RECORDS
+   STA BOT_RECORDS
 .endif
 ; --- DEFERRED Y PROJECTION (2026-07-11): ALL sy pairs are projected
 ; HERE, only for segs that passed has_gap — the transform phase now
@@ -461,9 +461,9 @@ ft_emit:
 ; top of the aperture — arm TOP_RECORDS. The old AND #$06 re-test was
 ; decidable at every entrant and is gone: solid/NEEDBT branch straight
 ; to ft_no_rec above.
-   LDA #$07
+   LDA #>TOP_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO $0700                             ; count = 0 (arm-time reset;
+   ZERO TOP_RECORDS                        ; count = 0 (arm-time reset;
                                            ; page-aligned → absolute)
    LDA #1
    STA zp_dcl_rec_off
@@ -516,9 +516,9 @@ fb_emit:
 ; Mirror of ft_emit: portal-lip only — arm BOT_RECORDS (the AND #$0A
 ; re-test was decidable at every entrant; solid/NEEDBB branch straight
 ; to fb_no_rec above).
-   LDA #$08
+   LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO $0800                             ; count = 0 (arm-time reset)
+   ZERO BOT_RECORDS                        ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
    BNE fb_set_line                         ; A = 1: always taken
@@ -546,12 +546,11 @@ step_cont:                              ;  pushed the branch out of range)
    AND #$04
    BEQ step_no_top
    LDX #zp_seg_sy1_btop_l - VX1            ; sy pair offset (btop)
-   LDA #$07
+   LDA #>TOP_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO $0700                             ; count = 0 (arm-time reset)
+   ZERO TOP_RECORDS                        ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
-; TOP_RECORDS = $0700
    JSR SC_DRAW_S16_H
 step_no_top:
 
@@ -560,9 +559,9 @@ step_no_top:
    AND #$08
    BEQ step_no_bot
    LDX #zp_seg_sy1_bbot_l - VX1            ; sy pair offset (bbot)
-   LDA #$08
+   LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO $0800                             ; count = 0 (arm-time reset)
+   ZERO BOT_RECORDS                        ; count = 0 (arm-time reset)
    LDA #1
    STA zp_dcl_rec_off
 ; BOT_RECORDS = $0800
@@ -635,10 +634,10 @@ ms_dispatch:
    BNE ms_solid_path
 ; --- Portal: apply the records tighten IMMEDIATELY (bank C is
 ;     guaranteed here — the emit-cascade audit — and the records are
-;     LIVE in $0700/$0800: consumed in place, no snapshot). Skip if no
-;     records were populated — mirrors Python's wrapper test.
-   LDA $0700
-   ORA $0800
+;     LIVE in the records buffers: consumed in place, no snapshot).
+;     Skip if no records were populated — mirrors Python's wrapper test.
+   LDA TOP_RECORDS
+   ORA BOT_RECORDS
    BEQ ms_zero_rec
    JSR SC_TIGHTEN_FROM_RECORDS
    JMP ms_skip
@@ -738,9 +737,9 @@ sa_done:
 ; gates BEFORE the descriptor read (both exits are draw-free and the
 ; mark is already down, so order is unobservable): STATIC zp
 ; addressing — this entry IS struct 0, no index needed.
-   LDA VX1+2                               ; near-clipped endpoint
+   LDA VX1+0                               ; near-clipped endpoint
    BNE f1_rts
-   LDA VX1+4                               ; column off-screen
+   LDA VX1+2                               ; column off-screen
    BNE f1_rts
    LDY zp_v1i_l
    LDA zp_v1i_b
@@ -761,9 +760,9 @@ f1_go:
    LDA zp_seg_v_bitm                        ; (v2's mask — see the site)
    ORA VDONE,X
    STA VDONE,X
-   LDA VX1+VX_STRIDE+2
+   LDA VX2+0                               ; clip
    BNE f2_rts
-   LDA VX1+VX_STRIDE+4
+   LDA VX2+2                               ; sx_hi
    BNE f2_rts
    LDY zp_seg_v_idx_l
    LDA zp_seg_v_idx_b
@@ -798,13 +797,13 @@ vsx_c2:                                    ; bottom step: bbot -> bot,
    LDA zp_seg_flags                        ; gated on NEEDBB (a solid or
    AND #$08                                ; stepless trigger self-annuls
    BEQ vsx_rts                             ; the code — world bfh <= fh)
-   LDA VX1+11,X
+   LDA VX1+9,X
    STA zp_line_yl_l
-   LDA VX1+12,X
+   LDA VX1+10,X
    STA zp_line_yl_h
-   LDA VX1+7,X
+   LDA VX1+5,X
    STA zp_line_yr_l
-   LDA VX1+8,X
+   LDA VX1+6,X
    STA zp_line_yr_h
    JMP vsx_emit
 vsx_c3:
@@ -812,31 +811,31 @@ vsx_c3:
 vsx_rts:
    RTS
 vsx_c1:                                    ; full corner: top -> bot
-   LDA VX1+5,X
+   LDA VX1+3,X
    STA zp_line_yl_l
-   LDA VX1+6,X
+   LDA VX1+4,X
    STA zp_line_yl_h
-   LDA VX1+7,X
+   LDA VX1+5,X
    STA zp_line_yr_l
-   LDA VX1+8,X
+   LDA VX1+6,X
    STA zp_line_yr_h
 vsx_emit:
-   LDA VX1+3,X                             ; column (pre-gated on-screen:
+   LDA VX1+1,X                             ; column (pre-gated on-screen:
    JMP SC_DCL_VERT_ON                      ; skip the senior-byte check)
 
 vsx_do_c3:                                 ; top step: top -> btop,
    LDA zp_seg_flags                        ; gated on NEEDBT
    AND #$04
    BEQ vsx_c3rts
-   LDA VX1+5,X
+   LDA VX1+3,X
    STA zp_line_yl_l
-   LDA VX1+6,X
+   LDA VX1+4,X
    STA zp_line_yl_h
-   LDA VX1+9,X
+   LDA VX1+7,X
    STA zp_line_yr_l
-   LDA VX1+10,X
+   LDA VX1+8,X
    STA zp_line_yr_h
-   LDA VX1+3,X                             ; (pre-gated on-screen)
+   LDA VX1+1,X                             ; (pre-gated on-screen)
    JMP SC_DCL_VERT_ON                      ; tail: RTS to OUR caller
 vsx_c3rts:
    RTS
@@ -852,9 +851,9 @@ vsx_expl:
 ; (VWHC planes) — an empty span pays no PAGE at all.
    AND #$7F
    STA zp_vs_i
-   LDA VX1+13,X                            ; endpoint recip -> projector
+   LDA VX1+11,X                            ; endpoint recip -> projector
    STA zp_br_r_m8
-   LDA VX1+14,X
+   LDA VX1+12,X
    STA zp_br_r_s
    RNS_SELECT                              ; (A = S rides in; clobbers X)
 vsx_exl:
@@ -914,7 +913,7 @@ vsx_em1:
    STY zp_line_yr_l
    PAGE BANK_C
    LDX zp_vs_x
-   LDA VX1+3,X                             ; (pre-gated on-screen)
+   LDA VX1+1,X                             ; (pre-gated on-screen)
    JSR SC_DCL_VERT_ON
 vsx_enext:
    LDY zp_vs_i

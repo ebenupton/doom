@@ -1248,24 +1248,24 @@ seg_zero_rec_solid:
 ; endpoint iff fb < Y_BIAS OR (NEEDBB and bb < Y_BIAS). Endpoint 1
 ; first; only if it passes do we pay for endpoint 2 (szr_b1).
 ; bottom family: band bottom above the screen top at endpoint 1?
-   LDX #7                                  ; sy1_bot (fb1) — VX1+7
+   LDX #zp_seg_sy1_bot_l - VX1            ; sy1_bot (fb1)
    JSR szr_lt
    BCS szr_b1
    LDA zp_seg_flags
    AND #$08                                ; SF_NEEDBB
    BEQ szr_top
-   LDX #11                                 ; sy1_bbot (bb1) — VX1+11
+   LDX #zp_seg_sy1_bbot_l - VX1            ; sy1_bbot (bb1)
    JSR szr_lt
    BCC szr_top
 szr_b1:
 ; ... and at endpoint 2?
-   LDX #22                                 ; sy2_bot (fb2) — VX2+7
+   LDX #zp_seg_sy2_bot_l - VX1            ; sy2_bot (fb2)
    JSR szr_lt
    BCS szr_closed
    LDA zp_seg_flags
    AND #$08
    BEQ szr_top
-   LDX #26                                 ; sy2_bbot (bb2) — VX2+11
+   LDX #zp_seg_sy2_bbot_l - VX1            ; sy2_bbot (bb2)
    JSR szr_lt
    BCS szr_closed
 szr_top:
@@ -1273,23 +1273,23 @@ szr_top:
 ; Band top = max(ft, bt-if-NEEDBT), and max(a,b) > k iff a > k OR
 ; b > k — the same either-of-two test per endpoint as the bottom
 ; family above, with szr_gt in place of szr_lt.
-   LDX #5                                  ; sy1_top (ft1) — VX1+5
+   LDX #zp_seg_sy1_top_l - VX1            ; sy1_top (ft1)
    JSR szr_gt
    BCS szr_t1
    LDA zp_seg_flags
    AND #$04                                ; SF_NEEDBT
    BEQ szr_open
-   LDX #9                                  ; sy1_btop (bt1) — VX1+9
+   LDX #zp_seg_sy1_btop_l - VX1            ; sy1_btop (bt1)
    JSR szr_gt
    BCC szr_open
 szr_t1:
-   LDX #20                                 ; sy2_top (ft2) — VX2+5
+   LDX #zp_seg_sy2_top_l - VX1            ; sy2_top (ft2)
    JSR szr_gt
    BCS szr_closed
    LDA zp_seg_flags
    AND #$04
    BEQ szr_open
-   LDX #24                                 ; sy2_btop (bt2) — VX2+9
+   LDX #zp_seg_sy2_btop_l - VX1            ; sy2_btop (bt2)
    JSR szr_gt
    BCS szr_closed
 szr_open:

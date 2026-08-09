@@ -13,7 +13,7 @@
 ;            zp_seg_bbot_dlt  = bfh - vz (s8)  back floor   (or APV1_CH)
 ;            zp_seg_flags     = seg header flags
 ;                               (SOLID=$02 NEEDBT=$04 NEEDBB=$08 APEDGE1=$40)
-;   Outputs: the endpoint struct sy pairs (base+5..12), s16 screen y,
+;   Outputs: the endpoint struct sy pairs (base+3..12), s16 screen y,
 ;            pre-biased by Y_BIAS (br_project_y folds it):
 ;            top/bot always, btop/bbot when the flags gate them in.
 ;   Uses:    br_project_y (project.s) — the VWHC-memoised projection;
@@ -39,14 +39,14 @@
 .local dpy_chk_bb, dpy_done
    LDA zp_seg_top_dlt                       ; h rides A into the cache front
    JSR br_project_y                        ; -> Y = sy lo, A = sy hi
-   STA base+6
+   STA base+4
    TYA
-   STA base+5                              ; sy_top
+   STA base+3                              ; sy_top
    LDA zp_seg_bot_dlt
    JSR br_project_y
-   STA base+8
+   STA base+6
    TYA
-   STA base+7                              ; sy_bot
+   STA base+5                              ; sy_bot
 backentry:
    LDA zp_seg_flags
    AND #$02
@@ -56,18 +56,18 @@ backentry:
    BEQ dpy_chk_bb
    LDA zp_seg_btop_dlt
    JSR br_project_y
-   STA base+10
+   STA base+8
    TYA
-   STA base+9                              ; sy_btop
+   STA base+7                              ; sy_btop
 dpy_chk_bb:
    LDA zp_seg_flags
    AND #$08
    BEQ dpy_done
    LDA zp_seg_bbot_dlt
    JSR br_project_y
-   STA base+12
+   STA base+10
    TYA
-   STA base+11                             ; sy_bbot
+   STA base+9                             ; sy_bbot
 dpy_done:
    RTS
 .endmacro
