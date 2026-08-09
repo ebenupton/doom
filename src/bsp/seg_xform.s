@@ -10,12 +10,13 @@
 ;
 ;   Input:  zp_seg_v_idx_l/hi = vertex index (u16), written by the caller
 ;             (doubles as the cache-write index — no staging copy).
-;   Output: THE ENDPOINT STRUCT (zp.inc VX1/VX2, X = zp_seg_ep = 0/15):
-;             +2 clip (1 = behind near plane; rest then undefined)
-;             +3/+4 sx  +5..+12 the flag-gated sy pairs (do_project_y tail)
-;             +13/+14 rhi/rlo (banked for apv_stage / the y-stage)
-;           (+0/+1 FREE since EV16 2026-08-09 — the s8 evy/evx tier
-;           died; crossing math recovers s24 totals via cr_recover.)
+;   Output: THE ENDPOINT STRUCT (zp.inc VX1/VX2, X = zp_seg_ep = 0/13):
+;             +0 clip (1 = behind near plane; rest then undefined)
+;             +1/+2 sx  +3..+10 the flag-gated sy pairs (do_project_y tail)
+;             +11/+12 rhi/rlo (banked for apv_stage / the y-stage)
+;           (COMPACTED 2026-08-09: the dead EV16 evy/evx head slots
+;           squeezed out — stride 13; crossing recovers s24 totals
+;           via cr_recover.)
 ;           zp_br_r_m8/rlo also hold the recip (projection working slots).
 ;           NOTHING is staged — every result stores once, struct-direct.
 ;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x.
@@ -78,29 +79,28 @@
    LDA vc_bit_mask,X                       ; bit mask = 1 << (idx_lo & 7)
    STA zp_seg_v_bitm
    LDX zp_seg_ep                           ; X = struct offset from here on
-   LDA VCACHE_VALID_BASE,Y
-   AND zp_seg_v_bitm
+   AND VCACHE_VALID_BASE,Y
    BEQ vmiss
 ; --- vcache hit serve (was VC_HIT_ARM, absorbed 2026-08-09) ---
 ; EV16: the evy/evx serves DIED — clip is the whole near verdict, and
 ; the crossing recovers s24 totals itself (cr_recover).
    LDY zp_seg_v_idx_l
    LDA VC_CLIP+pg,Y                        ; cached near-clip verdict —
-   STA VX1+2,X                             ; served UNCONDITIONALLY (the
+   STA VX1+0,X                             ; served UNCONDITIONALLY (the
    BNE vh_pgx                              ; head's ZERO died 2026-07-27);
                                            ; clipped: skip the dead serves
 ; (hit arm de-larded 2026-07-25: no working-recip stores, no select —
 ; every projector downstream restages from the STRUCT copies)
    LDA VC_SXL+pg,Y
-   STA VX1+3,X                             ; sx_lo
+   STA VX1+1,X                             ; sx_lo
    LDA VC_SXH+pg,Y
-   STA VX1+4,X                             ; sx_hi
+   STA VX1+2,X                             ; sx_hi
    LDA VC_RHI+pg,Y
-   STA VX1+13,X                            ; rhi (apv_stage / the y-stage
+   STA VX1+11,X                            ; rhi (apv_stage / the y-stage
                                            ; read the endpoint's own recip
                                            ; from +13/14)
    LDA VC_RLO+pg,Y
-   STA VX1+14,X                            ; rlo (= S)
+   STA VX1+12,X                            ; rlo (= S)
 vh_pgx:
    PAGE BANK_L2                            ; exit contract (see head)
    RTS
@@ -166,7 +166,6 @@ vfx_p:
    ADC vxc_ref_y+2
    STA zp_br_vy_x
 fetch_done:
-   LDX zp_seg_ep                           ; struct offset
 ; near-clip DIRECT on the raw s24 total (EV16 2026-08-09): clipped iff
 ; total_vy < 128 — bit-identical to the old rounded-evy <= 0 test
 ; (evy = (vy+128)>>8 <= 0 <=> vy < 128), but the evy round, the evx
@@ -202,10 +201,10 @@ ncr_done:
    LDX zp_seg_ep                           ; struct offset
    LDY zp_seg_v_idx_l                      ; plane index
    LDA zp_br_res_h
-   STA VX1+4,X                             ; sx_hi -> struct
+   STA VX1+2,X                             ; sx_hi -> struct
    STA VC_SXH+pg,Y                         ; sx_hi -> plane
    LDA zp_br_res_l
-   STA VX1+3,X                             ; sx_lo -> struct
+   STA VX1+1,X                             ; sx_lo -> struct
    STA VC_SXL+pg,Y                         ; sx_lo -> plane
 ; --- armed fills, FUSED (Eben, 2026-07-27): the ok-miss part carries
 ; only what a near-clipped entry must not get (recip, sx, clip=0) and
@@ -213,16 +212,16 @@ ncr_done:
 ; re-enters it with a branch-always. One copy of the shared stores
 ; per side instead of two. ---
    LDA zp_br_r_m8
-   STA VX1+13,X                            ; rhi/rlo: the endpoint's own
+   STA VX1+11,X                            ; rhi/rlo: the endpoint's own
                                            ; recip for apv_stage / y-stage
    STA VC_RHI+pg,Y
    LDA zp_br_r_s
-   STA VX1+14,X
+   STA VX1+12,X
    STA VC_RLO+pg,Y
    LDA #0                                  ; clip = 0 (plane + struct —
 fill_tail:
    STA VC_CLIP+pg,Y                        ; the nc prelude's mirror)
-   STA VX1+2,X
+   STA VX1+0,X
    RTS                                     ; (a fill_tail birth-fill hook
                                            ; was tried 2026-07-27 and is
                                            ; IMPOSSIBLE: px_shrink halves
@@ -231,6 +230,10 @@ fill_tail:
                                            ; snapshot PRE-projection, i.e.
                                            ; in the vxc cold arm = birth)
 nc_fail:
+   LDX zp_seg_ep                           ; struct offset — ONLY this arm
+                                           ; needs it before fill_tail; the
+                                           ; ok path reloads after project
+                                           ; (dead fetch_done LDX: Eben)
    LDY zp_seg_v_idx_l
    LDA #1                                  ; clip = 1 (plane + struct)
    BNE fill_tail                           ; (A = 1: always taken)
@@ -242,13 +245,16 @@ ncr_far:
 ::vxcon:
 ; --- VXC serve, V16 (2026-08-09): the cache memoizes base16 =
 ; q64(rot(w)) — a pure function of (vertex, angle epoch) — in FOUR s16
-; planes (XEXT/YEXT died; 1KB of bank C freed). Warm = 4 loads; cold =
-; birth: pure rotate + q64 (pages L2), 4-plane store (pages C). Both
-; fall into vxq_join, as does the plain vfoff path: every tier
-; computes total := (base16 << 2) + vxc_ref, so cache-on == cache-off
-; == Python bit-exactly BY CONSTRUCTION.
+; planes, MAIN RAM since 2026-08-09 (all cache planes left bank C):
+; the whole island runs under ONE entry PAGE BANK_L2, like vfoff —
+; the C round-trips died with the move. Warm = 4 loads; cold = birth:
+; pure rotate + q64, 4-plane store. Both fall into vxq_join, as does
+; the plain vfoff path: every tier computes total := (base16 << 2) +
+; vxc_ref, so cache-on == cache-off == Python bit-exactly BY
+; CONSTRUCTION.
+   PAGE BANK_L2                            ; sole page: VP fetch on cold;
+                                           ; planes + VALID are main
    LDX zp_seg_v_idx_b                      ; VXC_VALID index = B (header key)
-   PAGE BANK_C
    LDA VXC_VALID,X
    AND zp_seg_v_bitm
    BEQ vs_cold
@@ -267,7 +273,6 @@ vs_cold:
    ORA zp_seg_v_bitm
    STA VXC_VALID,X
 ; birth: fetch + pure rotate + q64 (the same stage as vfoff, side baked)
-   PAGE BANK_L2
    LDY zp_seg_v_idx_l
    LDA VP_YLO+pg,Y
    STA zp_br_dy_l
@@ -287,7 +292,6 @@ vcx_p:
 ; store 4 planes, << 2 back, fall into the add. The shifts live ONLY
 ; here: once per vertex per angle epoch.
    JSR vxq_shr2                            ; shared: both axes >> 2
-   PAGE BANK_C
    LDY zp_seg_v_idx_l
    LDA zp_br_vx_l
    STA VXC_XLO+pg,Y
@@ -348,8 +352,8 @@ vxq_add:
    LDA zp_br_vy_x
    ADC vxc_ref_y+2
    STA zp_br_vy_x
-   PAGE BANK_L2                            ; exit contract
-   JMP fetch_done
+   JMP fetch_done                          ; (exit-contract PAGE died: the
+                                           ; island never leaves L2 now)
 .endscope
 .endmacro
 
