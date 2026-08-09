@@ -16,7 +16,7 @@ SQR_BASE = $1C00                        ; quarter-square tables: lo,hi,2lo,2hi =
 SQR_LO = SQR_BASE+$000                  ; qsqr lo bytes (f 0..255)
 SQR2_LO = SQR_BASE+$100                 ; qsqr lo bytes (f 256..510)
 .if ::BANKED
-SQRH_BASE = $0200          ; quarter-square HI pages base — BANKED moved $1E00 -> $0200 (2026-07-27) to open the $1E00-$1FFF LCODE island; FLAT stays inside the $1C00 quad (the tube parasite client owns page 2 — never move flat data there)
+SQRH_BASE = $0200          ; quarter-square HI pages base — BANKED moved $1E00 -> $0200 (2026-07-27; the $1E00 LCODE island died 2026-08-09 — one-code-area rule — $1E00 is the srecip LDATA page now); FLAT stays inside the $1C00 quad (the tube parasite client owns page 2 — never move flat data there)
 .else
 SQRH_BASE = $1E00
 .endif

@@ -12,3 +12,4 @@
 .include "clip/plot_axis.s"
 .include "clip/dcl_s16.s"
 .include "clip/vplot.s"
+.include "clip/rotvar.s"

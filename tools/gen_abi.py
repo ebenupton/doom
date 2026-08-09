@@ -41,7 +41,7 @@ ABI = [
     # are unaffected (the equates still name both windows).
     ('SQR_LO',         'SQR_BASE+$000', None, 'qsqr lo bytes (f 0..255)'),
     ('SQR2_LO',        'SQR_BASE+$100', None, 'qsqr lo bytes (f 256..510)'),
-    ('SQRH_BASE',      0x0200, 0x1E00, 'quarter-square HI pages base — BANKED moved $1E00 -> $0200 (2026-07-27) to open the $1E00-$1FFF LCODE island; FLAT stays inside the $1C00 quad (the tube parasite client owns page 2 — never move flat data there)'),
+    ('SQRH_BASE',      0x0200, 0x1E00, 'quarter-square HI pages base — BANKED moved $1E00 -> $0200 (2026-07-27; the $1E00 LCODE island died 2026-08-09 — one-code-area rule — $1E00 is the srecip LDATA page now); FLAT stays inside the $1C00 quad (the tube parasite client owns page 2 — never move flat data there)'),
     ('SQR_HI',         'SQRH_BASE+$000', None, 'qsqr hi bytes (f 0..255)'),
     ('SQR2_HI',        'SQRH_BASE+$100', None, 'qsqr hi bytes (f 256..510)'),
     ('DRV_ORG',        0x2000, None, 'walk/anim driver entry (!BOOT CALLs this)'),

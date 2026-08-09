@@ -79,84 +79,17 @@ SEG_CODE
 ; One reciprocal serves both X and Y projection: the 1.2 aspect ratio
 ; is baked into height prescaling. Clobbers A, X, Y, zp_br_p/p_h.
 ; ============================================================================
-.segment "LCODE"                            ; $1E00 island (banked; ex sqr-HI
-                                            ; pages, 2026-07-27) — flat folds
-                                            ; to the CODE tail. JSR-only.
-.assert (RECIP_BASE & $FF) = 0, error   ; 4-page table indexed (page | t1)
-br_recip:
-.scope
-; (M8, S) for vy_idx in zp_br_t0/t1 (9.1 fixed point), then rns_select.
-; S = bit_length(idx-1) ships as DATA now (2026-07-15): the junior page
-; (idx < 256 — the measured-dominant case) reads SRECIP[lo] (low clamp
-; BAKED: S[0..2] = 1, matching the M8 table's baked [0..2] entries);
-; the hi pages have CONSTANT S (9 / 10) with exactly two one-off
-; exceptions (idx 256 -> 8, idx 512 -> 9) handled in their arms. The
-; old low clamp, the idx-1 subtract and the bit-length compare cascade
-; are all gone (~30 cycles on the common path).
-; REGISTER ABI (2026-07-19): idx arrives Y = lo, X = hi (X, not A —
-; the PAGE clobbers A). The old zp_br_t0/t1 staging round-trip died
-; at both callers and here.
-; ENTRY CONTRACT (2026-07-21 PAGE grind, round 2): the CALLER holds L2.
-; All arrivals proven: vxc-off = br_to_view_fetch exits L2 (trace:
-; nc_ok 128/128); vxc-on warm/cold = vxc_arm's exits now page L2 (the
-; same state as the off path — anything downstream needing L0 already
-; re-pages, by existing correctness of the off path); the near-plane
-; crossing macro (c_set_recip) pages L2 itself. Round 1 died on the
-; warm arc because the attribution trace ran VXC-off — vxcache_check
-; is the gate that catches it.
-   TXA
-   BNE rcp_pnz                             ; idx >= 256: rare ladder below
-; idx < 256: DOMINANT (85% on suite) — falls through (census 2026-07-27)
-   LDA RECIP_BASE,Y
-   STA zp_br_r_m8
-   LDA srecip_tab,Y
-   STA zp_br_r_s
-   RNS_SELECT
-   RTS
-::br_recip_hi:                             ; caller-split entry (2026-07-27):
-rcp_pnz:                                    ; A = idx hi (>= 1), Y = idx lo —
-   CMP #4                                  ; the junior arm is inlined at
-                                           ; nc_ok (seg_xform)
-   BCS rcp_clamp                           ; idx >= 1024 -> clamp to 1023
-   LSR A
-   BEQ rcp_p1                              ; t1 = 1
-   BCS rcp_p3                              ; t1 = 3
-; t1 = 2: S = 10 except idx == 512 (Y == 0) -> 9
-   LDA RECIP_BASE+$200,Y
-   STA zp_br_r_m8
-   LDA #10
-   CPY #0
-   BNE rcp_s
-   LDA #9
-rcp_s:
-   STA zp_br_r_s
-   RNS_SELECT                              ; (A = S per the macro contract)
-   RTS
-rcp_clamp:
-   LDY #$FF                                ; idx := 1023 (t1 -> page 3)
-rcp_p3:
-; t1 = 3: S = 10 always
-   LDA RECIP_BASE+$300,Y
-   STA zp_br_r_m8
-   LDA #10
-   BNE rcp_s                               ; (A = 10: always)
-rcp_p1:
-; t1 = 1: S = 9 except idx == 256 (Y == 0) -> 8
-   LDA RECIP_BASE+$100,Y
-   STA zp_br_r_m8
-   LDA #9
-   CPY #0
-   BNE rcp_s
-   LDA #8
-   BNE rcp_s                               ; (A = 8: always)
-
+; (br_recip_hi moved to clip/rotvar.s 2026-08-09 — see above.)
 ; SRECIP: 256-byte junior-page S table — ASSEMBLED data in the CODE
 ; region (main RAM: bank-independent, no loader involvement; the first
 ; flat placement at $1A00 sat on the RCACHE psi plane and rotcache
 ; caught it). Static and map-independent (src/srecip.inc, generated).
-::srecip_tab:                              ; (:: 2026-07-27: read by the
-.include "srecip.inc"                       ; inlined junior arm at nc_ok)
-.endscope
+.segment "LDATA"                            ; $1E00 DATA-ONLY region (the
+                                            ; LCODE island died 2026-08-09:
+                                            ; one contiguous code area rule)
+::srecip_tab:                              ; (read by the inlined junior
+.include "srecip.inc"                       ; arm at nc_ok, under L2)
+SEG_CODE
 SEG_CODE
 
 ; ============================================================================
@@ -273,90 +206,10 @@ zp_ri_d = zp_ri_d_l                     ; backwards-compat alias
 ;                                       rot_core_sin/_cos (per-trig: SMC sum bases)
 ; Same pattern as the bca_check_op / vxc_jsr_site / D-cache frame hooks.
 ; All variants are bit-exact with the old in-body branches.
-.segment "LCODE"                            ; variant entries: SMC-called
-rot_zero:
-   LDA #0
-   STA zp_br_res_l
-   STA zp_br_res_h
-   STA zp_br_res_x
-   RTS
+; (rot variant entries moved to clip/rotvar.s 2026-08-09 — the LCODE
+;  island died: one contiguous code area; the clip object join pad
+;  absorbs them.)
 
-; unity variants, SIGN-EXTERNAL (2026-07-19): ri_d arrives as |d| with
-; the d-sign banked in zp_ri_sgn by the caller's operand staging — the
-; product sign is trig-neg XOR d-neg, so pos and neg share two arms.
-rot_unity_pos:
-   LDA zp_ri_sgn
-   BNE ru_neg
-ru_pass:
-   ZERO zp_br_res_l
-   LDA zp_ri_d_l
-   STA zp_br_res_h
-   LDA zp_ri_d_h
-   STA zp_br_res_x
-   RTS
-rot_unity_neg:
-   LDA zp_ri_sgn
-   BNE ru_pass
-ru_neg:
-   LDA #0                                  ; doubles as the res_l zero (the
-   STA zp_br_res_l                         ; old ZERO+LDA#0 pair re-loaded a
-   SEC                                     ; value NMOS ZERO already left)
-   SBC zp_ri_d_l
-   STA zp_br_res_h
-   LDA #0
-   SBC zp_ri_d_h
-   STA zp_br_res_x
-   RTS
-
-; --- sin-side twins (res-slot split 2026-07-19): the sin slot of a
-; frame can hold unity/zero too, and those shared bodies can't serve
-; two dests — so the sin side gets its own copies writing zp_rs_*.
-; rot_select's sin arm picks these; the cos arm keeps the originals.
-rot_zero_s:
-   LDA #0
-   STA zp_rs_l
-   STA zp_rs_h
-   STA zp_rs_x
-   RTS
-rot_unity_pos_s:
-   LDA zp_ri_sgn
-   BNE rus_neg
-rus_pass:
-   ZERO zp_rs_l
-   LDA zp_ri_d_l
-   STA zp_rs_h
-   LDA zp_ri_d_h
-   STA zp_rs_x
-   RTS
-rot_unity_neg_s:
-   LDA zp_ri_sgn
-   BNE rus_pass
-rus_neg:
-   LDA #0                                  ; (mirror of ru_neg's fold)
-   STA zp_rs_l
-   SEC
-   SBC zp_ri_d_l
-   STA zp_rs_h
-   LDA #0
-   SBC zp_ri_d_h
-   STA zp_rs_x
-   RTS
-
-rot_gen_sin:
-   LDA #0                                  ; SMC +1: |sin| mag (rot_select)
-   STA zp_mul_b
-   LDA #0                                  ; SMC +5: sin neg flag
-   EOR zp_ri_sgn                           ; XOR the operand's banked sign
-   STA zp_br_t1                            ; (the cores' in-place abs died)
-   JMP rot_core_sin
-
-rot_gen_cos:
-   LDA #0                                  ; SMC +1: |cos| mag (rot_select)
-   STA zp_mul_b
-   LDA #0                                  ; SMC +5: cos neg flag
-   EOR zp_ri_sgn
-   STA zp_br_t1
-   JMP rot_core_cos
 
 SEG_CODE
 ; rot_core_sin/_cos — the general |d|*mag s24 path, ONE CORE PER TRIG
@@ -809,21 +662,5 @@ p_one:
    JMP p_sgn
 .endscope
 
-.segment "LCODE"
-rot_pair_thunk:
-; non-gen frames: run the two selected variants in sequence, then ADAPT
-; the cos result into vy (the variants keep their generic res dests;
-; the pair contract is rs + vy since the direct-write, 2026-07-27 —
-; this copy runs only on axis-aligned-trig frames, rare).
-::rpt_jsr:
-   JSR rot_gen_sin                         ; +1/+2 SMC: the frame's sinvar
-::rpt_jmp:
-   JSR rot_gen_cos                         ; +1/+2 SMC: the frame's cosvar
-   LDA zp_br_res_l
-   STA zp_br_vy_l
-   LDA zp_br_res_h
-   STA zp_br_vy_h
-   LDA zp_br_res_x
-   STA zp_br_vy_x
-   RTS
+; (rot_pair_thunk moved to clip/rotvar.s 2026-08-09)
 SEG_CODE

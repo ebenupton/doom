@@ -455,6 +455,14 @@ code_head:
 ; 2026-08-09: THE copy lives below (main RAM, always mapped) and the
 ; clipper imports it — see the banner at its definition.
 .export umul8
+.import br_recip_hi                     ; ex-LCODE code, clip/rotvar.s
+.import rot_zero, rot_unity_pos, rot_unity_neg
+.import rot_zero_s, rot_unity_pos_s, rot_unity_neg_s
+.import rot_gen_sin, rot_gen_cos, rot_pair_thunk, rpt_jsr, rpt_jmp
+.export rot_core_sin, rot_core_cos      ; rotvar's general-core tails
+.export rns_vec_l, rns_go_op            ; rotvar's RNS_SELECT expansion
+.export RECIP_BASE
+.assert (RECIP_BASE & $FF) = 0, error   ; 4-page table indexed (page | t1)
 .import span_mark_solid
 .import span_has_gap                    ; has_gap body (main B segment)
 .import seg_zero_rec_solid

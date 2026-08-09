@@ -16,7 +16,7 @@ import abi
 
 from symmap import sym as _sym
 ENTRY_BR_UMUL8 = _sym('br_umul8')
-ENTRY_BR_RECIP = _sym('br_recip')
+ENTRY_BR_RECIP_HI = _sym('br_recip_hi')   # junior arm is inlined at nc_ok
 
 ZP_A    = _sym('zp_br_a')
 ZP_B    = _sym('zp_br_b')
@@ -71,13 +71,23 @@ def test_recip():
     mem = sc.mpu.memory
     cases = list(range(2, 1024)) + [0, 1, 1024, 2048, 65535]
     fail = 0
+    recip_base = _sym('RECIP_BASE')
+    srecip = _sym('srecip_tab')
     for vy_idx in cases:
-        # register ABI (2026-07-19): idx rides Y = lo, X = hi
-        sc.mpu.y = vy_idx & 0xFF
-        sc.mpu.x = (vy_idx >> 8) & 0xFF
-        sc._run(ENTRY_BR_RECIP)
-        got_hi = mem[ZP_RHI]
-        got_lo = mem[ZP_RLO]
+        if vy_idx < 256:
+            # junior arm is INLINED at nc_ok (seg_xform) since 2026-07-27:
+            # (M8, S) = straight table reads — validate the tables the
+            # inline serves (the instruction sequence itself is covered
+            # by every rendering gate)
+            got_hi = mem[recip_base + vy_idx]
+            got_lo = mem[srecip + vy_idx]
+        else:
+            # senior ladder ABI: A = idx hi (>= 1), Y = idx lo
+            sc.mpu.y = vy_idx & 0xFF
+            sc.mpu.a = (vy_idx >> 8) & 0xFF
+            sc._run(ENTRY_BR_RECIP_HI)
+            got_hi = mem[ZP_RHI]
+            got_lo = mem[ZP_RLO]
         want_hi, want_lo = fp.fp_recip(vy_idx)
         ok = got_hi == want_hi and got_lo == want_lo
         if not ok:
