@@ -34,14 +34,14 @@ ABI = [
     # stale harness pokes touched them) and bca_ab moved to ZP. $1B40-
     # $1BFF is free in both builds and LOW now loads at $1C00.)
     ('BCA_AB',         0x62,   None, 'view angle byte — ZP (zp_buf\'s slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry\'s HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB'),
-    ('SQR_BASE',       0x1C00, None, 'quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)'),
+    ('SQR_BASE',       0x1A00, None, 'quarter-square tables, CONSOLIDATED $1A00-$1DFF 2026-08-09 (the retired vsync-journal page + the freed VCACHE_VALID page): lo,2lo then hi,2hi — one contiguous quad, one address, both builds'),
     # REORDERED 2026-07-12: lo pages CONTIGUOUS (f(0..510) linear), then
     # hi pages — rot_core's frame-constant-mag SMC bases index across the
     # 255 boundary without a window branch. Classic sqr/sqr2 split users
     # are unaffected (the equates still name both windows).
     ('SQR_LO',         'SQR_BASE+$000', None, 'qsqr lo bytes (f 0..255)'),
     ('SQR2_LO',        'SQR_BASE+$100', None, 'qsqr lo bytes (f 256..510)'),
-    ('SQRH_BASE',      0x0200, 0x1E00, 'quarter-square HI pages base — BANKED moved $1E00 -> $0200 (2026-07-27; the $1E00 LCODE island died 2026-08-09 — one-code-area rule — $1E00 is the srecip LDATA page now); FLAT stays inside the $1C00 quad (the tube parasite client owns page 2 — never move flat data there)'),
+    ('SQRH_BASE',      0x1C00, None, 'quarter-square HI pages ($1C00/$1D00) — UNFORKED into the $1A00-$1DFF quad 2026-08-09: the $0200 OS-page boot-staging dance died (page 2 freed — the tube client owns it); flat $1E00 freed for LDATA'),
     ('SQR_HI',         'SQRH_BASE+$000', None, 'qsqr hi bytes (f 0..255)'),
     ('SQR2_HI',        'SQRH_BASE+$100', None, 'qsqr hi bytes (f 256..510)'),
     ('DRV_ORG',        0x2000, None, 'walk/anim driver entry (!BOOT CALLs this)'),
@@ -75,7 +75,6 @@ ABI = [
     ('CPM_KDYH',       'CPM_BASE+$180', None, '... dy hi'),
     ('CPM_PSIL',       'CPM_BASE+$200', None, 'memo value: psi lo'),
     ('CPM_PSIH',       'CPM_BASE+$280', None, '... psi hi (last plane: memo ends at CPM_BASE+$300)'),
-    ('JBASE',          0x1A00, None, 'vsync journal (dead boot-loader memory)'),
     ('SCREEN0',        0x5800, 0xEA00, 'framebuffer 0 (flat: harness FB $EA00-$FDFF)'),
     ('SCREEN1',        0x6C00, 0xEA00, 'framebuffer 1 (flat: single buffer)'),
 ]

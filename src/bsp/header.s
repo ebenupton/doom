@@ -425,7 +425,13 @@ VC_RLO  = VCACHE_BASE + $600
 VC_SXL  = VCACHE_BASE + $800
 VC_SXH  = VCACHE_BASE + $A00
 VC_CLIP = VCACHE_BASE + $C00
-VCACHE_VALID_BASE = $1B00               ; 60 bytes (59 used, 467 vertices)
+VCACHE_VALID_BASE = $1F00               ; 60 bytes (59 used) + VDONE below
+                                        ; — moved from $1B00 2026-08-09
+                                        ; (the sqr quad took $1A00-$1DFF).
+                                        ; NOT page 6: flat RC_P1L_0 owns
+                                        ; $0600 (the 2026-07-27 psi-plane
+                                        ; recovery); $1F00 freed both
+                                        ; builds by the LCODE/SQRH deaths.
 ; VDONE adjacent (2026-07-26, Eben: 'combine the reset loops — 60 bytes
 ; each'): the per-frame wipe below clears BOTH as one 120-byte block of
 ; uniform stripes off one base. 60 >= 59 bytes covers ALL vertex ids —

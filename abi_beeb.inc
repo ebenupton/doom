@@ -7,10 +7,10 @@ BANK_L2 = 7                             \ sideways bank: angle/bbox/recip/verts/
 MAIN_BASE = &2C00                       \ engine CODE region head (cfg-anchored; MAIN first)
 HUD_ENTRY = &A400                       \ hud_draw (bank C window)
 BCA_AB = &0062                          \ view angle byte — ZP (zp_buf's slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry's HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB
-SQR_BASE = &1C00                        \ quarter-square tables: lo,hi,2lo,2hi = 4 pages (UNFORKED 2026-07-21: the map reshuffle freed flat $1C00 — one address, both builds)
+SQR_BASE = &1A00                        \ quarter-square tables, CONSOLIDATED $1A00-$1DFF 2026-08-09 (the retired vsync-journal page + the freed VCACHE_VALID page): lo,2lo then hi,2hi — one contiguous quad, one address, both builds
 SQR_LO = SQR_BASE+&000                  \ qsqr lo bytes (f 0..255)
 SQR2_LO = SQR_BASE+&100                 \ qsqr lo bytes (f 256..510)
-SQRH_BASE = &0200                       \ quarter-square HI pages base — BANKED moved $1E00 -> $0200 (2026-07-27) to open the $1E00-$1FFF LCODE island; FLAT stays inside the $1C00 quad (the tube parasite client owns page 2 — never move flat data there)
+SQRH_BASE = &1C00                       \ quarter-square HI pages ($1C00/$1D00) — UNFORKED into the $1A00-$1DFF quad 2026-08-09: the $0200 OS-page boot-staging dance died (page 2 freed — the tube client owns it); flat $1E00 freed for LDATA
 SQR_HI = SQRH_BASE+&000                 \ qsqr hi bytes (f 0..255)
 SQR2_HI = SQRH_BASE+&100                \ qsqr hi bytes (f 256..510)
 DRV_ORG = &2000                         \ walk/anim driver entry (!BOOT CALLs this)
@@ -44,6 +44,5 @@ CPM_KDYL = CPM_BASE+&100                \ ... dy lo
 CPM_KDYH = CPM_BASE+&180                \ ... dy hi
 CPM_PSIL = CPM_BASE+&200                \ memo value: psi lo
 CPM_PSIH = CPM_BASE+&280                \ ... psi hi (last plane: memo ends at CPM_BASE+$300)
-JBASE = &1A00                           \ vsync journal (dead boot-loader memory)
 SCREEN0 = &5800                         \ framebuffer 0 (flat: harness FB $EA00-$FDFF)
 SCREEN1 = &6C00                         \ framebuffer 1 (flat: single buffer)

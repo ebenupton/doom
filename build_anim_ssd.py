@@ -49,9 +49,10 @@ def build_images():
     bm = r.bm
     L0 = bytes(bm._banks[BANK_L0]); C = bytes(bm._banks[BANK_C]); L2 = bytes(bm._banks[BANK_L2])
     low_end = 0x2C00 + os.path.getsize('bsp_render_bk.bin')   # CODE region
-    low = bytearray(bm[0x1C00:max(low_end, TAB_ADDR + N_FRAMES*8)])  # LOW base $1C00 (BCA_WS retired 2026-07-26)
+    low = bytearray(bm[0x1A00:max(low_end, TAB_ADDR + N_FRAMES*8)])  # LOW base $1A00 (sqr quad
+    # consolidated $1A00-$1DFF + srecip LDATA $1E00 ride the one LOW image, 2026-08-09)
     def overlay(addr, data):
-        off = addr - 0x1C00
+        off = addr - 0x1A00
         low[off:off+len(data)] = data
     overlay(DRV_ADDR, open('ANIMDRV', 'rb').read())
     overlay(TAB_ADDR, sincos_table())

@@ -97,16 +97,8 @@ def _emit_variant_images():
         with orig(f'build/walk_{name}.bin', 'wb') as f:
             f.write(data)
     import abi
-    with orig('build/walk_SQRH.bin', 'wb') as f:
-        f.write(bytes(anim_mem_sqrh()))
 
 
-def anim_mem_sqrh():
-    """The sqr HI pages (canonical generator — same bytes the flat
-    harness seeds; banked home = $0200 since 2026-07-27)."""
-    from span_clip_6502 import _gen_quarter_square
-    sqr_l, sqr_h, sqr2_l, sqr2_h = _gen_quarter_square()
-    return bytes(sqr_h) + bytes(sqr2_h)
 
 
 def _banked_variant(c02):
@@ -152,20 +144,14 @@ def banked_files():
     subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)
     BOOT = builtins.open('!BOOT', 'rb').read()
     import abi
-    SQRH = LOW_sqrh = None
-    # the HI pages live at $0200 in the model images; ship them as their
-    # own file (staged $3000 by the boot, copied down post-OS)
-    with builtins.open('build/walk_SQRH.bin', 'rb') as f:
-        SQRH = f.read()
     return [
         ('WALK',  0x1900, 0x1900, BOOT),
-        ('SQRH',  0x7000, 0x7000, SQRH),
         ('BANK0', 0x3000, 0x3000, L0),
         ('BANK1', 0x3000, 0x3000, C),
         ('BANK2', 0x3000, 0x3000, L2),
-        ('LOW',   0x1C00, 0x1C00, LOW),
+        ('LOW',   0x1A00, 0x1A00, LOW),
         ('BANK1C', 0x3000, 0x3000, Cc),
-        ('LOWC',  0x1C00, 0x1C00, LOWc),
+        ('LOWC',  0x1A00, 0x1A00, LOWc),
     ]
 
 

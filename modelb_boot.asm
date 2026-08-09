@@ -1,7 +1,8 @@
 ; modelb_boot.asm — !BOOT loader for a plain Model B + sideways RAM (no *SRLOAD).
 ; Acorn DFS has no *SRLOAD, so we *LOAD each 16K bank file into a main-RAM staging
 ; area ($3000) and copy it into the target sideways bank via ROMSEL ($FE30). Then
-; *LOAD LOW at $1C00 (sqr tables + code + driver @ $2000 + sincos @ $2200), MODE 4, and
+; *LOAD LOW at $1A00 (the full sqr quad $1A00-$1DFF + srecip $1E00 + driver
+; @ $2000 + engine), MODE 4, and
 ; jump to the driver. Banks 4/6/7 = L0/C/L2 (all writable SWRAM on a Model B).
 ;
 ; *RUN as !BOOT (boot option 2) -> SHIFT-BREAK autoboots. PAGE=$1900 (DFS).
@@ -9,9 +10,11 @@
 ; ldr — load/copy each bank in turn, then LOW, then hand off. Each
 ; JSR $FFF7 is OSCLI on a command string; OS calls are fine here (the
 ; driver's SEI at $2000 is where the OS goes away). The $3000 staging
-; area is plain user RAM under the boot-time MODE 7, and LOW ($1C00+)
+; area is plain user RAM under the boot-time MODE 7, and LOW ($1A00+)
 ; only lands after the last bank copy has consumed the staging.
-; (LOW rebased $1B40 -> $1C00 2026-07-26: BCA_WS retired.)
+; (LOW rebased $1C00 -> $1A00 2026-08-09: the sqr quad consolidated —
+;  the SQRH $7000-stage-then-$0200-copy dance DIED with it; page 2 is
+;  never touched, so no pre-driver SEI is needed either.)
 INCLUDE "abi_beeb.inc"
 ORG &1900
 .ldr
@@ -39,28 +42,12 @@ ORG &1900
 .ld_lowc
     LDX #LO(c_lowc): LDY #HI(c_lowc)
 .ld_lowgo
-    JSR &FFF7                                    ; *LOAD LOW|LOWC 1C00
-    LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4 (FIRST: its clear
-                                                 ; wipes $5800-$7FFF — the
-                                                 ; $7000 staging must load
-                                                 ; AFTER; banks stage $3000,
-                                                 ; below the screen, safe)
-    LDX #LO(c_sqrh): LDY #HI(c_sqrh)
-    JSR &FFF7                                    ; *LOAD SQRH 7000 (staged —
-                                                 ; NOT $3000: LOW spans
-                                                 ; $1C00-$57FF and the first
-                                                 ; cut stomped engine code)
-; sqr HI pages -> $0200/$0300 (banked SQRH_BASE, 2026-07-27). The OS
-; vector page dies here: interrupts OFF first (the driver's own SEI
-; would be too late — an IRQ through half-copied vectors is a crash),
-; and NO OS calls after this point (MODE 4 above was the last).
-    SEI
-    LDX #0
-.sqh
-    LDA &7000,X : STA &200,X
-    LDA &7100,X : STA &300,X
-    INX : BNE sqh
-    JMP DRV_ORG                                  ; -> animation driver
+    JSR &FFF7                                    ; *LOAD LOW|LOWC 1A00
+    LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4 (last OS call)
+    JMP DRV_ORG                                  ; -> driver (its SEI kills
+                                                 ; the OS; no vector-page
+                                                 ; copy remains — the sqr
+                                                 ; quad rode LOW)
 .cpuflag EQUB 0
 
 ; copy — copy the 16K staged at $3000-$6FFF into sideways bank A.
@@ -89,9 +76,8 @@ ORG &1900
 .c_b0  EQUS "LOAD BANK0 3000" : EQUB 13
 .c_b1  EQUS "LOAD BANK1 3000" : EQUB 13
 .c_b2  EQUS "LOAD BANK2 3000" : EQUB 13
-.c_low EQUS "LOAD LOW 1C00"   : EQUB 13
-.c_sqrh EQUS "LOAD SQRH 7000" : EQUB 13
+.c_low EQUS "LOAD LOW 1A00"   : EQUB 13
 .c_b1c EQUS "LOAD BANK1C 3000": EQUB 13          ; 65C02 clipper/raster/HUD bank
-.c_lowc EQUS "LOAD LOWC 1C00": EQUB 13          ; 65C02 engine CODE image
+.c_lowc EQUS "LOAD LOWC 1A00": EQUB 13          ; 65C02 engine CODE image
 .ldr_end
 SAVE "!BOOT", &1900, ldr_end, &1900

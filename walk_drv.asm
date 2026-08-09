@@ -22,19 +22,13 @@ pxh    = DV_PXH
 pyf    = DV_PYF
 pyl    = DV_PYL
 pyh    = DV_PYH
-jidx   = DV_JIDX          ; vsync journal index (0..62)
 hud_en   = DV_HUD_EN        ; debug HUD on/off (H key toggles)
 hud_prev = DV_HUD_PREV        ; H-key state last frame (press-edge debounce)
 ; (D_ENABLE/D_FWD from the ABI include)        ; forward-coherence bbox cache master switch (bbox.s)
 ; ---        ; per-frame flag: this frame's move was forward-only
-; vsync journal: 64 x 4 bytes at $0300 (dead OS workspace; no OS after boot):
-;   +0 class taken (0/1/2)   +1 T1 hi at classify
-;   +2 T1 hi after the vsync wait ($FF = class 2, no wait)
-;   +3 T1 hi after clears done
-jbase  = JBASE          ; RELOCATED 2026-07-08 from $0300: the forward-coherence
-                        ; bbox cache owns $0210-$03F7 (bbox.s); $1A00 is dead
-                        ; boot-loader memory (loader stages below $1B40, never
-                        ; touched after boot)
+; (vsync journal RETIRED 2026-08-09 — the flip timing is validated and the
+; page was reclaimed for the quarter-square tables; the class logic below
+; is unchanged, the flight recorder is gone. JBASE/DV_JIDX freed.)
 tabbase = DRV_TAB         ; sincos table (build-overlaid): 64 x 8 bytes
 
 SPEED = 12              ; world units per frame of forward motion
@@ -189,10 +183,10 @@ ORG DRV_ORG
     JSR flip_sched
     JMP frame
 
-; ptrtab must clear the driver variable block (angidx..jidx live at
+; ptrtab must clear the driver variable block (angidx.. live at
 ; $3D80-$3D88 as fixed equates; the sincos table is overlaid at $3E00).
 ; An extra init block once pushed it INTO the variables - the engine's
-; table pointers then got clobbered at runtime by angidx/jidx stores and
+; table pointers then got clobbered at runtime by angidx/etc stores and
 ; every frame rendered pixel-free while the loop ran happily. Pin it.
 ASSERT P% <= DRV_VARS
 ORG DRV_VARS + &10
@@ -213,7 +207,6 @@ ORG DRV_GLUE
 ; re-pages banks before every engine call). Clobbers A + whatever anim uses.
 .anim_glue_init
     LDA #0
-    STA jidx                                        ; (init spill: main is full)
     STA hud_en : STA hud_prev                       ; HUD off at boot
     LDA #7:STA &FE30
     ; (RNS stack-page copy retired 2026-07-12: the vectoring block lives
@@ -299,9 +292,8 @@ ORG DRV_CLR
 ; walk_drv extras over the anim_drv version:
 ;   - the class thresholds cover H 0-77, so a raw H >= 78 (transient/wrap
 ;     read) is pre-filtered to class 0, the always-safe choice;
-;   - every decision is journalled, 4 bytes/frame at jbase ($0300): class,
-;     H at classify, H after the vsync wait ($FF = class 2, none), H when
-;     the clears finished — post-mortem evidence for clear-vs-beam races.
+;   - (the per-decision journal was RETIRED 2026-08-09 once the timing
+;     proved stable; re-add a store hook here if beam races recur.)
 ; Toggles backhi. Re-phases T1 at each vsync it waits on. Clobbers A,X,Y.
 ; ---------------------------------------------------------------------------
 .flip_sched
@@ -319,8 +311,7 @@ ORG DRV_CLR
     LDA #12:STA &FE00 : LDA backhi:LSR A:LSR A:LSR A:STA &FE01
     LDA #13:STA &FE00 : LDA backhi:AND #7:ASL A:ASL A:ASL A:ASL A:ASL A:STA &FE01
     LDA backhi:EOR #(&58 EOR &6C):STA backhi        ; backhi = buffer coming off display
-    ; classify the beam; Y = jidx*4 = journal record offset
-    LDA jidx:ASL A:ASL A:TAY
+    ; classify the beam (class rides A to the dispatch below)
     LDX &FE45
     ; class(T1hi): <=14 -> 2, 15-34 -> 1, 35-56 -> 0, 57-77 -> 2, >=78 -> 0
     ; (was a 78-byte beamtbl lookup; thresholds inlined 2026-07-08 to free
@@ -335,26 +326,20 @@ ORG DRV_CLR
 .fs_cls1i
     LDA #1
 .fs_havecls
-    STA jbase,Y                                     ; journal: class
-    TXA:STA jbase+1,Y                               ; journal: T1hi at classify
-    LDA jbase,Y
+    CMP #0
     BEQ fs_cls0
     CMP #1 : BEQ fs_cls1
     ; class 2: display of the old buffer already over — clear all, no wait
-    LDA #&FF:STA jbase+2,Y                          ; journal: no wait
     JSR fs_clrtop
-    JSR fs_clrbot
-    JMP fs_logdone
+    JMP fs_clrbot                                   ; (tail: clr RTS returns)
 .fs_cls0
     ; class 0: beam still in the top half — everything must wait for vsync
     LDA #2:STA &FE4D                                ; arm the vsync flag
 .fs_w0
     LDA &FE4D:AND #2:BEQ fs_w0
     LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
-    JSR fs_logwait
     JSR fs_clrtop
-    JSR fs_clrbot
-    JMP fs_logdone
+    JMP fs_clrbot
 .fs_cls1
     ; class 1: beam in the bottom half — top is clearable now; arm the vsync
     ; flag BEFORE clearing (it latches), then wait and clear the bottom
@@ -372,25 +357,7 @@ ORG DRV_CLR
     LDA &FE4D:AND #2:BEQ fs_w1
     LDA #&4D:STA &FE45                              ; fresh edge: re-phase T1
 .fs_w1_stale
-    JSR fs_logwait
-    JSR fs_clrbot
-    JMP fs_logdone
-; fs_logwait: journal byte +2 = T1hi right after the vsync wait (should be
-; ~$4D). fs_logdone: byte +3 = T1hi when the clears finished, then advance
-; the ring index (wraps at 63 so record 63 stays as a scribble guard).
-.fs_logwait
-    LDA jidx:ASL A:ASL A:TAY
-    LDA &FE45:STA jbase+2,Y
-    RTS
-.fs_logdone
-    LDA jidx:ASL A:ASL A:TAY
-    LDA &FE45:STA jbase+3,Y
-    LDX jidx:INX
-    CPX #63:BCC fs_jw
-    LDX #0
-.fs_jw
-    STX jidx
-    RTS
+    JMP fs_clrbot
 ; fs_clrtop/fs_clrbot: clear the half of whichever buffer backhi now names
 ; (i.e. the one just taken OFF display; the CRTC shows the other one).
 .fs_clrbot
