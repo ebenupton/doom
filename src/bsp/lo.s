@@ -281,6 +281,77 @@ cr_cp:                                     ; $E3-$E6 (zp.inc order contract)
 
 cr_recover:
 .scope
+; ---- VXC-aware claw-back (2026-08-09): when the translation cache is
+; on and holds this vertex, serve base16 from the planes + widen + ref
+; (~90cyc) instead of the full fetch+rotate (~330). Bit-identical BY
+; CONSTRUCTION (the V16 join: every tier computes (base16<<2)+ref).
+; Cold does NOT birth — recovery is read-only, so cache state
+; invariants (vxcache_check/walkseq) are untouched; the rare cold
+; crossing just pays the plain path like before. ----
+   LDY zp_vxc_on
+   BEQ cr_plain                            ; cache off -> plain
+   STA zp_div_l                            ; idx_l stash (div scratch, dead
+   AND #7                                  ;  until the t divide)
+   TAY
+   LDA vc_bit_mask,Y
+   AND VXC_VALID,X                         ; VALID is main RAM — no paging
+   BEQ cr_cold
+   PAGE_Y BANK_C                           ; planes live in bank C (banked);
+   LDY zp_div_l                            ; Y = idx_l (after the clobber)
+   TXA
+   AND #$20
+   BNE cr_w_hi
+   LDA VXC_XLO,Y                           ; warm: base16 -> the working
+   STA zp_br_vx_l                          ; slots (junior side)
+   LDA VXC_XHI,Y
+   STA zp_br_vx_h
+   LDA VXC_YLO,Y
+   STA zp_br_vy_l
+   LDA VXC_YHI,Y
+   STA zp_br_vy_h
+   JMP cr_widen
+cr_w_hi:
+   LDA VXC_XLO+$100,Y                      ; senior side twins
+   STA zp_br_vx_l
+   LDA VXC_XHI+$100,Y
+   STA zp_br_vx_h
+   LDA VXC_YLO+$100,Y
+   STA zp_br_vy_l
+   LDA VXC_YHI+$100,Y
+   STA zp_br_vy_h
+cr_widen:
+   PAGE_Y BANK_L2                          ; restore the L2 contract; the
+                                           ; widen below is pure zp
+; widen base16 << 2, sign-extended into the ext bytes (the vxq_join
+; form — BIT reads the hi sign without disturbing A's accumulator)
+   LDA #0
+   BIT zp_br_vx_h
+   BPL cw_xp
+   LDA #$FF
+cw_xp:
+   ASL zp_br_vx_l
+   ROL zp_br_vx_h
+   ROL A
+   ASL zp_br_vx_l
+   ROL zp_br_vx_h
+   ROL A
+   STA zp_br_vx_x
+   LDA #0
+   BIT zp_br_vy_h
+   BPL cw_yp
+   LDA #$FF
+cw_yp:
+   ASL zp_br_vy_l
+   ROL zp_br_vy_h
+   ROL A
+   ASL zp_br_vy_l
+   ROL zp_br_vy_h
+   ROL A
+   STA zp_br_vy_x
+   JMP cr_ref                              ; shared ref add
+cr_cold:
+   LDA zp_div_l                            ; restore idx_l (X untouched)
+cr_plain:
    TAY                                     ; Y = plane index
    TXA
    AND #$20
@@ -315,6 +386,7 @@ cr_xp1:
    STA zp_ri_d_h
 cr_rot:
    JSR rot_w_signed                        ; widened q64 base in the s24 slots
+cr_ref:
 ; ref add — totals := base + ref (the vxq_add join; those expansions
 ; live inside SXV_BODY's macro scopes, unreachable from here)
    CLC
