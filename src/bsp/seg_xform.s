@@ -61,6 +61,34 @@
 ; (NC_FILL_ARM macro ABSORBED into SXV_BODY 2026-07-27 — the fills
 ; fused around one shared evy/evx tail per side.)
 
+.macro VXC_WARM_ARM pg
+; warm: total = base + ref, two s24 adds (senior page baked)
+   CLC
+   LDA VXC_XLO+pg,Y
+   ADC vxc_ref_x+0
+   STA zp_br_vx_l
+   LDA VXC_XHI+pg,Y
+   ADC vxc_ref_x+1
+   STA zp_br_vx_h
+   LDA VXC_XEXT+pg,Y
+   ADC vxc_ref_x+2
+   STA zp_br_vx_x
+   CLC
+   LDA VXC_YLO+pg,Y
+   ADC vxc_ref_y+0
+   STA zp_br_vy_l
+   LDA VXC_YHI+pg,Y
+   ADC vxc_ref_y+1
+   STA zp_br_vy_h
+   LDA VXC_YEXT+pg,Y
+   ADC vxc_ref_y+2
+   STA zp_br_vy_x
+   PAGE BANK_L2                            ; exit L2 = the fetch path's exit
+   JMP fetch_done                          ; state; expands INSIDE SXV_BODY
+                                           ; (serve inlined 2026-08-09), so
+                                           ; fetch_done binds per side
+.endmacro
+
 ; ============================================================================
 ; SXV_BODY — one full SIDE (senior page BAKED) of the vertex transform:
 ; probe -> hit serve | miss: fetch/rotate -> evy clamp -> near-clip ->
@@ -116,13 +144,9 @@ ec_clamp:
 ec_hi_nz:
    ev_clamp_hi_nz
    JMP ec_done
-::vxcon:
-.if pg = 0
-   JSR vxc_serve_lo                        ; probe + warm serve; COLD tail-
-.else                                      ; calls the plain fetch (base
-   JSR vxc_serve_hi                        ; fill happens at BIRTH via the
-.endif                                     ; fill vector)
-   JMP fetch_done
+; (vxcon island moved to the BODY END 2026-08-09: the inlined serve
+;  outgrew the ec_clamp/ec_hi_nz branch spans here — it is vector-
+;  entered and JMP-exited, so placement is free)
 vmiss:
 ; mark valid now (fill lands the bytes below; even a near-clipped
 ; path leaves a usable evy/evx entry; clip lands in the fills — both
@@ -238,6 +262,32 @@ nc_fail:
 ncr_far:
    JSR br_recip_hi                         ; A = idx hi, Y = idx lo
    JMP ncr_done
+::vxcon:
+; --- VXC serve INLINE (vxc_serve_lo/hi discarded 2026-08-09): probe +
+; warm serve; cold = BIRTH. Warm exits inside VXC_WARM_ARM (PAGE L2 +
+; JMP fetch_done: the old JSR/RTS/JMP glue — 12 cyc/warm serve — dies).
+; Cold marks valid, fetches via the side's vf_plain (pages L2), then
+; snapshots the base through the ONE shared store tail — JSR'd, since
+; one tail serves both sides and fetch_done binds per side. The store
+; must run PRE-projection: px_shrink corrupts wide vx totals in place.
+   LDX zp_seg_v_idx_b                      ; VXC_VALID index = B (header key)
+   PAGE BANK_C
+   LDA VXC_VALID,X
+   AND zp_seg_v_bitm
+   BEQ vs_cold
+   LDY zp_seg_v_idx_l
+   VXC_WARM_ARM pg
+vs_cold:
+   LDA VXC_VALID,X
+   ORA zp_seg_v_bitm
+   STA VXC_VALID,X
+.if pg = 0
+   JSR vf_plain0                           ; pages L2; fetch+rotate
+.else
+   JSR vf_plain1
+.endif
+   JSR vxc_store_tail                      ; PAGE C, birth store, PAGE L2
+   JMP fetch_done
 .endscope
 .endmacro
 
@@ -253,7 +303,8 @@ ncr_far:
 ::sx_vert_hi:                              ; bytes overflow BOTH regions —
    SXV_BODY $100, sxv1_vfoff, sxv1_vxcon   ; unaligned round-2 form kept)
 
-; --- shared cold store tail (both serve sides JMP here post-fetch) ---
+; --- shared cold store tail (JSR'd from both inlined cold arms
+;     post-fetch; one copy serves both sides) ---
 vxc_store_tail:
    PAGE BANK_C
    vxc_cold_store
@@ -262,70 +313,12 @@ vxc_store_tail:
 
 
 
-.macro VXC_WARM_ARM pg
-; warm: total = base + ref, two s24 adds (senior page baked)
-   CLC
-   LDA VXC_XLO+pg,Y
-   ADC vxc_ref_x+0
-   STA zp_br_vx_l
-   LDA VXC_XHI+pg,Y
-   ADC vxc_ref_x+1
-   STA zp_br_vx_h
-   LDA VXC_XEXT+pg,Y
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
-   CLC
-   LDA VXC_YLO+pg,Y
-   ADC vxc_ref_y+0
-   STA zp_br_vy_l
-   LDA VXC_YHI+pg,Y
-   ADC vxc_ref_y+1
-   STA zp_br_vy_h
-   LDA VXC_YEXT+pg,Y
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x
-   PAGE BANK_L2                            ; exit L2 = the OFF-path's exit
-   RTS                                     ; state (br_to_view_fetch): one
-                                           ; contract, and br_recip's
-                                           ; per-call PAGE dies (2026-07-21)
-.endmacro
+; (VXC_WARM_ARM moved above SXV_BODY 2026-08-09 — it expands inside it now)
 
 ; ============================================================================
-; vxc_arm — the coherence-cache tier of the vertex pipeline (2026-07-12:
-; the old vxc_to_view wrapper + vxc_warm_load hop, flattened into THIS
-; file so the whole per-vertex path — frame-cache probe, coherence probe,
-; warm reconstruction, rotate fallback — reads top to bottom in one
-; place). JSR'd from vxc_jsr_site above when VXC is enabled (vxc_frame
-; patches the operand; disabled frames call br_to_view_fetch directly,
-; zero overhead). Ends RTS; the caller falls into the evy/evx compute.
-;
-; In:  zp_seg_v_idx_l/b (vertex key), zp_seg_v_bitm (1 << (idx&7)),
-;      vxc_ref_x/y (this frame's to_view(0,0), s24 each)
-; Out: zp_br_vx/vy lo/hi/ext = exact view totals (bit-identical to
-;      br_to_view: base' = L(w) is translation-invariant, see vxcache.s)
+; (VXC serve INLINED into SXV_BODY's vxcon islands 2026-08-09 — the
+; VXC_SERVE_SIDE macro and the standalone vxc_serve_lo/hi bodies are
+; gone. In/out contract unchanged: in zp_seg_v_idx_l/b + zp_seg_v_bitm
+; + vxc_ref_x/y; out zp_br_vx/vy lo/hi/ext, bit-identical to
+; br_to_view — base' = L(w) is translation-invariant, see vxcache.s.)
 ; ============================================================================
-.macro VXC_SERVE_SIDE pg, vfp
-.scope
-   LDX zp_seg_v_idx_b                      ; VXC_VALID index = B (header key)
-   PAGE BANK_C
-   LDA VXC_VALID,X
-   AND zp_seg_v_bitm
-   BEQ vs_cold
-; warm: total = base + ref, two s24 adds — side page BAKED
-   LDY zp_seg_v_idx_l
-   VXC_WARM_ARM pg
-vs_cold:
-; cold = BIRTH: mark valid, fetch+rotate, snapshot the base via the
-; ONE shared store tail (store must run PRE-projection: px_shrink
-; corrupts wide vx totals in place)
-   LDA VXC_VALID,X
-   ORA zp_seg_v_bitm
-   STA VXC_VALID,X
-   JSR vfp                                 ; pages L2; fetch+rotate
-   JMP vxc_store_tail
-.endscope
-.endmacro
-vxc_serve_lo:
-   VXC_SERVE_SIDE 0, vf_plain0
-vxc_serve_hi:
-   VXC_SERVE_SIDE $100, vf_plain1
