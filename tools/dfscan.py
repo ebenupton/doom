@@ -191,8 +191,8 @@ def transfer(st, ins, volatile):
             return M(a)
         return U
 
-    if mn in ('STA',) and mode == 'abs' and opnd == 0xFE30:
-        v = st.r['A']
+    if mn in ('STA', 'STX', 'STY') and mode == 'abs' and opnd == 0xFE30:
+        v = st.r[mn[2]]                 # PAGE / PAGE_X / PAGE_Y all bank
         st.bank = v[1] if (v != U and v[0] == 'c') else None
         return st
     if mn in ('LDA', 'LDX', 'LDY'):
@@ -443,7 +443,7 @@ def main():
     # ── trace ────────────────────────────────────────────────────────────
     count = {}
     seen = {}
-    pagew = {}      # pc -> [same_bank, total] for STA $FE30 sites (banked)
+    pagew = {}      # pc -> [same_bank, total] for ROMSEL stores (STA/STX/STY)
     curbank = [None]
     positions = CR.POSITIONS[:3] if args.quick else CR.POSITIONS
     for (px, py, ab) in positions:
@@ -477,12 +477,15 @@ def main():
             else:
                 count[pc] = 1
                 seen[pc] = (mem[pc], mem[pc+1], mem[pc+2])
-            if seen[pc][0] == 0x8D and seen[pc][1] == 0x30 and seen[pc][2] == 0xFE:
+            op = seen[pc][0]
+            if (op in (0x8D, 0x8E, 0x8C)
+                    and seen[pc][1] == 0x30 and seen[pc][2] == 0xFE):
+                v = mpu.a if op == 0x8D else (mpu.x if op == 0x8E else mpu.y)
                 st = pagew.setdefault(pc, [0, 0])
                 st[1] += 1
-                if mpu.a == curbank[0]:
+                if v == curbank[0]:
                     st[0] += 1
-                curbank[0] = mpu.a
+                curbank[0] = v
             mpu.step()
     print(f"trace: {len(positions)} frames, {sum(count.values())} steps, "
           f"{len(seen)} distinct PCs", file=sys.stderr)
@@ -757,9 +760,9 @@ def main():
             eff = EFF[b]
             st = IN[b].clone() if b in IN else None
             for i in blocks[b]:
-                if (i['mn'] == 'STA' and i['mode'] == 'abs'
+                if (i['mn'] in ('STA', 'STX', 'STY') and i['mode'] == 'abs'
                         and i['opnd'] == 0xFE30):
-                    v = st.r['A'] if st is not None else U
+                    v = st.r[i['mn'][2]] if st is not None else U
                     eff = (('const', v[1]) if (v != U and v[0] == 'c')
                            else None)
                 elif i['mn'] == 'JSR':
@@ -952,8 +955,8 @@ def main():
                                                  f"${st.r[reg][1]:02X}"))
                 # F9: redundant PAGE — STA $FE30 with the bank already
                 # current on every modeled path (LDA #bank + STA pair)
-                if mn == 'STA' and mode == 'abs' and opnd == 0xFE30:
-                    v = st.r['A']
+                if mn in ('STA', 'STX', 'STY') and mode == 'abs' and opnd == 0xFE30:
+                    v = st.r[mn[2]]
                     if v != U and v[0] == 'c' and st.bank == v[1]:
                         findings.append(dict(cat='page_same', pc=pc, n=n,
                                              save=6 * n,
