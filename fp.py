@@ -108,6 +108,24 @@ for _i in range(1, 65):
 _SIN_QUADRANT[0] = 0
 _SIN_UNITY[0] = False
 
+# -- DOOM_TRIG5=1 (env): quantize the WHOLE STACK to 5-bit trig at
+# module load — quadrant magnitudes to multiples of 8, entries that
+# round to 256 promoted to unity. Every consumer inherits (the
+# mirror, the WAD pack, hence the 6502's baked tables): a disc built
+# under this env IS the playable 5-bit prototype with zero engine
+# changes — the RN>>3 quantize then rounds nothing. Movement/driver
+# step vectors keep full precision (separate table by design).
+import os as _os_t5
+if _os_t5.environ.get('DOOM_TRIG5'):
+    for _i in range(1, 65):
+        if not _SIN_UNITY[_i]:
+            _m5 = (_SIN_QUADRANT[_i] + 4) >> 3
+            if _m5 >= 32:
+                _SIN_QUADRANT[_i] = 0
+                _SIN_UNITY[_i] = True
+            else:
+                _SIN_QUADRANT[_i] = _m5 * 8
+
 
 def _sin_mag_sign(a):
     """For angle byte a, return (magnitude 0..255, is_negative, is_unity).
