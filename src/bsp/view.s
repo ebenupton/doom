@@ -255,8 +255,13 @@ dy_ok:
    LDA zp_br_dy_l
    STA zp_ri_d_l
 .else
-   LDA zp_br_dy_l
+; (off-by-one fix 2026-08-10: seed C from the py frac's borrow — the
+; frac terms carry (0 - p_88) & 255, so the int part is
+; -py_int - (frac != 0). See the dx twin above btv_dx_signed.)
+   LDA #0
    SEC
+   SBC zp_br_py                         ; C = (py frac == 0); result dead
+   LDA zp_br_dy_l
    SBC zp_br_py_h
    STA zp_ri_d_l
    LDA zp_br_dy_h
@@ -306,8 +311,17 @@ s4:
 ;  (v+2) & ~3 — see there.)
 
    ZERO zp_ri_sgn
-   LDA zp_br_dx_l
+; OFF-BY-ONE FIX (2026-08-10): the frac terms are (0 - p_88) & 255 —
+; the low byte of the FULL negate — so this integer subtract must take
+; the low byte's BORROW (C = 0 iff px frac != 0): the int part of
+; -p_88 is -px_int - 1 whenever the frac is nonzero. The old SEC seed
+; rendered from a viewpoint one unit off per fractional axis, snapping
+; at integer crossings (Eben's quantised-jumping report; fp mirror
+; fixed identically in fp_view_context).
+   LDA #0
    SEC
+   SBC zp_br_px                         ; C = (px frac == 0); result dead
+   LDA zp_br_dx_l
    SBC zp_br_px_h
    STA zp_ri_d_l
    LDA zp_br_dx_h

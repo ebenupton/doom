@@ -366,16 +366,24 @@ def fp_view_context(vx_88, vy_88, sc):
                + _frac_rot_term(dy_lo, s_mag, s_neg, s_unity))
 
     # V16 (2026-08-09): the pipeline is total := widen(q64(rot(w))) + ref,
-    # where ref = rot(-p_int) + frac is the per-frame origin term (the
-    # 6502's vxc_ref, staged once by vxc_frame). rot is exactly linear
-    # (integer operands, exact products), so this equals the old
-    # rot(w - p_int) + frac up to q64's rounding of the vertex term —
-    # corpus-proven pixel-identical (v16_proof: 0 differing FB bytes,
-    # max |base| 326 prescaled -> s16 in 1/64 units, 1.57x headroom).
-    ref_vx = (_rot_int(-px_int, s_mag, s_neg, s_unity)
-              - _rot_int(-py_int, c_mag, c_neg, c_unity) + frac_vx)
-    ref_vy = (_rot_int(-px_int, c_mag, c_neg, c_unity)
-              + _rot_int(-py_int, s_mag, s_neg, s_unity) + frac_vy)
+    # where ref = rot(N_int) + frac is the per-frame origin term (the
+    # 6502's vxc_ref, staged once by vxc_frame), N = -p_88.
+    #
+    # OFF-BY-ONE FIX (2026-08-10, Eben's quantised-jumping report): the
+    # frac bytes above are (N & 255) — the UNSIGNED low byte of the
+    # NEGATED position — so the integer term they pair with must be the
+    # arithmetic N >> 8 (= -px_int - 1 when the frac is nonzero), NOT
+    # -px_int. The old pairing rendered from a viewpoint one full unit
+    # (8 world units) off per fractional axis, snapping at every
+    # integer crossing — an invisible error on the integer suite grid,
+    # a violent per-axis lurch when walking through fractional
+    # positions. N = 256*(N>>8) + (N&255) is exact by construction.
+    nx_int = (-vx_88) >> 8
+    ny_int = (-vy_88) >> 8
+    ref_vx = (_rot_int(nx_int, s_mag, s_neg, s_unity)
+              - _rot_int(ny_int, c_mag, c_neg, c_unity) + frac_vx)
+    ref_vy = (_rot_int(nx_int, c_mag, c_neg, c_unity)
+              + _rot_int(ny_int, s_mag, s_neg, s_unity) + frac_vy)
 
     return (px_int, py_int, sc, frac_vx, frac_vy, ref_vx, ref_vy)
 
