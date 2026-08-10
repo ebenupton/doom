@@ -69,7 +69,7 @@
 ; the crossing's post-div restore) each break banked when removed,
 ; consumer unidentified; see vh_pgx).
 ; ============================================================================
-.macro SXV_BODY pg, vxcon
+.macro SXV_BODY pg, vfoff, vxcon
 .scope
 ; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
 ; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
@@ -124,17 +124,55 @@ vmiss:
    LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
-; --- direct fetch dispatch (TRUE16 2026-08-10): the vectors DIED with
-; the plain tier — the cache path IS the fetch (VXC always-on;
-; ENABLE=0 degrades to a wipe-every-frame all-birth mode in
-; vxc_frame, bit-identical by construction). ---
-   JMP vxcon
+; --- VECTORED fetch dispatch (Eben, 2026-07-27: the bca-cache idiom —
+; pointer, not flag; vxc_frame aims it once per frame). Cache off:
+; straight into the inline plain fetch below. Cache on: the vxcon
+; stub (island below) probes/serves the translation cache. (The off
+; arm was briefly deleted for TRUE16 always-on 2026-08-10 and
+; RESTORED same day: the canonical cache-off contract is compute-
+; only — same result, no probe, no store.) ---
+.if pg = 0
+   JMP (zp_vf_vec0)
+.else
+   JMP (zp_vf_vec1)
+.endif
+::vfoff:
+; TRUE16 plain fetch: stage the VERTEX verbatim, pure-rotate (the vq3
+; tail leaves s16 counts), then the same 16-bit ref add as vxq_add.
+; Bit-identical to the cached path by construction: every tier
+; computes base_c + ref_c.
+   PAGE BANK_L2                            ; vert planes live in L2
+   LDY zp_seg_v_idx_l
+   LDA VP_YLO+pg,Y
+   STA zp_br_dy_l
+   LDA VP_YHI+pg,Y
+   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
+   LDX VP_XLO+pg,Y                         ; wx rides the REGISTER ABI:
+   LDA VP_XHI+pg,Y                         ; X = lo, A = raw hi, N = sign —
+                                           ; NOTHING may touch flags before
+   JSR rot_w_signed                        ; the JSR; s16 count base in (l,h)
+   CLC
+   LDA zp_br_vx_l
+   ADC vxc_ref_x+0
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+   ADC vxc_ref_x+1
+   STA zp_br_vx_h
+   CLC
+   LDA zp_br_vy_l
+   ADC vxc_ref_y+0
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ADC vxc_ref_y+1
+   STA zp_br_vy_h                          ; A/N/Z = vy count hi — fetch_
+                                           ; done RIDES these (STA is flag-
+                                           ; transparent; falls straight in)
 fetch_done:
 ; near-clip on the s16 count total (TRUE16): clipped iff vy < 16
 ; counts (0.5 unit) — the count twin of the old vy_88 < 128 test.
 ; ARRIVAL CONTRACT (register-out): A/N/Z = zp_br_vy_h from the ref
-; add's final ADC (vxq_add is the ONLY arrival). Nothing may slip
-; between the STA and here.
+; add's final ADC — BOTH arrivals (vfoff falls in, vxq_add JMPs) end
+; with that add. Nothing may slip between the STA and here.
    BMI nc_fail                             ; negative -> behind
    BNE nc_ok                               ; >= 256 counts (8.0) -> visible
    LDA zp_br_vy_l
@@ -310,9 +348,9 @@ vxq_add:
 ; test piggybacks); these are two complete side-baked routines with NO
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
-   SXV_BODY 0, sxv0_vxcon                  ; tried 2026-07-27: the ~370 pad
+   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon      ; tried 2026-07-27: the ~370 pad
 ::sx_vert_hi:                              ; bytes overflow BOTH regions —
-   SXV_BODY $100, sxv1_vxcon               ; unaligned round-2 form kept)
+   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon   ; unaligned round-2 form kept)
 
 ; (vxc_store_tail deleted 2026-08-09 — birth store inlined per side in
 ;  the vxcon islands, side baked)

@@ -263,13 +263,32 @@ inl_end:
    STA vxc_ref_y+0
    LDA zp_br_vy_h
    STA vxc_ref_y+1
-; --- TRUE16 (2026-08-10): the fetch vectors DIED with the plain tier —
-; the cache path IS the fetch. ENABLE=0 (harness A/B) degrades to a
-; wipe-EVERY-frame all-birth mode: bit-identical totals with zero warm
-; reuse, and cr_recover's zp_vxc_on gate still steers its plain arm. ---
    LDA VXC_ENABLE
-   STA zp_vxc_on
-   BEQ vf_wipe                             ; OFF: all-birth (A = 0 rides)
+   STA zp_vxc_on                           ; kept for harness/tools AND
+   BNE vf_on                               ; cr_recover's plain gate; the
+                                           ; fetch dispatch is the VECTORS
+; cache OFF: fetch vectors -> the plain compute-only arms (canonical
+; cache-off contract: same result, no probe, no store, no wipe —
+; restored 2026-08-10 after a brief always-on detour)
+   LDA #<sxv0_vfoff
+   STA zp_vf_vec0
+   LDA #>sxv0_vfoff
+   STA zp_vf_vec0+1
+   LDA #<sxv1_vfoff
+   STA zp_vf_vec1
+   LDA #>sxv1_vfoff
+   STA zp_vf_vec1+1
+   JMP inl_end
+vf_on:
+; cache ON: fetch vectors -> the serve stubs
+   LDA #<sxv0_vxcon
+   STA zp_vf_vec0
+   LDA #>sxv0_vxcon
+   STA zp_vf_vec0+1
+   LDA #<sxv1_vxcon
+   STA zp_vf_vec1
+   LDA #>sxv1_vxcon
+   STA zp_vf_vec1+1
    LDA vxc_ab
    CMP vxc_prev_ab
    BEQ vf_patch
@@ -279,7 +298,6 @@ inl_end:
 ; $05A0 home banned it: byte 60 was VXC_ENABLE). ~325 cyc vs the
 ; 1-byte loop's ~589, on every rotation frame.
    STA vxc_prev_ab
-vf_wipe:
    LDA #0
    LDX #4
 vf_wl:                                     ; 12 stripes x 5 = 60 bytes

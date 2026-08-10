@@ -244,10 +244,16 @@ zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on 
 ; walk's variables (98fc1b3, defined locally in subsector.s): the 2026-
 ; 07-15 'FREE' comments here were STALE and cost a corrupted-vector
 ; hang on 2026-07-27. $52-$53 freed again 2026-08-10 (TRUE16).
-; $7B, $7D-$7E FREE 2026-08-10: zp_vf_vec0/1 DIED with the plain fetch
-; tier (TRUE16 — the VXC path is THE fetch, dispatched by direct JMP).
-; $7B-$7E were the boot-time tube-detect scratch (coprot/hostt) —
-; phase-disjoint. ($7C separately FREE since 2026-07-15, see below.)
+zp_vf_vec0 = $7B                  ; [bsp]; VXC fetch vector, junior side —
+                                  ; vxc_frame aims it at sxv0_vfoff (off)
+                                  ; or sxv0_vxcon (on); bca VECTORED idiom.
+                                  ; (Briefly deleted for TRUE16 always-on
+                                  ; 2026-08-10, restored same day: the off
+                                  ; arm is compute-only per the canonical
+                                  ; cache contract.) $7B-$7E were the
+                                  ; boot-time tube-detect scratch — phase-
+                                  ; disjoint.
+zp_vf_vec1 = $7D                  ; [bsp]; senior-side twin ($7D/$7E)
 ; FREE 2026-07-15 (cross-core unification): zp_node_dy_h = $53
 zp_node_nx_l = $54                ; [bsp]
 zp_node_nx_h = $55                ; [bsp]
@@ -319,7 +325,7 @@ zp_seg_v_bitm = $47               ; [bsp]; valid-bitmap mask (1 << (idx & 7));
 ; the vcache is page-split SoA with baked senior arms, no pointer.
 ; FREE 2026-07-15 (cross-core unification): zp_seg_dxraw_l = $7C
 ; ($7D NOT free despite the old dxraw_h note: zp_vf_vec1 = $7D-$7E.)
-; ($7E/$7F note retired — see the $7B block: vf_vec1 died 2026-08-10)
+; ($7E/$7F: zp_vf_vec1 hi byte — see the $7B block)
 ; (were the dyraw pair, free since the cross-core unification).
 RASTER_ZP_X0 = $82                ; [clip]
 RASTER_ZP_Y0 = $83                ; [clip]
@@ -457,7 +463,7 @@ zp_plot_i = $95                     ; [clip]; plot_h byte-index scratch
 ; ext pair) so cr_recover_clipped's stash is an indexed loop.
 ; NOT $E3+: that range sits INSIDE the VX1/VX2 endpoint structs
 ; ($E2-$FF, stride 15) — zpcheck's free list does not expand w= struct
-; widths (the $64 trap, again). ($7D-$7E free since 2026-08-10)
+; widths (the $64 trap, again). NOT $7E: zp_vf_vec1 spans $7D-$7E
 ; (the dxraw_h 'free' note was stale — vector hi byte, VXC dispatch
 ; corrupts). Homes: the ang module's registered free singles $89-$8C
 ; + the twice-audited $52/$53 pair.
