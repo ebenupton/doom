@@ -32,9 +32,9 @@ def build_image():
     subprocess.run(['./beebasm', '-i', 'tube/emit.asm'], check=True,
                    capture_output=True)
     emit = open('EMIT', 'rb').read(); os.remove('EMIT')
-    mem[0x6200:0x6B00] = bytes(0x6B00 - 0x6200)
-    mem[0x6200:0x6200 + len(emit)] = emit
-    for name, target in (('plot_h', 0x6210), ('plot_v', 0x6220)):
+    mem[0x7500:0x7E00] = bytes(0x7E00 - 0x7500)   # drop the OR blob (the
+    mem[0x7500:0x7500 + len(emit)] = emit         # $7500 RASTER home since
+    for name, target in (('plot_h', 0x7510), ('plot_v', 0x7520)):   # 2026-08-09)
         a = symmap.sym(name)
         mem[a] = 0x4C; mem[a+1] = target & 0xFF; mem[a+2] = target >> 8
     subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,

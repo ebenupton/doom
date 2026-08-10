@@ -61,29 +61,25 @@ ORG &EA00                       \ the FB region: the copro never
 .boot
     SEI
     LDA #0                      \ REAL-HW hardening: the engine's runtime
-    STA &6C                     \ arenas ($0400-$1AFF: pool/records/TFS/
-    LDA #4                      \ LC/VCACHE planes) and the CPM memo
-    STA &6D                     \ ($5500-$57FF) assume the py65-zeros
-    LDY #0                      \ ground state; parasite RAM is only
-    TYA                         \ zeroed by luck on emulators. Zero them
-.pz1                            \ BEFORE the loads (D2 then restores the
-    STA (&6C),Y                 \ CPM KDXH $80-sentinel plane on top).
-    INY
+    STA &6C                     \ arenas ($0400-$19FF: pool/records/
+    LDA #4                      \ scratch/bitmap page/cache planes)
+    LDY #0                      \ assume the py65-zeros ground state;
+    STA &6D                     \ parasite RAM is only zeroed by luck on
+    TYA                         \ emulators. Zero them BEFORE the loads.
+.pz1                            \ STOP at $1A00: the sqr quad rides the
+    STA (&6C),Y                 \ CODE file from $1A00 (f34f835 map) —
+    INY                         \ the old #&1B bound wiped its first page.
     BNE pz1
     INC &6D
     LDX &6D
-    CPX #&1B
+    CPX #&1A
     BNE pz1
-    LDA #&6B                    \ the cache block $6B00-$85FF (2026-07-21
-    STA &6D                     \ map: all caches contiguous)
-    LDA #0
+    LDA #&7E                    \ CPM memo page ($7E00, 2026-08-09 map;
+    STA &6D                     \ the old $6B00-$85FF sweep is LIVE CODE
+    LDA #0                      \ now); init $80-fills KDXH on top
 .pz2
     STA (&6C),Y
     INY
-    BNE pz2
-    INC &6D
-    LDX &6D
-    CPX #&86
     BNE pz2
     LDX #0                      \ *LOAD every engine/data file: strings
 .ldloop                         \ are CR-terminated, list ends with 0

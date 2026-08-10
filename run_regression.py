@@ -62,6 +62,11 @@ ct = run('compare_traversal', ['compare_traversal.py'], lambda o: o.count('diff=
 run('compare_subsector', ['compare_subsector.py'], lambda o: re.search(r'TOTAL:.*0 pixel/span-affecting, 0 px', o) is not None)
 run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('vxcache_check', ['tools/vxcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
+run('tube_pipeline', ['tube/test_pipeline_py65.py'], lambda o: 'PIPELINE CONVERGED' in o)
+# ^ the parasite shares the flat image but carries its OWN map glue
+# (emit overlay, ship ranges, boot zeroing) — layout arcs rot it
+# silently without a gate (the 2026-08-10 black screen: three arcs
+# of slide between tube-convergence and the first tube boot)
 run('walkseq_check', ['tools/walkseq_check.py'], lambda o: 'walkseq_check: OK' in o)
 run('bankedcmp_check', ['tools/bankedcmp_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('anim6502_check', ['tools/anim6502_check.py'], lambda o: 'ANIM6502: PASS' in o)

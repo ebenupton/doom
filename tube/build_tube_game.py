@@ -104,9 +104,12 @@ def main():
 
     # ---- the three surgical changes ----
     emit = asm('tube/emit.asm', 'EMIT')
-    mem[0x6200:0x6B00] = bytes(0x6B00 - 0x6200)     # drop the NJ blob
-    mem[0x6200:0x6200 + len(emit)] = emit
-    for name, target in (('plot_h', 0x6210), ('plot_v', 0x6220)):
+    # drop the OR blob (flat RASTER_ENTRY = $7500 since the 2026-08-09
+    # cache-region map; $6200-$6B00 is LIVE CLIPF now — the old window
+    # was the pre-shuffle blob home and zeroing it was the black-screen)
+    mem[0x7500:0x7E00] = bytes(0x7E00 - 0x7500)
+    mem[0x7500:0x7500 + len(emit)] = emit
+    for name, target in (('plot_h', 0x7510), ('plot_v', 0x7520)):
         a = fsym(name)
         mem[a] = 0x4C
         mem[a+1] = target & 0xFF
@@ -116,12 +119,16 @@ def main():
     # ---- TWO LOADS (Eben's spec): CODE = engine + NJ/emitters,
     # DATA = level + tables (+anim/sincos). The 2026-07-21 map makes both
     # contiguous; the cache block is runtime-only and never shipped.
-    CODE_LO, CODE_HI = 0x1C00, 0x6B00   # sqr tables ride in the CODE file
+    CODE_LO, CODE_HI = 0x1A00, 0x7600   # sqr rides at $1A00 (f34f835 map);
+                                        # CLIPF ends ~$6D65, VPLOTF $6E00,
+                                        # emit at $7500 — one contiguous file
     DATA_LO, DATA_HI = 0x8600, 0xEA00
     # guard: nothing nonzero outside the shipped spans + runtime regions
+    # ($0400-$1A00 = pool/records/caches ground state; $7600-$8600 =
+    # blob remnant (zeroed above) + CPM memo, boot-initialized)
     for a in range(0x0400, 0xF7F0):
         if mem[a] and not (CODE_LO <= a < CODE_HI or DATA_LO <= a < DATA_HI
-                           or 0x0400 <= a < 0x2000 or 0x6B00 <= a < 0x8600):
+                           or 0x0400 <= a < 0x1A00 or 0x7600 <= a < 0x8600):
             raise AssertionError(f"unshipped nonzero byte at &{a:04X}")
     # (high check: VATOX now ends at $E701 — nothing above $E9FF but FB)
     for a in range(0xEA00, 0xF7F0):
@@ -147,12 +154,11 @@ def main():
                      ('T_D_FWD', 'D_FWD'),
                      ('T_CPM_KDXH', 'CPM_KDXH')):
             f.write(f"{t} = &{fsym(s):04X}\n")
-        f.write(f"T_RCACHE_STATE = &{0xF100:04X}\n")
+        f.write(f"T_RCACHE_STATE = &{abi.RCACHE_STATE_FLAT:04X}\n")
         f.write(f"T_RCACHE_LEN = &{abi.RCACHE_STATE_LEN & 0xFF:02X}\n")
         f.write(f"T_VXC_STATE = &{abi.VXC_STATE:04X}\n")
         f.write(f"T_VXC_LEN = &{abi.VXC_STATE_LEN:02X}\n")
         f.write(f"T_VXC_ENABLE = &{abi.VXC_ENABLE:04X}\n")
-        f.write(f"T_CPM_BASE = &5500\n")
         f.write(f"T_BCA_AB = &{fsym('bca_ab'):04X}\n")
         f.write(f"SPAWN_ANGIDX = {SPAWN_ANGIDX}\n")
         f.write(f"SPAWN_PXF = &{px88 & 0xFF:02X}\n")

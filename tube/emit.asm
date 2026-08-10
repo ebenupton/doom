@@ -1,10 +1,10 @@
-\ emit.asm — parasite-side line-command emitters, ORG &6200 (the NJ
-\ rasteriser's home in the flat map: the copro build loads THIS instead
-\ of linedraw_or_reloc.bin, so dcl's des_diag "JMP RASTER_ENTRY" lands
-\ on the diagonal emitter with no engine change at all; plot_h/plot_v's
-\ entry bytes are poked to JMP &6210/&6220 by build_tube_game.py — the
-\ only two patches distinguishing the parasite image from the flat
-\ build).
+\ emit.asm — parasite-side line-command emitters, ORG &7500 (flat
+\ RASTER_ENTRY since the 2026-08-09 cache-region map — the OR blob's
+\ home: the copro build loads THIS instead of linedraw_or_reloc.bin,
+\ so dcl's des_diag "JMP RASTER_ENTRY" lands on the diagonal emitter
+\ with no engine change at all; plot_h/plot_v's entry bytes are poked
+\ to JMP &7510/&7520 by build_tube_game.py — the only two patches
+\ distinguishing the parasite image from the flat build).
 \
 \ Each emitter sends exactly the operands its plotter would consume,
 \ which sidesteps every "is $84/$85 actually stored on this path"
@@ -18,17 +18,17 @@ X0=&82
 Y0=&83
 X1=&84
 Y1=&85
-ORG &6200
+ORG &7500
 .entry_diag                     \ = RASTER_ENTRY (des_diag JMPs here)
     JMP diag
 .pad1
-FOR n, 1, &6210 - pad1
+FOR n, 1, &7510 - pad1
     EQUB 0
 NEXT
 .entry_h                        \ plot_h's poked JMP lands here
     JMP ph
 .pad2
-FOR n, 1, &6220 - pad2
+FOR n, 1, &7520 - pad2
     EQUB 0
 NEXT
 .entry_v                        \ plot_v's poked JMP lands here
