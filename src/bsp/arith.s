@@ -87,8 +87,10 @@ SEG_CODE
 .segment "LDATA"                            ; $1E00 DATA-ONLY region (the
                                             ; LCODE island died 2026-08-09:
                                             ; one contiguous code area rule)
-::srecip_tab:                              ; (read by the inlined junior
-.include "srecip.inc"                       ; arm at nc_ok, under L2)
+::RECIP_S:                                 ; (read by the inlined junior
+.include "srecip.inc"                       ; arm at nc_ok, under L2;
+                                            ; NIBBLE-SWAPPED layout — see
+                                            ; the .inc header)
 SEG_CODE
 SEG_CODE
 

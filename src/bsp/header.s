@@ -375,10 +375,10 @@ zp_br_dy = zp_br_dy_l
 ; (L8/AE/VATOX/recip) | LEVEL $8C00-$A3FF (bbox 16p, verts $800) |
 ; CACHES $A400-$B2FF (CPM, rc psi planes, RCACHE_STATE, VWHC) |
 ; ANIM $B300/$B400 | FREE $B500-$BFFF contiguous.
-RECIP_BASE = $8800                      ; bank L2 TABLES group
+RECIP_M8 = $8800                        ; bank L2 TABLES group
 L2_BBOX = $8C00                         ; bank L2 (harness/loader points zp_rom_bbox here; = ROM_BBOX_C)
 .else
-RECIP_BASE = $D500                      ; flat LEVEL block (2026-07-21 map)
+RECIP_M8 = $D500                        ; flat LEVEL block (2026-07-21 map)
 .endif
 ; (SINCOS_BASE deleted 2026-07-21: no reader — the engine takes sincos
 ;  via the ZP contract ($05-$0A), the driver owns its own DRV_TAB.)
@@ -481,8 +481,12 @@ code_head:
 .import rot_gen_sin, rot_gen_cos, rot_pair_thunk, rpt_jsr, rpt_jmp
 .export rot_core_sin, rot_core_cos      ; rotvar's general-core tails
 .export rns_vec_l, rns_go_op            ; rotvar's RNS_SELECT expansion
-.export RECIP_BASE
-.assert (RECIP_BASE & $FF) = 0, error   ; 4-page table indexed (page | t1)
+.export RECIP_M8
+.assert (RECIP_M8 & $FF) = 0, error     ; 4-page table indexed (page | t1);
+                                        ; PAGE 0 NIBBLE-SWAPPED (2026-08-10):
+                                        ; entry swap(idx) = M8[idx] — the
+                                        ; fast path masks (vy_l & $F0)|vy_h;
+                                        ; pages 1-3 linear (br_recip_hi)
 .import span_mark_solid
 .import span_has_gap                    ; has_gap body (main B segment)
 .import seg_zero_rec_solid

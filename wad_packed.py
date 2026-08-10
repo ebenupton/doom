@@ -497,7 +497,15 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         rom_recip[off_sin_mag + j] = _SIN_QUADRANT[j] & 0xFF
         rom_recip[off_sin_unity + j] = 1 if _SIN_UNITY[j] else 0
 
-    for j in range(RECIP_ENTRIES):
+    # Page 0 (the fast-path domain, idx < 256) is stored NIBBLE-SWAPPED
+    # (Eben 2026-08-10): entry ((idx&15)<<4)|(idx>>4) holds M8[idx], so
+    # the 6502 forms the index as (vy_l & $F0) | vy_h — a mask+OR
+    # instead of the 4xASL + 4xLSR nibble splice. Pages 1-3 (the
+    # br_recip_hi ladder) stay linear. The python mirror indexes
+    # LOGICALLY (fp_recip) and never sees the layout.
+    for j in range(256):
+        rom_recip[off_recip_m8 + (((j & 0x0F) << 4) | (j >> 4))] = _RECIP_M8[j] & 0xFF
+    for j in range(256, RECIP_ENTRIES):
         rom_recip[off_recip_m8 + j] = _RECIP_M8[j] & 0xFF
 
     # ── RAM sizing ──────────────────────────────────────────────────────

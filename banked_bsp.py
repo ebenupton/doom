@@ -127,7 +127,7 @@ def build_banked(flatr):
                                                  # single source (2026-07-21)
     cpy(bdst('VATOX'), _vsym('VATOX'), 1025)
     cpy(bdst('L2_BBOX'), _vsym('ROM_BBOX_C'), len(flatr.bbox_table))
-    cpy(bdst('RECIP_BASE'), _vsym('RECIP_BASE'), 1024)
+    cpy(bdst('RECIP_M8'), _vsym('RECIP_M8'), 1024)
     # (VWH heights table stripped 2026-07-10: no 6502 reader)
     # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
     # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays

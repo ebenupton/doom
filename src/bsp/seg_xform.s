@@ -180,26 +180,23 @@ fetch_done:
    BCC nc_fail                             ; < 0.5 unit -> behind
 nc_ok:
 ; recip: vy_idx = counts >> 4 (the same half-unit 9.1 index — counts
-; >>4 == vy_88 >> 7); junior arm inlined. vy is DEAD after the index,
-; so the hi byte doubles as the (h&15)<<4 scratch.
+; >>4 == vy_88 >> 7); junior arm inlined. PERMUTED page-0 layout
+; (Eben, 2026-08-10): in the fast-path domain idx < 256 BOTH nibbles
+; of the index live in one byte, so the M8/S junior pages are stored
+; NIBBLE-SWAPPED and the index is a mask + OR:
+;   Y = (vy_l & $F0) | vy_h   ( = swap(vy >> 4) )
+; — the 4xASL + 4xLSR splice died. Far pages stay linear
+; (br_recip_hi's ladder).
    LDA zp_br_vy_h
    CMP #16
    BCS ncr_far                             ; idx >= 256: rare (island below)
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   STA zp_br_vy_h                          ; (h)<<4, h < 16: no bits lost
    LDA zp_br_vy_l
-   LSR A
-   LSR A
-   LSR A
-   LSR A
+   AND #$F0
    ORA zp_br_vy_h
-   TAY                                     ; idx lo rides Y
-   LDA RECIP_BASE,Y
+   TAY                                     ; swapped idx rides Y
+   LDA RECIP_M8,Y
    STA zp_br_r_m8
-   LDA srecip_tab,Y
+   LDA RECIP_S,Y
    STA zp_br_r_s                           ; (no RNS_SELECT: the counts
                                            ; projector selects net = S-3)
 ncr_done:

@@ -37,6 +37,12 @@ def build_image():
     for name, target in (('plot_h', 0x7510), ('plot_v', 0x7520)):   # 2026-08-09)
         a = symmap.sym(name)
         mem[a] = 0x4C; mem[a+1] = target & 0xFF; mem[a+2] = target >> 8
+    import importlib
+    btg = importlib.import_module('build_tube_game')
+    btg.write_tube_syms()               # tube_syms.inc from the CURRENT map
+                                        # (stale syms = the anim_tick crash)
+    import build_anim_ssd as _anim      # SINCOS.bin: count-native mag5
+    open('SINCOS.bin', 'wb').write(_anim.sincos_table())
     subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,
                    capture_output=True)
     cop = open('COPROT', 'rb').read(); os.remove('COPROT')

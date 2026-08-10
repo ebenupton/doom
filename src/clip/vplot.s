@@ -126,7 +126,7 @@ vp_fb1:
 ; ============================================================================
 ; FLAT build (2026-07-27, after the $6B00 recovery): ONE framebuffer
 ; ($EA00), ONE copy in the VPLOTF region ($6B00-$6F60), tables and the
-; single dispatch as CODE-resident data/code (the srecip_tab precedent
+; single dispatch as CODE-resident data/code (the RECIP_S precedent
 ; — CODE tail had 858 B free). No copy select: plot_v IS the dispatch.
 ; ============================================================================
 .segment "VPLOTF"

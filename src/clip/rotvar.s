@@ -14,7 +14,7 @@ SEG_CODE
 .export rot_gen_sin, rot_gen_cos, rot_pair_thunk, rpt_jsr, rpt_jmp
 .import rot_core_sin, rot_core_cos          ; bsp/arith.s general cores
 .import rns_vec_l, rns_go_op                ; project.s vectored shifter
-.import RECIP_BASE                          ; bsp/header.s equate (L2/flat)
+.import RECIP_M8                            ; bsp/header.s equate (L2/flat)
                                             ; (rns_go_op = the NAMED SMC
                                             ; patch point, exported there)
 
@@ -31,7 +31,7 @@ rcp_pnz:                                    ; A = idx hi (>= 1), Y = idx lo —
    BEQ rcp_p1                              ; t1 = 1
    BCS rcp_p3                              ; t1 = 3
 ; t1 = 2: S = 10 except idx == 512 (Y == 0) -> 9
-   LDA RECIP_BASE+$200,Y
+   LDA RECIP_M8+$200,Y
    STA zp_br_r_m8
    LDA #10
    CPY #0
@@ -49,13 +49,13 @@ rcp_clamp:
    LDY #$FF                                ; idx := 1023 (t1 -> page 3)
 rcp_p3:
 ; t1 = 3: S = 10 always
-   LDA RECIP_BASE+$300,Y
+   LDA RECIP_M8+$300,Y
    STA zp_br_r_m8
    LDA #10
    BNE rcp_s                               ; (A = 10: always)
 rcp_p1:
 ; t1 = 1: S = 9 except idx == 256 (Y == 0) -> 8
-   LDA RECIP_BASE+$100,Y
+   LDA RECIP_M8+$100,Y
    STA zp_br_r_m8
    LDA #9
    CPY #0

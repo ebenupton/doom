@@ -71,16 +71,18 @@ def test_recip():
     mem = sc.mpu.memory
     cases = list(range(2, 1024)) + [0, 1, 1024, 2048, 65535]
     fail = 0
-    recip_base = _sym('RECIP_BASE')
-    srecip = _sym('srecip_tab')
+    recip_base = _sym('RECIP_M8')
+    srecip = _sym('RECIP_S')
     for vy_idx in cases:
         if vy_idx < 256:
             # junior arm is INLINED at nc_ok (seg_xform) since 2026-07-27:
             # (M8, S) = straight table reads — validate the tables the
-            # inline serves (the instruction sequence itself is covered
-            # by every rendering gate)
-            got_hi = mem[recip_base + vy_idx]
-            got_lo = mem[srecip + vy_idx]
+            # inline serves (NIBBLE-SWAPPED page-0 layout, 2026-08-10;
+            # the instruction sequence itself is covered by every
+            # rendering gate)
+            sw = ((vy_idx & 0x0F) << 4) | (vy_idx >> 4)
+            got_hi = mem[recip_base + sw]
+            got_lo = mem[srecip + sw]
         else:
             # senior ladder ABI: A = idx hi (>= 1), Y = idx lo
             sc.mpu.y = vy_idx & 0xFF

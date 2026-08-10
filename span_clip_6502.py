@@ -138,10 +138,14 @@ class SpanClip6502:
         from engine_load import load_engine
         load_engine(mem, banked=0, c02=int(_C02))
 
-        # Reciprocal mantissa table at $E000: M8[idx] for the 10-bit 9.1
+        # Reciprocal mantissa table at $D500: M8[idx] for the 10-bit 9.1
         # index (4 pages; S = bit_length(idx-1) is computed, not stored).
+        # Page 0 NIBBLE-SWAPPED (2026-08-10): the fast path indexes
+        # (vy_l & $F0) | vy_h; pages 1-3 linear (br_recip_hi ladder).
         from fp import _RECIP_M8
-        for i in range(1024):
+        for i in range(256):
+            mem[0xD500 + (((i & 0x0F) << 4) | (i >> 4))] = _RECIP_M8[i]
+        for i in range(256, 1024):
             mem[0xD500 + i] = _RECIP_M8[i]
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
