@@ -2,9 +2,10 @@ SEG_CODE
 bsp_lo_start:
 
 ; ============================================================================
-; reproject_at_crossing — EV16 full-precision near-plane crossing
-; (2026-08-09): recover BOTH endpoints' s24 view totals from their
-; vertex keys, compute the vy = NEAR crossing in 8.8, and project it
+; reproject_at_crossing — full-precision near-plane crossing (EV16
+; 2026-08-09; TRUE16 counts 2026-08-10): recover BOTH endpoints' s16
+; count totals from their vertex keys, compute the vy = NEAR crossing
+; in counts, and project it
 ; WITH ITS REAL FRACTION straight into the clipped endpoint's STRUCT
 ; slots (VX1/VX2, zp.inc — stride 15; zp_seg_ep = 0 for v1, 15 for v2,
 ; set by the caller). Y projection is NOT done here: it is deferred to
@@ -13,13 +14,13 @@ bsp_lo_start:
 ; apv_stage read the right reciprocal.
 ;
 ; Called by the seg loop (seg_emit.s) when EXACTLY ONE endpoint of a
-; front-facing seg is behind the near plane. Mirrors fp.fp_cross_88
+; front-facing seg is behind the near plane. Mirrors fp.fp_cross_t16
 ; bit-exactly (v1 arg = the CLIPPED endpoint):
-;     d = vy_u - vy_c; n = 256 - vy_c     (both positive; d >= 1)
+;     d = vy_u - vy_c; n = 32 - vy_c      (both positive; d >= 1)
 ;     normalize d to u8 (floor-shift n and d together)
 ;     t >= 256 (<=> n >= d) -> crossing = the unclipped endpoint EXACT
 ;     t = (n<<8 + d>>1) / d               (u8, RN)
-;     cx = vx_c + sign(dvx)*((t*|dvx| + 128) >> 8)     (s24 8.8)
+;     cx = vx_c + sign(dvx)*((t*|dvx| + 128) >> 8)     (s16 counts)
 ; The old s8 evy/evx tier died with this: the crossing was its LAST
 ; consumer, and its integer resolution (frac forced to 0) was the
 ; near-clip's remaining precision loss — toward-float verdict
@@ -33,7 +34,7 @@ bsp_lo_start:
 ;            struct +13/+14 and zp_br_r_m8/rlo = recip(NEAR) = (M8=0, S=1);
 ;            chain key killed by the caller (VX2 no longer holds a vertex).
 ;   Clobbers: fetch/rot scratch (via cr_recover), zp_cr_*, zp_br_a,
-;            zp_br_sign, zp_br_t2, zp_div_*, umul8 scratch, A/X/Y.
+;            zp_br_sign, zp_div_*, umul8 scratch, A/X/Y.
 ;   Banking: SELF-CONTAINED (2026-08-09, exit-contract retirement):
 ;            arrival bank is arbitrary (the transform's hit arm is
 ;            bank-preserving now). cr_plain pages L2 for the VP reads;
@@ -45,8 +46,8 @@ bsp_lo_start:
 ; ============================================================================
 reproject_at_crossing:
 .scope
-; ---- recover totals: clipped endpoint -> zp_cr_*, unclipped -> the
-; zp_br_vx/vy working slots ----
+; ---- recover count totals: clipped endpoint -> zp_cr_*, unclipped ->
+; the zp_br_vx/vy working slots ----
    LDA zp_seg_ep
    BNE rp_v2c
    LDA zp_v1i_l                            ; ep = 0: v1 is the clipped one
@@ -64,8 +65,8 @@ rp_v2c:
    LDX zp_v1i_b
    JSR cr_recover
 rp_math:
-; ---- d = vy_u - vy_c (positive: the verdicts guarantee
-; vy_c < 128 <= vy_u; lands in the vy working slots) ----
+; ---- d = vy_u - vy_c (s16, positive: the verdicts guarantee
+; vy_c < 16 <= vy_u counts; lands in the vy working slots) ----
    SEC
    LDA zp_br_vy_l
    SBC zp_cr_vy_l
@@ -73,38 +74,29 @@ rp_math:
    LDA zp_br_vy_h
    SBC zp_cr_vy_h
    STA zp_br_vy_h
-   LDA zp_br_vy_x
-   SBC zp_cr_vy_x
-   STA zp_br_vy_x
-; ---- n = 256 - vy_c (positive; overwrites vy_c — dead) ----
+; ---- n = 32 - vy_c (s16 positive: NEAR = 32 counts = 1.0 unit;
+; overwrites vy_c — dead) ----
    SEC
-   LDA #$00
+   LDA #32
    SBC zp_cr_vy_l
    STA zp_cr_vy_l
-   LDA #$01
+   LDA #0
    SBC zp_cr_vy_h
    STA zp_cr_vy_h
-   LDA #$00
-   SBC zp_cr_vy_x
-   STA zp_cr_vy_x
 ; ---- normalize d to u8: floor-shift n and d together ----
 rp_norm:
    LDA zp_br_vy_h
-   ORA zp_br_vy_x
    BEQ rp_norm_done
-   LSR zp_br_vy_x
-   ROR zp_br_vy_h
+   LSR zp_br_vy_h
    ROR zp_br_vy_l
-   LSR zp_cr_vy_x
-   ROR zp_cr_vy_h
+   LSR zp_cr_vy_h
    ROR zp_cr_vy_l
    JMP rp_norm                             ; (rare path: clarity over the
 rp_norm_done:                              ;  backward-branch save)
 ; ---- t >= 256 <=> n >= d (proof: n>=d -> n<<8 >= 256d; n<d ->
 ; n<<8 + d>>1 <= 256d - 256 + 127 < 256d): crossing degenerates to
 ; the UNCLIPPED endpoint exactly (python: t >= 256 -> cx = vx2) ----
-   LDA zp_cr_vy_x
-   ORA zp_cr_vy_h
+   LDA zp_cr_vy_h
    BNE rp_use_u_j
    LDA zp_cr_vy_l
    CMP zp_br_vy_l
@@ -128,7 +120,9 @@ rp_t_ok:
 ; explicit PAGE still wants L2, and the audit (has_gap main, y-stage
 ; self-paged, emits PAGE_X C) has not identified it. Do NOT delete
 ; without root-causing; bankedcmp is the catcher. (~6 cyc, ~1.7x/frame.)
-; ---- dvx = vx_u - vx_c: sign + u24 magnitude in the vy slots ----
+; ---- dvx = vx_u - vx_c: sign + u16 magnitude in the vy slots
+; (TRUE16: totals are s16 counts — the third byte and its gated
+; third mul DIED) ----
    ZERO zp_br_sign
    SEC
    LDA zp_br_vx_l
@@ -137,9 +131,6 @@ rp_t_ok:
    LDA zp_br_vx_h
    SBC zp_cr_vx_h
    STA zp_br_vy_h
-   LDA zp_br_vx_x
-   SBC zp_cr_vx_x
-   STA zp_br_vy_x
    BPL rp_dvx_p                            ; N rides the last SBC byte
    INC zp_br_sign
    SEC
@@ -149,14 +140,11 @@ rp_t_ok:
    LDA #0
    SBC zp_br_vy_h
    STA zp_br_vy_h
-   LDA #0
-   SBC zp_br_vy_x
-   STA zp_br_vy_x
 rp_dvx_p:
-; ---- prod = (t * |dvx| + 128) >> 8 (u8 x u24 -> u18: three umul8s,
-; the top one gated on |dvx|'s rare nonzero third byte). r0/r1/r2
-; accumulate the SHIFTED result: r0 = prod byte 1, etc — the +128
-; rounding bias contributes only its carry out of byte 0. ----
+; ---- prod = (t * |dvx| + 128) >> 8 (u8 x u16 -> u16: two umul8s;
+; t < 256 so prod < |dvx| fits u16). r0/r1 accumulate the SHIFTED
+; result: r0 = prod byte 1, etc — the +128 rounding bias contributes
+; only its carry out of byte 0. ----
    LDA zp_br_vy_l
    STA zp_mul_b
    LDA zp_br_a
@@ -181,25 +169,9 @@ rp_dvx_p:
    TXA
    ADC #0
    STA zp_br_res_h                         ; r1 = p1h + c (<= 255)
-   ZERO zp_br_t2                           ; r2
-   LDA zp_br_vy_x                          ; m2 (nonzero only for view
-   BEQ rp_prod_done                        ;  spans past +-256 units)
-   STA zp_mul_b
-   LDA zp_br_a
-   JSR umul8                               ; t*m2
-   TAX
-   LDA zp_br_res_h
-   CLC
-   ADC zp_prod_l                           ; r1 += p2l
-   STA zp_br_res_h
-   TXA
-   ADC #0
-   STA zp_br_t2                            ; r2 = p2h + c
-rp_prod_done:
 ; ---- cx = vx_c +- prod, STRAIGHT INTO the projection input slots:
-; zp_br_vx_l/h/x = frac/int-lo/int-hi is exactly the 8.8 layout
-; br_project_x consumes — the crossing's real frac flows through
-; where the old path forced 0 ----
+; s16 counts in zp_br_vx_l/h — exactly what br_project_x_c consumes —
+; and the crossing's real (count-grain) fraction flows through ----
    LDA zp_br_sign
    BNE rp_cx_sub
    CLC
@@ -209,9 +181,6 @@ rp_prod_done:
    LDA zp_cr_vx_h
    ADC zp_br_res_h
    STA zp_br_vx_h
-   LDA zp_cr_vx_x
-   ADC zp_br_t2
-   STA zp_br_vx_x
    JMP rp_recip
 rp_cx_sub:
    SEC
@@ -221,9 +190,6 @@ rp_cx_sub:
    LDA zp_cr_vx_h
    SBC zp_br_res_h
    STA zp_br_vx_h
-   LDA zp_cr_vx_x
-   SBC zp_br_t2
-   STA zp_br_vx_x
 rp_use_u:
 ; (falls in; t >= 256 arrivals: the crossing IS the unclipped
 ; endpoint, whose totals already sit in the projection input slots)
@@ -236,11 +202,10 @@ rp_recip:
    LDA #0
    STA zp_br_r_m8
    LDA #1
-   STA zp_br_r_s
-   LDA rns_vec_l                           ; = rns_vec_l-1+S with S = 1
-   STA rns_go_op
+   STA zp_br_r_s                           ; (the hand kernel fold died: the
+                                           ; counts projector selects itself)
 ; ---- project + land in the clipped endpoint's struct ----
-   JSR br_project_x                        ; -> zp_br_res_l/h = sx
+   JSR br_project_x_c                      ; -> zp_br_res_l/h = sx
    LDX zp_seg_ep
    LDA zp_br_res_h
    STA VX1+2,X                             ; sx -> the clipped endpoint's
@@ -254,15 +219,16 @@ rp_recip:
 .endscope
 
 ; ============================================================================
-; cr_recover — recover one endpoint's s24 view totals from its vertex
-; key (EV16 2026-08-09). total := widen(q64(rot(w))) + ref — the same
-; join every fetch tier computes (SXV_BODY vfoff / vxcon), so recovery
-; is bit-identical to the transform that produced the endpoint's clip
-; verdict, in BOTH vxc modes: the base is a pure function of (vertex,
-; angle epoch) and ref is staged unconditionally by vxc_frame.
+; cr_recover — recover one endpoint's s16 count totals from its vertex
+; key (EV16 2026-08-09; TRUE16 2026-08-10). total := rns(rot(w),3) +
+; ref_c — the same join the fetch computes (SXV_BODY vxcon), so
+; recovery is bit-identical to the transform that produced the
+; endpoint's clip verdict, in BOTH vxc modes: the base is a pure
+; function of (vertex, angle epoch) and ref is staged unconditionally
+; by vxc_frame.
 ;   In:  A = idx_l, X = idx_b (senior side bit $20); any bank —
 ;        cr_plain pages L2 itself (warm serves need no paging at all).
-;   Out: zp_br_vx_l/h/x, zp_br_vy_l/h/x = totals (s24 8.8).
+;   Out: zp_br_vx_l/h, zp_br_vy_l/h = totals (s16 counts).
 ;   Clobbers: A/X/Y, fetch scratch (zp_br_dy_*, zp_ri_*), rot scratch.
 ; cr_recover_clipped: same, then banks the result into the zp_cr_*
 ; slots — the clipped endpoint recovers FIRST, so the second call
@@ -274,24 +240,20 @@ cr_recover_clipped:
 .scope
    JSR cr_recover
    LDX #3                                  ; the $11-$14 pair block mirrors
-cr_cp:                                     ; $E3-$E6 (zp.inc order contract)
-   LDA zp_br_vx_l,X
-   STA zp_cr_vx_l,X
+cr_cp:                                     ; the zp_cr block (zp.inc order
+   LDA zp_br_vx_l,X                        ; contract). TRUE16: the ext pair
+   STA zp_cr_vx_l,X                        ; copies DIED — totals are s16
    DEX
    BPL cr_cp
-   LDA zp_br_vx_x                          ; + the $2E/$2F ext pair
-   STA zp_cr_vx_x
-   LDA zp_br_vy_x
-   STA zp_cr_vy_x
    RTS
 .endscope
 
 cr_recover:
 .scope
 ; ---- VXC-aware claw-back (2026-08-09): when the translation cache is
-; on and holds this vertex, serve base16 from the planes + widen + ref
-; (~90cyc) instead of the full fetch+rotate (~330). Bit-identical BY
-; CONSTRUCTION (the V16 join: every tier computes (base16<<2)+ref).
+; on and holds this vertex, serve base counts from the planes + ref
+; (~70cyc) instead of the full fetch+rotate (~330). Bit-identical BY
+; CONSTRUCTION (the TRUE16 join: every tier computes base_c + ref_c).
 ; Cold does NOT birth — recovery is read-only, so cache state
 ; invariants (vxcache_check/walkseq) are untouched; the rare cold
 ; crossing just pays the plain path like before. ----
@@ -308,15 +270,15 @@ cr_recover:
                                            ; BANK_C/L2 pair died)
    AND #$20
    BNE cr_w_hi
-   LDA VXC_XLO,Y                           ; warm: base16 -> the working
-   STA zp_br_vx_l                          ; slots (junior side)
+   LDA VXC_XLO,Y                           ; warm: base counts -> the
+   STA zp_br_vx_l                          ; working slots (junior side)
    LDA VXC_XHI,Y
    STA zp_br_vx_h
    LDA VXC_YLO,Y
    STA zp_br_vy_l
    LDA VXC_YHI,Y
    STA zp_br_vy_h
-   JMP cr_widen
+   JMP cr_ref
 cr_w_hi:
    LDA VXC_XLO+$100,Y                      ; senior side twins
    STA zp_br_vx_l
@@ -326,34 +288,8 @@ cr_w_hi:
    STA zp_br_vy_l
    LDA VXC_YHI+$100,Y
    STA zp_br_vy_h
-cr_widen:
-; widen base16 << 2, sign-extended into the ext bytes (the vxq_join
-; form — BIT reads the hi sign without disturbing A's accumulator)
-   LDA #0
-   BIT zp_br_vx_h
-   BPL cw_xp
-   LDA #$FF
-cw_xp:
-   ASL zp_br_vx_l
-   ROL zp_br_vx_h
-   ROL A
-   ASL zp_br_vx_l
-   ROL zp_br_vx_h
-   ROL A
-   STA zp_br_vx_x
-   LDA #0
-   BIT zp_br_vy_h
-   BPL cw_yp
-   LDA #$FF
-cw_yp:
-   ASL zp_br_vy_l
-   ROL zp_br_vy_h
-   ROL A
-   ASL zp_br_vy_l
-   ROL zp_br_vy_h
-   ROL A
-   STA zp_br_vy_x
-   JMP cr_ref                              ; shared ref add
+   JMP cr_ref                              ; counts ARE the working form
+                                           ; (TRUE16: the <<2 widen DIED)
 cr_cold:
    LDA zp_div_l                            ; restore idx_l (X untouched)
 cr_plain:
@@ -380,10 +316,10 @@ cr_hi:
    LDX VP_XLO+$100,Y
    LDA VP_XHI+$100,Y                       ; (register ABI — see junior)
 cr_rot:
-   JSR rot_w_signed                        ; widened q64 base in the s24 slots
+   JSR rot_w_signed                        ; s16 count base in (l,h)
 cr_ref:
-; ref add — totals := base + ref (the vxq_add join; those expansions
-; live inside SXV_BODY's macro scopes, unreachable from here)
+; ref add — totals := base_c + ref_c, s16 (the vxq_add join; those
+; expansions live inside SXV_BODY's macro scopes, unreachable from here)
    CLC
    LDA zp_br_vx_l
    ADC vxc_ref_x+0
@@ -391,9 +327,6 @@ cr_ref:
    LDA zp_br_vx_h
    ADC vxc_ref_x+1
    STA zp_br_vx_h
-   LDA zp_br_vx_x
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
    CLC
    LDA zp_br_vy_l
    ADC vxc_ref_y+0
@@ -401,9 +334,6 @@ cr_ref:
    LDA zp_br_vy_h
    ADC vxc_ref_y+1
    STA zp_br_vy_h
-   LDA zp_br_vy_x
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x
    RTS
 .endscope
 

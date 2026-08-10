@@ -1775,9 +1775,10 @@ _USE_ANGLE_COL = False
 _USE_ANGLE_BBOX = False
 # (EV16 _NC88 flag RETIRED 2026-08-09: the 8.8 crossing is THE path in
 # both python renderers — gate passed toward-float, 6502 landed.)
-_T16 = False    # TRUE16 (2026-08-10): s16 count-scale totals (K=32/unit,
-                # rot output >>3 RN — fp.fp_to_view_t16 family). Flag-off
-                # = current 8.8 pipeline, bit-identical.
+_T16 = True     # TRUE16 (2026-08-10): s16 count-scale totals (K=32/unit,
+                # rot output >>3 RN — fp.fp_to_view_t16 family) — THE
+                # 6502 pipeline since the same date. Flag-off = the old
+                # 8.8 pipeline (kept for A/B archaeology only).
 _VIEW_AB = 0
 # Option 2b: full angle-space SEG (no per-vertex rotation). X from world angle,
 # Y from wall-distance scale. Reference path in packed_render_seg. Mirrors the

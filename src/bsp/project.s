@@ -65,29 +65,30 @@ ps_shift:
    ADC #0
    BNE ps_loop
 ; --- dispatch the net shift and tail-call the narrow body ---
-   CPX #8
-   BCS ps_patch                            ; net >= 5: rlo-free kernels
-   CPX #4
-   BCS ps_rns24                            ; net in [1,4]: rns24 reads rlo
-ps_patch:                                   ; (net <= 0 falls in here too)
+; (single flat arm since 2026-08-10: EVERY net in [-2,10] has a baked
+; kernel — the ps_rns24 save/restore dance died with the rns_s1..s4
+; bake; no arm writes r_s, so the TRUE S survives for the y-stage.)
+ps_patch:
    LDA rns_vec_all-1,X
    STA rns_go_op
    JMP px_narrow                           ; tail-call: narrow's RTS + REG
                                         ; contract return to the caller
-ps_rns24:
-   LDA zp_br_r_s                           ; the ONE arm that must write
-   STA zp_px_s_save                        ; rlo: save the TRUE S first
-   TXA
-   SEC
-   SBC #3                                  ; unbias: rlo = net
-   STA zp_br_r_s
-   RNS_SELECT                              ; (A = net S)
-   JSR px_narrow
-   LDA zp_px_s_save                        ; restore + re-select (rlo-
-   STA zp_br_r_s                           ; writer invariant); the macro
-   RNS_SELECT                              ; clobbers A/X (fine: the REG
-   RTS                                     ; contract DIED 2026-08-09 —
-                                           ; callers read zp_br_res_l/h)
+; TRUE16 counts entry (2026-08-10): input = s16 view COUNTS in
+; zp_br_vx_l/h (vx_x is DEAD — the narrow body derives sign from the
+; hi byte and never reads the ext). Exact identity:
+;   sx = 128 + rns(X88*m9, S+8)  with X88 = counts<<3
+;      = 128 + rns(counts*m9, S+5)        (rns(8B, k+3) == rns(B, k))
+; i.e. the EXISTING narrow body at net shift S-3 — and px_shrink's
+; dispatch table already covers net in [-2, 7] (X = net+3 = S in
+; [1,10]). The whole projection is a kernel select + fall-in: ZERO
+; bytes of operand staging. zp_br_r_s keeps the TRUE S (VWHC key /
+; y-stage contract); only the selected kernel differs.
+::br_project_x_c:
+   LDX zp_br_r_s                           ; X = net+3 = S: EVERY net is a
+   LDA rns_vec_all-1,X                     ; baked kernel now (s1..s4 landed
+   STA rns_go_op                           ; 2026-08-10) — one flat select,
+   JMP px_narrow                           ; no r_s tamper, no restore
+
 ; --- M8 == 0 rare cell (2026-07-26, Eben: same mostly-taken BNE as the
 ; y-side; zero M8 = crossing recip / power-of-two depths only). Hoisted
 ; above the entry, still inside the scope; the head BEQs back here.
@@ -571,39 +572,15 @@ pym_nneg:
 ; projection's caller — pure leaves, bit-exact vs Python's rns().
 ; ============================================================================
 SEG_CODE
+; (rns_go + the vector tables moved BELOW the fence 2026-08-10: only
+; the kernel ENTRY bytes must share the SMC hi-byte page, and the
+; baked rns_s1..s4 squeezed it — dispatch site and data read full
+; 16-bit addresses.)
 .align $100                             ; the rns kernel window must sit in
                                         ; ONE page (the vector patches only
                                         ; the JMP operand LO byte) — the CODE
                                         ; segment carries align=$100 in both
                                         ; cfgs so this .align is honoured
-rns_go:
-   CLC                                     ; hoisted from every kernel: all
-                                        ; six bodies enter C=0 (their round
-                                        ; ADC is the first carry consumer;
-                                        ; rns32 is NOT dispatched here and
-                                        ; keeps its own CLC)
-rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
-                                        ; LO byte. ALL select sites store
-                                        ; here — NEVER rns_go+1, that is
-                                        ; the JMP opcode (the CLC above
-                                        ; shifted the encoding, 2026-07-13)
-   JMP rns24                               ; operand LO byte = live shifter
-                                        ; (SMC by rns_select + the inlined
-                                        ; selects; the HI byte is CONSTANT
-                                        ; — all six kernel entries share
-                                        ; one 256-byte window, asserted
-                                        ; below — so a select patches ONE
-                                        ; byte, 2026-07-12)
-
-; (the rns_select SUBROUTINE is retired 2026-07-15: RNS_SELECT macro
-; in bsp/header.s expands at every select site — each already had S in
-; A, so the JSR/RTS and the zp_br_r_s reload were pure tax.)
-rns_vec_all:                               ; ONE table, net shift -2..10 in
-   .byte <rns_sm2, <rns_sm1, <rns_s0      ; order; the shrink indexes it
-rns_vec_l:                                ; with X = net+3, the regular
-   .byte <rns24, <rns24, <rns24, <rns24, <rns_s5   ; selects at S (=net)
-   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10   ; via this alias
-; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
 
 ; --- the six kernels: entries must stay inside the first 256 bytes of
 ; this aligned segment (bodies may spill past); the fence asserts catch
@@ -696,43 +673,183 @@ s5_sh:
    ROL zp_br_res_h
    RTS
 .endscope
+; --- rns_s1..rns_s4 (TRUE16 claw-back, 2026-08-10): BAKED twins of
+; what was rns24's domain. The counts projector maps the common depth
+; band (S in [4,7]) onto net = S-3 in [1,4], which made rns24's
+; generic loop + the ps_rns24 save/restore dance the HOT path — these
+; kernels restore flat one-select dispatch, and every OTHER S-in-[1,4]
+; select (y-stage, shrink) rides them too. s1/s2 shift RIGHT (fewer
+; trios + the s0-style shuffle), s3/s4 shift LEFT like rns_s5 (result
+; lands in res_l/h, no shuffle) — each form at its cheaper end. ---
+rns_s1:
+.scope
+; floor((P + 1) / 2): bias into b0, one arithmetic ROR of the 3-byte P,
+; result = its low 16 (b0,b1) shuffled up.
+   LDA zp_br_t2
+   ADC #1                                  ; C=0 from rns_go
+   STA zp_br_t2
+   BCC s1_sh
+   INC zp_br_res_l
+   BNE s1_sh
+   INC zp_br_res_h
+s1_sh:
+   LDA zp_br_res_h                         ; b2 rides A (dead at exit)
+   CMP #$80
+   ROR A
+   ROR zp_br_res_l
+   ROR zp_br_t2
+   LDA zp_br_res_l
+   STA zp_br_res_h
+   LDA zp_br_t2
+   STA zp_br_res_l
+   RTS
+.endscope
+rns_s2:
+.scope
+; floor((P + 2) / 4): two right trios, then the shuffle.
+   LDA zp_br_t2
+   ADC #2                                  ; C=0 from rns_go
+   STA zp_br_t2
+   BCC s2_sh
+   INC zp_br_res_l
+   BNE s2_sh
+   INC zp_br_res_h
+s2_sh:
+   LDA zp_br_res_h
+   CMP #$80
+   ROR A
+   ROR zp_br_res_l
+   ROR zp_br_t2
+   CMP #$80
+   ROR A
+   ROR zp_br_res_l
+   ROR zp_br_t2
+   LDA zp_br_res_l
+   STA zp_br_res_h
+   LDA zp_br_t2
+   STA zp_br_res_l
+   RTS
+.endscope
+rns_s3:
+.scope
+; floor((P + 4) / 8) = ((P + 4) << 5) >> 8 — the rns_s5 left form.
+   LDA zp_br_t2
+   ADC #4                                  ; C=0 from rns_go
+   BCC s3_sh
+   INC zp_br_res_l
+   BNE s3_sh
+   INC zp_br_res_h
+s3_sh:
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   RTS
+.endscope
+rns_s4:
+.scope
+; floor((P + 8) / 16) = ((P + 8) << 4) >> 8 — left form.
+   LDA zp_br_t2
+   ADC #8                                  ; C=0 from rns_go
+   BCC s4_sh
+   INC zp_br_res_l
+   BNE s4_sh
+   INC zp_br_res_h
+s4_sh:
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   ASL A
+   ROL zp_br_res_l
+   ROL zp_br_res_h
+   RTS
+.endscope
 ; --- deficit kernels (2026-07-13): a shrink that ran out of exponent
-; (S floored at 1) dispatches HERE instead of rounding at S=1 and
-; scaling back in an epilogue — net shift <= 0, no rounding stage at
-; all (single quantisation: the shrink's own truncations). Result is
-; (b0,b1) scaled, shuffled up in place; overflow wraps mod 2^16 (the
-; old wide contract). defc is CLAMPED to 3 (engine bound; the harness
-; sweeps beyond it and the fp mirror clamps identically). ---
+; (S floored at 1) — net shift <= 0, no rounding stage (single
+; quantisation: the shrink's own truncations). Result is (b0,b1)
+; scaled, shuffled up; overflow wraps mod 2^16. CORPUS-UNSEEN — page-
+; fence trampolines (2026-08-10: the baked s1..s4 squeezed the page;
+; only the 3-byte entries must share the SMC hi byte). ---
 rns_s0:
-; deficit 1: net shift 0 — result = P exactly
-   LDA zp_br_res_l
-   STA zp_br_res_h
-   LDA zp_br_t2
-   STA zp_br_res_l
-   RTS
+   JMP rns_s0_body
 rns_sm1:
-; deficit 2: net shift -1 — result = P << 1 (b1 rides in A: the
-; shifted res_l is only ever read back as the new res_h)
-   LDA zp_br_res_l
-   ASL zp_br_t2
-   ROL A
-   STA zp_br_res_h
-   LDA zp_br_t2
-   STA zp_br_res_l
-   RTS
+   JMP rns_sm1_body
 rns_sm2:
-; deficit 3: net shift -2 — result = P << 2 (b1 rides in A, twice)
-   LDA zp_br_res_l
-   ASL zp_br_t2
-   ROL A
-   ASL zp_br_t2
-   ROL A
-   STA zp_br_res_h
-   LDA zp_br_t2
-   STA zp_br_res_l
-   RTS
+   JMP rns_sm2_body
 
 rns_s10:
+   JMP rns_s10_body                        ; page-fence trampoline (rare)
+; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
+; 2026-07-12 so all six kernel entries share the JMP hi byte; its
+; rns_half rounding-constant tables stay in resolve_crossing.s.)
+; ============================================================================
+rns24:
+   JMP rns24_body                          ; page-fence trampoline (cold
+                                           ; since the baked s1..s4: only
+                                           ; the go-vector DEFAULT lands
+                                           ; here — every live select
+                                           ; patches a baked kernel first)
+.assert >rns_s6 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s7 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s0 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_sm1 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_sm2 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s5 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s1 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s2 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s3 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s4 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+
+rns_go:
+   CLC                                     ; hoisted from every kernel: all
+                                        ; bodies enter C=0 (their round
+                                        ; ADC is the first carry consumer;
+                                        ; rns32 is NOT dispatched here and
+                                        ; keeps its own CLC)
+rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
+                                        ; LO byte. ALL select sites store
+                                        ; here — NEVER rns_go+1, that is
+                                        ; the JMP opcode (the CLC above
+                                        ; shifted the encoding, 2026-07-13)
+   JMP rns24                               ; operand LO byte = live shifter
+                                        ; (SMC by the inlined selects; the
+                                        ; HI byte is CONSTANT — all kernel
+                                        ; entries share one 256-byte
+                                        ; window, asserted above — so a
+                                        ; select patches ONE byte)
+
+; (the rns_select SUBROUTINE is retired 2026-07-15: RNS_SELECT macro
+; in bsp/header.s expands at every select site — each already had S in
+; A, so the JSR/RTS and the zp_br_r_s reload were pure tax.)
+rns_vec_all:                               ; ONE table, net shift -2..10 in
+   .byte <rns_sm2, <rns_sm1, <rns_s0      ; order; the shrink indexes it
+rns_vec_l:                                ; with X = net+3, the regular
+   .byte <rns_s1, <rns_s2, <rns_s3, <rns_s4, <rns_s5   ; selects at S (=net)
+   .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10   ; via this alias
+; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
+
+; --- out-of-page bodies (trampolined entries above) ---
+rns_s10_body:
 .scope
 ; floor((P + $200) / 1024): round is +2 into b1 (in place), then drop b0
 ; and ASR the (resh, resl) pair twice. Reinstated 2026-07-13 so rns24's
@@ -752,20 +869,44 @@ rns_s10:
    STA zp_br_res_h
    RTS
 .endscope
-; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
-; 2026-07-12 so all six kernel entries share the JMP hi byte; its
-; rns_half rounding-constant tables stay in resolve_crossing.s.)
-; ============================================================================
-rns24:
+rns_s0_body:
+; deficit 1: net shift 0 — result = P exactly
+   LDA zp_br_res_l
+   STA zp_br_res_h
+   LDA zp_br_t2
+   STA zp_br_res_l
+   RTS
+rns_sm1_body:
+; deficit 2: net shift -1 — result = P << 1 (b1 rides in A: the
+; shifted res_l is only ever read back as the new res_h)
+   LDA zp_br_res_l
+   ASL zp_br_t2
+   ROL A
+   STA zp_br_res_h
+   LDA zp_br_t2
+   STA zp_br_res_l
+   RTS
+rns_sm2_body:
+; deficit 3: net shift -2 — result = P << 2 (b1 rides in A, twice)
+   LDA zp_br_res_l
+   ASL zp_br_t2
+   ROL A
+   ASL zp_br_t2
+   ROL A
+   STA zp_br_res_h
+   LDA zp_br_t2
+   STA zp_br_res_l
+   RTS
+rns24_body:
 .scope
-; Generic kernel, domain now PURE S in [1,4] (5..10 all have unrolled
-; kernels): half = 2^(S-1) <= 8 fits the LO byte, so the old mid-table
-; add is a carry propagate and the S=10 arm + CPX dispatch are gone
-; (2026-07-13). S=1 is the near-plane crossing reciprocal — hot for
-; clipped segs. Result lands one byte LOW (b0, b1): shuffle up at exit.
-   LDX zp_br_r_s
+; Generic loop kernel — UNREACHABLE from live selects since the baked
+; s1..s4 (2026-08-10); kept as the go-vector's power-on default and a
+; safety net for any stale-select bug (the rlo-writer invariant makes
+; that a bug, not a path). Result lands one byte LOW: shuffle at exit.
+   CLC                                     ; (trampolined arrivals kept
+   LDX zp_br_r_s                           ;  rns_go's C=0; re-seed anyway)
    LDA rns_half_l-1,X
-   ADC zp_br_t2                            ; C=0 from rns_go
+   ADC zp_br_t2
    STA zp_br_t2
    BCC rn_enter
    INC zp_br_res_l
@@ -786,15 +927,6 @@ rn_rloop:                                  ; value is dead at exit (the
    STA zp_br_res_l
    RTS
 .endscope
-.assert >rns_s6 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s7 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s0 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_sm1 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_sm2 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s5 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
 
 
 SEG_CODE

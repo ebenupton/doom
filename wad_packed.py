@@ -244,9 +244,21 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # V16 RANGE ASSERT: base = rot(w) must fit s16 in 1/64 units for
     # EVERY angle; |rot(w)| <= hypot(w) (trig magnitudes <= 1), so
     # hypot(w) <= 32767/64 = 511.98 is sound over all angles.
+    # TRUE16 RANGE ASSERT (2026-08-10): the pipeline's s16 COUNT totals
+    # (1/32 unit) must never overflow: |total| ~= |rot(w - p)| <=
+    # hypot(w) + hypot(p). Vertices are bounded by the V16 assert below
+    # (511.98); the player is clamped by walk_drv's RAWX/RAWY box, whose
+    # center-relative corner hypot is < 2500 world = 312.5 units — 320
+    # here is that bound plus slack. 511.98 + 320 + 2 (frac terms +
+    # count rounding) = 833.98 units < 32767/32 = 1023.97. Update the
+    # 320 if the walk clamp box ever grows.
+    _PLAYER_MAX_HYPOT_UNITS = 320
     for i, v in enumerate(fp_vertexes):
         assert v[0] * v[0] + v[1] * v[1] <= 511 * 511, \
             f"V16 base range: vertex {i} {v} exceeds s16 1/64-unit storage"
+        assert ((v[0] * v[0] + v[1] * v[1]) ** 0.5
+                + _PLAYER_MAX_HYPOT_UNITS + 2) * 32 <= 32767, \
+            f"TRUE16 total range: vertex {i} {v} can overflow s16 counts"
         pg, off = (i >> 8) * 256, i & 0xFF
         ax, ay = abs(v[0]), abs(v[1])
         rom_main[off_verts + 0x000 + pg + off] = ax & 0xFF

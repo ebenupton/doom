@@ -69,7 +69,7 @@
 ; the crossing's post-div restore) each break banked when removed,
 ; consumer unidentified; see vh_pgx).
 ; ============================================================================
-.macro SXV_BODY pg, vfoff, vxcon
+.macro SXV_BODY pg, vxcon
 .scope
 ; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
 ; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
@@ -124,87 +124,48 @@ vmiss:
    LDA VCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
    STA VCACHE_VALID_BASE,Y
-; --- VECTORED fetch dispatch (Eben, 2026-07-27: the bca-cache idiom —
-; pointer, not flag; vxc_frame aims it once per frame). Cache off:
-; straight into the inline plain fetch below. Cache on: the vxcon
-; stub (island above) probes/serves the translation cache. ---
-.if pg = 0
-   JMP (zp_vf_vec0)
-.else
-   JMP (zp_vf_vec1)
-.endif
-::vfoff:
-; V16 plain fetch (2026-08-09): stage the VERTEX verbatim (the px/py
-; subtract DIED — all position terms live in vxc_ref), pure-rotate +
-; q64, then the shared widen+ref join in the island. Bit-identical to
-; the cached path by construction: both compute q64(rot(w)) + ref.
-   PAGE BANK_L2                            ; vert planes live in L2
-   LDY zp_seg_v_idx_l
-   LDA VP_YLO+pg,Y
-   STA zp_br_dy_l
-   LDA VP_YHI+pg,Y
-   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
-   LDX VP_XLO+pg,Y                         ; wx rides the REGISTER ABI
-   LDA VP_XHI+pg,Y                         ; (2026-08-09): X = lo, A = raw
-                                           ; hi, N = sign — NOTHING may
-                                           ; touch flags before the JSR
-   JSR rot_w_signed                        ; widened q64 base in the s24 slots
-; ref add INLINE (2026-08-09: the vxq_add hop died — this path falls
-; straight into fetch_done again, as the old fetch did)
-   CLC
-   LDA zp_br_vx_l
-   ADC vxc_ref_x+0
-   STA zp_br_vx_l
-   LDA zp_br_vx_h
-   ADC vxc_ref_x+1
-   STA zp_br_vx_h
-   LDA zp_br_vx_x
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
-   CLC
-   LDA zp_br_vy_l
-   ADC vxc_ref_y+0
-   STA zp_br_vy_l
-   LDA zp_br_vy_h
-   ADC vxc_ref_y+1
-   STA zp_br_vy_h
-   LDA zp_br_vy_x
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x                          ; A/N/Z = total_vy ext byte —
-                                           ; fetch_done RIDES these (the
-                                           ; ADC's flags describe the
-                                           ; stored value; STA is flag-
-                                           ; transparent)
+; --- direct fetch dispatch (TRUE16 2026-08-10): the vectors DIED with
+; the plain tier — the cache path IS the fetch (VXC always-on;
+; ENABLE=0 degrades to a wipe-every-frame all-birth mode in
+; vxc_frame, bit-identical by construction). ---
+   JMP vxcon
 fetch_done:
-; near-clip DIRECT on the raw s24 total (EV16 2026-08-09): clipped iff
-; total_vy < 128 — bit-identical to the old rounded-evy <= 0 test.
-; ARRIVAL CONTRACT (register-out, 2026-08-09): A/N/Z = zp_br_vy_x from
-; the ref add's final ADC — BOTH arrivals (vfoff falls in, vxq_add
-; JMPs) end with that add, so the reload died. Nothing may slip
+; near-clip on the s16 count total (TRUE16): clipped iff vy < 16
+; counts (0.5 unit) — the count twin of the old vy_88 < 128 test.
+; ARRIVAL CONTRACT (register-out): A/N/Z = zp_br_vy_h from the ref
+; add's final ADC (vxq_add is the ONLY arrival). Nothing may slip
 ; between the STA and here.
    BMI nc_fail                             ; negative -> behind
-   BNE nc_ok                               ; >= 256.0 -> visible
-   LDA zp_br_vy_h
-   BNE nc_ok                               ; >= 1.0 -> visible
+   BNE nc_ok                               ; >= 256 counts (8.0) -> visible
    LDA zp_br_vy_l
-   BPL nc_fail                             ; < 0.5 -> behind
+   CMP #16
+   BCC nc_fail                             ; < 0.5 unit -> behind
 nc_ok:
-; recip: vy_idx = s24 total_vy >> 7 (9.1); junior arm inlined
-   LDA zp_br_vy_l
-   ASL A
+; recip: vy_idx = counts >> 4 (the same half-unit 9.1 index — counts
+; >>4 == vy_88 >> 7); junior arm inlined. vy is DEAD after the index,
+; so the hi byte doubles as the (h&15)<<4 scratch.
    LDA zp_br_vy_h
-   ROL A
+   CMP #16
+   BCS ncr_far                             ; idx >= 256: rare (island below)
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   STA zp_br_vy_h                          ; (h)<<4, h < 16: no bits lost
+   LDA zp_br_vy_l
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   ORA zp_br_vy_h
    TAY                                     ; idx lo rides Y
-   LDA zp_br_vy_x
-   ROL A
-   BNE ncr_far                             ; idx >= 256: rare (island below)
    LDA RECIP_BASE,Y
    STA zp_br_r_m8
    LDA srecip_tab,Y
-   STA zp_br_r_s
-   RNS_SELECT
+   STA zp_br_r_s                           ; (no RNS_SELECT: the counts
+                                           ; projector selects net = S-3)
 ncr_done:
-   JSR br_project_x                        ; -> zp_br_res_l/h = sx (the reg
+   JSR br_project_x_c                      ; -> zp_br_res_l/h = sx (the reg
                                            ; contract died: one load feeds
                                            ; BOTH copies below — Eben's
                                            ; symmetric-store form)
@@ -248,20 +209,38 @@ nc_fail:
    LDA #1                                  ; clip = 1 (plane + struct)
    BNE fill_tail                           ; (A = 1: always taken)
 ncr_far:
-   JSR br_recip_hi                         ; A = idx hi, Y = idx lo
+; rare: vy >= 128 units (idx >= 256). idx = counts>>4 split by nibble:
+; vy_l is dead scratch for the lo half, vy_h stays whole for the hi.
+   LDA zp_br_vy_l
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   STA zp_br_vy_l                          ; l>>4
+   LDA zp_br_vy_h
+   ASL A
+   ASL A
+   ASL A
+   ASL A                                   ; (h&15)<<4
+   ORA zp_br_vy_l
+   TAY                                     ; Y = idx lo
+   LDA zp_br_vy_h
+   LSR A
+   LSR A
+   LSR A
+   LSR A                                   ; A = idx hi
+   JSR br_recip_hi
    JMP ncr_done
 ; (the ec_clamp/ec_hi_nz s8-saturate islands DIED with the evy/evx
 ; tier — EV16 2026-08-09: no consumer treats anything as s8 any more)
 ::vxcon:
-; --- VXC serve, V16 (2026-08-09): the cache memoizes base16 =
-; q64(rot(w)) — a pure function of (vertex, angle epoch) — in FOUR s16
-; planes, MAIN RAM since 2026-08-09 (all cache planes left bank C):
-; the whole island runs under ONE entry PAGE BANK_L2, like vfoff —
-; the C round-trips died with the move. Warm = 4 loads; cold = birth:
-; pure rotate + q64, 4-plane store. Both fall into vxq_join, as does
-; the plain vfoff path: every tier computes total := (base16 << 2) +
-; vxc_ref, so cache-on == cache-off == Python bit-exactly BY
-; CONSTRUCTION.
+; --- VXC serve, TRUE16 (2026-08-10): the cache memoizes base counts =
+; rns(rot(w), 3) — a pure function of (vertex, angle epoch) — in FOUR
+; s16 planes, main RAM. Counts ARE the working form: warm = 4 loads +
+; the 16-bit ref add (the <<2 widen DIED); cold = birth: fetch + rot
+; (counts out of the vq3 tail) + 4 plane stores DIRECT (the >>2/<<2
+; dance DIED), same add. Every tier computes total := base_c +
+; ref_c, so warm == birth == Python bit-exactly BY CONSTRUCTION.
    PAGE BANK_L2                            ; sole page: VP fetch on cold;
                                            ; planes + VALID are main
    LDX zp_seg_v_idx_b                      ; VXC_VALID index = B (header key)
@@ -269,20 +248,20 @@ ncr_far:
    AND zp_seg_v_bitm
    BEQ vs_cold
    LDY zp_seg_v_idx_l
-   LDA VXC_XLO+pg,Y                        ; warm: base16 -> the vx/vy slots
-   STA zp_br_vx_l
+   LDA VXC_XLO+pg,Y                        ; warm: base counts -> the
+   STA zp_br_vx_l                          ; working slots
    LDA VXC_XHI+pg,Y
    STA zp_br_vx_h
    LDA VXC_YLO+pg,Y
    STA zp_br_vy_l
    LDA VXC_YHI+pg,Y
    STA zp_br_vy_h
-   JMP vxq_join
+   JMP vxq_add
 vs_cold:
    LDA VXC_VALID,X
    ORA zp_seg_v_bitm
    STA VXC_VALID,X
-; birth: fetch + pure rotate + q64 (the same stage as vfoff, side baked)
+; birth: fetch + pure rotate; the vq3 tail leaves s16 counts in (l,h)
    LDY zp_seg_v_idx_l
    LDA VP_YLO+pg,Y
    STA zp_br_dy_l
@@ -290,51 +269,19 @@ vs_cold:
    STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
    LDX VP_XLO+pg,Y                         ; wx rides the REGISTER ABI:
    LDA VP_XHI+pg,Y                         ; X = lo, A = raw hi, N = sign
-   JSR rot_w_signed                        ; widened q64 base in the s24 slots
-; birth store: >>2 in place to the s16 form (exact — low 2 bits are 0),
-; store 4 planes, << 2 back, fall into the add. The shifts live ONLY
-; here: once per vertex per angle epoch.
-   JSR vxq_shr2                            ; shared: both axes >> 2
+   JSR rot_w_signed                        ; s16 count base in (l,h)
    LDY zp_seg_v_idx_l
    LDA zp_br_vx_l
-   STA VXC_XLO+pg,Y
+   STA VXC_XLO+pg,Y                        ; birth store: counts verbatim
    LDA zp_br_vx_h
    STA VXC_XHI+pg,Y
    LDA zp_br_vy_l
    STA VXC_YLO+pg,Y
    LDA zp_br_vy_h
    STA VXC_YHI+pg,Y
-   JSR vxq_shl2                            ; shared: both axes << 2 back
-   JMP vxq_add
-vxq_join:
-; warm entry: widen base16 << 2 (sign-extended into the ext slots),
-; then FALL into the shared ref add. BIT reads the hi sign sans A.
-   LDA #0
-   BIT zp_br_vx_h
-   BPL vxw_xp
-   LDA #$FF
-vxw_xp:
-   ASL zp_br_vx_l
-   ROL zp_br_vx_h
-   ROL A
-   ASL zp_br_vx_l
-   ROL zp_br_vx_h
-   ROL A
-   STA zp_br_vx_x
-   LDA #0
-   BIT zp_br_vy_h
-   BPL vxw_yp
-   LDA #$FF
-vxw_yp:
-   ASL zp_br_vy_l
-   ROL zp_br_vy_h
-   ROL A
-   ASL zp_br_vy_l
-   ROL zp_br_vy_h
-   ROL A
-   STA zp_br_vy_x
 vxq_add:
-; shared tail: totals := (widened base) + ref, all three bytes
+; shared tail: totals := base_c + ref_c, s16 (overflow impossible:
+; the pack range assert bounds |total| <= 32767)
    CLC
    LDA zp_br_vx_l
    ADC vxc_ref_x+0
@@ -342,22 +289,16 @@ vxq_add:
    LDA zp_br_vx_h
    ADC vxc_ref_x+1
    STA zp_br_vx_h
-   LDA zp_br_vx_x
-   ADC vxc_ref_x+2
-   STA zp_br_vx_x
    CLC
    LDA zp_br_vy_l
    ADC vxc_ref_y+0
    STA zp_br_vy_l
    LDA zp_br_vy_h
    ADC vxc_ref_y+1
-   STA zp_br_vy_h
-   LDA zp_br_vy_x
-   ADC vxc_ref_y+2
-   STA zp_br_vy_x                          ; A/N/Z = vy ext — fetch_done's
-   JMP fetch_done                          ; arrival contract (JMP is flag-
-                                           ; transparent; exit-PAGE died:
-                                           ; the island never leaves L2)
+   STA zp_br_vy_h                          ; A/N/Z = vy count hi —
+   JMP fetch_done                          ; fetch_done's arrival contract
+                                           ; (JMP is flag-transparent; the
+                                           ; island never leaves L2)
 .endscope
 .endmacro
 
@@ -369,9 +310,9 @@ vxq_add:
 ; test piggybacks); these are two complete side-baked routines with NO
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
-   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon      ; tried 2026-07-27: the ~370 pad
+   SXV_BODY 0, sxv0_vxcon                  ; tried 2026-07-27: the ~370 pad
 ::sx_vert_hi:                              ; bytes overflow BOTH regions —
-   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon   ; unaligned round-2 form kept)
+   SXV_BODY $100, sxv1_vxcon               ; unaligned round-2 form kept)
 
 ; (vxc_store_tail deleted 2026-08-09 — birth store inlined per side in
 ;  the vxcon islands, side baked)

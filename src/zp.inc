@@ -12,8 +12,9 @@
 ;
 ; Run tools/zpcheck.py for a rendered map + free-slot list.
 as_x = $A1                        ; [bsp] apv_stage endpoint-offset stash
-vxc_ref_x = $A2                   ; [bsp] s24 frame ref = to_view(0,0) (x)
-vxc_ref_y = $A5                   ; [bsp] s24 frame ref (y); was $05DD/$05E0
+vxc_ref_x = $A2                   ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
+vxc_ref_y = $A4                   ; [bsp] s16 count ref (y); TRUE16 2026-08-10
+                                  ; ($A6-$A7 FREE — the s24 third bytes died)
                                   ; absolute — six warm-path ADCs per vertex
 ; ============================================================================
 
@@ -84,7 +85,9 @@ zp_bca_val_h = $CF               ; [ang]
 ; unregistered squatter; registered 2026-07-10. Do not allocate.
 zp_rcache_c4 = $C4                ; [bsp]; rcache internal (see ang/rcache.s)
 zp_rcache_c5 = $C5                ; [bsp]; rcache internal
-zp_px_s_save = $C6                ; [bsp]; br_project_x shrink path: the
+; $C6 FREE 2026-08-10: zp_px_s_save died with the ps_rns24 arm (the
+; rns_s1..s4 bake — no dispatch arm writes r_s any more)
+; (was) zp_px_s_save = $C6        ; [bsp]; br_project_x shrink path: the
                                   ; vertex's TRUE S across the shrunken
                                   ; projection (callers bank rlo AFTER)
 zp_vxc_on = $C7                   ; [bsp]; VXC gate flag (vxc_frame sets it
@@ -108,7 +111,7 @@ zp_rs_l = $1E                     ; [bsp] sin-side rotate result lo (res-slot
 zp_v1i_l = $45                    ; [bsp]; v1 vertex key lo (idx & 255) banked
 zp_v1i_b = $46                    ; [bsp]; ... key B (idx >> 3) across the v2
                                   ; transform for the vertex-span emitter
-; $52/$53 TAKEN 2026-08-09: zp_cr_vx_x/vy_x (EV16). (zp_vs_il/ib retired 2026-07-25: call sites probe VDONE
+; $52/$53 FREE (EV16 took them 2026-08-09; TRUE16 freed them 2026-08-10). (zp_vs_il/ib retired 2026-07-25: call sites probe VDONE
 ; inline and the fresh path re-reads the key from its home pair)
 ; $47 free (zp_vs_d retired 2026-07-25: vs_go dispatches on A directly)
 zp_vs_x  = $4D                    ; [bsp]; vs_vertex: struct offset save
@@ -195,8 +198,9 @@ zp_rs_h = $2A                     ; [bsp] sin-side rotate result hi (pairs $1E)
 ; (was zp_par_zone — zone inheritance removed 2026-07-18)
 zp_ri_d_h = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
 zp_br_res_x = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
-zp_br_vx_x = $2E                 ; [bsp]; total view-space x sign-extension byte
-zp_br_vy_x = $2F                 ; [bsp]; total view-space y sign-extension byte
+zp_br_vx_x = $2E                 ; [bsp]; ROT-INTERNAL s24 ext byte (x sums);
+                                 ; dead once vq3_counts lands the s16 counts
+zp_br_vy_x = $2F                 ; [bsp]; rot-internal ext (y) — same lifetime
 pa_dx = $30                       ; [ang]; s16 in ; w=2
 pa_dy = $32                       ; [ang]; s16 in ; w=2
 zp_bbox_side = $34                ; [bsp]
@@ -239,13 +243,11 @@ zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on 
 ; $4F-$51 = zp_vs_i / zp_vs_hl / zp_vs_hh — the vertex-span descriptor
 ; walk's variables (98fc1b3, defined locally in subsector.s): the 2026-
 ; 07-15 'FREE' comments here were STALE and cost a corrupted-vector
-; hang on 2026-07-27. $52-$53 now zp_cr ext bytes (2026-08-09).
-zp_vf_vec0 = $7B                  ; [bsp]; VXC fetch vector, junior side —
-                                  ; vxc_frame aims it at sxv0_vfoff (off)
-                                  ; or sxv0_vxcon (on); bca VECTORED idiom.
-                                  ; $7B-$7E were the boot-time tube-detect
-                                  ; scratch (coprot/hostt) — phase-disjoint
-zp_vf_vec1 = $7D                  ; [bsp]; senior-side twin ($7D/$7E)
+; hang on 2026-07-27. $52-$53 freed again 2026-08-10 (TRUE16).
+; $7B, $7D-$7E FREE 2026-08-10: zp_vf_vec0/1 DIED with the plain fetch
+; tier (TRUE16 — the VXC path is THE fetch, dispatched by direct JMP).
+; $7B-$7E were the boot-time tube-detect scratch (coprot/hostt) —
+; phase-disjoint. ($7C separately FREE since 2026-07-15, see below.)
 ; FREE 2026-07-15 (cross-core unification): zp_node_dy_h = $53
 zp_node_nx_l = $54                ; [bsp]
 zp_node_nx_h = $55                ; [bsp]
@@ -317,7 +319,7 @@ zp_seg_v_bitm = $47               ; [bsp]; valid-bitmap mask (1 << (idx & 7));
 ; the vcache is page-split SoA with baked senior arms, no pointer.
 ; FREE 2026-07-15 (cross-core unification): zp_seg_dxraw_l = $7C
 ; ($7D NOT free despite the old dxraw_h note: zp_vf_vec1 = $7D-$7E.)
-; $7E/$7F TAKEN 2026-08-09: zp_cr_vx_x/vy_x EV16 crossing scratch
+; ($7E/$7F note retired — see the $7B block: vf_vec1 died 2026-08-10)
 ; (were the dyraw pair, free since the cross-core unification).
 RASTER_ZP_X0 = $82                ; [clip]
 RASTER_ZP_Y0 = $83                ; [clip]
@@ -455,16 +457,16 @@ zp_plot_i = $95                     ; [clip]; plot_h byte-index scratch
 ; ext pair) so cr_recover_clipped's stash is an indexed loop.
 ; NOT $E3+: that range sits INSIDE the VX1/VX2 endpoint structs
 ; ($E2-$FF, stride 15) — zpcheck's free list does not expand w= struct
-; widths (the $64 trap, again). NOT $7E: zp_vf_vec1 spans $7D-$7E
+; widths (the $64 trap, again). ($7D-$7E free since 2026-08-10)
 ; (the dxraw_h 'free' note was stale — vector hi byte, VXC dispatch
 ; corrupts). Homes: the ang module's registered free singles $89-$8C
 ; + the twice-audited $52/$53 pair.
-zp_cr_vx_l = $89                  ; [bsp]; clipped total vx (8.8 lo)
+zp_cr_vx_l = $89                  ; [bsp]; clipped total vx (s16 counts)
 zp_cr_vx_h = $8A                  ; [bsp]
-zp_cr_vy_l = $8B                  ; [bsp]; clipped total vy (8.8 lo)
+zp_cr_vy_l = $8B                  ; [bsp]; clipped total vy (s16 counts)
 zp_cr_vy_h = $8C                  ; [bsp]
-zp_cr_vx_x = $52                  ; [bsp]; ext bytes (mirror $2E/$2F)
-zp_cr_vy_x = $53                  ; [bsp]
+; ($52/$53 FREE again 2026-08-10: the zp_cr ext bytes died with TRUE16
+;  — totals are s16 counts)
 zp_save0 = $6A                    ; [clip]; DCL line-clip scratch (also
 ;   carries bca_vis's old duty? NO — bca_vis/ccsave own $64/$65 solo)
 zp_save1 = $6B                    ; [clip]

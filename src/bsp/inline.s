@@ -248,6 +248,9 @@ inl_end:
    STA zp_br_dy_h
 .endif
    JSR br_to_view
+   JSR vq3_counts                          ; ref -> s16 counts (rns >>3),
+                                           ; the same quantize tail every
+                                           ; base rides — ONE rounding each
 ; --- publish this frame's ref (ORIGIN NORMALIZATION: stored bases are
 ; total - ref, i.e. the exactly-linear L(w); the warm arm adds the
 ; current ref back. No ref_cold, no CACC - the epoch anchor was a
@@ -256,40 +259,17 @@ inl_end:
    STA vxc_ref_x+0
    LDA zp_br_vx_h
    STA vxc_ref_x+1
-   LDA zp_br_vx_x
-   STA vxc_ref_x+2
    LDA zp_br_vy_l
    STA vxc_ref_y+0
    LDA zp_br_vy_h
    STA vxc_ref_y+1
-   LDA zp_br_vy_x
-   STA vxc_ref_y+2
+; --- TRUE16 (2026-08-10): the fetch vectors DIED with the plain tier —
+; the cache path IS the fetch. ENABLE=0 (harness A/B) degrades to a
+; wipe-EVERY-frame all-birth mode: bit-identical totals with zero warm
+; reuse, and cr_recover's zp_vxc_on gate still steers its plain arm. ---
    LDA VXC_ENABLE
-   STA zp_vxc_on                           ; kept for harness/tools; the
-   BNE vf_on                               ; ENGINE dispatch is the VECTORS
-; cache OFF: fetch vectors -> the plain arms; fill vector -> bare RTS
-   LDA #<sxv0_vfoff
-   STA zp_vf_vec0
-   LDA #>sxv0_vfoff
-   STA zp_vf_vec0+1
-   LDA #<sxv1_vfoff
-   STA zp_vf_vec1
-   LDA #>sxv1_vfoff
-   STA zp_vf_vec1+1
-   JMP inl_end
-vf_on:
-; cache ON: fetch vectors -> the serve stubs; fill -> the birth fill
-   LDA #<sxv0_vxcon
-   STA zp_vf_vec0
-   LDA #>sxv0_vxcon
-   STA zp_vf_vec0+1
-   LDA #<sxv1_vxcon
-   STA zp_vf_vec1
-   LDA #>sxv1_vxcon
-   STA zp_vf_vec1+1
-
-; (ref staging HOISTED above the enable test 2026-08-09: V16 makes the
-;  ref load-bearing on EVERY path — the plain fetch adds it too.)
+   STA zp_vxc_on
+   BEQ vf_wipe                             ; OFF: all-birth (A = 0 rides)
    LDA vxc_ab
    CMP vxc_prev_ab
    BEQ vf_patch
@@ -299,9 +279,10 @@ vf_on:
 ; $05A0 home banned it: byte 60 was VXC_ENABLE). ~325 cyc vs the
 ; 1-byte loop's ~589, on every rotation frame.
    STA vxc_prev_ab
+vf_wipe:
    LDA #0
    LDX #4
-vf_wipe:                                   ; 12 stripes x 5 = 60 bytes
+vf_wl:                                     ; 12 stripes x 5 = 60 bytes
    STA VXC_VALID,X
    STA VXC_VALID+5,X
    STA VXC_VALID+10,X
@@ -315,7 +296,7 @@ vf_wipe:                                   ; 12 stripes x 5 = 60 bytes
    STA VXC_VALID+50,X
    STA VXC_VALID+55,X
    DEX
-   BPL vf_wipe
+   BPL vf_wl
 vf_patch:
 inl_end:
 .endscope

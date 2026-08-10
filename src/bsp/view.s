@@ -408,47 +408,8 @@ bv_fvy_b:
 ;        per frame). total := (base16 << 2) + ref at the callers' join.
 ;   Callers: seg_xform vfoff + vxcon cold arms (both sides).
 ; ============================================================================
-; vxq_shr2 / vxq_shl2 — V16 cold-store shift pair (side-independent,
-; shared by both SXV sides; cold arc only — once per vertex per angle
-; epoch). >>2 takes the widened-masked s24 base to its s16 stored form
-; (exact: low 2 bits are 0); <<2 restores it for the ref add.
-; ============================================================================
-vxq_shr2:
-   LDA zp_br_vx_x
-   CMP #$80
-   ROR zp_br_vx_x
-   ROR zp_br_vx_h
-   ROR zp_br_vx_l
-   LDA zp_br_vx_x
-   CMP #$80
-   ROR zp_br_vx_x
-   ROR zp_br_vx_h
-   ROR zp_br_vx_l
-   LDA zp_br_vy_x
-   CMP #$80
-   ROR zp_br_vy_x
-   ROR zp_br_vy_h
-   ROR zp_br_vy_l
-   LDA zp_br_vy_x
-   CMP #$80
-   ROR zp_br_vy_x
-   ROR zp_br_vy_h
-   ROR zp_br_vy_l
-   RTS
-vxq_shl2:
-   ASL zp_br_vx_l
-   ROL zp_br_vx_h
-   ROL zp_br_vx_x
-   ASL zp_br_vx_l
-   ROL zp_br_vx_h
-   ROL zp_br_vx_x
-   ASL zp_br_vy_l
-   ROL zp_br_vy_h
-   ROL zp_br_vy_x
-   ASL zp_br_vy_l
-   ROL zp_br_vy_h
-   ROL zp_br_vy_x
-   RTS
+; (vxq_shr2 / vxq_shl2 deleted 2026-08-10 — TRUE16: the planes store
+;  counts, which ARE the working form; the birth shift dance died.)
 
 ; ============================================================================
 ; rot_w_signed — REGISTER ABI (Eben, 2026-08-09): the wx operand
@@ -476,40 +437,60 @@ rws_pos:
    ZERO zp_ri_sgn
 rws_go:
    ROT_CORE rot_s13w, rot_s2w, rot_s4w, 1
-; RN-quantize FUSED with the widen (2026-08-09 round 2): the consumer
-; adds widen(q64(v)) = ((v+2)>>2)<<2 = (v+2) & ~3 — a ripple +2 and one
-; AND, NO shifts. The s24 slots exit holding the widened quantized base
-; (low 2 bits zero, ext byte LIVE); only the cold store pays a real
-; shift pair (>>2 to the s16 planes, <<2 back — exact: low bits are 0).
-; RARE-RIPPLE RN (claw-back, 2026-08-09): the +2 only carries out of
-; the lo byte when lo >= $FE — the hi/ext ADC #0 chains become a
-; branch-guarded stub (bit-identical; the stub re-seeds C=0 for the
-; next axis / exit). Common path: 15 cyc/axis vs 28.
-   CLC
-   LDA zp_br_vx_l
-   ADC #2
-   AND #$FC
+; TRUE16 quantize (2026-08-10): counts = (v+4)>>3 arithmetic — the s16
+; view-count base (1/32 unit, K=32) lands in (l,h); the ext bytes DIE
+; as outputs (they were rot workspace only). Three sign-rotates ride
+; the ext byte in A; the RN +4 FUSES into the shift:
+;   (v+4)>>3 = (v>>3) + bit2(v)
+; and bit 2 is exactly the carry out of the third ROR of the lo byte —
+; so ADC #0 finishes round-half-up with no separate +4 pass (the
+; lo-wrap ripple INC is rare; counts <= 10,432 so the hi never wraps).
+; CMP #$80 re-seeds C fresh each round: no CLC anywhere, even straight
+; out of a taken ripple stub. (Python: rns(rot_88, 3) — fp_to_view_
+; totals_t16; rns(rot(w),3) == rns(rot(32w),8), the scale-placement
+; identity.)
+vq3_counts:                                ; JSR-able tail: vxc_frame runs
+   LDA zp_br_vx_x                          ; the frame REF through the same
+   CMP #$80                                ; quantize once per frame
+   ROR A
+   ROR zp_br_vx_h
+   ROR zp_br_vx_l
+   CMP #$80
+   ROR A
+   ROR zp_br_vx_h
+   ROR zp_br_vx_l
+   CMP #$80
+   ROR A
+   ROR zp_br_vx_h
+   ROR zp_br_vx_l
+   LDA zp_br_vx_l                          ; C = v bit 2 = the round bit
+   ADC #0
    STA zp_br_vx_l
    BCS vq_xrip
 vq_x_done:
-   LDA zp_br_vy_l                          ; C = 0 (BCC arc / stub CLC)
-   ADC #2
-   AND #$FC
+   LDA zp_br_vy_x
+   CMP #$80
+   ROR A
+   ROR zp_br_vy_h
+   ROR zp_br_vy_l
+   CMP #$80
+   ROR A
+   ROR zp_br_vy_h
+   ROR zp_br_vy_l
+   CMP #$80
+   ROR A
+   ROR zp_br_vy_h
+   ROR zp_br_vy_l
+   LDA zp_br_vy_l                          ; C = v bit 2
+   ADC #0
    STA zp_br_vy_l
    BCS vq_yrip
    RTS
 vq_xrip:
-   INC zp_br_vx_h                          ; (INC leaves C — cleared below)
-   BNE vq_xr1
-   INC zp_br_vx_x
-vq_xr1:
-   CLC
-   BCC vq_x_done                           ; (always)
+   INC zp_br_vx_h                          ; rare lo-wrap ripple
+   JMP vq_x_done
 vq_yrip:
    INC zp_br_vy_h
-   BNE vq_yr1
-   INC zp_br_vy_x
-vq_yr1:
    RTS
 
 ; (br_smul_s8_u8 + its br_smul_am register entry deleted 2026-07-13:
