@@ -97,18 +97,18 @@ ta_first:
    RTS
 .endscope
 SEG_BANKC
-; TFS state block ($0900-$091B) — the 3-cursor event walk's working set.
+; TFS state block — the 3-cursor event walk's working set.
 ; (Moved here from the deleted 6-byte-records legacy file.)
-; Plain RAM rather than ZP: all accesses are absolute (non-indexed), and
-; the ZP map is full — see project_refactor_toolchain / src/zp.inc.
+; ZP SWEEP (2026-08-11, profiled): the HOT members moved to the zp
+; bytes freed by the TRUE16/TRIG5 arcs (heat-ranked py65 profile,
+; ~1k cyc/frame in this block alone); the cold tail stays in the
+; $06xx scratch page. Every promoted byte is logged in src/zp.inc —
+; the free-list is the trap (the $CB/zp_tail_vec near-miss). The
+; PROMOTED equates live in src/zp.inc (must be seen before all code
+; or ca65 sizes the operands absolute — codescan caught exactly that).
 ; PEND_* is a 1-deep output buffer: the interval most recently produced
 ; by the sweep, held back so the next interval can extend it in place
 ; (same top/bot sources) instead of allocating a new pool span.
-TFS_CUR_X = $0600                       ; current x in inner loop
-TFS_X_HI = $0601                        ; right edge of in-range processing
-TFS_NEXT_X = $0602                      ; next event x
-TFS_TOP_DOM = $0603                     ; 1 if top dominated by record at cur_x, else 0
-TFS_BOT_DOM = $0604                     ; same for bot
 TFS_TOP_L = $0605                       ; top value at cur_x
 TFS_TOP_R = $0606                       ; top value at next_x
 TFS_BOT_L = $0607
@@ -119,9 +119,6 @@ TFS_BOT_KIND = $060B                    ; 0 = pool, 1 = bot record
 TFS_BOT_ID = $060C
 TFS_TOP_BUFEND = $060D                  ; 1 + top_count*4 (first invalid offset)
 TFS_BOT_BUFEND = $060E
-TFS_T_CUR = $060F                       ; top record cursor offset (0 = exhausted)
-TFS_B_CUR = $0610                       ; bot record cursor offset (0 = exhausted)
-TFS_PEND_ACT = $0611                    ; 1 if a pending output span is buffered
 TFS_PEND_XL = $0612
 TFS_PEND_XR = $0613
 TFS_PEND_TL = $0614
@@ -1151,27 +1148,16 @@ LC_OX2_LO = $063C
 LC_OX2_HI = $063D
 LC_OY2_LO = $063E
 LC_OY2_HI = $063F
-; ---- math working ----
-LC_OFF_LO = $0640
-LC_OFF_HI = $0641
-LC_DEN_LO = $0642
-LC_DEN_HI = $0643
-LC_DY_LO = $0644
-LC_DY_HI = $0645
+; ---- math working (ZP SWEEP 2026-08-11: the hot subset — the u16
+; mul/div workspace dominates the profile — moved to freed zp; cold
+; members stay $06xx) ----
 LC_DY_NEG = $0646
 LC_M_A_LO = $0647
 LC_M_A_HI = $0648
 LC_M_B_LO = $0649
 LC_M_B_HI = $064A
-LC_M_R0 = $064B
-LC_M_R1 = $064C
 LC_M_R2 = $064D
 LC_M_R3 = $064E
-LC_QUOT_LO = $064F
-LC_QUOT_HI = $0650
-LC_REM_LO = $0651
-LC_REM_HI = $0652
-LC_TMP_LO = $0653
 LC_TMP_HI = $0654
 LC_RES_LO = $0655
 LC_RES_HI = $0656

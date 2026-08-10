@@ -427,54 +427,54 @@ s16_interp:
    LDA LC_TGT_LO
    SEC
    SBC LC_OX1_LO
-   STA LC_OFF_LO
+   STA z:LC_OFF_LO
    LDA LC_TGT_HI
    SBC LC_OX1_HI
-   STA LC_OFF_HI
+   STA z:LC_OFF_HI
 ; den = x1 - x0
    LDA LC_OX2_LO
    SEC
    SBC LC_OX1_LO
-   STA LC_DEN_LO
+   STA z:LC_DEN_LO
    LDA LC_OX2_HI
    SBC LC_OX1_HI
-   STA LC_DEN_HI
+   STA z:LC_DEN_HI
 ; If den < 0, negate both offset and den. (A and N are the SBC's — no
 ; reload needed for the sign test.)
    BPL si_den_pos
    LDA #0
    SEC
-   SBC LC_OFF_LO
-   STA LC_OFF_LO
+   SBC z:LC_OFF_LO
+   STA z:LC_OFF_LO
    LDA #0
-   SBC LC_OFF_HI
-   STA LC_OFF_HI
+   SBC z:LC_OFF_HI
+   STA z:LC_OFF_HI
    LDA #0
    SEC
-   SBC LC_DEN_LO
-   STA LC_DEN_LO
+   SBC z:LC_DEN_LO
+   STA z:LC_DEN_LO
    LDA #0
-   SBC LC_DEN_HI
-   STA LC_DEN_HI
+   SBC z:LC_DEN_HI
+   STA z:LC_DEN_HI
 si_den_pos:
 ; Trivial: den == 0 (degenerate line) → return y0
-   LDA LC_DEN_LO
-   ORA LC_DEN_HI
+   LDA z:LC_DEN_LO
+   ORA z:LC_DEN_HI
    BNE si_den_nz
    JMP si_return_y0
 si_den_nz:
 ; Trivial: offset == 0 (target == x0) → return y0
-   LDA LC_OFF_LO
-   ORA LC_OFF_HI
+   LDA z:LC_OFF_LO
+   ORA z:LC_OFF_HI
    BNE si_off_nz
    JMP si_return_y0
 si_off_nz:
 ; Trivial: offset == den (target == x1) → return y1
-   LDA LC_OFF_LO
-   CMP LC_DEN_LO
+   LDA z:LC_OFF_LO
+   CMP z:LC_DEN_LO
    BNE si_off_lt_den
-   LDA LC_OFF_HI
-   CMP LC_DEN_HI
+   LDA z:LC_OFF_HI
+   CMP z:LC_DEN_HI
    BNE si_off_lt_den
    JMP si_return_y1
 si_off_lt_den:
@@ -482,18 +482,18 @@ si_off_lt_den:
    LDA LC_OY2_LO
    SEC
    SBC LC_OY1_LO
-   STA LC_DY_LO
+   STA z:LC_DY_LO
    LDA LC_OY2_HI
    SBC LC_OY1_HI
-   STA LC_DY_HI
+   STA z:LC_DY_HI
 ; Trivial: dy == 0 (horizontal line) → return y0. dy-hi is still in
 ; A from the store — ORA the lo byte instead of reloading both.
-   ORA LC_DY_LO
+   ORA z:LC_DY_LO
    BNE si_dy_nz
    JMP si_return_y0
 si_dy_nz:
 ; |dy|, sign tracked in LC_DY_NEG
-   LDA LC_DY_HI
+   LDA z:LC_DY_HI
    BPL si_dy_pos
    STA LC_DY_NEG                           ; A = dy hi, BPL-proven negative:
                                         ; the flag is zero/nonzero only
@@ -501,27 +501,27 @@ si_dy_nz:
                                         ; LDA #1 coercion was dead weight
    LDA #0
    SEC
-   SBC LC_DY_LO
-   STA LC_DY_LO
+   SBC z:LC_DY_LO
+   STA z:LC_DY_LO
    LDA #0
-   SBC LC_DY_HI
-   STA LC_DY_HI
+   SBC z:LC_DY_HI
+   STA z:LC_DY_HI
    JMP si_dy_done
 si_dy_pos:
    ZERO LC_DY_NEG
 si_dy_done:
 ; Fast path: |offset|, |den|, |dy| all fit u8 → use existing
 ; umul8 + udiv16_8 (one multiply, one divide-with-skip-zeros).
-   LDA LC_OFF_HI
-   ORA LC_DEN_HI
-   ORA LC_DY_HI
+   LDA z:LC_OFF_HI
+   ORA z:LC_DEN_HI
+   ORA z:LC_DY_HI
    BNE si_general
-   LDA LC_DY_LO
+   LDA z:LC_DY_LO
    STA z:zp_mul_b
-   LDA LC_OFF_LO
+   LDA z:LC_OFF_LO
    JSR umul8
 ; round: prod += (den / 2)
-   LDA LC_DEN_LO
+   LDA z:LC_DEN_LO
    LSR A
    CLC
    ADC zp_prod_l
@@ -529,7 +529,7 @@ si_dy_done:
    LDA #0
    ADC zp_prod_h
    STA zp_div_h
-   LDA LC_DEN_LO
+   LDA z:LC_DEN_LO
    STA zp_div_den
    JSR udiv16_8                            ; A = u8 quotient
    LDX LC_DY_NEG
@@ -542,10 +542,10 @@ si_dy_done:
    STA LC_RES_HI
    JMP si_clamp
 si_u8_sub:
-   STA LC_TMP_LO
+   STA z:LC_TMP_LO
    LDA LC_OY1_LO
    SEC
-   SBC LC_TMP_LO
+   SBC z:LC_TMP_LO
    STA LC_RES_LO
    LDA LC_OY1_HI
    SBC #0
@@ -558,13 +558,13 @@ si_general:
 .scope
 
 ; Always need p1 = a_lo * b_lo.
-   LDA LC_DY_LO
+   LDA z:LC_DY_LO
    STA z:zp_mul_b
-   LDA LC_OFF_LO
+   LDA z:LC_OFF_LO
    JSR umul8
-   STA LC_M_R1                             ; A = prod_hi (umul8 contract)
+   STA z:LC_M_R1                             ; A = prod_hi (umul8 contract)
    LDA z:zp_prod_l
-   STA LC_M_R0
+   STA z:LC_M_R0
 .if ::C02
    STZ LC_M_R2
    STZ LC_M_R3
@@ -575,17 +575,17 @@ si_general:
 .endif
 
 ; Fast paths: skip multiplies whose factor is zero.
-   LDA LC_DY_HI
+   LDA z:LC_DY_HI
    BEQ skip_p2
 
    STA z:zp_mul_b                            ; A = b_hi from the test above
-   LDA LC_OFF_LO
+   LDA z:LC_OFF_LO
    JSR umul8
 ; p2 = a_lo * b_hi
    LDA z:zp_prod_l
    CLC
-   ADC LC_M_R1
-   STA LC_M_R1
+   ADC z:LC_M_R1
+   STA z:LC_M_R1
    LDA z:zp_prod_h
    ADC LC_M_R2
    STA LC_M_R2
@@ -594,18 +594,18 @@ si_general:
    STA LC_M_R3
 skip_p2:
 
-   LDA LC_OFF_HI
+   LDA z:LC_OFF_HI
    BEQ skip_p3_p4
 
-   LDA LC_DY_LO
+   LDA z:LC_DY_LO
    STA z:zp_mul_b
-   LDA LC_OFF_HI
+   LDA z:LC_OFF_HI
    JSR umul8
 ; p3 = a_hi * b_lo
    LDA z:zp_prod_l
    CLC
-   ADC LC_M_R1
-   STA LC_M_R1
+   ADC z:LC_M_R1
+   STA z:LC_M_R1
    LDA z:zp_prod_h
    ADC LC_M_R2
    STA LC_M_R2
@@ -613,11 +613,11 @@ skip_p2:
    ADC LC_M_R3
    STA LC_M_R3
 
-   LDA LC_DY_HI
+   LDA z:LC_DY_HI
    BEQ skip_p3_p4
 ; if b fits u8, p4 = a_hi * 0 = 0
    STA z:zp_mul_b                            ; A = b_hi from the test above
-   LDA LC_OFF_HI
+   LDA z:LC_OFF_HI
    JSR umul8
 ; p4 = a_hi * b_hi
    LDA z:zp_prod_l
@@ -630,17 +630,17 @@ skip_p2:
 skip_p3_p4:
 .endscope
 ; round-to-nearest: add (den / 2) before divide
-   LDA LC_DEN_HI
+   LDA z:LC_DEN_HI
    LSR A
    STA LC_TMP_HI
-   LDA LC_DEN_LO
+   LDA z:LC_DEN_LO
    ROR A
    CLC                                     ; (ROR left bit 0 in C)
-   ADC LC_M_R0                             ; den/2 lo rides A into the
-   STA LC_M_R0                             ; add — no TMP_LO staging
-   LDA LC_M_R1
+   ADC z:LC_M_R0                             ; den/2 lo rides A into the
+   STA z:LC_M_R0                             ; add — no TMP_LO staging
+   LDA z:LC_M_R1
    ADC LC_TMP_HI
-   STA LC_M_R1
+   STA z:LC_M_R1
    BCC m_r_nc                              ; BCC/INC 2-byte propagate:
    INC LC_M_R2                             ; wrap of R2 carries into R3
    BNE m_r_nc
@@ -649,12 +649,12 @@ m_r_nc:
 .scope
 
 .if ::C02
-   STZ LC_QUOT_LO
-   STZ LC_QUOT_HI
+   STZ z:LC_QUOT_LO
+   STZ z:LC_QUOT_HI
 .else
    LDA #0
-   STA LC_QUOT_LO
-   STA LC_QUOT_HI
+   STA z:LC_QUOT_LO
+   STA z:LC_QUOT_HI
 .endif
 
 ; ---- Fast path: quotient fits u16 ----
@@ -663,11 +663,11 @@ m_r_nc:
 ; iterations the standard loop would do). For typical s16 clipper
 ; inputs (product u20-u22, den u12) this is always true.
    LDA LC_M_R3
-   CMP LC_DEN_HI
+   CMP z:LC_DEN_HI
    BCC u16_quot_noreload
    BNE nq_j
    LDA LC_M_R2
-   CMP LC_DEN_LO
+   CMP z:LC_DEN_LO
    BCC u16_quot
 nq_j:
    JMP no_u16_quot                         ; (the u8 tier pushed the slow
@@ -682,69 +682,69 @@ u16_quot_noreload:                         ; arrives with R3 live)
 ; each iteration drops the R1 ROL and the QUOT_HI ROL. ----
    BNE u16_full                            ; R3 != 0 → 16-bit quotient
    LDA LC_M_R2
-   CMP LC_DEN_HI
+   CMP z:LC_DEN_HI
    BCC u8_tier                             ; R2 < den hi → q < 256
    BNE u16_full
-   LDA LC_M_R1
-   CMP LC_DEN_LO
+   LDA z:LC_M_R1
+   CMP z:LC_DEN_LO
    BCS u16_full                            ; R2:R1 >= den → q >= 256
 u8_tier:
    LDA LC_M_R2
-   STA LC_REM_HI
-   LDA LC_M_R1
-   STA LC_REM_LO
+   STA z:LC_REM_HI
+   LDA z:LC_M_R1
+   STA z:LC_REM_LO
    LDX #8
 u8_loop:
-   ASL LC_M_R0
-   ROL LC_REM_LO
-   ROL LC_REM_HI
-   LDA LC_REM_LO
+   ASL z:LC_M_R0
+   ROL z:LC_REM_LO
+   ROL z:LC_REM_HI
+   LDA z:LC_REM_LO
    SEC
-   SBC LC_DEN_LO
-   STA LC_TMP_LO
-   LDA LC_REM_HI
-   SBC LC_DEN_HI
+   SBC z:LC_DEN_LO
+   STA z:LC_TMP_LO
+   LDA z:LC_REM_HI
+   SBC z:LC_DEN_HI
    BCC u8_set                              ; no-sub: C=0 rides into the ROL
-   STA LC_REM_HI
-   LDA LC_TMP_LO
-   STA LC_REM_LO                           ; sub taken: C=1 from the SBC
+   STA z:LC_REM_HI
+   LDA z:LC_TMP_LO
+   STA z:LC_REM_LO                           ; sub taken: C=1 from the SBC
 u8_set:
-   ROL LC_QUOT_LO                          ; QUOT_HI stays its pre-zeroed 0
+   ROL z:LC_QUOT_LO                          ; QUOT_HI stays its pre-zeroed 0
    DEX
    BNE u8_loop
    JMP udv_done
 u16_full:
    LDA LC_M_R3
-   STA LC_REM_HI
+   STA z:LC_REM_HI
    LDA LC_M_R2
-   STA LC_REM_LO
+   STA z:LC_REM_LO
    LDX #16
 u16_loop:
-   ASL LC_M_R0
-   ROL LC_M_R1
-   ROL LC_REM_LO
-   ROL LC_REM_HI
-   LDA LC_REM_LO
+   ASL z:LC_M_R0
+   ROL z:LC_M_R1
+   ROL z:LC_REM_LO
+   ROL z:LC_REM_HI
+   LDA z:LC_REM_LO
    SEC
-   SBC LC_DEN_LO
-   STA LC_TMP_LO
-   LDA LC_REM_HI
-   SBC LC_DEN_HI
+   SBC z:LC_DEN_LO
+   STA z:LC_TMP_LO
+   LDA z:LC_REM_HI
+   SBC z:LC_DEN_HI
    BCS u16_sub                             ; sub arm out of the fall path
                                            ; (census 2026-07-27: no-sub is
                                            ; 76.6% — C=0 rides into the ROL)
 u16_set:
-   ROL LC_QUOT_LO
-   ROL LC_QUOT_HI
+   ROL z:LC_QUOT_LO
+   ROL z:LC_QUOT_HI
    DEX
    BNE u16_loop
    JMP udv_done
 u16_sub:
-   STA LC_REM_HI
-   LDA LC_TMP_LO
-   STA LC_REM_LO                           ; C=1 from the SBC rides the ROLs
-   ROL LC_QUOT_LO                          ; (duplicated tail: a jump back
-   ROL LC_QUOT_HI                          ; to u16_set costs more than it
+   STA z:LC_REM_HI
+   LDA z:LC_TMP_LO
+   STA z:LC_REM_LO                           ; C=1 from the SBC rides the ROLs
+   ROL z:LC_QUOT_LO                          ; (duplicated tail: a jump back
+   ROL z:LC_QUOT_HI                          ; to u16_set costs more than it
    DEX                                     ; saves at 23% sub rate)
    BNE u16_loop
    JMP udv_done
@@ -754,12 +754,12 @@ no_u16_quot:
 ; (Rare for s16 clipper; kept for correctness.) Use byte-level skip
 ; + bit-level skip to trim no-op iterations.
 .if ::C02
-   STZ LC_REM_LO
-   STZ LC_REM_HI
+   STZ z:LC_REM_LO
+   STZ z:LC_REM_HI
 .else
    LDA #0
-   STA LC_REM_LO
-   STA LC_REM_HI
+   STA z:LC_REM_LO
+   STA z:LC_REM_HI
 .endif
 ; Byte-level skip: while the top dividend byte (R3) is zero, shift the
 ; dividend left 8 bits in one move (R2->R3, R1->R2, R0->R1, 0->R0) and
@@ -769,25 +769,25 @@ no_u16_quot:
    BNE bit_skip
    LDA LC_M_R2
    STA LC_M_R3
-   LDA LC_M_R1
+   LDA z:LC_M_R1
    STA LC_M_R2
-   LDA LC_M_R0
-   STA LC_M_R1
+   LDA z:LC_M_R0
+   STA z:LC_M_R1
    ZERO LC_M_R0
    LDX #24
    LDA LC_M_R3
    BNE bit_skip
    LDA LC_M_R2
    STA LC_M_R3
-   LDA LC_M_R1
+   LDA z:LC_M_R1
    STA LC_M_R2
 .if ::C02
-   STZ LC_M_R0
-   STZ LC_M_R1
+   STZ z:LC_M_R0
+   STZ z:LC_M_R1
 .else
    LDA #0
-   STA LC_M_R0
-   STA LC_M_R1
+   STA z:LC_M_R0
+   STA z:LC_M_R1
 .endif
    LDX #16
    LDA LC_M_R3
@@ -795,13 +795,13 @@ no_u16_quot:
    LDA LC_M_R2
    STA LC_M_R3
 .if ::C02
-   STZ LC_M_R0
-   STZ LC_M_R1
+   STZ z:LC_M_R0
+   STZ z:LC_M_R1
    STZ LC_M_R2
 .else
    LDA #0
-   STA LC_M_R0
-   STA LC_M_R1
+   STA z:LC_M_R0
+   STA z:LC_M_R1
    STA LC_M_R2
 .endif
    LDX #8
@@ -813,37 +813,37 @@ bit_skip:
 ; iterations can never make rem >= den since rem stays 0).
    BMI div_loop
 bs_loop:
-   ASL LC_M_R0
-   ROL LC_M_R1
+   ASL z:LC_M_R0
+   ROL z:LC_M_R1
    ROL LC_M_R2
    ROL LC_M_R3
    DEX
    LDA LC_M_R3
    BPL bs_loop
 div_loop:
-   ASL LC_M_R0
-   ROL LC_M_R1
+   ASL z:LC_M_R0
+   ROL z:LC_M_R1
    ROL LC_M_R2
    ROL LC_M_R3
-   ROL LC_REM_LO
-   ROL LC_REM_HI
-   LDA LC_REM_LO
+   ROL z:LC_REM_LO
+   ROL z:LC_REM_HI
+   LDA z:LC_REM_LO
    SEC
-   SBC LC_DEN_LO
-   STA LC_TMP_LO
-   LDA LC_REM_HI
-   SBC LC_DEN_HI
+   SBC z:LC_DEN_LO
+   STA z:LC_TMP_LO
+   LDA z:LC_REM_HI
+   SBC z:LC_DEN_HI
    BCC div_no_sub
-   STA LC_REM_HI
-   LDA LC_TMP_LO
-   STA LC_REM_LO
+   STA z:LC_REM_HI
+   LDA z:LC_TMP_LO
+   STA z:LC_REM_LO
    SEC
    JMP div_setbit
 div_no_sub:
    CLC
 div_setbit:
-   ROL LC_QUOT_LO
-   ROL LC_QUOT_HI
+   ROL z:LC_QUOT_LO
+   ROL z:LC_QUOT_HI
    DEX
    BNE div_loop
 udv_done:
@@ -853,19 +853,19 @@ udv_done:
    BNE si_sub
    LDA LC_OY1_LO
    CLC
-   ADC LC_QUOT_LO
+   ADC z:LC_QUOT_LO
    STA LC_RES_LO
    LDA LC_OY1_HI
-   ADC LC_QUOT_HI
+   ADC z:LC_QUOT_HI
    STA LC_RES_HI
    JMP si_clamp
 si_sub:
    LDA LC_OY1_LO
    SEC
-   SBC LC_QUOT_LO
+   SBC z:LC_QUOT_LO
    STA LC_RES_LO
    LDA LC_OY1_HI
-   SBC LC_QUOT_HI
+   SBC z:LC_QUOT_HI
    STA LC_RES_HI
 si_clamp:
 ; (no load: ALL six inbound paths — add/sub, u8 fast pair, return_y0/

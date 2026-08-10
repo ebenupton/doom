@@ -11,6 +11,41 @@
 ; a group unless you have proven phase-disjointness.
 ;
 ; Run tools/zpcheck.py for a rendered map + free-slot list.
+;
+; ZP SWEEP (2026-08-11, profiled promotion of hot $06xx scalars —
+; equates live in clip/tfr.s, logged HERE so the free-list can't rot):
+;   $1F TFS_T_CUR      $2B TFS_B_CUR     $52 LC_REM_LO   $53 LC_REM_HI
+;   $8F TFS_CUR_X      $94 TFS_NEXT_X    $98 LC_DEN_LO   $99 LC_DEN_HI
+;   $A6 LC_QUOT_LO     $A7 LC_QUOT_HI    $C6 LC_TMP_LO   $CE TFS_TOP_DOM
+;   $D3 LC_M_R0        $D4 LC_M_R1       $D6 TFS_BOT_DOM $D8 TFS_PEND_ACT
+;   $E1 TFS_X_HI       $FC LC_DY_LO      $FD LC_DY_HI    $FE LC_OFF_LO
+;   $FF LC_OFF_HI
+TFS_T_CUR = $1F                   ; [clip]; ZP-sweep promotions (definitions
+TFS_B_CUR = $2B                   ; [clip]; HERE so every unit sizes them zp)
+LC_REM_LO = $52                   ; [clip]
+LC_REM_HI = $53                   ; [clip]
+TFS_CUR_X = $8F                   ; [clip]
+TFS_NEXT_X = $94                  ; [clip]
+LC_DEN_LO = $98                   ; [clip]
+LC_DEN_HI = $99                   ; [clip]
+LC_QUOT_LO = $A6                  ; [clip]
+LC_QUOT_HI = $A7                  ; [clip]
+LC_TMP_LO = $C6                   ; [clip]
+TFS_TOP_DOM = $CE                 ; [clip]
+LC_M_R0 = $D3                     ; [clip]
+LC_M_R1 = $D4                     ; [clip]
+TFS_BOT_DOM = $D6                 ; [clip]
+TFS_PEND_ACT = $D8                ; [clip]
+TFS_X_HI = $E1                    ; [clip]
+LC_DY_LO = $FC                    ; [clip]
+LC_DY_HI = $FD                    ; [clip]
+LC_OFF_LO = $FE                   ; [clip]
+LC_OFF_HI = $FF                   ; [clip]
+; REJECTED bytes (the listing scan + pyref are the arbiters, NOT the
+; free notes): $CB = zp_tail_vec+1; $7C = zp_vf_vec0 HI BYTE (the $64
+; trap again — the 'separately FREE' note below rotted when the off-arm
+; restore brought the vectors back, and pyref caught it); $9F/$A0 left
+; for the visibility hooks.
 as_x = $A1                        ; [bsp] apv_stage endpoint-offset stash
 vxc_ref_x = $A2                   ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
 vxc_ref_y = $A4                   ; [bsp] s16 count ref (y); TRUE16 2026-08-10
