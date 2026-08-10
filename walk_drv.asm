@@ -33,12 +33,12 @@ tabbase = DRV_TAB         ; sincos table (build-overlaid): 64 x 8 bytes
 
 SPEED = 12              ; world units per frame of forward motion
 
-; map bounds in RAW world units relative to MAP_CENTER (1200,-3250),
+; map bounds in RAW world units relative to MAP_CENTER (1200,-3248),
 ; with a 32-unit margin: x in [-768,3808] -> raw [-1968+32, 2608-32]
 RAWX_MIN = &F870        ; -1936 as u16
 RAWX_MAX = &0A10        ;  2576
-RAWY_MIN = &F9D2        ; -1582
-RAWY_MAX = &0492        ;  1170
+RAWY_MIN = &F9D0        ; -1584 (same WORLD clamp; center moved -3250->-3248)
+RAWY_MAX = &0490        ;  1168
 
 ORG DRV_ORG
 ; ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ ORG DRV_ORG
     LDA #0 : STA &FE34                              ; Master: ACCCON off (harmless on B)
     ; --- spawn position 1056,-3616 as 24-bit prescaled 8.8 ---
     LDA #&00:STA pxf : LDA #&EE:STA pxl : LDA #&FF:STA pxh
-    LDA #&40:STA pyf : LDA #&D2:STA pyl : LDA #&FF:STA pyh
+    LDA #&00:STA pyf : LDA #&D2:STA pyl : LDA #&FF:STA pyh    \ spawn y = -46.0 units exactly (8-aligned center)
     LDA #&06:STA &04                                ; VZ (spawn floor; constant v1)
     ; --- CRTC: narrow 256x160 centred, cursor off (R12/R13 set per flip) ---
     LDA #1 :STA &FE00: LDA #32 :STA &FE01

@@ -56,7 +56,7 @@ def build_floor_grid():
     """36x22 grid of prescaled VZ (player_floor+41) at 128-unit cells over
     the walk clamp bounds; sampled from the Python float BSP."""
     import doom_wireframe as dw
-    RAWX_MIN, RAWY_MIN = -1936, -1582
+    RAWX_MIN, RAWY_MIN = -1936, -1584   # center -3248 (same world region)
     COLS, ROWS, CELL = 36, 22, 128
     grid = bytearray(COLS * ROWS)
     fallback = dw._prescale_height(dw.player_floor(1056, -3616) + 41) & 0xFF

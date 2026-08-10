@@ -520,7 +520,10 @@ def fp_near_clip(vx1, vy1, vx2, vy2):
 # -- Prescaling constants (used by doom_wireframe.py at load time) ------------
 
 MAP_CENTER_X = 1200
-MAP_CENTER_Y = -3250
+MAP_CENTER_Y = -3248    # 8-ALIGNED (2026-08-10, was -3250): a non-8-aligned
+                        # center adds a fractional offset to every packed
+                        # unit coordinate before rounding — free precision
+                        # loss. Keep BOTH components multiples of PRESCALE.
 
 # Prescale factor — divides all world coordinates at load time so view
 # deltas fit in s8 arithmetic.  Default is 8; setting the DOOM_PRESCALE

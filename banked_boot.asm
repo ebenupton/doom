@@ -54,9 +54,10 @@ ORG DRV_ORG
     ; --- Master 128: clear ACCCON -> $8000 = sideways bank (not ANDY), $3000-7FFF
     ;     main, display main. Plain Model-B+SWRAM behaviour. Harmless on a B. ---
     LDA #0 : STA &FE34
-    ; --- spawn player ZP (precomputed for 1056,-3616, angle 128) ---
+    ; --- spawn player ZP (precomputed for 1056,-3616, angle 128;
+    ;     center -3248 since 2026-08-10: py = -46.0 units exactly) ---
     LDA #&00:STA &00  : LDA #&EE:STA &01            ; ZP_PX (8.8 frac/lo)
-    LDA #&40:STA &02  : LDA #&D2:STA &03            ; ZP_PY
+    LDA #&00:STA &02  : LDA #&D2:STA &03            ; ZP_PY
     LDA #&FF:STA &9D  : STA &9E                     ; ZP_PX_E/PY_E (s16 int hi
                                                     ; bytes; spawn is negative
                                                     ; both axes after centring)
@@ -64,7 +65,7 @@ ORG DRV_ORG
     LDA #&00:STA &05  : LDA #&00:STA &06 : LDA #&00:STA &07  ; sin mag/neg/one
     LDA #&00:STA &08  : LDA #&01:STA &09 : LDA #&01:STA &0A  ; cos mag/neg/one
     LDA #&70:STA &90  : LDA #&FF:STA &91            ; ZP_PXRAW
-    LDA #&92:STA &92  : LDA #&FE:STA &93            ; ZP_PYRAW
+    LDA #&90:STA &92  : LDA #&FE:STA &93            ; ZP_PYRAW (-368, center -3248)
     LDA #&80:STA BCA_AB                             ; view angle byte
     ; (ROM pointers retired 2026-07-10: layout.inc constants)
     LDA #&58:STA &70                                ; rasteriser scrstrt hi
