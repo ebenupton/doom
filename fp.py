@@ -127,10 +127,57 @@ def _sin_mag_sign(a):
         return 0, neg, True
     return _SIN_QUADRANT[idx], neg, False
 
+# -- TRIG5 prototype (2026-08-10): 5-bit trig magnitudes. mode 0 = off
+# (8-bit table, THE pipeline); 1 = each magnitude rounded to a multiple
+# of 8 (5 significant bits, emulated in the 8.8 pipeline — the t16
+# RN>>3 then rounds nothing, exactly equivalent to computing counts
+# with mag5 = mag/8 directly); 2 = per-angle OPTIMIZED (sin5, cos5)
+# pair: joint search over +-1 candidates minimizing screen-space
+# impact (angle error dominates x — weight 128 = focal; gain error
+# shows only in y heights — weight 60 ~= max height offset).
+TRIG5 = 0
+_T5_PAIRS = None
+
+def _t5_build_pairs():
+    pairs = []
+    for a in range(256):
+        rad = a * 2.0 * math.pi / 256.0
+        sv, cv = math.sin(rad), math.cos(rad)
+        best = None
+        s0 = int(math.floor(sv * 32)); c0 = int(math.floor(cv * 32))
+        for s5 in range(max(-32, s0 - 1), min(32, s0 + 2) + 1):
+            for c5 in range(max(-32, c0 - 1), min(32, c0 + 2) + 1):
+                ds, dc = s5 / 32.0 - sv, c5 / 32.0 - cv
+                cost = 128.0 * abs(cv * ds - sv * dc) + 60.0 * abs(sv * ds + cv * dc)
+                if best is None or cost < best[0]:
+                    best = (cost, s5, c5)
+        pairs.append((best[1], best[2]))
+    return pairs
+
+def _t5_pack(v):
+    # signed 5-bit value -> (mag_88, neg, unity) in the 8.8 emulation
+    m = abs(v)
+    if m >= 32:
+        return 0, v < 0, True
+    return m * 8, v < 0, False
+
 def fp_sincos(angle_byte):
     """Returns (sin_mag, sin_neg, sin_unity, cos_mag, cos_neg, cos_unity)."""
+    if TRIG5 == 2:
+        global _T5_PAIRS
+        if _T5_PAIRS is None:
+            _T5_PAIRS = _t5_build_pairs()
+        s5, c5 = _T5_PAIRS[angle_byte & 0xFF]
+        return _t5_pack(s5) + _t5_pack(c5)
     s_mag, s_neg, s_unity = _sin_mag_sign(angle_byte)
     c_mag, c_neg, c_unity = _sin_mag_sign(angle_byte + 64)
+    if TRIG5:
+        if not s_unity:
+            m = (s_mag + 4) >> 3
+            s_mag, s_unity = (0, True) if m >= 32 else (m * 8, False)
+        if not c_unity:
+            m = (c_mag + 4) >> 3
+            c_mag, c_unity = (0, True) if m >= 32 else (m * 8, False)
     return s_mag, s_neg, s_unity, c_mag, c_neg, c_unity
 
 # Keep fp_sin/fp_cos for backward compatibility (back-face test doesn't need this)
