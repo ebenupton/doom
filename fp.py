@@ -457,6 +457,70 @@ NEAR_FP = 1  # 8.0
 NEAR_88 = 256  # 8.8
 
 
+# -- TRUE16 (2026-08-10): s16 count-scale pipeline, K16 = 32 counts per
+# prescaled unit. The v2 formulation: operands stay UNIT scale (the
+# rotation's 87%-zero hi partial is load-bearing — measured), and the
+# count scale is applied as ONE RN >>3 at the rotation output:
+#   rns(rot_88(w), 3) == rns(rot_88(32*w), 8) identically (32 = 2^5).
+# base (per epoch, cached s16) and ref (per frame, fracs summed in
+# BEFORE the shift) each round ONCE. Totals are s16 counts; NEAR
+# verdict = 16 counts (0.5 unit); crossing plane = 32 counts (1.0);
+# recip idx = vy>>4 (same half-unit table semantics); projection via
+# X88 = counts<<3 EXACTLY (the 8.8 form br_project_x consumes).
+
+T16_K = 32
+T16_NEAR_VERDICT = 16          # 0.5 unit, mirrors evy<=0 / vy_88<128
+T16_NEAR_CROSS = 32            # 1.0 unit, mirrors NEAR_88=256
+
+def fp_to_view_totals_t16(wx, wy, ctx):
+    """s16 count totals — the TRUE16 twin of fp_to_view_totals."""
+    px_int, py_int, sc, frac_vx, frac_vy, ref_vx, ref_vy = ctx
+    s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
+    base_vx = (_rot_int(wx, s_mag, s_neg, s_unity)
+               - _rot_int(wy, c_mag, c_neg, c_unity))
+    base_vy = (_rot_int(wx, c_mag, c_neg, c_unity)
+               + _rot_int(wy, s_mag, s_neg, s_unity))
+    # per-epoch RN to counts (the VXC plane store); per-frame ref RN to
+    # counts (ctx ref already carries ints + fracs at full 8.8)
+    bx = rns(base_vx, 3)
+    by = rns(base_vy, 3)
+    rx = rns(ref_vx, 3)
+    ry = rns(ref_vy, 3)
+    return bx + rx, by + ry
+
+def fp_to_view_t16(wx, wy, ctx):
+    """TRUE16 twin of fp_to_view: same 5-tuple interface, count-derived.
+    ex/frac come from X88 = counts<<3 (exact); evy token = the count vy
+    (only ever compared for identity/near); vy_idx = vy>>4."""
+    tvx, tvy = fp_to_view_totals_t16(wx, wy, ctx)
+    X88 = tvx << 3
+    evx_trunc = X88 >> 8
+    evx_round = (X88 + 128) >> 8
+    evx_frac = X88 & 0xFF
+    evy = tvy                       # identity token + near verdict source
+    evy_idx = max(2, tvy >> 4)
+    return evx_trunc, evx_round, evy, evx_frac, evy_idx
+
+def fp_cross_t16(vx1, vy1, vx2, vy2):
+    """TRUE16 crossing at vy = 32 counts (1.0 unit). Same structure as
+    fp_cross_88; returns cx in COUNTS. v1 = the clipped endpoint."""
+    d = vy2 - vy1
+    n = T16_NEAR_CROSS - vy1
+    if d <= 0:
+        return None
+    while d > 255:
+        d >>= 1
+        n >>= 1
+    if d == 0:
+        return vx2
+    t = ((n << 8) + (d >> 1)) // d
+    if t >= 256:
+        return vx2
+    dvx = vx2 - vx1
+    if dvx >= 0:
+        return vx1 + ((t * dvx + 128) >> 8)
+    return vx1 - ((t * (-dvx) + 128) >> 8)
+
 def fp_cross_88(vx1, vy1, vx2, vy2):
     """Full-precision (8.8) near-plane crossing (EV16 prototype,
     2026-08-09). Caller guarantees vy1 < 128 <= ... exactly one side

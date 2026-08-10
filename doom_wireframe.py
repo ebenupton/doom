@@ -1775,6 +1775,9 @@ _USE_ANGLE_COL = False
 _USE_ANGLE_BBOX = False
 # (EV16 _NC88 flag RETIRED 2026-08-09: the 8.8 crossing is THE path in
 # both python renderers — gate passed toward-float, 6502 landed.)
+_T16 = False    # TRUE16 (2026-08-10): s16 count-scale totals (K=32/unit,
+                # rot output >>3 RN — fp.fp_to_view_t16 family). Flag-off
+                # = current 8.8 pipeline, bit-identical.
 _VIEW_AB = 0
 # Option 2b: full angle-space SEG (no per-vertex rotation). X from world angle,
 # Y from wall-distance scale. Reference path in packed_render_seg. Mirrors the
@@ -2095,12 +2098,13 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         if vi not in vm:
             vm[vi] = [0, 0]
     v_before = fp_module.mul_counts["view"]
+    _tv = fp_module.fp_to_view_t16 if _T16 else fp_to_view
     if vcache[v1_idx] is None:
-        vcache[v1_idx] = fp_to_view(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
+        vcache[v1_idx] = _tv(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
         vm[v1_idx][0] += fp_module.mul_counts["view"] - v_before
         v_before = fp_module.mul_counts["view"]
     if vcache[v2_idx] is None:
-        vcache[v2_idx] = fp_to_view(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
+        vcache[v2_idx] = _tv(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
         vm[v2_idx][0] += fp_module.mul_counts["view"] - v_before
     vc1_full = vcache[v1_idx]
     evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vc1_full[:5]
@@ -2115,34 +2119,39 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     # from the seg paths; verdicts are bit-identical, crossing gains
     # its real fraction).
     cxf1 = cxf2 = None
-    tvx1, tvy1 = fp_module.fp_to_view_totals(
+    _totals = fp_module.fp_to_view_totals_t16 if _T16 else fp_module.fp_to_view_totals
+    _cross = fp_module.fp_cross_t16 if _T16 else fp_module.fp_cross_88
+    _nearv = fp_module.T16_NEAR_VERDICT if _T16 else 128
+    tvx1, tvy1 = _totals(
         fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
-    tvx2, tvy2 = fp_module.fp_to_view_totals(
+    tvx2, tvy2 = _totals(
         fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
-    c1 = tvy1 < 128
-    c2 = tvy2 < 128
+    c1 = tvy1 < _nearv
+    c2 = tvy2 < _nearv
     if c1 and c2:
         return
     if not (c1 or c2):
         ex1, ey1, ex2, ey2 = evx1, evy1, evx2, evy2
     elif c1:
-        cx = fp_module.fp_cross_88(tvx1, tvy1, tvx2, tvy2)
+        cx = _cross(tvx1, tvy1, tvx2, tvy2)
         if cx is None:
             return
-        ex1, ey1 = cx >> 8, 1
-        cxf1 = cx & 0xFF
+        cx88 = (cx << 3) if _T16 else cx
+        ex1, ey1 = cx88 >> 8, None
+        cxf1 = cx88 & 0xFF
         ex2, ey2 = evx2, evy2
     else:
-        cx = fp_module.fp_cross_88(tvx2, tvy2, tvx1, tvy1)
+        cx = _cross(tvx2, tvy2, tvx1, tvy1)
         if cx is None:
             return
-        ex2, ey2 = cx >> 8, 1
-        cxf2 = cx & 0xFF
+        cx88 = (cx << 3) if _T16 else cx
+        ex2, ey2 = cx88 >> 8, None
+        cxf2 = cx88 & 0xFF
         ex1, ey1 = evx1, evy1
 
     # Reciprocals and X projection — cached per vertex (non-near-clipped only)
-    idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
-    idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
+    idx1 = vy_idx1 if ey1 == evy1 else 2   # crossing idx = NEAR at
+    idx2 = vy_idx2 if ey2 == evy2 else 2   # half-unit granularity, both scales
     rxh1, rxl1 = fp_recip(idx1)
     rxh2, rxl2 = fp_recip(idx2)
 
@@ -2602,7 +2611,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         fp_module.mul_cat("view")
         vc1 = _packed_read_vcache(ram, v1_idx)
         if vc1 is None:
-            result = fp_to_view(wx1, wy1, ctx)
+            result = (fp_module.fp_to_view_t16 if _T16 else fp_to_view)(wx1, wy1, ctx)
             evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
             _packed_write_vcache(ram, v1_idx, evx1_t, fvx1, evy1, vy_idx1, 0)
             _vc1_has_sx = False
@@ -2616,7 +2625,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
         vc2 = _packed_read_vcache(ram, v2_idx)
         if vc2 is None:
-            result = fp_to_view(wx2, wy2, ctx)
+            result = (fp_module.fp_to_view_t16 if _T16 else fp_to_view)(wx2, wy2, ctx)
             evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
             _packed_write_vcache(ram, v2_idx, evx2_t, fvx2, evy2, vy_idx2, 0)
             _vc2_has_sx = False
@@ -2638,32 +2647,38 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         # base + frame ref), and the crossing projects with its REAL
         # fraction. Toward-float gate: tools/nc88_verdict.py.
         cxf1 = cxf2 = None                  # crossing fracs
-        tvx1, tvy1 = fp_module.fp_to_view_totals(wx1, wy1, ctx)
-        tvx2, tvy2 = fp_module.fp_to_view_totals(wx2, wy2, ctx)
-        c1 = tvy1 < 128
-        c2 = tvy2 < 128
+        _totals = fp_module.fp_to_view_totals_t16 if _T16 else fp_module.fp_to_view_totals
+        _cross = fp_module.fp_cross_t16 if _T16 else fp_module.fp_cross_88
+        _nearv = fp_module.T16_NEAR_VERDICT if _T16 else 128
+        tvx1, tvy1 = _totals(wx1, wy1, ctx)
+        tvx2, tvy2 = _totals(wx2, wy2, ctx)
+        c1 = tvy1 < _nearv
+        c2 = tvy2 < _nearv
         if c1 and c2:
             return
         if not (c1 or c2):
             ex1, ey1, ex2, ey2 = evx1, evy1, evx2, evy2
         elif c1:
-            cx = fp_module.fp_cross_88(tvx1, tvy1, tvx2, tvy2)
+            cx = _cross(tvx1, tvy1, tvx2, tvy2)
             if cx is None:
                 return
-            ex1, ey1 = cx >> 8, 1
-            cxf1 = cx & 0xFF
-            ex2, ey2 = evx2, evy2
+            cx88 = (cx << 3) if _T16 else cx   # counts -> 8.8 EXACT
+            ex1, ey1 = cx88 >> 8, None         # None: crossing marker (a
+            cxf1 = cx88 & 0xFF                 # count-evy CAN equal 1 in
+            ex2, ey2 = evx2, evy2              # t16 — token compare unsafe)
         else:
-            cx = fp_module.fp_cross_88(tvx2, tvy2, tvx1, tvy1)
+            cx = _cross(tvx2, tvy2, tvx1, tvy1)
             if cx is None:
                 return
-            ex2, ey2 = cx >> 8, 1
-            cxf2 = cx & 0xFF
+            cx88 = (cx << 3) if _T16 else cx
+            ex2, ey2 = cx88 >> 8, None
+            cxf2 = cx88 & 0xFF
             ex1, ey1 = evx1, evy1
 
         # ── Reciprocals + X projection ──
-        idx1 = vy_idx1 if ey1 == evy1 else (ey1 << RECIP_FRAC_BITS)
-        idx2 = vy_idx2 if ey2 == evy2 else (ey2 << RECIP_FRAC_BITS)
+        # (crossing idx = NEAR at half-unit granularity = 2, both scales)
+        idx1 = vy_idx1 if ey1 == evy1 else 2
+        idx2 = vy_idx2 if ey2 == evy2 else 2
         rxh1, rxl1 = fp_recip(idx1)
         rxh2, rxl2 = fp_recip(idx2)
 
