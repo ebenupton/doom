@@ -50,8 +50,14 @@ NO_ZP_FORM = {'B9', '99'}   # abs,Y loads/stores of A (no zp,Y mode)
 line_re = re.compile(r'^([0-9A-F]{6})r?\s+\d+\s+((?:[0-9A-F]{2}r?\s)+)\s*(.*)$')
 
 
+STORE_ABS = {'8D':'STA','8E':'STX','8C':'STY','9D':'STA,X','99':'STA,Y',
+             'EE':'INC','CE':'DEC','0E':'ASL','4E':'LSR','2E':'ROL','6E':'ROR',
+             'FE':'INC,X','DE':'DEC,X'}
+
 def scan_listing(path):
     abszp, filler = [], []
+    romwr = []
+    banked = '_b1' in path
     run_start, run_len, run_byte = None, 0, None
     src_line = ''
     for raw in open(path, errors='replace'):
@@ -61,6 +67,15 @@ def scan_listing(path):
         addr = int(m.group(1), 16)
         octets = [b.rstrip('r') for b in m.group(2).split()]
         text = m.group(3).strip()
+        # --- BANKED ROM writes: absolute stores >= $C000 hit OS/lang ROM
+        # on the real machine (harness RAM-everywhere is BLIND to this —
+        # the $E4F8 zp_ft regression class, 2026-08-10). $FCxx-$FExx =
+        # hardware/FRED/JIM/SHEILA are legitimate. ---
+        if banked and len(octets) == 3 and octets[0] in STORE_ABS \
+                and 'r' not in m.group(2):
+            ad = int(octets[2],16)<<8 | int(octets[1],16)
+            if 0xC000 <= ad < 0xFC00:
+                romwr.append((path, addr, STORE_ABS[octets[0]], ad, text))
         # --- abs-zp: 3-byte encodings with hi operand byte 00 ---
         if len(octets) == 3 and octets[0] in ABS_OPS \
                 and octets[0] not in NO_ZP_FORM and octets[2] == '00' \
@@ -90,7 +105,7 @@ def scan_listing(path):
                 run_byte, run_len = None, 0
     if run_byte and run_len >= THRESH:
         filler.append((path, run_start, run_byte, run_len, src_line))
-    return abszp, filler
+    return abszp, filler, romwr
 
 
 def main():
@@ -98,19 +113,22 @@ def main():
     if not lsts:
         print('CODESCAN: no listings found — build first (asmbuild emits -l)')
         return 1
-    all_abszp, all_filler = [], []
+    all_abszp, all_filler, all_romwr = [], [], []
     for p in lsts:
-        a, f = scan_listing(p)
+        a, f, r = scan_listing(p)
         all_abszp += a
         all_filler += f
+        all_romwr += r
     for (p, addr, op, operand, text) in all_abszp:
         print(f'ABS-ZP  {os.path.basename(p)} {addr:06X} {op} ${operand:02X}  | {text}')
     for (p, addr, byte, n, text) in all_filler:
         kind = 'BRK' if byte == '00' else 'NOP'
         print(f'FILLER  {os.path.basename(p)} {addr:06X} {n}x {kind}  | {text}')
+    for (p, addr, op, ad, text) in all_romwr:
+        print(f'ROM-WR  {os.path.basename(p)} {addr:06X} {op} ${ad:04X}  | {text}')
     print(f'CODESCAN: {len(all_abszp)} abs-zp site(s), '
-          f'{len(all_filler)} filler run(s)')
-    if not all_abszp and not all_filler:
+          f'{len(all_filler)} filler run(s), {len(all_romwr)} banked ROM write(s)')
+    if not all_abszp and not all_filler and not all_romwr:
         print('CODESCAN: PASS')
         return 0
     return 1

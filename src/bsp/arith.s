@@ -113,10 +113,20 @@ SEG_CODE
 ; unity = cardinal angle (|sin| or |cos| rounds to 1.0): exact copy of
 ; lo, no multiply. Clobbers zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
 ; ============================================================================
-zp_ft_lo = $E4F8                        ; absolute (swapped with zp_seg_lv1x/y); cold
-zp_ft_mag = $E4F9                       ; (moved from $0BF8 2026-07-27: the
-zp_ft_neg = $E4FA                       ; flat recovery — $0B00 is now the
-zp_ft_one = $E4FB                       ; RC_P1L_1 psi plane; $E4F8-$E4FB
+zp_ft_lo = $07FB                        ; bitmap-page tail — REAL RAM both
+zp_ft_mag = $07FC                       ; builds. WAS $E4F8-$E4FB (2026-07-27
+zp_ft_neg = $07FD                       ; flat recovery) = OS ROM on the
+zp_ft_one = $07FE                       ; REAL banked machine: the stores
+                                        ; vanished, ft read constant ROM
+                                        ; bytes, the fracs froze, and the
+                                        ; viewpoint STAIRCASED a whole unit
+                                        ; at every integer crossing — the
+                                        ; quantised-jumping regression
+                                        ; (2026-08-10, Eben's static-step
+                                        ; repro; every harness models
+                                        ; $E4F8 as RAM so every gate was
+                                        ; blind — jsbeeb/HW only). Old note:
+                                        ; ($E4F8-$E4FB
                                         ; sits in the proven-free VATOX tail)
 
 br_frac_rot_term:
