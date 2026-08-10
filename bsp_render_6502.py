@@ -154,7 +154,7 @@ class BspRender6502:
         mem[ZP_PYRAW_LO]     = raw_py & 0xFF
         mem[ZP_PYRAW_LO + 1] = (raw_py >> 8) & 0xFF
 
-        s_mag, s_neg, s_one, c_mag, c_neg, c_one = fp.fp_sincos(angle_byte)
+        s_mag, s_neg, s_one, c_mag, c_neg, c_one = fp.fp_sincos5(angle_byte)
         mem[ZP_SMAG] = s_mag
         mem[ZP_SNEG] = 1 if s_neg else 0
         mem[ZP_SONE] = 1 if s_one else 0

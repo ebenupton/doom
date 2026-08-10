@@ -72,34 +72,54 @@ rot_zero:
    LDA #0
    STA zp_br_res_l
    STA zp_br_res_h
-   STA zp_br_res_x
    RTS
 
 ; unity variants, SIGN-EXTERNAL (2026-07-19): ri_d arrives as |d| with
 ; the d-sign banked in zp_ri_sgn by the caller's operand staging — the
 ; product sign is trig-neg XOR d-neg, so pos and neg share two arms.
+; COUNT-NATIVE (2026-08-10): unity = 32 counts/unit, so the product is
+; |d| << 5 (s16): res_l = (d_l << 5) & FF, res_h = (d_l >> 3) ORA
+; (d_h << 5) — the bit fields are disjoint (d_l>>3 <= 31; d_h <= 2 by
+; the range asserts -> $20/$40).
 rot_unity_pos:
    LDA zp_ri_sgn
    BNE ru_neg
 ru_pass:
-   ZERO zp_br_res_l
+   LDX zp_ri_d_h
    LDA zp_ri_d_l
+   LSR A
+   LSR A
+   LSR A                                   ; d_l >> 3
+   CPX #0
+   BEQ rup_h
+   CPX #2
+   BCS rup_h2
+   ORA #$20                                ; d_h = 1
+   BNE rup_h                               ; (A >= $20: always)
+rup_h2:
+   ORA #$40                                ; d_h = 2 (|d| = 512 exactly)
+rup_h:
    STA zp_br_res_h
-   LDA zp_ri_d_h
-   STA zp_br_res_x
+   LDA zp_ri_d_l
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A                                   ; (d_l << 5) & FF
+   STA zp_br_res_l
    RTS
 rot_unity_neg:
    LDA zp_ri_sgn
    BNE ru_pass
 ru_neg:
-   LDA #0                                  ; doubles as the res_l zero (the
-   STA zp_br_res_l                         ; old ZERO+LDA#0 pair re-loaded a
-   SEC                                     ; value NMOS ZERO already left)
-   SBC zp_ri_d_l
-   STA zp_br_res_h
+   JSR ru_pass                             ; positive form, then negate
+   LDA #0                                  ; (rare-ish arm: axis-aligned
+   SEC                                     ; trig frames only)
+   SBC zp_br_res_l
+   STA zp_br_res_l
    LDA #0
-   SBC zp_ri_d_h
-   STA zp_br_res_x
+   SBC zp_br_res_h
+   STA zp_br_res_h
    RTS
 
 ; --- sin-side twins (res-slot split 2026-07-19): the sin slot of a
@@ -110,30 +130,46 @@ rot_zero_s:
    LDA #0
    STA zp_rs_l
    STA zp_rs_h
-   STA zp_rs_x
    RTS
 rot_unity_pos_s:
    LDA zp_ri_sgn
    BNE rus_neg
 rus_pass:
-   ZERO zp_rs_l
+   LDX zp_ri_d_h
    LDA zp_ri_d_l
+   LSR A
+   LSR A
+   LSR A
+   CPX #0
+   BEQ rusp_h
+   CPX #2
+   BCS rusp_h2
+   ORA #$20
+   BNE rusp_h
+rusp_h2:
+   ORA #$40
+rusp_h:
    STA zp_rs_h
-   LDA zp_ri_d_h
-   STA zp_rs_x
+   LDA zp_ri_d_l
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   STA zp_rs_l
    RTS
 rot_unity_neg_s:
    LDA zp_ri_sgn
    BNE rus_pass
 rus_neg:
-   LDA #0                                  ; (mirror of ru_neg's fold)
-   STA zp_rs_l
-   SEC
-   SBC zp_ri_d_l
-   STA zp_rs_h
+   JSR rus_pass                            ; (mirror of ru_neg's form)
    LDA #0
-   SBC zp_ri_d_h
-   STA zp_rs_x
+   SEC
+   SBC zp_rs_l
+   STA zp_rs_l
+   LDA #0
+   SBC zp_rs_h
+   STA zp_rs_h
    RTS
 
 rot_gen_sin:
@@ -164,6 +200,4 @@ rpt_jmp:
    STA zp_br_vy_l
    LDA zp_br_res_h
    STA zp_br_vy_h
-   LDA zp_br_res_x
-   STA zp_br_vy_x
    RTS

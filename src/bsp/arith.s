@@ -227,7 +227,8 @@ SEG_CODE
 ; their SMC'd table-base operands (sin and cos have different mags).
 ; In: zp_ri_d_l/dhi = d (s16), zp_mul_b = mag (staged by the thunk; the
 ;     DIFF side still needs it), zp_br_t1 = trig sign seed (thunk).
-; Out: resl/resh/resext (s24). |d| written back to zp_ri_d_l/dhi.
+; Out: resl/resh (s16 view COUNTS — 5-bit mag5 operands since
+;      2026-08-10; the ext byte died). |d| written back to zp_ri_d_l/dhi.
 rot_core_sin:
 .scope
 ; d==0 -> both products are exactly zero (axis-aligned vertex deltas are
@@ -264,8 +265,8 @@ um1_pos:
 ::rot_sqs1h:
    LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_h,Y
-   STA zp_rs_h
-   ZERO zp_rs_x
+   STA zp_rs_h                             ; (s16: mag5 products — the ext
+                                           ; byte DIED with count-native)
 ; --- hi partial: |d| hi byte is 0..2 on this map (10-bit world coords;
 ; measured 87% zero, ~13% one) — multiply-by-0/1 dispatch to trivial
 ; arms; the general quarter-square stays as the >=2 fallback so NO
@@ -290,16 +291,12 @@ ris_sign:
    LDA #0
    SBC zp_rs_h
    STA zp_rs_h
-   LDA #0
-   SBC zp_rs_x
-   STA zp_rs_x
 ris_done:
    RTS
 ris_zero:
 ; A = 0 on entry (the d==0 BEQ path)
    STA zp_rs_l
    STA zp_rs_h
-   STA zp_rs_x
    RTS
 
 ; --- sin hi-partial rare block (x != 0), hoisted below the tails.
@@ -318,30 +315,17 @@ s_um2_pos:
 ::rot_sqs2l:
    LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
-   SBC sqr_l,Y
-   STA zp_prod_l
-::rot_sqs2h:
-   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_h,Y
-   STA zp_prod_h
-ris_finish:                                 ; general arm falls in
-   CLC
-   LDA zp_prod_l
-   ADC zp_rs_h
-   STA zp_rs_h
-   LDA zp_prod_h
-   ADC zp_rs_x
-   STA zp_rs_x
-   JMP ris_sign
+   SBC sqr_l,Y                            ; x*mag5 <= 93: the low-byte
+   CLC                                    ; difference IS the product
+   ADC zp_rs_h                            ; (mod-256 exact; the _h lookup
+   STA zp_rs_h                            ; pair DIED with count-native —
+   JMP ris_sign                           ; no carry: h <= 30 + 93 < 128)
 s_one:
-   LDA zp_mul_b                            ; rs_h += mag, carry -> rs_x
-   CLC
+   LDA zp_mul_b                            ; rs_h += mag5 (no carry: see
+   CLC                                     ; the general arm's bound)
    ADC zp_rs_h
    STA zp_rs_h
-   BCC s_z1
-   INC zp_rs_x
-s_z1:
-   JMP ris_sign                            ; skip ris_finish's dead adds
+   JMP ris_sign
 
 rot_core_cos:
 .scope
@@ -380,8 +364,7 @@ um1_pos:
 ::rot_sqc1h:
    LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_h,Y
-   STA zp_br_res_h
-   ZERO zp_br_res_x
+   STA zp_br_res_h                         ; (s16 — see the sin core)
 ; --- hi partial: |d| hi byte is 0..2 on this map (10-bit world coords;
 ; measured 87% zero, ~13% one) — multiply-by-0/1 dispatch to trivial
 ; arms; the general quarter-square stays as the >=2 fallback so NO
@@ -404,16 +387,12 @@ ri_sign:                                    ; entry for the x0/x1 arms
    LDA #0
    SBC zp_br_res_h
    STA zp_br_res_h
-   LDA #0
-   SBC zp_br_res_x
-   STA zp_br_res_x
 ri_done:
    RTS
 ri_zero:
 ; A = 0 on entry (the d==0 BEQ path)
    STA zp_br_res_l
    STA zp_br_res_h
-   STA zp_br_res_x
    RTS
 
 ; --- cos hi-partial rare block (x != 0), hoisted below the tails.
@@ -433,30 +412,17 @@ c_um2_pos:
 ::rot_sqc2l:
    LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
-   SBC sqr_l,Y
-   STA zp_prod_l
-::rot_sqc2h:
-   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_h,Y
-   STA zp_prod_h
-ri_finish:                                  ; general arm falls in
+   SBC sqr_l,Y                            ; 1-byte product (see sin core)
    CLC
-   LDA zp_prod_l
    ADC zp_br_res_h
    STA zp_br_res_h
-   LDA zp_prod_h
-   ADC zp_br_res_x
-   STA zp_br_res_x
    JMP ri_sign
 c_one:
-   LDA zp_mul_b                            ; resh += mag, carry -> resext
+   LDA zp_mul_b                            ; resh += mag5 (no carry)
    CLC
    ADC zp_br_res_h
    STA zp_br_res_h
-   BCC c_z1
-   INC zp_br_res_x
-c_z1:
-   JMP ri_sign                             ; skip ri_finish's dead adds
+   JMP ri_sign
 
 ; ============================================================================
 ; rot_core_cosv_nz — the fused pair's cos half, VY DESTINATIONS
@@ -486,8 +452,7 @@ cv1_pos:
 ::rot_sqcv1h:
    LDA sqr_h,X                            ; +1 SMC = |cos| mag (rot_select)
    SBC sqr_h,Y
-   STA zp_br_vy_h
-   ZERO zp_br_vy_x
+   STA zp_br_vy_h                          ; (s16 — see the sin core)
    LDA zp_ri_d_h
    BNE cv_hi_nz                            ; x1/x>=2 rare: block below
 rivsign:
@@ -500,9 +465,6 @@ rivsign:
    LDA #0
    SBC zp_br_vy_h
    STA zp_br_vy_h
-   LDA #0
-   SBC zp_br_vy_x
-   STA zp_br_vy_x
 rivdone:
    RTS
 cv_hi_nz:
@@ -519,28 +481,16 @@ cv2_pos:
 ::rot_sqcv2l:
    LDA sqr_l,X                            ; +1 SMC = |cos| mag (rot_select)
    SEC
-   SBC sqr_l,Y
-   STA zp_prod_l
-::rot_sqcv2h:
-   LDA sqr_h,X                            ; +1 SMC = |cos| mag (rot_select)
-   SBC sqr_h,Y
-   STA zp_prod_h
+   SBC sqr_l,Y                            ; 1-byte product (see sin core)
    CLC
-   LDA zp_prod_l
    ADC zp_br_vy_h
    STA zp_br_vy_h
-   LDA zp_prod_h
-   ADC zp_br_vy_x
-   STA zp_br_vy_x
    JMP rivsign
 cv_one:
-   LDA zp_mul_b                            ; vy_h += mag, carry -> vy_x
+   LDA zp_mul_b                            ; vy_h += mag5 (no carry)
    CLC
    ADC zp_br_vy_h
    STA zp_br_vy_h
-   BCC cv_z1
-   INC zp_br_vy_x
-cv_z1:
    JMP rivsign
 .endscope
 
@@ -590,8 +540,7 @@ p_um1_pos:
 ::rgp_sq1h:
    LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
    SBC sqr_h,Y
-   STA zp_rs_h
-   ZERO zp_rs_x
+   STA zp_rs_h                             ; (s16 — see the sin core)
    LDA zp_ri_d_h
    BNE p_hi_nz                             ; x1/x>=2 rare: block below
                                            ; p_zero; x0 FALLS INTO p_sgn
@@ -607,9 +556,6 @@ p_sgn:
    LDA #0
    SBC zp_rs_h
    STA zp_rs_h
-   LDA #0
-   SBC zp_rs_x
-   STA zp_rs_x
 p_cos:
 ; --- cos half: gen_cos's staging, then the shared core past its test ---
 ::rgp_cmag:
@@ -626,10 +572,8 @@ p_cos:
 p_zero:
    STA zp_rs_l                             ; A = 0: zero BOTH result sets
    STA zp_rs_h                             ; (cos side = vy since the
-   STA zp_rs_x                             ; direct-write, 2026-07-27)
-   STA zp_br_vy_l
+   STA zp_br_vy_l                          ; direct-write, 2026-07-27)
    STA zp_br_vy_h
-   STA zp_br_vy_x
    RTS
 
 ; --- pair sin-half hi-partial rare block (x != 0) ---
@@ -647,28 +591,16 @@ p_um2_pos:
 ::rgp_sq2l:
    LDA sqr_l,X                            ; +1 SMC = mag (rot_select)
    SEC
-   SBC sqr_l,Y
-   STA zp_prod_l
-::rgp_sq2h:
-   LDA sqr_h,X                            ; +1 SMC = mag (rot_select)
-   SBC sqr_h,Y
-   STA zp_prod_h
-; local ris_finish
+   SBC sqr_l,Y                            ; 1-byte product (see sin core)
    CLC
-   LDA zp_prod_l
    ADC zp_rs_h
    STA zp_rs_h
-   LDA zp_prod_h
-   ADC zp_rs_x
-   STA zp_rs_x
    JMP p_sgn
 p_one:
-   LDA zp_mul_b                            ; rs_h += mag, carry -> rs_x
+   LDA zp_mul_b                            ; rs_h += mag5 (no carry)
    CLC
    ADC zp_rs_h
    STA zp_rs_h
-   BCC p_sgn                               ; (backward, in range)
-   INC zp_rs_x
    JMP p_sgn
 .endscope
 

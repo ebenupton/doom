@@ -105,6 +105,9 @@ br_view_setup:
    LDA zp_br_t2
    STA zp_ft_lo
    LDA zp_br_smag
+   ASL A
+   ASL A
+   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
    STA zp_ft_mag
    LDA zp_br_sneg
    STA zp_ft_neg
@@ -119,6 +122,9 @@ br_view_setup:
    LDA zp_br_t3
    STA zp_ft_lo
    LDA zp_br_cmag
+   ASL A
+   ASL A
+   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
    STA zp_ft_mag
    LDA zp_br_cneg
    STA zp_ft_neg
@@ -138,6 +144,9 @@ br_view_setup:
    LDA zp_br_t2
    STA zp_ft_lo
    LDA zp_br_cmag
+   ASL A
+   ASL A
+   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
    STA zp_ft_mag
    LDA zp_br_cneg
    STA zp_ft_neg
@@ -152,6 +161,9 @@ br_view_setup:
    LDA zp_br_t3
    STA zp_ft_lo
    LDA zp_br_smag
+   ASL A
+   ASL A
+   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
    STA zp_ft_mag
    LDA zp_br_sneg
    STA zp_ft_neg
@@ -165,6 +177,46 @@ br_view_setup:
    LDA zp_br_fvy_h
    ADC zp_br_res_h
    STA zp_br_fvy_h
+
+; --- fracs -> COUNTS (2026-08-10): fv_c = rns(fv_88, 3) per axis,
+; in place. EXACT vs the mirror's ref_c = rns(rot_88 + fv_88, 3):
+; rot_88 = 8*rot5 passes through the shift, so ref_c = rot5 +
+; rns(fv_88, 3) identically. Sign-rotate with the fused round bit
+; (the vq3 idiom); |fv| <= ~500 so the ripple INC can't overflow. ---
+   LDA zp_br_fvx_h
+   CMP #$80
+   ROR A
+   ROR zp_br_fvx_l
+   CMP #$80
+   ROR A
+   ROR zp_br_fvx_l
+   CMP #$80
+   ROR A
+   ROR zp_br_fvx_l
+   STA zp_br_fvx_h
+   LDA zp_br_fvx_l                         ; C = bit 2 = the round bit
+   ADC #0
+   STA zp_br_fvx_l
+   BCC fq_x_ok
+   INC zp_br_fvx_h
+fq_x_ok:
+   LDA zp_br_fvy_h
+   CMP #$80
+   ROR A
+   ROR zp_br_fvy_l
+   CMP #$80
+   ROR A
+   ROR zp_br_fvy_l
+   CMP #$80
+   ROR A
+   ROR zp_br_fvy_l
+   STA zp_br_fvy_h
+   LDA zp_br_fvy_l
+   ADC #0
+   STA zp_br_fvy_l
+   BCC fq_y_ok
+   INC zp_br_fvy_h
+fq_y_ok:
 
 ; Rotation-coherence: choose cached vs original bbox_check_angle for this
 ; frame (SMC-patches bca_check_op) by whether the integer player position
@@ -282,7 +334,8 @@ s2:
    JSR rot_gen_cos                         ; d2*cos -> zp_br_res
 ; vx = d1*sin - d2*cos, straight from the two result slots (rs still
 ; holds s1's product — s3 wrote zp_br_res and s2 overwrote it, neither
-; touches rs).
+; touches rs). COUNT-NATIVE (2026-08-10): products are s16 counts
+; (mag5 operands) — the sums ARE the s16 count outputs, no quantize.
    LDA zp_rs_l
    SEC
    SBC zp_br_res_l
@@ -290,9 +343,6 @@ s2:
    LDA zp_rs_h
    SBC zp_br_res_h
    STA zp_br_vx_h
-   LDA zp_rs_x
-   SBC zp_br_res_x
-   STA zp_br_vx_x
 s4:
    JSR rot_gen_sin                         ; d2*sin -> zp_rs
    LDA zp_br_vy_l
@@ -302,9 +352,6 @@ s4:
    LDA zp_br_vy_h
    ADC zp_rs_h
    STA zp_br_vy_h
-   LDA zp_br_vy_x
-   ADC zp_rs_x
-   STA zp_br_vy_x
 .endmacro
 
 ; (V16Q retired same-day: the quantize fused into rot_w_signed as
@@ -331,78 +378,21 @@ btv_dx_signed:                          ; N = delta sign (internal only
                                         ; since V16 — the vertex fetch
                                         ; goes to rot_w_signed)
    ROT_CORE rot_s13, rot_s2, rot_s4, 0
+   RTS                                  ; s16 COUNTS out (2026-08-10);
+                                        ; the caller (vxc_frame) adds the
+                                        ; pre-quantized count fracs —
+                                        ; tv_add_fracs DIED with the 8.8
+                                        ; position path
 
-; (falls through into tv_add_fracs — its RTS is br_to_view's return)
-
-; ============================================================================
-; tv_add_fracs — add the per-frame fractional rotation terms (s16,
-; sign-extended) to the s24 vx/vy accumulators. Tail of br_to_view (the
-; old second caller — the perspective bbox corner combine — is long
-; retired; the JMP became fall-through 2026-07-11).
-;
-;   Inputs (zp):  zp_br_vx_l/vxhi/vxext, zp_br_vy_l/vyhi/vyext (s24
-;                 integer-rotation sums), zp_br_fvx_l/hi, zp_br_fvy_l/hi
-;                 (s16 per-frame fracs from br_view_setup).
-;   Outputs (zp): the same accumulators, += sign-extended frac:
-;                 total_v* = int_v* + frac_v*   (Python: fp_to_view's sums)
-;   Clobbers: A.
-;
-;   The frac term is s16; its sign extension into the ext byte is done by
-;   adding #$00 (frac >= 0) or #$FF (frac < 0) with the carry propagated
-;   from the hi-byte add.
-; ============================================================================
-tv_add_fracs:
-.scope
-   LDA zp_br_vx_l
-   CLC
-   ADC zp_br_fvx_l
-   STA zp_br_vx_l
-   LDA zp_br_vx_h
-   ADC zp_br_fvx_h
-   STA zp_br_vx_h
-   LDA zp_br_fvx_h
-   BMI bv_fvxneg
-   BCS bv_fvx_c                            ; +frac carry rare (census
-                                           ; 2026-07-27): island below
-bv_fvx_done:
-
-   LDA zp_br_vy_l
-   CLC
-   ADC zp_br_fvy_l
-   STA zp_br_vy_l
-   LDA zp_br_vy_h
-   ADC zp_br_fvy_h
-   STA zp_br_vy_h
-   LDA zp_br_fvy_h
-   BMI bv_fvyneg
-   BCS bv_fvy_c                            ; +frac carry rare: below
-bv_fvy_done:
-   RTS
-bv_fvy_c:
-   INC zp_br_vy_x
-   RTS
-bv_fvx_c:
-   INC zp_br_vx_x
-   JMP bv_fvx_done
-bv_fvxneg:
-   BCS bv_fvx_nod                          ; -frac: carry SET is a no-op
-   DEC zp_br_vx_x                          ; (ADC #$FF == ext-1+C)
-bv_fvx_nod:
-   JMP bv_fvx_done
-bv_fvyneg:
-   BCC bv_fvy_b                            ; -frac borrow: rare (carry SET
-   RTS                                     ; is a no-op — ADC #$FF == ext-1+C)
-bv_fvy_b:
-   DEC zp_br_vy_x
-   RTS
-.endscope
+; (tv_add_fracs DELETED 2026-08-10 — count-native position path:
+;  vxc_frame adds the pre-quantized s16 count fracs itself.)
 
 ; ============================================================================
 ; rot_w_signed — V16 pure-vertex rotate + q64 (2026-08-09).
 ;   In:  zp_ri_d_l/h = wx (N staged by the caller's last load),
 ;        zp_br_dy_l/h = wy, zp_ri_sgn zeroed.
-;   Out: zp_br_vx_l/h, zp_br_vy_l/h = base16 = ((rot(w) + 2) >> 2), the
-;        RN 1/64-unit s16 base (ext bytes dead — range-proved s16).
+;   Out: zp_br_vx_l/h, zp_br_vy_l/h = the s16 COUNT base rot5(w)
+;        (1/32 unit, EXACT — 5-bit mag5 operands, no rounding stage).
 ;        Position-independent: NO py subtract, NO frac terms — those
 ;        live entirely in vxc_ref (= rot(-p_int) + fracs, staged once
 ;        per frame). total := (base16 << 2) + ref at the callers' join.
@@ -437,60 +427,11 @@ rws_pos:
    ZERO zp_ri_sgn
 rws_go:
    ROT_CORE rot_s13w, rot_s2w, rot_s4w, 1
-; TRUE16 quantize (2026-08-10): counts = (v+4)>>3 arithmetic — the s16
-; view-count base (1/32 unit, K=32) lands in (l,h); the ext bytes DIE
-; as outputs (they were rot workspace only). Three sign-rotates ride
-; the ext byte in A; the RN +4 FUSES into the shift:
-;   (v+4)>>3 = (v>>3) + bit2(v)
-; and bit 2 is exactly the carry out of the third ROR of the lo byte —
-; so ADC #0 finishes round-half-up with no separate +4 pass (the
-; lo-wrap ripple INC is rare; counts <= 10,432 so the hi never wraps).
-; CMP #$80 re-seeds C fresh each round: no CLC anywhere, even straight
-; out of a taken ripple stub. (Python: rns(rot_88, 3) — fp_to_view_
-; totals_t16; rns(rot(w),3) == rns(rot(32w),8), the scale-placement
-; identity.)
-vq3_counts:                                ; JSR-able tail: vxc_frame runs
-   LDA zp_br_vx_x                          ; the frame REF through the same
-   CMP #$80                                ; quantize once per frame
-   ROR A
-   ROR zp_br_vx_h
-   ROR zp_br_vx_l
-   CMP #$80
-   ROR A
-   ROR zp_br_vx_h
-   ROR zp_br_vx_l
-   CMP #$80
-   ROR A
-   ROR zp_br_vx_h
-   ROR zp_br_vx_l
-   LDA zp_br_vx_l                          ; C = v bit 2 = the round bit
-   ADC #0
-   STA zp_br_vx_l
-   BCS vq_xrip
-vq_x_done:
-   LDA zp_br_vy_x
-   CMP #$80
-   ROR A
-   ROR zp_br_vy_h
-   ROR zp_br_vy_l
-   CMP #$80
-   ROR A
-   ROR zp_br_vy_h
-   ROR zp_br_vy_l
-   CMP #$80
-   ROR A
-   ROR zp_br_vy_h
-   ROR zp_br_vy_l
-   LDA zp_br_vy_l                          ; C = v bit 2
-   ADC #0
-   STA zp_br_vy_l
-   BCS vq_yrip
-   RTS
-vq_xrip:
-   INC zp_br_vx_h                          ; rare lo-wrap ripple
-   JMP vq_x_done
-vq_yrip:
-   INC zp_br_vy_h
+; COUNT-NATIVE (2026-08-10, 5-bit trig): the cores multiply |d| x mag5
+; so the ROT_CORE sums land as s16 view counts DIRECTLY — the RN>>3
+; quantize tail died (rot5(w) == rns(rot_88(w), 3) exactly: 8.8 mags
+; are multiples of 8). Python: rns(rot_88, 3) in fp_to_view_totals_t16
+; over the quantized table — bit-identical.
    RTS
 
 ; (br_smul_s8_u8 + its br_smul_am register entry deleted 2026-07-13:

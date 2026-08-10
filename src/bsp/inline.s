@@ -247,21 +247,26 @@ inl_end:
    STA zp_br_dy_l
    STA zp_br_dy_h
 .endif
-   JSR br_to_view
-   JSR vq3_counts                          ; ref -> s16 counts (rns >>3),
-                                           ; the same quantize tail every
-                                           ; base rides — ONE rounding each
-; --- publish this frame's ref (ORIGIN NORMALIZATION: stored bases are
-; total - ref, i.e. the exactly-linear L(w); the warm arm adds the
-; current ref back. No ref_cold, no CACC - the epoch anchor was a
-; historical artifact, not a numerical need.) ---
+   JSR br_to_view                          ; rot5(-p_int): s16 COUNTS out
+                                           ; (count-native 2026-08-10)
+; --- publish this frame's ref = rot5(-p_int) + count fracs (ORIGIN
+; NORMALIZATION: stored bases are total - ref, i.e. the exactly-linear
+; L(w); the warm arm adds the current ref back). The fracs were
+; quantized to counts in br_view_setup; ref rounds ONCE per axis,
+; exactly the mirror's rns(ref_88, 3). ---
+   CLC
    LDA zp_br_vx_l
+   ADC zp_br_fvx_l
    STA vxc_ref_x+0
    LDA zp_br_vx_h
+   ADC zp_br_fvx_h
    STA vxc_ref_x+1
+   CLC
    LDA zp_br_vy_l
+   ADC zp_br_fvy_l
    STA vxc_ref_y+0
    LDA zp_br_vy_h
+   ADC zp_br_fvy_h
    STA vxc_ref_y+1
    LDA VXC_ENABLE
    STA zp_vxc_on                           ; kept for harness/tools AND
@@ -347,14 +352,15 @@ sin_notone:
 sin_gen:
    STA rot_gen_sin+1                       ; mag immediate
    STA rot_sqs1l+1                         ; sum-side table bases: lo byte
-   STA rot_sqs1h+1                         ; = mag (SQR pages page-aligned,
+   STA rot_sqs1h+1                         ; = mag5 (SQR pages page-aligned,
    STA rot_sqs2l+1                         ; hi byte static; abs,X crosses
-   STA rot_sqs2h+1                         ; into the contiguous 2nd page)
+                                           ; into the contiguous 2nd page)
+                                           ; (the _2h sites DIED count-
+                                           ; native: 1-byte hi products)
    STA rgp_smag+1                          ; ... and the fused pair's twins
    STA rgp_sq1l+1
    STA rgp_sq1h+1
    STA rgp_sq2l+1
-   STA rgp_sq2h+1
    LDA zp_br_sneg
    STA rot_gen_sin+5                       ; neg immediate
    STA rgp_sneg+1
@@ -390,11 +396,9 @@ cos_gen:
    STA rot_sqc1l+1                         ; cos sum-side bases (see sin)
    STA rot_sqc1h+1
    STA rot_sqc2l+1
-   STA rot_sqc2h+1
    STA rot_sqcv1l+1                        ; the pair's VY-dest cos twin
    STA rot_sqcv1h+1                        ; (rot_core_cosv_nz, 2026-07-27)
    STA rot_sqcv2l+1
-   STA rot_sqcv2h+1
    STA rgp_cmag+1                          ; the fused pair's cos staging
    LDA zp_br_cneg
    STA rot_gen_cos+5

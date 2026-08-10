@@ -120,6 +120,9 @@ ZP_VYLO  = _sym('zp_br_vy_l');  ZP_VYHI  = _sym('zp_br_vy_h')
 def write_view_state(mem, vx_88, vy_88, sc_tuple):
     """Write player view state into ZP."""
     s_mag, s_neg, s_one, c_mag, c_neg, c_one = sc_tuple
+    s_mag >>= 3                     # zp staging is COUNT-NATIVE mag5
+    c_mag >>= 3                     # (2026-08-10); the python ctx keeps
+                                    # the 8.8 tuple
     mem[ZP_PX]  = vx_88 & 0xFF
     mem[ZP_PXH] = (vx_88 >> 8) & 0xFF
     mem[ZP_PY]  = vy_88 & 0xFF
@@ -153,11 +156,10 @@ def test_view_setup():
         got_fvx = s16_from_zp(mem, ZP_FVXLO)
         got_fvy = s16_from_zp(mem, ZP_FVYLO)
         ctx = fp.fp_view_context(vx88, vy88, sc_tuple)
-        want_fvx = ctx[3] & 0xFFFF
-        want_fvy = ctx[4] & 0xFFFF
-        # ctx[3] / ctx[4] are signed Python ints; convert to s16 wraparound.
-        if want_fvx >= 0x8000: want_fvx -= 0x10000
-        if want_fvy >= 0x8000: want_fvy -= 0x10000
+        # COUNT-NATIVE (2026-08-10): the engine quantizes the 8.8 frac
+        # terms to s16 counts in br_view_setup — rns(fv_88, 3).
+        want_fvx = fp.rns(ctx[3], 3)
+        want_fvy = fp.rns(ctx[4], 3)
         ok = got_fvx == want_fvx and got_fvy == want_fvy
         if not ok:
             fail += 1
@@ -211,10 +213,11 @@ def test_to_view():
         t_dy_sin = _rot_int(d_dy, s_mag, s_neg, s_one)
         int_vx = t_dx_sin - t_dy_cos
         int_vy = t_dx_cos + t_dy_sin
-        want_vx = (int_vx + frac_vx) & 0xFFFF
-        want_vy = (int_vy + frac_vy) & 0xFFFF
-        if want_vx >= 0x8000: want_vx -= 0x10000
-        if want_vy >= 0x8000: want_vy -= 0x10000
+        # COUNT-NATIVE (2026-08-10): br_to_view returns rot5 = the 8.8
+        # rotation sum / 8 EXACTLY (5-bit mags are multiples of 8); the
+        # count fracs are added by vxc_frame, not here.
+        want_vx = int_vx >> 3
+        want_vy = int_vy >> 3
         ok = got_vx == want_vx and got_vy == want_vy
         if not ok:
             fail += 1

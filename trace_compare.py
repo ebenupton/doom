@@ -100,8 +100,8 @@ def setup_view_zp(sc, px, py, ab):
     mem[0x93] = (raw_py >> 8) & 0xFF
     from symmap import sym as _s
     mem[_s('bca_ab')] = ab & 0xFF  # bca_ab: angle-space bbox view angle (u8)
-    sc_t = fp.fp_sincos(ab)
-    mem[5] = sc_t[0]
+    sc_t = fp.fp_sincos5(ab)            # zp staging is COUNT-NATIVE mag5
+    mem[5] = sc_t[0]                    # (2026-08-10)
     mem[6] = 1 if sc_t[1] else 0
     mem[7] = 1 if sc_t[2] else 0
     mem[8] = sc_t[3]

@@ -459,7 +459,7 @@ def main():
         rpx = int(px) - r.map_center_x; rpy = int(py) - r.map_center_y
         mem[ZP_PXRAW_LO] = rpx & 0xFF; mem[ZP_PXRAW_LO+1] = (rpx >> 8) & 0xFF
         mem[ZP_PYRAW_LO] = rpy & 0xFF; mem[ZP_PYRAW_LO+1] = (rpy >> 8) & 0xFF
-        sm, sn, so, cm, cn, co = fp.fp_sincos(ab)
+        sm, sn, so, cm, cn, co = fp.fp_sincos5(ab)
         mem[ZP_SMAG] = sm; mem[ZP_SNEG] = 1 if sn else 0
         mem[ZP_SONE] = 1 if so else 0
         mem[ZP_CMAG] = cm; mem[ZP_CNEG] = 1 if cn else 0
