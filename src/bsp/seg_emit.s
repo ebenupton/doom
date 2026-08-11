@@ -374,8 +374,8 @@ ys_deltas_done:
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   JSR dpy_back_v1                         ; (chained v1 = struct VX1)
-   JMP ys_v2
+   JMP dpy1_back                           ; back pair only (chained v1 =
+                                        ; struct VX1); falls into ys_v2
 ys_v1_full:
    ZERO zp_seg_ep                         ; v1 -> struct VX1
    LDA zp_seg_v1_r_m8
@@ -384,7 +384,40 @@ ys_v1_full:
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   JSR do_project_y_v1
+; ---- do_project_y v1, INLINED (2026-08-11; was seg_project.s — the
+; whole file: single-caller bodies, JSR/RTS died, back section shared
+; with the chain arc via dpy1_back, all exits fall into ys_v2).
+; Projects the per-seg heights through br_project_y (VWHC-memoised;
+; h rides A in, Y = sy lo / A = sy hi out, Y_BIAS folded) into the
+; endpoint struct's sy slots. Gating is output-identical: front pair
+; always; back pair only when NEEDBT/NEEDBB ($04/$08) gate it in and
+; the seg isn't SOLID ($40 — the BIT/V ride).
+   LDA zp_seg_top_dlt                       ; h rides A into the cache front
+   JSR br_project_y                        ; -> Y = sy lo, A = sy hi
+   STA VX1+4
+   STY VX1+3                               ; sy_top
+   LDA zp_seg_bot_dlt
+   JSR br_project_y
+   STA VX1+6
+   STY VX1+5                               ; sy_bot
+dpy1_back:
+   BIT zp_seg_flags                        ; V = bit 6 = SF_SOLID (the hot
+   BVS ys_v2                               ; flag rides BIT since 2026-08-11)
+   LDA zp_seg_flags
+   AND #$04
+   BEQ dpy1_chk_bb
+   LDA zp_seg_btop_dlt
+   JSR br_project_y
+   STA VX1+8
+   STY VX1+7                               ; sy_btop
+dpy1_chk_bb:
+   LDA zp_seg_flags
+   AND #$08
+   BEQ ys_v2
+   LDA zp_seg_bbot_dlt
+   JSR br_project_y
+   STA VX1+10
+   STY VX1+9                              ; sy_bbot
 ys_v2:
 ; (v2-first + select-only fast arc MEASURED 2026-07-25: the crossing
 ; test + arc split cost what the elided recip loads saved — wash;
@@ -398,7 +431,35 @@ ys_v2:
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   JSR do_project_y_v2
+; ---- do_project_y v2, INLINED (see v1 above; dpy_back_v2 had ZERO
+; callers — the chain path donates v2's pair forward, never backward —
+; so the whole body folds flat and the RTS becomes fall-through).
+   LDA zp_seg_top_dlt
+   JSR br_project_y
+   STA VX2+4
+   STY VX2+3                               ; sy_top
+   LDA zp_seg_bot_dlt
+   JSR br_project_y
+   STA VX2+6
+   STY VX2+5                               ; sy_bot
+   BIT zp_seg_flags
+   BVS dpy2_done                           ; SOLID: no back pair
+   LDA zp_seg_flags
+   AND #$04
+   BEQ dpy2_chk_bb
+   LDA zp_seg_btop_dlt
+   JSR br_project_y
+   STA VX2+8
+   STY VX2+7                               ; sy_btop
+dpy2_chk_bb:
+   LDA zp_seg_flags
+   AND #$08
+   BEQ dpy2_done
+   LDA zp_seg_bbot_dlt
+   JSR br_project_y
+   STA VX2+10
+   STY VX2+9                              ; sy_bbot
+dpy2_done:
    LDA #1
    STA zp_ys_done                           ; this seg's VX2 sy is live for
    LDA #0                                   ; the next seg's chain

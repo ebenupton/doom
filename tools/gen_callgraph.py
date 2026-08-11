@@ -83,8 +83,7 @@ extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss'
  'dcl_vert','dcl_vert_on','dcl_vertical',
  'reproject_at_crossing','br_recip','hud_draw',
  'corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp',
- 'rot_core_sin','rot_core_cos','rot_gen_pair','dpy_back_v1',
- 'do_project_y_v1','do_project_y_v2'}
+ 'rot_core_sin','rot_core_cos','rot_gen_pair'}
 routines = ({resolve(t) for t in jsr_targets} | extra) & set(owner)
 
 edges = set()
