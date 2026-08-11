@@ -337,94 +337,47 @@ hg_pass:
 ; do_project_y with its OWN struct-banked recip (for a near-clipped
 ; endpoint that is the crossing recip). Runs BEFORE the canonicalizing
 ; swap so struct identity still equals seg-endpoint identity.
+; --- Y-stage arc split (Eben's hoist, 2026-08-11): flags & $0C is
+; BOTH the "stage back deltas" gate AND the per-endpoint "neither
+; back projection" predicate (it subsumes SOLID — the baker and the
+; anim worker keep SOLID and NEEDBT/NEEDBB exclusive). Test it ONCE
+; per seg and fork: this no-back arc (solids + stepless portals, the
+; majority) projects front pairs with no per-endpoint tests at all
+; and falls through the tail into hgp_can; the with-back arc (island
+; past sa_done — all three blocks want to abut the tail, so the
+; minority pays the JMPs) KNOWS >=1 back flag is set: each dpy
+; section opens at the BT dispatch and a BT miss means BB fires.
+; The per-endpoint $0C neither-tests and the chain pre-gate are dead.
    LDA zp_seg_flags
-   AND #$0C                                ; portal steps need back deltas
-   BEQ ys_deltas_done
-   PAGE BANK_L0
-   LDY #13
-   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
-   SBC zp_br_vz                             ; no SEC: hg_pass is entered only
-                                            ; by falling past BCC hg_adv (C=1)
-                                            ; and nothing above touches carry
-   STA zp_seg_btop_dlt
-   DEY
-   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
-   SEC
-   SBC zp_br_vz
-   STA zp_seg_bbot_dlt
-   PAGE BANK_L2                             ; restore for the projections
-                                        ; below (br_project_y no longer
-                                        ; re-pages per call)
-ys_deltas_done:
+   AND #$0C                                ; back deltas / back pairs?
+   BEQ ys_noback
+   JMP ys_withback
+ys_noback:
 ; (no PAGE: solid arcs arrive L2 — br_seg_xform_vertex's exit contract
 ;  is L2-always since 2026-07-21, and nothing between v2's JSR and here
 ;  pages away (reproject/br_recip end L2; SC_HAS_GAP is main-resident).
-;  The portal block above restores L2 itself after its L0 excursion.)
+;  The with-back island restores L2 itself after its L0 excursion.)
    LDA zp_ys_v1ok
-   BEQ ys_v1_full
-; chained v1 with a LIVE front sy pair (copied from the emitted prev
-; seg) — only a portal's back pair still needs v1's recip
-   LDA zp_seg_flags
-   AND #$0C
-   BEQ ys_v2
-   ZERO zp_seg_ep
-   LDA zp_seg_v1_r_m8
-   STA zp_br_r_m8
-   LDX zp_seg_v1_r_s                        ; inlined rns_select (hot site)
-   STX zp_br_r_s
-   LDA rns_vec_l-1,X
-   STA rns_go_op
-   JMP dpy1_back                           ; back pair only (chained v1 =
-                                        ; struct VX1); falls into ys_v2
-ys_v1_full:
-   ZERO zp_seg_ep                         ; v1 -> struct VX1
+   BNE ysnb_v2                             ; chained: VX1 front pair live
+   ZERO zp_seg_ep                          ; v1 -> struct VX1
    LDA zp_seg_v1_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v1_r_s                        ; inlined rns_select
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-; ---- do_project_y v1, INLINED (2026-08-11; was seg_project.s — the
-; whole file: single-caller bodies, JSR/RTS died, back section shared
-; with the chain arc via dpy1_back, all exits fall into ys_v2).
-; Projects the per-seg heights through br_project_y (VWHC-memoised;
-; h rides A in, Y = sy lo / A = sy hi out, Y_BIAS folded) into the
-; endpoint struct's sy slots. Gating is output-identical: front pair
-; always; back pair only when NEEDBT/NEEDBB ($04/$08) gate it in (the
-; neither-test subsumes SOLID — the writers keep them exclusive).
-   LDA zp_seg_top_dlt                       ; h rides A into the cache front
-   JSR br_project_y                        ; -> Y = sy lo, A = sy hi
+; ---- front pair only (do_project_y INLINED 2026-08-11; back pairs
+; live in the with-back island). br_project_y: h rides A in, Y = sy
+; lo / A = sy hi out, Y_BIAS folded, VWHC-memoised. ----
+   LDA zp_seg_top_dlt
+   JSR br_project_y
    STA VX1+4
    STY VX1+3                               ; sy_top
    LDA zp_seg_bot_dlt
    JSR br_project_y
    STA VX1+6
    STY VX1+5                               ; sy_bot
-dpy1_back:
-   LDA zp_seg_flags                        ; first test = NEITHER back proj
-   AND #$0C                                ; (subsumes SOLID: the baker and
-   BEQ ys_v2                               ;  anim worker keep SOLID and
-                                        ;  NEEDBT/NEEDBB exclusive, Eben's
-                                        ;  fold 2026-08-11)
-   AND #$04                                ; A still = flags & $0C
-   BEQ dpy1_bb                             ; no BT -> BB is GUARANTEED
-   LDA zp_seg_btop_dlt
-   JSR br_project_y
-   STA VX1+8
-   STY VX1+7                               ; sy_btop
-   LDA zp_seg_flags
-   AND #$08
-   BEQ ys_v2
-dpy1_bb:
-   LDA zp_seg_bbot_dlt
-   JSR br_project_y
-   STA VX1+10
-   STY VX1+9                              ; sy_bbot
-ys_v2:
-; (v2-first + select-only fast arc MEASURED 2026-07-25: the crossing
-; test + arc split cost what the elided recip loads saved — wash;
-; reverted to the single-path restage. The rns vector NEVER survives
-; the xform: br_project_x re-patches rns_go on miss arcs.)
+ysnb_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                            ; v2 -> struct VX2
    LDA zp_seg_v2_r_m8
@@ -433,9 +386,6 @@ ys_v2:
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-; ---- do_project_y v2, INLINED (see v1 above; dpy_back_v2 had ZERO
-; callers — the chain path donates v2's pair forward, never backward —
-; so the whole body folds flat and the RTS becomes fall-through).
    LDA zp_seg_top_dlt
    JSR br_project_y
    STA VX2+4
@@ -444,24 +394,7 @@ ys_v2:
    JSR br_project_y
    STA VX2+6
    STY VX2+5                               ; sy_bot
-   LDA zp_seg_flags                        ; NEITHER test subsumes SOLID
-   AND #$0C                                ; (see the v1 copy above)
-   BEQ dpy2_done
-   AND #$04                                ; A still = flags & $0C
-   BEQ dpy2_bb                             ; no BT -> BB is GUARANTEED
-   LDA zp_seg_btop_dlt
-   JSR br_project_y
-   STA VX2+8
-   STY VX2+7                               ; sy_btop
-   LDA zp_seg_flags
-   AND #$08
-   BEQ dpy2_done
-dpy2_bb:
-   LDA zp_seg_bbot_dlt
-   JSR br_project_y
-   STA VX2+10
-   STY VX2+9                              ; sy_bbot
-dpy2_done:
+ys_done:
    LDA #1
    STA zp_ys_done                           ; this seg's VX2 sy is live for
    LDA #0                                   ; the next seg's chain
@@ -766,6 +699,108 @@ ms_advance:
    JMP seg_proc                            ; LDA/BNE re-test was dead
 sa_done:
    RTS                                     ; ops already applied per seg
+
+; ============================================================================
+; ys_withback — the with-back y-stage arc (see the fork at the deltas
+; gate). >=1 of NEEDBT/NEEDBB is PROVEN on entry: stage the back
+; deltas, then per-endpoint front pairs + back pairs with the
+; BT-miss-means-BB dispatch. Ends JMP ys_done.
+; ============================================================================
+ys_withback:
+   PAGE BANK_L0
+   LDY #13
+   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
+   SBC zp_br_vz                             ; no SEC: hg_pass is entered only
+                                            ; by falling past BCC hg_adv (C=1)
+                                            ; and nothing above touches carry
+                                            ; (the fork's LDA/AND/BEQ/JMP
+                                            ; included)
+   STA zp_seg_btop_dlt
+   DEY
+   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
+   SEC
+   SBC zp_br_vz
+   STA zp_seg_bbot_dlt
+   PAGE BANK_L2                             ; restore for the projections
+   LDA zp_ys_v1ok
+   BEQ ysb_v1_full
+; chained v1 with a LIVE front sy pair (copied from the emitted prev
+; seg) — only the back pair projects (the old $0C pre-gate IS the
+; fork now; nothing re-tests)
+   ZERO zp_seg_ep
+   LDA zp_seg_v1_r_m8
+   STA zp_br_r_m8
+   LDX zp_seg_v1_r_s                        ; inlined rns_select (hot site)
+   STX zp_br_r_s
+   LDA rns_vec_l-1,X
+   STA rns_go_op
+   JMP dpy1_have                           ; back pair only
+ysb_v1_full:
+   ZERO zp_seg_ep                         ; v1 -> struct VX1
+   LDA zp_seg_v1_r_m8
+   STA zp_br_r_m8
+   LDX zp_seg_v1_r_s
+   STX zp_br_r_s
+   LDA rns_vec_l-1,X
+   STA rns_go_op
+   LDA zp_seg_top_dlt                       ; front pair
+   JSR br_project_y
+   STA VX1+4
+   STY VX1+3                               ; sy_top
+   LDA zp_seg_bot_dlt
+   JSR br_project_y
+   STA VX1+6
+   STY VX1+5                               ; sy_bot
+dpy1_have:
+   LDA zp_seg_flags                        ; >=1 back flag proven: open at
+   AND #$04                                ; the BT dispatch
+   BEQ dpy1_bb                             ; no BT -> BB is GUARANTEED
+   LDA zp_seg_btop_dlt
+   JSR br_project_y
+   STA VX1+8
+   STY VX1+7                               ; sy_btop
+   LDA zp_seg_flags
+   AND #$08
+   BEQ ysb_v2
+dpy1_bb:
+   LDA zp_seg_bbot_dlt
+   JSR br_project_y
+   STA VX1+10
+   STY VX1+9                              ; sy_bbot
+ysb_v2:
+   LDA #VX_STRIDE
+   STA zp_seg_ep                            ; v2 -> struct VX2
+   LDA zp_seg_v2_r_m8
+   STA zp_br_r_m8
+   LDX zp_seg_v2_r_s
+   STX zp_br_r_s
+   LDA rns_vec_l-1,X
+   STA rns_go_op
+   LDA zp_seg_top_dlt                       ; front pair
+   JSR br_project_y
+   STA VX2+4
+   STY VX2+3                               ; sy_top
+   LDA zp_seg_bot_dlt
+   JSR br_project_y
+   STA VX2+6
+   STY VX2+5                               ; sy_bot
+   LDA zp_seg_flags
+   AND #$04
+   BEQ dpy2_bb
+   LDA zp_seg_btop_dlt
+   JSR br_project_y
+   STA VX2+8
+   STY VX2+7                               ; sy_btop
+   LDA zp_seg_flags
+   AND #$08
+   BEQ ys_wb_done
+dpy2_bb:
+   LDA zp_seg_bbot_dlt
+   JSR br_project_y
+   STA VX2+10
+   STY VX2+9                              ; sy_bbot
+ys_wb_done:
+   JMP ys_done
 .endscope
 
 ; (seg_swap_vx retired 2026-07-15: reversed 1px projections are DROPPED
