@@ -832,8 +832,7 @@ ys_wb_done:
 ; mark is already down, so order is unobservable): STATIC zp
 ; addressing — this entry IS struct 0, no index needed.
    LDA VX1+0                               ; near-clipped endpoint
-   BNE f1_rts
-   LDA VX1+2                               ; column off-screen
+   ORA VX1+2                               ; column off-screen
    BNE f1_rts
    LDY zp_v1i_l
    LDA zp_v1i_b
@@ -855,8 +854,7 @@ f1_go:
    ORA VDONE,X
    STA VDONE,X
    LDA VX2+0                               ; clip
-   BNE f2_rts
-   LDA VX2+2                               ; sx_hi
+   ORA VX2+2                               ; sx_hi
    BNE f2_rts
    LDY zp_seg_v_idx_l
    LDA zp_seg_v_idx_b
