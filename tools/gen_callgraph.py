@@ -37,15 +37,17 @@ MACRO_OWNERS = {                      # CPM_ENTRY expansions (ang/bca.s)
 # Calls INSIDE a .macro definition have no enclosing routine label, so
 # the edge scan used to drop them silently (vxq_shl2 vanished from the
 # graph when the fetch arms were absorbed into SXV_BODY — Eben's catch,
-# 2026-08-09). Attribute each known macro's body to the routine its
-# expansion lives in. Macros absent here still scan as before (their
-# calls attribute to the last label — fine for in-routine macros like
-# cross_compute was).
+# 2026-08-09). Attribute each known macro's body to the routine(s) its
+# expansions live in — ALL of them (list-valued since 2026-08-12: the
+# single-owner map credited SXV_BODY's calls to sx_vert_lo only,
+# rendering sx_vert_hi as a leaf — Eben's catch). Macros absent here
+# still scan as before (their calls attribute to the last label — fine
+# for in-routine macros like cross_compute was).
 MACRO_CALLERS = {
-    'SXV_BODY':  'sx_vert_lo',        # expanded as sx_vert_lo/hi
-    'vxc_frame': 'br_view_setup',     # single expansion (view setup)
-    'apv_stage': 'bf_seg_front',      # emit-cascade expansions
-    'ap_edges':  'bf_seg_front',
+    'SXV_BODY':  ['sx_vert_lo', 'sx_vert_hi'],
+    'vxc_frame': ['br_view_setup'],   # single expansion (view setup)
+    'apv_stage': ['bf_seg_front'],    # emit-cascade expansions
+    'ap_edges':  ['bf_seg_front'],
 }
 
 owner, jsr_targets, alias = dict(MACRO_OWNERS), set(), {}
@@ -79,7 +81,7 @@ extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss'
  'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
  'umul8','udiv16_8','interp_store','vf_plain0','vf_plain1','bca_frame','rc_wipe',
- 'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vsx_do_c3',
+ 'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vs_go','vsx_do_c3',
  'dcl_vert','dcl_vert_on','dcl_vertical',
  'reproject_at_crossing','br_recip','hud_draw',
  'corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp',
@@ -114,8 +116,9 @@ for f in files:
             continue
         for kind, tgt0 in call_re.findall(code):
             tgt = resolve(tgt0)
-            if tgt in routines and tgt != cur:
-                edges.add((cur, tgt, kind))
+            for c in (cur if isinstance(cur, list) else [cur]):
+                if tgt in routines and tgt != c:
+                    edges.add((c, tgt, kind))
 
 vec = [('zp_bv_entry (vector)','bbox_check_angle'),
        ('zp_bv_entry (vector)','box_classify'),
@@ -126,6 +129,11 @@ vec = [('zp_bv_entry (vector)','bbox_check_angle'),
        ('rot_select (SMC)','rot_core_sin'),('rot_select (SMC)','rot_core_cos'),
        ('rot_select (SMC)','rot_gen_pair')]
 edges.add(('br_bbox_visible','zp_bv_entry (vector)','JMP'))
+# vs_go = the shared vertical-serve tail: vs_fresh1 enters by
+# branch-always (LDX #0/BEQ), vs_fresh2 by fall-through — neither is
+# visible to the JSR/JMP scan (2026-08-12, Eben's catch)
+edges.add(('vs_fresh1','vs_go','JMP'))
+edges.add(('vs_fresh2','vs_go','JMP'))
 for cp in ('corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp'):
     edges.add((cp,'zp_tail_vec (vector)','JMP'))
 edges = {(a,b,k) for a,b,k in edges if (a,b) not in [(x,y) for x,y in vec]}
