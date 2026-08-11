@@ -1,28 +1,28 @@
 figure               entry      segs  pts bytes  eps
-Zombieman            POSSA1       40   40    80  0.85
-Zombieman            POSSA2       37   37    74  1.00
-Zombieman            POSSA3       39   39    78  1.34
-Zombieman            POSSA4       40   40    80  1.11
-Zombieman            POSSA5       40   40    80  0.74
-Zombieman            POSSA6       40   40    80  1.11
-Zombieman            POSSA7       39   39    78  1.34
-Zombieman            POSSA8       37   37    74  1.00
-Shotgun sergeant     SPOSA1       39   39    78  0.82
-Shotgun sergeant     SPOSA2       40   40    80  0.95
-Shotgun sergeant     SPOSA3       40   40    80  1.18
-Shotgun sergeant     SPOSA4       39   39    78  1.00
-Shotgun sergeant     SPOSA5       40   40    80  0.71
-Shotgun sergeant     SPOSA6       39   39    78  1.00
-Shotgun sergeant     SPOSA7       40   40    80  1.18
-Shotgun sergeant     SPOSA8       40   40    80  0.95
-Imp                  TROOA1       40   40    80  1.68
-Imp                  TROOA2       37   37    74  1.77
-Imp                  TROOA3       39   39    78  0.91
-Imp                  TROOA4       40   40    80  0.83
-Imp                  TROOA5       39   39    78  1.10
-Imp                  TROOA6       40   40    80  0.83
-Imp                  TROOA7       39   39    78  0.91
-Imp                  TROOA8       37   37    74  1.77
+Zombieman            POSSA1       28   28    56  1.02
+Zombieman            POSSA2       30   30    60  1.15
+Zombieman            POSSA3       30   30    60  1.59
+Zombieman            POSSA4       28   28    56  1.41
+Zombieman            POSSA5       29   29    58  0.89
+Zombieman            POSSA6       28   28    56  1.41
+Zombieman            POSSA7       30   30    60  1.59
+Zombieman            POSSA8       30   30    60  1.15
+Shotgun sergeant     SPOSA1       30   30    60  1.10
+Shotgun sergeant     SPOSA2       30   30    60  1.22
+Shotgun sergeant     SPOSA3       30   30    60  1.69
+Shotgun sergeant     SPOSA4       29   29    58  1.41
+Shotgun sergeant     SPOSA5       28   28    56  0.89
+Shotgun sergeant     SPOSA6       29   29    58  1.41
+Shotgun sergeant     SPOSA7       30   30    60  1.69
+Shotgun sergeant     SPOSA8       30   30    60  1.22
+Imp                  TROOA1       30   30    60  2.06
+Imp                  TROOA2       30   30    60  2.06
+Imp                  TROOA3       30   30    60  1.37
+Imp                  TROOA4       30   30    60  1.11
+Imp                  TROOA5       29   29    58  1.56
+Imp                  TROOA6       30   30    60  1.11
+Imp                  TROOA7       30   30    60  1.37
+Imp                  TROOA8       30   30    60  2.06
 Exploding barrel     BAR1A0        9   10    20  0.89
 Stimpack             STIMA0        8   10    20  0.71
 Medikit              MEDIA0        8   10    20  0.71
@@ -34,4 +34,4 @@ Shell box            SBOXA0        8    8    16  0.68
 Dead marine          PLAYN0       12   12    24  1.58
 Bloody mess          PLAYW0       10   10    20  3.38
 
-entries: 34   total segments: 1022   total bytes (2/pt): 2054
+entries: 34   total segments: 790   total bytes (2/pt): 1590
