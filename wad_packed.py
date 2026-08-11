@@ -234,13 +234,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     rom_main = bytearray(rom_main_size)
 
-    # Vertices — page-split SoA planes (XLO/XHI/YLO/YHI, 512 bytes each;
+    # Vertices — page-split SoA planes (OX/OY/PG, 512 bytes each;
     # n_verts <= 512 asserted above): junior page idx 0-255, senior 256+.
-    # SIGN-MAGNITUDE since V16 (2026-08-09): lo = |w| & 255, hi =
-    # (|w| >> 8) | ($80 if w < 0) — |w| <= 511 so bit 7 is free. The
-    # fetch reads the sign as the hi-byte load's N flag and the abs-
-    # negate ladder dies (the rotate wants |d| + sign anyway, and w is
-    # static — only V16's pure-w operand makes this bakeable).
+    # PAGE-DECOMPOSED (Eben's concept, 2026-08-11): w = page_base +
+    # (ox, oy) with ox/oy UNSIGNED u8 (w & 255) and the 2+2 senior bits
+    # packed as a nibble: pg = ((wx>>8)+2) | (((wy>>8)+2) << 2), page
+    # bases in {-512,-256,0,+256}. rot() is linear, so the engine adds
+    # rot(page_base) — 16 s16 pairs rebuilt per angle epoch — to the
+    # four UNSIGNED u8 x mag5 products, whose combine signs are frame-
+    # constant (trig signs only): the per-vertex sign ladders died.
+    # (The 4th plane slot at +$600 is currently UNUSED — kept so the
+    # ROM layout doesn't shift; reclaim separately.)
     # V16 RANGE ASSERT: base = rot(w) must fit s16 in 1/64 units for
     # EVERY angle; |rot(w)| <= hypot(w) (trig magnitudes <= 1), so
     # hypot(w) <= 32767/64 = 511.98 is sound over all angles.
@@ -260,13 +264,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                 + _PLAYER_MAX_HYPOT_UNITS + 2) * 32 <= 32767, \
             f"TRUE16 total range: vertex {i} {v} can overflow s16 counts"
         pg, off = (i >> 8) * 256, i & 0xFF
-        ax, ay = abs(v[0]), abs(v[1])
-        rom_main[off_verts + 0x000 + pg + off] = ax & 0xFF
-        rom_main[off_verts + 0x200 + pg + off] = ((ax >> 8)
-                                                 | (0x80 if v[0] < 0 else 0))
-        rom_main[off_verts + 0x400 + pg + off] = ay & 0xFF
-        rom_main[off_verts + 0x600 + pg + off] = ((ay >> 8)
-                                                 | (0x80 if v[1] < 0 else 0))
+        pxi = ((v[0] >> 8) + 2) & 3
+        pyi = ((v[1] >> 8) + 2) & 3
+        assert 0 <= pxi < 4 and 0 <= pyi < 4
+        rom_main[off_verts + 0x000 + pg + off] = v[0] & 0xFF
+        rom_main[off_verts + 0x200 + pg + off] = v[1] & 0xFF
+        rom_main[off_verts + 0x400 + pg + off] = pxi | (pyi << 2)
 
     # BSP nodes — point_on_side uses raw s16 values so the prescale rounding
     # doesn't lose a weak axis (nodes where, e.g., raw dx=0 dy=8 would

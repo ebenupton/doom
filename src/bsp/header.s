@@ -119,10 +119,25 @@ TAX
 ; junior page idx 0-255, senior 256+ (select = header key B & $20).
 ; ROM_VERTS_C: flat $9C00 (planes end EXACTLY at SEL $A400), banked
 ; L2 $A200 (end $A9FF; next resident RCACHE $AD00 — symmap-audited).
-VP_XLO = ROM_VERTS_C + $000
-VP_XHI = ROM_VERTS_C + $200
-VP_YLO = ROM_VERTS_C + $400
-VP_YHI = ROM_VERTS_C + $600
+; PAGE-DECOMPOSED vertex planes (Eben's concept, 2026-08-11): unsigned
+; u8 offsets + a senior-bits nibble; the +$600 slot is unused (kept so
+; the ROM layout doesn't shift — reclaim separately). See rot_w_pages.
+VP_OX = ROM_VERTS_C + $000
+VP_OY = ROM_VERTS_C + $200
+VP_PG = ROM_VERTS_C + $400
+
+; rotated page-base tables, 16 entries each (one per senior nibble),
+; REBUILT PER ANGLE EPOCH by rot_select: PB_X = PX*sin - PY*cos,
+; PB_Y = PX*cos + PY*sin in s16 counts (PX,PY in {-512,-256,0,+256}).
+; $0680-$06BF: scratch-page run verified free by listing scan 2026-08-11.
+PB_XL = $0680
+PB_XH = $0690
+PB_YL = $06A0
+PB_YH = $06B0
+PB_TS = $06C0                           ; epoch-build scratch: (k-2)*256*sin
+PB_TC = $06C8                           ; (k-2)*256*cos — 4 s16 each
+PB_PREV_AB = $06D0                      ; angle the tables were built for
+PB_VALID = $06D1                        ; 0 = tables/patches stale (boot)
 
 ; NODE_SOA comes from layout.inc (NODE_SOA_C): banked = L0 window head,
 ; flat = $B600 (the hole the retired FHCH stream vacated 2026-07-11 —
@@ -478,8 +493,6 @@ code_head:
 .import br_recip_hi                     ; ex-LCODE code, clip/rotvar.s
 .import rot_zero, rot_unity_pos, rot_unity_neg
 .import rot_zero_s, rot_unity_pos_s, rot_unity_neg_s
-.import rot_gen_sin, rot_gen_cos, rot_pair_thunk, rpt_jsr, rpt_jmp
-.export rot_core_sin, rot_core_cos      ; rotvar's general-core tails
 .export rns_vec_l, rns_go_op            ; rotvar's RNS_SELECT expansion
 .export RECIP_M8
 .assert (RECIP_M8 & $FF) = 0, error     ; 4-page table indexed (page | t1);

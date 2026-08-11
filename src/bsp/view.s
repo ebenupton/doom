@@ -29,7 +29,7 @@
 ;     frac_vy = ft(dx_lo, cos) + ft(dy_lo, sin)
 ;   where ft = _frac_rot_term: unity → lo; else (lo*mag + 128) >> 8, then
 ;   negate if trig negative (see br_frac_rot_term in arith.s).
-; ============================================================================
+
 br_view_setup:
 .scope
 ; a_fine = ab<<4 is frame-constant; hoist it here (once/frame) instead of
@@ -244,195 +244,203 @@ fq_y_ok:
 ; arms JSR their side's vf_plain directly.)
 .assert <ROM_VERTS_C = 0, error, "vertex planes assume page-aligned ROM_VERTS_C"
 
-br_to_view:
-; (no .scope: rot_s1..rot_s4 must be GLOBAL labels — rot_select patches
-; their operands — and the body has no local labels; same rule as
-; vxc_jsr_site in seg_xform.s.)
-; OPERAND-PAIRED rotate (2026-07-19): each delta is staged as |d| ONCE
-; (sign banked in zp_ri_sgn) and feeds BOTH its trig calls — the four
-; per-call stagings and the cores' in-place abs died. rot_select's
-; wiring is unchanged: s1/s4 = the sin variant, s2/s3 = cos; the call
-; ORDER regroups by operand (dx: s1 sin -> vx, s3 cos -> vy;
-; dy: s2 cos -> vx -=, s4 sin -> vy +=) — same formulas:
-;   int_vx = dx*sin - dy*cos ; int_vy = dx*cos + dy*sin  (s24)
-;
-; The delta d = vertex_world - player_int SUBTRACTS STRAIGHT INTO the
-; rotate staging (2026-07-19): the old in-place zp_br_dx delta + copy
-; round is gone — zp_br_dx/dy keep the RAW world coords (dead after;
-; walk/backface stage their own deltas there), the SBC's N flag is the
-; sign test, and the dy subtract waits until its pair (the cores don't
-; touch zp_br_dy).
-; --- ROT_CORE: the operand-paired rotate, ONE source TWO expansions
-; (V16, 2026-08-09): the position path (br_to_view below — dy gets the
-; py subtract) and the pure-vertex path (rot_w_signed — dy is wy
-; verbatim; the base must be position-independent). The three JSR
-; operands are per-expansion SMC sites: rot_select patches BOTH sets
-; each frame (s13/s2/s4 and s13w/s2w/s4w).
-.macro ROT_CORE s13, s2, s4, wmode
-.local dx_ok, dy_ok
-.if wmode = 0
-; position path: d1's sign is dynamic (subtract) — abs-negate ladder
-   BPL dx_ok
-   INC zp_ri_sgn
+
+; (br_to_view + ROT_CORE + tv_add_fracs ALL DELETED 2026-08-11: the
+;  position path rides rot_w_pages too — vxc_frame decomposes
+;  -p_int - (frac != 0) into the same page/offset form (the off-by-one
+;  borrow seed lives THERE now), so ONE rotate body serves everything
+;  and the fused-pair/variant/thunk machinery died with its sites.)
+
+; ============================================================================
+; rot_w_pages — PAGE-DECOMPOSED vertex rotate (Eben's concept,
+; 2026-08-11): the stored vertex is an UNSIGNED u8 offset pair + a
+; senior-bits nibble, and rot() is linear:
+;     base_c = PB[page] + ox*rot(ex) + oy*rot(ey)
+; The four products are unsigned u8 x mag5 quarter-squares, and their
+; combine signs depend ONLY on the frame's trig signs (offsets are
+; never negative): rot_select patches the four combine-op pairs
+; (CLC/ADC <-> SEC/SBC, sites rwp_o*) once per frame and rebuilds the
+; 16-entry page-base tables once per angle epoch. DEAD: the per-vertex
+; sign ladders, the reg-ABI sign ride, the hi partials (seniors live
+; in the tables), the d==0 tests, AND the unity/zero variant dispatch
+; for this path — mag5 unity = 32 fits the u8 multiplier (sqr index
+; <= 255+32, inside the 2-page tables) and zero mags multiply to
+; genuine zeros. Overflow-safe: |PB| <= 24,576, each product <= 8,160,
+; so no intermediate leaves s16 (max 32,736).
+;   In:  zp_ri_d_l = ox, zp_br_dy_l = oy, zp_ri_d_h = page nibble.
+;   Out: zp_br_vx_l/h, zp_br_vy_l/h = s16 count base (rot5(w) EXACT —
+;        python fp_to_view_totals_t16 over the signed w, identical by
+;        linearity; the mirror's math never changed).
+;   Callers: seg_xform vxcon cold + vfoff (both sides), lo.s cr_plain.
+;   Clobbers: A, X, Y, zp_rs_l/h, zp_br_res_l/h.
+; ============================================================================
+.macro RWP_MUL src, m, s1l, s1h, dstl, dsth
+   LDA src
+   TAX
    SEC
-   LDA #0
-   SBC zp_ri_d_l
-   STA zp_ri_d_l
-   LDA #0
-   SBC zp_ri_d_h
-   STA zp_ri_d_h
-dx_ok:
-.endif
-; (pure path: |wx| + sign arrive PRE-RESOLVED from the sign-magnitude
-;  planes — the caller staged zp_ri_d = |wx| and zp_ri_sgn; no ladder)
-s13:
-   JSR rot_gen_pair                        ; dx pair, ONE call (2026-07-19):
-                                           ; sin*dx -> zp_rs, cos*dx ->
-                                           ; zp_br_res, shared d==0 test.
-                                           ; rot_select patches this site:
-                                           ; gen+gen = the fused variant,
-                                           ; else rot_pair_thunk (rare)
-; (res->vy copy DELETED 2026-07-27: the fused pair writes vy directly
-;  via rot_core_cosv_nz; the thunk adapts internally on rare frames)
-   ZERO zp_ri_sgn
-.if wmode
-; pure path: wy is SIGN-MAGNITUDE from the packed planes — resolve the
-; sign off the hi byte, no negate ladder
-   LDA zp_br_dy_h
-   BPL dy_ok                               ; bit 7 = sign
-   INC zp_ri_sgn
-   AND #$7F
-dy_ok:
-   STA zp_ri_d_h
-   LDA zp_br_dy_l
-   STA zp_ri_d_l
-.else
-; (off-by-one fix 2026-08-10: seed C from the py frac's borrow — the
-; frac terms carry (0 - p_88) & 255, so the int part is
-; -py_int - (frac != 0). See the dx twin above btv_dx_signed.)
-   LDA #0
+m: SBC #0                                  ; +1 SMC: mag5 (rot_select)
+   BCS :+
+   EOR #$FF
+   ADC #1
+:  TAY
+s1l: LDA sqr_l,X                           ; +1 SMC = mag5 (base+mag trick)
    SEC
-   SBC zp_br_py                         ; C = (py frac == 0); result dead
-   LDA zp_br_dy_l
-   SBC zp_br_py_h
-   STA zp_ri_d_l
-   LDA zp_br_dy_h
-   SBC zp_br_py_x
-   STA zp_ri_d_h
-   BPL dy_ok
-   INC zp_ri_sgn
-   SEC
-   LDA #0
-   SBC zp_ri_d_l
-   STA zp_ri_d_l
-   LDA #0
-   SBC zp_ri_d_h
-   STA zp_ri_d_h
-dy_ok:
-.endif
-s2:
-   JSR rot_gen_cos                         ; d2*cos -> zp_br_res
-; vx = d1*sin - d2*cos, straight from the two result slots (rs still
-; holds s1's product — s3 wrote zp_br_res and s2 overwrote it, neither
-; touches rs). COUNT-NATIVE (2026-08-10): products are s16 counts
-; (mag5 operands) — the sums ARE the s16 count outputs, no quantize.
-   LDA zp_rs_l
-   SEC
-   SBC zp_br_res_l
-   STA zp_br_vx_l
-   LDA zp_rs_h
-   SBC zp_br_res_h
-   STA zp_br_vx_h
-s4:
-   JSR rot_gen_sin                         ; d2*sin -> zp_rs
-   LDA zp_br_vy_l
-   CLC
-   ADC zp_rs_l
-   STA zp_br_vy_l
-   LDA zp_br_vy_h
-   ADC zp_rs_h
-   STA zp_br_vy_h
+   SBC sqr_l,Y
+   STA dstl
+s1h: LDA sqr_h,X                           ; +1 SMC = mag5
+   SBC sqr_h,Y
+   STA dsth
 .endmacro
 
-; (V16Q retired same-day: the quantize fused into rot_w_signed as
-;  (v+2) & ~3 — see there.)
-
-   ZERO zp_ri_sgn
-; OFF-BY-ONE FIX (2026-08-10): the frac terms are (0 - p_88) & 255 —
-; the low byte of the FULL negate — so this integer subtract must take
-; the low byte's BORROW (C = 0 iff px frac != 0): the int part of
-; -p_88 is -px_int - 1 whenever the frac is nonzero. The old SEC seed
-; rendered from a viewpoint one unit off per fractional axis, snapping
-; at integer crossings (Eben's quantised-jumping report; fp mirror
-; fixed identically in fp_view_context).
-   LDA #0
-   SEC
-   SBC zp_br_px                         ; C = (px frac == 0); result dead
-   LDA zp_br_dx_l
-   SBC zp_br_px_h
-   STA zp_ri_d_l
-   LDA zp_br_dx_h
-   SBC zp_br_px_x
-   STA zp_ri_d_h
-btv_dx_signed:                          ; N = delta sign (internal only
-                                        ; since V16 — the vertex fetch
-                                        ; goes to rot_w_signed)
-   ROT_CORE rot_s13, rot_s2, rot_s4, 0
-   RTS                                  ; s16 COUNTS out (2026-08-10);
-                                        ; the caller (vxc_frame) adds the
-                                        ; pre-quantized count fracs —
-                                        ; tv_add_fracs DIED with the 8.8
-                                        ; position path
-
-; (tv_add_fracs DELETED 2026-08-10 — count-native position path:
-;  vxc_frame adds the pre-quantized s16 count fracs itself.)
-
-; ============================================================================
-; rot_w_signed — V16 pure-vertex rotate + q64 (2026-08-09).
-;   In:  zp_ri_d_l/h = wx (N staged by the caller's last load),
-;        zp_br_dy_l/h = wy, zp_ri_sgn zeroed.
-;   Out: zp_br_vx_l/h, zp_br_vy_l/h = the s16 COUNT base rot5(w)
-;        (1/32 unit, EXACT — 5-bit mag5 operands, no rounding stage).
-;        Position-independent: NO py subtract, NO frac terms — those
-;        live entirely in vxc_ref (= rot(-p_int) + fracs, staged once
-;        per frame). total := (base16 << 2) + ref at the callers' join.
-;   Callers: seg_xform vfoff + vxcon cold arms (both sides).
-; ============================================================================
-; (vxq_shr2 / vxq_shl2 deleted 2026-08-10 — TRUE16: the planes store
-;  counts, which ARE the working form; the birth shift dance died.)
-
-; ============================================================================
-; rot_w_signed — REGISTER ABI (Eben, 2026-08-09): the wx operand
-; arrives in registers and the sign-magnitude resolve lives HERE, once,
-; instead of at every fetch site (it was expanded 6x):
-;   A = VP_XHI raw (bit 7 = sign, low 7 = |wx| hi), X = VP_XLO,
-;   N = A's sign — callers ride the VP_XHI load's flags through the
-;   JSR (JSR/JMP/STX are flag-transparent; nothing may intervene).
-; wy stays zp-staged (zp_br_dy_l/h): Y is the plane index until the
-; last load, so no register is left to carry it — and ROT_CORE resolves
-; wy internally between the mul pairs anyway (the old caller-side wx /
-; core-side wy asymmetry was forced by the shared zp_ri_d mul slot:
-; wx occupies it during s13. This prologue keeps that slot discipline —
-; it IS the old call-site ladder, relocated).
-rot_w_signed:
-   STX zp_ri_d_l                           ; (STX: flags untouched)
-   BPL rws_pos                             ; N = wx sign (caller's load)
-   AND #$7F
-   STA zp_ri_d_h
-   LDA #1
-   STA zp_ri_sgn
-   BNE rws_go                              ; (A = 1: always)
-rws_pos:
-   STA zp_ri_d_h
-   ZERO zp_ri_sgn
-rws_go:
-   ROT_CORE rot_s13w, rot_s2w, rot_s4w, 1
-; COUNT-NATIVE (2026-08-10, 5-bit trig): the cores multiply |d| x mag5
-; so the ROT_CORE sums land as s16 view counts DIRECTLY — the RN>>3
-; quantize tail died (rot5(w) == rns(rot_88(w), 3) exactly: 8.8 mags
-; are multiples of 8). Python: rns(rot_88, 3) in fp_to_view_totals_t16
-; over the quantized table — bit-identical.
+rot_w_pages:
+; P1 = ox*|sin| -> rs, P2 = oy*|cos| -> res
+   RWP_MUL zp_ri_d_l, ::rwp_m1, ::rwp_s1l, ::rwp_s1h, zp_rs_l, zp_rs_h
+   RWP_MUL zp_br_dy_l, ::rwp_m2, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h
+; vx = PB_X[page] (+sin)P1 (-cos)P2 — op pairs SMC'd per frame
+   LDX zp_ri_d_h                           ; page nibble
+   LDA PB_XL,X
+::rwp_o1s:
+   CLC                                     ; SMC: CLC/SEC = sin sign
+::rwp_o1l:
+   ADC zp_rs_l                             ; SMC: ADC/SBC zp
+   STA zp_br_vx_l
+   LDA PB_XH,X
+::rwp_o1h:
+   ADC zp_rs_h
+   STA zp_br_vx_h
+::rwp_o2s:
+   SEC                                     ; SMC: SEC/CLC = NOT cos sign
+   LDA zp_br_vx_l
+::rwp_o2l:
+   SBC zp_br_res_l                         ; SMC: SBC/ADC zp
+   STA zp_br_vx_l
+   LDA zp_br_vx_h
+::rwp_o2h:
+   SBC zp_br_res_h
+   STA zp_br_vx_h
+; P3 = ox*|cos| -> rs, P4 = oy*|sin| -> res
+   RWP_MUL zp_ri_d_l, ::rwp_m3, ::rwp_s3l, ::rwp_s3h, zp_rs_l, zp_rs_h
+   RWP_MUL zp_br_dy_l, ::rwp_m4, ::rwp_s4l, ::rwp_s4h, zp_br_res_l, zp_br_res_h
+; vy = PB_Y[page] (+cos)P3 (+sin)P4
+   LDX zp_ri_d_h
+   LDA PB_YL,X
+::rwp_o3s:
+   CLC                                     ; SMC: CLC/SEC = cos sign
+::rwp_o3l:
+   ADC zp_rs_l
+   STA zp_br_vy_l
+   LDA PB_YH,X
+::rwp_o3h:
+   ADC zp_rs_h
+   STA zp_br_vy_h
+::rwp_o4s:
+   CLC                                     ; SMC: CLC/SEC = sin sign
+   LDA zp_br_vy_l
+::rwp_o4l:
+   ADC zp_br_res_l
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+::rwp_o4h:
+   ADC zp_br_res_h
+   STA zp_br_vy_h
    RTS
+
+; ============================================================================
+; rwp_card_su / rwp_card_cu — CARDINAL-frame twins of rot_w_pages
+; (Eben's mid-flight catch, 2026-08-11: a full quarter-square mul by 0
+; or by unity-32 throws the fast frames away). At mag5 scale a
+; cardinal epoch is EXACTLY "one trig zero, the other unity", so
+; rot_select patches the five rot-w JSR sites to one of the three
+; bodies per epoch and the zero muls never execute:
+;   sin = +-32, cos = 0 (ab 64/192):  vx = PB_X +-s ox<<5,
+;                                     vy = PB_Y +-s oy<<5
+;   cos = +-32, sin = 0 (ab 0/128):   vx = PB_X -+c oy<<5,
+;                                     vy = PB_Y +-c ox<<5
+; The <<5 is the nibble splice (u8 -> u13); the combine signs ride the
+; same SMC op-pair scheme (sites rwc_*), patched at epoch build.
+; ============================================================================
+.macro RWP_SHL5 src
+   LDA src
+   LSR A
+   LSR A
+   LSR A
+   STA zp_rs_h                             ; src >> 3
+   LDA src
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   STA zp_rs_l                             ; (src << 5) & FF
+.endmacro
+
+.macro RWP_CARD a1, a2, o1s, o1l, o1h, o2s, o2l, o2h
+   RWP_SHL5 a1
+   LDX zp_ri_d_h                           ; page nibble
+   LDA PB_XL,X
+o1s: CLC                                   ; SMC: sign op pair
+o1l: ADC zp_rs_l
+   STA zp_br_vx_l
+   LDA PB_XH,X
+o1h: ADC zp_rs_h
+   STA zp_br_vx_h
+   RWP_SHL5 a2
+   LDA PB_YL,X
+o2s: CLC                                   ; SMC: sign op pair
+o2l: ADC zp_rs_l
+   STA zp_br_vy_l
+   LDA PB_YH,X
+o2h: ADC zp_rs_h
+   STA zp_br_vy_h
+   RTS
+.endmacro
+
+rwp_card_su:                               ; sin unity: vx from ox, vy from oy
+   RWP_CARD zp_ri_d_l, zp_br_dy_l, ::rwc_s1s, ::rwc_s1l, ::rwc_s1h, ::rwc_s2s, ::rwc_s2l, ::rwc_s2h
+rwp_card_cu:                               ; cos unity: vx from -oy, vy from ox
+   RWP_CARD zp_br_dy_l, zp_ri_d_l, ::rwc_c1s, ::rwc_c1l, ::rwc_c1h, ::rwc_c2s, ::rwc_c2l, ::rwc_c2h
+
+; rwp_contrib — one 4-entry epoch contrib table T[k] = (k-2)*256*mag,
+; signed. In: A = mag5, X = neg flag, Y = dest offset (0 = PB_TS,
+; 8 = PB_TC). Entries interleaved lo,hi at dest + k*2:
+;   T[2] = 0, T[3] = +V, T[1] = -V, T[0] = -2V   with V = mag<<8,
+; all negated when X != 0 (fold: swap the +/- roles).
+rwp_contrib:
+.scope
+   STA zp_rs_h                             ; V = mag << 8: hi = mag, lo = 0
+   LDA #0
+   STA zp_rs_l
+   STA PB_TS+4,Y                           ; T[2] = 0
+   STA PB_TS+5,Y
+   ; +V / -V / -2V with the sign fold: pos = V if !neg else -V
+   SEC
+   SBC zp_rs_h                             ; A = (-V) hi (lo stays 0)
+   CPX #0
+   BEQ pos_up
+   ; negated table: T[3] = -V, T[1] = +V, T[0] = +2V
+   STA PB_TS+7,Y                           ; T[3] hi = -mag
+   LDA zp_rs_h
+   STA PB_TS+3,Y                           ; T[1] hi = +mag
+   ASL A
+   STA PB_TS+1,Y                           ; T[0] hi = +2*mag (mag<=32: fits)
+   BPL zlo                                 ; (always: 2*mag <= 64)
+pos_up:
+   STA PB_TS+3,Y                           ; T[1] hi = -mag
+   ASL zp_rs_h
+   SEC
+   LDA #0
+   SBC zp_rs_h
+   STA PB_TS+1,Y                           ; T[0] hi = -(2*mag)
+   LSR zp_rs_h
+   LDA zp_rs_h
+   STA PB_TS+7,Y                           ; T[3] hi = +mag
+zlo:
+   LDA #0                                  ; all lo bytes are 0
+   STA PB_TS+0,Y
+   STA PB_TS+2,Y
+   STA PB_TS+6,Y
+   RTS
+.endscope
 
 ; (br_smul_s8_u8 + its br_smul_am register entry deleted 2026-07-13:
 ; the py projector inlined the body 2026-07-12 and the wide X projector

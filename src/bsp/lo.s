@@ -301,22 +301,22 @@ cr_plain:
    TXA
    AND #$20
    BNE cr_hi
-   LDA VP_YLO,Y                            ; junior side (pg 0): stage the
-   STA zp_br_dy_l                          ; vertex verbatim, like vfoff
-   LDA VP_YHI,Y
-   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
-   LDX VP_XLO,Y                            ; wx rides the REGISTER ABI:
-   LDA VP_XHI,Y                            ; X = lo, A = raw hi, N = sign
-   JMP cr_rot                              ; (JMP is flag-transparent)
-cr_hi:
-   LDA VP_YLO+$100,Y                       ; senior side (pg $100)
+   LDA VP_OX,Y                             ; junior side (pg 0): the page-
+   STA zp_ri_d_l                           ; decomposed fetch (2026-08-11)
+   LDA VP_OY,Y
    STA zp_br_dy_l
-   LDA VP_YHI+$100,Y
-   STA zp_br_dy_h
-   LDX VP_XLO+$100,Y
-   LDA VP_XHI+$100,Y                       ; (register ABI — see junior)
+   LDA VP_PG,Y
+   JMP cr_rot
+cr_hi:
+   LDA VP_OX+$100,Y                        ; senior side (pg $100)
+   STA zp_ri_d_l
+   LDA VP_OY+$100,Y
+   STA zp_br_dy_l
+   LDA VP_PG+$100,Y
 cr_rot:
-   JSR rot_w_signed                        ; s16 count base in (l,h)
+   STA zp_ri_d_h                           ; page nibble
+::cr_rwp:
+   JSR rot_w_pages                         ; SMC: rot_select picks the body
 cr_ref:
 ; ref add — totals := base_c + ref_c, s16 (the vxq_add join; those
 ; expansions live inside SXV_BODY's macro scopes, unreachable from here)

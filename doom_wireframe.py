@@ -2575,19 +2575,18 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             return
 
     # ── Read vertex positions from rom_main (page-split SoA planes:
-    # XLO/XHI/YLO/YHI, 512 bytes each — mirrors br_to_view_fetch) ──
+    # OX/OY/PG, 512 bytes each — mirrors the page-decomposed fetch) ──
     verts_off = layout['off_verts']
     def _vplane(plane, i):
         return rom[verts_off + plane + (i >> 8) * 256 + (i & 0xFF)]
-    def _vs16(lo, hi):
-        # SIGN-MAGNITUDE since V16 sign-mag packing (2026-08-09):
-        # hi = (|w| >> 8) | ($80 if w < 0) — mirror the 6502 fetch decode
-        mag = lo | ((hi & 0x7F) << 8)
-        return -mag if (hi & 0x80) else mag
-    wx1 = _vs16(_vplane(0x000, v1_idx), _vplane(0x200, v1_idx))
-    wy1 = _vs16(_vplane(0x400, v1_idx), _vplane(0x600, v1_idx))
-    wx2 = _vs16(_vplane(0x000, v2_idx), _vplane(0x200, v2_idx))
-    wy2 = _vs16(_vplane(0x400, v2_idx), _vplane(0x600, v2_idx))
+    def _vpg(i):
+        # PAGE-DECOMPOSED (2026-08-11): w = ((nib+2sel)-2)<<8 + u8 offset
+        ox, oy, pg = (_vplane(0x000, i), _vplane(0x200, i),
+                      _vplane(0x400, i))
+        return ((((pg & 3) - 2) << 8) + ox,
+                ((((pg >> 2) & 3) - 2) << 8) + oy)
+    wx1, wy1 = _vpg(v1_idx)
+    wx2, wy2 = _vpg(v2_idx)
 
     if _USE_ANGLE_SEG:
         # ── Angle-space 2b projection (mirrors 6502 seg_c + seg_project) ──

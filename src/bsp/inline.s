@@ -234,21 +234,40 @@ inl_end:
 
 .macro vxc_frame
 .scope
-; ref = view totals of world (0,0) under this frame's context
-.if ::C02
-   STZ zp_br_dx_l
-   STZ zp_br_dx_h
-   STZ zp_br_dy_l
-   STZ zp_br_dy_h
-.else
+; ref = rot5(-p_int) + count fracs. The position rides rot_w_pages too
+; (2026-08-11): d = -p_int - (frac != 0) per axis (the off-by-one
+; borrow seed — see the 2026-08-10 fix — lives HERE now), page-
+; decomposed exactly like a vertex. br_to_view and the whole legacy
+; rot machinery died with this.
    LDA #0
-   STA zp_br_dx_l
-   STA zp_br_dx_h
-   STA zp_br_dy_l
-   STA zp_br_dy_h
-.endif
-   JSR br_to_view                          ; rot5(-p_int): s16 COUNTS out
-                                           ; (count-native 2026-08-10)
+   SEC
+   SBC zp_br_px                            ; C = (px frac == 0); result dead
+   LDA #0
+   SBC zp_br_px_h
+   STA zp_ri_d_l                           ; ox = d & 255
+   LDA #0
+   SBC zp_br_px_x
+   CLC
+   ADC #2
+   AND #3
+   STA zp_br_t2                            ; pxi
+   LDA #0
+   SEC
+   SBC zp_br_py                            ; C = (py frac == 0)
+   LDA #0
+   SBC zp_br_py_h
+   STA zp_br_dy_l                          ; oy = d & 255
+   LDA #0
+   SBC zp_br_py_x
+   CLC
+   ADC #2
+   AND #3
+   ASL A
+   ASL A
+   ORA zp_br_t2
+   STA zp_ri_d_h                           ; page nibble
+::vf_rwp:
+   JSR rot_w_pages                         ; SMC: rot_select picks the body
 ; --- publish this frame's ref = rot5(-p_int) + count fracs (ORIGIN
 ; NORMALIZATION: stored bases are total - ref, i.e. the exactly-linear
 ; L(w); the warm arm adds the current ref back). The fracs were
@@ -331,113 +350,226 @@ inl_end:
 
 .macro rot_select
 .scope
-; --- sin variant -> A/X = lo/hi ---
-   LDA zp_br_sone
-   BEQ sin_notone
-   LDA zp_br_sneg
-   BEQ sin_up
-   LDA #<rot_unity_neg_s                   ; the _s twins write zp_rs (res-
-   LDX #>rot_unity_neg_s                   ; slot split): the sin slot must
-   BNE sin_have                            ; never target zp_br_res
-sin_up:
-   LDA #<rot_unity_pos_s
-   LDX #>rot_unity_pos_s
-   BNE sin_have
-sin_notone:
+; (The sin/cos/pair VARIANT SELECTION died 2026-08-11 with the legacy
+; rot machinery: rot_w_pages + its cardinal twins are the only rotate
+; bodies, and everything below is angle-gated.)
+; --- PAGE-DECOMPOSED w-path (Eben's concept, 2026-08-11): mag + sign
+; + body-dispatch SMC patches run EVERY FRAME (~90 cyc): they live in
+; CODE, and harness/loader flows can reload the code image under a
+; persistent scratch page — an angle-gated patch then skips against a
+; stale-valid gate (the compare_traversal setup_wad bite, 2026-08-11).
+; Only the PB TABLE build (RAM, survives reloads) is angle-gated.
+; Signs: vx = PB_X +sgn(s) P1 -sgn(c) P2; vy = PB_Y +sgn(c) P3
+; +sgn(s) P4 — CLC/ADC ($18/$65) vs SEC/SBC ($38/$E5) opcode pairs. ---
+; mags: sin -> muls 1/4, cos -> muls 2/3 (operand + both table bases).
+; EFFECTIVE values: unity stages as (mag=0, one=1) but mag5 unity = 32
+; FITS the u8 quarter-square (sqr index <= 255+32) — the general body
+; handles unity through the mul (Eben's call), and the 5-BIT UNITY
+; BAND IS WIDE: near-cardinals (e.g. ab=252) have cos = unity with
+; sin NONZERO, so unity does NOT imply the partner is zero.
    LDA zp_br_smag
-   BNE sin_gen
-   LDA #<rot_zero_s
-   LDX #>rot_zero_s
-   BNE sin_have
-sin_gen:
-   STA rot_gen_sin+1                       ; mag immediate
-   STA rot_sqs1l+1                         ; sum-side table bases: lo byte
-   STA rot_sqs1h+1                         ; = mag5 (SQR pages page-aligned,
-   STA rot_sqs2l+1                         ; hi byte static; abs,X crosses
-                                           ; into the contiguous 2nd page)
-                                           ; (the _2h sites DIED count-
-                                           ; native: 1-byte hi products)
-   STA rgp_smag+1                          ; ... and the fused pair's twins
-   STA rgp_sq1l+1
-   STA rgp_sq1h+1
-   STA rgp_sq2l+1
-   LDA zp_br_sneg
-   STA rot_gen_sin+5                       ; neg immediate
-   STA rgp_sneg+1
-   LDA #<rot_gen_sin
-   LDX #>rot_gen_sin
-sin_have:
-   STA rot_s4+1                            ; (rot_s1 died in the pair fusion)
-   STX rot_s4+2
-   STA rot_s4w+1                           ; V16 twin (rot_w_signed core)
-   STX rot_s4w+2
-   STA rpt_jsr+1                           ; thunk sin target (maintained
-   STX rpt_jsr+2                           ; every frame; used on non-gen)
-; --- cos variant -> rot_s2 / rot_s3 ---
-   LDA zp_br_cone
-   BEQ cos_notone
-   LDA zp_br_cneg
-   BEQ cos_up
-   LDA #<rot_unity_neg
-   LDX #>rot_unity_neg
-   BNE cos_have
-cos_up:
-   LDA #<rot_unity_pos
-   LDX #>rot_unity_pos
-   BNE cos_have
-cos_notone:
+   LDX zp_br_sone
+   BEQ :+
+   LDA #32
+:  STA rwp_m1+1
+   STA rwp_s1l+1
+   STA rwp_s1h+1
+   STA rwp_m4+1
+   STA rwp_s4l+1
+   STA rwp_s4h+1
    LDA zp_br_cmag
-   BNE cos_gen
-   LDA #<rot_zero
-   LDX #>rot_zero
-   BNE cos_have
-cos_gen:
-   STA rot_gen_cos+1
-   STA rot_sqc1l+1                         ; cos sum-side bases (see sin)
-   STA rot_sqc1h+1
-   STA rot_sqc2l+1
-   STA rot_sqcv1l+1                        ; the pair's VY-dest cos twin
-   STA rot_sqcv1h+1                        ; (rot_core_cosv_nz, 2026-07-27)
-   STA rot_sqcv2l+1
-   STA rgp_cmag+1                          ; the fused pair's cos staging
+   LDX zp_br_cone
+   BEQ :+
+   LDA #32
+:  STA rwp_m2+1
+   STA rwp_s2l+1
+   STA rwp_s2h+1
+   STA rwp_m3+1
+   STA rwp_s3l+1
+   STA rwp_s3h+1
+; sign opcodes: terms 1/4 follow sin, term 3 follows cos, term 2 is
+; INVERTED cos (the -cos in vx)
+   LDX #$18
+   LDY #$65                                ; positive: CLC / ADC zp
+   LDA zp_br_sneg
+   BEQ rwp_sp
+   LDX #$38
+   LDY #$E5                                ; negative: SEC / SBC zp
+rwp_sp:
+   STX rwp_o1s
+   STX rwp_o4s
+   TYA
+   STA rwp_o1l
+   STA rwp_o1h
+   STA rwp_o4l
+   STA rwp_o4h
+   LDX #$18
+   LDY #$65
    LDA zp_br_cneg
-   STA rot_gen_cos+5
-   STA rgp_cneg+1
-   LDA #<rot_gen_cos
-   LDX #>rot_gen_cos
-cos_have:
-   STA rot_s2+1                            ; (rot_s3 died in the pair fusion)
-   STX rot_s2+2
-   STA rot_s2w+1                           ; V16 twin
-   STX rot_s2w+2
-   STA rpt_jmp+1                           ; thunk cos target
-   STX rpt_jmp+2
-; --- pair-site select: general sin AND general cos -> the fused
-; variant; anything else -> the thunk (runs the two selected variants
-; back to back; +3 cycles, axis-aligned frames only). ---
-   LDA rot_s4+1
-   CMP #<rot_gen_sin
-   BNE psel_thunk
-   LDA rot_s4+2
-   CMP #>rot_gen_sin
-   BNE psel_thunk
-   LDA rot_s2+1
-   CMP #<rot_gen_cos
-   BNE psel_thunk
-   LDA rot_s2+2
-   CMP #>rot_gen_cos
-   BNE psel_thunk
-   LDA #<rot_gen_pair
-   LDX #>rot_gen_pair
-   BNE psel_have                           ; (hi never 0 — always taken)
-psel_thunk:
-   LDA #<rot_pair_thunk
-   LDX #>rot_pair_thunk
-psel_have:
-   STA rot_s13+1
-   STX rot_s13+2
-   STA rot_s13w+1                          ; V16 twin
-   STX rot_s13w+2
+   BEQ rwp_cp
+   LDX #$38
+   LDY #$E5
+rwp_cp:
+   STX rwp_o3s
+   TYA
+   STA rwp_o3l
+   STA rwp_o3h
+; term 2 = inverted cos sign
+   LDX #$38
+   LDY #$E5
+   LDA zp_br_cneg
+   BEQ rwp_ci
+   LDX #$18
+   LDY #$65
+rwp_ci:
+   STX rwp_o2s
+   TYA
+   STA rwp_o2l
+   STA rwp_o2h
+; --- PB tables: ANGLE-GATED (RAM state, reload-proof) ---
+   LDA PB_VALID
+   BEQ rwp_build                           ; boot: scratch page zero-ground
+   LDA bca_ab
+   CMP PB_PREV_AB
+   BNE rwp_build
+   JMP rwd_dispatch                        ; tables current: still patch
+                                           ; the body JSRs below
+rwp_build:
+   LDA bca_ab
+   STA PB_PREV_AB
+   LDA #1
+   STA PB_VALID
+; --- contrib tables: Ts[k] = (k-2)*256*sin_signed, Tc[k] likewise ---
+; entry layout: lo/hi interleaved (k*2). (k-2) in {-2,-1,0,+1}:
+; T[2]=0, T[3]=+m<<8, T[1]=-(m<<8), T[0]=-(m<<9); sign flips all.
+; EFFECTIVE mags: the stagers encode unity as (mag=0, one=1) — the
+; tables want 32 there (Eben's unity/zero catch, 2026-08-11).
+   LDA zp_br_smag
+   LDX zp_br_sone
+   BEQ :+
+   LDA #32
+:  LDX zp_br_sneg
+   LDY #0
+   JSR rwp_contrib                         ; -> PB_TS (A=mag, X=neg, Y=off)
+   LDA zp_br_cmag
+   LDX zp_br_cone
+   BEQ :+
+   LDA #32
+:  LDX zp_br_cneg
+   LDY #8                                  ; dest offset: PB_TC = PB_TS+8
+   JSR rwp_contrib
+; --- the 16 combines: PB_X[pg] = Ts[pgx] - Tc[pgy],
+;                      PB_Y[pg] = Tc[pgx] + Ts[pgy] ---
+   LDX #15
+rwp_pg:
+   TXA
+   AND #3
+   ASL A
+   TAY                                     ; Y = pgx*2
+   LDA PB_TS,Y
+   STA zp_br_t2                            ; Ts[pgx] lo
+   LDA PB_TS+1,Y
+   STA zp_br_t3
+   LDA PB_TC,Y
+   STA zp_ri_d_l                           ; Tc[pgx] lo
+   LDA PB_TC+1,Y
+   STA zp_ri_d_h
+   TXA
+   AND #$0C
+   LSR A
+   TAY                                     ; Y = pgy*2
+   SEC
+   LDA zp_br_t2
+   SBC PB_TC,Y
+   STA PB_XL,X
+   LDA zp_br_t3
+   SBC PB_TC+1,Y
+   STA PB_XH,X
+   CLC
+   LDA zp_ri_d_l
+   ADC PB_TS,Y
+   STA PB_YL,X
+   LDA zp_ri_d_h
+   ADC PB_TS+1,Y
+   STA PB_YH,X
+   DEX
+   BPL rwp_pg
+rwd_dispatch:
+; --- body dispatch (Eben's unity/zero catch): cardinal epochs (one
+; trig ZERO, the other UNITY at mag5 scale) swap the whole body so the
+; zero muls never run and unity is a splice. Patch the five rot-w JSR
+; sites + the chosen cardinal body's sign ops. ---
+   LDA zp_br_sone
+   BEQ rwd_notsu
+   LDA zp_br_cmag
+   ORA zp_br_cone
+   BEQ rwd_su                              ; sin unity AND cos TRUE ZERO
+rwd_notsu:
+   LDA zp_br_cone
+   BEQ rwd_gen
+   LDA zp_br_smag
+   ORA zp_br_sone
+   BEQ rwd_cu                              ; cos unity AND sin TRUE ZERO
+rwd_gen:
+   LDA #<rot_w_pages
+   LDX #>rot_w_pages
+   BNE rwd_patch                           ; (hi never 0: always)
+rwd_su:
+; sin = +-32, cos = 0: both terms follow sin's sign
+   LDX #$18
+   LDY #$65
+   LDA zp_br_sneg
+   BEQ :+
+   LDX #$38
+   LDY #$E5
+:  STX rwc_s1s
+   STX rwc_s2s
+   TYA
+   STA rwc_s1l
+   STA rwc_s1h
+   STA rwc_s2l
+   STA rwc_s2h
+   LDA #<rwp_card_su
+   LDX #>rwp_card_su
+   BNE rwd_patch
+rwd_cu:
+; cos = +-32, sin = 0: vx term = INVERTED cos sign (-c*oy), vy = +c*ox
+   LDX #$38
+   LDY #$E5
+   LDA zp_br_cneg
+   BEQ :+
+   LDX #$18
+   LDY #$65
+:  STX rwc_c1s
+   TYA
+   STA rwc_c1l
+   STA rwc_c1h
+   LDX #$18
+   LDY #$65
+   LDA zp_br_cneg
+   BEQ :+
+   LDX #$38
+   LDY #$E5
+:  STX rwc_c2s
+   TYA
+   STA rwc_c2l
+   STA rwc_c2h
+   LDA #<rwp_card_cu
+   LDX #>rwp_card_cu
+rwd_patch:
+   STA sxv0_rwpa+1
+   STX sxv0_rwpa+2
+   STA sxv0_rwpb+1
+   STX sxv0_rwpb+2
+   STA sxv1_rwpa+1
+   STX sxv1_rwpa+2
+   STA sxv1_rwpb+1
+   STX sxv1_rwpb+2
+   STA cr_rwp+1
+   STX cr_rwp+2
+   STA vf_rwp+1
+   STX vf_rwp+2
 inl_end:
 .endscope
 .endmacro
+

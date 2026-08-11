@@ -105,7 +105,6 @@ def test_recip():
 
 
 ENTRY_BR_VIEW_SETUP = _sym('br_view_setup')
-ENTRY_BR_TO_VIEW    = _sym('br_to_view')
 
 # zp slots (linked equates; hi bytes are lo+1)
 ZP_PX    = _sym('zp_br_px');    ZP_PXH  = ZP_PX + 1
@@ -174,60 +173,33 @@ def test_view_setup():
 
 
 def test_to_view():
-    """Compare 6502 (vx, vy) for sample vertices against fp_to_view."""
+    """Position-path check (rot_w_pages era, 2026-08-11): br_to_view
+    died — the ref is built by vxc_frame through the SAME page-
+    decomposed rotate as vertices. Validate the staged vxc_ref
+    against the mirror: ref_c = rns(ref_88, 3)."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
-    # Pick a player state and a few sample vertices.
-    vx88, vy88, ab = 0x0500, -0x0300, 32
-    sc_tuple = fp.fp_sincos(ab)
-    ctx = fp.fp_view_context(vx88, vy88, sc_tuple)
-
-    # Apply view setup.
-    write_view_state(mem, vx88, vy88, sc_tuple)
-    sc._run(ENTRY_BR_VIEW_SETUP)
-
-    cases = [(10, 10), (-30, 50), (100, -100), (0, 0), (5, -5)]
+    cases = [(0x0500, -0x0300, 32), (0x1234, -0x0500, 64),
+             (-0x0080, 0x0080, 200), (0x2F00, -0x1D00, 7)]
     fail = 0
-    for wx, wy in cases:
-        # New s16 ZP layout: dxlo=$0F, dxhi=$35, dylo=$10, dyhi=$36
-        mem[0x0F] = wx & 0xFF
-        mem[0x35] = (wx >> 8) & 0xFF
-        mem[0x10] = wy & 0xFF
-        mem[0x36] = (wy >> 8) & 0xFF
-        sc._run(ENTRY_BR_TO_VIEW)
-        got_vx = s16_from_zp(mem, ZP_VXLO)
-        got_vy = s16_from_zp(mem, ZP_VYLO)
-        # br_to_view is the POSITION path (ref staging) — V16 moved the
-        # per-vertex compute to q64(rot(w)) + ref (fp_to_view mirrors
-        # THAT), so the expected value here is built from _rot_int
-        # directly: rot(w - p_int) + fracs, the unchanged old formula.
-        px_int, py_int, _, frac_vx, frac_vy = ctx[:5]
-        dx = (wx - px_int) & 0xFF
-        dy = (wy - py_int) & 0xFF
-        # Use the Python helpers that compute integer parts.
-        from fp import _rot_int
-        s_mag, s_neg, s_one, c_mag, c_neg, c_one = sc_tuple
-        d_dx = wx - px_int
-        d_dy = wy - py_int
-        t_dx_sin = _rot_int(d_dx, s_mag, s_neg, s_one)
-        t_dy_cos = _rot_int(d_dy, c_mag, c_neg, c_one)
-        t_dx_cos = _rot_int(d_dx, c_mag, c_neg, c_one)
-        t_dy_sin = _rot_int(d_dy, s_mag, s_neg, s_one)
-        int_vx = t_dx_sin - t_dy_cos
-        int_vy = t_dx_cos + t_dy_sin
-        # COUNT-NATIVE (2026-08-10): br_to_view returns rot5 = the 8.8
-        # rotation sum / 8 EXACTLY (5-bit mags are multiples of 8); the
-        # count fracs are added by vxc_frame, not here.
-        want_vx = int_vx >> 3
-        want_vy = int_vy >> 3
-        ok = got_vx == want_vx and got_vy == want_vy
+    for vx88, vy88, ab in cases:
+        sc_tuple = fp.fp_sincos(ab)
+        write_view_state(mem, vx88, vy88, sc_tuple)
+        mem[_sym('bca_ab')] = ab & 0xFF
+        sc._run(ENTRY_BR_VIEW_SETUP)
+        rx = _sym('vxc_ref_x'); ry = _sym('vxc_ref_y')
+        got_x = s16_from_zp(mem, rx)
+        got_y = s16_from_zp(mem, ry)
+        ctx = fp.fp_view_context(vx88, vy88, sc_tuple)
+        want_x = fp.rns(ctx[5], 3)
+        want_y = fp.rns(ctx[6], 3)
+        ok = got_x == want_x and got_y == want_y
         if not ok:
             fail += 1
-            print(f"  FAIL to_view(wx={wx:+4d} wy={wy:+4d}): "
-                  f"got=(vx={got_vx:+6d} vy={got_vy:+6d}), "
-                  f"want=(vx={want_vx:+6d} vy={want_vy:+6d})")
+            print(f"  FAIL ref(vx={vx88:5X} vy={vy88:5X} a={ab}): "
+                  f"got=({got_x},{got_y}) want=({want_x},{want_y})")
         else:
-            print(f"  OK   to_view(wx={wx:+4d} wy={wy:+4d}) vx={got_vx:+6d} vy={got_vy:+6d}")
+            print(f"  OK   ref(a={ab:3d}) = ({got_x:+6d},{got_y:+6d})")
     return fail
 
 
@@ -389,7 +361,7 @@ if __name__ == '__main__':
     f3 = test_recip()
     print("== br_view_setup ==")
     f4 = test_view_setup()
-    print("== br_to_view ==")
+    print("== position ref (rot_w_pages) ==")
     f5 = test_to_view()
     print("== br_project_x ==")
     f6 = test_project_x()

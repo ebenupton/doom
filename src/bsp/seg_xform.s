@@ -69,7 +69,7 @@
 ; the crossing's post-div restore) each break banked when removed,
 ; consumer unidentified; see vh_pgx).
 ; ============================================================================
-.macro SXV_BODY pg, vfoff, vxcon
+.macro SXV_BODY pg, vfoff, vxcon, rwpa, rwpb
 .scope
 ; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
 ; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
@@ -137,20 +137,21 @@ vmiss:
    JMP (zp_vf_vec1)
 .endif
 ::vfoff:
-; TRUE16 plain fetch: stage the VERTEX verbatim, pure-rotate (the vq3
-; tail leaves s16 counts), then the same 16-bit ref add as vxq_add.
-; Bit-identical to the cached path by construction: every tier
-; computes base_c + ref_c.
+; TRUE16 plain fetch: stage the PAGE-DECOMPOSED vertex (unsigned u8
+; offsets + senior nibble, 2026-08-11), rotate via the epoch-selected
+; body (SMC site — general/cardinal), then the same 16-bit ref add as
+; vxq_add. Bit-identical to the cached path by construction: every
+; tier computes base_c + ref_c.
    PAGE BANK_L2                            ; vert planes live in L2
    LDY zp_seg_v_idx_l
-   LDA VP_YLO+pg,Y
+   LDA VP_OX+pg,Y
+   STA zp_ri_d_l
+   LDA VP_OY+pg,Y
    STA zp_br_dy_l
-   LDA VP_YHI+pg,Y
-   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
-   LDX VP_XLO+pg,Y                         ; wx rides the REGISTER ABI:
-   LDA VP_XHI+pg,Y                         ; X = lo, A = raw hi, N = sign —
-                                           ; NOTHING may touch flags before
-   JSR rot_w_signed                        ; the JSR; s16 count base in (l,h)
+   LDA VP_PG+pg,Y
+   STA zp_ri_d_h                           ; page nibble
+::rwpa:
+   JSR rot_w_pages                         ; SMC: rot_select picks the body
    CLC
    LDA zp_br_vx_l
    ADC vxc_ref_x+0
@@ -296,15 +297,16 @@ vs_cold:
    LDA VXC_VALID,X
    ORA zp_seg_v_bitm
    STA VXC_VALID,X
-; birth: fetch + pure rotate; the vq3 tail leaves s16 counts in (l,h)
+; birth: page-decomposed fetch + the epoch-selected rotate body
    LDY zp_seg_v_idx_l
-   LDA VP_YLO+pg,Y
+   LDA VP_OX+pg,Y
+   STA zp_ri_d_l
+   LDA VP_OY+pg,Y
    STA zp_br_dy_l
-   LDA VP_YHI+pg,Y
-   STA zp_br_dy_h                          ; sign-magnitude hi (core resolves)
-   LDX VP_XLO+pg,Y                         ; wx rides the REGISTER ABI:
-   LDA VP_XHI+pg,Y                         ; X = lo, A = raw hi, N = sign
-   JSR rot_w_signed                        ; s16 count base in (l,h)
+   LDA VP_PG+pg,Y
+   STA zp_ri_d_h                           ; page nibble
+::rwpb:
+   JSR rot_w_pages                         ; SMC: rot_select picks the body
    LDY zp_seg_v_idx_l
    LDA zp_br_vx_l
    STA VXC_XLO+pg,Y                        ; birth store: counts verbatim
@@ -345,9 +347,9 @@ vxq_add:
 ; test piggybacks); these are two complete side-baked routines with NO
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
-   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon      ; tried 2026-07-27: the ~370 pad
+   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon, sxv0_rwpa, sxv0_rwpb ; (pad note: 2026-07-27)
 ::sx_vert_hi:                              ; bytes overflow BOTH regions —
-   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon   ; unaligned round-2 form kept)
+   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon, sxv1_rwpa, sxv1_rwpb
 
 ; (vxc_store_tail deleted 2026-08-09 — birth store inlined per side in
 ;  the vxcon islands, side baked)
