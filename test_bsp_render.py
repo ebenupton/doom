@@ -203,7 +203,6 @@ def test_to_view():
     return fail
 
 
-ENTRY_BR_PROJECT_X = _sym('br_project_x')   # by symbol — jt offsets shift
 ENTRY_BR_PROJECT_Y = _sym('br_project_y')  # paged entry retired 2026-07-26: zero callers; naked contract = A = h
 
 
@@ -221,86 +220,54 @@ def _rns_reselect(sc, mem):
     mem[_sym('rns_go_op')] = mem[_sym('rns_vec_l') - 1 + mem[0x1B]]
 
 def test_project_x():
-    """fp_project_x (narrow): vx, vx_frac, (M8, S) → sx. Dense sweep:
-    every S band × full-range vx (s8) × frac corners."""
+    """br_project_x_c (the ONLY X projector since the classic entry +
+    px_shrink were proven unreachable and deleted, 2026-08-11): input
+    is s16 COUNTS in vx_l/vx_h; sx = 128 + rns((c<<3)*m9, S+8). The
+    entry selects its own net kernel — no pre-select needed."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     cases = []
     for vy_idx in _IDX_SWEEP:
         rh, rl = fp.fp_recip(vy_idx)
-        for vx in range(-128, 128, 7):
-            for vx_frac in [0, 1, 127, 128, 255]:
-                cases.append((vx, vx_frac, rh, rl))
+        for c in range(-16384, 16385, 971):
+            cases.append((c, rh, rl))
     fail = 0
-    ZP_XINT, ZP_XEXT, ZP_XFRAC = _sym('zp_br_vx_h'), _sym('zp_br_vx_x'), _sym('zp_br_vx_l')
-    for vx, vx_frac, rh, rl in cases:
-        mem[ZP_XINT] = vx & 0xFF
-        mem[ZP_XEXT] = 0xFF if vx < 0 else 0   # narrow: ext = sign extension
-        mem[ZP_XFRAC] = vx_frac
-        mem[0x1A] = rh               # zp_br_r_m8 (M8)
-        mem[0x1B] = rl               # zp_br_r_s (S)
-        _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
-        sc._run(ENTRY_BR_PROJECT_X)
-        got = s16_from_zp(mem, 0x17)
-        want = fp.fp_project_x(vx, vx_frac, rh, rl)
-        ok = got == want
-        if not ok:
-            fail += 1
-            if fail <= 5:
-                print(f"  FAIL project_x(vx={vx}, frac={vx_frac}, M8={rh:02X}, S={rl}): "
-                      f"got={got}, want={want}")
-    if fail == 0:
-        print(f"  OK   project_x: {len(cases)} cases pass")
-    else:
-        print(f"  ... {fail}/{len(cases)} failed")
-    return fail
-
-
-def test_project_x_wide():
-    """br_project_x shrink dispatch: s16 view-x beyond s8, bit-exact vs
-    the fp_project_x mirror (X88 >>= 1 with S-- until s8; S floors at 1)."""
-    sc = SpanClip6502()
-    mem = sc.mpu.memory
-    ZP_XINT = _sym('zp_br_vx_h')
-    ZP_XEXT = _sym('zp_br_vx_x')
-    ZP_XFRAC = _sym('zp_br_vx_l')
-    ENTRY_AUTO = ENTRY_BR_PROJECT_X          # unified entry dispatches itself
-    cases = []
-    for vy_idx in [1, 2, 5, 17, 65, 200, 513, 1023]:   # 1 -> S=1: deficit arm
-        rh, rl = fp.fp_recip(vy_idx)
-        for vx in [-32768, -3000, -300, -129, -128, 127, 128, 300, 3000, 32767]:
-            for vx_frac in [0, 128, 255]:
-                # engine domain: net shift >= -2 (k <= S+2). Beyond it the
-                # shrink would index off rns_vec_all — excluded by design.
-                X88, k = vx * 256 + vx_frac, 0
-                while not (-128 <= (X88 >> 8) <= 127):
-                    X88 >>= 1; k += 1
-                if k > rl + 2:
-                    continue
-                cases.append((vx, vx_frac, rh, rl))
-    fail = 0
-    for vx, vx_frac, rh, rl in cases:
-        mem[ZP_XINT] = vx & 0xFF
-        mem[ZP_XEXT] = (vx >> 8) & 0xFF
-        mem[ZP_XFRAC] = vx_frac
+    ZP_CL, ZP_CH = _sym('zp_br_vx_l'), _sym('zp_br_vx_h')
+    E_C = _sym('br_project_x_c')
+    for c, rh, rl in cases:
+        mem[ZP_CL] = c & 0xFF
+        mem[ZP_CH] = (c >> 8) & 0xFF
         mem[0x1A] = rh
         mem[0x1B] = rl
-        _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
-        sc._run(ENTRY_AUTO)
-        got = mem[0x17] | (mem[0x18] << 8)
-        want = fp.fp_project_x(vx, vx_frac, rh, rl) & 0xFFFF
+        sc._run(E_C)
+        got = mem[_sym('zp_br_res_l')] | (mem[_sym('zp_br_res_l')+1] << 8)
+        # EXACT reference (fp_project_x would take its SHRINK path for
+        # wide X88 and truncate — _c never shrinks): b123 = floor(c*m9
+        # / 256) by the narrow-body identity, then the net = S-3 kernel:
+        # RN for net >= 1, pure shift (mod 2^16, the wide contract) for
+        # net <= 0.
+        m9 = 256 + rh
+        P = (c * m9) >> 8
+        net = rl - 3
+        if net >= 1:
+            r = (P + (1 << (net - 1))) >> net
+        else:
+            r = P << -net
+        want = (128 + r) & 0xFFFF
         ok = got == want
         if not ok:
             fail += 1
-            if fail <= 5:
-                print(f"  FAIL project_x_wide(vx={vx}, frac={vx_frac}, M8={rh:02X}, S={rl}): "
-                      f"got={got:04X}, want={want:04X}")
-    if fail == 0:
-        print(f"  OK   project_x_wide: {len(cases)} cases pass")
-    else:
-        print(f"  ... {fail}/{len(cases)} failed")
+            if fail < 6:
+                print(f"  FAIL project_x_c(c={c}, m8={rh}, s={rl}): got={got} want={want}")
+    print(f"  {'OK  ' if not fail else 'FAIL'} project_x_c: {len(cases)-fail}/{len(cases)} cases pass")
     return fail
 
+
+# (test_project_x_wide DELETED 2026-08-11: it exercised the px_shrink
+# dispatch, whose domain — s16 integer view-x parts — is empty by
+# construction under count-native totals; the shrink was proven
+# unreachable and removed. br_project_x_c's full-range counts sweep in
+# test_project_x covers the live projector.)
 
 def _has_sym(name):
     try:
@@ -368,7 +335,7 @@ if __name__ == '__main__':
     print("== br_project_y ==")
     f7 = test_project_y()
     print("== br_project_x (wide) ==")
-    f8 = test_project_x_wide()
+    f8 = 0   # test_project_x_wide deleted (shrink domain empty)
     total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
     print()
     if total == 0:

@@ -30,49 +30,12 @@
 ;   Clobbers zp_br_t2, zp_br_a/b, mul workspace.
 ; ============================================================================
 .scope
-px_shrink:
-; s16 view-x (cold; INLINED above the entry 2026-07-13 so the hot
-; dispatch below falls straight through and this block is in BNE
-; range). Halve the 8.8 X88, dropping the exponent per step, until the
-; integer part fits s8 — err <= |vx|/(256*vy) px (corpus max 0.008px).
-; The NET SHIFT (S minus shifts taken) is tracked in X as an index
-; into rns_vec_all, bias +3: X = net+3 in [1,13]. net >= -2 is a DOMAIN
-; PRECONDITION, not a runtime clamp (map diagonal 672 wu -> k <= 3;
-; S >= 1 — a violating input indexes garbage; the harness respects the
-; domain). zp_br_r_s is written ONLY
-; on the rns24 arm (net in [1,4], the one kernel that reads it; unseen
-; in corpus): every other arm patches rns_go_op straight from the ONE
-; ordered table and TAIL-CALLS the narrow body — no S restore, no
-; re-select, no register reload. A stale rns_go_op between projections
-; is fine BY the rlo-writer invariant: every dispatcher selects before
-; its dispatch. Net<1 = the no-round kernels rns_s0/sm1/sm2 ('right
-; magnitude on the shrink's truncation grid', per Eben).
-   LDX zp_br_r_s
-   INX
-   INX
-   INX                                     ; X = net+3 (starts at S+3)
-ps_loop:
-   DEX
-ps_shift:
-   LDA zp_br_vx_x
-   CMP #$80                                ; arithmetic >>1 of the s24 X88
-   ROR zp_br_vx_x
-   ROR zp_br_vx_h
-   ROR zp_br_vx_l
-   LDA zp_br_vx_h
-   ASL A
-   LDA zp_br_vx_x
-   ADC #0
-   BNE ps_loop
-; --- dispatch the net shift and tail-call the narrow body ---
-; (single flat arm since 2026-08-10: EVERY net in [-2,10] has a baked
-; kernel — the ps_rns24 save/restore dance died with the rns_s1..s4
-; bake; no arm writes r_s, so the TRUE S survives for the y-stage.)
-ps_patch:
-   LDA rns_vec_all-1,X
-   STA rns_go_op
-   JMP px_narrow                           ; tail-call: narrow's RTS + REG
-                                        ; contract return to the caller
+; (px_shrink + ps_patch + the classic br_project_x entry DELETED
+; 2026-08-11, unreachability PROVEN analytically (see the commit):
+; no symbolic refs, no fall-through, no SMC vector's value set
+; contains them; s16 int parts cannot occur under count-native
+; totals, so the shrink's domain is empty by construction.)
+
 ; TRUE16 counts entry (2026-08-10): input = s16 view COUNTS in
 ; zp_br_vx_l/h (vx_x is DEAD — the narrow body derives sign from the
 ; hi byte and never reads the ext). Exact identity:
@@ -105,13 +68,7 @@ px_frac_z:
    STA zp_br_t2                            ; A = 0 (the BEQ's operand)
    JMP px_no_frac
 
-::br_project_x:
-   LDA zp_br_vx_h
-   ASL A                                   ; C = sign bit of xint
-   LDA zp_br_vx_x
-   ADC #0                                  ; 0 iff xext == sign extension
-   BNE px_shrink                           ; cold (in range: block above);
-px_narrow:                                  ; hot path FALLS THROUGH
+px_narrow:                                  ; entered by br_project_x_c only
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
 .if ::C02
    STZ zp_br_res_l
@@ -800,25 +757,20 @@ rns_s10:
 ; 2026-07-12 so all six kernel entries share the JMP hi byte; its
 ; rns_half rounding-constant tables stay in resolve_crossing.s.)
 ; ============================================================================
-rns24:
-   JMP rns24_body                          ; page-fence trampoline (cold
-                                           ; since the baked s1..s4: only
-                                           ; the go-vector DEFAULT lands
-                                           ; here — every live select
-                                           ; patches a baked kernel first)
-.assert >rns_s6 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s7 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s8 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s9 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s10 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s0 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_sm1 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_sm2 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s5 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s1 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s2 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s3 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
-.assert >rns_s4 = >rns24, error, "RNS kernels must share one page (1-byte SMC)"
+; (rns24 DELETED 2026-08-11 — unreachable, proven: no table entry
+;  selects it and every rns_go dispatch is select-dominated.)
+.assert >rns_s6 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s7 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s9 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s10 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s0 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_sm1 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_sm2 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s5 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s1 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s2 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s3 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s4 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 
 rns_go:
    CLC                                     ; hoisted from every kernel: all
@@ -831,7 +783,11 @@ rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
                                         ; here — NEVER rns_go+1, that is
                                         ; the JMP opcode (the CLC above
                                         ; shifted the encoding, 2026-07-13)
-   JMP rns24                               ; operand LO byte = live shifter
+   JMP rns_s8                              ; operand LO byte = live shifter
+                                        ; (power-on default: PROVEN never
+                                        ; executed — every dispatch is
+                                        ; select-dominated; rns_s8 is an
+                                        ; arbitrary live kernel)
                                         ; (SMC by the inlined selects; the
                                         ; HI byte is CONSTANT — all kernel
                                         ; entries share one 256-byte
@@ -897,36 +853,6 @@ rns_sm2_body:
    LDA zp_br_t2
    STA zp_br_res_l
    RTS
-rns24_body:
-.scope
-; Generic loop kernel — UNREACHABLE from live selects since the baked
-; s1..s4 (2026-08-10); kept as the go-vector's power-on default and a
-; safety net for any stale-select bug (the rlo-writer invariant makes
-; that a bug, not a path). Result lands one byte LOW: shuffle at exit.
-   CLC                                     ; (trampolined arrivals kept
-   LDX zp_br_r_s                           ;  rns_go's C=0; re-seed anyway)
-   LDA rns_half_l-1,X
-   ADC zp_br_t2
-   STA zp_br_t2
-   BCC rn_enter
-   INC zp_br_res_l
-   BNE rn_enter
-   INC zp_br_res_h
-rn_enter:
-   LDA zp_br_res_h                         ; ride b2 in A: its shifted
-rn_rloop:                                  ; value is dead at exit (the
-   CMP #$80                                ; shuffle overwrites res_h)
-   ROR A
-   ROR zp_br_res_l
-   ROR zp_br_t2
-   DEX
-   BNE rn_rloop
-   LDA zp_br_res_l
-   STA zp_br_res_h
-   LDA zp_br_t2
-   STA zp_br_res_l
-   RTS
-.endscope
 
 
 SEG_CODE
