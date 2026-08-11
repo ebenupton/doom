@@ -354,13 +354,26 @@ inl_end:
 ; rot machinery: rot_w_pages + its cardinal twins are the only rotate
 ; bodies, and everything below is angle-gated.)
 ; --- PAGE-DECOMPOSED w-path (Eben's concept, 2026-08-11): mag + sign
-; + body-dispatch SMC patches run EVERY FRAME (~90 cyc): they live in
-; CODE, and harness/loader flows can reload the code image under a
-; persistent scratch page — an angle-gated patch then skips against a
-; stale-valid gate (the compare_traversal setup_wad bite, 2026-08-11).
-; Only the PB TABLE build (RAM, survives reloads) is angle-gated.
+; + body-dispatch SMC patches + the PB table build, ALL gated on
+; (rwp_stamp == $A5 AND angle unchanged). The stamp lives IN THE CODE
+; IMAGE (assembled 0), so any code reload self-invalidates the gate —
+; the every-frame-patch tax this replaced existed only for the
+; harness reload case (Eben's catch: real game cost for testbench
+; convenience). Standing/translation frames pay ~20 cyc here.
 ; Signs: vx = PB_X +sgn(s) P1 -sgn(c) P2; vy = PB_Y +sgn(c) P3
 ; +sgn(s) P4 — CLC/ADC ($18/$65) vs SEC/SBC ($38/$E5) opcode pairs. ---
+   LDA rwp_stamp
+   CMP #$A5
+   BNE rwp_repatch                         ; fresh/reloaded code image
+   LDA bca_ab
+   CMP PB_PREV_AB
+   BNE rwp_repatch                         ; new epoch
+   JMP inl_end
+rwp_repatch:
+   LDA bca_ab
+   STA PB_PREV_AB
+   LDA #$A5
+   STA rwp_stamp
 ; mags: sin -> muls 1/4, cos -> muls 2/3 (operand + both table bases).
 ; EFFECTIVE values: unity stages as (mag=0, one=1) but mag5 unity = 32
 ; FITS the u8 quarter-square (sqr index <= 255+32) — the general body
@@ -426,19 +439,9 @@ rwp_ci:
    TYA
    STA rwp_o2l
    STA rwp_o2h
-; --- PB tables: ANGLE-GATED (RAM state, reload-proof) ---
-   LDA PB_VALID
-   BEQ rwp_build                           ; boot: scratch page zero-ground
-   LDA bca_ab
-   CMP PB_PREV_AB
-   BNE rwp_build
-   JMP rwd_dispatch                        ; tables current: still patch
-                                           ; the body JSRs below
-rwp_build:
-   LDA bca_ab
-   STA PB_PREV_AB
-   LDA #1
-   STA PB_VALID
+; --- PB tables (same gate: a rebuild here is rare and cheap enough
+; to ride the patch path even when only the code image was reloaded —
+; the tables are recomputed from the same staged trig) ---
 ; --- contrib tables: Ts[k] = (k-2)*256*sin_signed, Tc[k] likewise ---
 ; entry layout: lo/hi interleaved (k*2). (k-2) in {-2,-1,0,+1}:
 ; T[2]=0, T[3]=+m<<8, T[1]=-(m<<8), T[0]=-(m<<9); sign flips all.

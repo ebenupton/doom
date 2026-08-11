@@ -137,7 +137,8 @@ PB_YH = $06B0
 PB_TS = $06C0                           ; epoch-build scratch: (k-2)*256*sin
 PB_TC = $06C8                           ; (k-2)*256*cos — 4 s16 each
 PB_PREV_AB = $06D0                      ; angle the tables were built for
-PB_VALID = $06D1                        ; 0 = tables/patches stale (boot)
+; ($06D1 free again 2026-08-11: PB_VALID died — validity rides
+;  rwp_stamp IN THE CODE IMAGE, so code reloads self-invalidate)
 
 ; NODE_SOA comes from layout.inc (NODE_SOA_C): banked = L0 window head,
 ; flat = $B600 (the hole the retired FHCH stream vacated 2026-07-11 —

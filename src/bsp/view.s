@@ -292,6 +292,15 @@ s1h: LDA sqr_h,X                           ; +1 SMC = mag5
    STA dsth
 .endmacro
 
+; rwp_stamp — the SMC-validity stamp, IN THE CODE IMAGE (Eben's
+; testbench-tax catch, 2026-08-11): assembled 0, written $A5 when
+; rot_select applies the mag/sign/dispatch patches. Any flow that
+; reloads the code image (harness setup_wad, a future loader) resets
+; it to 0, so the epoch gate self-invalidates — no per-frame patching,
+; no harness protocol, no stale-gate class.
+rwp_stamp:
+   .byte 0
+
 rot_w_pages:
 ; P1 = ox*|sin| -> rs, P2 = oy*|cos| -> res
    RWP_MUL zp_ri_d_l, ::rwp_m1, ::rwp_s1l, ::rwp_s1h, zp_rs_l, zp_rs_h
