@@ -8,7 +8,7 @@ frame is currently on the stack:
   VERTEX  = br_seg_xform_vertex / reproject_at_crossing (per-seg vertex xform)
   CLIP    = span_clip jump-table entries (mark_solid/tighten/has_gap/is_full/
             draw_clipped_line/clip_line_records/tighten_from_records/...)
-  RASTER  = NJ linedraw backend ($A900-$B55F), by PC range
+  RASTER  = NJ linedraw backend (flat $7500 home), by PC range
   BSP     = everything else (walk + node setup + bbox visibility + bv_* +
             the rotation cache + the recip/projection primitives used for
             bbox corners + the seg-processor glue)

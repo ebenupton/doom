@@ -355,7 +355,7 @@ REC_VERDICT_BELOW = 2
 ; driver stores the back-buffer page; the Python harness sets it in
 ; flat tests).
 .if ::BANKED
-RASTER_ENTRY = $A900                    ; bank C window
+RASTER_ENTRY = $A800                    ; bank C window (down a page 2026-08-11: unrolled steep)
 .else
 RASTER_ENTRY = $7500                    ; flat: above-line (2026-08-09 —
                                         ; the $2000-$29FF exception DIED;

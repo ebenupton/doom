@@ -14,7 +14,10 @@ ORG &7500                       \ flat: above-line (2026-08-09 full sub-22K
                                 \ alignment — $2000-$2BFF is the shared
                                 \ driver reservation now)
 ELSE
-ORG &A900                       \ banked: the bank C window home
+ORG &A800                       \ banked: bank C window home (down a page
+                                \ 2026-08-11: VEXPL_CONT vacated $A800 for
+                                \ the unrolled steep core; budget $A800-
+                                \ $B3FF, VPLOTC above at $B400)
 ENDIF
 
 ; ZP interface (must match the engine's zp map):
@@ -36,7 +39,13 @@ ls = &86
 b = &87
 
 HAMILTONIAN_12 = TRUE
-STEEP_COMPACT = TRUE
+IF FLATORG
+STEEP_COMPACT = TRUE            \ flat: compact loops (blob must fit $7500-
+                                \ $7FFF; steep is ~1% of suite pixels)
+ELSE
+STEEP_COMPACT = FALSE           \ banked: unrolled steep restored 2026-08-11
+                                \ (-3.01 cyc/px measured; fits the $A800 home)
+ENDIF
 HAMILTONIAN_23 = FALSE
 
 INCLUDE "raster/nj-linedraw4-or.asm"
@@ -48,5 +57,5 @@ ENDIF
 IF FLATORG
 SAVE "linedraw_or_flat.bin", &7500, P%
 ELSE
-SAVE "linedraw_or_reloc.bin", &A900, P%
+SAVE "linedraw_or_reloc.bin", &A800, P%
 ENDIF

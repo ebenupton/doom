@@ -421,7 +421,10 @@ RECIP_M8 = $D500                        ; flat LEVEL block (2026-07-21 map)
 VDESC      = $A500                      ; bank C (verticals run under C;
 VEXPL_LO   = $A700                      ; moved from $B200/$B400 2026-07-27
 VEXPL_HI   = $A760                      ; — the vplot unrolled column owns
-VEXPL_CONT = $A800                      ; $B200-$BFFF now)
+VEXPL_CONT = $9600                      ; moved from $A800 2026-08-11 (the
+                                        ; unrolled-steep blob starts $A800;
+                                        ; $9600 = clipper headroom, guarded
+                                        ; in banked_bsp)
 .else
 VDESC      = $DC00                      ; flat TABLES block
 VEXPL_LO   = $DE00

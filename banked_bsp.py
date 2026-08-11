@@ -6,7 +6,7 @@ the banked_mem.py $FE30 model.
 Strategy: build a flat BspRender6502 (loads all tables + code at flat addrs),
 copy its 64K into a BankedMemory, then patch the banked deltas:
   - ROM_MAIN (verts/nodes/ss/seg_hdr) -> bank L0 @ $8000; ZP ptrs -> $8000+off
-  - clipper (span_clip_bankc.bin) + rasteriser -> bank C @ $8000/$A900
+  - clipper (span_clip_bankc.bin) + rasteriser -> bank C @ $8000/$A800
   - sqr tables -> low RAM $1C00 (banked clipper/bsp umul8 read them there)
   - bsp_render code -> the *_bk.bin variants (PAGE inserts + $80xx clip entries)
 Everything else (recip/bbox/angle subsystem/vcache) stays flat (above the
@@ -24,7 +24,8 @@ import abi
 BANK_L0, BANK_C, BANK_L2 = abi.BANK_L0, abi.BANK_C, abi.BANK_L2
 FHCH_LOW = 0x2400
 SQR_LOW = abi.SQR_BASE
-RASTER_OFF = 0xA900            # rasteriser window addr in bank C
+RASTER_OFF = 0xA800            # rasteriser window addr in bank C
+RASTER_BUDGET = 0x0C00         # $A800-$B3FF (VPLOTC at $B400)
 
 
 def _w16(mem, addr, val):
@@ -77,13 +78,14 @@ def build_banked(flatr):
     c = bytearray(16384)
     clip = open('span_clip_bankc.bin', 'rb').read()
     c[:len(clip)] = clip
-    rast = open('linedraw_or_reloc.bin', 'rb').read()      # ORG $A900
+    rast = open('linedraw_or_reloc.bin', 'rb').read()      # ORG $A800
+    assert len(rast) <= RASTER_BUDGET, f'rasteriser {len(rast)} bytes overruns VPLOTC at $B400'
     roff = RASTER_OFF - 0x8000
     c[roff:roff + len(rast)] = rast
     # VXC fat paths -> bank C @ $A300 (planes are BSS at $9700-$A2D3; the
     # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
     # define_bank: it COPIES the image into a fresh buffer.
-    assert len(clip) <= 0x1700, f'clipper {len(clip)} bytes reaches VXC planes at $9700'
+    assert len(clip) <= 0x1600, f'clipper {len(clip)} bytes reaches VEXPL_CONT at $9600'
     # (VXCODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
@@ -93,13 +95,13 @@ def build_banked(flatr):
     for i, d in enumerate(dw.vspan_desc):
         c[0x2500 + i] = d                # VDESC @ $A500 (moved 2026-07-27)
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
-        c[0x2700 + i] = lo & 0xFF        # VEXPL @ $A700/$A760/$A800
+        c[0x2700 + i] = lo & 0xFF        # VEXPL @ $A700/$A760 (+cont $9600)
         c[0x2760 + i] = hi & 0xFF
-        c[0x2800 + i] = 1 if cont else 0
+        c[0x1600 + i] = 1 if cont else 0   # VEXPL_CONT @ $9600 (2026-08-11)
     # unrolled vertical plot columns + tables ($B200-$BFFF, cfg VPLOTC)
     vp = open('engine_vplot_bankc.bin', 'rb').read()
-    assert len(vp) <= 0x0E00, f'vplot {len(vp)} bytes overruns bank C'
-    c[0x3200:0x3200 + len(vp)] = vp
+    assert len(vp) <= 0x0C00, f'vplot {len(vp)} bytes overruns bank C'
+    c[0x3400:0x3400 + len(vp)] = vp   # VPLOTC @ $B400 (2026-08-11)
     bm.define_bank(BANK_C, c)
 
     # (FHCH moved into bank L0 2026-07-10 — level data out of main, $2400-$33xx freed for code)
