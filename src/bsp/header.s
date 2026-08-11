@@ -13,8 +13,81 @@
 ; --- CPU target: every builder MUST pass -D C02=0 (plain 6502) or -D C02=1
 ;     (enable 65C02 opcodes). STZ/INC A/PHX/etc are gated on C02 throughout. ---
 .if ::C02
-.setcpu "65C02"
+.setcpu "65C02"                            ; ca65 2.18: this CPU already
+                                           ; includes the Rockwell bit ops
+                                           ; BBS/BBR (newer cc65 moved them
+                                           ; to "W65C02").
+                                           ; (SMB/RMB unused so far). REAL-HW
+                                           ; note: needs an R/W-class 65C02
+                                           ; (PiTubeDirect yes; vintage
+                                           ; NCR 65C02/65C102 may lack them).
 .endif
+
+; ROCKWELL: opt-in (DOOM_ROCKWELL=1). The Acorn CMOS parts our C02
+; builds ship to — the Master's 65C12 host and the vintage 65C102
+; copro — do NOT implement the Rockwell bit ops (jsbeeb Master boot
+; goes black on them, matching real silicon; measured 2026-08-11).
+; Only PiTubeDirect-class copros have them, so the default C02 build
+; stays portable and the BBS/BBR arm is an experiment flag.
+.ifndef ROCKWELL
+ROCKWELL = 0
+.endif
+
+; BR_BIT_SET/CLR bit, zpb, target — branch when the bit is set/clear.
+; C02+ROCKWELL: one Rockwell bit-branch (5 cyc, any bit, A PRESERVED).
+; Otherwise: LDA/AND #mask/branch (7.5 cyc, A = mask residue).
+; Callers must treat A as DEAD after either form.
+.macro BR_BIT_SET bit, zpb, target
+.if ::C02 && ::ROCKWELL
+   .if bit = 0
+   BBS0 zpb, target
+   .elseif bit = 1
+   BBS1 zpb, target
+   .elseif bit = 2
+   BBS2 zpb, target
+   .elseif bit = 3
+   BBS3 zpb, target
+   .elseif bit = 4
+   BBS4 zpb, target
+   .elseif bit = 5
+   BBS5 zpb, target
+   .elseif bit = 6
+   BBS6 zpb, target
+   .else
+   BBS7 zpb, target
+   .endif
+.else
+   LDA zpb
+   AND #(1 << bit)
+   BNE target
+.endif
+.endmacro
+
+.macro BR_BIT_CLR bit, zpb, target
+.if ::C02 && ::ROCKWELL
+   .if bit = 0
+   BBR0 zpb, target
+   .elseif bit = 1
+   BBR1 zpb, target
+   .elseif bit = 2
+   BBR2 zpb, target
+   .elseif bit = 3
+   BBR3 zpb, target
+   .elseif bit = 4
+   BBR4 zpb, target
+   .elseif bit = 5
+   BBR5 zpb, target
+   .elseif bit = 6
+   BBR6 zpb, target
+   .else
+   BBR7 zpb, target
+   .endif
+.else
+   LDA zpb
+   AND #(1 << bit)
+   BEQ target
+.endif
+.endmacro
 ; ZERO addr: zero a byte. 65C02 = STZ (A preserved); 6502 = LDA #0:STA (A
 ; clobbered) — only use where A is dead afterwards.
 .macro ZERO addr

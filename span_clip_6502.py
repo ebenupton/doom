@@ -11,6 +11,7 @@ import os
 _C02 = '1' if os.environ.get('DOOM_CPU', '').lower() in ('65c02', 'c02', '1') else '0'
 if _C02 == '1':
     from py65.devices.mpu65c02 import MPU
+    import py65_rockwell                   # C02 build uses BBS/BBR (class patch)
 else:
     from py65.devices.mpu6502 import MPU
 

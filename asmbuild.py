@@ -66,7 +66,11 @@ def build(asm, banked=0, c02=None, out=None, force=False):
         c02 = env_c02()
     c02 = int(c02)
     banked = int(banked)
-    key = ('engine', banked, c02)
+    # DOOM_ROCKWELL=1: experimental BBS/BBR C02 build (PiTubeDirect-class
+    # copros ONLY — the Master 65C12 / vintage 65C102 lack the Rockwell
+    # ops; see src/bsp/header.s). Not part of any shipped variant.
+    rw = int(os.environ.get('DOOM_ROCKWELL', '0') != '0')
+    key = ('engine', banked, c02, rw)
     if key in _built and _on_disk.get(banked) == c02 and not force:
         return ''
     # refuse to build with unallocated ZP declarations (name = ?) pending —
@@ -85,6 +89,7 @@ def build(asm, banked=0, c02=None, out=None, force=False):
         name = os.path.basename(src).replace('.s', '')
         obj = os.path.join(objdir, f'{name}_b{banked}c{c02}.o')
         text += _run(['ca65', '-g', '-D', f'C02={c02}', '-D', f'BANKED={banked}',
+                      '-D', f'ROCKWELL={rw}',
                       '-l', os.path.join(objdir, f'{name}_b{banked}c{c02}.lst'),
                       os.path.join(_ROOT, src), '-o', obj])
         objs.append(obj)

@@ -5,6 +5,7 @@ import asmbuild
 
 if asmbuild.env_c02():
     from py65.devices.mpu65c02 import MPU
+    import py65_rockwell                   # BBS/BBR (engine C02 build)
 else:
     from py65.devices.mpu6502 import MPU
 

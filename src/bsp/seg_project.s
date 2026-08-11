@@ -48,17 +48,13 @@
 backentry:
    BIT zp_seg_flags                        ; V = bit 6 = SF_SOLID (the hot
    BVS dpy_done                            ; flag rides BIT since 2026-08-11)
-   LDA zp_seg_flags
-   AND #$04
-   BEQ dpy_chk_bb
+   BR_BIT_CLR 2, zp_seg_flags, dpy_chk_bb  ; NEEDBT (C02: BBR2)
    LDA zp_seg_btop_dlt
    JSR br_project_y
    STA base+8
    STY base+7                              ; sy_btop
 dpy_chk_bb:
-   LDA zp_seg_flags
-   AND #$08
-   BEQ dpy_done
+   BR_BIT_CLR 3, zp_seg_flags, dpy_done    ; NEEDBB (C02: BBR3)
    LDA zp_seg_bbot_dlt
    JSR br_project_y
    STA base+10

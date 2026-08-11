@@ -30,6 +30,7 @@ from bsp_render_6502 import BspRender6502
 import symmap
 from py65.devices.mpu6502 import MPU
 from py65.devices.mpu65c02 import MPU as MPU_C02
+import py65_rockwell                      # BBS/BBR (engine C02 build)
 from py65.memory import ObservableMemory
 
 FRAMES = int(os.environ.get('TUBE_WALK_FRAMES', '30'))
