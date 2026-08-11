@@ -293,9 +293,9 @@ def green_rim_stroke(mask, pix, pal, w, h):
 
 # (sprite, frame, rotations, outline budget, stroke fn, label)
 ENEMIES = [
-    ("POSS", "A", 16, "Zombieman"),
-    ("SPOS", "A", 16, "Shotgun sergeant"),
-    ("TROO", "A", 18, "Imp"),
+    ("POSS", "A", 40, "Zombieman"),
+    ("SPOS", "A", 40, "Shotgun sergeant"),
+    ("TROO", "A", 40, "Imp"),
 ]
 OBJECTS = [
     ("BAR1", "A", 10, green_rim_stroke, "Exploding barrel"),
