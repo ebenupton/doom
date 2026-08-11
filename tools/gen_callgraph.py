@@ -50,6 +50,14 @@ MACRO_CALLERS = {
     'ap_edges':  ['bf_seg_front'],
 }
 
+# Internal labels whose span is SHARED by several routines (vs_go: the
+# vertical-serve tail — vs_fresh1 enters by branch-always LDX #0/BEQ,
+# vs_fresh2 by fall-through; neither entry is a JSR/JMP, and the label
+# is not a routine, so its calls belong to BOTH entries).
+SHARED_SPANS = {
+    'vs_go': ['vs_fresh1', 'vs_fresh2'],
+}
+
 owner, jsr_targets, alias = dict(MACRO_OWNERS), set(), {}
 for f in files:
     for ln in open(f):
@@ -81,7 +89,7 @@ extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss'
  'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
  'umul8','udiv16_8','interp_store','vf_plain0','vf_plain1','bca_frame','rc_wipe',
- 'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vs_go','vsx_do_c3',
+ 'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vsx_do_c3',
  'dcl_vert','dcl_vert_on','dcl_vertical',
  'reproject_at_crossing','br_recip','hud_draw',
  'corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp',
@@ -109,7 +117,9 @@ for f in files:
             continue
         m = label_re.match(code)
         if m:
-            if m.group(1) in routines:
+            if m.group(1) in SHARED_SPANS:
+                cur = SHARED_SPANS[m.group(1)]
+            elif m.group(1) in routines:
                 cur = m.group(1)
             code = m.group(2)
         if not cur:
@@ -129,11 +139,6 @@ vec = [('zp_bv_entry (vector)','bbox_check_angle'),
        ('rot_select (SMC)','rot_core_sin'),('rot_select (SMC)','rot_core_cos'),
        ('rot_select (SMC)','rot_gen_pair')]
 edges.add(('br_bbox_visible','zp_bv_entry (vector)','JMP'))
-# vs_go = the shared vertical-serve tail: vs_fresh1 enters by
-# branch-always (LDX #0/BEQ), vs_fresh2 by fall-through — neither is
-# visible to the JSR/JMP scan (2026-08-12, Eben's catch)
-edges.add(('vs_fresh1','vs_go','JMP'))
-edges.add(('vs_fresh2','vs_go','JMP'))
 for cp in ('corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp'):
     edges.add((cp,'zp_tail_vec (vector)','JMP'))
 edges = {(a,b,k) for a,b,k in edges if (a,b) not in [(x,y) for x,y in vec]}
