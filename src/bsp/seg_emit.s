@@ -122,9 +122,9 @@ ch_miss_a:                                 ; (B-differs falls in; A-differs
    STY zp_seg_ep                            ; v1 → struct VX1 (Y = 0)
    STY zp_ys_done                           ; prev-seg donation dies here
    STY zp_ys_v1ok
-   BR_BIT_SET 5, zp_seg_v_idx_b, sxv1_hi    ; side test at the CALLER
-                                        ; (2026-07-27 round 2; C02 BBS5
-                                        ;  2026-08-11 — senior: island above)
+   LDA zp_seg_v_idx_b                       ; side test at the CALLER
+   AND #$20                                 ; (2026-07-27 round 2)
+   BNE sxv1_hi                              ; senior: island above
    JSR sx_vert_lo
 sxv1_done:                                  ; (the old 'A = B at entry'
                                         ; contract is a FOSSIL: the entry
@@ -431,7 +431,9 @@ hgp_fwd:
 ; bch > ch portal-lip case draws ft with roles={0: TOP_RECORDS}.)
    BIT zp_seg_flags
    BVS ft_no_rec                           ; SOLID (V) → emit, no records
-   BR_BIT_CLR 2, zp_seg_flags, ft_no_needbt ; NEEDBT (C02: BBR2)
+   LDA zp_seg_flags
+   AND #$04
+   BEQ ft_no_needbt
 ; NEEDBT: emit only if ch > vz. FLIPPED + CMP (Eben, 2026-07-26): the
 ; old SEC/SBC materialized a diff nobody consumed and needed BMI+BEQ;
 ; testing vz - ch makes "skip" one BPL (vz >= ch, Z included). Same
@@ -488,7 +490,9 @@ ft_skip:
 ; (Exact mirror of the top-horizontal logic with floor/bottom roles.)
    BIT zp_seg_flags
    BVS fb_no_rec                           ; SOLID (V) → emit, no records
-   BR_BIT_CLR 3, zp_seg_flags, fb_no_needbb ; NEEDBB (C02: BBR3)
+   LDA zp_seg_flags
+   AND #$08
+   BEQ fb_no_needbb
 ; NEEDBB: emit only if fh < vz. FLIPPED + CMP (mirror of the ft test):
 ; skip iff fh >= vz = one BPL.
    LDA zp_seg_fh
@@ -535,7 +539,9 @@ step_cont:                              ;  pushed the branch out of range)
 ; bt is the new TOP of the aperture — populate TOP_RECORDS so the
 ; tighten_from_records call at end of seg has the right per-span
 ; verdict data. Matches Python's roles={yt_idx: TOP_RECORDS}.
-   BR_BIT_CLR 2, zp_seg_flags, step_no_top  ; NEEDBT (C02: BBR2)
+   LDA zp_seg_flags
+   AND #$04
+   BEQ step_no_top
    LDX #zp_seg_sy1_btop_l - VX1            ; sy pair offset (btop)
    LDA #>TOP_RECORDS
    STA zp_dcl_rec_buf_h
@@ -546,7 +552,9 @@ step_cont:                              ;  pushed the branch out of range)
 step_no_top:
 
 ; Back floor step if NEEDBB (= $08) set: emit (sx1, bb1) → (sx2, bb2).
-   BR_BIT_CLR 3, zp_seg_flags, step_no_bot  ; NEEDBB (C02: BBR3)
+   LDA zp_seg_flags
+   AND #$08
+   BEQ step_no_bot
    LDX #zp_seg_sy1_bbot_l - VX1            ; sy pair offset (bbot)
    LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
@@ -730,7 +738,9 @@ sa_done:
    LDA VX1+2                               ; column off-screen
    BNE f1_rts
    LDY zp_v1i_l
-   BR_BIT_SET 5, zp_v1i_b, f1_hi           ; senior plane (ids 256+)
+   LDA zp_v1i_b
+   AND #$20                                ; senior plane (ids 256+)
+   BNE f1_hi
    LDA VDESC,Y
    BNE f1_go
 f1_rts:
@@ -751,7 +761,9 @@ f1_go:
    LDA VX2+2                               ; sx_hi
    BNE f2_rts
    LDY zp_seg_v_idx_l
-   BR_BIT_SET 5, zp_seg_v_idx_b, f2_hi     ; senior plane
+   LDA zp_seg_v_idx_b
+   AND #$20
+   BNE f2_hi
    LDA VDESC,Y
    BNE f2_go
 f2_rts:
@@ -778,9 +790,9 @@ vs_go:                                      ; A = descriptor (nonzero),
    JSR vsx_do_c3
    LDX zp_vs_x
 vsx_c2:                                    ; bottom step: bbot -> bot,
-   BR_BIT_CLR 3, zp_seg_flags, vsx_rts     ; gated on NEEDBB (a solid or
-                                        ; stepless trigger self-annuls
-                                        ; the code — world bfh <= fh)
+   LDA zp_seg_flags                        ; gated on NEEDBB (a solid or
+   AND #$08                                ; stepless trigger self-annuls
+   BEQ vsx_rts                             ; the code — world bfh <= fh)
    LDA VX1+9,X
    STA zp_line_yl_l
    LDA VX1+10,X
@@ -808,7 +820,9 @@ vsx_emit:
    JMP SC_DCL_VERT_ON                      ; skip the senior-byte check)
 
 vsx_do_c3:                                 ; top step: top -> btop,
-   BR_BIT_CLR 2, zp_seg_flags, vsx_c3rts   ; gated on NEEDBT
+   LDA zp_seg_flags                        ; gated on NEEDBT
+   AND #$04
+   BEQ vsx_c3rts
    LDA VX1+3,X
    STA zp_line_yl_l
    LDA VX1+4,X

@@ -144,18 +144,15 @@ inl_end:
 
 .macro ap_edges
 .scope
-   BR_BIT_CLR 1, zp_seg_flags, ap_chk2     ; APEDGE1 = $02 since the SOLID
-                                        ; swap (cold path pays the test)
+   LDA zp_seg_flags                        ; APEDGE1 = $02 since the SOLID
+   AND #$02                                ; swap (cold path pays the AND)
+   BEQ ap_chk2
    LDX #0                                  ; v1 struct
    JSR ap_edge_one
 ap_chk2:
-.if ::C02 && ::ROCKWELL
-   BBR0 zp_seg_flags, ap_done              ; C = bit 0 = SF_APEDGE2
-.else
    LDA zp_seg_flags
    LSR A                                   ; C = bit 0 = SF_APEDGE2
    BCC ap_done
-.endif
    LDX #VX_STRIDE                          ; v2 struct
    JSR ap_edge_one                         ; tail call
    JMP inl_end
@@ -166,18 +163,16 @@ inl_end:
 
 .macro apv_stage
 .scope
-   BR_BIT_CLR 1, zp_seg_flags, as_chk2     ; APEDGE1 = $02 (see ap_edges)
+   LDA zp_seg_flags                        ; APEDGE1 = $02 (see ap_edges)
+   AND #$02
+   BEQ as_chk2
    LDX #0
    LDY #13                                 ; header +13 = apv1_fh (+12 ch)
    JSR as_one
 as_chk2:
-.if ::C02 && ::ROCKWELL
-   BBR0 zp_seg_flags, as_done              ; C = bit 0 = APEDGE2
-.else
    LDA zp_seg_flags
    LSR A                                   ; C = bit 0 = APEDGE2
    BCC as_done
-.endif
    LDX #VX_STRIDE
    LDY #15                                 ; header +15 = apv2_fh (+14 ch)
    JSR as_one                              ; tail call
