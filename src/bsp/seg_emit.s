@@ -390,8 +390,8 @@ ys_v1_full:
 ; Projects the per-seg heights through br_project_y (VWHC-memoised;
 ; h rides A in, Y = sy lo / A = sy hi out, Y_BIAS folded) into the
 ; endpoint struct's sy slots. Gating is output-identical: front pair
-; always; back pair only when NEEDBT/NEEDBB ($04/$08) gate it in and
-; the seg isn't SOLID ($40 — the BIT/V ride).
+; always; back pair only when NEEDBT/NEEDBB ($04/$08) gate it in (the
+; neither-test subsumes SOLID — the writers keep them exclusive).
    LDA zp_seg_top_dlt                       ; h rides A into the cache front
    JSR br_project_y                        ; -> Y = sy lo, A = sy hi
    STA VX1+4
@@ -401,19 +401,21 @@ ys_v1_full:
    STA VX1+6
    STY VX1+5                               ; sy_bot
 dpy1_back:
-   BIT zp_seg_flags                        ; V = bit 6 = SF_SOLID (the hot
-   BVS ys_v2                               ; flag rides BIT since 2026-08-11)
-   LDA zp_seg_flags
-   AND #$04
-   BEQ dpy1_chk_bb
+   LDA zp_seg_flags                        ; first test = NEITHER back proj
+   AND #$0C                                ; (subsumes SOLID: the baker and
+   BEQ ys_v2                               ;  anim worker keep SOLID and
+                                        ;  NEEDBT/NEEDBB exclusive, Eben's
+                                        ;  fold 2026-08-11)
+   AND #$04                                ; A still = flags & $0C
+   BEQ dpy1_bb                             ; no BT -> BB is GUARANTEED
    LDA zp_seg_btop_dlt
    JSR br_project_y
    STA VX1+8
    STY VX1+7                               ; sy_btop
-dpy1_chk_bb:
    LDA zp_seg_flags
    AND #$08
    BEQ ys_v2
+dpy1_bb:
    LDA zp_seg_bbot_dlt
    JSR br_project_y
    STA VX1+10
@@ -442,19 +444,19 @@ ys_v2:
    JSR br_project_y
    STA VX2+6
    STY VX2+5                               ; sy_bot
-   BIT zp_seg_flags
-   BVS dpy2_done                           ; SOLID: no back pair
-   LDA zp_seg_flags
-   AND #$04
-   BEQ dpy2_chk_bb
+   LDA zp_seg_flags                        ; NEITHER test subsumes SOLID
+   AND #$0C                                ; (see the v1 copy above)
+   BEQ dpy2_done
+   AND #$04                                ; A still = flags & $0C
+   BEQ dpy2_bb                             ; no BT -> BB is GUARANTEED
    LDA zp_seg_btop_dlt
    JSR br_project_y
    STA VX2+8
    STY VX2+7                               ; sy_btop
-dpy2_chk_bb:
    LDA zp_seg_flags
    AND #$08
    BEQ dpy2_done
+dpy2_bb:
    LDA zp_seg_bbot_dlt
    JSR br_project_y
    STA VX2+10
