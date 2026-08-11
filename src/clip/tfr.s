@@ -674,8 +674,11 @@ tfs_st_bot_done:
    CMP TOP_RECORDS,Y
 ; T.xr
    BCS tfs_top_dom_done                    ; cur >= xr: not dominating
-   STY TFS_TOP_DOM                         ; Y = cur+2 >= 3: any nonzero —
-                                        ; every reader is BNE/BEQ/ORA-BNE
+   DEC TFS_TOP_DOM                         ; 0 -> $FF (ZERO'd above): every
+                                        ; reader is BNE/BEQ/ORA-BNE, and
+                                        ; the advance gate ANDs the CURSOR
+                                        ; through it ($FF-transparent) —
+                                        ; keep this 0/$FF, not 0/1
 tfs_top_dom_done:
 
 ; ---- Determine bot_dom ----
@@ -690,7 +693,7 @@ tfs_top_dom_done:
    INY
    CMP BOT_RECORDS,Y
    BCS tfs_bot_dom_done
-   STY TFS_BOT_DOM                         ; Y = cur+2 >= 3 (mirror)
+   DEC TFS_BOT_DOM                         ; 0 -> $FF (mirror; see top)
 tfs_bot_dom_done:
 
 
@@ -926,10 +929,9 @@ tfs_advance_curs:
 ; Advance T_CUR if next_x crossed T.xr.
    LDA TFS_T_CUR
    BEQ tfs_skip_t_adv
-   LDA TFS_TOP_DOM
-   BEQ tfs_skip_t_adv
-   LDA TFS_T_CUR
-   CLC
+   AND TFS_TOP_DOM                         ; $FF-transparent: A stays CUR
+   BEQ tfs_skip_t_adv                      ; (0 iff not dominating) — the
+   CLC                                     ; reload died (2026-08-11)
    ADC #2
    TAY
    LDA TOP_RECORDS,Y
@@ -946,9 +948,8 @@ tfs_t_adv_ok:
 tfs_skip_t_adv:
    LDA TFS_B_CUR
    BEQ tfs_skip_b_adv
-   LDA TFS_BOT_DOM
+   AND TFS_BOT_DOM                         ; $FF-transparent (mirror)
    BEQ tfs_skip_b_adv
-   LDA TFS_B_CUR
    CLC
    ADC #2
    TAY

@@ -415,12 +415,11 @@ not_both_yneg2:
 not_both_ybig2:
 
 ; ---- If both y already in u8, skip y-clip ----
-   LDA zp_line_yl_h
-   BNE need_yclip
-   LDA zp_line_yr_h
-   BNE need_yclip
-   JMP y_in_range
-need_yclip:
+   LDA zp_line_yl_h                        ; OR-fused zero pair (2026-08-11,
+   ORA zp_line_yr_h                        ;  the vs_fresh idiom): both u8
+   BNE need_yclip                          ;  iff the OR is zero; A dead on
+   JMP y_in_range                          ;  both arms (y_in_range out of
+need_yclip:                                ;  BEQ range by 53 — measured)
 ; Re-snap originals to post-x-clip values; for y-clip, axes swap:
 ; OX* now holds the FREE axis (y), OY* the TARGET (x).
    LDA zp_line_yl_l
