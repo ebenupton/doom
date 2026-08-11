@@ -118,10 +118,11 @@ TAX
 ; Vertex planes (page-split SoA, 2026-07-15): 512 bytes per field,
 ; junior page idx 0-255, senior 256+ (select = header key B & $20).
 ; ROM_VERTS_C: flat $9C00 (planes end EXACTLY at SEL $A400), banked
-; L2 $A200 (end $A9FF; next resident RCACHE $AD00 — symmap-audited).
+; L2 $A200 (end $A7FF since the reclaim; next resident RCACHE $AD00).
 ; PAGE-DECOMPOSED vertex planes (Eben's concept, 2026-08-11): unsigned
-; u8 offsets + a senior-bits nibble; the +$600 slot is unused (kept so
-; the ROM layout doesn't shift — reclaim separately). See rot_w_pages.
+; u8 offsets + a senior-bits nibble — THREE planes, $600 total (the
+; 4th slot reclaimed same day: banked L2 $A800-$A9FF and flat
+; $B700-$B8FF freed). See rot_w_pages.
 VP_OX = ROM_VERTS_C + $000
 VP_OY = ROM_VERTS_C + $200
 VP_PG = ROM_VERTS_C + $400

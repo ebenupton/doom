@@ -31,7 +31,10 @@ ROM_BBOX_C    = $C500                   ; all contiguous
 NODE_SOA_C    = $B900
 ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
 .assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= ROM_VERTS_C, error, "DIR tables reach the vertex planes"
-.assert ROM_VERTS_C + $800 <= NODE_SOA_C, error, "flat vertex planes reach the node SoA"
+.assert ROM_VERTS_C + $600 <= NODE_SOA_C, error, "flat vertex planes reach the node SoA"
+; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
+;  page decomposition — flat frees $B700-$B8FF, banked frees
+;  $A800-$A9FF in L2, both now part of the pre-existing gaps)
 .endif
 .assert (ROM_BBOX_C & $FF) = 0, error, "bbox base must stay page-aligned"
 ; Bbox corner planes (16 x 256, page-split SoA): field at f*$200, side

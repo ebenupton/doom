@@ -220,7 +220,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     off_nodes = 0
     off_ss = NODE_SOA_PAGES * 256
     off_verts = NODE_SOA_SIZE
-    off_seg_hdr = off_verts + 0x800   # 4 page-split vertex planes (fixed)
+    off_seg_hdr = off_verts + 0x600   # 3 page-split vertex planes (OX/OY/PG
+                                      # — the 4th slot RECLAIMED 2026-08-11)
     # DIR tables tail the headers: 3 parallel u8 arrays, one entry per
     # distinct primitive diagonal direction (filled during the seg loop).
     _dirs = {}          # (dx', dy') -> id  (0-based; header stores id+4)
@@ -243,8 +244,6 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # rot(page_base) — 16 s16 pairs rebuilt per angle epoch — to the
     # four UNSIGNED u8 x mag5 products, whose combine signs are frame-
     # constant (trig signs only): the per-vertex sign ladders died.
-    # (The 4th plane slot at +$600 is currently UNUSED — kept so the
-    # ROM layout doesn't shift; reclaim separately.)
     # V16 RANGE ASSERT: base = rot(w) must fit s16 in 1/64 units for
     # EVERY angle; |rot(w)| <= hypot(w) (trig magnitudes <= 1), so
     # hypot(w) <= 32767/64 = 511.98 is sound over all angles.
