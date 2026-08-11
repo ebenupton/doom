@@ -256,6 +256,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # count rounding) = 833.98 units < 32767/32 = 1023.97. Update the
     # 320 if the walk clamp box ever grows.
     _PLAYER_MAX_HYPOT_UNITS = 320
+    # SQR_MIRROR rides the VXC senior-plane tail ($19E0-$19FF): the
+    # last usable senior vertex index is 479 (2026-08-11).
+    assert len(fp_vertexes) <= 480, "SQR_MIRROR needs the VXC plane tail free"
     for i, v in enumerate(fp_vertexes):
         assert v[0] * v[0] + v[1] * v[1] <= 511 * 511, \
             f"V16 base range: vertex {i} {v} exceeds s16 1/64-unit storage"

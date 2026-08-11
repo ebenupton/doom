@@ -364,11 +364,23 @@ inl_end:
 ; +sgn(s) P4 — CLC/ADC ($18/$65) vs SEC/SBC ($38/$E5) opcode pairs. ---
    LDA rwp_stamp
    CMP #$A5
-   BNE rwp_repatch                         ; fresh/reloaded code image
+   BNE rwp_fresh                           ; fresh/reloaded code image
    LDA bca_ab
    CMP PB_PREV_AB
    BNE rwp_repatch                         ; new epoch
    JMP inl_end
+rwp_fresh:
+; fresh image: ALSO (re)build the 32-byte SQR_MIRROR prefix below
+; sqr_l (boot zeroing / image reloads wipe it): SQR_MIRROR+k =
+; sqr_l[32-k] — f is even. Runs once per image, ~420 cyc.
+   LDX #31
+   LDY #1
+rwm_fill:
+   LDA sqr_l,Y
+   STA SQR_MIRROR,X
+   INY
+   DEX
+   BPL rwm_fill
 rwp_repatch:
    LDA bca_ab
    STA PB_PREV_AB
@@ -384,22 +396,50 @@ rwp_repatch:
    LDX zp_br_sone
    BEQ :+
    LDA #32
-:  STA rwp_m1+1
-   STA rwp_s1l+1
+:  STA rwp_s1l+1                           ; sum bases (page-aligned trick)
    STA rwp_s1h+1
-   STA rwp_m4+1
    STA rwp_s4l+1
    STA rwp_s4h+1
+   TAX                                     ; X = eff sin mag
+   LDA #0
+   SEC
+   SBC rwp_s1l+1                           ; A = (-mag) & 255: the diff-LO
+   STA rwp_d1l+1                           ; base lo (hi constant, mag>=1)
+   STA rwp_d4l+1
+   LDA #<(SQD_H+32)
+   SEC
+   STX zp_br_t2
+   SBC zp_br_t2
+   STA rwp_d1h+1
+   STA rwp_d4h+1
+   LDA #>(SQD_H+32)
+   SBC #0
+   STA rwp_d1h+2
+   STA rwp_d4h+2
    LDA zp_br_cmag
    LDX zp_br_cone
    BEQ :+
    LDA #32
-:  STA rwp_m2+1
-   STA rwp_s2l+1
+:  STA rwp_s2l+1
    STA rwp_s2h+1
-   STA rwp_m3+1
    STA rwp_s3l+1
    STA rwp_s3h+1
+   TAX
+   LDA #0
+   SEC
+   SBC rwp_s2l+1
+   STA rwp_d2l+1
+   STA rwp_d3l+1
+   LDA #<(SQD_H+32)
+   SEC
+   STX zp_br_t2
+   SBC zp_br_t2
+   STA rwp_d2h+1
+   STA rwp_d3h+1
+   LDA #>(SQD_H+32)
+   SBC #0
+   STA rwp_d2h+2
+   STA rwp_d3h+2
 ; sign opcodes: terms 1/4 follow sin, term 3 follows cos, term 2 is
 ; INVERTED cos (the -cos in vx)
    LDX #$18

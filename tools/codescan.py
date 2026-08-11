@@ -60,6 +60,7 @@ def scan_listing(path):
     banked = '_b1' in path
     run_start, run_len, run_byte = None, 0, None
     src_line = ''
+    prev_decl = False
     for raw in open(path, errors='replace'):
         m = line_re.match(raw.rstrip('\n'))
         if not m:
@@ -93,6 +94,12 @@ def scan_listing(path):
                       declared.split(':', 1)[1].lstrip().startswith(d))
                       for d in ('.byte', '.word', '.dbyt', '.addr', '.lobytes',
                                 '.hibytes'))
+        if not text:
+            # continuation row of a multi-line emission: inherit the
+            # declaring line's class (long zero .byte runs — e.g. the
+            # SQD_H even-extension table — are data, not filler)
+            is_decl = prev_decl
+        prev_decl = is_decl
         for b in octets:
             v = b
             if v in ('00', 'EA') and not is_decl:

@@ -274,21 +274,26 @@ fq_y_ok:
 ;   Callers: seg_xform vxcon cold + vfoff (both sides), lo.s cr_plain.
 ;   Clobbers: A, X, Y, zp_rs_l/h, zp_br_res_l/h.
 ; ============================================================================
-.macro RWP_MUL src, m, s1l, s1h, dstl, dsth
-   LDA src
-   TAX
-   SEC
-m: SBC #0                                  ; +1 SMC: mag5 (rot_select)
-   BCS :+
-   EOR #$FF
-   ADC #1
-:  TAY
+.macro RWP_MUL src, d1l, d1h, s1l, s1h, dstl, dsth
+; product = f(x+m) - f(x-m), BOTH sides single indexed loads (Eben's
+; <16 question flushed the |x-m| staging out; his reuse catch kept the
+; LO table shared, 2026-08-11): the sum side keeps the page-aligned
+; base+mag trick (1-byte poke). The diff LO side reads sqr_l ITSELF at
+; base sqr_l-mag — f is even and the 32-byte SQR_MIRROR prefix sits
+; directly below sqr_l, so negative differences land on mirrors; with
+; mag in 1..32 the operand hi byte is CONSTANT (>sqr_l - 1): 1-byte
+; poke. The diff HI side reads the dedicated SQD_H (sqr_h's prefix
+; bytes are live sqr_l entries): 2-byte poke. The SBC/branch/negate/
+; TAY staging died: ~-10 cyc/product. INVARIANT: the general body is
+; never dispatched with mag 0 (rot_select's cardinal classes own
+; those), so the borrow into the LO base's hi byte always happens.
+   LDX src
 s1l: LDA sqr_l,X                           ; +1 SMC = mag5 (base+mag trick)
    SEC
-   SBC sqr_l,Y
+d1l: SBC sqr_l-1,X                         ; +1 SMC = (-mag5) & 255
    STA dstl
 s1h: LDA sqr_h,X                           ; +1 SMC = mag5
-   SBC sqr_h,Y
+d1h: SBC SQD_H+32,X                        ; +1/+2 SMC = SQD_H+32-mag5
    STA dsth
 .endmacro
 
@@ -303,8 +308,8 @@ rwp_stamp:
 
 rot_w_pages:
 ; P1 = ox*|sin| -> rs, P2 = oy*|cos| -> res
-   RWP_MUL zp_ri_d_l, ::rwp_m1, ::rwp_s1l, ::rwp_s1h, zp_rs_l, zp_rs_h
-   RWP_MUL zp_br_dy_l, ::rwp_m2, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h
+   RWP_MUL zp_ri_d_l, ::rwp_d1l, ::rwp_d1h, ::rwp_s1l, ::rwp_s1h, zp_rs_l, zp_rs_h
+   RWP_MUL zp_br_dy_l, ::rwp_d2l, ::rwp_d2h, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h
 ; vx = PB_X[page] (+sin)P1 (-cos)P2 — op pairs SMC'd per frame
    LDX zp_ri_d_h                           ; page nibble
    LDA PB_XL,X
@@ -328,8 +333,8 @@ rot_w_pages:
    SBC zp_br_res_h
    STA zp_br_vx_h
 ; P3 = ox*|cos| -> rs, P4 = oy*|sin| -> res
-   RWP_MUL zp_ri_d_l, ::rwp_m3, ::rwp_s3l, ::rwp_s3h, zp_rs_l, zp_rs_h
-   RWP_MUL zp_br_dy_l, ::rwp_m4, ::rwp_s4l, ::rwp_s4h, zp_br_res_l, zp_br_res_h
+   RWP_MUL zp_ri_d_l, ::rwp_d3l, ::rwp_d3h, ::rwp_s3l, ::rwp_s3h, zp_rs_l, zp_rs_h
+   RWP_MUL zp_br_dy_l, ::rwp_d4l, ::rwp_d4h, ::rwp_s4l, ::rwp_s4h, zp_br_res_l, zp_br_res_h
 ; vy = PB_Y[page] (+cos)P3 (+sin)P4
    LDX zp_ri_d_h
    LDA PB_YL,X
@@ -414,6 +419,8 @@ rwp_card_cu:                               ; cos unity: vx from -oy, vy from ox
 ; 8 = PB_TC). Entries interleaved lo,hi at dest + k*2:
 ;   T[2] = 0, T[3] = +V, T[1] = -V, T[0] = -2V   with V = mag<<8,
 ; all negated when X != 0 (fold: swap the +/- roles).
+.include "sqd.inc"
+
 rwp_contrib:
 .scope
    STA zp_rs_h                             ; V = mag << 8: hi = mag, lo = 0
