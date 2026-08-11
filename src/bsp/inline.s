@@ -144,8 +144,9 @@ inl_end:
 
 .macro ap_edges
 .scope
-   BIT zp_seg_flags                        ; V = bit 6 = APEDGE1
-   BVC ap_chk2
+   LDA zp_seg_flags                        ; APEDGE1 = $02 since the SOLID
+   AND #$02                                ; swap (cold path pays the AND)
+   BEQ ap_chk2
    LDX #0                                  ; v1 struct
    JSR ap_edge_one
 ap_chk2:
@@ -162,8 +163,9 @@ inl_end:
 
 .macro apv_stage
 .scope
-   BIT zp_seg_flags                        ; V = bit 6 = APEDGE1
-   BVC as_chk2
+   LDA zp_seg_flags                        ; APEDGE1 = $02 (see ap_edges)
+   AND #$02
+   BEQ as_chk2
    LDX #0
    LDY #13                                 ; header +13 = apv1_fh (+12 ch)
    JSR as_one

@@ -40,25 +40,21 @@
    LDA zp_seg_top_dlt                       ; h rides A into the cache front
    JSR br_project_y                        ; -> Y = sy lo, A = sy hi
    STA base+4
-   TYA
-   STA base+3                              ; sy_top
+   STY base+3                              ; sy_top
    LDA zp_seg_bot_dlt
    JSR br_project_y
    STA base+6
-   TYA
-   STA base+5                              ; sy_bot
+   STY base+5                              ; sy_bot
 backentry:
-   LDA zp_seg_flags
-   AND #$02
-   BNE dpy_done                            ; solid: APV pairs are post-vis
+   BIT zp_seg_flags                        ; V = bit 6 = SF_SOLID (the hot
+   BVS dpy_done                            ; flag rides BIT since 2026-08-11)
    LDA zp_seg_flags
    AND #$04
    BEQ dpy_chk_bb
    LDA zp_seg_btop_dlt
    JSR br_project_y
    STA base+8
-   TYA
-   STA base+7                              ; sy_btop
+   STY base+7                              ; sy_btop
 dpy_chk_bb:
    LDA zp_seg_flags
    AND #$08
@@ -66,8 +62,7 @@ dpy_chk_bb:
    LDA zp_seg_bbot_dlt
    JSR br_project_y
    STA base+10
-   TYA
-   STA base+9                             ; sy_bbot
+   STY base+9                             ; sy_bbot
 dpy_done:
    RTS
 .endmacro

@@ -429,9 +429,8 @@ hgp_fwd:
 ; (Python: solid lines[] always includes ft; need_bt inserts ft only when
 ; ch > vz — the "secondary" front-ceiling above the bt step; the
 ; bch > ch portal-lip case draws ft with roles={0: TOP_RECORDS}.)
-   LDA zp_seg_flags
-   AND #$02
-   BNE ft_no_rec                           ; SOLID → emit, no records
+   BIT zp_seg_flags
+   BVS ft_no_rec                           ; SOLID (V) → emit, no records
    LDA zp_seg_flags
    AND #$04
    BEQ ft_no_needbt
@@ -489,9 +488,8 @@ ft_skip:
 ; Portal w/ NEEDBB:  iff fh < vz (face below eyeline, fb visible).
 ; Portal w/o NEEDBB: iff bfh < fh (back floor below front; step visible).
 ; (Exact mirror of the top-horizontal logic with floor/bottom roles.)
-   LDA zp_seg_flags
-   AND #$02
-   BNE fb_no_rec                           ; SOLID → emit, no records
+   BIT zp_seg_flags
+   BVS fb_no_rec                           ; SOLID (V) → emit, no records
    LDA zp_seg_flags
    AND #$08
    BEQ fb_no_needbb
@@ -531,9 +529,8 @@ fb_skip:
 
 ; --- Portal step edges (back ceiling / floor) ---
 ; Solid walls have no back sector — skip the step emits.
-   LDA zp_seg_flags
-   AND #$02
-   BEQ step_cont
+   BIT zp_seg_flags
+   BVC step_cont                           ; portal (SOLID clear)
 ; SF_SOLID set → skip steps
    JMP step_skip                           ; (trampoline: PAGE inserts
 step_cont:                              ;  pushed the branch out of range)
@@ -629,9 +626,8 @@ ms_lost:
 ; (clamp fixups relocated below ms_skip: the in-range path — every seg —
 ; falls straight through; the rare saturations pay the branch back)
 ms_dispatch:
-   LDA zp_seg_flags
-   AND #$02
-   BNE ms_solid_path
+   BIT zp_seg_flags
+   BVS ms_solid_path                       ; SOLID (V)
 ; --- Portal: apply the records tighten IMMEDIATELY (bank C is
 ;     guaranteed here — the emit-cascade audit — and the records are
 ;     LIVE in the records buffers: consumed in place, no snapshot).

@@ -87,12 +87,14 @@ SF_SAMEDIR = 0x80  # set when the seg runs WITH its linedef (bit INVERTED
                    # yields bit7 = FRONT directly, so the back-face sign
                    # tail is branchless (EOR flags / AND #$80 / RTS with
                    # the Z-contract). TOP bit so one EOR/BIT applies it.
-SF_SOLID  = 0x02   # one-sided wall
+SF_SOLID  = 0x40   # one-sided wall — bit 6 so the HOT test (1,670/
+                   # frame-corpus census 2026-08-11) is BIT->V, 5.5 cyc
 SF_NEEDBT = 0x04   # back ceiling < front ceiling
 SF_NEEDBB = 0x08   # back floor > front floor
 SF_NOVT1  = 0x10   # suppress vertical at v1 (BSP-internal split point)
 SF_NOVT2  = 0x20   # suppress vertical at v2 (BSP-internal split point)
-SF_APEDGE1 = 0x40  # emit aperture edge at v1 when NOVT1 suppresses the vertical
+SF_APEDGE1 = 0x02  # emit aperture edge at v1 when NOVT1 suppresses the
+                   # vertical (swapped with SOLID 2026-08-11: cold path)
 SF_APEDGE2 = 0x01  # emit aperture edge at v2 when NOVT2 suppresses the vertical
 
 # ── Vertex cache (RAM) ─────────────────────────────────────────────────

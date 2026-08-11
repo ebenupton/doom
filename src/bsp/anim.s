@@ -277,7 +277,7 @@ anim_bit2:
 ;   for each fhch addr: *addr = ANIM_VAL
 ;   for each flag entry:                       # packer's rules, post-patch
 ;     fh,ch,bfh,bch = quad[0..3]               # prescaled s8, SBC sign exact
-;     f = *hdr & ~(SOLID|NEEDBT|NEEDBB)        # & $F1
+;     f = *hdr & ~(SOLID|NEEDBT|NEEDBB)        # & $B3
 ;     if bch <= fh or bfh >= ch: f |= SOLID
 ;     else: if bch < ch: f |= NEEDBT ; if bfh > fh: f |= NEEDBB
 ;     *hdr = f
@@ -349,14 +349,14 @@ alw_gbody:
    INY
    LDA (zp_anim_w),Y
    STA alw_bch
-; flags = old & ~(SOLID|NEEDBT|NEEDBB) = old & ~$0E
+; flags = old & ~(SOLID|NEEDBT|NEEDBB) = old & ~$4C (SOLID=$40)
    LDA alw_hdr
    STA zp_anim_w
    LDA alw_hdr+1
    STA zp_anim_w+1
    LDY #0
    LDA (zp_anim_w),Y
-   AND #$F1
+   AND #$B3                                ; ~(SOLID|NEEDBT|NEEDBB)
    STA alw_f
 ; SOLID iff bch <= fh  or  bfh >= ch
    LDA alw_bch
@@ -388,7 +388,7 @@ alw_nobb:
    JMP alw_wf
 alw_solid:
    LDA alw_f
-   ORA #$02                                ; SF_SOLID
+   ORA #$40                                ; SF_SOLID
    STA alw_f
 alw_wf:
    LDA alw_f                               ; NEEDED: the BPL alw_nobb path
