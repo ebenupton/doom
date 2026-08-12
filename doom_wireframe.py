@@ -794,6 +794,64 @@ print(f"Page-slotted seg headers: {len(fp_segs_vwh)} → {len(_slotted)} "
 fp_segs_vwh = _slotted
 fp_segs = [svwh[0] for svwh in _slotted]
 fp_ssectors = _slotted_ss
+
+# ── Vertex renumbering: single-byte chain key (2026-08-13) ─────────────
+# Engine invariant: within any subsector no two vertices share an id LOW
+# byte, and no vertex id has low byte $FF (the chain-kill sentinel) — so
+# the v1 chain probe compares ONE byte.  New id space: 0..254 and
+# 256..454 (dummy hole at 255).  The 199 twin pairs (k, k+256) are
+# chosen non-adjacent in the subsector co-residence graph; 56 singles
+# fill lo 199..254.  Deterministic greedy; asserted below AND at pack.
+_n_old = len(fp_vertexes)
+_co = [set() for _ in range(_n_old)]
+for _cnt, _first in fp_ssectors:
+    _vs = set()
+    for _svwh in fp_segs_vwh[_first:_first + _cnt]:
+        _vs.add(_svwh[0][0]); _vs.add(_svwh[0][1])
+    for _a in _vs:
+        _co[_a] |= (_vs - {_a})
+_npairs = _n_old - 255
+_unpaired = set(range(_n_old))
+_tpairs = []
+for _a in sorted(range(_n_old), key=lambda v: (-len(_co[v]), v)):
+    if _a not in _unpaired:
+        continue
+    _cands = sorted(_unpaired - {_a} - _co[_a],
+                    key=lambda v: (len(_co[v]), v))
+    if _cands:
+        _tpairs.append((_a, _cands[0]))
+        _unpaired -= {_a, _cands[0]}
+    if len(_tpairs) == _npairs:
+        break
+assert len(_tpairs) == _npairs,     f"chain renumber: only {len(_tpairs)}/{_npairs} twin pairs found"
+_vperm = {}
+for _k, (_a, _b) in enumerate(_tpairs):
+    _vperm[_a] = _k
+    _vperm[_b] = _k + 256
+for _k, _a in enumerate(sorted(_unpaired)):
+    _vperm[_a] = _npairs + _k               # singles: lo 199..254
+assert len(_vperm) == _n_old and 255 not in _vperm.values()
+_new_fp = [(0, 0)] * (_n_old + 1)           # hole at 255: fp (0,0) = centre
+_new_raw = [(MAP_CENTER_X, MAP_CENTER_Y)] * (_n_old + 1)
+for _o, _nw in _vperm.items():
+    _new_fp[_nw] = fp_vertexes[_o]
+    _new_raw[_nw] = vertexes[_o]
+fp_vertexes = _new_fp
+vertexes = _new_raw
+fp_segs_vwh = [((_vperm[_svwh[0][0]], _vperm[_svwh[0][1]])
+                + tuple(_svwh[0][2:]),) + tuple(_svwh[1:])
+               for _svwh in fp_segs_vwh]
+fp_segs = [_svwh[0] for _svwh in fp_segs_vwh]
+linedefs = [(_vperm[_l[0]], _vperm[_l[1]]) + tuple(_l[2:])
+            for _l in linedefs]
+for _cnt, _first in fp_ssectors:            # the load-bearing invariant
+    _bylo = {}
+    for _svwh in fp_segs_vwh[_first:_first + _cnt]:
+        for _v in (_svwh[0][0], _svwh[0][1]):
+            assert (_v & 0xFF) != 0xFF
+            assert _bylo.setdefault(_v & 0xFF, _v) == _v,                 f"subsector lo-byte collision at ss first={_first}"
+print(f"Chain renumber: {_npairs} twin pairs + {_n_old - 2 * _npairs} "
+      f"singles -> {_n_old + 1} id slots (hole at 255)")
 # ── layout.inc drift gate (2026-07-10): the engine assembles against the
 # GENERATED constants in src/layout.inc; if the packed layout ever moves,
 # fail HERE (first harness import), never silently in the binary. ──
@@ -1329,11 +1387,11 @@ for _v, _sjs in _vs_groups.items():
         vspan_desc[_v] = 0x80 | _ix
 print(f"VSPANS: {sum(1 for d in vspan_desc if d)} vertices, "
       f"{len(vspan_expl)} explicit entries, {_vs_forced} mover-forced")
-# VDONE wipe bound (walk.s wipes bitmap bytes 0-47 only): every vertex
-# with a descriptor must have id < 384; higher ids may only ever carry
-# desc-0 marks, which legally persist across frames.
-assert max((_i for _i, _d in enumerate(vspan_desc) if _d), default=0) < 384, \
-    'VDONE wipe bound: desc!=0 vertex id >= 384 (widen the 48-byte wipe in walk.s)'
+# VDONE wipe bound (walk.s wipes 60 bitmap bytes = 480 ids — the old
+# 48-byte/ids<384 dependence died when the wipe widened): every vertex
+# with a descriptor must sit inside the wiped range.
+assert max((_i for _i, _d in enumerate(vspan_desc) if _d), default=0) < 480, \
+    'VDONE wipe bound: desc!=0 vertex id >= 480 (widen the 60-byte wipe in walk.s)'
 
 _vspan_done = set()
 

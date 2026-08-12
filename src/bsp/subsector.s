@@ -103,9 +103,10 @@ anim_ss_cont:
    STA zp_seg_bot_dlt                       ; bot_dlt = fh - vz
 ; Invalidate the vertex-chain key at the subsector boundary: chained
 ; front-sy reuse needs the SAME front heights, only guaranteed within
-; one subsector. B = idx>>3 <= 58, so $FF never matches a real B byte.
+; one subsector.  The chain compares the LO byte only (2026-08-13):
+; $FF matches no vertex (pack sentinel reservation).
    LDX #$FF
-   STX zp_seg_v_idx_b
+   STX zp_seg_v_idx_l
    INX
    STX zp_ys_done                           ; no cross-subsector sy donation
    STX zp_ys_v1ok

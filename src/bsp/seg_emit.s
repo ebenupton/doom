@@ -67,32 +67,31 @@
 ;       last_idx = hdr.v1_idx; transform v1 into VX1
 ;   transform v2 into VX2 (always)
 ;
-; The chain KEY is banked into zp_v1i_* AS IT IS READ — stage 7's v1
-; probe needs it after the v2 transform overwrites zp_seg_v_idx.
-; Compare order is B byte first (differs most often), Y walking 1 -> 0
-; so every arm lands with Y = 0 for the ep/ys resets.
+; The chain compare is ONE byte (2026-08-13): the packer guarantees no
+; two vertices of a subsector share an id low byte, and the key is
+; invalidated (lo := $FF, matched by no vertex) at subsector
+; boundaries and crossings — so lo equality PROVES identity, and the
+; hit arm recovers the B byte from the live key instead of the header.
+; The lo byte is banked into zp_v1i_l as it is read — stage 7's v1
+; probe needs the key after the v2 transform overwrites zp_seg_v_idx.
 ; The transform (br_seg_xform_vertex, seg_xform.s) is side-baked:
 ; sx_vert_lo / sx_vert_hi by bit 5 of the idx B byte (senior plane).
 ; It writes clip/sx/recip directly into the struct named by zp_seg_ep
 ; and exits in bank L2 on every path.
 ; ============================================================================
 ::bf_seg_front:
-   LDY #1
-   LDA (zp_seg_hdr_p),Y                    ; v1 idx B
-   STA zp_v1i_b
-   CMP zp_seg_v_idx_b
-   BNE chain_miss_b
 .if ::C02
-   LDA (zp_seg_hdr_p)                      ; v1 idx lo (non-indexed: the
-                                        ;  DEY died — the Y=0 consumers
-                                        ;  below fork to STZ)
+   LDA (zp_seg_hdr_p)                      ; v1 idx lo
 .else
-   DEY                                     ; Y = 0
+   LDY #0
    LDA (zp_seg_hdr_p),Y                    ; v1 idx lo
 .endif
    STA zp_v1i_l
-   CMP zp_seg_v_idx_l
-   BNE chain_miss_a
+   CMP zp_seg_v_idx_l                      ; ONE compare: lo equality
+   BNE chain_miss                          ; PROVES identity (pack invariant)
+   LDA zp_seg_v_idx_b                      ; B byte recovered from the live
+   STA zp_v1i_b                            ; key (same vertex — no header
+                                        ; read)
 ; --- chain hit: VX2 -> VX1, in place ---
 .scope
    LDA zp_seg_v2_clipped
@@ -133,27 +132,21 @@ hit_done:
 xform1_hi:                                 ; v1 senior-plane transform
    JSR sx_vert_hi
    JMP xform1_done
-chain_miss_b:                              ; B differs (Y = 1, v1i_b stored)
-   STA zp_seg_v_idx_b
+chain_miss:                                ; A = header lo (banked in v1i_l)
+   STA zp_seg_v_idx_l
 .if ::C02
-   LDA (zp_seg_hdr_p)                      ; non-indexed: the DEY died
-.else
-   DEY                                     ; Y = 0
-   LDA (zp_seg_hdr_p),Y
-.endif
-   STA zp_v1i_l
-chain_miss_a:                              ; lo differs (B already correct);
-   STA zp_seg_v_idx_l                      ; B-miss falls in with both v1i
-.if ::C02                                  ; bytes stored.  ep = 0: v1 -> VX1;
-   STZ zp_seg_ep                           ; any prev-seg donation dies here
-   STZ zp_ys_done
+   STZ zp_seg_ep                           ; ep = 0: v1 -> VX1; any prev-seg
+   STZ zp_ys_done                          ; donation dies here
    STZ zp_ys_v1ok
 .else
-   STY zp_seg_ep                           ; (Y = 0 throughout on NMOS)
+   STY zp_seg_ep                           ; (Y = 0 from the probe load)
    STY zp_ys_done
    STY zp_ys_v1ok
 .endif
-   LDA zp_seg_v_idx_b
+   LDY #1
+   LDA (zp_seg_hdr_p),Y                    ; v1 idx B
+   STA zp_v1i_b
+   STA zp_seg_v_idx_b
    AND #$20                                ; side test at the caller: the
    BNE xform1_hi                           ; transform is side-baked
    JSR sx_vert_lo
@@ -251,14 +244,14 @@ clip_v2:
    JSR reproject_at_crossing
    LDA #$80
    STA zp_seg_v_idx_b                      ; VX2 = the CROSSING, not the
-                                        ; vertex: kill the chain key.
-                                        ; MUST be $80, not $FF: the value
-                                        ; doubles as v2's VDONE probe
-                                        ; index in stage 7 — VDONE+$80
-                                        ; lands in the free $1B78-$1BFF
-                                        ; tail; $FF would read AND MARK
-                                        ; inside SQR_LO. Any value > 58
-                                        ; kills the chain CMP.
+                                        ; vertex.  B := $80 keeps stage
+                                        ; 7's VDONE probe in the free
+                                        ; $1B78-$1BFF sandbox ($FF would
+                                        ; read AND MARK inside SQR_LO).
+   LDA #$FF
+   STA zp_seg_v_idx_l                      ; lo := $FF kills the CHAIN (no
+                                        ; vertex has lo $FF — the pack
+                                        ; sentinel reservation)
    JMP clip_none
 
 ; --- stage-3 slow path: hi bytes differ (page-straddling seg) ---
