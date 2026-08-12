@@ -565,14 +565,8 @@ si_general:
    STA z:LC_M_R1                             ; A = prod_hi (umul8 contract)
    LDA z:zp_prod_l
    STA z:LC_M_R0
-.if ::C02
-   STZ LC_M_R2
-   STZ LC_M_R3
-.else
-   LDA #0
-   STA LC_M_R2
-   STA LC_M_R3
-.endif
+   ZERO LC_M_R2, LC_M_R3
+
 
 ; Fast paths: skip multiplies whose factor is zero.
    LDA z:LC_DY_HI
@@ -648,14 +642,8 @@ skip_p3_p4:
 m_r_nc:
 .scope
 
-.if ::C02
-   STZ z:LC_QUOT_LO
-   STZ z:LC_QUOT_HI
-.else
-   LDA #0
-   STA z:LC_QUOT_LO
-   STA z:LC_QUOT_HI
-.endif
+   ZERO z:LC_QUOT_LO, z:LC_QUOT_HI
+
 
 ; ---- Fast path: quotient fits u16 ----
 ; True iff top 16 bits of dividend < den. Pre-load rem = R3:R2 and
@@ -753,14 +741,8 @@ no_u16_quot:
 ; ---- Slow path: u32 ÷ u16 → up to u17 quotient ----
 ; (Rare for s16 clipper; kept for correctness.) Use byte-level skip
 ; + bit-level skip to trim no-op iterations.
-.if ::C02
-   STZ z:LC_REM_LO
-   STZ z:LC_REM_HI
-.else
-   LDA #0
-   STA z:LC_REM_LO
-   STA z:LC_REM_HI
-.endif
+   ZERO z:LC_REM_LO, z:LC_REM_HI
+
 ; Byte-level skip: while the top dividend byte (R3) is zero, shift the
 ; dividend left 8 bits in one move (R2->R3, R1->R2, R0->R1, 0->R0) and
 ; drop the iteration count by 8.  X = 32/24/16/8 iterations remaining.
@@ -781,29 +763,15 @@ no_u16_quot:
    STA LC_M_R3
    LDA z:LC_M_R1
    STA LC_M_R2
-.if ::C02
-   STZ z:LC_M_R0
-   STZ z:LC_M_R1
-.else
-   LDA #0
-   STA z:LC_M_R0
-   STA z:LC_M_R1
-.endif
+   ZERO z:LC_M_R0, z:LC_M_R1
+
    LDX #16
    LDA LC_M_R3
    BNE bit_skip
    LDA LC_M_R2
    STA LC_M_R3
-.if ::C02
-   STZ z:LC_M_R0
-   STZ z:LC_M_R1
-   STZ LC_M_R2
-.else
-   LDA #0
-   STA z:LC_M_R0
-   STA z:LC_M_R1
-   STA LC_M_R2
-.endif
+   ZERO z:LC_M_R0, z:LC_M_R1, LC_M_R2
+
    LDX #8
    LDA LC_M_R3
    BNE bit_skip

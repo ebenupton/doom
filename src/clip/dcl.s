@@ -779,8 +779,8 @@ dcl_cb_top_p1_ok:
    JSR interp_store
 dcl_cb_top_cy2_const:                      ; BEQ lands here with A = top1
    STA zp_cb_cy2
-   LDA #0                                  ; exit was through the TOP:
-   STA DCLV_RVY                            ; [cx2, orig ox1] pends 'above'
+   ZERO DCLV_RVY                           ; exit was through the TOP:
+                                        ; [cx2, orig ox1] pends 'above'
    JMP dcl_cb_top_done
 
 dcl_cb_top_clip:
@@ -1277,20 +1277,8 @@ dcl_yband_clip:
    STA LC_OY1_LO
    LDA zp_ox1
    STA LC_OY2_LO
-.if ::C02
-   STZ LC_OX1_HI
-   STZ LC_OX2_HI
-   STZ LC_OY1_HI
-   STZ LC_OY2_HI
-   STZ LC_TGT_HI                           ; hoisted from all 4 clip arms
-.else
-   LDA #0
-   STA LC_OX1_HI
-   STA LC_OX2_HI
-   STA LC_OY1_HI
-   STA LC_OY2_HI
-   STA LC_TGT_HI                           ; hoisted from all 4 clip arms
-.endif
+   ZERO LC_OX1_HI, LC_OX2_HI, LC_OY1_HI, LC_OY2_HI, LC_TGT_HI                          ; hoisted from all 4 clip arms
+
 ; --- Outcode census: X = #endpoints above band (y < Y_BIAS),
 ; Y = #endpoints below band (y > VIS_YMAX) ---
    LDX #0

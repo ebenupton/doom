@@ -70,12 +70,8 @@ px_frac_z:
 
 px_narrow:                                  ; entered by br_project_x_c only
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
-.if ::C02
-   STZ zp_br_res_l
-.else
-   LDA #0
-   STA zp_br_res_l
-.endif
+   ZERO zp_br_res_l
+
 ; (res_h zeroing DELETED 2026-07-26, py insight ported: on the narrow
 ; path b123 = vx*m9 with |vx| < 128, m9 <= 511 => |b123| < 65408 fits
 ; s16 — the ext byte is the PURE SIGN of the arm and each arm delivers

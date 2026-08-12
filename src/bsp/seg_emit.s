@@ -321,14 +321,8 @@ hg_query:
 hg_pass:
 ; Records reset for THIS seg (moved from seg_proc): ms_dispatch reads
 ; the counts only for segs that got here; armed draws re-init them.
-.if ::C02
-   STZ TOP_RECORDS                        ; counts (symbolic 2026-08-09:
-   STZ BOT_RECORDS                        ;  TOP moved to $0B00 for the
-.else                                     ;  VXC-planes-to-main shuffle)
-   LDA #0
-   STA TOP_RECORDS
-   STA BOT_RECORDS
-.endif
+   ZERO TOP_RECORDS, BOT_RECORDS                          ; counts (symbolic 2026-08-09:
+
 ; --- DEFERRED Y PROJECTION (2026-07-11): ALL sy pairs are projected
 ; HERE, only for segs that passed has_gap — the transform phase now
 ; computes evy/evx/clip/sx/recip only (measured 11.5k cyc/frame of
@@ -397,8 +391,7 @@ ysnb_v2:
 ys_done:
    LDA #1
    STA zp_ys_done                           ; this seg's VX2 sy is live for
-   LDA #0                                   ; the next seg's chain
-   STA zp_ys_v1ok
+   ZERO zp_ys_v1ok                          ; the next seg's chain
 ; (apv_stage RETIRED 2026-07-24: the APV overload died with the vertex-
 ;  span descriptors — solids' +12/+13 now carry the fh/ch alias)
 hgp_can:
@@ -670,8 +663,7 @@ ms_advance:
 ; brought (two-seg-old values: the 21-row wrong ft). Emitted segs
 ; cleared v1ok in the y stage; ONLY the cull arcs leaked. The backface
 ; arc (s_advance_l0) never touches the chain and must PRESERVE it.
-   LDA #0
-   STA zp_ys_v1ok
+   ZERO zp_ys_v1ok
 ; (no zp_seg_skip reset needed: the back-face test returns in A now, and
 ; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
 ; (zp_seg_first is NOT advanced per seg: its only reader is the subsector

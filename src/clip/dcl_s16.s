@@ -191,14 +191,8 @@ mcv_y1_cl:
 mcv_y1_neg:
    LDA zp_line_yr_h                        ; y1 above: y2 also above → out
    BMI mcv_rej
-.if ::C02
-   STZ zp_line_yl_l
-   STZ zp_line_yl_h
-.else
-   LDA #0
-   STA zp_line_yl_l
-   STA zp_line_yl_h
-.endif
+   ZERO zp_line_yl_l, zp_line_yl_h
+
 mcv_y1_done:
 ; clamp y2
    LDA zp_line_yr_h
@@ -215,14 +209,8 @@ mcv_y1_done:
    BEQ mcv_y2_done
 .endif
 mcv_y2_neg:
-.if ::C02
-   STZ zp_line_yr_l
-   STZ zp_line_yr_h
-.else
-   LDA #0
-   STA zp_line_yr_l
-   STA zp_line_yr_h
-.endif
+   ZERO zp_line_yr_l, zp_line_yr_h
+
 mcv_y2_done:
 ; clamped to a point (one end was AT the boundary) → reject, exactly
 ; as the generic post-clip degen check does
@@ -308,14 +296,8 @@ need_xclip:
 ; Else if x1 > 255, replace y1 with y at x=255; x1 = 255.
    LDA zp_line_xl_h
    BPL x1_not_neg
-.if ::C02
-   STZ LC_TGT_LO
-   STZ LC_TGT_HI
-.else
-   LDA #0
-   STA LC_TGT_LO
-   STA LC_TGT_HI
-.endif
+   ZERO LC_TGT_LO, LC_TGT_HI
+
    JSR s16_interp
 ; store the UNCLAMPED crossing Y (LC_RES), not the u8-clamped A: if the
 ; y-crossing at the x-boundary is itself out of [0,255] the later y-clip
@@ -325,14 +307,8 @@ need_xclip:
    STA zp_line_yl_l
    LDA LC_RES_HI
    STA zp_line_yl_h
-.if ::C02
-   STZ zp_line_xl_l
-   STZ zp_line_xl_h
-.else
-   LDA #0
-   STA zp_line_xl_l
-   STA zp_line_xl_h
-.endif
+   ZERO zp_line_xl_l, zp_line_xl_h
+
    JMP x1_done
 x1_not_neg:
    BEQ x1_done                             ; HI=0 → in u8 range, no clip
@@ -355,28 +331,16 @@ x1_done:
 ; same for x2
    LDA zp_line_xr_h
    BPL x2_not_neg
-.if ::C02
-   STZ LC_TGT_LO
-   STZ LC_TGT_HI
-.else
-   LDA #0
-   STA LC_TGT_LO
-   STA LC_TGT_HI
-.endif
+   ZERO LC_TGT_LO, LC_TGT_HI
+
    JSR s16_interp
 ; store UNCLAMPED crossing Y (see zp_line_yl_l note above).
    LDA LC_RES_LO
    STA zp_line_yr_l
    LDA LC_RES_HI
    STA zp_line_yr_h
-.if ::C02
-   STZ zp_line_xr_l
-   STZ zp_line_xr_h
-.else
-   LDA #0
-   STA zp_line_xr_l
-   STA zp_line_xr_h
-.endif
+   ZERO zp_line_xr_l, zp_line_xr_h
+
    JMP x2_done
 x2_not_neg:
    BEQ x2_done
@@ -442,26 +406,12 @@ need_yclip:                                ;  BEQ range by 53 — measured)
 ; y1 clip
    LDA zp_line_yl_h
    BPL y1c_not_neg
-.if ::C02
-   STZ LC_TGT_LO
-   STZ LC_TGT_HI
-.else
-   LDA #0
-   STA LC_TGT_LO
-   STA LC_TGT_HI
-.endif
+   ZERO LC_TGT_LO, LC_TGT_HI
+
    JSR s16_interp
    STA zp_line_xl_l
-.if ::C02
-   STZ zp_line_xl_h
-   STZ zp_line_yl_l                       ; A still 0
-   STZ zp_line_yl_h
-.else
-   LDA #0
-   STA zp_line_xl_h
-   STA zp_line_yl_l
-   STA zp_line_yl_h
-.endif
+   ZERO zp_line_xl_h, zp_line_yl_l, zp_line_yl_h                          ; A still 0
+
    LDA zp_dcl_rec_buf_h
    BEQ y1c_done
    LDA #0                                  ; [orig xl, xl] exited via TOP
@@ -486,28 +436,12 @@ y1c_done:
 ; y2 clip
    LDA zp_line_yr_h
    BPL y2c_not_neg
-.if ::C02
-   STZ LC_TGT_LO
-   STZ LC_TGT_HI
-.else
-   LDA #0
-   STA LC_TGT_LO
-   STA LC_TGT_HI
-.endif
+   ZERO LC_TGT_LO, LC_TGT_HI
+
    JSR s16_interp
    STA zp_line_xr_l
-.if ::C02
-   STZ zp_line_xr_h
-   STZ zp_line_yr_l                       ; A still 0...
-   STZ zp_line_yr_h
-   STZ DCLV_S16VY                         ; [xr, orig xr] exited via TOP:
-.else
-   LDA #0
-   STA zp_line_xr_h
-   STA zp_line_yr_l
-   STA zp_line_yr_h
-   STA DCLV_S16VY
-.endif
+   ZERO zp_line_xr_h, zp_line_yr_l, zp_line_yr_h, DCLV_S16VY                          ; A still 0...
+
                                         ; pend 0 (order: after walk recs)
    JMP y2c_done
 y2c_not_neg:

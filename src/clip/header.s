@@ -5,12 +5,42 @@
 .endif
 ; ZERO addr: zero a byte. 65C02 = STZ (A preserved); 6502 = LDA #0:STA (A
 ; clobbered) — only use where A is dead afterwards.
-.macro ZERO addr
+.macro ZERO a1, a2, a3, a4, a5, a6
 .if ::C02
-STZ addr
+STZ a1
+.ifnblank a2
+STZ a2
+.endif
+.ifnblank a3
+STZ a3
+.endif
+.ifnblank a4
+STZ a4
+.endif
+.ifnblank a5
+STZ a5
+.endif
+.ifnblank a6
+STZ a6
+.endif
 .else
    LDA #0
-   STA addr
+   STA a1
+.ifnblank a2
+   STA a2
+.endif
+.ifnblank a3
+   STA a3
+.endif
+.ifnblank a4
+   STA a4
+.endif
+.ifnblank a5
+   STA a5
+.endif
+.ifnblank a6
+   STA a6
+.endif
 .endif
 .endmacro
 

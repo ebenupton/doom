@@ -829,8 +829,9 @@ ct_il_z:
    LDA #0
    BEQ ct_il                               ; (always: A = 0)
 ct_r1out_r2f:
-   LDA #0                                  ; (R,F)/(L,F): the box wraps in
-   STA bca_ilo                             ; from the left edge — ilo = 0
+   ZERO bca_ilo                            ; (R,F)/(L,F): the box wraps in
+                                        ; from the left edge — ilo = 0
+                                        ; (visok reloads A from bca_ihi)
    JMP visok                               ; (bca_ihi stored at ct_ih)
 ct_r2out:
 ; A = r2 hi in [4,15]. X is free (the tail entry owns it):
@@ -1145,8 +1146,8 @@ ns_k255:
 ns_dy0:
    INX                                     ; |dy| = 0: ta = 0, axgt set
 ns_dx0:
-   LDA #0                                  ; zero-delta axis: ta = 0, so
-   STA pa_res                              ; psi = octant base EXACTLY in
+   ZERO pa_res                             ; zero-delta axis: ta = 0, so
+                                        ; psi = octant base EXACTLY in
    LDA pa_base_hi,X                        ; both sign conventions (base
    STA pa_res+1                            ; +/- 0) — skip the compose
    JMP mask_done                           ; (A = psi hi for the store)

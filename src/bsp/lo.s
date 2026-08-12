@@ -199,8 +199,7 @@ rp_recip:
 ; entries, and the select collapses to one absolute load of the S=1
 ; kernel vector. r_m8/r_s stores stay: r_s doubles as the VWHC rlo key
 ; and the rlo-writer invariant requires the true value.
-   LDA #0
-   STA zp_br_r_m8
+   ZERO zp_br_r_m8
    LDA #1
    STA zp_br_r_s                           ; (the hand kernel fold died: the
                                            ; counts projector selects itself)

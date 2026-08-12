@@ -168,9 +168,7 @@ ft_apply_neg:
 ft_done:
    RTS
 ft_zero:
-   LDA #0
-   STA zp_br_res_l
-   STA zp_br_res_h
+   ZERO zp_br_res_l, zp_br_res_h           ; (callers reload from res)
    RTS
 .endscope
 

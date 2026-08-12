@@ -199,8 +199,7 @@ at_notwb:
    STA ANIM_WS+0,Y
    LDA ANIM_CFG+1,X
    STA ANIM_WS+1,Y
-   LDA #$00
-   STA at_state
+   ZERO at_state
    LDA ANIM_CFG+6,X                        ; wait_at_A
    STA at_timer
    JMP at_done

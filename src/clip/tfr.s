@@ -438,14 +438,8 @@ tfr_do_sweep:
    ZERO zp_hg_cache
    LDA zp_head
    STA zp_old_cur
-.if ::C02
-   STZ zp_new_tail
-   STZ zp_head
-.else
-   LDA #0
-   STA zp_new_tail
-   STA zp_head
-.endif
+   ZERO zp_new_tail, zp_head
+
 ; Reset DCL's portal-continuation state ($FF = inactive) so the next
 ; draw_clipped_line starts clean. (Write-only from this module.)
    LDA #$FF

@@ -320,8 +320,9 @@ rc_s0:
    LDA NODE_DSGN,X
    LSR A                                   ; b0 -> C
    BCS r0_vis                              ; serve: verdict inherited (1)
-   LDA #0                                  ; side store sunk past the serve
-   STA zp_bbox_side                        ; branch (serves never read it)
+   ZERO zp_bbox_side                       ; side store sunk past the serve
+                                        ; branch (serves never read it;
+                                        ; bbox entry takes no A)
    JSR br_bbox_visible                     ; vector-dispatched (zp_bv_entry)
 .if ::BANKED
    BCC r0_far_i                            ; near invisible: far check enters

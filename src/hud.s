@@ -64,8 +64,7 @@ OS_FONT    = $C000                      ; OS 1.2 glyphs, chars 32..127
 ; --- hud_draw ($A400): entry. Emits the whole line. Clobbers A,X,Y. ---
 hud_draw:
 .scope
-   LDA #0
-   STA zp_hud_dst                          ; cell 0 (col*8 accumulates below)
+   ZERO zp_hud_dst                         ; cell 0 (col*8 accumulates below)
    LDA HUD_BACKHI
    STA zp_hud_dst+1                        ; row-0 block = FB page start
 ; "X="
