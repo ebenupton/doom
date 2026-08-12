@@ -469,7 +469,8 @@ VC_RHI  = VCACHE_BASE + $000
 VC_RLO  = VCACHE_BASE + $200
 VC_SXL  = VCACHE_BASE + $400
 VC_SXH  = VCACHE_BASE + $600
-VC_CLIP = VCACHE_BASE + $800
+; ($1000-$11FF FREE 2026-08-13: VC_CLIP folded into VC_RLO — S = 0 is
+;  the clipped sentinel, real S is never 0. VCACHE = 4 planes now.)
 VCACHE_VALID_BASE = $0700               ; THE BITMAP PAGE (2026-08-09,
                                         ; Eben: every cache's valid
                                         ; bitmap on ONE page, heading the

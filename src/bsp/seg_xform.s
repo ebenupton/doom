@@ -93,22 +93,21 @@
 ; EV16: the evy/evx serves DIED — clip is the whole near verdict, and
 ; the crossing recovers s24 totals itself (cr_recover).
    LDY zp_seg_v_idx_l
-   LDA VC_CLIP+pg,Y                        ; cached near-clip verdict —
-   STA VX1+0,X                             ; served UNCONDITIONALLY (the
-   BNE vh_pgx                              ; head's ZERO died 2026-07-27);
-                                           ; clipped: skip the dead serves
-; (hit arm de-larded 2026-07-25: no working-recip stores, no select —
-; every projector downstream restages from the STRUCT copies)
-   LDA VC_SXL+pg,Y
-   STA VX1+1,X                             ; sx_lo
-   LDA VC_SXH+pg,Y
-   STA VX1+2,X                             ; sx_hi
+   LDA VC_RLO+pg,Y                         ; S, with 0 = the CLIPPED
+   BEQ vh_clipped                          ; sentinel (real S is in [1,10]
+                                           ; — the VC_CLIP plane folded
+                                           ; into RLO, 2026-08-13)
+   STA VX1+12,X                            ; rlo (= S, riding A)
    LDA VC_RHI+pg,Y
    STA VX1+11,X                            ; rhi (apv_stage / the y-stage
                                            ; read the endpoint's own recip
                                            ; from +13/14)
-   LDA VC_RLO+pg,Y
-   STA VX1+12,X                            ; rlo (= S)
+   LDA VC_SXL+pg,Y
+   STA VX1+1,X                             ; sx_lo
+   LDA VC_SXH+pg,Y
+   STA VX1+2,X                             ; sx_hi
+   LDA #0
+   STA VX1+0,X                             ; clip = 0 (unconditional stage)
 vh_pgx:
    RTS                                     ; L2 rides from the caller's
                                            ; entry PAGE (contract flip
@@ -120,6 +119,11 @@ vh_pgx:
                                            ; ($B100/$B200 = bank L2), read
                                            ; by the y-stage's NO-BACK arc
                                            ; which pages nothing.
+vh_clipped:
+   LDA #1
+   STA VX1+0,X                             ; clip = nonzero; the other
+   RTS                                     ; slots are undefined for a
+                                           ; clipped vertex (unchanged)
 ; (vxcon island lives at the BODY END — vector-entered and JMP-exited,
 ;  so placement is free)
 vmiss:
@@ -233,10 +237,9 @@ ncr_done:
    LDA zp_br_r_s
    STA VX1+12,X
    STA VC_RLO+pg,Y
-   LDA #0                                  ; clip = 0 (plane + struct —
-fill_tail:
-   STA VC_CLIP+pg,Y                        ; the nc prelude's mirror)
-   STA VX1+0,X
+   LDA #0                                  ; clip = 0 (struct only: the
+fill_tail:                                 ;  PLANE verdict is RLO != 0,
+   STA VX1+0,X                             ;  just stored above)
    RTS                                     ; (a fill_tail birth-fill hook
                                            ; was tried 2026-07-27 and is
                                            ; IMPOSSIBLE: px_shrink halves
@@ -250,8 +253,10 @@ nc_fail:
                                            ; ok path reloads after project
                                            ; (dead fetch_done LDX: Eben)
    LDY zp_seg_v_idx_l
-   LDA #1                                  ; clip = 1 (plane + struct)
-   BNE fill_tail                           ; (A = 1: always taken)
+   LDA #0
+   STA VC_RLO+pg,Y                         ; S := 0 — the plane's CLIPPED
+   LDA #1                                  ; sentinel; clip = 1 to the
+   BNE fill_tail                           ; struct (A = 1: always taken)
 ncr_far:
 ; rare: vy >= 128 units (idx >= 256). idx = counts>>4 split by nibble:
 ; vy_l is dead scratch for the lo half, vy_h stays whole for the hi.
