@@ -845,7 +845,10 @@ f1_hi:
    RTS
 f1_go:
    LDX #0
-   BEQ vs_go                               ; (always: Z from LDX #0)
+   BEQ vs_go                               ; (always: Z from LDX #0 — NOT a
+                                        ;  C02 STZ join-pull candidate: the
+                                        ;  vsx arms index VX1+n,X, so X
+                                        ;  itself is live, 2026-08-12)
 ::vs_fresh2:                                ; v2 endpoint (struct VX_STRIDE)
    LDA zp_seg_v_bitm                        ; (v2's mask — see the site)
    ORA VDONE,X

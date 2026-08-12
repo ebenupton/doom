@@ -410,8 +410,14 @@ pym_ppd:
 pym_ptail:
    CLC
    ADC zp_br_t0                            ; mid = hi(h*M8) + h
+.if ::C02
+   STA zp_br_res_l                         ; STZ join-pull (Eben, 2026-08-12):
+   STZ zp_br_res_h                         ;  the shared STX dies for the
+   BRA py_stored                           ;  constant-0 ext arm (-2 cyc)
+.else
    LDX #0
    JMP py_shift
+.endif
 pym_neg:
 ; negative h: |h| through the quarter-square, negate during the copy-out
    EOR #$FF
@@ -468,6 +474,8 @@ pym_nneg:
                                            ; outside the raw-body scope)
    STA zp_br_res_l
    STX zp_br_res_h
+py_stored:                                 ; (C02 ptail re-enters here past
+                                        ;  the join stores, 2026-08-12)
 
 ; --- sy = 128 - rns(P24, S) (per-vertex vectored shifter) ---
 ; De-larded 2026-07-26 (Eben's hot-sequence pass): X = slot BEFORE the
