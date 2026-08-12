@@ -1,98 +1,111 @@
 ; ============================================================================
-; bsp/seg_emit.s — the seg pipeline PAST the back-face verdict, through
-; seg advance. Split out of bsp/subsector.s 2026-08-09 (call-graph file
-; DAG: subsector -> backface -> HERE; the loop back-edge to ::seg_proc
-; is the seg loop itself). Included immediately after subsector.s, so
-; the split moved zero bytes.
+; bsp/seg_emit.s — the per-seg pipeline from the front-face verdict to
+; the seg advance.
 ;
-; Entries (all JMP, no fall-through from subsector.s):
-;   ::bf_seg_front  — backface.s front verdict: the seg survives; vertex
-;                     pipeline, has_gap gate, y projection, canonicalize,
-;                     emit cascade, mark_solid/tighten dispatch.
-;   ::s_advance     — emit-path arrivals that left bank L0.
-;   ::s_advance_l0  — backface back-exits (header reads never paged away).
-; Exits: JMP ::seg_proc (subsector.s loop head) / RTS at sa_done when the
-; subsector's segs are exhausted.
-; Also here: vs_fresh1/vs_fresh2/vsx serve chain (vertex-span descriptor
-; verticals) — called only from the emit cascade above them.
+; PIPELINE (one pass per front-facing seg):
+;
+;   1  TRANSFORM   v1 (chain-served ~80%) and v2: world -> view -> sx
+;   2  NEAR CLIP   0 clipped: continue; 1: reproject at crossing; 2: cull
+;   3  RANGE GATE  order sx pair, clamp to [0,255], has_gap over [ilo,ihi]
+;   4  Y STAGE     project the seg's sy pairs (front always; back by flags)
+;   5  CANONICAL   reversed 1px projections are dropped
+;   6  EMIT        top/bottom horizontals + portal step edges
+;   7  VERTICALS   per-vertex span descriptors, once per vertex per frame
+;   8  OCCLUSION   solid -> mark_solid; portal -> tighten_from_records
+;   9  ADVANCE     bump header cursor, loop or return
+;
+; Pseudocode (mirrors packed_render_seg in doom_wireframe.py):
+;
+;   def render_seg(seg):
+;       v1 = chain_or_transform(seg.v1); v2 = transform(seg.v2)   # 1
+;       if v1.clipped and v2.clipped: return                      # 2
+;       if v1.clipped != v2.clipped: reproject_at_crossing()
+;       ilo, ihi = clamp8(sorted(sx1, sx2));                      # 3
+;       if empty or not has_gap(ilo, ihi): return
+;       project_sy_pairs(front always, btop/bbot by NEEDBT/NEEDBB) # 4
+;       if sx reversed: return                                    # 5
+;       emit ft, fb, bt-step, bb-step (by flags, vz tests)        # 6
+;       for v in (v1, v2): serve_vertex_descriptor_once(v)        # 7
+;       if SOLID: mark_solid(ilo, ihi)                            # 8
+;       else:     tighten_from_records(ilo, ihi)
+;       advance()                                                 # 9
+;
+; ENTRIES (JMP only, no fall-through from other files):
+;   ::bf_seg_front   backface.s front verdict — run stages 1-9
+;   ::s_advance      cull arrivals that left bank L0 (re-pages L0)
+;   ::s_advance_l0   backface back-exits (L0 never left)
+; EXITS: JMP ::seg_proc (subsector.s loop head); RTS when seg count hits 0.
+;
+; SEG HEADER (16 B, via zp_seg_hdr_p, bank L0):
+;   +0/+1 v1 idx lo/b   +2/+3 v2 idx lo/b   +8 flags
+;   +10 fh  +11 ch  +12 bfh|apv1_ch  +13 bch|apv1_fh  +14/+15 apv2_ch/fh
+; FLAGS (wad_packed single source):
+;   $80 SAMEDIR  $40 SOLID  $20/$10 (novt, ship 0)  $08 NEEDBB
+;   $04 NEEDBT   $02/$01 (apedge, ship 0)
+;   SOLID and NEEDBT/NEEDBB are mutually exclusive by construction
+;   (baker + anim worker both derive them in exclusive arms).
+; VERTEX STRUCTS (zp): VX1 / VX2 = VX1+VX_STRIDE:
+;   +0 clipped  +1 sx_lo  +2 sx_hi  +3/4 sy_top  +5/6 sy_bot
+;   +7/8 sy_btop  +9/10 sy_bbot  +11 recip m8  +12 recip s
+; BANKS: transforms end L2; emit cascade runs under ONE BANK_C page at
+;   stage 5 (header reads inside page around themselves); the tighten/
+;   mark dispatch inherits C.  Flat build: PAGE macros are no-ops.
 ; ============================================================================
 .scope
+
+; ============================================================================
+; STAGE 1 — TRANSFORM.  v1 goes through the chain probe first: if this
+; seg's v1 is the vertex the previous transform produced (the packer
+; chain-orders subsector segs, ~80% hit on consecutive front pairs),
+; VX2 is copied wholesale into VX1 and the transform is skipped.
+;
+;   if hdr.v1_idx == last_idx:           # chain hit
+;       VX1 <- VX2 (clip; and if unclipped: sx, recips)
+;       if prev seg ran its y stage: VX1.front_sy <- VX2.front_sy
+;                                    (v1ok: stage 4 then skips v1 front)
+;   else:                                # miss
+;       last_idx = hdr.v1_idx; transform v1 into VX1
+;   transform v2 into VX2 (always)
+;
+; The chain KEY is banked into zp_v1i_* AS IT IS READ — stage 7's v1
+; probe needs it after the v2 transform overwrites zp_seg_v_idx.
+; Compare order is B byte first (differs most often), Y walking 1 -> 0
+; so every arm lands with Y = 0 for the ep/ys resets.
+; The transform (br_seg_xform_vertex, seg_xform.s) is side-baked:
+; sx_vert_lo / sx_vert_hi by bit 5 of the idx B byte (senior plane).
+; It writes clip/sx/recip directly into the struct named by zp_seg_ep
+; and exits in bank L2 on every path.
+; ============================================================================
 ::bf_seg_front:
-; front-facing: fetch v1/v2 straight from the header via zp_seg_hdr_p.
-
-; --- Heights: front fh/ch + deltas were HOISTED to the subsector
-; prologue (subsector-constant; every seg fronts this sector). The back
-; heights live INLINE in the header at +12..15 (the separate FHCH
-; stream retired 2026-07-11):
-;     [+10 fh, +11 ch, +12 bfh|apv1_ch, +13 bch|apv1_fh,
-;      +14 apv2_ch, +15 apv2_fh].
-; Back-delta staging is DEFERRED into the post-has_gap y stage
-; (2026-07-11) — culled portals never pay the header reads. ---
-
-; --- Transform + project both endpoints (br_seg_xform_vertex:
-; vcache-backed br_to_view, near-plane test, X projection, Y projections
-; for the edges this seg's flags need; sets zp_seg_skip=1 if the vertex
-; is behind the near plane, else writes sx/sy straight into this endpoint's
-; slots via zp_seg_ep). Transform v1. Copy the clip verdict so crossing
-; dispatch sees both endpoints (crossing COORDS are recovered from the
-; vertex keys by cr_recover — EV16 2026-08-09, the s8 evy/evx tier died).
-; --- VERTEX CHAIN (2026-07-10): if this seg's v1 is the vertex the LAST
-; transform produced (zp_seg_v_idx still holds it, and VX2 still holds
-; its outputs), reuse VX2 wholesale: clip always; sx, the front
-; sy pair (same subsector => same fh/ch) and rhi/rlo when unclipped.
-; The packer chain-orders subsector segs, so this hits ~80% of
-; consecutive front-facing pairs. zp_seg_v_idx_b is invalidated at the
-; subsector boundary and when a crossing overwrites VX2.
-; BYTE ORDER REVERSED (Eben, 2026-07-26): compare B (+1) first, then
-; A (+0), walking Y DOWN — every exit arrives with Y = 0, which then
-; feeds zp_seg_ep / zp_ys_done / zp_ys_v1ok: the LDY#0/LDX#0/LDA#0
-; constants die and the NMOS/C02 hit tails unify. The hit arm stores
-; no ep at all (v2's staging overwrites it before any consumer).
-; KEY LANDS IN zp_v1i_* AS IT IS READ (Eben, 2026-07-26): the serve
-; sites need v1's key banked across the v2 transform anyway — storing
-; during the compare kills the 4-op banking block at ch_v1_done_l0 on
-; EVERY front-seg arc; zp_seg_v_idx_* is only written on the miss arcs
-; (the transform's input — on a hit it already equals the key).
    LDY #1
-   LDA (zp_seg_hdr_p),Y
+   LDA (zp_seg_hdr_p),Y                    ; v1 idx B
    STA zp_v1i_b
    CMP zp_seg_v_idx_b
-   BNE ch_miss_b                           ; A = header idx_b
+   BNE chain_miss_b
    DEY                                     ; Y = 0
-   LDA (zp_seg_hdr_p),Y
+   LDA (zp_seg_hdr_p),Y                    ; v1 idx lo
    STA zp_v1i_l
    CMP zp_seg_v_idx_l
-   BNE ch_miss_a                           ; A = header idx_l; B equal
-; chain hit: the VX2 -> VX1 wholesale copy, IN PLACE (the macro
-; indirection retired 2026-07-26 — this is its only site; the LO body
-; + JSR tax died 2026-07-17, the MAIN/LO split died in the reshuffle).
+   BNE chain_miss_a
+; --- chain hit: VX2 -> VX1, in place ---
 .scope
-   LDA zp_seg_v2_clipped                   ; (the evy/evx copies DIED with
-   STA zp_seg_v1_clipped                   ;  the s8 tier — EV16 2026-08-09)
-   BNE ch_reuse_done                       ; clipped: rest undefined
+   LDA zp_seg_v2_clipped
+   STA zp_seg_v1_clipped
+   BNE hit_done                            ; clipped: rest undefined
    LDA zp_seg_sx2_l
    STA zp_seg_sx1_l
    LDA zp_seg_sx2_h
    STA zp_seg_sx1_h
-; recip carried UNCONDITIONALLY (2026-07-11): the post-has_gap y stage
-; projects from the struct-banked recips.
-   LDA zp_seg_v2_r_m8
-   STA zp_seg_v1_r_m8
-   LDA zp_seg_v2_r_s
+   LDA zp_seg_v2_r_m8                      ; recips carried unconditionally:
+   STA zp_seg_v1_r_m8                      ; stage 4 projects from the
+   LDA zp_seg_v2_r_s                       ; struct-banked pair
    STA zp_seg_v1_r_s
-; CHAIN SY RECOVERY (2026-07-11): if the PREVIOUS seg ran its y stage
-; (zp_ys_done — consumed on chain hits, cleared by chain misses and by
-; the cull funnel's v1ok clear regime), VX2 still holds its v2's
-; projected FRONT pair, and this seg's v1 is that same vertex under
-; the same subsector heights: copy the pair and let the y stage skip
-; v1's front projection (zp_ys_v1ok).
+; front sy donation: only valid if the PREVIOUS seg ran its y stage
+; (zp_ys_done); same vertex + same subsector heights => same front pair.
    LDA zp_ys_done
-   BEQ ch_reuse_done
-   STA zp_ys_v1ok                          ; A = ys_done, BEQ-proven nonzero:
-                                        ; v1ok is zero/nonzero only (the ys
-                                        ; stage LDA/BEQs it) — the old
-                                        ; trailing LDA #1 coercion died
-   LDA zp_seg_sy2_top_l
+   BEQ hit_done
+   STA zp_ys_v1ok                          ; nonzero (BEQ-proven) = stage 4
+   LDA zp_seg_sy2_top_l                    ; may skip v1's front projection
    STA zp_seg_sy1_top_l
    LDA zp_seg_sy2_top_h
    STA zp_seg_sy1_top_h
@@ -100,269 +113,242 @@
    STA zp_seg_sy1_bot_l
    LDA zp_seg_sy2_bot_h
    STA zp_seg_sy1_bot_h
-ch_reuse_done:
+hit_done:
 .endscope
-   STY zp_ys_done                          ; consumed (chain; Y = 0) — reset
-   JMP ch_v1_done_l0                       ; for THIS seg's own y stage; the
-                                        ; chain body is pure ZP — this arc
-                                        ; NEVER left L0, skips the re-page
-                                        ; (STY+JMP: the NMOS/C02 fork died
-                                        ; with the reversed-order Y=0)
-sxv1_hi:
-   JSR sx_vert_hi
-   JMP sxv1_done
-ch_miss_b:                                 ; A = header idx_b (Y = 1;
-   STA zp_seg_v_idx_b                      ;  v1i_b already stored above)
-   DEY                                     ; Y = 0
-   LDA (zp_seg_hdr_p),Y                    ; header idx_l
-   STA zp_v1i_l
-ch_miss_a:                                 ; (B-differs falls in; A-differs
-   STA zp_seg_v_idx_l                      ;  arrives with B already correct
-                                        ;  and both v1i bytes stored)
-   STY zp_seg_ep                            ; v1 → struct VX1 (Y = 0)
-   STY zp_ys_done                           ; prev-seg donation dies here
-   STY zp_ys_v1ok
-   LDA zp_seg_v_idx_b                       ; side test at the CALLER
-   AND #$20                                 ; (2026-07-27 round 2)
-   BNE sxv1_hi                              ; senior: island above
-   JSR sx_vert_lo
-sxv1_done:                                  ; (the old 'A = B at entry'
-                                        ; contract is a FOSSIL: the entry
-                                        ; reloads both key bytes from zp —
-                                        ; audited 2026-07-26)
-; (no marshalling: evy/evx/clip/sx/recip all landed in VX1 directly)
-ch_v1_done:
-   PAGE BANK_L0                             ; transform arc: br_seg_xform_
-; vertex exits L2 on EVERY path (2026-07-21 contract) — the header read
-; below needs the L0 window back. Flat: no-op.
-ch_v1_done_l0:
-; (the v1-key banking block died 2026-07-26: the chain test stores the
-; key into zp_v1i_* as it reads it — the serve sites' banked copy is
-; ready before the v2 transform ever overwrites zp_seg_v_idx)
+   STY zp_ys_done                          ; donation consumed (Y = 0);
+   JMP v1_done_l0                          ; chain arc is pure ZP — L0 was
+                                        ; never left, skip the re-page
 
-; Transform v2.
-   LDA #VX_STRIDE
-   STA zp_seg_ep                            ; v2 → struct VX2
-   LDY #2
+; --- stage-1 islands ---
+xform1_hi:                                 ; v1 senior-plane transform
+   JSR sx_vert_hi
+   JMP xform1_done
+chain_miss_b:                              ; B differs (Y = 1, v1i_b stored)
+   STA zp_seg_v_idx_b
+   DEY                                     ; Y = 0
    LDA (zp_seg_hdr_p),Y
+   STA zp_v1i_l
+chain_miss_a:                              ; lo differs (B already correct);
+   STA zp_seg_v_idx_l                      ; B-miss falls in with both v1i
+   STY zp_seg_ep                           ; bytes stored.  ep = 0: v1 ->
+   STY zp_ys_done                          ; VX1; any prev-seg donation
+   STY zp_ys_v1ok                          ; dies here (Y = 0 throughout)
+   LDA zp_seg_v_idx_b
+   AND #$20                                ; side test at the caller: the
+   BNE xform1_hi                           ; transform is side-baked
+   JSR sx_vert_lo
+xform1_done:
+v1_done:
+   PAGE BANK_L0                            ; transform exits L2; the v2
+                                        ; header read needs L0 (flat: no-op)
+v1_done_l0:
+   LDA #VX_STRIDE
+   STA zp_seg_ep                           ; v2 -> VX2
+   LDY #2
+   LDA (zp_seg_hdr_p),Y                    ; v2 idx lo
    STA zp_seg_v_idx_l
    INY
-   LDA (zp_seg_hdr_p),Y
+   LDA (zp_seg_hdr_p),Y                    ; v2 idx B
    STA zp_seg_v_idx_b
-   AND #$20                                 ; side rides the just-loaded byte
-   BNE sxv2_hi                              ; senior ~35%: island below
+   AND #$20                                ; side rides the just-loaded byte
+   BNE xform2_hi
    JSR sx_vert_lo
-sxv2_done:
-; (no marshalling — see v1)
+xform2_done:
 
-; --- Near-plane clip resolution (mirrors fp_near_clip in fp.py) ---
-; Both vertices xform'd. If both clipped → bail. If exactly one clipped,
-; reproject from crossing point and copy into that vertex's slots.
-; (reproject_at_crossing computes the vy=NEAR crossing from the saved
-; v1/v2 view coords and projects it straight into that endpoint's slots
-; via zp_seg_ep.)
-; Python near-clips ALL front-facing segs (fp_near_clip), so solid
-; walls reproject too — their clamped mark_solid range comes from the
-; crossing projection (e.g. mark_solid(0,81) from sx=-2176 at
-; (800,-3400,96); bailing solids loses that occlusion entirely).
+; ============================================================================
+; STAGE 2 — NEAR-CLIP RESOLUTION (mirrors fp_near_clip in fp.py).
+;
+;   if v1.clipped and v2.clipped: cull
+;   elif one clipped: reproject that endpoint at the vy=NEAR crossing
+;   (solid walls reproject too: their clamped mark_solid range comes
+;    from the crossing projection — bailing solids loses occlusion)
+;
+; Common case (85%): neither clipped — one ORA falls through.
+; The resolution block is an island past the stage-3 fast arms.
+; ============================================================================
    LDA zp_seg_v1_clipped
    ORA zp_seg_v2_clipped
-   BNE s_some_clipped                      ; rare (15%, census 2026-07-27):
-                                           ; the resolution block lives in
-                                           ; an island past the hg fast arms
-s_both_have_proj:
+   BNE clip_resolve
+clip_none:
 
-; Match Python's has_gap wrapper:
-;   ilo = max(0, min(sx1,sx2)); ihi = min(255, max(sx1,sx2))
-;   bail if the range is empty (whole seg off one side of the screen)
-; Order the s16 endpoints FIRST — clamp8 is monotone, so order-then-clamp
-; equals clamp-then-order — then ONE hi-byte test per endpoint does both
-; the off-screen bail and the clamp:
-;   max hi: BMI = whole seg left of screen; BNE = ihi clamps 255; else
-;           the low byte IS ihi.
-;   min hi: zero = low byte IS ilo; BMI = ilo clamps 0; else min >= 256,
-;           whole seg right of screen (matches the old both-hi>=1 bail,
-;           since min >= 256 forces max >= 256).
-; The min endpoint's struct offset (0 = sx1, VX_STRIDE = sx2) is latched
-; in zp_sx_ord at hg_query so the mark_solid/tighten range below the
-; emits can re-derive its clamps without repeating the s16 compare
-; (sx1/sx2 survive the emits; the u8 scratch does not). X is dead here:
-; nothing carries X across the SC_HAS_GAP JSR.
-; FUSED order + clamp analysis (2026-07-11): both decisions key off the
-; hi bytes. EQUAL hi bytes (the common case) collapse everything:
-;   zero    -> both endpoints in [0,255]: the lo bytes ARE the range and
-;              one unsigned lo compare is the order;
-;   nonzero -> both endpoints share an off-screen page (both < 0 or both
-;              >= 256): bail, no clamps needed.
-; Only page-straddling segs (hi bytes differ) take the full s16 order +
-; per-endpoint ladder path below.
+; ============================================================================
+; STAGE 3 — RANGE GATE.  Order the s16 sx pair, clamp to u8, bail if
+; empty, then has_gap over the clamped range:
+;
+;   ilo = max(0, min(sx1, sx2)); ihi = min(255, max(sx1, sx2))
+;   if whole seg off-screen: cull
+;   if not has_gap(ilo, ihi):  cull        # every column occluded
+;
+; Order-then-clamp equals clamp-then-order (clamp8 is monotone), so the
+; hi bytes drive everything:
+;   equal hi bytes (common):  zero -> both in [0,255]: lo bytes are the
+;       range and one lo compare orders them; nonzero -> both endpoints
+;       share an off-screen side: cull.
+;   differing hi bytes: full s16 order, then a per-endpoint clamp ladder.
+; zp_sx_ord latches the min endpoint's struct offset (0 = sx1) for
+; stage 5's drop test and stage 8's re-clamp.
+; ABI into hg_query: A = ihi (register-only), zp_i_l = ilo, X = min
+; endpoint offset.  SC_HAS_GAP: C=1 gap / C=0 occluded, preserves A's
+; role as ihi for nobody — the emit path recomputes its own clamps.
+; Carry note: stage 4's with-back arc relies on C=1 from the BCS-fall
+; at hg_query (nothing between touches carry).
+; ============================================================================
    LDA zp_seg_sx1_h
    CMP zp_seg_sx2_h
-   BNE hg_hi_diff
+   BNE range_straddle                      ; hi bytes differ: slow ladder
    TAX                                     ; shared hi byte
-   BNE hg_adv                              ; nonzero: off one side entirely
+   BNE range_cull                          ; both off one side: cull
    LDA zp_seg_sx1_l
    CMP zp_seg_sx2_l
-   BEQ hg_fast_fwd                         ; TIE: a one-column seg is NOT
-                                        ; reversed (it must draw + record;
-                                        ; the old ties->rev was harmless
-                                        ; only while rev meant SWAP)
-   BCS hg_fast_rev                         ; sx1 > sx2: reversed -> DROP
-hg_fast_fwd:
-; X = 0 already: the TAX above saw A = 0 (BNE not taken)
-   STA zp_i_l                              ; A = sx1_lo = ilo
-   LDA zp_seg_sx2_l                        ; ihi rides in A (A-hi ABI)
+   BEQ range_fwd                           ; tie: one-column seg is FORWARD
+   BCS range_rev                           ; sx1 > sx2: reversed
+range_fwd:
+; X = 0 already (TAX saw A = 0)
+   STA zp_i_l                              ; ilo = sx1_lo
+   LDA zp_seg_sx2_l                        ; ihi rides A
    JMP hg_query
-hg_fast_rev:
-   LDX #VX_STRIDE
-   LDY zp_seg_sx2_l                        ; ilo = sx2_lo via Y (dead here —
-   STY zp_i_l                              ; has_gap clobbers it); A = sx1_lo
-   JMP hg_query                            ; = ihi rides through (A-hi ABI)
-; --- near-clip resolution island (census 2026-07-27) ---
-s_some_clipped:
+range_rev:
+   LDX #VX_STRIDE                          ; min endpoint = sx2
+   LDY zp_seg_sx2_l
+   STY zp_i_l                              ; ilo = sx2_lo (Y dead: has_gap
+   JMP hg_query                            ; clobbers it); A = sx1_lo = ihi
+
+; --- stage-2 island: near-clip resolution ---
+clip_resolve:
    LDA zp_seg_v1_clipped
-   BEQ s_v2_was_clipped
+   BEQ clip_v2
    LDA zp_seg_v2_clipped
-   BNE s_advance_jmp                       ; both clipped
-   STA zp_seg_ep                            ; = 0 (the BNE above proves A=0):
-   JSR reproject_at_crossing                ; reproject into v1 (struct VX1)
-   JMP s_both_have_proj
-s_advance_jmp:
+   BNE cull_jmp                            ; both clipped
+   STA zp_seg_ep                           ; = 0 (BNE proves A=0): v1 <- xing
+   JSR reproject_at_crossing
+   JMP clip_none
+cull_jmp:
    JMP s_advance
-sxv2_hi:
+xform2_hi:                                 ; v2 senior-plane transform
    JSR sx_vert_hi
-   JMP sxv2_done
-s_v2_was_clipped:
+   JMP xform2_done
+clip_v2:
    LDA #VX_STRIDE
-   STA zp_seg_ep                            ; reproject into v2 (struct VX2)
+   STA zp_seg_ep                           ; v2 <- crossing
    JSR reproject_at_crossing
    LDA #$80
-   STA zp_seg_v_idx_b                      ; VX2 now holds the CROSSING, not
-                                        ; the vertex — kill the chain key.
-                                        ; $80, NOT $FF (2026-07-26): the
-                                        ; sentinel is also the v2 VDONE
-                                        ; probe/mark INDEX — VDONE+$80 =
-                                        ; $1BBC sits in the free ex-BCA_WS
-                                        ; tail, the sandbox the old $0600
-                                        ; page provided ($FF would read
-                                        ; AND CORRUPT SQR_LO+$3B — the
-                                        ; walkseq phantom-line bug). Any
-                                        ; value > 58 kills the chain CMP;
-                                        ; keep base+sentinel inside
-                                        ; $1B78-$1BFF.
-   JMP s_both_have_proj
-hg_hi_diff:
-; hi bytes differ: signed hi-byte difference gives the order (lo bytes
-; only ever break ties, and ties took the equal path above)
-; (A = sx1_h from the entry compare; SEC stays — CMP's carry varies)
-; V-correction KEPT (2026-07-17 sweep): |sx| reaches +-32,577 (rns
-; bound), so the hi bytes span +-127 and their s8 difference CAN
-; overflow for a near wall with endpoints at opposite extremes.
-   SEC
+   STA zp_seg_v_idx_b                      ; VX2 = the CROSSING, not the
+                                        ; vertex: kill the chain key.
+                                        ; MUST be $80, not $FF: the value
+                                        ; doubles as v2's VDONE probe
+                                        ; index in stage 7 — VDONE+$80
+                                        ; lands in the free $1B78-$1BFF
+                                        ; tail; $FF would read AND MARK
+                                        ; inside SQR_LO. Any value > 58
+                                        ; kills the chain CMP.
+   JMP clip_none
+
+; --- stage-3 slow path: hi bytes differ (page-straddling seg) ---
+; Signed hi-byte difference gives the order (lo bytes only break ties,
+; and ties took the equal-hi path).  V-correction is required: |sx|
+; reaches +-32577, so the s8 difference can overflow.
+range_straddle:
+   SEC                                     ; (CMP left carry unknown)
    SBC zp_seg_sx2_h
-   BVC hgd_v_ok
+   BVC rs_v_ok
    EOR #$80
-hgd_v_ok:
-   BPL hg_min2                             ; sx1 >= sx2
-; --- min = sx1, max = sx2 --- (A-hi ABI: min lands in zp_i_l first,
-; max is computed LAST so ihi ends in A at hg_query. Bail outcomes are
-; order-independent: off-right (min >= 256) now bails before the max
-; test; off-left (max < 0) pays a dead ilo=0 store first — rare.)
-hg_min1:
-   LDX #0
-   LDA zp_seg_sx1_h                       ; min hi
-   BNE hg_lock1                            ; nonzero: neg -> 0 / pos -> bail
+rs_v_ok:
+   BPL range_min_v2                        ; sx1 >= sx2: min = sx2
+; --- min = sx1, max = sx2: clamp ladder ---
+; Each endpoint: hi byte 0 -> lo byte used as-is; min: neg -> 0,
+; pos -> whole seg off right, cull; max: neg -> off left, cull,
+; pos -> 255.  ihi ends in A (the hg_query ABI).
+range_min_v1:
+   LDX #0                                  ; min endpoint = sx1
+   LDA zp_seg_sx1_h
+   BEQ rm1_ilo_lo                          ; in range: lo IS ilo
+   BPL range_cull                          ; min >= 256: off right
+   LDA #0                                  ; min < 0: ilo = 0
+   BEQ rm1_ilo_have
+rm1_ilo_lo:
    LDA zp_seg_sx1_l
-hg_lost1:
+rm1_ilo_have:
    STA zp_i_l
-   LDA zp_seg_sx2_h                       ; max hi
-   BMI hg_adv                              ; max < 0: off-screen left
-   BNE hg_hi255_1                          ; max >= 256: ihi = 255
-   LDA zp_seg_sx2_l
-   JMP hg_query                            ; ihi rides in A (A-hi ABI)
-hg_hi255_1:
+   LDA zp_seg_sx2_h
+   BMI range_cull                          ; max < 0: off left
+   BEQ rm1_ihi_lo                          ; in range: lo IS ihi
    LDA #255
-   BNE hg_query                            ; (always: A=255)
-hg_lock1:
-   BPL hg_adv                              ; min >= 256: off-screen right
-   LDA #0
-   BEQ hg_lost1                            ; (always: A=0)
-hg_adv:
+   BNE hg_query                            ; (always)
+rm1_ihi_lo:
+   LDA zp_seg_sx2_l
+   JMP hg_query
+range_cull:
    JMP s_advance
-hg_hi255_2:
-   LDA #255
-   BNE hg_query                            ; (always: A=255)
-hg_lock2:
-   BPL hg_adv                              ; min >= 256: off-screen right
-   LDA #0
-   BEQ hg_lost2                            ; (always: A=0)
-; --- min = sx2, max = sx1 ---
-hg_min2:
+; --- min = sx2, max = sx1: mirror of the ladder above ---
+range_min_v2:
    LDX #VX_STRIDE
-   LDA zp_seg_sx2_h                       ; min hi
-   BNE hg_lock2                            ; nonzero: neg -> 0 / pos -> bail
+   LDA zp_seg_sx2_h
+   BEQ rm2_ilo_lo
+   BPL range_cull
+   LDA #0
+   BEQ rm2_ilo_have
+rm2_ilo_lo:
    LDA zp_seg_sx2_l
-hg_lost2:
+rm2_ilo_have:
    STA zp_i_l
-   LDA zp_seg_sx1_h                       ; max hi
-   BMI hg_adv                              ; max < 0: off-screen left
-   BNE hg_hi255_2                          ; max >= 256: ihi = 255
+   LDA zp_seg_sx1_h
+   BMI range_cull
+   BEQ rm2_ihi_lo
+   LDA #255
+   BNE hg_query                            ; (always)
+rm2_ihi_lo:
    LDA zp_seg_sx1_l
 hg_query:
    STX zp_sx_ord                           ; latch min-endpoint offset
-   JSR SC_HAS_GAP                          ; A = ihi (A-hi ABI; ihi stays
-                                           ; register-only — ms/tfr get
-                                           ; their pair from the emit-path
-                                           ; clamp); main-resident — no PAGE
-   BCC hg_adv                              ; C-only verdict: C=0 skip ->
-                                           ; borrow hg_adv's JMP backward;
-                                           ; C=1 gap FALLS THROUGH (was an
-                                           ; 80%-taken BCS — census)
+   JSR SC_HAS_GAP                          ; in: A = ihi, zp_i_l = ilo
+   BCC range_cull                          ; C=0: no visible column, cull
 hg_pass:
-; Records reset for THIS seg (moved from seg_proc): ms_dispatch reads
-; the counts only for segs that got here; armed draws re-init them.
-   ZERO TOP_RECORDS, BOT_RECORDS                          ; counts (symbolic 2026-08-09:
+; records counts reset for THIS seg — stage 8 reads them only for segs
+; that got here; the emit arms re-arm them as needed
+   ZERO TOP_RECORDS, BOT_RECORDS
 
-; --- DEFERRED Y PROJECTION (2026-07-11): ALL sy pairs are projected
-; HERE, only for segs that passed has_gap — the transform phase now
-; computes evy/evx/clip/sx/recip only (measured 11.5k cyc/frame of
-; culled-seg projections deleted). Front deltas are subsector-constant;
-; portal back deltas are staged just below; each endpoint projects via
-; do_project_y with its OWN struct-banked recip (for a near-clipped
-; endpoint that is the crossing recip). Runs BEFORE the canonicalizing
-; swap so struct identity still equals seg-endpoint identity.
-; --- Y-stage arc split (Eben's hoist, 2026-08-11): flags & $0C is
-; BOTH the "stage back deltas" gate AND the per-endpoint "neither
-; back projection" predicate (it subsumes SOLID — the baker and the
-; anim worker keep SOLID and NEEDBT/NEEDBB exclusive). Test it ONCE
-; per seg and fork: this no-back arc (solids + stepless portals, the
-; majority) projects front pairs with no per-endpoint tests at all
-; and falls through the tail into hgp_can; the with-back arc (island
-; past sa_done — all three blocks want to abut the tail, so the
-; minority pays the JMPs) KNOWS >=1 back flag is set: each dpy
-; section opens at the BT dispatch and a BT miss means BB fires.
-; The per-endpoint $0C neither-tests and the chain pre-gate are dead.
+; ============================================================================
+; STAGE 4 — Y PROJECTION.  All sy pairs project HERE (post-has_gap:
+; culled segs never pay), each endpoint at its own struct-banked recip
+; (for a near-clipped endpoint that is the crossing recip).  Runs
+; before stage 5 so struct identity still equals seg-endpoint identity.
+;
+;   if not (NEEDBT or NEEDBB):            # solids + stepless portals
+;       for v in (v1 unless chained, v2): project front top/bot
+;   else:                                 # >= 1 back pair needed
+;       stage back deltas (bch-vz, bfh-vz) from the header
+;       for v in (v1 [chained: back only], v2):
+;           project front top/bot
+;           if NEEDBT: project btop
+;           if NEEDBB: project bbot       # BT miss => BB guaranteed
+;
+; flags & $0C is BOTH the back-deltas gate AND the per-endpoint back-
+; pair predicate (SOLID is exclusive with NEEDBT/NEEDBB), so ONE test
+; forks the whole stage.  The with-back arc is an island past the
+; advance tail (the no-back majority falls straight through the stage
+; tail into stage 5); it enters with >= 1 back flag PROVEN, so each
+; endpoint opens at the NEEDBT dispatch and a BT miss means BB fires.
+; br_project_y ABI: h in A -> Y = sy lo, A = sy hi (Y_BIAS folded,
+; VWHC-memoised).  Each endpoint stages its recip + rns kernel select
+; (zp_br_r_m8/r_s + rns_go_op) before its projections.
+; ============================================================================
    LDA zp_seg_flags
-   AND #$0C                                ; back deltas / back pairs?
+   AND #$0C
    BEQ ys_noback
    JMP ys_withback
 ys_noback:
-; (no PAGE: solid arcs arrive L2 — br_seg_xform_vertex's exit contract
-;  is L2-always since 2026-07-21, and nothing between v2's JSR and here
-;  pages away (reproject/br_recip end L2; SC_HAS_GAP is main-resident).
-;  The with-back island restores L2 itself after its L0 excursion.)
+; (bank note: solid arcs arrive L2 — the transform's exit contract —
+; and nothing here pages; the with-back island manages its own L0
+; excursion for the header reads)
    LDA zp_ys_v1ok
    BNE ysnb_v2                             ; chained: VX1 front pair live
-   ZERO zp_seg_ep                          ; v1 -> struct VX1
+   ZERO zp_seg_ep                          ; v1 -> VX1
    LDA zp_seg_v1_r_m8
    STA zp_br_r_m8
-   LDX zp_seg_v1_r_s                        ; inlined rns_select
+   LDX zp_seg_v1_r_s
    STX zp_br_r_s
-   LDA rns_vec_l-1,X
+   LDA rns_vec_l-1,X                       ; inlined rns select
    STA rns_go_op
-; ---- front pair only (do_project_y INLINED 2026-08-11; back pairs
-; live in the with-back island). br_project_y: h rides A in, Y = sy
-; lo / A = sy hi out, Y_BIAS folded, VWHC-memoised. ----
    LDA zp_seg_top_dlt
    JSR br_project_y
    STA VX1+4
@@ -373,10 +359,10 @@ ys_noback:
    STY VX1+5                               ; sy_bot
 ysnb_v2:
    LDA #VX_STRIDE
-   STA zp_seg_ep                            ; v2 -> struct VX2
+   STA zp_seg_ep                           ; v2 -> VX2
    LDA zp_seg_v2_r_m8
    STA zp_br_r_m8
-   LDX zp_seg_v2_r_s                        ; inlined rns_select
+   LDX zp_seg_v2_r_s
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
@@ -390,192 +376,158 @@ ysnb_v2:
    STY VX2+5                               ; sy_bot
 ys_done:
    LDA #1
-   STA zp_ys_done                           ; this seg's VX2 sy is live for
-   ZERO zp_ys_v1ok                          ; the next seg's chain
-; (apv_stage RETIRED 2026-07-24: the APV overload died with the vertex-
-;  span descriptors — solids' +12/+13 now carry the fh/ch alias)
+   STA zp_ys_done                          ; VX2's sy pair is live for the
+   ZERO zp_ys_v1ok                         ; next seg's chain donation
+
+; ============================================================================
+; STAGE 5 — CANONICAL GATE.  After hg_query, zp_sx_ord = 0 iff sx1 is
+; the min endpoint.  A reversed pair here is a 1px seg whose projection
+; inverted by sub-pixel rounding: DROP it (the python mirror returns
+; likewise; the only loss is the degenerate sliver itself).  Below this
+; point VX1 is always the left endpoint and every emit is single-path.
+; ============================================================================
 hgp_can:
-; Canonicalize: after this point VX1 is ALWAYS the left endpoint, and
-; every emit path below is single-path (no ord dispatch anywhere).
    LDA zp_sx_ord
    BEQ hgp_fwd
-   JMP s_advance                           ; reversed 1px projection: DROP
-                                        ; (2026-07-15: seg_swap_vx retired;
-                                        ; python mirror returns likewise)
+   JMP s_advance                           ; reversed: drop
 hgp_fwd:
-   PAGE BANK_C                             ; THE emit-cascade page (2026-07-21
-                                           ; PAGE grind): one page dominates
-                                           ; every arc below — the old per-emit
-                                           ; pages at ft/fb/step-top (and the
-                                           ; L2 corridor they guarded) die; the
-                                           ; two header reads inside re-page
-                                           ; around themselves as before.
+   PAGE BANK_C                             ; THE emit-cascade page: one page
+                                        ; dominates every arc below; only
+                                        ; the two header reads inside page
+                                        ; around themselves (flat: no-op)
 
-; --- Emit top horizontal (front-sector ceiling): (sx1,ft1)→(sx2,ft2) ---
-; Solid wall:        always.
-; Portal w/ NEEDBT:  iff ch > vz (face above eyeline, ft visible).
-; Portal w/o NEEDBT: iff bch > ch (back ceiling above front; step visible).
-; (Python: solid lines[] always includes ft; need_bt inserts ft only when
-; ch > vz — the "secondary" front-ceiling above the bt step; the
-; bch > ch portal-lip case draws ft with roles={0: TOP_RECORDS}.)
+; ============================================================================
+; STAGE 6 — EMIT CASCADE.  Horizontal edges via SC_DRAW_S16_H: X names
+; the sy pair offset (same in both structs); it fetches x from
+; zp_seg_sx1/sx2 and y from VX1+X/VX2+X itself.  zp_dcl_rec_buf_h arms
+; (page hi) or disarms (0) record capture for the draw; the record page
+; count byte is reset at arm time.  Both record pages are page-aligned
+; (buf lo stays 0, zeroed once per frame).
+;
+;   ft (front ceiling):  solid: emit, no records
+;                        NEEDBT: emit iff ch > vz, no records
+;                        else:   emit iff bch > ch, TOP_RECORDS armed
+;   fb (front floor):    solid: emit, no records
+;                        NEEDBB: emit iff fh < vz, no records
+;                        else:   emit iff bfh < fh, BOT_RECORDS armed
+;   bt step (bch line):  portals with NEEDBT, TOP_RECORDS armed
+;   bb step (bfh line):  portals with NEEDBB, BOT_RECORDS armed
+;
+; The unrecorded ft/fb tests use vz - ch / fh - vz comparisons so
+; "skip" is one BPL (s8 heights, no overflow by the pack fence).
+; The armed portal-lip arms are the ONLY fall-ins to ft_emit/fb_emit:
+; solid and NEEDBT/NEEDBB entrants branch straight to their no-record
+; arms, so no re-test is needed at the arm point.
+; ============================================================================
+; --- ft: top horizontal (sx1,ft1) -> (sx2,ft2) ---
    BIT zp_seg_flags
-   BVS ft_no_rec                           ; SOLID (V) → emit, no records
+   BVS ft_no_rec                           ; SOLID (V): emit, no records
    LDA zp_seg_flags
    AND #$04
    BEQ ft_no_needbt
-; NEEDBT: emit only if ch > vz. FLIPPED + CMP (Eben, 2026-07-26): the
-; old SEC/SBC materialized a diff nobody consumed and needed BMI+BEQ;
-; testing vz - ch makes "skip" one BPL (vz >= ch, Z included). Same
-; s8 no-overflow assumption as the original sign test.
-   LDA zp_br_vz
+   LDA zp_br_vz                            ; NEEDBT: emit iff ch > vz
    CMP zp_seg_ch
-   BPL ft_skip
-   BMI ft_no_rec                           ; NEEDBT → emit, no records
-                                           ; (N = 1: always taken)
+   BPL ft_skip                             ; vz >= ch: skip
+   BMI ft_no_rec                           ; (always: N = 1)
 ft_no_needbt:
-; bch > ch ? (bch on demand from header +13 — the header lives in the
-; L0 window and this path runs under BANK_C, so page around the read;
-; flat: no-ops)
-   PAGE BANK_L0
-   LDY #13
-   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
-   PAGE_X BANK_C                            ; back to C with bch RIDING A
-   CMP zp_seg_ch                            ; verdict AFTER the page (its
-   BMI ft_skip                              ; immediate load killed flags);
-   BEQ ft_skip                              ; the SEC/TAX/TXA ride died
-                                           ; (Eben, 2026-07-26)
+   PAGE BANK_L0                            ; bch is a header read: page
+   LDY #13                                 ; around it (flat: no-ops)
+   LDA (zp_seg_hdr_p),Y                    ; bch
+   PAGE_X BANK_C                           ; bch rides A across the page
+   CMP zp_seg_ch                           ; emit iff bch > ch
+   BMI ft_skip
+   BEQ ft_skip
 ft_emit:
-; Portal-lip (the only fall-in: !SOLID, !NEEDBT, bch>ch): ft IS the new
-; top of the aperture — arm TOP_RECORDS. The old AND #$06 re-test was
-; decidable at every entrant and is gone: solid/NEEDBT branch straight
-; to ft_no_rec above.
+; portal lip: ft is the aperture's new top — arm TOP_RECORDS
    LDA #>TOP_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO TOP_RECORDS                        ; count = 0 (arm-time reset;
-                                           ; page-aligned → absolute)
+   ZERO TOP_RECORDS                        ; count = 0
    LDA #1
    STA zp_dcl_rec_off
-   BNE ft_set_line                         ; A = 1: always taken
+   BNE ft_set_line                         ; (always: A = 1)
 ft_no_rec:
    ZERO zp_dcl_rec_buf_h
 ft_set_line:
-; (rec_buf lo is never non-zero — both record pages are page-aligned;
-;  the per-seg prologue zeroes it once. Only _h arms/disarms.)
-; Hand off to the horizontal s16 entry: X names the sy pair (same
-; offset in both vertex structs); SC_DRAW_S16_H fetches x from
-; zp_seg_sx1/sx2 and the y pair from VX1+X/VX2+X itself — no staging
-; here at all (the zp_line_* slots don't survive the clipper's
-; in-place normalization, so nothing can be seg-hoisted into them).
-   LDX #zp_seg_sy1_top_l - VX1            ; sy pair offset (top)
+   LDX #zp_seg_sy1_top_l - VX1             ; sy pair: top
    JSR SC_DRAW_S16_H
-; (no disarm: every later DCL entry in this seg sets _h itself, and the
-;  defq snapshot reads the $0700/$0800 COUNTS, not the pointer)
 ft_skip:
 
-; --- Emit bottom horizontal (front-sector floor): (sx1,fb1)→(sx2,fb2) ---
-; Solid:             always.
-; Portal w/ NEEDBB:  iff fh < vz (face below eyeline, fb visible).
-; Portal w/o NEEDBB: iff bfh < fh (back floor below front; step visible).
-; (Exact mirror of the top-horizontal logic with floor/bottom roles.)
+; --- fb: bottom horizontal (sx1,fb1) -> (sx2,fb2) — ft's mirror ---
    BIT zp_seg_flags
-   BVS fb_no_rec                           ; SOLID (V) → emit, no records
+   BVS fb_no_rec                           ; SOLID (V): emit, no records
    LDA zp_seg_flags
    AND #$08
    BEQ fb_no_needbb
-; NEEDBB: emit only if fh < vz. FLIPPED + CMP (mirror of the ft test):
-; skip iff fh >= vz = one BPL.
-   LDA zp_seg_fh
+   LDA zp_seg_fh                           ; NEEDBB: emit iff fh < vz
    CMP zp_br_vz
-   BPL fb_skip
-   BMI fb_no_rec                           ; NEEDBB → emit, no records
-                                           ; (N = 1: always taken)
+   BPL fb_skip                             ; fh >= vz: skip
+   BMI fb_no_rec                           ; (always: N = 1)
 fb_no_needbb:
-; bfh < fh ? (bfh on demand from header +12 — L0-window read under
-; BANK_C, page around like ft_no_needbt; flat: no-ops)
    PAGE BANK_L0
    LDY #12
-   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
-   PAGE_X BANK_C                            ; back to C with bfh RIDING A
-   CMP zp_seg_fh                            ; bfh - fh: skip iff bfh >= fh —
-   BPL fb_skip                              ; the operand flip makes it ONE
-                                           ; branch (emit iff bfh < fh)
+   LDA (zp_seg_hdr_p),Y                    ; bfh
+   PAGE_X BANK_C
+   CMP zp_seg_fh                           ; emit iff bfh < fh
+   BPL fb_skip
 fb_emit:
-; Mirror of ft_emit: portal-lip only — arm BOT_RECORDS (the AND #$0A
-; re-test was decidable at every entrant; solid/NEEDBB branch straight
-; to fb_no_rec above).
    LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO BOT_RECORDS                        ; count = 0 (arm-time reset)
+   ZERO BOT_RECORDS                        ; count = 0
    LDA #1
    STA zp_dcl_rec_off
-   BNE fb_set_line                         ; A = 1: always taken
+   BNE fb_set_line                         ; (always: A = 1)
 fb_no_rec:
    ZERO zp_dcl_rec_buf_h
 fb_set_line:
-   LDX #zp_seg_sy1_bot_l - VX1            ; sy pair offset (bot)
+   LDX #zp_seg_sy1_bot_l - VX1             ; sy pair: bot
    JSR SC_DRAW_S16_H
 fb_skip:
 
-; --- Portal step edges (back ceiling / floor) ---
-; Solid walls have no back sector — skip the step emits.
+; --- portal step edges ---
    BIT zp_seg_flags
-   BVS step_skip                           ; SOLID: skip the step emits
-                                        ; (direct since 2026-08-12 — the
-                                        ;  range comment was STALE: the
-                                        ;  step blocks measure +51 flat /
-                                        ;  +56 banked, both in range; the
-                                        ;  trampoline died)
-
-; Back ceiling step if NEEDBT (= $04) set: emit (sx1, bt1) → (sx2, bt2).
-; bt is the new TOP of the aperture — populate TOP_RECORDS so the
-; tighten_from_records call at end of seg has the right per-span
-; verdict data. Matches Python's roles={yt_idx: TOP_RECORDS}.
+   BVS step_skip                           ; SOLID: no back sector
    LDA zp_seg_flags
    AND #$04
    BEQ step_no_top
-   LDX #zp_seg_sy1_btop_l - VX1            ; sy pair offset (btop)
-   LDA #>TOP_RECORDS
+   LDX #zp_seg_sy1_btop_l - VX1            ; bt step: sy pair btop,
+   LDA #>TOP_RECORDS                       ; TOP_RECORDS armed
    STA zp_dcl_rec_buf_h
-   ZERO TOP_RECORDS                        ; count = 0 (arm-time reset)
+   ZERO TOP_RECORDS
    LDA #1
    STA zp_dcl_rec_off
    JSR SC_DRAW_S16_H
 step_no_top:
-
-; Back floor step if NEEDBB (= $08) set: emit (sx1, bb1) → (sx2, bb2).
    LDA zp_seg_flags
    AND #$08
    BEQ step_no_bot
-   LDX #zp_seg_sy1_bbot_l - VX1            ; sy pair offset (bbot)
-   LDA #>BOT_RECORDS
+   LDX #zp_seg_sy1_bbot_l - VX1            ; bb step: sy pair bbot,
+   LDA #>BOT_RECORDS                       ; BOT_RECORDS armed
    STA zp_dcl_rec_buf_h
-   ZERO BOT_RECORDS                        ; count = 0 (arm-time reset)
+   ZERO BOT_RECORDS
    LDA #1
    STA zp_dcl_rec_off
-; BOT_RECORDS = $0800
-; (no PAGE: entry here is provably bank-C — since 2026-07-21 the
-;  hgp_fwd cascade page dominates everything. Historical note kept:
-;  !NEEDBT paths paged C at
-;  ft_no_needbt and every fb path preserves it; NEEDBT means the
-;  step-top emit just paged C. The ONLY non-C corridor into the
-;  cascade — portal + NEEDBT + ch<=vz skipping ft in bank L2 — dies at
-;  step-top's PAGE. That corridor is exactly why the step-top and
-;  fb_set_line PAGEs above are LOAD-BEARING: do not elide them.
-;  Audited 2026-07-15.)
+; (bank note: entry here is provably bank C — the stage-5 page
+; dominates the cascade; the header-read arms above re-page around
+; themselves.  Audited: the PAGEs at ft/fb_no_needbt are load-bearing.)
    JSR SC_DRAW_S16_H
 step_no_bot:
 step_skip:
 
-; --- Emit verticals: PER-VERTEX SPAN DESCRIPTORS (2026-07-24) ---
-; The per-seg solid/portal ladders, NOVT tests and the whole APEDGE
-; exception path (ap_edges/apv_stage/ap_emit_y) are RETIRED: each
-; endpoint's vertex is served ONCE per frame (VDONE bit) by the first
-; rendering seg to touch it, from a one-byte descriptor. Codes read
-; this seg's already-projected sy slots; explicit refs clamp world
-; heights to this seg's front and project at the endpoint recip.
-; Probe-first (2026-07-25 lean rework): the VDONE bit is tested INLINE —
-; a served (or marked-desc-0) vertex exits in the site's ~20 cycles with
-; no JSR and no ZP staging. Only unmarked vertices call the fresh path.
+; ============================================================================
+; STAGE 7 — VERTICALS.  Each endpoint's vertex is served ONCE per frame
+; (VDONE bit) by the first rendering seg that touches it, from a
+; one-byte descriptor (VDESC, senior plane at +$100).  The probe is
+; inline: a served vertex exits in ~20 cycles with no JSR.
+;
+;   for v in (v1, v2):
+;       if VDONE[v]: continue
+;       vs_fresh(v)          # mark; gate; dispatch descriptor
+;
+; v1's probe rebuilds mask/index from the banked key (zp_v1i_*); v2's
+; mask is still live in zp_seg_v_bitm (its transform stored it and
+; nothing since writes it — chain hits skip v1's store, and v2's own
+; transform always ran last).
+; ============================================================================
    LDA zp_v1i_l
    AND #7
    TAY
@@ -585,10 +537,6 @@ step_skip:
    BNE vs1_done
    JSR vs_fresh1
 vs1_done:
-; v2's bit mask is STILL LIVE in zp_seg_v_bitm (stored by its transform;
-; nothing between writes it — chain v1 hits skip the store, leaving the
-; previous seg's v2 = a different vertex, but v2's own xform ALWAYS ran
-; last). Saves the AND/TAY/table reload the v1 site still needs.
    LDA zp_seg_v_bitm
    LDX zp_seg_v_idx_b
    AND VDONE,X
@@ -596,151 +544,129 @@ vs1_done:
    JSR vs_fresh2
 vs2_done:
 
-; --- Compute clamped u8 ilo/ihi for both solid (mark_solid) and
-;     portal (tighten) cases.
-; Same clamp as the has_gap prelude (Python: ilo = max(0, min(sx1,sx2)),
-; ihi = min(255, max(sx1,sx2))), recomputed from the sx slots — the
-; $C2/$C3 scratch does not survive the emissions above. The seg was
-; CANONICALIZED at hg_pass (sx1 <= sx2 always), and the prelude's bails
-; guarantee max >= 0 and min < 256 — one hi-byte test per endpoint,
-; single path.
-   LDA zp_seg_sx2_h                       ; max hi: 0 = in range
-   BNE ms_hi255                            ; >= 256 (BMI impossible): 255
+; ============================================================================
+; STAGE 8 — OCCLUSION.  Recompute the clamped u8 range (the stage-3
+; scratch did not survive the emits; the pair is canonical now, so one
+; hi-byte test per endpoint suffices — stage 3 already culled the
+; off-screen cases, leaving max >= 0 and min < 256):
+;
+;   ilo = clamp0(sx1); ihi = clamp255(sx2)
+;   if SOLID:        mark_solid(ilo, ihi)
+;   elif records:    tighten_from_records(ilo, ihi)
+;   elif not seg_zero_rec_solid(): pass   # aperture covers the screen
+;   else:            mark_solid(ilo, ihi) # aperture wholly off-screen:
+;                                         # every column is wall
+; ============================================================================
+   LDA zp_seg_sx2_h                        ; ihi: hi 0 = in range
+   BNE clamp_sat_hi                        ; >= 256 (neg impossible): 255
    LDA zp_seg_sx2_l
-ms_hist:
+clamp_ihi_have:
    STA zp_i_h
-   LDA zp_seg_sx1_h                       ; min hi: 0 = in range
-   BMI ms_lo0                              ; < 0 (pos-nonzero impossible): 0
+   LDA zp_seg_sx1_h                        ; ilo: hi 0 = in range
+   BMI clamp_sat_lo                        ; < 0 (pos impossible): 0
    LDA zp_seg_sx1_l
-ms_lost:
+clamp_ilo_have:
    STA zp_i_l
-; (clamp fixups relocated below ms_skip: the in-range path — every seg —
-; falls straight through; the rare saturations pay the branch back)
 ms_dispatch:
    BIT zp_seg_flags
-   BVS ms_solid_path                       ; SOLID (V)
-; --- Portal: apply the records tighten IMMEDIATELY (bank C is
-;     guaranteed here — the emit-cascade audit — and the records are
-;     LIVE in the records buffers: consumed in place, no snapshot).
-;     Skip if no records were populated — mirrors Python's wrapper test.
-   LDA TOP_RECORDS
-   ORA BOT_RECORDS
-   BEQ ms_zero_rec
+   BVS ms_solid                            ; SOLID (V)
+   LDA TOP_RECORDS                         ; portal: tighten iff any records
+   ORA BOT_RECORDS                         ; were captured (consumed in
+   BEQ ms_zero_rec                         ; place, bank C guaranteed)
    JSR SC_TIGHTEN_FROM_RECORDS
-   JMP ms_advance                          ; (was JMP ms_skip -> JMP
-                                        ;  ms_advance — double hop died
-                                        ;  2026-08-12)
-; --- clamp saturation islands (relocated 2026-08-12 into this existing
-; seam — the old home between ms_skip and ms_advance forced a
-; trampoline on every seg; here they cost nothing) ---
-ms_hi255:
+   JMP ms_advance
+; --- stage-8 islands (this seam costs nothing: the JSR/JMP above) ---
+clamp_sat_hi:
    LDA #255
-   BNE ms_hist                             ; (always: A=255)
-ms_lo0:
+   BNE clamp_ihi_have                      ; (always)
+clamp_sat_lo:
    LDA #0
-   BEQ ms_lost                             ; (always: A=0)
+   BEQ clamp_ilo_have                      ; (always)
 ms_zero_rec:
-; Zero records: skip only when the aperture genuinely covers the whole
-; screen; a wholly off-screen aperture means the columns are all wall ->
-; close them (aligns with endpoint_spans' record verdicts; see
-; seg_zero_rec_solid in clip/tfr.s).
+; no records: if the aperture covers the whole screen there is nothing
+; to close; wholly off-screen means every column is wall (tfr.s)
    JSR seg_zero_rec_solid
    BCC ms_advance
    JSR SC_MARK_SOLID
    JMP ms_advance
-ms_solid_path:
-; --- Solid wall: mark_solid NOW (bank C held; ilo/ihi staged above) ---
+ms_solid:
    JSR SC_MARK_SOLID
 ms_advance:
 
-; --- Advance to the next seg: clear the skip flag, bump the seg index
-;     (u16) and the two persistent ROM cursors (+12 header, +6 FHCH). ---
-
-::s_advance:                            ; arrivals that left L0 (emit path
-; ends bank C; the mid-loop culls — both-clipped, off-screen, has_gap
-; fail, 1px drop — end bank L2): re-page L0 for the next seg's header
-; reads, but only on the loop-back arc so the RTS keeps the old
-; caller-sees-last-seg's-bank contract.
-; ZP_YS_V1OK LEAK (2026-07-25, the 004A.0B jump): a seg that CHAIN-HIT
-; (v1ok=1, ys_done consumed) and then culled here never ran its y
-; stage — the stale v1ok leaked into the NEXT seg, whose y stage then
-; skipped v1's front projection and emitted whatever sy the chain copy
-; brought (two-seg-old values: the 21-row wrong ft). Emitted segs
-; cleared v1ok in the y stage; ONLY the cull arcs leaked. The backface
-; arc (s_advance_l0) never touches the chain and must PRESERVE it.
+; ============================================================================
+; STAGE 9 — ADVANCE.  Two entries: ::s_advance re-pages L0 for the next
+; header read (emit arcs end bank C; mid-loop culls end L2);
+; ::s_advance_l0 is the backface back-exit twin that never left L0 (the
+; 12-byte duplication keeps the majority arc page-free).
+; zp_ys_v1ok MUST be cleared on the cull arcs: a chain-hit seg that
+; culls here never consumed its donation, and the stale flag would make
+; the NEXT seg's y stage skip v1 with two-seg-old sy values.  The
+; backface arc never touches the chain and must NOT clear it.
+; ============================================================================
+::s_advance:
    ZERO zp_ys_v1ok
-; (no zp_seg_skip reset needed: the back-face test returns in A now, and
-; br_seg_xform_vertex ZEROs the slot at entry before every consumer read)
-; (zp_seg_first is NOT advanced per seg: its only reader is the subsector
-; prologue's cursor derivation — the loop lives off zp_seg_hdr_p.
-; The old INC pair was ~8 cyc/seg of dead work, removed 2026-07-10.)
    CLC
    LDA zp_seg_hdr_p
    ADC #16
-   STA zp_seg_hdr_p                        ; page-slotted (packer assert):
-                                        ; a run never crosses its page, so
-                                        ; the hi byte is ss-constant
-   DEC zp_seg_count
-   BEQ sa_done
-   PAGE BANK_L0                            ; the old loop-top page, moved to
-   JMP seg_proc                            ; the arcs that actually left L0
-::s_advance_l0:                         ; backface back-exits: header reads
-; never paged away — the advance tail is duplicated (12 bytes) so the
-; majority arc pays no PAGE at all (57% of iterations per dfscan).
+   STA zp_seg_hdr_p                        ; headers are page-slotted: a run
+   DEC zp_seg_count                        ; never crosses its page (packer
+   BEQ sa_done                             ; assert) — hi byte is constant
+   PAGE BANK_L0
+   JMP seg_proc
+::s_advance_l0:
    CLC
    LDA zp_seg_hdr_p
    ADC #16
    STA zp_seg_hdr_p
    DEC zp_seg_count
-   BEQ sa_done                             ; loop rotation: seg_loop's
-   JMP seg_proc                            ; LDA/BNE re-test was dead
+   BEQ sa_done
+   JMP seg_proc
 sa_done:
-   RTS                                     ; ops already applied per seg
+   RTS
 
 ; ============================================================================
-; ys_withback — the with-back y-stage arc (see the fork at the deltas
-; gate). >=1 of NEEDBT/NEEDBB is PROVEN on entry: stage the back
-; deltas, then per-endpoint front pairs + back pairs with the
-; BT-miss-means-BB dispatch. Ends JMP ys_done.
+; STAGE 4 ISLAND — the with-back y-projection arc.  Entered with
+; >= 1 of NEEDBT/NEEDBB PROVEN (the stage-4 fork) and C = 1 (the
+; hg_query BCS-fall; nothing between touches carry — the fork's
+; LDA/AND/BEQ/JMP included, so the first SBC needs no SEC).
+;
+;   stage btop_dlt = bch - vz, bbot_dlt = bfh - vz   (header, bank L0)
+;   v1: chained -> back pair only; else front pair too
+;   v2: front pair + back pair
+;   per endpoint: NEEDBT ? project btop : (BB guaranteed)
+;                 NEEDBB ? project bbot
 ; ============================================================================
 ys_withback:
    PAGE BANK_L0
    LDY #13
-   LDA (zp_seg_hdr_p),Y                     ; bch (header +13)
-   SBC zp_br_vz                             ; no SEC: hg_pass is entered only
-                                            ; by falling past BCC hg_adv (C=1)
-                                            ; and nothing above touches carry
-                                            ; (the fork's LDA/AND/BEQ/JMP
-                                            ; included)
+   LDA (zp_seg_hdr_p),Y                    ; bch
+   SBC zp_br_vz                            ; (no SEC: C=1 from hg_query)
    STA zp_seg_btop_dlt
    DEY
-   LDA (zp_seg_hdr_p),Y                     ; bfh (header +12)
+   LDA (zp_seg_hdr_p),Y                    ; bfh
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
-   PAGE BANK_L2                             ; restore for the projections
+   PAGE BANK_L2                            ; projections run under L2
    LDA zp_ys_v1ok
    BEQ ysb_v1_full
-; chained v1 with a LIVE front sy pair (copied from the emitted prev
-; seg) — only the back pair projects (the old $0C pre-gate IS the
-; fork now; nothing re-tests)
-   ZERO zp_seg_ep
-   LDA zp_seg_v1_r_m8
-   STA zp_br_r_m8
-   LDX zp_seg_v1_r_s                        ; inlined rns_select (hot site)
+   ZERO zp_seg_ep                          ; chained v1: front pair is live,
+   LDA zp_seg_v1_r_m8                      ; stage recip + kernel and go
+   STA zp_br_r_m8                          ; straight to the back pair
+   LDX zp_seg_v1_r_s
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   JMP dpy1_have                           ; back pair only
+   JMP ysb_v1_back
 ysb_v1_full:
-   ZERO zp_seg_ep                         ; v1 -> struct VX1
+   ZERO zp_seg_ep                          ; v1 -> VX1
    LDA zp_seg_v1_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v1_r_s
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   LDA zp_seg_top_dlt                       ; front pair
+   LDA zp_seg_top_dlt                      ; front pair
    JSR br_project_y
    STA VX1+4
    STY VX1+3                               ; sy_top
@@ -748,10 +674,10 @@ ysb_v1_full:
    JSR br_project_y
    STA VX1+6
    STY VX1+5                               ; sy_bot
-dpy1_have:
-   LDA zp_seg_flags                        ; >=1 back flag proven: open at
-   AND #$04                                ; the BT dispatch
-   BEQ dpy1_bb                             ; no BT -> BB is GUARANTEED
+ysb_v1_back:
+   LDA zp_seg_flags                        ; >= 1 back flag proven:
+   AND #$04                                ; open at the NEEDBT dispatch
+   BEQ ysb_v1_bb                           ; no BT -> BB is GUARANTEED
    LDA zp_seg_btop_dlt
    JSR br_project_y
    STA VX1+8
@@ -759,21 +685,21 @@ dpy1_have:
    LDA zp_seg_flags
    AND #$08
    BEQ ysb_v2
-dpy1_bb:
+ysb_v1_bb:
    LDA zp_seg_bbot_dlt
    JSR br_project_y
    STA VX1+10
-   STY VX1+9                              ; sy_bbot
+   STY VX1+9                               ; sy_bbot
 ysb_v2:
    LDA #VX_STRIDE
-   STA zp_seg_ep                            ; v2 -> struct VX2
+   STA zp_seg_ep                           ; v2 -> VX2
    LDA zp_seg_v2_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v2_r_s
    STX zp_br_r_s
    LDA rns_vec_l-1,X
    STA rns_go_op
-   LDA zp_seg_top_dlt                       ; front pair
+   LDA zp_seg_top_dlt                      ; front pair
    JSR br_project_y
    STA VX2+4
    STY VX2+3                               ; sy_top
@@ -781,55 +707,58 @@ ysb_v2:
    JSR br_project_y
    STA VX2+6
    STY VX2+5                               ; sy_bot
-   LDA zp_seg_flags
+   LDA zp_seg_flags                        ; back pair (mirror of v1)
    AND #$04
-   BEQ dpy2_bb
+   BEQ ysb_v2_bb
    LDA zp_seg_btop_dlt
    JSR br_project_y
    STA VX2+8
    STY VX2+7                               ; sy_btop
    LDA zp_seg_flags
    AND #$08
-   BEQ ys_wb_done
-dpy2_bb:
+   BEQ ysb_done
+ysb_v2_bb:
    LDA zp_seg_bbot_dlt
    JSR br_project_y
    STA VX2+10
-   STY VX2+9                              ; sy_bbot
-ys_wb_done:
+   STY VX2+9                               ; sy_bbot
+ysb_done:
    JMP ys_done
 .endscope
 
-; (seg_swap_vx retired 2026-07-15: reversed 1px projections are DROPPED
-; at the hg_query prelude — Eben's call, measured: the only cost is the
-; degenerate slivers themselves; no aperture/occlusion regressions.)
-
-; (drain_deferred_ms replaced by defq_drain — see the $0B00 region.)
-
 ; ============================================================================
-; vs_fresh1/vs_fresh2 — serve a FRESH endpoint vertex (2026-07-25 lean
-; rework; the staged vs_vertex entry retired). The call sites probe the
-; VDONE bit inline, so only unmarked vertices arrive here.
-;   in : Y = idx&7 (bit select), X = idx>>3 (bitmap byte); the vertex
-;        key is re-read from its home ZP pair (v1: zp_v1i, v2:
-;        zp_seg_v_idx) — no staging slots.
-;   The mark is FIRST and unconditional: desc-0 vertices get marked too
-;   (nothing can ever draw there — the mark just upgrades every later
-;   touch to the site's fast exit; python mirrors this). Clip/column
-;   gates are vertex facts (trigger-invariant), so mark-before-gate is
-;   safe. Bank C throughout; the explicit path excurses to L2 around
-;   br_project_y (VWHC planes) and returns to C.
+; STAGE 7 SUBROUTINES — vs_fresh1 / vs_fresh2: serve a fresh vertex.
+;
+;   mark VDONE (unconditional and FIRST: desc-0 vertices get marked
+;       too — nothing can ever draw there, and the mark upgrades every
+;       later touch to the probe's fast exit)
+;   if clipped or column off-screen: return   (vertex facts —
+;       trigger-invariant, so marking before the gates is safe)
+;   desc = VDESC[idx]  (senior plane at +$100 by idx bit 13)
+;   if desc == 0: return
+;   dispatch:
+;     $01       full corner:  top -> bot
+;     $02       bottom step:  bbot -> bot   [gated NEEDBB]
+;     $03       top step:     top -> btop   [gated NEEDBT]
+;     $04       frame pair:   top step then bottom step
+;     $80|i     explicit span table walk (VEXPL, rare)
+;   The NEEDBT/NEEDBB gates make solid/stepless triggers self-annul
+;   (their world bch/bfh alias fh/ch — the codes never fire).
+;
+; in: v1 site: Y = idx & 7, X = idx B byte (probe leftovers, reused for
+;     the mark); key re-read from zp_v1i_*.  v2 site: mask in A via
+;     zp_seg_v_bitm, X = idx B; key from zp_seg_v_idx_*.
+; Verticals draw via SC_DCL_VERT_ON with zp_line_yl/yr staged and the
+; column in A (pre-gated on-screen — the +2 test above).  Bank C
+; throughout; the explicit path excurses to L2 around br_project_y.
 ; ============================================================================
 .scope
-::vs_fresh1:                                ; v1 endpoint (struct 0)
-   LDA vc_bit_mask,Y
+::vs_fresh1:
+   LDA vc_bit_mask,Y                       ; mark
    ORA VDONE,X
    STA VDONE,X
-; gates BEFORE the descriptor read (both exits are draw-free and the
-; mark is already down, so order is unobservable): STATIC zp
-; addressing — this entry IS struct 0, no index needed.
-   LDA VX1+0                               ; near-clipped endpoint
-   ORA VX1+2                               ; column off-screen
+   LDA VX1+0                               ; clipped?
+   ORA VX1+2                               ; column off-screen?
    BNE f1_rts
    LDY zp_v1i_l
    LDA zp_v1i_b
@@ -838,23 +767,22 @@ ys_wb_done:
    LDA VDESC,Y
    BNE f1_go
 f1_rts:
-   RTS                                     ; no spans, ever (marked)
+   RTS
 f1_hi:
    LDA VDESC+$100,Y
    BNE f1_go
    RTS
 f1_go:
-   LDX #0
-   BEQ vs_go                               ; (always: Z from LDX #0 — NOT a
-                                        ;  C02 STZ join-pull candidate: the
-                                        ;  vsx arms index VX1+n,X, so X
-                                        ;  itself is live, 2026-08-12)
-::vs_fresh2:                                ; v2 endpoint (struct VX_STRIDE)
-   LDA zp_seg_v_bitm                        ; (v2's mask — see the site)
-   ORA VDONE,X
+   LDX #0                                  ; struct VX1.  (X is LIVE in the
+   BEQ vs_go                               ; vsx arms — indexes VX1+n,X —
+                                        ; so no C02 STZ pull here; branch
+                                        ; always: Z from LDX)
+::vs_fresh2:
+   LDA zp_seg_v_bitm                       ; mark (mask still live — see
+   ORA VDONE,X                             ; the stage-7 site note)
    STA VDONE,X
-   LDA VX2+0                               ; clip
-   ORA VX2+2                               ; sx_hi
+   LDA VX2+0                               ; clipped?
+   ORA VX2+2                               ; column off-screen?
    BNE f2_rts
    LDY zp_seg_v_idx_l
    LDA zp_seg_v_idx_b
@@ -869,26 +797,23 @@ f2_hi:
    BNE f2_go
    RTS
 f2_go:
-   LDX #VX_STRIDE
-vs_go:                                      ; A = descriptor (nonzero),
-   STX zp_vs_x                             ; X = struct (dcl/project
-                                           ; clobber X; STX keeps flags)
-; dispatch on A directly (zp_vs_d retired) — the incoming N/Z are from
-; the LDX above, so test explicitly:
-   CMP #$80
-   BCS vsx_expl                            ; $80|i: explicit table ref
+   LDX #VX_STRIDE                          ; struct VX2
+vs_go:
+   STX zp_vs_x                             ; struct offset banked (dcl and
+                                        ; the projector clobber X)
+   CMP #$80                                ; A = descriptor (nonzero)
+   BCS vsx_expl                            ; $80|i: explicit table
    CMP #2
-   BCC vsx_c1                              ; $01: fh->ch
-   BEQ vsx_c2                              ; $02: fh->bfh
+   BCC vsx_c1                              ; $01
+   BEQ vsx_c2                              ; $02
    CMP #4
-   BCC vsx_c3                              ; $03: bch->ch
-; $04 frame pair: top piece then bottom piece
-   JSR vsx_do_c3
+   BCC vsx_c3                              ; $03
+   JSR vsx_do_c3                           ; $04: top piece...
    LDX zp_vs_x
-vsx_c2:                                    ; bottom step: bbot -> bot,
-   LDA zp_seg_flags                        ; gated on NEEDBB (a solid or
-   AND #$08                                ; stepless trigger self-annuls
-   BEQ vsx_rts                             ; the code — world bfh <= fh)
+vsx_c2:                                    ; bottom step: bbot -> bot
+   LDA zp_seg_flags
+   AND #$08                                ; NEEDBB gate (self-annul)
+   BEQ vsx_rts
    LDA VX1+9,X
    STA zp_line_yl_l
    LDA VX1+10,X
@@ -912,13 +837,13 @@ vsx_c1:                                    ; full corner: top -> bot
    LDA VX1+6,X
    STA zp_line_yr_h
 vsx_emit:
-   LDA VX1+1,X                             ; column (pre-gated on-screen:
-   JMP SC_DCL_VERT_ON                      ; skip the senior-byte check)
+   LDA VX1+1,X                             ; column (pre-gated on-screen)
+   JMP SC_DCL_VERT_ON                      ; tail: RTS to our caller
 
-vsx_do_c3:                                 ; top step: top -> btop,
-   LDA zp_seg_flags                        ; gated on NEEDBT
-   AND #$04
-   BEQ vsx_c3rts
+::vsx_do_c3:                               ; top step: top -> btop
+   LDA zp_seg_flags
+   AND #$04                                ; NEEDBT gate (self-annul)
+   BEQ c3_rts
    LDA VX1+3,X
    STA zp_line_yl_l
    LDA VX1+4,X
@@ -927,74 +852,65 @@ vsx_do_c3:                                 ; top step: top -> btop,
    STA zp_line_yr_l
    LDA VX1+8,X
    STA zp_line_yr_h
-   LDA VX1+1,X                             ; (pre-gated on-screen)
-   JMP SC_DCL_VERT_ON                      ; tail: RTS to OUR caller
-vsx_c3rts:
+   LDA VX1+1,X                             ; column (pre-gated on-screen)
+   JMP SC_DCL_VERT_ON                      ; tail: RTS to our caller
+c3_rts:
    RTS
 
+; --- explicit span table walk ($80|i): each span clamps its world
+; height pair to this trigger's front sector, projects at the
+; endpoint's own recip, and emits.  Recip + kernel select are hoisted
+; out of the span loop (one recip per vertex).  VEXPL reads run under
+; the ambient bank C; only the projections need the L2 window. ---
 vsx_expl:
-; explicit table walk: clamp world heights to this trigger's front
-; sector, project at the endpoint's own recip, emit. Rare (86 refs
-; map-wide). Lean layout (2026-07-25): recip staging + RNS_SELECT are
-; hoisted out of the span loop (every span at this vertex projects at
-; the same endpoint recip) and are BANK-FREE (rns tables + the SMC site
-; live in CODE, VX is zp); the VEXPL reads + clamps run under the
-; ambient bank C; only the two br_project_y calls need the L2 window
-; (VWHC planes) — an empty span pays no PAGE at all.
    AND #$7F
-   STA zp_vs_i
+   STA zp_vs_i                             ; span index
    LDA VX1+11,X                            ; endpoint recip -> projector
    STA zp_br_r_m8
    LDA VX1+12,X
    STA zp_br_r_s
-   RNS_SELECT                              ; (A = S rides in; clobbers X)
-vsx_exl:
-; VEXPL reads under the ambient bank C (the planes live beside VDESC in
-; the C window); the clamp is pure ZP.
+   RNS_SELECT                              ; (A = S in; clobbers X)
+vsx_span:
    LDY zp_vs_i
-; c_lo = max(h_lo, fh)  [signed s8]
+; c_lo = max(h_lo, fh); c_hi = min(h_hi, ch)   [signed s8, V-corrected]
    LDA VEXPL_LO,Y
    SEC
    SBC zp_seg_fh
-   BVC vsx_lo1
+   BVC el_v_ok
    EOR #$80
-vsx_lo1:
-   BMI vsx_lofh
+el_v_ok:
+   BMI el_use_fh
    LDA VEXPL_LO,Y
-   JMP vsx_lohave
-vsx_lofh:
+   JMP el_have
+el_use_fh:
    LDA zp_seg_fh
-vsx_lohave:
+el_have:
    STA zp_vs_hl
-; c_hi = min(h_hi, ch)  [signed s8]
    LDA VEXPL_HI,Y
    SEC
    SBC zp_seg_ch
-   BVC vsx_hi1
+   BVC eh_v_ok
    EOR #$80
-vsx_hi1:
-   BPL vsx_hich
+eh_v_ok:
+   BPL eh_use_ch
    LDA VEXPL_HI,Y
-   JMP vsx_hihave
-vsx_hich:
+   JMP eh_have
+eh_use_ch:
    LDA zp_seg_ch
-vsx_hihave:
+eh_have:
    STA zp_vs_hh
-; empty? (c_hi <= c_lo, signed) — A rides from the STA above (valid
-; again: the RNS hoist removed the clobber between clamp and test)
-   SEC
-   SBC zp_vs_hl
-   BVC vsx_em1
+   SEC                                     ; empty? (c_hi <= c_lo, signed;
+   SBC zp_vs_hl                            ; A rides from the STA)
+   BVC em_v_ok
    EOR #$80
-vsx_em1:
-   BMI vsx_enext
-   BEQ vsx_enext
-; project both ends (deltas vs eye height), emit
-   PAGE BANK_L2                            ; br_project_y's VWHC planes
+em_v_ok:
+   BMI vsx_next
+   BEQ vsx_next
+   PAGE BANK_L2                            ; project both ends vs eye height
    LDA zp_vs_hh
    SEC
    SBC zp_br_vz
-   JSR br_project_y                        ; -> Y = lo, A = hi
+   JSR br_project_y
    STA zp_line_yl_h
    STY zp_line_yl_l
    LDA zp_vs_hl
@@ -1005,20 +921,14 @@ vsx_em1:
    STY zp_line_yr_l
    PAGE BANK_C
    LDX zp_vs_x
-   LDA VX1+1,X                             ; (pre-gated on-screen)
+   LDA VX1+1,X                             ; column (pre-gated on-screen)
    JSR SC_DCL_VERT_ON
-vsx_enext:
+vsx_next:
    LDY zp_vs_i
-   LDA VEXPL_CONT,Y
-   BEQ vsx_edone
+   LDA VEXPL_CONT,Y                        ; continuation flag
+   BEQ vsx_done
    INC zp_vs_i
-   JMP vsx_exl
-vsx_edone:
+   JMP vsx_span
+vsx_done:
    RTS
 .endscope
-
-
-
-
-; (dcl_rec_arm inlined at the four arm sites — JSR/RTS tax on every
-; portal edge arm; semantics unchanged.)
