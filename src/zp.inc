@@ -46,7 +46,7 @@ LC_OFF_HI = $FF                   ; [clip]
 ; trap again — the 'separately FREE' note below rotted when the off-arm
 ; restore brought the vectors back, and pyref caught it); $9F/$A0 left
 ; for the visibility hooks.
-as_x = $A1                        ; [bsp] apv_stage endpoint-offset stash
+; $A1 FREE (was as_x — died with the apv_stage macro text, 2026-08-12)
 vxc_ref_x = $A2                   ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
 vxc_ref_y = $A4                   ; [bsp] s16 count ref (y); TRUE16 2026-08-10
                                   ; ($A6-$A7 FREE — the s24 third bytes died)
@@ -270,7 +270,7 @@ zc_ptr = $44                      ; [ang]; ZC arm dispatch pointer (JMP (zp)
                                   ;   still free)
 sd_q = $48                        ; [ang] ; w=2
 sd_r = $4A                        ; [ang] ; w=2
-zp_ap2_dlt = $4C                  ; [bsp]; apv_stage: apv fh-vz stash
+; $4C FREE (was zp_ap2_dlt — died with the apv_stage macro text, 2026-08-12)
 ; between its two projections (one L0 page-in reads both header bytes)
 ; FREE 2026-07-16 (write-only since the C-form): zp_bf_pym_l = $4D
 ; back-face diagonal C-form reads both per call)

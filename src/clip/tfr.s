@@ -515,7 +515,9 @@ tfs_oor:
    LDX zp_clr_save_x
    JSR tg_append_x
    JMP tfs_continue
-tfs_in_range:
+; (tfs_in_range reload head DELETED 2026-08-12: zero references — every
+;  caller branches to the _noreload twin with XSTART riding A — and the
+;  JMP above blocks fall-through; provably unreachable.)
 
 ; Single-column span [x..x]: the sweep below is empty (CUR_X == X_HI),
 ; which used to DROP the span entirely and leave its records unconsumed
@@ -523,19 +525,17 @@ tfs_in_range:
 ; reversed/overlapping phantom spans — the 1056,-3616,64 window bug).
 ; Enter the loop body directly with CUR_X = X_HI = x: the body evaluates
 ; record dominance at x, emits the one column, and the loop test exits.
-   LDA POOL_XSTART,X
 tfs_in_range_noreload:
    CMP POOL_XEND,X
    BNE tfs_pre_chk_noreload
    STA TFS_CUR_X
    STA TFS_X_HI
    JMP tfs_body
-tfs_pre_chk:
+; (tfs_pre_chk reload head DELETED 2026-08-12 — same proof as in_range.)
 
 ; Pre-fragment [span.xstart, ilo] if span.xstart < ilo.
 ; Abutting: the fragment KEEPS ilo as its xend (shared boundary column
 ; with the swept region starting at cur_x = ilo). Line def preserved.
-   LDA POOL_XSTART,X
 tfs_pre_chk_noreload:
    CMP zp_i_l
    BCS tfs_no_pre_noreload
@@ -549,9 +549,8 @@ tfs_pre_chk_noreload:
    LDA zp_i_l
    STA TFS_CUR_X
    JMP tfs_xhi_done
-tfs_no_pre:
-; (X = clr_save_x rides in from the BCS site)
-   LDA POOL_XSTART,X
+; (tfs_no_pre reload head DELETED 2026-08-12 — same proof; X =
+;  clr_save_x rides in from the BCS site)
 tfs_no_pre_noreload:
    STA TFS_CUR_X
 tfs_xhi_done:

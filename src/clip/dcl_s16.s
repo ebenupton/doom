@@ -532,7 +532,7 @@ y_in_range:
 ; values (written in place by the clip steps above — the old LC_*_LO
 ; alias layer was removed 2026-07-10).
 ; NB the "bail" margin note on the BNE below is stale (2026-07-12):
-; rejected_swap_after_clip SWAPS the endpoints and still emits — see
+; rsac_noreload SWAPS the endpoints and still emits — see
 ; its own comment.
    LDA zp_line_xl_l
    CMP zp_line_xr_l
@@ -544,9 +544,10 @@ y_in_range:
 dispatch_dcl:
    JSR draw_clipped_line
    JMP dcl_rec_s16r_flush
-rejected_swap_after_clip:
-; Post-clip x1 > x2 — would require swap; just emit reordered.
-   LDA zp_line_xl_l                        ; (xl_l live at the BNE site)
+; Post-clip x1 > x2 — would require swap; just emit reordered. (The
+; rejected_swap_after_clip reload head DELETED 2026-08-12: zero
+; references — the BNE enters at rsac_noreload with xl_l riding A —
+; and the JMP above blocks fall-through.)
 rsac_noreload:
    LDX zp_line_xr_l
    STX zp_line_xl_l

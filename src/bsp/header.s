@@ -29,23 +29,7 @@ STZ addr
 ; ZERO_X / ZERO_Y: as ZERO but the NMOS arm clobbers X / Y instead of
 ; A (65C02 STZ clobbers nothing either way). Pick by which register is
 ; dead at the site.
-.macro ZERO_X addr
-.if ::C02
-STZ addr
-.else
-   LDX #0
-   STX addr
-.endif
-.endmacro
 
-.macro ZERO_Y addr
-.if ::C02
-STZ addr
-.else
-   LDY #0
-   STY addr
-.endif
-.endmacro
 
 ; BUMP: A = A + 1. 65C02 = INC A (no carry); 6502 = CLC : ADC #1. Use only
 ; where the carry/overflow OUT is dead (negate, single-byte increments).
@@ -597,26 +581,5 @@ uo:
    STA zp_prod_h
    RTS
 .endscope
-; ============================================================================
-; SC_UDIV16_8 — restoring shift-subtract division, u16 ÷ u8.
-;   Inputs:  zp_div_l/hi = numerator (u16), zp_div_den = denominator (u8).
-;   Output:  A = quotient low byte (also in zp_div_l; on the 16-bit path
-;            zp_div_h holds the quotient high byte). Remainder discarded.
-;   Clobbers: A, X, zp_div_l/hi.
-;
-;   Two paths, selected on div_hi vs den:
-;   - div_hi < den → quotient fits u8. The numerator is pre-shifted left 8
-;     (lo→hi, lo:=0) so only 8 loop iterations remain, and the leading
-;     zero bits of the quotient are skipped by an unrolled compare-only
-;     prelude: ASL/ROL + CMP den per bit, with NO quotient bookkeeping
-;     until the first bit that commits (remainder >= den, or a carry out
-;     of ROL). That bit jumps to dskip_cN, which loads X = bits remaining
-;     and falls into the shared loop via dskip_commit. If all 8 compares
-;     miss, the quotient is exactly 0 (early RTS).
-;   - div_hi >= den → d16: full 16-iteration loop. Quotient bits shift
-;     into div_lo:div_hi from the right as the numerator shifts out into
-;     the remainder accumulating in A; dl_over handles remainder bit 8
-;     popping out of ROL (subtract always fits, CMP skipped).
-; ============================================================================
-; (SC_UDIV16_8 is a MACRO now — bsp/inline.s — expanded at its single
-;  call site, 2026-07-17.)
+; (SC_UDIV16_8 DELETED 2026-08-12: the macro had lost its last
+;  expansion site — zero invocations across every source.)
