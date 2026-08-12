@@ -69,7 +69,7 @@
 ; the crossing's post-div restore) each break banked when removed,
 ; consumer unidentified; see vh_pgx).
 ; ============================================================================
-.macro SXV_BODY pg, vfoff, vxcon, rwpa, rwpb
+.macro SXV_BODY pg, vec, vfoff, vxcon, rwpa, rwpb
 .scope
 ; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
 ; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
@@ -133,11 +133,9 @@ vmiss:
 ; arm was briefly deleted for TRUE16 always-on 2026-08-10 and
 ; RESTORED same day: the canonical cache-off contract is compute-
 ; only — same result, no probe, no store.) ---
-.if pg = 0
-   JMP (zp_vf_vec0)
-.else
-   JMP (zp_vf_vec1)
-.endif
+   JMP (vec)                               ; the per-side fetch vector,
+                                        ; passed in (the pg=0 fork died
+                                        ; 2026-08-13)
 ::vfoff:
 ; TRUE16 plain fetch: stage the PAGE-DECOMPOSED vertex (unsigned u8
 ; offsets + senior nibble, 2026-08-11), rotate via the epoch-selected
@@ -353,9 +351,9 @@ vxq_add:
 ; test piggybacks); these are two complete side-baked routines with NO
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
-   SXV_BODY 0, sxv0_vfoff, sxv0_vxcon, sxv0_rwpa, sxv0_rwpb ; (pad note: 2026-07-27)
+   SXV_BODY 0, zp_vf_vec0, sxv0_vfoff, sxv0_vxcon, sxv0_rwpa, sxv0_rwpb ; (pad note: 2026-07-27)
 ::sx_vert_hi:                              ; bytes overflow BOTH regions —
-   SXV_BODY $100, sxv1_vfoff, sxv1_vxcon, sxv1_rwpa, sxv1_rwpb
+   SXV_BODY $100, zp_vf_vec1, sxv1_vfoff, sxv1_vxcon, sxv1_rwpa, sxv1_rwpb
 
 ; (vxc_store_tail deleted 2026-08-09 — birth store inlined per side in
 ;  the vxcon islands, side baked)
