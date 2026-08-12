@@ -138,12 +138,14 @@ chain_miss:                                ; A = header lo (banked in v1i_l)
    STZ zp_seg_ep                           ; ep = 0: v1 -> VX1; any prev-seg
    STZ zp_ys_done                          ; donation dies here
    STZ zp_ys_v1ok
+   LDY #1                                  ; (C02 probe leaves Y undefined)
 .else
    STY zp_seg_ep                           ; (Y = 0 from the probe load)
    STY zp_ys_done
    STY zp_ys_v1ok
+   INY                                     ; Y = 1 (rides the probe's 0 —
+                                        ;  one byte cheaper than LDY #1)
 .endif
-   LDY #1
    LDA (zp_seg_hdr_p),Y                    ; v1 idx B
    STA zp_v1i_b
    STA zp_seg_v_idx_b
