@@ -82,8 +82,14 @@
    STA zp_v1i_b
    CMP zp_seg_v_idx_b
    BNE chain_miss_b
+.if ::C02
+   LDA (zp_seg_hdr_p)                      ; v1 idx lo (non-indexed: the
+                                        ;  DEY died — the Y=0 consumers
+                                        ;  below fork to STZ)
+.else
    DEY                                     ; Y = 0
    LDA (zp_seg_hdr_p),Y                    ; v1 idx lo
+.endif
    STA zp_v1i_l
    CMP zp_seg_v_idx_l
    BNE chain_miss_a
@@ -115,7 +121,11 @@
    STA zp_seg_sy1_bot_h
 hit_done:
 .endscope
-   STY zp_ys_done                          ; donation consumed (Y = 0);
+.if ::C02
+   STZ zp_ys_done                          ; donation consumed
+.else
+   STY zp_ys_done                          ; donation consumed (Y = 0)
+.endif
    JMP v1_done_l0                          ; chain arc is pure ZP — L0 was
                                         ; never left, skip the re-page
 
@@ -125,14 +135,24 @@ xform1_hi:                                 ; v1 senior-plane transform
    JMP xform1_done
 chain_miss_b:                              ; B differs (Y = 1, v1i_b stored)
    STA zp_seg_v_idx_b
+.if ::C02
+   LDA (zp_seg_hdr_p)                      ; non-indexed: the DEY died
+.else
    DEY                                     ; Y = 0
    LDA (zp_seg_hdr_p),Y
+.endif
    STA zp_v1i_l
 chain_miss_a:                              ; lo differs (B already correct);
    STA zp_seg_v_idx_l                      ; B-miss falls in with both v1i
-   STY zp_seg_ep                           ; bytes stored.  ep = 0: v1 ->
-   STY zp_ys_done                          ; VX1; any prev-seg donation
-   STY zp_ys_v1ok                          ; dies here (Y = 0 throughout)
+.if ::C02                                  ; bytes stored.  ep = 0: v1 -> VX1;
+   STZ zp_seg_ep                           ; any prev-seg donation dies here
+   STZ zp_ys_done
+   STZ zp_ys_v1ok
+.else
+   STY zp_seg_ep                           ; (Y = 0 throughout on NMOS)
+   STY zp_ys_done
+   STY zp_ys_v1ok
+.endif
    LDA zp_seg_v_idx_b
    AND #$20                                ; side test at the caller: the
    BNE xform1_hi                           ; transform is side-baked

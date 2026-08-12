@@ -1200,10 +1200,16 @@ dcl_es_record:
    STA (zp_dcl_rec_buf),Y
    INY
    STY zp_dcl_rec_off
+.if ::C02
+   LDA (zp_dcl_rec_buf)                    ; non-indexed indirect: the LDY
+   ADC #1                                  ; dies and STA (zp) is 5 cyc
+   STA (zp_dcl_rec_buf)                    ; (C=0 from the xl>=xr BCS guard)
+.else
    LDY #0
    LDA (zp_dcl_rec_buf),Y
    ADC #1                                  ; C=0 from the xl>=xr BCS guard
    STA (zp_dcl_rec_buf),Y
+.endif
 dcl_es_no_record:
 ; (LINE_OUT capture RETIRED 2026-07-26 — see the vertical emit note.)
    LDA zp_seg_start_x
@@ -1514,10 +1520,16 @@ rf_app:
    STA (zp_dcl_rec_buf),Y
    INY
    STY zp_dcl_rec_off
+.if ::C02
+   LDA (zp_dcl_rec_buf)                    ; non-indexed (see the es site)
+   ADC #1                                  ; C=0 proven: BCS rf_restore
+   STA (zp_dcl_rec_buf)                    ; not taken, INY/LDA keep C
+.else
    LDY #0
    LDA (zp_dcl_rec_buf),Y
    ADC #1                                  ; C=0 proven: BCS rf_restore
    STA (zp_dcl_rec_buf),Y                  ; not taken, INY/LDA keep C
+.endif
 rf_restore:
    LDX DCLV_SX
 rf_done:

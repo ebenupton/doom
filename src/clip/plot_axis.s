@@ -87,10 +87,16 @@ plot_h:
    LDA RASTER_ZP_X0
    AND #7
    TAX
+.if ::C02
+   LDA plot_lmask,X
+   ORA (zp_tmp0)                           ; non-indexed indirect (STA (zp)
+   STA (zp_tmp0)                           ;  is 5 cyc; the LDY died)
+.else
    LDY #0
    LDA plot_lmask,X
    ORA (zp_tmp0),Y
    STA (zp_tmp0),Y
+.endif
 ; right partial at Y = diff
    LDA RASTER_ZP_X1
    AND #7
@@ -124,9 +130,14 @@ ph_single:
    TAX
    LDA plot_rmask,X
    AND zp_tmp2
+.if ::C02
+   ORA (zp_tmp0)                           ; non-indexed (see left partial)
+   STA (zp_tmp0)
+.else
    LDY #0
    ORA (zp_tmp0),Y
    STA (zp_tmp0),Y
+.endif
    RTS
 .endscope
 

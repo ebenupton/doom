@@ -70,8 +70,12 @@ vpd_rst:
    STA zp_tmp2
    STA vpd_rst+2
    LDA #$60                                ; RTS: arm the stop
+.if ::C02
+   STA (zp_tmp1)                           ; non-indexed (the LDY died)
+.else
    LDY #0
    STA (zp_tmp1),Y
+.endif
    LDY RASTER_ZP_Y0                        ; push block y0 - 1
    LDA hitab,Y
    PHA
