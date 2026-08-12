@@ -510,11 +510,14 @@ pym_nneg:
 ;            rns_go+1/+2 from the rns_vec tables. No ZP vector (the old
 ;            zp_rns_vec pair $C6/$C7 is freed), and JMP abs is 2 cycles
 ;            cheaper than the old JMP (zp).
-;   INVARIANT: every writer of zp_br_r_s MUST re-select (RNS_SELECT
-;            or the inlined form) before the next projection, or the
-;            dispatch runs a stale shifter. Current writers: br_recip
-;            (arith.s), the vcache hit path (seg_xform.s), chain_reuse_v1
-;            (lo.s), y_stage (subsector.s).
+;   INVARIANT: every rns_go dispatch must be DOMINATED by a select on
+;            its own path (a stale poke = a stale shifter). Current
+;            shape (audited 2026-08-12): br_project_x_c self-pokes on
+;            every x projection; every y projection sits inside a
+;            poked cluster (the five y-stage selects in seg_emit +
+;            vsx_expl's RNS_SELECT). Recip writers do NOT poke — the
+;            far arm's fossil select was deleted (rotvar.s), the near
+;            arm never had one.
 ;
 ; ALL bodies live in this file, in the LO segment (one CODE region both
 ; builds; evicted from the stack page 2026-07-12 — page 1 is reserved

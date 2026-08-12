@@ -9,10 +9,7 @@
 ; ============================================================================
 SEG_CODE
 .export br_recip_hi
-.import rns_vec_l, rns_go_op                ; project.s vectored shifter
 .import RECIP_M8                            ; bsp/header.s equate (L2/flat)
-                                            ; (rns_go_op = the NAMED SMC
-                                            ; patch point, exported there)
 
 
 ; (br_recip junior entry DELETED 2026-08-09 — dead since the nc_ok
@@ -35,12 +32,14 @@ rcp_pnz:                                    ; A = idx hi (>= 1), Y = idx lo —
    LDA #9
 rcp_s:
    STA zp_br_r_s
-; (RNS_SELECT expansion — the macro lives in bsp/header.s, not this
-; unit; A = S per its contract, X dies, A becomes the vector byte)
-   TAX
-   LDA rns_vec_l-1,X
-   STA rns_go_op
    RTS
+; (the RNS_SELECT expansion here DELETED 2026-08-12 — PROVEN dead: the
+;  sole caller falls straight into ncr_done -> br_project_x_c, whose
+;  own poke overwrites rns_go_op before px_narrow can dispatch, and
+;  every y-side dispatch is dominated by its cluster's select. Dynamic
+;  confirmation: 83 far-recip pokes traced over an extended corpus,
+;  none ever the live writer at a dispatch. The near arm at nc_ok
+;  never poked — this was its asymmetric fossil twin.)
 rcp_clamp:
    LDY #$FF                                ; idx := 1023 (t1 -> page 3)
 rcp_p3:
