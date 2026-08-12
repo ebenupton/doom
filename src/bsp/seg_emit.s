@@ -150,6 +150,9 @@ chain_miss:                                ; A = header lo (banked in v1i_l)
    STA zp_v1i_b
    STA zp_seg_v_idx_b
    TAY                                     ; SXV ABI: Y = idx_b (2026-08-13)
+   PAGE_X BANK_L2                          ; SXV bank contract: L2 in (A
+                                        ; rides the X-form page; header
+                                        ; reads above were the last L0 use)
    AND #$20                                ; side test at the caller: the
    BNE xform1_hi                           ; transform is side-baked
    JSR sx_vert_lo
@@ -167,6 +170,7 @@ v1_done_l0:
    LDA (zp_seg_hdr_p),Y                    ; v2 idx B
    STA zp_seg_v_idx_b
    TAY                                     ; SXV ABI: Y = idx_b (2026-08-13)
+   PAGE_X BANK_L2                          ; SXV bank contract: L2 in
    AND #$20                                ; side rides the just-loaded byte
    BNE xform2_hi
    JSR sx_vert_lo

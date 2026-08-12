@@ -77,6 +77,10 @@
 ; ABI (2026-08-13): Y = zp_seg_v_idx_b on entry — all four JSR sites
 ; TAY it from the just-loaded header byte, and Y RIDES through the
 ; probe, vmiss and into vxcon's VXC_VALID accesses.
+; BANK CONTRACT (flip 2026-08-13): callers PAGE_X BANK_L2 before the
+; side dispatch (they finish their L0 header reads first), the body
+; assumes L2 throughout and pages NOTHING; every exit leaves L2
+; paged (the load-bearing exit postcondition, unchanged).
    LDA zp_seg_v_idx_l
    AND #7
    TAX
@@ -106,17 +110,14 @@
    LDA VC_RLO+pg,Y
    STA VX1+12,X                            ; rlo (= S)
 vh_pgx:
-   PAGE BANK_L2                            ; exit-L2 contract — LOAD-
-   RTS                                     ; BEARING (2026-08-09: removal
-                                           ; breaks banked at 2/7 bankedcmp
-                                           ; positions even with reproject
-                                           ; self-paged and the post-div
-                                           ; restore in place; the consumer
-                                           ; is NOT identified — has_gap +
-                                           ; records are main and the
-                                           ; y-stage/emits page explicitly.
-                                           ; Do NOT remove without root-
-                                           ; causing; bankedcmp catches.)
+   RTS                                     ; L2 rides from the caller's
+                                           ; entry PAGE (contract flip
+                                           ; 2026-08-13) — the exit-L2
+                                           ; POSTCONDITION still holds and
+                                           ; is LOAD-BEARING (2026-08-09:
+                                           ; two bisects, consumer not yet
+                                           ; identified; bankedcmp catches
+                                           ; at 2/7 positions).
 ; (vxcon island lives at the BODY END — vector-entered and JMP-exited,
 ;  so placement is free)
 vmiss:
@@ -141,8 +142,8 @@ vmiss:
 ; offsets + senior nibble, 2026-08-11), rotate via the epoch-selected
 ; body (SMC site — general/cardinal), then the same 16-bit ref add as
 ; vxq_add. Bit-identical to the cached path by construction: every
-; tier computes base_c + ref_c.
-   PAGE BANK_L2                            ; vert planes live in L2
+; tier computes base_c + ref_c.  (L2 arrives from the caller — the
+; contract flip 2026-08-13; the vert planes live there.)
    LDY zp_seg_v_idx_l
    LDA VP_OX+pg,Y
    STA zp_ri_d_l
@@ -282,9 +283,10 @@ ncr_far:
 ; (counts out of the vq3 tail) + 4 plane stores DIRECT (the >>2/<<2
 ; dance DIED), same add. Every tier computes total := base_c +
 ; ref_c, so warm == birth == Python bit-exactly BY CONSTRUCTION.
-   PAGE BANK_L2                            ; sole page: VP fetch on cold;
-                                           ; planes + VALID are main
    LDA VXC_VALID,Y                         ; Y = B RIDES from the head
+                                           ; (planes + VALID are main; the
+                                           ; cold VP fetch uses the
+                                           ; caller's L2)
    AND zp_seg_v_bitm                       ; (the X reload died — the
    BEQ vs_cold                             ;  X/Y roles flipped 2026-08-13)
    LDX zp_seg_v_idx_l
