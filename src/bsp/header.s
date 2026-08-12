@@ -475,7 +475,10 @@ VC_SXL  = VCACHE_BASE + $400
 VC_SXH  = VCACHE_BASE + $600
 ; ($1000-$11FF FREE 2026-08-13: VC_CLIP folded into VC_RLO — S = 0 is
 ;  the clipped sentinel, real S is never 0. VCACHE = 4 planes now.)
-VCACHE_VALID_BASE = $0700               ; THE BITMAP PAGE (2026-08-09,
+VCACHE_VALID_BASE = $13C7               ; VXC XLO plane tail (2026-08-13:
+                                        ; 455 entries + 57 bitmap bytes
+                                        ; = 512 exactly; the bitmap page
+                                        ; dissolved —
                                         ; Eben: every cache's valid
                                         ; bitmap on ONE page, heading the
                                         ; contiguous cache region
@@ -497,7 +500,12 @@ VCACHE_VALID_BASE = $0700               ; THE BITMAP PAGE (2026-08-09,
 ; the old $0600 home cleared only 0-49 and leaned on the packer's
 ; ids<384 assert for the tail; that dependence is gone. $1B78-$1BFF
 ; stays free (ex-BCA_WS).
-VDONE = VCACHE_VALID_BASE + 60
+VDONE = $15C7                           ; VXC XHI plane tail (57 B; the
+                                        ; crossing's B=$80 probe lands in
+                                        ; YLO data — harmless: the
+                                        ; crossing zeroes zp_seg_v_bitm,
+                                        ; so the mark writes back the
+                                        ; byte unchanged)
 
 
 ; ============================================================================

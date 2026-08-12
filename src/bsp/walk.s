@@ -60,38 +60,50 @@ br_render_frame:
    LDA #0                               ; A = 0 RIDES into the wipes below
    STA zp_dcl_rec_buf                   ; — NOT a C02/STZ candidate
    STA zp_dcl_rec_buf_h
-; VCACHE_VALID + VDONE wipe, COMBINED (2026-07-26, Eben): the two
-; bitmaps are adjacent 60-byte blocks heading THE BITMAP PAGE ($0700 —
-; see bsp/header.s), so the wipe is one 120-byte run of 24 uniform
-; 5-byte stripes off one X.
-; VDONE now clears ALL 59 live bytes (467 ids) — the old partial wipe's
-; ids<384 assert-dependence is gone.
-   LDX #4
-bif_clr2:                               ; 24 stripes x 5 = 120 bytes
+; VCACHE_VALID + VDONE wipe (re-striped 2026-08-13: the bitmaps ride
+; their VXC plane tails now, 57 B EXACT — a 60-byte wipe would stomp
+; the next plane's first entries. 19 stores x 3 iterations x 2 bitmaps
+; = 114 B; ~40 cyc cheaper than the old 24x5 shape).
+   LDX #2
+bif_clr2:
    STA VCACHE_VALID_BASE,X
-   STA VCACHE_VALID_BASE+5,X
-   STA VCACHE_VALID_BASE+10,X
+   STA VCACHE_VALID_BASE+3,X
+   STA VCACHE_VALID_BASE+6,X
+   STA VCACHE_VALID_BASE+9,X
+   STA VCACHE_VALID_BASE+12,X
    STA VCACHE_VALID_BASE+15,X
-   STA VCACHE_VALID_BASE+20,X
-   STA VCACHE_VALID_BASE+25,X
+   STA VCACHE_VALID_BASE+18,X
+   STA VCACHE_VALID_BASE+21,X
+   STA VCACHE_VALID_BASE+24,X
+   STA VCACHE_VALID_BASE+27,X
    STA VCACHE_VALID_BASE+30,X
-   STA VCACHE_VALID_BASE+35,X
-   STA VCACHE_VALID_BASE+40,X
+   STA VCACHE_VALID_BASE+33,X
+   STA VCACHE_VALID_BASE+36,X
+   STA VCACHE_VALID_BASE+39,X
+   STA VCACHE_VALID_BASE+42,X
    STA VCACHE_VALID_BASE+45,X
-   STA VCACHE_VALID_BASE+50,X
-   STA VCACHE_VALID_BASE+55,X
+   STA VCACHE_VALID_BASE+48,X
+   STA VCACHE_VALID_BASE+51,X
+   STA VCACHE_VALID_BASE+54,X
    STA VDONE,X
-   STA VDONE+5,X
-   STA VDONE+10,X
+   STA VDONE+3,X
+   STA VDONE+6,X
+   STA VDONE+9,X
+   STA VDONE+12,X
    STA VDONE+15,X
-   STA VDONE+20,X
-   STA VDONE+25,X
+   STA VDONE+18,X
+   STA VDONE+21,X
+   STA VDONE+24,X
+   STA VDONE+27,X
    STA VDONE+30,X
-   STA VDONE+35,X
-   STA VDONE+40,X
+   STA VDONE+33,X
+   STA VDONE+36,X
+   STA VDONE+39,X
+   STA VDONE+42,X
    STA VDONE+45,X
-   STA VDONE+50,X
-   STA VDONE+55,X
+   STA VDONE+48,X
+   STA VDONE+51,X
+   STA VDONE+54,X
    DEX
    BPL bif_clr2
 

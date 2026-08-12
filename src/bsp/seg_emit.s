@@ -252,14 +252,18 @@ clip_v2:
    JSR reproject_at_crossing
    LDA #$80
    STA zp_seg_v_idx_b                      ; VX2 = the CROSSING, not the
-                                        ; vertex.  B := $80 keeps stage
-                                        ; 7's VDONE probe in the free
-                                        ; $1B78-$1BFF sandbox ($FF would
-                                        ; read AND MARK inside SQR_LO).
+                                        ; vertex (B := $80: any index is
+                                        ; safe now — the zeroed mask
+                                        ; below makes the mark inert).
    LDA #$FF
    STA zp_seg_v_idx_l                      ; lo := $FF kills the CHAIN (no
                                         ; vertex has lo $FF — the pack
                                         ; sentinel reservation)
+   ZERO zp_seg_v_bitm                      ; mask := 0 — stage 7's VDONE
+                                        ; probe at +$80 lands in YLO
+                                        ; plane data now; ORA #0 makes
+                                        ; the mark write the byte back
+                                        ; UNCHANGED (2026-08-13)
    JMP clip_none
 
 ; --- stage-3 slow path: hi bytes differ (page-straddling seg) ---

@@ -43,7 +43,10 @@ RC_PH_1  = $7300                        ; ($E402+219 = $E4DB — same page,
 .endif
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:
-RCACHE_COMPUTED = $07C0                 ; 59 bytes (bit per k>>3 group) —
+RCACHE_COMPUTED = $0700                 ; 59 bytes (bit per k>>3 group;
+                                        ; sole page-7 resident since the
+                                        ; bitmap consolidation 2026-08-13
+                                        ; — $073B-$07FF FREE) —
                                         ; on THE bitmap page (main, any
                                         ; bank) since 2026-08-09; the
                                         ; rest of RCACHE_STATE stays

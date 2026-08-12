@@ -41,7 +41,7 @@
 ; select = B & $20 (B = idx>>3, header key byte B; B >= 32 <=> idx >= 256).
 ; ============================================================================
 ; --- data equates (unbanked) ---
-VXC_VALID   = $0780                     ; 59 bytes — on THE bitmap page
+VXC_VALID   = $17C7                     ; VXC YLO plane tail (57 B)
 ; (VXC_ENABLE comes from abi.inc)
 vxc_prev_ab = $05DC
 ; (vxc_ref_x/y promoted to ZP 2026-07-14 — defined in zp.inc so the

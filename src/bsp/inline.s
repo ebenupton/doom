@@ -121,26 +121,32 @@ vf_on:
    CMP vxc_prev_ab
    BEQ vf_patch
 ; --- angle changed: new epoch - wipe the valid bitmap ---
-; STRIPED (2026-08-09): 12 uniform 5-byte stripes = 60 bytes — byte 60
-; ($07BB) is the bitmap page's sentinel gap, safe to clear (the old
-; $05A0 home banned it: byte 60 was VXC_ENABLE). ~325 cyc vs the
-; 1-byte loop's ~589, on every rotation frame.
+; STRIPED, 57 B EXACT (2026-08-13: VXC_VALID rides the YLO plane tail
+; — a 60-byte wipe would stomp YHI's first entries). 19 stores x 3
+; iterations, ~300 cyc on every rotation frame.
    STA vxc_prev_ab
    LDA #0
-   LDX #4
-vf_wl:                                     ; 12 stripes x 5 = 60 bytes
+   LDX #2
+vf_wl:
    STA VXC_VALID,X
-   STA VXC_VALID+5,X
-   STA VXC_VALID+10,X
+   STA VXC_VALID+3,X
+   STA VXC_VALID+6,X
+   STA VXC_VALID+9,X
+   STA VXC_VALID+12,X
    STA VXC_VALID+15,X
-   STA VXC_VALID+20,X
-   STA VXC_VALID+25,X
+   STA VXC_VALID+18,X
+   STA VXC_VALID+21,X
+   STA VXC_VALID+24,X
+   STA VXC_VALID+27,X
    STA VXC_VALID+30,X
-   STA VXC_VALID+35,X
-   STA VXC_VALID+40,X
+   STA VXC_VALID+33,X
+   STA VXC_VALID+36,X
+   STA VXC_VALID+39,X
+   STA VXC_VALID+42,X
    STA VXC_VALID+45,X
-   STA VXC_VALID+50,X
-   STA VXC_VALID+55,X
+   STA VXC_VALID+48,X
+   STA VXC_VALID+51,X
+   STA VXC_VALID+54,X
    DEX
    BPL vf_wl
 vf_patch:
