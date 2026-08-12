@@ -236,7 +236,18 @@ def fp_recip(vy_idx):
     vy_idx: 9.1 index (1 fractional bit from vy), clamped to [2, 1023].
     """
     vy_idx = max(2, min((RECIP_TABLE_SIZE << 1) - 1, vy_idx))
-    return _RECIP_M8[vy_idx], (vy_idx - 1).bit_length()
+    # FAR SYNTHESIS (2026-08-13): idx >= 256 reduces by right shifts
+    # into [128,255] — the reciprocal's scaling identity gives the same
+    # mantissa domain with S += shifts. S is EXACT everywhere
+    # (bit_length composes through the shifts, including the idx2=128
+    # power case); M8 loses the shifted-out index bits: ~1 lsb of
+    # distance resolution in the 256-511 octave, 2 lsb beyond. Mirrors
+    # br_recip_hi; the far M8 pages died for a 128-byte half-table.
+    sh = 0
+    while vy_idx >= 256:
+        vy_idx >>= 1
+        sh += 1
+    return _RECIP_M8[vy_idx], (vy_idx - 1).bit_length() + sh
 
 
 def rns(p, s):

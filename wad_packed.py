@@ -492,8 +492,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # normalized floating mantissa per 10-bit 9.1 index (see fp.py); the
     # shift S = bit_length(idx-1) is computed by br_recip, not stored.
     SINCOS_SIZE = 64 + 64   # magnitude + unity flags, one quadrant
-    RECIP_ENTRIES = 1024
-    rom_recip_size = SINCOS_SIZE + RECIP_ENTRIES
+    RECIP_ENTRIES = 256     # page 0 only (far synthesis, 2026-08-13)
+    RECIP_FAR = 128         # unswapped [128,255] half for br_recip_hi
+    rom_recip_size = SINCOS_SIZE + RECIP_ENTRIES + RECIP_FAR
 
     rom_recip = bytearray(rom_recip_size)
     off_sin_mag = 0
@@ -512,8 +513,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # LOGICALLY (fp_recip) and never sees the layout.
     for j in range(256):
         rom_recip[off_recip_m8 + (((j & 0x0F) << 4) | (j >> 4))] = _RECIP_M8[j] & 0xFF
-    for j in range(256, RECIP_ENTRIES):
-        rom_recip[off_recip_m8 + j] = _RECIP_M8[j] & 0xFF
+    # far half-table, UNSWAPPED, idx2-128 indexed: br_recip_hi reduces
+    # far indices into [128,255] and reads this directly (the linear
+    # pages 1-3 died — 1024 -> 384 recip bytes)
+    for j in range(128, 256):
+        rom_recip[off_recip_m8 + 256 + (j - 128)] = _RECIP_M8[j] & 0xFF
 
     # ── RAM sizing ──────────────────────────────────────────────────────
 
@@ -601,7 +605,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = {n_segs * SEG_HDR_SIZE}")
     print(f"  VWH heights: {n_vwh} × {VWH_SIZE} = {n_vwh}")
     print(f"  Seg detail:  {n_segs} × {SEG_DTL_SIZE} = {len(rom_detail)}")
-    print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES})")
+    print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES}+{RECIP_FAR})")
     print(f"  RAM:         {ram_size}")
 
     # Build prescaled bbox table as 16 page-split SoA planes (4KB):

@@ -9,55 +9,56 @@
 ; ============================================================================
 SEG_CODE
 .export br_recip_hi
-.import RECIP_M8                            ; bsp/header.s equate (L2/flat)
+.import RECIP_M8, RECIP_M8H                 ; bsp/header.s equates (L2/flat)
 
 
 ; (br_recip junior entry DELETED 2026-08-09 — dead since the nc_ok
 ; inline; the senior ladder below is the only remaining entry.)
 .scope
-::br_recip_hi:                             ; caller-split entry (2026-07-27):
-rcp_pnz:                                    ; A = idx hi (>= 1), Y = idx lo —
-   CMP #4                                  ; the junior arm is inlined at
-                                           ; nc_ok (seg_xform)
-   BCS rcp_clamp                           ; idx >= 1024 -> clamp to 1023
-   LSR A
-   BEQ rcp_p1                              ; t1 = 1
-   BCS rcp_p3                              ; t1 = 3
-; t1 = 2: S = 10 except idx == 512 (Y == 0) -> 9
-   LDA RECIP_M8+$200,Y
+::br_recip_hi:                             ; caller-split entry:
+rcp_pnz:                                    ; A = idx hi (>= 1), Y = idx lo
+; FAR SYNTHESIS (2026-08-13, Eben's smaller-tables idea): reduce the
+; index into the [128,255] half by 1-2 right shifts — the reciprocal's
+; scaling identity keeps the mantissa domain and adds the shift count
+; to S (EXACT: bit_length composes through the shifts; only M8 loses
+; the shifted-out index bits — ~1-2 lsb of far distance resolution).
+; The linear M8 pages 1-3 died for the 128-byte RECIP_M8H half-table.
+; Mirrors fp.fp_recip. Clobbers A, X, Y.
+   CMP #4
+   BCC rcp_r
+   LDA #3                                  ; idx >= 1024: clamp to 1023
+   LDY #$FF
+rcp_r:
+   LSR A                                   ; C = hi bit 0; A = 0 (hi 1) /
+   BNE rcp_two                             ;  1 (hi 2-3: two shifts)
+   TYA                                     ; ONE shift: C = 1 (hi was 1),
+   ROR A                                   ; idx2 = $80 | lo>>1
+   TAY
+   LDX #1                                  ; sh = 1
+   BNE rcp_fetch                           ; (always)
+rcp_two:
+   TYA
+   ROR A                                   ; (hi & 1) -> b7, lo >>= 1
+   SEC
+   ROR A                                   ; $80 | (hi&1)<<6 | lo>>2
+   TAY
+   LDX #2                                  ; sh = 2
+rcp_fetch:
+   LDA RECIP_M8H-128,Y                     ; far half-table (idx2 - 128)
    STA zp_br_r_m8
-   LDA #10
-   CPY #0
-   BNE rcp_s
-   LDA #9
-rcp_s:
+   CPY #$80
+   BEQ rcp_pow                             ; idx2 = 128: an exact power —
+   TXA                                     ;  S is one lower (bit_length)
+   CLC
+   ADC #8                                  ; S = sh + 8
    STA zp_br_r_s
    RTS
-; (the RNS_SELECT expansion here DELETED 2026-08-12 — PROVEN dead: the
-;  sole caller falls straight into ncr_done -> br_project_x_c, whose
-;  own poke overwrites rns_go_op before px_narrow can dispatch, and
-;  every y-side dispatch is dominated by its cluster's select. Dynamic
-;  confirmation: 83 far-recip pokes traced over an extended corpus,
-;  none ever the live writer at a dispatch. The near arm at nc_ok
-;  never poked — this was its asymmetric fossil twin.)
-rcp_clamp:
-   LDY #$FF                                ; idx := 1023 (t1 -> page 3)
-rcp_p3:
-; t1 = 3: S = 10 always
-   LDA RECIP_M8+$300,Y
-   STA zp_br_r_m8
-   LDA #10
-   BNE rcp_s                               ; (A = 10: always)
-rcp_p1:
-; t1 = 1: S = 9 except idx == 256 (Y == 0) -> 8
-   LDA RECIP_M8+$100,Y
-   STA zp_br_r_m8
-   LDA #9
-   CPY #0
-   BNE rcp_s
-   LDA #8
-   BNE rcp_s                               ; (A = 8: always)
-
+rcp_pow:
+   TXA
+   CLC
+   ADC #7                                  ; S = sh + 7
+   STA zp_br_r_s
+   RTS
 .endscope                                   ; (the recip scope — its close
                                             ; sat after the srecip data in
                                             ; the old layout)

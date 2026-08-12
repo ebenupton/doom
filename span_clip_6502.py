@@ -145,8 +145,9 @@ class SpanClip6502:
         from fp import _RECIP_M8
         for i in range(256):
             mem[0xD500 + (((i & 0x0F) << 4) | (i >> 4))] = _RECIP_M8[i]
-        for i in range(256, 1024):
-            mem[0xD500 + i] = _RECIP_M8[i]
+        for i in range(128, 256):
+            mem[0xD600 + i - 128] = _RECIP_M8[i]   # far half (unswapped;
+                                                   # the linear pages died)
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
         raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_flat.bin')

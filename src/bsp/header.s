@@ -416,9 +416,13 @@ zp_br_dy = zp_br_dy_l
 ; CACHES $A400-$B2FF (CPM, rc psi planes, RCACHE_STATE, VWHC) |
 ; ANIM $B300/$B400 | FREE $B500-$BFFF contiguous.
 RECIP_M8 = $8800                        ; bank L2 TABLES group
+RECIP_M8H = $8900                       ; far half-table [128,255],
+                                        ; unswapped ($8980-$8BFF FREE
+                                        ; 2026-08-13: far synthesis)
 L2_BBOX = $8C00                         ; bank L2 (harness/loader points zp_rom_bbox here; = ROM_BBOX_C)
 .else
 RECIP_M8 = $D500                        ; flat LEVEL block (2026-07-21 map)
+RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)
 .endif
 ; (SINCOS_BASE deleted 2026-07-21: no reader — the engine takes sincos
 ;  via the ZP contract ($05-$0A), the driver owns its own DRV_TAB.)
@@ -523,7 +527,7 @@ code_head:
 .import rot_zero, rot_unity_pos, rot_unity_neg
 .import rot_zero_s, rot_unity_pos_s, rot_unity_neg_s
 .export rns_vec_l, rns_go_op            ; rotvar's RNS_SELECT expansion
-.export RECIP_M8
+.export RECIP_M8, RECIP_M8H
 .assert (RECIP_M8 & $FF) = 0, error     ; 4-page table indexed (page | t1);
                                         ; PAGE 0 NIBBLE-SWAPPED (2026-08-10):
                                         ; entry swap(idx) = M8[idx] — the
