@@ -182,6 +182,10 @@ at_notwb:
    CMP #$40
    BEQ at_up                               ; 1: A -> B
 ; --- 3: B -> A (pos -= speed, clamp at min = CFG+0) ---
+   ZERO D_FWD                              ; geometry moves THIS frame:
+                                        ; forward-coherence bbox serves
+                                        ; would inherit stale occlusion
+                                        ; (D + anims gate, 2026-08-13)
    LDA ANIM_WS+0,Y
    SEC
    SBC ANIM_CFG+4,X
@@ -206,6 +210,7 @@ at_notwb:
 
 at_up:
 ; --- 1: A -> B (pos += speed, clamp at max = CFG+2) ---
+   ZERO D_FWD                              ; (mirror of the B->A gate)
    LDA ANIM_WS+0,Y
    CLC
    ADC ANIM_CFG+4,X
