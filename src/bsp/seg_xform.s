@@ -113,11 +113,13 @@ vh_pgx:
    RTS                                     ; L2 rides from the caller's
                                            ; entry PAGE (contract flip
                                            ; 2026-08-13) — the exit-L2
-                                           ; POSTCONDITION still holds and
-                                           ; is LOAD-BEARING (2026-08-09:
-                                           ; two bisects, consumer not yet
-                                           ; identified; bankedcmp catches
-                                           ; at 2/7 positions).
+                                           ; POSTCONDITION is LOAD-BEARING:
+                                           ; the consumer (found by poison
+                                           ; bisect 2026-08-13) is
+                                           ; br_project_y's VWHC planes
+                                           ; ($B100/$B200 = bank L2), read
+                                           ; by the y-stage's NO-BACK arc
+                                           ; which pages nothing.
 ; (vxcon island lives at the BODY END — vector-entered and JMP-exited,
 ;  so placement is free)
 vmiss:

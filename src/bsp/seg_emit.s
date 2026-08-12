@@ -336,8 +336,10 @@ hg_pass:
    JMP ys_withback
 ys_noback:
 ; (bank note: solid arcs arrive L2 — the transform's exit contract —
-; and nothing here pages; the with-back island manages its own L0
-; excursion for the header reads)
+; and nothing here pages.  THIS ARC IS the exit-L2 contract's consumer:
+; br_project_y's VWHC planes are $B100/$B200 = bank L2 in the banked
+; build (poison bisect 2026-08-13).  The with-back island manages its
+; own L0 excursion and restores L2 itself.)
    LDA zp_ys_v1ok
    BNE ysnb_v2                             ; chained: VX1 front pair live
    ZERO zp_seg_ep                          ; v1 -> VX1
