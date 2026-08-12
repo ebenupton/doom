@@ -6,7 +6,7 @@
 ;
 ;   1  TRANSFORM   v1 (chain-served ~80%) and v2: world -> view -> sx
 ;   2  NEAR CLIP   0 clipped: continue; 1: reproject at crossing; 2: cull
-;   3  RANGE GATE  sort sx1/sx2, DROP reversed, clamp, has_gap [ilo,ihi]
+;   3  RANGE GATE  compare sx1/sx2, DROP reversed, clamp, has_gap [ilo,ihi]
 ;   4  Y STAGE     project the seg's sy pairs (front always; back by flags)
 ;   5  CASCADE PAGE one BANK_C page for the emit cascade
 ;   6  EMIT        top/bottom horizontals + portal step edges
