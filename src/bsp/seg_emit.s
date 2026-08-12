@@ -6,9 +6,9 @@
 ;
 ;   1  TRANSFORM   v1 (chain-served ~80%) and v2: world -> view -> sx
 ;   2  NEAR CLIP   0 clipped: continue; 1: reproject at crossing; 2: cull
-;   3  RANGE GATE  order sx pair, clamp to [0,255], has_gap over [ilo,ihi]
+;   3  RANGE GATE  sort sx1/sx2, DROP reversed, clamp, has_gap [ilo,ihi]
 ;   4  Y STAGE     project the seg's sy pairs (front always; back by flags)
-;   5  CANONICAL   reversed 1px projections are dropped
+;   5  CASCADE PAGE one BANK_C page for the emit cascade
 ;   6  EMIT        top/bottom horizontals + portal step edges
 ;   7  VERTICALS   per-vertex span descriptors, once per vertex per frame
 ;   8  OCCLUSION   solid -> mark_solid; portal -> tighten_from_records
@@ -20,10 +20,10 @@
 ;       v1 = chain_or_transform(seg.v1); v2 = transform(seg.v2)   # 1
 ;       if v1.clipped and v2.clipped: return                      # 2
 ;       if v1.clipped != v2.clipped: reproject_at_crossing()
-;       ilo, ihi = clamp8(sorted(sx1, sx2));                      # 3
+;       if sx1 > sx2: return    # reversed 1px sliver: drop      # 3
+;       ilo, ihi = clamp8(sx1, sx2)
 ;       if empty or not has_gap(ilo, ihi): return
 ;       project_sy_pairs(front always, btop/bbot by NEEDBT/NEEDBB) # 4
-;       if sx reversed: return                                    # 5
 ;       emit ft, fb, bt-step, bb-step (by flags, vz tests)        # 6
 ;       for v in (v1, v2): serve_vertex_descriptor_once(v)        # 7
 ;       if SOLID: mark_solid(ilo, ihi)                            # 8
@@ -179,39 +179,37 @@ clip_none:
 ;   if whole seg off-screen: cull
 ;   if not has_gap(ilo, ihi):  cull        # every column occluded
 ;
+; A REVERSED pair (sx2 < sx1) is dropped HERE: winding + monotone
+; projection guarantee sx1 <= sx2 in exact arithmetic, so a reversal is
+; a 1px sliver inverted by rounding — drop it (the swap machinery is
+; retired; the python mirror returns likewise).  Everything below this
+; stage may assume sx1 <= sx2.
 ; Order-then-clamp equals clamp-then-order (clamp8 is monotone), so the
 ; hi bytes drive everything:
 ;   equal hi bytes (common):  zero -> both in [0,255]: lo bytes are the
-;       range and one lo compare orders them; nonzero -> both endpoints
-;       share an off-screen side: cull.
-;   differing hi bytes: full s16 order, then a per-endpoint clamp ladder.
-; zp_sx_ord latches the min endpoint's struct offset (0 = sx1) for
-; stage 5's drop test and stage 8's re-clamp.
-; ABI into hg_query: A = ihi (register-only), zp_i_l = ilo, X = min
-; endpoint offset.  SC_HAS_GAP: C=1 gap / C=0 occluded, preserves A's
-; role as ihi for nobody — the emit path recomputes its own clamps.
+;       range and one lo compare decides forward/tie vs reversed;
+;       nonzero -> both endpoints share an off-screen side: cull.
+;   differing hi bytes: signed order test — reversed drops; else the
+;       min = sx1 clamp ladder.
+; ABI into hg_query: A = ihi (register-only), zp_i_l = ilo.
+; SC_HAS_GAP: C=1 gap / C=0 occluded — the emit path recomputes its own
+; clamps (this stage's scratch does not survive the emits).
 ; Carry note: stage 4's with-back arc relies on C=1 from the BCS-fall
 ; at hg_query (nothing between touches carry).
 ; ============================================================================
    LDA zp_seg_sx1_h
    CMP zp_seg_sx2_h
    BNE range_straddle                      ; hi bytes differ: slow ladder
-   TAX                                     ; shared hi byte
+   TAX                                     ; shared hi byte (X: flags only)
    BNE range_cull                          ; both off one side: cull
    LDA zp_seg_sx1_l
    CMP zp_seg_sx2_l
    BEQ range_fwd                           ; tie: one-column seg is FORWARD
-   BCS range_rev                           ; sx1 > sx2: reversed
+   BCS cull_jmp                            ; sx1 > sx2: reversed sliver, drop
 range_fwd:
-; X = 0 already (TAX saw A = 0)
    STA zp_i_l                              ; ilo = sx1_lo
    LDA zp_seg_sx2_l                        ; ihi rides A
    JMP hg_query
-range_rev:
-   LDX #VX_STRIDE                          ; min endpoint = sx2
-   LDY zp_seg_sx2_l
-   STY zp_i_l                              ; ilo = sx2_lo (Y dead: has_gap
-   JMP hg_query                            ; clobbers it); A = sx1_lo = ihi
 
 ; --- stage-2 island: near-clip resolution ---
 clip_resolve:
@@ -253,13 +251,12 @@ range_straddle:
    BVC rs_v_ok
    EOR #$80
 rs_v_ok:
-   BPL range_min_v2                        ; sx1 >= sx2: min = sx2
-; --- min = sx1, max = sx2: clamp ladder ---
+   BPL range_cull                          ; sx1 > sx2 (ties took the fast
+                                        ; path): reversed sliver, drop
+; --- clamp ladder (min = sx1 — reversal was dropped above) ---
 ; Each endpoint: hi byte 0 -> lo byte used as-is; min: neg -> 0,
 ; pos -> whole seg off right, cull; max: neg -> off left, cull,
 ; pos -> 255.  ihi ends in A (the hg_query ABI).
-range_min_v1:
-   LDX #0                                  ; min endpoint = sx1
    LDA zp_seg_sx1_h
    BEQ rm1_ilo_lo                          ; in range: lo IS ilo
    BPL range_cull                          ; min >= 256: off right
@@ -279,27 +276,7 @@ rm1_ihi_lo:
    JMP hg_query
 range_cull:
    JMP s_advance
-; --- min = sx2, max = sx1: mirror of the ladder above ---
-range_min_v2:
-   LDX #VX_STRIDE
-   LDA zp_seg_sx2_h
-   BEQ rm2_ilo_lo
-   BPL range_cull
-   LDA #0
-   BEQ rm2_ilo_have
-rm2_ilo_lo:
-   LDA zp_seg_sx2_l
-rm2_ilo_have:
-   STA zp_i_l
-   LDA zp_seg_sx1_h
-   BMI range_cull
-   BEQ rm2_ihi_lo
-   LDA #255
-   BNE hg_query                            ; (always)
-rm2_ihi_lo:
-   LDA zp_seg_sx1_l
 hg_query:
-   STX zp_sx_ord                           ; latch min-endpoint offset
    JSR SC_HAS_GAP                          ; in: A = ihi, zp_i_l = ilo
    BCC range_cull                          ; C=0: no visible column, cull
 hg_pass:
@@ -380,16 +357,9 @@ ys_done:
    ZERO zp_ys_v1ok                         ; next seg's chain donation
 
 ; ============================================================================
-; STAGE 5 — CANONICAL GATE.  After hg_query, zp_sx_ord = 0 iff sx1 is
-; the min endpoint.  A reversed pair here is a 1px seg whose projection
-; inverted by sub-pixel rounding: DROP it (the python mirror returns
-; likewise; the only loss is the degenerate sliver itself).  Below this
-; point VX1 is always the left endpoint and every emit is single-path.
+; STAGE 5 — CASCADE PAGE.  VX1 is the left endpoint (stage 3 dropped
+; reversals), so every emit below is single-path.
 ; ============================================================================
-hgp_can:
-   LDA zp_sx_ord
-   BEQ hgp_fwd
-   JMP s_advance                           ; reversed: drop
 hgp_fwd:
    PAGE BANK_C                             ; THE emit-cascade page: one page
                                         ; dominates every arc below; only

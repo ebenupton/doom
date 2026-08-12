@@ -297,10 +297,8 @@ zp_node_ny_h = $57                ; [bsp]
 zp_node_ch_l = $58                ; [bsp]; current child (lo, hi: 16-bit id)
 ; $59 free (was zp_node_ch_h — ids are u8 end to end, 2026-07-15)
 ; FREE 2026-07-16 (write-only since the C-form): zp_bf_pym_h = $5B
-zp_sx_ord = $5A                   ; [bsp]; reversal flag (0 = v1 already
-; left, VX_STRIDE = reversed): latched by the has_gap prelude; its ONLY
-; consumer is the hg_pass canonicalization gate (seg_swap_vx) — every
-; emit path downstream assumes VX1 = left.
+; $5A FREE (was zp_sx_ord — the reversal latch died when the drop
+;     moved into the stage-3 range gate, 2026-08-12)
 zp_seg_count = $5C                ; [bsp]; remaining segs in subsector
 ; --- $5D: overlay group (2 phase-disjoint users) ---
 zp_anim_p = $5D                   ; [bsp]; anim table cursor (2; was the
