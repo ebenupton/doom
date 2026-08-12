@@ -74,7 +74,9 @@
 ; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
 ; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
 ; unconditionally, the miss arm stores the probe's own zero — see vmiss)
-   LDY zp_seg_v_idx_b                      ; Y rides to the probe/set-bit
+; ABI (2026-08-13): Y = zp_seg_v_idx_b on entry — all four JSR sites
+; TAY it from the just-loaded header byte, and Y RIDES through the
+; probe, vmiss and into vxcon's VXC_VALID accesses.
    LDA zp_seg_v_idx_l
    AND #7
    TAX
@@ -284,24 +286,23 @@ ncr_far:
 ; ref_c, so warm == birth == Python bit-exactly BY CONSTRUCTION.
    PAGE BANK_L2                            ; sole page: VP fetch on cold;
                                            ; planes + VALID are main
-   LDX zp_seg_v_idx_b                      ; VXC_VALID index = B (header key)
-   LDA VXC_VALID,X
-   AND zp_seg_v_bitm
-   BEQ vs_cold
-   LDY zp_seg_v_idx_l
-   LDA VXC_XLO+pg,Y                        ; warm: base counts -> the
+   LDA VXC_VALID,Y                         ; Y = B RIDES from the head
+   AND zp_seg_v_bitm                       ; (the X reload died — the
+   BEQ vs_cold                             ;  X/Y roles flipped 2026-08-13)
+   LDX zp_seg_v_idx_l
+   LDA VXC_XLO+pg,X                        ; warm: base counts -> the
    STA zp_br_vx_l                          ; working slots
-   LDA VXC_XHI+pg,Y
+   LDA VXC_XHI+pg,X
    STA zp_br_vx_h
-   LDA VXC_YLO+pg,Y
+   LDA VXC_YLO+pg,X
    STA zp_br_vy_l
-   LDA VXC_YHI+pg,Y
+   LDA VXC_YHI+pg,X
    STA zp_br_vy_h
    JMP vxq_add
 vs_cold:
-   LDA VXC_VALID,X
+   LDA VXC_VALID,Y
    ORA zp_seg_v_bitm
-   STA VXC_VALID,X
+   STA VXC_VALID,Y
 ; birth: page-decomposed fetch + the epoch-selected rotate body
    LDY zp_seg_v_idx_l
    LDA VP_OX+pg,Y
