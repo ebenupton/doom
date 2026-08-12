@@ -519,10 +519,12 @@ fb_skip:
 ; --- Portal step edges (back ceiling / floor) ---
 ; Solid walls have no back sector — skip the step emits.
    BIT zp_seg_flags
-   BVC step_cont                           ; portal (SOLID clear)
-; SF_SOLID set → skip steps
-   JMP step_skip                           ; (trampoline: PAGE inserts
-step_cont:                              ;  pushed the branch out of range)
+   BVS step_skip                           ; SOLID: skip the step emits
+                                        ; (direct since 2026-08-12 — the
+                                        ;  range comment was STALE: the
+                                        ;  step blocks measure +51 flat /
+                                        ;  +56 banked, both in range; the
+                                        ;  trampoline died)
 
 ; Back ceiling step if NEEDBT (= $04) set: emit (sx1, bt1) → (sx2, bt2).
 ; bt is the new TOP of the aperture — populate TOP_RECORDS so the

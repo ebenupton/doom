@@ -1138,8 +1138,7 @@ nsyx_have:
    JMP ns_khave
 ns_pos96:
    ADC #95                                 ; C=1: diff+96
-   BCS ns_k255
-   JMP ns_khave
+   BCC ns_khave                            ; (direct 2026-08-12: +47)
 ns_k255:
    LDA #255                                ; k clamp (the AE tail is flat
    JMP ns_khave                            ; there — certified exact)
@@ -1291,8 +1290,7 @@ nsxy_have:
    JMP ns_khave                            ; from down here, and BCS is the
 nsxy_pos96:                                ; COMMON direction — no trampoline)
    ADC #95                                 ; C=1: diff+96
-   BCS nsxy_k255
-   JMP ns_khave
+   BCC ns_khave                            ; (direct 2026-08-12: -114)
 nsxy_k255:
    LDA #255                                ; k clamp (AE tail flat there)
    JMP ns_khave

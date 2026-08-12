@@ -71,8 +71,8 @@ ip_uo:
    CLC
    ADC zp_prod_l
    STA zp_prod_l
-   BCS ip_rn_c
-   JMP udiv16_8
+   BCC udiv16_8                            ; (direct 2026-08-12: +53 —
+                                        ;  falls into ip_rn_c below)
 ip_rn_c:
    INC zp_prod_h
    JMP udiv16_8                            ; tail-call
@@ -830,8 +830,8 @@ no_u16_quot:
 
    LDX #8
    LDA LC_M_R3
-   BNE bit_skip
-   JMP udv_done                                     ; dividend == 0 → quot = rem = 0
+   BEQ udv_done                            ; dividend == 0 → quot = rem = 0
+                                        ; (direct 2026-08-12: +66)
 bit_skip:
 ; Bit-level skip: shift left until the dividend MSB is set (those
 ; iterations can never make rem >= den since rem stays 0).

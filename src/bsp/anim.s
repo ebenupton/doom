@@ -300,8 +300,7 @@ anim_l0_worker:
 ; FHCH byte patches
 alw_floop:
    LDA alw_nf
-   BNE alw_fbody
-   JMP alw_flags
+   BEQ alw_flags                           ; (direct 2026-08-12: +31)
 alw_fbody:
    LDA (zp_anim_p),Y
    STA zp_anim_w

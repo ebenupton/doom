@@ -66,25 +66,8 @@ draw_clipped_line_s16_h:
    LDA VX2,X
    STA zp_line_yr_l
    JMP dcl16_fastu8
-dclh_slow:
-; some coord outside u8: stage the full s16 line for the classic clip
-   LDA zp_seg_sx1_l
-   STA zp_line_xl_l
-   LDA zp_seg_sx1_h
-   STA zp_line_xl_h
-   LDA zp_seg_sx2_l
-   STA zp_line_xr_l
-   LDA zp_seg_sx2_h
-   STA zp_line_xr_h
-   LDA VX1,X
-   STA zp_line_yl_l
-   LDA VX1+1,X
-   STA zp_line_yl_h
-   LDA VX2,X
-   STA zp_line_yr_l
-   LDA VX2+1,X
-   STA zp_line_yr_h
-   JMP dcl16_mainclip
+; (dclh_slow MOVED 2026-08-12 into the fp_degen seam below: its stage
+;  now FALLS into dcl16_mainclip — the +29 tail hop died)
 
 draw_clipped_line_s16:
 .scope
@@ -127,6 +110,25 @@ fp_x_eq:
 fp_degen:
    RTS
 
+::dclh_slow:                               ; (:: — moved inside the _s16 scope)
+; some coord outside u8: stage the full s16 line for the classic clip
+   LDA zp_seg_sx1_l
+   STA zp_line_xl_l
+   LDA zp_seg_sx1_h
+   STA zp_line_xl_h
+   LDA zp_seg_sx2_l
+   STA zp_line_xr_l
+   LDA zp_seg_sx2_h
+   STA zp_line_xr_h
+   LDA VX1,X
+   STA zp_line_yl_l
+   LDA VX1+1,X
+   STA zp_line_yl_h
+   LDA VX2,X
+   STA zp_line_yr_l
+   LDA VX2+1,X
+   STA zp_line_yr_h
+; (falls into dcl16_mainclip — moved 2026-08-12)
 main_clip:
 ::dcl16_mainclip:
 ; no pending right-side band verdict yet ($80 = none)

@@ -988,14 +988,14 @@ tfs_no_post:
 tfs_continue:
    LDA zp_old_cur
    TAX
-   BEQ tfsc_finish                         ; (entry guard bypassed)
+   BEQ tfs_finish                          ; (entry guard bypassed)
    JMP tfs_proc
-tfsc_finish:
-   JMP tfs_finish
-
-tfs_finish:
-   JMP tfs_flush_pending                   ; tail call (was JSR+RTS): -9 cyc
-.endscope
+tfs_finish:                                ; (tfsc_finish relay + the
+.endscope                                  ;  JMP-to-next-instruction pair
+                                        ;  died 2026-08-12: tfs_finish
+                                        ;  FALLS into tfs_flush_pending
+                                        ;  right below — the tail call
+                                        ;  is free now)
 
 ; ---- Flush pending output span: alloc, populate fields, append. ----
 ;

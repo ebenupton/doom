@@ -167,15 +167,15 @@ dcl_entry_path:
 ; (X = span slot must be preserved for the Tier checks below.)
    LDA zp_line_yl_l
    CMP zp_line_yr_l
-   BCS dcl_ep_yge
+   BCC dcl_ep_ylt                          ; arm swap 2026-08-12 (suite:
+   STA zp_line_y_h                         ;  lt 231 vs ge 107) — the hot
+   LDA zp_line_yr_l                        ;  arm falls into the join
    STA zp_line_y_l
-   LDA zp_line_yr_l
-   STA zp_line_y_h
    JMP dcl_ep_done
-dcl_ep_yge:
-   STA zp_line_y_h
-   LDA zp_line_yr_l
+dcl_ep_ylt:
    STA zp_line_y_l
+   LDA zp_line_yr_l
+   STA zp_line_y_h
 dcl_ep_done:
 
 ; ========== ENTRY: seg_start is NULL ==========
@@ -269,15 +269,15 @@ dcl_extends_past:
 
 ; Check if next span abuts this one
    LDY POOL_NEXT,X
-   BNE dcl_has_next
-   JMP dcl_exit_no_portal                  ; no next span → emit+reset
+   BEQ dcl_exit_no_portal                  ; no next span → emit+reset
+                                        ; (direct 2026-08-12: +87, in
+                                        ;  range — the JMP died)
 dcl_has_next:
 
 ; Abutting? POOL_XEND[current] == POOL_XSTART[next] (shared pixel center)
    LDA POOL_XEND,X
    CMP POOL_XSTART,Y
-   BEQ dcl_is_abutting
-   JMP dcl_exit_no_portal
+   BNE dcl_exit_no_portal                  ; (direct 2026-08-12: +76)
 dcl_is_abutting:
 
 ; --- Continuation containment check (FIX 2026-06-19) ---
