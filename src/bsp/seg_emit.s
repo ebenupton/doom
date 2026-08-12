@@ -625,27 +625,30 @@ ms_dispatch:
    ORA BOT_RECORDS
    BEQ ms_zero_rec
    JSR SC_TIGHTEN_FROM_RECORDS
-   JMP ms_skip
-ms_zero_rec:
-; Zero records: skip only when the aperture genuinely covers the whole
-; screen; a wholly off-screen aperture means the columns are all wall ->
-; close them (aligns with endpoint_spans' record verdicts; see
-; seg_zero_rec_solid in clip/tfr.s).
-   JSR seg_zero_rec_solid
-   BCC ms_skip
-   JSR SC_MARK_SOLID
-   JMP ms_skip
-ms_solid_path:
-; --- Solid wall: mark_solid NOW (bank C held; ilo/ihi staged above) ---
-   JSR SC_MARK_SOLID
-ms_skip:
-   JMP ms_advance
+   JMP ms_advance                          ; (was JMP ms_skip -> JMP
+                                        ;  ms_advance — double hop died
+                                        ;  2026-08-12)
+; --- clamp saturation islands (relocated 2026-08-12 into this existing
+; seam — the old home between ms_skip and ms_advance forced a
+; trampoline on every seg; here they cost nothing) ---
 ms_hi255:
    LDA #255
    BNE ms_hist                             ; (always: A=255)
 ms_lo0:
    LDA #0
    BEQ ms_lost                             ; (always: A=0)
+ms_zero_rec:
+; Zero records: skip only when the aperture genuinely covers the whole
+; screen; a wholly off-screen aperture means the columns are all wall ->
+; close them (aligns with endpoint_spans' record verdicts; see
+; seg_zero_rec_solid in clip/tfr.s).
+   JSR seg_zero_rec_solid
+   BCC ms_advance
+   JSR SC_MARK_SOLID
+   JMP ms_advance
+ms_solid_path:
+; --- Solid wall: mark_solid NOW (bank C held; ilo/ihi staged above) ---
+   JSR SC_MARK_SOLID
 ms_advance:
 
 ; --- Advance to the next seg: clear the skip flag, bump the seg index

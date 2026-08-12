@@ -275,8 +275,10 @@ nsd_mul:
 rc_descend_near:
    BMI rc_leaf                             ; near leaf: is_full + render
    SPAN_IS_NOT_FULL
-   BEQ bsp_done_full2
-   JMP rc_node_nc                          ; near node: the recursion
+   BNE rc_node_nc                          ; near node: the recursion
+                                        ; (inverted 2026-08-12 — the JMP
+                                        ;  trampoline died; the rare
+                                        ;  full-screen early-out falls in)
 bsp_done_full2:
 ; unwind() twin: the inlined node_setup expansion below pushed the
 ; original out of branch range of this cluster — 5 bytes buys locality.

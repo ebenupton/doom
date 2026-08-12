@@ -46,13 +46,6 @@
 ; [1,10]). The whole projection is a kernel select + fall-in: ZERO
 ; bytes of operand staging. zp_br_r_s keeps the TRUE S (VWHC key /
 ; y-stage contract); only the selected kernel differs.
-::br_project_x_c:
-   LDX zp_br_r_s                           ; X = net+3 = S: EVERY net is a
-   LDA rns_vec_all-1,X                     ; baked kernel now (s1..s4 landed
-   STA px_go_op                            ; 2026-08-10) — one flat select
-                                        ; into px's PRIVATE tail-jump
-   JMP px_narrow                           ; (2026-08-12); no restore
-
 ; --- M8 == 0 rare cell (2026-07-26, Eben: same mostly-taken BNE as the
 ; y-side; zero M8 = crossing recip / power-of-two depths only). Hoisted
 ; above the entry, still inside the scope; the head BEQs back here.
@@ -69,6 +62,14 @@ px_frac_z:
    STA zp_br_t2                            ; A = 0 (the BEQ's operand)
    JMP px_no_frac
 
+::br_project_x_c:
+   LDX zp_br_r_s                           ; X = net+3 = S: EVERY net is a
+   LDA rns_vec_all-1,X                     ; baked kernel now (s1..s4 landed
+   STA px_go_op                            ; 2026-08-10) — one flat select
+                                        ; into px's PRIVATE tail-jump
+                                        ; (2026-08-12); FALLS INTO the
+                                        ; body — the rare cells moved
+                                        ; above the entry (2026-08-12)
 px_narrow:                                  ; entered by br_project_x_c only
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    ZERO zp_br_res_l
@@ -103,16 +104,16 @@ pxf_pd:
    CLC
    ADC zp_br_r_m8
    TAX                                     ; X = frac + M8
-   BCS pxf_uo
+   BCC pxf_pdarm                           ; arm swap 2026-08-12 (suite:
+   LDA sqr2_l,X                            ;  no-ovf 232 vs uo 200) — the
+   CMP sqr_l,Y                             ;  hotter arm falls into the join
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pxf_have
+pxf_pdarm:
    LDA sqr_l,X
    CMP sqr_l,Y                            ; C = lo borrow (hi-only: no store)
    LDA sqr_h,X
-   SBC sqr_h,Y
-   JMP pxf_have
-pxf_uo:
-   LDA sqr2_l,X
-   CMP sqr_l,Y
-   LDA sqr2_h,X
    SBC sqr_h,Y
 pxf_have:
    CLC
@@ -141,19 +142,19 @@ pxm_pd:
    CLC
    ADC zp_br_r_m8
    TAX                                     ; X = |vx| + M8
-   BCS pxm_puo
+   BCC pxm_ppd                             ; arm swap 2026-08-12 (uo = 2
+   LDA sqr2_l,X                            ;  suite execs vs 228): the JMP
+   SBC sqr_l,Y                            ; moved to the cold arm (C set
+   STA zp_br_a                            ;  on this arm from the BCC)
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pxm_pacc
+pxm_ppd:
    LDA sqr_l,X
    SEC
    SBC sqr_l,Y
    STA zp_br_a                             ; prod lo (scratch)
    LDA sqr_h,X
-   SBC sqr_h,Y
-   JMP pxm_pacc
-pxm_puo:
-   LDA sqr2_l,X
-   SBC sqr_l,Y                            ; C set on this arm
-   STA zp_br_a
-   LDA sqr2_h,X
    SBC sqr_h,Y
 pxm_pacc:
    TAX                                     ; X = prod hi
@@ -207,19 +208,19 @@ pxm_nd:
    CLC
    ADC zp_br_r_m8
    TAX
-   BCS pxm_nuo
+   BCC pxm_npd                             ; arm swap 2026-08-12 (nuo = 2
+   LDA sqr2_l,X                            ;  suite execs vs 243)
+   SBC sqr_l,Y
+   STA zp_br_a
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pxm_nacc
+pxm_npd:
    LDA sqr_l,X
    SEC
    SBC sqr_l,Y
    STA zp_br_a                             ; prod lo
    LDA sqr_h,X
-   SBC sqr_h,Y
-   JMP pxm_nacc
-pxm_nuo:
-   LDA sqr2_l,X
-   SBC sqr_l,Y
-   STA zp_br_a
-   LDA sqr2_h,X
    SBC sqr_h,Y
 pxm_nacc:
    STA zp_mul_b                            ; prod hi (scratch — the mul that
@@ -389,19 +390,19 @@ pym_pd:
    CLC
    ADC zp_br_r_m8
    TAX                                     ; X = h + M8
-   BCS pym_puo
+   BCC pym_ppd                             ; arm swap 2026-08-12 (puo = 20
+   LDA sqr2_l,X                           ;  suite execs vs 392): f(x+y)
+   SBC sqr_l,Y                            ;  overflowed into the +256
+   STA zp_br_t2                           ;  window (carry in = 1, from
+   LDA sqr2_h,X                           ;  the BCC)
+   SBC sqr_h,Y
+   JMP pym_ptail                           ; A = hi(h*M8) — positive tail
+pym_ppd:
    LDA sqr_l,X
    SEC
    SBC sqr_l,Y
    STA zp_br_t2                            ; P24 lo
    LDA sqr_h,X
-   SBC sqr_h,Y
-   JMP pym_ptail                           ; A = hi(h*M8) — positive tail
-pym_puo:
-   LDA sqr2_l,X                           ; f(x+y) overflowed into the
-   SBC sqr_l,Y                            ; +256 window (carry in = 1)
-   STA zp_br_t2
-   LDA sqr2_h,X
    SBC sqr_h,Y
 ; --- POSITIVE TAIL: h > 0 => P24 >= 257 => mid in [1,127]: ext is the
 ; CONSTANT 0 (same fence). The puo arm falls in; the no-overflow arm
@@ -426,19 +427,19 @@ pym_nd:
    CLC
    ADC zp_br_r_m8
    TAX
-   BCS pym_nuo
+   BCC pym_npd                             ; arm swap 2026-08-12 (nuo = 5
+   LDA sqr2_l,X                            ;  suite execs vs 309)
+   SBC sqr_l,Y
+   STA zp_br_t2
+   LDA sqr2_h,X
+   SBC sqr_h,Y
+   JMP pym_nneg
+pym_npd:
    LDA sqr_l,X
    SEC
    SBC sqr_l,Y
    STA zp_br_t2                            ; |prod| lo (negated below)
    LDA sqr_h,X
-   SBC sqr_h,Y
-   JMP pym_nneg
-pym_nuo:
-   LDA sqr2_l,X
-   SBC sqr_l,Y
-   STA zp_br_t2
-   LDA sqr2_h,X
    SBC sqr_h,Y
 pym_nneg:
    TAX                                     ; X = |prod| hi

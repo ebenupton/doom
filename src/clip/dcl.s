@@ -1161,8 +1161,9 @@ dcl_es_ok_noreload:                        ; BNE arrives with start_y live)
    CMP #Y_BIAS
    BCC dcl_es_yband
    CMP #(VIS_YMAX + 1)
-   BCS dcl_es_yband
-   JMP dcl_es_record
+   BCC dcl_es_record                       ; in-band: one taken branch
+                                        ; (inverted 2026-08-12; the rare
+                                        ;  yband clip falls in)
 dcl_es_yband:
    JSR dcl_yband_clip
    BCC dcl_es_record

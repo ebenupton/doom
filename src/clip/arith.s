@@ -55,6 +55,62 @@
 ;       16 shift/trial-subtract steps, quotient spread over div_lo:div_hi
 ;   return div_lo
 ; ======================================================================
+; ======================================================================
+; --- rare arms as ISLANDS above the entry (2026-08-12; scope-free —
+; the ip_* labels are file-unique in arith.s): the hot sum<256 /
+; no-round-carry path falls straight into udiv16_8 below ---
+ip_uo:
+   LDA SQR2_LO,X                           ; (carry already set from BCS)
+   SBC SQR_LO,Y
+   STA zp_prod_l
+   LDA SQR2_HI,X
+   SBC SQR_HI,Y
+   STA zp_prod_h
+   LDA zp_div_den                          ; per-arm rounding tail (keeps
+   LSR A                                   ; the hot arm fall-through)
+   CLC
+   ADC zp_prod_l
+   STA zp_prod_l
+   BCS ip_rn_c
+   JMP udiv16_8
+ip_rn_c:
+   INC zp_prod_h
+   JMP udiv16_8                            ; tail-call
+umul_round_div:
+; umul8 INLINED (2026-08-09 — this one site carries HALF of all umul8
+; traffic, 35 calls/frame; the JSR/RTS was 417 cyc/frame). Identical
+; quarter-square math on the same SQR_* tables (abi.inc — main RAM,
+; reachable from bank C). Each sum arm carries its own rounding tail so
+; the common sum<256 arm keeps umul8's zero-overhead fall-through; the
+; rare round-carry bump is shared (ip_rn_c).
+   TAX                                     ; stash |dy| in X
+   SEC
+   SBC zp_mul_b
+   BCS ip_pos
+   EOR #$FF
+   ADC #1                                  ; |dy - offset| (C=0 from SBC)
+ip_pos:
+   TAY                                     ; Y = |diff|
+   TXA
+   CLC
+   ADC zp_mul_b
+   TAX                                     ; X = sum & $FF
+   BCS ip_uo                               ; sum >= 256: sqr2 tables
+   LDA SQR_LO,X
+   SEC
+   SBC SQR_LO,Y
+   STA zp_prod_l
+   LDA SQR_HI,X
+   SBC SQR_HI,Y
+   STA zp_prod_h
+; 16-bit add of den//2 into the product (prod aliases the div dividend)
+   LDA zp_div_den
+   LSR A
+   CLC
+   ADC zp_prod_l
+   STA zp_prod_l
+   BCS ip_rn_c                             ; round-carry rare (3.6% —
+; (falls THROUGH into udiv16_8 — the tail-call JMP died 2026-08-12)
 udiv16_8:
 .scope
 ; Cell classify (2026-07-19, measured: 69% of calls have a u8
