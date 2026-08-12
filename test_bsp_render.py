@@ -222,8 +222,10 @@ def _rns_reselect(sc, mem):
 def test_project_x():
     """br_project_x_c (the ONLY X projector since the classic entry +
     px_shrink were proven unreachable and deleted, 2026-08-11): input
-    is s16 COUNTS in vx_l/vx_h; sx = 128 + rns((c<<3)*m9, S+8). The
-    entry selects its own net kernel — no pre-select needed."""
+    is s16 COUNTS in vx_l/vx_h; returns rns((c<<3)*m9, S+8) UNBIASED in
+    res — the +128 tail moved into the callers with the px tail-call
+    dispatch (2026-08-12), so this bench, as a caller, applies it in
+    the reference instead. The entry selects its own net kernel."""
     sc = SpanClip6502()
     mem = sc.mpu.memory
     cases = []
@@ -253,7 +255,8 @@ def test_project_x():
             r = (P + (1 << (net - 1))) >> net
         else:
             r = P << -net
-        want = (128 + r) & 0xFFFF
+        want = r & 0xFFFF               # UNBIASED (the +128 lives in the
+                                        # callers since the tail-call move)
         ok = got == want
         if not ok:
             fail += 1

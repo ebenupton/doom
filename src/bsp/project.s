@@ -49,8 +49,9 @@
 ::br_project_x_c:
    LDX zp_br_r_s                           ; X = net+3 = S: EVERY net is a
    LDA rns_vec_all-1,X                     ; baked kernel now (s1..s4 landed
-   STA rns_go_op                           ; 2026-08-10) — one flat select,
-   JMP px_narrow                           ; no r_s tamper, no restore
+   STA px_go_op                            ; 2026-08-10) — one flat select
+                                        ; into px's PRIVATE tail-jump
+   JMP px_narrow                           ; (2026-08-12); no restore
 
 ; --- M8 == 0 rare cell (2026-07-26, Eben: same mostly-taken BNE as the
 ; y-side; zero M8 = crossing recip / power-of-two depths only). Hoisted
@@ -176,25 +177,19 @@ px_shift:
    STA zp_br_res_l                         ; single shared store pair — all
    STX zp_br_res_h                         ; three arms deliver (A=mid, X=ext)
 
-; --- sx = 128 + rns(b123, S) (per-vertex vectored shifter) ---
-   JSR rns_go
-   LDA zp_br_res_l
-   CLC
-   ADC #128
-   STA zp_br_res_l                         ; (the REG CONTRACT died
-                                        ; 2026-08-09, Eben: both sx
-                                        ; consumers store struct+plane
-                                        ; symmetrically from ZP — the
-                                        ; TAY and the rns24 arm's reload
-                                        ; pair went with it)
-   LDA zp_br_res_h
-   ADC #0
-   STA zp_br_res_h
-   RTS                                     ; (resext staging deleted
-                                        ; 2026-07-13: NO consumer reads it
-                                        ; after a projection — the bbox-
-                                        ; classification story was legacy;
-                                        ; sx_hi in the records serves it)
+; --- sx = 128 + rns(b123, S): TAIL-CALL dispatch (Eben's design,
+; 2026-08-12). px has its OWN SMC JMP (br_project_x_c pokes px_go_op
+; instead of rns_go_op — same instruction count, no select changes),
+; so the kernel's RTS returns STRAIGHT to br_project_x_c's caller and
+; the old JSR rns_go + tail + RTS round trip is gone. The +128 bias
+; moved INTO both call sites, fused with their struct/plane landing
+; stores (the res writeback died with it — the two sites are the only
+; sx consumers). rns_go itself remains for the y side, whose miss-path
+; writeback must run after the kernel and keeps the JSR shape. ---
+px_go:
+   CLC                                     ; kernels enter C=0 (the neg-vx
+   JMP rns_s8                              ; arm exits with C=1) — SMC:
+px_go_op = px_go + 2                       ; operand LO poked per call
 pxm_neg:
 ; negative vx: b123 -= |vx|*M8 (unsigned product, subtractive accumulate)
    EOR #$FF

@@ -201,18 +201,23 @@ nc_ok:
    STA zp_br_r_s                           ; (no RNS_SELECT: the counts
                                            ; projector selects net = S-3)
 ncr_done:
-   JSR br_project_x_c                      ; -> zp_br_res_l/h = sx (the reg
-                                           ; contract died: one load feeds
-                                           ; BOTH copies below — Eben's
-                                           ; symmetric-store form)
+   JSR br_project_x_c                      ; -> zp_br_res_l/h = rns(b123);
+                                           ; the KERNEL RTSes straight here
+                                           ; (px tail-jumps, 2026-08-12) —
+                                           ; sx = 128 + res, biased in the
+                                           ; landing adds below (lo FIRST:
+                                           ; the carry feeds the hi pair)
    LDX zp_seg_ep                           ; struct offset
    LDY zp_seg_v_idx_l                      ; plane index
-   LDA zp_br_res_h
-   STA VX1+2,X                             ; sx_hi -> struct
-   STA VC_SXH+pg,Y                         ; sx_hi -> plane
    LDA zp_br_res_l
+   CLC
+   ADC #128
    STA VX1+1,X                             ; sx_lo -> struct
    STA VC_SXL+pg,Y                         ; sx_lo -> plane
+   LDA zp_br_res_h
+   ADC #0
+   STA VX1+2,X                             ; sx_hi -> struct
+   STA VC_SXH+pg,Y                         ; sx_hi -> plane
 ; --- armed fills, FUSED (Eben, 2026-07-27): the ok-miss part carries
 ; only what a near-clipped entry must not get (recip, sx, clip=0) and
 ; FALLS INTO the shared evy/evx tail; the near-clip prelude (rare)

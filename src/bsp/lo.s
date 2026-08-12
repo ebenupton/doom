@@ -204,12 +204,17 @@ rp_recip:
    STA zp_br_r_s                           ; (the hand kernel fold died: the
                                            ; counts projector selects itself)
 ; ---- project + land in the clipped endpoint's struct ----
-   JSR br_project_x_c                      ; -> zp_br_res_l/h = sx
+   JSR br_project_x_c                      ; -> res = rns(b123); kernel
+                                           ; RTSes straight here (px tail-
+                                           ; jumps, 2026-08-12)
    LDX zp_seg_ep
-   LDA zp_br_res_h
-   STA VX1+2,X                             ; sx -> the clipped endpoint's
-   LDA zp_br_res_l                         ; struct slots
+   LDA zp_br_res_l                         ; sx = 128 + res, biased in the
+   CLC                                     ; landing adds (lo first: carry
+   ADC #128                                ; feeds the hi)
    STA VX1+1,X
+   LDA zp_br_res_h
+   ADC #0
+   STA VX1+2,X
    LDA zp_br_r_m8                          ; bank recip(NEAR) = (M8=0, S=1)
    STA VX1+11,X                            ; into the struct: the deferred
    LDA zp_br_r_s                           ; y stage (and apv_stage) project
