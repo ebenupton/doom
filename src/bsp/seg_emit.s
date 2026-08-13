@@ -429,8 +429,11 @@ hgp_fwd:
    BMI ft_no_rec                           ; (always: N = 1)
 ft_no_needbt:
    PAGE BANK_SEG                           ; bch is a header read: page
-   LDY #13                                 ; around it (flat: no-ops)
-   LDA (zp_seg_hdr_p),Y                    ; bch
+   LDY #12                                 ; around it (flat: no-ops)
+   LDA (zp_seg_hdr_p),Y                    ; bfh — prefetched into zp while
+   STA zp_seg_bfh                          ; the bank is held: the fb arm
+   INY                                     ; reads it pageless (Eben's
+   LDA (zp_seg_hdr_p),Y                    ; grab-at-12/13 idea); bch next
    PAGE_X BANK_C                           ; bch rides A across the page
    CMP zp_seg_ch                           ; emit iff bch > ch
    BMI ft_skip
@@ -461,10 +464,9 @@ ft_skip:
    BPL fb_skip                             ; fh >= vz: skip
    BMI fb_no_rec                           ; (always: N = 1)
 fb_no_needbb:
-   PAGE BANK_SEG
-   LDY #12
-   LDA (zp_seg_hdr_p),Y                    ; bfh
-   PAGE_X BANK_C
+   LDA zp_seg_bfh                          ; banked: ft's prefetch (stepless)
+                                        ; or ys_withback's ride (NEEDBT set)
+                                        ; — every NEEDBB-clear path covered
    CMP zp_seg_fh                           ; emit iff bfh < fh
    BPL fb_skip
 fb_emit:
@@ -627,6 +629,8 @@ ys_withback:
    STA zp_seg_btop_dlt
    DEY
    LDA (zp_seg_hdr_p),Y                    ; bfh
+   STA zp_seg_bfh                          ; bank the raw for the fb arm
+                                        ; (its NEEDBB-clear read goes zp)
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
