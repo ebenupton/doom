@@ -404,13 +404,16 @@ hgp_fwd:
    BVC portal_cascade                      ; V clear: two-sided seg
 solid_cascade:
    ZERO zp_dcl_rec_buf_h                   ; records off for the whole path
-   BIT zp_ss_eskip                         ; eyeline: N = no top edges
-   BMI sc_no_ft
+; Eyeline dispatch exploits near-exclusivity (Eben): $80|$40 together
+; require vz == fh == ch (degenerate zero-height front at exact eye
+; height — python skips both, so $C0 stays representable), and any
+; other nonzero value means EXACTLY ONE edge is suppressed.  The
+; common no-skip case pays one LDA/BNE instead of two BITs.
+   LDA zp_ss_eskip
+   BNE sc_esk                              ; some edge suppressed: island
    LDX #zp_seg_sy1_top_l - VX1
    JSR draw_clipped_line_s16_h
-sc_no_ft:
-   BIT zp_ss_eskip                         ; eyeline: V = no bottom edges
-   BVS sc_no_fb
+sc_fb:
    LDX #zp_seg_sy1_bot_l - VX1
    JSR draw_clipped_line_s16_h
 sc_no_fb:
@@ -432,6 +435,15 @@ sc_vs1:
 sc_vs2:
    JSR span_mark_solid                     ; zp_i clamps persisted (stage 3)
    JMP s_advance
+sc_esk:
+   BIT zp_ss_eskip                         ; (LDA set N but not V)
+   BMI sc_esk_mi
+   LDX #zp_seg_sy1_top_l - VX1             ; $40: top live, bottom gone
+   JSR draw_clipped_line_s16_h
+   JMP sc_no_fb
+sc_esk_mi:
+   BVS sc_no_fb                            ; $C0: degenerate — neither
+   BVC sc_fb                               ; $80: bottom live (always)
 portal_cascade:
 
 ; ============================================================================
