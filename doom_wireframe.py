@@ -2067,9 +2067,10 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
                           lambda hp: half_h - (hp * _UNPRE - vz) * fy2,
                           _cH, clips, surface, draw_stats, 0 <= sx2 <= 255)
     if solid:
-        clips.draw_clipped([
-            (sx1, ft1, sx2, ft2), (sx1, fb1, sx2, fb2),
-        ], GREEN, surface, draw_stats)
+        _lines = []
+        if ch > vz: _lines.append((sx1, ft1, sx2, ft2))   # subsector eyeline
+        if fh < vz: _lines.append((sx1, fb1, sx2, fb2))   # rule (2026-08-13)
+        clips.draw_clipped(_lines, GREEN, surface, draw_stats)
         _c_emit()
         if deferred is not None:
             deferred.append(('solid', x_lo, x_hi, sx1, sx2, ft1, ft2, fb1, fb2))
@@ -2316,10 +2317,10 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     _sH = _vs_heights(si)               # trigger heights (solid-aliased)
     _s0 = svwh[0]
     if solid:
-        clips.draw_clipped([
-            (sx1, ft1, sx2, ft2),
-            (sx1, fb1, sx2, fb2),
-        ], GREEN, surface, draw_stats)
+        _lines = []
+        if ch > vz: _lines.append((sx1, ft1, sx2, ft2))   # subsector eyeline
+        if fh < vz: _lines.append((sx1, fb1, sx2, fb2))   # rule (2026-08-13)
+        clips.draw_clipped(_lines, GREEN, surface, draw_stats)
         # VERTEX-SPAN DESCRIPTORS replace per-seg verticals + APEDGE
         emit_vertex_spans(_s0[0], sx1,
                           lambda h: fp_project_y(h - vz, ryh1, ryl1),
@@ -2861,13 +2862,20 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     fp_module.mul_cat("clip")
     if solid:
         lines = []
+        # Subsector eyeline rule (2026-08-13): no top edges when the
+        # subsector ceiling is at/below the sightline, no bottom edges
+        # when the floor is at/above it — all seg classes uniformly.
+        if ch <= vz:
+            pass
         # Top horizontal: skip if line is above visible spans everywhere.
-        if _AP_SKIP_ENABLE and clips.line_above_spans(sx1, ft1, sx2, ft2):
+        elif _AP_SKIP_ENABLE and clips.line_above_spans(sx1, ft1, sx2, ft2):
             _ap_skip_stats['solid_top_skipped'] += 1
         else:
             lines.append((sx1, ft1, sx2, ft2))
+        if fh >= vz:
+            pass
         # Bottom horizontal: skip if line is below visible spans everywhere.
-        if _AP_SKIP_ENABLE and clips.line_below_spans(sx1, fb1, sx2, fb2):
+        elif _AP_SKIP_ENABLE and clips.line_below_spans(sx1, fb1, sx2, fb2):
             _ap_skip_stats['solid_bot_skipped'] += 1
         else:
             lines.append((sx1, fb1, sx2, fb2))

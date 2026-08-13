@@ -105,6 +105,24 @@ render_subsector:
    SEC
    SBC zp_br_vz
    STA zp_seg_bot_dlt                       ; bot_dlt = fh - vz
+; Subsector eyeline rule (Eben, 2026-08-13): ceiling at/below the
+; sightline => NO top edges this subsector; floor at/above => NO
+; bottom edges. One byte, BIT-shaped: N ($80) kills ft, V ($40)
+; kills fb — the ft/fb arm heads test it in 5 cycles.
+   LDX #0
+   LDA zp_seg_top_dlt                       ; ch - vz
+   BMI ss_esk_t                             ; <= 0: ceiling at/below eye
+   BNE ss_esk_tok
+ss_esk_t:
+   LDX #$80
+ss_esk_tok:
+   LDA zp_seg_bot_dlt                       ; fh - vz
+   BMI ss_esk_done                          ; < 0: floor below eye — live
+   TXA
+   ORA #$40
+   TAX
+ss_esk_done:
+   STX zp_ss_eskip
 ; Invalidate the vertex-chain key at the subsector boundary: chained
 ; front-sy reuse needs the SAME front heights, only guaranteed within
 ; one subsector.  The chain compares the LO byte only (2026-08-13):

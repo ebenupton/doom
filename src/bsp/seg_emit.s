@@ -445,6 +445,13 @@ ft_emit:
    STA zp_dcl_rec_off
    BNE ft_set_line                         ; (always: A = 1)
 ft_no_rec:
+   BIT zp_ss_eskip                         ; subsector eyeline rule: no
+   BMI ft_skip                             ; top edges (NO-RECORD lines
+                                        ; only — the recorded bch>ch
+                                        ; class must draw: its records
+                                        ; ARE the tighten channel, and
+                                        ; it self-clips to empty records
+                                        ; under the rule anyway)
    ZERO zp_dcl_rec_buf_h
 ft_set_line:
    LDX #zp_seg_sy1_top_l - VX1             ; sy pair: top
@@ -472,6 +479,8 @@ fb_emit:
    STA zp_dcl_rec_off
    BNE fb_set_line                         ; (always: A = 1)
 fb_no_rec:
+   BIT zp_ss_eskip                         ; eyeline rule, bottom twin
+   BVS fb_skip                             ; (no-record lines only)
    ZERO zp_dcl_rec_buf_h
 fb_set_line:
    LDX #zp_seg_sy1_bot_l - VX1             ; sy pair: bot

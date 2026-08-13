@@ -260,6 +260,11 @@ pa_ptr = $40                      ; [ang]; 16-bit table pointer ; w=2
 zp_ys_done = $42                  ; [bsp]; 1 = the PREVIOUS seg ran the
 ; post-has_gap y stage (its VX2 sy pairs are live for the chain);
 ; cleared per seg at the chain decision, set at y-stage end
+zp_ss_eskip = $4C                 ; [bsp]; subsector eyeline edge-skip:
+                                  ; $80 = ch <= vz (no top edges),
+                                  ; $40 = fh >= vz (no bottom edges);
+                                  ; built in the subsector prologue,
+                                  ; BIT-tested at the ft/fb arm heads
 zp_ys_v1ok = $43                  ; [bsp]; 1 = this seg's chained v1
 ; already carries a valid front sy pair (copied from an emitted prev
 ; seg) — the y stage skips v1's front projection
