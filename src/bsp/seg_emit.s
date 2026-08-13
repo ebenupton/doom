@@ -214,7 +214,17 @@ clip_none:
    BEQ range_fwd                           ; tie: one-column seg is FORWARD
                                         ; (KEEP: measured 2026-08-13 — ties
                                         ; are occlusion workhorses; dropping
-                                        ; them = +652/fr MEAN and 1px leaks)
+                                        ; them = +652/fr MEAN and 1px leaks.
+                                        ; TODO revisit (Eben): the drop is
+                                        ; one instruction — BCS cull_jmp
+                                        ; replacing this BEQ+BCS pair; a
+                                        ; play build lives in
+                                        ; doom_walk_notie.ssd. If the leaks
+                                        ; don't offend in play, the honest
+                                        ; version needs the tie dropped in
+                                        ; the python mirrors + float ref
+                                        ; too, and the +652/fr paid or
+                                        ; clawed back)
    BCS cull_jmp                            ; sx1 > sx2: reversed sliver, drop
 range_fwd:
    STA zp_i_l                              ; ilo = sx1_lo
