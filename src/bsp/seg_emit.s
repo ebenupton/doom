@@ -147,8 +147,7 @@ chain_miss:                                ; A = header lo (banked in v1i_l)
    STA zp_v1i_b
                                         ; (SXV bank contract: bank SEG in —
                                         ; already held for the header reads)
-   JSR sx_vert                             ; ABI: A = idx_b; staging + side
-                                        ; test live in the entry
+   JSR sx_vert                             ; ABI: A = idx_b
 v1_done:
 v1_done_l0:
    LDA #VX_STRIDE
@@ -158,8 +157,10 @@ v1_done_l0:
    STA zp_seg_v_idx_l
    INY
    LDA (zp_seg_hdr_p),Y                    ; v2 idx B
-   JSR sx_vert                             ; ABI: A = idx_b; staging + side
-                                        ; test live in the entry
+   STA zp_seg_v_idx_b                      ; the seg-level record: chain key,
+                                        ; stage-7 VDONE, crossing recovery
+                                        ; all read V2's B from here
+   JSR sx_vert                             ; ABI: A = idx_b
 
 ; ============================================================================
 ; STAGE 2 — NEAR-CLIP RESOLUTION (mirrors fp_near_clip in fp.py).

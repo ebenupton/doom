@@ -367,10 +367,13 @@ sxv_hi_j:
    JMP sx_vert_hi                          ; (above the entry: the lo body
                                         ; below is far past branch range)
 ::sx_vert:
-   STA zp_seg_v_idx_b                      ; ABI: A = idx_b (= id>>3) — the
-   TAY                                     ; entry owns ALL idx_b staging:
+   TAY                                     ; ABI: A = idx_b (= id>>3);
    AND #$20                                ; Y = bitmap index for the probe,
-   BNE sxv_hi_j                            ; bit 5 = senior plane (256>>3)
+   BNE sxv_hi_j                            ; bit 5 = senior plane (256>>3).
+                                        ; zp_seg_v_idx_b is NOT stored here:
+                                        ; every consumer wants V2's value
+                                        ; (v1's lives in zp_v1i_b) — the v2
+                                        ; call site banks it
 ; fall into the lo body — the two side-baked routines below have NO
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
