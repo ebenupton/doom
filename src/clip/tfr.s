@@ -42,33 +42,25 @@ tg_append_x:
                                            ; scope tail — merge path falls
 ta_try_merge:
    TAY                                     ; A = zp_new_tail from the gate
-; Fail fast: tail Y must be a constant-line span (tl==tr AND bl==br).
+; Merge preconditions, reordered by measured fail rate (census
+; 2026-08-14: TL-match rejects 12.2/fr — the old order buried it
+; fifth) and FUSED by transitivity: once TL,Y == TL,X, that one value
+; rides A through all four top-side compares (TLy==TLx==TRy==TRx is
+; the same conjunction as the old pairwise tests); bottom mirrors.
    LDA POOL_TL,Y
-   CMP POOL_TR,Y
+   CMP POOL_TL,X                           ; constants match (top)?
    BNE ta_link
-; |||
+   CMP POOL_TR,Y                           ; tail constant-line (top)?
+   BNE ta_link
+   CMP POOL_TR,X                           ; new constant-line (top)?
+   BNE ta_link
    LDA POOL_BL,Y
-   CMP POOL_BR,Y
+   CMP POOL_BL,X                           ; constants match (bottom)?
    BNE ta_link
-; ||
-; New X must also be a constant-line span.
-   LDA POOL_TL,X
-   CMP POOL_TR,X
+   CMP POOL_BR,Y                           ; tail constant-line (bottom)?
    BNE ta_link
-; ||
-   LDA POOL_BL,X
-   CMP POOL_BR,X
+   CMP POOL_BR,X                           ; new constant-line (bottom)?
    BNE ta_link
-; |
-; Matching constants?
-   LDA POOL_TL,Y
-   CMP POOL_TL,X
-   BNE ta_link
-; |
-   LDA POOL_BL,Y
-   CMP POOL_BL,X
-   BNE ta_link
-; |
 ; Contiguous active ranges? (abutting: tail.xend == new.xstart)
    LDA POOL_XEND,Y
    CMP POOL_XSTART,X
