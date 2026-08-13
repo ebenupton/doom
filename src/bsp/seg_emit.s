@@ -128,10 +128,7 @@ hit_done:
    JMP v1_done_l0                          ; chain arc is pure ZP — L0 was
                                         ; never left, skip the re-page
 
-; --- stage-1 islands ---
-xform1_hi:                                 ; v1 senior-plane transform
-   JSR sx_vert_hi
-   JMP xform1_done
+; --- stage-1 island ---
 chain_miss:                                ; A = header lo (banked in v1i_l)
    STA zp_seg_v_idx_l
 .if ::C02
@@ -148,14 +145,10 @@ chain_miss:                                ; A = header lo (banked in v1i_l)
 .endif
    LDA (zp_seg_hdr_p),Y                    ; v1 idx B
    STA zp_v1i_b
-   STA zp_seg_v_idx_b
-   TAY                                     ; SXV ABI: Y = idx_b (2026-08-13)
                                         ; (SXV bank contract: bank SEG in —
                                         ; already held for the header reads)
-   AND #$20                                ; side test at the caller: the
-   BNE xform1_hi                           ; transform is side-baked
-   JSR sx_vert_lo
-xform1_done:
+   JSR sx_vert                             ; ABI: A = idx_b; staging + side
+                                        ; test live in the entry
 v1_done:
 v1_done_l0:
    LDA #VX_STRIDE
@@ -165,12 +158,8 @@ v1_done_l0:
    STA zp_seg_v_idx_l
    INY
    LDA (zp_seg_hdr_p),Y                    ; v2 idx B
-   STA zp_seg_v_idx_b
-   TAY                                     ; SXV ABI: Y = idx_b (2026-08-13)
-   AND #$20                                ; side rides the just-loaded byte
-   BNE xform2_hi
-   JSR sx_vert_lo
-xform2_done:
+   JSR sx_vert                             ; ABI: A = idx_b; staging + side
+                                        ; test live in the entry
 
 ; ============================================================================
 ; STAGE 2 — NEAR-CLIP RESOLUTION (mirrors fp_near_clip in fp.py).
@@ -239,9 +228,6 @@ clip_resolve:
    JMP clip_none
 cull_jmp:
    JMP s_advance
-xform2_hi:                                 ; v2 senior-plane transform
-   JSR sx_vert_hi
-   JMP xform2_done
 clip_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                           ; v2 <- crossing

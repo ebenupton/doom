@@ -74,9 +74,10 @@
 ; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
 ; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
 ; unconditionally, the miss arm stores the probe's own zero — see vmiss)
-; ABI (2026-08-13): Y = zp_seg_v_idx_b on entry — all four JSR sites
-; TAY it from the just-loaded header byte, and Y RIDES through the
-; probe, vmiss and into vxcon's VXC_VALID accesses.
+; ABI (2026-08-13): callers enter via sx_vert with A = the just-loaded
+; idx_b header byte; the entry stores zp_seg_v_idx_b, sets Y = idx_b
+; and side-dispatches on bit 5. Y RIDES through the probe, vmiss and
+; into vxcon's VXC_VALID accesses.
 ; BANK CONTRACT (flip 2026-08-13): callers PAGE_X BANK_L2 before the
 ; side dispatch (they finish their L0 header reads first), the body
 ; assumes L2 throughout and pages NOTHING; every exit leaves L2
@@ -355,9 +356,22 @@ vxq_add:
 ; (SXV_HEAD folded into SXV_BODY 2026-08-09 — it was expanded exactly
 ; once before each body and nothing could enter between them.)
 
-; CALLER-SIDE DISPATCH (Eben, 2026-07-27 round 2): the side test lives
-; at the CALL SITES (subsector stages idx_b with the byte in A — the
-; test piggybacks); these are two complete side-baked routines with NO
+; Common entry (2026-08-13, dispatch pushed DOWN from the call sites —
+; no caller knows the side statically, so the caller-side test only
+; bought two 6-byte islands in seg_emit). A = idx_b (the TAY in the
+; SXV ABI staging preserves it); bit 5 selects the side-baked body.
+; The lo body sits between the test and sx_vert_hi, far past branch
+; range — the hi arm pays a JMP trampoline, exactly what the old
+; caller-side islands paid, so cycles are unchanged (lo 10, hi 14).
+sxv_hi_j:
+   JMP sx_vert_hi                          ; (above the entry: the lo body
+                                        ; below is far past branch range)
+::sx_vert:
+   STA zp_seg_v_idx_b                      ; ABI: A = idx_b (= id>>3) — the
+   TAY                                     ; entry owns ALL idx_b staging:
+   AND #$20                                ; Y = bitmap index for the probe,
+   BNE sxv_hi_j                            ; bit 5 = senior plane (256>>3)
+; fall into the lo body — the two side-baked routines below have NO
 ; internal senior test anywhere (probe, fetch, VXC, fills all baked).
 ::sx_vert_lo:                              ; (page-aligning both sides was
    SXV_BODY 0, zp_vf_vec0, sxv0_vfoff, sxv0_vxcon, sxv0_rwpa, sxv0_rwpb ; (pad note: 2026-07-27)
