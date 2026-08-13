@@ -323,10 +323,12 @@ br_project_y:
                                            ; consumes the registers; the unit
                                            ; test reads mpu.a/mpu.y now)
 pym0:
-   STA VWHC_R_S,X
+::py_miss0:                                ; inlined-probe miss entry (stage
+   STA VWHC_R_S,X                          ; 0: A = r_s, X = slot, t0 = h)
    LDA zp_br_t0
 pym2:
-   STA VWHC_KEY,X
+::py_miss2:                                ; inlined-probe miss entry (stage
+   STA VWHC_KEY,X                          ; 2: A = h, X = slot)
    STX zp_pyc_idx                          ; slot for the tail's VALUE stores;
 .endscope                                  ; FALLS THROUGH into the raw body
 

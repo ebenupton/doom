@@ -310,6 +310,34 @@ hg_pass:
 ; that got here; the emit arms re-arm them as needed
    ZERO TOP_RECORDS, BOT_RECORDS
 
+; PY_PROBE — br_project_y's VWHC probe, inlined (2026-08-13, the
+; hit-dominated sites only: hit -9 cyc, miss +3; per-site value census
+; in scratch site_hits.py — miss-heavy arms keep the JSR).  Same ABI:
+; h in A -> Y = sy lo, A = sy hi; misses JSR the raw body's staged
+; store-ladder entries (py_miss0/py_miss2 in project.s).
+.macro PY_PROBE
+.scope
+   STA zp_br_t0
+   EOR zp_br_r_m8
+   TAX                                     ; slot = h ^ M8
+   LDA zp_br_r_s
+   CMP VWHC_R_S,X
+   BNE m0
+   LDA zp_br_t0
+   CMP VWHC_KEY,X
+   BNE m2
+   LDY VWHC_L,X                            ; hit: serve (Y = lo, A = hi)
+   LDA VWHC_H,X
+   JMP pd
+m0:
+   JSR py_miss0
+   JMP pd
+m2:
+   JSR py_miss2
+pd:
+.endscope
+.endmacro
+
 ; ============================================================================
 ; STAGE 4 — Y PROJECTION.  All sy pairs project HERE (post-has_gap:
 ; culled segs never pay), each endpoint at its own struct-banked recip
@@ -355,11 +383,11 @@ ys_noback:
    LDA rns_vec_l-1,X                       ; inlined rns select
    STA rns_go_op
    LDA zp_seg_top_dlt
-   JSR br_project_y
+   PY_PROBE                                ; (hit-dominated site: inlined)
    STA VX1+4
    STY VX1+3                               ; sy_top
    LDA zp_seg_bot_dlt
-   JSR br_project_y
+   PY_PROBE
    STA VX1+6
    STY VX1+5                               ; sy_bot
 ysnb_v2:
@@ -686,7 +714,7 @@ ysb_v1_back:
    AND #$04                                ; open at the NEEDBT dispatch
    BEQ ysb_v1_bb                           ; no BT -> BB is GUARANTEED
    LDA zp_seg_btop_dlt
-   JSR br_project_y
+   PY_PROBE                                ; (chained-back arm: hit-rich)
    STA VX1+8
    STY VX1+7                               ; sy_btop
    LDA zp_seg_flags
@@ -694,7 +722,7 @@ ysb_v1_back:
    BEQ ysb_v2
 ysb_v1_bb:
    LDA zp_seg_bbot_dlt
-   JSR br_project_y
+   PY_PROBE                                ; (chained-back arm: hit-rich)
    STA VX1+10
    STY VX1+9                               ; sy_bbot
 ysb_v2:
@@ -934,13 +962,13 @@ em_v_ok:
    LDA zp_vs_hh
    SEC
    SBC zp_br_vz
-   JSR br_project_y
-   STA zp_line_yl_h
+   PY_PROBE                                ; (vertical heights repeat: the
+   STA zp_line_yl_h                        ;  hottest hit site)
    STY zp_line_yl_l
    LDA zp_vs_hl
    SEC
    SBC zp_br_vz
-   JSR br_project_y
+   PY_PROBE
    STA zp_line_yr_h
    STY zp_line_yr_l
    PAGE BANK_C
