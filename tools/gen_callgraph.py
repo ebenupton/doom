@@ -80,7 +80,10 @@ def resolve(n, d=0):
         return resolve(alias[n], d + 1)
     return n
 
-extra = {'br_back_face_test','bf_seg_front','s_advance','s_advance_l0','vc_miss',
+extra = {'br_back_face_test','bf_seg_front','s_advance','vc_miss',
+ # (s_advance_l0 dropped 2026-08-13: hoisted above seg_proc in subsector.s
+ #  as a fall-through loop-tail label — same invisible-closure treatment
+ #  as seg_proc itself)
  'vxc_arm_lo','vxc_arm_hi','br_to_view','bbox_check_angle','box_classify',
  'dbox_check','bt_store','bca_tail_postrc','br_render_subsector',
  'br_project_x','br_project_y','rns_go','slope_div_le','cp_havepsi',

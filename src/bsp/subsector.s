@@ -124,7 +124,18 @@ br_render_subsector:
 seg_loop:
    LDA zp_seg_count
    BNE seg_proc
+sl_rts:
    RTS                                     ; empty subsector
+; Backface back-exit advance twin (hoisted from seg_emit.s 2026-08-13):
+; single entry (backface.s JMPs), never left bank SEG, and it FALLS
+; into seg_proc — the 57%-majority arc pays no jump at all now.
+::s_advance_l0:
+   CLC
+   LDA zp_seg_hdr_p
+   ADC #16
+   STA zp_seg_hdr_p
+   DEC zp_seg_count
+   BEQ sl_rts
 ::seg_proc:                             ; global: the advance tails in
                                         ; seg_emit.s loop back here
 ; (no PAGE: every arrival is L0-proven — the prologue paged L0 for the

@@ -596,16 +596,12 @@ ms_advance:
    BEQ sa_done                             ; assert) — hi byte is constant
    PAGE BANK_SEG
    JMP seg_proc
-::s_advance_l0:
-   CLC
-   LDA zp_seg_hdr_p
-   ADC #16
-   STA zp_seg_hdr_p
-   DEC zp_seg_count
-   BEQ sa_done
-   JMP seg_proc
 sa_done:
    RTS
+; (::s_advance_l0 hoisted into subsector.s 2026-08-13 — it sits right
+;  above seg_proc and FALLS into it, killing its JMP on the majority
+;  backface arc; this s_advance keeps the ms_advance fall-in and the
+;  cull_jmp entries, so it stays here with its page + jump.)
 
 ; ============================================================================
 ; STAGE 4 ISLAND — the with-back y-projection arc.  Entered with
