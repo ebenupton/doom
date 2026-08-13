@@ -27,7 +27,7 @@ bsp_d_end:
 
 ; ============================================================================
 ; VWHC ARRAY EQUATES — the Y-projection memo's five parallel 256-byte
-; arrays (the CODE lives with br_project_y in project.s; only the DATA
+; arrays (the CODE lives with project_y in project.s; only the DATA
 ; addresses live here, historically, because this file owned the old W
 ; region). Flat: $D500-$D9FF, the BSS window between the bbox table
 ; (ends $D4BF) and TA_LO ($DC00). Banked: bank L2 window $B500-$B9FF.
@@ -36,7 +36,7 @@ bsp_d_end:
 ; The W segment itself floats inside the one CODE region in BOTH builds
 ; (2026-07-12 flat merge); there is no W memory area any more.
 ;
-; br_project_y (project.s) memoises the inlined raw body: the key is
+; project_y (project.s) memoises the inlined raw body: the key is
 ; the COMPLETE input tuple (rhi, rlo, h), so a hit returns exactly the
 ; previously computed value — bit-identical by construction. See
 ; project.s for the probe hash and its 2026-07-12

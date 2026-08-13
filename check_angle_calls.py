@@ -76,7 +76,7 @@ def check(px,py,ab):
                 if got!=standalone(*armed) and len(vs_st)<4: vs_st.append((armed,got,standalone(*armed)))
                 armed=None
             mpu.step()
-    sc._run=traced; sc._run(sym('br_render_frame'))
+    sc._run=traced; sc._run(sym('render_frame'))
     return n,vs_py,vs_st
 
 tp=ts=nc=0

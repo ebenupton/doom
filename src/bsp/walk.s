@@ -1,13 +1,13 @@
 
 ; ============================================================================
-; br_render_frame — top-level entry. Walks the BSP from the root,
+; render_frame — top-level entry. Walks the BSP from the root,
 ; visiting subsectors in front-to-back order, dispatching to the
-; per-subsector handler (br_render_subsector).
+; per-subsector handler (render_subsector).
 ;
 ; Caller must have:
 ;   - Loaded WAD ROM into memory.
 ;   - (ROM bases are layout.inc constants since 2026-07-10 — no pointer setup.)
-;   - Set up player view state (zp_br_px, etc.) and called br_view_setup.
+;   - Set up player view state (zp_br_px, etc.) and called view_setup.
 ;   - Initialized the span pool (via span_init at $2000).
 ;   - Cleared the framebuffer.
 ;
@@ -36,11 +36,11 @@
 ; end to end (2026-07-15) — a child's subsector-ness lives in its
 ; PARENT's TYPE byte (NF_RLEAF/NF_LLEAF), not in the link.
 ; (br_init_frame retired 2026-07-15: the per-frame init lives inline at
-; br_render_frame entry below; the jt slot and its harness/driver
+; render_frame entry below; the jt slot and its harness/driver
 ; callers are gone — partial-flow harnesses poke the state from Python,
 ; see bsp_render_6502.poke_init_frame_state.)
 
-br_render_frame:
+render_frame:
 .scope bsp_walk                         ; (named scope: historical — the
                                         ; bv_site SMC patching is retired)
 ; L0 anchor: the traversal's bank invariant (node_setup and the
@@ -302,7 +302,7 @@ rc_leaf:
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full2
 rdf_leaf:
-   JMP br_render_subsector
+   JMP render_subsector
 rc_descend_far:
    BMI rdf_leaf                            ; far leaf: straight to render
 ; SIDE-SPECIALISED (2026-07-15): node_setup returns side in A with Z
@@ -336,7 +336,7 @@ rc_s0:
    ZERO zp_bbox_side                       ; side store sunk past the serve
                                         ; branch (serves never read it;
                                         ; bbox entry takes no A)
-   JSR br_bbox_visible                     ; vector-dispatched (zp_bv_entry)
+   JSR bbox_visible                     ; vector-dispatched (zp_bv_entry)
 .if ::BANKED
    BCC r0_far_i                            ; near invisible: far check enters
                                         ; ALREADY L2 (bca exit) — the clone
@@ -345,7 +345,7 @@ rc_s0:
    BCC r0_far                              ; near invisible: skip subtree
 .endif
 r0_vis:
-; (bank WALK held: br_bbox_visible pages it at entry and its exits never
+; (bank WALK held: bbox_visible pages it at entry and its exits never
 ; re-page — the four child-fetch PAGEs died in the two-bank re-cut)
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
@@ -359,7 +359,7 @@ r0_far:
    STA zp_bbox_side                        ; far = LEFT
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full
-   JSR br_bbox_visible
+   JSR bbox_visible
    BCC rc_ret                              ; far invisible: this node is done
 r0_far_vis:
    LDX zp_node_ch_l
@@ -372,11 +372,11 @@ r0_far_vis:
 r0_far_i:                               ; near-invisible arc ONLY: bank is
    PLA                                  ; L2-proven (bca exit; nothing here
    STA zp_node_ch_l                     ; touches banked data), so the far
-   LDA #1                               ; check skips br_bbox_visible's
+   LDA #1                               ; check skips bbox_visible's
    STA zp_bbox_side                     ; blind PAGE. Post-descend and
    SPAN_IS_NOT_FULL              ; serve arcs keep the paged entry
    BEQ bsp_done_full
-   JSR br_bbox_visible_l2               ; via r0_far above.
+   JSR bbox_visible_l2               ; via r0_far above.
    BCC rc_ret
    JMP r0_far_vis
 .endif
@@ -402,7 +402,7 @@ rc_n1:
    BNE r1_vis                              ; serve: verdict inherited (1)
    LDA #1                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (mirror)
-   JSR br_bbox_visible
+   JSR bbox_visible
 .if ::BANKED
    BCC r1_far_i                            ; near invisible: L2-proven (mirror)
 .else
@@ -421,7 +421,7 @@ r1_far:
    ZERO zp_bbox_side                      ; far = RIGHT
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full
-   JSR br_bbox_visible
+   JSR bbox_visible
    BCC rc_ret1
 r1_far_vis:
    LDX zp_node_ch_l
@@ -436,7 +436,7 @@ r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
    ZERO zp_bbox_side                    ; far = RIGHT
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full
-   JSR br_bbox_visible_l2
+   JSR bbox_visible_l2
    BCC rc_ret1
    JMP r1_far_vis
 .endif
@@ -452,7 +452,7 @@ rc_ret1:
 ; children straight from the SoA pages; $096B-$096E are free.)
 
 ; ============================================================================
-; br_render_subsector — called per subsector during walk.
+; render_subsector — called per subsector during walk.
 ;   Input: zp_node_ch_l = subsector id (u8).
 ;
 ; (Historical note: this banner predates the real implementation — the

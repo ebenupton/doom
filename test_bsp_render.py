@@ -15,8 +15,8 @@ import fp
 import abi
 
 from symmap import sym as _sym
-ENTRY_BR_UMUL8 = _sym('br_umul8')
-ENTRY_BR_RECIP_HI = _sym('br_recip_hi')   # junior arm is inlined at nc_ok
+ENTRY_BR_UMUL8 = _sym('umul8_zp')
+ENTRY_BR_RECIP_HI = _sym('recip_hi')   # junior arm is inlined at nc_ok
 
 ZP_A    = _sym('zp_br_a')
 ZP_B    = _sym('zp_br_b')
@@ -104,7 +104,7 @@ def test_recip():
     return fail
 
 
-ENTRY_BR_VIEW_SETUP = _sym('br_view_setup')
+ENTRY_BR_VIEW_SETUP = _sym('view_setup')
 
 # zp slots (linked equates; hi bytes are lo+1)
 ZP_PX    = _sym('zp_br_px');    ZP_PXH  = ZP_PX + 1
@@ -158,7 +158,7 @@ def test_view_setup():
         got_fvy = s16_from_zp(mem, ZP_FVYLO)
         ctx = fp.fp_view_context(vx88, vy88, sc_tuple)
         # COUNT-NATIVE (2026-08-10): the engine quantizes the 8.8 frac
-        # terms to s16 counts in br_view_setup — rns(fv_88, 3).
+        # terms to s16 counts in view_setup — rns(fv_88, 3).
         want_fvx = fp.rns(ctx[3], 3)
         want_fvy = fp.rns(ctx[4], 3)
         ok = got_fvx == want_fvx and got_fvy == want_fvy
@@ -203,7 +203,7 @@ def test_to_view():
     return fail
 
 
-ENTRY_BR_PROJECT_Y = _sym('br_project_y')  # paged entry retired 2026-07-26: zero callers; naked contract = A = h
+ENTRY_BR_PROJECT_Y = _sym('project_y')  # paged entry retired 2026-07-26: zero callers; naked contract = A = h
 
 
 # One recip sample per shift value S=1..10 (idx chosen mid-range for each
@@ -220,7 +220,7 @@ def _rns_reselect(sc, mem):
     mem[_sym('rns_go_op')] = mem[_sym('rns_vec_l') - 1 + mem[0x1B]]
 
 def test_project_x():
-    """br_project_x_c (the ONLY X projector since the classic entry +
+    """project_x_c (the ONLY X projector since the classic entry +
     px_shrink were proven unreachable and deleted, 2026-08-11): input
     is s16 COUNTS in vx_l/vx_h; returns rns((c<<3)*m9, S+8) UNBIASED in
     res — the +128 tail moved into the callers with the px tail-call
@@ -235,7 +235,7 @@ def test_project_x():
             cases.append((c, rh, rl))
     fail = 0
     ZP_CL, ZP_CH = _sym('zp_br_vx_l'), _sym('zp_br_vx_h')
-    E_C = _sym('br_project_x_c')
+    E_C = _sym('project_x_c')
     for c, rh, rl in cases:
         mem[ZP_CL] = c & 0xFF
         mem[ZP_CH] = (c >> 8) & 0xFF
@@ -269,7 +269,7 @@ def test_project_x():
 # (test_project_x_wide DELETED 2026-08-11: it exercised the px_shrink
 # dispatch, whose domain — s16 integer view-x parts — is empty by
 # construction under count-native totals; the shrink was proven
-# unreachable and removed. br_project_x_c's full-range counts sweep in
+# unreachable and removed. project_x_c's full-range counts sweep in
 # test_project_x covers the live projector.)
 
 def _has_sym(name):
@@ -307,7 +307,7 @@ def test_project_y():
         # store-backs were test-only and died — cp_havepsi precedent)
         got = sc.mpu.y | (sc.mpu.a << 8)
         if got >= 0x8000: got -= 0x10000
-        # br_project_y outputs HALF_H + Y_BIAS based values (the bias the
+        # project_y outputs HALF_H + Y_BIAS based values (the bias the
         # emission paths used to add per store is folded into the constant).
         want = fp.fp_project_y(h, rh, rl) + 48
         ok = got == want
@@ -324,18 +324,18 @@ def test_project_y():
 
 
 if __name__ == '__main__':
-    print("== br_umul8 ==")
+    print("== umul8_zp ==")
     f1 = test_umul8()
     f2 = 0   # (br_smul8 retired)
     print("== br_recip ==")
     f3 = test_recip()
-    print("== br_view_setup ==")
+    print("== view_setup ==")
     f4 = test_view_setup()
     print("== position ref (rot_w_pages) ==")
     f5 = test_to_view()
     print("== br_project_x ==")
     f6 = test_project_x()
-    print("== br_project_y ==")
+    print("== project_y ==")
     f7 = test_project_y()
     print("== br_project_x (wide) ==")
     f8 = 0   # test_project_x_wide deleted (shrink domain empty)

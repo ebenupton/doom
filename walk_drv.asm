@@ -176,7 +176,7 @@ ORG DRV_ORG
     JSR anim_glue_tick                              ; advance movers (lazy patch)
     ; --- render into hidden buffer (cleared by previous flip_sched) ---
     LDA backhi:STA &70
-    LDA #BANK_L0 :STA &FE30 : JSR ENG_VIEW_SETUP    ; br_view_setup (real address, from the map)
+    LDA #BANK_L0 :STA &FE30 : JSR ENG_VIEW_SETUP    ; view_setup (real address, from the map)
     LDA #BANK_C :STA &FE30 : JSR ENG_SPAN_INIT      ; span_init / pool
     LDA #BANK_L0 :STA &FE30 : JSR ENG_RENDER_FRAME ; (init is inline at render entry)
     JSR flip_sched

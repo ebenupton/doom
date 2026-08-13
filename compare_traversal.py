@@ -4,16 +4,16 @@ sides using the 6502 seg processor and the 6502 clipper for visibility.
 Because the seg processor is identical on both sides, any divergence in
 the visited-subsector sequence or the has_gap(ilo,ihi) query stream is a
 pure TRAVERSAL bug (bbox visibility / side test / ordering) in
-br_render_frame + br_bbox_visible.
+render_frame + bbox_visible.
 
 Python side: packed_render_bsp with
-  - packed_render_subsector replaced by the 6502 br_render_subsector
+  - packed_render_subsector replaced by the 6502 render_subsector
   - a clips wrapper whose has_gap/is_full delegate to the 6502 clipper
     state (unlike Instrumented6502Spans, whose Python spans never see the
     6502 seg processor's mutations)
   - fp_bbox_visible_fixed left as the Python reference.
 
-6502 side: br_render_frame end-to-end.
+6502 side: render_frame end-to-end.
 """
 import os, sys
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
@@ -26,8 +26,8 @@ from wad_packed import spans_init_full
 import trace_compare as tc
 
 from symmap import sym as _sym
-ENTRY_BR_RENDER_SUBSECTOR = _sym('br_render_subsector_entry')
-ENTRY_BR_RENDER_FRAME     = _sym('br_render_frame')
+ENTRY_BR_RENDER_SUBSECTOR = _sym('render_subsector_entry')
+ENTRY_BR_RENDER_FRAME     = _sym('render_frame')
 _E_HAS_GAP = _sym('span_has_gap')
 
 
@@ -54,7 +54,7 @@ def setup(sc, px, py, ab):
 
 
 def install_tracing(sc, trace_all):
-    # The BSP walk JSRs br_render_subsector's real address, not the jump
+    # The BSP walk JSRs render_subsector's real address, not the jump
     # table — read the JMP operand at $4819 to find it.
     ss_real = (sc.mpu.memory[ENTRY_BR_RENDER_SUBSECTOR + 1]
                | (sc.mpu.memory[ENTRY_BR_RENDER_SUBSECTOR + 2] << 8))
@@ -112,7 +112,7 @@ def trace_hybrid(px, py, ab):
     orig = dw.packed_render_subsector
     dw.packed_render_subsector = hybrid_ss
     # Python side uses the SAME angle-space bbox visibility as the 6502, so the
-    # traversal stays pixel-exact (6502 br_bbox_visible -> bbox_check_angle).
+    # traversal stays pixel-exact (6502 bbox_visible -> bbox_check_angle).
     orig_use, orig_ab = dw._USE_ANGLE_BBOX, dw._VIEW_AB
     dw._USE_ANGLE_BBOX = True
     dw._VIEW_AB = ab

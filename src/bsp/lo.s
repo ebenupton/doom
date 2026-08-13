@@ -115,7 +115,7 @@ rp_t_ok:
    STA zp_br_a                             ; (the JSR, not the SC_ inline:
    PAGE BANK_SEG                           ;  ~100B for a rare path)
 ; ^ restore for the y-stage's VWHC reads (the 2026-08-09 "empirically
-; load-bearing" mystery, root-caused 2026-08-13: br_project_y's VWHC
+; load-bearing" mystery, root-caused 2026-08-13: project_y's VWHC
 ; planes were the L2 consumer; VWHC lives in bank SEG now).
 ; ---- dvx = vx_u - vx_c: sign + u16 magnitude in the vy slots
 ; (TRUE16: totals are s16 counts — the third byte and its gated
@@ -167,7 +167,7 @@ rp_dvx_p:
    ADC #0
    STA zp_br_res_h                         ; r1 = p1h + c (<= 255)
 ; ---- cx = vx_c +- prod, STRAIGHT INTO the projection input slots:
-; s16 counts in zp_br_vx_l/h — exactly what br_project_x_c consumes —
+; s16 counts in zp_br_vx_l/h — exactly what project_x_c consumes —
 ; and the crossing's real (count-grain) fraction flows through ----
    LDA zp_br_sign
    BNE rp_cx_sub
@@ -201,7 +201,7 @@ rp_recip:
    STA zp_br_r_s                           ; (the hand kernel fold died: the
                                            ; counts projector selects itself)
 ; ---- project + land in the clipped endpoint's struct ----
-   JSR br_project_x_c                      ; -> res = rns(b123); kernel
+   JSR project_x_c                      ; -> res = rns(b123); kernel
                                            ; RTSes straight here (px tail-
                                            ; jumps, 2026-08-12)
    LDX zp_seg_ep
@@ -377,7 +377,7 @@ cr_ref:
 ; VXk+9/10 (FH projection) and +11/12 (CH projection): the same slots
 ; and orientation the old dpy(APEDGE1)/ap2_solid_proj paths produced.
 ; Replaces TRANSFORM-TIME speculation: has_gap-culled segs pay nothing.
-; Arrives under BANK_C; pages L0 for the header reads; br_project_y
+; Arrives under BANK_C; pages L0 for the header reads; project_y
 ; pages L2 itself; the emits re-page C per draw as always.
 ; ============================================================================
 ; (apv_stage is a MACRO now — bsp/inline.s — expanded at its single

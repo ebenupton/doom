@@ -24,7 +24,7 @@
 ; ref_cold epoch-anchor formulation was equivalent; origin form needs no
 ; anchor state — $05E3-$05E8 freed.)
 ;
-; DISPATCH: vxc_frame (JSR'd from br_view_setup's tail, view.s) publishes
+; DISPATCH: vxc_frame (JSR'd from view_setup's tail, view.s) publishes
 ; ref into vxc_ref_x/y and SMC-patches the operand of seg_xform's
 ; vxc_jsr_site JSR between br_to_view_fetch (disabled — zero cost,
 ; byte-identical path) and vxc_arm (enabled). VXC_ENABLE lives in low
@@ -94,7 +94,7 @@ SEG_HIGH
 ;  call site, 2026-07-17.)
 
 ; ============================================================================
-; Per-frame hook — called from br_view_setup after the view context (fracs)
+; Per-frame hook — called from view_setup after the view context (fracs)
 ; is built. Banked: runs from the L2 window (caller paged BANK_L2); touches
 ; only low RAM, ZP and resident MAIN (br_to_view, the SMC site).
 ; ============================================================================

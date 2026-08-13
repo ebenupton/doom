@@ -6,7 +6,7 @@
 ;   LOGICAL heights advance every frame in anim_tick (per-mover state
 ;   machine over a 3-byte block: pos 8.8 prescaled + packed state/timer).
 ;   APPLIED heights (the bytes the renderer reads) update lazily: the
-;   br_render_subsector hook (anim_ss_hook, SMC like the vxc/bca hooks)
+;   render_subsector hook (anim_ss_hook, SMC like the vxc/bca hooks)
 ;   consults a per-subsector mover bitmask and patches a dirty mover the
 ;   first time a frame visits any subsector containing one of its segs.
 ;   An invisible mover's stale bytes are never read, so lazy == eager.
@@ -71,7 +71,7 @@ ANIM_WS     = $05EB                     ; per mover: pos_lo, pos_hi, state/timer
 ; ============================================================================
 ; Resident hub — anim_ss_hook (in subsector.s) is SMC-patched here by
 ; anim_init. Entry: bank SEG paged (headers/FHCH/TABL0), subsector index (u8) at zp_node_ch_l.
-; A/X/Y are dead at the hook point (br_render_subsector reloads them).
+; A/X/Y are dead at the hook point (render_subsector reloads them).
 ; ============================================================================
 SEG_HIGH
 ; pseudocode:
@@ -112,7 +112,7 @@ ah_next:
    DEX
    BPL ah_loop
 ah_done:
-   JMP anim_ss_cont                        ; resume br_render_subsector
+   JMP anim_ss_cont                        ; resume render_subsector
 ah_bit:
    .byte 1,2,4,8,16,32
 ah_pend:

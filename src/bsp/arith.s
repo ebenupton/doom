@@ -2,14 +2,14 @@
 ; bsp/arith.s — renderer-local arithmetic primitives.
 ;
 ; CONTEXT: everything here is a leaf (or thunk) under the seg pipeline.
-;   br_umul8 / br_smul8       u8xu8 / s8xs8 via the shared quarter-square
+;   umul8_zp / br_smul8       u8xu8 / s8xs8 via the shared quarter-square
 ;                             core umul8 (bsp/header.s, sqr tables —
 ;                             banked $1C00 / flat $A500, abi SQR_*).
 ;   br_recip                  (M8,S) reciprocal from the 9.1 depth index;
 ;                             every zp_br_r_s write is followed by an
 ;                             rns re-select (see project.s RNS banner).
-;   br_frac_rot_term          per-frame fractional rotation term
-;                             (br_view_setup only).
+;   frac_rot_term          per-frame fractional rotation term
+;                             (view_setup only).
 ;   rot_zero/unity_pos/unity_neg/rot_gen_sin/rot_gen_cos + rot_core_sin/_cos
 ;                             the SMC-specialized rotation variants:
 ;                             rot_select (view.s SEL segment) patches the
@@ -24,7 +24,7 @@
 ; ============================================================================
 
 ; ============================================================================
-; br_umul8 — unsigned u8 × u8 → u16.
+; umul8_zp — unsigned u8 × u8 → u16.
 ;   Inputs:  zp_br_a, zp_br_b (u8 each)
 ;   Output:  zp_br_res_l/resh (u16)
 ;   Uses:    umul8, the shared quarter-square multiplier
@@ -33,7 +33,7 @@
 ; Thin adapter from the br_a/br_b register convention onto umul8.
 ; ============================================================================
 SEG_CODE
-br_umul8:
+umul8_zp:
    LDA zp_br_b
    STA zp_mul_b
    LDA zp_br_a
@@ -79,7 +79,7 @@ SEG_CODE
 ; One reciprocal serves both X and Y projection: the 1.2 aspect ratio
 ; is baked into height prescaling. Clobbers A, X, Y, zp_br_p/p_h.
 ; ============================================================================
-; (br_recip_hi moved to clip/rotvar.s 2026-08-09 — see above.)
+; (recip_hi moved to clip/rotvar.s 2026-08-09 — see above.)
 ; SRECIP: 256-byte junior-page S table — ASSEMBLED data in the CODE
 ; region (main RAM: bank-independent, no loader involvement; the first
 ; flat placement at $1A00 sat on the RCACHE psi plane and rotcache
@@ -94,7 +94,7 @@ SEG_CODE
 SEG_CODE
 
 ; ============================================================================
-; HELPER: br_frac_rot_term — fractional rotation contribution.
+; HELPER: frac_rot_term — fractional rotation contribution.
 ;   Inputs:  zp_ft_lo  (u8 fractional delta)
 ;            zp_ft_mag (u8 trig magnitude)
 ;            zp_ft_neg (1 if trig is negative, else 0)
@@ -108,7 +108,7 @@ SEG_CODE
 ;     return -val if neg else val
 ;
 ; Mirrors _frac_rot_term (fp.py). Called (up to) 4× per FRAME by
-; br_view_setup (view.s) to build frac_vx/frac_vy — the rotation of the
+; view_setup (view.s) to build frac_vx/frac_vy — the rotation of the
 ; player position's fractional byte. Vertex fractions are always 0, so
 ; per-vertex work needs only the integer terms (br_rot_int below).
 ; unity = cardinal angle (|sin| or |cos| rounds to 1.0): exact copy of
@@ -130,7 +130,7 @@ zp_ft_one = $07FE                       ; REAL banked machine: the stores
                                         ; ($E4F8-$E4FB
                                         ; sits in the proven-free VATOX tail)
 
-br_frac_rot_term:
+frac_rot_term:
 .scope
    LDA zp_ft_one
    BEQ ft_not_one

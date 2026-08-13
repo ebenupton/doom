@@ -24,7 +24,7 @@ ABI = [
     ('BANK_L2',        7,      None, 'legacy alias for BANK_WALK'),
     ('BANK_WALK',      7,      None, 'sideways bank B: node SoA, L8/AE/VATOX, bbox, CPM, rcache, ANIM CFG — held for the whole BSP walk'),
     # Jump tables are GONE (2026-07-16, forbidden): engine entry points
-    # (br_view_setup / br_render_frame / anim_tick / anim_init / clipper
+    # (view_setup / render_frame / anim_tick / anim_init / clipper
     # entries) are resolved by SYMBOL from the linker map — beebasm via
     # the generated engine_syms.inc (build_walk_ssd.py), Python via
     # symmap. Only the cfg-anchored region head stays an ABI constant

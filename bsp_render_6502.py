@@ -28,8 +28,8 @@ ZP_CONE         = _sym('zp_br_cone')
 ZP_PXRAW_LO     = _sym('zp_br_pxraw_l')
 ZP_PYRAW_LO     = _sym('zp_br_pyraw_l')
 
-ENTRY_BR_VIEW_SETUP   = _sym('br_view_setup')
-ENTRY_BR_RENDER_FRAME = _sym('br_render_frame')
+ENTRY_BR_VIEW_SETUP   = _sym('view_setup')
+ENTRY_BR_RENDER_FRAME = _sym('render_frame')
 
 # Table load addresses: harness-owned placement decisions (the engine reads
 # these tables only through the pointer slots above), NOT engine symbols.
@@ -47,7 +47,7 @@ ROM_BBOX_BASE   = 0xC500   # 16 corner planes $C500-$D4FF (page-split SoA)
 
 
 def poke_init_frame_state(mem):
-    """Mirror br_render_frame's inline per-frame init for partial-flow
+    """Mirror render_frame's inline per-frame init for partial-flow
     harnesses (the standalone jt_br_init_frame entry retired 2026-07-15):
     records-pointer ground state + the 60-byte vcache valid clear."""
     mem[_sym('zp_dcl_rec_buf')] = 0

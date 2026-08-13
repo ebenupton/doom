@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; br_view_setup — compute frac_vx, frac_vy for the current frame.
+; view_setup — compute frac_vx, frac_vy for the current frame.
 ;
 ; Per-frame view-context setup, mirror of fp_view_context (fp.py): the
 ; vertex fraction is always 0, so the fractional part of the rotated
@@ -28,9 +28,9 @@
 ;     frac_vx = ft(dx_lo, sin) - ft(dy_lo, cos)
 ;     frac_vy = ft(dx_lo, cos) + ft(dy_lo, sin)
 ;   where ft = _frac_rot_term: unity → lo; else (lo*mag + 128) >> 8, then
-;   negate if trig negative (see br_frac_rot_term in arith.s).
+;   negate if trig negative (see frac_rot_term in arith.s).
 
-br_view_setup:
+view_setup:
 .scope
 ; a_fine = ab<<4 is frame-constant; hoist it here (once/frame) instead of
 ; recomputing inside bbox_check_angle on every one of the ~650 bbox checks.
@@ -113,7 +113,7 @@ br_view_setup:
    STA zp_ft_neg
    LDA zp_br_sone
    STA zp_ft_one
-   JSR br_frac_rot_term
+   JSR frac_rot_term
    LDA zp_br_res_l
    STA zp_br_fvx_l
    LDA zp_br_res_h
@@ -130,7 +130,7 @@ br_view_setup:
    STA zp_ft_neg
    LDA zp_br_cone
    STA zp_ft_one
-   JSR br_frac_rot_term
+   JSR frac_rot_term
 ; frac_vx -= result
    LDA zp_br_fvx_l
    SEC
@@ -152,7 +152,7 @@ br_view_setup:
    STA zp_ft_neg
    LDA zp_br_cone
    STA zp_ft_one
-   JSR br_frac_rot_term
+   JSR frac_rot_term
    LDA zp_br_res_l
    STA zp_br_fvy_l
    LDA zp_br_res_h
@@ -169,7 +169,7 @@ br_view_setup:
    STA zp_ft_neg
    LDA zp_br_sone
    STA zp_ft_one
-   JSR br_frac_rot_term
+   JSR frac_rot_term
    LDA zp_br_fvy_l
    CLC
    ADC zp_br_res_l
@@ -490,7 +490,7 @@ zlo:
 ; call sites (SEL region: banked = main $2C00 since 2026-07-10 — no code
 ; in banks without explicit permission;
 ; flat = the free page below the quarter-square tables). Runs once per
-; frame from br_view_setup with bank C paged; every store below targets
+; frame from view_setup with bank C paged; every store below targets
 ; resident MAIN, so bank state only matters for FETCHING this code.
 ;   sin -> rot_s1/rot_s4, cos -> rot_s2/rot_s3. General thunks get the
 ;   frame's mag/neg poked into their immediates (offsets +1 / +5).

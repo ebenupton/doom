@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; br_bbox_visible — node child-subtree visibility gate: is any part of the
+; bbox_visible — node child-subtree visibility gate: is any part of the
 ; child's bounding box potentially on screen, and does the span list still
 ; have a gap in the box's column extent?
 ;
@@ -46,7 +46,7 @@
 .export D_ENABLE, D_FWD
 
 ; ============================================================================
-; br_bbox_visible — THE walk-facing bbox entry (2026-07-18, SMC-free;
+; bbox_visible — THE walk-facing bbox entry (2026-07-18, SMC-free;
 ; vectored 2026-07-20). bca_frame points zp_bv_entry at the frame
 ; class's entry: bbox_check_angle (standing: rotation-cache probe),
 ; dbox_check (forward run: D probe), box_classify (pristine).
@@ -54,9 +54,9 @@
 ;   out: C = combined verdict (has_gap over the check's extent) —
 ;        C-only since 2026-07-26; the walk branches BCS/BCC
 ; ============================================================================
-br_bbox_visible:
+bbox_visible:
    PAGE BANK_WALK                          ; angle tables ride the walk bank
-::br_bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
+::bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
                                         ; walk's near-invisible -> far-check
                                         ; arc: bca exits L2 and PLA/stores/
                                         ; SPAN_IS_NOT_FULL touch no banked

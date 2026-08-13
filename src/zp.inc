@@ -104,7 +104,7 @@ zp_tail_vec = $CA                 ; [ang] 2-byte tail vector: the corner arms
                                   ; store psis + COMPUTED) or bca_tail_postrc
                                   ; (moving: nothing stored). Set per frame by
                                   ; bca_frame; REPLACES the zp_rc_moved flag
-zp_bv_entry = $63                 ; [ang] 2-byte entry vector: br_bbox_visible
+zp_bv_entry = $63                 ; [ang] 2-byte entry vector: bbox_visible
                                   ; is JMP (zp_bv_entry) -> bbox_check_angle
                                   ; (standing: probe) or box_classify (moving:
                                   ; pristine). Paired with zp_tail_vec; w=2

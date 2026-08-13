@@ -3,19 +3,19 @@
 ; code area rule — the $1E00 island died; $1E00 is DATA-only now).
 ; Lives in the span_clip object so the bytes land in the inter-object
 ; alignment pad before bsp_render's fragment: zero net CODE growth.
-; Contents: br_recip_hi (senior recip ladder) + the SMC-selected rotate
+; Contents: recip_hi (senior recip ladder) + the SMC-selected rotate
 ; variant entries + rot_pair_thunk. All JSR/SMC-called from the bsp
 ; object (linker-resolved imports/exports, per the no-jump-tables rule).
 ; ============================================================================
 SEG_CODE
-.export br_recip_hi
+.export recip_hi
 .import RECIP_M8, RECIP_M8H                 ; bsp/header.s equates (L2/flat)
 
 
 ; (br_recip junior entry DELETED 2026-08-09 — dead since the nc_ok
 ; inline; the senior ladder below is the only remaining entry.)
 .scope
-::br_recip_hi:                             ; caller-split entry:
+::recip_hi:                             ; caller-split entry:
 rcp_pnz:                                    ; A = idx hi (>= 1), Y = idx lo
 ; FAR SYNTHESIS (2026-08-13, Eben's smaller-tables idea): reduce the
 ; index into the [128,255] half by 1-2 right shifts — the reciprocal's

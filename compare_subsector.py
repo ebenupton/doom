@@ -2,7 +2,7 @@
 
 Drives the pure-Python BSP (the reference traversal). At each subsector:
   1. Snapshot the full 6502 memory (clipper span pool, records, FB).
-  2. Run the 6502 br_render_subsector; capture its clipper-call trace and
+  2. Run the 6502 render_subsector; capture its clipper-call trace and
      post-run span state.
   3. Restore the snapshot.
   4. Run Python's packed_render_subsector (which shadows into the same
@@ -25,7 +25,7 @@ from wad_packed import spans_init_full
 import trace_compare as tc
 
 from symmap import sym as _sym
-ENTRY_BR_RENDER_SUBSECTOR = _sym('br_render_subsector_entry')
+ENTRY_BR_RENDER_SUBSECTOR = _sym('render_subsector_entry')
 _E_MARK_SOLID = _sym('span_mark_solid')
 _E_TFR        = _sym('tighten_from_records')
 _E_DCL_S16    = _sym('draw_clipped_line_s16')

@@ -121,8 +121,8 @@ def gen_engine_syms():
     are forbidden — the linker resolves cross-module dependencies; this
     file regenerates on every driver assembly so it can never go stale."""
     import symmap
-    entries = [('ENG_VIEW_SETUP',   'br_view_setup',  'PAGE BANK_L0 first'),
-               ('ENG_RENDER_FRAME', 'br_render_frame','PAGE BANK_L0 first'),
+    entries = [('ENG_VIEW_SETUP',   'view_setup',  'PAGE BANK_L0 first'),
+               ('ENG_RENDER_FRAME', 'render_frame','PAGE BANK_L0 first'),
                ('ENG_SPAN_INIT',    'span_init',      'PAGE BANK_C first'),
                ('ENG_ANIM_TICK',    'anim_tick',      'PAGE BANK_L2 first'),
                ('ENG_ANIM_INIT',    'anim_init',      'PAGE BANK_L2 first'),

@@ -79,7 +79,7 @@ ORG DRV_ORG
     LDA #13:STA &FE00: LDA #&00:STA &FE01           ; R13
     ; (RNS stack-page copy retired 2026-07-12: block lives in CODE)
     ; --- canonical order (matches render_frame): view_setup BEFORE span_init ---
-    LDA #4 :STA &FE30 : JSR ENG_VIEW_SETUP          ; br_view_setup (pages L0/L2)
+    LDA #4 :STA &FE30 : JSR ENG_VIEW_SETUP          ; view_setup (pages L0/L2)
     LDA #6 :STA &FE30 : JSR ENG_SPAN_INIT           ; span_init / pool (bank C)
     ; --- clear framebuffer $5800-$6BFF (20 pages) using $EE/$EF ptr ---
     LDA #0 :STA &EE : LDA #&58:STA &EF
@@ -89,7 +89,7 @@ ORG DRV_ORG
     ; --- render one frame (entries page banks internally) ---
     LDA #4 :STA &FE30
     ; (per-frame init is inline at the render_frame entry, 2026-07-15)
-    JSR ENG_RENDER_FRAME                            ; br_render_frame
+    JSR ENG_RENDER_FRAME                            ; render_frame
 .spin
     JMP spin
 .drv_end

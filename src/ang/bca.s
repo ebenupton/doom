@@ -437,12 +437,12 @@ yRmid:                                     ; row 6 (E): corners share R,
 ;  cull_far/visok, and box_classify's inside-escape goes through full_vis —
 ;  so the old LDA #0/STA preset was 5 dead cycles per check, 2026-07-16.)
 ; bca_pxs/bca_pys (px,py sign-extended to s16) are precomputed once/frame
-; by br_view_setup — frame-constant. Direct unit-test callers set them.
+; by view_setup — frame-constant. Direct unit-test callers set them.
 ; bca_px/bca_py (s8) are still read below by ins_test/box_pos.
 ; inside test: left<=px<=right and bot<=py<=top  -> full (0,255)
 ; left<=px : px-left >= 0
 ; a_fine (bca_afn) is precomputed once/frame by the caller
-; (br_view_setup), not recomputed here — it is frame-constant. Direct
+; (view_setup), not recomputed here — it is frame-constant. Direct
 ; unit-test callers (test_bca, check_angle_calls) set bca_afn themselves.
 ; inside test + boxx/boxy classification share one set of subtractions:
 ; JMP-THREADED CHAIN (2026-07-18, enabled by the cold-route
@@ -814,7 +814,7 @@ visok:
                                            ; see the C/V-CONTRACT above)
    LDA bca_ihi                             ; A-hi ABI (stored at ct_ih /
                                            ; ct_f_r2out)
-   JMP SC_HAS_GAP                          ; the fused exit IS the verdict:
+   JMP span_has_gap                          ; the fused exit IS the verdict:
                                            ; C from has_gap, V=0 from the
                                            ; CLV, A = ihi preserved
 
@@ -879,7 +879,7 @@ full_vis:
                                            ; C/V-CONTRACT at visok)
    LDA #255                                ; ihi rides in A (A-hi ABI) AND
    STA bca_ihi                             ; lands for the dst*_ext record
-   JMP SC_HAS_GAP                          ; FUSED EXIT (2026-07-18): every
+   JMP span_has_gap                          ; FUSED EXIT (2026-07-18): every
                                            ; visible exit chains straight into
                                            ; has_gap on the freshly-written
                                            ; interval — the caller gets the
@@ -1303,7 +1303,7 @@ SEG_HIGH
 ; file — src/ang/rcache.s died): bca_frame is the per-frame epoch keeper,
 ; and bbox_check_angle below is the ONE public entry — probe at the top,
 ; serve-and-skip-classify on a hit, stash-and-fall-into-box_classify on a
-; miss. Moving frames enter at box_classify (br_bbox_visible's indirect
+; miss. Moving frames enter at box_classify (bbox_visible's indirect
 ; JMP through zp_bv_entry) and never see the probe. Callers guarantee L2
 ; is paged. ---
 .if BANKED
@@ -1314,7 +1314,7 @@ SEG_CODE
 bca_frame:
 ; Per-frame EPOCH KEEPER (vectored 2026-07-20, Eben's design): the
 ; frame class lives in TWO ZP VECTORS, not a flag —
-;   zp_bv_entry: br_bbox_visible is JMP (zp_bv_entry)
+;   zp_bv_entry: bbox_visible is JMP (zp_bv_entry)
 ;                -> bbox_check_angle (standing: probe first)
 ;                -> box_classify     (moving: pristine, no probe)
 ;   zp_tail_vec: the corner arms end JMP (zp_tail_vec)
@@ -1505,7 +1505,7 @@ dcap_s1:
                                         ; other way — treat as straddle
    ZERO bca_ilo                            ; straddles centre: (0,255)
    LDA #255                                ; ihi rides in A (A-hi ABI)
-   JMP SC_HAS_GAP
+   JMP span_has_gap
 dcv_left_1:
    ADC #2                                  ; (0, ihi+2): C=0, ihi<128 — no clamp
 .if ::C02
@@ -1514,12 +1514,12 @@ dcv_left_1:
    LDY #0                                  ; ihi stays in A (A-hi ABI); Y is
    STY bca_ilo                             ; dead here (has_gap clobbers it)
 .endif
-   JMP SC_HAS_GAP
+   JMP span_has_gap
 dcv_right_1:
    SBC #2                                  ; (ilo-2, 255): C=1, ilo>=128 — no wrap
    STA bca_ilo
    LDA #255                                ; ihi rides in A (A-hi ABI)
-   JMP SC_HAS_GAP
+   JMP span_has_gap
 dcv_invis:
    CLC                                     ; serve-path cull: C=0, the walk
    RTS                                     ; skips (BCC). V is DELIBERATELY
@@ -1593,7 +1593,7 @@ dcap_s0:
    BCS dcv_right_0
    ZERO bca_ilo
    LDA #255                                ; ihi rides in A (A-hi ABI)
-   JMP SC_HAS_GAP
+   JMP span_has_gap
 dcv_left_0:
    ADC #2
 .if ::C02
@@ -1602,12 +1602,12 @@ dcv_left_0:
    LDY #0                                  ; ihi stays in A (A-hi ABI)
    STY bca_ilo
 .endif
-   JMP SC_HAS_GAP
+   JMP span_has_gap
 dcv_right_0:
    SBC #2
    STA bca_ilo
    LDA #255                                ; ihi rides in A (A-hi ABI)
-   JMP SC_HAS_GAP
+   JMP span_has_gap
 dcap_s0_fresh:
    LDA zp_node_ch_l
    AND #3

@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; br_back_face_test — is the current seg back-facing?  [pipeline stage 1]
+; back_face_test — is the current seg back-facing?  [pipeline stage 1]
 ;
 ; CONTEXT: sole caller is the seg loop (subsector.s), which stages
 ; zp_seg_flags and JMPs here (no JSR). TAIL-DISPATCHED exits:
@@ -13,7 +13,7 @@
 ;                or lv1x at +5/+6, lv1y split lo +7 / hi +9);
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player int pos (s16);
 ;                zp_bf_pxm_l/hi, zp_bf_pym_l/hi = |px|,|py| (staged
-;                once per frame by br_view_setup, view.s).
+;                once per frame by view_setup, view.s).
 ;   Clobbers: A, X, Y; zp_br_dx/dy lo+hi, zp_br_t2..t5, zp_br_sign,
 ;             zp_bf_dir, zp_br_a, the mul workspace (via umul8).
 ;   Bank state: caller holds BANK_L0 paged (header reads); no paging here.
@@ -40,7 +40,7 @@
 ; — bit-identical by construction; the packer (wad_packed.py) emits
 ; form/C/DIR data in the same loop that sets the flags.
 ; ============================================================================
-br_back_face_test:
+back_face_test:
 .scope
 ; ============================================================================
 ; UNIFORM C-FORM (2026-07-11, stride-16 header): dot = dy'*px - dx'*py - C
@@ -51,7 +51,7 @@ br_back_face_test:
 ;   header +5..7 C (s24; axis compares use only +5/6 as s16)
 ; DIR tables (ROM_DIRS_C, one entry per distinct primitive direction):
 ;   +0*MAX |dx'| , +1*MAX |dy'| , +2*MAX sign byte (b7 dy'<0, b6 dx'<0)
-; |px|/|py| are staged per frame by br_view_setup (zp_bf_p?m_*); signs
+; |px|/|py| are staged per frame by view_setup (zp_bf_p?m_*); signs
 ; read live from px_e/py_e bit7. Ties (dot == 0) are BACK, as always.
 ; TAIL-DISPATCHED: exits JMP bf_seg_front / s_advance (no RTS).
 ; Ranges: |P1|,|P2| <= 127*2600 < 2^19; |dot|+|C| < 2^21 — s24 exact,
@@ -210,7 +210,7 @@ bf_g_mul:
 ; sweep: free space consolidates at the CODE segment end; page-cross
 ; dice re-rolled and measured as one lump.)
 ; ============================================================================
-; br_bbox_visible — visibility test for a child subtree's bounding box.
+; bbox_visible — visibility test for a child subtree's bounding box.
 ;
 ; NOTE: the routine itself lives in src/bsp/bbox.s. The algorithm sketch
 ; below (steps 1-7) describes the RETIRED perspective corner-projection
@@ -235,7 +235,6 @@ bf_g_mul:
 ;     6. If ilo > ihi → return 0.
 ;     7. JSR span_has_gap → return its A.
 ; ============================================================================
-SC_HAS_GAP = span_has_gap               ; main-resident (no PAGE needed)
 
 ; Per-corner storage (5 bytes × 4 = 20) — legacy perspective-path scratch
 ; (dead with the angle module; layout retained). bv_proj_one writes here so
@@ -279,7 +278,7 @@ BBOX_IHI = $066A                        ; running max sx clamped (u8)
 ; angle module + bca workspace relocate when banked (must match slope_div.asm:
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
 .import bbox_check_angle, bca_frame     ; direct (linker-resolved); the bbox.s
-.import box_classify                    ; pristine tier (br_bbox_visible dispatches
+.import box_classify                    ; pristine tier (bbox_visible dispatches
                                         ; on zp_bv_mode — SMC retired)
                                         ; call site bca_check_op is SMC-
                                         ; retargeted by bca_frame (rcache.s)

@@ -28,7 +28,7 @@ VERTEX = {sym('br_seg_xform_vertex'), sym('reproject_at_crossing')}
 CLIP   = {sym('span_mark_solid'), sym('span_has_gap'),
           sym('interp_store'), sym('draw_clipped_line'),
           sym('tighten_from_records'), sym('draw_clipped_line_s16')}
-BBOX   = {sym('br_bbox_visible')}    # sub-slice of BSP traversal
+BBOX   = {sym('bbox_visible')}    # sub-slice of BSP traversal
 GATE = {a: 'VERTEX' for a in VERTEX}
 GATE.update({a: 'CLIP' for a in CLIP})
 GATE.update({a: 'BBOX' for a in BBOX})
@@ -46,7 +46,7 @@ def profile(px, py, ab):
     sc.init(); sc.clear_screen()
     from bsp_render_6502 import poke_init_frame_state; poke_init_frame_state(sc.mpu.memory)
     mpu = sc.mpu; mem = mpu.memory
-    mpu.pc = sym('br_render_frame'); mpu.sp = 0xFD; mpu.p = 0x30
+    mpu.pc = sym('render_frame'); mpu.sp = 0xFD; mpu.p = 0x30
     mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF
     mpu.processorCycles = 0
     buckets = {'VERTEX': 0, 'BSP': 0, 'BBOX': 0, 'CLIP': 0, 'RASTER': 0}

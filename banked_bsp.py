@@ -205,8 +205,8 @@ class BankedBspRender(BspRender6502):
         import bsp_render_6502 as _br
         from symmap import sym as _sym
         saved = (_br.ENTRY_BR_VIEW_SETUP, _br.ENTRY_BR_RENDER_FRAME)
-        _br.ENTRY_BR_VIEW_SETUP   = _sym('br_view_setup', banked=1)
-        _br.ENTRY_BR_RENDER_FRAME = _sym('br_render_frame', banked=1)
+        _br.ENTRY_BR_VIEW_SETUP   = _sym('view_setup', banked=1)
+        _br.ENTRY_BR_RENDER_FRAME = _sym('render_frame', banked=1)
         try:
             return super().render_frame(px, py, ab, floor_z)
         finally:

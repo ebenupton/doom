@@ -122,7 +122,7 @@ vh_pgx:
                                            ; POSTCONDITION is LOAD-BEARING:
                                            ; the consumer (found by poison
                                            ; bisect 2026-08-13) is
-                                           ; br_project_y's VWHC planes
+                                           ; project_y's VWHC planes
                                            ; ($B100/$B200 = bank L2), read
                                            ; by the y-stage's NO-BACK arc
                                            ; which pages nothing.
@@ -206,7 +206,7 @@ nc_ok:
 ; NIBBLE-SWAPPED and the index is a mask + OR:
 ;   Y = (vy_l & $F0) | vy_h   ( = swap(vy >> 4) )
 ; — the 4xASL + 4xLSR splice died. Far pages stay linear
-; (br_recip_hi's ladder).
+; (recip_hi's ladder).
    LDA zp_br_vy_h
    CMP #16
    BCS ncr_far                             ; idx >= 256: rare (island below)
@@ -220,7 +220,7 @@ nc_ok:
    STA zp_br_r_s                           ; (no RNS_SELECT: the counts
                                            ; projector selects net = S-3)
 ncr_done:
-   JSR br_project_x_c                      ; -> zp_br_res_l/h = rns(b123);
+   JSR project_x_c                      ; -> zp_br_res_l/h = rns(b123);
                                            ; the KERNEL RTSes straight here
                                            ; (px tail-jumps, 2026-08-12) —
                                            ; sx = 128 + res, biased in the
@@ -290,7 +290,7 @@ ncr_far:
    LSR A
    LSR A
    LSR A                                   ; A = idx hi
-   JSR br_recip_hi
+   JSR recip_hi
    JMP ncr_done
 ; (the ec_clamp/ec_hi_nz s8-saturate islands DIED with the evy/evx
 ; tier — EV16 2026-08-09: no consumer treats anything as s8 any more)

@@ -22,8 +22,8 @@ from wad_packed import (SEG_DTL_SIZE, SD_FH, SD_CH, SD_BFH, SD_BCH,
                         spans_init_full)
 
 from symmap import sym as _sym
-ENTRY_BR_VIEW_SETUP   = _sym('br_view_setup')
-ENTRY_BR_RENDER_FRAME = _sym('br_render_frame')
+ENTRY_BR_VIEW_SETUP   = _sym('view_setup')
+ENTRY_BR_RENDER_FRAME = _sym('render_frame')
 _E_MARK_SOLID = _sym('span_mark_solid')
 _E_HAS_GAP    = _sym('span_has_gap')
 _E_DCL_S16    = _sym('draw_clipped_line_s16')

@@ -10,8 +10,8 @@ Per frame N of a scripted mask sequence (stand, then UP held):
                entry) into a cleared $5800 buffer.
   reference  : ONE persistent flat BspRender6502 instance walks the
                same frames — per frame its FB is cleared, the SAME ZP
-               inputs are poked, and br_view_setup/span_init/
-               br_render_frame run with the real NJ + plotters.
+               inputs are poked, and view_setup/span_init/
+               render_frame run with the real NJ + plotters.
   gate       : FBs must match byte-exact, every frame.
 Also mirrors the driver's movement math (step_tab/bounds/derive_raw)
 in python and checks the driver's position/angle vars every frame.
@@ -129,8 +129,8 @@ class FlatRef:
                                dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
         self.m = self.r.sc.mpu.memory
         self.m[0x70] = 0xEA
-        self.entries = [symmap.sym('anim_tick'), symmap.sym('br_view_setup'),
-                        symmap.sym('span_init'), symmap.sym('br_render_frame')]
+        self.entries = [symmap.sym('anim_tick'), symmap.sym('view_setup'),
+                        symmap.sym('span_init'), symmap.sym('render_frame')]
         self.m[symmap.sym('ANIM_ENABLE')] = 1
         self._call(symmap.sym('anim_init'))
 

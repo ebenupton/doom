@@ -199,7 +199,7 @@ clip_none:
 ;   differing hi bytes: signed order test — reversed drops; else the
 ;       min = sx1 clamp ladder.
 ; ABI into hg_query: A = ihi (register-only), zp_i_l = ilo.
-; SC_HAS_GAP: C=1 gap / C=0 occluded.  The clamped pair PERSISTS to
+; span_has_gap: C=1 gap / C=0 occluded.  The clamped pair PERSISTS to
 ; stage 8 (zp_i_l here, zp_i_h banked at hg_pass) — nothing in the
 ; emit arcs writes either byte.
 ; Carry note: stage 4's with-back arc relies on C=1 from the BCS-fall
@@ -295,11 +295,11 @@ rm1_ihi_lo:
 range_cull:
    JMP s_advance
 hg_query:
-   JSR SC_HAS_GAP                          ; in: A = ihi, zp_i_l = ilo
+   JSR span_has_gap                          ; in: A = ihi, zp_i_l = ilo
    BCC range_cull                          ; C=0: no visible column, cull
 hg_pass:
    STA zp_i_h                              ; bank ihi for stage 8 (A = ihi,
-                                        ; UNTOUCHED by SC_HAS_GAP — its
+                                        ; UNTOUCHED by span_has_gap — its
                                         ; documented contract; STA keeps
                                         ; the C=1 the with-back arc rides).
                                         ; zp_i_l already holds ilo and
@@ -331,7 +331,7 @@ hg_pass:
 ; advance tail (the no-back majority falls straight through the stage
 ; tail into stage 5); it enters with >= 1 back flag PROVEN, so each
 ; endpoint opens at the NEEDBT dispatch and a BT miss means BB fires.
-; br_project_y ABI: h in A -> Y = sy lo, A = sy hi (Y_BIAS folded,
+; project_y ABI: h in A -> Y = sy lo, A = sy hi (Y_BIAS folded,
 ; VWHC-memoised).  Each endpoint stages its recip + rns kernel select
 ; (zp_br_r_m8/r_s + rns_go_op) before its projections.
 ; ============================================================================
@@ -342,7 +342,7 @@ hg_pass:
 ys_noback:
 ; (bank note: solid arcs arrive L2 — the transform's exit contract —
 ; and nothing here pages.  THIS ARC IS the exit-L2 contract's consumer:
-; br_project_y's VWHC planes are $B100/$B200 = bank L2 in the banked
+; project_y's VWHC planes are $B100/$B200 = bank L2 in the banked
 ; build (poison bisect 2026-08-13).  The with-back island manages its
 ; own L0 excursion and restores L2 itself.)
    LDA zp_ys_v1ok
@@ -355,11 +355,11 @@ ys_noback:
    LDA rns_vec_l-1,X                       ; inlined rns select
    STA rns_go_op
    LDA zp_seg_top_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX1+4
    STY VX1+3                               ; sy_top
    LDA zp_seg_bot_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX1+6
    STY VX1+5                               ; sy_bot
 ysnb_v2:
@@ -372,11 +372,11 @@ ysnb_v2:
    LDA rns_vec_l-1,X
    STA rns_go_op
    LDA zp_seg_top_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX2+4
    STY VX2+3                               ; sy_top
    LDA zp_seg_bot_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX2+6
    STY VX2+5                               ; sy_bot
 ys_done:
@@ -395,7 +395,7 @@ hgp_fwd:
                                         ; around themselves (flat: no-op)
 
 ; ============================================================================
-; STAGE 6 — EMIT CASCADE.  Horizontal edges via SC_DRAW_S16_H: X names
+; STAGE 6 — EMIT CASCADE.  Horizontal edges via draw_clipped_line_s16_h: X names
 ; the sy pair offset (same in both structs); it fetches x from
 ; zp_seg_sx1/sx2 and y from VX1+X/VX2+X itself.  zp_dcl_rec_buf_h arms
 ; (page hi) or disarms (0) record capture for the draw; the record page
@@ -450,7 +450,7 @@ ft_no_rec:
    ZERO zp_dcl_rec_buf_h
 ft_set_line:
    LDX #zp_seg_sy1_top_l - VX1             ; sy pair: top
-   JSR SC_DRAW_S16_H
+   JSR draw_clipped_line_s16_h
 ft_skip:
 
 ; --- fb: bottom horizontal (sx1,fb1) -> (sx2,fb2) — ft's mirror ---
@@ -480,7 +480,7 @@ fb_no_rec:
    ZERO zp_dcl_rec_buf_h
 fb_set_line:
    LDX #zp_seg_sy1_bot_l - VX1             ; sy pair: bot
-   JSR SC_DRAW_S16_H
+   JSR draw_clipped_line_s16_h
 fb_skip:
 
 ; --- portal step edges ---
@@ -495,7 +495,7 @@ fb_skip:
    ZERO TOP_RECORDS
    LDA #1
    STA zp_dcl_rec_off
-   JSR SC_DRAW_S16_H
+   JSR draw_clipped_line_s16_h
 step_no_top:
    LDA zp_seg_flags
    AND #$08
@@ -509,7 +509,7 @@ step_no_top:
 ; (bank note: entry here is provably bank C — the stage-5 page
 ; dominates the cascade; the header-read arms above re-page around
 ; themselves.  Audited: the PAGEs at ft/fb_no_needbt are load-bearing.)
-   JSR SC_DRAW_S16_H
+   JSR draw_clipped_line_s16_h
 step_no_bot:
 step_skip:
 
@@ -564,7 +564,7 @@ ms_dispatch:
    LDA TOP_RECORDS                         ; portal: tighten iff any records
    ORA BOT_RECORDS                         ; were captured (consumed in
    BEQ ms_zero_rec                         ; place, bank C guaranteed)
-   JSR SC_TIGHTEN_FROM_RECORDS
+   JSR tighten_from_records
    JMP ms_advance
 ; --- stage-8 island (this seam costs nothing: the JSR/JMP above) ---
 ms_zero_rec:
@@ -573,7 +573,7 @@ ms_zero_rec:
    JSR seg_zero_rec_solid
    BCC ms_advance
 ms_solid:
-   JSR SC_MARK_SOLID
+   JSR span_mark_solid
 ms_advance:
 
 ; ============================================================================
@@ -651,11 +651,11 @@ ysb_v1_full:
    LDA rns_vec_l-1,X
    STA rns_go_op
    LDA zp_seg_top_dlt                      ; front pair
-   JSR br_project_y
+   JSR project_y
    STA VX1+4
    STY VX1+3                               ; sy_top
    LDA zp_seg_bot_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX1+6
    STY VX1+5                               ; sy_bot
 ysb_v1_back:
@@ -663,7 +663,7 @@ ysb_v1_back:
    AND #$04                                ; open at the NEEDBT dispatch
    BEQ ysb_v1_bb                           ; no BT -> BB is GUARANTEED
    LDA zp_seg_btop_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX1+8
    STY VX1+7                               ; sy_btop
    LDA zp_seg_flags
@@ -671,7 +671,7 @@ ysb_v1_back:
    BEQ ysb_v2
 ysb_v1_bb:
    LDA zp_seg_bbot_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX1+10
    STY VX1+9                               ; sy_bbot
 ysb_v2:
@@ -684,18 +684,18 @@ ysb_v2:
    LDA rns_vec_l-1,X
    STA rns_go_op
    LDA zp_seg_top_dlt                      ; front pair
-   JSR br_project_y
+   JSR project_y
    STA VX2+4
    STY VX2+3                               ; sy_top
    LDA zp_seg_bot_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX2+6
    STY VX2+5                               ; sy_bot
    LDA zp_seg_flags                        ; back pair (mirror of v1)
    AND #$04
    BEQ ysb_v2_bb
    LDA zp_seg_btop_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX2+8
    STY VX2+7                               ; sy_btop
    LDA zp_seg_flags
@@ -703,7 +703,7 @@ ysb_v2:
    BEQ ysb_done
 ysb_v2_bb:
    LDA zp_seg_bbot_dlt
-   JSR br_project_y
+   JSR project_y
    STA VX2+10
    STY VX2+9                               ; sy_bbot
 ysb_done:
@@ -732,9 +732,9 @@ ysb_done:
 ; in: v1 site: Y = idx & 7, X = idx B byte (probe leftovers, reused for
 ;     the mark); key re-read from zp_v1i_*.  v2 site: mask in A via
 ;     zp_seg_v_bitm, X = idx B; key from zp_seg_v_idx_*.
-; Verticals draw via SC_DCL_VERT_ON with zp_line_yl/yr staged and the
+; Verticals draw via dcl_vert_on with zp_line_yl/yr staged and the
 ; column in A (pre-gated on-screen — the +2 test above).  Bank C
-; throughout; the explicit path excurses to L2 around br_project_y.
+; throughout; the explicit path excurses to L2 around project_y.
 ; ============================================================================
 .scope
 ::vs_fresh1:
@@ -822,7 +822,7 @@ vsx_c1:                                    ; full corner: top -> bot
    STA zp_line_yr_h
 vsx_emit:
    LDA VX1+1,X                             ; column (pre-gated on-screen)
-   JMP SC_DCL_VERT_ON                      ; tail: RTS to our caller
+   JMP dcl_vert_on                      ; tail: RTS to our caller
 
 ::vsx_do_c3:                               ; top step: top -> btop
    LDA zp_seg_flags
@@ -837,7 +837,7 @@ vsx_emit:
    LDA VX1+8,X
    STA zp_line_yr_h
    LDA VX1+1,X                             ; column (pre-gated on-screen)
-   JMP SC_DCL_VERT_ON                      ; tail: RTS to our caller
+   JMP dcl_vert_on                      ; tail: RTS to our caller
 c3_rts:
    RTS
 
@@ -891,23 +891,23 @@ em_v_ok:
    BMI vsx_next
    BEQ vsx_next
    PAGE BANK_SEG                           ; project both ends vs eye height
-                                        ; (br_project_y reads VWHC, bank SEG)
+                                        ; (project_y reads VWHC, bank SEG)
    LDA zp_vs_hh
    SEC
    SBC zp_br_vz
-   JSR br_project_y
+   JSR project_y
    STA zp_line_yl_h
    STY zp_line_yl_l
    LDA zp_vs_hl
    SEC
    SBC zp_br_vz
-   JSR br_project_y
+   JSR project_y
    STA zp_line_yr_h
    STY zp_line_yr_l
    PAGE BANK_C
    LDX zp_vs_x
    LDA VX1+1,X                             ; column (pre-gated on-screen)
-   JSR SC_DCL_VERT_ON
+   JSR dcl_vert_on
 vsx_next:
    LDY zp_vs_i
    LDA VEXPL_CONT,Y                        ; continuation flag

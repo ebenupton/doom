@@ -45,7 +45,7 @@ MACRO_OWNERS = {                      # CPM_ENTRY expansions (ang/bca.s)
 # for in-routine macros like cross_compute was).
 MACRO_CALLERS = {
     'SXV_BODY':  ['sx_vert_lo', 'sx_vert_hi'],
-    'vxc_frame': ['br_view_setup'],   # single expansion (view setup)
+    'vxc_frame': ['view_setup'],   # single expansion (view setup)
     'apv_stage': ['bf_seg_front'],    # emit-cascade expansions
     'ap_edges':  ['bf_seg_front'],
 }
@@ -80,17 +80,17 @@ def resolve(n, d=0):
         return resolve(alias[n], d + 1)
     return n
 
-extra = {'br_back_face_test','bf_seg_front','s_advance','vc_miss',
+extra = {'back_face_test','bf_seg_front','s_advance','vc_miss',
  # (s_advance_l0 dropped 2026-08-13: hoisted above seg_proc in subsector.s
  #  as a fall-through loop-tail label — same invisible-closure treatment
  #  as seg_proc itself)
  'vxc_arm_lo','vxc_arm_hi','br_to_view','bbox_check_angle','box_classify',
- 'dbox_check','bt_store','bca_tail_postrc','br_render_subsector',
- 'br_project_x','br_project_y','rns_go','slope_div_le','cp_havepsi',
- 'br_render_frame','br_view_setup','br_init_frame','anim_tick','anim_init',
+ 'dbox_check','bt_store','bca_tail_postrc','render_subsector',
+ 'br_project_x','project_y','rns_go','slope_div_le','cp_havepsi',
+ 'render_frame','view_setup','br_init_frame','anim_tick','anim_init',
  'span_init','span_has_gap','span_mark_solid','ev_clamp_hi_nz',
  'tighten_from_records','draw_clipped_line','draw_clipped_line_s16',
- 'draw_clipped_line_s16_h','anim_hub','br_bbox_visible','br_bbox_visible_l2',
+ 'draw_clipped_line_s16_h','anim_hub','bbox_visible','bbox_visible_l2',
  'umul8','udiv16_8','interp_store','vf_plain0','vf_plain1','bca_frame','rc_wipe',
  'bcls_s0','bcls_s1','vs_fresh1','vs_fresh2','vsx_do_c3',
  'dcl_vert','dcl_vert_on','dcl_vertical',
@@ -141,7 +141,7 @@ vec = [('zp_bv_entry (vector)','bbox_check_angle'),
        ('rns_go (SMC)','interp_store'),
        ('rot_select (SMC)','rot_core_sin'),('rot_select (SMC)','rot_core_cos'),
        ('rot_select (SMC)','rot_gen_pair')]
-edges.add(('br_bbox_visible','zp_bv_entry (vector)','JMP'))
+edges.add(('bbox_visible','zp_bv_entry (vector)','JMP'))
 for cp in ('corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp'):
     edges.add((cp,'zp_tail_vec (vector)','JMP'))
 edges = {(a,b,k) for a,b,k in edges if (a,b) not in [(x,y) for x,y in vec]}
@@ -150,9 +150,9 @@ edges = {(a,b,k) for a,b,k in edges if not b.startswith('rns_s')}
 MOD = lambda f: ('bsp' if '/bsp/' in f else 'ang' if '/ang/' in f
                  else 'clip' if '/clip/' in f else 'hud')
 COLORS = {'bsp':'#dbe9ff','ang':'#ffe9d6','clip':'#e2f5df','hud':'#f2e2f5'}
-HOT = {'br_render_subsector','sx_vert_lo','sx_vert_hi','br_back_face_test',
- 'br_to_view','br_project_y','br_project_x','vxc_arm','umul8','interp_store',
- 'rns_go','br_render_frame','span_has_gap','draw_clipped_line_s16',
+HOT = {'render_subsector','sx_vert_lo','sx_vert_hi','back_face_test',
+ 'br_to_view','project_y','br_project_x','vxc_arm','umul8','interp_store',
+ 'rns_go','render_frame','span_has_gap','draw_clipped_line_s16',
  'draw_clipped_line_s16_h','bf_seg_front','bbox_check_angle','box_classify',
  'dbox_check','bcls_s0','bcls_s1',
  'corner_phi_nn','corner_phi_pn','corner_phi_np','corner_phi_pp'}
@@ -185,7 +185,7 @@ for a, b, k in edges:
 for a, b in vec:
     _adj.setdefault(a, set()).add(b)
 # LONGEST-path depth (BFS-shortest measured useless: everything lands
-# 4 levels deep off br_render_frame). Iterative relaxation, capped to
+# 4 levels deep off render_frame). Iterative relaxation, capped to
 # survive the few call cycles; the cap never binds on the real graph.
 _depth = {n: 0 for n in nodes}
 for _pass in range(24):

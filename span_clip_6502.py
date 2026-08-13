@@ -141,7 +141,7 @@ class SpanClip6502:
         # Reciprocal mantissa table at $D500: M8[idx] for the 10-bit 9.1
         # index (4 pages; S = bit_length(idx-1) is computed, not stored).
         # Page 0 NIBBLE-SWAPPED (2026-08-10): the fast path indexes
-        # (vy_l & $F0) | vy_h; pages 1-3 linear (br_recip_hi ladder).
+        # (vy_l & $F0) | vy_h; pages 1-3 linear (recip_hi ladder).
         from fp import _RECIP_M8
         for i in range(256):
             mem[0xD500 + (((i & 0x0F) << 4) | (i >> 4))] = _RECIP_M8[i]

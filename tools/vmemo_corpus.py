@@ -10,7 +10,7 @@ seg's mark_solid/tighten).
 
 Method: pure PC-trap instrumentation of the flat engine over the
 compare_renders suite positions — no engine changes.
-  seg window  = between subsector hg-gate calls (JSR SC_HAS_GAP with the
+  seg window  = between subsector hg-gate calls (JSR span_has_gap with the
                 subsector return address)
   edge emits  = plot_h/plot_v/RASTER_ENTRY events between window start and
                 the first vs_fresh call (args from RASTER_ZP_X0/Y0/X1/Y1)

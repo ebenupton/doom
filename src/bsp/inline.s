@@ -75,7 +75,7 @@
 ; --- publish this frame's ref = rot5(-p_int) + count fracs (ORIGIN
 ; NORMALIZATION: stored bases are total - ref, i.e. the exactly-linear
 ; L(w); the warm arm adds the current ref back). The fracs were
-; quantized to counts in br_view_setup; ref rounds ONCE per axis,
+; quantized to counts in view_setup; ref rounds ONCE per axis,
 ; exactly the mirror's rns(ref_88, 3). ---
    CLC
    LDA zp_br_vx_l

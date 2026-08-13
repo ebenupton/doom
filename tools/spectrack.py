@@ -31,7 +31,7 @@ KNOWN NOISE CLASSES (triaged 2026-07-12 — check before believing):
   - Cache/coherence writes (hg cache, D-cache, VWHC keys) are
     cross-frame value stores; single-frame flush marks the last
     frame's tail dead.
-  - VERDICT PRODUCERS (br_bbox_visible/_d, bca, is_full, has_gap):
+  - VERDICT PRODUCERS (bbox_visible/_d, bca, is_full, has_gap):
     the product is the A/Z verdict — their inclusive cycles dominate
     section A on warm frames (bv_d ~53k/frame) but the calls are the
     walk's live work, not speculation.
@@ -178,7 +178,7 @@ def main():
     sc = r.sc
     m = Tracker(sc.mpu.memory)
     sc.mpu.memory = m
-    RF = sym('br_render_frame')
+    RF = sym('render_frame')
     orig = sc._run
 
     def run(entry, max_cycles=30_000_000):

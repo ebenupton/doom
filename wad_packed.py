@@ -493,7 +493,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # shift S = bit_length(idx-1) is computed by br_recip, not stored.
     SINCOS_SIZE = 64 + 64   # magnitude + unity flags, one quadrant
     RECIP_ENTRIES = 256     # page 0 only (far synthesis, 2026-08-13)
-    RECIP_FAR = 128         # unswapped [128,255] half for br_recip_hi
+    RECIP_FAR = 128         # unswapped [128,255] half for recip_hi
     rom_recip_size = SINCOS_SIZE + RECIP_ENTRIES + RECIP_FAR
 
     rom_recip = bytearray(rom_recip_size)
@@ -509,11 +509,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # (Eben 2026-08-10): entry ((idx&15)<<4)|(idx>>4) holds M8[idx], so
     # the 6502 forms the index as (vy_l & $F0) | vy_h — a mask+OR
     # instead of the 4xASL + 4xLSR nibble splice. Pages 1-3 (the
-    # br_recip_hi ladder) stay linear. The python mirror indexes
+    # recip_hi ladder) stay linear. The python mirror indexes
     # LOGICALLY (fp_recip) and never sees the layout.
     for j in range(256):
         rom_recip[off_recip_m8 + (((j & 0x0F) << 4) | (j >> 4))] = _RECIP_M8[j] & 0xFF
-    # far half-table, UNSWAPPED, idx2-128 indexed: br_recip_hi reduces
+    # far half-table, UNSWAPPED, idx2-128 indexed: recip_hi reduces
     # far indices into [128,255] and reads this directly (the linear
     # pages 1-3 died — 1024 -> 384 recip bytes)
     for j in range(128, 256):

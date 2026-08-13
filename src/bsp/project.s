@@ -62,7 +62,7 @@ px_frac_z:
    STA zp_br_t2                            ; A = 0 (the BEQ's operand)
    JMP px_no_frac
 
-::br_project_x_c:
+::project_x_c:
    LDX zp_br_r_s                           ; X = net+3 = S: EVERY net is a
    LDA rns_vec_all-1,X                     ; baked kernel now (s1..s4 landed
    STA px_go_op                            ; 2026-08-10) — one flat select
@@ -70,7 +70,7 @@ px_frac_z:
                                         ; (2026-08-12); FALLS INTO the
                                         ; body — the rare cells moved
                                         ; above the entry (2026-08-12)
-px_narrow:                                  ; entered by br_project_x_c only
+px_narrow:                                  ; entered by project_x_c only
 ; --- b123 := (frac*M8 >> 8) + frac  (u9; both terms vanish when frac=0) ---
    ZERO zp_br_res_l
 
@@ -179,9 +179,9 @@ px_shift:
    STX zp_br_res_h                         ; three arms deliver (A=mid, X=ext)
 
 ; --- sx = 128 + rns(b123, S): TAIL-CALL dispatch (Eben's design,
-; 2026-08-12). px has its OWN SMC JMP (br_project_x_c pokes px_go_op
+; 2026-08-12). px has its OWN SMC JMP (project_x_c pokes px_go_op
 ; instead of rns_go_op — same instruction count, no select changes),
-; so the kernel's RTS returns STRAIGHT to br_project_x_c's caller and
+; so the kernel's RTS returns STRAIGHT to project_x_c's caller and
 ; the old JSR rns_go + tail + RTS round trip is gone. The +128 bias
 ; moved INTO both call sites, fused with their struct/plane landing
 ; stores (the res writeback died with it — the two sites are the only
@@ -248,13 +248,13 @@ pxm_nacc:
 
 
 ; ============================================================================
-; br_project_y — project height delta to screen Y, through the VWHC memo.
+; project_y — project height delta to screen Y, through the VWHC memo.
 ; (Consolidated 2026-07-12: the cache front moved here from the deleted
 ; ycache.s and the raw body below is INLINED — the miss path FALLS
 ; THROUGH into it, and the writeback rides the raw tail. One routine,
 ; one file, no JSR/RTS between front and body.)
 ;
-;   Native entry (br_project_y): h in A (REG CONTRACT — also stored to
+;   Native entry (project_y): h in A (REG CONTRACT — also stored to
 ;     zp_br_t0 here), zp_br_r_m8/rlo = (M8, S) recip.
 ;   jt/harness entry (br_project_y_paged): pages L2, loads h from
 ;     zp_br_t0 (the wrapper contract predates the register pass).
@@ -292,7 +292,7 @@ pymz_go:
 ; callers anywhere — every caller pages L2 itself per the y_stage/apv
 ; once-per-run contract and enters with A = h. It was a vestige of
 ; the pre-2026-07-21 caller-pages era.)
-br_project_y:
+project_y:
 .scope
    STA zp_br_t0                            ; h (tag compare + raw body reads)
    EOR zp_br_r_m8
@@ -331,7 +331,7 @@ pym2:
 .endscope                                  ; FALLS THROUGH into the raw body
 
 ; ============================================================================
-; br_project_y — project height delta to screen Y.
+; project_y — project height delta to screen Y.
 ;
 ;   Inputs (zp):
 ;     zp_br_t0 = height_delta (s8)
@@ -350,7 +350,7 @@ pym2:
 ;   sy = 128 - (h<<7) exactly: the mul degenerates to zero.
 ;
 ;   This label is br_project_y_RAW: the uncached projection body.
-;   Production callers go through br_project_y (the cache front ABOVE),
+;   Production callers go through project_y (the cache front ABOVE),
 ;   front keyed on the full (M8, S, h) input tuple; only that front
 ;   calls _raw.
 ;
@@ -507,7 +507,7 @@ py_stored:                                 ; (C02 ptail re-enters here past
 ; VWHC valid flag) is a per-vertex constant, so the shifter is selected
 ; ONCE per reciprocal and each projection dispatches with a single JSR:
 ;
-;   rns_go:  JSR'd by br_project_x and br_project_y's raw body (both this
+;   rns_go:  JSR'd by br_project_x and project_y's raw body (both this
 ;            file). It is ONE instruction — JMP <body> — whose OPERAND is
 ;            the live shifter (SMC, 2026-07-12): rns_select below and the
 ;            three INLINED selects in subsector.s's y_stage write
@@ -516,7 +516,7 @@ py_stored:                                 ; (C02 ptail re-enters here past
 ;            cheaper than the old JMP (zp).
 ;   INVARIANT: every rns_go dispatch must be DOMINATED by a select on
 ;            its own path (a stale poke = a stale shifter). Current
-;            shape (audited 2026-08-12): br_project_x_c self-pokes on
+;            shape (audited 2026-08-12): project_x_c self-pokes on
 ;            every x projection; every y projection sits inside a
 ;            poked cluster (the five y-stage selects in seg_emit +
 ;            vsx_expl's RNS_SELECT). Recip writers do NOT poke — the

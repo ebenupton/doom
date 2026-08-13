@@ -201,7 +201,7 @@ NF_RLEAF = $80                          ; right child is a subsector
 NF_LLEAF = $40                          ; left child is a subsector
 
 ; Page-alignment contracts for the byte-at-a-time pointer builds
-; (br_bbox_visible, bcac_index, the seg_xform vcache indexers):
+; (bbox_visible, bcac_index, the seg_xform vcache indexers):
 .assert (VCACHE_BASE & $FF) = 0, error, "VCACHE_BASE must be page-aligned"
 
 .macro PAGE bank
@@ -509,7 +509,7 @@ VDONE = VCACHE_VALID_BASE + 60          ; (57 B live; the crossing's
 ; ============================================================================
 ; CODE region head. The driver-facing jump table that lived here is
 ; GONE (2026-07-16): jump tables are forbidden — the beebasm drivers
-; take real entry addresses (br_view_setup / br_render_frame /
+; take real entry addresses (view_setup / render_frame /
 ; anim_tick / anim_init) from the linker map via the generated
 ; engine_syms.inc, and the Python harness resolves every entry by
 ; symbol (symmap). MAIN still sits FIRST in the CODE region (cfg
@@ -529,7 +529,7 @@ code_head:
 .import udiv16_8                        ; clip/arith.s — the crossing's t
                                         ; divide (EV16 2026-08-09; rare
                                         ; path, JSR beats the SC_ inline)
-.import br_recip_hi                     ; ex-LCODE code, clip/rotvar.s
+.import recip_hi                     ; ex-LCODE code, clip/rotvar.s
 .import rot_zero, rot_unity_pos, rot_unity_neg
 .import rot_zero_s, rot_unity_pos_s, rot_unity_neg_s
 .export rns_vec_l, rns_go_op            ; rotvar's RNS_SELECT expansion
@@ -538,19 +538,13 @@ code_head:
                                         ; PAGE 0 NIBBLE-SWAPPED (2026-08-10):
                                         ; entry swap(idx) = M8[idx] — the
                                         ; fast path masks (vy_l & $F0)|vy_h;
-                                        ; pages 1-3 linear (br_recip_hi)
+                                        ; pages 1-3 linear (recip_hi)
 .import span_mark_solid
 .import span_has_gap                    ; has_gap body (main B segment)
 .import seg_zero_rec_solid
 .import tighten_from_records
 .import draw_clipped_line_s16, draw_clipped_line_s16_h
 .import dcl_vert, dcl_vert_on           ; vertical fastpath (senior-byte
-SC_DCL_VERT = dcl_vert                  ; discard + y clamp + span query;
-SC_DCL_VERT_ON = dcl_vert_on            ; _ON = column pre-verified u8)
-SC_DRAW_S16 = draw_clipped_line_s16
-SC_DRAW_S16_H = draw_clipped_line_s16_h   ; horizontal: x read from zp_seg_sx1/2
-SC_MARK_SOLID = span_mark_solid
-SC_TIGHTEN_FROM_RECORDS = tighten_from_records
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites
@@ -624,5 +618,5 @@ uo:
    STA zp_prod_h
    RTS
 .endscope
-; (SC_UDIV16_8 DELETED 2026-08-12: the macro had lost its last
+; (udiv16_8 DELETED 2026-08-12: the macro had lost its last
 ;  expansion site — zero invocations across every source.)

@@ -242,7 +242,7 @@ def fp_recip(vy_idx):
     # (bit_length composes through the shifts, including the idx2=128
     # power case); M8 loses the shifted-out index bits: ~1 lsb of
     # distance resolution in the 256-511 octave, 2 lsb beyond. Mirrors
-    # br_recip_hi; the far M8 pages died for a 128-byte half-table.
+    # recip_hi; the far M8 pages died for a 128-byte half-table.
     sh = 0
     while vy_idx >= 256:
         vy_idx >>= 1
@@ -308,7 +308,7 @@ def fp_project_y(height_delta, recip_m8, recip_s):
 
     sy = 80 - rns(h * m9, S)  with m9 = 256 + M8:
       h*m9 = h*M8 + (h << 8)
-    ONE 8x8 multiply (was 2). The 6502 mirror (br_project_y's raw body) builds
+    ONE 8x8 multiply (was 2). The 6502 mirror (project_y's raw body) builds
     the same s24 product and feeds the shared RNS shifter; with the
     crossing reciprocal (M8=0, S=1) this degenerates to sy = 80 - (h<<7),
     exact, no multiplies.

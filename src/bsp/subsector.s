@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; br_render_subsector — THE SEG LOOP: process one subsector.
+; render_subsector — THE SEG LOOP: process one subsector.
 ;   Input: zp_node_ch_l:hi = subsector id (high bit cleared).
 ;   Caller: the BSP walk (bsp/walk.s) through the anim_ss_hook JMP below.
 ;
@@ -22,7 +22,7 @@
 ;     7. Endpoint canonicalization: THE SEG LAYER OWNS LEFT-TO-RIGHT —
 ;        seg_swap_vx deep-swaps the structs on the rare reversal and
 ;        kills the chain key (the s16 clipper no longer sorts).
-;     8. Emission: ft/fb/bt/bb horizontals via SC_DRAW_S16_H (X = the
+;     8. Emission: ft/fb/bt/bb horizontals via draw_clipped_line_s16_h (X = the
 ;        sy-pair struct offset), NOVT/APEDGE-gated verticals, then a
 ;        deferred solid/tighten op is queued [defq.s].
 ;
@@ -37,7 +37,7 @@
 ;     if both endpoints off one screen side: continue
 ;     if not has_gap(clamp8(sx), clamp8(sx')): continue
 ;     project sy pairs (deferred to here); swap endpoints if reversed
-;     emit flag-gated lines (SC_DRAW_S16, records routed via $BC/$BD):
+;     emit flag-gated lines (draw_clipped_line_s16, records routed via $BC/$BD):
 ;       front top/bottom horizontals, back-step horizontals,
 ;       endpoint verticals, aperture-edge verticals
 ;     defq.append(solid(ilo,ihi) | tighten(ilo,ihi + records snapshot))
@@ -45,7 +45,7 @@
 ;
 ; Line emission contract (clipper interface):
 ;   zp_line_xl_l/yl/xr/yr ($A8-$AB) = endpoint lo bytes,
-;   $B2-$B5 (zp_line_xl_h..zp_line_yr_h)  = endpoint s16 hi bytes → SC_DRAW_S16.
+;   $B2-$B5 (zp_line_xl_h..zp_line_yr_h)  = endpoint s16 hi bytes → draw_clipped_line_s16.
 ;   $BC/$BD (zp_dcl_rec_buf) = per-span records buffer: hi byte $00 =
 ;   records off, $07 → TOP_RECORDS ($0700), $08 → BOT_RECORDS ($0800).
 ;   $C2/$C3 (zp_i_l/zp_i_h) = column range for has_gap / defq ops.
@@ -56,9 +56,9 @@
 ; span anchors. Records are snapshotted into the queue because later
 ; segs' DCL emission overwrites TOP/BOT_RECORDS before the drain.
 ; ============================================================================
-br_render_subsector_entry:                 ; harness entry: bank unknown
+render_subsector_entry:                 ; harness entry: bank unknown
    PAGE BANK_WALK                          ; ss SoA pages ride the walk bank
-br_render_subsector:
+render_subsector:
 ; (walk callers arrive WALK-paged — near/far child follows page WALK)
 .scope
 ; (The write-only visited-bitmap instrumentation is GONE, 2026-07-15:
@@ -178,7 +178,7 @@ sl_rts:
 ; --- Back-face test: TAIL-DISPATCHED (2026-07-11). Single caller, so
 ; the test JMPs straight to bf_seg_front / bf_seg_back instead of
 ; returning a Z verdict — no JSR/RTS, no verdict LDA, no re-branch.
-   JMP br_back_face_test
+   JMP back_face_test
 ; (bf_seg_back trampoline deleted 2026-07-12: back-exits in backface.s
 ; JMP ::s_advance directly — one hop, not two, per back-facing seg)
 
