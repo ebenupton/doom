@@ -69,7 +69,13 @@
 ; the crossing's post-div restore) each break banked when removed,
 ; consumer unidentified; see vh_pgx).
 ; ============================================================================
-.macro SXV_BODY pg, vec, vfoff, vxcon, rwpa, rwpb
+; SPLIT MACROS (2026-08-13): SXV_TOP = head/probe/hit-serve/vmiss up to
+; the vectored fetch dispatch; SXV_BOT = everything the vectors enter
+; (vfoff plain fetch, near-clip, recip, fills, the vxcon island). The
+; halves only connect through JMP (vec) -> the ::-global vfoff/vxcon
+; labels, so the four expansions lay out top0, top1, bot0, bot1 — both
+; tops fit under the entry's branch range and the hi trampoline died.
+.macro SXV_TOP pg, vec
 .scope
 ; --- head (was SXV_HEAD, folded 2026-08-09): probe staging. (clip
 ; zeroing moved OUT of the head 2026-07-27, Eben: the hit arm serves it
@@ -144,6 +150,11 @@ vmiss:
    JMP (vec)                               ; the per-side fetch vector,
                                         ; passed in (the pg=0 fork died
                                         ; 2026-08-13)
+.endscope
+.endmacro
+
+.macro SXV_BOT pg, vfoff, vxcon, rwpa, rwpb
+.scope
 ::vfoff:
 ; TRUE16 plain fetch: stage the PAGE-DECOMPOSED vertex (unsigned u8
 ; offsets + senior nibble, 2026-08-11), rotate via the epoch-selected
@@ -363,23 +374,24 @@ vxq_add:
 ; The lo body sits between the test and sx_vert_hi, far past branch
 ; range — the hi arm pays a JMP trampoline, exactly what the old
 ; caller-side islands paid, so cycles are unchanged (lo 10, hi 14).
-sxv_hi_j:
-   JMP sx_vert_hi                          ; (above the entry: the lo body
-                                        ; below is far past branch range)
 ::sx_vert:
    TAY                                     ; ABI: A = idx_b (= id>>3);
    AND #$20                                ; Y = bitmap index for the probe,
-   BNE sxv_hi_j                            ; bit 5 = senior plane (256>>3).
+   BNE sx_vert_hi                          ; bit 5 = senior plane (256>>3);
+                                        ; top1 is in branch range (the
+                                        ; split macros — trampoline died).
                                         ; zp_seg_v_idx_b is NOT stored here:
                                         ; every consumer wants V2's value
                                         ; (v1's lives in zp_v1i_b) — the v2
                                         ; call site banks it
-; fall into the lo body — the two side-baked routines below have NO
-; internal senior test anywhere (probe, fetch, VXC, fills all baked).
-::sx_vert_lo:                              ; (page-aligning both sides was
-   SXV_BODY 0, zp_vf_vec0, sxv0_vfoff, sxv0_vxcon, sxv0_rwpa, sxv0_rwpb ; (pad note: 2026-07-27)
-::sx_vert_hi:                              ; bytes overflow BOTH regions —
-   SXV_BODY $100, zp_vf_vec1, sxv1_vfoff, sxv1_vxcon, sxv1_rwpa, sxv1_rwpb
+; fall into the lo top — the side-baked halves below have NO internal
+; senior test anywhere (probe, fetch, VXC, fills all baked).
+::sx_vert_lo:
+   SXV_TOP 0, zp_vf_vec0
+::sx_vert_hi:
+   SXV_TOP $100, zp_vf_vec1
+   SXV_BOT 0, sxv0_vfoff, sxv0_vxcon, sxv0_rwpa, sxv0_rwpb
+   SXV_BOT $100, sxv1_vfoff, sxv1_vxcon, sxv1_rwpa, sxv1_rwpb
 
 ; (vxc_store_tail deleted 2026-08-09 — birth store inlined per side in
 ;  the vxcon islands, side baked)
