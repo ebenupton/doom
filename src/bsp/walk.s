@@ -60,10 +60,9 @@ br_render_frame:
    LDA #0                               ; A = 0 RIDES into the wipes below
    STA zp_dcl_rec_buf                   ; — NOT a C02/STZ candidate
    STA zp_dcl_rec_buf_h
-; VCACHE_VALID + VDONE wipe (re-striped 2026-08-13: the bitmaps ride
-; their VXC plane tails now, 57 B EXACT — a 60-byte wipe would stomp
-; the next plane's first entries. 19 stores x 3 iterations x 2 bitmaps
-; = 114 B; ~40 cyc cheaper than the old 24x5 shape).
+; VCACHE_VALID + VDONE wipe (re-striped 2026-08-13: 19 stores x 3
+; iterations x 2 bitmaps = 114 B — the 57-byte EXACT extent for 455
+; ids, and ~40 cyc cheaper than the old 24x5/120-byte shape).
    LDX #2
 bif_clr2:
    STA VCACHE_VALID_BASE,X

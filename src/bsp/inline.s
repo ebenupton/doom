@@ -121,9 +121,8 @@ vf_on:
    CMP vxc_prev_ab
    BEQ vf_patch
 ; --- angle changed: new epoch - wipe the valid bitmap ---
-; STRIPED, 57 B EXACT (2026-08-13: VXC_VALID rides the YLO plane tail
-; — a 60-byte wipe would stomp YHI's first entries). 19 stores x 3
-; iterations, ~300 cyc on every rotation frame.
+; STRIPED, 57 B (2026-08-13: the exact 455-id extent — 19 stores x 3
+; iterations, ~300 cyc vs the old 12x5's ~325, every rotation frame).
    STA vxc_prev_ab
    LDA #0
    LDX #2
