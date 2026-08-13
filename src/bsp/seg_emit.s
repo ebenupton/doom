@@ -403,16 +403,14 @@ hgp_fwd:
 ; (buf lo stays 0, zeroed once per frame).
 ;
 ;   ft (front ceiling):  solid: emit, no records
-;                        NEEDBT: emit iff ch > vz, no records
+;                        NEEDBT: emit, no records (self-clips if ch <= vz)
 ;                        else:   emit iff bch > ch, TOP_RECORDS armed
 ;   fb (front floor):    solid: emit, no records
-;                        NEEDBB: emit iff fh < vz, no records
+;                        NEEDBB: emit, no records (self-clips if fh >= vz)
 ;                        else:   emit iff bfh < fh, BOT_RECORDS armed
 ;   bt step (bch line):  portals with NEEDBT, TOP_RECORDS armed
 ;   bb step (bfh line):  portals with NEEDBB, BOT_RECORDS armed
 ;
-; The unrecorded ft/fb tests use vz - ch / fh - vz comparisons so
-; "skip" is one BPL (s8 heights, no overflow by the pack fence).
 ; The armed portal-lip arms are the ONLY fall-ins to ft_emit/fb_emit:
 ; solid and NEEDBT/NEEDBB entrants branch straight to their no-record
 ; arms, so no re-test is needed at the arm point.
@@ -422,11 +420,11 @@ hgp_fwd:
    BVS ft_no_rec                           ; SOLID (V): emit, no records
    LDA zp_seg_flags
    AND #$04
-   BEQ ft_no_needbt
-   LDA zp_br_vz                            ; NEEDBT: emit iff ch > vz
-   CMP zp_seg_ch
-   BPL ft_skip                             ; vz >= ch: skip
-   BMI ft_no_rec                           ; (always: N = 1)
+   BNE ft_no_rec                           ; NEEDBT: emit, no records (the
+                                        ; eyeline test DIED 2026-08-13:
+                                        ; vz >= ch fired 0.06/fr and the
+                                        ; ft line self-clips there — the
+                                        ; python gates dropped in lockstep)
 ft_no_needbt:
    PAGE BANK_SEG                           ; bch is a header read: page
    LDY #12                                 ; around it (flat: no-ops)
@@ -458,11 +456,8 @@ ft_skip:
    BVS fb_no_rec                           ; SOLID (V): emit, no records
    LDA zp_seg_flags
    AND #$08
-   BEQ fb_no_needbb
-   LDA zp_seg_fh                           ; NEEDBB: emit iff fh < vz
-   CMP zp_br_vz
-   BPL fb_skip                             ; fh >= vz: skip
-   BMI fb_no_rec                           ; (always: N = 1)
+   BNE fb_no_rec                           ; NEEDBB: emit, no records
+                                        ; (eyeline test died with ft's)
 fb_no_needbb:
    LDA zp_seg_bfh                          ; banked: ft's prefetch (stepless)
                                         ; or ys_withback's ride (NEEDBT set)
