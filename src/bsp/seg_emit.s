@@ -800,11 +800,11 @@ f2_go:
 vs_go:
    STX zp_vs_x                             ; struct offset banked (dcl and
                                         ; the projector clobber X)
-   CMP #$80                                ; A = descriptor (nonzero)
-   BCS vsx_expl                            ; $80|i: explicit table
-   CMP #2
-   BCC vsx_c1                              ; $01
-   BEQ vsx_c2                              ; $02
+   CMP #2                                  ; A = descriptor (nonzero);
+   BCC vsx_c1                              ; $01 first (12.3/fr census
+   BEQ vsx_c2                              ; 2026-08-14 — was 3rd) / $02
+   CMP #$80
+   BCS vsx_expl                            ; $80|i: explicit table (5.0/fr)
    CMP #4
    BCC vsx_c3                              ; $03
    JSR vsx_do_c3                           ; $04: top piece...
