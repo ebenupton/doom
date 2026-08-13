@@ -464,90 +464,72 @@ portal_cascade:
 ; solid and NEEDBT/NEEDBB entrants branch straight to their no-record
 ; arms, so no re-test is needed at the arm point.
 ; ============================================================================
-; --- ft: top horizontal (sx1,ft1) -> (sx2,ft2) ---
-; Three-way on BAKED flags (2026-08-13, Eben's split): SOLID and NEEDBT
-; merge (both draw the front line, no records, eyeline-gated);
-; SF_STEPUP_T is the pack-baked bch>ch verdict — the paged header
-; reads (and the bfh prefetch machinery) died with it.  The anim
-; worker re-derives the STEPUP bits per mover state.
+; Step edges FUSED into their flag-owning arms (Eben, 2026-08-14):
+; each side tests its NEEDB* bit ONCE and draws both its lines — the
+; separate step-arm block (and its two retests) died; the records
+; arming is duplicated per recorded draw (the lip and the step-up
+; front line arm the same page).
+; --- top side: NEEDBT => front-ceil (no-rec, eyeline) + bt lip
+;               STEPUP_T => recorded front line; else nothing ---
    LDA zp_seg_flags
-   AND #$04                                ; NEEDBT: front line, no
-   BNE ft_no_rec                           ; records, eyeline-gated
-   LDA zp_seg_flags
-   AND #$10                                ; SF_STEPUP_T (baked bch > ch)
-   BEQ ft_skip
-ft_emit:
-; portal lip: ft is the aperture's new top — arm TOP_RECORDS
-   LDA #>TOP_RECORDS
-   STA zp_dcl_rec_buf_h
-   ZERO TOP_RECORDS                        ; count = 0
-   LDA #1
-   STA zp_dcl_rec_off
-   BNE ft_set_line                         ; (always: A = 1)
-ft_no_rec:
-   BIT zp_ss_eskip                         ; subsector eyeline rule: no
-   BMI ft_skip                             ; top edges (NO-RECORD lines
-                                        ; only — the recorded bch>ch
-                                        ; class must draw: its records
-                                        ; ARE the tighten channel, and
-                                        ; it self-clips to empty records
-                                        ; under the rule anyway)
+   AND #$04                                ; NEEDBT?
+   BEQ ft_chk_up
+   BIT zp_ss_eskip                         ; eyeline: no top edges — the
+   BMI ft_lip                              ; RECORDED lip still draws
    ZERO zp_dcl_rec_buf_h
-ft_set_line:
-   LDX #zp_seg_sy1_top_l - VX1             ; sy pair: top
+   LDX #zp_seg_sy1_top_l - VX1             ; front-ceil, no records
    JSR draw_clipped_line_s16_h
-ft_skip:
-
-; --- fb: bottom horizontal (sx1,fb1) -> (sx2,fb2) — ft's mirror ---
-   LDA zp_seg_flags
-   AND #$08                                ; NEEDBB: front line, no
-   BNE fb_no_rec                           ; records, eyeline-gated
-   LDA zp_seg_flags
-   AND #$20                                ; SF_STEPUP_B (baked bfh < fh)
-   BEQ fb_skip
-fb_emit:
-   LDA #>BOT_RECORDS
-   STA zp_dcl_rec_buf_h
-   ZERO BOT_RECORDS                        ; count = 0
-   LDA #1
-   STA zp_dcl_rec_off
-   BNE fb_set_line                         ; (always: A = 1)
-fb_no_rec:
-   BIT zp_ss_eskip                         ; eyeline rule, bottom twin
-   BVS fb_skip                             ; (no-record lines only)
-   ZERO zp_dcl_rec_buf_h
-fb_set_line:
-   LDX #zp_seg_sy1_bot_l - VX1             ; sy pair: bot
-   JSR draw_clipped_line_s16_h
-fb_skip:
-
-; --- portal step edges (solids never reach here — the stage-5b fork) ---
-   LDA zp_seg_flags
-   AND #$04
-   BEQ step_no_top
-   LDX #zp_seg_sy1_btop_l - VX1            ; bt step: sy pair btop,
-   LDA #>TOP_RECORDS                       ; TOP_RECORDS armed
-   STA zp_dcl_rec_buf_h
+ft_lip:
+   LDA #>TOP_RECORDS                       ; bt lip: the aperture's new
+   STA zp_dcl_rec_buf_h                    ; top — TOP_RECORDS armed
    ZERO TOP_RECORDS
    LDA #1
    STA zp_dcl_rec_off
+   LDX #zp_seg_sy1_btop_l - VX1
    JSR draw_clipped_line_s16_h
-step_no_top:
+   JMP fb_arm
+ft_chk_up:
    LDA zp_seg_flags
-   AND #$08
-   BEQ step_no_bot
-   LDX #zp_seg_sy1_bbot_l - VX1            ; bb step: sy pair bbot,
-   LDA #>BOT_RECORDS                       ; BOT_RECORDS armed
+   AND #$10                                ; SF_STEPUP_T (baked bch > ch)
+   BEQ fb_arm
+   LDA #>TOP_RECORDS                       ; recorded front line: it IS
+   STA zp_dcl_rec_buf_h                    ; the aperture top here
+   ZERO TOP_RECORDS
+   LDA #1
+   STA zp_dcl_rec_off
+   LDX #zp_seg_sy1_top_l - VX1
+   JSR draw_clipped_line_s16_h
+fb_arm:
+; --- bottom side: ft's mirror (NEEDBB / STEPUP_B) ---
+   LDA zp_seg_flags
+   AND #$08                                ; NEEDBB?
+   BEQ fb_chk_up
+   BIT zp_ss_eskip                         ; eyeline: no bottom edges
+   BVS fb_lip
+   ZERO zp_dcl_rec_buf_h
+   LDX #zp_seg_sy1_bot_l - VX1             ; front-floor, no records
+   JSR draw_clipped_line_s16_h
+fb_lip:
+   LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
    ZERO BOT_RECORDS
    LDA #1
    STA zp_dcl_rec_off
-; (bank note: entry here is provably bank C — the stage-5 page
-; dominates the cascade; the header-read arms above re-page around
-; themselves.  Audited: the PAGEs at ft/fb_no_needbt are load-bearing.)
+   LDX #zp_seg_sy1_bbot_l - VX1
    JSR draw_clipped_line_s16_h
-step_no_bot:
-step_skip:
+   JMP vert_stage
+fb_chk_up:
+   LDA zp_seg_flags
+   AND #$20                                ; SF_STEPUP_B (baked bfh < fh)
+   BEQ vert_stage
+   LDA #>BOT_RECORDS
+   STA zp_dcl_rec_buf_h
+   ZERO BOT_RECORDS
+   LDA #1
+   STA zp_dcl_rec_off
+   LDX #zp_seg_sy1_bot_l - VX1
+   JSR draw_clipped_line_s16_h
+vert_stage:
 
 ; ============================================================================
 ; STAGE 7 — VERTICALS.  Each endpoint's vertex is served ONCE per frame
