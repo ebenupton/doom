@@ -415,11 +415,11 @@ zp_br_dy = zp_br_dy_l
 ; (L8/AE/VATOX/recip) | LEVEL $8C00-$A3FF (bbox 16p, verts $800) |
 ; CACHES $A400-$B2FF (CPM, rc psi planes, RCACHE_STATE, VWHC) |
 ; ANIM $B300/$B400 | FREE $B500-$BFFF contiguous.
-RECIP_M8 = $8800                        ; bank L2 TABLES group
-RECIP_M8H = $8900                       ; far half-table [128,255],
+RECIP_M8 = $B100                        ; bank SEG (two-bank re-cut)
+RECIP_M8H = $B200                       ; far half-table [128,255],
                                         ; unswapped ($8980-$8BFF FREE
                                         ; 2026-08-13: far synthesis)
-L2_BBOX = $8C00                         ; bank L2 (harness/loader points zp_rom_bbox here; = ROM_BBOX_C)
+L2_BBOX = $9600                         ; bank WALK (harness/loader points zp_rom_bbox here; = ROM_BBOX_C)
 .else
 RECIP_M8 = $D500                        ; flat LEVEL block (2026-07-21 map)
 RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)

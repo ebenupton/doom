@@ -1,9 +1,13 @@
 # Two-Bank Layout Plan — seg/vert bank + walk bank
 
-*Design only (2026-08-13). Nothing implemented. The goal: each render
-phase holds ONE sideways bank for its whole duration, killing the
-L0/L2 page-flipping (143 PAGE/frame measured) and the transform's
-exit-L2 contract structurally.*
+*IMPLEMENTED 2026-08-13 (same day). Measured: 332.8 -> 193.7 ROMSEL
+writes/frame (-42%), banked -774 cyc/frame on the 6-position paging
+set. Deviations from the plan below: VCACHE/VXC/bitmaps STAYED IN MAIN
+(main is always visible — moving them buys no paging); VWHC went to
+bank A (the y-stage holds A, so the 1K fits after the recip shrink);
+the DIR planes ship in BOTH banks at $B700 (the shared
+CROSS_MAG_DECIDE serves node classify under bank B and seg backface
+under bank A — the one union consumer the plan missed).*
 
 ## Bank A — the SEG/VERT bank (held for pipeline stages 1–4)
 

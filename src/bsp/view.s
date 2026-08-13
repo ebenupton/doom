@@ -227,7 +227,7 @@ fq_y_ok:
    rot_select                          ; SMC: specialize rot_s1..s4 for this
                                         ; frame's trig (SEL, main $2C00 —
                                         ; runs under any bank)
-   PAGE BANK_L2
+   PAGE BANK_WALK
    JSR bca_frame                           ; rcache epoch keeper (rcache.s);
                                            ; the D-cache classifier call is
                                            ; gone — D disabled 2026-07-20

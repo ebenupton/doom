@@ -87,9 +87,9 @@ ang_head:
 ; ($3B/$3C, $71/$72 freed: abs now writes the divide operands directly --
 ;  reused below for bca_afn / bca_cy)
 .if BANKED
-L8_TAB = $8000                          ; bank L2 TABLES group (2026-07-21
-AE_LO  = $8100                          ; regroup): L8, AE lo/hi, VATOX
-AE_HI  = $8200                          ; $8300, recip $8800 — all math
+L8_TAB = $8E00                          ; bank WALK (two-bank re-cut:
+AE_LO  = $8F00                          ; L8/AE/VATOX ride behind the
+AE_HI  = $9000                          ; node SoA; recip moved to bank
                                         ; tables contiguous ($8000-$8BFF).
                                         ; ONE source: tools/atanexp_cert.py
 .else
@@ -167,7 +167,7 @@ t1 = $CD
 val_hi = $CF                            ; only user: rcache's rc_bytehi alias
 bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
 .if BANKED
-VATOX = $8300                           ; bank L2 TABLES group: viewangletox, 1025 entries (phi+512), $8300-$8701
+VATOX  = $9100                          ; SEG with the verts)
 .else
 VATOX = $E000                           ; viewangletox, 1025 entries (phi+512),
                                         ; $F600-$FA00 (moved down 1 into the

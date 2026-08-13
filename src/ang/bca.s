@@ -19,12 +19,12 @@
 ; the flat set scatters over audited free fragments and the $5000
 ; CODE-tail carve is GONE (flat CODE now runs to $5800 — main_tail).
 .if BANKED
-RC_P1L_0 = $A700                        ; bank L2 CACHES group (2026-07-21
-RC_P1L_1 = $A800                        ; regroup): CPM $A400, psi planes
-RC_P2L_0 = $A900                        ; $A700-$ACFF, RCACHE_STATE $AD00,
-RC_P2L_1 = $AA00                        ; VWHC $AE00-$B2FF — every cache
-RC_PH_0  = $AB00                        ; beside its neighbours, free tail
-RC_PH_1  = $AC00                        ; $B500-$BFFF contiguous
+RC_P1L_0 = $A900                        ; bank L2 CACHES group (2026-07-21
+RC_P1L_1 = $AA00                        ; regroup): CPM $A400, psi planes
+RC_P2L_0 = $AB00                        ; $A700-$ACFF, RCACHE_STATE $AD00,
+RC_P2L_1 = $AC00                        ; VWHC $AE00-$B2FF — every cache
+RC_PH_0  = $AD00                        ; beside its neighbours, free tail
+RC_PH_1  = $AE00                        ; $B500-$BFFF contiguous
 .else
 RC_P1L_0 = $7400                        ; flat psi planes: NODE-indexed
 RC_P1L_1 = $E402                        ; (Y = node id <= 219 -> 220 B

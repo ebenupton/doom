@@ -18,9 +18,11 @@ os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 # (name, banked, flat_or_None_if_same_or_meaningless, comment)
 ABI = [
-    ('BANK_L0',        4,      None, 'sideways bank: level data (SoA, seg_hdr, FHCH, TABL0)'),
+    ('BANK_L0',        4,      None, 'legacy alias for BANK_SEG (two-bank re-cut 2026-08-13)'),
+    ('BANK_SEG',       4,      None, 'sideways bank A: seg headers+DIRs, verts, recips, VWHC, TABL0 — held for seg stages 1-4'),
     ('BANK_C',         6,      None, 'sideways bank: clipper + rasteriser + HUD'),
-    ('BANK_L2',        7,      None, 'sideways bank: angle/bbox/recip/verts/RCACHE/VWHC/CFG'),
+    ('BANK_L2',        7,      None, 'legacy alias for BANK_WALK'),
+    ('BANK_WALK',      7,      None, 'sideways bank B: node SoA, L8/AE/VATOX, bbox, CPM, rcache, ANIM CFG — held for the whole BSP walk'),
     # Jump tables are GONE (2026-07-16, forbidden): engine entry points
     # (br_view_setup / br_render_frame / anim_tick / anim_init / clipper
     # entries) are resolved by SYMBOL from the linker map — beebasm via
@@ -65,10 +67,10 @@ ABI = [
     ('VXC_STATE',      0x0700, None, 'THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
     ('VXC_STATE_LEN',  0x100,  None, 'bytes to zero at boot (the whole bitmap page)'),
     ('VXC_ENABLE',     0x05DB, None, 'translation vertex cache switch'),
-    ('RCACHE_STATE',   0xAD00, 0x7268, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
+    ('RCACHE_STATE',   0xAF00, 0x7268, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
-    ('RCACHE_ENABLE',  0xAD88, 0x72F0, 'rotation-coherence bca cache switch (STATE+$88)'),
-    ('CPM_BASE',       0xA400, 0x7E00, 'corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen — moved up from $5480 2026-07-19 to hand the CODE tail another page). BANKED $8300: the tantoangle span option F freed — the first home $8E00 sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
+    ('RCACHE_ENABLE',  0xAF88, 0x72F0, 'rotation-coherence bca cache switch (STATE+$88)'),
+    ('CPM_BASE',       0xA600, 0x7E00, 'corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
     ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
     ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane'),
     ('CPM_KDYL',       'CPM_BASE+$100', None, '... dy lo'),

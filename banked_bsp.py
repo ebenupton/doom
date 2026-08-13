@@ -53,26 +53,41 @@ def build_banked(flatr):
     # the separate FHCH stream retired 2026-07-11) | TABL0 $BE90].
     # SSMASK -> MAIN $0A80 (rule exception, measured: hub reads it per
     # subsector under whatever bank; main = 0 paging. 237 B.)
-    l0 = bytearray(16384)
+    # --- bank A (BANK_SEG=4, two-bank re-cut 2026-08-13): seg headers+DIRs
+    # @ $8000, vertex planes @ ROM_VERTS_C, recip @ RECIP_M8/M8H, VWHC BSS
+    # (must ship ZERO — the key plane doubles as validity), TABL0 @ $BE90 ---
+    la = bytearray(16384)
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     n_segs = layout['n_segs']
     hdr_len = len(rom_main) - off_hdr        # stride-16 headers + DIR tables
-    l0[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages (14)
-    # SS_PHI page ships first*16 offsets — rebase onto the banked
-    # seg-header base ($9000 = window $8000 + the $1000 header offset)
-    for i in range(0xB00, 0xC00):
-        l0[i] = (rom_main[i] + 0x90) & 0xFF
-    l0[0x1000:0x1000 + hdr_len] = bytes(rom_main[off_hdr:off_hdr + hdr_len])
-    assert 0x1000 + hdr_len <= 0x3E90, "seg headers + DIRs reach TABL0 at $BE90"
+    from symmap import sym as _vsym
+    def bdst(name):
+        return _vsym(name, banked=1) - 0x8000    # dst offsets BY SYMBOL —
+                                                 # the .s equates are the
+                                                 # single source (2026-07-21)
+    la[:hdr_len] = bytes(rom_main[off_hdr:off_hdr + hdr_len])
+    assert hdr_len <= bdst('ROM_VERTS_C'), "seg headers + DIRs reach the vertex planes"
+    # DIR planes (3 x LAY_MAX_DIRS) also land at ROM_DIRS_C in BOTH banks:
+    # the shared CROSS_MAG_DECIDE reads them from node classify (bank WALK)
+    # AND seg backface (bank SEG) — $B700 is free in both windows
+    dirs_off = off_hdr + n_segs * 16
+    dir_blob = bytes(rom_main[dirs_off:dirs_off + 3 * layout['max_dirs']])
+    la[0x3700:0x3700 + len(dir_blob)] = dir_blob
+    vlen = off_hdr - off_verts
+    la[bdst('ROM_VERTS_C'):bdst('ROM_VERTS_C') + vlen] = bytes(rom_main[off_verts:off_hdr])
+    # EXACT recip lengths (256 + 128): a padded 1K copy here would drag
+    # flat-image garbage over the VWHC key plane at $B300 -> stale serves
+    la[bdst('RECIP_M8'):bdst('RECIP_M8') + 256] = bytes(fmem[_vsym('RECIP_M8'):_vsym('RECIP_M8') + 256])
+    la[bdst('RECIP_M8H'):bdst('RECIP_M8H') + 128] = bytes(fmem[_vsym('RECIP_M8H'):_vsym('RECIP_M8H') + 128])
     if dw.ANIM_SECTORS:
         import anim_sectors as _an0
         for addr, blob in _an0.gen_6502_tables(flat=False).items():
-            if 0xBE90 <= addr < 0x4000 + 0x8000:  # L0-side table (TABL0 @ $BE90)
-                l0[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
+            if 0xBE90 <= addr < 0xC000:           # TABL0 @ $BE90 (bank A)
+                la[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
             elif 0x1F00 <= addr < 0x1FE0:         # SSMASK -> MAIN
                 for i, b in enumerate(blob):
                     bm[addr + i] = b
-    bm.define_bank(BANK_L0, l0)
+    bm.define_bank(BANK_L0, la)                   # BANK_L0 == BANK_SEG (4)
 
     # --- bank C = clipper ($8000) + rasteriser ($A900) ---
     c = bytearray(16384)
@@ -112,53 +127,35 @@ def build_banked(flatr):
         bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
         bm[abi.SQRH_BASE + i] = fmem[abi.SQR_BASE + 0x200 + i]
 
-    # --- bank L2 = relocated $C000+ data (window offsets must match the asm) ---
-    # TA_LO $8000, TA_HI $8400, VATOX $8800, bbox $8D00, recip $9C00,
-    # VWHC cache $A600 (zeroed). ($A200 VWH heights stripped 2026-07-10.)
-    l2 = bytearray(16384)
+    # --- bank B (BANK_WALK=7): node/ss SoA @ $8000 (SS_PHI rebased onto
+    # the bank-A header base), L8/AE/VATOX behind the SoA, bbox @ ROM_BBOX_C,
+    # CPM, rcache BSS, ANIM CFG @ $B300 + SSMASK staging @ $B400 ---
+    lb = bytearray(16384)
+    lb[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages (14)
+    # SS_PHI page ships first*16 offsets — rebase onto the banked
+    # seg-header base ($8000 = the bank-A window head)
+    for i in range(0xB00, 0xC00):
+        lb[i] = (rom_main[i] + 0x80) & 0xFF
     def cpy(dst_off, src, n):
-        l2[dst_off:dst_off + n] = bytes(fmem[src:src + n])
-    from symmap import sym as _vsym
-    cpy(0x0000, _vsym('L8_TAB'), 256)    # L8_TAB -> $8000 (F tables; flat
-    cpy(0x0100, _vsym('AE_LO'), 256)     # AE_LO  -> $8100  source by symbol —
-    cpy(0x0200, _vsym('AE_HI'), 256)     # AE_HI  -> $8200  2026-07-21 map)
-                                         # F: $8300-$88FF freed banked)
-    def bdst(name):
-        return _vsym(name, banked=1) - 0x8000    # dst offsets BY SYMBOL —
-                                                 # the .s equates are the
-                                                 # single source (2026-07-21)
+        lb[dst_off:dst_off + n] = bytes(fmem[src:src + n])
+    cpy(bdst('L8_TAB'), _vsym('L8_TAB'), 256)     # dst offsets BY SYMBOL
+    cpy(bdst('AE_LO'), _vsym('AE_LO'), 256)
+    cpy(bdst('AE_HI'), _vsym('AE_HI'), 256)
     cpy(bdst('VATOX'), _vsym('VATOX'), 1025)
     cpy(bdst('L2_BBOX'), _vsym('ROM_BBOX_C'), len(flatr.bbox_table))
-    cpy(bdst('RECIP_M8'), _vsym('RECIP_M8'), 1024)
-    # (VWH heights table stripped 2026-07-10: no 6502 reader)
-    # rotation-cache CODE -> $B500 in the L2 window (its data region $AD00-
-    # $B4E8 is bank-L2 BSS; all consumers run with L2 paged; VWHC arrays
-    # end at $ACFF).
-    # verts -> L2 $A200 (evicted from L0 to make room for FHCH; the only
-    # reader is vc_miss, which now pages L2 for the fetch)
-    n_verts_b = layout['off_nodes'] and 0  # (offsets: verts span off_verts..off_seg_hdr)
-    vlen = layout['off_seg_hdr'] - layout['off_verts']
-    vdst = _vsym('ROM_VERTS_C', banked=1) - 0x8000
-    l2[vdst:vdst + vlen] = bytes(rom_main[layout['off_verts']:layout['off_seg_hdr']])
-    # Animated sectors (DOOM_ANIM builds): CFG @ $BA00 (L2); TABL0 @ $BE90
-    # (L0, seeded into the l0 image above). SSMASK is consumed from MAIN
-    # $0A80 (pageless hub reads) but main below $1B40 never reaches the
-    # disc — so it ALSO stages at L2 $BB00 (ANIM_SSMASK_SRC) and anim_init
-    # copies the page down at boot. The direct bm[] seed above keeps
-    # harnesses that never call anim_init working; the bytes are identical.
-    # (STK staging retired 2026-07-12: RNS lives in CODE; page 1 is free)
     if dw.ANIM_SECTORS:
         import anim_sectors as _an
         for addr, blob in _an.gen_6502_tables(flat=False).items():
-            if 0xB300 <= addr < 0xB400:          # L2-side table (CFG @ $B300)
-                l2[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
+            if 0xB300 <= addr < 0xB400:          # CFG @ $B300 (bank B)
+                lb[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
             elif 0x1F00 <= addr < 0x1FE0:        # SSMASK -> staging @ $B400
                 assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $B400 staging page'
-                l2[0x3400:0x3400 + len(blob)] = blob
-    # corner-phi memo validity: KDXH plane ($8380) ships $80-filled — the
+                lb[0x3400:0x3400 + len(blob)] = blob
+    lb[0x3700:0x3700 + len(dir_blob)] = dir_blob   # DIR planes, bank-B copy
+    # corner-phi memo validity: KDXH plane ships $80-filled — the
     # probe's KDXH compare doubles as the never-written test (no EP plane).
-    l2[abi.CPM_KDXH - 0x8000:abi.CPM_KDXH - 0x8000 + 128] = b'\x80' * 128
-    bm.define_bank(BANK_L2, l2)
+    lb[abi.CPM_KDXH - 0x8000:abi.CPM_KDXH - 0x8000 + 128] = b'\x80' * 128
+    bm.define_bank(BANK_L2, lb)                   # BANK_L2 == BANK_WALK (7)
 
 
     # --- banked bsp_render code (_bk variants) into low RAM ---

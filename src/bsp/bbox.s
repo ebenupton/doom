@@ -55,7 +55,7 @@
 ;        C-only since 2026-07-26; the walk branches BCS/BCC
 ; ============================================================================
 br_bbox_visible:
-   PAGE BANK_L2                            ; angle tables live in bank L2
+   PAGE BANK_WALK                          ; angle tables ride the walk bank
 ::br_bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
                                         ; walk's near-invisible -> far-check
                                         ; arc: bca exits L2 and PLA/stores/

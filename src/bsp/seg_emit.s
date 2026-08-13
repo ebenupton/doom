@@ -150,16 +150,13 @@ chain_miss:                                ; A = header lo (banked in v1i_l)
    STA zp_v1i_b
    STA zp_seg_v_idx_b
    TAY                                     ; SXV ABI: Y = idx_b (2026-08-13)
-   PAGE_X BANK_L2                          ; SXV bank contract: L2 in (A
-                                        ; rides the X-form page; header
-                                        ; reads above were the last L0 use)
+                                        ; (SXV bank contract: bank SEG in —
+                                        ; already held for the header reads)
    AND #$20                                ; side test at the caller: the
    BNE xform1_hi                           ; transform is side-baked
    JSR sx_vert_lo
 xform1_done:
 v1_done:
-   PAGE BANK_L0                            ; transform exits L2; the v2
-                                        ; header read needs L0 (flat: no-op)
 v1_done_l0:
    LDA #VX_STRIDE
    STA zp_seg_ep                           ; v2 -> VX2
@@ -170,7 +167,6 @@ v1_done_l0:
    LDA (zp_seg_hdr_p),Y                    ; v2 idx B
    STA zp_seg_v_idx_b
    TAY                                     ; SXV ABI: Y = idx_b (2026-08-13)
-   PAGE_X BANK_L2                          ; SXV bank contract: L2 in
    AND #$20                                ; side rides the just-loaded byte
    BNE xform2_hi
    JSR sx_vert_lo
@@ -423,7 +419,7 @@ hgp_fwd:
    BPL ft_skip                             ; vz >= ch: skip
    BMI ft_no_rec                           ; (always: N = 1)
 ft_no_needbt:
-   PAGE BANK_L0                            ; bch is a header read: page
+   PAGE BANK_SEG                           ; bch is a header read: page
    LDY #13                                 ; around it (flat: no-ops)
    LDA (zp_seg_hdr_p),Y                    ; bch
    PAGE_X BANK_C                           ; bch rides A across the page
@@ -456,7 +452,7 @@ ft_skip:
    BPL fb_skip                             ; fh >= vz: skip
    BMI fb_no_rec                           ; (always: N = 1)
 fb_no_needbb:
-   PAGE BANK_L0
+   PAGE BANK_SEG
    LDY #12
    LDA (zp_seg_hdr_p),Y                    ; bfh
    PAGE_X BANK_C
@@ -604,7 +600,7 @@ ms_advance:
    STA zp_seg_hdr_p                        ; headers are page-slotted: a run
    DEC zp_seg_count                        ; never crosses its page (packer
    BEQ sa_done                             ; assert) — hi byte is constant
-   PAGE BANK_L0
+   PAGE BANK_SEG
    JMP seg_proc
 ::s_advance_l0:
    CLC
@@ -630,7 +626,9 @@ sa_done:
 ;                 NEEDBB ? project bbot
 ; ============================================================================
 ys_withback:
-   PAGE BANK_L0
+                                        ; (bank SEG held since stage 1 —
+                                        ; the fork and hg_query touch no
+                                        ; ROMSEL; header reads are safe)
    LDY #13
    LDA (zp_seg_hdr_p),Y                    ; bch
    SBC zp_br_vz                            ; (no SEC: C=1 from hg_query)
@@ -640,7 +638,8 @@ ys_withback:
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt
-   PAGE BANK_L2                            ; projections run under L2
+                                        ; (projections read VWHC — bank SEG,
+                                        ; still held from the header reads)
    LDA zp_ys_v1ok
    BEQ ysb_v1_full
    ZERO zp_seg_ep                          ; chained v1: front pair is live,
@@ -899,7 +898,8 @@ eh_have:
 em_v_ok:
    BMI vsx_next
    BEQ vsx_next
-   PAGE BANK_L2                            ; project both ends vs eye height
+   PAGE BANK_SEG                           ; project both ends vs eye height
+                                        ; (br_project_y reads VWHC, bank SEG)
    LDA zp_vs_hh
    SEC
    SBC zp_br_vz

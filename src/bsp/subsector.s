@@ -57,15 +57,9 @@
 ; segs' DCL emission overwrites TOP/BOT_RECORDS before the drain.
 ; ============================================================================
 br_render_subsector_entry:                 ; harness entry: bank unknown
-   PAGE BANK_L0                            ; ss / seg_hdr / verts / sincos live in bank L0
+   PAGE BANK_WALK                          ; ss SoA pages ride the walk bank
 br_render_subsector:
-; (walk callers arrive L0-paged — near/far child follows page L0)
-; Animated-sector hook: anim_init retargets this JMP at anim_hub, which
-; lazily patches any dirty mover with segs in this subsector (see
-; src/bsp/anim.s). Disabled (default) it falls straight through: 3 cycles.
-anim_ss_hook:
-   JMP anim_ss_cont
-anim_ss_cont:
+; (walk callers arrive WALK-paged — near/far child follows page WALK)
 .scope
 ; (The write-only visited-bitmap instrumentation is GONE, 2026-07-15:
 ; nothing anywhere read it — dead scaffolding taxing every flat
@@ -85,6 +79,16 @@ anim_ss_cont:
    STA zp_seg_hdr_p
    LDA SS_PHI,X
    STA zp_seg_hdr_p_h
+   PAGE BANK_SEG                           ; headers / verts / VWHC bank —
+                                        ; held through seg stages 1-4
+; Animated-sector hook: anim_init retargets this JMP at anim_hub, which
+; lazily patches any dirty mover with segs in this subsector (headers +
+; FHCH quads live in bank SEG — the hook runs under it, and BEFORE the
+; fh/ch reads below so mover-patched heights are already in place).
+; Disabled (default) it falls straight through: 3 cycles.
+::anim_ss_hook:
+   JMP anim_ss_cont
+::anim_ss_cont:
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so read fh/ch + compute the front deltas ONCE
 ; here instead of per seg (2026-07-10; runs after the anim hub, so

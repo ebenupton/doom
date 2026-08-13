@@ -47,7 +47,7 @@ br_render_frame:
 ; subsector serve no longer page — every path keeps L0 until the
 ; clipper/angle modules page for themselves and the child follows
 ; restore it). One PAGE per frame covers the seed.
-   PAGE BANK_L0
+   PAGE BANK_WALK
 
 ; --- Per-frame init (the standalone br_init_frame is retired).
 ; Records-pointer ground state: the lo byte is never written non-zero
@@ -345,7 +345,8 @@ rc_s0:
    BCC r0_far                              ; near invisible: skip subtree
 .endif
 r0_vis:
-   PAGE BANK_L0                            ; node SoA pages live in bank L0
+; (bank WALK held: br_bbox_visible pages it at entry and its exits never
+; re-page — the four child-fetch PAGEs died in the two-bank re-cut)
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l
@@ -361,7 +362,6 @@ r0_far:
    JSR br_bbox_visible
    BCC rc_ret                              ; far invisible: this node is done
 r0_far_vis:
-   PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
    STA zp_node_ch_l
@@ -409,7 +409,6 @@ rc_n1:
    BCC r1_far
 .endif
 r1_vis:
-   PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CLLO,X                         ; inline LEFT fetch
    STA zp_node_ch_l
@@ -425,7 +424,6 @@ r1_far:
    JSR br_bbox_visible
    BCC rc_ret1
 r1_far_vis:
-   PAGE BANK_L0
    LDX zp_node_ch_l
    LDA NODE_CRLO,X                         ; inline RIGHT fetch
    STA zp_node_ch_l

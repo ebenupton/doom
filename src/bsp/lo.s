@@ -113,13 +113,10 @@ rp_t_ok:
    PAGE BANK_C                             ; udiv16_8 lives in the CLIPPER
    JSR udiv16_8                            ; segment = bank C when banked
    STA zp_br_a                             ; (the JSR, not the SC_ inline:
-   PAGE BANK_L2                            ;  ~100B for a rare path)
-; ^ EMPIRICALLY LOAD-BEARING (2026-08-09): removing this restore
-; crashes banked on the crossing seg's SECOND draw (raster PC runs off
-; the blob end, misaligned) — some consumer between here and the next
-; explicit PAGE still wants L2, and the audit (has_gap main, y-stage
-; self-paged, emits PAGE_X C) has not identified it. Do NOT delete
-; without root-causing; bankedcmp is the catcher. (~6 cyc, ~1.7x/frame.)
+   PAGE BANK_SEG                           ;  ~100B for a rare path)
+; ^ restore for the y-stage's VWHC reads (the 2026-08-09 "empirically
+; load-bearing" mystery, root-caused 2026-08-13: br_project_y's VWHC
+; planes were the L2 consumer; VWHC lives in bank SEG now).
 ; ---- dvx = vx_u - vx_c: sign + u16 magnitude in the vy slots
 ; (TRUE16: totals are s16 counts — the third byte and its gated
 ; third mul DIED) ----
@@ -297,7 +294,7 @@ cr_w_hi:
 cr_cold:
    LDA zp_div_l                            ; restore idx_l (X untouched)
 cr_plain:
-   PAGE_Y BANK_L2                          ; VP planes (self-paged since the
+   PAGE_Y BANK_SEG                         ; VP planes (self-paged since the
                                            ; transform exit contract died —
                                            ; arrival bank is now arbitrary;
                                            ; Y dead, A = idx_l survives)

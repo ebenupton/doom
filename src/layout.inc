@@ -18,11 +18,15 @@ LAY_N_DIRS   = 113                   ; distinct diagonal primitives
 LAY_MAX_DIRS   = 160                   ; DIR table stride (3 arrays)
 
 .if ::BANKED
-ROM_SEG_HDR_C = $9000                   ; 662*16 = 10592 + DIR tables
-ROM_VERTS_C   = $9C00                   ; bank L2 LEVEL group (2026-07-21
-ROM_BBOX_C    = $8C00                   ; regroup: bbox 16p then verts $800)
-NODE_SOA_C    = $8000                   ; bank L0 window head
-ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
+ROM_SEG_HDR_C = $8000                   ; bank SEG window head: headers+DIRs
+ROM_VERTS_C   = $AB00                   ; bank SEG (2026-08-13 two-bank
+ROM_BBOX_C    = $9600                   ; re-cut: bbox lives in bank WALK)
+NODE_SOA_C    = $8000                   ; bank WALK window head
+ROM_DIRS_C    = $B700                   ; DIR planes ship in BOTH banks
+                                        ; (union consumer: node classify
+                                        ; under bank WALK, seg backface
+                                        ; under bank SEG — one shared
+                                        ; CROSS_MAG_DECIDE reads them)
 .assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $BE90, error, "DIR tables reach TABL0"
 .else
 ROM_SEG_HDR_C = $8600                   ; flat LEVEL block (2026-07-21 map):
