@@ -212,6 +212,9 @@ clip_none:
    LDA zp_seg_sx1_l
    CMP zp_seg_sx2_l
    BEQ range_fwd                           ; tie: one-column seg is FORWARD
+                                        ; (KEEP: measured 2026-08-13 — ties
+                                        ; are occlusion workhorses; dropping
+                                        ; them = +652/fr MEAN and 1px leaks)
    BCS cull_jmp                            ; sx1 > sx2: reversed sliver, drop
 range_fwd:
    STA zp_i_l                              ; ilo = sx1_lo
