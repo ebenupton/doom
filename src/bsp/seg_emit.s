@@ -199,8 +199,9 @@ clip_none:
 ;   differing hi bytes: signed order test — reversed drops; else the
 ;       min = sx1 clamp ladder.
 ; ABI into hg_query: A = ihi (register-only), zp_i_l = ilo.
-; SC_HAS_GAP: C=1 gap / C=0 occluded — the emit path recomputes its own
-; clamps (this stage's scratch does not survive the emits).
+; SC_HAS_GAP: C=1 gap / C=0 occluded.  The clamped pair PERSISTS to
+; stage 8 (zp_i_l here, zp_i_h banked at hg_pass) — nothing in the
+; emit arcs writes either byte.
 ; Carry note: stage 4's with-back arc relies on C=1 from the BCS-fall
 ; at hg_query (nothing between touches carry).
 ; ============================================================================
@@ -297,6 +298,14 @@ hg_query:
    JSR SC_HAS_GAP                          ; in: A = ihi, zp_i_l = ilo
    BCC range_cull                          ; C=0: no visible column, cull
 hg_pass:
+   STA zp_i_h                              ; bank ihi for stage 8 (A = ihi,
+                                        ; UNTOUCHED by SC_HAS_GAP — its
+                                        ; documented contract; STA keeps
+                                        ; the C=1 the with-back arc rides).
+                                        ; zp_i_l already holds ilo and
+                                        ; nothing between here and stage 8
+                                        ; writes either byte (the bca_ilo
+                                        ; alias writes are walk-context)
 ; records counts reset for THIS seg — stage 8 reads them only for segs
 ; that got here; the emit arms re-arm them as needed
    ZERO TOP_RECORDS, BOT_RECORDS
@@ -534,28 +543,19 @@ vs1_done:
 vs2_done:
 
 ; ============================================================================
-; STAGE 8 — OCCLUSION.  Recompute the clamped u8 range (the stage-3
-; scratch did not survive the emits; the pair is canonical now, so one
-; hi-byte test per endpoint suffices — stage 3 already culled the
-; off-screen cases, leaving max >= 0 and min < 256):
+; STAGE 8 — OCCLUSION.  zp_i_l/zp_i_h still hold stage 3's clamped
+; range: the only other writers of the pair are the bca_ilo/bca_ihi
+; aliases (bbox visibility — walk context, never inside the seg loop),
+; and stage 3 stores ilo directly while hg_pass banks ihi off the
+; has_gap ABI ride.  (The recompute + its clamp_sat islands died
+; 2026-08-13 — the "scratch does not survive" note was a DEFQ fossil.)
 ;
-;   ilo = clamp0(sx1); ihi = clamp255(sx2)
 ;   if SOLID:        mark_solid(ilo, ihi)
 ;   elif records:    tighten_from_records(ilo, ihi)
 ;   elif not seg_zero_rec_solid(): pass   # aperture covers the screen
 ;   else:            mark_solid(ilo, ihi) # aperture wholly off-screen:
 ;                                         # every column is wall
 ; ============================================================================
-   LDA zp_seg_sx2_h                        ; ihi: hi 0 = in range
-   BNE clamp_sat_hi                        ; >= 256 (neg impossible): 255
-   LDA zp_seg_sx2_l
-clamp_ihi_have:
-   STA zp_i_h
-   LDA zp_seg_sx1_h                        ; ilo: hi 0 = in range
-   BMI clamp_sat_lo                        ; < 0 (pos impossible): 0
-   LDA zp_seg_sx1_l
-clamp_ilo_have:
-   STA zp_i_l
 ms_dispatch:
    BIT zp_seg_flags
    BVS ms_solid                            ; SOLID (V)
@@ -564,13 +564,7 @@ ms_dispatch:
    BEQ ms_zero_rec                         ; place, bank C guaranteed)
    JSR SC_TIGHTEN_FROM_RECORDS
    JMP ms_advance
-; --- stage-8 islands (this seam costs nothing: the JSR/JMP above) ---
-clamp_sat_hi:
-   LDA #255
-   BNE clamp_ihi_have                      ; (always)
-clamp_sat_lo:
-   LDA #0
-   BEQ clamp_ilo_have                      ; (always)
+; --- stage-8 island (this seam costs nothing: the JSR/JMP above) ---
 ms_zero_rec:
 ; no records: if the aperture covers the whole screen there is nothing
 ; to close; wholly off-screen means every column is wall (tfr.s)
