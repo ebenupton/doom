@@ -365,25 +365,6 @@ ys_noback:
 ysnb_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                           ; v2 -> VX2
-; Equal-recip fold (2026-08-13, measured 4.8/fr): same (M8,S) + same
-; deltas => identical sy pair (pure function) — copy v1's, bit-exact.
-; VX1's pair is always live here (projected above or chain-donated).
-   LDA zp_seg_v2_r_m8
-   CMP zp_seg_v1_r_m8
-   BNE ysnb_v2_proj
-   LDA zp_seg_v2_r_s
-   CMP zp_seg_v1_r_s
-   BNE ysnb_v2_proj
-   LDA VX1+3
-   STA VX2+3
-   LDA VX1+4
-   STA VX2+4                               ; sy_top
-   LDA VX1+5
-   STA VX2+5
-   LDA VX1+6
-   STA VX2+6                               ; sy_bot
-   JMP ys_done
-ysnb_v2_proj:
    LDA zp_seg_v2_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v2_r_s
@@ -700,22 +681,6 @@ ysb_v1_bb:
 ysb_v2:
    LDA #VX_STRIDE
    STA zp_seg_ep                           ; v2 -> VX2
-; Equal-recip fold, with-back flavour: v1's front AND back slots are
-; live (flags gate both endpoints identically), copy all four pairs.
-   LDA zp_seg_v2_r_m8
-   CMP zp_seg_v1_r_m8
-   BNE ysb_v2_proj
-   LDA zp_seg_v2_r_s
-   CMP zp_seg_v1_r_s
-   BNE ysb_v2_proj
-   LDX #7
-ysb_cp:
-   LDA VX1+3,X
-   STA VX2+3,X
-   DEX
-   BPL ysb_cp
-   JMP ys_done
-ysb_v2_proj:
    LDA zp_seg_v2_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v2_r_s
