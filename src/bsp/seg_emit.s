@@ -576,8 +576,6 @@ ms_zero_rec:
 ; to close; wholly off-screen means every column is wall (tfr.s)
    JSR seg_zero_rec_solid
    BCC ms_advance
-   JSR SC_MARK_SOLID
-   JMP ms_advance
 ms_solid:
    JSR SC_MARK_SOLID
 ms_advance:
