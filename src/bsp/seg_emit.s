@@ -390,9 +390,49 @@ ys_done:
 ; ============================================================================
 hgp_fwd:
    PAGE BANK_C                             ; THE emit-cascade page: one page
-                                        ; dominates every arc below; only
-                                        ; the two header reads inside page
-                                        ; around themselves (flat: no-op)
+                                        ; dominates every arc below
+
+; ============================================================================
+; STAGE 5b — SOLID/PORTAL FORK (Eben's five-path split, 2026-08-13).
+; Solids (the majority arc) FALL THROUGH into a dedicated straight-line
+; cascade: two eyeline-gated no-record draws, verticals, mark_solid —
+; no flag ladders, no step arms, no stage-8 dispatch.  Portals branch
+; to the four-class arm cascade below (top/bottom x step-up/step-down),
+; which loses its solid tests in exchange.
+; ============================================================================
+   BIT zp_seg_flags
+   BVC portal_cascade                      ; V clear: two-sided seg
+solid_cascade:
+   ZERO zp_dcl_rec_buf_h                   ; records off for the whole path
+   BIT zp_ss_eskip                         ; eyeline: N = no top edges
+   BMI sc_no_ft
+   LDX #zp_seg_sy1_top_l - VX1
+   JSR draw_clipped_line_s16_h
+sc_no_ft:
+   BIT zp_ss_eskip                         ; eyeline: V = no bottom edges
+   BVS sc_no_fb
+   LDX #zp_seg_sy1_bot_l - VX1
+   JSR draw_clipped_line_s16_h
+sc_no_fb:
+; verticals (stage-7 twin — same probe, straight-lined)
+   LDA zp_v1i_l
+   AND #7
+   TAY
+   LDA vc_bit_mask,Y
+   LDX zp_v1i_b
+   AND VDONE,X
+   BNE sc_vs1
+   JSR vs_fresh1
+sc_vs1:
+   LDA zp_seg_v_bitm
+   LDX zp_seg_v_idx_b
+   AND VDONE,X
+   BNE sc_vs2
+   JSR vs_fresh2
+sc_vs2:
+   JSR span_mark_solid                     ; zp_i clamps persisted (stage 3)
+   JMP s_advance
+portal_cascade:
 
 ; ============================================================================
 ; STAGE 6 — EMIT CASCADE.  Horizontal edges via draw_clipped_line_s16_h: X names
@@ -402,12 +442,11 @@ hgp_fwd:
 ; count byte is reset at arm time.  Both record pages are page-aligned
 ; (buf lo stays 0, zeroed once per frame).
 ;
-;   ft (front ceiling):  solid: emit, no records
-;                        NEEDBT: emit, no records (self-clips if ch <= vz)
-;                        else:   emit iff bch > ch, TOP_RECORDS armed
-;   fb (front floor):    solid: emit, no records
-;                        NEEDBB: emit, no records (self-clips if fh >= vz)
-;                        else:   emit iff bfh < fh, BOT_RECORDS armed
+;   (solids never arrive — the stage-5b fork owns them)
+;   ft (front ceiling):  NEEDBT: emit, no records (self-clips if ch <= vz)
+;                        else:   emit iff STEPUP_T (baked bch > ch), recorded
+;   fb (front floor):    NEEDBB: emit, no records (self-clips if fh >= vz)
+;                        else:   emit iff STEPUP_B (baked bfh < fh), recorded
 ;   bt step (bch line):  portals with NEEDBT, TOP_RECORDS armed
 ;   bb step (bfh line):  portals with NEEDBB, BOT_RECORDS armed
 ;
@@ -422,8 +461,8 @@ hgp_fwd:
 ; reads (and the bfh prefetch machinery) died with it.  The anim
 ; worker re-derives the STEPUP bits per mover state.
    LDA zp_seg_flags
-   AND #$44                                ; SOLID|NEEDBT: front line,
-   BNE ft_no_rec                           ; no records, eyeline-gated
+   AND #$04                                ; NEEDBT: front line, no
+   BNE ft_no_rec                           ; records, eyeline-gated
    LDA zp_seg_flags
    AND #$10                                ; SF_STEPUP_T (baked bch > ch)
    BEQ ft_skip
@@ -451,8 +490,8 @@ ft_skip:
 
 ; --- fb: bottom horizontal (sx1,fb1) -> (sx2,fb2) — ft's mirror ---
    LDA zp_seg_flags
-   AND #$48                                ; SOLID|NEEDBB: front line,
-   BNE fb_no_rec                           ; no records, eyeline-gated
+   AND #$08                                ; NEEDBB: front line, no
+   BNE fb_no_rec                           ; records, eyeline-gated
    LDA zp_seg_flags
    AND #$20                                ; SF_STEPUP_B (baked bfh < fh)
    BEQ fb_skip
@@ -472,9 +511,7 @@ fb_set_line:
    JSR draw_clipped_line_s16_h
 fb_skip:
 
-; --- portal step edges ---
-   BIT zp_seg_flags
-   BVS step_skip                           ; SOLID: no back sector
+; --- portal step edges (solids never reach here — the stage-5b fork) ---
    LDA zp_seg_flags
    AND #$04
    BEQ step_no_top
@@ -548,9 +585,8 @@ vs2_done:
 ;                                         # every column is wall
 ; ============================================================================
 ms_dispatch:
-   BIT zp_seg_flags
-   BVS ms_solid                            ; SOLID (V)
-   LDA TOP_RECORDS                         ; portal: tighten iff any records
+   LDA TOP_RECORDS                         ; (solids took the stage-5b path:
+                                        ; only portals arrive here)                         ; portal: tighten iff any records
    ORA BOT_RECORDS                         ; were captured (consumed in
    BEQ ms_zero_rec                         ; place, bank C guaranteed)
    JSR tighten_from_records
