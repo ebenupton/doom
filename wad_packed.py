@@ -91,8 +91,10 @@ SF_SOLID  = 0x40   # one-sided wall — bit 6 so the HOT test (1,670/
                    # frame-corpus census 2026-08-11) is BIT->V, 5.5 cyc
 SF_NEEDBT = 0x04   # back ceiling < front ceiling
 SF_NEEDBB = 0x08   # back floor > front floor
-SF_NOVT1  = 0x10   # suppress vertical at v1 (BSP-internal split point)
-SF_NOVT2  = 0x20   # suppress vertical at v2 (BSP-internal split point)
+SF_NOVT1  = 0x10   # RETIRED in the packed byte (ships 0 since the
+SF_NOVT2  = 0x20   # descriptors) — bits REUSED as SF_STEPUP_T/B below
+SF_STEPUP_T = 0x10  # back ceiling > front ceiling (recorded ft emits) — baked
+SF_STEPUP_B = 0x20  # back floor < front floor (recorded fb emits) — baked
 SF_APEDGE1 = 0x02  # emit aperture edge at v1 when NOVT1 suppresses the
                    # vertical (swapped with SOLID 2026-08-11: cold path)
 SF_APEDGE2 = 0x01  # emit aperture edge at v2 when NOVT2 suppresses the vertical
@@ -394,6 +396,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             else:
                 if bs[1] < ch: flags |= SF_NEEDBT
                 if bs[0] > fh: flags |= SF_NEEDBB
+                if bs[1] > ch: flags |= SF_STEPUP_T   # baked step-up verdicts:
+                if bs[0] < fh: flags |= SF_STEPUP_B   # the cascade's bch/bfh
+                                                      # header reads die
         # (NOVT/APEDGE flag baking RETIRED 2026-07-24: verticals come
         # from the per-vertex span descriptors — SF_NOVT1/2 and
         # SF_APEDGE1/2 ship as ZERO; the constants remain for old

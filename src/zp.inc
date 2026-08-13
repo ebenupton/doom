@@ -46,9 +46,7 @@ LC_OFF_HI = $FF                   ; [clip]
 ; trap again — the 'separately FREE' note below rotted when the off-arm
 ; restore brought the vectors back, and pyref caught it); $9F/$A0 left
 ; for the visibility hooks.
-zp_seg_bfh = $A1                  ; [bsp]; s8 bfh (header +12) banked for the
-                                  ; fb cascade arm (ft prefetch / ys_withback
-                                  ; ride, 2026-08-13 — was as_x, FREE 08-12)
+; $A1 FREE again 2026-08-13 (zp_seg_bfh died with the baked STEPUP flags)
 vxc_ref_x = $A2                   ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
 vxc_ref_y = $A4                   ; [bsp] s16 count ref (y); TRUE16 2026-08-10
                                   ; ($A6-$A7 FREE — the s24 third bytes died)

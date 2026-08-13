@@ -33,7 +33,8 @@ import os
 
 import doom_wireframe as dw
 from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, SD_FH, SD_CH, SD_BFH,
-                        SD_BCH, SH_FLAGS, SF_SOLID, SF_NEEDBT, SF_NEEDBB)
+                        SD_BCH, SH_FLAGS, SF_SOLID, SF_NEEDBT, SF_NEEDBB,
+                        SF_STEPUP_T, SF_STEPUP_B)
 
 _LAYOUT = dw.packed_layout
 _ROM_MAIN = dw.packed_rom_main          # bytearray — shared with _p_rom_main
@@ -196,12 +197,15 @@ class Mover:
             ffh, fch = dw.fp_sectors[fi][0], dw.fp_sectors[fi][1]
             bfh, bch = dw.fp_sectors[bi][0], dw.fp_sectors[bi][1]
             o = _OFF_SEG_HDR + i * SEG_HDR_SIZE + SH_FLAGS
-            f = _ROM_MAIN[o] & ~(SF_SOLID | SF_NEEDBT | SF_NEEDBB)
+            f = _ROM_MAIN[o] & ~(SF_SOLID | SF_NEEDBT | SF_NEEDBB
+                                 | SF_STEPUP_T | SF_STEPUP_B)
             if bch <= ffh or bfh >= fch:
                 f |= SF_SOLID
             else:
                 if bch < fch: f |= SF_NEEDBT
                 if bfh > ffh: f |= SF_NEEDBB
+                if bch > fch: f |= SF_STEPUP_T
+                if bfh < ffh: f |= SF_STEPUP_B
             _ROM_MAIN[o] = f
             for mem, base in _attached:
                 mem[base['seg_hdr'] + i * SEG_HDR_SIZE + SH_FLAGS] = f

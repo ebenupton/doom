@@ -2832,8 +2832,10 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
     # ── Determine solid / two-sided ──
     solid = bool(flags & SF_SOLID)
-    no_vt1 = bool(flags & SF_NOVT1)
-    no_vt2 = bool(flags & SF_NOVT2)
+    # NOVT moved out of the packed byte ($10/$20 now SF_STEPUP_T/B):
+    # read the python-side list the fp path already uses
+    no_vt1 = bool(_seg_novt_flags[si] & _SF_NOVT1)
+    no_vt2 = bool(_seg_novt_flags[si] & _SF_NOVT2)
     # trigger heights for the vertex-span descriptors (solid alias;
     # dtl_off is assigned later — index the detail stream directly)
     if solid:

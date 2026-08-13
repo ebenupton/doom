@@ -416,25 +416,16 @@ hgp_fwd:
 ; arms, so no re-test is needed at the arm point.
 ; ============================================================================
 ; --- ft: top horizontal (sx1,ft1) -> (sx2,ft2) ---
-   BIT zp_seg_flags
-   BVS ft_no_rec                           ; SOLID (V): emit, no records
+; Three-way on BAKED flags (2026-08-13, Eben's split): SOLID and NEEDBT
+; merge (both draw the front line, no records, eyeline-gated);
+; SF_STEPUP_T is the pack-baked bch>ch verdict — the paged header
+; reads (and the bfh prefetch machinery) died with it.  The anim
+; worker re-derives the STEPUP bits per mover state.
    LDA zp_seg_flags
-   AND #$04
-   BNE ft_no_rec                           ; NEEDBT: emit, no records (the
-                                        ; eyeline test DIED 2026-08-13:
-                                        ; vz >= ch fired 0.06/fr and the
-                                        ; ft line self-clips there — the
-                                        ; python gates dropped in lockstep)
-ft_no_needbt:
-   PAGE BANK_SEG                           ; bch is a header read: page
-   LDY #12                                 ; around it (flat: no-ops)
-   LDA (zp_seg_hdr_p),Y                    ; bfh — prefetched into zp while
-   STA zp_seg_bfh                          ; the bank is held: the fb arm
-   INY                                     ; reads it pageless (Eben's
-   LDA (zp_seg_hdr_p),Y                    ; grab-at-12/13 idea); bch next
-   PAGE_X BANK_C                           ; bch rides A across the page
-   CMP zp_seg_ch                           ; emit iff bch > ch
-   BMI ft_skip
+   AND #$44                                ; SOLID|NEEDBT: front line,
+   BNE ft_no_rec                           ; no records, eyeline-gated
+   LDA zp_seg_flags
+   AND #$10                                ; SF_STEPUP_T (baked bch > ch)
    BEQ ft_skip
 ft_emit:
 ; portal lip: ft is the aperture's new top — arm TOP_RECORDS
@@ -459,18 +450,12 @@ ft_set_line:
 ft_skip:
 
 ; --- fb: bottom horizontal (sx1,fb1) -> (sx2,fb2) — ft's mirror ---
-   BIT zp_seg_flags
-   BVS fb_no_rec                           ; SOLID (V): emit, no records
    LDA zp_seg_flags
-   AND #$08
-   BNE fb_no_rec                           ; NEEDBB: emit, no records
-                                        ; (eyeline test died with ft's)
-fb_no_needbb:
-   LDA zp_seg_bfh                          ; banked: ft's prefetch (stepless)
-                                        ; or ys_withback's ride (NEEDBT set)
-                                        ; — every NEEDBB-clear path covered
-   CMP zp_seg_fh                           ; emit iff bfh < fh
-   BPL fb_skip
+   AND #$48                                ; SOLID|NEEDBB: front line,
+   BNE fb_no_rec                           ; no records, eyeline-gated
+   LDA zp_seg_flags
+   AND #$20                                ; SF_STEPUP_B (baked bfh < fh)
+   BEQ fb_skip
 fb_emit:
    LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
@@ -629,8 +614,6 @@ ys_withback:
    STA zp_seg_btop_dlt
    DEY
    LDA (zp_seg_hdr_p),Y                    ; bfh
-   STA zp_seg_bfh                          ; bank the raw for the fb arm
-                                        ; (its NEEDBB-clear read goes zp)
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt

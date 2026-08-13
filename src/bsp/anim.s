@@ -368,7 +368,7 @@ alw_gbody:
    LDY #0
    LDA (zp_anim_w),Y
 .endif
-   AND #$B3                                ; ~(SOLID|NEEDBT|NEEDBB)
+   AND #$83                                ; ~(SOLID|NEEDBT|NEEDBB|STEPUP_T/B)
    STA alw_f
 ; SOLID iff bch <= fh  or  bfh >= ch
    LDA alw_bch
@@ -380,21 +380,35 @@ alw_gbody:
    SEC
    SBC alw_ch
    BPL alw_solid
-; portal: NEEDBT iff bch < ch ; NEEDBB iff bfh > fh
+; portal, top: NEEDBT iff bch < ch ; STEPUP_T iff bch > ch (baked
+; verdicts — the cascade dispatches on them, 2026-08-13)
    LDA alw_bch
    SEC
    SBC alw_ch
-   BPL alw_nobt
+   BEQ alw_nott                            ; equal: neither
+   BMI alw_bt
+   LDA alw_f
+   ORA #$10                                ; SF_STEPUP_T
+   BNE alw_stt                             ; (always: bit set)
+alw_bt:
    LDA alw_f
    ORA #$04                                ; SF_NEEDBT
+alw_stt:
    STA alw_f
-alw_nobt:
+alw_nott:
+; portal, bottom: NEEDBB iff bfh > fh ; STEPUP_B iff bfh < fh
    LDA alw_fh
    SEC
    SBC alw_bfh
-   BPL alw_nobb
+   BEQ alw_nobb                            ; equal: neither
+   BMI alw_bb
+   LDA alw_f
+   ORA #$20                                ; SF_STEPUP_B
+   BNE alw_stb                             ; (always: bit set)
+alw_bb:
    LDA alw_f
    ORA #$08                                ; SF_NEEDBB
+alw_stb:
    STA alw_f
 alw_nobb:
    JMP alw_wf
