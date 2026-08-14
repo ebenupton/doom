@@ -447,6 +447,17 @@ fp_sectors = [
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+# ── One-way windows (Eben, 2026-08-14): the three courtyard windows
+# (linedefs 30/31 into rooms 15/14, 276 into room 46 across the yard)
+# are SOLID when viewed from the courtyard side (sector 5) and normal
+# portals from the rooms — you see out, never in, and the long-range
+# across-the-courtyard views die.  Implemented as a per-seg back-sector
+# override in this one resolver: front == the walled side => back=None
+# (one-sided), so the packer bakes SF_SOLID, occlusion mark_solids the
+# full columns, and every world (float arbiter, fp, packed, 6502)
+# inherits identically.
+_ONEWAY_WALLED_SIDE = {30: 5, 31: 5, 276: 5}   # linedef -> blind-side sector
+
 def seg_sectors(seg):
     ld = linedefs[seg[3]]
     right_side, left_side = ld[5], ld[6]
@@ -456,6 +467,8 @@ def seg_sectors(seg):
     else:
         front = sidedefs[left_side][5] if left_side != 0xFFFF else sidedefs[right_side][5]
         back  = sidedefs[right_side][5] if left_side != 0xFFFF else None
+    if back is not None and _ONEWAY_WALLED_SIDE.get(seg[3]) == front:
+        return front, None
     return front, back
 
 NF_SUBSECTOR = 0x8000

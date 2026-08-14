@@ -4,7 +4,7 @@
 ; assembly-time truths. doom_wireframe asserts packed_layout against these
 ; values on import — drift fails loud there, never silently here.
 ; ============================================================================
-LAY_N_SEGS   = 649
+LAY_N_SEGS   = 648
 LAY_N_NODES   = 220
 LAY_ROOT   = 219                      ; n_nodes - 1
 LAY_OFF_VERTS   = $0C00
