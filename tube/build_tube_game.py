@@ -159,6 +159,14 @@ def main():
         mem[a+2] = target >> 8
         print(f"  poked {name} @ &{a:04X} -> JMP &{target:04X}")
 
+    # ---- anim tables (flat homes $E500/$E600/$E700, inside the DATA
+    # span): the harness memory ships WITHOUT them (anim6502_check
+    # installs its own copy per run) — before 2026-08-14 the disc shipped
+    # zero CFG/TABL0/SSMASK, anim_init configured every mover to
+    # min=max=0 and tube anims were frozen.
+    import anim_sectors as an
+    an.install_6502_tables(mem, flat=True)
+
     # ---- TWO LOADS (Eben's spec): CODE = engine + NJ/emitters,
     # DATA = level + tables (+anim/sincos). The 2026-07-21 map makes both
     # contiguous; the cache block is runtime-only and never shipped.

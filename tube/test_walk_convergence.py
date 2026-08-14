@@ -131,8 +131,10 @@ class FlatRef:
         self.m[0x70] = 0xEA
         self.entries = [symmap.sym('anim_tick'), symmap.sym('view_setup'),
                         symmap.sym('span_init'), symmap.sym('render_frame')]
-        self.m[symmap.sym('ANIM_ENABLE')] = 1
-        self._call(symmap.sym('anim_init'))
+        import anim_sectors as an           # real CFG/TABL0/SSMASK — the
+        an.install_6502_tables(self.m, flat=True)   # copro image carries them
+        self.m[symmap.sym('ANIM_ENABLE')] = 1       # too, so movers animate
+        self._call(symmap.sym('anim_init'))         # in lockstep on both sides
 
     def _call(self, e):
         mpu = self.r.sc.mpu
