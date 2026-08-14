@@ -210,6 +210,23 @@ class Mover:
             for mem, base in _attached:
                 mem[base['seg_hdr'] + i * SEG_HDR_SIZE + SH_FLAGS] = f
             nbytes += 1
+        # jamb explicit vspans (in-plane door/lift junctions): the MOVING
+        # bound of the entry tracks the mover so the jamb edge grows and
+        # shrinks with it (doom_wireframe ANIM_JAMB; the 6502 mirrors via
+        # the anim worker's VEXPL patch list). Flat homes $DE00/$DE80
+        # match bsp_render_6502's installer.
+        for ix, role in dw.ANIM_JAMB.get(sec, ()):
+            lo, hi, cont = dw.vspan_expl[ix]
+            if role == 'hi':
+                dw.vspan_expl[ix] = (lo, ch_ps, cont)
+            else:
+                dw.vspan_expl[ix] = (fh_ps, hi, cont)
+            for mem, base in _attached:
+                if role == 'hi':
+                    mem[0xDE80 + ix] = ch_ps & 0xFF
+                else:
+                    mem[0xDE00 + ix] = fh_ps & 0xFF
+            nbytes += 1
         STATS['bytes'] += nbytes
 
     # ── scripted access (demo strips) ────────────────────────────────
@@ -326,9 +343,10 @@ def gen_6502_tables(flat=True):
     if flat:
         import bsp_render_6502 as br
         A = dict(ssmask=0xE500, tabl0=0xE600, cfg=0xE700,
-                 hdr=br.ROM_SEG_HDR_BASE)
+                 hdr=br.ROM_SEG_HDR_BASE, vex_lo=0xDE00, vex_hi=0xDE80)
     else:
-        A = dict(ssmask=0x1F00, tabl0=0xBE90, cfg=0xB300, hdr=0x8000)
+        A = dict(ssmask=0x1F00, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
+                 vex_lo=0xA700, vex_hi=0xA780)
     order = sorted(dw.ANIM_SECTORS)
     out = {}
     # SSMASK
@@ -359,12 +377,18 @@ def gen_6502_tables(flat=True):
             fhch_addrs += [H(i, 2) for i in m.back_segs]   # bfh
             fhch_addrs += [H(i, 2) for i in m.front_segs if solid(i)]
         flag_segs = [i for i in m.touch_segs if dw.fp_segs_vwh[i][2] is not None]
-        blk = bytearray([len(fhch_addrs), len(flag_segs)])
+        # jamb VEXPL patch targets: the entry byte holding the MOVING bound
+        # (bank C banked — the worker pages around these writes)
+        vexpl_addrs = [(A['vex_hi'] if role == 'hi' else A['vex_lo']) + ix
+                       for ix, role in dw.ANIM_JAMB.get(sec, ())]
+        blk = bytearray([len(fhch_addrs), len(flag_segs), len(vexpl_addrs)])
         for a in fhch_addrs:
             blk += _st.pack('<H', a)
         for i in flag_segs:
             blk += _st.pack('<HH', A['hdr'] + i * SEG_HDR_SIZE + SH_FLAGS,
                             A['hdr'] + i * SEG_HDR_SIZE + 10)
+        for a in vexpl_addrs:
+            blk += _st.pack('<H', a)
         blocks += blk
     out[A['tabl0']] = bytes(ptrs) + bytes(blocks)
     # (TABL2 / private VWH slot lists stripped 2026-07-10: write-only data)

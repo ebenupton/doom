@@ -109,9 +109,11 @@ def build_banked(flatr):
     # the verticals section runs under C, zero paging on the code path)
     for i, d in enumerate(dw.vspan_desc):
         c[0x2500 + i] = d                # VDESC @ $A500 (moved 2026-07-27)
+    assert len(dw.vspan_expl) <= 0x80, \
+        f'{len(dw.vspan_expl)} explicit vspan entries overrun the 128-slot split'
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
-        c[0x2700 + i] = lo & 0xFF        # VEXPL @ $A700/$A760 (+cont $9600)
-        c[0x2760 + i] = hi & 0xFF
+        c[0x2700 + i] = lo & 0xFF        # VEXPL @ $A700/$A780 (+cont $9600;
+        c[0x2780 + i] = hi & 0xFF        #  HI split widened 2026-08-14)
         c[0x1600 + i] = 1 if cont else 0   # VEXPL_CONT @ $9600 (2026-08-11)
     # unrolled vertical plot columns + tables ($B200-$BFFF, cfg VPLOTC)
     vp = open('engine_vplot_bankc.bin', 'rb').read()

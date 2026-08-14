@@ -440,15 +440,20 @@ RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)
 .if ::BANKED
 VDESC      = $A500                      ; bank C (verticals run under C;
 VEXPL_LO   = $A700                      ; moved from $B200/$B400 2026-07-27
-VEXPL_HI   = $A760                      ; — the vplot unrolled column owns
+VEXPL_HI   = $A780                      ; — the vplot unrolled column owns
 VEXPL_CONT = $9600                      ; moved from $A800 2026-08-11 (the
                                         ; unrolled-steep blob starts $A800;
                                         ; $9600 = clipper headroom, guarded
                                         ; in banked_bsp)
+                                        ; HI split widened $60->$80
+                                        ; 2026-08-14 (mover jamb entries
+                                        ; pushed the count past 96; 128
+                                        ; slots each, HI ends $A7FF flush
+                                        ; against the rasteriser blob)
 .else
 VDESC      = $DC00                      ; flat TABLES block
 VEXPL_LO   = $DE00
-VEXPL_HI   = $DE60
+VEXPL_HI   = $DE80                      ; widened with the banked split
 VEXPL_CONT = $DF00
 .endif
 ; (VDONE moved next to VCACHE_VALID 2026-07-26 — see below; $0600 is

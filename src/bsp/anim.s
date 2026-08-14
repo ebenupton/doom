@@ -302,6 +302,9 @@ anim_l0_worker:
    LDA (zp_anim_p),Y                       ; n_flag
    STA alw_ng
    INY
+   LDA (zp_anim_p),Y                       ; n_vexpl (jamb patch targets)
+   STA alw_nv
+   INY
 ; FHCH byte patches
 alw_floop:
    LDA alw_nf
@@ -430,9 +433,40 @@ alw_wf:
    DEC alw_ng
    JMP alw_flags
 alw_done:
+; jamb VEXPL patches: u16 addrs of the entry byte holding the MOVING
+; bound of an in-plane door/lift jamb span (VEXPL_LO or VEXPL_HI slot;
+; gen_6502_tables). Value = ANIM_VAL, same as the FHCH patches. The
+; targets live in BANK_C banked (VEXPL $A700/$A780) while the list is
+; read from TABL0 under BANK_SEG — so each address is fetched first,
+; then the write runs under a C excursion.
+alw_vexpl:
+   LDA alw_nv
+   BEQ alw_ret
+   LDA (zp_anim_p),Y
+   STA zp_anim_w
+   INY
+   LDA (zp_anim_p),Y
+   STA zp_anim_w+1
+   INY
+   STY alw_y
+   PAGE BANK_C
+.if ::C02
+   LDA ANIM_VAL
+   STA (zp_anim_w)
+.else
+   LDY #0
+   LDA ANIM_VAL
+   STA (zp_anim_w),Y
+.endif
+   PAGE BANK_SEG
+   LDY alw_y
+   DEC alw_nv
+   JMP alw_vexpl
+alw_ret:
    RTS
 alw_nf:  .byte 0
 alw_ng:  .byte 0
+alw_nv:  .byte 0
 alw_y:   .byte 0
 alw_hdr: .word 0
 alw_fh:  .byte 0

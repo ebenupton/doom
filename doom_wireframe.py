@@ -1277,13 +1277,18 @@ print(f"NOVT flags: {_n_novt1} v1 + {_n_novt2} v2 "
 # Mover-adjacent explicit vertices are FORCED to code $01 (their
 # heights are runtime values; $01 reads the live header heights).
 # ============================================================================
-def _vs_faceset(sj):
+def _vs_faceset(sj, ov=None):
+    # ov: optional {sector: (fh, ch)} height override (prescaled) — used by
+    # the mover-jamb pose analysis to evaluate faces at a posed mover.
     sv = fp_segs_vwh[sj]
     fh_, ch_ = sv[3], sv[4]
+    if ov and sv[1] in ov:
+        fh_, ch_ = ov[sv[1]]
     bi_ = sv[2]
-    if bi_ is None or fp_sectors[bi_][1] <= fh_ or fp_sectors[bi_][0] >= ch_:
+    bs_ = None if bi_ is None else (
+        ov[bi_] if (ov and bi_ in ov) else fp_sectors[bi_][:2])
+    if bs_ is None or bs_[1] <= fh_ or bs_[0] >= ch_:
         return [(fh_, ch_)]
-    bs_ = fp_sectors[bi_]
     F = []
     if bs_[1] < ch_: F.append((bs_[1], ch_))
     if bs_[0] > fh_: F.append((fh_, bs_[0]))
@@ -1340,28 +1345,105 @@ for _i, _svwh in enumerate(fp_segs_vwh):
 
 VSPAN_CODES = {1: (('fh', 'ch'),), 2: (('fh', 'bfh'),), 3: (('bch', 'ch'),),
                4: (('bch', 'ch'), ('fh', 'bfh'))}
+
+def _vs_spans_at(v, sjs, ov=None):
+    """Union of per-colinear-run symdiff spans at vertex v, optionally with
+    mover sectors posed via the ov height-override dict."""
+    runs = []
+    for sj in sjs:
+        for r in runs:
+            if _vs_colinear(sj, r[0]): r.append(sj); break
+        else:
+            runs.append([sj])
+    spans = []
+    for r in runs:
+        pos, neg = [], []
+        for sj in r:
+            s0 = fp_segs_vwh[sj][0]
+            oth = s0[1] if s0[0] == v else s0[0]
+            dd = ((fp_vertexes[oth][0] - fp_vertexes[v][0]) * fp_segs_vwh[r[0]][13]
+                  + (fp_vertexes[oth][1] - fp_vertexes[v][1]) * fp_segs_vwh[r[0]][14])
+            (pos if dd >= 0 else neg).extend(_vs_faceset(sj, ov))
+        spans.extend(_vs_symdiff(_vs_union(pos), _vs_union(neg)))
+    return _vs_union(spans)
+
+# ── Mover pose table for the jamb analysis: sec -> (role, pose(t)) where
+# pose(t) returns the {sec: (fh, ch)} override at travel fraction t (0 =
+# pack/rest pose, 1 = far pose) and role names the MOVING bound of a jamb
+# span ('hi' = door ceiling rises into VEXPL_HI, 'lo' = lift floor falls
+# into VEXPL_LO). Rest heights follow the DOOM rules (anim_sectors):
+# door opens to lowest neighbour ceiling - 4, lift descends to lowest
+# neighbour floor.
+_vs_mover_pose = {}
+if ANIM_SECTORS:
+    for _sec, _kind in ANIM_SECTORS.items():
+        _nb = set()
+        for _ld in linedefs:
+            _ss = [sidedefs[_sd][5] for _sd in (_ld[5], _ld[6]) if _sd != 0xFFFF]
+            if _sec in _ss:
+                _nb.update(_x for _x in _ss if _x != _sec)
+        _fh0, _ch0 = fp_sectors[_sec][:2]
+        if _kind == 'ceil':
+            _far = _prescale_height(min(sectors[_n][1] for _n in _nb) - 4)
+            _vs_mover_pose[_sec] = ('hi', _ch0, _far,
+                                    lambda t, s=_sec, a=_fh0, b=_ch0, c=_far:
+                                    {s: (a, b + (c - b) * t)})
+        else:
+            _far = _prescale_height(min(sectors[_n][0] for _n in _nb))
+            _vs_mover_pose[_sec] = ('lo', _fh0, _far,
+                                    lambda t, s=_sec, a=_fh0, b=_ch0, c=_far:
+                                    {s: (a + (c - a) * t, b)})
+
+ANIM_JAMB = {}          # mover sector -> [(vspan_expl index, 'lo'|'hi')]
 vspan_desc = [0] * 512
 vspan_expl = []
 _vs_forced = 0
+_vs_jambs = 0
 for _v, _sjs in _vs_groups.items():
-    _runs = []
-    for _sj in _sjs:
-        for _r in _runs:
-            if _vs_colinear(_sj, _r[0]): _r.append(_sj); break
-        else:
-            _runs.append([_sj])
-    _spans = []
-    for _r in _runs:
-        _pos, _neg = [], []
-        for _sj in _r:
-            _s0 = fp_segs_vwh[_sj][0]
-            _oth = _s0[1] if _s0[0] == _v else _s0[0]
-            _dd = ((fp_vertexes[_oth][0] - fp_vertexes[_v][0]) * fp_segs_vwh[_r[0]][13]
-                   + (fp_vertexes[_oth][1] - fp_vertexes[_v][1]) * fp_segs_vwh[_r[0]][14])
-            (_pos if _dd >= 0 else _neg).extend(_vs_faceset(_sj))
-        _spans.extend(_vs_symdiff(_vs_union(_pos), _vs_union(_neg)))
-    _spans = _vs_union(_spans)
+    _spans = _vs_spans_at(_v, _sjs)
     if not _spans:
+        # ── Mover jamb (2026-08-14): an edge set EMPTY at pack pose can
+        # GROW an edge when an adjacent mover moves — the in-plane
+        # door/lift jamb (flat wall while the exit door is shut; a
+        # floor -> door-underside edge once it opens). Re-evaluate the
+        # span set at the mover's far pose; if an edge appears, emit an
+        # explicit entry whose MOVING bound is patched at runtime (python
+        # Mover._apply / the 6502 anim worker's VEXPL list) while the
+        # static bound is baked. Baked value = rest pose, so the entry
+        # starts empty and self-annuls until the mover moves.
+        _hits = []
+        for _msec, (_role, _rest, _far, _pose) in _vs_mover_pose.items():
+            if not any(_msec in (fp_segs_vwh[_t][1], fp_segs_vwh[_t][2])
+                       for _t in _sjs):
+                continue
+            _sf = _vs_spans_at(_v, _sjs, _pose(1))
+            if _sf:
+                _hits.append((_msec, _role, _rest, _far, _pose, _sf))
+        if not _hits:
+            continue
+        assert len(_hits) == 1, f'jamb vertex {_v}: multiple movers {_hits}'
+        _msec, _role, _rest, _far, _pose, _sf = _hits[0]
+        assert len(_sf) == 1, f'jamb vertex {_v}: multi-span {_sf}'
+        _jlo, _jhi = _sf[0]
+        # the far-pose span must carry the mover height on the moving
+        # bound; the mid-pose span must interpolate the SAME static bound
+        # (this is what licenses a single runtime-patched byte)
+        _mid = _rest + (_far - _rest) * 0.5
+        _sm = _vs_spans_at(_v, _sjs, _pose(0.5))
+        if _role == 'hi':
+            assert _jhi == _far, (_v, _sf)
+            assert _sm == ([(_jlo, _mid)] if _mid > _jlo else []), (_v, _sm)
+            _entry = (_jlo, _rest)
+        else:
+            assert _jlo == _far, (_v, _sf)
+            assert _sm == ([(_mid, _jhi)] if _jhi > _mid else []), (_v, _sm)
+            _entry = (_rest, _jhi)
+        _ix = len(vspan_expl)
+        assert _ix < 0x80
+        vspan_expl.append((_entry[0], _entry[1], False))
+        vspan_desc[_v] = 0x80 | _ix
+        ANIM_JAMB.setdefault(_msec, []).append((_ix, _role))
+        _vs_jambs += 1
         continue
     def _code_of(span):
         for _cn, _pairs in ((1, ('fh', 'ch')), (2, ('fh', 'bfh')), (3, ('bch', 'ch'))):
@@ -1400,7 +1482,8 @@ for _v, _sjs in _vs_groups.items():
             vspan_expl.append((_sp[0], _sp[1], _k + 1 < len(_spans)))
         vspan_desc[_v] = 0x80 | _ix
 print(f"VSPANS: {sum(1 for d in vspan_desc if d)} vertices, "
-      f"{len(vspan_expl)} explicit entries, {_vs_forced} mover-forced")
+      f"{len(vspan_expl)} explicit entries, {_vs_forced} mover-forced, "
+      f"{_vs_jambs} mover-jamb")
 # VDONE wipe bound (walk.s wipes 60 bitmap bytes = 480 ids — the old
 # 48-byte/ids<384 dependence died when the wipe widened): every vertex
 # with a descriptor must sit inside the wiped range.
