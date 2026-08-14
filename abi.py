@@ -50,14 +50,14 @@ CPM_PSIH = 0xA880  # ... psi hi (last plane: memo ends at CPM_BASE+$300)
 COLIDX_BASE = 0xB4A4  # collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists
 COLIDX_BASE_FLAT = 0x7600
 COLSEG_BASE = 0xB8C0  # collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
-COLSEG_BASE_FLAT = 0x77D0
+COLSEG_BASE_FLAT = 0x77E0
 SS_VZ_BASE = 0x8C00  # per-subsector prescale(floor+41) (s8)
 SS_VZ_BASE_FLAT = 0xE750
 SS_INFO_BASE = 0x8CE0  # per-subsector mover info: $FF none, else mover idx (b7 = ceil mover)
 SS_INFO_BASE_FLAT = 0xE830
-MV_MINPASS = 0xBEF0  # per-mover min passable door pos (fh + 56, prescaled)
+MV_MINPASS = 0xBFC0  # per-mover min passable door pos (fh + 56, prescaled)
 MV_MINPASS_FLAT = 0xE910
-USETAB_BASE = 0xBEF8  # use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action)
+USETAB_BASE = 0xBE00  # use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 USETAB_BASE_FLAT = 0xE918
 SCREEN0 = 0x5800  # framebuffer 0 (flat: harness FB $EA00-$FDFF)
 SCREEN0_FLAT = 0xEA00

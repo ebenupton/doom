@@ -105,22 +105,32 @@ def build():
                 seen.add(t)
                 work.append(t)
 
-    # collision line set: one-sided fronting reachable + blocking-flag
+    # collision line set: one-sided fronting reachable + blocking-flag.
+    # The bbox cull margin is 64 (NOT the 16 radius): the walk rect is
+    # only the blockmap indexing domain — the player legally stands up
+    # to a box-radius OUTSIDE it against perimeter walls that sit just
+    # beyond it (ld 127 west wall x=-768 / ld 332 south y=-4864 were
+    # culled by the 16-margin and became walk-through holes once the
+    # old hard clamp died — Eben's 2026-08-14 void clips). A REACHABLE
+    # blocking line outside even the wide margin is a build error.
     raw = []
-    for ld in dw.linedefs:
+    for li, ld in enumerate(dw.linedefs):
         v1, v2, flags, special, tag, r, l = ld
         x1, y1 = dw.vertexes[v1][:2]
         x2, y2 = dw.vertexes[v2][:2]
-        if (max(x1, x2) < CX + RAWX_MIN - RADIUS or min(x1, x2) > CX + RAWX_MAX + RADIUS or
-                max(y1, y2) < CY + RAWY_MIN - RADIUS or min(y1, y2) > CY + RAWY_MAX + RADIUS):
-            continue
         sr = dw.sidedefs[r][5] if r != 0xFFFF else None
         sl = dw.sidedefs[l][5] if l != 0xFFFF else None
-        if sl is None or sr is None:
-            if (sr if sl is None else sl) in seen:
-                raw.append(((x1 - CX, y1 - CY), (x2 - CX, y2 - CY)))
-        elif (flags & 1) and (sr in seen or sl in seen):
-            raw.append(((x1 - CX, y1 - CY), (x2 - CX, y2 - CY)))
+        blocking = ((sl is None or sr is None)
+                    and (sr if sl is None else sl) in seen) or \
+                   ((sl is not None and sr is not None) and (flags & 1)
+                    and (sr in seen or sl in seen))
+        if not blocking:
+            continue
+        if (max(x1, x2) < CX + RAWX_MIN - 64 or min(x1, x2) > CX + RAWX_MAX + 64 or
+                max(y1, y2) < CY + RAWY_MIN - 64 or min(y1, y2) > CY + RAWY_MAX + 64):
+            assert False, \
+                f'reachable blocking line {li} outside the census margin'
+        raw.append(((x1 - CX, y1 - CY), (x2 - CX, y2 - CY)))
 
     # colinear-merge chains (same idiom as the render seg merge)
     segs = raw
@@ -278,15 +288,21 @@ def blobs(flat=True):
     # only drivers move the player). Banked homes = bank WALK free
     # windows (audited 2026-08-14), same bank as the node SoA so the
     # whole movement test runs under one paging context.
+    # COLSEG stride is 9 since the P_SlideMove arc (2026-08-14): +1 baked
+    # wall-angle byte (direction quantized to the 64-angle space) for the
+    # slide projection. Banked: USETAB lives in BANK A ($BE00 — pmove_use
+    # pages SEG for its list) so the widened COLSEG fits bank B.
     if flat:
-        A = dict(idx=0x7600, colseg=0x77D0, ss_vz=0xE750, ss_info=0xE830,
+        A = dict(idx=0x7600, colseg=0x77E0, ss_vz=0xE750, ss_info=0xE830,
                  minpass=0xE910, usetab=0xE918)
     else:
         A = dict(idx=0xB4A4, colseg=0xB8C0, ss_vz=0x8C00, ss_info=0x8CE0,
-                 minpass=0xBEF0, usetab=0xBEF8)
+                 minpass=0xBFC0, usetab=0xBE00)
+    import math
     seg_blob = bytearray()
     for x1, y1, dx, dy in m['colsegs']:
-        seg_blob += struct.pack('<hhhh', x1, y1, dx, dy)
+        ang = int(round(math.atan2(dy, dx) * 32 / math.pi)) & 63
+        seg_blob += struct.pack('<hhhhB', x1, y1, dx, dy, ang)
     list_base = A['idx'] + 108
     idx_blob = bytearray()
     for off, cnt in m['colidx']:
@@ -304,16 +320,16 @@ def blobs(flat=True):
     # home-range asserts (free-space windows audited 2026-08-14)
     if flat:
         assert A['idx'] + len(idx_blob) <= A['colseg']
-        assert A['colseg'] + len(seg_blob) <= 0x7E00, \
-            'collision blob reaches the flat PMOVE region at $7E00'
+        assert A['colseg'] + len(seg_blob) <= 0x7F00, \
+            'collision blob reaches the flat PMOVE region at $7F00'
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
         assert 0xE830 + len(m['ss_info']) <= 0xE910
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
     else:
-        assert 0xB8C0 + len(seg_blob) <= 0xBEF0, 'COLSEG overruns MV_MINPASS'
+        assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
         assert 0xB4A4 + len(idx_blob) <= 0xB700, 'COLIDX blob reaches DIR'
         assert len(m['ss_vz']) <= 0xE0 and len(m['ss_info']) <= 0xE0
-        assert A['usetab'] + len(ub) <= 0xC000, 'USETAB overruns bank B'
+        assert A['usetab'] + len(ub) <= 0xBE8F, 'USETAB (bank A) reaches TABL0'
     out['addrs'] = A
     return out
 

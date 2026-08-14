@@ -170,7 +170,7 @@ def main():
     # ---- TWO LOADS (Eben's spec): CODE = engine + NJ/emitters,
     # DATA = level + tables (+anim/sincos). The 2026-07-21 map makes both
     # contiguous; the cache block is runtime-only and never shipped.
-    CODE_LO, CODE_HI = 0x1A00, 0x8400   # sqr rides at $1A00 (f34f835 map);
+    CODE_LO, CODE_HI = 0x1A00, 0x8600   # sqr rides at $1A00 (f34f835 map);
                                         # CLIPF ends ~$6D65, VPLOTF $6E00,
                                         # emit at $7500, collision tables
                                         # $7600-$7DF2, engine PMOVE $7E00,

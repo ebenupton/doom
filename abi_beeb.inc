@@ -49,7 +49,7 @@ COLIDX_BASE = &B4A4                     \ collision blockmap: 36 x (u16 list add
 COLSEG_BASE = &B8C0                     \ collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 SS_VZ_BASE = &8C00                      \ per-subsector prescale(floor+41) (s8)
 SS_INFO_BASE = &8CE0                    \ per-subsector mover info: $FF none, else mover idx (b7 = ceil mover)
-MV_MINPASS = &BEF0                      \ per-mover min passable door pos (fh + 56, prescaled)
-USETAB_BASE = &BEF8                     \ use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action)
+MV_MINPASS = &BFC0                      \ per-mover min passable door pos (fh + 56, prescaled)
+USETAB_BASE = &BE00                     \ use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 SCREEN0 = &5800                         \ framebuffer 0 (flat: harness FB $EA00-$FDFF)
 SCREEN1 = &6C00                         \ framebuffer 1 (flat: single buffer)

@@ -31,6 +31,10 @@ SEG_PMOVE
 ::pm_uy:    .res 2
 pm_exx:     .res 2                      ; crossing-test endpoint (staged
 pm_exy:     .res 2                      ;  by pmove_use)
+::pm_blkang: .res 1                     ; wall angle of the last box hit
+                                        ;  ($FF = blocked by sector rules)
+::pm_sdx:   .res 2                      ; slide vector out (s16 8.8)
+::pm_sdy:   .res 2
 
 ; --- internal scratch ---
 pm_bx0:     .res 2                      ; candidate box bounds (raw s16);
@@ -66,6 +70,8 @@ PM_XBIAS    = 1936                      ; -RAWX_MIN (walk clamp rect)
 .scope
 ::pmove_try:
    PAGE BANK_WALK
+   LDA #$FF
+   STA pm_blkang                        ; no wall hit yet
 ; box bounds: pm_bx0/by0 = raw-16, pm_bx1/by1 = raw+16 (X = 0 x / 2 y;
 ; the raws are consecutive zp $90-$93)
    LDX #2
@@ -103,6 +109,8 @@ pt_bounds:
    JSR pm_column_scan
    BCS pt_blocked
 pt_cols_done:
+::pmove_zonly:                          ; entry: z path only (mv_reval)
+   PAGE BANK_WALK
 ; destination sector rules
    JSR pm_find_ss                       ; X = subsector id
    LDA SS_INFO_BASE,X
@@ -201,7 +209,9 @@ pcs_loop:
    LDY pm_n
    DEY
    LDA (zp_pm_p),Y                      ; seg index
-; seg record addr = COLSEG_BASE + idx*8 -> zp_anim_p (frame-scoped reuse)
+; seg record addr = COLSEG_BASE + idx*9 -> zp_anim_p (frame-scoped
+; reuse; stride 9 since the slide arc: +1 wall-angle byte)
+   STA pm_idx
    STA zp_anim_p
    LDA #0
    STA zp_anim_p+1
@@ -212,6 +222,12 @@ pcs_loop:
    ASL zp_anim_p
    ROL zp_anim_p+1
    LDA zp_anim_p
+   CLC
+   ADC pm_idx                           ; *8 + 1 = *9
+   STA zp_anim_p
+   BCC :+
+   INC zp_anim_p+1
+:  LDA zp_anim_p
    CLC
    ADC #<COLSEG_BASE
    STA zp_anim_p
@@ -228,6 +244,7 @@ pcs_rts:
    RTS
 pm_col: .res 1
 pm_n:   .res 1
+pm_idx: .res 1
 .endscope
 
 ; ============================================================================
@@ -244,132 +261,75 @@ bvs_ld:
    STA pm_lx,Y
    DEY
    BPL bvs_ld
-; near stubs (branch-range islands; the diagonal block pushes the real
-; verdicts out of reach)
-   JMP bvs_start
-bvs_missx0:
-   JMP bvs_miss
-bvs_start:
-; line bbox: lx0/lx1 = x1, x1+dx ordered by dx sign (into t1m/t2m scratch)
-   LDA pm_lx
+; bbox phase, one loop per axis (X = 0 x / 2 y): line extent e0/e1 =
+; origin, origin+delta ordered by delta sign; strict-overlap reject
+; mirrors colmap._box_hits_seg. pm_lx+X = origin pair, pm_ldx+X = delta.
+   LDX #0
+bvs_axis:
+   LDA pm_lx,X
    CLC
-   ADC pm_ldx
-   STA pm_t1m                           ; x1+dx
-   LDA pm_lx+1
-   ADC pm_ldx+1
+   ADC pm_ldx,X
+   STA pm_t1m                           ; origin+delta lo
+   LDA pm_lx+1,X
+   ADC pm_ldx+1,X
    STA pm_t1m+1
-   LDA pm_ldx+1
-   BMI bvs_xneg
-; lx0 = x1, lx1 = x1+dx
-;   reject if bx1 <= lx0: need bx1 - x1 > 0
-   LDA pm_bx1
+   LDA pm_ldx+1,X
+   BMI bvs_neg
+; e0 = origin, e1 = origin+delta
+;   need box_hi - e0 > 0
+   LDA pm_bx1,X
    SEC
-   SBC pm_lx
-   TAX
-   LDA pm_bx1+1
-   SBC pm_lx+1
-   BMI bvs_missx0
-   BNE bvs_xp2
-   TXA
-   BEQ bvs_missx0
-bvs_xp2:
-;   reject if bx0 >= lx1: need x1+dx - bx0 > 0
+   SBC pm_lx,X
+   TAY
+   LDA pm_bx1+1,X
+   SBC pm_lx+1,X
+   BMI bvs_missj2
+   BNE bvs_p2
+   TYA
+   BEQ bvs_missj2
+bvs_p2:
+;   need e1 - box_lo > 0
    LDA pm_t1m
    SEC
-   SBC pm_bx0
-   TAX
+   SBC pm_bx0,X
+   TAY
    LDA pm_t1m+1
-   SBC pm_bx0+1
-   BMI bvs_missx
-   BNE bvs_xok
-   TXA
-   BEQ bvs_missx
-   JMP bvs_xok
-bvs_missx:
+   SBC pm_bx0+1,X
+   BMI bvs_missj2
+   BNE bvs_next
+   TYA
+   BEQ bvs_missj2
+   JMP bvs_next
+bvs_missj2:
    JMP bvs_miss
-bvs_xneg:
-; lx0 = x1+dx, lx1 = x1
-   LDA pm_bx1
+bvs_neg:
+; e0 = origin+delta, e1 = origin
+   LDA pm_bx1,X
    SEC
    SBC pm_t1m
-   TAX
-   LDA pm_bx1+1
+   TAY
+   LDA pm_bx1+1,X
    SBC pm_t1m+1
-   BMI bvs_missx
-   BNE bvs_xn2
-   TXA
-   BEQ bvs_missx
-bvs_xn2:
-   LDA pm_lx
+   BMI bvs_missj2
+   BNE bvs_n2
+   TYA
+   BEQ bvs_missj2
+bvs_n2:
+   LDA pm_lx,X
    SEC
-   SBC pm_bx0
-   TAX
-   LDA pm_lx+1
-   SBC pm_bx0+1
-   BMI bvs_missx
-   BNE bvs_xok
-   TXA
-   BEQ bvs_missx
-bvs_xok:
-; y axis, same shape
-   LDA pm_ly
-   CLC
-   ADC pm_ldy
-   STA pm_t1m
-   LDA pm_ly+1
-   ADC pm_ldy+1
-   STA pm_t1m+1
-   LDA pm_ldy+1
-   BMI bvs_yneg
-   LDA pm_by1
-   SEC
-   SBC pm_ly
-   TAX
-   LDA pm_by1+1
-   SBC pm_ly+1
-   BMI bvs_missj
-   BNE bvs_y2
-   TXA
-   BEQ bvs_missj
-bvs_y2:
-   LDA pm_t1m
-   SEC
-   SBC pm_by0
-   TAX
-   LDA pm_t1m+1
-   SBC pm_by0+1
-   BMI bvs_missj
-   BNE bvs_yok
-   TXA
-   BEQ bvs_missj
-   JMP bvs_yok
-bvs_missj:
-   JMP bvs_miss
-bvs_hitj:
-   JMP bvs_hit
-bvs_yneg:
-   LDA pm_by1
-   SEC
-   SBC pm_t1m
-   TAX
-   LDA pm_by1+1
-   SBC pm_t1m+1
-   BMI bvs_missj
-   BNE bvs_yn2
-   TXA
-   BEQ bvs_missj
-bvs_yn2:
-   LDA pm_ly
-   SEC
-   SBC pm_by0
-   TAX
-   LDA pm_ly+1
-   SBC pm_by0+1
-   BMI bvs_missj
-   BNE bvs_yok
-   TXA
-   BEQ bvs_missj
-bvs_yok:
+   SBC pm_bx0,X
+   TAY
+   LDA pm_lx+1,X
+   SBC pm_bx0+1,X
+   BMI bvs_missj2
+   BNE bvs_next
+   TYA
+   BEQ bvs_missj2
+bvs_next:
+   INX
+   INX
+   CPX #4
+   BCC bvs_axis
 ; bbox overlaps. Axis-aligned line: that IS the test.
    LDA pm_ldx
    ORA pm_ldx+1
@@ -377,6 +337,10 @@ bvs_yok:
    LDA pm_ldy
    ORA pm_ldy+1
    BEQ bvs_hitj
+   BNE bvs_diag
+bvs_hitj:
+   JMP bvs_hit
+bvs_diag:
 ; diagonal: quadrant corner pair must straddle the line.
 ; same-sign slope (dx>0)==(dy>0): corners (bx0,by1) and (bx1,by0);
 ; else (bx0,by0) and (bx1,by1).
@@ -429,6 +393,9 @@ bvs_miss:
    CLC
    RTS
 bvs_hit:
+   LDY #8
+   LDA (zp_anim_p),Y                    ; baked wall angle (64-space) —
+   STA pm_blkang                        ; P_HitSlideLine's line angle
    SEC
    RTS
 .endscope
@@ -623,16 +590,65 @@ fs_s0:
    JMP fs_loop
 fs_s1:
    LDX zp_node_ch_l
-   LDA NODE_TYPE,X
-   AND #$40                             ; NF_LLEAF
-   PHP
    LDA NODE_CLLO,X
    STA zp_node_ch_l
-   PLP
+   LDA NODE_TYPE,X                      ; X intact: flags after the store
+   AND #$40                             ; NF_LLEAF
    BNE fs_leaf
    JMP fs_loop
 fs_leaf:
    LDX zp_node_ch_l
+   RTS
+.endscope
+
+SEG_HIGH
+; ============================================================================
+; pmove_apply / pmove_unapply — add/subtract the slide vector (pm_sdx/y,
+; s16 8.8) to the DRIVER's 24-bit position (DV_PXF.. — fixed abi
+; addresses). Engine-side so the driver zone only pays the JSRs.
+; ============================================================================
+.scope
+::pmove_unapply:                        ; negate the vector, fall into apply
+   LDX #2
+pun_neg:
+   SEC
+   LDA #0
+   SBC pm_sdx,X
+   STA pm_sdx,X
+   LDA #0
+   SBC pm_sdx+1,X
+   STA pm_sdx+1,X
+   DEX
+   DEX
+   BPL pun_neg
+::pmove_apply:
+   LDX #0                               ; DV offset (stride 3)
+   LDY #0                               ; sd offset (stride 2)
+pa_axis:
+   CLC
+   LDA DV_PXF,X
+   ADC pm_sdx,Y
+   STA DV_PXF,X
+   LDA DV_PXF+1,X
+   ADC pm_sdx+1,Y
+   STA DV_PXF+1,X
+   LDA pm_sdx+1,Y
+   BPL pa_pos
+   LDA DV_PXF+2,X
+   ADC #$FF
+   JMP pa_st
+pa_pos:
+   LDA DV_PXF+2,X
+   ADC #0
+pa_st:
+   STA DV_PXF+2,X
+   INY
+   INY
+   INX
+   INX
+   INX
+   CPX #6
+   BCC pa_axis
    RTS
 .endscope
 
@@ -665,25 +681,21 @@ mc_ld:
    DEY
    BPL mc_ld
 ; side(old) vs record line
-   LDA pm_oldx
-   STA pm_ax
-   LDA pm_oldx+1
-   STA pm_ax+1
-   LDA pm_oldy
-   STA pm_ay
-   LDA pm_oldy+1
-   STA pm_ay+1
+   LDX #3
+mc_c0:
+   LDA pm_oldx,X
+   STA pm_ax,X
+   DEX
+   BPL mc_c0
    JSR pm_corner_side
    STA pm_sfirst
 ; side(endpoint) vs record line
-   LDA pm_exx
-   STA pm_ax
-   LDA pm_exx+1
-   STA pm_ax+1
-   LDA pm_exy
-   STA pm_ay
-   LDA pm_exy+1
-   STA pm_ay+1
+   LDX #3
+mc_c1:
+   LDA pm_exx,X
+   STA pm_ax,X
+   DEX
+   BPL mc_c1
    JSR pm_corner_side
    EOR pm_sfirst
    BNE mc_go                            ; sides differ: keep testing
@@ -700,54 +712,44 @@ mc_stash:
    DEX
    BPL mc_stash
 ; the move as the "line": origin old, delta cand-old
-   LDA pm_oldx
-   STA pm_lx
-   LDA pm_oldx+1
-   STA pm_lx+1
-   LDA pm_oldy
-   STA pm_ly
-   LDA pm_oldy+1
-   STA pm_ly+1
-   LDA pm_exx
+   LDX #2
+mc_ml:
+   LDA pm_oldx,X
+   STA pm_lx,X
+   LDA pm_oldx+1,X
+   STA pm_lx+1,X
+   LDA pm_exx,X
    SEC
-   SBC pm_oldx
-   STA pm_ldx
-   LDA pm_exx+1
-   SBC pm_oldx+1
-   STA pm_ldx+1
-   LDA pm_exy
-   SEC
-   SBC pm_oldy
-   STA pm_ldy
-   LDA pm_exy+1
-   SBC pm_oldy+1
-   STA pm_ldy+1
+   SBC pm_oldx,X
+   STA pm_ldx,X
+   LDA pm_exx+1,X
+   SBC pm_oldx+1,X
+   STA pm_ldx+1,X
+   DEX
+   DEX
+   BPL mc_ml
 ; record endpoint 1
-   LDA pm_rx
-   STA pm_ax
-   LDA pm_rx+1
-   STA pm_ax+1
-   LDA pm_ry
-   STA pm_ay
-   LDA pm_ry+1
-   STA pm_ay+1
+   LDX #3
+mc_r1:
+   LDA pm_rx,X
+   STA pm_ax,X
+   DEX
+   BPL mc_r1
    JSR pm_corner_side
    STA pm_sfirst
 ; record endpoint 2 = endpoint 1 + record delta
-   LDA pm_rx
+   LDX #2
+mc_r2:
+   LDA pm_rx,X
    CLC
-   ADC pm_rdx
-   STA pm_ax
-   LDA pm_rx+1
-   ADC pm_rdx+1
-   STA pm_ax+1
-   LDA pm_ry
-   CLC
-   ADC pm_rdy
-   STA pm_ay
-   LDA pm_ry+1
-   ADC pm_rdy+1
-   STA pm_ay+1
+   ADC pm_rdx,X
+   STA pm_ax,X
+   LDA pm_rx+1,X
+   ADC pm_rdx+1,X
+   STA pm_ax+1,X
+   DEX
+   DEX
+   BPL mc_r2
    JSR pm_corner_side
    EOR pm_sfirst
    BEQ mc_no
@@ -770,28 +772,24 @@ mc_no:
 ; ============================================================================
 .scope
 ::pmove_use:
-   PAGE BANK_WALK
+   PAGE BANK_SEG                        ; USETAB lives in BANK A
 ; move origin = current position; endpoint = position + trace delta.
 ; pm_move_crosses_line reads origin from pm_oldx/y and endpoint from
 ; pm_exx/y.
-   LDA zp_br_pxraw_l
-   STA pm_oldx
+   LDX #2
+pu_st:
+   LDA zp_br_pxraw_l,X
+   STA pm_oldx,X
    CLC
-   ADC pm_ux
-   STA pm_exx
-   LDA zp_br_pxraw_h
-   STA pm_oldx+1
-   ADC pm_ux+1
-   STA pm_exx+1
-   LDA zp_br_pyraw_l
-   STA pm_oldy
-   CLC
-   ADC pm_uy
-   STA pm_exy
-   LDA zp_br_pyraw_h
-   STA pm_oldy+1
-   ADC pm_uy+1
-   STA pm_exy+1
+   ADC pm_ux,X
+   STA pm_exx,X
+   LDA zp_br_pxraw_h,X
+   STA pm_oldx+1,X
+   ADC pm_ux+1,X
+   STA pm_exx+1,X
+   DEX
+   DEX
+   BPL pu_st
    LDA USETAB_BASE                      ; n_use
    STA pm_i
    BEQ pu_none
@@ -836,4 +834,217 @@ pu_moving:
 pu_exit:
    RTS
 pm_i: .res 1
+.endscope
+
+; ============================================================================
+; pm_use_prefilter — C=1 iff the use-trace bbox (pm_oldx/y..pm_exx/y)
+; overlaps the 9-byte line record's bbox at (zp_pm_p). Cheap s16
+; compares only; conservative (never rejects a true crossing).
+; ============================================================================
+; ============================================================================
+; pmove_slide — P_HitSlideLine (DOOM p_map.c) on the 64-angle tables.
+;   in : A = move direction (0..63); pm_blkang = the blocking wall's
+;        baked angle ($FF = sector-rule block: no slide, C=0)
+;   out: C=1, pm_sdx/pm_sdy = slide delta (s16 8.8) =
+;        step_tab[wall] * cos(delta), SIGNED cosine — delta > 90 slides
+;        backward along the line exactly like DOOM's negative newlen.
+;        C=0: no usable slide (sector block or cos == 0).
+; Pages BANK_SEG (step + sincos tables live in bank A). FLAT NOTE: the
+; $BA00/$BC00 literals are the BANKED homes; the flat/tube build links
+; this code but nothing calls it yet (tube driver movement parity is a
+; recorded follow-up — give the parasite its own table homes then).
+; ============================================================================
+.scope
+::pmove_slide:
+   LDY pm_blkang
+   CPY #$FF
+   BNE ps_go
+   JMP ps_none
+ps_go:
+   PAGE_X BANK_SEG                      ; X-clobber page: A (move dir) rides
+   SEC
+   SBC pm_blkang                        ; delta = move - wall (mod 64)
+   AND #63
+   STA pm_cnt                           ; delta in table-index units
+; cos(delta*4 BAM) from the driver sincos table (64 x 8 @ $BA00):
+; +3 cmag (count-native 0..32), +4 cneg, +5 cone
+   ASL A
+   ASL A
+   ASL A                                ; delta*8 -> table offset (fits u8:
+   TAY                                  ; delta<32 here? no: delta 0..63 *8
+                                        ; overflows — use the hi trick below
+   LDA pm_cnt
+   AND #$20                             ; upper half of the table?
+   BEQ ps_lo_half
+   LDA pm_cnt
+   AND #$1F
+   ASL A
+   ASL A
+   ASL A
+   TAY
+   LDA $BB00+3,Y                        ; second table page
+   STA pm_ma
+   LDA $BB00+4,Y
+   STA pm_mb
+   LDA $BB00+5,Y
+   JMP ps_have
+ps_lo_half:
+   LDA $BA00+3,Y                        ; cmag
+   STA pm_ma
+   LDA $BA00+4,Y                        ; cneg
+   STA pm_mb
+   LDA $BA00+5,Y                        ; cone
+ps_have:
+; A = cone: |cos| == 1 -> full step_tab entry; else scale by cmag/32
+   STA pm_cnt
+   LDA pm_ma
+   BNE ps_scaled
+   LDA pm_cnt
+   BNE ps_scaled                        ; cone set (mag encoded as 1.0)
+   CLC                                  ; cos == 0: no slide component
+   RTS
+ps_scaled:
+; fetch step_tab[wall] (4 bytes @ $BC00 + wall*4)
+   LDA pm_blkang
+   ASL A
+   ASL A
+   TAY
+   LDA $BC00,Y
+   STA pm_t1m
+   LDA $BC00+1,Y
+   STA pm_t1m+1
+   LDA $BC00+2,Y
+   STA pm_t2m
+   LDA $BC00+3,Y
+   STA pm_t2m+1
+   LDA pm_cnt                           ; cone: skip the scale
+   BNE ps_copy
+   LDA pm_t1m
+   LDX pm_t1m+1
+   JSR ps_scale16                       ; (A:X) * cmag / 32 -> A:X
+   STA pm_sdx
+   STX pm_sdx+1
+   LDA pm_t2m
+   LDX pm_t2m+1
+   JSR ps_scale16
+   STA pm_sdy
+   STX pm_sdy+1
+   JMP ps_sign
+ps_copy:
+   LDA pm_t1m
+   STA pm_sdx
+   LDA pm_t1m+1
+   STA pm_sdx+1
+   LDA pm_t2m
+   STA pm_sdy
+   LDA pm_t2m+1
+   STA pm_sdy+1
+ps_sign:
+   LDA pm_mb                            ; cneg: negate both components
+   BEQ ps_pos
+   SEC
+   LDA #0
+   SBC pm_sdx
+   STA pm_sdx
+   LDA #0
+   SBC pm_sdx+1
+   STA pm_sdx+1
+   SEC
+   LDA #0
+   SBC pm_sdy
+   STA pm_sdy
+   LDA #0
+   SBC pm_sdy+1
+   STA pm_sdy+1
+ps_pos:
+   SEC
+   RTS
+ps_none:
+   CLC
+   RTS
+; (A:X lo:hi s16) * cmag(pm_ma, 1..31) >> 5, signed via sign-magnitude
+ps_scale16:
+   STA pm_ax
+   STX pm_ax+1
+   LDA #0
+   STA pm_ay                            ; sign flag
+   LDA pm_ax+1
+   BPL ps_s_pos
+   LDA #1
+   STA pm_ay
+   SEC
+   LDA #0
+   SBC pm_ax
+   STA pm_ax
+   LDA #0
+   SBC pm_ax+1
+   STA pm_ax+1
+ps_s_pos:
+; u16 * u5 -> u21, keep >>5: shift-add over the 5 mag bits
+   LDA #0
+   STA pm_t1s
+   STA pm_lx
+   STA pm_lx+1
+   STA pm_ly                            ; acc 24-bit: lx lo/hi, ly top
+   LDA pm_ma
+   STA pm_sfirst                        ; mag bits ride here
+   LDX #5
+ps_s_loop:
+   LSR pm_sfirst
+   BCC ps_s_noadd
+   CLC
+   LDA pm_lx
+   ADC pm_ax
+   STA pm_lx
+   LDA pm_lx+1
+   ADC pm_ax+1
+   STA pm_lx+1
+   LDA pm_ly
+   ADC pm_t1s                           ; ax's third byte (the pm_smul
+   STA pm_ly                            ; lesson: shifting addends grow)
+ps_s_noadd:
+   ASL pm_ax
+   ROL pm_ax+1
+   ROL pm_t1s                           ; ax third byte
+   DEX
+   BNE ps_s_loop
+; >>5: take bits [20:5] of the 24-bit acc
+   LDX #5
+ps_s_shift:
+   LSR pm_ly
+   ROR pm_lx+1
+   ROR pm_lx
+   DEX
+   BNE ps_s_shift
+   LDA pm_ay
+   BEQ ps_s_done
+   SEC
+   LDA #0
+   SBC pm_lx
+   STA pm_lx
+   LDA #0
+   SBC pm_lx+1
+   STA pm_lx+1
+ps_s_done:
+   LDA pm_lx
+   LDX pm_lx+1
+   RTS
+.endscope
+
+; ============================================================================
+; pmove_try_slide — the driver's one-call slide retry: A = move dir.
+; Computes the P_HitSlideLine vector from the last block, applies it to
+; the position, re-derives NOTHING (the DRIVER re-derives + re-tries).
+; C=0: no slide available (caller falls to the DOOM stairstep).
+; ============================================================================
+.scope
+::pmove_try_slide:
+   JSR pmove_slide
+   BCC ts_no
+   JSR pmove_apply
+   SEC
+   RTS
+ts_no:
+   CLC
+   RTS
 .endscope

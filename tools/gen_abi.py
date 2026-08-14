@@ -82,11 +82,11 @@ ABI = [
     # (the replaced raster pocket $7600-$82FF + the high-table area).
     # colmap.blobs() asserts every blob against these homes.
     ('COLIDX_BASE',    0xB4A4, 0x7600, 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists'),
-    ('COLSEG_BASE',    0xB8C0, 0x77D0, 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
+    ('COLSEG_BASE',    0xB8C0, 0x77E0, 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
     ('SS_VZ_BASE',     0x8C00, 0xE750, 'per-subsector prescale(floor+41) (s8)'),
     ('SS_INFO_BASE',   0x8CE0, 0xE830, 'per-subsector mover info: $FF none, else mover idx (b7 = ceil mover)'),
-    ('MV_MINPASS',     0xBEF0, 0xE910, 'per-mover min passable door pos (fh + 56, prescaled)'),
-    ('USETAB_BASE',    0xBEF8, 0xE918, 'use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action)'),
+    ('MV_MINPASS',     0xBFC0, 0xE910, 'per-mover min passable door pos (fh + 56, prescaled)'),
+    ('USETAB_BASE',    0xBE00, 0xE918, 'use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads'),
     ('SCREEN0',        0x5800, 0xEA00, 'framebuffer 0 (flat: harness FB $EA00-$FDFF)'),
     ('SCREEN1',        0x6C00, 0xEA00, 'framebuffer 1 (flat: single buffer)'),
 ]

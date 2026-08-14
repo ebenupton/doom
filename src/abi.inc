@@ -66,7 +66,7 @@ COLIDX_BASE = $7600
 .if ::BANKED
 COLSEG_BASE = $B8C0        ; collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 .else
-COLSEG_BASE = $77D0
+COLSEG_BASE = $77E0
 .endif
 .if ::BANKED
 SS_VZ_BASE = $8C00         ; per-subsector prescale(floor+41) (s8)
@@ -79,12 +79,12 @@ SS_INFO_BASE = $8CE0       ; per-subsector mover info: $FF none, else mover idx 
 SS_INFO_BASE = $E830
 .endif
 .if ::BANKED
-MV_MINPASS = $BEF0         ; per-mover min passable door pos (fh + 56, prescaled)
+MV_MINPASS = $BFC0         ; per-mover min passable door pos (fh + 56, prescaled)
 .else
 MV_MINPASS = $E910
 .endif
 .if ::BANKED
-USETAB_BASE = $BEF8        ; use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action)
+USETAB_BASE = $BE00        ; use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 .else
 USETAB_BASE = $E918
 .endif

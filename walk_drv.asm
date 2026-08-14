@@ -397,10 +397,10 @@ ORG DRV_CLR
     LDA #1:STA space_prev
     LDA #4:STA &FE30                                ; use vector (bank A)
     LDA angidx:ASL A:ASL A:TAX
-    LDA USEVEC,X   : STA ENG_PM_UX
-    LDA USEVEC+1,X : STA ENG_PM_UX+1
-    LDA USEVEC+2,X : STA ENG_PM_UX+2                ; pm_uy (contiguous)
-    LDA USEVEC+3,X : STA ENG_PM_UX+3
+    LDY #0
+.ri_uv
+    LDA USEVEC,X : STA ENG_PM_UX,Y                  ; ux,uy (contiguous)
+    INX : INY : CPY #4 : BNE ri_uv
     JSR derive_raw                                  ; trace origin = here
     JSR ENG_PMOVE_USE
     CMP #&FE : BNE ri_spdone                        ; exit switch: respawn
@@ -416,6 +416,9 @@ ORG DRV_CLR
     JSR ENG_PMOVE_TRY
     BCS tos_ok
     JSR step_back                                   ; undo full
+    LDA angidx                                      ; P_SlideMove: project
+    JSR tos_slide                                   ; onto the blocking wall
+    BCS tos_slid
     JSR step_fwd_x
     JSR derive_raw
     JSR ENG_PMOVE_TRY
@@ -437,6 +440,10 @@ ORG DRV_CLR
     JSR ENG_PMOVE_TRY
     BCS tos_ok
     JSR step_fwd                                    ; undo full
+    LDA angidx
+    CLC : ADC #32 : AND #63                         ; backward move dir
+    JSR tos_slide
+    BCS tos_slid
     JSR step_back_x
     JSR derive_raw
     JSR ENG_PMOVE_TRY
@@ -450,6 +457,20 @@ ORG DRV_CLR
     JMP tos_slid
 
 ; --- respawn: the spawn pose (init + the exit switch 'ending the level')
+; tos_slide: A = move dir. Engine computes+applies the DOOM slide
+; vector; we re-derive and re-try; on block, unapply. C=1 = slid.
+.tos_slide
+    JSR ENG_PMOVE_TRY_SLIDE
+    BCC ts_no
+    JSR derive_raw
+    JSR ENG_PMOVE_TRY
+    BCS ts_yes
+    JSR ENG_PMOVE_UNAPPLY
+    CLC
+.ts_no
+.ts_yes
+    RTS
+
 .respawn
     LDA #&00:STA pxf : LDA #&EE:STA pxl : LDA #&FF:STA pxh
     LDA #&00:STA pyf : LDA #&D2:STA pyl : LDA #&FF:STA pyh
@@ -461,7 +482,7 @@ ORG DRV_CLR
 ; --- per-frame z revalidate: pmove_try on the standing position snaps
 ; VZ to the DOOM rule (sector floor + 41, live movers included)
 .mv_reval
-    JSR ENG_PMOVE_TRY
+    JSR ENG_PMOVE_ZONLY
     LDA ENG_PM_VZ
     STA &04
     RTS
@@ -473,6 +494,10 @@ ORG DRV_CLR
 ; byte). step_back is the exact inverse (SBC with #0/#$FF), used both for
 ; reverse motion and to undo an out-of-bounds step, so fwd-then-back is
 ; always bit-exact. Clobbers A,X.
+.step_prep
+    LDA #4:STA &FE30
+    LDA angidx:ASL A:ASL A:TAX
+    RTS
 .step_fwd
     JSR step_fwd_x
     JMP step_fwd_y
@@ -480,8 +505,7 @@ ORG DRV_CLR
     JSR step_back_x
     JMP step_back_y
 .step_fwd_x
-    LDA #4:STA &FE30
-    LDA angidx:ASL A:ASL A:TAX
+    JSR step_prep
     CLC
     LDA pxf:ADC STEPTAB,X:STA pxf
     LDA pxl:ADC STEPTAB+1,X:STA pxl
@@ -492,8 +516,7 @@ ORG DRV_CLR
     LDA pxh:ADC #&FF:STA pxh
     RTS
 .step_fwd_y
-    LDA #4:STA &FE30
-    LDA angidx:ASL A:ASL A:TAX
+    JSR step_prep
     CLC
     LDA pyf:ADC STEPTAB+2,X:STA pyf
     LDA pyl:ADC STEPTAB+3,X:STA pyl
@@ -504,8 +527,7 @@ ORG DRV_CLR
     LDA pyh:ADC #&FF:STA pyh
     RTS
 .step_back_x
-    LDA #4:STA &FE30
-    LDA angidx:ASL A:ASL A:TAX
+    JSR step_prep
     SEC
     LDA pxf:SBC STEPTAB,X:STA pxf
     LDA pxl:SBC STEPTAB+1,X:STA pxl
@@ -516,8 +538,7 @@ ORG DRV_CLR
     LDA pxh:SBC #&FF:STA pxh
     RTS
 .step_back_y
-    LDA #4:STA &FE30
-    LDA angidx:ASL A:ASL A:TAX
+    JSR step_prep
     SEC
     LDA pyf:SBC STEPTAB+2,X:STA pyf
     LDA pyl:SBC STEPTAB+3,X:STA pyl
