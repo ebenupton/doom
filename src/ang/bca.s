@@ -1174,14 +1174,19 @@ ns_dx0:
 ;   out: psi in pa_res and the memo (via mask_done), then falls
 ;        through cp_havepsi: A = r hi, Y = r lo, X = slot
 ; ============================================================================
+ns_wide:
+   LDA pa_dx+1                             ; rare re-split (0.1/fr): which
+   BNE ns_x16                              ; axis is wide?
+   LDA pa_dy+1                             ; (dy: the arm wants the hi
+   JMP ns_x8y16                            ;  byte riding A)
 lf_ns:
+; Width tests FUSED (2026-08-14 census: 72.5 of 72.6 atans/frame are
+; pure 8-bit — the wide arms are one-in-a-thousand): one ORA+branch
+; replaces the two load/branch pairs on the hot lane; the rare-wide
+; island re-splits.
    LDA pa_dx+1
-   BNE ns_x16                              ; 16-bit widths: backward, the
-   LDA pa_dy+1                             ; tested hi byte rides A into
-   BNE ns_x8y16                            ; the arm (FORWARD now: it
-                                           ; lives after khave_sub, in BNE
-                                           ; range — trampoline retired,
-                                           ; Eben 2026-07-20)
+   ORA pa_dy+1
+   BNE ns_wide
 ; both 8-bit (the common case): direct table reads, no reduction
    LDY pa_dy
    LDA L8_TAB,Y                            ; L8[|dy|]
