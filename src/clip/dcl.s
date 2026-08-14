@@ -244,11 +244,17 @@ dcl_amb_jmp:
 dcl_reject_above:
    LDA zp_dcl_rec_buf_h                    ; records off: plain reject
    BEQ dcl_outer_reject
+   LDA zp_dcl_out                          ; feedback: off-TOP evidence
+   ORA #$80
+   STA zp_dcl_out
    LDA #0                                  ; verdict 'above' over [ox0,ox1]
    BEQ dcl_rej_rec                         ; (always)
 dcl_reject_below:
    LDA zp_dcl_rec_buf_h
    BEQ dcl_outer_reject
+   LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence
+   ORA #$40
+   STA zp_dcl_out
    LDA #$FF                                ; verdict 'below'
 dcl_rej_rec:
    JSR dcl_rec_flat_span
@@ -464,6 +470,12 @@ dvc_y2_done:
                                            ; INTO the span query (was a
                                            ; 99.3%-taken BNE hop)
 dcl_vertical:
+   LDA zp_dcl_rec_buf_h                    ; feedback: the vertical walk is
+   BEQ dv_untapped                         ; untapped — tag MIXED for
+   LDA zp_dcl_out                          ; recorded (1-column lip) lines
+   ORA #$C0
+   STA zp_dcl_out
+dv_untapped:
 ; Compute ylo/yhi (dx/dy not needed for verticals)
    LDA zp_line_yl_l
    LDX zp_line_yr_l
@@ -643,6 +655,9 @@ dcl_cb_clip:
 ; span's true ox1 (the mid-span-exit path overwrites zp_ox1)
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_nvrec
+   LDA zp_dcl_out                          ; feedback: CB paths don't prove
+   ORA #$C0                                ; a direction — tag MIXED (voids
+   STA zp_dcl_out                          ; inference, conservatively)
    LDA #$80
    STA DCLV_RVY
    LDA zp_ox1
@@ -1180,6 +1195,9 @@ dcl_es_record:
 ; everything from these 4 endpoint values via interp.
    LDA zp_dcl_rec_buf_h
    BEQ dcl_es_no_record
+   LDA zp_dcl_out                          ; feedback: real pixels emitted
+   ORA #$01
+   STA zp_dcl_out
 ; (A) Skip degenerate records where xl >= xr (zero-width xl==xr OR reversed
 ; xl>xr). Such a record carries no tighten information AND deadlocks
 ; tfs_inner: bot_dom needs xl<=cur<xr (impossible when xl>=xr), so the

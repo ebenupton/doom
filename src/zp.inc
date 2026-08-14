@@ -46,6 +46,13 @@ LC_OFF_HI = $FF                   ; [clip]
 ; trap again — the 'separately FREE' note below rotted when the off-arm
 ; restore brought the vectors back, and pyref caught it); $9F/$A0 left
 ; for the visibility hooks.
+zp_dcl_out = $9F                  ; [clip]; per-line outcome accumulator
+                                  ; (clipper-feedback abort, 2026-08-14):
+                                  ; $80 = saw off-top reject, $40 = saw
+                                  ; off-bottom, $01 = real recorded segment
+                                  ; emitted, $C0 tagged conservatively by
+                                  ; the CB-clip + vertical recorded paths.
+                                  ; Tapped in RECORDS-ARMED forks only.
 plotq_n = $A0                     ; [clip]; plot queue write index (bytes,
                                   ; wraps at 256 = 64 entries full)
 plotq_mode = $A1                  ; [clip]; $80 = enqueue (driver arms per

@@ -474,12 +474,12 @@ portal_cascade:
    LDA zp_seg_flags
    AND #$04                                ; NEEDBT?
    BEQ ft_chk_up
-   BIT zp_ss_eskip                         ; eyeline: no top edges — the
-   BMI ft_lip                              ; RECORDED lip still draws
-   ZERO zp_dcl_rec_buf_h
-   LDX #zp_seg_sy1_top_l - VX1             ; front-ceil, no records
-   JSR draw_clipped_line_s16_h
-ft_lip:
+; LIP FIRST (clipper-feedback abort, Eben 2026-08-14): the recorded bt
+; draw accumulates its outcome in zp_dcl_out; if it emitted nothing and
+; every rejection was off-TOP (or the range was solid — has_gap already
+; proved a gap exists, so the pure-solid class is vestigial for these
+; full-range lines), then the HIGHER front-ceil line is provably dead.
+   ZERO zp_dcl_out
    LDA #>TOP_RECORDS                       ; bt lip: the aperture's new
    STA zp_dcl_rec_buf_h                    ; top — TOP_RECORDS armed
    ZERO TOP_RECORDS
@@ -487,6 +487,15 @@ ft_lip:
    STA zp_dcl_rec_off
    LDX #zp_seg_sy1_btop_l - VX1
    JSR draw_clipped_line_s16_h
+   LDA zp_dcl_out
+   AND #$41                                ; emitted, or off-BOTTOM seen?
+   BEQ ft_top_done                         ; neither: ft is dead
+   BIT zp_ss_eskip                         ; eyeline: no top edges
+   BMI ft_top_done
+   ZERO zp_dcl_rec_buf_h
+   LDX #zp_seg_sy1_top_l - VX1             ; front-ceil, no records
+   JSR draw_clipped_line_s16_h
+ft_top_done:
    JMP fb_arm
 ft_chk_up:
    LDA zp_seg_flags
@@ -504,12 +513,9 @@ fb_arm:
    LDA zp_seg_flags
    AND #$08                                ; NEEDBB?
    BEQ fb_chk_up
-   BIT zp_ss_eskip                         ; eyeline: no bottom edges
-   BVS fb_lip
-   ZERO zp_dcl_rec_buf_h
-   LDX #zp_seg_sy1_bot_l - VX1             ; front-floor, no records
-   JSR draw_clipped_line_s16_h
-fb_lip:
+; lip first, bottom mirror: bb zero-emission with only off-BOTTOM (or
+; solid) rejections proves the LOWER front-floor line dead.
+   ZERO zp_dcl_out
    LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
    ZERO BOT_RECORDS
@@ -517,6 +523,15 @@ fb_lip:
    STA zp_dcl_rec_off
    LDX #zp_seg_sy1_bbot_l - VX1
    JSR draw_clipped_line_s16_h
+   LDA zp_dcl_out
+   AND #$81                                ; emitted, or off-TOP seen?
+   BEQ fb_bot_done                         ; neither: fb is dead
+   BIT zp_ss_eskip                         ; eyeline: no bottom edges
+   BVS fb_bot_done
+   ZERO zp_dcl_rec_buf_h
+   LDX #zp_seg_sy1_bot_l - VX1             ; front-floor, no records
+   JSR draw_clipped_line_s16_h
+fb_bot_done:
    JMP vert_stage
 fb_chk_up:
    LDA zp_seg_flags
