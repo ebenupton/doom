@@ -20,7 +20,6 @@ TOTAL_SECTORS = 800
 SSD_SIZE = TOTAL_SECTORS * SECTOR
 import abi
 DRV_ADDR = abi.DRV_ORG
-TAB_ADDR = abi.DRV_TAB
 N_FRAMES = 64
 ANGLE_STEP = 256 // N_FRAMES        # 4
 
@@ -49,14 +48,17 @@ def build_images():
     bm = r.bm
     L0 = bytes(bm._banks[BANK_L0]); C = bytes(bm._banks[BANK_C]); L2 = bytes(bm._banks[BANK_L2])
     low_end = 0x2C00 + os.path.getsize('bsp_render_bk.bin')   # CODE region
-    low = bytearray(bm[0x1A00:max(low_end, TAB_ADDR + N_FRAMES*8)])  # LOW base $1A00 (sqr quad
+    low = bytearray(bm[0x1A00:low_end])  # LOW base $1A00 (sqr quad
     # consolidated $1A00-$1DFF + srecip LDATA $1E00 ride the one LOW image, 2026-08-09)
     def overlay(addr, data):
         off = addr - 0x1A00
         low[off:off+len(data)] = data
-    overlay(DRV_ADDR, open('ANIMDRV', 'rb').read())
-    overlay(TAB_ADDR, sincos_table())
-    # sanity: engine CODE starts at $2C00; the sincos table ends at $2400
-    # (the driver's clear/input block sits at $2400-$2BFF, part of ANIMDRV)
-    assert TAB_ADDR + N_FRAMES*8 <= 0x2C00, "table collides with bsp_render code"
+    drv = open('ANIMDRV', 'rb').read()
+    # the engine's PMOVE slice owns $2600-$2BFF (already in the bm slice):
+    # a driver that grows past $2600 would overlay-shred it
+    assert DRV_ADDR + len(drv) <= 0x2600, \
+        f'driver {len(drv)}B reaches the PMOVE slice at $2600'
+    overlay(DRV_ADDR, drv)
+    # (sincos overlay retired 2026-08-14: the table lives in bank A $BA00
+    # with STEPTAB/USEVEC — banked_bsp seeds them into the la image)
     return L0, C, L2, bytes(low)

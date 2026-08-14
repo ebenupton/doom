@@ -73,6 +73,13 @@ def build_banked(flatr):
     dirs_off = off_hdr + n_segs * 16
     dir_blob = bytes(rom_main[dirs_off:dirs_off + 3 * layout['max_dirs']])
     la[0x3700:0x3700 + len(dir_blob)] = dir_blob
+    # driver tables (2026-08-14 pmove arc): sincos $BA00, step $BC00, use
+    # vectors $BD00 — moved out of main to free the $2600 PMOVE slice
+    import colmap as _cm
+    from build_anim_ssd import sincos_table as _sct
+    la[0x3A00:0x3A00 + 512] = _sct()
+    _st = _cm.step_table(); la[0x3C00:0x3C00 + len(_st)] = _st
+    _uv = _cm.use_vectors(); la[0x3D00:0x3D00 + len(_uv)] = _uv
     vlen = off_hdr - off_verts
     la[bdst('ROM_VERTS_C'):bdst('ROM_VERTS_C') + vlen] = bytes(rom_main[off_verts:off_hdr])
     # EXACT recip lengths (256 + 128): a padded 1K copy here would drag
@@ -154,6 +161,11 @@ def build_banked(flatr):
                 assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $B400 staging page'
                 lb[0x3400:0x3400 + len(blob)] = blob
     lb[0x3700:0x3700 + len(dir_blob)] = dir_blob   # DIR planes, bank-B copy
+    # collision map (colmap.py): every banked home is a bank-B window addr
+    for _ca, _cb in _cm.blobs(flat=False).items():
+        if isinstance(_ca, int):
+            assert 0x8000 <= _ca < 0xC000
+            lb[_ca - 0x8000:_ca - 0x8000 + len(_cb)] = _cb
     # corner-phi memo validity: KDXH plane ships $80-filled — the
     # probe's KDXH compare doubles as the never-written test (no EP plane).
     lb[abi.CPM_KDXH - 0x8000:abi.CPM_KDXH - 0x8000 + 128] = b'\x80' * 128

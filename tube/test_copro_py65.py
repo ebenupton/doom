@@ -45,6 +45,8 @@ def build_image():
     open('SINCOS.bin', 'wb').write(_anim.sincos_table())
     import anim_sectors as _an          # anim CFG/TABL0/SSMASK (flat homes;
     _an.install_6502_tables(mem, flat=True)   # zero tables = frozen movers)
+    import colmap as _cm                # collision/use tables (the tube map
+    _cm.install(mem, flat=True)         # owns the flat homes)
     subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,
                    capture_output=True)
     cop = open('COPROT', 'rb').read(); os.remove('COPROT')

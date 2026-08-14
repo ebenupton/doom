@@ -120,9 +120,10 @@ def main():
         for mi2, s in enumerate(sim):
             state, timer = s['st'] & 0xC0, s['st'] & 0x3F
             if state in (0x00, 0x80):
-                timer = (timer - 1) & 0x3F
-                if timer == 0:
-                    state = (state + 0x40) & 0xC0
+                if timer:                       # 0 = hold forever (DR doors)
+                    timer = (timer - 1) & 0x3F
+                    if timer == 0:
+                        state = (state + 0x40) & 0xC0
             elif state == 0x40:
                 s['pos'] = s['pos'] + s['sp']
                 if s['pos'] >= s['max']:

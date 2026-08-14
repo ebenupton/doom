@@ -29,7 +29,12 @@ hud_prev = DV_HUD_PREV        ; H-key state last frame (press-edge debounce)
 ; (vsync journal RETIRED 2026-08-09 — the flip timing is validated and the
 ; page was reclaimed for the quarter-square tables; the class logic below
 ; is unchanged, the flight recorder is gone. JBASE/DV_JIDX freed.)
-tabbase = DRV_TAB         ; sincos table (build-overlaid): 64 x 8 bytes
+tabbase = &BA00           ; sincos table: 64 x 8 bytes, BANK A (banked_bsp
+                          ; seeds it; page 4 before reading — the 2026-08-14
+                          ; pmove arc moved all driver tables out of main)
+STEPTAB = &BC00           ; movement step table: 64 x 4 (dx,dy s16 8.8), bank A
+USEVEC  = &BD00           ; SPACE use-trace vectors: 64 x 4 (ux,uy s16 raw), bank A
+space_prev = DRV_VARS + 11  ; SPACE edge-detect state
 
 SPEED = 12              ; world units per frame of forward motion
 
@@ -56,10 +61,9 @@ ORG DRV_ORG
 .drv
     SEI
     LDA #0 : STA &FE34                              ; Master: ACCCON off (harmless on B)
-    ; --- spawn position 1056,-3616 as 24-bit prescaled 8.8 ---
-    LDA #&00:STA pxf : LDA #&EE:STA pxl : LDA #&FF:STA pxh
-    LDA #&00:STA pyf : LDA #&D2:STA pyl : LDA #&FF:STA pyh    \ spawn y = -46.0 units exactly (8-aligned center)
-    LDA #&06:STA &04                                ; VZ (spawn floor; constant v1)
+    JSR respawn                                     ; spawn pose (pos/angle/
+                                                    ; VZ/pm seeds; also the
+                                                    ; exit switch's target)
     ; --- CRTC: narrow 256x160 centred, cursor off (R12/R13 set per flip) ---
     LDA #1 :STA &FE00: LDA #32 :STA &FE01
     LDA #2 :STA &FE00: LDA #45 :STA &FE01
@@ -164,8 +168,9 @@ ORG DRV_ORG
     LDA pxf:STA &00 : LDA pxl:STA &01 : LDA pxh:STA &9D
     LDA pyf:STA &02 : LDA pyl:STA &03 : LDA pyh:STA &9E
     JSR derive_raw                                  ; PXRAW/PYRAW ($90-$93)
-    JSR floor_vz                                    ; VZ from grid (smoothed)
-    ; --- sincos + view angle from table[angidx] ---
+    JSR mv_reval                                    ; DOOM z (rides live lifts)
+    ; --- sincos + view angle from table[angidx] (bank A) ---
+    LDA #4:STA &FE30
     LDA #0:STA &ED
     LDA angidx
     ASL A:ROL &ED
@@ -374,16 +379,92 @@ ORG DRV_CLR
 .ri_nright
     LDA #&39:STA &FE4F : BIT &FE4F : BPL ri_nup     ; cursor UP: forward
     JSR step_fwd
-    JSR bounds_or_revert_fwd
+    JSR try_or_slide_f                              ; DOOM P_TryMove + slide
+    BCC ri_nup                                      ; blocked/slid: not fwd-only
     LDA #1:STA D_FWD
 .ri_nup
     LDA #&29:STA &FE4F : BIT &FE4F : BPL ri_ndown   ; cursor DOWN: back
     JSR step_back
-    JSR bounds_or_revert_back
+    JSR try_or_slide_b
     LDA #0:STA D_FWD
 .ri_ndown
-    JMP key_hud                                     ; H: HUD toggle (in the
-                                                    ; $3DA0 pocket; RTSes)
+    ; SPACE: DOOM 'use' on the press edge (doors, the exit switch)
+    LDA #&62:STA &FE4F : BIT &FE4F : BMI ri_spdn
+    LDA #0:STA space_prev
+    JMP key_hud
+.ri_spdn
+    LDA space_prev : BNE ri_spdone
+    LDA #1:STA space_prev
+    LDA #4:STA &FE30                                ; use vector (bank A)
+    LDA angidx:ASL A:ASL A:TAX
+    LDA USEVEC,X   : STA ENG_PM_UX
+    LDA USEVEC+1,X : STA ENG_PM_UX+1
+    LDA USEVEC+2,X : STA ENG_PM_UX+2                ; pm_uy (contiguous)
+    LDA USEVEC+3,X : STA ENG_PM_UX+3
+    JSR derive_raw                                  ; trace origin = here
+    JSR ENG_PMOVE_USE
+    CMP #&FE : BNE ri_spdone                        ; exit switch: respawn
+    JSR respawn
+.ri_spdone
+    JMP key_hud                                     ; H: HUD toggle (RTSes)
+
+; --- try_or_slide: full candidate already applied to the 24-bit position.
+; Try it; on block, retry each axis alone (DOOM wall slide). C=1 only if
+; the FULL move committed (feeds D_FWD). _f = forward step, _b = back.
+.try_or_slide_f
+    JSR derive_raw
+    JSR ENG_PMOVE_TRY
+    BCS tos_ok
+    JSR step_back                                   ; undo full
+    JSR step_fwd_x
+    JSR derive_raw
+    JSR ENG_PMOVE_TRY
+    BCS tos_slid
+    JSR step_back_x
+    JSR step_fwd_y
+    JSR derive_raw
+    JSR ENG_PMOVE_TRY
+    BCS tos_slid
+    JSR step_back_y
+.tos_slid
+    CLC
+    RTS
+.tos_ok
+    SEC
+    RTS
+.try_or_slide_b
+    JSR derive_raw
+    JSR ENG_PMOVE_TRY
+    BCS tos_ok
+    JSR step_fwd                                    ; undo full
+    JSR step_back_x
+    JSR derive_raw
+    JSR ENG_PMOVE_TRY
+    BCS tos_slid
+    JSR step_fwd_x
+    JSR step_back_y
+    JSR derive_raw
+    JSR ENG_PMOVE_TRY
+    BCS tos_slid
+    JSR step_fwd_y
+    JMP tos_slid
+
+; --- respawn: the spawn pose (init + the exit switch 'ending the level')
+.respawn
+    LDA #&00:STA pxf : LDA #&EE:STA pxl : LDA #&FF:STA pxh
+    LDA #&00:STA pyf : LDA #&D2:STA pyl : LDA #&FF:STA pyh
+    LDA #16 :STA angidx
+    LDA #&06:STA &04 : STA ENG_PM_VZ
+    LDA #0:STA space_prev
+    RTS
+
+; --- per-frame z revalidate: pmove_try on the standing position snaps
+; VZ to the DOOM rule (sector floor + 41, live movers included)
+.mv_reval
+    JSR ENG_PMOVE_TRY
+    LDA ENG_PM_VZ
+    STA &04
+    RTS
 
 ; --- movement: position += / -= step table entry for angidx ---------------
 ; step_fwd: 24-bit position += step_tab[angidx] (s16 8.8 delta, applied to
@@ -393,44 +474,57 @@ ORG DRV_CLR
 ; reverse motion and to undo an out-of-bounds step, so fwd-then-back is
 ; always bit-exact. Clobbers A,X.
 .step_fwd
-    LDA angidx:ASL A:ASL A:TAX                      ; idx*4 into step table
+    JSR step_fwd_x
+    JMP step_fwd_y
+.step_back
+    JSR step_back_x
+    JMP step_back_y
+.step_fwd_x
+    LDA #4:STA &FE30
+    LDA angidx:ASL A:ASL A:TAX
     CLC
-    LDA pxf:ADC step_tab,X:STA pxf
-    LDA pxl:ADC step_tab+1,X:STA pxl
-    LDA step_tab+1,X:BMI sf_xneg
+    LDA pxf:ADC STEPTAB,X:STA pxf
+    LDA pxl:ADC STEPTAB+1,X:STA pxl
+    LDA STEPTAB+1,X:BMI sfx_neg
     LDA pxh:ADC #0:STA pxh
-    JMP sf_y
-.sf_xneg
+    RTS
+.sfx_neg
     LDA pxh:ADC #&FF:STA pxh
-.sf_y
+    RTS
+.step_fwd_y
+    LDA #4:STA &FE30
+    LDA angidx:ASL A:ASL A:TAX
     CLC
-    LDA pyf:ADC step_tab+2,X:STA pyf
-    LDA pyl:ADC step_tab+3,X:STA pyl
-    LDA step_tab+3,X:BMI sf_yneg
+    LDA pyf:ADC STEPTAB+2,X:STA pyf
+    LDA pyl:ADC STEPTAB+3,X:STA pyl
+    LDA STEPTAB+3,X:BMI sfy_neg
     LDA pyh:ADC #0:STA pyh
     RTS
-.sf_yneg
+.sfy_neg
     LDA pyh:ADC #&FF:STA pyh
     RTS
-
-.step_back
+.step_back_x
+    LDA #4:STA &FE30
     LDA angidx:ASL A:ASL A:TAX
     SEC
-    LDA pxf:SBC step_tab,X:STA pxf
-    LDA pxl:SBC step_tab+1,X:STA pxl
-    LDA step_tab+1,X:BMI sb_xneg
+    LDA pxf:SBC STEPTAB,X:STA pxf
+    LDA pxl:SBC STEPTAB+1,X:STA pxl
+    LDA STEPTAB+1,X:BMI sbx_neg
     LDA pxh:SBC #0:STA pxh
-    JMP sb_y
-.sb_xneg
+    RTS
+.sbx_neg
     LDA pxh:SBC #&FF:STA pxh
-.sb_y
+    RTS
+.step_back_y
+    LDA #4:STA &FE30
+    LDA angidx:ASL A:ASL A:TAX
     SEC
-    LDA pyf:SBC step_tab+2,X:STA pyf
-    LDA pyl:SBC step_tab+3,X:STA pyl
-    LDA step_tab+3,X:BMI sb_yneg
+    LDA pyf:SBC STEPTAB+2,X:STA pyf
+    LDA pyl:SBC STEPTAB+3,X:STA pyl
+    LDA STEPTAB+3,X:BMI sby_neg
     LDA pyh:SBC #0:STA pyh
     RTS
-.sb_yneg
+.sby_neg
     LDA pyh:SBC #&FF:STA pyh
     RTS
 
@@ -458,133 +552,10 @@ ORG DRV_CLR
     DEX:BNE dr_y
     RTS
 
-; --- floor_vz: VZ ($04) tracks the grid floor under the derived raws ------
-; In: PXRAW/PYRAW ($90-$93). Out: VZ ($04) moved at most 1 prescaled unit
-; toward floor_tab[celly*36 + cellx] (see the grid comment at floor_tab):
-;   cellx = (rawx+1936)>>7 (0..35), celly = (rawy+1582)>>7 (0..21)
-; The 1-unit-per-frame easing ramps stairs/lifts smoothly instead of
-; snapping the eye height. Clobbers A,Y,$EC-$EE.
-.floor_vz
-    LDA &90:CLC:ADC #&90:STA &EC                    ; rawx + 1936 ($790)
-    LDA &91:ADC #&07:STA &ED
-    LDA &EC:ASL A                                   ; C = bit 7 of lo
-    LDA &ED:ROL A                                   ; A = (hi<<1)|(lo>>7) = cellx
-    STA &EC                                         ; cellx (0..35)
-    LDA &92:CLC:ADC #&2E:STA &ED                    ; rawy + 1582 ($62E)
-    LDA &93:ADC #&06:STA &EE
-    LDA &ED:ASL A
-    LDA &EE:ROL A                                   ; A = celly (0..21)
-    TAY
-    LDA frow_lo,Y:CLC:ADC &EC:STA &EC
-    LDA frow_hi,Y:ADC #0:STA &ED
-    LDA &EC:CLC:ADC #LO(floor_tab):STA &EC
-    LDA &ED:ADC #HI(floor_tab):STA &ED
-    LDY #0
-    LDA (&EC),Y                                     ; target VZ (s8, -15..21)
-    CMP &04
-    BEQ fv_done
-    ; move VZ one prescaled unit per frame toward the target (smooth stairs);
-    ; |diff| <= ~36 so the s8 subtract cannot overflow and N is the true sign
-    SEC:SBC &04
-    BMI fv_down
-    INC &04
-    RTS
-.fv_down
-    DEC &04
-.fv_done
-    RTS
-
-; --- bounds check on the derived raws; revert the step if outside ---------
-; s16 compare: in-range iff RAW >= MIN and RAW <= MAX.
-; bounds_or_revert_fwd/back: re-derive the raws for the just-stepped
-; position, test them, and undo the step (with the exact-inverse helper)
-; if any of the four limits failed. The stale raws left by a revert are
-; harmless: the frame loop re-derives before rendering.
-.bounds_or_revert_fwd
-    JSR derive_raw
-    JSR bounds_ok
-    BCS bor_ok1
-    JSR step_back                                   ; undo
-.bor_ok1
-    RTS
-.bounds_or_revert_back
-    JSR derive_raw
-    JSR bounds_ok
-    BCS bor_ok2
-    JSR step_fwd                                    ; undo
-.bor_ok2
-    RTS
-
-; bounds_ok — C=1 iff (PXRAW,PYRAW) is inside the clamp rectangle.
-; Each test is the standard signed-16 '>=': subtract (keeping only the high
-; byte's flags) and correct N by V (EOR #$80 when the subtract overflowed);
-; N set after correction means the difference is negative -> out of range.
-; Clobbers A.
-.bounds_ok
-    ; x >= RAWX_MIN ?
-    LDA &90:SEC:SBC #LO(RAWX_MIN)
-    LDA &91:SBC #HI(RAWX_MIN)
-    BVC bo_c1
-    EOR #&80
-.bo_c1
-    BMI bo_bad
-    ; x <= RAWX_MAX ?
-    LDA #LO(RAWX_MAX):SEC:SBC &90
-    LDA #HI(RAWX_MAX):SBC &91
-    BVC bo_c2
-    EOR #&80
-.bo_c2
-    BMI bo_bad
-    ; y >= RAWY_MIN ?
-    LDA &92:SEC:SBC #LO(RAWY_MIN)
-    LDA &93:SBC #HI(RAWY_MIN)
-    BVC bo_c3
-    EOR #&80
-.bo_c3
-    BMI bo_bad
-    ; y <= RAWY_MAX ?
-    LDA #LO(RAWY_MAX):SEC:SBC &92
-    LDA #HI(RAWY_MAX):SBC &93
-    BVC bo_c4
-    EOR #&80
-.bo_c4
-    BMI bo_bad
-    SEC
-    RTS
-.bo_bad
-    CLC
-    RTS
-
-
-; --- 64-entry movement step table: premultiplied 8.8 deltas ---------------
-; forward = (cos(a), sin(a)) in world units; 8.8 prescaled delta =
-; world_step * 256/8 = *32. Entry: dx lo, dx hi, dy lo, dy hi (s16).
-; The +65536.5 / AND &FFFF idiom is round-to-nearest of a possibly-negative
-; value into u16 two's complement (beebasm INT truncates toward zero).
-.step_tab
-FOR i, 0, 63
-    EQUW INT(SPEED * 32 * COS(i * PI / 32) + 65536.5) AND &FFFF
-    EQUW INT(SPEED * 32 * SIN(i * PI / 32) + 65536.5) AND &FFFF
-NEXT
-
 ; --- T1hi -> beam class (same boundaries as anim_drv's table; see the
 ; flip_sched header). Only 78 entries — flip_sched pre-filters H >= 78
 ; to class 0 — where anim_drv pads the table to 256 instead. ---
 
-; --- floor-height grid: 36x22 cells of 128 world units over the clamp
-; bounds, holding prescaled VZ (= _prescale_height(player_floor+41)),
-; sampled at cell centres from the Python float BSP at build time.
-; cellx = (rawx+1936)>>7, celly = (rawy+1582)>>7, byte = grid[celly*36+cellx].
-.floor_tab
-INCBIN "FLOORGRD.bin"
-.frow_lo
-FOR n, 0, 21
-    EQUB LO(n * 36)
-NEXT
-.frow_hi
-FOR n, 0, 21
-    EQUB HI(n * 36)
-NEXT
 .clr_end
 ASSERT clr_end <= MAIN_BASE ; MUST NOT touch the engine CODE region
 SAVE "WALKDRV", DRV_ORG, clr_end, DRV_ORG

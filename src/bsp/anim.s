@@ -235,7 +235,9 @@ at_up:
    JMP at_done
 
 at_wait:
-   DEC at_timer
+   LDA at_timer                            ; wait 0 = HOLD FOREVER (DR doors
+   BEQ at_done                             ; idle shut until pmove_use pokes
+   DEC at_timer                            ; the state; 2026-08-14)
    BNE at_done
 ; wait expired: 0 -> 1 (A->B), 2 -> 3 (B->A); timer stays 0 while moving
    LDA at_state

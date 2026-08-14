@@ -363,6 +363,7 @@ zp_seg_v_idx_b = $78              ; [bsp]; B = idx>>3 (bitmap/VXC byte
 ; $79 free — INSIDE THE RASTERIZER'S SCRATCH RANGE (measured 2026-07-25:
 ; RASTER_ENTRY writes it mid-frame; nothing may live here across draws)
 zp_seg_v_bitm = $47               ; [bsp]; valid-bitmap mask (1 << (idx & 7));
+zp_pm_p = $59                       ; [bsp]; pmove: collision list pointer ; w=2
                                   ; SURVIVES DRAWS (the old $79 home was
                                   ; raster scratch — reads were only safe
                                   ; adjacent to the store); the vs2 serve
@@ -582,6 +583,10 @@ EPSILON_F = 12
 .macro SEG_HIGHX                  ;  moved CPM/FB out of CODE's way)
 .segment "CODE"
 .endmacro
+.macro SEG_PMOVE
+.segment "PMOVE"                  ; player movement (pmove.s): banked =
+.endmacro                         ;  the driver-zone slice $2600, flat =
+                                  ;  the tube-map pocket $7E40
 .macro SEG_BANKC
 .if ::BANKED
 .segment "BANKC"

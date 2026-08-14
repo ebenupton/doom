@@ -170,13 +170,19 @@ def main():
     # ---- TWO LOADS (Eben's spec): CODE = engine + NJ/emitters,
     # DATA = level + tables (+anim/sincos). The 2026-07-21 map makes both
     # contiguous; the cache block is runtime-only and never shipped.
-    CODE_LO, CODE_HI = 0x1A00, 0x7600   # sqr rides at $1A00 (f34f835 map);
+    CODE_LO, CODE_HI = 0x1A00, 0x8400   # sqr rides at $1A00 (f34f835 map);
                                         # CLIPF ends ~$6D65, VPLOTF $6E00,
-                                        # emit at $7500 — one contiguous file
+                                        # emit at $7500, collision tables
+                                        # $7600-$7DF2, engine PMOVE $7E00,
+                                        # CPM (boot-init) $2900 — one file
     DATA_LO, DATA_HI = 0x8600, 0xEA00
+    # collision tables + use lines (colmap flat homes = THIS map: the
+    # replaced raster pocket + the high-table area)
+    import colmap
+    colmap.install(mem, flat=True)
     # guard: nothing nonzero outside the shipped spans + runtime regions
-    # ($0400-$1A00 = pool/records/caches ground state; $7600-$8600 =
-    # blob remnant (zeroed above) + CPM memo, boot-initialized)
+    # ($0400-$1A00 = pool/records/caches ground state; $8400-$8600 =
+    # CPM-era slack, boot-initialized)
     for a in range(0x0400, 0xF7F0):
         if mem[a] and not (CODE_LO <= a < CODE_HI or DATA_LO <= a < DATA_HI
                            or 0x0400 <= a < 0x1A00 or 0x7600 <= a < 0x8600):

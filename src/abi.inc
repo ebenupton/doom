@@ -30,8 +30,7 @@ DV_JIDX = DRV_VARS+8                    ; vsync journal index
 DV_HUD_EN = DRV_VARS+9                  ; debug HUD on/off (H toggles)
 DV_HUD_PREV = DRV_VARS+10               ; H-key debounce state
 DRV_GLUE = $21A0                        ; anim/HUD glue pocket
-DRV_TAB = $2200                         ; sincos table overlay: 64 x 8 bytes
-DRV_CLR = $2400                         ; unrolled clears + input block
+DRV_CLR = $2200                         ; unrolled clears + input block (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE slice at $2600)
 D_ENABLE = $05FE                        ; forward-coherence bbox cache master switch
 D_FWD = $05FF                           ; per-frame flag: move was forward-only
 VXC_STATE = $0700                       ; THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
@@ -51,7 +50,7 @@ RCACHE_ENABLE = $72F0
 .if ::BANKED
 CPM_BASE = $A600           ; corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.
 .else
-CPM_BASE = $7E00
+CPM_BASE = $2900
 .endif
 CPM_KDXL = CPM_BASE+$000                ; memo key: corner dx lo
 CPM_KDXH = CPM_BASE+$080                ; ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane
@@ -59,6 +58,36 @@ CPM_KDYL = CPM_BASE+$100                ; ... dy lo
 CPM_KDYH = CPM_BASE+$180                ; ... dy hi
 CPM_PSIL = CPM_BASE+$200                ; memo value: psi lo
 CPM_PSIH = CPM_BASE+$280                ; ... psi hi (last plane: memo ends at CPM_BASE+$300)
+.if ::BANKED
+COLIDX_BASE = $B4A4        ; collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists
+.else
+COLIDX_BASE = $7600
+.endif
+.if ::BANKED
+COLSEG_BASE = $B8C0        ; collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
+.else
+COLSEG_BASE = $77D0
+.endif
+.if ::BANKED
+SS_VZ_BASE = $8C00         ; per-subsector prescale(floor+41) (s8)
+.else
+SS_VZ_BASE = $E750
+.endif
+.if ::BANKED
+SS_INFO_BASE = $8CE0       ; per-subsector mover info: $FF none, else mover idx (b7 = ceil mover)
+.else
+SS_INFO_BASE = $E830
+.endif
+.if ::BANKED
+MV_MINPASS = $BEF0         ; per-mover min passable door pos (fh + 56, prescaled)
+.else
+MV_MINPASS = $E910
+.endif
+.if ::BANKED
+USETAB_BASE = $BEF8        ; use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action)
+.else
+USETAB_BASE = $E918
+.endif
 .if ::BANKED
 SCREEN0 = $5800            ; framebuffer 0 (flat: harness FB $EA00-$FDFF)
 .else

@@ -110,6 +110,8 @@ class Mover:
         if self.kind == 'ceil':
             lo, hi = self.closed, self.open
             if self.state == 'wait_closed':
+                if self.sec in USE_DOORS:
+                    return                # DOOM DR door: shut until used
                 self.timer -= dt
                 if self.timer <= 0: self.state = 'opening'
             elif self.state == 'opening':
@@ -229,6 +231,18 @@ class Mover:
             nbytes += 1
         STATS['bytes'] += nbytes
 
+    def trigger_use(self):
+        """DOOM DR use semantics (mirrors pmove_use): waiting -> move away
+        from the held end; moving -> reverse."""
+        if self.state == 'wait_closed':
+            self.state = 'opening'
+        elif self.state == 'wait_open':
+            self.state = 'closing'
+        elif self.state == 'opening':
+            self.state = 'closing'
+        elif self.state == 'closing':
+            self.state = 'opening'
+
     # ── scripted access (demo strips) ────────────────────────────────
     def phase(self, t):
         """t=0 rest/closed .. t=1 fully open/lowered; applies eagerly."""
@@ -332,6 +346,23 @@ ANIM_SPEED_WORLD = {'ceil': 12, 'floor': 10}      # world units / frame
 ANIM_WAITS = {'ceil': (14, 20), 'floor': (12, 18)}  # frames at A, at B
 
 
+def _use_doors():
+    """Movers with a DR (special 1) use line: DOOM doors — idle SHUT
+    until SPACE (wait_at_A = 0 = the hold-forever sentinel; pmove_use /
+    Mover.trigger_use start them). Walkover movers keep auto-cycling
+    until walk triggers are wired."""
+    out = set()
+    for ld in dw.linedefs:
+        if ld[3] == 1:
+            for sd in (ld[5], ld[6]):
+                if sd != 0xFFFF and dw.sidedefs[sd][5] in dw.ANIM_SECTORS:
+                    out.add(dw.sidedefs[sd][5])
+    return out
+
+
+USE_DOORS = _use_doors()
+
+
 def _speed88(world_per_frame):
     # world/frame -> prescaled 8.8 per frame (exact packer rounding)
     return max(1, dw._prescale_height(world_per_frame * 256))
@@ -397,6 +428,8 @@ def gen_6502_tables(flat=True):
     for sec in order:
         m = MOVERS[sec]
         wa, wb = ANIM_WAITS[m.kind]
+        if sec in USE_DOORS:
+            wa = 0                        # hold shut until used
         sp = _speed88(ANIM_SPEED_WORLD[m.kind])
         if m.kind == 'ceil':
             lo, hi = m.closed, m.open

@@ -74,9 +74,9 @@ ORG &EA00                       \ the FB region: the copro never
     LDX &6D
     CPX #&1A
     BNE pz1
-    LDA #&7E                    \ CPM memo page ($7E00, 2026-08-09 map;
-    STA &6D                     \ the old $6B00-$85FF sweep is LIVE CODE
-    LDA #0                      \ now); init $80-fills KDXH on top
+    LDA #HI(T_CPM_KDXH)         \ CPM memo page (symbol-driven since the
+    STA &6D                     \ 2026-08-14 pmove arc moved flat CPM to
+    LDA #0                      \ $2900); init $80-fills KDXH on top
 .pz2
     STA (&6C),Y
     INY

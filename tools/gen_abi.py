@@ -60,8 +60,7 @@ ABI = [
     ('DV_HUD_EN',      'DRV_VARS+9',  None, 'debug HUD on/off (H toggles)'),
     ('DV_HUD_PREV',    'DRV_VARS+10', None, 'H-key debounce state'),
     ('DRV_GLUE',       0x21A0, None, 'anim/HUD glue pocket'),
-    ('DRV_TAB',        0x2200, None, 'sincos table overlay: 64 x 8 bytes'),
-    ('DRV_CLR',        0x2400, None, 'unrolled clears + input block'),
+    ('DRV_CLR',        0x2200, None, 'unrolled clears + input block (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE slice at $2600)'),
     ('D_ENABLE',       0x05FE, None, 'forward-coherence bbox cache master switch'),
     ('D_FWD',          0x05FF, None, 'per-frame flag: move was forward-only'),
     ('VXC_STATE',      0x0700, None, 'THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
@@ -70,13 +69,24 @@ ABI = [
     ('RCACHE_STATE',   0xAF00, 0x7268, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
     ('RCACHE_ENABLE',  0xAF88, 0x72F0, 'rotation-coherence bca cache switch (STATE+$88)'),
-    ('CPM_BASE',       0xA600, 0x7E00, 'corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
+    ('CPM_BASE',       0xA600, 0x2900, 'corner-phi memo: 128-slot xor hash, 3 pages ($5500-$57FF flat, ending exactly at the screen). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
     ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
     ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane'),
     ('CPM_KDYL',       'CPM_BASE+$100', None, '... dy lo'),
     ('CPM_KDYH',       'CPM_BASE+$180', None, '... dy hi'),
     ('CPM_PSIL',       'CPM_BASE+$200', None, 'memo value: psi lo'),
     ('CPM_PSIH',       'CPM_BASE+$280', None, '... psi hi (last plane: memo ends at CPM_BASE+$300)'),
+    # Player-movement collision map (colmap.py, 2026-08-14). Banked =
+    # bank WALK free windows (same bank as the node SoA — one paging
+    # context for the whole movement test); flat = the TUBE parasite map
+    # (the replaced raster pocket $7600-$82FF + the high-table area).
+    # colmap.blobs() asserts every blob against these homes.
+    ('COLIDX_BASE',    0xB4A4, 0x7600, 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists'),
+    ('COLSEG_BASE',    0xB8C0, 0x77D0, 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
+    ('SS_VZ_BASE',     0x8C00, 0xE750, 'per-subsector prescale(floor+41) (s8)'),
+    ('SS_INFO_BASE',   0x8CE0, 0xE830, 'per-subsector mover info: $FF none, else mover idx (b7 = ceil mover)'),
+    ('MV_MINPASS',     0xBEF0, 0xE910, 'per-mover min passable door pos (fh + 56, prescaled)'),
+    ('USETAB_BASE',    0xBEF8, 0xE918, 'use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action)'),
     ('SCREEN0',        0x5800, 0xEA00, 'framebuffer 0 (flat: harness FB $EA00-$FDFF)'),
     ('SCREEN1',        0x6C00, 0xEA00, 'framebuffer 1 (flat: single buffer)'),
 ]
