@@ -447,16 +447,17 @@ fp_sectors = [
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-# ── One-way windows (Eben, 2026-08-14): the three courtyard windows
-# (linedefs 30/31 into rooms 15/14, 276 into room 46 across the yard)
-# are SOLID when viewed from the courtyard side (sector 5) and normal
-# portals from the rooms — you see out, never in, and the long-range
-# across-the-courtyard views die.  Implemented as a per-seg back-sector
-# override in this one resolver: front == the walled side => back=None
-# (one-sided), so the packer bakes SF_SOLID, occlusion mark_solids the
-# full columns, and every world (float arbiter, fp, packed, 6502)
-# inherits identically.
-_ONEWAY_WALLED_SIDE = {30: 5, 31: 5, 276: 5}   # linedef -> blind-side sector
+# ── One-way windows (Eben, 2026-08-14): the three windows into the main
+# courtyard are blocked at the ROOM side of their windowledge sectors
+# (14/15 off the spawn room 39, 46 off room 61 across the yard): from the
+# courtyard the window still reads as an opening onto the ledge, but the
+# wall at the back of the ledge is SOLID — you see out, never in, and the
+# long-range across-the-courtyard views die.  Implemented as a per-seg
+# back-sector override in this one resolver: front == the walled (ledge)
+# side => back=None (one-sided), so the packer bakes SF_SOLID, occlusion
+# mark_solids the full columns, and every world (float arbiter, fp,
+# packed, 6502) inherits identically.
+_ONEWAY_WALLED_SIDE = {26: 14, 29: 15, 275: 46}   # linedef -> blind-side sector
 
 def seg_sectors(seg):
     ld = linedefs[seg[3]]
