@@ -306,9 +306,8 @@ hg_pass:
                                         ; nothing between here and stage 8
                                         ; writes either byte (the bca_ilo
                                         ; alias writes are walk-context)
-; records counts reset for THIS seg — stage 8 reads them only for segs
-; that got here; the emit arms re-arm them as needed
-   ZERO TOP_RECORDS, BOT_RECORDS
+; (records counts reset moved BELOW the stage-5 PAGE BANK_C 2026-08-14:
+; the arenas live in bank C now; nothing reads them before the cascade)
 
 ; ============================================================================
 ; STAGE 4 — Y PROJECTION.  All sy pairs project HERE (post-has_gap:
@@ -390,6 +389,10 @@ ys_done:
 ; ============================================================================
 hgp_fwd:
    PAGE BANK_C                             ; THE emit-cascade page: one page
+   ZERO TOP_RECORDS, BOT_RECORDS           ; records counts reset for THIS
+                                        ; seg (arenas are bank C; stage 8
+                                        ; reads them only for segs that
+                                        ; got here; arms re-arm below)
                                         ; dominates every arc below
 
 ; ============================================================================

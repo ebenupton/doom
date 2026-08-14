@@ -80,6 +80,9 @@ def build_banked(flatr):
     la[0x3A00:0x3A00 + 512] = _sct()
     _st = _cm.step_table(); la[0x3C00:0x3C00 + len(_st)] = _st
     _uv = _cm.use_vectors(); la[0x3D00:0x3D00 + len(_uv)] = _uv
+    _ut = _cm.blobs(flat=False)[0xBE00]                 # USETAB (bank A —
+    la[0x3E00:0x3E00 + len(_ut)] = _ut                  # seed BEFORE
+                                                        # define_bank COPIES)
     vlen = off_hdr - off_verts
     la[bdst('ROM_VERTS_C'):bdst('ROM_VERTS_C') + vlen] = bytes(rom_main[off_verts:off_hdr])
     # EXACT recip lengths (256 + 128): a padded 1K copy here would drag
@@ -161,10 +164,14 @@ def build_banked(flatr):
                 assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $B400 staging page'
                 lb[0x3400:0x3400 + len(blob)] = blob
     lb[0x3700:0x3700 + len(dir_blob)] = dir_blob   # DIR planes, bank-B copy
-    # collision map (colmap.py): every banked home is a bank-B window addr
+    # collision map (colmap.py): banked homes SPLIT across banks since
+    # the slide arc — USETAB lives in BANK A ($BE00, read under SEG by
+    # pmove_use); everything else is bank B. The first cut routed ALL
+    # blobs to lb and banked SPACE read TABL0-neighborhood garbage (the
+    # 2026-08-14 'again' investigation's real find).
     for _ca, _cb in _cm.blobs(flat=False).items():
-        if isinstance(_ca, int):
-            assert 0x8000 <= _ca < 0xC000
+        if isinstance(_ca, int) and _ca != 0xBE00:      # USETAB seeded in
+            assert 0x8000 <= _ca < 0xC000               # the LA section
             lb[_ca - 0x8000:_ca - 0x8000 + len(_cb)] = _cb
     # corner-phi memo validity: KDXH plane ships $80-filled — the
     # probe's KDXH compare doubles as the never-written test (no EP plane).

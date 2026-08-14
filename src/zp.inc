@@ -225,8 +225,20 @@ zp_seg_v2_r_s = VX2+12
 ; ARMED (hi byte + count reset) by bsp/seg_emit.s, read by clip/tfr.s.
 ; Registry home since 2026-08-09: the arm sites used to hardcode the
 ; page numbers (clip-local equate) — the trap that bit the VXC move.
-TOP_RECORDS = $0300                     ; cache-region shuffle 2026-08-09:
-BOT_RECORDS = $0200                     ; records lead the map, clear of
+; Records arenas moved UP 2026-08-14 (Eben: 'move the records up, keep
+; the span state down for has_gap'): banked = the bank C free block left
+; by the VXC-planes-to-main move (all touchers run under the emit
+; cascade's PAGE BANK_C — the ONE seg-context count reset moved below
+; the page); flat = the empty flat side of the driver-reservation zone.
+; $0200-$03FF freed in the SHARED map (both builds) — the movement-code
+; space fund. Page-aligned: the records machinery rides zero lo bytes.
+.if ::BANKED
+TOP_RECORDS = $9800                     ; bank C
+BOT_RECORDS = $9700
+.else
+TOP_RECORDS = $2100
+BOT_RECORDS = $2000
+.endif
                                         ; SSMASK ($0B00 sat INSIDE the
                                         ; 221-byte $0A80 mask — the near
                                         ; miss anim6502 didn't catch) and
