@@ -66,7 +66,7 @@ COLIDX_BASE = $7600
 .if ::BANKED
 COLSEG_BASE = $B8C0        ; collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 .else
-COLSEG_BASE = $77E0
+COLSEG_BASE = $7810
 .endif
 .if ::BANKED
 SS_VZ_BASE = $8C00         ; per-subsector prescale(floor+41) (s8)
@@ -83,6 +83,8 @@ MV_MINPASS = $BFC0         ; per-mover min passable door pos (fh + 56, prescaled
 .else
 MV_MINPASS = $E910
 .endif
+COLPORT_BASE = $0200                    ; P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle) — the shared page freed by records-to-bank-C; ships via COLDAT (loaders TODO)
+COL_N_SOLID = $00C7                     ; collision indices >= this are ports (colmap asserts the count)
 .if ::BANKED
 USETAB_BASE = $BE00        ; use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 .else

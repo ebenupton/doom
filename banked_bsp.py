@@ -170,8 +170,12 @@ def build_banked(flatr):
     # blobs to lb and banked SPACE read TABL0-neighborhood garbage (the
     # 2026-08-14 'again' investigation's real find).
     for _ca, _cb in _cm.blobs(flat=False).items():
-        if isinstance(_ca, int) and _ca != 0xBE00:      # USETAB seeded in
-            assert 0x8000 <= _ca < 0xC000               # the LA section
+        if not isinstance(_ca, int) or _ca == 0xBE00:   # USETAB seeded in
+            continue                                    # the LA section
+        if _ca < 0x8000:                                # COLPORT etc: MAIN
+            for _k, _v in enumerate(_cb):               # (model RAM; discs
+                bm[_ca + _k] = _v                       # ship via COLDAT)
+        else:
             lb[_ca - 0x8000:_ca - 0x8000 + len(_cb)] = _cb
     # corner-phi memo validity: KDXH plane ships $80-filled — the
     # probe's KDXH compare doubles as the never-written test (no EP plane).

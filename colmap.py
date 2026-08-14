@@ -168,16 +168,10 @@ def build():
     assert len(segs) < 256, f'{len(segs)} collision segs (u8 indexing)'
     colsegs = [(a[0], a[1], b[0] - a[0], b[1] - a[1]) for a, b in segs]
 
-    # per-column (128-unit) lists
-    colidx = []
-    collist = []
-    for c in range(COLS):
-        cx0 = RAWX_MIN + c * 128 - RADIUS
-        cx1 = RAWX_MIN + (c + 1) * 128 + RADIUS
-        mine = [i for i, (x1, y1, dx, dy) in enumerate(colsegs)
-                if max(x1, x1 + dx) >= cx0 and min(x1, x1 + dx) <= cx1]
-        colidx.append((len(collist), len(mine)))
-        collist.extend(mine)
+    # per-column (128-unit) lists — built AFTER ports (below) so port
+    # entries can ride the same u8 index space at >= len(colsegs)
+    colidx = None
+    collist = None
 
     # per-subsector VZ + mover info
     ps = dw._prescale_height
@@ -258,7 +252,53 @@ def build():
                 f'use lines with different actions within trace range ' \
                 f'({aact} vs {bact}) — implement nearest-hit ordering'
 
-    _built = dict(colsegs=colsegs, colidx=colidx, collist=collist,
+    # ── aggregation ports (task 8): two-sided lines where openings can
+    # bind on a crossing box — mover-adjacent, floor step > 24, or a
+    # static opening < 56. Baked at REST pose; live mover substitution
+    # at test time. ob_vz = prescale(max fh)+5 (vz domain, +5 = the eye
+    # offset used everywhere in pmove); ot_ps = prescale(min ch).
+    ports = []
+    for li, ld in enumerate(dw.linedefs):
+        v1, v2, flags, special, tag, r, l = ld
+        if r == 0xFFFF or l == 0xFFFF or (flags & 1):
+            continue
+        sr, sl = dw.sidedefs[r][5], dw.sidedefs[l][5]
+        if sr not in seen and sl not in seen:
+            continue
+        is_mover = sr in dw.ANIM_SECTORS or sl in dw.ANIM_SECTORS
+        fr, fl = dw.sectors[sr], dw.sectors[sl]
+        if not (is_mover or abs(fr[0] - fl[0]) > 24
+                or min(fr[1], fl[1]) - max(fr[0], fl[0]) < 56):
+            continue
+        x1, y1 = dw.vertexes[v1][:2]
+        x2, y2 = dw.vertexes[v2][:2]
+        ob = ps(max(fr[0], fl[0])) + EYE_PS
+        ot = ps(min(fr[1], fl[1]))
+        mv = 0xFF
+        for sec in (sr, sl):
+            if sec in dw.ANIM_SECTORS:
+                mv = movers.index(sec) | (0x80 if dw.ANIM_SECTORS[sec] == 'ceil' else 0)
+        import math as _m
+        ang = int(round(_m.atan2(y2 - y1, x2 - x1) * 32 / _m.pi)) & 63
+        ports.append((x1 - CX, y1 - CY, x2 - x1, y2 - y1,
+                      ob & 0xFF, ot & 0xFF, mv, ang))
+    assert len(colsegs) + len(ports) < 256, 'u8 collision index space'
+
+    # per-column lists: SOLIDS ONLY until the engine's port dispatch
+    # lands (a port index in the list would be misread as an OOB solid
+    # record by the shipped scan — the task-8 asm flips this to the
+    # unified universe with idx >= COL_N_SOLID = port)
+    colidx = []
+    collist = []
+    for c in range(COLS):
+        cx0 = RAWX_MIN + c * 128 - RADIUS
+        cx1 = RAWX_MIN + (c + 1) * 128 + RADIUS
+        mine = [i for i, (x1, y1, dx, dy) in enumerate(colsegs)
+                if max(x1, x1 + dx) >= cx0 and min(x1, x1 + dx) <= cx1]
+        colidx.append((len(collist), len(mine)))
+        collist.extend(mine)
+
+    _built = dict(colsegs=colsegs, colidx=colidx, collist=collist, ports=ports,
                   ss_vz=bytes(ss_vz), ss_info=bytes(ss_info),
                   mv_minpass=bytes(mv_minpass),
                   use_lines=use_lines, walk_lines=walk_lines,
@@ -314,7 +354,7 @@ def blobs(flat=True):
     # slide projection. Banked: USETAB lives in BANK A ($BE00 — pmove_use
     # pages SEG for its list) so the widened COLSEG fits bank B.
     if flat:
-        A = dict(idx=0x7600, colseg=0x77E0, ss_vz=0xE750, ss_info=0xE830,
+        A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750, ss_info=0xE830,
                  minpass=0xE910, usetab=0xE918)
     else:
         A = dict(idx=0xB4A4, colseg=0xB8C0, ss_vz=0x8C00, ss_info=0x8CE0,
@@ -335,14 +375,29 @@ def blobs(flat=True):
     ub.append(len(m['walk_lines']))
     for x1, y1, dx, dy, act in m['walk_lines']:
         ub += struct.pack('<hhhhB', x1, y1, dx, dy, act)
+    # COLPORT: aggregation ports at $0200 BOTH builds (the shared page
+    # freed by the records-to-bank-C move; main = no paging in the scan).
+    # SHIPPING NOTE: discs load from $1A00 up — both loaders need the
+    # COLDAT file (or a staged copy) before this works on hardware; the
+    # py65 harnesses install it directly.
+    pb = bytearray()
+    for p in m['ports']:
+        pb += struct.pack('<hhhhBBBB', p[0], p[1], p[2], p[3],
+                          p[4], p[5], p[6], p[7])
+    assert 0x0200 + len(pb) <= 0x0400, 'COLPORT overruns the freed pages'
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
            A['ss_vz']: m['ss_vz'], A['ss_info']: m['ss_info'],
-           A['minpass']: m['mv_minpass'], A['usetab']: bytes(ub)}
+           A['minpass']: m['mv_minpass'], A['usetab']: bytes(ub),
+           0x0200: bytes(pb)}
+    # the asm dispatches on idx >= COL_N_SOLID (abi constant): pin it
+    import abi as _abi
+    assert len(m['colsegs']) == _abi.COL_N_SOLID, \
+        f'COL_N_SOLID {_abi.COL_N_SOLID} != {len(m["colsegs"])} — update gen_abi'
     # home-range asserts (free-space windows audited 2026-08-14)
     if flat:
         assert A['idx'] + len(idx_blob) <= A['colseg']
-        assert A['colseg'] + len(seg_blob) <= 0x7F00, \
-            'collision blob reaches the flat PMOVE region at $7F00'
+        assert A['colseg'] + len(seg_blob) <= 0x7F10, \
+            'collision blob reaches the flat PMOVE region at $7F10'
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
         assert 0xE830 + len(m['ss_info']) <= 0xE910
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
@@ -431,16 +486,63 @@ def _box_hits_seg(bx0, by0, bx1, by1, seg):
     return (s1 > 0) != (s2 > 0)
 
 
-def box_blocked(rx, ry):
+def _port_live(p, mover_pos):
+    ob, ot, mv = p[4], p[5], p[6]
+    ob = ob - (256 if ob >= 128 else 0)
+    ot = ot - (256 if ot >= 128 else 0)
+    if mv != 0xFF:
+        pos = mover_pos[mv & 0x3F]
+        pos = pos - (256 if pos >= 128 else 0)
+        if mv & 0x80:
+            ot = pos                      # door: live ceiling
+        else:
+            ob = pos + EYE_PS             # lift: live floor (vz domain)
+    return ob, ot
+
+
+def box_scan(rx, ry, z_ps, mover_pos):
+    """P_CheckPosition over the box: solids block; crossed ports either
+    block (opening/head too small) or aggregate tm_ob (the vz-domain
+    openbottom max). Returns (blocked, tm_ob)."""
     m = build()
+    n_solid = len(m['colsegs'])
+    bx0, by0, bx1, by1 = rx - RADIUS, ry - RADIUS, rx + RADIUS, ry + RADIUS
+    c0 = max(0, min(COLS - 1, (bx0 - RAWX_MIN) >> 7))
+    c1 = max(0, min(COLS - 1, (bx1 - RAWX_MIN) >> 7))
+    tm_ob = -128
+    for c in {c0, c1}:
+        off, cnt = m['colidx'][c]
+        for k in range(cnt):
+            idx = m['collist'][off + k]
+            if _box_hits_seg(bx0, by0, bx1, by1, m['colsegs'][idx]):
+                return True, tm_ob
+    # ports: direct iteration until the unified lists land with the asm
+    # (42 entries; the engine will list-drive them via idx >= n_solid)
+    for p in m['ports']:
+        if _box_hits_seg(bx0, by0, bx1, by1, p[:4]):
+            ob, ot = _port_live(p, mover_pos)
+            if ot - (ob - EYE_PS) < DOOR_MIN_OPEN_PS:
+                return True, tm_ob             # opening too small (or shut)
+            if ot - (z_ps - EYE_PS) < DOOR_MIN_OPEN_PS:
+                return True, tm_ob             # head bump
+            if ob > tm_ob:
+                tm_ob = ob
+    return False, tm_ob
+
+
+def box_blocked(rx, ry):
+    """Legacy solid-only probe (tools)."""
+    m = build()
+    n_solid = len(m['colsegs'])
     bx0, by0, bx1, by1 = rx - RADIUS, ry - RADIUS, rx + RADIUS, ry + RADIUS
     c0 = max(0, min(COLS - 1, (bx0 - RAWX_MIN) >> 7))
     c1 = max(0, min(COLS - 1, (bx1 - RAWX_MIN) >> 7))
     for c in {c0, c1}:
         off, cnt = m['colidx'][c]
         for k in range(cnt):
-            if _box_hits_seg(bx0, by0, bx1, by1,
-                             m['colsegs'][m['collist'][off + k]]):
+            idx = m['collist'][off + k]
+            if idx < n_solid and _box_hits_seg(bx0, by0, bx1, by1,
+                                               m['colsegs'][idx]):
                 return True
     return False
 
@@ -474,9 +576,17 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
     if not (RAWX_MIN <= nx <= RAWX_MIN + 36 * 128 - 1 and
             RAWY_MIN <= ny <= RAWY_MIN + 22 * 128 - 1):
         return False, z_ps
-    if box_blocked(nx, ny):
+    blocked, tm_ob = box_scan(nx, ny, z_ps, mover_pos)
+    if blocked:
         return False, z_ps
-    return dest_check(nx, ny, z_ps, mover_pos)
+    ok, vz = dest_check(nx, ny, z_ps, mover_pos)
+    if not ok:
+        return False, z_ps
+    if tm_ob > vz:                        # crossed-line floors bind (the
+        vz = tm_ob                        # DOOM tmfloorz aggregation)
+        if vz - z_ps > STEP_PS:
+            return False, z_ps
+    return True, vz
 
 
 def _seg_cross(ax, ay, adx, ady, bx, by, bdx, bdy):
