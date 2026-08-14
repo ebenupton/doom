@@ -598,7 +598,11 @@ dv_emit:
    LDA zp_cb_cy2
    SBC #Y_BIAS                             ; C=1 from the in-band SBC
    STA RASTER_ZP_Y1
+   BIT plotq_mode                          ; run-ahead queue armed?
+   BMI pq_enq_j
    JMP plot_v                              ; always vertical on this path
+pq_enq_j:
+   JMP plot_enq
 
 ; ========== Phase 4: CB clip (clip_to_span) ==========
 ; Exact clip of the line against the span's trapezoid aperture.
@@ -1228,9 +1232,13 @@ des_dispatch:
 ; vertical segments (gradient census 2026-07-05) — route them to the
 ; dedicated plotters instead of the generic NJ machinery ---
 ; (A = Y1 on both entry paths)
+   BIT plotq_mode                          ; run-ahead queue armed? (driver
+   BMI pq_enq_j2                           ; feature: harness stays direct)
    CMP RASTER_ZP_Y0
    BNE des_not_h
    JMP plot_h
+pq_enq_j2:
+   JMP plot_enq
 des_to_v:
    LDA RASTER_ZP_Y0                        ; this path's segments have no
    CMP RASTER_ZP_Y1                        ; y-order guarantee — normalize
@@ -1255,6 +1263,95 @@ des_diag:                                  ; FALLS THROUGH
    JMP RASTER_ENTRY                        ; tail-call rasteriser
 
 .endscope
+
+; ============================================================================
+; PLOT RUN-AHEAD QUEUE (2026-08-14, Eben's cheap-triple-buffer design).
+; 64 x 4-byte post-clip segments at PLOTQ ($1000).  While plotq_mode is
+; $80 (driver arms it at flip), plots append here instead of drawing —
+; the back buffer is still on display until the flip's vsync.  Each
+; append then calls the pq_pump vector: the DRIVER's pump polls the
+; vsync latch and, once it fires (or the queue fills), full-clears the
+; new back buffer, drains the queue and drops plotq_mode to direct.
+; Harness/default: plotq_mode = 0 — everything draws direct and the
+; only cost is the 6-cycle gate per line.  FIFO drain preserves
+; production order; the plotter is re-derived from the coords exactly
+; as des_dispatch would (y0==y1 -> plot_h, x0==x1 -> plot_v with the
+; des_to_v normalize, else NJ) — pixels identical by construction.
+; ============================================================================
+PLOTQ = $1000
+::plot_enq:
+   LDX plotq_n
+   LDA RASTER_ZP_X0
+   STA PLOTQ+0,X
+   LDA RASTER_ZP_Y0
+   STA PLOTQ+1,X
+   LDA RASTER_ZP_X1
+   STA PLOTQ+2,X
+   LDA RASTER_ZP_Y1
+   STA PLOTQ+3,X
+   TXA
+   CLC
+   ADC #4
+   STA plotq_n                             ; wraps to 0 at 64 entries: the
+                                        ; pump treats n==0 as FULL and
+                                        ; force-waits
+::pq_pump_op:
+   JSR pq_pump_default                     ; SMC (named): the driver pokes
+   RTS                                     ; its gated pump in here
+pq_pump_default:
+   RTS                                     ; engine default: no driver, no
+                                        ; pump (unreachable in harness —
+                                        ; mode is never armed there)
+
+; drain: dispatch every queued segment through the axis rules.
+; Caller guarantees the target buffer is cleared + off display and
+; bank C is paged (banked).  Clobbers A/X/Y; resets plotq_n.
+::plotq_drain:
+   LDY #0
+pqd_loop:
+   CPY plotq_n
+   BEQ pqd_done
+   LDA PLOTQ+0,Y
+   STA RASTER_ZP_X0
+   LDA PLOTQ+1,Y
+   STA RASTER_ZP_Y0
+   LDA PLOTQ+2,Y
+   STA RASTER_ZP_X1
+   LDA PLOTQ+3,Y
+   STA RASTER_ZP_Y1
+   INY
+   INY
+   INY
+   INY
+   STY pqd_y
+   LDA RASTER_ZP_Y1
+   CMP RASTER_ZP_Y0
+   BNE pqd_not_h
+   JSR plot_h
+   JMP pqd_next
+pqd_not_h:
+   LDA RASTER_ZP_X0
+   CMP RASTER_ZP_X1
+   BNE pqd_diag
+   LDA RASTER_ZP_Y0                        ; des_to_v normalize twin
+   CMP RASTER_ZP_Y1
+   BCC pqd_v_ord
+   LDX RASTER_ZP_Y1
+   STA RASTER_ZP_Y1
+   STX RASTER_ZP_Y0
+pqd_v_ord:
+   JSR plot_v
+   JMP pqd_next
+pqd_diag:
+   JSR RASTER_ENTRY
+pqd_next:
+   LDY pqd_y
+   BNE pqd_loop                            ; (y wraps to 0 only at a full
+                                        ; 256-byte drain: done)
+pqd_done:
+   ZERO plotq_n
+   RTS
+pqd_y: .byte 0
 
 ; --- dcl_yband_clip: clip emit segment to visible Y band [Y_BIAS,VIS_YMAX].
 ; In: zp_seg_start_x/y, zp_ox1, zp_tmp0 (u8 biased). Out: clipped; C clear=keep,
