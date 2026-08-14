@@ -4,17 +4,17 @@
 ; assembly-time truths. doom_wireframe asserts packed_layout against these
 ; values on import — drift fails loud there, never silently here.
 ; ============================================================================
-LAY_N_SEGS   = 623
+LAY_N_SEGS   = 649
 LAY_N_NODES   = 220
 LAY_ROOT   = 219                      ; n_nodes - 1
-LAY_OFF_VERTS   = $0C00
-LAY_OFF_SS   = $0900
-LAY_OFF_SEG_HDR   = $1200
+LAY_OFF_VERTS   = $0E00
+LAY_OFF_SS   = $0B00
+LAY_OFF_SEG_HDR   = $1600
 
 LAY_HDR_STRIDE  = 16                    ; heights INLINED at +10..15
 ; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —
 ; +4 form/dir_id, +5..7 C24, +8 flags, +9 L(pad), +10..15 heights)
-LAY_N_DIRS   = 116                   ; distinct diagonal primitives
+LAY_N_DIRS   = 113                   ; distinct diagonal primitives
 LAY_MAX_DIRS   = 160                   ; DIR table stride (3 arrays)
 
 .if ::BANKED
