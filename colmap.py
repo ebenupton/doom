@@ -236,6 +236,27 @@ def build():
         elif special in (88, 36) and tag in tag2mover:
             walk_lines.append((x1, y1, x2 - x1, y2 - y1, tag2mover[tag]))
     assert len(use_lines) <= 16 and len(walk_lines) <= 8
+    # P_UseLines ordering: DOOM picks the NEAREST crossed line; the 6502
+    # scans first-in-table. These are observationally identical iff no
+    # single USE_RANGE trace can cross two use lines with DIFFERENT
+    # actions (same-door face pairs are order-indifferent). Enforce that
+    # equivalence here so a future map fails the build instead of
+    # silently mis-ordering (the task-7 analysis, 2026-08-14).
+    for i, (ax, ay, adx, ady, aact) in enumerate(use_lines):
+        for bx, by, bdx, bdy, bact in use_lines[i + 1:]:
+            if aact == bact:
+                continue
+            # conservative: min bbox gap between the two lines must
+            # exceed the trace reach
+            gap_x = max(0, max(min(ax, ax + adx), min(bx, bx + bdx))
+                        - min(max(ax, ax + adx), max(bx, bx + bdx)))
+            gap_x = max(0, max(min(ax, ax+adx) - max(bx, bx+bdx),
+                               min(bx, bx+bdx) - max(ax, ax+adx)))
+            gap_y = max(0, max(min(ay, ay+ady) - max(by, by+bdy),
+                               min(by, by+bdy) - max(ay, ay+ady)))
+            assert max(gap_x, gap_y) > USE_TRACE + 4, \
+                f'use lines with different actions within trace range ' \
+                f'({aact} vs {bact}) — implement nearest-hit ordering'
 
     _built = dict(colsegs=colsegs, colidx=colidx, collist=collist,
                   ss_vz=bytes(ss_vz), ss_info=bytes(ss_info),
