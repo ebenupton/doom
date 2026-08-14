@@ -447,6 +447,36 @@ fp_sectors = [
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+# ── Sky hack (2026-08-14, id's r_segs.c "hack to allow height changes
+# in outdoor areas"): a two-sided seg whose front AND back ceilings are
+# both sky sees a synthetic back sector carrying the FRONT's ceiling
+# height.  The step verdicts (NEEDBT / STEPUP_T) then never fire for
+# sky-sky borders — no phantom lintels outdoors, and the aperture opens
+# to the front sky height.  DATA-LEVEL: every consumer (float arbiter,
+# fp + packed references, the packer's flag bakes, the 6502) inherits
+# through this one resolver; fronts are never rewritten (the clone is
+# only ever returned in back position).
+def _ceil_is_sky(sec):
+    p = sec[3]
+    if isinstance(p, bytes): return p.rstrip(b'\0').startswith(b'F_SKY')
+    return str(p).startswith('F_SKY')
+
+_sky_clones = {}
+def _sky_back(front, back):
+    if back is None or back == front: return back
+    fs, bs = sectors[front], sectors[back]
+    if fs[1] == bs[1] or not (_ceil_is_sky(fs) and _ceil_is_sky(bs)):
+        return back
+    key = (back, front)
+    ci = _sky_clones.get(key)
+    if ci is None:
+        ci = len(sectors)
+        sectors.append((bs[0], fs[1]) + tuple(bs[2:]))
+        fp_sectors.append((fp_sectors[back][0], fp_sectors[front][1])
+                          + tuple(fp_sectors[back][2:]))
+        _sky_clones[key] = ci
+    return ci
+
 def seg_sectors(seg):
     ld = linedefs[seg[3]]
     right_side, left_side = ld[5], ld[6]
@@ -456,7 +486,7 @@ def seg_sectors(seg):
     else:
         front = sidedefs[left_side][5] if left_side != 0xFFFF else sidedefs[right_side][5]
         back  = sidedefs[right_side][5] if left_side != 0xFFFF else None
-    return front, back
+    return front, _sky_back(front, back)
 
 NF_SUBSECTOR = 0x8000
 
