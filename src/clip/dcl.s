@@ -1306,11 +1306,9 @@ pq_pump_default:
 ; drain: dispatch every queued segment through the axis rules.
 ; Caller guarantees the target buffer is cleared + off display and
 ; bank C is paged (banked).  Clobbers A/X/Y; resets plotq_n.
-::plotq_drain:
-   LDY #0
-pqd_loop:
-   CPY plotq_n
-   BEQ pqd_done
+::plotq_drain:                             ; PRE: >= 1 entry queued
+   LDY #0                                  ; (n == 0 at entry means FULL —
+pqd_loop:                                  ;  the do-while drains all 64)
    LDA PLOTQ+0,Y
    STA RASTER_ZP_X0
    LDA PLOTQ+1,Y
@@ -1346,9 +1344,8 @@ pqd_diag:
    JSR RASTER_ENTRY
 pqd_next:
    LDY pqd_y
-   BNE pqd_loop                            ; (y wraps to 0 only at a full
-                                        ; 256-byte drain: done)
-pqd_done:
+   CPY plotq_n
+   BNE pqd_loop
    ZERO plotq_n
    RTS
 pqd_y: .byte 0

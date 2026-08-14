@@ -112,6 +112,14 @@ ORG DRV_ORG
     STA &63                     \ not a soft mis-class
     LDA #HI(ENG_BOX_CLASSIFY)
     STA &64
+    LDA #6 : STA &FE30          \ pq_pump_op lives in the BANK C window —
+    LDA #LO(pq_pump)            \ page it in for the poke (the RCACHE write
+    STA ENG_PQ_PUMP_OP+1        \ above left bank 7 selected: poking there
+    LDA #HI(pq_pump)            \ would shred node data — the CPM scar
+    STA ENG_PQ_PUMP_OP+2        \ class; jsbeeb caught it 2026-08-14)
+                                \ (no bank restore: the init tail is main-
+                                \ only and anim_glue_init pages for itself)
+    LDA #0 : STA &A1 : STA &A0  \ mode DIRECT until the first flip
     ; --- translation-coherence vertex cache (VXC): zero valid bitmap +
     ;     state ($05A0-$05FF, unbanked), then enable. Zero-init is safe:
     ;     first enabled frame is cold (prev_ab sentinel path) and every
@@ -132,7 +140,7 @@ ORG DRV_ORG
     ; (D_FWD needs no init: read_input clears it every frame)
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
     LDA #&6C :STA backhi
-    JSR clr58t:JSR clr58b:JSR clr6Ct:JSR clr6Cb
+    JSR clr58 : JSR clr6C
 ; ---------------------------------------------------------------------------
 ; frame — main loop, one iteration per rendered frame (paced by flip_sched's
 ; vsync waits when the beam demands one; free-running otherwise).
@@ -248,60 +256,57 @@ ORG DRV_CLR
 ; the beam-passed top early while waiting for vsync to release the bottom.
 ; One INY/BNE loop, ten STA abs,Y per pass = 5 cyc/byte. Clobbers A,Y.
 ; ---------------------------------------------------------------------------
-.clr58t
+.clr58
     LDA #0 : TAY
-.c0t
+.c58
     STA &5800,Y : STA &5900,Y : STA &5A00,Y : STA &5B00,Y
     STA &5C00,Y : STA &5D00,Y : STA &5E00,Y : STA &5F00,Y
-    STA &6000,Y : STA &6100,Y
-    INY : BNE c0t
+    STA &6000,Y : STA &6100,Y : STA &6200,Y : STA &6300,Y
+    STA &6400,Y : STA &6500,Y : STA &6600,Y : STA &6700,Y
+    STA &6800,Y : STA &6900,Y : STA &6A00,Y : STA &6B00,Y
+    INY : BNE c58
     RTS
-.clr58b
+.clr6C
     LDA #0 : TAY
-.c0b
-    STA &6200,Y : STA &6300,Y : STA &6400,Y : STA &6500,Y
-    STA &6600,Y : STA &6700,Y : STA &6800,Y : STA &6900,Y
-    STA &6A00,Y : STA &6B00,Y
-    INY : BNE c0b
-    RTS
-.clr6Ct
-    LDA #0 : TAY
-.c1t
+.c6C
     STA &6C00,Y : STA &6D00,Y : STA &6E00,Y : STA &6F00,Y
     STA &7000,Y : STA &7100,Y : STA &7200,Y : STA &7300,Y
-    STA &7400,Y : STA &7500,Y
-    INY : BNE c1t
+    STA &7400,Y : STA &7500,Y : STA &7600,Y : STA &7700,Y
+    STA &7800,Y : STA &7900,Y : STA &7A00,Y : STA &7B00,Y
+    STA &7C00,Y : STA &7D00,Y : STA &7E00,Y : STA &7F00,Y
+    INY : BNE c6C
     RTS
-.clr6Cb
-    LDA #0 : TAY
-.c1b
-    STA &7600,Y : STA &7700,Y : STA &7800,Y : STA &7900,Y
-    STA &7A00,Y : STA &7B00,Y : STA &7C00,Y : STA &7D00,Y
-    STA &7E00,Y : STA &7F00,Y
-    INY : BNE c1b
-    RTS
+.clr_back
+    LDA backhi : CMP #&58 : BNE cb_6C
+    JMP clr58
+.cb_6C
+    JMP clr6C
 
-; ---------------------------------------------------------------------------
-; flip_sched — show the just-rendered buffer, then clear the buffer coming
-; off display without ever touching a row the beam has yet to draw. Same
-; beam-class scheme as anim_drv (see the header there for the full field
-; timeline); T1's high byte H classifies the beam:
-;   class 2 (H 0..14 bottom border, 57..77 blanking): old buffer's display
-;           is over -> clear top+bottom now, no wait
-;   class 1 (H 15..34, beam in bottom half): clear top now, wait for vsync,
-;           then clear bottom
-;   class 0 (H 35..56, beam in top half): wait for vsync, then clear all
-; walk_drv extras over the anim_drv version:
-;   - the class thresholds cover H 0-77, so a raw H >= 78 (transient/wrap
-;     read) is pre-filtered to class 0, the always-safe choice;
-;   - (the per-decision journal was RETIRED 2026-08-09 once the timing
-;     proved stable; re-add a store hook here if beam races recur.)
-; Toggles backhi. Re-phases T1 at each vsync it waits on. Clobbers A,X,Y.
-; ---------------------------------------------------------------------------
 .flip_sched
     LDX &0A50                                       ; cadence probe: log the
     LDA &FE45                                       ; beam phase (T1hi) at
-    STA &1100,X                                     ; flip, per frame
+    STA &1100,X                                     ; frame end, per frame
+    ; --- finalize the run-ahead queue (fast frames only: the flip vsync
+    ; never arrived mid-render, so the whole frame sits queued). Normal
+    ; frames: the pump already cleared/drained/switched to direct. ---
+    LDA &A1                                         ; plotq_mode (zp.inc)
+    BPL fs_done_q
+    LDA &FE4D : AND #2 : BNE fs_wq_stale            ; latch already set: the
+                                                    ; edge is STALE — skip the
+                                                    ; T1 re-phase (free-run is
+                                                    ; exact; see fs_w1 history)
+.fs_wq
+    LDA &FE4D : AND #2 : BEQ fs_wq                  ; wait the flip vsync
+    LDA #&4D : STA &FE45                            ; fresh edge: re-phase T1
+.fs_wq_stale
+    JSR clr_back                                    ; full-frame clear
+    LDA &A0                                         ; plotq_n: 0 = no lines
+    BEQ fs_q_empty                                  ; (empty scene) — n>0
+    LDA #BANK_C : STA &FE30                         ; guaranteed < full here
+    JSR ENG_PLOTQ_DRAIN                             ; (the pump forces at 64)
+.fs_q_empty
+    LDA #0 : STA &A1                                ; direct mode
+.fs_done_q
     JSR hud_glue                                    ; debug HUD onto the back buffer
     ; R12/R13 straddle guard: the pair of writes must not bracket the CRTC
     ; frame-top reload (e=5632us -> T1 = $37FE), or one field displays a
@@ -316,65 +321,35 @@ ORG DRV_CLR
     LDA #12:STA &FE00 : LDA backhi:LSR A:LSR A:LSR A:STA &FE01
     LDA #13:STA &FE00 : LDA backhi:AND #7:ASL A:ASL A:ASL A:ASL A:ASL A:STA &FE01
     LDA backhi:EOR #(&58 EOR &6C):STA backhi        ; backhi = buffer coming off display
-    ; classify the beam (class rides A to the dispatch below)
-    LDX &FE45
-    ; class(T1hi): <=14 -> 2, 15-34 -> 1, 35-56 -> 0, 57-77 -> 2, >=78 -> 0
-    ; (was a 78-byte beamtbl lookup; thresholds inlined 2026-07-08 to free
-    ; driver bytes for the D-cache flag handling)
-    LDA #0                                          ; class 0 (35-56, >=78 guard)
-    CPX #78 : BCS fs_havecls                        ; transient/wrap read -> wait
-    CPX #57 : BCS fs_cls2i                          ; 57-77 -> class 2
-    CPX #35 : BCS fs_havecls                        ; 35-56 -> class 0
-    CPX #15 : BCS fs_cls1i                          ; 15-34 -> class 1
-.fs_cls2i
-    LDA #2 : BNE fs_havecls                         ; <=14 (and 57-77) -> class 2
-.fs_cls1i
-    LDA #1
-.fs_havecls
-    CMP #0
-    BEQ fs_cls0
-    CMP #1 : BEQ fs_cls1
-    ; class 2: display of the old buffer already over — clear all, no wait
-    JSR fs_clrtop
-    JMP fs_clrbot                                   ; (tail: clr RTS returns)
-.fs_cls0
-    ; class 0: beam still in the top half — everything must wait for vsync
-    LDA #2:STA &FE4D                                ; arm the vsync flag
-.fs_w0
-    LDA &FE4D:AND #2:BEQ fs_w0
-    LDA #&4D:STA &FE45                              ; re-phase T1 to this vsync
-    JSR fs_clrtop
-    JMP fs_clrbot
-.fs_cls1
-    ; class 1: beam in the bottom half — top is clearable now; arm the vsync
-    ; flag BEFORE clearing (it latches), then wait and clear the bottom
-    LDA #2:STA &FE4D
-    JSR fs_clrtop
-    ; If vsync latched DURING the top clear, the edge is stale (up to
-    ; ~5.5ms old): re-phasing T1 from it would set the beam clock that
-    ; late and every later frame would classify against a shifted clock —
-    ; clears then race the visible beam (mid-screen tearing/corruption).
-    ; T1 free-runs at exactly one field (latch 19966 + 2), so when the
-    ; edge is stale the existing phase is still correct: skip the
-    ; re-phase and only re-lock on a freshly-observed edge.
-    LDA &FE4D:AND #2:BNE fs_w1_stale
-.fs_w1
-    LDA &FE4D:AND #2:BEQ fs_w1
-    LDA #&4D:STA &FE45                              ; fresh edge: re-phase T1
-.fs_w1_stale
-    JMP fs_clrbot
-; fs_clrtop/fs_clrbot: clear the half of whichever buffer backhi now names
-; (i.e. the one just taken OFF display; the CRTC shows the other one).
-.fs_clrbot
-    LDA backhi : CMP #&58 : BNE fs_cb1
-    JMP clr58b
-.fs_cb1
-    JMP clr6Cb
-.fs_clrtop
-    LDA backhi : CMP #&58 : BNE fs_ct1
-    JMP clr58t
-.fs_ct1
-    JMP clr6Ct
+    ; arm the run-ahead pipeline for the next frame: clear the vsync
+    ; latch, enqueue mode, empty queue. The next frame's plots queue
+    ; until the pump sees this flip's vsync (buffer off display), then
+    ; it full-clears, drains and drops to direct — the old class-0/1
+    ; waits are covered by render compute.
+    LDA #2 : STA &FE4D
+    LDA #&80 : STA &A1
+    LDA #0 : STA &A0
+    RTS
+
+; --- pq_pump: poked into ENG_PQ_PUMP_OP at init; the engine calls it
+; after every enqueue (all enqueue sites are in the emit cascade, bank C
+; live). n==0 after an append means the queue is FULL (64 entries). ---
+.pq_pump
+    LDA &A0
+    BEQ pq_force
+    LDA &FE4D : AND #2 : BEQ pq_ret                 ; vsync not yet: queue on
+.pq_ready
+    JSR clr_back                                    ; buffer just off display
+    LDA #BANK_C : STA &FE30                         ; (explicit: drain plots)
+    JSR ENG_PLOTQ_DRAIN
+    LDA #0 : STA &A1                                ; direct from here on
+.pq_ret
+    RTS
+.pq_force
+    LDA &FE4D : AND #2 : BEQ pq_force               ; full before vsync: wait
+    JMP pq_ready                                    ; (no T1 re-phase: the
+                                                    ; mid-frame latch is stale
+                                                    ; by an unknown few lines)
 
 ; --- read_input: scan keys, update angidx / position (with bounds) --------
 ; Manual keyboard scan, no OS: init put the keyboard in manual-scan mode
