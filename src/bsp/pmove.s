@@ -515,13 +515,16 @@ sm_apos:
    SBC pm_mb+1
    STA pm_mb+1
 sm_bpos:
-; u16 x u16 -> u24 (high byte discarded; callers guarantee < 2^24):
-; classic shift-add: acc = 0; 16 times: acc >>= will overflow — use
-; add-and-shift with the multiplier in pm_ma, addend pm_mb.
+; u16 x u16 -> u24 (callers bound the product below 2^24): add-and-shift
+; with a 24-bit shifting addend (pm_mb:pm_mb2). The first cut ROL'd the
+; addend's overflow into the ACCUMULATOR's top byte instead of keeping a
+; third addend byte — every diagonal straddle verdict was garbage (the
+; 2026-08-14 shallow-wall-clip bug; the lockstep fuzz caught it).
    LDA #0
    STA pm_t1m_w
    STA pm_t1m_w+1
    STA pm_t1m_w+2
+   STA pm_mb2
    LDX #16
 sm_loop:
    LSR pm_ma+1
@@ -534,12 +537,13 @@ sm_loop:
    LDA pm_t1m_w+1
    ADC pm_mb+1
    STA pm_t1m_w+1
-   BCC sm_noadd
-   INC pm_t1m_w+2
+   LDA pm_t1m_w+2
+   ADC pm_mb2
+   STA pm_t1m_w+2
 sm_noadd:
    ASL pm_mb
    ROL pm_mb+1
-   ROL pm_t1m_w+2                       ; mb overflow migrates into byte 2
+   ROL pm_mb2
    DEX
    BNE sm_loop
 ; mag zero -> canonical positive sign
@@ -552,6 +556,7 @@ sm_done:
    RTS
 ::pm_t1s_w: .res 1
 ::pm_t1m_w: .res 3
+pm_mb2:     .res 1
 .endscope
 
 ; ============================================================================

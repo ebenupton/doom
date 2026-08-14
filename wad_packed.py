@@ -34,7 +34,11 @@ NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
 # direction SIGN into a bf_ax-style strict-compare form (side0 iff the
 # compare holds strictly; ties -> side1, matching D=0 -> side 1):
 #   0: px > nx   1: px < nx   2: py > ny   3: py < ny   4: general
-NT_GEN = 2
+NT_GEN = 3   # MUST be 3: the engine's node_setup seeds the general form's
+             # first SBC from the dispatch LSR's carry (LSR 3 -> C=1). The
+             # 2026-08-14 lockstep fuzz caught this baked as 2 — every
+             # general-node classify ran dx = px-nx-1 (engine-wide
+             # off-by-one at diagonal partitions)
 NF_RLEAF, NF_LLEAF = 0x80, 0x40   # child-is-subsector flags, baked into the TYPE byte
 SEG_HDR_SIZE = 16    # idx<<4 (pure shifts). Uniform back-face C-FORM:
                      # +4 form/dir_id: 0 front iff px>C16, 1 px<C16,
@@ -331,7 +335,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             assert raw_dx < 0, f"node {i}: '<' sense survived normalization"
             typ = 1                          # side0 iff py > ny
         else:
-            typ = NT_GEN                     # 2
+            typ = NT_GEN                     # 3 (C=1 seed; see above)
         if cr & 0x8000: typ |= NF_RLEAF
         if cl & 0x8000: typ |= NF_LLEAF
         _npg(8, i, typ)

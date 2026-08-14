@@ -329,17 +329,48 @@ def install(mem, flat=True):
 
 # ── canonical python movement model (mirrors pmove.s exactly) ───────────
 def find_ss(rx, ry):
-    """Subsector id for a center-relative raw point — descends dw.nodes
-    with the engine's tie rules (side0 iff strictly front; ties side1)."""
+    """Subsector id for a center-relative raw point — descends the PACKED
+    node SoA with the engine's literal rules (pm_find_ss). Descending
+    dw.nodes instead is NOT equivalent: the packer's sense-normalization
+    (axis child swaps, canonical general directions) preserves every
+    strict verdict but flips which child an exact TIE lands on — the two
+    residual 2026-08-14 fuzz divergences were both on-partition points."""
     import doom_wireframe as dw
-    CX, CY = dw.MAP_CENTER_X, dw.MAP_CENTER_Y
-    x, y = rx + CX, ry + CY
-    nid = len(dw.nodes) - 1
-    while not (nid & 0x8000):
-        n = dw.nodes[nid]
-        d = n[3] * (x - n[0]) - n[2] * (y - n[1])
-        nid = n[12] if d > 0 else n[13]
-    return nid & 0x7FFF
+    rom = dw.packed_rom_main
+    lay = dw.packed_layout
+    md = lay['max_dirs']
+    dirs_off = lay['off_seg_hdr'] + lay['n_segs'] * 16
+
+    def s16(lo, hi):
+        v = lo | (hi << 8)
+        return v - 0x10000 if v >= 0x8000 else v
+
+    nid = lay['n_nodes'] - 1
+    while True:
+        t = rom[0x800 + nid]
+        form = t & 3
+        if form == 0:                       # side0 iff px > nx (ties side1)
+            side = 0 if rx > s16(rom[nid], rom[0x100 + nid]) else 1
+        elif form == 1:                     # side0 iff py > ny
+            side = 0 if ry > s16(rom[0x200 + nid], rom[0x300 + nid]) else 1
+        else:                               # general (form >= 2): DIR delta form
+            dxv = rx - s16(rom[nid], rom[0x100 + nid])
+            dyv = ry - s16(rom[0x200 + nid], rom[0x300 + nid])
+            sgn = rom[0x500 + nid]
+            di = rom[0x400 + nid]
+            adx = rom[dirs_off + di]
+            ady = rom[dirs_off + md + di]
+            ndy = -ady if (sgn & 0x80) else ady
+            ndx = -adx if (sgn & 0x40) else adx
+            side = 0 if ndy * dxv - ndx * dyv > 0 else 1
+        if side == 0:
+            if t & 0x80:                    # NF_RLEAF
+                return rom[0x600 + nid]
+            nid = rom[0x600 + nid]
+        else:
+            if t & 0x40:                    # NF_LLEAF
+                return rom[0x700 + nid]
+            nid = rom[0x700 + nid]
 
 
 def _box_hits_seg(bx0, by0, bx1, by1, seg):
