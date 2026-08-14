@@ -179,6 +179,9 @@ ORG DRV_ORG
     LDA #BANK_L0 :STA &FE30 : JSR ENG_VIEW_SETUP    ; view_setup (real address, from the map)
     LDA #BANK_C :STA &FE30 : JSR ENG_SPAN_INIT      ; span_init / pool
     LDA #BANK_L0 :STA &FE30 : JSR ENG_RENDER_FRAME ; (init is inline at render entry)
+    INC &0A50                                       ; frame counter (cadence
+                                                    ; probe reads it; $0A50 =
+                                                    ; the dead zp_side slot)
     JSR flip_sched
     JMP frame
 
@@ -296,6 +299,9 @@ ORG DRV_CLR
 ; Toggles backhi. Re-phases T1 at each vsync it waits on. Clobbers A,X,Y.
 ; ---------------------------------------------------------------------------
 .flip_sched
+    LDX &0A50                                       ; cadence probe: log the
+    LDA &FE45                                       ; beam phase (T1hi) at
+    STA &1100,X                                     ; flip, per frame
     JSR hud_glue                                    ; debug HUD onto the back buffer
     ; R12/R13 straddle guard: the pair of writes must not bracket the CRTC
     ; frame-top reload (e=5632us -> T1 = $37FE), or one field displays a
