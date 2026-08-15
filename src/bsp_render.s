@@ -20,4 +20,5 @@
 .include "bsp/resolve_crossing.s"
 .include "bsp/lo.s"
 .include "bsp/pmove.s"
+.include "bsp/pm_sincos.s"
 .include "bsp/zzz_end.s"

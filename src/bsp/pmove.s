@@ -194,7 +194,12 @@ pt_blocked:
    CLC
    RTS
 
-; pm_column: A/X = raw s16 -> A = column 0..35 (clamped)
+; pm_column: A/X = raw s16 -> A = column 0..35 (clamped).
+; SEG_CODE, not PMOVE: PMOVE is the CPU-invariant pocket that bank-B
+; code calls into (see pmf_commit's header) and it is full — this
+; routine's only caller is pmove_try, main-to-main, so it pays the
+; rent instead.
+SEG_CODE
 ::pm_column:
    CLC
    ADC #<PM_XBIAS
@@ -218,6 +223,7 @@ pm_col_hi:
    RTS
 .endscope
 
+SEG_PMOVE
 ; ============================================================================
 ; pm_column_scan — test every collision seg in column A against the box.
 ; C=1 blocked. Preserves pm_* box state; stashes the column in pm_c0_save.
@@ -313,16 +319,24 @@ pcs_rts:
 .endscope
 
 ; ============================================================================
-; pm_port_aggr — the crossed port at (zp_anim_p): +8 ob_vz +9 ot_ps
-; +10 mover +11 wall angle. Live mover substitution; C=1 = BLOCK
-; (opening or head < 56 — with pm_blkang set for the slide), else
-; aggregate pm_tmob. Height algebra (all prescaled s8, EYE folded):
+; pm_port_aggr — the crossed port at (zp_anim_p): +8 WALL ANGLE, then
+; +9 ob_vz +10 ot_ps +11 mover. The angle sits at +8 to MATCH THE SOLID
+; RECORD (colmap packs it there): pm_box_vs_seg writes pm_blkang from
+; +8 for whatever record it straddled, so a port that turns out to
+; block needs no second load — and pa_ok must RESTORE $FF, else a
+; passable port leaves a bogus wall for a later sector-rule block to
+; slide along (the 2026-08-15 momentum-fuzz find: the old layout put
+; ob_vz at +8, so the speculative write stored a HEIGHT as an angle;
+; every verdict still matched, only the slide direction was wrong,
+; which is why the try suite stayed clean).
+; C=1 = BLOCK (opening or head < 56), else aggregate pm_tmob.
+; Height algebra (all prescaled s8, EYE folded):
 ;   opening: ot - (ob-5) < 7  <=>  ot - ob < 2
 ;   head:    ot - (vz-5) < 7  <=>  ot - vz < 2
 ; ============================================================================
 .scope
 ::pm_port_aggr:
-   LDY #8
+   LDY #9
    LDA (zp_anim_p),Y                    ; ob_vz
    STA pm_c1                            ; (scratch reuse: cols are done
    INY                                  ;  by the time ports test)
@@ -373,14 +387,13 @@ pa_static:
    LDA pm_c1
    STA pm_tmob
 pa_ok:
+   LDA #$FF                             ; passable: drop the speculative
+   STA pm_blkang                        ; wall (see the header)
    CLC
    RTS
 pa_block:
-   LDY #11                              ; the port's wall angle drives the
-   LDA (zp_anim_p),Y                    ; slide along a shut door/step face
-   STA pm_blkang
-   SEC
-   RTS
+   SEC                                  ; pm_blkang already holds this
+   RTS                                  ; port's angle (record +8)
 .endscope
 
 ; ============================================================================
@@ -584,82 +597,6 @@ pcs_c2:
 .endscope
 
 ; ============================================================================
-; pm_smul — signed multiply pm_ma * pm_mb (s16 x s16). Result as
-; sign-magnitude: pm_t1s_w = $00 pos / $80 neg (canonical: mag 0 -> pos),
-; pm_t1m_w..+2 = |product| (u24; callers' operands bound it).
-; Plain shift-add (movement is frame-rare; no table dependencies).
-; ============================================================================
-.scope
-::pm_smul:
-   LDA #0
-   STA pm_t1s_w
-   LDA pm_ma+1
-   BPL sm_apos
-   LDA #$80
-   STA pm_t1s_w
-   SEC                                  ; negate ma
-   LDA #0
-   SBC pm_ma
-   STA pm_ma
-   LDA #0
-   SBC pm_ma+1
-   STA pm_ma+1
-sm_apos:
-   LDA pm_mb+1
-   BPL sm_bpos
-   LDA pm_t1s_w
-   EOR #$80
-   STA pm_t1s_w
-   SEC
-   LDA #0
-   SBC pm_mb
-   STA pm_mb
-   LDA #0
-   SBC pm_mb+1
-   STA pm_mb+1
-sm_bpos:
-; u16 x u16 -> u24 (callers bound the product below 2^24): add-and-shift
-; with a 24-bit shifting addend (pm_mb:pm_mb2). The first cut ROL'd the
-; addend's overflow into the ACCUMULATOR's top byte instead of keeping a
-; third addend byte — every diagonal straddle verdict was garbage (the
-; 2026-08-14 shallow-wall-clip bug; the lockstep fuzz caught it).
-   LDA #0
-   STA pm_t1m_w
-   STA pm_t1m_w+1
-   STA pm_t1m_w+2
-   STA pm_mb2
-   LDX #16
-sm_loop:
-   LSR pm_ma+1
-   ROR pm_ma
-   BCC sm_noadd
-   CLC
-   LDA pm_t1m_w
-   ADC pm_mb
-   STA pm_t1m_w
-   LDA pm_t1m_w+1
-   ADC pm_mb+1
-   STA pm_t1m_w+1
-   LDA pm_t1m_w+2
-   ADC pm_mb2
-   STA pm_t1m_w+2
-sm_noadd:
-   ASL pm_mb
-   ROL pm_mb+1
-   ROL pm_mb2
-   DEX
-   BNE sm_loop
-; mag zero -> canonical positive sign
-   LDA pm_t1m_w
-   ORA pm_t1m_w+1
-   ORA pm_t1m_w+2
-   BNE sm_done
-   STA pm_t1s_w
-sm_done:
-   RTS
-.endscope
-
-; ============================================================================
 ; pm_cmp_t1_gt_t2 — A = 1 iff (t1 as s32) > (t2 as s32); sign-magnitude
 ; inputs in pm_t1s/pm_t1m and pm_t2s/pm_t2m (canonical signs).
 ; ============================================================================
@@ -731,57 +668,6 @@ fs_s1:
    JMP fs_loop
 fs_leaf:
    LDX zp_node_ch_l
-   RTS
-.endscope
-
-SEG_HIGH
-; ============================================================================
-; pmove_apply / pmove_unapply — add/subtract the slide vector (pm_sdx/y,
-; s16 8.8) to the DRIVER's 24-bit position (DV_PXF.. — fixed abi
-; addresses). Engine-side so the driver zone only pays the JSRs.
-; ============================================================================
-.scope
-::pmove_unapply:                        ; negate the vector, fall into apply
-   LDX #2
-pun_neg:
-   SEC
-   LDA #0
-   SBC pm_sdx,X
-   STA pm_sdx,X
-   LDA #0
-   SBC pm_sdx+1,X
-   STA pm_sdx+1,X
-   DEX
-   DEX
-   BPL pun_neg
-::pmove_apply:
-   LDX #0                               ; DV offset (stride 3)
-   LDY #0                               ; sd offset (stride 2)
-pa_axis:
-   CLC
-   LDA DV_PXF,X
-   ADC pm_sdx,Y
-   STA DV_PXF,X
-   LDA DV_PXF+1,X
-   ADC pm_sdx+1,Y
-   STA DV_PXF+1,X
-   LDA pm_sdx+1,Y
-   BPL pa_pos
-   LDA DV_PXF+2,X
-   ADC #$FF
-   JMP pa_st
-pa_pos:
-   LDA DV_PXF+2,X
-   ADC #0
-pa_st:
-   STA DV_PXF+2,X
-   INY
-   INY
-   INX
-   INX
-   INX
-   CPX #6
-   BCC pa_axis
    RTS
 .endscope
 
@@ -964,135 +850,806 @@ pu_exit:
 ; overlaps the 9-byte line record's bbox at (zp_pm_p). Cheap s16
 ; compares only; conservative (never rejects a true crossing).
 ; ============================================================================
+
+
 ; ============================================================================
-; pmove_slide — P_HitSlideLine (DOOM p_map.c) on the 64-angle tables.
-;   in : A = move direction (0..63); pm_blkang = the blocking wall's
-;        baked angle ($FF = sector-rule block: no slide, C=0)
-;   out: C=1, pm_sdx/pm_sdy = slide delta (s16 8.8) =
-;        step_tab[wall] * cos(delta), SIGNED cosine — delta > 90 slides
-;        backward along the line exactly like DOOM's negative newlen.
-;        C=0: no usable slide (sector block or cos == 0).
-; Pages BANK_SEG (step + sincos tables live in bank A). FLAT NOTE: the
-; $BA00/$BC00 literals are the BANKED homes; the flat/tube build links
-; this code but nothing calls it yet (tube driver movement parity is a
-; recorded follow-up — give the parasite its own table homes then).
+; pm_frame — DOOM 35Hz momentum physics, one call per driver frame.
+; THE canonical rules are colmap.momentum_frame (python); this is their
+; 6502 expression, fuzz-gated. CODE LIVES IN BANK B (Eben blessed
+; movement code into bank WALK 2026-08-15 — movement already runs
+; entirely under that bank): segments PMB1-4 are the bank B free
+; windows from the census (colmap.py / project_pmove); flat = one
+; $2300-$28FF region. THE DRIVER MUST PAGE BANK_WALK BEFORE THE JSR
+; (banked) — pm_frame cannot page itself in.
+;
+;   in : A = PAL fields elapsed (capped 32), X = input (b0 fwd, b1 back),
+;        DV_ANGIDX / DV_PXF.. (24-bit 8.8 positions), pm_vz.
+;   out: position + pm_vz updated, D_FWD written, PM_MOMX/Y + PM_TICREM
+;        (abi $03F8..) updated.
+;
+; Per 35Hz tic (fields*7/10, remainder carried): thrust 25*(cos,sin)
+; sign-magnitude on the mag6 grid; clamp +/-960; displacement += mom;
+; STOPSPEED-2 stop rule or *232>>8 FLOOR friction (DOOM FixedMul).
+; The displacement applies in DOOM-halved chunks (each axis <= 480 =
+; MAXMOVE/2) via pmove_try; a blocked chunk projects the REMAINING
+; displacement and the momentum onto the wall (dot-product
+; P_HitSlideLine, <= 2 walls/frame), then the axis fallback, then stop.
+; ============================================================================
+
+; pm_frame scratch (PM_SCRATCH tail — pmove_try's stops at +$48).
+; ADJACENCY LOAD-BEARING: tx/ty, fdx/fdy, cdx/cdy, remx/remy, axu/ayu,
+; vx/vy are (x,y) pairs indexed X=0/2; nx..ny is the 6-byte commit run;
+; pm_wu is (cmag,cneg,smag,sneg) so axis X=0 pairs with cos, X=2 sin.
+pm_tx     = PM_SCRATCH+$49              ; thrust vector (s16 8.8/tic)
+pm_ty     = PM_SCRATCH+$4B
+pm_fdx    = PM_SCRATCH+$4D              ; frame displacement
+pm_fdy    = PM_SCRATCH+$4F
+pm_cdx    = PM_SCRATCH+$51              ; chunk delta
+pm_cdy    = PM_SCRATCH+$53
+pm_rem    = PM_SCRATCH+$55              ; cd*chunks_left, kept by
+pm_remy   = PM_SCRATCH+$57              ;  increment (slide input)
+pm_chunks = PM_SCRATCH+$59
+pm_kk     = PM_SCRATCH+$5A
+pm_slides = PM_SCRATCH+$5B
+pm_tics   = PM_SCRATCH+$5C
+pm_okf    = PM_SCRATCH+$5D              ; clean-commit flag
+pm_in     = PM_SCRATCH+$5E              ; input bits
+pm_thr    = PM_SCRATCH+$5F              ; thrust-active flag
+pm_nx     = PM_SCRATCH+$60              ; candidate 24-bit x
+pm_ny     = PM_SCRATCH+$63              ;  (nx..ny: commit copy run)
+pm_tdx    = PM_SCRATCH+$66              ; intended displacement (D_FWD)
+pm_tdy    = PM_SCRATCH+$68
+pm_um     = PM_SCRATCH+$6A              ; mul |v| u16
+pm_ures   = PM_SCRATCH+$6C              ; mul 24-bit accumulator
+pm_uadd   = PM_SCRATCH+$6F              ; mul 24-bit shifting addend
+                                        ;  (pm_smul's lesson: 24 bits)
+pm_usgn   = PM_SCRATCH+$72
+pm_umag   = PM_SCRATCH+$73
+pm_ut     = PM_SCRATCH+$74
+pm_pp     = PM_SCRATCH+$75              ; projection scalar
+pm_wu     = PM_SCRATCH+$77              ; unit: cmag,cneg,smag,sneg
+pm_vx     = PM_SCRATCH+$7B              ; project vector in/out
+pm_vy     = PM_SCRATCH+$7D
+pm_p1     = PM_SCRATCH+$7F              ; D_FWD product 1 (24-bit)
+pm_p1s    = PM_SCRATCH+$82              ;  + its sign
+pm_axu    = PM_SCRATCH+$83              ; split |fd| work
+pm_ayu    = PM_SCRATCH+$85
+pm_sv     = PM_SCRATCH+$87              ; fallback stash
+pm_bk     = PM_SCRATCH+$89              ; back-key flag (0/1)
+pm_sh     = PM_SCRATCH+$8A              ; shift counter
+
+SEG_PMB1
+.scope
+::pm_frame_i:                           ; (the wrapper below is the ABI
+   STX pm_in                            ;  entry: it refreshes the raws)
+   CMP #33
+   BCC pf_fok
+   LDA #32                              ; fields hiccup clamp
+pf_fok:
+; tics = (ticrem + fields*7) / 10, remainder carried (7f as 4f+2f+f:
+; every partial <= 224, no carries)
+   STA pm_ut
+   ASL A
+   STA pm_umag                          ; 2f
+   ASL A
+   CLC
+   ADC pm_umag                          ; 6f
+   ADC pm_ut                            ; 7f
+   ADC PM_TICREM                        ; <= 233
+   LDX #0
+pf_d10:
+   CMP #10
+   BCC pf_d10d
+   SBC #10
+   INX
+   BNE pf_d10
+pf_d10d:
+   STA PM_TICREM
+   TXA
+   BNE pf_go
+pf_none:
+   LDA #0
+   STA D_FWD
+   RTS
+pf_go:
+   STA pm_tics
+   LDA pm_in
+   LSR A                                ; b1 (back) -> b0
+   AND #1
+   STA pm_bk
+   LDA #0
+   STA pm_thr
+   LDX #3
+pf_zfd:
+   STA pm_fdx,X
+   DEX
+   BPL pf_zfd
+; thrust vector (frame-constant angle): only when fwd XOR back
+   LDA pm_in
+   AND #3
+   BEQ pf_tic0
+   CMP #3
+   BEQ pf_tic0
+   INC pm_thr
+   LDA DV_ANGIDX
+   JSR pmf_unit
+   LDX #0
+pf_thr:
+   LDA #25                              ; MM_THRUST
+   STA pm_ax
+   LDA #0
+   STA pm_ax+1
+   LDA pm_wu,X
+   STA pm_umag
+   JSR pmf_sc16                         ; (25*mag)>>5
+   LDA pm_wu+1,X
+   EOR pm_bk                            ; thrust sign = unitneg XOR back
+   JSR pmf_negif
+   LDA pm_ax
+   STA pm_tx,X
+   LDA pm_ax+1
+   STA pm_tx+1,X
+   INX
+   INX
+   CPX #4
+   BCC pf_thr
+; --- tic loop ---------------------------------------------------------
+pf_tic0:
+   LDX #0
+pf_t_ax:
+   LDA pm_thr
+   BEQ pf_t_ni
+   CLC
+   LDA PM_MOMX,X
+   ADC pm_tx,X
+   STA PM_MOMX,X
+   LDA PM_MOMX+1,X
+   ADC pm_tx+1,X
+   STA PM_MOMX+1,X
+pf_t_ni:
+   JSR pmf_clamp                        ; X preserved
+   CLC
+   LDA pm_fdx,X
+   ADC PM_MOMX,X
+   STA pm_fdx,X
+   LDA pm_fdx+1,X
+   ADC PM_MOMX+1,X
+   STA pm_fdx+1,X
+   INX
+   INX
+   CPX #4
+   BCC pf_t_ax
+; stop rule (cmd nets zero AND both |mom| < 2) or friction
+   LDA pm_in
+   AND #3
+   BEQ pf_t_sc
+   CMP #3
+   BNE pf_t_fr
+pf_t_sc:
+   LDX #0
+pf_t_s1:
+   CLC
+   LDA PM_MOMX,X
+   ADC #1
+   TAY
+   LDA PM_MOMX+1,X
+   ADC #0
+   BNE pf_t_fr
+   CPY #3
+   BCS pf_t_fr
+   INX
+   INX
+   CPX #4
+   BCC pf_t_s1
+   LDA #0                               ; stop dead
+   LDX #3
+pf_t_z:
+   STA PM_MOMX,X
+   DEX
+   BPL pf_t_z
+   BMI pf_t_nx
+pf_t_fr:
+   LDX #0
+   JSR pmf_fric
+   LDX #2
+   JSR pmf_fric
+pf_t_nx:
+   DEC pm_tics
+   BEQ pf_move
+   JMP pf_tic0
+; --- apply the displacement in DOOM-halved chunks ---------------------
+pf_move:
+   LDA pm_fdx
+   ORA pm_fdx+1
+   ORA pm_fdy
+   ORA pm_fdy+1
+   BNE pf_mv_go
+   JMP pf_none
+pf_mv_go:
+   LDX #3
+pf_ctd:
+   LDA pm_fdx,X                         ; intended move, for D_FWD
+   STA pm_tdx,X
+   DEX
+   BPL pf_ctd
+   LDA #1
+   STA pm_okf
+   LDA #0
+   STA pm_slides
+   JSR pmf_split
+pf_chunk:
+   LDA pm_chunks
+   BNE pf_c_go
+   JMP pf_dfwd
+pf_c_go:
+   JSR pmf_cand                         ; candidate + raws
+   JSR pmove_try
+   BCC pf_blk
+   JSR pmf_commit
+   JMP pf_chunk
+pf_blk:
+   LDA #0
+   STA pm_okf
+   LDA pm_slides
+   CMP #2
+   BCS pf_fall
+   LDA pm_blkang
+   CMP #$FF
+   BEQ pf_fall
+   INC pm_slides
+   JSR pmf_unit                         ; A = blkang -> wall unit
+   LDX #3
+pf_s1:
+   LDA pm_rem,X                         ; remaining -> project -> new fd
+   STA pm_vx,X
+   DEX
+   BPL pf_s1
+   JSR pmf_project
+   LDX #3
+pf_s2:
+   LDA pm_vx,X
+   STA pm_fdx,X
+   DEX
+   BPL pf_s2
+   LDX #3
+pf_s3:
+   LDA PM_MOMX,X                        ; momentum takes the same wall
+   STA pm_vx,X
+   DEX
+   BPL pf_s3
+   JSR pmf_project
+   LDX #3
+pf_s4:
+   LDA pm_vx,X
+   STA PM_MOMX,X
+   DEX
+   BPL pf_s4
+   JSR pmf_split
+   JMP pf_chunk
+; --- axis fallback: keep y (X=2), then keep x (X=0), then full stop ---
+pf_fall:
+   LDX #2
+pf_f_ax:
+   LDA pm_cdx,X                         ; keep-axis delta zero: skip
+   ORA pm_cdx+1,X
+   BEQ pf_f_nx
+   TXA
+   EOR #2
+   TAY                                  ; Y = axis to zero
+   LDA pm_cdx,Y
+   STA pm_sv
+   LDA pm_cdx+1,Y
+   STA pm_sv+1
+   LDA #0
+   STA pm_cdx,Y
+   STA pm_cdx+1,Y
+   TXA
+   PHA
+   TYA
+   PHA
+   JSR pmf_cand
+   JSR pmove_try
+   PLA
+   TAY
+   PLA
+   TAX
+   BCS pf_f_ok
+   LDA pm_sv                            ; restore the zeroed axis
+   STA pm_cdx,Y
+   LDA pm_sv+1
+   STA pm_cdx+1,Y
+pf_f_nx:
+   CPX #2
+   BNE pf_f_stop
+   LDX #0
+   BEQ pf_f_ax
+pf_f_ok:
+   LDA #0                               ; dead axis: momentum + rem die
+   STA PM_MOMX,Y
+   STA PM_MOMX+1,Y
+   STA pm_rem,Y
+   STA pm_rem+1,Y
+   JSR pmf_commit
+   JMP pf_chunk
+pf_f_stop:
+   LDA #0                               ; boxed in: full stop
+   LDX #3
+pf_f_z:
+   STA PM_MOMX,X
+   DEX
+   BPL pf_f_z
+   JMP pf_dfwd
+.endscope
+
+; ============================================================================
+; D_FWD — clean commit AND intended move EXACTLY on the view ray
+; (cross == 0 as 24-bit magnitude products + signs, dot > 0). See the
+; model for why exact: friction drift has no epsilon budget in bca.
+; ============================================================================
+SEG_PMB2
+.scope
+::pf_dfwd:
+   LDA #0
+   STA D_FWD
+   LDA pm_okf
+   BNE df_go
+   RTS
+df_go:
+   LDA DV_ANGIDX
+   JSR pmf_unit
+   LDA pm_tdx
+   STA pm_ax
+   LDA pm_tdx+1
+   STA pm_ax+1
+   LDA pm_wu+2                          ; smag
+   STA pm_umag
+   JSR pmf_mul24s                       ; A = |tdx|*smag sign
+   EOR pm_wu+3                          ; product sign = sign XOR sneg
+   STA pm_p1s
+   LDX #2
+df_c1:
+   LDA pm_ures,X
+   STA pm_p1,X
+   DEX
+   BPL df_c1
+   LDA pm_tdy
+   STA pm_ax
+   LDA pm_tdy+1
+   STA pm_ax+1
+   LDA pm_wu                            ; cmag
+   STA pm_umag
+   JSR pmf_mul24s
+   EOR pm_wu+1
+   STA pm_ut                            ; sign 2
+   LDA pm_ures                          ; both products zero: on the ray
+   ORA pm_ures+1
+   ORA pm_ures+2
+   ORA pm_p1
+   ORA pm_p1+1
+   ORA pm_p1+2
+   BEQ df_dir
+   LDA pm_p1s
+   CMP pm_ut
+   BNE df_out
+   LDX #2
+df_c2:
+   LDA pm_ures,X
+   CMP pm_p1,X
+   BNE df_out
+   DEX
+   BPL df_c2
+df_dir:
+; forward iff the dominant nonzero component points with the unit
+   LDA pm_tdx
+   ORA pm_tdx+1
+   BEQ df_y
+   LDA pm_tdx+1
+   ASL A
+   LDA #0
+   ROL A                                ; A = sign(tdx)
+   CMP pm_wu+1
+   BNE df_out
+   BEQ df_yes
+df_y:
+   LDA pm_tdy+1
+   ASL A
+   LDA #0
+   ROL A
+   CMP pm_wu+3
+   BNE df_out
+df_yes:
+   LDA #1
+   STA D_FWD
+df_out:
+   RTS
+.endscope
+
+; ============================================================================
+; pmf_split — fd -> kk (halvings until both axes <= 480), chunks = 1<<k,
+; cd = fd asr k, rem = cd << k (= cd*chunks: the slide's remaining)
 ; ============================================================================
 .scope
-::pmove_slide:
-   LDY pm_blkang
-   CPY #$FF
-   BNE ps_go
-   CLC
-   RTS
-ps_go:
-   PAGE_X BANK_SEG                      ; X-clobber page: A (move dir) rides
-   SEC
-   SBC pm_blkang                        ; delta = move - wall (mod 64)
-   AND #63
-   STA pm_cnt                           ; delta in table-index units
-; cos(delta*4 BAM) from the driver sincos table (64 x 8 @ $BA00):
-; +3 cmag (count-native 0..32), +4 cneg, +5 cone
-   ASL A
-   ASL A
-   ASL A                                ; delta*8 -> table offset (fits u8:
-   TAY                                  ; delta<32 here? no: delta 0..63 *8
-                                        ; overflows — use the hi trick below
-   LDA pm_cnt
-   AND #$20                             ; upper half of the table?
-   BEQ ps_lo_half
-   LDA pm_cnt
-   AND #$1F
-   ASL A
-   ASL A
-   ASL A
-   TAY
-   LDA $BB00+3,Y                        ; second table page
-   STA pm_ma
-   LDA $BB00+4,Y
-   STA pm_mb
-   LDA $BB00+5,Y
-   JMP ps_have
-ps_lo_half:
-   LDA $BA00+3,Y                        ; cmag
-   STA pm_ma
-   LDA $BA00+4,Y                        ; cneg
-   STA pm_mb
-   LDA $BA00+5,Y                        ; cone
-ps_have:
-; A = cone: |cos| == 1 -> full step_tab entry; else scale by cmag/32
-   STA pm_cnt
-   LDA pm_ma
-   BNE ps_scaled
-   LDA pm_cnt
-   BNE ps_scaled                        ; cone set (mag encoded as 1.0)
-   CLC                                  ; cos == 0: no slide component
-   RTS
-ps_scaled:
-; fetch step_tab[wall] (4 bytes @ $BC00 + wall*4)
-   LDA pm_blkang
-   ASL A
-   ASL A
-   TAY
-   LDA $BC00,Y
-   STA pm_t1m
-   LDA $BC00+1,Y
-   STA pm_t1m+1
-   LDA $BC00+2,Y
-   STA pm_t2m
-   LDA $BC00+3,Y
-   STA pm_t2m+1
-   LDA pm_cnt                           ; cone: skip the scale
-   BNE ps_copy
-   LDA pm_t1m
-   LDX pm_t1m+1
-   JSR ps_scale16                       ; (A:X) * cmag / 32 -> A:X
-   STA pm_sdx
-   STX pm_sdx+1
-   LDA pm_t2m
-   LDX pm_t2m+1
-   JSR ps_scale16
-   STA pm_sdy
-   STX pm_sdy+1
-   JMP ps_sign
-ps_copy:
-   LDA pm_t1m
-   STA pm_sdx
-   LDA pm_t1m+1
-   STA pm_sdx+1
-   LDA pm_t2m
-   STA pm_sdy
-   LDA pm_t2m+1
-   STA pm_sdy+1
-ps_sign:
-   LDA pm_mb                            ; cneg: negate both components
-   BEQ ps_pos
+::pmf_split:
+   LDX #0
+sp_abs:
+   LDA pm_fdx+1,X                       ; |fd| -> axu/ayu
+   BMI sp_neg
+   STA pm_axu+1,X
+   LDA pm_fdx,X
+   STA pm_axu,X
+   JMP sp_abn
+sp_neg:
    SEC
    LDA #0
-   SBC pm_sdx
-   STA pm_sdx
+   SBC pm_fdx,X
+   STA pm_axu,X
    LDA #0
-   SBC pm_sdx+1
-   STA pm_sdx+1
-   SEC
+   SBC pm_fdx+1,X
+   STA pm_axu+1,X
+sp_abn:
+   INX
+   INX
+   CPX #4
+   BCC sp_abs
    LDA #0
-   SBC pm_sdy
-   STA pm_sdy
-   LDA #0
-   SBC pm_sdy+1
-   STA pm_sdy+1
-ps_pos:
-   SEC
-   RTS
-; (A:X lo:hi s16) * cmag(pm_ma, 1..31) >> 5, signed via sign-magnitude
-ps_scale16:
-   STA pm_ax
-   STX pm_ax+1
-   LDA #0
-   STA pm_ay                            ; sign flag
-   LDA pm_ax+1
-   BPL ps_s_pos
+   STA pm_kk
+sp_ck:
+   LDX #0
+sp_ck1:
+   LDA pm_axu+1,X                       ; > 480 ($01E0)?
+   CMP #1
+   BCC sp_ckn
+   BNE sp_half
+   LDA pm_axu,X
+   CMP #$E1
+   BCS sp_half
+sp_ckn:
+   INX
+   INX
+   CPX #4
+   BCC sp_ck1
+   BCS sp_kd
+sp_half:
+   LSR pm_axu+1
+   ROR pm_axu
+   LSR pm_ayu+1
+   ROR pm_ayu
+   INC pm_kk
+   BNE sp_ck
+sp_kd:
+   LDX pm_kk
    LDA #1
-   STA pm_ay
+sp_c1:
+   CPX #0
+   BEQ sp_c1d
+   ASL A
+   DEX
+   BNE sp_c1
+sp_c1d:
+   STA pm_chunks
+   LDX #3
+sp_cp:
+   LDA pm_fdx,X                         ; cd = fd ...
+   STA pm_cdx,X
+   DEX
+   BPL sp_cp
+   LDX pm_kk
+   BEQ sp_r0
+sp_sh:
+   LDA pm_cdx+1                         ; ... asr k (both axes)
+   CMP #$80
+   ROR pm_cdx+1
+   ROR pm_cdx
+   LDA pm_cdy+1
+   CMP #$80
+   ROR pm_cdy+1
+   ROR pm_cdy
+   DEX
+   BNE sp_sh
+sp_r0:
+   LDX #3
+sp_r1:
+   LDA pm_cdx,X                         ; rem = cd ...
+   STA pm_rem,X
+   DEX
+   BPL sp_r1
+   LDX pm_kk
+   BEQ sp_out
+sp_r2:
+   ASL pm_rem                           ; ... << k (= cd*chunks)
+   ROL pm_rem+1
+   ASL pm_remy
+   ROL pm_remy+1
+   DEX
+   BNE sp_r2
+sp_out:
+   RTS
+.endscope
+
+; ============================================================================
+; pmf_cand — candidate = DV position + cd -> pm_nx/ny AND the raw s16
+; pair for pmove_try ($90-$93 = candidate >> 5). X walks the DV stride-3
+; side, Y the cd/raw stride-2 side. Preserves neither.
+; ============================================================================
+SEG_PMB4
+.scope
+::pmf_cand:
+   LDX #0                               ; X = cd/raw side (stride 2:
+   LDY #0                               ;  zp,X RORs); Y = DV/nx side
+pc_ax:                                  ;  (stride 3)
+   CLC
+   LDA DV_PXF,Y
+   ADC pm_cdx,X
+   STA pm_nx,Y
+   LDA DV_PXF+1,Y
+   ADC pm_cdx+1,X
+   STA pm_nx+1,Y
+   LDA pm_cdx+1,X
+   BMI pc_neg
+   LDA DV_PXF+2,Y
+   ADC #0
+   JMP pc_hi
+pc_neg:
+   LDA DV_PXF+2,Y
+   ADC #$FF
+pc_hi:
+   STA pm_nx+2,Y
+   LDA pm_nx,Y                          ; raw = candidate >> 5
+   STA $90,X
+   LDA pm_nx+1,Y
+   STA $91,X
+   LDA pm_nx+2,Y
+   STA pm_ut
+   LDA #5
+   STA pm_sh
+pc_sh:
+   LDA pm_ut
+   CMP #$80
+   ROR pm_ut
+   ROR $91,X
+   ROR $90,X
+   DEC pm_sh
+   BNE pc_sh
+   INX
+   INX
+   INY
+   INY
+   INY
+   CPY #6
+   BCC pc_ax
+   RTS
+.endscope
+
+; ============================================================================
+; pmf_commit — candidate -> position, rem -= cd, one chunk done.
+; SEG_PMOVE, and that is LOAD-BEARING: bank-B code may only reference
+; symbols with CPU-INVARIANT addresses, because L0/L2 ship ONCE for
+; both the NMOS and 65C02 hosts (build_walk_ssd asserts it). CODE
+; shifts between the variants (STZ/BRA), so a JSR from PMB1 to a
+; CODE-resident routine made the bank image CPU-dependent — exactly 2
+; operand bytes, caught by that assert 2026-08-15. The PMOVE region
+; has a fixed start and no C02-variant opcodes, so it is safe.
+; ============================================================================
+SEG_PMOVE
+.scope
+::pmf_commit:
+   LDX #5
+cm_cp:
+   LDA pm_nx,X
+   STA DV_PXF,X
+   DEX
+   BPL cm_cp
+   LDX #2
+cm_rm:
+   SEC
+   LDA pm_rem,X
+   SBC pm_cdx,X
+   STA pm_rem,X
+   LDA pm_rem+1,X
+   SBC pm_cdx+1,X
+   STA pm_rem+1,X
+   DEX
+   DEX
+   BPL cm_rm
+   DEC pm_chunks
+   RTS
+.endscope
+
+; ============================================================================
+; pmf_unit — A = 64-angle -> pm_wu = (cmag,cneg,smag,sneg); mag6 has
+; unity pre-folded to 32 IN THE TABLE (gen_pm_sincos.py), so the decode
+; is a mask + a bit test. Row = pm_sincos + a*2 via zp_pm_p.
+; ============================================================================
+SEG_PMB3
+.scope
+::pmf_unit:
+   AND #63
+   ASL A                                ; a*2 (fits u8: <= 126)
+   CLC
+   ADC #<pm_sincos
+   STA zp_pm_p
+   LDA #0
+   ADC #>pm_sincos
+   STA zp_pm_p+1
+   LDY #1                               ; cos byte first (pm_wu order)
+   LDX #0
+pu_dec:
+   LDA (zp_pm_p),Y
+   PHA
+   AND #$3F
+   STA pm_wu,X
+   PLA
+   AND #$40
+   BEQ pu_z
+   LDA #1
+pu_z:
+   STA pm_wu+1,X
+   INX
+   INX
+   DEY
+   BPL pu_dec
+   RTS
+.endscope
+
+; ============================================================================
+; main-RAM helpers (the PMOVE region slack): the shift-add mul cluster,
+; friction, clamp, negif. All X-preserving except noted; muls loop via
+; pm_ut/Y, never X.
+; ============================================================================
+; ============================================================================
+; pm_frame (ABI entry) — run the frame, then leave zp $90-$93 = the raw
+; s16 of the COMMITTED position. THE contract for every later reader
+; this frame (mv_reval/pmove_zonly, next frame's SPACE trace): the
+; driver's own derive_raw is GONE — pmf_cand is the one derivation, and
+; a blocked final chunk would otherwise leave the REJECTED candidate's
+; raws in zp.
+; ============================================================================
+SEG_PMOVE
+::pm_frame:
+   JSR pm_frame_i
+   LDA #0
+   STA pm_cdx
+   STA pm_cdx+1
+   STA pm_cdy
+   STA pm_cdy+1
+   JMP pmf_cand                         ; cd = 0: candidate == position
+
+; ============================================================================
+; pmf_project — (pm_vx,pm_vy) = ((V . w-hat) w-hat) on the mag6 grid;
+; unit in pm_wu. Axis X=0 pairs with cos, X=2 with sin (both loops).
+; SEG_PMOVE (main): the bank-B windows are full; JSRs from bank B to
+; main are free (pm code never re-pages).
+; ============================================================================
+SEG_PMOVE
+.scope
+::pmf_project:
+   LDA #0
+   STA pm_pp
+   STA pm_pp+1
+   LDX #0
+pj_dot:
+   LDA pm_vx,X
+   STA pm_ax
+   LDA pm_vx+1,X
+   STA pm_ax+1
+   LDA pm_wu+1,X
+   JSR pmf_negif
+   LDA pm_wu,X
+   STA pm_umag
+   JSR pmf_sc16
+   CLC
+   LDA pm_pp
+   ADC pm_ax
+   STA pm_pp
+   LDA pm_pp+1
+   ADC pm_ax+1
+   STA pm_pp+1
+   INX
+   INX
+   CPX #4
+   BCC pj_dot
+   LDX #0
+pj_out:
+   LDA pm_pp
+   STA pm_ax
+   LDA pm_pp+1
+   STA pm_ax+1
+   LDA pm_wu,X
+   STA pm_umag
+   JSR pmf_sc16
+   LDA pm_wu+1,X
+   JSR pmf_negif
+   LDA pm_ax
+   STA pm_vx,X
+   LDA pm_ax+1
+   STA pm_vx+1,X
+   INX
+   INX
+   CPX #4
+   BCC pj_out
+   RTS
+.endscope
+
+SEG_PMOVE
+.scope
+; pmf_mul24s — pm_ax (s16) * pm_umag (u8) -> pm_ures (24-bit MAGNITUDE),
+; A = input sign (0/1)
+::pmf_mul24s:
+   LDA pm_ax+1
+   BPL m24_pos
+   SEC
+   LDA #0
+   SBC pm_ax
+   STA pm_um
+   LDA #0
+   SBC pm_ax+1
+   STA pm_um+1
+   LDA #1
+   BNE m24_go
+m24_pos:
+   LDA pm_ax
+   STA pm_um
+   LDA pm_ax+1
+   STA pm_um+1
+   LDA #0
+m24_go:
+   STA pm_usgn
+   LDA #0
+   STA pm_ures
+   STA pm_ures+1
+   STA pm_ures+2
+   STA pm_uadd+2
+   LDA pm_um
+   STA pm_uadd
+   LDA pm_um+1
+   STA pm_uadd+1
+   LDA pm_umag
+   STA pm_ut
+m24_lp:
+   LSR pm_ut
+   BCC m24_sh
+   CLC
+   LDA pm_ures
+   ADC pm_uadd
+   STA pm_ures
+   LDA pm_ures+1
+   ADC pm_uadd+1
+   STA pm_ures+1
+   LDA pm_ures+2
+   ADC pm_uadd+2
+   STA pm_ures+2
+m24_sh:
+   LDA pm_ut
+   BEQ m24_done
+   ASL pm_uadd
+   ROL pm_uadd+1
+   ROL pm_uadd+2
+   JMP m24_lp                           ; (a BNE here would fall through
+                                        ;  whenever byte 2 rolls to 0)
+m24_done:
+   LDA pm_usgn
+   RTS
+
+; pmf_sc16 — pm_ax = (pm_ax * pm_umag) >> 5, sign-magnitude truncate
+; (ps_scale16 semantics; mag 32 = identity falls out). Preserves X.
+::pmf_sc16:
+   JSR pmf_mul24s
+   LDY #5
+sc_sh:
+   LSR pm_ures+2
+   ROR pm_ures+1
+   ROR pm_ures
+   DEY
+   BNE sc_sh
+   LDA pm_ures
+   STA pm_ax
+   LDA pm_ures+1
+   STA pm_ax+1
+   LDA pm_usgn
+; pmf_negif — negate pm_ax when A != 0 (falls through from sc16's
+; sign reapply). Preserves X, Y.
+::pmf_negif:
+   BEQ ng_done
    SEC
    LDA #0
    SBC pm_ax
@@ -1100,72 +1657,174 @@ ps_scale16:
    LDA #0
    SBC pm_ax+1
    STA pm_ax+1
-ps_s_pos:
-; u16 * u5 -> u21, keep >>5: shift-add over the 5 mag bits
+ng_done:
+   RTS
+
+; pmf_clamp / pmf_fric — SEG_PMH: banked lands in the same $24E0 area
+; (two segments, one region); flat folds into the PMBF region instead,
+; because the flat PMOVE region ($7F10-$85FF) is capacity-pinned by the
+; level block at $8600.
+SEG_PMH
+; pmf_clamp — clamp PM_MOMX,X (X = 0/2) to +-960 ($03C0/$FC40).
+; Preserves X.
+::pmf_clamp:
+   LDA PM_MOMX+1,X
+   BMI cl_neg
+   CMP #3
+   BCC cl_done
+   BNE cl_setp
+   LDA PM_MOMX,X
+   CMP #$C1
+   BCC cl_done
+cl_setp:
+   LDA #$C0
+   STA PM_MOMX,X
+   LDA #3
+   STA PM_MOMX+1,X
+   RTS
+cl_neg:
+   CMP #$FC
+   BCC cl_setn
+   BNE cl_done
+   LDA PM_MOMX,X
+   CMP #$40
+   BCS cl_done
+cl_setn:
+   LDA #$40
+   STA PM_MOMX,X
+   LDA #$FC
+   STA PM_MOMX+1,X
+cl_done:
+   RTS
+
+; pmf_fric — PM_MOMX,X = (mom*232)>>8 FLOOR (DOOM FixedMul): S =
+; (mom<<8) - (mom<<4) - (mom<<3) in 24-bit two's complement, then
+; arithmetic >>8 (drop the low byte). Preserves X.
+::pmf_fric:
+   LDA PM_MOMX,X
+   STA pm_uadd
+   LDA PM_MOMX+1,X
+   STA pm_uadd+1
    LDA #0
-   STA pm_t1s
-   STA pm_lx
-   STA pm_lx+1
-   STA pm_ly                            ; acc 24-bit: lx lo/hi, ly top
-   LDA pm_ma
-   STA pm_sfirst                        ; mag bits ride here
-   LDX #5
-ps_s_loop:
-   LSR pm_sfirst
-   BCC ps_s_noadd
-   CLC
-   LDA pm_lx
-   ADC pm_ax
-   STA pm_lx
-   LDA pm_lx+1
-   ADC pm_ax+1
-   STA pm_lx+1
-   LDA pm_ly
-   ADC pm_t1s                           ; ax's third byte (the pm_smul
-   STA pm_ly                            ; lesson: shifting addends grow)
-ps_s_noadd:
-   ASL pm_ax
-   ROL pm_ax+1
-   ROL pm_t1s                           ; ax third byte
-   DEX
-   BNE ps_s_loop
-; >>5: take bits [20:5] of the 24-bit acc
-   LDX #5
-ps_s_shift:
-   LSR pm_ly
-   ROR pm_lx+1
-   ROR pm_lx
-   DEX
-   BNE ps_s_shift
-   LDA pm_ay
-   BEQ ps_s_done
+   BIT pm_uadd+1
+   BPL fr_sx
+   LDA #$FF
+fr_sx:
+   STA pm_uadd+2
+   ASL pm_uadd                          ; T = mom << 3
+   ROL pm_uadd+1
+   ROL pm_uadd+2
+   ASL pm_uadd
+   ROL pm_uadd+1
+   ROL pm_uadd+2
+   ASL pm_uadd
+   ROL pm_uadd+1
+   ROL pm_uadd+2
+   LDA #0                               ; S = mom << 8
+   STA pm_ures
+   LDA PM_MOMX,X
+   STA pm_ures+1
+   LDA PM_MOMX+1,X
+   STA pm_ures+2
+   JSR fr_sub                           ; S -= mom<<3
+   ASL pm_uadd                          ; T <<= 1 (mom<<4)
+   ROL pm_uadd+1
+   ROL pm_uadd+2
+   JSR fr_sub                           ; S -= mom<<4
+   LDA pm_ures+1                        ; >> 8
+   STA PM_MOMX,X
+   LDA pm_ures+2
+   STA PM_MOMX+1,X
+   RTS
+fr_sub:
    SEC
-   LDA #0
-   SBC pm_lx
-   STA pm_lx
-   LDA #0
-   SBC pm_lx+1
-   STA pm_lx+1
-ps_s_done:
-   LDA pm_lx
-   LDX pm_lx+1
+   LDA pm_ures
+   SBC pm_uadd
+   STA pm_ures
+   LDA pm_ures+1
+   SBC pm_uadd+1
+   STA pm_ures+1
+   LDA pm_ures+2
+   SBC pm_uadd+2
+   STA pm_ures+2
    RTS
 .endscope
 
 ; ============================================================================
-; pmove_try_slide — the driver's one-call slide retry: A = move dir.
-; Computes the P_HitSlideLine vector from the last block, applies it to
-; the position, re-derives NOTHING (the DRIVER re-derives + re-tries).
-; C=0: no slide available (caller falls to the DOOM stairstep).
+; pm_smul — signed multiply pm_ma * pm_mb (s16 x s16). Result as
+; sign-magnitude: pm_t1s_w = $00 pos / $80 neg (canonical: mag 0 -> pos),
+; pm_t1m_w..+2 = |product| (u24; callers' operands bound it).
+; Plain shift-add (movement is frame-rare; no table dependencies).
 ; ============================================================================
 .scope
-::pmove_try_slide:
-   JSR pmove_slide
-   BCC ts_no
-   JSR pmove_apply
+::pm_smul:
+   LDA #0
+   STA pm_t1s_w
+   LDA pm_ma+1
+   BPL sm_apos
+   LDA #$80
+   STA pm_t1s_w
+   SEC                                  ; negate ma
+   LDA #0
+   SBC pm_ma
+   STA pm_ma
+   LDA #0
+   SBC pm_ma+1
+   STA pm_ma+1
+sm_apos:
+   LDA pm_mb+1
+   BPL sm_bpos
+   LDA pm_t1s_w
+   EOR #$80
+   STA pm_t1s_w
    SEC
-   RTS
-ts_no:
+   LDA #0
+   SBC pm_mb
+   STA pm_mb
+   LDA #0
+   SBC pm_mb+1
+   STA pm_mb+1
+sm_bpos:
+; u16 x u16 -> u24 (callers bound the product below 2^24): add-and-shift
+; with a 24-bit shifting addend (pm_mb:pm_mb2). The first cut ROL'd the
+; addend's overflow into the ACCUMULATOR's top byte instead of keeping a
+; third addend byte — every diagonal straddle verdict was garbage (the
+; 2026-08-14 shallow-wall-clip bug; the lockstep fuzz caught it).
+   LDA #0
+   STA pm_t1m_w
+   STA pm_t1m_w+1
+   STA pm_t1m_w+2
+   STA pm_mb2
+   LDX #16
+sm_loop:
+   LSR pm_ma+1
+   ROR pm_ma
+   BCC sm_noadd
    CLC
+   LDA pm_t1m_w
+   ADC pm_mb
+   STA pm_t1m_w
+   LDA pm_t1m_w+1
+   ADC pm_mb+1
+   STA pm_t1m_w+1
+   LDA pm_t1m_w+2
+   ADC pm_mb2
+   STA pm_t1m_w+2
+sm_noadd:
+   ASL pm_mb
+   ROL pm_mb+1
+   ROL pm_mb2
+   DEX
+   BNE sm_loop
+; mag zero -> canonical positive sign
+   LDA pm_t1m_w
+   ORA pm_t1m_w+1
+   ORA pm_t1m_w+2
+   BNE sm_done
+   STA pm_t1s_w
+sm_done:
    RTS
 .endscope
+
+SEG_PMOVE
+

@@ -82,13 +82,22 @@ ORG DRV_ORG
     ;     312-line PAL field, phase-locked once to the vsync edge (CA1 IFR
     ;     bit 1). T1's high byte is then a drift-free beam-position clock
     ;     (4-line granularity) that flip_sched reads every frame. ---
-    LDA &FE4B:AND #&3F:ORA #&40:STA &FE4B           ; ACR: T1 continuous, PB7 off
+    LDA &FE4B:AND #&1F:ORA #&40:STA &FE4B           ; ACR: T1 continuous, PB7 off,
+                                                    ; and T2 TIMED (bit 5): the
+                                                    ; OS leaves it set = count
+                                                    ; PB6 pulses, so T2 sat at
+                                                    ; $FFFF and the frame clock
+                                                    ; read pure noise
     LDA #&FE:STA &FE46                              ; T1 latch = $4DFE = 19966 (+2)
     LDA #&4D:STA &FE47
     LDA #2  :STA &FE4D                              ; clear stale vsync flag
 .vsy0
     LDA &FE4D:AND #2:BEQ vsy0                       ; wait for vsync edge
     LDA #&4D:STA &FE45                              ; start T1: phase = time since vsync
+    LDA #&FF:STA &FE48 : STA &FE49                  ; T2 = free 1MHz odometer
+                                                    ; (the clock prevs are
+                                                    ; seeded at the END of
+                                                    ; init — see there)
     ; --- keyboard: manual scan mode (IC32 addr 3 = 0), DDRA 0-6 out ---
     LDA #3  :STA &FE40
     LDA #&7F:STA &FE43
@@ -145,6 +154,14 @@ ORG DRV_ORG
     ; (D_FWD needs no init: read_input clears it every frame)
     LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
     LDA #&6C :STA backhi
+    ; Seed the frame clock's prevs LAST. This must come after every
+    ; instruction below $208A has run: pm_frame's scratch OVERLAYS the
+    ; one-shot init block at PM_SCRATCH ($2000), so calling it earlier
+    ; rewrites the init code still ahead of the PC (it shredded the boot
+    ; screen when this sat up by the T1 lock, 2026-08-15). With no keys
+    ; and zero momentum the call itself is a no-op: it just stores
+    ; now->prev, so the first real frame gets an honest delta.
+    JSR mv_frame
     JSR clr58 : JSR clr6C
 ; ---------------------------------------------------------------------------
 ; frame — main loop, one iteration per rendered frame (paced by flip_sched's
@@ -152,7 +169,8 @@ ORG DRV_ORG
 ; Pseudocode:
 ;   read_input                  keys -> angidx, 24-bit position (bounds-checked)
 ;   ZP $00-$03/$9D/$9E <- pos   8.8 frac/lo + s16 integer high bytes
-;   derive_raw / floor_vz       PXRAW/PYRAW ($90-$93); VZ ($04) eased to grid
+;   mv_frame                    field clock -> 35Hz momentum (pm_frame owns
+;                               position, slide, D_FWD and the $90-$93 raws)
 ;   sincos <- table[angidx]     entry is 8 bytes, so ptr = tabbase + idx*8
 ;                               (24-bit shift into $EC/$ED); bytes 0-5 ->
 ;                               ZP $05-$0A (s/c mag,neg,one), byte 6 -> bca_ab
@@ -165,11 +183,14 @@ ORG DRV_ORG
 ; ---------------------------------------------------------------------------
 .frame
     JSR read_input
+    JSR mv_frame                                    ; field clock -> 35Hz
+                                                    ; momentum (pages WALK)
     ; --- position -> engine ZP ---
     LDA pxf:STA &00 : LDA pxl:STA &01 : LDA pxh:STA &9D
     LDA pyf:STA &02 : LDA pyl:STA &03 : LDA pyh:STA &9E
-    JSR derive_raw                                  ; PXRAW/PYRAW ($90-$93)
-    JSR mv_reval                                    ; DOOM z (rides live lifts)
+    JSR mv_reval                                    ; DOOM z (rides live lifts;
+                                                    ; $90-$93 raws come from
+                                                    ; pm_frame — see its ABI)
     ; --- sincos + view angle from table[angidx] (bank A) ---
     LDA #4:STA &FE30
     LDA #0:STA &ED
@@ -367,28 +388,22 @@ ORG DRV_CLR
 ; clamp rectangle. All four keys are independent (no else-chains).
 ; Clobbers A,X (via the movement helpers).
 .read_input
-    ; D_FWD: 1 iff this frame's net move is forward-only. Turn keys need
-    ; no explicit clear (the engine classifier compares the angle byte);
-    ; DOWN clears it (an UP whose bounds-revert cancelled plus a live
-    ; DOWN would otherwise flag a net-backward frame as forward).
-    LDA #0:STA D_FWD
     LDA #&19:STA &FE4F : BIT &FE4F : BPL ri_nleft   ; cursor LEFT
     LDA angidx:CLC:ADC #1:AND #63:STA angidx
 .ri_nleft
     LDA #&79:STA &FE4F : BIT &FE4F : BPL ri_nright  ; cursor RIGHT
     LDA angidx:SEC:SBC #1:AND #63:STA angidx
 .ri_nright
+    ; movement keys -> input bits for ENG_PM_FRAME (b0 fwd, b1 back);
+    ; the 35Hz momentum engine owns position, slide and D_FWD now
+    LDX #0
     LDA #&39:STA &FE4F : BIT &FE4F : BPL ri_nup     ; cursor UP: forward
-    JSR step_fwd
-    JSR try_or_slide_f                              ; DOOM P_TryMove + slide
-    BCC ri_nup                                      ; blocked/slid: not fwd-only
-    LDA #1:STA D_FWD
+    LDX #1
 .ri_nup
     LDA #&29:STA &FE4F : BIT &FE4F : BPL ri_ndown   ; cursor DOWN: back
-    JSR step_back
-    JSR try_or_slide_b
-    LDA #0:STA D_FWD
+    TXA : ORA #2 : TAX
 .ri_ndown
+    STX mv_in
     ; SPACE: DOOM 'use' on the press edge (doors, the exit switch)
     LDA #&62:STA &FE4F : BIT &FE4F : BMI ri_spdn
     LDA #0:STA space_prev
@@ -402,77 +417,12 @@ ORG DRV_CLR
 .ri_uv
     LDA USEVEC,X : STA ENG_PM_UX,Y                  ; ux,uy (contiguous)
     INX : INY : CPY #4 : BNE ri_uv
-    JSR derive_raw                                  ; trace origin = here
-    JSR ENG_PMOVE_USE
+    JSR ENG_PMOVE_USE                               ; ($90-$93 = trace origin:
+                                                    ;  pm_frame's exit contract)
     CMP #&FE : BNE ri_spdone                        ; exit switch: respawn
     JSR respawn
 .ri_spdone
     JMP key_hud                                     ; H: HUD toggle (RTSes)
-
-; --- try_or_slide: ONE direction-parameterized body (the step block's
-; antisymmetry made _b redundant): entry stages mv_dir; undo = the
-; opposite direction's step; the DOOM slide + stairstep use mv_dir.
-; C=1 only if the FULL move committed (feeds D_FWD).
-.try_or_slide_f
-    LDA angidx
-    JMP tos_go
-.try_or_slide_b
-    LDA angidx
-    CLC : ADC #32
-.tos_go
-    AND #63
-    STA mv_dir
-    JSR derive_raw
-    JSR ENG_PMOVE_TRY
-    BCS tos_ok
-    JSR tos_undo                                    ; full revert
-    LDA mv_dir                                      ; P_SlideMove projection
-    JSR tos_slide
-    BCS tos_slid
-    JSR tos_step_x                                  ; DOOM stairstep
-    JSR derive_raw
-    JSR ENG_PMOVE_TRY
-    BCS tos_slid
-    JSR tos_undo_x
-    JSR tos_step_y
-    JSR derive_raw
-    JSR ENG_PMOVE_TRY
-    BCS tos_slid
-    JSR tos_undo_y
-.tos_slid
-    CLC
-    RTS
-.tos_ok
-    SEC
-    RTS
-.tos_step_x
-    LDA mv_dir : JSR step_prep : JMP step_add_x
-.tos_step_y
-    LDA mv_dir : JSR step_prep : JMP step_add_y
-.tos_undo
-    LDA mv_dir
-    CLC : ADC #32
-    JSR step_prep
-    JSR step_add_x
-    JMP step_add_y
-.tos_undo_x
-    LDA mv_dir : CLC : ADC #32 : JSR step_prep : JMP step_add_x
-.tos_undo_y
-    LDA mv_dir : CLC : ADC #32 : JSR step_prep : JMP step_add_y
-
-; tos_slide: A = move dir. Engine computes+applies the DOOM slide
-; vector; we re-derive and re-try; on block, unapply. C=1 = slid.
-.tos_slide
-    JSR ENG_PMOVE_TRY_SLIDE
-    BCC ts_no
-    JSR derive_raw
-    JSR ENG_PMOVE_TRY
-    BCS ts_yes
-    JSR ENG_PMOVE_UNAPPLY
-    CLC
-.ts_no
-.ts_yes
-    RTS
 
 ; --- respawn: the spawn pose (init + the exit switch 'ending the level')
 .respawn
@@ -483,6 +433,11 @@ ORG DRV_CLR
     LDA #16 :STA angidx
     LDA #&06:STA &04 : STA ENG_PM_VZ
     LDA #0:STA space_prev
+    LDX #4                                          ; momentum dies with the
+.rs_zm
+    STA PM_MOMX,X                                   ; teleport (momx/y+ticrem)
+    DEX
+    BPL rs_zm
     RTS
 .rs_tab
     EQUB &00,&EE,&FF, &00,&D2,&FF
@@ -495,75 +450,71 @@ ORG DRV_CLR
     STA &04
     RTS
 
-; or #$FF depending on the delta's sign bit (tested from the table's hi
-; byte). step_back is the exact inverse (SBC with #0/#$FF), used both for
-; reverse motion and to undo an out-of-bounds step, so fwd-then-back is
-; always bit-exact. Clobbers A,X.
-; --- movement steps: ONE add-only body pair; stepping BACK = stepping
-; forward with the opposite table entry (step_tab[(a+32)&63] = -entry,
-; verified EXACT — the round-half-up idiom never sees a half-integer on
-; this grid). mv_dir holds the effective direction for the frame.
-.step_prep                ; A = direction idx -> X = table offset (bank 4)
-    AND #63
-    STA mv_dir
-    ASL A:ASL A:TAX
-    LDA #4:STA &FE30
-    RTS
-.step_fwd
-    LDA angidx
-    JSR step_prep
-    JSR step_add_x
-    JMP step_add_y
-.step_back
-    LDA angidx
-    CLC:ADC #32
-    JSR step_prep
-    JSR step_add_x
-    JMP step_add_y
-.step_add_x
-    CLC
-    LDA pxf:ADC STEPTAB,X:STA pxf
-    LDA pxl:ADC STEPTAB+1,X:STA pxl
-    LDA STEPTAB+1,X:BMI sax_neg
-    LDA pxh:ADC #0:STA pxh
-    RTS
-.sax_neg
-    LDA pxh:ADC #&FF:STA pxh
-    RTS
-.step_add_y
-    CLC
-    LDA pyf:ADC STEPTAB+2,X:STA pyf
-    LDA pyl:ADC STEPTAB+3,X:STA pyl
-    LDA STEPTAB+3,X:BMI say_neg
-    LDA pyh:ADC #0:STA pyh
-    RTS
-.say_neg
-    LDA pyh:ADC #&FF:STA pyh
-    RTS
+; --- mv_frame: elapsed PAL fields since last frame -> ENG_PM_FRAME -------
+; T1 (field-locked, period 19968us) gives duration mod 19968; T2 (free
+; 1MHz odometer) gives it mod 65536; both count down on the SAME crystal
+; so the pair is drift-free. fields = smallest f with
+; (d1 + f*19968) mod 65536 == d2. gcd(19968,65536) = 512, so the 128
+; candidate residues are 512us apart — a +-64us window absorbs the
+; T1-vs-T2 read skew and still resolves f uniquely. 19968 = $4E00, so the step is a hi-byte add.
+.mv_frame
+    JSR rd_timers
+    SEC                                             ; d1 = (prev-now) mod 19968
+    LDA prev_t1  :SBC now_t1  :STA acc_l
+    LDA prev_t1+1:SBC now_t1+1:STA acc_h
+    BCS mf_d1ok
+    LDA acc_h:CLC:ADC #&4E:STA acc_h                ; borrow: += $4E00
+.mf_d1ok
+    SEC                                             ; d2 = (prev-now) mod 2^16
+    LDA prev_t2  :SBC now_t2  :STA d2_l
+    LDA prev_t2+1:SBC now_t2+1:STA d2_h
+    LDA now_t1  :STA prev_t1   : LDA now_t1+1:STA prev_t1+1
+    LDA now_t2  :STA prev_t2   : LDA now_t2+1:STA prev_t2+1
+    LDX #0
+.mf_f
+    SEC                                             ; t = acc - d2 (mod 2^16);
+    LDA acc_l:SBC d2_l:STA tt                       ; accept |t| <= 64 by the
+    LDA acc_h:SBC d2_h                              ; HIGH BYTE's case, so the
+    BEQ mf_pos                                      ; borrow chain is never
+    CMP #&FF:BNE mf_no                              ; interrupted (the bias
+    LDA tt:CMP #&C0:BCS mf_go                       ; form broke it and the
+    BCC mf_no                                       ; search never matched:
+.mf_pos                                             ; every frame clamped to
+    LDA tt:CMP #65:BCC mf_go                        ; 127 -> 32 fields)
+.mf_no
+    LDA acc_h:CLC:ADC #&4E:STA acc_h                ; acc += 19968
+    INX
+    CPX #128:BCC mf_f                               ; f is unique mod 128:
+    LDX #0                                          ; the residues are 512
+.mf_go                                              ; apart, so a miss means
+                                                    ; a bad read — sit still
+    LDA #7:STA &FE30                                ; pm_frame LIVES IN BANK
+    TXA                                             ; WALK - page before JSR
+    LDX mv_in
+    JMP ENG_PM_FRAME                                ; (tail call)
 
-; --- derive_raw: PXRAW/PYRAW = 24-bit 8.8 position >> 5 (s16 result) ------
-; In: pxf..pyh. Out: $90/$91 = PXRAW, $92/$93 = PYRAW. Clobbers A,X,$EC.
-; Each shift step is an arithmetic >>1 of the 24-bit value: CMP #$80 copies
-; the top byte's sign into C, then ROR ripples it down through all 3 bytes.
-.derive_raw
-    ; raw s16 = (24-bit 8.8 position) >> 5 — i.e. bits [20:5]. Shift the
-    ; full 24 bits right 5 and keep the LOW TWO bytes of the result
-    ; (the top byte is sign extension once raw fits s16).
-    LDA pxf:STA &90
-    LDA pxl:STA &91
-    LDA pxh:STA &EC
-    LDX #5
-.dr_x
-    LDA &EC:CMP #&80:ROR &EC:ROR &91:ROR &90
-    DEX:BNE dr_x
-    LDA pyf:STA &92
-    LDA pyl:STA &93
-    LDA pyh:STA &EC
-    LDX #5
-.dr_y
-    LDA &EC:CMP #&80:ROR &EC:ROR &93:ROR &92
-    DEX:BNE dr_y
+; rd_timers: atomic 16-bit reads (hi-lo-hi retry; the counters tick at
+; 1MHz so a hi-byte carry mid-read is rare). T1 low read clears IFR6 -
+; nothing consumes it (flip_sched uses the CA1 vsync latch, bit 1).
+.rd_timers
+    LDA &FE45:STA now_t1+1
+    LDA &FE44:STA now_t1
+    LDA &FE45:CMP now_t1+1:BNE rd_timers
+.rd_t2
+    LDA &FE49:STA now_t2+1
+    LDA &FE48:STA now_t2
+    LDA &FE49:CMP now_t2+1:BNE rd_t2
     RTS
+.mv_in   EQUB 0
+.now_t1  EQUW 0
+.now_t2  EQUW 0
+.prev_t1 EQUW 0
+.prev_t2 EQUW 0
+.acc_l   EQUB 0
+.acc_h   EQUB 0
+.d2_l    EQUB 0
+.d2_h    EQUB 0
+.tt      EQUB 0
 
 ; --- T1hi -> beam class (same boundaries as anim_drv's table; see the
 ; flip_sched header). Only 78 entries — flip_sched pre-filters H >= 78

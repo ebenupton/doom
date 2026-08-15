@@ -599,6 +599,25 @@ EPSILON_F = 12
 .segment "PMOVE"                  ; player movement (pmove.s): banked =
 .endmacro                         ;  the driver-zone slice $2600, flat =
                                   ;  the tube-map pocket $7E40
+; pm_frame (35Hz momentum) lives in BANK B free windows banked (Eben
+; blessed movement code into bank WALK 2026-08-15 — it already runs
+; entirely under that bank's paging); flat = one $2300-$28FF region.
+; Fragmented by necessity: the windows are what the bank B census left.
+.macro SEG_PMB1
+.segment "PMB1"                   ; banked $B500-$B6FF: the frame flow
+.endmacro
+.macro SEG_PMB2
+.segment "PMB2"                   ; banked $B198-$B2FF: project/split
+.endmacro
+.macro SEG_PMB3
+.segment "PMB3"                   ; banked $B348-$B3FF: packed trig+unit
+.endmacro
+.macro SEG_PMB4
+.segment "PMB4"                   ; banked $B862-$B8BF: the DIR stride
+.endmacro                         ;  shadow (dirs<=118 asserted)
+.macro SEG_PMH
+.segment "PMH"                    ; pm helpers: banked = the PMOVE area
+.endmacro                         ;  (2nd segment); flat = the PMBF zone
 .macro SEG_BANKC
 .if ::BANKED
 .segment "BANKC"

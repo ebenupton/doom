@@ -394,8 +394,12 @@ def blobs(flat=True):
     # $8400 CODE-file slack. The py65 harnesses also poke $0200 directly.
     pb = bytearray()
     for p in m['ports']:
+        # WALL ANGLE AT +8, matching the solid record: pm_box_vs_seg
+        # writes pm_blkang from +8 for whichever record the box
+        # straddled, so one shared store serves both kinds (see
+        # pm_port_aggr's header for the bug this layout retired).
         pb += struct.pack('<hhhhBBBB', p[0], p[1], p[2], p[3],
-                          p[4], p[5], p[6], p[7])
+                          p[7], p[4], p[5], p[6])
     assert 0x0200 + len(pb) <= 0x0400, 'COLPORT overruns the freed pages'
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
            A['ss_vz']: m['ss_vz'], A['ss_info']: m['ss_info'],
@@ -593,10 +597,14 @@ def dest_check(rx, ry, z_ps, mover_pos):
 
 
 def try_move(px, py, nx, ny, z_ps, mover_pos):
-    """Full DOOM try-move for one candidate. Returns (ok, new_vz)."""
-    if not (RAWX_MIN <= nx <= RAWX_MIN + 36 * 128 - 1 and
-            RAWY_MIN <= ny <= RAWY_MIN + 22 * 128 - 1):
-        return False, z_ps
+    """Full DOOM try-move for one candidate. Returns (ok, new_vz).
+    NO walk-rect reject: the engine has none and neither does DOOM (an
+    out-of-range blockmap block just yields no lines) — what keeps the
+    player in is the map's own enclosing walls, which the census
+    asserts are all present. The old hard clamp was a driver-era
+    artifact; it survived here until the momentum fuzz caught the model
+    freezing where the engine walked (2026-08-15). Only the COLUMN
+    index is clamped, mirroring pm_column."""
     blocked, tm_ob = box_scan(nx, ny, z_ps, mover_pos)
     if blocked:
         return False, z_ps
@@ -700,7 +708,15 @@ def momentum_tics(mx, my, ticrem, fields, fwd, back, angidx):
 
 
 def _blk_ang(px, py, nx, ny, z_ps, mover_pos):
-    """Wall angle of the box_scan block at (nx,ny), or None/0xFF-like."""
+    """Wall angle of the box_scan block at (nx,ny); None = sector-rule
+    block (no slide). ORDER IS LOAD-BEARING: pm_column_scan walks each
+    column list BACKWARDS (LDY pm_n / DEY), so when the box straddles a
+    corner and hits two walls, the engine reports the LAST one in list
+    order — mirror that here. (box_scan's own verdict is order-free: any
+    hit blocks and tm_ob is a max, which is why the try suite stayed
+    clean at 0/9,456 while every corner slide diverged.)
+    DEVIATION from DOOM: P_SlideMove picks the NEAREST crossed line via
+    bestslidefrac; we take a scan-order hit. Corner-only, cosmetic."""
     m = build()
     n_solid = len(m['colsegs'])
     bx0, by0, bx1, by1 = nx - RADIUS, ny - RADIUS, nx + RADIUS, ny + RADIUS
@@ -709,7 +725,7 @@ def _blk_ang(px, py, nx, ny, z_ps, mover_pos):
     import math
     for c in ([c0] if c0 == c1 else [c0, c1]):
         off, cnt = m['colidx'][c]
-        for k in range(cnt):
+        for k in reversed(range(cnt)):          # engine order (see above)
             idx = m['collist'][off + k]
             if idx < n_solid:
                 s = m['colsegs'][idx]

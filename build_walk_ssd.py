@@ -138,9 +138,13 @@ def banked_files():
                                                      # engine_syms) as the
                                                      # repo's resting state
     assert L0c == L0 and L2c == L2, \
-        'L0/L2 bank images differ between CPU variants — banks are data-only ' \
-        '(code in banks is forbidden outside C); a CPU-dependent byte in ' \
-        'L0/L2 means the variants need their own copies AND a loader change'
+        'L0/L2 bank images differ between CPU variants — they ship ONCE for ' \
+        'both hosts. Bank B carries pm_frame CODE since 2026-08-15, so the ' \
+        'usual cause is a bank-B routine referencing a symbol whose address ' \
+        'is CPU-dependent: CODE shifts between the NMOS and C02 links, so ' \
+        'bank-B code may only call the fixed-start PMOVE region (see ' \
+        'pmf_commit in pmove.s). Otherwise the variants need their own ' \
+        'copies AND a loader change.'
     subprocess.run(['./beebasm', '-i', 'modelb_boot.asm', '-D', 'BANKED=1'], check=True)
     BOOT = builtins.open('!BOOT', 'rb').read()
     import abi
