@@ -76,7 +76,8 @@ ORG DRV_ORG
     ; rotate through all phases every ~12s -> periodic clear-vs-beam races),
     ; and shimmers 1px lines at 25Hz. Non-interlaced: field = exactly 312
     ; lines = 19968us, T1 lock is exact and the raster is stable.
-    LDA #10:STA &FE00: LDA #&20:STA &FE01
+    LDA #10:STA &FE00: LDA #&20:STA &FE01           ; R10 = cursor non-display
+    JSR cur_park                                    ; park it out of view too
     ; --- System VIA T1 field lock (see anim_drv for the full rationale):
     ;     free-running T1, period 19968us = exactly one non-interlaced
     ;     312-line PAL field, phase-locked once to the vsync edge (CA1 IFR
@@ -448,6 +449,18 @@ ORG DRV_CLR
     JSR ENG_PMOVE_ZONLY
     LDA ENG_PM_VZ
     STA &04
+    RTS
+
+; --- cur_park: park the hardware cursor outside both framebuffers ---------
+; R10 = &20 (cursor non-display) alone was NOT enough: the MOS leaves
+; R14/R15 = &0B00, i.e. $5800 — the FIRST displayed character of the
+; $5800 buffer — so a cursor block sat at the window's top-left on every
+; frame that displayed $5800 and vanished on the $6C00 frames. &3FFF is
+; past both windows, so the address can never coincide.
+; (Init-block space is razor thin, hence a tail routine + JSR.)
+.cur_park
+    LDA #14:STA &FE00: LDA #&3F:STA &FE01
+    LDA #15:STA &FE00: LDA #&FF:STA &FE01
     RTS
 
 ; --- mv_frame: elapsed PAL fields since last frame -> ENG_PM_FRAME -------
