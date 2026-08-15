@@ -35,6 +35,7 @@ tabbase = &BA00           ; sincos table: 64 x 8 bytes, BANK A (banked_bsp
 STEPTAB = &BC00           ; movement step table: 64 x 4 (dx,dy s16 8.8), bank A
 USEVEC  = &BD00           ; SPACE use-trace vectors: 64 x 4 (ux,uy s16 raw), bank A
 space_prev = DRV_VARS + 11  ; SPACE edge-detect state
+mv_dir     = DRV_VARS + 12  ; effective move direction this attempt
 
 SPEED = 12              ; world units per frame of forward motion
 
@@ -408,55 +409,57 @@ ORG DRV_CLR
 .ri_spdone
     JMP key_hud                                     ; H: HUD toggle (RTSes)
 
-; --- try_or_slide: full candidate already applied to the 24-bit position.
-; Try it; on block, retry each axis alone (DOOM wall slide). C=1 only if
-; the FULL move committed (feeds D_FWD). _f = forward step, _b = back.
+; --- try_or_slide: ONE direction-parameterized body (the step block's
+; antisymmetry made _b redundant): entry stages mv_dir; undo = the
+; opposite direction's step; the DOOM slide + stairstep use mv_dir.
+; C=1 only if the FULL move committed (feeds D_FWD).
 .try_or_slide_f
+    LDA angidx
+    JMP tos_go
+.try_or_slide_b
+    LDA angidx
+    CLC : ADC #32
+.tos_go
+    AND #63
+    STA mv_dir
     JSR derive_raw
     JSR ENG_PMOVE_TRY
     BCS tos_ok
-    JSR step_back                                   ; undo full
-    LDA angidx                                      ; P_SlideMove: project
-    JSR tos_slide                                   ; onto the blocking wall
+    JSR tos_undo                                    ; full revert
+    LDA mv_dir                                      ; P_SlideMove projection
+    JSR tos_slide
     BCS tos_slid
-    JSR step_fwd_x
+    JSR tos_step_x                                  ; DOOM stairstep
     JSR derive_raw
     JSR ENG_PMOVE_TRY
     BCS tos_slid
-    JSR step_back_x
-    JSR step_fwd_y
+    JSR tos_undo_x
+    JSR tos_step_y
     JSR derive_raw
     JSR ENG_PMOVE_TRY
     BCS tos_slid
-    JSR step_back_y
+    JSR tos_undo_y
 .tos_slid
     CLC
     RTS
 .tos_ok
     SEC
     RTS
-.try_or_slide_b
-    JSR derive_raw
-    JSR ENG_PMOVE_TRY
-    BCS tos_ok
-    JSR step_fwd                                    ; undo full
-    LDA angidx
-    CLC : ADC #32 : AND #63                         ; backward move dir
-    JSR tos_slide
-    BCS tos_slid
-    JSR step_back_x
-    JSR derive_raw
-    JSR ENG_PMOVE_TRY
-    BCS tos_slid
-    JSR step_fwd_x
-    JSR step_back_y
-    JSR derive_raw
-    JSR ENG_PMOVE_TRY
-    BCS tos_slid
-    JSR step_fwd_y
-    JMP tos_slid
+.tos_step_x
+    LDA mv_dir : JSR step_prep : JMP step_add_x
+.tos_step_y
+    LDA mv_dir : JSR step_prep : JMP step_add_y
+.tos_undo
+    LDA mv_dir
+    CLC : ADC #32
+    JSR step_prep
+    JSR step_add_x
+    JMP step_add_y
+.tos_undo_x
+    LDA mv_dir : CLC : ADC #32 : JSR step_prep : JMP step_add_x
+.tos_undo_y
+    LDA mv_dir : CLC : ADC #32 : JSR step_prep : JMP step_add_y
 
-; --- respawn: the spawn pose (init + the exit switch 'ending the level')
 ; tos_slide: A = move dir. Engine computes+applies the DOOM slide
 ; vector; we re-derive and re-try; on block, unapply. C=1 = slid.
 .tos_slide
@@ -471,13 +474,18 @@ ORG DRV_CLR
 .ts_yes
     RTS
 
+; --- respawn: the spawn pose (init + the exit switch 'ending the level')
 .respawn
-    LDA #&00:STA pxf : LDA #&EE:STA pxl : LDA #&FF:STA pxh
-    LDA #&00:STA pyf : LDA #&D2:STA pyl : LDA #&FF:STA pyh
+    LDX #5                                          ; pxf..pyh from the table
+.rs_l
+    LDA rs_tab,X : STA pxf,X
+    DEX : BPL rs_l
     LDA #16 :STA angidx
     LDA #&06:STA &04 : STA ENG_PM_VZ
     LDA #0:STA space_prev
     RTS
+.rs_tab
+    EQUB &00,&EE,&FF, &00,&D2,&FF
 
 ; --- per-frame z revalidate: pmove_try on the standing position snaps
 ; VZ to the DOOM rule (sector floor + 41, live movers included)
@@ -487,66 +495,50 @@ ORG DRV_CLR
     STA &04
     RTS
 
-; --- movement: position += / -= step table entry for angidx ---------------
-; step_fwd: 24-bit position += step_tab[angidx] (s16 8.8 delta, applied to
-; x then y). The delta is sign-extended by hand: the high-byte ADC uses #0
 ; or #$FF depending on the delta's sign bit (tested from the table's hi
 ; byte). step_back is the exact inverse (SBC with #0/#$FF), used both for
 ; reverse motion and to undo an out-of-bounds step, so fwd-then-back is
 ; always bit-exact. Clobbers A,X.
-.step_prep
+; --- movement steps: ONE add-only body pair; stepping BACK = stepping
+; forward with the opposite table entry (step_tab[(a+32)&63] = -entry,
+; verified EXACT — the round-half-up idiom never sees a half-integer on
+; this grid). mv_dir holds the effective direction for the frame.
+.step_prep                ; A = direction idx -> X = table offset (bank 4)
+    AND #63
+    STA mv_dir
+    ASL A:ASL A:TAX
     LDA #4:STA &FE30
-    LDA angidx:ASL A:ASL A:TAX
     RTS
 .step_fwd
-    JSR step_fwd_x
-    JMP step_fwd_y
-.step_back
-    JSR step_back_x
-    JMP step_back_y
-.step_fwd_x
+    LDA angidx
     JSR step_prep
+    JSR step_add_x
+    JMP step_add_y
+.step_back
+    LDA angidx
+    CLC:ADC #32
+    JSR step_prep
+    JSR step_add_x
+    JMP step_add_y
+.step_add_x
     CLC
     LDA pxf:ADC STEPTAB,X:STA pxf
     LDA pxl:ADC STEPTAB+1,X:STA pxl
-    LDA STEPTAB+1,X:BMI sfx_neg
+    LDA STEPTAB+1,X:BMI sax_neg
     LDA pxh:ADC #0:STA pxh
     RTS
-.sfx_neg
+.sax_neg
     LDA pxh:ADC #&FF:STA pxh
     RTS
-.step_fwd_y
-    JSR step_prep
+.step_add_y
     CLC
     LDA pyf:ADC STEPTAB+2,X:STA pyf
     LDA pyl:ADC STEPTAB+3,X:STA pyl
-    LDA STEPTAB+3,X:BMI sfy_neg
+    LDA STEPTAB+3,X:BMI say_neg
     LDA pyh:ADC #0:STA pyh
     RTS
-.sfy_neg
+.say_neg
     LDA pyh:ADC #&FF:STA pyh
-    RTS
-.step_back_x
-    JSR step_prep
-    SEC
-    LDA pxf:SBC STEPTAB,X:STA pxf
-    LDA pxl:SBC STEPTAB+1,X:STA pxl
-    LDA STEPTAB+1,X:BMI sbx_neg
-    LDA pxh:SBC #0:STA pxh
-    RTS
-.sbx_neg
-    LDA pxh:SBC #&FF:STA pxh
-    RTS
-.step_back_y
-    JSR step_prep
-    SEC
-    LDA pyf:SBC STEPTAB+2,X:STA pyf
-    LDA pyl:SBC STEPTAB+3,X:STA pyl
-    LDA STEPTAB+3,X:BMI sby_neg
-    LDA pyh:SBC #0:STA pyh
-    RTS
-.sby_neg
-    LDA pyh:SBC #&FF:STA pyh
     RTS
 
 ; --- derive_raw: PXRAW/PYRAW = 24-bit 8.8 position >> 5 (s16 result) ------

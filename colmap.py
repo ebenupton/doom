@@ -284,16 +284,16 @@ def build():
                       ob & 0xFF, ot & 0xFF, mv, ang))
     assert len(colsegs) + len(ports) < 256, 'u8 collision index space'
 
-    # per-column lists: SOLIDS ONLY until the engine's port dispatch
-    # lands (a port index in the list would be misread as an OOB solid
-    # record by the shipped scan — the task-8 asm flips this to the
-    # unified universe with idx >= COL_N_SOLID = port)
+    # per-column lists over the unified universe: solids then ports
+    # (idx >= len(colsegs) = port; the engine dispatches on COL_N_SOLID)
     colidx = []
     collist = []
+    universe = (list(colsegs)
+                + [(p[0], p[1], p[2], p[3]) for p in ports])
     for c in range(COLS):
         cx0 = RAWX_MIN + c * 128 - RADIUS
         cx1 = RAWX_MIN + (c + 1) * 128 + RADIUS
-        mine = [i for i, (x1, y1, dx, dy) in enumerate(colsegs)
+        mine = [i for i, (x1, y1, dx, dy) in enumerate(universe)
                 if max(x1, x1 + dx) >= cx0 and min(x1, x1 + dx) <= cx1]
         colidx.append((len(collist), len(mine)))
         collist.extend(mine)
@@ -357,7 +357,11 @@ def blobs(flat=True):
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750, ss_info=0xE830,
                  minpass=0xE910, usetab=0xE918)
     else:
-        A = dict(idx=0xB4A4, colseg=0xB8C0, ss_vz=0x8C00, ss_info=0x8CE0,
+        # idx moved $B4A4 -> $AB00 2026-08-15: the SSMASK staging page is
+        # $B400-$B4FF (anim_init copies all 256 bytes down to $0A80) and
+        # the old home sat inside it — the mask copy-down dragged COLIDX
+        # bytes into ANIM_SSMASK entries 164-220 on every shipped disc.
+        A = dict(idx=0xAB00, colseg=0xB8C0, ss_vz=0x8C00, ss_info=0x8CE0,
                  minpass=0xBFC0, usetab=0xBE00)
     import math
     seg_blob = bytearray()
@@ -377,9 +381,12 @@ def blobs(flat=True):
         ub += struct.pack('<hhhhB', x1, y1, dx, dy, act)
     # COLPORT: aggregation ports at $0200 BOTH builds (the shared page
     # freed by the records-to-bank-C move; main = no paging in the scan).
-    # SHIPPING NOTE: discs load from $1A00 up — both loaders need the
-    # COLDAT file (or a staged copy) before this works on hardware; the
-    # py65 harnesses install it directly.
+    # SHIPPING: $0200 is the OS vector page until the takeover, so no
+    # disc image can load it directly — anim_init copies it down from a
+    # staged source (the SSMASK idiom). Banked: bank B $A900 (anim_init
+    # runs under BANK_L2; the COLDT-file-at-$3000 scheme died 2026-08-15
+    # — $3000 is INSIDE engine CODE and the load shredded it). Flat/tube:
+    # $8400 CODE-file slack. The py65 harnesses also poke $0200 directly.
     pb = bytearray()
     for p in m['ports']:
         pb += struct.pack('<hhhhBBBB', p[0], p[1], p[2], p[3],
@@ -389,6 +396,9 @@ def blobs(flat=True):
            A['ss_vz']: m['ss_vz'], A['ss_info']: m['ss_info'],
            A['minpass']: m['mv_minpass'], A['usetab']: bytes(ub),
            0x0200: bytes(pb)}
+    if not flat:
+        out[0xA900] = bytes(pb)                 # bank-B staging for anim_init
+        assert 0xA900 + len(pb) <= 0xAB00, 'CP staging reaches COLIDX'
     # the asm dispatches on idx >= COL_N_SOLID (abi constant): pin it
     import abi as _abi
     assert len(m['colsegs']) == _abi.COL_N_SOLID, \
@@ -403,7 +413,8 @@ def blobs(flat=True):
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
     else:
         assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
-        assert 0xB4A4 + len(idx_blob) <= 0xB700, 'COLIDX blob reaches DIR'
+        assert 0xAB00 + len(idx_blob) <= 0xAF00, \
+            'COLIDX blob reaches the rcache state at $AF00'
         assert len(m['ss_vz']) <= 0xE0 and len(m['ss_info']) <= 0xE0
         assert A['usetab'] + len(ub) <= 0xBE8F, 'USETAB (bank A) reaches TABL0'
     out['addrs'] = A
@@ -509,24 +520,24 @@ def box_scan(rx, ry, z_ps, mover_pos):
     bx0, by0, bx1, by1 = rx - RADIUS, ry - RADIUS, rx + RADIUS, ry + RADIUS
     c0 = max(0, min(COLS - 1, (bx0 - RAWX_MIN) >> 7))
     c1 = max(0, min(COLS - 1, (bx1 - RAWX_MIN) >> 7))
-    tm_ob = -128
+    tm_ob = -40    # mirrors the asm sentinel (SBC-sign-safe)
     for c in {c0, c1}:
         off, cnt = m['colidx'][c]
         for k in range(cnt):
             idx = m['collist'][off + k]
-            if _box_hits_seg(bx0, by0, bx1, by1, m['colsegs'][idx]):
-                return True, tm_ob
-    # ports: direct iteration until the unified lists land with the asm
-    # (42 entries; the engine will list-drive them via idx >= n_solid)
-    for p in m['ports']:
-        if _box_hits_seg(bx0, by0, bx1, by1, p[:4]):
-            ob, ot = _port_live(p, mover_pos)
-            if ot - (ob - EYE_PS) < DOOR_MIN_OPEN_PS:
-                return True, tm_ob             # opening too small (or shut)
-            if ot - (z_ps - EYE_PS) < DOOR_MIN_OPEN_PS:
-                return True, tm_ob             # head bump
-            if ob > tm_ob:
-                tm_ob = ob
+            if idx < n_solid:
+                if _box_hits_seg(bx0, by0, bx1, by1, m['colsegs'][idx]):
+                    return True, tm_ob
+                continue
+            p = m['ports'][idx - n_solid]
+            if _box_hits_seg(bx0, by0, bx1, by1, p[:4]):
+                ob, ot = _port_live(p, mover_pos)
+                if ot - (ob - EYE_PS) < DOOR_MIN_OPEN_PS:
+                    return True, tm_ob         # opening too small (or shut)
+                if ot - (z_ps - EYE_PS) < DOOR_MIN_OPEN_PS:
+                    return True, tm_ob         # head bump
+                if ob > tm_ob:
+                    tm_ob = ob
     return False, tm_ob
 
 

@@ -47,7 +47,7 @@ CPM_KDYL = 0xA700  # ... dy lo
 CPM_KDYH = 0xA780  # ... dy hi
 CPM_PSIL = 0xA800  # memo value: psi lo
 CPM_PSIH = 0xA880  # ... psi hi (last plane: memo ends at CPM_BASE+$300)
-COLIDX_BASE = 0xB4A4  # collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists
+COLIDX_BASE = 0xAB00  # collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked moved off the $B400 SSMASK staging page 2026-08-15 — the 256B mask copy-down was dragging COLIDX bytes into ANIM_SSMASK 164-220)
 COLIDX_BASE_FLAT = 0x7600
 COLSEG_BASE = 0xB8C0  # collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 COLSEG_BASE_FLAT = 0x7810
@@ -57,7 +57,7 @@ SS_INFO_BASE = 0x8CE0  # per-subsector mover info: $FF none, else mover idx (b7 
 SS_INFO_BASE_FLAT = 0xE830
 MV_MINPASS = 0xBFC0  # per-mover min passable door pos (fh + 56, prescaled)
 MV_MINPASS_FLAT = 0xE910
-COLPORT_BASE = 0x0200  # P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle) — the shared page freed by records-to-bank-C; ships via COLDAT (loaders TODO)
+COLPORT_BASE = 0x0200  # P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle) — the shared page freed by records-to-bank-C; anim_init copies it down from staging (banked: bank B $A900; flat/tube: $8400 CODE slack)
 COL_N_SOLID = 0x00C7  # collision indices >= this are ports (colmap asserts the count)
 USETAB_BASE = 0xBE00  # use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 USETAB_BASE_FLAT = 0xE918

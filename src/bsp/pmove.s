@@ -23,40 +23,63 @@
 
 SEG_PMOVE
 
-; --- driver-visible state (the PMOVE region is main RAM in every build) ---
-::pm_oldx:  .res 2                      ; committed position, raw s16
-::pm_oldy:  .res 2                      ;   (for walkover crossing tests)
-::pm_vz:    .res 1                      ; current vz, prescaled s8 (in/out)
-::pm_ux:    .res 2                      ; use-trace delta, raw s16
-::pm_uy:    .res 2
-pm_exx:     .res 2                      ; crossing-test endpoint (staged
-pm_exy:     .res 2                      ;  by pmove_use)
-::pm_blkang: .res 1                     ; wall angle of the last box hit
+; --- driver-visible state: scratch-placed equates too (engine_syms
+; resolves equ symbols; oldx..oldy and ux..uy stay contiguous runs) ---
+::pm_oldx  = PM_SCRATCH+$3B             ; use-trace origin, raw s16
+::pm_oldy  = PM_SCRATCH+$3D
+::pm_vz    = PM_SCRATCH+$3F             ; current vz, prescaled s8 (in/out)
+::pm_ux    = PM_SCRATCH+$40             ; use-trace delta, raw s16
+::pm_uy    = PM_SCRATCH+$42
+pm_exx     = PM_SCRATCH+$24             ; crossing-test endpoint (staged
+pm_exy     = PM_SCRATCH+$26             ;  by pmove_use; oldx..exy runs)
+::pm_blkang = PM_SCRATCH+$44            ; wall angle of the last box hit
                                         ;  ($FF = blocked by sector rules)
-::pm_sdx:   .res 2                      ; slide vector out (s16 8.8)
-::pm_sdy:   .res 2
+::pm_sdx   = PM_SCRATCH+$45             ; slide vector out (s16 8.8; sdx/
+::pm_sdy   = PM_SCRATCH+$47             ;  sdy = a 4B run for the negate)
 
-; --- internal scratch ---
-pm_bx0:     .res 2                      ; candidate box bounds (raw s16);
-pm_by0:     .res 2                      ;  ORDER IS LOAD-BEARING: the
-pm_bx1:     .res 2                      ;  bounds loop indexes pm_bx0,X /
-pm_by1:     .res 2                      ;  pm_bx1,X with X = 0 (x) / 2 (y)
-pm_c1:      .res 1                      ; second column (or == first)
-pm_cnt:     .res 1
-pm_dvz:     .res 1                      ; dest vz candidate
-pm_t1s:     .res 1                      ; smul t1: sign / 24-bit mag
-pm_t1m:     .res 3
-pm_t2s:     .res 1
-pm_t2m:     .res 3
-pm_ma:      .res 2                      ; mul operands (u16)
-pm_mb:      .res 2
-pm_ax:      .res 2                      ; cross operands (s16)
-pm_ay:      .res 2
-pm_lx:      .res 2                      ; line origin / delta (s16)
-pm_ly:      .res 2
-pm_ldx:     .res 2
-pm_ldy:     .res 2
-pm_sfirst:  .res 1                      ; first corner/endpoint side bool
+; --- internal scratch: PLACED EQUATES, not .res — banked overlays the
+; driver's ONE-SHOT init block ($2000-$20D3, dead after boot; a warm
+; re-entry of the boot path would execute scratch as code — cold boot
+; only); flat uses its free zone side. Adjacency is LOAD-BEARING
+; throughout (indexed copy loops + the bounds/axis loops).
+.if ::BANKED
+PM_SCRATCH = $2000
+.else
+PM_SCRATCH = $2200
+.endif
+pm_bx0     = PM_SCRATCH+$00             ; box bounds; ORDER LOAD-BEARING
+pm_by0     = PM_SCRATCH+$02             ;  (pm_bx0,X / pm_bx1,X, X=0/2)
+pm_bx1     = PM_SCRATCH+$04
+pm_by1     = PM_SCRATCH+$06
+pm_c1      = PM_SCRATCH+$08             ; second column (or == first)
+pm_cnt     = PM_SCRATCH+$09
+pm_dvz     = PM_SCRATCH+$0A             ; dest vz candidate
+pm_t1s     = PM_SCRATCH+$0B             ; smul t1: sign + u24 mag
+pm_t1m     = PM_SCRATCH+$0C
+pm_t2s     = PM_SCRATCH+$0F             ; (t1s..t2m contiguous: the
+pm_t2m     = PM_SCRATCH+$10             ;  corner_side copy loops)
+pm_ma      = PM_SCRATCH+$13             ; mul operands
+pm_mb      = PM_SCRATCH+$15
+pm_ax      = PM_SCRATCH+$17             ; cross operands (ax..ay 4B runs)
+pm_ay      = PM_SCRATCH+$19
+pm_lx      = PM_SCRATCH+$1B             ; line origin/delta (8B run)
+pm_ly      = PM_SCRATCH+$1D
+pm_ldx     = PM_SCRATCH+$1F
+pm_ldy     = PM_SCRATCH+$21
+pm_sfirst  = PM_SCRATCH+$23
+pm_c0_save = PM_SCRATCH+$28             ; scan state
+pm_col     = PM_SCRATCH+$29
+pm_n       = PM_SCRATCH+$2A
+pm_idx     = PM_SCRATCH+$2B
+pm_i       = PM_SCRATCH+$2C
+pm_rx      = PM_SCRATCH+$2D             ; crossing record stash (8B run:
+pm_ry      = PM_SCRATCH+$2F             ;  the mc_stash copy loop)
+pm_rdx     = PM_SCRATCH+$31
+pm_rdy     = PM_SCRATCH+$33
+pm_t1s_w   = PM_SCRATCH+$35             ; smul work (4B run: pcs_c1/c2)
+pm_t1m_w   = PM_SCRATCH+$36
+pm_mb2     = PM_SCRATCH+$39
+pm_tmob    = PM_SCRATCH+$3A             ; tmfloorz aggregate
 
 PM_RADIUS   = 16
 PM_STEP     = 3                         ; 24 world units, prescaled
@@ -72,6 +95,11 @@ PM_XBIAS    = 1936                      ; -RAWX_MIN (walk clamp rect)
    PAGE BANK_WALK
    LDA #$FF
    STA pm_blkang                        ; no wall hit yet
+   LDA #$D8
+   STA pm_tmob                          ; tmfloorz aggregate = -40: low
+                                        ; enough to lose every max, small
+                                        ; enough that the SBC-sign trick
+                                        ; stays exact (-128 overflowed it)
 ; box bounds: pm_bx0/by0 = raw-16, pm_bx1/by1 = raw+16 (X = 0 x / 2 y;
 ; the raws are consecutive zp $90-$93)
    LDX #2
@@ -138,13 +166,18 @@ pt_door:
    SEC
    SBC MV_MINPASS,Y                     ; |heights| small: SBC sign exact
    BMI pt_blocked                       ; not open enough -> blocked
-   LDA SS_VZ_BASE,X
-   STA pm_dvz
-   JMP pt_step
 pt_static:
    LDA SS_VZ_BASE,X
    STA pm_dvz
 pt_step:
+; crossed-port floors bind: dvz = max(dvz, tm_ob) — DOOM's tmfloorz
+   LDA pm_tmob
+   SEC
+   SBC pm_dvz                           ; |heights| small: sign exact
+   BMI pt_step2
+   LDA pm_tmob
+   STA pm_dvz
+pt_step2:
 ; step rule: dvz - vz > 3 -> blocked (drops always allowed)
    LDA pm_dvz
    SEC
@@ -183,7 +216,6 @@ pm_col_lo:
 pm_col_hi:
    LDA #35
    RTS
-::pm_c0_save: .res 1
 .endscope
 
 ; ============================================================================
@@ -208,7 +240,10 @@ pm_col_hi:
 pcs_loop:
    LDY pm_n
    DEY
-   LDA (zp_pm_p),Y                      ; seg index
+   LDA (zp_pm_p),Y                      ; collision index
+   CMP #COL_N_SOLID
+   BCS pcs_port                         ; >= COL_N_SOLID: aggregation port
+pcs_solid:
 ; seg record addr = COLSEG_BASE + idx*9 -> zp_anim_p (frame-scoped
 ; reuse; stride 9 since the slide arc: +1 wall-angle byte)
    STA pm_idx
@@ -236,15 +271,116 @@ pcs_loop:
    STA zp_anim_p+1
    JSR pm_box_vs_seg
    BCS pcs_rts                          ; blocked
+; --- aggregation port (COLPORT @ main, stride 12): crossed -> the DOOM
+; opening rules with live mover heights; block or aggregate tmfloorz ---
+pcs_port:
+   SBC #COL_N_SOLID                     ; C=1 from the CMP: k = idx - 199
+   STA pm_idx
+   LDA #0
+   STA zp_anim_p+1
+   LDA pm_idx
+   ASL A
+   ASL A                                ; k*4 (k <= 42: fits)
+   STA zp_anim_p
+   ASL A
+   ROL zp_anim_p+1                      ; k*8 (16-bit from here)
+   CLC
+   ADC zp_anim_p
+   STA zp_anim_p
+   BCC :+
+   INC zp_anim_p+1
+:  LDA zp_anim_p                        ; k*12
+   CLC
+   ADC #<COLPORT_BASE
+   STA zp_anim_p
+   LDA zp_anim_p+1
+   ADC #>COLPORT_BASE
+   STA zp_anim_p+1
+   JSR pm_box_vs_seg                    ; geometry layout matches; main
+   BCC pcs_next                         ; RAM: readable under WALK
+   JSR pm_port_aggr
+   BCC pcs_next
+   BCS pcs_rts                          ; blocked verdict propagates
+
+pcs_next:
    DEC pm_n
-   BNE pcs_loop
+   BEQ pcs_clear
+   JMP pcs_loop
 pcs_clear:
    CLC
 pcs_rts:
    RTS
-pm_col: .res 1
-pm_n:   .res 1
-pm_idx: .res 1
+.endscope
+
+; ============================================================================
+; pm_port_aggr — the crossed port at (zp_anim_p): +8 ob_vz +9 ot_ps
+; +10 mover +11 wall angle. Live mover substitution; C=1 = BLOCK
+; (opening or head < 56 — with pm_blkang set for the slide), else
+; aggregate pm_tmob. Height algebra (all prescaled s8, EYE folded):
+;   opening: ot - (ob-5) < 7  <=>  ot - ob < 2
+;   head:    ot - (vz-5) < 7  <=>  ot - vz < 2
+; ============================================================================
+.scope
+::pm_port_aggr:
+   LDY #8
+   LDA (zp_anim_p),Y                    ; ob_vz
+   STA pm_c1                            ; (scratch reuse: cols are done
+   INY                                  ;  by the time ports test)
+   LDA (zp_anim_p),Y                    ; ot_ps
+   STA pm_cnt
+   INY
+   LDA (zp_anim_p),Y                    ; mover byte
+   CMP #$FF
+   BEQ pa_static
+   PHA
+   AND #$3F
+   STA pm_dvz                           ; scratch: idx
+   ASL A
+   ADC pm_dvz                           ; idx*3 (C=0: idx<=5 ASL)
+   TAY
+   LDA ANIM_WS+1,Y                      ; live pos
+   TAX
+   PLA
+   BMI pa_ceil
+   TXA                                  ; lift: ob = pos + eye
+   CLC
+   ADC #5
+   STA pm_c1
+   JMP pa_static
+pa_ceil:
+   TXA                                  ; door: ot = pos
+   STA pm_cnt
+pa_static:
+; opening: ot - ob < 2 -> block
+   LDA pm_cnt
+   SEC
+   SBC pm_c1
+   BMI pa_block
+   CMP #2
+   BCC pa_block
+; head: ot - vz < 2 -> block
+   LDA pm_cnt
+   SEC
+   SBC pm_vz
+   BMI pa_block
+   CMP #2
+   BCC pa_block
+; aggregate: pm_tmob = max(pm_tmob, ob)
+   LDA pm_c1
+   SEC
+   SBC pm_tmob
+   BMI pa_ok
+   LDA pm_c1
+   STA pm_tmob
+pa_ok:
+   CLC
+   RTS
+pa_block:
+   LDY #11                              ; the port's wall angle drives the
+   LDA (zp_anim_p),Y                    ; slide along a shut door/step face
+   STA pm_blkang
+   SEC
+   RTS
 .endscope
 
 ; ============================================================================
@@ -521,9 +657,6 @@ sm_noadd:
    STA pm_t1s_w
 sm_done:
    RTS
-::pm_t1s_w: .res 1
-::pm_t1m_w: .res 3
-pm_mb2:     .res 1
 .endscope
 
 ; ============================================================================
@@ -653,17 +786,6 @@ pa_st:
 .endscope
 
 SEG_PMOVE
-; --- (zp_pm_p) += 9: the 9-byte line-record stride ---
-.scope
-::pm_p_add9:
-   LDA zp_pm_p
-   CLC
-   ADC #9
-   STA zp_pm_p
-   BCC :+
-   INC zp_pm_p+1
-:  RTS
-.endscope
 
 ; ============================================================================
 ; pm_move_crosses_line — C=1 iff the segment pm_oldx/y -> pm_exx/y strictly
@@ -699,12 +821,12 @@ mc_c1:
    JSR pm_corner_side
    EOR pm_sfirst
    BNE mc_go                            ; sides differ: keep testing
-   JMP mc_no                            ; same side: no crossing
+   CLC
+   RTS
 mc_go:
 ; endpoints of the record must straddle the MOVE line: swap roles.
 ; Stash the record's origin+delta in pm_r* (pm_t* is pm_corner_side
-; scratch — the 2026-08-14 draft's stack dance died on exactly that),
-; then restage pm_l* as the move line.
+; scratch), then restage pm_l* as the move line.
    LDX #7
 mc_stash:
    LDA pm_lx,X
@@ -758,10 +880,6 @@ mc_r2:
 mc_no:
    CLC
    RTS
-::pm_rx:  .res 2
-::pm_ry:  .res 2
-::pm_rdx: .res 2
-::pm_rdy: .res 2
 .endscope
 
 ; ============================================================================
@@ -800,7 +918,13 @@ pu_st:
 pu_loop:
    JSR pm_move_crosses_line
    BCS pu_hit
-   JSR pm_p_add9
+   LDA zp_pm_p
+   CLC
+   ADC #9
+   STA zp_pm_p
+   BCC :+
+   INC zp_pm_p+1
+:
    DEC pm_i
    BNE pu_loop
 pu_none:
@@ -833,7 +957,6 @@ pu_moving:
    LDA #0
 pu_exit:
    RTS
-pm_i: .res 1
 .endscope
 
 ; ============================================================================
@@ -859,7 +982,8 @@ pm_i: .res 1
    LDY pm_blkang
    CPY #$FF
    BNE ps_go
-   JMP ps_none
+   CLC
+   RTS
 ps_go:
    PAGE_X BANK_SEG                      ; X-clobber page: A (move dir) rides
    SEC
@@ -958,9 +1082,6 @@ ps_sign:
    STA pm_sdy+1
 ps_pos:
    SEC
-   RTS
-ps_none:
-   CLC
    RTS
 ; (A:X lo:hi s16) * cmag(pm_ma, 1..31) >> 5, signed via sign-magnitude
 ps_scale16:

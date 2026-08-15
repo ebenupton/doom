@@ -153,6 +153,9 @@ def banked_files():
         ('BANK1C', 0x3000, 0x3000, Cc),
         ('LOWC',  0x1A00, 0x1A00, LOWc),
     ]
+    # (COLDT file retired 2026-08-15: the port table rides BANK2 at $A900
+    # — colmap.blobs(flat=False)[0xA900] — and anim_init copies it down to
+    # $0200. The *LOAD COLDT at $3000 landed INSIDE engine CODE after LOW.)
 
 
 def main():

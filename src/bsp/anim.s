@@ -488,6 +488,26 @@ alw_f:   .byte 0
 SEG_HIGH
 anim_init:
 .scope
+; COLPORT copy-down (2026-08-15): the collision port table's runtime
+; home is $0200 (OS vector page until the takeover), so the discs stage
+; it and this one-shot post-takeover hook copies it down — the SSMASK
+; idiom below. Banked: bank B $A900 (we run with BANK_L2 paged, see the
+; header); flat/tube: $8400 CODE-file slack. HISTORY: the first cut
+; *LOADed a COLDT file at $3000 — INSIDE engine CODE, which LOW had
+; just loaded — and the disc crashed at the first render (BRK loop).
+.if ::BANKED
+CP_STAGE = $A900
+.else
+CP_STAGE = $8400
+.endif
+   LDX #0
+ai_cpc:
+   LDA CP_STAGE,X
+   STA COLPORT_BASE,X
+   LDA CP_STAGE+$100,X
+   STA COLPORT_BASE+$100,X
+   INX
+   BNE ai_cpc
 ; SSMASK lives in MAIN ($0A80, BOTH builds since the 2026-07-21 unfork)
 ; so the hub reads it with zero paging — but main below $1B40 is never
 ; covered by a disc image (banked LOW loads at $1B40; the copro DATA

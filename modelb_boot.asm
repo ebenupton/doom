@@ -43,6 +43,10 @@ ORG &1900
     LDX #LO(c_lowc): LDY #HI(c_lowc)
 .ld_lowgo
     JSR &FFF7                                    ; *LOAD LOW|LOWC 1A00
+                                                 ; (no COLDT load: the port
+                                                 ; table stages in BANK2 at
+                                                 ; $A900 — a $3000 load here
+                                                 ; would shred engine CODE)
     LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4 (last OS call)
     JMP DRV_ORG                                  ; -> driver (its SEI kills
                                                  ; the OS; no vector-page

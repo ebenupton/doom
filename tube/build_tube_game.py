@@ -180,6 +180,12 @@ def main():
     # replaced raster pocket + the high-table area)
     import colmap
     colmap.install(mem, flat=True)
+    # COLPORT staging: the parasite's $0200 is client-OS territory during
+    # loads — ship the blob at $8400 (CODE-file slack) and the driver
+    # copies it down post-takeover
+    _cp = colmap.blobs(flat=True)[0x0200]
+    assert len(_cp) <= 0x200
+    mem[0x8400:0x8400 + len(_cp)] = _cp
     # guard: nothing nonzero outside the shipped spans + runtime regions
     # ($0400-$1A00 = pool/records/caches ground state; $8400-$8600 =
     # CPM-era slack, boot-initialized)
