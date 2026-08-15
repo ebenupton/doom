@@ -346,8 +346,20 @@ ORG DRV_CLR
     JMP fs_guard
 .fs_go
     ; CRTC screen start = address/8: R12 = backhi>>3, R13 = (backhi&7)<<5
-    LDA #12:STA &FE00 : LDA backhi:LSR A:LSR A:LSR A:STA &FE01
-    LDA #13:STA &FE00 : LDA backhi:AND #7:ASL A:ASL A:ASL A:ASL A:ASL A:STA &FE01
+    ; CRTC screen start, biased by -2 CHARACTERS (-16 bytes). The naive
+    ; value (base/8) puts FB byte 0 two cells LEFT of the visible area:
+    ; measured with a barcode row poked into the live framebuffer (solid
+    ; blocks at cells 0 and 4, dashes elsewhere) — cell 0 never appeared,
+    ; the cell-4 block came out at display position 2, and row 0 ran out
+    ; two cells early at the right, where the next row's bytes showed
+    ; through. That is the RHS wrap Eben reported. The two lost
+    ; characters are emitted during the border, so biasing the start by
+    ; -2 lines FB byte 0 up with the first visible pixel.
+    ; backhi is only ever $58 or $6C, so the pair is a 4-byte table
+    ; (bit 5 selects; keep in step with the EOR constant below).
+    LDA backhi : AND #&20 : LSR A:LSR A:LSR A:LSR A : TAX
+    LDA #12:STA &FE00 : LDA fs_tab,X   : STA &FE01
+    LDA #13:STA &FE00 : LDA fs_tab+1,X : STA &FE01
     LDA backhi:EOR #(&58 EOR &6C):STA backhi        ; backhi = buffer coming off display
     ; arm the run-ahead pipeline for the next frame: clear the vsync
     ; latch, enqueue mode, empty queue. The next frame's plots queue
@@ -458,6 +470,10 @@ ORG DRV_CLR
 ; frame that displayed $5800 and vanished on the $6C00 frames. &3FFF is
 ; past both windows, so the address can never coincide.
 ; (Init-block space is razor thin, hence a tail routine + JSR.)
+.fs_tab
+    EQUB &0A, &FE                                   ; $5800/8 - 2 = &0AFE
+    EQUB &0D, &7E                                   ; $6C00/8 - 2 = &0D7E
+
 .cur_park
     LDA #14:STA &FE00: LDA #&3F:STA &FE01
     LDA #15:STA &FE00: LDA #&FF:STA &FE01
