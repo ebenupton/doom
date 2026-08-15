@@ -357,11 +357,16 @@ def blobs(flat=True):
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750, ss_info=0xE830,
                  minpass=0xE910, usetab=0xE918)
     else:
-        # idx moved $B4A4 -> $AB00 2026-08-15: the SSMASK staging page is
-        # $B400-$B4FF (anim_init copies all 256 bytes down to $0A80) and
-        # the old home sat inside it — the mask copy-down dragged COLIDX
-        # bytes into ANIM_SSMASK entries 164-220 on every shipped disc.
-        A = dict(idx=0xAB00, colseg=0xB8C0, ss_vz=0x8C00, ss_info=0x8CE0,
+        # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
+        # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
+        # copy-down dragged COLIDX bytes into ANIM_SSMASK 164-220); the
+        # $AB00 fix landed ON THE RCACHE PSI PLANES ($A900-$AEFF,
+        # bca.s RC_P1L_0..RC_PH_1 — runtime-written; only harmless in
+        # tests because neither the fuzz nor the movement path renders).
+        # $AF8A = after RCACHE_STATE ($AF00+$89), before ANIM CFG $B300.
+        # LESSON: zero-runs in the shipped image are NOT free space —
+        # ships-zero runtime BSS looks identical; audit the equates.
+        A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8C00, ss_info=0x8CE0,
                  minpass=0xBFC0, usetab=0xBE00)
     import math
     seg_blob = bytearray()
@@ -397,8 +402,12 @@ def blobs(flat=True):
            A['minpass']: m['mv_minpass'], A['usetab']: bytes(ub),
            0x0200: bytes(pb)}
     if not flat:
+        # NOTE: $A900 is INSIDE the rcache psi planes (RC_P1L_0..) —
+        # deliberate overlay: anim_init copies the staged ports down at
+        # boot BEFORE any render writes psi; after that the bytes are
+        # the planes' ships-zero BSS. Boot-consumed staging only.
         out[0xA900] = bytes(pb)                 # bank-B staging for anim_init
-        assert 0xA900 + len(pb) <= 0xAB00, 'CP staging reaches COLIDX'
+        assert 0xA900 + len(pb) <= 0xAB00, 'CP staging spans 2 psi pages max'
     # the asm dispatches on idx >= COL_N_SOLID (abi constant): pin it
     import abi as _abi
     assert len(m['colsegs']) == _abi.COL_N_SOLID, \
@@ -413,8 +422,8 @@ def blobs(flat=True):
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
     else:
         assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
-        assert 0xAB00 + len(idx_blob) <= 0xAF00, \
-            'COLIDX blob reaches the rcache state at $AF00'
+        assert 0xAF8A + len(idx_blob) <= 0xB300, \
+            'COLIDX blob reaches the ANIM CFG page at $B300'
         assert len(m['ss_vz']) <= 0xE0 and len(m['ss_info']) <= 0xE0
         assert A['usetab'] + len(ub) <= 0xBE8F, 'USETAB (bank A) reaches TABL0'
     out['addrs'] = A
@@ -521,7 +530,8 @@ def box_scan(rx, ry, z_ps, mover_pos):
     c0 = max(0, min(COLS - 1, (bx0 - RAWX_MIN) >> 7))
     c1 = max(0, min(COLS - 1, (bx1 - RAWX_MIN) >> 7))
     tm_ob = -40    # mirrors the asm sentinel (SBC-sign-safe)
-    for c in {c0, c1}:
+    for c in ([c0] if c0 == c1 else [c0, c1]):   # 6502 scan order (blkang
+                                                 # identity needs it exact)
         off, cnt = m['colidx'][c]
         for k in range(cnt):
             idx = m['collist'][off + k]
@@ -598,6 +608,203 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
         if vz - z_ps > STEP_PS:
             return False, z_ps
     return True, vz
+
+
+# ── momentum physics (DOOM 35Hz, task 9) ───────────────────────────────
+# THE canonical statement of the player momentum rules; pmove.s pm_frame
+# is its 6502 expression and the lockstep fuzz is the gate.
+#
+# Units: velocities/displacements are s16 8.8 PRESCALED (1.0 = 8 world
+# units), positions are 24-bit 8.8 prescaled center-relative (the DV_PX
+# format). The scale is chosen because DOOM_fixed/2048 == our 8.8:
+# DOOM's forwardmove*2048 thrust IS the literal 25 below.
+#
+# Per DOOM tic (35Hz; P_PlayerThink + P_XYMovement order):
+#   1. thrust: mom += 25 * (cos,sin)(view), sign-magnitude (25*mag5)>>5
+#      (back = negated; both keys cancel exactly)
+#   2. clamp each axis to +/-960 (MAXMOVE 30 world units)
+#   3. displacement += mom   (position applied per FRAME, batched)
+#   4. friction: if no input and both |mom| < 2 (STOPSPEED): mom = 0
+#      else mom = (mom*232)>>8 FLOOR (DOOM FixedMul 0xE800 semantics:
+#      arithmetic shift, so -1 decays only via the stop rule — as DOOM)
+# Tic clock: PAL fields * 7/10 accumulated (50Hz * 0.7 = 35Hz), fields
+# capped at 32/frame (hiccup clamp).
+#
+# Frame displacement applies in <=15-world-unit chunks (DOOM's MAXMOVE/2
+# halving, extended: halve until each axis chunk <= 480), each chunk via
+# try_move. A blocked chunk with a wall angle projects BOTH the leftover
+# displacement AND the momentum onto the wall (P_HitSlideLine as a true
+# dot-product projection on the mag5 grid: p = (d.w>>5 terms summed),
+# slide = (p*wmag)>>5 per axis — DOOM's aprox-dist*cos(delta) is an
+# approximation of exactly this); at most 2 wall projections per frame,
+# then the axis fallback (y-only, then x-only, zeroing the blocked
+# axis' momentum), then full stop (mom = 0,0).
+MM_THRUST = 25            # walk forwardmove (DOOM 0x19; run not mapped)
+MM_MAXMOVE = 960          # 30 world units, 8.8 prescaled
+MM_HALF = 480             # MAXMOVE/2 chunk ceiling
+MM_STOP = 2               # STOPSPEED 0x1000 on our grid
+MM_FRICTION = 232         # 0xE800 >> 8
+MM_FIELDS_CAP = 32
+MM_TPF, MM_TPF_MOD = 7, 10   # tics = fields*7/10 with carried remainder
+
+
+def _sc16(v, mag5):
+    """(v * mag5) >> 5 sign-magnitude (ps_scale16): truncate toward 0."""
+    s = -1 if v < 0 else 1
+    return s * ((abs(v) * mag5) >> 5)
+
+
+def _unit5(ang):
+    """(cmag5, sneg-cos, smag5, sneg-sin) of a 64-grid angle: mag 0..32
+    (unity folded to 32), matching the $BA00 table + cone/sone flags."""
+    import fp
+    sm, sn, so, cm, cn, co = fp.fp_sincos5((ang & 63) * 4)
+    return (32 if co else cm), cn, (32 if so else sm), sn
+
+
+def wall_project(dx, dy, wall_ang):
+    """P_HitSlideLine on the mag5 grid: project (dx,dy) onto the wall
+    direction. Returns (sdx, sdy)."""
+    cw, cn, sw, sn = _unit5(wall_ang)
+    p = _sc16(-dx if cn else dx, cw) + _sc16(-dy if sn else dy, sw)
+    sdx, sdy = _sc16(p, cw), _sc16(p, sw)
+    return (-sdx if cn else sdx), (-sdy if sn else sdy)
+
+
+def momentum_tics(mx, my, ticrem, fields, fwd, back, angidx):
+    """Steps 1-4 for the frame's tics. Returns (mx, my, ticrem, dx, dy)."""
+    fields = min(fields, MM_FIELDS_CAP)
+    acc = ticrem + MM_TPF * fields
+    tics, ticrem = acc // MM_TPF_MOD, acc % MM_TPF_MOD
+    dx = dy = 0
+    for _ in range(tics):
+        if fwd != back:
+            cw, cn, sw, sn = _unit5(angidx)
+            tx = -_sc16(MM_THRUST, cw) if cn else _sc16(MM_THRUST, cw)
+            ty = -_sc16(MM_THRUST, sw) if sn else _sc16(MM_THRUST, sw)
+            if back:
+                tx, ty = -tx, -ty
+            mx += tx
+            my += ty
+        mx = max(-MM_MAXMOVE, min(MM_MAXMOVE, mx))
+        my = max(-MM_MAXMOVE, min(MM_MAXMOVE, my))
+        dx += mx
+        dy += my
+        if fwd == back and -MM_STOP < mx < MM_STOP \
+                and -MM_STOP < my < MM_STOP:
+            mx = my = 0               # DOOM stop rule: cmd nets to zero
+        else:                         # when fwd==back (keys cancel)
+            mx = (mx * MM_FRICTION) >> 8
+            my = (my * MM_FRICTION) >> 8
+    return mx, my, ticrem, dx, dy
+
+
+def _blk_ang(px, py, nx, ny, z_ps, mover_pos):
+    """Wall angle of the box_scan block at (nx,ny), or None/0xFF-like."""
+    m = build()
+    n_solid = len(m['colsegs'])
+    bx0, by0, bx1, by1 = nx - RADIUS, ny - RADIUS, nx + RADIUS, ny + RADIUS
+    c0 = max(0, min(COLS - 1, (bx0 - RAWX_MIN) >> 7))
+    c1 = max(0, min(COLS - 1, (bx1 - RAWX_MIN) >> 7))
+    import math
+    for c in ([c0] if c0 == c1 else [c0, c1]):
+        off, cnt = m['colidx'][c]
+        for k in range(cnt):
+            idx = m['collist'][off + k]
+            if idx < n_solid:
+                s = m['colsegs'][idx]
+                if _box_hits_seg(bx0, by0, bx1, by1, s):
+                    return int(round(math.atan2(s[3], s[2]) * 32 / math.pi)) & 63
+            else:
+                p = m['ports'][idx - n_solid]
+                if _box_hits_seg(bx0, by0, bx1, by1, p[:4]):
+                    ob, ot = _port_live(p, mover_pos)
+                    if (ot - (ob - EYE_PS) < DOOR_MIN_OPEN_PS or
+                            ot - (z_ps - EYE_PS) < DOOR_MIN_OPEN_PS):
+                        return p[7] & 63
+    return None                           # sector-rule (or bounds) block
+
+
+def momentum_frame(px88, py88, z_ps, mx, my, ticrem, fields, fwd, back,
+                   angidx, mover_pos):
+    """One driver frame: tic integration + chunked displacement with
+    wall projection. Positions 24-bit 8.8 prescaled center-relative.
+    d_fwd (the bca forward-coherence D-class gate) is 1 ONLY when the
+    frame's displacement is EXACTLY parallel to the view unit on the
+    mag6 grid (cross == 0, dot > 0) and every chunk committed clean:
+    friction's independent per-axis floors drift the momentum off the
+    ray, and the bbox classifier's certified epsilon has no slack for
+    that — so the cache serves on axis/diagonal runs (where alignment
+    is exact) and safely sits out the rest.
+    Returns (px88, py88, z_ps, mx, my, ticrem, d_fwd)."""
+    mx, my, ticrem, dx, dy = momentum_tics(mx, my, ticrem, fields,
+                                           fwd, back, angidx)
+    if dx == 0 and dy == 0:
+        return px88, py88, z_ps, mx, my, ticrem, 0
+    tdx, tdy = dx, dy                     # the frame's intended move
+    clean = True
+    k = 0
+    while (abs(dx) >> k) > MM_HALF or (abs(dy) >> k) > MM_HALF:
+        k += 1
+    chunks = 1 << k
+    cdx, cdy = dx >> k, dy >> k           # arithmetic halves (DOOM >>1)
+    slides = 0
+    while chunks:
+        nx88, ny88 = px88 + cdx, py88 + cdy
+        nx, ny = nx88 >> 5, ny88 >> 5     # 8.8 prescaled -> raw world int
+        px, py = px88 >> 5, py88 >> 5
+        ok, vz = try_move(px, py, nx, ny, z_ps, mover_pos)
+        if ok:
+            px88, py88, z_ps = nx88, ny88, vz
+            chunks -= 1
+            continue
+        if cdx == 0 and cdy == 0:
+            break
+        if slides < 2:
+            w = _blk_ang(px, py, nx, ny, z_ps, mover_pos)
+            if w is not None:
+                slides += 1
+                clean = False
+                rx, ry = cdx * chunks, cdy * chunks
+                rx, ry = wall_project(rx, ry, w)
+                mx, my = wall_project(mx, my, w)
+                k = 0
+                while (abs(rx) >> k) > MM_HALF or (abs(ry) >> k) > MM_HALF:
+                    k += 1
+                chunks, cdx, cdy = 1 << k, rx >> k, ry >> k
+                continue
+        # axis fallback: y-only then x-only; zero the dead axis' momentum
+        clean = False
+        if cdy and try_move(px, py, px, (py88 + cdy) >> 5,
+                            z_ps, mover_pos)[0]:
+            ok, vz = try_move(px, py, px, (py88 + cdy) >> 5, z_ps, mover_pos)
+            py88 += cdy
+            z_ps = vz
+            mx = 0
+            cdx = 0
+            chunks -= 1
+            continue
+        if cdx and try_move(px, py, (px88 + cdx) >> 5, py,
+                            z_ps, mover_pos)[0]:
+            ok, vz = try_move(px, py, (px88 + cdx) >> 5, py, z_ps, mover_pos)
+            px88 += cdx
+            z_ps = vz
+            my = 0
+            cdy = 0
+            chunks -= 1
+            continue
+        mx = my = 0                       # boxed in: full stop
+        break
+    d_fwd = 0
+    if clean:
+        cw, cn, sw, sn = _unit5(angidx)
+        ux = -cw if cn else cw
+        uy = -sw if sn else sw
+        if tdx * uy == tdy * ux:          # exactly on the view ray
+            if (tdx != 0 and (tdx > 0) == (ux > 0)) or \
+               (tdx == 0 and tdy != 0 and (tdy > 0) == (uy > 0)):
+                d_fwd = 1                 # ... pointing forward
+    return px88, py88, z_ps, mx, my, ticrem, d_fwd
 
 
 def _seg_cross(ax, ay, adx, ady, bx, by, bdx, bdy):
