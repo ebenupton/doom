@@ -927,109 +927,98 @@ pm_ayu    = PM_SCRATCH+$85
 pm_sv     = PM_SCRATCH+$87              ; fallback stash
 pm_bk     = PM_SCRATCH+$89              ; back-key flag (0/1)
 pm_sh     = PM_SCRATCH+$8A              ; shift counter
+; --- single-step momentum (the closed form; colmap.ss_coeffs mirrors it)
+pm_co     = PM_SCRATCH+$8C              ; 4 coefficients as 2 (m,T) PAIRS:
+                                        ;  +0 gamma +2 delta | +4 alpha
+                                        ;  +6 beta. ADJACENCY LOAD-BEARING
+                                        ;  (pf_pair walks them with Y=0/4)
+pm_acc    = PM_SCRATCH+$94              ; 24-bit two's-complement accumulator
+pm_mmag   = PM_SCRATCH+$97              ; |m| u8 + sign (|m| <= 232: the
+pm_msg    = PM_SCRATCH+$98              ;  u8 form is what makes this cheap)
+pm_tmag   = PM_SCRATCH+$99              ; |Tx|,sgn,|Ty|,sgn — X-indexed by
+                                        ;  axis, written by the thrust loop
+                                        ;  (|T| <= 24, so no s16 anywhere)
+pm_asg    = PM_SCRATCH+$9D              ; pf_addt's sign argument
+
+MM_THRUST   = 24                        ; trimmed from DOOM's 25 so the
+                                        ; closed form lands on the same
+                                        ; 8.0 u/tic top speed (colmap)
+MM_FRICTION = 232                       ; 0xE800>>8 = a
+SS_K        = 171                       ; 1/(1-a) = 32/3 in Q4
+PM_FCAP     = 10                        ; field hiccup clamp = table size.
+                                        ; 10 fields = 200 ms, ample over the
+                                        ; 3-7 a frame actually takes, and it
+                                        ; halves the worst-case travel in one
+                                        ; frame (56 world units, not 177) —
+                                        ; margin the chunk splitter then keeps
 
 SEG_PMB1
 .scope
 ::pm_frame_i:                           ; (the wrapper below is the ABI
    STX pm_in                            ;  entry: it refreshes the raws)
-   CMP #33
+   CMP #PM_FCAP+1
    BCC pf_fok
-   LDA #32                              ; fields hiccup clamp
-pf_fok:
-; tics = (ticrem + fields*7) / 10, remainder carried (7f as 4f+2f+f:
-; every partial <= 224, no carries)
-   STA pm_ut
-   ASL A
-   STA pm_umag                          ; 2f
-   ASL A
-   CLC
-   ADC pm_umag                          ; 6f
-   ADC pm_ut                            ; 7f
-   ADC PM_TICREM                        ; <= 233
-   LDX #0
-pf_d10:
-   CMP #10
-   BCC pf_d10d
-   SBC #10
-   INX
-   BNE pf_d10
-pf_d10d:
-   STA PM_TICREM
-   TXA
+   LDA #PM_FCAP                         ; fields hiccup clamp (also the
+pf_fok:                                 ;  coefficient table's last row)
+   TAX
    BNE pf_go
 pf_none:
    LDA #0
    STA D_FWD
    RTS
 pf_go:
-   STA pm_tics
+                                        ; (PM_TICREM is retired outright:
+                                        ;  n = 179*fields>>8, so there is no
+                                        ;  fractional tic to carry frame to
+                                        ;  frame. The byte is left alone.)
+   JSR pf_coef                         ; (SEG_PMOVE)
    LDA pm_in
    LSR A                                ; b1 (back) -> b0
    AND #1
    STA pm_bk
    LDA #0
-   STA pm_thr
    LDX #3
 pf_zfd:
-   STA pm_fdx,X
-   DEX
+   STA pm_tmag,X                        ; |T| = 0 unless thrusting (the
+   DEX                                  ;  step reads it either way)
    BPL pf_zfd
 ; thrust vector (frame-constant angle): only when fwd XOR back
    LDA pm_in
    AND #3
-   BEQ pf_tic0
+   BEQ pf_step
    CMP #3
-   BEQ pf_tic0
-   INC pm_thr
+   BEQ pf_step
    LDA DV_ANGIDX
    JSR pmf_unit
    LDX #0
 pf_thr:
-   LDA #25                              ; MM_THRUST
+   LDA #MM_THRUST
    STA pm_ax
    LDA #0
    STA pm_ax+1
    LDA pm_wu,X
    STA pm_umag
-   JSR pmf_sc16                         ; (25*mag)>>5
+   JSR pmf_sc16                         ; (24*mag)>>5 — POSITIVE, so pm_ax
+   LDA pm_ax                            ;  is already the magnitude, and
+   STA pm_tmag,X                        ;  |T| <= 24 fits the low byte
    LDA pm_wu+1,X
-   EOR pm_bk                            ; thrust sign = unitneg XOR back
-   JSR pmf_negif
-   LDA pm_ax
-   STA pm_tx,X
-   LDA pm_ax+1
-   STA pm_tx+1,X
+   EOR pm_bk                            ; sign = unitneg XOR back
+   AND #1
+   STA pm_tmag+1,X
    INX
    INX
    CPX #4
    BCC pf_thr
-; --- tic loop ---------------------------------------------------------
-pf_tic0:
-   LDX #0
-pf_t_ax:
-   LDA pm_thr
-   BEQ pf_t_ni
-   CLC
-   LDA PM_MOMX,X
-   ADC pm_tx,X
-   STA PM_MOMX,X
-   LDA PM_MOMX+1,X
-   ADC pm_tx+1,X
-   STA PM_MOMX+1,X
-pf_t_ni:
-   JSR pmf_clamp                        ; X preserved
-   CLC
-   LDA pm_fdx,X
-   ADC PM_MOMX,X
-   STA pm_fdx,X
-   LDA pm_fdx+1,X
-   ADC PM_MOMX+1,X
-   STA pm_fdx+1,X
-   INX
-   INX
-   CPX #4
-   BCC pf_t_ax
-; stop rule (cmd nets zero AND both |mom| < 2) or friction
+; --- the whole frame in ONE affine step per axis ----------------------
+;   D  = (m*gamma + T*delta + 128) >> 8
+;   m' = (m*alpha + T*beta  + 128) >> 8
+; Products go in as u8 magnitude x u16 coefficient (all coefficients are
+; positive), signed into a 24-bit two's-complement accumulator seeded
+; with 128; >>8 is then just reading bytes 1-2, which floors — the same
+; thing Python's >> does, so the model matches bit for bit.
+pf_step:
+   JSR pf_stepx                        ; (SEG_PMOVE)
+; stop rule (cmd nets zero AND both |mom| < 2) — once per frame now
    LDA pm_in
    AND #3
    BEQ pf_t_sc
@@ -1057,16 +1046,7 @@ pf_t_z:
    STA PM_MOMX,X
    DEX
    BPL pf_t_z
-   BMI pf_t_nx
 pf_t_fr:
-   LDX #0
-   JSR pmf_fric
-   LDX #2
-   JSR pmf_fric
-pf_t_nx:
-   DEC pm_tics
-   BEQ pf_move
-   JMP pf_tic0
 ; --- apply the displacement in DOOM-halved chunks ---------------------
 pf_move:
    LDA pm_fdx
@@ -1189,6 +1169,187 @@ pf_f_z:
    DEX
    BPL pf_f_z
    JMP pf_dfwd
+
+; --- the affine step's two primitives --------------------------------
+; SEG_PMOVE, not PMB1: main RAM is always mapped, so bank-B code reads
+; these (and the tables) with no paging, and the bank-B windows are the
+; scarcer resource. The region is CPU-invariant, which is the rule for
+; anything bank B references.
+SEG_PMH
+; --- the single-step momentum core -----------------------------------
+; SEG_PMH: banked lands in the main-RAM PMOVE area — always mapped, so
+; bank-B code reads it with no paging, and CPU-invariant, which is the
+; rule for anything bank B references; flat folds into PMBF, where the
+; space is. The bank-B windows are the scarcer resource of the two.
+;
+; pf_coef — the frame's four coefficients, from the field count in X
+; (== pm_f). Only alpha (u8) and delta (u16) are tabulated; gamma and
+; beta are identities on them (see colmap.ss_coeffs):
+;   gamma = ((256-alpha)*171)>>4        171/16 = 1/(1-a) = 32/3
+;   beta  = (gamma*232)>>8              = a*gamma
+; They land in pm_co as two (m-coefficient, T-coefficient) PAIRS, so
+; pf_stepx can walk them with one Y index instead of four expansions.
+;   pm_co+0 gamma  +2 delta   | the displacement pair
+;   pm_co+4 alpha  +6 beta    | the momentum pair
+pf_coef:
+   LDA SS_ALPHA-1,X
+   STA pm_co+4
+   LDA #0
+   STA pm_co+5                          ; alpha is u8: clear its high byte
+   SEC
+   SBC pm_co+4                          ; 256 - alpha, and it fits a byte
+   STA pm_umag                          ;  (17..165 for f >= 1)
+   LDA #SS_K
+   STA pm_ax
+   LDA #0
+   STA pm_ax+1
+   JSR pmf_mul24s                       ; <= 28215: 2 bytes carry it
+   LDY #4                               ; (Y, not X: X keeps the field
+pf_g4:                                  ;  count for the delta load)
+   LSR pm_ures+1
+   ROR pm_ures
+   DEY
+   BNE pf_g4
+   LDA pm_ures
+   STA pm_co
+   STA pm_ax
+   LDA pm_ures+1
+   STA pm_co+1
+   STA pm_ax+1
+   LDA #MM_FRICTION
+   STA pm_umag
+   JSR pmf_mul24s
+   LDA pm_ures+1
+   STA pm_co+6
+   LDA pm_ures+2
+   STA pm_co+7
+   LDA SS_DELTA_L-1,X
+   STA pm_co+2
+   LDA SS_DELTA_H-1,X
+   STA pm_co+3
+   RTS
+
+; pf_stepx — the whole frame, both axes:
+;   D  = (m*gamma + T*delta + 128) >> 8
+;   m' = (m*alpha + T*beta  + 128) >> 8
+; m and T go in as u8 MAGNITUDES (|m| <= 232, |T| <= 24 — the closed
+; form's attractor is what bounds m, and pm_fuzz asserts it), signed
+; into a 24-bit two's-complement accumulator seeded with 128. Reading
+; back bytes 1-2 is the >>8, and it floors, which is what Python's >>
+; does — so the model matches bit for bit.
+pf_stepx:
+   LDX #0
+pf_s_ax:
+   LDY #0
+   LDA PM_MOMX+1,X
+   BPL pf_s_mp
+   INY
+   LDA #0
+   SEC
+   SBC PM_MOMX,X
+   BNE pf_s_ms                          ; |m| <= 232, so a negative m
+pf_s_mp:                                ;  always has a nonzero low byte
+   LDA PM_MOMX,X
+pf_s_ms:
+   STA pm_mmag
+   STY pm_msg
+   LDY #0                               ; Y = 0 displacement pair, 4 mom
+pf_pair:                                ; (Y survives pf_acc0/pf_addt/
+   JSR pf_acc0                          ;  pmf_mul24s — all A + memory)
+   LDA pm_msg
+   STA pm_asg
+   LDA pm_mmag
+   JSR pf_addt                          ; m term:  pm_co+0 of the pair
+   INY
+   INY
+   LDA pm_tmag+1,X
+   STA pm_asg
+   LDA pm_tmag,X
+   JSR pf_addt                          ; T term:  pm_co+2 of the pair
+   LDA pm_acc+1                         ; (hoisted: CPY sets the flags)
+   CPY #2
+   BNE pf_p_mom
+   STA pm_fdx,X
+   LDA pm_acc+2
+   STA pm_fdx+1,X
+   LDY #4
+   BNE pf_pair
+pf_p_mom:
+   STA PM_MOMX,X
+   LDA pm_acc+2
+   STA PM_MOMX+1,X
+   INX
+   INX
+   CPX #4
+   BCC pf_s_ax
+   RTS
+
+; --- and these three into the bank-B window, where the space is. They
+; run only inside pm_frame, which holds BANK_WALK throughout, and they
+; reference nothing but PM_SCRATCH and pmf_mul24s (fixed-start PMOVE) —
+; both CPU-invariant, which is the rule for bank-B content.
+SEG_PMB1
+; pf_acc0 — accumulator = 128, the round-to-nearest seed. Without it the
+; per-frame floor biases the attractor down by enough to make the top
+; speed depend on the frame rate, which is the wobble this change exists
+; to remove (+/-0.2% with the seed, +/-0.4% without).
+pf_acc0:
+   LDA #128
+   STA pm_acc
+   LDA #0
+   STA pm_acc+1
+   STA pm_acc+2
+   RTS
+; pf_addt — accumulator += (pm_asg ? -1 : +1) * pm_co[Y](u16) * A(u8).
+; Loading the coefficient HERE rather than at each of the four call
+; sites is what let the step fit the region. Preserves X and Y.
+pf_addt:
+   STA pm_umag
+   LDA pm_co,Y
+   STA pm_ax
+   LDA pm_co+1,Y
+   STA pm_ax+1
+   JSR pmf_mul24s
+   LDA pm_asg
+   BNE pf_at_sub
+   CLC
+   LDA pm_acc
+   ADC pm_ures
+   STA pm_acc
+   LDA pm_acc+1
+   ADC pm_ures+1
+   STA pm_acc+1
+   LDA pm_acc+2
+   ADC pm_ures+2
+   STA pm_acc+2
+   RTS
+pf_at_sub:
+   SEC
+   LDA pm_acc
+   SBC pm_ures
+   STA pm_acc
+   LDA pm_acc+1
+   SBC pm_ures+1
+   STA pm_acc+1
+   LDA pm_acc+2
+   SBC pm_ures+2
+   STA pm_acc+2
+   RTS
+
+; --- coefficient tables (colmap._ss_build generates these; pm_fuzz
+; asserts the bytes against it, so they cannot drift) -----------------
+; alpha[f] = round(a^(f*179/256) * 256), f = 1..PM_FCAP (f=0 exits, so
+; the tables are indexed -1 and carry no dead row)
+SEG_PMB2
+SS_ALPHA:
+   .byte 239, 223, 208, 194, 181, 169, 158, 148, 138, 129
+; delta[f] = round(delta * 256), split lo/hi for the indexed load
+SEG_PMB3
+SS_DELTA_L:
+   .byte <154, <424, <803, <1284, <1861, <2525, <3273, <4098, <4995, <5959
+SEG_PMB1
+SS_DELTA_H:
+   .byte >154, >424, >803, >1284, >1861, >2525, >3273, >4098, >4995, >5959
 .endscope
 
 ; ============================================================================
@@ -1670,94 +1831,6 @@ sc_sh:
 ng_done:
    RTS
 
-; pmf_clamp / pmf_fric — SEG_PMH: banked lands in the same $24E0 area
-; (two segments, one region); flat folds into the PMBF region instead,
-; because the flat PMOVE region ($7F10-$85FF) is capacity-pinned by the
-; level block at $8600.
-SEG_PMH
-; pmf_clamp — clamp PM_MOMX,X (X = 0/2) to +-960 ($03C0/$FC40).
-; Preserves X.
-::pmf_clamp:
-   LDA PM_MOMX+1,X
-   BMI cl_neg
-   CMP #3
-   BCC cl_done
-   BNE cl_setp
-   LDA PM_MOMX,X
-   CMP #$C1
-   BCC cl_done
-cl_setp:
-   LDA #$C0
-   STA PM_MOMX,X
-   LDA #3
-   STA PM_MOMX+1,X
-   RTS
-cl_neg:
-   CMP #$FC
-   BCC cl_setn
-   BNE cl_done
-   LDA PM_MOMX,X
-   CMP #$40
-   BCS cl_done
-cl_setn:
-   LDA #$40
-   STA PM_MOMX,X
-   LDA #$FC
-   STA PM_MOMX+1,X
-cl_done:
-   RTS
-
-; pmf_fric — PM_MOMX,X = (mom*232)>>8 FLOOR (DOOM FixedMul): S =
-; (mom<<8) - (mom<<4) - (mom<<3) in 24-bit two's complement, then
-; arithmetic >>8 (drop the low byte). Preserves X.
-::pmf_fric:
-   LDA PM_MOMX,X
-   STA pm_uadd
-   LDA PM_MOMX+1,X
-   STA pm_uadd+1
-   LDA #0
-   BIT pm_uadd+1
-   BPL fr_sx
-   LDA #$FF
-fr_sx:
-   STA pm_uadd+2
-   ASL pm_uadd                          ; T = mom << 3
-   ROL pm_uadd+1
-   ROL pm_uadd+2
-   ASL pm_uadd
-   ROL pm_uadd+1
-   ROL pm_uadd+2
-   ASL pm_uadd
-   ROL pm_uadd+1
-   ROL pm_uadd+2
-   LDA #0                               ; S = mom << 8
-   STA pm_ures
-   LDA PM_MOMX,X
-   STA pm_ures+1
-   LDA PM_MOMX+1,X
-   STA pm_ures+2
-   JSR fr_sub                           ; S -= mom<<3
-   ASL pm_uadd                          ; T <<= 1 (mom<<4)
-   ROL pm_uadd+1
-   ROL pm_uadd+2
-   JSR fr_sub                           ; S -= mom<<4
-   LDA pm_ures+1                        ; >> 8
-   STA PM_MOMX,X
-   LDA pm_ures+2
-   STA PM_MOMX+1,X
-   RTS
-fr_sub:
-   SEC
-   LDA pm_ures
-   SBC pm_uadd
-   STA pm_ures
-   LDA pm_ures+1
-   SBC pm_uadd+1
-   STA pm_ures+1
-   LDA pm_ures+2
-   SBC pm_uadd+2
-   STA pm_ures+2
-   RTS
 .endscope
 
 ; ============================================================================

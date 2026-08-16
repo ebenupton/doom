@@ -153,6 +153,15 @@ class Rig:
         self.mem[abi.PM_TICREM] = rem
         self.mem[abi.D_FWD] = 0xEE                  # poison: must be written
         self.run(self.frame_e, a=fields, x=(1 if fwd else 0) | (2 if back else 0))
+        # STRUCTURAL: the single-step form feeds momentum to the
+        # multiplies as a u8 MAGNITUDE, so |m| > 255 would silently
+        # truncate. The closed form's attractor is ~232 and wall
+        # projection cannot grow a vector, but that is an argument, not
+        # a guarantee — assert it every case (cf. the record-pointer
+        # invariant: verdict comparison alone cannot see this).
+        for _a in (abi.PM_MOMX, abi.PM_MOMY):
+            _m = self._r16(_a)
+            assert -256 < _m < 256, f'|momentum| {_m} breaks the u8 magnitude path'
         vz = self.mem[self.vz]
         return ((self._r24(abi.DV_PXF), self._r24(abi.DV_PYF),
                  vz - (256 if vz >= 128 else 0),

@@ -616,8 +616,8 @@ EPSILON_F = 12
 .segment "PMB4"                   ; banked $B862-$B8BF: the DIR stride
 .endmacro                         ;  shadow (dirs<=118 asserted)
 .macro SEG_PMH
-.segment "PMH"                    ; pm helpers: banked = the PMOVE area
-.endmacro                         ;  (2nd segment); flat = the PMBF zone
+.segment "PMH"                    ; pm single-step: banked = the
+.endmacro                        ;  PMOVE area, flat = PMBF
 .macro SEG_BANKC
 .if ::BANKED
 .segment "BANKC"

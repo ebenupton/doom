@@ -647,13 +647,71 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
 # approximation of exactly this); at most 2 wall projections per frame,
 # then the axis fallback (y-only, then x-only, zeroing the blocked
 # axis' momentum), then full stop (mom = 0,0).
-MM_THRUST = 25            # walk forwardmove (DOOM 0x19; run not mapped)
+MM_THRUST = 24            # walk forwardmove (DOOM 0x19 = 25; trimmed to
+                          # 24 so the single-step form lands on the same
+                          # 8.0 u/tic top speed the per-tic loop reached
+                          # — the per-tic floor used to drag the
+                          # attractor 3.8% below 32T/3, and the closed
+                          # form does not reproduce that drag)
 MM_MAXMOVE = 960          # 30 world units, 8.8 prescaled
-MM_HALF = 480             # MAXMOVE/2 chunk ceiling
+MM_HALF = 480             # MAXMOVE/2 chunk ceiling — DO NOT RAISE past
+                          # 724 without redoing the tunnelling proof:
+                          # crossing a wall needs > 2*RADIUS = 32 world
+                          # units of perpendicular travel in ONE chunk,
+                          # and a cap of c permits c*sqrt(2)
 MM_STOP = 2               # STOPSPEED 0x1000 on our grid
 MM_FRICTION = 232         # 0xE800 >> 8
-MM_FIELDS_CAP = 32
-MM_TPF, MM_TPF_MOD = 7, 10   # tics = fields*7/10 with carried remainder
+MM_FIELDS_CAP = 10        # was 32. The single-step tables stop here, and
+                          # a tighter hiccup clamp cuts the worst-case
+                          # travel in one frame to 56 world units, not 177
+
+# --- single-step (closed-form) momentum -------------------------------
+# The per-tic recurrence m <- floor((m+T)*a) is affine, so n tics of it
+# collapse to one affine step. With a = 232/256 and u* = T/(1-a):
+#   m' = m*alpha + T*beta        alpha = a^n, beta = alpha + (a-alpha)/(1-a)
+#   D  = m*gamma + T*delta       gamma = (1-a^n)/(1-a)
+#                                delta = gamma + (n-gamma)/(1-a)
+# n need not be a whole number, and THAT is the point: displacement
+# becomes continuous in the frame period instead of jumping a whole
+# tic's worth when the period wobbles by one field (the +/-23% wobble
+# that read as jerkiness). Everything is indexed by the field count.
+#
+# Two identities keep the tables at 48 bytes instead of 96:
+#   gamma = (1-alpha)/(1-a)      -> derived from alpha, 1-a = 3/32
+#   beta  = a*gamma              -> one multiply
+# Only alpha (u8) and delta (u16) are stored. Operands are non-negative
+# so the 6502 sign-magnitude multiplies truncate the same way Python's
+# >> does, and the final >>8 runs on a two's-complement accumulator
+# (floor) seeded with 128 (round-to-nearest, which is what holds the
+# residual frame-rate dependence of the top speed under 0.3%).
+SS_RATE = 179             # tics per PAL field, Q8: 179/256 = 0.69922,
+                          # i.e. 34.96 Hz. Replaces the 7/10 accumulator
+                          # AND its carried remainder (ticrem retires)
+SS_K = 171                # 1/(1-a) = 32/3 in Q4
+
+
+def _ss_build():
+    """(alpha u8, delta u16) indexed by field count. Mirrored byte for
+    byte in pmove.s — tools/pm_fuzz.py asserts the two agree."""
+    a = MM_FRICTION / 256
+    al, de = [], []
+    for f in range(MM_FIELDS_CAP + 1):
+        n = f * SS_RATE / 256
+        an = a ** n
+        S = (1 - an) / (1 - a)
+        al.append(round(an * 256))
+        de.append(round((S + (n - S) / (1 - a)) * 256))
+    return al, de
+
+
+SS_ALPHA, SS_DELTA = _ss_build()
+
+
+def ss_coeffs(f):
+    """(alpha, beta, gamma, delta) for a field count — integer, exact."""
+    al = SS_ALPHA[f]
+    ga = ((256 - al) * SS_K) >> 4
+    return al, (ga * MM_FRICTION) >> 8, ga, SS_DELTA[f]
 
 
 def _sc16(v, mag5):
@@ -680,30 +738,35 @@ def wall_project(dx, dy, wall_ang):
 
 
 def momentum_tics(mx, my, ticrem, fields, fwd, back, angidx):
-    """Steps 1-4 for the frame's tics. Returns (mx, my, ticrem, dx, dy)."""
-    fields = min(fields, MM_FIELDS_CAP)
-    acc = ticrem + MM_TPF * fields
-    tics, ticrem = acc // MM_TPF_MOD, acc % MM_TPF_MOD
-    dx = dy = 0
-    for _ in range(tics):
-        if fwd != back:
-            cw, cn, sw, sn = _unit5(angidx)
-            tx = -_sc16(MM_THRUST, cw) if cn else _sc16(MM_THRUST, cw)
-            ty = -_sc16(MM_THRUST, sw) if sn else _sc16(MM_THRUST, sw)
-            if back:
-                tx, ty = -tx, -ty
-            mx += tx
-            my += ty
-        mx = max(-MM_MAXMOVE, min(MM_MAXMOVE, mx))
-        my = max(-MM_MAXMOVE, min(MM_MAXMOVE, my))
-        dx += mx
-        dy += my
-        if fwd == back and -MM_STOP < mx < MM_STOP \
-                and -MM_STOP < my < MM_STOP:
-            mx = my = 0               # DOOM stop rule: cmd nets to zero
-        else:                         # when fwd==back (keys cancel)
-            mx = (mx * MM_FRICTION) >> 8
-            my = (my * MM_FRICTION) >> 8
+    """The frame's whole momentum integration in ONE affine step.
+    Returns (mx, my, ticrem, dx, dy); ticrem is retired and passes
+    straight through — the engine no longer touches the byte.
+
+    Replaces the per-tic loop (see the SS_ notes above). The clamp to
+    MM_MAXMOVE is gone with the loop: it never bound — the attractor is
+    ~232 against a 960 ceiling, and wall projection cannot grow a
+    momentum — and |m| <= 255 is now STRUCTURAL, because the 6502 feeds
+    m to the multiplies as a u8 magnitude. pm_fuzz asserts it."""
+    f = min(fields, MM_FIELDS_CAP)
+    if f == 0:
+        return mx, my, ticrem, 0, 0
+    al, be, ga, de = ss_coeffs(f)
+    tx = ty = 0
+    if fwd != back:
+        cw, cn, sw, sn = _unit5(angidx)
+        tx = -_sc16(MM_THRUST, cw) if cn else _sc16(MM_THRUST, cw)
+        ty = -_sc16(MM_THRUST, sw) if sn else _sc16(MM_THRUST, sw)
+        if back:
+            tx, ty = -tx, -ty
+    # +128 = round to nearest; >> is floor, matching a two's-complement
+    # accumulator with its low byte dropped
+    dx = (mx * ga + tx * de + 128) >> 8
+    dy = (my * ga + ty * de + 128) >> 8
+    mx = (mx * al + tx * be + 128) >> 8
+    my = (my * al + ty * be + 128) >> 8
+    if fwd == back and -MM_STOP < mx < MM_STOP \
+            and -MM_STOP < my < MM_STOP:
+        mx = my = 0                   # DOOM stop rule, once per frame
     return mx, my, ticrem, dx, dy
 
 
