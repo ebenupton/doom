@@ -277,6 +277,16 @@ pcs_solid:
    STA zp_anim_p+1
    JSR pm_box_vs_seg
    BCS pcs_rts                          ; blocked
+   BCC pcs_next                         ; clear -> next record. NOT a
+                                        ; fall-through: 7987201 inserted
+                                        ; the port path between here and
+                                        ; pcs_next, so a passing solid ran
+                                        ; on into pcs_port and tested a
+                                        ; bogus record at COLPORT+k*12 with
+                                        ; k = A-200 from box_vs_seg. Quiet
+                                        ; memory in the fuzz rig, live OS/
+                                        ; engine data on the disc -> the
+                                        ; spawn-forward phantom blocker.
 ; --- aggregation port (COLPORT @ main, stride 12): crossed -> the DOOM
 ; opening rules with live mover heights; block or aggregate tmfloorz ---
 pcs_port:

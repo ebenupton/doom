@@ -66,6 +66,21 @@ class Rig:
             colmap.install(self.r.sc.mpu.memory, flat=True)
             an.install_6502_tables(self.r.sc.mpu.memory, flat=True)
         self.mem = self.r.sc.mpu.memory
+        # RECORD-POINTER INVARIANT: every pm_box_vs_seg call must be
+        # handed a record INSIDE one of the two packed tables. Comparing
+        # verdicts cannot see a violation on its own — an out-of-table
+        # read only changes the answer when the stray bytes happen to
+        # form a line through the box, which is why the pcs_solid
+        # fall-through (7987201) fuzzed clean for a day while the disc,
+        # whose $0200-$0E00 carries live OS and engine data, blocked on a
+        # phantom record. Poisoning the gap does NOT work: a constant
+        # fill is one fixed line and no fixed line crosses every box.
+        # Checking the pointer catches the whole class on case 1.
+        m = colmap.build()
+        A = colmap.blobs(flat=not banked)['addrs']
+        self.bvs = sym('pm_box_vs_seg', banked=banked)
+        self.rec_ok = (range(A['colseg'], A['colseg'] + len(m['colsegs']) * 9),
+                       range(0x0200, 0x0200 + len(m['ports']) * 12))
         self.vz = sym('pm_vz', banked=banked)
         self.try_e = sym('pmove_try', banked=banked)
         self.frame_e = sym('pm_frame', banked=banked)
@@ -77,11 +92,20 @@ class Rig:
 
     def run(self, entry, a=0, x=0, maxc=2_000_000):
         mpu = self.r.sc.mpu
+        if self.banked:
+            # pm_frame's CODE lives in BANK_WALK; the driver pages it in
+            # before the JSR, so the rig must too (pmove_try pages for
+            # itself, which is why the try suite never needed this).
+            self.mem[0xFE30] = 7
         mpu.pc, mpu.sp, mpu.a, mpu.x = entry, 0xFD, a, x
         self.mem[0x1FF] = 0xFF
         self.mem[0x1FE] = 0xFF
         n = 0
         while mpu.pc != 0 and n < maxc:
+            if mpu.pc == self.bvs:
+                p = self.mem[0x5D] | (self.mem[0x5E] << 8)   # zp_anim_p
+                assert any(p in r for r in self.rec_ok), \
+                    f'pm_box_vs_seg handed an out-of-table record at ${p:04X}'
             mpu.step()
             n += 1
         assert n < maxc, f'pm 6502 ran away at {entry:04X}'
