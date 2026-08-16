@@ -62,9 +62,8 @@ ORG DRV_ORG
 .drv
     SEI
     LDA #0 : STA &FE34                              ; Master: ACCCON off (harmless on B)
-    JSR respawn                                     ; spawn pose (pos/angle/
-                                                    ; VZ/pm seeds; also the
-                                                    ; exit switch's target)
+    ; (respawn is NOT called here — see the end of init. It writes
+    ;  pm_vz, which is a PM_SCRATCH slot overlaying THIS block.)
     ; --- CRTC: narrow 256x160 centred, cursor off (R12/R13 set per flip) ---
     LDA #1 :STA &FE00: LDA #32 :STA &FE01
     LDA #2 :STA &FE00: LDA #45 :STA &FE01
@@ -153,8 +152,25 @@ ORG DRV_ORG
     ; --- init state ---
     LDA #1  :STA D_ENABLE                           ; forward-coherence bbox cache
     ; (D_FWD needs no init: read_input clears it every frame)
-    LDA #16  :STA angidx                            ; angle byte 64 (spawn facing)
     LDA #&6C :STA backhi
+    ; --- spawn pose LAST, with the clock seed, and for the same reason:
+    ; respawn writes pm_vz = PM_SCRATCH+$3F = $203F, and PM_SCRATCH
+    ; OVERLAYS THIS INIT BLOCK. Called from the top (where it used to
+    ; live) it wrote $06 over the high byte of the `STA &FE00` that
+    ; selects R10 -- turning it into `STA &0600`. The CRTC address
+    ; register then still held 8 from the R8 write, so the following
+    ; `LDA #&20 : STA &FE01` put &20 into R8 (display-enable skew = 2
+    ; CHARACTERS = 16 bytes: the whole picture shifted with the right
+    ; edge wrapping) and R10 never got its cursor-off value, leaving
+    ; the MOS blink cursor on. ONE stray byte, BOTH artefacts.
+    ; RULE: nothing called from init may write PM_SCRATCH until the PC
+    ; is past the overlay ($2000..$208A today) -- that is why this and
+    ; mv_frame sit down here.
+    ASSERT P% > ENG_PM_VZ                           ; GUARD: the call site must
+                                                    ; sit ABOVE the scratch slot
+                                                    ; respawn writes, or it
+                                                    ; shreds unexecuted init
+    JSR respawn                                     ; pos/angle/VZ/pm seeds
     ; Seed the frame clock's prevs LAST. This must come after every
     ; instruction below $208A has run: pm_frame's scratch OVERLAYS the
     ; one-shot init block at PM_SCRATCH ($2000), so calling it earlier

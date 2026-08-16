@@ -47,7 +47,9 @@ if (discPath && discPath !== "-") {
     cpu.fdc.loadDisc(0, fdc.discFor(cpu.fdc, "", data));
 }
 
-// Shift-break autoboot: hold SHIFT across the reset.
+// Shift-break autoboot: the OS samples SHIFT during the first
+// milliseconds AFTER the reset, so press it once the reset has been
+// issued (pressing before reset() loses the key state).
 cpu.sysvia.keyDown(utils.BBC.SHIFT);
 cpu.reset(true);
 let done = 0;
@@ -58,7 +60,7 @@ let injected = false;
 while (done < cycles) {
     cpu.execute(chunk);
     done += chunk;
-    if (!holdReleased && done > 2e6) {
+    if (!holdReleased && done > 6e6) {
         cpu.sysvia.keyUp(utils.BBC.SHIFT);
         holdReleased = true;
     }
