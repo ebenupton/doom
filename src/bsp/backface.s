@@ -9,7 +9,7 @@
 ;                                 old bf_seg_back trampoline died 2026-07-12)
 ; There is NO flag/return contract: control flow IS the verdict.
 ;
-;   Inputs (zp): zp_seg_hdr_p -> the 14-byte seg header (form at +4, C16
+;   Inputs (zp): zp_seg_hdr_p -> the 12-byte seg header (form at +4, C16
 ;                or lv1x at +5/+6, lv1y split lo +7 / hi +9);
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player int pos (s16);
 ;                zp_bf_pxm_l/hi, zp_bf_pym_l/hi = |px|,|py| (staged
@@ -122,7 +122,7 @@ bf_ax_py_lt:
 ; near walls (senior-byte-clear -> 1-mul products), which measured
 ; FASTER than the C-form's raw-coordinate 4-mul products. Primitives
 ; (magnitudes + sign byte) come from the DIR tables; lv1x at +5/6,
-; lv1y SPLIT +7 lo / +9 hi (the fossil L byte's slot); SF_SAMEDIR is
+; lv1 via the deduped LV1 records (u8 id at +SH_DIAG); SF_SAMEDIR is
 ; folded into the primitive signs at pack time, so the old flags-EOR
 ; mode twist is gone.
 bf_diag:
@@ -132,26 +132,31 @@ bf_diag:
    LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; sign byte (b7 dy', b6 dx')
    STA zp_br_sign
    STX zp_bf_dir                           ; mags load lazily in the mul tier
-; dx = px - lv1x (s16, header +5/6); dxhi rides A for the zero test
+; lv1 comes from the DEDUPED LV1 records (2026-08-17): 159 diagonal segs
+; share 99 reference points, so the header carries a u8 id at +SH_DIAG and
+; X indexes four abs,X planes — cheaper than the four (zp),Y reads it
+; replaced (no Y reload, 4 cycles a load instead of 5), and it took 4 bytes
+; out of EVERY header. None of LDA/LDY/TAX touches C, so the SBC #4's C=1
+; still seeds the first subtract.
+   LDY #LAY_SH_DIAG
+   LDA (zp_seg_hdr_p),Y
+   TAX                                     ; X = LV1 record id
+; dx = px - lv1x (s16); dxhi rides A for the zero test
    LDA zp_br_px_h
-   LDY #5                                  ; (no SEC: SBC #4 with A >= 4
-   SBC (zp_seg_hdr_p),Y                    ;  above left C=1)
+   SBC ROM_LV1X_LO_C,X
    STA zp_br_dx_l
    LDA zp_br_px_x
-   INY
-   SBC (zp_seg_hdr_p),Y
+   SBC ROM_LV1X_HI_C,X
    STA zp_br_dx_h
    ORA zp_br_dx_l
    BEQ bfd_dx0
-; dy = py - lv1y (lo at +7, hi at +9 — the split around flags)
+; dy = py - lv1y
    LDA zp_br_py_h
    SEC
-   INY                                     ; -> +7 (lv1y lo)
-   SBC (zp_seg_hdr_p),Y
+   SBC ROM_LV1Y_LO_C,X
    STA zp_br_dy_l
    LDA zp_br_py_x
-   LDY #9                                  ; -> lv1y hi
-   SBC (zp_seg_hdr_p),Y
+   SBC ROM_LV1Y_HI_C,X
    STA zp_br_dy_h
    ORA zp_br_dy_l
    BEQ bfd_dy0                             ; dy==0: dot = P1
@@ -175,14 +180,13 @@ bfd_back_j:
 ; dx == 0: dot = -P2 = -(dx'*dy); need dy for its sign (P2 = 0 handled:
 ; dy==0 too -> dot = 0 -> back)
 bfd_dx0:
-; (no SEC: entered iff dx == 0 — zero subtract result, no borrow, C=1)
+; (no SEC: entered iff dx == 0 — zero subtract result, no borrow, C=1;
+;  X still holds the LV1 record id)
    LDA zp_br_py_h
-   INY                                     ; -> +7
-   SBC (zp_seg_hdr_p),Y
+   SBC ROM_LV1Y_LO_C,X
    STA zp_br_dy_l
    LDA zp_br_py_x
-   LDY #9
-   SBC (zp_seg_hdr_p),Y
+   SBC ROM_LV1Y_HI_C,X
    STA zp_br_dy_h
    ORA zp_br_dy_l
    BEQ bfd_back_j                          ; dx==0 and dy==0 -> back

@@ -32,7 +32,8 @@ import os
 # (DOOM_ANIM gate removed 2026-07-10: anim is the only variant)
 
 import doom_wireframe as dw
-from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, seg_hdr_off, SD_FH, SD_CH, SD_BFH,
+from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, seg_hdr_off, SH_BFH, SH_BCH,
+                        SD_FH, SD_CH, SD_BFH,
                         SD_BCH, SH_FLAGS, SF_SOLID, SF_NEEDBT, SF_NEEDBB,
                         SF_STEPUP_T, SF_STEPUP_B)
 
@@ -40,6 +41,18 @@ _LAYOUT = dw.packed_layout
 _ROM_MAIN = dw.packed_rom_main          # bytearray — shared with _p_rom_main
 _ROM_DETAIL = dw.packed_rom_detail
 _OFF_SEG_HDR = _LAYOUT['off_seg_hdr']
+_SS_FH_REL = _LAYOUT['off_ss_fh'] - _OFF_SEG_HDR     # front-height pages,
+_SS_CH_REL = _LAYOUT['off_ss_ch'] - _OFF_SEG_HDR     #  relative to the base
+
+
+def _seg_ss():
+    """slot -> subsector id (front heights are per SUBSECTOR since
+    2026-08-17, so a mover patches its subsectors, not its segs)."""
+    m = {}
+    for ssi, (cnt, first) in enumerate(dw.fp_ssectors):
+        for j in range(first, first + cnt):
+            m[j] = ssi
+    return m
 
 # speeds (world units / second) and dwell times (seconds)
 DOOR_SPEED = 140.0
@@ -168,27 +181,37 @@ class Mover:
         for idx, vert in self.vwh_c:
             dw.vwh_table[idx] = (vert, ch_ps)
         # packed seg detail + 6502 FHCH condensation
+        _ss_of = _seg_ss()
+        _touched_ss = set()
         for i in self.front_segs:
             o = i * SEG_DTL_SIZE
             _ROM_DETAIL[o + SD_FH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_CH] = ch_ps & 0xFF
             one_sided = dw.fp_segs_vwh[i][2] is None
-            for mem, base in _attached:
-                mem[base['seg_hdr'] + seg_hdr_off(i) + 10] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + seg_hdr_off(i) + 11] = ch_ps & 0xFF
-                if one_sided:
-                    # +12/13 alias (bfh:=fh, bch:=ch) must track — the
-                    # mover's own side walls (descriptor scheme)
-                    mem[base['seg_hdr'] + seg_hdr_off(i) + 12] = fh_ps & 0xFF
-                    mem[base['seg_hdr'] + seg_hdr_off(i) + 13] = ch_ps & 0xFF
-            nbytes += 2
+            # front heights: ONE write per subsector, not per seg
+            ssi = _ss_of.get(i)
+            if ssi is not None and ssi not in _touched_ss:
+                _touched_ss.add(ssi)
+                _ROM_MAIN[_OFF_SEG_HDR + _SS_FH_REL + ssi] = fh_ps & 0xFF
+                _ROM_MAIN[_OFF_SEG_HDR + _SS_CH_REL + ssi] = ch_ps & 0xFF
+                for mem, base in _attached:
+                    mem[base['seg_hdr'] + _SS_FH_REL + ssi] = fh_ps & 0xFF
+                    mem[base['seg_hdr'] + _SS_CH_REL + ssi] = ch_ps & 0xFF
+                nbytes += 2
+            if one_sided:
+                # the BACK slots carry the fh/ch alias for a one-sided seg
+                # (descriptor scheme, no runtime branch) and must track
+                for mem, base in _attached:
+                    mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BFH] = fh_ps & 0xFF
+                    mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BCH] = ch_ps & 0xFF
+                nbytes += 2
         for i in self.back_segs:
             o = i * SEG_DTL_SIZE
             _ROM_DETAIL[o + SD_BFH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_BCH] = ch_ps & 0xFF
             for mem, base in _attached:
-                mem[base['seg_hdr'] + seg_hdr_off(i) + 12] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + seg_hdr_off(i) + 13] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BFH] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BCH] = ch_ps & 0xFF
             nbytes += 2
         # seg flags: re-derive SOLID/NEEDBT/NEEDBB (the packer's rules)
         for i in self.touch_segs:
@@ -395,18 +418,32 @@ def gen_6502_tables(flat=True):
         addr = base0 + 12 + len(blocks)
         _st.pack_into('<H', ptrs, mi * 2, addr)
         fhch_addrs = []
-        H = lambda i, k: A['hdr'] + seg_hdr_off(i) + 10 + k
+        # back pair (+SH_BFH/+SH_BCH) is per seg; the FRONT pair lives on the
+        # per-subsector pages, so a mover's own sector patches ONE byte per
+        # subsector instead of one per seg (2026-08-17)
+        B = lambda i, k: A['hdr'] + seg_hdr_off(i) + SH_BFH + k
+        ss_of = _seg_ss()
         solid = lambda i: dw.fp_segs_vwh[i][2] is None
+        seen_ss = set()
+        def front_ss(segs, rel):
+            out = []
+            for i in segs:
+                ssi = ss_of.get(i)
+                if ssi is None or (ssi, rel) in seen_ss:
+                    continue
+                seen_ss.add((ssi, rel))
+                out.append(A['hdr'] + rel + ssi)
+            return out
         if m.kind == 'ceil':
-            fhch_addrs += [H(i, 1) for i in m.front_segs]  # ch
-            fhch_addrs += [H(i, 3) for i in m.back_segs]   # bch
-            # SOLID front segs (the mover's own side walls): +13 is the
-            # descriptor-scheme alias (bch := ch) and must track too
-            fhch_addrs += [H(i, 3) for i in m.front_segs if solid(i)]
+            fhch_addrs += front_ss(m.front_segs, _SS_CH_REL)   # ch (per ss)
+            fhch_addrs += [B(i, 1) for i in m.back_segs]       # bch
+            # SOLID front segs (the mover's own side walls): the back slot is
+            # the descriptor-scheme alias (bch := ch) and must track too
+            fhch_addrs += [B(i, 1) for i in m.front_segs if solid(i)]
         else:
-            fhch_addrs += [H(i, 0) for i in m.front_segs]  # fh
-            fhch_addrs += [H(i, 2) for i in m.back_segs]   # bfh
-            fhch_addrs += [H(i, 2) for i in m.front_segs if solid(i)]
+            fhch_addrs += front_ss(m.front_segs, _SS_FH_REL)   # fh (per ss)
+            fhch_addrs += [B(i, 0) for i in m.back_segs]       # bfh
+            fhch_addrs += [B(i, 0) for i in m.front_segs if solid(i)]
         flag_segs = [i for i in m.touch_segs if dw.fp_segs_vwh[i][2] is not None]
         # jamb VEXPL patch targets: the entry byte holding the MOVING bound
         # (bank C banked — the worker pages around these writes)
@@ -415,13 +452,26 @@ def gen_6502_tables(flat=True):
         blk = bytearray([len(fhch_addrs), len(flag_segs), len(vexpl_addrs)])
         for a in fhch_addrs:
             blk += _st.pack('<H', a)
+        # flag entries: the height quad is no longer contiguous — fh/ch sit on
+        # the per-subsector pages (ch = fh + $100 always). The BACK pair is in
+        # the same header as the flags byte, so the worker derives its address
+        # (+SH_BFH-SH_FLAGS) instead of us spending 2 more bytes per entry:
+        # TABL0's budget is 252 B and 6-byte entries overflowed it into the
+        # CFG table, silently — see the assert below.
         for i in flag_segs:
             blk += _st.pack('<HH', A['hdr'] + seg_hdr_off(i) + SH_FLAGS,
-                            A['hdr'] + seg_hdr_off(i) + 10)
+                            A['hdr'] + _SS_FH_REL + ss_of[i])
         for a in vexpl_addrs:
             blk += _st.pack('<H', a)
         blocks += blk
-    out[A['tabl0']] = bytes(ptrs) + bytes(blocks)
+    _t0 = bytes(ptrs) + bytes(blocks)
+    # HARD budget (this bit once): banked TABL0 sits at $BE90 with ANIM_TABL0's
+    # 252 B ahead of the bank tail, flat at $E600 with ANIM_CFG at $E700. An
+    # oversized blob does not fail here, it CORRUPTS the next table and the
+    # worker then reads garbage counts.
+    assert len(_t0) <= 252, \
+        f'TABL0 blob {len(_t0)} B exceeds its 252 B budget (would run into CFG)'
+    out[A['tabl0']] = _t0
     # (TABL2 / private VWH slot lists stripped 2026-07-10: write-only data)
     # CFG
     cfg = bytearray()

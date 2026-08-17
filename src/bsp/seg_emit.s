@@ -36,10 +36,11 @@
 ;   ::s_advance_l0   backface back-exits (L0 never left)
 ; EXITS: JMP ::seg_proc (subsector.s loop head); RTS when seg count hits 0.
 ;
-; SEG HEADER (14 B, via zp_seg_hdr_p, bank L0):
+; SEG HEADER (12 B, via zp_seg_hdr_p, bank L0):
 ;   +0/+1 v1 idx lo/b   +2/+3 v2 idx lo/b   +8 flags
-;   +10 fh  +11 ch  +12 bfh  +13 bch   (14 B stride: the APV2 pair at
-;   +14/+15 shipped zero for years and went with the 2026-08-17 squeeze)
+;   +10 bfh  +11 bch  (the BACK pair; solids carry the fh/ch alias here).
+;   Front fh/ch are PER SUBSECTOR — ROM_SS_FH_C/ROM_SS_CH_C, read in the
+;   subsector prologue. 12 B stride since 2026-08-17.
 ; FLAGS (wad_packed single source):
 ;   $80 SAMEDIR  $40 SOLID  $20/$10 (novt, ship 0)  $08 NEEDBB
 ;   $04 NEEDBT   $02/$01 (apedge, ship 0)
@@ -655,8 +656,9 @@ ys_withback:
                                         ; (bank SEG held since stage 1 —
                                         ; the fork and hg_query touch no
                                         ; ROMSEL; header reads are safe)
-   LDY #13
-   LDA (zp_seg_hdr_p),Y                    ; bch
+   LDY #LAY_SH_BCH
+   LDA (zp_seg_hdr_p),Y                    ; bch (layout.inc field offsets:
+                                        ;  the packer owns them)
    SBC zp_br_vz                            ; (no SEC: C=1 from hg_query)
    STA zp_seg_btop_dlt
    DEY

@@ -1564,19 +1564,25 @@ def _projection_bound_fence():
     # literals: this function's private copies went stale at the 2026-08-11
     # SOLID/APEDGE1 bit swap, so it had been testing 0x02 for SOLID (and the
     # aperture arm, which the descriptors retired, for 0x40)
-    from wad_packed import (SF_SOLID, SF_NEEDBT, SF_NEEDBB, seg_hdr_off)
+    from wad_packed import (SF_SOLID, SF_NEEDBT, SF_NEEDBB, seg_hdr_off,
+                            SH_FLAGS, SH_BFH, SH_BCH)
     L, rm = packed_layout, packed_rom_main
     def s8(v): return v - 256 if v >= 128 else v
     consumed = set()
+    # front heights are per SUBSECTOR now; the back pair (or its solid alias)
+    # stays per seg and is flag-gated
+    for ssi in range(L['n_ss']):
+        consumed.add(s8(rm[L['off_ss_fh'] + ssi]))
+        consumed.add(s8(rm[L['off_ss_ch'] + ssi]))
     for i in range(L['n_segs']):
         o = L['off_seg_hdr'] + seg_hdr_off(i)
-        f = rm[o + 8]
-        idx = [10, 11]                      # fh, ch: always projectable
+        f = rm[o + SH_FLAGS]
+        idx = []
         if f & SF_SOLID:
-            idx += [12, 13]                 # solid alias = fh/ch (see packer)
+            idx += [SH_BFH, SH_BCH]         # solid alias = fh/ch (see packer)
         else:
-            if f & SF_NEEDBB: idx.append(12)
-            if f & SF_NEEDBT: idx.append(13)
+            if f & SF_NEEDBB: idx.append(SH_BFH)
+            if f & SF_NEEDBT: idx.append(SH_BCH)
         for k in idx: consumed.add(s8(rm[o + k]))
     for sec, kind in ANIM_SECTORS.items():             # mover travel extremes
         srec = sectors[sec]
@@ -2618,7 +2624,7 @@ from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s
                         seg_hdr_off as _seg_hdr_off,
                         seg_hdr_slot as _seg_hdr_slot,
                         VWH_SIZE, VCACHE_ENTRY,
-                        SH_V1, SH_V2, SH_FORM, SH_C, SH_FLAGS,
+                        SH_V1, SH_V2, SH_FORM, SH_C, SH_FLAGS, SH_DIAG,
                         SD_FH, SD_CH, SD_BFH, SD_BCH,
                         SD_VWH_FT1, SD_VWH_FB1, SD_VWH_FT2, SD_VWH_FB2,
                         SD_VWH_BT1, SD_VWH_BB1, SD_VWH_BT2, SD_VWH_BB2,
@@ -2707,7 +2713,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     _w2 = read_u16(rom, seg_off + SH_V2)
     v1_idx = (_w1 >> 8) * 8 + (_w1 & 7)
     v2_idx = (_w2 >> 8) * 8 + (_w2 & 7)
-    bf_form = rom[seg_off + 4]              # 0-3 axis, >=4 diagonal dir_id+4
+    bf_form = rom[seg_off + SH_FORM]        # 0-3 axis, >=4 diagonal dir_id+4
     flags  = read_u8(rom,  seg_off + SH_FLAGS)
 
     # ── Back-face test (same arithmetic as classic path) ──
@@ -2715,7 +2721,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     py_int = ctx[1]
     if bf_form < 4:
         # axis C-form: one signed compare, SAMEDIR folded at pack time
-        bf_c16 = read_s16(rom, seg_off + 5)
+        bf_c16 = read_s16(rom, seg_off + SH_C)
         if bf_form == 0:   front = px_int > bf_c16
         elif bf_form == 1: front = px_int < bf_c16
         elif bf_form == 2: front = py_int > bf_c16
@@ -2723,16 +2729,19 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if not front:
             return
     else:
-        # diagonal DELTA form: primitives from the DIR tables, lv1 from
-        # the header (+5/6 x, +7/+9 y split), SAMEDIR folded at pack
+        # diagonal DELTA form: primitives from the DIR tables, lv1 from the
+        # DEDUPED LV1 records (u8 id at +SH_DIAG -> 4 planes at $00/$80/
+        # $100/$180), SAMEDIR folded at pack
         od = layout['off_dirs']; md = layout['max_dirs']
         did = bf_form - 4
         dxm = rom[od + did]; dym = rom[od + md + did]
         sg  = rom[od + 2 * md + did]
         dxp = -dxm if (sg & 0x40) else dxm
         dyp = -dym if (sg & 0x80) else dym
-        lv1_x = read_s16(rom, seg_off + 5)
-        lv1_y = rom[seg_off + 7] | (rom[seg_off + 9] << 8)
+        ol = layout['off_lv1']; rid = rom[seg_off + SH_DIAG]
+        lv1_x = rom[ol + 0x000 + rid] | (rom[ol + 0x080 + rid] << 8)
+        lv1_y = rom[ol + 0x100 + rid] | (rom[ol + 0x180 + rid] << 8)
+        if lv1_x & 0x8000: lv1_x -= 0x10000
         if lv1_y & 0x8000: lv1_y -= 0x10000
         dot = dyp * (px_int - lv1_x) - dxp * (py_int - lv1_y)
         if dot <= 0:

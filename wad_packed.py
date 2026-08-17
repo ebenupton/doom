@@ -42,17 +42,26 @@ NT_GEN = 3   # MUST be 3: the engine's node_setup seeds the general form's
              # general-node classify ran dx = px-nx-1 (engine-wide
              # off-by-one at diagonal partitions)
 NF_RLEAF, NF_LLEAF = 0x80, 0x40   # child-is-subsector flags, baked into the TYPE byte
-SEG_HDR_SIZE = 14    # SQUEEZED 16 -> 14 (2026-08-17): +14/+15 were the APV2
-                     # height pair, shipped ZERO for every seg since the
-                     # vertex-span descriptors retired the APV overlay
-                     # (2026-07-24) and read by nobody — poison-proven.
-                     # Uniform back-face C-FORM:
+SEG_HDR_SIZE = 10    # SQUEEZED 16 -> 14 -> 12 -> 10 (2026-08-17).
+                     # 16->14: +14/+15 were the APV2 height pair, shipped
+                     #   ZERO since the vertex-span descriptors retired the
+                     #   APV overlay (2026-07-24), read by nobody.
+                     # 14->12: fh/ch are SUBSECTOR-constant and left for the
+                     #   per-subsector pages (off_ss_fh/off_ss_ch).
+                     # 12->10: a diagonal's lv1 (4 bytes) deduped to 99
+                     #   distinct pairs, so the header carries a u8 id into
+                     #   the LV1 planes instead. Axis segs keep their C16
+                     #   inline — that compare is the hottest gate.
+                     # LAYOUT:
+                     # +0/1 v1 key, +2/3 v2 key
                      # +4 form/dir_id: 0 front iff px>C16, 1 px<C16,
                      #    2 py>C16, 3 py<C16; >=4 diagonal (id-4 indexes
                      #    the DIR tables appended after the headers)
-                     # +5..7 C24 = dy'*lv1x - dx'*lv1y (axis: C16 +5/6)
-                     # +8 flags, +9 L, +10..13 INLINED heights:
-                     # +10 fh +11 ch +12 bfh +13 bch
+                     # +5/6 axis: C16.  diagonal: +5 = LV1 record id
+                     # +7 flags
+                     # +8 bfh, +9 bch (the BACK pair; a one-sided seg
+                     #    carries the fh/ch alias here so the descriptor
+                     #    role codes need no runtime branch)
                      # DIR tables (at off_seg_hdr + seg_hdr_bytes(n_segs)):
                      # DIRXM |dx'| , DIRYM |dy'|, DIRS sign byte (b7=dy'
                      # neg, b6=dx' neg) — one entry per distinct primitive
@@ -65,7 +74,7 @@ SEG_HDR_SIZE = 14    # SQUEEZED 16 -> 14 (2026-08-17): +14/+15 were the APV2
 # its page, so the header pointer's HI BYTE is subsector-constant and the
 # +stride advance carries nothing. THE one source for this mapping: every
 # producer (packer, anim tables, the Python reference) goes through it.
-SEG_HDR_PER_PAGE = 18
+SEG_HDR_PER_PAGE = 256 // SEG_HDR_SIZE   # derived: never hand-set this
 
 
 def seg_hdr_off(slot):
@@ -95,10 +104,17 @@ VWH_SIZE     = 1     # identity: s8 height
 SH_V1 = 0; SH_V2 = 2             # vertex keys: lo=idx&255, hi=idx>>3 (see pack site)
 SH_FORM = 4; SH_C = 5           # back-face C-form (see SEG_HDR_SIZE note)
 # (lv1x/lv1y/ldx/ldy retired 2026-07-11: the C-form + DIR tables replace them)
-SH_FLAGS = 8                     # u8 flags
-SH_L = 9                         # u8 round(seg length) for option-2b
-# (SH_PAD retired: +11 is ch, and the trailing APV2 pair went with
-#  the stride squeeze to 14 — there is no pad byte in the header now)
+SH_DIAG = 5                      # u8 LV1 record id (diagonal forms only)
+SH_FLAGS = 7                     # u8 flags
+SH_BFH = 8                       # s8 back floor (or the fh alias if solid)
+SH_BCH = 9                       # s8 back ceiling (or the ch alias)
+# (SH_L died with the 12->10 squeeze: the fossil seg-length byte had no
+#  reader in either language — see the 2026-08-17 census.)
+LV1_PER_PLANE = 128              # 4 planes packed 2-per-page at $00/$80:
+                                 # with <=128 records no indexed read can
+                                 # cross a page (the +1-cycle penalty)
+# (SH_PAD retired: the 16->10 squeeze left no spare byte in the header —
+#  a diagonal's +6 is the only unused slot, and only for that class)
 
 # ── Offsets within seg detail (20 bytes) ─────────────────────────────────
 
@@ -268,9 +284,25 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # DIR tables tail the headers: 3 parallel u8 arrays, one entry per
     # distinct primitive diagonal direction (filled during the seg loop).
     _dirs = {}          # (dx', dy') -> id  (0-based; header stores id+4)
+    _lv1_ids = {}       # (lv1x, lv1y) -> LV1 record id (diagonals only)
     off_dirs = off_seg_hdr + seg_hdr_bytes(n_segs)
     MAX_DIRS = 160
-    off_vwh = off_dirs + 3 * MAX_DIRS
+    # Per-SUBSECTOR front heights (2026-08-17). fh/ch are subsector-constant
+    # — every seg fronts its subsector's sector — so carrying them per seg
+    # duplicated 2 bytes across all 649 headers to say 221 things. Two pages
+    # here, indexed by the subsector id the prologue already holds in X.
+    # PAGE-ALIGNED RELATIVE TO off_seg_hdr: both builds copy this blob to a
+    # page-aligned base, so aligning here aligns the runtime address in both
+    # (LDA SS_FH,X needs it).
+    _after_dirs = off_dirs + 3 * MAX_DIRS
+    off_ss_fh = off_seg_hdr + ((_after_dirs - off_seg_hdr + 255) & ~0xFF)
+    off_ss_ch = off_ss_fh + 256
+    # Diagonal LV1 records (2026-08-17): a diagonal's back-face reference
+    # point is 4 bytes that dedupe hard (99 distinct pairs over 159 diagonal
+    # segs on E1M1), so the header carries a u8 id and the coordinates live
+    # here. Two pages, planes at +$00/+$80 so no indexed read crosses a page.
+    off_lv1 = off_ss_ch + 256
+    off_vwh = off_lv1 + 512
     # VWH heights no longer ship in rom_main (2026-07-10): the 6502 render
     # projects from the FHCH stream; VWH indices are Python-side cache keys
     # only. off_vwh == rom_main_size is kept as a layout landmark.
@@ -395,6 +427,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         rom_main[off_ss + i] = ss[0] & 0xFF
         rom_main[off_ss + 256 + i] = off16 & 0xFF
         rom_main[off_ss + 512 + i] = (off16 >> 8) & 0xFF
+        # Front heights, per SUBSECTOR (2026-08-17). ASSERTED constant over
+        # the run: if a future map ever breaks that, this fails at pack time
+        # instead of rendering one seg's heights for its neighbours.
+        if ss[0]:
+            fh_ch = {(fp_segs_vwh[j][3] & 0xFF, fp_segs_vwh[j][4] & 0xFF)
+                     for j in range(ss[1], ss[1] + ss[0])}
+            assert len(fh_ch) == 1, \
+                f"subsector {i}: fh/ch not constant over its segs ({fh_ch})"
+            fh_i, ch_i = fh_ch.pop()
+            rom_main[off_ss_fh + i] = fh_i
+            rom_main[off_ss_ch + i] = ch_i
 
     # Build the set of "linedef-endpoint" vertices. Any vertex not in this
     # set is a BSP-inserted split point; segs whose v1 or v2 is such a
@@ -444,11 +487,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         # tooling that masks them out.)
 
 
-        # L = round(seg length) in the formerly-pad byte (offset 11), for the
-        # option-2b angle-space seg projection: c = (cross<<4)/L. u8 (<=89 for
-        # E1M1). na is recomputed on the 6502 via point_to_angle(-ldy, ldx).
-        seg_L = int(round(math.hypot(ldx, ldy)))
-        assert 0 <= seg_L <= 255, f"seg {i}: L={seg_L} not u8"
+        # (the fossil seg-length byte died with the 12->10 squeeze — it was
+        #  written for an option-2b angle-space projection that never shipped
+        #  and had no reader in either language)
         o = off_seg_hdr + seg_hdr_off(i)
         # --- back-face C-form, UNIFORM (2026-07-11, stride 16) ---
         # dot = dy'*px - dx'*py - C with (dx',dy') the primitive linedef
@@ -489,31 +530,29 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         struct.pack_into('<HH', rom_main, o, _vk(s[0]), _vk(s[1]))
         rom_main[o + 4] = form
         if form >= 4:
-            rom_main[o + 5] = lv1[0] & 0xFF
-            rom_main[o + 6] = (lv1[0] >> 8) & 0xFF
-            rom_main[o + 7] = lv1[1] & 0xFF
-            rom_main[o + 9] = (lv1[1] >> 8) & 0xFF
+            # diagonal: the reference point goes in the deduped LV1 records
+            key = (lv1[0] & 0xFFFF, lv1[1] & 0xFFFF)
+            rid = _lv1_ids.setdefault(key, len(_lv1_ids))
+            assert rid < LV1_PER_PLANE, \
+                f'LV1 records ({rid + 1}) exceed the {LV1_PER_PLANE}-slot planes'
+            rom_main[o + SH_DIAG] = rid
         else:
             rom_main[o + 5] = c24 & 0xFF
             rom_main[o + 6] = (c24 >> 8) & 0xFF
-            rom_main[o + 7] = 0
-            rom_main[o + 9] = seg_L          # fossil pad (no 6502 reader)
-        rom_main[o + 8] = flags
+        rom_main[o + SH_FLAGS] = flags
 
         # Heights INLINED into the header. SOLID ALIAS (2026-07-24,
         # descriptor scheme): a solid's +12/+13 carry fh/ch so the
         # descriptor role codes bfh/bch evaluate with NO runtime branch
         # (the APV overlay died with APEDGE); +14/+15 ship zero.
         od = i * SEG_DTL_SIZE
-        rom_main[o + 10] = rom_detail[od + SD_FH]
-        rom_main[o + 11] = rom_detail[od + SD_CH]
         back_idx = svwh[2]
         if back_idx is None:
             # ONE-SIDED solid: fh/ch alias — the descriptor role codes
             # bfh/bch evaluate with no runtime branch (never consumed
             # live: c2/c3 are NEEDBB/NEEDBT-gated, forever clear here)
-            rom_main[o + 12] = rom_detail[od + SD_FH]
-            rom_main[o + 13] = rom_detail[od + SD_CH]
+            rom_main[o + SH_BFH] = rom_detail[od + SD_FH]
+            rom_main[o + SH_BCH] = rom_detail[od + SD_CH]
         else:
             # TWO-SIDED — portal now or potentially at runtime (a closed
             # door is pack-time SOLID): TRUE back heights, NOT the alias.
@@ -523,8 +562,16 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             # SOLID flag holds, c2/c3 gate off, so the alias is not
             # missed; detail SD_BFH/BCH stay 0 for pack-time solids.
             bs = fp_sectors[back_idx]
-            rom_main[o + 12] = bs[0] & 0xFF
-            rom_main[o + 13] = bs[1] & 0xFF
+            rom_main[o + SH_BFH] = bs[0] & 0xFF
+            rom_main[o + SH_BCH] = bs[1] & 0xFF
+
+    # Diagonal LV1 records: 4 planes packed two per page at +$00/+$80 so an
+    # indexed read never crosses a page boundary.
+    for (lx, ly), rid in _lv1_ids.items():
+        rom_main[off_lv1 + 0x000 + rid] = lx & 0xFF
+        rom_main[off_lv1 + 0x080 + rid] = (lx >> 8) & 0xFF
+        rom_main[off_lv1 + 0x100 + rid] = ly & 0xFF
+        rom_main[off_lv1 + 0x180 + rid] = (ly >> 8) & 0xFF
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 
@@ -625,6 +672,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_ss': off_ss, 'off_seg_hdr': off_seg_hdr,
         'off_vwh': off_vwh,
         'off_dirs': off_dirs, 'n_dirs': len(_dirs), 'max_dirs': MAX_DIRS,
+        'off_ss_fh': off_ss_fh, 'off_ss_ch': off_ss_ch,
+        'off_lv1': off_lv1, 'n_lv1': len(_lv1_ids),
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
         'rom_recip_size': rom_recip_size,
@@ -644,6 +693,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Vertices:    {n_verts} in 4 page-split planes = 2048")
     print(f"  Nodes:       {n_nodes} × {NODE_SIZE} = {n_nodes * NODE_SIZE}")
     print(f"  Subsectors:  {n_ss} × {SSECTOR_SIZE} = {n_ss * SSECTOR_SIZE}")
+    print(f"  LV1 records: {layout['n_lv1']} diagonal reference points")
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = "
           f"{seg_hdr_bytes(n_segs)} B ({SEG_HDR_PER_PAGE}/page, page tails dead)")
     print(f"  VWH heights: {n_vwh} × {VWH_SIZE} = {n_vwh}")

@@ -90,17 +90,19 @@ render_subsector:
    JMP anim_ss_cont
 ::anim_ss_cont:
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
-; subsector's sector), so read fh/ch + compute the front deltas ONCE
-; here instead of per seg (2026-07-10; runs after the anim hub, so
-; mover-patched heights are already in place). ---
-   LDY #11
-   LDA (zp_seg_hdr_p),Y                     ; ch (header +11)
+; subsector's sector), so they LIVE per subsector (2026-08-17: two pages
+; in the header blob, ROM_SS_FH_C/ROM_SS_CH_C) instead of being copied
+; into every seg header, and the front deltas are computed ONCE here
+; (2026-07-10). X = the subsector id; the anim hub above clobbers X but
+; not zp_node_ch_l (it re-reads it itself), so reload. Both pages live in
+; BANK_SEG, already paged. ---
+   LDX zp_node_ch_l
+   LDA ROM_SS_CH_C,X                        ; ch (per subsector)
    STA zp_seg_ch
    SEC
    SBC zp_br_vz
    STA zp_seg_top_dlt                       ; top_dlt = ch - vz
-   DEY
-   LDA (zp_seg_hdr_p),Y                     ; fh (header +10)
+   LDA ROM_SS_FH_C,X                        ; fh (per subsector)
    STA zp_seg_fh
    SEC
    SBC zp_br_vz
@@ -189,7 +191,7 @@ sl_rts:
 ; calls that clobber registers — it must live in ZP). Everything else is
 ; read ON DEMAND via (zp_seg_hdr_p),Y — the persistent cursor is already
 ; a ZP pointer, so no copy into zp_br_p is needed (2026-07-09).
-   LDY #8
+   LDY #LAY_SH_FLAGS
    LDA (zp_seg_hdr_p),Y
    STA zp_seg_flags
 

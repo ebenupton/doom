@@ -11,13 +11,24 @@ LAY_OFF_VERTS   = $0C00
 LAY_OFF_SS   = $0900
 LAY_OFF_SEG_HDR   = $1200
 
-LAY_HDR_STRIDE   = 14                    ; heights INLINED at +10..13
-LAY_HDR_BYTES   = $240E                 ; footprint of the page-slotted
-                                        ; header array (generated: 18
-                                        ; slots of 14 per 256B page, so
+LAY_HDR_STRIDE   = 10                    ; +10 bfh, +11 bch
+LAY_HDR_BYTES   = $19F0                 ; footprint of the page-slotted
+                                        ; header array (generated: 256/
+                                        ; stride slots per 256B page, so
                                         ; it is NOT n_segs*stride)
+LAY_SH_DIAG   = 5                       ; generated header field offsets
+LAY_SH_FLAGS   = 7                      ; (wad_packed SH_*: the .s files
+LAY_SH_BFH   = 8                       ;  must never carry private copies)
+LAY_SH_BCH   = 9
+LAY_LV1_OFF   = $1E00                   ; generated: diagonal LV1 records,
+                                        ; relative to the seg-header base
+                                        ; (2 pages, planes at +$00/+$80)
+LAY_SS_FH_OFF   = $1C00                 ; generated: front-height pages,
+                                        ; RELATIVE to the seg-header base
+                                        ; (page-aligned in both builds)
 ; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —
-; +4 form/dir_id, +5..7 C24, +8 flags, +9 L(pad), +10..15 heights)
+; +4 form/dir_id, +5..7 C24, +8 flags, +9 L(pad), +10/+11 back heights;
+;  2026-08-17: fh/ch left for the per-subsector pages below)
 LAY_N_DIRS   = 118                   ; distinct diagonal primitives
 LAY_MAX_DIRS   = 160                   ; DIR table stride (3 arrays)
 
@@ -44,6 +55,20 @@ ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 ;  page decomposition — flat frees $B700-$B8FF, banked frees
 ;  $A800-$A9FF in L2, both now part of the pre-existing gaps)
 .endif
+; Per-SUBSECTOR front heights (2026-08-17): fh/ch are subsector-constant, so
+; they ride two pages in the header blob instead of 2 bytes x every seg. Read
+; under BANK_SEG with X = the subsector id (already live in the prologue).
+ROM_SS_FH_C = ROM_SEG_HDR_C + LAY_SS_FH_OFF
+ROM_SS_CH_C = ROM_SS_FH_C + $100
+; Diagonal back-face reference points (2026-08-17): 4 planes, 2 per page at
+; +$00/+$80, indexed by the u8 record id the header carries at +SH_DIAG. The
+; 128-slot spacing keeps every indexed read inside one page.
+ROM_LV1X_LO_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $000
+ROM_LV1X_HI_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $080
+ROM_LV1Y_LO_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $100
+ROM_LV1Y_HI_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $180
+.assert (ROM_LV1X_LO_C & $FF) = 0, error, "LV1 planes must be page-aligned"
+.assert (ROM_SS_FH_C & $FF) = 0, error, "SS height pages must be page-aligned"
 .assert (ROM_BBOX_C & $FF) = 0, error, "bbox base must stay page-aligned"
 ; Bbox corner planes (16 x 256, page-split SoA): field at f*$200, side
 ; (0 = right child box, 1 = left) at +$100. Node ids are u8 -> corner

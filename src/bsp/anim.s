@@ -13,8 +13,9 @@
 ;
 ; A patch writes, per mover (table-driven; tables generated at pack time
 ; by anim_sectors.gen_6502_tables and poked by the harness/disc build):
-;   header HEIGHT bytes — n_fhch u16 addrs into the 16-byte seg headers
-;     (+10..15; the separate FHCH stream was retired 2026-07-11 — the
+;   HEIGHT bytes — n_fhch u16 addrs: the per-subsector front-height pages
+;     for the mover's own sector, the seg headers' +10/+11 back pair for
+;     segs facing it (the separate FHCH stream was retired 2026-07-11 — the
 ;     'fhch' naming in the tables survives as history), value = pos_hi
 ;   seg-header FLAG bytes — SOLID/NEEDBT/NEEDBB re-derived from the
 ;     (patched) height quad
@@ -283,12 +284,14 @@ anim_bit2:
 ;     ANIM_CUR with value ANIM_VAL. Runs with BANK_L0 paged. ---
 ; TABL0 block (gen_6502_tables): n_fhch, n_flag, then n_fhch u16 FHCH byte
 ; addresses (the MOVING role only — doors: ch/bch slots, lifts: fh/bfh),
-; then n_flag x (u16 seg-header flag addr, u16 FHCH quad addr) covering
-; every two-sided seg touching the sector.
+; then n_flag x (u16 seg-header flag addr, u16 FRONT-pair addr) covering every
+; two-sided seg touching the sector; the BACK pair rides the flags address.
+; The quad is SPLIT since 2026-08-17: fh/ch live on the per-subsector pages
+; (ch is always fh + $100 — the pages abut) and bfh/bch in the header.
 ; pseudocode:
 ;   for each fhch addr: *addr = ANIM_VAL
 ;   for each flag entry:                       # packer's rules, post-patch
-;     fh,ch,bfh,bch = quad[0..3]               # prescaled s8, SBC sign exact
+;     fh, ch = front[0], front[$100] ; bfh, bch = back[0], back[1]
 ;     f = *hdr & ~(SOLID|NEEDBT|NEEDBB)        # & $B3
 ;     if bch <= fh or bfh >= ch: f |= SOLID
 ;     else: if bch < ch: f |= NEEDBT ; if bfh > fh: f |= NEEDBB
@@ -342,6 +345,8 @@ alw_flags:
    BNE alw_gbody
    JMP alw_done
 alw_gbody:
+; walk the entry's THREE addresses out of the block first (Y is the block
+; cursor and must survive to alw_y — read every u16 before touching it)
    LDA (zp_anim_p),Y
    STA alw_hdr
    INY
@@ -349,21 +354,31 @@ alw_gbody:
    STA alw_hdr+1
    INY
    LDA (zp_anim_p),Y
-   STA zp_anim_w
+   STA zp_anim_w                            ; FRONT pair: fh here, ch at +$100
    INY
    LDA (zp_anim_p),Y
    STA zp_anim_w+1
    INY
    STY alw_y
-; read quad: fh, ch, bfh, bch (prescaled s8; |h| small so SBC sign is exact)
+; front pair off the per-subsector pages (fh, then ch one page up — the two
+; pages abut by construction, layout.inc asserts the alignment)
    LDY #0
    LDA (zp_anim_w),Y
    STA alw_fh
-   INY
+   INC zp_anim_w+1
    LDA (zp_anim_w),Y
    STA alw_ch
-   INY
-   LDA (zp_anim_w),Y
+; back pair out of the header — SAME header as the flags byte, so the address
+; is derived rather than carried (TABL0's 252 B budget: a third u16 per entry
+; overflowed the blob into the CFG table, 2026-08-17)
+   LDA alw_hdr
+   CLC
+   ADC #LAY_SH_BFH - LAY_SH_FLAGS
+   STA zp_anim_w
+   LDA alw_hdr+1
+   ADC #0
+   STA zp_anim_w+1
+   LDA (zp_anim_w),Y                        ; Y still 0
    STA alw_bfh
    INY
    LDA (zp_anim_w),Y
