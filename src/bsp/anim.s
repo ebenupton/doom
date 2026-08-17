@@ -291,7 +291,8 @@ anim_bit2:
 ; pseudocode:
 ;   for each fhch addr: *addr = ANIM_VAL
 ;   for each flag entry:                       # packer's rules, post-patch
-;     fh, ch = front[0], front[$100] ; bfh, bch = back[0], back[1]
+;     fh, ch = front[0], front[$100]
+;     bfh, bch = BPAL_BFH[id], BPAL_BCH[id]   # id = the header's +SH_BPAL
 ;     f = *hdr & ~(SOLID|NEEDBT|NEEDBB)        # & $B3
 ;     if bch <= fh or bfh >= ch: f |= SOLID
 ;     else: if bch < ch: f |= NEEDBT ; if bfh > fh: f |= NEEDBB
@@ -368,20 +369,22 @@ alw_gbody:
    INC zp_anim_w+1
    LDA (zp_anim_w),Y
    STA alw_ch
-; back pair out of the header — SAME header as the flags byte, so the address
-; is derived rather than carried (TABL0's 252 B budget: a third u16 per entry
-; overflowed the blob into the CFG table, 2026-08-17)
+; back pair via the PALETTE (2026-08-17): the id byte sits in the SAME header
+; as the flags byte, so its address is derived rather than carried — TABL0's
+; 252 B budget has no room for a third u16 per entry. Mover-touching segs hold
+; PRIVATE palette entries, so patching one never moves a neighbour.
    LDA alw_hdr
    CLC
-   ADC #LAY_SH_BFH - LAY_SH_FLAGS
+   ADC #LAY_SH_BPAL - LAY_SH_FLAGS
    STA zp_anim_w
    LDA alw_hdr+1
    ADC #0
    STA zp_anim_w+1
-   LDA (zp_anim_w),Y                        ; Y still 0
+   LDA (zp_anim_w),Y                        ; Y still 0: the palette id
+   TAX
+   LDA ROM_BPAL_BFH_C,X
    STA alw_bfh
-   INY
-   LDA (zp_anim_w),Y
+   LDA ROM_BPAL_BCH_C,X
    STA alw_bch
 ; flags = old & ~(SOLID|NEEDBT|NEEDBB) = old & ~$4C (SOLID=$40)
    LDA alw_hdr

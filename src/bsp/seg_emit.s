@@ -36,11 +36,11 @@
 ;   ::s_advance_l0   backface back-exits (L0 never left)
 ; EXITS: JMP ::seg_proc (subsector.s loop head); RTS when seg count hits 0.
 ;
-; SEG HEADER (12 B, via zp_seg_hdr_p, bank L0):
+; SEG HEADER (9 B, via zp_seg_hdr_p, bank L0):
 ;   +0/+1 v1 idx lo/b   +2/+3 v2 idx lo/b   +8 flags
-;   +10 bfh  +11 bch  (the BACK pair; solids carry the fh/ch alias here).
-;   Front fh/ch are PER SUBSECTOR — ROM_SS_FH_C/ROM_SS_CH_C, read in the
-;   subsector prologue. 12 B stride since 2026-08-17.
+;   +8 back-pair palette id -> ROM_BPAL_BFH_C/BCH_C (solids' entry carries
+;   the fh/ch alias). Front fh/ch are PER SUBSECTOR — ROM_SS_FH_C/ROM_SS_CH_C,
+;   read in the subsector prologue. 9 B stride since 2026-08-17.
 ; FLAGS (wad_packed single source):
 ;   $80 SAMEDIR  $40 SOLID  $20/$10 (novt, ship 0)  $08 NEEDBB
 ;   $04 NEEDBT   $02/$01 (apedge, ship 0)
@@ -656,13 +656,18 @@ ys_withback:
                                         ; (bank SEG held since stage 1 —
                                         ; the fork and hg_query touch no
                                         ; ROMSEL; header reads are safe)
-   LDY #LAY_SH_BCH
-   LDA (zp_seg_hdr_p),Y                    ; bch (layout.inc field offsets:
-                                        ;  the packer owns them)
+; The back pair is a PALETTE ENTRY since 2026-08-17 (96 entries for 649 segs):
+; read the u8 id, then index the two planes. Y is free here (the old code left
+; it clobbered too) and X must not be touched — the caller reloads it below,
+; but only after this block. None of LDY/LDA/TAY disturbs the C=1 that
+; hg_query left, which the first SBC still rides.
+   LDY #LAY_SH_BPAL
+   LDA (zp_seg_hdr_p),Y
+   TAY                                     ; Y = back-pair palette id
+   LDA ROM_BPAL_BCH_C,Y                    ; bch
    SBC zp_br_vz                            ; (no SEC: C=1 from hg_query)
    STA zp_seg_btop_dlt
-   DEY
-   LDA (zp_seg_hdr_p),Y                    ; bfh
+   LDA ROM_BPAL_BFH_C,Y                    ; bfh
    SEC
    SBC zp_br_vz
    STA zp_seg_bbot_dlt

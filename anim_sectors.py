@@ -32,7 +32,7 @@ import os
 # (DOOM_ANIM gate removed 2026-07-10: anim is the only variant)
 
 import doom_wireframe as dw
-from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, seg_hdr_off, SH_BFH, SH_BCH,
+from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, seg_hdr_off, SH_BPAL,
                         SD_FH, SD_CH, SD_BFH,
                         SD_BCH, SH_FLAGS, SF_SOLID, SF_NEEDBT, SF_NEEDBB,
                         SF_STEPUP_T, SF_STEPUP_B)
@@ -43,6 +43,13 @@ _ROM_DETAIL = dw.packed_rom_detail
 _OFF_SEG_HDR = _LAYOUT['off_seg_hdr']
 _SS_FH_REL = _LAYOUT['off_ss_fh'] - _OFF_SEG_HDR     # front-height pages,
 _SS_CH_REL = _LAYOUT['off_ss_ch'] - _OFF_SEG_HDR     #  relative to the base
+_BPAL_REL = _LAYOUT['off_bpal'] - _OFF_SEG_HDR       # back-pair palette page
+
+
+def _bpal_id(i):
+    """The seg's back-pair palette id. Mover-touching segs hold PRIVATE
+    entries (wad_packed), which is what makes patching one safe."""
+    return _ROM_MAIN[_OFF_SEG_HDR + seg_hdr_off(i) + SH_BPAL]
 
 
 def _seg_ss():
@@ -199,19 +206,25 @@ class Mover:
                     mem[base['seg_hdr'] + _SS_CH_REL + ssi] = ch_ps & 0xFF
                 nbytes += 2
             if one_sided:
-                # the BACK slots carry the fh/ch alias for a one-sided seg
-                # (descriptor scheme, no runtime branch) and must track
+                # the palette entry carries the fh/ch alias for a one-sided
+                # seg (descriptor scheme, no runtime branch) and must track
+                _e = _BPAL_REL + _bpal_id(i)
+                _ROM_MAIN[_OFF_SEG_HDR + _e + 0x00] = fh_ps & 0xFF
+                _ROM_MAIN[_OFF_SEG_HDR + _e + 0x80] = ch_ps & 0xFF
                 for mem, base in _attached:
-                    mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BFH] = fh_ps & 0xFF
-                    mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BCH] = ch_ps & 0xFF
+                    mem[base['seg_hdr'] + _e + 0x00] = fh_ps & 0xFF
+                    mem[base['seg_hdr'] + _e + 0x80] = ch_ps & 0xFF
                 nbytes += 2
         for i in self.back_segs:
             o = i * SEG_DTL_SIZE
             _ROM_DETAIL[o + SD_BFH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_BCH] = ch_ps & 0xFF
+            _e = _BPAL_REL + _bpal_id(i)
+            _ROM_MAIN[_OFF_SEG_HDR + _e + 0x00] = fh_ps & 0xFF
+            _ROM_MAIN[_OFF_SEG_HDR + _e + 0x80] = ch_ps & 0xFF
             for mem, base in _attached:
-                mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BFH] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + seg_hdr_off(i) + SH_BCH] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + _e + 0x00] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + _e + 0x80] = ch_ps & 0xFF
             nbytes += 2
         # seg flags: re-derive SOLID/NEEDBT/NEEDBB (the packer's rules)
         for i in self.touch_segs:
@@ -421,7 +434,8 @@ def gen_6502_tables(flat=True):
         # back pair (+SH_BFH/+SH_BCH) is per seg; the FRONT pair lives on the
         # per-subsector pages, so a mover's own sector patches ONE byte per
         # subsector instead of one per seg (2026-08-17)
-        B = lambda i, k: A['hdr'] + seg_hdr_off(i) + SH_BFH + k
+        # back pair: the PALETTE entry for this seg (private for movers)
+        B = lambda i, k: A['hdr'] + _BPAL_REL + (0x80 if k else 0x00) + _bpal_id(i)
         ss_of = _seg_ss()
         solid = lambda i: dw.fp_segs_vwh[i][2] is None
         seen_ss = set()

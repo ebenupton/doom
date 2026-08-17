@@ -42,7 +42,7 @@ NT_GEN = 3   # MUST be 3: the engine's node_setup seeds the general form's
              # general-node classify ran dx = px-nx-1 (engine-wide
              # off-by-one at diagonal partitions)
 NF_RLEAF, NF_LLEAF = 0x80, 0x40   # child-is-subsector flags, baked into the TYPE byte
-SEG_HDR_SIZE = 10    # SQUEEZED 16 -> 14 -> 12 -> 10 (2026-08-17).
+SEG_HDR_SIZE = 9     # SQUEEZED 16 -> 14 -> 12 -> 10 -> 9 (2026-08-17).
                      # 16->14: +14/+15 were the APV2 height pair, shipped
                      #   ZERO since the vertex-span descriptors retired the
                      #   APV overlay (2026-07-24), read by nobody.
@@ -59,9 +59,13 @@ SEG_HDR_SIZE = 10    # SQUEEZED 16 -> 14 -> 12 -> 10 (2026-08-17).
                      #    the DIR tables appended after the headers)
                      # +5/6 axis: C16.  diagonal: +5 = LV1 record id
                      # +7 flags
-                     # +8 bfh, +9 bch (the BACK pair; a one-sided seg
-                     #    carries the fh/ch alias here so the descriptor
-                     #    role codes need no runtime branch)
+                     # +8 BACK-PAIR palette id -> BPAL planes. The pair
+                     #    deduped 649 segs into 96 entries (56 shared +
+                     #    one PRIVATE entry per mover-touching seg, so a
+                     #    patch can never bleed into a neighbour). A
+                     #    one-sided seg's entry carries the fh/ch alias,
+                     #    so the descriptor role codes still need no
+                     #    runtime branch.
                      # DIR tables (at off_seg_hdr + seg_hdr_bytes(n_segs)):
                      # DIRXM |dx'| , DIRYM |dy'|, DIRS sign byte (b7=dy'
                      # neg, b6=dx' neg) — one entry per distinct primitive
@@ -106,8 +110,10 @@ SH_FORM = 4; SH_C = 5           # back-face C-form (see SEG_HDR_SIZE note)
 # (lv1x/lv1y/ldx/ldy retired 2026-07-11: the C-form + DIR tables replace them)
 SH_DIAG = 5                      # u8 LV1 record id (diagonal forms only)
 SH_FLAGS = 7                     # u8 flags
-SH_BFH = 8                       # s8 back floor (or the fh alias if solid)
-SH_BCH = 9                       # s8 back ceiling (or the ch alias)
+SH_BPAL = 8                      # u8 back-pair palette id -> BPAL planes
+BPAL_PER_PLANE = 128             # 2 planes in ONE page at +$00/+$80 (as the
+                                 # LV1 records): <=128 entries means no
+                                 # indexed read crosses a page
 # (SH_L died with the 12->10 squeeze: the fossil seg-length byte had no
 #  reader in either language — see the 2026-08-17 census.)
 LV1_PER_PLANE = 128              # 4 planes packed 2-per-page at $00/$80:
@@ -217,7 +223,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                  seg_novt_aperture=None,
                  novt_rule4=None,
                  vert_covered_by_solid_ap=None,
-                 anim_vert_set=None):
+                 anim_vert_set=None,
+                 anim_sector_set=None):
     """Build the byte arrays from parsed WAD data.
 
     Returns (rom_main, rom_detail, rom_recip, layout).
@@ -285,6 +292,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # distinct primitive diagonal direction (filled during the seg loop).
     _dirs = {}          # (dx', dy') -> id  (0-based; header stores id+4)
     _lv1_ids = {}       # (lv1x, lv1y) -> LV1 record id (diagonals only)
+    _bpal_ids = {}      # (bfh, bch) -> palette id; mover-touching segs get a
+                        # PRIVATE entry keyed by seg index instead, so an anim
+                        # patch of one seg's back pair cannot move a neighbour
+    _movers = set(anim_sector_set or ())
     off_dirs = off_seg_hdr + seg_hdr_bytes(n_segs)
     MAX_DIRS = 160
     # Per-SUBSECTOR front heights (2026-08-17). fh/ch are subsector-constant
@@ -302,7 +313,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # segs on E1M1), so the header carries a u8 id and the coordinates live
     # here. Two pages, planes at +$00/+$80 so no indexed read crosses a page.
     off_lv1 = off_ss_ch + 256
-    off_vwh = off_lv1 + 512
+    # Back-pair palette (2026-08-17): one page, two planes at +$00/+$80.
+    off_bpal = off_lv1 + 512
+    off_vwh = off_bpal + 256
     # VWH heights no longer ship in rom_main (2026-07-10): the 6502 render
     # projects from the FHCH stream; VWH indices are Python-side cache keys
     # only. off_vwh == rom_main_size is kept as a layout landmark.
@@ -547,12 +560,19 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         # (the APV overlay died with APEDGE); +14/+15 ship zero.
         od = i * SEG_DTL_SIZE
         back_idx = svwh[2]
+        def _bpal(bfh_v, bch_v, seg=i, front=svwh[1], back=svwh[2]):
+            key = (('seg', seg) if (front in _movers or back in _movers)
+                   else (bfh_v & 0xFF, bch_v & 0xFF))
+            rid = _bpal_ids.setdefault(key, (len(_bpal_ids), bfh_v & 0xFF, bch_v & 0xFF))
+            assert rid[0] < BPAL_PER_PLANE, \
+                f'back-pair palette ({rid[0] + 1}) exceeds the {BPAL_PER_PLANE}-slot planes'
+            return rid[0]
         if back_idx is None:
             # ONE-SIDED solid: fh/ch alias — the descriptor role codes
             # bfh/bch evaluate with no runtime branch (never consumed
             # live: c2/c3 are NEEDBB/NEEDBT-gated, forever clear here)
-            rom_main[o + SH_BFH] = rom_detail[od + SD_FH]
-            rom_main[o + SH_BCH] = rom_detail[od + SD_CH]
+            rom_main[o + SH_BPAL] = _bpal(rom_detail[od + SD_FH],
+                                          rom_detail[od + SD_CH])
         else:
             # TWO-SIDED — portal now or potentially at runtime (a closed
             # door is pack-time SOLID): TRUE back heights, NOT the alias.
@@ -562,11 +582,13 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             # SOLID flag holds, c2/c3 gate off, so the alias is not
             # missed; detail SD_BFH/BCH stay 0 for pack-time solids.
             bs = fp_sectors[back_idx]
-            rom_main[o + SH_BFH] = bs[0] & 0xFF
-            rom_main[o + SH_BCH] = bs[1] & 0xFF
+            rom_main[o + SH_BPAL] = _bpal(bs[0], bs[1])
 
     # Diagonal LV1 records: 4 planes packed two per page at +$00/+$80 so an
     # indexed read never crosses a page boundary.
+    for _key, (rid, bfh_v, bch_v) in _bpal_ids.items():
+        rom_main[off_bpal + 0x00 + rid] = bfh_v
+        rom_main[off_bpal + 0x80 + rid] = bch_v
     for (lx, ly), rid in _lv1_ids.items():
         rom_main[off_lv1 + 0x000 + rid] = lx & 0xFF
         rom_main[off_lv1 + 0x080 + rid] = (lx >> 8) & 0xFF
@@ -674,6 +696,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_dirs': off_dirs, 'n_dirs': len(_dirs), 'max_dirs': MAX_DIRS,
         'off_ss_fh': off_ss_fh, 'off_ss_ch': off_ss_ch,
         'off_lv1': off_lv1, 'n_lv1': len(_lv1_ids),
+        'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
         'rom_recip_size': rom_recip_size,
@@ -694,6 +717,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Nodes:       {n_nodes} × {NODE_SIZE} = {n_nodes * NODE_SIZE}")
     print(f"  Subsectors:  {n_ss} × {SSECTOR_SIZE} = {n_ss * SSECTOR_SIZE}")
     print(f"  LV1 records: {layout['n_lv1']} diagonal reference points")
+    print(f"  Back pairs:  {layout['n_bpal']} palette entries "
+          f"({sum(1 for k in _bpal_ids if k[0] == 'seg')} private to movers)")
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = "
           f"{seg_hdr_bytes(n_segs)} B ({SEG_HDR_PER_PAGE}/page, page tails dead)")
     print(f"  VWH heights: {n_vwh} × {VWH_SIZE} = {n_vwh}")

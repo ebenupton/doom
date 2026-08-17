@@ -311,16 +311,11 @@ SPEED = 12                # world units / frame (walk_drv SPEED)
 USE_TRACE = 60            # SPACE trace length (raw units; DOOM uses 64)
 
 
-def step_table():
-    """64 x 4: (dx, dy) s16 8.8 movement deltas — byte-exact with the
-    old beebasm FOR table (INT(x + 65536.5) AND &FFFF idiom)."""
-    import math, struct
-    out = bytearray()
-    for i in range(64):
-        for v in (SPEED * 32 * math.cos(i * math.pi / 32),
-                  SPEED * 32 * math.sin(i * math.pi / 32)):
-            out += struct.pack('<H', int(v + 65536.5) & 0xFFFF)
-    return bytes(out)
+# (step_table DELETED 2026-08-17: the 64 x 4 movement-delta table lost its
+#  last reader when the single-step momentum rework (cb8cfdc) replaced table
+#  stepping with arithmetic. It sat in bank A at $BC00 for weeks, seeded every
+#  build, read by nobody — and its page is part of what the seg side tables
+#  moved into.)
 
 
 def use_vectors():

@@ -29,11 +29,13 @@ hud_prev = DV_HUD_PREV        ; H-key state last frame (press-edge debounce)
 ; (vsync journal RETIRED 2026-08-09 — the flip timing is validated and the
 ; page was reclaimed for the quarter-square tables; the class logic below
 ; is unchanged, the flight recorder is gone. JBASE/DV_JIDX freed.)
-tabbase = &BA00           ; sincos table: 64 x 8 bytes, BANK A (banked_bsp
-                          ; seeds it; page 4 before reading — the 2026-08-14
-                          ; pmove arc moved all driver tables out of main)
-STEPTAB = &BC00           ; movement step table: 64 x 4 (dx,dy s16 8.8), bank A
-USEVEC  = &BD00           ; SPACE use-trace vectors: 64 x 4 (ux,uy s16 raw), bank A
+tabbase = &9900           ; sincos table: 64 x 8 bytes, BANK C (banked_bsp
+                          ; seeds it; page 6 before reading — 2026-08-17: both
+                          ; driver tables left bank A so its bottom 19 pages
+                          ; could come free for the main-RAM caches)
+USEVEC  = &9B00           ; SPACE use-trace vectors: 64 x 4 (ux,uy s16 raw), bank C
+                          ; (STEPTAB died with the single-step momentum rework —
+                          ;  it had no reader anywhere)
 space_prev = DRV_VARS + 11  ; SPACE edge-detect state
 mv_dir     = DRV_VARS + 12  ; effective move direction this attempt
 
@@ -209,8 +211,8 @@ ORG DRV_ORG
     JSR mv_reval                                    ; DOOM z (rides live lifts;
                                                     ; $90-$93 raws come from
                                                     ; pm_frame — see its ABI)
-    ; --- sincos + view angle from table[angidx] (bank A) ---
-    LDA #4:STA &FE30
+    ; --- sincos + view angle from table[angidx] (bank C) ---
+    LDA #BANK_C:STA &FE30
     LDA #0:STA &ED
     LDA angidx
     ASL A:ROL &ED
@@ -409,7 +411,7 @@ ORG DRV_CLR
 .ri_spdn
     LDA space_prev : BNE ri_spdone
     LDA #1:STA space_prev
-    LDA #4:STA &FE30                                ; use vector (bank A)
+    LDA #BANK_C:STA &FE30                           ; use vector (bank C)
     LDA angidx:ASL A:ASL A:TAX
     LDY #0
 .ri_uv

@@ -1549,7 +1549,8 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
     seg_novt_aperture=_seg_novt_aperture,
     novt_rule4=_novt_rule4,
     vert_covered_by_solid_ap=_vert_covered_by_solid_ap,
-    anim_vert_set=(_anim_verts if ANIM_SECTORS else None))
+    anim_vert_set=(_anim_verts if ANIM_SECTORS else None),
+    anim_sector_set=set(ANIM_SECTORS))
 
 # ---- |h| <= 64 PROJECTION BOUND FENCE (2026-07-12) -------------------------
 # project_y's raw tail (src/bsp/project.s) assumes |height - vz| <= 64 for
@@ -1565,7 +1566,7 @@ def _projection_bound_fence():
     # SOLID/APEDGE1 bit swap, so it had been testing 0x02 for SOLID (and the
     # aperture arm, which the descriptors retired, for 0x40)
     from wad_packed import (SF_SOLID, SF_NEEDBT, SF_NEEDBB, seg_hdr_off,
-                            SH_FLAGS, SH_BFH, SH_BCH)
+                            SH_FLAGS, SH_BPAL)
     L, rm = packed_layout, packed_rom_main
     def s8(v): return v - 256 if v >= 128 else v
     consumed = set()
@@ -1577,13 +1578,14 @@ def _projection_bound_fence():
     for i in range(L['n_segs']):
         o = L['off_seg_hdr'] + seg_hdr_off(i)
         f = rm[o + SH_FLAGS]
+        bp = L['off_bpal'] + rm[o + SH_BPAL]    # back pair via the palette
         idx = []
         if f & SF_SOLID:
-            idx += [SH_BFH, SH_BCH]         # solid alias = fh/ch (see packer)
+            idx += [0x00, 0x80]             # solid entry = fh/ch (see packer)
         else:
-            if f & SF_NEEDBB: idx.append(SH_BFH)
-            if f & SF_NEEDBT: idx.append(SH_BCH)
-        for k in idx: consumed.add(s8(rm[o + k]))
+            if f & SF_NEEDBB: idx.append(0x00)
+            if f & SF_NEEDBT: idx.append(0x80)
+        for k in idx: consumed.add(s8(rm[bp + k]))
     for sec, kind in ANIM_SECTORS.items():             # mover travel extremes
         srec = sectors[sec]
         nb = [sectors[ld] for ld in range(len(sectors))]  # conservative: all

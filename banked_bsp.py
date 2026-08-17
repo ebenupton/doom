@@ -59,27 +59,36 @@ def build_banked(flatr):
     la = bytearray(16384)
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     n_segs = layout['n_segs']
-    hdr_len = len(rom_main) - off_hdr        # page-slotted headers + DIRs
     from symmap import sym as _vsym
     def bdst(name):
         return _vsym(name, banked=1) - 0x8000    # dst offsets BY SYMBOL —
                                                  # the .s equates are the
                                                  # single source (2026-07-21)
-    la[:hdr_len] = bytes(rom_main[off_hdr:off_hdr + hdr_len])
-    assert hdr_len <= bdst('ROM_VERTS_C'), "seg headers + DIRs reach the vertex planes"
+    # HEADERS ONLY at the bottom (2026-08-17). The side tables and the DIR
+    # source used to ride along as one contiguous blob copy; they are placed by
+    # symbol now, at the top of the bank, so everything between the header
+    # block and the vertex planes is one free run for the main-RAM caches.
+    hdr_bytes = layout['off_dirs'] - off_hdr
+    la[:hdr_bytes] = bytes(rom_main[off_hdr:off_hdr + hdr_bytes])
+    n_ss = layout['n_ss']
+    for _nm, _off, _n in (('ROM_SS_FH_C',   layout['off_ss_fh'], n_ss),
+                          ('ROM_SS_CH_C',   layout['off_ss_ch'], n_ss),
+                          ('ROM_LV1X_LO_C', layout['off_lv1'],   512),
+                          ('ROM_BPAL_BFH_C', layout['off_bpal'], 256)):
+        _d = bdst(_nm)
+        la[_d:_d + _n] = bytes(rom_main[_off:_off + _n])
+    assert hdr_bytes <= bdst('ROM_VERTS_C'), "seg headers reach the vertex planes"
     # DIR planes (3 x LAY_MAX_DIRS) also land at ROM_DIRS_C in BOTH banks:
     # the shared CROSS_MAG_DECIDE reads them from node classify (bank WALK)
     # AND seg backface (bank SEG) — $B700 is free in both windows
     dirs_off = layout['off_dirs']       # (page-slotted headers: NOT n_segs*stride)
     dir_blob = bytes(rom_main[dirs_off:dirs_off + 3 * layout['max_dirs']])
     la[0x3700:0x3700 + len(dir_blob)] = dir_blob
-    # driver tables (2026-08-14 pmove arc): sincos $BA00, step $BC00, use
-    # vectors $BD00 — moved out of main to free the $2600 PMOVE slice
+    # driver tables: sincos and the use vectors moved to BANK C 2026-08-17 (see
+    # the C image below) so the top of bank A could take the seg side tables;
+    # STEPTAB went with them — DELETED, it had no reader in either language
+    # after the single-step momentum rework replaced stepping with arithmetic.
     import colmap as _cm
-    from build_anim_ssd import sincos_table as _sct
-    la[0x3A00:0x3A00 + 512] = _sct()
-    _st = _cm.step_table(); la[0x3C00:0x3C00 + len(_st)] = _st
-    _uv = _cm.use_vectors(); la[0x3D00:0x3D00 + len(_uv)] = _uv
     _ut = _cm.blobs(flat=False)[0xBE00]                 # USETAB (bank A —
     la[0x3E00:0x3E00 + len(_ut)] = _ut                  # seed BEFORE
                                                         # define_bank COPIES)
@@ -111,6 +120,18 @@ def build_banked(flatr):
     # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
     # define_bank: it COPIES the image into a fresh buffer.
     assert len(clip) <= 0x1600, f'clipper {len(clip)} bytes reaches VEXPL_CONT at $9600'
+    # Driver tables, evicted from bank A 2026-08-17 so its bottom 19 pages come
+    # free: sincos $9900 (512 B), use vectors $9B00. Both are read ONLY by
+    # walk_drv, which pages this bank for them (one ROMSEL write each, and the
+    # sincos read happens once per frame).
+    import colmap as _cm0
+    from build_anim_ssd import sincos_table as _sct
+    from symmap import sym as _csym
+    for _nm, _blob in (('ROM_DRV_SINCOS_C', _sct()),
+                       ('ROM_DRV_USEVEC_C', _cm0.use_vectors())):
+        _d = _csym(_nm, banked=1) - 0x8000
+        assert _d + len(_blob) <= 0x2400, f'{_nm} runs into the records arenas'
+        c[_d:_d + len(_blob)] = _blob
     # (VXCODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()

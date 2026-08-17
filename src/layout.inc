@@ -11,19 +11,20 @@ LAY_OFF_VERTS   = $0C00
 LAY_OFF_SS   = $0900
 LAY_OFF_SEG_HDR   = $1200
 
-LAY_HDR_STRIDE   = 10                    ; +10 bfh, +11 bch
-LAY_HDR_BYTES   = $19F0                 ; footprint of the page-slotted
+LAY_HDR_STRIDE   = 9                    ; +10 bfh, +11 bch
+LAY_HDR_BYTES   = $172D                 ; footprint of the page-slotted
                                         ; header array (generated: 256/
                                         ; stride slots per 256B page, so
                                         ; it is NOT n_segs*stride)
 LAY_SH_DIAG   = 5                       ; generated header field offsets
 LAY_SH_FLAGS   = 7                      ; (wad_packed SH_*: the .s files
-LAY_SH_BFH   = 8                       ;  must never carry private copies)
-LAY_SH_BCH   = 9
-LAY_LV1_OFF   = $1E00                   ; generated: diagonal LV1 records,
+LAY_SH_BPAL   = 8                      ;  must never carry private copies)
+LAY_BPAL_OFF   = $1E00                  ; generated: back-pair palette page
+                                        ; (2 planes at +$00/+$80)
+LAY_LV1_OFF   = $1C00                   ; generated: diagonal LV1 records,
                                         ; relative to the seg-header base
                                         ; (2 pages, planes at +$00/+$80)
-LAY_SS_FH_OFF   = $1C00                 ; generated: front-height pages,
+LAY_SS_FH_OFF   = $1A00                 ; generated: front-height pages,
                                         ; RELATIVE to the seg-header base
                                         ; (page-aligned in both builds)
 ; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —
@@ -58,16 +59,51 @@ ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 ; Per-SUBSECTOR front heights (2026-08-17): fh/ch are subsector-constant, so
 ; they ride two pages in the header blob instead of 2 bytes x every seg. Read
 ; under BANK_SEG with X = the subsector id (already live in the prologue).
+.if ::BANKED
+; The side tables sit at the TOP of bank A (2026-08-17), not behind the
+; headers: that leaves 19 contiguous pages between the header block and the
+; vertex planes, which is what the main-RAM caches need to move in here. Space
+; came from evicting the driver's sincos/use-vector tables to bank C and
+; deleting the dead STEPTAB. SS_CH MUST stay exactly one page above SS_FH —
+; the anim worker reads ch by incrementing the pointer's high byte.
+ROM_SS_FH_C = $B900
+ROM_SS_CH_C = $BA00
+.else
 ROM_SS_FH_C = ROM_SEG_HDR_C + LAY_SS_FH_OFF
 ROM_SS_CH_C = ROM_SS_FH_C + $100
+.endif
 ; Diagonal back-face reference points (2026-08-17): 4 planes, 2 per page at
 ; +$00/+$80, indexed by the u8 record id the header carries at +SH_DIAG. The
 ; 128-slot spacing keeps every indexed read inside one page.
-ROM_LV1X_LO_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $000
-ROM_LV1X_HI_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $080
-ROM_LV1Y_LO_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $100
-ROM_LV1Y_HI_C = ROM_SEG_HDR_C + LAY_LV1_OFF + $180
+.if ::BANKED
+LV1_BASE = $BB00                        ; top of bank A (see above)
+.else
+LV1_BASE = ROM_SEG_HDR_C + LAY_LV1_OFF
+.endif
+ROM_LV1X_LO_C = LV1_BASE + $000
+ROM_LV1X_HI_C = LV1_BASE + $080
+ROM_LV1Y_LO_C = LV1_BASE + $100
+ROM_LV1Y_HI_C = LV1_BASE + $180
 .assert (ROM_LV1X_LO_C & $FF) = 0, error, "LV1 planes must be page-aligned"
+; Back-pair palette (2026-08-17): the seg header carries a u8 id here instead
+; of two height bytes. 96 entries — 56 shared plus one private per
+; mover-touching seg, so an anim patch cannot bleed into a neighbour.
+.if ::BANKED
+BPAL_BASE = $BD00                       ; top of bank A (see above)
+.else
+BPAL_BASE = ROM_SEG_HDR_C + LAY_BPAL_OFF
+.endif
+ROM_BPAL_BFH_C = BPAL_BASE + $00
+ROM_BPAL_BCH_C = BPAL_BASE + $80
+.assert ROM_BPAL_BCH_C + 128 <= $BE00, error, "BPAL runs into USETAB"
+; Driver tables in BANK C (2026-08-17): read only by walk_drv, which pages this
+; bank for them. They were in bank A until its bottom was wanted for the
+; main-RAM caches. Banked only — the flat harness runs no driver.
+.if ::BANKED
+ROM_DRV_SINCOS_C = $9900
+ROM_DRV_USEVEC_C = $9B00
+.endif
+.assert (ROM_BPAL_BFH_C & $FF) = 0, error, "BPAL page must be page-aligned"
 .assert (ROM_SS_FH_C & $FF) = 0, error, "SS height pages must be page-aligned"
 .assert (ROM_BBOX_C & $FF) = 0, error, "bbox base must stay page-aligned"
 ; Bbox corner planes (16 x 256, page-split SoA): field at f*$200, side
