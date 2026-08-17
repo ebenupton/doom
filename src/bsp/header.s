@@ -472,14 +472,27 @@ VEXPL_CONT = $DF00
 ; pack-time assert). The senior bit is header key byte B & $20 — the
 ; reader dispatches to an arm with the page BAKED, so there is no
 ; address generation anywhere in the vertex frame cache.
-VCACHE_BASE = $0800                     ; planes $0800-$11FF (cache
-                                        ; region shuffle 2026-08-09)
+; BANKED: the four planes live in the BANK A window since 2026-08-17 — the
+; audit censused ~20,000 accesses (VXC off, VXC on with the coherence walk, and
+; the real driver from a bare machine) and every one already ran with bank 4
+; paged, so this costs no paging and no cycles: abs,X in the window is the same
+; 4 cycles it was in main. FLAT keeps them in main, so $0800-$0FFF and
+; $1200-$19DF are free in the BANKED map ONLY — the one place the two builds'
+; sub-$5800 maps diverge (Eben's call, banked-first).
+.if ::BANKED
+VCACHE_BASE = $9800                     ; bank A, below the vertex planes
+.else
+VCACHE_BASE = $0800                     ; main (cache region shuffle 2026-08-09)
+.endif
 VC_RHI  = VCACHE_BASE + $000
 VC_RLO  = VCACHE_BASE + $200
 VC_SXL  = VCACHE_BASE + $400
 VC_SXH  = VCACHE_BASE + $600
-; ($1000-$11FF FREE 2026-08-13: VC_CLIP folded into VC_RLO — S = 0 is
-;  the clipped sentinel, real S is never 0. VCACHE = 4 planes now.)
+; (VC_CLIP folded into VC_RLO 2026-08-13 — S = 0 is the clipped sentinel, real
+;  S is never 0. VCACHE = 4 planes.)
+.if ::BANKED
+.assert VCACHE_BASE >= $8000 && VC_SXH + $200 <= $AB00, error,  "banked VCACHE must sit inside bank A, below the vertex planes"
+.endif
 VCACHE_VALID_BASE = $0700               ; THE BITMAP PAGE (relocation to
                                         ; the VXC plane tails tried and
                                         ; UNWOUND 2026-08-13 pending the

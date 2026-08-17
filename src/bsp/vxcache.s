@@ -64,10 +64,21 @@ vxc_prev_ab = $05DC
 ; (VXC_VALID was already main), banked frees $9700-$9EFF -> with the
 ; clipper tail gap a ~2.7KB contiguous bank-C block; flat frees
 ; $7500-$7CFF.
-VXC_XLO  = $1200
-VXC_XHI  = $1400
-VXC_YLO  = $1600
-VXC_YHI  = $1800
+; BANKED: the planes moved into the BANK A window 2026-08-17, directly above
+; VCACHE (see bsp/header.s for the audit that says this costs nothing). FLAT
+; keeps them in main.
+.if ::BANKED
+VXC_BASE = $A000
+.else
+VXC_BASE = $1200
+.endif
+VXC_XLO  = VXC_BASE + $000
+VXC_XHI  = VXC_BASE + $200
+VXC_YLO  = VXC_BASE + $400
+VXC_YHI  = VXC_BASE + $600
+.if ::BANKED
+.assert VXC_YHI + $200 <= $AB00, error,  "banked VXC must fit below the vertex planes"
+.endif
 
 ; the frame angle byte: abi.inc's BCA_AB (the old private vxc_ab copy
 ; shipped the 2026-07-10 broken-turn disc)
