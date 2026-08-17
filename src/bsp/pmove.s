@@ -38,12 +38,14 @@ pm_exy     = PM_SCRATCH+$26             ;  by pmove_use; oldx..exy runs)
 ::pm_sdy   = PM_SCRATCH+$47             ;  sdy = a 4B run for the negate)
 
 ; --- internal scratch: PLACED EQUATES, not .res — banked overlays the
-; driver's ONE-SHOT init block ($2000-$20D3, dead after boot; a warm
+; driver's ONE-SHOT init block ($1F00-$1FD3, dead after boot; a warm
 ; re-entry of the boot path would execute scratch as code — cold boot
-; only); flat uses its free zone side. Adjacency is LOAD-BEARING
-; throughout (indexed copy loops + the bounds/axis loops).
+; only; it tracks DRV_ORG, which slid a page down 2026-08-17); flat uses
+; its free zone side. Adjacency is LOAD-BEARING throughout (indexed copy
+; loops + the bounds/axis loops).
 .if ::BANKED
-PM_SCRATCH = $2000
+PM_SCRATCH = DRV_ORG                    ; NOT a private copy: the overlay IS
+                                        ; the driver's init block (abi.inc)
 .else
 PM_SCRATCH = $2200
 .endif

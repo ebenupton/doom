@@ -2,7 +2,7 @@
 ; bsp/header.s — build flags, macros, cross-unit imports.
 ;
 ; CONTEXT: included FIRST by src/bsp_render.s (after zp.inc). MAIN sits
-; first in the CODE region — banked $2C00, flat $3670 (= abi MAIN_BASE;
+; first in the CODE region — $2B00, both builds (= abi MAIN_BASE;
 ; gen_abi.py owns the constant). Jump tables are GONE (2026-07-16):
 ; drivers/harness resolve engine entries by symbol from the linker map. PAGE is the bank-select macro: LDA
 ; #bank / STA $FE30 banked, NOTHING flat — so PAGE clobbers A + flags
@@ -518,7 +518,7 @@ VDONE = VCACHE_VALID_BASE + 60          ; (57 B live; the crossing's
 ; anim_tick / anim_init) from the linker map via the generated
 ; engine_syms.inc, and the Python harness resolves every entry by
 ; symbol (symmap). MAIN still sits FIRST in the CODE region (cfg
-; anchor $2C00/$3670 = MAIN_BASE in the ABI table): code_head marks it
+; anchor $2B00 = MAIN_BASE in the ABI table): code_head marks it
 ; for engine_load.py's CODE-bin placement.
 ; ============================================================================
 code_head:

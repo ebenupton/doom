@@ -33,8 +33,11 @@ def rows():
     # --- per-vertex 512-entry planes: hi page holds NHI of 256 ---
     for n in ('VC_RHI', 'VC_RLO', 'VC_SXL', 'VC_SXH'):
         out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'main runtime'))
-    for n in ('VP_XLO', 'VP_XHI', 'VP_YLO', 'VP_YHI'):
-        out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'L2/flat ROM'))
+    # packed vertex planes: 4 fixed-point planes became 3 page-decomposed
+    # ones (VP_OX/OY offsets + VP_PG page nibble) — the old VP_XLO..VP_YHI
+    # names have not existed since that arc, and this tool died on them
+    for n in ('VP_OX', 'VP_OY', 'VP_PG'):
+        out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'bank A/flat ROM'))
     try:
         for n in ('VXC_XLO', 'VXC_XHI', 'VXC_YLO', 'VXC_YHI'):
             out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'main runtime'))
@@ -57,7 +60,7 @@ def rows():
             pass
     # --- singletons ---
     out.append(('VDONE', sym('VDONE'), 57, 256, 'main <$1B40'))
-    out.append(('ANIM_SSMASK tail', 0x1F00, NS, 0x1FE8 - 0x1F00, 'main bitmap-era home'))
+    out.append(('ANIM_SSMASK tail', sym('ANIM_SSMASK'), NS, 256, 'main; the copy-down moves a WHOLE page'))
     out.append(('VEXPL_LO/HI (packed @ $60)', sym('VEXPL_LO'), NEX, 0x60, 'already sub-page packed'))
     return out
 

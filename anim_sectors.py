@@ -376,7 +376,7 @@ def gen_6502_tables(flat=True):
         A = dict(ssmask=0xE500, tabl0=0xE600, cfg=0xE700,
                  hdr=br.ROM_SEG_HDR_BASE, vex_lo=0xDE00, vex_hi=0xDE80)
     else:
-        A = dict(ssmask=0x1F00, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
+        A = dict(ssmask=0x1100, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
                  vex_lo=0xA700, vex_hi=0xA780)
     order = sorted(dw.ANIM_SECTORS)
     out = {}

@@ -33,11 +33,19 @@ def mk_bare():
                           dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     L0,C,L2 = (bytes(src.bm._banks[b]) for b in (BANK_L0,BANK_C,BANK_L2))
     import os as _os
-    LOW = bytes(src.bm[0x1C00:0x2C00 + _os.path.getsize('bsp_render_bk.bin')])
+    # LOW base $1A00, exactly as the disc loads it (the $1C00 base here was
+    # stale from before the 2026-08-09 sqr consolidation, and showed up as
+    # ~340 phantom "diffs" in the sqr pages this harness never loaded)
+    LOW = bytes(src.bm[0x1A00:abi.MAIN_BASE + _os.path.getsize('bsp_render_bk.bin')])
     sc = SpanClip6502()
     bare = BankedMemory([0]*65536)
     for n,img in [(BANK_L0,L0),(BANK_C,C),(BANK_L2,L2)]: bare.define_bank(n,img)
-    for i,b in enumerate(LOW): bare[0x1C00+i]=b
+    for i,b in enumerate(LOW): bare[0x1A00+i]=b
+    # ANIM_SSMASK sits BELOW the LOW image, so no disc file carries it: on
+    # hardware anim_init copies it down from the bank staging page. We enter
+    # engine entries directly and never run init, so mirror that copy here.
+    _ss = symmap.sym('ANIM_SSMASK', banked=1)
+    for i in range(256): bare[_ss+i] = src.bm[_ss+i]
     for a,v in ZP.items(): bare[a]=v
     # RNS vectoring block: staged in L2 $A100, copied to the stack page by
     # the drivers' boot stkcpy — mirror that here (we enter entries directly).

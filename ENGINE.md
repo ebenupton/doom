@@ -124,7 +124,7 @@ vxcache.s.
                            inlined; returns phi hi in A, lo in Y)
     src/span_clip.s      Span clipper unit = ordered .includes of src/clip/:
       clip/header.s        build flags, entry .exports (no jump table)
-      clip/arith.s         umul8 (pinned $2030), udiv16_8
+      clip/arith.s         umul8 (the $2030 pin died — see the file), udiv16_8
       clip/pool.s          span_init, alloc/free (32 slots @ $0400)
       clip/interp.s        interp_store (round-to-nearest lerp)
       clip/mark_solid.s    lazy column removal (split/truncate/shrink)
@@ -185,25 +185,35 @@ The engine is **one ld65 link** of three objects; cross-module calls are
 the linker resolves cross-module calls), so a renamed/removed routine is a
 link error, never a silent wrong address.
 
-## Memory maps (2026-07-12, post flat-merge — the current truth)
+## Memory maps (2026-07-12, post flat-merge)
 
 Segment names describe WHAT code is; the per-build cfg decides WHERE it
 goes. There are no `.if BANKED` segment aliases left to add — placement
 belongs in the configs.
+
+**STALE IN PLACES (noted 2026-08-17).** These two listings date from
+2026-07-12 and several arcs have moved things since (the two-bank re-cut,
+the cache/bitmap regroup, page-decomposed verts, pm_frame into bank B, the
+$1F00/$2B00 slide below). The AUTHORITATIVE sources are, in order: the two
+`src/engine_*.cfg` files (regions), `src/abi.inc` via `tools/gen_abi.py`
+(every cross-language address), and `symmap.sym()` / the ld65 map (every
+label). Trust those over any prose here, and fix a line when you find it
+wrong rather than adding a second stale copy.
 
 **Flat** (harness/regression; 5 regions, was 13):
 
     $0000-$00FF  ZP (src/zp.inc registry)
     $0100-$01FF  RESERVED FREE (stack + future; do not squat — Eben)
     $0200-$0AFF  pools/records/workspaces (identical layout to banked;
-                 ANIM_SSMASK runtime copy $0A80 — unforked 2026-07-21;
+                 ANIM_SSMASK runtime copy: $1100 since 2026-08-17
                  $0600 = RC_P1L_0 since the 2026-07-27 recovery)
     $0B00-$0BFF  RC_P1L_1 (2026-07-27; zp_ft args moved to $E4F8,
                  zp_rom_detail $0BF6/7 retired dead)
     $0C00-$1B3F  VCACHE planes (7×512) + valid bitmap
     $1B40-$1B7F  BCA_WS (bca_ab $1B6F) — unforked with banked 2026-07-21
     $1C00-$1FFF  sqr quarter-square tables (unforked, one address)
-    $2000-$61FF  ALL CODE, one segment (islands died in the 2026-07-21 map)
+    $2B00-$566C  ALL CODE, one segment (islands died in the 2026-07-21 map;
+                 the head moved $2000 -> $2C00 -> $2B00, cfg-anchored)
     $6200-$6AFF  NJ rasteriser blob (RASTER_ENTRY $6200)  ** loaded by
                  span_clip_6502.py, NOT in any cfg — a placement trap **
     $6B00-$6FFF  FREE (1,280 contiguous — the 2026-07-27 recovery:
@@ -216,7 +226,7 @@ belongs in the configs.
                  $B900, bbox corners $C500, recip $D500
     $D900-$DBFF  L8_TAB / AE_LO / AE_HI
     $E000-$E401  VATOX ($E402-$E4F7 free; zp_ft args $E4F8-$E4FB)
-    $E500-$E7FF  anim: SSMASK_SRC $E500 (boot-copied to $0A80), TABL0
+    $E500-$E7FF  anim: SSMASK_SRC $E500 (boot-copied to $1100), TABL0
                  $E600, CFG $E700
     $E800-$E9FF  RC_P2L_1 $E800, RC_PH_0 $E900 (2026-07-27 recovery)
     $EA00-$FDFF  framebuffer (harness/copro)
@@ -231,9 +241,12 @@ belongs in the configs.
     $1C00-$1DFF  sqr LO pages (TWIN equates in clip/arith.s + bsp/header.s)
     $1E00-$1FFF  LCODE island: br_recip cluster + srecip_tab + rot
                  variant entries + pair thunk (472 B; JSR/SMC-linked only)
-    $2000-$2BFF  beebasm drivers (drv $2000, vars $2180, glue $21A0,
-                 sincos $2200, clears+input $2400)
-    $2C00-$57FF  CODE: MAIN first at $2C00 (MAIN_BASE); drivers take real
+    $1100-$11FF  ANIM_SSMASK runtime home (2026-08-17; the copy-down moves
+                 a WHOLE page, so the 35 B tail is NOT free)
+    $1F00-$2AFF  beebasm driver ($1F00, vars $2080, glue $20A0,
+                 clears+input+flip $2100) then the PMOVE/PMH region
+                 ($2340); the framebuffer clears live in bank C
+    $2B00-$57FF  CODE: MAIN first at $2B00 (MAIN_BASE); drivers take real
                  entry addresses from the generated engine_syms.inc
     $5800-$7FFF  screen (double-buffered $5800/$6C00)
     $8000-$BFFF  sideways window; banks 4/6/7 = L0/C/L2:
@@ -243,7 +256,7 @@ belongs in the configs.
       L2: TA_LO $8000 / TA_HI $8400 / VATOX $8900 / bbox $8E00 / recip
           $9D00 / verts $A200 / RCACHE $AD00-$B4E8 / VWHC $B500-$B9FF /
           anim CFG $BA00
-    SSMASK $0A80 = documented main-RAM exception (read under any bank).
+    SSMASK $1100 = documented main-RAM exception (read under any bank).
 
 RULES (absolute unless renegotiated): no level data in main RAM; no code
 in a sideways bank without explicit permission (only clipper/raster/HUD
@@ -317,9 +330,12 @@ not worsened vs baseline.json, suite cycles within 0.25% of baseline.
 - verify_6502_vs_python.py: float render_bsp is ground truth. Standing
   residue: 3px over at (911,-3366,13), 3px miss at (1057,-3809,135) —
   pre-existing, do not chase into unrelated changes.
-- test_lockstep prints an FB nz mismatch line (model 4586 vs bare 557)
-  and a $0063 diff — PRE-EXISTING diagnostic noise; test_bare_boot is
-  the actual pass gate of that pair.
+- test_lockstep is CLEAN as of 2026-08-17: "ZP + data diffs 0", identical
+  step counts, 0 differing FB bytes. The old "PRE-EXISTING diagnostic
+  noise" (an FB nz mismatch, model 4586 vs bare 557) was the harness's own
+  stale $1C00 LOW base — it never loaded the sqr pages the 2026-08-09
+  consolidation moved to $1A00. Any diff it prints now is REAL; treat it
+  as a gate, not as noise (test_bare_boot remains the stricter one).
 - walkseq_check warns "no warm speedup" at (1500,-3700) — pre-existing.
 - Unit-test individual stages first; debug integrated frames only when
   isolation fails. Contracts enforced only in Python wrapper preludes are

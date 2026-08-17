@@ -22,7 +22,7 @@
 ;       dst[0..7] = os_font[(ch-32)*8 .. +7]
 ;
 ; Driver interface (walk_drv.asm): BOTH sides now derive the variable
-; addresses from the abi.inc DV_* equates (DRV_VARS = $2180) — private
+; addresses from the abi.inc DV_* equates (DRV_VARS = $2080) — private
 ; address copies are banned here because of the bug this caused: when
 ; the driver vars moved (2026-07-10) this file's stale hardcoded $3D8x
 ; copies survived, HUD_BACKHI read an engine-code byte as the FB page,

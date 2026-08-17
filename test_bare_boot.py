@@ -23,6 +23,7 @@ from span_clip_6502 import SpanClip6502
 
 SPAWN = (1056, -3616, 128)
 import abi
+import symmap
 DRV_ADDR = abi.DRV_ORG
 # SPIN (.spin JMP self, see banked_boot.asm DRV) is found by scanning DRV
 # for the self-jump — the driver shrinks/moves with layout work.
@@ -51,7 +52,7 @@ def main():
     C  = bytes(src.bm._banks[BANK_C])
     L2 = bytes(src.bm._banks[BANK_L2])
     import os as _os
-    LOW = bytes(src.bm[0x1A00:0x2C00 + _os.path.getsize('bsp_render_bk.bin')])  # $1A00 base: sqr quad + srecip ride LOW (2026-08-09)
+    LOW = bytes(src.bm[0x1A00:abi.MAIN_BASE + _os.path.getsize('bsp_render_bk.bin')])  # $1A00 base: sqr quad + srecip ride LOW (2026-08-09)
     import subprocess as _sp
     import asmbuild
     asmbuild.gen_engine_syms()              # driver entries from the ld65 map
@@ -101,7 +102,10 @@ def main():
         # diagnostics: did the walk visit anything? check table pointers
         # ($42/$43 + $0BE8 pointer diagnostics retired 2026-07-10:
         #  ROM bases are layout.inc constants now)
-        print(f"  ssmask $0A80 = {' '.join('%02X'%bare[0xA80+i] for i in range(8))}")
+        # (the mask's home has moved twice since this print was written —
+        #  read it from the map, never from a literal)
+        _ss = symmap.sym('ANIM_SSMASK', banked=1)
+        print(f"  ssmask ${_ss:04X} = {' '.join('%02X'%bare[_ss+i] for i in range(8))}")
 
 
 if __name__ == '__main__':
