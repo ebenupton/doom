@@ -56,8 +56,8 @@ def build_images():
     drv = open('ANIMDRV', 'rb').read()
     # the engine's PMOVE slice owns $2600-$2BFF (already in the bm slice):
     # a driver that grows past $2600 would overlay-shred it
-    assert DRV_ADDR + len(drv) <= 0x24D2, \
-        f'driver {len(drv)}B reaches the PMOVE slice at $24D2'
+    assert DRV_ADDR + len(drv) <= 0x2440, \
+        f'driver {len(drv)}B reaches the PMOVE slice at $2440'
     overlay(DRV_ADDR, drv)
     # (sincos overlay retired 2026-08-14: the table lives in bank A $BA00
     # with STEPTAB/USEVEC — banked_bsp seeds them into the la image)

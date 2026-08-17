@@ -60,7 +60,7 @@ ABI = [
     ('DV_HUD_EN',      'DRV_VARS+9',  None, 'debug HUD on/off (H toggles)'),
     ('DV_HUD_PREV',    'DRV_VARS+10', None, 'H-key debounce state'),
     ('DRV_GLUE',       0x21A0, None, 'anim/HUD glue pocket'),
-    ('DRV_CLR',        0x2200, None, 'unrolled clears + input block (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE slice at $2600)'),
+    ('DRV_CLR',        0x2200, None, 'input block; the unrolled framebuffer clears moved to BANK C 2026-08-16 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE slice at $2600)'),
     ('D_ENABLE',       0x05FE, None, 'forward-coherence bbox cache master switch'),
     ('D_FWD',          0x05FF, None, 'per-frame flag: move was forward-only'),
     ('VXC_STATE',      0x0700, None, 'THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),

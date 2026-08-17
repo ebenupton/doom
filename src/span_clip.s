@@ -13,3 +13,4 @@
 .include "clip/dcl_s16.s"
 .include "clip/vplot.s"
 .include "clip/rotvar.s"
+.include "clip/fbclear.s"

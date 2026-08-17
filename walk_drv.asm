@@ -179,7 +179,8 @@ ORG DRV_ORG
     ; and zero momentum the call itself is a no-op: it just stores
     ; now->prev, so the first real frame gets an honest delta.
     JSR mv_frame
-    JSR clr58 : JSR clr6C
+    LDA #BANK_C : STA &FE30                         ; the clears live in bank C
+    JSR ENG_FB_CLR0 : JSR ENG_FB_CLR1
 ; ---------------------------------------------------------------------------
 ; frame — main loop, one iteration per rendered frame (paced by flip_sched's
 ; vsync waits when the beam demands one; free-running otherwise).
@@ -294,37 +295,11 @@ ORG DRV_GLUE
 
 ORG DRV_CLR
 ; ---------------------------------------------------------------------------
-; clr58t/clr58b/clr6Ct/clr6Cb — unrolled clears of framebuffer half-screens.
-; Each 20-page buffer ($5800 or $6C00) splits at the 80-row midline into a
-; top half (10 pages) and a bottom half (10 pages) so flip_sched can clear
-; the beam-passed top early while waiting for vsync to release the bottom.
-; One INY/BNE loop, ten STA abs,Y per pass = 5 cyc/byte. Clobbers A,Y.
+; The framebuffer clears used to live here (~145 B of unrolled STAs). They
+; moved into BANK C on 2026-08-16 (src/clip/fbclear.s) to buy main RAM
+; back: call ENG_FB_CLR_BACK / ENG_FB_CLR0 / ENG_FB_CLR1 with bank C
+; paged. Both call sites below page it for the plot-queue drain anyway.
 ; ---------------------------------------------------------------------------
-.clr58
-    LDA #0 : TAY
-.c58
-    STA &5800,Y : STA &5900,Y : STA &5A00,Y : STA &5B00,Y
-    STA &5C00,Y : STA &5D00,Y : STA &5E00,Y : STA &5F00,Y
-    STA &6000,Y : STA &6100,Y : STA &6200,Y : STA &6300,Y
-    STA &6400,Y : STA &6500,Y : STA &6600,Y : STA &6700,Y
-    STA &6800,Y : STA &6900,Y : STA &6A00,Y : STA &6B00,Y
-    INY : BNE c58
-    RTS
-.clr6C
-    LDA #0 : TAY
-.c6C
-    STA &6C00,Y : STA &6D00,Y : STA &6E00,Y : STA &6F00,Y
-    STA &7000,Y : STA &7100,Y : STA &7200,Y : STA &7300,Y
-    STA &7400,Y : STA &7500,Y : STA &7600,Y : STA &7700,Y
-    STA &7800,Y : STA &7900,Y : STA &7A00,Y : STA &7B00,Y
-    STA &7C00,Y : STA &7D00,Y : STA &7E00,Y : STA &7F00,Y
-    INY : BNE c6C
-    RTS
-.clr_back
-    LDA backhi : CMP #&58 : BNE cb_6C
-    JMP clr58
-.cb_6C
-    JMP clr6C
 
 .flip_sched
     LDX &0A50                                       ; cadence probe: log the
@@ -343,10 +318,10 @@ ORG DRV_CLR
     LDA &FE4D : AND #2 : BEQ fs_wq                  ; wait the flip vsync
     LDA #&4D : STA &FE45                            ; fresh edge: re-phase T1
 .fs_wq_stale
-    JSR clr_back                                    ; full-frame clear
+    LDA #BANK_C : STA &FE30                         ; clear + drain both live
+    JSR ENG_FB_CLR_BACK                             ;  in bank C
     LDA &A0                                         ; plotq_n: 0 = no lines
     BEQ fs_q_empty                                  ; (empty scene) — n>0
-    LDA #BANK_C : STA &FE30                         ; guaranteed < full here
     JSR ENG_PLOTQ_DRAIN                             ; (the pump forces at 64)
 .fs_q_empty
     LDA #0 : STA &A1                                ; direct mode
@@ -389,9 +364,9 @@ ORG DRV_CLR
     BEQ pq_force
     LDA &FE4D : AND #2 : BEQ pq_ret                 ; vsync not yet: queue on
 .pq_ready
-    JSR clr_back                                    ; buffer just off display
-    LDA #BANK_C : STA &FE30                         ; (explicit: drain plots)
-    JSR ENG_PLOTQ_DRAIN
+    LDA #BANK_C : STA &FE30                         ; (explicit: the emit
+    JSR ENG_FB_CLR_BACK                             ;  cascade leaves C live,
+    JSR ENG_PLOTQ_DRAIN                             ;  but do not lean on it)
     LDA #0 : STA &A1                                ; direct from here on
 .pq_ret
     RTS
