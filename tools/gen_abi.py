@@ -29,7 +29,7 @@ ABI = [
     # the generated engine_syms.inc (build_walk_ssd.py), Python via
     # symmap. Only the cfg-anchored region head stays an ABI constant
     # (the driver clear-overlay assert needs it before the engine links).
-    ('MAIN_BASE',      0x2B00, None, 'engine CODE region head (cfg-anchored; MAIN first). $2C00 -> $2B00 2026-08-17: SSMASK to the freed $1100 page let the driver+PMOVE block slide a page down, so CODE claims $2B00-$2BFF (+256 B of tail slack). Flat matched by moving the CPM psi planes off $2B00.'),
+    ('MAIN_BASE',      0x2A00, None, 'engine CODE region head (cfg-anchored; MAIN first). $2C00 -> $2B00 -> $2A00 2026-08-17 (the second slide came from retiring the LDATA region at $1E00): SSMASK to the freed $1100 page let the driver+PMOVE block slide a page down, so CODE claims $2B00-$2BFF (+256 B of tail slack). Flat matched by moving the CPM psi planes off $2B00.'),
     ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
     # (BCA_WS RETIRED 2026-07-26: the workspace block is gone — the box
     # val[] slots were engine-dead (the classify reads BBP planes; only
@@ -46,8 +46,8 @@ ABI = [
     ('SQRH_BASE',      0x1C00, None, 'quarter-square HI pages ($1C00/$1D00) — UNFORKED into the $1A00-$1DFF quad 2026-08-09: the $0200 OS-page boot-staging dance died (page 2 freed — the tube client owns it); flat $1E00 freed for LDATA'),
     ('SQR_HI',         'SQRH_BASE+$000', None, 'qsqr hi bytes (f 0..255)'),
     ('SQR2_HI',        'SQRH_BASE+$100', None, 'qsqr hi bytes (f 256..510)'),
-    ('DRV_ORG',        0x1F00, None, 'walk/anim driver entry (!BOOT CALLs this). $2000 -> $1F00 2026-08-17: ANIM_SSMASK vacated $1F00 for the freed $1100 page, so the whole driver + PMOVE block slid one page down and CODE gained $2B00-$2BFF.'),
-    ('DRV_VARS',       0x2080, None, 'walk driver variable block (layout below)'),
+    ('DRV_ORG',        0x1E00, None, 'walk/anim driver entry (!BOOT CALLs this). $2000 -> $1F00 -> $1E00 2026-08-17 (RECIP_S left main for bank A, retiring the LDATA region): ANIM_SSMASK vacated $1F00 for the freed $1100 page, so the whole driver + PMOVE block slid one page down and CODE gained $2B00-$2BFF.'),
+    ('DRV_VARS',       0x1F80, None, 'walk driver variable block (layout below)'),
     ('DV_ANGIDX',      'DRV_VARS+0',  None, 'view angle index 0..63 (angle byte = idx*4)'),
     ('DV_BACKHI',      'DRV_VARS+1',  None, 'hidden-buffer page hi ($58/$6C)'),
     ('DV_PXF',         'DRV_VARS+2',  None, 'player x 8.8 prescaled, 24-bit: frac'),
@@ -59,8 +59,8 @@ ABI = [
     ('DV_JIDX',        'DRV_VARS+8',  None, 'vsync journal index'),
     ('DV_HUD_EN',      'DRV_VARS+9',  None, 'debug HUD on/off (H toggles)'),
     ('DV_HUD_PREV',    'DRV_VARS+10', None, 'H-key debounce state'),
-    ('DRV_GLUE',       0x20A0, None, 'anim/HUD glue pocket'),
-    ('DRV_CLR',        0x2100, None, 'input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)'),
+    ('DRV_GLUE',       0x1FA0, None, 'anim/HUD glue pocket'),
+    ('DRV_CLR',        0x2000, None, 'input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)'),
     ('D_ENABLE',       0x05FE, None, 'forward-coherence bbox cache master switch'),
     ('D_FWD',          0x05FF, None, 'per-frame flag: move was forward-only'),
     ('VXC_STATE',      0x0700, None, 'THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
@@ -72,8 +72,13 @@ ABI = [
     ('CPM_BASE',       0xA600, 0x2900, 'corner-phi memo: 128-slot xor hash, 6 planes. This is the KEY head — 4 key planes, $200 long (the value planes hang off CPM_PSI_BASE, split out flat-side 2026-08-17). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
     ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
     ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane'),
-    ('CPM_KDYL',       'CPM_BASE+$100', None, '... dy lo'),
-    ('CPM_KDYH',       'CPM_BASE+$180', None, '... dy hi'),
+    # The dy key planes split out flat-side 2026-08-17 for the same reason
+    # the psi planes did: CODE's head moved down again, to $2A00, and flat
+    # has to clear the page. They land on the page RECIP_S vacated when it
+    # left main for bank A. Banked keeps the memo contiguous.
+    ('CPM_KDY_BASE',   'CPM_BASE+$100', 0x1E00, 'dy key planes head (banked: inline; flat: the page RECIP_S left)'),
+    ('CPM_KDYL',       'CPM_KDY_BASE+$000', None, '... dy lo'),
+    ('CPM_KDYH',       'CPM_KDY_BASE+$080', None, '... dy hi'),
     # The value planes are addressed independently of the key planes (bca.s
     # indexes each by X), so they need not abut the keys. Split out 2026-08-17
     # so the FLAT memo stops occupying $2B00-$2BFF: CODE's head moved down to

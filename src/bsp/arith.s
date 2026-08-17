@@ -80,18 +80,14 @@ SEG_CODE
 ; is baked into height prescaling. Clobbers A, X, Y, zp_br_p/p_h.
 ; ============================================================================
 ; (recip_hi moved to clip/rotvar.s 2026-08-09 — see above.)
-; SRECIP: 256-byte junior-page S table — ASSEMBLED data in the CODE
-; region (main RAM: bank-independent, no loader involvement; the first
-; flat placement at $1A00 sat on the RCACHE psi plane and rotcache
-; caught it). Static and map-independent (src/srecip.inc, generated).
-.segment "LDATA"                            ; $1E00 DATA-ONLY region (the
-                                            ; LCODE island died 2026-08-09:
-                                            ; one contiguous code area rule)
-::RECIP_S:                                 ; (read by the inlined junior
-.include "srecip.inc"                       ; arm at nc_ok, under L2;
-                                            ; NIBBLE-SWAPPED layout — see
-                                            ; the .inc header)
-SEG_CODE
+; SRECIP: the 256-byte junior-page S table is a PACKED TABLE now, seeded
+; beside RECIP_M8/M8H in bank A (flat: $D800) — see bsp/header.s for the
+; addresses and wad_packed.srecip_table() for the values. It was assembled
+; data in an LDATA region at main $1E00 until 2026-08-17; the region existed
+; only because the table was believed to be read under another bank, and a
+; census (1,663 reads, all bank 4, five bytes after the M8 read in the same
+; routine) said otherwise. The LDATA region is retired with it. HISTORY: the
+; first flat placement at $1A00 sat on the RCACHE psi plane, rotcache caught it.
 
 ; ============================================================================
 ; HELPER: frac_rot_term — fractional rotation contribution.

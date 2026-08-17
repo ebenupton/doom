@@ -87,6 +87,23 @@ def seg_hdr_off(slot):
     return page * 256 + k * SEG_HDR_SIZE
 
 
+def srecip_table():
+    """RECIP_S: the junior-page shift table for the floating-mantissa
+    reciprocal, S(idx) = bit_length(idx-1) with the low clamp baked
+    (S[0..2] = 1, matching the M8 table). Stored NIBBLE-SWAPPED so the
+    fast-path index is (vy_l & $F0) | vy_h — see seg_xform nc_ok.
+
+    Map-independent and static forever; it was assembled data in the LDATA
+    region at $1E00 until 2026-08-17, when it moved next to RECIP_M8/M8H in
+    bank A (the audit found all 1,663 reads already ran under bank 4, five
+    bytes after the M8 read in the same routine).
+    """
+    t = bytearray(256)
+    for idx in range(256):
+        t[((idx & 0x0F) << 4) | (idx >> 4)] = 1 if idx <= 2 else (idx - 1).bit_length()
+    return bytes(t)
+
+
 def seg_hdr_slot(off):
     """Inverse of seg_hdr_off: slot index for a byte offset (page-slotted)."""
     page, k = divmod(off, 256)

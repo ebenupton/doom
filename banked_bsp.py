@@ -98,6 +98,11 @@ def build_banked(flatr):
     # flat-image garbage over the VWHC key plane at $B300 -> stale serves
     la[bdst('RECIP_M8'):bdst('RECIP_M8') + 256] = bytes(fmem[_vsym('RECIP_M8'):_vsym('RECIP_M8') + 256])
     la[bdst('RECIP_M8H'):bdst('RECIP_M8H') + 128] = bytes(fmem[_vsym('RECIP_M8H'):_vsym('RECIP_M8H') + 128])
+    # RECIP_S: the junior-page shift table, beside the mantissa tables it is
+    # read with (2026-08-17 — it was assembled data in main until the census
+    # showed every read already ran under bank 4)
+    import wad_packed as _wp
+    la[bdst('RECIP_S'):bdst('RECIP_S') + 256] = _wp.srecip_table()
     if dw.ANIM_SECTORS:
         import anim_sectors as _an0
         for addr, blob in _an0.gen_6502_tables(flat=False).items():

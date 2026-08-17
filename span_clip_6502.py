@@ -143,11 +143,20 @@ class SpanClip6502:
         # Page 0 NIBBLE-SWAPPED (2026-08-10): the fast path indexes
         # (vy_l & $F0) | vy_h; pages 1-3 linear (recip_hi ladder).
         from fp import _RECIP_M8
+        import symmap as _sm, wad_packed as _wp
+        _m8 = _sm.sym('RECIP_M8', banked=0)
         for i in range(256):
-            mem[0xD500 + (((i & 0x0F) << 4) | (i >> 4))] = _RECIP_M8[i]
+            mem[_m8 + (((i & 0x0F) << 4) | (i >> 4))] = _RECIP_M8[i]
+        _m8h = _sm.sym('RECIP_M8H', banked=0)
         for i in range(128, 256):
-            mem[0xD600 + i - 128] = _RECIP_M8[i]   # far half (unswapped;
+            mem[_m8h + i - 128] = _RECIP_M8[i]     # far half (unswapped;
                                                    # the linear pages died)
+        # RECIP_S, the junior-page shift table: assembled data in the LDATA
+        # region at $1E00 until 2026-08-17, a seeded table beside the mantissa
+        # pages since (banked: bank A $B300).
+        _s = _sm.sym('RECIP_S', banked=0)
+        for i, b in enumerate(_wp.srecip_table()):
+            mem[_s + i] = b
 
         # Load NJ rasteriser at $A900 (for integrated line drawing)
         raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_flat.bin')

@@ -7,7 +7,7 @@ BANK_SEG = 4                            ; sideways bank A: seg headers+DIRs, ver
 BANK_C = 6                              ; sideways bank: clipper + rasteriser + HUD
 BANK_L2 = 7                             ; legacy alias for BANK_WALK
 BANK_WALK = 7                           ; sideways bank B: node SoA, L8/AE/VATOX, bbox, CPM, rcache, ANIM CFG — held for the whole BSP walk
-MAIN_BASE = $2B00                       ; engine CODE region head (cfg-anchored; MAIN first). $2C00 -> $2B00 2026-08-17: SSMASK to the freed $1100 page let the driver+PMOVE block slide a page down, so CODE claims $2B00-$2BFF (+256 B of tail slack). Flat matched by moving the CPM psi planes off $2B00.
+MAIN_BASE = $2A00                       ; engine CODE region head (cfg-anchored; MAIN first). $2C00 -> $2B00 -> $2A00 2026-08-17 (the second slide came from retiring the LDATA region at $1E00): SSMASK to the freed $1100 page let the driver+PMOVE block slide a page down, so CODE claims $2B00-$2BFF (+256 B of tail slack). Flat matched by moving the CPM psi planes off $2B00.
 HUD_ENTRY = $A400                       ; hud_draw (bank C window)
 BCA_AB = $0062                          ; view angle byte — ZP (zp_buf's slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry's HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB
 SQR_BASE = $1A00                        ; quarter-square tables, CONSOLIDATED $1A00-$1DFF 2026-08-09 (the retired vsync-journal page + the freed VCACHE_VALID page): lo,2lo then hi,2hi — one contiguous quad, one address, both builds
@@ -16,8 +16,8 @@ SQR2_LO = SQR_BASE+$100                 ; qsqr lo bytes (f 256..510)
 SQRH_BASE = $1C00                       ; quarter-square HI pages ($1C00/$1D00) — UNFORKED into the $1A00-$1DFF quad 2026-08-09: the $0200 OS-page boot-staging dance died (page 2 freed — the tube client owns it); flat $1E00 freed for LDATA
 SQR_HI = SQRH_BASE+$000                 ; qsqr hi bytes (f 0..255)
 SQR2_HI = SQRH_BASE+$100                ; qsqr hi bytes (f 256..510)
-DRV_ORG = $1F00                         ; walk/anim driver entry (!BOOT CALLs this). $2000 -> $1F00 2026-08-17: ANIM_SSMASK vacated $1F00 for the freed $1100 page, so the whole driver + PMOVE block slid one page down and CODE gained $2B00-$2BFF.
-DRV_VARS = $2080                        ; walk driver variable block (layout below)
+DRV_ORG = $1E00                         ; walk/anim driver entry (!BOOT CALLs this). $2000 -> $1F00 -> $1E00 2026-08-17 (RECIP_S left main for bank A, retiring the LDATA region): ANIM_SSMASK vacated $1F00 for the freed $1100 page, so the whole driver + PMOVE block slid one page down and CODE gained $2B00-$2BFF.
+DRV_VARS = $1F80                        ; walk driver variable block (layout below)
 DV_ANGIDX = DRV_VARS+0                  ; view angle index 0..63 (angle byte = idx*4)
 DV_BACKHI = DRV_VARS+1                  ; hidden-buffer page hi ($58/$6C)
 DV_PXF = DRV_VARS+2                     ; player x 8.8 prescaled, 24-bit: frac
@@ -29,8 +29,8 @@ DV_PYH = DRV_VARS+7                     ; ... int hi
 DV_JIDX = DRV_VARS+8                    ; vsync journal index
 DV_HUD_EN = DRV_VARS+9                  ; debug HUD on/off (H toggles)
 DV_HUD_PREV = DRV_VARS+10               ; H-key debounce state
-DRV_GLUE = $20A0                        ; anim/HUD glue pocket
-DRV_CLR = $2100                         ; input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
+DRV_GLUE = $1FA0                        ; anim/HUD glue pocket
+DRV_CLR = $2000                         ; input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
 D_ENABLE = $05FE                        ; forward-coherence bbox cache master switch
 D_FWD = $05FF                           ; per-frame flag: move was forward-only
 VXC_STATE = $0700                       ; THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
@@ -54,8 +54,13 @@ CPM_BASE = $2900
 .endif
 CPM_KDXL = CPM_BASE+$000                ; memo key: corner dx lo
 CPM_KDXH = CPM_BASE+$080                ; ... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane
-CPM_KDYL = CPM_BASE+$100                ; ... dy lo
-CPM_KDYH = CPM_BASE+$180                ; ... dy hi
+.if ::BANKED
+CPM_KDY_BASE = CPM_BASE+$100; dy key planes head (banked: inline; flat: the page RECIP_S left)
+.else
+CPM_KDY_BASE = $1E00
+.endif
+CPM_KDYL = CPM_KDY_BASE+$000            ; ... dy lo
+CPM_KDYH = CPM_KDY_BASE+$080            ; ... dy hi
 .if ::BANKED
 CPM_PSI_BASE = CPM_BASE+$200; psi value planes head (banked: inline after the keys; flat: off the $2B00 page CODE took, into the free run above the recip tables)
 .else

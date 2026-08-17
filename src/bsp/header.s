@@ -415,12 +415,24 @@ zp_br_dy = zp_br_dy_l
 ; (L8/AE/VATOX/recip) | LEVEL $8C00-$A3FF (bbox 16p, verts $800) |
 ; CACHES $A400-$B2FF (CPM, rc psi planes, RCACHE_STATE, VWHC) |
 ; ANIM $B300/$B400 | FREE $B500-$BFFF contiguous.
+RECIP_S  = $A800                        ; junior-page S table, PAGE-ALIGNED,
+                                        ; in the run the vertex caches left
+                                        ; (2026-08-17: it came out of the LDATA
+                                        ; region at main $1E00 — every read was
+                                        ; already under bank 4, censused, and
+                                        ; $1E00 went to the driver so CODE could
+                                        ; drop a page). NOT $B300: that is
+                                        ; VWHC_R_S, which ships zero and so is
+                                        ; invisible in an occupancy dump — it
+                                        ; cost a bankedcmp failure to find.
 RECIP_M8 = $B100                        ; bank SEG (two-bank re-cut)
 RECIP_M8H = $B200                       ; far half-table [128,255],
                                         ; unswapped ($8980-$8BFF FREE
                                         ; 2026-08-13: far synthesis)
 L2_BBOX = $9600                         ; bank WALK (harness/loader points zp_rom_bbox here; = ROM_BBOX_C)
 .else
+RECIP_S  = $D800                        ; page-aligned, in the free run the
+                                        ; far half-table leaves
 RECIP_M8 = $D500                        ; flat LEVEL block (2026-07-21 map)
 RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)
 .endif
