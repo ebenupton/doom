@@ -232,9 +232,6 @@ ORG DRV_ORG
     LDA #BANK_L0 :STA &FE30 : JSR ENG_VIEW_SETUP    ; view_setup (real address, from the map)
     LDA #BANK_C :STA &FE30 : JSR ENG_SPAN_INIT      ; span_init / pool
     LDA #BANK_L0 :STA &FE30 : JSR ENG_RENDER_FRAME ; (init is inline at render entry)
-    INC &0A50                                       ; frame counter (cadence
-                                                    ; probe reads it; $0A50 =
-                                                    ; the dead zp_side slot)
     JSR flip_sched
     JMP frame
 
@@ -301,10 +298,13 @@ ORG DRV_CLR
 ; paged. Both call sites below page it for the plot-queue drain anyway.
 ; ---------------------------------------------------------------------------
 
+; The cadence probe was retired 2026-08-17: it logged the beam phase (T1hi)
+; to $1100,X once per frame, indexed by a frame counter at $0A50. Neither
+; address was free. $1100 is a whole page of main RAM, and $0A50 is NOT the
+; dead zp_side slot its comment claimed — it is VC_RLO+$50, the cached
+; rotated-r low byte of vertex 80, so the INC corrupted one vertex's cache
+; by 1 LSB every frame (invisible: no harness runs the driver).
 .flip_sched
-    LDX &0A50                                       ; cadence probe: log the
-    LDA &FE45                                       ; beam phase (T1hi) at
-    STA &1100,X                                     ; frame end, per frame
     ; --- finalize the run-ahead queue (fast frames only: the flip vsync
     ; never arrived mid-render, so the whole frame sits queued). Normal
     ; frames: the pump already cleared/drained/switched to direct. ---

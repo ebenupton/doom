@@ -1297,6 +1297,10 @@ des_diag:                                  ; FALLS THROUGH
 ; des_to_v normalize, else NJ) — pixels identical by construction.
 ; ============================================================================
 PLOTQ = $1000
+; ($1100-$11FF is FREE in BOTH builds since 2026-08-17: it held the driver's
+;  per-frame beam-phase cadence ring, retired with the $0A50 frame counter
+;  that indexed it — $0A50 is VC_RLO+$50, so that INC was corrupting one
+;  cached vertex rotation per frame. Neighbours: PLOTQ below, VXC_XLO above.)
 ::plot_enq:
    LDX plotq_n
    LDA RASTER_ZP_X0
