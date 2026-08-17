@@ -767,7 +767,8 @@ print(f"Merged {_merge_count} colinear seg pair(s) "
       f"({len(_stripped_segs)} → {len(_merged_segs)} segs)")
 
 # ── Page-slotting (2026-07-15): every subsector's seg-header run must sit
-# inside ONE 256-byte page (16 header slots of 16 bytes), so the engine's
+# inside ONE 256-byte page (SEG_HDR_PER_PAGE slots of SEG_HDR_SIZE bytes;
+# 18x14 = 252, so the last 4 bytes of each page are dead), so the engine's
 # seg loop never crosses a page and the header base page is a
 # subsector-level constant. Best-fit-decreasing bin packing (runs are
 # located purely through the SS pointer pages, so run order in the
@@ -777,11 +778,13 @@ print(f"Merged {_merge_count} colinear seg pair(s) "
 # references (DIR dedupe absorbs the duplicates). This runs BEFORE every
 # per-seg derivation (NOVT, anim, packing), so slot indices ARE the seg
 # indices everywhere downstream.
+from wad_packed import SEG_HDR_PER_PAGE as _SLOTS_PER_PAGE
 _pages = []          # each: [space_left, [(ss_index, run)...]]
 for _ssi in sorted(range(len(fp_ssectors)),
                    key=lambda i: -fp_ssectors[i][0]):
     _cnt, _first = fp_ssectors[_ssi]
-    assert _cnt <= 16, f"subsector run of {_cnt} segs cannot fit one page"
+    assert _cnt <= _SLOTS_PER_PAGE, \
+        f"subsector run of {_cnt} segs cannot fit one page"
     if _cnt == 0:
         continue
     _best = -1
@@ -789,7 +792,7 @@ for _ssi in sorted(range(len(fp_ssectors)),
         if _pg[0] >= _cnt and (_best < 0 or _pg[0] < _pages[_best][0]):
             _best = _j
     if _best < 0:
-        _pages.append([16, []])
+        _pages.append([_SLOTS_PER_PAGE, []])
         _best = len(_pages) - 1
     _pages[_best][0] -= _cnt
     _pages[_best][1].append((_ssi, fp_segs_vwh[_first:_first + _cnt]))
@@ -800,7 +803,7 @@ for _pi, (_left, _runs) in enumerate(_pages):
         _slot_first[_ssi] = len(_slotted)
         _slotted.extend(_run)
     if _pi != len(_pages) - 1 and _left:
-        _slotted.extend([_slotted[-1]] * _left)   # pad page to 16 slots
+        _slotted.extend([_slotted[-1]] * _left)   # pad the page out full
 _slotted_ss = [(fp_ssectors[_i][0], _slot_first.get(_i, 0))
                for _i in range(len(fp_ssectors))]
 print(f"Page-slotted seg headers: {len(fp_segs_vwh)} → {len(_slotted)} "
@@ -1557,20 +1560,23 @@ packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_
 # flags-gated header slots +10..15 plus anim-mover travel extremes; vz = any
 # sector floor + 41 (eye height), prescaled exactly as the runtime does.
 def _projection_bound_fence():
-    solid, needbt, needbb, ap1, ap2 = 0x02, 0x04, 0x08, 0x40, 0x01
+    # flag bits and the slot mapping come from the packer, never from local
+    # literals: this function's private copies went stale at the 2026-08-11
+    # SOLID/APEDGE1 bit swap, so it had been testing 0x02 for SOLID (and the
+    # aperture arm, which the descriptors retired, for 0x40)
+    from wad_packed import (SF_SOLID, SF_NEEDBT, SF_NEEDBB, seg_hdr_off)
     L, rm = packed_layout, packed_rom_main
     def s8(v): return v - 256 if v >= 128 else v
     consumed = set()
     for i in range(L['n_segs']):
-        o = L['off_seg_hdr'] + i * 16
+        o = L['off_seg_hdr'] + seg_hdr_off(i)
         f = rm[o + 8]
-        idx = [10, 11]
-        if f & solid:
-            if f & ap1: idx += [12, 13]
-            if f & ap2: idx += [14, 15]
+        idx = [10, 11]                      # fh, ch: always projectable
+        if f & SF_SOLID:
+            idx += [12, 13]                 # solid alias = fh/ch (see packer)
         else:
-            if f & needbb: idx.append(12)
-            if f & needbt: idx.append(13)
+            if f & SF_NEEDBB: idx.append(12)
+            if f & SF_NEEDBT: idx.append(13)
         for k in idx: consumed.add(s8(rm[o + k]))
     for sec, kind in ANIM_SECTORS.items():             # mover travel extremes
         srec = sectors[sec]
@@ -2609,6 +2615,8 @@ def render_bsp_fp(nid, clips, ctx, vz,
 from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s16,
                         clear_valid, is_valid, set_valid,
                         VERTEX_SIZE, NODE_SIZE, SSECTOR_SIZE, SEG_HDR_SIZE, SEG_DTL_SIZE,
+                        seg_hdr_off as _seg_hdr_off,
+                        seg_hdr_slot as _seg_hdr_slot,
                         VWH_SIZE, VCACHE_ENTRY,
                         SH_V1, SH_V2, SH_FORM, SH_C, SH_FLAGS,
                         SD_FH, SD_CH, SD_BFH, SD_BCH,
@@ -2694,7 +2702,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     rom_d = _p_rom_detail
 
     # ── Read seg header from rom_main ──
-    seg_off = layout['off_seg_hdr'] + si * SEG_HDR_SIZE
+    seg_off = layout['off_seg_hdr'] + _seg_hdr_off(si)
     _w1 = read_u16(rom, seg_off + SH_V1)    # (A=idx&255, B=idx>>3) key form
     _w2 = read_u16(rom, seg_off + SH_V2)
     v1_idx = (_w1 >> 8) * 8 + (_w1 & 7)
@@ -3160,9 +3168,11 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     rom = _p_rom_main
     ss_off = layout['off_ss']              # SoA pages: count, hdr-off lo/hi
     count     = rom[ss_off + idx]
-    # pages hold first_seg*16 (the loaders rebase the hi page into a real
-    # pointer for the 6502; python just shifts the offset back down)
-    first_seg = (rom[ss_off + 256 + idx] | (rom[ss_off + 512 + idx] << 8)) >> 4
+    # pages hold the header's BYTE offset (the loaders rebase the hi page
+    # into a real pointer for the 6502; python maps the offset back to a
+    # slot index — page-slotted, so it is not a plain shift)
+    first_seg = _seg_hdr_slot((rom[ss_off + 256 + idx]
+                               | (rom[ss_off + 512 + idx] << 8)))
 
     # Deferral removed 2026-07-16: packed_render_seg's deferred=None
     # branches call clips.mark_solid / clips.tighten at seg end with the

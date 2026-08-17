@@ -87,10 +87,10 @@ class BspRender6502:
         bbox = self.bbox_table
         mem = self.sc.mpu.memory
 
-        # Flat placement (2026-07-11, heights inlined in stride-18 headers):
+        # Flat placement (2026-07-11, heights inlined in the seg headers):
         # headers $6C00-$9B8B, verts $9C00, node/ss SoA $B600 (the hole the
         # retired FHCH stream vacated). The packer bakes the height bytes
-        # (former load-time FHCH synthesis) into the header at +12..17.
+        # (former load-time FHCH synthesis) into the header at +10..13.
         off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
         for i in range(off_verts):                       # SoA pages (14: 11 node + 3 ss)
             mem[NODE_SOA_BASE + i] = rom_main[i]
@@ -100,7 +100,7 @@ class BspRender6502:
             mem[NODE_SOA_BASE + i] = (rom_main[i] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
         for i in range(off_verts, off_hdr):              # verts
             mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
-        for i in range(off_hdr, len(rom_main)):          # stride-18 headers
+        for i in range(off_hdr, len(rom_main)):          # headers + DIRs
             mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
 
         for i, b in enumerate(bbox):

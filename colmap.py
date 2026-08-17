@@ -455,7 +455,8 @@ def find_ss(rx, ry):
     rom = dw.packed_rom_main
     lay = dw.packed_layout
     md = lay['max_dirs']
-    dirs_off = lay['off_seg_hdr'] + lay['n_segs'] * 16
+    dirs_off = lay['off_dirs']          # (was off_seg_hdr + n_segs*16 — the
+                                       #  header array is page-slotted now)
 
     def s16(lo, hi):
         v = lo | (hi << 8)

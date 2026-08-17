@@ -11,7 +11,11 @@ LAY_OFF_VERTS   = $0C00
 LAY_OFF_SS   = $0900
 LAY_OFF_SEG_HDR   = $1200
 
-LAY_HDR_STRIDE  = 16                    ; heights INLINED at +10..15
+LAY_HDR_STRIDE   = 14                    ; heights INLINED at +10..13
+LAY_HDR_BYTES   = $240E                 ; footprint of the page-slotted
+                                        ; header array (generated: 18
+                                        ; slots of 14 per 256B page, so
+                                        ; it is NOT n_segs*stride)
 ; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —
 ; +4 form/dir_id, +5..7 C24, +8 flags, +9 L(pad), +10..15 heights)
 LAY_N_DIRS   = 118                   ; distinct diagonal primitives
@@ -33,7 +37,7 @@ ROM_SEG_HDR_C = $8600                   ; flat LEVEL block (2026-07-21 map):
 ROM_VERTS_C   = $B100                   ; hdrs+dirs, verts, SoA, bbox, recip
 ROM_BBOX_C    = $C500                   ; all contiguous
 NODE_SOA_C    = $B900
-ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_N_SEGS*LAY_HDR_STRIDE
+ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 .assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= ROM_VERTS_C, error, "DIR tables reach the vertex planes"
 .assert ROM_VERTS_C + $600 <= NODE_SOA_C, error, "flat vertex planes reach the node SoA"
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with

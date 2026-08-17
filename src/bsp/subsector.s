@@ -150,8 +150,8 @@ sl_rts:
 ::s_advance_l0:
    CLC
    LDA zp_seg_hdr_p
-   ADC #16
-   STA zp_seg_hdr_p
+   ADC #LAY_HDR_STRIDE                     ; 14 since the APV2 pair died; runs
+   STA zp_seg_hdr_p                        ; stay in-page, so no carry needed
    DEC zp_seg_count
    BEQ sl_rts
 ::seg_proc:                             ; global: the advance tails in

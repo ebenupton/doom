@@ -32,7 +32,7 @@ import os
 # (DOOM_ANIM gate removed 2026-07-10: anim is the only variant)
 
 import doom_wireframe as dw
-from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, SD_FH, SD_CH, SD_BFH,
+from wad_packed import (SEG_DTL_SIZE, SEG_HDR_SIZE, seg_hdr_off, SD_FH, SD_CH, SD_BFH,
                         SD_BCH, SH_FLAGS, SF_SOLID, SF_NEEDBT, SF_NEEDBB,
                         SF_STEPUP_T, SF_STEPUP_B)
 
@@ -174,21 +174,21 @@ class Mover:
             _ROM_DETAIL[o + SD_CH] = ch_ps & 0xFF
             one_sided = dw.fp_segs_vwh[i][2] is None
             for mem, base in _attached:
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 10] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 11] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + seg_hdr_off(i) + 10] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + seg_hdr_off(i) + 11] = ch_ps & 0xFF
                 if one_sided:
                     # +12/13 alias (bfh:=fh, bch:=ch) must track — the
                     # mover's own side walls (descriptor scheme)
-                    mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 12] = fh_ps & 0xFF
-                    mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 13] = ch_ps & 0xFF
+                    mem[base['seg_hdr'] + seg_hdr_off(i) + 12] = fh_ps & 0xFF
+                    mem[base['seg_hdr'] + seg_hdr_off(i) + 13] = ch_ps & 0xFF
             nbytes += 2
         for i in self.back_segs:
             o = i * SEG_DTL_SIZE
             _ROM_DETAIL[o + SD_BFH] = fh_ps & 0xFF
             _ROM_DETAIL[o + SD_BCH] = ch_ps & 0xFF
             for mem, base in _attached:
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 12] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + 13] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + seg_hdr_off(i) + 12] = fh_ps & 0xFF
+                mem[base['seg_hdr'] + seg_hdr_off(i) + 13] = ch_ps & 0xFF
             nbytes += 2
         # seg flags: re-derive SOLID/NEEDBT/NEEDBB (the packer's rules)
         for i in self.touch_segs:
@@ -198,7 +198,7 @@ class Mover:
                 continue
             ffh, fch = dw.fp_sectors[fi][0], dw.fp_sectors[fi][1]
             bfh, bch = dw.fp_sectors[bi][0], dw.fp_sectors[bi][1]
-            o = _OFF_SEG_HDR + i * SEG_HDR_SIZE + SH_FLAGS
+            o = _OFF_SEG_HDR + seg_hdr_off(i) + SH_FLAGS
             f = _ROM_MAIN[o] & ~(SF_SOLID | SF_NEEDBT | SF_NEEDBB
                                  | SF_STEPUP_T | SF_STEPUP_B)
             if bch <= ffh or bfh >= fch:
@@ -210,7 +210,7 @@ class Mover:
                 if bfh < ffh: f |= SF_STEPUP_B
             _ROM_MAIN[o] = f
             for mem, base in _attached:
-                mem[base['seg_hdr'] + i * SEG_HDR_SIZE + SH_FLAGS] = f
+                mem[base['seg_hdr'] + seg_hdr_off(i) + SH_FLAGS] = f
             nbytes += 1
         # jamb explicit vspans (in-plane door/lift junctions): the MOVING
         # bound of the entry tracks the mover so the jamb edge grows and
@@ -395,7 +395,7 @@ def gen_6502_tables(flat=True):
         addr = base0 + 12 + len(blocks)
         _st.pack_into('<H', ptrs, mi * 2, addr)
         fhch_addrs = []
-        H = lambda i, k: A['hdr'] + i * SEG_HDR_SIZE + 10 + k
+        H = lambda i, k: A['hdr'] + seg_hdr_off(i) + 10 + k
         solid = lambda i: dw.fp_segs_vwh[i][2] is None
         if m.kind == 'ceil':
             fhch_addrs += [H(i, 1) for i in m.front_segs]  # ch
@@ -416,8 +416,8 @@ def gen_6502_tables(flat=True):
         for a in fhch_addrs:
             blk += _st.pack('<H', a)
         for i in flag_segs:
-            blk += _st.pack('<HH', A['hdr'] + i * SEG_HDR_SIZE + SH_FLAGS,
-                            A['hdr'] + i * SEG_HDR_SIZE + 10)
+            blk += _st.pack('<HH', A['hdr'] + seg_hdr_off(i) + SH_FLAGS,
+                            A['hdr'] + seg_hdr_off(i) + 10)
         for a in vexpl_addrs:
             blk += _st.pack('<H', a)
         blocks += blk

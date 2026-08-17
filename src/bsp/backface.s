@@ -9,7 +9,7 @@
 ;                                 old bf_seg_back trampoline died 2026-07-12)
 ; There is NO flag/return contract: control flow IS the verdict.
 ;
-;   Inputs (zp): zp_seg_hdr_p -> the 16-byte seg header (form at +4, C16
+;   Inputs (zp): zp_seg_hdr_p -> the 14-byte seg header (form at +4, C16
 ;                or lv1x at +5/+6, lv1y split lo +7 / hi +9);
 ;                zp_br_px_h/px_e, zp_br_py_h/py_e = player int pos (s16);
 ;                zp_bf_pxm_l/hi, zp_bf_pym_l/hi = |px|,|py| (staged

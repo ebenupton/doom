@@ -59,7 +59,7 @@ def build_banked(flatr):
     la = bytearray(16384)
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     n_segs = layout['n_segs']
-    hdr_len = len(rom_main) - off_hdr        # stride-16 headers + DIR tables
+    hdr_len = len(rom_main) - off_hdr        # page-slotted headers + DIRs
     from symmap import sym as _vsym
     def bdst(name):
         return _vsym(name, banked=1) - 0x8000    # dst offsets BY SYMBOL —
@@ -70,7 +70,7 @@ def build_banked(flatr):
     # DIR planes (3 x LAY_MAX_DIRS) also land at ROM_DIRS_C in BOTH banks:
     # the shared CROSS_MAG_DECIDE reads them from node classify (bank WALK)
     # AND seg backface (bank SEG) — $B700 is free in both windows
-    dirs_off = off_hdr + n_segs * 16
+    dirs_off = layout['off_dirs']       # (page-slotted headers: NOT n_segs*stride)
     dir_blob = bytes(rom_main[dirs_off:dirs_off + 3 * layout['max_dirs']])
     la[0x3700:0x3700 + len(dir_blob)] = dir_blob
     # driver tables (2026-08-14 pmove arc): sincos $BA00, step $BC00, use

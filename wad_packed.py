@@ -6,12 +6,14 @@ Four arrays:
   rom_detail  - seg detail: VWH indices for front/back (ROM bank 2)
   ram         - vertex cache, VWH cache, packed valid bitmaps (RAM)
 
-Seg data is split: the header (8B, accessed for every traversed seg)
-is in rom_main; the detail (16B, accessed only for front-facing segs)
-is in rom_detail.  This keeps each ROM region under 16KB.
+Seg data is split: the header (SEG_HDR_SIZE, accessed for every traversed
+seg) is in rom_main; the detail (SEG_DTL_SIZE, accessed only for
+front-facing segs) is in rom_detail.  This keeps each ROM region under 16KB.
 
 All multi-byte values are little-endian (6502 native).
-Struct sizes are powers of 2 for fast index→offset shifts.
+Most struct sizes are powers of two for fast index->offset shifts. The seg
+header is NOT: it is 14 bytes, walked by a cursor (never indexed), so its
+slot->offset mapping goes through seg_hdr_off().
 """
 
 import struct
@@ -40,18 +42,50 @@ NT_GEN = 3   # MUST be 3: the engine's node_setup seeds the general form's
              # general-node classify ran dx = px-nx-1 (engine-wide
              # off-by-one at diagonal partitions)
 NF_RLEAF, NF_LLEAF = 0x80, 0x40   # child-is-subsector flags, baked into the TYPE byte
-SEG_HDR_SIZE = 16    # idx<<4 (pure shifts). Uniform back-face C-FORM:
+SEG_HDR_SIZE = 14    # SQUEEZED 16 -> 14 (2026-08-17): +14/+15 were the APV2
+                     # height pair, shipped ZERO for every seg since the
+                     # vertex-span descriptors retired the APV overlay
+                     # (2026-07-24) and read by nobody — poison-proven.
+                     # Uniform back-face C-FORM:
                      # +4 form/dir_id: 0 front iff px>C16, 1 px<C16,
                      #    2 py>C16, 3 py<C16; >=4 diagonal (id-4 indexes
                      #    the DIR tables appended after the headers)
                      # +5..7 C24 = dy'*lv1x - dx'*lv1y (axis: C16 +5/6)
-                     # +8 flags, +9 L, +10..15 INLINED heights:
-                     # +10 fh +11 ch +12 bfh|apv1_ch +13 bch|apv1_fh
-                     # +14 apv2_ch +15 apv2_fh
-                     # DIR tables (at off_seg_hdr + n_segs*16): DIRXM
-                     # |dx'| , DIRYM |dy'|, DIRS sign byte (b7=dy' neg,
-                     # b6=dx' neg) — one entry per distinct primitive
+                     # +8 flags, +9 L, +10..13 INLINED heights:
+                     # +10 fh +11 ch +12 bfh +13 bch
+                     # DIR tables (at off_seg_hdr + seg_hdr_bytes(n_segs)):
+                     # DIRXM |dx'| , DIRYM |dy'|, DIRS sign byte (b7=dy'
+                     # neg, b6=dx' neg) — one entry per distinct primitive
                      # diagonal direction (SAMEDIR folded at pack).
+
+# Slot -> byte offset. The stride is no longer a power of two, so slots no
+# longer tile a page exactly: 18 headers fill 252 of a page's 256 bytes and
+# the 4-byte tail is dead. Keeping each page's slots page-based preserves the
+# invariant the engine's advance depends on — a subsector's run never crosses
+# its page, so the header pointer's HI BYTE is subsector-constant and the
+# +stride advance carries nothing. THE one source for this mapping: every
+# producer (packer, anim tables, the Python reference) goes through it.
+SEG_HDR_PER_PAGE = 18
+
+
+def seg_hdr_off(slot):
+    """Byte offset of a header slot, relative to off_seg_hdr."""
+    page, k = divmod(slot, SEG_HDR_PER_PAGE)
+    return page * 256 + k * SEG_HDR_SIZE
+
+
+def seg_hdr_slot(off):
+    """Inverse of seg_hdr_off: slot index for a byte offset (page-slotted)."""
+    page, k = divmod(off, 256)
+    assert k % SEG_HDR_SIZE == 0, f'offset ${off:04X} is not a header slot'
+    return page * SEG_HDR_PER_PAGE + k // SEG_HDR_SIZE
+
+
+def seg_hdr_bytes(n_slots):
+    """Footprint of an n_slots header array (the DIR tables follow it)."""
+    if n_slots == 0:
+        return 0
+    return seg_hdr_off(n_slots - 1) + SEG_HDR_SIZE
 SEG_DTL_SIZE = 20    # ×20 = (idx<<4)+(idx<<2): fh,ch + 8 VWH u16 + back heights
 VWH_SIZE     = 1     # identity: s8 height
 # No separate linedef table — data inlined into seg headers
@@ -63,7 +97,8 @@ SH_FORM = 4; SH_C = 5           # back-face C-form (see SEG_HDR_SIZE note)
 # (lv1x/lv1y/ldx/ldy retired 2026-07-11: the C-form + DIR tables replace them)
 SH_FLAGS = 8                     # u8 flags
 SH_L = 9                         # u8 round(seg length) for option-2b
-SH_PAD = 11
+# (SH_PAD retired: +11 is ch, and the trailing APV2 pair went with
+#  the stride squeeze to 14 — there is no pad byte in the header now)
 
 # ── Offsets within seg detail (20 bytes) ─────────────────────────────────
 
@@ -233,7 +268,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # DIR tables tail the headers: 3 parallel u8 arrays, one entry per
     # distinct primitive diagonal direction (filled during the seg loop).
     _dirs = {}          # (dx', dy') -> id  (0-based; header stores id+4)
-    off_dirs = off_seg_hdr + n_segs * SEG_HDR_SIZE
+    off_dirs = off_seg_hdr + seg_hdr_bytes(n_segs)
     MAX_DIRS = 160
     off_vwh = off_dirs + 3 * MAX_DIRS
     # VWH heights no longer ship in rom_main (2026-07-10): the 6502 render
@@ -351,11 +386,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     assert n_segs <= 1024, \
         "SS hdr-offset pages assume seg-header offsets fit 14 bits"
     for i, ss in enumerate(fp_ssectors):
-        off16 = ss[1] * 16
+        off16 = seg_hdr_off(ss[1])
         # page-slotting invariant (doom_wireframe): a run never crosses
-        # its 256-byte page — the engine's +16 advance carries no page
-        # handling and the header page is subsector-constant
-        assert (off16 & 0xFF) + ss[0] * 16 <= 256, \
+        # its 256-byte page — the engine's +SEG_HDR_SIZE advance carries no
+        # page handling and the header page is subsector-constant
+        assert (off16 & 0xFF) + ss[0] * SEG_HDR_SIZE <= 256, \
             f"subsector {i} seg run crosses a page (slotting broken)"
         rom_main[off_ss + i] = ss[0] & 0xFF
         rom_main[off_ss + 256 + i] = off16 & 0xFF
@@ -414,7 +449,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         # E1M1). na is recomputed on the 6502 via point_to_angle(-ldy, ldx).
         seg_L = int(round(math.hypot(ldx, ldy)))
         assert 0 <= seg_L <= 255, f"seg {i}: L={seg_L} not u8"
-        o = off_seg_hdr + i * SEG_HDR_SIZE
+        o = off_seg_hdr + seg_hdr_off(i)
         # --- back-face C-form, UNIFORM (2026-07-11, stride 16) ---
         # dot = dy'*px - dx'*py - C with (dx',dy') the primitive linedef
         # direction (SF_SAMEDIR folded into its sign) and C pack-time.
@@ -490,8 +525,6 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             bs = fp_sectors[back_idx]
             rom_main[o + 12] = bs[0] & 0xFF
             rom_main[o + 13] = bs[1] & 0xFF
-        rom_main[o + 14] = 0
-        rom_main[o + 15] = 0
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 
@@ -611,7 +644,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Vertices:    {n_verts} in 4 page-split planes = 2048")
     print(f"  Nodes:       {n_nodes} × {NODE_SIZE} = {n_nodes * NODE_SIZE}")
     print(f"  Subsectors:  {n_ss} × {SSECTOR_SIZE} = {n_ss * SSECTOR_SIZE}")
-    print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = {n_segs * SEG_HDR_SIZE}")
+    print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = "
+          f"{seg_hdr_bytes(n_segs)} B ({SEG_HDR_PER_PAGE}/page, page tails dead)")
     print(f"  VWH heights: {n_vwh} × {VWH_SIZE} = {n_vwh}")
     print(f"  Seg detail:  {n_segs} × {SEG_DTL_SIZE} = {len(rom_detail)}")
     print(f"  Recip/trig:  {rom_recip_size} (sin/cos {SINCOS_SIZE} + recip {RECIP_ENTRIES}+{RECIP_FAR})")

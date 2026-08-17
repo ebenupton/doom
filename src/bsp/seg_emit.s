@@ -36,9 +36,10 @@
 ;   ::s_advance_l0   backface back-exits (L0 never left)
 ; EXITS: JMP ::seg_proc (subsector.s loop head); RTS when seg count hits 0.
 ;
-; SEG HEADER (16 B, via zp_seg_hdr_p, bank L0):
+; SEG HEADER (14 B, via zp_seg_hdr_p, bank L0):
 ;   +0/+1 v1 idx lo/b   +2/+3 v2 idx lo/b   +8 flags
-;   +10 fh  +11 ch  +12 bfh|apv1_ch  +13 bch|apv1_fh  +14/+15 apv2_ch/fh
+;   +10 fh  +11 ch  +12 bfh  +13 bch   (14 B stride: the APV2 pair at
+;   +14/+15 shipped zero for years and went with the 2026-08-17 squeeze)
 ; FLAGS (wad_packed single source):
 ;   $80 SAMEDIR  $40 SOLID  $20/$10 (novt, ship 0)  $08 NEEDBB
 ;   $04 NEEDBT   $02/$01 (apedge, ship 0)
@@ -625,10 +626,10 @@ ms_advance:
    ZERO zp_ys_v1ok
    CLC
    LDA zp_seg_hdr_p
-   ADC #16
-   STA zp_seg_hdr_p                        ; headers are page-slotted: a run
-   DEC zp_seg_count                        ; never crosses its page (packer
-   BEQ sa_done                             ; assert) — hi byte is constant
+   ADC #LAY_HDR_STRIDE                     ; headers are page-slotted: a run
+   STA zp_seg_hdr_p                        ; never crosses its page (packer
+   DEC zp_seg_count                        ; assert) — hi byte is constant
+   BEQ sa_done
    PAGE BANK_SEG
    JMP seg_proc
 sa_done:
