@@ -91,6 +91,9 @@ anim_hub:
 .scope
    LDX zp_node_ch_l
    LDA ANIM_SSMASK,X                       ; movers with segs in this subsector
+   BEQ ah_done                             ; most visited ss are moverless: out
+                                           ; before the DIRTY AND (measured -49
+                                           ; MEAN on the anims-on corpus)
    AND ANIM_DIRTY
    BEQ ah_done
    STA ah_pend
