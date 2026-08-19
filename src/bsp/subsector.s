@@ -66,37 +66,45 @@ render_subsector:
 ; subsector serve, and the reason $0A80 meant two things across
 ; builds.)
 
-; --- Read subsector header (SoA pages: count / seg-header pointer) ---
-   LDX zp_node_ch_l
-   LDA SS_CNT,X
-   STA zp_seg_count
-
-; Persistent per-seg pointer, advanced by the loop (+16). The si*16
-; shift chain is baked into the SS pointer pages at pack time (first*16,
-; loader-rebased onto ROM_SEG_HDR): two indexed loads, no address
-; generation (2026-07-15).
-   LDA SS_PLO,X
-   STA zp_seg_hdr_p
-   LDA SS_PHI,X
-   STA zp_seg_hdr_p_h
-   PAGE BANK_SEG                           ; headers / verts / VWHC bank —
-                                        ; held through seg stages 1-4
-; Animated-sector hook: anim_init retargets this JMP at anim_hub, which
-; lazily patches any dirty mover with segs in this subsector (headers +
-; FHCH quads live in bank SEG — the hook runs under it, and BEFORE the
-; fh/ch reads below so mover-patched heights are already in place).
-; Disabled (default) it falls straight through: 3 cycles.
+; Animated-sector hook FIRST (we arrive WALK-paged, and every SS read
+; below is bank B now): anim_init retargets this JMP at anim_hub, which
+; lazily patches any dirty mover with segs in this subsector and
+; RESTORES BANK_WALK before returning. Disabled (default) it falls
+; straight through: 3 cycles.
 ::anim_ss_hook:
    JMP anim_ss_cont
 ::anim_ss_cont:
-; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
-; subsector's sector), so they LIVE per subsector (2026-08-17: two pages
-; in the header blob, ROM_SS_FH_C/ROM_SS_CH_C) instead of being copied
-; into every seg header, and the front deltas are computed ONCE here
-; (2026-07-10). X = the subsector id; the anim hub above clobbers X but
-; not zp_node_ch_l (it re-reads it itself), so reload. Both pages live in
-; BANK_SEG, already paged. ---
+; --- The five SS planes, ALL adjacent in BANK B ($8900-$8DFF) and all
+; read here under WALK (2026-08-19 consolidation, 7 planes -> 5):
+;   SS_PC = (page<<3)|(cnt-1), $FF = empty subsector
+;   SS_SI = (info<<5)|slot    (info is pmove's; the prologue masks it)
+; The header pointer is DERIVED: hi = page + >ROM_SEG_HDR_C (this ADC is
+; the rebase both loaders used to do), lo = slot9_tab[slot] = slot*9. ---
    LDX zp_node_ch_l
+   LDA SS_PC,X
+   CMP #$FF
+   BNE ssp_live
+   RTS                                     ; empty subsector
+ssp_live:
+   AND #7
+   STA zp_seg_count                        ; cnt-1: the advance loops end
+                                        ; on BMI (the -1 saved a decode)
+   LDA SS_PC,X
+   AND #$F8
+   LSR A
+   LSR A
+   LSR A                                   ; header page 0..23 (C = 0: the
+                                        ; three low bits were masked off)
+   ADC #>ROM_SEG_HDR_C
+   STA zp_seg_hdr_p_h
+   LDA SS_SI,X
+   AND #$1F
+   TAY
+   LDA slot9_tab,Y
+   STA zp_seg_hdr_p
+; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
+; subsector's sector), so they LIVE per subsector; the front deltas are
+; computed ONCE here (2026-07-10). Bank B pages, WALK still live. ---
    LDA ROM_SS_CH_C,X                        ; ch (per subsector)
    STA zp_seg_ch
    SEC
@@ -134,18 +142,26 @@ ss_esk_done:
    INX
    STX zp_ys_done                           ; no cross-subsector sy donation
    STX zp_ys_v1ok
+   PAGE BANK_SEG                           ; headers / verts / VWHC bank —
+                                        ; held through seg stages 1-4
+   JMP seg_proc                            ; (the old seg_loop BNE cost the
+                                        ; same 3 cycles)
 
 ; (DEFQ retired 2026-07-16: clip ops apply IMMEDIATELY at seg end —
 ;  convex siblings only collide at shared edge columns, which is
 ;  exactly the portal-edge-vertical artifact this fixes; the record
 ;  snapshots died with it. Eben's call.)
 
-; --- Loop over segs ---
-seg_loop:
-   LDA zp_seg_count
-   BNE seg_proc
+; --- Loop over segs (empties returned in the prologue; zp_seg_count
+; holds cnt-1 >= 0, so there is nothing to gate here) ---
 sl_rts:
-   RTS                                     ; empty subsector
+   RTS
+; slot*9 = the seg-header lo byte the SS_PLO plane used to ship (28
+; slots of LAY_HDR_STRIDE=9 per page; the packer asserts slot < 29)
+slot9_tab:
+   .repeat 29, k
+   .byte k * 9
+   .endrepeat
 ; Backface back-exit advance twin (hoisted from seg_emit.s 2026-08-13):
 ; single entry (backface.s JMPs), never left bank SEG, and it FALLS
 ; into seg_proc — the 57%-majority arc pays no jump at all now.
@@ -154,8 +170,8 @@ sl_rts:
    LDA zp_seg_hdr_p
    ADC #LAY_HDR_STRIDE                     ; 14 since the APV2 pair died; runs
    STA zp_seg_hdr_p                        ; stay in-page, so no carry needed
-   DEC zp_seg_count
-   BEQ sl_rts
+   DEC zp_seg_count                        ; count holds cnt-1: done when
+   BMI sl_rts                              ; it wraps negative
 ::seg_proc:                             ; global: the advance tails in
                                         ; seg_emit.s loop back here
 ; (no PAGE: every arrival is L0-proven — the prologue paged L0 for the

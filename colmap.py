@@ -349,8 +349,8 @@ def blobs(flat=True):
     # slide projection. Banked: USETAB lives in BANK A ($BE00 — pmove_use
     # pages SEG for its list) so the widened COLSEG fits bank B.
     if flat:
-        A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750, ss_info=0xE830,
-                 minpass=0xE910, usetab=0xE918)
+        A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
+                 minpass=0xE910, mv_ceil=0xE980, usetab=0xE918)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -361,8 +361,11 @@ def blobs(flat=True):
         # $AF8A = after RCACHE_STATE ($AF00+$89), before ANIM CFG $B300.
         # LESSON: zero-runs in the shipped image are NOT free space —
         # ships-zero runtime BSS looks identical; audit the equates.
-        A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8C00, ss_info=0x8CE0,
-                 minpass=0xBFC0, usetab=0xBE00)
+        # ss_vz $8C00 -> $8D00 2026-08-19: fifth of the five adjacent SS
+        # planes; ss_info died into SS_SI's top bits (MV_CEIL carries the
+        # per-mover ceiling flag it used to hold in b7)
+        A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8D00,
+                 minpass=0xBFC0, mv_ceil=0xBFC6, usetab=0xBE00)
     import math
     seg_blob = bytearray()
     for x1, y1, dx, dy in m['colsegs']:
@@ -396,9 +399,14 @@ def blobs(flat=True):
                           p[7], p[4], p[5], p[6])
     import abi as _abi0
     assert _abi0.COLPORT_BASE + len(pb) <= 0x1C00, 'COLPORT overruns the pool'
+    import doom_wireframe as _dw
+    _movers = sorted(_dw.ANIM_SECTORS)
+    _ceil = bytes((0x80 if _dw.ANIM_SECTORS[sec] == 'ceil' else 0)
+                  for sec in _movers)
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
-           A['ss_vz']: m['ss_vz'], A['ss_info']: m['ss_info'],
-           A['minpass']: m['mv_minpass'], A['usetab']: bytes(ub),
+           A['ss_vz']: m['ss_vz'],
+           A['minpass']: m['mv_minpass'], A['mv_ceil']: _ceil,
+           A['usetab']: bytes(ub),
            _abi0.COLPORT_BASE: bytes(pb)}
     # (the bank-B $A900 / flat $8400 staging emits died 2026-08-18: at
     #  $1A00 the ports ship directly inside LOW / the tube CODE file,
@@ -415,13 +423,13 @@ def blobs(flat=True):
         assert A['colseg'] + len(seg_blob) <= 0x7F10, \
             'collision blob reaches the flat PMOVE region at $7F10'
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
-        assert 0xE830 + len(m['ss_info']) <= 0xE910
+        assert 0xE980 + len(_ceil) <= 0xEA00, 'MV_CEIL reaches the flat FB'
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
     else:
         assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
         assert 0xAF8A + len(idx_blob) <= 0xB300, \
             'COLIDX blob reaches the ANIM CFG page at $B300'
-        assert len(m['ss_vz']) <= 0xE0 and len(m['ss_info']) <= 0xE0
+        assert len(m['ss_vz']) <= 0x100 and len(_ceil) <= 6
         assert A['usetab'] + len(ub) <= 0xBE8F, 'USETAB (bank A) reaches TABL0'
     out['addrs'] = A
     return out

@@ -11,7 +11,8 @@
 ;                reachability-pruned, colinear-merged blocking lines
 ;                (one-sided + ML_BLOCKING)
 ;   SS_VZ_BASE   per-subsector prescale(floor+41) (s8)
-;   SS_INFO_BASE per-subsector: $FF none | mover idx, b7 = ceil mover
+;   SS_SI        per-subsector (info<<5)|slot: info = mover idx 0-5, 7 none
+;   MV_CEIL      per-mover $80-if-ceiling (replaced SS_INFO's b7)
 ;   MV_MINPASS   per-mover min passable door pos (fh+56 prescaled)
 ;   USETAB_BASE  u8 n_use, n_use x 9 (x1,y1,dx,dy s16 + action),
 ;                u8 n_walk, n_walk x 9   (action: mover idx, $FE = exit)
@@ -143,11 +144,17 @@ pt_cols_done:
    PAGE BANK_WALK
 ; destination sector rules
    JSR pm_find_ss                       ; X = subsector id
-   LDA SS_INFO_BASE,X
-   CMP #$FF
-   BEQ pt_static
-   TAY                                  ; mover info
-   AND #$3F
+; mover info rides SS_SI's top 3 bits since 2026-08-19 (idx 0-5, 7 =
+; none); the ceiling flag it used to carry in b7 is per-mover constant
+; and comes from MV_CEIL
+   LDA SS_SI,X
+   CMP #$E0                             ; info == 7 -> no mover here
+   BCS pt_static
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   LSR A                                ; A = mover idx 0..5
    STA pm_cnt                           ; mover idx (scratch reuse)
    ASL A
    CLC
@@ -156,7 +163,7 @@ pt_cols_done:
    LDA ANIM_WS+1,Y                      ; live pos_hi (prescaled s8)
    LDY pm_cnt
    PHA
-   LDA SS_INFO_BASE,X
+   LDA MV_CEIL,Y                        ; $80 = ceiling mover (door)
    BMI pt_door
    PLA                                  ; lift: dvz = pos + eye offset
    CLC

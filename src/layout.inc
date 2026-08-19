@@ -7,9 +7,9 @@
 LAY_N_SEGS   = 649
 LAY_N_NODES   = 220
 LAY_ROOT   = 219                      ; n_nodes - 1
-LAY_OFF_VERTS   = $0C00
+LAY_OFF_VERTS   = $0B00
 LAY_OFF_SS   = $0900
-LAY_OFF_SEG_HDR   = $1200
+LAY_OFF_SEG_HDR   = $1100
 
 LAY_HDR_STRIDE   = 9                    ; +10 bfh, +11 bch
 LAY_HDR_BYTES   = $172D                 ; footprint of the page-slotted
@@ -60,14 +60,16 @@ ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 ; they ride two pages in the header blob instead of 2 bytes x every seg. Read
 ; under BANK_SEG with X = the subsector id (already live in the prologue).
 .if ::BANKED
-; The side tables sit at the TOP of bank A (2026-08-17), not behind the
-; headers: that leaves 19 contiguous pages between the header block and the
-; vertex planes, which is what the main-RAM caches need to move in here. Space
-; came from evicting the driver's sincos/use-vector tables to bank C and
-; deleting the dead STEPTAB. SS_CH MUST stay exactly one page above SS_FH —
-; the anim worker reads ch by incrementing the pointer's high byte.
-ROM_SS_FH_C = $B900
-ROM_SS_CH_C = $BA00
+; SS_FH/SS_CH left bank A for bank B on 2026-08-19 (the SS consolidation:
+; all five per-subsector planes adjacent in one bank, read under WALK).
+; SS_CH MUST stay exactly one page above SS_FH — the anim worker reads ch
+; by incrementing the pointer's high byte. Bank A's $B900-$BAFF came free.
+ROM_SS_FH_C = $8B00                     ; 2026-08-19: planes 3+4 of the FIVE
+ROM_SS_CH_C = $8C00                     ; adjacent SS planes in BANK B
+                                        ; ($8900 PC, $8A00 SI, $8B00 FH,
+                                        ; $8C00 CH, $8D00 VZ) — read in the
+                                        ; prologue UNDER BANK_WALK, before
+                                        ; the PAGE to SEG
 .else
 ROM_SS_FH_C = ROM_SEG_HDR_C + LAY_SS_FH_OFF
 ROM_SS_CH_C = ROM_SS_FH_C + $100

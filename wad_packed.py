@@ -30,7 +30,7 @@ SSECTOR_SIZE = 4     # (legacy)
 # bytes; "child is a subsector" lives in the parent's TYPE byte
 # (NF_RLEAF/NF_LLEAF), not in the link.
 NODE_SOA_PAGES = 9    # DY pages dropped 2026-07-15 (no 6502 reader)
-SS_SOA_PAGES   = 3
+SS_SOA_PAGES   = 2    # PC + SI since 2026-08-19 (was count/lo/hi: 3 pages)
 NODE_SOA_SIZE  = (NODE_SOA_PAGES + SS_SOA_PAGES) * 256
 # Node partition TYPE (bits 0-2): axis-aligned partitions bake the
 # direction SIGN into a bf_ax-style strict-compare form (side0 iff the
@@ -294,7 +294,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     #   pg 10   node type: bits 0-1 = 0 general, 1 dx==0 (vertical),
     #           2 dy==0; bit 7 (NF_RLEAF) / bit 6 (NF_LLEAF) = that
     #           child is a subsector (leaf-ness is the parent's property)
-    #   pg 11-13 subsector count, first_lo, first_hi
+    #   pg 10-11 subsector PC / SI (packed — see the ss loop below)
     # Everything else follows at NODE_SOA_SIZE.
     assert n_nodes <= 256 and n_ss <= 256
     assert n_verts <= 512, \
@@ -438,16 +438,18 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         if cl & 0x8000: typ |= NF_LLEAF
         _npg(8, i, typ)
 
-    # Subsectors (SoA pages 11-13: count, hdr-offset lo, hdr-offset hi).
-    # The offset pages hold first_seg*16 — the seg-header BYTE offset.
-    # The loaders rebase the hi page onto the per-build ROM_SEG_HDR base
-    # (page-aligned), so the engine serves a subsector with two plain
-    # indexed loads: no address generation at run time. n_segs <= 1024
-    # keeps the offset in 14 bits (the real ceilings are tighter and
-    # layout-asserted: flat headers reach verts at ~768, banked reach
-    # TABL0 at ~745).
-    assert n_segs <= 1024, \
-        "SS hdr-offset pages assume seg-header offsets fit 14 bits"
+    # Subsectors (SoA pages 10-11: TWO packed bytes since 2026-08-19 —
+    # was count / hdr-offset lo / hdr-offset hi in three pages; the value
+    # ranges never needed them: cnt <= 8, header pages <= 24, slots are
+    # k*9 with k <= 27):
+    #   PC = (page << 3) | (cnt - 1)      $FF = empty subsector
+    #   SI = (info << 5) | slot           info: mover idx 0-5, 7 = none
+    # The engine derives the header pointer at run time: hi = page +
+    # >ROM_SEG_HDR_C (which KILLED both loaders' rebase passes), lo =
+    # slot9_tab[slot]. The mover info rides SI's top bits; the ceiling
+    # flag it used to carry is constant per mover and lives in the
+    # 6-byte MV_CEIL table (colmap) instead.
+    _ss_movers = sorted(anim_sector_set or ())
     for i, ss in enumerate(fp_ssectors):
         off16 = seg_hdr_off(ss[1])
         # page-slotting invariant (doom_wireframe): a run never crosses
@@ -455,9 +457,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         # page handling and the header page is subsector-constant
         assert (off16 & 0xFF) + ss[0] * SEG_HDR_SIZE <= 256, \
             f"subsector {i} seg run crosses a page (slotting broken)"
-        rom_main[off_ss + i] = ss[0] & 0xFF
-        rom_main[off_ss + 256 + i] = off16 & 0xFF
-        rom_main[off_ss + 512 + i] = (off16 >> 8) & 0xFF
+        page, rem = off16 >> 8, off16 & 0xFF
+        slot, r9 = divmod(rem, SEG_HDR_SIZE)
+        assert r9 == 0 and slot < 29 and page < 24 and ss[0] <= 8, \
+            f"subsector {i}: PC/SI encoding out of range ({page},{slot},{ss[0]})"
+        rom_main[off_ss + i] = 0xFF if ss[0] == 0 \
+            else ((page << 3) | (ss[0] - 1))
+        # info: the subsector's OWN sector (front sector of its first seg,
+        # the same rule colmap's model uses — including for empties)
+        _sec = fp_segs_vwh[ss[1]][1]
+        _info = _ss_movers.index(_sec) if _sec in _ss_movers else 7
+        rom_main[off_ss + 256 + i] = (_info << 5) | slot
         # Front heights, per SUBSECTOR (2026-08-17). ASSERTED constant over
         # the run: if a future map ever breaks that, this fails at pack time
         # instead of rendering one seg's heights for its neighbours.

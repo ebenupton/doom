@@ -70,13 +70,12 @@ def build_banked(flatr):
     # block and the vertex planes is one free run for the main-RAM caches.
     hdr_bytes = layout['off_dirs'] - off_hdr
     la[:hdr_bytes] = bytes(rom_main[off_hdr:off_hdr + hdr_bytes])
-    n_ss = layout['n_ss']
-    for _nm, _off, _n in (('ROM_SS_FH_C',   layout['off_ss_fh'], n_ss),
-                          ('ROM_SS_CH_C',   layout['off_ss_ch'], n_ss),
-                          ('ROM_LV1X_LO_C', layout['off_lv1'],   512),
+    for _nm, _off, _n in (('ROM_LV1X_LO_C', layout['off_lv1'],   512),
                           ('ROM_BPAL_BFH_C', layout['off_bpal'], 256)):
         _d = bdst(_nm)
         la[_d:_d + _n] = bytes(rom_main[_off:_off + _n])
+    # (SS_FH/SS_CH left bank A for bank B 2026-08-19 — seeded into lb
+    #  below with the rest of the five adjacent SS planes)
     assert hdr_bytes <= bdst('ROM_VERTS_C'), "seg headers reach the vertex planes"
     # DIR planes (3 x LAY_MAX_DIRS) also land at ROM_DIRS_C in BOTH banks:
     # the shared CROSS_MAG_DECIDE reads them from node classify (bank WALK)
@@ -169,11 +168,17 @@ def build_banked(flatr):
     # the bank-A header base), L8/AE/VATOX behind the SoA, bbox @ ROM_BBOX_C,
     # CPM, rcache BSS, ANIM CFG @ $B300 + SSMASK staging @ $B400 ---
     lb = bytearray(16384)
-    lb[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages (14)
-    # SS_PHI page ships first*16 offsets — rebase onto the banked
-    # seg-header base ($8000 = the bank-A window head)
-    for i in range(0xB00, 0xC00):
-        lb[i] = (rom_main[i] + 0x80) & 0xFF
+    lb[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages
+    # (the SS_PHI rebase loop died 2026-08-19: SS_PC carries a raw page
+    #  index and the engine adds >ROM_SEG_HDR_C itself)
+    # SS_FH/SS_CH: planes 3+4 of the five adjacent SS planes ($8900 PC,
+    # $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ — VZ arrives via the colmap
+    # blob router below)
+    _nss = layout['n_ss']
+    for _nm, _off in (('ROM_SS_FH_C', layout['off_ss_fh']),
+                      ('ROM_SS_CH_C', layout['off_ss_ch'])):
+        _d = bdst(_nm)
+        lb[_d:_d + _nss] = bytes(rom_main[_off:_off + _nss])
     def cpy(dst_off, src, n):
         lb[dst_off:dst_off + n] = bytes(fmem[src:src + n])
     cpy(bdst('L8_TAB'), _vsym('L8_TAB'), 256)     # dst offsets BY SYMBOL

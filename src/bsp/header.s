@@ -185,12 +185,15 @@ NODE_DSGN  = NODE_SOA + $500            ; general: sign byte (b7 ndy neg,
 NODE_CRLO = NODE_SOA + $600             ; right child id (side 0 = near)
 NODE_CLLO = NODE_SOA + $700             ; left child id
 NODE_TYPE = NODE_SOA + $800             ; bits 0-2 type; bit 7/6 leaf flags
-SS_CNT    = NODE_SOA + $900
-SS_PLO    = NODE_SOA + $A00             ; seg-header pointer lo
-SS_PHI    = NODE_SOA + $B00             ; ... hi. ROM ships first*16
-                                        ; offsets; the LOADERS rebase this
-                                        ; page onto >ROM_SEG_HDR_C, so
-                                        ; serve time is two indexed loads
+SS_PC     = NODE_SOA + $900             ; (page<<3)|(cnt-1); $FF = empty —
+                                        ; TWO packed subsector bytes since
+                                        ; 2026-08-19 (was count/lo/hi in 3
+                                        ; pages); hdr hi = page + >base at
+                                        ; run time, which killed both
+                                        ; loaders' rebase passes
+SS_SI     = NODE_SOA + $A00             ; (info<<5)|slot; hdr lo =
+                                        ; slot9_tab[slot] (slot*9); info =
+                                        ; mover idx 0-5, 7 = none
 
 ; TYPE-byte fields. NF_RLEAF sits at bit 7 so one ASL drops it into C
 ; (NF_LLEAF takes two) — the walk's child-follow gets id + leaf bit

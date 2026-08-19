@@ -410,10 +410,18 @@ def gen_6502_tables(flat=True):
     if flat:
         import bsp_render_6502 as br
         A = dict(ssmask=0xE500, tabl0=0xE600, cfg=0xE700,
-                 hdr=br.ROM_SEG_HDR_BASE, vex_lo=0xDE00, vex_hi=0xDE80)
+                 hdr=br.ROM_SEG_HDR_BASE, vex_lo=0xDE00, vex_hi=0xDE80,
+                 ss_fh=br.ROM_SEG_HDR_BASE + _SS_FH_REL,
+                 ss_ch=br.ROM_SEG_HDR_BASE + _SS_CH_REL)
     else:
+        # banked ss_fh/ss_ch BY THE MAP (the five SS planes live in bank B
+        # since 2026-08-19, no longer header-relative) — today's five
+        # stale-literal reds are why this is symmap, not a number
+        import symmap as _sm
         A = dict(ssmask=0x1100, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
-                 vex_lo=0xA700, vex_hi=0xA780)
+                 vex_lo=0xA700, vex_hi=0xA780,
+                 ss_fh=_sm.sym('ROM_SS_FH_C', banked=1),
+                 ss_ch=_sm.sym('ROM_SS_CH_C', banked=1))
     order = sorted(dw.ANIM_SECTORS)
     out = {}
     # SSMASK
@@ -430,41 +438,41 @@ def gen_6502_tables(flat=True):
         m = MOVERS[sec]
         addr = base0 + 12 + len(blocks)
         _st.pack_into('<H', ptrs, mi * 2, addr)
-        fhch_addrs = []
-        # back pair (+SH_BFH/+SH_BCH) is per seg; the FRONT pair lives on the
-        # per-subsector pages, so a mover's own sector patches ONE byte per
-        # subsector instead of one per seg (2026-08-17)
         # back pair: the PALETTE entry for this seg (private for movers)
         B = lambda i, k: A['hdr'] + _BPAL_REL + (0x80 if k else 0x00) + _bpal_id(i)
         ss_of = _seg_ss()
         solid = lambda i: dw.fp_segs_vwh[i][2] is None
         seen_ss = set()
-        def front_ss(segs, rel):
+        def front_ss(segs, base):
             out = []
             for i in segs:
                 ssi = ss_of.get(i)
-                if ssi is None or (ssi, rel) in seen_ss:
+                if ssi is None or (ssi, base) in seen_ss:
                     continue
-                seen_ss.add((ssi, rel))
-                out.append(A['hdr'] + rel + ssi)
+                seen_ss.add((ssi, base))
+                out.append(base + ssi)
             return out
+        # SPLIT LISTS since 2026-08-19: front-page addrs (bank B) first,
+        # back-pair addrs (bank A BPAL) second — the worker flips banks
+        # between the two phases
         if m.kind == 'ceil':
-            fhch_addrs += front_ss(m.front_segs, _SS_CH_REL)   # ch (per ss)
-            fhch_addrs += [B(i, 1) for i in m.back_segs]       # bch
+            front_addrs = front_ss(m.front_segs, A['ss_ch'])   # ch (per ss)
+            back_addrs = [B(i, 1) for i in m.back_segs]        # bch
             # SOLID front segs (the mover's own side walls): the back slot is
             # the descriptor-scheme alias (bch := ch) and must track too
-            fhch_addrs += [B(i, 1) for i in m.front_segs if solid(i)]
+            back_addrs += [B(i, 1) for i in m.front_segs if solid(i)]
         else:
-            fhch_addrs += front_ss(m.front_segs, _SS_FH_REL)   # fh (per ss)
-            fhch_addrs += [B(i, 0) for i in m.back_segs]       # bfh
-            fhch_addrs += [B(i, 0) for i in m.front_segs if solid(i)]
+            front_addrs = front_ss(m.front_segs, A['ss_fh'])   # fh (per ss)
+            back_addrs = [B(i, 0) for i in m.back_segs]        # bfh
+            back_addrs += [B(i, 0) for i in m.front_segs if solid(i)]
         flag_segs = [i for i in m.touch_segs if dw.fp_segs_vwh[i][2] is not None]
         # jamb VEXPL patch targets: the entry byte holding the MOVING bound
         # (bank C banked — the worker pages around these writes)
         vexpl_addrs = [(A['vex_hi'] if role == 'hi' else A['vex_lo']) + ix
                        for ix, role in dw.ANIM_JAMB.get(sec, ())]
-        blk = bytearray([len(fhch_addrs), len(flag_segs), len(vexpl_addrs)])
-        for a in fhch_addrs:
+        blk = bytearray([len(front_addrs), len(back_addrs),
+                         len(flag_segs), len(vexpl_addrs)])
+        for a in front_addrs + back_addrs:
             blk += _st.pack('<H', a)
         # flag entries: the height quad is no longer contiguous — fh/ch sit on
         # the per-subsector pages (ch = fh + $100 always). The BACK pair is in
@@ -474,7 +482,7 @@ def gen_6502_tables(flat=True):
         # CFG table, silently — see the assert below.
         for i in flag_segs:
             blk += _st.pack('<HH', A['hdr'] + seg_hdr_off(i) + SH_FLAGS,
-                            A['hdr'] + _SS_FH_REL + ss_of[i])
+                            A['ss_fh'] + ss_of[i])
         for a in vexpl_addrs:
             blk += _st.pack('<H', a)
         blocks += blk

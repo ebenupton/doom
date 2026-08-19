@@ -3177,13 +3177,13 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     """Render a subsector reading from packed ROM arrays."""
     layout = _p_layout
     rom = _p_rom_main
-    ss_off = layout['off_ss']              # SoA pages: count, hdr-off lo/hi
-    count     = rom[ss_off + idx]
-    # pages hold the header's BYTE offset (the loaders rebase the hi page
-    # into a real pointer for the 6502; python maps the offset back to a
-    # slot index — page-slotted, so it is not a plain shift)
-    first_seg = _seg_hdr_slot((rom[ss_off + 256 + idx]
-                               | (rom[ss_off + 512 + idx] << 8)))
+    ss_off = layout['off_ss']              # SoA pages: PC / SI (packed)
+    pc = rom[ss_off + idx]                 # (page<<3)|(cnt-1); $FF = empty
+    if pc == 0xFF:
+        return
+    count = (pc & 7) + 1
+    slot = rom[ss_off + 256 + idx] & 0x1F  # SI = (info<<5)|slot
+    first_seg = _seg_hdr_slot(((pc >> 3) << 8) | (slot * SEG_HDR_SIZE))
 
     # Deferral removed 2026-07-16: packed_render_seg's deferred=None
     # branches call clips.mark_solid / clips.tighten at seg end with the

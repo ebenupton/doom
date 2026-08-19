@@ -78,7 +78,9 @@ ANIM_WS     = $1DEB                     ; $0200-$05FF); same page offsets.
 
 ; ============================================================================
 ; Resident hub — anim_ss_hook (in subsector.s) is SMC-patched here by
-; anim_init. Entry: bank SEG paged (headers/FHCH/TABL0), subsector index (u8) at zp_node_ch_l.
+; anim_init. Entry: bank WALK paged (the hook moved to the FRONT of the
+; prologue 2026-08-19, before any SS read); the no-work exit leaves the
+; bank untouched, the work path restores WALK after the workers.
 ; A/X/Y are dead at the hook point (render_subsector reloads them).
 ; ============================================================================
 SEG_HIGH
@@ -108,7 +110,7 @@ ah_loop:
    TAY
    LDA ANIM_WS+1,Y
    STA ANIM_VAL
-   JSR anim_l0_worker                      ; FHCH bytes + seg flags (L0 paged)
+   JSR anim_l0_worker                      ; heights + seg flags (pages itself)
 ; (the L2 VWH worker is gone: the private VWH slot bytes were write-only —
 ; the 6502 render projects from the header height bytes; VWH indices are Python-side
 ; cache keys. Stripped 2026-07-10.)
@@ -119,6 +121,8 @@ ah_loop:
 ah_next:
    DEX
    BPL ah_loop
+   PAGE BANK_WALK                          ; the workers left SEG paged; the
+                                        ; prologue's SS reads need WALK back
 ah_done:
    JMP anim_ss_cont                        ; resume render_subsector
 ah_bit:
@@ -282,11 +286,16 @@ anim_bit2:
    .byte 1,2,4,8,16,32
 
 ; --- anim_l0_worker: patch FHCH bytes + re-derive seg flags for mover
-;     ANIM_CUR with value ANIM_VAL. Runs with BANK_L0 paged. ---
-; TABL0 block (gen_6502_tables): n_fhch, n_flag, then n_fhch u16 FHCH byte
-; addresses (the MOVING role only — doors: ch/bch slots, lifts: fh/bfh),
-; then n_flag x (u16 seg-header flag addr, u16 FRONT-pair addr) covering every
-; two-sided seg touching the sector; the BACK pair rides the flags address.
+;     ANIM_CUR with value ANIM_VAL. ENTRY BANK-AGNOSTIC since 2026-08-19
+;     (the hub is entered under WALK now): pages SEG itself for the TABL0
+;     block walk and the header/BPAL patches, and flips to WALK around
+;     every touch of the per-subsector front pages, which live in BANK B
+;     with the rest of the SS planes. ---
+; TABL0 block (gen_6502_tables): n_front, n_back, n_flag, n_vexpl, then
+; n_front u16 FRONT-page addrs (bank B: SS_FH/SS_CH entries), n_back u16
+; back-pair addrs (bank A: BPAL entries), then n_flag x (u16 seg-header
+; flag addr, u16 FRONT-pair addr) covering every two-sided seg touching
+; the sector; the BACK pair rides the flags address.
 ; The quad is SPLIT since 2026-08-17: fh/ch live on the per-subsector pages
 ; (ch is always fh + $100 — the pages abut) and bfh/bch in the header.
 ; pseudocode:
@@ -301,6 +310,7 @@ anim_bit2:
 SEG_HIGH
 anim_l0_worker:
 .scope
+   PAGE BANK_SEG                           ; TABL0 + headers + BPAL bank
    LDA ANIM_CUR
    ASL A
    TAY
@@ -309,8 +319,11 @@ anim_l0_worker:
    LDA ANIM_TABL0+1,Y
    STA zp_anim_p+1
    LDY #0
-   LDA (zp_anim_p),Y                       ; n_fhch
+   LDA (zp_anim_p),Y                       ; n_front (bank-B SS-page addrs)
    STA alw_nf
+   INY
+   LDA (zp_anim_p),Y                       ; n_back (bank-A BPAL addrs)
+   STA alw_nb
    INY
    LDA (zp_anim_p),Y                       ; n_flag
    STA alw_ng
@@ -318,11 +331,35 @@ anim_l0_worker:
    LDA (zp_anim_p),Y                       ; n_vexpl (jamb patch targets)
    STA alw_nv
    INY
-; FHCH byte patches
+; FRONT patches: the addr comes out of TABL0 under SEG, the byte lands in
+; a bank-B SS page — flip per write (cold: <= 2 per mover)
 alw_floop:
    LDA alw_nf
-   BEQ alw_flags                           ; (direct 2026-08-12: +31)
-alw_fbody:
+   BEQ alw_back
+   LDA (zp_anim_p),Y
+   STA zp_anim_w
+   INY
+   LDA (zp_anim_p),Y
+   STA zp_anim_w+1
+   INY
+   STY alw_y
+   PAGE BANK_WALK
+.if ::C02
+   LDA ANIM_VAL
+   STA (zp_anim_w)                         ; non-indexed (the LDY died)
+.else
+   LDY #0
+   LDA ANIM_VAL
+   STA (zp_anim_w),Y
+.endif
+   PAGE BANK_SEG
+   LDY alw_y
+   DEC alw_nf
+   JMP alw_floop
+; BACK patches: BPAL entries, bank A — no flipping
+alw_back:
+   LDA alw_nb
+   BEQ alw_flags
    LDA (zp_anim_p),Y
    STA zp_anim_w
    INY
@@ -332,15 +369,15 @@ alw_fbody:
    STY alw_y
 .if ::C02
    LDA ANIM_VAL
-   STA (zp_anim_w)                         ; non-indexed (the LDY died)
+   STA (zp_anim_w)
 .else
    LDY #0
    LDA ANIM_VAL
    STA (zp_anim_w),Y
 .endif
    LDY alw_y
-   DEC alw_nf
-   JMP alw_floop
+   DEC alw_nb
+   JMP alw_back
 alw_flags:
 ; per flag entry: u16 hdr flag addr, u16 FHCH quad addr
    LDA alw_ng
@@ -363,13 +400,15 @@ alw_gbody:
    INY
    STY alw_y
 ; front pair off the per-subsector pages (fh, then ch one page up — the two
-; pages abut by construction, layout.inc asserts the alignment)
+; pages abut by construction; BANK B since 2026-08-19, so flip around it)
+   PAGE BANK_WALK
    LDY #0
    LDA (zp_anim_w),Y
    STA alw_fh
    INC zp_anim_w+1
    LDA (zp_anim_w),Y
    STA alw_ch
+   PAGE BANK_SEG
 ; back pair via the PALETTE (2026-08-17): the id byte sits in the SAME header
 ; as the flags byte, so its address is derived rather than carried — TABL0's
 ; 252 B budget has no room for a third u16 per entry. Mover-touching segs hold
@@ -493,6 +532,7 @@ alw_ret:
    RTS
 alw_nf:  .byte 0
 alw_ng:  .byte 0
+alw_nb:  .byte 0                         ; back-list count (front/back split)
 alw_nv:  .byte 0
 alw_y:   .byte 0
 alw_hdr: .word 0

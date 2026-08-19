@@ -79,14 +79,14 @@ COLSEG_BASE = $B8C0        ; collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, 
 COLSEG_BASE = $7810
 .endif
 .if ::BANKED
-SS_VZ_BASE = $8C00         ; per-subsector prescale(floor+41) (s8)
+SS_VZ_BASE = $8D00         ; per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
 .else
 SS_VZ_BASE = $E750
 .endif
 .if ::BANKED
-SS_INFO_BASE = $8CE0       ; per-subsector mover info: $FF none, else mover idx (b7 = ceil mover)
+MV_CEIL = $BFC6            ; per-mover $80-if-ceiling flags (6 B; banked beside MV_MINPASS, flat past USETAB): replaces SS_INFO b7
 .else
-SS_INFO_BASE = $E830
+MV_CEIL = $E980
 .endif
 .if ::BANKED
 MV_MINPASS = $BFC0         ; per-mover min passable door pos (fh + 56, prescaled)

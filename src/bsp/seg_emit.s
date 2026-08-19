@@ -630,7 +630,7 @@ ms_advance:
    ADC #LAY_HDR_STRIDE                     ; headers are page-slotted: a run
    STA zp_seg_hdr_p                        ; never crosses its page (packer
    DEC zp_seg_count                        ; assert) — hi byte is constant
-   BEQ sa_done
+   BMI sa_done                             ; count holds cnt-1 (2026-08-19)
    PAGE BANK_SEG
    JMP seg_proc
 sa_done:

@@ -55,10 +55,10 @@ COLIDX_BASE = 0xAF8A  # collision blockmap: 36 x (u16 list addr, u8 count) + the
 COLIDX_BASE_FLAT = 0x7600
 COLSEG_BASE = 0xB8C0  # collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 COLSEG_BASE_FLAT = 0x7810
-SS_VZ_BASE = 0x8C00  # per-subsector prescale(floor+41) (s8)
+SS_VZ_BASE = 0x8D00  # per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
 SS_VZ_BASE_FLAT = 0xE750
-SS_INFO_BASE = 0x8CE0  # per-subsector mover info: $FF none, else mover idx (b7 = ceil mover)
-SS_INFO_BASE_FLAT = 0xE830
+MV_CEIL = 0xBFC6  # per-mover $80-if-ceiling flags (6 B; banked beside MV_MINPASS, flat past USETAB): replaces SS_INFO b7
+MV_CEIL_FLAT = 0xE980
 MV_MINPASS = 0xBFC0  # per-mover min passable door pos (fh + 56, prescaled)
 MV_MINPASS_FLAT = 0xE910
 COLPORT_BASE = 0x1A00  # P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). At $1A00 since 2026-08-18 (swapped with the sqr quad): LOW / the tube CODE file load from $1A00, so the ports SHIP DIRECTLY — the staging pages and anim_init copy-down are gone.
