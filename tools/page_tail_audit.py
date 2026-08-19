@@ -60,7 +60,7 @@ def rows():
             pass
     # --- singletons ---
     out.append(('VDONE', sym('VDONE'), 57, 256, 'main <$1B40'))
-    out.append(('ANIM_SSMASK tail', sym('ANIM_SSMASK'), NS, 256, 'main; the copy-down moves a WHOLE page'))
+    out.append(('ANIM_SSMASK tail', sym('ANIM_SSMASK'), NS, 256, 'bank-B home since 2026-08-19 (read in place under WALK); tail genuinely free'))
     out.append(('VEXPL_LO/HI (packed @ $60)', sym('VEXPL_LO'), NEX, 0x60, 'already sub-page packed'))
     return out
 

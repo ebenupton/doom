@@ -418,7 +418,7 @@ def gen_6502_tables(flat=True):
         # since 2026-08-19, no longer header-relative) — today's five
         # stale-literal reds are why this is symmap, not a number
         import symmap as _sm
-        A = dict(ssmask=0x1100, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
+        A = dict(ssmask=0xB400, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
                  vex_lo=0xA700, vex_hi=0xA780,
                  ss_fh=_sm.sym('ROM_SS_FH_C', banked=1),
                  ss_ch=_sm.sym('ROM_SS_CH_C', banked=1))

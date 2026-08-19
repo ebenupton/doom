@@ -107,9 +107,8 @@ def build_banked(flatr):
         for addr, blob in _an0.gen_6502_tables(flat=False).items():
             if 0xBE90 <= addr < 0xC000:           # TABL0 @ $BE90 (bank A)
                 la[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
-            elif 0x1100 <= addr < 0x11E0:         # SSMASK -> MAIN
-                for i, b in enumerate(blob):
-                    bm[addr + i] = b
+            # (SSMASK no longer routed here: its blob is keyed at its
+            #  bank-B home $B400 and seeded in the L2 section below)
     bm.define_bank(BANK_L0, la)                   # BANK_L0 == BANK_SEG (4)
 
     # --- bank C = clipper ($8000) + rasteriser ($A900) ---
@@ -191,8 +190,10 @@ def build_banked(flatr):
         for addr, blob in _an.gen_6502_tables(flat=False).items():
             if 0xB300 <= addr < 0xB400:          # CFG @ $B300 (bank B)
                 lb[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
-            elif 0x1100 <= addr < 0x11E0:        # SSMASK -> staging @ $B400
-                assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $B400 staging page'
+            elif addr == 0xB400:                 # SSMASK: bank-B HOME (the
+                # hub reads it in place under WALK since 2026-08-19; the
+                # $1100 main copy and the copy-down are gone)
+                assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows its $B400 page'
                 lb[0x3400:0x3400 + len(blob)] = blob
     lb[0x3700:0x3700 + len(dir_blob)] = dir_blob   # DIR planes, bank-B copy
     # (PMB stitching DELETED 2026-08-19: bank B carries no code any more —
