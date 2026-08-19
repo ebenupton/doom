@@ -101,6 +101,17 @@ ssp_live:
    STA zp_seg_hdr_p_h
    LDA SS_PLO,X
    STA zp_seg_hdr_p
+
+; Invalidate the vertex-chain key at the subsector boundary: chained
+; front-sy reuse needs the SAME front heights, only guaranteed within
+; one subsector.  The chain compares the LO byte only (2026-08-13):
+; $FF matches no vertex (pack sentinel reservation).
+   LDY #$FF
+   STY zp_seg_v_idx_l
+   INY
+   STY zp_ys_done                           ; no cross-subsector sy donation
+   STY zp_ys_v1ok
+
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so they LIVE per subsector; the front deltas are
 ; computed ONCE here (2026-07-10). Bank B pages, WALK still live. ---
@@ -113,7 +124,7 @@ ssp_live:
 ; the flags ride A straight out of each SBC — the two delta reloads
 ; died. Y is dead here (the SS_PC sentinel decode is done with it);
 ; X still holds the subsector id for the plane loads.
-   LDY #0                                   ; (before the SBC: LDY writes N)
+
    LDA ROM_SS_FH_C,X                        ; fh (per subsector)
    STA zp_seg_fh
    SEC
@@ -127,24 +138,7 @@ ssk_fb_live:
    SEC
    SBC zp_br_vz
    STA zp_seg_top_dlt                       ; top_dlt = ch - vz
-   BMI ssk_ft_kill                          ; < 0: ceiling below eye
-   BEQ ssk_ft_kill                          ; = 0: at the eyeline — kill too
-ssk_store:
-   STY zp_ss_eskip
-; Invalidate the vertex-chain key at the subsector boundary: chained
-; front-sy reuse needs the SAME front heights, only guaranteed within
-; one subsector.  The chain compares the LO byte only (2026-08-13):
-; $FF matches no vertex (pack sentinel reservation).
-   LDX #$FF
-   STX zp_seg_v_idx_l
-   INX
-   STX zp_ys_done                           ; no cross-subsector sy donation
-   STX zp_ys_v1ok
-   PAGE BANK_SEG                           ; headers / verts / VWHC bank —
-                                        ; held through seg stages 1-4
-   JMP seg_proc                            ; (the old seg_loop BNE cost the
-                                        ; same 3 cycles)
-ssk_ft_kill:                            ; eyeline: ceiling at/below eye
+   BPL ssk_ft_live                          ; < 0: ceiling below eye
    LDY #$80                                ; DISCARDS a pending fb bit (Eben):
                                            ; the solid dispatch treats $C0 and
                                            ; $80 identically anyway, and the
@@ -153,8 +147,12 @@ ssk_ft_kill:                            ; eyeline: ceiling at/below eye
                                            ; boundary's solid columns — the
                                            ; clipper owns it. Byte is one-hot
                                            ; BY CONSTRUCTION: {0,$40,$80}.
-   BMI ssk_store                           ; always — N=1 just set
-
+ssk_ft_live:
+   STY zp_ss_eskip
+   PAGE BANK_SEG                           ; headers / verts / VWHC bank —
+                                        ; held through seg stages 1-4
+   JMP seg_proc                            ; (the old seg_loop BNE cost the
+                                        ; same 3 cycles)
 ; (DEFQ retired 2026-07-16: clip ops apply IMMEDIATELY at seg end —
 ;  convex siblings only collide at shared edge columns, which is
 ;  exactly the portal-edge-vertical artifact this fixes; the record
