@@ -83,11 +83,9 @@ render_subsector:
 ; The header hi is DERIVED: page + >ROM_SEG_HDR_C — this ADC is the
 ; rebase both loaders used to do. ---
    LDX zp_node_ch_l
-   LDY SS_PC,X                             ; Z set on empty (dead reg: the
-   BNE ssp_live                            ; live path's seg loop clobbers
-   RTS                                     ; Y anyway) — empty subsector
-ssp_live:
-   TYA
+   LDY SS_PC,X                             ; Z set on empty (Y is dead: the
+   BEQ sl_rts                              ; seg loop clobbers it anyway) —
+   TYA                                     ; empty ss -> the shared loop RTS
    AND #7
    STA zp_seg_count                        ; cnt-1: the advance loops end
                                         ; on BMI (the -1 saved a decode)
