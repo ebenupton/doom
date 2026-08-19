@@ -76,26 +76,28 @@ render_subsector:
 ::anim_ss_cont:
 ; --- The five SS planes, ALL adjacent in BANK B ($8900-$8DFF) and all
 ; read here under WALK (2026-08-19 consolidation, 7 planes -> 5):
-;   SS_PC  = (page<<3)|(cnt-1), $FF = empty subsector
+;   SS_PC  = ((page+1)<<3)|(cnt-1), $00 = empty subsector (the +1 page
+;            bias makes the LDY's Z flag the empty test — no CMP — and
+;            dies in the ADC constant below; low bits stay cnt-1)
 ;   SS_PLO = the plain in-page header offset (slot * stride)
 ; The header hi is DERIVED: page + >ROM_SEG_HDR_C — this ADC is the
 ; rebase both loaders used to do. ---
    LDX zp_node_ch_l
-   LDA SS_PC,X
-   CMP #$FF
-   BNE ssp_live
-   RTS                                     ; empty subsector
+   LDY SS_PC,X                             ; Z set on empty (dead reg: the
+   BNE ssp_live                            ; live path's seg loop clobbers
+   RTS                                     ; Y anyway) — empty subsector
 ssp_live:
+   TYA
    AND #7
    STA zp_seg_count                        ; cnt-1: the advance loops end
                                         ; on BMI (the -1 saved a decode)
-   LDA SS_PC,X
+   TYA                                     ; (was a second SS_PC,X load)
    AND #$F8
    LSR A
    LSR A
-   LSR A                                   ; header page 0..23 (C = 0: the
+   LSR A                                   ; page+1, 1..24 (C = 0: the
                                         ; three low bits were masked off)
-   ADC #>ROM_SEG_HDR_C
+   ADC #(>ROM_SEG_HDR_C)-1                 ; the page bias dies here
    STA zp_seg_hdr_p_h
    LDA SS_PLO,X
    STA zp_seg_hdr_p

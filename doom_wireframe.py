@@ -3178,12 +3178,12 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     layout = _p_layout
     rom = _p_rom_main
     ss_off = layout['off_ss']              # SoA pages: PC / SI (packed)
-    pc = rom[ss_off + idx]                 # (page<<3)|(cnt-1); $FF = empty
-    if pc == 0xFF:
+    pc = rom[ss_off + idx]                 # ((page+1)<<3)|(cnt-1); 0 = empty
+    if pc == 0:
         return
     count = (pc & 7) + 1
     plo = rom[ss_off + 256 + idx]          # plain in-page offset (slot*stride)
-    first_seg = _seg_hdr_slot(((pc >> 3) << 8) | plo)
+    first_seg = _seg_hdr_slot((((pc >> 3) - 1) << 8) | plo)
 
     # Deferral removed 2026-07-16: packed_render_seg's deferred=None
     # branches call clips.mark_solid / clips.tighten at seg end with the

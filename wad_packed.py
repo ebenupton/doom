@@ -442,7 +442,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # was count / hdr-offset lo / hdr-offset hi in three pages; the value
     # ranges never needed them: cnt <= 8, header pages <= 24, slots are
     # k*9 with k <= 27):
-    #   PC  = (page << 3) | (cnt - 1)     $FF = empty subsector
+    #   PC  = ((page+1) << 3) | (cnt - 1)   $00 = empty subsector
+    #         (page biased +1, Eben's sentinel trick 2026-08-19: the
+    #         prologue's LDY sets Z on empty for free — no CMP — and the
+    #         -1 folds into the ADC base constant; the low bits stay
+    #         cnt-1 untouched, unlike a +1 which carries into the page
+    #         field at cnt=8)
     #   PLO = the in-page byte offset (slot * stride), stored PLAIN — an
     #         (info<<5)|slot packing was tried and clawed back the same
     #         day: the decode cost 8 cycles per visited subsector on the
@@ -462,8 +467,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         slot, r9 = divmod(rem, SEG_HDR_SIZE)
         assert r9 == 0 and slot < 29 and page < 24 and ss[0] <= 8, \
             f"subsector {i}: PC/SI encoding out of range ({page},{slot},{ss[0]})"
-        rom_main[off_ss + i] = 0xFF if ss[0] == 0 \
-            else ((page << 3) | (ss[0] - 1))
+        rom_main[off_ss + i] = 0 if ss[0] == 0 \
+            else (((page + 1) << 3) | (ss[0] - 1))
         rom_main[off_ss + 256 + i] = rem            # PLO: slot * stride
         # Front heights, per SUBSECTOR (2026-08-17). ASSERTED constant over
         # the run: if a future map ever breaks that, this fails at pack time
