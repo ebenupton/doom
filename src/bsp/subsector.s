@@ -104,34 +104,33 @@ ssp_live:
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so they LIVE per subsector; the front deltas are
 ; computed ONCE here (2026-07-10). Bank B pages, WALK still live. ---
+; Subsector eyeline rule (Eben, 2026-08-13): ceiling at/below the
+; sightline => NO top edges this subsector; floor at/above => NO
+; bottom edges. One byte, BIT-shaped: N ($80) kills ft, V ($40) kills
+; fb — the ft/fb arm heads test it in 5 cycles, and the one-hot LDA/BNE
+; dispatch needs the low bits CLEAN (kill polarity, zero elsewhere).
+; FUSED with the delta subtractions 2026-08-19 (Eben's synthesis call):
+; the flags ride A straight out of each SBC — the two delta reloads
+; died. Y is dead here (the SS_PC sentinel decode is done with it);
+; X still holds the subsector id for the plane loads.
+   LDY #0                                   ; (before the SBC: LDY writes N)
+   LDA ROM_SS_FH_C,X                        ; fh (per subsector)
+   STA zp_seg_fh
+   SEC
+   SBC zp_br_vz
+   STA zp_seg_bot_dlt                       ; bot_dlt = fh - vz (STA keeps N)
+   BMI ssk_fb_live                          ; < 0: floor below eye — live
+   LDY #$40                                 ; >= 0: no bottom edges
+ssk_fb_live:
    LDA ROM_SS_CH_C,X                        ; ch (per subsector)
    STA zp_seg_ch
    SEC
    SBC zp_br_vz
    STA zp_seg_top_dlt                       ; top_dlt = ch - vz
-   LDA ROM_SS_FH_C,X                        ; fh (per subsector)
-   STA zp_seg_fh
-   SEC
-   SBC zp_br_vz
-   STA zp_seg_bot_dlt                       ; bot_dlt = fh - vz
-; Subsector eyeline rule (Eben, 2026-08-13): ceiling at/below the
-; sightline => NO top edges this subsector; floor at/above => NO
-; bottom edges. One byte, BIT-shaped: N ($80) kills ft, V ($40)
-; kills fb — the ft/fb arm heads test it in 5 cycles.
-   LDX #0
-   LDA zp_seg_top_dlt                       ; ch - vz
-   BMI ss_esk_t                             ; <= 0: ceiling at/below eye
-   BNE ss_esk_tok
-ss_esk_t:
-   LDX #$80
-ss_esk_tok:
-   LDA zp_seg_bot_dlt                       ; fh - vz
-   BMI ss_esk_done                          ; < 0: floor below eye — live
-   TXA
-   ORA #$40
-   TAX
-ss_esk_done:
-   STX zp_ss_eskip
+   BMI ssk_ft_kill                          ; < 0: ceiling below eye
+   BEQ ssk_ft_kill                          ; = 0: at the eyeline — kill too
+ssk_store:
+   STY zp_ss_eskip
 ; Invalidate the vertex-chain key at the subsector boundary: chained
 ; front-sy reuse needs the SAME front heights, only guaranteed within
 ; one subsector.  The chain compares the LO byte only (2026-08-13):
@@ -145,6 +144,11 @@ ss_esk_done:
                                         ; held through seg stages 1-4
    JMP seg_proc                            ; (the old seg_loop BNE cost the
                                         ; same 3 cycles)
+ssk_ft_kill:                            ; eyeline: ceiling at/below eye
+   TYA                                     ; (island: the keep path above
+   ORA #$80                                ; falls straight to ssk_store)
+   TAY
+   BMI ssk_store                           ; always — N=1 just set
 
 ; (DEFQ retired 2026-07-16: clip ops apply IMMEDIATELY at seg end —
 ;  convex siblings only collide at shared edge columns, which is
