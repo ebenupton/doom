@@ -102,7 +102,7 @@ def main():
 
     mpu = MPU(memory=base)
     mpu.pc = 0xEA03                      # harness entry: init + frame loop
-    mpu.sp = 0xFD
+    mpu.sp = 0xDD
     steps = 0
     ring = [0] * 64
     while state['eofs'] < FRAMES and steps < 3_000_000 * FRAMES:

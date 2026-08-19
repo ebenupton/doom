@@ -182,11 +182,11 @@ class SpanClip6502:
         mpu = self.mpu
         mem = mpu.memory
         mpu.pc = entry
-        mpu.sp = 0xFD
+        mpu.sp = 0xDD  # SP capped below SQR_MIRROR ($01E0-$01FF, the stack-page mirror)
         mpu.p = 0x30
         # Push return to $FF00-1 = $FEFF (RTS adds 1)
-        mem[0x01FF] = 0xFE
-        mem[0x01FE] = 0xFF
+        mem[0x01DF] = 0xFE
+        mem[0x01DE] = 0xFF
         mpu.processorCycles = 0
         lines = self.last_lines = []
         for _ in range(max_cycles):

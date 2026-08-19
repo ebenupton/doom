@@ -85,7 +85,7 @@ def copro_walk():
     base.subscribe_to_write([0xFEF9], r1w)
     mpu = MPU_C02(memory=base)              # the copro is a 65C02
     mpu.pc = 0xEA03
-    mpu.sp = 0xFD
+    mpu.sp = 0xDD
     steps = 0
     while len(st['frames']) < FRAMES and steps < 3_000_000 * FRAMES:
         for _ in range(50000):
@@ -113,7 +113,7 @@ class HostRaster:
         for x0, y0, x1, y1 in cmds:
             m[0x82], m[0x83], m[0x84], m[0x85] = x0, y0, x1, y1
             self.mpu.pc = 0x1903
-            self.mpu.sp = 0xFD
+            self.mpu.sp = 0xDD
             m[0x1FF] = 0xFF; m[0x1FE] = 0xFF
             n = 0
             while self.mpu.pc != 0 and n < 200_000:
@@ -140,7 +140,7 @@ class FlatRef:
         mpu = self.r.sc.mpu
         m = self.m
         mpu.pc = e
-        mpu.sp = 0xFD
+        mpu.sp = 0xDD
         m[0x1FF] = 0xFF; m[0x1FE] = 0xFF
         n = 0
         while mpu.pc != 0 and n < 3_000_000:

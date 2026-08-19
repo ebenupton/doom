@@ -151,12 +151,17 @@ PB_XL = $0680
 PB_XH = $0690
 PB_YL = $06A0
 PB_YH = $06B0
-SQR_MIRROR = $19E0                      ; 32-byte even-mirror prefix BELOW
-                                        ; sqr_l (the VXC senior-plane tail —
-                                        ; n_verts <= 480 asserted at pack):
-                                        ; filled by rot_select on a fresh
+SQR_MIRROR = $01E0                      ; 32-byte even-mirror prefix BELOW
+                                        ; sqr_l — protruding into the STACK
+                                        ; PAGE since the quad moved to $0200
+                                        ; (Eben, 2026-08-18). The stack is
+                                        ; capped at $01DF: every SP init is
+                                        ; $DD/$DF (driver TXS, harness sp=)
+                                        ; and pushes grow DOWN from there,
+                                        ; so the mirror is never touched.
+                                        ; Filled by rot_select on a fresh
                                         ; code image (rwp_stamp), so boot
-                                        ; zeroing self-heals. SQR_MIRROR+k
+                                        ; scribbles self-heal. SQR_MIRROR+k
                                         ; = f(32-k) & 255.
 PB_TS = $06C0                           ; epoch-build scratch: (k-2)*256*sin
 PB_TC = $06C8                           ; (k-2)*256*cos — 4 s16 each

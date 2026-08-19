@@ -41,7 +41,7 @@ def standalone(top,bot,left,right,px,py,ab):
     m[sym('zp_tail_vec')]=_pr&0xFF; m[sym('zp_tail_vec')+1]=_pr>>8
     for f,val in enumerate((top,bot,left,right)):
         m[BBP[2*f]]=val&0xFF; m[BBP[2*f+1]]=((val>>8)^0x80)&0xFF  # offset-binned hi
-    _st.pc=BCA;_st.sp=0xFD;m[0x1FF]=0xFF;m[0x1FE]=0xFF
+    _st.pc=BCA;_st.sp=0xDD;m[0x1DF]=0xFF;m[0x1DE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
     _vis = (_st.p & 0x40) == 0   # C/V signature (2026-07-26): V=1 = angle
@@ -59,7 +59,7 @@ def check(px,py,ab):
     armed=None
     def traced(entry,max_cycles=30_000_000):
         nonlocal n,armed
-        mpu.pc=entry; mpu.sp=0xFD; mpu.p=0x30; mem[0x1FF]=0xFE; mem[0x1FE]=0xFF
+        mpu.pc=entry; mpu.sp=0xDD; mpu.p=0x30; mem[0x1DF]=0xFE; mem[0x1DE]=0xFF
         for _ in range(max_cycles):
             pc=mpu.pc
             if pc==0xFF00: break

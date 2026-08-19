@@ -63,10 +63,11 @@ ANIM_SSMASK_SRC = $E500                 ; flat TABLES block page (shipped in
 ; Mover bit/index m = index in sorted(ANIM_SECTORS) everywhere (SSMASK bits,
 ; TABL0 pointer slots, CFG stride 12, ANIM_WS stride 3, DIRTY bits).
 
-; --- state (unbanked; drivers zero $05E9-$05FF at init) ---
-ANIM_ENABLE = $05E9
-ANIM_DIRTY  = $05EA                     ; bit m set = mover m moved since patch
-ANIM_WS     = $05EB                     ; per mover: pos_lo, pos_hi, state/timer
+; --- state (unbanked; ships as LOW zeros, anim_init seeds it) ---
+ANIM_ENABLE = $1DE9                     ; scalars block moved $05xx -> $1Dxx
+ANIM_DIRTY  = $1DEA                     ; 2026-08-18 (the sqr quad took
+ANIM_WS     = $1DEB                     ; $0200-$05FF); same page offsets.
+                                        ; per mover: pos_lo, pos_hi, state/timer
                                         ;   state = bits 7-6 (0 wait@A, 1 A->B,
                                         ;   2 wait@B, 3 B->A), timer = bits 5-0
 
@@ -502,6 +503,68 @@ alw_bch: .byte 0
 alw_f:   .byte 0
 .endscope
 
+; ============================================================================
+; sqr_fill — regenerate the quarter-square quad at $0200-$05FF.
+; The quad lives on OS-owned pages (vector page + workspace) that no disc
+; file can load, and never needs loading: f(n) = n*n >> 2 falls out of the
+; recurrence f(n+1) = f(n) + ((n+1) >> 1). 1,024 bytes in ~13k cycles,
+; once per boot. Callers: anim_init (walk_drv and the tube driver both
+; come through it) and banked_boot's DRV directly (ENG_SQR_FILL).
+; The harnesses poke identical values; bare-boot's FB compare against the
+; poked model is the exactness gate. Clobbers A, X, Y, zp_anim_w pair.
+; (The COLPORT copy-down used to live in this slot: the ports ship at
+; $1A00 now, inside LOW / the tube CODE file. Do not resurrect $A900
+; staging — it overlays the psi planes.)
+; ============================================================================
+SEG_HIGH
+sqr_fill:
+.scope
+   LDA #0
+   STA zp_anim_w                           ; f16 = 0
+   STA zp_anim_w+1
+   TAX                                     ; n = 0
+   TAY                                     ; delta = 0
+sq1:
+   LDA zp_anim_w
+   STA SQR_LO,X                            ; f(n) lo
+   LDA zp_anim_w+1
+   STA SQR_HI,X                            ; f(n) hi
+   TXA
+   LSR A
+   BCC sq1e                                ; leaving odd n: delta+1
+   INY                                     ;  (delta = (n+1) >> 1)
+sq1e:
+   TYA
+   CLC
+   ADC zp_anim_w
+   STA zp_anim_w
+   BCC sq1c
+   INC zp_anim_w+1
+sq1c:
+   INX
+   BNE sq1
+sq2:                                       ; n = 256 + X (parity = X parity)
+   LDA zp_anim_w
+   STA SQR2_LO,X
+   LDA zp_anim_w+1
+   STA SQR2_HI,X
+   TXA
+   LSR A
+   BCC sq2e
+   INY
+sq2e:
+   TYA
+   CLC
+   ADC zp_anim_w
+   STA zp_anim_w
+   BCC sq2c
+   INC zp_anim_w+1
+sq2c:
+   INX
+   BNE sq2
+   RTS
+.endscope
+
 ; --- anim_init: load start state from CFG, mark all dirty, enable, and
 ;     point the subsector hook at the hub. Runs with BANK_L2 paged. ---
 ;   in : ANIM_CFG (+8 start88, +10 packed start state/timer)
@@ -512,26 +575,10 @@ alw_f:   .byte 0
 SEG_HIGH
 anim_init:
 .scope
-; COLPORT copy-down (2026-08-15): the collision port table's runtime
-; home is $0200 (OS vector page until the takeover), so the discs stage
-; it and this one-shot post-takeover hook copies it down — the SSMASK
-; idiom below. Banked: bank B $A900 (we run with BANK_L2 paged, see the
-; header); flat/tube: $8400 CODE-file slack. HISTORY: the first cut
-; *LOADed a COLDT file at $3000 — INSIDE engine CODE, which LOW had
-; just loaded — and the disc crashed at the first render (BRK loop).
-.if ::BANKED
-CP_STAGE = $A900
-.else
-CP_STAGE = $8400
-.endif
-   LDX #0
-ai_cpc:
-   LDA CP_STAGE,X
-   STA COLPORT_BASE,X
-   LDA CP_STAGE+$100,X
-   STA COLPORT_BASE+$100,X
-   INX
-   BNE ai_cpc
+; sqr fill first — see sqr_fill below; a JSR so the one-frame bare-boot
+; driver (banked_boot DRV), which never touches anims, can call the fill
+; alone via ENG_SQR_FILL.
+   JSR sqr_fill
 ; SSMASK lives in MAIN ($0A80, BOTH builds since the 2026-07-21 unfork)
 ; so the hub reads it with zero paging — but main below $1B40 is never
 ; covered by a disc image (banked LOW loads at $1B40; the copro DATA

@@ -58,7 +58,7 @@ def copro_frame_commands():
     base.subscribe_to_write([0xFEF9], r1w)
     mpu = MPU_C02(memory=base)              # the copro is a 65C02
     mpu.pc = 0xEA03
-    mpu.sp = 0xFD
+    mpu.sp = 0xDD
     steps = 0
     while (len(state['out']) < 4 or state['out'][-4:] != [0xFF] * 4) \
             and steps < 4_000_000:
@@ -82,7 +82,7 @@ def host_rasterize(cmds):
     for x0, y0, x1, y1 in cmds:
         m[0x82], m[0x83], m[0x84], m[0x85] = x0, y0, x1, y1
         mpu.pc = 0x1903
-        mpu.sp = 0xFD
+        mpu.sp = 0xDD
         m[0x1FF] = 0xFF; m[0x1FE] = 0xFF    # RTS-to-0 sentinel
         n = 0
         while mpu.pc != 0 and n < 200_000:

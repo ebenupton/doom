@@ -185,7 +185,7 @@ def main():
         if entry != RF:
             return orig(entry, max_cycles)
         mpu = sc.mpu
-        mpu.pc = entry; mpu.sp = 0xFD; mpu.p = 0x30
+        mpu.pc = entry; mpu.sp = 0xDD; mpu.p = 0x30
         m[0x01FF] = 0xFE; m[0x01FE] = 0xFF
         m.cycles = lambda: mpu.processorCycles
         m.armed = getattr(m, 'arm_next', True)

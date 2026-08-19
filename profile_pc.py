@@ -28,8 +28,8 @@ r = BspRender6502(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
 sc = r.sc
 pc_cyc = {}
 def prof_run(entry, max_cycles=10_000_000):
-    m = sc.mpu; m.pc = entry; m.sp = 0xFD; m.p = 0x30
-    mem = m.memory; mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF; m.processorCycles = 0
+    m = sc.mpu; m.pc = entry; m.sp = 0xDD; m.p = 0x30
+    mem = m.memory; mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF; m.processorCycles = 0
     for _ in range(max_cycles):
         if m.pc == 0xFF00: break
         pc = m.pc; c0 = m.processorCycles; m.step()

@@ -382,11 +382,10 @@ def blobs(flat=True):
     # COLPORT: aggregation ports at $0200 BOTH builds (the shared page
     # freed by the records-to-bank-C move; main = no paging in the scan).
     # SHIPPING: $0200 is the OS vector page until the takeover, so no
-    # disc image can load it directly — anim_init copies it down from a
-    # staged source (the SSMASK idiom). Banked: bank B $A900 (anim_init
-    # runs under BANK_L2; the COLDT-file-at-$3000 scheme died 2026-08-15
-    # — $3000 is INSIDE engine CODE and the load shredded it). Flat/tube:
-    # $8400 CODE-file slack. The py65 harnesses also poke $0200 directly.
+    # COLPORT ships at $1A00 (2026-08-18, the sqr swap): inside LOW and
+    # the tube CODE file, loaded directly — no staging, no copy-down.
+    # (It lived at $0200 with a boot dance until the sqr quad, which is
+    # boot-GENERATED and needs no shipping, took the OS pages instead.)
     pb = bytearray()
     for p in m['ports']:
         # WALL ANGLE AT +8, matching the solid record: pm_box_vs_seg
@@ -395,18 +394,17 @@ def blobs(flat=True):
         # pm_port_aggr's header for the bug this layout retired).
         pb += struct.pack('<hhhhBBBB', p[0], p[1], p[2], p[3],
                           p[7], p[4], p[5], p[6])
-    assert 0x0200 + len(pb) <= 0x0400, 'COLPORT overruns the freed pages'
+    import abi as _abi0
+    assert _abi0.COLPORT_BASE + len(pb) <= 0x1C00, 'COLPORT overruns the pool'
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
            A['ss_vz']: m['ss_vz'], A['ss_info']: m['ss_info'],
            A['minpass']: m['mv_minpass'], A['usetab']: bytes(ub),
-           0x0200: bytes(pb)}
+           _abi0.COLPORT_BASE: bytes(pb)}
+    # (the bank-B $A900 / flat $8400 staging emits died 2026-08-18: at
+    #  $1A00 the ports ship directly inside LOW / the tube CODE file,
+    #  and anim_init's copy-down is gone with them)
     if not flat:
-        # NOTE: $A900 is INSIDE the rcache psi planes (RC_P1L_0..) —
-        # deliberate overlay: anim_init copies the staged ports down at
-        # boot BEFORE any render writes psi; after that the bytes are
-        # the planes' ships-zero BSS. Boot-consumed staging only.
-        out[0xA900] = bytes(pb)                 # bank-B staging for anim_init
-        assert 0xA900 + len(pb) <= 0xAB00, 'CP staging spans 2 psi pages max'
+        pass
     # the asm dispatches on idx >= COL_N_SOLID (abi constant): pin it
     import abi as _abi
     assert len(m['colsegs']) == _abi.COL_N_SOLID, \

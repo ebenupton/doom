@@ -466,8 +466,8 @@ def main():
         mem[ZP_CONE] = 1 if co else 0
         mem[sym('bca_ab')] = ab & 0xFF
         sc._run(ENTRY_VIEW); sc.init(); sc.clear_screen()
-        mpu.pc = ENTRY_RENDER; mpu.sp = 0xFD; mpu.p = 0x30
-        mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF
+        mpu.pc = ENTRY_RENDER; mpu.sp = 0xDD; mpu.p = 0x30
+        mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF
         for _ in range(10000000):
             pc = mpu.pc
             if pc == 0xFF00:

@@ -46,8 +46,8 @@ def run(top, bot, left, right, px, py, ab):
         mpu.memory[lo] = v & 0xFF
         mpu.memory[lo + 0x200] = ((v >> 8) ^ 0x80) & 0xFF  # offset-binned hi
                                                            # (wad_packed rule)
-    mpu.pc = BCA; mpu.sp = 0xFD
-    mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
+    mpu.pc = BCA; mpu.sp = 0xDD  # SP capped below SQR_MIRROR ($01E0-$01FF, the stack-page mirror)
+    mpu.memory[0x01DF] = 0xFF; mpu.memory[0x01DE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 20000:
         mpu.step(); steps += 1

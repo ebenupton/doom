@@ -46,8 +46,8 @@ def run_pa(dx, dy):
     # macros in the real callers — mirror it here
     mpu.x = (dx ^ dy) & 0x7F
     mpu.a = (dy >> 8) & 0xFF   # entry A-contract: pa_dy+1 (stage-0 compare)
-    mpu.sp = 0xFD
-    mpu.memory[0x01FF] = 0xFF; mpu.memory[0x01FE] = 0xFF
+    mpu.sp = 0xDD  # SP capped below SQR_MIRROR ($01E0-$01FF, the stack-page mirror)
+    mpu.memory[0x01DF] = 0xFF; mpu.memory[0x01DE] = 0xFF
     steps = 0
     while mpu.pc != 0x0000 and steps < 5000:
         mpu.step(); steps += 1

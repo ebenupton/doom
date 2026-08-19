@@ -41,8 +41,8 @@ lab_cyc = {}
 def prof_run(entry, max_cycles=20_000_000):
     m = sc.mpu
     mem = m.memory
-    m.pc = entry; m.sp = 0xFD; m.p = 0x30
-    mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF
+    m.pc = entry; m.sp = 0xDD; m.p = 0x30
+    mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF
     m.processorCycles = 0
     for _ in range(max_cycles):
         if m.pc == 0xFF00:

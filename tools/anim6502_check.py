@@ -27,7 +27,10 @@ import pyref_render
 from bsp_render_6502 import BspRender6502
 from symmap import sym
 
-ANIM_WS, ANIM_DIRTY, ANIM_ENABLE = 0x05EB, 0x05EA, 0x05E9
+ANIM_WS, ANIM_DIRTY, ANIM_ENABLE = (sym('ANIM_WS'), sym('ANIM_DIRTY'),
+                                    sym('ANIM_ENABLE'))  # BY THE MAP — the
+                                    # 0x05xx literals here went stale when the
+                                    # scalars moved for the sqr swap
 ORDER = sorted(dw.ANIM_SECTORS)
 
 

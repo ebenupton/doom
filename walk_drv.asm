@@ -63,6 +63,10 @@ ORG DRV_ORG
 ; ---------------------------------------------------------------------------
 .drv
     SEI
+    LDX #&DF : TXS                                  ; stack tops out at $01DF:
+                                                    ; SQR_MIRROR owns $01E0-$01FF
+                                                    ; (rebuilt at first render,
+                                                    ; but never push into it)
     LDA #0 : STA &FE34                              ; Master: ACCCON off (harmless on B)
     ; (respawn is NOT called here — see the end of init. It writes
     ;  pm_vz, which is a PM_SCRATCH slot overlaying THIS block.)
@@ -136,8 +140,9 @@ ORG DRV_ORG
                                 \ (no bank restore: the init tail is main-
                                 \ only and anim_glue_init pages for itself)
     LDA #0 : STA &A1 : STA &A0  \ mode DIRECT until the first flip
-    ; --- translation-coherence vertex cache (VXC): zero valid bitmap +
-    ;     state ($05A0-$05FF, unbanked), then enable. Zero-init is safe:
+    ; --- translation-coherence vertex cache (VXC): zero the valid bitmap
+    ;     page, then enable (the scalar state ships as LOW zeros at
+    ;     $1DA0-$1DFF since the sqr swap). Zero-init is safe:
     ;     first enabled frame is cold (prev_ab sentinel path) and every
     ;     entry stores before it loads. ---
     LDA #0

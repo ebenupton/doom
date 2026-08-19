@@ -150,10 +150,10 @@ def main():
 
     def prof_run(entry, max_cycles=500000):
         mpu.pc = entry
-        mpu.sp = 0xFD
+        mpu.sp = 0xDD
         mpu.p = 0x30
-        mem[0x01FF] = 0xFE
-        mem[0x01FE] = 0xFF
+        mem[0x01DF] = 0xFE
+        mem[0x01DE] = 0xFF
         mpu.processorCycles = 0
         lines = sc.last_lines = []
         get = stats.get

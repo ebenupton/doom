@@ -43,7 +43,12 @@
 ; --- data equates (unbanked) ---
 VXC_VALID   = $0780                     ; 57 B — on THE bitmap page
 ; (VXC_ENABLE comes from abi.inc)
-vxc_prev_ab = $05DC
+vxc_prev_ab = $1DDC                     ; moved with the scalars block
+                                        ; 2026-08-18 (the hard $05DC literal
+                                        ; survived the sqr swap and wrote the
+                                        ; frame angle into SQR2_HI[$DC] —
+                                        ; found by the vxcache ON!=OFF gate
+                                        ; via a 4-frame cold-strafe repro)
 ; (vxc_ref_x/y promoted to ZP 2026-07-14 — defined in zp.inc so the
 ; forward references in seg_xform.s assemble as zero-page: the warm
 ; path does six ADCs against them per vertex.)

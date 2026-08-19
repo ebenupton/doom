@@ -63,10 +63,10 @@ def install_tracing(sc, trace_all):
         mpu = sc.mpu
         mem = mpu.memory
         mpu.pc = entry
-        mpu.sp = 0xFD
+        mpu.sp = 0xDD
         mpu.p = 0x30
-        mem[0x01FF] = 0xFE
-        mem[0x01FE] = 0xFF
+        mem[0x01DF] = 0xFE
+        mem[0x01DE] = 0xFF
         mpu.processorCycles = 0
         for _ in range(max_cycles):
             if mpu.pc == 0xFF00:

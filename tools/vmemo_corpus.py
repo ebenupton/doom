@@ -53,8 +53,8 @@ def main():
 
     orig_run = sc._run
     def traced(entry, max_cycles=10_000_000):
-        mpu.pc = entry; mpu.sp = 0xFD; mpu.p = 0x30
-        mem[0x1FF] = 0xFE; mem[0x1FE] = 0xFF
+        mpu.pc = entry; mpu.sp = 0xDD; mpu.p = 0x30
+        mem[0x1DF] = 0xFE; mem[0x1DE] = 0xFF
         mpu.processorCycles = 0
         edge_pts = {}          # column -> set(y) from edge emits, this seg
         in_vs = False

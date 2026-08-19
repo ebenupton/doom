@@ -46,8 +46,8 @@ def profile(px, py, ab):
     sc.init(); sc.clear_screen()
     from bsp_render_6502 import poke_init_frame_state; poke_init_frame_state(sc.mpu.memory)
     mpu = sc.mpu; mem = mpu.memory
-    mpu.pc = sym('render_frame'); mpu.sp = 0xFD; mpu.p = 0x30
-    mem[0x01FF] = 0xFE; mem[0x01FE] = 0xFF
+    mpu.pc = sym('render_frame'); mpu.sp = 0xDD; mpu.p = 0x30
+    mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF
     mpu.processorCycles = 0
     buckets = {'VERTEX': 0, 'BSP': 0, 'BBOX': 0, 'CLIP': 0, 'RASTER': 0}
     gw = []                      # stack of (threshold_sp, subsystem)

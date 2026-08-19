@@ -317,20 +317,26 @@ ds:
 ; a span has been narrowed: the line is preserved across mark_solid splits
 ; and left/right-fragment creation in tighten, so no interp_store is needed
 ; for those operations.
-POOL = $0400
-POOL_NEXT = $0400
-POOL_XLO = $0420
-POOL_DEN = $0440                        ; precomputed xhi - xlo (denominator for interp)
-POOL_TL = $0460
-POOL_BL = $0480
-POOL_TR = $04A0
-POOL_BR = $04C0
-POOL_XSTART = $04E0
-POOL_XEND = $0500
-POOL_OT = $0520
-POOL_OB = $0540
-POOL_IT = $0560
-POOL_IB = $0580
+POOL = $1C00                            ; moved from $0400 2026-08-18 (the
+                                        ; sqr quad took $0200-$05FF); ships
+                                        ; as LOW-image zeros, span_init owns
+                                        ; the per-frame ground state
+; field equates DERIVE from POOL (they were hard $04xx literals until
+; 2026-08-18 — the pool kept writing its old home after POOL moved and the
+; sqr HI pages took the corruption; only the pixel-exact pyref saw it)
+POOL_NEXT   = POOL + $000
+POOL_XLO    = POOL + $020
+POOL_DEN    = POOL + $040               ; precomputed xhi - xlo (interp denominator)
+POOL_TL     = POOL + $060
+POOL_BL     = POOL + $080
+POOL_TR     = POOL + $0A0
+POOL_BR     = POOL + $0C0
+POOL_XSTART = POOL + $0E0
+POOL_XEND   = POOL + $100
+POOL_OT     = POOL + $120
+POOL_OB     = POOL + $140
+POOL_IT     = POOL + $160
+POOL_IB     = POOL + $180
 NUM_SLOTS = 32
 
 Y_BIAS = 48                             ; bias Y so visible [0,159] maps to [48,207] within u8

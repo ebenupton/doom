@@ -10,10 +10,10 @@ BANK_WALK = 7                           ; sideways bank B: node SoA, L8/AE/VATOX
 MAIN_BASE = $2A00                       ; engine CODE region head (cfg-anchored; MAIN first). $2C00 -> $2B00 -> $2A00 2026-08-17 (the second slide came from retiring the LDATA region at $1E00): SSMASK to the freed $1100 page let the driver+PMOVE block slide a page down, so CODE claims $2B00-$2BFF (+256 B of tail slack). Flat matched by moving the CPM psi planes off $2B00.
 HUD_ENTRY = $A400                       ; hud_draw (bank C window)
 BCA_AB = $0062                          ; view angle byte — ZP (zp_buf's slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry's HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB
-SQR_BASE = $1A00                        ; quarter-square tables, CONSOLIDATED $1A00-$1DFF 2026-08-09 (the retired vsync-journal page + the freed VCACHE_VALID page): lo,2lo then hi,2hi — one contiguous quad, one address, both builds
+SQR_BASE = $0200                        ; quarter-square tables: lo,2lo then hi,2hi — one contiguous quad $0200-$05FF, one address, both builds. Moved from $1A00 2026-08-18: pure-function data belongs in the UNSHIPPABLE pages (OS-owned until takeover) — it is GENERATED at boot by the fill at the top of anim_init, never loaded, and the shippable pages it vacated took COLPORT and the pool, killing every boot copy-dance.
 SQR_LO = SQR_BASE+$000                  ; qsqr lo bytes (f 0..255)
 SQR2_LO = SQR_BASE+$100                 ; qsqr lo bytes (f 256..510)
-SQRH_BASE = $1C00                       ; quarter-square HI pages ($1C00/$1D00) — UNFORKED into the $1A00-$1DFF quad 2026-08-09: the $0200 OS-page boot-staging dance died (page 2 freed — the tube client owns it); flat $1E00 freed for LDATA
+SQRH_BASE = $0400                       ; quarter-square HI pages ($0400/$0500). The 2026-08-09 note about the $0200 staging dance dying is history twice over: the quad is back on the OS pages, but BOOT-GENERATED now, so there is no dance to die.
 SQR_HI = SQRH_BASE+$000                 ; qsqr hi bytes (f 0..255)
 SQR2_HI = SQRH_BASE+$100                ; qsqr hi bytes (f 256..510)
 DRV_ORG = $1E00                         ; walk/anim driver entry (!BOOT CALLs this). $2000 -> $1F00 -> $1E00 2026-08-17 (RECIP_S left main for bank A, retiring the LDATA region): ANIM_SSMASK vacated $1F00 for the freed $1100 page, so the whole driver + PMOVE block slid one page down and CODE gained $2B00-$2BFF.
@@ -31,11 +31,11 @@ DV_HUD_EN = DRV_VARS+9                  ; debug HUD on/off (H toggles)
 DV_HUD_PREV = DRV_VARS+10               ; H-key debounce state
 DRV_GLUE = $1FA0                        ; anim/HUD glue pocket
 DRV_CLR = $2000                         ; input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
-D_ENABLE = $05FE                        ; forward-coherence bbox cache master switch
-D_FWD = $05FF                           ; per-frame flag: move was forward-only
+D_ENABLE = $1DFE                        ; forward-coherence bbox cache master switch
+D_FWD = $1DFF                           ; per-frame flag: move was forward-only
 VXC_STATE = $0700                       ; THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
 VXC_STATE_LEN = $0100                   ; bytes to zero at boot (the whole bitmap page)
-VXC_ENABLE = $05DB                      ; translation vertex cache switch
+VXC_ENABLE = $1DDB                      ; translation vertex cache switch (scalars block moved $05xx -> $1Dxx with the sqr swap, same page offsets)
 .if ::BANKED
 RCACHE_STATE = $AF00       ; rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 .else
@@ -93,11 +93,11 @@ MV_MINPASS = $BFC0         ; per-mover min passable door pos (fh + 56, prescaled
 .else
 MV_MINPASS = $E910
 .endif
-COLPORT_BASE = $0200                    ; P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle) — the shared page freed by records-to-bank-C; anim_init copies it down from staging (banked: bank B $A900; flat/tube: $8400 CODE slack)
+COLPORT_BASE = $1A00                    ; P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). At $1A00 since 2026-08-18 (swapped with the sqr quad): LOW / the tube CODE file load from $1A00, so the ports SHIP DIRECTLY — the staging pages and anim_init copy-down are gone.
 COL_N_SOLID = $00C7                     ; collision indices >= this are ports (colmap asserts the count)
-PM_MOMX = $03F8                         ; player momentum x (s16 8.8 prescaled) — the COLPORT page tail; anim_init's 512B copy-down zero-seeds it (bank staging pads with zeros)
-PM_MOMY = $03FA                         ; ... momentum y
-PM_TICREM = $03FC                       ; 35Hz tic accumulator remainder (0..9)
+PM_MOMX = $1BF8                         ; player momentum x (s16 8.8 prescaled) — the COLPORT tail; ships as LOW-image zeros (the copy-down that used to zero-seed it is gone)
+PM_MOMY = PM_MOMX+2                     ; player momentum y (derives — a hard $03FA literal here survived the 2026-08-18 move and cost a red pm_fuzz)
+PM_TICREM = $1BFC                       ; 35Hz tic accumulator remainder — DEAD since single-step momentum; declared for pm_fuzz
 .if ::BANKED
 USETAB_BASE = $BE00        ; use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 .else

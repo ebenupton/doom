@@ -80,15 +80,16 @@ class Rig:
         A = colmap.blobs(flat=not banked)['addrs']
         self.bvs = sym('pm_box_vs_seg', banked=banked)
         self.rec_ok = (range(A['colseg'], A['colseg'] + len(m['colsegs']) * 9),
-                       range(0x0200, 0x0200 + len(m['ports']) * 12))
+                       range(abi.COLPORT_BASE, abi.COLPORT_BASE + len(m['ports']) * 12))
         self.vz = sym('pm_vz', banked=banked)
         self.try_e = sym('pmove_try', banked=banked)
         self.frame_e = sym('pm_frame', banked=banked)
 
     def pose(self, ws):
-        for i, p in enumerate(ws):                  # ANIM_WS pos: stride 3,
-            self.mem[0x5EB + i * 3] = 0             # (frac, hi, _). anim_init
-            self.mem[0x5EB + i * 3 + 1] = p & 0xFF  # would wedge the banked rig
+        _ws = sym('ANIM_WS')                        # BY THE MAP — the literal
+        for i, p in enumerate(ws):                  # 0x5EB here went stale the
+            self.mem[_ws + i * 3] = 0               # day the scalars moved and
+            self.mem[_ws + i * 3 + 1] = p & 0xFF    # silently unposed every door
 
     def run(self, entry, a=0, x=0, maxc=2_000_000):
         mpu = self.r.sc.mpu
@@ -97,9 +98,9 @@ class Rig:
             # before the JSR, so the rig must too (pmove_try pages for
             # itself, which is why the try suite never needed this).
             self.mem[0xFE30] = 7
-        mpu.pc, mpu.sp, mpu.a, mpu.x = entry, 0xFD, a, x
-        self.mem[0x1FF] = 0xFF
-        self.mem[0x1FE] = 0xFF
+        mpu.pc, mpu.sp, mpu.a, mpu.x = entry, 0xDD, a, x  # SP capped below SQR_MIRROR ($01E0-$01FF, the stack-page mirror)
+        self.mem[0x1DF] = 0xFF
+        self.mem[0x1DE] = 0xFF
         n = 0
         while mpu.pc != 0 and n < maxc:
             if mpu.pc == self.bvs:

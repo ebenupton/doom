@@ -75,7 +75,7 @@ def main():
     # --- run the driver from DRV_ADDR until it reaches the spin loop ---
     mpu = sc.mpu
     mpu.pc = DRV_ADDR
-    mpu.sp = 0xFD
+    mpu.sp = 0xDD  # SP capped below SQR_MIRROR ($01E0-$01FF, the stack-page mirror) — the driver TXSes to $DF itself
     mpu.p = 0x34            # I set (SEI will set it too)
     steps = 0
     MAX = 30_000_000
