@@ -149,8 +149,15 @@ ssk_ft_live:
    STY zp_ss_eskip
    PAGE BANK_SEG                           ; headers / verts / VWHC bank —
                                         ; held through seg stages 1-4
-   JMP seg_proc                            ; (the old seg_loop BNE cost the
-                                        ; same 3 cycles)
+; FIRST-ITERATION ROTATION (2026-08-20): seg_proc's 4-op head is
+; duplicated here so the prologue FALLS into the seg loop — the JMP
+; seg_proc died (+6 B, -3 cyc per visited subsector). s_advance_l0
+; keeps the majority-arc fall-through it already owned; the advance
+; tails in seg_emit.s still loop back to ::seg_proc below.
+   LDY #LAY_SH_FLAGS
+   LDA (zp_seg_hdr_p),Y
+   STA zp_seg_flags
+   JMP back_face_test
 ; (DEFQ retired 2026-07-16: clip ops apply IMMEDIATELY at seg end —
 ;  convex siblings only collide at shared edge columns, which is
 ;  exactly the portal-edge-vertical artifact this fixes; the record
