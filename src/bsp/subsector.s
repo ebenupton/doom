@@ -145,9 +145,14 @@ ssk_store:
    JMP seg_proc                            ; (the old seg_loop BNE cost the
                                         ; same 3 cycles)
 ssk_ft_kill:                            ; eyeline: ceiling at/below eye
-   TYA                                     ; (island: the keep path above
-   ORA #$80                                ; falls straight to ssk_store)
-   TAY
+   LDY #$80                                ; DISCARDS a pending fb bit (Eben):
+                                           ; the solid dispatch treats $C0 and
+                                           ; $80 identically anyway, and the
+                                           ; portal fb in the fh=ch=vz slab
+                                           ; case sits behind the closed
+                                           ; boundary's solid columns — the
+                                           ; clipper owns it. Byte is one-hot
+                                           ; BY CONSTRUCTION: {0,$40,$80}.
    BMI ssk_store                           ; always — N=1 just set
 
 ; (DEFQ retired 2026-07-16: clip ops apply IMMEDIATELY at seg end —

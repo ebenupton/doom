@@ -409,11 +409,12 @@ hgp_fwd:
    BVC portal_cascade                      ; V clear: two-sided seg
 solid_cascade:
    ZERO zp_dcl_rec_buf_h                   ; records off for the whole path
-; Eyeline dispatch exploits ONE-HOT bits (Eben): both-set needs a
-; rendered seg fronting a CLOSED sector (fh == ch), and those never
-; reach the cascade — they backface-cull or sit behind the closed
-; sector's solid-promoted boundary, which the front-to-back walk
-; renders first, so has_gap culls them.  Nonzero therefore means
+; Eyeline dispatch exploits ONE-HOT bits (Eben): the prologue writes
+; {0, $40, $80} BY CONSTRUCTION since 2026-08-19 — a top-kill discards
+; any pending fb bit ($C0 cannot occur). The both-suppressed slab case
+; (fh == ch == vz, a closed sector at exact eye height) leans on the
+; clipper: its segs sit behind the closed boundary's solid-promoted
+; columns, so a let-through fb dies in has_gap. Nonzero therefore means
 ; exactly one edge suppressed: skip the first => draw the second.
    LDA zp_ss_eskip
    BNE sc_esk                              ; one edge suppressed: island
