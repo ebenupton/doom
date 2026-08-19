@@ -76,10 +76,10 @@ render_subsector:
 ::anim_ss_cont:
 ; --- The five SS planes, ALL adjacent in BANK B ($8900-$8DFF) and all
 ; read here under WALK (2026-08-19 consolidation, 7 planes -> 5):
-;   SS_PC = (page<<3)|(cnt-1), $FF = empty subsector
-;   SS_SI = (info<<5)|slot    (info is pmove's; the prologue masks it)
-; The header pointer is DERIVED: hi = page + >ROM_SEG_HDR_C (this ADC is
-; the rebase both loaders used to do), lo = slot9_tab[slot] = slot*9. ---
+;   SS_PC  = (page<<3)|(cnt-1), $FF = empty subsector
+;   SS_PLO = the plain in-page header offset (slot * stride)
+; The header hi is DERIVED: page + >ROM_SEG_HDR_C — this ADC is the
+; rebase both loaders used to do. ---
    LDX zp_node_ch_l
    LDA SS_PC,X
    CMP #$FF
@@ -97,10 +97,7 @@ ssp_live:
                                         ; three low bits were masked off)
    ADC #>ROM_SEG_HDR_C
    STA zp_seg_hdr_p_h
-   LDA SS_SI,X
-   AND #$1F
-   TAY
-   LDA slot9_tab,Y
+   LDA SS_PLO,X
    STA zp_seg_hdr_p
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so they LIVE per subsector; the front deltas are
@@ -156,12 +153,6 @@ ss_esk_done:
 ; holds cnt-1 >= 0, so there is nothing to gate here) ---
 sl_rts:
    RTS
-; slot*9 = the seg-header lo byte the SS_PLO plane used to ship (28
-; slots of LAY_HDR_STRIDE=9 per page; the packer asserts slot < 29)
-slot9_tab:
-   .repeat 29, k
-   .byte k * 9
-   .endrepeat
 ; Backface back-exit advance twin (hoisted from seg_emit.s 2026-08-13):
 ; single entry (backface.s JMPs), never left bank SEG, and it FALLS
 ; into seg_proc — the 57%-majority arc pays no jump at all now.

@@ -442,14 +442,15 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # was count / hdr-offset lo / hdr-offset hi in three pages; the value
     # ranges never needed them: cnt <= 8, header pages <= 24, slots are
     # k*9 with k <= 27):
-    #   PC = (page << 3) | (cnt - 1)      $FF = empty subsector
-    #   SI = (info << 5) | slot           info: mover idx 0-5, 7 = none
-    # The engine derives the header pointer at run time: hi = page +
-    # >ROM_SEG_HDR_C (which KILLED both loaders' rebase passes), lo =
-    # slot9_tab[slot]. The mover info rides SI's top bits; the ceiling
-    # flag it used to carry is constant per mover and lives in the
-    # 6-byte MV_CEIL table (colmap) instead.
-    _ss_movers = sorted(anim_sector_set or ())
+    #   PC  = (page << 3) | (cnt - 1)     $FF = empty subsector
+    #   PLO = the in-page byte offset (slot * stride), stored PLAIN — an
+    #         (info<<5)|slot packing was tried and clawed back the same
+    #         day: the decode cost 8 cycles per visited subsector on the
+    #         render's hot prologue to save bits that pm reads twice per
+    #         MOVE. The 7 mover subsectors live in colmap's MV_SS probe
+    #         list instead, and the prologue loads PLO in 7 cycles.
+    # The engine derives the header hi at run time: page + >ROM_SEG_HDR_C
+    # (which KILLED both loaders' rebase passes).
     for i, ss in enumerate(fp_ssectors):
         off16 = seg_hdr_off(ss[1])
         # page-slotting invariant (doom_wireframe): a run never crosses
@@ -463,11 +464,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"subsector {i}: PC/SI encoding out of range ({page},{slot},{ss[0]})"
         rom_main[off_ss + i] = 0xFF if ss[0] == 0 \
             else ((page << 3) | (ss[0] - 1))
-        # info: the subsector's OWN sector (front sector of its first seg,
-        # the same rule colmap's model uses — including for empties)
-        _sec = fp_segs_vwh[ss[1]][1]
-        _info = _ss_movers.index(_sec) if _sec in _ss_movers else 7
-        rom_main[off_ss + 256 + i] = (_info << 5) | slot
+        rom_main[off_ss + 256 + i] = rem            # PLO: slot * stride
         # Front heights, per SUBSECTOR (2026-08-17). ASSERTED constant over
         # the run: if a future map ever breaks that, this fails at pack time
         # instead of rendering one seg's heights for its neighbours.

@@ -350,7 +350,8 @@ def blobs(flat=True):
     # pages SEG for its list) so the widened COLSEG fits bank B.
     if flat:
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
-                 minpass=0xE910, mv_ceil=0xE980, usetab=0xE918)
+                 minpass=0xE910, mv_ss_id=0xE980, mv_ss_info=0xE988,
+                 usetab=0xE918)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -365,7 +366,8 @@ def blobs(flat=True):
         # planes; ss_info died into SS_SI's top bits (MV_CEIL carries the
         # per-mover ceiling flag it used to hold in b7)
         A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8D00,
-                 minpass=0xBFC0, mv_ceil=0xBFC6, usetab=0xBE00)
+                 minpass=0xBFC0, mv_ss_id=0xBFC6, mv_ss_info=0xBFCE,
+                 usetab=0xBE00)
     import math
     seg_blob = bytearray()
     for x1, y1, dx, dy in m['colsegs']:
@@ -399,13 +401,19 @@ def blobs(flat=True):
                           p[7], p[4], p[5], p[6])
     import abi as _abi0
     assert _abi0.COLPORT_BASE + len(pb) <= 0x1C00, 'COLPORT overruns the pool'
-    import doom_wireframe as _dw
-    _movers = sorted(_dw.ANIM_SECTORS)
-    _ceil = bytes((0x80 if _dw.ANIM_SECTORS[sec] == 'ceil' else 0)
-                  for sec in _movers)
+    # MV_SS probe list (2026-08-19 claw-back): the <=8 mover subsectors as
+    # parallel id/info arrays, $FF-padded to 8 — pmove probes these twice
+    # per MOVE instead of the render paying 8 cycles per visited subsector
+    # for info bits packed into SS_PLO. The info byte keeps the classic
+    # SS_INFO format (mover idx, b7 = ceiling).
+    _mvss = [(ssi, v) for ssi, v in enumerate(m['ss_info']) if v != 0xFF]
+    assert len(_mvss) <= 8, f'{len(_mvss)} mover subsectors overflow the 8-slot probe list'
+    _ids = bytes([p[0] for p in _mvss] + [0xFF] * (8 - len(_mvss)))
+    _inf = bytes([p[1] for p in _mvss] + [0xFF] * (8 - len(_mvss)))
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
            A['ss_vz']: m['ss_vz'],
-           A['minpass']: m['mv_minpass'], A['mv_ceil']: _ceil,
+           A['minpass']: m['mv_minpass'],
+           A['mv_ss_id']: _ids, A['mv_ss_info']: _inf,
            A['usetab']: bytes(ub),
            _abi0.COLPORT_BASE: bytes(pb)}
     # (the bank-B $A900 / flat $8400 staging emits died 2026-08-18: at
@@ -423,13 +431,13 @@ def blobs(flat=True):
         assert A['colseg'] + len(seg_blob) <= 0x7F10, \
             'collision blob reaches the flat PMOVE region at $7F10'
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
-        assert 0xE980 + len(_ceil) <= 0xEA00, 'MV_CEIL reaches the flat FB'
+        assert 0xE988 + 8 <= 0xEA00, 'MV_SS lists reach the flat FB'
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
     else:
         assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
         assert 0xAF8A + len(idx_blob) <= 0xB300, \
             'COLIDX blob reaches the ANIM CFG page at $B300'
-        assert len(m['ss_vz']) <= 0x100 and len(_ceil) <= 6
+        assert len(m['ss_vz']) <= 0x100
         assert A['usetab'] + len(ub) <= 0xBE8F, 'USETAB (bank A) reaches TABL0'
     out['addrs'] = A
     return out

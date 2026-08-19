@@ -191,9 +191,13 @@ SS_PC     = NODE_SOA + $900             ; (page<<3)|(cnt-1); $FF = empty —
                                         ; pages); hdr hi = page + >base at
                                         ; run time, which killed both
                                         ; loaders' rebase passes
-SS_SI     = NODE_SOA + $A00             ; (info<<5)|slot; hdr lo =
-                                        ; slot9_tab[slot] (slot*9); info =
-                                        ; mover idx 0-5, 7 = none
+SS_PLO    = NODE_SOA + $A00             ; header lo byte, PLAIN (slot *
+                                        ; stride — an info-bit packing was
+                                        ; clawed back the same day: 8 cyc
+                                        ; per visited ss on the prologue
+                                        ; for bits pm reads twice a MOVE;
+                                        ; the 7 mover subsectors live in
+                                        ; colmap's MV_SS probe list)
 
 ; TYPE-byte fields. NF_RLEAF sits at bit 7 so one ASL drops it into C
 ; (NF_LLEAF takes two) — the walk's child-follow gets id + leaf bit

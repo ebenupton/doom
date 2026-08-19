@@ -84,9 +84,14 @@ SS_VZ_BASE = $8D00         ; per-subsector prescale(floor+41) (s8). Banked $8D00
 SS_VZ_BASE = $E750
 .endif
 .if ::BANKED
-MV_CEIL = $BFC6            ; per-mover $80-if-ceiling flags (6 B; banked beside MV_MINPASS, flat past USETAB): replaces SS_INFO b7
+MV_SS_ID = $BFC6           ; mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)
 .else
-MV_CEIL = $E980
+MV_SS_ID = $E980
+.endif
+.if ::BANKED
+MV_SS_INFO = $BFCE         ; parallel info bytes, classic SS_INFO format (mover idx, b7 = ceiling)
+.else
+MV_SS_INFO = $E988
 .endif
 .if ::BANKED
 MV_MINPASS = $BFC0         ; per-mover min passable door pos (fh + 56, prescaled)

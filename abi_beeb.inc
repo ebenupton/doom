@@ -50,7 +50,8 @@ CPM_PSIH = CPM_PSI_BASE+&080            \ ... psi hi (last plane; the key planes
 COLIDX_BASE = &AF8A                     \ collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked: $B4A4 -> $AB00 -> $AF8A 2026-08-15 — off the SSMASK staging page, then off the rcache PSI PLANES $A900-$AEFF; now after RCACHE_STATE, ends $B197)
 COLSEG_BASE = &B8C0                     \ collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 SS_VZ_BASE = &8D00                      \ per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
-MV_CEIL = &BFC6                         \ per-mover $80-if-ceiling flags (6 B; banked beside MV_MINPASS, flat past USETAB): replaces SS_INFO b7
+MV_SS_ID = &BFC6                        \ mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)
+MV_SS_INFO = &BFCE                      \ parallel info bytes, classic SS_INFO format (mover idx, b7 = ceiling)
 MV_MINPASS = &BFC0                      \ per-mover min passable door pos (fh + 56, prescaled)
 COLPORT_BASE = &1A00                    \ P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). At $1A00 since 2026-08-18 (swapped with the sqr quad): LOW / the tube CODE file load from $1A00, so the ports SHIP DIRECTLY — the staging pages and anim_init copy-down are gone.
 COL_N_SOLID = &00C7                     \ collision indices >= this are ports (colmap asserts the count)

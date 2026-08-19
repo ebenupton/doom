@@ -3182,8 +3182,8 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     if pc == 0xFF:
         return
     count = (pc & 7) + 1
-    slot = rom[ss_off + 256 + idx] & 0x1F  # SI = (info<<5)|slot
-    first_seg = _seg_hdr_slot(((pc >> 3) << 8) | (slot * SEG_HDR_SIZE))
+    plo = rom[ss_off + 256 + idx]          # plain in-page offset (slot*stride)
+    first_seg = _seg_hdr_slot(((pc >> 3) << 8) | plo)
 
     # Deferral removed 2026-07-16: packed_render_seg's deferred=None
     # branches call clips.mark_solid / clips.tighten at seg end with the

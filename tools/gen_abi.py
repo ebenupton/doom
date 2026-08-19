@@ -97,7 +97,8 @@ ABI = [
     # (SS_INFO_BASE retired 2026-08-19: the mover info rides SS_SI bits 5-7 —
     #  idx 0-5, 7 = none; the b7 ceiling flag it carried is per-mover constant
     #  and lives in MV_CEIL)
-    ('MV_CEIL',        0xBFC6, 0xE980, 'per-mover $80-if-ceiling flags (6 B; banked beside MV_MINPASS, flat past USETAB): replaces SS_INFO b7'),
+    ('MV_SS_ID',       0xBFC6, 0xE980, 'mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)'),
+    ('MV_SS_INFO',     0xBFCE, 0xE988, 'parallel info bytes, classic SS_INFO format (mover idx, b7 = ceiling)'),
     ('MV_MINPASS',     0xBFC0, 0xE910, 'per-mover min passable door pos (fh + 56, prescaled)'),
     ('COLPORT_BASE',   0x1A00, 0x1A00, 'P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). At $1A00 since 2026-08-18 (swapped with the sqr quad): LOW / the tube CODE file load from $1A00, so the ports SHIP DIRECTLY — the staging pages and anim_init copy-down are gone.'),
     ('COL_N_SOLID',    199,    None,   'collision indices >= this are ports (colmap asserts the count)'),
