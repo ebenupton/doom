@@ -43,7 +43,7 @@
 ; --- data equates (unbanked) ---
 VXC_VALID   = $0780                     ; 57 B — on THE bitmap page
 ; (VXC_ENABLE comes from abi.inc)
-vxc_prev_ab = $1DDC                     ; moved with the scalars block
+vxc_prev_ab = $19DC                     ; moved with the scalars block
                                         ; 2026-08-18 (the hard $05DC literal
                                         ; survived the sqr swap and wrote the
                                         ; frame angle into SQR2_HI[$DC] —
@@ -79,10 +79,16 @@ VXC_BASE = $1200
 .endif
 VXC_XLO  = VXC_BASE + $000
 VXC_XHI  = VXC_BASE + $200
+.if ::BANKED
 VXC_YLO  = VXC_BASE + $400
 VXC_YHI  = VXC_BASE + $600
-.if ::BANKED
 .assert VXC_YHI + $200 <= $AB00, error,  "banked VXC must fit below the vertex planes"
+.else
+VXC_YLO  = $1A00                        ; flat: evicted from $1600/$1800 by the
+VXC_YHI  = $1C00                        ; 2026-08-19 strip slide — window pages
+                                        ; (banked walk_drv territory); planes
+                                        ; are self-contained 512 B, no cross-
+                                        ; plane address arithmetic anywhere
 .endif
 
 ; the frame angle byte: abi.inc's BCA_AB (the old private vxc_ab copy

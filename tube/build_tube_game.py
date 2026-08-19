@@ -170,7 +170,8 @@ def main():
     # ---- TWO LOADS (Eben's spec): CODE = engine + NJ/emitters,
     # DATA = level + tables (+anim/sincos). The 2026-07-21 map makes both
     # contiguous; the cache block is runtime-only and never shipped.
-    CODE_LO, CODE_HI = 0x1A00, 0x8600   # sqr rides at $1A00 (f34f835 map);
+    import abi as _abi
+    CODE_LO, CODE_HI = _abi.LOW_BASE, 0x8600   # strip head (window slide 2026-08-19);
                                         # CLIPF ends ~$6D65, VPLOTF $6E00,
                                         # emit at $7500, collision tables
                                         # $7600-$7DF2, engine PMOVE $7E00,
@@ -189,7 +190,7 @@ def main():
     # CPM-era slack, boot-initialized)
     for a in range(0x0400, 0xF7F0):
         if mem[a] and not (CODE_LO <= a < CODE_HI or DATA_LO <= a < DATA_HI
-                           or 0x0400 <= a < 0x1A00 or 0x7600 <= a < 0x8600):
+                           or 0x0400 <= a < CODE_LO or 0x7600 <= a < 0x8600):
             raise AssertionError(f"unshipped nonzero byte at &{a:04X}")
     # (high check: VATOX now ends at $E701 — nothing above $E9FF but FB)
     for a in range(0xEA00, 0xF7F0):

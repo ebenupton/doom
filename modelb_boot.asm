@@ -1,20 +1,17 @@
 ; modelb_boot.asm — !BOOT loader for a plain Model B + sideways RAM (no *SRLOAD).
 ; Acorn DFS has no *SRLOAD, so we *LOAD each 16K bank file into a main-RAM staging
 ; area ($3000) and copy it into the target sideways bank via ROMSEL ($FE30). Then
-; *LOAD LOW at $1A00 (the full sqr quad $1A00-$1DFF + srecip $1E00 + driver
-; @ $2000 + engine), MODE 4, and
+; *LOAD LOW at LOW_BASE $1600 (strip + driver + engine, one image), MODE 4, and
 ; jump to the driver. Banks 4/6/7 = L0/C/L2 (all writable SWRAM on a Model B).
 ;
 ; *RUN as !BOOT (boot option 2) -> SHIFT-BREAK autoboots. PAGE=$1900 (DFS).
 ;
 ; ldr — load/copy each bank in turn, then LOW, then hand off. Each
 ; JSR $FFF7 is OSCLI on a command string; OS calls are fine here (the
-; driver's SEI at $2000 is where the OS goes away). The $3000 staging
-; area is plain user RAM under the boot-time MODE 7, and LOW ($1A00+)
-; only lands after the last bank copy has consumed the staging.
-; (LOW rebased $1C00 -> $1A00 2026-08-09: the sqr quad consolidated —
-;  the SQRH $7000-stage-then-$0200-copy dance DIED with it; page 2 is
-;  never touched, so no pre-driver SEI is needed either.)
+; driver's SEI is where the OS goes away). The $3000 staging area is
+; plain user RAM under the boot-time MODE 7, and LOW (LOW_BASE $1600+)
+; only lands after the last bank copy has consumed the staging — loaded
+; by the relocated $0900 stub, because it covers this loader's $1900.
 INCLUDE "abi_beeb.inc"
 ORG &1900
 .ldr
@@ -37,21 +34,19 @@ ORG &1900
     LDA #6:  JSR copy                            ; -> bank 6
     LDX #LO(c_b2): LDY #HI(c_b2): JSR &FFF7      ; *LOAD BANK2 3000  (L2)
     LDA #7:  JSR copy                            ; -> bank 7
-    LDA cpuflag : BNE ld_lowc
-    LDX #LO(c_low): LDY #HI(c_low): BNE ld_lowgo ; (Y = HI = &19: always taken)
-.ld_lowc
-    LDX #LO(c_lowc): LDY #HI(c_lowc)
-.ld_lowgo
-    JSR &FFF7                                    ; *LOAD LOW|LOWC 1A00
-                                                 ; (no COLDT load: the port
-                                                 ; table stages in BANK2 at
-                                                 ; $A900 — a $3000 load here
-                                                 ; would shred engine CODE)
-    LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4 (last OS call)
-    JMP DRV_ORG                                  ; -> driver (its SEI kills
-                                                 ; the OS; no vector-page
-                                                 ; copy remains — the sqr
-                                                 ; quad rode LOW)
+    ; --- finale runs RELOCATED at $0900 (2026-08-19 window slide): LOW
+    ;     now loads at LOW_BASE = $1600, which covers this loader at
+    ;     $1900 — the last *LOAD must execute from memory it does not
+    ;     overwrite. $0900-$0Bxx is cassette/RS423 buffer space, idle
+    ;     under DFS disc ops (DFS's own load state is ZP + $0D00 NMI +
+    ;     the catalog at $0E00-$0FFF; the $1600-$18FF span LOW covers is
+    ;     only OPENIN/BGET buffer space, and no file is open). ---
+    LDX #stub_len
+.rl LDA stub_image-1,X
+    STA &0900-1,X
+    DEX : BNE rl
+    LDA cpuflag                                  ; stub branches on it
+    JMP &0900
 .cpuflag EQUB 0
 
 ; copy — copy the 16K staged at $3000-$6FFF into sideways bank A.
@@ -80,8 +75,24 @@ ORG &1900
 .c_b0  EQUS "LOAD BANK0 3000" : EQUB 13
 .c_b1  EQUS "LOAD BANK1 3000" : EQUB 13
 .c_b2  EQUS "LOAD BANK2 3000" : EQUB 13
-.c_low EQUS "LOAD LOW 1A00"   : EQUB 13
 .c_b1c EQUS "LOAD BANK1C 3000": EQUB 13          ; 65C02 clipper/raster/HUD bank
-.c_lowc EQUS "LOAD LOWC 1A00": EQUB 13          ; 65C02 engine CODE image
-.ldr_end
-SAVE "!BOOT", &1900, ldr_end, &1900
+.stub_image                                      ; the $0900 finale rides here
+
+ORG &0900
+.stub                                            ; entry: A = cpuflag
+    BNE s_c02
+    LDX #LO(s_low): LDY #HI(s_low): BNE s_go     ; (Y = HI = &09: always taken)
+.s_c02
+    LDX #LO(s_lowc): LDY #HI(s_lowc)
+.s_go
+    JSR &FFF7                                    ; *LOAD LOW|LOWC 1600
+    LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4 (last OS call)
+    JMP DRV_ORG                                  ; -> driver (its SEI kills
+                                                 ; the OS)
+.s_low  EQUS "LOAD LOW 1600"  : EQUB 13
+.s_lowc EQUS "LOAD LOWC 1600" : EQUB 13          ; 65C02 engine CODE image
+.s_end
+stub_len = s_end - stub
+ASSERT LOW_BASE = &1600                          ; the strings above are text
+COPYBLOCK &0900, s_end, stub_image
+SAVE "!BOOT", &1900, stub_image + stub_len, &1900

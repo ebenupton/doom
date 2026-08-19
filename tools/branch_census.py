@@ -206,7 +206,7 @@ def main():
             klass = 'BACK-NT'
         else:
             klass = ''
-        if 0x2000 <= pc < 0x2900 and pc not in addr2line:
+        if 0x1C00 <= pc < 0x2600 and pc not in addr2line:  # drivers+PMOVE zone (window slide 2026-08-19)
             label, off = '(raster-blob-SEALED)', pc - 0x2000
             fname, lno = '?', 0
         else:

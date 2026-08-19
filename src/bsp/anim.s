@@ -64,9 +64,9 @@ ANIM_SSMASK_SRC = $E500                 ; flat TABLES block page (shipped in
 ; TABL0 pointer slots, CFG stride 12, ANIM_WS stride 3, DIRTY bits).
 
 ; --- state (unbanked; ships as LOW zeros, anim_init seeds it) ---
-ANIM_ENABLE = $1DE9                     ; scalars block moved $05xx -> $1Dxx
-ANIM_DIRTY  = $1DEA                     ; 2026-08-18 (the sqr quad took
-ANIM_WS     = $1DEB                     ; $0200-$05FF); same page offsets.
+ANIM_ENABLE = $19E9                     ; scalars block: $05xx -> $1Dxx (sqr
+ANIM_DIRTY  = $19EA                     ; swap) -> $19xx (2026-08-19 window
+ANIM_WS     = $19EB                     ; slide); same page offsets.
                                         ; per mover: pos_lo, pos_hi, state/timer
                                         ;   state = bits 7-6 (0 wait@A, 1 A->B,
                                         ;   2 wait@B, 3 B->A), timer = bits 5-0

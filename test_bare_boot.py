@@ -52,7 +52,7 @@ def main():
     C  = bytes(src.bm._banks[BANK_C])
     L2 = bytes(src.bm._banks[BANK_L2])
     import os as _os
-    LOW = bytes(src.bm[0x1A00:abi.MAIN_BASE + _os.path.getsize('bsp_render_bk.bin')])  # $1A00 base: sqr quad + srecip ride LOW (2026-08-09)
+    LOW = bytes(src.bm[abi.LOW_BASE:abi.MAIN_BASE + _os.path.getsize('bsp_render_bk.bin')])  # LOW base = strip head (abi)
     import subprocess as _sp
     import asmbuild
     asmbuild.gen_engine_syms()              # driver entries from the ld65 map
@@ -66,7 +66,7 @@ def main():
     bare.define_bank(BANK_C, C)
     bare.define_bank(BANK_L2, L2)
     for i, b in enumerate(LOW):
-        bare[0x1A00 + i] = b
+        bare[abi.LOW_BASE + i] = b
     for i, b in enumerate(DRV):
         bare[DRV_ADDR + i] = b
     bare.select(BANK_L0)

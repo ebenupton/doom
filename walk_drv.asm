@@ -142,7 +142,7 @@ ORG DRV_ORG
     LDA #0 : STA &A1 : STA &A0  \ mode DIRECT until the first flip
     ; --- translation-coherence vertex cache (VXC): zero the valid bitmap
     ;     page, then enable (the scalar state ships as LOW zeros at
-    ;     $1DA0-$1DFF since the sqr swap). Zero-init is safe:
+    ;     $19A0-$19FF since the window slide). Zero-init is safe:
     ;     first enabled frame is cold (prev_ab sentinel path) and every
     ;     entry stores before it loads. ---
     LDA #0
@@ -161,7 +161,7 @@ ORG DRV_ORG
     ; (D_FWD needs no init: read_input clears it every frame)
     LDA #&6C :STA backhi
     ; --- spawn pose LAST, with the clock seed, and for the same reason:
-    ; respawn writes pm_vz = PM_SCRATCH+$3F = $203F, and PM_SCRATCH
+    ; respawn writes pm_vz = PM_SCRATCH+$3F = $1A3F, and PM_SCRATCH
     ; OVERLAYS THIS INIT BLOCK. Called from the top (where it used to
     ; live) it wrote $06 over the high byte of the `STA &FE00` that
     ; selects R10 -- turning it into `STA &0600`. The CRTC address

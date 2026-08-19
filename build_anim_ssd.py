@@ -48,16 +48,15 @@ def build_images():
     bm = r.bm
     L0 = bytes(bm._banks[BANK_L0]); C = bytes(bm._banks[BANK_C]); L2 = bytes(bm._banks[BANK_L2])
     low_end = abi.MAIN_BASE + os.path.getsize('bsp_render_bk.bin')  # CODE region
-    low = bytearray(bm[0x1A00:low_end])  # LOW base $1A00 (sqr quad
-    # consolidated $1A00-$1DFF + srecip LDATA $1E00 ride the one LOW image, 2026-08-09)
+    low = bytearray(bm[abi.LOW_BASE:low_end])  # LOW base = the strip head (abi)
     def overlay(addr, data):
-        off = addr - 0x1A00
+        off = addr - abi.LOW_BASE
         low[off:off+len(data)] = data
     drv = open('ANIMDRV', 'rb').read()
     # the engine's PMOVE slice owns $2600-$2BFF (already in the bm slice):
     # a driver that grows past $2600 would overlay-shred it
-    assert DRV_ADDR + len(drv) <= 0x2240, \
-        f'driver {len(drv)}B reaches the PMOVE slice at $2240'
+    assert DRV_ADDR + len(drv) <= abi.PMOVE_BASE, \
+        f'driver {len(drv)}B reaches the PMOVE region at {abi.PMOVE_BASE:#x}'
     overlay(DRV_ADDR, drv)
     # (sincos overlay retired 2026-08-14: the table lives in bank A $BA00
     # with STEPTAB/USEVEC — banked_bsp seeds them into the la image)

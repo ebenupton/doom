@@ -36,11 +36,11 @@ def mk_bare():
     # LOW base $1A00, exactly as the disc loads it (the $1C00 base here was
     # stale from before the 2026-08-09 sqr consolidation, and showed up as
     # ~340 phantom "diffs" in the sqr pages this harness never loaded)
-    LOW = bytes(src.bm[0x1A00:abi.MAIN_BASE + _os.path.getsize('bsp_render_bk.bin')])
+    LOW = bytes(src.bm[abi.LOW_BASE:abi.MAIN_BASE + _os.path.getsize('bsp_render_bk.bin')])
     sc = SpanClip6502()
     bare = BankedMemory([0]*65536)
     for n,img in [(BANK_L0,L0),(BANK_C,C),(BANK_L2,L2)]: bare.define_bank(n,img)
-    for i,b in enumerate(LOW): bare[0x1A00+i]=b
+    for i,b in enumerate(LOW): bare[abi.LOW_BASE+i]=b
     # ANIM_SSMASK sits BELOW the LOW image, so no disc file carries it: on
     # hardware anim_init copies it down from the bank staging page. We enter
     # engine entries directly and never run init, so mirror that copy here.

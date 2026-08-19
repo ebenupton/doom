@@ -317,9 +317,10 @@ ds:
 ; a span has been narrowed: the line is preserved across mark_solid splits
 ; and left/right-fragment creation in tighten, so no interp_store is needed
 ; for those operations.
-POOL = $1C00                            ; moved from $0400 2026-08-18 (the
-                                        ; sqr quad took $0200-$05FF); ships
-                                        ; as LOW-image zeros, span_init owns
+POOL = SPAN_POOL                        ; abi.inc ($1800 since the 2026-08-19
+                                        ; window slide; $1C00 before, $0400
+                                        ; before the sqr swap); ships as
+                                        ; LOW-image zeros, span_init owns
                                         ; the per-frame ground state
 ; field equates DERIVE from POOL (they were hard $04xx literals until
 ; 2026-08-18 — the pool kept writing its old home after POOL moved and the

@@ -153,9 +153,9 @@ def banked_files():
         ('BANK0', 0x3000, 0x3000, L0),
         ('BANK1', 0x3000, 0x3000, C),
         ('BANK2', 0x3000, 0x3000, L2),
-        ('LOW',   0x1A00, 0x1A00, LOW),
+        ('LOW',   abi.LOW_BASE, abi.LOW_BASE, LOW),
         ('BANK1C', 0x3000, 0x3000, Cc),
-        ('LOWC',  0x1A00, 0x1A00, LOWc),
+        ('LOWC',  abi.LOW_BASE, abi.LOW_BASE, LOWc),
     ]
     # (COLDT file retired 2026-08-15: the port table rides BANK2 at $A900
     # — colmap.blobs(flat=False)[0xA900] — and anim_init copies it down to

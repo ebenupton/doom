@@ -195,21 +195,9 @@ def build_banked(flatr):
                 assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows the $B400 staging page'
                 lb[0x3400:0x3400 + len(blob)] = blob
     lb[0x3700:0x3700 + len(dir_blob)] = dir_blob   # DIR planes, bank-B copy
-    # pm_frame CODE in bank B (PMB1-4, cfg-anchored — Eben blessed
-    # movement code into bank WALK 2026-08-15: it already ran entirely
-    # under this bank's paging, and main RAM had ~560 B left). Stitched
-    # from the cfg region list so a new window can't be missed, and
-    # BEFORE define_bank (the seed-before-define landmine).
-    from engine_load import _regions as _rg
-    _pmb = 0
-    for _pa, _pf in _rg(banked=1):
-        if not _pf.startswith('engine_pmb'):
-            continue
-        assert _pa >= 0x8000, f'{_pf} at {_pa:04X} is not a bank window'
-        _pd = open(_pf, 'rb').read()
-        lb[_pa - 0x8000:_pa - 0x8000 + len(_pd)] = _pd
-        _pmb += len(_pd)
-    assert _pmb, 'no PMB region found in the banked cfg — pm_frame would be absent'
+    # (PMB stitching DELETED 2026-08-19: bank B carries no code any more —
+    #  the pm_frame slices ride the CODE region tail and load with the
+    #  rest of main below.)
     # collision map (colmap.py): banked homes SPLIT across banks since
     # the slide arc — USETAB lives in BANK A ($BE00, read under SEG by
     # pmove_use); everything else is bank B. The first cut routed ALL
@@ -239,8 +227,6 @@ def build_banked(flatr):
     for addr, fn in _regions(banked=1):
         if fn.startswith('span_clip') or fn == 'bsp_render_hud_bk.bin':
             continue    # clipper + HUD -> BANK_C (rc/anim/vxc/sel are main now)
-        if fn.startswith('engine_pmb'):
-            continue    # pm_frame -> BANK_WALK (stitched into lb above)
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):
