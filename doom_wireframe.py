@@ -416,6 +416,21 @@ nodes = [
     else tuple(n)
     for n in nodes]
 
+# ── Always-descend policy (2026-08-20, tools/adesc_sweep.py) ────────────
+# (node, boxside) check sites whose bbox_visible cost exceeds what their
+# rare rejects save — measured never-worse at every corpus location. The
+# packer bakes them as DSGN b2 (right box) / b3 (left box); the walk and
+# BOTH python mirrors skip the check and descend. Node ids are
+# POST-transform (this list).
+try:
+    import json as _json
+    ADESC = {tuple(p) for p in _json.load(
+        open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'adesc_policy.json')))['wins']}
+except Exception:
+    ADESC = set()
+
+
 # ── Prescaled data for 8-bit fixed-point path ───────────────────────────
 #
 # Center on map and divide by 8 so all vertex/height values fit in 8 bits.
@@ -2601,14 +2616,22 @@ def render_bsp_fp(nid, clips, ctx, vz,
     # Near child: bbox check before visiting (optimisation over DOOM's
     # unconditional near-child visit — safe because if the bbox is
     # entirely outside the frustum, nothing in the subtree is visible).
-    br = fp_bbox_visible_fixed(node, side, ctx)
-    if br is not None:
-        if clips.has_gap(br[0], br[1]):
-            render_bsp_fp(ch[side], clips, ctx, vz,
-                          wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+    if (nid, side) in ADESC:
+        render_bsp_fp(ch[side], clips, ctx, vz,
+                      wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+    else:
+        br = fp_bbox_visible_fixed(node, side, ctx)
+        if br is not None:
+            if clips.has_gap(br[0], br[1]):
+                render_bsp_fp(ch[side], clips, ctx, vz,
+                              wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
     if clips.is_full():
         return
     far = side ^ 1
+    if (nid, far) in ADESC:
+        render_bsp_fp(ch[far], clips, ctx, vz,
+                      wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+        return
     br = fp_bbox_visible_fixed(node, far, ctx)
     if br is not None:
         if clips.has_gap(br[0], br[1]):
@@ -3229,14 +3252,22 @@ def packed_render_bsp(nid, clips, ctx, vz,
 
     ch = (child_r, child_l)
     # Near child: bbox check (see render_bsp_fp)
-    br = fp_bbox_visible_fixed(node, side, ctx)
-    if br is not None:
-        if clips.has_gap(br[0], br[1]):
-            packed_render_bsp(ch[side], clips, ctx, vz,
-                              wx_full, wy_full, cos_f, sin_f, surface, ram)
+    if (nid, side) in ADESC:
+        packed_render_bsp(ch[side], clips, ctx, vz,
+                          wx_full, wy_full, cos_f, sin_f, surface, ram)
+    else:
+        br = fp_bbox_visible_fixed(node, side, ctx)
+        if br is not None:
+            if clips.has_gap(br[0], br[1]):
+                packed_render_bsp(ch[side], clips, ctx, vz,
+                                  wx_full, wy_full, cos_f, sin_f, surface, ram)
     if clips.is_full():
         return
     far = side ^ 1
+    if (nid, far) in ADESC:
+        packed_render_bsp(ch[far], clips, ctx, vz,
+                          wx_full, wy_full, cos_f, sin_f, surface, ram)
+        return
     br = fp_bbox_visible_fixed(node, far, ctx)
     if br is not None:
         if clips.has_gap(br[0], br[1]):

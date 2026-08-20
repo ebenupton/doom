@@ -701,6 +701,21 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                                              # b7 (ndy) pinned 0 by the
                                              # normalization, only b6 lives
 
+    # Always-descend flags (2026-08-20, tools/adesc_sweep.py verdicts):
+    # DSGN b2 = RIGHT box (side 0) / b3 = LEFT box (side 1) — the walk
+    # skips bbox_visible outright for these check sites (near sites fold
+    # the bit into the same-as-parent serve mask for free; far sites pay
+    # a ~10-cycle gate). Node ids are post-transform, same as this bake.
+    import json as _json, os as _os
+    try:
+        _adesc = {tuple(p) for p in _json.load(
+            open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                               'adesc_policy.json')))['wins']}
+    except Exception:
+        _adesc = set()
+    for (_ni, _sd) in _adesc:
+        rom_main[off_nodes + 5 * 256 + _ni] |= (0x04 << _sd)
+
     # SAME-AS-PARENT box flags (2026-07-17): DSGN bit 0 (right box) /
     # bit 1 (left box) set on child node c when box(c,side) is byte-
     # identical to the parent box the walk descended through — the

@@ -329,8 +329,9 @@ rc_s0:
 ; near subtree drew, so its verdict must be fresh.
    TAX                                     ; A = id (L0 anchored: SoA readable)
    LDA NODE_DSGN,X
-   LSR A                                   ; b0 -> C
-   BCS r0_vis                              ; serve: verdict inherited (1)
+   AND #$05                                ; b0 serve | b2 always-descend
+   BNE r0_vis                              ; (RIGHT box) — same cycles as
+                                        ; the old LSR/BCS pair
    ZERO zp_bbox_side                       ; side store sunk past the serve
                                         ; branch (serves never read it;
                                         ; bbox entry takes no A)
@@ -352,12 +353,19 @@ r0_vis:
    JSR rc_descend_near
 r0_far:
    PLA
+   TAX                                     ; id for the ADESC gate
    STA zp_node_ch_l                        ; id
    LDA #1
    STA zp_bbox_side                        ; far = LEFT
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full
-   JSR bbox_visible
+   PAGE BANK_WALK                          ; DSGN read (bbox_visible would
+                                        ; have paged this anyway — its
+                                        ; no-page entry is used below)
+   LDA NODE_DSGN,X
+   AND #$08                                ; ADESC: LEFT box always-descends
+   BNE r0_far_vis
+   JSR bbox_visible_l2
    BCC rc_ret                              ; far invisible: this node is done
 r0_far_vis:
    LDX zp_node_ch_l
@@ -369,13 +377,18 @@ r0_far_vis:
 .if ::BANKED
 r0_far_i:                               ; near-invisible arc ONLY: bank is
    PLA                                  ; L2-proven (bca exit; nothing here
-   STA zp_node_ch_l                     ; touches banked data), so the far
-   LDA #1                               ; check skips bbox_visible's
-   STA zp_bbox_side                     ; blind PAGE. Post-descend and
-   SPAN_IS_NOT_FULL              ; serve arcs keep the paged entry
+   TAX                                  ; touches banked data), so both the
+   STA zp_node_ch_l                     ; ADESC gate and the far check run
+   LDA #1                               ; with no PAGE.
+   STA zp_bbox_side
+   SPAN_IS_NOT_FULL
    BEQ bsp_done_full
-   JSR bbox_visible_l2               ; via r0_far above.
+   LDA NODE_DSGN,X
+   AND #$08                             ; ADESC (LEFT box)
+   BNE r0fi_vis
+   JSR bbox_visible_l2
    BCC rc_ret
+r0fi_vis:
    JMP r0_far_vis
 .endif
 rc_ret:
@@ -396,7 +409,7 @@ rc_n1:
    PHA
    TAX                                     ; SAME-AS-PARENT serve, mirror:
    LDA NODE_DSGN,X                         ; b1 = LEFT box == parent box
-   AND #$02
+   AND #$0A                                ; ... | b3 always-descend (LEFT)
    BNE r1_vis                              ; serve: verdict inherited (1)
    LDA #1                                  ; side store sunk past the serve
    STA zp_bbox_side                        ; branch (mirror)
@@ -415,11 +428,16 @@ r1_vis:
    JSR rc_descend_near
 r1_far:
    PLA
+   TAX                                     ; id for the ADESC gate
    STA zp_node_ch_l
    ZERO zp_bbox_side                      ; far = RIGHT
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full
-   JSR bbox_visible
+   PAGE BANK_WALK                          ; (see r0_far)
+   LDA NODE_DSGN,X
+   AND #$04                                ; ADESC: RIGHT box always-descends
+   BNE r1_far_vis
+   JSR bbox_visible_l2
    BCC rc_ret1
 r1_far_vis:
    LDX zp_node_ch_l
@@ -430,12 +448,17 @@ r1_far_vis:
 .if ::BANKED
 r1_far_i:                               ; near-invisible arc: L2-proven (mirror)
    PLA
+   TAX
    STA zp_node_ch_l
    ZERO zp_bbox_side                    ; far = RIGHT
    SPAN_IS_NOT_FULL
    BEQ bsp_done_full
+   LDA NODE_DSGN,X
+   AND #$04                             ; ADESC (RIGHT box)
+   BNE r1fi_vis
    JSR bbox_visible_l2
    BCC rc_ret1
+r1fi_vis:
    JMP r1_far_vis
 .endif
 rc_ret1:
