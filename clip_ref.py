@@ -7,15 +7,20 @@ Two primitives, nothing else:
                        including columns where it was itself hidden or
                        off-screen.  sense='top' occludes everything
                        ABOVE the line (y < yl); 'bot' everything BELOW.
-  mark_solid(x0, x1)   occlude the CLOSED column range completely
+  mark_solid(x0, x1)   occlude the HALF-OPEN column range completely
                        (a 'top' authority at y=+inf, exactly as the
                        original one-sided model did it).
 
 Screen bounds are part of visibility (x in [0,256), y in [0,160)) but
 NOT of authority: a line's clip authority is pure geometry.
 
-Intervals are CLOSED ([x0, x1] inclusive) — the engine's column
-language — unlike the original half-open sketch.
+Intervals are HALF-OPEN ([x0, x1) — the original sketch's convention,
+restored by decree 2026-08-20): a chain of connected lines
+[a,m) [m,b) ... gives EVERY column exactly one claiming authority.
+That single-ownership tiling is the design point of this model. (The
+engine's tighten is the mirror tiling, (lo, hi] — joint column to the
+LEFT seg — and its mark_solid is closed on both ends; those seams are
+exactly what the differential harness probes.)
 
 Interpolation matches the engine's interp_store rounding (half away
 from zero on |dy|) so the oracle can be compared EXACTLY against the
@@ -40,12 +45,12 @@ def interp(x, x0, y0, x1, y1):
 
 class line:
     def __init__(self, x0, y0, x1, y1, sense='top'):
-        assert x0 <= x1
+        assert x0 < x1
         self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
         self.sense = sense                  # 'top' | 'bot'
 
     def eval(self, x):
-        if self.x0 <= x <= self.x1:
+        if self.x0 <= x < self.x1:
             return interp(x, self.x0, self.y0, self.x1, self.y1)
         return None
 
@@ -77,14 +82,14 @@ class ClipRef:
         """Visible fragments of l, then l joins the authority list."""
         output = []
         start = None
-        for x in range(l.x0, l.x1 + 1):
+        for x in range(l.x0, l.x1):
             y = l.eval(x)
             if self.inside(x, y):
                 if start is None:
                     start = (x, y)
             else:
                 if start is not None:
-                    output.append((*start, x - 1, l.eval(x - 1)))
+                    output.append((*start, x, y))
                     start = None
         if start is not None:
             output.append((*start, l.x1, l.y1))
@@ -92,7 +97,7 @@ class ClipRef:
         return output
 
     def mark_solid(self, x0, x1):
-        if x0 <= x1:
+        if x0 < x1:
             self.lines.append(line(x0, SOLID_Y, x1, SOLID_Y, 'top'))
 
     # -- state queries for the differential harness ----------------------
