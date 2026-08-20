@@ -27,7 +27,9 @@ from zero on |dy|) so the oracle can be compared EXACTLY against the
 python clipper reference; y values are conceptually unbounded ints.
 """
 
-SCREEN_W, SCREEN_H = 256, 160
+SCREEN_W, SCREEN_H = 255, 160   # columns 0..254: column 255 is
+# permanently solid BY DECREE (Eben 2026-08-20) so half-open edges max
+# out at 255 and everything fits u8 — no 9-bit interval anywhere
 SOLID_Y = 10**6
 
 

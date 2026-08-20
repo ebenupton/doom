@@ -37,6 +37,7 @@ os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 
 from clip_ref import ClipRef, line as oline, SCREEN_W, SCREEN_H
 import endpoint_spans as es
+es.AUTHORITY = 'halfopen'          # the spec under test
 
 
 def ref_aperture(sp, x):
@@ -70,13 +71,14 @@ def gen_chain(rng):
 
 def apply_chain(chain, oracle, sp):
     for (kind, xa, xb, yt_a, yt_b, yb_a, yb_b) in chain:
+        # authority [xa, xb) == closed [xa, xb-1] on the reference ABI
         if kind == 'solid':
             oracle.mark_solid(xa, xb)
-            sp.mark_solid(xa, xb)
+            sp.mark_solid(xa, xb - 1)
         else:
             oracle.draw_line(oline(xa, yt_a, xb, yt_b, 'top'))
             oracle.draw_line(oline(xa, yb_a, xb, yb_b, 'bot'))
-            sp.tighten(xa, xb, xa, xb, yt_a, yt_b, yb_a, yb_b)
+            sp.tighten(xa, xb - 1, xa, xb, yt_a, yt_b, yb_a, yb_b)
 
 
 def compare(oracle, sp):
@@ -95,11 +97,20 @@ def compare(oracle, sp):
     return diffs
 
 
+def make_ref():
+    sp = es.EndpointClipSpans()
+    if es.AUTHORITY == 'halfopen':
+        # column 255 is permanently solid by decree: trim the seed span
+        s0 = sp.spans[0]
+        sp.spans[0] = (s0[0], es.HALF_OPEN_XMAX) + s0[2:]
+    return sp
+
+
 def run_seq(chains):
     """Apply chains; compare at each chain COMPLETION. Returns
     (chain_index, diffs) of first divergence or None."""
     oracle = ClipRef()
-    sp = es.EndpointClipSpans()
+    sp = make_ref()
     for i, chain in enumerate(chains):
         apply_chain(chain, oracle, sp)
         diffs = compare(oracle, sp)

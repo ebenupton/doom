@@ -200,6 +200,18 @@ _partial_aperture_count = 0
 #               tighten itself).
 # All three modes produce identical span state — verified by
 # test_unified_tighten.py against the 9 reference scenes.
+# Authority convention (Eben, 2026-08-20): 'legacy' = the historical mix
+# (tighten claims (lo,hi] via pixel-center seams + shared-edge spans;
+# mark_solid closed).  'halfopen' = THE SPEC: a seg's authority is
+# [sx1, sx2) — callers pass the CLOSED interval [lo, hi] = [sx1, sx2-1]
+# to BOTH primitives, spans are closed and DISJOINT, every column has
+# one owner.  Default legacy until the 6502 flips in the same commit.
+AUTHORITY = 'legacy'
+# halfopen domain: columns 0..HALF_OPEN_XMAX (254) — column 255 is
+# permanently solid by decree (Eben 2026-08-20), so half-open edges
+# and record keys max at 255 and stay u8. Legacy keeps 0..255.
+HALF_OPEN_XMAX = 254
+
 _TIGHTEN_MODE = 'records'   # 2026-07-13: the verdict spec is LIVE — the
 # 6502 transports 'above'/'below' as flat 0/$FF records and solid-drops
 # empty apertures (the off-screen-aperture fix); 'normal' mode kept a
@@ -286,7 +298,7 @@ def _append_merge(new, span):
         if (tail[4] == tail[6] and tail[5] == tail[7] and
                 span[4] == span[6] and span[5] == span[7] and
                 tail[4] == span[4] and tail[5] == span[5] and
-                tail[1] == span[0]):
+                tail[1] + (1 if AUTHORITY == 'halfopen' else 0) == span[0]):
             new[-1] = (tail[0], span[1],
                        tail[2], tail[3], tail[4], tail[5], tail[6], tail[7])
             return
@@ -442,7 +454,8 @@ class EndpointClipSpans:
         # (xlo, xhi, tl, bl, tr, br) are preserved verbatim across splits —
         # no _interp_store calls happen in this method any more.
         ilo = max(0, lo)
-        ihi = min(FP_RENDER_W - 1, hi)
+        ihi = min(HALF_OPEN_XMAX if AUTHORITY == 'halfopen'
+                  else FP_RENDER_W - 1, hi)
         if ihi < ilo: return
         new = []
         for s in self.spans:
@@ -501,8 +514,20 @@ class EndpointClipSpans:
                 # whole range (no-op) or is entirely OFF-screen (close).
                 b_vis_lo = self.y_display_offset
                 b_vis_hi = self.y_display_offset + FP_RENDER_H - 1
-                if ((yb1 < b_vis_lo and yb2 < b_vis_lo) or
-                        (yt1 > b_vis_hi and yt2 > b_vis_hi)):
+                tyb1, tyb2, tyt1, tyt2 = yb1, yb2, yt1, yt2
+                if AUTHORITY == 'halfopen' and sx2 > sx1:
+                    # THE FAR-WEST FIX: test edge values AT the interval,
+                    # not the seg's raw endpoints — a crossing outside
+                    # [ilo, ihi] must not veto the off-screen verdict
+                    # for the columns inside it.
+                    ei0 = max(sx1, ilo)
+                    ei1 = min(sx2, min(ihi, HALF_OPEN_XMAX) + 1)
+                    tyb1 = _interp_store_s16(ei0, sx1, yb1, sx2, yb2)
+                    tyb2 = _interp_store_s16(ei1, sx1, yb1, sx2, yb2)
+                    tyt1 = _interp_store_s16(ei0, sx1, yt1, sx2, yt2)
+                    tyt2 = _interp_store_s16(ei1, sx1, yt1, sx2, yt2)
+                if ((tyb1 < b_vis_lo and tyb2 < b_vis_lo) or
+                        (tyt1 > b_vis_hi and tyt2 > b_vis_hi)):
                     self.mark_solid(ilo, ihi)
                 return
             return self.tighten_from_x_records(lo, hi,
@@ -757,6 +782,9 @@ class EndpointClipSpans:
         ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
         if ihi < ilo:
             return
+        if AUTHORITY == 'halfopen':
+            return self._tfxr_halfopen(ilo, min(ihi, HALF_OPEN_XMAX),
+                                       top_recs, bot_recs)
         b_lo = self.y_display_offset - Y_BIAS
         SAT_A = b_lo
         SAT_B = b_lo + 255
@@ -859,6 +887,104 @@ class EndpointClipSpans:
         self.spans = new
         self._update_bbox()
 
+    def _tfxr_halfopen(self, ilo, ihi, top_recs, bot_recs):
+        """HALFOPEN sweep: closed interval [ilo, ihi] in, closed DISJOINT
+        spans out.  Internally the sweep runs on edges [ilo, ihi+1);
+        every emitted piece is active over [cur, nxt-1] with its line
+        anchored on the edge pair (cur, nxt) — the anchor/active split
+        the span tuple already supports."""
+        b_lo = self.y_display_offset - Y_BIAS
+        SAT_A = b_lo
+        SAT_B = b_lo + 255
+        if (all(r[1] == SAT_A for r in top_recs) and
+                all(r[1] == SAT_B for r in bot_recs)):
+            return
+        e_hi = ihi + 1
+        new = []
+        pend = None   # [xl, xr(edge), tl, tr, bl, br, tsrc, bsrc]
+        def flush():
+            nonlocal pend
+            if pend is not None:
+                if pend[1] - 1 >= pend[0]:
+                    _append_merge(new, (pend[0], pend[1] - 1,
+                                        pend[0], pend[1],
+                                        pend[2], pend[4], pend[3], pend[5]))
+                pend = None
+        ti = 0; bi = 0
+        for sp in self.spans:
+            xs, xe = sp[0], sp[1]              # closed columns
+            if xe < ilo or xs > ihi:
+                flush(); _append_merge(new, sp); continue
+            cur = xs
+            if xs < ilo:
+                flush()
+                _append_merge(new, (xs, ilo - 1, sp[2], sp[3],
+                                    sp[4], sp[5], sp[6], sp[7]))
+                cur = ilo
+            x_hi = min(xe + 1, e_hi)           # edge bound
+            while cur < x_hi:
+                while ti < len(top_recs) and top_recs[ti][2] <= cur:
+                    ti += 1
+                while bi < len(bot_recs) and bot_recs[bi][2] <= cur:
+                    bi += 1
+                t_dom = (ti < len(top_recs) and top_recs[ti][0] <= cur
+                         < top_recs[ti][2])
+                b_dom = (bi < len(bot_recs) and bot_recs[bi][0] <= cur
+                         < bot_recs[bi][2])
+                nxt = x_hi
+                if ti < len(top_recs):
+                    cand = top_recs[ti][2] if t_dom else top_recs[ti][0]
+                    if cand < nxt: nxt = cand
+                if bi < len(bot_recs):
+                    cand = bot_recs[bi][2] if b_dom else bot_recs[bi][0]
+                    if cand < nxt: nxt = cand
+                if (t_dom and top_recs[ti][1] == top_recs[ti][3] == SAT_B) or \
+                   (b_dom and bot_recs[bi][1] == bot_recs[bi][3] == SAT_A):
+                    flush()
+                    if t_dom and top_recs[ti][2] == nxt: ti += 1
+                    if b_dom and bot_recs[bi][2] == nxt: bi += 1
+                    cur = nxt; continue
+                tl = _span_top_store(sp, cur); tr = _span_top_store(sp, nxt)
+                tsrc = ('p', id(sp))
+                if t_dom and not (top_recs[ti][1] == top_recs[ti][3]
+                                  == SAT_A):
+                    r = top_recs[ti]
+                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
+                    rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
+                    if rl > tl: tl = rl
+                    if rr > tr: tr = rr
+                    tsrc = ('t', ti)
+                bl = _span_bot_store(sp, cur); br = _span_bot_store(sp, nxt)
+                bsrc = ('p', id(sp))
+                if b_dom and not (bot_recs[bi][1] == bot_recs[bi][3]
+                                  == SAT_B):
+                    r = bot_recs[bi]
+                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
+                    rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
+                    if rl < bl: bl = rl
+                    if rr < br: br = rr
+                    bsrc = ('b', bi)
+                if tl >= bl and tr >= br:
+                    flush()
+                elif pend is not None and pend[1] == cur \
+                        and pend[6] == tsrc and pend[7] == bsrc:
+                    pend[1] = nxt; pend[3] = tr; pend[5] = br
+                else:
+                    flush()
+                    pend = [cur, nxt, tl, tr, bl, br, tsrc, bsrc]
+                if t_dom and ti < len(top_recs) and top_recs[ti][2] == nxt:
+                    ti += 1
+                if b_dom and bi < len(bot_recs) and bot_recs[bi][2] == nxt:
+                    bi += 1
+                cur = nxt
+            if xe > ihi:
+                flush()
+                _append_merge(new, (ihi + 1, xe, sp[2], sp[3],
+                                    sp[4], sp[5], sp[6], sp[7]))
+        flush()
+        self.spans = new
+        self._update_bbox()
+
     def build_tighten_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                               emit_top=True, emit_bot=True):
         """Per-line record build vs the CURRENT spans (mirrors the 6502
@@ -872,9 +998,14 @@ class EndpointClipSpans:
             sx1, sx2 = sx2, sx1
             yt1, yt2 = yt2, yt1
             yb1, yb2 = yb2, yb1
-        top = (_line_records_x(self, sx1, yt1, sx2, yt2, ilo, ihi)
+        if AUTHORITY == 'halfopen':
+            ihi = min(ihi, HALF_OPEN_XMAX)
+            if ihi < ilo:
+                return [], []
+        e_hi = ihi + 1 if AUTHORITY == 'halfopen' else ihi
+        top = (_line_records_x(self, sx1, yt1, sx2, yt2, ilo, e_hi)
                if emit_top else [])
-        bot = (_line_records_x(self, sx1, yb1, sx2, yb2, ilo, ihi)
+        bot = (_line_records_x(self, sx1, yb1, sx2, yb2, ilo, e_hi)
                if emit_bot else [])
         return top, bot
 
@@ -1491,6 +1622,8 @@ def _line_records_x(spans_obj, xl, yl, xr, yr, ilo, ihi):
         lo_w = max(cxl, ilo); hi_w = min(cxr, ihi)
         for sp in spans_obj.spans:
             xs, xe = sp[0], sp[1]
+            if AUTHORITY == 'halfopen':
+                xe = xe + 1                    # closed span -> edge bound
             if xe <= lo_w or xs >= hi_w:
                 continue
             ox0 = max(xs, lo_w); ox1 = min(xe, hi_w)
