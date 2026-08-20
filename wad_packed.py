@@ -708,9 +708,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # a ~10-cycle gate). Node ids are post-transform, same as this bake.
     import json as _json, os as _os
     try:
-        _adesc = {tuple(p) for p in _json.load(
-            open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                               'adesc_policy.json')))['wins']}
+        if _os.environ.get('DOOM_ADESC_OFF'):
+            _adesc = set()                   # measurement runs: policy off
+        else:
+            _adesc = {tuple(p) for p in _json.load(
+                open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                   'adesc_policy.json')))['wins']}
     except Exception:
         _adesc = set()
     for (_ni, _sd) in _adesc:

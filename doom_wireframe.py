@@ -424,9 +424,12 @@ nodes = [
 # POST-transform (this list).
 try:
     import json as _json
-    ADESC = {tuple(p) for p in _json.load(
-        open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          'adesc_policy.json')))['wins']}
+    if os.environ.get('DOOM_ADESC_OFF'):
+        ADESC = set()                        # measurement runs: policy off
+    else:
+        ADESC = {tuple(p) for p in _json.load(
+            open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              'adesc_policy.json')))['wins']}
 except Exception:
     ADESC = set()
 
