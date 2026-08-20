@@ -178,7 +178,9 @@ NODE_NXHI = NODE_SOA + $100
 NODE_NYLO = NODE_SOA + $200
 NODE_NYHI = NODE_SOA + $300
 NODE_DIRID = NODE_SOA + $400            ; general: DIR-table index
-NODE_DSGN  = NODE_SOA + $500            ; general: sign byte (b7 ndy neg,
+NODE_DSGN  = NODE_SOA + $500            ; general: sign byte (b7 PINNED 0
+                                        ; since the 2026-08-20 diagonal
+                                        ; normalization — ndy > 0 always;
                                         ;  b6 ndx neg); axis nodes ignore
 ; (raw dy pages RECLAIMED 2026-07-15: no reader on either side — the
 ;  SoA is 12 pages now and the 2 pages before ROM_BBOX_C are free)

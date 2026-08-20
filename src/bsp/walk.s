@@ -231,10 +231,9 @@ ns_t_general:
    ORA zp_br_dy_l
    BEQ nsd_dy0                             ; dy==0: D = P1
 ; sign shortcut (mirror of bf_g_both): opposite product signs decide
-; with no multiply; sign(D) = sign(P1)
-   LDA zp_br_sign                          ; b7 = sgn ndy
-   EOR zp_br_dx_h                          ; b7 = sign(P1)
-   TAX                                     ; ride in X across the P2 sign
+; with no multiply; sign(D) = sign(P1). Diagonal sense is NORMALIZED
+; (2026-08-20): ndy > 0 always, so sign(P1) = sign(dx) — the EOR died.
+   LDX zp_br_dx_h                          ; b7 = sign(P1), rides X
    LDA zp_br_sign
    ASL A                                   ; b6 (ndx sign) -> b7
    EOR zp_br_dy_h                          ; b7 = sign(P2)
@@ -265,9 +264,8 @@ nsd_dx0:
    BPL nsd_s1                              ; (always)
 ; dy == 0: D = P1 = ndy*dx (nonzero: dx != 0 here)
 nsd_dy0:
-   LDA zp_br_sign                          ; b7 = sgn ndy
-   EOR zp_br_dx_h                          ; b7 = sign(P1)
-   BMI nsd_s1
+   LDA zp_br_dx_h                          ; sign(P1) = sign(dx): ndy > 0
+   BMI nsd_s1                              ; by normalization
 ; local verdict stubs (the branches above can't reach past the macro)
 nsd_s0:
    JMP s0

@@ -682,15 +682,24 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         g = math.gcd(abs(raw_dx), abs(raw_dy))
         pdx, pdy = raw_dx // g, raw_dy // g
         assert abs(pdx) <= 255 and abs(pdy) <= 255,             f"node {i} reduced dir {pdx},{pdy} exceeds u8"
-        did = _dirs.setdefault((pdx, pdy), len(_dirs))
+        assert pdy > 0, f"node {i}: diagonal '<' sense survived normalization"
+        # MAGNITUDE-KEYED lookup (2026-08-20): the node arm reads its signs
+        # from NODE_DSGN, never from the DIR sign array — any entry with
+        # matching |pdx|,|pdy| serves, so normalization grows NOTHING.
+        did = _dirs.get((pdx, pdy))
+        if did is None:
+            did = _dirs.get((-pdx, -pdy))
+        if did is None:
+            did = _dirs.setdefault((pdx, pdy), len(_dirs))
+            rom_main[off_dirs + did] = abs(pdx)
+            rom_main[off_dirs + MAX_DIRS + did] = abs(pdy)
+            rom_main[off_dirs + 2 * MAX_DIRS + did] = \
+                ((0x80 if pdy < 0 else 0) | (0x40 if pdx < 0 else 0))
         assert len(_dirs) <= MAX_DIRS, "DIR table overflow (nodes+segs)"
-        rom_main[off_dirs + did] = abs(pdx)
-        rom_main[off_dirs + MAX_DIRS + did] = abs(pdy)
-        rom_main[off_dirs + 2 * MAX_DIRS + did] = \
-            ((0x80 if pdy < 0 else 0) | (0x40 if pdx < 0 else 0))
         _npg(4, i, did)                      # NODE_DXLO := dir id
-        _npg(5, i, (0x80 if pdy < 0 else 0)  # NODE_DXHI := sign byte
-                   | (0x40 if pdx < 0 else 0))
+        _npg(5, i, (0x40 if pdx < 0 else 0)) # NODE_DXHI := sign byte —
+                                             # b7 (ndy) pinned 0 by the
+                                             # normalization, only b6 lives
 
     # SAME-AS-PARENT box flags (2026-07-17): DSGN bit 0 (right box) /
     # bit 1 (left box) set on child node c when box(c,side) is byte-
