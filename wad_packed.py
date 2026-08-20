@@ -314,7 +314,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                         # patch of one seg's back pair cannot move a neighbour
     _movers = set(anim_sector_set or ())
     off_dirs = off_seg_hdr + seg_hdr_bytes(n_segs)
-    MAX_DIRS = 160
+    MAX_DIRS = 128                    # 160 -> 128 2026-08-20: E1M1 uses 118
+                                      # slots; the stride ships x2 banks, so
+                                      # -64 B in EACH of A and B (form byte
+                                      # did+4 <= 255 still clears easily)
     # Per-SUBSECTOR front heights (2026-08-17). fh/ch are subsector-constant
     # — every seg fronts its subsector's sector — so carrying them per seg
     # duplicated 2 bytes across all 649 headers to say 221 things. Two pages

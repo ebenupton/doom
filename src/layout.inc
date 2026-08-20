@@ -19,19 +19,19 @@ LAY_HDR_BYTES   = $172D                 ; footprint of the page-slotted
 LAY_SH_DIAG   = 5                       ; generated header field offsets
 LAY_SH_FLAGS   = 7                      ; (wad_packed SH_*: the .s files
 LAY_SH_BPAL   = 8                      ;  must never carry private copies)
-LAY_BPAL_OFF   = $1E00                  ; generated: back-pair palette page
+LAY_BPAL_OFF   = $1D00                  ; generated: back-pair palette page
                                         ; (2 planes at +$00/+$80)
-LAY_LV1_OFF   = $1C00                   ; generated: diagonal LV1 records,
+LAY_LV1_OFF   = $1B00                   ; generated: diagonal LV1 records,
                                         ; relative to the seg-header base
                                         ; (2 pages, planes at +$00/+$80)
-LAY_SS_FH_OFF   = $1A00                 ; generated: front-height pages,
+LAY_SS_FH_OFF   = $1900                 ; generated: front-height pages,
                                         ; RELATIVE to the seg-header base
                                         ; (page-aligned in both builds)
 ; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —
 ; +4 form/dir_id, +5..7 C24, +8 flags, +9 L(pad), +10/+11 back heights;
 ;  2026-08-17: fh/ch left for the per-subsector pages below)
 LAY_N_DIRS   = 118                   ; distinct diagonal primitives
-LAY_MAX_DIRS   = 160                   ; DIR table stride (3 arrays)
+LAY_MAX_DIRS   = 128                   ; DIR table stride (3 arrays)
 
 .if ::BANKED
 ROM_SEG_HDR_C = $8000                   ; bank SEG window head: headers+DIRs
