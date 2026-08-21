@@ -206,8 +206,11 @@ ms_has_left:
 ; On pool exhaustion the right fragment is sacrificed (left-only) —
 ; conservative: drops open columns, never leaks solid ones as open.
    STX zp_prev                             ; |
-   JSR alloc_span
-   BEQ ms_left_only_after_fail
+   LDX zp_free                             ; alloc_span INLINED 2026-08-21:
+   BEQ ms_left_only_after_fail          ; pool empty -> caller's fail arm
+   LDA POOL_NEXT,X                         ; (the sub's TXA and the caller's
+   STA zp_free                             ; BEQ existed only to carry Z
+                                        ; across the JSR — both die)
 ; |
    LDY zp_prev                             ; Y = original span (the left fragment)               ; |
 ; Copy line params from Y to X (sibling shares the same line)

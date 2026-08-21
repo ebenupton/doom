@@ -1019,8 +1019,11 @@ tfs_flush_pending:
    RTS
 flush_do:
    ZERO TFS_PEND_ACT
-   JSR alloc_span
-   BEQ flush_fail
+   LDX zp_free                             ; alloc_span INLINED 2026-08-21:
+   BEQ flush_fail          ; pool empty -> caller's fail arm
+   LDA POOL_NEXT,X                         ; (the sub's TXA and the caller's
+   STA zp_free                             ; BEQ existed only to carry Z
+                                        ; across the JSR — both die)
    LDA TFS_PEND_XL
    STA POOL_XSTART,X
    STA POOL_XLO,X
@@ -1077,8 +1080,11 @@ flush_fail:
 ;         range [ox0, ox1), appended via tg_append_x.  Silently dropped
 ;         on pool exhaustion.  Clobbers A,X,Y.
 emit_unchanged_subspan:
-   JSR alloc_span
-   BEQ ues_fail
+   LDX zp_free                             ; alloc_span INLINED 2026-08-21:
+   BEQ ues_fail          ; pool empty -> caller's fail arm
+   LDA POOL_NEXT,X                         ; (the sub's TXA and the caller's
+   STA zp_free                             ; BEQ existed only to carry Z
+                                        ; across the JSR — both die)
    LDY zp_clr_save_x
    LDA POOL_XLO,Y
    STA POOL_XLO,X

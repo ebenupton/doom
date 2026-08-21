@@ -95,19 +95,11 @@ id:
 ;              list first). Out: slot pushed on free chain. Clobbers A;
 ;              X preserved.
 ; ======================================================================
-alloc_span:
-; Returns X = new span offset.  Z=1 if failed (X=0), Z=0 if success.
-; Caller is responsible for setting POOL_NEXT (tg_append_x or mark_solid linking).
-   LDX zp_free
-   BEQ af
-; |
-   LDA POOL_NEXT,X
-   STA zp_free
-; |
-   TXA                                     ; A=X≠0, sets Z=0                           ; |
-af:
-   RTS
-; |
+; (alloc_span RETIRED 2026-08-21, with free_span: all three call sites
+; carry the 4-instruction pop inline. Inlining is a STRICT win here —
+; the subroutine's TXA and each caller's BEQ existed solely to carry
+; the empty-pool verdict across the JSR, and inline the pop's own BEQ
+; branches straight to the caller's fail arm.)
 
 ; (free_span RETIRED 2026-08-21: all three call sites — mark_solid's
 ; ms_free and tfr's sweep-tail + merge tail-call — carry the
