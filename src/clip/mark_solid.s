@@ -60,11 +60,14 @@ span_mark_solid:
 ; any later query (observed: freed slot (60,69) made has_gap(60,73)
 ; return 1 against a pool whose only live span was (121,132)).
    ZERO zp_hg_cache
-; Degenerate range (ihi < ilo) → no-op.
+; Degenerate range (hi <= lo = EMPTY half-open) → no-op. The old
+; closed-era check let hi == lo through, and the closed shrink arm
+; then removed column lo from a zero-width solid.
    LDA zp_i_h
    CMP zp_i_l
+   BEQ ms_rts0
    BCS mss
-; |
+ms_rts0:
    RTS
 mss:
 ; zp_prev = $FF sentinel: "current span is the list head" (unlink via
@@ -134,12 +137,15 @@ ms_unlink_span:
 ; |
 
 ms_shrink:
-; Shrink in place: xstart = ihi + 1 (span keeps its line + right part).
-; A holds ihi; carry clear from BCC.
-; TERMINAL: this span extends past ihi and the list is x-sorted &
-; disjoint — nothing after can intersect [ilo,ihi]. The old fall-through
-; scanned the rest of the list for nothing.
-   ADC #1
+; Shrink in place: xstart := hi — a PURE COPY under half-open (the
+; span keeps its line + its part [hi, xend)). The closed-era ADC #1
+; here over-removed one open column (found in the 2026-08-21 comment
+; re-derivation; the shadowing gates compare 6502-vs-6502 and the
+; pure-python lockstep drift was tolerated, so only verify-vs-float
+; saw it).
+; A holds hi (from the CMP above).
+; TERMINAL: this span extends past hi and the list is x-sorted &
+; disjoint — nothing after can intersect [lo, hi).
    STA POOL_XSTART,X
    RTS
 
@@ -218,10 +224,9 @@ ms_has_left:
    LDA POOL_IB,Y
    STA POOL_IB,X
 ; |
-; Sibling's active range = [ihi+1, original xend]
-; carry already clear: BCS ms_left_only fell through (C=0) and alloc_span/STAs don't change C
+; Sibling's active range = [hi, original xend) — pure copies under
+; half-open (the closed +1/-1 pair died with the 2026-08-21 fix).
    LDA zp_i_h
-   ADC #1
    STA POOL_XSTART,X
 ; |
    LDA POOL_XEND,Y
@@ -234,14 +239,12 @@ ms_has_left:
    TXA
    STA POOL_NEXT,Y
 ; |
-; Original (Y) now becomes the left fragment: xend = ilo - 1
-; carry is clear: C=0 propagated from BCS fall-through, through alloc+copies+ADC(no overflow)
+; Original (Y) now becomes the left fragment [xstart, lo).
    LDA zp_i_l
-   SBC #0
    STA POOL_XEND,Y
 ; |
-; TERMINAL: the sibling covers (ihi, old xend] and the list is x-sorted
-; & disjoint — nothing after can intersect [ilo,ihi].
+; TERMINAL: the sibling covers [hi, old xend) and the list is x-sorted
+; & disjoint — nothing after can intersect [lo, hi).
    RTS
 
 ms_left_only_after_fail:
