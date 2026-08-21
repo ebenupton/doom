@@ -189,6 +189,13 @@ def bbox_check_angle(top, bot, left, right, px, py, ab):
     view_col phi-convention. Returns a conservative (ilo,ihi) column extent or
     None. Per corner: 0 muls, 1 divide.
 
+    (ilo, ihi) is HALF-OPEN — ihi is the exclusive right edge fed to the
+    native strict has_gap (certified 2026-08-21 over 20k viewpoints,
+    tools/bbox_margin_cert.py; margin-stack analysis in src/ang/bca.s).
+    The +-1 column inflate below is load-bearing: the vatox bracket
+    centre can sit a full column inside the true edge while the seg
+    pipeline's RN projection reaches 0.5 beyond it.
+
     Faithful DOOM R_CheckBBox in our phi convention (our _phi is the NEGATED
     DOOM view-relative angle, so DOOM angle1=-p1, angle2=-p2). All angular
     arithmetic is UNSIGNED-BAM wraparound, which natively handles a

@@ -20,7 +20,9 @@
 ;     bca_ab            = view angle byte; bca_afn = ab<<4 (hoisted fine angle)
 ; Output:
 ;   A = 1 (Z clear) if the box subtends visible screen columns AND
-;       span_has_gap([bca_ilo, bca_ihi]) — subtree worth descending;
+;       span_has_gap([bca_ilo, bca_ihi)) — HALF-OPEN, ihi exclusive
+;       (certified 2026-08-21, see the extent-semantics block in
+;       src/ang/bca.s) — subtree worth descending;
 ;   A = 0 (Z set) otherwise. Callers branch on Z (BEQ → skip subtree).
 ; Clobbers: A, X, Y; $86/$87 (bca_boxp); $C2/$C3 (zp_i_l/zp_i_h);
 ;   pages bank L2 then bank C in the banked build (caller re-pages after).
@@ -29,7 +31,7 @@
 ;   boxp = rom_bbox + node*16 + side*8
 ;   vis, ilo, ihi = bbox_check_angle(boxp, px, py, ab)   # bca_check_op
 ;   if not vis: return 0                                 # culled/behind
-;   return span_has_gap(ilo, ihi)                        # occlusion query
+;   return span_has_gap(ilo, ihi)      # occlusion query over [ilo, ihi)
 ; ============================================================================
 ; ============================================================================
 ; Forward-coherence bbox cache ("D"): REVIVED 2026-07-21 on the rcache

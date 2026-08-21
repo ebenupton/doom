@@ -624,6 +624,24 @@ SEG_HIGH
 ;   if tspan > 1024: cull if tspan-1024 >= span else p2 = +512
 ;   ilo = max(0, vatox[p1+512] - 1) ; ihi = min(255, vatox[p2+512] + 1)
 ;   cull if ilo > ihi else visible
+;
+; EXTENT SEMANTICS (certified 2026-08-21): (ilo, ihi) is the NATIVE
+; HALF-OPEN interval [ilo, ihi) handed to strict span_has_gap — ihi is
+; an EXCLUSIVE right edge, NOT a closed rightmost column. Safety story:
+; a right-silhouette vertex's own seg claims only [.., sx2) and paints
+; (run-out) through sx2, so coverage needs ihi >= max(sx2)+0 for
+; claims and >= max(paint)+1 for paints; the margin stack — pack-time
+; outward-rounded +1-unit world inflate, the +-EPS one-sided angle
+; bias (guarantees no inward angle error, adds nothing outward), the
+; vatox bracket centre (can sit 1 col inside true), and the +-1 column
+; inflate here — certifies both with slack floor 1-2. The +-1 column
+; inflate is LOAD-BEARING (bracket-mid -1 + RN projection +0.5); do
+; not drop it. Certificate: tools/bbox_margin_cert.py — 20,030
+; viewpoints x every (node,side), 0 violations in all four classes
+; (claim/paint x left/right); the only apparent violations were the
+; standing seg-staging overflow class (see margin_viol_triage.py:
+; off-screen col ~ -0.5 wrapping to a 256-wide claim), float-verified
+; STAGING in every case.
 ; ENTRY CONTRACT (2026-07-19, Eben's convention flip, adjusted): the
 ; caller hands p2 IN REGISTERS — A = p2 hi, Y = p2 lo, exactly what
 ; cp_havepsi returns. p2 NEVER LANDS IN MEMORY (bca_p2 died
