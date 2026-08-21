@@ -152,7 +152,13 @@ ms_free:
    LDA POOL_NEXT,X
    STA zp_tmp0
 ; |
-   JSR free_span                           ; |
+; free_span INLINED (2026-08-21): its 3-instruction body costs 7 bytes
+; against the JSR's 3, and kills a 12-cycle JSR/RTS on a path taken
+; ~6x per frame. X is preserved by the body, exactly as the sub did.
+; (free_span itself stays — clip/tfr.s tail-calls it.)
+   LDA zp_free
+   STA POOL_NEXT,X
+   STX zp_free
    LDA zp_prev
    CMP #$FF
    BNE ms_unlink_span
