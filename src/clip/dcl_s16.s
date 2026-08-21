@@ -1,7 +1,7 @@
 
 ; ============================================================================
-; clip/dcl_s16.s — clipper fragment 10 of 10, last in the link (module
-; map: clip/header.s). Contents: the s16 pre-clip entries
+; clip/dcl_s16.s — clipper fragment 10 of 13 (module map:
+; clip/header.s). Contents: the s16 pre-clip entries
 ; draw_clipped_line_s16 / draw_clipped_line_s16_h, which clip to the u8 box and dispatch into
 ; draw_clipped_line (clip/dcl.s). LC_* working-set addresses are
 ; declared in clip/tfr.s. (s16_interp and the inlined wide-arithmetic

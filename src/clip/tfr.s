@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; clip/tfr.s — clipper fragment 8 of 10 (module map: clip/header.s).
+; clip/tfr.s — clipper fragment 8 of 13 (module map: clip/header.s).
 ; Contents: tg_append_x (list builder + merge), the TFS_* state block,
 ; tighten_from_records and its helpers, the
 ; LC_* absolute working set for the s16 clipper (code in clip/dcl_s16.s),
@@ -150,7 +150,8 @@ DCLV_S16VY = $0624                      ; s16-clip pending right verdict ($80 = 
 ; (kind + id) match — this is the lossless-merge condition because
 ; same-source guarantees same line equation and hence same slope.
 ;
-; Input:  zp_i_l/zp_i_h = seg column range (closed, pre-clamped u8);
+; Input:  zp_i_l/zp_i_h = seg column range [ilo, ihi) (HALF-OPEN,
+;         pre-clamped u8);
 ;         zp_head = old span list (consumed);
 ;         TOP_RECORDS/BOT_RECORDS = record buffers written by the
 ;         preceding draw_clipped_line(yt)/(yb) calls: byte 0 = count,
@@ -172,30 +173,31 @@ DCLV_S16VY = $0624                      ; s16-clip pending right verdict ($80 = 
 ; $0700/$0800 first) via a direct JSR — bank C paged in the
 ; banked build — and the harness's tighten_from_records.
 ;
-; Python mirror: EndpointClipSpans.tighten_from_records (older 6-byte
-; verdict form; this 4-byte segment walk is state-equivalent — records
-; only exist for 'inside' sub-ranges).
+; Python mirror: EndpointClipSpans.tighten in records mode (the only
+; live mode — the legacy 'normal'/'unified' modes raise); it snapshots
+; the same 4-byte segment records and computes the same sweep.
 ;
 ; pseudocode:
 ;   for span in old list:
-;     if span.xend <= ilo or span.xstart >= ihi:   # pixel-center overlap
+;     if span.xend <= ilo or span.xstart >= ihi:   # strict half-open
 ;         append span unchanged; continue
-;     if span.xstart < ilo: emit [xstart, ilo] unchanged  # left fragment
+;     if span.xstart < ilo: emit [xstart, ilo) unchanged  # left fragment
 ;     cur_x = max(xstart, ilo); x_hi = min(xend, ihi)
 ;     while cur_x < x_hi:                          # event sweep
 ;         drop stale records (rec.xr <= cur_x)
 ;         top_dom = T covers cur_x; bot_dom = B covers cur_x
 ;         next_x = min(x_hi, T.xl or T.xr, B.xl or B.xr)
 ;                  #  not-yet-dom → next event is xl; dom → xr
-;         top/bot lines for [cur_x, next_x] = record line if dom
+;         top/bot lines for [cur_x, next_x) = record line if dom
 ;                                             else pool line (interp both ends)
 ;         merge into pending if same sources and abutting, else flush+start
 ;         consume records whose xr == next_x; cur_x = next_x
-;     if span.xend > ihi: emit [ihi, xend] unchanged      # right fragment
+;     if span.xend > ihi: emit [ihi, xend) unchanged      # right fragment
 ;     free original span
 ;   flush pending
-; Fragments and sweep intervals ABUT (shared boundary column), unlike
-; mark_solid's ilo-1/ihi+1 — closed-interval seam-friendly model.
+; Fragments and sweep intervals TILE the span exactly: consecutive
+; pieces share their boundary EDGE ([a,b) then [b,c)) — the half-open
+; native model has no seam arithmetic (mark_solid tiles the same way).
 ; ===================================================================
 ; --- tfs value helpers (LO: CLIP is at its ceiling; called via JSR
 ; from the sweep — main RAM always mapped) ---
@@ -519,9 +521,9 @@ tfs_in_range_noreload:
    JMP tfs_body
 ; (tfs_pre_chk reload head DELETED 2026-08-12 — same proof as in_range.)
 
-; Pre-fragment [span.xstart, ilo] if span.xstart < ilo.
-; Abutting: the fragment KEEPS ilo as its xend (shared boundary column
-; with the swept region starting at cur_x = ilo). Line def preserved.
+; Pre-fragment [span.xstart, ilo) if span.xstart < ilo.
+; Abutting: the fragment's exclusive xend = ilo = the swept region's
+; first column — shared EDGE, no shared column. Line def preserved.
 tfs_pre_chk_noreload:
    CMP zp_i_l
    BCS tfs_no_pre_noreload
@@ -958,8 +960,9 @@ tfs_skip_b_adv:
 
 tfs_inner_done:
 
-; Post-fragment [ihi, span.xend] if span.xend > ihi.
-; Abutting: keeps ihi as its xstart (shared with the swept region).
+; Post-fragment [ihi, span.xend) if span.xend > ihi.
+; Abutting: xstart = ihi = the swept region's exclusive end — shared
+; EDGE, no shared column.
    LDX zp_clr_save_x
    LDA zp_i_h                              ; INVERTED: C = ihi >= xend —
    CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ
@@ -1054,14 +1057,14 @@ flush_fail:
    RTS
 .endscope
 
-; Emit unchanged sub-span [zp_ox0, zp_ox1] with old span's line def.
+; Emit unchanged sub-span [zp_ox0, zp_ox1) with old span's line def.
 ;
-; Input:  zp_ox0/zp_ox1 = active range for the fragment (closed);
+; Input:  zp_ox0/zp_ox1 = active range for the fragment (half-open);
 ;         zp_clr_save_x = source pool slot.
 ; Output: new slot with the source's line definition copied VERBATIM
 ;         (XLO/DEN/TL/BL/TR/BR + precomputed OT/OB/IT/IB — no interp,
 ;         matching the lazy fragments of the Python mirrors) and active
-;         range [ox0, ox1], appended via tg_append_x.  Silently dropped
+;         range [ox0, ox1), appended via tg_append_x.  Silently dropped
 ;         on pool exhaustion.  Clobbers A,X,Y.
 emit_unchanged_subspan:
    JSR alloc_span
@@ -1169,7 +1172,7 @@ SEG_HIGH
 ; In:  the packed ZP vertex structs (zp.inc VX1/VX2) biased s16 sy pairs,
 ;      zp_seg_flags (SF_NEEDBT=$04, SF_NEEDBB=$08).
 ; Out: C=1 -> aperture band provably empty on screen (caller appends a
-;      SOLID over [ilo,ihi]); C=0 -> genuine no-op (skip).
+;      SOLID over [ilo, ihi)); C=0 -> genuine no-op (skip).
 ; Caller: bsp/subsector.s seg-emit tail (direct .import, not a jt slot;
 ; bank C paged in the banked build). Clobbers A,X.
 ;

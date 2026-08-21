@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; clip/pool.s — clipper fragment 3 of 10 (module map: clip/header.s).
+; clip/pool.s — clipper fragment 3 of 13 (module map: clip/header.s).
 ; Contents: span_init and the O(1) free-list allocator
 ; (alloc_span / free_span).
 ; Pool layout + field equates (POOL_*) are defined in clip/arith.s;
@@ -12,17 +12,20 @@
 ;
 ; Builds two structures:
 ;   FREE LIST -- singly-linked chain of unused slots 2..31
-;   ACTIVE LIST -- single span (slot 1) covering [0,255] x [0,159]
+;   ACTIVE LIST -- single span (slot 1) covering columns [0, 255) —
+;                  XEND = 255 is the native EXCLUSIVE edge (column 255
+;                  is nonexistent by decree) — with the full visible
+;                  Y band on every column
 ;
-; Called once per frame (linker-resolved; harness calls span_init by symbol)
-; pages bank C and JSRs the jump-table slot before the render; the
+; Called once per frame: the walk driver pages bank C and JSRs
+; span_init (address via engine_syms.inc) before the render; the
 ; Python harness calls it per test frame. Runtime is negligible
 ; (< 0.5% of total).
 ;
 ; Input:  none.
 ; Output: zp_free = 2 (free chain 2->3->...->31->0),
 ;         zp_head = 1, slot 1 = full-screen span:
-;           XSTART=XLO=0, XEND=DEN=255,
+;           XSTART=XLO=0, XEND=DEN=255 (XEND exclusive),
 ;           TL=TR=OT=IT=Y_BIAS (48), BL=BR=OB=IB=Y_BIAS+159 (207)
 ;           (screen-space Y is stored BIASED: visible [0,159] -> [48,207])
 ;         zp_hg_cache = 1 (has_gap coherence cache primed to the span).

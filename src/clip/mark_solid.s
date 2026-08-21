@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; clip/mark_solid.s — clipper fragment 5 of 10 (module map: clip/header.s).
+; clip/mark_solid.s — clipper fragment 5 of 13 (module map: clip/header.s).
 ; Contents: span_mark_solid only. Uses alloc_span /
 ; free_span from clip/pool.s; POOL_* field equates from clip/arith.s.
 ; ============================================================================
@@ -12,42 +12,48 @@
 ; 0-byte pad: optimal alignment for narrowed-BB layout
 
 ; ======================================================================
-; MARK_SOLID: punch out [ilo, ihi] from the span list (solid wall)
+; MARK_SOLID: punch out the HALF-OPEN range [lo, hi) (solid wall)
+;
+; NATIVE half-open throughout (the 2026-08-20 decree; arms completed
+; 2026-08-21): every boundary write is a PURE COPY of lo or hi — no
+; +-1 arithmetic anywhere.
 ;
 ; LAZY operation: only adjusts XSTART/XEND on affected spans.
-; Line params (XLO/XHI/TL/BL/TR/BR) are NEVER modified -- zero interp
+; Line params (XLO/DEN/TL/BL/TR/BR) are NEVER modified -- zero interp
 ; calls needed.  When a solid range splits a span in the middle, a
-; sibling slot is allocated and the 6 line bytes are copied verbatim.
+; sibling slot is allocated and the 10 field bytes are copied verbatim.
 ;
-; Three cases per span:
-;   1. No left frag (xstart >= ilo): shrink xstart or free entirely
-;   2. Left only (xend <= ihi): truncate xend = ilo - 1
-;   3. Middle split: alloc sibling for right frag, truncate original
+; Three cases per overlapped span [xs, xe):
+;   1. No left frag (xs >= lo): free entirely (xe <= hi) or xs := hi
+;   2. Left only    (xe <= hi): xe := lo
+;   3. Middle split: sibling gets [hi, xe), original keeps [xs, lo)
 ;
-; Input:  zp_i_l, zp_i_h = solid column range (closed, both inclusive,
-;         pre-clamped to [0,255] by the caller; ihi < ilo = no-op).
-;         zp_head = active span list (sorted by XSTART).
-; Output: every active column in [ilo,ihi] removed; freed slots pushed
+; Input:  zp_i_l, zp_i_h = solid range [lo, hi), pre-clamped to
+;         [0, 255] by the caller; hi <= lo = empty = no-op.
+;         zp_head = active span list (sorted by XSTART, disjoint).
+; Output: every open column in [lo, hi) removed; freed slots pushed
 ;         on the free list; zp_head updated; zp_hg_cache invalidated.
 ;         Clobbers A,X,Y, zp_prev, zp_tmp0.
 ;
-; Callers: bsp/defq.s (deferred solid ops) via direct JSR — bank C
-; must be paged in the banked build — and the harness's mark_solid.
+; Callers: bsp/seg_emit.s (solid-seg arm) + bsp/tfr consumers via
+; direct JSR — bank C must be paged in the banked build — and the
+; harness's mark_solid.
 ;
 ; Python mirror: EndpointClipSpans.mark_solid (lazy, line-preserving).
-; pseudocode (per span s, walked left to right):
-;   if s.xend   <  ilo: skip (fast ping-pong scan below)
-;   if s.xstart >  ihi: done (list is sorted)
-;   if s.xstart >= ilo:                    # no left fragment
-;       if s.xend <= ihi: unlink + free s  # fully covered
-;       else:             s.xstart = ihi+1 # shrink in place, done-check
+; pseudocode (per span s = [xs, xe), walked left to right):
+;   if xe <= lo: skip (fast ping-pong scan below)
+;   if xs >= hi: done (list is sorted)
+;   if xs >= lo:                           # no left fragment
+;       if xe <= hi: unlink + free s       # fully covered
+;       else:        s.xs = hi             # shrink in place, TERMINAL
 ;   else:                                  # keep left fragment
-;       if s.xend <= ihi: s.xend = ilo-1   # right part swallowed
-;       else:                              # middle split
+;       if xe <= hi: s.xe = lo             # right part swallowed
+;       else:                              # middle split, TERMINAL
 ;           sib = alloc(); sib.line = s.line (copied verbatim)
-;           sib.range = [ihi+1, s.xend]; link after s; s.xend = ilo-1
-; Fragments here are NON-abutting (ilo-1 / ihi+1): solid columns are
-; removed outright, unlike tighten's shared-boundary fragments.
+;           sib.range = [hi, xe); link after s; s.xe = lo
+; The two fragments of a split ABUT the removed range exactly (share
+; its boundary edges lo and hi) — no gap columns, no overlap: the
+; half-open tiling has no seam arithmetic at all.
 ; ======================================================================
 span_mark_solid:
 .scope
@@ -96,14 +102,14 @@ ms_chk_after:
 ; |||
 ms_overlap:
 ; A = xstart (from ms_chk_after). Check left fragment.
-; xstart < ilo  → keep a left fragment   (xend may need clip too)
-; xstart >= ilo → no left fragment       (this span is entirely in or right of [ilo,ihi])
+; xs < lo  → keep a left fragment   (xe may need truncating too)
+; xs >= lo → no left fragment       (span starts inside [lo, hi))
    CMP zp_i_l
    BCC ms_has_left
 ; ||
 ; --- No left fragment ---
-; xend > ihi  → shrink in place (BCC past ms_free)
-; xend <= ihi → fully covered → fall through to ms_free
+; xe > hi  → shrink in place (BCC past ms_free)
+; xe <= hi → fully covered → fall through to ms_free
    LDA zp_i_h
    CMP POOL_XEND,X
    BCC ms_shrink
@@ -150,8 +156,9 @@ ms_shrink:
    RTS
 
 
-; --- Skip-ahead scan: chase NEXT while xend < ilo (span wholly left of
-;     the solid range). Unrolled 2x ping-pong: the current slot
+; --- Skip-ahead scan: chase NEXT while xe <= lo (span wholly left of
+;     the solid range — strict half-open: xe == lo is edge-touch, not
+;     overlap). Unrolled 2x ping-pong: the current slot
 ;     alternates X/Y so the skip path needs no TAX/TAY transfer.
 ;     zp_prev tracks the predecessor for the unlink in ms_free. ---
 msl:                                    ; X = current span — fall-through from shrink, branch target from free
@@ -177,15 +184,15 @@ ms_rts_x:
    RTS
 
 ms_has_left:
-; xstart < ilo. Has right fragment? xend > ihi?
+; xs < lo. Right fragment too? (xe > hi → middle split)
    LDA zp_i_h
    CMP POOL_XEND,X
    BCS ms_left_only
 ; |
 ; --- Middle split: allocate sibling for the right fragment ---
-; Original span becomes the left fragment; the sibling inherits the
-; SAME line definition (10 field bytes copied verbatim, including the
-; precomputed OT/OB/IT/IB bbox) and takes the right active range.
+; Original span becomes the left fragment [xs, lo); the sibling
+; inherits the SAME line definition (10 field bytes copied verbatim,
+; including the precomputed OT/OB/IT/IB bbox) and takes [hi, xe).
 ; On pool exhaustion the right fragment is sacrificed (left-only) —
 ; conservative: drops open columns, never leaks solid ones as open.
    STX zp_prev                             ; |

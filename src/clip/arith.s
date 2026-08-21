@@ -1,5 +1,5 @@
 ; ============================================================================
-; clip/arith.s — clipper fragment 2 of 10 (see clip/header.s for the module
+; clip/arith.s — clipper fragment 2 of 13 (see clip/header.s for the module
 ; map and entry contracts). Contents: udiv16_8 (first code in the CLIP
 ; segment; umul8 unified into bsp/header.s 2026-08-09 — main RAM, imported
 ; here — and the old $2030 first-code pin died with it), the
@@ -306,13 +306,15 @@ ds:
 ;   TR       top y at XLO+DEN
 ;   BR       bot y at XLO+DEN
 ;   XSTART   active range start (mutable: shrunk by mark_solid / tighten fragments)
-;   XEND     active range end   (mutable)
+;   XEND     active range end, EXCLUSIVE (mutable) — the span covers
+;            columns [XSTART, XEND); a full-screen span has XEND=255
+;            (column 255 is nonexistent by decree)
 ;   OT       min(TL, TR) — outer top (precomputed bbox)
 ;   OB       max(BL, BR) — outer bot (precomputed bbox)
 ;   IT       max(TL, TR) — inner top (precomputed bbox)
 ;   IB       min(BL, BR) — inner bot (precomputed bbox)
 ;
-; Spans interpolate y at any column x ∈ [XSTART, XEND] using the line through
+; Spans interpolate y at any column x ∈ [XSTART, XEND) using the line through
 ; (XLO, TL/BL) — (XLO+DEN, TR/BR). XLO/DEN need not match XSTART/XEND once
 ; a span has been narrowed: the line is preserved across mark_solid splits
 ; and left/right-fragment creation in tighten, so no interp_store is needed
@@ -446,7 +448,7 @@ RASTER_ENTRY = $7500                    ; flat: above-line (2026-08-09 —
 ; file DAG: both dcl.s (dcl_yband_clip, swapped axes) and dcl_s16.s call
 ; it, so it lives with the arithmetic primitives — no back edge).
 ; LC_* working-set addresses are declared in clip/tfr.s (forward refs:
-; absolute $09xx, resolved at link). udiv16_8 lives in clip/pool.s.
+; absolute $09xx, resolved at link). udiv16_8 lives above in this file.
 ; ======================================================================
 ; (umul16x16 inlined+specialised into si_general 2026-07-16 —
 ; single caller; operands read straight from LC_OFF/LC_DY, the

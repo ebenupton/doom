@@ -1,5 +1,6 @@
 ; ============================================================================
-; Framebuffer clears — bank C (Eben's call, 2026-08-16).
+; clip/fbclear.s — clipper fragment 13 of 13, last in the link (module
+; map: clip/header.s). Framebuffer clears — bank C (Eben's call, 2026-08-16).
 ;
 ; These were three unrolled routines in walk_drv.asm at DRV_CLR ($2200),
 ; ~145 B of the driver's 1,229. Moving them here buys that back in main

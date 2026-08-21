@@ -66,15 +66,28 @@ ina
 ; span clipper (src/clip/*) -- 6502 span-clipper module for the DOOM-style
 ; BSP renderer.  ONE MODULE of the single ld65 engine link (it was a
 ; standalone beebasm unit historically; the old "span_clip.asm" name
-; survives as src/span_clip.s, the include shell that pulls in, in this
-; order: clip/header.s (this file), arith.s, pool.s, interp.s,
-; mark_solid.s, query.s, dcl.s, tfr.s, plot_axis.s, dcl_s16.s).
+; survives as src/span_clip.s, the include shell that pulls in the 13
+; fragments in link order: clip/header.s (this file), arith.s, pool.s,
+; interp.s, mark_solid.s, query.s, dcl.s, tfr.s, plot_axis.s,
+; dcl_s16.s, vplot.s, rotvar.s, fbclear.s.
 ;
 ; This module manages a linked list of 'spans' representing the visible
-; aperture on each horizontal column of the screen (0-255).  Each span stores
-; a line definition (top/bot Y at two anchor X's) and an active column range.
-; The BSP front-to-back traversal calls three main operations:
-;   has_gap              -- quick check whether any column in [lo,hi] is open
+; aperture on each horizontal column of the screen.
+;
+; EVERYTHING HERE IS HALF-OPEN (the native-representation decree,
+; 2026-08-20/21, clip_ref.py is the executable spec): every interval —
+; the query/solid ABI (zp_i_l/zp_i_h, hi EXCLUSIVE), a span's active
+; range [XSTART, XEND), a DCL record's column claim [xl, xr) — means
+; [lo, hi).  The column domain is [0, 255): column 255 is permanently
+; solid/nonexistent BY DECREE, so every edge fits u8 and there are no
+; 9-bit cases.  The one boundary where ranges meet pixels is dcl->
+; raster: an emitted line RUNS OUT to paint its exclusive right edge
+; inclusively (Eben's run-out ruling — no -1 anywhere).
+;
+; Each span stores a line definition (top/bot Y at two anchor X's) and
+; an active column range.  The BSP front-to-back traversal calls three
+; main operations:
+;   has_gap              -- is any column in [lo, hi) open?
 ;   mark_solid           -- remove a column range entirely (wall occludes)
 ;   tighten_from_records -- narrow apertures from DCL segment records
 ; plus draw_clipped_line[_s16[_h]] -- clip a line to the spans and plot it.
@@ -131,9 +144,9 @@ SEG_BANKC
 ;
 ; Entry contracts (full I/O headers at each routine):
 ;   span_init               reset pool: free chain + one full-screen span
-;   span_mark_solid         remove closed range [zp_i_l, zp_i_h] (solid)
-;   span_has_gap            C=1 iff any span overlaps [zp_i_l, A] (A-hi,
-;                           C-only verdict; A returns ihi untouched)
+;   span_mark_solid         remove the range [zp_i_l, zp_i_h) (solid)
+;   span_has_gap            C=1 iff any span overlaps [zp_i_l, A) (A-hi,
+;                           C-only verdict; A returns ihi value-preserved)
 ;   (span_is_full retired — SPAN_IS_NOT_FULL macro tests zp_head inline)
 ;   span_read               serialize span list to buffer at (zp_buf)
 ;   interp_store            A = line y at column A (u8 round-to-nearest)

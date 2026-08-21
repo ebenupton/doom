@@ -17,10 +17,10 @@ NOT of authority: a line's clip authority is pure geometry.
 Intervals are HALF-OPEN ([x0, x1) — the original sketch's convention,
 restored by decree 2026-08-20): a chain of connected lines
 [a,m) [m,b) ... gives EVERY column exactly one claiming authority.
-That single-ownership tiling is the design point of this model. (The
-engine's tighten is the mirror tiling, (lo, hi] — joint column to the
-LEFT seg — and its mark_solid is closed on both ends; those seams are
-exactly what the differential harness probes.)
+That single-ownership tiling is the design point of this model — and
+since the 2026-08-21 native conversion the ENGINE shares it exactly:
+tighten, mark_solid, has_gap and the span pool are all [lo, hi) with
+pure-copy boundaries (the old mirror/closed tilings are gone).
 
 Interpolation matches the engine's interp_store rounding (half away
 from zero on |dy|) so the oracle can be compared EXACTLY against the

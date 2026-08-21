@@ -1,5 +1,6 @@
 ; ============================================================================
-; clip/rotvar.s — the ex-LCODE island code (2026-08-09: ONE contiguous
+; clip/rotvar.s — clipper fragment 12 of 13 (module map: clip/header.s).
+; The ex-LCODE island code (2026-08-09: ONE contiguous
 ; code area rule — the $1E00 island died; $1E00 is DATA-only now).
 ; Lives in the span_clip object so the bytes land in the inter-object
 ; alignment pad before bsp_render's fragment: zero net CODE growth.

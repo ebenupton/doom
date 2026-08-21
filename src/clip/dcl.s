@@ -1,6 +1,6 @@
 
 ; ============================================================================
-; clip/dcl.s — clipper fragment 7 of 10 (module map: clip/header.s).
+; clip/dcl.s — clipper fragment 7 of 13 (module map: clip/header.s).
 ; Contents: draw_clipped_line + dcl_vertical, the CB
 ; trapezoid clip, dcl_boundary_ix, dcl_emit_segment (records writer +
 ; plot dispatch), dcl_yband_clip, and line_interp_store.
@@ -28,13 +28,14 @@
 ;
 ; Output: each surviving segment is staged into RASTER_ZP_X0..Y1 (Y
 ; un-biased) and dispatched to plot_h / plot_v / RASTER_ENTRY as it is
-; produced.  Only when LINE_OUT_EN is set (HARNESS-ONLY — the buffer
-; overlaps the D-cache; see the note in clip/arith.s) is each segment
-; also appended to LINE_OUT_BUF (4 bytes: x0,y0,x1,y1, Y un-biased,
-; count at LINE_OUT_COUNT).  In records mode, one 4-byte record
-; (xl,yl,xr,yr — BIASED Y) per surviving segment is appended to the
-; record buffer (count in byte 0) for the records-driven tighten
-; (consumer: tighten_from_records, clip/tfr.s).
+; produced.  RUN-OUT at the ranges->pixels boundary (Eben's ruling):
+; X1 is staged as the segment's EXCLUSIVE end column and the raster
+; paints through it inclusively — no -1 anywhere.  In records mode,
+; one 4-byte record (xl,yl,xr,yr — BIASED Y, claiming columns
+; [xl, xr)) per surviving segment is appended to the record buffer
+; (count in byte 0) for the records-driven tighten (consumer:
+; tighten_from_records, clip/tfr.s).  (The old LINE_OUT capture was
+; RETIRED 2026-07-26 — the harness PC-traps the plot entries.)
 ; READ-ONLY walk — never modifies the span list.
 ;
 ; Python mirror: EndpointClipSpans.draw_clipped (endpoint_spans.py) —
@@ -280,7 +281,8 @@ dcl_extends_past:
                                         ;  range — the JMP died)
 dcl_has_next:
 
-; Abutting? POOL_XEND[current] == POOL_XSTART[next] (shared pixel center)
+; Abutting? POOL_XEND[current] == POOL_XSTART[next] — half-open spans
+; abut when they SHARE the boundary edge (exclusive end == next start)
    LDA POOL_XEND,X
    CMP POOL_XSTART,Y
    BNE dcl_exit_no_portal                  ; (direct 2026-08-12: +76)
@@ -417,9 +419,18 @@ dcl_fl_emit:
 ; emit single vertical line segment.  Matches Python's draw_clipped
 ; vertical path (break on first span containing ix).
 ;
+; KNOWN OPEN BUG (jamb-vertical boundary column, root-caused
+; 2026-07-24): the span lookup below is doubly-inclusive first-match
+; (serves xl even from a span whose EXCLUSIVE end == xl), so boundary
+; columns are always served by the LEFTMOST touching span — a stale
+; aperture at every portal's x_lo jamb.  The designed fix (serve from
+; the more restrictive touching span; prototype in tools/joint_proto
+; .py) awaits its rebaseline — do not 'tidy' the compares to strict
+; without landing that fix.
+;
 ; Inputs:  zp_line_xl_l (== xr), zp_line_yl_l, zp_line_yr_l; zp_head.
-; Output:  at most one segment to LINE_OUT_BUF + plot_v; no records
-;          (vertical lines carry no tighten information).
+; Output:  at most one segment staged to RASTER_ZP_* + plot_v; no
+;          records (vertical lines carry no tighten information).
 ; Pseudocode:
 ;   for s in spans:
 ;       if s.xend < xl: continue
@@ -1137,7 +1148,7 @@ dcl_bix_mid:
    RTS
 
 ; --- dcl_emit_segment: stage a segment to the rasteriser (plus the
-;     harness-only LINE_OUT capture and the optional tighten record) ---
+;     optional tighten record) ---
 ; Input: zp_seg_start_x, zp_seg_start_y, zp_ox1 (end_x), zp_tmp0 (end_y)
 ; Clobbers: A, Y
 ;
@@ -1147,8 +1158,8 @@ dcl_bix_mid:
 ;       yband-clip segment; if fully off-screen: return
 ;   if records mode and xl < xr:                  # skip useless records
 ;       append record (xl, yl, xr, yr); records[0] += 1
-;   append (xl, yl-Y_BIAS, xr, yr-Y_BIAS) to LINE_OUT_BUF and the
-;   rasteriser ZP args; bump LINE_OUT_COUNT
+;   stage (xl, yl-Y_BIAS, xr, yr-Y_BIAS) into the rasteriser ZP args
+;   (xr = exclusive end; the raster RUNS OUT through it — no -1)
 ;   tail-call plot_h / plot_v / RASTER_ENTRY by segment axis
 dcl_es_degen:
 ; maybe-degenerate: same x — degenerate iff same y too (rare: 2.6%)

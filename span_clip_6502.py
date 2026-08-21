@@ -236,10 +236,10 @@ class SpanClip6502:
         self.total_cycles = 0  # init cost doesn't count toward frame
 
     def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
-        """mark_solid(lo, hi).
+        """mark_solid(lo, hi) — NATIVE HALF-OPEN [lo, hi), hi exclusive.
 
-        Inclusive right edge (solid wall covers last column).
-        Closed-interval: ilo, ihi are both inclusive column indices in [0,255].
+        Empty (hi <= lo) is a no-op. Both edges fit u8: the column
+        domain is [0, 255) with 255 the permanently-solid decree column.
 
         Seg params are accepted for API compatibility but ignored — wall
         line emission is handled by draw_clipped_line (DCL), so the 6502's

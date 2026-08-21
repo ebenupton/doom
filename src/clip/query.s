@@ -1,44 +1,44 @@
 
 ; ============================================================================
-; clip/query.s — clipper fragment 6 of 10 (module map: clip/header.s).
+; clip/query.s — clipper fragment 6 of 13 (module map: clip/header.s).
 ; Contents: span_has_gap, plus the retirement notes for the old
 ; per-span tighten whose site this was, span_is_full and span_read.
 ; ============================================================================
 
 ; ======================================================================
-; HAS_GAP: fast visibility check for column range [ilo, ihi]
+; HAS_GAP: fast visibility check for the HALF-OPEN column range [lo, hi)
 ;
 ; Returns C=1 if ANY active span overlaps the query range, C=0 otherwise.
-; Most-called entry point (~174 calls/frame).  The inner loop is just
-; 3 compares + linked-list chase, so it's very fast per iteration.
-; Profile: ~14% of all clipper cycles despite trivial per-call cost,
-; due to sheer call frequency.
+; NATIVE-STRICT (2026-08-21): a span [xs, xe) overlaps [lo, hi) iff
+; xs < hi AND xe > lo — edge-touch (xe == lo or xs == hi) is NOT
+; overlap.  Most-called entry point (~500 calls/heavy frame); the scan
+; step is one reversed compare + linked-list chase (12 cyc).
 ;
-; Input:  A = interval hi, zp_i_l = interval lo (closed range; caller
-;         pre-clamps to [0,255]).  zp_i_h is NOT touched: ihi lives in
-;         A for the whole routine (Eben's 2026-07-26 rewrite).
+; Input:  A = hi (EXCLUSIVE), zp_i_l = lo (caller pre-clamps to
+;         [0, 255]).  zp_i_h is NOT touched: hi lives in A (Eben's
+;         2026-07-26 rewrite; stash-and-restore since 2026-08-21).
 ; Output: C = verdict (C=1 gap / C=0 none) — C-ONLY since 2026-07-26;
-;         A returns the caller's ihi UNTOUCHED (no exit materializes
-;         a 0/1 any more); Z, N and V are UNDEFINED here. Clobbers
-;         X,Y; may update zp_hg_cache (slot of the hit span).
-; Callers: bsp/bbox.s (bbox visibility probe) and bsp/subsector.s (seg
-; prelude) — direct JSR (bank C paged in the banked build); harness.
+;         A returns the caller's hi VALUE-PRESERVED; Z, N UNDEFINED,
+;         V untouched (load-bearing — see the ABI block below).
+;         Clobbers X,Y; may update zp_hg_cache (slot of the hit span).
+; Callers: bsp/bbox.s (bbox visibility probe, via bca's fused JMP
+; exits) and bsp/seg_emit.s (hg_query seg prelude) — direct JSR/JMP
+; (has_gap lives in main RAM, no paging needed); harness.
 ;
 ; Python mirror: EndpointClipSpans.has_gap — a pure X-overlap test:
 ; every live span is treated as having aperture (no top/bot check).
 ; pseudocode:
 ;   for s in spans (sorted by xstart):
-;     if s.xend < ilo:  continue          # wholly left — keep scanning
-;     return 1 if s.xstart <= ihi else 0  # first candidate decides
+;     if s.xe <= lo: continue             # wholly left — keep scanning
+;     return 1 if s.xs < hi else 0        # first candidate decides
 ;   return 0
 ; ======================================================================
 ; MOVED TO MAIN (2026-07-15): has_gap touches ONLY main-RAM state
-; (POOL_* $04xx/$05xx + zp) — hosting the code in bank C forced a
-; PAGE BANK_C round-trip at every probe (~174 calls/frame, and the
-; hottest cross-bank transition on the audit: bbox's angle work L2 ->
-; C -> back). It lives in the B segment (CODE region, unbanked) so
-; callers just JSR/JMP span_has_gap directly (linker-resolved) — the
-; harness.
+; (the POOL_* planes + zp) — hosting the code in bank C forced a
+; PAGE BANK_C round-trip at every probe (the hottest cross-bank
+; transition on the audit: bbox's angle work L2 -> C -> back). It
+; lives in the CODE region (unbanked) so callers JSR/JMP
+; span_has_gap directly (linker-resolved).
 .export span_has_gap
 SEG_CODE
 span_has_gap:
@@ -138,11 +138,11 @@ hgn0:
 ; on a no) are gone. Caching a FAILING candidate is sound: it is
 ; still a live span (mark_solid/tighten zero the cache on any
 ; mutation), and the probe only ever shortcuts POSITIVE overlaps — a
-; cached non-overlapper just falls through to the walk. A = ihi
-; throughout; the CMP's carry IS the returned verdict (C=0: xstart >
-; ihi — first candidate starts past the range, and the list is
-; sorted, so no later span can overlap either). -3 cycles on the gap
-; verdict, +1 on the no-gap one; hits dominate.
+; cached non-overlapper just falls through to the walk. The CMP's
+; carry IS the returned verdict — C=0 means xs >= hi: the first
+; candidate starts at or past the range end, and the list is sorted,
+; so no later span can overlap either — with the xs == hi edge-touch
+; demoted to no-gap via the shared CLC exit (strict half-open).
 hg_chk_x:
    STX zp_hg_cache
    LDA zp_hg_ihi                           ; A = ihi back (verdict + ABI)
@@ -169,7 +169,8 @@ SEG_BANKC
 ; $63 was only ever zp_bv_entry's lo byte wearing a second hat.)
 
 ; ======================================================================
-; TIGHTEN: the core visibility-narrowing operation
+; TIGHTEN: the core visibility-narrowing operation (RETIRED — see the
+; note below; closed-interval notation preserved as written)
 ;
 ; Given a new wall segment [ilo,ihi] x [yt1..yt2, yb1..yb2], walks the
 ; old active list and builds a new list with narrowed apertures.

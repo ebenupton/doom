@@ -1,5 +1,6 @@
 ; ============================================================================
-; clip/vplot.s — unrolled vertical-column rasteriser (BANKED only).
+; clip/vplot.s — clipper fragment 11 of 13 (module map: clip/header.s).
+; Unrolled vertical-column rasteriser (both builds; banked primary).
 ; Eben's design, 2026-07-27:
 ;
 ;   160 unrolled row-plot blocks (one per screen row), TWO copies (one

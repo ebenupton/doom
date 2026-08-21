@@ -1,5 +1,5 @@
 ; ============================================================================
-; clip/interp.s — clipper fragment 4 of 10 (module map: clip/header.s).
+; clip/interp.s — clipper fragment 4 of 13 (module map: clip/header.s).
 ; Contents: interp_store — u8 round-to-nearest line
 ; interpolation — and its umul_round_div helper (umul8 inlined there
 ; 2026-08-09; the div still tail-calls udiv16_8 in clip/arith.s).
