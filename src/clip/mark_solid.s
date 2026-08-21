@@ -87,10 +87,9 @@ ms_chk_after_y:
 ms_chk_after:
 ; Done if xstart > ihi (span starts after solid range).
 ; Load xstart once and reuse for both ihi and ilo comparisons.
-   LDA POOL_XSTART,X                       ; |
-   CMP zp_i_h
-   BEQ ms_overlap
-   BCS ms_rts_x
+   LDA POOL_XSTART,X                       ; NATIVE: done iff xs >= hi
+   CMP zp_i_h                              ; (xs == hi is wholly-right —
+   BCS ms_rts_x                            ; the legacy BEQ overlap died)
 ; |||
 ms_overlap:
 ; A = xstart (from ms_chk_after). Check left fragment.
@@ -151,18 +150,18 @@ ms_shrink:
 ;     zp_prev tracks the predecessor for the unlink in ms_free. ---
 msl:                                    ; X = current span — fall-through from shrink, branch target from free
 msl_x:
-   LDA POOL_XEND,X
-   CMP zp_i_l
-   BCS ms_chk_after
-; ||||
+   LDA zp_i_l                              ; REVERSED strict compare
+   CMP POOL_XEND,X                         ; (2026-08-21): C=(lo>=xe) =
+   BCC ms_chk_after                        ; wholly-left skip — native
+; ||||                                     ; semantics at legacy cost
    STX zp_prev
    LDY POOL_NEXT,X
    BEQ ms_rts_x
 ; ||
 msl_y:
-   LDA POOL_XEND,Y
-   CMP zp_i_l
-   BCS ms_chk_after_y
+   LDA zp_i_l                              ; (mirror)
+   CMP POOL_XEND,Y
+   BCC ms_chk_after_y
 ; ||||
    STY zp_prev
    LDX POOL_NEXT,Y

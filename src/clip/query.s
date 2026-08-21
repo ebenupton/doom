@@ -50,8 +50,8 @@ span_has_gap:
 ;   in:  A = interval hi (EXCLUSIVE), zp_i_l = lo — NATIVE [lo, hi)
 ;   out: C = verdict. C=1 -> some active span overlaps [lo, hi)
 ;                     C=0 -> none does (range fully solid)
-;        A = ihi, UNTOUCHED (every instruction below is a load, a
-;            compare, CLC or a store — nothing writes A)
+;        A = ihi, VALUE-PRESERVED (the scan stashes it in zp_hg_ihi
+;            so lo can ride A, and every exit restores it)
 ;        Z/N = undefined (last compare's leftovers)
 ;        V   = untouched (no instruction here affects it) — this is
 ;            LOAD-BEARING: the bca classify tail runs CLV before its
@@ -59,21 +59,19 @@ span_has_gap:
 ;            (extent) vs V=1 (cull) AFTER this routine returns. Do
 ;            not add ADC/SBC/BIT/PLP to this routine.
 ;
-; ihi NEVER lands in memory here — A carries it through the probe
-; (xstart test first; the two probe tests are independent), the walk
-; (xend compares ride Y/X via CPY/CPX zp_i_l, scratching the idle
-; cursor register — safe, each advance reloads it), and the hit
-; checks (CMP POOL_XSTART off A). zp_i_h is neither read nor written:
+; ihi stashes to zp_hg_ihi at walk entry (2026-08-21): CPX/CPY have
+; no abs,X mode, so the reversed strict compare — C=(lo>=xe), one
+; branch — needs A, and lo is loop-invariant so it rides A across the
+; whole ping-pong (12 cyc/step). zp_i_h is neither read nor written:
 ; its post-call consumers have their own writers (mark_solid/tfr get
 ; the emit-path clamp; the dst*_ext record store reads bca_ihi landed
 ; by the bca classify tail).
 ;
-; C provenance, per exit (no exit executes a flag instruction except
-; hgn0's CLC — the verdict IS the last compare's carry):
-;   probe hit        CPY zp_i_l fell through BCC  -> C=1
-;   hg_chk_x/y       CMP POOL_XSTART's carry, returned RAW (branch-
-;                    free: the cache store precedes the compare)
-;   hgn (list ran out) CPY/CPX zp_i_l, BCS not taken -> C=0
+; C provenance, per exit:
+;   probe hit        CPY zp_i_l fell through BCC/BEQ -> C=1
+;   hg_chk_x/y       CMP POOL_XSTART's carry, raw (equality demoted
+;                    via the shared CLC exit)
+;   hgn_clc (list ran out / edge-touch) explicit CLC
 ;   hgn0 (empty list) explicit CLC (C is caller junk on this entry)
 ;
 ; Consumers of C: subsector's seg gate (BCS hg_pass), the walk's six
@@ -92,51 +90,38 @@ span_has_gap:
 ; cache, so a live cached slot always holds current XSTART/XEND.)
    LDX zp_hg_cache
    BEQ hg_no_cache
-   CMP POOL_XSTART,X                       ; native: hit needs xs < hi
-   BEQ hg_no_cache                       ; A = ihi, straight off the entry
+   CMP POOL_XSTART,X                       ; strict xs < hi: C=(hi>=xs),
+   BEQ hg_no_cache                         ; equality demoted (edge-touch)
    BCC hg_no_cache
-; ihi < xstart → miss
    LDY POOL_XEND,X
-   CPY zp_i_l                              ; native: ... and xe > lo
-   BCC hg_no_cache
-   BEQ hg_no_cache
-; xe <= lo → miss
-   RTS                                     ; cache hit: C=1 from the CPY
-                                           ; (BCC/BEQ fell); A still = hi
+   CPY zp_i_l                              ; strict xe > lo: BCC + BEQ
+   BCC hg_no_cache                         ; demote (CPY abs,X does not
+   BEQ hg_no_cache                         ; exist, so no reversal here)
+   RTS                                     ; hit: C=1 from the CPY
 hg_no_cache:
 ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
 ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
    LDX zp_head
-   BEQ hgn0
-; --- X iteration: current span in X ---
+   BEQ hgn0                                ; (A still = ihi on this path)
+   STA zp_hg_ihi                           ; stash hi; then LO RIDES A,
+   LDA zp_i_l                              ; loop-invariant, so each step
+; --- X iteration: current span in X ---  ; is ONE reversed compare:
 hgl_x:
-   LDY POOL_XEND,X
-   CPY zp_i_l                              ; NATIVE: overlap needs xe > lo;
-   BEQ hg_eq_adv_x                         ; xe == lo is wholly-left (the
-   BCS hg_chk_x                            ; equal arc must CLC — the
-; xe < lo → skip                           ; chain-end fall relies on C=0)
-hg_adv_x:
-   LDY POOL_NEXT,X
-   BEQ hgn
-; advance via Y
+   CMP POOL_XEND,X                         ; C = (lo >= xe) = wholly-left
+   BCC hg_chk_x                            ; — strict skip in one branch,
+   LDY POOL_NEXT,X                         ; 12 cyc/step (legacy was 15,
+   BEQ hgn_clc                             ; the BEQ-demoted form 17)
 ; --- Y iteration: current span in Y ---
 hgl_y:
-   LDX POOL_XEND,Y
-   CPX zp_i_l                              ; (mirror)
-   BEQ hg_eq_adv_y
-   BCS hg_chk_y
-hg_adv_y:
+   CMP POOL_XEND,Y                         ; (mirror)
+   BCC hg_chk_y
    LDX POOL_NEXT,Y
    BNE hgl_x
-; advance via X; chain end FALLS INTO hgn (C=0 from the CPX/CLC above)
-hgn:
-   RTS                                     ; no gap: C=0, A = hi untouched
-hg_eq_adv_x:
-   CLC                                     ; equal skip: restore the C=0
-   BCC hg_adv_x                            ; fall invariant (always taken)
-hg_eq_adv_y:
-   CLC
-   BCC hg_adv_y
+hgn_clc:
+   CLC                                     ; no gap: explicit C=0, then
+   LDA zp_hg_ihi                           ; restore A = ihi (the contract
+hgn:                                       ; is value-preservation)
+   RTS
 hgn0:
    CLC                                     ; empty active list ONLY: C is
                                            ; the caller's junk on this entry
@@ -160,19 +145,15 @@ hgn0:
 ; verdict, +1 on the no-gap one; hits dominate.
 hg_chk_x:
    STX zp_hg_cache
-   CMP POOL_XSTART,X                       ; C = (hi >= xs); NATIVE gap
-   BEQ hg_eq_x                             ; needs hi > xs — demote the
-   RTS                                     ; equal case to no-gap
-hg_eq_x:
-   CLC
-   RTS
-hg_chk_y:
+   LDA zp_hg_ihi                           ; A = ihi back (verdict + ABI)
+   CMP POOL_XSTART,X                       ; C = (hi >= xs): the verdict,
+   BEQ hgn_clc                             ; equality demoted via the
+   RTS                                     ; shared CLC exit (its LDA is
+hg_chk_y:                                  ; redundant-but-harmless here)
    STY zp_hg_cache
-   CMP POOL_XSTART,Y                       ; (mirror)
-   BEQ hg_eq_y
-   RTS
-hg_eq_y:
-   CLC
+   LDA zp_hg_ihi                           ; (mirror)
+   CMP POOL_XSTART,Y
+   BEQ hgn_clc
    RTS
 .endscope
 SEG_BANKC

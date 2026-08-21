@@ -492,6 +492,7 @@ zp_i_l = $C2                      ; [clip+ang]; interval lo (= bca_ilo)
 zp_i_h = $C3                      ; [clip+ang]; interval hi (= bca_ihi)
                                   ; directly; $BB/$BF freed)
 zp_hg_cache = $D0                 ; [clip]; has_gap coherence cache: last-matching span offset
+zp_hg_ihi = $5B                     ; [clip]; has_gap: stashed interval hi
 zp_i_x0 = $D1                     ; [clip]
 zp_i_y0 = $D2                     ; [clip]
 ; --- $D3: overlay group (2 phase-disjoint users) ---
