@@ -301,8 +301,9 @@ hg_query:
    BCC range_cull                          ; C=0: no visible column, cull
 hg_pass:
    STA zp_i_h                              ; bank ihi for stage 8 (A = ihi,
-                                        ; UNTOUCHED by span_has_gap — its
-                                        ; documented contract; STA keeps
+                                        ; VALUE-PRESERVED by span_has_gap
+                                        ; — its contract since 058e6cb
+                                        ; stashes/restores; STA keeps
                                         ; the C=1 the with-back arc rides).
                                         ; zp_i_l already holds ilo and
                                         ; nothing between here and stage 8
