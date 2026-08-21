@@ -109,12 +109,10 @@ af:
    RTS
 ; |
 
-free_span:
-   LDA zp_free
-   STA POOL_NEXT,X
-   STX zp_free
-   RTS
-; |||
+; (free_span RETIRED 2026-08-21: all three call sites — mark_solid's
+; ms_free and tfr's sweep-tail + merge tail-call — carry the
+; 3-instruction body inline now. It was never exported; alloc_span
+; stays, since its free-list pop is not a straight-line body.)
 
 ; ======================================================================
 ; UMUL8: unsigned 8x8 multiply via quarter-square identity

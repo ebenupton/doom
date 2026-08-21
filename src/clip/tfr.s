@@ -66,10 +66,14 @@ ta_try_merge:
    CMP POOL_XSTART,X
    BNE ta_link
 ; |
-; Merge: extend tail's xend to cover new, then free X.
+; Merge: extend tail's xend to cover new, then free X (free_span
+; INLINED 2026-08-21 — the tail-call JMP's 3 cycles die with it).
    LDA POOL_XEND,X
    STA POOL_XEND,Y
-   JMP free_span                           ; frees X (via tail-call), returns
+   LDA zp_free
+   STA POOL_NEXT,X
+   STX zp_free
+   RTS
 ta_link:
 ; X becomes new tail — write POOL_NEXT,X = 0 (deferred from entry).
    ZERO {POOL_NEXT,X}
@@ -977,8 +981,14 @@ tfs_inner_done:
 tfs_no_post:
 
 ; Free original pool span (its replacements are now in the new list).
+; free_span INLINED 2026-08-21 (its last two call sites went inline
+; together, so the subroutine itself is gone): -12 cyc of JSR/RTS on a
+; path that runs once per swept span. A is dead here — tfs_continue
+; reloads it.
    LDX zp_clr_save_x
-   JSR free_span
+   LDA zp_free
+   STA POOL_NEXT,X
+   STX zp_free
 
 tfs_continue:
    LDA zp_old_cur
