@@ -166,9 +166,8 @@ ms_free:
    LDA zp_free
    STA POOL_NEXT,X
    STX zp_free
-   LDA zp_prev
-   CMP #$FF
-   BNE ms_unlink_span
+   LDY zp_prev
+   BPL ms_unlink_span
 ; |
    LDX zp_tmp0                             ; (LDX/STX: A is not needed
    STX zp_head                             ; here and LDX sets Z)
@@ -179,7 +178,6 @@ ms_free:
    JMP msl
 ; |
 ms_unlink_span:
-   LDY zp_prev
    LDA zp_tmp0
    STA POOL_NEXT,Y                         ; (STX has no abs,Y form)
    TAX
