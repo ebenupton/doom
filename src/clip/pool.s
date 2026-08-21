@@ -1,8 +1,10 @@
 
 ; ============================================================================
 ; clip/pool.s — clipper fragment 3 of 13 (module map: clip/header.s).
-; Contents: span_init and the O(1) free-list allocator
-; (alloc_span / free_span).
+; Contents: span_init ONLY. The O(1) free-list allocator that lived
+; here (alloc_span / free_span) was retired 2026-08-21 — both bodies
+; are straight-line enough that all six call sites carry them inline;
+; see the notes below for the accounting.
 ; Pool layout + field equates (POOL_*) are defined in clip/arith.s;
 ; ZP names come from src/zp.inc.
 ; ============================================================================
@@ -84,16 +86,22 @@ id:
 .endscope
 
 ; ======================================================================
-; ALLOC_SPAN / FREE_SPAN: O(1) pool allocator via free-list push/pop
+; POOL ALLOCATOR (retired as subroutines 2026-08-21) — the free list is
+; a singly-linked chain through POOL_NEXT with the head in zp_free.
+; The two operations are now inline at every site:
 ;
-; alloc_span: pops free list head into X.  Z=0 on success, Z=1 if empty.
-; free_span:  pushes slot X back onto free list.  Tail-callable (JMP).
+;   POP (was alloc_span, 3 sites: mark_solid's middle split, tfr's
+;   flush_pending and emit_unchanged_subspan)
+;       LDX zp_free / BEQ <caller's fail arm>
+;       LDA POOL_NEXT,X / STA zp_free       ; X = fresh slot, fields stale
 ;
-; alloc_span — In: none. Out: X = slot (0 + Z=1 if pool exhausted).
-;              Clobbers A. All other slot fields are stale — caller fills.
-; free_span  — In: X = slot to free (must be unlinked from the active
-;              list first). Out: slot pushed on free chain. Clobbers A;
-;              X preserved.
+;   PUSH (was free_span, 3 sites: mark_solid's ms_free, tfr's sweep
+;   tail and tg_append_x's merge). Slot must be UNLINKED first.
+;       LDA zp_free / STA POOL_NEXT,X / STX zp_free   ; X preserved
+;
+; Both inlines are net-free: span_clip.bin is the same size as with
+; the subroutines, and they bought -366 cyc/frame together (the pop
+; also kills the TXA/BEQ pair that only carried Z across the JSR).
 ; ======================================================================
 ; (alloc_span RETIRED 2026-08-21, with free_span: all three call sites
 ; carry the 4-instruction pop inline. Inlining is a STRICT win here —

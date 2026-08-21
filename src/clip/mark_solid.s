@@ -1,8 +1,9 @@
 
 ; ============================================================================
 ; clip/mark_solid.s — clipper fragment 5 of 13 (module map: clip/header.s).
-; Contents: span_mark_solid only. Uses alloc_span /
-; free_span from clip/pool.s; POOL_* field equates from clip/arith.s.
+; Contents: span_mark_solid only. Carries the pool push/pop INLINE
+; (the alloc_span/free_span subroutines were retired 2026-08-21 — see
+; clip/pool.s); POOL_* field equates from clip/arith.s.
 ; ============================================================================
 
 ; (interp_span removed — mark_solid no longer interpolates)
