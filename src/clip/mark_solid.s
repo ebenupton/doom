@@ -81,11 +81,13 @@ span_mark_solid:
 ; loses a taken branch and the RTS folds into the shared exit.
    LDX zp_head
    BEQ ms_rts0
-; zp_prev = $FF sentinel: "current span is the list head" (unlink via
-; zp_head rather than a predecessor's NEXT). Sited AFTER both rejects
-; so neither early exit pays for it.
-   LDA #$FF
-   STA zp_prev
+; PREDECESSOR RIDES A REGISTER (Eben, 2026-08-21). The ping-pong
+; already holds it: at msl_x the previous span is in Y, at msl_y it is
+; in X. So zp_prev is written ONCE, at the classification landing,
+; instead of on every skip iteration — and the $FF "current is the
+; head" sentinel just seeds Y here, so the entry store dies too.
+; ($FF is never used as an index before the landing stores it.)
+   LDY #$FF                                ; sentinel predecessor
    LDA zp_i_l                              ; HOISTED: lo is loop-invariant
                                         ; and NOTHING in the scan body
                                         ; touches A (the ping-pong
@@ -101,17 +103,16 @@ msl:                                    ; X = current span — entered by
 msl_x:                                  ; FALL-THROUGH from the prologue,
                                         ; branch target from free/shrink
    CMP POOL_XEND,X                         ; A = lo (hoisted): C=(lo>=xe)
-   BCC ms_chk_after                        ; = wholly-left skip
-   STX zp_prev
-   LDY POOL_NEXT,X
+   BCC ms_chk_after                        ; = wholly-left skip; X = cur,
+                                        ; Y = predecessor
+   LDY POOL_NEXT,X                         ; advance: X becomes the pred
    BEQ ms_rts_x
 ; ||
 msl_y:
-   CMP POOL_XEND,Y                         ; (mirror)
+   CMP POOL_XEND,Y                         ; (mirror: Y = cur, X = pred)
    BCC ms_chk_after_y
 ; ||||
-   STY zp_prev
-   LDX POOL_NEXT,Y
+   LDX POOL_NEXT,Y                         ; advance: Y becomes the pred
    BNE msl_x
 ; ||
 ms_rts_x:
@@ -120,11 +121,16 @@ ms_rts0:                                   ; shared RTS (empty-range +
 
 ; --- Overlap classification (entered from the scan loop when
 ;     xend >= ilo, i.e. the span is not entirely left of the range) ---
-ms_chk_after_y:
+ms_chk_after_y:                            ; Y = current, X = predecessor
+   STX zp_prev                             ; save pred BEFORE TAX eats it
    TYA
-   TAX
-; Y→X for overlap code
-ms_chk_after:
+   TAX                                     ; Y→X for the overlap code
+   BNE ms_chk_body                         ; always taken (a live slot is
+                                        ; never 0) — skips the X arm's
+                                        ; own store
+ms_chk_after:                              ; X = current, Y = predecessor
+   STY zp_prev                             ; ($FF on the first span)
+ms_chk_body:
 ; Done if xstart > ihi (span starts after solid range).
 ; Load xstart once and reuse for both ihi and ilo comparisons.
    LDA POOL_XSTART,X                       ; NATIVE: done iff xs >= hi
@@ -167,8 +173,10 @@ ms_free:
    LDX zp_tmp0                             ; (LDX/STX: A is not needed
    STX zp_head                             ; here and LDX sets Z)
    BEQ ms_rts_x
+   LDY #$FF                                ; new current IS the head: re-seed
+                                        ; the sentinel predecessor
    LDA zp_i_l                              ; restore the hoisted invariant
-   JMP msl                                 ; (free_span clobbered A)
+   JMP msl
 ; |
 ms_unlink_span:
    LDY zp_prev
@@ -277,10 +285,9 @@ ms_left_only:
    LDA zp_i_l
    STA POOL_XEND,X
 ; |
-   STX zp_prev
-   LDY POOL_NEXT,X
-   BEQ ms_rts_ml
-   JMP msl_y
+   LDY POOL_NEXT,X                         ; re-enter the Y arm with X = the
+   BEQ ms_rts_ml                           ; truncated fragment = the next
+   JMP msl_y                               ; span's predecessor (store dies)
 ; |
 ms_rts_ml:
    RTS
