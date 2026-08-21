@@ -64,6 +64,10 @@ ANIM_SSMASK = $E500                     ; flat TABLES block page (shipped in
 ANIM_ENABLE = $19E9                     ; scalars block: $05xx -> $1Dxx (sqr
 ANIM_DIRTY  = $19EA                     ; swap) -> $19xx (2026-08-19 window
 ANIM_WS     = $19EB                     ; slide); same page offsets.
+ANIM_TPRE   = $19FD                     ; wait prescaler (2026-08-21): waits
+                                        ; decrement every 4th field so the
+                                        ; 6-bit timer spans multi-second
+                                        ; holds; ships as LOW zeros
                                         ; per mover: pos_lo, pos_hi, state/timer
                                         ;   state = bits 7-6 (0 wait@A, 1 A->B,
                                         ;   2 wait@B, 3 B->A), timer = bits 5-0
@@ -161,6 +165,8 @@ anim_tick:
    BNE at_on
    RTS
 at_on:
+   INC ANIM_TPRE                           ; /4 wait prescaler (one bump
+                                           ; per TICK, shared by movers)
    LDA #5
    STA at_m
 at_loop:
@@ -249,7 +255,10 @@ at_up:
 at_wait:
    LDA at_timer                            ; wait 0 = HOLD FOREVER (DR doors
    BEQ at_done                             ; idle shut until pmove_use pokes
-   DEC at_timer                            ; the state; 2026-08-14)
+   LDA ANIM_TPRE                           ; the state; 2026-08-14)
+   AND #3                                  ; waits tick every 4th field
+   BNE at_done                             ; (the /4 prescaler, 2026-08-21)
+   DEC at_timer
    BNE at_done
 ; wait expired: 0 -> 1 (A->B), 2 -> 3 (B->A); timer stays 0 while moving
    LDA at_state

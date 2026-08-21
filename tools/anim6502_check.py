@@ -118,14 +118,16 @@ def main():
         sim.append({'min': c[0], 'max': c[1], 'sp': c[2], 'wa': c[3],
                     'wb': c[4], 'pos': c[5], 'st': c[6]})
     tick_bad = 0
+    tpre = 0
     for step in range(400):
         eng.sc._run(sym('anim_tick'))
+        tpre = (tpre + 1) & 0xFF
         for mi2, s in enumerate(sim):
             state, timer = s['st'] & 0xC0, s['st'] & 0x3F
             if state in (0x00, 0x80):
-                if timer:                       # 0 = hold forever (DR doors)
-                    timer = (timer - 1) & 0x3F
-                    if timer == 0:
+                if timer and (tpre & 3) == 0:   # 0 = hold forever; waits
+                    timer = (timer - 1) & 0x3F  # tick every 4th field
+                    if timer == 0:              # (the /4 prescaler)
                         state = (state + 0x40) & 0xC0
             elif state == 0x40:
                 s['pos'] = s['pos'] + s['sp']
@@ -133,7 +135,10 @@ def main():
                     s['pos'], state, timer = s['max'], 0x80, s['wb']
             else:
                 s['pos'] = s['pos'] - s['sp']
-                if s['pos'] <= s['min']:
+                if s['pos'] < s['min']:     # STRICT: the 6502's B->A clamp
+                    # (BPL on pos-min) keeps 'moving' when landing exactly
+                    # ON min and transitions next tick; the up-arm is
+                    # inclusive at max (BMI). Mirror the asymmetry.
                     s['pos'], state, timer = s['min'], 0x00, s['wa']
             s['st'] = state | timer
             got_pos = mem[ANIM_WS + mi2*3] | (mem[ANIM_WS + mi2*3 + 1] << 8)

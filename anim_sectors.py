@@ -378,8 +378,17 @@ def fb_to_surface(fb):
 # Doors (ceil): A=closed, B=open, start at A. Lifts (floor): A=bottom,
 # B=top, start waiting at B.
 
-ANIM_SPEED_WORLD = {'ceil': 12, 'floor': 10}      # world units / frame
-ANIM_WAITS = {'ceil': (14, 20), 'floor': (12, 18)}  # frames at A, at B
+# Calibrated to the 50Hz FIELD tick (2026-08-21 — the values below were
+# per-frame numbers from the pre-beam-clock era; after the field-locked
+# T1 arc made anim_tick run per PAL field, doors snapped open in 6
+# fields and held for 0.4s: 'doors have been broken for some time').
+# Speeds mirror the python MOVERS spec: DOOR_SPEED 140, LIFT_SPEED 120
+# world units/second -> /50 per field.
+ANIM_SPEED_WORLD = {'ceil': 140 / 50, 'floor': 120 / 50}  # world u / field
+# Waits in units of FOUR fields (anim_tick's /4 wait prescaler — the
+# 6-bit timer can't hold multi-second waits in raw fields). Mirrors the
+# MOVERS spec: door closed 1.6s/open 2.2s; lift bottom 1.4s/top 2.0s.
+ANIM_WAITS = {'ceil': (20, 28), 'floor': (18, 25)}  # 4-field units at A, B
 
 
 def _use_doors():
@@ -400,8 +409,9 @@ USE_DOORS = _use_doors()
 
 
 def _speed88(world_per_frame):
-    # world/frame -> prescaled 8.8 per frame (exact packer rounding)
-    return max(1, dw._prescale_height(world_per_frame * 256))
+    # world/field -> prescaled 8.8 per field (per-field speeds are
+    # fractional world units since the 50Hz calibration: int-round)
+    return max(1, int(round(dw._prescale_height(world_per_frame * 256))))
 
 
 def gen_6502_tables(flat=True):
@@ -421,7 +431,14 @@ def gen_6502_tables(flat=True):
         A = dict(ssmask=0xB400, tabl0=0xBE90, cfg=0xB300, hdr=0x8000,
                  vex_lo=0xA700, vex_hi=0xA780,
                  ss_fh=_sm.sym('ROM_SS_FH_C', banked=1),
-                 ss_ch=_sm.sym('ROM_SS_CH_C', banked=1))
+                 ss_ch=_sm.sym('ROM_SS_CH_C', banked=1),
+                 # BPAL is NOT header-relative in the banked map: the
+                 # seg-header squeeze moved it to the top of bank A. The
+                 # header-relative form silently pointed the mover back-
+                 # pair patches at $9Dxx — free space at first, VCACHE
+                 # once the caches moved in: THE broken-doors bug
+                 # (2026-08-19..21, census-invisible to every gate).
+                 bpal=_sm.sym('BPAL_BASE', banked=1))
     order = sorted(dw.ANIM_SECTORS)
     out = {}
     # SSMASK
@@ -439,7 +456,8 @@ def gen_6502_tables(flat=True):
         addr = base0 + 12 + len(blocks)
         _st.pack_into('<H', ptrs, mi * 2, addr)
         # back pair: the PALETTE entry for this seg (private for movers)
-        B = lambda i, k: A['hdr'] + _BPAL_REL + (0x80 if k else 0x00) + _bpal_id(i)
+        _bpal_base = A.get('bpal', A['hdr'] + _BPAL_REL)   # flat: hdr-rel
+        B = lambda i, k: _bpal_base + (0x80 if k else 0x00) + _bpal_id(i)
         ss_of = _seg_ss()
         solid = lambda i: dw.fp_segs_vwh[i][2] is None
         seen_ss = set()
@@ -470,6 +488,16 @@ def gen_6502_tables(flat=True):
         # (bank C banked — the worker pages around these writes)
         vexpl_addrs = [(A['vex_hi'] if role == 'hi' else A['vex_lo']) + ix
                        for ix, role in dw.ANIM_JAMB.get(sec, ())]
+        # Census guard (the tube lesson, twice now): every patch address
+        # must land inside a KNOWN plane. Banked: front -> bank-B SS
+        # pages, back -> the BPAL page. Anything else is a stale base.
+        if not flat:
+            for a in front_addrs:
+                assert (A['ss_fh'] & 0xFF00) <= a <= (A['ss_ch'] | 0xFF), \
+                    f'front patch addr {a:#x} outside the SS planes'
+            for a in back_addrs:
+                assert (_bpal_base & 0xFF00) <= a <= (_bpal_base | 0xFF), \
+                    f'back patch addr {a:#x} outside the BPAL page'
         blk = bytearray([len(front_addrs), len(back_addrs),
                          len(flag_segs), len(vexpl_addrs)])
         for a in front_addrs + back_addrs:
