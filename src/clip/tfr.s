@@ -203,192 +203,9 @@ DCLV_S16VY = $0624                      ; s16-clip pending right verdict ($80 = 
 ; pieces share their boundary EDGE ([a,b) then [b,c)) — the half-open
 ; native model has no seam arithmetic (mark_solid tiles the same way).
 ; ===================================================================
-; --- tfs value helpers (LO: CLIP is at its ceiling; called via JSR
-; from the sweep — main RAM always mapped) ---
-SEG_HIGH
-tfs_top_pool_interp:
-   LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_TL,X
-   STA zp_i_y0
-   LDA POOL_TR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_TOP_R
-   RTS
-tfs_top_rec_interp:
-; record line -> TOP_L/R directly (pure-record path; setup inlined —
-; the JSR/RTS pair was per-interval tax on the hot extremes shortcut)
-   LDY TFS_T_CUR
-   LDA TOP_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_TOP_R
-   RTS
-tfs_top_vals_mixed:
-; mixed path in ONE call: pool line -> TOP_L/R, then record line MAXed
-; in (endpoint max = the model's rt = max(old_t, cy)). Replaces the old
-; JSR pool_interp + JSR rec_interp0 (+ its JSR setup) pair chain.
-   LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_TL,X
-   STA zp_i_y0
-   LDA POOL_TR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_TOP_R
-; record line, MAXed into TOP_L/R
-; (pool-dominates pre-test measured-and-rejected 2026-07-13: +384 on
-; the reference corpus — mixed intervals mostly hold competing records)
-   LDY TFS_T_CUR
-   LDA TOP_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   CMP TFS_TOP_L
-   BCC tfs_tri_l
-   STA TFS_TOP_L
-tfs_tri_l:
-   LDA TFS_NEXT_X
-   JSR interp_store
-   CMP TFS_TOP_R
-   BCC tfs_tri_r
-   STA TFS_TOP_R
-tfs_tri_r:
-   RTS
-tfs_bot_pool_interp:
-   LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_BL,X
-   STA zp_i_y0
-   LDA POOL_BR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_BOT_R
-   RTS
-tfs_bot_rec_interp:
-; (setup inlined — see tfs_top_rec_interp note)
-   LDY TFS_B_CUR
-   LDA BOT_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_BOT_R
-   RTS
-tfs_bot_vals_mixed:
-; mixed path in ONE call (mirror of tfs_top_vals_mixed, MIN instead)
-   LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_BL,X
-   STA zp_i_y0
-   LDA POOL_BR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_BOT_R
-; record line, MINed into BOT_L/R
-   LDY TFS_B_CUR
-   LDA BOT_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   CMP TFS_BOT_L
-   BCS tfs_bri_l
-   STA TFS_BOT_L
-tfs_bri_l:
-   LDA TFS_NEXT_X
-   JSR interp_store
-   CMP TFS_BOT_R
-   BCS tfs_bri_r
-   STA TFS_BOT_R
-tfs_bri_r:
-   RTS
+; (the six tfs value helpers that lived here — top/bot x
+; pool_interp / rec_interp / vals_mixed — were INLINED into their
+; single call sites in the sweep, 2026-08-21.)
 SEG_BANKC
 tighten_from_records:
 .scope
@@ -801,17 +618,114 @@ tfs_compute_vals:
    LDA TOP_RECORDS,Y
    CMP POOL_IT,X
    BCC tfs_top_mixed
-   JSR tfs_top_rec_interp
-   JMP tfs_top_tag_rec
-tfs_top_mixed:
-   JSR tfs_top_vals_mixed
+; --- tfs_top_rec_interp INLINED 2026-08-21: single call site, so
+; inlining deletes the body AND the JSR (-4 bytes, -12
+; cycles). The bytes move from main RAM into the clipper
+; segment; the flat CLIPF region was grown to suit. ---
+; record line -> TOP_L/R directly (pure-record path; setup inlined —
+; the JSR/RTS pair was per-interval tax on the hot extremes shortcut)
+   LDY TFS_T_CUR
+   LDA TOP_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
    JMP tfs_top_tag_rec
 tfs_top_pool:
-   JSR tfs_top_pool_interp
+; --- tfs_top_pool_interp INLINED 2026-08-21: single call site, so
+; inlining deletes the body AND the JSR (-4 bytes, -12
+; cycles). The bytes move from main RAM into the clipper
+; segment; the flat CLIPF region was grown to suit. ---
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_TL,X
+   STA zp_i_y0
+   LDA POOL_TR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
    ZERO TFS_TOP_KIND
    LDA zp_clr_save_x
    STA TFS_TOP_ID
    JMP tfs_top_vals_done
+tfs_top_mixed:
+; --- tfs_top_vals_mixed INLINED 2026-08-21: single call site, so
+; inlining deletes the body AND the JSR (-4 bytes, -12
+; cycles). The bytes move from main RAM into the clipper
+; segment; the flat CLIPF region was grown to suit. ---
+; mixed path in ONE call: pool line -> TOP_L/R, then record line MAXed
+; in (endpoint max = the model's rt = max(old_t, cy)). Replaces the old
+; JSR pool_interp + JSR rec_interp0 (+ its JSR setup) pair chain.
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_TL,X
+   STA zp_i_y0
+   LDA POOL_TR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_TOP_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_TOP_R
+; record line, MAXed into TOP_L/R
+; (pool-dominates pre-test measured-and-rejected 2026-07-13: +384 on
+; the reference corpus — mixed intervals mostly hold competing records)
+   LDY TFS_T_CUR
+   LDA TOP_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA TOP_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   CMP TFS_TOP_L
+   BCC tfs_tri_l
+   STA TFS_TOP_L
+tfs_tri_l:
+   LDA TFS_NEXT_X
+   JSR interp_store
+   CMP TFS_TOP_R
+   BCC tfs_tri_r
+   STA TFS_TOP_R
+tfs_tri_r:
+   JMP tfs_top_tag_rec
 tfs_top_tag_rec:
    LDA #1
    STA TFS_TOP_KIND
@@ -837,17 +751,109 @@ tfs_top_vals_done:
    CMP BOT_RECORDS,Y                       ; predicate is strict-<, which
    BCC tfs_bot_mixed                       ; carry alone already decides.
 tfs_bot_fast2:
-   JSR tfs_bot_rec_interp
-   JMP tfs_bot_tag_rec
-tfs_bot_mixed:
-   JSR tfs_bot_vals_mixed
+; --- tfs_bot_rec_interp INLINED 2026-08-21: single call site, so
+; inlining deletes the body AND the JSR (-4 bytes, -12
+; cycles). The bytes move from main RAM into the clipper
+; segment; the flat CLIPF region was grown to suit. ---
+; (setup inlined — see tfs_top_rec_interp note)
+   LDY TFS_B_CUR
+   LDA BOT_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
    JMP tfs_bot_tag_rec
 tfs_bot_pool:
-   JSR tfs_bot_pool_interp
+; --- tfs_bot_pool_interp INLINED 2026-08-21: single call site, so
+; inlining deletes the body AND the JSR (-4 bytes, -12
+; cycles). The bytes move from main RAM into the clipper
+; segment; the flat CLIPF region was grown to suit. ---
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_BL,X
+   STA zp_i_y0
+   LDA POOL_BR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
    ZERO TFS_BOT_KIND
    LDA zp_clr_save_x
    STA TFS_BOT_ID
    JMP tfs_bot_vals_done
+tfs_bot_mixed:
+; --- tfs_bot_vals_mixed INLINED 2026-08-21: single call site, so
+; inlining deletes the body AND the JSR (-4 bytes, -12
+; cycles). The bytes move from main RAM into the clipper
+; segment; the flat CLIPF region was grown to suit. ---
+; mixed path in ONE call (mirror of tfs_top_vals_mixed, MIN instead)
+   LDX zp_clr_save_x
+   LDA POOL_XLO,X
+   STA zp_i_x0
+   LDA POOL_BL,X
+   STA zp_i_y0
+   LDA POOL_BR,X
+   STA zp_i_y1
+   LDA POOL_DEN,X
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   STA TFS_BOT_L
+   LDA TFS_NEXT_X
+   JSR interp_store
+   STA TFS_BOT_R
+; record line, MINed into BOT_L/R
+   LDY TFS_B_CUR
+   LDA BOT_RECORDS,Y
+   STA zp_i_x0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_tmp0
+   INY
+   LDA BOT_RECORDS,Y
+   STA zp_i_y1
+   LDA zp_tmp0
+   SEC
+   SBC zp_i_x0
+   STA zp_div_den
+   LDA TFS_CUR_X
+   JSR interp_store
+   CMP TFS_BOT_L
+   BCS tfs_bri_l
+   STA TFS_BOT_L
+tfs_bri_l:
+   LDA TFS_NEXT_X
+   JSR interp_store
+   CMP TFS_BOT_R
+   BCS tfs_bri_r
+   STA TFS_BOT_R
+tfs_bri_r:
+   JMP tfs_bot_tag_rec
 tfs_bot_tag_rec:
    LDA #1
    STA TFS_BOT_KIND

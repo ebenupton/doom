@@ -34,7 +34,7 @@
 ;   flip variant from the spec would save ~7 cycles per call — ~10
 ;   calls/frame — at the cost of driver coupling; deliberately traded.)
 ;
-;   Placement: cfg region VPLOTC, bank C $B200-$BFFF (the vertex-span
+;   Placement: cfg region VPLOTC, bank C $B400-$BFFF (the vertex-span
 ;   descriptor tables moved to the $A500-$A8FF HUD-blob gap to free
 ;   this window; verticals already run under ambient bank C, zero
 ;   paging). Flat build (2026-07-27 recovery): ONE copy in VPLOTF
@@ -129,10 +129,11 @@ vp_fb1:
 
 .else
 ; ============================================================================
-; FLAT build (2026-07-27, after the $6B00 recovery): ONE framebuffer
-; ($EA00), ONE copy in the VPLOTF region ($6B00-$6F60), tables and the
-; single dispatch as CODE-resident data/code (the RECIP_S precedent
-; — CODE tail had 858 B free). No copy select: plot_v IS the dispatch.
+; FLAT build: ONE framebuffer ($EA00), ONE copy in the VPLOTF region
+; (moved to $A500 on 2026-08-21 — it had been squatting on CLIPF's
+; ceiling at $6E00, blocking the clipper from growing; $A400-$B0FF was
+; PROBE-VERIFIED empty in the live harness), tables and the single
+; dispatch CLIPF-resident. No copy select: plot_v IS the dispatch.
 ; ============================================================================
 .segment "VPLOTF"
 .align $100
