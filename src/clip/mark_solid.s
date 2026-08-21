@@ -75,17 +75,47 @@ span_mark_solid:
    LDA zp_i_l
    CMP zp_i_h                              ; C = lo >= hi -> empty
    BCS ms_rts0
-mss:
+; Empty active list? REVERSED (Eben, 2026-08-21): exit on Z and FALL
+; INTO the scan below, instead of BNE-ing into it — the live path
+; loses a taken branch and the RTS folds into the shared exit.
+   LDX zp_head
+   BEQ ms_rts0
 ; zp_prev = $FF sentinel: "current span is the list head" (unlink via
-; zp_head rather than a predecessor's NEXT).
+; zp_head rather than a predecessor's NEXT). Sited AFTER both rejects
+; so neither early exit pays for it.
    LDA #$FF
    STA zp_prev
-; |
-   LDA zp_head
-   TAX
-   BNE msl
-   RTS
-; |
+   LDA zp_i_l                              ; HOISTED: lo is loop-invariant
+                                        ; and NOTHING in the scan body
+                                        ; touches A (the ping-pong
+                                        ; advances via LDX/LDY), so it
+                                        ; rides the whole walk
+
+; --- Skip-ahead scan: chase NEXT while xe <= lo (span wholly left of
+;     the solid range — strict half-open: xe == lo is edge-touch, not
+;     overlap). Unrolled 2x ping-pong: the current slot alternates
+;     X/Y so the skip path needs no TAX/TAY transfer. zp_prev tracks
+;     the predecessor for the unlink in ms_free. ---
+msl:                                    ; X = current span — entered by
+msl_x:                                  ; FALL-THROUGH from the prologue,
+                                        ; branch target from free/shrink
+   CMP POOL_XEND,X                         ; A = lo (hoisted): C=(lo>=xe)
+   BCC ms_chk_after                        ; = wholly-left skip
+   STX zp_prev
+   LDY POOL_NEXT,X
+   BEQ ms_rts_x
+; ||
+msl_y:
+   CMP POOL_XEND,Y                         ; (mirror)
+   BCC ms_chk_after_y
+; ||||
+   STY zp_prev
+   LDX POOL_NEXT,Y
+   BNE msl_x
+; ||
+ms_rts_x:
+ms_rts0:                                   ; shared RTS (empty-range +
+   RTS                                     ; empty-list entries)
 
 ; --- Overlap classification (entered from the scan loop when
 ;     xend >= ilo, i.e. the span is not entirely left of the range) ---
@@ -127,19 +157,20 @@ ms_free:
    CMP #$FF
    BNE ms_unlink_span
 ; |
-   LDA zp_tmp0
-   STA zp_head
-   TAX
-   BNE msl
-   RTS
+   LDX zp_tmp0                             ; (LDX/STX: A is not needed
+   STX zp_head                             ; here and LDX sets Z)
+   BEQ ms_rts_x
+   LDA zp_i_l                              ; restore the hoisted invariant
+   JMP msl                                 ; (free_span clobbered A)
 ; |
 ms_unlink_span:
    LDY zp_prev
    LDA zp_tmp0
-   STA POOL_NEXT,Y
+   STA POOL_NEXT,Y                         ; (STX has no abs,Y form)
    TAX
-   BNE msl
-   RTS
+   BEQ ms_rts_x
+   LDA zp_i_l                              ; restore the hoisted invariant
+   JMP msl
 ; |
 
 ms_shrink:
@@ -155,34 +186,6 @@ ms_shrink:
    STA POOL_XSTART,X
    RTS
 
-
-; --- Skip-ahead scan: chase NEXT while xe <= lo (span wholly left of
-;     the solid range — strict half-open: xe == lo is edge-touch, not
-;     overlap). Unrolled 2x ping-pong: the current slot
-;     alternates X/Y so the skip path needs no TAX/TAY transfer.
-;     zp_prev tracks the predecessor for the unlink in ms_free. ---
-msl:                                    ; X = current span — fall-through from shrink, branch target from free
-msl_x:
-   LDA zp_i_l                              ; REVERSED strict compare
-   CMP POOL_XEND,X                         ; (2026-08-21): C=(lo>=xe) =
-   BCC ms_chk_after                        ; wholly-left skip — native
-; ||||                                     ; semantics at legacy cost
-   STX zp_prev
-   LDY POOL_NEXT,X
-   BEQ ms_rts_x
-; ||
-msl_y:
-   LDA zp_i_l                              ; (mirror)
-   CMP POOL_XEND,Y
-   BCC ms_chk_after_y
-; ||||
-   STY zp_prev
-   LDX POOL_NEXT,Y
-   BNE msl_x
-; ||
-ms_rts_x:
-ms_rts0:                                   ; shared RTS (empty-range entry)
-   RTS
 
 ms_has_left:
 ; xs < lo. Right fragment too? (xe > hi → middle split)
