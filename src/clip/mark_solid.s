@@ -248,11 +248,10 @@ ms_has_left:
 ms_left_only_after_fail:
 ; alloc failed → fall through and just truncate left fragment
    LDX zp_prev
-   SEC                                     ; (the hot BCS entrant below
-ms_left_only:                              ; arrives with C=1 already)
-; xend = ilo - 1 (truncate to left fragment only)
+ms_left_only:
+; xend = lo (NATIVE: truncate to the left fragment [xs, lo) — the
+; SEC/SBC carry dance died with the half-open decree)
    LDA zp_i_l
-   SBC #1
    STA POOL_XEND,X
 ; |
    STX zp_prev

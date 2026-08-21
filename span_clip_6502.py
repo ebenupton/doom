@@ -247,8 +247,8 @@ class SpanClip6502:
         """
         mem = self.mpu.memory
         ilo = max(0, lo)
-        ihi = min(255, hi)
-        if ihi < ilo:
+        ihi = min(255, hi)                 # NATIVE [lo, hi): 255 max edge
+        if ihi <= ilo:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF

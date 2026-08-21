@@ -36,13 +36,12 @@ os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 
 from clip_ref import ClipRef, line as oline, SCREEN_W, SCREEN_H
-import endpoint_spans as es
-es.AUTHORITY = 'halfopen'          # the spec under test
+import endpoint_spans as es        # natively half-open since 2026-08-21
 
 
 def ref_aperture(sp, x):
     for s in sp.spans:
-        if s[0] <= x <= s[1]:
+        if s[0] <= x < s[1]:               # native [xstart, xend)
             return (es._span_top_store(s, x), es._span_bot_store(s, x))
     return None
 
@@ -71,14 +70,14 @@ def gen_chain(rng):
 
 def apply_chain(chain, oracle, sp):
     for (kind, xa, xb, yt_a, yt_b, yb_a, yb_b) in chain:
-        # authority [xa, xb) == closed [xa, xb-1] on the reference ABI
+        # NATIVE ABI: both sides speak [xa, xb) directly — no arithmetic
         if kind == 'solid':
             oracle.mark_solid(xa, xb)
-            sp.mark_solid(xa, xb - 1)
+            sp.mark_solid(xa, xb)
         else:
             oracle.draw_line(oline(xa, yt_a, xb, yt_b, 'top'))
             oracle.draw_line(oline(xa, yb_a, xb, yb_b, 'bot'))
-            sp.tighten(xa, xb - 1, xa, xb, yt_a, yt_b, yb_a, yb_b)
+            sp.tighten(xa, xb, xa, xb, yt_a, yt_b, yb_a, yb_b)
 
 
 def compare(oracle, sp):
@@ -98,12 +97,8 @@ def compare(oracle, sp):
 
 
 def make_ref():
-    sp = es.EndpointClipSpans()
-    if es.AUTHORITY == 'halfopen':
-        # column 255 is permanently solid by decree: trim the seed span
-        s0 = sp.spans[0]
-        sp.spans[0] = (s0[0], es.HALF_OPEN_XMAX) + s0[2:]
-    return sp
+    # native seed span (0, 255) = columns 0..254 — nothing to trim
+    return es.EndpointClipSpans()
 
 
 def run_seq(chains):

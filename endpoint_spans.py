@@ -159,8 +159,8 @@ def _compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
     Usually one element; two when the seg is too steep for the full range.
     """
     ilo = max(0, lo)
-    ihi = min(255, hi)
-    if ihi < ilo:
+    ihi = min(255, hi)                     # native: 255 is the max EDGE
+    if ihi <= ilo:
         return [(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)]
     s1, s2, t1, t2, b1, b2 = sx1, sx2, yt1, yt2, yb1, yb2
     if s1 > s2:
@@ -169,9 +169,12 @@ def _compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
         b1, b2 = b2, b1
     r = _remap_seg_for_8bit(ilo, ihi, s1, s2, t1, t2, b1, b2)
     if r[1] < ihi:
+        # NATIVE tiling: the pieces SHARE the boundary edge r[1] —
+        # [lo, r[1]) + [r[1], hi). (The legacy closed-abutting split
+        # was the steep-seg gap at 2112,-2368.)
         return [
             (lo, r[1], sx1, sx2, yt1, yt2, yb1, yb2),
-            (r[1] + 1, hi, r[1], r[1] + 1, r[3], r[3], r[5], r[5]),
+            (r[1], hi, r[1], r[1] + 1, r[3], r[3], r[5], r[5]),
         ]
     return [(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2)]
 
@@ -200,17 +203,19 @@ _partial_aperture_count = 0
 #               tighten itself).
 # All three modes produce identical span state — verified by
 # test_unified_tighten.py against the 9 reference scenes.
-# Authority convention (Eben, 2026-08-20): 'legacy' = the historical mix
-# (tighten claims (lo,hi] via pixel-center seams + shared-edge spans;
-# mark_solid closed).  'halfopen' = THE SPEC: a seg's authority is
-# [sx1, sx2) — callers pass the CLOSED interval [lo, hi] = [sx1, sx2-1]
-# to BOTH primitives, spans are closed and DISJOINT, every column has
-# one owner.  Default legacy until the 6502 flips in the same commit.
-AUTHORITY = 'legacy'
-# halfopen domain: columns 0..HALF_OPEN_XMAX (254) — column 255 is
-# permanently solid by decree (Eben 2026-08-20), so half-open edges
-# and record keys max at 255 and stay u8. Legacy keeps 0..255.
-HALF_OPEN_XMAX = 254
+# ============================================================================
+# NATIVE HALF-OPEN REPRESENTATION (Eben's decree, 2026-08-21).
+# EVERYTHING in the clipper system is a half-open column range [lo, hi):
+#   - the interval ABI (lo, hi) — hi is one-past-the-last column
+#   - pool spans: (xstart, xend) active over [xstart, xend)
+#   - records: (xl, yl, xr, yr) covering [xl, xr)
+# The screen domain is [0, 255): column 255 does not exist (permanently
+# solid), so every edge value fits u8 with no 9-bit cases. There are NO
+# representation conversions anywhere inside the system; the single
+# legitimate boundary is the rasteriser ABI, whose pixels are inherently
+# inclusive (the dcl->raster glue converts once, at that edge only).
+# clip_ref.py is the executable spec for this representation.
+# ============================================================================
 
 _TIGHTEN_MODE = 'records'   # 2026-07-13: the verdict spec is LIVE — the
 # 6502 transports 'above'/'below' as flat 0/$FF records and solid-drops
@@ -298,7 +303,7 @@ def _append_merge(new, span):
         if (tail[4] == tail[6] and tail[5] == tail[7] and
                 span[4] == span[6] and span[5] == span[7] and
                 tail[4] == span[4] and tail[5] == span[5] and
-                tail[1] + (1 if AUTHORITY == 'halfopen' else 0) == span[0]):
+                tail[1] == span[0]):    # native: [a,b)+[b,c) abut
             new[-1] = (tail[0], span[1],
                        tail[2], tail[3], tail[4], tail[5], tail[6], tail[7])
             return
@@ -344,14 +349,15 @@ class EndpointClipSpans:
         return not self.spans
 
     def has_gap(self, lo, hi):
-        # Trivial overlap test — every span in the active list is treated
-        # as having aperture (matching the cheapened 6502 has_gap).
+        # Trivial overlap test on the NATIVE [lo, hi) interval — every
+        # span in the active list is treated as having aperture
+        # (matching the cheapened 6502 has_gap).
         ilo = max(0, lo)
         ihi = min(FP_RENDER_W - 1, hi)
-        if ihi < ilo: return False
+        if ihi <= ilo: return False
         for s in self.spans:
-            if s[0] > ihi: break
-            if s[1] < ilo: continue
+            if s[0] >= ihi: break
+            if s[1] <= ilo: continue
             return True
         return False
 
@@ -417,7 +423,7 @@ class EndpointClipSpans:
         vertical can be skipped — it would clip to nothing anyway,
         saving the dispatch / span walk."""
         for s in self.spans:
-            if not (s[0] <= sx <= s[1]):
+            if not (s[0] <= sx < s[1]):    # native: [xstart, xend)
                 continue
             top_y = _span_top(s, sx)
             bot_y = _span_bot(s, sx)
@@ -453,20 +459,20 @@ class EndpointClipSpans:
         # LAZY: only updates xstart/xend on existing spans. The line params
         # (xlo, xhi, tl, bl, tr, br) are preserved verbatim across splits —
         # no _interp_store calls happen in this method any more.
+        # NATIVE [lo, hi): the fragment bounds are pure copies — no ±1.
         ilo = max(0, lo)
-        ihi = min(HALF_OPEN_XMAX if AUTHORITY == 'halfopen'
-                  else FP_RENDER_W - 1, hi)
-        if ihi < ilo: return
+        ihi = min(FP_RENDER_W - 1, hi)     # domain edge 255 (col 254 last)
+        if ihi <= ilo: return
         new = []
         for s in self.spans:
             xs, xe = s[0], s[1]
-            if xe < ilo or xs > ihi:
+            if xe <= ilo or xs >= ihi:
                 _append_merge(new, s); continue
             if xs < ilo:
-                _append_merge(new, (xs, ilo - 1,
+                _append_merge(new, (xs, ilo,
                                     s[2], s[3], s[4], s[5], s[6], s[7]))
             if ihi < xe:
-                _append_merge(new, (ihi + 1, xe,
+                _append_merge(new, (ihi, xe,
                                     s[2], s[3], s[4], s[5], s[6], s[7]))
         self.spans = new
         self._update_bbox()
@@ -482,16 +488,20 @@ class EndpointClipSpans:
         # records mode (2026-07-13 — the engine's records ride the draws).
         _ = emit_sec_top, emit_sec_bot
         _ = yt_sec1, yt_sec2, yb_sec1, yb_sec2
-        # Mode dispatch (legacy boolean still honoured).
+        # NATIVE dispatch: records mode is the representation — the
+        # legacy 'normal'/'unified' bodies predate the half-open decree
+        # and read spans closed; any straggler consumer must surface
+        # loudly rather than silently mix representations.
         mode = _TIGHTEN_MODE
         if _USE_UNIFIED_TIGHTEN and mode == 'normal':
             mode = 'unified'
-        if mode == 'unified':
-            return self.unified_clip_tighten(lo, hi, sx1, sx2,
-                                             yt1, yt2, yb1, yb2)
-        if mode == 'records':
+        if mode != 'records':
+            raise NotImplementedError(
+                f"tighten mode {mode!r} retired with the native half-open "
+                f"representation (2026-08-21)")
+        if True:
             ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
-            if ihi < ilo: return
+            if ihi <= ilo: return
             if sx1 > sx2:
                 sx1, sx2 = sx2, sx1
                 yt1, yt2 = yt2, yt1
@@ -514,163 +524,20 @@ class EndpointClipSpans:
                 # whole range (no-op) or is entirely OFF-screen (close).
                 b_vis_lo = self.y_display_offset
                 b_vis_hi = self.y_display_offset + FP_RENDER_H - 1
-                tyb1, tyb2, tyt1, tyt2 = yb1, yb2, yt1, yt2
-                if AUTHORITY == 'halfopen' and sx2 > sx1:
-                    # THE FAR-WEST FIX: test edge values AT the interval,
-                    # not the seg's raw endpoints — a crossing outside
-                    # [ilo, ihi] must not veto the off-screen verdict
-                    # for the columns inside it.
-                    ei0 = max(sx1, ilo)
-                    ei1 = min(sx2, min(ihi, HALF_OPEN_XMAX) + 1)
-                    tyb1 = _interp_store_s16(ei0, sx1, yb1, sx2, yb2)
-                    tyb2 = _interp_store_s16(ei1, sx1, yb1, sx2, yb2)
-                    tyt1 = _interp_store_s16(ei0, sx1, yt1, sx2, yt2)
-                    tyt2 = _interp_store_s16(ei1, sx1, yt1, sx2, yt2)
-                if ((tyb1 < b_vis_lo and tyb2 < b_vis_lo) or
-                        (tyt1 > b_vis_hi and tyt2 > b_vis_hi)):
+                # Raw-endpoint test, matching the 6502 arm exactly. (The
+                # interval-clamped variant is the separate far-west arc:
+                # its home is clamped records at the DCL layer, and the
+                # 6502 arm must move with it.)
+                if ((yb1 < b_vis_lo and yb2 < b_vis_lo) or
+                        (yt1 > b_vis_hi and yt2 > b_vis_hi)):
                     self.mark_solid(ilo, ihi)
                 return
             return self.tighten_from_x_records(lo, hi,
                                                top_records, bot_records)
-        ilo = max(0, lo)
-        ihi = min(FP_RENDER_W - 1, hi)
-        if ihi < ilo: return
-        if sx1 > sx2:
-            sx1, sx2 = sx2, sx1
-            yt1, yt2 = yt2, yt1
-            yb1, yb2 = yb2, yb1
-        # 6502 shadow biases (y_display_offset=Y_BIAS) and needs u8 yt/yb.
-        # The unbiased Python reference (y_display_offset=0) preserves
-        # above-screen negative y values — without this, remap's u8 clamp
-        # forces nt_l up to 0, losing the sign info that crossover
-        # detection uses to split the span where seg transitions from
-        # above-screen to on-screen.
-        sx1, sx2, yt1, yt2, yb1, yb2 = _remap_seg_for_8bit(
-            ilo, ihi, sx1, sx2, yt1, yt2, yb1, yb2,
-            clamp_u8=(self.y_display_offset != 0))
-        TIGHTEN_STATS['tighten_calls'] += 1
-        new = []
-        for s in self.spans:
-            TIGHTEN_STATS['spans_visited'] += 1
-            xs, xe = s[0], s[1]
-            if xe <= ilo or xs >= ihi:  # pixel-center: endpoint-only ≠ overlap
-                TIGHTEN_STATS['no_overlap'] += 1
-                _append_merge(new, s); continue
-            ox0 = max(xs, ilo); ox1 = min(xe, ihi)
-            # Pre-check (cheap, no interp): does the seg's bbox prove one-sided
-            # dominance? OT_span = min(tl, tr); OB_span = max(bl, br); seg_top_max
-            # = max(yt1, yt2); seg_bot_min = min(yb1, yb2). If seg_top_max <=
-            # OT_span, the seg top is above old top everywhere on overlap → top
-            # wins for sure. Symmetric for bot. With asymmetric anchors, top-wins
-            # would let us skip ALL top-side interps.
-            ot_span = min(s[4], s[6])
-            ob_span = max(s[5], s[7])
-            seg_top_max_pre = max(yt1, yt2)
-            seg_bot_min_pre = min(yb1, yb2)
-            pre_top_dom = (seg_top_max_pre <= ot_span)
-            pre_bot_dom = (seg_bot_min_pre >= ob_span)
-            if pre_top_dom: TIGHTEN_STATS['pre_top_dom'] += 1
-            if pre_bot_dom: TIGHTEN_STATS['pre_bot_dom'] += 1
-            # Dominance/crossover prelude
-            # Fast path: if the overlap endpoints match the old span's LINE
-            # anchors, the stored tl/bl/tr/br *are* the y values at those
-            # endpoints — no interp needed.
-            if ox0 == s[2] and ox1 == s[3]:
-                TIGHTEN_STATS['old_fast_path'] += 1
-                old_tl = s[4]; old_bl = s[5]
-                old_tr = s[6]; old_br = s[7]
-            else:
-                TIGHTEN_STATS['old_interp_path'] += 1
-                old_tl = _span_top_store(s, ox0)
-                old_tr = _span_top_store(s, ox1)
-                old_bl = _span_bot_store(s, ox0)
-                old_br = _span_bot_store(s, ox1)
-            # Same fast path for the seg's line
-            if ox0 == sx1 and ox1 == sx2:
-                TIGHTEN_STATS['new_fast_path'] += 1
-                new_tl = yt1; new_bl = yb1
-                new_tr = yt2; new_br = yb2
-            else:
-                TIGHTEN_STATS['new_interp_path'] += 1
-                new_tl = _interp_store(ox0, sx1, yt1, sx2, yt2)
-                new_tr = _interp_store(ox1, sx1, yt1, sx2, yt2)
-                new_bl = _interp_store(ox0, sx1, yb1, sx2, yb2)
-                new_br = _interp_store(ox1, sx1, yb1, sx2, yb2)
-            # Crossover detection uses UNCLAMPED s16 values so that a line
-            # that crosses entirely in negative-y territory still registers
-            # as a crossover. Matches the asm which does sign-bit logic on
-            # the high byte before clamping.
-            dt0 = old_tl - new_tl; dt1 = old_tr - new_tr
-            db0 = old_bl - new_bl; db1 = old_br - new_br
-            has_top_cx = (dt0 != dt1 and ((dt0 >= 0) != (dt1 >= 0)))
-            has_bot_cx = (db0 != db1 and ((db0 >= 0) != (db1 >= 0)))
 
-            # Clamped copies of new_* for dominance check and no-crossover
-            # storage (matches asm `tg_cn{1..4}` block). Unclamped new_*
-            # stays available for the crossover path — _tighten_span needs
-            # the signed values to compute the crossover x correctly.
-            # The visible Y range depends on the caller's coordinate
-            # system: biased (Instrumented6502Spans) uses [Y_BIAS, VIS_YMAX]
-            # = [48, 207], unbiased (plain EndpointClipSpans used by
-            # debug stepper / FP reference) uses [0, 159].  Derive from
-            # self.y_display_offset so tighten matches the caller's spans.
-            vis_min = self.y_display_offset
-            vis_max = self.y_display_offset + FP_RENDER_H - 1
-            c_tl = max(vis_min, min(vis_max, new_tl))
-            c_tr = max(vis_min, min(vis_max, new_tr))
-            c_bl = max(vis_min, min(vis_max, new_bl))
-            c_br = max(vis_min, min(vis_max, new_br))
-
-            if (c_tl <= old_tl and c_tr <= old_tr and
-                    c_bl >= old_bl and c_br >= old_br):
-                TIGHTEN_STATS['full_dom'] += 1
-                _append_merge(new, s); continue
-            # Left fragment (line preserved, abutting: includes ilo)
-            if xs < ilo:
-                _append_merge(new, (xs, ilo,
-                                    s[2], s[3], s[4], s[5], s[6], s[7]))
-            # Right fragment (abutting: includes ihi)
-            right_s = ((ihi, xe, s[2], s[3], s[4], s[5], s[6], s[7])
-                       if ihi < xe else None)
-
-            if not has_top_cx and not has_bot_cx:
-                rt_l = max(old_tl, c_tl); rb_l = min(old_bl, c_bl)
-                rt_r = max(old_tr, c_tr); rb_r = min(old_br, c_br)
-                if rt_l < rb_l or rt_r < rb_r:  # ox0 < ox1 guaranteed by strict overlap
-                    old_top_wins = (rt_l == old_tl and rt_r == old_tr)
-                    old_bot_wins = (rb_l == old_bl and rb_r == old_br)
-                    if old_top_wins and old_bot_wins:
-                        TIGHTEN_STATS['no_cx_both_win'] += 1
-                        _append_merge(new, (ox0, ox1, s[2], s[3],
-                                            s[4], s[5], s[6], s[7]))
-                    else:
-                        if old_top_wins:
-                            TIGHTEN_STATS['no_cx_bot_only'] += 1
-                            if pre_top_dom:
-                                TIGHTEN_STATS['pre_save_top4'] += 1
-                        elif old_bot_wins:
-                            TIGHTEN_STATS['no_cx_top_only'] += 1
-                            if pre_bot_dom:
-                                TIGHTEN_STATS['pre_save_bot4'] += 1
-                        else:
-                            TIGHTEN_STATS['no_cx_both_narrow'] += 1
-                        _append_merge(new, (ox0, ox1, ox0, ox1,
-                                            rt_l, rb_l, rt_r, rb_r))
-                else:
-                    TIGHTEN_STATS['no_cx_killed'] += 1
-            else:
-                TIGHTEN_STATS['crossover'] += 1
-                _tighten_span(s, ox0, ox1, sx1, sx2, yt1, yt2,
-                              yb1, yb2, new,
-                              old_tl, old_tr, old_bl, old_br,
-                              new_tl, new_tr, new_bl, new_br,
-                              y_display_offset=self.y_display_offset)
-            if right_s is not None:
-                _append_merge(new, right_s)
-        self.spans = new
-        self._update_bbox()
-
-    # -- Records-based unified clip+tighten (prototype) -----------------------
+    # (The legacy 'normal'-mode tighten body was DELETED with the native
+    # half-open decree, 2026-08-21 — it read spans closed. The records
+    # path above is the only implementation; 'normal'/'unified' raise.)
 
     def clip_line_records(self, lx1, ly1, lx2, ly2, ilo=None, ihi=None):
         """Per-span clip sub-records for a line. Mirrors what DCL writes
@@ -779,12 +646,11 @@ class EndpointClipSpans:
         top/bot cursors, saturated-flat verdicts (top yl at band-bottom
         saturation => solid; bot yl at band-top => solid), endpoint
         max/min narrow-only values, source-tagged pend merge."""
+        # NATIVE [lo, hi): the sweep below was half-open all along —
+        # shared-edge pieces, [cur, nxt) intervals, min(xe, ihi) bounds.
         ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
-        if ihi < ilo:
+        if ihi <= ilo:
             return
-        if AUTHORITY == 'halfopen':
-            return self._tfxr_halfopen(ilo, min(ihi, HALF_OPEN_XMAX),
-                                       top_recs, bot_recs)
         b_lo = self.y_display_offset - Y_BIAS
         SAT_A = b_lo
         SAT_B = b_lo + 255
@@ -818,8 +684,9 @@ class EndpointClipSpans:
                                     sp[4], sp[5], sp[6], sp[7]))
                 cur = ilo
             x_hi = min(xe, ihi)
-            single = (xs == xe)
-            while cur < x_hi or (single and cur == x_hi):
+            # (the width-1 'single' special case died with the native
+            # representation: an empty span [x, x) cannot exist)
+            while cur < x_hi:
                 # consume stale records
                 while ti < len(top_recs) and top_recs[ti][2] <= cur:
                     ti += 1
@@ -842,7 +709,6 @@ class EndpointClipSpans:
                     flush()
                     if t_dom and top_recs[ti][2] == nxt: ti += 1
                     if b_dom and bot_recs[bi][2] == nxt: bi += 1
-                    if single: break
                     cur = nxt; continue
                 # top values: pool, then record max (skip 'above' flats)
                 tl = _span_top_store(sp, cur); tr = _span_top_store(sp, nxt)
@@ -877,7 +743,6 @@ class EndpointClipSpans:
                     ti += 1
                 if b_dom and bi < len(bot_recs) and bot_recs[bi][2] == nxt:
                     bi += 1
-                if single: break
                 cur = nxt
             if xe > ihi:
                 flush()
@@ -887,103 +752,8 @@ class EndpointClipSpans:
         self.spans = new
         self._update_bbox()
 
-    def _tfxr_halfopen(self, ilo, ihi, top_recs, bot_recs):
-        """HALFOPEN sweep: closed interval [ilo, ihi] in, closed DISJOINT
-        spans out.  Internally the sweep runs on edges [ilo, ihi+1);
-        every emitted piece is active over [cur, nxt-1] with its line
-        anchored on the edge pair (cur, nxt) — the anchor/active split
-        the span tuple already supports."""
-        b_lo = self.y_display_offset - Y_BIAS
-        SAT_A = b_lo
-        SAT_B = b_lo + 255
-        if (all(r[1] == SAT_A for r in top_recs) and
-                all(r[1] == SAT_B for r in bot_recs)):
-            return
-        e_hi = ihi + 1
-        new = []
-        pend = None   # [xl, xr(edge), tl, tr, bl, br, tsrc, bsrc]
-        def flush():
-            nonlocal pend
-            if pend is not None:
-                if pend[1] - 1 >= pend[0]:
-                    _append_merge(new, (pend[0], pend[1] - 1,
-                                        pend[0], pend[1],
-                                        pend[2], pend[4], pend[3], pend[5]))
-                pend = None
-        ti = 0; bi = 0
-        for sp in self.spans:
-            xs, xe = sp[0], sp[1]              # closed columns
-            if xe < ilo or xs > ihi:
-                flush(); _append_merge(new, sp); continue
-            cur = xs
-            if xs < ilo:
-                flush()
-                _append_merge(new, (xs, ilo - 1, sp[2], sp[3],
-                                    sp[4], sp[5], sp[6], sp[7]))
-                cur = ilo
-            x_hi = min(xe + 1, e_hi)           # edge bound
-            while cur < x_hi:
-                while ti < len(top_recs) and top_recs[ti][2] <= cur:
-                    ti += 1
-                while bi < len(bot_recs) and bot_recs[bi][2] <= cur:
-                    bi += 1
-                t_dom = (ti < len(top_recs) and top_recs[ti][0] <= cur
-                         < top_recs[ti][2])
-                b_dom = (bi < len(bot_recs) and bot_recs[bi][0] <= cur
-                         < bot_recs[bi][2])
-                nxt = x_hi
-                if ti < len(top_recs):
-                    cand = top_recs[ti][2] if t_dom else top_recs[ti][0]
-                    if cand < nxt: nxt = cand
-                if bi < len(bot_recs):
-                    cand = bot_recs[bi][2] if b_dom else bot_recs[bi][0]
-                    if cand < nxt: nxt = cand
-                if (t_dom and top_recs[ti][1] == top_recs[ti][3] == SAT_B) or \
-                   (b_dom and bot_recs[bi][1] == bot_recs[bi][3] == SAT_A):
-                    flush()
-                    if t_dom and top_recs[ti][2] == nxt: ti += 1
-                    if b_dom and bot_recs[bi][2] == nxt: bi += 1
-                    cur = nxt; continue
-                tl = _span_top_store(sp, cur); tr = _span_top_store(sp, nxt)
-                tsrc = ('p', id(sp))
-                if t_dom and not (top_recs[ti][1] == top_recs[ti][3]
-                                  == SAT_A):
-                    r = top_recs[ti]
-                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
-                    rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
-                    if rl > tl: tl = rl
-                    if rr > tr: tr = rr
-                    tsrc = ('t', ti)
-                bl = _span_bot_store(sp, cur); br = _span_bot_store(sp, nxt)
-                bsrc = ('p', id(sp))
-                if b_dom and not (bot_recs[bi][1] == bot_recs[bi][3]
-                                  == SAT_B):
-                    r = bot_recs[bi]
-                    rl = _interp_store(cur, r[0], r[1], r[2], r[3])
-                    rr = _interp_store(nxt, r[0], r[1], r[2], r[3])
-                    if rl < bl: bl = rl
-                    if rr < br: br = rr
-                    bsrc = ('b', bi)
-                if tl >= bl and tr >= br:
-                    flush()
-                elif pend is not None and pend[1] == cur \
-                        and pend[6] == tsrc and pend[7] == bsrc:
-                    pend[1] = nxt; pend[3] = tr; pend[5] = br
-                else:
-                    flush()
-                    pend = [cur, nxt, tl, tr, bl, br, tsrc, bsrc]
-                if t_dom and ti < len(top_recs) and top_recs[ti][2] == nxt:
-                    ti += 1
-                if b_dom and bi < len(bot_recs) and bot_recs[bi][2] == nxt:
-                    bi += 1
-                cur = nxt
-            if xe > ihi:
-                flush()
-                _append_merge(new, (ihi + 1, xe, sp[2], sp[3],
-                                    sp[4], sp[5], sp[6], sp[7]))
-        flush()
-        self.spans = new
-        self._update_bbox()
+    # (_tfxr_halfopen DELETED 2026-08-21: the native sweep above IS the
+    #  half-open implementation.)
 
     def build_tighten_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
                               emit_top=True, emit_bot=True):
@@ -992,20 +762,15 @@ class EndpointClipSpans:
         an undrawn aperture edge leaves its stream empty — the known
         pre-existing under-tightening class at 1500,-3700)."""
         ilo = max(0, lo); ihi = min(FP_RENDER_W - 1, hi)
-        if ihi < ilo:
+        if ihi <= ilo:
             return [], []
         if sx1 > sx2:
             sx1, sx2 = sx2, sx1
             yt1, yt2 = yt2, yt1
             yb1, yb2 = yb2, yb1
-        if AUTHORITY == 'halfopen':
-            ihi = min(ihi, HALF_OPEN_XMAX)
-            if ihi < ilo:
-                return [], []
-        e_hi = ihi + 1 if AUTHORITY == 'halfopen' else ihi
-        top = (_line_records_x(self, sx1, yt1, sx2, yt2, ilo, e_hi)
+        top = (_line_records_x(self, sx1, yt1, sx2, yt2, ilo, ihi)
                if emit_top else [])
-        bot = (_line_records_x(self, sx1, yb1, sx2, yb2, ilo, e_hi)
+        bot = (_line_records_x(self, sx1, yb1, sx2, yb2, ilo, ihi)
                if emit_bot else [])
         return top, bot
 
@@ -1621,9 +1386,7 @@ def _line_records_x(spans_obj, xl, yl, xr, yr, ilo, ihi):
     if cxl < cxr:
         lo_w = max(cxl, ilo); hi_w = min(cxr, ihi)
         for sp in spans_obj.spans:
-            xs, xe = sp[0], sp[1]
-            if AUTHORITY == 'halfopen':
-                xe = xe + 1                    # closed span -> edge bound
+            xs, xe = sp[0], sp[1]              # native [xs, xe)
             if xe <= lo_w or xs >= hi_w:
                 continue
             ox0 = max(xs, lo_w); ox1 = min(xe, hi_w)

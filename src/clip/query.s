@@ -47,8 +47,8 @@ span_has_gap:
 ; same-day A-lo and entry-STA cuts, and the 2026-07-20 "A/Z with
 ; C == A" contract):
 ;
-;   in:  A = interval hi, zp_i_l = interval lo (closed [lo, hi])
-;   out: C = verdict. C=1 -> some active span overlaps [lo, hi]
+;   in:  A = interval hi (EXCLUSIVE), zp_i_l = lo — NATIVE [lo, hi)
+;   out: C = verdict. C=1 -> some active span overlaps [lo, hi)
 ;                     C=0 -> none does (range fully solid)
 ;        A = ihi, UNTOUCHED (every instruction below is a load, a
 ;            compare, CLC or a store — nothing writes A)
@@ -92,15 +92,17 @@ span_has_gap:
 ; cache, so a live cached slot always holds current XSTART/XEND.)
    LDX zp_hg_cache
    BEQ hg_no_cache
-   CMP POOL_XSTART,X                       ; A = ihi, straight off the entry
+   CMP POOL_XSTART,X                       ; native: hit needs xs < hi
+   BEQ hg_no_cache                       ; A = ihi, straight off the entry
    BCC hg_no_cache
 ; ihi < xstart → miss
    LDY POOL_XEND,X
-   CPY zp_i_l
+   CPY zp_i_l                              ; native: ... and xe > lo
    BCC hg_no_cache
-; xend < ilo → miss
+   BEQ hg_no_cache
+; xe <= lo → miss
    RTS                                     ; cache hit: C=1 from the CPY
-                                           ; (BCC fell); A still = ihi
+                                           ; (BCC/BEQ fell); A still = hi
 hg_no_cache:
 ; Unrolled 2× ping-pong: X and Y alternate as the current span offset.
 ; Eliminates the TAX in the skip path (−2.5 cyc per skip iteration avg).
@@ -109,24 +111,32 @@ hg_no_cache:
 ; --- X iteration: current span in X ---
 hgl_x:
    LDY POOL_XEND,X
-   CPY zp_i_l
-   BCS hg_chk_x
-; xend >= ilo → hit
+   CPY zp_i_l                              ; NATIVE: overlap needs xe > lo;
+   BEQ hg_eq_adv_x                         ; xe == lo is wholly-left (the
+   BCS hg_chk_x                            ; equal arc must CLC — the
+; xe < lo → skip                           ; chain-end fall relies on C=0)
+hg_adv_x:
    LDY POOL_NEXT,X
    BEQ hgn
 ; advance via Y
 ; --- Y iteration: current span in Y ---
 hgl_y:
    LDX POOL_XEND,Y
-   CPX zp_i_l
+   CPX zp_i_l                              ; (mirror)
+   BEQ hg_eq_adv_y
    BCS hg_chk_y
-; xend >= ilo → hit
+hg_adv_y:
    LDX POOL_NEXT,Y
    BNE hgl_x
-; advance via X; chain end FALLS INTO hgn (C=0 from the CPX above —
-; no CLC needed; Eben's catch: hgn0 moved out of line 2026-07-26)
+; advance via X; chain end FALLS INTO hgn (C=0 from the CPX/CLC above)
 hgn:
-   RTS                                     ; no gap: C=0, A = ihi untouched
+   RTS                                     ; no gap: C=0, A = hi untouched
+hg_eq_adv_x:
+   CLC                                     ; equal skip: restore the C=0
+   BCC hg_adv_x                            ; fall invariant (always taken)
+hg_eq_adv_y:
+   CLC
+   BCC hg_adv_y
 hgn0:
    CLC                                     ; empty active list ONLY: C is
                                            ; the caller's junk on this entry
@@ -150,11 +160,19 @@ hgn0:
 ; verdict, +1 on the no-gap one; hits dominate.
 hg_chk_x:
    STX zp_hg_cache
-   CMP POOL_XSTART,X
+   CMP POOL_XSTART,X                       ; C = (hi >= xs); NATIVE gap
+   BEQ hg_eq_x                             ; needs hi > xs — demote the
+   RTS                                     ; equal case to no-gap
+hg_eq_x:
+   CLC
    RTS
 hg_chk_y:
    STY zp_hg_cache
-   CMP POOL_XSTART,Y
+   CMP POOL_XSTART,Y                       ; (mirror)
+   BEQ hg_eq_y
+   RTS
+hg_eq_y:
+   CLC
    RTS
 .endscope
 SEG_BANKC
