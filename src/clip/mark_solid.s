@@ -66,15 +66,15 @@ span_mark_solid:
 ; any later query (observed: freed slot (60,69) made has_gap(60,73)
 ; return 1 against a pool whose only live span was (121,132)).
    ZERO zp_hg_cache
-; Degenerate range (hi <= lo = EMPTY half-open) → no-op. The old
-; closed-era check let hi == lo through, and the closed shrink arm
-; then removed column lo from a zero-width solid.
-   LDA zp_i_h
-   CMP zp_i_l
-   BEQ ms_rts0
-   BCS mss
-ms_rts0:
-   RTS
+; Degenerate range (hi <= lo = EMPTY half-open) → no-op. REVERSED
+; (Eben, 2026-08-21): comparing FROM lo makes "empty" a single carry
+; test — C = (lo >= hi) — instead of the BEQ/BCS pair the hi-first
+; form needed to catch equality separately. 8 cycles on the live
+; path, was 11, and 2 bytes shorter. (A = lo here is dead: the
+; sentinel store below overwrites it.)
+   LDA zp_i_l
+   CMP zp_i_h                              ; C = lo >= hi -> empty
+   BCS ms_rts0
 mss:
 ; zp_prev = $FF sentinel: "current span is the list head" (unlink via
 ; zp_head rather than a predecessor's NEXT).
@@ -181,6 +181,7 @@ msl_y:
    BNE msl_x
 ; ||
 ms_rts_x:
+ms_rts0:                                   ; shared RTS (empty-range entry)
    RTS
 
 ms_has_left:

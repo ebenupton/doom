@@ -1093,7 +1093,11 @@ class EndpointClipSpans:
                 _vert_drew = False
                 for s in self.spans:
                     xs, xe = s[0], s[1]
-                    if xs <= ix <= xe:
+                    # HALF-OPEN: xe is EXCLUSIVE, so a column belongs to
+                    # exactly one span. The old `xs <= ix <= xe` served
+                    # boundary columns from the LEFTMOST touching span —
+                    # the jamb bug (fixed engine-side 2026-08-21).
+                    if xs <= ix < xe:
                         top_y = _span_top_ceil(s, ix)
                         bot_y = _span_bot(s, ix)
                         if top_y >= bot_y: break
@@ -1734,7 +1738,9 @@ def _line_y(ly1, dy, dx, x, lx1):
 def _clip_to_span(lx1, ly1, lx2, ly2, s):
     """Clip line to span's ACTIVE range, using the span's LINE for top/bot."""
     from clip_math import boundary_ix
-    xlo, xhi = s[0], s[1]                           # active range
+    xlo, xhi = s[0], s[1]                           # active range: s[1] is
+                                                    # the exclusive edge the
+                                                    # line may run out to
     line_xlo, line_xhi = s[2], s[3]                 # line anchors
     tl, bl, tr, br = s[4], s[5], s[6], s[7]
     dx = lx2 - lx1

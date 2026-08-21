@@ -138,7 +138,17 @@ dcl_not_left:
    LDA zp_line_xl_l
 dcl_ox0_ok:
    STA zp_ox0
-; ox1 = min(xend, xr)
+; ox1 = min(xend, xr).
+; ox1 IS THE EXCLUSIVE CLAIM BOUND, not the last painted column: it
+; becomes the record's xr (tighten dominates columns [xl, xr)) AND the
+; emitted line's right end, which the raster RUNS OUT to paint
+; inclusively. So a fragment paints one column past what it claims —
+; deliberately, and identically at a span boundary and at the line's
+; own endpoint (Eben's run-out ruling, "under all circumstances").
+; DO NOT 'fix' this to xend-1: the paint looks tidier for exactly one
+; frame and the record then under-claims the span's last open column,
+; which under-tightens every portal edge (measured 2026-08-21:
+; traversal at (-486,-3307,243) went 6 -> 34 subsectors).
    LDA POOL_XEND,X
    CMP zp_line_xr_l
    BCC dcl_ox1_ok
@@ -230,7 +240,9 @@ dcl_accept_yl:
 
 dcl_exit_check:
 ; ========== EXIT CHECK ==========
-; Does the line end within this span? (xr <= xend)
+; Does the line end within this span? (xr <= xend — inclusive, because
+; xend is the exclusive claim edge the line is allowed to run out to;
+; see the ox1 note above)
    LDA POOL_XEND,X
    CMP zp_line_xr_l
    BCC dcl_extends_past
@@ -499,15 +511,22 @@ dv_bbox_done:
    LDX zp_head
    BEQ dvc_rej                             ; empty list (island RTS)
 dv_check:
-; Skip if xend < xl (span entirely left of column — strict)
-   LDA POOL_XEND,X
-   CMP zp_line_xl_l
-   BCC dv_next
-; Done if xstart > xl (span entirely right of column; list sorted)
-   LDA zp_line_xl_l                        ; INVERTED (audit 2026-07-19):
-   CMP POOL_XSTART,X                       ; C = xl >= xstart — one BCS
-   BCS dv_in                               ; replaces the BEQ/BCC pair
-   RTS
+; THE JAMB FIX (2026-08-21). A column belongs to EXACTLY ONE span
+; under half-open tiling ([xs, xe) contains ix iff xs <= ix < xe), so
+; this lookup is determinate — no 'which touching span do we pick?'
+; heuristic is needed. The old test skipped only when xend < xl, so a
+; span whose EXCLUSIVE end equalled the column claimed it anyway:
+; boundary columns were always served by the LEFTMOST touching span,
+; giving a stale aperture at every portal's x_lo jamb (and drawing
+; verticals straight through solid — reproduced on the harness).
+; xl rides A through both tests, so the strict form is 3 cycles
+; CHEAPER than the inclusive one it replaces.
+   LDA zp_line_xl_l
+   CMP POOL_XEND,X                         ; C = xl >= xend -> wholly left
+   BCS dv_next
+   CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart
+   BCS dv_in                               ; -> this span owns the column
+   RTS                                     ; sorted list: column is solid
 dv_next:
    LDA POOL_NEXT,X
    TAX
