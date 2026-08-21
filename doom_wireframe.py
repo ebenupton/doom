@@ -2814,6 +2814,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         # ── View transform with RAM vcache ──
         fp_module.mul_cat("view")
         vc1 = _packed_read_vcache(ram, v1_idx)
+        if vc1 is not None and vc1[3] == 0:
+            # sx-less partial entry: the 6502 has NO such state (sx_vert
+            # fills transform+clip+sx atomically) — serving it here used
+            # to recompute sx from the cache's NARROWED 8.8 evx (s8
+            # integer byte: evx -129 wraps to +127, sx flips sides, the
+            # margin-cert staging-wrap class). Treat as a full miss.
+            vc1 = None
         if vc1 is None:
             result = (fp_module.fp_to_view_t16 if _T16 else fp_to_view)(wx1, wy1, ctx)
             evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
@@ -2828,6 +2835,8 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             _vc1_has_sx = (vc1[3] != 0)
 
         vc2 = _packed_read_vcache(ram, v2_idx)
+        if vc2 is not None and vc2[3] == 0:
+            vc2 = None                     # (mirror — see vc1)
         if vc2 is None:
             result = (fp_module.fp_to_view_t16 if _T16 else fp_to_view)(wx2, wy2, ctx)
             evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
