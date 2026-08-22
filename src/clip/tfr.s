@@ -294,6 +294,40 @@ tfs_bot_be:
 ; No pending output span yet.
    ZERO TFS_PEND_ACT
 
+; ---- PREFIX SPLICE (2026-08-22, Eben: "there's a skip to be had") ----
+; Spans wholly LEFT of the seg (xend <= ilo) are untouched by it and
+; are ALREADY a correctly-linked, sorted chain. Re-appending them one
+; at a time through tfs_oor -> flush_pending -> tg_append_x is pure
+; tax: measured mean 1.45 such spans per call out of a 3.90-span list
+; (only 1.21 actually overlap). So ADOPT the prefix wholesale — new
+; head = old head, new tail = the last prefix span — and start the
+; sweep at the first span that reaches past ilo.
+; The seam is NOT lost: zp_new_tail points at the prefix tail, so the
+; next tg_append_x still runs its merge test against it.
+   LDX zp_old_cur
+   BEQ tfs_pfx_none                        ; empty list
+   LDA zp_i_l                              ; ilo rides A through the scan
+   CMP POOL_XEND,X
+   BCC tfs_pfx_none                        ; head already reaches past ilo
+   STX zp_head                             ; adopt the prefix as the new list
+tfs_pfx_loop:                              ; X = a prefix span
+   LDY POOL_NEXT,X
+   BEQ tfs_pfx_all                         ; the WHOLE list is prefix
+   CMP POOL_XEND,Y
+   BCC tfs_pfx_split                       ; Y is the first overlapper
+   TYA
+   TAX
+   BNE tfs_pfx_loop                        ; always (a live slot != 0)
+tfs_pfx_split:                             ; X = last prefix, Y = sweep start
+   STY zp_old_cur
+   STX zp_new_tail
+   ZERO {POOL_NEXT,X}                      ; terminate the adopted chain —
+   JMP tfs_pfx_none                        ; tg_append_x relinks it on the
+tfs_pfx_all:                               ; first real append
+   STX zp_new_tail
+   ZERO zp_old_cur                         ; nothing overlaps: sweep is empty
+tfs_pfx_none:
+
 ; ---- Outer loop: walk the old span list (X = current slot) ----
    LDX zp_old_cur
 tfs_walk:
@@ -317,6 +351,22 @@ tfs_proc:
    BCC tfs_in_range_noreload               ; (XSTART rides A through the whole
                                            ; prologue: in_range -> pre_chk ->
                                            ; no_pre all skip their reloads)
+; ---- SUFFIX SPLICE (2026-08-22, the prefix argument mirrored) ----
+; xstart >= ihi, and the list is SORTED, so every remaining span is
+; wholly right of the seg too. Append THIS one (keeping the seam's
+; merge test) and then re-attach the whole rest of the chain with one
+; store, instead of walking it span by span. zp_old_cur already holds
+; the rest — the prologue stashed it. Measured 0.62 spans per call
+; beyond the seam.
+   JSR tfs_flush_pending
+   LDX zp_clr_save_x
+   JSR tg_append_x                         ; may merge X into the tail (and
+                                        ; free it) or link it; either way
+                                        ; zp_new_tail is the live tail
+   LDA zp_old_cur                          ; rest of the old chain
+   LDY zp_new_tail
+   STA POOL_NEXT,Y                         ; splice it on, terminator intact
+   JMP tfs_finish                          ; nothing pending (just flushed)
 tfs_oor:
 ; Relink the untouched span. Flush pending first to keep the output
 ; list in x order (pending always precedes this span).

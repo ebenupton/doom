@@ -467,10 +467,15 @@ RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)
 VDESC      = $A500                      ; bank C (verticals run under C;
 VEXPL_LO   = $A700                      ; moved from $B200/$B400 2026-07-27
 VEXPL_HI   = $A780                      ; — the vplot unrolled column owns
-VEXPL_CONT = $9600                      ; moved from $A800 2026-08-11 (the
-                                        ; unrolled-steep blob starts $A800;
-                                        ; $9600 = clipper headroom, guarded
-                                        ; in banked_bsp)
+VEXPL_CONT = $9680                      ; moved from $A800 2026-08-11, then
+                                        ; $9600 -> $9680 on 2026-08-22: it
+                                        ; is 128 slots and the rest of the
+                                        ; page was empty, so sitting at the
+                                        ; page HEAD wasted 128 bytes of the
+                                        ; clipper's ceiling. Now flush
+                                        ; against BOT_RECORDS $9700, and
+                                        ; the clipper may grow to $9680
+                                        ; (guarded in banked_bsp)
                                         ; HI split widened $60->$80
                                         ; 2026-08-14 (mover jamb entries
                                         ; pushed the count past 96; 128

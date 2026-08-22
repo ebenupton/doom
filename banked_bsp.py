@@ -122,7 +122,7 @@ def build_banked(flatr):
     # VXC fat paths -> bank C @ $A300 (planes are BSS at $9700-$A2D3; the
     # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
     # define_bank: it COPIES the image into a fresh buffer.
-    assert len(clip) <= 0x1600, f'clipper {len(clip)} bytes reaches VEXPL_CONT at $9600'
+    assert len(clip) <= 0x1680, f'clipper {len(clip)} bytes reaches VEXPL_CONT at $9680'
     # Driver tables, evicted from bank A 2026-08-17 so its bottom 19 pages come
     # free: sincos $9900 (512 B), use vectors $9B00. Both are read ONLY by
     # walk_drv, which pages this bank for them (one ROMSEL write each, and the
@@ -148,7 +148,9 @@ def build_banked(flatr):
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
         c[0x2700 + i] = lo & 0xFF        # VEXPL @ $A700/$A780 (+cont $9600;
         c[0x2780 + i] = hi & 0xFF        #  HI split widened 2026-08-14)
-        c[0x1600 + i] = 1 if cont else 0   # VEXPL_CONT @ $9600 (2026-08-11)
+        c[0x1680 + i] = 1 if cont else 0   # VEXPL_CONT @ $9680 (moved off
+        #  the page head 2026-08-22 to give the clipper its ceiling back;
+        #  128 slots end $96FF, flush against BOT_RECORDS $9700)
     # unrolled vertical plot columns + tables ($B200-$BFFF, cfg VPLOTC)
     vp = open('engine_vplot_bankc.bin', 'rb').read()
     assert len(vp) <= 0x0C00, f'vplot {len(vp)} bytes overruns bank C'
