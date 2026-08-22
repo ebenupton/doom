@@ -73,10 +73,37 @@ draw_clipped_line:
    SBC zp_line_yl_l
    STA zp_line_dy
 
-; (initial ylo/yhi min-max deleted 2026-07-14: dcl_entry_path recomputes
-; the full-line bbox before every Tier read, and the continuation path
-; only narrows values the entry pass wrote — the block was dead work on
-; every non-vertical line)
+; --- Y bbox: [min(yl,yr), max(yl,yr)] — ONCE per line -----------------
+; RESTORED 2026-08-22, reversing the 2026-07-14 deletion.  That deletion
+; was right at the time: dcl_entry_path recomputed the bbox before every
+; Tier read, so computing it here as well was dead work.  Two things
+; changed since.  The deferred-emit restructure made EVERY span run the
+; entry path (1.29 times per call, measured), and the portal check's
+; death removed both narrowers — the CB no-exit-clip narrowing and the
+; portal commit — so nothing writes ylo/yhi mid-walk any more.  yl and yr
+; are provably unchanged across a call (asserted by probe: 0 of 411
+; entries saw them differ), so the bbox is loop-invariant and belongs
+; here.
+;
+; BELOW the vertical branch on purpose: dcl_vert_on is an EXPORTED entry
+; that seg_emit jumps to per vertical descriptor, bypassing this routine
+; entirely, and it CLAMPS yl/yr into the u8 band before use — so the
+; vertical handler must keep computing its own bbox, after that clamp.
+; Hoisting above the branch and deleting the vertical's copy loses every
+; descriptor vertical (tried it: walkseq 55 divergent frames).
+;
+; One compare, loser parked in X:
+;   BCC taken => A=yl is the min, X=yr the max
+;   else         A<-yr (min),     X<-yl (max)
+   LDA zp_line_yl_l
+   LDX zp_line_yr_l
+   CMP zp_line_yr_l
+   BCC dcl_bb_ylt
+   TXA
+   LDX zp_line_yl_l
+dcl_bb_ylt:
+   STA zp_line_y_l                         ; min
+   STX zp_line_y_h                         ; max
 
 ; (Records-mode init moved to ARM time — bsp/subsector.s dcl_rec_arm,
 ; 2026-07-13: the s16 band clip appends verdict records before this
@@ -183,24 +210,13 @@ dcl_ox1_ok:
 ; only cost cycles, never pixels.  zp_seg_end_x carries the right end of
 ; the visible run so far; the end Y is computed once, at the emit.
 dcl_entry_path:
-; Reset the Y bbox to the full line range for this span.  A previous
-; span may have NARROWED ylo/yhi; a stale narrow bbox describes the line
-; over a range to the LEFT of this span and would make Tier-2 wrongly
-; ACCEPT -> over-draw (the slot4 over-draw at 845,-3084,215).  The
-; full-line bbox is conservative: it never wrongly accepts/rejects.
-; (X = span slot must be preserved for the Tier checks below.)
-   LDA zp_line_yl_l
-   CMP zp_line_yr_l
-   BCC dcl_ep_ylt                          ; arm swap 2026-08-12 (suite:
-   STA zp_line_y_h                         ;  lt 231 vs ge 107) — the hot
-   LDA zp_line_yr_l                        ;  arm falls into the join
-   STA zp_line_y_l
-   JMP dcl_ep_done
-dcl_ep_ylt:
-   STA zp_line_y_l
-   LDA zp_line_yr_l
-   STA zp_line_y_h
-dcl_ep_done:
+; (The per-span Y-bbox reset is HOISTED to the head of the sloped path.
+;  It was defending against a stale NARROWED bbox — one describing the
+;  line over a range to the LEFT of this span, which made Tier-2 wrongly
+;  ACCEPT and over-draw at 845,-3084,215.  Both narrowers died with the
+;  portal check on 2026-08-22, so ylo/yhi are now write-once per line and
+;  the reset was re-deriving the same two bytes on every span.
+;  X = span slot is live for the Tier checks below.)
 
 ; ========== ENTRY: seg_start is NULL ==========
 ; --- Tier 1: outer bbox reject ---
