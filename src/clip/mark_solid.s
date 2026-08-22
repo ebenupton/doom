@@ -67,15 +67,24 @@ span_mark_solid:
 ; any later query (observed: freed slot (60,69) made has_gap(60,73)
 ; return 1 against a pool whose only live span was (121,132)).
    ZERO zp_hg_cache
-; Degenerate range (hi <= lo = EMPTY half-open) → no-op. REVERSED
-; (Eben, 2026-08-21): comparing FROM lo makes "empty" a single carry
-; test — C = (lo >= hi) — instead of the BEQ/BCS pair the hi-first
-; form needed to catch equality separately. 8 cycles on the live
-; path, was 11, and 2 bytes shorter. (A = lo here is dead: the
-; sentinel store below overwrites it.)
-   LDA zp_i_l
-   CMP zp_i_h                              ; C = lo >= hi -> empty
-   BCS ms_rts0
+; NO EMPTY-RANGE GUARD (removed 2026-08-22 with the tie-drop). The
+; CALLER guarantees ilo < ihi: both staging paths in bsp/seg_emit.s
+; cull sx1 >= sx2 (the fast path's BCS cull_jmp, the straddle
+; ladder's BPL range_cull). Verified 0 zero-length and 0 backward
+; arrivals across 360 frames / 2,538 entries.
+;
+; WHY THIS MATTERS — unguarded, the degenerate forms are NOT all
+; benign (measured on the harness):
+;   [0,0)     no-op: "done if xs >= hi" is trivially true at hi = 0
+;   [255,255) no-op: every span has xe <= 255, so the scan runs out
+;   [100,100) MUTATES: takes the middle-split arm and gratuitously
+;             splits a span, burning a pool slot
+;   [120,100) MUTATES: leaves OVERLAPPING spans — pool corruption
+; The first two are all the straddle clamps can produce, so they are
+; safe. An INTERIOR empty range needs equal hi bytes AND equal lo
+; bytes — i.e. a tie — and ties are culled at staging. If you ever
+; re-admit ties, or relax either cull, restore this guard:
+;     LDA zp_i_l / CMP zp_i_h / BCS ms_rts0
 ; Empty active list? REVERSED (Eben, 2026-08-21): exit on Z and FALL
 ; INTO the scan below, instead of BNE-ing into it — the live path
 ; loses a taken branch and the RTS folds into the shared exit.

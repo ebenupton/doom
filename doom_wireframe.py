@@ -2380,6 +2380,14 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     x_lo = min(sx1, sx2)
     x_hi = max(sx1, sx2)
 
+    # Tie drop (2026-08-22), mirroring seg_emit.s and packed_render_seg:
+    # under the half-open decree sx1 == sx2 spans ZERO columns, so the
+    # seg occludes nothing and only drew a 1px sliver. (Reversed segs
+    # are NOT dropped here — the float path has always kept them; that
+    # is a separate, pre-existing divergence from the engine.)
+    if sx1 == sx2:
+        return
+
     fp_module.mul_cat("clip")   # has_gap may call fp_eval → don't pollute "proj"
     if not clips.has_gap(x_lo, x_hi):
         return
@@ -2939,7 +2947,10 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     # than canonicalized (2026-07-15, Eben's call): measured cost is the
     # degenerate slivers only (5px at 1/18 suite positions), no
     # occlusion damage — the zero-records arm covers the aperture.
-    if sx2 < sx1:
+    # TIES join them 2026-08-22: under the half-open decree sx1 == sx2
+    # covers ZERO columns, so a tie seg occludes nothing — it only drew
+    # a 1px sliver. Mirrors seg_emit.s's BCS cull_jmp.
+    if sx2 <= sx1:
         return
 
     # ── Read seg detail from rom_detail ──

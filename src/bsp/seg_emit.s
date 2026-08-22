@@ -214,21 +214,27 @@ clip_none:
    BNE range_cull                          ; both off one side: cull
    LDA zp_seg_sx1_l
    CMP zp_seg_sx2_l
-   BEQ range_fwd                           ; tie: one-column seg is FORWARD
-                                        ; (KEEP: measured 2026-08-13 — ties
-                                        ; are occlusion workhorses; dropping
-                                        ; them = +652/fr MEAN and 1px leaks.
-                                        ; TODO revisit (Eben): the drop is
-                                        ; one instruction — BCS cull_jmp
-                                        ; replacing this BEQ+BCS pair; a
-                                        ; play build lives in
-                                        ; doom_walk_notie.ssd. If the leaks
-                                        ; don't offend in play, the honest
-                                        ; version needs the tie dropped in
-                                        ; the python mirrors + float ref
-                                        ; too, and the +652/fr paid or
-                                        ; clawed back)
-   BCS cull_jmp                            ; sx1 > sx2: reversed sliver, drop
+   BCS cull_jmp                            ; sx1 >= sx2: DROP. Reversed
+                                        ; slivers always were; TIES joined
+                                        ; them 2026-08-22 (Eben) once the
+                                        ; half-open decree made [x,x) cover
+                                        ; ZERO columns — a tie seg occludes
+                                        ; nothing (mark_solid's range is
+                                        ; empty, DCL's record guard drops
+                                        ; xl>=xr, tfr never sees it), so the
+                                        ; old "occlusion workhorse" note was
+                                        ; pre-decree and void. Measured:
+                                        ; dropping adds ZERO pixels anywhere
+                                        ; (no leaks) and saves 273 cyc/fr;
+                                        ; it only removes the 1px slivers
+                                        ; the ties drew.
+;
+; CONTRACT (relied on downstream): this cull guarantees ilo < ihi for
+; every interval staged from THIS path, which is why span_mark_solid
+; carries no empty-range guard. The straddle ladder below preserves it
+; (it culls sx1 >= sx2 too); its clamps can still yield [0,0) or
+; [255,255), and both are provably no-ops in the clipper — see the
+; ABI note at span_mark_solid.
 range_fwd:
    STA zp_i_l                              ; ilo = sx1_lo
    LDA zp_seg_sx2_l                        ; ihi rides A
