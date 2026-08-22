@@ -1028,12 +1028,21 @@ tfs_inner_done:
    CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ
    BCS tfs_no_post                         ; pair
    JSR tfs_flush_pending
+; REUSE THE ORIGINAL SLOT (2026-08-22) instead of alloc + 10-byte copy
+; + free. The post-fragment is [ihi, xend) of THIS span: its XEND and
+; its whole line definition are already right, and this is the span's
+; LAST use — the very next thing the old code did was free it. So just
+; move XSTART up and append the slot itself. ~146 cycles saved per
+; post-fragment (alloc 12, ten field copies 90, range staging 16,
+; ues call/return 12, free 11), and the pool-exhaustion arm inside
+; emit_unchanged_subspan cannot fire here because nothing is
+; allocated. Measured 2.58 post-fragments/frame.
+; NB the free below MUST be skipped — the slot is live in the new list.
    LDX zp_clr_save_x
    LDA zp_i_h
-   STA zp_ox0
-   LDA POOL_XEND,X
-   STA zp_ox1
-   JSR emit_unchanged_subspan
+   STA POOL_XSTART,X                       ; [ihi, xend), line untouched
+   JSR tg_append_x                         ; may merge+free it: also fine
+   JMP tfs_continue                        ; SKIP the free
 tfs_no_post:
 
 ; Free original pool span (its replacements are now in the new list).
