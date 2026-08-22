@@ -59,16 +59,14 @@
 ; ======================================================================
 draw_clipped_line:
 .scope
-; --- Vertical fast path: xl == xr (trampoline — dcl_vertical out of BEQ range) ---
-   LDA zp_line_xl_l
-   CMP zp_line_xr_l
-   BEQ dcl_to_vert                         ; verticals rare here (0.7%,
-                                           ; census 2026-07-27): trampoline
-                                           ; in the dclw_flush island
 ; --- Compute dx, dy, ylo, yhi ---
    LDA zp_line_xr_l
    SEC
    SBC zp_line_xl_l
+; --- Vertical fast path: xl == xr (trampoline — dcl_vertical out of BEQ range) ---
+   BEQ dcl_to_vert                         ; verticals rare here (0.7%,
+                                           ; census 2026-07-27): trampoline
+                                           ; in the dclw_flush island
    STA zp_line_dx
    LDA zp_line_yr_l
    SEC
@@ -91,10 +89,12 @@ dcl_records_off:
 
 ; Walk span list
    LDX zp_head
-
-dcl_walk:
 ; End of list? (inverted 2026-07-27: non-empty 100% on suite — the
-; empty case borrows the dclw_flush island)
+; empty case borrows the dclw_flush island).  The Z comes from the LDX
+; above; the dcl_walk label that used to name this point had no
+; references anywhere in the tree — every advance re-enters at
+; dcl_walk2, which is precisely the point of that label (it SKIPS this
+; test, having already proved the next slot non-null).
    BEQ dclw_flush
 dcl_walk2:
 
