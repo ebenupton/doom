@@ -510,7 +510,6 @@ dv_untapped:
 dv_bbox_done:
    LDX zp_head
    BEQ dvc_rej                             ; empty list (island RTS)
-dv_check:
 ; THE JAMB FIX (2026-08-21). A column belongs to EXACTLY ONE span
 ; under half-open tiling ([xs, xe) contains ix iff xs <= ix < xe), so
 ; this lookup is determinate — no 'which touching span do we pick?'
@@ -519,18 +518,36 @@ dv_check:
 ; boundary columns were always served by the LEFTMOST touching span,
 ; giving a stale aperture at every portal's x_lo jamb (and drawing
 ; verticals straight through solid — reproduced on the harness).
-; xl rides A through both tests, so the strict form is 3 cycles
-; CHEAPER than the inclusive one it replaces.
-   LDA zp_line_xl_l
-   CMP POOL_XEND,X                         ; C = xl >= xend -> wholly left
-   BCS dv_next
+;
+; SEARCH IDIOM (2026-08-22, mark_solid's walk applied here): xl is
+; LOOP-INVARIANT, so it is hoisted into A and rides the whole search,
+; and the slot alternates X/Y in an unrolled ping-pong so the skip
+; path needs no TAX. Skip step was LDA zp + CMP + BCS + LDA abs,X +
+; TAX + BNE = 19 cyc; it is now CMP + BCC + LDY abs,X + BEQ = 13.
+; (measured 18 vertical calls and 23.6 skip steps per frame)
+   LDA zp_line_xl_l                        ; HOISTED: rides A throughout
+dv_check:
+dv_x:
+   CMP POOL_XEND,X                         ; C=0: this span reaches past xl
+   BCC dv_own_x
+   LDY POOL_NEXT,X
+   BEQ dvc_rej
+   CMP POOL_XEND,Y                         ; (mirror)
+   BCC dv_own_y
+   LDX POOL_NEXT,Y
+   BNE dv_x
+   BEQ dvc_rej                             ; list ran out (always taken)
+dv_own_x:
    CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart
    BCS dv_in                               ; -> this span owns the column
    RTS                                     ; sorted list: column is solid
-dv_next:
-   LDA POOL_NEXT,X
-   TAX
-   BNE dv_check                            ; direct loop-back
+dv_own_y:
+   CMP POOL_XSTART,Y
+   BCC dv_rts_solid
+   TYA                                     ; Y->X for the X-indexed dv_in
+   TAX                                     ; (the arm's only extra cost)
+   BNE dv_in                               ; always taken: a live slot != 0
+dv_rts_solid:
    RTS
 
 ; --- rare-arm island (census 2026-07-27): the vert clamp arms, degen/
