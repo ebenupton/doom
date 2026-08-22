@@ -106,27 +106,27 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; ---------------------------------------------------------------------------
 .macro ZCF s, xl, yl, ck
 .ifblank ck
-   SEC                                     ; ck set = the leaf's entry arc
+   SEC                                     ; ck set = the leaf's entry arc ;#            0.0
 .endif                                     ; proves C=1 (BNE-after-BCC-untaken
                                            ; or BCS — see the ladder analysis
                                            ; at each ZARM below); bot-row
                                            ; leaves arrive via BCC (C=0) and
                                            ; keep the SEC
-   LDA xl+(s)*$100,Y
+   LDA xl+(s)*$100,Y                                                      ;# |          0.8
    SBC bca_pxs
-   STA pa_dx
-   LDA xl+$200+(s)*$100,Y
-   SBC bca_pxs+1
-   STA pa_dx+1
-   SEC
-   LDA yl+(s)*$100,Y
-   SBC bca_pys
-   STA pa_dy
+   STA pa_dx                                                              ;# |          0.5
+   LDA xl+$200+(s)*$100,Y                                                 ;# |          0.8
+   SBC bca_pxs+1                                                          ;#            0.1
+   STA pa_dx+1                                                            ;#            0.1
+   SEC                                                                    ;#            0.3
+   LDA yl+(s)*$100,Y                                                      ;# |          0.8
+   SBC bca_pys                                                            ;#            0.0
+   STA pa_dy                                                              ;# |          0.5
    EOR pa_dx                               ; slot = (dx ^ dy) & $7F, hashed
-   AND #$7F                                ; here where dy-lo is in A —
+   AND #$7F                                ; here where dy-lo is in A —   ;#            0.4
    TAX                                     ; EOR/AND/TAX keep C for the SBC
-   LDA yl+$200+(s)*$100,Y
-   SBC bca_pys+1
+   LDA yl+$200+(s)*$100,Y                                                 ;#            0.0
+   SBC bca_pys+1                                                          ;# |          0.6
    STA pa_dy+1
 .endmacro
 ; Partial fetches for the axis-sharing rows: the OTHER delta must
@@ -134,26 +134,26 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; reads it. ZCF_DX exits with A = pa_dx+1, so its users re-load dy-hi
 ; before the JSR to honour the entry A-contract.
 .macro ZCF_DX s, xl
-   SEC
-   LDA xl+(s)*$100,Y
-   SBC bca_pxs
-   STA pa_dx
-   EOR pa_dy                               ; slot hash (pa_dy already valid)
-   AND #$7F
+   SEC                                                                    ;#            0.0
+   LDA xl+(s)*$100,Y                                                      ;#            0.0
+   SBC bca_pxs                                                            ;#            0.0
+   STA pa_dx                                                              ;#            0.1
+   EOR pa_dy                               ; slot hash (pa_dy already valid) ;#            0.0
+   AND #$7F                                                               ;#            0.0
    TAX
    LDA xl+$200+(s)*$100,Y
-   SBC bca_pxs+1
+   SBC bca_pxs+1                                                          ;#            0.1
    STA pa_dx+1
 .endmacro
 .macro ZCF_DY s, yl
    SEC
    LDA yl+(s)*$100,Y
-   SBC bca_pys
-   STA pa_dy
-   EOR pa_dx                               ; slot hash (pa_dx carried over)
-   AND #$7F
+   SBC bca_pys                                                            ;#            0.0
+   STA pa_dy                                                              ;#            0.0
+   EOR pa_dx                               ; slot hash (pa_dx carried over) ;#            0.0
+   AND #$7F                                                               ;#            0.0
    TAX
-   LDA yl+$200+(s)*$100,Y
+   LDA yl+$200+(s)*$100,Y                                                 ;#            0.3
    SBC bca_pys+1
    STA pa_dy+1
 .endmacro
@@ -174,7 +174,7 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 .endmacro
 .macro ZCF_MEMO_DY
    LDA CPM_KDYL,X
-   STA pa_dy
+   STA pa_dy                                                              ;#            0.0
    LDA CPM_KDYH,X
    STA pa_dy+1
 .endmacro
@@ -193,41 +193,41 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; dy-hi for the entry A-contract.
 ; ---------------------------------------------------------------------------
 .macro ZARM s, x1, y1, x2, y2, e1, e2, ck
-   ZCF s, x1, y1, ck
-   JSR e1
-   STA bca_p1+1
-   STY bca_p1
-   LDY zp_node_ch_l                        ; (r-lo clobbered Y)
-   ZCF s, x2, y2
-   JSR e2
-   JMP (zp_tail_vec)                       ; p2 rides A/Y; no return trip
+   ZCF s, x1, y1, ck                                                      ;# |          1.0
+   JSR e1                                                                 ;# |          0.5
+   STA bca_p1+1                                                           ;#            0.1
+   STY bca_p1                                                             ;#            0.2
+   LDY zp_node_ch_l                        ; (r-lo clobbered Y)           ;#            0.1
+   ZCF s, x2, y2                                                          ;# |          0.5
+   JSR e2                                                                 ;# |          0.5
+   JMP (zp_tail_vec)                       ; p2 rides A/Y; no return trip ;#            0.4
 .endmacro
 .macro ZARM_SX s, x1, y1, y2, e1, e2, ck
    ZCF s, x1, y1, ck
-   JSR e1
-   STA bca_p1+1
-   STY bca_p1
-   LDY zp_node_ch_l
+   JSR e1                                                                 ;#            0.0
+   STA bca_p1+1                                                           ;#            0.0
+   STY bca_p1                                                             ;#            0.0
+   LDY zp_node_ch_l                                                       ;#            0.0
    ZCF_DY s, y2                            ; pa_dx carried over
-   JSR e2
-   JMP (zp_tail_vec)
+   JSR e2                                                                 ;#            0.0
+   JMP (zp_tail_vec)                                                      ;#            0.0
 .endmacro
 .macro ZARM_SY s, x1, y1, x2, e1, e2, ck
    ZCF s, x1, y1, ck
-   JSR e1
-   STA bca_p1+1
-   STY bca_p1
-   LDY zp_node_ch_l
-   ZCF_DX s, x2                            ; pa_dy carried over
-   LDA pa_dy+1                             ; entry A-contract: dy hi
-   JSR e2
-   JMP (zp_tail_vec)
+   JSR e1                                                                 ;#            0.0
+   STA bca_p1+1                                                           ;#            0.0
+   STY bca_p1                                                             ;#            0.0
+   LDY zp_node_ch_l                                                       ;#            0.0
+   ZCF_DX s, x2                            ; pa_dy carried over           ;#            0.0
+   LDA pa_dy+1                             ; entry A-contract: dy hi      ;#            0.0
+   JSR e2                                                                 ;#            0.0
+   JMP (zp_tail_vec)                                                      ;#            0.0
 .endmacro
 .macro ZARM_SYM s, x1, y1, x2, e1, e2, ck
    ZCF s, x1, y1, ck
    JSR e1
    STA bca_p1+1
-   STY bca_p1
+   STY bca_p1                                                             ;#            0.0
    ZCF_MEMO_DY                             ; c1's slot read FIRST — the
    LDY zp_node_ch_l                        ; hashing ZCF_DX then computes
    ZCF_DX s, x2                            ; c2's slot into X
@@ -299,72 +299,72 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
    .local yR, yRlo, yRlo_nr, yRtop, yRbot, yRmid
 ; --- x ladder ---
    LDA bca_pxs+1
-   CMP BBP_L_HI+(s)*$100,Y
-   BCC yL                                  ; px < L (hi): LEFT, direct
-   BNE xge_nr                              ; px > L (hi): right-of tests,
+   CMP BBP_L_HI+(s)*$100,Y                                                ;#            0.4
+   BCC yL                                  ; px < L (hi): LEFT, direct    ;#            0.2
+   BNE xge_nr                              ; px > L (hi): right-of tests, ;#            0.2
                                            ; pxs+1 still live
-   LDA BBP_L_LO+(s)*$100,Y                 ; hi tie: plane in A —
-   CMP bca_pxs                             ; C = L_lo >= px_lo, so ONE
-   BCS yL                                  ; branch covers px <= L
+   LDA BBP_L_LO+(s)*$100,Y                 ; hi tie: plane in A —         ;#            0.4
+   CMP bca_pxs                             ; C = L_lo >= px_lo, so ONE    ;# |          0.6
+   BCS yL                                  ; branch covers px <= L        ;#            0.2
 xge:
-   LDA bca_pxs+1                           ; (inverted-lo fall only)
+   LDA bca_pxs+1                           ; (inverted-lo fall only)      ;#            0.3
 xge_nr:
    CMP BBP_R_HI+(s)*$100,Y
-   BCC ymj                                 ; px < R (hi): MID via stub
+   BCC ymj                                 ; px < R (hi): MID via stub    ;#            0.2
    BNE yrj                                 ; px > R (hi): RIGHT via stub
-   LDA BBP_R_LO+(s)*$100,Y                 ; hi tie: px <= R is mid,
-   CMP bca_pxs                             ; one BCS; fall = strict
+   LDA BBP_R_LO+(s)*$100,Y                 ; hi tie: px <= R is mid,      ;# |          0.6
+   CMP bca_pxs                             ; one BCS; fall = strict       ;# |          0.5
    BCS ymj                                 ; right
 yrj:
    JMP yR
 ymj:
-   JMP yM
+   JMP yM                                                                 ;#            0.1
 ; --- LEFT column (ladder-adjacent, all exits direct) ---
 yL:
-   LDA bca_pys+1
-   CMP BBP_T_HI+(s)*$100,Y
+   LDA bca_pys+1                                                          ;#            0.0
+   CMP BBP_T_HI+(s)*$100,Y                                                ;#            0.0
    BCC yLlo_nr                             ; py < T (hi): bottom test,
                                            ; pys+1 still live
-   BNE yLtop                               ; py > T strictly (hi)
+   BNE yLtop                               ; py > T strictly (hi)         ;#            0.0
    LDA bca_pys
    CMP BBP_T_LO+(s)*$100,Y
    BCC yLlo
 yLtop:                                     ; py >= T: row 0 (NW)
-   ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn, 1
+   ZARM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, BBP_B_LO, corner_phi_pn, corner_phi_pn, 1 ;#            0.2
 yLlo:
    LDA bca_pys+1                           ; (lo-tier arrivals only)
 yLlo_nr:
-   CMP BBP_B_HI+(s)*$100,Y
+   CMP BBP_B_HI+(s)*$100,Y                                                ;#            0.0
    BCC yLbot                               ; py < B strictly (hi)
    BNE yLmid                               ; py > B (hi): mid band
-   LDA bca_pys
+   LDA bca_pys                                                            ;#            0.0
    CMP BBP_B_LO+(s)*$100,Y
-   BCS yLmid                               ; py >= B: mid band
+   BCS yLmid                               ; py >= B: mid band            ;#            0.0
 yLbot:                                     ; py < B: row 8 (SW)
    ZARM s, BBP_L_LO, BBP_T_LO, BBP_R_LO, BBP_B_LO, corner_phi_pp, corner_phi_pp
 yLmid:                                     ; row 4 (W): corners share L
-   ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn, 1
+   ZARM_SX s, BBP_L_LO, BBP_T_LO, BBP_B_LO, corner_phi_pp, corner_phi_pn, 1 ;#            0.1
 ; --- MID column ---
 yM:
-   LDA bca_pys+1
-   CMP BBP_T_HI+(s)*$100,Y
-   BCC yMlo_nr
-   BNE yMtop
-   LDA bca_pys
-   CMP BBP_T_LO+(s)*$100,Y
-   BCC yMlo
+   LDA bca_pys+1                                                          ;#            0.1
+   CMP BBP_T_HI+(s)*$100,Y                                                ;#            0.1
+   BCC yMlo_nr                                                            ;#            0.0
+   BNE yMtop                                                              ;#            0.1
+   LDA bca_pys                                                            ;#            0.0
+   CMP BBP_T_LO+(s)*$100,Y                                                ;#            0.1
+   BCC yMlo                                                               ;#            0.0
 yMtop:                                     ; row 1 (N): corners share T,
                                            ; c1 negates it -> memo reload
-   ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn, 1
+   ZARM_SYM s, BBP_R_LO, BBP_T_LO, BBP_L_LO, corner_phi_pn, corner_phi_nn, 1 ;# |          0.9
 yMlo:
-   LDA bca_pys+1
+   LDA bca_pys+1                                                          ;#            0.1
 yMlo_nr:
-   CMP BBP_B_HI+(s)*$100,Y
-   BCC yMbot
+   CMP BBP_B_HI+(s)*$100,Y                                                ;#            0.1
+   BCC yMbot                                                              ;#            0.0
    BNE cxi
    LDA bca_pys
-   CMP BBP_B_LO+(s)*$100,Y
-   BCS cxi
+   CMP BBP_B_LO+(s)*$100,Y                                                ;#            0.0
+   BCS cxi                                                                ;#            0.0
 yMbot:                                     ; row 9 (S): corners share B
    ZARM_SY s, BBP_L_LO, BBP_B_LO, BBP_R_LO, corner_phi_np, corner_phi_pp
 cxi:
@@ -373,32 +373,32 @@ cxi:
 ; box is naturally uncacheable and re-runs the plain path each frame
 ; (the classify ladder's inside detect is the cheap case). The old
 ; $80-marker protocol died with the wrapper scavenge (2026-07-20).
-   JMP full_vis
+   JMP full_vis                                                           ;#            0.0
 ; --- RIGHT column ---
 yR:
-   LDA bca_pys+1
-   CMP BBP_T_HI+(s)*$100,Y
-   BCC yRlo_nr
+   LDA bca_pys+1                                                          ;# |          0.5
+   CMP BBP_T_HI+(s)*$100,Y                                                ;# |          0.6
+   BCC yRlo_nr                                                            ;#            0.2
    BNE yRtop
-   LDA bca_pys
+   LDA bca_pys                                                            ;#            0.2
    CMP BBP_T_LO+(s)*$100,Y
-   BCC yRlo
+   BCC yRlo                                                               ;#            0.2
 yRtop:                                     ; py >= T: row 2 (NE)
    ZARM s, BBP_R_LO, BBP_B_LO, BBP_L_LO, BBP_T_LO, corner_phi_nn, corner_phi_nn, 1
 yRlo:
-   LDA bca_pys+1
+   LDA bca_pys+1                                                          ;#            0.3
 yRlo_nr:
-   CMP BBP_B_HI+(s)*$100,Y
-   BCC yRbot
-   BNE yRmid
-   LDA bca_pys
-   CMP BBP_B_LO+(s)*$100,Y
+   CMP BBP_B_HI+(s)*$100,Y                                                ;#            0.2
+   BCC yRbot                                                              ;#            0.2
+   BNE yRmid                                                              ;#            0.2
+   LDA bca_pys                                                            ;#            0.0
+   CMP BBP_B_LO+(s)*$100,Y                                                ;#            0.1
    BCS yRmid
 yRbot:                                     ; py < B: row 10 (SE)
-   ZARM s, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np
+   ZARM s, BBP_L_LO, BBP_B_LO, BBP_R_LO, BBP_T_LO, corner_phi_np, corner_phi_np ;#            0.4
 yRmid:                                     ; row 6 (E): corners share R,
                                            ; c1 negates it -> memo reload
-   ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np, 1
+   ZARM_SXM s, BBP_R_LO, BBP_B_LO, BBP_T_LO, corner_phi_nn, corner_phi_np, 1 ;# |||||||||| 8.6
 .endmacro
 
 ; ============================================================================
@@ -494,10 +494,10 @@ box_classify:                              ; THE MOVING-FRAME ENTRY (pristine:
                                            ; no probe, no stores). Standing
                                            ; frames enter at bbox_check_angle
                                            ; above (zp_bv_entry vector).
-   LDY zp_node_ch_l                        ; ONE LDY serves both trees
-   LDA zp_bbox_side
-   BNE bcls_s1
-   JMP bcls_s0
+   LDY zp_node_ch_l                        ; ONE LDY serves both trees    ;# |          0.6
+   LDA zp_bbox_side                                                       ;# |          0.6
+   BNE bcls_s1                                                            ;# |          0.6
+   JMP bcls_s0                                                            ;#            0.3
 ; --- side 1: probe (side baked), serve, or fall into the tree ---
 bcap_s1:
    TYA
@@ -550,7 +550,7 @@ bcap_s1_miss:
    STA rc_bit
    LDY zp_node_ch_l                        ; the tree indexes planes by Y
 bcls_s1:
-   CLASSIFY_TREE 1
+   CLASSIFY_TREE 1                                                        ;# ||         1.8
 ; --- side 0: mirror (k & 7 = (node & 3)*2, no ORA at all) ---
 bcap_s0:
    TYA
@@ -596,7 +596,7 @@ bcap_s0_miss:
    STA rc_bit
    LDY zp_node_ch_l
 bcls_s0:
-   CLASSIFY_TREE 0
+   CLASSIFY_TREE 0                                                        ;# |||||||||  7.6
 
 zc_end:
 .if BANKED
@@ -747,20 +747,20 @@ bca_tail_postrc:                           ; the tail proper — reached from
 ; bca_p1 stays RAW for the rcache snapshot. The python mirror
 ; implements the SAME table cell for cell.
 ; classify r2: A = p2' hi (masked by cp_havepsi's exit), Y = p2' lo
-   CMP #4
-   BCS ct_r2out                            ; r2 >= 1024: R or L
+   CMP #4                                                                 ;#            0.4
+   BCS ct_r2out                            ; r2 >= 1024: R or L           ;# |          0.5
 ; --- (F,*): ihi = vatox[r2]+1. C=0 (the BCS fell); the pointer ADC's
 ; carry-out is CONSTANT 0 (r_hi <= 4, link-asserted) and rides into
 ; the +1 adjust; overflow clamps to 255. ---
-   ADC #>VATOX
-   STA pa_ptr+1
-   LDA (pa_ptr),Y                          ; vatox[r2]
-   ADC #1
-   BCS ct_ih_cl                            ; overflow clamp: rare (0.2%,
+   ADC #>VATOX                                                            ;#            0.3
+   STA pa_ptr+1                                                           ;#            0.4
+   LDA (pa_ptr),Y                          ; vatox[r2]                    ;# |          0.7
+   ADC #1                                                                 ;#            0.3
+   BCS ct_ih_cl                            ; overflow clamp: rare (0.2%,  ;#            0.3
                                            ; census 2026-07-27, island
                                            ; past visok's fused exit)
 ct_ih:
-   STA bca_ihi                             ; ihi lands HERE, not in has_gap
+   STA bca_ihi                             ; ihi lands HERE, not in has_gap ;#            0.4
                                            ; (pure-A since Eben's 2026-07-26
                                            ; rewrite): the dst*_ext record
                                            ; store snapshots bca_ilo/bca_ihi
@@ -768,24 +768,24 @@ ct_ih:
                                            ; reloads it for the A-hi call
 ct_left:
 ; r1'' = (p1' - 2*EPS) & 4095 in registers (raw p1' stays in memory)
-   LDA bca_p1
-   SEC
-   SBC #(2*EPSILON_F)
-   TAY
-   LDA bca_p1+1
-   SBC #0
-   AND #$0F
-   CMP #4
-   BCS ct_r1out_r2f                        ; r1 out, r2 in: ilo = 0
+   LDA bca_p1                                                             ;#            0.4
+   SEC                                                                    ;#            0.3
+   SBC #(2*EPSILON_F)                                                     ;#            0.3
+   TAY                                                                    ;#            0.3
+   LDA bca_p1+1                                                           ;#            0.4
+   SBC #0                                                                 ;#            0.3
+   AND #$0F                                                               ;#            0.3
+   CMP #4                                                                 ;#            0.3
+   BCS ct_r1out_r2f                        ; r1 out, r2 in: ilo = 0       ;#            0.3
 lk_left:
-   ADC #>VATOX                             ; C=0 (BCS fell / ct_f_r2out's
-   STA pa_ptr+1                            ; BCC — both arrive C=0)
-   LDA (pa_ptr),Y                          ; vatox[r1'']
-   SBC #0                                  ; C=0 (constant carry-out) -> v-1
-   BCC ct_il_z                             ; v == 0: rare clamp (island);
+   ADC #>VATOX                             ; C=0 (BCS fell / ct_f_r2out's ;#            0.3
+   STA pa_ptr+1                            ; BCC — both arrive C=0)       ;# |          0.5
+   LDA (pa_ptr),Y                          ; vatox[r1'']                  ;# |          0.8
+   SBC #0                                  ; C=0 (constant carry-out) -> v-1 ;#            0.3
+   BCC ct_il_z                             ; v == 0: rare clamp (island); ;#            0.3
                                            ; C rides identically both ways
 ct_il:
-   STA bca_ilo
+   STA bca_ilo                                                            ;# |          0.5
 ; falls into visok, which recovers ihi from X into A (A-hi ABI
 ; 2026-07-26: has_gap's entry lands bca_ihi/zp_i_h — the pair is
 ; still the persistent state). NO ilo > ihi check: in (F,F) the
@@ -827,12 +827,12 @@ ct_il:
 ; full_vis is the CANONICAL full-visibility tail (the rcache warm-full
 ; path and box_classify's inside case JMP here instead of local copies).
 visok:
-   CLV                                     ; V=0: extent verdict for the
+   CLV                                     ; V=0: extent verdict for the  ;#            0.3
                                            ; dcap store (survives has_gap —
                                            ; see the C/V-CONTRACT above)
-   LDA bca_ihi                             ; A-hi ABI (stored at ct_ih /
+   LDA bca_ihi                             ; A-hi ABI (stored at ct_ih /  ;# |          0.5
                                            ; ct_f_r2out)
-   JMP span_has_gap                          ; the fused exit IS the verdict:
+   JMP span_has_gap                          ; the fused exit IS the verdict: ;# |          0.5
                                            ; C from has_gap, V=0 from the
                                            ; CLV, A = ihi preserved
 
@@ -847,38 +847,38 @@ ct_il_z:
    LDA #0
    BEQ ct_il                               ; (always: A = 0)
 ct_r1out_r2f:
-   ZERO bca_ilo                            ; (R,F)/(L,F): the box wraps in
+   ZERO bca_ilo                            ; (R,F)/(L,F): the box wraps in ;#            0.1
                                         ; from the left edge — ilo = 0
                                         ; (visok reloads A from bca_ihi)
-   JMP visok                               ; (bca_ihi stored at ct_ih)
+   JMP visok                               ; (bca_ihi stored at ct_ih)    ;#            0.0
 ct_r2out:
 ; A = r2 hi in [4,15]. X is free (the tail entry owns it):
 ; bank r2's R/L class there, then classify r1.
-   LDX #0
-   CMP #10
-   BCC ct_r2have                           ; hi < 10: R (X = 0)
-   INX                                     ; else L (X = 1)
+   LDX #0                                                                 ;#            0.1
+   CMP #10                                                                ;#            0.1
+   BCC ct_r2have                           ; hi < 10: R (X = 0)           ;#            0.1
+   INX                                     ; else L (X = 1)               ;#            0.0
 ct_r2have:
-   LDA bca_p1                              ; r1'' build (same as ct_left)
-   SEC
-   SBC #(2*EPSILON_F)
-   TAY
-   LDA bca_p1+1
-   SBC #0
-   AND #$0F
-   CMP #4
-   BCC ct_f_r2out                          ; r1 in F: [col1, 255]
+   LDA bca_p1                              ; r1'' build (same as ct_left) ;#            0.1
+   SEC                                                                    ;#            0.1
+   SBC #(2*EPSILON_F)                                                     ;#            0.1
+   TAY                                                                    ;#            0.1
+   LDA bca_p1+1                                                           ;#            0.1
+   SBC #0                                                                 ;#            0.1
+   AND #$0F                                                               ;#            0.1
+   CMP #4                                                                 ;#            0.1
+   BCC ct_f_r2out                          ; r1 in F: [col1, 255]         ;#            0.1
 ; both corners out: (L,R) -> full, everything else -> cull
-   CMP #10
-   BCC cull                           ; r1 = R: (R,R)/(R,L) cull
-   CPX #0
-   BEQ full_vis                           ; (L,R): full
+   CMP #10                                                                ;#            0.0
+   BCC cull                           ; r1 = R: (R,R)/(R,L) cull          ;#            0.0
+   CPX #0                                                                 ;#            0.0
+   BEQ full_vis                           ; (L,R): full                   ;#            0.0
 cull:                                      ; THE cull exit — (L,L) FALLS in
                                            ; off the untaken BEQ above; the
                                            ; others branch direct.
-   CLC                                     ; C=0: to the walk a cull IS a
+   CLC                                     ; C=0: to the walk a cull IS a ;#            0.0
                                            ; no-gap return (BCC skips)
-   BIT cull_rts                            ; V=1 tells the dcap store 'angle
+   BIT cull_rts                            ; V=1 tells the dcap store 'angle ;#            0.1
                                            ; cull' (code 1) apart from
                                            ; no-gap (V=0 via visok's CLV).
                                            ; The operand is the RTS below:
@@ -890,14 +890,14 @@ cull:                                      ; THE cull exit — (L,L) FALLS in
                                            ; and N from bit7 — both already
                                            ; undefined in the contract.)
 cull_rts:
-   RTS                                     ; signature C=0/V=1; A undefined
+   RTS                                     ; signature C=0/V=1; A undefined ;#            0.1
 full_vis:
-   ZERO bca_ilo
-   CLV                                     ; V=0: extent verdict (see the
+   ZERO bca_ilo                                                           ;#            0.1
+   CLV                                     ; V=0: extent verdict (see the ;#            0.0
                                            ; C/V-CONTRACT at visok)
-   LDA #255                                ; ihi rides in A (A-hi ABI) AND
-   STA bca_ihi                             ; lands for the dst*_ext record
-   JMP span_has_gap                          ; FUSED EXIT (2026-07-18): every
+   LDA #255                                ; ihi rides in A (A-hi ABI) AND ;#            0.0
+   STA bca_ihi                             ; lands for the dst*_ext record ;#            0.0
+   JMP span_has_gap                          ; FUSED EXIT (2026-07-18): every ;#            0.0
                                            ; visible exit chains straight into
                                            ; has_gap on the freshly-written
                                            ; interval — the caller gets the
@@ -909,9 +909,9 @@ ct_f_r2out:
 ; both live into lk_left; the old TAX/LDA/STA/TXA dance is dead).
 ; C=0 from the BCC — LDX/STX/JMP preserve it into lk_left's pointer
 ; ADC. The store feeds the dst*_ext record + visok's reload.
-   LDX #255
-   STX bca_ihi
-   JMP lk_left
+   LDX #255                                                               ;#            0.1
+   STX bca_ihi                                                            ;#            0.1
+   JMP lk_left                                                            ;#            0.1
 
 ; ============================================================================
 ; ROTATION COHERENCE CACHE
@@ -965,69 +965,69 @@ ct_f_r2out:
 .macro CPM_ENTRY name, negx, negy, obase
    .local cmiss0, cmiss1, cmiss2, cmiss3, czx, czy
 name:
-   CMP CPM_KDYH,X                          ; stage 0: A = dy hi, no load
-   BNE cmiss0
-   LDA pa_dy
+   CMP CPM_KDYH,X                          ; stage 0: A = dy hi, no load  ;# ||         1.4
+   BNE cmiss0                                                             ;# |          0.8
+   LDA pa_dy                                                              ;# |          0.8
    CMP CPM_KDYL,X
-   BNE cmiss1
-   LDA pa_dx
-   CMP CPM_KDXL,X
-   BNE cmiss2
-   LDA pa_dx+1
-   CMP CPM_KDXH,X
-   BNE cmiss3
-   LDA CPM_PSIL,X                          ; HIT: serve psi; X = slot
-   STA pa_res                              ; rides through untouched
-   LDA CPM_PSIH,X
-   STA pa_res+1
-   JMP cp_havepsi_hit                      ; C=1 PROVEN: all four probe
+   BNE cmiss1                                                             ;# |          0.7
+   LDA pa_dx                                                              ;#            0.4
+   CMP CPM_KDXL,X                                                         ;#            0.2
+   BNE cmiss2                                                             ;#            0.3
+   LDA pa_dx+1                                                            ;#            0.4
+   CMP CPM_KDXH,X                                                         ;# |          0.5
+   BNE cmiss3                                                             ;#            0.1
+   LDA CPM_PSIL,X                          ; HIT: serve psi; X = slot     ;#            0.2
+   STA pa_res                              ; rides through untouched      ;#            0.4
+   LDA CPM_PSIH,X                                                         ;# |          0.5
+   STA pa_res+1                                                           ;#            0.4
+   JMP cp_havepsi_hit                      ; C=1 PROVEN: all four probe   ;#            0.4
                                         ; CMPs matched (equality sets C),
                                         ; the serve preserves it — skip
                                         ; the SEC (carry-flow audit
                                         ; 2026-07-22)
 cmiss0:
-   STA CPM_KDYH,X                          ; staggered key bank: enter at
-   LDA pa_dy                               ; the missed stage, store the
+   STA CPM_KDYH,X                          ; staggered key bank: enter at ;#            0.4
+   LDA pa_dy                               ; the missed stage, store the  ;#            0.0
 cmiss1:
-   STA CPM_KDYL,X                          ; byte in A, load-store the
-   LDA pa_dx                               ; rest; matched bytes are
+   STA CPM_KDYL,X                          ; byte in A, load-store the    ;# |          1.0
+   LDA pa_dx                               ; rest; matched bytes are      ;# |          0.6
 cmiss2:
-   STA CPM_KDXL,X                          ; already in the planes
-   LDA pa_dx+1
+   STA CPM_KDXL,X                          ; already in the planes        ;# |          1.0
+   LDA pa_dx+1                                                            ;# |          0.6
 cmiss3:
-   STA CPM_KDXH,X                          ; the validity mark (made good
+   STA CPM_KDXH,X                          ; the validity mark (made good ;# |          0.5
                                            ; when the psi lands; single-
                                            ; threaded, no early outs)
-   STX zp_cpm_slot                         ; slot to zp on the MISS path
+   STX zp_cpm_slot                         ; slot to zp on the MISS path  ;#            0.3
                                            ; only — X becomes the octant
-   LDX #obase
-   ORA pa_dx                               ; A = pa_dx+1 (converged): the
-   BEQ czx                                 ; x zero-out costs no load
+   LDX #obase                                                             ;# |          0.4
+   ORA pa_dx                               ; A = pa_dx+1 (converged): the ;# |          0.6
+   BEQ czx                                 ; x zero-out costs no load     ;#            0.4
 .if negx
-   LDA #0                                  ; |dx| = -dx in place (dx <= 0)
-   SEC
-   SBC pa_dx
-   STA pa_dx
-   LDA #0
-   SBC pa_dx+1
-   STA pa_dx+1
+   LDA #0                                  ; |dx| = -dx in place (dx <= 0) ;#            0.2
+   SEC                                                                    ;#            0.2
+   SBC pa_dx                                                              ;# |          0.6
+   STA pa_dx                                                              ;# |          0.6
+   LDA #0                                                                 ;#            0.4
+   SBC pa_dx+1                                                            ;#            0.3
+   STA pa_dx+1                                                            ;#            0.3
 .endif
 .if negy
    LDA #0                                  ; |dy| = -dy in place (dy <= 0);
-   SEC                                     ; the zero-out folds into the
-   SBC pa_dy                               ; negate's final ORA
-   STA pa_dy
+   SEC                                     ; the zero-out folds into the  ;#            0.2
+   SBC pa_dy                               ; negate's final ORA           ;#            0.3
+   STA pa_dy                                                              ;#            0.3
    LDA #0
-   SBC pa_dy+1
-   STA pa_dy+1
-   ORA pa_dy
+   SBC pa_dy+1                                                            ;#            0.3
+   STA pa_dy+1                                                            ;#            0.3
+   ORA pa_dy                                                              ;#            0.3
    BEQ czy
 .else
-   LDA pa_dy+1                             ; |dy| = dy already (dy >= 0):
-   ORA pa_dy                               ; just the zero-out
-   BEQ czy
+   LDA pa_dy+1                             ; |dy| = dy already (dy >= 0): ;#            0.3
+   ORA pa_dy                               ; just the zero-out            ;#            0.3
+   BEQ czy                                                                ;#            0.2
 .endif
-   JMP lf_ns
+   JMP lf_ns                                                              ;# |          0.6
 czx:
    JMP ns_dx0
 czy:
@@ -1041,10 +1041,10 @@ czy:
 SEG_HIGHX
 angx_head:
 .endif
-CPM_ENTRY corner_phi_nn, 1, 1, 6
-CPM_ENTRY corner_phi_pn, 0, 1, 2
-CPM_ENTRY corner_phi_np, 1, 0, 4
-CPM_ENTRY corner_phi_pp, 0, 0, 0
+CPM_ENTRY corner_phi_nn, 1, 1, 6                                          ;# ||||       3.6
+CPM_ENTRY corner_phi_pn, 0, 1, 2                                          ;# |          1.2
+CPM_ENTRY corner_phi_np, 1, 0, 4                                          ;# |          0.6
+CPM_ENTRY corner_phi_pp, 0, 0, 0                                          ;# |          0.5
 
 ; ============================================================================
 ; Width arms — the 16-bit reductions, placed ABOVE lf_ns so its
@@ -1202,20 +1202,20 @@ lf_ns:
 ; pure 8-bit — the wide arms are one-in-a-thousand): one ORA+branch
 ; replaces the two load/branch pairs on the hot lane; the rare-wide
 ; island re-splits.
-   LDA pa_dx+1
-   ORA pa_dy+1
-   BNE ns_wide
+   LDA pa_dx+1                                                            ;# |          0.7
+   ORA pa_dy+1                                                            ;# |          0.7
+   BNE ns_wide                                                            ;# |          0.4
 ; both 8-bit (the common case): direct table reads, no reduction
-   LDY pa_dy
-   LDA L8_TAB,Y                            ; L8[|dy|]
-   LDY pa_dx
-   SEC
-   SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|]
-   BCS ns_khave                            ; s >= 0 (ties ride k = 0)
+   LDY pa_dy                                                              ;# |          0.7
+   LDA L8_TAB,Y                            ; L8[|dy|]                     ;# |          0.9
+   LDY pa_dx                                                              ;# |          0.7
+   SEC                                                                    ;# |          0.4
+   SBC L8_TAB,Y                            ; s = L8[|dy|] - L8[|dx|]      ;# |          0.9
+   BCS ns_khave                            ; s >= 0 (ties ride k = 0)     ;# |          0.5
 ns_neg:
-   EOR #$FF                                ; k = -s (C = 0 on every
-   ADC #1                                  ; arrival: the ADC supplies
-   INX                                     ; exactly +1); axgt
+   EOR #$FF                                ; k = -s (C = 0 on every       ;#            0.4
+   ADC #1                                  ; arrival: the ADC supplies    ;#            0.4
+   INX                                     ; exactly +1); axgt            ;#            0.4
 ; ---------------------------------------------------------------------------
 ; ns_khave — compose psi = base[oct] +/- ta, mod 4096, straight off
 ; the AE tables. The sign is tested BEFORE the reads (N flag off the
@@ -1232,25 +1232,25 @@ ns_neg:
 ; base either way) and enter at mask_done with psi = base staged.
 ; ---------------------------------------------------------------------------
 ns_khave:
-   TAY                                     ; k
-   LDA pa_sign,X                           ; octant sign, N off the load
-   BMI khave_sub
-   LDA AE_LO,Y
-   STA pa_res                              ; psi lo = ta lo
-   LDA AE_HI,Y
-   CLC
-   ADC pa_base_hi,X                        ; psi hi = base + ta hi
-   STA pa_res+1
+   TAY                                     ; k                            ;# |          0.4
+   LDA pa_sign,X                           ; octant sign, N off the load  ;# |          0.9
+   BMI khave_sub                                                          ;# |          0.6
+   LDA AE_LO,Y                                                            ;# |          0.4
+   STA pa_res                              ; psi lo = ta lo               ;#            0.3
+   LDA AE_HI,Y                                                            ;# |          0.4
+   CLC                                                                    ;#            0.2
+   ADC pa_base_hi,X                        ; psi hi = base + ta hi        ;# |          0.4
+   STA pa_res+1                                                           ;#            0.3
 mask_done:
 ; psi memo store; entries persist forever (psi is a pure function of
 ; the key). The LDX does double duty: store index AND the X = slot
 ; return contract (the octant chain repurposed X) — both mask_done
 ; and khave_sub's exit depend on it, so list its duties before
 ; touching it.
-   LDX zp_cpm_slot
-   STA CPM_PSIH,X
-   LDA pa_res
-   STA CPM_PSIL,X
+   LDX zp_cpm_slot                                                        ;# |          0.7
+   STA CPM_PSIH,X                                                         ;# |          1.1
+   LDA pa_res                                                             ;# |          0.7
+   STA CPM_PSIL,X                                                         ;# |          1.1
 cp_havepsi:
 ; r = (afn - psi) & 4095, pure u12 (consumers do mod-4096 arithmetic
 ; on the hi nibble directly). pa_res stays stored: the psi-hi SBC and
@@ -1262,25 +1262,25 @@ cp_havepsi:
 ; MIXED — add-compose C=0 (the no-wrap ADC), khave_sub C=1 (sub bases
 ; can't borrow), zero-delta arms inherit the classify's C — so the
 ; SEC stays for the fall-through; memo hits enter past it.
-   SEC
+   SEC                                                                    ;# |          0.4
 cp_havepsi_hit:
-   LDA bca_afn
-   SBC pa_res
-   TAY                                     ; r lo rides Y to the caller
-   LDA bca_afn+1
-   SBC pa_res+1
-   AND #$0F
-   RTS
+   LDA bca_afn                                                            ;# |          1.1
+   SBC pa_res                                                             ;# |          1.1
+   TAY                                     ; r lo rides Y to the caller   ;# |          0.7
+   LDA bca_afn+1                                                          ;# |          1.1
+   SBC pa_res+1                                                           ;# |          1.1
+   AND #$0F                                                               ;# |          0.7
+   RTS                                                                    ;# |||        2.2
 khave_sub:
-   SEC
-   LDA #0
-   SBC AE_LO,Y                             ; psi lo = -ta lo, borrow out
-   STA pa_res
-   LDA pa_base_hi,X
-   SBC AE_HI,Y                             ; psi hi = base - ta hi - b
-   AND #$0F                                ; octant 3's mod-4096 wrap
-   STA pa_res+1
-   JMP mask_done
+   SEC                                                                    ;#            0.2
+   LDA #0                                                                 ;#            0.2
+   SBC AE_LO,Y                             ; psi lo = -ta lo, borrow out  ;# |          0.4
+   STA pa_res                                                             ;#            0.3
+   LDA pa_base_hi,X                                                       ;# |          0.4
+   SBC AE_HI,Y                             ; psi hi = base - ta hi - b    ;# |          0.4
+   AND #$0F                                ; octant 3's mod-4096 wrap     ;#            0.2
+   STA pa_res+1                                                           ;#            0.3
+   JMP mask_done                                                          ;#            0.3
 ns_x8y16:
 ; |dx| 8-bit, |dy| 16-bit: axgt static clear.
 ; (relocated below khave_sub 2026-07-20: puts the arm in FORWARD BNE

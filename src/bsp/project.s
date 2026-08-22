@@ -484,7 +484,15 @@ py_stored:                                 ; (C02 ptail re-enters here past
 ; write-back/reload and the TYA shuttle were staged-then-copied lard.
 ; (zp_br_res_h is NOT an output: the hit path never writes it, so no
 ; caller may rely on it — the register contract is the whole truth.)
-   JSR rns_go
+   CLC                                     ; hoisted from every kernel: all
+                                        ; bodies enter C=0 (their round ADC
+                                        ; is the first carry consumer;
+                                        ; rns32 is NOT dispatched here and
+                                        ; keeps its own CLC)
+::rns_call:                                ; global: rns_go_op derives from it
+   JSR rns_s8                              ; SMC: operand LO = live shifter
+                                        ; (default arbitrary — every
+                                        ; dispatch is select-dominated)
    LDX zp_pyc_idx
    LDA #128
    SEC
@@ -507,8 +515,8 @@ py_stored:                                 ; (C02 ptail re-enters here past
 ; VWHC valid flag) is a per-vertex constant, so the shifter is selected
 ; ONCE per reciprocal and each projection dispatches with a single JSR:
 ;
-;   rns_go:  JSR'd by br_project_x and project_y's raw body (both this
-;            file). It is ONE instruction — JMP <body> — whose OPERAND is
+;   rns dispatch: project_y's raw body carries it inline (br_project_x's
+;            round trip was inlined away 2026-07-26).  The JSR's OPERAND is
 ;            the live shifter (SMC, 2026-07-12): rns_select below and the
 ;            three INLINED selects in subsector.s's y_stage write
 ;            rns_go+1/+2 from the rns_vec tables. No ZP vector (the old
@@ -775,31 +783,19 @@ rns_s10:
 .assert >rns_s3 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s4 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 
-rns_go:
-   CLC                                     ; hoisted from every kernel: all
-                                        ; bodies enter C=0 (their round
-                                        ; ADC is the first carry consumer;
-                                        ; rns32 is NOT dispatched here and
-                                        ; keeps its own CLC)
-rns_go_op = rns_go + 2                     ; SMC patch point: the JMP operand
-                                        ; LO byte. ALL select sites store
-                                        ; here — NEVER rns_go+1, that is
-                                        ; the JMP opcode (the CLC above
-                                        ; shifted the encoding, 2026-07-13)
-   JMP rns_s8                              ; operand LO byte = live shifter
-                                        ; (power-on default: PROVEN never
-                                        ; executed — every dispatch is
-                                        ; select-dominated; rns_s8 is an
-                                        ; arbitrary live kernel)
-                                        ; (SMC by the inlined selects; the
-                                        ; HI byte is CONSTANT — all kernel
-                                        ; entries share one 256-byte
-                                        ; window, asserted above — so a
-                                        ; select patches ONE byte)
+; (rns_go RETIRED 2026-08-22: a CLC + SMC JMP trampoline with a SINGLE
+;  caller — project_y's raw body.  br_project_x's round trip through it
+;  was inlined away on 2026-07-26, and the stale note above still says
+;  otherwise; it is corrected there.  The caller now carries both the
+;  CLC and the dispatch: CLC 2 + JSR 6 = 8, against the old JSR 6 + CLC
+;  2 + JMP 3 = 11, on 179 calls a frame.
+;
+;  rns_go_op keeps its NAME and simply moves to that JSR's operand, so
+;  all six select sites are untouched.  It must point at rns_call + 1:
+;  rns_call itself is the JSR opcode, which is the same off-by-one the
+;  2026-07-13 note records for rns_go + 1.)
+rns_go_op = rns_call + 1
 
-; (the rns_select SUBROUTINE is retired 2026-07-15: RNS_SELECT macro
-; in bsp/header.s expands at every select site — each already had S in
-; A, so the JSR/RTS and the zp_br_r_s reload were pure tax.)
 rns_vec_all:                               ; ONE table, net shift -2..10 in
    .byte <rns_sm2, <rns_sm1, <rns_s0      ; order; the shrink indexes it
 rns_vec_l:                                ; with X = net+3, the regular

@@ -366,16 +366,16 @@ tfs_bot_be:                                ; (likewise unreferenced)
    BEQ tfs_pfx_none                        ; empty list                   ;# |          0.1
    LDA zp_i_l                              ; ilo rides A through the scan ;# ||         0.2
    CMP POOL_XEND,X                                                        ;# ||         0.3
-   BCC tfs_pfx_none                        ; head already reaches past ilo ;# |          0.2
+   BCC tfs_pfx_none                        ; head already reaches past ilo ;# |          0.1
    STX zp_head                             ; adopt the prefix as the new list ;# |          0.2
 tfs_pfx_loop:                              ; X = a prefix span
    LDY POOL_NEXT,X                                                        ;# |||        0.4
    BEQ tfs_pfx_all                         ; the WHOLE list is prefix     ;# ||         0.2
    CMP POOL_XEND,Y                                                        ;# |||        0.4
-   BCC tfs_pfx_split                       ; Y is the first overlapper    ;# |||        0.3
+   BCC tfs_pfx_split                       ; Y is the first overlapper    ;# ||         0.2
    TYA                                                                    ;# |          0.1
    TAX                                                                    ;# |          0.1
-   BNE tfs_pfx_loop                        ; always (a live slot != 0)    ;# |          0.2
+   BNE tfs_pfx_loop                        ; always (a live slot != 0)    ;# |          0.1
 tfs_pfx_split:                             ; X = last prefix, Y = sweep start
    STY zp_old_cur                                                         ;# |          0.2
    STX zp_new_tail                                                        ;# |          0.2
@@ -517,8 +517,8 @@ tfs_fp_emit:
 ; Each pass handles one interval [cur_x, next_x] over which the
 ; dominating source (record vs pool) is constant on both sides.
 tfs_inner:
-   LDA TFS_CUR_X                                                          ;# |||||      0.5
-   CMP TFS_X_HI                                                           ;# |||||      0.5
+   LDA TFS_CUR_X                                                          ;# |||||      0.6
+   CMP TFS_X_HI                                                           ;# |||||      0.6
    BCC tfs_inner_go                                                       ;# ||||       0.5
    JMP tfs_inner_done                                                     ;# ||         0.3
 tfs_inner_go:
@@ -561,7 +561,7 @@ tfs_st_bot:
    TAY                                                                    ;# ||         0.2
    LDA TFS_CUR_X                           ; INVERTED (mirror of st_top)  ;# ||         0.3
    CMP BOT_RECORDS,Y                                                      ;# |||        0.4
-   BCC tfs_st_bot_done                                                    ;# |||        0.4
+   BCC tfs_st_bot_done                                                    ;# ||         0.3
 tfs_st_bot_stale:
    LDA TFS_B_CUR
    CLC
@@ -900,7 +900,7 @@ tfs_advance_curs:
 ; Advance the cursor by 4, wrapping to 0 (exhausted) at BUFEND.
 ; Advance T_CUR if next_x crossed T.xr.
    LDA TFS_T_CUR                                                          ;# |||        0.3
-   BEQ tfs_skip_t_adv                                                     ;# ||         0.2
+   BEQ tfs_skip_t_adv                                                     ;# ||         0.3
    AND TFS_TOP_DOM                         ; $FF-transparent: A stays CUR ;# ||         0.2
    BEQ tfs_skip_t_adv                      ; (0 iff not dominating) — the ;# |          0.1
    CLC                                     ; reload died (2026-08-11)     ;# |          0.1
@@ -908,7 +908,7 @@ tfs_advance_curs:
    TAY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
    CMP TFS_NEXT_X                                                         ;# ||         0.2
-   BNE tfs_skip_t_adv                                                     ;# |          0.1
+   BNE tfs_skip_t_adv                                                     ;# ||         0.2
    LDA TFS_T_CUR                                                          ;# |          0.1
    CLC                                                                    ;# |          0.1
    ADC #4                                                                 ;# |          0.1
