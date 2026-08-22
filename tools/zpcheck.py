@@ -36,13 +36,59 @@ def parse(path):
     return entries
 
 
-def used_addresses(entries):
+SRC_ROOT = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..'))
+
+
+def observed_widths():
+    """Widest NAME+K reference found anywhere in the sources.
+
+    The `w=` annotation is hand-maintained and CAN be forgotten — and a
+    missing one is invisible until something lands on the high byte of a
+    16-bit variable and corrupts it under a phase overlap.  That is the
+    whole family of "free-note traps" (zp_bv_entry's $64, zp_vf_vec1's
+    $7E, zp_tail_vec's $CB), and on 2026-08-22 it bit again: $5E was
+    taken for zp_seg_end_x while zp_anim_p at $5D was 2 bytes wide and
+    said so only in prose.  So DERIVE the width from actual use: if any
+    source writes `name+1`, the variable is at least 2 bytes."""
+    widths = {}
+    pat = re.compile(r'\b([A-Za-z_]\w*)\s*\+\s*(\d+)\b')
+    for dirpath, _, files in os.walk(SRC_ROOT):
+        rel = os.path.relpath(dirpath, SRC_ROOT)
+        if rel.split(os.sep)[0] in ('.git', 'build', 'tools'):
+            continue                       # (normpath + relpath: SRC_ROOT
+                                           #  used to be ".../tools/..", so
+                                           #  a substring test skipped EVERY
+                                           #  directory and the check was
+                                           #  silently dead)
+        for fn in files:
+            if not fn.endswith(('.s', '.inc', '.asm')):
+                continue
+            try:
+                txt = open(os.path.join(dirpath, fn), errors='ignore').read()
+            except OSError:
+                continue
+            for m in pat.finditer(txt):
+                k = int(m.group(2))
+                if k < 8:                      # struct strides are not widths
+                    n = m.group(1)
+                    widths[n] = max(widths.get(n, 1), k + 1)
+    return widths
+
+
+def used_addresses(entries, strict=False):
     used = {}
+    obs = observed_widths()
     for _, name, val, com in entries:
         if val is None:
             continue
         m = re.search(r'w=(\d+)', com)
-        width = int(m.group(1)) if m else 1
+        declared = int(m.group(1)) if m else 1
+        width = max(declared, obs.get(name, 1))
+        if strict and width > declared:
+            print(f'  WIDTH: {name} = ${val:02X} is declared w={declared} but '
+                  f'the sources reference {name}+{width - 1} — '
+                  f'${val + declared:02X}..${val + width - 1:02X} are NOT free')
         used.setdefault(val, []).append(name)
         for off in range(1, width):
             used.setdefault(val + off, []).append(f'{name}+{off}')
@@ -58,7 +104,7 @@ def free_slots(used):
 
 def main():
     entries = parse(ZP_INC)
-    used = used_addresses(entries)
+    used = used_addresses(entries, strict=True)
     free = free_slots(used)
     pending = [(i, n) for i, n, v, _ in entries if v is None]
 
