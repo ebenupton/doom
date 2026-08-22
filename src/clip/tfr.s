@@ -47,23 +47,42 @@ ta_try_merge:
 ; fifth) and FUSED by transitivity: once TL,Y == TL,X, that one value
 ; rides A through all four top-side compares (TLy==TLx==TRy==TRx is
 ; the same conjunction as the old pairwise tests); bottom mirrors.
-   LDA POOL_TL,Y
-   CMP POOL_TL,X                           ; constants match (top)?
-   BNE ta_link
-   CMP POOL_TR,Y                           ; tail constant-line (top)?
-   BNE ta_link
-   CMP POOL_TR,X                           ; new constant-line (top)?
-   BNE ta_link
-   LDA POOL_BL,Y
-   CMP POOL_BL,X                           ; constants match (bottom)?
-   BNE ta_link
-   CMP POOL_BR,Y                           ; tail constant-line (bottom)?
-   BNE ta_link
-   CMP POOL_BR,X                           ; new constant-line (bottom)?
-   BNE ta_link
-; Contiguous active ranges? (abutting: tail.xend == new.xstart)
+; SAME-LINE test (2026-08-22, source anchoring). The old test asked
+; whether both spans were CONSTANT with equal values — the only cheap
+; way to prove they lay on one line back when TL/TR were the values at
+; each span's OWN ends. Now the anchors ARE the source line, so "same
+; line" is plain equality on (anchor, den, yl, yr), which also catches
+; the SLOPED co-linear pairs the constant test had to give up on.
+; WITHOUT this the change is a NET LOSS: a sloped source no longer
+; looks constant over a narrow span, so nearly every merge failed and
+; the span count exploded (heavy scene 33 -> 46).
+; Abutting is tested first — cheapest reject.
    LDA POOL_XEND,Y
    CMP POOL_XSTART,X
+   BNE ta_link
+   LDA POOL_TL,Y
+   CMP POOL_TL,X
+   BNE ta_link
+   LDA POOL_TR,Y
+   CMP POOL_TR,X
+   BNE ta_link
+   LDA POOL_XLO,Y
+   CMP POOL_XLO,X
+   BNE ta_link
+   LDA POOL_DEN,Y
+   CMP POOL_DEN,X
+   BNE ta_link
+   LDA POOL_BL,Y
+   CMP POOL_BL,X
+   BNE ta_link
+   LDA POOL_BR,Y
+   CMP POOL_BR,X
+   BNE ta_link
+   LDA POOL_BXLO,Y
+   CMP POOL_BXLO,X
+   BNE ta_link
+   LDA POOL_BDEN,Y
+   CMP POOL_BDEN,X
    BNE ta_link
 ; |
 ; Merge: extend tail's xend to cover new, then free X (free_span
