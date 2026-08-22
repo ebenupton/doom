@@ -1267,11 +1267,18 @@ szr_t1:
    AND #$04
    BEQ szr_open
    LDX #zp_seg_sy2_btop_l - VX1            ; sy2_btop (bt2)
-   JSR szr_gt
-   BCS szr_closed
+   JMP szr_gt                              ; TAIL: the last test's carry IS
+                                        ; the verdict, so the old
+                                        ; BCS szr_closed + fall-into-szr_open
+                                        ; pair was just re-encoding szr_gt's
+                                        ; own C.  -14 cycles, -5 bytes.
+                                        ; The two labels below MUST stay:
+                                        ; five other branches target them
+                                        ; (szr_closed x3, szr_open x2).
 szr_open:
-   RTS                                     ; C=0 — both szr_gt exits arrive
-                                        ; via BCS-not-taken
+   RTS                                     ; C=0 — every arrival is a
+                                        ; BCS-not-taken or a BCC, and the
+                                        ; intervening LDA/AND leave C alone
 szr_closed:
    SEC
    RTS
