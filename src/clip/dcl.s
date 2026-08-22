@@ -640,8 +640,10 @@ dv_cy2_ok:
 ; Emit if cy1 <= cy2  (swapped compare: cy2 >= cy1 is one BCS;
 ; A = cy2 rides out of both min() arms)
    CMP zp_cb_cy1
-   BCS dv_emit
-   RTS                                     ; line clipped away
+   BCC dv_clipped_away                     ; INVERTED 2026-08-22 (census:
+                                        ; 96.2% of verticals emit, so the
+                                        ; emit path now FALLS THROUGH and
+                                        ; the reject takes the branch)
 dv_emit:
 ; Stage the rasteriser ZP args (x, cy1, x, cy2), un-biasing Y (biased
 ; [48,207] -> screen [0,159]) and tail-call the vertical plotter.
@@ -662,6 +664,8 @@ dv_emit:
    JMP plot_v                              ; always vertical on this path
 pq_enq_j:
    JMP plot_enq
+dv_clipped_away:
+   RTS                                     ; cy1 > cy2: clipped away (3.8%)
 
 ; ========== Phase 4: CB clip (clip_to_span) ==========
 ; Exact clip of the line against the span's trapezoid aperture.
@@ -1227,13 +1231,19 @@ dcl_es_ok_noreload:                        ; BNE arrives with start_y live)
    CMP #Y_BIAS
    BCC dcl_es_yband
    CMP #(VIS_YMAX + 1)
-   BCC dcl_es_record                       ; in-band: one taken branch
-                                        ; (inverted 2026-08-12; the rare
-                                        ;  yband clip falls in)
-dcl_es_yband:
-   JSR dcl_yband_clip
-   BCC dcl_es_record
-   RTS                                     ; fully off-screen -> drop segment
+   BCS dcl_es_yband                        ; RE-INVERTED 2026-08-22 (branch
+                                        ; census): the 2026-08-12 note
+                                        ; claimed "the rare yband clip
+                                        ; falls in", but it had the RARE
+                                        ; block in the fall-through and
+                                        ; made the COMMON in-band path
+                                        ; take a branch — measured 100%
+                                        ; taken over 20 frames, with the
+                                        ; yband arm never firing at all.
+                                        ; Now the common path falls
+                                        ; straight into the record hook
+                                        ; and the clip arm is an island
+                                        ; below (see dcl_es_yband).
 dcl_es_record:
 ; --- Records hook: ONE record per surviving segment ---
 ; Segment record format: 4 bytes (xl, yl, xr, yr).
@@ -1326,6 +1336,17 @@ des_diag:                                  ; FALLS THROUGH
 ; sub-1:33 lines to amortize even the dispatch test. See the
 ; 'experiment: run-slice' commit to revive.)
    JMP RASTER_ENTRY                        ; tail-call rasteriser
+
+; --- rare-arm island: the Y-band safety clip (2026-08-22). Reached only
+;     when an emitted segment has an endpoint outside [Y_BIAS,VIS_YMAX];
+;     it did not fire once across the 20-frame census, so it costs the
+;     hot path nothing here. ---
+dcl_es_yband:
+   JSR dcl_yband_clip
+   BCC dcl_es_record_j                     ; clipped to something visible
+   RTS                                     ; fully off-screen -> drop segment
+dcl_es_record_j:
+   JMP dcl_es_record
 
 .endscope
 
