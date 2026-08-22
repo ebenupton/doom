@@ -36,6 +36,41 @@ LC_M_R0 = $D3                     ; [clip]
 LC_M_R1 = $D4                     ; [clip]
 TFS_BOT_DOM = $D6                 ; [clip]
 TFS_PEND_ACT = $D8                ; [clip]
+; --- TFS sweep state, PROMOTED FROM $0600-$061B 2026-08-22 -----------
+; The tighten sweep touches this block 2,379 times on the heavy frame
+; (tools/zpheat.py), so absolute addressing was costing ~0.5% of that
+; frame and a byte per instruction.  Scattered addresses are fine: no
+; TFS byte is reached by index or +offset — they are all plain scalars
+; (checked before the move).  The bytes came from 24 dead ZP symbols
+; plus 5 cold evictions; see the zp-crunch commit.
+TFS_TOP_L = $54                   ; [clip]; top y at TFS_TOP_XL
+TFS_TOP_R = $55                   ; [clip]; top y at TFS_TOP_XL + TFS_TOP_DEN
+TFS_BOT_L = $56                   ; [clip]
+TFS_BOT_R = $57                   ; [clip]
+TFS_TOP_XL = $2D                  ; [clip]; top line's own anchor
+TFS_TOP_DEN = $2E                 ; [clip]
+TFS_BOT_XL = $2F                  ; [clip]; bottom line's own anchor
+TFS_BOT_DEN = $37                 ; [clip]
+TFS_TOP_KIND = $B7                ; [clip]; 0 = pool, 1 = top record
+TFS_TOP_ID = $B9                  ; [clip]; pool slot or record offset
+TFS_BOT_KIND = $BB                ; [clip]; 0 = pool, 1 = bot record
+TFS_BOT_ID = $BF                  ; [clip]
+TFS_TOP_BUFEND = $CF              ; [clip]; 1 + top_count*4 (first invalid offset)
+TFS_BOT_BUFEND = $DD              ; [clip]
+TFS_PEND_XL = $4E                 ; [clip]
+TFS_PEND_XR = $6B                 ; [clip]
+TFS_PEND_TL = $48                 ; [clip]
+TFS_PEND_TR = $49                 ; [clip]
+TFS_PEND_BL = $4A                 ; [clip]
+TFS_PEND_BR = $4B                 ; [clip]
+TFS_PEND_TKIND = $C4              ; [clip]
+TFS_PEND_TID = $C5                ; [clip]
+TFS_PEND_BKIND = $CC              ; [clip]
+TFS_PEND_BID = $CD                ; [clip]
+TFS_PEND_TXL = $1C                ; [clip]; pending copies of the two anchors
+TFS_PEND_TDEN = $1D               ; [clip]
+TFS_PEND_BXL = $38                ; [clip]
+TFS_PEND_BDEN = $44               ; [clip]
 TFS_X_HI = $E1                    ; [clip]
 LC_DY_LO = $FC                    ; [clip]
 LC_DY_HI = $FD                    ; [clip]
