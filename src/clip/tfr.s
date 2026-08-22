@@ -372,7 +372,7 @@ tfs_pfx_loop:                              ; X = a prefix span
    LDY POOL_NEXT,X                                                        ;# |||        0.4
    BEQ tfs_pfx_all                         ; the WHOLE list is prefix     ;# ||         0.2
    CMP POOL_XEND,Y                                                        ;# |||        0.4
-   BCC tfs_pfx_split                       ; Y is the first overlapper    ;# ||         0.2
+   BCC tfs_pfx_split                       ; Y is the first overlapper    ;# |||        0.3
    TYA                                                                    ;# |          0.1
    TAX                                                                    ;# |          0.1
    BNE tfs_pfx_loop                        ; always (a live slot != 0)    ;# |          0.2
