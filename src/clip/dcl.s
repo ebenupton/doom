@@ -1467,7 +1467,11 @@ pqd_loop:                                  ;  the do-while drains all 64)
    INY
    INY
    STY pqd_y
-   LDA RASTER_ZP_Y1
+                                        ; (LDA RASTER_ZP_Y1 deleted: A still
+                                        ;  holds it from the PLOTQ+3 load
+                                        ;  above — INY/STY do not touch A,
+                                        ;  and pqd_loop is upstream of that
+                                        ;  load so every entry passes it)
    CMP RASTER_ZP_Y0
    BNE pqd_not_h
    JSR plot_h
