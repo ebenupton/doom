@@ -137,16 +137,16 @@ dcl_records_off:
 ; test, which it now does by entering past it.)
    LDA zp_line_xl_l                                                       ;# |||||      0.6
 dclw_x:
-   CMP POOL_XEND,X                                                        ;# |||||||||| 1.1
+   CMP POOL_XEND,X                                                        ;# |||||||||| 1.2
    BCC dcl_not_left                                                       ;# ||||||     0.7
-   LDY POOL_NEXT,X                                                        ;# ||||||     0.6
+   LDY POOL_NEXT,X                                                        ;# ||||||     0.7
    BEQ dclw_flush                                                         ;# |||        0.3
-   CMP POOL_XEND,Y                                                        ;# ||||||     0.6
+   CMP POOL_XEND,Y                                                        ;# ||||||     0.7
    BCC dclw_found_y                                                       ;# |||        0.4
    LDX POOL_NEXT,Y                                                        ;# ||||       0.4
    BNE dclw_x                                                             ;# |||        0.3
 dclw_flush:
-   JMP dcl_flush                                                          ;#            0.0
+   JMP dcl_flush                                                          ;#            0.1
 dcl_to_vert:
    JMP dcl_vertical
 dclw_found_y:
@@ -157,7 +157,7 @@ dcl_not_left:
 
 ; --- Skip spans entirely right of line ---
 ; Done if xstart >= xr (all remaining spans are further right)
-   LDA POOL_XSTART,X                                                      ;# |||||||||  1.0
+   LDA POOL_XSTART,X                                                      ;# |||||||||  1.1
    CMP zp_line_xr_l                                                       ;# |||||||    0.8
    BCS dclw_flush                          ; xstart >= xr → done (18%;    ;# |||||      0.5
                                            ; backward to the flush island —
@@ -222,7 +222,7 @@ dcl_entry_path:
 ; --- Tier 1: outer bbox reject ---
    LDA zp_line_y_h                                                        ;# ||||||     0.7
    CMP POOL_OT,X                                                          ;# ||||||||   1.0
-   BCC dcl_reject_above                                                   ;# ||||||     0.6
+   BCC dcl_reject_above                                                   ;# ||||||     0.7
 ; yhi < OT → line above aperture
    LDA POOL_OB,X                                                          ;# ||||||     0.7
    CMP zp_line_y_l                                                        ;# ||||       0.5
@@ -230,7 +230,7 @@ dcl_entry_path:
 ; OB < ylo → line below aperture
 
 ; --- Tier 2: inner bbox accept ---
-   LDA zp_line_y_l                                                        ;# ||||       0.4
+   LDA zp_line_y_l                                                        ;# ||||       0.5
    CMP POOL_IT,X                                                          ;# |||||      0.6
    BCC dcl_amb_jmp                         ; ylo < max(tl,tr) → CB clip   ;# |||        0.3
    LDA POOL_IB,X                                                          ;# |||||      0.6
@@ -253,8 +253,8 @@ dcl_accept:
 ; That is the hot path, and it does no work at all — in particular it
 ; skips the entry interp, which the old portal check paid for.
    LDA zp_seg_start_x                                                     ;# |||        0.4
-   CMP #$FF                                                               ;# ||         0.2
-   BEQ dcl_acc_open                        ; nothing open -> open one     ;# ||||       0.4
+   CMP #$FF                                                               ;# ||         0.3
+   BEQ dcl_acc_open                        ; nothing open -> open one     ;# ||||       0.5
    LDA zp_ox0                                                             ;# |          0.1
    CMP zp_seg_end_x                                                       ;# |          0.1
    BEQ dcl_acc_extend                      ; contiguous -> just extend    ;# |          0.1
@@ -275,7 +275,7 @@ dcl_acc_open:
 ; dy == 0 → yl
 ; ox0 > xl, dy != 0: interp (rare path)
    STX zp_save0                                                           ;#            0.0
-   JSR dcl_line_y_at_ox0                   ; A = line_y_at(ox0)           ;#            0.0
+   JSR dcl_line_y_at_ox0                   ; A = line_y_at(ox0)           ;#            0.1
    LDX zp_save0                                                           ;#            0.0
    .byte $2C                               ; BIT abs: skip LDA            ;#            0.0
 dcl_accept_yl:
@@ -293,7 +293,7 @@ dcl_exit_check:
 ; Does the line end within this span? (xr <= xend — inclusive, because
 ; xend is the exclusive claim edge the line is allowed to run out to;
 ; see the ox1 note above)
-   LDA POOL_XEND,X                                                        ;# |||||      0.5
+   LDA POOL_XEND,X                                                        ;# |||||      0.6
    CMP zp_line_xr_l                                                       ;# ||||       0.4
    BCC dcl_advance                                                        ;# |||        0.3
 ; xend < xr → extends past: the segment stays OPEN and we simply walk on.
@@ -317,8 +317,21 @@ dcl_amb_jmp:
    JMP dcl_cb_clip                                                        ;# |          0.1
 dcl_reject_above:
 ; Not visible anywhere in this span, so an open run really did end at
-; zp_seg_end_x.  Close it FIRST (dcl_close_open_nx ordering contract).
-   JSR dcl_close_if_open                                                  ;# ||||       0.5
+; zp_seg_end_x.
+; Close any open run FIRST — the ordering contract on dcl_close_open_nx.
+; INLINED, with the X save INSIDE the branch: 97% of these calls find
+; nothing open (105 of 109, census over 5 scenes), and the old
+; JSR dcl_close_if_open -> STX -> JSR dcl_close_open_nx -> test -> RTS
+; -> LDX -> RTS spent 39 cycles to discover it.  The test alone is 9.
+   LDA zp_seg_start_x                                                     ;# ||         0.2
+   CMP #$FF                                                               ;# |          0.2
+   BEQ dcl_ra_closed                                                      ;# ||         0.2
+   STX zp_save0                            ; X = span slot, live below
+   JSR dcl_emit_open
+   LDX zp_save0
+   LDA #$FF
+   STA zp_seg_start_x
+dcl_ra_closed:
    LDA zp_dcl_rec_buf_h                    ; records off: plain reject    ;# ||         0.2
    BEQ dcl_outer_reject                                                   ;# ||         0.2
    LDA zp_dcl_out                          ; feedback: off-TOP evidence   ;# |          0.1
@@ -327,7 +340,20 @@ dcl_reject_above:
    LDA #0                                  ; verdict 'above' over [ox0,ox1] ;# |          0.1
    BEQ dcl_rej_rec                         ; (always)                     ;# |          0.1
 dcl_reject_below:
-   JSR dcl_close_if_open                                                  ;# |          0.1
+; Close any open run FIRST — the ordering contract on dcl_close_open_nx.
+; INLINED, with the X save INSIDE the branch: 97% of these calls find
+; nothing open (105 of 109, census over 5 scenes), and the old
+; JSR dcl_close_if_open -> STX -> JSR dcl_close_open_nx -> test -> RTS
+; -> LDX -> RTS spent 39 cycles to discover it.  The test alone is 9.
+   LDA zp_seg_start_x                                                     ;#            0.0
+   CMP #$FF                                                               ;#            0.0
+   BEQ dcl_rb_closed                                                      ;#            0.0
+   STX zp_save0                            ; X = span slot, live below    ;#            0.0
+   JSR dcl_emit_open                                                      ;#            0.0
+   LDX zp_save0                                                           ;#            0.0
+   LDA #$FF                                                               ;#            0.0
+   STA zp_seg_start_x                                                     ;#            0.0
+dcl_rb_closed:
    LDA zp_dcl_rec_buf_h                                                   ;#            0.0
    BEQ dcl_outer_reject                                                   ;#            0.0
    LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence ;#            0.0
@@ -421,7 +447,7 @@ dcl_eo_yr:
    LDA zp_line_yr_l                                                       ;#            0.0
    STA zp_tmp0                                                            ;#            0.0
    JSR dcl_emit_segment                                                   ;# |          0.1
-   PLA                                                                    ;#            0.0
+   PLA                                                                    ;#            0.1
    STA zp_ox1                                                             ;#            0.0
    RTS                                                                    ;# |          0.1
 
@@ -437,21 +463,18 @@ dcl_eo_yr:
 ; verdict.  Get it backwards and the segment record is eaten, the
 ; tighten under-informed, and lines go missing.
 dcl_close_open_nx:
-   LDA zp_seg_start_x                                                     ;# |||        0.3
-   CMP #$FF                                                               ;# ||         0.2
-   BEQ dcl_cio_rts                                                        ;# |||        0.3
-   JSR dcl_emit_open                                                      ;#            0.0
-   LDA #$FF                                                               ;#            0.0
-   STA zp_seg_start_x                                                     ;#            0.0
+   LDA zp_seg_start_x                                                     ;#            0.0
+   CMP #$FF                                                               ;#            0.0
+   BEQ dcl_cio_rts                                                        ;#            0.0
+   JSR dcl_emit_open
+   LDA #$FF
+   STA zp_seg_start_x
 dcl_cio_rts:
-   RTS                                                                    ;# |||||      0.6
+   RTS                                                                    ;# |          0.1
 
-; --- dcl_close_if_open: as above, but preserves X (through zp_save0) ---
-dcl_close_if_open:
-   STX zp_save0                                                           ;# ||         0.3
-   JSR dcl_close_open_nx                                                  ;# |||||      0.5
-   LDX zp_save0                                                           ;# ||         0.3
-   RTS                                                                    ;# |||||      0.5
+; (dcl_close_if_open — the X-preserving wrapper — is RETIRED: its only
+;  two callers were the Tier-1 reject arms, which now inline the test and
+;  save X only on the 4-in-135 path that actually closes.)
 
 ; ========== Vertical line handler ==========
 ; For xl == xr: find the first span containing column xl, compute
@@ -496,7 +519,7 @@ dcl_close_if_open:
    BEQ dcl_vert_on                         ; (neg) or right (>=256) discards
    RTS
 ::dcl_vert_on:
-   STA zp_line_xl_l                        ; THE column (dv_* reads only this) ;# |||        0.3
+   STA zp_line_xl_l                        ; THE column (dv_* reads only this) ;# |||        0.4
 ; (corner ±1 shrink REVERTED 2026-07-27: walkseq found 48 frames with
 ; 2-6 px gaps — portal-edge verticals whose ft/fb horizontals were
 ; tightened away have NO join to cover the shrunk corners, and the s16
@@ -505,38 +528,38 @@ dcl_close_if_open:
 ; free and provably joined. See project_vplot memory.)
 ; clamp y1 into the u8 band (mc_vertical's exact ladder, lo-only:
 ; nothing downstream reads the y hi bytes)
-   LDA zp_line_yl_h                                                       ;# |||        0.3
+   LDA zp_line_yl_h                                                       ;# |||        0.4
    BNE dvc_y1_clamp                        ; rare (3%, census 2026-07-27): ;# ||         0.2
                                            ; clamp arms in the island below
 dvc_y1_done:
 ; clamp y2 (same-side pairs already rejected above)
-   LDA zp_line_yr_h                                                       ;# |||        0.3
+   LDA zp_line_yr_h                                                       ;# |||        0.4
    BNE dvc_y2_clamp                        ; rare (1.4%): island below    ;# ||         0.2
 dvc_y2_done:
 ; clamped to a point (one end AT the boundary) -> reject, exactly as
 ; the generic post-clip degen check does; else FALL INTO the span query
-   LDA zp_line_yl_l                                                       ;# |||        0.3
-   CMP zp_line_yr_l                                                       ;# |||        0.3
+   LDA zp_line_yl_l                                                       ;# |||        0.4
+   CMP zp_line_yr_l                                                       ;# |||        0.4
    BEQ dvc_rej                             ; degen: rare — non-degen FALLS ;# ||         0.2
                                            ; INTO the span query (was a
                                            ; 99.3%-taken BNE hop)
 dcl_vertical:
-   LDA zp_dcl_rec_buf_h                    ; feedback: the vertical walk is ;# |||        0.3
+   LDA zp_dcl_rec_buf_h                    ; feedback: the vertical walk is ;# |||        0.4
    BEQ dv_untapped                         ; untapped — tag MIXED for     ;# ||         0.3
    LDA zp_dcl_out                          ; recorded (1-column lip) lines ;# ||         0.2
    ORA #$C0                                                               ;# |          0.1
    STA zp_dcl_out                                                         ;# ||         0.2
 dv_untapped:
 ; Compute ylo/yhi (dx/dy not needed for verticals)
-   LDA zp_line_yl_l                                                       ;# |||        0.3
-   LDX zp_line_yr_l                                                       ;# |||        0.3
-   CMP zp_line_yr_l                                                       ;# |||        0.3
+   LDA zp_line_yl_l                                                       ;# |||        0.4
+   LDX zp_line_yr_l                                                       ;# |||        0.4
+   CMP zp_line_yr_l                                                       ;# |||        0.4
    BCS dv_yl_ge                            ; yl >= yr never on suite: swap ;# ||         0.2
                                            ; arm in the island (census)
-   STA zp_line_y_l                                                        ;# |||        0.3
-   STX zp_line_y_h                                                        ;# |||        0.3
+   STA zp_line_y_l                                                        ;# |||        0.4
+   STX zp_line_y_h                                                        ;# |||        0.4
 dv_bbox_done:
-   LDX zp_head                                                            ;# |||        0.3
+   LDX zp_head                                                            ;# |||        0.4
    BEQ dvc_rej                             ; empty list (island RTS)      ;# ||         0.2
 ; THE JAMB FIX (2026-08-21). A column belongs to EXACTLY ONE span
 ; under half-open tiling ([xs, xe) contains ix iff xs <= ix < xe), so
@@ -553,17 +576,17 @@ dv_bbox_done:
 ; path needs no TAX. Skip step was LDA zp + CMP + BCS + LDA abs,X +
 ; TAX + BNE = 19 cyc; it is now CMP + BCC + LDY abs,X + BEQ = 13.
 ; (measured 18 vertical calls and 23.6 skip steps per frame)
-   LDA zp_line_xl_l                        ; HOISTED: rides A throughout  ;# |||        0.3
+   LDA zp_line_xl_l                        ; HOISTED: rides A throughout  ;# |||        0.4
 dv_check:
 dv_x:
-   CMP POOL_XEND,X                         ; C=0: this span reaches past xl ;# |||||||    0.7
+   CMP POOL_XEND,X                         ; C=0: this span reaches past xl ;# |||||||    0.8
    BCC dv_own_x                                                           ;# ||||       0.4
    LDY POOL_NEXT,X                                                        ;# ||||       0.5
    BEQ dvc_rej                                                            ;# ||         0.3
    CMP POOL_XEND,Y                         ; (mirror)                     ;# ||||       0.5
-   BCC dv_own_y                                                           ;# |||        0.3
+   BCC dv_own_y                                                           ;# ||         0.3
    LDX POOL_NEXT,Y                                                        ;# |||        0.3
-   BNE dv_x                                                               ;# ||         0.2
+   BNE dv_x                                                               ;# |||        0.3
    BEQ dvc_rej                             ; list ran out (always taken)  ;#            0.0
 dv_own_x:
    CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart     ;# ||         0.2
@@ -618,13 +641,13 @@ dv_in:
    STA zp_cb_top1                                                         ;#            0.0
    BEQ dv_top_done                         ; Z=1 from the TL==TR CMP      ;#            0.0
 dv_top_interp:
-   LDA POOL_TXLO,X                                                        ;# |||        0.3
+   LDA POOL_TXLO,X                                                        ;# |||        0.4
    STA zp_i_x0                                                            ;# ||         0.3
-   LDA POOL_TDEN,X                                                        ;# |||        0.3
+   LDA POOL_TDEN,X                                                        ;# |||        0.4
    STA zp_div_den                                                         ;# ||         0.3
-   LDA POOL_TL,X                                                          ;# |||        0.3
+   LDA POOL_TL,X                                                          ;# |||        0.4
    STA zp_i_y0                                                            ;# ||         0.3
-   LDA POOL_TR,X                                                          ;# |||        0.3
+   LDA POOL_TR,X                                                          ;# |||        0.4
    STA zp_i_y1                                                            ;# ||         0.3
    LDA zp_line_xl_l                                                       ;# ||         0.3
    JSR interp_store                                                       ;# |||||      0.5
@@ -678,18 +701,18 @@ dv_emit:
 ; (LINE_OUT capture RETIRED 2026-07-26: the harness PC-traps the plot
 ; entries and reads RASTER_ZP_* directly — the engine no longer pays
 ; a gate test per emitted line.)
-   LDA zp_line_xl_l                                                       ;# ||         0.2
-   STA RASTER_ZP_X0                                                       ;# ||         0.2
-   STA RASTER_ZP_X1                                                       ;# ||         0.2
-   LDA zp_cb_cy1                                                          ;# ||         0.2
+   LDA zp_line_xl_l                                                       ;# ||         0.3
+   STA RASTER_ZP_X0                                                       ;# ||         0.3
+   STA RASTER_ZP_X1                                                       ;# ||         0.3
+   LDA zp_cb_cy1                                                          ;# ||         0.3
    SBC #Y_BIAS                             ; C=1 from the BCS dv_emit guard ;# |          0.2
-   STA RASTER_ZP_Y0                                                       ;# ||         0.2
-   LDA zp_cb_cy2                                                          ;# ||         0.2
+   STA RASTER_ZP_Y0                                                       ;# ||         0.3
+   LDA zp_cb_cy2                                                          ;# ||         0.3
    SBC #Y_BIAS                             ; C=1 from the in-band SBC     ;# |          0.2
-   STA RASTER_ZP_Y1                                                       ;# ||         0.2
-   BIT plotq_mode                          ; run-ahead queue armed?       ;# ||         0.2
+   STA RASTER_ZP_Y1                                                       ;# ||         0.3
+   BIT plotq_mode                          ; run-ahead queue armed?       ;# ||         0.3
    BMI pq_enq_j                                                           ;# |          0.2
-   JMP plot_v                              ; always vertical on this path ;# ||         0.2
+   JMP plot_v                              ; always vertical on this path ;# ||         0.3
 pq_enq_j:
    JMP plot_enq
 dv_clipped_away:
@@ -806,7 +829,7 @@ dcl_cb_cy_done:
    LDA zp_cb_cy1                                                          ;# |          0.1
    CMP POOL_IT,X                                                          ;# |          0.1
    BCC dcl_cb_top_eval                                                    ;#            0.0
-   JMP dcl_cb_top_done                     ; both >= IT → skip top        ;#            0.0
+   JMP dcl_cb_top_done                     ; both >= IT → skip top        ;#            0.1
 
 dcl_cb_top_eval:
 ; Evaluate top1, top2 at cx1, cx2 (fast paths first)
@@ -946,30 +969,30 @@ dcl_cb_bot_eval:
 ; Constant bot? BL==BR (also covers den=0 since that implies BL==BR)
    LDA POOL_BL,X                                                          ;# |          0.1
    CMP POOL_BR,X                                                          ;# |          0.1
-   BNE dcl_cb_bot_interp                                                  ;# |          0.1
+   BNE dcl_cb_bot_interp                                                  ;#            0.1
    STA zp_cb_bot1
    STA zp_cb_bot2
    BEQ dcl_cb_bot_eval_done                ; Z=1 from the BL==BR CMP
 dcl_cb_bot_interp:
    LDA POOL_BXLO,X                         ; BOTTOM line's own anchors    ;# |          0.1
-   STA zp_i_x0                                                            ;#            0.0
+   STA zp_i_x0                                                            ;#            0.1
    LDA POOL_BDEN,X                                                        ;# |          0.1
-   STA zp_div_den                                                         ;#            0.0
+   STA zp_div_den                                                         ;#            0.1
    LDA POOL_BL,X                                                          ;# |          0.1
-   STA zp_i_y0                                                            ;#            0.0
+   STA zp_i_y0                                                            ;#            0.1
    LDA POOL_BR,X                                                          ;# |          0.1
-   STA zp_i_y1                                                            ;#            0.0
-   LDA zp_cb_cx1                                                          ;#            0.0
+   STA zp_i_y1                                                            ;#            0.1
+   LDA zp_cb_cx1                                                          ;#            0.1
    JSR interp_store                                                       ;# |          0.1
-   STA zp_cb_bot1                                                         ;#            0.0
-   LDA zp_cb_cx2                                                          ;#            0.0
+   STA zp_cb_bot1                                                         ;#            0.1
+   LDA zp_cb_cx2                                                          ;#            0.1
    JSR interp_store                                                       ;# |          0.1
    STA zp_cb_bot2                                                         ;# |          0.1
 dcl_cb_bot_eval_done:
 
 ; Bot clip: test cy vs bot at each endpoint
-   LDA zp_cb_bot1                                                         ;#            0.0
-   CMP zp_cb_cy1                                                          ;#            0.0
+   LDA zp_cb_bot1                                                         ;#            0.1
+   CMP zp_cb_cy1                                                          ;#            0.1
    BCS dcl_cb_bot_p1_ok                                                   ;#            0.0
 ; bot1 >= cy1
    LDA zp_cb_bot2                                                         ;#            0.0
@@ -1064,7 +1087,7 @@ dcl_cb_bot_done:
 ; left the aperture mid-span. dcl_line_ends / dcl_emit_open both use
 ; xr/yr or line_y_at(seg_end_x) for the exit, which would be wrong here.
    CMP zp_ox1                              ; A = cx2 from the reject test ;#            0.1
-   BCS dcl_cb_no_exit_clip                                                ;#            0.1
+   BCS dcl_cb_no_exit_clip                                                ;# |          0.1
 ; cx2 < ox1 → the line leaves the aperture INSIDE this span, so the run
 ; genuinely ends at cx2 and is emitted here (segment record written by
 ; emit).  But if a run was already open and this one starts exactly where
@@ -1111,7 +1134,7 @@ dcl_cb_no_exit_clip:
    LDX zp_save0                                                           ;#            0.0
    LDA zp_seg_start_x                                                     ;#            0.0
    CMP #$FF                                                               ;#            0.0
-   BEQ dcl_cbn_open                                                       ;#            0.1
+   BEQ dcl_cbn_open                                                       ;#            0.0
    LDA zp_cb_cx1                                                          ;#            0.0
    CMP zp_seg_end_x                                                       ;#            0.0
    BEQ dcl_cbn_extend                      ; contiguous → extend          ;#            0.0
@@ -1144,7 +1167,7 @@ dcl_cb_reject_above:
    LDA #0                                  ; whole overlap above the aperture
    BEQ dcl_cb_rej_rec                      ; (always)
 dcl_cb_reject_below:
-   JSR dcl_close_open_nx                   ; close BEFORE this span's record ;#            0.0
+   JSR dcl_close_open_nx                   ; close BEFORE this span's record ;#            0.1
    LDA zp_dcl_rec_buf_h                                                   ;#            0.0
    BEQ dcl_cb_reject                                                      ;#            0.0
    LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence
@@ -1220,7 +1243,7 @@ dcl_bix_d2_pos:
    BEQ dcl_bix_cx1                         ; dx=0 → return cx1            ;#            0.0
 
    LDA zp_tmp2                             ; |d1|                         ;#            0.0
-   JSR umul8                               ; prod = dx * |d1| → zp_prod_l:hi ;#            0.0
+   JSR umul8                               ; prod = dx * |d1| → zp_prod_l:hi ;#            0.1
 
 ; Directed rounding: if clip_p1, add (denom-1) to numerator before divide
 ; (ceiling division). If !clip_p1, just floor division.
@@ -1237,7 +1260,7 @@ dcl_bix_d2_pos:
    INC zp_div_h                                                           ;#            0.0
 dcl_bix_no_round:
 ; prod already in div_lo:hi (aliases — fall through to divide)
-   JSR udiv16_8                            ; A = quotient = num / denom   ;#            0.0
+   JSR udiv16_8                            ; A = quotient = num / denom   ;#            0.1
 
 ; ix = cx1 + quotient
    CLC                                                                    ;#            0.0
@@ -1247,7 +1270,7 @@ dcl_bix_no_round:
    BCC dcl_bix_cx1                                                        ;#            0.0
    CMP zp_cb_cx2                                                          ;#            0.0
    BCS dcl_bix_cx2                         ; == returns cx2 (same value)  ;#            0.0
-   RTS                                                                    ;#            0.0
+   RTS                                                                    ;#            0.1
 
 dcl_bix_cx1:
    LDA zp_cb_cx1
@@ -1286,8 +1309,8 @@ dcl_es_degen:
 dcl_emit_segment:
 ; Skip degenerate segments (zero-length). Common case falls through
 ; (was a 97.4%-taken BNE — census 2026-07-27).
-   LDA zp_seg_start_x                                                     ;# |||        0.3
-   CMP zp_ox1                                                             ;# |||        0.3
+   LDA zp_seg_start_x                                                     ;# |||        0.4
+   CMP zp_ox1                                                             ;# |||        0.4
    BEQ dcl_es_degen                                                       ;# ||         0.2
 dcl_es_ok:
 ; --- Y-band safety clip: clamp biased Y to [Y_BIAS, VIS_YMAX] so the
@@ -1297,13 +1320,13 @@ dcl_es_ok:
 ; aperture clip can still hand us an off-screen segment (e.g. the BL=241
 ; span at 1000,-3160,156).  Needed until the tighten clamps apertures to
 ; [Y_BIAS,VIS_YMAX].  In-band segments are byte-identical (4 compares).
-   LDA zp_seg_start_y                      ; (x-differ path only: the y-differ ;# |||        0.3
+   LDA zp_seg_start_y                      ; (x-differ path only: the y-differ ;# |||        0.4
 dcl_es_ok_noreload:                        ; BNE arrives with start_y live)
    CMP #Y_BIAS                                                            ;# ||         0.2
    BCC dcl_es_yband                                                       ;# ||         0.2
    CMP #(VIS_YMAX + 1)                                                    ;# ||         0.2
    BCS dcl_es_yband                                                       ;# ||         0.2
-   LDA zp_tmp0                                                            ;# |||        0.3
+   LDA zp_tmp0                                                            ;# |||        0.4
    CMP #Y_BIAS                                                            ;# ||         0.2
    BCC dcl_es_yband                                                       ;# ||         0.2
    CMP #(VIS_YMAX + 1)                                                    ;# ||         0.2
@@ -1326,8 +1349,8 @@ dcl_es_record:
 ; Triggers exactly when DCL emits a visible segment, regardless of how
 ; many pool spans the segment crossed. Tighten consumer derives
 ; everything from these 4 endpoint values via interp.
-   LDA zp_dcl_rec_buf_h                                                   ;# |||        0.3
-   BEQ dcl_es_no_record                                                   ;# ||         0.3
+   LDA zp_dcl_rec_buf_h                                                   ;# |||        0.4
+   BEQ dcl_es_no_record                                                   ;# |||        0.3
    LDA zp_dcl_out                          ; feedback: real pixels emitted ;# ||         0.2
    ORA #$01                                                               ;# |          0.1
    STA zp_dcl_out                                                         ;# ||         0.2
@@ -1367,25 +1390,25 @@ dcl_es_record:
 .endif
 dcl_es_no_record:
 ; (LINE_OUT capture RETIRED 2026-07-26 — see the vertical emit note.)
-   LDA zp_seg_start_x                                                     ;# |||        0.3
-   STA RASTER_ZP_X0                                                       ;# |||        0.3
-   LDA zp_seg_start_y                                                     ;# |||        0.3
+   LDA zp_seg_start_x                                                     ;# |||        0.4
+   STA RASTER_ZP_X0                                                       ;# |||        0.4
+   LDA zp_seg_start_y                                                     ;# |||        0.4
    SEC                                                                    ;# ||         0.2
    SBC #Y_BIAS                                                            ;# ||         0.2
-   STA RASTER_ZP_Y0                                                       ;# |||        0.3
-   LDA zp_ox1                                                             ;# |||        0.3
-   STA RASTER_ZP_X1                                                       ;# |||        0.3
-   LDA zp_tmp0                                                            ;# |||        0.3
+   STA RASTER_ZP_Y0                                                       ;# |||        0.4
+   LDA zp_ox1                                                             ;# |||        0.4
+   STA RASTER_ZP_X1                                                       ;# |||        0.4
+   LDA zp_tmp0                                                            ;# |||        0.4
    SBC #Y_BIAS                             ; C=1 from the Y0 unbias       ;# ||         0.2
-   STA RASTER_ZP_Y1                                                       ;# |||        0.3
+   STA RASTER_ZP_Y1                                                       ;# |||        0.4
 des_dispatch:
 ; --- axis dispatch: ~70% of rasterised pixels are in horizontal or
 ; vertical segments (gradient census 2026-07-05) — route them to the
 ; dedicated plotters instead of the generic NJ machinery ---
 ; (A = Y1 on both entry paths)
-   BIT plotq_mode                          ; run-ahead queue armed? (driver ;# |||        0.3
+   BIT plotq_mode                          ; run-ahead queue armed? (driver ;# |||        0.4
    BMI pq_enq_j2                           ; feature: harness stays direct) ;# ||         0.2
-   CMP RASTER_ZP_Y0                                                       ;# |||        0.3
+   CMP RASTER_ZP_Y0                                                       ;# |||        0.4
    BNE des_not_h                                                          ;# |||        0.3
    JMP plot_h                                                             ;# |          0.2
 pq_enq_j2:
@@ -1752,20 +1775,20 @@ rf_in:
    LDA (zp_dcl_rec_buf),Y                                                 ;# |          0.1
    CMP DCLV_YV                                                            ;# |          0.1
    BNE rf_app                                                             ;#            0.1
-   DEY                                                                    ;#            0.0
-   DEY                                     ; prev.yl                      ;#            0.0
+   DEY                                                                    ;#            0.1
+   DEY                                     ; prev.yl                      ;#            0.1
    LDA (zp_dcl_rec_buf),Y                                                 ;# |          0.1
    CMP DCLV_YV                                                            ;# |          0.1
-   BNE rf_app                                                             ;#            0.0
-   INY                                     ; prev.xr                      ;#            0.0
+   BNE rf_app                                                             ;#            0.1
+   INY                                     ; prev.xr                      ;#            0.1
    LDA (zp_dcl_rec_buf),Y                                                 ;# |          0.1
    CMP DCLV_X0                                                            ;# |          0.1
-   BCC rf_app                              ; gap -> append fresh          ;#            0.0
+   BCC rf_app                              ; gap -> append fresh          ;#            0.1
 ; merge: prev.xr = max(prev.xr, X1)
    CMP DCLV_X1                                                            ;# |          0.1
-   BCS rf_restore                                                         ;#            0.0
+   BCS rf_restore                                                         ;#            0.1
    LDA DCLV_X1                                                            ;# |          0.1
-   STA (zp_dcl_rec_buf),Y                                                 ;# |          0.1
+   STA (zp_dcl_rec_buf),Y                                                 ;# |          0.2
    JMP rf_restore                                                         ;# |          0.1
 rf_app:
    LDY zp_dcl_rec_off                                                     ;# |          0.1
