@@ -136,6 +136,23 @@ ta_first:
    STX zp_new_tail                                                        ;#            0.0
    RTS                                                                    ;# |          0.1
 .endscope
+
+; --- FLUSH_PEND: call tfs_flush_pending only when there IS something ---
+; 57% of calls find TFS_PEND_ACT clear (census over 5 scenes, 235 calls)
+; and burn JSR 6 + LDA 3 + BNE 2 + RTS 6 = 17 cycles to discover it.
+; TFS_PEND_ACT is in zero page since the 2026-08-22 promotion, so testing
+; at the CALL SITE costs 3+3 and skips the JSR/RTS entirely:
+;   empty   (57%)  LDA 3 + BEQ taken 3            =  6   (was 17)
+;   pending (43%)  LDA 3 + BEQ 2 + JSR 6          = 11   (was 12)
+; Callers enter at tfs_flush_do, past the now-redundant test.
+.macro FLUSH_PEND
+.local fp_skip
+   LDA TFS_PEND_ACT                                                       ;# |          0.2
+   BEQ fp_skip                                                            ;# ||         0.2
+   JSR tfs_flush_do
+fp_skip:
+.endmacro
+
 SEG_BANKC
 ; TFS state block — the 3-cursor event walk's working set.
 ; (Moved here from the deleted 6-byte-records legacy file.)
@@ -296,10 +313,9 @@ tfr_neutral:
 tfr_do_sweep:
 ; ---- Init: detach the old list and start the new one empty ----
 ; Invalidate the has_gap coherence cache (see span_mark_solid note).
-   ZERO zp_hg_cache                                                       ;# |||        0.3
    LDA zp_head                                                            ;# ||         0.2
    STA zp_old_cur                                                         ;# ||         0.2
-   ZERO zp_new_tail, zp_head                                              ;# |||||      0.5
+   ZERO zp_hg_cache, zp_new_tail, zp_head                                 ;# |||||||    0.7
 
 ; Reset DCL's portal-continuation state ($FF = inactive) so the next
 ; draw_clipped_line starts clean. (Write-only from this module.)
@@ -404,7 +420,7 @@ tfs_proc:
 ; store, instead of walking it span by span. zp_old_cur already holds
 ; the rest — the prologue stashed it. Measured 0.62 spans per call
 ; beyond the seam.
-   JSR tfs_flush_pending                                                  ;# ||         0.2
+   FLUSH_PEND                                                             ;# |||        0.4
    LDX zp_clr_save_x                                                      ;# |          0.1
    JSR tg_append_x                         ; may merge X into the tail (and ;# ||         0.2
                                         ; free it) or link it; either way
@@ -416,7 +432,7 @@ tfs_proc:
 tfs_oor:
 ; Relink the untouched span. Flush pending first to keep the output
 ; list in x order (pending always precedes this span).
-   JSR tfs_flush_pending                                                  ;# ||         0.2
+   FLUSH_PEND
    LDX zp_clr_save_x                                                      ;# |          0.1
    JSR tg_append_x                                                        ;# ||         0.2
    JMP tfs_continue                                                       ;# |          0.1
@@ -444,7 +460,7 @@ tfs_in_range_noreload:
 tfs_pre_chk_noreload:
    CMP zp_i_l                                                             ;# ||         0.3
    BCS tfs_no_pre_noreload                                                ;# ||         0.2
-   JSR tfs_flush_pending                                                  ;# |          0.1
+   FLUSH_PEND
    LDX zp_clr_save_x                                                      ;#            0.1
    LDA POOL_XSTART,X                                                      ;# |          0.1
    STA zp_ox0                                                             ;#            0.1
@@ -492,7 +508,7 @@ tfs_fp_chk_bot:
    BCC tfs_inner                                                          ;# |          0.1
 tfs_fp_emit:
 ; Neither record reaches this span: emit [cur_x, x_hi] unchanged.
-   JSR tfs_flush_pending
+   FLUSH_PEND
    LDX zp_clr_save_x
    LDA TFS_CUR_X
    STA zp_ox0
@@ -669,7 +685,7 @@ tfs_ns_top:
    LDA BOT_RECORDS,Y                                                      ;# |||        0.4
    BNE tfs_not_solid                                                      ;# ||         0.3
 tfs_solid_skip:
-   JSR tfs_flush_pending                                                  ;#            0.0
+   FLUSH_PEND
    JMP tfs_advance_curs                                                   ;#            0.0
 tfs_not_solid:
 
@@ -679,7 +695,7 @@ tfs_not_solid:
    LDA TFS_TOP_DOM                                                        ;# ||         0.3
    ORA TFS_BOT_DOM                                                        ;# ||         0.3
    BNE tfs_compute_vals                                                   ;# ||         0.3
-   JSR tfs_flush_pending
+   FLUSH_PEND
    LDX zp_clr_save_x
    LDA TFS_CUR_X
    STA zp_ox0
@@ -702,7 +718,7 @@ tfs_compute_vals:
    LDY TFS_T_CUR                                                          ;# ||         0.2
    INY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
-   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# |          0.2
+   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# ||         0.2
 ; A dominating record IS the boundary — no max() needed (2026-08-22,
 ; Eben). A top record exists BECAUSE dcl drew that edge inside the
 ; aperture, so rec >= pool over its range by construction. The old
@@ -847,7 +863,7 @@ tfs_bot_vals_done:
    STA TFS_PEND_XR                                                        ;#            0.0
    JMP tfs_advance_curs                                                   ;#            0.0
 tfs_no_merge:
-   JSR tfs_flush_pending                                                  ;# |          0.1
+   FLUSH_PEND                                                             ;# |||        0.3
 tfs_start_pend:
 ; Buffer this interval as the new pending span (materialized by
 ; tfs_flush_pending when the next interval can't merge into it).
@@ -940,7 +956,7 @@ tfs_inner_done:
    LDA zp_i_h                              ; INVERTED: C = ihi >= xend —  ;# ||         0.3
    CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ ;# |||        0.4
    BCS tfs_no_post                         ; pair                         ;# ||         0.2
-   JSR tfs_flush_pending                                                  ;# |          0.1
+   FLUSH_PEND                                                             ;# |          0.2
 ; REUSE THE ORIGINAL SLOT (2026-08-22) instead of alloc + 10-byte copy
 ; + free. The post-fragment is [ihi, xend) of THIS span: its XEND and
 ; its whole line definition are already right, and this is the span's
@@ -965,7 +981,7 @@ tfs_no_post:
 ; reloads it.
    LDX zp_clr_save_x                                                      ;# ||         0.2
    LDA zp_free                                                            ;# ||         0.2
-   STA POOL_NEXT,X                                                        ;# |||        0.3
+   STA POOL_NEXT,X                                                        ;# |||        0.4
    STX zp_free                                                            ;# ||         0.2
 
 tfs_continue:
@@ -992,10 +1008,11 @@ tfs_finish:                                ; (tfsc_finish relay + the
 ;         Clobbers A,X,Y.
 tfs_flush_pending:
 .scope
-   LDA TFS_PEND_ACT                                                       ;# |||||      0.6
-   BNE flush_do                                                           ;# ||||       0.5
-   RTS                                                                    ;# ||||||     0.7
-flush_do:
+   LDA TFS_PEND_ACT                                                       ;# ||         0.2
+   BNE flush_do                                                           ;# |          0.1
+   RTS                                                                    ;# |||        0.3
+::tfs_flush_do:                            ; entry PAST the test, for the
+flush_do:                                  ; FLUSH_PEND call sites
    ZERO TFS_PEND_ACT                                                      ;# ||||       0.4
    LDX zp_free                             ; alloc_span INLINED 2026-08-21: ;# ||         0.3
    BEQ flush_fail          ; pool empty -> caller's fail arm              ;# ||         0.2
