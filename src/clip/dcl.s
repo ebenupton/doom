@@ -706,9 +706,10 @@ dcl_cb_clip:
 ; span's true ox1 (the mid-span-exit path overwrites zp_ox1)
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_nvrec
-   LDA zp_dcl_out                          ; feedback: CB paths don't prove
-   ORA #$C0                                ; a direction — tag MIXED (voids
-   STA zp_dcl_out                          ; inference, conservatively)
+; (the blanket ORA #$C0 MIXED tag died 2026-08-22: every CB termination
+;  DOES prove a direction — see the per-reject tags below.  Tagging
+;  MIXED here made the off-TOP/off-BOTTOM inference depend on WHICH
+;  entry a line took, so a band width change moved pixels.)
    LDA #$80
    STA DCLV_RVY
    LDA zp_ox1
@@ -1066,14 +1067,27 @@ dcl_cb_bbox_done:
 ; (X = save0 still: nothing above touched it since the entry load)
    JMP dcl_exit_check
 
+; Both arms prove a direction, so both tag zp_dcl_out exactly as the
+; Tier-1 arms do (feedback only when records are armed — same contract).
+; Soundness: 'both endpoints above' generalises to the whole range
+; because line_y - boundary_y is LINEAR in x, so a value negative at
+; both ends is negative throughout; the empty-after-clip arms are the
+; same fact stated by construction.  A range clipped above CANNOT also
+; run below (top < bot), so a single direction is the whole story.
 dcl_cb_reject_above:
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_reject
+   LDA zp_dcl_out                          ; feedback: off-TOP evidence
+   ORA #$80
+   STA zp_dcl_out
    LDA #0                                  ; whole overlap above the aperture
    BEQ dcl_cb_rej_rec                      ; (always)
 dcl_cb_reject_below:
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_reject
+   LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence
+   ORA #$40
+   STA zp_dcl_out
    LDA #$FF
 dcl_cb_rej_rec:
    JSR dcl_rec_flat_span
