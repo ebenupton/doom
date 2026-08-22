@@ -376,6 +376,18 @@ dcl_fl_emit:
 ;   else            → line_y_at(seg_end_x)
 ; Does NOT reset zp_seg_start_x — callers that carry on do that.
 dcl_emit_open:
+; PRESERVES zp_ox1.  dcl_emit_segment takes its end-x THERE, so closing a
+; run would otherwise overwrite the CURRENT span's ox1 with the closed
+; run's end — and every caller still needs it afterwards:
+;   dcl_accept    stores it as the new run's zp_seg_end_x
+;   the rejects   pass it to dcl_rec_flat_span as the verdict's xr
+;   the left-clip needs it for the "cx2 < ox1" mid-span-exit test
+; That clobber drew the second fragment of a re-entering line back to the
+; FIRST fragment's end — (109,90)-(100,91) instead of (109,90)-(115,90),
+; 99px of over-draw at X=000C.B0 Y=0052.BD R=B0.  The tail call to
+; dcl_emit_segment becomes a JSR so the restore can happen after it.
+   LDA zp_ox1
+   PHA
    LDA zp_seg_end_x
    STA zp_ox1
    CMP zp_line_xr_l
@@ -387,7 +399,10 @@ dcl_emit_open:
 dcl_eo_yr:
    LDA zp_line_yr_l
    STA zp_tmp0
-   JMP dcl_emit_segment                    ; tail call
+   JSR dcl_emit_segment
+   PLA
+   STA zp_ox1
+   RTS
 
 ; --- dcl_close_open_nx: emit + close, if any segment is open ---
 ; Clobbers A/X/Y; PRESERVES zp_save0, so the CB clip (which parks its

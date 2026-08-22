@@ -95,7 +95,12 @@ VERIFY_POSITIONS = [(1792.34375, -3351.375, 108),
                     # beyond the old box (s16 player int)
                     (3648, -4800, 131),
                     # zero-record off-screen-aperture portal reproducer
-                    (-486, -3307, 243)]
+                    (-486, -3307, 243),
+                    # RE-ENTERING LINE: the deferred-emit restructure closed
+                    # the second fragment at the FIRST one's end (stale ox1),
+                    # 99px over-draw the whole suite above missed.  HUD reads
+                    # X=000C.B0 Y=0052.BD R=B0.
+                    (1301.5, -2586.09375, 0xB0)]
 try:
     import pygame; pygame.init(); pygame.display.set_mode((1, 1))
     import verify_6502_vs_python as V
