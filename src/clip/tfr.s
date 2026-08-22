@@ -87,11 +87,13 @@ ta_try_merge:
 ; |
 ; Merge: extend tail's xend to cover new, then free X (free_span
 ; INLINED 2026-08-21 — the tail-call JMP's 3 cycles die with it).
-; NB this pushes the tail's ACTIVE range past its XLO+DEN anchor range,
-; so later interps on it evaluate outside the anchors. That is safe
-; ONLY because the merge requires constant lines (tested above), where
-; interp_store returns y0 without dividing — see the precondition note
-; in clip/interp.s. Do not relax the constant-line test.
+; The merged range stays INSIDE the anchors now: both spans carry the
+; same SOURCE line, and each one's active range is a sub-interval of
+; that source's extent, so their union is too. (Before source
+; anchoring the anchor was the span's own range, so a merge pushed the
+; active range past it and relied on the constant-line test to keep
+; interp_store from extrapolating — see the precondition note in
+; clip/interp.s.)
    LDA POOL_XEND,X
    STA POOL_XEND,Y
    LDA zp_free
@@ -163,9 +165,6 @@ TFS_PEND_TXL  = $0601                   ; pending copies of the two anchors
 TFS_PEND_TDEN = $0602
 TFS_PEND_BXL  = $0603
 TFS_PEND_BDEN = $0604
-TFS_KIND_MIXED = 2                      ; kind tag that never merges (the
-                                        ; mixed arms anchor to the interval,
-                                        ; so extending one would be wrong)
 ; --- verdict-record support (2026-07-13 off-screen-aperture fix) ---
 ; $091C/$091D free (TFS_*_VERD retired — verdicts tested lazily at the
 ; consumption points, 2026-07-13)
@@ -698,17 +697,16 @@ tfs_compute_vals:
    INY
    LDA TOP_RECORDS,Y
    BEQ tfs_top_pool                        ; 'above' verdict: pool stands
-; Extremes shortcut: record endpoints BOTH at-or-below the span's
-; tightest top (POOL_IT = max(tl,tr)) prove max(pool,rec) == rec on the
-; whole interval: pure record values at the OLD (pre-narrow-only) cost.
-   LDX zp_clr_save_x
-   CMP POOL_IT,X
-   BCC tfs_top_mixed
-   INY
-   INY
-   LDA TOP_RECORDS,Y
-   CMP POOL_IT,X
-   BCC tfs_top_mixed
+; A dominating record IS the boundary — no max() needed (2026-08-22,
+; Eben). A top record exists BECAUSE dcl drew that edge inside the
+; aperture, so rec >= pool over its range by construction. The old
+; narrow-only max() guarded against DEFERRED ops moving the pool
+; between draw time and apply time; deferral died in d541b80, so the
+; hazard is gone. Measured over 810 frames (suite + 200 corpus
+; positions x 4 angles, including 1200,-3000,129 — the very position
+; the guard was added for): 240 'mixed' intervals, 240 with the record
+; dominating at BOTH ends, ZERO genuine crossings. The extremes
+; shortcut and both mixed arms are therefore dead weight and are gone.
 ; --- tfs_top_rec_interp INLINED 2026-08-21: single call site, so
 ; inlining deletes the body AND the JSR (-4 bytes, -12
 ; cycles). The bytes move from main RAM into the clipper
@@ -750,74 +748,6 @@ tfs_top_pool:
    LDA zp_clr_save_x
    STA TFS_TOP_ID
    JMP tfs_top_vals_done
-tfs_top_mixed:
-; --- tfs_top_vals_mixed INLINED 2026-08-21: single call site, so
-; inlining deletes the body AND the JSR (-4 bytes, -12
-; cycles). The bytes move from main RAM into the clipper
-; segment; the flat CLIPF region was grown to suit. ---
-; mixed path in ONE call: pool line -> TOP_L/R, then record line MAXed
-; in (endpoint max = the model's rt = max(old_t, cy)). Replaces the old
-; JSR pool_interp + JSR rec_interp0 (+ its JSR setup) pair chain.
-   LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_TL,X
-   STA zp_i_y0
-   LDA POOL_TR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_TOP_R
-; record line, MAXed into TOP_L/R
-; (pool-dominates pre-test measured-and-rejected 2026-07-13: +384 on
-; the reference corpus — mixed intervals mostly hold competing records)
-   LDY TFS_T_CUR
-   LDA TOP_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   CMP TFS_TOP_L
-   BCC tfs_tri_l
-   STA TFS_TOP_L
-tfs_tri_l:
-   LDA TFS_NEXT_X
-   JSR interp_store
-   CMP TFS_TOP_R
-   BCC tfs_tri_r
-   STA TFS_TOP_R
-tfs_tri_r:
-; MIXED anchors to THIS interval (max/min of two lines is not a line),
-; and takes a kind that can never merge — extending a pending interval
-; whose anchor is its own range would silently reinterpret the line.
-   LDA TFS_CUR_X
-   STA TFS_TOP_XL
-   LDA TFS_NEXT_X
-   SEC
-   SBC TFS_CUR_X
-   STA TFS_TOP_DEN
-   LDA #TFS_KIND_MIXED
-   STA TFS_TOP_KIND
-   LDA TFS_CUR_X                               ; unique per interval
-   STA TFS_TOP_ID
-   JMP tfs_top_vals_done
 tfs_top_tag_rec:
    LDA #1
    STA TFS_TOP_KIND
@@ -834,14 +764,8 @@ tfs_top_vals_done:
    LDA BOT_RECORDS,Y
    CMP #$FF
    BEQ tfs_bot_pool                        ; 'below' verdict: pool stands
-   LDX zp_clr_save_x
-   LDA POOL_IB,X                           ; INVERTED double fold: IB in A —
-   CMP BOT_RECORDS,Y                       ; C = IB >= y folds both BEQ/BCS
-   BCC tfs_bot_mixed                       ; pairs, and IB rides A through
-   INY                                     ; the INYs (the yr LDA died). The
-   INY                                     ; TOP twin keeps value-in-A: its
-   CMP BOT_RECORDS,Y                       ; predicate is strict-<, which
-   BCC tfs_bot_mixed                       ; carry alone already decides.
+; (mirror of the top: a dominating record IS the boundary, so the
+;  extremes shortcut and the min() arm are gone — see the note there)
 tfs_bot_fast2:
 ; --- tfs_bot_rec_interp INLINED 2026-08-21: single call site, so
 ; inlining deletes the body AND the JSR (-4 bytes, -12
@@ -879,70 +803,6 @@ tfs_bot_pool:
    STA TFS_BOT_R
    ZERO TFS_BOT_KIND
    LDA zp_clr_save_x
-   STA TFS_BOT_ID
-   JMP tfs_bot_vals_done
-tfs_bot_mixed:
-; --- tfs_bot_vals_mixed INLINED 2026-08-21: single call site, so
-; inlining deletes the body AND the JSR (-4 bytes, -12
-; cycles). The bytes move from main RAM into the clipper
-; segment; the flat CLIPF region was grown to suit. ---
-; mixed path in ONE call (mirror of tfs_top_vals_mixed, MIN instead)
-   LDX zp_clr_save_x
-   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors
-   STA zp_i_x0
-   LDA POOL_BL,X
-   STA zp_i_y0
-   LDA POOL_BR,X
-   STA zp_i_y1
-   LDA POOL_BDEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
-   STA TFS_BOT_R
-; record line, MINed into BOT_L/R
-   LDY TFS_B_CUR
-   LDA BOT_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_tmp0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
-   CMP TFS_BOT_L
-   BCS tfs_bri_l
-   STA TFS_BOT_L
-tfs_bri_l:
-   LDA TFS_NEXT_X
-   JSR interp_store
-   CMP TFS_BOT_R
-   BCS tfs_bri_r
-   STA TFS_BOT_R
-tfs_bri_r:
-; MIXED anchors to THIS interval (max/min of two lines is not a line),
-; and takes a kind that can never merge — extending a pending interval
-; whose anchor is its own range would silently reinterpret the line.
-   LDA TFS_CUR_X
-   STA TFS_BOT_XL
-   LDA TFS_NEXT_X
-   SEC
-   SBC TFS_CUR_X
-   STA TFS_BOT_DEN
-   LDA #TFS_KIND_MIXED
-   STA TFS_BOT_KIND
-   LDA TFS_CUR_X                               ; unique per interval
    STA TFS_BOT_ID
    JMP tfs_bot_vals_done
 tfs_bot_tag_rec:
