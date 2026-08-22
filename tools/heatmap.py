@@ -17,8 +17,8 @@ annotations can be stripped again with --strip.
 import os, re, sys, subprocess
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-MARK = ';#|'
-WIDTH = 8
+MARK = ';#'      # NOT ';#|' — a pipe in the marker adds a phantom bar
+WIDTH = 10
 COL = 74
 
 
@@ -135,19 +135,19 @@ def main():
     lines = open(path).readlines()
     # Percentages are of THIS FILE's own total, not the frame: tfr is 11%
     # of the frame spread over 500 lines, so frame-relative numbers are
-    # all 0.0% and say nothing.  The bar is sqrt-scaled — linear spends
-    # its whole range on the peak, log flattens everything to the same
-    # height, and the data here has no single dominant line.
+    # all 0.0% and say nothing.  The bar is LINEAR, with the costliest
+    # instruction at WIDTH bars — so bar length is directly proportional
+    # to cycles and two lines can be compared by eye.
     for ln, c in per.items():
         if ln - 1 >= len(lines):
             continue
         raw = lines[ln - 1].rstrip('\n')
         if not raw.strip() or raw.lstrip().startswith(';'):
             continue
-        n = max(1, round(WIDTH * (c / peak) ** 0.5))
+        n = round(WIDTH * c / peak)
         pct = 100.0 * c / body
         pad = max(1, COL - len(raw))
-        lines[ln - 1] = (f'{raw}{" " * pad}{MARK}{"|" * n:<{WIDTH}}'
+        lines[ln - 1] = (f'{raw}{" " * pad}{MARK} {"|" * n:<{WIDTH}}'
                          f'{pct:4.1f}\n')
     open(path, 'w').writelines(lines)
     print(f'{src}: {len(per)} executed lines, {body:,} of {total:,} frame '
