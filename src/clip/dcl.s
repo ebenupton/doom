@@ -87,32 +87,27 @@ dcl_records_off:
    LDA #$FF
    STA zp_seg_start_x
 
-; Walk span list
+; Walk span list.  Empty list exits via the dclw_flush island (dcl_flush
+; is out of branch range); its seg_start test is a provable no-op here,
+; seg_start_x having been set to $FF five instructions ago, but the
+; empty case does not occur on the suite so it is not worth an island of
+; its own.
    LDX zp_head
-; End of list? (inverted 2026-07-27: non-empty 100% on suite — the
-; empty case borrows the dclw_flush island).  The Z comes from the LDX
-; above; the dcl_walk label that used to name this point had no
-; references anywhere in the tree — every advance re-enters at
-; dcl_walk2, which is precisely the point of that label (it SKIPS this
-; test, having already proved the next slot non-null).
    BEQ dclw_flush
-dcl_walk2:
 
-; --- Skip spans entirely left of line ---
+; --- Skip spans entirely left of line — FIRST ENTRY ONLY ---
 ; Skip if xend <= xl (strict: pixel-center model). xl is LOOP-
 ; INVARIANT: it rides A across the whole skip walk via an X/Y
 ; ping-pong advance (the has_gap idiom) — the old inline advance
 ; reloaded it every span because LDA POOL_NEXT/TAX consumed A.
 ;
-; ONLY THE FIRST ENTRY COMES HERE.  Every advance re-enters at
-; dcl_not_left instead, because once a span has passed this test the
-; rest of the walk provably cannot skip: the survivor has xend > xl, the
-; next span has xstart >= that xend, and its own xend is larger still,
-; so xend > xl holds for every span after.  Re-running the test would be
-; 10 cycles (LDA xl + CMP POOL_XEND,X + BCC) per span crossed, spent to
-; prove something already known.  Before the 2026-08-22 deferred-emit
-; restructure this did not arise — continuations skipped the walk head
-; entirely — so the advances inherited dcl_walk2 by default.
+; Every ADVANCE re-enters below at dcl_not_left, never here, because
+; once a span has passed this test the rest of the walk provably cannot
+; skip: the survivor has xend > xl, the next span starts at xstart >=
+; that xend, and its own xend is larger still, so xend > xl holds for
+; every span after.  (Both the dcl_walk and dcl_walk2 labels died with
+; that routing — dcl_walk2 existed only to let an advance skip this
+; test, which it now does by entering past it.)
    LDA zp_line_xl_l
 dclw_x:
    CMP POOL_XEND,X
@@ -327,7 +322,7 @@ dcl_rej_rec:
    JSR dcl_rec_flat_span
 dcl_outer_reject:
 ; Outer reject → advance to next span (inline; JMP — the ping-pong
-; walk pushed dcl_walk2 out of branch range, and an always-guarded
+; walk pushed the re-entry out of branch range, and an always-guarded
 ; BNE+JMP pair costs the same as the test+JMP form)
    LDA POOL_NEXT,X
    TAX

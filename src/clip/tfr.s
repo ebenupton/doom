@@ -561,7 +561,7 @@ tfs_st_bot:
    TAY                                                                    ;# ||         0.2
    LDA TFS_CUR_X                           ; INVERTED (mirror of st_top)  ;# ||         0.3
    CMP BOT_RECORDS,Y                                                      ;# |||        0.4
-   BCC tfs_st_bot_done                                                    ;# ||         0.3
+   BCC tfs_st_bot_done                                                    ;# |||        0.4
 tfs_st_bot_stale:
    LDA TFS_B_CUR
    CLC
@@ -900,7 +900,7 @@ tfs_advance_curs:
 ; Advance the cursor by 4, wrapping to 0 (exhausted) at BUFEND.
 ; Advance T_CUR if next_x crossed T.xr.
    LDA TFS_T_CUR                                                          ;# |||        0.3
-   BEQ tfs_skip_t_adv                                                     ;# ||         0.3
+   BEQ tfs_skip_t_adv                                                     ;# ||         0.2
    AND TFS_TOP_DOM                         ; $FF-transparent: A stays CUR ;# ||         0.2
    BEQ tfs_skip_t_adv                      ; (0 iff not dominating) — the ;# |          0.1
    CLC                                     ; reload died (2026-08-11)     ;# |          0.1
@@ -908,7 +908,7 @@ tfs_advance_curs:
    TAY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
    CMP TFS_NEXT_X                                                         ;# ||         0.2
-   BNE tfs_skip_t_adv                                                     ;# ||         0.2
+   BNE tfs_skip_t_adv                                                     ;# |          0.1
    LDA TFS_T_CUR                                                          ;# |          0.1
    CLC                                                                    ;# |          0.1
    ADC #4                                                                 ;# |          0.1
