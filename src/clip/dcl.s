@@ -797,6 +797,58 @@ dcl_cb_top_interp:
    LDA zp_cb_cx2
    JSR interp_store
    STA zp_cb_top2
+; --- Narrow the span's TOP band with what we just computed ---
+; POOL_TL/TR hold the top boundary at its SOURCE line's ends, and this
+; span is a sub-range of that source, so OT/IT = min/max(TL,TR) is a
+; SOURCE-WIDE band: correct, but loose (~30% of sides cover under a
+; quarter of their source).  We have just evaluated the boundary at cx1
+; and cx2 to decide whether the line passes through this span's vertical
+; faces, so spend that work on the band as well.
+;
+; The boundary is LINEAR, hence MONOTONIC, so an exact value at either
+; END of the span is an exact bound on that side:
+;   ascending  (top1 < top2): left end is the min (OT), right the max (IT)
+;   descending              : left end is the max (IT), right the min (OT)
+; Each side is guarded and stored independently, so a line covering only
+; ONE end of the span still tightens one bound; covering both gives the
+; exact band.  Both bounds are worth having: IT gates the Tier-2 ACCEPT
+; (which keeps a line off the CB path), and OT gates the Tier-1 reject
+; (which skips Tier-2 and CB together — measured worth more than IT
+; alone, inner-only was +12 MEAN over this).
+; SAFE only because a span's band no longer steers any emission
+; decision: the portal merge check that used to read IT/IB is gone (see
+; "NEVER SPLIT A LINE"), so band width now costs cycles, never pixels.
+   LDX zp_save0
+   LDA zp_cb_top1
+   CMP zp_cb_top2
+   BCC dcl_cb_tt_asc
+   BEQ dcl_cb_tt_asc                       ; equal → either arm is exact
+; descending: top1 is the max over [cx1,cx2], top2 the min
+   LDA zp_cb_cx1
+   CMP POOL_XSTART,X
+   BNE dcl_cb_tt_d2
+   LDA zp_cb_top1
+   STA POOL_IT,X
+dcl_cb_tt_d2:
+   LDA zp_cb_cx2
+   CMP POOL_XEND,X
+   BNE dcl_cb_top_evaled
+   LDA zp_cb_top2
+   STA POOL_OT,X
+   BCS dcl_cb_top_evaled                   ; (always: C=1 from the equal CMP)
+dcl_cb_tt_asc:
+; ascending: top1 is the min over [cx1,cx2], top2 the max
+   LDA zp_cb_cx1
+   CMP POOL_XSTART,X
+   BNE dcl_cb_tt_a2
+   LDA zp_cb_top1
+   STA POOL_OT,X
+dcl_cb_tt_a2:
+   LDA zp_cb_cx2
+   CMP POOL_XEND,X
+   BNE dcl_cb_top_evaled
+   LDA zp_cb_top2
+   STA POOL_IT,X
 dcl_cb_top_evaled:
 
 ; Top clip: test cy vs top at each endpoint
@@ -929,6 +981,43 @@ dcl_cb_bot_interp:
    LDA zp_cb_cx2
    JSR interp_store
    STA zp_cb_bot2
+; --- Narrow the span's BOT band, mirror of the top arm ---
+; OB is the MAX of the bot boundary over the span, IB the MIN.  The
+; cx1/cx2 guards are re-tested here rather than reused from the top arm:
+; the TOP clip may already have moved cx1/cx2 inward, and a bound read
+; off a narrowed sub-range would be TIGHTER than the span's true extent
+; and could wrongly accept later.
+   LDX zp_save0
+   LDA zp_cb_bot1
+   CMP zp_cb_bot2
+   BCC dcl_cb_bt_asc
+   BEQ dcl_cb_bt_asc
+; descending: bot1 is the max, bot2 the min
+   LDA zp_cb_cx1
+   CMP POOL_XSTART,X
+   BNE dcl_cb_bt_d2
+   LDA zp_cb_bot1
+   STA POOL_OB,X
+dcl_cb_bt_d2:
+   LDA zp_cb_cx2
+   CMP POOL_XEND,X
+   BNE dcl_cb_bot_eval_done
+   LDA zp_cb_bot2
+   STA POOL_IB,X
+   BCS dcl_cb_bot_eval_done                ; (always: C=1 from the equal CMP)
+dcl_cb_bt_asc:
+; ascending: bot1 is the min, bot2 the max
+   LDA zp_cb_cx1
+   CMP POOL_XSTART,X
+   BNE dcl_cb_bt_a2
+   LDA zp_cb_bot1
+   STA POOL_IB,X
+dcl_cb_bt_a2:
+   LDA zp_cb_cx2
+   CMP POOL_XEND,X
+   BNE dcl_cb_bot_eval_done
+   LDA zp_cb_bot2
+   STA POOL_OB,X
 dcl_cb_bot_eval_done:
 
 ; Bot clip: test cy vs bot at each endpoint
