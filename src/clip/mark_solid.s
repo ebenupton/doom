@@ -20,7 +20,7 @@
 ; +-1 arithmetic anywhere.
 ;
 ; LAZY operation: only adjusts XSTART/XEND on affected spans.
-; Line params (XLO/DEN/TL/BL/TR/BR) are NEVER modified -- zero interp
+; Line params (TXLO/TDEN/BXLO/BDEN/TL/BL/TR/BR) are NEVER modified -- zero interp
 ; calls needed.  When a solid range splits a span in the middle, a
 ; sibling slot is allocated and the 10 field bytes are copied verbatim.
 ;
@@ -59,7 +59,7 @@
 span_mark_solid:
 .scope
 ; mark_solid is now LAZY: it only updates the active range (XSTART/XEND)
-; on existing spans. The line params (XLO/XHI/TL/BL/TR/BR) never change,
+; on existing spans. The line params (TXLO/TDEN/BXLO/BDEN/TL/BL/TR/BR) never change,
 ; so no interp_store calls happen here. Splitting a span in the middle
 ; just allocates a sibling and copies the 6 line bytes verbatim.
 ; Invalidate the has_gap coherence cache: this entry frees/merges
@@ -230,11 +230,11 @@ ms_has_left:
 ; |
    LDY zp_prev                             ; Y = original span (the left fragment)               ; |
 ; Copy line params from Y to X (sibling shares the same line)
-   LDA POOL_XLO,Y
-   STA POOL_XLO,X
+   LDA POOL_TXLO,Y
+   STA POOL_TXLO,X
 ; |
-   LDA POOL_DEN,Y
-   STA POOL_DEN,X
+   LDA POOL_TDEN,Y
+   STA POOL_TDEN,X
 ; |
    LDA POOL_BXLO,Y                         ; the bottom line has its own
    STA POOL_BXLO,X                         ; anchors since 2026-08-22

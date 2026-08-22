@@ -65,8 +65,8 @@ POOL_BASE = _sym('POOL')
 # hoisted 2026-07-26 when read_spans went direct, replacing two
 # method-local magic-number blocks)
 POOL_NEXT   = _sym('POOL_NEXT')
-POOL_XLO    = _sym('POOL_XLO')
-POOL_DEN    = _sym('POOL_DEN')
+POOL_TXLO    = _sym('POOL_TXLO')
+POOL_TDEN    = _sym('POOL_TDEN')
 POOL_TL     = _sym('POOL_TL')
 POOL_BL     = _sym('POOL_BL')
 POOL_TR     = _sym('POOL_TR')
@@ -324,8 +324,8 @@ class SpanClip6502:
     def _read_span_at_slot(self, slot):
         """Read a single span from pool by slot number."""
         mem = self.mpu.memory
-        xlo = mem[POOL_XLO + slot]
-        den = mem[POOL_DEN + slot]
+        xlo = mem[POOL_TXLO + slot]
+        den = mem[POOL_TDEN + slot]
         return (mem[POOL_XSTART + slot], mem[POOL_XEND + slot],
                 xlo, (xlo + den) & 0xFF,
                 mem[POOL_TL + slot], mem[POOL_BL + slot],
@@ -343,8 +343,8 @@ class SpanClip6502:
             xstart, xend, xlo, xhi, tl, bl, tr, br = s
             mem[POOL_XSTART + slot] = xstart & 0xFF
             mem[POOL_XEND + slot] = xend & 0xFF
-            mem[POOL_XLO + slot] = xlo & 0xFF
-            mem[POOL_DEN + slot] = (xhi - xlo) & 0xFF
+            mem[POOL_TXLO + slot] = xlo & 0xFF
+            mem[POOL_TDEN + slot] = (xhi - xlo) & 0xFF
             mem[POOL_TL + slot] = tl & 0xFF
             mem[POOL_BL + slot] = bl & 0xFF
             mem[POOL_TR + slot] = tr & 0xFF
@@ -401,9 +401,9 @@ class SpanClip6502:
         for _ in range(64):                 # 31 spans max; a longer chase
             if slot == 0:                   # means pool corruption
                 return spans
-            xlo = mem[POOL_XLO + slot]
+            xlo = mem[POOL_TXLO + slot]
             spans.append((mem[POOL_XSTART + slot], mem[POOL_XEND + slot],
-                          xlo, (xlo + mem[POOL_DEN + slot]) & 0xFF,
+                          xlo, (xlo + mem[POOL_TDEN + slot]) & 0xFF,
                           mem[POOL_TL + slot], mem[POOL_BL + slot],
                           mem[POOL_TR + slot], mem[POOL_BR + slot]))
             slot = mem[POOL_NEXT + slot]

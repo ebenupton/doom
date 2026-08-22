@@ -299,12 +299,12 @@ ds:
 ;
 ; Field blocks (32 bytes each):
 ;   NEXT     linked-list next (slot number, 0 = end)
-;   XLO      line anchor x left  (immutable after span creation)
-;   DEN      xhi - xlo (precomputed denominator for interp, immutable)
-;   TL       top y at XLO
-;   BL       bot y at XLO
-;   TR       top y at XLO+DEN
-;   BR       bot y at XLO+DEN
+;   TXLO     top line anchor x left  (immutable after span creation)
+;   TDEN     xhi - xlo (precomputed denominator for interp, immutable)
+;   TL       top y at TXLO
+;   BL       bot y at BXLO
+;   TR       top y at TXLO+TDEN
+;   BR       bot y at BXLO+BDEN
 ;   XSTART   active range start (mutable: shrunk by mark_solid / tighten fragments)
 ;   XEND     active range end, EXCLUSIVE (mutable) — the span covers
 ;            columns [XSTART, XEND); a full-screen span has XEND=255
@@ -315,7 +315,8 @@ ds:
 ;   IB       min(BL, BR) — inner bot (precomputed bbox)
 ;
 ; Spans interpolate y at any column x ∈ [XSTART, XEND) using the line through
-; (XLO, TL/BL) — (XLO+DEN, TR/BR). XLO/DEN need not match XSTART/XEND once
+; (TXLO, TL) — (TXLO+TDEN, TR), and likewise BXLO/BDEN for the bottom.
+; The anchors need not match XSTART/XEND once
 ; a span has been narrowed: the line is preserved across mark_solid splits
 ; and left/right-fragment creation in tighten, so no interp_store is needed
 ; for those operations.
@@ -328,8 +329,10 @@ POOL = SPAN_POOL                        ; abi.inc ($1800 since the 2026-08-19
 ; 2026-08-18 — the pool kept writing its old home after POOL moved and the
 ; sqr HI pages took the corruption; only the pixel-exact pyref saw it)
 POOL_NEXT   = POOL + $000
-POOL_XLO    = POOL + $020
-POOL_DEN    = POOL + $040               ; precomputed xhi - xlo (interp denominator)
+POOL_TXLO   = POOL + $020               ; TOP line's anchor x  (pairs with
+POOL_TDEN   = POOL + $040               ;  POOL_BXLO/BDEN below); DEN is the
+                                        ;  precomputed xhi - xlo, i.e. the
+                                        ;  interp denominator
 POOL_TL     = POOL + $060
 POOL_BL     = POOL + $080
 POOL_TR     = POOL + $0A0
@@ -340,8 +343,10 @@ POOL_OT     = POOL + $120
 POOL_OB     = POOL + $140
 POOL_IT     = POOL + $160
 POOL_IB     = POOL + $180
-; SEPARATE TOP/BOTTOM ANCHORS (2026-08-22). XLO/DEN anchor the TOP line
-; only; the BOTTOM line carries its own pair below. Each boundary is
+; SEPARATE TOP/BOTTOM ANCHORS (2026-08-22). TXLO/TDEN anchor the TOP line
+; only; the BOTTOM line carries its own BXLO/BDEN pair below. (They were
+; the unprefixed XLO/DEN until 2026-08-22, from the days when there was
+; only one anchor pair — renamed so the two sides read symmetrically.) Each boundary is
 ; stored at its SOURCE line's own extent, so the sweep no longer has to
 ; interpolate both sources onto a common anchor when it emits a span —
 ; see the note in clip/tfr.s flush_pending. (VXC_ENABLE/vxc_prev_ab

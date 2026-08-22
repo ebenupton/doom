@@ -582,9 +582,9 @@ dv_in:
    STA zp_cb_top1
    BEQ dv_top_done                         ; Z=1 from the TL==TR CMP
 dv_top_interp:
-   LDA POOL_XLO,X
+   LDA POOL_TXLO,X
    STA zp_i_x0
-   LDA POOL_DEN,X
+   LDA POOL_TDEN,X
    STA zp_div_den
    LDA POOL_TL,X
    STA zp_i_y0
@@ -783,9 +783,9 @@ dcl_cb_top_eval:
    BEQ dcl_cb_top_evaled                   ; Z=1 from the TL==TR CMP
 dcl_cb_top_interp:
 ; Setup interp and evaluate
-   LDA POOL_XLO,X
+   LDA POOL_TXLO,X
    STA zp_i_x0
-   LDA POOL_DEN,X
+   LDA POOL_TDEN,X
    STA zp_div_den
    LDA POOL_TL,X
    STA zp_i_y0
@@ -830,13 +830,13 @@ dcl_cb_top_p1_ok:
 ; A = ix (clip p2, round toward cx1)
    STA zp_cb_cx2
 ; cy at crossing = boundary_y(ix). Interp workspace still has the
-; span's top line (i_x0=XLO, i_y0=TL, i_y1=TR); boundary_ix only
+; span's top line (i_x0=TXLO, i_y0=TL, i_y1=TR); boundary_ix only
 ; clobbered div_den. Constant spans: cy = top1 directly.
    LDA zp_cb_top1
    CMP zp_cb_top2
    BEQ dcl_cb_top_cy2_const
    LDX zp_save0
-   LDA POOL_DEN,X
+   LDA POOL_TDEN,X
    STA zp_div_den
    LDA zp_cb_cx2
    JSR interp_store
@@ -865,7 +865,7 @@ dcl_cb_top_clip:
    CMP zp_cb_top2
    BEQ dcl_cb_top_cy1_const
    LDX zp_save0
-   LDA POOL_DEN,X
+   LDA POOL_TDEN,X
    STA zp_div_den
    LDA zp_cb_cx1
    JSR interp_store

@@ -27,7 +27,7 @@
 ; Input:  none.
 ; Output: zp_free = 2 (free chain 2->3->...->31->0),
 ;         zp_head = 1, slot 1 = full-screen span:
-;           XSTART=XLO=0, XEND=DEN=255 (XEND exclusive),
+;           XSTART=TXLO=BXLO=0, XEND=TDEN=BDEN=255 (XEND exclusive),
 ;           TL=TR=OT=IT=Y_BIAS (48), BL=BR=OB=IB=Y_BIAS+159 (207)
 ;           (screen-space Y is stored BIASED: visible [0,159] -> [48,207])
 ;         zp_hg_cache = 1 (has_gap coherence cache primed to the span).
@@ -53,14 +53,14 @@ il:
    BNE il                                  ; always taken                               ; |
 id:
    LDA #0                                  ; A = 0 RIDES into slot 1's
-   STA POOL_NEXT,X                         ; NEXT/XLO/XSTART stores below —
+   STA POOL_NEXT,X                         ; NEXT/TXLO/XSTART stores below —
                                         ; NOT a C02/STZ candidate
 ; |
 ; Active list: slot 1 = full screen with biased Y [Y_BIAS, Y_BIAS+159].
    LDX #1                                  ; slot 1 (index 1)                           ; |
    STX zp_head                             ; |
    STA POOL_NEXT,X
-   STA POOL_XLO,X                          ; top anchor lo = 0
+   STA POOL_TXLO,X                          ; top anchor lo = 0
    STA POOL_BXLO,X                         ; bottom anchor lo = 0
    STA POOL_XSTART,X
 ; |
@@ -72,7 +72,7 @@ id:
    STA POOL_IT,X
 ; | OT=IT=Y_BIAS
    LDA #255
-   STA POOL_DEN,X                          ; top anchor span = 255
+   STA POOL_TDEN,X                          ; top anchor span = 255
    STA POOL_BDEN,X                         ; bottom anchor span = 255
    STA POOL_XEND,X
 ; |

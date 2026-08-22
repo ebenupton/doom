@@ -113,7 +113,7 @@ ina
 ;
 ; Pool at POOL ($0400), 32 slots in block layout.  Slot 0 = null.
 ; Each field is a 32-byte block; slot N is at POOL_FIELD + N.
-; Access: LDX slot_number; LDA POOL_XLO,X  (fast absolute indexed)
+; Access: LDX slot_number; LDA POOL_TXLO,X  (fast absolute indexed)
 ;
 ; Division by 256 (ex=0): just take high byte of multiply (shift, no loop).
 ; Otherwise: restoring division loop, 8 iterations.

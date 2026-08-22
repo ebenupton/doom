@@ -66,11 +66,11 @@ ta_try_merge:
    LDA POOL_TR,Y
    CMP POOL_TR,X
    BNE ta_link
-   LDA POOL_XLO,Y
-   CMP POOL_XLO,X
+   LDA POOL_TXLO,Y
+   CMP POOL_TXLO,X
    BNE ta_link
-   LDA POOL_DEN,Y
-   CMP POOL_DEN,X
+   LDA POOL_TDEN,Y
+   CMP POOL_TDEN,X
    BNE ta_link
    LDA POOL_BL,Y
    CMP POOL_BL,X
@@ -736,9 +736,9 @@ tfs_top_pool:
 ; want — copy its anchors and endpoint values (was two interp_store
 ; calls re-anchoring the SAME line onto this interval).
    LDX zp_clr_save_x
-   LDA POOL_XLO,X
+   LDA POOL_TXLO,X
    STA TFS_TOP_XL
-   LDA POOL_DEN,X
+   LDA POOL_TDEN,X
    STA TFS_TOP_DEN
    LDA POOL_TL,X
    STA TFS_TOP_L
@@ -979,7 +979,7 @@ tfs_finish:                                ; (tfsc_finish relay + the
 ; Input:  TFS_PEND_* (valid only when TFS_PEND_ACT = 1; no-op otherwise).
 ; Output: pending interval materialized as a pool span and appended via
 ;         tg_append_x; TFS_PEND_ACT cleared.  The span is DENSE-ANCHORED:
-;         line anchors == active range (XLO = XL, DEN = XR - XL), with
+;         line anchors == active range (TXLO = XL, TDEN = XR - XL), with
 ;         the OT/IT/OB/IB bbox bytes computed from the endpoint values.
 ;         On pool exhaustion the interval is silently dropped
 ;         (flush_fail) — columns vanish rather than corrupt the list.
@@ -1001,9 +1001,9 @@ flush_do:
    LDA TFS_PEND_XR
    STA POOL_XEND,X
    LDA TFS_PEND_TXL                        ; each boundary keeps its SOURCE
-   STA POOL_XLO,X                          ; anchor; the active range is
+   STA POOL_TXLO,X                          ; anchor; the active range is
    LDA TFS_PEND_TDEN                       ; independent of both
-   STA POOL_DEN,X
+   STA POOL_TDEN,X
    LDA TFS_PEND_BXL
    STA POOL_BXLO,X
    LDA TFS_PEND_BDEN
@@ -1051,7 +1051,7 @@ flush_fail:
 ; Input:  zp_ox0/zp_ox1 = active range for the fragment (half-open);
 ;         zp_clr_save_x = source pool slot.
 ; Output: new slot with the source's line definition copied VERBATIM
-;         (XLO/DEN/TL/BL/TR/BR + precomputed OT/OB/IT/IB — no interp,
+;         (TXLO/TDEN/BXLO/BDEN/TL/BL/TR/BR + precomputed OT/OB/IT/IB — no interp,
 ;         matching the lazy fragments of the Python mirrors) and active
 ;         range [ox0, ox1), appended via tg_append_x.  Silently dropped
 ;         on pool exhaustion.  Clobbers A,X,Y.
@@ -1062,10 +1062,10 @@ emit_unchanged_subspan:
    STA zp_free                             ; BEQ existed only to carry Z
                                         ; across the JSR — both die)
    LDY zp_clr_save_x
-   LDA POOL_XLO,Y
-   STA POOL_XLO,X
-   LDA POOL_DEN,Y
-   STA POOL_DEN,X
+   LDA POOL_TXLO,Y
+   STA POOL_TXLO,X
+   LDA POOL_TDEN,Y
+   STA POOL_TDEN,X
    LDA POOL_BXLO,Y                         ; bottom line's own anchors
    STA POOL_BXLO,X
    LDA POOL_BDEN,Y
