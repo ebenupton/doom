@@ -236,6 +236,12 @@ ms_has_left:
    LDA POOL_DEN,Y
    STA POOL_DEN,X
 ; |
+   LDA POOL_BXLO,Y                         ; the bottom line has its own
+   STA POOL_BXLO,X                         ; anchors since 2026-08-22
+; |
+   LDA POOL_BDEN,Y
+   STA POOL_BDEN,X
+; |
    LDA POOL_TL,Y
    STA POOL_TL,X
 ; |

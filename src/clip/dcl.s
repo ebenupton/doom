@@ -610,9 +610,9 @@ dv_top_done:
    STA zp_cb_bot1
    BEQ dv_bot_done                         ; Z=1 from the BL==BR CMP
 dv_bot_interp:
-   LDA POOL_XLO,X
+   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors
    STA zp_i_x0
-   LDA POOL_DEN,X
+   LDA POOL_BDEN,X
    STA zp_div_den
    LDA POOL_BL,X
    STA zp_i_y0
@@ -913,9 +913,9 @@ dcl_cb_bot_eval:
    STA zp_cb_bot2
    BEQ dcl_cb_bot_eval_done                ; Z=1 from the BL==BR CMP
 dcl_cb_bot_interp:
-   LDA POOL_XLO,X
+   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors
    STA zp_i_x0
-   LDA POOL_DEN,X
+   LDA POOL_BDEN,X
    STA zp_div_den
    LDA POOL_BL,X
    STA zp_i_y0
@@ -967,7 +967,7 @@ dcl_cb_bot_p1_ok:
    CMP zp_cb_bot2
    BEQ dcl_cb_bot_cy2_const
    LDX zp_save0
-   LDA POOL_DEN,X
+   LDA POOL_BDEN,X                         ; BOTTOM anchors
    STA zp_div_den
    LDA zp_cb_cx2
    JSR interp_store
@@ -994,7 +994,7 @@ dcl_cb_bot_clip:
    CMP zp_cb_bot2
    BEQ dcl_cb_bot_cy1_const
    LDX zp_save0
-   LDA POOL_DEN,X
+   LDA POOL_BDEN,X                         ; BOTTOM anchors
    STA zp_div_den
    LDA zp_cb_cx1
    JSR interp_store

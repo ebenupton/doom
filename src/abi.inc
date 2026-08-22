@@ -35,7 +35,7 @@ D_ENABLE = $19FE                        ; forward-coherence bbox cache master sw
 D_FWD = $19FF                           ; per-frame flag: move was forward-only
 VXC_STATE = $0700                       ; THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
 VXC_STATE_LEN = $0100                   ; bytes to zero at boot (the whole bitmap page)
-VXC_ENABLE = $19DB                      ; translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide, same page offsets)
+VXC_ENABLE = $19DD                      ; translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxc_prev_ab follows it)
 .if ::BANKED
 RCACHE_STATE = $AF00       ; rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 .else

@@ -340,6 +340,14 @@ POOL_OT     = POOL + $120
 POOL_OB     = POOL + $140
 POOL_IT     = POOL + $160
 POOL_IB     = POOL + $180
+; SEPARATE TOP/BOTTOM ANCHORS (2026-08-22). XLO/DEN anchor the TOP line
+; only; the BOTTOM line carries its own pair below. Each boundary is
+; stored at its SOURCE line's own extent, so the sweep no longer has to
+; interpolate both sources onto a common anchor when it emits a span —
+; see the note in clip/tfr.s flush_pending. (VXC_ENABLE/vxc_prev_ab
+; moved $19DB/DC -> $19DD/DE to clear the room.)
+POOL_BXLO   = POOL + $1A0
+POOL_BDEN   = POOL + $1C0
 NUM_SLOTS = 32
 
 Y_BIAS = 48                             ; bias Y so visible [0,159] maps to [48,207] within u8

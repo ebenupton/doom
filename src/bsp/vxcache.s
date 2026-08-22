@@ -43,7 +43,10 @@
 ; --- data equates (unbanked) ---
 VXC_VALID   = $0780                     ; 57 B — on THE bitmap page
 ; (VXC_ENABLE comes from abi.inc)
-vxc_prev_ab = $19DC                     ; moved with the scalars block
+vxc_prev_ab = $19DE                     ; moved with the scalars block, then
+                                        ; $19DC -> $19DE 2026-08-22 (with
+                                        ; VXC_ENABLE) to clear $19A0-$19DF for
+                                        ; the span pool's two new planes
                                         ; 2026-08-18 (the hard $05DC literal
                                         ; survived the sqr swap and wrote the
                                         ; frame angle into SQR2_HI[$DC] —

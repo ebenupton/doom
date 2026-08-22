@@ -60,7 +60,8 @@ id:
    LDX #1                                  ; slot 1 (index 1)                           ; |
    STX zp_head                             ; |
    STA POOL_NEXT,X
-   STA POOL_XLO,X
+   STA POOL_XLO,X                          ; top anchor lo = 0
+   STA POOL_BXLO,X                         ; bottom anchor lo = 0
    STA POOL_XSTART,X
 ; |
    LDA #Y_BIAS                             ; |
@@ -71,7 +72,8 @@ id:
    STA POOL_IT,X
 ; | OT=IT=Y_BIAS
    LDA #255
-   STA POOL_DEN,X
+   STA POOL_DEN,X                          ; top anchor span = 255
+   STA POOL_BDEN,X                         ; bottom anchor span = 255
    STA POOL_XEND,X
 ; |
    LDA #(Y_BIAS + 159)                     ; |

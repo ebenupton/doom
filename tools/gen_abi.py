@@ -65,7 +65,7 @@ ABI = [
     ('D_FWD',          0x19FF, None, 'per-frame flag: move was forward-only'),
     ('VXC_STATE',      0x0700, None, 'THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
     ('VXC_STATE_LEN',  0x100,  None, 'bytes to zero at boot (the whole bitmap page)'),
-    ('VXC_ENABLE',     0x19DB, None, 'translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide, same page offsets)'),
+    ('VXC_ENABLE',     0x19DD, None, 'translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxc_prev_ab follows it)'),
     ('RCACHE_STATE',   0xAF00, 0x7268, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
     ('RCACHE_ENABLE',  0xAF88, 0x72F0, 'rotation-coherence bca cache switch (STATE+$88)'),

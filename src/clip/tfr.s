@@ -110,10 +110,20 @@ SEG_BANKC
 ; PEND_* is a 1-deep output buffer: the interval most recently produced
 ; by the sweep, held back so the next interval can extend it in place
 ; (same top/bot sources) instead of allocating a new pool span.
-TFS_TOP_L = $0605                       ; top value at cur_x
-TFS_TOP_R = $0606                       ; top value at next_x
+; SOURCE-ANCHORED BOUNDARIES (2026-08-22). Each side is carried as its
+; SOURCE line's own (anchor_lo, den, y_lo, y_hi) rather than the two
+; values interpolated onto the interval's ends, so a pure side costs
+; four copies instead of two interp_store calls. The MIXED arms (max/
+; min of pool and record) cannot be one line, so they still interpolate
+; onto [cur_x, next_x] and anchor there.
+TFS_TOP_L = $0605                       ; top y at TFS_TOP_XL
+TFS_TOP_R = $0606                       ; top y at TFS_TOP_XL + TFS_TOP_DEN
 TFS_BOT_L = $0607
 TFS_BOT_R = $0608
+TFS_TOP_XL  = $060F                     ; top line's own anchor
+TFS_TOP_DEN = $0610
+TFS_BOT_XL  = $0611                     ; bottom line's own anchor
+TFS_BOT_DEN = $0600
 TFS_TOP_KIND = $0609                    ; 0 = pool, 1 = top record
 TFS_TOP_ID = $060A                      ; pool slot or record offset
 TFS_BOT_KIND = $060B                    ; 0 = pool, 1 = bot record
@@ -130,6 +140,13 @@ TFS_PEND_TKIND = $0618
 TFS_PEND_TID = $0619
 TFS_PEND_BKIND = $061A
 TFS_PEND_BID = $061B
+TFS_PEND_TXL  = $0601                   ; pending copies of the two anchors
+TFS_PEND_TDEN = $0602
+TFS_PEND_BXL  = $0603
+TFS_PEND_BDEN = $0604
+TFS_KIND_MIXED = 2                      ; kind tag that never merges (the
+                                        ; mixed arms anchor to the interval,
+                                        ; so extending one would be wrong)
 ; --- verdict-record support (2026-07-13 off-screen-aperture fix) ---
 ; $091C/$091D free (TFS_*_VERD retired — verdicts tested lazily at the
 ; consumption points, 2026-07-13)
@@ -679,48 +696,36 @@ tfs_compute_vals:
 ; segment; the flat CLIPF region was grown to suit. ---
 ; record line -> TOP_L/R directly (pure-record path; setup inlined —
 ; the JSR/RTS pair was per-interval tax on the hot extremes shortcut)
+; SOURCE-ANCHORED: the record IS the line — copy its anchors and its
+; endpoint values; no interpolation at all (was two interp_store calls).
    LDY TFS_T_CUR
-   LDA TOP_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA TOP_RECORDS,Y
+   LDA TOP_RECORDS,Y                       ; xl
+   STA TFS_TOP_XL
    STA zp_tmp0
    INY
-   LDA TOP_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
+   LDA TOP_RECORDS,Y                       ; yl
    STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
+   INY
+   LDA TOP_RECORDS,Y                       ; xr
+   SEC
+   SBC zp_tmp0
+   STA TFS_TOP_DEN
+   INY
+   LDA TOP_RECORDS,Y                       ; yr
    STA TFS_TOP_R
    JMP tfs_top_tag_rec
 tfs_top_pool:
-; --- tfs_top_pool_interp INLINED 2026-08-21: single call site, so
-; inlining deletes the body AND the JSR (-4 bytes, -12
-; cycles). The bytes move from main RAM into the clipper
-; segment; the flat CLIPF region was grown to suit. ---
+; SOURCE-ANCHORED: the pool span's top line is already exactly what we
+; want — copy its anchors and endpoint values (was two interp_store
+; calls re-anchoring the SAME line onto this interval).
    LDX zp_clr_save_x
    LDA POOL_XLO,X
-   STA zp_i_x0
-   LDA POOL_TL,X
-   STA zp_i_y0
-   LDA POOL_TR,X
-   STA zp_i_y1
+   STA TFS_TOP_XL
    LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
+   STA TFS_TOP_DEN
+   LDA POOL_TL,X
    STA TFS_TOP_L
-   LDA TFS_NEXT_X
-   JSR interp_store
+   LDA POOL_TR,X
    STA TFS_TOP_R
    ZERO TFS_TOP_KIND
    LDA zp_clr_save_x
@@ -780,7 +785,20 @@ tfs_tri_l:
    BCC tfs_tri_r
    STA TFS_TOP_R
 tfs_tri_r:
-   JMP tfs_top_tag_rec
+; MIXED anchors to THIS interval (max/min of two lines is not a line),
+; and takes a kind that can never merge — extending a pending interval
+; whose anchor is its own range would silently reinterpret the line.
+   LDA TFS_CUR_X
+   STA TFS_TOP_XL
+   LDA TFS_NEXT_X
+   SEC
+   SBC TFS_CUR_X
+   STA TFS_TOP_DEN
+   LDA #TFS_KIND_MIXED
+   STA TFS_TOP_KIND
+   LDA TFS_CUR_X                               ; unique per interval
+   STA TFS_TOP_ID
+   JMP tfs_top_vals_done
 tfs_top_tag_rec:
    LDA #1
    STA TFS_TOP_KIND
@@ -811,48 +829,34 @@ tfs_bot_fast2:
 ; cycles). The bytes move from main RAM into the clipper
 ; segment; the flat CLIPF region was grown to suit. ---
 ; (setup inlined — see tfs_top_rec_interp note)
+; SOURCE-ANCHORED (mirror of the top arm): the record IS the line.
    LDY TFS_B_CUR
-   LDA BOT_RECORDS,Y
-   STA zp_i_x0
-   INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y0
-   INY
-   LDA BOT_RECORDS,Y
+   LDA BOT_RECORDS,Y                       ; xl
+   STA TFS_BOT_XL
    STA zp_tmp0
    INY
-   LDA BOT_RECORDS,Y
-   STA zp_i_y1
-   LDA zp_tmp0
-   SEC
-   SBC zp_i_x0
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
+   LDA BOT_RECORDS,Y                       ; yl
    STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
+   INY
+   LDA BOT_RECORDS,Y                       ; xr
+   SEC
+   SBC zp_tmp0
+   STA TFS_BOT_DEN
+   INY
+   LDA BOT_RECORDS,Y                       ; yr
    STA TFS_BOT_R
    JMP tfs_bot_tag_rec
 tfs_bot_pool:
-; --- tfs_bot_pool_interp INLINED 2026-08-21: single call site, so
-; inlining deletes the body AND the JSR (-4 bytes, -12
-; cycles). The bytes move from main RAM into the clipper
-; segment; the flat CLIPF region was grown to suit. ---
+; SOURCE-ANCHORED (mirror of the top arm): copy the pool span's own
+; bottom line rather than re-anchoring it onto this interval.
    LDX zp_clr_save_x
-   LDA POOL_XLO,X
-   STA zp_i_x0
+   LDA POOL_BXLO,X
+   STA TFS_BOT_XL
+   LDA POOL_BDEN,X
+   STA TFS_BOT_DEN
    LDA POOL_BL,X
-   STA zp_i_y0
-   LDA POOL_BR,X
-   STA zp_i_y1
-   LDA POOL_DEN,X
-   STA zp_div_den
-   LDA TFS_CUR_X
-   JSR interp_store
    STA TFS_BOT_L
-   LDA TFS_NEXT_X
-   JSR interp_store
+   LDA POOL_BR,X
    STA TFS_BOT_R
    ZERO TFS_BOT_KIND
    LDA zp_clr_save_x
@@ -865,13 +869,13 @@ tfs_bot_mixed:
 ; segment; the flat CLIPF region was grown to suit. ---
 ; mixed path in ONE call (mirror of tfs_top_vals_mixed, MIN instead)
    LDX zp_clr_save_x
-   LDA POOL_XLO,X
+   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors
    STA zp_i_x0
    LDA POOL_BL,X
    STA zp_i_y0
    LDA POOL_BR,X
    STA zp_i_y1
-   LDA POOL_DEN,X
+   LDA POOL_BDEN,X
    STA zp_div_den
    LDA TFS_CUR_X
    JSR interp_store
@@ -908,7 +912,20 @@ tfs_bri_l:
    BCS tfs_bri_r
    STA TFS_BOT_R
 tfs_bri_r:
-   JMP tfs_bot_tag_rec
+; MIXED anchors to THIS interval (max/min of two lines is not a line),
+; and takes a kind that can never merge — extending a pending interval
+; whose anchor is its own range would silently reinterpret the line.
+   LDA TFS_CUR_X
+   STA TFS_BOT_XL
+   LDA TFS_NEXT_X
+   SEC
+   SBC TFS_CUR_X
+   STA TFS_BOT_DEN
+   LDA #TFS_KIND_MIXED
+   STA TFS_BOT_KIND
+   LDA TFS_CUR_X                               ; unique per interval
+   STA TFS_BOT_ID
+   JMP tfs_bot_vals_done
 tfs_bot_tag_rec:
    LDA #1
    STA TFS_BOT_KIND
@@ -938,13 +955,11 @@ tfs_bot_vals_done:
    LDA TFS_PEND_BID
    CMP TFS_BOT_ID
    BNE tfs_no_merge
-; Merge: extend pending right edge.
+; Merge: extend the pending ACTIVE range only. Same sources means the
+; same lines at the same anchors, so no value or anchor is re-derived —
+; the four stores this used to do died with source anchoring.
    LDA TFS_NEXT_X
    STA TFS_PEND_XR
-   LDA TFS_TOP_R
-   STA TFS_PEND_TR
-   LDA TFS_BOT_R
-   STA TFS_PEND_BR
    JMP tfs_advance_curs
 tfs_no_merge:
    JSR tfs_flush_pending
@@ -965,6 +980,14 @@ tfs_start_pend:
    STA TFS_PEND_BL
    LDA TFS_BOT_R
    STA TFS_PEND_BR
+   LDA TFS_TOP_XL                          ; each side's own anchor
+   STA TFS_PEND_TXL
+   LDA TFS_TOP_DEN
+   STA TFS_PEND_TDEN
+   LDA TFS_BOT_XL
+   STA TFS_PEND_BXL
+   LDA TFS_BOT_DEN
+   STA TFS_PEND_BDEN
    LDA TFS_TOP_KIND
    STA TFS_PEND_TKIND
    LDA TFS_TOP_ID
@@ -1096,12 +1119,16 @@ flush_do:
                                         ; across the JSR — both die)
    LDA TFS_PEND_XL
    STA POOL_XSTART,X
-   STA POOL_XLO,X
    LDA TFS_PEND_XR
    STA POOL_XEND,X
-   SEC
-   SBC TFS_PEND_XL
+   LDA TFS_PEND_TXL                        ; each boundary keeps its SOURCE
+   STA POOL_XLO,X                          ; anchor; the active range is
+   LDA TFS_PEND_TDEN                       ; independent of both
    STA POOL_DEN,X
+   LDA TFS_PEND_BXL
+   STA POOL_BXLO,X
+   LDA TFS_PEND_BDEN
+   STA POOL_BDEN,X
    LDA TFS_PEND_TL
    STA POOL_TL,X
    LDA TFS_PEND_TR
@@ -1160,6 +1187,10 @@ emit_unchanged_subspan:
    STA POOL_XLO,X
    LDA POOL_DEN,Y
    STA POOL_DEN,X
+   LDA POOL_BXLO,Y                         ; bottom line's own anchors
+   STA POOL_BXLO,X
+   LDA POOL_BDEN,Y
+   STA POOL_BDEN,X
    LDA POOL_TL,Y
    STA POOL_TL,X
    LDA POOL_BL,Y
