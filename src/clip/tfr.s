@@ -36,12 +36,12 @@ SEG_HIGH
 ; RAM is always mapped, so the bank-C sweep JSRs here at no cost.)
 tg_append_x:
 .scope
-   LDA zp_new_tail                                                        ;# |||||      0.5
+   LDA zp_new_tail                                                        ;# |||||      0.6
    BEQ ta_first                            ; empty list rare (24%, census ;# ||||       0.4
                                            ; 2026-07-27): island at the
                                            ; scope tail — merge path falls
 ta_try_merge:
-   TAY                                     ; A = zp_new_tail from the gate ;# |||        0.3
+   TAY                                     ; A = zp_new_tail from the gate ;# |||        0.4
 ; Merge preconditions, reordered by measured fail rate (census
 ; 2026-08-14: TL-match rejects 12.2/fr — the old order buried it
 ; fifth) and FUSED by transitivity: once TL,Y == TL,X, that one value
@@ -56,35 +56,53 @@ ta_try_merge:
 ; WITHOUT this the change is a NET LOSS: a sloped source no longer
 ; looks constant over a narrow span, so nearly every merge failed and
 ; the span count exploded (heavy scene 33 -> 46).
-; Abutting is tested first — cheapest reject.
-   LDA POOL_XEND,Y                                                        ;# ||||||     0.6
-   CMP POOL_XSTART,X                                                      ;# ||||||     0.6
-   BNE ta_link                                                            ;# |||        0.3
-   LDA POOL_TL,Y                                                          ;# ||||||     0.6
-   CMP POOL_TL,X                                                          ;# ||||||     0.6
-   BNE ta_link                                                            ;# |||        0.3
-   LDA POOL_TR,Y                                                          ;# ||||||     0.6
-   CMP POOL_TR,X                                                          ;# ||||||     0.6
-   BNE ta_link                                                            ;# |||        0.3
-   LDA POOL_TXLO,Y                                                        ;# ||||||     0.6
-   CMP POOL_TXLO,X                                                        ;# ||||||     0.6
-   BNE ta_link                                                            ;# |||        0.3
-   LDA POOL_TDEN,Y                                                        ;# ||||||     0.6
-   CMP POOL_TDEN,X                                                        ;# ||||||     0.6
-   BNE ta_link                                                            ;# |||        0.3
-   LDA POOL_BL,Y                                                          ;# ||||||     0.6
-   CMP POOL_BL,X                                                          ;# ||||||     0.6
-   BNE ta_link                                                            ;# ||||       0.4
-   LDA POOL_BR,Y                                                          ;# |||        0.3
-   CMP POOL_BR,X                                                          ;# |||        0.3
-   BNE ta_link                                                            ;# |          0.1
-   LDA POOL_BXLO,Y                                                        ;# |||        0.3
-   CMP POOL_BXLO,X                                                        ;# |||        0.3
-   BNE ta_link                                                            ;# ||         0.2
-   LDA POOL_BDEN,Y                                                        ;# |          0.1
-   CMP POOL_BDEN,X                                                        ;# |          0.1
-   BNE ta_link                                                            ;#            0.0
-; |
+; ORDERED BY MEASURED REJECT RATE (re-censused 2026-08-22).  The
+; 2026-08-14 order was tuned for the OLD constant-value test; the
+; same-line rewrite changed which fields discriminate and nobody
+; re-measured, leaving the chain almost exactly BACKWARDS — the 3.8%
+; test first and the 85.9% test last.  Unconditional reject rates over
+; 205 merge candidates (5 scenes):
+;   BDEN 85.9%  BXLO 82.1%  BL 52.6%  BR 46.2%
+;   TXLO 11.5%  TDEN 11.5%  TR 10.3%  TL 9.0%  abut 3.8%
+; The order below is the EXHAUSTIVE optimum over all 9! permutations
+; (greedy agrees): 354 test executions against the old order's 913.
+; Only 12% of candidates merge, so the chain's job is to reject fast.
+;
+; Any order is correct — every test must pass to merge, so the set that
+; merges is identical and the frame is byte-for-byte the same.  Moving
+; the abutting test off the front is safe: the other compares read live
+; span slots either way, so a non-adjacent pair is just compared and
+; rejected a little later.
+; (The old note claimed the top-side compares were FUSED by transitivity
+; with one value riding A — that was true of the retired constant-value
+; test; this chain reloads for every pair, so reordering is free.)
+   LDA POOL_BDEN,Y                                                        ;# ||||||     0.7
+   CMP POOL_BDEN,X                                                        ;# ||||||     0.7
+   BNE ta_link                          ; 85.9% reject                    ;# |||||      0.5
+   LDA POOL_TDEN,Y                                                        ;# |          0.1
+   CMP POOL_TDEN,X                                                        ;# |          0.1
+   BNE ta_link                          ; 11.5% reject                    ;#            0.1
+   LDA POOL_XEND,Y                                                        ;# |          0.1
+   CMP POOL_XSTART,X                                                      ;# |          0.1
+   BNE ta_link                          ; 3.8% reject                     ;#            0.0
+   LDA POOL_BXLO,Y                                                        ;# |          0.1
+   CMP POOL_BXLO,X                                                        ;# |          0.1
+   BNE ta_link                          ; 82.1% reject                    ;#            0.0
+   LDA POOL_TL,Y                                                          ;# |          0.1
+   CMP POOL_TL,X                                                          ;# |          0.1
+   BNE ta_link                          ; 9.0% reject                     ;#            0.0
+   LDA POOL_TR,Y                                                          ;# |          0.1
+   CMP POOL_TR,X                                                          ;# |          0.1
+   BNE ta_link                          ; 10.3% reject                    ;#            0.0
+   LDA POOL_TXLO,Y                                                        ;# |          0.1
+   CMP POOL_TXLO,X                                                        ;# |          0.1
+   BNE ta_link                          ; 11.5% reject                    ;#            0.0
+   LDA POOL_BL,Y                                                          ;# |          0.1
+   CMP POOL_BL,X                                                          ;# |          0.1
+   BNE ta_link                          ; 52.6% reject                    ;#            0.0
+   LDA POOL_BR,Y                                                          ;# |          0.1
+   CMP POOL_BR,X                                                          ;# |          0.1
+   BNE ta_link                          ; 46.2% reject                    ;#            0.0
 ; Merge: extend tail's xend to cover new, then free X (free_span
 ; INLINED 2026-08-21 — the tail-call JMP's 3 cycles die with it).
 ; The merged range stays INSIDE the anchors now: both spans carry the
@@ -102,12 +120,12 @@ ta_try_merge:
    RTS                                                                    ;# |          0.1
 ta_link:
 ; X becomes new tail — write POOL_NEXT,X = 0 (deferred from entry).
-   ZERO {POOL_NEXT,X}                                                     ;# |||||||||| 1.0
+   ZERO {POOL_NEXT,X}                                                     ;# |||||||||| 1.1
 ; ||
    TXA                                                                    ;# |||        0.3
-   STA POOL_NEXT,Y                                                        ;# |||||||    0.7
+   STA POOL_NEXT,Y                                                        ;# |||||||    0.8
 ; ||
-   STX zp_new_tail                                                        ;# ||||       0.4
+   STX zp_new_tail                                                        ;# ||||       0.5
    RTS                                                                    ;# |||||||||  0.9
 ; |||
 ta_first:
@@ -251,14 +269,14 @@ tighten_from_records:
    BEQ tfr_neu_top_ok                                                     ;# ||         0.2
    LDY #2                                  ; first record's yl (1 + 1)    ;# |          0.1
 tfr_neu_top:
-   LDA TOP_RECORDS,Y                                                      ;# |          0.1
+   LDA TOP_RECORDS,Y                                                      ;# |          0.2
    BNE tfr_do_sweep                        ; in-band value or solid flat  ;# |          0.1
    INY                                                                    ;#            0.0
    INY                                                                    ;#            0.0
    INY                                                                    ;#            0.0
    INY                                                                    ;#            0.0
    DEX                                                                    ;#            0.0
-   BNE tfr_neu_top                                                        ;#            0.0
+   BNE tfr_neu_top                                                        ;#            0.1
 tfr_neu_top_ok:
    LDX BOT_RECORDS                                                        ;# ||         0.2
    BEQ tfr_neutral                                                        ;# |          0.1
@@ -291,21 +309,21 @@ tfr_do_sweep:
 ; Init top/bot cursors and buffer-end offsets.
 ; Cursor = offset of the current record (1 = first; 0 = exhausted/none).
 ; BUFEND = 1 + count*4 = first invalid offset (via ASL,ASL,+1).
-   LDA TOP_RECORDS                                                        ;# ||         0.2
-   BEQ tfs_no_top                                                         ;# |          0.1
+   LDA TOP_RECORDS                                                        ;# ||         0.3
+   BEQ tfs_no_top                                                         ;# |          0.2
    LDA #1                                                                 ;# |          0.1
    STA TFS_T_CUR                                                          ;# |          0.1
    JMP tfs_top_be                                                         ;# |          0.1
 tfs_no_top:
-   ZERO TFS_T_CUR                                                         ;# |          0.1
+   ZERO TFS_T_CUR                                                         ;# |          0.2
 tfs_top_be:
-   LDA TOP_RECORDS                                                        ;# ||         0.2
+   LDA TOP_RECORDS                                                        ;# ||         0.3
    ASL A                                                                  ;# |          0.1
    ASL A                                                                  ;# |          0.1
    BUMP_CC                                 ; C=0: count <= 63 (1+4n <= 255) ;# |          0.1
                                            ; so both ASLs shift out 0
    STA TFS_TOP_BUFEND                                                     ;# ||         0.2
-   LDA BOT_RECORDS                                                        ;# ||         0.2
+   LDA BOT_RECORDS                                                        ;# ||         0.3
    BEQ tfs_no_bot                                                         ;# |          0.1
    LDA #1                                                                 ;# |          0.1
    STA TFS_B_CUR                                                          ;# ||         0.2
@@ -313,7 +331,7 @@ tfs_top_be:
 tfs_no_bot:
    ZERO TFS_B_CUR                                                         ;#            0.0
 tfs_bot_be:
-   LDA BOT_RECORDS                                                        ;# ||         0.2
+   LDA BOT_RECORDS                                                        ;# ||         0.3
    ASL A                                                                  ;# |          0.1
    ASL A                                                                  ;# |          0.1
    BUMP_CC                                 ; C=0: same count-bound proof  ;# |          0.1
@@ -335,22 +353,22 @@ tfs_bot_be:
    LDX zp_old_cur                                                         ;# ||         0.2
    BEQ tfs_pfx_none                        ; empty list                   ;# |          0.1
    LDA zp_i_l                              ; ilo rides A through the scan ;# ||         0.2
-   CMP POOL_XEND,X                                                        ;# ||         0.2
+   CMP POOL_XEND,X                                                        ;# ||         0.3
    BCC tfs_pfx_none                        ; head already reaches past ilo ;# |          0.1
-   STX zp_head                             ; adopt the prefix as the new list ;# |          0.1
+   STX zp_head                             ; adopt the prefix as the new list ;# |          0.2
 tfs_pfx_loop:                              ; X = a prefix span
-   LDY POOL_NEXT,X                                                        ;# |||        0.3
+   LDY POOL_NEXT,X                                                        ;# |||        0.4
    BEQ tfs_pfx_all                         ; the WHOLE list is prefix     ;# ||         0.2
-   CMP POOL_XEND,Y                                                        ;# |||        0.3
+   CMP POOL_XEND,Y                                                        ;# |||        0.4
    BCC tfs_pfx_split                       ; Y is the first overlapper    ;# ||         0.2
    TYA                                                                    ;# |          0.1
    TAX                                                                    ;# |          0.1
    BNE tfs_pfx_loop                        ; always (a live slot != 0)    ;# |          0.1
 tfs_pfx_split:                             ; X = last prefix, Y = sweep start
-   STY zp_old_cur                                                         ;# |          0.1
-   STX zp_new_tail                                                        ;# |          0.1
-   ZERO {POOL_NEXT,X}                      ; terminate the adopted chain — ;# |||        0.3
-   JMP tfs_pfx_none                        ; tg_append_x relinks it on the ;# |          0.1
+   STY zp_old_cur                                                         ;# |          0.2
+   STX zp_new_tail                                                        ;# |          0.2
+   ZERO {POOL_NEXT,X}                      ; terminate the adopted chain — ;# |||        0.4
+   JMP tfs_pfx_none                        ; tg_append_x relinks it on the ;# |          0.2
 tfs_pfx_all:                               ; first real append
    STX zp_new_tail
    ZERO zp_old_cur                         ; nothing overlaps: sweep is empty
@@ -365,17 +383,17 @@ tfs_proc:
 ; Save NEXT now (this slot is freed/relinked below) and stash the
 ; current slot in zp_clr_save_x — X is clobbered by every JSR here.
    LDA POOL_NEXT,X                                                        ;# ||||||     0.6
-   STA zp_old_cur                                                         ;# ||||       0.4
-   STX zp_clr_save_x                                                      ;# ||||       0.4
+   STA zp_old_cur                                                         ;# ||||       0.5
+   STX zp_clr_save_x                                                      ;# ||||       0.5
 
 ; Out-of-range check: pixel-center overlap semantics — a span touching
 ; the seg only at a shared endpoint column (xend == ilo or
 ; xstart == ihi) does NOT overlap; append it unchanged.
-   LDA zp_i_l                              ; INVERTED: C = ilo >= xend —  ;# ||||       0.4
+   LDA zp_i_l                              ; INVERTED: C = ilo >= xend —  ;# ||||       0.5
    CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ ;# ||||||     0.6
    BCS tfs_oor                             ; pair                         ;# |||        0.3
    LDA POOL_XSTART,X                                                      ;# |||||      0.5
-   CMP zp_i_h                                                             ;# |||        0.3
+   CMP zp_i_h                                                             ;# |||        0.4
    BCC tfs_in_range_noreload               ; (XSTART rides A through the whole ;# |||        0.3
                                            ; prologue: in_range -> pre_chk ->
                                            ; no_pre all skip their reloads)
@@ -413,8 +431,8 @@ tfs_oor:
 ; Enter the loop body directly with CUR_X = X_HI = x: the body evaluates
 ; record dominance at x, emits the one column, and the loop test exits.
 tfs_in_range_noreload:
-   CMP POOL_XEND,X                                                        ;# |||        0.3
-   BNE tfs_pre_chk_noreload                                               ;# ||         0.2
+   CMP POOL_XEND,X                                                        ;# |||        0.4
+   BNE tfs_pre_chk_noreload                                               ;# ||         0.3
    STA TFS_CUR_X
    STA TFS_X_HI
    JMP tfs_body
@@ -424,18 +442,18 @@ tfs_in_range_noreload:
 ; Abutting: the fragment's exclusive xend = ilo = the swept region's
 ; first column — shared EDGE, no shared column. Line def preserved.
 tfs_pre_chk_noreload:
-   CMP zp_i_l                                                             ;# ||         0.2
+   CMP zp_i_l                                                             ;# ||         0.3
    BCS tfs_no_pre_noreload                                                ;# ||         0.2
    JSR tfs_flush_pending                                                  ;# |          0.1
-   LDX zp_clr_save_x                                                      ;#            0.0
+   LDX zp_clr_save_x                                                      ;#            0.1
    LDA POOL_XSTART,X                                                      ;# |          0.1
-   STA zp_ox0                                                             ;#            0.0
-   LDA zp_i_l                                                             ;#            0.0
-   STA zp_ox1                                                             ;#            0.0
+   STA zp_ox0                                                             ;#            0.1
+   LDA zp_i_l                                                             ;#            0.1
+   STA zp_ox1                                                             ;#            0.1
    JSR emit_unchanged_subspan                                             ;# |          0.1
-   LDA zp_i_l                                                             ;#            0.0
-   STA TFS_CUR_X                                                          ;#            0.0
-   JMP tfs_xhi_done                                                       ;#            0.0
+   LDA zp_i_l                                                             ;#            0.1
+   STA TFS_CUR_X                                                          ;#            0.1
+   JMP tfs_xhi_done                                                       ;#            0.1
 ; (tfs_no_pre reload head DELETED 2026-08-12 — same proof; X =
 ;  clr_save_x rides in from the BCS site)
 tfs_no_pre_noreload:
@@ -443,9 +461,9 @@ tfs_no_pre_noreload:
 tfs_xhi_done:
 
 ; x_hi = min(span.xend, ihi).
-   LDX zp_clr_save_x                                                      ;# ||         0.2
-   LDA POOL_XEND,X                                                        ;# |||        0.3
-   CMP zp_i_h                                                             ;# ||         0.2
+   LDX zp_clr_save_x                                                      ;# ||         0.3
+   LDA POOL_XEND,X                                                        ;# |||        0.4
+   CMP zp_i_h                                                             ;# ||         0.3
    BCC tfs_xhi_xend                                                       ;# ||         0.2
    LDA zp_i_h                                                             ;# ||         0.2
    STA TFS_X_HI                                                           ;# ||         0.2
@@ -458,7 +476,7 @@ tfs_xhi_set:
 ; emit the pool span unchanged and skip the interp inner loop.
 ; A record at the cursor doesn't overlap if its xl >= x_hi (segment
 ; starts past us). T_CUR == 0 also means no overlap.
-   LDA TFS_T_CUR                                                          ;# ||         0.2
+   LDA TFS_T_CUR                                                          ;# ||         0.3
    BEQ tfs_fp_chk_bot                                                     ;# ||         0.2
    TAY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
@@ -489,8 +507,8 @@ tfs_fp_emit:
 tfs_inner:
    LDA TFS_CUR_X                                                          ;# |||||      0.5
    CMP TFS_X_HI                                                           ;# |||||      0.5
-   BCC tfs_inner_go                                                       ;# ||||       0.4
-   JMP tfs_inner_done                                                     ;# ||         0.2
+   BCC tfs_inner_go                                                       ;# ||||       0.5
+   JMP tfs_inner_done                                                     ;# ||         0.3
 tfs_inner_go:
 
 tfs_body:
@@ -529,9 +547,9 @@ tfs_st_bot:
    CLC                                                                    ;# ||         0.2
    ADC #2                                                                 ;# ||         0.2
    TAY                                                                    ;# ||         0.2
-   LDA TFS_CUR_X                           ; INVERTED (mirror of st_top)  ;# ||         0.2
-   CMP BOT_RECORDS,Y                                                      ;# |||        0.3
-   BCC tfs_st_bot_done                                                    ;# ||         0.2
+   LDA TFS_CUR_X                           ; INVERTED (mirror of st_top)  ;# ||         0.3
+   CMP BOT_RECORDS,Y                                                      ;# |||        0.4
+   BCC tfs_st_bot_done                                                    ;# ||         0.3
 tfs_st_bot_stale:
    LDA TFS_B_CUR
    CLC
@@ -547,7 +565,7 @@ tfs_st_bot_done:
 ; ---- Determine top_dom (T.xl <= cur_x < T.xr) ----
 ; i.e. the current top record's segment covers cur_x, so the yt-line
 ; (not the pool line) is the top boundary on this interval.
-   ZERO TFS_TOP_DOM                                                       ;# ||||       0.4
+   ZERO TFS_TOP_DOM                                                       ;# ||||       0.5
    LDA TFS_T_CUR                                                          ;# |||        0.3
    BEQ tfs_top_dom_done                                                   ;# ||         0.2
    TAY                                                                    ;# |          0.1
@@ -568,16 +586,16 @@ tfs_st_bot_done:
 tfs_top_dom_done:
 
 ; ---- Determine bot_dom ----
-   ZERO TFS_BOT_DOM                                                       ;# ||||       0.4
+   ZERO TFS_BOT_DOM                                                       ;# ||||       0.5
    LDA TFS_B_CUR                                                          ;# |||        0.3
    BEQ tfs_bot_dom_done                                                   ;# ||         0.2
    TAY                                                                    ;# ||         0.2
-   LDA TFS_CUR_X                           ; INVERTED double fold (mirror) ;# ||         0.2
-   CMP BOT_RECORDS,Y                                                      ;# |||        0.3
+   LDA TFS_CUR_X                           ; INVERTED double fold (mirror) ;# ||         0.3
+   CMP BOT_RECORDS,Y                                                      ;# |||        0.4
    BCC tfs_bot_dom_done                                                   ;# ||         0.2
    INY                                                                    ;# ||         0.2
    INY                                                                    ;# ||         0.2
-   CMP BOT_RECORDS,Y                                                      ;# |||        0.3
+   CMP BOT_RECORDS,Y                                                      ;# |||        0.4
    BCS tfs_bot_dom_done                                                   ;# ||         0.2
    DEC TFS_BOT_DOM                         ; 0 -> $FF (mirror; see top)   ;# ||||       0.4
 tfs_bot_dom_done:
@@ -612,20 +630,20 @@ tfs_top_evt_check:
 tfs_skip_top_evt:
    LDA TFS_B_CUR                                                          ;# |||        0.3
    BEQ tfs_skip_bot_evt                                                   ;# ||         0.2
-   LDA TFS_BOT_DOM                                                        ;# ||         0.2
-   BNE tfs_bot_evt_xr                                                     ;# ||         0.2
+   LDA TFS_BOT_DOM                                                        ;# ||         0.3
+   BNE tfs_bot_evt_xr                                                     ;# ||         0.3
    LDY TFS_B_CUR
    LDA BOT_RECORDS,Y
    JMP tfs_bot_evt_check
 tfs_bot_evt_xr:
-   LDA TFS_B_CUR                                                          ;# ||         0.2
+   LDA TFS_B_CUR                                                          ;# ||         0.3
    CLC                                                                    ;# ||         0.2
    ADC #2                                                                 ;# ||         0.2
    TAY                                                                    ;# ||         0.2
-   LDA BOT_RECORDS,Y                                                      ;# |||        0.3
+   LDA BOT_RECORDS,Y                                                      ;# |||        0.4
 tfs_bot_evt_check:
-   CMP TFS_NEXT_X                                                         ;# ||         0.2
-   BCS tfs_skip_bot_evt                                                   ;# ||         0.2
+   CMP TFS_NEXT_X                                                         ;# ||         0.3
+   BCS tfs_skip_bot_evt                                                   ;# ||         0.3
    STA TFS_NEXT_X
 tfs_skip_bot_evt:
 
@@ -644,12 +662,12 @@ tfs_skip_bot_evt:
    CMP #$FF                                                               ;# |          0.1
    BEQ tfs_solid_skip                                                     ;# |          0.1
 tfs_ns_top:
-   LDA TFS_BOT_DOM                                                        ;# ||         0.2
+   LDA TFS_BOT_DOM                                                        ;# ||         0.3
    BEQ tfs_not_solid                                                      ;# ||         0.2
-   LDY TFS_B_CUR                                                          ;# ||         0.2
+   LDY TFS_B_CUR                                                          ;# ||         0.3
    INY                                                                    ;# ||         0.2
-   LDA BOT_RECORDS,Y                                                      ;# |||        0.3
-   BNE tfs_not_solid                                                      ;# ||         0.2
+   LDA BOT_RECORDS,Y                                                      ;# |||        0.4
+   BNE tfs_not_solid                                                      ;# ||         0.3
 tfs_solid_skip:
    JSR tfs_flush_pending                                                  ;#            0.0
    JMP tfs_advance_curs                                                   ;#            0.0
@@ -658,9 +676,9 @@ tfs_not_solid:
 ; ---- Per-interval fast path: both sides from pool → emit unchanged.
 ; Saves the 4 interps the normal path would do for a pool/pool sub-
 ; fragment (the parts of a pool span that records don't dominate).
-   LDA TFS_TOP_DOM                                                        ;# ||         0.2
-   ORA TFS_BOT_DOM                                                        ;# ||         0.2
-   BNE tfs_compute_vals                                                   ;# ||         0.2
+   LDA TFS_TOP_DOM                                                        ;# ||         0.3
+   ORA TFS_BOT_DOM                                                        ;# ||         0.3
+   BNE tfs_compute_vals                                                   ;# ||         0.3
    JSR tfs_flush_pending
    LDX zp_clr_save_x
    LDA TFS_CUR_X
@@ -679,12 +697,12 @@ tfs_compute_vals:
 ; deferred ops of the same subsector move the pool between draw time
 ; and apply time, so replace could WIDEN (the 1200,-3000,129 852-line
 ; over-draw). Endpoint-max matches the model's approximation exactly.
-   LDA TFS_TOP_DOM                                                        ;# ||         0.2
+   LDA TFS_TOP_DOM                                                        ;# ||         0.3
    BEQ tfs_top_pool                                                       ;# ||         0.2
    LDY TFS_T_CUR                                                          ;# ||         0.2
    INY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
-   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# |          0.1
+   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# |          0.2
 ; A dominating record IS the boundary — no max() needed (2026-08-22,
 ; Eben). A top record exists BECAUSE dcl drew that edge inside the
 ; aperture, so rec >= pool over its range by construction. The old
@@ -704,19 +722,19 @@ tfs_compute_vals:
 ; SOURCE-ANCHORED: the record IS the line — copy its anchors and its
 ; endpoint values; no interpolation at all (was two interp_store calls).
    LDY TFS_T_CUR                                                          ;#            0.0
-   LDA TOP_RECORDS,Y                       ; xl                           ;#            0.0
+   LDA TOP_RECORDS,Y                       ; xl                           ;#            0.1
    STA TFS_TOP_XL                                                         ;#            0.0
    STA zp_tmp0                                                            ;#            0.0
    INY                                                                    ;#            0.0
-   LDA TOP_RECORDS,Y                       ; yl                           ;#            0.0
+   LDA TOP_RECORDS,Y                       ; yl                           ;#            0.1
    STA TFS_TOP_L                                                          ;#            0.0
    INY                                                                    ;#            0.0
-   LDA TOP_RECORDS,Y                       ; xr                           ;#            0.0
+   LDA TOP_RECORDS,Y                       ; xr                           ;#            0.1
    SEC                                                                    ;#            0.0
    SBC zp_tmp0                                                            ;#            0.0
    STA TFS_TOP_DEN                                                        ;#            0.0
    INY                                                                    ;#            0.0
-   LDA TOP_RECORDS,Y                       ; yr                           ;#            0.0
+   LDA TOP_RECORDS,Y                       ; yr                           ;#            0.1
    STA TFS_TOP_R                                                          ;#            0.0
    JMP tfs_top_tag_rec                                                    ;#            0.0
 tfs_top_pool:
@@ -732,7 +750,7 @@ tfs_top_pool:
    STA TFS_TOP_L                                                          ;# ||         0.2
    LDA POOL_TR,X                                                          ;# |||        0.3
    STA TFS_TOP_R                                                          ;# ||         0.2
-   ZERO TFS_TOP_KIND                                                      ;# |||        0.3
+   ZERO TFS_TOP_KIND                                                      ;# |||        0.4
    LDA zp_clr_save_x                                                      ;# ||         0.2
    STA TFS_TOP_ID                                                         ;# ||         0.2
    JMP tfs_top_vals_done                                                  ;# ||         0.2
@@ -745,11 +763,11 @@ tfs_top_vals_done:
 
 ; ---- Compute bot values for [cur_x, next_x] ----
 ; Mirror of the top block (extremes shortcut vs POOL_IB = min(bl,br)).
-   LDA TFS_BOT_DOM                                                        ;# ||         0.2
+   LDA TFS_BOT_DOM                                                        ;# ||         0.3
    BEQ tfs_bot_pool                                                       ;# ||         0.2
-   LDY TFS_B_CUR                                                          ;# ||         0.2
+   LDY TFS_B_CUR                                                          ;# ||         0.3
    INY                                                                    ;# ||         0.2
-   LDA BOT_RECORDS,Y                                                      ;# |||        0.3
+   LDA BOT_RECORDS,Y                                                      ;# |||        0.4
    CMP #$FF                                                               ;# ||         0.2
    BEQ tfs_bot_pool                        ; 'below' verdict: pool stands ;# ||         0.2
 ; (mirror of the top: a dominating record IS the boundary, so the
@@ -761,22 +779,22 @@ tfs_bot_fast2:
 ; segment; the flat CLIPF region was grown to suit. ---
 ; (setup inlined — see tfs_top_rec_interp note)
 ; SOURCE-ANCHORED (mirror of the top arm): the record IS the line.
-   LDY TFS_B_CUR                                                          ;# ||         0.2
-   LDA BOT_RECORDS,Y                       ; xl                           ;# |||        0.3
-   STA TFS_BOT_XL                                                         ;# ||         0.2
-   STA zp_tmp0                                                            ;# ||         0.2
+   LDY TFS_B_CUR                                                          ;# ||         0.3
+   LDA BOT_RECORDS,Y                       ; xl                           ;# |||        0.4
+   STA TFS_BOT_XL                                                         ;# ||         0.3
+   STA zp_tmp0                                                            ;# ||         0.3
    INY                                                                    ;# ||         0.2
-   LDA BOT_RECORDS,Y                       ; yl                           ;# |||        0.3
-   STA TFS_BOT_L                                                          ;# ||         0.2
+   LDA BOT_RECORDS,Y                       ; yl                           ;# |||        0.4
+   STA TFS_BOT_L                                                          ;# ||         0.3
    INY                                                                    ;# ||         0.2
-   LDA BOT_RECORDS,Y                       ; xr                           ;# |||        0.3
+   LDA BOT_RECORDS,Y                       ; xr                           ;# |||        0.4
    SEC                                                                    ;# ||         0.2
-   SBC zp_tmp0                                                            ;# ||         0.2
-   STA TFS_BOT_DEN                                                        ;# ||         0.2
+   SBC zp_tmp0                                                            ;# ||         0.3
+   STA TFS_BOT_DEN                                                        ;# ||         0.3
    INY                                                                    ;# ||         0.2
-   LDA BOT_RECORDS,Y                       ; yr                           ;# |||        0.3
-   STA TFS_BOT_R                                                          ;# ||         0.2
-   JMP tfs_bot_tag_rec                                                    ;# ||         0.2
+   LDA BOT_RECORDS,Y                       ; yr                           ;# |||        0.4
+   STA TFS_BOT_R                                                          ;# ||         0.3
+   JMP tfs_bot_tag_rec                                                    ;# ||         0.3
 tfs_bot_pool:
 ; SOURCE-ANCHORED (mirror of the top arm): copy the pool span's own
 ; bottom line rather than re-anchoring it onto this interval.
@@ -795,9 +813,9 @@ tfs_bot_pool:
    JMP tfs_bot_vals_done
 tfs_bot_tag_rec:
    LDA #1                                                                 ;# ||         0.2
-   STA TFS_BOT_KIND                                                       ;# ||         0.2
-   LDA TFS_B_CUR                                                          ;# ||         0.2
-   STA TFS_BOT_ID                                                         ;# ||         0.2
+   STA TFS_BOT_KIND                                                       ;# ||         0.3
+   LDA TFS_B_CUR                                                          ;# ||         0.3
+   STA TFS_BOT_ID                                                         ;# ||         0.3
 tfs_bot_vals_done:
 
 ; ---- Try to merge with pending ----
@@ -805,11 +823,11 @@ tfs_bot_vals_done:
 ; BOTH boundary sources match (top kind+id AND bot kind+id). Same
 ; source ⇒ same line equation, so extending the interval and re-tagging
 ; its right-end values is lossless — no geometry is re-derived.
-   LDA TFS_PEND_ACT                                                       ;# ||         0.2
+   LDA TFS_PEND_ACT                                                       ;# ||         0.3
    BEQ tfs_start_pend                                                     ;# ||         0.2
    LDA TFS_PEND_XR                                                        ;# |          0.1
    CMP TFS_CUR_X                                                          ;# |          0.1
-   BNE tfs_no_merge                                                       ;#            0.0
+   BNE tfs_no_merge                                                       ;#            0.1
    LDA TFS_PEND_TKIND                                                     ;# |          0.1
    CMP TFS_TOP_KIND                                                       ;# |          0.1
    BNE tfs_no_merge                                                       ;# |          0.1
@@ -834,35 +852,35 @@ tfs_start_pend:
 ; Buffer this interval as the new pending span (materialized by
 ; tfs_flush_pending when the next interval can't merge into it).
    LDA #1                                                                 ;# ||         0.2
-   STA TFS_PEND_ACT                                                       ;# ||         0.2
-   LDA TFS_CUR_X                                                          ;# ||         0.2
-   STA TFS_PEND_XL                                                        ;# ||         0.2
-   LDA TFS_NEXT_X                                                         ;# ||         0.2
-   STA TFS_PEND_XR                                                        ;# ||         0.2
-   LDA TFS_TOP_L                                                          ;# ||         0.2
-   STA TFS_PEND_TL                                                        ;# ||         0.2
-   LDA TFS_TOP_R                                                          ;# ||         0.2
-   STA TFS_PEND_TR                                                        ;# ||         0.2
-   LDA TFS_BOT_L                                                          ;# ||         0.2
-   STA TFS_PEND_BL                                                        ;# ||         0.2
-   LDA TFS_BOT_R                                                          ;# ||         0.2
-   STA TFS_PEND_BR                                                        ;# ||         0.2
-   LDA TFS_TOP_XL                          ; each side's own anchor       ;# ||         0.2
-   STA TFS_PEND_TXL                                                       ;# ||         0.2
-   LDA TFS_TOP_DEN                                                        ;# ||         0.2
-   STA TFS_PEND_TDEN                                                      ;# ||         0.2
-   LDA TFS_BOT_XL                                                         ;# ||         0.2
-   STA TFS_PEND_BXL                                                       ;# ||         0.2
-   LDA TFS_BOT_DEN                                                        ;# ||         0.2
-   STA TFS_PEND_BDEN                                                      ;# ||         0.2
-   LDA TFS_TOP_KIND                                                       ;# ||         0.2
-   STA TFS_PEND_TKIND                                                     ;# ||         0.2
-   LDA TFS_TOP_ID                                                         ;# ||         0.2
-   STA TFS_PEND_TID                                                       ;# ||         0.2
-   LDA TFS_BOT_KIND                                                       ;# ||         0.2
-   STA TFS_PEND_BKIND                                                     ;# ||         0.2
-   LDA TFS_BOT_ID                                                         ;# ||         0.2
-   STA TFS_PEND_BID                                                       ;# ||         0.2
+   STA TFS_PEND_ACT                                                       ;# ||         0.3
+   LDA TFS_CUR_X                                                          ;# ||         0.3
+   STA TFS_PEND_XL                                                        ;# ||         0.3
+   LDA TFS_NEXT_X                                                         ;# ||         0.3
+   STA TFS_PEND_XR                                                        ;# ||         0.3
+   LDA TFS_TOP_L                                                          ;# ||         0.3
+   STA TFS_PEND_TL                                                        ;# ||         0.3
+   LDA TFS_TOP_R                                                          ;# ||         0.3
+   STA TFS_PEND_TR                                                        ;# ||         0.3
+   LDA TFS_BOT_L                                                          ;# ||         0.3
+   STA TFS_PEND_BL                                                        ;# ||         0.3
+   LDA TFS_BOT_R                                                          ;# ||         0.3
+   STA TFS_PEND_BR                                                        ;# ||         0.3
+   LDA TFS_TOP_XL                          ; each side's own anchor       ;# ||         0.3
+   STA TFS_PEND_TXL                                                       ;# ||         0.3
+   LDA TFS_TOP_DEN                                                        ;# ||         0.3
+   STA TFS_PEND_TDEN                                                      ;# ||         0.3
+   LDA TFS_BOT_XL                                                         ;# ||         0.3
+   STA TFS_PEND_BXL                                                       ;# ||         0.3
+   LDA TFS_BOT_DEN                                                        ;# ||         0.3
+   STA TFS_PEND_BDEN                                                      ;# ||         0.3
+   LDA TFS_TOP_KIND                                                       ;# ||         0.3
+   STA TFS_PEND_TKIND                                                     ;# ||         0.3
+   LDA TFS_TOP_ID                                                         ;# ||         0.3
+   STA TFS_PEND_TID                                                       ;# ||         0.3
+   LDA TFS_BOT_KIND                                                       ;# ||         0.3
+   STA TFS_PEND_BKIND                                                     ;# ||         0.3
+   LDA TFS_BOT_ID                                                         ;# ||         0.3
+   STA TFS_PEND_BID                                                       ;# ||         0.3
 
 tfs_advance_curs:
 ; ---- Consume records whose segment ends exactly at next_x ----
@@ -890,13 +908,13 @@ tfs_t_adv_ok:
 tfs_skip_t_adv:
    LDA TFS_B_CUR                                                          ;# |||        0.3
    BEQ tfs_skip_b_adv                                                     ;# ||         0.2
-   AND TFS_BOT_DOM                         ; $FF-transparent (mirror)     ;# ||         0.2
+   AND TFS_BOT_DOM                         ; $FF-transparent (mirror)     ;# ||         0.3
    BEQ tfs_skip_b_adv                                                     ;# ||         0.2
    CLC                                                                    ;# ||         0.2
    ADC #2                                                                 ;# ||         0.2
    TAY                                                                    ;# ||         0.2
-   LDA BOT_RECORDS,Y                                                      ;# |||        0.3
-   CMP TFS_NEXT_X                                                         ;# ||         0.2
+   LDA BOT_RECORDS,Y                                                      ;# |||        0.4
+   CMP TFS_NEXT_X                                                         ;# ||         0.3
    BNE tfs_skip_b_adv                                                     ;# ||         0.2
    LDA TFS_B_CUR                                                          ;# ||         0.2
    CLC                                                                    ;# |          0.1
@@ -918,9 +936,9 @@ tfs_inner_done:
 ; Post-fragment [ihi, span.xend) if span.xend > ihi.
 ; Abutting: xstart = ihi = the swept region's exclusive end — shared
 ; EDGE, no shared column.
-   LDX zp_clr_save_x                                                      ;# ||         0.2
-   LDA zp_i_h                              ; INVERTED: C = ihi >= xend —  ;# ||         0.2
-   CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ ;# |||        0.3
+   LDX zp_clr_save_x                                                      ;# ||         0.3
+   LDA zp_i_h                              ; INVERTED: C = ihi >= xend —  ;# ||         0.3
+   CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ ;# |||        0.4
    BCS tfs_no_post                         ; pair                         ;# ||         0.2
    JSR tfs_flush_pending                                                  ;# |          0.1
 ; REUSE THE ORIGINAL SLOT (2026-08-22) instead of alloc + 10-byte copy
@@ -933,11 +951,11 @@ tfs_inner_done:
 ; emit_unchanged_subspan cannot fire here because nothing is
 ; allocated. Measured 2.58 post-fragments/frame.
 ; NB the free below MUST be skipped — the slot is live in the new list.
-   LDX zp_clr_save_x                                                      ;#            0.0
-   LDA zp_i_h                                                             ;#            0.0
+   LDX zp_clr_save_x                                                      ;#            0.1
+   LDA zp_i_h                                                             ;#            0.1
    STA POOL_XSTART,X                       ; [ihi, xend), line untouched  ;# |          0.1
    JSR tg_append_x                         ; may merge+free it: also fine ;# |          0.1
-   JMP tfs_continue                        ; SKIP the free                ;#            0.0
+   JMP tfs_continue                        ; SKIP the free                ;#            0.1
 tfs_no_post:
 
 ; Free original pool span (its replacements are now in the new list).
@@ -951,10 +969,10 @@ tfs_no_post:
    STX zp_free                                                            ;# ||         0.2
 
 tfs_continue:
-   LDA zp_old_cur                                                         ;# |||        0.3
+   LDA zp_old_cur                                                         ;# |||        0.4
    TAX                                                                    ;# ||         0.2
-   BEQ tfs_finish                          ; (entry guard bypassed)       ;# ||         0.2
-   JMP tfs_proc                                                           ;# ||         0.2
+   BEQ tfs_finish                          ; (entry guard bypassed)       ;# ||         0.3
+   JMP tfs_proc                                                           ;# ||         0.3
 tfs_finish:                                ; (tfsc_finish relay + the
 .endscope                                  ;  JMP-to-next-instruction pair
                                         ;  died 2026-08-12: tfs_finish
@@ -974,64 +992,64 @@ tfs_finish:                                ; (tfsc_finish relay + the
 ;         Clobbers A,X,Y.
 tfs_flush_pending:
 .scope
-   LDA TFS_PEND_ACT                                                       ;# |||||      0.5
-   BNE flush_do                                                           ;# ||||       0.4
-   RTS                                                                    ;# ||||||     0.6
+   LDA TFS_PEND_ACT                                                       ;# |||||      0.6
+   BNE flush_do                                                           ;# ||||       0.5
+   RTS                                                                    ;# ||||||     0.7
 flush_do:
    ZERO TFS_PEND_ACT                                                      ;# ||||       0.4
-   LDX zp_free                             ; alloc_span INLINED 2026-08-21: ;# ||         0.2
+   LDX zp_free                             ; alloc_span INLINED 2026-08-21: ;# ||         0.3
    BEQ flush_fail          ; pool empty -> caller's fail arm              ;# ||         0.2
    LDA POOL_NEXT,X                         ; (the sub's TXA and the caller's ;# |||        0.3
-   STA zp_free                             ; BEQ existed only to carry Z  ;# ||         0.2
+   STA zp_free                             ; BEQ existed only to carry Z  ;# ||         0.3
                                         ; across the JSR — both die)
-   LDA TFS_PEND_XL                                                        ;# ||         0.2
+   LDA TFS_PEND_XL                                                        ;# ||         0.3
    STA POOL_XSTART,X                                                      ;# ||||       0.4
-   LDA TFS_PEND_XR                                                        ;# ||         0.2
+   LDA TFS_PEND_XR                                                        ;# ||         0.3
    STA POOL_XEND,X                                                        ;# ||||       0.4
-   LDA TFS_PEND_TXL                        ; each boundary keeps its SOURCE ;# ||         0.2
+   LDA TFS_PEND_TXL                        ; each boundary keeps its SOURCE ;# ||         0.3
    STA POOL_TXLO,X                          ; anchor; the active range is ;# ||||       0.4
-   LDA TFS_PEND_TDEN                       ; independent of both          ;# ||         0.2
+   LDA TFS_PEND_TDEN                       ; independent of both          ;# ||         0.3
    STA POOL_TDEN,X                                                        ;# ||||       0.4
-   LDA TFS_PEND_BXL                                                       ;# ||         0.2
+   LDA TFS_PEND_BXL                                                       ;# ||         0.3
    STA POOL_BXLO,X                                                        ;# ||||       0.4
-   LDA TFS_PEND_BDEN                                                      ;# ||         0.2
+   LDA TFS_PEND_BDEN                                                      ;# ||         0.3
    STA POOL_BDEN,X                                                        ;# ||||       0.4
-   LDA TFS_PEND_TL                                                        ;# ||         0.2
+   LDA TFS_PEND_TL                                                        ;# ||         0.3
    STA POOL_TL,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_TR                                                        ;# ||         0.2
+   LDA TFS_PEND_TR                                                        ;# ||         0.3
    STA POOL_TR,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_BL                                                        ;# ||         0.2
+   LDA TFS_PEND_BL                                                        ;# ||         0.3
    STA POOL_BL,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_BR                                                        ;# ||         0.2
+   LDA TFS_PEND_BR                                                        ;# ||         0.3
    STA POOL_BR,X                                                          ;# ||||       0.4
 ; OT = min(TL,TR), IT = max(TL,TR), OB = max(BL,BR), IB = min(BL,BR).
-   LDA TFS_PEND_TL                                                        ;# ||         0.2
-   CMP TFS_PEND_TR                                                        ;# ||         0.2
+   LDA TFS_PEND_TL                                                        ;# ||         0.3
+   CMP TFS_PEND_TR                                                        ;# ||         0.3
    BCC fp_ot                                                              ;# ||         0.2
    LDA TFS_PEND_TR                                                        ;# ||         0.2
 fp_ot:
    STA POOL_OT,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_TL                                                        ;# ||         0.2
-   CMP TFS_PEND_TR                                                        ;# ||         0.2
-   BCS fp_it                                                              ;# ||         0.2
+   LDA TFS_PEND_TL                                                        ;# ||         0.3
+   CMP TFS_PEND_TR                                                        ;# ||         0.3
+   BCS fp_it                                                              ;# ||         0.3
    LDA TFS_PEND_TR                                                        ;#            0.0
 fp_it:
    STA POOL_IT,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_BL                                                        ;# ||         0.2
-   CMP TFS_PEND_BR                                                        ;# ||         0.2
+   LDA TFS_PEND_BL                                                        ;# ||         0.3
+   CMP TFS_PEND_BR                                                        ;# ||         0.3
    BCS fp_ob                                                              ;# ||         0.2
    LDA TFS_PEND_BR                                                        ;#            0.0
 fp_ob:
    STA POOL_OB,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_BL                                                        ;# ||         0.2
-   CMP TFS_PEND_BR                                                        ;# ||         0.2
+   LDA TFS_PEND_BL                                                        ;# ||         0.3
+   CMP TFS_PEND_BR                                                        ;# ||         0.3
    BCC fp_ib                                                              ;# ||         0.2
    LDA TFS_PEND_BR                                                        ;# ||         0.2
 fp_ib:
    STA POOL_IB,X                                                          ;# ||||       0.4
-   JSR tg_append_x                                                        ;# |||||      0.5
+   JMP tg_append_x                                                        ;# ||         0.3
 flush_fail:
-   RTS                                                                    ;# |||||      0.5
+   RTS
 .endscope
 
 ; Emit unchanged sub-span [zp_ox0, zp_ox1) with old span's line def.
@@ -1044,12 +1062,12 @@ flush_fail:
 ;         range [ox0, ox1), appended via tg_append_x.  Silently dropped
 ;         on pool exhaustion.  Clobbers A,X,Y.
 emit_unchanged_subspan:
-   LDX zp_free                             ; alloc_span INLINED 2026-08-21: ;#            0.0
+   LDX zp_free                             ; alloc_span INLINED 2026-08-21: ;#            0.1
    BEQ ues_fail          ; pool empty -> caller's fail arm                ;#            0.0
    LDA POOL_NEXT,X                         ; (the sub's TXA and the caller's ;# |          0.1
-   STA zp_free                             ; BEQ existed only to carry Z  ;#            0.0
+   STA zp_free                             ; BEQ existed only to carry Z  ;#            0.1
                                         ; across the JSR — both die)
-   LDY zp_clr_save_x                                                      ;#            0.0
+   LDY zp_clr_save_x                                                      ;#            0.1
    LDA POOL_TXLO,Y                                                        ;# |          0.1
    STA POOL_TXLO,X                                                        ;# |          0.1
    LDA POOL_TDEN,Y                                                        ;# |          0.1
@@ -1074,13 +1092,13 @@ emit_unchanged_subspan:
    STA POOL_IT,X                                                          ;# |          0.1
    LDA POOL_IB,Y                                                          ;# |          0.1
    STA POOL_IB,X                                                          ;# |          0.1
-   LDA zp_ox0                                                             ;#            0.0
+   LDA zp_ox0                                                             ;#            0.1
    STA POOL_XSTART,X                                                      ;# |          0.1
-   LDA zp_ox1                                                             ;#            0.0
+   LDA zp_ox1                                                             ;#            0.1
    STA POOL_XEND,X                                                        ;# |          0.1
-   JSR tg_append_x                                                        ;# |          0.1
+   JMP tg_append_x                                                        ;#            0.1
 ues_fail:
-   RTS                                                                    ;# |          0.1
+   RTS
 
 
 ; ===================================================================
