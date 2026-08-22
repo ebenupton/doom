@@ -156,25 +156,33 @@ dcl_ox0_ok:
 dcl_ox1_ok:
    STA zp_ox1
 
-; --- Entry or continuation? ---
-; seg_start_x == $FF means no segment is open (NULL sentinel).
-; Open segment (BNE): this span was reached via a portal merge — the
-; line is already known to stay inside the aperture across it, so go
-; straight to the exit check.  Records are written once at
-; dcl_emit_segment, not per-span.
-   LDA zp_seg_start_x
-   CMP #$FF
-   BNE dcl_exit_check
-; not entry -> exit_check (was BEQ+JMP)
-; Continuation: line still in aperture across this span. Records are
-; written once at dcl_emit_segment, not per-span.
+; --- EVERY span is verified.  There is no "continuation" fast path ---
+; NEVER SPLIT A LINE (Eben's rule, 2026-08-22).  A line is drawn WHOLE
+; over a contiguous visible run, or clipped; breaking one contiguous run
+; into two emitted fragments draws a DIFFERENT line, because each
+; fragment is rasterised from its OWN endpoints (measured: splitting at
+; an interior column changes the raster 40% of the time).
+;
+; The old design decided at span N whether to merge into span N+1, using
+; a CONSERVATIVE containment test against the next span's inner bbox.
+; When that test could not prove containment it ENDED the segment at the
+; shared boundary and let span N+1 re-open one at the very same column —
+; a split-and-continue, i.e. exactly the forbidden thing, on 4.4% of
+; drawn lines (11.5% at 845,-3084,215).
+;
+; Now the segment is simply left OPEN and its emit DEFERRED.  Each span
+; is clipped on its own merits, and the open segment is closed only when
+; the line is PROVEN to leave the chain: it exits the aperture, or the
+; next visible run does not start where the last one ended (a solid gap
+; between spans), or the list/line ends.  A conservative test can then
+; only cost cycles, never pixels.  zp_seg_end_x carries the right end of
+; the visible run so far; the end Y is computed once, at the emit.
 dcl_entry_path:
-; Reset the Y bbox to the full line range for this fresh segment.  A
-; previous segment may have NARROWED ylo/yhi (continuation) and then
-; reset seg_start without restoring it; a stale narrow bbox here makes
-; Tier-2 wrongly ACCEPT (skip CB clip) for the new span -> over-draw
-; (the slot4 over-draw at 845,-3084,215).  The full-line bbox is
-; conservative: it never wrongly accepts/rejects; CB clip refines.
+; Reset the Y bbox to the full line range for this span.  A previous
+; span may have NARROWED ylo/yhi; a stale narrow bbox describes the line
+; over a range to the LEFT of this span and would make Tier-2 wrongly
+; ACCEPT -> over-draw (the slot4 over-draw at 845,-3084,215).  The
+; full-line bbox is conservative: it never wrongly accepts/rejects.
 ; (X = span slot must be preserved for the Tier checks below.)
    LDA zp_line_yl_l
    CMP zp_line_yr_l
@@ -218,6 +226,24 @@ dcl_ep_done:
 ;   else       → A = interp  (rare: line enters span mid-way)
 ; The rare interp path uses BIT abs to skip the LDA zp_line_yl_l.
 dcl_accept:
+; Visible over the WHOLE overlap, so the run here is [ox0, ox1].
+; If a segment is already open and this run starts exactly where the
+; last one ended, the line never left the chain: extend it in silence.
+; That is the hot path, and it does no work at all — in particular it
+; skips the entry interp, which the old portal check paid for.
+   LDA zp_seg_start_x
+   CMP #$FF
+   BEQ dcl_acc_open                        ; nothing open -> open one
+   LDA zp_ox0
+   CMP zp_seg_end_x
+   BEQ dcl_acc_extend                      ; contiguous -> just extend
+; A visible run that does NOT continue the open one: the line genuinely
+; left the chain at zp_seg_end_x (a solid gap between spans).  Close the
+; old segment there, then open a new one here.
+   STX zp_save0
+   JSR dcl_emit_open
+   LDX zp_save0
+dcl_acc_open:
    LDA zp_ox0
    STA zp_seg_start_x
    CMP zp_line_xl_l
@@ -234,7 +260,10 @@ dcl_accept:
 dcl_accept_yl:
    LDA zp_line_yl_l
    STA zp_seg_start_y
-; (Records hook moved to dcl_emit_segment — one record per surviving
+dcl_acc_extend:
+   LDA zp_ox1                              ; the run now reaches ox1
+   STA zp_seg_end_x
+; (Records hook is at dcl_emit_segment — one record per surviving
 ;  segment, not per-span.)
 ; Fall through to exit check
 
@@ -245,16 +274,30 @@ dcl_exit_check:
 ; see the ox1 note above)
    LDA POOL_XEND,X
    CMP zp_line_xr_l
-   BCC dcl_extends_past
-; xend < xr → extends past
+   BCC dcl_advance
+; xend < xr → extends past: the segment stays OPEN and we simply walk on.
+; No portal check, no containment proof, no emit — whether the run
+; really continues is decided by the NEXT span, on its own merits.
 ; xend >= xr: line ends within this span
    JMP dcl_line_ends
+
+dcl_advance:
+; Walk to the next span with the segment (if any) still open.
+   LDA POOL_NEXT,X
+   TAX
+   BEQ dcladv_flush                        ; (entry guard bypassed: TAX's Z
+   JMP dcl_walk2                           ; answers the null test here)
+dcladv_flush:
+   JMP dcl_flush
 
 ; --- rare-arm island (census 2026-07-27): tier-1/2 targets out of the
 ; hot fall path; all within branch range of the tiers above ---
 dcl_amb_jmp:
    JMP dcl_cb_clip
 dcl_reject_above:
+; Not visible anywhere in this span, so an open run really did end at
+; zp_seg_end_x.  Close it FIRST (dcl_close_open_nx ordering contract).
+   JSR dcl_close_if_open
    LDA zp_dcl_rec_buf_h                    ; records off: plain reject
    BEQ dcl_outer_reject
    LDA zp_dcl_out                          ; feedback: off-TOP evidence
@@ -263,6 +306,7 @@ dcl_reject_above:
    LDA #0                                  ; verdict 'above' over [ox0,ox1]
    BEQ dcl_rej_rec                         ; (always)
 dcl_reject_below:
+   JSR dcl_close_if_open
    LDA zp_dcl_rec_buf_h
    BEQ dcl_outer_reject
    LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence
@@ -282,120 +326,22 @@ dcl_outer_reject:
 dclor_flush:
    JMP dcl_flush
 
-dcl_extends_past:
-; ========== Line extends past this span — Phase 2 portal check ==========
-   STX zp_save0                            ; save current span pointer
-
-; Check if next span abuts this one
-   LDY POOL_NEXT,X
-   BEQ dcl_exit_no_portal                  ; no next span → emit+reset
-                                        ; (direct 2026-08-12: +87, in
-                                        ;  range — the JMP died)
-dcl_has_next:
-
-; Abutting? POOL_XEND[current] == POOL_XSTART[next] — half-open spans
-; abut when they SHARE the boundary edge (exclusive end == next start)
-   LDA POOL_XEND,X
-   CMP POOL_XSTART,Y
-   BNE dcl_exit_no_portal                  ; (direct 2026-08-12: +76)
-dcl_is_abutting:
-
-; --- Continuation containment check (FIX 2026-06-19) ---
-; Merge across the portal ONLY if the line, from the shared boundary to
-; its end, stays within the NEXT span's inner bbox [IT, IB] — which
-; guarantees the line cannot exit that span's aperture anywhere, so no
-; per-span re-clip is needed.  Otherwise end the segment at the boundary
-; and let the next span re-enter via the entry path (CB clip).  The old
-; code only checked the portal aperture at the shared boundary column, so
-; a line grazing the aperture edge at the boundary but running outside it
-; WITHIN the next span was emitted across the whole span (over-extension
-; -> off-screen; the 845,-3084,215 over-draw and the 1056,-3291,34 crash).
-; ly = line_y at the shared boundary (= current.XEND)
-; (X = save0 rides in from the abutting test — no reload)
-   LDY zp_line_dy
-   BEQ dcl_pp_use_yr
-   LDA POOL_XEND,X
-   CMP zp_line_xr_l
-   BEQ dcl_pp_use_yr
-   JSR dcl_line_y_at_a                     ; A = xend already
-   .byte $2C                               ; BIT abs: skip LDA yr
-dcl_pp_use_yr:
-   LDA zp_line_yr_l
-; bbox of the line over [boundary, xr] = [min(ly,yr), max(ly,yr)].
-; (A = ly rides both arms — the zp_tmp2 shuttle is gone)
-   CMP zp_line_yr_l
-   BCS dcl_pp_ly_ge
-   STA zp_tmp0
-   LDA zp_line_yr_l
-   STA zp_tmp1
-; ly < yr: lo=ly, hi=yr
-   JMP dcl_pp_bbox
-dcl_pp_ly_ge:
-   STA zp_tmp1
-   LDA zp_line_yr_l
-   STA zp_tmp0
-; ly >= yr: lo=yr, hi=ly
-dcl_pp_bbox:
-   LDX zp_save0
-   LDY POOL_NEXT,X
-; Y = next span slot
-   LDA zp_tmp0
-   CMP POOL_IT,Y
-   BCC dcl_exit_no_portal
-; lo < next.IT -> may exit top
-   LDA POOL_IB,Y
-   CMP zp_tmp1
-   BCC dcl_exit_no_portal
-; next.IB < hi -> may exit bot
-; Contained in next span's inner bbox: commit narrowed bbox, continue.
-   LDA zp_tmp0
-   STA zp_line_y_l
-   LDA zp_tmp1
-   STA zp_line_y_h
-   TYA
-   TAX
-   BEQ dclwb_flush0                        ; (entry guard bypassed: TAX's Z
-   JMP dcl_walk2                           ; answers the null test here)
-dclwb_flush0:
-   JMP dcl_flush
-
-; (dcl_exit_no_portal_a — the 'restore X for emit' alias — is retired:
-; no caller remained, and every entry below arrives with X = save0
-; already, dfscan-proven.)
-dcl_exit_no_portal:
-; Portal failed or closed: emit current segment and reset.
-; Compute exit point Y — three cases converge at dcl_exit_emit via
-; chained BIT abs tricks (interp skips yl, yl skips yr):
-;   xend == xr → A = yr
-;   dy == 0    → A = yl
-;   else       → A = line_y_at(xend)
-   LDA POOL_XEND,X
-   STA zp_ox1                              ; end_x = xend of current span
-   CMP zp_line_xr_l
-   BEQ dcl_exit_use_yr
-   LDY zp_line_dy
-   BEQ dcl_exit_use_yr
-; dy==0 → yr (== yl for flat lines)
-; xend < xr, sloped: interp (A = xend still)
-   JSR dcl_line_y_at_a
-   .byte $2C                               ; BIT abs: skip LDA yr
-dcl_exit_use_yr:
-   LDA zp_line_yr_l
-dcl_exit_emit:
-; A = end_y
-   STA zp_tmp0
-   JSR dcl_emit_segment
-; Reset seg_start
-   LDA #$FF
-   STA zp_seg_start_x
-   LDX zp_save0
-; Advance to next span (inline)
-   LDA POOL_NEXT,X
-   TAX
-   BEQ dclwb_flush1                        ; (entry guard bypassed: TAX's Z
-   JMP dcl_walk2                           ; answers the null test here)
-dclwb_flush1:
-   JMP dcl_flush
+; (The Phase-2 portal check — dcl_extends_past / dcl_has_next /
+;  dcl_is_abutting / dcl_pp_use_yr / dcl_pp_ly_ge / dcl_pp_bbox /
+;  dcl_exit_no_portal / dcl_exit_emit — was DELETED 2026-08-22.
+;
+;  It existed to decide, at span N, whether the line could be merged
+;  across the portal into span N+1 without re-clipping, by testing the
+;  line's bbox over [boundary, xr] against span N+1's INNER bbox.  That
+;  test is conservative, and its failure path ended the segment at the
+;  shared boundary — splitting a line that had not left the chain.
+;
+;  Walking on with the segment open and clipping span N+1 on its own
+;  merits gives the same answer without ever splitting, and is CHEAPER:
+;  the containment test cost a compare chain plus, when the boundary was
+;  interior, a full line_y_at interp (a divide) at EVERY portal, where
+;  the Tier-1/Tier-2 pair that replaces it is four compares and usually
+;  falls straight through to "extend".)
 
 dcl_line_ends:
 ; Line ends within this span. Emit seg_start → (xr, yr)
@@ -409,21 +355,67 @@ dcl_line_ends:
    JMP dcl_emit_segment                    ; tail call (was JSR+RTS): -9 cyc, line fully consumed
 
 dcl_flush:
-; End of walk.  If seg_start is still active (last iteration was a
-; portal-continue into a span past xr, or list exhausted), emit the
-; final segment to (xr, yr).
+; End of walk (span list exhausted, or every remaining span is right of
+; the line).  An open run ended at zp_seg_end_x — NOT at xr: the line
+; may continue past the last span into solid columns, which is exactly
+; where the run stops.
    LDA zp_seg_start_x
    CMP #$FF
-   BNE dcl_fl_emit                         ; open seg rare at flush (0% on
-                                           ; suite, census 2026-07-27)
+   BNE dcl_fl_emit
 dcl_done:
    RTS
 dcl_fl_emit:
+   JMP dcl_emit_open                       ; tail call
+
+; --- dcl_emit_open: close the open segment at zp_seg_end_x ---
+; Emits [seg_start .. seg_end_x].  The end Y is computed HERE, ONCE per
+; segment, instead of once per span boundary as the old portal path did.
+; Three cases converge via chained BIT abs:
+;   seg_end_x == xr → yr
+;   dy == 0         → yl (== yr for flat lines)
+;   else            → line_y_at(seg_end_x)
+; Does NOT reset zp_seg_start_x — callers that carry on do that.
+dcl_emit_open:
+   LDA zp_seg_end_x
+   STA zp_ox1
+   CMP zp_line_xr_l
+   BEQ dcl_eo_yr
+   LDY zp_line_dy
+   BEQ dcl_eo_yr
+   JSR dcl_line_y_at_a                     ; A = seg_end_x rides in
+   .byte $2C                               ; BIT abs: skip LDA yr
+dcl_eo_yr:
    LDA zp_line_yr_l
    STA zp_tmp0
-   LDA zp_line_xr_l
-   STA zp_ox1
    JMP dcl_emit_segment                    ; tail call
+
+; --- dcl_close_open_nx: emit + close, if any segment is open ---
+; Clobbers A/X/Y; PRESERVES zp_save0, so the CB clip (which parks its
+; span pointer there) can call it mid-clip.
+;
+; ORDERING CONTRACT: every caller must close the open run BEFORE writing
+; any verdict record for the span it is currently on.  The record stream
+; is run-length-coded in ASCENDING x — rf_in merges into the PREVIOUS
+; record and silently absorbs anything arriving out of order — and the
+; segment record written here covers columns to the LEFT of this span's
+; verdict.  Get it backwards and the segment record is eaten, the
+; tighten under-informed, and lines go missing.
+dcl_close_open_nx:
+   LDA zp_seg_start_x
+   CMP #$FF
+   BEQ dcl_cio_rts
+   JSR dcl_emit_open
+   LDA #$FF
+   STA zp_seg_start_x
+dcl_cio_rts:
+   RTS
+
+; --- dcl_close_if_open: as above, but preserves X (through zp_save0) ---
+dcl_close_if_open:
+   STX zp_save0
+   JSR dcl_close_open_nx
+   LDX zp_save0
+   RTS
 
 ; ========== Vertical line handler ==========
 ; For xl == xr: find the first span containing column xl, compute
@@ -879,6 +871,15 @@ dcl_cb_top_clip:
    JSR interp_store
 dcl_cb_top_cy1_const:                      ; BEQ lands here with A = top1
    STA zp_cb_cy1
+; cx1 was clipped right of ox0, so the line is NOT visible at ox0 and an
+; open run ended there.  Close it BEFORE this span's verdict record —
+; ascending-x contract.  Guarded on ox0 < cx1 so an intersection landing
+; exactly on ox0 (nothing clipped off, run continues) neither closes nor
+; records.
+   LDA zp_ox0
+   CMP zp_cb_cx1
+   BCS dcl_cb_top_done
+   JSR dcl_close_open_nx                   ; preserves zp_save0
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_top_done
    LDA #0                                  ; [ox0, cx1] was above the aperture
@@ -1001,6 +1002,15 @@ dcl_cb_bot_clip:
    JSR interp_store
 dcl_cb_bot_cy1_const:                      ; BEQ lands here with A = bot1
    STA zp_cb_cy1
+; cx1 was clipped right of ox0, so the line is NOT visible at ox0 and an
+; open run ended there.  Close it BEFORE this span's verdict record —
+; ascending-x contract.  Guarded on ox0 < cx1 so an intersection landing
+; exactly on ox0 (nothing clipped off, run continues) neither closes nor
+; records.
+   LDA zp_ox0
+   CMP zp_cb_cx1
+   BCS dcl_cb_bot_done
+   JSR dcl_close_open_nx                   ; preserves zp_save0
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_bot_done
    LDA #$FF                                ; [ox0, cx1] was below the aperture
@@ -1015,16 +1025,30 @@ dcl_cb_bot_done:
 ; CB clip succeeded. If cx2 < ox1 the line exits the aperture INSIDE
 ; the span (not at a span boundary). Emit (cx1,cy1)→(cx2,cy2) directly
 ; and reset seg_start — no portal continuation possible since the line
-; left the aperture mid-span. dcl_line_ends / dcl_exit_no_portal both
-; use xr/yr or line_y_at(xend) for the exit, which would be wrong here.
+; left the aperture mid-span. dcl_line_ends / dcl_emit_open both use
+; xr/yr or line_y_at(seg_end_x) for the exit, which would be wrong here.
    CMP zp_ox1                              ; A = cx2 from the reject test
    BCS dcl_cb_no_exit_clip
-; cx2 < ox1 → emit clipped fragment (segment record written by emit).
+; cx2 < ox1 → the line leaves the aperture INSIDE this span, so the run
+; genuinely ends at cx2 and is emitted here (segment record written by
+; emit).  But if a run was already open and this one starts exactly where
+; that one ended, it is the SAME run: keep the original seg_start and
+; emit once.  Overwriting seg_start with cx1 here would split the line.
    LDX zp_save0
+   LDA zp_seg_start_x
+   CMP #$FF
+   BEQ dcl_cbx_open
+   LDA zp_cb_cx1
+   CMP zp_seg_end_x
+   BEQ dcl_cbx_emit                        ; contiguous → extend it
+   JSR dcl_close_open_nx                   ; a real gap → close the old run
+   LDX zp_save0
+dcl_cbx_open:
    LDA zp_cb_cx1
    STA zp_seg_start_x
    LDA zp_cb_cy1
    STA zp_seg_start_y
+dcl_cbx_emit:
    LDA zp_cb_cx2
    STA zp_ox1
    LDA zp_cb_cy2
@@ -1042,29 +1066,29 @@ dclwb_flush2:
    JMP dcl_flush
 
 dcl_cb_no_exit_clip:
-; cx2 == ox1: CB did not clip the exit. Set seg_start = (cx1, cy1)
-; and fall through to the normal exit check (portal or line_ends).
-; Segment record written by dcl_emit_segment when the segment closes.
+; cx2 == ox1: CB did not clip the exit, so the visible run reaches the
+; end of the overlap and may continue into the next span.  Open, extend
+; or re-open exactly as dcl_accept does.
+; (The Y-bbox narrowing that used to live here died with the portal
+;  check: its only consumer was dcl_pp_bbox, and dcl_entry_path resets
+;  the bbox on every span anyway — it was a dead store on this path.)
    LDX zp_save0
+   LDA zp_seg_start_x
+   CMP #$FF
+   BEQ dcl_cbn_open
+   LDA zp_cb_cx1
+   CMP zp_seg_end_x
+   BEQ dcl_cbn_extend                      ; contiguous → extend
+   JSR dcl_emit_open                       ; a real gap → close the old run
+   LDX zp_save0
+dcl_cbn_open:
    LDA zp_cb_cx1
    STA zp_seg_start_x
    LDA zp_cb_cy1
    STA zp_seg_start_y
-; Update Y bbox for portal checks (A = cy1 still)
-   CMP zp_cb_cy2
-   BCC dcl_cb_ylo_ok
-; cy1 >= cy2
-   STA zp_line_y_h
-   LDA zp_cb_cy2
-   STA zp_line_y_l
-   JMP dcl_cb_bbox_done
-dcl_cb_ylo_ok:
-; cy1 < cy2
-   STA zp_line_y_l
-   LDA zp_cb_cy2
-   STA zp_line_y_h
-dcl_cb_bbox_done:
-; (X = save0 still: nothing above touched it since the entry load)
+dcl_cbn_extend:
+   LDA zp_cb_cx2
+   STA zp_seg_end_x
    JMP dcl_exit_check
 
 ; Both arms prove a direction, so both tag zp_dcl_out exactly as the
@@ -1075,6 +1099,7 @@ dcl_cb_bbox_done:
 ; same fact stated by construction.  A range clipped above CANNOT also
 ; run below (top < bot), so a single direction is the whole story.
 dcl_cb_reject_above:
+   JSR dcl_close_open_nx                   ; close BEFORE this span's record
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_reject
    LDA zp_dcl_out                          ; feedback: off-TOP evidence
@@ -1083,6 +1108,7 @@ dcl_cb_reject_above:
    LDA #0                                  ; whole overlap above the aperture
    BEQ dcl_cb_rej_rec                      ; (always)
 dcl_cb_reject_below:
+   JSR dcl_close_open_nx                   ; close BEFORE this span's record
    LDA zp_dcl_rec_buf_h
    BEQ dcl_cb_reject
    LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence
