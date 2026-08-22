@@ -103,6 +103,16 @@ dcl_walk2:
 ; INVARIANT: it rides A across the whole skip walk via an X/Y
 ; ping-pong advance (the has_gap idiom) — the old inline advance
 ; reloaded it every span because LDA POOL_NEXT/TAX consumed A.
+;
+; ONLY THE FIRST ENTRY COMES HERE.  Every advance re-enters at
+; dcl_not_left instead, because once a span has passed this test the
+; rest of the walk provably cannot skip: the survivor has xend > xl, the
+; next span has xstart >= that xend, and its own xend is larger still,
+; so xend > xl holds for every span after.  Re-running the test would be
+; 10 cycles (LDA xl + CMP POOL_XEND,X + BCC) per span crossed, spent to
+; prove something already known.  Before the 2026-08-22 deferred-emit
+; restructure this did not arise — continuations skipped the walk head
+; entirely — so the advances inherited dcl_walk2 by default.
    LDA zp_line_xl_l
 dclw_x:
    CMP POOL_XEND,X
@@ -286,7 +296,7 @@ dcl_advance:
    LDA POOL_NEXT,X
    TAX
    BEQ dcladv_flush                        ; (entry guard bypassed: TAX's Z
-   JMP dcl_walk2                           ; answers the null test here)
+   JMP dcl_not_left                           ; answers the null test here)
 dcladv_flush:
    JMP dcl_flush
 
@@ -322,7 +332,7 @@ dcl_outer_reject:
    LDA POOL_NEXT,X
    TAX
    BEQ dclor_flush
-   JMP dcl_walk2
+   JMP dcl_not_left
 dclor_flush:
    JMP dcl_flush
 
@@ -1076,7 +1086,7 @@ dcl_cbx_emit:
    LDA POOL_NEXT,X
    TAX
    BEQ dclwb_flush2                        ; (entry guard bypassed: TAX's Z
-   JMP dcl_walk2                           ; answers the null test here)
+   JMP dcl_not_left                           ; answers the null test here)
 dclwb_flush2:
    JMP dcl_flush
 
@@ -1138,7 +1148,7 @@ dcl_cb_reject:
    LDA POOL_NEXT,X
    TAX
    BEQ dclwb_flush3                        ; (entry guard bypassed: TAX's Z
-   JMP dcl_walk2                           ; answers the null test here)
+   JMP dcl_not_left                           ; answers the null test here)
 dclwb_flush3:
    JMP dcl_flush
 
