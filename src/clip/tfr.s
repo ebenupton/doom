@@ -1036,30 +1036,37 @@ flush_do:                                  ; FLUSH_PEND call sites
    LDA TFS_PEND_BR                                                        ;# ||         0.3
    STA POOL_BR,X                                                          ;# ||||       0.4
 ; OT = min(TL,TR), IT = max(TL,TR), OB = max(BL,BR), IB = min(BL,BR).
+; ONE compare per pair, not two: the LOSER of the compare is the other
+; answer, so keep it in Y instead of re-deriving it.  Arrange the arms so
+; A holds the wanted value and Y the other, then store A, TYA, store.
+; Ties are fine — the two values are equal, so either arm is right.
+;   top:  BCC taken => A=TL is the min, Y=TR the max
+;         else         A<-TR (min),     Y<-TL (max)
+; Y is free here: nothing above this block uses it, and tg_append_x
+; (tail-called below) loads its own with TAY.
    LDA TFS_PEND_TL                                                        ;# ||         0.3
+   LDY TFS_PEND_TR                                                        ;# ||         0.3
    CMP TFS_PEND_TR                                                        ;# ||         0.3
    BCC fp_ot                                                              ;# ||         0.2
-   LDA TFS_PEND_TR                                                        ;# ||         0.2
+   TYA                                                                    ;# |          0.2
+   LDY TFS_PEND_TL                                                        ;# ||         0.2
 fp_ot:
-   STA POOL_OT,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_TL                                                        ;# ||         0.3
-   CMP TFS_PEND_TR                                                        ;# ||         0.3
-   BCS fp_it                                                              ;# ||         0.3
-   LDA TFS_PEND_TR                                                        ;#            0.0
-fp_it:
-   STA POOL_IT,X                                                          ;# ||||       0.4
+   STA POOL_OT,X                           ; min                          ;# ||||       0.4
+   TYA                                                                    ;# ||         0.2
+   STA POOL_IT,X                           ; max                          ;# ||||       0.4
+; bot mirrors it with the sense flipped (OB is the MAX, IB the min):
+;   BCS taken => A=BL is the max, Y=BR the min
+;   else        A<-BR (max),      Y<-BL (min)
    LDA TFS_PEND_BL                                                        ;# ||         0.3
+   LDY TFS_PEND_BR                                                        ;# ||         0.3
    CMP TFS_PEND_BR                                                        ;# ||         0.3
    BCS fp_ob                                                              ;# ||         0.3
-   LDA TFS_PEND_BR                                                        ;#            0.0
+   TYA                                                                    ;#            0.0
+   LDY TFS_PEND_BL                                                        ;#            0.0
 fp_ob:
-   STA POOL_OB,X                                                          ;# ||||       0.4
-   LDA TFS_PEND_BL                                                        ;# ||         0.3
-   CMP TFS_PEND_BR                                                        ;# ||         0.3
-   BCC fp_ib                                                              ;# ||         0.2
-   LDA TFS_PEND_BR                                                        ;# ||         0.2
-fp_ib:
-   STA POOL_IB,X                                                          ;# ||||       0.4
+   STA POOL_OB,X                           ; max                          ;# ||||       0.4
+   TYA                                                                    ;# ||         0.2
+   STA POOL_IB,X                           ; min                          ;# ||||       0.4
    JMP tg_append_x                                                        ;# ||         0.3
 flush_fail:
    RTS
