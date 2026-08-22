@@ -147,9 +147,9 @@ ta_first:
 ; Callers enter at tfs_flush_do, past the now-redundant test.
 .macro FLUSH_PEND
 .local fp_skip
-   LDA TFS_PEND_ACT                                                       ;# |          0.2
-   BEQ fp_skip                                                            ;# ||         0.2
-   JSR tfs_flush_do
+   LDA TFS_PEND_ACT                                                       ;# ||||       0.4
+   BEQ fp_skip                                                            ;# |||        0.3
+   JSR tfs_flush_do                                                       ;# ||||       0.4
 fp_skip:
 .endmacro
 
@@ -288,11 +288,11 @@ tighten_from_records:
 tfr_neu_top:
    LDA TOP_RECORDS,Y                                                      ;# |          0.2
    BNE tfr_do_sweep                        ; in-band value or solid flat  ;# |          0.1
-   INY                                                                    ;#            0.0
-   INY                                                                    ;#            0.0
-   INY                                                                    ;#            0.0
-   INY                                                                    ;#            0.0
-   DEX                                                                    ;#            0.0
+   INY                                                                    ;#            0.1
+   INY                                                                    ;#            0.1
+   INY                                                                    ;#            0.1
+   INY                                                                    ;#            0.1
+   DEX                                                                    ;#            0.1
    BNE tfr_neu_top                                                        ;#            0.1
 tfr_neu_top_ok:
    LDX BOT_RECORDS                                                        ;# ||         0.2
@@ -301,7 +301,7 @@ tfr_neu_top_ok:
 tfr_neu_bot:
    LDA BOT_RECORDS,Y                                                      ;# ||         0.2
    CMP #$FF                                                               ;# |          0.1
-   BNE tfr_do_sweep                                                       ;# |          0.1
+   BNE tfr_do_sweep                                                       ;# |          0.2
    INY
    INY
    INY
@@ -315,7 +315,7 @@ tfr_do_sweep:
 ; Invalidate the has_gap coherence cache (see span_mark_solid note).
    LDA zp_head                                                            ;# ||         0.2
    STA zp_old_cur                                                         ;# ||         0.2
-   ZERO zp_hg_cache, zp_new_tail, zp_head                                 ;# |||||||    0.7
+   ZERO zp_hg_cache, zp_new_tail, zp_head, TFS_PEND_ACT                   ;# ||||||||   0.9
 
 ; Reset DCL's portal-continuation state ($FF = inactive) so the next
 ; draw_clipped_line starts clean. (Write-only from this module.)
@@ -328,33 +328,29 @@ tfr_do_sweep:
    LDA TOP_RECORDS                                                        ;# ||         0.3
    BEQ tfs_no_top                                                         ;# |          0.2
    LDA #1                                                                 ;# |          0.1
-   STA TFS_T_CUR                                                          ;# |          0.1
-   JMP tfs_top_be                                                         ;# |          0.1
 tfs_no_top:
-   ZERO TFS_T_CUR                                                         ;# |          0.2
-tfs_top_be:
+   STA TFS_T_CUR                                                          ;# ||         0.2
+tfs_top_be:                                ; (no longer branched to — the
+                                        ;  JMP that used it died with the
+                                        ;  shared-STA fold below)
    LDA TOP_RECORDS                                                        ;# ||         0.3
    ASL A                                                                  ;# |          0.1
    ASL A                                                                  ;# |          0.1
    BUMP_CC                                 ; C=0: count <= 63 (1+4n <= 255) ;# |          0.1
                                            ; so both ASLs shift out 0
    STA TFS_TOP_BUFEND                                                     ;# ||         0.2
+
    LDA BOT_RECORDS                                                        ;# ||         0.3
    BEQ tfs_no_bot                                                         ;# |          0.1
    LDA #1                                                                 ;# |          0.1
-   STA TFS_B_CUR                                                          ;# ||         0.2
-   JMP tfs_bot_be                                                         ;# ||         0.2
 tfs_no_bot:
-   ZERO TFS_B_CUR                                                         ;#            0.0
-tfs_bot_be:
+   STA TFS_B_CUR                                                          ;# ||         0.2
+tfs_bot_be:                                ; (likewise unreferenced)
    LDA BOT_RECORDS                                                        ;# ||         0.3
    ASL A                                                                  ;# |          0.1
    ASL A                                                                  ;# |          0.1
    BUMP_CC                                 ; C=0: same count-bound proof  ;# |          0.1
    STA TFS_BOT_BUFEND                                                     ;# ||         0.2
-
-; No pending output span yet.
-   ZERO TFS_PEND_ACT                                                      ;# |||        0.3
 
 ; ---- PREFIX SPLICE (2026-08-22, Eben: "there's a skip to be had") ----
 ; Spans wholly LEFT of the seg (xend <= ilo) are untouched by it and
@@ -370,7 +366,7 @@ tfs_bot_be:
    BEQ tfs_pfx_none                        ; empty list                   ;# |          0.1
    LDA zp_i_l                              ; ilo rides A through the scan ;# ||         0.2
    CMP POOL_XEND,X                                                        ;# ||         0.3
-   BCC tfs_pfx_none                        ; head already reaches past ilo ;# |          0.1
+   BCC tfs_pfx_none                        ; head already reaches past ilo ;# |          0.2
    STX zp_head                             ; adopt the prefix as the new list ;# |          0.2
 tfs_pfx_loop:                              ; X = a prefix span
    LDY POOL_NEXT,X                                                        ;# |||        0.4
@@ -379,7 +375,7 @@ tfs_pfx_loop:                              ; X = a prefix span
    BCC tfs_pfx_split                       ; Y is the first overlapper    ;# ||         0.2
    TYA                                                                    ;# |          0.1
    TAX                                                                    ;# |          0.1
-   BNE tfs_pfx_loop                        ; always (a live slot != 0)    ;# |          0.1
+   BNE tfs_pfx_loop                        ; always (a live slot != 0)    ;# |          0.2
 tfs_pfx_split:                             ; X = last prefix, Y = sweep start
    STY zp_old_cur                                                         ;# |          0.2
    STX zp_new_tail                                                        ;# |          0.2
@@ -420,7 +416,7 @@ tfs_proc:
 ; store, instead of walking it span by span. zp_old_cur already holds
 ; the rest — the prologue stashed it. Measured 0.62 spans per call
 ; beyond the seam.
-   FLUSH_PEND                                                             ;# |||        0.4
+   FLUSH_PEND
    LDX zp_clr_save_x                                                      ;# |          0.1
    JSR tg_append_x                         ; may merge X into the tail (and ;# ||         0.2
                                         ; free it) or link it; either way
@@ -718,7 +714,7 @@ tfs_compute_vals:
    LDY TFS_T_CUR                                                          ;# ||         0.2
    INY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
-   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# ||         0.2
+   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# |          0.2
 ; A dominating record IS the boundary — no max() needed (2026-08-22,
 ; Eben). A top record exists BECAUSE dcl drew that edge inside the
 ; aperture, so rec >= pool over its range by construction. The old
@@ -863,7 +859,7 @@ tfs_bot_vals_done:
    STA TFS_PEND_XR                                                        ;#            0.0
    JMP tfs_advance_curs                                                   ;#            0.0
 tfs_no_merge:
-   FLUSH_PEND                                                             ;# |||        0.3
+   FLUSH_PEND
 tfs_start_pend:
 ; Buffer this interval as the new pending span (materialized by
 ; tfs_flush_pending when the next interval can't merge into it).
@@ -904,7 +900,7 @@ tfs_advance_curs:
 ; Advance the cursor by 4, wrapping to 0 (exhausted) at BUFEND.
 ; Advance T_CUR if next_x crossed T.xr.
    LDA TFS_T_CUR                                                          ;# |||        0.3
-   BEQ tfs_skip_t_adv                                                     ;# ||         0.2
+   BEQ tfs_skip_t_adv                                                     ;# ||         0.3
    AND TFS_TOP_DOM                         ; $FF-transparent: A stays CUR ;# ||         0.2
    BEQ tfs_skip_t_adv                      ; (0 iff not dominating) — the ;# |          0.1
    CLC                                     ; reload died (2026-08-11)     ;# |          0.1
@@ -912,7 +908,7 @@ tfs_advance_curs:
    TAY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
    CMP TFS_NEXT_X                                                         ;# ||         0.2
-   BNE tfs_skip_t_adv                                                     ;# |          0.1
+   BNE tfs_skip_t_adv                                                     ;# ||         0.2
    LDA TFS_T_CUR                                                          ;# |          0.1
    CLC                                                                    ;# |          0.1
    ADC #4                                                                 ;# |          0.1
@@ -956,7 +952,7 @@ tfs_inner_done:
    LDA zp_i_h                              ; INVERTED: C = ihi >= xend —  ;# ||         0.3
    CMP POOL_XEND,X                         ; one BCS replaces the BCC/BEQ ;# |||        0.4
    BCS tfs_no_post                         ; pair                         ;# ||         0.2
-   FLUSH_PEND                                                             ;# |          0.2
+   FLUSH_PEND
 ; REUSE THE ORIGINAL SLOT (2026-08-22) instead of alloc + 10-byte copy
 ; + free. The post-fragment is [ihi, xend) of THIS span: its XEND and
 ; its whole line definition are already right, and this is the span's
@@ -1054,7 +1050,7 @@ fp_it:
    STA POOL_IT,X                                                          ;# ||||       0.4
    LDA TFS_PEND_BL                                                        ;# ||         0.3
    CMP TFS_PEND_BR                                                        ;# ||         0.3
-   BCS fp_ob                                                              ;# ||         0.2
+   BCS fp_ob                                                              ;# ||         0.3
    LDA TFS_PEND_BR                                                        ;#            0.0
 fp_ob:
    STA POOL_OB,X                                                          ;# ||||       0.4
