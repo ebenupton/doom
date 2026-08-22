@@ -58,9 +58,9 @@ LOW_BASE = COLPORT_BASE+0               \ first shipped byte of the LOW disc ima
 SPAN_POOL = &1800                       \ clipper span pool block head (13 x $20 fields; arith.s POOL derives from this)
 PMOVE_BASE = &1E40                      \ PMOVE region head (banked cfg anchor; build_anim_ssd asserts driver_end <= this)
 COL_N_SOLID = &00C7                     \ collision indices >= this are ports (colmap asserts the count)
-PM_MOMX = &17F8                         \ player momentum x (s16 8.8 prescaled) — the COLPORT tail; ships as LOW-image zeros (the copy-down that used to zero-seed it is gone)
-PM_MOMY = PM_MOMX+2                     \ player momentum y (derives — a hard $03FA literal here survived the 2026-08-18 move and cost a red pm_fuzz)
-PM_TICREM = &17FC                       \ 35Hz tic accumulator remainder — DEAD since single-step momentum; declared for pm_fuzz
+PM_MOMX = &17F8                         \ RETIRED 2026-08-22 with momentum; the COLPORT tail, left declared so the slot stays reserved and pm_fuzz can assert it stays zero
+PM_MOMY = PM_MOMX+2                     \ RETIRED with PM_MOMX (derives — a hard $03FA literal here survived the 2026-08-18 move and cost a red pm_fuzz)
+PM_TURNREM = &17FC                      \ sub-step rotation fraction, Q8 — carries the frame-rate-compensated turn across frames (was the 35Hz tic remainder)
 USETAB_BASE = &BE00                     \ use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 SCREEN0 = &5800                         \ framebuffer 0 (flat: harness FB $EA00-$FDFF)
 SCREEN1 = &6C00                         \ framebuffer 1 (flat: single buffer)

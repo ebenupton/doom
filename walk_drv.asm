@@ -192,10 +192,15 @@ ORG DRV_ORG
 ; frame — main loop, one iteration per rendered frame (paced by flip_sched's
 ; vsync waits when the beam demands one; free-running otherwise).
 ; Pseudocode:
-;   read_input                  keys -> angidx, 24-bit position (bounds-checked)
+;   read_input                  keys -> 4 input bits (fwd/back/left/right)
+;   mv_frame                    field clock -> pm_frame, which owns ROTATION,
+;                               position, slide, D_FWD and the $90-$93 raws.
+;                               Both the walk and the turn are scaled by the
+;                               field count, so neither changes with the frame
+;                               rate; the sincos load below reads the angidx
+;                               pm_frame just wrote, so a turn lands the SAME
+;                               frame it was pressed.
 ;   ZP $00-$03/$9D/$9E <- pos   8.8 frac/lo + s16 integer high bytes
-;   mv_frame                    field clock -> 35Hz momentum (pm_frame owns
-;                               position, slide, D_FWD and the $90-$93 raws)
 ;   sincos <- table[angidx]     entry is 8 bytes, so ptr = tabbase + idx*8
 ;                               (24-bit shift into $EC/$ED); bytes 0-5 ->
 ;                               ZP $05-$0A (s/c mag,neg,one), byte 6 -> bca_ab
@@ -208,8 +213,8 @@ ORG DRV_ORG
 ; ---------------------------------------------------------------------------
 .frame
     JSR read_input
-    JSR mv_frame                                    ; field clock -> 35Hz
-                                                    ; momentum (pages WALK)
+    JSR mv_frame                                    ; field clock -> rotate +
+                                                    ; walk (pages WALK)
     ; --- position -> engine ZP ---
     LDA pxf:STA &00 : LDA pxl:STA &01 : LDA pxh:STA &9D
     LDA pyf:STA &02 : LDA pyl:STA &03 : LDA pyh:STA &9E
@@ -387,23 +392,24 @@ ORG DRV_CLR
 ; Manual keyboard scan, no OS: init put the keyboard in manual-scan mode
 ; (IC32 addr 3 low) with DDRA bits 0-6 out; writing a key number to $FE4F
 ; and reading bit 7 back (BIT -> N) gives that key's state directly.
-; Keys (internal key numbers): $19 LEFT / $79 RIGHT turn one table step
-; (= 4 angle-bytes); $39 UP / $29 DOWN move SPEED world units along the
-; view direction, then bounds_or_revert undoes any step that leaves the
-; clamp rectangle. All four keys are independent (no else-chains).
-; Clobbers A,X (via the movement helpers).
+; Keys (internal key numbers): $19 LEFT / $79 RIGHT turn, $39 UP / $29
+; DOWN walk. All four are now just INPUT BITS for ENG_PM_FRAME
+;   b0 fwd  b1 back  b2 left  b3 right
+; which owns position, rotation, slide and D_FWD. Rotation moved there
+; (2026-08-22) because only pm_frame knows the field count: stepping
+; angidx here turned one step per FRAME, i.e. faster the faster the
+; frame rate. All four keys are independent (no else-chains).
+; Clobbers A,X.
 .read_input
+    LDX #0
     LDA #&19:STA &FE4F : BIT &FE4F : BPL ri_nleft   ; cursor LEFT
-    LDA angidx:CLC:ADC #1:AND #63:STA angidx
+    LDX #4
 .ri_nleft
     LDA #&79:STA &FE4F : BIT &FE4F : BPL ri_nright  ; cursor RIGHT
-    LDA angidx:SEC:SBC #1:AND #63:STA angidx
+    TXA : ORA #8 : TAX
 .ri_nright
-    ; movement keys -> input bits for ENG_PM_FRAME (b0 fwd, b1 back);
-    ; the 35Hz momentum engine owns position, slide and D_FWD now
-    LDX #0
     LDA #&39:STA &FE4F : BIT &FE4F : BPL ri_nup     ; cursor UP: forward
-    LDX #1
+    TXA : ORA #1 : TAX
 .ri_nup
     LDA #&29:STA &FE4F : BIT &FE4F : BPL ri_ndown   ; cursor DOWN: back
     TXA : ORA #2 : TAX
@@ -438,12 +444,8 @@ ORG DRV_CLR
     LDA #16 :STA angidx
     LDA #&06:STA &04 : STA ENG_PM_VZ
     LDA #0:STA space_prev
-    LDX #4                                          ; momentum dies with the
-.rs_zm
-    STA PM_MOMX,X                                   ; teleport (momx/y+ticrem)
-    DEX
-    BPL rs_zm
-    RTS
+    STA PM_TURNREM                                  ; teleport clears the
+    RTS                                             ; part-turn fraction
 .rs_tab
     EQUB &00,&EE,&FF, &00,&D2,&FF
 

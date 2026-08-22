@@ -657,71 +657,58 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
 # approximation of exactly this); at most 2 wall projections per frame,
 # then the axis fallback (y-only, then x-only, zeroing the blocked
 # axis' momentum), then full stop (mom = 0,0).
-MM_THRUST = 24            # walk forwardmove (DOOM 0x19 = 25; trimmed to
-                          # 24 so the single-step form lands on the same
-                          # 8.0 u/tic top speed the per-tic loop reached
-                          # — the per-tic floor used to drag the
-                          # attractor 3.8% below 32T/3, and the closed
-                          # form does not reproduce that drag)
 MM_MAXMOVE = 960          # 30 world units, 8.8 prescaled
 MM_HALF = 480             # MAXMOVE/2 chunk ceiling — DO NOT RAISE past
                           # 724 without redoing the tunnelling proof:
                           # crossing a wall needs > 2*RADIUS = 32 world
                           # units of perpendicular travel in ONE chunk,
                           # and a cap of c permits c*sqrt(2)
-MM_STOP = 2               # STOPSPEED 0x1000 on our grid
-MM_FRICTION = 232         # 0xE800 >> 8
 MM_FIELDS_CAP = 10        # was 32. The single-step tables stop here, and
                           # a tighter hiccup clamp cuts the worst-case
                           # travel in one frame to 56 world units, not 177
 
-# --- single-step (closed-form) momentum -------------------------------
-# The per-tic recurrence m <- floor((m+T)*a) is affine, so n tics of it
-# collapse to one affine step. With a = 232/256 and u* = T/(1-a):
-#   m' = m*alpha + T*beta        alpha = a^n, beta = alpha + (a-alpha)/(1-a)
-#   D  = m*gamma + T*delta       gamma = (1-a^n)/(1-a)
-#                                delta = gamma + (n-gamma)/(1-a)
-# n need not be a whole number, and THAT is the point: displacement
-# becomes continuous in the frame period instead of jumping a whole
-# tic's worth when the period wobbles by one field (the +/-23% wobble
-# that read as jerkiness). Everything is indexed by the field count.
+# --- direct walk (momentum RETIRED 2026-08-22, Eben) -------------------
+# The momentum/friction integrator is gone.  Holding forward or back now
+# advances along the view ray at a CONSTANT speed, and both movement and
+# ROTATION are compensated for the frame period so the feel does not
+# change with the frame rate.
 #
-# Two identities keep the tables at 48 bytes instead of 96:
-#   gamma = (1-alpha)/(1-a)      -> derived from alpha, 1-a = 3/32
-#   beta  = a*gamma              -> one multiply
-# Only alpha (u8) and delta (u16) are stored. Operands are non-negative
-# so the 6502 sign-magnitude multiplies truncate the same way Python's
-# >> does, and the final >>8 runs on a two's-complement accumulator
-# (floor) seeded with 128 (round-to-nearest, which is what holds the
-# residual frame-rate dependence of the top speed under 0.3%).
+# The speed is 80% of the old model's asymptotic top speed.  In that
+# model a tic did `m += T; x += m; m *= a`, so the fixed point is
+# m* = T*a/(1-a) = 232 and the per-tic DISPLACEMENT is m* + T = 256
+# (= 8.0 world units/tic, the "8.0 u/tic top speed" the tables were
+# trimmed to).  80% of that is 204.8 per tic.
+#
+# Everything is then expressed PER PAL FIELD rather than per tic, which
+# drops the tic quantisation entirely: a field is 20 ms of real elapsed
+# time, so scaling by the field count IS the frame-rate compensation and
+# no fractional tic has to be carried.  MOVE[f] is the frame's whole
+# displacement magnitude, tabulated to keep the 6502 side a table read.
+WALK_TIC = 204.8          # 80% of the retired model's 256/tic attractor
 SS_RATE = 179             # tics per PAL field, Q8: 179/256 = 0.69922,
-                          # i.e. 34.96 Hz. Replaces the 7/10 accumulator
-                          # AND its carried remainder (ticrem retires)
-SS_K = 171                # 1/(1-a) = 32/3 in Q4
+                          # i.e. 34.96 Hz — still the tic:field ratio
+MM_FIELDS_CAP = 10        # hiccup clamp; also the table length
+
+# Rotation: 2 angle-bytes per tic.  The view angle is quantised to 64
+# steps of 4 angle-bytes, so a frame's turn is generally fractional; the
+# fraction is CARRIED in a remainder byte (the retired PM_TICREM), which
+# is what makes a slow frame turn as far as two fast ones.
+TURN_TIC = 0.5            # angle-STEPS per tic (= 2 angle-bytes)
 
 
-def _ss_build():
-    """(alpha u8, delta u16) indexed by field count. Mirrored byte for
-    byte in pmove.s — tools/pm_fuzz.py asserts the two agree."""
-    a = MM_FRICTION / 256
-    al, de = [], []
+def _walk_build():
+    """MOVE[f] = displacement magnitude for a frame of f fields;
+    TURN[f] = angle-steps for f fields, Q8.  Mirrored byte for byte in
+    pmove.s — tools/pm_fuzz.py asserts the two agree."""
+    mv, tn = [], []
     for f in range(MM_FIELDS_CAP + 1):
-        n = f * SS_RATE / 256
-        an = a ** n
-        S = (1 - an) / (1 - a)
-        al.append(round(an * 256))
-        de.append(round((S + (n - S) / (1 - a)) * 256))
-    return al, de
+        n = f * SS_RATE / 256                  # tics in the frame
+        mv.append(round(WALK_TIC * n))
+        tn.append(round(TURN_TIC * n * 256))
+    return mv, tn
 
 
-SS_ALPHA, SS_DELTA = _ss_build()
-
-
-def ss_coeffs(f):
-    """(alpha, beta, gamma, delta) for a field count — integer, exact."""
-    al = SS_ALPHA[f]
-    ga = ((256 - al) * SS_K) >> 4
-    return al, (ga * MM_FRICTION) >> 8, ga, SS_DELTA[f]
+MOVE_TAB, TURN_TAB = _walk_build()
 
 
 def _sc16(v, mag5):
@@ -747,37 +734,41 @@ def wall_project(dx, dy, wall_ang):
     return (-sdx if cn else sdx), (-sdy if sn else sdy)
 
 
-def momentum_tics(mx, my, ticrem, fields, fwd, back, angidx):
-    """The frame's whole momentum integration in ONE affine step.
-    Returns (mx, my, ticrem, dx, dy); ticrem is retired and passes
-    straight through — the engine no longer touches the byte.
+def walk_disp(fields, fwd, back, angidx):
+    """The frame's displacement: a constant-speed step along the view
+    ray, scaled by the field count.  Returns (dx, dy).
 
-    Replaces the per-tic loop (see the SS_ notes above). The clamp to
-    MM_MAXMOVE is gone with the loop: it never bound — the attractor is
-    ~232 against a 960 ceiling, and wall projection cannot grow a
-    momentum — and |m| <= 255 is now STRUCTURAL, because the 6502 feeds
-    m to the multiplies as a u8 magnitude. pm_fuzz asserts it."""
+    No momentum, no friction and no coasting — releasing the key stops
+    dead.  fwd and back cancel, matching the old thrust gate."""
     f = min(fields, MM_FIELDS_CAP)
-    if f == 0:
-        return mx, my, ticrem, 0, 0
-    al, be, ga, de = ss_coeffs(f)
-    tx = ty = 0
-    if fwd != back:
-        cw, cn, sw, sn = _unit5(angidx)
-        tx = -_sc16(MM_THRUST, cw) if cn else _sc16(MM_THRUST, cw)
-        ty = -_sc16(MM_THRUST, sw) if sn else _sc16(MM_THRUST, sw)
-        if back:
-            tx, ty = -tx, -ty
-    # +128 = round to nearest; >> is floor, matching a two's-complement
-    # accumulator with its low byte dropped
-    dx = (mx * ga + tx * de + 128) >> 8
-    dy = (my * ga + ty * de + 128) >> 8
-    mx = (mx * al + tx * be + 128) >> 8
-    my = (my * al + ty * be + 128) >> 8
-    if fwd == back and -MM_STOP < mx < MM_STOP \
-            and -MM_STOP < my < MM_STOP:
-        mx = my = 0                   # DOOM stop rule, once per frame
-    return mx, my, ticrem, dx, dy
+    if f == 0 or fwd == back:
+        return 0, 0
+    mag = MOVE_TAB[f]
+    cw, cn, sw, sn = _unit5(angidx)
+    dx, dy = _sc16(mag, cw), _sc16(mag, sw)
+    if cn:
+        dx = -dx
+    if sn:
+        dy = -dy
+    if back:
+        dx, dy = -dx, -dy
+    return dx, dy
+
+
+def turn_frame(angidx, turnrem, left, right, fields):
+    """Frame-rate-compensated rotation.  Returns (angidx, turnrem).
+
+    TURN_TAB is Q8 angle-steps for the field count; turnrem carries the
+    sub-step fraction across frames so the turn rate is independent of
+    how the frame period happens to fall.  Left and right cancel."""
+    f = min(fields, MM_FIELDS_CAP)
+    if f == 0 or left == right:
+        return angidx, turnrem
+    acc = TURN_TAB[f] + turnrem
+    steps, turnrem = acc >> 8, acc & 0xFF
+    if steps:
+        angidx = (angidx + steps if left else angidx - steps) & 63
+    return angidx, turnrem
 
 
 def _blk_ang(px, py, nx, ny, z_ps, mover_pos):
@@ -814,22 +805,29 @@ def _blk_ang(px, py, nx, ny, z_ps, mover_pos):
     return None                           # sector-rule (or bounds) block
 
 
-def momentum_frame(px88, py88, z_ps, mx, my, ticrem, fields, fwd, back,
-                   angidx, mover_pos):
-    """One driver frame: tic integration + chunked displacement with
-    wall projection. Positions 24-bit 8.8 prescaled center-relative.
+def move_frame(px88, py88, z_ps, angidx, turnrem, fields, fwd, back,
+               left, right, mover_pos):
+    """One driver frame: rotate, then walk, with chunked displacement
+    and wall projection.  Positions 24-bit 8.8 prescaled center-relative.
+
+    Momentum is retired (see the direct-walk notes above): the frame's
+    displacement is a constant-speed step along the view ray scaled by
+    the field count, so releasing a key stops dead and there is no
+    coasting, no friction drift and no per-axis momentum to project.
+    Collision and wall sliding are unchanged.
+
     d_fwd (the bca forward-coherence D-class gate) is 1 ONLY when the
     frame's displacement is EXACTLY parallel to the view unit on the
-    mag6 grid (cross == 0, dot > 0) and every chunk committed clean:
-    friction's independent per-axis floors drift the momentum off the
-    ray, and the bbox classifier's certified epsilon has no slack for
-    that — so the cache serves on axis/diagonal runs (where alignment
-    is exact) and safely sits out the rest.
-    Returns (px88, py88, z_ps, mx, my, ticrem, d_fwd)."""
-    mx, my, ticrem, dx, dy = momentum_tics(mx, my, ticrem, fields,
-                                           fwd, back, angidx)
+    mag6 grid (cross == 0, dot > 0) and every chunk committed clean.
+    Sliding therefore CLEARS it, which is the point: once the wall has
+    deflected the move it is no longer a forward walk and the bbox
+    cache's coherence assumption does not hold.
+
+    Returns (px88, py88, z_ps, angidx, turnrem, d_fwd)."""
+    angidx, turnrem = turn_frame(angidx, turnrem, left, right, fields)
+    dx, dy = walk_disp(fields, fwd, back, angidx)
     if dx == 0 and dy == 0:
-        return px88, py88, z_ps, mx, my, ticrem, 0
+        return px88, py88, z_ps, angidx, turnrem, 0
     tdx, tdy = dx, dy                     # the frame's intended move
     clean = True
     k = 0
@@ -856,20 +854,18 @@ def momentum_frame(px88, py88, z_ps, mx, my, ticrem, fields, fwd, back,
                 clean = False
                 rx, ry = cdx * chunks, cdy * chunks
                 rx, ry = wall_project(rx, ry, w)
-                mx, my = wall_project(mx, my, w)
                 k = 0
                 while (abs(rx) >> k) > MM_HALF or (abs(ry) >> k) > MM_HALF:
                     k += 1
                 chunks, cdx, cdy = 1 << k, rx >> k, ry >> k
                 continue
-        # axis fallback: y-only then x-only; zero the dead axis' momentum
+        # axis fallback: y-only then x-only, killing the blocked axis
         clean = False
         if cdy and try_move(px, py, px, (py88 + cdy) >> 5,
                             z_ps, mover_pos)[0]:
             ok, vz = try_move(px, py, px, (py88 + cdy) >> 5, z_ps, mover_pos)
             py88 += cdy
             z_ps = vz
-            mx = 0
             cdx = 0
             chunks -= 1
             continue
@@ -878,12 +874,10 @@ def momentum_frame(px88, py88, z_ps, mx, my, ticrem, fields, fwd, back,
             ok, vz = try_move(px, py, (px88 + cdx) >> 5, py, z_ps, mover_pos)
             px88 += cdx
             z_ps = vz
-            my = 0
             cdy = 0
             chunks -= 1
             continue
-        mx = my = 0                       # boxed in: full stop
-        break
+        break                             # boxed in
     d_fwd = 0
     if clean:
         cw, cn, sw, sn = _unit5(angidx)
@@ -893,7 +887,7 @@ def momentum_frame(px88, py88, z_ps, mx, my, ticrem, fields, fwd, back,
             if (tdx != 0 and (tdx > 0) == (ux > 0)) or \
                (tdx == 0 and tdy != 0 and (tdy > 0) == (uy > 0)):
                 d_fwd = 1                 # ... pointing forward
-    return px88, py88, z_ps, mx, my, ticrem, d_fwd
+    return px88, py88, z_ps, angidx, turnrem, d_fwd
 
 
 def _seg_cross(ax, ay, adx, ady, bx, by, bdx, bdy):

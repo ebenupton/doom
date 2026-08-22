@@ -8,7 +8,7 @@ rules statement) case for case, in BOTH builds:
         port x normal offsets x heights + random points (the shallow-
         wall-clip drill, 2026-08-14 — it caught the pm_smul missing
         third addend byte and the NT_GEN=2 engine-wide classify bug).
-  mom   pm_frame vs colmap.momentum_frame: multi-frame walks (thrust,
+  mom   pm_frame vs colmap.move_frame: multi-frame walks (walk, turn,
         friction, clamp, chunked application, wall projection, the
         axis fallback and D_FWD) from spawn + port-adjacent starts.
 
@@ -143,31 +143,28 @@ class Rig:
         v = self.mem[addr] | (self.mem[addr + 1] << 8)
         return v - 65536 if v >= 32768 else v
 
-    def frame(self, st, fields, fwd, back, angidx):
-        px88, py88, z, mx, my, rem = st
+    def frame(self, st, fields, inbits):
+        px88, py88, z, angidx, turnrem = st
         self._w24(abi.DV_PXF, px88)
         self._w24(abi.DV_PYF, py88)
         self.mem[abi.DV_ANGIDX] = angidx & 0xFF
         self.mem[self.vz] = z & 0xFF
-        self._w16(abi.PM_MOMX, mx)
-        self._w16(abi.PM_MOMY, my)
-        self.mem[abi.PM_TICREM] = rem
+        self.mem[abi.PM_TURNREM] = turnrem
+        self._w16(abi.PM_MOMX, 0)
+        self._w16(abi.PM_MOMY, 0)
         self.mem[abi.D_FWD] = 0xEE                  # poison: must be written
-        self.run(self.frame_e, a=fields, x=(1 if fwd else 0) | (2 if back else 0))
-        # STRUCTURAL: the single-step form feeds momentum to the
-        # multiplies as a u8 MAGNITUDE, so |m| > 255 would silently
-        # truncate. The closed form's attractor is ~232 and wall
-        # projection cannot grow a vector, but that is an argument, not
-        # a guarantee — assert it every case (cf. the record-pointer
-        # invariant: verdict comparison alone cannot see this).
+        self.run(self.frame_e, a=fields, x=inbits)
+        # STRUCTURAL: momentum is retired, so the slots must stay dead —
+        # a stray write here would mean some arm of the old integrator
+        # survived the 2026-08-22 cut (verdict comparison alone cannot
+        # see it, cf. the record-pointer invariant).
         for _a in (abi.PM_MOMX, abi.PM_MOMY):
-            _m = self._r16(_a)
-            assert -256 < _m < 256, f'|momentum| {_m} breaks the u8 magnitude path'
+            assert self._r16(_a) == 0, 'retired momentum slot was written'
         vz = self.mem[self.vz]
         return ((self._r24(abi.DV_PXF), self._r24(abi.DV_PYF),
                  vz - (256 if vz >= 128 else 0),
-                 self._r16(abi.PM_MOMX), self._r16(abi.PM_MOMY),
-                 self.mem[abi.PM_TICREM]), self.mem[abi.D_FWD])
+                 self.mem[abi.DV_ANGIDX],
+                 self.mem[abi.PM_TURNREM]), self.mem[abi.D_FWD])
 
 
 def suite_try(rig, verbose):
@@ -239,38 +236,50 @@ def _starts(ws):
 def suite_mom(rig, verbose):
     """Multi-frame walks: each start x heading x key script, 12 frames,
     comparing EVERY frame's full state (a divergence that cancels out
-    would still be a bug)."""
+    would still be a bug).  Input bits: b0 fwd, b1 back, b2 left, b3
+    right.  The scripts exercise the turn accumulator's carry (a run of
+    short frames must turn as far as the same time in long ones) and the
+    turn-while-walking case, which is what makes the walk direction
+    change mid-script."""
+    F, B, L, R = 1, 2, 4, 8
     bad = cases = 0
     random.seed(11)
     scripts = [
-        ('hold-fwd',   [(7, 1, 0)] * 12),
-        ('hold-back',  [(7, 0, 1)] * 12),
-        ('tap-coast',  [(7, 1, 0)] * 3 + [(7, 0, 0)] * 9),
-        ('both-keys',  [(7, 1, 1)] * 6 + [(7, 1, 0)] * 6),
-        ('slow-frames', [(23, 1, 0)] * 6 + [(3, 1, 0)] * 6),
-        ('stutter',    [(1, 1, 0), (14, 1, 0), (2, 0, 0), (9, 1, 0)] * 3),
+        ('hold-fwd',    [(7, F)] * 12),
+        ('hold-back',   [(7, B)] * 12),
+        ('tap-stop',    [(7, F)] * 3 + [(7, 0)] * 9),
+        ('both-keys',   [(7, F | B)] * 6 + [(7, F)] * 6),
+        ('slow-frames', [(23, F)] * 6 + [(3, F)] * 6),
+        ('stutter',     [(1, F), (14, F), (2, 0), (9, F)] * 3),
+        ('turn-left',   [(7, L)] * 12),
+        ('turn-right',  [(4, R)] * 12),
+        ('turn-carry',  [(1, L)] * 8 + [(2, L)] * 4),
+        ('turn-cancel', [(7, L | R)] * 6 + [(7, L)] * 6),
+        ('walk-turn',   [(5, F | L)] * 6 + [(5, B | R)] * 6),
+        ('turn-stutter', [(1, F | R), (13, F | R), (3, R), (8, F)] * 3),
     ]
     for pname, ws in poses():
         rig.pose(ws)
         for si, (px88, py88, vz) in enumerate(_starts(ws)):
             for ang in (0, 4, 8, 13, 32, 47):
                 for sname, script in scripts:
-                    py_st = (px88, py88, vz, 0, 0, 0)
+                    py_st = (px88, py88, vz, ang, 0)
                     a_st = py_st
-                    for fi, (fields, fwd, back) in enumerate(script):
-                        a = colmap.momentum_frame(a_st[0], a_st[1], a_st[2],
-                                                  a_st[3], a_st[4], a_st[5],
-                                                  fields, bool(fwd), bool(back),
-                                                  ang, ws)
-                        a_st, a_fwd = a[:6], a[6]
-                        b_st, b_fwd = rig.frame(py_st, fields, fwd, back, ang)
+                    for fi, (fields, bits) in enumerate(script):
+                        a = colmap.move_frame(a_st[0], a_st[1], a_st[2],
+                                              a_st[3], a_st[4], fields,
+                                              bool(bits & F), bool(bits & B),
+                                              bool(bits & L), bool(bits & R),
+                                              ws)
+                        a_st, a_fwd = a[:5], a[5]
+                        b_st, b_fwd = rig.frame(py_st, fields, bits)
                         py_st = b_st
                         cases += 1
                         if a_st != b_st or a_fwd != b_fwd:
                             bad += 1
                             if verbose and bad <= 6:
                                 print(f'  {pname}/start{si}/ang{ang}/{sname} f{fi} '
-                                      f'({fields}f,{fwd},{back})')
+                                      f'({fields}f,bits={bits})')
                                 print(f'    py={a_st} dfwd={a_fwd}')
                                 print(f'    65={b_st} dfwd={b_fwd}')
                             a_st = b_st          # resync: report each frame's
