@@ -24,10 +24,13 @@ import doom_wireframe as dw
 import trace_compare as tc
 
 from symmap import sym
-VERTEX = {sym('br_seg_xform_vertex'), sym('reproject_at_crossing')}
+VERTEX = {sym('sx_vert'), sym('reproject_at_crossing')}
+# (br_seg_xform_vertex -> sx_vert with the 2026-08-13 split ABI: callers
+#  enter at sx_vert with A = the idx_b header byte and it side-dispatches)
 CLIP   = {sym('span_mark_solid'), sym('span_has_gap'),
           sym('interp_store'), sym('draw_clipped_line'),
-          sym('tighten_from_records'), sym('draw_clipped_line_s16')}
+          sym('tighten_from_records'), sym('draw_clipped_line_s16'),
+          sym('draw_clipped_line_s16_h'), sym('seg_zero_rec_solid')}
 BBOX   = {sym('bbox_visible')}    # sub-slice of BSP traversal
 GATE = {a: 'VERTEX' for a in VERTEX}
 GATE.update({a: 'CLIP' for a in CLIP})
