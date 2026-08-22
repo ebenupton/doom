@@ -68,6 +68,11 @@ ta_try_merge:
 ; |
 ; Merge: extend tail's xend to cover new, then free X (free_span
 ; INLINED 2026-08-21 — the tail-call JMP's 3 cycles die with it).
+; NB this pushes the tail's ACTIVE range past its XLO+DEN anchor range,
+; so later interps on it evaluate outside the anchors. That is safe
+; ONLY because the merge requires constant lines (tested above), where
+; interp_store returns y0 without dividing — see the precondition note
+; in clip/interp.s. Do not relax the constant-line test.
    LDA POOL_XEND,X
    STA POOL_XEND,Y
    LDA zp_free

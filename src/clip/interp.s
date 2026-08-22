@@ -21,8 +21,19 @@
 ; harness (by symbol).
 ;
 ; Input: A = x (eval point), zp_i_x0, zp_i_y0, zp_i_y1, zp_div_den
-;        (den = xhi - xlo; caller guarantees 0 <= x - x0 <= den, den > 0
-;        except when x == x0, which early-exits before the divide)
+;        (den = xhi - xlo, den > 0 except when x == x0, which early-exits
+;        before the divide)
+; PRECONDITION, as actually enforced (measured 2026-08-22): the real
+; requirement is  0 <= x - x0 <= den  OR  y0 == y1.  15 calls in 4,489
+; DO exceed den — every one of them on a FLAT line, where the direction
+; compare below takes BEQ is_y0 and returns y0 without dividing, so the
+; extrapolation never happens. The cause is tg_append_x's merge, which
+; extends a span's XEND past its XLO+DEN anchor range — and it only
+; merges CONSTANT-line spans, which is exactly what makes this safe.
+; So the flat-line early-out is LOAD-BEARING, not just a fast path: if
+; it is ever removed, or the merge is ever allowed on sloped spans,
+; those calls start extrapolating (and udiv16_8's slow path would
+; return the LOW BYTE of a >8-bit quotient — a wrapped y).
 ; Output: A = interpolated Y (u8).  Clobbers X,Y and the mul/div ZP
 ;        working set (zp_mul_b, zp_prod_l/hi = zp_div_l/hi).
 ;
