@@ -32,6 +32,10 @@
 ; The traversal is RECURSIVE on the hardware stack since 2026-07-14:
 ; rc_node renders one internal node; it pushes (node id, far side) as
 ; locals, recurses on the near child, and tail-calls on the far.
+; zp_bsp_stack_sp EVICTED FROM ZERO PAGE 2026-08-22: two accesses per
+; frame (tools/zpheat.py), a plain scalar, and zero page is the binding
+; constraint on bringing the TFS sweep state in.
+zp_bsp_stack_sp = $0628
 ; zp_bsp_stack_sp = the saved S for the is_full unwind. Ids are u8
 ; end to end (2026-07-15) — a child's subsector-ness lives in its
 ; PARENT's TYPE byte (NF_RLEAF/NF_LLEAF), not in the link.

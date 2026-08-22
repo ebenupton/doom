@@ -174,7 +174,18 @@ DCLV_X0 = $0620                         ; dcl_rec_flat range args
 DCLV_X1 = $0621
 DCLV_SX = $0622                         ; X save across dcl_rec_flat
 DCLV_YV = $0623                         ; verdict y value latch
-DCLV_S16VY = $0624                      ; s16-clip pending right verdict ($80 = none)
+DCLV_S16VY = $0624
+; --- EVICTED FROM ZERO PAGE 2026-08-22 ---------------------------------
+; Priced with tools/zpheat.py on the heavy frame: a ZP byte's only honest
+; cost is how often it is touched (1 cycle and 1 byte per access to move
+; it out).  These are the clipper's coldest ZP residents and all three are
+; plain scalars — no (zp),Y, no zp,X — so the move is an address change:
+;   zp_cb_top2  18 accesses/frame     zp_cb_bot2  16
+;   zp_save1     8
+; 42 cycles a frame buys three of the 28 bytes the TFS sweep state needs.
+zp_cb_top2 = $0625                      ; u8, span top at cx2
+zp_cb_bot2 = $0626                      ; u8, span bot at cx2
+zp_save1   = $0627                      ; dcl_boundary_ix's clip_p1 save                      ; s16-clip pending right verdict ($80 = none)
 
 
 ; ===================================================================

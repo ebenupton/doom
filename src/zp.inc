@@ -103,8 +103,6 @@ zp_br_r_s = $1B                   ; [bsp]; u8 lo
 ; $BB bca_ilo   $BF bca_ihi   $C8-$C9 bca_p1   $CA-$CB zp_tail_vec
 ; $CC t0        $CD t1        $CE val_lo       $CF val_hi
 ; $F5 bca_vis   $F6 bca_ccsave                 $F7 DEFQ_TAIL
-zp_bca_i_l = $BB                  ; [ang]
-zp_bca_i_h = $BF                  ; [ang]
 zp_bca_p1 = $C8                   ; [ang]; s16 pair with $C9
 zp_bca_p1_h = $C9                ; [ang]
 ; $CA FREE (zp_cpm_s2 died with the rcache wrapper scavenge 2026-07-20).
@@ -123,14 +121,9 @@ zp_bv_entry = $63                 ; [ang] 2-byte entry vector: bbox_visible
                                   ; by bca_frame; the stop EDGE wipes the
                                   ; bitmap and clears this. Driver init
                                   ; seeds $FF (boot garbage safety).
-zp_bca_t0 = $CC                   ; [ang]
-zp_bca_t1 = $CD                   ; [ang]
 ; $CE free (was zp_bca_val_lo, 2026-07-11)
-zp_bca_val_h = $CF               ; [ang]
 ; $C4/$C5: OWNED by ang/rcache.s (position-keyed rotation cache) — was an
 ; unregistered squatter; registered 2026-07-10. Do not allocate.
-zp_rcache_c4 = $C4                ; [bsp]; rcache internal (see ang/rcache.s)
-zp_rcache_c5 = $C5                ; [bsp]; rcache internal
 ; $C6 FREE 2026-08-10: zp_px_s_save died with the ps_rns24 arm (the
 ; rns_s1..s4 bake — no dispatch arm writes r_s any more)
 ; (was) zp_px_s_save = $C6        ; [bsp]; br_project_x shrink path: the
@@ -144,8 +137,6 @@ zp_vxc_on = $C7                   ; [bsp]; VXC gate flag (vxc_frame sets it
 ; registered 2026-07-08 after zp_rns_vec landed on them and the walk disc
 ; jammed (cached-bbox frames clobbered the vector). anim.s similarly owns
 ; $EB-$EE/$F0-$F1. Do not trust "free" without grepping ang/anim/drivers.
-zp_br_p = $1C                     ; [bsp]
-zp_br_p_h = $1D                   ; [bsp]
 zp_rs_l = $1E                     ; [bsp] sin-side rotate result lo (res-slot
                                   ; split 2026-07-19: sin cores/variants write
                                   ; rs_*, cos keeps zp_br_res — the s1 res->vx
@@ -255,17 +246,11 @@ zp_ri_d_l = $28                   ; [bsp]
 zp_rs_h = $2A                     ; [bsp] sin-side rotate result hi (pairs $1E)
 ; (was zp_par_zone — zone inheritance removed 2026-07-18)
 zp_ri_d_h = $2C                   ; [bsp]; (was unused; s16 hi byte of d)
-zp_br_res_x = $2D                ; [bsp]; s24 result high byte (rot_int + to_view extension)
-zp_br_vx_x = $2E                 ; [bsp]; ROT-INTERNAL s24 ext byte (x sums);
-                                 ; dead once vq3_counts lands the s16 counts
-zp_br_vy_x = $2F                 ; [bsp]; rot-internal ext (y) — same lifetime
 pa_dx = $30                       ; [ang]; s16 in ; w=2
 pa_dy = $32                       ; [ang]; s16 in ; w=2
 zp_bbox_side = $34                ; [bsp]
 zp_br_dx_h = $35                  ; [bsp]
 zp_br_dy_h = $36                  ; [bsp]
-zp_ri_sgn = $37                   ; [bsp]; rotate operand sign (|d| staging)
-zp_rs_x = $38                     ; [bsp] sin-side rotate result ext (with $1E/$2A)
 ; (was zp_v_x_l)
 pa_res = $39                      ; [ang]; u16 out (fineangle) ; w=2
 bca_afn = $3B                     ; [ang]; a_fine (s16) -- ZP (freed from pa_adx); hot in corner_phi ; w=2
@@ -292,17 +277,10 @@ zp_ys_v1ok = $43                  ; [bsp]; 1 = this seg's chained v1
 ; constant-base abs,X; layout constants live in layout.inc)
 ; (sd_num/sd_den alias names DELETED 2026-07-19 — the converters use
 ;  pa_dx/pa_dy directly; the fossil slope_div naming was confusing.)
-zc_ptr = $44                      ; [ang]; ZC arm dispatch pointer (JMP (zp)
-                                  ;   beats push-push-RTS by 1 cycle and the
-                                  ;   arm table holds REAL addresses; $46/$47
-                                  ;   still free)
-sd_q = $48                        ; [ang] ; w=2
-sd_r = $4A                        ; [ang] ; w=2
 ; $4C FREE (was zp_ap2_dlt — died with the apv_stage macro text, 2026-08-12)
 ; between its two projections (one L0 page-in reads both header bytes)
 ; FREE 2026-07-16 (write-only since the C-form): zp_bf_pym_l = $4D
 ; back-face diagonal C-form reads both per call)
-zp_bsp_stack_sp = $4E             ; [bsp]; SAVED S at frame entry (walk runs on the hardware stack; is_full unwinds via TXS)
 ; $4F-$51 = zp_vs_i / zp_vs_hl / zp_vs_hh — the vertex-span descriptor
 ; walk's variables (98fc1b3, defined locally in subsector.s): the 2026-
 ; 07-15 'FREE' comments here were STALE and cost a corrupted-vector
@@ -318,10 +296,6 @@ zp_vf_vec0 = $7B                  ; [bsp]; VXC fetch vector, junior side —
                                   ; disjoint.
 zp_vf_vec1 = $7D                  ; [bsp]; senior-side twin ($7D/$7E)
 ; FREE 2026-07-15 (cross-core unification): zp_node_dy_h = $53
-zp_node_nx_l = $54                ; [bsp]
-zp_node_nx_h = $55                ; [bsp]
-zp_node_ny_l = $56                ; [bsp]
-zp_node_ny_h = $57                ; [bsp]
 zp_node_ch_l = $58                ; [bsp]; current child (lo, hi: 16-bit id)
 ; $59 free (was zp_node_ch_h — ids are u8 end to end, 2026-07-15)
 ; FREE 2026-07-16 (write-only since the C-form): zp_bf_pym_h = $5B
@@ -440,11 +414,9 @@ zp_line_yr_h = $B5                    ; [clip]
 ; --- $B6: overlay group (4 phase-disjoint users) ---
 zp_cb_top1 = $B6                  ; [clip]; u8, span top at cx1
 ; --- $B7: overlay group (3 phase-disjoint users) ---
-zp_cb_top2 = $B7                  ; [clip]; u8, span top at cx2
 ; --- $B8: overlay group (3 phase-disjoint users) ---
 zp_cb_bot1 = $B8                  ; [clip]; u8, span bot at cx1
 ; --- $B9: overlay group (3 phase-disjoint users) ---
-zp_cb_bot2 = $B9                  ; [clip]; u8, span bot at cx2
 zp_tg_cont = $BA                  ; [clip]; portal continuation: $FF=inactive, else=prev span xend
 zp_dcl_rec_buf = $BC              ; [clip]; lo byte of buffer ptr ; w=2
 zp_dcl_rec_buf_h = $BD            ; [clip]; hi byte of buffer ptr ($00 = records disabled)
@@ -523,7 +495,6 @@ zp_prod_h = $DB                  ; [bsp+clip]
 zp_div_h = $DB                   ; [bsp+clip]
 zp_div_den = $DC                  ; [bsp+clip]
 ; --- $DD: overlay group (2 phase-disjoint users) ---
-zp_div_rem = $DD                  ; [clip]
 zp_tmp0 = $DE                     ; [bsp+clip]; umul8 scratch (matches span_clip); free outside span_clip
 zp_tmp1 = $DF                     ; [clip]
 zp_tmp2 = $E0                     ; [clip]
@@ -550,7 +521,6 @@ zp_cr_vy_h = $8C                  ; [bsp]
 ;  — totals are s16 counts)
 zp_save0 = $6A                    ; [clip]; DCL line-clip scratch (also
 ;   carries bca_vis's old duty? NO — bca_vis/ccsave own $64/$65 solo)
-zp_save1 = $6B                    ; [clip]
 zp_save2 = $6C                    ; [clip]
 zp_new_tail = $6C                 ; [clip]; OVERLAY (pre-existing pair):
 ;   mark_solid vs tighten phases
