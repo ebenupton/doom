@@ -158,7 +158,7 @@ SEG_BANKC
 .export span_init, span_mark_solid
 .export interp_store, draw_clipped_line
 .export tighten_from_records, draw_clipped_line_s16, draw_clipped_line_s16_h
-.export dcl_vert, dcl_vert_on           ; vertical fastpath (dcl.s)
+.export dcl_vert_on                     ; vertical fastpath (dcl.s)
 .export udiv16_8
 .import umul8                           ; THE multiplier lives in bsp/header.s
                                         ; (main RAM — unified 2026-08-09)

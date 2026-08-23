@@ -528,10 +528,11 @@ dcl_cio_rts:
 ; survivors enter the SAME dcl_vertical walk. xr/x-hi/rec staging and
 ; the general entry's rediscovery tests are gone (~55 cyc/vertical).
 ; ----------------------------------------------------------------------------
-::dcl_vert:
-   CPY #0                                  ; senior byte: off-screen left
-   BEQ dcl_vert_on                         ; (neg) or right (>=256) discards
-   RTS
+; (::dcl_vert — a CPY #0 / BEQ / RTS senior-byte guard in front of
+;  dcl_vert_on — is DELETED 2026-08-23: ZERO callers.  It was exported
+;  and imported, but every caller (seg_emit's three vertical sites)
+;  enters at dcl_vert_on directly, so the guard has been dead code
+;  carrying a cross-module symbol.)
 ::dcl_vert_on:
    STA zp_line_xl_l                        ; THE column (dv_* reads only this) ;# |||        0.4
 ; (corner ±1 shrink REVERTED 2026-07-27: walkseq found 48 frames with

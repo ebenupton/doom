@@ -593,7 +593,7 @@ code_head:
 .import seg_zero_rec_solid
 .import tighten_from_records
 .import draw_clipped_line_s16, draw_clipped_line_s16_h
-.import dcl_vert, dcl_vert_on           ; vertical fastpath (senior-byte
+.import dcl_vert_on                     ; vertical fastpath (senior-byte
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use
 ; quarter-square tables (loaded by harness) — for inlining umul8 at hot sites
