@@ -158,4 +158,7 @@ def main():
         print(f'    {ln:5d}  {100.0*c/body:5.2f}%  {c:6,}  {txt[:52]}')
 
 
-main()
+if __name__ == '__main__':      # importing this module must NOT
+    main()                      # run a census/annotation pass: it
+                                # leaves dw._span_clip_6502 warm and
+                                # silently poisons the importer's state

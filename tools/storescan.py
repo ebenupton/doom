@@ -173,4 +173,7 @@ def main():
         print(f'  {n:6d}x  ${pc:04X}  {fn}:{line}  {txt}')
 
 
-main()
+if __name__ == '__main__':      # importing this module must NOT
+    main()                      # run a census/annotation pass: it
+                                # leaves dw._span_clip_6502 warm and
+                                # silently poisons the importer's state

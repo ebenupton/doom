@@ -315,7 +315,16 @@ tfr_do_sweep:
 ; Invalidate the has_gap coherence cache (see span_mark_solid note).
    LDA zp_head
    STA zp_old_cur
-   ZERO zp_hg_cache, zp_new_tail, zp_head, TFS_PEND_ACT
+; TFS_PEND_ACT is NOT reset here -- it is already 0 on arrival.  It is
+; set nonzero at exactly ONE site (tfs_start_pend), and the sweep's
+; only exit is tfs_continue -> BEQ tfs_finish, which FALLS INTO
+; tfs_flush_pending; that clears it.  tfs_finish is also the target of
+; the nothing-pending JMP above.  The one exit that skips the flush is
+; tfr_neutral's RTS, which returns before the sweep can arm anything.
+; Base case holds too: 'inactive' is 0, which is what a cold image
+; already contains -- unlike DCLV_S16VY, whose 'none' sentinel is $80
+; and whose entry write is therefore a real initialiser.
+   ZERO zp_hg_cache, zp_new_tail, zp_head
 
 ; (The zp_tg_cont reset died 2026-08-23.  It was not merely write-only
 ;  from this module -- the whole tree contained exactly ONE reference to
