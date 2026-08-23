@@ -233,7 +233,7 @@ mc_ordered_noreload:                       ; hi-differ BNE has xl_h live)
    BPL x1_in_or_big
    LDA zp_line_xr_h
    BPL not_both_xneg
-   JMP rejected
+   JMP dcl_rec_s16r_flush
 x1_in_or_big:
 ; zp_line_xl_h ≥ 0. Check if zp_line_xl_l/HI > 255 (i.e. HI != 0).
    BEQ not_both_xbig                       ; HI = 0 → in [0, 255] (low byte)
@@ -243,7 +243,7 @@ x1_in_or_big:
 ; x2 < 0 → not both > 255
    BEQ not_both_xbig                       ; x2 in [0, 255] → not both > 255
 ; both > 255
-   JMP rejected
+   JMP dcl_rec_s16r_flush
 not_both_xneg:
 not_both_xbig:
 ; same for y — RECORDS-OFF ONLY: with records on, a both-out line falls
@@ -255,7 +255,7 @@ not_both_xbig:
    BPL not_both_yneg
    LDA zp_dcl_rec_buf_h
    BNE not_both_yneg
-   JMP rejected
+   JMP dcl_rec_s16r_flush
 y1_in_or_big:
    BEQ not_both_ybig
    LDA zp_line_yr_h
@@ -263,7 +263,7 @@ y1_in_or_big:
    BEQ not_both_ybig
    LDA zp_dcl_rec_buf_h
    BNE not_both_ybig
-   JMP rejected
+   JMP dcl_rec_s16r_flush
 not_both_yneg:
 not_both_ybig:
 
@@ -368,7 +368,7 @@ skip_xclip:
    BPL not_both_yneg2
    LDA #0                                  ; whole line above the band
    JSR dcl_rec_flat_line
-   JMP rejected
+   JMP dcl_rec_s16r_flush
 y1_after_in_or_big:
    BEQ not_both_ybig2
    LDA zp_line_yr_h
@@ -376,7 +376,7 @@ y1_after_in_or_big:
    BEQ not_both_ybig2
    LDA #$FF                                ; whole line below the band
    JSR dcl_rec_flat_line
-   JMP rejected
+   JMP dcl_rec_s16r_flush
 not_both_yneg2:
 not_both_ybig2:
 
@@ -494,6 +494,12 @@ rsac_noreload:
    STA zp_line_yr_l
    JSR draw_clipped_line
    JMP dcl_rec_s16r_flush
+; `rejected` is now reached ONLY by the BEQ above — a branch cannot span
+; the distance to dcl_rec_s16r_flush, so the trampoline stays for it.
+; Its six JMP callers were retargeted straight at the destination
+; (tools/jumpscan.py: JMP landing on another JMP), saving 3 cycles each.
+; The reason it exists is unchanged: pending may be armed even when the
+; in-band piece degenerated.
 rejected:
    JMP dcl_rec_s16r_flush                  ; pending may be armed even when
                                         ; the in-band piece degenerated

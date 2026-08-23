@@ -715,7 +715,9 @@ bts_bit:
    STA RCACHE_COMPUTED,X
    LDA t1                                  ; restore p2 hi/lo
    LDY t0
-   JMP bca_tail_postrc
+                                        ; (JMP bca_tail_postrc deleted: the
+                                        ;  label IS the next instruction —
+                                        ;  tools/jumpscan.py)
 bca_tail_postrc:                           ; the tail proper — reached from
                                            ; the arms via JMP (zp_tail_vec)
                                            ; when moving, from bt_store when

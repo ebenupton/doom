@@ -1166,9 +1166,11 @@ pf_turn:
    TYA                                  ; LEFT: angidx += steps
    CLC
    ADC DV_ANGIDX
-   BCC pt_wr                            ; (AND #63 masks either way)
-pt_wr:
-   AND #63
+   AND #63                              ; (the BCC that used to sit here
+                                        ;  branched to the NEXT instruction:
+                                        ;  the AND masks either way, so the
+                                        ;  test was dead the moment it was
+                                        ;  written — tools/jumpscan.py)
    STA DV_ANGIDX
 pt_none:
    RTS
