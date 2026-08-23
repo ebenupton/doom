@@ -42,22 +42,13 @@ ORG &EA00                       \ the FB region: the copro never
     JMP boot
     JMP init                    \ &F03: harness entry — py65 runs the
                                 \ driver with loads pre-applied (no OSCLI)
-.angidx
-    EQUB 0
 .mask
     EQUB 0
-.pxf
-    EQUB 0
-.pxl
-    EQUB 0
-.pxh
-    EQUB 0
-.pyf
-    EQUB 0
-.pyl
-    EQUB 0
-.pyh
-    EQUB 0
+.fields
+    EQUB 0                      \ PAL fields since the last rendered frame
+                                \ (masks drained), pm_frame's A argument.
+                                \ The pose lives in DV_* now -- pm_frame
+                                \ reads and writes it there.
 .boot
     SEI
     LDX #&DF                    \ STACK CAP (2026-08-23): SQR_MIRROR owns
@@ -190,22 +181,28 @@ ORG &EA00                       \ the FB region: the copro never
     LDA #HI(T_BOX_CLASSIFY)
     STA &64
 \ ---- spawn state (constants from tube_syms.inc) ----
+\ Spawn lands in pm_frame's DRIVER-VARIABLE CONTRACT (DV_*, abi $1B80):
+\ the engine reads AND writes those, so the driver no longer keeps its
+\ own copy of the pose.
     LDA #SPAWN_ANGIDX
-    STA angidx
+    STA T_DV_ANGIDX
     LDA #SPAWN_PXF
-    STA pxf
+    STA T_DV_PXF
     LDA #SPAWN_PXL
-    STA pxl
+    STA T_DV_PXL
     LDA #SPAWN_PXH
-    STA pxh
+    STA T_DV_PXH
     LDA #SPAWN_PYF
-    STA pyf
+    STA T_DV_PYF
     LDA #SPAWN_PYL
-    STA pyl
+    STA T_DV_PYL
     LDA #SPAWN_PYH
-    STA pyh
+    STA T_DV_PYH
     LDA #SPAWN_VZ
-    STA &04
+    STA T_PM_VZ                 \ pm_frame/pmove_zonly own vz
+    STA &04                     \ engine ZP eye height for frame 1
+    LDA #0
+    STA T_PM_TURNREM            \ no carried sub-step rotation
 .rdrain
     BIT R1S                     \ eat stale host->parasite R1 bytes (the
     BPL rdone                   \ Tube OS uses R1 for escape/event
@@ -219,68 +216,52 @@ ORG &EA00                       \ the FB region: the copro never
 .wm
     BIT R1S                     \ N = key mask waiting
     BPL wm
+    LDA #0
+    STA fields
 .mloop
     LDA R1D
-    STA mask
-    LDA #0                      \ D_FWD: 1 iff this frame's net move is
-    STA T_D_FWD                 \ forward-only (walk_drv's rule)
-    LDA mask                    \ (the D_FWD clear clobbered A — the
-                                \ LEFT arm was the one consumer that
-                                \ relied on the mask riding in A)
-    AND #4                      \ b2 LEFT: turn
-    BEQ nlf
-    LDA angidx
-    CLC
-    ADC #1
-    AND #63
-    STA angidx
-.nlf
-    LDA mask
-    AND #8                      \ b3 RIGHT
-    BEQ nrt
-    LDA angidx
-    SEC
-    SBC #1
-    AND #63
-    STA angidx
-.nrt
-    LDA mask
-    AND #1                      \ b0 UP: forward + bounds
-    BEQ nup
-    JSR step_fwd
-    JSR bounds_or_revert_fwd
-    LDA #1                      \ walk_drv's rule: UP flags forward;
-    STA T_D_FWD                 \ turns need no clear (the engine
-                                \ compares the angle byte); DOWN
-                                \ clears below
-.nup
-    LDA mask
-    AND #2                      \ b1 DOWN: back + bounds
-    BEQ ndn
-    JSR step_back
-    JSR bounds_or_revert_back
-    LDA #0                      \ net-backward frame is NOT forward
-    STA T_D_FWD
-.ndn
-    BIT R1S                     \ SKIP-AHEAD: if more masks are already
-    BMI mloop                   \ queued (the render ran behind vsync),
-                                \ apply them all before drawing — input
-                                \ stays realtime and no latency accrues
-    LDA pxf                     \ position -> engine ZP
+    STA mask                    \ LATEST mask wins, exactly as walk_drv
+                                \ samples the keyboard once per frame and
+                                \ passes the elapsed field count apart
+    LDA fields
+    CMP #32                     \ pm_frame's ABI caps fields at 32
+    BCS mnocount
+    INC fields
+.mnocount
+    BIT R1S                     \ drain every queued mask: the host sends
+    BMI mloop                   \ exactly one per DISPLAYED field, so the
+                                \ count IS the elapsed field count -- the
+                                \ copro's field clock, standing in for
+                                \ walk_drv's T1/T2 pair.  Draining also
+                                \ keeps input realtime when the render
+                                \ runs behind vsync.
+\ ---- DOOM movement: same engine entry the host uses --------------------
+\ pm_frame owns ROTATION, position, P_TryMove box collision, wall slide
+\ and D_FWD, and scales both the walk and the turn by the field count --
+\ so neither changes with the frame rate.  The parasite's old step_fwd /
+\ step_back / bounds_or_revert did a fixed step per mask and a plain
+\ rectangle clamp: no collision, no slide, and a speed that tracked the
+\ frame rate.  (No bank paging here: the copro runs the FLAT engine.)
+    LDA fields
+    LDX mask                    \ b0 fwd b1 back b2 left b3 right -- the
+    JSR T_PM_FRAME              \ mask bit order IS walk_drv's mv_in order
+\ ---- pose -> engine ZP (pm_frame wrote DV_* and the $90-$93 raws) ------
+    LDA T_DV_PXF
     STA &00
-    LDA pxl
+    LDA T_DV_PXL
     STA &01
-    LDA pxh
+    LDA T_DV_PXH
     STA &9D
-    LDA pyf
+    LDA T_DV_PYF
     STA &02
-    LDA pyl
+    LDA T_DV_PYL
     STA &03
-    LDA pyh
+    LDA T_DV_PYH
     STA &9E
-    JSR derive_raw
-    JSR floor_vz
-    LDA angidx                  \ sincos <- table[angidx] (entry = 8 bytes)
+    JSR T_PMOVE_ZONLY           \ DOOM z: rides live lifts (walk_drv's
+    LDA T_PM_VZ                 \ mv_reval).  derive_raw is gone: the
+    STA &04                     \ $90-$93 raws are pm_frame's exit contract
+    LDA T_DV_ANGIDX             \ sincos <- table[angidx] (entry = 8 bytes)
     ASL A
     ASL A
     ASL A
@@ -329,229 +310,13 @@ ORG &EA00                       \ the FB region: the copro never
     BVC send1
     STA R1D
     RTS
-\ ---- movement block: VERBATIM from walk_drv.asm (D_FWD lines dropped) ----
-.step_fwd
-    LDA angidx
-    ASL A
-    ASL A
-    TAX
-    CLC
-    LDA pxf
-    ADC step_tab,X
-    STA pxf
-    LDA pxl
-    ADC step_tab+1,X
-    STA pxl
-    LDA step_tab+1,X
-    BMI sf_xneg
-    LDA pxh
-    ADC #0
-    STA pxh
-    JMP sf_y
-.sf_xneg
-    LDA pxh
-    ADC #&FF
-    STA pxh
-.sf_y
-    CLC
-    LDA pyf
-    ADC step_tab+2,X
-    STA pyf
-    LDA pyl
-    ADC step_tab+3,X
-    STA pyl
-    LDA step_tab+3,X
-    BMI sf_yneg
-    LDA pyh
-    ADC #0
-    STA pyh
-    RTS
-.sf_yneg
-    LDA pyh
-    ADC #&FF
-    STA pyh
-    RTS
-.step_back
-    LDA angidx
-    ASL A
-    ASL A
-    TAX
-    SEC
-    LDA pxf
-    SBC step_tab,X
-    STA pxf
-    LDA pxl
-    SBC step_tab+1,X
-    STA pxl
-    LDA step_tab+1,X
-    BMI sb_xneg
-    LDA pxh
-    SBC #0
-    STA pxh
-    JMP sb_y
-.sb_xneg
-    LDA pxh
-    SBC #&FF
-    STA pxh
-.sb_y
-    SEC
-    LDA pyf
-    SBC step_tab+2,X
-    STA pyf
-    LDA pyl
-    SBC step_tab+3,X
-    STA pyl
-    LDA step_tab+3,X
-    BMI sb_yneg
-    LDA pyh
-    SBC #0
-    STA pyh
-    RTS
-.sb_yneg
-    LDA pyh
-    SBC #&FF
-    STA pyh
-    RTS
-.derive_raw
-    LDA pxf
-    STA &90
-    LDA pxl
-    STA &91
-    LDA pxh
-    STA &EC
-    LDX #5
-.dr_x
-    LDA &EC
-    CMP #&80
-    ROR &EC
-    ROR &91
-    ROR &90
-    DEX
-    BNE dr_x
-    LDA pyf
-    STA &92
-    LDA pyl
-    STA &93
-    LDA pyh
-    STA &EC
-    LDX #5
-.dr_y
-    LDA &EC
-    CMP #&80
-    ROR &EC
-    ROR &93
-    ROR &92
-    DEX
-    BNE dr_y
-    RTS
-.floor_vz
-    LDA &90
-    CLC
-    ADC #&90
-    STA &EC
-    LDA &91
-    ADC #&07
-    STA &ED
-    LDA &EC
-    ASL A
-    LDA &ED
-    ROL A
-    STA &EC
-    LDA &92
-    CLC
-    ADC #&2E
-    STA &ED
-    LDA &93
-    ADC #&06
-    STA &EE
-    LDA &ED
-    ASL A
-    LDA &EE
-    ROL A
-    TAY
-    LDA frow_lo,Y
-    CLC
-    ADC &EC
-    STA &EC
-    LDA frow_hi,Y
-    ADC #0
-    STA &ED
-    LDA &EC
-    CLC
-    ADC #LO(floor_tab)
-    STA &EC
-    LDA &ED
-    ADC #HI(floor_tab)
-    STA &ED
-    LDY #0
-    LDA (&EC),Y
-    CMP &04
-    BEQ fv_done
-    SEC
-    SBC &04
-    BMI fv_down
-    INC &04
-    RTS
-.fv_down
-    DEC &04
-.fv_done
-    RTS
-.bounds_or_revert_fwd
-    JSR derive_raw
-    JSR bounds_ok
-    BCS bor_ok1
-    JSR step_back
-.bor_ok1
-    RTS
-.bounds_or_revert_back
-    JSR derive_raw
-    JSR bounds_ok
-    BCS bor_ok2
-    JSR step_fwd
-.bor_ok2
-    RTS
-.bounds_ok
-    LDA &90
-    SEC
-    SBC #LO(RAWX_MIN)
-    LDA &91
-    SBC #HI(RAWX_MIN)
-    BVC bo_c1
-    EOR #&80
-.bo_c1
-    BMI bo_bad
-    LDA #LO(RAWX_MAX)
-    SEC
-    SBC &90
-    LDA #HI(RAWX_MAX)
-    SBC &91
-    BVC bo_c2
-    EOR #&80
-.bo_c2
-    BMI bo_bad
-    LDA &92
-    SEC
-    SBC #LO(RAWY_MIN)
-    LDA &93
-    SBC #HI(RAWY_MIN)
-    BVC bo_c3
-    EOR #&80
-.bo_c3
-    BMI bo_bad
-    LDA #LO(RAWY_MAX)
-    SEC
-    SBC &92
-    LDA #HI(RAWY_MAX)
-    SBC &93
-    BVC bo_c4
-    EOR #&80
-.bo_c4
-    BMI bo_bad
-    SEC
-    RTS
-.bo_bad
-    CLC
-    RTS
+\ (The old movement block -- step_fwd/step_back, bounds_or_revert and
+\ their derive_raw/floor_vz helpers, 223 lines transplanted from an
+\ early walk_drv -- was DELETED 2026-08-23.  It stepped a fixed
+\ distance per mask (so speed tracked the frame rate) and clamped the
+\ player to a rectangle instead of colliding with the map.  The copro
+\ now calls the engine's pm_frame, exactly as the host does.)
+
 \ ---- command strings ----
 .runcmd
     EQUB 2

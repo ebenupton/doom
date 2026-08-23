@@ -100,8 +100,23 @@ def write_tube_syms():
                      ('T_ANIM_ENABLE', 'ANIM_ENABLE'),
                      ('T_D_ENABLE', 'D_ENABLE'),
                      ('T_D_FWD', 'D_FWD'),
-                     ('T_CPM_KDXH', 'CPM_KDXH')):
+                     ('T_CPM_KDXH', 'CPM_KDXH'),
+                     # PMOVE: the parasite runs the SAME DOOM collision /
+                     # slide / frame-rate-compensated walk as walk_drv
+                     # (2026-08-23).  pm_frame owns rotation, position,
+                     # slide and D_FWD; pmove_zonly re-derives z so the
+                     # copro rides live lifts too.
+                     ('T_PM_FRAME', 'pm_frame'),
+                     ('T_PMOVE_ZONLY', 'pmove_zonly'),
+                     ('T_PM_VZ', 'pm_vz')):
             f.write(f"{t} = &{fsym(s):04X}\n")
+        # pm_frame's driver-variable contract (abi constants, not map syms)
+        for t, v in (('T_DV_ANGIDX', abi.DV_ANGIDX), ('T_DV_PXF', abi.DV_PXF),
+                     ('T_DV_PXL', abi.DV_PXL), ('T_DV_PXH', abi.DV_PXH),
+                     ('T_DV_PYF', abi.DV_PYF), ('T_DV_PYL', abi.DV_PYL),
+                     ('T_DV_PYH', abi.DV_PYH),
+                     ('T_PM_TURNREM', abi.PM_TURNREM)):
+            f.write(f"{t} = &{v:04X}\n")
         f.write(f"T_RCACHE_STATE = &{abi.RCACHE_STATE_FLAT:04X}\n")
         f.write(f"T_RCACHE_LEN = &{abi.RCACHE_STATE_LEN & 0xFF:02X}\n")
         f.write(f"T_VXC_STATE = &{abi.VXC_STATE:04X}\n")
