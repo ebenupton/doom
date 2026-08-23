@@ -300,8 +300,11 @@ dcl_exit_check:
 dcl_advance:
 ; Walk to the next span with the segment (if any) still open.
    LDA POOL_NEXT,X                                                        ;# |          0.2
-   TAX                                                                    ;# |          0.1
-   BEQ dcladv_flush                        ; (entry guard bypassed: TAX's Z ;# |          0.1
+   BEQ dcladv_flush                        ; LDA's own Z — the TAX below is ;# |          0.1
+   TAX                                     ; SKIPPED on the flush arm, where ;# |          0.1
+                                        ; X is dead (the walk exits via RTS
+                                        ; and no caller of draw_clipped_line
+                                        ; reads X back)                        ; (entry guard bypassed: LDA's Z
    JMP dcl_not_left                           ; answers the null test here) ;# |          0.1
 dcladv_flush:
    JMP dcl_flush                                                          ;#            0.0
@@ -381,8 +384,11 @@ dcl_outer_reject:
 ; walk pushed the re-entry out of branch range, and an always-guarded
 ; BNE+JMP pair costs the same as the test+JMP form)
    LDA POOL_NEXT,X                                                        ;# |||        0.4
-   TAX                                                                    ;# ||         0.2
-   BEQ dclor_flush                                                        ;# ||         0.2
+   BEQ dclor_flush                        ; LDA's own Z — the TAX below is ;# ||         0.2
+   TAX                                     ; SKIPPED on the flush arm, where ;# |          0.1
+                                        ; X is dead (the walk exits via RTS
+                                        ; and no caller of draw_clipped_line
+                                        ; reads X back)
    JMP dcl_not_left                                                       ;# |          0.1
 dclor_flush:
    JMP dcl_flush                                                          ;# |          0.2
@@ -601,7 +607,7 @@ dv_x:
    CMP POOL_XEND,Y                         ; (mirror)                     ;# ||||       0.5
    BCC dv_own_y                                                           ;# ||         0.3
    LDX POOL_NEXT,Y                                                        ;# |||        0.4
-   BNE dv_x                                                               ;# ||         0.2
+   BNE dv_x                                                               ;# |||        0.3
    BEQ dvc_rej                             ; list ran out (always taken)  ;#            0.0
 dv_own_x:
    CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart     ;# ||         0.2
@@ -1133,8 +1139,11 @@ dcl_cbx_emit:
    STA zp_seg_start_x                                                     ;#            0.0
    LDX zp_save0                                                           ;#            0.0
    LDA POOL_NEXT,X                                                        ;#            0.0
-   TAX                                                                    ;#            0.0
-   BEQ dclwb_flush2                        ; (entry guard bypassed: TAX's Z ;#            0.0
+   BEQ dclwb_flush2                        ; LDA's own Z — the TAX below is ;#            0.0
+   TAX                                     ; SKIPPED on the flush arm, where
+                                        ; X is dead (the walk exits via RTS
+                                        ; and no caller of draw_clipped_line
+                                        ; reads X back)                        ; (entry guard bypassed: LDA's Z
    JMP dcl_not_left                           ; answers the null test here)
 dclwb_flush2:
    JMP dcl_flush                                                          ;#            0.0
@@ -1195,8 +1204,11 @@ dcl_cb_reject:
 ; CB clip rejected — skip this span
    LDX zp_save0                                                           ;#            0.0
    LDA POOL_NEXT,X                                                        ;#            0.0
-   TAX                                                                    ;#            0.0
-   BEQ dclwb_flush3                        ; (entry guard bypassed: TAX's Z ;#            0.0
+   BEQ dclwb_flush3                        ; LDA's own Z — the TAX below is ;#            0.0
+   TAX                                     ; SKIPPED on the flush arm, where
+                                        ; X is dead (the walk exits via RTS
+                                        ; and no caller of draw_clipped_line
+                                        ; reads X back)                        ; (entry guard bypassed: LDA's Z
    JMP dcl_not_left                           ; answers the null test here)
 dclwb_flush3:
    JMP dcl_flush                                                          ;#            0.0
