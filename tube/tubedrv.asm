@@ -220,14 +220,21 @@ ORG &EA00                       \ the FB region: the copro never
     STA fields
 .mloop
     LDA R1D
-    STA mask                    \ LATEST mask wins, exactly as walk_drv
-                                \ samples the keyboard once per frame and
-                                \ passes the elapsed field count apart
-    LDA fields
-    CMP #32                     \ pm_frame's ABI caps fields at 32
-    BCS mnocount
-    INC fields
+    TAX                         \ b0-3 = keys, b4-7 = elapsed PAL fields
+    AND #&0F                    \ (HOSTT packs the count because R1
+    STA mask                    \  host->parasite is ONE BYTE, not a
+    TXA                         \  FIFO -- draining masks could never
+    LSR A                       \  measure elapsed time, it would always
+    LSR A                       \  find exactly one)
+    LSR A
+    LSR A
+    CLC
+    ADC fields                  \ sum, in case more than one arrives
+    CMP #33
+    BCC mnocount
+    LDA #32                     \ pm_frame's ABI caps fields at 32
 .mnocount
+    STA fields
     BIT R1S                     \ drain every queued mask: the host sends
     BMI mloop                   \ exactly one per DISPLAYED field, so the
                                 \ count IS the elapsed field count -- the

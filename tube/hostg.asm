@@ -25,6 +25,8 @@ eofs=&65                        \ complete frames currently queued in the
                                 \ main loop decrements per frame consumed)
 ffrun=&71                       \ ISR: consecutive-FF run length (EOF detect)
 skpd=&72                        \ diagnostics: frames skipped (latency cap)
+fields=&73                      \ PAL fields since the last mask the copro
+                                \ actually TOOK (see .nk4)
 wrl=&66
 wrh=&67
 rdl=&68
@@ -315,7 +317,9 @@ ORG &1900
 .notick
     LDA &FE4D
     AND #2
-    BEQ ipop                    \ no vsync: drain-only entry
+    BNE isvsync                 \ (trampoline: the field-count block below
+    JMP ipop                    \  pushed ipop out of branch range)
+.isvsync                        \ no vsync: drain-only entry
     STA &FE4D
     LDX pend
     BMI nopres
@@ -367,11 +371,32 @@ ORG &1900
     ORA #8
     STA mask
 .nk4
+\ The mask byte carries the ELAPSED FIELD COUNT in its high nibble.
+\ R1 host->parasite is ONE BYTE, not a FIFO: at most one mask is ever in
+\ flight, so the copro cannot recover elapsed time by counting the masks
+\ it drains -- it always finds exactly one, and moves a single field's
+\ worth per RENDERED frame, i.e. slower in exact proportion to the frame
+\ rate.  Counting here is free: this is already the vsync arm of the ISR
+\ (the T1 drain tick exits at ipop above, so ticks are NOT counted).
+\ The count is fields since the copro last TOOK a byte, so a still-full
+\ register just keeps accumulating.  Saturates at 15; copro caps at 32.
+    LDA fields
+    CMP #15
+    BCS nk5
+    INC fields
+.nk5
     LDA &FEE0                   \ push the mask if there's FIFO room —
     AND #&40                    \ this byte paces the copro's frame loop
     BEQ nosend
-    LDA mask
+    LDA fields
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    ORA mask                    \ b0-3 = keys, b4-7 = elapsed fields
     STA &FEE1
+    LDA #0
+    STA fields                  \ only on a SUCCESSFUL hand-off
 .nosend
 .ipop
     PLA
