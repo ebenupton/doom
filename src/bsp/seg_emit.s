@@ -133,15 +133,23 @@ hit_done:
 ; --- stage-1 island ---
 chain_miss:                                ; A = header lo (banked in v1i_l)
    STA zp_seg_v_idx_l
+; zp_ys_v1ok is NOT cleared here -- it is already 0 on arrival, by
+; induction over segs.  It is set nonzero at exactly ONE site (the
+; chain-hit arm above), and every seg that reaches stage 1 leaves
+; through either the y stage (ys_done ZEROes it) or a cull (all of
+; which funnel into ::s_advance, which ZEROes it).  A back-facing seg
+; never reaches stage 1 at all -- seg_proc reads the flags and JMPs
+; straight to back_face_test, whose exits take s_advance_l0 -- so that
+; arc's deliberate non-clearing cannot leak a 1 either.  Census: 666/666
+; executions wrote the value already present.  (The zp_ys_done store
+; beside it IS load-bearing: the previous seg's y stage sets it.)
 .if ::C02
    STZ zp_seg_ep                           ; ep = 0: v1 -> VX1; any prev-seg
    STZ zp_ys_done                          ; donation dies here
-   STZ zp_ys_v1ok
    LDY #1                                  ; (C02 probe leaves Y undefined)
 .else
    STY zp_seg_ep                           ; (Y = 0 from the probe load)
    STY zp_ys_done
-   STY zp_ys_v1ok
    INY                                     ; Y = 1 (rides the probe's 0 —
                                         ;  one byte cheaper than LDY #1)
 .endif

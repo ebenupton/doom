@@ -108,7 +108,11 @@ render_subsector:
    STY zp_seg_v_idx_l
    INY
    STY zp_ys_done                           ; no cross-subsector sy donation
-   STY zp_ys_v1ok
+; (zp_ys_v1ok is NOT cleared here: it is 0 on arrival by the same
+;  induction as the chain_miss arm in seg_emit.s -- every seg that can
+;  set it also clears it before the next seg's stage 1.  Census: 631/631
+;  executions wrote the value already present.  zp_ys_done above is a
+;  different matter and IS load-bearing.)
 
 ; --- Front heights are SUBSECTOR-CONSTANT (every seg fronts this
 ; subsector's sector), so they LIVE per subsector; the front deltas are

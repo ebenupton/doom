@@ -452,7 +452,8 @@ zp_cb_top1 = $B6                  ; [clip]; u8, span top at cx1
 ; --- $B8: overlay group (3 phase-disjoint users) ---
 zp_cb_bot1 = $B8                  ; [clip]; u8, span bot at cx1
 ; --- $B9: overlay group (3 phase-disjoint users) ---
-zp_tg_cont = $BA                  ; [clip]; portal continuation: $FF=inactive, else=prev span xend
+; --- $BA: FREE (zp_tg_cont retired 2026-08-23 -- the portal-continuation
+;     state had no reader anywhere in the tree; storescan found the store)
 zp_dcl_rec_buf = $BC              ; [clip]; lo byte of buffer ptr ; w=2
 zp_dcl_rec_buf_h = $BD            ; [clip]; hi byte of buffer ptr ($00 = records disabled)
 zp_dcl_rec_off = $BE              ; [clip]; current write offset (1-based) within buffer
