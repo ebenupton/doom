@@ -57,8 +57,7 @@ def run(px, py, ab, tot, red):
     from bsp_render_6502 import poke_init_frame_state
     _ = dw.Instrumented6502Spans(); sc = dw._span_clip_6502
     tc.setup_wad(sc); tc.setup_view_zp(sc, px, py, ab)
-    sc._run(tc.ENTRY_BR_VIEW_SETUP); sc.init(); sc.clear_screen()
-    poke_init_frame_state(sc.mpu.memory)
+    sc._run(tc.ENTRY_BR_VIEW_SETUP)
     mpu = sc.mpu; mem = mpu.memory
     # THREE consecutive frames from one state; only the last two are
     # counted.  A single frame from a cold start makes every per-frame
@@ -66,6 +65,13 @@ def run(px, py, ab, tot, red):
     # obvious one) because nothing has dirtied the bytes yet.  Frame 1
     # warms the state; frames 2-3 see it as the hardware would.
     for _frame in range(3):
+        # FULL per-frame reset.  render_frame alone is NOT re-enterable:
+        # the span pool still reads fully solid from the previous frame,
+        # so the BSP walk bails after ~199 steps.  init/clear_screen
+        # rebuild the pool; poke_init_frame_state mirrors the inline
+        # records + vcache-valid ground state.  The VWHC and VXC caches
+        # are deliberately NOT touched -- they persist on hardware too.
+        sc.init(); sc.clear_screen(); poke_init_frame_state(mem)
         mpu.pc = sym('render_frame'); mpu.sp = 0xDD; mpu.p = 0x30
         mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF
         _count = _frame > 0
