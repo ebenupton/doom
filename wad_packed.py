@@ -368,14 +368,35 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # six interior verticals are left out so the shape reads as the
     # smooth-sided barrel it stands in for.  The first FOUR lines are the
     # lid's top arc -- the ones the engine arms to record its tighten.
+    #
+    # LEFT-TO-RIGHT IS A HARD CONTRACT, not a nicety.  draw_clipped_line_s16
+    # requires x1 <= x2: the in-clipper swap was DELETED when the seg layer
+    # took over canonicalising (the 8F.1F "solid bars" fix), so a reversed
+    # line now walks the span list without emitting or recording.  The lid's
+    # top arc runs V[0]..V[4], whose x indices descend 4,3,2,1,0 -- i.e.
+    # every one of the four ARMED lines was reversed, which is why
+    # BOT_RECORDS stayed 0, the tighten never fired, and the reversed walks
+    # smeared horizontal runs up to 121 px wide.  obj_X is monotone in its
+    # index, so ordering by INDEX is ordering by x, and doing it here costs
+    # the 6502 nothing.
     _V = [(4,2),(3,1),(2,0),(1,1),(0,2),(1,3),(2,4),(3,3)]
+
+    def _ln(p, q):
+        if p[0] > q[0]:
+            p, q = q, p
+        return [p[0]*2, p[1]*2, q[0]*2, q[1]*2]
+
     obj_art = []
     for a_, b_ in [(i, (i+1) % 8) for i in range(8)]:
-        obj_art += [_V[a_][0]*2, _V[a_][1]*2, _V[b_][0]*2, _V[b_][1]*2]
+        obj_art += _ln(_V[a_], _V[b_])
     for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:
-        obj_art += [_V[a_][0]*2, (_V[a_][1]+5)*2, _V[b_][0]*2, (_V[b_][1]+5)*2]
+        obj_art += _ln((_V[a_][0], _V[a_][1]+5), (_V[b_][0], _V[b_][1]+5))
     for v in (0, 4):
-        obj_art += [_V[v][0]*2, _V[v][1]*2, _V[v][0]*2, (_V[v][1]+5)*2]
+        obj_art += _ln(_V[v], (_V[v][0], _V[v][1]+5))
+    for _e in range(0, len(obj_art), 4):
+        assert obj_art[_e] <= obj_art[_e+2], \
+            f"billboard art line {_e//4} is reversed -- draw_clipped_line_s16 " \
+            f"requires x1 <= x2 and will silently drop its tighten record"
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4
     rom_main_size = off_obj_art + len(obj_art)
