@@ -61,7 +61,7 @@ ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 ; --- static object (billboard) planes: SoA, one X indexes every field ---
 ; Positions use the SAME page-decomposed encoding as the vertex planes
 ; (u8 offset + page nibble), so an object stages exactly like a vertex.
-OBJ_DRAW = 1                            ; static-object billboards: the
+OBJ_DRAW = 0                            ; static-object billboards: the
                                         ; 6502 draw is complete and works,
                                         ; but the PYTHON references do not
                                         ; draw them yet, so every
@@ -78,6 +78,13 @@ OBJ_RC   = ROM_OBJ_C + 4*LAY_N_OBJ      ; half-width in s16 COUNTS
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
+LAY_N_OBJ_ART = 14                 ; billboard art lines
+OBJ_ART  = OBJ_BITS + 28                ; the template itself: 14 x
+                                        ; (x1,y1,x2,y2) pre-doubled indices.
+                                        ; It lives HERE, not in CODE -- CODE
+                                        ; is full, and the stamp loop pages
+                                        ; BANK_SEG to read it and BANK_C to
+                                        ; draw (flat: PAGE is a no-op)
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B8FF, banked frees
 ;  $A800-$A9FF in L2; the flat object table lives in that freed run)

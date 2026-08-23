@@ -355,7 +355,30 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     OBJ_N_PLANES = 7                       # OX OY PG SS RC ZT ZB
     off_obj_bits = off_obj + OBJ_N_PLANES * n_obj
     obj_bits_len = (n_ss + 7) // 8
-    rom_main_size = off_obj_bits + obj_bits_len
+    # ---- billboard ART template ------------------------------------------
+    # A billboard is a 2D SCALED stamp: the engine derives a base point and
+    # ONE scale factor, then plays this table.  Nothing here is projected.
+    # Each line is (x1,y1,x2,y2) as PRE-DOUBLED indices into the engine's
+    # scaled obj_X[5] / obj_Y[10] (doubled because those hold s16):
+    #   x: 0=cx-a, 2=cx-a7, 4=cx, 6=cx+a7, 8=cx+a      (a = half width)
+    #   y: 0..8 = lid (cy-b .. cy+b), 10..18 = the same dropped to the base
+    # An octagon's vertices are only ever +-a and +-0.7071a, which is why
+    # five x values and five y values cover all eight.  Eight lid edges,
+    # the base's four VISIBLE edges, and the two silhouette verticals: the
+    # six interior verticals are left out so the shape reads as the
+    # smooth-sided barrel it stands in for.  The first FOUR lines are the
+    # lid's top arc -- the ones the engine arms to record its tighten.
+    _V = [(4,2),(3,1),(2,0),(1,1),(0,2),(1,3),(2,4),(3,3)]
+    obj_art = []
+    for a_, b_ in [(i, (i+1) % 8) for i in range(8)]:
+        obj_art += [_V[a_][0]*2, _V[a_][1]*2, _V[b_][0]*2, _V[b_][1]*2]
+    for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:
+        obj_art += [_V[a_][0]*2, (_V[a_][1]+5)*2, _V[b_][0]*2, (_V[b_][1]+5)*2]
+    for v in (0, 4):
+        obj_art += [_V[v][0]*2, _V[v][1]*2, _V[v][0]*2, (_V[v][1]+5)*2]
+    off_obj_art = off_obj_bits + obj_bits_len
+    n_obj_art = len(obj_art) // 4
+    rom_main_size = off_obj_art + len(obj_art)
 
     rom_main = bytearray(rom_main_size)
 
@@ -371,6 +394,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                                   _o['zt'] & 0xFF, _o['zb'] & 0xFF)):
             rom_main[off_obj + _pl * n_obj + _i] = _v
         rom_main[off_obj_bits + (_o['ss'] >> 3)] |= 1 << (_o['ss'] & 7)
+    rom_main[off_obj_art:off_obj_art + len(obj_art)] = bytes(obj_art)
 
     # Vertices — page-split SoA planes (OX/OY/PG, 512 bytes each;
     # n_verts <= 512 asserted above): junior page idx 0-255, senior 256+.
@@ -787,6 +811,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_lv1': off_lv1, 'n_lv1': len(_lv1_ids),
         'off_obj': off_obj, 'n_obj': n_obj,
         'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,
+        'off_obj_art': off_obj_art, 'n_obj_art': n_obj_art,
         'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
@@ -809,7 +834,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Subsectors:  {n_ss} × {SSECTOR_SIZE} = {n_ss * SSECTOR_SIZE}")
     print(f"  LV1 records: {layout['n_lv1']} diagonal reference points")
     print(f"  Objects:     {n_obj} static billboards "
-          f"({OBJ_N_PLANES * n_obj} B) + {obj_bits_len} B subsector bitmap")
+          f"({OBJ_N_PLANES * n_obj} B) + {obj_bits_len} B subsector bitmap"
+)
     print(f"  Back pairs:  {layout['n_bpal']} palette entries "
           f"({sum(1 for k in _bpal_ids if k[0] == 'seg')} private to movers)")
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = "

@@ -27,37 +27,49 @@
 
 ; scratch — main RAM in BOTH builds (the CODE region), so it is writable
 ; on hardware under any paging (see the scalar-state rule)
-obj_i:    .res 1
-obj_vx_l: .res 1
-obj_vx_h: .res 1
-obj_xl_l: .res 1
-obj_xl_h: .res 1
-obj_xr_l: .res 1
-obj_xr_h: .res 1
-obj_yt_l: .res 1
-obj_yt_h: .res 1
-obj_yb_l: .res 1
-obj_yb_h: .res 1
 
-OBJ_MAXSLOT = 4                            ; most objects in one subsector
+; --- scratch: $1100-$11FF, FREE IN BOTH BUILDS since 2026-08-17 (it
+;     held the driver's retired cadence probe -- see dcl.s:1527).  It
+;     lives here rather than as .res in CODE because CODE is full,
+;     and it must be real RAM in both builds (the scalar-state rule).
+obj_i     = $1100
+obj_cx_l  = $1101
+obj_cx_h  = $1102
+obj_yt_l  = $1103
+obj_yt_h  = $1104
+obj_yb_l  = $1105
+obj_yb_h  = $1106
+obj_h     = $1107
+obj_t     = $1108
+obj_a     = $1109
+obj_a7    = $110A
+obj_b     = $110B
+obj_b7    = $110C
+obj_dy    = $110D
+obj_e     = $110E
+obj_X     = $110F   ; 10 bytes
+obj_sd_l  = $1133   ; [OBJ_MAXSLOT]
+obj_sd_h  = $1136   ; [OBJ_MAXSLOT]
+obj_scx_l = $1139   ; [OBJ_MAXSLOT]
+obj_scx_h = $113C   ; [OBJ_MAXSLOT]
+obj_syt_l = $113F   ; [OBJ_MAXSLOT]
+obj_syt_h = $1142   ; [OBJ_MAXSLOT]
+obj_syb_l = $1145   ; [OBJ_MAXSLOT]
+obj_syb_h = $1148   ; [OBJ_MAXSLOT]
+obj_Y     = $1119   ; 20 bytes
+obj_n     = $112D
+obj_left  = $112E
+obj_k     = $112F
+obj_best  = $1130
+obj_ss    = $1131
+obj_mask  = $1132
+
+OBJ_MAXSLOT = 3                            ; most objects in one subsector
                                         ; is 3 (wad_packed asserts it)
-obj_n:     .res 1                          ; slots filled this subsector
-obj_left:  .res 1                          ; slots still to draw
-obj_k:     .res 1                          ; edge-table cursor across the JSR
-obj_best:  .res 1
-obj_sd_l:  .res OBJ_MAXSLOT                ; depth (vy counts) -- sort key
-obj_sd_h:  .res OBJ_MAXSLOT
-obj_sxl_l: .res OBJ_MAXSLOT
-obj_sxl_h: .res OBJ_MAXSLOT
-obj_sxr_l: .res OBJ_MAXSLOT
-obj_sxr_h: .res OBJ_MAXSLOT
-obj_syt_l: .res OBJ_MAXSLOT
-obj_syt_h: .res OBJ_MAXSLOT
-obj_syb_l: .res OBJ_MAXSLOT
-obj_syb_h: .res OBJ_MAXSLOT
 
 obj_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
+
 
 ; --- rectangle edges, table-driven ---------------------------------------
 ; The four edges use only four values (xl, xr, yt, yb), so each edge is
@@ -78,8 +90,11 @@ obj_edges:
 ; ============================================================================
 ::obj_subsector:
 .if OBJ_DRAW = 0
-   RTS                                     ; feature off (layout.inc)
-.endif
+   RTS                                     ; feature off (layout.inc); the
+.else                                      ; whole body is compiled out too --
+                                        ; the octagonal art does not fit the
+                                        ; banked CODE area (see the note at
+                                        ; the head of this file)
    STA obj_ss
    PAGE BANK_SEG                           ; NB: PAGE is LDA #n/STA $FE30 --
    LDA obj_ss                              ; it EATS A.  Flat's PAGE is a
@@ -154,8 +169,6 @@ obj_done:
    PAGE BANK_WALK                          ; the prologue's SS reads are WALK
    RTS
 
-obj_ss:   .res 1
-obj_mask: .res 1
 
 ; ============================================================================
 ; obj_one — project and draw object X.
@@ -250,44 +263,18 @@ obj_near:
    LDA RECIP_S,Y
    STA zp_br_r_s
 obj_recip_done:
-; --- screen x of the two edges.  project_x is LINEAR in vx, so the
-;     billboard's edges are just vx -/+ r; no second rotation.
-   LDA zp_br_vx_l
-   STA obj_vx_l
-   LDA zp_br_vx_h
-   STA obj_vx_h
-   LDX obj_i
-   SEC
-   LDA obj_vx_l
-   SBC OBJ_RC,X
-   STA zp_br_vx_l
-   LDA obj_vx_h
-   SBC #0
-   STA zp_br_vx_h
+; --- screen x of the billboard's CENTRE.  A billboard is a 2D scaled
+;     stamp, not a 3D object: one base point and one scale factor is the
+;     whole of it, so the edges are NOT projected -- OBJ_RC is not even
+;     read here any more.  The width falls out of the scale below.
    JSR project_x_c
    LDA zp_br_res_l
    CLC
    ADC #128                                ; sx = 128 + rns(b123)
-   STA obj_xl_l
+   STA obj_cx_l
    LDA zp_br_res_h
    ADC #0
-   STA obj_xl_h
-   LDX obj_i
-   CLC
-   LDA obj_vx_l
-   ADC OBJ_RC,X
-   STA zp_br_vx_l
-   LDA obj_vx_h
-   ADC #0
-   STA zp_br_vx_h
-   JSR project_x_c
-   LDA zp_br_res_l
-   CLC
-   ADC #128
-   STA obj_xr_l
-   LDA zp_br_res_h
-   ADC #0
-   STA obj_xr_h
+   STA obj_cx_h
 ; --- screen y of top and bottom.  project_y wants the height DELTA and
 ;     the rns kernel selected for this reciprocal (both heights share it).
    LDX zp_br_r_s
@@ -314,14 +301,10 @@ obj_recip_done:
    STA obj_sd_l,Y
    LDA zp_br_vy_h
    STA obj_sd_h,Y
-   LDA obj_xl_l
-   STA obj_sxl_l,Y
-   LDA obj_xl_h
-   STA obj_sxl_h,Y
-   LDA obj_xr_l
-   STA obj_sxr_l,Y
-   LDA obj_xr_h
-   STA obj_sxr_h,Y
+   LDA obj_cx_l
+   STA obj_scx_l,Y
+   LDA obj_cx_h
+   STA obj_scx_h,Y
    LDA obj_yt_l
    STA obj_syt_l,Y
    LDA obj_yt_h
@@ -347,15 +330,33 @@ obj_recip_done:
 ; This is also why pass 2 runs nearest-first: a far billboard that
 ; tightened first would close the columns a nearer one still needs.
 ; ============================================================================
+; obj_draw_slot — stamp slot X's billboard, then TIGHTEN behind it.
+;
+; A billboard is a 2D SCALED SPRITE, not a 3D object: everything follows
+; from the base point and ONE scale factor, with no projection at all.
+;     H  = syb - syt                                  the scale, screen px
+;     a  = 23H/64 = H>>2 + H>>4 + H>>5 + H>>6          half width
+;     b  = H/16                                        lid semi-axis
+;     a7 = 45a/64 = a>>1 + a>>3 + a>>4 + a>>6          a * 0.7071, to 0.4%
+;     b7 = 45b/64
+;     dy = 7H/8   = H - H>>3                lid centre -> base centre
+; 23/64 and 45/64 are exact sums of powers of two, so there is not one
+; multiply here.  An octagon's vertices are only ever +-a, +-0.7071a,
+; which is why five x values and five y values cover all eight.
+;
+; The lid's TOP arc (art lines 0-3) is drawn with BOT_RECORDS ARMED, so
+; it both draws and records; tighten_from_records then makes that arc the
+; new aperture BOTTOM and nothing later in the walk can draw below it.
+; ============================================================================
 obj_draw_slot:
-   LDA obj_sxl_l,X
-   STA obj_xl_l
-   LDA obj_sxl_h,X
-   STA obj_xl_h
-   LDA obj_sxr_l,X
-   STA obj_xr_l
-   LDA obj_sxr_h,X
-   STA obj_xr_h
+   JMP obj_ds_go
+obj_dsr:                                   ; near early-out: the tail is ~490
+   RTS                                     ; bytes away, out of branch range
+obj_ds_go:
+   LDA obj_scx_l,X
+   STA obj_cx_l
+   LDA obj_scx_h,X
+   STA obj_cx_h
    LDA obj_syt_l,X
    STA obj_yt_l
    LDA obj_syt_h,X
@@ -364,67 +365,236 @@ obj_draw_slot:
    STA obj_yb_l
    LDA obj_syb_h,X
    STA obj_yb_h
+   SEC                                     ; H = syb - syt
+   LDA obj_yb_l
+   SBC obj_yt_l
+   STA obj_h
+   LDA obj_yb_h
+   SBC obj_yt_h
+   BEQ obj_hok
+   BMI obj_dsr                             ; inverted: degenerate
+   LDA #255                                ; very near: clamp the scale
+   STA obj_h
+obj_hok:
+   LDA obj_h                               ; (no minimum-height cull: below a
+   LSR A                                   ; a = 23H/64   few px every offset
+                                        ; rounds to zero, the whole stamp
+                                        ; collapses to one point and the
+                                        ; clipper rejects each zero-length
+                                        ; line -- and CODE has no room for
+                                        ; the test)
+   LSR A
+   STA obj_t
+   STA obj_a
+   LSR A
+   LSR A
+   CLC
+   ADC obj_a
+   STA obj_a
+   LDA obj_t
+   LSR A
+   LSR A
+   LSR A
+   CLC
+   ADC obj_a
+   STA obj_a
+   LDA obj_t
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   CLC
+   ADC obj_a
+   STA obj_a
+   LDA obj_h                               ; b = H/16
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   STA obj_b
+   LDA obj_h                               ; dy = 7H/8
+   LSR A
+   LSR A
+   LSR A
+   STA obj_t
+   LDA obj_h
+   SEC
+   SBC obj_t
+   STA obj_dy
+   LDX #0                                  ; a7,b7 = 45/64 of a,b
+obj_s7:
+   LDA obj_a,X
+   LSR A
+   STA obj_t
+   STA obj_a7,X
+   LSR A
+   LSR A
+   CLC
+   ADC obj_a7,X
+   STA obj_a7,X
+   LDA obj_t
+   LSR A
+   LSR A
+   LSR A
+   CLC
+   ADC obj_a7,X
+   STA obj_a7,X
+   LDA obj_t
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   LSR A
+   CLC
+   ADC obj_a7,X
+   STA obj_a7,X
+   INX
+   INX
+   CPX #4
+   BCC obj_s7
+; --- X[] = cx + {-a, -a7, 0, +a7, +a} ------------------------------------
+   LDA obj_cx_l
+   STA obj_X+4
+   LDA obj_cx_h
+   STA obj_X+5
+   CLC
+   LDA obj_cx_l
+   ADC obj_a
+   STA obj_X+8
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+9
+   SEC
+   LDA obj_cx_l
+   SBC obj_a
+   STA obj_X+0
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+1
+   CLC
+   LDA obj_cx_l
+   ADC obj_a7
+   STA obj_X+6
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+7
+   SEC
+   LDA obj_cx_l
+   SBC obj_a7
+   STA obj_X+2
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+3
+; --- Y[0..4] = lid, Y[5..9] = lid + dy -----------------------------------
+   LDA obj_yt_l                            ; Y[0] = syt (the lid's top)
+   STA obj_Y+0
+   LDA obj_yt_h
+   STA obj_Y+1
+   CLC                                     ; Y[2] = syt + b
+   LDA obj_yt_l
+   ADC obj_b
+   STA obj_Y+4
+   LDA obj_yt_h
+   ADC #0
+   STA obj_Y+5
+   CLC                                     ; Y[4] = Y[2] + b
+   LDA obj_Y+4
+   ADC obj_b
+   STA obj_Y+8
+   LDA obj_Y+5
+   ADC #0
+   STA obj_Y+9
+   SEC                                     ; Y[1] = Y[2] - b7
+   LDA obj_Y+4
+   SBC obj_b7
+   STA obj_Y+2
+   LDA obj_Y+5
+   SBC #0
+   STA obj_Y+3
+   CLC                                     ; Y[3] = Y[2] + b7
+   LDA obj_Y+4
+   ADC obj_b7
+   STA obj_Y+6
+   LDA obj_Y+5
+   ADC #0
+   STA obj_Y+7
+   LDX #0
+obj_ycp:
+   CLC
+   LDA obj_Y+0,X
+   ADC obj_dy
+   STA obj_Y+10,X
+   LDA obj_Y+1,X
+   ADC #0
+   STA obj_Y+11,X
+   INX
+   INX
+   CPX #10
+   BCC obj_ycp
+; --- stamp the 14 art lines ----------------------------------------------
    PAGE BANK_C
-; hg_pass zeroes the record counts per seg; we run in the PROLOGUE,
-; ahead of the seg loop, so zero them ourselves.  TOP stays empty: a
-; billboard closes the aperture from below only.
    ZERO TOP_RECORDS
    ZERO BOT_RECORDS
    LDA #1
    STA zp_dcl_rec_off
    LDA #>BOT_RECORDS
-   STA zp_dcl_rec_buf_h                    ; armed for the TOP edge only
-   LDX #0
-obj_ea:
-   LDY obj_edges,X
-   LDA obj_xl_l,Y
+   STA zp_dcl_rec_buf_h                    ; armed for the lid's top arc
+   LDA #0
+   STA obj_e
+obj_stamp:
+   PAGE BANK_SEG                           ; the art template lives with the
+   LDX obj_e                               ; object data (CODE is full)
+   LDY OBJ_ART+0,X
+   LDA obj_X+0,Y
    STA zp_line_xl_l
-   LDA obj_xl_h,Y
+   LDA obj_X+1,Y
    STA zp_line_xl_h
-   LDY obj_edges+1,X
-   LDA obj_xl_l,Y
+   LDY OBJ_ART+1,X
+   LDA obj_Y+0,Y
    STA zp_line_yl_l
-   LDA obj_xl_h,Y
+   LDA obj_Y+1,Y
    STA zp_line_yl_h
-   LDY obj_edges+2,X
-   LDA obj_xl_l,Y
+   LDY OBJ_ART+2,X
+   LDA obj_X+0,Y
    STA zp_line_xr_l
-   LDA obj_xl_h,Y
+   LDA obj_X+1,Y
    STA zp_line_xr_h
-   LDY obj_edges+3,X
-   LDA obj_xl_l,Y
+   LDY OBJ_ART+3,X
+   LDA obj_Y+0,Y
    STA zp_line_yr_l
-   LDA obj_xl_h,Y
+   LDA obj_Y+1,Y
    STA zp_line_yr_h
-   STX obj_k
+   PAGE BANK_C
    JSR draw_clipped_line_s16
-   ZERO zp_dcl_rec_buf_h                   ; only the first edge records
-   LDA obj_k
+   LDA obj_e
    CLC
    ADC #4
-   TAX
-   CPX #16
-   BNE obj_ea
-; --- close the columns, if the top edge survived the clip.  Zero
-;     records means it was clipped away entirely; tighten_from_records
-;     must not be called then (its own contract says so).
+   STA obj_e
+   CMP #16                                 ; lid top arc done -> stop
+   BNE obj_st_on                           ; recording
+   ZERO zp_dcl_rec_buf_h
+obj_st_on:
+   LDA obj_e
+   CMP #4*LAY_N_OBJ_ART
+   BCC obj_stamp
+; --- close the columns behind it -----------------------------------------
    LDA BOT_RECORDS
-   BEQ obj_ds_done
-   LDX #0                                  ; ilo = clamp(xl, 0..255)
-   LDA obj_xl_h
+   BEQ obj_dsx
+   LDX #0                                  ; ilo = clamp(X[0])
+   LDA obj_X+1
    BMI obj_ds_lo
    BEQ obj_ds_lol
    LDX #255
    BNE obj_ds_lo
 obj_ds_lol:
-   LDX obj_xl_l
+   LDX obj_X+0
 obj_ds_lo:
    STX zp_i_l
-   LDX #255                                ; ihi = clamp(xr)+1, HALF-OPEN
-   LDA obj_xr_h
+   LDX #255                                ; ihi = clamp(X[4]) + 1
+   LDA obj_X+9
    BMI obj_ds_hz
    BNE obj_ds_hi
-   LDX obj_xr_l
+   LDX obj_X+8
    INX
    BNE obj_ds_hi
 obj_ds_hz:
@@ -432,8 +602,9 @@ obj_ds_hz:
 obj_ds_hi:
    STX zp_i_h
    CPX zp_i_l
-   BCC obj_ds_done                         ; empty or inverted range
-   BEQ obj_ds_done
+   BCC obj_dsx
+   BEQ obj_dsx
    JSR tighten_from_records
-obj_ds_done:
+obj_dsx:
    RTS
+.endif
