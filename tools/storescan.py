@@ -117,12 +117,23 @@ def linemap():
         if k == 'file': d = f(rest); files[d['id']] = d['name'].strip('"')
         elif k == 'seg': d = f(rest); segs[d['id']] = int(d['start'], 0)
         elif k == 'span': d = f(rest); spans[d['id']] = (d['seg'], int(d['start']), int(d['size']))
+    # A macro's stores carry TWO line records per span: type=2 is the
+    # macro BODY and type=0 the INVOCATION.  Report the invocation --
+    # every ZERO/ZARM/CLASSIFY_TREE site otherwise collapses onto the
+    # same body line and the listing cannot say which call is redundant.
     out = {}
-    for ln in raw:
-        k, _, rest = ln.partition('\t')
-        if k != 'line': continue
-        d = f(rest); fn = files.get(d.get('file'))
-        if not fn: continue
+    for want in ('2', '0'):                # body first, invocation wins
+        for ln in raw:
+            k, _, rest = ln.partition('\t')
+            if k != 'line': continue
+            d = f(rest); fn = files.get(d.get('file'))
+            if not fn or d.get('type', '0') != want: continue
+            _emit(d, rest, spans, segs, fn, out)
+    return out
+
+
+def _emit(d, rest, spans, segs, fn, out):
+    if True:
         for sid in re.findall(r'span=([\d+]+)', rest):
             for sp in sid.split('+'):
                 if sp not in spans: continue
@@ -130,7 +141,6 @@ def linemap():
                 if base is None: continue
                 for a in range(base + st, base + st + sz):
                     out[a] = (os.path.relpath(fn, ROOT), int(d['line']))
-    return out
 
 
 def main():

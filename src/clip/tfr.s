@@ -1174,7 +1174,7 @@ LC_TMP_HI = $0654
 LC_RES_LO = $0655
 LC_RES_HI = $0656
 LC_TGT_LO = $0657                       ; clip target value (s16)
-LC_TGT_HI = $0658
+; $0658 FREE (LC_TGT_HI retired 2026-08-23 -- provably constant 0)
 
 ; ---------------------------------------------------------------------------
 SEG_HIGH

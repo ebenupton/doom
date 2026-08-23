@@ -1631,7 +1631,7 @@ dcl_yband_clip:
    STA LC_OY1_LO
    LDA zp_ox1
    STA LC_OY2_LO
-   ZERO LC_OX1_HI, LC_OX2_HI, LC_OY1_HI, LC_OY2_HI, LC_TGT_HI                          ; hoisted from all 4 clip arms
+   ZERO LC_OX1_HI, LC_OX2_HI, LC_OY1_HI, LC_OY2_HI                          ; hoisted from all 4 clip arms
 
 ; --- Outcode census: X = #endpoints above band (y < Y_BIAS),
 ; Y = #endpoints below band (y > VIS_YMAX) ---

@@ -506,7 +506,13 @@ s16_interp:
    SEC
    SBC LC_OX1_LO
    STA z:LC_OFF_LO
-   LDA LC_TGT_HI
+   LDA #0                                  ; LC_TGT_HI retired 2026-08-23:
+                                        ; the clip target is always a screen
+                                        ; bound (0 or 255), and NO instruction
+                                        ; anywhere ever wrote its hi byte
+                                        ; non-zero -- every write in the tree
+                                        ; was a ZERO.  Constant, so the read
+                                        ; folds to an immediate.
    SBC LC_OX1_HI
    STA z:LC_OFF_HI
 ; den = x1 - x0

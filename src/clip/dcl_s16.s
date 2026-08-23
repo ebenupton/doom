@@ -298,7 +298,7 @@ need_xclip:
 ; Else if x1 > 255, replace y1 with y at x=255; x1 = 255.
    LDA zp_line_xl_h
    BPL x1_not_neg
-   ZERO LC_TGT_LO, LC_TGT_HI
+   ZERO LC_TGT_LO
 
    JSR s16_interp
 ; store the UNCLAMPED crossing Y (LC_RES), not the u8-clamped A: if the
@@ -316,7 +316,6 @@ x1_not_neg:
    BEQ x1_done                             ; HI=0 → in u8 range, no clip
    LDA #$FF
    STA LC_TGT_LO
-   ZERO LC_TGT_HI
    JSR s16_interp
 ; store the UNCLAMPED crossing Y (LC_RES), not the u8-clamped A: if the
 ; y-crossing at the x-boundary is itself out of [0,255] the later y-clip
@@ -333,7 +332,7 @@ x1_done:
 ; same for x2
    LDA zp_line_xr_h
    BPL x2_not_neg
-   ZERO LC_TGT_LO, LC_TGT_HI
+   ZERO LC_TGT_LO
 
    JSR s16_interp
 ; store UNCLAMPED crossing Y (see zp_line_yl_l note above).
@@ -348,7 +347,6 @@ x2_not_neg:
    BEQ x2_done
    LDA #$FF
    STA LC_TGT_LO
-   ZERO LC_TGT_HI
    JSR s16_interp
 ; store UNCLAMPED crossing Y (see zp_line_yl_l note above).
    LDA LC_RES_LO
@@ -408,7 +406,7 @@ need_yclip:                                ;  BEQ range by 53 — measured)
 ; y1 clip
    LDA zp_line_yl_h
    BPL y1c_not_neg
-   ZERO LC_TGT_LO, LC_TGT_HI
+   ZERO LC_TGT_LO
 
    JSR s16_interp
    STA zp_line_xl_l
@@ -423,7 +421,6 @@ y1c_not_neg:
    BEQ y1c_done
    LDA #$FF
    STA LC_TGT_LO
-   ZERO LC_TGT_HI
    JSR s16_interp
    STA zp_line_xl_l
    ZERO zp_line_xl_h
@@ -438,7 +435,7 @@ y1c_done:
 ; y2 clip
    LDA zp_line_yr_h
    BPL y2c_not_neg
-   ZERO LC_TGT_LO, LC_TGT_HI
+   ZERO LC_TGT_LO
 
    JSR s16_interp
    STA zp_line_xr_l
@@ -450,7 +447,6 @@ y2c_not_neg:
    BEQ y2c_done
    LDA #$FF
    STA LC_TGT_LO
-   ZERO LC_TGT_HI
    JSR s16_interp
    STA zp_line_xr_l
    ZERO zp_line_xr_h
