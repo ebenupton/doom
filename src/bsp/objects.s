@@ -451,12 +451,15 @@ obj_hok:
    LDA obj_asp
    AND #$7F
    JSR umul8
-   LDA zp_prod_l                           ; >> 6 == << 2 then take the hi
-   ASL A
+   LDA zp_prod_l                           ; (H*k + 32) >> 6, ROUNDED:
+   ASL A                                   ; << 2, then +128 into the hi byte
    ROL zp_prod_h
    ASL A
    ROL zp_prod_h
+   CLC
+   ADC #128
    LDA zp_prod_h
+   ADC #0
    STA obj_a
    LDA obj_h                               ; b = H/16
    LSR A
@@ -473,42 +476,35 @@ obj_hok:
    SEC
    SBC obj_t
    STA obj_dy
-; a2,b2 = 47/64 (the dodecagon's sqrt3-1, to 0.32%); a3,b3 = the exact
-; complement, since (sqrt3-1) + (2-sqrt3) = 1.  One chain, not two.
+; a2,b2 = 47/64 of a,b (the dodecagon's sqrt3-1, to 0.32%); a3,b3 = the
+; EXACT complement, since (sqrt3-1) + (2-sqrt3) = 1.
+;
+; THE RATIO MUST BE ROUNDED, NOT TRUNCATED, and this is not a quality nicety
+; -- it is an ordering invariant.  The six slots come out monotonic in y iff
+; v >= v2 >= v3, i.e. iff v2 >= v/2.  The obvious shift chain
+; (v>>1 + v>>3 + v>>4 + v>>5 + v>>6) truncates every term and returns v2 < v3
+; for v = 1,3,5,7 -- and b is H/16, so a barrel of any sane size lands
+; squarely in that range (H=48 -> b=3 -> b2=1, b3=2).  Y[1] and Y[2] then
+; SWAP, the lid's arc edges cross, and the barrel draws as two full-width
+; horizontal bands.  Rounding fixes it for all 256 inputs; verified
+; exhaustively.  One mul is also ~20 bytes shorter than the chain was.
    LDX #0
 obj_s7:
-   LDA obj_a,X                             ; t = v>>1
-   LSR A
-   STA obj_t
-   STA obj_a2,X
-   LSR A
-   LSR A                                   ; += t>>2
+   STX obj_t                               ; umul8 eats X
+   LDA obj_a,X
+   STA zp_mul_b
+   LDA #47
+   JSR umul8
+   LDA zp_prod_l                           ; (v*47 + 32) >> 6
+   ASL A
+   ROL zp_prod_h
+   ASL A
+   ROL zp_prod_h
    CLC
-   ADC obj_a2,X
-   STA obj_a2,X
-   LDA obj_t
-   LSR A
-   LSR A
-   LSR A                                   ; += t>>3
-   CLC
-   ADC obj_a2,X
-   STA obj_a2,X
-   LDA obj_t
-   LSR A
-   LSR A
-   LSR A
-   LSR A                                   ; += t>>4
-   CLC
-   ADC obj_a2,X
-   STA obj_a2,X
-   LDA obj_t
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   LSR A                                   ; += t>>5  -> 47/64
-   CLC
-   ADC obj_a2,X
+   ADC #128
+   LDA zp_prod_h
+   ADC #0
+   LDX obj_t
    STA obj_a2,X
    SEC
    LDA obj_a,X
