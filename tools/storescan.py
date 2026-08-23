@@ -64,13 +64,26 @@ def run(px, py, ab, tot, red):
     # CLEAR look redundant (the VCACHE_VALID/VDONE wipe in walk.s is the
     # obvious one) because nothing has dirtied the bytes yet.  Frame 1
     # warms the state; frames 2-3 see it as the hardware would.
+    # The viewpoint MOVES between the counted frames.  Re-rendering one
+    # static view marks every view-dependent value that happens to
+    # recompute to the same number as "redundant" -- the VC_SXL/SXH/RLO
+    # vertex-cache write-backs are the obvious victims, since only the
+    # VALID bits are wiped per frame while the data planes keep last
+    # frame's bytes.  Stepping the view forward 8 units per frame (the
+    # walkseq step) keeps the state warm without that artefact.
+    import pygame as _pg
     for _frame in range(3):
+        if _frame:
+            v = _pg.math.Vector2(1, 0).rotate(ab * 360 / 256)
+            px, py = px + v.x * 8.0, py + v.y * 8.0
+            tc.setup_view_zp(sc, int(px), int(py), ab)
+            sc._run(tc.ENTRY_BR_VIEW_SETUP)
         # FULL per-frame reset.  render_frame alone is NOT re-enterable:
         # the span pool still reads fully solid from the previous frame,
         # so the BSP walk bails after ~199 steps.  init/clear_screen
         # rebuild the pool; poke_init_frame_state mirrors the inline
-        # records + vcache-valid ground state.  The VWHC and VXC caches
-        # are deliberately NOT touched -- they persist on hardware too.
+        # records + vcache-valid ground state.  VWHC and VXC are
+        # deliberately NOT touched -- they persist on hardware too.
         sc.init(); sc.clear_screen(); poke_init_frame_state(mem)
         mpu.pc = sym('render_frame'); mpu.sp = 0xDD; mpu.p = 0x30
         mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF
