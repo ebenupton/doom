@@ -688,6 +688,51 @@ dv_yl_ge:
 dv_in:
 ; Span contains column xl. Compute top_y and bot_y at xl.
    STX zp_save0
+; ── IT/IB fast path (Eben, 2026-08-23) ────────────────────────────────
+; The span carries its top line's extremes as OT = min(tl,tr) <= IT =
+; max(tl,tr), and its bottom's as IB = min(bl,br) <= OB = max(bl,br). The
+; column's exact top_y/bot_y therefore lie in [OT,IT] and [IB,OB], so two
+; compares against the pair decide without evaluating either boundary:
+;
+;   ylo >= IT and yhi <= IB  ->  inside the aperture at EVERY column, so
+;                                the clamp is the identity:
+;                                cy1 = max(ylo,top) = ylo,
+;                                cy2 = min(yhi,bot) = yhi.  Emit as-is.
+;   yhi < OT                 ->  yhi < OT <= top_y, so cy2 < cy1: reject.
+;   ylo > OB                 ->  bot_y <= OB < ylo, so cy2 < cy1: reject.
+;
+; Both are BIT-IDENTICAL to what the exact path computes -- this only
+; skips work, it never changes a pixel. Census over 24 corpus frames:
+; 52.0% inner accept, 2.9% outer reject, 45.1% still need the interp, so
+; the ACCEPT leads and the two interps + the clamp fall away on half the
+; verticals. (The general path has had this cascade all along; the
+; vertical fast path never did.)
+;
+; dv_emit's SBC #Y_BIAS rides C=1 from its guard, and LDA/STA leave C
+; alone, so the accept arm hands it the C=1 left by the IB compare.
+   LDA zp_line_y_l                         ; ylo
+   CMP POOL_IT,X
+   BCC dv_fp_slow                          ; ylo < IT: not wholly inside
+   LDA POOL_IB,X
+   CMP zp_line_y_h                         ; C = IB >= yhi
+   BCC dv_fp_slow
+   LDA zp_line_y_l
+   STA zp_cb_cy1
+   LDA zp_line_y_h
+   STA zp_cb_cy2
+   JMP dv_emit                             ; (C = 1 from the IB compare)
+dv_fp_slow:
+   LDA zp_line_y_h                         ; yhi
+   CMP POOL_OT,X
+   BCC dv_fp_rej                           ; yhi < OT: entirely above
+   LDA POOL_OB,X
+   CMP zp_line_y_l                         ; C = OB >= ylo
+   BCS dv_fp_exact
+dv_fp_rej:
+   RTS                                     ; entirely outside the aperture
+                                        ; (dv_clipped_away is out of
+                                        ;  branch range from here)
+dv_fp_exact:
 ; Top: constant-line fast path or interp
    LDA POOL_TL,X
    CMP POOL_TR,X
