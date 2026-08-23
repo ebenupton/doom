@@ -366,7 +366,7 @@ tfs_bot_be:                                ; (likewise unreferenced)
    BEQ tfs_pfx_none                        ; empty list                   ;# |          0.1
    LDA zp_i_l                              ; ilo rides A through the scan ;# ||         0.2
    CMP POOL_XEND,X                                                        ;# ||         0.3
-   BCC tfs_pfx_none                        ; head already reaches past ilo ;# |          0.1
+   BCC tfs_pfx_none                        ; head already reaches past ilo ;# |          0.2
    STX zp_head                             ; adopt the prefix as the new list ;# |          0.2
 tfs_pfx_loop:                              ; X = a prefix span
    LDY POOL_NEXT,X                                                        ;# |||        0.4
@@ -517,8 +517,8 @@ tfs_fp_emit:
 ; Each pass handles one interval [cur_x, next_x] over which the
 ; dominating source (record vs pool) is constant on both sides.
 tfs_inner:
-   LDA TFS_CUR_X                                                          ;# |||||      0.6
-   CMP TFS_X_HI                                                           ;# |||||      0.6
+   LDA TFS_CUR_X                                                          ;# |||||      0.5
+   CMP TFS_X_HI                                                           ;# |||||      0.5
    BCC tfs_inner_go                                                       ;# ||||       0.5
    JMP tfs_inner_done                                                     ;# ||         0.3
 tfs_inner_go:

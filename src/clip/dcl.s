@@ -159,16 +159,16 @@ dcl_not_left:
 ; Done if xstart >= xr (all remaining spans are further right)
    LDA POOL_XSTART,X                                                      ;# |||||||||  1.1
    CMP zp_line_xr_l                                                       ;# |||||||    0.8
-   BCS dclw_flush                          ; xstart >= xr → done (18%;    ;# |||||      0.5
+   BCS dclw_flush                          ; xstart >= xr → done (18%;    ;# |||||      0.6
                                            ; backward to the flush island —
                                            ; common case falls, census)
 
 ; --- Compute overlap ---
 ; ox0 = max(xstart, xl) — A already holds POOL_XSTART,X from skip check
-   CMP zp_line_xl_l                                                       ;# ||||||     0.7
+   CMP zp_line_xl_l                                                       ;# ||||||     0.8
    BCC dcl_ox0_lt                          ; INVERTED (census: 85.1% of 754 ;# |||||      0.6
 dcl_ox0_ok:                                ; took the old BCS) — xstart >= xl
-   STA zp_ox0                              ; is the common case, so it falls ;# ||||||     0.7
+   STA zp_ox0                              ; is the common case, so it falls ;# ||||||     0.8
                                         ; through; the xl arm is an island
 ; ox1 = min(xend, xr).
 ; ox1 IS THE EXCLUSIVE CLAIM BOUND, not the last painted column: it
@@ -182,11 +182,11 @@ dcl_ox0_ok:                                ; took the old BCS) — xstart >= xl
 ; which under-tightens every portal edge (measured 2026-08-21:
 ; traversal at (-486,-3307,243) went 6 -> 34 subsectors).
    LDA POOL_XEND,X                                                        ;# ||||||||   1.0
-   CMP zp_line_xr_l                                                       ;# ||||||     0.7
+   CMP zp_line_xr_l                                                       ;# ||||||     0.8
    BCC dcl_ox1_ok                                                         ;# |||||      0.6
    LDA zp_line_xr_l                                                       ;# ||||       0.5
 dcl_ox1_ok:
-   STA zp_ox1                                                             ;# ||||||     0.7
+   STA zp_ox1                                                             ;# ||||||     0.8
 
 ; --- EVERY span is verified.  There is no "continuation" fast path ---
 ; NEVER SPLIT A LINE (Eben's rule, 2026-08-22).  A line is drawn WHOLE
@@ -220,7 +220,7 @@ dcl_entry_path:
 
 ; ========== ENTRY: seg_start is NULL ==========
 ; --- Tier 1: outer bbox reject ---
-   LDA zp_line_y_h                                                        ;# ||||||     0.7
+   LDA zp_line_y_h                                                        ;# ||||||     0.8
    CMP POOL_OT,X                                                          ;# ||||||||   1.0
    BCC dcl_reject_above                                                   ;# ||||||     0.7
 ; yhi < OT → line above aperture
@@ -301,8 +301,14 @@ dcl_exit_check:
 ; was paying a JMP to reach its own fall-through.
    LDA zp_line_yr_l                                                       ;# |||        0.3
    STA zp_tmp0                             ; end_y = yr                   ;# |||        0.3
-   LDA zp_line_xr_l                                                       ;# |||        0.3
-   STA zp_ox1                              ; end_x = xr                   ;# |||        0.3
+; end_x needs NO store: zp_ox1 ALREADY holds it.  dcl_ox1_ok set
+; ox1 = min(xend, xr) for this span, and reaching here means xend >= xr,
+; so that min IS xr.  Nothing rewrites ox1 in between — the only other
+; writers are dcl_emit_open (which preserves it), the CB mid-span-exit
+; arm (which emits and advances, never reaching this check) and the
+; Y-band clip inside dcl_emit_segment (downstream of here).  Asserted
+; empirically too: 394/394 exit-check ends arms on the suite had
+; zp_ox1 == zp_line_xr_l already.
    JMP dcl_emit_segment                    ; tail call: the line is fully ;# |||        0.3
                                         ; consumed, so emit RTSes for us
 dcl_rb_tr:                                 ; the inlined body above pushed
@@ -623,7 +629,7 @@ dv_x:
    BNE dv_x                                                               ;# |||        0.3
    BEQ dvc_rej                             ; list ran out (always taken)  ;#            0.0
 dv_own_x:
-   CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart     ;# ||         0.2
+   CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart     ;# ||         0.3
    BCS dv_in                               ; -> this span owns the column ;# ||         0.2
    RTS                                     ; sorted list: column is solid ;#            0.0
 dv_own_y:
@@ -1121,7 +1127,7 @@ dcl_cb_bot_done:
 ; left the aperture mid-span. The exit check / dcl_emit_open both use
 ; xr/yr or line_y_at(seg_end_x) for the exit, which would be wrong here.
    CMP zp_ox1                              ; A = cx2 from the reject test ;#            0.1
-   BCS dcl_cb_no_exit_clip                                                ;# |          0.1
+   BCS dcl_cb_no_exit_clip                                                ;#            0.1
 ; cx2 < ox1 → the line leaves the aperture INSIDE this span, so the run
 ; genuinely ends at cx2 and is emitted here (segment record written by
 ; emit).  But if a run was already open and this one starts exactly where
@@ -1390,7 +1396,7 @@ dcl_es_record:
 ; many pool spans the segment crossed. Tighten consumer derives
 ; everything from these 4 endpoint values via interp.
    LDA zp_dcl_rec_buf_h                                                   ;# |||        0.4
-   BEQ dcl_es_no_record                                                   ;# |||        0.3
+   BEQ dcl_es_no_record                                                   ;# ||         0.3
    LDA zp_dcl_out                          ; feedback: real pixels emitted ;# ||         0.2
    ORA #$01                                                               ;# |          0.1
    STA zp_dcl_out                                                         ;# ||         0.2
