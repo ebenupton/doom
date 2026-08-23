@@ -379,21 +379,64 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # smeared horizontal runs up to 121 px wide.  obj_X is monotone in its
     # index, so ordering by INDEX is ordering by x, and doing it here costs
     # the 6502 nothing.
+    # TWO templates, laid end to end and SELF-TERMINATING, so the draw loop
+    # needs no per-template length: a 4-byte entry whose first byte is
+    # OBJ_ART_STOPREC stops recording, OBJ_ART_END ends the template.  The
+    # RECORDED lines are therefore always the block's leading run -- the
+    # lid's top arc for the prism, the top edge for the rectangle -- and
+    # the engine plays a template by starting at its offset and reading
+    # until END.  The per-object aspect byte's bit 7 picks which.
+    OBJ_ART_STOPREC, OBJ_ART_END = 0xFE, 0xFF
+    _CTL = lambda b: [b, 0, 0, 0]
     _V = [(4,2),(3,1),(2,0),(1,1),(0,2),(1,3),(2,4),(3,3)]
 
     def _ln(p, q):
+        # LEFT-TO-RIGHT IS A HARD CONTRACT.  draw_clipped_line_s16 requires
+        # x1 <= x2: the in-clipper swap was deleted when the seg layer took
+        # over canonicalising (the 8F.1F "solid bars" fix), so a reversed
+        # line walks the span list WITHOUT emitting or recording.  The lid
+        # arc descends 4,3,2,1,0 in x, so all four ARMED lines were
+        # reversed -- BOT_RECORDS stayed 0, the tighten never fired, and
+        # the reversed walks smeared 121 px horizontal runs.  obj_X is
+        # monotone in its index, so ordering by INDEX is ordering by x.
         if p[0] > q[0]:
             p, q = q, p
         return [p[0]*2, p[1]*2, q[0]*2, q[1]*2]
 
+    # -- octagonal prism (BARRELS ONLY): lid top arc, then the rest -------
     obj_art = []
-    for a_, b_ in [(i, (i+1) % 8) for i in range(8)]:
+    for a_, b_ in [(0,1),(1,2),(2,3),(3,4)]:            # top arc: RECORDED
         obj_art += _ln(_V[a_], _V[b_])
-    for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:
+    obj_art += _CTL(OBJ_ART_STOPREC)
+    for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:            # lid, lower arc
+        obj_art += _ln(_V[a_], _V[b_])
+    for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:            # base, visible edges
         obj_art += _ln((_V[a_][0], _V[a_][1]+5), (_V[b_][0], _V[b_][1]+5))
-    for v in (0, 4):
+    for v in (0, 4):                                    # silhouette verticals
         obj_art += _ln(_V[v], (_V[v][0], _V[v][1]+5))
+    obj_art += _CTL(OBJ_ART_END)
+    off_art_oct = 0
+
+    # -- plain outline rectangle (everything that is not a barrel) --------
+    # Y index 9 is Y[4] + dy = (yt + 2b) + dy = yt + H/8 + 7H/8 = syb, so
+    # the rectangle spans exactly the projected top and bottom.
+    off_art_rect = len(obj_art)
+    obj_art += _ln((0, 0), (4, 0))                      # top edge: RECORDED
+    obj_art += _CTL(OBJ_ART_STOPREC)
+    obj_art += _ln((0, 9), (4, 9))
+    obj_art += _ln((0, 0), (0, 9))
+    obj_art += _ln((4, 0), (4, 9))
+    obj_art += _CTL(OBJ_ART_END)
+
+    # The engine turns the aspect byte's bit 7 straight into a start
+    # offset, so these two must be exactly what layout.inc's OBJ_ART_OCT /
+    # OBJ_ART_RECT say. Assert rather than plumb a constant through.
+    assert off_art_oct == 0 and off_art_rect == 64, \
+        f"art block offsets moved ({off_art_oct}, {off_art_rect}) -- " \
+        f"update OBJ_ART_OCT/OBJ_ART_RECT in layout.inc to match"
     for _e in range(0, len(obj_art), 4):
+        if obj_art[_e] >= OBJ_ART_STOPREC:
+            continue
         assert obj_art[_e] <= obj_art[_e+2], \
             f"billboard art line {_e//4} is reversed -- draw_clipped_line_s16 " \
             f"requires x1 <= x2 and will silently drop its tighten record"
@@ -408,10 +451,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         assert -512 <= _px < 512 and -512 <= _py < 512, \
             f"object {_i} {(_px, _py)} outside the page-decomposed range"
         assert 0 <= _o['ss'] < 256, "subsector id must fit u8"
-        assert 0 < _o['rc'] < 256, "object radius (counts) must fit u8"
+        # k <= 63 keeps H*k/64 inside a u8 for any H (max 251), so the
+        # engine's half-width needs no clamp.
+        assert 0 < (_o['asp'] & 0x7F) < 64, "object width ratio must be 1..63"
         for _pl, _v in enumerate((_px & 0xFF, _py & 0xFF,
                                   (((_px >> 8) + 2) & 3) | ((((_py >> 8) + 2) & 3) << 2),
-                                  _o['ss'], _o['rc'],
+                                  _o['ss'], _o['asp'],
                                   _o['zt'] & 0xFF, _o['zb'] & 0xFF)):
             rom_main[off_obj + _pl * n_obj + _i] = _v
         rom_main[off_obj_bits + (_o['ss'] >> 3)] |= 1 << (_o['ss'] & 7)

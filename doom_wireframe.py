@@ -1567,25 +1567,41 @@ print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
 # and barrels.  The 68 pickups/gibs are h=16 and would render as floor
 # litter, so they are left out; monsters are excluded because they are
 # not static in principle, even with no AI to move them.
-# type -> (radius, height) in world units, from DOOM's mobjinfo.
-_OBJ_KINDS = {35: (16, 60),     # Candelabra
-              48: (16, 128),    # Tall techno pillar
-              2028: (16, 48),   # Floor lamp
-              2035: (10, 42)}   # Barrel
+# type -> (radius, height, art, k) in world units, from DOOM's mobjinfo.
+#
+# `art` picks the billboard template (see wad_packed): the octagonal prism
+# is BARREL art and stays barrel-only -- a floor lamp drawn as a squat
+# eight-sided drum reads as a barrel, not a lamp.  Everything else keeps the
+# plain outline rectangle it had before the barrel work.
+#
+# `k` is the width ratio, 64ths: half_width_screen = H * k / 64, where H is
+# the object's projected screen height.  Both scale by the same 1/depth, so
+# k = 64 * radius / height is exact -- no projection of the radius needed.
+# The barrel overrides to 23, the value matched against the DOOM sprite
+# (whose art is wider than its 10-unit collision radius).
+_ART_OCT, _ART_RECT = 0, 1
+def _obj_kind(r, h, art=_ART_RECT, k=None):
+    return (r, h, art, k if k is not None else max(1, min(127, round(64 * r / h))))
+_OBJ_KINDS = {35:   _obj_kind(16, 60),                      # Candelabra
+              48:   _obj_kind(16, 128),                     # Tall techno pillar
+              2028: _obj_kind(16, 48),                      # Floor lamp
+              2035: _obj_kind(10, 42, _ART_OCT, 23)}        # Barrel
 fp_objects = []
 for _th in things:
     _tx, _ty_, _ta, _tt, _tfl = _th
     if _tt not in _OBJ_KINDS or (_tfl & 0x10):   # skip multiplayer-only
         continue
-    _r, _h = _OBJ_KINDS[_tt]
+    _r, _h, _art, _k = _OBJ_KINDS[_tt]
     _fz = player_floor(_tx, _ty_)
     fp_objects.append(dict(
         ss=find_subsector(_tx, _ty_),
         x=_prescale_round(_tx - MAP_CENTER_X, PRESCALE),
         y=_prescale_round(_ty_ - MAP_CENTER_Y, PRESCALE),
-        # radius in s16 COUNTS (K=32/unit) straight from world units, so
-        # it keeps sub-unit precision the prescaled grid would round away
-        rc=max(1, round(_r * 32 / PRESCALE)),
+        # ONE byte carries both: bit 7 = art template, bits 0-6 = the width
+        # ratio k.  This is the plane that used to hold the radius in
+        # counts, which the draw stopped reading when the billboard became
+        # a scaled stamp -- the width now falls out of H and k.
+        asp=(_art << 7) | _k,
         zb=_prescale_height(_fz),
         zt=_prescale_height(_fz + _h)))
 fp_objects.sort(key=lambda o: o['ss'])           # 6502 scans a run per ss

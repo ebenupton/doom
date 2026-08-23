@@ -63,6 +63,8 @@ obj_k     = $112F
 obj_best  = $1130
 obj_ss    = $1131
 obj_mask  = $1132
+obj_asp   = $114B   ; live object's aspect byte (bit 7 = art, 0-6 = k)
+obj_sasp  = $114C   ; [OBJ_MAXSLOT]
 
 OBJ_MAXSLOT = 3                            ; most objects in one subsector
                                         ; is 3 (wad_packed asserts it)
@@ -296,7 +298,10 @@ obj_recip_done:
    STA obj_yb_h
 ; --- park the projected rectangle in a slot; the draw happens later,
 ;     nearest-first, because each billboard tightens behind itself ---
+   LDX obj_i                               ; project_y clobbered X
+   LDA OBJ_ASP,X                           ; art template + width ratio
    LDY obj_n
+   STA obj_sasp,Y
    LDA zp_br_vy_l
    STA obj_sd_l,Y
    LDA zp_br_vy_h
@@ -365,6 +370,8 @@ obj_ds_go:
    STA obj_yb_l
    LDA obj_syb_h,X
    STA obj_yb_h
+   LDA obj_sasp,X                          ; X stops being the slot below
+   STA obj_asp                             ; (the a7/b7 loop takes it)
    SEC                                     ; H = syb - syt
    LDA obj_yb_l
    SBC obj_yt_l
@@ -376,35 +383,27 @@ obj_ds_go:
    LDA #255                                ; very near: clamp the scale
    STA obj_h
 obj_hok:
-   LDA obj_h                               ; (no minimum-height cull: below a
-   LSR A                                   ; a = 23H/64   few px every offset
-                                        ; rounds to zero, the whole stamp
-                                        ; collapses to one point and the
-                                        ; clipper rejects each zero-length
-                                        ; line -- and CODE has no room for
-                                        ; the test)
-   LSR A
-   STA obj_t
-   STA obj_a
-   LSR A
-   LSR A
-   CLC
-   ADC obj_a
-   STA obj_a
-   LDA obj_t
-   LSR A
-   LSR A
-   LSR A
-   CLC
-   ADC obj_a
-   STA obj_a
-   LDA obj_t
-   LSR A
-   LSR A
-   LSR A
-   LSR A
-   CLC
-   ADC obj_a
+; a = H * k / 64, k = the object's width ratio in 64ths.  A billboard's
+; half width and its height both scale by the same 1/depth, so k is just
+; 64*radius/height and no projection of the radius is needed.  The old
+; code hardwired the BARREL's 23/64 as a four-term shift chain; one
+; quarter-square mul is both general and ~21 bytes SHORTER.  k <= 63 and
+; H <= 255 are asserted in the baker, so the product cannot exceed
+; 251 -- a stays u8 with no clamp.
+; (No minimum-height cull: below a few px every offset rounds to zero,
+;  the stamp collapses to a point, and the clipper rejects each
+;  zero-length line.)
+   LDA obj_h
+   STA zp_mul_b
+   LDA obj_asp
+   AND #$7F
+   JSR umul8
+   LDA zp_prod_l                           ; >> 6 == << 2 then take the hi
+   ASL A
+   ROL zp_prod_h
+   ASL A
+   ROL zp_prod_h
+   LDA zp_prod_h
    STA obj_a
    LDA obj_h                               ; b = H/16
    LSR A
@@ -539,12 +538,22 @@ obj_ycp:
    STA zp_dcl_rec_off
    LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h                    ; armed for the lid's top arc
-   LDA #0
+; Start at this object's template.  Bit 7 of the aspect byte IS the
+; selector: barrels get the octagonal prism, everything else the plain
+; outline rectangle it had before the prism existed -- a floor lamp drawn
+; as a squat eight-sided drum reads as a barrel, not a lamp.
+   LDA #OBJ_ART_OCT
+   BIT obj_asp
+   BPL obj_art_set
+   LDA #OBJ_ART_RECT
+obj_art_set:
    STA obj_e
 obj_stamp:
    PAGE BANK_SEG                           ; the art template lives with the
    LDX obj_e                               ; object data (CODE is full)
    LDY OBJ_ART+0,X
+   CPY #OBJ_ART_STOPREC                    ; control entry? ($FE/$FF)
+   BCS obj_ctl
    LDA obj_X+0,Y
    STA zp_line_xl_l
    LDA obj_X+1,Y
@@ -566,17 +575,23 @@ obj_stamp:
    STA zp_line_yr_h
    PAGE BANK_C
    JSR draw_clipped_line_s16
+obj_st_next:
    LDA obj_e
    CLC
    ADC #4
    STA obj_e
-   CMP #16                                 ; lid top arc done -> stop
-   BNE obj_st_on                           ; recording
+   JMP obj_stamp
+; Control entries end the template ($FF) or stop recording ($FE), so the
+; two art blocks need no per-template length and the RECORDED lines are
+; always the block's leading run.  PAGE eats A but not Y, so the second
+; test costs one CPY rather than a saved flag.
+obj_ctl:
+   PAGE BANK_C
+   CPY #OBJ_ART_END
+   BEQ obj_art_done
    ZERO zp_dcl_rec_buf_h
-obj_st_on:
-   LDA obj_e
-   CMP #4*LAY_N_OBJ_ART
-   BCC obj_stamp
+   JMP obj_st_next
+obj_art_done:
 ; --- close the columns behind it -----------------------------------------
    LDA BOT_RECORDS
    BEQ obj_dsx

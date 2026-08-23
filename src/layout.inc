@@ -87,12 +87,23 @@ OBJ_OX   = ROM_OBJ_C + 0*LAY_N_OBJ      ; x offset lo
 OBJ_OY   = ROM_OBJ_C + 1*LAY_N_OBJ      ; y offset lo
 OBJ_PG   = ROM_OBJ_C + 2*LAY_N_OBJ      ; page nibble (x b0-1, y b2-3)
 OBJ_SS   = ROM_OBJ_C + 3*LAY_N_OBJ      ; home subsector id (u8)
-OBJ_RC   = ROM_OBJ_C + 4*LAY_N_OBJ      ; half-width in s16 COUNTS
+OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
+                                        ; bits 0-6 = width ratio k in
+                                        ; 64ths (half_width = H*k/64).
+                                        ; Was the radius in counts, dead
+                                        ; since the billboard became a
+                                        ; scaled stamp.
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-LAY_N_OBJ_ART = 14                 ; billboard art lines
-OBJ_ART  = OBJ_BITS + 28                ; the template itself: 14 x
+LAY_N_OBJ_ART = 22                 ; billboard art entries, BOTH templates
+                                   ; (16 prism + 6 rectangle, control
+                                   ;  entries included)
+OBJ_ART_OCT  = 0                   ; octagonal prism -- BARRELS ONLY
+OBJ_ART_RECT = 64                  ; plain outline rectangle -- the rest
+OBJ_ART_STOPREC = $FE              ; entry: stop recording, keep drawing
+OBJ_ART_END     = $FF              ; entry: template finished
+OBJ_ART  = OBJ_BITS + 28                ; the templates: 22 x
                                         ; (x1,y1,x2,y2) pre-doubled indices.
                                         ; It lives HERE, not in CODE -- CODE
                                         ; is full, and the stamp loop pages
@@ -101,7 +112,7 @@ OBJ_ART  = OBJ_BITS + 28                ; the template itself: 14 x
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B8FF, banked frees
 ;  $A800-$A9FF in L2; the flat object table lives in that freed run)
-.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 <= ROM_OBJ_C + $200, error, "object table overruns its 512-byte hole"
+.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 + 4*LAY_N_OBJ_ART <= ROM_OBJ_C + $200, error, "object table overruns its 512-byte hole"
 ; Per-SUBSECTOR front heights (2026-08-17): fh/ch are subsector-constant, so
 ; they ride two pages in the header blob instead of 2 bytes x every seg. Read
 ; under BANK_SEG with X = the subsector id (already live in the prologue).
