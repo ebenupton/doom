@@ -115,16 +115,31 @@ def write_tube_syms():
                      ('T_PMOVE_USE', 'pmove_use'),
                      ('T_PM_UX', 'pm_ux')):
             f.write(f"{t} = &{fsym(s):04X}\n")
-        # pm_frame's driver-variable contract (abi constants, not map syms)
-        for t, v in (('T_DV_ANGIDX', abi.DV_ANGIDX), ('T_DV_PXF', abi.DV_PXF),
-                     ('T_DV_PXL', abi.DV_PXL), ('T_DV_PXH', abi.DV_PXH),
-                     ('T_DV_PYF', abi.DV_PYF), ('T_DV_PYL', abi.DV_PYL),
-                     ('T_DV_PYH', abi.DV_PYH),
-                     ('T_PM_TURNREM', abi.PM_TURNREM)):
+        # pm_frame's driver-variable contract (abi constants, not map syms).
+        # The parasite runs the FLAT build, so take the _FLAT value wherever
+        # the symbol forked -- DRV_VARS did, and the DV_* derive from it.
+        def _flat(n):
+            return getattr(abi, n + '_FLAT', getattr(abi, n))
+        for t, v in (('T_DV_ANGIDX', _flat('DV_ANGIDX')), ('T_DV_PXF', _flat('DV_PXF')),
+                     ('T_DV_PXL', _flat('DV_PXL')), ('T_DV_PXH', _flat('DV_PXH')),
+                     ('T_DV_PYF', _flat('DV_PYF')), ('T_DV_PYL', _flat('DV_PYL')),
+                     ('T_DV_PYH', _flat('DV_PYH')),
+                     ('T_PM_TURNREM', _flat('PM_TURNREM'))):
             f.write(f"{t} = &{v:04X}\n")
         f.write(f"T_RCACHE_STATE = &{abi.RCACHE_STATE_FLAT:04X}\n")
         import colmap as _cm
         f.write(f"T_USEVEC = &{_cm.USEVEC_FLAT:04X}\n")
+        # TRIPWIRE lives in src/layout.inc (ca65). Parse it rather than
+        # keeping a second copy: the driver AND the host both gate on it,
+        # and a drifted copy would silently half-enable the thing.
+        import re as _re
+        _tw = _re.search(r'^TRIPWIRE\s*=\s*(\d+)',
+                         open('src/layout.inc').read(), _re.M)
+        _twv = int(_tw.group(1)) if _tw else 0
+        f.write(f"T_TRIPWIRE = {_twv}\n")
+        if _twv:
+            f.write(f"T_TW_CHECK = &{fsym('tw_check'):04X}\n")
+            f.write(f"T_ZP_TW = &{fsym('zp_tw'):04X}\n")
         f.write(f"T_RCACHE_LEN = &{abi.RCACHE_STATE_LEN & 0xFF:02X}\n")
         f.write(f"T_VXC_STATE = &{abi.VXC_STATE:04X}\n")
         f.write(f"T_VXC_LEN = &{abi.VXC_STATE_LEN:02X}\n")

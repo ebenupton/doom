@@ -51,8 +51,8 @@ RING = 0x3000                                  # wrh is masked &0F ORA &30
 # angidx 0x3D -> angle byte 0xF4; x = $FFE6.D2, y = $001D.E3
 PAYLOAD = [0x3D, 0xD2, 0xE6, 0x00,
            0xFF, 0xE3, 0x1D, 0x00,
-           0x00, 0x00, 0x00, 0x00]
-EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4"
+           0x00, 0x5C, 0x03, 0x00]      # 9 = TRIPWIRE latch, 10 = PAL fields
+EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03"
 
 
 # The REAL 'A' and '0' glyphs (identical in OS 1.2 and MOS 3.20) -- the

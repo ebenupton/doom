@@ -15,6 +15,20 @@
 \ same ZP contract with the engine ($00-$0A, $90-$93, $9D/$9E, BCA_AB).
 INCLUDE "tube/tube_syms.inc"    \ generated: flat engine addresses + spawn
 
+\ TRIPWIRE (debug): id must be NON-ZERO. Transparent -- A, X, Y and the
+\ flags all survive, so a checkpoint can go anywhere. FIRST WRITER WINS,
+\ so the surviving id names the EARLIEST phase that saw the corruption.
+MACRO TW id
+IF T_TRIPWIRE
+    PHP
+    PHA
+    LDA #id
+    JSR T_TW_CHECK
+    PLA
+    PLP
+ENDIF
+ENDMACRO
+
 R1S=&FEF8
 R1D=&FEF9
 R2S=&FEFA
@@ -260,9 +274,11 @@ ORG &EA00                       \ the FB region: the copro never
 \ step_back / bounds_or_revert did a fixed step per mask and a plain
 \ rectangle clamp: no collision, no slide, and a speed that tracked the
 \ frame rate.  (No bank paging here: the copro runs the FLAT engine.)
+    TW 1                        \ frame start, before any engine work
     LDA fields
     LDX mask                    \ b0 fwd b1 back b2 left b3 right -- the
     JSR T_PM_FRAME              \ mask bit order IS walk_drv's mv_in order
+    TW 2                        \ after pm_frame (rotation + position)
 \ ---- SPACE: DOOM 'use' on the PRESS EDGE (doors) -----------------------
 \ Every DR door on the map is "shut until used" (anim_sectors), so with no
 \ use path the copro's doors could never open -- the lifts self-cycle,
@@ -294,6 +310,7 @@ ORG &EA00                       \ the FB region: the copro never
 .spclr
     STA space_prev              \ A = 0 here
 .spdone
+    TW 3                        \ after the SPACE use / door sense
 \ ---- pose -> engine ZP (pm_frame wrote DV_* and the $90-$93 raws) ------
     LDA T_DV_PXF
     STA &00
@@ -307,6 +324,7 @@ ORG &EA00                       \ the FB region: the copro never
     STA &03
     LDA T_DV_PYH
     STA &9E
+    TW 4                        \ after the pose copy to engine ZP
     JSR T_PMOVE_ZONLY           \ DOOM z: rides live lifts (walk_drv's
     LDA T_PM_VZ                 \ mv_reval).  derive_raw is gone: the
     STA &04                     \ $90-$93 raws are pm_frame's exit contract
@@ -341,10 +359,15 @@ ORG &EA00                       \ the FB region: the copro never
     INY
     LDA (&EC),Y
     STA T_BCA_AB                \ view angle byte
+    TW 5                        \ after pmove_zonly + the sincos copy
     JSR T_ANIM_TICK             \ advance door/lift movers
+    TW 6                        \ after anim_tick
     JSR T_VIEW_SETUP            \ br_view_setup (flat: no banking)
+    TW 7                        \ after view_setup
     JSR T_SPAN_INIT             \ span_init / pool
+    TW 8                        \ after span_init
     JSR T_RENDER_FRAME          \ lines leave via the &A900 emitters
+    TW 9                        \ after render_frame -- THE big phase
 \ ---- HUD packet: FE FE FE FE + 12 payload bytes -----------------------
 \ The HOST draws the HUD, not the copro: the parasite has no framebuffer
 \ and no OS font ($C000 is its own DATA span), so it just ships its pose
@@ -372,8 +395,13 @@ ORG &EA00                       \ the FB region: the copro never
     LDA T_DV_PYL    : JSR send1
     LDA #0          : JSR send1
     LDA T_DV_PYH    : JSR send1
-    LDA #0          : JSR send1
-    LDA #0          : JSR send1
+IF T_TRIPWIRE
+    LDA T_ZP_TW                     \ TRIPWIRE latch -> the HUD's T= field
+ELSE
+    LDA #0
+ENDIF
+    JSR send1
+    LDA fields      : JSR send1     \ PAL fields this frame -> the HUD's F=
     LDA #0          : JSR send1
     LDA #&FF                    \ end of frame
     JSR send1

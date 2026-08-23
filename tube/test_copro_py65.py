@@ -183,7 +183,12 @@ def main():
         h = state['hud']
         want = [base[T['DV_ANGIDX']], base[T['DV_PXF']], base[T['DV_PXL']], 0,
                 base[T['DV_PXH']], base[T['DV_PYF']], base[T['DV_PYL']], 0,
-                base[T['DV_PYH']], 0, 0, 0]
+                base[T['DV_PYH']],
+                base[T['ZP_TW']] if 'ZP_TW' in T else 0,
+                base[T['FIELDS']] if 'FIELDS' in T else None, 0]
+        if want[10] is None:                       # `fields` is a driver var,
+            want[10] = h[10]                       # not an exported symbol
+
         hud_ok = (h == want)
         if not hud_ok:
             print(f"HUD FAIL: packet {h} != driver pose {want}")

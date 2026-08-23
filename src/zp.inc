@@ -273,7 +273,10 @@ zp_seg_ep = $26                   ; [bsp]; per-endpoint STRUCT offset into
 ; VX1 (0 = v1, 15 = VX_STRIDE = v2): the generators write evy/evx/sx/sy/
 ; recip DIRECTLY into the endpoint structs via ,X = this offset. Set by
 ; the seg loop before each transform / projection / reprojection.
-; $27 still FREE.
+; $27 -> zp_tw (TRIPWIRE, debug). Verified free by poisoning it and
+; running the full render + anim_tick + pm_frame: zero writes, unlike
+; $4C/$7C/$CA/$C6/$1F which all carry stale FREE notes and ARE written.
+zp_tw = $27                       ; [debug]; tripwire latch, 0 = not tripped
 zp_ri_d_l = $28                   ; [bsp]
 ; $29 FREE (2026-07-09): zp_seg_bfh retired — back floor read on demand
 ; from header+12 via (zp_seg_hdr_p),Y (stride-16 heights; solids never
@@ -645,5 +648,21 @@ EPSILON_F = 12
                                         ; ABOVE the 22K line ($5800 area) —
                                         ; the bottom-22K map is IDENTICAL
                                         ; between builds (Eben, 2026-08-09)
+.endif
+.endmacro
+
+
+; --- TRIPWIRE call macro (see layout.inc / tw_check in bsp/header.s) ---
+; TW id  -- id must be NON-ZERO. Fully transparent: A, X, Y and the flags
+; all survive, so a site can be dropped anywhere, including between a
+; compare and its branch.
+.macro TW id
+.if TRIPWIRE
+   PHP
+   PHA
+   LDA #id
+   JSR tw_check
+   PLA
+   PLP
 .endif
 .endmacro

@@ -646,6 +646,36 @@ sqr2_h = SQR2_HI
 ;   needed. (The uo path enters SBC with carry set from the ADC overflow,
 ;   which is exactly the required borrow-clear.)
 ; ============================================================================
+; ============================================================================
+; tw_check — TRIPWIRE (debug, layout.inc TRIPWIRE=1).
+;
+; A = a NON-ZERO checkpoint id. If the watched byte has changed away from
+; TW_WANT and the latch is still clear, record this id. FIRST WRITER WINS,
+; so the id that survives names the EARLIEST checkpoint that saw the
+; corruption -- which brackets it between that call site and the previous
+; one.
+;
+; Transparent to the caller: the TW macro saves flags and A around it, and
+; this body touches neither X nor Y. The latch is never cleared per frame:
+; we want the first occurrence ever, not the most recent.
+; ============================================================================
+.if TRIPWIRE
+.export tw_check
+tw_check:
+   PHA
+   LDA zp_tw
+   BNE twc_out                             ; already tripped: keep the first
+   LDA TW_ADDR
+   CMP #TW_WANT
+   BEQ twc_out                             ; still intact
+   PLA
+   STA zp_tw
+   RTS
+twc_out:
+   PLA
+   RTS
+.endif
+
 umul8:
 .scope
    TAX                                     ; stash a in X (was zp_tmp0: the

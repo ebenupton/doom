@@ -47,7 +47,7 @@ ABI = [
     ('SQR_HI',         'SQRH_BASE+$000', None, 'qsqr hi bytes (f 0..255)'),
     ('SQR2_HI',        'SQRH_BASE+$100', None, 'qsqr hi bytes (f 256..510)'),
     ('DRV_ORG',        0x1A00, None, 'walk/anim driver entry (!BOOT CALLs this). $1E00 -> $1A00 2026-08-19 (the -$400 window slide, bank-B code eviction): the exception window is $1A00-$25FF — banked walk_drv+PMOVE, flat VXC_YLO/YHI + CPM keys + records + PM_SCRATCH + PMH.'),
-    ('DRV_VARS',       0x1B80, None, 'walk driver variable block (layout below)'),
+    ('DRV_VARS',       0x1B80, 0x1180, 'walk driver variable block (layout below). PER-BUILD since 2026-08-24: banked keeps $1B80, which is carved out of walk_drv\'s own ORG\'d space (walk_drv ASSERTs its code ends below it). FLAT moves to $1180 because $1B00-$1BFF there is the SENIOR page of VXC_YLO: the seg pipeline cached vertices 384..396 straight over this block -- vertex 387 landed on DV_PXL and the player X jumped mid-turn. Banked never saw it (VXC lives in bank A), so only the TUBE, which runs the flat engine with a driver, was corrupted. $1180 verified clear by poisoning $1100-$11FF and running render+anim_tick+pm_frame.'),
     ('DV_ANGIDX',      'DRV_VARS+0',  None, 'view angle index 0..63 (angle byte = idx*4)'),
     ('DV_BACKHI',      'DRV_VARS+1',  None, 'hidden-buffer page hi ($58/$6C)'),
     ('DV_PXF',         'DRV_VARS+2',  None, 'player x 8.8 prescaled, 24-bit: frac'),
@@ -143,15 +143,24 @@ with open('abi_beeb.inc', 'w') as f:
 
 with open('abi.py', 'w') as f:
     f.write(f'# {HDR.replace(chr(10), chr(10)+"# ")}\n')
-    env = {}
+    env = {}        # banked values
+    envf = {}       # flat values -- so a symbol DERIVED from a per-build
+                    # base (DV_PXL = DRV_VARS+3) gets its own _FLAT, instead
+                    # of silently inheriting the banked base. That gap put
+                    # the tube driver at $1B83 and the flat engine at $1183
+                    # after DRV_VARS forked.
     for name, bank, flat, comment in ABI:
         v = bank
         if isinstance(v, str):
             v = eval(v.replace('$', '0x'), {}, env)
         env[name] = v
+        vf = flat if flat is not None else bank
+        if isinstance(vf, str):
+            vf = eval(vf.replace('$', '0x'), {}, envf)
+        envf[name] = vf
         f.write(f'{name} = 0x{v:04X}  # {comment}\n' if v > 9
                 else f'{name} = {v}  # {comment}\n')
-        if flat is not None and flat != bank:
-            f.write(f'{name}_FLAT = 0x{flat:04X}\n')
+        if vf != v:
+            f.write(f'{name}_FLAT = 0x{vf:04X}\n')
 
 print('wrote src/abi.inc, abi_beeb.inc, abi.py')

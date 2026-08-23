@@ -54,6 +54,10 @@ zp_tmp1 = &DF
 zp_tmp2 = &E0
 zp_plot_i = &95
 
+INCLUDE "tube/tube_syms.inc"    \ generated -- for T_TRIPWIRE, so the host's
+                                \ debug field is gated by the SAME constant
+                                \ the parasite is
+
 HAMILTONIAN_12 = TRUE
 STEEP_COMPACT = TRUE
 HAMILTONIAN_23 = FALSE
@@ -565,6 +569,18 @@ ORG &1900
     ASL A
     ASL A                       \ angle byte = angidx*4, as src/hud.s
     JSR hudhex
+    LDA #' ' : JSR hudchar      \ F = PAL fields the last frame consumed,
+    LDA #'F' : JSR hudchar      \ i.e. how many 1/50ths that frame cost --
+    LDA #'=' : JSR hudchar      \ the copro's own frame-rate readout
+    LDA hudb+10
+    JSR hudhex
+IF T_TRIPWIRE
+    LDA #' ' : JSR hudchar      \ TRIPWIRE latch: the id of the EARLIEST
+    LDA #'T' : JSR hudchar      \ checkpoint that saw the watched byte
+    LDA #'=' : JSR hudchar      \ corrupted. 00 = nothing has tripped.
+    LDA hudb+9
+    JSR hudhex
+ENDIF
     RTS
 .hudhex                         \ A = byte -> two hex cells
     PHA

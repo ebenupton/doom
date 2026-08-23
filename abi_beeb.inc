@@ -16,7 +16,7 @@ SQRH_BASE = &0400                       \ quarter-square HI pages ($0400/$0500).
 SQR_HI = SQRH_BASE+&000                 \ qsqr hi bytes (f 0..255)
 SQR2_HI = SQRH_BASE+&100                \ qsqr hi bytes (f 256..510)
 DRV_ORG = &1A00                         \ walk/anim driver entry (!BOOT CALLs this). $1E00 -> $1A00 2026-08-19 (the -$400 window slide, bank-B code eviction): the exception window is $1A00-$25FF — banked walk_drv+PMOVE, flat VXC_YLO/YHI + CPM keys + records + PM_SCRATCH + PMH.
-DRV_VARS = &1B80                        \ walk driver variable block (layout below)
+DRV_VARS = &1B80                        \ walk driver variable block (layout below). PER-BUILD since 2026-08-24: banked keeps $1B80, which is carved out of walk_drv's own ORG'd space (walk_drv ASSERTs its code ends below it). FLAT moves to $1180 because $1B00-$1BFF there is the SENIOR page of VXC_YLO: the seg pipeline cached vertices 384..396 straight over this block -- vertex 387 landed on DV_PXL and the player X jumped mid-turn. Banked never saw it (VXC lives in bank A), so only the TUBE, which runs the flat engine with a driver, was corrupted. $1180 verified clear by poisoning $1100-$11FF and running render+anim_tick+pm_frame.
 DV_ANGIDX = DRV_VARS+0                  \ view angle index 0..63 (angle byte = idx*4)
 DV_BACKHI = DRV_VARS+1                  \ hidden-buffer page hi ($58/$6C)
 DV_PXF = DRV_VARS+2                     \ player x 8.8 prescaled, 24-bit: frac

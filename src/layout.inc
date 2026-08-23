@@ -61,6 +61,16 @@ ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 ; --- static object (billboard) planes: SoA, one X indexes every field ---
 ; Positions use the SAME page-decomposed encoding as the vertex planes
 ; (u8 offset + page nibble), so an object stages exactly like a vertex.
+; --- TRIPWIRE: first-writer-wins corruption catcher (debug) ------------
+; Hunting the tube's player-X corruption: the middle byte of the player X
+; position is $EE while standing at the spawn column, and something moves
+; it. TW sites latch the FIRST checkpoint id to observe the change, so the
+; id that comes back names the phase the corruption happened in.
+; Set TRIPWIRE = 0 to compile every call site out.
+TRIPWIRE = 0
+TW_ADDR  = DV_PXL                       ; watched byte
+TW_WANT  = $EE                          ; its value while standing still
+
 OBJ_DRAW = 1                            ; static-object billboards.  ON
                                         ; since 2026-08-23: the octagonal
                                         ; barrel art fits banked CODE now
