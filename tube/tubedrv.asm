@@ -46,6 +46,11 @@ ORG &EA00                       \ the FB region: the copro never
     EQUB 0
 .fields
     EQUB 0                      \ PAL fields since the last rendered frame
+.spraw
+    EQUB 0                      \ SPACE, STICKY across a multi-mask drain:
+                                \ a press must never be lost to a burst
+.space_prev
+    EQUB 0                      \ press-edge state, as walk_drv's
                                 \ (masks drained), pm_frame's A argument.
                                 \ The pose lives in DV_* now -- pm_frame
                                 \ reads and writes it there.
@@ -218,14 +223,20 @@ ORG &EA00                       \ the FB region: the copro never
     BPL wm
     LDA #0
     STA fields
+    STA spraw
 .mloop
     LDA R1D
-    TAX                         \ b0-3 = keys, b4-7 = elapsed PAL fields
-    AND #&0F                    \ (HOSTT packs the count because R1
-    STA mask                    \  host->parasite is ONE BYTE, not a
-    TXA                         \  FIFO -- draining masks could never
-    LSR A                       \  measure elapsed time, it would always
-    LSR A                       \  find exactly one)
+    TAX                         \ b0-3 = keys, b4-6 = elapsed PAL fields,
+    AND #&0F                    \ b7 = SPACE (HOSTT packs the count because
+    STA mask                    \ R1 host->parasite is ONE BYTE, not a
+    TXA                         \ FIFO -- draining masks could never
+    AND #&80                    \ measure elapsed time, it would always
+    ORA spraw                   \ find exactly one)
+    STA spraw
+    TXA
+    AND #&70
+    LSR A
+    LSR A
     LSR A
     LSR A
     CLC
@@ -252,6 +263,37 @@ ORG &EA00                       \ the FB region: the copro never
     LDA fields
     LDX mask                    \ b0 fwd b1 back b2 left b3 right -- the
     JSR T_PM_FRAME              \ mask bit order IS walk_drv's mv_in order
+\ ---- SPACE: DOOM 'use' on the PRESS EDGE (doors) -----------------------
+\ Every DR door on the map is "shut until used" (anim_sectors), so with no
+\ use path the copro's doors could never open -- the lifts self-cycle,
+\ which is exactly why only the DOORS looked frozen while anim_tick,
+\ anim_hub and the mover state machine were all provably running.
+\ Must come AFTER pm_frame: $90-$93 are its exit contract and pmove_use
+\ traces from them.  (No bank paging: the copro runs the FLAT engine, so
+\ walk_drv's PAGE BANK_C around USEVEC has no counterpart here.)
+    LDA spraw
+    BEQ spclr
+    LDA space_prev
+    BNE spdone
+    LDA #1
+    STA space_prev
+    LDA T_DV_ANGIDX             \ USEVEC entry = 4 bytes (ux,uy s16 raw)
+    ASL A
+    ASL A
+    TAX
+    LDY #0
+.spuv
+    LDA T_USEVEC,X
+    STA T_PM_UX,Y
+    INX
+    INY
+    CPY #4
+    BNE spuv
+    JSR T_PMOVE_USE
+    JMP spdone
+.spclr
+    STA space_prev              \ A = 0 here
+.spdone
 \ ---- pose -> engine ZP (pm_frame wrote DV_* and the $90-$93 raws) ------
     LDA T_DV_PXF
     STA &00

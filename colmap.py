@@ -318,6 +318,14 @@ USE_TRACE = 60            # SPACE trace length (raw units; DOOM uses 64)
 #  moved into.)
 
 
+# Flat/tube home for the SPACE use-trace vectors.  Banked builds get them
+# from banked_bsp (ROM_DRV_USEVEC_C, bank C); the parasite has no banks, so
+# they ship in the DATA file.  $B800-$B8FF is the tail of the run the
+# vertex-block shrink freed ($B700-$B8FF) whose head the object table uses:
+# all-zero in the shipped image, and clear of NODE_SOA at $B900.
+USEVEC_FLAT = 0xB800
+
+
 def use_vectors():
     """64 x 4: (ux, uy) s16 raw-unit SPACE trace vectors."""
     import math, struct
@@ -351,7 +359,7 @@ def blobs(flat=True):
     if flat:
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
                  minpass=0xE910, mv_ss_id=0xE980, mv_ss_info=0xE988,
-                 usetab=0xE918)
+                 usetab=0xE918, usevec=USEVEC_FLAT)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -416,6 +424,12 @@ def blobs(flat=True):
            A['mv_ss_id']: _ids, A['mv_ss_info']: _inf,
            A['usetab']: bytes(ub),
            _abi0.COLPORT_BASE: bytes(pb)}
+    if flat:
+        # The tube driver's SPACE 'use' needs these; walk_drv reads the
+        # bank-C copy banked_bsp seeds, which the parasite cannot page to.
+        uv = use_vectors()
+        assert A['usevec'] + len(uv) <= 0xB900, 'USEVEC reaches NODE_SOA'
+        out[A['usevec']] = uv
     # (the bank-B $A900 / flat $8400 staging emits died 2026-08-18: at
     #  $1A00 the ports ship directly inside LOW / the tube CODE file,
     #  and anim_init's copy-down is gone with them)

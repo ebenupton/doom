@@ -63,6 +63,11 @@ run('compare_subsector', ['compare_subsector.py'], lambda o: re.search(r'TOTAL:.
 run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('vxcache_check', ['tools/vxcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('tube_pipeline', ['tube/test_pipeline_py65.py'], lambda o: 'PIPELINE CONVERGED' in o)
+# The copro gate also covers SPACE 'use': DR doors are shut until used, so a
+# parasite with no use path has permanently frozen doors while anim_tick,
+# anim_hub and the mover state machine all look perfect. Nothing else here
+# catches it -- anim6502_check POKES mover state instead of triggering it.
+run('tube_copro', ['tube/test_copro_py65.py'], lambda o: 'copro_py65: PASS' in o)
 # ^ the parasite shares the flat image but carries its OWN map glue
 # (emit overlay, ship ranges, boot zeroing) — layout arcs rot it
 # silently without a gate (the 2026-08-10 black screen: three arcs

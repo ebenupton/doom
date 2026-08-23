@@ -108,7 +108,12 @@ def write_tube_syms():
                      # copro rides live lifts too.
                      ('T_PM_FRAME', 'pm_frame'),
                      ('T_PMOVE_ZONLY', 'pmove_zonly'),
-                     ('T_PM_VZ', 'pm_vz')):
+                     ('T_PM_VZ', 'pm_vz'),
+                     # SPACE 'use': without it every DR door on the map is
+                     # shut forever (anim_sectors: "shut until used"), which
+                     # is not a rendering bug but a missing input path.
+                     ('T_PMOVE_USE', 'pmove_use'),
+                     ('T_PM_UX', 'pm_ux')):
             f.write(f"{t} = &{fsym(s):04X}\n")
         # pm_frame's driver-variable contract (abi constants, not map syms)
         for t, v in (('T_DV_ANGIDX', abi.DV_ANGIDX), ('T_DV_PXF', abi.DV_PXF),
@@ -118,6 +123,8 @@ def write_tube_syms():
                      ('T_PM_TURNREM', abi.PM_TURNREM)):
             f.write(f"{t} = &{v:04X}\n")
         f.write(f"T_RCACHE_STATE = &{abi.RCACHE_STATE_FLAT:04X}\n")
+        import colmap as _cm
+        f.write(f"T_USEVEC = &{_cm.USEVEC_FLAT:04X}\n")
         f.write(f"T_RCACHE_LEN = &{abi.RCACHE_STATE_LEN & 0xFF:02X}\n")
         f.write(f"T_VXC_STATE = &{abi.VXC_STATE:04X}\n")
         f.write(f"T_VXC_LEN = &{abi.VXC_STATE_LEN:02X}\n")

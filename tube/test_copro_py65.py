@@ -23,6 +23,12 @@ FRAMES = int(os.environ.get('TUBE_FRAMES', '5'))
 MASKS = [0, 0, 0, 1, 1, 8, 8, 0]        # still, fwd, turn — exercise movement
 
 
+# Use line 0 is the door at raw x=336, y=816..688; stand just west of it
+# facing +x.  Raw center-relative units, the space colmap's tables use.
+USE_DOOR_RAW = (296, 752)
+USE_DOOR_ANG = 0
+
+
 def build_image():
     os.environ['DOOM_CPU'] = '65c02'    # parasite build: C02=1 opcodes; the
     r = BspRender6502(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
@@ -64,7 +70,8 @@ def main():
     base = ObservableMemory()
     base[0:0x10000] = img
 
-    state = {'frame': 0, 'out': [], 'eofs': 0, 'lines': 0, 'mask_reads': 0, 'avail': False, 'polls': 0}
+    state = {'frame': 0, 'out': [], 'eofs': 0, 'lines': 0, 'mask_reads': 0,
+             'avail': False, 'polls': 0, 'space': 0}
 
     def r1s_read(addr):
         # b6 (space): always. b7 (mask avail): FIFO model — empty until the
@@ -83,7 +90,7 @@ def main():
         state['mask_reads'] += 1
         state['avail'] = False
         m = MASKS[min(state['frame'], len(MASKS) - 1)]
-        return m
+        return m | state.get('space', 0)
 
     def r1d_write(addr, value):
         state['out'].append(value)
@@ -115,9 +122,47 @@ def main():
             print(f"vec63={base[0x63]:02x}{base[0x64]:02x} vecCA={base[0xCA]:02x}{base[0xCB]:02x}")
             sys.exit(1)
     ok = state['eofs'] >= FRAMES
+
+    # ---- SPACE 'use' phase --------------------------------------------
+    # Every DR door on the map is "shut until used" (anim_sectors), so a
+    # parasite with no use path has doors frozen shut FOREVER while
+    # anim_tick, anim_hub and the mover state machine all look perfect --
+    # which is exactly how it shipped.  Nothing here was covered: the
+    # pipeline gate compares one view, this test ran 5 frames, and
+    # anim6502_check POKES mover state rather than triggering it.  So
+    # trigger it: teleport onto a door line, hold SPACE, and require a
+    # CEIL mover (a door, not a self-cycling lift) to advance.
+    import doom_wireframe as _dw, anim_sectors as _an, re as _re
+    T = {}
+    for _l in open(os.path.join(ROOT, 'tube/tube_syms.inc')):
+        _m = _re.match(r'T_(\w+) = &([0-9A-F]+)', _l.strip())
+        if _m:
+            T[_m.group(1)] = int(_m.group(2), 16)
+    AW = symmap.sym('ANIM_WS', banked=0, c02=1)
+    doors = [i for i, (sec, mv) in enumerate(sorted(_an.MOVERS.items()))
+             if mv.kind == 'ceil']
+    for nm, raw in (('PX', USE_DOOR_RAW[0]), ('PY', USE_DOOR_RAW[1])):
+        v = (raw * 256 // _dw.PRESCALE) & 0xFFFFFF
+        base[T['DV_' + nm + 'F']] = v & 0xFF
+        base[T['DV_' + nm + 'L']] = (v >> 8) & 0xFF
+        base[T['DV_' + nm + 'H']] = (v >> 16) & 0xFF
+    base[T['DV_ANGIDX']] = USE_DOOR_ANG
+    before = bytes(base[AW:AW + 3 * len(_an.MOVERS)])
+    state['space'] = 0x80
+    target = state['eofs'] + 40
+    steps = 0
+    while state['eofs'] < target and steps < 3_000_000 * 40:
+        mpu.step(); steps += 1
+    after = bytes(base[AW:AW + 3 * len(_an.MOVERS)])
+    opened = [i for i in doors if before[3*i:3*i+3] != after[3*i:3*i+3]]
+    use_ok = bool(opened)
+    if not use_ok:
+        print("USE FAIL: SPACE on a door line moved no ceil mover — "
+              "the parasite's door-sense path is dead")
+    ok = ok and use_ok
     print(f"copro_py65: {'PASS' if ok else 'FAIL'} — {state['eofs']} frames, "
           f"{state['lines']} lines, {state['mask_reads']} mask reads, "
-          f"{steps} steps")
+          f"{steps} steps, doors opened by SPACE: {opened}")
     sys.exit(0 if ok else 1)
 
 

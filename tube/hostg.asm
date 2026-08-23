@@ -371,6 +371,14 @@ ORG &1900
     ORA #8
     STA mask
 .nk4
+    LDA #&62                    \ SPACE -> b7: DOOM 'use'.  Without it the
+    STA &FE4F                   \ map's DR doors never open on the copro
+    BIT &FE4F                   \ (anim_sectors keeps them "shut until
+    BPL nksp                    \ used"); the lifts self-cycle, which is
+    LDA mask                    \ why only the DOORS looked frozen.
+    ORA #&80
+    STA mask
+.nksp
 \ The mask byte carries the ELAPSED FIELD COUNT in its high nibble.
 \ R1 host->parasite is ONE BYTE, not a FIFO: at most one mask is ever in
 \ flight, so the copro cannot recover elapsed time by counting the masks
@@ -379,9 +387,18 @@ ORG &1900
 \ rate.  Counting here is free: this is already the vsync arm of the ISR
 \ (the T1 drain tick exits at ipop above, so ticks are NOT counted).
 \ The count is fields since the copro last TOOK a byte, so a still-full
-\ register just keeps accumulating.  Saturates at 15; copro caps at 32.
+\ register just keeps accumulating.
+\ b7 IS NOW SPACE, so the count has THREE bits and saturates at 7, not 15.
+\ That is a real trade and worth stating: the count only exceeds 1 while
+\ the copro is behind, and 7 fields is 140 ms -- below about 7 fps the
+\ count clips and motion slows, exactly as it already does past the
+\ copro's own cap of 32.  At the 19 fps recorded for the port in 32f9e35
+\ that is ~2.6 fields a frame -- better than 2x headroom -- but that
+\ figure predates the billboards and is NOT a fresh measurement of this
+\ build.  If the copro ever drops near 7 fps, widen this before believing
+\ the motion.
     LDA fields
-    CMP #15
+    CMP #7
     BCS nk5
     INC fields
 .nk5
