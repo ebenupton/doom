@@ -93,6 +93,10 @@ def build_banked(flatr):
                                                         # define_bank COPIES)
     vlen = off_hdr - off_verts
     la[bdst('ROM_VERTS_C'):bdst('ROM_VERTS_C') + vlen] = bytes(rom_main[off_verts:off_hdr])
+    # static-object (billboard) table -- bank SEG, beside the vertex planes
+    # it is read alongside (layout.inc ROM_OBJ_C)
+    _oo = layout['off_obj']; _od = bdst('ROM_OBJ_C')
+    la[_od:_od + len(rom_main) - _oo] = bytes(rom_main[_oo:])
     # EXACT recip lengths (256 + 128): a padded 1K copy here would drag
     # flat-image garbage over the VWHC key plane at $B300 -> stale serves
     la[bdst('RECIP_M8'):bdst('RECIP_M8') + 256] = bytes(fmem[_vsym('RECIP_M8'):_vsym('RECIP_M8') + 256])

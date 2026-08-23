@@ -1562,10 +1562,39 @@ _novt_annotations = []  # populated per frame: [(sx, sy, label), ...]
 # ── Build packed byte arrays for 8-bit processor simulation ──────────────
 from wad_packed import build_packed
 print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
+# ── Static objects (billboards) ────────────────────────────────────────
+# Map THINGS that never move AND stand off the floor: solid decorations
+# and barrels.  The 68 pickups/gibs are h=16 and would render as floor
+# litter, so they are left out; monsters are excluded because they are
+# not static in principle, even with no AI to move them.
+# type -> (radius, height) in world units, from DOOM's mobjinfo.
+_OBJ_KINDS = {35: (16, 60),     # Candelabra
+              48: (16, 128),    # Tall techno pillar
+              2028: (16, 48),   # Floor lamp
+              2035: (10, 42)}   # Barrel
+fp_objects = []
+for _th in things:
+    _tx, _ty_, _ta, _tt, _tfl = _th
+    if _tt not in _OBJ_KINDS or (_tfl & 0x10):   # skip multiplayer-only
+        continue
+    _r, _h = _OBJ_KINDS[_tt]
+    _fz = player_floor(_tx, _ty_)
+    fp_objects.append(dict(
+        ss=find_subsector(_tx, _ty_),
+        x=_prescale_round(_tx - MAP_CENTER_X, PRESCALE),
+        y=_prescale_round(_ty_ - MAP_CENTER_Y, PRESCALE),
+        # radius in s16 COUNTS (K=32/unit) straight from world units, so
+        # it keeps sub-unit precision the prescaled grid would round away
+        rc=max(1, round(_r * 32 / PRESCALE)),
+        zb=_prescale_height(_fz),
+        zt=_prescale_height(_fz + _h)))
+fp_objects.sort(key=lambda o: o['ss'])           # 6502 scans a run per ss
+
 packed_rom_main, packed_rom_detail, packed_rom_recip, packed_bbox_table, packed_layout = build_packed(
     vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
     PRESCALE, MAP_CENTER_X, MAP_CENTER_Y,
+    fp_objects=fp_objects,
     seg_novt_flags=_seg_novt_flags,
     seg_novt_aperture=_seg_novt_aperture,
     novt_rule4=_novt_rule4,

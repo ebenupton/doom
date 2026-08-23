@@ -62,8 +62,13 @@ def setup_wad(sc):
         mem[NODE_SOA_BASE + i] = (rom_main[i] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
     for i in range(off_verts, off_hdr):
         mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
-    for i in range(off_hdr, len(rom_main)):
+    off_obj = layout['off_obj']
+    for i in range(off_hdr, off_obj):
         mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
+    from symmap import sym as _sym2                 # object table: own home
+    _ob = _sym2('ROM_OBJ_C')
+    for i in range(off_obj, len(rom_main)):
+        mem[_ob + (i - off_obj)] = rom_main[i]
     for i, b in enumerate(dw.packed_bbox_table):
         mem[ROM_BBOX_BASE + i] = b
     # vertex-span descriptor planes (flat homes; mirror of _load_wad)

@@ -236,6 +236,7 @@ SP_INNER_BOT  = 12   # s16
 def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                  fp_segs_vwh, vwh_table, fp_sectors, linedefs, sidedefs,
                  prescale, map_center_x, map_center_y,
+                 fp_objects=None,
                  seg_novt_flags=None,
                  seg_novt_aperture=None,
                  novt_rule4=None,
@@ -341,7 +342,35 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # only. off_vwh == rom_main_size is kept as a layout landmark.
     rom_main_size = off_vwh
 
+    # ---- static object (billboard) table --------------------------------
+    # Map THINGS that never move, drawn as flat outline rectangles when
+    # their home subsector is drawn.  SoA planes so one X indexes every
+    # field, plus a per-subsector "has objects" bitmap so an ordinary
+    # subsector costs a single bit test.  Position uses the SAME
+    # page-decomposed encoding as the vertex planes, so the 6502 stages
+    # an object exactly as it stages a vertex and reuses rot_w_pages.
+    fp_objects = fp_objects or []
+    n_obj = len(fp_objects)
+    off_obj = rom_main_size
+    OBJ_N_PLANES = 7                       # OX OY PG SS RC ZT ZB
+    off_obj_bits = off_obj + OBJ_N_PLANES * n_obj
+    obj_bits_len = (n_ss + 7) // 8
+    rom_main_size = off_obj_bits + obj_bits_len
+
     rom_main = bytearray(rom_main_size)
+
+    for _i, _o in enumerate(fp_objects):
+        _px, _py = _o['x'], _o['y']
+        assert -512 <= _px < 512 and -512 <= _py < 512, \
+            f"object {_i} {(_px, _py)} outside the page-decomposed range"
+        assert 0 <= _o['ss'] < 256, "subsector id must fit u8"
+        assert 0 < _o['rc'] < 256, "object radius (counts) must fit u8"
+        for _pl, _v in enumerate((_px & 0xFF, _py & 0xFF,
+                                  (((_px >> 8) + 2) & 3) | ((((_py >> 8) + 2) & 3) << 2),
+                                  _o['ss'], _o['rc'],
+                                  _o['zt'] & 0xFF, _o['zb'] & 0xFF)):
+            rom_main[off_obj + _pl * n_obj + _i] = _v
+        rom_main[off_obj_bits + (_o['ss'] >> 3)] |= 1 << (_o['ss'] & 7)
 
     # Vertices — page-split SoA planes (OX/OY/PG, 512 bytes each;
     # n_verts <= 512 asserted above): junior page idx 0-255, senior 256+.
@@ -756,6 +785,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_dirs': off_dirs, 'n_dirs': len(_dirs), 'max_dirs': MAX_DIRS,
         'off_ss_fh': off_ss_fh, 'off_ss_ch': off_ss_ch,
         'off_lv1': off_lv1, 'n_lv1': len(_lv1_ids),
+        'off_obj': off_obj, 'n_obj': n_obj,
+        'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,
         'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
@@ -777,6 +808,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     print(f"  Nodes:       {n_nodes} × {NODE_SIZE} = {n_nodes * NODE_SIZE}")
     print(f"  Subsectors:  {n_ss} × {SSECTOR_SIZE} = {n_ss * SSECTOR_SIZE}")
     print(f"  LV1 records: {layout['n_lv1']} diagonal reference points")
+    print(f"  Objects:     {n_obj} static billboards "
+          f"({OBJ_N_PLANES * n_obj} B) + {obj_bits_len} B subsector bitmap")
     print(f"  Back pairs:  {layout['n_bpal']} palette entries "
           f"({sum(1 for k in _bpal_ids if k[0] == 'seg')} private to movers)")
     print(f"  Seg headers: {n_segs} × {SEG_HDR_SIZE} = "

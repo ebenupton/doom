@@ -170,7 +170,12 @@ ssk_ft_live:
 ; --- Loop over segs (empties returned in the prologue; zp_seg_count
 ; holds cnt-1 >= 0, so there is nothing to gate here) ---
 sl_rts:
-   RTS
+; Shared seg-loop exit: the EMPTY subsector (prologue) and the
+; all-back-facing one (s_advance_l0).  Both can still own static
+; objects, so both go through the object hook -- same tail call
+; seg_emit's sa_done makes.
+   LDA zp_node_ch_l
+   JMP obj_subsector
 ; Backface back-exit advance twin (hoisted from seg_emit.s 2026-08-13):
 ; single entry (backface.s JMPs), never left bank SEG, and it FALLS
 ; into seg_proc — the 57%-majority arc pays no jump at all now.

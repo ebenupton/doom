@@ -38,6 +38,9 @@ ROM_SEG_HDR_C = $8000                   ; bank SEG window head: headers+DIRs
 ROM_VERTS_C   = $AB00                   ; bank SEG (2026-08-13 two-bank
 ROM_BBOX_C    = $9600                   ; re-cut: bbox lives in bank WALK)
 NODE_SOA_C    = $8000                   ; bank WALK window head
+ROM_OBJ_C     = $A900                   ; static-object (billboard) table,
+                                        ; between RECIP_S's page and the
+                                        ; vertex planes at $AB00
 ROM_DIRS_C    = $B700                   ; DIR planes ship in BOTH banks
                                         ; (union consumer: node classify
                                         ; under bank WALK, seg backface
@@ -49,13 +52,36 @@ ROM_SEG_HDR_C = $8600                   ; flat LEVEL block (2026-07-21 map):
 ROM_VERTS_C   = $B100                   ; hdrs+dirs, verts, SoA, bbox, recip
 ROM_BBOX_C    = $C500                   ; all contiguous
 NODE_SOA_C    = $B900
+ROM_OBJ_C     = $B700                   ; static-object table, in the run
+                                        ; the retired 4th vertex plane left
 ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 .assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= ROM_VERTS_C, error, "DIR tables reach the vertex planes"
 .assert ROM_VERTS_C + $600 <= NODE_SOA_C, error, "flat vertex planes reach the node SoA"
+.endif
+; --- static object (billboard) planes: SoA, one X indexes every field ---
+; Positions use the SAME page-decomposed encoding as the vertex planes
+; (u8 offset + page nibble), so an object stages exactly like a vertex.
+OBJ_DRAW = 1                            ; static-object billboards: the
+                                        ; 6502 draw is complete and works,
+                                        ; but the PYTHON references do not
+                                        ; draw them yet, so every
+                                        ; cross-impl gate reports the
+                                        ; rectangles as over-draw.  Flip to
+                                        ; 1 once packed_render_subsector and
+                                        ; the float render_bsp mirror it.
+LAY_N_OBJ   = 18                   ; static objects (wad_packed)
+OBJ_OX   = ROM_OBJ_C + 0*LAY_N_OBJ      ; x offset lo
+OBJ_OY   = ROM_OBJ_C + 1*LAY_N_OBJ      ; y offset lo
+OBJ_PG   = ROM_OBJ_C + 2*LAY_N_OBJ      ; page nibble (x b0-1, y b2-3)
+OBJ_SS   = ROM_OBJ_C + 3*LAY_N_OBJ      ; home subsector id (u8)
+OBJ_RC   = ROM_OBJ_C + 4*LAY_N_OBJ      ; half-width in s16 COUNTS
+OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
+OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
+OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B8FF, banked frees
-;  $A800-$A9FF in L2, both now part of the pre-existing gaps)
-.endif
+;  $A800-$A9FF in L2; the flat object table lives in that freed run)
+.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 <= ROM_OBJ_C + $200, error, "object table overruns its 512-byte hole"
 ; Per-SUBSECTOR front heights (2026-08-17): fh/ch are subsector-constant, so
 ; they ride two pages in the header blob instead of 2 bytes x every seg. Read
 ; under BANK_SEG with X = the subsector id (already live in the prologue).

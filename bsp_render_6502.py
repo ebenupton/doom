@@ -98,8 +98,15 @@ class BspRender6502:
         #  and the engine's prologue adds >ROM_SEG_HDR_C itself)
         for i in range(off_verts, off_hdr):              # verts
             mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
-        for i in range(off_hdr, len(rom_main)):          # headers + DIRs
+        off_obj = layout['off_obj']
+        for i in range(off_hdr, off_obj):                # headers + DIRs
             mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
+        # static-object (billboard) table -- its own home, NOT part of the
+        # header blob (layout.inc ROM_OBJ_C)
+        from symmap import sym as _sym2
+        _ob = _sym2('ROM_OBJ_C')
+        for i in range(off_obj, len(rom_main)):
+            mem[_ob + (i - off_obj)] = rom_main[i]
 
         for i, b in enumerate(bbox):
             mem[ROM_BBOX_BASE + i] = b

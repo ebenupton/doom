@@ -30,6 +30,7 @@ import wad_packed as _wp
 sub('LAY_SH_DIAG', _wp.SH_DIAG)
 sub('LAY_SH_FLAGS', _wp.SH_FLAGS)
 sub('LAY_SH_BPAL', _wp.SH_BPAL)
+sub('LAY_N_OBJ', lay['n_obj'])
 sub('LAY_N_DIRS', lay['n_dirs'])
 sub('LAY_MAX_DIRS', lay['max_dirs'])
 open(p, 'w').write(s)
