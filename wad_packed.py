@@ -405,7 +405,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     # -- octagonal prism (BARRELS ONLY): lid top arc, then the rest -------
     obj_art = []
-    for a_, b_ in [(0,1),(1,2),(2,3),(3,4)]:            # top arc: RECORDED
+    # ASCENDING X IS A SECOND HARD CONTRACT, distinct from per-line ordering.
+    # tighten_from_records walks the buffer with MONOTONIC cursors and its
+    # input contract says records arrive "in ascending x order (DCL walks
+    # spans left to right)".  Walking the arc V[0]..V[4] emits the segments
+    # right-to-left ([3,4],[2,3],[1,2],[0,1]); the cursor then consumes the
+    # first record and stale-consumes the rest, so the tighten covered only
+    # the barrel's RIGHTMOST slice instead of tracking its top edge.  Walk
+    # the arc the other way so the four ranges come out [0,1],[1,2],[2,3],
+    # [3,4].  Ranges are half-open (xl <= x < xr), so touching ends do not
+    # overlap.
+    for a_, b_ in [(3,4),(2,3),(1,2),(0,1)]:            # top arc: RECORDED
         obj_art += _ln(_V[a_], _V[b_])
     obj_art += _CTL(OBJ_ART_STOPREC)
     for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:            # lid, lower arc
@@ -434,6 +444,18 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     assert off_art_oct == 0 and off_art_rect == 64, \
         f"art block offsets moved ({off_art_oct}, {off_art_rect}) -- " \
         f"update OBJ_ART_OCT/OBJ_ART_RECT in layout.inc to match"
+    # Gate BOTH record contracts at build time: they fail silently, as
+    # over-draw and a part-width tighten respectively.
+    for _blk in (off_art_oct, off_art_rect):
+        _prev = -1
+        for _e in range(_blk, len(obj_art), 4):
+            if obj_art[_e] >= OBJ_ART_STOPREC:
+                break                                   # end of the run
+            assert obj_art[_e] >= _prev, \
+                f"recorded art lines in block {_blk} are not in ascending x " \
+                f"order -- tighten_from_records' monotonic cursor will drop " \
+                f"every record after the first"
+            _prev = obj_art[_e]
     for _e in range(0, len(obj_art), 4):
         if obj_art[_e] >= OBJ_ART_STOPREC:
             continue
