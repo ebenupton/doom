@@ -208,7 +208,67 @@ bf_g_mul:
 ; both deltas nonzero, products same sign (X = shared sign, bit7):
 ; the magnitude comparator is the shared CROSS_MAG_DECIDE macro
 ; (header.s) — same core serves br_node_setup's general arm (lo.s).
-   CROSS_MAG_DECIDE bf_seg_front, s_advance_l0
+   CROSS_MAG_DECIDE bf_seg_front, s_advance_l0, bf_tie
+
+; ============================================================================
+; bf_tie — |P1| == |P2|, i.e. dot == 0 for the TRUNCATED viewpoint.
+;
+; px_int/py_int throw away the 8.8 fraction, so the viewpoint can land
+; exactly ON a seg's line while sitting comfortably to one side of it. The
+; twin's dot is the exact negation, so "tie -> back" rejected BOTH: the
+; portal disappeared, nothing tightened its columns, and the far sector's
+; ceiling showed through the hole. (Eben's ffe6.d2 001d.e3 f4 report: a
+; 2-column slit at screen centre leaking the ceiling of a room 328 units
+; away. seg 98, the sector 38 <-> 39 portal, with dot_int = 0 but the true
+; dot = +4.367.)
+;
+; Refine with the fraction the integer test dropped:
+;     dot_88 = 256*dot + (dy'*fx - dx'*fy)
+; dot is 0 here, so the correction alone is the verdict. With
+; A = |dy'|*fx, B = |dx'|*fy and GE = (the primitive signs differ) OR
+; (A >= B):
+;     front  <=>  GE == (dy' > 0)
+; That covers all four sign cases and sends a full-precision tie to
+; dy' > 0, so exactly one twin always survives -- never a hole. dy' is
+; never 0 here (that is the axis form).
+;
+; TWO 8x8 muls, and only on the tie: the hot path still spends one branch.
+; ============================================================================
+bf_tie:
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'|
+   LDX zp_br_px                            ; fx = the 8.8 low byte
+   STX zp_mul_b
+   JSR umul8
+   STA zp_br_t1                            ; A hi (umul8 returns prod_h in A)
+   LDA zp_prod_l
+   STA zp_br_t0                            ; A = |dy'| * fx
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C,X                        ; |dx'|
+   LDX zp_br_py                            ; fy
+   STX zp_mul_b
+   JSR umul8                               ; B = |dx'| * fy in zp_prod_l/h
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; b7 = sgn dy', b6 = sgn dx'
+   STA zp_br_t2
+   ASL A                                   ; b6 -> b7
+   EOR zp_br_t2                            ; b7 set = signs differ
+   BMI bft_ge                              ; differ: the terms ADD -> GE
+   LDA zp_br_t0
+   CMP zp_prod_l
+   LDA zp_br_t1
+   SBC zp_prod_h
+   BCC bft_lt                              ; A < B
+bft_ge:
+   BIT zp_br_t2                            ; N = sgn(dy')
+   BMI bft_back
+   JMP bf_seg_front
+bft_lt:
+   BIT zp_br_t2
+   BPL bft_back
+   JMP bf_seg_front
+bft_back:
+   JMP s_advance_l0
 .endscope
 ; (24-byte layout-keeper pad stripped 2026-07-26 in the all-pads
 ; sweep: free space consolidates at the CODE segment end; page-cross

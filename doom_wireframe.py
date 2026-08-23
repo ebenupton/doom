@@ -2321,9 +2321,25 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     px_int = ctx[0]
     py_int = ctx[1]
     dot = ldy * (px_int - lv1[0]) - ldx * (py_int - lv1[1])
+    corr = (ldy * (fp_module.VIEW_PX88 & 0xFF)
+            - ldx * (fp_module.VIEW_PY88 & 0xFF))
+    tie_sign = ldy
     if s[4] == 1:
         dot = -dot
-    if dot <= 0:
+        corr = -corr
+        tie_sign = -ldy
+    if dot == 0:
+        # px_int/py_int are TRUNCATED, so the viewpoint can land exactly on
+        # this seg's line even when it is comfortably to one side. Then
+        # dot == 0 for the seg AND its twin (whose dot is the exact
+        # negation), "dot <= 0" rejects both, the portal disappears and
+        # everything behind it shows through the hole. Refine with the 8.8
+        # fraction: dot_88 = 256*dot + corr, and dot is 0 here so corr IS
+        # the verdict. tie_sign breaks a full-precision tie so exactly one
+        # twin always survives. (Same fix in packed_render_seg.)
+        if corr < 0 or (corr == 0 and tie_sign <= 0):
+            return
+    elif dot < 0:
         return
 
     map_trace["segs_processed"].add(si)
@@ -2811,10 +2827,15 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     if bf_form < 4:
         # axis C-form: one signed compare, SAMEDIR folded at pack time
         bf_c16 = read_s16(rom, seg_off + SH_C)
-        if bf_form == 0:   front = px_int > bf_c16
-        elif bf_form == 1: front = px_int < bf_c16
-        elif bf_form == 2: front = py_int > bf_c16
-        else:              front = py_int < bf_c16
+        # 8.8 compare, not the truncated one.  Forms 0/2 are '>' and 1/3
+        # are '<', so a seg and its twin partition the plane -- EXCEPT at
+        # px_int == C, where both were false and BOTH were rejected,
+        # leaving a hole the far geometry shows through.  Give the exact
+        # tie (fraction 0 too) to the '<' form so exactly one survives.
+        if bf_form < 2: d, f = px_int - bf_c16, fp_module.VIEW_PX88 & 0xFF
+        else:           d, f = py_int - bf_c16, fp_module.VIEW_PY88 & 0xFF
+        front = ((d < 0 or (d == 0 and f == 0)) if (bf_form & 1)
+                 else (d > 0 or (d == 0 and f > 0)))
         if not front:
             return
     else:
@@ -2833,7 +2854,21 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if lv1_x & 0x8000: lv1_x -= 0x10000
         if lv1_y & 0x8000: lv1_y -= 0x10000
         dot = dyp * (px_int - lv1_x) - dxp * (py_int - lv1_y)
-        if dot <= 0:
+        if dot == 0:
+            # The truncated viewpoint lies exactly ON this seg's line, so
+            # the integer test cannot say which side we are on -- and
+            # "dot <= 0" rejected the seg AND its twin (whose dot is the
+            # exact negation), so the portal vanished and everything
+            # behind it leaked through the hole.  Refine with the
+            # fraction: dot_88 = 256*dot + (dyp*fx - dxp*fy), and here
+            # dot is 0, so the correction IS the verdict.  dyp is never 0
+            # for a diagonal, so its sign breaks a full-precision tie and
+            # exactly one twin always survives.
+            corr = (dyp * (fp_module.VIEW_PX88 & 0xFF)
+                    - dxp * (fp_module.VIEW_PY88 & 0xFF))
+            if corr < 0 or (corr == 0 and dyp <= 0):
+                return
+        elif dot < 0:
             return
 
     # ── Read vertex positions from rom_main (page-split SoA planes:

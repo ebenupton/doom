@@ -268,7 +268,7 @@ NF_LLEAF = $40                          ; left child is a subsector
 ; (UMUL8_INLINE reverted 2026-07-19 evening: the space-recovery pass
 ; bought back its 212 bytes for +154 cycles/frame — 0.73 c/B, under
 ; the 1 c/B recovery price. The JSR/RTS pairs returned.)
-.macro CROSS_MAG_DECIDE front, back
+.macro CROSS_MAG_DECIDE front, back, tie
 .local cm_dx_pos, cm_dy_pos, cm_p1_done, cm_p2_done, cm_p1_hi, cm_p2_hi
 .local cm_dec, cm_neg, cm_back
    STX zp_br_sign                          ; X dies at umul8
@@ -324,7 +324,8 @@ cm_p1_done:
    STA zp_br_t5                            ; A = 0: 1-mul product, hi = 0
 cm_p2_done:
 ; --- ONE u24 compare, early-out (products usually decide at the mid
-; byte). A tie loses for either sign, so equality exits first; after
+; byte). Equality (dot == 0) exits first -- to `back`, or to the caller's
+; `tie` refinement when it has one; after
 ; that C is the STRICT order and one sign load decodes the verdict:
 ;   C=1 (|P1| > |P2|): front iff sign positive
 ;   C=0 (|P1| < |P2|): front iff sign negative
@@ -336,7 +337,17 @@ cm_p2_done:
    BNE cm_dec
    LDA zp_br_t2
    CMP zp_br_t0
+.ifblank tie
    BEQ cm_back                             ; equal -> dot == 0 -> back
+.else
+; Equal magnitudes = dot == 0 on the TRUNCATED viewpoint. Sending that to
+; `back` rejects the seg AND its twin (whose dot is the exact negation),
+; so the portal vanishes and everything behind it shows through the hole.
+; A caller that can refine the verdict from the 8.8 fraction passes a tie
+; label; the hot path is unchanged either way -- this branch was already
+; taken on the tie.
+   BEQ tie
+.endif
 cm_dec:
    LDA zp_br_sign                          ; (touches neither C nor N-verdict)
    BMI cm_neg

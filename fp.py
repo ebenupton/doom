@@ -193,6 +193,7 @@ def fp_cos(angle_byte):
 FP_RENDER_W = 256
 FP_RENDER_H = 160
 FP_FOCAL_X = FP_RENDER_W // 2   # 128
+VIEW_PX88 = VIEW_PY88 = 0       # set by fp_view_context each frame
 HALF_W = FP_RENDER_W // 2       # 128
 HALF_H = FP_RENDER_H // 2       # 80
 # Aspect ratio (1.2x) is baked into height prescaling, not the focal length.
@@ -393,6 +394,14 @@ def fp_view_context(vx_88, vy_88, sc):
     """
     px_int = vx_88 >> 8
     py_int = vy_88 >> 8
+    # The back-face test truncates to px_int/py_int, which throws away the
+    # 8.8 fraction and can land the viewpoint exactly ON a seg's line --
+    # rejecting the seg AND its twin, leaving a hole.  Stash the full 8.8
+    # here (the one choke point where ctx is built; ctx itself is unpacked
+    # as a fixed 7-tuple in three places, so it cannot grow) so the test
+    # can break that tie.  See packed_render_seg.
+    global VIEW_PX88, VIEW_PY88
+    VIEW_PX88, VIEW_PY88 = vx_88, vy_88
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
 
     # Vertex fraction is always 0, so frac = -player_frac
