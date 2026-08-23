@@ -503,7 +503,12 @@ portal_cascade:
    ZERO zp_dcl_out
    LDA #>TOP_RECORDS                       ; bt lip: the aperture's new
    STA zp_dcl_rec_buf_h                    ; top — TOP_RECORDS armed
-   ZERO TOP_RECORDS
+; (the count ZERO here died 2026-08-23: hg_pass's per-seg
+;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
+;  cascade, and the only other path out of hgp_fwd is
+;  solid_cascade, which turns records off and exits via
+;  s_advance without ever reaching here.  The arms re-arm the
+;  POINTER; the count is already 0.)
    LDA #1
    STA zp_dcl_rec_off
    LDX #zp_seg_sy1_btop_l - VX1
@@ -524,7 +529,12 @@ ft_chk_up:
    BEQ fb_arm
    LDA #>TOP_RECORDS                       ; recorded front line: it IS
    STA zp_dcl_rec_buf_h                    ; the aperture top here
-   ZERO TOP_RECORDS
+; (the count ZERO here died 2026-08-23: hg_pass's per-seg
+;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
+;  cascade, and the only other path out of hgp_fwd is
+;  solid_cascade, which turns records off and exits via
+;  s_advance without ever reaching here.  The arms re-arm the
+;  POINTER; the count is already 0.)
    LDA #1
    STA zp_dcl_rec_off
    LDX #zp_seg_sy1_top_l - VX1
@@ -539,7 +549,12 @@ fb_arm:
    ZERO zp_dcl_out
    LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO BOT_RECORDS
+; (the count ZERO here died 2026-08-23: hg_pass's per-seg
+;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
+;  cascade, and the only other path out of hgp_fwd is
+;  solid_cascade, which turns records off and exits via
+;  s_advance without ever reaching here.  The arms re-arm the
+;  POINTER; the count is already 0.)
    LDA #1
    STA zp_dcl_rec_off
    LDX #zp_seg_sy1_bbot_l - VX1
@@ -560,7 +575,12 @@ fb_chk_up:
    BEQ vert_stage
    LDA #>BOT_RECORDS
    STA zp_dcl_rec_buf_h
-   ZERO BOT_RECORDS
+; (the count ZERO here died 2026-08-23: hg_pass's per-seg
+;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
+;  cascade, and the only other path out of hgp_fwd is
+;  solid_cascade, which turns records off and exits via
+;  s_advance without ever reaching here.  The arms re-arm the
+;  POINTER; the count is already 0.)
    LDA #1
    STA zp_dcl_rec_off
    LDX #zp_seg_sy1_bot_l - VX1

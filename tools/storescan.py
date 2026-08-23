@@ -154,13 +154,13 @@ def main():
         if fn not in srcs:
             srcs[fn] = open(os.path.join(ROOT, fn), errors='ignore').readlines()
         txt = srcs[fn][line - 1].split(';')[0].strip()
-        rows.append((n, fn, line, txt))
+        rows.append((n, fn, line, txt, pc))
     rows.sort(reverse=True)
     print(f'{len(tot)} store sites executed; '
           f'{sum(1 for pc in tot if red[pc] == tot[pc])} always-redundant\n')
     print(f'ALWAYS wrote the value already present (>= {mn} executions):\n')
-    for n, fn, line, txt in rows:
-        print(f'  {n:6d}x  {fn}:{line}  {txt}')
+    for n, fn, line, txt, pc in rows:
+        print(f'  {n:6d}x  ${pc:04X}  {fn}:{line}  {txt}')
 
 
 main()
