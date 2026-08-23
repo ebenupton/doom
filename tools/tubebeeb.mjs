@@ -76,6 +76,13 @@ for (const cmd of script.split(";").map((s) => s.trim()).filter(Boolean)) {
             session.keyUp(KEY.SHIFT);
             break;
         }
+        case "dboot": {
+            // MachineSession's own autoboot (SHIFT+BREAK + wait). The
+            // hand-rolled `boot` above fixes a cycle budget and returns
+            // whether or not the disc has finished loading.
+            await session.boot(Number(rest[0] || 30));
+            break;
+        }
         case "waitprompt": {
             const out = await session.runUntilPrompt(Number(rest[0] || 30));
             process.stdout.write(out.screenText ? out.screenText + "\n" : JSON.stringify(out) + "\n");
@@ -89,6 +96,13 @@ for (const cmd of script.split(";").map((s) => s.trim()).filter(Boolean)) {
             if (code === undefined) throw new Error("unknown key " + rest[0]);
             if (rest[1] === "down") session.keyDown(code);
             else session.keyUp(code);
+            break;
+        }
+        case "type": {
+            // Headless SHIFT+BREAK does not fire the disc's autoboot, so
+            // a boot check has to type the command itself. rest is the
+            // rest of the semicolon-separated step, spaces intact.
+            await session.type(rest.join(" ") + "\n");   // jsbeeb maps \n, not \r
             break;
         }
         case "shot": {

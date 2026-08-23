@@ -61,14 +61,27 @@ ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 ; --- static object (billboard) planes: SoA, one X indexes every field ---
 ; Positions use the SAME page-decomposed encoding as the vertex planes
 ; (u8 offset + page nibble), so an object stages exactly like a vertex.
-OBJ_DRAW = 0                            ; static-object billboards: the
-                                        ; 6502 draw is complete and works,
-                                        ; but the PYTHON references do not
-                                        ; draw them yet, so every
-                                        ; cross-impl gate reports the
-                                        ; rectangles as over-draw.  Flip to
-                                        ; 1 once packed_render_subsector and
-                                        ; the float render_bsp mirror it.
+OBJ_DRAW = 1                            ; static-object billboards.  ON
+                                        ; since 2026-08-23: the octagonal
+                                        ; barrel art fits banked CODE now
+                                        ; that the CODE head took the
+                                        ; PMOVE region's dead page
+                                        ; ($2600 -> $2500), leaving 68 B.
+                                        ; KNOWN GATE STATE: the PYTHON
+                                        ; references still do not draw
+                                        ; objects, so compare_subsector /
+                                        ; walkseq_check / anim6502_check /
+                                        ; verify-vs-float all report the
+                                        ; billboards as over-draw (miss is
+                                        ; unchanged everywhere -- nothing
+                                        ; STOPS being drawn).  Closing that
+                                        ; needs packed_render_subsector to
+                                        ; mirror obj_subsector, including
+                                        ; the 4-segment records tighten,
+                                        ; which the python shadow model
+                                        ; cannot yet express (it speaks
+                                        ; single-line tightens only).
+                                        ; Set 0 to get a green gate back.
 LAY_N_OBJ   = 18                   ; static objects (wad_packed)
 OBJ_OX   = ROM_OBJ_C + 0*LAY_N_OBJ      ; x offset lo
 OBJ_OY   = ROM_OBJ_C + 1*LAY_N_OBJ      ; y offset lo
