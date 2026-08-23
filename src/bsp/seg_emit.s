@@ -670,12 +670,7 @@ ms_advance:
    PAGE BANK_SEG
    JMP seg_proc
 sa_done:
-; The subsector's segs are done -- draw any static objects it owns.
-; zp_node_ch_l still holds the subsector id (nothing in the seg loop
-; writes it), so the hook is free.  obj_subsector pages what it needs
-; and returns for us: one bit test when the subsector has none.
-   LDA zp_node_ch_l
-   JMP obj_subsector
+   RTS
 ; (::s_advance_l0 hoisted into subsector.s 2026-08-13 — it sits right
 ;  above seg_proc and FALLS into it, killing its JMP on the majority
 ;  backface arc; this s_advance keeps the ms_advance fall-in and the

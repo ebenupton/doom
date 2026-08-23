@@ -89,6 +89,7 @@ obj_bitmask:
    LDA OBJ_BITS,X
    AND obj_mask
    BNE obj_have
+   PAGE BANK_WALK                          ; prologue contract: WALK in/out
    RTS                                     ; the common case: one bit test
 obj_have:
 ; the table is sorted by subsector, but a linear sweep of 18 entries is
@@ -103,6 +104,7 @@ obj_scan:
 obj_next:
    DEX
    BPL obj_scan
+   PAGE BANK_WALK                          ; the prologue's SS reads are WALK
    RTS
 
 obj_ss:   .res 1
@@ -125,7 +127,19 @@ obj_one:
    STA zp_br_dy_l
    LDA OBJ_PG,X
    STA zp_ri_d_h
-   JSR rot_w_pages
+; The rotate body is SMC-DISPATCHED: rot_select patches six call sites
+; per frame to pick the general rot_w_pages or a CARDINAL twin when the
+; view angle is axis-aligned (and the twins depend on operands only that
+; path maintains).  A fixed JSR here is right for a general angle and
+; WRONG for every cardinal one, which is why the billboards jumped as
+; the view swung through 0/90/180/270.  Copy whatever the seg pipeline
+; is using -- one of its patched sites is the live selection.
+   LDA sxv0_rwpa+1
+   STA obj_rwp+1
+   LDA sxv0_rwpa+2
+   STA obj_rwp+2
+obj_rwp:
+   JSR rot_w_pages                         ; operand SMC-copied above
 ; --- + the frame's translation ref (vertex pipeline's own ref add) ---
    CLC
    LDA zp_br_vx_l
