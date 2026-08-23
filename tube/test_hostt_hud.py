@@ -55,16 +55,40 @@ PAYLOAD = [0x3D, 0xD2, 0xE6, 0x00,
 EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4"
 
 
-def main():
-    code, sym = assemble()
+# The REAL 'A' and '0' glyphs (identical in OS 1.2 and MOS 3.20) -- the
+# host's search looks for these two to locate the font. Every other
+# character gets eight bytes of its own code so a drawn cell decodes
+# straight back to ASCII.
+GLYPH_A = [0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x00]
+GLYPH_0 = [0x3C, 0x66, 0x6E, 0x7E, 0x76, 0x66, 0x3C, 0x00]
+
+
+def glyph(c):
+    return GLYPH_A if c == ord('A') else GLYPH_0 if c == ord('0') else [c] * 8
+
+
+def install_font(mem, base):
+    for a in range(0xC000, 0xFC00):          # nothing that can false-match
+        mem[a] = 0xEA
+    for c in range(32, 128):
+        o = base + (c - 32) * 8
+        for i, b in enumerate(glyph(c)):
+            mem[o + i] = b
+
+
+def decode(mem, base_page, n):
+    rev = {tuple(glyph(c)): chr(c) for c in range(32, 128)}
+    out = ''
+    for cell in range(n):
+        o = (base_page << 8) + cell * 8
+        out += rev.get(tuple(mem[o:o + 8]), '?')
+    return out
+
+
+def run_case(code, sym, font_base):
     mem = ObservableMemory()
     mem[0x1900:0x1900 + len(code)] = list(code)
-
-    # synthetic OS font: glyph(c) = eight bytes of c, so a cell decodes
-    # back to its own ASCII
-    for c in range(32, 128):
-        for i in range(8):
-            mem[0xC000 + (c - 32) * 8 + i] = c
+    install_font(mem, font_base)
 
     mem[sym['huden']] = 1                      # as if H had been pressed
     mem[DRAW], mem[PEND], mem[FREE], mem[EOFS] = 1, 0xFF, 2, 1
@@ -90,16 +114,9 @@ def main():
         return 1
 
     base = target_page << 8
-    got = ''
-    for cell in range(len(EXPECT)):
-        col = mem[base + cell * 8: base + cell * 8 + 8]
-        if len(set(col)) != 1:                 # a glyph is 8 copies of its code
-            got += '?'
-        else:
-            got += chr(col[0])
+    got = decode(mem, target_page, len(EXPECT))
     ok = got == EXPECT
-    print(f'  drawn: "{got}"')
-    print(f'  want : "{EXPECT}"')
+    print(f'   drawn: "{got}"')
 
     # and with the HUD off, the row must be untouched
     mem[sym['huden']] = 0
@@ -120,8 +137,22 @@ def main():
         print('  FAIL: the HUD drew with huden = 0')
     ok = ok and off_clean
 
-    print('HOSTT-HUD: ' + ('PASS' if ok else 'FAIL'))
-    return 0 if ok else 1
+    return ok
+
+
+def main():
+    code, sym = assemble()
+    allok = True
+    # Model B keeps the font at $C000, the Master at $F900. The host must
+    # find BOTH -- reading $C000 on a Master is MOS code, which is exactly
+    # how the HUD came out corrupted there.
+    for name, base in (('Model B  $C000', 0xC000), ('Master   $F900', 0xF900)):
+        print(f'-- font at {name} --')
+        ok = run_case(code, sym, base)
+        print(f'   {"ok" if ok else "FAILED"}')
+        allok = allok and ok
+    print('HOSTT-HUD: ' + ('PASS' if allok else 'FAIL'))
+    return 0 if allok else 1
 
 
 if __name__ == '__main__':

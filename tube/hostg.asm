@@ -454,6 +454,69 @@ ORG &1900
     TAX
     LDA &FC
     RTI
+\ ---- find the MOS font -------------------------------------------------
+\ The 96 glyphs (chars 32..127, 8 bytes each) are contiguous but NOT at a
+\ fixed address: OS 1.2 keeps them at &C000, MOS 3.20 at &F900. Reading
+\ &C000 on a Master gets MOS code (or HAZEL RAM, depending on ACCCON) --
+\ which is exactly why the HUD came out as garbage there.
+\ So SEARCH rather than carry a per-machine table: look for the 'A' glyph
+\ and derive the base, then confirm with '0'. Verified against both ROM
+\ images -- the A pattern occurs EXACTLY ONCE in each across the whole
+\ scanned range, so this cannot land on the wrong thing.
+\ Two bytes of state, not 768 of baked font.
+\ Starts at &C000+&108 so the derived base can never fall below &C000,
+\ and stops before &FC00: FRED/JIM/SHEILA live there and READS have side
+\ effects.
+.hudfind
+    LDA #&08
+    STA hudsrc
+    LDA #&C1
+    STA hudsrc+1
+.hfloop
+    LDY #7
+.hfcmp
+    LDA (hudsrc),Y
+    CMP hudrefA,Y
+    BNE hfnext
+    DEY
+    BPL hfcmp
+    SEC                         \ candidate base = match - ('A'-32)*8
+    LDA hudsrc
+    SBC #&08
+    STA hudbase
+    LDA hudsrc+1
+    SBC #&01
+    STA hudbase+1
+    CLC                         \ confirm with '0' at base + ('0'-32)*8
+    LDA hudbase
+    ADC #&80
+    STA huddst
+    LDA hudbase+1
+    ADC #0
+    STA huddst+1
+    LDY #7
+.hfver
+    LDA (huddst),Y
+    CMP hudref0,Y
+    BNE hfnext
+    DEY
+    BPL hfver
+    RTS                         \ found: hudbase is the font
+.hfnext
+    INC hudsrc
+    BNE hfnc
+    INC hudsrc+1
+.hfnc
+    LDA hudsrc+1
+    CMP #&FC
+    BCC hfloop
+    LDA #&FF                    \ no font: mark it so we never rescan
+    STA hudbase+1
+    RTS
+.hudrefA
+    EQUB &3C,&66,&66,&7E,&66,&66,&66,&00    \ 'A', identical in both ROMs
+.hudref0
+    EQUB &3C,&66,&6E,&7E,&76,&66,&3C,&00    \ '0'
 \ ---- debug HUD (H toggles) --------------------------------------------
 \ "X=hhhh.hh Y=hhhh.hh R=hh" on the top character row, exactly what the
 \ banked build's src/hud.s shows -- but drawn HERE, because the copro has
@@ -468,6 +531,15 @@ ORG &1900
     BNE hgon
     RTS
 .hgon
+    LDA hudbase+1               \ 0 = not looked for yet
+    BNE hgfound
+    JSR hudfind
+    LDA hudbase+1
+.hgfound
+    CMP #&FF                    \ sentinel: searched, not found
+    BNE hgdraw
+    RTS
+.hgdraw
     LDA #0
     STA huddst
     LDX draw                    \ the buffer this frame was drawn into
@@ -509,21 +581,24 @@ ORG &1900
     LDA hexdig,X
 .hudchar                        \ A = ascii -> blit the glyph, advance a cell
     SEC
-    SBC #32                     \ font ptr = &C000 + (A-32)*8; (A-32) < 96,
-    PHA                         \ so the product is 11 bits
+    SBC #32                     \ src = hudbase + (A-32)*8; (A-32) < 96, so
+    STA hudt                    \ the product is 11 bits and needs both ends
     LSR A
     LSR A
     LSR A
     LSR A
     LSR A
+    STA hudt+1                  \ hi = (A-32) >> 5
+    LDA hudt
+    ASL A
+    ASL A
+    ASL A                       \ lo = ((A-32) << 3) & 255
     CLC
-    ADC #&C0
-    STA hudsrc+1
-    PLA
-    ASL A
-    ASL A
-    ASL A
+    ADC hudbase
     STA hudsrc
+    LDA hudt+1
+    ADC hudbase+1               \ + the carry out of the low add
+    STA hudsrc+1
     LDY #7
 .hcrow
     LDA (hudsrc),Y
@@ -537,6 +612,10 @@ ORG &1900
     RTS
 .hexdig
     EQUS "0123456789ABCDEF"
+.hudbase
+    EQUW 0                      \ found font base; &FFxx = searched, none
+.hudt
+    EQUW 0                      \ hudchar scratch
 .huden
     EQUB 0
 .hudprev

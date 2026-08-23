@@ -57,13 +57,25 @@ HUD_YFRAC  = DV_PYF
 HUD_YLO    = DV_PYL
 HUD_YHI    = DV_PYH
 
-OS_FONT    = $C000                      ; OS 1.2 glyphs, chars 32..127
+HUD_FONT   = DV_HUD_FONT                ; found base (0 = not searched yet,
+                                        ; $FFxx = searched and not found)
+zp_hud_t   = $F1                        ; hud_char scratch (frame-scoped, as
+                                        ; the pointers above)
 
 .segment "HUD"
 
 ; --- hud_draw ($A400): entry. Emits the whole line. Clobbers A,X,Y. ---
 hud_draw:
 .scope
+   LDA HUD_FONT+1                          ; font located yet?
+   BNE hd_have
+   JSR hud_find
+   LDA HUD_FONT+1
+hd_have:
+   CMP #$FF                                ; searched, no font: draw nothing
+   BNE hd_go
+   RTS
+hd_go:
    ZERO zp_hud_dst                         ; cell 0 (col*8 accumulates below)
    LDA HUD_BACKHI
    STA zp_hud_dst+1                        ; row-0 block = FB page start
@@ -130,24 +142,28 @@ hud_hex:
 ;     advance one cell (zp_hud_dst += 8). Clobbers A,Y. ---
 hud_char:
 .scope
-; font ptr = OS_FONT + (A-32)*8: (A-32) < 96 so the product is 11 bits —
-; hi = >OS_FONT + (A-32)>>5, lo = ((A-32)<<3) & $FF
+; font ptr = HUD_FONT + (A-32)*8: (A-32) < 96 so the product is 11 bits
+; and BOTH halves matter — the base is no longer page-aligned ($F900 on
+; a Master), so the low add can carry.
    SEC
    SBC #32
-   PHA
+   STA zp_hud_t
    LSR A
    LSR A
    LSR A
    LSR A
    LSR A
+   STA zp_hud_t+1                          ; hi = (A-32) >> 5
+   LDA zp_hud_t
+   ASL A
+   ASL A
+   ASL A                                   ; lo = ((A-32) << 3) & $FF
    CLC
-   ADC #>OS_FONT
-   STA zp_hud_src+1
-   PLA
-   ASL A
-   ASL A
-   ASL A
+   ADC HUD_FONT
    STA zp_hud_src
+   LDA zp_hud_t+1
+   ADC HUD_FONT+1                          ; + the carry out of the low add
+   STA zp_hud_src+1
    LDY #7
 hc_row:
    LDA (zp_hud_src),Y
@@ -163,6 +179,76 @@ hc_row:
 
 hexdig:
    .byte "0123456789ABCDEF"
+
+; ============================================================================
+; hud_find — locate the MOS font. The 96 glyphs (chars 32..127, 8 bytes
+; each) are contiguous but NOT at a fixed address: OS 1.2 keeps them at
+; $C000, MOS 3.20 at $F900. Reading $C000 on a Master gets MOS code (or
+; HAZEL RAM, depending on ACCCON), which is exactly why the HUD came out
+; as garbage there.
+;
+; So SEARCH rather than carry a per-machine table, and rather than bake a
+; copy into RAM — this costs TWO bytes of state. Look for the 'A' glyph
+; and derive the base, then confirm with '0'. Verified against both ROM
+; images: the A pattern occurs EXACTLY ONCE in each across the scanned
+; range, so it cannot land on the wrong thing.
+;
+; Starts at $C000+$108 so the derived base can never fall below $C000,
+; and stops before $FC00 — FRED/JIM/SHEILA live there and READS have
+; side effects.
+; ============================================================================
+hud_find:
+.scope
+   LDA #$08
+   STA zp_hud_src
+   LDA #$C1
+   STA zp_hud_src+1
+hf_loop:
+   LDY #7
+hf_cmp:
+   LDA (zp_hud_src),Y
+   CMP hud_ref_a,Y
+   BNE hf_next
+   DEY
+   BPL hf_cmp
+   SEC                                     ; base = match - ('A'-32)*8
+   LDA zp_hud_src
+   SBC #$08
+   STA HUD_FONT
+   LDA zp_hud_src+1
+   SBC #$01
+   STA HUD_FONT+1
+   CLC                                     ; confirm '0' at base + $80
+   LDA HUD_FONT
+   ADC #$80
+   STA zp_hud_dst
+   LDA HUD_FONT+1
+   ADC #0
+   STA zp_hud_dst+1
+   LDY #7
+hf_ver:
+   LDA (zp_hud_dst),Y
+   CMP hud_ref_0,Y
+   BNE hf_next
+   DEY
+   BPL hf_ver
+   RTS                                     ; found
+hf_next:
+   INC zp_hud_src
+   BNE hf_nohi
+   INC zp_hud_src+1
+hf_nohi:
+   LDA zp_hud_src+1
+   CMP #$FC
+   BCC hf_loop
+   LDA #$FF                                ; none: mark so we never rescan
+   STA HUD_FONT+1
+   RTS
+.endscope
+hud_ref_a:
+   .byte $3C,$66,$66,$7E,$66,$66,$66,$00   ; 'A', identical in both ROMs
+hud_ref_0:
+   .byte $3C,$66,$6E,$7E,$76,$66,$3C,$00   ; '0'
 
 ; restore the segment for subsequently-included parts (they inherit)
 SEG_CODE

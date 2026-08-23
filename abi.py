@@ -26,6 +26,7 @@ DV_PYL = 0x1B86  # ... int lo
 DV_PYH = 0x1B87  # ... int hi
 DV_JIDX = 0x1B88  # vsync journal index
 DV_HUD_EN = 0x1B89  # debug HUD on/off (H toggles)
+DV_HUD_FONT = 0x1B8B  # MOS font base found by hud_find (2 bytes; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.
 DV_HUD_PREV = 0x1B8A  # H-key debounce state
 DRV_GLUE = 0x1BA0  # anim/HUD glue pocket
 DRV_CLR = 0x1C00  # input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)

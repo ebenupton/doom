@@ -58,6 +58,7 @@ ABI = [
     ('DV_PYH',         'DRV_VARS+7',  None, '... int hi'),
     ('DV_JIDX',        'DRV_VARS+8',  None, 'vsync journal index'),
     ('DV_HUD_EN',      'DRV_VARS+9',  None, 'debug HUD on/off (H toggles)'),
+    ('DV_HUD_FONT',    'DRV_VARS+11', None, 'MOS font base found by hud_find (2 bytes; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.'),
     ('DV_HUD_PREV',    'DRV_VARS+10', None, 'H-key debounce state'),
     ('DRV_GLUE',       0x1BA0, None, 'anim/HUD glue pocket'),
     ('DRV_CLR',        0x1C00, None, 'input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)'),

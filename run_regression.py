@@ -72,6 +72,10 @@ run('tube_copro', ['tube/test_copro_py65.py'], lambda o: 'copro_py65: PASS' in o
 # draws the readout. The pipeline gate drives drawcmd directly and never
 # sees the packet, so without this the host half is untested.
 run('tube_hud', ['tube/test_hostt_hud.py'], lambda o: 'HOSTT-HUD: PASS' in o)
+# The banked (non-copro) HUD has the same font search. The MOS font is not
+# at a fixed address -- OS 1.2 $C000, MOS 3.20 $F900 -- and hardwiring
+# $C000 is what corrupted the readout on a Master.
+run('hud_font', ['tools/test_hud_font.py'], lambda o: 'HUDFONT: PASS' in o)
 # ^ the parasite shares the flat image but carries its OWN map glue
 # (emit overlay, ship ranges, boot zeroing) — layout arcs rot it
 # silently without a gate (the 2026-08-10 black screen: three arcs
