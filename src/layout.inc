@@ -96,14 +96,19 @@ OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-LAY_N_OBJ_ART = 22                 ; billboard art entries, BOTH templates
-                                   ; (16 prism + 6 rectangle, control
+LAY_N_OBJ_ART = 25                 ; billboard art entries, BOTH templates
+                                   ; (19 barrel + 6 rectangle, control
                                    ;  entries included)
-OBJ_ART_OCT  = 0                   ; octagonal prism -- BARRELS ONLY
-OBJ_ART_RECT = 64                  ; plain outline rectangle -- the rest
+OBJ_ART_OCT  = 0                   ; 12-sided barrel -- BARRELS ONLY: 17
+                                   ; lines = 5 far lid arc (RECORDED) + 5
+                                   ; near lid arc + 5 base arc + 2 sides,
+                                   ; each side running from the top of the
+                                   ; lid's vertical edge to the bottom of
+                                   ; the base's (they are collinear)
+OBJ_ART_RECT = 76                  ; plain outline rectangle -- the rest
 OBJ_ART_STOPREC = $FE              ; entry: stop recording, keep drawing
 OBJ_ART_END     = $FF              ; entry: template finished
-OBJ_ART  = OBJ_BITS + 28                ; the templates: 22 x
+OBJ_ART  = OBJ_BITS + 28                ; the templates: 25 x
                                         ; (x1,y1,x2,y2) pre-doubled indices.
                                         ; It lives HERE, not in CODE -- CODE
                                         ; is full, and the stamp loop pages

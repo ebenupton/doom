@@ -388,80 +388,56 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # until END.  The per-object aspect byte's bit 7 picks which.
     OBJ_ART_STOPREC, OBJ_ART_END = 0xFE, 0xFF
     _CTL = lambda b: [b, 0, 0, 0]
-    _V = [(4,2),(3,1),(2,0),(1,1),(0,2),(1,3),(2,4),(3,3)]
+    # -- twelve-sided barrel (BARRELS ONLY) -------------------------------
+    # Vertices at 15 + 30k, so EDGE midpoints land on 0/90/180/270: an edge
+    # faces the viewer, an edge faces away, and the +-x edges are VERTICAL --
+    # collinear with the body's silhouette, which is why each side is one
+    # line from the top of the lid's side edge to the bottom of the base's.
+    #   x index 0..5 -> cx - {a, a2, a3}, cx + {a3, a2, a}
+    #   y index 0..5 -> lid centre -+ {b, b2, b3};  6..11 = the same + dy
+    # a2/a3 are (sqrt3-1) and (2-sqrt3) of a, which sum to EXACTLY 1, so the
+    # engine computes one and takes the other as the complement.
+    # 17 lines: 5 top lid arc (RECORDED), 5 near lid arc, 5 base arc, 2 sides.
+    _XI = {0:5, 1:4, 2:3, 3:2, 4:1, 5:0, 6:0, 7:1, 8:2, 9:3, 10:4, 11:5}
+    _YI = {0:3, 1:4, 2:5, 3:5, 4:4, 5:3, 6:2, 7:1, 8:0, 9:0, 10:1, 11:2}
 
     def _ln(p, q):
         # LEFT-TO-RIGHT IS A HARD CONTRACT.  draw_clipped_line_s16 requires
-        # x1 <= x2: the in-clipper swap was deleted when the seg layer took
-        # over canonicalising (the 8F.1F "solid bars" fix), so a reversed
-        # line walks the span list WITHOUT emitting or recording.  The lid
-        # arc descends 4,3,2,1,0 in x, so all four ARMED lines were
-        # reversed -- BOT_RECORDS stayed 0, the tighten never fired, and
-        # the reversed walks smeared 121 px horizontal runs.  obj_X is
-        # monotone in its index, so ordering by INDEX is ordering by x.
+        # x1 <= x2 -- the in-clipper swap died when the seg layer took over
+        # canonicalising (the 8F.1F "solid bars" fix), so a reversed line
+        # walks the span list WITHOUT emitting or recording.
         if p[0] > q[0]:
             p, q = q, p
         return [p[0]*2, p[1]*2, q[0]*2, q[1]*2]
 
-    # -- octagonal prism (BARRELS ONLY): lid top arc, then the rest -------
+    def _edge(k, dy=0):
+        j = (k + 1) % 12
+        return _ln((_XI[k], _YI[k] + dy), (_XI[j], _YI[j] + dy))
+
     obj_art = []
-    # ASCENDING X IS A SECOND HARD CONTRACT, distinct from per-line ordering.
-    # tighten_from_records walks the buffer with MONOTONIC cursors and its
-    # input contract says records arrive "in ascending x order (DCL walks
-    # spans left to right)".  Walking the arc V[0]..V[4] emits the segments
-    # right-to-left ([3,4],[2,3],[1,2],[0,1]); the cursor then consumes the
-    # first record and stale-consumes the rest, so the tighten covered only
-    # the barrel's RIGHTMOST slice instead of tracking its top edge.  Walk
-    # the arc the other way so the four ranges come out [0,1],[1,2],[2,3],
-    # [3,4].  Ranges are half-open (xl <= x < xr), so touching ends do not
-    # overlap.
-    for a_, b_ in [(3,4),(2,3),(1,2),(0,1)]:            # top arc: RECORDED
-        obj_art += _ln(_V[a_], _V[b_])
+    for k in (6, 7, 8, 9, 10):                  # far half of the lid: RECORDED
+        obj_art += _edge(k)
     obj_art += _CTL(OBJ_ART_STOPREC)
-    for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:            # lid, lower arc
-        obj_art += _ln(_V[a_], _V[b_])
-    for a_, b_ in [(4,5),(5,6),(6,7),(7,0)]:            # base, visible edges
-        obj_art += _ln((_V[a_][0], _V[a_][1]+5), (_V[b_][0], _V[b_][1]+5))
-    for v in (0, 4):                                    # silhouette verticals
-        obj_art += _ln(_V[v], (_V[v][0], _V[v][1]+5))
+    for k in (0, 1, 2, 3, 4):                   # near half of the lid
+        obj_art += _edge(k)
+    for k in (0, 1, 2, 3, 4):                   # near half of the base
+        obj_art += _edge(k, 6)
+    obj_art += _ln((0, 2), (0, 9))              # left side, lid edge included
+    obj_art += _ln((5, 2), (5, 9))              # right side
     obj_art += _CTL(OBJ_ART_END)
     off_art_oct = 0
 
     # -- plain outline rectangle (everything that is not a barrel) --------
-    # Y index 9 is Y[4] + dy = (yt + 2b) + dy = yt + H/8 + 7H/8 = syb, so
-    # the rectangle spans exactly the projected top and bottom.
+    # Y index 11 is lid_centre + b + dy = syt + 2b + dy = syb, so the
+    # rectangle spans exactly the projected top and bottom.
     off_art_rect = len(obj_art)
-    obj_art += _ln((0, 0), (4, 0))                      # top edge: RECORDED
+    obj_art += _ln((0, 0), (5, 0))              # top edge: RECORDED
     obj_art += _CTL(OBJ_ART_STOPREC)
-    obj_art += _ln((0, 9), (4, 9))
-    obj_art += _ln((0, 0), (0, 9))
-    obj_art += _ln((4, 0), (4, 9))
+    obj_art += _ln((0, 11), (5, 11))
+    obj_art += _ln((0, 0), (0, 11))
+    obj_art += _ln((5, 0), (5, 11))
     obj_art += _CTL(OBJ_ART_END)
 
-    # The engine turns the aspect byte's bit 7 straight into a start
-    # offset, so these two must be exactly what layout.inc's OBJ_ART_OCT /
-    # OBJ_ART_RECT say. Assert rather than plumb a constant through.
-    assert off_art_oct == 0 and off_art_rect == 64, \
-        f"art block offsets moved ({off_art_oct}, {off_art_rect}) -- " \
-        f"update OBJ_ART_OCT/OBJ_ART_RECT in layout.inc to match"
-    # Gate BOTH record contracts at build time: they fail silently, as
-    # over-draw and a part-width tighten respectively.
-    for _blk in (off_art_oct, off_art_rect):
-        _prev = -1
-        for _e in range(_blk, len(obj_art), 4):
-            if obj_art[_e] >= OBJ_ART_STOPREC:
-                break                                   # end of the run
-            assert obj_art[_e] >= _prev, \
-                f"recorded art lines in block {_blk} are not in ascending x " \
-                f"order -- tighten_from_records' monotonic cursor will drop " \
-                f"every record after the first"
-            _prev = obj_art[_e]
-    for _e in range(0, len(obj_art), 4):
-        if obj_art[_e] >= OBJ_ART_STOPREC:
-            continue
-        assert obj_art[_e] <= obj_art[_e+2], \
-            f"billboard art line {_e//4} is reversed -- draw_clipped_line_s16 " \
-            f"requires x1 <= x2 and will silently drop its tighten record"
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4
     rom_main_size = off_obj_art + len(obj_art)

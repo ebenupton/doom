@@ -41,30 +41,42 @@ obj_yb_l  = $1105
 obj_yb_h  = $1106
 obj_h     = $1107
 obj_t     = $1108
+; The two ratio TRIPLES, same stride so one loop fills both and obj_hex
+; walks either with X = 0 or X = 3.  v2 = (sqrt3-1)v ~ 47v/64, v3 = v - v2,
+; which is EXACT: the dodecagon's two ratios sum to 1.
 obj_a     = $1109
-obj_a7    = $110A
-obj_b     = $110B
-obj_b7    = $110C
-obj_dy    = $110D
-obj_e     = $110E
-obj_X     = $110F   ; 10 bytes
-obj_sd_l  = $1133   ; [OBJ_MAXSLOT]
-obj_sd_h  = $1136   ; [OBJ_MAXSLOT]
-obj_scx_l = $1139   ; [OBJ_MAXSLOT]
-obj_scx_h = $113C   ; [OBJ_MAXSLOT]
-obj_syt_l = $113F   ; [OBJ_MAXSLOT]
-obj_syt_h = $1142   ; [OBJ_MAXSLOT]
-obj_syb_l = $1145   ; [OBJ_MAXSLOT]
-obj_syb_h = $1148   ; [OBJ_MAXSLOT]
-obj_Y     = $1119   ; 20 bytes
-obj_n     = $112D
-obj_left  = $112E
-obj_k     = $112F
-obj_best  = $1130
-obj_ss    = $1131
-obj_mask  = $1132
-obj_asp   = $114B   ; live object's aspect byte (bit 7 = art, 0-6 = k)
-obj_sasp  = $114C   ; [OBJ_MAXSLOT]
+obj_a2    = $110A
+obj_a3    = $110B
+obj_b     = $110C
+obj_b2    = $110D
+obj_b3    = $110E
+obj_dy    = $110F
+obj_e     = $1110
+obj_ctr_l = $1111   ; obj_hex centre
+obj_ctr_h = $1112
+obj_hcnt  = $1113
+; obj_Y MUST sit exactly 12 bytes after obj_X: obj_hex addresses both as
+; obj_X,Y with Y = 0 (the x table) or 12 (the lid), so one store serves both.
+obj_X     = $1114   ; 6 x s16  -> $1114-$111F
+obj_Y     = $1120   ; 12 x s16 -> $1120-$1137
+obj_n     = $1138
+obj_left  = $1139
+obj_k     = $113A
+obj_best  = $113B
+obj_ss    = $113C
+obj_mask  = $113D
+obj_asp   = $113E   ; live object's aspect byte (bit 7 = art, 0-6 = k)
+obj_sd_l  = $113F   ; [OBJ_MAXSLOT]
+obj_sd_h  = $1142
+obj_scx_l = $1145
+obj_scx_h = $1148
+obj_syt_l = $114B
+obj_syt_h = $114E
+obj_syb_l = $1151
+obj_syb_h = $1154
+obj_sasp  = $1157   ; [OBJ_MAXSLOT] -> $1157-$1159
+
+.assert obj_Y = obj_X + 12, error, "obj_hex addresses the lid as obj_X+12"
 
 OBJ_MAXSLOT = 3                            ; most objects in one subsector
                                         ; is 3 (wad_packed asserts it)
@@ -175,6 +187,47 @@ obj_done:
 ; ============================================================================
 ; obj_one — project and draw object X.
 ; ============================================================================
+; ============================================================================
+; obj_hex — fill six s16 slots with centre -+ a ratio triple.
+;   in: obj_ctr_l/h = centre; X = triple base (0 = a, 3 = b);
+;       Y = destination byte offset from obj_X (0 = the x table, 12 = the lid)
+;   Both the x table and the lid ellipse are centre -+ {v, v2, v3}, so one
+;   routine builds both -- which is what pays for the 12-gon's extra pair of
+;   values in less code than the 8-gon's straight-line blocks took.
+; ============================================================================
+obj_hex:
+   LDA #3
+   STA obj_hcnt
+oh_minus:
+   SEC
+   LDA obj_ctr_l
+   SBC obj_a,X
+   STA obj_X+0,Y
+   LDA obj_ctr_h
+   SBC #0
+   STA obj_X+1,Y
+   INY
+   INY
+   INX
+   DEC obj_hcnt
+   BNE oh_minus
+   LDA #3                                  ; mirror back: X walks the triple
+   STA obj_hcnt                            ; in reverse for the + side
+oh_plus:
+   DEX
+   CLC
+   LDA obj_ctr_l
+   ADC obj_a,X
+   STA obj_X+0,Y
+   LDA obj_ctr_h
+   ADC #0
+   STA obj_X+1,Y
+   INY
+   INY
+   DEC obj_hcnt
+   BNE oh_plus
+   RTS
+
 ; early-out target, placed BEFORE the body so the near-clip and far-recip
 ; branches reach it backwards (the four edge macros put the tail far out
 ; of branch range)
@@ -420,115 +473,86 @@ obj_hok:
    SEC
    SBC obj_t
    STA obj_dy
-   LDX #0                                  ; a7,b7 = 45/64 of a,b
+; a2,b2 = 47/64 (the dodecagon's sqrt3-1, to 0.32%); a3,b3 = the exact
+; complement, since (sqrt3-1) + (2-sqrt3) = 1.  One chain, not two.
+   LDX #0
 obj_s7:
-   LDA obj_a,X
+   LDA obj_a,X                             ; t = v>>1
    LSR A
    STA obj_t
-   STA obj_a7,X
+   STA obj_a2,X
    LSR A
-   LSR A
+   LSR A                                   ; += t>>2
    CLC
-   ADC obj_a7,X
-   STA obj_a7,X
+   ADC obj_a2,X
+   STA obj_a2,X
+   LDA obj_t
+   LSR A
+   LSR A
+   LSR A                                   ; += t>>3
+   CLC
+   ADC obj_a2,X
+   STA obj_a2,X
    LDA obj_t
    LSR A
    LSR A
    LSR A
+   LSR A                                   ; += t>>4
    CLC
-   ADC obj_a7,X
-   STA obj_a7,X
+   ADC obj_a2,X
+   STA obj_a2,X
    LDA obj_t
    LSR A
    LSR A
    LSR A
    LSR A
-   LSR A
+   LSR A                                   ; += t>>5  -> 47/64
    CLC
-   ADC obj_a7,X
-   STA obj_a7,X
+   ADC obj_a2,X
+   STA obj_a2,X
+   SEC
+   LDA obj_a,X
+   SBC obj_a2,X
+   STA obj_a3,X
    INX
    INX
-   CPX #4
+   INX
+   CPX #6
    BCC obj_s7
-; --- X[] = cx + {-a, -a7, 0, +a7, +a} ------------------------------------
+; --- X[0..5] = cx -+ {a,a2,a3};  Y[0..5] = lid centre -+ {b,b2,b3} -------
+; Both tables are the SAME shape, which is what obj_hex exists for.  The lid
+; centre is syt + b, so Y[0] comes out syt and Y[5] syt + 2b exactly as the
+; art expects.
    LDA obj_cx_l
-   STA obj_X+4
+   STA obj_ctr_l
    LDA obj_cx_h
-   STA obj_X+5
+   STA obj_ctr_h
+   LDX #0                                  ; the a triple
+   LDY #0                                  ; -> obj_X
+   JSR obj_hex
    CLC
-   LDA obj_cx_l
-   ADC obj_a
-   STA obj_X+8
-   LDA obj_cx_h
-   ADC #0
-   STA obj_X+9
-   SEC
-   LDA obj_cx_l
-   SBC obj_a
-   STA obj_X+0
-   LDA obj_cx_h
-   SBC #0
-   STA obj_X+1
-   CLC
-   LDA obj_cx_l
-   ADC obj_a7
-   STA obj_X+6
-   LDA obj_cx_h
-   ADC #0
-   STA obj_X+7
-   SEC
-   LDA obj_cx_l
-   SBC obj_a7
-   STA obj_X+2
-   LDA obj_cx_h
-   SBC #0
-   STA obj_X+3
-; --- Y[0..4] = lid, Y[5..9] = lid + dy -----------------------------------
-   LDA obj_yt_l                            ; Y[0] = syt (the lid's top)
-   STA obj_Y+0
-   LDA obj_yt_h
-   STA obj_Y+1
-   CLC                                     ; Y[2] = syt + b
    LDA obj_yt_l
    ADC obj_b
-   STA obj_Y+4
+   STA obj_ctr_l
    LDA obj_yt_h
    ADC #0
-   STA obj_Y+5
-   CLC                                     ; Y[4] = Y[2] + b
-   LDA obj_Y+4
-   ADC obj_b
-   STA obj_Y+8
-   LDA obj_Y+5
-   ADC #0
-   STA obj_Y+9
-   SEC                                     ; Y[1] = Y[2] - b7
-   LDA obj_Y+4
-   SBC obj_b7
-   STA obj_Y+2
-   LDA obj_Y+5
-   SBC #0
-   STA obj_Y+3
-   CLC                                     ; Y[3] = Y[2] + b7
-   LDA obj_Y+4
-   ADC obj_b7
-   STA obj_Y+6
-   LDA obj_Y+5
-   ADC #0
-   STA obj_Y+7
-   LDX #0
+   STA obj_ctr_h
+   LDX #3                                  ; the b triple
+   LDY #12                                 ; -> obj_Y (= obj_X + 12)
+   JSR obj_hex
+; --- Y[9..11] = the base arc: only the NEAR half is ever drawn ------------
+   LDX #6
 obj_ycp:
    CLC
    LDA obj_Y+0,X
    ADC obj_dy
-   STA obj_Y+10,X
+   STA obj_Y+12,X
    LDA obj_Y+1,X
    ADC #0
-   STA obj_Y+11,X
+   STA obj_Y+13,X
    INX
    INX
-   CPX #10
+   CPX #12
    BCC obj_ycp
 ; --- stamp the 14 art lines ----------------------------------------------
    PAGE BANK_C
@@ -605,11 +629,11 @@ obj_ds_lol:
    LDX obj_X+0
 obj_ds_lo:
    STX zp_i_l
-   LDX #255                                ; ihi = clamp(X[4]) + 1
-   LDA obj_X+9
+   LDX #255                                ; ihi = clamp(X[5]) + 1
+   LDA obj_X+11
    BMI obj_ds_hz
    BNE obj_ds_hi
-   LDX obj_X+8
+   LDX obj_X+10
    INX
    BNE obj_ds_hi
 obj_ds_hz:
