@@ -39,29 +39,38 @@ obj_yt_h: .res 1
 obj_yb_l: .res 1
 obj_yb_h: .res 1
 
+OBJ_MAXSLOT = 4                            ; most objects in one subsector
+                                        ; is 3 (wad_packed asserts it)
+obj_n:     .res 1                          ; slots filled this subsector
+obj_left:  .res 1                          ; slots still to draw
+obj_k:     .res 1                          ; edge-table cursor across the JSR
+obj_best:  .res 1
+obj_sd_l:  .res OBJ_MAXSLOT                ; depth (vy counts) -- sort key
+obj_sd_h:  .res OBJ_MAXSLOT
+obj_sxl_l: .res OBJ_MAXSLOT
+obj_sxl_h: .res OBJ_MAXSLOT
+obj_sxr_l: .res OBJ_MAXSLOT
+obj_sxr_h: .res OBJ_MAXSLOT
+obj_syt_l: .res OBJ_MAXSLOT
+obj_syt_h: .res OBJ_MAXSLOT
+obj_syb_l: .res OBJ_MAXSLOT
+obj_syb_h: .res OBJ_MAXSLOT
+
 obj_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
 
-; --- stage one rectangle edge and clip it ---
-.macro OBJ_EDGE x1l, x1h, y1l, y1h, x2l, x2h, y2l, y2h
-   LDA x1l
-   STA zp_line_xl_l
-   LDA x1h
-   STA zp_line_xl_h
-   LDA y1l
-   STA zp_line_yl_l
-   LDA y1h
-   STA zp_line_yl_h
-   LDA x2l
-   STA zp_line_xr_l
-   LDA x2h
-   STA zp_line_xr_h
-   LDA y2l
-   STA zp_line_yr_l
-   LDA y2h
-   STA zp_line_yr_h
-   JSR draw_clipped_line_s16
-.endmacro
+; --- rectangle edges, table-driven ---------------------------------------
+; The four edges use only four values (xl, xr, yt, yb), so each edge is
+; four byte OFFSETS into the obj_xl_l block: x1, y1, x2, y2.  Four macro
+; expansions of the staging cost ~200 bytes and overflowed the banked
+; CODE area; this is ~40 plus a 16-byte table.
+;   block: obj_xl_l/h = +0, obj_xr_l/h = +2, obj_yt_l/h = +4, obj_yb_l/h = +6
+obj_edges:
+   .byte 0,4, 2,4                          ; top    (xl,yt)-(xr,yt)
+   .byte 0,6, 2,6                          ; bottom
+   .byte 0,4, 0,6                          ; left
+   .byte 2,4, 2,6                          ; right
+
 
 ; ============================================================================
 ; ::obj_subsector — draw every object whose home is subsector A.
@@ -92,18 +101,56 @@ obj_bitmask:
    PAGE BANK_WALK                          ; prologue contract: WALK in/out
    RTS                                     ; the common case: one bit test
 obj_have:
-; the table is sorted by subsector, but a linear sweep of 18 entries is
-; cheaper than any search and only runs for a subsector that HAS objects
+; PASS 1 -- project every object of this subsector into a slot.  The
+; table is sorted by subsector, but a linear sweep of 18 entries is
+; cheaper than any search and only runs for a subsector that HAS
+; objects.
+   LDA #0
+   STA obj_n
    LDX #LAY_N_OBJ-1
 obj_scan:
    LDA OBJ_SS,X
    CMP obj_ss
    BNE obj_next
-   JSR obj_one
-   LDX obj_i                               ; obj_one clobbers X
+   JSR obj_project
+   LDX obj_i                               ; obj_project clobbers X
 obj_next:
    DEX
    BPL obj_scan
+; PASS 2 -- draw FRONT TO BACK.  Order matters now that each billboard
+; tightens behind itself: the nearest must claim its columns first, or a
+; farther one would tighten them and clip the nearer one away.  n <= 3,
+; so a selection scan is cheaper than any real sort.
+   LDA obj_n
+   STA obj_left
+obj_pick:
+   LDA obj_left
+   BEQ obj_done
+   LDX #0
+   STX obj_best
+   LDY #1
+obj_minloop:
+   CPY obj_n
+   BCS obj_gotmin
+   LDX obj_best                            ; depth[Y] < depth[best] ?
+   LDA obj_sd_l,Y
+   CMP obj_sd_l,X
+   LDA obj_sd_h,Y
+   SBC obj_sd_h,X
+   BCS obj_minnext
+   STY obj_best
+obj_minnext:
+   INY
+   BNE obj_minloop
+obj_gotmin:
+   LDX obj_best
+   JSR obj_draw_slot
+   LDX obj_best                            ; retire it: depth = $FFFF sorts
+   LDA #$FF                                ; last; obj_n stays the scan
+   STA obj_sd_h,X                          ; bound, obj_left counts down
+   DEC obj_left
+   BNE obj_pick
+obj_done:
    PAGE BANK_WALK                          ; the prologue's SS reads are WALK
    RTS
 
@@ -118,8 +165,11 @@ obj_mask: .res 1
 ; of branch range)
 obj_ret:
    RTS
-obj_one:
+obj_project:
    STX obj_i
+   LDA obj_n                               ; slot array is fixed-size
+   CMP #OBJ_MAXSLOT
+   BCS obj_ret
 ; --- stage the position exactly as the vertex pipeline stages a vertex ---
    LDA OBJ_OX,X
    STA zp_ri_d_l
@@ -257,13 +307,133 @@ obj_recip_done:
    JSR project_y
    STY obj_yb_l
    STA obj_yb_h
-; --- four clipped edges, records OFF (a billboard must never write a
-;     tighten record: it is not a wall and closes no aperture) ---
-   ZERO zp_dcl_rec_buf_h
+; --- park the projected rectangle in a slot; the draw happens later,
+;     nearest-first, because each billboard tightens behind itself ---
+   LDY obj_n
+   LDA zp_br_vy_l
+   STA obj_sd_l,Y
+   LDA zp_br_vy_h
+   STA obj_sd_h,Y
+   LDA obj_xl_l
+   STA obj_sxl_l,Y
+   LDA obj_xl_h
+   STA obj_sxl_h,Y
+   LDA obj_xr_l
+   STA obj_sxr_l,Y
+   LDA obj_xr_h
+   STA obj_sxr_h,Y
+   LDA obj_yt_l
+   STA obj_syt_l,Y
+   LDA obj_yt_h
+   STA obj_syt_h,Y
+   LDA obj_yb_l
+   STA obj_syb_l,Y
+   LDA obj_yb_h
+   STA obj_syb_h,Y
+   INC obj_n
+   RTS
+
+; ============================================================================
+; obj_draw_slot — draw slot X's rectangle, then TIGHTEN behind it.
+;
+; The TOP edge is drawn with BOT_RECORDS ARMED, so the same call both
+; draws it and records it; tighten_from_records then makes that line the
+; new aperture BOTTOM across the billboard's columns.  Nothing drawn
+; later in the walk can appear below it -- which is exactly what a solid
+; object standing on the floor should do to the geometry behind it.  The
+; other three edges are pure outline and are drawn DISARMED, after the
+; top, so they are not themselves clipped by the tighten they cause.
+;
+; This is also why pass 2 runs nearest-first: a far billboard that
+; tightened first would close the columns a nearer one still needs.
+; ============================================================================
+obj_draw_slot:
+   LDA obj_sxl_l,X
+   STA obj_xl_l
+   LDA obj_sxl_h,X
+   STA obj_xl_h
+   LDA obj_sxr_l,X
+   STA obj_xr_l
+   LDA obj_sxr_h,X
+   STA obj_xr_h
+   LDA obj_syt_l,X
+   STA obj_yt_l
+   LDA obj_syt_h,X
+   STA obj_yt_h
+   LDA obj_syb_l,X
+   STA obj_yb_l
+   LDA obj_syb_h,X
+   STA obj_yb_h
    PAGE BANK_C
-   OBJ_EDGE obj_xl_l, obj_xl_h, obj_yt_l, obj_yt_h, obj_xr_l, obj_xr_h, obj_yt_l, obj_yt_h
-   OBJ_EDGE obj_xl_l, obj_xl_h, obj_yb_l, obj_yb_h, obj_xr_l, obj_xr_h, obj_yb_l, obj_yb_h
-   OBJ_EDGE obj_xl_l, obj_xl_h, obj_yt_l, obj_yt_h, obj_xl_l, obj_xl_h, obj_yb_l, obj_yb_h
-   OBJ_EDGE obj_xr_l, obj_xr_h, obj_yt_l, obj_yt_h, obj_xr_l, obj_xr_h, obj_yb_l, obj_yb_h
-   PAGE BANK_SEG                           ; the scan's next OBJ_SS read
+; hg_pass zeroes the record counts per seg; we run in the PROLOGUE,
+; ahead of the seg loop, so zero them ourselves.  TOP stays empty: a
+; billboard closes the aperture from below only.
+   ZERO TOP_RECORDS
+   ZERO BOT_RECORDS
+   LDA #1
+   STA zp_dcl_rec_off
+   LDA #>BOT_RECORDS
+   STA zp_dcl_rec_buf_h                    ; armed for the TOP edge only
+   LDX #0
+obj_ea:
+   LDY obj_edges,X
+   LDA obj_xl_l,Y
+   STA zp_line_xl_l
+   LDA obj_xl_h,Y
+   STA zp_line_xl_h
+   LDY obj_edges+1,X
+   LDA obj_xl_l,Y
+   STA zp_line_yl_l
+   LDA obj_xl_h,Y
+   STA zp_line_yl_h
+   LDY obj_edges+2,X
+   LDA obj_xl_l,Y
+   STA zp_line_xr_l
+   LDA obj_xl_h,Y
+   STA zp_line_xr_h
+   LDY obj_edges+3,X
+   LDA obj_xl_l,Y
+   STA zp_line_yr_l
+   LDA obj_xl_h,Y
+   STA zp_line_yr_h
+   STX obj_k
+   JSR draw_clipped_line_s16
+   ZERO zp_dcl_rec_buf_h                   ; only the first edge records
+   LDA obj_k
+   CLC
+   ADC #4
+   TAX
+   CPX #16
+   BNE obj_ea
+; --- close the columns, if the top edge survived the clip.  Zero
+;     records means it was clipped away entirely; tighten_from_records
+;     must not be called then (its own contract says so).
+   LDA BOT_RECORDS
+   BEQ obj_ds_done
+   LDX #0                                  ; ilo = clamp(xl, 0..255)
+   LDA obj_xl_h
+   BMI obj_ds_lo
+   BEQ obj_ds_lol
+   LDX #255
+   BNE obj_ds_lo
+obj_ds_lol:
+   LDX obj_xl_l
+obj_ds_lo:
+   STX zp_i_l
+   LDX #255                                ; ihi = clamp(xr)+1, HALF-OPEN
+   LDA obj_xr_h
+   BMI obj_ds_hz
+   BNE obj_ds_hi
+   LDX obj_xr_l
+   INX
+   BNE obj_ds_hi
+obj_ds_hz:
+   LDX #0
+obj_ds_hi:
+   STX zp_i_h
+   CPX zp_i_l
+   BCC obj_ds_done                         ; empty or inverted range
+   BEQ obj_ds_done
+   JSR tighten_from_records
+obj_ds_done:
    RTS
