@@ -517,8 +517,8 @@ tfs_fp_emit:
 ; Each pass handles one interval [cur_x, next_x] over which the
 ; dominating source (record vs pool) is constant on both sides.
 tfs_inner:
-   LDA TFS_CUR_X                                                          ;# |||||      0.5
-   CMP TFS_X_HI                                                           ;# |||||      0.5
+   LDA TFS_CUR_X                                                          ;# |||||      0.6
+   CMP TFS_X_HI                                                           ;# |||||      0.6
    BCC tfs_inner_go                                                       ;# ||||       0.5
    JMP tfs_inner_done                                                     ;# ||         0.3
 tfs_inner_go:
@@ -714,7 +714,7 @@ tfs_compute_vals:
    LDY TFS_T_CUR                                                          ;# ||         0.2
    INY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
-   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# ||         0.2
+   BEQ tfs_top_pool                        ; 'above' verdict: pool stands ;# |          0.2
 ; A dominating record IS the boundary — no max() needed (2026-08-22,
 ; Eben). A top record exists BECAUSE dcl drew that edge inside the
 ; aperture, so rec >= pool over its range by construction. The old
@@ -908,7 +908,7 @@ tfs_advance_curs:
    TAY                                                                    ;# |          0.1
    LDA TOP_RECORDS,Y                                                      ;# ||         0.2
    CMP TFS_NEXT_X                                                         ;# ||         0.2
-   BNE tfs_skip_t_adv                                                     ;# |          0.1
+   BNE tfs_skip_t_adv                                                     ;# ||         0.2
    LDA TFS_T_CUR                                                          ;# |          0.1
    CLC                                                                    ;# |          0.1
    ADC #4                                                                 ;# |          0.1
