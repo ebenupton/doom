@@ -72,8 +72,12 @@ obj_bitmask:
    RTS                                     ; feature off (layout.inc)
 .endif
    STA obj_ss
-   PAGE BANK_SEG
-   AND #7
+   PAGE BANK_SEG                           ; NB: PAGE is LDA #n/STA $FE30 --
+   LDA obj_ss                              ; it EATS A.  Flat's PAGE is a
+   AND #7                                  ; no-op, so a missing reload here
+                                        ; works in flat and silently
+                                        ; computes the mask from the bank
+                                        ; number in banked.
    TAX
    LDA obj_bitmask,X
    STA obj_mask
@@ -144,12 +148,35 @@ obj_one:
    CMP #16
    BCC obj_ret
 obj_nc_ok:
-; --- reciprocal, permuted junior pages (seg_xform's mask+OR index).
-;     A far object (idx >= 256) is simply dropped: it is a handful of
-;     pixels at that range and the far ladder is not worth inlining.
+; --- reciprocal.  For SEG endpoints idx >= 256 is rare, so seg_xform
+;     puts the far ladder on an island; for billboards it is the COMMON
+;     case -- a floor lamp 1300 world units away is idx 336 -- so both
+;     arms are inline here.  Dropping the far arm (the first cut did)
+;     silently discarded every object on the map.
    LDA zp_br_vy_h
    CMP #16
-   BCS obj_ret
+   BCC obj_near
+   LDA zp_br_vy_l                          ; idx = counts>>4, split by
+   LSR A                                   ; nibble: vy_l is dead scratch
+   LSR A                                   ; for the lo half, vy_h stays
+   LSR A                                   ; whole for the hi
+   LSR A
+   STA zp_br_vy_l
+   LDA zp_br_vy_h
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ORA zp_br_vy_l
+   TAY                                     ; Y = idx lo
+   LDA zp_br_vy_h
+   LSR A
+   LSR A
+   LSR A
+   LSR A                                   ; A = idx hi
+   JSR recip_hi
+   JMP obj_recip_done
+obj_near:
    LDA zp_br_vy_l
    AND #$F0
    ORA zp_br_vy_h
@@ -158,6 +185,7 @@ obj_nc_ok:
    STA zp_br_r_m8
    LDA RECIP_S,Y
    STA zp_br_r_s
+obj_recip_done:
 ; --- screen x of the two edges.  project_x is LINEAR in vx, so the
 ;     billboard's edges are just vx -/+ r; no second rotation.
    LDA zp_br_vx_l
