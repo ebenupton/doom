@@ -400,14 +400,19 @@ dcl_outer_reject:
 ; walk pushed the re-entry out of branch range, and an always-guarded
 ; BNE+JMP pair costs the same as the test+JMP form)
    LDA POOL_NEXT,X                                                        ;# |||        0.4
-   BEQ dclor_flush                        ; LDA's own Z — the TAX below is ;# ||         0.2
+   BEQ dcl_flush                           ; straight there: the dclor_flush ;# ||         0.2
+                                        ; trampoline that used to sit here
+                                        ; jumped to the NEXT instruction
+                                        ; (tools/jumpscan.py).  -3 cyc on the
+                                        ; flush arm.  MEAN reads +11 from the
+                                        ; 3-byte shift's alignment reshuffle;
+                                        ; that is noise and does not veto a
+                                        ; true win — see the true-wins rule                        ; LDA's own Z — the TAX below is
    TAX                                     ; SKIPPED on the flush arm, where ;# |          0.1
                                         ; X is dead (the walk exits via RTS
                                         ; and no caller of draw_clipped_line
                                         ; reads X back)
    JMP dcl_not_left                                                       ;# |          0.1
-dclor_flush:
-   JMP dcl_flush                                                          ;# |          0.2
 
 
 ; (The Phase-2 portal check — dcl_extends_past / dcl_has_next /
@@ -1848,7 +1853,7 @@ rf_app:
    STA (zp_dcl_rec_buf)                    ; not taken, INY/LDA keep C
 .else
    LDY #0                                                                 ;# |          0.1
-   LDA (zp_dcl_rec_buf),Y                                                 ;# |          0.1
+   LDA (zp_dcl_rec_buf),Y                                                 ;# |          0.2
    ADC #1                                  ; C=0 proven: BCS rf_restore   ;# |          0.1
    STA (zp_dcl_rec_buf),Y                  ; not taken, INY/LDA keep C    ;# ||         0.2
 .endif
