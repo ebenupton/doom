@@ -65,7 +65,21 @@ def copro_frame_commands():
         mpu.step(); steps += 1
     cmds = state['out'][:-4]
     assert len(cmds) % 4 == 0 and cmds, "no frame captured"
-    return [tuple(cmds[i:i+4]) for i in range(0, len(cmds), 4)]
+    tuples = [tuple(cmds[i:i+4]) for i in range(0, len(cmds), 4)]
+    # Strip the HUD packet the way the host's `main` does. This gate drives
+    # `drawcmd` directly, so it never runs the dispatch that recognises
+    # FE FE FE FE -- feed the packet in as geometry and its 12 payload
+    # bytes rasterise as garbage across row 0.
+    out, skip = [], 0
+    for t in tuples:
+        if skip:
+            skip -= 1
+            assert t[3] == 0, f"HUD payload tuple not 00-padded: {t}"
+        elif t == (0xFE,) * 4:
+            skip = 3
+        else:
+            out.append(t)
+    return out
 
 
 def host_rasterize(cmds):

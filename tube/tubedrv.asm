@@ -345,6 +345,36 @@ ORG &EA00                       \ the FB region: the copro never
     JSR T_VIEW_SETUP            \ br_view_setup (flat: no banking)
     JSR T_SPAN_INIT             \ span_init / pool
     JSR T_RENDER_FRAME          \ lines leave via the &A900 emitters
+\ ---- HUD packet: FE FE FE FE + 12 payload bytes -----------------------
+\ The HOST draws the HUD, not the copro: the parasite has no framebuffer
+\ and no OS font ($C000 is its own DATA span), so it just ships its pose
+\ every frame and the H toggle lives host-side.  That also dodges the
+\ mask byte being full -- 4 keys + 3 field bits + SPACE, no room for an
+\ H bit.
+\ FE FE FE FE cannot collide with geometry (a real y byte is < 160).
+\ EVERY payload tuple ends in 00, which does two jobs: it keeps the
+\ packet 4-TUPLE ALIGNED so the host's skip-ahead parser stays in step,
+\ and it breaks any run of FFs in the position bytes -- x = -1/256 would
+\ otherwise put four consecutive FFs on the wire and fake the ISR's
+\ 4-consecutive-FF end-of-frame marker.
+    LDX #4
+.hudmk
+    LDA #&FE
+    JSR send1
+    DEX
+    BNE hudmk
+    LDA T_DV_ANGIDX : JSR send1
+    LDA T_DV_PXF    : JSR send1
+    LDA T_DV_PXL    : JSR send1
+    LDA #0          : JSR send1
+    LDA T_DV_PXH    : JSR send1
+    LDA T_DV_PYF    : JSR send1
+    LDA T_DV_PYL    : JSR send1
+    LDA #0          : JSR send1
+    LDA T_DV_PYH    : JSR send1
+    LDA #0          : JSR send1
+    LDA #0          : JSR send1
+    LDA #0          : JSR send1
     LDA #&FF                    \ end of frame
     JSR send1
     LDA #&FF

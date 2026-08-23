@@ -71,7 +71,8 @@ def main():
     base[0:0x10000] = img
 
     state = {'frame': 0, 'out': [], 'eofs': 0, 'lines': 0, 'mask_reads': 0,
-             'avail': False, 'polls': 0, 'space': 0}
+             'avail': False, 'polls': 0, 'space': 0,
+             'hudleft': 0, 'hud': [], 'hudpkts': 0}
 
     def r1s_read(addr):
         # b6 (space): always. b7 (mask avail): FIFO model — empty until the
@@ -96,9 +97,21 @@ def main():
         state['out'].append(value)
         if len(state['out']) % 4 == 0:
             c = state['out'][-4:]
-            if c == [0xFF] * 4:
+            if state['hudleft']:                      # HUD payload tuple
+                state['hudleft'] -= 1
+                state['hud'] += c
+                # EVERY payload tuple must end in 00: that is what keeps
+                # the packet 4-tuple aligned for the host's skip-ahead
+                # parser AND stops a run of FFs in the position bytes
+                # faking the ISR's 4-consecutive-FF end-of-frame marker.
+                assert c[3] == 0, f"HUD payload tuple not 00-padded: {c}"
+            elif c == [0xFF] * 4:
                 state['eofs'] += 1
                 state['frame'] += 1
+            elif c == [0xFE] * 4:                     # HUD packet marker
+                state['hudleft'] = 3
+                state['hud'] = []
+                state['hudpkts'] += 1
             else:
                 state['lines'] += 1
                 assert c[1] < 160 and c[3] < 160, f"bad y in {c}"
@@ -160,9 +173,28 @@ def main():
         print("USE FAIL: SPACE on a door line moved no ceil mover — "
               "the parasite's door-sense path is dead")
     ok = ok and use_ok
+
+    # ---- HUD packet ----------------------------------------------------
+    # The copro ships its pose every frame so the HOST can draw the HUD
+    # (the parasite has no framebuffer and no OS font). One packet per
+    # frame, carrying the driver's live DV_* pose.
+    hud_ok = state['hudpkts'] >= state['eofs'] - 1 and len(state['hud']) == 12
+    if hud_ok:
+        h = state['hud']
+        want = [base[T['DV_ANGIDX']], base[T['DV_PXF']], base[T['DV_PXL']], 0,
+                base[T['DV_PXH']], base[T['DV_PYF']], base[T['DV_PYL']], 0,
+                base[T['DV_PYH']], 0, 0, 0]
+        hud_ok = (h == want)
+        if not hud_ok:
+            print(f"HUD FAIL: packet {h} != driver pose {want}")
+    elif state['hudpkts'] == 0:
+        print("HUD FAIL: the copro sent no HUD packet - the host has "
+              "nothing to draw the readout from")
+    ok = ok and hud_ok
     print(f"copro_py65: {'PASS' if ok else 'FAIL'} — {state['eofs']} frames, "
           f"{state['lines']} lines, {state['mask_reads']} mask reads, "
-          f"{steps} steps, doors opened by SPACE: {opened}")
+          f"{steps} steps, doors opened by SPACE: {opened}, "
+          f"HUD packets: {state['hudpkts']}")
     sys.exit(0 if ok else 1)
 
 

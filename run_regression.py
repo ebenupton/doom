@@ -68,6 +68,10 @@ run('tube_pipeline', ['tube/test_pipeline_py65.py'], lambda o: 'PIPELINE CONVERG
 # anim_hub and the mover state machine all look perfect. Nothing else here
 # catches it -- anim6502_check POKES mover state instead of triggering it.
 run('tube_copro', ['tube/test_copro_py65.py'], lambda o: 'copro_py65: PASS' in o)
+# HOSTT's half of the split HUD: the copro ships a pose packet, the host
+# draws the readout. The pipeline gate drives drawcmd directly and never
+# sees the packet, so without this the host half is untested.
+run('tube_hud', ['tube/test_hostt_hud.py'], lambda o: 'HOSTT-HUD: PASS' in o)
 # ^ the parasite shares the flat image but carries its OWN map glue
 # (emit overlay, ship ranges, boot zeroing) — layout arcs rot it
 # silently without a gate (the 2026-08-10 black screen: three arcs

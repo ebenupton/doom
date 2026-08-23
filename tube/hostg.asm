@@ -47,6 +47,8 @@ x1 = &84
 y1 = &85
 ls = &86
 b = &87
+hudsrc = &88                    \ HUD glyph pointer (above the raster map,
+huddst = &8A                    \ and the HUD only runs between frames)
 zp_tmp0 = &DE
 zp_tmp1 = &DF
 zp_tmp2 = &E0
@@ -167,6 +169,9 @@ ORG &1900
     AND y1
     CMP #&FF
     BEQ eof
+    CMP #&FE                    \ FE FE FE FE = the copro's HUD packet.
+    BEQ hudpkt                  \ A real line cannot AND to FE: that needs
+                                \ every byte in {FE,FF} and y is < 160.
     INC &6F                     \ diagnostics: commands this frame (cheap;
     JSR drawcmd                 \ &6A = last frame's count, &6B = EOFs)
     JMP main
@@ -182,7 +187,18 @@ ORG &1900
     JMP plot_v
 .diag
     JMP linedraw4               \ the real NJ rasteriser
+.hudpkt
+    LDX #0
+.hp1
+    JSR rd
+    STA hudb,X
+    INX
+    CPX #12
+    BNE hp1
+    JMP main
 .eof
+    JSR hudglue                 \ onto the buffer just rendered, before the
+                                \ swap hands it to the presenter
     SEI                         \ one complete frame consumed
     DEC eofs
     CLI
@@ -379,6 +395,22 @@ ORG &1900
     ORA #&80
     STA mask
 .nksp
+    LDA #&54                    \ H: toggle the HUD on the PRESS EDGE only,
+    STA &FE4F                   \ so holding it flips exactly once (same
+    BIT &FE4F                   \ internal code and debounce as walk_drv)
+    BPL hudup
+    LDA hudprev
+    BNE hudkdone
+    LDA #1
+    STA hudprev
+    LDA huden
+    EOR #1
+    STA huden
+    JMP hudkdone
+.hudup
+    LDA #0
+    STA hudprev
+.hudkdone
 \ The mask byte carries the ELAPSED FIELD COUNT in its high nibble.
 \ R1 host->parasite is ONE BYTE, not a FIFO: at most one mask is ever in
 \ flight, so the copro cannot recover elapsed time by counting the masks
@@ -422,6 +454,95 @@ ORG &1900
     TAX
     LDA &FC
     RTI
+\ ---- debug HUD (H toggles) --------------------------------------------
+\ "X=hhhh.hh Y=hhhh.hh R=hh" on the top character row, exactly what the
+\ banked build's src/hud.s shows -- but drawn HERE, because the copro has
+\ neither a framebuffer nor the OS font.  Mode 4 makes it a straight copy:
+\ a row-0 cell is 8 CONSECUTIVE bytes at buf + col*8, and an OS glyph is 8
+\ consecutive bytes at &C000 + (ascii-32)*8.  24 cells * 8 = 192 < 256, so
+\ the destination low byte never leaves the buffer's first page.
+\ Payload (tuple-padded on the wire): 0 angidx, 1 xf, 2 xl, 4 xh,
+\ 5 yf, 6 yl, 8 yh.
+.hudglue
+    LDA huden
+    BNE hgon
+    RTS
+.hgon
+    LDA #0
+    STA huddst
+    LDX draw                    \ the buffer this frame was drawn into
+    LDA bufhi,X
+    STA huddst+1
+    LDA #'X' : JSR hudchar
+    LDA #'=' : JSR hudchar
+    LDA hudb+4 : JSR hudhex     \ x int hi
+    LDA hudb+2 : JSR hudhex     \ x int lo
+    LDA #'.' : JSR hudchar
+    LDA hudb+1 : JSR hudhex     \ x frac
+    LDA #' ' : JSR hudchar
+    LDA #'Y' : JSR hudchar
+    LDA #'=' : JSR hudchar
+    LDA hudb+8 : JSR hudhex
+    LDA hudb+6 : JSR hudhex
+    LDA #'.' : JSR hudchar
+    LDA hudb+5 : JSR hudhex
+    LDA #' ' : JSR hudchar
+    LDA #'R' : JSR hudchar
+    LDA #'=' : JSR hudchar
+    LDA hudb+0
+    ASL A
+    ASL A                       \ angle byte = angidx*4, as src/hud.s
+    JSR hudhex
+    RTS
+.hudhex                         \ A = byte -> two hex cells
+    PHA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAX
+    LDA hexdig,X
+    JSR hudchar
+    PLA
+    AND #&0F
+    TAX
+    LDA hexdig,X
+.hudchar                        \ A = ascii -> blit the glyph, advance a cell
+    SEC
+    SBC #32                     \ font ptr = &C000 + (A-32)*8; (A-32) < 96,
+    PHA                         \ so the product is 11 bits
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CLC
+    ADC #&C0
+    STA hudsrc+1
+    PLA
+    ASL A
+    ASL A
+    ASL A
+    STA hudsrc
+    LDY #7
+.hcrow
+    LDA (hudsrc),Y
+    STA (huddst),Y
+    DEY
+    BPL hcrow
+    CLC
+    LDA huddst
+    ADC #8
+    STA huddst
+    RTS
+.hexdig
+    EQUS "0123456789ABCDEF"
+.huden
+    EQUB 0
+.hudprev
+    EQUB 0
+.hudb
+    EQUD 0 : EQUD 0 : EQUD 0
 .clearbuf
     LDA #0                      \ X = buffer index; 20 pages of zeros
     STA ptr
