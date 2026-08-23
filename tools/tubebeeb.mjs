@@ -119,6 +119,41 @@ for (const cmd of script.split(";").map((s) => s.trim()).filter(Boolean)) {
                         "s=" + par.s.toString(16));
             break;
         }
+        case "fbcount": {
+            // non-zero bytes across BOTH game buffers -- the bisect
+            // predicate for "did anything actually get drawn".
+            let n = 0;
+            const b = session.readMemory(0x5800, 0x2800);
+            const arr = b.bytes || b;
+            for (const v of arr) if (v) n++;
+            console.log("fb_nonzero=" + n);
+            break;
+        }
+        case "boottrace": {
+            // SHIFT+reset while sampling the PARASITE pc, so the copro's
+            // brief life during *RUN COPROT is visible.  Plain `boot` runs
+            // 1.5M cycles atomically, by which time the parasite has
+            // already come and gone.
+            const par0 = proc.tube && proc.tube.readmem ? proc.tube : null;
+            if (!par0) throw new Error("no parasite");
+            const n = Number(rest[0] || 60), cyc = Number(rest[1] || 25000);
+            session.keyDown(KEY.SHIFT);
+            session.reset(true);
+            const seq = [];
+            for (let i = 0; i < n; i++) {
+                await session.runFor(cyc);
+                const pc = par0.pc;
+                const tag = (pc >= 0xea00 && pc < 0xf000) ? "DRV:" + pc.toString(16)
+                          : (pc < 0xc000) ? "ENG:" + pc.toString(16)
+                          : pc.toString(16);
+                if (!seq.length || seq[seq.length - 1].tag !== tag)
+                    seq.push({ tag, at: (i + 1) * cyc, n: 1 });
+                else seq[seq.length - 1].n++;
+            }
+            session.keyUp(KEY.SHIFT);
+            console.log(seq.map((e) => `${e.tag}x${e.n}@${e.at}`).join(" "));
+            break;
+        }
         case "ptrace": {
             const par = proc.tube && proc.tube.readmem ? proc.tube : null;
             if (!par) throw new Error("no parasite");

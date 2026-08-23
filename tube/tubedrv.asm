@@ -60,6 +60,17 @@ ORG &EA00                       \ the FB region: the copro never
     EQUB 0
 .boot
     SEI
+    LDX #&DF                    \ STACK CAP (2026-08-23): SQR_MIRROR owns
+    TXS                         \ $01E0-$01FF since the sqr swap (15ba65c)
+                                \ made the quad boot-GENERATED with a mirror
+                                \ prefix in the stack page.  walk_drv caps
+                                \ the stack for exactly this reason; the
+                                \ parasite never did, so its stack started
+                                \ at $FF and the mirror overwrote the JSR
+                                \ OSCLI return addresses in .boot's load
+                                \ sequence -- the copro disappeared into the
+                                \ tube MOS and never came back, so HOSTT was
+                                \ never RUN and the screen stayed black.
     LDA #0                      \ REAL-HW hardening: the engine's runtime
     STA &6C                     \ arenas ($0400-$19FF: pool/records/
     LDA #4                      \ scratch/bitmap page/cache planes)
