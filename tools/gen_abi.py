@@ -29,7 +29,7 @@ ABI = [
     # the generated engine_syms.inc (build_walk_ssd.py), Python via
     # symmap. Only the cfg-anchored region head stays an ABI constant
     # (the driver clear-overlay assert needs it before the engine links).
-    ('MAIN_BASE',      0x2600, None, 'engine CODE region head (cfg-anchored; MAIN first). $2A00 -> $2600 2026-08-19: the -$400 window slide that took the pm_frame code out of bank B — strip $1600, window $1A00-$25FF, CODE $2600 with PMB1-4 appended identically in both builds.'),
+    ('MAIN_BASE',      0x2500, None, 'engine CODE region head (cfg-anchored; MAIN first). $2A00 -> $2600 2026-08-19: the -$400 window slide that took the pm_frame code out of bank B — strip $1600, window $1A00-$25FF, CODE $2600 with PMB1-4 appended identically in both builds. $2600 -> $2500 2026-08-23: PMOVE+PMH are 1,728 B and stopped at $24FF, leaving the PMOVE region a dead last page; CODE takes it (+256 B) and the window shrinks to $1A00-$24FF. Both cfgs move together — bottom-22K identity.'),
     ('HUD_ENTRY',      0xA400, None, 'hud_draw (bank C window)'),
     # (BCA_WS RETIRED 2026-07-26: the workspace block is gone — the box
     # val[] slots were engine-dead (the classify reads BBP planes; only
