@@ -67,6 +67,22 @@ ORG DRV_ORG
                                                     ; SQR_MIRROR owns $01E0-$01FF
                                                     ; (rebuilt at first render,
                                                     ; but never push into it)
+    ; --- REAL-HW hardening: ZERO PAGE (2026-08-23).  The engine reads ZP
+    ;     bytes it never writes and relies on them being 0 -- see
+    ;     tools/zpvirgin.py, which lists every such consumer.  On a real
+    ;     Beeb ZP arrives holding OS/BASIC workspace, not zeros, and no
+    ;     loaded file covers $00-$FF (LOW starts at $1600).  plotq_mode
+    ;     ($A1) is the sharp one: flip_sched only writes it at the END of
+    ;     a frame, so a garbage bit 7 queues the WHOLE first frame.
+    ;     Safe here: SEI is held, this block makes no OS calls, and by
+    ;     the house rule nothing calls the OS after boot.  Clearing to 0
+    ;     reproduces the py65 image every harness validates against.
+    LDA #0
+    TAX
+.zpclr
+    STA &00,X
+    INX
+    BNE zpclr
     LDA #0 : STA &FE34                              ; Master: ACCCON off (harmless on B)
     ; (respawn is NOT called here — see the end of init. It writes
     ;  pm_vz, which is a PM_SCRATCH slot overlaying THIS block.)

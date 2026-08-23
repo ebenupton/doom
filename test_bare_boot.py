@@ -59,7 +59,38 @@ def main():
     _sp.run(['./beebasm', '-i', 'banked_boot.asm'], check=True)  # fresh DRV
     DRV = open('DRV', 'rb').read()
 
-    # --- bare machine: zeroed RAM + banks + LOW + driver, nothing else ---
+    def build_and_run(zp_poison=None):
+        return _boot(L0, C, L2, LOW, DRV, zp_poison)
+
+    bare, bare_fb = build_and_run()
+    poisoned, pois_fb = build_and_run(0xA5)
+    ref_ok = bare_fb == ref_fb
+    pois_ok = pois_fb == bare_fb
+    print(f"bare frame: {sum(1 for b in bare_fb if b)} non-zero FB bytes")
+    print(f"ZP-poisoned frame: {sum(1 for b in pois_fb if b)} non-zero FB bytes")
+    if not pois_ok:
+        d = sum(1 for a, b in zip(pois_fb, bare_fb) if a != b)
+        print(f"\nFAIL — {d} FB bytes differ when zero page starts as $A5.\n"
+              f"  The engine reads ZP bytes it never writes and relies on them\n"
+              f"  being 0.  Real hardware does not provide that: the parasite's\n"
+              f"  ZP holds tube MOS workspace and the host's holds OS/BASIC\n"
+              f"  leftovers.  Run tools/zpvirgin.py to list the consumers, and\n"
+              f"  check the drivers' zpclr blocks still run.")
+    if ref_ok and pois_ok:
+        print("\nPASS — bare-boot driver frame is bit-identical to the model "
+              "reference, and immune to a poisoned zero page")
+    elif not ref_ok:
+        diff = sum(1 for a, b in zip(bare_fb, ref_fb) if a != b)
+        print(f"\nFAIL — {diff} FB bytes differ from reference")
+        _ss = symmap.sym('ANIM_SSMASK', banked=1)
+        print(f"  ssmask ${_ss:04X} = {' '.join('%02X'%bare[_ss+i] for i in range(8))}")
+    return
+
+
+def _boot(L0, C, L2, LOW, DRV, zp_poison):
+    # --- bare machine: banks + LOW + driver, nothing else.  RAM starts
+    # zeroed, OR with zero page poisoned: hardware does NOT hand the
+    # engine a zeroed ZP, so both must render identically.
     sc = SpanClip6502()
     bare = BankedMemory([0] * 65536)
     bare.define_bank(BANK_L0, L0)
@@ -70,6 +101,9 @@ def main():
     for i, b in enumerate(DRV):
         bare[DRV_ADDR + i] = b
     bare.select(BANK_L0)
+    if zp_poison is not None:
+        for a in range(0x100):
+            bare[a] = zp_poison
     sc.mpu.memory = bare
 
     # --- run the driver from DRV_ADDR until it reaches the spin loop ---
@@ -87,25 +121,10 @@ def main():
         if mpu.pc == pc0:        # JMP self == driver spin loop reached
             reached = True
             break
-    print(f"driver: {'reached spin at $%04X'%mpu.pc if reached else f'STUCK at ${mpu.pc:04X}'} "
+    tag = 'poisoned' if zp_poison is not None else 'clean'
+    print(f"driver[{tag}]: {'reached spin at $%04X'%mpu.pc if reached else f'STUCK at ${mpu.pc:04X}'} "
           f"after {steps:,} steps")
-
-    bare_fb = fb_bytes(bare)
-    bare_nz = sum(1 for b in bare_fb if b)
-    print(f"bare frame: {bare_nz} non-zero FB bytes")
-    same = bare_fb == ref_fb
-    if same:
-        print("\nPASS — bare-boot driver frame is bit-identical to the model reference")
-    else:
-        diff = sum(1 for a, b in zip(bare_fb, ref_fb) if a != b)
-        print(f"\nFAIL — {diff} FB bytes differ from reference")
-        # diagnostics: did the walk visit anything? check table pointers
-        # ($42/$43 + $0BE8 pointer diagnostics retired 2026-07-10:
-        #  ROM bases are layout.inc constants now)
-        # (the mask's home has moved twice since this print was written —
-        #  read it from the map, never from a literal)
-        _ss = symmap.sym('ANIM_SSMASK', banked=1)
-        print(f"  ssmask ${_ss:04X} = {' '.join('%02X'%bare[_ss+i] for i in range(8))}")
+    return bare, fb_bytes(bare)
 
 
 if __name__ == '__main__':

@@ -118,9 +118,32 @@ ORG &EA00                       \ the FB region: the copro never
     BNE cli
 .cdone
 .init
-\ ---- engine state init (walk_drv's rcinit block, flat addresses) ----
+\ ---- REAL-HW hardening, part 2: ZERO PAGE (2026-08-23) ----
+\ boot already zeroes the runtime arenas ($0400-$19FF) because parasite
+\ RAM is only zeroed by luck; zero page was never covered, and it
+\ arrives holding tube MOS workspace.  The engine READS ZP bytes it
+\ never writes and relies on them being 0 -- tools/zpvirgin.py lists
+\ them.  The one that kills the port is plotq_mode ($A1): dcl.s's
+\ contract is "Harness/default: plotq_mode = 0 -- everything draws
+\ direct", and walk_drv establishes it on the host (it writes &A1 in
+\ flip_sched) but NOTHING on the parasite ever does.  With bit 7 set by
+\ chance, every line is enqueued into PLOTQ instead of drawn, and the
+\ Tube port has no drain because the rasteriser is exactly what it
+\ removed -- so the screen stays blank forever.  plotq_n, zp_dcl_out
+\ and TFS_PEND_ACT are consumers of the same ground state.
+\ Clearing to 0 reproduces the py65 image every harness validates
+\ against.  Safe here: the parasite OS is finished (SEI is held since
+\ the last OSCLI), driver variables live as absolutes at &EA00, and
+\ init is entered exactly twice -- boot falls in, and &F03 is the
+\ harness entry, so the harness exercises this too.
     LDA #0
     TAX
+.zpclr
+    STA &00,X
+    INX
+    BNE zpclr
+\ ---- engine state init (walk_drv's rcinit block, flat addresses) ----
+                                \ (A = 0, X = 0 still — rides into rcinit)
 .rcinit
     STA T_RCACHE_STATE,X
     INX

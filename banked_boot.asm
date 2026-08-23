@@ -51,6 +51,21 @@ SAVE "BOOT", &0900, boot_end, &0900
 ORG DRV_ORG
 .drv
     SEI
+    ; --- REAL-HW hardening: ZERO PAGE (2026-08-23).  MUST come before the
+    ;     spawn ZP block below, which only establishes the driver's own
+    ;     contract bytes.  The engine reads OTHER ZP bytes it never writes
+    ;     and relies on them being 0 (tools/zpvirgin.py lists them); real
+    ;     hardware hands over OS/BASIC or tube MOS workspace instead.
+    ;     plotq_mode ($A1) is the fatal one -- a stray bit 7 queues every
+    ;     line instead of drawing it.  test_bare_boot now runs this driver
+    ;     a second time with ZP pre-filled with $A5 and requires an
+    ;     identical framebuffer, so this block is gated.
+    LDA #0
+    TAX
+.zpclr
+    STA &00,X
+    INX
+    BNE zpclr
     ; --- Master 128: clear ACCCON -> $8000 = sideways bank (not ANDY), $3000-7FFF
     ;     main, display main. Plain Model-B+SWRAM behaviour. Harmless on a B. ---
     LDA #0 : STA &FE34
