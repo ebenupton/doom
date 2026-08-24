@@ -18,6 +18,21 @@
 ; planes x 2 pages; the side pages are independently placed, so
 ; the flat set scatters over audited free fragments and the $5000
 ; CODE-tail carve is GONE (flat CODE now runs to $5800 — main_tail).
+;
+; FLAT P2L_1 $E800 -> $E500 and PH_0 $E900 -> $E600, 2026-08-24: the two
+; old bases sat ON TOP of colmap's flat tables. PH_0 ($E900-$E9DB)
+; covered MV_MINPASS, the whole of USETAB and MV_SS_ID/INFO; P2L_1
+; ($E800-$E8DB) covered the tail of SS_VZ. Every armed frame sprayed
+; cached psi bytes over them, so on the TUBE (the only build that runs
+; the flat engine with a driver) the doors whose use lines sat in the
+; trampled tail stopped opening -- some doors worked, some did not,
+; depending on which node ids the cache had armed. The banked side hit
+; exactly this once before, in the other direction, and colmap.py's
+; blobs() carries the scar tissue for it ("$AB00 fix landed ON THE
+; RCACHE PSI PLANES"); nobody had checked the flat side. Both bases
+; keep base+219 inside one page, which is the property the odd-looking
+; $E402 is protecting. tools/test_table_overlap.py now gates the whole
+; cross-product, both builds.
 .if BANKED
 RC_P1L_0 = $A900                        ; bank L2 CACHES group (2026-07-21
 RC_P1L_1 = $AA00                        ; regroup): CPM $A400, psi planes
@@ -29,8 +44,8 @@ RC_PH_1  = $AE00                        ; $B500-$BFFF contiguous
 RC_P1L_0 = $7400                        ; flat psi planes: NODE-indexed
 RC_P1L_1 = $E402                        ; (Y = node id <= 219 -> 220 B
 RC_P2L_0 = $8100                        ; each; _0/_1 = SIDE arms, not
-RC_P2L_1 = $E800                        ; senior halves). P1L_1 lives in
-RC_PH_0  = $E900                        ; the $E402-$E4F7 fragment
+RC_P2L_1 = $E500                        ; senior halves). P1L_1 lives in
+RC_PH_0  = $E600                        ; the $E402-$E4F7 fragment
 RC_PH_1  = $7300                        ; ($E402+219 = $E4DB — same page,
                                         ; clear of zp_ft $E4F8). The
                                         ; $2000-$29FF exception DIED:
