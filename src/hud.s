@@ -2,9 +2,10 @@
 ; ============================================================================
 ; Debug HUD — position and rotation on the top character row of the display.
 ;
-; Renders "X=hhhh.hh Y=hhhh.hh R=hh" (map-relative prescaled position,
-; s16 integer + 8-bit fraction of the driver's 8.8 fixed point, and the
-; view angle byte) into the BACK buffer's first character row, after the
+; Renders "X=hhhh.hh Y=hhhh.hh R=hh F=hh" (map-relative prescaled
+; position, s16 integer + 8-bit fraction of the driver's 8.8 fixed point,
+; the view angle byte, and the PAL fields the last frame took) into the
+; BACK buffer's first character row, after the
 ; frame render and before the flip, using the OS ROM font.  The fraction
 ; matters for exact position capture: the engine consumes the full 8.8,
 ; so an integer-only reading is up to 1 prescaled unit (8 world units)
@@ -25,7 +26,7 @@
 ; leaves the answer in DV_HUD_FONT. Note $F900 is not glyph-aligned the
 ; way $C000 is, so hud_char's offset add carries — see there.
 ;
-;   for i, ch in enumerate(template):   # template = "X=....%.. Y=....%.. R=.."
+;   for i, ch in enumerate(template):   # "X=....%.. Y=....%.. R=.. F=.."
 ;       if ch is a hex slot: ch = hexdigit(nibble of the referenced value)
 ;       dst = back_fb + i*8                  # back_fb page from the driver
 ;       dst[0..7] = os_font[(ch-32)*8 .. +7]
@@ -66,6 +67,7 @@ HUD_XHI    = DV_PXH
 HUD_YFRAC  = DV_PYF
 HUD_YLO    = DV_PYL
 HUD_YHI    = DV_PYH
+HUD_FIELDS = DV_FIELDS                  ; PAL fields the last frame consumed
 
 HUD_FONT   = DV_HUD_FONT                ; font base, chosen by the driver's
                                         ; OSBYTE 129 probe at boot; 0 = the
@@ -125,6 +127,18 @@ hd_go:
    LDA HUD_ANGIDX
    ASL A
    ASL A                                   ; angle byte = angidx*4
+   JSR hud_hex
+; "F=" — PAL fields the last frame took. This is the frame cost in the
+; only unit that matters on the machine: a 50Hz frame is 1, and the
+; movement code scales its walk and turn by exactly this count, so the
+; readout is the number the motion used rather than a second estimate.
+   LDA #' '
+   JSR hud_char
+   LDA #'F'
+   JSR hud_char
+   LDA #'='
+   JSR hud_char
+   LDA HUD_FIELDS
 ; fall through to hud_hex for the final value
 .endscope
 

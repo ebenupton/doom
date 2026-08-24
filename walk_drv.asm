@@ -546,6 +546,7 @@ ORG DRV_CLR
 .mf_go                                              ; apart, so a miss means
                                                     ; a bad read — sit still
     LDA #7:STA &FE30                                ; pm_frame LIVES IN BANK
+    STX DV_FIELDS                                   ; debug HUD F=: the count
     TXA                                             ; WALK - page before JSR
     LDX mv_in
     JMP ENG_PM_FRAME                                ; (tail call)

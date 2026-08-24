@@ -39,8 +39,9 @@ FB = abi.SCREEN0
 
 POSE = {'DV_ANGIDX': 0x3D, 'DV_BACKHI': FB >> 8,
         'DV_PXF': 0xD2, 'DV_PXL': 0xE6, 'DV_PXH': 0xFF,
-        'DV_PYF': 0xE3, 'DV_PYL': 0x1D, 'DV_PYH': 0x00}
-EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4"          # angidx $3D * 4 = $F4
+        'DV_PYF': 0xE3, 'DV_PYL': 0x1D, 'DV_PYH': 0x00,
+        'DV_FIELDS': 0x03}
+EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03"     # angidx $3D * 4 = $F4
 
 
 def run(img, base, c02):

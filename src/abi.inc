@@ -38,6 +38,7 @@ DV_MV_DIR = DRV_VARS+12                 ; effective move direction this attempt 
 HUD_FONT_B = $C000                      ; MOS font base on OS 0.x/1.x (Model B/B+). Picked by OSBYTE 129 at driver entry -- the glyphs are NOT at a fixed address.
 HUD_FONT_MASTER = $F900                 ; MOS font base on MOS 3.20 (Master 128). Verified against the ROM image: the 96 glyphs sit at $F900-$FBFF, ending exactly at the $FC00 I/O boundary. ASSUMED for any OS version 3..$7F, which includes MOS 5 (Master Compact) -- unverified there.
 DV_HUD_FONT = DRV_VARS+13               ; MOS font base found by hud_find (TWO bytes, +13/+14; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.
+DV_FIELDS = DRV_VARS+15                 ; PAL fields consumed by the last frame, for the debug HUD (F=). Written by walk_drv's mv_frame from the field-clock search result -- the same count it hands pm_frame, so the readout is the number the movement actually used, not a second estimate of it. The tube build carries the equivalent in its HUD packet.
 DRV_GLUE = $1BA0                        ; anim/HUD glue pocket
 DRV_CLR = $1C00                         ; input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
 D_ENABLE = $19FE                        ; forward-coherence bbox cache master switch

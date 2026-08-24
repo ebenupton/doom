@@ -47,6 +47,8 @@ HUD_FONT_B = 0xC000  # MOS font base on OS 0.x/1.x (Model B/B+). Picked by OSBYT
 HUD_FONT_MASTER = 0xF900  # MOS font base on MOS 3.20 (Master 128). Verified against the ROM image: the 96 glyphs sit at $F900-$FBFF, ending exactly at the $FC00 I/O boundary. ASSUMED for any OS version 3..$7F, which includes MOS 5 (Master Compact) -- unverified there.
 DV_HUD_FONT = 0x1BFD  # MOS font base found by hud_find (TWO bytes, +13/+14; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.
 DV_HUD_FONT_FLAT = 0x118D
+DV_FIELDS = 0x1BFF  # PAL fields consumed by the last frame, for the debug HUD (F=). Written by walk_drv's mv_frame from the field-clock search result -- the same count it hands pm_frame, so the readout is the number the movement actually used, not a second estimate of it. The tube build carries the equivalent in its HUD packet.
+DV_FIELDS_FLAT = 0x118F
 DRV_GLUE = 0x1BA0  # anim/HUD glue pocket
 DRV_CLR = 0x1C00  # input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
 D_ENABLE = 0x19FE  # forward-coherence bbox cache master switch
