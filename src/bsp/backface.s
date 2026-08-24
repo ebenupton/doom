@@ -34,7 +34,13 @@
 ;     Sign shortcut first (opposite product signs decide with no mul);
 ;     |dx'|/|dy'| magnitudes load LAZILY in the mul tier via zp_bf_dir
 ;     (sign-shortcut exits never read them, 2026-07-11).
-;   Ties (dot == 0) are BACK on every path.
+;   Ties (dot == 0): DIAGONALS refine via bf_tie (frac products).
+;   AXIS ties are resolved at PACK time (2026-08-25): truncation is a
+;   floor, so a truncated tie means the true position is on the '>'
+;   side; the packer ships C-1 for the '>' forms (0/2) and this file's
+;   strict compares need NO change -- 'coord > C-1' IS 'coord >= C'.
+;   The '<' forms keep C (their tie->back was already correct), so
+;   exactly one twin survives everywhere, frac-0 poses included.
 ;
 ; Python mirror: packed_render_seg's bf_form dispatch (doom_wireframe.py)
 ; — bit-identical by construction; the packer (wad_packed.py) emits
@@ -52,7 +58,7 @@ back_face_test:
 ; DIR tables (ROM_DIRS_C, one entry per distinct primitive direction):
 ;   +0*MAX |dx'| , +1*MAX |dy'| , +2*MAX sign byte (b7 dy'<0, b6 dx'<0)
 ; |px|/|py| are staged per frame by view_setup (zp_bf_p?m_*); signs
-; read live from px_e/py_e bit7. Ties (dot == 0) are BACK, as always.
+; read live from px_e/py_e bit7. Axis ties: pack-time C-1 bake (banner).
 ; TAIL-DISPATCHED: exits JMP bf_seg_front / s_advance (no RTS).
 ; Ranges: |P1|,|P2| <= 127*2600 < 2^19; |dot|+|C| < 2^21 — s24 exact,
 ; no overflow handling needed anywhere.
@@ -69,6 +75,8 @@ back_face_test:
 ; is strictly negative iff front, so ties fall to BACK on the sign test
 ; alone and the old STA/ORA/BEQ tie chain is gone ('<' arms always
 ; worked this way; the reversed decode shares their overflow stub).
+; (2026-08-25: 'ties fall to BACK' here is now the C-1 BAKE doing the
+; work -- see the banner; the emitted constant already encodes >=.)
    INY                                     ; -> C lo (+5)
    LDA (zp_seg_hdr_p),Y
    CMP zp_br_px_h                          ; borrow seed (result dead)

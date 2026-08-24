@@ -2324,10 +2324,12 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     corr = (ldy * (fp_module.VIEW_PX88 & 0xFF)
             - ldx * (fp_module.VIEW_PY88 & 0xFF))
     tie_sign = ldy
+    tie_sx = ldx
     if s[4] == 1:
         dot = -dot
         corr = -corr
         tie_sign = -ldy
+        tie_sx = -ldx
     if dot == 0:
         # px_int/py_int are TRUNCATED, so the viewpoint can land exactly on
         # this seg's line even when it is comfortably to one side. Then
@@ -2337,7 +2339,14 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
         # fraction: dot_88 = 256*dot + corr, and dot is 0 here so corr IS
         # the verdict. tie_sign breaks a full-precision tie so exactly one
         # twin always survives. (Same fix in packed_render_seg.)
-        if corr < 0 or (corr == 0 and tie_sign <= 0):
+        # corr == 0 (frac-0 pose exactly on the line): the seg is
+        # edge-on and the verdict goes to the '>' form, matching the
+        # pack-time C-1 bake. tie_sign (dy') decides verticals; for
+        # horizontals dy' == 0 and dx' < 0 is the '>' form (dot =
+        # -dx'*(py-lv1y)) -- without the tie_sx term BOTH horizontal
+        # twins died here while the packed mirror kept one.
+        if corr < 0 or (corr == 0 and (tie_sign < 0 or
+                                       (tie_sign == 0 and tie_sx > 0))):
             return
     elif dot < 0:
         return
@@ -2827,16 +2836,18 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     if bf_form < 4:
         # axis C-form: one signed compare, SAMEDIR folded at pack time
         bf_c16 = read_s16(rom, seg_off + SH_C)
-        # 8.8 compare, not the truncated one.  Forms 0/2 are '>' and 1/3
-        # are '<', so a seg and its twin partition the plane -- EXCEPT at
-        # px_int == C, where both were false and BOTH were rejected,
-        # leaving a hole the far geometry shows through.  Give the exact
-        # tie (fraction 0 too) to the '<' form so exactly one survives.
-        if bf_form < 2: d, f = px_int - bf_c16, fp_module.VIEW_PX88 & 0xFF
-        else:           d, f = py_int - bf_c16, fp_module.VIEW_PY88 & 0xFF
-        front = ((d < 0 or (d == 0 and f == 0)) if (bf_form & 1)
-                 else (d > 0 or (d == 0 and f > 0)))
-        if not front:
+        # STRICT compares, same as the 6502: the tie is resolved at PACK
+        # time (2026-08-25). Position truncation is a floor, so a
+        # truncated tie always means the true position is on the '>'
+        # side; the packer ships C-1 for forms 0/2, making this strict
+        # '>' read as '>= C', and the '<' forms keep tie->back. The old
+        # runtime frac refinement here is gone WITH the bake -- reading
+        # the baked constant with a strict compare IS the refinement,
+        # and the 6502 and this mirror are bit-identical by construction
+        # again (they briefly disagreed: the mirror refined, the 6502's
+        # axis arms did not -- the 1c.26/56.c3/fc show-through).
+        d = (px_int if bf_form < 2 else py_int) - bf_c16
+        if (d >= 0) if (bf_form & 1) else (d <= 0):
             return
     else:
         # diagonal DELTA form: primitives from the DIR tables, lv1 from the

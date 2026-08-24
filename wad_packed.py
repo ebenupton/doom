@@ -668,10 +668,27 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             form, c24 = 1, (-32768) & 0xFFFFFF   # px < -32768: always BACK
         elif pdx == 0:
             form = 0 if pdy > 0 else 1
-            c24 = lv1[0] & 0xFFFFFF              # compare constant = lv1x
+            c24 = lv1[0]                         # compare constant = lv1x
         elif pdy == 0:
             form = 3 if pdx > 0 else 2
-            c24 = lv1[1] & 0xFFFFFF              # compare constant = lv1y
+            c24 = lv1[1]                         # compare constant = lv1y
+        if pdx == 0 or pdy == 0:
+            # AXIS TIE BAKE (2026-08-25): the 8.8 position truncates by
+            # FLOOR, so a truncated tie (coord_int == C) means the true
+            # position is in [C, C+1) -- always on the '>' side. The old
+            # uniform tie->BACK therefore culled the '>' twin wrongly and
+            # BOTH twins of an axis portal vanished whenever the player
+            # stood in the 1-unit strip on its '>' side (a standing-
+            # reachable 8-world-unit band: the 1c.26/56.c3/fc show-
+            # through). Resolving the tie costs ZERO cycles: ship C-1 for
+            # the '>' forms so the engine's strict compare reads
+            # 'coord > C-1' == 'coord >= C'. The '<' forms keep C (their
+            # tie->back was already correct), so exactly one twin
+            # survives in every state, frac-0 included.
+            if form in (0, 2):
+                c24 -= 1
+                assert c24 != -32769, 'C-1 underflow: axis form 0/2 at s16 min'
+            c24 &= 0xFFFFFF
         else:
             # diagonal: DELTA form (operands stay small — the C-form's
             # raw-coordinate products measured SLOWER: 4 muls vs the
