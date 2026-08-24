@@ -336,7 +336,7 @@ rc_s0:
    AND #$05                                ; b0 serve | b2 always-descend
    BNE r0_vis                              ; (RIGHT box) — same cycles as
                                         ; the old LSR/BCS pair
-   ZERO zp_bbox_side                       ; side store sunk past the serve
+   STA zp_bbox_side                       ; side store sunk past the serve
                                         ; branch (serves never read it;
                                         ; bbox entry takes no A)
    JSR bbox_visible                     ; vector-dispatched (zp_bv_entry)

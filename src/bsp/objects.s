@@ -552,8 +552,7 @@ obj_ycp:
    BCC obj_ycp
 ; --- stamp the 14 art lines ----------------------------------------------
    PAGE BANK_C
-   ZERO TOP_RECORDS
-   ZERO BOT_RECORDS
+   ZERO TOP_RECORDS, BOT_RECORDS           ; one macro: one LDA #0 on NMOS
    LDA #1
    STA zp_dcl_rec_off
    LDA #>BOT_RECORDS

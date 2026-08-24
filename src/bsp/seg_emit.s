@@ -363,7 +363,8 @@ ys_noback:
 ; own L0 excursion and restores L2 itself.)
    LDA zp_ys_v1ok
    BNE ysnb_v2                             ; chained: VX1 front pair live
-   ZERO zp_seg_ep                          ; v1 -> VX1
+   STA zp_seg_ep                           ; v1 -> VX1 (A == 0: the BNE just
+                                        ; proved it, in EVERY variant)
    LDA zp_seg_v1_r_m8
    STA zp_br_r_m8
    LDX zp_seg_v1_r_s

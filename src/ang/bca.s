@@ -1180,7 +1180,10 @@ ns_k255:
 ns_dy0:
    INX                                     ; |dy| = 0: ta = 0, axgt set
 ns_dx0:
-   ZERO pa_res                             ; zero-delta axis: ta = 0, so
+   STA pa_res                              ; zero-delta axis: ta = 0, so
+                                        ; (A == 0 on BOTH entries: czx
+                                        ; arrives on ORA/BEQ-taken and
+                                        ; ns_dy0 adds only INX)
                                         ; psi = octant base EXACTLY in
    LDA pa_base_hi,X                        ; both sign conventions (base
    STA pa_res+1                            ; +/- 0) — skip the compose
