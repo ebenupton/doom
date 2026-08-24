@@ -47,6 +47,14 @@ def main():
             for i, b in enumerate(glyph(c)):
                 mem[o + i] = b
         mem[font] = mem[font + 1] = 0          # not searched yet
+        # the rest of the driver block must be untouched: DV_HUD_FONT once
+        # sat on walk_drv's space_prev/mv_dir and hud_find silently ate the
+        # input state.
+        import abi as _abi
+        blk = _abi.DRV_VARS
+        for i in range(16):
+            if blk + i not in (font, font + 1):
+                mem[blk + i] = 0x5A
         mpu = MPU(memory=mem)
         mpu.pc, mpu.sp = find, 0xFD
         mem[0x01FF], mem[0x01FE] = 0x00, 0xFF  # RTS -> $0100
@@ -59,7 +67,12 @@ def main():
             ok = False
             continue
         got = mem[font] | (mem[font + 1] << 8)
-        good = got == base
+        smashed = [i for i in range(16)
+                   if blk + i not in (font, font + 1) and mem[blk + i] != 0x5A]
+        if smashed:
+            print(f'  {label}: hud_find wrote DRV_VARS+{smashed} '
+                  f'-- it must only touch its own two bytes')
+        good = got == base and not smashed
         ok = ok and good
         print(f'  {label}: font at ${base:04X} -> found ${got:04X}'
               f'  {"ok" if good else "*** WRONG ***"}')

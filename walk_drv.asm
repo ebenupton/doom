@@ -36,8 +36,12 @@ tabbase = &9900           ; sincos table: 64 x 8 bytes, BANK C (banked_bsp
 USEVEC  = &9B00           ; SPACE use-trace vectors: 64 x 4 (ux,uy s16 raw), bank C
                           ; (STEPTAB died with the single-step momentum rework —
                           ;  it had no reader anywhere)
-space_prev = DRV_VARS + 11  ; SPACE edge-detect state
-mv_dir     = DRV_VARS + 12  ; effective move direction this attempt
+space_prev = DV_SPACE_PREV   ; SPACE edge-detect state -- from the ABI now,
+mv_dir     = DV_MV_DIR       ; not a private DRV_VARS+n copy. Those private
+                             ; offsets were invisible to the ABI table, so
+                             ; adding DV_HUD_FONT at +11 silently ate both
+                             ; and broke input. gen_abi now checks the block
+                             ; for collisions.
 
 SPEED = 12              ; world units per frame of forward motion
 

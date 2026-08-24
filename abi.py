@@ -37,10 +37,14 @@ DV_JIDX = 0x1B88  # vsync journal index
 DV_JIDX_FLAT = 0x1188
 DV_HUD_EN = 0x1B89  # debug HUD on/off (H toggles)
 DV_HUD_EN_FLAT = 0x1189
-DV_HUD_FONT = 0x1B8B  # MOS font base found by hud_find (2 bytes; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.
-DV_HUD_FONT_FLAT = 0x118B
 DV_HUD_PREV = 0x1B8A  # H-key debounce state
 DV_HUD_PREV_FLAT = 0x118A
+DV_SPACE_PREV = 0x1B8B  # SPACE edge-detect state (walk_drv). Was a PRIVATE walk_drv equate until 2026-08-24, when DV_HUD_FONT was added at the same offset and silently ate it AND mv_dir -- SPACE stopped retriggering and the move direction was corrupted. The whole block is described HERE now; private copies of these offsets are what hud.s already warns about.
+DV_SPACE_PREV_FLAT = 0x118B
+DV_MV_DIR = 0x1B8C  # effective move direction this attempt (walk_drv). Also formerly private -- see DV_SPACE_PREV.
+DV_MV_DIR_FLAT = 0x118C
+DV_HUD_FONT = 0x1B8D  # MOS font base found by hud_find (TWO bytes, +13/+14; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.
+DV_HUD_FONT_FLAT = 0x118D
 DRV_GLUE = 0x1BA0  # anim/HUD glue pocket
 DRV_CLR = 0x1C00  # input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
 D_ENABLE = 0x19FE  # forward-coherence bbox cache master switch

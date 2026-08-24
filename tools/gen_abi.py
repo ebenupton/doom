@@ -58,8 +58,10 @@ ABI = [
     ('DV_PYH',         'DRV_VARS+7',  None, '... int hi'),
     ('DV_JIDX',        'DRV_VARS+8',  None, 'vsync journal index'),
     ('DV_HUD_EN',      'DRV_VARS+9',  None, 'debug HUD on/off (H toggles)'),
-    ('DV_HUD_FONT',    'DRV_VARS+11', None, 'MOS font base found by hud_find (2 bytes; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.'),
     ('DV_HUD_PREV',    'DRV_VARS+10', None, 'H-key debounce state'),
+    ('DV_SPACE_PREV',  'DRV_VARS+11', None, 'SPACE edge-detect state (walk_drv). Was a PRIVATE walk_drv equate until 2026-08-24, when DV_HUD_FONT was added at the same offset and silently ate it AND mv_dir -- SPACE stopped retriggering and the move direction was corrupted. The whole block is described HERE now; private copies of these offsets are what hud.s already warns about.'),
+    ('DV_MV_DIR',      'DRV_VARS+12', None, 'effective move direction this attempt (walk_drv). Also formerly private -- see DV_SPACE_PREV.'),
+    ('DV_HUD_FONT',    'DRV_VARS+13', None, 'MOS font base found by hud_find (TWO bytes, +13/+14; 0 = not searched, $FFxx = searched and absent). The glyphs are NOT at a fixed address: OS 1.2 $C000, MOS 3.20 $F900.'),
     ('DRV_GLUE',       0x1BA0, None, 'anim/HUD glue pocket'),
     ('DRV_CLR',        0x1C00, None, 'input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)'),
     ('D_ENABLE',       0x19FE, None, 'forward-coherence bbox cache master switch'),
@@ -162,5 +164,25 @@ with open('abi.py', 'w') as f:
                 else f'{name} = {v}  # {comment}\n')
         if vf != v:
             f.write(f'{name}_FLAT = 0x{vf:04X}\n')
+
+# --- DRV_VARS block occupancy check -------------------------------------
+# walk_drv ORGs its glue at DRV_VARS+$10, so the block is +0..+15, and two
+# fields must never share an offset. This is the check that would have
+# caught DV_HUD_FONT landing on space_prev/mv_dir.
+_DV_SIZES = {'DV_HUD_FONT': 2}          # everything else is one byte
+_occ = {}
+for name, bank, flat, comment in ABI:
+    if not (isinstance(bank, str) and bank.startswith('DRV_VARS+')):
+        continue
+    off = int(bank.split('+')[1])
+    for i in range(_DV_SIZES.get(name, 1)):
+        if off + i in _occ:
+            raise SystemExit(f'ABI ERROR: {name} at DRV_VARS+{off + i} '
+                             f'collides with {_occ[off + i]}')
+        if off + i >= 0x10:
+            raise SystemExit(f'ABI ERROR: {name} at DRV_VARS+{off + i} '
+                             f'runs into the glue at DRV_VARS+$10')
+        _occ[off + i] = name
+print(f'DRV_VARS block: {len(_occ)}/16 bytes used, no collisions')
 
 print('wrote src/abi.inc, abi_beeb.inc, abi.py')
