@@ -76,6 +76,7 @@ run('tube_hud', ['tube/test_hostt_hud.py'], lambda o: 'HOSTT-HUD: PASS' in o)
 # at a fixed address -- OS 1.2 $C000, MOS 3.20 $F900 -- and hardwiring
 # $C000 is what corrupted the readout on a Master.
 run('hud_font', ['tools/test_hud_font.py'], lambda o: 'HUDFONT: PASS' in o)
+run('hud_draw', ['tools/test_hud_draw.py'], lambda o: 'HUDDRAW: PASS' in o)
 # ^ the parasite shares the flat image but carries its OWN map glue
 # (emit overlay, ship ranges, boot zeroing) — layout arcs rot it
 # silently without a gate (the 2026-08-10 black screen: three arcs

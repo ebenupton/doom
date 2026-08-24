@@ -66,6 +66,20 @@ ORG DRV_ORG
 ;   4. T1 field-locked beam clock   8. driver state + clear both buffers
 ; ---------------------------------------------------------------------------
 .drv
+    ; --- MOS font base for the debug HUD, decided HERE and only here ----
+    ; The glyphs are not at a fixed address (OS 1.2 $C000, MOS 3.20
+    ; $F900), so ask the OS which machine this is. This is the ONLY
+    ; moment it can be asked: SEI goes down on the next instruction and
+    ; by the house rule nothing calls the OS after boot.
+    ; OSBYTE 129 with Y=&FF is "read OS version" -- with any other Y it
+    ; is INKEY and would WAIT for a key.
+    LDA #&81 : LDX #0 : LDY #&FF : JSR &FFF4        ; X = OS version
+    LDA #LO(HUD_FONT_B) : LDY #HI(HUD_FONT_B)
+    CPX #3 : BCC drv_fontset                        ; 0,1,2 = OS 1.x and older
+    CPX #&80 : BCS drv_fontset                      ; &FF = OS 0.10
+    LDA #LO(HUD_FONT_MASTER) : LDY #HI(HUD_FONT_MASTER)
+.drv_fontset
+    STA DV_HUD_FONT : STY DV_HUD_FONT+1
     SEI
     LDX #&DF : TXS                                  ; stack tops out at $01DF:
                                                     ; SQR_MIRROR owns $01E0-$01FF
@@ -272,10 +286,13 @@ ORG DRV_ORG
 ; An extra init block once pushed it INTO the variables - the engine's
 ; table pointers then got clobbered at runtime by angidx/etc stores and
 ; every frame rendered pixel-free while the loop ran happily. Pin it.
-ASSERT P% <= DRV_VARS
-ORG DRV_VARS + &10
+ASSERT P% <= DRV_GLUE                   ; the glue is what the code runs into
 ; (.ptrtab retired 2026-07-10 — the engine assembles its ROM bases from
 ; src/layout.inc; the $0BE8 block is dead. $3D90-$3D9F freed.)
+; The driver's ORG'd span is  code | glue (DRV_GLUE) | vars (DRV_VARS) |
+; input+flip (DRV_CLR).  DRV_VARS used to sit at $1B80, in the MIDDLE of
+; the code, which capped it at 384 B; it moved to the 16 free bytes below
+; DRV_CLR on 2026-08-24 so the OSBYTE font probe above would fit.
 .drv_end
 
 ; --- unrolled framebuffer clears + flip scheduler: identical to anim_drv --
@@ -322,6 +339,7 @@ ORG DRV_GLUE
     LDA #4:STA &FE30                                ; restore a render bank
     RTS
 
+ASSERT P% <= DRV_VARS                   ; glue must stop below the vars
 ORG DRV_CLR
 ; ---------------------------------------------------------------------------
 ; The framebuffer clears used to live here (~145 B of unrolled STAs). They

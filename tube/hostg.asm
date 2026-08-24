@@ -54,6 +54,7 @@ zp_tmp1 = &DF
 zp_tmp2 = &E0
 zp_plot_i = &95
 
+INCLUDE "abi_beeb.inc"          \ HUD_FONT_B / HUD_FONT_MASTER
 INCLUDE "tube/tube_syms.inc"    \ generated -- for T_TRIPWIRE, so the host's
                                 \ debug field is gated by the SAME constant
                                 \ the parasite is
@@ -67,6 +68,7 @@ ORG &1900
     JMP realstart
     JMP drawcmd                 \ &1903: py65 pipeline-gate entry
 .realstart
+    JSR hudprobe                \ while the OS is still alive
     SEI
     LDA #&7F                    \ every VIA interrupt source off
     STA &FE4E
@@ -458,69 +460,33 @@ ORG &1900
     TAX
     LDA &FC
     RTI
-\ ---- find the MOS font -------------------------------------------------
+\ ---- MOS font base -----------------------------------------------------
 \ The 96 glyphs (chars 32..127, 8 bytes each) are contiguous but NOT at a
 \ fixed address: OS 1.2 keeps them at &C000, MOS 3.20 at &F900. Reading
-\ &C000 on a Master gets MOS code (or HAZEL RAM, depending on ACCCON) --
-\ which is exactly why the HUD came out as garbage there.
-\ So SEARCH rather than carry a per-machine table: look for the 'A' glyph
-\ and derive the base, then confirm with '0'. Verified against both ROM
-\ images -- the A pattern occurs EXACTLY ONCE in each across the whole
-\ scanned range, so this cannot land on the wrong thing.
-\ Two bytes of state, not 768 of baked font.
-\ Starts at &C000+&108 so the derived base can never fall below &C000,
-\ and stops before &FC00: FRED/JIM/SHEILA live there and READS have side
-\ effects.
-.hudfind
-    LDA #&08
-    STA hudsrc
-    LDA #&C1
-    STA hudsrc+1
-.hfloop
-    LDY #7
-.hfcmp
-    LDA (hudsrc),Y
-    CMP hudrefA,Y
-    BNE hfnext
-    DEY
-    BPL hfcmp
-    SEC                         \ candidate base = match - ('A'-32)*8
-    LDA hudsrc
-    SBC #&08
+\ &C000 on a Master gets MOS code, which is how the HUD came out as
+\ garbage there.
+\ So ask the OS which machine this is, ONCE, at entry -- the only moment
+\ it can be asked, since SEI goes down immediately after and nothing
+\ calls the OS again. OSBYTE 129 with Y=&FF is "read OS version"; with
+\ any other Y it is INKEY and would WAIT for a key.
+.hudprobe
+    LDA #&81
+    LDX #0
+    LDY #&FF
+    JSR &FFF4                   \ X = OS version
+    LDA #LO(HUD_FONT_B)
+    LDY #HI(HUD_FONT_B)
+    CPX #3
+    BCC hpset                   \ 0,1,2 = OS 1.x and older
+    CPX #&80
+    BCS hpset                   \ &FF = OS 0.10
+    LDA #LO(HUD_FONT_MASTER)
+    LDY #HI(HUD_FONT_MASTER)
+.hpset
     STA hudbase
-    LDA hudsrc+1
-    SBC #&01
-    STA hudbase+1
-    CLC                         \ confirm with '0' at base + ('0'-32)*8
-    LDA hudbase
-    ADC #&80
-    STA huddst
-    LDA hudbase+1
-    ADC #0
-    STA huddst+1
-    LDY #7
-.hfver
-    LDA (huddst),Y
-    CMP hudref0,Y
-    BNE hfnext
-    DEY
-    BPL hfver
-    RTS                         \ found: hudbase is the font
-.hfnext
-    INC hudsrc
-    BNE hfnc
-    INC hudsrc+1
-.hfnc
-    LDA hudsrc+1
-    CMP #&FC
-    BCC hfloop
-    LDA #&FF                    \ no font: mark it so we never rescan
-    STA hudbase+1
+    STY hudbase+1
     RTS
-.hudrefA
-    EQUB &3C,&66,&66,&7E,&66,&66,&66,&00    \ 'A', identical in both ROMs
-.hudref0
-    EQUB &3C,&66,&6E,&7E,&76,&66,&3C,&00    \ '0'
+
 \ ---- debug HUD (H toggles) --------------------------------------------
 \ "X=hhhh.hh Y=hhhh.hh R=hh" on the top character row, exactly what the
 \ banked build's src/hud.s shows -- but drawn HERE, because the copro has
@@ -535,13 +501,8 @@ ORG &1900
     BNE hgon
     RTS
 .hgon
-    LDA hudbase+1               \ 0 = not looked for yet
-    BNE hgfound
-    JSR hudfind
-    LDA hudbase+1
-.hgfound
-    CMP #&FF                    \ sentinel: searched, not found
-    BNE hgdraw
+    LDA hudbase+1               \ set by hudprobe at entry; 0 only if the
+    BNE hgdraw                  \ probe never ran (py65 harnesses)
     RTS
 .hgdraw
     LDA #0

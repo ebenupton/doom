@@ -10,9 +10,9 @@ gate drives `drawcmd` directly and never sees the packet at all.
 
 Feeds the host's ring a real frame -- one line, the HUD packet, EOF --
 and reads the glyphs back out of the buffer the frame was drawn into.
-The font at $C000 is synthetic (glyph for character c is eight bytes of
-c), so a drawn cell decodes straight back to its ASCII and the check is
-on the TEXT, not on a byte blob.
+The font is synthetic (glyph for character c is eight bytes of c), so a
+drawn cell decodes straight back to its ASCII and the check is on the
+TEXT, not on a byte blob. Both real bases are exercised.
 
 The payload is Eben's own readout from the show-through report,
 ffe6.d2 001d.e3 f4, so a pass means the HUD would have printed exactly
@@ -55,16 +55,10 @@ PAYLOAD = [0x3D, 0xD2, 0xE6, 0x00,
 EXPECT = "X=FFE6.D2 Y=001D.E3 R=F4 F=03"
 
 
-# The REAL 'A' and '0' glyphs (identical in OS 1.2 and MOS 3.20) -- the
-# host's search looks for these two to locate the font. Every other
-# character gets eight bytes of its own code so a drawn cell decodes
-# straight back to ASCII.
-GLYPH_A = [0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x00]
-GLYPH_0 = [0x3C, 0x66, 0x6E, 0x7E, 0x76, 0x66, 0x3C, 0x00]
-
-
+# Every character gets eight bytes of its own code, so a drawn cell
+# decodes straight back to ASCII and the check is on TEXT, not a blob.
 def glyph(c):
-    return GLYPH_A if c == ord('A') else GLYPH_0 if c == ord('0') else [c] * 8
+    return [c] * 8
 
 
 def install_font(mem, base):
@@ -90,6 +84,10 @@ def run_case(code, sym, font_base):
     mem[0x1900:0x1900 + len(code)] = list(code)
     install_font(mem, font_base)
 
+    # hudprobe (run from .realstart, which this harness enters past) picks
+    # the base from the OS version; hand the loop the answer it would have.
+    mem[sym['hudbase']] = font_base & 0xFF
+    mem[sym['hudbase'] + 1] = font_base >> 8
     mem[sym['huden']] = 1                      # as if H had been pressed
     mem[DRAW], mem[PEND], mem[FREE], mem[EOFS] = 1, 0xFF, 2, 1
     target_page = mem[sym['bufhi'] + 1]        # the buffer this frame draws into
@@ -143,9 +141,11 @@ def run_case(code, sym, font_base):
 def main():
     code, sym = assemble()
     allok = True
-    # Model B keeps the font at $C000, the Master at $F900. The host must
-    # find BOTH -- reading $C000 on a Master is MOS code, which is exactly
-    # how the HUD came out corrupted there.
+    # Model B keeps the font at $C000, the Master at $F900. The blitter
+    # must work off EITHER base -- $F900 is not page-aligned to the glyph
+    # stride the way $C000 is, so the 11-bit offset add is exercised only
+    # by the Master case. tools/test_hud_font.py gates the probe that
+    # chooses between them.
     for name, base in (('Model B  $C000', 0xC000), ('Master   $F900', 0xF900)):
         print(f'-- font at {name} --')
         ok = run_case(code, sym, base)
