@@ -97,11 +97,11 @@ def host_rasterize(cmds):
         m[0x82], m[0x83], m[0x84], m[0x85] = x0, y0, x1, y1
         mpu.pc = 0x1903
         mpu.sp = 0xDD
-        m[0x1FF] = 0xFF; m[0x1FE] = 0xFF    # RTS-to-0 sentinel
-        n = 0
-        while mpu.pc != 0 and n < 200_000:
-            mpu.step(); n += 1
-        assert mpu.pc == 0, f"drawcmd wedged on {(x0,y0,x1,y1)}"
+        m[0x1DE] = 0xFF; m[0x1DF] = 0xFE    # RTS at S=$DD pops $1DE/$1DF
+        n = 0                               # -> $FF00 done marker (the old
+        while mpu.pc != 0xFF00 and n < 200_000:   # $1FE/$1FF sentinel was
+            mpu.step(); n += 1              # never popped: BRK-sled exit)
+        assert mpu.pc == 0xFF00, f"drawcmd wedged on {(x0,y0,x1,y1)}"
     return bytes(m[0x5800:0x6C00])
 
 

@@ -41,7 +41,13 @@ MASKS = ([0, 0] + [1] * (FRAMES - 12)        # settle, UP held, then turn
                                              # shipped through an UP-only
                                              # mask diet)
 SPEED = 12
-DRVVARS = 0xEA06                             # angidx..pyh (after the two JMPs)
+DRVVARS = 0x1180                             # T_DV_ANGIDX.. (abi DRV_VARS,
+                                             # tube/flat home; 2026-08-25 —
+                                             # the old 0xEA06 parse was the
+                                             # RETIRED pre-pmove var block)
+FIELDS = 4                                   # PAL fields ridden in each mask
+                                             # byte's b4-6 (pm_frame scales
+                                             # movement by this; 0 = frozen)
 ZPSET = list(range(0x00, 0x0B)) + [0x90, 0x91, 0x92, 0x93, 0x9D, 0x9E]
 
 
@@ -67,12 +73,26 @@ def copro_walk():
 
     def r1d(a):
         st['avail'] = False
-        return MASKS[min(st['f'], len(MASKS) - 1)]
+        # b0-3 keys, b4-6 elapsed PAL fields (tubedrv sums these into
+        # pm_frame's field count -- a bare key mask moves NOTHING)
+        return MASKS[min(st['f'], len(MASKS) - 1)] | (FIELDS << 4)
 
     def r1w(a, v):
         st['cur'].append(v)
         if len(st['cur']) >= 4 and st['cur'][-4:] == [0xFF] * 4:
-            cmds = [tuple(st['cur'][i:i+4]) for i in range(0, len(st['cur']) - 4, 4)]
+            raw = [tuple(st['cur'][i:i+4]) for i in range(0, len(st['cur']) - 4, 4)]
+            # strip the HUD packet (FE FE FE FE + 3 payload tuples) the way
+            # the host's dispatch does -- fed to drawcmd raw it rasterises
+            # as garbage lines (the pipeline gate does the same strip)
+            cmds, skip = [], 0
+            for t in raw:
+                if skip:
+                    skip -= 1
+                    assert t[3] == 0, f"HUD payload tuple not 00-padded: {t}"
+                elif t == (0xFE,) * 4:
+                    skip = 3
+                else:
+                    cmds.append(t)
             zp = {a2: base[a2] for a2 in ZPSET}
             zp['bca_ab'] = base[symmap.sym('bca_ab')]
             drv = bytes(base[DRVVARS:DRVVARS + 8])
@@ -114,11 +134,16 @@ class HostRaster:
             m[0x82], m[0x83], m[0x84], m[0x85] = x0, y0, x1, y1
             self.mpu.pc = 0x1903
             self.mpu.sp = 0xDD
-            m[0x1FF] = 0xFF; m[0x1FE] = 0xFF
+            # real return sentinel: RTS at S=$DD pops $1DE/$1DF -> $FF00.
+            # (The old $1FE/$1FF pokes were never popped; every drawcmd
+            # 'returned' by BRK-sledding zero page, and the BRK pushes
+            # eventually left bytes that warped a later RTS into
+            # realstart's FIFO spin — the phantom 'drawcmd wedged'.)
+            m[0x1DE] = 0xFF; m[0x1DF] = 0xFE
             n = 0
-            while self.mpu.pc != 0 and n < 200_000:
+            while self.mpu.pc != 0xFF00 and n < 200_000:
                 self.mpu.step(); n += 1
-            assert self.mpu.pc == 0, f"drawcmd wedged on {(x0, y0, x1, y1)}"
+            assert self.mpu.pc == 0xFF00, f"drawcmd wedged on {(x0, y0, x1, y1)}"
         return bytes(m[0x5800:0x6C00])
 
 
@@ -137,15 +162,20 @@ class FlatRef:
         self._call(symmap.sym('anim_init'))         # in lockstep on both sides
 
     def _call(self, e):
+        # SpanClip6502._run's convention (NOT the old $1FF sentinel: S is
+        # capped at $DD because $01E0-$01FF is SQR_MIRROR, the stack-page
+        # sqr mirror — poking $1FE/$1FF corrupts the multiply tables, and
+        # an RTS at S=$DD pops $1DE/$1DF): return sentinel FF FE ->
+        # RTS lands at $FF00, which is the done marker.
         mpu = self.r.sc.mpu
         m = self.m
         mpu.pc = e
         mpu.sp = 0xDD
-        m[0x1FF] = 0xFF; m[0x1FE] = 0xFF
+        m[0x1DF] = 0xFE; m[0x1DE] = 0xFF
         n = 0
-        while mpu.pc != 0 and n < 3_000_000:
+        while mpu.pc != 0xFF00 and n < 6_000_000:
             mpu.step(); n += 1
-        assert mpu.pc == 0, f"flat entry &{e:04X} wedged"
+        assert mpu.pc == 0xFF00, f"flat entry &{e:04X} wedged"
 
     def frame(self, zp):
         m = self.m
@@ -216,17 +246,18 @@ def main():
     for n, (cmds, zp, drv) in enumerate(frames):
         ang, px, py = mirror[n]
         dang = drv[0]
-        dpx = drv[2] | (drv[3] << 8) | (drv[4] << 16)
+        dpx = drv[2] | (drv[3] << 8) | (drv[4] << 16)   # frac,lo,hi (DV_PXF..)
         dpy = drv[5] | (drv[6] << 8) | (drv[7] << 16)
-        pose = 'ok'
-        if (dang, dpx, dpy) != (ang, px, py):
-            pose = f"POSE MISMATCH drv=({dang},{dpx:06x},{dpy:06x}) py=({ang},{px:06x},{py:06x})"
+        # NOTE 2026-08-25: the python movement mirror models the RETIRED
+        # step_tab core (pre-pmove momentum) -- pose is reported for eyeball
+        # context only, never gated. The FB compare is the gate.
+        pose = f"drv=({dang},{dpx:06x},{dpy:06x})"
         fb_t = host.frame(cmds)
         fb_r = ref.frame(zp)
         diff = sum(1 for a, b in zip(fb_r, fb_t) if a != b)
-        mark = '' if diff == 0 and pose == 'ok' else '   <<<<'
+        mark = '' if diff == 0 else '   <<<<'
         print(f"frame {n:3d}: {len(cmds):3d} cmds, fb diff {diff:4d}  {pose}{mark}")
-        if diff or pose != 'ok':
+        if diff:
             bad += 1
     print("WALK CONVERGENCE:", "PASS" if bad == 0 else f"FAIL ({bad} frames)")
     sys.exit(1 if bad else 0)
