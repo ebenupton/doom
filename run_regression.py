@@ -73,6 +73,14 @@ run('tube_copro', ['tube/test_copro_py65.py'], lambda o: 'copro_py65: PASS' in o
 # sees the packet, so without this the host half is untested.
 run('tube_hud', ['tube/test_hostt_hud.py'], lambda o: 'HOSTT-HUD: PASS' in o)
 run('tube_doors', ['tube/test_tube_doors.py'], lambda o: 'TUBEDOORS: PASS' in o)
+# Multi-POSE tube convergence (walk + turns, FB byte-exact per frame).
+# The pipeline gate above covers ONE pose (spawn); this is the gate that
+# would have caught the 2026-08-25 psi-plane-on-anim-tables spray, which
+# corrupted the copro engine only at non-spawn poses/angles. NOTE its
+# mask model must ride a field count in b4-6 -- a bare key mask moves
+# nothing since pmove (that diet is how the hole opened).
+run('tube_walk', ['tube/test_walk_convergence.py'],
+    lambda o: 'WALK CONVERGENCE: PASS' in o)
 run('table_overlap', ['tools/test_table_overlap.py'],
     lambda o: 'TABLEOVERLAP: PASS' in o)
 # The banked (non-copro) HUD has the same font search. The MOS font is not
@@ -92,6 +100,11 @@ run('anim6502_check', ['tools/anim6502_check.py'], lambda o: 'ANIM6502: PASS' in
 # so a reintroduced call cycle fails the regression here.
 run('callgraph', ['tools/gen_callgraph.py'], lambda o: 'build/callgraph.pdf' in o and 'CYCLE' not in o)
 run('codescan', ['tools/codescan.py'], lambda o: 'CODESCAN: PASS' in o)
+# project_y raw-body domain certificate: every (recip, h) pair, S=1..11,
+# vs fp_project_y — the proof behind the |h| <= 127 projection fence
+# (the HALF-UNIT mover tier lives on it, 2026-08-25)
+run('projy_range', ['tools/test_projy_range.py'],
+    lambda o: 'PROJY-RANGE: PASS' in o)
 
 baseline = None
 if os.path.exists(BASELINE_PATH):
