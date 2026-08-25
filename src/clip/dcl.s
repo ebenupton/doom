@@ -385,13 +385,9 @@ dcl_reject_above:
    LDA #$FF
    STA zp_seg_start_x
 dcl_ra_closed:
-   LDA zp_dcl_rec_buf_h                    ; records off: plain reject
-   BEQ dcl_outer_reject
-   LDA zp_dcl_out                          ; feedback: off-TOP evidence
-   ORA #$80
-   STA zp_dcl_out
-   LDA #0                                  ; verdict 'above' over [ox0,ox1]
-   BEQ dcl_rej_rec                         ; (always)
+; (records/feedback plumbing died with the FUSED cutover 2026-08-25 —
+;  armed lines never reach this core; fall straight to the advance)
+   JMP dcl_outer_reject
 dcl_reject_below:
 ; Close any open run FIRST — the ordering contract on dcl_close_open_nx.
 ; INLINED, with the X save INSIDE the branch: 97% of these calls find
@@ -407,14 +403,6 @@ dcl_reject_below:
    LDA #$FF
    STA zp_seg_start_x
 dcl_rb_closed:
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_outer_reject
-   LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence
-   ORA #$40
-   STA zp_dcl_out
-   LDA #$FF                                ; verdict 'below'
-dcl_rej_rec:
-   JSR dcl_rec_flat_span
 dcl_outer_reject:
 ; Outer reject → advance to next span (inline; JMP — the ping-pong
 ; walk pushed the re-entry out of branch range, and an always-guarded
@@ -852,19 +840,7 @@ dv_clipped_away:
 ;   if cx1 > cx2: reject
 dcl_cb_clip:
    STX zp_save0                            ; save span pointer
-; verdict-record housekeeping: no pending right verdict; stash the
-; span's true ox1 (the mid-span-exit path overwrites zp_ox1)
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_cb_nvrec
-; (the blanket ORA #$C0 MIXED tag died 2026-08-22: every CB termination
-;  DOES prove a direction — see the per-reject tags below.  Tagging
-;  MIXED here made the off-TOP/off-BOTTOM inference depend on WHICH
-;  entry a line took, so a band width change moved pixels.)
-   LDA #$80
-   STA DCLV_RVY
-   LDA zp_ox1
-   STA DCLV_OX1S
-dcl_cb_nvrec:
+; (verdict-record housekeeping died with the FUSED cutover 2026-08-25)
 
 ; Step 1: X-clip line to [xstart, xend] = [ox0, ox1]
 ; cx1 = ox0
@@ -1000,8 +976,6 @@ dcl_cb_top_p1_ok:
    JSR interp_store
 dcl_cb_top_cy2_const:                      ; BEQ lands here with A = top1
    STA zp_cb_cy2
-   ZERO DCLV_RVY                           ; exit was through the TOP:
-                                        ; [cx2, orig ox1] pends 'above'
    JMP dcl_cb_top_done
 
 dcl_cb_top_clip:
@@ -1038,10 +1012,6 @@ dcl_cb_top_cy1_const:                      ; BEQ lands here with A = top1
    CMP zp_cb_cx1
    BCS dcl_cb_top_done
    JSR dcl_close_open_nx                   ; preserves zp_save0
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_cb_top_done
-   LDA #0                                  ; [ox0, cx1] was above the aperture
-   JSR dcl_rec_flat_left
 
 dcl_cb_top_done:
 ; Check cx1 > cx2 after top clip → reject
@@ -1133,8 +1103,6 @@ dcl_cb_bot_p1_ok:
    JSR interp_store
 dcl_cb_bot_cy2_const:                      ; BEQ lands here with A = bot1
    STA zp_cb_cy2
-   LDA #$FF                                ; exit through the BOTTOM:
-   STA DCLV_RVY                            ; [cx2, orig ox1] pends 'below'
    JMP dcl_cb_bot_done
 
 dcl_cb_bot_clip:
@@ -1169,10 +1137,6 @@ dcl_cb_bot_cy1_const:                      ; BEQ lands here with A = bot1
    CMP zp_cb_cx1
    BCS dcl_cb_bot_done
    JSR dcl_close_open_nx                   ; preserves zp_save0
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_cb_bot_done
-   LDA #$FF                                ; [ox0, cx1] was below the aperture
-   JSR dcl_rec_flat_left
 
 dcl_cb_bot_done:
 ; Check cx1 > cx2 after bot clip → reject
@@ -1212,7 +1176,6 @@ dcl_cbx_emit:
    LDA zp_cb_cy2
    STA zp_tmp0
    JSR dcl_emit_segment
-   JSR dcl_rec_right                       ; pending [cx2, orig ox1] verdict
    LDA #$FF
    STA zp_seg_start_x
    LDX zp_save0
@@ -1260,24 +1223,8 @@ dcl_cbn_extend:
 ; same fact stated by construction.  A range clipped above CANNOT also
 ; run below (top < bot), so a single direction is the whole story.
 dcl_cb_reject_above:
-   JSR dcl_close_open_nx                   ; close BEFORE this span's record
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_cb_reject
-   LDA zp_dcl_out                          ; feedback: off-TOP evidence
-   ORA #$80
-   STA zp_dcl_out
-   LDA #0                                  ; whole overlap above the aperture
-   BEQ dcl_cb_rej_rec                      ; (always)
 dcl_cb_reject_below:
-   JSR dcl_close_open_nx                   ; close BEFORE this span's record
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_cb_reject
-   LDA zp_dcl_out                          ; feedback: off-BOTTOM evidence
-   ORA #$40
-   STA zp_dcl_out
-   LDA #$FF
-dcl_cb_rej_rec:
-   JSR dcl_rec_flat_span
+   JSR dcl_close_open_nx                   ; (record plumbing died 2026-08-25)
 dcl_cb_reject:
 ; CB clip rejected — skip this span
    LDX zp_save0
@@ -1308,7 +1255,7 @@ dclwb_flush3:
 ;   return clamp(cx1 + q, cx1, cx2)
 ; Guards: den == 0 or den > 255 -> return midpoint (cannot occur for
 ; sane pixel-scale inputs); cx2 == cx1 -> return cx1.
-dcl_boundary_ix:
+::dcl_boundary_ix:
    STA zp_save1                            ; save clip_p1 flag
 
 ; denom = d1 - d2 (s8 result, but could be s9 in theory)
@@ -1411,7 +1358,7 @@ dcl_es_degen:
    CMP zp_tmp0
    BNE dcl_es_ok_noreload
    RTS                                     ; degenerate
-dcl_emit_segment:
+::dcl_emit_segment:
 ; Skip degenerate segments (zero-length). Common case falls through
 ; (was a 97.4%-taken BNE — census 2026-07-27).
    LDA zp_seg_start_x
@@ -1449,50 +1396,9 @@ dcl_es_ok_noreload:                        ; BNE arrives with start_y live)
                                         ; and the clip arm is an island
                                         ; below (see dcl_es_yband).
 dcl_es_record:
-; --- Records hook: ONE record per surviving segment ---
-; Segment record format: 4 bytes (xl, yl, xr, yr).
-; Triggers exactly when DCL emits a visible segment, regardless of how
-; many pool spans the segment crossed. Tighten consumer derives
-; everything from these 4 endpoint values via interp.
-   LDA zp_dcl_rec_buf_h
-   BEQ dcl_es_no_record
-   LDA zp_dcl_out                          ; feedback: real pixels emitted
-   ORA #$01
-   STA zp_dcl_out
-; (A) Skip degenerate records where xl >= xr (zero-width xl==xr OR reversed
-; xl>xr). Such a record carries no tighten information AND deadlocks
-; tfs_inner: bot_dom needs xl<=cur<xr (impossible when xl>=xr), so the
-; cursor never advances and the inner loop spins forever. Edge-on segs that
-; project to one column give xl==xr (e.g. 1308,-3289,252); the per-span
-; clip can also emit a 1-column REVERSED sliver xl>xr (e.g. 1160,-3400,102
-; after the continuation/entry clip fix). The segment is already drawn
-; above; only the (useless) tighten record is dropped.
-   LDA zp_seg_start_x
-   CMP zp_ox1
-   BCS dcl_es_no_record
-   LDY zp_dcl_rec_off
-   STA (zp_dcl_rec_buf),Y                  ; A = start_x still
-   INY
-   LDA zp_seg_start_y
-   STA (zp_dcl_rec_buf),Y
-   INY
-   LDA zp_ox1
-   STA (zp_dcl_rec_buf),Y
-   INY
-   LDA zp_tmp0
-   STA (zp_dcl_rec_buf),Y
-   INY
-   STY zp_dcl_rec_off
-.if ::C02
-   LDA (zp_dcl_rec_buf)                    ; non-indexed indirect: the LDY
-   ADC #1                                  ; dies and STA (zp) is 5 cyc
-   STA (zp_dcl_rec_buf)                    ; (C=0 from the xl>=xr BCS guard)
-.else
-   LDY #0
-   LDA (zp_dcl_rec_buf),Y
-   ADC #1                                  ; C=0 from the xl>=xr BCS guard
-   STA (zp_dcl_rec_buf),Y
-.endif
+; (the records hook died with the FUSED cutover 2026-08-25 — the armed
+;  aperture lines never reach this core any more; the fused walker
+;  plots THROUGH this routine with its records machinery gone)
 dcl_es_no_record:
 ; (LINE_OUT capture RETIRED 2026-07-26 — see the vertical emit note.)
    LDA zp_seg_start_x
@@ -1860,105 +1766,10 @@ SEG_HIGH
 ; (double-reject arms can re-cover a range — the merge absorbs it).
 ; Capacity guard: a full buffer drops the append (never hit in corpus;
 ; the harness counts). Preserves X. Clobbers A, Y.
-dcl_rec_flat:
-   STA DCLV_YV
-dcl_rec_flat_v:                            ; post-latch entry (DCLV_YV
-   LDA zp_dcl_rec_buf_h                    ; already written by wrappers)
-   BEQ rf_out
-   LDA DCLV_X0
-   CMP DCLV_X1
-   BCC rf_in                               ; X0 < X1: non-empty range
-rf_out:
-   RTS
-rf_in:
-.scope
-   STX DCLV_SX
-   LDY zp_dcl_rec_off
-   CPY #1
-   BEQ rf_app                              ; no previous record
-   DEY                                     ; prev.yr
-   LDA (zp_dcl_rec_buf),Y
-   CMP DCLV_YV
-   BNE rf_app
-   DEY
-   DEY                                     ; prev.yl
-   LDA (zp_dcl_rec_buf),Y
-   CMP DCLV_YV
-   BNE rf_app
-   INY                                     ; prev.xr
-   LDA (zp_dcl_rec_buf),Y
-   CMP DCLV_X0
-   BCC rf_app                              ; gap -> append fresh
-; merge: prev.xr = max(prev.xr, X1)
-   CMP DCLV_X1
-   BCS rf_restore
-   LDA DCLV_X1
-   STA (zp_dcl_rec_buf),Y
-   JMP rf_restore
-rf_app:
-   LDY zp_dcl_rec_off
-   CPY #$F9
-   BCS rf_restore                          ; buffer full -> drop
-   LDA DCLV_X0
-   STA (zp_dcl_rec_buf),Y
-   INY
-   LDA DCLV_YV
-   STA (zp_dcl_rec_buf),Y
-   INY
-   LDA DCLV_X1
-   STA (zp_dcl_rec_buf),Y
-   INY
-   LDA DCLV_YV
-   STA (zp_dcl_rec_buf),Y
-   INY
-   STY zp_dcl_rec_off
-.if ::C02
-   LDA (zp_dcl_rec_buf)                    ; non-indexed (see the es site)
-   ADC #1                                  ; C=0 proven: BCS rf_restore
-   STA (zp_dcl_rec_buf)                    ; not taken, INY/LDA keep C
-.else
-   LDY #0
-   LDA (zp_dcl_rec_buf),Y
-   ADC #1                                  ; C=0 proven: BCS rf_restore
-   STA (zp_dcl_rec_buf),Y                  ; not taken, INY/LDA keep C
-.endif
-rf_restore:
-   LDX DCLV_SX
-rf_done:
-   RTS
-.endscope
+; (dcl_rec_flat moved to clip/fusedw.s 2026-08-25 — it IS the fused
+;  flat handler now, and the DAG wants no dcl -> fused edge)
 
 ; wrappers staging the range, so CLIP call sites stay 5 bytes
-dcl_rec_flat_span:                         ; whole overlap [zp_ox0, zp_ox1]
-   STA DCLV_YV
-   LDA zp_ox0
-   STA DCLV_X0
-   LDA zp_ox1
-   STA DCLV_X1
-   JMP dcl_rec_flat_v
-
-dcl_rec_flat_left:                         ; left clip-off [zp_ox0, zp_cb_cx1]
-   STA DCLV_YV
-   LDA zp_ox0
-   STA DCLV_X0
-   LDA zp_cb_cx1
-   STA DCLV_X1
-   JMP dcl_rec_flat_v
-
-; dcl_rec_right — flush the pending right-side verdict after the
-; mid-span-exit emit (zp_ox1 == cx2 there; DCLV_OX1S = the span's
-; original ox1, stashed at CB entry). $80 = no pending. The pending is
-; only armed under records mode, so a stale value can't leak: the
-; append itself is gated too.
-dcl_rec_right:
-   LDA DCLV_RVY
-   CMP #$80
-   BEQ rr_done
-   LDY zp_ox1
-   STY DCLV_X0
-   LDX DCLV_OX1S
-   STX DCLV_X1
-   JMP dcl_rec_flat                        ; A = RVY still
-rr_done:
-   RTS
+; (dcl_rec_flat_span / _left / dcl_rec_right died 2026-08-25 —
+;  the u8 core has no record consumers left)
 SEG_BANKC

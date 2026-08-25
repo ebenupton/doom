@@ -116,7 +116,7 @@ OBJ_ART_OCT  = 0                   ; 12-sided barrel -- BARRELS ONLY: 17
                                    ; lid's vertical edge to the bottom of
                                    ; the base's (they are collinear)
 OBJ_ART_RECT = 76                  ; plain outline rectangle -- the rest
-OBJ_ART_STOPREC = $FE              ; entry: stop recording, keep drawing
+OBJ_ART_ARM = $FE                  ; entry: arm the FUSED authority run
 OBJ_ART_END     = $FF              ; entry: template finished
 OBJ_ART  = OBJ_BITS + 28                ; the templates: 25 x
                                         ; (x1,y1,x2,y2) pre-doubled indices.

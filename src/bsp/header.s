@@ -602,7 +602,10 @@ code_head:
 .import span_mark_solid
 .import span_has_gap                    ; has_gap body (main B segment)
 .import seg_zero_rec_solid
-.import tighten_from_records
+.import fused_begin, fused_above_h, fused_below_h
+.import fused_below_raw, fused_merge_range
+.import FW_TOUCH                        ; fused walker's zero-touch flag
+                                        ; (clip/fused.s owns the block)
 .import draw_clipped_line_s16, draw_clipped_line_s16_h
 .import dcl_vert_on                     ; vertical fastpath (senior-byte
 

@@ -258,13 +258,8 @@ zp_seg_v2_r_s = VX2+12
 ; the page); flat = the empty flat side of the driver-reservation zone.
 ; $0200-$03FF freed in the SHARED map (both builds) — the movement-code
 ; space fund. Page-aligned: the records machinery rides zero lo bytes.
-.if ::BANKED
-TOP_RECORDS = $9800                     ; bank C
-BOT_RECORDS = $9700
-.else
-TOP_RECORDS = $2100
-BOT_RECORDS = $2000
-.endif
+; (TOP/BOT_RECORDS retired 2026-08-25 — the FUSED walker owns the two
+;  pages now: FW_BASE in clip/fusedw.s = the ex-BOT_RECORDS page.)
                                         ; SSMASK ($0B00 sat INSIDE the
                                         ; 221-byte $0A80 mask — the near
                                         ; miss anim6502 didn't catch) and

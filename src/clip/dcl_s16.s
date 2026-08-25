@@ -97,10 +97,15 @@ draw_clipped_line_s16:
 ::dcl16_fastu8:
 ; input contract: xl <= xr (seg layer / wrapper ordered) — equality is
 ; the only case left to classify (vertical vs zero-length point)
+   BIT FW_MODE                             ; FUSED capture (2026-08-25):
+   BMI dcl16_fu_cap                        ; the armed line's walk zone
    LDA zp_line_xl_l
    CMP zp_line_xr_l
    BEQ fp_x_eq
    JMP draw_clipped_line
+dcl16_fu_cap:
+   JMP fw_walk_line                        ; (verticals fall through to
+                                        ;  the core inside — plot-only)
 fp_x_eq:
 ; x1 == x2: vertical unless y1 == y2 (zero-length point → reject)
    LDA zp_line_yl_l
@@ -253,16 +258,16 @@ not_both_xbig:
    BPL y1_in_or_big
    LDA zp_line_yr_h
    BPL not_both_yneg
-   LDA zp_dcl_rec_buf_h
-   BNE not_both_yneg
+   BIT FW_MODE                             ; armed: keep the flat verdict
+   BMI not_both_yneg
    JMP dcl_rec_s16r_flush
 y1_in_or_big:
    BEQ not_both_ybig
    LDA zp_line_yr_h
    BMI not_both_ybig
    BEQ not_both_ybig
-   LDA zp_dcl_rec_buf_h
-   BNE not_both_ybig
+   BIT FW_MODE
+   BMI not_both_ybig
    JMP dcl_rec_s16r_flush
 not_both_yneg:
 not_both_ybig:
@@ -412,8 +417,8 @@ need_yclip:                                ;  BEQ range by 53 — measured)
    STA zp_line_xl_l
    ZERO zp_line_xl_h, zp_line_yl_l, zp_line_yl_h                          ; A still 0
 
-   LDA zp_dcl_rec_buf_h
-   BEQ y1c_done
+   BIT FW_MODE
+   BPL y1c_done
    LDA #0                                  ; [orig xl, xl] exited via TOP
    JSR dcl_rec_flat_y1
    JMP y1c_done
@@ -427,8 +432,8 @@ y1c_not_neg:
    LDA #$FF
    STA zp_line_yl_l
    ZERO zp_line_yl_h
-   LDA zp_dcl_rec_buf_h
-   BEQ y1c_done
+   BIT FW_MODE
+   BPL y1c_done
    LDA #$FF                                ; [orig xl, xl] exited via BOTTOM
    JSR dcl_rec_flat_y1
 y1c_done:
@@ -474,7 +479,12 @@ y_in_range:
    CMP zp_line_yr_l
    BEQ rejected
 dispatch_dcl:
+   BIT FW_MODE
+   BMI dd_fused
    JSR draw_clipped_line
+   JMP dcl_rec_s16r_flush
+dd_fused:
+   JSR fw_walk_line
    JMP dcl_rec_s16r_flush
 ; Post-clip x1 > x2 — would require swap; just emit reordered. (The
 ; rejected_swap_after_clip reload head DELETED 2026-08-12: zero
@@ -488,7 +498,12 @@ rsac_noreload:
    LDX zp_line_yr_l
    STX zp_line_yl_l
    STA zp_line_yr_l
+   BIT FW_MODE
+   BMI rsac_fused
    JSR draw_clipped_line
+   JMP dcl_rec_s16r_flush
+rsac_fused:
+   JSR fw_walk_line
    JMP dcl_rec_s16r_flush
 ; `rejected` is now reached ONLY by the BEQ above — a branch cannot span
 ; the distance to dcl_rec_s16r_flush, so the trampoline stays for it.

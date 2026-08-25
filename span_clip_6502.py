@@ -25,12 +25,15 @@ ENTRY_MARK_SOLID = _sym('span_mark_solid')
 ENTRY_HAS_GAP    = _sym('span_has_gap')
 ENTRY_INTERP_ST  = _sym('interp_store')
 ENTRY_DRAW_CLIP  = _sym('draw_clipped_line')
-ENTRY_TIGHTEN_FROM_RECORDS = _sym('tighten_from_records')
+ENTRY_FUSED_BEGIN = _sym('fused_begin')
+ENTRY_FUSED_ABOVE = _sym('fused_above_raw')
+ENTRY_FUSED_BELOW = _sym('fused_below_raw')
+ENTRY_FUSED_MERGE = _sym('fused_merge_range')
+FW_TOUCH = _sym('FW_TOUCH')
 ENTRY_DRAW_CLIP_S16 = _sym('draw_clipped_line_s16')
 
 # Records buffers
-TOP_RECORDS = _sym('TOP_RECORDS')
-BOT_RECORDS = _sym('BOT_RECORDS')
+# (TOP/BOT_RECORDS died with the records machinery, 2026-08-25)
 REC_BYTES = 4   # one record per surviving DCL segment: (xl, yl, xr, yr)
 
 # s16 line clipper hi bytes (ZP, alias CB-clip / secondary-seg block).
@@ -256,70 +259,59 @@ class SpanClip6502:
         if self.capture is not None:
             self.capture.extend(self.last_lines)
 
-    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                emit_top=True, emit_bot=True,
-                emit_sec_top=False, emit_sec_bot=False,
-                yt_sec1=None, yt_sec2=None,
-                yb_sec1=None, yb_sec2=None):
-        """tighten with 16-bit seg parameters.
+    def fused_begin(self):
+        """Per-seg / per-object: reset the walker's touch state."""
+        self._run(ENTRY_FUSED_BEGIN, max_cycles=100)
 
-        Closed-interval: ilo, ihi are both inclusive column indices in [0,255].
+    def draw_fused_line(self, xl, yl, xr, yr, side):
+        """FUSED (2026-08-25): clip + plot + APPLY one armed aperture
+        line, sequentially (Eben's decree). side: 'top' | 'bot'. The
+        boundary written to covered spans is the FULL u8 line — pure
+        copy, no interpolation. Returns the plotted fragments."""
+        mem = self.mpu.memory
+        if xl > xr:
+            xl, yl, xr, yr = xr, yr, xl, yl
+        if xl == xr and yl == yr:
+            return []
+        mem[ZP_LINE_XL] = xl & 0xFF
+        mem[ZP_LINE_YL] = yl & 0xFF
+        mem[ZP_LINE_XR] = xr & 0xFF
+        mem[ZP_LINE_YR] = yr & 0xFF
+        mem[zp_line_xl_h] = (xl >> 8) & 0xFF
+        mem[zp_line_yl_h] = (yl >> 8) & 0xFF
+        mem[zp_line_xr_h] = (xr >> 8) & 0xFF
+        mem[zp_line_yr_h] = (yr >> 8) & 0xFF
+        self._run(ENTRY_FUSED_ABOVE if side == 'top' else ENTRY_FUSED_BELOW)
+        lines = self.last_lines
+        if self.capture is not None:
+            self.capture.extend(lines)
+        return lines
 
-        emit_top/emit_bot: when True (default), the 6502 emits portal top/bot
-        edge lines during mutation where the new seg narrows the old span.
-        Set False to suppress emission for segs where the Python reference
-        doesn't draw the corresponding line (e.g. need_bt-only segs don't
-        draw the floor line, so emit_bot=False matches the Python semantic).
+    def fused_touched(self):
+        return self.mpu.memory[FW_TOUCH] != 0
 
-        emit_sec_top/emit_sec_bot: when True, the 6502 emits the OLD span
-        boundary (ot_l/r or ob_l/r) in addition to the new seg boundary.
-        Used for step cases (need_bt + ch>vz draws both bt and ft; need_bb
-        + fh<vz draws both bb and fb).  The old boundary at overlap
-        endpoints typically equals the front ceiling/floor projection when
-        the span is at its original room boundary.
-
-        Records-driven path (default) skips all seg-param preconditioning —
-        line geometry comes from segment records written by the prior
-        draw_clipped_line(yt) and draw_clipped_line(yb) calls. The
-        BSP/transform-cache values flow through unchanged. Legacy path
-        (records mode off) still applies _remap_seg_for_8bit for
-        ENTRY_TIGHTEN's 8-bit interp pipeline.
-        """
+    def fused_finish(self, lo, hi, yt1, yt2, yb1, yb2):
+        """Seg-end: touched -> the merge pass over [lo, hi); untouched
+        -> the zero-touch dispatch (seg_zero_rec_solid semantics: an
+        aperture wholly off-screen closes its columns)."""
         mem = self.mpu.memory
         ilo = max(0, lo)
         ihi = min(255, hi)
         if ihi < ilo:
             return
-
-        # Records-driven (the ONLY path): line geometry comes from the
-        # segment records the prior draw_clipped_line(yt/yb) calls wrote.
-        # Just pass [ilo, ihi] through and dispatch.
-        if mem[TOP_RECORDS] == 0 and mem[BOT_RECORDS] == 0:
-            # Zero records is ambiguous: the aperture edges drew nothing
-            # either because the opening covers the whole screen (genuine
-            # no-op) or because the opening is entirely OFF-screen (every
-            # visible row in [ilo,ihi] is wall/flat -> the columns must be
-            # CLOSED). Mirror of seg_zero_rec_solid in src/clip/tfr.s and
-            # of endpoint_spans' record verdicts. yt/yb here are the
-            # combined (min/max) band boundaries, biased.
-            if ((yb1 < 48 and yb2 < 48) or
-                    (yt1 > 48 + 159 and yt2 > 48 + 159)):
-                self.mark_solid(ilo, ihi)
+        if mem[FW_TOUCH]:
+            mem[ZP_ILO] = ilo & 0xFF
+            mem[ZP_IHI] = ihi & 0xFF
+            self._run(ENTRY_FUSED_MERGE)
             return
-        mem[ZP_ILO] = ilo & 0xFF
-        mem[ZP_IHI] = ihi & 0xFF
-        self._run(ENTRY_TIGHTEN_FROM_RECORDS)
-        if self.capture is not None:
-            self.capture.extend(self.last_lines)
+        if ((yb1 < 48 and yb2 < 48) or
+                (yt1 > 48 + 159 and yt2 > 48 + 159)):
+            self.mark_solid(ilo, ihi)
 
     _reset_count = [0]
     def reset_records(self):
-        """Zero record buffer counts. Called by the wireframe between segs
-        so stale records don't leak into the next seg's tighten."""
-        mem = self.mpu.memory
-        mem[TOP_RECORDS] = 0
-        mem[BOT_RECORDS] = 0
-        SpanClip6502._reset_count[0] += 1
+        """(records are gone — kept as a no-op for old callers)"""
+        pass
 
     def _read_span_at_slot(self, slot):
         """Read a single span from pool by slot number."""
@@ -505,16 +497,7 @@ class SpanClip6502:
         cy2 = max(0, min(255, cy2))
         return cx1, cy1, cx2, cy2
 
-    def tighten_from_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2):
-        """Run tighten consuming top+bot record buffers."""
-        mem = self.mpu.memory
-        mem[ZP_ILO] = max(0, lo) & 0xFF
-        mem[ZP_IHI] = min(255, hi) & 0xFF
-        # ZP for records-tighten not yet defined — pass via existing slots
-        # for now (caller already wrote records to TOP_RECORDS/BOT_RECORDS).
-        self._run(ENTRY_TIGHTEN_FROM_RECORDS)
-
-    def draw_clipped_line(self, xl, yl, xr, yr, records_buf=None):
+    def draw_clipped_line(self, xl, yl, xr, yr):
         """Clip a single s16 line against the span list and emit visible segments.
 
         Inputs are s16 (raw BSP/transform values, can be negative or > 255).
@@ -524,8 +507,6 @@ class SpanClip6502:
         clipping path. Returns list of emitted (x1, y1, x2, y2) segments.
         """
         mem = self.mpu.memory
-        if records_buf is not None:
-            mem[records_buf] = 0
         # Trivial wrapper-side prep: order endpoints, reject degenerate.
         # Both are simple data shuffling — they preserve the line's
         # geometry and don't constitute "pre-conditioning" of values.
@@ -544,16 +525,8 @@ class SpanClip6502:
         mem[zp_line_yl_h] = (yl >> 8) & 0xFF
         mem[zp_line_xr_h] = (xr >> 8) & 0xFF
         mem[zp_line_yr_h] = (yr >> 8) & 0xFF
-        if records_buf is not None:
-            mem[ZP_DCL_REC_BUF]   = records_buf & 0xFF
-            mem[ZP_DCL_REC_BUF_H] = (records_buf >> 8) & 0xFF
-            mem[ZP_DCL_REC_OFF]   = 1   # arm-time reset (see dcl_rec_arm)
-        else:
-            mem[ZP_DCL_REC_BUF_H] = 0
+        mem[ZP_DCL_REC_BUF_H] = 0           # (vestigial; nothing reads it)
         self._run(ENTRY_DRAW_CLIP_S16)
-        if records_buf is not None:
-            mem[ZP_DCL_REC_BUF]   = 0
-            mem[ZP_DCL_REC_BUF_H] = 0
         lines = self.last_lines
         if self.capture is not None:
             self.capture.extend(lines)

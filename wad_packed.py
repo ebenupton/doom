@@ -381,12 +381,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # the 6502 nothing.
     # TWO templates, laid end to end and SELF-TERMINATING, so the draw loop
     # needs no per-template length: a 4-byte entry whose first byte is
-    # OBJ_ART_STOPREC stops recording, OBJ_ART_END ends the template.  The
+    # OBJ_ART_ARM starts the FUSED authority run, OBJ_ART_END ends it.  The
     # RECORDED lines are therefore always the block's leading run -- the
     # lid's top arc for the prism, the top edge for the rectangle -- and
     # the engine plays a template by starting at its offset and reading
     # until END.  The per-object aspect byte's bit 7 picks which.
-    OBJ_ART_STOPREC, OBJ_ART_END = 0xFE, 0xFF
+    OBJ_ART_ARM, OBJ_ART_END = 0xFE, 0xFF
     _CTL = lambda b: [b, 0, 0, 0]
     # -- twelve-sided barrel (BARRELS ONLY) -------------------------------
     # Vertices at 15 + 30k, so EDGE midpoints land on 0/90/180/270: an edge
@@ -414,16 +414,24 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         j = (k + 1) % 12
         return _ln((_XI[k], _YI[k] + dy), (_XI[j], _YI[j] + dy))
 
+    # FUSED REORDER (2026-08-25): the outline draws FIRST (against the
+    # pre-tighten pool — the old flow drew the recorded arc first but the
+    # tighten only applied at object end, so the outline never saw it;
+    # order among plain draws is pixel-free), then $FE ARMS the fused
+    # walker and the AUTHORITY arc draws LAST, each line clipping,
+    # plotting and applying in one walk. Per-arc-line application equals
+    # the old batch because the arc lines abut in ascending x: a split at
+    # a piece edge never moves the next piece's clip evaluation range.
     obj_art = []
-    for k in (6, 7, 8, 9, 10):                  # far half of the lid: RECORDED
-        obj_art += _edge(k)
-    obj_art += _CTL(OBJ_ART_STOPREC)
     for k in (0, 1, 2, 3, 4):                   # near half of the lid
         obj_art += _edge(k)
     for k in (0, 1, 2, 3, 4):                   # near half of the base
         obj_art += _edge(k, 6)
     obj_art += _ln((0, 2), (0, 9))              # left side, lid edge included
     obj_art += _ln((5, 2), (5, 9))              # right side
+    obj_art += _CTL(OBJ_ART_ARM)
+    for k in (6, 7, 8, 9, 10):                  # far half of the lid: FUSED
+        obj_art += _edge(k)
     obj_art += _CTL(OBJ_ART_END)
     off_art_oct = 0
 
@@ -431,11 +439,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # Y index 11 is lid_centre + b + dy = syt + 2b + dy = syb, so the
     # rectangle spans exactly the projected top and bottom.
     off_art_rect = len(obj_art)
-    obj_art += _ln((0, 0), (5, 0))              # top edge: RECORDED
-    obj_art += _CTL(OBJ_ART_STOPREC)
     obj_art += _ln((0, 11), (5, 11))
     obj_art += _ln((0, 0), (0, 11))
     obj_art += _ln((5, 0), (5, 11))
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += _ln((0, 0), (5, 0))              # top edge: FUSED authority
     obj_art += _CTL(OBJ_ART_END)
 
     off_obj_art = off_obj_bits + obj_bits_len

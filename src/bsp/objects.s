@@ -74,7 +74,8 @@ obj_syt_l = $114B
 obj_syt_h = $114E
 obj_syb_l = $1151
 obj_syb_h = $1154
-obj_sasp  = $1157   ; [OBJ_MAXSLOT] -> $1157-$1159
+obj_sasp  = $1157
+obj_fused = $1158                        ; FUSED authority-run flag   ; [OBJ_MAXSLOT] -> $1157-$1159
 
 .assert obj_Y = obj_X + 12, error, "obj_hex addresses the lid as obj_X+12"
 
@@ -551,12 +552,12 @@ obj_ycp:
    CPX #12
    BCC obj_ycp
 ; --- stamp the 14 art lines ----------------------------------------------
+; FUSED (2026-08-25): the outline runs lead DISARMED; the $FE control
+; entry arms the fused walker and the trailing AUTHORITY arc lines each
+; draw + apply in one walk (obj_fused routes the dispatch below).
    PAGE BANK_C
-   ZERO TOP_RECORDS, BOT_RECORDS           ; one macro: one LDA #0 on NMOS
-   LDA #1
-   STA zp_dcl_rec_off
-   LDA #>BOT_RECORDS
-   STA zp_dcl_rec_buf_h                    ; armed for the lid's top arc
+   JSR fused_begin                         ; per-object zero-touch state
+   ZERO obj_fused                          ; leading run: plain draws
 ; Start at this object's template.  Bit 7 of the aspect byte IS the
 ; selector: barrels get the octagonal prism, everything else the plain
 ; outline rectangle it had before the prism existed -- a floor lamp drawn
@@ -571,7 +572,7 @@ obj_stamp:
    PAGE BANK_SEG                           ; the art template lives with the
    LDX obj_e                               ; object data (CODE is full)
    LDY OBJ_ART+0,X
-   CPY #OBJ_ART_STOPREC                    ; control entry? ($FE/$FF)
+   CPY #OBJ_ART_ARM                        ; control entry? ($FE/$FF)
    BCS obj_ctl
    LDA obj_X+0,Y
    STA zp_line_xl_l
@@ -593,6 +594,11 @@ obj_stamp:
    LDA obj_Y+1,Y
    STA zp_line_yr_h
    PAGE BANK_C
+   LDA obj_fused
+   BEQ obj_plain
+   JSR fused_below_raw                     ; authority line: clip + plot +
+   JMP obj_st_next                         ; apply in one walk
+obj_plain:
    JSR draw_clipped_line_s16
 obj_st_next:
    LDA obj_e
@@ -608,11 +614,12 @@ obj_ctl:
    PAGE BANK_C
    CPY #OBJ_ART_END
    BEQ obj_art_done
-   ZERO zp_dcl_rec_buf_h
+   LDA #1                                  ; $FE: ARM the fused authority run
+   STA obj_fused
    JMP obj_st_next
 obj_art_done:
-; --- close the columns behind it -----------------------------------------
-   LDA BOT_RECORDS
+; --- merge pass over the object's columns (applies happened per line) ----
+   LDA FW_TOUCH
    BEQ obj_dsx
    LDX #0                                  ; ilo = clamp(X[0])
    LDA obj_X+1
@@ -638,7 +645,7 @@ obj_ds_hi:
    CPX zp_i_l
    BCC obj_dsx
    BEQ obj_dsx
-   JSR tighten_from_records
+   JSR fused_merge_range
 obj_dsx:
    RTS
 .endif

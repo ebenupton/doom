@@ -84,6 +84,13 @@ id:
    STA POOL_IB,X
 ; | OB=IB=Y_BIAS+159
    STX zp_hg_cache                         ; init cache to slot 1 (the initial span)   ; |
+; FUSED walker state (2026-08-25): FW_MODE MUST be 0 before the first
+; un-armed draw or it misroutes into the walker — the page is RAM and
+; holds GARBAGE at boot on hardware (the zeroed-py65 harness hides it;
+; the ZP-poison lesson, applied to the record page).
+   LDA #0                                  ; (X = 1 here; keep it)
+   STA FW_MODE
+   STA FW_TOUCH
    RTS                                     ; |
 .endscope
 

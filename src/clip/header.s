@@ -157,7 +157,9 @@ SEG_BANKC
 ;                           bsp_render carries LOCAL copies, 2026-07-12)
 .export span_init, span_mark_solid
 .export interp_store, draw_clipped_line
-.export tighten_from_records, draw_clipped_line_s16, draw_clipped_line_s16_h
+.export draw_clipped_line_s16, draw_clipped_line_s16_h
+.export fused_begin, fused_above_h, fused_below_h
+.export fused_below_raw, fused_above_raw, fused_merge_range
 .export dcl_vert_on                     ; vertical fastpath (dcl.s)
 .export udiv16_8
 .import umul8                           ; THE multiplier lives in bsp/header.s

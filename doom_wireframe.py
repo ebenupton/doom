@@ -144,14 +144,6 @@ class Instrumented6502Spans(EndpointClipSpans):
         from endpoint_spans import Y_BIAS
         return tuple(y + Y_BIAS for y in ys)
 
-    def snapshot_tighten_records(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                                 top_dom=False, bot_dom=False,
-                                 emit_top=True, emit_bot=True, *rest):
-        yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
-        super().snapshot_tighten_records(lo, hi, sx1, sx2, yt1, yt2, yb1,
-                                         yb2, top_dom, bot_dom,
-                                         emit_top, emit_bot)
-
     def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
         if yt1 is not None:
             yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
@@ -159,56 +151,29 @@ class Instrumented6502Spans(EndpointClipSpans):
         _span_clip_6502.mark_solid(lo, hi, sx1=sx1, sx2=sx2, yt1=yt1, yt2=yt2, yb1=yb1, yb2=yb2)
         self._check()
 
-    def tighten(self, lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                top_dom=False, bot_dom=False,
-                emit_top=True, emit_bot=True,
-                emit_sec_top=False, emit_sec_bot=False,
-                yt_sec1=None, yt_sec2=None,
-                yb_sec1=None, yb_sec2=None):
+    def fused_begin(self):
+        _span_clip_6502.fused_begin()
+
+    def draw_fused(self, lx1, ly1, lx2, ly2, side):
+        """FUSED (2026-08-25, sequential by decree): one armed aperture
+        line — the 6502 clips, plots and applies in one walk; the twin
+        is synced from the pool afterwards (the 6502 is the authority;
+        the batch model is dead)."""
+        from endpoint_spans import Y_BIAS
+        _span_clip_6502.draw_fused_line(lx1, ly1 + Y_BIAS, lx2, ly2 + Y_BIAS,
+                                        side)
+        self._sync_from_6502()
+
+    def fused_finish(self, lo, hi, yt1, yt2, yb1, yb2):
         yt1, yt2, yb1, yb2 = self._bias_y(yt1, yt2, yb1, yb2)
-        if emit_sec_top and yt_sec1 is not None:
-            yt_sec1, yt_sec2 = self._bias_y(yt_sec1, yt_sec2)
-        if emit_sec_bot and yb_sec1 is not None:
-            yb_sec1, yb_sec2 = self._bias_y(yb_sec1, yb_sec2)
-        # No-op detection: when the seg's [yt, yb] strictly contains every
-        # overlapping span's [span_top, span_bot] (yt above all span_tops
-        # AND yb below all span_bots), tighten cannot narrow any span.  The
-        # per-span dominance check inside the existing implementation would
-        # discover this and continue, but the span walk + interp work isn't
-        # free.  Skip the whole call (Python tighten + 6502 shadow tighten)
-        # — yields identical span state.  Use the unbiased super method on
-        # already-biased y values.
-        if _AP_SKIP_ENABLE:
-            if (EndpointClipSpans.line_above_spans(self, sx1, yt1, sx2, yt2)
-                    and EndpointClipSpans.line_below_spans(self, sx1, yb1, sx2, yb2)):
-                _ap_skip_stats['tighten_skipped'] += 1
-                return
-        from endpoint_spans import _compute_tighten_splits
-        _RECORDS_MODE = True   # records-driven tighten is the only 6502 path
-        splits = list(_compute_tighten_splits(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2))
-        for i, params in enumerate(splits):
-            super().tighten(*params, top_dom=top_dom, bot_dom=bot_dom)
-        if _RECORDS_MODE:
-            # Records-driven path: records were written for the FULL seg
-            # line, not per-split. Call _span_clip_6502.tighten ONCE with
-            # the whole range so records' span indices stay valid (per-split
-            # tightens would mutate the pool and invalidate records si).
-            _span_clip_6502.tighten(lo, hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                                    emit_top=emit_top, emit_bot=emit_bot,
-                                    emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
-                                    yt_sec1=yt_sec1, yt_sec2=yt_sec2,
-                                    yb_sec1=yb_sec1, yb_sec2=yb_sec2)
-            self._check()
-        else:
-            for i, params in enumerate(splits):
-                if i == 0:
-                    _span_clip_6502.tighten(*params, emit_top=emit_top, emit_bot=emit_bot,
-                                           emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
-                                           yt_sec1=yt_sec1, yt_sec2=yt_sec2,
-                                           yb_sec1=yb_sec1, yb_sec2=yb_sec2)
-                else:
-                    _span_clip_6502.tighten(*params, emit_top=False, emit_bot=False)
-                self._check()
+        _span_clip_6502.fused_finish(lo, hi, yt1, yt2, yb1, yb2)
+        self._sync_from_6502()
+
+    def _sync_from_6502(self):
+        saved = _span_clip_6502.total_cycles
+        self.spans = _span_clip_6502.read_spans()
+        _span_clip_6502.total_cycles = saved
+        self._update_bbox()
 
     def draw_clipped(self, lines, color, surface, stats=None, roles=None):
         """Forward lines to 6502 DCL for clipped emission.
@@ -220,9 +185,8 @@ class Instrumented6502Spans(EndpointClipSpans):
         """
         from endpoint_spans import Y_BIAS
         biased = [(lx1, ly1 + Y_BIAS, lx2, ly2 + Y_BIAS) for lx1, ly1, lx2, ly2 in lines]
-        for i, (lx1, ly1, lx2, ly2) in enumerate(biased):
-            rb = roles.get(i) if roles else None
-            _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2, records_buf=rb)
+        for (lx1, ly1, lx2, ly2) in biased:
+            _span_clip_6502.draw_clipped_line(lx1, ly1, lx2, ly2)
         super().draw_clipped(biased, color, surface, stats)
 
     def line_above_spans(self, lx1, ly1, lx2, ly2, _dbg=False):
@@ -2574,13 +2538,11 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             else:
                 lines.insert(0, (sx1, ft1, sx2, ft2))
                 yt_idx = 1  # bt at index 1 (ft at 0)
-            from span_clip_6502 import TOP_RECORDS as _TOP_REC
             clips.draw_clipped(lines, GREEN, surface, draw_stats,
-                               roles={yt_idx: _TOP_REC})
+                               roles={yt_idx: 'top'})   # (ignored: python-only path)
         elif back[1] > ch:
-            from span_clip_6502 import TOP_RECORDS as _TOP_REC
             clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface,
-                               draw_stats, roles={0: _TOP_REC})
+                               draw_stats, roles={0: 'top'})
 
         if need_bb:
             fp_module.mul_cat("proj")
@@ -2601,13 +2563,11 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
                 pass
             else:
                 lines.insert(1, (sx1, fb1, sx2, fb2))
-            from span_clip_6502 import BOT_RECORDS as _BOT_REC
             clips.draw_clipped(lines, GREEN, surface, draw_stats,
-                               roles={0: _BOT_REC})  # bb is yb-line at idx 0
+                               roles={0: 'bot'})  # bb is yb-line at idx 0
         elif back[0] < fh:
-            from span_clip_6502 import BOT_RECORDS as _BOT_REC
             clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
-                               draw_stats, roles={0: _BOT_REC})
+                               draw_stats, roles={0: 'bot'})
 
         # VERTEX-SPAN DESCRIPTORS replace frame verticals + APEDGE
         emit_vertex_spans(_s0[0], sx1,
@@ -2813,10 +2773,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
     Produces IDENTICAL output to fp_render_seg when data is consistent.
     """
-    # Reset records buffers so a seg with no yt/yb edge draw doesn't
-    # consume stale records from a previous seg.
+    # Per-seg fused-walker state (the zero-touch dispatch's scope)
     if _span_clip_6502 is not None:
-        _span_clip_6502.reset_records()
+        _span_clip_6502.fused_begin()
     layout = _p_layout
     rom = _p_rom_main
     rom_d = _p_rom_detail
@@ -3160,156 +3119,94 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         bfh = read_s8(rom_d, dtl_off + SD_BFH)
         bch = read_s8(rom_d, dtl_off + SD_BCH)
 
-        if need_bt:
-            fp_module.mul_cat("proj")
-            vwh_bt1 = read_u16(rom_d, dtl_off + SD_VWH_BT1)
-            vwh_bt2 = read_u16(rom_d, dtl_off + SD_VWH_BT2)
-            cached_bt1 = _packed_read_vwh(ram, vwh_bt1) if ey1 == evy1 else None
-            if cached_bt1 is not None:
-                bt1 = cached_bt1
-            else:
-                bt1 = _py1(bch)
-                if ey1 == evy1: _packed_write_vwh(ram, vwh_bt1, bt1)
-            cached_bt2 = _packed_read_vwh(ram, vwh_bt2) if ey2 == evy2 else None
-            if cached_bt2 is not None:
-                bt2 = cached_bt2
-            else:
-                bt2 = _py2(bch)
-                if ey2 == evy2: _packed_write_vwh(ram, vwh_bt2, bt2)
-            if _seg2b_debug_bt is not None:
-                _seg2b_debug_bt[si] = (bt1, bt2)
-            fp_module.mul_cat("clip")
-            _ap_skip_stats['bt_seen'] += 1
-            # Aperture-above-clip: bt horizontal is entirely above the
-            # visible spans → step verticals (which extend further up
-            # to ft) and front-ceil line (also above) are also clipped.
-            # Skip emission of the whole need_bt block.
-            _dbg = (_AP_SKIP_DEBUG and si == 360)
-            _ap_above = (_AP_SKIP_ENABLE and
-                         clips.line_above_spans(sx1, bt1, sx2, bt2, _dbg=_dbg))
-            if _AP_SKIP_DEBUG and _ap_above:
-                print(f'  BT-SKIP s{si} sx=({sx1},{sx2}) bt=({bt1},{bt2}) ft=({ft1},{ft2}) '
-                      f'spans top0={[(s[0],s[1],s[4],s[6]) for s in clips.spans[:3]]}')
-            if _ap_above:
-                _ap_skip_stats['bt_skipped'] += 1
-                # Count lines we would have drawn (1 horiz + step verts + maybe front-ceil)
-                _saved = 1 + (0 if no_vt1 else 1) + (0 if no_vt2 else 1) + (1 if ch > vz else 0)
-                _ap_skip_stats['bt_lines_saved'] += _saved
-            else:
-                lines = [(sx1, bt1, sx2, bt2)]
-                yt_idx = 0  # bt is yt-line, currently at index 0
+        if True:
+            # ==================== FUSED cascade =========================
+            # Reordered cascade: no-record companion edges first, then
+            # verticals (both against the pre-tighten pool), then each
+            # ARMED aperture edge drawn and APPLIED as it goes
+            # (sequential by decree), then the seg-end merge pass /
+            # zero-touch dispatch.
+            # --- projections (VWH-cached, identical to pipeline A) ---
+            bt1 = bt2 = bb1 = bb2 = None
+            if need_bt:
+                fp_module.mul_cat("proj")
+                vwh_bt1 = read_u16(rom_d, dtl_off + SD_VWH_BT1)
+                vwh_bt2 = read_u16(rom_d, dtl_off + SD_VWH_BT2)
+                bt1 = _packed_read_vwh(ram, vwh_bt1) if ey1 == evy1 else None
+                if bt1 is None:
+                    bt1 = _py1(bch)
+                    if ey1 == evy1: _packed_write_vwh(ram, vwh_bt1, bt1)
+                bt2 = _packed_read_vwh(ram, vwh_bt2) if ey2 == evy2 else None
+                if bt2 is None:
+                    bt2 = _py2(bch)
+                    if ey2 == evy2: _packed_write_vwh(ram, vwh_bt2, bt2)
+                fp_module.mul_cat("clip")
+            if need_bb:
+                fp_module.mul_cat("proj")
+                vwh_bb1 = read_u16(rom_d, dtl_off + SD_VWH_BB1)
+                vwh_bb2 = read_u16(rom_d, dtl_off + SD_VWH_BB2)
+                bb1 = _packed_read_vwh(ram, vwh_bb1) if ey1 == evy1 else None
+                if bb1 is None:
+                    bb1 = _py1(bfh)
+                    if ey1 == evy1: _packed_write_vwh(ram, vwh_bb1, bb1)
+                bb2 = _packed_read_vwh(ram, vwh_bb2) if ey2 == evy2 else None
+                if bb2 is None:
+                    bb2 = _py2(bfh)
+                    if ey2 == evy2: _packed_write_vwh(ram, vwh_bb2, bb2)
+                fp_module.mul_cat("clip")
+            # --- ap-skip whole-side gates (inert in the reference) ---
+            _skip_top = (need_bt and _AP_SKIP_ENABLE and
+                         clips.line_above_spans(sx1, bt1, sx2, bt2))
+            _skip_bot = (need_bb and _AP_SKIP_ENABLE and
+                         clips.line_below_spans(sx1, bb1, sx2, bb2))
+            # --- companions (no records), pre-tighten pool ---
+            if need_bt and not _skip_top:
                 if ch <= vz:
                     pass
                 elif (_AP_SKIP_ENABLE and
                         clips.line_above_spans(sx1, ft1, sx2, ft2)):
-                    _ap_skip_stats['fc_skipped'] += 1
+                    pass
                 else:
-                    lines.insert(0, (sx1, ft1, sx2, ft2))
-                    yt_idx = 1  # bt now at index 1 (ft at 0)
-                from span_clip_6502 import TOP_RECORDS as _TOP_REC
-                clips.draw_clipped(lines, GREEN, surface, draw_stats,
-                                   roles={yt_idx: _TOP_REC})
-        elif bch > ch:
-            if _AP_SKIP_ENABLE and clips.line_above_spans(sx1, ft1, sx2, ft2):
-                _ap_skip_stats['pp_top_skipped'] += 1
-            else:
-                from span_clip_6502 import TOP_RECORDS as _TOP_REC
-                clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN, surface,
-                                   draw_stats, roles={0: _TOP_REC})
-
-        if need_bb:
-            fp_module.mul_cat("proj")
-            vwh_bb1 = read_u16(rom_d, dtl_off + SD_VWH_BB1)
-            vwh_bb2 = read_u16(rom_d, dtl_off + SD_VWH_BB2)
-            cached_bb1 = _packed_read_vwh(ram, vwh_bb1) if ey1 == evy1 else None
-            if cached_bb1 is not None:
-                bb1 = cached_bb1
-            else:
-                bb1 = _py1(bfh)
-                if ey1 == evy1: _packed_write_vwh(ram, vwh_bb1, bb1)
-            cached_bb2 = _packed_read_vwh(ram, vwh_bb2) if ey2 == evy2 else None
-            if cached_bb2 is not None:
-                bb2 = cached_bb2
-            else:
-                bb2 = _py2(bfh)
-                if ey2 == evy2: _packed_write_vwh(ram, vwh_bb2, bb2)
-            if _seg2b_debug_bt is not None:
-                _seg2b_debug_bt.setdefault(si, (None, None))
-                _seg2b_debug_bt[si] = _seg2b_debug_bt[si] + (bb1, bb2)
-            fp_module.mul_cat("clip")
-            _ap_skip_stats['bb_seen'] += 1
-            # Aperture-below-clip mirror of need_bt skip.
-            if (_AP_SKIP_ENABLE and
-                    clips.line_below_spans(sx1, bb1, sx2, bb2)):
-                _ap_skip_stats['bb_skipped'] += 1
-                _saved = 1 + (0 if no_vt1 else 1) + (0 if no_vt2 else 1) + (1 if fh < vz else 0)
-                _ap_skip_stats['bb_lines_saved'] += _saved
-            else:
-                lines = [(sx1, bb1, sx2, bb2)]
+                    clips.draw_clipped([(sx1, ft1, sx2, ft2)], GREEN,
+                                       surface, draw_stats)
+            if need_bb and not _skip_bot:
                 if fh >= vz:
                     pass
                 elif (_AP_SKIP_ENABLE and
                         clips.line_below_spans(sx1, fb1, sx2, fb2)):
-                    _ap_skip_stats['fc_skipped'] += 1
+                    pass
                 else:
-                    lines.insert(1, (sx1, fb1, sx2, fb2))
-                from span_clip_6502 import BOT_RECORDS as _BOT_REC
-                clips.draw_clipped(lines, GREEN, surface, draw_stats,
-                                   roles={0: _BOT_REC})  # bb is yb-line at idx 0
-        elif bfh < fh:
-            if _AP_SKIP_ENABLE and clips.line_below_spans(sx1, fb1, sx2, fb2):
-                _ap_skip_stats['pp_bot_skipped'] += 1
-            else:
-                from span_clip_6502 import BOT_RECORDS as _BOT_REC
-                clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN, surface,
-                                   draw_stats, roles={0: _BOT_REC})
-
-        # VERTEX-SPAN DESCRIPTORS replace frame verticals + APEDGE
-        emit_vertex_spans(v1_idx, sx1, _py1, _pH, clips, surface, draw_stats,
-                          ey1 == evy1 and 0 <= sx1 <= 255)
-        emit_vertex_spans(v2_idx, sx2, _py2, _pH, clips, surface, draw_stats,
-                          ey2 == evy2 and 0 <= sx2 <= 255)
-
-        # Tighten
-        tt1 = bt1 if need_bt else ft1
-        tt2 = bt2 if need_bt else ft2
-        tb1 = bb1 if need_bb else fb1
-        tb2 = bb2 if need_bb else fb2
-        yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
-        yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
-        # See fp_render_seg note: top_dom/bot_dom are dead in the current
-        # Python+6502-shadow path; stubbed so tuple positions stay aligned.
-        top_dom = bot_dom = False
-        # Emit flags for the 6502 shadow: only emit a portal edge during
-        # tighten mutation when the Python reference draws the matching
-        # line. Python draws a top line iff need_bt or bch > ch, and a
-        # bot line iff need_bb or bfh < fh.
-        emit_top = need_bt or (bch > ch)
-        emit_bot = need_bb or (bfh < fh)
-        # Secondary edge emission: Python draws BOTH the step edge (at
-        # bt/bb) AND the front ceiling/floor edge (at ft/fb) when there's
-        # a step and the other edge is visible above/below eye.  Pass
-        # ft1/ft2 (secondary top) and fb1/fb2 (secondary bot) so tighten
-        # can interpolate and emit those lines at the overlap endpoints.
-        emit_sec_top = need_bt and (ch > vz)
-        emit_sec_bot = need_bb and (fh < vz)
-        yt_sec1 = ft1 if emit_sec_top else None
-        yt_sec2 = ft2 if emit_sec_top else None
-        yb_sec1 = fb1 if emit_sec_bot else None
-        yb_sec2 = fb2 if emit_sec_bot else None
-        if deferred is not None:
-            deferred.append(('tighten', x_lo, x_hi, sx1, sx2,
-                             yt1, yt2, yb1, yb2, top_dom, bot_dom,
-                             emit_top, emit_bot, emit_sec_top, emit_sec_bot,
-                             yt_sec1, yt_sec2, yb_sec1, yb_sec2))
-            clips.snapshot_tighten_records(*deferred[-1][1:])
-        else:
-            clips.tighten(x_lo, x_hi, sx1, sx2, yt1, yt2, yb1, yb2,
-                          top_dom, bot_dom,
-                          emit_top=emit_top, emit_bot=emit_bot,
-                          emit_sec_top=emit_sec_top, emit_sec_bot=emit_sec_bot,
-                          yt_sec1=yt_sec1, yt_sec2=yt_sec2,
-                          yb_sec1=yb_sec1, yb_sec2=yb_sec2)
+                    clips.draw_clipped([(sx1, fb1, sx2, fb2)], GREEN,
+                                       surface, draw_stats)
+            # --- verticals, still pre-tighten ---
+            emit_vertex_spans(v1_idx, sx1, _py1, _pH, clips, surface,
+                              draw_stats, ey1 == evy1 and 0 <= sx1 <= 255)
+            emit_vertex_spans(v2_idx, sx2, _py2, _pH, clips, surface,
+                              draw_stats, ey2 == evy2 and 0 <= sx2 <= 255)
+            # --- armed aperture edges: each clips, plots and APPLIES as
+            # it draws (sequential by decree — Eben accepted the
+            # crossing-quantization divergence class for simplicity).
+            if need_bt and not _skip_top:
+                clips.draw_fused(sx1, bt1, sx2, bt2, 'top')
+            elif (not need_bt) and bch > ch:
+                if not (_AP_SKIP_ENABLE and
+                        clips.line_above_spans(sx1, ft1, sx2, ft2)):
+                    clips.draw_fused(sx1, ft1, sx2, ft2, 'top')
+            if need_bb and not _skip_bot:
+                clips.draw_fused(sx1, bb1, sx2, bb2, 'bot')
+            elif (not need_bb) and bfh < fh:
+                if not (_AP_SKIP_ENABLE and
+                        clips.line_below_spans(sx1, fb1, sx2, fb2)):
+                    clips.draw_fused(sx1, fb1, sx2, fb2, 'bot')
+            # --- seg end: merge pass / zero-touch dispatch ---
+            tt1 = bt1 if need_bt else ft1
+            tt2 = bt2 if need_bt else ft2
+            tb1 = bb1 if need_bb else fb1
+            tb2 = bb2 if need_bb else fb2
+            yt1, yt2 = max(ft1, tt1), max(ft2, tt2)
+            yb1, yb2 = min(fb1, tb1), min(fb2, tb2)
+            clips.fused_finish(x_lo, x_hi, yt1, yt2, yb1, yb2)
+            return
 
     # Seg number annotation (toggle with I key; drawn on upscaled display)
     if _show_seg_numbers:

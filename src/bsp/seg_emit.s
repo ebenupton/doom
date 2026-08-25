@@ -407,11 +407,10 @@ ys_done:
 ; ============================================================================
 hgp_fwd:
    PAGE BANK_C                             ; THE emit-cascade page: one page
-   ZERO TOP_RECORDS, BOT_RECORDS           ; records counts reset for THIS
-                                        ; seg (arenas are bank C; stage 8
-                                        ; reads them only for segs that
-                                        ; got here; arms re-arm below)
                                         ; dominates every arc below
+                                        ; (the records-count reset died
+                                        ; 2026-08-25: fused_begin owns the
+                                        ; per-seg zero-touch state)
 
 ; ============================================================================
 ; STAGE 5b — SOLID/PORTAL FORK (Eben's five-path split, 2026-08-13).
@@ -424,7 +423,7 @@ hgp_fwd:
    BIT zp_seg_flags
    BVC portal_cascade                      ; V clear: two-sided seg
 solid_cascade:
-   ZERO zp_dcl_rec_buf_h                   ; records off for the whole path
+; (the records-off disarm died 2026-08-25 — nothing reads the flag)
 ; Eyeline dispatch exploits ONE-HOT bits (Eben): the prologue writes
 ; {0, $40, $80} BY CONSTRUCTION since 2026-08-19 — a top-kill discards
 ; any pending fb bit ($C0 cannot occur). The both-suppressed slab case
@@ -467,179 +466,101 @@ sc_esk:
 portal_cascade:
 
 ; ============================================================================
-; STAGE 6 — EMIT CASCADE.  Horizontal edges via draw_clipped_line_s16_h: X names
-; the sy pair offset (same in both structs); it fetches x from
-; zp_seg_sx1/sx2 and y from VX1+X/VX2+X itself.  zp_dcl_rec_buf_h arms
-; (page hi) or disarms (0) record capture for the draw; the record page
-; count byte is reset at arm time.  Both record pages are page-aligned
-; (buf lo stays 0, zeroed once per frame).
+; STAGE 6 — FUSED EMIT (2026-08-25). REORDERED: the no-record companion
+; edges and the verticals draw FIRST (against the pre-tighten pool —
+; exactly the state they saw in the old order; draws are read-only, so
+; hoisting them commutes: proven by the 291-pose A/B), then each ARMED
+; aperture edge stages into the fused walker, which clips, plots and
+; APPLIES the boundary in one span walk (clip/fused.s). The records
+; arena and the seg-end sweep are gone.
 ;
-;   (solids never arrive — the stage-5b fork owns them)
-;   ft (front ceiling):  NEEDBT: emit, no records (self-clips if ch <= vz)
-;                        else:   emit iff STEPUP_T (baked bch > ch), recorded
-;   fb (front floor):    NEEDBB: emit, no records (self-clips if fh >= vz)
-;                        else:   emit iff STEPUP_B (baked bfh < fh), recorded
-;   bt step (bch line):  portals with NEEDBT, TOP_RECORDS armed
-;   bb step (bfh line):  portals with NEEDBB, BOT_RECORDS armed
+; The bt->ft feedback abort died with the reorder (it needed the lip
+; drawn first to prove the companion dead); companions draw on their
+; eyeline gates alone — when dead they cost their walk and emit
+; nothing, pixels unchanged.
 ;
-; The armed portal-lip arms are the ONLY fall-ins to ft_emit/fb_emit:
-; solid and NEEDBT/NEEDBB entrants branch straight to their no-record
-; arms, so no re-test is needed at the arm point.
+;   ft companion: NEEDBT and ch > vz          (plain draw)
+;   fb companion: NEEDBB and fh < vz
+;   verticals    (stage 7, hoisted above the armed draws)
+;   armed top:   NEEDBT ? bt lip : (STEPUP_T ? front line)  — applies
+;   armed bot:   NEEDBB ? bb lip : (STEPUP_B ? front line)  — as it draws
 ; ============================================================================
-; Step edges FUSED into their flag-owning arms (Eben, 2026-08-14):
-; each side tests its NEEDB* bit ONCE and draws both its lines — the
-; separate step-arm block (and its two retests) died; the records
-; arming is duplicated per recorded draw (the lip and the step-up
-; front line arm the same page).
-; --- top side: NEEDBT => front-ceil (no-rec, eyeline) + bt lip
-;               STEPUP_T => recorded front line; else nothing ---
+   JSR fused_begin
+; --- companions (never armed; the dcl record sites are gone) ---
    LDA zp_seg_flags
    AND #$04                                ; NEEDBT?
-   BEQ ft_chk_up
-; LIP FIRST (clipper-feedback abort, Eben 2026-08-14): the recorded bt
-; draw accumulates its outcome in zp_dcl_out; if it emitted nothing and
-; every rejection was off-TOP (or the range was solid — has_gap already
-; proved a gap exists, so the pure-solid class is vestigial for these
-; full-range lines), then the HIGHER front-ceil line is provably dead.
-   ZERO zp_dcl_out
-   LDA #>TOP_RECORDS                       ; bt lip: the aperture's new
-   STA zp_dcl_rec_buf_h                    ; top — TOP_RECORDS armed
-; (the count ZERO here died 2026-08-23: hg_pass's per-seg
-;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
-;  cascade, and the only other path out of hgp_fwd is
-;  solid_cascade, which turns records off and exits via
-;  s_advance without ever reaching here.  The arms re-arm the
-;  POINTER; the count is already 0.)
-   LDA #1
-   STA zp_dcl_rec_off
-   LDX #zp_seg_sy1_btop_l - VX1
-   JSR draw_clipped_line_s16_h
-   LDA zp_dcl_out
-   AND #$41                                ; emitted, or off-BOTTOM seen?
-   BEQ ft_top_done                         ; neither: ft is dead
+   BEQ pc_fb_comp
    BIT zp_ss_eskip                         ; eyeline: no top edges
-   BMI ft_top_done
-   ZERO zp_dcl_rec_buf_h
-   LDX #zp_seg_sy1_top_l - VX1             ; front-ceil, no records
+   BMI pc_fb_comp
+   LDX #zp_seg_sy1_top_l - VX1             ; front-ceil
    JSR draw_clipped_line_s16_h
-ft_top_done:
-   JMP fb_arm
-ft_chk_up:
-   LDA zp_seg_flags
-   AND #$10                                ; SF_STEPUP_T (baked bch > ch)
-   BEQ fb_arm
-   LDA #>TOP_RECORDS                       ; recorded front line: it IS
-   STA zp_dcl_rec_buf_h                    ; the aperture top here
-; (the count ZERO here died 2026-08-23: hg_pass's per-seg
-;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
-;  cascade, and the only other path out of hgp_fwd is
-;  solid_cascade, which turns records off and exits via
-;  s_advance without ever reaching here.  The arms re-arm the
-;  POINTER; the count is already 0.)
-   LDA #1
-   STA zp_dcl_rec_off
-   LDX #zp_seg_sy1_top_l - VX1
-   JSR draw_clipped_line_s16_h
-fb_arm:
-; --- bottom side: ft's mirror (NEEDBB / STEPUP_B) ---
+pc_fb_comp:
    LDA zp_seg_flags
    AND #$08                                ; NEEDBB?
-   BEQ fb_chk_up
-; lip first, bottom mirror: bb zero-emission with only off-BOTTOM (or
-; solid) rejections proves the LOWER front-floor line dead.
-   ZERO zp_dcl_out
-   LDA #>BOT_RECORDS
-   STA zp_dcl_rec_buf_h
-; (the count ZERO here died 2026-08-23: hg_pass's per-seg
-;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
-;  cascade, and the only other path out of hgp_fwd is
-;  solid_cascade, which turns records off and exits via
-;  s_advance without ever reaching here.  The arms re-arm the
-;  POINTER; the count is already 0.)
-   LDA #1
-   STA zp_dcl_rec_off
-   LDX #zp_seg_sy1_bbot_l - VX1
-   JSR draw_clipped_line_s16_h
-   LDA zp_dcl_out
-   AND #$81                                ; emitted, or off-TOP seen?
-   BEQ fb_bot_done                         ; neither: fb is dead
+   BEQ pc_verts
    BIT zp_ss_eskip                         ; eyeline: no bottom edges
-   BVS fb_bot_done
-   ZERO zp_dcl_rec_buf_h
-   LDX #zp_seg_sy1_bot_l - VX1             ; front-floor, no records
+   BVS pc_verts
+   LDX #zp_seg_sy1_bot_l - VX1             ; front-floor
    JSR draw_clipped_line_s16_h
-fb_bot_done:
-   JMP vert_stage
-fb_chk_up:
-   LDA zp_seg_flags
-   AND #$20                                ; SF_STEPUP_B (baked bfh < fh)
-   BEQ vert_stage
-   LDA #>BOT_RECORDS
-   STA zp_dcl_rec_buf_h
-; (the count ZERO here died 2026-08-23: hg_pass's per-seg
-;  ZERO TOP_RECORDS, BOT_RECORDS dominates every arm of this
-;  cascade, and the only other path out of hgp_fwd is
-;  solid_cascade, which turns records off and exits via
-;  s_advance without ever reaching here.  The arms re-arm the
-;  POINTER; the count is already 0.)
-   LDA #1
-   STA zp_dcl_rec_off
-   LDX #zp_seg_sy1_bot_l - VX1
-   JSR draw_clipped_line_s16_h
-vert_stage:
-
-; ============================================================================
-; STAGE 7 — VERTICALS.  Each endpoint's vertex is served ONCE per frame
-; (VDONE bit) by the first rendering seg that touches it, from a
-; one-byte descriptor (VDESC, senior plane at +$100).  The probe is
-; inline: a served vertex exits in ~20 cycles with no JSR.
-;
-;   for v in (v1, v2):
-;       if VDONE[v]: continue
-;       vs_fresh(v)          # mark; gate; dispatch descriptor
-;
-; v1's probe rebuilds mask/index from the banked key (zp_v1i_*); v2's
-; mask is still live in zp_seg_v_bitm (its transform stored it and
-; nothing since writes it — chain hits skip v1's store, and v2's own
-; transform always ran last).
-; ============================================================================
+pc_verts:
+; --- STAGE 7 verticals, hoisted (still the pre-tighten pool) ---
    LDA zp_v1i_l
    AND #7
    TAY
    LDA vc_bit_mask,Y
-   LDX zp_v1i_b                            ; B byte IS the bitmap index
+   LDX zp_v1i_b
    AND VDONE,X
-   BNE vs1_done
+   BNE pc_vs1
    JSR vs_fresh1
-vs1_done:
+pc_vs1:
    LDA zp_seg_v_bitm
    LDX zp_seg_v_idx_b
    AND VDONE,X
-   BNE vs2_done
+   BNE pc_vs2
    JSR vs_fresh2
-vs2_done:
+pc_vs2:
+; --- armed aperture edges -> the fused walker ---
+   LDA zp_seg_flags
+   AND #$04
+   BEQ pc_top_up
+   LDX #zp_seg_sy1_btop_l - VX1            ; bt lip IS the aperture top
+   JSR fused_above_h
+   JMP pc_bot
+pc_top_up:
+   LDA zp_seg_flags
+   AND #$10                                ; SF_STEPUP_T (baked bch > ch)
+   BEQ pc_bot
+   LDX #zp_seg_sy1_top_l - VX1             ; recorded front line
+   JSR fused_above_h
+pc_bot:
+   LDA zp_seg_flags
+   AND #$08
+   BEQ pc_bot_up
+   LDX #zp_seg_sy1_bbot_l - VX1            ; bb lip IS the aperture bot
+   JSR fused_below_h
+   JMP pc_walk
+pc_bot_up:
+   LDA zp_seg_flags
+   AND #$20                                ; SF_STEPUP_B (baked bfh < fh)
+   BEQ pc_walk
+   LDX #zp_seg_sy1_bot_l - VX1
+   JSR fused_below_h
+pc_walk:
+   JMP ms_dispatch                         ; (each armed draw applied as it
+                                        ;  ran — sequential by decree)
 
-; ============================================================================
-; STAGE 8 — OCCLUSION.  zp_i_l/zp_i_h still hold stage 3's clamped
-; range: the only other writers of the pair are the bca_ilo/bca_ihi
-; aliases (bbox visibility — walk context, never inside the seg loop),
-; and stage 3 stores ilo directly while hg_pass banks ihi off the
-; has_gap ABI ride.  (The recompute + its clamp_sat islands died
-; 2026-08-13 — the "scratch does not survive" note was a DEFQ fossil.)
-;
-;   if SOLID:        mark_solid(ilo, ihi)
-;   elif records:    tighten_from_records(ilo, ihi)
-;   elif not seg_zero_rec_solid(): pass   # aperture covers the screen
-;   else:            mark_solid(ilo, ihi) # aperture wholly off-screen:
-;                                         # every column is wall
-; ============================================================================
+vert_stage:
+; (the portal stage-7 block moved INTO the fused cascade above,
+;  2026-08-25 — the solid path has its own twin; nothing arrives here)
+
 ms_dispatch:
-   LDA TOP_RECORDS                         ; (solids took the stage-5b path:
-                                        ; only portals arrive here)                         ; portal: tighten iff any records
-   ORA BOT_RECORDS                         ; were captured (consumed in
-   BEQ ms_zero_rec                         ; place, bank C guaranteed)
-   JSR tighten_from_records
-   JMP ms_advance
+   LDA FW_TOUCH                            ; (solids took the stage-5b path)
+   BEQ ms_zero_rec                         ; nothing staged by either armed
+                                        ; line: the zero-record dispatch
+   JSR fused_merge_range                   ; boundaries already applied by
+   JMP ms_advance                          ; the walk; restore the batch
+                                        ; sweep's merge postcondition over
+                                        ; stage 3's [zp_i_l, zp_i_h)
 ; --- stage-8 island (this seam costs nothing: the JSR/JMP above) ---
 ms_zero_rec:
 ; no records: if the aperture covers the whole screen there is nothing
