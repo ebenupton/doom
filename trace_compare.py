@@ -75,9 +75,10 @@ def setup_wad(sc):
     for i, d in enumerate(dw.vspan_desc):
         mem[0xDC00 + i] = d
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
-        mem[0xDE00 + i] = lo & 0xFF
-        mem[0xDE80 + i] = hi & 0xFF
-        mem[0xDF00 + i] = 1 if cont else 0
+        _lo, _hi, _ct = dw.vexpl_bytes(i, lo, hi, cont)
+        mem[0xDE00 + i] = _lo
+        mem[0xDE80 + i] = _hi
+        mem[0xDF00 + i] = _ct
     def w16(addr_lo, val):
         mem[addr_lo]     = val & 0xFF
         mem[addr_lo + 1] = (val >> 8) & 0xFF

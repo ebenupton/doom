@@ -1,7 +1,8 @@
 ; GENERATED: SQD_H — even-extended quarter-square DIFF table, HI
 ; bytes only (2026-08-11, Eben: reuse the lower-address table).
 ; The diff LO side reuses sqr_l itself + a 32-byte mirrored prefix
-; at SQR_MIRROR ($19E0, the free VXC senior-plane tail, n_verts
+; at SQR_MIRROR ($01E0 below the sqr quad since the $0200 swap; this
+; note said $19E0 long after the move — see bsp/header.s, n_verts
 ; <= 480 asserted at pack) — filled by rot_select on a fresh code
 ; image (rwp_stamp), so boot zeroing self-heals. The HI side needs
 ; this dedicated copy: the 32 bytes below sqr_h are sqr_l's top

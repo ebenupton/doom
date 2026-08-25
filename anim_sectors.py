@@ -215,16 +215,23 @@ class Mover:
                     mem[base['seg_hdr'] + _e + 0x00] = fh_ps & 0xFF
                     mem[base['seg_hdr'] + _e + 0x80] = ch_ps & 0xFF
                 nbytes += 2
+        # HALF-UNIT tier (2026-08-25): every back-pair representation
+        # carries half-prescaled bytes (the packer bakes 2h; the 6502
+        # patcher writes pos>>7). This python patcher is integer-driven
+        # (floor/ceil are rounded world heights), so its half value is
+        # 2x the integer — python-attached runs stay at integer poses
+        # by construction, coherent with the packed-python normalizer.
+        fh2_ps, ch2_ps = (fh_ps * 2) & 0xFF, (ch_ps * 2) & 0xFF
         for i in self.back_segs:
             o = i * SEG_DTL_SIZE
-            _ROM_DETAIL[o + SD_BFH] = fh_ps & 0xFF
-            _ROM_DETAIL[o + SD_BCH] = ch_ps & 0xFF
+            _ROM_DETAIL[o + SD_BFH] = fh2_ps
+            _ROM_DETAIL[o + SD_BCH] = ch2_ps
             _e = _BPAL_REL + _bpal_id(i)
-            _ROM_MAIN[_OFF_SEG_HDR + _e + 0x00] = fh_ps & 0xFF
-            _ROM_MAIN[_OFF_SEG_HDR + _e + 0x80] = ch_ps & 0xFF
+            _ROM_MAIN[_OFF_SEG_HDR + _e + 0x00] = fh2_ps
+            _ROM_MAIN[_OFF_SEG_HDR + _e + 0x80] = ch2_ps
             for mem, base in _attached:
-                mem[base['seg_hdr'] + _e + 0x00] = fh_ps & 0xFF
-                mem[base['seg_hdr'] + _e + 0x80] = ch_ps & 0xFF
+                mem[base['seg_hdr'] + _e + 0x00] = fh2_ps
+                mem[base['seg_hdr'] + _e + 0x80] = ch2_ps
             nbytes += 2
         # seg flags: re-derive SOLID/NEEDBT/NEEDBB (the packer's rules)
         for i in self.touch_segs:
@@ -261,7 +268,7 @@ class Mover:
                 dw.vspan_expl[ix] = (fh_ps, hi, cont)
             for mem, base in _attached:
                 if role == 'hi':
-                    mem[0xDE80 + ix] = ch_ps & 0xFF
+                    mem[0xDE80 + ix] = ch_ps & 0xFF   # VEXPL: integer tier
                 else:
                     mem[0xDE00 + ix] = fh_ps & 0xFF
             nbytes += 1
@@ -299,6 +306,26 @@ for _ssi, (_cnt, _first) in enumerate(dw.fp_ssectors):
         _seg_to_ss[_k] = _ssi
 
 MOVERS = {sec: Mover(sec) for sec in dw.ANIM_SECTORS}
+
+# H2 bound assert (2026-08-25): the 6502 flag worker compares mover quads
+# with PLAIN SBC sign tests after doubling the integer side — every
+# doubled diff must stay inside s8 over the mover's WHOLE travel. The
+# diff is monotone in pos, so the two travel endpoints suffice.
+for _m in MOVERS.values():
+    _ends = ((_m.closed, _m.open) if _m.kind == 'ceil'
+             else (_m.bottom, _m.top))
+    for _i in _m.touch_segs:
+        _sv = dw.fp_segs_vwh[_i]
+        _fi = _sv[1] if _sv[1] != _m.sec else _sv[2]
+        if _fi is None:
+            continue
+        _ffh = dw._prescale_height(dw.sectors[_fi][0])
+        _fch = dw._prescale_height(dw.sectors[_fi][1])
+        for _e in _ends:
+            _ep = dw._prescale_height(_e)
+            for _d in (2 * _ep - 2 * _ffh, 2 * _ep - 2 * _fch):
+                assert -128 <= _d <= 127, \
+                    f'H2 flag diff {_d} overflows s8 (mover {_m.sec} seg {_i})'
 
 # ── subsector -> movers mask (which movers a visited ss can reveal) ─────
 SS_MOVERS = {}

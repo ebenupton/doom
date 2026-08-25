@@ -117,24 +117,36 @@ def main():
         c = struct.unpack_from('<hhHBBhBB', cfg, mi2 * 12)
         sim.append({'min': c[0], 'max': c[1], 'sp': c[2], 'wa': c[3],
                     'wb': c[4], 'pos': c[5], 'st': c[6]})
+    # FIELD-SCALED tick (2026-08-25): ANIM_FIELDS scales movement, waits
+    # consume whole (TPRE+f)/4 steps per tick. Phase 1 = the harness
+    # default (ANIM_FIELDS 0 -> 1 field/tick); phase 2 replays a bursty
+    # frame-cost schedule so the multi-step wait subtract and the
+    # movement add-loop both get exercised.
+    ANIM_FIELDS = sym('ANIM_FIELDS')
     tick_bad = 0
     tpre = 0
-    for step in range(400):
+    schedule = [1] * 400 + [1, 4, 3, 6, 2, 8, 5, 1, 12, 4, 32, 1, 7] * 16
+    for step, f in enumerate(schedule):
+        mem[ANIM_FIELDS] = 0 if step < 400 else f   # phase 1: harness 0->1
         eng.sc._run(sym('anim_tick'))
-        tpre = (tpre + 1) & 0xFF
+        acc = tpre + f
+        wsteps = acc >> 2
+        tpre = acc & 3
         for mi2, s in enumerate(sim):
             state, timer = s['st'] & 0xC0, s['st'] & 0x3F
             if state in (0x00, 0x80):
-                if timer and (tpre & 3) == 0:   # 0 = hold forever; waits
-                    timer = (timer - 1) & 0x3F  # tick every 4th field
-                    if timer == 0:              # (the /4 prescaler)
+                if timer:                       # 0 = hold forever
+                    if timer > wsteps:          # SBC: expired iff
+                        timer -= wsteps         # timer <= wsteps
+                    else:
+                        timer = 0
                         state = (state + 0x40) & 0xC0
             elif state == 0x40:
-                s['pos'] = s['pos'] + s['sp']
+                s['pos'] = s['pos'] + s['sp'] * f
                 if s['pos'] >= s['max']:
                     s['pos'], state, timer = s['max'], 0x80, s['wb']
             else:
-                s['pos'] = s['pos'] - s['sp']
+                s['pos'] = s['pos'] - s['sp'] * f
                 if s['pos'] < s['min']:     # STRICT: the 6502's B->A clamp
                     # (BPL on pos-min) keeps 'moving' when landing exactly
                     # ON min and transitions next tick; the up-arm is
@@ -146,12 +158,14 @@ def main():
             got_st = mem[ANIM_WS + mi2*3 + 2]
             if got_pos != s['pos'] or got_st != s['st']:
                 if tick_bad < 5:
-                    print(f'TICK step {step} mover {mi2}: '
+                    print(f'TICK step {step} (f={f}) mover {mi2}: '
                           f'6502 pos={got_pos} st=${got_st:02X} '
                           f'sim pos={s["pos"]} st=${s["st"]:02X}')
                 tick_bad += 1
+    mem[ANIM_FIELDS] = 0
     bad += tick_bad
-    print(f'tick lockstep (400 steps x 6): {"PASS" if tick_bad == 0 else f"FAIL ({tick_bad})"}')
+    print(f'tick lockstep ({len(schedule)} steps x 6, field-scaled): '
+          f'{"PASS" if tick_bad == 0 else f"FAIL ({tick_bad})"}')
 
     print(f'ANIM6502: {"PASS" if bad == 0 else "FAIL"}')
     sys.exit(1 if bad else 0)

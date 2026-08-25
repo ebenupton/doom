@@ -622,33 +622,39 @@ ys_withback:
    LDY #LAY_SH_BPAL
    LDA (zp_seg_hdr_p),Y
    TAY                                     ; Y = back-pair palette id
+; HALF-UNIT mover tier (2026-08-25): mover-valued palette entries live
+; in the id-64..127 pool and carry HALF-prescaled bytes — deltas
+; subtract vz2 (staged through zp_vs_cfh, a stage-7 byte free here) and
+; the back projections bump S by one (zp_ys_bs; at rest 2h @ S+1 is
+; bit-identical to h @ S). Every op below the id load leaves the
+; hg_query C=1 alone, so the first SBC still rides it on both arms.
+   TYA
+   AND #$40
+   STA zp_ys_bs                            ; 0 static / $40 half-unit
+   LDA zp_br_vz
+   LDX zp_ys_bs
+   BEQ ysb_ey
+   ASL A                                   ; half tier: eye in half units
+ysb_ey:
+   STA zp_vs_cfh                           ; the back-delta eye height
    LDA ROM_BPAL_BCH_C,Y                    ; bch
-   SBC zp_br_vz                            ; (no SEC: C=1 from hg_query)
+   SBC zp_vs_cfh                           ; (no SEC: C=1 from hg_query)
    STA zp_seg_btop_dlt
    LDA ROM_BPAL_BFH_C,Y                    ; bfh
    SEC
-   SBC zp_br_vz
+   SBC zp_vs_cfh
    STA zp_seg_bbot_dlt
                                         ; (projections read VWHC — bank SEG,
                                         ; still held from the header reads)
+   ZERO zp_seg_ep                          ; v1 -> VX1: ONE staging block
+   LDA zp_seg_v1_r_m8                      ; (the chained arm's duplicate
+   STA zp_br_r_m8                          ; folded 2026-08-25 — it now
+   LDX zp_seg_v1_r_s                       ; skips the front pair below)
+   STX zp_br_r_s
+   LDA rns_vec_l-1,X
+   STA rns_go_op
    LDA zp_ys_v1ok
-   BEQ ysb_v1_full
-   ZERO zp_seg_ep                          ; chained v1: front pair is live,
-   LDA zp_seg_v1_r_m8                      ; stage recip + kernel and go
-   STA zp_br_r_m8                          ; straight to the back pair
-   LDX zp_seg_v1_r_s
-   STX zp_br_r_s
-   LDA rns_vec_l-1,X
-   STA rns_go_op
-   JMP ysb_v1_back
-ysb_v1_full:
-   ZERO zp_seg_ep                          ; v1 -> VX1
-   LDA zp_seg_v1_r_m8
-   STA zp_br_r_m8
-   LDX zp_seg_v1_r_s
-   STX zp_br_r_s
-   LDA rns_vec_l-1,X
-   STA rns_go_op
+   BNE ysb_v1_back                         ; chained v1: front pair is live
    LDA zp_seg_top_dlt                      ; front pair
    JSR project_y
    STA VX1+4
@@ -658,6 +664,10 @@ ysb_v1_full:
    STA VX1+6
    STY VX1+5                               ; sy_bot
 ysb_v1_back:
+   LDA zp_ys_bs                            ; mover back pair: S+1 + kernel
+   BEQ ysb_v1_nb                           ; re-stage (half-unit tier;
+   JSR ysb_bump                            ; shared with the v2 site)
+ysb_v1_nb:
    LDA zp_seg_flags                        ; >= 1 back flag proven:
    AND #$04                                ; open at the NEEDBT dispatch
    BEQ ysb_v1_bb                           ; no BT -> BB is GUARANTEED
@@ -690,6 +700,10 @@ ysb_v2:
    JSR project_y
    STA VX2+6
    STY VX2+5                               ; sy_bot
+   LDA zp_ys_bs                            ; mover back pair: S+1 + kernel
+   BEQ ysb_v2_nb                           ; re-stage (half-unit tier)
+   JSR ysb_bump
+ysb_v2_nb:
    LDA zp_seg_flags                        ; back pair (mirror of v1)
    AND #$04
    BEQ ysb_v2_bb
@@ -707,6 +721,16 @@ ysb_v2_bb:
    STY VX2+9                               ; sy_bbot
 ysb_done:
    JMP ys_done
+ysb_bump:
+; half-unit back pair: project one shift deeper — S+1 into the staged
+; recip AND the kernel select (mover segs only; the static path never
+; gets here)
+   LDX zp_br_r_s
+   INX
+   STX zp_br_r_s
+   LDA rns_vec_l-1,X
+   STA rns_go_op
+   RTS
 .endscope
 
 ; ============================================================================

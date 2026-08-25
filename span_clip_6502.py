@@ -43,9 +43,8 @@ zp_line_xr_h = _sym('zp_line_xr_h')
 zp_line_yr_h = _sym('zp_line_yr_h')
 
 # DCL records-hook ZP slots
-ZP_DCL_REC_BUF   = _sym('zp_dcl_rec_buf')
-ZP_DCL_REC_OFF   = _sym('zp_dcl_rec_off')
-ZP_DCL_REC_BUF_H = _sym('zp_dcl_rec_buf_h')
+# (ZP_DCL_REC_* retired 2026-08-25: the records machinery died with the
+#  FUSED walker; the zp bytes were reassigned)
 
 # ZP addresses (linked equates)
 ZP_HEAD  = _sym('zp_head')

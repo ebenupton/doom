@@ -54,20 +54,32 @@ ANIM_SSMASK = $E500                     ; flat TABLES block page (shipped in
 ; prescaled 8.8 fixed point — hi byte = the packer's prescaled s8 height):
 ;   +0  min88  (s16: endpoint "A" — doors: closed, lifts: bottom)
 ;   +2  max88  (s16: endpoint "B" — doors: open,   lifts: top)
-;   +4  speed88 (u16, per frame)
-;   +6  wait_at_A, +7 wait_at_B (frames, <= 63 to fit the packed timer)
+;   +4  speed88 (u16, per FIELD — anim_tick scales by ANIM_FIELDS)
+;   +6  wait_at_A, +7 wait_at_B (4-FIELD units, <= 63 for the packed timer)
 ;   +8  start88, +10 packed start state/timer, +11 pad
 ; Mover bit/index m = index in sorted(ANIM_SECTORS) everywhere (SSMASK bits,
 ; TABL0 pointer slots, CFG stride 12, ANIM_WS stride 3, DIRTY bits).
 
 ; --- state (unbanked; ships as LOW zeros, anim_init seeds it) ---
+ANIM_FIELDS = $19E8                     ; PAL fields this frame consumed —
+                                        ; the DRIVER stores its mv_frame /
+                                        ; mask-drain count here before the
+                                        ; tick (2026-08-25); 0 (harness, no
+                                        ; driver) ticks as 1 field. Byte
+                                        ; below the anim block: the old
+                                        ; VXC senior-plane tail, free since
+                                        ; n_verts <= 480.
 ANIM_ENABLE = $19E9                     ; scalars block: $05xx -> $1Dxx (sqr
 ANIM_DIRTY  = $19EA                     ; swap) -> $19xx (2026-08-19 window
 ANIM_WS     = $19EB                     ; slide); same page offsets.
-ANIM_TPRE   = $19FD                     ; wait prescaler (2026-08-21): waits
-                                        ; decrement every 4th field so the
-                                        ; 6-bit timer spans multi-second
-                                        ; holds; ships as LOW zeros
+ANIM_TPRE   = $19FD                     ; wait prescaler residue (2026-08-25
+                                        ; field-scaled: accumulates FIELDS,
+                                        ; the whole /4 steps are consumed
+                                        ; into at_wsteps each tick, the
+                                        ; residue 0-3 stays). Waits tick per
+                                        ; 4 FIELDS so the 6-bit timer spans
+                                        ; multi-second holds; ships as LOW
+                                        ; zeros
                                         ; per mover: pos_lo, pos_hi, state/timer
                                         ;   state = bits 7-6 (0 wait@A, 1 A->B,
                                         ;   2 wait@B, 3 B->A), timer = bits 5-0
@@ -91,6 +103,33 @@ SEG_HIGH
 ;     ANIM_VAL = pos_hi(m)               # ANIM_WS[m*3+1], prescaled s8 height
 ;     anim_l0_worker (FHCH bytes + seg flags)
 ;     DIRTY &= ~bit(m)                   # applied == logical again
+; --- scratch home $115B+ (2026-08-25): the anim scratch joins the
+; objects block in the $1100 page — real RAM in BOTH builds (the
+; scalar-state rule), runtime-written only (nothing to ship), and it
+; buys the CODE region back ~24 bytes it no longer has. ---
+anim_val2  = $115B                      ; pos>>7: the HALF-unit patch value
+ah_pend2   = $115C
+at_m       = $115D
+at_t       = $115E
+at_state   = $115F
+at_timer   = $1160
+at_fields  = $1161
+at_wsteps  = $1162
+at_c       = $1163
+at_prevhi  = $1164
+alw_nf     = $1165
+alw_ng     = $1166
+alw_nb     = $1167
+alw_nv     = $1168
+alw_y      = $1169
+alw_hdr    = $116A                      ; 2 bytes
+alw_fh     = $116C
+alw_ch     = $116D
+alw_bfh    = $116E
+alw_bch    = $116F
+alw_f      = $1170
+ai_t       = $1171
+ai_midx    = $1172
 anim_hub:
 .scope
    LDX zp_node_ch_l
@@ -100,11 +139,11 @@ anim_hub:
                                            ; MEAN on the anims-on corpus)
    AND ANIM_DIRTY
    BEQ ah_done
-   STA ah_pend
+   STA ah_pend2
    LDX #5
 ah_loop:
-   LDA ah_pend
-   AND ah_bit,X
+   LDA ah_pend2
+   AND vc_bit_mask,X
    BEQ ah_next
    STX ANIM_CUR
 ; value = pos_hi of mover X (ws + X*3 + 1)
@@ -114,13 +153,18 @@ ah_loop:
    TAY
    LDA ANIM_WS+1,Y
    STA ANIM_VAL
+   LDA ANIM_WS+0,Y                         ; anim_val2 = pos >> 7: the HALF-
+   ASL A                                   ; unit patch value (back pairs +
+   LDA ANIM_WS+1,Y                         ; jamb VEXPL bytes, 2026-08-25)
+   ROL A
+   STA anim_val2
    JSR anim_l0_worker                      ; heights + seg flags (pages itself)
 ; (the L2 VWH worker is gone: the private VWH slot bytes were write-only —
 ; the 6502 render projects from the header height bytes; VWH indices are Python-side
 ; cache keys. Stripped 2026-07-10.)
    LDX ANIM_CUR
    LDA ANIM_DIRTY
-   EOR ah_bit,X                            ; clear this mover's dirty bit
+   EOR vc_bit_mask,X                       ; clear this mover's dirty bit
    STA ANIM_DIRTY
 ah_next:
    DEX
@@ -129,10 +173,6 @@ ah_next:
                                         ; prologue's SS reads need WALK back
 ah_done:
    JMP anim_ss_cont                        ; resume render_subsector
-ah_bit:
-   .byte 1,2,4,8,16,32
-ah_pend:
-   .byte 0
 .endscope
 
 ; ============================================================================
@@ -148,25 +188,47 @@ SEG_HIGH
 ;     Per mover: Y = m*3 indexes the WS block, X = m*12 the CFG block.
 ;     Prescaled 8.8 arithmetic; bounds |int| <= ~30 so SBC-sign compares
 ;     are exact. Sets the mover's ANIM_DIRTY bit iff pos_hi changed. ---
-; pseudocode (integerised Mover.tick, anim_sectors.py):
+; pseudocode (integerised Mover.tick, anim_sectors.py; FIELD-SCALED
+; 2026-08-25 — speeds are world/FIELD by design, python's float side is
+; world/SECOND real-dt: ticking once per variable-cost frame made door
+; speed depend on scene cost AND ran waits ~4x their spec at a typical
+; 4-field frame):
+;   f = ANIM_FIELDS or 1                   # driver-written; harness = 1
+;   wsteps = (TPRE + f) >> 2; TPRE = (TPRE + f) & 3
 ;   for m in 5..0:
 ;     state = WS[m*3+2] & $C0 ; timer = WS[m*3+2] & $3F
 ;     if state in (0 wait@A, 2 wait@B):
-;       if --timer == 0: state += $40      # 0 -> 1 (A->B), 2 -> 3 (B->A)
+;       if timer:                          # 0 = hold forever (DR doors)
+;         if timer > wsteps: timer -= wsteps
+;         else: timer = 0; state += $40    # 0 -> 1 (A->B), 2 -> 3 (B->A)
 ;     elif state == 1 (A->B):
-;       pos += speed88; if pos >= max88: pos = max88; state = 2; timer = wait_B
+;       pos += speed88*f; if pos >= max88: pos = max88; state = 2; timer = wait_B
 ;     else (3, B->A):
-;       pos -= speed88; if pos < min88:  pos = min88; state = 0; timer = wait_A
+;       pos -= speed88*f; if pos < min88:  pos = min88; state = 0; timer = wait_A
 ;     WS[m*3+2] = state | timer
 ;     if pos_hi != previous pos_hi: DIRTY |= bit(m)  # renderer bytes now stale
+; (speed88*f = a bounded add-loop, f <= 32 by the pm_frame ABI cap; the
+;  overshoot-then-clamp is the same final pos as f clamped single steps.)
 anim_tick:
 .scope
    LDA ANIM_ENABLE
    BNE at_on
    RTS
 at_on:
-   INC ANIM_TPRE                           ; /4 wait prescaler (one bump
-                                           ; per TICK, shared by movers)
+   LDA ANIM_FIELDS                         ; driver-written field count;
+   BNE at_f1                               ; 0 = no driver (py65 harness):
+   LDA #1                                  ; tick as one field
+at_f1:
+   STA at_fields
+   CLC
+   ADC ANIM_TPRE                           ; accumulate fields into the
+   PHA                                     ; prescaler; whole /4 steps are
+   AND #3                                  ; this tick's wait budget, the
+   STA ANIM_TPRE                           ; 0-3 residue carries over
+   PLA
+   LSR A
+   LSR A
+   STA at_wsteps
    LDA #5
    STA at_m
 at_loop:
@@ -174,15 +236,13 @@ at_loop:
    ASL A
    ADC at_m                                ; m*3 (no carry: m<=5)
    TAY
-   LDA at_m
-   ASL A
-   ASL A
-   STA at_t                                ; m*4
-   ASL A                                   ; m*8
-   CLC
-   ADC at_t                                ; m*12
+   ASL A                                   ; m*12 = (m*3)<<2 (<= 60, no
+   ASL A                                   ; carry; TAY left A intact)
    TAX
+   LDA ANIM_WS+0,Y                         ; prev = pos>>7 (half units)
+   ASL A
    LDA ANIM_WS+1,Y
+   ROL A
    STA at_prevhi
    LDA ANIM_WS+2,Y
    AND #$3F
@@ -204,6 +264,9 @@ at_notwb:
                                         ; forward-coherence bbox serves
                                         ; would inherit stale occlusion
                                         ; (D + anims gate, 2026-08-13)
+   LDA at_fields
+   STA at_c
+at_dnlp:
    LDA ANIM_WS+0,Y
    SEC
    SBC ANIM_CFG+4,X
@@ -211,12 +274,17 @@ at_notwb:
    LDA ANIM_WS+1,Y
    SBC ANIM_CFG+5,X
    STA ANIM_WS+1,Y
+   DEC at_c
+   BNE at_dnlp
    LDA ANIM_WS+0,Y
    SEC
    SBC ANIM_CFG+0,X
    LDA ANIM_WS+1,Y
    SBC ANIM_CFG+1,X
-   BPL at_done                             ; pos >= min: still travelling
+   BPL at_jdone                            ; pos >= min: still travelling
+                                        ; (rides the clamp tail's own JMP
+                                        ; — at_done left branch range when
+                                        ; the field loops landed 2026-08-25)
    LDA ANIM_CFG+0,X
    STA ANIM_WS+0,Y
    LDA ANIM_CFG+1,X
@@ -224,11 +292,15 @@ at_notwb:
    ZERO at_state
    LDA ANIM_CFG+6,X                        ; wait_at_A
    STA at_timer
+at_jdone:
    JMP at_done
 
 at_up:
 ; --- 1: A -> B (pos += speed, clamp at max = CFG+2) ---
    ZERO D_FWD                              ; (mirror of the B->A gate)
+   LDA at_fields
+   STA at_c
+at_uplp:
    LDA ANIM_WS+0,Y
    CLC
    ADC ANIM_CFG+4,X
@@ -236,6 +308,8 @@ at_up:
    LDA ANIM_WS+1,Y
    ADC ANIM_CFG+5,X
    STA ANIM_WS+1,Y
+   DEC at_c
+   BNE at_uplp
    LDA ANIM_WS+0,Y
    SEC
    SBC ANIM_CFG+2,X
@@ -255,28 +329,36 @@ at_up:
 at_wait:
    LDA at_timer                            ; wait 0 = HOLD FOREVER (DR doors
    BEQ at_done                             ; idle shut until pmove_use pokes
-   LDA ANIM_TPRE                           ; the state; 2026-08-14)
-   AND #3                                  ; waits tick every 4th field
-   BNE at_done                             ; (the /4 prescaler, 2026-08-21)
-   DEC at_timer
-   BNE at_done
-; wait expired: 0 -> 1 (A->B), 2 -> 3 (B->A); timer stays 0 while moving
+   SEC                                     ; the state; 2026-08-14)
+   SBC at_wsteps                           ; consume this tick's 4-field
+   BEQ at_expire                           ; steps in ONE subtract (multi-
+   BCS at_hold                             ; step at heavy frames); > 0 with
+                                        ; no borrow = still waiting
+at_expire:
+; wait expired (timer <= wsteps): 0 -> 1 (A->B), 2 -> 3 (B->A); timer
+; stays 0 while moving
    LDA at_state
    CLC
    ADC #$40
    STA at_state
    ZERO at_timer
+   JMP at_done
+at_hold:
+   STA at_timer
 
 at_done:
    LDA at_state
    ORA at_timer
    STA ANIM_WS+2,Y
-   LDA ANIM_WS+1,Y
+   LDA ANIM_WS+0,Y                         ; DIRTY fires on HALF-step
+   ASL A                                   ; changes (pos>>7) so the lip
+   LDA ANIM_WS+1,Y                         ; repatches at the new
+   ROL A                                   ; resolution (2026-08-25)
    CMP at_prevhi
    BEQ at_clean
    LDX at_m
    LDA ANIM_DIRTY
-   ORA anim_bit2,X
+   ORA vc_bit_mask,X                       ; (shared 1<<n table, defq.s)
    STA ANIM_DIRTY
 at_clean:
    DEC at_m
@@ -284,15 +366,8 @@ at_clean:
    JMP at_loop
 at_end:
    RTS
-at_m:      .byte 0
-at_t:      .byte 0
-at_state:  .byte 0
-at_timer:  .byte 0
-at_prevhi: .byte 0
 .endscope
 
-anim_bit2:
-   .byte 1,2,4,8,16,32
 
 ; --- anim_l0_worker: patch FHCH bytes + re-derive seg flags for mover
 ;     ANIM_CUR with value ANIM_VAL. ENTRY BANK-AGNOSTIC since 2026-08-19
@@ -377,11 +452,11 @@ alw_back:
    INY
    STY alw_y
 .if ::C02
-   LDA ANIM_VAL
+   LDA anim_val2                           ; HALF units (mover BPAL pool)
    STA (zp_anim_w)
 .else
    LDY #0
-   LDA ANIM_VAL
+   LDA anim_val2                           ; HALF units (mover BPAL pool)
    STA (zp_anim_w),Y
 .endif
    LDY alw_y
@@ -435,6 +510,15 @@ alw_gbody:
    STA alw_bfh
    LDA ROM_BPAL_BCH_C,X
    STA alw_bch
+; HALF-UNIT tier: a mover-valued back pair (id bit 6) is in half units —
+; double the front pair so the quad compares below are unit-consistent
+; (the doubled range needs the V-corrections on the SBCs).
+   TXA
+   AND #$40
+   BEQ alw_units_ok
+   ASL alw_fh
+   ASL alw_ch
+alw_units_ok:
 ; flags = old & ~(SOLID|NEEDBT|NEEDBB) = old & ~$4C (SOLID=$40)
    LDA alw_hdr
    STA zp_anim_w
@@ -448,7 +532,9 @@ alw_gbody:
 .endif
    AND #$83                                ; ~(SOLID|NEEDBT|NEEDBB|STEPUP_T/B)
    STA alw_f
-; SOLID iff bch <= fh  or  bfh >= ch
+; SOLID iff bch <= fh  or  bfh >= ch   (plain SBC sign tests: the packer
+; asserts every mover quad's doubled diffs stay inside s8 — see
+; wad_packed's H2 bound assert)
    LDA alw_bch
    SEC
    SBC alw_fh
@@ -526,9 +612,9 @@ alw_vexpl:
    STY alw_y
    PAGE BANK_C
 .if ::C02
-   LDA ANIM_VAL
-   STA (zp_anim_w)
-.else
+   LDA ANIM_VAL                            ; INTEGER units (VEXPL stays the
+   STA (zp_anim_w)                         ; integer tier this pass — see
+.else                                     ; doom_wireframe vexpl_bytes)
    LDY #0
    LDA ANIM_VAL
    STA (zp_anim_w),Y
@@ -539,17 +625,6 @@ alw_vexpl:
    JMP alw_vexpl
 alw_ret:
    RTS
-alw_nf:  .byte 0
-alw_ng:  .byte 0
-alw_nb:  .byte 0                         ; back-list count (front/back split)
-alw_nv:  .byte 0
-alw_y:   .byte 0
-alw_hdr: .word 0
-alw_fh:  .byte 0
-alw_ch:  .byte 0
-alw_bfh: .byte 0
-alw_bch: .byte 0
-alw_f:   .byte 0
 .endscope
 
 ; ============================================================================
@@ -641,13 +716,8 @@ ai_m:
    CLC
    ADC ai_midx
    TAY                                     ; m*3
-   LDA ai_midx
-   ASL A
-   ASL A
-   STA ai_t                                ; m*4
-   ASL A                                   ; m*8
-   CLC
-   ADC ai_t                                ; m*12
+   ASL A                                   ; m*12 = (m*3)<<2 (TAY leaves
+   ASL A                                   ; A intact; <= 60, no carry)
    TAX
    LDA ANIM_CFG+8,X                        ; start pos (8.8 prescaled)
    STA ANIM_WS+0,Y
@@ -666,8 +736,6 @@ ai_m:
    LDA #>anim_hub
    STA anim_ss_hook+2
    RTS
-ai_t:    .byte 0
-ai_midx: .byte 0
 .endscope
 
 

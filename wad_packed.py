@@ -266,6 +266,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # ── ROM Detail: seg VWH indices ─────────────────────────────────────
 
     rom_detail = bytearray(n_segs * SEG_DTL_SIZE)
+    _movers = set(anim_sector_set or ())
     for i, svwh in enumerate(fp_segs_vwh):
         fh, ch = svwh[3], svwh[4]
         vft1, vfb1 = svwh[5], svwh[6]
@@ -276,6 +277,13 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         if back_idx is not None:
             bs = fp_sectors[back_idx]
             bfh, bch = bs[0], bs[1]
+            if back_idx in _movers:
+                # HALF-UNIT mover tier (2026-08-25): a mover's back pair
+                # ships in half-prescaled units so the anim patcher can
+                # move the lip in half steps (projection uses S+1; at
+                # rest 2h with S+1 is BIT-IDENTICAL to h with S).
+                bfh, bch = bfh * 2, bch * 2
+                assert -128 <= bfh <= 127 and -128 <= bch <= 127
         else:
             bfh, bch = 0, 0
         if vbt1 == -1: vbt1 = vbb1 = vbt2 = vbb2 = 0xFFFF
@@ -313,7 +321,13 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     _bpal_ids = {}      # (bfh, bch) -> palette id; mover-touching segs get a
                         # PRIVATE entry keyed by seg index instead, so an anim
                         # patch of one seg's back pair cannot move a neighbour
-    _movers = set(anim_sector_set or ())
+    # HALF-UNIT mover tier (2026-08-25): entries whose VALUES are mover
+    # heights (back sector is a mover, or a mover's own solid alias)
+    # allocate ids 64..127 and carry HALF-prescaled bytes — the ys stage
+    # gates on id bit 6 (TYA/AND #$40, carry-preserving) and projects
+    # them at S+1 against vz*2. Static-valued entries stay 0..63.
+    _BPAL_MOVER_MIN = 64
+    _bpal_next = [0, _BPAL_MOVER_MIN]   # [shared/static pool, mover pool]
     off_dirs = off_seg_hdr + seg_hdr_bytes(n_segs)
     MAX_DIRS = 128                    # 160 -> 128 2026-08-20: E1M1 uses 118
                                       # slots; the stride ships x2 banks, so
@@ -736,18 +750,39 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         od = i * SEG_DTL_SIZE
         back_idx = svwh[2]
         def _bpal(bfh_v, bch_v, seg=i, front=svwh[1], back=svwh[2]):
-            key = (('seg', seg) if (front in _movers or back in _movers)
-                   else (bfh_v & 0xFF, bch_v & 0xFF))
-            rid = _bpal_ids.setdefault(key, (len(_bpal_ids), bfh_v & 0xFF, bch_v & 0xFF))
-            assert rid[0] < BPAL_PER_PLANE, \
-                f'back-pair palette ({rid[0] + 1}) exceeds the {BPAL_PER_PLANE}-slot planes'
+            # mover-VALUED = the bytes are a mover's heights (half-unit
+            # tier): a mover back, or a mover's own solid alias. ONLY
+            # these are anim patch targets, so ONLY these need private
+            # per-seg entries (the old front-OR-back privacy was over-
+            # broad: a static-valued seg fronting a mover is never
+            # patched and shares the common pool — 2026-08-25, when the
+            # id-pool split made the distinction load-bearing).
+            mover_vals = (back in _movers) or (back is None and front in _movers)
+            key = ('seg', seg) if mover_vals else (bfh_v & 0xFF, bch_v & 0xFF)
+            if key not in _bpal_ids:
+                pool = 1 if mover_vals else 0
+                rid_new = _bpal_next[pool]
+                _bpal_next[pool] += 1
+                _bpal_ids[key] = (rid_new, bfh_v & 0xFF, bch_v & 0xFF)
+            rid = _bpal_ids[key]
+            if mover_vals:
+                assert _BPAL_MOVER_MIN <= rid[0] < BPAL_PER_PLANE, \
+                    f'mover back-pair pool overflow (id {rid[0]})'
+            else:
+                assert rid[0] < _BPAL_MOVER_MIN, \
+                    f'static back-pair pool overflow (id {rid[0]})'
             return rid[0]
         if back_idx is None:
             # ONE-SIDED solid: fh/ch alias — the descriptor role codes
             # bfh/bch evaluate with no runtime branch (never consumed
-            # live: c2/c3 are NEEDBB/NEEDBT-gated, forever clear here)
-            rom_main[o + SH_BPAL] = _bpal(rom_detail[od + SD_FH],
-                                          rom_detail[od + SD_CH])
+            # live: c2/c3 are NEEDBB/NEEDBT-gated, forever clear here).
+            # A mover's own side walls alias in HALF units (the mover
+            # pool) so the anim back patch keeps the alias in step.
+            _afh = read_s8(rom_detail, od + SD_FH)
+            _ach = read_s8(rom_detail, od + SD_CH)
+            if svwh[1] in _movers:
+                _afh, _ach = _afh * 2, _ach * 2
+            rom_main[o + SH_BPAL] = _bpal(_afh & 0xFF, _ach & 0xFF)
         else:
             # TWO-SIDED — portal now or potentially at runtime (a closed
             # door is pack-time SOLID): TRUE back heights, NOT the alias.
@@ -757,7 +792,13 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             # SOLID flag holds, c2/c3 gate off, so the alias is not
             # missed; detail SD_BFH/BCH stay 0 for pack-time solids.
             bs = fp_sectors[back_idx]
-            rom_main[o + SH_BPAL] = _bpal(bs[0], bs[1])
+            _bfh, _bch = bs[0], bs[1]
+            if back_idx in _movers:
+                _bfh, _bch = _bfh * 2, _bch * 2    # half-unit tier
+            rom_main[o + SH_BPAL] = _bpal(_bfh & 0xFF, _bch & 0xFF)
+
+    # (H2 flag-worker bound assert lives in anim_sectors — it knows the
+    #  mover travel endpoints; wad_packed only sees the rest pose.)
 
     # Diagonal LV1 records: 4 planes packed two per page at +$00/+$80 so an
     # indexed read never crosses a page boundary.

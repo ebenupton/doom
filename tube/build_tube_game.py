@@ -97,6 +97,7 @@ def write_tube_syms():
                      ('T_BOX_CLASSIFY', 'box_classify'),
                      ('T_ANIM_INIT', 'anim_init'),
                      ('T_ANIM_TICK', 'anim_tick'),
+                     ('T_ANIM_FIELDS', 'ANIM_FIELDS'),
                      ('T_ANIM_ENABLE', 'ANIM_ENABLE'),
                      ('T_D_ENABLE', 'D_ENABLE'),
                      ('T_D_FWD', 'D_FWD'),

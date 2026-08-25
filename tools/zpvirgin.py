@@ -68,7 +68,7 @@ def main():
         track(); mpu.step()
     sc.init(); sc.clear_screen(); poke(mem)
     # anything Python poked directly counts as established too
-    for n in ('zp_dcl_rec_buf', 'zp_dcl_rec_buf_h'): written.add(sym(n))
+    # (zp_dcl_rec_* retired 2026-08-25 with the records machinery)
     for a in range(0x100):
         if mem[a]: written.add(a)          # non-zero => something set it
 

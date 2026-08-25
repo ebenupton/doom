@@ -1478,6 +1478,17 @@ print(f"VSPANS: {sum(1 for d in vspan_desc if d)} vertices, "
 assert max((_i for _i, _d in enumerate(vspan_desc) if _d), default=0) < 480, \
     'VDONE wipe bound: desc!=0 vertex id >= 480 (widen the 60-byte wipe in walk.s)'
 
+# (HALF-UNIT tier note, 2026-08-25: the mover BACK PAIR ships half-
+# prescaled — see wad_packed/_apply. VEXPL jamb entries STAY integer this
+# pass: the vsx H2 plumbing cost ~100 B the banked CODE region does not
+# have. Jamb edges keep integer granularity; a follow-up can revisit
+# once bytes are found — the design is in the 2026-08-25 session notes.)
+
+def vexpl_bytes(i, lo, hi, cont):
+    """The 6502 VEXPL byte triple for entry i (loaders share this —
+    bsp_render_6502 / banked_bsp / trace_compare must bake identically)."""
+    return lo & 0xFF, hi & 0xFF, (1 if cont else 0)
+
 _vspan_done = set()
 
 def vspan_frame_reset():
@@ -1610,31 +1621,47 @@ def _projection_bound_fence():
     for ssi in range(L['n_ss']):
         consumed.add(s8(rm[L['off_ss_fh'] + ssi]))
         consumed.add(s8(rm[L['off_ss_ch'] + ssi]))
-    for i in range(L['n_segs']):
-        o = L['off_seg_hdr'] + seg_hdr_off(i)
-        f = rm[o + SH_FLAGS]
-        bp = L['off_bpal'] + rm[o + SH_BPAL]    # back pair via the palette
+    consumed_h2 = set()                     # HALF-UNIT tier (2026-08-25):
+    for i in range(L['n_segs']):            # mover-valued palette entries
+        o = L['off_seg_hdr'] + seg_hdr_off(i)   # (id bit 6) hold 2h and
+        f = rm[o + SH_FLAGS]                    # project as h2 - 2vz — the
+        pid = rm[o + SH_BPAL]                   # SAME |h| <= 64 bound applies
+        bp = L['off_bpal'] + pid                # to the DOUBLED delta
         idx = []
         if f & SF_SOLID:
             idx += [0x00, 0x80]             # solid entry = fh/ch (see packer)
         else:
             if f & SF_NEEDBB: idx.append(0x00)
             if f & SF_NEEDBT: idx.append(0x80)
-        for k in idx: consumed.add(s8(rm[bp + k]))
+        tgt = consumed_h2 if pid & 0x40 else consumed
+        for k in idx: tgt.add(s8(rm[bp + k]))
+    mover_h2 = set()
     for sec, kind in ANIM_SECTORS.items():             # mover travel extremes
         srec = sectors[sec]
-        nb = [sectors[ld] for ld in range(len(sectors))]  # conservative: all
         if kind == 'ceil':                             # door: ceil floor..open
-            consumed.add(_prescale_height(srec[0]))
-            consumed.add(_prescale_height(srec[1]))
+            mover_h2.add(2 * _prescale_height(srec[0]))
+            mover_h2.add(2 * _prescale_height(srec[1]))
         else:                                          # lift: floor bottom..top
-            consumed.add(_prescale_height(srec[0]))
+            mover_h2.add(2 * _prescale_height(srec[0]))
     vzs = {_prescale_height(srec[0] + 41) for srec in sectors}
     worst = max(abs(h - v) for h in consumed for v in vzs)
-    assert worst <= 64, (
-        f"projection |h| bound violated: worst |height-vz| = {worst} > 64 — "
-        f"restore the full s24 ext bookkeeping in project_y's raw body "
-        f"(src/bsp/project.s pym_join) before shipping this map")
+    # half tier: the byte is 2h, the delta is 2h - 2vz
+    worst2 = max((abs(h2 - 2 * v) for h2 in (consumed_h2 | mover_h2)
+                  for v in vzs), default=0)
+    # BOUND RE-DERIVED 2026-08-25 (the half-unit tier pushed deltas past
+    # the old 64): the raw body is exact for |h| <= 127, not 64. Both
+    # arms compute the mid byte mod-256 exactly (the fused ADC identity
+    # (P>>8) === h + ~|hi| + (lo==0) is carry-independent), and the
+    # constant ext bytes stay right for the whole s8 range: h > 0 gives
+    # P = h*m9 <= 127*511 = 64,897 < 2^16 so ext = 0; h < 0 gives
+    # P >= -64,897 > -2^16 so ext = $FF. The old "P fits s16 / ext is
+    # the sign of mid" justification was sufficient but not necessary.
+    # Verified exhaustively: tools/test_projy_range.py sweeps every
+    # (recip, h in [-127,127]) pair against fp_project_y, S=1..11.
+    assert worst <= 127 and worst2 <= 127, (
+        f"projection |h| bound violated: worst int {worst} / half {worst2} "
+        f"> 127 — beyond the s8 raw-body domain; this needs real s24 ext "
+        f"bookkeeping in project_y (src/bsp/project.s)")
 _projection_bound_fence()
 
 # Build ROM banks for sideways ROM paging
@@ -3058,12 +3085,21 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
     no_vt2 = bool(_seg_novt_flags[si] & _SF_NOVT2)
     # trigger heights for the vertex-span descriptors (solid alias;
     # dtl_off is assigned later — index the detail stream directly)
+    # HALF-UNIT mover tier (2026-08-25): mover backs ship half-prescaled
+    # in SD_BFH/BCH. The python packed tier stays INTEGER — normalize at
+    # read (exact at rest: half bytes are 2h there; while a mover sits
+    # at a half step the python reference floors — a documented gap,
+    # the same class as the OBJ_DRAW reference gap).
+    _h2b = (not solid) and fp_segs_vwh[si][2] in ANIM_SECTORS
     if solid:
         _pH = {'fh': fh, 'ch': ch, 'bfh': fh, 'bch': ch}
     else:
-        _pH = {'fh': fh, 'ch': ch,
-               'bfh': read_s8(rom_d, si * SEG_DTL_SIZE + SD_BFH),
-               'bch': read_s8(rom_d, si * SEG_DTL_SIZE + SD_BCH)}
+        _bfh_r = read_s8(rom_d, si * SEG_DTL_SIZE + SD_BFH)
+        _bch_r = read_s8(rom_d, si * SEG_DTL_SIZE + SD_BCH)
+        if _h2b:
+            _bfh_r //= 2
+            _bch_r //= 2
+        _pH = {'fh': fh, 'ch': ch, 'bfh': _bfh_r, 'bch': _bch_r}
 
     # Annotation: record verticals for the V-key overlay (mirrors
     # fp_render_seg).  Rule string here is approximate — packed flags
@@ -3118,6 +3154,9 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         need_bb = bool(flags & SF_NEEDBB)
         bfh = read_s8(rom_d, dtl_off + SD_BFH)
         bch = read_s8(rom_d, dtl_off + SD_BCH)
+        if _h2b:
+            bfh //= 2                     # half-unit tier normalization
+            bch //= 2                     # (see the _pH note above)
 
         if True:
             # ==================== FUSED cascade =========================

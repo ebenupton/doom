@@ -447,9 +447,14 @@ zp_cb_bot1 = $B8                  ; [clip]; u8, span bot at cx1
 ; --- $B9: overlay group (3 phase-disjoint users) ---
 ; --- $BA: FREE (zp_tg_cont retired 2026-08-23 -- the portal-continuation
 ;     state had no reader anywhere in the tree; storescan found the store)
-zp_dcl_rec_buf = $BC              ; [clip]; lo byte of buffer ptr ; w=2
-zp_dcl_rec_buf_h = $BD            ; [clip]; hi byte of buffer ptr ($00 = records disabled)
-zp_dcl_rec_off = $BE              ; [clip]; current write offset (1-based) within buffer
+; $BC FREE (2026-08-25: zp_dcl_rec_buf died with the records machinery;
+;  the short-lived zp_br_vz2 died the same day — the ysb arm derives
+;  vz*2 inline)
+zp_ys_bs = $BD                    ; [bsp]; per-seg back-pair S bump (0 static /
+                                  ; nonzero mover): ys back projections re-stage
+                                  ; S+1 + kernel when set
+zp_vs_cfh = $BE                   ; [bsp]; vsx_expl clamp copy of fh (doubled
+                                  ; for H2 mover-jamb entries, 2026-08-25)
 zp_head = $C0                     ; [clip]
 ; SPAN_IS_NOT_FULL (2026-07-26, replaces IS_FULL_B and the retired
 ; span_is_full routine): the clipper's whole occlusion truth is
@@ -528,7 +533,9 @@ zp_tmp0 = $DE                     ; [bsp+clip]; umul8 scratch (matches span_clip
 zp_tmp1 = $DF                     ; [clip]
 zp_tmp2 = $E0                     ; [clip]
 zp_plot_i = $95                     ; [clip]; plot_h byte-index scratch
-; --- $E1: overlay group (2 phase-disjoint users) ---
+; --- $E1: vsx_expl clamp copy (both prior users died) ---
+zp_vs_cch = $E1                   ; [bsp]; vsx_expl clamp copy of ch (doubled
+                                  ; for H2 mover-jamb entries, 2026-08-25)
 
 ; EV16 crossing scratch (2026-08-09): the CLIPPED endpoint's recovered
 ; s24 view totals, banked across the second cr_recover call (which

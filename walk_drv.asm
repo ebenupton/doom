@@ -314,8 +314,8 @@ ORG DRV_GLUE
     ; in engine CODE now; page 1 is reserved headroom.)
     JMP ENG_ANIM_INIT
 .anim_glue_tick
-    LDA #7:STA &FE30
-    JMP ENG_ANIM_TICK
+    LDA #7:STA &FE30            \ (ANIM_FIELDS is stored by mv_frame -- the
+    JMP ENG_ANIM_TICK           \  glue pocket has no room for the copy)
 .key_hud
     ; H key: toggle the debug HUD on the press edge only (hud_prev holds
     ; last frame's state, so holding the key flips it exactly once).
@@ -547,6 +547,10 @@ ORG DRV_CLR
                                                     ; a bad read — sit still
     LDA #7:STA &FE30                                ; pm_frame LIVES IN BANK
     STX DV_FIELDS                                   ; debug HUD F=: the count
+    STX ENG_ANIM_FIELDS                             ; FIELD-SCALED anim_tick
+                                                    ; (2026-08-25) reads the
+                                                    ; same count (stored here:
+                                                    ; the glue pocket is full)
     TXA                                             ; WALK - page before JSR
     LDX mv_in
     JMP ENG_PM_FRAME                                ; (tail call)

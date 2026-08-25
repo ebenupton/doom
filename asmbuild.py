@@ -125,6 +125,7 @@ def gen_engine_syms():
                ('ENG_RENDER_FRAME', 'render_frame','PAGE BANK_L0 first'),
                ('ENG_SPAN_INIT',    'span_init',      'PAGE BANK_C first'),
                ('ENG_ANIM_TICK',    'anim_tick',      'PAGE BANK_L2 first'),
+               ('ENG_ANIM_FIELDS',  'ANIM_FIELDS',    'store the frame FIELD count before the tick (0 ticks as 1)'),
                ('ENG_ANIM_INIT',    'anim_init',      'PAGE BANK_L2 first'),
                ('ENG_TAIL_POSTRC',  'bca_tail_postrc','zp_tail_vec moving seed'),
                ('ENG_BOX_CLASSIFY', 'box_classify',   'zp_bv_entry moving seed'),

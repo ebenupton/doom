@@ -150,9 +150,10 @@ def build_banked(flatr):
     assert len(dw.vspan_expl) <= 0x80, \
         f'{len(dw.vspan_expl)} explicit vspan entries overrun the 128-slot split'
     for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
-        c[0x2700 + i] = lo & 0xFF        # VEXPL @ $A700/$A780 (+cont $9600;
-        c[0x2780 + i] = hi & 0xFF        #  HI split widened 2026-08-14)
-        c[0x1680 + i] = 1 if cont else 0   # VEXPL_CONT @ $9680 (moved off
+        _lo, _hi, _ct = dw.vexpl_bytes(i, lo, hi, cont)   # H2 half-baking
+        c[0x2700 + i] = _lo              # VEXPL @ $A700/$A780 (+cont $9600;
+        c[0x2780 + i] = _hi              #  HI split widened 2026-08-14)
+        c[0x1680 + i] = _ct                # VEXPL_CONT @ $9680 (moved off
         #  the page head 2026-08-22 to give the clipper its ceiling back;
         #  128 slots end $96FF, flush against BOT_RECORDS $9700)
     # unrolled vertical plot columns + tables ($B200-$BFFF, cfg VPLOTC)

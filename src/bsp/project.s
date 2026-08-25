@@ -764,6 +764,10 @@ rns_sm2:
 
 rns_s10:
    JMP rns_s10_body                        ; page-fence trampoline (rare)
+rns_s11:
+   JMP rns_s11_body                        ; HALF-UNIT mover tier (2026-08-25):
+                                        ; back pairs project at S+1 and the
+                                        ; far-field recips reach S=10
 ; (rns24 follows IN THE SAME LO PAGE — pulled out of the ANG segment
 ; 2026-07-12 so all six kernel entries share the JMP hi byte; its
 ; rns_half rounding-constant tables stay in resolve_crossing.s.)
@@ -774,6 +778,7 @@ rns_s10:
 .assert >rns_s7 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s9 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s10 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
+.assert >rns_s11 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_s0 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_sm1 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
 .assert >rns_sm2 = >rns_s8, error, "RNS kernels must share one page (1-byte SMC)"
@@ -801,6 +806,8 @@ rns_vec_all:                               ; ONE table, net shift -2..10 in
 rns_vec_l:                                ; with X = net+3, the regular
    .byte <rns_s1, <rns_s2, <rns_s3, <rns_s4, <rns_s5   ; selects at S (=net)
    .byte <rns_s6, <rns_s7, <rns_s8, <rns_s9, <rns_s10   ; via this alias
+   .byte <rns_s11                          ; S+1 of the deepest live S (the
+                                        ; half-unit mover arm only)
 ; (rns_vec_hi retired: single-page kernels, constant JMP hi byte)
 
 ; --- out-of-page bodies (trampolined entries above) ---
@@ -815,14 +822,31 @@ rns_s10_body:
    STA zp_br_res_l
    LDA zp_br_res_h
    ADC #0                                  ; carry folds into the load
-   CMP #$80                                ; C = sign bit → arithmetic ROR
-   ROR A
-   ROR zp_br_res_l
+::rns_s10_t2:                             ; (rns_s11 joins here after its
+   CMP #$80                                ; own +4 round and first ASR —
+   ROR A                                   ; the last two ASR pairs + store
+   ROR zp_br_res_l                         ; are shared, 2026-08-25)
    CMP #$80
    ROR A
    ROR zp_br_res_l
    STA zp_br_res_h
    RTS
+.endscope
+rns_s11_body:
+.scope
+; floor((P + $400) / 2048): +4 into b1 (in place), drop b0, ASR the
+; (resh, resl) pair once, then ride rns_s10's last two ASR pairs (A =
+; the live hi byte on entry there, exactly as s10's own flow). Only the
+; half-unit mover arm selects S=11 (the ys back-pair bump).
+   LDA zp_br_res_l
+   ADC #4                                  ; C=0 at kernel entry
+   STA zp_br_res_l
+   LDA zp_br_res_h
+   ADC #0
+   CMP #$80                                ; C = sign bit -> arithmetic ROR
+   ROR A
+   ROR zp_br_res_l
+   JMP rns_s10_t2
 .endscope
 rns_s0_body:
 ; deficit 1: net shift 0 — result = P exactly

@@ -50,8 +50,6 @@ def poke_init_frame_state(mem):
     """Mirror render_frame's inline per-frame init for partial-flow
     harnesses (the standalone jt_br_init_frame entry retired 2026-07-15):
     records-pointer ground state + the 60-byte vcache valid clear."""
-    mem[_sym('zp_dcl_rec_buf')] = 0
-    mem[_sym('zp_dcl_rec_buf_h')] = 0
     # VCACHE_VALID + VDONE ride separate VXC plane tails since
     # 2026-08-13 (57 B each) — wipe both by symbol
     for name in ('VCACHE_VALID_BASE', 'VDONE'):
@@ -116,9 +114,10 @@ class BspRender6502:
         for i, d in enumerate(dw.vspan_desc):
             mem[0xDC00 + i] = d
         for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
-            mem[0xDE00 + i] = lo & 0xFF
-            mem[0xDE80 + i] = hi & 0xFF
-            mem[0xDF00 + i] = 1 if cont else 0
+            _lo, _hi, _ct = dw.vexpl_bytes(i, lo, hi, cont)
+            mem[0xDE00 + i] = _lo            # H2 jamb entries bake half-unit
+            mem[0xDE80 + i] = _hi            # bounds + CONT bit 7 (2026-08-25)
+            mem[0xDF00 + i] = _ct
 
         def w16(addr_lo, val):
             mem[addr_lo]     = val & 0xFF

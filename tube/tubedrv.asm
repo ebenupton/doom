@@ -360,6 +360,8 @@ ORG &EA00                       \ the FB region: the copro never
     LDA (&EC),Y
     STA T_BCA_AB                \ view angle byte
     TW 5                        \ after pmove_zonly + the sincos copy
+    LDA fields                  \ summed mask-drain field count -> the
+    STA T_ANIM_FIELDS           \ FIELD-SCALED tick (2026-08-25)
     JSR T_ANIM_TICK             \ advance door/lift movers
     TW 6                        \ after anim_tick
     JSR T_VIEW_SETUP            \ br_view_setup (flat: no banking)
