@@ -74,8 +74,15 @@ obj_syt_l = $114B
 obj_syt_h = $114E
 obj_syb_l = $1151
 obj_syb_h = $1154
-obj_sasp  = $1157
-obj_fused = $1158                        ; FUSED authority-run flag   ; [OBJ_MAXSLOT] -> $1157-$1159
+obj_sasp  = $1157   ; [OBJ_MAXSLOT] -> $1157-$1159
+obj_fused = $115A                        ; FUSED authority-run flag.
+                                        ; NOT $1158: that is obj_sasp
+                                        ; SLOT 1 — the first home sat
+                                        ; inside the array and every
+                                        ; armed stamp wrote asp=$01 over
+                                        ; whichever object held slot 1
+                                        ; (the 2px-wide barrel at
+                                        ; FFC2.AE/0.AE/84)
 
 .assert obj_Y = obj_X + 12, error, "obj_hex addresses the lid as obj_X+12"
 
