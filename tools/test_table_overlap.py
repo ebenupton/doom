@@ -57,6 +57,23 @@ def tables(flat):
     ws = symmap.sym('ANIM_WS', banked=0 if flat else 1,
                     c02=1 if flat else None)
     out.append(('anim_ws', ws, 3 * len(an.MOVERS)))
+    # the anim TABLE homes (SSMASK/TABL0/CFG + friends): the 2026-08-25
+    # strike -- the flat psi planes were rehomed ONTO $E500/$E600, the
+    # worker patched through psi-corrupted addresses, and the tube
+    # misrendered everywhere off spawn. gen_6502_tables() is the one
+    # source of the homes AND the real blob sizes.
+    for a, blob in an.gen_6502_tables(flat=flat).items():
+        out.append((f'anim@${a:04X}', a, len(blob)))
+    # the LINKED engine regions (code + data bins): a cache plane over
+    # CODE is the same class with a worse failure mode. Region extents
+    # from the ld65 cfg + the real bin sizes (concatenated per file).
+    import engine_load
+    seen = {}
+    for start, fname in engine_load._regions(0 if flat else 1):
+        if fname not in seen:
+            seen[fname] = (start, os.path.getsize(os.path.join(ROOT, fname)))
+    for fname, (start, size) in seen.items():
+        out.append((f'region:{fname}', start, size))
     return out
 
 

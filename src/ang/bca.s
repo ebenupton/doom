@@ -44,17 +44,27 @@ RC_PH_1  = $AE00                        ; $B500-$BFFF contiguous
 RC_P1L_0 = $7400                        ; flat psi planes: NODE-indexed
 RC_P1L_1 = $E402                        ; (Y = node id <= 219 -> 220 B
 RC_P2L_0 = $8100                        ; each; _0/_1 = SIDE arms, not
-RC_P2L_1 = $E500                        ; senior halves). P1L_1 lives in
-RC_PH_0  = $E600                        ; the $E402-$E4F7 fragment
+RC_P2L_1 = $2100                        ; senior halves). P1L_1 lives in
+RC_PH_0  = $A400                        ; the $E402-$E4F7 fragment
 RC_PH_1  = $7300                        ; ($E402+219 = $E4DB — same page,
-                                        ; clear of zp_ft $E4F8). The
-                                        ; $2000-$29FF exception DIED:
-                                        ; P1L_1 left $2900, the flat
-                                        ; raster left $2000 (-> $7500) —
-                                        ; $6B00-$6FFF (1,280 B) is FREE
-                                        ; contiguous (flat-vplot candidate;
-                                        ; planes are independent abs,Y —
-                                        ; adjacency was cosmetic)
+                                        ; clear of zp_ft $E4F8).
+; FLAT P2L_1 $E500 -> $2100 and PH_0 $E600 -> $A400, 2026-08-25: the
+; 2026-08-24 rehome (away from colmap's tables) landed them on the ANIM
+; flat homes — SSMASK $E500 and TABL0 $E600. Every armed standing frame
+; sprayed psi bytes over the mover PATCH LISTS, and the lazy worker then
+; STORED THROUGH the corrupted addresses — engine CODE hit at psi-valued
+; locations. On the tube (the only build running flat + driver + anim)
+; that was position/angle-dependent misrendering everywhere off spawn.
+; Same class, THIRD strike; test_table_overlap now includes the anim
+; table homes and the linked engine regions in its cross-product.
+; New homes, both probed untouched across renders AND clear in the maps:
+;   $2100 = the tighten-records page the FUSED walker freed (2026-08-25;
+;           exception-window tenant list in engine_flat.cfg)
+;   $A400 = the head of the probed $A400-$B0FF hole (VPLOTF $A500,
+;           PMOVE $AA00 are the other tenants)
+; NOTE: the old "$6B00-$6FFF is FREE contiguous" claim here was STALE —
+; CLIPF's declared region runs $5800-$6FFF and its content reaches
+; $6ECC today. Free notes rot; the overlap gate is the arbiter.
 .endif
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:
