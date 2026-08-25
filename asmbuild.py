@@ -132,6 +132,7 @@ def gen_engine_syms():
                ('ENG_PQ_PUMP_OP',   'pq_pump_op',     'run-ahead queue pump SMC site (poke +1/+2)'),
                ('ENG_PLOTQ_DRAIN',  'plotq_drain',    'drain the plot queue (bank C paged)'),
                ('ENG_SQR_FILL',     'sqr_fill',       'regenerate the quarter-square quad at $0200 (bank-independent)'),
+               ('ENG_OBJ_FILL',     'obj_anyb_fill',  'copy OBJ_BITS into its main-RAM home (pages SEG, leaves WALK)'),
                ('ENG_FB_CLR0',      'fb_clr0',        'clear framebuffer 0 (PAGE BANK_C first)'),
                ('ENG_FB_CLR1',      'fb_clr1',        'clear framebuffer 1 (PAGE BANK_C first)'),
                ('ENG_FB_CLR_BACK',  'fb_clr_back',    'clear the hidden buffer per DV_BACKHI (PAGE BANK_C first)'),

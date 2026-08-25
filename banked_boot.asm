@@ -97,6 +97,11 @@ ORG DRV_ORG
     JSR ENG_SQR_FILL                                ; the sqr quad is boot-
                                                     ; GENERATED (OS pages, no
                                                     ; disc file covers $0200)
+    JSR ENG_OBJ_FILL                                ; OBJ_ANYB bitmap copy
+                                                    ; ($11xx ships nothing —
+                                                    ; the game boots it via
+                                                    ; anim_init; this DRV
+                                                    ; never runs anims)
     LDA #4 :STA &FE30 : JSR ENG_VIEW_SETUP          ; view_setup (pages L0/L2)
     LDA #6 :STA &FE30 : JSR ENG_SPAN_INIT           ; span_init / pool (bank C)
     ; --- clear framebuffer $5800-$6BFF (20 pages) using $EE/$EF ptr ---
