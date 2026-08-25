@@ -469,16 +469,27 @@ obj_hok:
    LDA zp_prod_h
    ADC #0
    STA obj_a
-   LDA obj_h                               ; b = H/16
-   LSR A
+; b = (H + 8) / 16 ROUNDED (2026-08-25 rounding audit: the LSR chain
+; truncated — a 1px-flatter lid on ~half of all sizes). The ADC's
+; carry-out is bit 8 of H+8; ROR folds it back so the u9 sum shifts
+; correctly even at the H=255 clamp.
+   LDA obj_h
+   CLC
+   ADC #8
+   ROR A
    LSR A
    LSR A
    LSR A
    STA obj_b
-   LDA obj_h                               ; dy = 7H/8
-   LSR A
-   LSR A
-   LSR A
+; dy = H - 2b (was the truncating 7H/8 = H - H>>3). This is a CONTRACT,
+; not an approximation: the rect art's bottom edge is Y[11] = lid
+; centre + b + dy = syt + 2b + dy, and with dy = H - 2b that is
+; EXACTLY syb for every H (the old form drifted +-1px). For barrels it
+; puts the base ellipse's centre exactly b above the bottom — the
+; mirror of the lid's centre b below the top — and 2b ~ H/8, so the
+; proportions are the intended 7/8 to within the same rounding.
+   LDA obj_b
+   ASL A
    STA obj_t
    LDA obj_h
    SEC
