@@ -249,6 +249,17 @@ x1_in_or_big:
    JMP dcl_rec_s16r_flush
 not_both_xneg:
 not_both_xbig:
+; ---- OFF-IN-X-ONLY LEAN LANE (2026-08-25, Eben's spot; census 67% of
+; slow-path lines). Both ys already u8: every crossing y is BOUNDED by
+; the endpoint ys (a rounded convex combination of two u8s stays in
+; u8), so the y-clip machinery — re-snap, band tests, verdict flats,
+; the S16VY pend, the post-clip rechecks — provably cannot fire. Clip
+; x with the same s16_interp arithmetic and dispatch straight to u8.
+   LDA zp_line_yl_h
+   ORA zp_line_yr_h
+   BNE mc_notxonly
+   JMP mc_xonly
+mc_notxonly:
 ; same for y — RECORDS-OFF ONLY: with records on, a both-out line falls
 ; through so the post-x-clip census emits its flat verdict record with
 ; u8 x values (aperture fix part 2); records-off keeps the cheap reject.
@@ -512,6 +523,79 @@ rsac_fused:
 rejected:
    JMP dcl_rec_s16r_flush                  ; pending may be armed even when
                                         ; the in-band piece degenerated
+.endscope
+
+; ============================================================================
+; mc_xonly — the off-in-x-only lean lane. Entry: ordered s16 line, both
+; y hi bytes ZERO, at least one x hi byte nonzero, not both-left/right
+; (the quick rejects above ran). Same save-originals + s16_interp
+; arithmetic as the general arms; the result y stores are LEAN (A is
+; the crossing y, provably u8; the hi bytes are already zero).
+; ============================================================================
+mc_xonly:
+.scope
+   LDA zp_line_xl_l                        ; originals for BOTH interps
+   STA LC_OX1_LO                           ; (clipping x1 overwrites the
+   LDA zp_line_xl_h                        ;  line x2's interp still needs)
+   STA LC_OX1_HI
+   LDA zp_line_yl_l
+   STA LC_OY1_LO
+   ZERO LC_OY1_HI
+   LDA zp_line_xr_l
+   STA LC_OX2_LO
+   LDA zp_line_xr_h
+   STA LC_OX2_HI
+   LDA zp_line_yr_l
+   STA LC_OY2_LO
+   ZERO LC_OY2_HI
+; x1 arm
+   LDA zp_line_xl_h
+   BPL xo_x1_notneg
+   ZERO LC_TGT_LO
+   JSR s16_interp                          ; A = y at x=0 (u8: bounded)
+   STA zp_line_yl_l
+   ZERO zp_line_xl_l, zp_line_xl_h
+   JMP xo_x2
+xo_x1_notneg:
+   BEQ xo_x2                               ; hi 0: x1 in range
+   LDA #$FF
+   STA LC_TGT_LO
+   JSR s16_interp
+   STA zp_line_yl_l
+   LDA #$FF
+   STA zp_line_xl_l
+   ZERO zp_line_xl_h
+xo_x2:
+   LDA zp_line_xr_h
+   BPL xo_x2_notneg
+   ZERO LC_TGT_LO
+   JSR s16_interp
+   STA zp_line_yr_l
+   ZERO zp_line_xr_l, zp_line_xr_h
+   JMP xo_disp
+xo_x2_notneg:
+   BEQ xo_disp
+   LDA #$FF
+   STA LC_TGT_LO
+   JSR s16_interp
+   STA zp_line_yr_l
+   LDA #$FF
+   STA zp_line_xr_l
+   ZERO zp_line_xr_h
+xo_disp:
+; all-u8 now; order preserved (0 <= u8 <= 255 cannot reverse). The
+; degenerate/vertical classify is dcl16_fastu8's, armed or not
+; (verticals are plot-only either way); no pend is owed here.
+   LDA zp_line_xl_l
+   CMP zp_line_xr_l
+   BNE xo_line
+   JMP dcl16_fastu8                        ; vertical/point classify
+xo_line:
+   BIT FW_MODE
+   BMI xo_armed
+   JMP draw_clipped_line
+xo_armed:
+   JMP fw_walk_line
 .endscope
 
 ; ============================================================================
