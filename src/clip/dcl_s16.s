@@ -97,15 +97,13 @@ draw_clipped_line_s16:
 ::dcl16_fastu8:
 ; input contract: xl <= xr (seg layer / wrapper ordered) — equality is
 ; the only case left to classify (vertical vs zero-length point)
-   BIT FW_MODE                             ; FUSED capture (2026-08-25):
-   BMI dcl16_fu_cap                        ; the armed line's walk zone
+; (the FW_MODE test died 2026-08-25: the fused entries stage their own
+;  fast path and never route armed lines here — this is the DISARMED
+;  fast lane, pure and simple)
    LDA zp_line_xl_l
    CMP zp_line_xr_l
    BEQ fp_x_eq
    JMP draw_clipped_line
-dcl16_fu_cap:
-   JMP fw_walk_line                        ; (verticals fall through to
-                                        ;  the core inside — plot-only)
 fp_x_eq:
 ; x1 == x2: vertical unless y1 == y2 (zero-length point → reject)
    LDA zp_line_yl_l

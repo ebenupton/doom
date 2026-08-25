@@ -94,8 +94,9 @@ wl_line:
    STA fwl_xr
    LDA zp_line_yr_l
    STA fwl_yr
-   SEC
-   SBC fwl_yl
+::fw_walk_staged:                          ; fast-path entry (fused.s): the
+   SEC                                     ; entries stage fwl_* DIRECTLY
+   SBC fwl_yl                              ; from VX/sx — A = fwl_yr rides in
    STA fwl_dy
    LDA fwl_xr
    SEC
