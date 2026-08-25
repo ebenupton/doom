@@ -116,7 +116,8 @@ at_timer   = $1160
 at_fields  = $1161
 at_wsteps  = $1162
 at_c       = $1163
-at_prevhi  = $1164
+at_moved   = $1164                      ; was at_prevhi (the DIRTY rework
+                                        ; retired the half-derive compare)
 alw_nf     = $1165
 alw_ng     = $1166
 alw_nb     = $1167
@@ -222,11 +223,11 @@ at_f1:
    STA at_fields
    CLC
    ADC ANIM_TPRE                           ; accumulate fields into the
-   PHA                                     ; prescaler; whole /4 steps are
+   TAX                                     ; prescaler; whole /4 steps are
    AND #3                                  ; this tick's wait budget, the
    STA ANIM_TPRE                           ; 0-3 residue carries over
-   PLA
-   LSR A
+   TXA                                     ; (TAX/TXA: X is dead until the
+   LSR A                                   ;  mover loop reloads it)
    LSR A
    STA at_wsteps
    LDA #5
@@ -239,11 +240,6 @@ at_loop:
    ASL A                                   ; m*12 = (m*3)<<2 (<= 60, no
    ASL A                                   ; carry; TAY left A intact)
    TAX
-   LDA ANIM_WS+0,Y                         ; prev = pos>>7 (half units)
-   ASL A
-   LDA ANIM_WS+1,Y
-   ROL A
-   STA at_prevhi
    LDA ANIM_WS+2,Y
    AND #$3F
    STA at_timer
@@ -264,6 +260,7 @@ at_notwb:
                                         ; forward-coherence bbox serves
                                         ; would inherit stale occlusion
                                         ; (D + anims gate, 2026-08-13)
+   INC at_moved                            ; travelling => DIRTY at at_done
    LDA at_fields
    STA at_c
 at_dnlp:
@@ -298,6 +295,7 @@ at_jdone:
 at_up:
 ; --- 1: A -> B (pos += speed, clamp at max = CFG+2) ---
    ZERO D_FWD                              ; (mirror of the B->A gate)
+   INC at_moved                            ; travelling => DIRTY at at_done
    LDA at_fields
    STA at_c
 at_uplp:
@@ -336,13 +334,13 @@ at_wait:
                                         ; no borrow = still waiting
 at_expire:
 ; wait expired (timer <= wsteps): 0 -> 1 (A->B), 2 -> 3 (B->A); timer
-; stays 0 while moving
+; stays 0 while moving — pack state|0 straight into WS and skip
+; at_done's staging (a wait never raises at_moved)
    LDA at_state
    CLC
    ADC #$40
-   STA at_state
-   ZERO at_timer
-   JMP at_done
+   STA ANIM_WS+2,Y
+   JMP at_clean
 at_hold:
    STA at_timer
 
@@ -350,12 +348,16 @@ at_done:
    LDA at_state
    ORA at_timer
    STA ANIM_WS+2,Y
-   LDA ANIM_WS+0,Y                         ; DIRTY fires on HALF-step
-   ASL A                                   ; changes (pos>>7) so the lip
-   LDA ANIM_WS+1,Y                         ; repatches at the new
-   ROL A                                   ; resolution (2026-08-25)
-   CMP at_prevhi
+; DIRTY = "a move arm ran": while travelling pos STRICTLY changes every
+; tick (speed88 >= 1, arrival clamps from beyond), so the arms raise
+; at_moved and the waiting majority pays one load+branch instead of two
+; 16-cycle pos>>7 derives (2026-08-25 grind). A patch can repeat while
+; pos>>7 sits inside one half step — same bytes rewritten, rare, cheap.
+   LDA at_moved
    BEQ at_clean
+   DEC at_moved                            ; exactly one INC per travelling
+                                        ; tick (anim_init zeroes it), so
+                                        ; DEC restores 0
    LDX at_m
    LDA ANIM_DIRTY
    ORA vc_bit_mask,X                       ; (shared 1<<n table, defq.s)
@@ -703,6 +705,7 @@ anim_init:
 ; driver (banked_boot DRV), which never touches anims, can call the fill
 ; alone via ENG_SQR_FILL.
    JSR sqr_fill
+   JSR obj_anyb_fill                       ; OBJ_BITS -> main (objects.s)
 ; (SSMASK copy-down DELETED 2026-08-19: the hub reads the shipped page
 ; in place — banked $B400 under the WALK bank it is entered with, flat
 ; $E500. The whole failure class the copy carried — the 355c126 frozen
@@ -729,6 +732,9 @@ ai_m:
    BPL ai_m
    LDA #$3F
    STA ANIM_DIRTY
+   ZERO at_moved                           ; $11xx ships nothing: boot garbage
+                                        ; here would only cost one spurious
+                                        ; repatch, but determinism is free
    LDA #1
    STA ANIM_ENABLE
    LDA #<anim_hub

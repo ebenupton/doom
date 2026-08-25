@@ -57,15 +57,33 @@ draw_clipped_line_s16_h:
    ORA zp_seg_sx1_h
    ORA zp_seg_sx2_h
    BNE dclh_slow
+; GRIND (2026-08-25): classify INLINE while staging — the common
+; non-vertical line jumps STRAIGHT to the drawer instead of hopping
+; through dcl16_fastu8's re-compare (the fused entries' trick, applied
+; to the disarmed lane).
    LDA zp_seg_sx1_l
    STA zp_line_xl_l
+   CMP zp_seg_sx2_l
+   BEQ dclh_veq                            ; 1px seg: vertical / point
    LDA zp_seg_sx2_l
    STA zp_line_xr_l
    LDA VX1,X
    STA zp_line_yl_l
    LDA VX2,X
    STA zp_line_yr_l
-   JMP dcl16_fastu8
+   JMP draw_clipped_line
+dclh_veq:
+; x1 == x2 (rare): vertical unless y1 == y2 (zero-length point)
+   STA zp_line_xr_l
+   LDA VX1,X
+   STA zp_line_yl_l
+   CMP VX2,X
+   BEQ dclh_rts                            ; point: reject
+   LDA VX2,X
+   STA zp_line_yr_l
+   JMP draw_clipped_line
+dclh_rts:
+   RTS
 ; (dclh_slow MOVED 2026-08-12 into the fp_degen seam below: its stage
 ;  now FALLS into dcl16_mainclip — the +29 tail hop died)
 

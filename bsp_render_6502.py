@@ -105,6 +105,13 @@ class BspRender6502:
         _ob = _sym2('ROM_OBJ_C')
         for i in range(off_obj, len(rom_main)):
             mem[_ob + (i - off_obj)] = rom_main[i]
+        # OBJ_ANYB: the main-RAM bitmap copy the per-subsector test reads
+        # (hardware fills it from anim_init; harness renders may never run
+        # that, so poke it here — the sqr_fill dual-path pattern)
+        _anyb = _sym2('OBJ_ANYB')
+        _bits = off_obj + 7 * 18            # OBJ_BITS = ROM_OBJ_C + 7*N_OBJ
+        for i in range(28):
+            mem[_anyb + i] = rom_main[_bits + i]
 
         for i, b in enumerate(bbox):
             mem[ROM_BBOX_BASE + i] = b

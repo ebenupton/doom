@@ -898,37 +898,51 @@ SEG_BANKC
 ; ============================================================================
 fused_merge_range:
 .scope
-   ZERO fm_prev
    LDX zp_head
-   BNE fm_seek
+   BNE fm_go
    RTS
-fm_seek:
+fm_go:
+; seek: first span with xend > ilo. GRIND (2026-08-25): ilo rides A the
+; whole loop (it was reloaded per step) and the ping-pong carries the
+; PREDECESSOR in the idle register — the per-step STX fm_prev died with
+; the entry ZERO. Same shape as fw_walk_line's wl_sx skip.
    LDA zp_i_l
    CMP POOL_XEND,X
-   BCC fm_found                            ; xend > ilo
+   BCC fm_found0                           ; found at the head: no P
+fm_sx:
    LDY POOL_NEXT,X
    BEQ fm_rts
+   CMP POOL_XEND,Y
+   BCC fm_pair                             ; found: P = X, Q = Y — already
+                                        ; the pair contract, no shuffle
+   LDX POOL_NEXT,Y
+   BEQ fm_rts
+   CMP POOL_XEND,X
+   BCS fm_sx
+; found with the roles swapped (P = Y, Q = X): exchange via the stash
    STX fm_prev
    TYA
    TAX
-   JMP fm_seek
+   LDY fm_prev
+   JMP fm_pair
 fm_rts:
    RTS
-fm_found:
-   TXA
-   TAY                                     ; Y = first overlapping span (Q)
-   LDX fm_prev                             ; X = its predecessor (P), or 0
-   BNE fm_pair
-   TYA
-   TAX
-   LDA POOL_NEXT,Y
-   TAY
-   BNE fm_chk
+fm_found0:
+   LDA POOL_NEXT,X                         ; no predecessor: the window is
+   TAY                                     ; (head, head.next), entering at
+   BNE fm_chk                              ; the range check
    RTS
 fm_pair:
-; P = X, Q = Y: abut + 8 line fields
+; P = X, Q = Y: abut + 8 line fields. ORDER (2026-08-25 grind): the B
+; chain runs FIRST — the heat showed pairs surviving the whole T chain
+; and dying at BXLO (a seg's spans share the top line's anchor, so the
+; T fields match trivially); most-discriminating-first saves four
+; wasted compares on the failing majority.
    LDA POOL_XEND,X
    CMP POOL_XSTART,Y
+   BNE fm_stepq
+   LDA POOL_BXLO,X
+   CMP POOL_BXLO,Y
    BNE fm_stepq
    LDA POOL_TXLO,X
    CMP POOL_TXLO,Y
@@ -941,9 +955,6 @@ fm_pair:
    BNE fm_stepq
    LDA POOL_TR,X
    CMP POOL_TR,Y
-   BNE fm_stepq
-   LDA POOL_BXLO,X
-   CMP POOL_BXLO,Y
    BNE fm_stepq
    LDA POOL_BDEN,X
    CMP POOL_BDEN,Y

@@ -621,29 +621,41 @@ ys_withback:
 ; hg_query left, which the first SBC still rides.
    LDY #LAY_SH_BPAL
    LDA (zp_seg_hdr_p),Y
-   TAY                                     ; Y = back-pair palette id
+   TAY                                     ; Y = back-pair palette id (TAY
+                                        ; leaves A = id: no TYA reload)
 ; HALF-UNIT mover tier (2026-08-25): mover-valued palette entries live
 ; in the id-64..127 pool and carry HALF-prescaled bytes — deltas
 ; subtract vz2 (staged through zp_vs_cfh, a stage-7 byte free here) and
 ; the back projections bump S by one (zp_ys_bs; at rest 2h @ S+1 is
 ; bit-identical to h @ S). Every op below the id load leaves the
 ; hg_query C=1 alone, so the first SBC still rides it on both arms.
-   TYA
    AND #$40
    STA zp_ys_bs                            ; 0 static / $40 half-unit
-   LDA zp_br_vz
-   LDX zp_ys_bs
-   BEQ ysb_ey
-   ASL A                                   ; half tier: eye in half units
-ysb_ey:
-   STA zp_vs_cfh                           ; the back-delta eye height
+   BNE ysb_h2
+; STATIC arm = the pre-movers code verbatim (TWINNED 2026-08-25 grind:
+; the shared eye-staging cost every static with-back seg ~10 cycles;
+; obj_edges' corpse paid the bytes)
    LDA ROM_BPAL_BCH_C,Y                    ; bch
-   SBC zp_vs_cfh                           ; (no SEC: C=1 from hg_query)
+   SBC zp_br_vz                            ; (no SEC: C=1 from hg_query)
    STA zp_seg_btop_dlt
    LDA ROM_BPAL_BFH_C,Y                    ; bfh
    SEC
+   SBC zp_br_vz
+   STA zp_seg_bbot_dlt
+   JMP ysb_staged
+ysb_h2:
+   LDA zp_br_vz
+   ASL A                                   ; eye in half units (clears C:
+   STA zp_vs_cfh                           ; vz < $80 — hence the SEC)
+   LDA ROM_BPAL_BCH_C,Y                    ; bch (half units)
+   SEC
+   SBC zp_vs_cfh
+   STA zp_seg_btop_dlt
+   LDA ROM_BPAL_BFH_C,Y                    ; bfh (half units)
+   SEC
    SBC zp_vs_cfh
    STA zp_seg_bbot_dlt
+ysb_staged:
                                         ; (projections read VWHC — bank SEG,
                                         ; still held from the header reads)
    ZERO zp_seg_ep                          ; v1 -> VX1: ONE staging block

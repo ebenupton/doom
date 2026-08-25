@@ -64,8 +64,14 @@ obj_left  = $1139
 obj_k     = $113A
 obj_best  = $113B
 obj_ss    = $113C
-obj_mask  = $113D
+obj_mask  = $113D   ; (FREE since the OBJ_ANYB grind — kept as a hole note)
 obj_asp   = $113E   ; live object's aspect byte (bit 7 = art, 0-6 = k)
+OBJ_ANYB  = $1173   ; [28] main-RAM copy of the OBJ_BITS bitmap (2026-08-25
+                    ; grind): the per-subsector test runs under WHATEVER
+                    ; bank the walk holds — both PAGEs left the common
+                    ; path. Boot-filled by obj_anyb_fill (from anim_init);
+                    ; harness loaders poke it directly ($11xx ships
+                    ; nothing). Tail $118F-$11FF still free.
 obj_sd_l  = $113F   ; [OBJ_MAXSLOT]
 obj_sd_h  = $1142
 obj_scx_l = $1145
@@ -93,18 +99,28 @@ obj_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
 
 
-; --- rectangle edges, table-driven ---------------------------------------
-; The four edges use only four values (xl, xr, yt, yb), so each edge is
-; four byte OFFSETS into the obj_xl_l block: x1, y1, x2, y2.  Four macro
-; expansions of the staging cost ~200 bytes and overflowed the banked
-; CODE area; this is ~40 plus a 16-byte table.
-;   block: obj_xl_l/h = +0, obj_xr_l/h = +2, obj_yt_l/h = +4, obj_yb_l/h = +6
-obj_edges:
-   .byte 0,4, 2,4                          ; top    (xl,yt)-(xr,yt)
-   .byte 0,6, 2,6                          ; bottom
-   .byte 0,4, 0,6                          ; left
-   .byte 2,4, 2,6                          ; right
+; (obj_edges DELETED 2026-08-25 grind: the table-driven rectangle edge
+;  loop it served died in the template-art rework — zero consumers
+;  remained; 18 bytes back to the starved banked CODE region.)
 
+; --- obj_anyb_fill: boot copy of the shipped OBJ_BITS bitmap into its
+; main-RAM home (see OBJ_ANYB). Called from anim_init (bank L2/WALK
+; ambient); pages SEG for the read and restores. $11xx ships nothing,
+; so hardware needs this; the py65 loaders poke the copy directly. ---
+::obj_anyb_fill:
+.if OBJ_DRAW = 0
+   RTS
+.else
+   PAGE BANK_SEG
+   LDX #27
+oaf_lp:
+   LDA OBJ_BITS,X
+   STA OBJ_ANYB,X
+   DEX
+   BPL oaf_lp
+   PAGE BANK_WALK
+   RTS
+.endif
 
 ; ============================================================================
 ; ::obj_subsector — draw every object whose home is subsector A.
@@ -118,26 +134,24 @@ obj_edges:
                                         ; banked CODE area (see the note at
                                         ; the head of this file)
    STA obj_ss
-   PAGE BANK_SEG                           ; NB: PAGE is LDA #n/STA $FE30 --
-   LDA obj_ss                              ; it EATS A.  Flat's PAGE is a
-   AND #7                                  ; no-op, so a missing reload here
-                                        ; works in flat and silently
-                                        ; computes the mask from the bank
-                                        ; number in banked.
+; GRIND (2026-08-25): the bitmap lives in main RAM (OBJ_ANYB) so the
+; common no-objects case tests it under the ambient WALK bank — the two
+; PAGEs and the obj_mask staging left the hot path (58 -> 36 cycles
+; banked, 48 -> 36 flat). obj_have pages SEG for the pass-1 scan.
+   TAY                                     ; ss rides Y (saves the reload)
+   AND #7
    TAX
-   LDA obj_bitmask,X
-   STA obj_mask
-   LDA obj_ss
+   TYA
    LSR A
    LSR A
    LSR A
-   TAX
-   LDA OBJ_BITS,X
-   AND obj_mask
+   TAY
+   LDA OBJ_ANYB,Y
+   AND obj_bitmask,X
    BNE obj_have
-   PAGE BANK_WALK                          ; prologue contract: WALK in/out
    RTS                                     ; the common case: one bit test
 obj_have:
+   PAGE BANK_SEG                           ; pass 1 reads the OBJ_* planes
 ; PASS 1 -- project every object of this subsector into a slot.  The
 ; table is sorted by subsector, but a linear sweep of 18 entries is
 ; cheaper than any search and only runs for a subsector that HAS

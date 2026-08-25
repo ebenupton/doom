@@ -169,6 +169,13 @@ def build_banked(flatr):
     for i in range(0x200):
         bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
         bm[abi.SQRH_BASE + i] = fmem[abi.SQR_BASE + 0x200 + i]
+    # OBJ_ANYB main-RAM bitmap copy (2026-08-25 grind): hardware fills it
+    # via anim_init/obj_anyb_fill; model runs may skip init, so seed it
+    _bits = layout['off_obj'] + 7 * 18       # OBJ_BITS = ROM_OBJ_C+7*N_OBJ
+    from symmap import sym as _bsym
+    _anyb = _bsym('OBJ_ANYB', banked=1)
+    for i in range(28):
+        bm[_anyb + i] = rom_main[_bits + i]
 
     # --- bank B (BANK_WALK=7): node/ss SoA @ $8000 (SS_PHI rebased onto
     # the bank-A header base), L8/AE/VATOX behind the SoA, bbox @ ROM_BBOX_C,
