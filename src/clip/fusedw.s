@@ -112,24 +112,43 @@ wl_min:
    STX fwl_hi
    LDA #$FF
    STA fwl_run                             ; no open run
-; ---- the walk ----
+; ---- the walk: dcl's two-phase idiom (2026-08-25 grind) ----
+; Phase 1 skips spans wholly left of the line with xl riding A through
+; an X/Y ping-pong — no SLOT/NEXT staging, no processed-span work.
+; Phase 2 never re-tests the left edge: the first survivor has
+; xend > xl, and every later span starts at xstart >= that xend, so the
+; property is monotone (dcl's proof, dclw_x).
    LDX zp_head
-wl_loop:
-   BEQ wl_flush
-   STX FW_SLOT
-   LDA POOL_NEXT,X                         ; resume slot stashed BEFORE any
-   STA FW_NEXT                             ; apply can free/split this span
-; span left of the line?
+   BNE wl_skip
+   JMP wl_flush
+wl_skip:
    LDA fwl_xl
+wl_sx:
    CMP POOL_XEND,X
-   BCS wl_adv                              ; xend <= xl: skip
+   BCC wl_proc                             ; first survivor (X)
+   LDY POOL_NEXT,X
+   BNE wl_sy
+   JMP wl_flush
+wl_sy:
+   CMP POOL_XEND,Y
+   BCC wl_found_y
+   LDX POOL_NEXT,Y
+   BNE wl_sx
+   JMP wl_flush
+wl_found_y:
+   TYA
+   TAX
+wl_proc:
+; phase 2: X = span with xend > xl
    LDA POOL_XSTART,X
    CMP fwl_xr
    BCS wl_flush                            ; xstart >= xr: done (sorted)
+   STX FW_SLOT
+   LDY POOL_NEXT,X                         ; Y, not A: XSTART rides A into
+   STY FW_NEXT                             ; the clip (its ox0 max)
    JSR fw_clip_span
-wl_adv:
    LDX FW_NEXT
-   JMP wl_loop
+   BNE wl_proc
 wl_flush:
    LDA fwl_run
    CMP #$FF
@@ -143,25 +162,25 @@ wl_done:
 ; fw_clip_span — classify the line on span FW_SLOT's overlap [zx0, zx1),
 ; plot / apply. Transcribed compare-for-compare from dcl.s; the flats
 ; and run closes apply IMMEDIATELY (sequential semantics by decree).
+; GRIND (2026-08-25): flat polarity is a SITE CONSTANT — the side test
+; inlines at each site, so a neutral flat is touch-and-return and only
+; genuine kills pay the fused_kill call.
 ; ============================================================================
 fw_clip_span:
 .scope
-   LDX FW_SLOT
-   LDA POOL_XSTART,X
+; entry: A = POOL_XSTART,X (the walk's test load rides), X = slot
    CMP fwl_xl
    BCS cs_ox0
    LDA fwl_xl
 cs_ox0:
    STA fwl_zx0
-   STA fwl_leftf
    LDA POOL_XEND,X
    CMP fwl_xr
    BCC cs_ox1
    LDA fwl_xr
 cs_ox1:
    STA fwl_zx1
-   LDA #$80
-   STA fwl_pend
+; (fwl_leftf / fwl_pend staging moved into fw_cb — the only consumer)
 ; ---- Tier: inner accept first (dcl_entry_path order) ----
    LDA fwl_lo
    CMP POOL_IT,X
@@ -176,9 +195,9 @@ cs_ox1:
    LDA fwl_dy
    BEQ cs_acc_yl
    JSR fw_line_interp_zx0                  ; entry y (PLOT only)
-   JMP cs_acc_have                         ; (NO .byte $2C here: fwl_yl is
-cs_acc_yl:                                 ;  ABSOLUTE — a 3-byte LDA that
-   LDA fwl_yl                              ;  BIT abs cannot swallow)
+   JMP cs_acc_have
+cs_acc_yl:
+   LDA fwl_yl
 cs_acc_have:
    STA cp_vy0
    LDA fwl_zx0
@@ -198,19 +217,25 @@ cs_ent_bot:
    CMP fwl_lo
    BCC cs_rej_below                        ; OB < ylo: whole overlap below
    JMP fw_cb
-cs_rej_above:
-   LDA #0
-   BEQ cs_rej
-cs_rej_below:
-   LDA #$FF
-cs_rej:
-   STA fw_pol
-; a whole-overlap flat means the line is outside the aperture here: an
-; open run genuinely ended (dcl_close_open_nx's ordering contract)
+cs_rej_above:                              ; 'above': kills iff BOT side
+   LDA #1
+   STA FW_TOUCH
+   JSR fw_close_if_open                    ; run genuinely ended here
+   BIT FW_SIDE
+   BMI cs_kill
+   RTS
+cs_rej_below:                              ; 'below': kills iff TOP side
+   LDA #1
+   STA FW_TOUCH
    JSR fw_close_if_open
+   BIT FW_SIDE
+   BMI cs_neutral
+cs_kill:
    LDA fwl_zx0
    LDY fwl_zx1
-   JMP fused_flat
+   JMP fused_kill
+cs_neutral:
+   RTS
 .endscope
 
 ; close any open run (the flat/reject paths' preamble)
@@ -246,11 +271,14 @@ fw_line_interp_a:
 ; ============================================================================
 fw_cb:
 .scope
+   LDA #$80
+   STA fwl_pend
    LDA fwl_zx0
+   STA fwl_leftf
    STA zp_cb_cx1
    LDA fwl_zx1
    STA zp_cb_cx2
-; ---- cy1/cy2 ----
+; ---- cy1/cy2: line-mode interp workspace staged ONCE (dcl's trick) ----
    LDA fwl_dy
    BNE cb_cy_slow
    LDA fwl_yl
@@ -258,11 +286,19 @@ fw_cb:
    STA zp_cb_cy2
    JMP cb_cy_done
 cb_cy_slow:
+   LDA fwl_xl
+   STA zp_i_x0
+   LDA fwl_yl
+   STA zp_i_y0
+   LDA fwl_yr
+   STA zp_i_y1
+   LDA fwl_dx
+   STA zp_div_den
    LDA zp_cb_cx1
    CMP fwl_xl
    BEQ cb_cy1_yl
-   JSR fw_line_interp_a
-   JMP cb_cy1_have                         ; (same 3-byte-LDA caveat)
+   JSR interp_store                        ; A = cx1 rides in
+   JMP cb_cy1_have
 cb_cy1_yl:
    LDA fwl_yl
 cb_cy1_have:
@@ -270,7 +306,7 @@ cb_cy1_have:
    LDA zp_cb_cx2
    CMP fwl_xr
    BEQ cb_cy2_yr
-   JSR fw_line_interp_a
+   JSR interp_store
    JMP cb_cy2_have
 cb_cy2_yr:
    LDA fwl_yr
@@ -294,7 +330,14 @@ cb_top_eval:
    STA fw_top2
    JMP cb_top_evaled
 cb_top_interp:
-   JSR fw_stage_top_ws
+   LDA POOL_TXLO,X                         ; staging inlined (2026-08-25
+   STA zp_i_x0                             ; grind): the JSR/RTS pair was
+   LDA POOL_TDEN,X                         ; per-evaluation tax
+   STA zp_div_den
+   LDA POOL_TL,X
+   STA zp_i_y0
+   LDA POOL_TR,X
+   STA zp_i_y1
    LDA zp_cb_cx1
    JSR interp_store
    STA fw_top1
@@ -324,8 +367,7 @@ cb_top_p1_ok:
    LDA #0
    JSR dcl_boundary_ix
    STA zp_cb_cx2
-   LDA zp_cb_cx2
-   JSR fw_bval_top
+   JSR fw_bval_top                         ; A = ix rides in
    STA zp_cb_cy2
    LDA #0
    STA fwl_pend                            ; right-pend 'above'
@@ -341,19 +383,21 @@ cb_top_clip_p1:                            ; cy1 < top1, cy2 >= top2 (C=1)
    LDA #1
    JSR dcl_boundary_ix
    STA zp_cb_cx1
-   LDA zp_cb_cx1
    JSR fw_bval_top
    STA zp_cb_cy1
-; left flat [leftf, cx1) 'above', guarded zx0 < cx1; close-open first
+; left flat [leftf, cx1) 'above' — kills iff BOT side (site constant)
    LDA fwl_zx0
    CMP zp_cb_cx1
    BCS cb_top_done
+   LDA #1
+   STA FW_TOUCH
    JSR fw_close_if_open
-   LDA #0
-   STA fw_pol
+   BIT FW_SIDE
+   BPL cb_tlf_done                         ; top side: neutral
    LDA fwl_leftf
    LDY zp_cb_cx1
-   JSR fused_flat
+   JSR fused_kill
+cb_tlf_done:
    LDA zp_cb_cx1
    STA fwl_leftf
 cb_top_done:
@@ -378,7 +422,14 @@ cb_bot_eval:
    STA fw_top2
    JMP cb_bot_evaled
 cb_bot_interp:
-   JSR fw_stage_bot_ws
+   LDA POOL_BXLO,X                         ; (mirror of the top inline)
+   STA zp_i_x0
+   LDA POOL_BDEN,X
+   STA zp_div_den
+   LDA POOL_BL,X
+   STA zp_i_y0
+   LDA POOL_BR,X
+   STA zp_i_y1
    LDA zp_cb_cx1
    JSR interp_store
    STA fw_top1
@@ -409,7 +460,6 @@ cb_bot_p1_ok:
    LDA #0
    JSR dcl_boundary_ix
    STA zp_cb_cx2
-   LDA zp_cb_cx2
    JSR fw_bval_bot
    STA zp_cb_cy2
    LDA #$FF
@@ -425,19 +475,21 @@ cb_bot_clip_p1:                            ; bot1 < cy1, bot2 >= cy2 (C=1)
    LDA #1
    JSR dcl_boundary_ix
    STA zp_cb_cx1
-   LDA zp_cb_cx1
    JSR fw_bval_bot
    STA zp_cb_cy1
-; left flat [leftf, cx1) 'below', guarded zx0 < cx1; close-open first
+; left flat [leftf, cx1) 'below' — kills iff TOP side (site constant)
    LDA fwl_zx0
    CMP zp_cb_cx1
    BCS cb_bot_done
+   LDA #1
+   STA FW_TOUCH
    JSR fw_close_if_open
-   LDA #$FF
-   STA fw_pol
+   BIT FW_SIDE
+   BMI cb_blf_done                         ; bot side: neutral
    LDA fwl_leftf
    LDY zp_cb_cx1
-   JSR fused_flat
+   JSR fused_kill
+cb_blf_done:
    LDA zp_cb_cx1
    STA fwl_leftf
 cb_bot_done:
@@ -459,36 +511,56 @@ cb_bot_done:
 cb_end_open:
    STA cp_vev
    JSR fw_run_visible
-; right-pend flat [cx2, zx1) if armed
+; right-pend flat [cx2, zx1): pol in fwl_pend (runtime — the two CB
+; p2 arms overwrite each other), touch + side-resolved kill
    LDA fwl_pend
    CMP #$80
    BEQ cb_done
-   STA fw_pol
+   LDY #1
+   STY FW_TOUCH
    LDA zp_cb_cx2
    CMP fwl_zx1
    BCS cb_done                             ; empty
-   LDY fwl_zx1
+; kill iff (top & pend=='below' $FF) or (bot & pend=='above' 0)
+   TAY                                     ; Y = cx2 (kill's x0... reload
+   LDA fwl_pend                            ; below; Y freed for the range)
+   BIT FW_SIDE
+   BMI cb_rp_bot
+   CMP #$FF
+   BEQ cb_rp_kill
+   RTS
+cb_rp_bot:
+   CMP #0
+   BEQ cb_rp_kill
+   RTS
+cb_rp_kill:
    LDA zp_cb_cx2
-   JMP fused_flat
+   LDY fwl_zx1
+   JMP fused_kill
 cb_done:
    RTS
 cb_whole_above:
-; effective: [leftf, zx1) 'above'; discard any right-pend
-   LDA #0
-   BEQ cb_whole_flat
-cb_whole_below:
-   LDA #$FF
-cb_whole_flat:
-   STA fw_pol
-   LDA #$80
-   STA fwl_pend
+; effective: [leftf, zx1) 'above' — kills iff BOT side; discard pend
+   LDA #1
+   STA FW_TOUCH
    JSR fw_close_if_open
+   BIT FW_SIDE
+   BMI cb_wf_kill
+   RTS
+cb_whole_below:
+; effective: [leftf, zx1) 'below' — kills iff TOP side; discard pend
+   LDA #1
+   STA FW_TOUCH
+   JSR fw_close_if_open
+   BIT FW_SIDE
+   BMI cb_wf_neutral
+cb_wf_kill:
    LDA fwl_leftf
    CMP fwl_zx1
-   BCS cb_wf_done
+   BCS cb_wf_neutral                       ; nothing left to kill
    LDY fwl_zx1
-   JMP fused_flat
-cb_wf_done:
+   JMP fused_kill
+cb_wf_neutral:
    RTS
 .endscope
 
@@ -765,28 +837,16 @@ fsr_fail:
 .endscope
 
 ; ============================================================================
-; fused_flat — apply one flat piece [A, Y) of polarity fw_pol for side
-; FW_SIDE. Kill iff (top & 'below' $FF) or (bot & 'above' 0); neutral
-; is a no-op. Every flat COUNTS toward FW_TOUCH. Kills via
-; span_mark_solid (zp_i saved/restored — the cascade's range survives).
+; fused_kill — close columns [A, Y): the kill half of a flat verdict,
+; via span_mark_solid with the cascade's zp_i range saved. The walk's
+; flat sites call this DIRECTLY (their polarity is a site constant);
+; fused_flat below keeps the runtime-pol interface for dcl_rec_flat
+; (the s16 band-clip wrappers).
 ; ============================================================================
-fused_flat:
+fused_kill:
 .scope
    STA fw_fx0
    STY fw_fx1
-   LDA #1
-   STA FW_TOUCH
-   BIT FW_SIDE
-   BMI ff_bot
-   LDA fw_pol                              ; top side: $FF ('below') kills
-   CMP #$FF
-   BEQ ff_kill
-   RTS
-ff_bot:
-   LDA fw_pol                              ; bot side: 0 ('above') kills
-   BEQ ff_kill
-   RTS
-ff_kill:
    LDA zp_i_l
    STA FW_ISAVE0
    LDA zp_i_h
@@ -801,6 +861,32 @@ ff_kill:
    LDA FW_ISAVE1
    STA zp_i_h
    RTS
+.endscope
+
+; fused_flat — runtime polarity (fw_pol), [A, Y): touch + side-resolved
+; kill. Only dcl_rec_flat (band flats) comes here now.
+fused_flat:
+.scope
+   STA ff_x0
+   STY ff_y1
+   LDA #1
+   STA FW_TOUCH
+   BIT FW_SIDE
+   BMI ff_bot
+   LDA fw_pol                              ; top side: $FF ('below') kills
+   CMP #$FF
+   BEQ ff_kill
+   RTS
+ff_bot:
+   LDA fw_pol                              ; bot side: 0 ('above') kills
+   BEQ ff_kill
+   RTS
+ff_kill:
+   LDA ff_x0
+   LDY ff_y1
+   JMP fused_kill
+ff_x0 = FW_BASE+$27
+ff_y1 = FW_BASE+$28
 .endscope
 
 SEG_BANKC

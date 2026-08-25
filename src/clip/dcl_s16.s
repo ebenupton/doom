@@ -170,8 +170,8 @@ mc_vertical:
 ; live callers of this entry and always arrive disarmed. ARMED lines
 ; (harness wrapper only) keep the generic path — its y-census emits
 ; flat verdict records this fast path doesn't model.
-   LDA zp_dcl_rec_buf_h
-   BNE mc_ordered
+   BIT FW_MODE                             ; armed (FUSED) verticals keep
+   BMI mc_ordered                          ; the generic path's band census
 ; x1 == x2, so off-screen x is same-side by definition: reject unless
 ; x in [0,255] (hi == 0)
    LDA zp_line_xl_h

@@ -62,8 +62,10 @@ render_frame:
 ; persists). 60-byte clear (59 used + 1 pad, inside the vcache
 ; reservation up to $1B3F), four 15-byte stripes off one X. ---
    LDA #0                               ; A = 0 RIDES into the wipes below
-   STA zp_dcl_rec_buf                   ; — NOT a C02/STZ candidate
-   STA zp_dcl_rec_buf_h
+                                        ; — NOT a C02/STZ candidate
+                                        ; (the zp_dcl_rec_buf pair's clear
+                                        ; died 2026-08-25: last reader gone
+                                        ; with the records machinery)
 ; VCACHE_VALID + VDONE wipe (re-striped 2026-08-13: 19 stores x 3
 ; iterations x 2 bitmaps = 114 B — the 57-byte EXACT extent for 455
 ; ids, and ~40 cyc cheaper than the old 24x5/120-byte shape).

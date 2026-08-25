@@ -586,12 +586,8 @@ dvc_y2_done:
                                            ; INTO the span query (was a
                                            ; 99.3%-taken BNE hop)
 dcl_vertical:
-   LDA zp_dcl_rec_buf_h                    ; feedback: the vertical walk is
-   BEQ dv_untapped                         ; untapped — tag MIXED for
-   LDA zp_dcl_out                          ; recorded (1-column lip) lines
-   ORA #$C0
-   STA zp_dcl_out
-dv_untapped:
+; (the records-feedback tag died with the FUSED cutover 2026-08-25 —
+;  verticals are never armed and zp_dcl_out has no reader)
 ; Compute ylo/yhi (dx/dy not needed for verticals)
    LDA zp_line_yl_l
    LDX zp_line_yr_l

@@ -525,7 +525,6 @@ class SpanClip6502:
         mem[zp_line_yl_h] = (yl >> 8) & 0xFF
         mem[zp_line_xr_h] = (xr >> 8) & 0xFF
         mem[zp_line_yr_h] = (yr >> 8) & 0xFF
-        mem[ZP_DCL_REC_BUF_H] = 0           # (vestigial; nothing reads it)
         self._run(ENTRY_DRAW_CLIP_S16)
         lines = self.last_lines
         if self.capture is not None:
