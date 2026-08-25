@@ -20,58 +20,53 @@
 ;   $D3 LC_M_R0        $D4 LC_M_R1       $D6 TFS_BOT_DOM $D8 TFS_PEND_ACT
 ;   $E1 TFS_X_HI       $FC LC_DY_LO      $FD LC_DY_HI    $FE LC_OFF_LO
 ;   $FF LC_OFF_HI
-TFS_T_CUR = $1F                   ; [clip]; ZP-sweep promotions (definitions
-TFS_B_CUR = $2B                   ; [clip]; HERE so every unit sizes them zp)
+; FUSED walker hot state (2026-08-25 grind): the records sweep's death
+; freed its 34 promoted bytes; the walker takes 30 of them (listing-scan
+; verified free — $CC/$CD/$CF were already re-squatted by t0/t1/
+; rc_bytehi). Same liveness class as the TFS set: live only inside
+; render_frame, so the drivers'/pm's zp never sees them. Cold walker
+; bytes (touch/saves/splits) stay on the FW page in clip/fusedw.s.
+FW_SLOT  = $1F                    ; [clip]
+FW_NEXT  = $2B                    ; [clip]
+fwl_xl   = $2D                    ; [clip]; the armed line (fw_walk_line)
+fwl_yl   = $2E                    ; [clip]
+fwl_xr   = $2F                    ; [clip]
+fwl_yr   = $37                    ; [clip]
+fwl_dy   = $38                    ; [clip]
+fwl_dx   = $44                    ; [clip]
+fwl_lo   = $48                    ; [clip]; minmax pair = the apply's extremes
+fwl_hi   = $49                    ; [clip]
+fwl_run  = $4A                    ; [clip]; run state ($FF = closed)
+fwl_ry0  = $4B                    ; [clip]
+fwl_rend = $4E                    ; [clip]
+fwl_rendv = $54                   ; [clip]; $80 = open end
+fwl_zx0  = $55                    ; [clip]; current overlap
+fwl_zx1  = $56                    ; [clip]
+fwl_leftf = $57                   ; [clip]; left-flat frontier
+fwl_pend = $6B                    ; [clip]; right-pend pol ($80 = none)
+fw_pol   = $8F                    ; [clip]; flat polarity
+fw_top1  = $94                    ; [clip]; CB boundary values
+fw_top2  = $B7                    ; [clip]
+cp_vx0   = $B9                    ; [clip]; visible piece staging
+cp_vy0   = $BB                    ; [clip]
+cp_vx1   = $BF                    ; [clip]
+cp_vev   = $C4                    ; [clip]
+fw_ax0   = $C5                    ; [clip]; apply range
+fw_ax1   = $CE                    ; [clip]
+fw_rslot = $D6                    ; [clip]; span slot at run open
+FW_SIDE  = $D8                    ; [clip]; 0 top / $80 bot
+FW_MODE  = $DD                    ; [clip]; s16 dispatch redirect (b7)
+; ($E1 free — the set's spare)
+; s16 clipper working set (LIVE — these shared the old TFS block's home)
 LC_REM_LO = $52                   ; [clip]
 LC_REM_HI = $53                   ; [clip]
-TFS_CUR_X = $8F                   ; [clip]
-TFS_NEXT_X = $94                  ; [clip]
 LC_DEN_LO = $98                   ; [clip]
 LC_DEN_HI = $99                   ; [clip]
 LC_QUOT_LO = $A6                  ; [clip]
 LC_QUOT_HI = $A7                  ; [clip]
 LC_TMP_LO = $C6                   ; [clip]
-TFS_TOP_DOM = $CE                 ; [clip]
 LC_M_R0 = $D3                     ; [clip]
 LC_M_R1 = $D4                     ; [clip]
-TFS_BOT_DOM = $D6                 ; [clip]
-TFS_PEND_ACT = $D8                ; [clip]
-; --- TFS sweep state, PROMOTED FROM $0600-$061B 2026-08-22 -----------
-; The tighten sweep touches this block 2,379 times on the heavy frame
-; (tools/zpheat.py), so absolute addressing was costing ~0.5% of that
-; frame and a byte per instruction.  Scattered addresses are fine: no
-; TFS byte is reached by index or +offset — they are all plain scalars
-; (checked before the move).  The bytes came from 24 dead ZP symbols
-; plus 5 cold evictions; see the zp-crunch commit.
-TFS_TOP_L = $54                   ; [clip]; top y at TFS_TOP_XL
-TFS_TOP_R = $55                   ; [clip]; top y at TFS_TOP_XL + TFS_TOP_DEN
-TFS_BOT_L = $56                   ; [clip]
-TFS_BOT_R = $57                   ; [clip]
-TFS_TOP_XL = $2D                  ; [clip]; top line's own anchor
-TFS_TOP_DEN = $2E                 ; [clip]
-TFS_BOT_XL = $2F                  ; [clip]; bottom line's own anchor
-TFS_BOT_DEN = $37                 ; [clip]
-TFS_TOP_KIND = $B7                ; [clip]; 0 = pool, 1 = top record
-TFS_TOP_ID = $B9                  ; [clip]; pool slot or record offset
-TFS_BOT_KIND = $BB                ; [clip]; 0 = pool, 1 = bot record
-TFS_BOT_ID = $BF                  ; [clip]
-TFS_TOP_BUFEND = $CF              ; [clip]; 1 + top_count*4 (first invalid offset)
-TFS_BOT_BUFEND = $DD              ; [clip]
-TFS_PEND_XL = $4E                 ; [clip]
-TFS_PEND_XR = $6B                 ; [clip]
-TFS_PEND_TL = $48                 ; [clip]
-TFS_PEND_TR = $49                 ; [clip]
-TFS_PEND_BL = $4A                 ; [clip]
-TFS_PEND_BR = $4B                 ; [clip]
-TFS_PEND_TKIND = $C4              ; [clip]
-TFS_PEND_TID = $C5                ; [clip]
-TFS_PEND_BKIND = $CC              ; [clip]
-TFS_PEND_BID = $CD                ; [clip]
-TFS_PEND_TXL = $1C                ; [clip]; pending copies of the two anchors
-TFS_PEND_TDEN = $1D               ; [clip]
-TFS_PEND_BXL = $38                ; [clip]
-TFS_PEND_BDEN = $44               ; [clip]
-TFS_X_HI = $E1                    ; [clip]
 LC_DY_LO = $FC                    ; [clip]
 LC_DY_HI = $FD                    ; [clip]
 LC_OFF_LO = $FE                   ; [clip]

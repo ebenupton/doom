@@ -61,41 +61,11 @@ FW_BASE = $9700                         ; ex-BOT_RECORDS (bank C)
 .else
 FW_BASE = $2000                         ; ex-BOT_RECORDS (exception window)
 .endif
+; COLD walker bytes only — the hot set was promoted to zero page
+; (src/zp.inc FUSED block, 2026-08-25 grind; the freed TFS bytes).
 FW_TOUCH   = FW_BASE+$00                ; any flat or run this seg/object
-FW_SIDE    = FW_BASE+$01                ; 0 = top line, $80 = bot (BIT/BMI)
-FW_MODE    = FW_BASE+$02                ; s16 dispatch redirect flag (b7)
 FW_ISAVE0  = FW_BASE+$03                ; zp_i_l/h save around mark_solid
 FW_ISAVE1  = FW_BASE+$04
-FW_NEXT    = FW_BASE+$05                ; walk resume slot (stashed at span
-FW_SLOT    = FW_BASE+$06                ; entry, BEFORE any apply)
-; the armed line (staged from zp_line_* by fw_walk_line)
-fwl_xl   = FW_BASE+$08
-fwl_yl   = FW_BASE+$09
-fwl_xr   = FW_BASE+$0A
-fwl_yr   = FW_BASE+$0B
-fwl_dy   = FW_BASE+$0C                  ; yr - yl (s8)
-fwl_dx   = FW_BASE+$0D                  ; xr - xl (> 0)
-fwl_lo   = FW_BASE+$0E                  ; min(yl, yr) — also the apply's
-fwl_hi   = FW_BASE+$0F                  ; max(yl, yr) — extreme pair
-; run state ($FF in fwl_run = closed)
-fwl_run  = FW_BASE+$10                  ; run start x
-fwl_ry0  = FW_BASE+$11                  ; run start y (PLOT only)
-fwl_rend = FW_BASE+$12                  ; run end x (exclusive claim)
-fwl_rendv = FW_BASE+$13                 ; run end y ($80 = open: compute
-                                        ; at close — PLOT only)
-fwl_zx0  = FW_BASE+$14                  ; current overlap [zx0, zx1)
-fwl_zx1  = FW_BASE+$15
-fwl_leftf = FW_BASE+$16                 ; left flat frontier (overlap trim)
-fwl_pend = FW_BASE+$17                  ; right-pend flat pol ($80 = none)
-fw_pol   = FW_BASE+$18                  ; flat polarity for fused_flat
-fw_top1  = FW_BASE+$19                  ; CB boundary values at cx1/cx2
-fw_top2  = FW_BASE+$1A
-cp_vx0 = FW_BASE+$1B                    ; visible piece staging
-cp_vy0 = FW_BASE+$1C
-cp_vx1 = FW_BASE+$1D
-cp_vev = FW_BASE+$1E
-fw_ax0 = FW_BASE+$1F                    ; apply range
-fw_ax1 = FW_BASE+$20
 fw_split_at = FW_BASE+$21
 fw_fx0 = FW_BASE+$22
 fw_fx1 = FW_BASE+$23
@@ -593,8 +563,10 @@ rv_extend:
    STA fwl_rendv
    RTS
 rv_open:
-   LDA cp_vx0
-   STA fwl_run
+   LDA FW_SLOT
+   STA fw_rslot                            ; the apply starts HERE, not at
+   LDA cp_vx0                              ; zp_head — the from-head rescan
+   STA fwl_run                             ; was the heavy frame's tax
    LDA cp_vy0
    STA fwl_ry0
    LDA cp_vx1
@@ -679,7 +651,7 @@ SEG_HIGH
 fused_apply_run:
 .scope
    ZERO zp_hg_cache
-   LDX zp_head
+   LDX fw_rslot                            ; run-open slot (see fw_rslot)
 ar_walk:
    BNE ar_go
    RTS
