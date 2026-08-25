@@ -149,6 +149,7 @@ bf_diag:
    LDY #LAY_SH_DIAG
    LDA (zp_seg_hdr_p),Y
    TAX                                     ; X = LV1 record id
+   STX zp_bf_lv1                           ; (bf_band reads the K plane)
 ; dx = px - lv1x (s16); dxhi rides A for the zero test
    LDA zp_br_px_h
    SBC ROM_LV1X_LO_C,X
@@ -156,8 +157,12 @@ bf_diag:
    LDA zp_br_px_x
    SBC ROM_LV1X_HI_C,X
    STA zp_br_dx_h
-   ORA zp_br_dx_l
-   BEQ bfd_dx0
+; (the dx==0 / dy==0 shortcut arms DELETED 2026-08-25: their verdicts
+; were TRUNCATED too — dx_int == 0 only means the viewpoint's integer
+; grid cell aligns, and the exact dot can sit either side. The general
+; mul path handles zero deltas correctly and, crucially, routes them
+; through the BAND refinement like everything else. Their ~50 bytes
+; part-fund bf_band below.)
 ; dy = py - lv1y
    LDA zp_br_py_h
    SEC
@@ -166,117 +171,424 @@ bf_diag:
    LDA zp_br_py_x
    SBC ROM_LV1Y_HI_C,X
    STA zp_br_dy_h
-   ORA zp_br_dy_l
-   BEQ bfd_dy0                             ; dy==0: dot = P1
 bf_g_both:
-; sign(P1) = sgn(dy') ^ sgn(dxhi); sign(P2) = sgn(dx')<<1... build both:
+; ============================================================================
+; EXACT BANDED BACKFACE (2026-08-25). The truncated dot's total error
+; (viewpoint fraction + lv1 rounding) is provably < 256 dot units
+; (primitive sums <= 58, residues <= 4/8), so:
+;   |dot_int| >= 256  ->  the truncated sign IS the exact sign;
+;   |dot_int| <  256  ->  bf_band refines with the dropped fraction and
+;                         the LV1 K residue — an EXACT verdict.
+; This replaced the shared CROSS_MAG_DECIDE expansion: backface needs
+; BOTH tails (difference for same-sign products, sum for opposite) and
+; the band; the node core keeps the plain macro. The witness that
+; forced it: seg 121 at X=9C.C9 Y=4E.F8 R=F4 — dot_int -4, exact +4612,
+; a front SOLID wall culled, the maze bleeding through its columns.
+; ============================================================================
+; sign(P1) = sgn(dy') ^ sgn(dxhi); sign(P2) = sgn(dx') ^ sgn(dyhi)
    LDA zp_br_sign                          ; b7 = sgn dy'
    EOR zp_br_dx_h                          ; b7 = sign(P1)
-   TAX                                     ; ride in X across the P2 sign
+   TAX
    LDA zp_br_sign
    ASL A                                   ; b6 (dx' sign) -> b7
    EOR zp_br_dy_h                          ; b7 = sign(P2)
    STA zp_br_t2
    TXA
    EOR zp_br_t2                            ; b7 set = opposite signs
-   BPL bf_g_mul                            ; same sign -> magnitude compare
-   TXA                                     ; opposite: sign(dot) = sign(P1)
-   BMI bfd_back_j
+   STA zp_ys_bs                            ; opposite flag (the stage-4 byte
+                                        ; — backface is stage 0, it is dead
+                                        ; here and rewritten there)
+   STX zp_br_sign                          ; b7 = sign(P1): the verdict key
+   BPL bfx_same                            ; same-sign: the mul path
+; opposite signs: dot = sign(P1)*(|P1|+|P2|) — the OLD code decided here
+; mul-free, and the band only matters when BOTH products are tiny. Any
+; |delta| >= 128 makes |dot| >= 128 (primitives >= 1): screen mul-free
+; and only the viewer-hugging-the-reference case pays the products.
+   LDA zp_br_dx_h
+   BEQ bfo_dxp
+   CMP #$FF
+   BNE bfo_far
+   LDA zp_br_dx_l
+   BPL bfo_far                             ; dx <= -129
+   BMI bfo_dy
+bfo_dxp:
+   LDA zp_br_dx_l
+   BMI bfo_far                             ; dx >= 128
+bfo_dy:
+   LDA zp_br_dy_h
+   BEQ bfo_dyp
+   CMP #$FF
+   BNE bfo_far
+   LDA zp_br_dy_l
+   BPL bfo_far
+   BMI bfx_same                            ; both tiny: sum tail via muls
+bfo_dyp:
+   LDA zp_br_dy_l
+   BMI bfo_far
+   BPL bfx_same
+bfo_far:
+   LDA zp_br_sign                          ; |dot| >= 128: exact by sign
+   BMI bfo_back
    JMP bf_seg_front
-bfd_back_j:
+bfo_back:
    JMP s_advance_l0
-; dx == 0: dot = -P2 = -(dx'*dy); need dy for its sign (P2 = 0 handled:
-; dy==0 too -> dot = 0 -> back)
-bfd_dx0:
-; (no SEC: entered iff dx == 0 — zero subtract result, no borrow, C=1;
-;  X still holds the LV1 record id)
-   LDA zp_br_py_h
-   SBC ROM_LV1Y_LO_C,X
+bfx_same:
+; --- |dx|, |dy| (the macro's abs section, inlined) ---
+   LDX zp_br_dx_h
+   BPL bfx_dx_pos
+   LDA #0
+   SEC
+   SBC zp_br_dx_l
+   STA zp_br_dx_l
+   LDA #0
+   SBC zp_br_dx_h
+   STA zp_br_dx_h
+bfx_dx_pos:
+   LDX zp_br_dy_h
+   BPL bfx_dy_pos
+   LDA #0
+   SEC
+   SBC zp_br_dy_l
    STA zp_br_dy_l
-   LDA zp_br_py_x
-   SBC ROM_LV1Y_HI_C,X
+   LDA #0
+   SBC zp_br_dy_h
    STA zp_br_dy_h
-   ORA zp_br_dy_l
-   BEQ bfd_back_j                          ; dx==0 and dy==0 -> back
-   LDA zp_br_sign
-   ASL A                                   ; b7 = sgn dx'
-   EOR zp_br_dy_h                          ; b7 = sign(P2)
-   BMI bfd_front_j                         ; dot = -P2 > 0 iff P2 < 0
-   JMP s_advance_l0
-bfd_front_j:
-   JMP bf_seg_front
-; dy == 0: dot = P1 = dy'*dx (nonzero: dx != 0 here)
-bfd_dy0:
-   LDA zp_br_sign                          ; b7 = sgn dy'
-   EOR zp_br_dx_h                          ; b7 = sign(P1)
-   BMI bfd_back_j
-   JMP bf_seg_front
-
-bf_g_mul:
-; both deltas nonzero, products same sign (X = shared sign, bit7):
-; the magnitude comparator is the shared CROSS_MAG_DECIDE macro
-; (header.s) — same core serves br_node_setup's general arm (lo.s).
-   CROSS_MAG_DECIDE bf_seg_front, s_advance_l0, bf_tie
-
-; ============================================================================
-; bf_tie — |P1| == |P2|, i.e. dot == 0 for the TRUNCATED viewpoint.
-;
-; px_int/py_int throw away the 8.8 fraction, so the viewpoint can land
-; exactly ON a seg's line while sitting comfortably to one side of it. The
-; twin's dot is the exact negation, so "tie -> back" rejected BOTH: the
-; portal disappeared, nothing tightened its columns, and the far sector's
-; ceiling showed through the hole. (Eben's ffe6.d2 001d.e3 f4 report: a
-; 2-column slit at screen centre leaking the ceiling of a room 328 units
-; away. seg 98, the sector 38 <-> 39 portal, with dot_int = 0 but the true
-; dot = +4.367.)
-;
-; Refine with the fraction the integer test dropped:
-;     dot_88 = 256*dot + (dy'*fx - dx'*fy)
-; dot is 0 here, so the correction alone is the verdict. With
-; A = |dy'|*fx, B = |dx'|*fy and GE = (the primitive signs differ) OR
-; (A >= B):
-;     front  <=>  GE == (dy' > 0)
-; That covers all four sign cases and sends a full-precision tie to
-; dy' > 0, so exactly one twin always survives -- never a hole. dy' is
-; never 0 here (that is the axis form).
-;
-; TWO 8x8 muls, and only on the tie: the hot path still spends one branch.
-; ============================================================================
-bf_tie:
+bfx_dy_pos:
+; --- |P1| = |dy'| * |dx| -> (t2, t3, t4) u24 ---
    LDX zp_bf_dir
    LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'|
-   LDX zp_br_px                            ; fx = the 8.8 low byte
+   STA zp_br_a
+   LDX zp_br_dx_l
    STX zp_mul_b
    JSR umul8
-   STA zp_br_t1                            ; A hi (umul8 returns prod_h in A)
+   STA zp_br_t3
    LDA zp_prod_l
-   STA zp_br_t0                            ; A = |dy'| * fx
+   STA zp_br_t2
+   LDA zp_br_dx_h
+   BEQ bfx_p1_nc                           ; senior partial (out of line —
+   JMP bfx_p1_hi                           ; past branch range)
+bfx_p1_nc:
+   STA zp_br_t4
+bfx_p1_done:
+; --- |P2| = |dx'| * |dy| -> (t0, t1, t5) u24 ---
    LDX zp_bf_dir
+   LDA ROM_DIRS_C,X                        ; |dx'|
+   STA zp_br_a
+   LDX zp_br_dy_l
+   STX zp_mul_b
+   JSR umul8
+   STA zp_br_t1
+   LDA zp_prod_l
+   STA zp_br_t0
+   LDA zp_br_dy_h
+   BEQ bfx_p2_nc                           ; senior partial (out of line —
+   JMP bfx_p2_hi                           ; past branch range)
+bfx_p2_nc:
+   STA zp_br_t5
+bfx_p2_done:
+   BIT zp_ys_bs
+   BPL bfx_diff                            ; (bfx_sum moved past branch
+   JMP bfx_sum                             ; range — rare arm pays the JMP)
+bfx_diff:
+; --- same-sign tail: the old compare chain's EARLY-OUT restored, with
+; a |d| < 128 band underneath (the total truncation + lv1 error is
+; provably < 87 dot units — primitive sums are pack-asserted <= 63 —
+; so any |d| >= 128 verdict is exact). The chain only computes the
+; low-byte difference when hi and mid leave the verdict within a page.
+   LDA zp_br_t4
+   CMP zp_br_t5
+   BNE bfx_hi_diff                         ; senior products differ (rare)
+   LDA zp_br_t3
+   CMP zp_br_t1
+   BEQ bfx_mid_eq
+; mids differ: in-band only when they differ by exactly 1 AND the low
+; bytes pull the difference back inside +/-128
+   BCC bfx_mid_lt
+   SBC zp_br_t1                            ; C=1: A = t3 - t1 exactly
+   CMP #1
+   BNE bfx_out_front                       ; diff >= 2: d >= 256+ — exact
+; d = 256 + (t2 - t0) in (0, 512)
+   LDA zp_br_t2
+   SEC
+   SBC zp_br_t0
+   BCS bfx_out_front                       ; t2 >= t0: d >= 256 — exact
+   CMP #$80                                ; C=0: A = 256-(t0-t2) = d itself
+   BCS bfx_out_front                       ; d >= 128 — exact
+   STA zp_br_t0                            ; d < 128: refine
+   JMP bfx_bandp
+bfx_mid_lt:
+   LDA zp_br_t1
+   SEC
+   SBC zp_br_t3                            ; A = t1 - t3 (u8 exact)
+   CMP #1
+   BNE bfx_out_back                        ; diff >= 2: d <= -256- — exact
+; d = -256 + (t2 - t0) in (-512, 0)
+   LDA zp_br_t0
+   SEC
+   SBC zp_br_t2
+   BCS bfx_out_back                        ; t0 >= t2: d <= -256 — exact
+   CMP #$80                                ; C=0: A = 256-(t2-t0) = |d|
+   BCS bfx_out_back                        ; |d| >= 128 — exact
+   STA zp_br_t0                            ; |d| < 128: refine
+   JMP bfx_bandn
+bfx_mid_eq:
+; hi and mid equal: d = t2 - t0 in (-256, 256) — refine iff |d| < 128
+   LDA zp_br_t2
+   SBC zp_br_t0                            ; C=1 from the CMP equality
+   BCC bfx_lo_neg
+   CMP #$80
+   BCS bfx_out_front                       ; d in [128, 255] — exact
+   STA zp_br_t0
+   JMP bfx_bandp
+bfx_lo_neg:
+   CMP #$80
+   BCC bfx_out_back                        ; d in [-256, -129] — exact
+   EOR #$FF                                ; |d| = -d < 128
+   CLC
+   ADC #1
+   STA zp_br_t0
+   JMP bfx_bandn
+bfx_bandp:
+; shared band entry, d > 0: t0 holds |dot_int| (stored by the site)
+   LDA zp_br_sign
+   STA zp_br_t1
+   JMP bf_band
+bfx_bandn:
+; shared band entry, d < 0: dot's sign flips P1's
+   LDA zp_br_sign
+   EOR #$80
+   STA zp_br_t1
+   JMP bf_band
+bfx_out_front:
+; |dot| out of band with |P1| > |P2|: verdict = sign(P1)
+   LDA zp_br_sign
+   BMI bfx_back
+   JMP bf_seg_front
+bfx_out_back:
+; |dot| out of band with |P1| < |P2|: verdict = NOT sign(P1)
+   LDA zp_br_sign
+   BPL bfx_back
+   JMP bf_seg_front
+bfx_back:
+   JMP s_advance_l0
+bfx_hi_diff:
+; senior bytes differ: |d| >= 65536 - 65535 — decide by the compare's C
+; (the pre-band code's verdict, exact out here: |d| >= 256 always when
+; the seniors differ by >= 1 page and the mid/lo can pull back at most
+; 255+255 < 512... a 1-page senior gap CAN land inside +/-128, so run
+; the full subtraction on this RARE path)
+   SEC
+   LDA zp_br_t2
+   SBC zp_br_t0
+   STA zp_br_t0                            ; d lo
+   LDA zp_br_t3
+   SBC zp_br_t1
+   STA zp_br_t1                            ; d mid
+   LDA zp_br_t4
+   SBC zp_br_t5                            ; d hi; C = sign
+   BCC bfx_hd_neg
+   ORA zp_br_t1
+   BNE bfx_out_front                       ; d >= 256 — exact
+   LDA zp_br_t0
+   BMI bfx_out_front                       ; d in [128,255] — exact
+   JMP bfx_bandp
+bfx_hd_neg:
+   AND zp_br_t1
+   CMP #$FF
+   BNE bfx_out_back                        ; d <= -257 — exact
+   LDA zp_br_t0
+   BEQ bfx_out_back                        ; d = -256 — exact
+   BPL bfx_out_back                        ; d in [-256,-129] — exact
+   EOR #$FF
+   CLC
+   ADC #1
+   STA zp_br_t0
+   JMP bfx_bandn
+bfx_sum:
+; --- opposite-sign tail: dot = sign(P1) * (|P1| + |P2|). Only reached
+; with BOTH |deltas| < 128 (the mul-free screen), so the products are
+; < 57*128 and the senior bytes are structurally zero — the mid test
+; suffices. ---
+   LDA zp_br_t3
+   ORA zp_br_t1
+   BNE bfx_sfar
+   LDA zp_br_t2
+   CLC
+   ADC zp_br_t0
+   BCS bfx_sfar                            ; sum >= 256
+   STA zp_br_t0
+   JMP bfx_bandp
+bfx_sfar:
+   LDA zp_br_sign                          ; |dot| >= 256: P1's sign decides
+   BMI bfx_back
+   JMP bf_seg_front
+; --- out-of-line senior partials (shared bodies in header.s) ---
+bfx_p1_hi:
+   JSR cross_p1_hi
+   JMP bfx_p1_done
+bfx_p2_hi:
+   JSR cross_p2_hi
+   JMP bfx_p2_done
+
+; ============================================================================
+; bf_band — the EXACT in-band verdict (2026-08-25; supersedes bf_tie,
+; which refined dot == 0 only and trusted the ROUNDED lv1 to sit on the
+; line — it doesn't, by up to half a prescaled unit).
+;
+;   In: zp_br_t0 = |dot_int| (u8), zp_br_t1 b7 = sign(dot_int),
+;       zp_bf_dir = DIR index, zp_bf_lv1 = LV1 record id.
+;   T (s24, t2/t3/t4) = 256*dot_int + (dy'*fx - dx'*fy)
+;                                   - 32*(dy'*kx - dx'*ky)
+;   = 256 * the FULL-PRECISION dot against the true (world-vertex)
+;   reference point: fx/fy are the viewpoint's 8.8 fractions, (kx,ky)
+;   the reference point's sub-prescale residues (the packed K plane,
+;   |k| <= 4 — so the K terms pre-shift into the multiplier: |k|<<5 is
+;   u8 and the product needs no post-shift).
+;   Verdict: T > 0 front, T < 0 back, T == 0 -> front iff dy' > 0
+;   (the full-precision tie-break; exactly one twin survives).
+; ============================================================================
+bf_band:
+   LDA #0
+   STA zp_br_t2                            ; T = dot_int << 8 (signed)
+   TAX                                     ; X = 0 (the positive hi byte)
+   LDA zp_br_t0
+   BIT zp_br_t1
+   BPL bb_ipos
+   EOR #$FF                                ; negative: mid = -|dot|, hi = $FF
+   CLC                                     ; (|dot| > 0 on this path — the
+   ADC #1                                  ; -256 edge stayed out of band)
+   LDX #$FF
+bb_ipos:
+   STA zp_br_t3
+   STX zp_br_t4
+; term 1: + dy' * fx (subtract iff dy' < 0)
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; b7 = sgn dy'
+   STA zp_br_t5
+   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'|
+   LDX zp_br_px                            ; fx = px88's 8.8 low byte
+   STX zp_mul_b
+   JSR umul8
+   JSR bb_apply
+; term 2: - dx' * fy (subtract iff dx' > 0)
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X
+   ASL A                                   ; b7 = sgn dx'
+   EOR #$80
+   STA zp_br_t5
    LDA ROM_DIRS_C,X                        ; |dx'|
    LDX zp_br_py                            ; fy
    STX zp_mul_b
-   JSR umul8                               ; B = |dx'| * fy in zp_prod_l/h
+   JSR umul8
+   JSR bb_apply
+; terms 3/4: the K residues. kx nibble hi, ky nibble lo, both +8.
+; term 3: - 32*dy'*kx (subtract iff dy'*kx > 0);
+; term 4: + 32*dx'*ky (subtract iff dx'*ky < 0)
+   LDX zp_bf_lv1
+   LDA ROM_LV1K_C,X
+   LSR A
+   LSR A
+   LSR A
+   LSR A                                   ; kx + 8
+   SEC
+   SBC #8                                  ; kx (s8, |kx| <= 4)
+   BEQ bb_t4
+   BMI bb_kxn
+   LDY #0                                  ; kx > 0 (LDY #0 sets Z: the
+   BEQ bb_kxs                              ; branch is always taken)
+bb_kxn:
+   LDY #$80                                ; b7 = (kx < 0)
+   EOR #$FF                                ; |kx|
+   CLC
+   ADC #1
+bb_kxs:
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A                                   ; |kx| << 5 (<= 128: |kx| <= 4)
+   STA zp_mul_b
+   STY zp_br_t1                            ; park kx's sign
    LDX zp_bf_dir
-   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; b7 = sgn dy', b6 = sgn dx'
-   STA zp_br_t2
-   ASL A                                   ; b6 -> b7
-   EOR zp_br_t2                            ; b7 set = signs differ
-   BMI bft_ge                              ; differ: the terms ADD -> GE
-   LDA zp_br_t0
-   CMP zp_prod_l
-   LDA zp_br_t1
-   SBC zp_prod_h
-   BCC bft_lt                              ; A < B
-bft_ge:
-   BIT zp_br_t2                            ; N = sgn(dy')
-   BMI bft_back
-   JMP bf_seg_front
-bft_lt:
-   BIT zp_br_t2
-   BPL bft_back
-   JMP bf_seg_front
-bft_back:
+   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; b7 = sgn dy'
+   EOR zp_br_t1                            ; b7 = sgn(dy'*kx)
+   EOR #$80                                ; subtract iff dy'*kx > 0
+   STA zp_br_t5
+   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'|
+   JSR umul8
+   JSR bb_apply
+bb_t4:
+   LDX zp_bf_lv1
+   LDA ROM_LV1K_C,X
+   AND #15                                 ; ky + 8
+   SEC
+   SBC #8                                  ; ky (s8, |ky| <= 4)
+   BEQ bb_verdict
+   BMI bb_kyn
+   LDY #0                                  ; ky > 0 (Z set: always taken)
+   BEQ bb_kys
+bb_kyn:
+   LDY #$80                                ; b7 = (ky < 0)
+   EOR #$FF
+   CLC
+   ADC #1
+bb_kys:
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A                                   ; |ky| << 5
+   STA zp_mul_b
+   STY zp_br_t1                            ; park ky's sign
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X
+   ASL A                                   ; b7 = sgn dx'
+   EOR zp_br_t1                            ; b7 = sgn(dx'*ky)
+   STA zp_br_t5                            ; subtract iff dx'*ky < 0
+   LDA ROM_DIRS_C,X                        ; |dx'|
+   JSR umul8
+   JSR bb_apply
+bb_verdict:
+   LDA zp_br_t4
+   BMI bb_back                             ; T < 0 -> back
+   ORA zp_br_t3
+   ORA zp_br_t2
+   BEQ bb_zero
+   JMP bf_seg_front                        ; T > 0 -> front
+bb_back:
    JMP s_advance_l0
+bb_zero:
+; exact zero: full-precision tie — front iff dy' > 0
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X
+   BMI bb_back
+   JMP bf_seg_front
+; bb_apply — fold (zp_prod_l/h) into T: add, or subtract when t5 b7 set
+bb_apply:
+   BIT zp_br_t5
+   BMI bb_sub
+   LDA zp_br_t2
+   CLC
+   ADC zp_prod_l
+   STA zp_br_t2
+   LDA zp_br_t3
+   ADC zp_prod_h
+   STA zp_br_t3
+   BCC bb_ap_done
+   INC zp_br_t4
+bb_ap_done:
+   RTS
+bb_sub:
+   LDA zp_br_t2
+   SEC
+   SBC zp_prod_l
+   STA zp_br_t2
+   LDA zp_br_t3
+   SBC zp_prod_h
+   STA zp_br_t3
+   BCS bb_ap_done
+   DEC zp_br_t4
+   RTS
 .endscope
 ; (24-byte layout-keeper pad stripped 2026-07-26 in the all-pads
 ; sweep: free space consolidates at the CODE segment end; page-cross

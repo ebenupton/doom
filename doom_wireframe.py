@@ -2307,39 +2307,27 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
     # Back-face test using prescaled linedef vertices.  ldx/ldy are taken
     # from the precomputed s8-asserted table (matches 6502 packed format).
     ld = linedefs[s[3]]
-    lv1 = fp_vertexes[ld[0]]
     ldx, ldy = svwh[13], svwh[14]
-    px_int = ctx[0]
-    py_int = ctx[1]
-    dot = ldy * (px_int - lv1[0]) - ldx * (py_int - lv1[1])
-    corr = (ldy * (fp_module.VIEW_PX88 & 0xFF)
-            - ldx * (fp_module.VIEW_PY88 & 0xFF))
+    # EXACT back-face (2026-08-25): full-precision dot against the TRUE
+    # reference point — the raw world vertex in 8.8 prescaled (x32 is
+    # exact). This subsumes the old truncated dot + frac-corr tie repair:
+    # the rounded fp_vertexes reference sat up to half a unit off the
+    # line and culled front walls near edge-on (the 9C.C9/4E.F8/F4
+    # witness). Ties keep the '>'-form convention (matches the packed
+    # C-1 bake for axis forms and dy' > 0 for diagonals).
+    _rv = vertexes[ld[0]]
+    _lx88 = (_rv[0] - MAP_CENTER_X) * 32
+    _ly88 = (_rv[1] - MAP_CENTER_Y) * 32
+    dot = (ldy * (fp_module.VIEW_PX88 - _lx88)
+           - ldx * (fp_module.VIEW_PY88 - _ly88))
     tie_sign = ldy
     tie_sx = ldx
     if s[4] == 1:
         dot = -dot
-        corr = -corr
         tie_sign = -ldy
         tie_sx = -ldx
-    if dot == 0:
-        # px_int/py_int are TRUNCATED, so the viewpoint can land exactly on
-        # this seg's line even when it is comfortably to one side. Then
-        # dot == 0 for the seg AND its twin (whose dot is the exact
-        # negation), "dot <= 0" rejects both, the portal disappears and
-        # everything behind it shows through the hole. Refine with the 8.8
-        # fraction: dot_88 = 256*dot + corr, and dot is 0 here so corr IS
-        # the verdict. tie_sign breaks a full-precision tie so exactly one
-        # twin always survives. (Same fix in packed_render_seg.)
-        # corr == 0 (frac-0 pose exactly on the line): the seg is
-        # edge-on and the verdict goes to the '>' form, matching the
-        # pack-time C-1 bake. tie_sign (dy') decides verticals; for
-        # horizontals dy' == 0 and dx' < 0 is the '>' form (dot =
-        # -dx'*(py-lv1y)) -- without the tie_sx term BOTH horizontal
-        # twins died here while the packed mirror kept one.
-        if corr < 0 or (corr == 0 and (tie_sign < 0 or
-                                       (tie_sign == 0 and tie_sx > 0))):
-            return
-    elif dot < 0:
+    if dot < 0 or (dot == 0 and (tie_sign < 0 or
+                                 (tie_sign == 0 and tie_sx > 0))):
         return
 
     map_trace["segs_processed"].add(si)
@@ -2850,22 +2838,21 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         lv1_y = rom[ol + 0x100 + rid] | (rom[ol + 0x180 + rid] << 8)
         if lv1_x & 0x8000: lv1_x -= 0x10000
         if lv1_y & 0x8000: lv1_y -= 0x10000
-        dot = dyp * (px_int - lv1_x) - dxp * (py_int - lv1_y)
-        if dot == 0:
-            # The truncated viewpoint lies exactly ON this seg's line, so
-            # the integer test cannot say which side we are on -- and
-            # "dot <= 0" rejected the seg AND its twin (whose dot is the
-            # exact negation), so the portal vanished and everything
-            # behind it leaked through the hole.  Refine with the
-            # fraction: dot_88 = 256*dot + (dyp*fx - dxp*fy), and here
-            # dot is 0, so the correction IS the verdict.  dyp is never 0
-            # for a diagonal, so its sign breaks a full-precision tie and
-            # exactly one twin always survives.
-            corr = (dyp * (fp_module.VIEW_PX88 & 0xFF)
-                    - dxp * (fp_module.VIEW_PY88 & 0xFF))
-            if corr < 0 or (corr == 0 and dyp <= 0):
-                return
-        elif dot < 0:
+        # EXACT banded verdict (2026-08-25, mirrors bf_band): the truncated
+        # dot's error (viewpoint fraction + lv1 rounding) is < 256 dot
+        # units, so out-of-band the truncated sign is exact and in-band
+        # the full-precision dot — against the TRUE reference point
+        # (the K plane carries its sub-prescale residues) — decides.
+        # Python computes the full-precision form everywhere; the 6502's
+        # banded evaluation equals it by construction (the witness class:
+        # seg 121 at 9C.C9/4E.F8/F4, a front solid culled at dot_int -4,
+        # exact +4612 — the maze bled through its columns).
+        kb = rom[layout['off_lv1k'] + rid]
+        kx = ((kb >> 4) & 15) - 8
+        ky = (kb & 15) - 8
+        dot = (dyp * (fp_module.VIEW_PX88 - (256 * lv1_x + 32 * kx))
+               - dxp * (fp_module.VIEW_PY88 - (256 * lv1_y + 32 * ky)))
+        if dot < 0 or (dot == 0 and dyp <= 0):
             return
 
     # ── Read vertex positions from rom_main (page-split SoA planes:

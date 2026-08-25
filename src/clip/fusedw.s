@@ -57,7 +57,12 @@
 ; CONSTRUCTION — this campaign emptied it — and it is in the clipper's
 ; own bank context (bank C banked; the flat exception window flat).
 .if ::BANKED
-FW_BASE = $9700                         ; ex-BOT_RECORDS (bank C)
+FW_BASE = $9880                         ; bank C tail (2026-08-25 re-cut:
+                                        ; code to $97FF, VEXPL_CONT $9800-
+                                        ; $987F, cold state here, SINCOS
+                                        ; $9900 unmoved). Ex-records pages;
+                                        ; the BANKC region boundary keeps
+                                        ; code growth a LINK ERROR.
 .else
 FW_BASE = $2000                         ; ex-BOT_RECORDS (exception window)
 .endif
@@ -705,10 +710,11 @@ cr_store:
    RTS
 .endscope
 
-SEG_HIGH
-; (the apply/flat/split/merge cluster lives in MAIN — always mapped, so
-;  the bank-C walker JSRs here at no cost: the pattern tg_append_x used;
-;  tg_append_x's death paid for the space.)
+SEG_BANKC
+; (the apply/flat/split/merge cluster moved MAIN -> BANK C 2026-08-25:
+;  every caller — fw_close_run, ms_dispatch, obj_art_done, the s16
+;  band-clip wrappers — runs with bank C held, and the fm grind freed
+;  the space. Its ~300 main bytes fund the exact banded backface.)
 
 ; ============================================================================
 ; fused_apply_run — install the FULL LINE as the FW_SIDE boundary on

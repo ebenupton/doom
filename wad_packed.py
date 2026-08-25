@@ -462,7 +462,18 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4
-    rom_main_size = off_obj_art + len(obj_art)
+    off_lv1k = off_obj + 0x180              # LV1 K plane (128 B): the
+                                            # reference points' sub-prescale
+                                            # residues, nibble-packed
+                                            # (kx+8)<<4 | (ky+8) — the exact
+                                            # banded backface reads it.
+                                            # PINNED at off_obj+$180 so the
+                                            # layout.inc equates cannot
+                                            # drift with the art length;
+                                            # fills the 512-byte obj hole
+                                            # exactly.
+    assert off_obj_art + len(obj_art) <= off_lv1k, 'obj table reached the K plane'
+    rom_main_size = off_lv1k + 128
 
     rom_main = bytearray(rom_main_size)
 
@@ -732,9 +743,25 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         struct.pack_into('<HH', rom_main, o, _vk(s[0]), _vk(s[1]))
         rom_main[o + 4] = form
         if form >= 4:
-            # diagonal: the reference point goes in the deduped LV1 records
-            key = (lv1[0] & 0xFFFF, lv1[1] & 0xFFFF)
-            rid = _lv1_ids.setdefault(key, len(_lv1_ids))
+            # diagonal: the reference point goes in the deduped LV1 records.
+            # EXACT-BACKFACE (2026-08-25): the record also carries the
+            # point's sub-prescale residue k = raw_rel - PS*lv1 (one nibble
+            # per axis), so the banded refinement can reconstruct the TRUE
+            # line point — the rounded lv1 alone sits up to half a unit off
+            # the line, which is what culled front-facing walls near
+            # edge-on (the 9C.C9/4E.F8/F4 bleed witness, seg 121: dot_int
+            # -4 vs true +4612). The dedupe key includes k: two raw points
+            # rounding to the same lv1 must NOT share a record.
+            assert prescale == 8, 'the 6502 corr math bakes 256/PS = 32'
+            _rvx, _rvy = vertexes[ld[0]]
+            _relx, _rely = _rvx - map_center_x, _rvy - map_center_y
+            _kx = _relx - prescale * lv1[0]
+            _ky = _rely - prescale * lv1[1]
+            assert -8 <= _kx <= 7 and -8 <= _ky <= 7, (_kx, _ky)
+            key = (lv1[0] & 0xFFFF, lv1[1] & 0xFFFF, _kx, _ky)
+            if key not in _lv1_ids:
+                _lv1_ids[key] = len(_lv1_ids)
+            rid = _lv1_ids[key]
             assert rid < LV1_PER_PLANE, \
                 f'LV1 records ({rid + 1}) exceed the {LV1_PER_PLANE}-slot planes'
             rom_main[o + SH_DIAG] = rid
@@ -805,11 +832,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     for _key, (rid, bfh_v, bch_v) in _bpal_ids.items():
         rom_main[off_bpal + 0x00 + rid] = bfh_v
         rom_main[off_bpal + 0x80 + rid] = bch_v
-    for (lx, ly), rid in _lv1_ids.items():
+    for (lx, ly, _kx, _ky), rid in _lv1_ids.items():
         rom_main[off_lv1 + 0x000 + rid] = lx & 0xFF
         rom_main[off_lv1 + 0x080 + rid] = (lx >> 8) & 0xFF
         rom_main[off_lv1 + 0x100 + rid] = ly & 0xFF
         rom_main[off_lv1 + 0x180 + rid] = (ly >> 8) & 0xFF
+        rom_main[off_lv1k + rid] = (((_kx + 8) & 15) << 4) | ((_ky + 8) & 15)
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 
@@ -943,6 +971,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,
         'off_obj_art': off_obj_art, 'n_obj_art': n_obj_art,
         'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
+        'off_lv1k': off_lv1k,
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
         'rom_recip_size': rom_recip_size,

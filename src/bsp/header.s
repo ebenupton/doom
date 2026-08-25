@@ -247,6 +247,33 @@ NF_LLEAF = $40                          ; left child is a subsector
 ; just stored zp_br_r_s from A — the old JSR routine's LDX zp_br_r_s
 ; was a pure reload). Clobbers X (A becomes the vector byte). Retired
 ; the rns_select subroutine 2026-07-15.
+; --- shared senior-partial bodies for the cross cores (see the macro's
+; cm_p*_hi and backface's bfx_p*_hi): in A = the senior delta byte ---
+::cross_p1_hi:
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR umul8
+   LDA zp_prod_l
+   CLC
+   ADC zp_br_t3
+   STA zp_br_t3
+   LDA zp_prod_h
+   ADC #0
+   STA zp_br_t4
+   RTS
+::cross_p2_hi:
+   STA zp_mul_b
+   LDA zp_br_a
+   JSR umul8
+   LDA zp_prod_l
+   CLC
+   ADC zp_br_t1
+   STA zp_br_t1
+   LDA zp_prod_h
+   ADC #0
+   STA zp_br_t5
+   RTS
+
 .macro RNS_SELECT
    TAX
    LDA rns_vec_l-1,X
@@ -358,30 +385,14 @@ cm_neg:
    JMP front
 cm_back:
    JMP back
-; --- out-of-line senior partials (the uncommon big-delta tier) ---
+; --- out-of-line senior partials: SHARED subroutines since 2026-08-25
+; (four inline copies — node macro + backface — deduped; the tier is
+; the uncommon big-delta one, so the JSR/RTS is cheap) ---
 cm_p1_hi:
-   STA zp_mul_b
-   LDA zp_br_a
-   JSR umul8
-   LDA zp_prod_l
-   CLC
-   ADC zp_br_t3
-   STA zp_br_t3
-   LDA zp_prod_h
-   ADC #0
-   STA zp_br_t4
+   JSR cross_p1_hi
    JMP cm_p1_done
 cm_p2_hi:
-   STA zp_mul_b
-   LDA zp_br_a
-   JSR umul8
-   LDA zp_prod_l
-   CLC
-   ADC zp_br_t1
-   STA zp_br_t1
-   LDA zp_prod_h
-   ADC #0
-   STA zp_br_t5
+   JSR cross_p2_hi
    JMP cm_p2_done
 .endmacro
 
@@ -478,7 +489,10 @@ RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)
 VDESC      = $A500                      ; bank C (verticals run under C;
 VEXPL_LO   = $A700                      ; moved from $B200/$B400 2026-07-27
 VEXPL_HI   = $A780                      ; — the vplot unrolled column owns
-VEXPL_CONT = $9680                      ; moved from $A800 2026-08-11, then
+VEXPL_CONT = $9800                      ; -> $9800 2026-08-25 (the ex-TOP
+                                        ; records page): the fused cluster's
+                                        ; move into BANKC grew the clipper
+                                        ; past $9680. Was $9680; before that
                                         ; $9600 -> $9680 on 2026-08-22: it
                                         ; is 128 slots and the rest of the
                                         ; page was empty, so sitting at the

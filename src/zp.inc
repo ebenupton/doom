@@ -447,9 +447,10 @@ zp_cb_bot1 = $B8                  ; [clip]; u8, span bot at cx1
 ; --- $B9: overlay group (3 phase-disjoint users) ---
 ; --- $BA: FREE (zp_tg_cont retired 2026-08-23 -- the portal-continuation
 ;     state had no reader anywhere in the tree; storescan found the store)
-; $BC FREE (2026-08-25: zp_dcl_rec_buf died with the records machinery;
-;  the short-lived zp_br_vz2 died the same day — the ysb arm derives
-;  vz*2 inline)
+zp_bf_lv1 = $BC                   ; [bsp]; diagonal backface LV1 record id
+                                  ; (stashed for bf_band's K-plane read;
+                                  ; $BC was zp_dcl_rec_buf until the FUSED
+                                  ; walker killed the records, 2026-08-25)
 zp_ys_bs = $BD                    ; [bsp]; per-seg back-pair S bump (0 static /
                                   ; nonzero mover): ys back projections re-stage
                                   ; S+1 + kernel when set

@@ -127,7 +127,12 @@ OBJ_ART  = OBJ_BITS + 28                ; the templates: 25 x
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B8FF, banked frees
 ;  $A800-$A9FF in L2; the flat object table lives in that freed run)
-.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 + 4*LAY_N_OBJ_ART <= ROM_OBJ_C + $200, error, "object table overruns its 512-byte hole"
+.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 + 4*LAY_N_OBJ_ART <= ROM_OBJ_C + $180, error, "object table reached the LV1 K plane"
+; LV1 K plane (2026-08-25, the exact banded backface): each record's
+; reference-point sub-prescale residue, nibble-packed (kx+8)<<4|(ky+8).
+; Rides the object blob at a PINNED +$180 (both builds copy rom_main's
+; off_obj..+512 as one piece flat / by symbol banked).
+ROM_LV1K_C = ROM_OBJ_C + $180
 ; Per-SUBSECTOR front heights (2026-08-17): fh/ch are subsector-constant, so
 ; they ride two pages in the header blob instead of 2 bytes x every seg. Read
 ; under BANK_SEG with X = the subsector id (already live in the prologue).

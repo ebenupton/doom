@@ -420,6 +420,10 @@ rwp_card_cu:                               ; cos unity: vx from -oy, vy from ox
 ;   T[2] = 0, T[3] = +V, T[1] = -V, T[0] = -2V   with V = mag<<8,
 ; all negated when X != 0 (fold: swap the +/- roles).
 .include "sqd.inc"
+; (the 2026-08-25 bank-7 eviction of SQD_H was REVERTED the same day:
+;  the VXC fat paths execute FROM bank C and ride rot_w_pages, so the
+;  table must be in ALWAYS-MAPPED main — the far-pose banked frames
+;  collapsed to a third of their lines. bankedcmp caught it.)
 
 rwp_contrib:
 .scope

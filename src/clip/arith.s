@@ -248,46 +248,64 @@ dskip_c2:
 dskip_c1:
    LDX #1
 dskip_commit:
-; First 1 quotient bit: commit the trial subtract and enter the main
-; loop for the remaining X-1 iterations (X=1 ⇒ done, quotient=1 in
-; div_lo). SBC is correct on both arrival paths: via CMP-BCS C=1 and
-; rem>=den; via ROL-BCS the true 9-bit rem is 256+A, and 256+A-den
-; still fits u8 with C=1.
+; First 1 quotient bit: commit the trial subtract; the bit RIDES C into
+; the main loop's ROL (the INC->ROL restoring-divide transform,
+; 2026-08-25 grind: bits inject one iteration late, and the exit ROL A
+; gives every bit its final shift — positions identical, the 5-cycle
+; INC per committed bit is gone). SBC is correct on both arrival paths:
+; via CMP-BCS C=1 and rem>=den; via ROL-BCS the true 9-bit rem is 256+A,
+; and 256+A-den still fits u8 with C=1.
    SBC zp_div_den                          ; carry already set (from BCS)
-   INC zp_div_l                           ; set this quotient bit
-   DEX
-   BNE dl
-; remaining iterations via main loop (rem in A)
+   SEC                                     ; the commit bit is 1 BY
+   DEX                                     ; DEFINITION — on the ROL-BCS
+   BNE dl                                  ; arrival the 9-bit subtract can
+                                        ; clear SBC's carry (A < den)
+; X was 1: the only bit is still in C — inject and go
    LDA zp_div_l
+   ROL A
    RTS
 d16:
-; SLOW PATH: quotient can exceed u8. Full 16-iteration restoring divide
-; over div_lo:div_hi; quotient bits accumulate across div_lo (low 8)
-; and div_hi (high 8); only the low byte is returned.
+; SLOW PATH (rare: seg extrapolation): quotient can exceed u8. The
+; ORIGINAL INC-form loop, kept as its OWN copy — quotient bits
+; accumulate across div_lo/div_hi; only the low byte is returned.
    LDA #0
    LDX #16
-; Main loop: remainder kept in A (saves LDA/STA zp_div_rem per iter)
-; Per iteration: shift dividend/quotient register left (top bit into
-; rem); if rem >= den (or a bit overflowed rem: dl_over) subtract den
-; and set the vacated quotient bit via INC div_lo.
-dl:
+d16l:
    ASL zp_div_l
    ROL zp_div_h
    ROL A
-; ||||||||||||||||||||||||||||||||||||||||
-   BCS dl_sub                              ; 9-bit overflow: subtract (C=1)
+   BCS d16_sub
    CMP zp_div_den
-   BCC ds
-; |||||||||||||||||||||||||||||
-dl_sub:
-   SBC zp_div_den                          ; C=1 on both arrival paths
-   INC zp_div_l                           ; |||||
+   BCC d16s
+d16_sub:
+   SBC zp_div_den
+   INC zp_div_l
+d16s:
+   DEX
+   BNE d16l
+   LDA zp_div_l
+   RTS
+; Main FAST loop (quotient in div_lo): the previous trial's bit rides C
+; into the ROL; the trial leaves C = this iteration's bit; the exit
+; ROL A injects the final bit and completes every earlier bit's shift.
+dl:
+   ROL zp_div_l                            ; in: last trial's quotient bit
+   ROL zp_div_h
+   ROL A
+   BCS dl_over                             ; 9-bit overflow: subtract, bit=1
+   CMP zp_div_den
+   BCC ds                                  ; C=0 = quotient bit 0
+   SBC zp_div_den                          ; A >= den: C=1 in AND out
 ds:
    DEX
    BNE dl
-; |||||||||||||
    LDA zp_div_l
+   ROL A                                   ; final bit in from C
    RTS
+dl_over:
+   SBC zp_div_den                          ; true rem = 256+A-den; the 8-bit
+   SEC                                     ; borrow may clear C — the bit is
+   BCS ds                                  ; 1 regardless (branch always)
 .endscope
 
 ; === Pool constants and field offsets ===
@@ -600,22 +618,15 @@ si_dy_done:
    ORA z:LC_DEN_HI
    ORA z:LC_DY_HI
    BNE si_general
+; GRIND (2026-08-25): this tier re-implemented umul_round_div with two
+; JSRs and its own rounding block. Stage den first (the fused helper
+; reads zp_div_den for its den/2 round) and ride the one entry.
+   LDA z:LC_DEN_LO
+   STA zp_div_den
    LDA z:LC_DY_LO
    STA z:zp_mul_b
    LDA z:LC_OFF_LO
-   JSR umul8
-; round: prod += (den / 2)
-   LDA z:LC_DEN_LO
-   LSR A
-   CLC
-   ADC zp_prod_l
-   STA zp_div_l
-   LDA #0
-   ADC zp_prod_h
-   STA zp_div_h
-   LDA z:LC_DEN_LO
-   STA zp_div_den
-   JSR udiv16_8                            ; A = u8 quotient
+   JSR umul_round_div                      ; A = u8 quotient
    LDX LC_DY_NEG
    BNE si_u8_sub
    CLC
