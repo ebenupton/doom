@@ -170,7 +170,6 @@ bif_clr2:
 ; ============================================================================
 .macro NODE_SETUP_DISPATCH s0, s1
 .local ns_t_general, ns_py_gt, ns_x0, ns_x1
-.local nsd_dx0, nsd_dy0, nsd_s0, nsd_s1, nsd_mul
    LDX zp_node_ch_l
    LDA NODE_TYPE,X
    AND #NT_MASK                            ; bits 7/6 are the child leaf flags
@@ -184,22 +183,20 @@ bif_clr2:
 ; nx - px puts the tie on the fall-through side for free (side0 iff
 ; the diff is strictly negative). Same rule for form 1 (py). Ties fall
 ; to side1 (D == 0 -> side 1, the mirror's rule, post-normalization).
-   LDA NODE_NXLO,X
-   CMP zp_br_pxraw_l                       ; borrow seed (result dead)
-   LDA NODE_NXHI,X
-   SBC zp_br_pxraw_h                       ; diff' = nx - px
-; (no V decode: the packer asserts map axis extent < 32768, so the s16
-;  diff never overflows and N IS the sign — all four arms alike)
-   BMI ns_x0                               ; nx < px -> side0
-   JMP s1                                  ; tie or less -> side1 (always)
+   LDA NODE_NXLO,X                         ; the plane bakes 2*nx; px2 is
+   CMP zp_br_px2_l                         ; the tie-broken doubled raw —
+   LDA NODE_NXHI,X                         ; 'px_true > nx' EXACTLY, ties
+   SBC zp_br_px2_h                         ; included, at the original
+   BMI ns_x0                               ; two-byte compare (2026-08-26)
+   JMP s1                                  ; tie or less -> side1
 ns_x0:
    JMP s0
 ns_py_gt:
 ; form 1: side0 iff py > ny — reversed like form 0
    LDA NODE_NYLO,X
-   CMP zp_br_pyraw_l
+   CMP zp_br_py2_l
    LDA NODE_NYHI,X
-   SBC zp_br_pyraw_h
+   SBC zp_br_py2_h
    BMI ns_x0                               ; ny < py -> side0
    JMP s1                                  ; tie or less -> side1
 ns_t_general:
@@ -211,13 +208,32 @@ ns_t_general:
 ; the SAME CROSS_MAG_DECIDE core the back-face test expands: side0 is
 ; "front" (D = ndy*dx - ndx*dy > 0), ties side1. The old raw s16 x s16
 ; double-smul cascade (and br_smul_s16_s16_s32) is gone.
+; the whole general body is ONE shared subroutine (2026-08-26 — funded
+; the exact-descent band): DSGN/DIRID staging, deltas, sign shortcut,
+; products, banded verdict. C comes back as the side.
+   JSR node_side_general
+   BCS ns_x0                               ; C=1 -> side0
+   JMP s1
+.endmacro
+
+; ============================================================================
+; node_side_general — the general (diagonal) point-on-side body, ONE
+; copy for both NODE_SETUP_DISPATCH expansions (walk + pm_find_ss).
+;   in : X = node id (zp_node_ch_l), zp_br_sign = NODE_DSGN,
+;        zp_bf_dir = DIR id, C = 1 (the dispatch LSR of NT_GEN);
+;        zp_br_pxraw/pyraw + PM_FXW/+2 = the position.
+;   out: C=1 -> side0 (D_true > 0), C=0 -> side1. EXACT everywhere
+;        (2026-08-26): out-of-band by sign, in-band via node_band.
+;   Clobbers A, X, deltas, t0-t5, mul workspace.
+; ============================================================================
+.scope
+::node_side_general:
    LDA NODE_DSGN,X
    STA zp_br_sign                          ; b7 = sgn ndy, b6 = sgn ndx
    LDA NODE_DIRID,X
    STA zp_bf_dir                           ; DIR-table index
 ; dx = pxraw - nx (s16); hi rides A for the zero test. NO SEC: the
-; dispatch LSR of NT_GEN=3 left C=1 (the same known-carry audit that
-; freed the axis arms' ties).
+; dispatch LSR of NT_GEN=3 left C=1, and JSR + the loads preserved it.
    LDA zp_br_pxraw_l
    SBC NODE_NXLO,X
    STA zp_br_dx_l
@@ -225,7 +241,7 @@ ns_t_general:
    SBC NODE_NXHI,X
    STA zp_br_dx_h
    ORA zp_br_dx_l
-   BEQ nsd_dx0
+   BEQ nsg_dx0
 ; dy = pyraw - ny (s16)
    LDA zp_br_pyraw_l
    SEC
@@ -235,10 +251,12 @@ ns_t_general:
    SBC NODE_NYHI,X
    STA zp_br_dy_h
    ORA zp_br_dy_l
-   BEQ nsd_dy0                             ; dy==0: D = P1
+   BEQ nsg_dy0                             ; dy==0: D = P1
 ; sign shortcut (mirror of bf_g_both): opposite product signs decide
-; with no multiply; sign(D) = sign(P1). Diagonal sense is NORMALIZED
-; (2026-08-20): ndy > 0 always, so sign(P1) = sign(dx) — the EOR died.
+; with no multiply; sign(D) = sign(P1). EXACT: both deltas nonzero
+; here, so |D| = |P1|+|P2| >= ndy+ndx = sum > the fraction error.
+; Diagonal sense is NORMALIZED (2026-08-20): ndy > 0 always, so
+; sign(P1) = sign(dx) — the EOR died.
    LDX zp_br_dx_h                          ; b7 = sign(P1), rides X
    LDA zp_br_sign
    ASL A                                   ; b6 (ndx sign) -> b7
@@ -246,13 +264,19 @@ ns_t_general:
    STA zp_br_t2
    TXA
    EOR zp_br_t2                            ; b7 set = opposite signs
-   BPL nsd_mul                             ; same sign -> magnitude core
+   BPL nsg_mul                             ; same sign -> magnitude core
    TXA                                     ; opposite: sign(D) = sign(P1)
-   BMI nsd_s1
-   JMP s0
-; dx == 0: D = -P2 = -(ndx*dy); side0 iff P2 < 0
-; (dy == 0 too -> D = 0 -> side1)
-nsd_dx0:
+   BMI nsg_s1
+   SEC                                     ; positive: side0
+   RTS
+nsg_s1:
+   CLC
+   RTS
+; dx == 0: |P1| = 0 — the int verdict is IN BAND whenever ndx*|dy| is:
+; no shortcut arm; stage sign(P2) and run the banded product core
+; (P1's mul is a cheap 0*n). Same for dy == 0, and for dx == dy == 0
+; the core ties into the fraction refine (D_int = 0).
+nsg_dx0:
 ; (no SEC: entered iff dx == 0 — a zero subtract result means no
 ;  borrow, C is already 1)
    LDA zp_br_pyraw_l
@@ -261,25 +285,146 @@ nsd_dx0:
    LDA zp_br_pyraw_h
    SBC NODE_NYHI,X
    STA zp_br_dy_h
-   ORA zp_br_dy_l
-   BEQ nsd_s1                              ; dx==0 and dy==0 -> side1
    LDA zp_br_sign
    ASL A                                   ; b7 = sgn ndx
-   EOR zp_br_dy_h                          ; b7 = sign(P2)
-   BMI nsd_s0                              ; D = -P2 > 0 iff P2 < 0
-   BPL nsd_s1                              ; (always)
-; dy == 0: D = P1 = ndy*dx (nonzero: dx != 0 here)
-nsd_dy0:
-   LDA zp_br_dx_h                          ; sign(P1) = sign(dx): ndy > 0
-   BMI nsd_s1                              ; by normalization
-; local verdict stubs (the branches above can't reach past the macro)
-nsd_s0:
-   JMP s0
-nsd_s1:
-   JMP s1
-nsd_mul:
-   CROSS_MAG_DECIDE s0, s1
-.endmacro
+   EOR zp_br_dy_h                          ; b7 = sign(P2) (P1 = 0: the
+   TAX                                     ; core's 'shared sign' is P2's)
+   JMP nsg_mul
+; dy == 0: D = P1 = ndy*dx; sign(P1) = sign(dx) (ndy > 0 normalized)
+nsg_dy0:
+   LDX zp_br_dx_h
+nsg_mul:
+   JMP cross_products_banded               ; tail: C is the verdict
+.endscope
+
+; ============================================================================
+; cross_side_banded — node point-on-side verdict from the staged cross
+; products, EXACT (2026-08-26, the backface finding applied to the
+; traversal). Out-of-band the truncated compare's sign IS the true sign;
+; in-band (|D| < ROM_DBOUND_C[dir] — conservative: the node error is
+; only the dropped position fraction, < sum, K-free since node origins
+; are exact map vertices) node_band refines T = 256*D + ndy*fxw - ndx*fyw.
+;   in : t2/t3/t4 = |P1| u24, t0/t1/t5 = |P2| u24, zp_br_sign b7 =
+;        shared product sign, zp_bf_dir, zp_node_ch_l live,
+;        PM_FXW/+2 = world fraction bytes (pmf_cand stages them).
+;   out: C=1 -> side0 (D_true > 0), C=0 -> side1 (ties side1 — the
+;        float mirror's rule). Clobbers A, X, t0-t4, mul workspace.
+; ============================================================================
+.scope
+::cross_side_banded:
+; ONE full s24 subtract, then classify (2026-08-26 size cut: the
+; d16 mid-tier + separate senior-diff path merged — this path already
+; paid two umul8s, the flat subtract is noise):
+   SEC
+   LDA zp_br_t2
+   SBC zp_br_t0
+   STA zp_br_t0                            ; d lo
+   LDA zp_br_t3
+   SBC zp_br_t1
+   STA zp_br_t1                            ; d mid
+   LDA zp_br_t4
+   SBC zp_br_t5                            ; A = d hi
+   BCC csb_neg
+   ORA zp_br_t1
+   BNE csb_front                           ; d >= 256: far
+   LDA zp_br_t0
+   BMI csb_front                           ; d in [128,255]: far (bound<=95)
+csb_bp:
+   LDX zp_bf_dir                           ; band gate, |d| in A (== t0 on
+   CMP ROM_DBOUND_C,X                      ; the positive path)
+   BCS csb_front                           ; |d| >= bound: exact by sign
+   STA zp_br_t0
+   LDA zp_br_sign                          ; sign(D) = shared sign
+   STA zp_br_t1
+   JMP node_band                           ; tail: returns C to the caller
+csb_neg:
+   AND zp_br_t1
+   CMP #$FF
+   BNE csb_back                            ; d <= -257: far
+   LDA zp_br_t0
+   BEQ csb_back                            ; d = -256: far
+   BPL csb_back                            ; d in [-256,-129]: far
+   EOR #$FF
+   CLC
+   ADC #1                                  ; |d| in [1,128]
+   STA zp_br_t0
+   LDA zp_br_sign                          ; negative d: FLIP the shared
+   EOR #$80                                ; sign in place — csb_bp's gate,
+   STA zp_br_sign                          ; stage and far-exit then read
+   LDA zp_br_t0                            ; sign(D) directly
+   JMP csb_bp
+csb_front:                                 ; |P1| > |P2| out of band:
+   LDA zp_br_sign                          ; D = +sign -> side0 iff sign+
+   BMI csb_s1
+csb_s0:
+   SEC
+   RTS
+csb_back:                                  ; |P1| < |P2| out of band:
+   LDA zp_br_sign                          ; D = -sign -> side0 iff sign-
+   BMI csb_s0
+csb_s1:
+   CLC
+   RTS
+.endscope
+
+; ============================================================================
+; node_band — the exact in-band node verdict.
+;   T (s24) = 256*D + ndy*fxw - ndx*fyw  — the true dot x256 against the
+;   full-fraction position (node lines pass through exact map vertices,
+;   so there is NO K-residue term; ndy > 0 by sense normalization).
+;   in : zp_br_t0 = |D| u8, zp_br_t1 b7 = sign(D), zp_bf_dir,
+;        zp_node_ch_l (NODE_DSGN b6 = sgn ndx), PM_FXW/+2 world fracs.
+;   out: C=1 -> T > 0 (side0); C=0 -> T <= 0 (side1; exact ties side1).
+; ============================================================================
+.scope
+::node_band:
+   LDA #0
+   STA zp_br_t2                            ; T = D << 8 (signed)
+   STA zp_br_t5                            ; first bb_apply = ADD
+   TAX
+   LDA zp_br_t0
+   BEQ nb_ipos                             ; D == 0: ext MUST be 0 (either
+   BIT zp_br_t1                            ; staged sign arrives)
+   BPL nb_ipos
+   EOR #$FF
+   CLC
+   ADC #1
+   LDX #$FF
+nb_ipos:
+   STA zp_br_t3
+   STX zp_br_t4
+; + ndy * fxw (ndy > 0 normalized; t5 staged 0 at entry)
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; ndy
+   LDX PM_FXW
+   STX zp_mul_b
+   JSR umul8
+   JSR bb_apply
+; -+ ndx * fyw: subtract iff ndx > 0 (DSGN b6 = ndx NEGATIVE)
+   LDX z:zp_node_ch_l
+   LDA NODE_DSGN,X
+   AND #$40                                ; $40 = ndx neg -> ADD (t5 b7=0)
+   EOR #$40
+   ASL A                                   ; ndx pos -> $80 = subtract
+   STA zp_br_t5
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C,X                        ; |ndx|
+   LDX PM_FXW+2
+   STX zp_mul_b
+   JSR umul8
+   JSR bb_apply
+nb_v:
+   LDA zp_br_t4
+   BMI nb_le                               ; T < 0 -> side1
+   ORA zp_br_t3
+   ORA zp_br_t2
+   BEQ nb_le                               ; T == 0 -> side1 (float rule)
+   SEC
+   RTS
+nb_le:
+   CLC
+   RTS
+.endscope
 
 ; descend: id in zp_node_ch_l, N = the child's leaf bit (staged by the
 ; caller's TYPE load, +ASL for left arms — flags ride through JSR/JMP).

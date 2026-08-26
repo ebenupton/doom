@@ -118,6 +118,13 @@ class Rig:
         self.mem[0x91] = (cx >> 8) & 0xFF
         self.mem[0x92] = cy & 0xFF
         self.mem[0x93] = (cy >> 8) & 0xFF
+        # exact-descent state (integer candidates: fracs 0, px2 = raw*2)
+        from symmap import sym as _sy
+        self.mem[_sy('PM_FXW')] = 0
+        self.mem[_sy('PM_FXW') + 2] = 0
+        for nm, v in (('zp_br_px2', cx * 2), ('zp_br_py2', cy * 2)):
+            self.mem[_sy(nm + '_l')] = v & 0xFF
+            self.mem[_sy(nm + '_h')] = (v >> 8) & 0xFF
         self.mem[self.vz] = z & 0xFF
         mpu = self.run(self.try_e)
         vz = self.mem[self.vz]

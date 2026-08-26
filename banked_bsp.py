@@ -171,8 +171,9 @@ def build_banked(flatr):
         bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
         bm[abi.SQRH_BASE + i] = fmem[abi.SQR_BASE + 0x200 + i]
     # LV1 K planes -> bank A $B900/$B980 (unpacked residues, 2026-08-26)
-    la[0x3900:0x3980] = bytes(rom_main[layout['off_lv1kx']:layout['off_lv1kx'] + 128])
-    la[0x3980:0x3A00] = bytes(rom_main[layout['off_lv1ky']:layout['off_lv1ky'] + 128])
+    la[0x3900:0x3980] = bytes(rom_main[layout['off_bktlo']:layout['off_bktlo'] + 128])
+    la[0x3980:0x3A00] = bytes(rom_main[layout['off_bkthi']:layout['off_bkthi'] + 128])
+    la[0x3880:0x3900] = bytes(rom_main[layout['off_dbound']:layout['off_dbound'] + 128])
     # OBJ_ANYB main-RAM bitmap copy (2026-08-25 grind): hardware fills it
     # via anim_init/obj_anyb_fill; model runs may skip init, so seed it
     _bits = layout['off_obj'] + 7 * 18       # OBJ_BITS = ROM_OBJ_C+7*N_OBJ

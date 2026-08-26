@@ -48,7 +48,11 @@ DRVVARS = 0x1180                             # T_DV_ANGIDX.. (abi DRV_VARS,
 FIELDS = 4                                   # PAL fields ridden in each mask
                                              # byte's b4-6 (pm_frame scales
                                              # movement by this; 0 = frozen)
-ZPSET = list(range(0x00, 0x0B)) + [0x90, 0x91, 0x92, 0x93, 0x9D, 0x9E]
+ZPSET = (list(range(0x00, 0x0B)) + [0x90, 0x91, 0x92, 0x93, 0x9D, 0x9E]
+         # exact-descent state (2026-08-26): the tie-broken doubled raws
+         # + the PM_FXW world-frac block pmf_cand stages — the reference
+         # replays them like every other engine input
+         + [0x1C, 0x1D, 0x7F, 0xBA, 0x96B, 0x96C, 0x96D, 0x96E])
 
 
 def copro_walk():

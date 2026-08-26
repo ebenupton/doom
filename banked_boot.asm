@@ -81,6 +81,12 @@ ORG DRV_ORG
     LDA #&00:STA &08  : LDA #&01:STA &09 : LDA #&01:STA &0A  ; cos mag/neg/one
     LDA #&70:STA &90  : LDA #&FF:STA &91            ; ZP_PXRAW
     LDA #&90:STA &92  : LDA #&FE:STA &93            ; ZP_PYRAW (-368, center -3248)
+    ; exact-descent state (2026-08-26): tie-broken doubled raws (integer
+    ; spawn: raw*2, frac bit 0) + the PM_FXW world-frac block, which is
+    ; REAL RAM and must be stored, not assumed zero
+    LDA #&E0:STA &1C  : LDA #&FE:STA &1D            ; px2 = -288
+    LDA #&20:STA &7F  : LDA #&FD:STA &BA            ; py2 = -736
+    LDA #&00:STA &096B: STA &096D                   ; PM_FXW x/y = 0
     LDA #&80:STA BCA_AB                             ; view angle byte
     ; (ROM pointers retired 2026-07-10: layout.inc constants)
     LDA #&58:STA &70                                ; rasteriser scrstrt hi

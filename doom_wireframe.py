@@ -2847,10 +2847,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         # banded evaluation equals it by construction (the witness class:
         # seg 121 at 9C.C9/4E.F8/F4, a front solid culled at dot_int -4,
         # exact +4612 — the maze bled through its columns).
-        _bx = rom[layout['off_lv1kx'] + rid]
-        _by = rom[layout['off_lv1ky'] + rid]
-        kx = ((_bx >> 4) & 7) * (-1 if _bx & 0x80 else 1)
-        ky = ((_by >> 4) & 7) * (-1 if _by & 0x80 else 1)
+        kx, ky, _cdx, _cdy = layout['lv1_krec'][rid]
         dot = (dyp * (fp_module.VIEW_PX88 - (256 * lv1_x + 32 * kx))
                - dxp * (fp_module.VIEW_PY88 - (256 * lv1_y + 32 * ky)))
         if dot < 0 or (dot == 0 and dyp <= 0):

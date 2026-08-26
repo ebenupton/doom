@@ -462,18 +462,23 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4
-    # LV1 K planes (2 x 128 B): the reference points' sub-prescale
-    # residues, UNPACKED (Eben, 2026-08-26 — data is cheaper than the
-    # nibble dance): one byte per axis, sign<<7 | (|k|<<4), so bf_band
-    # unpacks with a single ASL (C = sign, A = |k|<<5 = the pre-shifted
-    # multiplier operand). Appended at the blob end; the loaders place
-    # them per build (layout.inc ROM_LV1KX_C/KY_C).
-    off_lv1kx = off_obj + 0x200             # PAST the 512-byte obj hole:
-    off_lv1ky = off_lv1kx + 128             # the loaders copy the hole as
-                                            # one piece and the K planes
+    # LV1 BKT planes (2 x 128 B, s16 LE): the WHOLE K-residue term of the
+    # banded backface, baked per record (2026-08-26 second cut — the
+    # unpacked per-axis K planes lasted a day): BKT = -32*(cdy*kx - cdx*ky)
+    # with (cdx,cdy) the record's CANONICAL primitive dir (cdy > 0).
+    # bf_band folds it with ONE s16 add — subtract instead when the seg's
+    # DIR sign plane says dy' < 0 (the twin runs the negated dir).
+    # DBOUND (1 x 128 B, u8): per-DIR exactness bound sum + sum>>1 + 1
+    # (sum = |dx'|+|dy'| <= 63) — one indexed load replaces bfx_bound's
+    # arithmetic, and the node point-on-side band gate reads the same
+    # plane. All appended at the blob end; loaders place per build
+    # (layout.inc ROM_BKTLO/HI_C, ROM_DBOUND_C).
+    off_bktlo = off_obj + 0x200             # PAST the 512-byte obj hole:
+    off_bkthi = off_bktlo + 128             # the loaders copy the hole as
+    off_dbound = off_bkthi + 128            # one piece and these planes
                                             # separately to their homes
-    assert off_obj_art + len(obj_art) <= off_lv1kx, 'obj blob overran its hole'
-    rom_main_size = off_lv1ky + 128
+    assert off_obj_art + len(obj_art) <= off_bktlo, 'obj blob overran its hole'
+    rom_main_size = off_dbound + 128
 
     rom_main = bytearray(rom_main_size)
 
@@ -561,8 +566,22 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"node {i} dx/dy out of s16 range"
         assert raw_dx or raw_dy, \
             f"node {i} degenerate (dx==dy==0) — type bake can't represent it"
-        _npg(0, i, raw_nx); _npg(1, i, raw_nx >> 8)
-        _npg(2, i, raw_ny); _npg(3, i, raw_ny >> 8)
+        # AXIS origins bake DOUBLED (2026-08-26, the exact-descent land):
+        # the engine compares 2*nx against the staged tie-broken raw
+        # (raw<<1 | frac>0), so 'px_true > nx' — ties included — costs
+        # the ORIGINAL two-byte compare. General nodes keep plain nx/ny
+        # (the delta arm subtracts them). Mirrors: colmap.find_ss.
+        _ax_dbl = 2 if (raw_dx == 0 or raw_dy == 0) else 1
+        if raw_dx == 0:
+            _nx_b, _ny_b = 2 * raw_nx, raw_ny        # form 0 reads NX only
+        elif raw_dy == 0:
+            _nx_b, _ny_b = raw_nx, 2 * raw_ny        # form 1 reads NY only
+        else:
+            _nx_b, _ny_b = raw_nx, raw_ny
+        assert -32768 <= _nx_b <= 32767 and -32768 <= _ny_b <= 32767, \
+            f"node {i}: doubled axis origin overflows s16"
+        _npg(0, i, _nx_b); _npg(1, i, _nx_b >> 8)
+        _npg(2, i, _ny_b); _npg(3, i, _ny_b >> 8)
         _npg(4, i, raw_dx)                   # general nodes: over-written by
         _npg(5, i, 0)                        # the DIR bake below (dir id /
         # sign byte); raw dy has no reader on either side -> its pages
@@ -763,7 +782,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             _kx = _relx - prescale * lv1[0]
             _ky = _rely - prescale * lv1[1]
             assert -8 <= _kx <= 7 and -8 <= _ky <= 7, (_kx, _ky)
-            key = (lv1[0] & 0xFFFF, lv1[1] & 0xFFFF, _kx, _ky)
+            _cdx, _cdy = (pdx, pdy) if pdy > 0 else (-pdx, -pdy)
+            # canonical dir joins the key: records also bake the K term
+            # against (cdx,cdy), so two different LINES through the same
+            # rounded point must not share a record
+            key = (lv1[0] & 0xFFFF, lv1[1] & 0xFFFF, _kx, _ky, _cdx, _cdy)
             if key not in _lv1_ids:
                 _lv1_ids[key] = len(_lv1_ids)
             rid = _lv1_ids[key]
@@ -837,14 +860,16 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     for _key, (rid, bfh_v, bch_v) in _bpal_ids.items():
         rom_main[off_bpal + 0x00 + rid] = bfh_v
         rom_main[off_bpal + 0x80 + rid] = bch_v
-    for (lx, ly, _kx, _ky), rid in _lv1_ids.items():
+    for (lx, ly, _kx, _ky, _cdx, _cdy), rid in _lv1_ids.items():
         rom_main[off_lv1 + 0x000 + rid] = lx & 0xFF
         rom_main[off_lv1 + 0x080 + rid] = (lx >> 8) & 0xFF
         rom_main[off_lv1 + 0x100 + rid] = ly & 0xFF
         rom_main[off_lv1 + 0x180 + rid] = (ly >> 8) & 0xFF
         assert -4 <= _kx <= 4 and -4 <= _ky <= 4, (_kx, _ky)
-        rom_main[off_lv1kx + rid] = (0x80 if _kx < 0 else 0) | (abs(_kx) << 4)
-        rom_main[off_lv1ky + rid] = (0x80 if _ky < 0 else 0) | (abs(_ky) << 4)
+        _bkt = -32 * (_cdy * _kx - _cdx * _ky)
+        assert -32768 <= _bkt <= 32767
+        rom_main[off_bktlo + rid] = _bkt & 0xFF
+        rom_main[off_bkthi + rid] = (_bkt >> 8) & 0xFF
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 
@@ -965,6 +990,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     spans_offset = vcache_size + vcache_valid + vwh_cache_size + vwh_valid
     ram_size = spans_offset + SPAN_TOTAL
 
+    # DBOUND: per-dir exactness bound, one pass over the FINAL dir table
+    # (seg dirs + node general dirs share it)
+    for (_pdx, _pdy), _did in _dirs.items():
+        _sum = abs(_pdx) + abs(_pdy)
+        rom_main[off_dbound + _did] = _sum + (_sum >> 1) + 1
     layout = {
         'n_verts': n_verts, 'n_nodes': n_nodes, 'n_ss': n_ss,
         'n_segs': n_segs, 'n_vwh': n_vwh,
@@ -978,7 +1008,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,
         'off_obj_art': off_obj_art, 'n_obj_art': n_obj_art,
         'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
-        'off_lv1kx': off_lv1kx, 'off_lv1ky': off_lv1ky,
+        'off_bktlo': off_bktlo, 'off_bkthi': off_bkthi,
+        'off_dbound': off_dbound,
+        'lv1_krec': {rid: (k[2], k[3], k[4], k[5])
+                     for k, rid in _lv1_ids.items()},   # python mirrors only
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
         'rom_recip_size': rom_recip_size,

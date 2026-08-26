@@ -36,6 +36,7 @@ DV_HUD_FONT = DRV_VARS+13               \ MOS font base found by hud_find (TWO b
 DV_FIELDS = DRV_VARS+15                 \ PAL fields consumed by the last frame, for the debug HUD (F=). Written by walk_drv's mv_frame from the field-clock search result -- the same count it hands pm_frame, so the readout is the number the movement actually used, not a second estimate of it. The tube build carries the equivalent in its HUD packet.
 DRV_GLUE = &1BA0                        \ anim/HUD glue pocket
 DRV_CLR = &1C00                         \ input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
+PM_FXW = &096B                          \ world-fraction bytes of the CANDIDATE/committed position, x at +0 / y at +2 (4-byte block $096B-$096E, freed by the u8 BSP child staging retirement). Staged by pmf_cand = (candidate 8.8-prescaled byte0) << 3; consumed by the EXACT node point-on-side (axis ties + node_band) and nowhere else. Harnesses that poke the $90-$93 raws directly MUST poke these too (zero for integer positions).
 D_ENABLE = &19FE                        \ forward-coherence bbox cache master switch
 D_FWD = &19FF                           \ per-frame flag: move was forward-only
 VXC_STATE = &0700                       \ THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)

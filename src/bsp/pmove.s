@@ -1415,6 +1415,11 @@ pc_neg:
    ADC #$FF
 pc_hi:
    STA pm_nx+2,Y
+   LDA pm_nx,Y                          ; world frac = (8.8-prescaled
+   ASL A                                ; byte0 & $1F) << 3 — the mask is
+   ASL A                                ; the shift's own overflow. THE
+   ASL A                                ; EXACT-DESCENT feed (node_band +
+   STA PM_FXW,X                         ; axis ties read it)
    LDA pm_nx,Y                          ; raw = candidate >> 5
    STA $90,X
    LDA pm_nx+1,Y
@@ -1438,6 +1443,28 @@ pc_sh:
    INY
    CPY #6
    BCC pc_ax
+; tie-broken doubled raws for the EXACT axis point-on-side:
+; px2 = (raw << 1) | (world frac > 0), vs the baked 2*nx planes
+   LDA $90
+   ASL A
+   STA zp_br_px2_l
+   LDA $91
+   ROL A
+   STA zp_br_px2_h
+   LDA PM_FXW
+   BEQ pc_fy
+   INC zp_br_px2_l                      ; bit 0 is clear after the ASL
+pc_fy:
+   LDA $92
+   ASL A
+   STA zp_br_py2_l
+   LDA $93
+   ROL A
+   STA zp_br_py2_h
+   LDA PM_FXW+2
+   BEQ pc_done
+   INC zp_br_py2_l
+pc_done:
    RTS
 .endscope
 

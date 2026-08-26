@@ -399,6 +399,13 @@ bca_boxp = $86                    ; [ang]; ROM box pointer: caller points this a
 ; $89-$8C TAKEN 2026-08-09: zp_cr_* EV16 crossing scratch (see the
 ; block above the div slots) — were pa_sy / pa_oct / bca_hi frees.
 bca_pxs = $8D                     ; [ang]; px sign-extended (s16) ; w=2
+zp_br_px2_l  = $1C               ; [bsp]; tie-broken doubled raw x:
+zp_br_px2_h  = $1D               ;   (raw<<1) | (world frac > 0) — the
+zp_br_py2_l  = $7F               ;   EXACT axis point-on-side compares
+zp_br_py2_h  = $BA               ;   this against the baked 2*nx/2*ny
+                                 ;   ($F8/$F9 were the free-list's THIRD
+                                 ;   rot: VX2+9/+10 live there — ysb
+                                 ;   writes them every mover back pair)
 zp_br_pxraw_l = $90              ; [bsp]; s16 player x relative to map_center (raw)
 zp_br_pxraw_h = $91              ; [bsp]
 zp_br_pyraw_l = $92              ; [bsp]

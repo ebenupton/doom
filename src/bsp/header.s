@@ -274,6 +274,39 @@ NF_LLEAF = $40                          ; left child is a subsector
    STA zp_br_t5
    RTS
 
+; ============================================================================
+; bb_apply — fold the u16 product (zp_prod_l/h) into the s24 T
+; accumulator (zp_br_t2/t3/t4): add, or subtract when zp_br_t5 b7 set.
+; Shared by bf_band (backface refine) and node_band (node refine).
+; ============================================================================
+.scope
+::bb_apply:
+   BIT zp_br_t5
+   BMI bb_sub
+   LDA zp_br_t2
+   CLC
+   ADC zp_prod_l
+   STA zp_br_t2
+   LDA zp_br_t3
+   ADC zp_prod_h
+   STA zp_br_t3
+   BCC bb_ap_done
+   INC zp_br_t4
+bb_ap_done:
+   RTS
+bb_sub:
+   LDA zp_br_t2
+   SEC
+   SBC zp_prod_l
+   STA zp_br_t2
+   LDA zp_br_t3
+   SBC zp_prod_h
+   STA zp_br_t3
+   BCS bb_ap_done
+   DEC zp_br_t4
+   RTS
+.endscope
+
 .macro RNS_SELECT
    TAX
    LDA rns_vec_l-1,X
@@ -295,9 +328,18 @@ NF_LLEAF = $40                          ; left child is a subsector
 ; (UMUL8_INLINE reverted 2026-07-19 evening: the space-recovery pass
 ; bought back its 212 bytes for +154 cycles/frame — 0.73 c/B, under
 ; the 1 c/B recovery price. The JSR/RTS pairs returned.)
-.macro CROSS_MAG_DECIDE front, back, tie
-.local cm_dx_pos, cm_dy_pos, cm_p1_done, cm_p2_done, cm_p1_hi, cm_p2_hi
-.local cm_dec, cm_neg, cm_back
+; ============================================================================
+; cross_products_banded — the general point-on-side body, ONE copy for
+; both NODE_SETUP_DISPATCH expansions (walk + pm_find_ss). Computes the
+; |P1|/|P2| u24 products from the staged deltas and chains into the
+; EXACT tiered/banded verdict (cross_side_banded, walk.s).
+;   in : X = shared product sign (b7), zp_br_dx/dy = SIGNED deltas
+;        (either may be zero — a zero product ties into the band
+;        refine), zp_bf_dir, zp_node_ch_l, PM_FXW/+2.
+;   out: C=1 -> side0, C=0 -> side1. Clobbers A, X, deltas, t0-t5, mul.
+; ============================================================================
+.scope
+::cross_products_banded:
    STX zp_br_sign                          ; X dies at umul8
 ; (t4/t5 zeroing lives in the senior-clear skips — each hi slot is
 ;  written on EVERY path: by its out-of-line hi tier, or by the skip's
@@ -350,50 +392,27 @@ cm_p1_done:
    BNE cm_p2_hi                            ; senior partial (out of line)
    STA zp_br_t5                            ; A = 0: 1-mul product, hi = 0
 cm_p2_done:
-; --- ONE u24 compare, early-out (products usually decide at the mid
-; byte). Equality (dot == 0) exits first -- to `back`, or to the caller's
-; `tie` refinement when it has one; after
-; that C is the STRICT order and one sign load decodes the verdict:
-;   C=1 (|P1| > |P2|): front iff sign positive
-;   C=0 (|P1| < |P2|): front iff sign negative
-   LDA zp_br_t4
-   CMP zp_br_t5
-   BNE cm_dec
-   LDA zp_br_t3
-   CMP zp_br_t1
-   BNE cm_dec
-   LDA zp_br_t2
-   CMP zp_br_t0
-.ifblank tie
-   BEQ cm_back                             ; equal -> dot == 0 -> back
-.else
-; Equal magnitudes = dot == 0 on the TRUNCATED viewpoint. Sending that to
-; `back` rejects the seg AND its twin (whose dot is the exact negation),
-; so the portal vanishes and everything behind it shows through the hole.
-; A caller that can refine the verdict from the 8.8 fraction passes a tie
-; label; the hot path is unchanged either way -- this branch was already
-; taken on the tie.
-   BEQ tie
-.endif
-cm_dec:
-   LDA zp_br_sign                          ; (touches neither C nor N-verdict)
-   BMI cm_neg
-   BCC cm_back                             ; positive: |P1| < |P2| -> back
-   JMP front                               ; (hot fall-through: pos front)
-cm_neg:
-   BCS cm_back                             ; negative: |P1| > |P2| -> back
-   JMP front
-cm_back:
-   JMP back
-; --- out-of-line senior partials: SHARED subroutines since 2026-08-25
-; (four inline copies — node macro + backface — deduped; the tier is
-; the uncommon big-delta one, so the JSR/RTS is cheap) ---
+   JMP cross_side_banded                   ; tail: C is the verdict
+; --- out-of-line senior partials: SHARED subroutines ---
 cm_p1_hi:
    JSR cross_p1_hi
    JMP cm_p1_done
 cm_p2_hi:
    JSR cross_p2_hi
    JMP cm_p2_done
+.endscope
+
+.macro CROSS_MAG_DECIDE front, back
+.local cm_front
+; ONE shared body (2026-08-26, funded the exact-descent band): products
+; + tiered banded verdict live in ::cross_products_banded (walk.s side
+; owns cross_side_banded; the products moved beside it). C returns the
+; side.
+   JSR cross_products_banded
+   BCS cm_front                            ; C=1: D_true > 0 -> side0
+   JMP back
+cm_front:
+   JMP front
 .endmacro
 
 SEG_CODE

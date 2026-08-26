@@ -119,10 +119,11 @@ class BspRender6502:
             mem[_ob + (i - off_obj)] = rom_main[i]   # (the K planes follow in
                                                      # the blob and go to their
                                                      # own homes below)
-        # LV1 K planes (unpacked residues) — per-build homes, from the
-        # blob tail (see layout.inc ROM_LV1KX_C)
-        for _nm, _off in (('ROM_LV1KX_C', layout['off_lv1kx']),
-                          ('ROM_LV1KY_C', layout['off_lv1ky'])):
+        # LV1 BKT planes + per-dir DBOUND — per-build homes, from the
+        # blob tail (see layout.inc ROM_BKTLO/HI_C, ROM_DBOUND_C)
+        for _nm, _off in (('ROM_BKTLO_C', layout['off_bktlo']),
+                          ('ROM_BKTHI_C', layout['off_bkthi']),
+                          ('ROM_DBOUND_C', layout['off_dbound'])):
             _d = _sym2(_nm)
             for i in range(128):
                 mem[_d + i] = rom_main[_off + i]
@@ -180,12 +181,27 @@ class BspRender6502:
              // (self.prescale * ASPECT_DEN)
         mem[ZP_VZ] = vz & 0xFF
 
-        raw_px = int(player_x) - self.map_center_x
-        raw_py = int(player_y) - self.map_center_y
+        # raws mirror pmf_cand EXACTLY (2026-08-26): position quantized
+        # to 8.8 prescaled, raw = FLOOR (the old int() truncation and
+        # trace_compare's round() were unfaithful at fractional poses),
+        # plus the world-frac bytes and the tie-broken doubled pairs the
+        # exact node point-on-side consumes.
+        _px88 = int((player_x - self.map_center_x) * 256 / self.prescale)
+        _py88 = int((player_y - self.map_center_y) * 256 / self.prescale)
+        raw_px, raw_py = _px88 >> 5, _py88 >> 5
+        _fx, _fy = (_px88 << 3) & 0xFF, (_py88 << 3) & 0xFF
         mem[ZP_PXRAW_LO]     = raw_px & 0xFF
         mem[ZP_PXRAW_LO + 1] = (raw_px >> 8) & 0xFF
         mem[ZP_PYRAW_LO]     = raw_py & 0xFF
         mem[ZP_PYRAW_LO + 1] = (raw_py >> 8) & 0xFF
+        from symmap import sym as _sy
+        mem[_sy('PM_FXW')], mem[_sy('PM_FXW') + 2] = _fx, _fy
+        _px2 = (raw_px << 1) | (1 if _fx else 0)
+        _py2 = (raw_py << 1) | (1 if _fy else 0)
+        mem[_sy('zp_br_px2_l')] = _px2 & 0xFF
+        mem[_sy('zp_br_px2_h')] = (_px2 >> 8) & 0xFF
+        mem[_sy('zp_br_py2_l')] = _py2 & 0xFF
+        mem[_sy('zp_br_py2_h')] = (_py2 >> 8) & 0xFF
 
         s_mag, s_neg, s_one, c_mag, c_neg, c_one = fp.fp_sincos5(angle_byte)
         mem[ZP_SMAG] = s_mag

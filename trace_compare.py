@@ -70,8 +70,9 @@ def setup_wad(sc):
     for i in range(off_obj, off_obj + 0x200):       # the 512-byte hole ONLY
         mem[_ob + (i - off_obj)] = rom_main[i]      # (the K planes follow in
                                                     # the blob; own homes)
-    for _nm, _off in (('ROM_LV1KX_C', layout['off_lv1kx']),
-                      ('ROM_LV1KY_C', layout['off_lv1ky'])):
+    for _nm, _off in (('ROM_BKTLO_C', layout['off_bktlo']),
+                      ('ROM_BKTHI_C', layout['off_bkthi']),
+                      ('ROM_DBOUND_C', layout['off_dbound'])):
         _dst = _sym2(_nm)
         for i in range(128):
             mem[_dst + i] = rom_main[_off + i]
@@ -104,12 +105,21 @@ def setup_view_zp(sc, px, py, ab):
     fz = dw.player_floor(px, py)
     vz = dw._prescale_height(fz + 41)
     mem[4] = vz & 0xFF
-    raw_px = int(round(px - dw.MAP_CENTER_X))   # fractional poses: the raw
-    raw_py = int(round(py - dw.MAP_CENTER_Y))   # ints feed the corner pipeline
+    raw_px = px_88 >> 5                         # FLOOR, mirroring pmf_cand
+    raw_py = py_88 >> 5                         # (round() was unfaithful at
+    fxw = (px_88 << 3) & 0xFF                   # fractional poses)
+    fyw = (py_88 << 3) & 0xFF
     mem[0x90] = raw_px & 0xFF
     mem[0x91] = (raw_px >> 8) & 0xFF
     mem[0x92] = raw_py & 0xFF
     mem[0x93] = (raw_py >> 8) & 0xFF
+    mem[_sym('PM_FXW')], mem[_sym('PM_FXW') + 2] = fxw, fyw
+    _px2 = (raw_px << 1) | (1 if fxw else 0)
+    _py2 = (raw_py << 1) | (1 if fyw else 0)
+    mem[_sym('zp_br_px2_l')] = _px2 & 0xFF
+    mem[_sym('zp_br_px2_h')] = (_px2 >> 8) & 0xFF
+    mem[_sym('zp_br_py2_l')] = _py2 & 0xFF
+    mem[_sym('zp_br_py2_h')] = (_py2 >> 8) & 0xFF
     from symmap import sym as _s
     mem[_s('bca_ab')] = ab & 0xFF  # bca_ab: angle-space bbox view angle (u8)
     sc_t = fp.fp_sincos5(ab)            # zp staging is COUNT-NATIVE mag5

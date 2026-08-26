@@ -350,26 +350,17 @@ bfx_lo_neg:
    ADC #1
    STA zp_br_t0
    JMP bfx_bandn
-; bfx_bound — A = this dir's exactness bound = 1.5*(|dx'|+|dy'|) + 1.
-; Certificate: |dot_true/256 - dot_int| < |dy'|*ex + |dx'|*ey
+; Band gates: bound = ROM_DBOUND_C[dir] = 1.5*(|dx'|+|dy'|) + 1, BAKED
+; (2026-08-26 grind — bfx_bound's runtime arithmetic died). Certificate:
+; |dot_true/256 - dot_int| < |dy'|*ex + |dx'|*ey
 ; + 32*4*(|dy'|+|dx'|)/256 < sum*(1 + 1/2), with ex,ey < 1 the dropped
 ; viewpoint fractions and |k| <= 4 the LV1 residues. Any |d| >= bound
 ; is therefore EXACT by sign — the fixed |d| < 128 band over-refined
-; ~3x (2026-08-26 clawback; sums are pack-asserted <= 63 so the bound
-; is <= 95 and the add cannot carry).
-bfx_bound:
-   LDX zp_bf_dir
-   LDA ROM_DIRS_C,X                        ; |dx'|
-   CLC
-   ADC ROM_DIRS_C + LAY_MAX_DIRS,X         ; + |dy'|
-   STA zp_br_t2
-   LSR A
-   SEC
-   ADC zp_br_t2                            ; sum + sum>>1 + 1
-   RTS
+; ~3x (sums are pack-asserted <= 63 so the bound is <= 95).
 bfx_bandp:
 ; shared band entry, d > 0: t0 holds |dot_int| (stored by the site)
-   JSR bfx_bound
+   LDX zp_bf_dir
+   LDA ROM_DBOUND_C,X
    CMP zp_br_t0
    BCC bfx_of2                             ; bound < |d| <= exact by sign
    BEQ bfx_of2                             ; (BEQ covers bound == |d|)
@@ -380,7 +371,8 @@ bfx_of2:
    JMP bfx_out_front                       ; d > 0 = |P1| > |P2|
 bfx_bandn:
 ; shared band entry, d < 0: dot's sign flips P1's
-   JSR bfx_bound
+   LDX zp_bf_dir
+   LDA ROM_DBOUND_C,X
    CMP zp_br_t0
    BCC bfx_ob2
    BEQ bfx_ob2
@@ -468,8 +460,8 @@ bfx_p2_hi:
 ;
 ;   In: zp_br_t0 = |dot_int| (u8), zp_br_t1 b7 = sign(dot_int),
 ;       zp_bf_dir = DIR index, zp_bf_lv1 = LV1 record id.
-;   T (s24, t2/t3/t4) = 256*dot_int + (dy'*fx - dx'*fy)
-;                                   - 32*(dy'*kx - dx'*ky)
+;   T (s24, t2/t3/t4) = 256*dot_int + (dy'*fx - dx'*fy) +/- BKT[rec]
+;   (BKT = -32*(cdy*kx - cdx*ky) baked canonical; - for the neg twin)
 ;   = 256 * the FULL-PRECISION dot against the true (world-vertex)
 ;   reference point: fx/fy are the viewpoint's 8.8 fractions, (kx,ky)
 ;   the reference point's sub-prescale residues (the packed K plane,
@@ -483,6 +475,10 @@ bf_band:
    STA zp_br_t2                            ; T = dot_int << 8 (signed)
    TAX                                     ; X = 0 (the positive hi byte)
    LDA zp_br_t0
+   BEQ bb_ipos                             ; dot_int == 0 (mid_eq lo-equal
+                                           ; arrives here with EITHER staged
+                                           ; sign): hi ext MUST be 0 — the
+                                           ; negate path would write $FF
    BIT zp_br_t1
    BPL bb_ipos
    EOR #$FF                                ; negative: mid = -|dot|, hi = $FF
@@ -512,44 +508,55 @@ bb_ipos:
    STX zp_mul_b
    JSR umul8
    JSR bb_apply
-; terms 3/4: the K residues, UNPACKED planes (2026-08-26, Eben's call —
-; data over the nibble dance): byte = sign<<7 | (|k|<<4), so ONE ASL
-; yields C = sign and A = |k|<<5, the pre-shifted multiplier operand.
-; term 3: - 32*dy'*kx (subtract iff dy'*kx > 0);
-; term 4: + 32*dx'*ky (subtract iff dx'*ky < 0)
-   LDX zp_bf_lv1
-   LDA ROM_LV1KX_C,X
-   ASL A                                   ; C = sign(kx), A = |kx|<<5
-   BEQ bb_t4                               ; kx == 0
-   STA zp_mul_b
-   LDA #0
-   ROR A                                   ; b7 = sign(kx) (C survives BEQ)
-   STA zp_br_t1
+; terms 3/4 FUSED (2026-08-26 grind): the whole K-residue term ships
+; BAKED per record as BKT = -32*(cdy*kx - cdx*ky) against the record's
+; CANONICAL dir (cdy > 0) — one s16 fold replaces two unpack+multiply
+; blocks. This seg's dir is either the canonical one or its negation:
+; the DIR sign plane's b7 (sgn dy') says which, and the negated twin
+; SUBTRACTS the baked term.
    LDX zp_bf_dir
    LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; b7 = sgn dy'
-   EOR zp_br_t1                            ; b7 = sgn(dy'*kx)
-   EOR #$80                                ; subtract iff dy'*kx > 0
-   STA zp_br_t5
-   LDA ROM_DIRS_C + LAY_MAX_DIRS,X         ; |dy'|
-   JSR umul8
-   JSR bb_apply
-bb_t4:
+   BMI bb_ksub
    LDX zp_bf_lv1
-   LDA ROM_LV1KY_C,X
-   ASL A                                   ; C = sign(ky), A = |ky|<<5
-   BEQ bb_verdict                          ; ky == 0
-   STA zp_mul_b
-   LDA #0
-   ROR A                                   ; b7 = sign(ky)
-   STA zp_br_t1
-   LDX zp_bf_dir
-   LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X
-   ASL A                                   ; b7 = sgn dx'
-   EOR zp_br_t1                            ; b7 = sgn(dx'*ky)
-   STA zp_br_t5                            ; subtract iff dx'*ky < 0
-   LDA ROM_DIRS_C,X                        ; |dx'|
-   JSR umul8
-   JSR bb_apply
+   LDY ROM_BKTHI_C,X                       ; Y = hi (sign for the s24 ext)
+   LDA zp_br_t2
+   CLC
+   ADC ROM_BKTLO_C,X
+   STA zp_br_t2
+   LDA zp_br_t3
+   ADC ROM_BKTHI_C,X
+   STA zp_br_t3
+   TYA                                     ; N = sgn(BKT), C preserved
+   BMI bb_ka_neg
+   LDA zp_br_t4                            ; s24 += positive s16: ext 0
+   ADC #0
+   STA zp_br_t4
+   JMP bb_verdict
+bb_ka_neg:
+   LDA zp_br_t4                            ; s24 += negative s16: ext $FF
+   ADC #$FF
+   STA zp_br_t4
+   JMP bb_verdict
+bb_ksub:
+   LDX zp_bf_lv1
+   LDY ROM_BKTHI_C,X
+   LDA zp_br_t2
+   SEC
+   SBC ROM_BKTLO_C,X
+   STA zp_br_t2
+   LDA zp_br_t3
+   SBC ROM_BKTHI_C,X
+   STA zp_br_t3
+   TYA
+   BMI bb_ks_neg
+   LDA zp_br_t4                            ; s24 -= positive s16: ext 0
+   SBC #0
+   STA zp_br_t4
+   JMP bb_verdict
+bb_ks_neg:
+   LDA zp_br_t4                            ; s24 -= negative s16: ext $FF
+   SBC #$FF
+   STA zp_br_t4
 bb_verdict:
    LDA zp_br_t4
    BMI bb_back                             ; T < 0 -> back
@@ -565,32 +572,8 @@ bb_zero:
    LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X
    BMI bb_back
    JMP bf_seg_front
-; bb_apply — fold (zp_prod_l/h) into T: add, or subtract when t5 b7 set
-bb_apply:
-   BIT zp_br_t5
-   BMI bb_sub
-   LDA zp_br_t2
-   CLC
-   ADC zp_prod_l
-   STA zp_br_t2
-   LDA zp_br_t3
-   ADC zp_prod_h
-   STA zp_br_t3
-   BCC bb_ap_done
-   INC zp_br_t4
-bb_ap_done:
-   RTS
-bb_sub:
-   LDA zp_br_t2
-   SEC
-   SBC zp_prod_l
-   STA zp_br_t2
-   LDA zp_br_t3
-   SBC zp_prod_h
-   STA zp_br_t3
-   BCS bb_ap_done
-   DEC zp_br_t4
-   RTS
+; (bb_apply moved to header.s as ::bb_apply 2026-08-26 — node_band
+;  shares it for the exact node refine's fraction terms)
 .endscope
 ; (24-byte layout-keeper pad stripped 2026-07-26 in the all-pads
 ; sweep: free space consolidates at the CODE segment end; page-cross

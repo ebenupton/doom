@@ -67,6 +67,7 @@ ABI = [
     ('DV_FIELDS',      'DRV_VARS+15', None, 'PAL fields consumed by the last frame, for the debug HUD (F=). Written by walk_drv\'s mv_frame from the field-clock search result -- the same count it hands pm_frame, so the readout is the number the movement actually used, not a second estimate of it. The tube build carries the equivalent in its HUD packet.'),
     ('DRV_GLUE',       0x1BA0, None, 'anim/HUD glue pocket'),
     ('DRV_CLR',        0x1C00, None, 'input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)'),
+    ('PM_FXW',         0x096B, None, 'world-fraction bytes of the CANDIDATE/committed position, x at +0 / y at +2 (4-byte block $096B-$096E, freed by the u8 BSP child staging retirement). Staged by pmf_cand = (candidate 8.8-prescaled byte0) << 3; consumed by the EXACT node point-on-side (axis ties + node_band) and nowhere else. Harnesses that poke the $90-$93 raws directly MUST poke these too (zero for integer positions).'),
     ('D_ENABLE',       0x19FE, None, 'forward-coherence bbox cache master switch'),
     ('D_FWD',          0x19FF, None, 'per-frame flag: move was forward-only'),
     ('VXC_STATE',      0x0700, None, 'THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
