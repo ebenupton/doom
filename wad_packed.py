@@ -462,18 +462,18 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4
-    off_lv1k = off_obj + 0x180              # LV1 K plane (128 B): the
-                                            # reference points' sub-prescale
-                                            # residues, nibble-packed
-                                            # (kx+8)<<4 | (ky+8) — the exact
-                                            # banded backface reads it.
-                                            # PINNED at off_obj+$180 so the
-                                            # layout.inc equates cannot
-                                            # drift with the art length;
-                                            # fills the 512-byte obj hole
-                                            # exactly.
-    assert off_obj_art + len(obj_art) <= off_lv1k, 'obj table reached the K plane'
-    rom_main_size = off_lv1k + 128
+    # LV1 K planes (2 x 128 B): the reference points' sub-prescale
+    # residues, UNPACKED (Eben, 2026-08-26 — data is cheaper than the
+    # nibble dance): one byte per axis, sign<<7 | (|k|<<4), so bf_band
+    # unpacks with a single ASL (C = sign, A = |k|<<5 = the pre-shifted
+    # multiplier operand). Appended at the blob end; the loaders place
+    # them per build (layout.inc ROM_LV1KX_C/KY_C).
+    off_lv1kx = off_obj + 0x200             # PAST the 512-byte obj hole:
+    off_lv1ky = off_lv1kx + 128             # the loaders copy the hole as
+                                            # one piece and the K planes
+                                            # separately to their homes
+    assert off_obj_art + len(obj_art) <= off_lv1kx, 'obj blob overran its hole'
+    rom_main_size = off_lv1ky + 128
 
     rom_main = bytearray(rom_main_size)
 
@@ -730,6 +730,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             # L byte); primitives via the DIR tables.
             did = _dirs.setdefault((pdx, pdy), len(_dirs))
             assert did + 4 <= 255 and len(_dirs) <= MAX_DIRS
+            # the exact-backface band bound (bfx_bound) computes
+            # 1.5*sum + 1 in u8 with a carry-free add — and the |d|<128
+            # tier tests assume the bound stays under 128
+            assert abs(pdx) + abs(pdy) <= 63, \
+                f'primitive sum {abs(pdx)+abs(pdy)} breaks the band bound'
             form = did + 4
             rom_main[off_dirs + did] = abs(pdx)
             rom_main[off_dirs + MAX_DIRS + did] = abs(pdy)
@@ -837,7 +842,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         rom_main[off_lv1 + 0x080 + rid] = (lx >> 8) & 0xFF
         rom_main[off_lv1 + 0x100 + rid] = ly & 0xFF
         rom_main[off_lv1 + 0x180 + rid] = (ly >> 8) & 0xFF
-        rom_main[off_lv1k + rid] = (((_kx + 8) & 15) << 4) | ((_ky + 8) & 15)
+        assert -4 <= _kx <= 4 and -4 <= _ky <= 4, (_kx, _ky)
+        rom_main[off_lv1kx + rid] = (0x80 if _kx < 0 else 0) | (abs(_kx) << 4)
+        rom_main[off_lv1ky + rid] = (0x80 if _ky < 0 else 0) | (abs(_ky) << 4)
 
     # ── ROM Recip: sin/cos + reciprocal tables ────────────────────────────
 
@@ -971,7 +978,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,
         'off_obj_art': off_obj_art, 'n_obj_art': n_obj_art,
         'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
-        'off_lv1k': off_lv1k,
+        'off_lv1kx': off_lv1kx, 'off_lv1ky': off_lv1ky,
         'rom_main_size': rom_main_size,
         'rom_detail_size': len(rom_detail),
         'rom_recip_size': rom_recip_size,

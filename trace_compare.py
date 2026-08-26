@@ -67,8 +67,14 @@ def setup_wad(sc):
         mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
     from symmap import sym as _sym2                 # object table: own home
     _ob = _sym2('ROM_OBJ_C')
-    for i in range(off_obj, len(rom_main)):
-        mem[_ob + (i - off_obj)] = rom_main[i]
+    for i in range(off_obj, off_obj + 0x200):       # the 512-byte hole ONLY
+        mem[_ob + (i - off_obj)] = rom_main[i]      # (the K planes follow in
+                                                    # the blob; own homes)
+    for _nm, _off in (('ROM_LV1KX_C', layout['off_lv1kx']),
+                      ('ROM_LV1KY_C', layout['off_lv1ky'])):
+        _dst = _sym2(_nm)
+        for i in range(128):
+            mem[_dst + i] = rom_main[_off + i]
     for i, b in enumerate(dw.packed_bbox_table):
         mem[ROM_BBOX_BASE + i] = b
     # vertex-span descriptor planes (flat homes; mirror of _load_wad)

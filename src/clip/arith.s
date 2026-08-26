@@ -737,10 +737,12 @@ skip_p3_p4:
 m_r_nc:
 .scope
 
-   ZERO z:LC_QUOT_LO, z:LC_QUOT_HI
-
-
 ; ---- Fast path: quotient fits u16 ----
+; ROL-form restoring divide (2026-08-26, same transform as udiv16_8):
+; quotient bits ride the carry into the vacated dividend bits, so
+; M_R1:M_R0 shifts out dividend and shifts in quotient — both LC_QUOT
+; ROLs leave the loop. Entry C is garbage: that bit is the one shifted
+; OUT by the exit normalize ROL, never a quotient bit.
 ; True iff top 16 bits of dividend < den. Pre-load rem = R3:R2 and
 ; run 16 iterations on the low 16 bits (skip the first 16 no-op
 ; iterations the standard loop would do). For typical s16 clipper
@@ -778,7 +780,7 @@ u8_tier:
    STA z:LC_REM_LO
    LDX #8
 u8_loop:
-   ASL z:LC_M_R0
+   ROL z:LC_M_R0                             ; quot bit in, dividend bit out
    ROL z:LC_REM_LO
    ROL z:LC_REM_HI
    LDA z:LC_REM_LO
@@ -792,9 +794,13 @@ u8_loop:
    LDA z:LC_TMP_LO
    STA z:LC_REM_LO                           ; sub taken: C=1 from the SBC
 u8_set:
-   ROL z:LC_QUOT_LO                          ; QUOT_HI stays its pre-zeroed 0
    DEX
    BNE u8_loop
+   LDA z:LC_M_R0                             ; normalize: last quot bit in C
+   ROL A
+   STA z:LC_M_R0
+   LDA #0
+   STA z:LC_M_R1                             ; quotient = 0:M_R0
    JMP udv_done
 u16_full:
    LDA LC_M_R3
@@ -803,7 +809,7 @@ u16_full:
    STA z:LC_REM_LO
    LDX #16
 u16_loop:
-   ASL z:LC_M_R0
+   ROL z:LC_M_R0                             ; quot bit in, dividend bit out
    ROL z:LC_M_R1
    ROL z:LC_REM_LO
    ROL z:LC_REM_HI
@@ -817,23 +823,26 @@ u16_loop:
                                            ; (census 2026-07-27: no-sub is
                                            ; 76.6% — C=0 rides into the ROL)
 u16_set:
-   ROL z:LC_QUOT_LO
-   ROL z:LC_QUOT_HI
    DEX
    BNE u16_loop
+u16_norm:
+   ROL z:LC_M_R0                             ; normalize: last quot bit in C
+   ROL z:LC_M_R1                             ; quotient = M_R1:M_R0
    JMP udv_done
 u16_sub:
    STA z:LC_REM_HI
    LDA z:LC_TMP_LO
-   STA z:LC_REM_LO                           ; C=1 from the SBC rides the ROLs
-   ROL z:LC_QUOT_LO                          ; (duplicated tail: a jump back
-   ROL z:LC_QUOT_HI                          ; to u16_set costs more than it
-   DEX                                     ; saves at 23% sub rate)
-   BNE u16_loop
-   JMP udv_done
+   STA z:LC_REM_LO                           ; C=1 from the SBC rides the ROL
+   DEX                                     ; (duplicated tail: a jump back
+   BNE u16_loop                            ; to u16_set costs more than it
+   BEQ u16_norm                            ; saves at 23% sub rate)
 
 no_u16_quot:
 ; ---- Slow path: u32 ÷ u16 → up to u17 quotient ----
+; (QUOT regs local to this path now; copied out to M_R1:M_R0 at exit.
+; The dividend==0 BEQ below is safe: that byte-skip arm already ZEROed
+; M_R0/M_R1.)
+   ZERO z:LC_QUOT_LO, z:LC_QUOT_HI
 ; (Rare for s16 clipper; kept for correctness.) Use byte-level skip
 ; + bit-level skip to trim no-op iterations.
    ZERO z:LC_REM_LO, z:LC_REM_HI
@@ -909,6 +918,10 @@ div_setbit:
    ROL z:LC_QUOT_HI
    DEX
    BNE div_loop
+   LDA z:LC_QUOT_LO
+   STA z:LC_M_R0
+   LDA z:LC_QUOT_HI
+   STA z:LC_M_R1
 udv_done:
 .endscope
 ; result = y0 ± quot
@@ -916,19 +929,19 @@ udv_done:
    BNE si_sub
    LDA LC_OY1_LO
    CLC
-   ADC z:LC_QUOT_LO
+   ADC z:LC_M_R0
    STA LC_RES_LO
    LDA LC_OY1_HI
-   ADC z:LC_QUOT_HI
+   ADC z:LC_M_R1
    STA LC_RES_HI
    JMP si_clamp
 si_sub:
    LDA LC_OY1_LO
    SEC
-   SBC z:LC_QUOT_LO
+   SBC z:LC_M_R0
    STA LC_RES_LO
    LDA LC_OY1_HI
-   SBC z:LC_QUOT_HI
+   SBC z:LC_M_R1
    STA LC_RES_HI
 si_clamp:
 ; (no load: ALL six inbound paths — add/sub, u8 fast pair, return_y0/

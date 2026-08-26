@@ -297,7 +297,9 @@ bfx_diff:
 ; low-byte difference when hi and mid leave the verdict within a page.
    LDA zp_br_t4
    CMP zp_br_t5
-   BNE bfx_hi_diff                         ; senior products differ (rare)
+   BEQ bfx_hi_eq                           ; senior products differ (rare;
+   JMP bfx_hi_diff                         ; the arm left branch range)
+bfx_hi_eq:
    LDA zp_br_t3
    CMP zp_br_t1
    BEQ bfx_mid_eq
@@ -348,17 +350,46 @@ bfx_lo_neg:
    ADC #1
    STA zp_br_t0
    JMP bfx_bandn
+; bfx_bound — A = this dir's exactness bound = 1.5*(|dx'|+|dy'|) + 1.
+; Certificate: |dot_true/256 - dot_int| < |dy'|*ex + |dx'|*ey
+; + 32*4*(|dy'|+|dx'|)/256 < sum*(1 + 1/2), with ex,ey < 1 the dropped
+; viewpoint fractions and |k| <= 4 the LV1 residues. Any |d| >= bound
+; is therefore EXACT by sign — the fixed |d| < 128 band over-refined
+; ~3x (2026-08-26 clawback; sums are pack-asserted <= 63 so the bound
+; is <= 95 and the add cannot carry).
+bfx_bound:
+   LDX zp_bf_dir
+   LDA ROM_DIRS_C,X                        ; |dx'|
+   CLC
+   ADC ROM_DIRS_C + LAY_MAX_DIRS,X         ; + |dy'|
+   STA zp_br_t2
+   LSR A
+   SEC
+   ADC zp_br_t2                            ; sum + sum>>1 + 1
+   RTS
 bfx_bandp:
 ; shared band entry, d > 0: t0 holds |dot_int| (stored by the site)
+   JSR bfx_bound
+   CMP zp_br_t0
+   BCC bfx_of2                             ; bound < |d| <= exact by sign
+   BEQ bfx_of2                             ; (BEQ covers bound == |d|)
    LDA zp_br_sign
    STA zp_br_t1
    JMP bf_band
+bfx_of2:
+   JMP bfx_out_front                       ; d > 0 = |P1| > |P2|
 bfx_bandn:
 ; shared band entry, d < 0: dot's sign flips P1's
+   JSR bfx_bound
+   CMP zp_br_t0
+   BCC bfx_ob2
+   BEQ bfx_ob2
    LDA zp_br_sign
    EOR #$80
    STA zp_br_t1
    JMP bf_band
+bfx_ob2:
+   JMP bfx_out_back                        ; d < 0 = |P1| < |P2|
 bfx_out_front:
 ; |dot| out of band with |P1| > |P2|: verdict = sign(P1)
    LDA zp_br_sign
@@ -481,34 +512,19 @@ bb_ipos:
    STX zp_mul_b
    JSR umul8
    JSR bb_apply
-; terms 3/4: the K residues. kx nibble hi, ky nibble lo, both +8.
+; terms 3/4: the K residues, UNPACKED planes (2026-08-26, Eben's call —
+; data over the nibble dance): byte = sign<<7 | (|k|<<4), so ONE ASL
+; yields C = sign and A = |k|<<5, the pre-shifted multiplier operand.
 ; term 3: - 32*dy'*kx (subtract iff dy'*kx > 0);
 ; term 4: + 32*dx'*ky (subtract iff dx'*ky < 0)
    LDX zp_bf_lv1
-   LDA ROM_LV1K_C,X
-   LSR A
-   LSR A
-   LSR A
-   LSR A                                   ; kx + 8
-   SEC
-   SBC #8                                  ; kx (s8, |kx| <= 4)
-   BEQ bb_t4
-   BMI bb_kxn
-   LDY #0                                  ; kx > 0 (LDY #0 sets Z: the
-   BEQ bb_kxs                              ; branch is always taken)
-bb_kxn:
-   LDY #$80                                ; b7 = (kx < 0)
-   EOR #$FF                                ; |kx|
-   CLC
-   ADC #1
-bb_kxs:
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   ASL A                                   ; |kx| << 5 (<= 128: |kx| <= 4)
+   LDA ROM_LV1KX_C,X
+   ASL A                                   ; C = sign(kx), A = |kx|<<5
+   BEQ bb_t4                               ; kx == 0
    STA zp_mul_b
-   STY zp_br_t1                            ; park kx's sign
+   LDA #0
+   ROR A                                   ; b7 = sign(kx) (C survives BEQ)
+   STA zp_br_t1
    LDX zp_bf_dir
    LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X       ; b7 = sgn dy'
    EOR zp_br_t1                            ; b7 = sgn(dy'*kx)
@@ -519,27 +535,13 @@ bb_kxs:
    JSR bb_apply
 bb_t4:
    LDX zp_bf_lv1
-   LDA ROM_LV1K_C,X
-   AND #15                                 ; ky + 8
-   SEC
-   SBC #8                                  ; ky (s8, |ky| <= 4)
-   BEQ bb_verdict
-   BMI bb_kyn
-   LDY #0                                  ; ky > 0 (Z set: always taken)
-   BEQ bb_kys
-bb_kyn:
-   LDY #$80                                ; b7 = (ky < 0)
-   EOR #$FF
-   CLC
-   ADC #1
-bb_kys:
-   ASL A
-   ASL A
-   ASL A
-   ASL A
-   ASL A                                   ; |ky| << 5
+   LDA ROM_LV1KY_C,X
+   ASL A                                   ; C = sign(ky), A = |ky|<<5
+   BEQ bb_verdict                          ; ky == 0
    STA zp_mul_b
-   STY zp_br_t1                            ; park ky's sign
+   LDA #0
+   ROR A                                   ; b7 = sign(ky)
+   STA zp_br_t1
    LDX zp_bf_dir
    LDA ROM_DIRS_C + 2*LAY_MAX_DIRS,X
    ASL A                                   ; b7 = sgn dx'

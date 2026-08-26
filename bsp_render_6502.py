@@ -58,6 +58,18 @@ def poke_init_frame_state(mem):
             mem[base + i] = 0
 
 
+def disable_objects(mem):
+    """Zero the OBJ_ANYB per-subsector bitmap: no subsector tests positive,
+    so the engine neither stamps billboards nor tightens behind them.
+    For FB-compare harnesses whose python reference does not model objects
+    (the documented OBJ_DRAW reference gap). Call AFTER any init that runs
+    obj_anyb_fill (anim_init refills the bitmap from OBJ_BITS)."""
+    from symmap import sym as _sym2
+    _anyb = _sym2('OBJ_ANYB')
+    for i in range(28):
+        mem[_anyb + i] = 0
+
+
 class BspRender6502:
     """Persistent BSP-render 6502 instance for interactive use."""
 
@@ -103,8 +115,17 @@ class BspRender6502:
         # header blob (layout.inc ROM_OBJ_C)
         from symmap import sym as _sym2
         _ob = _sym2('ROM_OBJ_C')
-        for i in range(off_obj, len(rom_main)):
-            mem[_ob + (i - off_obj)] = rom_main[i]
+        for i in range(off_obj, off_obj + 0x200):    # the 512-byte hole ONLY
+            mem[_ob + (i - off_obj)] = rom_main[i]   # (the K planes follow in
+                                                     # the blob and go to their
+                                                     # own homes below)
+        # LV1 K planes (unpacked residues) — per-build homes, from the
+        # blob tail (see layout.inc ROM_LV1KX_C)
+        for _nm, _off in (('ROM_LV1KX_C', layout['off_lv1kx']),
+                          ('ROM_LV1KY_C', layout['off_lv1ky'])):
+            _d = _sym2(_nm)
+            for i in range(128):
+                mem[_d + i] = rom_main[_off + i]
         # OBJ_ANYB: the main-RAM bitmap copy the per-subsector test reads
         # (hardware fills it from anim_init; harness renders may never run
         # that, so poke it here — the sqr_fill dual-path pattern)

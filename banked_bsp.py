@@ -96,7 +96,8 @@ def build_banked(flatr):
     # static-object (billboard) table -- bank SEG, beside the vertex planes
     # it is read alongside (layout.inc ROM_OBJ_C)
     _oo = layout['off_obj']; _od = bdst('ROM_OBJ_C')
-    la[_od:_od + len(rom_main) - _oo] = bytes(rom_main[_oo:])
+    la[_od:_od + 0x200] = bytes(rom_main[_oo:_oo + 0x200])   # the hole only
+                                                             # (K planes below)
     # EXACT recip lengths (256 + 128): a padded 1K copy here would drag
     # flat-image garbage over the VWHC key plane at $B300 -> stale serves
     la[bdst('RECIP_M8'):bdst('RECIP_M8') + 256] = bytes(fmem[_vsym('RECIP_M8'):_vsym('RECIP_M8') + 256])
@@ -169,6 +170,9 @@ def build_banked(flatr):
     for i in range(0x200):
         bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
         bm[abi.SQRH_BASE + i] = fmem[abi.SQR_BASE + 0x200 + i]
+    # LV1 K planes -> bank A $B900/$B980 (unpacked residues, 2026-08-26)
+    la[0x3900:0x3980] = bytes(rom_main[layout['off_lv1kx']:layout['off_lv1kx'] + 128])
+    la[0x3980:0x3A00] = bytes(rom_main[layout['off_lv1ky']:layout['off_lv1ky'] + 128])
     # OBJ_ANYB main-RAM bitmap copy (2026-08-25 grind): hardware fills it
     # via anim_init/obj_anyb_fill; model runs may skip init, so seed it
     _bits = layout['off_obj'] + 7 * 18       # OBJ_BITS = ROM_OBJ_C+7*N_OBJ

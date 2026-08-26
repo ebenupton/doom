@@ -127,12 +127,22 @@ OBJ_ART  = OBJ_BITS + 28                ; the templates: 25 x
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B8FF, banked frees
 ;  $A800-$A9FF in L2; the flat object table lives in that freed run)
-.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 + 4*LAY_N_OBJ_ART <= ROM_OBJ_C + $180, error, "object table reached the LV1 K plane"
-; LV1 K plane (2026-08-25, the exact banded backface): each record's
-; reference-point sub-prescale residue, nibble-packed (kx+8)<<4|(ky+8).
-; Rides the object blob at a PINNED +$180 (both builds copy rom_main's
-; off_obj..+512 as one piece flat / by symbol banked).
-ROM_LV1K_C = ROM_OBJ_C + $180
+.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 + 4*LAY_N_OBJ_ART <= ROM_OBJ_C + $200, error, "object table overruns its 512-byte hole"
+.if ::BANKED
+ROM_LV1KX_C = $B900                     ; bank A free page (SS planes left
+ROM_LV1KY_C = $B980                     ; for bank B 2026-08-19)
+.else
+ROM_LV1KX_C = $7080                     ; above CLIPF ($5800-$707F)
+ROM_LV1KY_C = $7100
+.endif
+; LV1 K planes (2026-08-26, unpacked — Eben's call: data over the
+; nibble dance): per record, per axis, sign<<7 | (|k|<<4) — bf_band's
+; whole unpack is one ASL (C = sign, A = |k|<<5, the pre-shifted
+; multiplier operand). Loaders place them from the blob tail
+; (off_lv1kx/ky): banked in bank A's free $B900 page; flat just above
+; the right-sized CLIPF region (its overgrowth is a link error BELOW
+; these, never a silent overwrite — the wall chain is planes $7080/
+; $7100, then RCACHE_STATE $7268).
 ; Per-SUBSECTOR front heights (2026-08-17): fh/ch are subsector-constant, so
 ; they ride two pages in the header blob instead of 2 bytes x every seg. Read
 ; under BANK_SEG with X = the subsector id (already live in the prologue).
