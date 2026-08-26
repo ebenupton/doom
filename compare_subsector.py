@@ -27,8 +27,10 @@ import trace_compare as tc
 from symmap import sym as _sym
 ENTRY_BR_RENDER_SUBSECTOR = _sym('render_subsector_entry')
 _E_MARK_SOLID = _sym('span_mark_solid')
-_E_TFR        = _sym('tighten_from_records')
 _E_DCL_S16    = _sym('draw_clipped_line_s16')
+# (the 'tighten' trap died with tighten_from_records — draw+tighten are
+# FUSED since a495494; both sides tighten inside the dcl walk now, so the
+# comparable events are mark_solid + draw + the span pool + the FB)
 
 
 def install_tracing(sc, trace_all):
@@ -51,8 +53,6 @@ def install_tracing(sc, trace_all):
             pc = mpu.pc
             if pc == _E_MARK_SOLID:
                 trace_all.append(('mark_solid', mem[0xC2], mem[0xC3]))
-            elif pc == _E_TFR:
-                trace_all.append(('tighten', mem[0xC2], mem[0xC3]))
             elif pc == _E_DCL_S16:
                 xl = s16(mem[0xA8] | (mem[0xB2] << 8))
                 yl = s16(mem[0xA9] | (mem[0xB3] << 8))
@@ -131,8 +131,10 @@ def run_position(px, py, ab, verbose=False):
     sc._run(tc.ENTRY_BR_VIEW_SETUP)
     sc.init()
     sc.clear_screen()
-    from bsp_render_6502 import poke_init_frame_state
+    from bsp_render_6502 import poke_init_frame_state, disable_objects
     poke_init_frame_state(sc.mpu.memory)
+    disable_objects(sc.mpu.memory)      # the python side of the differ has
+                                        # no billboards (OBJ_DRAW gap)
 
     trace_all = []
     install_tracing(sc, trace_all)

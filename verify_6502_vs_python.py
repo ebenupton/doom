@@ -69,6 +69,9 @@ def _six_mask(px, py, ab):
         _r6502 = BspRender6502(dw.packed_layout, dw.packed_rom_main,
                                dw.packed_rom_detail, dw.packed_bbox_table,
                                dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+        from bsp_render_6502 import disable_objects
+        disable_objects(_r6502.sc.mpu.memory)   # float reference has no
+                                                # billboards (OBJ_DRAW gap)
         _fb = pygame.Surface((W, H))
     cyc = _r6502.render_frame(px, py, ab, dw.player_floor(px, py))
     done = _r6502.sc.mpu.pc == 0xFF00

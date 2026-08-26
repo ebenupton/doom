@@ -60,6 +60,10 @@ def main():
     an.install_6502_tables(mem, flat=True)
     eng.sc._run(sym('anim_init'))
     assert mem[ANIM_ENABLE] == 1
+    from bsp_render_6502 import disable_objects
+    disable_objects(mem)                    # pyref has no billboards (the
+                                            # documented OBJ_DRAW gap); this
+                                            # gate compares MOVER pixels
 
     bad = 0
 

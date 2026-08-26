@@ -32,6 +32,9 @@ def main():
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
                         dw.PRESCALE)
     mem = eng.sc.mpu.memory
+    from bsp_render_6502 import disable_objects
+    disable_objects(mem)                    # pyref has no billboards (the
+                                            # documented OBJ_DRAW gap)
     D_ENABLE, D_FWD = sym('D_ENABLE'), sym('D_FWD')
     mem[D_ENABLE] = 1
 
