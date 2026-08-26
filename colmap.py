@@ -178,8 +178,23 @@ def build():
     ss_vz = bytearray(len(dw.fp_ssectors))
     ss_info = bytearray([0xFF]) * 0     # rebuilt below
     ss_info = bytearray(len(dw.fp_ssectors))
+    # Sector attribution comes from the WAD ssector chain (player_floor's
+    # own derivation) — NOT the packed seg list: a subsector whose segs
+    # were ALL stripped by packing reads (cnt=0, first=0) and would take
+    # seg 0's sector. THE HOLE at (3011.9,-3596.4) 2026-08-26: empty ss13
+    # (true sector 56, floor -24) baked seg 0's sector 13 (floor -80) —
+    # standing in that leaf dropped the eye 56 world units.
+    def _wad_ss_sector(ssi):
+        ss = dw.ssectors[ssi]
+        sg = dw.segs[ss[1]]
+        ld = dw.linedefs[sg[3]]
+        sd_idx = ld[5] if sg[4] == 0 else ld[6]
+        if sd_idx == 0xFFFF: sd_idx = ld[5]
+        return dw.sidedefs[sd_idx][5]
     for ssi, (cnt, first) in enumerate(dw.fp_ssectors):
-        sec = dw.fp_segs_vwh[first][1]
+        sec = _wad_ss_sector(ssi)
+        assert cnt == 0 or dw.fp_segs_vwh[first][1] == sec, \
+            f'ss {ssi}: packed seg sector {dw.fp_segs_vwh[first][1]} != wad {sec}'
         ss_vz[ssi] = ps(dw.sectors[sec][0] + 41) & 0xFF
         if sec in dw.ANIM_SECTORS:
             mi = movers.index(sec)
@@ -467,13 +482,16 @@ def install(mem, flat=True):
 
 
 # ── canonical python movement model (mirrors pmove.s exactly) ───────────
-def find_ss(rx, ry):
+def find_ss(rx, ry, fx=0, fy=0):
     """Subsector id for a center-relative raw point — descends the PACKED
-    node SoA with the engine's literal rules (pm_find_ss). Descending
-    dw.nodes instead is NOT equivalent: the packer's sense-normalization
-    (axis child swaps, canonical general directions) preserves every
-    strict verdict but flips which child an exact TIE lands on — the two
-    residual 2026-08-14 fuzz divergences were both on-partition points."""
+    node SoA with the engine's literal rules (pm_find_ss, EXACT since
+    2026-08-26): axis origins ship DOUBLED and compare against the
+    tie-broken (raw<<1 | frac>0); the general arm refines truncated
+    near-ties with the fraction term. fx/fy are the world-fraction
+    bytes ((prescaled-8.8 byte0 & $1F) << 3); 0 = an integer position.
+    With the fraction the verdict equals doom_wireframe.point_on_side
+    on the true position EVERYWHERE, exact ties included (the 2026-08-14
+    on-partition fuzz divergences died with the exact descent)."""
     import doom_wireframe as dw
     rom = dw.packed_rom_main
     lay = dw.packed_layout
@@ -485,14 +503,16 @@ def find_ss(rx, ry):
         v = lo | (hi << 8)
         return v - 0x10000 if v >= 0x8000 else v
 
+    px2 = (rx << 1) | (1 if fx else 0)
+    py2 = (ry << 1) | (1 if fy else 0)
     nid = lay['n_nodes'] - 1
     while True:
         t = rom[0x800 + nid]
         form = t & 3
-        if form == 0:                       # side0 iff px > nx (ties side1)
-            side = 0 if rx > s16(rom[nid], rom[0x100 + nid]) else 1
-        elif form == 1:                     # side0 iff py > ny
-            side = 0 if ry > s16(rom[0x200 + nid], rom[0x300 + nid]) else 1
+        if form == 0:                       # side0 iff px_true > nx (baked 2*nx)
+            side = 0 if px2 > s16(rom[nid], rom[0x100 + nid]) else 1
+        elif form == 1:                     # side0 iff py_true > ny (baked 2*ny)
+            side = 0 if py2 > s16(rom[0x200 + nid], rom[0x300 + nid]) else 1
         else:                               # general (form >= 2): DIR delta form
             dxv = rx - s16(rom[nid], rom[0x100 + nid])
             dyv = ry - s16(rom[0x200 + nid], rom[0x300 + nid])
@@ -502,7 +522,8 @@ def find_ss(rx, ry):
             ady = rom[dirs_off + md + di]
             ndy = -ady if (sgn & 0x80) else ady
             ndx = -adx if (sgn & 0x40) else adx
-            side = 0 if ndy * dxv - ndx * dyv > 0 else 1
+            T = 256 * (ndy * dxv - ndx * dyv) + ndy * fx - ndx * fy
+            side = 0 if T > 0 else 1
         if side == 0:
             if t & 0x80:                    # NF_RLEAF
                 return rom[0x600 + nid]
