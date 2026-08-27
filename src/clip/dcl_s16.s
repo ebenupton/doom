@@ -121,6 +121,7 @@ draw_clipped_line_s16:
    LDA zp_line_xl_l
    CMP zp_line_xr_l
    BEQ fp_x_eq
+   LDA zp_line_yr_l                        ; the drawer's A-rides contract
    JMP draw_clipped_line
 fp_x_eq:
 ; x1 == x2: vertical unless y1 == y2 (zero-length point → reject)
@@ -611,6 +612,7 @@ xo_disp:
 xo_line:
    BIT FW_MODE
    BMI xo_armed
+   LDA zp_line_yr_l                        ; the drawer's A-rides contract
    JMP draw_clipped_line
 xo_armed:
    JMP fw_walk_line

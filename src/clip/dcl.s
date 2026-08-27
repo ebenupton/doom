@@ -59,19 +59,24 @@
 ; ======================================================================
 draw_clipped_line:
 .scope
-; --- Compute dx, dy, ylo, yhi ---
-   LDA zp_line_xr_l                                                       ;# ||||       0.6
-   SEC                                                                    ;# |||        0.4
-   SBC zp_line_xl_l                                                       ;# ||||       0.6
+; --- Compute dy, dx, ylo, yhi ---
+; A = zp_line_yr_l RIDES IN (2026-08-27, the fused entries' contract
+; applied to the plain drawer): dy computes straight from the riding A,
+; killing the reload. Every non-vertical entry ends on the yr store or
+; loads it at the seam (dcl16_fastu8's line exit, xo_line); VERTICAL
+; entries may carry anything — their dy write below is scratch, because
+; dcl_vertical derives its own dy after the u8 clamp.
+   SEC
+   SBC zp_line_yl_l
+   STA zp_line_dy
+   LDA zp_line_xr_l
+   SEC
+   SBC zp_line_xl_l
 ; --- Vertical fast path: xl == xr (trampoline — dcl_vertical out of BEQ range) ---
-   BEQ dcl_to_vert                         ; verticals rare here (0.7%,   ;# |||        0.4
+   BEQ dcl_to_vert                         ; verticals rare here (0.7%,
                                            ; census 2026-07-27): trampoline
                                            ; in the dclw_flush island
-   STA zp_line_dx                                                         ;# ||||       0.6
-   LDA zp_line_yr_l                                                       ;# ||||       0.6
-   SEC                                                                    ;# |||        0.4
-   SBC zp_line_yl_l                                                       ;# ||||       0.6
-   STA zp_line_dy                                                         ;# ||||       0.6
+   STA zp_line_dx
 
 ; --- Y bbox: [min(yl,yr), max(yl,yr)] — ONCE per line -----------------
 ; RESTORED 2026-08-22, reversing the 2026-07-14 deletion.  That deletion
