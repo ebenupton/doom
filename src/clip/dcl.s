@@ -738,18 +738,37 @@ dv_in:
 ;
 ; dv_emit's SBC #Y_BIAS rides C=1 from its guard, and LDA/STA leave C
 ; alone, so the accept arm hands it the C=1 left by the IB compare.
+; ── PER-SIDE SPLIT (2026-08-27) ──────────────────────────────────────
+; The old ambiguous arm evaluated BOTH boundaries; the census says 52%
+; of ambiguous verticals have yhi <= IB (bot clamp = identity) and 9%
+; have ylo >= IT (top clamp = identity).  Each failed side is now
+; evaluated alone; the route also proves one reject test away:
+;   ylo >= IT ⟹ yhi > IB (accept failed) and yhi > IB >= OT ⟹ the
+;   above-reject cannot fire — only the below test remains.
+; BIT-IDENTICAL to the two-sided evaluation: skipping an identity
+; clamp changes nothing.
    LDA zp_line_y_l                         ; ylo                          ;# ||||       0.5
    CMP POOL_IT,X                                                          ;# |||||      0.6
-   BCC dv_fp_slow                          ; ylo < IT: not wholly inside  ;# |||        0.4
+   BCC dv_amb_top                          ; ylo < IT: top side ambiguous ;# |||        0.4
    LDA POOL_IB,X                                                          ;# |||        0.3
    CMP zp_line_y_h                         ; C = IB >= yhi                ;# ||         0.3
-   BCC dv_fp_slow                                                         ;# |          0.2
+   BCC dv_amb_botonly                                                     ;# |          0.2
    LDA zp_line_y_l                                                        ;# ||         0.2
    STA zp_cb_cy1                                                          ;# ||         0.2
    LDA zp_line_y_h                                                        ;# ||         0.2
    STA zp_cb_cy2                                                          ;# ||         0.2
    JMP dv_emit                             ; (C = 1 from the IB compare)  ;# ||         0.2
-dv_fp_slow:
+dv_amb_botonly:
+; ylo >= IT: cy1 = ylo without evaluating the top line; above-reject
+; impossible (yhi > IB >= OT); only the below test stands.
+   LDA POOL_OB,X
+   CMP zp_line_y_l                         ; C = OB >= ylo
+   BCC dv_fp_rej                           ; entirely below the aperture
+   LDA zp_line_y_l
+   STA zp_cb_cy1
+   BCS dv_bot_eval                         ; (always: C=1 from the test)
+dv_amb_top:
+; ylo < IT: the top side needs the exact evaluation; both rejects live.
    LDA zp_line_y_h                         ; yhi                          ;# ||         0.3
    CMP POOL_OT,X                                                          ;# |||        0.3
    BCC dv_fp_rej                           ; yhi < OT: entirely above     ;# |          0.2
@@ -780,8 +799,20 @@ dv_top_interp:
    JSR interp_store                                                       ;# |||        0.4
    STA zp_cb_top1                                                         ;# ||         0.2
 dv_top_done:
-; Bot: constant-line fast path or interp
+; cy1 = max(ylo, top_y)
+   LDA zp_line_y_l                                                        ;# ||         0.2
+   CMP zp_cb_top1                                                         ;# ||         0.2
+   BCS dv_cy1_ok                                                          ;# |          0.2
+   LDA zp_cb_top1                                                         ;# |          0.2
+dv_cy1_ok:
+   STA zp_cb_cy1                                                          ;# ||         0.2
+; Bot side: identity when yhi <= IB (bot_y >= IB >= yhi ⟹ min = yhi)
    LDX zp_save0                                                           ;# ||         0.2
+   LDA POOL_IB,X
+   CMP zp_line_y_h                         ; C = IB >= yhi
+   BCS dv_bot_skip
+dv_bot_eval:
+; Bot: constant-line fast path or interp (X = slot on both entries)
    LDA POOL_BL,X                                                          ;# ||         0.3
    CMP POOL_BR,X                                                          ;# ||         0.3
    BNE dv_bot_interp                                                      ;# |          0.2
@@ -800,14 +831,6 @@ dv_bot_interp:
    JSR interp_store                                                       ;# ||         0.2
    STA zp_cb_bot1                                                         ;# |          0.1
 dv_bot_done:
-; Clip [ylo, yhi] to [top_y, bot_y]
-; cy1 = max(ylo, top_y)
-   LDA zp_line_y_l                                                        ;# ||         0.2
-   CMP zp_cb_top1                                                         ;# ||         0.2
-   BCS dv_cy1_ok                                                          ;# |          0.2
-   LDA zp_cb_top1                                                         ;# |          0.2
-dv_cy1_ok:
-   STA zp_cb_cy1                                                          ;# ||         0.2
 ; cy2 = min(yhi, bot_y)
    LDA zp_line_y_h                                                        ;# ||         0.2
    CMP zp_cb_bot1                                                         ;# ||         0.2
@@ -822,6 +845,13 @@ dv_cy2_ok:
                                         ; 96.2% of verticals emit, so the
                                         ; emit path now FALLS THROUGH and
                                         ; the reject takes the branch)
+   JMP dv_emit                             ; (C = 1 from the BCS-not-taken)
+dv_bot_skip:
+; cy2 = yhi; the emit guard still stands (top1 may exceed yhi)
+   LDA zp_line_y_h
+   STA zp_cb_cy2
+   CMP zp_cb_cy1
+   BCC dv_clipped_away                     ; (C=1 rides into dv_emit)
 dv_emit:
 ; Stage the rasteriser ZP args (x, cy1, x, cy2), un-biasing Y (biased
 ; [48,207] -> screen [0,159]) and tail-call the vertical plotter.
@@ -940,11 +970,83 @@ dcl_cb_cy_done:
 ; the top boundary anywhere.  Skip top eval + clip entirely.
    LDX zp_save0                                                           ;# |          0.1
    CMP POOL_IT,X                           ; A = cy2 from both cy paths   ;# |          0.1
-   BCC dcl_cb_top_eval                                                    ;# |          0.1
+   BCC dcl_cb_top_c2u                                                     ;# |          0.1
    LDA zp_cb_cy1                                                          ;# |          0.1
    CMP POOL_IT,X                                                          ;# |          0.1
-   BCC dcl_cb_top_eval                                                    ;#            0.1
+   BCC dcl_cb_top_c1only                                                  ;#            0.1
    JMP dcl_cb_top_done                     ; both >= IT → skip top        ;# |          0.1
+
+; ── ONE-SIDED top evals (2026-08-27): when only one endpoint fails the
+; IT filter the other is PROVABLY inside (cy >= IT >= top there), so
+; the boundary is evaluated at the failing endpoint alone; the second
+; eval happens only if a clip actually results.  Verdicts and values
+; are BIT-IDENTICAL to the two-sided path — this only skips work.
+dcl_cb_top_c2u:
+   LDA zp_cb_cy1
+   CMP POOL_IT,X
+   BCC dcl_cb_top_eval                     ; both < IT: two-sided path
+; only cy2 < IT: p1 inside.  top2 alone; cy2 >= top2 ⟹ no clip.
+   LDY zp_cb_cx2
+   JSR dcl_cb_top_at
+   STA zp_cb_top2
+   CMP zp_cb_cy2                           ; C = top2 > cy2 inverted:
+   BEQ dcl_cb_top_done_j                   ;   cy2 >= top2 ⟹ no clip
+   BCC dcl_cb_top_done_j
+   LDY zp_cb_cx1                           ; clip p2: need top1 for d1
+   JSR dcl_cb_top_at
+   STA zp_cb_top1
+   JMP dcl_cb_top_p2clip
+dcl_cb_top_c1only:
+; only cy1 < IT: p2 inside.  top1 alone; cy1 >= top1 ⟹ no clip.
+   LDY zp_cb_cx1
+   JSR dcl_cb_top_at
+   STA zp_cb_top1
+   LDA zp_cb_cy1
+   CMP zp_cb_top1
+   BCS dcl_cb_top_done_j                   ; no clip
+   LDY zp_cb_cx2                           ; clip p1: need top2 for d2
+   JSR dcl_cb_top_at
+   STA zp_cb_top2
+   SEC                                     ; the clip arm's C=1 contract
+   JMP dcl_cb_top_clip
+dcl_cb_top_done_j:
+   JMP dcl_cb_top_done
+
+; --- dcl_cb_top_at / dcl_cb_bot_at: boundary value at column Y -------
+; interp_store's own shortcuts serve the constant/endpoint cases.
+; In MAIN (BANKC is at its ceiling): JSR-reached cold code, and main
+; RAM is always mapped under the clip's bank-C paging.  BANKED ONLY:
+; the flat CLIP region has the headroom, flat CODE does not.
+.if ::BANKED
+SEG_HIGH
+.endif
+dcl_cb_top_at:
+   LDX zp_save0
+   LDA POOL_TXLO,X
+   STA zp_i_x0
+   LDA POOL_TDEN,X
+   STA zp_div_den
+   LDA POOL_TL,X
+   STA zp_i_y0
+   LDA POOL_TR,X
+   STA zp_i_y1
+   TYA
+   JMP interp_store
+dcl_cb_bot_at:
+   LDX zp_save0
+   LDA POOL_BXLO,X
+   STA zp_i_x0
+   LDA POOL_BDEN,X
+   STA zp_div_den
+   LDA POOL_BL,X
+   STA zp_i_y0
+   LDA POOL_BR,X
+   STA zp_i_y1
+   TYA
+   JMP interp_store
+.if ::BANKED
+SEG_BANKC
+.endif
 
 dcl_cb_top_eval:
 ; Evaluate top1, top2 at cx1, cx2 (fast paths first)
@@ -990,6 +1092,7 @@ dcl_cb_top_p1_ok:
    BCS dcl_cb_top_done                                                    ;#            0.0
 ; cy2 >= top2 → both inside, no clip
 ; cy2 < top2, cy1 >= top1: clip at p2 end
+dcl_cb_top_p2clip:
    LDA zp_cb_cy1                                                          ;#            0.0
    SEC                                                                    ;#            0.0
    SBC zp_cb_top1                                                         ;#            0.0
@@ -1068,10 +1171,41 @@ dcl_cb_top_ok:
    LDX zp_save0                                                           ;# |          0.1
    LDA POOL_IB,X                                                          ;# |          0.1
    CMP zp_cb_cy1                                                          ;# |          0.1
-   BCC dcl_cb_bot_eval                                                    ;# |          0.1
+   BCC dcl_cb_bot_c1o                                                     ;# |          0.1
    CMP zp_cb_cy2                           ; A = IB still                 ;#            0.0
-   BCC dcl_cb_bot_eval                                                    ;#            0.0
+   BCC dcl_cb_bot_c2only                                                  ;#            0.0
    JMP dcl_cb_bot_done                     ; both <= IB → skip bot        ;#            0.0
+
+; ── ONE-SIDED bot evals (2026-08-27, mirror of the top split) ────────
+dcl_cb_bot_c1o:
+   CMP zp_cb_cy2                           ; A = IB still
+   BCC dcl_cb_bot_eval                     ; both > IB: two-sided path
+; only cy1 > IB: p2 inside (cy2 <= IB <= bot2).  bot1 alone;
+; bot1 >= cy1 ⟹ no clip anywhere.
+   LDY zp_cb_cx1
+   JSR dcl_cb_bot_at
+   STA zp_cb_bot1
+   CMP zp_cb_cy1                           ; C = bot1 >= cy1
+   BCS dcl_cb_bot_done_j                   ; no clip
+   LDY zp_cb_cx2                           ; clip p1: need bot2 for d2
+   JSR dcl_cb_bot_at
+   STA zp_cb_bot2
+   SEC                                     ; the clip arm's C=1 contract
+   JMP dcl_cb_bot_clip
+dcl_cb_bot_c2only:
+; only cy2 > IB: p1 inside (cy1 <= IB <= bot1).  bot2 alone;
+; bot2 >= cy2 ⟹ no clip anywhere.
+   LDY zp_cb_cx2
+   JSR dcl_cb_bot_at
+   STA zp_cb_bot2
+   CMP zp_cb_cy2                           ; C = bot2 >= cy2
+   BCS dcl_cb_bot_done_j                   ; no clip
+   LDY zp_cb_cx1                           ; clip p2: need bot1 for d1
+   JSR dcl_cb_bot_at
+   STA zp_cb_bot1
+   JMP dcl_cb_bot_p2clip
+dcl_cb_bot_done_j:
+   JMP dcl_cb_bot_done
 
 dcl_cb_bot_eval:
 ; Evaluate bot1, bot2 at (possibly top-clipped) cx1, cx2
@@ -1117,6 +1251,7 @@ dcl_cb_bot_p1_ok:
 ; bot2 >= cy2 → both inside
 ; cy2 > bot2, cy1 <= bot1: clip p2 end
 ; d1 = cy1 - bot1 (negative or zero, since cy1 <= bot1)
+dcl_cb_bot_p2clip:
    LDA zp_cb_cy1
    SEC
    SBC zp_cb_bot1
@@ -1295,6 +1430,11 @@ dclwb_flush3:
 ;   return clamp(cx1 + q, cx1, cx2)
 ; Guards: den == 0 or den > 255 -> return midpoint (cannot occur for
 ; sane pixel-scale inputs); cx2 == cx1 -> return cx1.
+; In MAIN since 2026-08-27 (BANKC ceiling): JSR-reached, ~5 calls/frame.
+; BANKED ONLY (flat CODE is full; the flat CLIP region is not).
+.if ::BANKED
+SEG_HIGH
+.endif
 ::dcl_boundary_ix:
    STA zp_save1                            ; save clip_p1 flag            ;#            0.1
 
@@ -1377,6 +1517,9 @@ dcl_bix_mid:
    ADC zp_cb_cx2
    ROR A
    RTS
+.if ::BANKED
+SEG_BANKC
+.endif
 
 ; --- dcl_emit_segment: stage a segment to the rasteriser (plus the
 ;     optional tighten record) ---

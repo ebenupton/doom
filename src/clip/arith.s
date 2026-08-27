@@ -59,6 +59,63 @@
 ; --- rare arms as ISLANDS above the entry (2026-08-12; scope-free —
 ; the ip_* labels are file-unique in arith.s): the hot sum<256 /
 ; no-round-carry path falls straight into udiv16_8 below ---
+; --- small-|dy| fast paths (2026-08-27): off <= den — the enforced
+; interp precondition for SLOPED lines (flat lines short-circuit before
+; the divide, and only flat spans ever extrapolate: see interp.s) —
+; bounds the quotient by |dy|.  Census (5 CB-heavy frames, 249 calls):
+; |dy|=1 is 17% of traffic, |dy|<=7 is ~half, and q<=1 alone is 36%.
+; |dy|=1 needs ONE compare (~26 cyc); |dy| 2..7 keeps the mul and
+; replaces the ~200-cycle divide with a <=|dy|-step subtract walk.
+; EXACT: both compute the same floor((off*|dy| + den>>1)/den).
+ip_dy1:
+; q = (off + den>>1 >= den) — off <= den ⟹ q ∈ {0,1}; the sum can
+; carry (off+h <= den+h < 2*den < 512), and carry ⟹ >= 256 > den ⟹ 1.
+   LDA zp_div_den
+   LSR A
+   CLC
+   ADC zp_mul_b
+   BCS ip_dy1_q1
+   CMP zp_div_den
+   LDA #0
+   ADC #0                                  ; A = C = the verdict
+   RTS
+ip_dy1_q1:
+   LDA #1
+   RTS
+ip_dysm:
+; 2 <= |dy| <= 7: num = off*|dy| (u16, hi <= 6), + den>>1, then a
+; subtract walk of at most |dy| steps (q <= |dy|).  num_lo rides A,
+; num_hi rides Y, q counts in X.
+   JSR umul8                               ; A=|dy|, zp_mul_b=off -> prod
+   LDA zp_div_den
+   LSR A
+   CLC
+   ADC zp_prod_l
+   LDY zp_prod_h
+   BCC ip_sm_go
+   INY
+ip_sm_go:
+   LDX #0
+ip_sm_hi:
+   CPY #0
+   BEQ ip_sm_lo                            ; hi clear: finish 8-bit
+   SEC                                     ; hi set ⟹ num >= 256 > den
+   SBC zp_div_den
+   BCS ip_sm_nod
+   DEY
+ip_sm_nod:
+   INX
+   BNE ip_sm_hi                            ; (always: q <= 7)
+ip_sm_lo:
+   CMP zp_div_den
+   BCC ip_sm_done
+   SBC zp_div_den                          ; C=1 from the compare
+   INX
+   BNE ip_sm_lo                            ; (always)
+ip_sm_done:
+   TXA
+   RTS
+
 ip_uo:
    LDA SQR2_LO,X                           ; (carry already set from BCS)
    SBC SQR_LO,Y
@@ -83,6 +140,10 @@ umul_round_div:
 ; reachable from bank C). Each sum arm carries its own rounding tail so
 ; the common sum<256 arm keeps umul8's zero-overhead fall-through; the
 ; rare round-carry bump is shared (ip_rn_c).
+   CMP #2                                  ; |dy|=1: the compare path
+   BCC ip_dy1                              ; (|dy|=0 never arrives: flat
+   CMP #8                                  ;  lines short-circuit upstream)
+   BCC ip_dysm                             ; |dy| 2..7: the subtract walk
    TAX                                     ; stash |dy| in X
    SEC
    SBC zp_mul_b
@@ -623,10 +684,10 @@ si_dy_done:
 ; reads zp_div_den for its den/2 round) and ride the one entry.
    LDA z:LC_DEN_LO
    STA zp_div_den
-   LDA z:LC_DY_LO
-   STA z:zp_mul_b
-   LDA z:LC_OFF_LO
-   JSR umul_round_div                      ; A = u8 quotient
+   LDA z:LC_OFF_LO                         ; ROLES MATTER (2026-08-27): the
+   STA z:zp_mul_b                          ; small-|dy| fast paths key on
+   LDA z:LC_DY_LO                          ; A = |dy|, mul_b = off (off <
+   JSR umul_round_div                      ; den holds: strict straddle)
    LDX LC_DY_NEG
    BNE si_u8_sub
    CLC
