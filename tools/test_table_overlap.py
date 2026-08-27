@@ -64,6 +64,21 @@ def tables(flat):
     # source of the homes AND the real blob sizes.
     for a, blob in an.gen_6502_tables(flat=flat).items():
         out.append((f'anim@${a:04X}', a, len(blob)))
+    # the packed-WAD object table + art templates: installed by the
+    # loader at layout constants, INVISIBLE to the linker map. The
+    # 2026-08-27 strike: the LOD hex template grew the art blob past the
+    # flat hole's real wall (colmap USEVEC at $B800) and colmap stomped
+    # it -- the copro free-ran the whole template table.
+    # FLAT ONLY: the banked homes are inside the bank-SEG window, where
+    # same-address pairs against other banks' tables (the L2 psi planes
+    # at $A900/$AA00) are routine; layout.inc asserts fence the banked
+    # blob against its real neighbour (the vertex planes) instead.
+    if flat:
+        L = dw.packed_layout
+        obj_a = symmap.sym('ROM_OBJ_C', banked=0, c02=1)
+        art_a = symmap.sym('OBJ_ART', banked=0, c02=1)
+        out.append(('wad:obj_planes', obj_a, L['off_obj_art'] - L['off_obj']))
+        out.append(('wad:obj_art', art_a, 4 * L['n_obj_art']))
     # the LINKED engine regions (code + data bins): a cache plane over
     # CODE is the same class with a worse failure mode. Region extents
     # from the ld65 cfg + the real bin sizes (concatenated per file).
@@ -96,6 +111,19 @@ def main():
                 if lo < hi:
                     hits.append(f'{pn} (${pa:04X}+{pl}) over {tn} '
                                 f'(${ta:04X}+{tl}): ${lo:04X}-${hi - 1:04X}')
+        # pairwise: the tables themselves must not overlap either (the
+        # LOD-art-vs-USEVEC strike was table-over-table, psi-invisible).
+        # FLAT ONLY: banked homes are window addresses in different
+        # sideways banks, so same-address pairs there are routine.
+        if not banked:
+            T = tables(flat=True)
+            for i in range(len(T)):
+                for j in range(i + 1, len(T)):
+                    (an_, aa, al), (bn, ba, bl) = T[i], T[j]
+                    lo, hi = max(aa, ba), min(aa + al, ba + bl)
+                    if lo < hi:
+                        hits.append(f'{an_} (${aa:04X}+{al}) over {bn} '
+                                    f'(${ba:04X}+{bl}): ${lo:04X}-${hi - 1:04X}')
         if hits:
             ok = False
             print(f'  {tag}: {len(hits)} OVERLAP(S) -- a cache plane is '

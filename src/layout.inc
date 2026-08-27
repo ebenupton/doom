@@ -106,9 +106,9 @@ OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-LAY_N_OBJ_ART = 25                 ; billboard art entries, BOTH templates
-                                   ; (19 barrel + 6 rectangle, control
-                                   ;  entries included)
+LAY_N_OBJ_ART = 38                 ; billboard art entries, ALL templates
+                                   ; (19 barrel + 6 rectangle + 13 LOD
+                                   ;  hex, control entries included)
 OBJ_ART_OCT  = 0                   ; 12-sided barrel -- BARRELS ONLY: 17
                                    ; lines = 5 far lid arc (RECORDED) + 5
                                    ; near lid arc + 5 base arc + 2 sides,
@@ -116,18 +116,39 @@ OBJ_ART_OCT  = 0                   ; 12-sided barrel -- BARRELS ONLY: 17
                                    ; lid's vertical edge to the bottom of
                                    ; the base's (they are collinear)
 OBJ_ART_RECT = 76                  ; plain outline rectangle -- the rest
+OBJ_ART_HEX  = 100                 ; LOD barrel (2026-08-27): flat-top
+                                   ; hexagonal lid, 11 lines. Best-fit
+                                   ; top half-width = 9a/16 = a>>1+a>>4
+                                   ; (packer-verified LSQ optimum among
+                                   ; shift ratios); mid vertices ride
+                                   ; the existing +-b3 table heights
+                                   ; (<= 1px at LOD scale). Selected
+                                   ; when a < OBJ_LOD_A.
+OBJ_LOD_A    = 12                  ; hex when lid half-width < 12 px
+                                   ; (max outline deviation ~0.12a
+                                   ; <= ~1.3px; packer asserts the
+                                   ; ratio). Tune freely.
 OBJ_ART_ARM = $FE                  ; entry: arm the FUSED authority run
 OBJ_ART_END     = $FF              ; entry: template finished
-OBJ_ART  = OBJ_BITS + 28                ; the templates: 25 x
-                                        ; (x1,y1,x2,y2) pre-doubled indices.
-                                        ; It lives HERE, not in CODE -- CODE
-                                        ; is full, and the stamp loop pages
-                                        ; BANK_SEG to read it and BANK_C to
-                                        ; draw (flat: PAGE is a no-op)
+; The templates: 38 x (x1,y1,x2,y2) pre-doubled indices. They live in
+; DATA, not CODE -- CODE is full, and the stamp loop pages BANK_SEG to
+; read them and BANK_C to draw (flat: PAGE is a no-op).
+; PER-BUILD HOME (2026-08-27): the flat object hole is only 256 bytes --
+; colmap's USEVEC owns $B800 -- and the LOD hex template pushed the blob
+; past it (the old 25-entry blob ended at $B7FE by luck). Banked keeps
+; the abutting home in the true 512-byte $A900-$AAFF hole.
+.if ::BANKED
+OBJ_ART  = OBJ_BITS + 28
+.assert OBJ_ART + 4*LAY_N_OBJ_ART <= ROM_VERTS_C, error, "banked art templates reach the vertex planes"
+.else
+OBJ_ART  = $E830                        ; colmap gap: ss_vz ends $E82C,
+                                        ; minpass at $E910 (inside DATA)
+.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $E910, error, "flat art templates reach colmap minpass"
+.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 <= $B800, error, "flat object planes reach colmap USEVEC"
+.endif
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
-;  page decomposition — flat frees $B700-$B8FF, banked frees
+;  page decomposition — flat frees $B700-$B7FF, banked frees
 ;  $A800-$A9FF in L2; the flat object table lives in that freed run)
-.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 + 4*LAY_N_OBJ_ART <= ROM_OBJ_C + $200, error, "object table overruns its 512-byte hole"
 .if ::BANKED
 ROM_BKTLO_C = $B900                     ; bank A free page (SS planes left
 ROM_BKTHI_C = $B980                     ; for bank B 2026-08-19)

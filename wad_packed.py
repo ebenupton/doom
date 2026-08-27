@@ -460,6 +460,82 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _ln((0, 0), (5, 0))              # top edge: FUSED authority
     obj_art += _CTL(OBJ_ART_END)
 
+    # -- LOD barrel: flat-top hexagonal lid (2026-08-27) ------------------
+    # Selected by the engine when the scaled half-width a < OBJ_LOD_A.
+    # Vertices (+-a, lidc+-~0) , (+-w, lidc+-b): the silhouette still
+    # touches +-a (the body sides join there) and the lid top stays at
+    # the 12-gon's bbox (the FUSED authority height is preserved).
+    # BEST FIT, computed here: normalize the lid to a unit ellipse and
+    # least-squares the hex outline against the ACTUAL 12-gon template
+    # polygon (engine ratios 1, 47/64, 17/64) over a dense angular
+    # sweep, for w/a among the engine's shift-cheap candidates. The mid
+    # vertices ride the EXISTING +-b3 table heights instead of exact
+    # lid-centre (error b3 <= 1px at LOD scales), so the engine builds
+    # NO new y values — only cx -+ w into the two dead Y slots (which
+    # the walker reaches as x indices 12/13, the arrays being adjacent).
+    import math as _mm
+    _th = [_mm.tau * _i / 720 for _i in range(720)]
+    _v12 = [(_mm.cos(_mm.radians(15+30*k)), _mm.sin(_mm.radians(15+30*k))) for k in range(12)]
+    # replace true cos/sin with the ENGINE's baked ratios (x: 1,.734,.266; y likewise)
+    def _snap(v):
+        s_ = 1 if v >= 0 else -1
+        av = abs(v)
+        return s_ * min((1.0, 47/64, 17/64), key=lambda r: abs(r-av))
+    _v12 = [(_snap(x), _snap(y)) for (x, y) in _v12]
+    def _poly_r(poly, th):
+        # boundary radius of a star-shaped polygon along direction th
+        import math as _m
+        dx, dy = _m.cos(th), _m.sin(th)
+        best = 0.0
+        n = len(poly)
+        for i in range(n):
+            x1, y1 = poly[i]; x2, y2 = poly[(i+1) % n]
+            den = dx*(y2-y1) - dy*(x2-x1)
+            if abs(den) < 1e-12:
+                continue
+            r = (x1*(y2-y1) - y1*(x2-x1)) / den
+            if r <= 0:
+                continue
+            px, py = r*dx, r*dy
+            if abs(x2-x1) >= abs(y2-y1):
+                u = (px-x1) / (x2-x1)
+            else:
+                u = (py-y1) / (y2-y1)
+            if -1e-9 <= u <= 1 + 1e-9:
+                best = max(best, r)
+        return best
+    _r12 = [_poly_r(_v12, t) for t in _th]
+    _best_w, _best_e = None, None
+    for _w, _nm in ((0.5, 'a>>1'), (7/16, 'a>>1-a>>4'), (9/16, 'a>>1+a>>4'), (17/64, 'a3')):
+        _hex = [(1,0),(_w,1),(-_w,1),(-1,0),(-_w,-1),(_w,-1)]
+        _rh = [_poly_r(_hex, t) for t in _th]
+        _e = sum((a-b)**2 for a, b in zip(_r12, _rh))
+        if _best_e is None or _e < _best_e:
+            _best_e, _best_w, _best_nm = _e, _w, _nm
+    assert _best_w == 9/16, \
+        f'hex LOD best-fit drifted from 9a/16 (got {_best_w}, {_best_nm}) — retune objects.s'
+    _dev = max(abs(a-b) for a, b in zip(_r12, [_poly_r([(1,0),(9/16,1),(-9/16,1),(-1,0),(-9/16,-1),(9/16,-1)], t) for t in _th]))
+    assert _dev * 12 <= 1.75, \
+        f'hex LOD deviation {_dev:.3f}*a exceeds ~1.5px at OBJ_LOD_A=12 — retune the threshold'
+    # template: x idx 0=-a, 5=+a, 12=-w, 13=+w; y idx 0=syt, 3=lidc+b3,
+    # 5=lidc+b, 9/11 = the base twins. 11 lines, outline then ARM+authority.
+    off_art_hex = len(obj_art)
+    _H = lambda x1,y1,x2,y2: [x1*2, y1*2, x2*2, y2*2]
+    obj_art += _H(0,3, 12,5)                    # near lid, left slant
+    obj_art += _H(12,5, 13,5)                   # near lid, bottom edge
+    obj_art += _H(13,5, 5,3)                    # near lid, right slant
+    obj_art += _H(0,9, 12,11)                   # near base, left slant
+    obj_art += _H(12,11, 13,11)                 # near base, bottom edge
+    obj_art += _H(13,11, 5,9)                   # near base, right slant
+    obj_art += _H(0,3, 0,9)                     # left side (silhouette)
+    obj_art += _H(5,3, 5,9)                     # right side
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += _H(0,3, 12,0)                    # far lid, left slant: FUSED
+    obj_art += _H(12,0, 13,0)                   # far lid, top edge: FUSED
+    obj_art += _H(13,0, 5,3)                    # far lid, right slant: FUSED
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_hex == 100, f'OBJ_ART_HEX drifted: {off_art_hex} (layout.inc says 100)'
+
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4
     # LV1 BKT planes (2 x 128 B, s16 LE): the WHOLE K-residue term of the

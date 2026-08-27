@@ -591,13 +591,49 @@ obj_ycp:
    JSR fused_begin                         ; per-object zero-touch state
    ZERO obj_fused                          ; leading run: plain draws
 ; Start at this object's template.  Bit 7 of the aspect byte IS the
-; selector: barrels get the octagonal prism, everything else the plain
+; selector: barrels get the dodecagonal prism, everything else the plain
 ; outline rectangle it had before the prism existed -- a floor lamp drawn
 ; as a squat eight-sided drum reads as a barrel, not a lamp.
-   LDA #OBJ_ART_OCT
+; LOD (2026-08-27): a distant barrel (lid half-width a < OBJ_LOD_A px)
+; swaps to the flat-top HEX lid — same bbox, same silhouette touch at
+; +-a, top edge at the same authority height; the packer's LSQ says the
+; best-fit top half-width is 9a/16. The two cx-+w values land in the
+; DEAD Y slots 6/7, which the stamp walker addresses as x indices 12/13
+; (obj_X and obj_Y are adjacent by the obj_hex contract).
    BIT obj_asp
-   BPL obj_art_set
+   BMI obj_art_rect
+   LDA obj_a
+   CMP #OBJ_LOD_A
+   BCS obj_art_oct
+   LSR A                                   ; w = 9a/16 = a>>1 + a>>4
+   STA obj_t
+   LSR A
+   LSR A
+   LSR A
+   CLC
+   ADC obj_t
+   STA obj_t
+   SEC
+   LDA obj_cx_l
+   SBC obj_t
+   STA obj_Y+12                            ; "x index 12" = cx - w
+   LDA obj_cx_h
+   SBC #0
+   STA obj_Y+13
+   CLC
+   LDA obj_cx_l
+   ADC obj_t
+   STA obj_Y+14                            ; "x index 13" = cx + w
+   LDA obj_cx_h
+   ADC #0
+   STA obj_Y+15
+   LDA #OBJ_ART_HEX
+   BNE obj_art_set                         ; (always)
+obj_art_rect:
    LDA #OBJ_ART_RECT
+   BNE obj_art_set                         ; (always)
+obj_art_oct:
+   LDA #OBJ_ART_OCT
 obj_art_set:
    STA obj_e
 obj_stamp:

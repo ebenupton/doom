@@ -112,13 +112,20 @@ class BspRender6502:
         for i in range(off_hdr, off_obj):                # headers + DIRs
             mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
         # static-object (billboard) table -- its own home, NOT part of the
-        # header blob (layout.inc ROM_OBJ_C)
+        # header blob (layout.inc ROM_OBJ_C). The art templates have a
+        # PER-BUILD home (2026-08-27: the flat hole is only 256 bytes --
+        # colmap's USEVEC owns $B800 -- so flat art lives at $E830).
         from symmap import sym as _sym2
         _ob = _sym2('ROM_OBJ_C')
-        for i in range(off_obj, off_obj + 0x200):    # the 512-byte hole ONLY
-            mem[_ob + (i - off_obj)] = rom_main[i]   # (the K planes follow in
-                                                     # the blob and go to their
-                                                     # own homes below)
+        off_art = layout['off_obj_art']
+        for i in range(off_obj, off_art):            # planes + bitmap
+            mem[_ob + (i - off_obj)] = rom_main[i]
+        _oa = _sym2('OBJ_ART')
+        _na = 4 * layout['n_obj_art']                # EXACT length: the flat
+        for i in range(off_art, off_art + _na):      # home abuts colmap's
+            mem[_oa + (i - off_art)] = rom_main[i]   # minpass/usetab -- the
+                                                     # hole's zero tail must
+                                                     # NOT be copied with it
         # LV1 BKT planes + per-dir DBOUND — per-build homes, from the
         # blob tail (see layout.inc ROM_BKTLO/HI_C, ROM_DBOUND_C)
         for _nm, _off in (('ROM_BKTLO_C', layout['off_bktlo']),
