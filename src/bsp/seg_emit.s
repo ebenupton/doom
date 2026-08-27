@@ -433,8 +433,11 @@ solid_cascade:
 ; exactly one edge suppressed: skip the first => draw the second.
    LDA zp_ss_eskip
    BNE sc_esk                              ; one edge suppressed: island
-   LDX #zp_seg_sy1_top_l - VX1
-   JSR draw_clipped_line_s16_h
+   JSR dcl_solid_pair                      ; both edges, ONE screen/stage/
+                                           ; seek (2026-08-27; the classic
+                                           ; two-call path serves the rare
+                                           ; s16/vertical solids inside)
+   JMP sc_no_fb
 sc_fb:
    LDX #zp_seg_sy1_bot_l - VX1
    JSR draw_clipped_line_s16_h
@@ -487,6 +490,15 @@ portal_cascade:
 ; ============================================================================
    JSR fused_begin
 ; --- companions (never armed; the dcl record sites are gone) ---
+   LDA zp_seg_flags
+   AND #$0C                                ; both companions? -> the PAIR
+   CMP #$0C                                ; (2026-08-27: same top+bot
+   BNE pc_singles                          ; lines the solid pair draws —
+   LDA zp_ss_eskip                         ; one screen/stage/seek)
+   BNE pc_singles                          ; any eyeline suppression: singles
+   JSR dcl_solid_pair
+   JMP pc_verts
+pc_singles:
    LDA zp_seg_flags
    AND #$04                                ; NEEDBT?
    BEQ pc_fb_comp
@@ -951,4 +963,78 @@ vsx_next:
    JMP vsx_span
 vsx_done:
    RTS
+.endscope
+
+
+; ============================================================================
+; dcl_solid_pair — draw a solid's top AND bottom lines with one
+; hi-screen, one x staging and one span-list seek (2026-08-27).
+; The lines share sx1/sx2, so the walk's x side is common: the pair
+; entries in clip/dcl.s memo pass 1's first visible span and pass 2
+; enters there directly. Rare shapes (any s16 coordinate, vertical/
+; point pairs) fall back to the classic sequential calls — all the
+; slow machinery stays on the proven path. BANK_C is paged (stage-5
+; cascade context).
+; ============================================================================
+.scope
+::dcl_solid_pair:
+   LDA zp_seg_sy1_top_h
+   ORA zp_seg_sy2_top_h
+   ORA zp_seg_sy1_bot_h
+   ORA zp_seg_sy2_bot_h
+   ORA zp_seg_sx1_h
+   ORA zp_seg_sx2_h
+   BNE dsp_classic
+   LDA zp_seg_sx1_l
+   CMP zp_seg_sx2_l
+   BEQ dsp_classic                         ; 1px pair: vertical/point path
+   STA zp_line_xl_l
+   LDA zp_seg_sx2_l
+   STA zp_line_xr_l
+   SEC
+   SBC zp_line_xl_l
+   STA zp_line_dx                          ; shared: both passes
+; ---- pass 1: the top line ----
+   LDA zp_seg_sy2_top_l
+   SEC
+   SBC zp_seg_sy1_top_l
+   STA zp_line_dy
+   LDA zp_seg_sy1_top_l
+   STA zp_line_yl_l
+   LDX zp_seg_sy2_top_l
+   STX zp_line_yr_l
+   CMP zp_line_yr_l
+   BCC dsp_t_bb
+   TXA
+   LDX zp_seg_sy1_top_l
+dsp_t_bb:
+   STA zp_line_y_l                         ; bbox min
+   STX zp_line_y_h                         ; bbox max
+   LDA #$FF
+   STA zp_seg_start_x
+   JSR dcl_pair_seek
+; ---- pass 2: the bottom line (xl/xr/dx persist; seek via the memo) ----
+   LDA zp_seg_sy2_bot_l
+   SEC
+   SBC zp_seg_sy1_bot_l
+   STA zp_line_dy
+   LDA zp_seg_sy1_bot_l
+   STA zp_line_yl_l
+   LDX zp_seg_sy2_bot_l
+   STX zp_line_yr_l
+   CMP zp_line_yr_l
+   BCC dsp_b_bb
+   TXA
+   LDX zp_seg_sy1_bot_l
+dsp_b_bb:
+   STA zp_line_y_l
+   STX zp_line_y_h
+   LDA #$FF
+   STA zp_seg_start_x
+   JMP dcl_pair_resume                     ; tail call
+dsp_classic:
+   LDX #zp_seg_sy1_top_l - VX1
+   JSR draw_clipped_line_s16_h
+   LDX #zp_seg_sy1_bot_l - VX1
+   JMP draw_clipped_line_s16_h             ; tail call
 .endscope

@@ -60,18 +60,18 @@
 draw_clipped_line:
 .scope
 ; --- Compute dx, dy, ylo, yhi ---
-   LDA zp_line_xr_l
-   SEC
-   SBC zp_line_xl_l
+   LDA zp_line_xr_l                                                       ;# ||||       0.6
+   SEC                                                                    ;# |||        0.4
+   SBC zp_line_xl_l                                                       ;# ||||       0.6
 ; --- Vertical fast path: xl == xr (trampoline — dcl_vertical out of BEQ range) ---
-   BEQ dcl_to_vert                         ; verticals rare here (0.7%,
+   BEQ dcl_to_vert                         ; verticals rare here (0.7%,   ;# |||        0.4
                                            ; census 2026-07-27): trampoline
                                            ; in the dclw_flush island
-   STA zp_line_dx
-   LDA zp_line_yr_l
-   SEC
-   SBC zp_line_yl_l
-   STA zp_line_dy
+   STA zp_line_dx                                                         ;# ||||       0.6
+   LDA zp_line_yr_l                                                       ;# ||||       0.6
+   SEC                                                                    ;# |||        0.4
+   SBC zp_line_yl_l                                                       ;# ||||       0.6
+   STA zp_line_dy                                                         ;# ||||       0.6
 
 ; --- Y bbox: [min(yl,yr), max(yl,yr)] — ONCE per line -----------------
 ; RESTORED 2026-08-22, reversing the 2026-07-14 deletion.  That deletion
@@ -95,15 +95,15 @@ draw_clipped_line:
 ; One compare, loser parked in X:
 ;   BCC taken => A=yl is the min, X=yr the max
 ;   else         A<-yr (min),     X<-yl (max)
-   LDA zp_line_yl_l
-   LDX zp_line_yr_l
-   CMP zp_line_yr_l
-   BCC dcl_bb_ylt
-   TXA
-   LDX zp_line_yl_l
+   LDA zp_line_yl_l                                                       ;# ||||       0.6
+   LDX zp_line_yr_l                                                       ;# ||||       0.6
+   CMP zp_line_yr_l                                                       ;# ||||       0.6
+   BCC dcl_bb_ylt                                                         ;# |||        0.4
+   TXA                                                                    ;# ||         0.3
+   LDX zp_line_yl_l                                                       ;# |||        0.4
 dcl_bb_ylt:
-   STA zp_line_y_l                         ; min
-   STX zp_line_y_h                         ; max
+   STA zp_line_y_l                         ; min                          ;# ||||       0.6
+   STX zp_line_y_h                         ; max                          ;# ||||       0.6
 
 ; (Records-mode init moved to ARM time — bsp/subsector.s dcl_rec_arm,
 ; 2026-07-13: the s16 band clip appends verdict records before this
@@ -111,16 +111,16 @@ dcl_bb_ylt:
 dcl_records_off:
 
 ; seg_start = NULL
-   LDA #$FF
-   STA zp_seg_start_x
+   LDA #$FF                                                               ;# |||        0.4
+   STA zp_seg_start_x                                                     ;# ||||       0.6
 
 ; Walk span list.  Empty list exits via the dclw_flush island (dcl_flush
 ; is out of branch range); its seg_start test is a provable no-op here,
 ; seg_start_x having been set to $FF five instructions ago, but the
 ; empty case does not occur on the suite so it is not worth an island of
 ; its own.
-   LDX zp_head
-   BEQ dclw_flush
+   LDX zp_head                                                            ;# ||||       0.6
+   BEQ dclw_flush                                                         ;# |||        0.4
 
 ; --- Skip spans entirely left of line — FIRST ENTRY ONLY ---
 ; Skip if xend <= xl (strict: pixel-center model). xl is LOOP-
@@ -135,40 +135,41 @@ dcl_records_off:
 ; every span after.  (Both the dcl_walk and dcl_walk2 labels died with
 ; that routing — dcl_walk2 existed only to let an advance skip this
 ; test, which it now does by entering past it.)
-   LDA zp_line_xl_l
+   LDA zp_line_xl_l                                                       ;# ||||       0.6
 dclw_x:
-   CMP POOL_XEND,X
-   BCC dcl_not_left
-   LDY POOL_NEXT,X
-   BEQ dclw_flush
-   CMP POOL_XEND,Y
-   BCC dclw_found_y
-   LDX POOL_NEXT,Y
-   BNE dclw_x
+   CMP POOL_XEND,X                                                        ;# ||||||||   1.1
+   BCC dcl_not_left                                                       ;# |||||      0.7
+   LDY POOL_NEXT,X                                                        ;# ||||       0.5
+   BEQ dclw_flush                                                         ;# ||         0.3
+   CMP POOL_XEND,Y                                                        ;# ||||       0.5
+   BCC dclw_found_y                                                       ;# ||         0.3
+   LDX POOL_NEXT,Y                                                        ;# ||         0.3
+   BNE dclw_x                                                             ;# ||         0.2
 dclw_flush:
-   JMP dcl_flush
+   JMP dcl_flush                                                          ;# |          0.1
 dcl_to_vert:
    JMP dcl_vertical
 dclw_found_y:
-   TYA
-   TAX                                     ; canonicalize: span rides X into
+   TYA                                                                    ;# |          0.1
+   TAX                                     ; canonicalize: span rides X into ;# |          0.1
                                            ; the right-skip test below
-dcl_not_left:
+::dcl_enter_span:                          ; (alias: the pair entries jump
+dcl_not_left:                              ; in with X = span, staging done)
 
 ; --- Skip spans entirely right of line ---
 ; Done if xstart >= xr (all remaining spans are further right)
-   LDA POOL_XSTART,X
-   CMP zp_line_xr_l
-   BCS dclw_flush                          ; xstart >= xr → done (18%;
+   LDA POOL_XSTART,X                                                      ;# ||||||||   1.1
+   CMP zp_line_xr_l                                                       ;# ||||||     0.8
+   BCS dclw_flush                          ; xstart >= xr → done (18%;    ;# ||||       0.6
                                            ; backward to the flush island —
                                            ; common case falls, census)
 
 ; --- Compute overlap ---
 ; ox0 = max(xstart, xl) — A already holds POOL_XSTART,X from skip check
-   CMP zp_line_xl_l
-   BCC dcl_ox0_lt                          ; INVERTED (census: 85.1% of 754
+   CMP zp_line_xl_l                                                       ;# |||||      0.7
+   BCC dcl_ox0_lt                          ; INVERTED (census: 85.1% of 754 ;# ||||       0.6
 dcl_ox0_ok:                                ; took the old BCS) — xstart >= xl
-   STA zp_ox0                              ; is the common case, so it falls
+   STA zp_ox0                              ; is the common case, so it falls ;# |||||      0.7
                                         ; through; the xl arm is an island
 ; ox1 = min(xend, xr).
 ; ox1 IS THE EXCLUSIVE CLAIM BOUND, not the last painted column: it
@@ -181,12 +182,12 @@ dcl_ox0_ok:                                ; took the old BCS) — xstart >= xl
 ; frame and the record then under-claims the span's last open column,
 ; which under-tightens every portal edge (measured 2026-08-21:
 ; traversal at (-486,-3307,243) went 6 -> 34 subsectors).
-   LDA POOL_XEND,X
-   CMP zp_line_xr_l
-   BCC dcl_ox1_ok
-   LDA zp_line_xr_l
+   LDA POOL_XEND,X                                                        ;# |||||||    0.9
+   CMP zp_line_xr_l                                                       ;# |||||      0.7
+   BCC dcl_ox1_ok                                                         ;# ||||       0.5
+   LDA zp_line_xr_l                                                       ;# ||||       0.5
 dcl_ox1_ok:
-   STA zp_ox1
+   STA zp_ox1                                                             ;# |||||      0.7
 
 ; --- EVERY span is verified.  There is no "continuation" fast path ---
 ; NEVER SPLIT A LINE (Eben's rule, 2026-08-22).  A line is drawn WHOLE
@@ -227,12 +228,12 @@ dcl_entry_path:
 ; accept: passing both inner tests implies not-rejected, because
 ; OT = min(tl,tr) <= max(tl,tr) = IT and IB = min(bl,br) <= max(bl,br)
 ; = OB.  So the inner pair leads and accept falls through in 18.
-   LDA zp_line_y_l
-   CMP POOL_IT,X
-   BCC dcl_ent_top                         ; ylo < max(tl,tr) -> above/amb
-   LDA POOL_IB,X
-   CMP zp_line_y_h
-   BCC dcl_ent_bot                         ; yhi > min(bl,br) -> below/amb
+   LDA zp_line_y_l                                                        ;# |||||      0.7
+   CMP POOL_IT,X                                                          ;# |||||||    0.9
+   BCC dcl_ent_top                         ; ylo < max(tl,tr) -> above/amb ;# ||||||     0.7
+   LDA POOL_IB,X                                                          ;# |||        0.4
+   CMP zp_line_y_h                                                        ;# |||        0.3
+   BCC dcl_ent_bot                         ; yhi > min(bl,br) -> below/amb ;# ||         0.3
 ; min(bl,br) >= yhi → accept FALLS IN (was a page-crossing BCS taken
 ; 88% — census 2026-07-27; the amb/reject island moved below
 ; dcl_exit_check's JMP boundary)
@@ -253,29 +254,29 @@ dcl_accept:
 ; and the BEQ crossed a page, so the common arm was paying 4).  Nothing
 ; open is the common case, so it falls through now and the have-a-run
 ; arm is an island below the block.
-   LDA zp_seg_start_x
-   CMP #$FF
-   BNE dcl_acc_haveopen                    ; 16%: island below
+   LDA zp_seg_start_x                                                     ;# ||         0.2
+   CMP #$FF                                                               ;# |          0.1
+   BNE dcl_acc_haveopen                    ; 16%: island below            ;# |          0.1
 dcl_acc_open:
-   LDA zp_ox0
-   STA zp_seg_start_x
-   CMP zp_line_xl_l
-   BEQ dcl_accept_yl
+   LDA zp_ox0                                                             ;# ||         0.2
+   STA zp_seg_start_x                                                     ;# ||         0.2
+   CMP zp_line_xl_l                                                       ;# ||         0.2
+   BEQ dcl_accept_yl                                                      ;# |          0.2
 ; ox0 == xl → yl
-   LDA zp_line_dy
-   BEQ dcl_accept_yl
+   LDA zp_line_dy                                                         ;#            0.0
+   BEQ dcl_accept_yl                                                      ;#            0.0
 ; dy == 0 → yl
 ; ox0 > xl, dy != 0: interp (rare path)
-   STX zp_save0
-   JSR dcl_line_y_at_ox0                   ; A = line_y_at(ox0)
-   LDX zp_save0
-   .byte $2C                               ; BIT abs: skip LDA
+   STX zp_save0                                                           ;#            0.0
+   JSR dcl_line_y_at_ox0                   ; A = line_y_at(ox0)           ;#            0.1
+   LDX zp_save0                                                           ;#            0.0
+   .byte $2C                               ; BIT abs: skip LDA            ;#            0.0
 dcl_accept_yl:
-   LDA zp_line_yl_l
-   STA zp_seg_start_y
+   LDA zp_line_yl_l                                                       ;# |          0.2
+   STA zp_seg_start_y                                                     ;# ||         0.2
 dcl_acc_extend:
-   LDA zp_ox1                              ; the run now reaches ox1
-   STA zp_seg_end_x
+   LDA zp_ox1                              ; the run now reaches ox1      ;# ||         0.2
+   STA zp_seg_end_x                                                       ;# ||         0.2
 ; (Records hook is at dcl_emit_segment — one record per surviving
 ;  segment, not per-span.)
 ; Fall through to exit check
@@ -285,9 +286,9 @@ dcl_exit_check:
 ; Does the line end within this span? (xr <= xend — inclusive, because
 ; xend is the exclusive claim edge the line is allowed to run out to;
 ; see the ox1 note above)
-   LDA POOL_XEND,X
-   CMP zp_line_xr_l
-   BCC dcl_advance
+   LDA POOL_XEND,X                                                        ;# |||        0.3
+   CMP zp_line_xr_l                                                       ;# ||         0.3
+   BCC dcl_advance                                                        ;# ||         0.2
 ; xend < xr → extends past: the segment stays OPEN and we simply walk on.
 ; No portal check, no containment proof, no emit — whether the run
 ; really continues is decided by the NEXT span, on its own merits.
@@ -296,8 +297,8 @@ dcl_exit_check:
 ; INLINED from dcl_line_ends (2026-08-23): one caller, four instructions,
 ; and it is the COMMON arm (71% of 557 exit checks on the suite), so it
 ; was paying a JMP to reach its own fall-through.
-   LDA zp_line_yr_l
-   STA zp_tmp0                             ; end_y = yr
+   LDA zp_line_yr_l                                                       ;# ||         0.2
+   STA zp_tmp0                             ; end_y = yr                   ;# ||         0.2
 ; end_x needs NO store: zp_ox1 ALREADY holds it.  dcl_ox1_ok set
 ; ox1 = min(xend, xr) for this span, and reaching here means xend >= xr,
 ; so that min IS xr.  Nothing rewrites ox1 in between — the only other
@@ -306,7 +307,7 @@ dcl_exit_check:
 ; Y-band clip inside dcl_emit_segment (downstream of here).  Asserted
 ; empirically too: 394/394 exit-check ends arms on the suite had
 ; zp_ox1 == zp_line_xr_l already.
-   JMP dcl_emit_segment                    ; tail call: the line is fully
+   JMP dcl_emit_segment                    ; tail call: the line is fully ;# ||         0.2
                                         ; consumed, so emit RTSes for us
 dcl_rb_tr:                                 ; the inlined body above pushed
    JMP dcl_reject_below                    ; dcl_reject_below 6 bytes out of
@@ -317,21 +318,21 @@ dcl_rb_tr:                                 ; the inlined body above pushed
 
 dcl_advance:
 ; Walk to the next span with the segment (if any) still open.
-   LDA POOL_NEXT,X
-   BEQ dcladv_flush                        ; LDA's own Z — the TAX below is
-   TAX                                     ; SKIPPED on the flush arm, where
+   LDA POOL_NEXT,X                                                        ;# |          0.1
+   BEQ dcladv_flush                        ; LDA's own Z — the TAX below is ;#            0.0
+   TAX                                     ; SKIPPED on the flush arm, where ;#            0.0
                                         ; X is dead (the walk exits via RTS
                                         ; and no caller of draw_clipped_line
                                         ; reads X back)                        ; (entry guard bypassed: LDA's Z
-   JMP dcl_not_left                           ; answers the null test here)
+   JMP dcl_not_left                           ; answers the null test here) ;#            0.1
 dcladv_flush:
    JMP dcl_flush
 
 ; --- rare-arm island (census 2026-07-27): tier-1/2 targets out of the
 ; hot fall path; all within branch range of the tiers above ---
 dcl_ox0_lt:                                ; rare: the line starts inside
-   LDA zp_line_xl_l                        ; this span, so ox0 = xl
-   JMP dcl_ox0_ok
+   LDA zp_line_xl_l                        ; this span, so ox0 = xl       ;# |          0.2
+   JMP dcl_ox0_ok                                                         ;# |          0.2
 
 ; --- rare arm: a run is already open (16%, census 2026-08-22) --------
 ; Islanded here rather than after dcl_acc_extend: that spot is the hot
@@ -358,16 +359,16 @@ dcl_acc_haveopen:
 ; hold even for a skewed span where IT > IB and nothing can be accepted.
 ; The top arm falls into dcl_amb_jmp; the bottom arm branches to it.
 dcl_ent_bot:                               ; yhi > IB: below or ambiguous
-   LDA POOL_OB,X
-   CMP zp_line_y_l
-   BCC dcl_reject_below                    ; OB < ylo -> line below
-   BCS dcl_amb_jmp                         ; (always)
+   LDA POOL_OB,X                                                          ;# |          0.2
+   CMP zp_line_y_l                                                        ;# |          0.1
+   BCC dcl_reject_below                    ; OB < ylo -> line below       ;# |          0.1
+   BCS dcl_amb_jmp                         ; (always)                     ;# |          0.1
 dcl_ent_top:                               ; ylo < IT: above or ambiguous
-   LDA zp_line_y_h
-   CMP POOL_OT,X
-   BCC dcl_reject_above                    ; yhi < OT -> line above
+   LDA zp_line_y_h                                                        ;# |||        0.4
+   CMP POOL_OT,X                                                          ;# ||||       0.5
+   BCC dcl_reject_above                    ; yhi < OT -> line above       ;# |||        0.4
 dcl_amb_jmp:
-   JMP dcl_cb_clip
+   JMP dcl_cb_clip                                                        ;# |          0.1
 dcl_reject_above:
 ; Not visible anywhere in this span, so an open run really did end at
 ; zp_seg_end_x.
@@ -376,9 +377,9 @@ dcl_reject_above:
 ; nothing open (105 of 109, census over 5 scenes), and the old
 ; JSR dcl_close_if_open -> STX -> JSR dcl_close_open_nx -> test -> RTS
 ; -> LDX -> RTS spent 39 cycles to discover it.  The test alone is 9.
-   LDA zp_seg_start_x
-   CMP #$FF
-   BEQ dcl_ra_closed
+   LDA zp_seg_start_x                                                     ;# |||        0.3
+   CMP #$FF                                                               ;# ||         0.2
+   BEQ dcl_ra_closed                                                      ;# |||        0.3
    STX zp_save0                            ; X = span slot, live below
    JSR dcl_emit_open
    LDX zp_save0
@@ -387,28 +388,28 @@ dcl_reject_above:
 dcl_ra_closed:
 ; (records/feedback plumbing died with the FUSED cutover 2026-08-25 —
 ;  armed lines never reach this core; fall straight to the advance)
-   JMP dcl_outer_reject
+   JMP dcl_outer_reject                                                   ;# |||        0.3
 dcl_reject_below:
 ; Close any open run FIRST — the ordering contract on dcl_close_open_nx.
 ; INLINED, with the X save INSIDE the branch: 97% of these calls find
 ; nothing open (105 of 109, census over 5 scenes), and the old
 ; JSR dcl_close_if_open -> STX -> JSR dcl_close_open_nx -> test -> RTS
 ; -> LDX -> RTS spent 39 cycles to discover it.  The test alone is 9.
-   LDA zp_seg_start_x
-   CMP #$FF
-   BEQ dcl_rb_closed
-   STX zp_save0                            ; X = span slot, live below
-   JSR dcl_emit_open
-   LDX zp_save0
-   LDA #$FF
-   STA zp_seg_start_x
+   LDA zp_seg_start_x                                                     ;#            0.1
+   CMP #$FF                                                               ;#            0.0
+   BEQ dcl_rb_closed                                                      ;#            0.0
+   STX zp_save0                            ; X = span slot, live below    ;#            0.0
+   JSR dcl_emit_open                                                      ;#            0.0
+   LDX zp_save0                                                           ;#            0.0
+   LDA #$FF                                                               ;#            0.0
+   STA zp_seg_start_x                                                     ;#            0.0
 dcl_rb_closed:
 dcl_outer_reject:
 ; Outer reject → advance to next span (inline; JMP — the ping-pong
 ; walk pushed the re-entry out of branch range, and an always-guarded
 ; BNE+JMP pair costs the same as the test+JMP form)
-   LDA POOL_NEXT,X
-   BEQ dcl_flush                           ; straight there: the dclor_flush
+   LDA POOL_NEXT,X                                                        ;# ||||       0.5
+   BEQ dcl_flush                           ; straight there: the dclor_flush ;# |||        0.3
                                         ; trampoline that used to sit here
                                         ; jumped to the NEXT instruction
                                         ; (tools/jumpscan.py).  -3 cyc on the
@@ -416,11 +417,11 @@ dcl_outer_reject:
                                         ; 3-byte shift's alignment reshuffle;
                                         ; that is noise and does not veto a
                                         ; true win — see the true-wins rule                        ; LDA's own Z — the TAX below is
-   TAX                                     ; SKIPPED on the flush arm, where
+   TAX                                     ; SKIPPED on the flush arm, where ;# |          0.1
                                         ; X is dead (the walk exits via RTS
                                         ; and no caller of draw_clipped_line
                                         ; reads X back)
-   JMP dcl_not_left
+   JMP dcl_not_left                                                       ;# |          0.2
 
 
 ; (The Phase-2 portal check — dcl_extends_past / dcl_has_next /
@@ -445,11 +446,11 @@ dcl_flush:
 ; the line).  An open run ended at zp_seg_end_x — NOT at xr: the line
 ; may continue past the last span into solid columns, which is exactly
 ; where the run stops.
-   LDA zp_seg_start_x
-   CMP #$FF
-   BNE dcl_emit_open                       ; straight there — it is the next
+   LDA zp_seg_start_x                                                     ;# |||        0.4
+   CMP #$FF                                                               ;# ||         0.2
+   BNE dcl_emit_open                       ; straight there — it is the next ;# ||         0.2
 dcl_done:                                  ; instruction below, so the old
-   RTS                                     ; dcl_fl_emit JMP was 3 cycles to
+   RTS                                     ; dcl_fl_emit JMP was 3 cycles to ;# |||||      0.7
                                         ; reach the fall-through.  The
                                         ; nothing-open arm still falls into
                                         ; this RTS, so the common case is
@@ -474,23 +475,23 @@ dcl_emit_open:
 ; FIRST fragment's end — (109,90)-(100,91) instead of (109,90)-(115,90),
 ; 99px of over-draw at X=000C.B0 Y=0052.BD R=B0.  The tail call to
 ; dcl_emit_segment becomes a JSR so the restore can happen after it.
-   LDA zp_ox1
-   PHA
-   LDA zp_seg_end_x
-   STA zp_ox1
-   CMP zp_line_xr_l
-   BEQ dcl_eo_yr
-   LDY zp_line_dy
-   BEQ dcl_eo_yr
-   JSR dcl_line_y_at_a                     ; A = seg_end_x rides in
-   .byte $2C                               ; BIT abs: skip LDA yr
+   LDA zp_ox1                                                             ;#            0.0
+   PHA                                                                    ;#            0.0
+   LDA zp_seg_end_x                                                       ;#            0.0
+   STA zp_ox1                                                             ;#            0.0
+   CMP zp_line_xr_l                                                       ;#            0.0
+   BEQ dcl_eo_yr                                                          ;#            0.0
+   LDY zp_line_dy                                                         ;#            0.0
+   BEQ dcl_eo_yr                                                          ;#            0.0
+   JSR dcl_line_y_at_a                     ; A = seg_end_x rides in       ;#            0.1
+   .byte $2C                               ; BIT abs: skip LDA yr         ;#            0.0
 dcl_eo_yr:
-   LDA zp_line_yr_l
-   STA zp_tmp0
-   JSR dcl_emit_segment
-   PLA
-   STA zp_ox1
-   RTS
+   LDA zp_line_yr_l                                                       ;#            0.0
+   STA zp_tmp0                                                            ;#            0.0
+   JSR dcl_emit_segment                                                   ;# |          0.1
+   PLA                                                                    ;#            0.1
+   STA zp_ox1                                                             ;#            0.0
+   RTS                                                                    ;# |          0.1
 
 ; --- dcl_close_open_nx: emit + close, if any segment is open ---
 ; Clobbers A/X/Y; PRESERVES zp_save0, so the CB clip (which parks its
@@ -504,18 +505,56 @@ dcl_eo_yr:
 ; verdict.  Get it backwards and the segment record is eaten, the
 ; tighten under-informed, and lines go missing.
 dcl_close_open_nx:
-   LDA zp_seg_start_x
-   CMP #$FF
-   BEQ dcl_cio_rts
+   LDA zp_seg_start_x                                                     ;#            0.1
+   CMP #$FF                                                               ;#            0.0
+   BEQ dcl_cio_rts                                                        ;#            0.1
    JSR dcl_emit_open
    LDA #$FF
    STA zp_seg_start_x
 dcl_cio_rts:
-   RTS
+   RTS                                                                    ;# |          0.1
 
 ; (dcl_close_if_open — the X-preserving wrapper — is RETIRED: its only
 ;  two callers were the Tier-1 reject arms, which now inline the test and
 ;  save X only on the 4-in-135 path that actually closes.)
+
+; ============================================================================
+; dcl_solid_pair entries (2026-08-27): the SOLID cascade draws its top
+; and bottom lines with ONE screen/stage/seek — the wrapper
+; (bsp/seg_emit.s dcl_solid_pair) stages each line's zp set, and these
+; entries own the span-list side. The lines share xl/xr, so pass 1's
+; first visible span is provably pass 2's too (the seek tests xend > xl
+; only) — the memo hands it over and the second seek dies. NORMAL dcl
+; calls never touch any of this: zero tax.
+; ============================================================================
+::dcl_pair_seek:                           ; pass 1: seek-with-memo from head
+   LDA #0
+   STA DCLS_FIRST
+   LDX zp_head
+   BEQ dps_rts
+   LDA zp_line_xl_l
+dps_x:
+   CMP POOL_XEND,X
+   BCC dps_found
+   LDY POOL_NEXT,X
+   BEQ dps_rts
+   CMP POOL_XEND,Y
+   BCC dps_found_y
+   LDX POOL_NEXT,Y
+   BNE dps_x
+dps_rts:
+   RTS                                     ; every span left of the pair:
+                                           ; nothing visible for EITHER line
+dps_found_y:
+   TYA
+   TAX
+dps_found:
+   STX DCLS_FIRST
+   JMP dcl_enter_span
+::dcl_pair_resume:                         ; pass 2: straight to the memo span
+   LDX DCLS_FIRST
+   BEQ dps_rts
+   JMP dcl_enter_span
 
 ; ========== Vertical line handler ==========
 ; For xl == xr: find the first span containing column xl, compute
@@ -561,7 +600,7 @@ dcl_cio_rts:
 ;  enters at dcl_vert_on directly, so the guard has been dead code
 ;  carrying a cross-module symbol.)
 ::dcl_vert_on:
-   STA zp_line_xl_l                        ; THE column (dv_* reads only this)
+   STA zp_line_xl_l                        ; THE column (dv_* reads only this) ;# |||||      0.6
 ; (corner ±1 shrink REVERTED 2026-07-27: walkseq found 48 frames with
 ; 2-6 px gaps — portal-edge verticals whose ft/fb horizontals were
 ; tightened away have NO join to cover the shrunk corners, and the s16
@@ -570,35 +609,35 @@ dcl_cio_rts:
 ; free and provably joined. See project_vplot memory.)
 ; clamp y1 into the u8 band (mc_vertical's exact ladder, lo-only:
 ; nothing downstream reads the y hi bytes)
-   LDA zp_line_yl_h
-   BNE dvc_y1_clamp                        ; rare (3%, census 2026-07-27):
+   LDA zp_line_yl_h                                                       ;# |||||      0.6
+   BNE dvc_y1_clamp                        ; rare (3%, census 2026-07-27): ;# |||        0.4
                                            ; clamp arms in the island below
 dvc_y1_done:
 ; clamp y2 (same-side pairs already rejected above)
-   LDA zp_line_yr_h
-   BNE dvc_y2_clamp                        ; rare (1.4%): island below
+   LDA zp_line_yr_h                                                       ;# |||||      0.6
+   BNE dvc_y2_clamp                        ; rare (1.4%): island below    ;# |||        0.4
 dvc_y2_done:
 ; clamped to a point (one end AT the boundary) -> reject, exactly as
 ; the generic post-clip degen check does; else FALL INTO the span query
-   LDA zp_line_yl_l
-   CMP zp_line_yr_l
-   BEQ dvc_rej                             ; degen: rare — non-degen FALLS
+   LDA zp_line_yl_l                                                       ;# |||||      0.6
+   CMP zp_line_yr_l                                                       ;# |||||      0.6
+   BEQ dvc_rej                             ; degen: rare — non-degen FALLS ;# |||        0.4
                                            ; INTO the span query (was a
                                            ; 99.3%-taken BNE hop)
 dcl_vertical:
 ; (the records-feedback tag died with the FUSED cutover 2026-08-25 —
 ;  verticals are never armed and zp_dcl_out has no reader)
 ; Compute ylo/yhi (dx/dy not needed for verticals)
-   LDA zp_line_yl_l
-   LDX zp_line_yr_l
-   CMP zp_line_yr_l
-   BCS dv_yl_ge                            ; yl >= yr never on suite: swap
+   LDA zp_line_yl_l                                                       ;# |||||      0.6
+   LDX zp_line_yr_l                                                       ;# |||||      0.6
+   CMP zp_line_yr_l                                                       ;# |||||      0.6
+   BCS dv_yl_ge                            ; yl >= yr never on suite: swap ;# |||        0.4
                                            ; arm in the island (census)
-   STA zp_line_y_l
-   STX zp_line_y_h
+   STA zp_line_y_l                                                        ;# |||||      0.6
+   STX zp_line_y_h                                                        ;# |||||      0.6
 dv_bbox_done:
-   LDX zp_head
-   BEQ dvc_rej                             ; empty list (island RTS)
+   LDX zp_head                                                            ;# |||||      0.6
+   BEQ dvc_rej                             ; empty list (island RTS)      ;# |||        0.4
 ; THE JAMB FIX (2026-08-21). A column belongs to EXACTLY ONE span
 ; under half-open tiling ([xs, xe) contains ix iff xs <= ix < xe), so
 ; this lookup is determinate — no 'which touching span do we pick?'
@@ -614,30 +653,30 @@ dv_bbox_done:
 ; path needs no TAX. Skip step was LDA zp + CMP + BCS + LDA abs,X +
 ; TAX + BNE = 19 cyc; it is now CMP + BCC + LDY abs,X + BEQ = 13.
 ; (measured 18 vertical calls and 23.6 skip steps per frame)
-   LDA zp_line_xl_l                        ; HOISTED: rides A throughout
+   LDA zp_line_xl_l                        ; HOISTED: rides A throughout  ;# |||||      0.6
 dv_check:
 dv_x:
-   CMP POOL_XEND,X                         ; C=0: this span reaches past xl
-   BCC dv_own_x
-   LDY POOL_NEXT,X
-   BEQ dvc_rej
-   CMP POOL_XEND,Y                         ; (mirror)
-   BCC dv_own_y
-   LDX POOL_NEXT,Y
-   BNE dv_x
-   BEQ dvc_rej                             ; list ran out (always taken)
+   CMP POOL_XEND,X                         ; C=0: this span reaches past xl ;# |||||||||| 1.3
+   BCC dv_own_x                                                           ;# ||||||     0.8
+   LDY POOL_NEXT,X                                                        ;# |||||||    0.9
+   BEQ dvc_rej                                                            ;# ||||       0.5
+   CMP POOL_XEND,Y                         ; (mirror)                     ;# ||||||     0.8
+   BCC dv_own_y                                                           ;# ||||       0.5
+   LDX POOL_NEXT,Y                                                        ;# |||||      0.6
+   BNE dv_x                                                               ;# |||        0.4
+   BEQ dvc_rej                             ; list ran out (always taken)  ;# |          0.1
 dv_own_x:
-   CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart
-   BCS dv_in                               ; -> this span owns the column
-   RTS                                     ; sorted list: column is solid
+   CMP POOL_XSTART,X                       ; A = xl: C = xl >= xstart     ;# |||        0.4
+   BCS dv_in                               ; -> this span owns the column ;# ||         0.3
+   RTS                                     ; sorted list: column is solid ;#            0.0
 dv_own_y:
-   CMP POOL_XSTART,Y
-   BCC dv_rts_solid
-   TYA                                     ; Y->X for the X-indexed dv_in
-   TAX                                     ; (the arm's only extra cost)
-   BNE dv_in                               ; always taken: a live slot != 0
+   CMP POOL_XSTART,Y                                                      ;# ||         0.2
+   BCC dv_rts_solid                                                       ;# |          0.1
+   TYA                                     ; Y->X for the X-indexed dv_in ;# |          0.1
+   TAX                                     ; (the arm's only extra cost)  ;# |          0.1
+   BNE dv_in                               ; always taken: a live slot != 0 ;# |          0.2
 dv_rts_solid:
-   RTS
+   RTS                                                                    ;#            0.0
 
 ; --- rare-arm island (census 2026-07-27): the vert clamp arms, degen/
 ; empty RTS and the yl>=yr swap arm, out of the hot fall path ---
@@ -664,14 +703,14 @@ dvc_y2_neg:
    ZERO zp_line_yr_l
    JMP dvc_y2_done                         ; (ZERO = STZ on C02: no flags)
 dvc_rej:
-   RTS
+   RTS                                                                    ;# ||         0.2
 dv_yl_ge:
    STA zp_line_y_h
    STX zp_line_y_l
    JMP dv_bbox_done
 dv_in:
 ; Span contains column xl. Compute top_y and bot_y at xl.
-   STX zp_save0
+   STX zp_save0                                                           ;# ||||       0.5
 ; ── IT/IB fast path (Eben, 2026-08-23) ────────────────────────────────
 ; The span carries its top line's extremes as OT = min(tl,tr) <= IT =
 ; max(tl,tr), and its bottom's as IB = min(bl,br) <= OB = max(bl,br). The
@@ -694,87 +733,87 @@ dv_in:
 ;
 ; dv_emit's SBC #Y_BIAS rides C=1 from its guard, and LDA/STA leave C
 ; alone, so the accept arm hands it the C=1 left by the IB compare.
-   LDA zp_line_y_l                         ; ylo
-   CMP POOL_IT,X
-   BCC dv_fp_slow                          ; ylo < IT: not wholly inside
-   LDA POOL_IB,X
-   CMP zp_line_y_h                         ; C = IB >= yhi
-   BCC dv_fp_slow
-   LDA zp_line_y_l
-   STA zp_cb_cy1
-   LDA zp_line_y_h
-   STA zp_cb_cy2
-   JMP dv_emit                             ; (C = 1 from the IB compare)
+   LDA zp_line_y_l                         ; ylo                          ;# ||||       0.5
+   CMP POOL_IT,X                                                          ;# |||||      0.6
+   BCC dv_fp_slow                          ; ylo < IT: not wholly inside  ;# |||        0.4
+   LDA POOL_IB,X                                                          ;# |||        0.3
+   CMP zp_line_y_h                         ; C = IB >= yhi                ;# ||         0.3
+   BCC dv_fp_slow                                                         ;# |          0.2
+   LDA zp_line_y_l                                                        ;# ||         0.2
+   STA zp_cb_cy1                                                          ;# ||         0.2
+   LDA zp_line_y_h                                                        ;# ||         0.2
+   STA zp_cb_cy2                                                          ;# ||         0.2
+   JMP dv_emit                             ; (C = 1 from the IB compare)  ;# ||         0.2
 dv_fp_slow:
-   LDA zp_line_y_h                         ; yhi
-   CMP POOL_OT,X
-   BCC dv_fp_rej                           ; yhi < OT: entirely above
-   LDA POOL_OB,X
-   CMP zp_line_y_l                         ; C = OB >= ylo
-   BCS dv_fp_exact
+   LDA zp_line_y_h                         ; yhi                          ;# ||         0.3
+   CMP POOL_OT,X                                                          ;# |||        0.3
+   BCC dv_fp_rej                           ; yhi < OT: entirely above     ;# |          0.2
+   LDA POOL_OB,X                                                          ;# ||         0.3
+   CMP zp_line_y_l                         ; C = OB >= ylo                ;# ||         0.2
+   BCS dv_fp_exact                                                        ;# ||         0.2
 dv_fp_rej:
-   RTS                                     ; entirely outside the aperture
+   RTS                                     ; entirely outside the aperture ;#            0.1
                                         ; (dv_clipped_away is out of
                                         ;  branch range from here)
 dv_fp_exact:
 ; Top: constant-line fast path or interp
-   LDA POOL_TL,X
-   CMP POOL_TR,X
-   BNE dv_top_interp
-   STA zp_cb_top1
-   BEQ dv_top_done                         ; Z=1 from the TL==TR CMP
+   LDA POOL_TL,X                                                          ;# ||         0.3
+   CMP POOL_TR,X                                                          ;# ||         0.3
+   BNE dv_top_interp                                                      ;# ||         0.2
+   STA zp_cb_top1                                                         ;#            0.0
+   BEQ dv_top_done                         ; Z=1 from the TL==TR CMP      ;#            0.0
 dv_top_interp:
-   LDA POOL_TXLO,X
-   STA zp_i_x0
-   LDA POOL_TDEN,X
-   STA zp_div_den
-   LDA POOL_TL,X
-   STA zp_i_y0
-   LDA POOL_TR,X
-   STA zp_i_y1
-   LDA zp_line_xl_l
-   JSR interp_store
-   STA zp_cb_top1
+   LDA POOL_TXLO,X                                                        ;# ||         0.3
+   STA zp_i_x0                                                            ;# ||         0.2
+   LDA POOL_TDEN,X                                                        ;# ||         0.3
+   STA zp_div_den                                                         ;# ||         0.2
+   LDA POOL_TL,X                                                          ;# ||         0.3
+   STA zp_i_y0                                                            ;# ||         0.2
+   LDA POOL_TR,X                                                          ;# ||         0.3
+   STA zp_i_y1                                                            ;# ||         0.2
+   LDA zp_line_xl_l                                                       ;# ||         0.2
+   JSR interp_store                                                       ;# |||        0.4
+   STA zp_cb_top1                                                         ;# ||         0.2
 dv_top_done:
 ; Bot: constant-line fast path or interp
-   LDX zp_save0
-   LDA POOL_BL,X
-   CMP POOL_BR,X
-   BNE dv_bot_interp
-   STA zp_cb_bot1
-   BEQ dv_bot_done                         ; Z=1 from the BL==BR CMP
+   LDX zp_save0                                                           ;# ||         0.2
+   LDA POOL_BL,X                                                          ;# ||         0.3
+   CMP POOL_BR,X                                                          ;# ||         0.3
+   BNE dv_bot_interp                                                      ;# |          0.2
+   STA zp_cb_bot1                                                         ;# |          0.1
+   BEQ dv_bot_done                         ; Z=1 from the BL==BR CMP      ;# |          0.1
 dv_bot_interp:
-   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors
-   STA zp_i_x0
-   LDA POOL_BDEN,X
-   STA zp_div_den
-   LDA POOL_BL,X
-   STA zp_i_y0
-   LDA POOL_BR,X
-   STA zp_i_y1
-   LDA zp_line_xl_l
-   JSR interp_store
-   STA zp_cb_bot1
+   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors    ;# |          0.2
+   STA zp_i_x0                                                            ;# |          0.1
+   LDA POOL_BDEN,X                                                        ;# |          0.2
+   STA zp_div_den                                                         ;# |          0.1
+   LDA POOL_BL,X                                                          ;# |          0.2
+   STA zp_i_y0                                                            ;# |          0.1
+   LDA POOL_BR,X                                                          ;# |          0.2
+   STA zp_i_y1                                                            ;# |          0.1
+   LDA zp_line_xl_l                                                       ;# |          0.1
+   JSR interp_store                                                       ;# ||         0.2
+   STA zp_cb_bot1                                                         ;# |          0.1
 dv_bot_done:
 ; Clip [ylo, yhi] to [top_y, bot_y]
 ; cy1 = max(ylo, top_y)
-   LDA zp_line_y_l
-   CMP zp_cb_top1
-   BCS dv_cy1_ok
-   LDA zp_cb_top1
+   LDA zp_line_y_l                                                        ;# ||         0.2
+   CMP zp_cb_top1                                                         ;# ||         0.2
+   BCS dv_cy1_ok                                                          ;# |          0.2
+   LDA zp_cb_top1                                                         ;# |          0.2
 dv_cy1_ok:
-   STA zp_cb_cy1
+   STA zp_cb_cy1                                                          ;# ||         0.2
 ; cy2 = min(yhi, bot_y)
-   LDA zp_line_y_h
-   CMP zp_cb_bot1
-   BCC dv_cy2_ok
-   LDA zp_cb_bot1
+   LDA zp_line_y_h                                                        ;# ||         0.2
+   CMP zp_cb_bot1                                                         ;# ||         0.2
+   BCC dv_cy2_ok                                                          ;# |          0.2
+   LDA zp_cb_bot1                                                         ;# ||         0.2
 dv_cy2_ok:
-   STA zp_cb_cy2
+   STA zp_cb_cy2                                                          ;# ||         0.2
 ; Emit if cy1 <= cy2  (swapped compare: cy2 >= cy1 is one BCS;
 ; A = cy2 rides out of both min() arms)
-   CMP zp_cb_cy1
-   BCC dv_clipped_away                     ; INVERTED 2026-08-22 (census:
+   CMP zp_cb_cy1                                                          ;# ||         0.2
+   BCC dv_clipped_away                     ; INVERTED 2026-08-22 (census: ;# |          0.1
                                         ; 96.2% of verticals emit, so the
                                         ; emit path now FALLS THROUGH and
                                         ; the reject takes the branch)
@@ -784,18 +823,18 @@ dv_emit:
 ; (LINE_OUT capture RETIRED 2026-07-26: the harness PC-traps the plot
 ; entries and reads RASTER_ZP_* directly — the engine no longer pays
 ; a gate test per emitted line.)
-   LDA zp_line_xl_l
-   STA RASTER_ZP_X0
-   STA RASTER_ZP_X1
-   LDA zp_cb_cy1
-   SBC #Y_BIAS                             ; C=1 from the BCS dv_emit guard
-   STA RASTER_ZP_Y0
-   LDA zp_cb_cy2
-   SBC #Y_BIAS                             ; C=1 from the in-band SBC
-   STA RASTER_ZP_Y1
-   BIT plotq_mode                          ; run-ahead queue armed?
-   BMI pq_enq_j
-   JMP plot_v                              ; always vertical on this path
+   LDA zp_line_xl_l                                                       ;# |||        0.4
+   STA RASTER_ZP_X0                                                       ;# |||        0.4
+   STA RASTER_ZP_X1                                                       ;# |||        0.4
+   LDA zp_cb_cy1                                                          ;# |||        0.4
+   SBC #Y_BIAS                             ; C=1 from the BCS dv_emit guard ;# ||         0.3
+   STA RASTER_ZP_Y0                                                       ;# |||        0.4
+   LDA zp_cb_cy2                                                          ;# |||        0.4
+   SBC #Y_BIAS                             ; C=1 from the in-band SBC     ;# ||         0.3
+   STA RASTER_ZP_Y1                                                       ;# |||        0.4
+   BIT plotq_mode                          ; run-ahead queue armed?       ;# |||        0.4
+   BMI pq_enq_j                                                           ;# ||         0.3
+   JMP plot_v                              ; always vertical on this path ;# |||        0.4
 pq_enq_j:
    JMP plot_enq
 dv_clipped_away:
@@ -835,185 +874,185 @@ dv_clipped_away:
 ;       ... symmetric with span_bot / reject-below ...
 ;   if cx1 > cx2: reject
 dcl_cb_clip:
-   STX zp_save0                            ; save span pointer
+   STX zp_save0                            ; save span pointer            ;# |          0.1
 ; (verdict-record housekeeping died with the FUSED cutover 2026-08-25)
 
 ; Step 1: X-clip line to [xstart, xend] = [ox0, ox1]
 ; cx1 = ox0
-   LDA zp_ox0
-   STA zp_cb_cx1
+   LDA zp_ox0                                                             ;# |          0.1
+   STA zp_cb_cx1                                                          ;# |          0.1
 ; cx2 = ox1
-   LDA zp_ox1
-   STA zp_cb_cx2
+   LDA zp_ox1                                                             ;# |          0.1
+   STA zp_cb_cx2                                                          ;# |          0.1
 
 ; Step 2: Compute line Y at clipped X endpoints
 ; dy==0 fast path: flat line → cy1 = cy2 = yl (skips the line-mode
 ; preset below — its only consumers are the two interps in cy_slow)
-   LDA zp_line_dy
-   BNE dcl_cb_cy_slow
-   LDA zp_line_yl_l
-   STA zp_cb_cy1
-   STA zp_cb_cy2
-   JMP dcl_cb_cy_done
+   LDA zp_line_dy                                                         ;# |          0.1
+   BNE dcl_cb_cy_slow                                                     ;# |          0.1
+   LDA zp_line_yl_l                                                       ;#            0.0
+   STA zp_cb_cy1                                                          ;#            0.0
+   STA zp_cb_cy2                                                          ;#            0.0
+   JMP dcl_cb_cy_done                                                     ;#            0.0
 dcl_cb_cy_slow:
 ; Pre-set interp workspace to line-mode so both cy interps can call
 ; interp_store directly (no shuffle).
-   LDA zp_line_xl_l
-   STA zp_i_x0
-   LDA zp_line_yl_l
-   STA zp_i_y0
-   LDA zp_line_yr_l
-   STA zp_i_y1
-   LDA zp_line_dx
-   STA zp_div_den
+   LDA zp_line_xl_l                                                       ;# |          0.1
+   STA zp_i_x0                                                            ;# |          0.1
+   LDA zp_line_yl_l                                                       ;# |          0.1
+   STA zp_i_y0                                                            ;# |          0.1
+   LDA zp_line_yr_l                                                       ;# |          0.1
+   STA zp_i_y1                                                            ;# |          0.1
+   LDA zp_line_dx                                                         ;# |          0.1
+   STA zp_div_den                                                         ;# |          0.1
 ; cy1 = line_y_at(cx1). CMP preserves A, so interp reuses it.
 ; Interp workspace already in line-mode — call interp_store directly.
-   LDA zp_cb_cx1
-   CMP zp_line_xl_l
-   BEQ dcl_cb_cy1_yl
-   JSR interp_store
-   .byte $2C
+   LDA zp_cb_cx1                                                          ;# |          0.1
+   CMP zp_line_xl_l                                                       ;# |          0.1
+   BEQ dcl_cb_cy1_yl                                                      ;# |          0.1
+   JSR interp_store                                                       ;#            0.0
+   .byte $2C                                                              ;#            0.0
 ; BIT abs: skip LDA
 dcl_cb_cy1_yl:
-   LDA zp_line_yl_l
-   STA zp_cb_cy1
+   LDA zp_line_yl_l                                                       ;#            0.1
+   STA zp_cb_cy1                                                          ;# |          0.1
 
 ; cy2 = line_y_at(cx2)
-   LDA zp_cb_cx2
-   CMP zp_line_xr_l
-   BEQ dcl_cb_cy2_yr
-   JSR interp_store
-   .byte $2C
+   LDA zp_cb_cx2                                                          ;# |          0.1
+   CMP zp_line_xr_l                                                       ;# |          0.1
+   BEQ dcl_cb_cy2_yr                                                      ;# |          0.1
+   JSR interp_store                                                       ;#            0.0
+   .byte $2C                                                              ;#            0.0
 ; BIT abs: skip LDA
 dcl_cb_cy2_yr:
-   LDA zp_line_yr_l
-   STA zp_cb_cy2
+   LDA zp_line_yr_l                                                       ;#            0.1
+   STA zp_cb_cy2                                                          ;# |          0.1
 dcl_cb_cy_done:
 
 ; ── Step 3: Top boundary ──────────────────────────────────────────
 ; Bbox filter: if both cy values are below the span's tightest top
 ; (cy >= IT = max(tl,tr) for both endpoints), the line can't cross
 ; the top boundary anywhere.  Skip top eval + clip entirely.
-   LDX zp_save0
-   CMP POOL_IT,X                           ; A = cy2 from both cy paths
-   BCC dcl_cb_top_eval
-   LDA zp_cb_cy1
-   CMP POOL_IT,X
-   BCC dcl_cb_top_eval
-   JMP dcl_cb_top_done                     ; both >= IT → skip top
+   LDX zp_save0                                                           ;# |          0.1
+   CMP POOL_IT,X                           ; A = cy2 from both cy paths   ;# |          0.1
+   BCC dcl_cb_top_eval                                                    ;# |          0.1
+   LDA zp_cb_cy1                                                          ;# |          0.1
+   CMP POOL_IT,X                                                          ;# |          0.1
+   BCC dcl_cb_top_eval                                                    ;#            0.1
+   JMP dcl_cb_top_done                     ; both >= IT → skip top        ;# |          0.1
 
 dcl_cb_top_eval:
 ; Evaluate top1, top2 at cx1, cx2 (fast paths first)
 ; Constant top? TL==TR (also covers den=0 since that implies TL==TR)
-   LDA POOL_TL,X
-   CMP POOL_TR,X
-   BNE dcl_cb_top_interp
-   STA zp_cb_top1
-   STA zp_cb_top2
-   BEQ dcl_cb_top_evaled                   ; Z=1 from the TL==TR CMP
+   LDA POOL_TL,X                                                          ;#            0.0
+   CMP POOL_TR,X                                                          ;#            0.0
+   BNE dcl_cb_top_interp                                                  ;#            0.0
+   STA zp_cb_top1                                                         ;#            0.0
+   STA zp_cb_top2                                                         ;#            0.0
+   BEQ dcl_cb_top_evaled                   ; Z=1 from the TL==TR CMP      ;#            0.0
 dcl_cb_top_interp:
 ; Setup interp and evaluate
-   LDA POOL_TXLO,X
-   STA zp_i_x0
-   LDA POOL_TDEN,X
-   STA zp_div_den
-   LDA POOL_TL,X
-   STA zp_i_y0
-   LDA POOL_TR,X
-   STA zp_i_y1
-   LDA zp_cb_cx1
-   JSR interp_store
-   STA zp_cb_top1
-   LDA zp_cb_cx2
-   JSR interp_store
-   STA zp_cb_top2
+   LDA POOL_TXLO,X                                                        ;#            0.0
+   STA zp_i_x0                                                            ;#            0.0
+   LDA POOL_TDEN,X                                                        ;#            0.0
+   STA zp_div_den                                                         ;#            0.0
+   LDA POOL_TL,X                                                          ;#            0.0
+   STA zp_i_y0                                                            ;#            0.0
+   LDA POOL_TR,X                                                          ;#            0.0
+   STA zp_i_y1                                                            ;#            0.0
+   LDA zp_cb_cx1                                                          ;#            0.0
+   JSR interp_store                                                       ;#            0.0
+   STA zp_cb_top1                                                         ;#            0.0
+   LDA zp_cb_cx2                                                          ;#            0.0
+   JSR interp_store                                                       ;#            0.0
+   STA zp_cb_top2                                                         ;#            0.0
 dcl_cb_top_evaled:
 
 ; Top clip: test cy vs top at each endpoint
-   LDA zp_cb_cy1
-   CMP zp_cb_top1
-   BCS dcl_cb_top_p1_ok
+   LDA zp_cb_cy1                                                          ;#            0.0
+   CMP zp_cb_top1                                                         ;#            0.0
+   BCS dcl_cb_top_p1_ok                                                   ;#            0.0
 ; cy1 >= top1
-   LDA zp_cb_cy2
-   CMP zp_cb_top2
-   BCS dcl_cb_top_clip
+   LDA zp_cb_cy2                                                          ;#            0.0
+   CMP zp_cb_top2                                                         ;#            0.0
+   BCS dcl_cb_top_clip                                                    ;#            0.0
 ; cy2 >= top2 → one inside, clip
    JMP dcl_cb_reject_above                 ; both above → reject
 dcl_cb_top_p1_ok:
 ; cy1 >= top1; check cy2
-   LDA zp_cb_cy2
-   CMP zp_cb_top2
-   BCS dcl_cb_top_done
+   LDA zp_cb_cy2                                                          ;#            0.0
+   CMP zp_cb_top2                                                         ;#            0.0
+   BCS dcl_cb_top_done                                                    ;#            0.0
 ; cy2 >= top2 → both inside, no clip
 ; cy2 < top2, cy1 >= top1: clip at p2 end
-   LDA zp_cb_cy1
-   SEC
-   SBC zp_cb_top1
-   STA zp_tmp0
+   LDA zp_cb_cy1                                                          ;#            0.0
+   SEC                                                                    ;#            0.0
+   SBC zp_cb_top1                                                         ;#            0.0
+   STA zp_tmp0                                                            ;#            0.0
 ; d1 = cy1 - top1 >= 0  (=> C=1: no SEC for the next subtract)
-   LDA zp_cb_cy2
-   SBC zp_cb_top2
-   STA zp_tmp1
+   LDA zp_cb_cy2                                                          ;#            0.0
+   SBC zp_cb_top2                                                         ;#            0.0
+   STA zp_tmp1                                                            ;#            0.0
 ; d2 = cy2 - top2 < 0
-   LDA #0
-   JSR dcl_boundary_ix
+   LDA #0                                                                 ;#            0.0
+   JSR dcl_boundary_ix                                                    ;#            0.0
 ; A = ix (clip p2, round toward cx1)
-   STA zp_cb_cx2
+   STA zp_cb_cx2                                                          ;#            0.0
 ; cy at crossing = boundary_y(ix). Interp workspace still has the
 ; span's top line (i_x0=TXLO, i_y0=TL, i_y1=TR); boundary_ix only
 ; clobbered div_den. Constant spans: cy = top1 directly.
-   LDA zp_cb_top1
-   CMP zp_cb_top2
-   BEQ dcl_cb_top_cy2_const
+   LDA zp_cb_top1                                                         ;#            0.0
+   CMP zp_cb_top2                                                         ;#            0.0
+   BEQ dcl_cb_top_cy2_const                                               ;#            0.0
    LDX zp_save0
    LDA POOL_TDEN,X
    STA zp_div_den
    LDA zp_cb_cx2
    JSR interp_store
 dcl_cb_top_cy2_const:                      ; BEQ lands here with A = top1
-   STA zp_cb_cy2
-   JMP dcl_cb_top_done
+   STA zp_cb_cy2                                                          ;#            0.0
+   JMP dcl_cb_top_done                                                    ;#            0.0
 
 dcl_cb_top_clip:
 ; cy1 < top1, cy2 >= top2: clip at p1 end (entered via BCS => C=1)
-   LDA zp_cb_cy1
-   SBC zp_cb_top1
-   STA zp_tmp0
+   LDA zp_cb_cy1                                                          ;#            0.0
+   SBC zp_cb_top1                                                         ;#            0.0
+   STA zp_tmp0                                                            ;#            0.0
 ; d1 < 0
-   LDA zp_cb_cy2
-   SEC
-   SBC zp_cb_top2
-   STA zp_tmp1
+   LDA zp_cb_cy2                                                          ;#            0.0
+   SEC                                                                    ;#            0.0
+   SBC zp_cb_top2                                                         ;#            0.0
+   STA zp_tmp1                                                            ;#            0.0
 ; d2 >= 0
-   LDA #1
-   JSR dcl_boundary_ix
+   LDA #1                                                                 ;#            0.0
+   JSR dcl_boundary_ix                                                    ;#            0.0
 ; A = ix (clip p1, round toward cx2)
-   STA zp_cb_cx1
-   LDA zp_cb_top1
-   CMP zp_cb_top2
-   BEQ dcl_cb_top_cy1_const
+   STA zp_cb_cx1                                                          ;#            0.0
+   LDA zp_cb_top1                                                         ;#            0.0
+   CMP zp_cb_top2                                                         ;#            0.0
+   BEQ dcl_cb_top_cy1_const                                               ;#            0.0
    LDX zp_save0
    LDA POOL_TDEN,X
    STA zp_div_den
    LDA zp_cb_cx1
    JSR interp_store
 dcl_cb_top_cy1_const:                      ; BEQ lands here with A = top1
-   STA zp_cb_cy1
+   STA zp_cb_cy1                                                          ;#            0.0
 ; cx1 was clipped right of ox0, so the line is NOT visible at ox0 and an
 ; open run ended there.  Close it BEFORE this span's verdict record —
 ; ascending-x contract.  Guarded on ox0 < cx1 so an intersection landing
 ; exactly on ox0 (nothing clipped off, run continues) neither closes nor
 ; records.
-   LDA zp_ox0
-   CMP zp_cb_cx1
-   BCS dcl_cb_top_done
-   JSR dcl_close_open_nx                   ; preserves zp_save0
+   LDA zp_ox0                                                             ;#            0.0
+   CMP zp_cb_cx1                                                          ;#            0.0
+   BCS dcl_cb_top_done                                                    ;#            0.0
+   JSR dcl_close_open_nx                   ; preserves zp_save0           ;#            0.0
 
 dcl_cb_top_done:
 ; Check cx1 > cx2 after top clip → reject
-   LDA zp_cb_cx2
-   CMP zp_cb_cx1
-   BCS dcl_cb_top_ok
+   LDA zp_cb_cx2                                                          ;# |          0.1
+   CMP zp_cb_cx1                                                          ;# |          0.1
+   BCS dcl_cb_top_ok                                                      ;# |          0.1
    JMP dcl_cb_reject_above
 dcl_cb_top_ok:
 
@@ -1021,55 +1060,55 @@ dcl_cb_top_ok:
 ; Bbox filter: if both cy values are above the span's tightest bot
 ; (cy <= IB = min(bl,br) for both endpoints), the line can't cross
 ; the bot boundary anywhere.  Skip bot eval + clip entirely.
-   LDX zp_save0
-   LDA POOL_IB,X
-   CMP zp_cb_cy1
-   BCC dcl_cb_bot_eval
-   CMP zp_cb_cy2                           ; A = IB still
-   BCC dcl_cb_bot_eval
-   JMP dcl_cb_bot_done                     ; both <= IB → skip bot
+   LDX zp_save0                                                           ;# |          0.1
+   LDA POOL_IB,X                                                          ;# |          0.1
+   CMP zp_cb_cy1                                                          ;# |          0.1
+   BCC dcl_cb_bot_eval                                                    ;# |          0.1
+   CMP zp_cb_cy2                           ; A = IB still                 ;#            0.0
+   BCC dcl_cb_bot_eval                                                    ;#            0.0
+   JMP dcl_cb_bot_done                     ; both <= IB → skip bot        ;#            0.0
 
 dcl_cb_bot_eval:
 ; Evaluate bot1, bot2 at (possibly top-clipped) cx1, cx2
 ; Constant bot? BL==BR (also covers den=0 since that implies BL==BR)
-   LDA POOL_BL,X
-   CMP POOL_BR,X
-   BNE dcl_cb_bot_interp
+   LDA POOL_BL,X                                                          ;# |          0.1
+   CMP POOL_BR,X                                                          ;# |          0.1
+   BNE dcl_cb_bot_interp                                                  ;# |          0.1
    STA zp_cb_bot1
    STA zp_cb_bot2
    BEQ dcl_cb_bot_eval_done                ; Z=1 from the BL==BR CMP
 dcl_cb_bot_interp:
-   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors
-   STA zp_i_x0
-   LDA POOL_BDEN,X
-   STA zp_div_den
-   LDA POOL_BL,X
-   STA zp_i_y0
-   LDA POOL_BR,X
-   STA zp_i_y1
-   LDA zp_cb_cx1
-   JSR interp_store
-   STA zp_cb_bot1
-   LDA zp_cb_cx2
-   JSR interp_store
-   STA zp_cb_bot2
+   LDA POOL_BXLO,X                         ; BOTTOM line's own anchors    ;# |          0.1
+   STA zp_i_x0                                                            ;# |          0.1
+   LDA POOL_BDEN,X                                                        ;# |          0.1
+   STA zp_div_den                                                         ;# |          0.1
+   LDA POOL_BL,X                                                          ;# |          0.1
+   STA zp_i_y0                                                            ;# |          0.1
+   LDA POOL_BR,X                                                          ;# |          0.1
+   STA zp_i_y1                                                            ;# |          0.1
+   LDA zp_cb_cx1                                                          ;# |          0.1
+   JSR interp_store                                                       ;# |          0.2
+   STA zp_cb_bot1                                                         ;# |          0.1
+   LDA zp_cb_cx2                                                          ;# |          0.1
+   JSR interp_store                                                       ;# |          0.2
+   STA zp_cb_bot2                                                         ;# |          0.1
 dcl_cb_bot_eval_done:
 
 ; Bot clip: test cy vs bot at each endpoint
-   LDA zp_cb_bot1
-   CMP zp_cb_cy1
-   BCS dcl_cb_bot_p1_ok
+   LDA zp_cb_bot1                                                         ;# |          0.1
+   CMP zp_cb_cy1                                                          ;# |          0.1
+   BCS dcl_cb_bot_p1_ok                                                   ;#            0.1
 ; bot1 >= cy1
-   LDA zp_cb_bot2
-   CMP zp_cb_cy2
-   BCS dcl_cb_bot_clip
+   LDA zp_cb_bot2                                                         ;#            0.1
+   CMP zp_cb_cy2                                                          ;#            0.0
+   BCS dcl_cb_bot_clip                                                    ;#            0.0
 ; bot2 >= cy2 → one inside, clip
-   JMP dcl_cb_reject_below                 ; both below → reject
+   JMP dcl_cb_reject_below                 ; both below → reject          ;#            0.0
 dcl_cb_bot_p1_ok:
 ; bot1 >= cy1; check cy2
-   LDA zp_cb_bot2
-   CMP zp_cb_cy2
-   BCS dcl_cb_bot_done
+   LDA zp_cb_bot2                                                         ;#            0.0
+   CMP zp_cb_cy2                                                          ;#            0.0
+   BCS dcl_cb_bot_done                                                    ;#            0.0
 ; bot2 >= cy2 → both inside
 ; cy2 > bot2, cy1 <= bot1: clip p2 end
 ; d1 = cy1 - bot1 (negative or zero, since cy1 <= bot1)
@@ -1136,29 +1175,29 @@ dcl_cb_bot_cy1_const:                      ; BEQ lands here with A = bot1
 
 dcl_cb_bot_done:
 ; Check cx1 > cx2 after bot clip → reject
-   LDA zp_cb_cx2
-   CMP zp_cb_cx1
-   BCC dcl_cb_reject_below
+   LDA zp_cb_cx2                                                          ;#            0.1
+   CMP zp_cb_cx1                                                          ;#            0.1
+   BCC dcl_cb_reject_below                                                ;#            0.0
 
 ; CB clip succeeded. If cx2 < ox1 the line exits the aperture INSIDE
 ; the span (not at a span boundary). Emit (cx1,cy1)→(cx2,cy2) directly
 ; and reset seg_start — no portal continuation possible since the line
 ; left the aperture mid-span. The exit check / dcl_emit_open both use
 ; xr/yr or line_y_at(seg_end_x) for the exit, which would be wrong here.
-   CMP zp_ox1                              ; A = cx2 from the reject test
-   BCS dcl_cb_no_exit_clip
+   CMP zp_ox1                              ; A = cx2 from the reject test ;#            0.1
+   BCS dcl_cb_no_exit_clip                                                ;#            0.1
 ; cx2 < ox1 → the line leaves the aperture INSIDE this span, so the run
 ; genuinely ends at cx2 and is emitted here (segment record written by
 ; emit).  But if a run was already open and this one starts exactly where
 ; that one ended, it is the SAME run: keep the original seg_start and
 ; emit once.  Overwriting seg_start with cx1 here would split the line.
-   LDX zp_save0
-   LDA zp_seg_start_x
-   CMP #$FF
-   BEQ dcl_cbx_open
-   LDA zp_cb_cx1
-   CMP zp_seg_end_x
-   BEQ dcl_cbx_emit                        ; contiguous → extend it
+   LDX zp_save0                                                           ;#            0.0
+   LDA zp_seg_start_x                                                     ;#            0.0
+   CMP #$FF                                                               ;#            0.0
+   BEQ dcl_cbx_open                                                       ;#            0.0
+   LDA zp_cb_cx1                                                          ;#            0.0
+   CMP zp_seg_end_x                                                       ;#            0.0
+   BEQ dcl_cbx_emit                        ; contiguous → extend it       ;#            0.0
    JSR dcl_close_open_nx                   ; a real gap → close the old run
    LDX zp_save0
 dcl_cbx_open:
@@ -1167,23 +1206,23 @@ dcl_cbx_open:
    LDA zp_cb_cy1
    STA zp_seg_start_y
 dcl_cbx_emit:
-   LDA zp_cb_cx2
-   STA zp_ox1
-   LDA zp_cb_cy2
-   STA zp_tmp0
-   JSR dcl_emit_segment
-   LDA #$FF
-   STA zp_seg_start_x
-   LDX zp_save0
-   LDA POOL_NEXT,X
-   BEQ dclwb_flush2                        ; LDA's own Z — the TAX below is
+   LDA zp_cb_cx2                                                          ;#            0.0
+   STA zp_ox1                                                             ;#            0.0
+   LDA zp_cb_cy2                                                          ;#            0.0
+   STA zp_tmp0                                                            ;#            0.0
+   JSR dcl_emit_segment                                                   ;#            0.0
+   LDA #$FF                                                               ;#            0.0
+   STA zp_seg_start_x                                                     ;#            0.0
+   LDX zp_save0                                                           ;#            0.0
+   LDA POOL_NEXT,X                                                        ;#            0.0
+   BEQ dclwb_flush2                        ; LDA's own Z — the TAX below is ;#            0.0
    TAX                                     ; SKIPPED on the flush arm, where
                                         ; X is dead (the walk exits via RTS
                                         ; and no caller of draw_clipped_line
                                         ; reads X back)                        ; (entry guard bypassed: LDA's Z
    JMP dcl_not_left                           ; answers the null test here)
 dclwb_flush2:
-   JMP dcl_flush
+   JMP dcl_flush                                                          ;#            0.0
 
 dcl_cb_no_exit_clip:
 ; cx2 == ox1: CB did not clip the exit, so the visible run reaches the
@@ -1192,24 +1231,24 @@ dcl_cb_no_exit_clip:
 ; (The Y-bbox narrowing that used to live here died with the portal
 ;  check: its only consumer was dcl_pp_bbox, and dcl_entry_path resets
 ;  the bbox on every span anyway — it was a dead store on this path.)
-   LDX zp_save0
-   LDA zp_seg_start_x
-   CMP #$FF
-   BEQ dcl_cbn_open
-   LDA zp_cb_cx1
-   CMP zp_seg_end_x
-   BEQ dcl_cbn_extend                      ; contiguous → extend
+   LDX zp_save0                                                           ;#            0.1
+   LDA zp_seg_start_x                                                     ;#            0.1
+   CMP #$FF                                                               ;#            0.0
+   BEQ dcl_cbn_open                                                       ;#            0.1
+   LDA zp_cb_cx1                                                          ;#            0.0
+   CMP zp_seg_end_x                                                       ;#            0.0
+   BEQ dcl_cbn_extend                      ; contiguous → extend          ;#            0.0
    JSR dcl_emit_open                       ; a real gap → close the old run
    LDX zp_save0
 dcl_cbn_open:
-   LDA zp_cb_cx1
-   STA zp_seg_start_x
-   LDA zp_cb_cy1
-   STA zp_seg_start_y
+   LDA zp_cb_cx1                                                          ;#            0.0
+   STA zp_seg_start_x                                                     ;#            0.0
+   LDA zp_cb_cy1                                                          ;#            0.0
+   STA zp_seg_start_y                                                     ;#            0.0
 dcl_cbn_extend:
-   LDA zp_cb_cx2
-   STA zp_seg_end_x
-   JMP dcl_exit_check
+   LDA zp_cb_cx2                                                          ;#            0.1
+   STA zp_seg_end_x                                                       ;#            0.1
+   JMP dcl_exit_check                                                     ;#            0.1
 
 ; Both arms prove a direction, so both tag zp_dcl_out exactly as the
 ; Tier-1 arms do (feedback only when records are armed — same contract).
@@ -1220,19 +1259,19 @@ dcl_cbn_extend:
 ; run below (top < bot), so a single direction is the whole story.
 dcl_cb_reject_above:
 dcl_cb_reject_below:
-   JSR dcl_close_open_nx                   ; (record plumbing died 2026-08-25)
+   JSR dcl_close_open_nx                   ; (record plumbing died 2026-08-25) ;# |          0.1
 dcl_cb_reject:
 ; CB clip rejected — skip this span
-   LDX zp_save0
-   LDA POOL_NEXT,X
-   BEQ dclwb_flush3                        ; LDA's own Z — the TAX below is
+   LDX zp_save0                                                           ;#            0.0
+   LDA POOL_NEXT,X                                                        ;#            0.1
+   BEQ dclwb_flush3                        ; LDA's own Z — the TAX below is ;#            0.0
    TAX                                     ; SKIPPED on the flush arm, where
                                         ; X is dead (the walk exits via RTS
                                         ; and no caller of draw_clipped_line
                                         ; reads X back)                        ; (entry guard bypassed: LDA's Z
    JMP dcl_not_left                           ; answers the null test here)
 dclwb_flush3:
-   JMP dcl_flush
+   JMP dcl_flush                                                          ;#            0.0
 
 ; --- dcl_boundary_ix: compute intersection X for CB clip ---
 ; Input: zp_tmp0 = d1 (s8), zp_tmp1 = d2 (s8), A = clip_p1 flag (0 or 1)
@@ -1252,73 +1291,73 @@ dclwb_flush3:
 ; Guards: den == 0 or den > 255 -> return midpoint (cannot occur for
 ; sane pixel-scale inputs); cx2 == cx1 -> return cx1.
 ::dcl_boundary_ix:
-   STA zp_save1                            ; save clip_p1 flag
+   STA zp_save1                            ; save clip_p1 flag            ;#            0.1
 
 ; denom = d1 - d2 (s8 result, but could be s9 in theory)
 ; Since d1 and d2 have opposite signs, |denom| = |d1| + |d2|
 ; Compute |d1| and sign
-   LDA zp_tmp0
-   BPL dcl_bix_d1_pos
+   LDA zp_tmp0                                                            ;#            0.0
+   BPL dcl_bix_d1_pos                                                     ;#            0.0
 ; d1 negative: |d1| = -d1
-   EOR #$FF
-   BUMP
+   EOR #$FF                                                               ;#            0.0
+   BUMP                                                                   ;#            0.0
 dcl_bix_d1_pos:
-   STA zp_tmp2                             ; |d1|
+   STA zp_tmp2                             ; |d1|                         ;#            0.0
 
 ; |denom| = |d1| + |d2| (since opposite signs)
-   LDA zp_tmp1
-   BPL dcl_bix_d2_pos
-   EOR #$FF
-   BUMP
+   LDA zp_tmp1                                                            ;#            0.0
+   BPL dcl_bix_d2_pos                                                     ;#            0.0
+   EOR #$FF                                                               ;#            0.0
+   BUMP                                                                   ;#            0.0
 dcl_bix_d2_pos:
-   CLC
-   ADC zp_tmp2
-   STA zp_div_den
+   CLC                                                                    ;#            0.0
+   ADC zp_tmp2                                                            ;#            0.0
+   STA zp_div_den                                                         ;#            0.0
 ; |denom| = |d1| + |d2|
 ; Handle overflow: if carry set, denom > 255 — shouldn't happen
 ; for pixel-scale values, but guard just in case
-   BCS dcl_bix_mid                         ; denom overflow → use midpoint fallback
+   BCS dcl_bix_mid                         ; denom overflow → use midpoint fallback ;#            0.0
 
 ; Check denom == 0 (shouldn't happen if signs differ, but guard)
-   BEQ dcl_bix_mid
+   BEQ dcl_bix_mid                                                        ;#            0.0
 
 ; num = (cx2 - cx1) * |d1|
-   LDA zp_cb_cx2
-   SEC
-   SBC zp_cb_cx1
-   STA zp_mul_b
+   LDA zp_cb_cx2                                                          ;#            0.0
+   SEC                                                                    ;#            0.0
+   SBC zp_cb_cx1                                                          ;#            0.0
+   STA zp_mul_b                                                           ;#            0.0
 ; dx = cx2 - cx1
-   BEQ dcl_bix_cx1                         ; dx=0 → return cx1
+   BEQ dcl_bix_cx1                         ; dx=0 → return cx1            ;#            0.0
 
-   LDA zp_tmp2                             ; |d1|
-   JSR umul8                               ; prod = dx * |d1| → zp_prod_l:hi
+   LDA zp_tmp2                             ; |d1|                         ;#            0.0
+   JSR umul8                               ; prod = dx * |d1| → zp_prod_l:hi ;# |          0.1
 
 ; Directed rounding: if clip_p1, add (denom-1) to numerator before divide
 ; (ceiling division). If !clip_p1, just floor division.
-   LDA zp_save1
-   BEQ dcl_bix_no_round
+   LDA zp_save1                                                           ;#            0.1
+   BEQ dcl_bix_no_round                                                   ;#            0.0
 ; Add (denom - 1) in one pass: den + $FF with C=0 in (the guards above
 ; fell through) = den-1 with C=1 out (den >= 1), then + prod_l.
-   LDA zp_div_den
-   ADC #$FF
-   CLC
-   ADC zp_prod_l
-   STA zp_div_l
-   BCC dcl_bix_no_round
-   INC zp_div_h
+   LDA zp_div_den                                                         ;#            0.0
+   ADC #$FF                                                               ;#            0.0
+   CLC                                                                    ;#            0.0
+   ADC zp_prod_l                                                          ;#            0.0
+   STA zp_div_l                                                           ;#            0.0
+   BCC dcl_bix_no_round                                                   ;#            0.0
+   INC zp_div_h                                                           ;#            0.0
 dcl_bix_no_round:
 ; prod already in div_lo:hi (aliases — fall through to divide)
-   JSR udiv16_8                            ; A = quotient = num / denom
+   JSR udiv16_8                            ; A = quotient = num / denom   ;# |          0.1
 
 ; ix = cx1 + quotient
-   CLC
-   ADC zp_cb_cx1
+   CLC                                                                    ;#            0.0
+   ADC zp_cb_cx1                                                          ;#            0.0
 ; Clamp to [cx1, cx2]
-   CMP zp_cb_cx1
-   BCC dcl_bix_cx1
-   CMP zp_cb_cx2
-   BCS dcl_bix_cx2                         ; == returns cx2 (same value)
-   RTS
+   CMP zp_cb_cx1                                                          ;#            0.0
+   BCC dcl_bix_cx1                                                        ;#            0.0
+   CMP zp_cb_cx2                                                          ;#            0.0
+   BCS dcl_bix_cx2                         ; == returns cx2 (same value)  ;#            0.0
+   RTS                                                                    ;# |          0.1
 
 dcl_bix_cx1:
    LDA zp_cb_cx1
@@ -1357,9 +1396,9 @@ dcl_es_degen:
 ::dcl_emit_segment:
 ; Skip degenerate segments (zero-length). Common case falls through
 ; (was a 97.4%-taken BNE — census 2026-07-27).
-   LDA zp_seg_start_x
-   CMP zp_ox1
-   BEQ dcl_es_degen
+   LDA zp_seg_start_x                                                     ;# |||||      0.6
+   CMP zp_ox1                                                             ;# |||||      0.6
+   BEQ dcl_es_degen                                                       ;# |||        0.4
 dcl_es_ok:
 ; --- Y-band safety clip: clamp biased Y to [Y_BIAS, VIS_YMAX] so the
 ; un-bias below can't wrap an off-screen Y into a wild row address.  The
@@ -1368,17 +1407,17 @@ dcl_es_ok:
 ; aperture clip can still hand us an off-screen segment (e.g. the BL=241
 ; span at 1000,-3160,156).  Needed until the tighten clamps apertures to
 ; [Y_BIAS,VIS_YMAX].  In-band segments are byte-identical (4 compares).
-   LDA zp_seg_start_y                      ; (x-differ path only: the y-differ
+   LDA zp_seg_start_y                      ; (x-differ path only: the y-differ ;# |||||      0.6
 dcl_es_ok_noreload:                        ; BNE arrives with start_y live)
-   CMP #Y_BIAS
-   BCC dcl_es_yband
-   CMP #(VIS_YMAX + 1)
-   BCS dcl_es_yband
-   LDA zp_tmp0
-   CMP #Y_BIAS
-   BCC dcl_es_yband
-   CMP #(VIS_YMAX + 1)
-   BCS dcl_es_yband                        ; RE-INVERTED 2026-08-22 (branch
+   CMP #Y_BIAS                                                            ;# |||        0.4
+   BCC dcl_es_yband                                                       ;# |||        0.4
+   CMP #(VIS_YMAX + 1)                                                    ;# |||        0.4
+   BCS dcl_es_yband                                                       ;# |||        0.4
+   LDA zp_tmp0                                                            ;# |||||      0.6
+   CMP #Y_BIAS                                                            ;# |||        0.4
+   BCC dcl_es_yband                                                       ;# |||        0.4
+   CMP #(VIS_YMAX + 1)                                                    ;# |||        0.4
+   BCS dcl_es_yband                        ; RE-INVERTED 2026-08-22 (branch ;# |||        0.4
                                         ; census): the 2026-08-12 note
                                         ; claimed "the rare yband clip
                                         ; falls in", but it had the RARE
@@ -1397,27 +1436,27 @@ dcl_es_record:
 ;  plots THROUGH this routine with its records machinery gone)
 dcl_es_no_record:
 ; (LINE_OUT capture RETIRED 2026-07-26 — see the vertical emit note.)
-   LDA zp_seg_start_x
-   STA RASTER_ZP_X0
-   LDA zp_seg_start_y
-   SEC
-   SBC #Y_BIAS
-   STA RASTER_ZP_Y0
-   LDA zp_ox1
-   STA RASTER_ZP_X1
-   LDA zp_tmp0
-   SBC #Y_BIAS                             ; C=1 from the Y0 unbias
-   STA RASTER_ZP_Y1
+   LDA zp_seg_start_x                                                     ;# |||||      0.6
+   STA RASTER_ZP_X0                                                       ;# |||||      0.6
+   LDA zp_seg_start_y                                                     ;# |||||      0.6
+   SEC                                                                    ;# |||        0.4
+   SBC #Y_BIAS                                                            ;# |||        0.4
+   STA RASTER_ZP_Y0                                                       ;# |||||      0.6
+   LDA zp_ox1                                                             ;# |||||      0.6
+   STA RASTER_ZP_X1                                                       ;# |||||      0.6
+   LDA zp_tmp0                                                            ;# |||||      0.6
+   SBC #Y_BIAS                             ; C=1 from the Y0 unbias       ;# |||        0.4
+   STA RASTER_ZP_Y1                                                       ;# |||||      0.6
 des_dispatch:
 ; --- axis dispatch: ~70% of rasterised pixels are in horizontal or
 ; vertical segments (gradient census 2026-07-05) — route them to the
 ; dedicated plotters instead of the generic NJ machinery ---
 ; (A = Y1 on both entry paths)
-   BIT plotq_mode                          ; run-ahead queue armed? (driver
-   BMI pq_enq_j2                           ; feature: harness stays direct)
-   CMP RASTER_ZP_Y0
-   BNE des_not_h
-   JMP plot_h
+   BIT plotq_mode                          ; run-ahead queue armed? (driver ;# |||||      0.6
+   BMI pq_enq_j2                           ; feature: harness stays direct) ;# |||        0.4
+   CMP RASTER_ZP_Y0                                                       ;# |||||      0.6
+   BNE des_not_h                                                          ;# ||||       0.5
+   JMP plot_h                                                             ;# ||         0.3
 pq_enq_j2:
    JMP plot_enq
 des_to_v:
@@ -1430,9 +1469,9 @@ des_to_v:
 dtv_ord:
    JMP plot_v
 des_not_h:
-   LDA RASTER_ZP_X0
-   CMP RASTER_ZP_X1
-   BEQ des_to_v                            ; verticals never here on suite
+   LDA RASTER_ZP_X0                                                       ;# ||         0.3
+   CMP RASTER_ZP_X1                                                       ;# ||         0.3
+   BEQ des_to_v                            ; verticals never here on suite ;# ||         0.2
                                            ; (census 2026-07-27): diagonal
 des_diag:                                  ; FALLS THROUGH
 ; (A run-slice plotter for shallow diagonals was measured-and-rejected
@@ -1441,7 +1480,7 @@ des_diag:                                  ; FALLS THROUGH
 ; is already run-accumulating at ~11 cyc/px and E1M1 lacks enough
 ; sub-1:33 lines to amortize even the dispatch test. See the
 ; 'experiment: run-slice' commit to revive.)
-   JMP RASTER_ENTRY                        ; tail-call rasteriser
+   JMP RASTER_ENTRY                        ; tail-call rasteriser         ;# ||         0.3
 
 ; --- rare-arm island: the Y-band safety clip (2026-08-22). Reached only
 ;     when an emitted segment has an endpoint outside [Y_BIAS,VIS_YMAX];
@@ -1682,44 +1721,44 @@ yb_reject:
 ;                       addressing despite the forward reference)
 ;   dcl_line_y_at_a   — x in A
 dcl_line_y_at_ox0:
-   LDA zp_ox0                              ; (was a hardcoded $E9 "forward
+   LDA zp_ox0                              ; (was a hardcoded $E9 "forward ;#            0.0
 ; ref" — zp.inc is included first, the symbol resolves fine; the literal
 ; silently missed the 2026-07-10 relocation and read struct sy garbage)
 dcl_line_y_at_a:
 line_interp_store:
 .scope
-   SEC
-   SBC zp_line_xl_l
-   BEQ lis_yl
+   SEC                                                                    ;#            0.0
+   SBC zp_line_xl_l                                                       ;#            0.1
+   BEQ lis_yl                                                             ;#            0.0
 ; offset=0 → yl
-   CMP zp_line_dx
-   BEQ lis_yr
+   CMP zp_line_dx                                                         ;#            0.1
+   BEQ lis_yr                                                             ;#            0.0
 ; offset=dx → yr
-   STA zp_mul_b
-   LDY zp_line_dx
-   STY zp_div_den
+   STA zp_mul_b                                                           ;#            0.1
+   LDY zp_line_dx                                                         ;#            0.1
+   STY zp_div_den                                                         ;#            0.1
 ; Direction check
-   LDA zp_line_yr_l
-   CMP zp_line_yl_l
-   BEQ lis_yl
-   BCC lis_desc
+   LDA zp_line_yr_l                                                       ;#            0.1
+   CMP zp_line_yl_l                                                       ;#            0.1
+   BEQ lis_yl                                                             ;#            0.0
+   BCC lis_desc                                                           ;#            0.1
 ; |||
 ; ASCENDING: dy = yr - yl (unsigned; C=1 — the BCC above didn't take)
-   SBC zp_line_yl_l
-   JSR umul_round_div
-   CLC
-   ADC zp_line_yl_l
-   RTS
+   SBC zp_line_yl_l                                                       ;#            0.0
+   JSR umul_round_div                                                     ;#            0.0
+   CLC                                                                    ;#            0.0
+   ADC zp_line_yl_l                                                       ;#            0.0
+   RTS                                                                    ;#            0.0
 lis_desc:
 ; DESCENDING: |dy| = yl - yr (unsigned)
-   LDA zp_line_yl_l
-   SEC
-   SBC zp_line_yr_l
-   JSR umul_round_div
-   EOR #$FF
-   SEC
-   ADC zp_line_yl_l
-   RTS
+   LDA zp_line_yl_l                                                       ;#            0.0
+   SEC                                                                    ;#            0.0
+   SBC zp_line_yr_l                                                       ;#            0.0
+   JSR umul_round_div                                                     ;# |          0.1
+   EOR #$FF                                                               ;#            0.0
+   SEC                                                                    ;#            0.0
+   ADC zp_line_yl_l                                                       ;#            0.0
+   RTS                                                                    ;# |          0.1
 lis_yl:
    LDA zp_line_yl_l
    RTS

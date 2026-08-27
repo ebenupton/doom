@@ -158,6 +158,7 @@ SEG_BANKC
 .export span_init, span_mark_solid
 .export interp_store, draw_clipped_line
 .export draw_clipped_line_s16, draw_clipped_line_s16_h
+.export dcl_pair_seek, dcl_pair_resume  ; the solid-pair entries (dcl.s)
 .export fused_begin, fused_above_h, fused_below_h
 .export fused_below_raw, fused_above_raw, fused_merge_range
 .export dcl_vert_on                     ; vertical fastpath (dcl.s)

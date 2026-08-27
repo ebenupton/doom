@@ -640,6 +640,7 @@ code_head:
 .import FW_TOUCH                        ; fused walker's zero-touch flag
                                         ; (clip/fused.s owns the block)
 .import draw_clipped_line_s16, draw_clipped_line_s16_h
+.import dcl_pair_seek, dcl_pair_resume  ; dcl_solid_pair's span-side halves
 .import dcl_vert_on                     ; vertical fastpath (senior-byte
 
 ; And span_clip's ZP slots that umul8/udiv16_8 use

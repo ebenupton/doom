@@ -47,6 +47,11 @@ DCLV_X1 = $0A21
 DCLV_SX = $0A22                         ; X save across dcl_rec_flat
 DCLV_YV = $0A23                         ; verdict y value latch
 DCLV_S16VY = $0A24
+DCLS_FIRST = $0AD1                      ; dcl_solid_pair's first-span memo
+                                        ; (WORK page free run $0AD1-$0AFF;
+                                        ; written by dcl_pair_seek, read by
+                                        ; dcl_pair_resume — pairs only, the
+                                        ; normal walker never touches it)
 ; --- EVICTED FROM ZERO PAGE 2026-08-22 ---------------------------------
 ; Priced with tools/zpheat.py on the heavy frame: a ZP byte's only honest
 ; cost is how often it is touched (1 cycle and 1 byte per access to move
