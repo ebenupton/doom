@@ -133,9 +133,14 @@ ROM_BKTLO_C = $B900                     ; bank A free page (SS planes left
 ROM_BKTHI_C = $B980                     ; for bank B 2026-08-19)
 ROM_DBOUND_C = $B880                    ; the gap after the 3 DIR planes
 .else
-ROM_BKTLO_C = $7080                     ; above CLIPF ($5800-$707F)
-ROM_BKTHI_C = $7100
-ROM_DBOUND_C = $7180                    ; below RCACHE_STATE $7268
+ROM_BKTLO_C = $0C10                     ; the shared $0C10 gap (scratch
+ROM_BKTHI_C = $D680                     ; ends $0C0E, COLPORT at $0D00);
+ROM_DBOUND_C = $4D00                    ; the RECIP_M8H-to-CPM_PSI half
+                                        ; page; the page the flat CODE
+                                        ; region SHRANK to wall off.
+                                        ; (All three left $7080-$71FF
+                                        ; 2026-08-27 so CLIPF could take
+                                        ; the armed-pair entries.)
 .endif
 ; LV1 BKT planes (2026-08-26 second cut — the per-axis K planes lasted
 ; a day): the record's WHOLE K-residue term, s16 LE split-plane,
