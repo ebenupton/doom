@@ -95,7 +95,7 @@ px_narrow:                                  ; entered by project_x_c only
    TAX                                                                    ;# ||         0.3
    SEC                                                                    ;# ||         0.3
    SBC zp_br_r_m8                                                         ;# ||         0.5
-   BCS pxf_pd                                                             ;# ||         0.5
+   BCS pxf_pd                                                             ;# ||         0.4
    EOR #$FF                                                               ;# |          0.1
    ADC #1                                                                 ;# |          0.1
 pxf_pd:
@@ -142,7 +142,7 @@ pxm_pd:
    CLC                                                                    ;# |          0.3
    ADC zp_br_r_m8                                                         ;# ||         0.4
    TAX                                     ; X = |vx| + M8                ;# |          0.3
-   BCC pxm_ppd                             ; arm swap 2026-08-12 (uo = 2  ;# ||         0.4
+   BCC pxm_ppd                             ; arm swap 2026-08-12 (uo = 2  ;# |||        0.5
    LDA sqr2_l,X                            ;  suite execs vs 228): the JMP ;#            0.0
    SBC sqr_l,Y                            ; moved to the cold arm (C set  ;#            0.0
    STA zp_br_a                            ;  on this arm from the BCC)    ;#            0.0
@@ -376,7 +376,7 @@ pym2:
 ; the JSR/RTS, the prod->res copy and both resh reloads (~44 cyc/call).
 ; Math is bit-identical to br_smul_s8_u8 (same quarter-square idiom).
    LDA zp_br_t0                                                           ;# |||||      1.0
-   BMI pym_neg                                                            ;# ||||       0.8
+   BMI pym_neg                                                            ;# ||||       0.7
 ; positive h: unsigned quarter-square, result used as-is
    TAX                                                                    ;# ||         0.5
    SEC                                                                    ;# ||         0.5

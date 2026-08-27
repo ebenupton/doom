@@ -1679,8 +1679,12 @@ PLOTQ = $0600
                                         ; pump treats n==0 as FULL and
                                         ; force-waits
 ::pq_pump_op:
-   JSR pq_pump_default                     ; SMC (named): the driver pokes
-   RTS                                     ; its gated pump in here
+   JMP pq_pump_default                     ; SMC (named): the driver pokes
+                                        ; its gated pump in here (operand
+                                        ; at +1/+2, unchanged 2026-08-27:
+                                        ; JSR->JMP tail — the pump's RTS
+                                        ; returns to plot_enq's caller,
+                                        ; -9 cyc per enqueued line on HW)
 pq_pump_default:
    RTS                                     ; engine default: no driver, no
                                         ; pump (unreachable in harness —
