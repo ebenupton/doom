@@ -61,7 +61,7 @@ ANIM_SSMASK = $E500                     ; flat TABLES block page (shipped in
 ; TABL0 pointer slots, CFG stride 12, ANIM_WS stride 3, DIRTY bits).
 
 ; --- state (unbanked; ships as LOW zeros, anim_init seeds it) ---
-ANIM_FIELDS = $19E8                     ; PAL fields this frame consumed —
+ANIM_FIELDS = $0B68                     ; PAL fields this frame consumed —
                                         ; the DRIVER stores its mv_frame /
                                         ; mask-drain count here before the
                                         ; tick (2026-08-25); 0 (harness, no
@@ -69,10 +69,10 @@ ANIM_FIELDS = $19E8                     ; PAL fields this frame consumed —
                                         ; below the anim block: the old
                                         ; VXC senior-plane tail, free since
                                         ; n_verts <= 480.
-ANIM_ENABLE = $19E9                     ; scalars block: $05xx -> $1Dxx (sqr
-ANIM_DIRTY  = $19EA                     ; swap) -> $19xx (2026-08-19 window
-ANIM_WS     = $19EB                     ; slide); same page offsets.
-ANIM_TPRE   = $19FD                     ; wait prescaler residue (2026-08-25
+ANIM_ENABLE = $0B69                     ; scalars block: $05xx -> $1Dxx (sqr
+ANIM_DIRTY  = $0B6A                     ; swap) -> $19xx (2026-08-19 window
+ANIM_WS     = $0B6B                     ; slide); same page offsets.
+ANIM_TPRE   = $0B7D                     ; wait prescaler residue (2026-08-25
                                         ; field-scaled: accumulates FIELDS,
                                         ; the whole /4 steps are consumed
                                         ; into at_wsteps each tick, the
@@ -107,30 +107,30 @@ SEG_HIGH
 ; objects block in the $1100 page — real RAM in BOTH builds (the
 ; scalar-state rule), runtime-written only (nothing to ship), and it
 ; buys the CODE region back ~24 bytes it no longer has. ---
-anim_val2  = $115B                      ; pos>>7: the HALF-unit patch value
-ah_pend2   = $115C
-at_m       = $115D
-at_t       = $115E
-at_state   = $115F
-at_timer   = $1160
-at_fields  = $1161
-at_wsteps  = $1162
-at_c       = $1163
-at_moved   = $1164                      ; was at_prevhi (the DIRTY rework
+anim_val2  = $0BDB                      ; pos>>7: the HALF-unit patch value
+ah_pend2   = $0BDC
+at_m       = $0BDD
+at_t       = $0BDE
+at_state   = $0BDF
+at_timer   = $0BE0
+at_fields  = $0BE1
+at_wsteps  = $0BE2
+at_c       = $0BE3
+at_moved   = $0BE4                      ; was at_prevhi (the DIRTY rework
                                         ; retired the half-derive compare)
-alw_nf     = $1165
-alw_ng     = $1166
-alw_nb     = $1167
-alw_nv     = $1168
-alw_y      = $1169
-alw_hdr    = $116A                      ; 2 bytes
-alw_fh     = $116C
-alw_ch     = $116D
-alw_bfh    = $116E
-alw_bch    = $116F
-alw_f      = $1170
-ai_t       = $1171
-ai_midx    = $1172
+alw_nf     = $0BE5
+alw_ng     = $0BE6
+alw_nb     = $0BE7
+alw_nv     = $0BE8
+alw_y      = $0BE9
+alw_hdr    = $0BEA                      ; 2 bytes
+alw_fh     = $0BEC
+alw_ch     = $0BED
+alw_bfh    = $0BEE
+alw_bch    = $0BEF
+alw_f      = $0BF0
+ai_t       = $0BF1
+ai_midx    = $0BF2
 anim_hub:
 .scope
    LDX zp_node_ch_l

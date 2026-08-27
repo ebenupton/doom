@@ -32,56 +32,56 @@
 ;     held the driver's retired cadence probe -- see dcl.s:1527).  It
 ;     lives here rather than as .res in CODE because CODE is full,
 ;     and it must be real RAM in both builds (the scalar-state rule).
-obj_i     = $1100
-obj_cx_l  = $1101
-obj_cx_h  = $1102
-obj_yt_l  = $1103
-obj_yt_h  = $1104
-obj_yb_l  = $1105
-obj_yb_h  = $1106
-obj_h     = $1107
-obj_t     = $1108
+obj_i     = $0B80
+obj_cx_l  = $0B81
+obj_cx_h  = $0B82
+obj_yt_l  = $0B83
+obj_yt_h  = $0B84
+obj_yb_l  = $0B85
+obj_yb_h  = $0B86
+obj_h     = $0B87
+obj_t     = $0B88
 ; The two ratio TRIPLES, same stride so one loop fills both and obj_hex
 ; walks either with X = 0 or X = 3.  v2 = (sqrt3-1)v ~ 47v/64, v3 = v - v2,
 ; which is EXACT: the dodecagon's two ratios sum to 1.
-obj_a     = $1109
-obj_a2    = $110A
-obj_a3    = $110B
-obj_b     = $110C
-obj_b2    = $110D
-obj_b3    = $110E
-obj_dy    = $110F
-obj_e     = $1110
-obj_ctr_l = $1111   ; obj_hex centre
-obj_ctr_h = $1112
-obj_hcnt  = $1113
+obj_a     = $0B89
+obj_a2    = $0B8A
+obj_a3    = $0B8B
+obj_b     = $0B8C
+obj_b2    = $0B8D
+obj_b3    = $0B8E
+obj_dy    = $0B8F
+obj_e     = $0B90
+obj_ctr_l = $0B91   ; obj_hex centre
+obj_ctr_h = $0B92
+obj_hcnt  = $0B93
 ; obj_Y MUST sit exactly 12 bytes after obj_X: obj_hex addresses both as
 ; obj_X,Y with Y = 0 (the x table) or 12 (the lid), so one store serves both.
-obj_X     = $1114   ; 6 x s16  -> $1114-$111F
-obj_Y     = $1120   ; 12 x s16 -> $1120-$1137
-obj_n     = $1138
-obj_left  = $1139
-obj_k     = $113A
-obj_best  = $113B
-obj_ss    = $113C
-obj_mask  = $113D   ; (FREE since the OBJ_ANYB grind — kept as a hole note)
-obj_asp   = $113E   ; live object's aspect byte (bit 7 = art, 0-6 = k)
-OBJ_ANYB  = $1173   ; [28] main-RAM copy of the OBJ_BITS bitmap (2026-08-25
+obj_X     = $0B94   ; 6 x s16  -> $1114-$111F
+obj_Y     = $0BA0   ; 12 x s16 -> $1120-$1137
+obj_n     = $0BB8
+obj_left  = $0BB9
+obj_k     = $0BBA
+obj_best  = $0BBB
+obj_ss    = $0BBC
+obj_mask  = $0BBD   ; (FREE since the OBJ_ANYB grind — kept as a hole note)
+obj_asp   = $0BBE   ; live object's aspect byte (bit 7 = art, 0-6 = k)
+OBJ_ANYB  = $0BF3   ; [28] main-RAM copy of the OBJ_BITS bitmap (2026-08-25
                     ; grind): the per-subsector test runs under WHATEVER
                     ; bank the walk holds — both PAGEs left the common
                     ; path. Boot-filled by obj_anyb_fill (from anim_init);
                     ; harness loaders poke it directly ($11xx ships
                     ; nothing). Tail $118F-$11FF still free.
-obj_sd_l  = $113F   ; [OBJ_MAXSLOT]
-obj_sd_h  = $1142
-obj_scx_l = $1145
-obj_scx_h = $1148
-obj_syt_l = $114B
-obj_syt_h = $114E
-obj_syb_l = $1151
-obj_syb_h = $1154
-obj_sasp  = $1157   ; [OBJ_MAXSLOT] -> $1157-$1159
-obj_fused = $115A                        ; FUSED authority-run flag.
+obj_sd_l  = $0BBF   ; [OBJ_MAXSLOT]
+obj_sd_h  = $0BC2
+obj_scx_l = $0BC5
+obj_scx_h = $0BC8
+obj_syt_l = $0BCB
+obj_syt_h = $0BCE
+obj_syb_l = $0BD1
+obj_syb_h = $0BD4
+obj_sasp  = $0BD7   ; [OBJ_MAXSLOT] -> $1157-$1159
+obj_fused = $0BDA                        ; FUSED authority-run flag.
                                         ; NOT $1158: that is obj_sasp
                                         ; SLOT 1 — the first home sat
                                         ; inside the array and every

@@ -157,16 +157,10 @@ class Rig:
         self.mem[abi.DV_ANGIDX] = angidx & 0xFF
         self.mem[self.vz] = z & 0xFF
         self.mem[abi.PM_TURNREM] = turnrem
-        self._w16(abi.PM_MOMX, 0)
-        self._w16(abi.PM_MOMY, 0)
         self.mem[abi.D_FWD] = 0xEE                  # poison: must be written
         self.run(self.frame_e, a=fields, x=inbits)
-        # STRUCTURAL: momentum is retired, so the slots must stay dead —
-        # a stray write here would mean some arm of the old integrator
-        # survived the 2026-08-22 cut (verdict comparison alone cannot
-        # see it, cf. the record-pointer invariant).
-        for _a in (abi.PM_MOMX, abi.PM_MOMY):
-            assert self._r16(_a) == 0, 'retired momentum slot was written'
+        # (the retired-momentum stay-zero assert died with the slots
+        # themselves — the 2026-08-26 low-RAM map deleted PM_MOMX/Y)
         vz = self.mem[self.vz]
         return ((self._r24(abi.DV_PXF), self._r24(abi.DV_PYF),
                  vz - (256 if vz >= 128 else 0),

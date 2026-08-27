@@ -2,7 +2,7 @@
 ; standalone DOOM E1M1 renderer. Proves the banked build runs on real hardware.
 ;
 ; Disc files: !BOOT (this, $0900) ; BANK0/1/2 (16K -> sideways banks 4/6/7) ;
-; LOW (strip+code, LOW_BASE $1600-...) ; DRV (driver, DRV_ORG $1A00).
+; LOW (strip+driver+code, LOW_BASE $0D00-$57FF, staged at $3000). No DRV file.
 ; Boot: copy banks, load LOW, MODE 4, JMP driver. Driver: SEI, set spawn ZP +
 ; CRTC, span_init (bank C), clear FB, render (bank L0->...), display, spin.
 
@@ -27,16 +27,34 @@ ORG &0900
     LDX #LO(cmd_b0): LDY #HI(cmd_b0): JSR &FFF7      ; SRLOAD BANK0 8000 4 (L0)
     LDX #LO(cmd_b1): LDY #HI(cmd_b1): JSR &FFF7      ; SRLOAD BANK1 8000 6 (C)
     LDX #LO(cmd_b2): LDY #HI(cmd_b2): JSR &FFF7      ; SRLOAD BANK2 8000 7 (L2)
-    LDX #LO(cmd_low):LDY #HI(cmd_low):JSR &FFF7      ; *LOAD LOW 1600
-    LDX #LO(cmd_drv):LDY #HI(cmd_drv):JSR &FFF7      ; *LOAD DRV 1A00
+    ; --- LOW loads STAGED at $3000 and copies down (2026-08-26 low-RAM
+    ;     map): the strip now starts at $0D00 — under DFS a direct *LOAD
+    ;     there lands on the NMI workspace ($0D00) and the catalog
+    ;     ($0E00-$0FFF) while the transfer is USING them. Stage high
+    ;     (MODE 7 screen at $7C00 clears $3000-$7AFF), copy ascending
+    ;     (dst < src throughout). The DRV file is GONE: the driver is
+    ;     inside the LOW image ($0F00, LOW_BASE..$57FF is one span). ---
+    LDX #LO(cmd_low):LDY #HI(cmd_low):JSR &FFF7      ; *LOAD LOW 3000
+    LDA #&00 : STA &80 : LDA #&30 : STA &81          ; src = $3000
+    LDA #&00 : STA &82 : LDA #&0D : STA &83          ; dst = $0D00
+    LDY #0
+.lcp
+    LDA (&80),Y
+    STA (&82),Y
+    INY
+    BNE lcp
+    INC &81
+    INC &83
+    LDA &83
+    CMP #&58                                         ; dst page = $5800: done
+    BNE lcp
     LDA #22 : JSR &FFEE : LDA #4 : JSR &FFEE          ; MODE 4
     JMP DRV_ORG                                      ; -> driver
 
 .cmd_b0  EQUS "SRLOAD BANK0 8000 4" : EQUB 13
 .cmd_b1  EQUS "SRLOAD BANK1 8000 6" : EQUB 13
 .cmd_b2  EQUS "SRLOAD BANK2 8000 7" : EQUB 13
-.cmd_low EQUS "LOAD LOW 1600"   : EQUB 13
-.cmd_drv EQUS "LOAD DRV 1A00"   : EQUB 13
+.cmd_low EQUS "LOAD LOW 3000"   : EQUB 13
 .boot_end
 SAVE "BOOT", &0900, boot_end, &0900
 
@@ -86,7 +104,7 @@ ORG DRV_ORG
     ; REAL RAM and must be stored, not assumed zero
     LDA #&E0:STA &1C  : LDA #&FE:STA &1D            ; px2 = -288
     LDA #&20:STA &7F  : LDA #&FD:STA &BA            ; py2 = -736
-    LDA #&00:STA &096B: STA &096D                   ; PM_FXW x/y = 0
+    LDA #&00:STA &0B00: STA &0B02                   ; PM_FXW x/y = 0
     LDA #&80:STA BCA_AB                             ; view angle byte
     ; (ROM pointers retired 2026-07-10: layout.inc constants)
     LDA #&58:STA &70                                ; rasteriser scrstrt hi

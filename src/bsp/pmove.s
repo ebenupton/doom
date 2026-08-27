@@ -48,7 +48,7 @@ pm_exy     = PM_SCRATCH+$26             ;  by pmove_use; oldx..exy runs)
 PM_SCRATCH = DRV_ORG                    ; NOT a private copy: the overlay IS
                                         ; the driver's init block (abi.inc)
 .else
-PM_SCRATCH = $2200
+PM_SCRATCH = $5700
 .endif
 pm_bx0     = PM_SCRATCH+$00             ; box bounds; ORDER LOAD-BEARING
 pm_by0     = PM_SCRATCH+$02             ;  (pm_bx0,X / pm_bx1,X, X=0/2)

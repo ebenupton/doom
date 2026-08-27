@@ -40,13 +40,13 @@ SEG_BANKC
 ; --- verdict-record support (2026-07-13 off-screen-aperture fix) ---
 ; $091C/$091D free (TFS_*_VERD retired — verdicts tested lazily at the
 ; consumption points, 2026-07-13)
-DCLV_RVY = $061E                        ; pending right-side verdict y ($80 = none)
-DCLV_OX1S = $061F                       ; original ox1 stashed at CB entry
-DCLV_X0 = $0620                         ; dcl_rec_flat range args
-DCLV_X1 = $0621
-DCLV_SX = $0622                         ; X save across dcl_rec_flat
-DCLV_YV = $0623                         ; verdict y value latch
-DCLV_S16VY = $0624
+DCLV_RVY = $0A1E                        ; pending right-side verdict y ($80 = none)
+DCLV_OX1S = $0A1F                       ; original ox1 stashed at CB entry
+DCLV_X0 = $0A20                         ; dcl_rec_flat range args
+DCLV_X1 = $0A21
+DCLV_SX = $0A22                         ; X save across dcl_rec_flat
+DCLV_YV = $0A23                         ; verdict y value latch
+DCLV_S16VY = $0A24
 ; --- EVICTED FROM ZERO PAGE 2026-08-22 ---------------------------------
 ; Priced with tools/zpheat.py on the heavy frame: a ZP byte's only honest
 ; cost is how often it is touched (1 cycle and 1 byte per access to move
@@ -55,9 +55,9 @@ DCLV_S16VY = $0624
 ;   zp_cb_top2  18 accesses/frame     zp_cb_bot2  16
 ;   zp_save1     8
 ; 42 cycles a frame buys three of the 28 bytes the TFS sweep state needs.
-zp_cb_top2 = $0625                      ; u8, span top at cx2
-zp_cb_bot2 = $0626                      ; u8, span bot at cx2
-zp_save1   = $0627                      ; dcl_boundary_ix's clip_p1 save                      ; s16-clip pending right verdict ($80 = none)
+zp_cb_top2 = $0A25                      ; u8, span top at cx2
+zp_cb_bot2 = $0A26                      ; u8, span bot at cx2
+zp_save1   = $0A27                      ; dcl_boundary_ix's clip_p1 save                      ; s16-clip pending right verdict ($80 = none)
 
 
 ; ===================================================================
@@ -79,28 +79,28 @@ zp_save1   = $0627                      ; dcl_boundary_ix's clip_p1 save        
 ; (LC_*_LO alias layer removed 2026-07-10: the s16 clipper reads the
 ; zp_line_* slots by their real names.)
 ; ---- saved originals for interp (snapped at start of x-clip / y-clip) ----
-LC_OX1_LO = $0638
-LC_OX1_HI = $0639
-LC_OY1_LO = $063A
-LC_OY1_HI = $063B
-LC_OX2_LO = $063C
-LC_OX2_HI = $063D
-LC_OY2_LO = $063E
-LC_OY2_HI = $063F
+LC_OX1_LO = $0A38
+LC_OX1_HI = $0A39
+LC_OY1_LO = $0A3A
+LC_OY1_HI = $0A3B
+LC_OX2_LO = $0A3C
+LC_OX2_HI = $0A3D
+LC_OY2_LO = $0A3E
+LC_OY2_HI = $0A3F
 ; ---- math working (ZP SWEEP 2026-08-11: the hot subset — the u16
 ; mul/div workspace dominates the profile — moved to freed zp; cold
 ; members stay $06xx) ----
-LC_DY_NEG = $0646
-LC_M_A_LO = $0647
-LC_M_A_HI = $0648
-LC_M_B_LO = $0649
-LC_M_B_HI = $064A
-LC_M_R2 = $064D
-LC_M_R3 = $064E
-LC_TMP_HI = $0654
-LC_RES_LO = $0655
-LC_RES_HI = $0656
-LC_TGT_LO = $0657                       ; clip target value (s16)
+LC_DY_NEG = $0A46
+LC_M_A_LO = $0A47
+LC_M_A_HI = $0A48
+LC_M_B_LO = $0A49
+LC_M_B_HI = $0A4A
+LC_M_R2 = $0A4D
+LC_M_R3 = $0A4E
+LC_TMP_HI = $0A54
+LC_RES_LO = $0A55
+LC_RES_HI = $0A56
+LC_TGT_LO = $0A57                       ; clip target value (s16)
 ; $0658 FREE (LC_TGT_HI retired 2026-08-23 -- provably constant 0)
 
 ; ---------------------------------------------------------------------------

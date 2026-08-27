@@ -423,7 +423,7 @@ def blobs(flat=True):
         pb += struct.pack('<hhhhBBBB', p[0], p[1], p[2], p[3],
                           p[7], p[4], p[5], p[6])
     import abi as _abi0
-    assert _abi0.COLPORT_BASE + len(pb) <= _abi0.SPAN_POOL, 'COLPORT overruns the pool'
+    assert _abi0.COLPORT_BASE + len(pb) <= _abi0.DRV_ORG, 'COLPORT overruns the driver'
     # MV_SS probe list (2026-08-19 claw-back): the <=8 mover subsectors as
     # parallel id/info arrays, $FF-padded to 8 — pmove probes these twice
     # per MOVE instead of the render paying 8 cycles per visited subsector

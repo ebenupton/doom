@@ -41,10 +41,12 @@ MASKS = ([0, 0] + [1] * (FRAMES - 12)        # settle, UP held, then turn
                                              # shipped through an UP-only
                                              # mask diet)
 SPEED = 12
-DRVVARS = 0x1180                             # T_DV_ANGIDX.. (abi DRV_VARS,
-                                             # tube/flat home; 2026-08-25 —
-                                             # the old 0xEA06 parse was the
-                                             # RETIRED pre-pmove var block)
+import abi as _abi
+DRVVARS = _abi.DRV_VARS                      # T_DV_ANGIDX.. — BY THE ABI
+                                             # (the 0x1180 literal went stale
+                                             # at the 2026-08-26 low-RAM map's
+                                             # unified $0B10 home and made the
+                                             # movement-mirror check vacuous)
 FIELDS = 4                                   # PAL fields ridden in each mask
                                              # byte's b4-6 (pm_frame scales
                                              # movement by this; 0 = frozen)

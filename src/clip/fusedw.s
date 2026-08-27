@@ -64,7 +64,7 @@ FW_BASE = $9880                         ; bank C tail (2026-08-25 re-cut:
                                         ; the BANKC region boundary keeps
                                         ; code growth a LINK ERROR.
 .else
-FW_BASE = $2000                         ; ex-BOT_RECORDS (exception window)
+FW_BASE = $1900                         ; low-RAM map 2026-08-26 (ex $2000)
 .endif
 ; COLD walker bytes only — the hot set was promoted to zero page
 ; (src/zp.inc FUSED block, 2026-08-25 grind; the freed TFS bytes).

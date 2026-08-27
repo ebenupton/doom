@@ -1470,7 +1470,7 @@ dcl_es_record_j:
 ; as des_dispatch would (y0==y1 -> plot_h, x0==x1 -> plot_v with the
 ; des_to_v normalize, else NJ) — pixels identical by construction.
 ; ============================================================================
-PLOTQ = $1000
+PLOTQ = $0600
 ; ($1100-$11FF is FREE in BOTH builds since 2026-08-17: it held the driver's
 ;  per-frame beam-phase cadence ring, retired with the $0A50 frame counter
 ;  that indexed it — $0A50 is VC_RLO+$50, so that INC was corrupting one

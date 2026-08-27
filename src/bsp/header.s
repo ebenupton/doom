@@ -147,10 +147,10 @@ VP_PG = ROM_VERTS_C + $400
 ; REBUILT PER ANGLE EPOCH by rot_select: PB_X = PX*sin - PY*cos,
 ; PB_Y = PX*cos + PY*sin in s16 counts (PX,PY in {-512,-256,0,+256}).
 ; $0680-$06BF: scratch-page run verified free by listing scan 2026-08-11.
-PB_XL = $0680
-PB_XH = $0690
-PB_YL = $06A0
-PB_YH = $06B0
+PB_XL = $0A80
+PB_XH = $0A90
+PB_YL = $0AA0
+PB_YH = $0AB0
 SQR_MIRROR = $01E0                      ; 32-byte even-mirror prefix BELOW
                                         ; sqr_l — protruding into the STACK
                                         ; PAGE since the quad moved to $0200
@@ -163,9 +163,9 @@ SQR_MIRROR = $01E0                      ; 32-byte even-mirror prefix BELOW
                                         ; code image (rwp_stamp), so boot
                                         ; scribbles self-heal. SQR_MIRROR+k
                                         ; = f(32-k) & 255.
-PB_TS = $06C0                           ; epoch-build scratch: (k-2)*256*sin
-PB_TC = $06C8                           ; (k-2)*256*cos — 4 s16 each
-PB_PREV_AB = $06D0                      ; angle the tables were built for
+PB_TS = $0AC0                           ; epoch-build scratch: (k-2)*256*sin
+PB_TC = $0AC8                           ; (k-2)*256*cos — 4 s16 each
+PB_PREV_AB = $0AD0                      ; angle the tables were built for
 ; ($06D1 free again 2026-08-11: PB_VALID died — validity rides
 ;  rwp_stamp IN THE CODE IMAGE, so code reloads self-invalidate)
 
@@ -557,7 +557,7 @@ VEXPL_CONT = $DF00
 .if ::BANKED
 VCACHE_BASE = $9800                     ; bank A, below the vertex planes
 .else
-VCACHE_BASE = $0800                     ; main (cache region shuffle 2026-08-09)
+VCACHE_BASE = $0F00                     ; main (low-RAM consolidation 2026-08-26)
 .endif
 VC_RHI  = VCACHE_BASE + $000
 VC_RLO  = VCACHE_BASE + $200

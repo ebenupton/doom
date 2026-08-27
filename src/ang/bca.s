@@ -44,7 +44,7 @@ RC_PH_1  = $AE00                        ; $B500-$BFFF contiguous
 RC_P1L_0 = $7400                        ; flat psi planes: NODE-indexed
 RC_P1L_1 = $E402                        ; (Y = node id <= 219 -> 220 B
 RC_P2L_0 = $8100                        ; each; _0/_1 = SIDE arms, not
-RC_P2L_1 = $2100                        ; senior halves). P1L_1 lives in
+RC_P2L_1 = $5600                        ; senior halves). P1L_1 lives in
 RC_PH_0  = $A400                        ; the $E402-$E4F7 fragment
 RC_PH_1  = $7300                        ; ($E402+219 = $E4DB — same page,
                                         ; clear of zp_ft $E4F8).

@@ -1,7 +1,7 @@
 ; modelb_boot.asm — !BOOT loader for a plain Model B + sideways RAM (no *SRLOAD).
 ; Acorn DFS has no *SRLOAD, so we *LOAD each 16K bank file into a main-RAM staging
 ; area ($3000) and copy it into the target sideways bank via ROMSEL ($FE30). Then
-; *LOAD LOW at LOW_BASE $1600 (strip + driver + engine, one image), MODE 4, and
+; stage LOW at $3000 and copy down to LOW_BASE $0D00 (strip+driver+engine), MODE 4, and
 ; jump to the driver. Banks 4/6/7 = L0/C/L2 (all writable SWRAM on a Model B).
 ;
 ; *RUN as !BOOT (boot option 2) -> SHIFT-BREAK autoboots. PAGE=$1900 (DFS).
@@ -85,14 +85,34 @@ ORG &0900
 .s_c02
     LDX #LO(s_lowc): LDY #HI(s_lowc)
 .s_go
-    JSR &FFF7                                    ; *LOAD LOW|LOWC 1600
+    JSR &FFF7                                    ; *LOAD LOW|LOWC 3000 (STAGED:
+                                                 ; LOW_BASE is $0D00 since the
+                                                 ; 2026-08-26 low-RAM map, and a
+                                                 ; direct *LOAD there lands on
+                                                 ; DFS's NMI workspace + catalog
+                                                 ; DURING the transfer)
+    ; copy $3000.. down to $0D00-$57FF, ascending (dst < src throughout;
+    ; MODE 7 screen at $7C00 clears the $3000-$7AFF staging)
+    LDA #&00 : STA &80 : LDA #&30 : STA &81      ; src = $3000
+    LDA #&00 : STA &82 : LDA #&0D : STA &83      ; dst = $0D00
+    LDY #0
+.s_cp
+    LDA (&80),Y
+    STA (&82),Y
+    INY
+    BNE s_cp
+    INC &81
+    INC &83
+    LDA &83
+    CMP #&58                                     ; dst page = $5800: done
+    BNE s_cp
     LDA #22: JSR &FFEE : LDA #4 : JSR &FFEE      ; MODE 4 (last OS call)
     JMP DRV_ORG                                  ; -> driver (its SEI kills
                                                  ; the OS)
-.s_low  EQUS "LOAD LOW 1600"  : EQUB 13
-.s_lowc EQUS "LOAD LOWC 1600" : EQUB 13          ; 65C02 engine CODE image
+.s_low  EQUS "LOAD LOW 3000"  : EQUB 13
+.s_lowc EQUS "LOAD LOWC 3000" : EQUB 13          ; 65C02 engine CODE image
 .s_end
 stub_len = s_end - stub
-ASSERT LOW_BASE = &1600                          ; the strings above are text
+ASSERT LOW_BASE = &0D00                          ; the copy loop above targets
 COPYBLOCK &0900, s_end, stub_image
 SAVE "!BOOT", &1900, stub_image + stub_len, &1900

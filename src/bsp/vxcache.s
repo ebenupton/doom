@@ -43,7 +43,7 @@
 ; --- data equates (unbanked) ---
 VXC_VALID   = $0780                     ; 57 B — on THE bitmap page
 ; (VXC_ENABLE comes from abi.inc)
-vxc_prev_ab = $19DE                     ; moved with the scalars block, then
+vxc_prev_ab = $0B5E                     ; moved with the scalars block, then
                                         ; $19DC -> $19DE 2026-08-22 (with
                                         ; VXC_ENABLE) to clear $19A0-$19DF for
                                         ; the span pool's two new planes
@@ -78,7 +78,7 @@ vxc_prev_ab = $19DE                     ; moved with the scalars block, then
 .if ::BANKED
 VXC_BASE = $A000
 .else
-VXC_BASE = $1200
+VXC_BASE = $4E00
 .endif
 VXC_XLO  = VXC_BASE + $000
 VXC_XHI  = VXC_BASE + $200
@@ -87,10 +87,10 @@ VXC_YLO  = VXC_BASE + $400
 VXC_YHI  = VXC_BASE + $600
 .assert VXC_YHI + $200 <= $AB00, error,  "banked VXC must fit below the vertex planes"
 .else
-VXC_YLO  = $1A00                        ; flat: evicted from $1600/$1800 by the
-VXC_YHI  = $1C00                        ; 2026-08-19 strip slide — window pages
-                                        ; (banked walk_drv territory); planes
-                                        ; are self-contained 512 B, no cross-
+VXC_YLO  = $5200                        ; flat: the CODE-tail cache run of the
+VXC_YHI  = $5400                        ; 2026-08-26 low-RAM map ($4E00 X pair,
+                                        ; $5200/$5400 Y pair); planes are
+                                        ; self-contained 512 B, no cross-
                                         ; plane address arithmetic anywhere
 .endif
 

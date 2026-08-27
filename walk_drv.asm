@@ -339,7 +339,9 @@ ORG DRV_GLUE
     LDA #4:STA &FE30                                ; restore a render bank
     RTS
 
-ASSERT P% <= DRV_VARS                   ; glue must stop below the vars
+ASSERT P% <= DRV_CLR                    ; glue must stop below the input/flip
+                                        ; block (the vars left the driver span
+                                        ; for the WORK segment, 2026-08-26)
 ORG DRV_CLR
 ; ---------------------------------------------------------------------------
 ; The framebuffer clears used to live here (~145 B of unrolled STAs). They
