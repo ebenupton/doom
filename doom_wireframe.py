@@ -846,6 +846,13 @@ fp_segs_vwh = [((_vperm[_svwh[0][0]], _vperm[_svwh[0][1]])
 fp_segs = [_svwh[0] for _svwh in fp_segs_vwh]
 linedefs = [(_vperm[_l[0]], _vperm[_l[1]]) + tuple(_l[2:])
             for _l in linedefs]
+segs = [(_vperm[_s[0]], _vperm[_s[1]]) + tuple(_s[2:])
+        for _s in segs]                    # FLOAT segs too (2026-08-27):
+# the float reference read OLD vertex ids against the renumbered
+# vertexes table from 2026-08-13 until today — every float frame was
+# scrambled sparse phantom geometry, and no gate consumes the float
+# render, so nobody saw it. The fp/packed worlds were consistent all
+# along; the FLOAT was the broken one.
 for _cnt, _first in fp_ssectors:            # the load-bearing invariant
     _bylo = {}
     for _svwh in fp_segs_vwh[_first:_first + _cnt]:
@@ -2235,10 +2242,14 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
     def _c_emit():
         emit_vertex_spans(_cs[0], sx1,
                           lambda hp: half_h - (hp * _UNPRE - vz) * fy1,
-                          _cH, clips, surface, draw_stats, 0 <= sx1 <= 255)
-        emit_vertex_spans(_cs[1], sx2,
+                          _cH, clips, surface, draw_stats,
+                          0 <= sx1 <= SCREEN_W - 1)   # FLOAT sx is native
+        emit_vertex_spans(_cs[1], sx2,               # 0..1023, not the fp
                           lambda hp: half_h - (hp * _UNPRE - vz) * fy2,
-                          _cH, clips, surface, draw_stats, 0 <= sx2 <= 255)
+                          _cH, clips, surface, draw_stats,   # 0..255 —
+                          0 <= sx2 <= SCREEN_W - 1)   # (2026-08-27 fix:
+# the 255 bound silently suppressed ~3/4 of the float's descriptor
+# verticals, so the float could not arbitrate vertical-stroke bugs)
     if solid:
         _lines = []
         if ch > vz: _lines.append((sx1, ft1, sx2, ft2))   # subsector eyeline
