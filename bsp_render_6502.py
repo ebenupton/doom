@@ -184,7 +184,7 @@ class BspRender6502:
         # vz = prescale_height(player_floor + 41); we get player_floor in.
         # Inline a minimal prescale_height.
         ASPECT_NUM = 6; ASPECT_DEN = 5
-        vz = ((floor_z + 41) * ASPECT_NUM + ASPECT_DEN // 2) \
+        vz = ((floor_z + 41) * ASPECT_NUM + (self.prescale * ASPECT_DEN) // 2) \
              // (self.prescale * ASPECT_DEN)
         mem[ZP_VZ] = vz & 0xFF
 

@@ -422,8 +422,16 @@ fp_vertexes = [
 ]
 
 def _prescale_height(h):
-    """Prescale a height value with 1.2x aspect baked in."""
-    return (h * ASPECT_NUM + ASPECT_DEN // 2) // (PRESCALE * ASPECT_DEN)
+    """Prescale a height value with 1.2x aspect baked in.
+
+    ROUND-TO-NEAREST (2026-08-28): the bias used to be ASPECT_DEN//2 = 2
+    against a divisor of PRESCALE*ASPECT_DEN = 40 — effectively
+    truncation (72 wu -> 10.80q -> 10). Screen error of a height is the
+    quantization residual x rows-per-quantum (~17 rows/q at 60 wu), so
+    the wrong bias alone cost up to ~8 rows on near walls (the 009C.9A
+    displaced-edge class). Proper half bias: 10.80q -> 11.
+    """
+    return (h * ASPECT_NUM + (PRESCALE * ASPECT_DEN) // 2) // (PRESCALE * ASPECT_DEN)
 
 fp_sectors = [
     (_prescale_height(s[0]), _prescale_height(s[1]), *s[2:])
