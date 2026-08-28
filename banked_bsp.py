@@ -114,7 +114,19 @@ def build_banked(flatr):
                 la[addr - 0x8000:addr - 0x8000 + len(blob)] = blob
             # (SSMASK no longer routed here: its blob is keyed at its
             #  bank-B home $B400 and seeded in the L2 section below)
+    # LV1 K planes -> bank A $B900/$B980 + DBOUND $B880 (exact-backface
+    # 2026-08-26). MUST precede define_bank: it copies the image.
+    la[0x3900:0x3980] = bytes(rom_main[layout['off_bktlo']:layout['off_bktlo'] + 128])
+    la[0x3980:0x3A00] = bytes(rom_main[layout['off_bkthi']:layout['off_bkthi'] + 128])
+    la[0x3880:0x3900] = bytes(rom_main[layout['off_dbound']:layout['off_dbound'] + 128])
     bm.define_bank(BANK_L0, la)                   # BANK_L0 == BANK_SEG (4)
+    # post-define content gate (2026-08-28): the dead-write class above is
+    # silent — verify the planes actually live in the defined bank.
+    for _go, _gn in ((0x3900, 'off_bktlo'), (0x3980, 'off_bkthi'),
+                     (0x3880, 'off_dbound')):
+        assert bytes(bm._banks[BANK_L0][_go:_go + 128]) == \
+               bytes(rom_main[layout[_gn]:layout[_gn] + 128]), \
+               f'bank A plane at ${0x8000+_go:04X} ({_gn}) did not survive define_bank'
 
     # --- bank C = clipper ($8000) + rasteriser ($A900) ---
     c = bytearray(16384)
@@ -170,10 +182,12 @@ def build_banked(flatr):
     for i in range(0x200):
         bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
         bm[abi.SQRH_BASE + i] = fmem[abi.SQR_BASE + 0x200 + i]
-    # LV1 K planes -> bank A $B900/$B980 (unpacked residues, 2026-08-26)
-    la[0x3900:0x3980] = bytes(rom_main[layout['off_bktlo']:layout['off_bktlo'] + 128])
-    la[0x3980:0x3A00] = bytes(rom_main[layout['off_bkthi']:layout['off_bkthi'] + 128])
-    la[0x3880:0x3900] = bytes(rom_main[layout['off_dbound']:layout['off_dbound'] + 128])
+    # (LV1 K planes + DBOUND moved ABOVE define_bank(BANK_L0) 2026-08-28:
+    #  define_bank COPIES, so writes here were DEAD. DBOUND was shipping
+    #  as ZEROS in every banked build/disc — the banded backface's bound
+    #  read 0 and mis-culled near-band diagonals: the 009C.9A tick bleed,
+    #  a front SOLID culled with the room behind drawn through its
+    #  columns. See project_rhs_bleed_2.)
     # OBJ_ANYB main-RAM bitmap copy (2026-08-25 grind): hardware fills it
     # via anim_init/obj_anyb_fill; model runs may skip init, so seed it
     _bits = layout['off_obj'] + 7 * 18       # OBJ_BITS = ROM_OBJ_C+7*N_OBJ
