@@ -162,7 +162,10 @@ print('== frame cycles ==')
 try:
     import pygame; pygame.init(); pygame.display.set_mode((1, 1))
     import doom_wireframe as dw
-    from bsp_render_6502 import BspRender6502
+    # THE REFERENCE IS THE BANKED BUILD (2026-08-29, Eben): that is what
+    # ships on a Model B, so it is what the numbers must describe. The
+    # flat build survives only as the tube parasite's engine.
+    from banked_bsp import BankedBspRender as BspRender6502
     import compare_renders as C
     r = BspRender6502(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                       dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)

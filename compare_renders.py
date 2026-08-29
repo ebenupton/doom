@@ -6,7 +6,8 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 
 import doom_wireframe as dw
 import fp
-from bsp_render_6502 import BspRender6502
+from banked_bsp import BankedBspRender as BspRender6502   # the REFERENCE
+                                                         # build (2026-08-29)
 
 W, H = 256, 160
 SCALE = 3

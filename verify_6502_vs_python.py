@@ -7,7 +7,7 @@ they verify self-consistency, not agreement with the Python ground truth. And
 they only test integer positions (the harness does `px & 0xFF`), missing
 sub-unit divergences.
 
-Here we render BspRender6502 (the real chip pipeline) and render_bsp_fp (the
+Here we render the BANKED build (the real chip pipeline as shipped) and render_bsp_fp (the
 pure-Python fixed-point reference) at the same (px, py, ab) and compare their
 framebuffers. The two use different rasterisers (6502 Hamiltonian vs
 pygame.draw.line), so identical geometry still differs by ~1px aliasing. We
@@ -25,7 +25,8 @@ os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame
 import numpy as np
 import doom_wireframe as dw
-from bsp_render_6502 import BspRender6502
+from banked_bsp import BankedBspRender as BspRender6502   # the REFERENCE
+                                                         # build (2026-08-29)
 from endpoint_spans import EndpointClipSpans
 
 W, H = dw.FP_RENDER_W, dw.FP_RENDER_H

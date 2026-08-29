@@ -249,10 +249,16 @@ class BspRender6502:
         return cyc
 
     def blit_framebuffer_to(self, surface):
-        """Render the 256×160 BBC mode-4 framebuffer at $5800 into surface."""
+        """Render the 256x160 BBC mode-4 framebuffer into `surface`.
+
+        The base is the harness's own SCREEN_START -- flat parks the FB at
+        $EA00 (out of the shared <32K map), banked uses the real hardware
+        screen at $5800.  Hardcoding $EA00 here made every banked frame
+        read as blank (2026-08-29).
+        """
         import pygame
         mem = self.sc.mpu.memory
-        start = 0xEA00
+        start = getattr(self.sc, 'SCREEN_START', 0xEA00)
         surface.fill((0, 0, 0))
         pix = pygame.PixelArray(surface)
         for cy in range(20):
