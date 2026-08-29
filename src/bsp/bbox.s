@@ -56,8 +56,18 @@
 ;   out: C = combined verdict (has_gap over the check's extent) —
 ;        C-only since 2026-07-26; the walk branches BCS/BCC
 ; ============================================================================
+; NO PAGE HERE (2026-08-29).  BANK_WALK is already live at entry: both
+; callers -- walk.s r0 and its r1 mirror -- execute LDA NODE_DSGN,X
+; immediately before the JSR, and the node SoA is bank B (BANK_WALK = 7).
+; The walk has held that bank since the two-bank re-cut killed the four
+; child-fetch PAGEs, which is what the r0_vis comment below already
+; asserts.  Confirmed dynamically: tools/pagecensus.py over the 18-pose
+; suite counts 19.6 executions/frame of this store and ZERO of them
+; changing the bank.  A ROMSEL store costs 6 cycles whether or not the
+; bank changes, so deleting it is worth ~118 cycles/frame.  The two
+; labels are now aliases; bbox_visible_l2 keeps its name because the
+; L2-proven arcs document why they may skip a page.
 bbox_visible:
-   PAGE BANK_WALK                          ; angle tables ride the walk bank
 ::bbox_visible_l2:                   ; entry for L2-PROVEN callers (the
                                         ; walk's near-invisible -> far-check
                                         ; arc: bca exits L2 and PLA/stores/
