@@ -36,7 +36,16 @@ Table homes (bank WALK banked / flat):
 import os
 
 RADIUS = 16
-STEP_PS = 3          # 24 world units, prescaled
+STEP_PS = 4          # DOOM's 24-world-unit step, in PRESCALED units.
+                     # NOT 24/PRESCALE: _prescale_height bakes in the 1.2x
+                     # aspect, so a height divides by PRESCALE*5/6 and 24
+                     # world = 3.6 units. A limit of 3 was really TWENTY
+                     # world units, and it blocked the 24-unit climb from
+                     # the nukage (s13, -80) back onto the zigzag path
+                     # (s5, -56) — Eben, 2026-08-29. 4 admits up to 26.7
+                     # world; _assert_step_rule below proves that admits
+                     # nothing DOOM would block ON THIS MAP, and fails the
+                     # build if a future map has a step in the gap.
 DOOR_MIN_OPEN_PS = 7 # 56 world units, prescaled
 EYE_PS = 5           # +41 world, prescaled, for live lift floors
 USE_RANGE = 64
@@ -114,6 +123,32 @@ def build():
             if t not in seen:
                 seen.add(t)
                 work.append(t)
+
+    # STEP-RULE EXACTNESS (2026-08-29): the prescaled limit must agree
+    # with DOOM's 24-world-unit rule on EVERY adjacent sector pair. The
+    # heights are rounded independently, so a true 24 can span 3 or 4
+    # prescaled units — this proves the chosen STEP_PS neither blocks a
+    # legal climb (the zigzag-path bug) nor admits an illegal one.
+    _ps = dw._prescale_height        # ('ps' is bound later in build())
+    _step_bad = []
+    for _ld in dw.linedefs:
+        _r, _l = _ld[5], _ld[6]
+        if _r == 0xFFFF or _l == 0xFFFF or (_ld[2] & 1):
+            continue
+        _a, _b = dw.sidedefs[_r][5], dw.sidedefs[_l][5]
+        if _a == _b:
+            continue
+        for _lo, _hi in ((dw.sectors[_a][0], dw.sectors[_b][0]),
+                         (dw.sectors[_b][0], dw.sectors[_a][0])):
+            if _hi <= _lo:
+                continue
+            if (_hi - _lo <= 24) != (_ps(_hi) - _ps(_lo) <= STEP_PS):
+                _step_bad.append((_lo, _hi, _hi - _lo, _ps(_hi) - _ps(_lo)))
+    assert not _step_bad, (
+        'STEP_PS=%d disagrees with DOOM\'s 24-unit step on %d sector pair(s): '
+        '%s — a mismatch either blocks a legal climb or admits an illegal '
+        'one. Re-derive STEP_PS for this map.'
+        % (STEP_PS, len(set(_step_bad)), sorted(set(_step_bad))[:4]))
 
     # collision line set: one-sided fronting reachable + blocking-flag.
     # The bbox cull margin is 64 (NOT the 16 radius): the walk rect is

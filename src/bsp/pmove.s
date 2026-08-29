@@ -85,7 +85,16 @@ pm_mb2     = PM_SCRATCH+$39
 pm_tmob    = PM_SCRATCH+$3A             ; tmfloorz aggregate
 
 PM_RADIUS   = 16
-PM_STEP     = 3                         ; 24 world units, prescaled
+PM_STEP     = 4                         ; DOOM's 24-world-unit step, in
+                                        ; PRESCALED units. _prescale_height
+                                        ; bakes in the 1.2x aspect, so 24
+                                        ; world = 3.6 units — a limit of 3
+                                        ; was really 20 world units and
+                                        ; blocked the climb out of the
+                                        ; nukage onto the zigzag path.
+                                        ; colmap.STEP_PS is the twin and
+                                        ; asserts the map has no step in
+                                        ; the 24..26.7 gap this admits.
 PM_XBIAS    = 1936                      ; -RAWX_MIN (walk clamp rect)
 
 ; ============================================================================
