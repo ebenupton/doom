@@ -105,10 +105,10 @@ pxf_pd:
    ADC zp_br_r_m8                                                         ;# ||         0.5
    TAX                                     ; X = frac + M8                ;# ||         0.3
    BCC pxf_pdarm                           ; arm swap 2026-08-12 (suite:  ;# ||         0.4
-   LDA sqr2_l,X                            ;  no-ovf 232 vs uo 200) — the ;# ||         0.4
-   CMP sqr_l,Y                             ;  hotter arm falls into the join ;# ||         0.4
-   LDA sqr2_h,X                                                           ;# ||         0.4
-   SBC sqr_h,Y                                                            ;# ||         0.4
+   LDA sqr2_l,X                            ;  no-ovf 232 vs uo 200) — the ;# ||         0.3
+   CMP sqr_l,Y                             ;  hotter arm falls into the join ;# ||         0.3
+   LDA sqr2_h,X                                                           ;# ||         0.3
+   SBC sqr_h,Y                                                            ;# ||         0.3
    JMP pxf_have                                                           ;# |          0.3
 pxf_pdarm:
    LDA sqr_l,X                                                            ;# |          0.3
@@ -194,11 +194,11 @@ px_go_op = px_go + 2                       ; operand LO poked per call
 pxm_neg:
 ; negative vx: b123 -= |vx|*M8 (unsigned product, subtractive accumulate)
    EOR #$FF                                                               ;#            0.0
-   BUMP_TAX                                ; A = X = |vx| (CPU-forked pair: ;#            0.1
+   BUMP_TAX                                ; A = X = |vx| (CPU-forked pair: ;# |          0.1
                                            ; NMOS TAX/INX/TXA saves a byte,
                                            ; C02 keeps INA/TAX — Eben)
    SEC                                                                    ;#            0.0
-   SBC zp_br_r_m8                                                         ;#            0.0
+   SBC zp_br_r_m8                                                         ;#            0.1
    BCS pxm_nd                                                             ;#            0.0
    EOR #$FF                                                               ;#            0.0
    ADC #1                                                                 ;#            0.0
@@ -206,9 +206,9 @@ pxm_nd:
    TAY                                                                    ;#            0.0
    TXA                                                                    ;#            0.0
    CLC                                                                    ;#            0.0
-   ADC zp_br_r_m8                                                         ;#            0.0
+   ADC zp_br_r_m8                                                         ;#            0.1
    TAX                                                                    ;#            0.0
-   BCC pxm_npd                             ; arm swap 2026-08-12 (nuo = 2 ;#            0.0
+   BCC pxm_npd                             ; arm swap 2026-08-12 (nuo = 2 ;#            0.1
    LDA sqr2_l,X                            ;  suite execs vs 243)
    SBC sqr_l,Y
    STA zp_br_a
@@ -219,16 +219,16 @@ pxm_npd:
    LDA sqr_l,X                                                            ;#            0.1
    SEC                                                                    ;#            0.0
    SBC sqr_l,Y                                                            ;#            0.1
-   STA zp_br_a                             ; prod lo                      ;#            0.0
+   STA zp_br_a                             ; prod lo                      ;#            0.1
    LDA sqr_h,X                                                            ;#            0.1
    SBC sqr_h,Y                                                            ;#            0.1
 pxm_nacc:
-   STA zp_mul_b                            ; prod hi (scratch — the mul that ;#            0.0
+   STA zp_mul_b                            ; prod hi (scratch — the mul that ;#            0.1
                                         ; owned this byte is inlined now)
    SEC                                                                    ;#            0.0
-   LDA zp_br_t2                                                           ;#            0.0
-   SBC zp_br_a                                                            ;#            0.0
-   STA zp_br_t2                                                           ;#            0.0
+   LDA zp_br_t2                                                           ;#            0.1
+   SBC zp_br_a                                                            ;#            0.1
+   STA zp_br_t2                                                           ;#            0.1
 ; --- NEGATIVE TAIL (py insight ported, 2026-07-26): vx < 0 => b123 =
 ; vx*m9 in [-65408, -2] (|vx| <= 128, m9 <= 511, vx <= -1/256) — the
 ; ext byte is the CONSTANT $FF, so the borrow-out of the mid subtract
@@ -236,12 +236,12 @@ pxm_nacc:
 ; mod-2^16 arithmetic on (t2, mid) is exact regardless. The vx<<8 add
 ; folds into the mid chain in A (CLC needed: the SBC's borrow-out is
 ; data-dependent); mid rides A to the shared px_shift stores. ---
-   LDA zp_br_res_l                                                        ;#            0.0
-   SBC zp_mul_b                            ; mid partial (borrow-out dropped) ;#            0.0
+   LDA zp_br_res_l                                                        ;#            0.1
+   SBC zp_mul_b                            ; mid partial (borrow-out dropped) ;#            0.1
    CLC                                                                    ;#            0.0
-   ADC zp_br_vx_h                          ; += vx (the <<8 fold)         ;#            0.0
+   ADC zp_br_vx_h                          ; += vx (the <<8 fold)         ;#            0.1
    LDX #$FF                                ; ext = sign of the arm        ;#            0.0
-   JMP px_shift                                                           ;#            0.0
+   JMP px_shift                                                           ;#            0.1
 
 .endscope
 
@@ -294,8 +294,8 @@ pymz_go:
 ; the pre-2026-07-21 caller-pages era.)
 project_y:
 .scope
-   STA zp_br_t0                            ; h (tag compare + raw body reads) ;# ||||||||   1.5
-   EOR zp_br_r_m8                                                         ;# ||||||||   1.5
+   STA zp_br_t0                            ; h (tag compare + raw body reads) ;# |||||||    1.5
+   EOR zp_br_r_m8                                                         ;# |||||||    1.5
    TAX                                     ; probe idx = h ^ rhi          ;# |||||      1.0
 ; Staggered partial-key update (the CPM_ENTRY idiom, 2026-07-19):
 ; compares run LDA zp / CMP plane, so a miss at stage k arrives with
@@ -311,19 +311,19 @@ project_y:
 ; safety: same slot + same h => same rhi, and rlo (the valid flag —
 ; a real S is never 0) is still compared. Zero-filled fresh slots
 ; miss at the R_S stage exactly as before.
-   LDA zp_br_r_s                                                          ;# ||||||||   1.5
+   LDA zp_br_r_s                                                          ;# |||||||    1.5
    CMP VWHC_R_S,X                                                         ;# |||||||||| 2.0
-   BNE pym0                                                               ;# |||||||    1.3
+   BNE pym0                                                               ;# ||||||     1.3
    LDA zp_br_t0                                                           ;# |||        0.6
-   CMP VWHC_KEY,X                                                         ;# ||||       0.8
+   CMP VWHC_KEY,X                                                         ;# ||||       0.7
    BNE pym2                                                               ;# ||         0.4
-   LDY VWHC_L,X                           ; REG CONTRACT: Y = lo, A = hi  ;# ||||       0.7
-   LDA VWHC_H,X                           ; (zp_br_res store-backs dropped ;# ||||       0.7
-   RTS                                     ; 2026-07-19: every engine caller ;# |||||      1.1
+   LDY VWHC_L,X                           ; REG CONTRACT: Y = lo, A = hi  ;# |||        0.6
+   LDA VWHC_H,X                           ; (zp_br_res store-backs dropped ;# |||        0.6
+   RTS                                     ; 2026-07-19: every engine caller ;# |||||      1.0
                                            ; consumes the registers; the unit
                                            ; test reads mpu.a/mpu.y now)
 pym0:
-   STA VWHC_R_S,X                                                         ;# ||||||||   1.5
+   STA VWHC_R_S,X                                                         ;# ||||||||   1.6
    LDA zp_br_t0                                                           ;# |||||      0.9
 pym2:
    STA VWHC_KEY,X                                                         ;# ||||||||   1.7
@@ -381,9 +381,9 @@ pym2:
    TAX                                                                    ;# ||         0.5
    SEC                                                                    ;# ||         0.5
    SBC zp_br_r_m8                                                         ;# ||||       0.7
-   BCS pym_pd                                                             ;# ||         0.5
-   EOR #$FF                                                               ;# ||         0.4
-   ADC #1                                                                 ;# ||         0.4
+   BCS pym_pd                                                             ;# |||        0.5
+   EOR #$FF                                                               ;# ||         0.5
+   ADC #1                                                                 ;# ||         0.5
 pym_pd:
    TAY                                     ; Y = |h - M8|                 ;# ||         0.5
    TXA                                                                    ;# ||         0.5
@@ -398,12 +398,12 @@ pym_pd:
    SBC sqr_h,Y                                                            ;#            0.0
    JMP pym_ptail                           ; A = hi(h*M8) — positive tail ;#            0.0
 pym_ppd:
-   LDA sqr_l,X                                                            ;# |||||      0.9
+   LDA sqr_l,X                                                            ;# |||||      1.0
    SEC                                                                    ;# ||         0.5
-   SBC sqr_l,Y                                                            ;# |||||      0.9
-   STA zp_br_t2                            ; P24 lo                       ;# |||        0.7
-   LDA sqr_h,X                                                            ;# |||||      0.9
-   SBC sqr_h,Y                                                            ;# |||||      0.9
+   SBC sqr_l,Y                                                            ;# |||||      1.0
+   STA zp_br_t2                            ; P24 lo                       ;# ||||       0.7
+   LDA sqr_h,X                                                            ;# |||||      1.0
+   SBC sqr_h,Y                                                            ;# |||||      1.0
 ; --- POSITIVE TAIL: h > 0 => P24 >= 257 => mid in [1,127]: ext is the
 ; CONSTANT 0 (same fence). The puo arm falls in; the no-overflow arm
 ; JMPs here. Ext rides X into py_shift's shared STX (hand edit).
@@ -434,12 +434,12 @@ pym_nd:
    ADC zp_br_r_m8                                                         ;# |          0.2
    TAX                                                                    ;# |          0.2
    BCC pym_npd                             ; arm swap 2026-08-12 (nuo = 5 ;# |          0.2
-   LDA sqr2_l,X                            ;  suite execs vs 309)
-   SBC sqr_l,Y
-   STA zp_br_t2
-   LDA sqr2_h,X
-   SBC sqr_h,Y
-   JMP pym_nneg
+   LDA sqr2_l,X                            ;  suite execs vs 309)         ;#            0.0
+   SBC sqr_l,Y                                                            ;#            0.0
+   STA zp_br_t2                                                           ;#            0.0
+   LDA sqr2_h,X                                                           ;#            0.0
+   SBC sqr_h,Y                                                            ;#            0.0
+   JMP pym_nneg                                                           ;#            0.0
 pym_npd:
    LDA sqr_l,X                                                            ;# |          0.3
    SEC                                                                    ;# |          0.2
@@ -560,7 +560,7 @@ rns_s8:
 ; carry, propagated in place. No copies.
    BIT zp_br_t2                            ; round carry = bit 7 of b0    ;# ||         0.4
    BPL s8_done                                                            ;# ||         0.4
-   INC zp_br_res_l                                                        ;# ||         0.3
+   INC zp_br_res_l                                                        ;# ||         0.4
    BNE s8_done                                                            ;# |          0.2
    INC zp_br_res_h
 s8_done:
@@ -594,11 +594,11 @@ rns_s6:
    INC zp_br_res_h
 s6_sh:
    ASL A                                                                  ;# |          0.2
-   ROL zp_br_res_l                                                        ;# ||         0.5
-   ROL zp_br_res_h                                                        ;# ||         0.5
+   ROL zp_br_res_l                                                        ;# ||         0.4
+   ROL zp_br_res_h                                                        ;# ||         0.4
    ASL A                                                                  ;# |          0.2
-   ROL zp_br_res_l                                                        ;# ||         0.5
-   ROL zp_br_res_h                                                        ;# ||         0.5
+   ROL zp_br_res_l                                                        ;# ||         0.4
+   ROL zp_br_res_h                                                        ;# ||         0.4
    RTS                                                                    ;# |||        0.5
 .endscope
 
@@ -609,8 +609,8 @@ rns_s7:
    LDA zp_br_t2                                                           ;# |          0.1
    ADC #$40                                ; C=0 from rns_go              ;#            0.1
    BCC s7_sh                                                              ;# |          0.1
-   INC zp_br_res_l
-   BNE s7_sh
+   INC zp_br_res_l                                                        ;#            0.0
+   BNE s7_sh                                                              ;#            0.0
    INC zp_br_res_h
 s7_sh:
    ASL A                                                                  ;#            0.1

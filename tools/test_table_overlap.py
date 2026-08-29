@@ -79,6 +79,11 @@ def tables(flat):
         art_a = symmap.sym('OBJ_ART', banked=0, c02=1)
         out.append(('wad:obj_planes', obj_a, L['off_obj_art'] - L['off_obj']))
         out.append(('wad:obj_art', art_a, 4 * L['n_obj_art']))
+        # OBJ_ANYB bitmap (2026-08-29): python-placed, invisible to the
+        # linker — register so future placements collide loudly (the
+        # byte-plane experiment landed on engine_pmbf/VXC senior pages)
+        _anyb = symmap.sym('OBJ_ANYB', banked=0, c02=1)
+        out.append(('obj_anyb', _anyb, L['obj_bits_len']))
     # the LINKED engine regions (code + data bins): a cache plane over
     # CODE is the same class with a worse failure mode. Region extents
     # from the ld65 cfg + the real bin sizes (concatenated per file).

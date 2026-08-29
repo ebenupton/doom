@@ -488,7 +488,7 @@ portal_cascade:
 ;   armed top:   NEEDBT ? bt lip : (STEPUP_T ? front line)  — applies
 ;   armed bot:   NEEDBB ? bb lip : (STEPUP_B ? front line)  — as it draws
 ; ============================================================================
-   JSR fused_begin
+   ZERO FW_TOUCH                           ; (fused_begin inlined 2026-08-29)
 ; --- companions (never armed; the dcl record sites are gone) ---
    LDA zp_seg_flags
    AND #$0C                                ; both companions? -> the PAIR

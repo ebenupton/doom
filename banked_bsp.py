@@ -193,7 +193,7 @@ def build_banked(flatr):
     _bits = layout['off_obj'] + 7 * 18       # OBJ_BITS = ROM_OBJ_C+7*N_OBJ
     from symmap import sym as _bsym
     _anyb = _bsym('OBJ_ANYB', banked=1)
-    for i in range(28):
+    for i in range(layout['obj_bits_len']):
         bm[_anyb + i] = rom_main[_bits + i]
 
     # --- bank B (BANK_WALK=7): node/ss SoA @ $8000 (SS_PHI rebased onto
@@ -201,8 +201,13 @@ def build_banked(flatr):
     # CPM, rcache BSS, ANIM CFG @ $B300 + SSMASK staging @ $B400 ---
     lb = bytearray(16384)
     lb[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages
-    # (the SS_PHI rebase loop died 2026-08-19: SS_PG carries a raw page
-    #  index and the engine adds >ROM_SEG_HDR_C itself)
+    # SS_PG rebase (RESURRECTED 2026-08-29, one line per loader): the
+    # plane ships the FINAL header hi byte (page + >ROM_SEG_HDR_C), so
+    # the prologue's CLC/ADC died. rom_main keeps the RAW page (the
+    # python mirror reads it there). Empty subsectors rebase harmlessly
+    # (CNT $FF is the empty test).
+    for _i in range(layout['n_ss']):
+        lb[layout['off_ss'] + _i] = (rom_main[layout['off_ss'] + _i] + 0x80) & 0xFF
     # SS_FH/SS_CH: planes 3+4 of the five adjacent SS planes ($8900 PG,
     # $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ — VZ arrives via the colmap
     # blob router below). SS_CNT (the 2026-08-29 PG/CNT split) rides the

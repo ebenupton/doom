@@ -287,14 +287,14 @@ fq_y_ok:
 ; TAY staging died: ~-10 cyc/product. INVARIANT: the general body is
 ; never dispatched with mag 0 (rot_select's cardinal classes own
 ; those), so the borrow into the LO base's hi byte always happens.
-   LDX src
-s1l: LDA sqr_l,X                           ; +1 SMC = mag5 (base+mag trick)
-   SEC
-d1l: SBC sqr_l-1,X                         ; +1 SMC = (-mag5) & 255
-   STA dstl
-s1h: LDA sqr_h,X                           ; +1 SMC = mag5
-d1h: SBC SQD_H+32,X                        ; +1/+2 SMC = SQD_H+32-mag5
-   STA dsth
+   LDX src                                                                ;# |          1.4
+s1l: LDA sqr_l,X                           ; +1 SMC = mag5 (base+mag trick) ;# ||         1.9
+   SEC                                                                    ;# |          1.0
+d1l: SBC sqr_l-1,X                         ; +1 SMC = (-mag5) & 255       ;# ||||       4.6
+   STA dstl                                                               ;# |          1.4
+s1h: LDA sqr_h,X                           ; +1 SMC = mag5                ;# |||        4.0
+d1h: SBC SQD_H+32,X                        ; +1/+2 SMC = SQD_H+32-mag5    ;# |||||||    8.3
+   STA dsth                                                               ;# |          1.4
 .endmacro
 
 ; rwp_stamp — the SMC-validity stamp, IN THE CODE IMAGE (Eben's
@@ -309,55 +309,55 @@ rwp_stamp:
 rot_w_pages:
 ; P1 = ox*|sin| -> rs, P2 = oy*|cos| -> res
    RWP_MUL zp_ri_d_l, ::rwp_d1l, ::rwp_d1h, ::rwp_s1l, ::rwp_s1h, zp_rs_l, zp_rs_h
-   RWP_MUL zp_br_dy_l, ::rwp_d2l, ::rwp_d2h, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h
+   RWP_MUL zp_br_dy_l, ::rwp_d2l, ::rwp_d2h, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h ;# ||||||||||11.6
 ; vx = PB_X[page] (+sin)P1 (-cos)P2 — op pairs SMC'd per frame
-   LDX zp_ri_d_h                           ; page nibble
-   LDA PB_XL,X
+   LDX zp_ri_d_h                           ; page nibble                  ;# |          1.4
+   LDA PB_XL,X                                                            ;# ||         1.9
 ::rwp_o1s:
-   CLC                                     ; SMC: CLC/SEC = sin sign
+   CLC                                     ; SMC: CLC/SEC = sin sign      ;# |          1.0
 ::rwp_o1l:
-   ADC zp_rs_l                             ; SMC: ADC/SBC zp
-   STA zp_br_vx_l
-   LDA PB_XH,X
+   ADC zp_rs_l                             ; SMC: ADC/SBC zp              ;# |          1.4
+   STA zp_br_vx_l                                                         ;# |          1.4
+   LDA PB_XH,X                                                            ;# ||         1.9
 ::rwp_o1h:
-   ADC zp_rs_h
-   STA zp_br_vx_h
+   ADC zp_rs_h                                                            ;# |          1.4
+   STA zp_br_vx_h                                                         ;# |          1.4
 ::rwp_o2s:
-   SEC                                     ; SMC: SEC/CLC = NOT cos sign
-   LDA zp_br_vx_l
+   SEC                                     ; SMC: SEC/CLC = NOT cos sign  ;# |          1.0
+   LDA zp_br_vx_l                                                         ;# |          1.4
 ::rwp_o2l:
-   SBC zp_br_res_l                         ; SMC: SBC/ADC zp
-   STA zp_br_vx_l
-   LDA zp_br_vx_h
+   SBC zp_br_res_l                         ; SMC: SBC/ADC zp              ;# |          1.4
+   STA zp_br_vx_l                                                         ;# |          1.4
+   LDA zp_br_vx_h                                                         ;# |          1.4
 ::rwp_o2h:
-   SBC zp_br_res_h
-   STA zp_br_vx_h
+   SBC zp_br_res_h                                                        ;# |          1.4
+   STA zp_br_vx_h                                                         ;# |          1.4
 ; P3 = ox*|cos| -> rs, P4 = oy*|sin| -> res
-   RWP_MUL zp_ri_d_l, ::rwp_d3l, ::rwp_d3h, ::rwp_s3l, ::rwp_s3h, zp_rs_l, zp_rs_h
-   RWP_MUL zp_br_dy_l, ::rwp_d4l, ::rwp_d4h, ::rwp_s4l, ::rwp_s4h, zp_br_res_l, zp_br_res_h
+   RWP_MUL zp_ri_d_l, ::rwp_d3l, ::rwp_d3h, ::rwp_s3l, ::rwp_s3h, zp_rs_l, zp_rs_h ;# ||||||||||11.5
+   RWP_MUL zp_br_dy_l, ::rwp_d4l, ::rwp_d4h, ::rwp_s4l, ::rwp_s4h, zp_br_res_l, zp_br_res_h ;# ||||||     7.2
 ; vy = PB_Y[page] (+cos)P3 (+sin)P4
-   LDX zp_ri_d_h
-   LDA PB_YL,X
+   LDX zp_ri_d_h                                                          ;# |          1.4
+   LDA PB_YL,X                                                            ;# ||         1.9
 ::rwp_o3s:
-   CLC                                     ; SMC: CLC/SEC = cos sign
+   CLC                                     ; SMC: CLC/SEC = cos sign      ;# |          1.0
 ::rwp_o3l:
-   ADC zp_rs_l
-   STA zp_br_vy_l
-   LDA PB_YH,X
+   ADC zp_rs_l                                                            ;# |          1.4
+   STA zp_br_vy_l                                                         ;# |          1.4
+   LDA PB_YH,X                                                            ;# ||         1.9
 ::rwp_o3h:
-   ADC zp_rs_h
-   STA zp_br_vy_h
+   ADC zp_rs_h                                                            ;# |          1.4
+   STA zp_br_vy_h                                                         ;# |          1.4
 ::rwp_o4s:
-   CLC                                     ; SMC: CLC/SEC = sin sign
-   LDA zp_br_vy_l
+   CLC                                     ; SMC: CLC/SEC = sin sign      ;# |          1.0
+   LDA zp_br_vy_l                                                         ;# |          1.4
 ::rwp_o4l:
-   ADC zp_br_res_l
-   STA zp_br_vy_l
-   LDA zp_br_vy_h
+   ADC zp_br_res_l                                                        ;# |          1.4
+   STA zp_br_vy_l                                                         ;# |          1.4
+   LDA zp_br_vy_h                                                         ;# |          1.4
 ::rwp_o4h:
-   ADC zp_br_res_h
-   STA zp_br_vy_h
-   RTS
+   ADC zp_br_res_h                                                        ;# |          1.4
+   STA zp_br_vy_h                                                         ;# |          1.4
+   RTS                                                                    ;# ||         2.9
 
 ; ============================================================================
 ; rwp_card_su / rwp_card_cu — CARDINAL-frame twins of rot_w_pages

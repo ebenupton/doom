@@ -104,8 +104,11 @@ class BspRender6502:
         off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
         for i in range(off_verts):                       # SoA pages (14: 11 node + 3 ss)
             mem[NODE_SOA_BASE + i] = rom_main[i]
-        # (the SS_PHI rebase died 2026-08-19: SS_PG ships a raw page index
-        #  and the engine's prologue adds >ROM_SEG_HDR_C itself)
+        # SS_PG rebase (2026-08-29): the loaded plane carries the FINAL
+        # header hi byte (+>ROM_SEG_HDR_BASE); rom_main keeps the raw page
+        for i in range(layout['n_ss']):
+            _pgoff = layout['off_ss'] + i
+            mem[NODE_SOA_BASE + _pgoff] = (rom_main[_pgoff] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
         for i in range(off_verts, off_hdr):              # verts
             mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
         off_obj = layout['off_obj']
@@ -142,12 +145,12 @@ class BspRender6502:
             _d = _sym2(_nm)
             for i in range(128):
                 mem[_d + i] = rom_main[_off + i]
-        # OBJ_ANYB: the main-RAM bitmap copy the per-subsector test reads
+        # OBJ_ANYB: the main-RAM bitmap the inline per-subsector probe reads
         # (hardware fills it from anim_init; harness renders may never run
         # that, so poke it here — the sqr_fill dual-path pattern)
         _anyb = _sym2('OBJ_ANYB')
         _bits = off_obj + 7 * 18            # OBJ_BITS = ROM_OBJ_C + 7*N_OBJ
-        for i in range(28):
+        for i in range(layout['obj_bits_len']):
             mem[_anyb + i] = rom_main[_bits + i]
 
         for i, b in enumerate(bbox):

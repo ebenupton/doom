@@ -66,7 +66,13 @@ obj_best  = $0BBB
 obj_ss    = $0BBC
 obj_mask  = $0BBD   ; (FREE since the OBJ_ANYB grind — kept as a hole note)
 obj_asp   = $0BBE   ; live object's aspect byte (bit 7 = art, 0-6 = k)
-OBJ_ANYB  = $0BF3   ; [28] main-RAM copy of the OBJ_BITS bitmap (2026-08-25
+OBJ_ANYB  = $0BF3   ; [28] main-RAM copy of the OBJ_BITS bitmap (2026-08-25;
+                    ; the caller-side probe is INLINE in the subsector
+                    ; prologue since 2026-08-29 — a byte-per-ss plane was
+                    ; tried first and REJECTED: no free page exists in the
+                    ; shared OR flat maps ($5700=pmbf, $5100=VXC_XHI hi,
+                    ; $1200=VC_RLO hi, $E400=VATOX end — the ld65 map alone
+                    ; is never the free-space truth). Bitmap-era note (2026-08-25
                     ; grind): the per-subsector test runs under WHATEVER
                     ; bank the walk holds — both PAGEs left the common
                     ; path. Boot-filled by obj_anyb_fill (from anim_init);
@@ -112,7 +118,7 @@ obj_bitmask:
    RTS
 .else
    PAGE BANK_SEG
-   LDX #27
+   LDX #LAY_OBJ_BITS_LEN-1
 oaf_lp:
    LDA OBJ_BITS,X
    STA OBJ_ANYB,X
@@ -134,23 +140,10 @@ oaf_lp:
                                         ; banked CODE area (see the note at
                                         ; the head of this file)
    STA obj_ss
-; GRIND (2026-08-25): the bitmap lives in main RAM (OBJ_ANYB) so the
-; common no-objects case tests it under the ambient WALK bank — the two
-; PAGEs and the obj_mask staging left the hot path (58 -> 36 cycles
-; banked, 48 -> 36 flat). obj_have pages SEG for the pass-1 scan.
-   TAY                                     ; ss rides Y (saves the reload)
-   AND #7
-   TAX
-   TYA
-   LSR A
-   LSR A
-   LSR A
-   TAY
-   LDA OBJ_ANYB,Y
-   AND obj_bitmask,X
-   BNE obj_have
-   RTS                                     ; the common case: one bit test
-obj_have:
+; GRIND (2026-08-29): the no-objects probe moved to the CALLER (the
+; subsector prologue tests the OBJ_ANYB byte plane inline — LDA/BEQ —
+; so this routine only runs for subsectors that HAVE objects; the old
+; in-here shift/mask bitmap probe cost 37 cycles per visited subsector).
    PAGE BANK_SEG                           ; pass 1 reads the OBJ_* planes
 ; PASS 1 -- project every object of this subsector into a slot.  The
 ; table is sorted by subsector, but a linear sweep of 18 entries is
@@ -588,7 +581,11 @@ obj_ycp:
 ; entry arms the fused walker and the trailing AUTHORITY arc lines each
 ; draw + apply in one walk (obj_fused routes the dispatch below).
    PAGE BANK_C
-   JSR fused_begin                         ; per-object zero-touch state
+   ZERO FW_TOUCH                           ; per-object zero-touch state
+                                        ; (fused_begin inlined 2026-08-29:
+                                        ;  the JSR/RTS was 12 of its 16
+                                        ;  cycles; the routine survives as
+                                        ;  the harness entry)
    ZERO obj_fused                          ; leading run: plain draws
 ; Start at this object's template.  Bit 7 of the aspect byte IS the
 ; selector: barrels get the dodecagonal prism, everything else the plain

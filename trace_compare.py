@@ -58,9 +58,10 @@ def setup_wad(sc):
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     for i in range(off_verts):
         mem[NODE_SOA_BASE + i] = rom_main[i]
-    # (the SS_PHI offsets->pointers rebase loop is GONE, 2026-08-29: the
-    #  plane it rewrote died 2026-08-19, and its fossil writes landed on
-    #  the page that is now the flat SS_CNT home at $C400)
+    # SS_PG rebase (2026-08-29): final header hi byte in the loaded plane
+    for i in range(layout['n_ss']):
+        _pg = layout['off_ss'] + i
+        mem[NODE_SOA_BASE + _pg] = (rom_main[_pg] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
     for i in range(off_verts, off_hdr):
         mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
     off_obj = layout['off_obj']
@@ -87,6 +88,11 @@ def setup_wad(sc):
             mem[_dst + i] = rom_main[_off + i]
     for i, b in enumerate(dw.packed_bbox_table):
         mem[ROM_BBOX_BASE + i] = b
+    # OBJ_ANYB (2026-08-29): ZEROED explicitly — this differential has
+    # always run objects-off (the bitmap sat in never-filled workspace)
+    _anyb = _sym2('OBJ_ANYB')
+    for i in range(28):
+        mem[_anyb + i] = 0
     # vertex-span descriptor planes (flat homes; mirror of _load_wad)
     for i, d in enumerate(dw.vspan_desc):
         mem[0xDC00 + i] = d

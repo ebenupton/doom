@@ -78,9 +78,27 @@ render_subsector:
 ; solid: an object inside a convex cell stands in FRONT of every wall
 ; of that cell, so it must be drawn before them.  Nearer subsectors are
 ; already down, so the clipper still occludes it correctly.
-; obj_subsector restores BANK_WALK for the SS reads below.
-   LDA zp_node_ch_l
+; obj_subsector restores BANK_WALK for the SS reads below. The
+; no-objects probe is INLINE (2026-08-29): one plane byte, X = ss id
+; rides through into the SS decode.
+   LDX zp_node_ch_l
+.if ::OBJ_DRAW <> 0
+   TXA                                     ; INLINE any-objects probe
+   AND #7                                  ; (2026-08-29: the JSR/RTS,
+   TAY                                     ;  obj_ss staging and the ss
+   TXA                                     ;  re-derive left the common
+   LSR A                                   ;  no-objects path — 43 -> 29
+   LSR A                                   ;  cycles per visited subsector)
+   LSR A
+   TAX
+   LDA OBJ_ANYB,X
+   AND obj_bitmask,Y
+   BEQ no_obj
+   LDA zp_node_ch_l                        ; obj_subsector wants A = ss id
    JSR obj_subsector
+no_obj:
+   LDX zp_node_ch_l
+.endif
 ; --- The five SS planes, ALL adjacent in BANK B ($8900-$8DFF) and all
 ; read here under WALK (2026-08-19 consolidation, 7 planes -> 5):
 ;   SS_PG  = page, PLAIN (the 2026-08-29 PG/CNT split; the old +1
@@ -91,18 +109,17 @@ render_subsector:
 ;   SS_PLO = the plain in-page header offset (slot * stride)
 ; The header hi is DERIVED: page + >ROM_SEG_HDR_C — this ADC is the
 ; rebase both loaders used to do. ---
-   LDX zp_node_ch_l
    LDY ROM_SS_CNT_C,X                      ; cnt-1 ($FF = empty subsector:
    BMI sl_rts                              ;  BMI is the empty test — the
    STY zp_seg_count                        ;  live values are 0..27); the
                                         ; advance loops end on BMI too
                                         ; (the -1 saved a decode)
-   LDA SS_PG,X                             ; page, PLAIN (the +1 sentinel
-   CLC                                     ; bias died with the PG/CNT
-   ADC #>ROM_SEG_HDR_C                     ; split — Eben 2026-08-29); the
-   STA zp_seg_hdr_p_h                      ; CLC is the one cycle the old
-                                        ; LSRs used to buy (C unknown
-                                        ; on entry)
+   LDA SS_PG,X                             ; header hi byte, FINAL: the
+   STA zp_seg_hdr_p_h                      ; loaders rebase the plane by
+                                        ; +>ROM_SEG_HDR_C at image-build
+                                        ; time (2026-08-29 — the CLC/ADC
+                                        ; died; rom_main keeps raw pages
+                                        ; for the python mirror)
    LDA SS_PLO,X
    STA zp_seg_hdr_p
 
