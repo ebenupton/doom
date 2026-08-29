@@ -32,9 +32,12 @@ POSITIONS = [
     (3648, -2368, 35),
     (2500, -2600, 67),
     (3648, -4800, 131),
-    # zero-record off-screen-aperture portal (screen-wide wall just behind
-    # the viewer) — the sixth clipper bug's reproducer
-    (-486, -3307, 243),
+    # (the far-west void pose (-486,-3307,243) — the sixth clipper bug's
+    # zero-record aperture reproducer — LEFT this suite 2026-08-29: it
+    # stands where no player can, and the proved-dead-seg strip removed
+    # its principal occluders, so it ballooned to 258k cycles and owned
+    # the MEAN. The reproducer class stays guarded in bankedcmp_check,
+    # pyref_render and expl_fullline_census.)
     # FRACTIONAL walker-grid pose (engine 8.8: 004A.0B FFF3.54 ang 6C) —
     # the zp_ys_v1ok cull-leak reproducer (6509a23). Walker positions
     # live on this grid; integer poses never sample it.
