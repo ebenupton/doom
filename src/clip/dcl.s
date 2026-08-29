@@ -1114,16 +1114,18 @@ dcl_cb_top_p2clip:
 ; cy at crossing = boundary_y(ix). Interp workspace still has the
 ; span's top line (i_x0=TXLO, i_y0=TL, i_y1=TR); boundary_ix only
 ; clobbered div_den. Constant spans: cy = top1 directly.
-   LDA zp_cb_top1                                                         ;#            0.0
-   CMP zp_cb_top2                                                         ;#            0.0
-   BEQ dcl_cb_top_cy2_const                                               ;#            0.0
-   LDX zp_save0
-   LDA POOL_TDEN,X
-   STA zp_div_den
+; THE CLIPPED ENDPOINT RIDES THE **LINE**, NOT THE BOUNDARY (2026-08-29).
+; boundary_ix returns an integer COLUMN, and the two curves only agree at
+; the exact real crossing: once ix is rounded, evaluating the boundary
+; puts the endpoint (boundary_slope - line_slope) * frac away from the
+; line. With a steep aperture edge that is enormous — a near wall's floor
+; plunging 6 px/column threw the endpoint 5 px off and visibly tilted the
+; whole fragment (Eben's wrong-angle line, X=FFDD.29 Y=FFFA.25 R=28).
+; dcl_line_y_at_a sets up its own operands from zp_line_*, so this is
+; also SHORTER and needs no interp workspace.
    LDA zp_cb_cx2
-   JSR interp_store
-dcl_cb_top_cy2_const:                      ; BEQ lands here with A = top1
-   STA zp_cb_cy2                                                          ;#            0.0
+   JSR dcl_line_y_at_a
+   STA zp_cb_cy2
    JMP dcl_cb_top_done                                                    ;#            0.0
 
 dcl_cb_top_clip:
@@ -1141,16 +1143,9 @@ dcl_cb_top_clip:
    JSR dcl_boundary_ix                                                    ;#            0.0
 ; A = ix (clip p1, round toward cx2)
    STA zp_cb_cx1                                                          ;#            0.0
-   LDA zp_cb_top1                                                         ;#            0.0
-   CMP zp_cb_top2                                                         ;#            0.0
-   BEQ dcl_cb_top_cy1_const                                               ;#            0.0
-   LDX zp_save0
-   LDA POOL_TDEN,X
-   STA zp_div_den
-   LDA zp_cb_cx1
-   JSR interp_store
-dcl_cb_top_cy1_const:                      ; BEQ lands here with A = top1
-   STA zp_cb_cy1                                                          ;#            0.0
+   LDA zp_cb_cx1                           ; see the note at the top clip
+   JSR dcl_line_y_at_a
+   STA zp_cb_cy1
 ; cx1 was clipped right of ox0, so the line is NOT visible at ox0 and an
 ; open run ended there.  Close it BEFORE this span's verdict record —
 ; ascending-x contract.  Guarded on ox0 < cx1 so an intersection landing
@@ -1273,15 +1268,8 @@ dcl_cb_bot_p2clip:
    JSR dcl_boundary_ix
    STA zp_cb_cx2
 ; cy at crossing = boundary_y(ix). Bot interp workspace still valid.
-   LDA zp_cb_bot1
-   CMP zp_cb_bot2
-   BEQ dcl_cb_bot_cy2_const
-   LDX zp_save0
-   LDA POOL_BDEN,X                         ; BOTTOM anchors
-   STA zp_div_den
-   LDA zp_cb_cx2
-   JSR interp_store
-dcl_cb_bot_cy2_const:                      ; BEQ lands here with A = bot1
+   LDA zp_cb_cx2                           ; see the note at the top clip
+   JSR dcl_line_y_at_a
    STA zp_cb_cy2
    JMP dcl_cb_bot_done
 
@@ -1298,15 +1286,8 @@ dcl_cb_bot_clip:
    LDA #1
    JSR dcl_boundary_ix
    STA zp_cb_cx1
-   LDA zp_cb_bot1
-   CMP zp_cb_bot2
-   BEQ dcl_cb_bot_cy1_const
-   LDX zp_save0
-   LDA POOL_BDEN,X                         ; BOTTOM anchors
-   STA zp_div_den
-   LDA zp_cb_cx1
-   JSR interp_store
-dcl_cb_bot_cy1_const:                      ; BEQ lands here with A = bot1
+   LDA zp_cb_cx1                           ; see the note at the top clip
+   JSR dcl_line_y_at_a
    STA zp_cb_cy1
 ; cx1 was clipped right of ox0, so the line is NOT visible at ox0 and an
 ; open run ended there.  Close it BEFORE this span's verdict record —

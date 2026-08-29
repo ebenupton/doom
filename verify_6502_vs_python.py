@@ -123,7 +123,9 @@ def compare(px, py, ab):
 def main():
     pygame.init()
     if len(sys.argv) == 4:
-        px, py, ab = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+        # float px/py accepted: sub-unit positions are exactly where the
+        # CB-clip endpoint bug lived (the crossing's fractional column)
+        px, py, ab = float(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3])
         mo, no, mm, nm, cyc, done = compare(px, py, ab)
         verdict = ("CLEAN" if (mo <= ALIAS_PX and mm <= ALIAS_PX)
                    else f"DIVERGENT (over {mo}px / miss {mm}px)")
@@ -146,6 +148,12 @@ def main():
                                   random.randint(0, 255)))
     # include the known cases
     positions += [(1056, -3328, 14), (1200, -3000, 129), (1308, -3289, 252)]
+    # The CB-clip endpoint case (2026-08-29): a line emerging from behind a
+    # near wall whose aperture edge plunges ~6 px/column. The clipped
+    # endpoint used to ride the BOUNDARY rather than the line, which tilted
+    # the whole fragment (over 5px/62 cols here before the fix). The
+    # sub-unit position matters — it sets the crossing's fractional column.
+    positions += [(921.281, -3294.844, 40), (924.063, -3317.031, 52)]
 
     divergent = []
     for i, (px, py, ab) in enumerate(positions):
