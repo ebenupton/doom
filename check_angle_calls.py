@@ -9,7 +9,14 @@ from py65.devices.mpu6502 import MPU
 import trace_compare as tc
 import angle_bbox as A
 from engine_load import load_angle_module
-from symmap import sym
+# Symbols resolve for the build the shared rig IS (banked since 2026-08-29;
+# DOOM_FLAT_RIG=1 restores flat).  zp/pool names are identical in both maps
+# by rule, so only CODE entries actually move -- but a stale flat entry in a
+# banked rig is a silent jump into the wrong build, so resolve it all here.
+import functools as _ft, os as _os
+_BANKED = 1 if _os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+from symmap import sym as _raw_sym
+sym = _ft.partial(_raw_sym, banked=_BANKED)
 def s16(v): return v-0x10000 if v>=0x8000 else v
 def s8(v):  return v-0x100 if v>=0x80 else v
 

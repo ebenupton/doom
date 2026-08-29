@@ -16,6 +16,11 @@ annotations can be stripped again with --strip.
 """
 import os, re, sys, subprocess
 
+# Attribute cycles in the build that SHIPS.  The shared span rig went
+# banked on 2026-08-29; profiling the flat one would describe an image
+# nobody runs (and miss the paging traffic entirely).
+BANKED = 1 if os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 MARK = ';#'      # NOT ';#|' — a pipe in the marker adds a phantom bar
 WIDTH = 10
@@ -83,7 +88,7 @@ def run_frame(px, py, ab):
     from bsp_render_6502 import poke_init_frame_state
     poke_init_frame_state(sc.mpu.memory)
     mpu = sc.mpu; mem = mpu.memory
-    mpu.pc = sym('render_frame'); mpu.sp = 0xDD; mpu.p = 0x30
+    mpu.pc = sym('render_frame', banked=BANKED); mpu.sp = 0xDD; mpu.p = 0x30
     mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF; mpu.processorCycles = 0
     hot = {}; prev = 0
     while mpu.pc != 0xFF00:
@@ -117,9 +122,9 @@ def main():
 
     import importlib
     sys.path.insert(0, ROOT)
-    import asmbuild; asmbuild.build_all(banked=0, force=True)
+    import asmbuild; asmbuild.build_all(banked=BANKED, force=True)
     # the LINKED debug file: the per-object ones carry start=0 segments
-    dbg = os.path.join(ROOT, 'build', 'engine_b0c0.dbg')
+    dbg = os.path.join(ROOT, 'build', f'engine_b{BANKED}c0.dbg')
     amap = parse_dbg(dbg, os.path.basename(src))
     hot, total = run_frame(*pos)
 

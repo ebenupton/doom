@@ -121,6 +121,11 @@ class SpanClip6502:
         # a traced-run override (trace_compare) bypasses the traps, so
         # this can be stale there — those flows never read it.
         self.last_lines = []
+        # Per-instance so a BANKED rig can swap in bank-C code addresses:
+        # plot_h/plot_v/RASTER_ENTRY are the only symbols here that MOVE
+        # between builds (everything else is zp/pool, and $0000-$57FF is
+        # identical in both maps).  2026-08-29.
+        self.PLOT_PCS = PLOT_PCS
         mem = self.mpu.memory
 
         # Load quarter-square tables (base from the generated ABI — the flat
@@ -195,7 +200,7 @@ class SpanClip6502:
             pc = mpu.pc
             if pc == 0xFF00:
                 break
-            if pc in PLOT_PCS:
+            if pc in self.PLOT_PCS:
                 lines.append((mem[RZ_X0], mem[RZ_Y0], mem[RZ_X1], mem[RZ_Y1]))
             mpu.step()
         self.last_cycles = mpu.processorCycles

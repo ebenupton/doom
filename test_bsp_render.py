@@ -14,7 +14,14 @@ from span_clip_6502 import SpanClip6502
 import fp
 import abi
 
-from symmap import sym as _sym
+# Symbols resolve for the build the shared rig IS (banked since 2026-08-29;
+# DOOM_FLAT_RIG=1 restores flat).  zp/pool names are identical in both maps
+# by rule, so only CODE entries actually move -- but a stale flat entry in a
+# banked rig is a silent jump into the wrong build, so resolve it all here.
+import functools as _ft, os as _os
+_BANKED = 1 if _os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+from symmap import sym as _raw_sym
+_sym = _ft.partial(_raw_sym, banked=_BANKED)
 ENTRY_BR_UMUL8 = _sym('umul8_zp')
 ENTRY_BR_RECIP_HI = _sym('recip_hi')   # junior arm is inlined at nc_ok
 

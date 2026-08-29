@@ -21,7 +21,13 @@ import fp
 from wad_packed import (SEG_DTL_SIZE, SD_FH, SD_CH, SD_BFH, SD_BCH,
                         spans_init_full)
 
-from symmap import sym as _sym
+# Resolve symbols for the build the shared rig actually is (2026-08-29).
+# zp/pool names are identical in both maps by rule ($0000-$57FF), so only
+# the CODE entries below actually move -- but resolving everything through
+# one build keeps it honest if that rule ever bends.
+import functools as _ft
+from symmap import sym as _raw_sym
+_sym = _ft.partial(_raw_sym, banked=0 if dw.FLAT_RIG else 1)
 ENTRY_BR_VIEW_SETUP   = _sym('view_setup')
 ENTRY_BR_RENDER_FRAME = _sym('render_frame')
 _E_MARK_SOLID = _sym('span_mark_solid')

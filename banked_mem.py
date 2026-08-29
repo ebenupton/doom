@@ -31,6 +31,7 @@ class BankedMemory(list):
         super().__init__(*args)
         self._banks = {}        # bank_num -> bytearray(16384)
         self._cur = None        # currently-paged bank (None = none of ours)
+        self._dirty = False     # window written since it was paged in?
 
     def define_andy(self, image=None):
         """Model the Master's ANDY: 4K of RAM paged over $8000-$8FFF when
@@ -63,9 +64,16 @@ class BankedMemory(list):
     def _switch(self, num):
         if num == self._cur:
             return
-        # save current window contents back to the outgoing bank
-        if self._cur is not None and self._cur in self._banks:
+        # Save the window back to the outgoing bank ONLY if something wrote
+        # to it while it was paged in.  Most banks are read-only data (level,
+        # segs, verts); without this every switch cost a 16K save AND a 16K
+        # load, and at ~92 switches/frame that is ~3 MB of list slicing per
+        # frame -- it made the whole banked tool fleet crawl.  The dirty flag
+        # is set by __setitem__ on any write inside the window.  2026-08-29.
+        if (self._dirty and self._cur is not None
+                and self._cur in self._banks):
             self._banks[self._cur][:] = super().__getitem__(slice(WINDOW_LO, WINDOW_HI))
+        self._dirty = False
         self._cur = num
         if num in self._banks:
             # load incoming bank into the window
@@ -78,6 +86,7 @@ class BankedMemory(list):
             self._andy_in = False
 
     def _andy_page_in(self):
+        self._dirty = True          # ANDY swap rewrites the window bytes
         self._andy_save = super().__getitem__(slice(0x8000, 0x9000))
         super().__setitem__(slice(0x8000, 0x9000), list(self._andy))
         self._andy_in = True
@@ -91,8 +100,13 @@ class BankedMemory(list):
                     self._andy_page_in()
                 list.__setitem__(self, i, v & 0xFF)
                 return
+            if WINDOW_LO <= i < WINDOW_HI:
+                self._dirty = True
             list.__setitem__(self, i, v)
         else:
+            # slice write: assume it may touch the window (only the bank
+            # machinery itself does these, via super(), so this is rare)
+            self._dirty = True
             list.__setitem__(self, i, v)
 
     def current_bank(self):

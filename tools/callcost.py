@@ -16,6 +16,9 @@ many calls is a guard-at-the-call-site candidate: the floor is what a
 no-op costs, and 12 of it is the call itself.
 """
 import os, sys, collections, bisect
+# Profile the build that SHIPS: the shared span rig went banked
+# 2026-08-29 (DOOM_FLAT_RIG=1 for the old flat one).
+BANKED = 1 if os.environ.get('DOOM_BANKED_RIG') == '1' else 0
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.insert(0, ROOT)
@@ -40,7 +43,7 @@ def run(px, py, ab):
     sc._run(tc.ENTRY_BR_VIEW_SETUP); sc.init(); sc.clear_screen()
     poke_init_frame_state(sc.mpu.memory)
     mpu = sc.mpu; mem = mpu.memory
-    mpu.pc = sym('render_frame'); mpu.sp = 0xDD; mpu.p = 0x30
+    mpu.pc = sym('render_frame', banked=BANKED); mpu.sp = 0xDD; mpu.p = 0x30
     mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF; mpu.processorCycles = 0
     costs = collections.defaultdict(list)
     stack = []                       # (target, sp_after_jsr, cycles_at_entry)

@@ -16,6 +16,9 @@ Indexed modes charge the effective address, so a struct walked with X
 shows its real footprint rather than just its base.
 """
 import os, sys, collections
+# Profile the build that SHIPS: the shared span rig went banked
+# 2026-08-29 (DOOM_FLAT_RIG=1 for the old flat one).
+BANKED = 1 if os.environ.get('DOOM_BANKED_RIG') == '1' else 0
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.insert(0, ROOT)
@@ -38,7 +41,7 @@ def census(px, py, ab):
     from bsp_render_6502 import poke_init_frame_state
     poke_init_frame_state(sc.mpu.memory)
     mpu = sc.mpu; mem = mpu.memory
-    mpu.pc = sym('render_frame'); mpu.sp = 0xDD; mpu.p = 0x30
+    mpu.pc = sym('render_frame', banked=BANKED); mpu.sp = 0xDD; mpu.p = 0x30
     mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF; mpu.processorCycles = 0
     hits = collections.Counter()
     while mpu.pc != 0xFF00:

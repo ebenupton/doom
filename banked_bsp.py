@@ -22,6 +22,7 @@ from bsp_render_6502 import BspRender6502
 
 import abi
 BANK_L0, BANK_C, BANK_L2 = abi.BANK_L0, abi.BANK_C, abi.BANK_L2
+abi_RASTER_ENTRY_BANKED = 0xA800     # clip/arith.s, banked arm
 FHCH_LOW = 0x2400
 SQR_LOW = abi.SQR_BASE
 RASTER_OFF = 0xA800            # rasteriser window addr in bank C
@@ -297,6 +298,29 @@ class BankedBspRender(BspRender6502):
             sc._run(_span_init)
             sc.total_cycles = 0
         sc.init = banked_init
+
+        # --- make this rig usable as a general BANKED span rig ------------
+        # (2026-08-29: the shared flat rig, dw._span_clip_6502, is being
+        # retired in favour of this one.)
+        #
+        # The plot entries are the only symbols the rig traps that MOVE
+        # between builds -- everything else it names is zp or pool, and
+        # $0000-$57FF is identical in both maps by rule.  Banked they live
+        # in bank C (plot_h/plot_v in VPLOTC, RASTER_ENTRY at $A800).
+        sc.PLOT_PCS = frozenset((_sym('plot_h', banked=1),
+                                 _sym('plot_v', banked=1),
+                                 abi_RASTER_ENTRY_BANKED))
+        # Every byte of CODE in the paged window is bank C -- banks A/B/L0/L2
+        # are data only, by rule.  So an entry inside $8000-$BFFF is always
+        # bank-C code, and running it with another bank live executes that
+        # bank's DATA.  Page it here rather than making 20 call sites
+        # remember (see the pq_pump_op spray, same day).
+        _raw_run = sc._run
+        def banked_run(entry, *a, **k):
+            if 0x8000 <= entry < 0xC000:
+                self.bm.select(BANK_C)
+            return _raw_run(entry, *a, **k)
+        sc._run = banked_run
 
     def render_frame(self, px, py, ab, floor_z=0):
         # bca_ab relocated from $FA2F to $1B6F (BCA_WS+$2F) in the banked build.

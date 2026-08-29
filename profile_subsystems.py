@@ -23,7 +23,14 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 import doom_wireframe as dw
 import trace_compare as tc
 
-from symmap import sym
+# Symbols resolve for the build the shared rig IS (banked since 2026-08-29;
+# DOOM_FLAT_RIG=1 restores flat).  zp/pool names are identical in both maps
+# by rule, so only CODE entries actually move -- but a stale flat entry in a
+# banked rig is a silent jump into the wrong build, so resolve it all here.
+import functools as _ft, os as _os
+_BANKED = 1 if _os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+from symmap import sym as _raw_sym
+sym = _ft.partial(_raw_sym, banked=_BANKED)
 VERTEX = {sym('sx_vert'), sym('reproject_at_crossing')}
 # (br_seg_xform_vertex -> sx_vert with the 2026-08-13 split ABI: callers
 #  enter at sx_vert with A = the idx_b header byte and it side-dispatches)

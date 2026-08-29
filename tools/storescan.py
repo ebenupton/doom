@@ -19,6 +19,9 @@ Hardware ($FE00-$FEFF) and the framebuffer are excluded: a same-value
 write there can still be load-bearing.
 """
 import os, sys, collections, bisect
+# Profile the build that SHIPS: the shared span rig went banked
+# 2026-08-29 (DOOM_FLAT_RIG=1 for the old flat one).
+BANKED = 1 if os.environ.get('DOOM_BANKED_RIG') == '1' else 0
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, 'tools'))
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
@@ -32,7 +35,8 @@ STORES = {0x85:'A',0x95:'A',0x8D:'A',0x9D:'A',0x99:'A',0x81:'A',0x91:'A',
           0x86:'X',0x96:'X',0x8E:'X',
           0x84:'Y',0x94:'Y',0x8C:'Y',
           0x64:'Z',0x74:'Z',0x9C:'Z',0x9E:'Z'}
-FB_LO, FB_HI = 0xEA00, 0xFDFF          # flat framebuffer + IO headroom
+FB_LO, FB_HI = ((0x5800, 0x6BFF) if BANKED
+               else (0xEA00, 0xFDFF))   # the rig's framebuffer
 
 
 def ea(mpu, mem, pc, mode):
@@ -85,7 +89,7 @@ def run(px, py, ab, tot, red):
         # records + vcache-valid ground state.  VWHC and VXC are
         # deliberately NOT touched -- they persist on hardware too.
         sc.init(); sc.clear_screen(); poke_init_frame_state(mem)
-        mpu.pc = sym('render_frame'); mpu.sp = 0xDD; mpu.p = 0x30
+        mpu.pc = sym('render_frame', banked=BANKED); mpu.sp = 0xDD; mpu.p = 0x30
         mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF
         _count = _frame > 0
         _scan(mpu, mem, tot, red, _count)
@@ -108,7 +112,7 @@ def _scan(mpu, mem, tot, red, count):
 
 def linemap():
     """addr -> file:line, from the linked debug file."""
-    dbg = os.path.join(ROOT, 'build', 'engine_b0c0.dbg')
+    dbg = os.path.join(ROOT, 'build', f'engine_b{BANKED}c0.dbg')
     raw = open(dbg).readlines()
     def f(rest): return dict(re.findall(r'(\w+)=("?[^,"]*"?)', rest))
     segs, spans, files = {}, {}, {}

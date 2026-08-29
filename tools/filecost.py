@@ -34,7 +34,7 @@ def all_maps(dbg):
     return a2f
 
 pos = (1133, -3242, 0x90)
-a2f = all_maps(os.path.join(ROOT, 'build', 'engine_b0c0.dbg'))
+a2f = all_maps(os.path.join(ROOT, 'build', f'engine_b{H.BANKED}c0.dbg'))
 hot, tot = H.run_frame(*pos)
 per = collections.Counter()
 for pc, c in hot.items():

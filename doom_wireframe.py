@@ -75,7 +75,42 @@ from fp import (fp_mul8, fp_div8, s8,
 
 # ── 6502 span clipper shadow (cycle counting) ────────────────────────────────
 
-_span_clip_6502 = None  # lazy-loaded SpanClip6502 instance
+_span_clip_6502 = None  # lazy-loaded span rig (see make_span_rig)
+_span_rig_owner = None  # keeps the banked renderer (and its BankedMemory) alive
+
+# The shared span rig: FLAT for now, banked with DOOM_BANKED_RIG=1.
+#
+# The banked build is the reference (2026-08-29) and this rig should follow
+# it, but ONE THING BLOCKS THE SWITCH: trace_compare.setup_wad is a
+# flat-scatter WAD loader (headers $6C00, verts $9C00, node SoA $B600 --
+# see its own comment).  Every span-level tool -- compare_traversal,
+# compare_subsector, heatmap/callcost/zpheat/storescan, check_angle_calls --
+# seeds its rig through it.  Point those at a banked rig and they load
+# flat-laid data into a banked image: the engine then walks garbage until
+# the cycle cap, which reads as a HANG, not a failure (a 40-minute gate).
+# Retiring the flat rig means replacing setup_wad with banked seeding
+# (build_banked already does exactly this job) -- until then the switch is
+# opt-in so the fleet stays green.
+FLAT_RIG = os.environ.get('DOOM_BANKED_RIG') != '1' 
+
+
+def make_span_rig():
+    """The span/clipper rig every tool shares.  Banked unless DOOM_FLAT_RIG.
+
+    The banked one is a BankedBspRender's own `sc`: that gets the WAD load,
+    the BankedMemory, SCREEN_START $5800, bank-C paging on window entries
+    and the bank-C plot traps, all of which the bare SpanClip6502 has no
+    idea about.  Imported lazily -- banked_bsp imports this module.
+    """
+    global _span_rig_owner
+    if FLAT_RIG:
+        from span_clip_6502 import SpanClip6502
+        return SpanClip6502()
+    from banked_bsp import BankedBspRender
+    _span_rig_owner = BankedBspRender(
+        packed_layout, packed_rom_main, packed_rom_detail, packed_bbox_table,
+        MAP_CENTER_X, MAP_CENTER_Y, PRESCALE)
+    return _span_rig_owner.sc
 _frame_clip_cycles = [0]
 _frame_clip_match = [True]  # set False on any py/6502 span divergence
 _clip_mismatch_reported = set()  # (x,y,a) tuples already printed
@@ -123,8 +158,7 @@ class Instrumented6502Spans(EndpointClipSpans):
         self._update_bbox()
         global _span_clip_6502
         if _span_clip_6502 is None:
-            from span_clip_6502 import SpanClip6502
-            _span_clip_6502 = SpanClip6502()
+            _span_clip_6502 = make_span_rig()
         _span_clip_6502.clear_screen()
         _span_clip_6502.init()
         _frame_clip_match[0] = True

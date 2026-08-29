@@ -27,7 +27,14 @@ sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, 'tools'))
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame; pygame.init(); pygame.display.set_mode((1, 1))
-from symmap import sym
+# Symbols resolve for the build the shared rig IS (banked since 2026-08-29;
+# DOOM_FLAT_RIG=1 restores flat).  zp/pool names are identical in both maps
+# by rule, so only CODE entries actually move -- but a stale flat entry in a
+# banked rig is a silent jump into the wrong build, so resolve it all here.
+import functools as _ft, os as _os
+_BANKED = 1 if _os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+from symmap import sym as _raw_sym
+sym = _ft.partial(_raw_sym, banked=_BANKED)
 
 PY = sym('project_y'); RM8 = sym('zp_br_r_m8'); RS = sym('zp_br_r_s')
 IDX = lambda k: (k[2] ^ k[0]) & 0xFF            # the shipped probe index
