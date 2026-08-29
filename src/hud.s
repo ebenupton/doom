@@ -80,45 +80,22 @@ zp_hud_t   = $F1                        ; hud_char scratch (frame-scoped, as
 ; --- hud_draw ($A400): entry. Emits the whole line. Clobbers A,X,Y. ---
 hud_draw:
 .scope
-; The driver's OSBYTE probe maps OS VERSION -> font address, which is an
-; ASSUMPTION about each MOS ($C000 on OS 1.x, $F900 on MOS 3.20; Compact
-; never verified). VALIDATE it against the glyphs themselves before
-; blitting MOS code as characters (2026-08-29): char 32 (space) must be
-; 8 blank rows and char 33 ('!') must have ink in row 2. A failing base
-; swaps to the other candidate — the two differ only in the HIGH byte,
-; so one EOR toggles them — and if neither holds a font the base is
-; marked $FFxx (the ABI's "searched and absent") and the HUD stays dark
-; instead of drawing garbage.
-   LDA HUD_FONT+1
-   BEQ hd_rts                              ; 0 = no driver ever probed
-   CMP #$FF                                ; $FFxx = validated absent. NOT
-   BEQ hd_rts                              ;  BMI: the Master base IS $F9xx
-   LDX #2                                  ; two candidate bases to try
-hv_try:
-   LDA #0
-   STA zp_hud_src                          ; both candidates are page-aligned
-   LDY HUD_FONT+1
-   STY zp_hud_src+1
-   LDY #7
-hv_sp:
-   ORA (zp_hud_src),Y                      ; space must be 8 blank rows
-   DEY
-   BPL hv_sp
-   TAY                                     ; Z from the ACCUMULATOR (the
-   BNE hv_next                             ;  loop exits on DEY's flags)
-   LDY #10
-   LDA (zp_hud_src),Y                      ; '!' row 2 must have ink
-   BNE hd_go
-hv_next:
-   LDA HUD_FONT+1
-   EOR #(>HUD_FONT_B) ^ (>HUD_FONT_MASTER)
-   STA HUD_FONT+1
-   DEX
-   BNE hv_try
-   LDA #$FF
-   STA HUD_FONT+1                          ; neither: never retry
-hd_rts:
-   RTS
+   LDA HUD_FONT+1                          ; the driver picks this at boot from
+   BNE hd_have                             ; the OS version; 0 = never set (no
+   RTS                                     ; driver ran), so draw nothing
+hd_have:
+; The Master keeps its CURRENT character definitions in ANDY ($8900-$8FFF,
+; chars 32-255), paged over $8000-$8FFF by ROMSEL bit 7 — its font is NOT
+; in the MOS ROM (the old $F900 constant was MOS code, and drawing it as
+; glyphs is exactly the garbage HUD). Page ANDY in for the whole draw:
+; hud_draw calls nothing below $9000 (only hud_char/hud_hex, its own
+; segment at $A400), the framebuffer and its state are main RAM, and
+; hud_glue re-pages a render bank the instant we return. A $C000 base is
+; MOS ROM on a Model B and needs no paging at all.
+   CMP #>HUD_FONT_B
+   BCS hd_go
+   LDA #$80 | BANK_C                       ; ANDY over $8000-$8FFF, bank C
+   STA $FE30                               ; still at $9000-$BFFF (this code)
 hd_go:
    ZERO zp_hud_dst                         ; cell 0 (col*8 accumulates below).
                                            ; NOT branched on: ZERO is STZ on the

@@ -95,8 +95,7 @@ def main():
     code, sym = assemble('tube/hostg.asm', [], 'HOSTT', 'build/hostt.labels')
     print('-- hostg (tube host) --')
     for ver, want, label in CASES:
-        mpu, mem = probe(code, sym['start'], sym['hudprobe'], ver,
-                         fonts=(B, M))          # both candidates real
+        mpu, mem = probe(code, sym['start'], sym['hudprobe'], ver)
         if mpu is None:
             print(f'   X=${ver:02X}: hudprobe never returned')
             ok = False
@@ -106,27 +105,14 @@ def main():
         ok = ok and good
         print(f'   X=${ver:02X} {label:16s} -> ${got:04X} '
               f'{"ok" if good else f"*** want ${want:04X} ***"}')
-    # hudprobe VALIDATES its guess against the glyphs (2026-08-29): a
-    # wrong version->address map must self-correct, and a machine with
-    # the font at NEITHER candidate must go dark, not blit MOS code.
-    for ver, real, want, label in ((0x01, M, M, 'guess $C000, font at $F900'),
-                                   (0x03, B, B, 'guess $F900, font at $C000'),
-                                   (0x03, None, 0xFF00, 'font at neither')):
-        mpu, mem = probe(code, sym['start'], sym['hudprobe'], ver,
-                         fonts=() if real is None else (real,))
-        got = mem[sym['hudbase']] | (mem[sym['hudbase'] + 1] << 8)
-        good = got == want
-        ok = ok and good
-        print(f'   {label:24s} -> ${got:04X} '
-              f'{"ok" if good else f"*** want ${want:04X} ***"}')
-
-    # The Master base is the one that cost hardware time, so pin the claim:
-    # 96 glyphs of 8 bytes from $F900 must END exactly at the $FC00 I/O
-    # boundary. If someone edits the constant, this catches it.
-    fits = M + 96 * 8 == 0xFC00
+    # Pin the Master claim (2026-08-29): its font is the CURRENT character
+    # definitions in ANDY, chars 32-255 x 8 bytes = $700, filling
+    # $8900-$8FFF exactly. $F900 -- the constant until this was found --
+    # is MOS CODE, which is what the HUD had been drawing as glyphs.
+    fits = M == 0x8900 and M + 224 * 8 == 0x9000
     ok = ok and fits
-    print(f'   $F900 + 96*8 = ${M + 96 * 8:04X} '
-          f'{"ok (ends at the I/O boundary)" if fits else "*** not $FC00 ***"}')
+    print(f'   ANDY font ${M:04X} + 224*8 = ${M + 224 * 8:04X} '
+          f'{"ok (fills ANDY to $9000)" if fits else "*** not the $8900-$8FFF block ***"}')
 
     print('HUDFONT: ' + ('PASS' if ok else 'FAIL'))
     return 0 if ok else 1

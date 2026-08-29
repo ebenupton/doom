@@ -32,6 +32,21 @@ class BankedMemory(list):
         self._banks = {}        # bank_num -> bytearray(16384)
         self._cur = None        # currently-paged bank (None = none of ours)
 
+    def define_andy(self, image=None):
+        """Model the Master's ANDY: 4K of RAM paged over $8000-$8FFF when
+        ROMSEL bit 7 is set. The Master's CURRENT character definitions
+        live at $8900-$8FFF there, which is where the HUD reads its font
+        (the MOS ROM has no font on a Master). A Model B latches only the
+        low 4 bits, so bit 7 is a no-op there — that is exactly why the
+        engine can use one store on both machines."""
+        buf = bytearray(0x1000)
+        if image:
+            n_ = min(len(image), 0x1000)
+            buf[:n_] = bytes(image[:n_])
+        self._andy = buf
+        self._andy_in = False
+        self._andy_save = None
+
     def define_bank(self, num, image=None):
         """Register a 16K RAM bank, optionally seeded with `image` bytes."""
         buf = bytearray(WINDOW_SZ)
@@ -56,10 +71,24 @@ class BankedMemory(list):
             # load incoming bank into the window
             super().__setitem__(slice(WINDOW_LO, WINDOW_HI), list(self._banks[num]))
 
+    def _andy_out(self):
+        if getattr(self, '_andy_in', False):
+            self._andy[:] = super().__getitem__(slice(0x8000, 0x9000))
+            super().__setitem__(slice(0x8000, 0x9000), list(self._andy_save))
+            self._andy_in = False
+
+    def _andy_page_in(self):
+        self._andy_save = super().__getitem__(slice(0x8000, 0x9000))
+        super().__setitem__(slice(0x8000, 0x9000), list(self._andy))
+        self._andy_in = True
+
     def __setitem__(self, i, v):
         if isinstance(i, int):
             if i == ROMSEL:
+                self._andy_out()                  # window back to bank bytes
                 self._switch(v & 0x0F)
+                if (v & 0x80) and getattr(self, '_andy', None) is not None:
+                    self._andy_page_in()
                 list.__setitem__(self, i, v & 0xFF)
                 return
             list.__setitem__(self, i, v)

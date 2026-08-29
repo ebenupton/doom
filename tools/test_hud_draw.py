@@ -53,10 +53,7 @@ def run(img, base, c02, font_at='same'):
     for c in range(32, 128) if where is not None else ():   # synthetic font
         o = where + (c - 32) * 8
         for i in range(8):
-            # space MUST be blank and '!' MUST have ink: hud_draw
-            # validates the base against those two glyphs before it
-            # trusts the driver's OS-version guess (2026-08-29)
-            mem[o + i] = 0 if c == 32 else c
+            mem[o + i] = 0 if c == 32 else c   # blank space, like a real font
     for name, v in POSE.items():
         mem[getattr(abi, name)] = v
     mem[abi.DV_HUD_FONT] = base & 0xFF
@@ -102,26 +99,8 @@ def one(c02):
           f'VDESC at ${VDESC:04X}  '
           f'{"ok" if fits else "*** OVERLAPS -- H will crash ***"}')
 
-    # SELF-VALIDATION (2026-08-29): the driver's OS-version guess is an
-    # assumption about each MOS. hud_draw checks the glyphs (space blank,
-    # '!' inked) and swaps to the other candidate if the guess is wrong,
-    # or goes dark rather than blitting MOS code as characters.
-    for label, probed, real in (
-            ('probe says $C000, font at $F900', abi.HUD_FONT_B, abi.HUD_FONT_MASTER),
-            ('probe says $F900, font at $C000', abi.HUD_FONT_MASTER, abi.HUD_FONT_B)):
-        got, mem = run(img, probed, c02, font_at=real)
-        good = got == EXPECT
-        ok = ok and good
-        print(f'  {label}: {"recovered ok" if good else "*** NOT RECOVERED: %r ***" % got}')
-    for label, probed in (('no font anywhere ($C000 probe)', abi.HUD_FONT_B),
-                          ('no font anywhere ($F900 probe)', abi.HUD_FONT_MASTER)):
-        got, mem = run(img, probed, c02, font_at=None)
-        dark = got is not None and set(got) <= {' '}
-        ok = ok and dark
-        print(f'  {label}: {"stayed dark, ok" if dark else "*** DREW GARBAGE: %r ***" % got}')
-
     for label, base in (('Model B  $C000', abi.HUD_FONT_B),
-                        ('Master   $F900', abi.HUD_FONT_MASTER)):
+                        ('Master   $8900', abi.HUD_FONT_MASTER)):
         got, mem = run(img, base, c02)
         if got is None:
             print(f'  {label}: hud_draw never returned')

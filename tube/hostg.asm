@@ -485,46 +485,10 @@ ORG &1900
 .hpset
     STA hudbase
     STY hudbase+1
-    \ The version -> address map is an ASSUMPTION about each MOS (the
-    \ Compact was never verified), so CHECK the base against the glyphs
-    \ before the blitter draws MOS code as characters (2026-08-29, same
-    \ rule as src/hud.s): char 32 (space) must be 8 blank rows and char
-    \ 33 ('!') must have ink in row 2.  A failing base EORs to the other
-    \ candidate; if neither holds a font, &FFxx leaves the HUD dark.
-    JSR hpval
-    BCS hpdone
-    LDA hudbase+1
-    EOR #(HI(HUD_FONT_B) EOR HI(HUD_FONT_MASTER))
-    STA hudbase+1
-    JSR hpval
-    BCS hpdone
-    LDA #&FF
-    STA hudbase+1               \ neither candidate: stay dark
-.hpdone
+    LDA &F4                     \ the OS's ROMSEL copy, taken while it is
+    STA hudrom                  \ still alive: what to page BACK after ANDY
     RTS
 
-\ hpval — C=1 iff hudbase holds a real font.  Both candidates are page
-\ aligned, so SMC on the operand HIGH byte is the whole indexing.
-.hpval
-    LDA hudbase+1
-    STA hpv1+2
-    STA hpv2+2
-    LDY #7
-    LDA #0
-.hpv1
-    ORA &FF00,Y                 \ space: 8 blank rows (operand patched)
-    DEY
-    BPL hpv1
-    TAY                         \ Z from the ACCUMULATOR, not DEY
-    BNE hpvno
-.hpv2
-    LDA &FF0A                   \ '!' row 2 must have ink
-    BEQ hpvno
-    SEC
-    RTS
-.hpvno
-    CLC
-    RTS
 
 \ ---- debug HUD (H toggles) --------------------------------------------
 \ "X=hhhh.hh Y=hhhh.hh R=hh" on the top character row, exactly what the
@@ -544,6 +508,18 @@ ORG &1900
     BNE hgdraw                  \ probe never ran (py65 harnesses)
     RTS
 .hgdraw
+    \ The Master keeps its CURRENT character definitions in ANDY
+    \ ($8900-$8FFF), paged over $8000-$8FFF by ROMSEL bit 7 -- its font is
+    \ NOT in the MOS ROM.  This host runs from main RAM and calls no ROM,
+    \ so ANDY can stay in for the draw; hgpg restores the OS's bank after.
+    \ A $C000 base is MOS ROM on a Model B and needs no paging.
+    LDA hudbase+1
+    CMP #HI(HUD_FONT_B)
+    BCS hgnopg
+    LDA hudrom
+    ORA #&80
+    STA &FE30
+.hgnopg
     LDA #0
     STA huddst
     LDX draw                    \ the buffer this frame was drawn into
@@ -581,6 +557,12 @@ IF T_TRIPWIRE
     LDA hudb+9
     JSR hudhex
 ENDIF
+    LDA hudbase+1               \ un-page ANDY if we paged it
+    CMP #HI(HUD_FONT_B)
+    BCS hgret
+    LDA hudrom
+    STA &FE30
+.hgret
     RTS
 .hudhex                         \ A = byte -> two hex cells
     PHA
@@ -628,6 +610,8 @@ ENDIF
     RTS
 .hexdig
     EQUS "0123456789ABCDEF"
+.hudrom
+    EQUB 0                      \ ROMSEL value the OS was using at boot
 .hudbase
     EQUW 0                      \ found font base; &FFxx = searched, none
 .hudt
