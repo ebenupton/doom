@@ -174,6 +174,17 @@ class BspRender6502:
         # after a source edit must not test a stale bin).
         from engine_load import load_angle_module
         load_angle_module(mem)
+        # CANARY (2026-08-29): load_angle_module RELOADS every flat region
+        # file — any poked table a region overlaps gets silently replaced
+        # by code bytes. The dbound stomp read as +0.35% MEAN and a
+        # walkseq pixel flip before this tripped anything.
+        for _nm, _off in (('ROM_BKTLO_C', layout['off_bktlo']),
+                          ('ROM_BKTHI_C', layout['off_bkthi']),
+                          ('ROM_DBOUND_C', layout['off_dbound'])):
+            _d = _sym2(_nm)
+            for i in (0, 64, 127):
+                assert mem[_d + i] == rom_main[_off + i], \
+                    f'{_nm} stomped by a region reload (engine code grew over it?)'
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0):
         import fp

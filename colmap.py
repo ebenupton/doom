@@ -374,7 +374,8 @@ def blobs(flat=True):
     if flat:
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
                  minpass=0xE910, mv_ss_id=0xE980, mv_ss_info=0xE988,
-                 usetab=0xE918, usevec=USEVEC_FLAT)
+                 usetab=0xE918, usevec=USEVEC_FLAT,
+                 cymin=0x7F10, cymax=0x8000)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -390,12 +391,21 @@ def blobs(flat=True):
         # per-mover ceiling flag it used to hold in b7)
         A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8D00,
                  minpass=0xBFC0, mv_ss_id=0xBFC6, mv_ss_info=0xBFCE,
-                 usetab=0xBE00)
+                 usetab=0xBE00, cymin=0xB200, cymax=0xB600)
     import math
     seg_blob = bytearray()
+    cymin = bytearray(); cymax = bytearray()
     for x1, y1, dx, dy in m['colsegs']:
         ang = int(round(math.atan2(dy, dx) * 32 / math.pi)) & 63
         seg_blob += struct.pack('<hhhhB', x1, y1, dx, dy, ang)
+        # per-seg y-cell extent for the column-scan prescreen
+        # (2026-08-29): cell = (y - RAWY_MIN) >> 7, clamped to u8; the
+        # 6502 rejects a record when the box's cell range and the seg's
+        # are disjoint — a pure fast-out (bvs would reject the same
+        # records via its own bbox test, ~100 cycles later)
+        ylo, yhi = min(y1, y1 + dy), max(y1, y1 + dy)
+        cymin.append(max(0, min(255, (ylo - RAWY_MIN) >> 7)))
+        cymax.append(max(0, min(255, (yhi - RAWY_MIN) >> 7)))
     list_base = A['idx'] + 108
     idx_blob = bytearray()
     for off, cnt in m['colidx']:
@@ -434,6 +444,7 @@ def blobs(flat=True):
     _ids = bytes([p[0] for p in _mvss] + [0xFF] * (8 - len(_mvss)))
     _inf = bytes([p[1] for p in _mvss] + [0xFF] * (8 - len(_mvss)))
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
+           A['cymin']: bytes(cymin), A['cymax']: bytes(cymax),
            A['ss_vz']: m['ss_vz'],
            A['minpass']: m['mv_minpass'],
            A['mv_ss_id']: _ids, A['mv_ss_info']: _inf,
@@ -455,10 +466,14 @@ def blobs(flat=True):
     assert len(m['colsegs']) == _abi.COL_N_SOLID, \
         f'COL_N_SOLID {_abi.COL_N_SOLID} != {len(m["colsegs"])} — update gen_abi'
     # home-range asserts (free-space windows audited 2026-08-14)
+    assert len(cymin) <= 256 and len(cymax) <= 256, 'cy tables must stay one page (abs,Y prescreen)'
     if flat:
         assert A['idx'] + len(idx_blob) <= A['colseg']
-        assert A['colseg'] + len(seg_blob) <= 0x7F10, \
-            'collision blob reaches the flat PMOVE region at $7F10'
+        assert A['cymin'] == 0x7F10 and A['cymax'] == 0x8000, 'cy home moved: re-audit (the $7F10-$80FF PMOVE-vacated hole; $D700/$D800 are CPM_PSI + RECIP_S)'
+        assert A['colseg'] + len(seg_blob) <= A['cymin'], \
+            'collision blob reaches the flat CY prescreen tables at $7F10'
+        assert A['cymin'] + len(cymin) <= 0x8000, 'CYMIN reaches CYMAX at $8000'
+        assert A['cymax'] + len(cymax) <= 0x8100, 'CYMAX reaches RC_P2L_0 at $8100'
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
         assert 0xE988 + 8 <= 0xEA00, 'MV_SS lists reach the flat FB'
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'

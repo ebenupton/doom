@@ -691,6 +691,20 @@ sq2c:
    RTS
 .endscope
 
+; sqr_fill_cold — the fill + pmove displacement-cache cold-init. The
+; cache scratch overlays boot-time code bytes, and a garbage key match
+; would serve a garbage displacement; pmc_fld = 0 can never match
+; (fields are 1..10). Lives in PMB4 (past the CODE tail) so the 5 bytes
+; don't shift the render code behind anim.s. Every boot path runs it:
+; anim_init JSRs it, and ENG_SQR_FILL (the bare-boot driver's fill hook)
+; resolves HERE (asmbuild engine-syms alias).
+SEG_PMB4
+sqr_fill_cold:
+   JSR sqr_fill
+   LDA #0
+   STA pmc_fld
+   RTS
+
 ; --- anim_init: load start state from CFG, mark all dirty, enable, and
 ;     point the subsector hook at the hub. Runs with BANK_L2 paged. ---
 ;   in : ANIM_CFG (+8 start88, +10 packed start state/timer)
@@ -701,10 +715,10 @@ sq2c:
 SEG_HIGH
 anim_init:
 .scope
-; sqr fill first — see sqr_fill below; a JSR so the one-frame bare-boot
-; driver (banked_boot DRV), which never touches anims, can call the fill
-; alone via ENG_SQR_FILL.
-   JSR sqr_fill
+; sqr fill first — the COLD arm (quad + pm cache init, PMB4): a JSR so
+; the one-frame bare-boot driver (banked_boot DRV), which never touches
+; anims OR movement, can still call the plain fill via ENG_SQR_FILL.
+   JSR sqr_fill_cold
    JSR obj_anyb_fill                       ; OBJ_BITS -> main (objects.s)
 ; (SSMASK copy-down DELETED 2026-08-19: the hub reads the shipped page
 ; in place — banked $B400 under the WALK bank it is entered with, flat

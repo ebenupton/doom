@@ -84,6 +84,11 @@ def tables(flat):
         # byte-plane experiment landed on engine_pmbf/VXC senior pages)
         _anyb = symmap.sym('OBJ_ANYB', banked=0, c02=1)
         out.append(('obj_anyb', _anyb, L['obj_bits_len']))
+        # angle-module tables (python-loaded; a PMEXT cut landed on
+        # L8_TAB) + the colmap y-cell prescreen tables (2026-08-29)
+        for _nm, _ln in (('L8_TAB', 256), ('AE_LO', 256), ('AE_HI', 256),
+                         ('VATOX', 1025)):   # (CY tables register via colmap)
+            out.append((f'tbl:{_nm}', symmap.sym(_nm, banked=0, c02=1), _ln))
     # the LINKED engine regions (code + data bins): a cache plane over
     # CODE is the same class with a worse failure mode. Region extents
     # from the ld65 cfg + the real bin sizes (concatenated per file).

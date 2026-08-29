@@ -93,151 +93,9 @@ PM_XBIAS    = 1936                      ; -RAWX_MIN (walk clamp rect)
 ;   in: zp_br_pxraw/pyraw = CANDIDATE (raw s16), pm_oldx/y = committed
 ;       position, pm_vz = current vz. Pages BANK_WALK and leaves it.
 ; ============================================================================
-.scope
-::pmove_try:
-   PAGE BANK_WALK
-   LDA #$FF
-   STA pm_blkang                        ; no wall hit yet
-   LDA #$D8
-   STA pm_tmob                          ; tmfloorz aggregate = -40: low
-                                        ; enough to lose every max, small
-                                        ; enough that the SBC-sign trick
-                                        ; stays exact (-128 overflowed it)
-; box bounds: pm_bx0/by0 = raw-16, pm_bx1/by1 = raw+16 (X = 0 x / 2 y;
-; the raws are consecutive zp $90-$93)
-   LDX #2
-pt_bounds:
-   LDA zp_br_pxraw_l,X
-   SEC
-   SBC #PM_RADIUS
-   STA pm_bx0,X
-   LDA zp_br_pxraw_h,X
-   SBC #0
-   STA pm_bx0+1,X
-   LDA zp_br_pxraw_l,X
-   CLC
-   ADC #PM_RADIUS
-   STA pm_bx1,X
-   LDA zp_br_pxraw_h,X
-   ADC #0
-   STA pm_bx1+1,X
-   DEX
-   DEX
-   BPL pt_bounds
-; columns of bx0 and bx1: c = clamp((bx + 1936) >> 7, 0..35)
-   LDA pm_bx1
-   LDX pm_bx1+1
-   JSR pm_column
-   STA pm_c1
-   LDA pm_bx0
-   LDX pm_bx0+1
-   JSR pm_column
-   JSR pm_column_scan                   ; test column c (in A)
-   BCS pt_blocked
-   LDA pm_c1
-   CMP ::pm_c0_save
-   BEQ pt_cols_done
-   JSR pm_column_scan
-   BCS pt_blocked
-pt_cols_done:
-::pmove_zonly:                          ; entry: z path only (mv_reval)
-   PAGE BANK_WALK
-; destination sector rules
-   JSR pm_find_ss                       ; X = subsector id
-; mover subsectors come from colmap's MV_SS probe list since 2026-08-19
-; (7 on E1M1; padded to 8 with $FF, which no real id matches — n_ss <=
-; 221). A linear probe here is COLD (twice per MOVE), and it bought the
-; render prologue its 8 cycles per visited subsector back: the SS_PLO
-; plane stays plain instead of carrying packed info bits.
-   TXA
-   LDY #0
-pt_mvscan:
-   CMP MV_SS_ID,Y
-   BEQ pt_mvhit
-   INY
-   CPY #8
-   BNE pt_mvscan
-   JMP pt_static
-pt_mvhit:
-   LDA MV_SS_INFO,Y                     ; the classic byte: idx, b7 = ceil
-   STA pm_dvz                           ; (scratch: staged for the re-read)
-   AND #$3F
-   STA pm_cnt                           ; mover idx (scratch reuse)
-   ASL A
-   CLC
-   ADC pm_cnt                           ; idx*3
-   TAY
-   LDA ANIM_WS+1,Y                      ; live pos_hi (prescaled s8)
-   LDY pm_cnt
-   PHA
-   LDA pm_dvz                           ; staged info byte
-   BMI pt_door                          ; b7 = ceiling mover (door)
-   PLA                                  ; lift: dvz = pos + eye offset
-   CLC
-   ADC #5
-   STA pm_dvz
-   JMP pt_step
-pt_door:
-   PLA                                  ; door: pos >= MV_MINPASS[idx] ?
-   SEC
-   SBC MV_MINPASS,Y                     ; |heights| small: SBC sign exact
-   BMI pt_blocked                       ; not open enough -> blocked
-pt_static:
-   LDA SS_VZ_BASE,X
-   STA pm_dvz
-pt_step:
-; crossed-port floors bind: dvz = max(dvz, tm_ob) — DOOM's tmfloorz
-   LDA pm_tmob
-   SEC
-   SBC pm_dvz                           ; |heights| small: sign exact
-   BMI pt_step2
-   LDA pm_tmob
-   STA pm_dvz
-pt_step2:
-; step rule: dvz - vz > 3 -> blocked (drops always allowed)
-   LDA pm_dvz
-   SEC
-   SBC pm_vz
-   BMI pt_commit                        ; downward: fine
-   CMP #PM_STEP+1
-   BCS pt_blocked
-pt_commit:
-   LDA pm_dvz
-   STA pm_vz
-   SEC
-   RTS
-pt_blocked:
-   CLC
-   RTS
+; (pm_column rehomed to SEG_PMB4 2026-08-29: the y-cell prescreen
+;  filled the banked PMOVE area)
 
-; pm_column: A/X = raw s16 -> A = column 0..35 (clamped).
-; SEG_CODE, not PMOVE: PMOVE is the CPU-invariant pocket that bank-B
-; code calls into (see pmf_commit's header) and it is full — this
-; routine's only caller is pmove_try, main-to-main, so it pays the
-; rent instead.
-SEG_CODE
-::pm_column:
-   CLC
-   ADC #<PM_XBIAS
-   STA pm_t1m
-   TXA
-   ADC #>PM_XBIAS
-   BMI pm_col_lo                        ; below the rect: clamp 0
-   STA pm_t1m+1
-   LDA pm_t1m
-   ASL A                                ; C = bit 7 of lo
-   LDA pm_t1m+1
-   ROL A                                ; A = (hi<<1)|(lo>>7)
-   CMP #36
-   BCS pm_col_hi
-   RTS
-pm_col_lo:
-   LDA #0
-   RTS
-pm_col_hi:
-   LDA #35
-   RTS
-.endscope
 
 SEG_PMOVE
 ; ============================================================================
@@ -258,13 +116,36 @@ SEG_PMOVE
    STA zp_pm_p+1
    LDA COLIDX_BASE+2,Y
    STA pm_n
-   BEQ pcs_clear
+   BNE pcs_loop
+   JMP pcs_clear                        ; (prescreen pushed it from range)
 pcs_loop:
    LDY pm_n
    DEY
    LDA (zp_pm_p),Y                      ; collision index
    CMP #COL_N_SOLID
-   BCS pcs_port                         ; >= COL_N_SOLID: aggregation port
+   BCS pcs_port_j                       ; >= COL_N_SOLID: aggregation port
+; per-record y-cell prescreen (2026-08-29): CYMIN/CYMAX are indexed by
+; the RAW collision index, so the reject runs before the *9 address
+; build and the bvs staging (~100 cycles each). Purely conservative:
+; a cell-disjoint record is one bvs's own bbox test would reject.
+   TAY
+   LDA CYMAX_BASE,Y
+   CMP pm_bycl0
+   BCC pcs_yrej                         ; seg entirely below the box
+   LDA CYMIN_BASE,Y
+   CMP pm_bycl1p
+   BCC pcs_ylive                        ; overlap: stage the record
+pcs_yrej:
+   DEC pm_n
+   BEQ pcs_yclear
+   JMP pcs_loop
+pcs_yclear:
+   JMP pcs_clear
+pcs_port_j:
+   JMP pcs_port                         ; (the prescreen pushed pcs_port
+                                        ;  out of branch range)
+pcs_ylive:
+   TYA
 pcs_solid:
 ; seg record addr = COLSEG_BASE + idx*9 -> zp_anim_p (frame-scoped
 ; reuse; stride 9 since the slide arc: +1 wall-angle byte)
@@ -944,6 +825,17 @@ pm_ayu    = PM_SCRATCH+$85
 pm_sv     = PM_SCRATCH+$87              ; fallback stash
 pm_bk     = PM_SCRATCH+$89              ; back-key flag (0/1)
 pm_sh     = PM_SCRATCH+$8A              ; shift counter
+pm_bycl0  = PM_SCRATCH+$8B              ; box ymin cell (prescreen,
+pm_bycl1p = PM_SCRATCH+$8C              ;  2026-08-29) / ymax cell + 1
+pmc_ang   = PM_SCRATCH+$8D              ; displacement cache key: angidx /
+pmc_fld   = PM_SCRATCH+$8E              ;  fields / key bits ($FF = cold:
+pmc_in    = PM_SCRATCH+$8F              ;  fields is 1..10, never $FF)
+pmc_fd    = PM_SCRATCH+$90              ; cached fdx,fdy (4 B)
+pmc_hit   = PM_SCRATCH+$94              ; this frame served from cache
+pmc_dfwd  = PM_SCRATCH+$95              ; cached D_FWD (a pure key
+                                        ;  function); $FF = not computed
+                                        ;  under this key (a blocked
+                                        ;  commit skips the compute)
 ; (PM_SCRATCH+$8C..+$9D — the single-step momentum core's coefficient
 ;  pairs, 24-bit accumulator and sign-magnitude operands — are FREE
 ;  since momentum retired 2026-08-22.  colmap.walk_disp / turn_frame
@@ -987,11 +879,48 @@ pf_go:
 ; faster the faster the frame rate).  pf_turn preserves X = fields.
    JSR pf_turn                          ; (SEG_PMOVE)
 ; --- the frame's walk: constant speed along the view ray -------------
+; DISPLACEMENT CACHE (2026-08-29, Eben's "why actual math?"): with no
+; momentum state, fdx/fdy = PF_MOVE[fields] * unit(angidx) * dir — a
+; pure function of (angidx, fields, keys). Straight-line frames hit
+; the one-entry cache and skip pmf_unit + both sc16 multiplies.
    LDA pm_in
    AND #3
-   BEQ pf_nomove                        ; neither key
+   BEQ pf_nm_j                          ; neither key
    CMP #3
-   BEQ pf_nomove                        ; both cancel
+   BNE pfc_probe                        ; both cancel ->
+pf_nm_j:
+   JMP pf_nomove                        ;  (cache code pushed it from range)
+pfc_probe:
+   TAY                                  ; Y = key bits (1 or 2)
+   LDA DV_ANGIDX
+   CMP pmc_ang
+   BNE pfc_miss
+   CPX pmc_fld
+   BNE pfc_miss
+   TYA
+   CMP pmc_in
+   BNE pfc_miss
+   LDA pmc_fd                           ; hit: the cached displacement
+   STA pm_fdx
+   LDA pmc_fd+1
+   STA pm_fdx+1
+   LDA pmc_fd+2
+   STA pm_fdy
+   LDA pmc_fd+3
+   STA pm_fdy+1
+   LDA #1
+   STA pmc_hit
+   JMP pf_move
+pfc_miss:
+   LDA #0
+   STA pmc_hit
+   LDA #$FF
+   STA pmc_dfwd
+   LDA DV_ANGIDX
+   STA pmc_ang
+   STX pmc_fld
+   TYA
+   STA pmc_in
    LSR A                                ; A = 1 or 2 -> b1 (back) to b0
    AND #1
    STA pm_bk
@@ -1016,8 +945,10 @@ pf_thr:
    JSR pmf_negif                        ; (preserves X)
    LDA pm_ax
    STA pm_fdx,X
+   STA pmc_fd,X                         ; store-through to the cache
    LDA pm_ax+1
    STA pm_fdx+1,X
+   STA pmc_fd+1,X
    INX
    INX
    CPX #4
@@ -1216,6 +1147,13 @@ SEG_PMB2
    BNE df_go
    RTS
 df_go:
+   LDA pmc_hit                          ; cache-hit frame: D_FWD is the
+   BEQ df_compute                       ; same pure function of the key
+   LDA pmc_dfwd                         ; as the displacement — IF a
+   BMI df_compute                       ; compute ran under this key
+   STA D_FWD                            ; ($FF = it did not)
+   RTS
+df_compute:
    LDA DV_ANGIDX
    JSR pmf_unit
    LDA pm_tdx
@@ -1282,6 +1220,11 @@ df_yes:
    LDA #1
    STA D_FWD
 df_out:
+; store-through: on a clean commit the value just derived is the pure
+; key function the hit path serves (D_FWD stays 0-initialized on the
+; not-clean path, which never reaches here)
+   LDA D_FWD
+   STA pmc_dfwd
    RTS
 .endscope
 
@@ -1392,7 +1335,7 @@ sp_out:
 ; pair for pmove_try ($90-$93 = candidate >> 5). X walks the DV stride-3
 ; side, Y the cd/raw stride-2 side. Preserves neither.
 ; ============================================================================
-SEG_PMB4
+SEG_PMCND
 .scope
 ::pmf_cand:
    LDX #0                               ; X = cd/raw side (stride 2:
@@ -1415,27 +1358,27 @@ pc_neg:
    ADC #$FF
 pc_hi:
    STA pm_nx+2,Y
-   LDA pm_nx,Y                          ; world frac = (8.8-prescaled
-   ASL A                                ; byte0 & $1F) << 3 — the mask is
-   ASL A                                ; the shift's own overflow. THE
-   ASL A                                ; EXACT-DESCENT feed (node_band +
-   STA PM_FXW,X                         ; axis ties read it)
-   LDA pm_nx,Y                          ; raw = candidate >> 5
-   STA $90,X
+; raw = candidate >> 5 AND frac = (byte0 & $1F) << 3, both from ONE
+; <<3 of the 24-bit value (2026-08-29): (x << 3) >> 8 == x >> 5 for
+; two's complement with the same floor semantics as the old 5-step
+; ROR chain, and the shifted-out low byte IS the frac feed.
+   LDA pm_nx,Y
+   STA pm_ut                            ; b0
    LDA pm_nx+1,Y
+   STA $90,X                            ; b1 (becomes raw lo)
+   LDA pm_nx+2,Y                        ; b2 rides A (becomes raw hi)
+   ASL pm_ut
+   ROL $90,X
+   ROL A
+   ASL pm_ut
+   ROL $90,X
+   ROL A
+   ASL pm_ut
+   ROL $90,X
+   ROL A
    STA $91,X
-   LDA pm_nx+2,Y
-   STA pm_ut
-   LDA #5
-   STA pm_sh
-pc_sh:
-   LDA pm_ut
-   CMP #$80
-   ROR pm_ut
-   ROR $91,X
-   ROR $90,X
-   DEC pm_sh
-   BNE pc_sh
+   LDA pm_ut                            ; = (b0 & $1F) << 3
+   STA PM_FXW,X                         ; the EXACT-DESCENT feed
    INX
    INX
    INY
@@ -1788,3 +1731,200 @@ sm_done:
 
 SEG_PMOVE
 
+; ============================================================================
+; pm_ycells — box y cells for the column-scan prescreen (2026-08-29):
+;   pm_bycl0  = clamp0((pm_by0 + 1584) >> 7)
+;   pm_bycl1p = clamp0((pm_by1 + 1584) >> 7) + 1
+; cell = 128-unit row of the walk rect (RAWY_MIN = -1584). Below-rect
+; clamps to 0; above-rect cannot exceed u8 (the rect is 22 rows and the
+; box pokes past it by at most radius+chunk). Clobbers A only.
+; ============================================================================
+SEG_PMEXT
+.scope
+::pm_ycells:
+   LDA pm_by0
+   CLC
+   ADC #<1584
+   STA pm_bycl0                         ; lo' (scratch)
+   LDA pm_by0+1
+   ADC #>1584
+   BPL yc0
+   LDA #0
+   STA pm_bycl0
+   BEQ yc1
+yc0:
+   ASL pm_bycl0                         ; C = lo' bit 7
+   ROL A                                ; A = (hi'<<1)|b7 = cell
+   STA pm_bycl0
+yc1:
+   LDA pm_by1
+   CLC
+   ADC #<1584
+   STA pm_bycl1p
+   LDA pm_by1+1
+   ADC #>1584
+   BPL yc2
+   LDA #0
+   STA pm_bycl1p
+   BEQ yc3
+yc2:
+   ASL pm_bycl1p
+   ROL A
+   STA pm_bycl1p
+yc3:
+   INC pm_bycl1p                        ; bymax cell + 1 (BCS-reject form)
+   RTS
+.endscope
+
+SEG_PMB4
+.scope
+::pmove_try:
+   PAGE BANK_WALK
+   LDA #$FF
+   STA pm_blkang                        ; no wall hit yet
+   LDA #$D8
+   STA pm_tmob                          ; tmfloorz aggregate = -40: low
+                                        ; enough to lose every max, small
+                                        ; enough that the SBC-sign trick
+                                        ; stays exact (-128 overflowed it)
+; box bounds: pm_bx0/by0 = raw-16, pm_bx1/by1 = raw+16 (X = 0 x / 2 y;
+; the raws are consecutive zp $90-$93)
+   LDX #2
+pt_bounds:
+   LDA zp_br_pxraw_l,X
+   SEC
+   SBC #PM_RADIUS
+   STA pm_bx0,X
+   LDA zp_br_pxraw_h,X
+   SBC #0
+   STA pm_bx0+1,X
+   LDA zp_br_pxraw_l,X
+   CLC
+   ADC #PM_RADIUS
+   STA pm_bx1,X
+   LDA zp_br_pxraw_h,X
+   ADC #0
+   STA pm_bx1+1,X
+   DEX
+   DEX
+   BPL pt_bounds
+   JSR pm_ycells                        ; box y cells for the prescreen
+                                        ; (SEG_PMB4 — the PMOVE region
+                                        ; is full; CODE-tail slack isn't)
+; columns of bx0 and bx1: c = clamp((bx + 1936) >> 7, 0..35)
+   LDA pm_bx1
+   LDX pm_bx1+1
+   JSR pm_column
+   STA pm_c1
+   LDA pm_bx0
+   LDX pm_bx0+1
+   JSR pm_column
+   JSR pm_column_scan                   ; test column c (in A)
+   BCS pt_blocked
+   LDA pm_c1
+   CMP ::pm_c0_save
+   BEQ pt_cols_done
+   JSR pm_column_scan
+   BCS pt_blocked
+pt_cols_done:
+::pmove_zonly:                          ; entry: z path only (mv_reval)
+   PAGE BANK_WALK
+; destination sector rules
+   JSR pm_find_ss                       ; X = subsector id
+; mover subsectors come from colmap's MV_SS probe list since 2026-08-19
+; (7 on E1M1; padded to 8 with $FF, which no real id matches — n_ss <=
+; 221). A linear probe here is COLD (twice per MOVE), and it bought the
+; render prologue its 8 cycles per visited subsector back: the SS_PLO
+; plane stays plain instead of carrying packed info bits.
+   TXA
+   LDY #0
+pt_mvscan:
+   CMP MV_SS_ID,Y
+   BEQ pt_mvhit
+   INY
+   CPY #8
+   BNE pt_mvscan
+   JMP pt_static
+pt_mvhit:
+   LDA MV_SS_INFO,Y                     ; the classic byte: idx, b7 = ceil
+   STA pm_dvz                           ; (scratch: staged for the re-read)
+   AND #$3F
+   STA pm_cnt                           ; mover idx (scratch reuse)
+   ASL A
+   CLC
+   ADC pm_cnt                           ; idx*3
+   TAY
+   LDA ANIM_WS+1,Y                      ; live pos_hi (prescaled s8)
+   LDY pm_cnt
+   PHA
+   LDA pm_dvz                           ; staged info byte
+   BMI pt_door                          ; b7 = ceiling mover (door)
+   PLA                                  ; lift: dvz = pos + eye offset
+   CLC
+   ADC #5
+   STA pm_dvz
+   JMP pt_step
+pt_door:
+   PLA                                  ; door: pos >= MV_MINPASS[idx] ?
+   SEC
+   SBC MV_MINPASS,Y                     ; |heights| small: SBC sign exact
+   BMI pt_blocked                       ; not open enough -> blocked
+pt_static:
+   LDA SS_VZ_BASE,X
+   STA pm_dvz
+pt_step:
+; crossed-port floors bind: dvz = max(dvz, tm_ob) — DOOM's tmfloorz
+   LDA pm_tmob
+   SEC
+   SBC pm_dvz                           ; |heights| small: sign exact
+   BMI pt_step2
+   LDA pm_tmob
+   STA pm_dvz
+pt_step2:
+; step rule: dvz - vz > 3 -> blocked (drops always allowed)
+   LDA pm_dvz
+   SEC
+   SBC pm_vz
+   BMI pt_commit                        ; downward: fine
+   CMP #PM_STEP+1
+   BCS pt_blocked
+pt_commit:
+   LDA pm_dvz
+   STA pm_vz
+   SEC
+   RTS
+pt_blocked:
+   CLC
+   RTS
+
+; pm_column: A/X = raw s16 -> A = column 0..35 (clamped).
+; SEG_CODE, not PMOVE: PMOVE is the CPU-invariant pocket that bank-B
+; code calls into (see pmf_commit's header) and it is full — this
+; routine's only caller is pmove_try, main-to-main, so it pays the
+; rent instead. (It briefly visited PMEXT 2026-08-29 — that shifted the
+; whole render tail behind it and cost +0.35% MEAN in pure alignment
+; noise; banked stays HERE so the CODE stream matches the pre-physics
+; bytes; flat — whose CODE area is at the $4E00 cap — rides PMOVE slack.)
+SEG_PMCOL
+::pm_column:
+   CLC
+   ADC #<PM_XBIAS
+   STA pm_t1m
+   TXA
+   ADC #>PM_XBIAS
+   BMI pm_col_lo                        ; below the rect: clamp 0
+   STA pm_t1m+1
+   LDA pm_t1m
+   ASL A                                ; C = bit 7 of lo
+   LDA pm_t1m+1
+   ROL A                                ; A = (hi<<1)|(lo>>7)
+   CMP #36
+   BCS pm_col_hi
+   RTS
+pm_col_lo:
+   LDA #0
+   RTS
+pm_col_hi:
+   LDA #35
+   RTS
+.endscope

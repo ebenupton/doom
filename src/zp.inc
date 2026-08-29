@@ -645,6 +645,25 @@ EPSILON_F = 12
 .macro SEG_PMH
 .segment "PMH"                    ; pm single-step: banked = the
 .endmacro                        ;  PMOVE area, flat = PMBF
+.macro SEG_PMEXT
+.segment "PMEXT"                  ; pm helpers past the flat CODE cap
+.endmacro                         ;  (banked: CODE tail; flat: $DF80)
+.macro SEG_PMCND
+.if ::BANKED
+.segment "PMB4"                   ; pmf_cand: banked rides the CODE tail
+.else                             ;  with the rest of PMB4; flat moves to
+.segment "PMCND"                  ;  the VPLOTF hole so the CODE area stays
+.endif                            ;  walled at $4D00 (ROM_DBOUND_C page —
+.endmacro                         ;  the loader POKES dbound there and the
+                                  ;  ang-module region reload would serve
+                                  ;  code bytes as bounds; 2026-08-29)
+.macro SEG_PMCOL
+.if ::BANKED
+.segment "CODE"                   ; pm_column: banked stays in CODE (its
+.else                             ;  pre-physics home — moving it shifted
+.segment "PMOVE"                  ;  the render tail, +0.35% MEAN in pure
+.endif                            ;  alignment noise); flat CODE is at the
+.endmacro                         ;  $4E00 cap, so flat rides PMOVE slack
 .macro SEG_BANKC
 .if ::BANKED
 .segment "BANKC"

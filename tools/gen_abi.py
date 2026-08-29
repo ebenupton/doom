@@ -100,6 +100,8 @@ ABI = [
     # colmap.blobs() asserts every blob against these homes.
     ('COLIDX_BASE',    0xAF8A, 0x7600, 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked: $B4A4 -> $AB00 -> $AF8A 2026-08-15 — off the SSMASK staging page, then off the rcache PSI PLANES $A900-$AEFF; now after RCACHE_STATE, ends $B197)'),
     ('COLSEG_BASE',    0xB8C0, 0x7810, 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
+    ('CYMIN_BASE',     0xB200, 0x7F10, 'per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: CPM_PSI planes + RECIP_S live there — that stomp garbled the tube copro 2026-08-29'),
+    ('CYMAX_BASE',     0xB600, 0x8000, 'per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100'),
     ('SS_VZ_BASE',     0x8D00, 0xE750, 'per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)'),
     # (SS_INFO_BASE retired 2026-08-19: the mover info rides SS_SI bits 5-7 —
     #  idx 0-5, 7 = none; the b7 ceiling flag it carried is per-mover constant

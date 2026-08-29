@@ -86,6 +86,16 @@ COLSEG_BASE = $B8C0        ; collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, 
 COLSEG_BASE = $7810
 .endif
 .if ::BANKED
+CYMIN_BASE = $B200         ; per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: CPM_PSI planes + RECIP_S live there — that stomp garbled the tube copro 2026-08-29
+.else
+CYMIN_BASE = $7F10
+.endif
+.if ::BANKED
+CYMAX_BASE = $B600         ; per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100
+.else
+CYMAX_BASE = $8000
+.endif
+.if ::BANKED
 SS_VZ_BASE = $8D00         ; per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
 .else
 SS_VZ_BASE = $E750
