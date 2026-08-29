@@ -98,18 +98,6 @@ class Rig:
             # before the JSR, so the rig must too (pmove_try pages for
             # itself, which is why the try suite never needed this).
             self.mem[0xFE30] = 7
-        # TELEPORT CONTRACT (2026-08-29): the fuzz pokes positions the
-        # engine never walked to, which invalidates every cross-frame
-        # pure-key/continuity cache. Drivers get this via sqr_fill_cold
-        # at boot and never teleport afterwards; the rig must cold-reset
-        # per entry or stale certificates serve another case's columns.
-        from symmap import sym as _sy2
-        for nm, v in (('pmt_ok', 0), ('pm_lmv', 0), ('pm_okf', 0),
-                      ('pmc_dfwd', 0xFF)):
-            try:
-                self.mem[_sy2(nm, banked=self.banked)] = v
-            except Exception:
-                pass                      # symbol not in this build era
         mpu.pc, mpu.sp, mpu.a, mpu.x = entry, 0xDD, a, x  # SP capped below SQR_MIRROR ($01E0-$01FF, the stack-page mirror)
         self.mem[0x1DF] = 0xFF
         self.mem[0x1DE] = 0xFF
@@ -124,8 +112,20 @@ class Rig:
         assert n < maxc, f'pm 6502 ran away at {entry:04X}'
         return mpu
 
+    def cold(self):
+        # TELEPORT CONTRACT (2026-08-29): a poked position the engine
+        # never walked to invalidates every cross-frame continuity
+        # cache — exactly what sqr_fill_cold does at driver boot.
+        # Suites call this per teleport; CONTINUOUS frames stay warm so
+        # the fuzz exercises the certificate/replay/fast-commit paths.
+        from symmap import sym as _sy2
+        for nm, v in (('pmt_ok', 0), ('pm_lmv', 0), ('pm_okf', 0),
+                      ('pmc_fld', 0), ('pmc_dfwd', 0xFF)):
+            self.mem[_sy2(nm, banked=self.banked)] = v
+
     # --- try suite -----------------------------------------------------
     def try_move(self, cx, cy, z):
+        self.cold()
         self.mem[0x90] = cx & 0xFF
         self.mem[0x91] = (cx >> 8) & 0xFF
         self.mem[0x92] = cy & 0xFF
@@ -278,6 +278,7 @@ def suite_mom(rig, verbose):
                 for sname, script in scripts:
                     py_st = (px88, py88, vz, ang, 0)
                     a_st = py_st
+                    rig.cold()                   # teleport to the start
                     for fi, (fields, bits) in enumerate(script):
                         a = colmap.move_frame(a_st[0], a_st[1], a_st[2],
                                               a_st[3], a_st[4], fields,
@@ -297,6 +298,8 @@ def suite_mom(rig, verbose):
                                 print(f'    65={b_st} dfwd={b_fwd}')
                             a_st = b_st          # resync: report each frame's
                                                  # own divergence, not an echo
+                            rig.cold()           # (the resync itself is a
+                                                 #  teleport for the caches)
     return cases, bad
 
 

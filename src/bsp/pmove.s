@@ -1402,6 +1402,51 @@ sp_out:
 ; pair for pmove_try ($90-$93 = candidate >> 5). X walks the DV stride-3
 ; side, Y the cd/raw stride-2 side. Preserves neither.
 ; ============================================================================
+; pt_zcheck — the replay came back all-clear. Sector lines with
+; |floor delta| <= 24 and opening >= 56 ship NO collision record (the
+; first fast-commit cut held vz across those silent floor steps —
+; pm_fuzz caught it), so the skip ALSO requires both key columns'
+; SILENT-LINE y intervals (SIL_BASE nibbles, 256-unit cells, sentinel
+; $0F = none — same compare forms as the CYPORT screen) to miss the
+; box: then no line of ANY kind was crossed => same subsector; with a
+; static class, dvz == SS_VZ[ss] == pm_vz already: commit as-is and
+; skip find_ss + the mover probe + the height rules.
+SEG_PMSF
+.scope
+::pt_zcheck:
+   LDA pm_pcross
+   BNE ptz_full                         ; a port was crossed: full rules
+   LDA pm_lmv
+   BEQ ptz_full                         ; mover ss / cold boot: run it
+; box INSIDE the column's clear band: (t&$F0) <= by8lo4 (band floor at
+; or below the box) AND (t&$0F) >= by8hi1 (band ceiling at or above)
+   LDY pmt_c0
+   LDA SIL_BASE,Y
+   AND #$F0
+   CMP pm_by8lo4
+   BEQ :+
+   BCS ptz_full                        ; band starts above the box
+:  LDA SIL_BASE,Y
+   AND #$0F
+   CMP pm_by8hi1
+   BCC ptz_full                        ; band ends below the box
+   LDY pmt_c1
+   LDA SIL_BASE,Y
+   AND #$F0
+   CMP pm_by8lo4
+   BEQ :+
+   BCS ptz_full
+:  LDA SIL_BASE,Y
+   AND #$0F
+   CMP pm_by8hi1
+   BCC ptz_full
+   SEC
+   RTS
+ptz_full:
+   JMP pmove_zonly                      ; (== pt_cols_done: the shared
+                                        ;  z-rules entry)
+.endscope
+
 SEG_PMCND
 .scope
 ::pmf_cand:
@@ -1872,15 +1917,8 @@ yc3:
 ; class is static, dvz == SS_VZ[ss] == pm_vz already: commit as-is and
 ; skip find_ss + the mover probe + the height rules entirely.
 SEG_PMEXT
-; UNSOUND AS A FULL SKIP (2026-08-29, pm_fuzz caught it): sector lines
-; with |floor delta| <= 24 and opening >= 56 have NO collision record,
-; so "no port crossed" does NOT imply "same subsector" — the fast
-; commit held vz across silent floor steps. Until a sound silent-line
-; tripwire exists (cell bitmap of unrecorded 2-sided lines), the replay
-; always falls through to the full z rules.
-::pt_zcheck:
-   JMP pmove_zonly                      ; (== pt_cols_done: the shared
-                                        ;  z-rules entry)
+; pt_zcheck moved to PMCND (the VPLOTF hole) 2026-08-29: the silent-
+; line interval screen outgrew this area.
 
 SEG_PMB4
 .scope

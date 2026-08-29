@@ -273,6 +273,7 @@ def build():
     # at test time. ob_vz = prescale(max fh)+5 (vz domain, +5 = the eye
     # offset used everywhere in pmove); ot_ps = prescale(min ch).
     ports = []
+    port_lids = set()
     for li, ld in enumerate(dw.linedefs):
         v1, v2, flags, special, tag, r, l = ld
         if r == 0xFFFF or l == 0xFFFF or (flags & 1):
@@ -297,6 +298,7 @@ def build():
         ang = int(round(_m.atan2(y2 - y1, x2 - x1) * 32 / _m.pi)) & 63
         ports.append((x1 - CX, y1 - CY, x2 - x1, y2 - y1,
                       ob & 0xFF, ot & 0xFF, mv, ang))
+        port_lids.add(li)
     assert len(colsegs) + len(ports) < 256, 'u8 collision index space'
 
     # per-column lists over the unified universe: solids then ports
@@ -313,7 +315,78 @@ def build():
         colidx.append((len(collist), len(mine)))
         collist.extend(mine)
 
+    # --- silent-line raster (2026-08-29, the same-ss fast commit) ---
+    # 2-sided passable lines that DON'T qualify as ports ship no record,
+    # yet crossing one changes subsector. Rasterize them into the 128-
+    # unit cell grid (36 cols x 28 y cells): a certificate whose cells
+    # are all silent-free proves a key-stable move cannot change ss.
+    # silent = every 2-sided PASSABLE line that is NOT in the recorded
+    # port set — by IDENTITY, not by re-deriving the qualification: the
+    # port loop's `seen` filter also drops port-QUALIFIED lines between
+    # unprobed sectors, and those must raster as silent or the fast
+    # commit walks across them (the start6 fuzz catch, 2026-08-29)
+    silent = []
+    for li, ld in enumerate(dw.linedefs):
+        v1, v2, flags, special, tag, r, l = ld
+        if r == 0xFFFF or l == 0xFFFF or (flags & 1):
+            continue
+        if li in port_lids:
+            continue                      # recorded: the scan sees it
+        x1, y1 = dw.vertexes[v1][:2]
+        x2, y2 = dw.vertexes[v2][:2]
+        silent.append((x1 - CX, y1 - CY, x2 - CX, y2 - CY))
+
+    def _segrect(x1, y1, x2, y2, rx0, ry0, rx1, ry1):
+        if max(x1, x2) < rx0 or min(x1, x2) > rx1 \
+           or max(y1, y2) < ry0 or min(y1, y2) > ry1:
+            return False
+        dx_, dy_ = x2 - x1, y2 - y1
+        sides = set()
+        for cx_, cy_ in ((rx0, ry0), (rx0, ry1), (rx1, ry0), (rx1, ry1)):
+            d = dx_ * (cy_ - y1) - dy_ * (cx_ - x1)
+            sides.add(0 if d == 0 else (1 if d > 0 else -1))
+        return not (sides == {1} or sides == {-1})
+
+    silgrid = [[0] * 28 for _ in range(36)]
+    for (x1, y1, x2, y2) in silent:
+        for c in range(36):
+            rx0 = RAWX_MIN + c * 128
+            for yc in range(28):
+                ry0 = RAWY_MIN + yc * 128
+                if _segrect(x1, y1, x2, y2, rx0, ry0, rx0 + 127, ry0 + 127):
+                    silgrid[c][yc] = 1
+
+    # VOID cells are silent too (2026-08-29, the start6 fuzz catch): in
+    # void space the BSP still assigns every point a subsector, and ss
+    # boundaries there are NODE lines — unrasterizable. Any cell the
+    # outside can flood into without crossing a cell that contains a
+    # linedef (of ANY kind) is void; a fast commit there could cross a
+    # node line into a different stolen vz. Flood on the grid.
+    blocked = [[0] * 28 for _ in range(36)]
+    for ld in dw.linedefs:
+        x1, y1 = dw.vertexes[ld[0]][:2]
+        x2, y2 = dw.vertexes[ld[1]][:2]
+        x1 -= CX; y1 -= CY; x2 -= CX; y2 -= CY
+        for c in range(36):
+            rx0 = RAWX_MIN + c * 128
+            for yc in range(28):
+                ry0 = RAWY_MIN + yc * 128
+                if _segrect(x1, y1, x2, y2, rx0, ry0, rx0 + 127, ry0 + 127):
+                    blocked[c][yc] = 1
+    stack = [(c, yc) for c in range(36) for yc in range(28)
+             if (c in (0, 35) or yc in (0, 27)) and not blocked[c][yc]]
+    flood = set(stack)
+    while stack:
+        c, yc = stack.pop()
+        for nc, ny in ((c-1, yc), (c+1, yc), (c, yc-1), (c, yc+1)):
+            if 0 <= nc < 36 and 0 <= ny < 28 and not blocked[nc][ny] \
+               and (nc, ny) not in flood:
+                flood.add((nc, ny)); stack.append((nc, ny))
+    for c, yc in flood:
+        silgrid[c][yc] = 1
+
     _built = dict(colsegs=colsegs, colidx=colidx, collist=collist, ports=ports,
+                  silgrid=silgrid,
                   ss_vz=bytes(ss_vz), ss_info=bytes(ss_info),
                   mv_minpass=bytes(mv_minpass),
                   use_lines=use_lines, walk_lines=walk_lines,
@@ -375,7 +448,7 @@ def blobs(flat=True):
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
                  minpass=0xE910, mv_ss_id=0xE980, mv_ss_info=0xE988,
                  usetab=0xE918, usevec=USEVEC_FLAT,
-                 cymin=0x7F10, cymax=0x8000, cyport=0x80C7)
+                 cymin=0x7F10, cymax=0x8000, cyport=0x80C7, sil=0x7180)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -391,7 +464,8 @@ def blobs(flat=True):
         # per-mover ceiling flag it used to hold in b7)
         A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8D00,
                  minpass=0xBFC0, mv_ss_id=0xBFC6, mv_ss_info=0xBFCE,
-                 usetab=0xBE00, cymin=0xB200, cymax=0xB600, cyport=0xB6C7)
+                 usetab=0xBE00, cymin=0xB200, cymax=0xB600, cyport=0xB6C7,
+                 sil=0xB198)
     import math
     seg_blob = bytearray()
     cymin = bytearray(); cymax = bytearray(); cyport = bytearray()
@@ -451,9 +525,39 @@ def blobs(flat=True):
     assert len(_mvss) <= 8, f'{len(_mvss)} mover subsectors overflow the 8-slot probe list'
     _ids = bytes([p[0] for p in _mvss] + [0xFF] * (8 - len(_mvss)))
     _inf = bytes([p[1] for p in _mvss] + [0xFF] * (8 - len(_mvss)))
+    # SIL blob: 36 per-column bytes, (clear_lo256 << 4) | (clear_hi256
+    # + 1) — the largest CLEAR band of 256-unit y cells (no silent line,
+    # no void) in that column. The fast commit needs the box INSIDE the
+    # band: by8lo4 >= lo<<4 and by8hi1 <= hi+1. Complement encoding
+    # because the void flood marks both grid ends of most columns —
+    # a covering interval of the SILENT cells would span everything.
+    # $F0 (lo 15, hi+1 0) = no clear band: never fast-commits.
+    g = m['silgrid']
+    sil_blob = bytearray()
+    for c in range(36):
+        sil256 = set()
+        for r in range(28):
+            if g[c][r]:
+                sil256.add(r >> 1)
+        best = (0, -1)                      # (lo, hi) of the widest run
+        lo = None
+        for cell in range(15):
+            if cell not in sil256 and cell <= 13:
+                if lo is None:
+                    lo = cell
+                if cell - lo > best[1] - best[0]:
+                    best = (lo, cell)
+            else:
+                lo = None
+        if best[1] < 0:
+            sil_blob.append(0xF0)
+        else:
+            assert best[1] + 1 <= 15
+            sil_blob.append((best[0] << 4) | (best[1] + 1))
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
            A['cymin']: bytes(cymin), A['cymax']: bytes(cymax),
            A['cyport']: bytes(cyport),
+           A['sil']: bytes(sil_blob),
            A['ss_vz']: m['ss_vz'],
            A['minpass']: m['mv_minpass'],
            A['mv_ss_id']: _ids, A['mv_ss_info']: _inf,
@@ -484,12 +588,17 @@ def blobs(flat=True):
         assert A['cymin'] + len(cymin) <= 0x8000, 'CYMIN reaches CYMAX at $8000'
         assert A['cymax'] + len(cymax) <= A['cyport'], 'CYMAX reaches CYPORT'
         assert A['cyport'] + len(cyport) <= 0x8100, 'CYPORT reaches RC_P2L_0 at $8100'
+        assert A['sil'] == 0x7180 and A['sil'] + len(sil_blob) <= 0x71A4, \
+            'SIL home moved: the flat slot is the walled CLIPF tail $7180-$71FF'
+        assert len(sil_blob) == 36
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
         assert 0xE988 + 8 <= 0xEA00, 'MV_SS lists reach the flat FB'
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
     else:
         assert A['cymax'] + len(cymax) <= A['cyport'] and \
             A['cyport'] + len(cyport) <= 0xB700, 'CY tables overrun the $B600 page'
+        assert A['sil'] == 0xB198 and A['sil'] + len(sil_blob) <= 0xB200, \
+            'SIL home moved: the banked slot is the COLIDX-to-CYMIN gap'
         assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
         assert 0xAF8A + len(idx_blob) <= 0xB300, \
             'COLIDX blob reaches the ANIM CFG page at $B300'

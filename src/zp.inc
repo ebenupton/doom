@@ -655,6 +655,13 @@ EPSILON_F = 12
 .segment "PMZ"                    ;  (above the DBOUND plane, below the
 .endif                            ;  $4E00 VXC planes — ships zero,
 .endmacro                         ;  render-untouched, audited 2026-08-29)
+.macro SEG_PMSF
+.if ::BANKED
+.segment "CODE"                   ; silent-line fast-commit gate: banked
+.else                             ;  rides the CODE tail; flat lives with
+.segment "PMSF"                   ;  its SIL table in the walled CLIPF
+.endif                            ;  tail ($71A4-$71FF)
+.endmacro
 .macro SEG_PMCND
 .if ::BANKED
 .segment "PMB4"                   ; pmf_cand: banked rides the CODE tail

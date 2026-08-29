@@ -101,6 +101,11 @@ CYPORT_BASE = $B6C7        ; per-PORT packed y-cell nibbles ((ymaxcell<<4)|yminc
 CYPORT_BASE = $80C7
 .endif
 .if ::BANKED
+SIL_BASE = $B198           ; silent-line tripwire: 36 per-column ((clear_lo256<<4)|(clear_hi256+1)) — the widest y band of 256-unit cells free of BOTH unrecorded sector lines and flooded void ($F0 = none). A box inside its columns bands proves a key-stable move cannot change subsector (the same-ss fast commit, 2026-08-29). Flat: the walled CLIPF tail $7180; banked: the COLIDX-to-CYMIN gap $B198
+.else
+SIL_BASE = $7180
+.endif
+.if ::BANKED
 SS_VZ_BASE = $8D00         ; per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
 .else
 SS_VZ_BASE = $E750

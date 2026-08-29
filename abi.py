@@ -74,6 +74,8 @@ CYMAX_BASE = 0xB600  # per-colseg max y cell — see CYMIN_BASE. Banked: the fre
 CYMAX_BASE_FLAT = 0x8000
 CYPORT_BASE = 0xB6C7  # per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80C6, RC_P2L_0 walls $8100)
 CYPORT_BASE_FLAT = 0x80C7
+SIL_BASE = 0xB198  # silent-line tripwire: 36 per-column ((clear_lo256<<4)|(clear_hi256+1)) — the widest y band of 256-unit cells free of BOTH unrecorded sector lines and flooded void ($F0 = none). A box inside its columns bands proves a key-stable move cannot change subsector (the same-ss fast commit, 2026-08-29). Flat: the walled CLIPF tail $7180; banked: the COLIDX-to-CYMIN gap $B198
+SIL_BASE_FLAT = 0x7180
 SS_VZ_BASE = 0x8D00  # per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
 SS_VZ_BASE_FLAT = 0xE750
 MV_SS_ID = 0xBFC6  # mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)
