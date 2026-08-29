@@ -46,6 +46,15 @@ def main():
     mem = r.sc.mpu.memory
     S = symmap.sym
     mode, n, pump, drain = S('plotq_mode'), S('plotq_n'), S('pq_pump_op'), S('plotq_drain')
+    arm, off = S('plotq_arm'), S('plotq_off')
+
+    def call(entry):
+        mpu = r.sc.mpu
+        mpu.pc, mpu.sp, mpu.p = entry, 0xDD, 0x30
+        mem[0x01DF], mem[0x01DE] = 0xFE, 0xFF
+        steps = 0
+        while mpu.pc != 0xFF00 and steps < 2_000_000:
+            mpu.step(); steps += 1
     # pump stub: if plotq_n == 0 the queue just wrapped (FULL) -> drain.
     # The mode MUST drop to direct around the drain: the drain dispatches
     # through the same axis rules the emit sites use, so with the queue
@@ -55,31 +64,24 @@ def main():
     for i, b in enumerate([0xAD, n & 0xFF, n >> 8,      # LDA plotq_n
                            0xF0, 0x01,                  # BEQ do
                            0x60,                        # RTS
-                           0xA9, 0x00,                  # do: LDA #0
-                           0x8D, mode & 0xFF, mode >> 8,  # STA plotq_mode
+                           0x20, off & 0xFF, off >> 8,      # do: JSR plotq_off
                            0x20, drain & 0xFF, drain >> 8,  # JSR plotq_drain
-                           0xA9, 0x80,                  # LDA #$80
-                           0x8D, mode & 0xFF, mode >> 8,  # STA plotq_mode
-                           0x60]):                      # RTS
+                           0x20, arm & 0xFF, arm >> 8,      # JSR plotq_arm
+                           0x60]):                          # RTS
         mem[STUB + i] = b
     mem[pump + 1], mem[pump + 2] = STUB & 0xFF, STUB >> 8
 
     bad = 0
     for (px, py, ab) in C.POSITIONS:
-        mem[mode] = 0
+        call(off)
         r.render_frame(px, py, ab, dw.player_floor(px, py))
         direct = fb(mem)
-        mem[mode] = 0x80
+        call(arm)
         mem[n] = 0
         r.render_frame(px, py, ab, dw.player_floor(px, py))
-        mem[mode] = 0                                # direct BEFORE draining
+        call(off)                                    # direct BEFORE draining
         if mem[n]:                                   # drain the tail
-            mpu = r.sc.mpu
-            mpu.pc, mpu.sp, mpu.p = drain, 0xDD, 0x30
-            mem[0x01DF], mem[0x01DE] = 0xFE, 0xFF
-            steps = 0
-            while mpu.pc != 0xFF00 and steps < 2_000_000:
-                mpu.step(); steps += 1
+            call(drain)
         queued = fb(mem)
         d = sum(1 for a, b in zip(direct, queued) if a != b)
         if d:

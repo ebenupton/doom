@@ -131,6 +131,8 @@ def gen_engine_syms():
                ('ENG_BOX_CLASSIFY', 'box_classify',   'zp_bv_entry moving seed'),
                ('ENG_PQ_PUMP_OP',   'pq_pump_op',     'run-ahead queue pump SMC site (poke +1/+2)'),
                ('ENG_PLOTQ_DRAIN',  'plotq_drain',    'drain the plot queue (bank C paged)'),
+               ('ENG_PLOTQ_ARM',    'plotq_arm',      'queue ON: retarget dv_emit_op + set plotq_mode (BANK C MUST BE PAGED — dv_emit_op lives there)'),
+               ('ENG_PLOTQ_OFF',    'plotq_off',      'queue OFF: same, back to direct (bank C paged)'),
                ('ENG_SQR_FILL',     'sqr_fill_cold',  'regenerate the quarter-square quad at $0200 + pm displacement-cache cold-init (bank-independent)'),
                ('ENG_OBJ_FILL',     'obj_anyb_fill',  'copy OBJ_BITS into its main-RAM home (pages SEG, leaves WALK)'),
                ('ENG_FB_CLR0',      'fb_clr0',        'clear framebuffer 0 (PAGE BANK_C first)'),

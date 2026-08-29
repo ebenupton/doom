@@ -707,6 +707,13 @@ POOL_BDEN   = POOL + $1C0
 .segment "PMWK"                   ;  to-FB tail ($E9A8, after the MV_SS
 .endif                            ;  repack)
 .endmacro
+.macro SEG_PQ
+.if ::BANKED
+.segment "CODE"                   ; plotq arm/off: cold (twice a frame),
+.else                             ;  so it leaves the packed clipper
+.segment "PQ"                     ;  segment; flat uses the VPLOTF tail
+.endif
+.endmacro
 .macro SEG_OBJB
 .if ::BANKED
 .segment "CODE"                   ; obj_anyb_fill: BOOT ONLY, so flat parks

@@ -867,11 +867,16 @@ dv_emit:
    LDA zp_cb_cy2                                                          ;# |||        0.4
    SBC #Y_BIAS                             ; C=1 from the in-band SBC     ;# ||         0.3
    STA RASTER_ZP_Y1                                                       ;# |||        0.4
-   BIT plotq_mode                          ; run-ahead queue armed?       ;# |||        0.4
-   BMI pq_enq_j                                                           ;# ||         0.3
+; The queue used to be a per-LINE test here (BIT plotq_mode + BMI, 5
+; cycles every emitted line). It is a per-FRAME mode, so it is SMC now:
+; plotq_arm/plotq_off rewrite this JMP's operand between plot_v and
+; plot_enq. Zero bytes, zero cycles — the JMP was already here.
+; (The other gate, at des_axis, can NOT be done this way: its first
+;  instruction is CMP RASTER_ZP_Y0, and RASTER_ZP_* are ZERO PAGE, so
+;  it is 2 bytes where a JMP needs 3 — patching it in place would eat
+;  the following BNE's opcode.)
+::dv_emit_op:
    JMP plot_v                              ; always vertical on this path ;# |||        0.4
-pq_enq_j:
-   JMP plot_enq
 dv_clipped_away:
    RTS                                     ; cy1 > cy2: clipped away (3.8%)
 
@@ -1662,6 +1667,35 @@ PLOTQ = $0600
 ;  per-frame beam-phase cadence ring, retired with the $0A50 frame counter
 ;  that indexed it — $0A50 is VC_RLO+$50, so that INC was corrupting one
 ;  cached vertex rotation per frame. Neighbours: PLOTQ below, VXC_XLO above.)
+; ============================================================================
+; plotq_arm / plotq_off — retarget the dv_emit dispatch (dv_emit_op) and
+; set the mode. The mode flips twice a frame; the site runs hundreds of
+; times, so the cost belongs here.
+;
+; plotq_off MUST run before plotq_drain: the drain dispatches through the
+; same emit cascade, so a still-armed dv_emit_op would re-enqueue lines
+; instead of drawing them.
+; ============================================================================
+SEG_PQ
+::plotq_arm:
+   LDA #<plot_enq
+   STA dv_emit_op+1
+   LDA #>plot_enq
+   STA dv_emit_op+2
+   LDA #$80
+   STA plotq_mode
+   RTS
+::plotq_off:
+   LDA #<plot_v
+   STA dv_emit_op+1
+   LDA #>plot_v
+   STA dv_emit_op+2
+   LDA #0
+   STA plotq_mode
+   RTS
+SEG_BANKC                                  ; back to the clipper's own
+                                           ; segment (plot_enq and the
+                                           ; drain stay with the sites)
 ::plot_enq:
    LDX plotq_n
    LDA RASTER_ZP_X0

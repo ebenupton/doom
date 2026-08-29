@@ -173,7 +173,9 @@ ORG DRV_ORG
     STA ENG_PQ_PUMP_OP+2        \ class; jsbeeb caught it 2026-08-14)
                                 \ (no bank restore: the init tail is main-
                                 \ only and anim_glue_init pages for itself)
-    LDA #0 : STA &A1 : STA &A0  \ mode DIRECT until the first flip
+    LDA #0 : STA &A1 : STA &A0  \ mode DIRECT until the first flip (the
+                                \ engine ships dv_emit_op = JMP plot_v, so
+                                \ the flag alone is consistent here)
     ; --- translation-coherence vertex cache (VXC): zero the valid bitmap
     ;     page, then enable (the scalar state ships as LOW zeros at
     ;     $19A0-$19FF since the window slide). Zero-init is safe:
@@ -379,8 +381,8 @@ ORG DRV_CLR
     BEQ fs_q_empty                                  ; (empty scene) — n>0
     JSR ENG_PLOTQ_DRAIN                             ; (the pump forces at 64)
 .fs_q_empty
-    LDA #0 : STA &A1                                ; direct mode
-.fs_done_q
+    JSR ENG_PLOTQ_OFF                               ; direct mode (also puts
+.fs_done_q                                          ;  dv_emit_op back)
     JSR hud_glue                                    ; debug HUD onto the back buffer
     ; R12/R13 straddle guard: the pair of writes must not bracket the CRTC
     ; frame-top reload (e=5632us -> T1 = $37FE), or one field displays a
@@ -407,9 +409,11 @@ ORG DRV_CLR
     ; it full-clears, drains and drops to direct — the old class-0/1
     ; waits are covered by render compute.
     LDA #2 : STA &FE4D
-    LDA #&80 : STA &A1
-    LDA #0 : STA &A0
-    RTS
+    LDA #BANK_C : STA &FE30                         ; dv_emit_op lives in bank
+    JSR ENG_PLOTQ_ARM                               ;  C — page it to patch.
+    LDA #0 : STA &A0                                ; (the next frame pages
+    RTS                                             ;  L0 itself, so leaving
+                                                    ;  C live is fine)
 
 ; --- pq_pump: poked into ENG_PQ_PUMP_OP at init; the engine calls it
 ; after every enqueue (all enqueue sites are in the emit cascade, bank C
@@ -422,7 +426,7 @@ ORG DRV_CLR
     LDA #BANK_C : STA &FE30                         ; (explicit: the emit
     JSR ENG_FB_CLR_BACK                             ;  cascade leaves C live,
     JSR ENG_PLOTQ_DRAIN                             ;  but do not lean on it)
-    LDA #0 : STA &A1                                ; direct from here on
+    JSR ENG_PLOTQ_OFF                               ; direct from here on
 .pq_ret
     RTS
 .pq_force
