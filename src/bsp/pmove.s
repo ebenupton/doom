@@ -145,8 +145,27 @@ pcs_port_j:
    JMP pcs_port                         ; (the prescreen pushed pcs_port
                                         ;  out of branch range)
 pcs_ylive:
+   LDX pm_surv                          ; record the survivor for the
+   CPX #4                               ;  replay certificate (Y = idx)
+   BCS pcy_over
+   TYA
+   STA pmt_sv,X
+   INC pm_surv
+   BNE pcs_solid                        ; (count >= 1: always)
+pcy_over:
+   LDA #$FF
+   STA pm_surv                          ; 5th survivor: no certificate
    TYA
 pcs_solid:
+   JSR pm_test_solid
+   BCC pcs_nx1
+   RTS                                  ; blocked: C=1 up to pmove_try
+pcs_nx1:
+   JMP pcs_next
+; pm_test_solid — A = solid idx -> C=1 blocked (the extracted body:
+; the replay certificate re-tests recorded survivors through the SAME
+; code the scan uses)
+::pm_test_solid:
 ; seg record addr = COLSEG_BASE + idx*9 -> zp_anim_p (frame-scoped
 ; reuse; stride 9 since the slide arc: +1 wall-angle byte)
    STA pm_idx
@@ -172,22 +191,44 @@ pcs_solid:
    LDA zp_anim_p+1
    ADC #>COLSEG_BASE
    STA zp_anim_p+1
-   JSR pm_box_vs_seg
-   BCS pcs_rts                          ; blocked
-   BCC pcs_next                         ; clear -> next record. NOT a
-                                        ; fall-through: 7987201 inserted
-                                        ; the port path between here and
-                                        ; pcs_next, so a passing solid ran
-                                        ; on into pcs_port and tested a
-                                        ; bogus record at COLPORT+k*12 with
-                                        ; k = A-200 from box_vs_seg. Quiet
-                                        ; memory in the fuzz rig, live OS/
-                                        ; engine data on the disc -> the
-                                        ; spawn-forward phantom blocker.
+   JMP pm_box_vs_seg                    ; C out = the verdict (a JMP tail
+                                        ; call, NEVER a fall-through: see
+                                        ; the 7987201 phantom-blocker scar
+                                        ; on the port path below)
 ; --- aggregation port (COLPORT @ main, stride 12): crossed -> the DOOM
 ; opening rules with live mover heights; block or aggregate tmfloorz ---
 pcs_port:
    SBC #COL_N_SOLID                     ; C=1 from the CMP: k = idx - 199
+   TAY
+; port y-cell prescreen (2026-08-29): packed nibbles, 256-unit cells —
+; hi = ymax cell, lo = ymin cell. Disjoint cell ranges cannot cross the
+; box (bvs would reject the same port ~100 cycles later).
+   LDA CYPORT_BASE,Y
+   CMP pm_by8lo4
+   BCC pcs_next                         ; port entirely below the box
+   AND #$0F
+   CMP pm_by8hi1
+   BCS pcs_next                         ; entirely above
+   LDX pm_surv                          ; record the RAW idx for replay
+   CPX #4
+   BCS pcp_over
+   TYA
+   ADC #COL_N_SOLID                     ; C=0: the BCS above fell through
+   STA pmt_sv,X
+   INC pm_surv
+   BNE pcp_go                           ; (count >= 1: always)
+pcp_over:
+   LDA #$FF
+   STA pm_surv                          ; 5th survivor: no certificate
+pcp_go:
+   TYA
+   JSR pm_test_port_k
+   BCC pcs_nx2
+   RTS                                  ; blocked: C=1 up to pmove_try
+pcs_nx2:
+   JMP pcs_next
+; pm_test_port_k — A = k (idx - COL_N_SOLID) -> C=1 blocked
+::pm_test_port_k:
    STA pm_idx
    LDA #0
    STA zp_anim_p+1
@@ -210,10 +251,13 @@ pcs_port:
    ADC #>COLPORT_BASE
    STA zp_anim_p+1
    JSR pm_box_vs_seg                    ; geometry layout matches; main
-   BCC pcs_next                         ; RAM: readable under WALK
-   JSR pm_port_aggr
-   BCC pcs_next
-   BCS pcs_rts                          ; blocked verdict propagates
+   BCS ptp_agg                          ; RAM: readable under WALK
+   CLC
+   RTS                                  ; box misses the port: clear
+ptp_agg:
+   LDA #1                               ; the move CROSSES this port: ss
+   STA pm_pcross                        ;  may change, tmob may bind
+   JMP pm_port_aggr                     ; C out = the verdict
 
 pcs_next:
    DEC pm_n
@@ -836,6 +880,29 @@ pmc_dfwd  = PM_SCRATCH+$95              ; cached D_FWD (a pure key
                                         ;  function); $FF = not computed
                                         ;  under this key (a blocked
                                         ;  commit skips the compute)
+pm_by8lo4 = PM_SCRATCH+$96              ; box ymin 256-cell << 4 and
+pm_by8hi1 = PM_SCRATCH+$97              ;  ymax 256-cell + 1: the packed-
+                                        ;  nibble port prescreen operands
+pmt_c0    = PM_SCRATCH+$98              ; empty-columns certificate key:
+pmt_c1    = PM_SCRATCH+$99              ;  the two scan columns + the box
+pmt_y0    = PM_SCRATCH+$9A              ;  y cells of the last scan that
+pmt_y1p   = PM_SCRATCH+$9B              ;  rejected EVERY record
+pmt_ok    = PM_SCRATCH+$9C              ; 1 = key valid (cold-init 0)
+pm_surv   = PM_SCRATCH+$9D              ; any record survived prescreen
+pmt_c0s   = PM_SCRATCH+$9E              ; staged c0 across the key check
+; survivor-replay slots (2026-08-29): PMH ends $57DE and the PMBF area
+; runs to $57FF in BOTH builds — real RAM, engine-owned, ld65 walls the
+; area at $60 so PMH growth trips a link error before a collision
+pmt_sv    = $57E0                       ; <=4 surviving collision idxes
+pm_svx    = $57E4                       ; replay cursor (X across testers)
+pm_stmv   = $57E5                       ; staged ss class this zonly (1 =
+pm_lmv    = $57E6                       ;  static) -> pm_lmv ON COMMIT: the
+                                        ;  committed position's ss class
+                                        ;  (0 = mover/cold: no fast commit)
+pm_pcross = $57E7                       ; per-TRY: a port line was CROSSED
+                                        ;  (box_vs_seg C=1) — the move may
+                                        ;  change subsector / bind tmob,
+                                        ;  so no same-ss fast commit
 ; (PM_SCRATCH+$8C..+$9D — the single-step momentum core's coefficient
 ;  pairs, 24-bit accumulator and sign-magnitude operands — are FREE
 ;  since momentum retired 2026-08-22.  colmap.walk_disp / turn_frame
@@ -1260,12 +1327,12 @@ sp_abn:
 sp_ck:
    LDX #0
 sp_ck1:
-   LDA pm_axu+1,X                       ; > 480 ($01E0)?
-   CMP #1
+   LDA pm_axu+1,X                       ; > 724 ($02D4)? (MM_HALF — the
+   CMP #2                               ;  tunnelling-proof cap, colmap)
    BCC sp_ckn
    BNE sp_half
    LDA pm_axu,X
-   CMP #$E1
+   CMP #$D5
    BCS sp_half
 sp_ckn:
    INX
@@ -1498,6 +1565,14 @@ pu_z:
 SEG_PMOVE
 ::pm_frame:
    JSR pm_frame_i
+   LDA pm_okf                           ; clean commit: the last chunk's
+   BEQ pf_rederive                      ;  candidate IS the position, so
+   RTS                                  ;  its raws/fracs already sit in
+                                        ;  zp (no-move frames keep the
+                                        ;  previous frame's, still valid;
+                                        ;  cold boot forces the derive
+                                        ;  via sqr_fill_cold's okf=0)
+pf_rederive:
    LDA #0
    STA pm_cdx
    STA pm_cdx+1
@@ -1773,13 +1848,46 @@ yc2:
    STA pm_bycl1p
 yc3:
    INC pm_bycl1p                        ; bymax cell + 1 (BCS-reject form)
+; 256-cell forms for the packed-nibble port prescreen (2026-08-29):
+;   by8lo4 = (bycl0>>1)<<4 = (bycl0&$FE)<<3, by8hi1 = ((bycl1p-1)>>1)+1
+; (cells <= 27 on this map, so the <<3 cannot carry out)
+   LDA pm_bycl0
+   AND #$FE
+   ASL A
+   ASL A
+   ASL A
+   STA pm_by8lo4
+   LDA pm_bycl1p
+   SEC
+   SBC #1
+   LSR A
+   CLC
+   ADC #1
+   STA pm_by8hi1
    RTS
 .endscope
+
+; pt_zcheck — the replay came back all-clear. If no port is in play the
+; move cannot cross a sector line, so the subsector is unchanged; if its
+; class is static, dvz == SS_VZ[ss] == pm_vz already: commit as-is and
+; skip find_ss + the mover probe + the height rules entirely.
+SEG_PMEXT
+; UNSOUND AS A FULL SKIP (2026-08-29, pm_fuzz caught it): sector lines
+; with |floor delta| <= 24 and opening >= 56 have NO collision record,
+; so "no port crossed" does NOT imply "same subsector" — the fast
+; commit held vz across silent floor steps. Until a sound silent-line
+; tripwire exists (cell bitmap of unrecorded 2-sided lines), the replay
+; always falls through to the full z rules.
+::pt_zcheck:
+   JMP pmove_zonly                      ; (== pt_cols_done: the shared
+                                        ;  z-rules entry)
 
 SEG_PMB4
 .scope
 ::pmove_try:
    PAGE BANK_WALK
+   LDA #0
+   STA pm_pcross                        ; no port crossed yet this try
    LDA #$FF
    STA pm_blkang                        ; no wall hit yet
    LDA #$D8
@@ -1819,13 +1927,84 @@ pt_bounds:
    LDA pm_bx0
    LDX pm_bx0+1
    JSR pm_column
+   STA pmt_c0s
+; EMPTY-COLUMNS CERTIFICATE (2026-08-29): if the LAST scan rejected
+; every record via the y-cell prescreens under the SAME (c0,c1,ycl0,
+; ycl1p) key, this scan must too — the lists and cell tables are
+; static, and a mover can only influence a port that SURVIVES the
+; screen (pm_port_aggr), which kills the certificate. Skip both scans.
+   LDA pmt_ok
+   BEQ pt_scan
+   LDA pmt_c0s
+   CMP pmt_c0
+   BNE pt_scan
+   LDA pm_c1
+   CMP pmt_c1
+   BNE pt_scan
+   LDA pm_bycl0
+   CMP pmt_y0
+   BNE pt_scan
+   LDA pm_bycl1p
+   CMP pmt_y1p
+   BNE pt_scan
+; REPLAY: same key => the prescreens reject the same records, so only
+; the recorded survivors (<= 4) need fresh box/port verdicts — the
+; verdicts DO depend on the exact position, the set only on the cells.
+   LDX #0
+ptr_lp:
+   CPX pm_surv
+   BCS ptr_done                         ; all survivors clear
+   LDA pmt_sv,X
+   STX pm_svx                           ; (the testers clobber X)
+   CMP #COL_N_SOLID
+   BCS ptr_port
+   JSR pm_test_solid
+   JMP ptr_ck
+ptr_port:
+   SBC #COL_N_SOLID                     ; C=1 from the CMP
+   JSR pm_test_port_k
+ptr_ck:
+   BCS pt_blocked_j                     ; a survivor blocks: full verdict
+   LDX pm_svx
+   INX
+   BNE ptr_lp                           ; (X <= 4: always)
+ptr_done:
+   JMP pt_zcheck                        ; all clear: same-ss fast commit?
+pt_scan:
+   LDA #0
+   STA pmt_ok
+   STA pm_surv
+   LDA pmt_c0s
+   STA pmt_c0
+   LDA pm_c1
+   STA pmt_c1
+   LDA pm_bycl0
+   STA pmt_y0
+   LDA pm_bycl1p
+   STA pmt_y1p
+   LDA pmt_c0s
    JSR pm_column_scan                   ; test column c (in A)
-   BCS pt_blocked
+   BCS pt_blocked_j
    LDA pm_c1
    CMP ::pm_c0_save
-   BEQ pt_cols_done
+   BEQ pt_scans_done
    JSR pm_column_scan
-   BCS pt_blocked
+   BCC pt_scans_done
+pt_blocked_j:
+   JMP pt_blocked                       ; (the certificate block pushed
+                                        ;  pt_blocked from branch range)
+pt_scans_done:
+   LDA pm_surv                          ; <= 4 survivors recorded: the key
+   CMP #5                               ;  + the list certify ($FF = the
+   BCS ptc_j                            ;  list overflowed, no certificate)
+   LDA #1
+   STA pmt_ok
+ptc_j:
+   JMP pt_cols_done                     ; (the zonly tail lives in PMZ —
+                                        ;  EXPLICIT jump, never a cross-
+                                        ;  segment fall-through)
+
+SEG_PMZ
 pt_cols_done:
 ::pmove_zonly:                          ; entry: z path only (mv_reval)
    PAGE BANK_WALK
@@ -1846,6 +2025,8 @@ pt_mvscan:
    BNE pt_mvscan
    JMP pt_static
 pt_mvhit:
+   LDX #0                               ; mover ss: never fast-commit
+   STX pm_stmv
    LDA MV_SS_INFO,Y                     ; the classic byte: idx, b7 = ceil
    STA pm_dvz                           ; (scratch: staged for the re-read)
    AND #$3F
@@ -1870,6 +2051,8 @@ pt_door:
    SBC MV_MINPASS,Y                     ; |heights| small: SBC sign exact
    BMI pt_blocked                       ; not open enough -> blocked
 pt_static:
+   LDY #1                               ; static ss: fast-commit eligible
+   STY pm_stmv
    LDA SS_VZ_BASE,X
    STA pm_dvz
 pt_step:
@@ -1889,6 +2072,8 @@ pt_step2:
    CMP #PM_STEP+1
    BCS pt_blocked
 pt_commit:
+   LDA pm_stmv                          ; the verdict stands: the class
+   STA pm_lmv                           ;  now describes the POSITION
    LDA pm_dvz
    STA pm_vz
    SEC

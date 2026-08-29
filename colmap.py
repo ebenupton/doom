@@ -375,7 +375,7 @@ def blobs(flat=True):
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
                  minpass=0xE910, mv_ss_id=0xE980, mv_ss_info=0xE988,
                  usetab=0xE918, usevec=USEVEC_FLAT,
-                 cymin=0x7F10, cymax=0x8000)
+                 cymin=0x7F10, cymax=0x8000, cyport=0x80C7)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -391,10 +391,10 @@ def blobs(flat=True):
         # per-mover ceiling flag it used to hold in b7)
         A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8D00,
                  minpass=0xBFC0, mv_ss_id=0xBFC6, mv_ss_info=0xBFCE,
-                 usetab=0xBE00, cymin=0xB200, cymax=0xB600)
+                 usetab=0xBE00, cymin=0xB200, cymax=0xB600, cyport=0xB6C7)
     import math
     seg_blob = bytearray()
-    cymin = bytearray(); cymax = bytearray()
+    cymin = bytearray(); cymax = bytearray(); cyport = bytearray()
     for x1, y1, dx, dy in m['colsegs']:
         ang = int(round(math.atan2(dy, dx) * 32 / math.pi)) & 63
         seg_blob += struct.pack('<hhhhB', x1, y1, dx, dy, ang)
@@ -425,6 +425,14 @@ def blobs(flat=True):
     # (It lived at $0200 with a boot dance until the sqr quad, which is
     # boot-GENERATED and needs no shipping, took the OS pages instead.)
     pb = bytearray()
+    for p_ in m['ports']:
+        # port y-cell nibbles for the scan prescreen (2026-08-29):
+        # 256-unit cells so both bounds pack one byte; hi = ymax cell,
+        # lo = ymin cell. Conservative superset of the port's y extent.
+        ylo = min(p_[1], p_[1] + p_[3]); yhi = max(p_[1], p_[1] + p_[3])
+        c0 = max(0, (ylo - RAWY_MIN) >> 8); c1 = max(0, (yhi - RAWY_MIN) >> 8)
+        assert c0 <= 15 and c1 <= 15, 'port y cell overflows the nibble'
+        cyport.append((c1 << 4) | c0)
     for p in m['ports']:
         # WALL ANGLE AT +8, matching the solid record: pm_box_vs_seg
         # writes pm_blkang from +8 for whichever record the box
@@ -445,6 +453,7 @@ def blobs(flat=True):
     _inf = bytes([p[1] for p in _mvss] + [0xFF] * (8 - len(_mvss)))
     out = {A['colseg']: bytes(seg_blob), A['idx']: bytes(idx_blob),
            A['cymin']: bytes(cymin), A['cymax']: bytes(cymax),
+           A['cyport']: bytes(cyport),
            A['ss_vz']: m['ss_vz'],
            A['minpass']: m['mv_minpass'],
            A['mv_ss_id']: _ids, A['mv_ss_info']: _inf,
@@ -473,11 +482,14 @@ def blobs(flat=True):
         assert A['colseg'] + len(seg_blob) <= A['cymin'], \
             'collision blob reaches the flat CY prescreen tables at $7F10'
         assert A['cymin'] + len(cymin) <= 0x8000, 'CYMIN reaches CYMAX at $8000'
-        assert A['cymax'] + len(cymax) <= 0x8100, 'CYMAX reaches RC_P2L_0 at $8100'
+        assert A['cymax'] + len(cymax) <= A['cyport'], 'CYMAX reaches CYPORT'
+        assert A['cyport'] + len(cyport) <= 0x8100, 'CYPORT reaches RC_P2L_0 at $8100'
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
         assert 0xE988 + 8 <= 0xEA00, 'MV_SS lists reach the flat FB'
         assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
     else:
+        assert A['cymax'] + len(cymax) <= A['cyport'] and \
+            A['cyport'] + len(cyport) <= 0xB700, 'CY tables overrun the $B600 page'
         assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
         assert 0xAF8A + len(idx_blob) <= 0xB300, \
             'COLIDX blob reaches the ANIM CFG page at $B300'
@@ -698,8 +710,8 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
 # Tic clock: PAL fields * 7/10 accumulated (50Hz * 0.7 = 35Hz), fields
 # capped at 32/frame (hiccup clamp).
 #
-# Frame displacement applies in <=15-world-unit chunks (DOOM's MAXMOVE/2
-# halving, extended: halve until each axis chunk <= 480), each chunk via
+# Frame displacement applies in <=22.6-world-unit chunks (DOOM's MAXMOVE/2
+# halving, extended: halve until each axis chunk <= 724), each chunk via
 # try_move. A blocked chunk with a wall angle projects BOTH the leftover
 # displacement AND the momentum onto the wall (P_HitSlideLine as a true
 # dot-product projection on the mag5 grid: p = (d.w>>5 terms summed),
@@ -708,11 +720,15 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
 # then the axis fallback (y-only, then x-only, zeroing the blocked
 # axis' momentum), then full stop (mom = 0,0).
 MM_MAXMOVE = 960          # 30 world units, 8.8 prescaled
-MM_HALF = 480             # MAXMOVE/2 chunk ceiling — DO NOT RAISE past
-                          # 724 without redoing the tunnelling proof:
+MM_HALF = 724             # chunk ceiling AT the tunnelling proof's own
+                          # limit (2026-08-29, was 480 = DOOM MAXMOVE/2):
                           # crossing a wall needs > 2*RADIUS = 32 world
-                          # units of perpendicular travel in ONE chunk,
-                          # and a cap of c permits c*sqrt(2)
+                          # units (1024 in 8.8) of perpendicular travel
+                          # in ONE chunk, and a cap of c permits at most
+                          # c*sqrt(2) — 724*1.4143 < 1024. Buys fields<=5
+                          # walks a single chunk and halves heavy-frame
+                          # chunk counts; block-stop granularity coarsens
+                          # 15 -> 22.6 world (DOOM's own halving shape)
 MM_FIELDS_CAP = 10        # was 32. The single-step tables stop here, and
                           # a tighter hiccup clamp cuts the worst-case
                           # travel in one frame to 56 world units, not 177

@@ -72,6 +72,8 @@ CYMIN_BASE = 0xB200  # per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexe
 CYMIN_BASE_FLAT = 0x7F10
 CYMAX_BASE = 0xB600  # per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100
 CYMAX_BASE_FLAT = 0x8000
+CYPORT_BASE = 0xB6C7  # per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80C6, RC_P2L_0 walls $8100)
+CYPORT_BASE_FLAT = 0x80C7
 SS_VZ_BASE = 0x8D00  # per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
 SS_VZ_BASE_FLAT = 0xE750
 MV_SS_ID = 0xBFC6  # mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)

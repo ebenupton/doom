@@ -703,7 +703,10 @@ sqr_fill_cold:
    JSR sqr_fill
    LDA #0
    STA pmc_fld
-   RTS
+   STA pmt_ok                           ; empty-columns certificate too
+   STA pm_okf                           ; force the raw re-derive on the
+   STA pm_lmv                           ;  first frame + no fast commit
+   RTS                                  ;  until a real zonly classifies
 
 ; --- anim_init: load start state from CFG, mark all dirty, enable, and
 ;     point the subsector hook at the hub. Runs with BANK_L2 paged. ---

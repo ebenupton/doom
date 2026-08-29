@@ -98,6 +98,18 @@ class Rig:
             # before the JSR, so the rig must too (pmove_try pages for
             # itself, which is why the try suite never needed this).
             self.mem[0xFE30] = 7
+        # TELEPORT CONTRACT (2026-08-29): the fuzz pokes positions the
+        # engine never walked to, which invalidates every cross-frame
+        # pure-key/continuity cache. Drivers get this via sqr_fill_cold
+        # at boot and never teleport afterwards; the rig must cold-reset
+        # per entry or stale certificates serve another case's columns.
+        from symmap import sym as _sy2
+        for nm, v in (('pmt_ok', 0), ('pm_lmv', 0), ('pm_okf', 0),
+                      ('pmc_dfwd', 0xFF)):
+            try:
+                self.mem[_sy2(nm, banked=self.banked)] = v
+            except Exception:
+                pass                      # symbol not in this build era
         mpu.pc, mpu.sp, mpu.a, mpu.x = entry, 0xDD, a, x  # SP capped below SQR_MIRROR ($01E0-$01FF, the stack-page mirror)
         self.mem[0x1DF] = 0xFF
         self.mem[0x1DE] = 0xFF

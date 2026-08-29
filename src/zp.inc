@@ -648,6 +648,13 @@ EPSILON_F = 12
 .macro SEG_PMEXT
 .segment "PMEXT"                  ; pm helpers past the flat CODE cap
 .endmacro                         ;  (banked: CODE tail; flat: $DF80)
+.macro SEG_PMZ
+.if ::BANKED
+.segment "PMB4"                   ; pmove_try's zonly tail: banked rides
+.else                             ;  PMB4; flat takes the $4D80 half page
+.segment "PMZ"                    ;  (above the DBOUND plane, below the
+.endif                            ;  $4E00 VXC planes — ships zero,
+.endmacro                         ;  render-untouched, audited 2026-08-29)
 .macro SEG_PMCND
 .if ::BANKED
 .segment "PMB4"                   ; pmf_cand: banked rides the CODE tail

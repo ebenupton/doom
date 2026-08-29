@@ -96,6 +96,11 @@ CYMAX_BASE = $B600         ; per-colseg max y cell — see CYMIN_BASE. Banked: t
 CYMAX_BASE = $8000
 .endif
 .if ::BANKED
+CYPORT_BASE = $B6C7        ; per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80C6, RC_P2L_0 walls $8100)
+.else
+CYPORT_BASE = $80C7
+.endif
+.if ::BANKED
 SS_VZ_BASE = $8D00         ; per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
 .else
 SS_VZ_BASE = $E750
