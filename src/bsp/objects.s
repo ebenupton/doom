@@ -64,7 +64,12 @@ obj_left  = $0BB9
 obj_k     = $0BBA
 obj_best  = $0BBB
 obj_ss    = $0BBC
-obj_mask  = $0BBD   ; (FREE since the OBJ_ANYB grind — kept as a hole note)
+obj_fast  = $0BBD   ; fast-path verdict for the billboard being stamped:
+                    ; 1 = every art line is provably inside the aperture,
+                    ; so it draws DIRECT (no clip). Was obj_mask, free
+                    ; since the OBJ_ANYB grind.
+obj_cur   = $0B88   ; = obj_t, dead once the vertices are built: the
+                    ; probe's x cursor (columns covered so far)
 obj_asp   = $0BBE   ; live object's aspect byte (bit 7 = art, 0-6 = k)
 OBJ_ANYB  = $0BF3   ; [28] main-RAM copy of the OBJ_BITS bitmap (2026-08-25;
                     ; the caller-side probe is INLINE in the subsector
@@ -633,6 +638,8 @@ obj_art_oct:
    LDA #OBJ_ART_OCT
 obj_art_set:
    STA obj_e
+   JSR obj_probe                           ; can this billboard skip the
+                                           ; clipper entirely?
 obj_stamp:
    PAGE BANK_SEG                           ; the art template lives with the
    LDX obj_e                               ; object data (CODE is full)
@@ -664,6 +671,10 @@ obj_stamp:
    JSR fused_below_raw                     ; authority line: clip + plot +
    JMP obj_st_next                         ; apply in one walk
 obj_plain:
+   LDA obj_fast                            ; provably unclipped? then the
+   BEQ obj_slow                            ; span walk has nothing to do
+   JMP obj_emit_direct                     ; (OBJX; it rejoins obj_st_next)
+obj_slow:
    JSR draw_clipped_line_s16
 obj_st_next:
    LDA obj_e
@@ -713,4 +724,103 @@ obj_ds_hi:
    JSR fused_merge_range
 obj_dsx:
    RTS
+
+SEG_OBJX
+; ============================================================================
+; obj_probe — may this billboard skip the clipper?  obj_fast = 1 iff
+; every one of its art lines is provably inside the visible aperture.
+;
+; Two conditions, both cheap and both once per billboard (not per line):
+;   1. FULLY ON SCREEN. The box is [X0,X5] x [yt,yb]: X0/X5 are the
+;      sorted extremes of the six x values and the lid top / base bottom
+;      bound y, so the box contains every art vertex by construction
+;      (verified over the suite: 0 violations). All four HI bytes must be
+;      zero and y must sit inside the visible band.
+;   2. FULLY UNCLIPPED. Walk the active span list (sorted by XSTART) and
+;      require the spans to COVER [X0,X5] with no gap — a gap is a column
+;      the walk already closed as solid — and each covering span's INNER
+;      aperture [IT,IB] to contain [yt,yb]. IT/IB are the per-span
+;      extremes, so that is exactly dcl's Tier-2 inner accept, hoisted
+;      out of the per-line walk and asked once for the whole box.
+;
+; Measured on the 19-pose suite: 24% of stamped billboards qualify, and
+; they are the EXPENSIVE ones (5,437 cyc each, 38% of all stamp time).
+; Clobbers A,X,Y.
+; ============================================================================
+obj_probe:
+   LDY #0
+   STY obj_fast                            ; assume the clipper is needed
+   LDA obj_X+1                             ; all four HI bytes must be 0:
+   ORA obj_X+11                            ;  on screen and non-negative.
+   ORA obj_yt_h                            ;  ORA-fold — one branch, and 6
+   ORA obj_yb_h                            ;  bytes shorter than four tests
+   BNE obj_pno
+   LDA obj_yt_l
+   CMP #Y_BIAS                             ; above the visible band?
+   BCC obj_pno
+   LDA #VIS_YMAX
+   CMP obj_yb_l                            ; below it?
+   BCC obj_pno
+   LDA obj_X+0
+   STA obj_cur                             ; cursor: covered up to here
+   LDX zp_head
+   BEQ obj_pno                             ; no spans at all: nothing open
+obj_ploop:
+   LDA POOL_XEND,X                         ; XEND is EXCLUSIVE
+   CMP obj_cur
+   BCC obj_pnext                           ; span wholly left of the cursor
+   BEQ obj_pnext
+   LDA POOL_XSTART,X
+   CMP obj_cur
+   BEQ obj_pin
+   BCS obj_pno                             ; starts past the cursor: GAP
+obj_pin:
+   LDA obj_yt_l
+   CMP POOL_IT,X
+   BCC obj_pno                             ; top pokes above the aperture
+   LDA POOL_IB,X
+   CMP obj_yb_l
+   BCC obj_pno                             ; bottom pokes below it
+   LDA POOL_XEND,X
+   STA obj_cur
+   CMP obj_X+10                            ; covered past the last column?
+   BEQ obj_pnext                           ; (XEND exclusive: need > x1)
+   BCS obj_pyes
+obj_pnext:
+   LDA POOL_NEXT,X
+   TAX
+   BNE obj_ploop
+obj_pno:
+   RTS
+obj_pyes:
+   LDA #1
+   STA obj_fast
+   RTS
+
+obj_emit_direct:
+; Every art vertex is inside [X0,X5] x [yt,yb] BY CONSTRUCTION (X0/X5 are
+; the sorted extremes of the six x values and the lid/base bound y), and
+; obj_probe proved that box is covered by spans whose [IT,IB] contains
+; it. So the whole line is visible: hand the segment straight to the
+; emitter. The HI bytes are all zero — obj_probe rejected anything not
+; fully on screen — so the s16 pre-clip has nothing to do either.
+   LDA zp_line_xl_l
+   STA zp_seg_start_x
+   LDA zp_line_yl_l
+   STA zp_seg_start_y
+   LDA zp_line_xr_l
+   STA zp_ox1
+   LDA zp_line_yr_l
+   STA zp_tmp0
+   JSR dcl_emit_segment
+   JMP obj_st_next
+
+SEG_CODE                                   ; RESTORE the segment: the next
+                                           ; included file (seg_xform.s)
+                                           ; opens with no SEG_ macro and
+                                           ; would inherit OBJX — the
+                                           ; fall-through-across-.segment
+                                           ; landmine, caught by a 660-byte
+                                           ; CODE shrink in the map
+
 .endif

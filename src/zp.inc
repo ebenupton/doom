@@ -612,6 +612,44 @@ EPSILON_F = 12
 ; old 25-name zoo (MAIN/LO/B/D/W/ZC/RNSPG/RPAIR/ZZTAIL/SEL/LOX/ANG/
 ; ANGX/ANIM*/RCCODE/VXCODE/.._BK twins) died here; so did its landmine
 ; class (ZZTAIL fall-through, cfg-order region shifts).
+Y_BIAS = 48                             ; bias Y so visible [0,159] maps to [48,207] within u8
+VIS_YMAX = Y_BIAS + 159                 ; = 207: maximum biased visible Y
+; --- span-pool layout (moved from clip/arith.s 2026-08-29: BOTH units
+;     need it — the clipper owns the pool, bsp/objects.s probes it) ---
+POOL = SPAN_POOL                        ; abi.inc ($1800 since the 2026-08-19
+                                        ; window slide; $1C00 before, $0400
+                                        ; before the sqr swap); ships as
+                                        ; LOW-image zeros, span_init owns
+                                        ; the per-frame ground state
+; field equates DERIVE from POOL (they were hard $04xx literals until
+; 2026-08-18 — the pool kept writing its old home after POOL moved and the
+; sqr HI pages took the corruption; only the pixel-exact pyref saw it)
+POOL_NEXT   = POOL + $000
+POOL_TXLO   = POOL + $020               ; TOP line's anchor x  (pairs with
+POOL_TDEN   = POOL + $040               ;  POOL_BXLO/BDEN below); DEN is the
+                                        ;  precomputed xhi - xlo, i.e. the
+                                        ;  interp denominator
+POOL_TL     = POOL + $060
+POOL_BL     = POOL + $080
+POOL_TR     = POOL + $0A0
+POOL_BR     = POOL + $0C0
+POOL_XSTART = POOL + $0E0
+POOL_XEND   = POOL + $100
+POOL_OT     = POOL + $120
+POOL_OB     = POOL + $140
+POOL_IT     = POOL + $160
+POOL_IB     = POOL + $180
+; SEPARATE TOP/BOTTOM ANCHORS (2026-08-22). TXLO/TDEN anchor the TOP line
+; only; the BOTTOM line carries its own BXLO/BDEN pair below. (They were
+; the unprefixed XLO/DEN until 2026-08-22, from the days when there was
+; only one anchor pair — renamed so the two sides read symmetrically.) Each boundary is
+; stored at its SOURCE line's own extent, so the sweep no longer has to
+; interpolate both sources onto a common anchor when it emits a span —
+; see the note in clip/tfr.s flush_pending. (VXC_ENABLE/vxc_prev_ab
+; moved $19DB/DC -> $19DD/DE to clear the room.)
+POOL_BXLO   = POOL + $1A0
+POOL_BDEN   = POOL + $1C0
+
 ; ============================================================================
 .macro SEG_CODE
 .segment "CODE"
@@ -669,6 +707,13 @@ EPSILON_F = 12
 .segment "PMWK"                   ;  to-FB tail ($E9A8, after the MV_SS
 .endif                            ;  repack)
 .endmacro
+.macro SEG_OBJX
+.if ::BANKED
+.segment "CODE"                   ; billboard fast-path probe + direct
+.else                             ;  emit: banked rides the CODE tail;
+.segment "OBJX"                   ;  flat CODE is at its $4D00 wall, so
+.endif                            ;  it takes the gap between CLIPF's
+.endmacro                         ;  walled tail and RCACHE_STATE
 .macro SEG_PMSF
 .if ::BANKED
 .segment "CODE"                   ; silent-line fast-commit gate: banked

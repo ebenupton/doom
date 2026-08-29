@@ -40,8 +40,6 @@ SEG_BANKC
 ; --- verdict-record support (2026-07-13 off-screen-aperture fix) ---
 ; $091C/$091D free (TFS_*_VERD retired — verdicts tested lazily at the
 ; consumption points, 2026-07-13)
-DCLV_RVY = $0A1E                        ; pending right-side verdict y ($80 = none)
-DCLV_OX1S = $0A1F                       ; original ox1 stashed at CB entry
 DCLV_X0 = $0A20                         ; dcl_rec_flat range args
 DCLV_X1 = $0A21
 DCLV_SX = $0A22                         ; X save across dcl_rec_flat
@@ -96,10 +94,6 @@ LC_OY2_HI = $0A3F
 ; mul/div workspace dominates the profile — moved to freed zp; cold
 ; members stay $06xx) ----
 LC_DY_NEG = $0A46
-LC_M_A_LO = $0A47
-LC_M_A_HI = $0A48
-LC_M_B_LO = $0A49
-LC_M_B_HI = $0A4A
 LC_M_R2 = $0A4D
 LC_M_R3 = $0A4E
 LC_TMP_HI = $0A54

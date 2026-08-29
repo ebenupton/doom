@@ -885,7 +885,8 @@ wo_rts:
 
 
 ; ============================================================================
-; pm_frame — DOOM 35Hz momentum physics, one call per driver frame.
+; pm_frame — the player's movement for one driver frame (35Hz-derived;
+; momentum retired 2026-08-22, see the ABI note below).
 ; THE canonical rules are colmap.move_frame (python); this is their
 ; 6502 expression, fuzz-gated. CODE LIVES IN BANK B (Eben blessed
 ; movement code into bank WALK 2026-08-15 — movement already runs
@@ -894,18 +895,23 @@ wo_rts:
 ; $2300-$28FF region. THE DRIVER MUST PAGE BANK_WALK BEFORE THE JSR
 ; (banked) — pm_frame cannot page itself in.
 ;
-;   in : A = PAL fields elapsed (capped 32), X = input (b0 fwd, b1 back),
-;        DV_ANGIDX / DV_PXF.. (24-bit 8.8 positions), pm_vz.
-;   out: position + pm_vz updated, D_FWD written, PM_MOMX/Y + PM_TICREM
-;        (abi $03F8..) updated.
+;   in : A = PAL fields elapsed (clamped PM_FCAP), X = input (b0 fwd,
+;        b1 back, b2/b3 turn), DV_ANGIDX / DV_PXF.. (24-bit 8.8
+;        positions), pm_vz.
+;   out: position + pm_vz updated, D_FWD written, PM_TURNREM carried.
 ;
-; Per 35Hz tic (fields*7/10, remainder carried): thrust 25*(cos,sin)
-; sign-magnitude on the mag6 grid; clamp +/-960; displacement += mom;
-; STOPSPEED-2 stop rule or *232>>8 FLOOR friction (DOOM FixedMul).
-; The displacement applies in DOOM-halved chunks (each axis <= 480 =
-; MAXMOVE/2) via pmove_try; a blocked chunk projects the REMAINING
-; displacement and the momentum onto the wall (dot-product
-; P_HitSlideLine, <= 2 walls/frame), then the axis fallback, then stop.
+; (This block described the MOMENTUM model until 2026-08-29 — thrust,
+;  the +-960 clamp, STOPSPEED, *232>>8 friction, and an "out" naming
+;  PM_MOMX/Y + PM_TICREM at $03F8. Momentum was retired 2026-08-22 and
+;  those addresses died with the low-RAM map; the comment outlived all
+;  of it. Nothing here is momentum any more.)
+;
+; The frame's whole displacement is ONE affine step along the view ray
+; at constant speed (PF_MOVE_L/H by field count, colmap.walk_disp is the
+; twin). It applies in chunks of at most MM_HALF per axis via pmove_try;
+; a blocked chunk projects the REMAINING displacement onto the wall
+; (dot-product P_HitSlideLine, <= 2 walls/frame), then the axis
+; fallback, then stop.
 ; ============================================================================
 
 ; pm_frame scratch (PM_SCRATCH tail — pmove_try's stops at +$48).

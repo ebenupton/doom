@@ -213,12 +213,15 @@ ORG DRV_ORG
                                                     ; shreds unexecuted init
     JSR respawn                                     ; pos/angle/VZ/pm seeds
     ; Seed the frame clock's prevs LAST. This must come after every
-    ; instruction below $208A has run: pm_frame's scratch OVERLAYS the
-    ; one-shot init block at PM_SCRATCH ($2000), so calling it earlier
+    ; instruction of the init block has run: pm_frame's scratch OVERLAYS
+    ; that block at PM_SCRATCH (= DRV_ORG), so calling it earlier
     ; rewrites the init code still ahead of the PC (it shredded the boot
-    ; screen when this sat up by the T1 lock, 2026-08-15). With no keys
-    ; and zero momentum the call itself is a no-op: it just stores
-    ; now->prev, so the first real frame gets an honest delta.
+    ; screen when this sat up by the T1 lock, 2026-08-15). The literal
+    ; $2000/$208A this comment used to quote were the 2026-08-15 driver
+    ; org, three window slides ago. With no keys held the call is a
+    ; no-op: it just stores now->prev, so the first real frame gets an
+    ; honest delta. (It said "and zero momentum" until 2026-08-29 —
+    ; momentum retired 2026-08-22.)
     JSR mv_frame
     LDA #BANK_C : STA &FE30                         ; the clears live in bank C
     JSR ENG_FB_CLR0 : JSR ENG_FB_CLR1

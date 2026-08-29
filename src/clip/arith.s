@@ -399,43 +399,14 @@ dl_over:
 ; a span has been narrowed: the line is preserved across mark_solid splits
 ; and left/right-fragment creation in tighten, so no interp_store is needed
 ; for those operations.
-POOL = SPAN_POOL                        ; abi.inc ($1800 since the 2026-08-19
-                                        ; window slide; $1C00 before, $0400
-                                        ; before the sqr swap); ships as
-                                        ; LOW-image zeros, span_init owns
-                                        ; the per-frame ground state
-; field equates DERIVE from POOL (they were hard $04xx literals until
-; 2026-08-18 — the pool kept writing its old home after POOL moved and the
-; sqr HI pages took the corruption; only the pixel-exact pyref saw it)
-POOL_NEXT   = POOL + $000
-POOL_TXLO   = POOL + $020               ; TOP line's anchor x  (pairs with
-POOL_TDEN   = POOL + $040               ;  POOL_BXLO/BDEN below); DEN is the
-                                        ;  precomputed xhi - xlo, i.e. the
-                                        ;  interp denominator
-POOL_TL     = POOL + $060
-POOL_BL     = POOL + $080
-POOL_TR     = POOL + $0A0
-POOL_BR     = POOL + $0C0
-POOL_XSTART = POOL + $0E0
-POOL_XEND   = POOL + $100
-POOL_OT     = POOL + $120
-POOL_OB     = POOL + $140
-POOL_IT     = POOL + $160
-POOL_IB     = POOL + $180
-; SEPARATE TOP/BOTTOM ANCHORS (2026-08-22). TXLO/TDEN anchor the TOP line
-; only; the BOTTOM line carries its own BXLO/BDEN pair below. (They were
-; the unprefixed XLO/DEN until 2026-08-22, from the days when there was
-; only one anchor pair — renamed so the two sides read symmetrically.) Each boundary is
-; stored at its SOURCE line's own extent, so the sweep no longer has to
-; interpolate both sources onto a common anchor when it emits a span —
-; see the note in clip/tfr.s flush_pending. (VXC_ENABLE/vxc_prev_ab
-; moved $19DB/DC -> $19DD/DE to clear the room.)
-POOL_BXLO   = POOL + $1A0
-POOL_BDEN   = POOL + $1C0
+; (POOL / POOL_* field equates MOVED to zp.inc 2026-08-29 so the BSP
+;  unit can see them too: bsp/objects.s probes the span list for its
+;  fully-unclipped fast path. Two units, one definition — the 2026-08-18
+;  scar in the moved block is exactly this drift.)
 NUM_SLOTS = 32
 
-Y_BIAS = 48                             ; bias Y so visible [0,159] maps to [48,207] within u8
-VIS_YMAX = Y_BIAS + 159                 ; = 207: maximum biased visible Y
+; (Y_BIAS / VIS_YMAX moved to zp.inc 2026-08-29 — bsp/objects.s's
+;  fast-path probe needs the visible band too)
 
 ; (sqr table aliases deleted with the unified umul8 2026-08-09 — the
 ; quarter-square tables at SQR_BASE are read only by bsp/header.s's

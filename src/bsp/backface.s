@@ -616,7 +616,6 @@ bb_zero:
 ; (span_clip's LC_* scratch ends at $0958).
 BBOX_CORNERS = $0A20                    ; 4 x 8: vx16, vy16, front, vy24 (lo,hi,ext)
 ; (overlays the per-seg projection scratch — disjoint phases)
-BBOX_CORNER_IDX = $0AFD                 ; offset into BBOX_CORNERS for current corner
 
 ; Deferred per-subsector op queue (mirrors Python's packed_render_subsector
 ; `deferred` list): seg-ordered solid/tighten ops, applied at subsector end.
@@ -636,14 +635,12 @@ BBOX_CORNER_IDX = $0AFD                 ; offset into BBOX_CORNERS for current c
 ; visibility runs during node processing, when the seg-loop variables
 ; ($5D-$6F) are dead.
 
-BBOX_SCRATCH = $0A60                    ; 8 bytes: top_lo,top_hi,bot_lo,bot_hi,
-;          left_lo,left_hi,right_lo,right_hi
-BBOX_FLAGS = $0A68                      ; bit 0 = any_behind, bit 1 = any_front
-BBOX_ILO = $0A69                        ; running min sx clamped (u8)
-BBOX_IHI = $0A6A                        ; running max sx clamped (u8)
 
 ; --- Angle-space bbox module (bsp_render_ang.bin @ $E940; tables $DC00/$E400/$F200).
-;     Replaces the perspective corner-projection path below (now dead code).
+;     Replaced the perspective corner-projection path, which was
+;     DELETED long ago -- only its scratch equates survived, and they
+;     went too on 2026-08-29 (BBOX_SCRATCH/FLAGS/ILO/IHI/CORNER_IDX,
+;     $0A60-$0A6A + $0AFD: 12 bytes back to the scratch page).
 ; angle module + bca workspace relocate when banked (must match slope_div.asm:
 ;   code -> $3400 (entry+3 = $3403); bca workspace -> BCA_WS $3A00).
 .import bbox_check_angle, bca_frame     ; direct (linker-resolved); the bbox.s

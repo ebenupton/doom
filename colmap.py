@@ -910,7 +910,9 @@ def try_move(px, py, nx, ny, z_ps, mover_pos):
 # approximation of exactly this); at most 2 wall projections per frame,
 # then the axis fallback (y-only, then x-only, zeroing the blocked
 # axis' momentum), then full stop (mom = 0,0).
-MM_MAXMOVE = 960          # 30 world units, 8.8 prescaled
+# (MM_MAXMOVE = 960 DELETED 2026-08-29: DOOM's MAXMOVE was a momentum-era
+#  speed clamp and momentum retired 2026-08-22. Nothing read it; only
+#  MM_HALF, the chunk ceiling, outlived the model.)
 MM_HALF = 724             # chunk ceiling AT the tunnelling proof's own
                           # limit (2026-08-29, was 480 = DOOM MAXMOVE/2):
                           # crossing a wall needs > 2*RADIUS = 32 world
@@ -944,7 +946,8 @@ MM_FIELDS_CAP = 10        # was 32. The single-step tables stop here, and
 WALK_TIC = 204.8          # 80% of the retired model's 256/tic attractor
 SS_RATE = 179             # tics per PAL field, Q8: 179/256 = 0.69922,
                           # i.e. 34.96 Hz — still the tic:field ratio
-MM_FIELDS_CAP = 10        # hiccup clamp; also the table length
+                          # (the SECOND MM_FIELDS_CAP = 10 that sat here was
+                          #  a duplicate of the one above — deleted 2026-08-29)
 
 # Rotation: 2 angle-bytes per tic.  The view angle is quantised to 64
 # steps of 4 angle-bytes, so a frame's turn is generally fractional; the
