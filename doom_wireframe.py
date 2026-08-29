@@ -535,13 +535,104 @@ def _is_renderable(s):
     if bi is None: return True
     return sectors[fi][0] != sectors[bi][0] or sectors[fi][1] != sectors[bi][1]
 
+# ── Dead-seg elimination (2026-08-29, memo-dead-seg-proofs.md) ──────────
+#
+# A seg whose ENGINE draw half-plane contains no reachable floor never
+# renders and never occludes (occlusion comes only from drawn segs), so
+# it can be stripped with proof rather than sampling:
+#   R+  = sectors flood-reachable from the player spawn; a two-sided edge
+#         is passable iff step <= 24 AND opening >= 56 at SOME mover
+#         phase (conditions are monotone in each mover height, so the
+#         [far, rest] endpoint OR is an exact exists-phase test — this
+#         covers falls of any depth AND riding a lift between poses).
+#         One-sided lines always block; ML_BLOCKING is IGNORED, radius
+#         is IGNORED (both over-approximate: strictly safe).
+#   cert = the draw predicate is linear and half-planes are convex, so
+#         "no reachable point draws" reduces to checking every VERTEX of
+#         every R+ sector, in exact integers.  The predicate mirrors
+#         wad_packed's C-form bake: folded primitive dir (pdx,pdy) =
+#         ±linedef delta (side 1 negates); draw side is CLOSED (tie
+#         draws) for verticals with pdy>0, horizontals with pdx<0 and
+#         diagonals with pdy>0 — the pack-time C-1 / tie-rule fold —
+#         and STRICT otherwise.
+# Audit: tools/prove_dead_segs.py re-proves the list against the PACKED
+# bytes of a DOOM_NO_DEADSTRIP=1 build.  Kill switch: DOOM_NO_DEADSTRIP.
+
+def _dead_seg_set():
+    import collections as _cl
+    movers = ANIM_SECTORS or {}
+    def _far(s):
+        fh, ch = sectors[s][0], sectors[s][1]
+        nb = set()
+        for _ld in linedefs:
+            _ss = [sidedefs[sd][5] for sd in (_ld[5], _ld[6]) if sd != 0xFFFF]
+            if s in _ss: nb.update(x for x in _ss if x != s)
+        if movers[s] == 'ceil': ch = min(sectors[n][1] for n in nb) - 4
+        else:                   fh = min(sectors[n][0] for n in nb)
+        return fh, ch
+    def _phases(s):
+        rest = (sectors[s][0], sectors[s][1])
+        return [rest, _far(s)] if s in movers else [rest]
+    adj = _cl.defaultdict(set)
+    for _ld in linedefs:
+        r, l = _ld[5], _ld[6]
+        if r == 0xFFFF or l == 0xFFFF: continue
+        sr, sl = sidedefs[r][5], sidedefs[l][5]
+        for fr, cr in _phases(sr):
+            for fl, cl in _phases(sl):
+                if min(cr, cl) - max(fr, fl) < 56: continue
+                if fl - fr <= 24: adj[sr].add(sl)
+                if fr - fl <= 24: adj[sl].add(sr)
+    _spawn = next((t for t in things if t[3] == 1), None)
+    if _spawn is None: return set(), 0
+    _sx, _sy = _spawn[0], _spawn[1]
+    _nid = len(nodes) - 1
+    while not (_nid & NF_SUBSECTOR):
+        _n = nodes[_nid]
+        _nid = _n[12] if (_n[3]*(_sx-_n[0]) - _n[2]*(_sy-_n[1])) > 0 else _n[13]
+    _s0 = segs[ssectors[_nid & 0x7FFF][1]]
+    _sec = seg_sectors(_s0)[0]
+    reach = {_sec}; _work = [_sec]
+    while _work:
+        s = _work.pop()
+        for t in adj[s]:
+            if t not in reach: reach.add(t); _work.append(t)
+    _rverts = set()
+    for _ld in linedefs:
+        if any(sidedefs[sd][5] in reach for sd in (_ld[5], _ld[6]) if sd != 0xFFFF):
+            _rverts.add(vertexes[_ld[0]]); _rverts.add(vertexes[_ld[1]])
+    dead = set()
+    for _si, s in enumerate(segs):
+        if ANIM_SECTORS and _seg_touches_anim(s): continue
+        _ld = linedefs[s[3]]
+        (lx, ly), (mx, my) = vertexes[_ld[0]], vertexes[_ld[1]]
+        sgn = 1 if s[4] == 0 else -1
+        pdx, pdy = sgn * (mx - lx), sgn * (my - ly)
+        if pdx == 0 and pdy == 0: continue
+        closed = (pdy > 0) if pdy != 0 else (pdx < 0)
+        ok = True
+        for (vx, vy) in _rverts:
+            dot = pdy * (vx - lx) - pdx * (vy - ly)
+            if dot > 0 or (dot == 0 and closed):
+                ok = False; break
+        if ok: dead.add(_si)
+    return dead, len(reach)
+
+import os as _os_ds
+_dead_segs = set()
+if not _os_ds.environ.get('DOOM_NO_DEADSTRIP'):
+    _dead_segs, _n_reach = _dead_seg_set()
+    if _dead_segs:
+        print(f"Dead-seg elimination: {len(_dead_segs)} segs certified "
+              f"back-facing from all reachable floor (R+ = {_n_reach} sectors)")
+
 _stripped_segs = []
 _stripped_ssectors = []
 _strip_count = 0
 for _ssi, _ss in enumerate(ssectors):
     _first = len(_stripped_segs)
     for _si in range(_ss[1], _ss[1] + _ss[0]):
-        if _is_renderable(segs[_si]):
+        if _si not in _dead_segs and _is_renderable(segs[_si]):
             _stripped_segs.append(segs[_si])
         else:
             _strip_count += 1
@@ -3262,13 +3353,14 @@ def packed_render_subsector(idx, clips, ctx, vz, surface, ram):
     """Render a subsector reading from packed ROM arrays."""
     layout = _p_layout
     rom = _p_rom_main
-    ss_off = layout['off_ss']              # SoA pages: PC / SI (packed)
-    pc = rom[ss_off + idx]                 # ((page+1)<<3)|(cnt-1); 0 = empty
-    if pc == 0:
+    ss_off = layout['off_ss']              # SoA pages: PG / SI
+    cnt = rom[layout['off_ss_cnt'] + idx]  # cnt-1; $FF = empty (PG/CNT split)
+    if cnt == 0xFF:
         return
-    count = (pc & 7) + 1
+    count = cnt + 1
+    pg = rom[ss_off + idx]                 # page, PLAIN (no sentinel bias)
     plo = rom[ss_off + 256 + idx]          # plain in-page offset (slot*stride)
-    first_seg = _seg_hdr_slot((((pc >> 3) - 1) << 8) | plo)
+    first_seg = _seg_hdr_slot((pg << 8) | plo)
 
     # Deferral removed 2026-07-16: packed_render_seg's deferred=None
     # branches call clips.mark_solid / clips.tighten at seg end with the

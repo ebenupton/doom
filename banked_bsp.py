@@ -201,14 +201,18 @@ def build_banked(flatr):
     # CPM, rcache BSS, ANIM CFG @ $B300 + SSMASK staging @ $B400 ---
     lb = bytearray(16384)
     lb[:off_verts] = bytes(rom_main[:off_verts])         # node/ss SoA pages
-    # (the SS_PHI rebase loop died 2026-08-19: SS_PC carries a raw page
+    # (the SS_PHI rebase loop died 2026-08-19: SS_PG carries a raw page
     #  index and the engine adds >ROM_SEG_HDR_C itself)
-    # SS_FH/SS_CH: planes 3+4 of the five adjacent SS planes ($8900 PC,
+    # SS_FH/SS_CH: planes 3+4 of the five adjacent SS planes ($8900 PG,
     # $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ — VZ arrives via the colmap
-    # blob router below)
+    # blob router below). SS_CNT (the 2026-08-29 PG/CNT split) rides the
+    # same loop to its own bank-B page at $B500 (the free pair below the DIR
+    # planes; $A900 REJECTED: reads catching the window mid bank-C raster
+    # excursion saw raster state there — vxcache warm mismatches).
     _nss = layout['n_ss']
     for _nm, _off in (('ROM_SS_FH_C', layout['off_ss_fh']),
-                      ('ROM_SS_CH_C', layout['off_ss_ch'])):
+                      ('ROM_SS_CH_C', layout['off_ss_ch']),
+                      ('ROM_SS_CNT_C', layout['off_ss_cnt'])):
         _d = bdst(_nm)
         lb[_d:_d + _nss] = bytes(rom_main[_off:_off + _nss])
     def cpy(dst_off, src, n):

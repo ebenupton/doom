@@ -83,27 +83,26 @@ render_subsector:
    JSR obj_subsector
 ; --- The five SS planes, ALL adjacent in BANK B ($8900-$8DFF) and all
 ; read here under WALK (2026-08-19 consolidation, 7 planes -> 5):
-;   SS_PC  = ((page+1)<<3)|(cnt-1), $00 = empty subsector (the +1 page
-;            bias makes the LDY's Z flag the empty test — no CMP — and
-;            dies in the ADC constant below; low bits stay cnt-1)
+;   SS_PG  = page, PLAIN (the 2026-08-29 PG/CNT split; the old +1
+;            sentinel bias died with it — Eben: the empty test rides
+;            ROM_SS_CNT_C now, $FF = empty via the LDY's N flag)
+;   ROM_SS_CNT_C = cnt-1, its own plane (rom_main tail; banked $B500,
+;            flat $C400 — see layout.inc for the two rejected homes)
 ;   SS_PLO = the plain in-page header offset (slot * stride)
 ; The header hi is DERIVED: page + >ROM_SEG_HDR_C — this ADC is the
 ; rebase both loaders used to do. ---
    LDX zp_node_ch_l
-   LDY SS_PC,X                             ; Z set on empty (Y is dead: the
-   BEQ sl_rts                              ; seg loop clobbers it anyway) —
-   TYA                                     ; empty ss -> the shared loop RTS
-   AND #7
-   STA zp_seg_count                        ; cnt-1: the advance loops end
-                                        ; on BMI (the -1 saved a decode)
-   TYA                                     ; (was a second SS_PC,X load)
-   AND #$F8
-   LSR A
-   LSR A
-   LSR A                                   ; page+1, 1..24 (C = 0: the
-                                        ; three low bits were masked off)
-   ADC #(>ROM_SEG_HDR_C)-1                 ; the page bias dies here
-   STA zp_seg_hdr_p_h
+   LDY ROM_SS_CNT_C,X                      ; cnt-1 ($FF = empty subsector:
+   BMI sl_rts                              ;  BMI is the empty test — the
+   STY zp_seg_count                        ;  live values are 0..27); the
+                                        ; advance loops end on BMI too
+                                        ; (the -1 saved a decode)
+   LDA SS_PG,X                             ; page, PLAIN (the +1 sentinel
+   CLC                                     ; bias died with the PG/CNT
+   ADC #>ROM_SEG_HDR_C                     ; split — Eben 2026-08-29); the
+   STA zp_seg_hdr_p_h                      ; CLC is the one cycle the old
+                                        ; LSRs used to buy (C unknown
+                                        ; on entry)
    LDA SS_PLO,X
    STA zp_seg_hdr_p
 
@@ -131,7 +130,7 @@ render_subsector:
 ; dispatch needs the low bits CLEAN (kill polarity, zero elsewhere).
 ; FUSED with the delta subtractions 2026-08-19 (Eben's synthesis call):
 ; the flags ride A straight out of each SBC — the two delta reloads
-; died. Y is dead here (the SS_PC sentinel decode is done with it);
+; died. Y is dead here (the CNT empty-sentinel decode is done with it);
 ; X still holds the subsector id for the plane loads.
 
    LDA ROM_SS_FH_C,X                        ; fh (per subsector)

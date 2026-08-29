@@ -187,12 +187,14 @@ NODE_DSGN  = NODE_SOA + $500            ; general: sign byte (b7 PINNED 0
 NODE_CRLO = NODE_SOA + $600             ; right child id (side 0 = near)
 NODE_CLLO = NODE_SOA + $700             ; left child id
 NODE_TYPE = NODE_SOA + $800             ; bits 0-2 type; bit 7/6 leaf flags
-SS_PC     = NODE_SOA + $900             ; (page<<3)|(cnt-1); $FF = empty —
-                                        ; TWO packed subsector bytes since
-                                        ; 2026-08-19 (was count/lo/hi in 3
-                                        ; pages); hdr hi = page + >base at
-                                        ; run time, which killed both
-                                        ; loaders' rebase passes
+SS_PG     = NODE_SOA + $900             ; page, PLAIN (PG/CNT split
+                                        ; 2026-08-29 — the 3-bit count left
+                                        ; for its own plane ROM_SS_CNT_C
+                                        ; ($FF there = empty ss), taking the
+                                        ; AND/AND/LSRx3 unpack and the +1
+                                        ; sentinel bias with it); hdr hi =
+                                        ; page + >base at run time, which
+                                        ; killed both loaders' rebase passes
 SS_PLO    = NODE_SOA + $A00             ; header lo byte, PLAIN (slot *
                                         ; stride — an info-bit packing was
                                         ; clawed back the same day: 8 cyc

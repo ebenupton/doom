@@ -4,15 +4,15 @@
 ; assembly-time truths. doom_wireframe asserts packed_layout against these
 ; values on import — drift fails loud there, never silently here.
 ; ============================================================================
-LAY_N_SEGS   = 649
-LAY_N_NODES   = 220
-LAY_ROOT   = 219                      ; n_nodes - 1
+LAY_N_SEGS   = 644
+LAY_N_NODES   = 195
+LAY_ROOT   = 194                      ; n_nodes - 1
 LAY_OFF_VERTS   = $0B00
 LAY_OFF_SS   = $0900
 LAY_OFF_SEG_HDR   = $1100
 
 LAY_HDR_STRIDE   = 9                    ; +10 bfh, +11 bch
-LAY_HDR_BYTES   = $172D                 ; footprint of the page-slotted
+LAY_HDR_BYTES   = $16FC                 ; footprint of the page-slotted
                                         ; header array (generated: 256/
                                         ; stride slots per 256B page, so
                                         ; it is NOT n_segs*stride)
@@ -27,10 +27,13 @@ LAY_LV1_OFF   = $1B00                   ; generated: diagonal LV1 records,
 LAY_SS_FH_OFF   = $1900                 ; generated: front-height pages,
                                         ; RELATIVE to the seg-header base
                                         ; (page-aligned in both builds)
+LAY_SS_CNT_OFF   = $1E00                 ; generated: per-ss seg-count plane
+                                        ; (cnt-1; PG/CNT split 2026-08-29),
+                                        ; relative to the seg-header base
 ; (2026-07-11: FHCH stream gone; back-face C-form replaced lv1/ld —
 ; +4 form/dir_id, +5..7 C24, +8 flags, +9 L(pad), +10/+11 back heights;
 ;  2026-08-17: fh/ch left for the per-subsector pages below)
-LAY_N_DIRS   = 118                   ; distinct diagonal primitives
+LAY_N_DIRS   = 120                   ; distinct diagonal primitives
 LAY_MAX_DIRS   = 128                   ; DIR table stride (3 arrays)
 
 .if ::BANKED
@@ -93,6 +96,11 @@ OBJ_DRAW = 1                            ; static-object billboards.  ON
                                         ; single-line tightens only).
                                         ; Set 0 to get a green gate back.
 LAY_N_OBJ   = 18                   ; static objects (wad_packed)
+LAY_OBJ_BITS_LEN   = 25            ; generated: (n_ss+7)//8 — the per-ss
+                                   ; "has objects" bitmap length; the
+                                   ; OBJ_ART home abuts it (a hardcoded
+                                   ; 28 here skewed the banked art base
+                                   ; when the polish tree cut n_ss)
 OBJ_OX   = ROM_OBJ_C + 0*LAY_N_OBJ      ; x offset lo
 OBJ_OY   = ROM_OBJ_C + 1*LAY_N_OBJ      ; y offset lo
 OBJ_PG   = ROM_OBJ_C + 2*LAY_N_OBJ      ; page nibble (x b0-1, y b2-3)
@@ -138,13 +146,13 @@ OBJ_ART_END     = $FF              ; entry: template finished
 ; past it (the old 25-entry blob ended at $B7FE by luck). Banked keeps
 ; the abutting home in the true 512-byte $A900-$AAFF hole.
 .if ::BANKED
-OBJ_ART  = OBJ_BITS + 28
+OBJ_ART  = OBJ_BITS + LAY_OBJ_BITS_LEN
 .assert OBJ_ART + 4*LAY_N_OBJ_ART <= ROM_VERTS_C, error, "banked art templates reach the vertex planes"
 .else
 OBJ_ART  = $E830                        ; colmap gap: ss_vz ends $E82C,
                                         ; minpass at $E910 (inside DATA)
 .assert OBJ_ART + 4*LAY_N_OBJ_ART <= $E910, error, "flat art templates reach colmap minpass"
-.assert ROM_OBJ_C + 8*LAY_N_OBJ + 28 <= $B800, error, "flat object planes reach colmap USEVEC"
+.assert ROM_OBJ_C + 7*LAY_N_OBJ + LAY_OBJ_BITS_LEN <= $B800, error, "flat object planes reach colmap USEVEC"
 .endif
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B7FF, banked frees
@@ -192,6 +200,28 @@ ROM_SS_CH_C = $8C00                     ; adjacent SS planes in BANK B
 ROM_SS_FH_C = ROM_SEG_HDR_C + LAY_SS_FH_OFF
 ROM_SS_CH_C = ROM_SS_FH_C + $100
 .endif
+; Per-subsector seg-count plane (cnt-1, $FF = empty; the PG/CNT split
+; 2026-08-29 — SS_PG went back to a plain page byte, killing the
+; prologue's AND/AND/LSRx3 unpack and the +1 sentinel bias). The plane
+; rides the END of rom_main (off_ss_cnt) but is NOT part of the header
+; blob copy: both flat installers place it at this OWN home. The three
+; rejected homes, for the record: banked $A500 stomped BBP_R_HI side 1
+; (the bbox is a PAGE-SPLIT SoA spanning the full $9600-$A5FF, not
+; n_nodes*16 bytes); growing the flat header blob slid BPAL onto the
+; rcache plane RC_PH_0 at $A400 (flat blob end has ZERO slack); banked
+; $A900 sees bank-C raster state at $A9xx in the same window (warm
+; vxcache reads caught it). Banked home: $B500 (free pair below the DIR
+; planes), read under WALK with the other SS planes. Flat home: the free
+; page between the node SoA end and the bbox planes.
+.if ::BANKED
+ROM_SS_CNT_C = $B500
+.assert ROM_SS_CNT_C + $100 <= $B700, error, "SS_CNT runs into the DIR planes"
+.else
+ROM_SS_CNT_C = $C400
+.assert NODE_SOA_C + $B00 <= ROM_SS_CNT_C, error, "node SoA reaches SS_CNT"
+.assert ROM_SS_CNT_C + $100 <= ROM_BBOX_C, error, "SS_CNT runs into the bbox planes"
+.endif
+.assert (ROM_SS_CNT_C & $FF) = 0, error, "SS_CNT plane must be page-aligned"
 ; Diagonal back-face reference points (2026-08-17): 4 planes, 2 per page at
 ; +$00/+$80, indexed by the u8 record id the header carries at +SH_DIAG. The
 ; 128-slot spacing keeps every indexed read inside one page.

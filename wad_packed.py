@@ -350,7 +350,15 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     off_lv1 = off_ss_ch + 256
     # Back-pair palette (2026-08-17): one page, two planes at +$00/+$80.
     off_bpal = off_lv1 + 512
-    off_vwh = off_bpal + 256
+    # Per-subsector seg count (2026-08-29, the PG/CNT split): cnt-1 in its
+    # own plane so the prologue loads it flat instead of masking it out of
+    # the packed byte, and the page field gets the whole byte (no shifts).
+    # LAST in rom_main and NOT part of the header blob: the flat blob copy
+    # ends at off_ss_cnt and this page goes to its OWN home (flat $C400,
+    # banked $A900) — growing the blob itself slid BPAL onto the flat
+    # rcache plane RC_PH_0 at $A400 (the first cut of this split).
+    off_ss_cnt = off_bpal + 256
+    off_vwh = off_ss_cnt + 256
     # VWH heights no longer ship in rom_main (2026-07-10): the 6502 render
     # projects from the FHCH stream; VWH indices are Python-side cache keys
     # only. off_vwh == rom_main_size is kept as a layout landmark.
@@ -686,16 +694,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         if cl & 0x8000: typ |= NF_LLEAF
         _npg(8, i, typ)
 
-    # Subsectors (SoA pages 10-11: TWO packed bytes since 2026-08-19 —
-    # was count / hdr-offset lo / hdr-offset hi in three pages; the value
-    # ranges never needed them: cnt <= 8, header pages <= 24, slots are
-    # k*9 with k <= 27):
-    #   PC  = ((page+1) << 3) | (cnt - 1)   $00 = empty subsector
-    #         (page biased +1, Eben's sentinel trick 2026-08-19: the
-    #         prologue's LDY sets Z on empty for free — no CMP — and the
-    #         -1 folds into the ADC base constant; the low bits stay
-    #         cnt-1 untouched, unlike a +1 which carries into the page
-    #         field at cnt=8)
+    # Subsectors (PG/CNT split 2026-08-29 — was one packed PC byte
+    # ((page+1)<<3)|(cnt-1), whose 3-bit count field capped subsectors at
+    # 8 segs and cost the prologue an AND/AND/LSRx3 unpack):
+    #   PG  = page, PLAIN (the +1 sentinel bias died with the split —
+    #         Eben 2026-08-29: the empty test rides the CNT plane now,
+    #         so the page byte feeds the ADC base constant directly)
+    #   CNT = cnt - 1 in its OWN plane (off_ss_cnt, rom_main tail with
+    #         per-build homes); $FF = empty subsector — the prologue's
+    #         LDY/BMI is the empty test, and cnt-1 is the loop counter
+    #         verbatim. Count range is now bounded only by the page-slot
+    #         invariant below (28), not the encoding
     #   PLO = the in-page byte offset (slot * stride), stored PLAIN — an
     #         (info<<5)|slot packing was tried and clawed back the same
     #         day: the decode cost 8 cycles per visited subsector on the
@@ -713,11 +722,16 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"subsector {i} seg run crosses a page (slotting broken)"
         page, rem = off16 >> 8, off16 & 0xFF
         slot, r9 = divmod(rem, SEG_HDR_SIZE)
-        assert r9 == 0 and slot < 29 and page < 24 and ss[0] <= 8, \
-            f"subsector {i}: PC/SI encoding out of range ({page},{slot},{ss[0]})"
-        rom_main[off_ss + i] = 0 if ss[0] == 0 \
-            else (((page + 1) << 3) | (ss[0] - 1))
+        # cnt <= 28: the page-slot invariant above is the real bound (a
+        # subsector's header run must fit one 256-byte page at stride 9);
+        # the old <= 8 came from the retired SS_PC 3-bit count field and
+        # died with the PG/CNT split (cnt-1 <= 27 never collides with the
+        # $FF empty sentinel, and the loop's BMI end is safe to 127).
+        assert r9 == 0 and slot < 29 and page < 255 and ss[0] <= 28, \
+            f"subsector {i}: PG/SI encoding out of range ({page},{slot},{ss[0]})"
+        rom_main[off_ss + i] = page if ss[0] else 0
         rom_main[off_ss + 256 + i] = rem            # PLO: slot * stride
+        rom_main[off_ss_cnt + i] = (ss[0] - 1) if ss[0] else 0xFF
         # Front heights, per SUBSECTOR (2026-08-17). ASSERTED constant over
         # the run: if a future map ever breaks that, this fails at pack time
         # instead of rendering one seg's heights for its neighbours.
@@ -1079,6 +1093,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_vwh': off_vwh,
         'off_dirs': off_dirs, 'n_dirs': len(_dirs), 'max_dirs': MAX_DIRS,
         'off_ss_fh': off_ss_fh, 'off_ss_ch': off_ss_ch,
+        'off_ss_cnt': off_ss_cnt,
         'off_lv1': off_lv1, 'n_lv1': len(_lv1_ids),
         'off_obj': off_obj, 'n_obj': n_obj,
         'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,

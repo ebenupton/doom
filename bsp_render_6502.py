@@ -104,13 +104,21 @@ class BspRender6502:
         off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
         for i in range(off_verts):                       # SoA pages (14: 11 node + 3 ss)
             mem[NODE_SOA_BASE + i] = rom_main[i]
-        # (the SS_PHI rebase died 2026-08-19: SS_PC ships a raw page index
+        # (the SS_PHI rebase died 2026-08-19: SS_PG ships a raw page index
         #  and the engine's prologue adds >ROM_SEG_HDR_C itself)
         for i in range(off_verts, off_hdr):              # verts
             mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
         off_obj = layout['off_obj']
-        for i in range(off_hdr, off_obj):                # headers + DIRs
+        # header blob ends at off_ss_cnt: the SS_CNT plane (PG/CNT split
+        # 2026-08-29) is the rom_main TAIL with its OWN home — the blob
+        # copy must NOT extend past $A3FF (RC_PH_0 owns flat $A400)
+        off_ss_cnt = layout['off_ss_cnt']
+        for i in range(off_hdr, off_ss_cnt):             # headers + DIRs
             mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
+        from symmap import sym as _symc
+        _cntb = _symc('ROM_SS_CNT_C')
+        for i in range(256):                             # SS_CNT plane
+            mem[_cntb + i] = rom_main[off_ss_cnt + i]
         # static-object (billboard) table -- its own home, NOT part of the
         # header blob (layout.inc ROM_OBJ_C). The art templates have a
         # PER-BUILD home (2026-08-27: the flat hole is only 256 bytes --

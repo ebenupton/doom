@@ -58,13 +58,22 @@ def setup_wad(sc):
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
     for i in range(off_verts):
         mem[NODE_SOA_BASE + i] = rom_main[i]
-    for i in range(0xB00, 0xC00):        # SS_PHI: offsets -> flat pointers
-        mem[NODE_SOA_BASE + i] = (rom_main[i] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
+    # (the SS_PHI offsets->pointers rebase loop is GONE, 2026-08-29: the
+    #  plane it rewrote died 2026-08-19, and its fossil writes landed on
+    #  the page that is now the flat SS_CNT home at $C400)
     for i in range(off_verts, off_hdr):
         mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
     off_obj = layout['off_obj']
-    for i in range(off_hdr, off_obj):
+    # header blob ends at off_ss_cnt (PG/CNT split 2026-08-29): the SS_CNT
+    # plane is the rom_main tail with its OWN flat home — mirror of
+    # bsp_render_6502's installer
+    off_ss_cnt = layout['off_ss_cnt']
+    for i in range(off_hdr, off_ss_cnt):
         mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
+    from symmap import sym as _symc
+    _cntb = _symc('ROM_SS_CNT_C')
+    for i in range(256):
+        mem[_cntb + i] = rom_main[off_ss_cnt + i]
     from symmap import sym as _sym2                 # object table: own home
     _ob = _sym2('ROM_OBJ_C')
     for i in range(off_obj, off_obj + 0x200):       # the 512-byte hole ONLY
