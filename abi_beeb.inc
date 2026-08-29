@@ -58,18 +58,19 @@ COLIDX_BASE = &AF8A                     \ collision blockmap: 36 x (u16 list add
 COLSEG_BASE = &B8C0                     \ collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 CYMIN_BASE = &B200                      \ per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: CPM_PSI planes + RECIP_S live there — that stomp garbled the tube copro 2026-08-29
 CYMAX_BASE = &B600                      \ per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100
-CYPORT_BASE = &B6C7                     \ per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80C6, RC_P2L_0 walls $8100)
+CYPORT_BASE = &B6CC                     \ per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80CB, RC_P2L_0 walls $8100)
 SIL_BASE = &B198                        \ silent-line tripwire: 36 per-column ((clear_lo256<<4)|(clear_hi256+1)) — the widest y band of 256-unit cells free of BOTH unrecorded sector lines and flooded void ($F0 = none). A box inside its columns bands proves a key-stable move cannot change subsector (the same-ss fast commit, 2026-08-29). Flat: the walled CLIPF tail $7180; banked: the COLIDX-to-CYMIN gap $B198
 SS_VZ_BASE = &8D00                      \ per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)
-MV_SS_ID = &BFC6                        \ mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)
-MV_SS_INFO = &BFCE                      \ parallel info bytes, classic SS_INFO format (mover idx, b7 = ceiling)
-MV_MINPASS = &BFC0                      \ per-mover min passable door pos (fh + 56, prescaled)
+MV_SS_ID = &B1C2                        \ mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)
+MV_SS_INFO = &B1CA                      \ parallel info bytes, classic SS_INFO format (mover idx, b7 = ceiling)
+MV_MINPASS = &B1BC                      \ per-mover min passable door pos (fh + 56, prescaled)
 COLPORT_BASE = &0D00                    \ P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). Strip head since the 2026-08-19 window slide: LOW / the tube CODE file load from LOW_BASE = here, so the ports SHIP DIRECTLY.
 LOW_BASE = COLPORT_BASE+0               \ first shipped byte of the LOW disc image / tube CODE file / bare-boot copy (the strip head)
 SPAN_POOL = &0800                       \ clipper span pool block head (13 x $20 fields; arith.s POOL derives from this)
 PMOVE_BASE = &1340                      \ PMOVE region head (banked cfg anchor; build_anim_ssd asserts driver_end <= this)
-COL_N_SOLID = &00C7                     \ collision indices >= this are ports (colmap asserts the count)
+COL_N_SOLID = &00CC                     \ collision indices >= this are ports (colmap asserts the count; 199 -> 204 2026-08-29: the phase-existential flood adopted s62 + the two-pass colinear merge)
 PM_TURNREM = &0B04                      \ sub-step rotation fraction, Q8 — carries the frame-rate-compensated turn across frames. Moved into the WORK segment 2026-08-26; the PM_MOMX/Y tombstone slots (and the pm_fuzz stay-zero assert) DIED with the old map.
+WALKTAB_BASE = &BE64                    \ USETAB + 1 + n_use*11: the walk-over record section (n_walk byte, then 11-byte records — 9 + 2 biased hi-byte y bounds, SAME stride as use records). colmap asserts n_use == 9
 USETAB_BASE = &BE00                     \ use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads
 SCREEN0 = &5800                         \ framebuffer 0 (flat: harness FB $EA00-$FDFF)
 SCREEN1 = &6C00                         \ framebuffer 1 (flat: single buffer)

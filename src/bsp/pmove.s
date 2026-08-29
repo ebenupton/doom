@@ -752,12 +752,40 @@ pu_st:
    STA zp_pm_p
    LDA #>(USETAB_BASE+1)
    STA zp_pm_p+1
+; pu_scan — shared record scan (SPACE traces AND pm_walkover): pm_i
+; records of stride 11 at (zp_pm_p), trace staged in pm_oldx/y..pm_exx/y.
+; Records carry biased hi-byte y bounds at +9/+10: two unsigned
+; compares reject far records before the mul-heavy crossing test.
+::pu_scan:
+   LDA pm_oldy+1
+   EOR #$80
+   STA pm_woy0                          ; biased trace-y his (NOT pm_ut:
+   LDA pm_exy+1                         ;  the smuls inside the crossing
+   EOR #$80                             ;  test clobber that)
+   STA pm_woy1
 pu_loop:
+   LDY #9
+   LDA pm_woy0
+   CMP (zp_pm_p),Y                      ; y0 < rec ymin?
+   BCS pu_s1
+   LDA pm_woy1
+   CMP (zp_pm_p),Y
+   BCC pu_nx                            ; both below: reject
+pu_s1:
+   INY
+   LDA (zp_pm_p),Y                      ; rec ymax
+   CMP pm_woy0
+   BCS pu_go
+   CMP pm_woy1
+   BCS pu_go
+   BCC pu_nx                            ; both above: reject
+pu_go:
    JSR pm_move_crosses_line
    BCS pu_hit
+pu_nx:
    LDA zp_pm_p
    CLC
-   ADC #9
+   ADC #11
    STA zp_pm_p
    BCC :+
    INC zp_pm_p+1
@@ -793,6 +821,50 @@ pu_moving:
    STA ANIM_WS+2,Y
    LDA #0
 pu_exit:
+   RTS
+.endscope
+
+; ============================================================================
+
+; ============================================================================
+; pm_walkover — fire the walk-over movers this frame's committed move
+; crossed (colmap walk_hits' 6502 twin — it NEVER EXISTED before
+; 2026-08-29: the WR lift trigger ld195 could not fire, so lift 70
+; never lowered and the zigzag platform was unreachable once left).
+; Reuses pu_scan (stride-11 records at WALKTAB) and pu_hit's mover
+; toggle — a crossed plat waiting at B starts B->A exactly like a DR
+; door face; re-crossing while it moves reverses it (a DOOM quirk we
+; accept; DOOM ignores mid-motion retriggers). Skipped when nothing
+; moved, when the origin raws are boot garbage (pm_moved != 2), or
+; when every chunk fast-committed (no silent-class line — walk lines
+; included — can have been crossed).
+; ============================================================================
+SEG_PMWO
+.scope
+::pm_walkover:
+   LDA pm_moved
+   CMP #2                               ; moved AND valid origin
+   BNE wo_rts
+   LDA pm_woneed
+   BEQ wo_rts
+   LDX #3
+wo_ex:
+   LDA zp_br_pxraw_l,X                  ; trace endpoint = committed raws
+   STA pm_exx,X
+   DEX
+   BPL wo_ex
+   PAGE BANK_SEG                        ; the records live in bank A
+   LDA WALKTAB_BASE                     ; n_walk (abi bakes the section
+   BEQ wo_pg                            ;  offset; colmap asserts n_use)
+   STA pm_i
+   LDA #<(WALKTAB_BASE+1)
+   STA zp_pm_p
+   LDA #>(WALKTAB_BASE+1)
+   STA zp_pm_p+1
+   JSR pu_scan
+wo_pg:
+   PAGE BANK_WALK                       ; pm_frame's caller owns WALK
+wo_rts:
    RTS
 .endscope
 
@@ -899,6 +971,12 @@ pm_stmv   = $57E5                       ; staged ss class this zonly (1 =
 pm_lmv    = $57E6                       ;  static) -> pm_lmv ON COMMIT: the
                                         ;  committed position's ss class
                                         ;  (0 = mover/cold: no fast commit)
+pm_moved  = $57E9                       ; okf at entry, ASL'd by pf_move:
+                                        ;  2 = moved AND origin raws valid
+pm_woy0   = $57EA                       ; pu_scan biased trace-y his
+pm_woy1   = $57EB                       ;  (survive pm_move_crosses_line)
+pm_woneed = $57EC                       ; a full zonly ran (a silent-line
+                                        ;  class crossing was possible)
 pm_pcross = $57E7                       ; per-TRY: a port line was CROSSED
                                         ;  (box_vs_seg C=1) — the move may
                                         ;  change subsector / bind tmob,
@@ -1034,6 +1112,7 @@ pf_move:
    BNE pf_mv_go
    JMP pf_none
 pf_mv_go:
+   ASL pm_moved                         ; 1 -> 2: moved with a valid origin
    LDX #3
 pf_ctd:
    LDA pm_fdx,X                         ; intended move, for D_FWD
@@ -1609,7 +1688,24 @@ pu_z:
 ; ============================================================================
 SEG_PMOVE
 ::pm_frame:
+   PHA                                  ; A = fields, X = input mask: the
+   TXA                                  ;  walkover prologue below needs
+   PHA                                  ;  both registers, so bank them
+   LDA pm_okf                           ; pm_moved: okf-at-entry (raws in
+   STA pm_moved                         ;  zp $90-$93 = last committed
+   LDA #0                               ;  position iff okf); pf_move
+   STA pm_woneed                        ;  ASLs it, so ==2 means "moved
+   LDX #3                               ;  AND the trace origin is real"
+pf_wst:
+   LDA zp_br_pxraw_l,X                  ; walkover trace origin
+   STA pm_oldx,X
+   DEX
+   BPL pf_wst
+   PLA
+   TAX                                  ; X = input mask
+   PLA                                  ; A = fields
    JSR pm_frame_i
+   JSR pm_walkover                      ; fire crossed walk-over movers
    LDA pm_okf                           ; clean commit: the last chunk's
    BEQ pf_rederive                      ;  candidate IS the position, so
    RTS                                  ;  its raws/fracs already sit in
@@ -1743,6 +1839,9 @@ m24_done:
 
 ; pmf_sc16 — pm_ax = (pm_ax * pm_umag) >> 5, sign-magnitude truncate
 ; (ps_scale16 semantics; mag 32 = identity falls out). Preserves X.
+.endscope
+SEG_PMMU
+.scope
 ::pmf_sc16:
    JSR pmf_mul24s
    LDY #5
@@ -1759,6 +1858,9 @@ sc_sh:
    LDA pm_usgn
 ; pmf_negif — negate pm_ax when A != 0 (falls through from sc16's
 ; sign reapply). Preserves X, Y.
+.endscope
+SEG_PMMU
+.scope
 ::pmf_negif:
    BEQ ng_done
    SEC
@@ -1779,6 +1881,7 @@ ng_done:
 ; pm_t1m_w..+2 = |product| (u24; callers' operands bound it).
 ; Plain shift-add (movement is frame-rare; no table dependencies).
 ; ============================================================================
+SEG_PMOVE
 .scope
 ::pm_smul:
    LDA #0
@@ -2045,6 +2148,8 @@ ptc_j:
 SEG_PMZ
 pt_cols_done:
 ::pmove_zonly:                          ; entry: z path only (mv_reval)
+   INC pm_woneed                        ; full rules ran: a silent-class
+                                        ;  (walk-over) crossing is possible
    PAGE BANK_WALK
 ; destination sector rules
    JSR pm_find_ss                       ; X = subsector id

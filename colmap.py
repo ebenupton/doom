@@ -77,19 +77,29 @@ def build():
     for s in movers:
         H[s] = far_heights(s)
 
-    # reachability flood fill (movers at far pose = openings open)
+    # reachability flood fill — EXISTENTIAL over mover phases
+    # (2026-08-29): the far pose alone missed the zigzag platform s62,
+    # enterable only from lift 70 AT REST — its one-sided walls dropped
+    # from the collision set and the player walked through them. Same
+    # lesson as the dead-seg proofs: mover edges must be evaluated at
+    # BOTH endpoints (a rider crosses when the lift is up).
+    R = {s: (dw.sectors[s][0], dw.sectors[s][1]) for s in range(len(dw.sectors))}
+    def _phases(sec):
+        return (R[sec], H[sec]) if sec in dw.ANIM_SECTORS else (R[sec],)
     adj = collections.defaultdict(set)
     for ld in dw.linedefs:
         r, l = ld[5], ld[6]
         if r == 0xFFFF or l == 0xFFFF or (ld[2] & 1):
             continue
         sr, sl = dw.sidedefs[r][5], dw.sidedefs[l][5]
-        if min(H[sr][1], H[sl][1]) - max(H[sr][0], H[sl][0]) < 56:
-            continue
-        if H[sl][0] - H[sr][0] <= 24:
-            adj[sr].add(sl)
-        if H[sr][0] - H[sl][0] <= 24:
-            adj[sl].add(sr)
+        for hr in _phases(sr):
+            for hl in _phases(sl):
+                if min(hr[1], hl[1]) - max(hr[0], hl[0]) < 56:
+                    continue
+                if hl[0] - hr[0] <= 24:
+                    adj[sr].add(sl)
+                if hr[0] - hl[0] <= 24:
+                    adj[sl].add(sr)
     sx, sy = 1056, -3616
     nid = len(dw.nodes) - 1
     while not (nid & 0x8000):
@@ -132,39 +142,51 @@ def build():
                 f'reachable blocking line {li} outside the census margin'
         raw.append(((x1 - CX, y1 - CY), (x2 - CX, y2 - CY)))
 
-    # colinear-merge chains (same idiom as the render seg merge)
+    # colinear-merge chains (same idiom as the render seg merge), TWO
+    # passes (2026-08-29): first in the map's natural winding, then
+    # endpoint-CANONICALIZED and merged again — DOOM draws wall runs in
+    # either winding, and antiparallel neighbours never chain in one
+    # pass. The s62 adoption (phase-existential flood) overflowed the
+    # u8 index space until this bought the merges back (215 -> 204).
+    # Solid records are direction-blind everywhere that matters: the
+    # box test is a line-straddle, and the slide projection (d.w)w is
+    # invariant under w -> -w (the +8 angle byte flips by 32, the
+    # projection doesn't).
     segs = raw
-    merged = True
-    while merged:
-        merged = False
-        out = []
-        used = [False] * len(segs)
-        bystart = collections.defaultdict(list)
-        for i, (a, b) in enumerate(segs):
-            bystart[a].append(i)
-        for i, (a, b) in enumerate(segs):
-            if used[i]:
-                continue
-            used[i] = True
-            cur = b
-            d = (b[0] - a[0], b[1] - a[1])
-            while True:
-                nxt = None
-                for j in bystart.get(cur, ()):
-                    if used[j]:
-                        continue
-                    c, e = segs[j]
-                    d2 = (e[0] - c[0], e[1] - c[1])
-                    if d[0] * d2[1] == d[1] * d2[0] and d[0] * d2[0] + d[1] * d2[1] > 0:
-                        nxt = j
+    for _pass in range(2):
+        if _pass:
+            segs = [(a, b) if a < b else (b, a) for a, b in segs]
+        merged = True
+        while merged:
+            merged = False
+            out = []
+            used = [False] * len(segs)
+            bystart = collections.defaultdict(list)
+            for i, (a, b) in enumerate(segs):
+                bystart[a].append(i)
+            for i, (a, b) in enumerate(segs):
+                if used[i]:
+                    continue
+                used[i] = True
+                cur = b
+                d = (b[0] - a[0], b[1] - a[1])
+                while True:
+                    nxt = None
+                    for j in bystart.get(cur, ()):
+                        if used[j]:
+                            continue
+                        c, e = segs[j]
+                        d2 = (e[0] - c[0], e[1] - c[1])
+                        if d[0] * d2[1] == d[1] * d2[0] and d[0] * d2[0] + d[1] * d2[1] > 0:
+                            nxt = j
+                            break
+                    if nxt is None:
                         break
-                if nxt is None:
-                    break
-                used[nxt] = True
-                cur = segs[nxt][1]
-                merged = True
-            out.append((a, cur))
-        segs = out
+                    used[nxt] = True
+                    cur = segs[nxt][1]
+                    merged = True
+                out.append((a, cur))
+            segs = out
     assert len(segs) < 256, f'{len(segs)} collision segs (u8 indexing)'
     colsegs = [(a[0], a[1], b[0] - a[0], b[1] - a[1]) for a, b in segs]
 
@@ -245,6 +267,8 @@ def build():
         elif special in (88, 36) and tag in tag2mover:
             walk_lines.append((x1, y1, x2 - x1, y2 - y1, tag2mover[tag]))
     assert len(use_lines) <= 16 and len(walk_lines) <= 8
+    assert len(use_lines) == 9, \
+        'n_use changed: regenerate WALKTAB_BASE in gen_abi (USETAB+1+n_use*9)'
     # P_UseLines ordering: DOOM picks the NEAREST crossed line; the 6502
     # scans first-in-table. These are observationally identical iff no
     # single USE_RANGE trace can cross two use lines with DIFFERENT
@@ -307,11 +331,18 @@ def build():
     collist = []
     universe = (list(colsegs)
                 + [(p[0], p[1], p[2], p[3]) for p in ports])
+    # PURE-grid membership (2026-08-29, was +-RADIUS slop): the scan
+    # tests BOTH box-edge columns (c0 = col(x-16), c1 = col(x+16)), and
+    # the box x-range is covered by their union, so a record overlapping
+    # the box always sits in one of the two scanned pure columns. Wall
+    # extents CLAMP to the edge columns so perimeter walls beyond the
+    # rect (the ld127/ld332 class) stay listed. -43 list bytes — the
+    # s62 adoption overflowed the COLIDX windows without this.
+    def _cc(x):
+        return max(0, min(COLS - 1, (x - RAWX_MIN) >> 7))
     for c in range(COLS):
-        cx0 = RAWX_MIN + c * 128 - RADIUS
-        cx1 = RAWX_MIN + (c + 1) * 128 + RADIUS
         mine = [i for i, (x1, y1, dx, dy) in enumerate(universe)
-                if max(x1, x1 + dx) >= cx0 and min(x1, x1 + dx) <= cx1]
+                if _cc(min(x1, x1 + dx)) <= c <= _cc(max(x1, x1 + dx))]
         colidx.append((len(collist), len(mine)))
         collist.extend(mine)
 
@@ -446,9 +477,9 @@ def blobs(flat=True):
     # pages SEG for its list) so the widened COLSEG fits bank B.
     if flat:
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
-                 minpass=0xE910, mv_ss_id=0xE980, mv_ss_info=0xE988,
+                 minpass=0xE910, mv_ss_id=0xE998, mv_ss_info=0xE9A0,
                  usetab=0xE918, usevec=USEVEC_FLAT,
-                 cymin=0x7F10, cymax=0x8000, cyport=0x80C7, sil=0x7180)
+                 cymin=0x7F3C, cymax=0x8008, cyport=0x80D4, sil=0x7180)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -463,8 +494,8 @@ def blobs(flat=True):
         # planes; ss_info died into SS_SI's top bits (MV_CEIL carries the
         # per-mover ceiling flag it used to hold in b7)
         A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8D00,
-                 minpass=0xBFC0, mv_ss_id=0xBFC6, mv_ss_info=0xBFCE,
-                 usetab=0xBE00, cymin=0xB200, cymax=0xB600, cyport=0xB6C7,
+                 minpass=0xB1BC, mv_ss_id=0xB1C2, mv_ss_info=0xB1CA,
+                 usetab=0xBE00, cymin=0xB200, cymax=0xB600, cyport=0xB6CC,
                  sil=0xB198)
     import math
     seg_blob = bytearray()
@@ -486,11 +517,21 @@ def blobs(flat=True):
         idx_blob += struct.pack('<HB', list_base + off, cnt)
     idx_blob += bytes(m['collist'])
     ub = bytearray([len(m['use_lines'])])
+    # use AND walk records carry 2 extra BIASED HI-BYTE y-bounds
+    # (stride 11, 2026-08-29): pu_scan's prescreen rejects on two
+    # unsigned compares instead of the full crossing test — the
+    # walkover scan runs EVERY full-zonly frame. hi(v)^0x80 makes s16
+    # hi bytes compare unsigned; hi truncation only widens the trace.
+    def _bh(v):
+        return ((v >> 8) & 0xFF) ^ 0x80
+    def _rec(x1, y1, dx, dy, act):
+        return struct.pack('<hhhhB', x1, y1, dx, dy, act) + \
+            bytes([_bh(min(y1, y1 + dy)), _bh(max(y1, y1 + dy))])
     for x1, y1, dx, dy, act in m['use_lines']:
-        ub += struct.pack('<hhhhB', x1, y1, dx, dy, act)
+        ub += _rec(x1, y1, dx, dy, act)
     ub.append(len(m['walk_lines']))
     for x1, y1, dx, dy, act in m['walk_lines']:
-        ub += struct.pack('<hhhhB', x1, y1, dx, dy, act)
+        ub += _rec(x1, y1, dx, dy, act)
     # COLPORT: aggregation ports at $0200 BOTH builds (the shared page
     # freed by the records-to-bank-C move; main = no paging in the scan).
     # SHIPPING: $0200 is the OS vector page until the takeover, so no
@@ -582,10 +623,10 @@ def blobs(flat=True):
     assert len(cymin) <= 256 and len(cymax) <= 256, 'cy tables must stay one page (abs,Y prescreen)'
     if flat:
         assert A['idx'] + len(idx_blob) <= A['colseg']
-        assert A['cymin'] == 0x7F10 and A['cymax'] == 0x8000, 'cy home moved: re-audit (the $7F10-$80FF PMOVE-vacated hole; $D700/$D800 are CPM_PSI + RECIP_S)'
+        assert A['cymin'] == 0x7F3C and A['cymax'] == 0x8008, 'cy home moved: re-audit (the $7810-$80FF pocket packs COLSEG+CY exactly; $D700/$D800 are CPM_PSI + RECIP_S)'
         assert A['colseg'] + len(seg_blob) <= A['cymin'], \
             'collision blob reaches the flat CY prescreen tables at $7F10'
-        assert A['cymin'] + len(cymin) <= 0x8000, 'CYMIN reaches CYMAX at $8000'
+        assert A['cymin'] + len(cymin) <= A['cymax'], 'CYMIN reaches CYMAX'
         assert A['cymax'] + len(cymax) <= A['cyport'], 'CYMAX reaches CYPORT'
         assert A['cyport'] + len(cyport) <= 0x8100, 'CYPORT reaches RC_P2L_0 at $8100'
         assert A['sil'] == 0x7180 and A['sil'] + len(sil_blob) <= 0x71A4, \
@@ -593,13 +634,19 @@ def blobs(flat=True):
         assert len(sil_blob) == 36
         assert 0xE750 + len(m['ss_vz']) <= 0xE830
         assert 0xE988 + 8 <= 0xEA00, 'MV_SS lists reach the flat FB'
-        assert A['usetab'] + len(ub) <= 0xEA00, 'USETAB reaches the FB'
+        assert A['usetab'] + len(ub) <= A['mv_ss_id'], \
+            'USETAB reaches the MV_SS lists (stride-11 records)'
+        assert A['mv_ss_info'] + 8 <= 0xE9A8, \
+            'MV_SS lists reach the PMWK area (pm_walkover home, $E9A8)'
     else:
         assert A['cymax'] + len(cymax) <= A['cyport'] and \
             A['cyport'] + len(cyport) <= 0xB700, 'CY tables overrun the $B600 page'
         assert A['sil'] == 0xB198 and A['sil'] + len(sil_blob) <= 0xB200, \
             'SIL home moved: the banked slot is the COLIDX-to-CYMIN gap'
-        assert 0xB8C0 + len(seg_blob) <= 0xBFC0, 'COLSEG overruns MV_MINPASS'
+        assert 0xB8C0 + len(seg_blob) <= 0xC000, \
+            'COLSEG overruns the bank top (MV block moved to $B1BC 2026-08-29)'
+        assert A['sil'] + 36 <= A['minpass'] and A['mv_ss_info'] + 8 <= 0xB200, \
+            'the $B198 window packs SIL+MV_MINPASS+MV_SS lists exactly'
         assert 0xAF8A + len(idx_blob) <= 0xB300, \
             'COLIDX blob reaches the ANIM CFG page at $B300'
         assert len(m['ss_vz']) <= 0x100

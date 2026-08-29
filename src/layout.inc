@@ -151,7 +151,7 @@ OBJ_ART  = OBJ_BITS + LAY_OBJ_BITS_LEN
 .else
 OBJ_ART  = $E830                        ; colmap gap: ss_vz ends $E82C,
                                         ; minpass at $E910 (inside DATA)
-.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $E910, error, "flat art templates reach colmap minpass"
+.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $E8C8, error, "flat art templates reach the PMMU area (pmf_mul24s home, $E8C8)"
 .assert ROM_OBJ_C + 7*LAY_N_OBJ + LAY_OBJ_BITS_LEN <= $B800, error, "flat object planes reach colmap USEVEC"
 .endif
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with

@@ -93,6 +93,7 @@ run('hud_draw', ['tools/test_hud_draw.py'], lambda o: 'HUDDRAW: PASS' in o)
 # silently without a gate (the 2026-08-10 black screen: three arcs
 # of slide between tube-convergence and the first tube boot)
 run('walkseq_check', ['tools/walkseq_check.py'], lambda o: 'walkseq_check: OK' in o)
+run('hud_e2e', ['tools/test_hud_e2e.py'], lambda o: 'HUDFONT-E2E: PASS' in o)
 run('bankedcmp_check', ['tools/bankedcmp_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('anim6502_check', ['tools/anim6502_check.py'], lambda o: 'ANIM6502: PASS' in o)
 # The call graph is a FIRST-CLASS OUTPUT (Eben, 2026-08-09): always

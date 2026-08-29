@@ -655,6 +655,20 @@ EPSILON_F = 12
 .segment "PMZ"                    ;  (above the DBOUND plane, below the
 .endif                            ;  $4E00 VXC planes — ships zero,
 .endmacro                         ;  render-untouched, audited 2026-08-29)
+.macro SEG_PMMU
+.if ::BANKED
+.segment "PMOVE"                  ; pmf_mul24s: banked stays in the
+.else                             ;  PMOVE region; flat rides the
+.segment "PMMU"                   ;  OBJ_ART-to-minpass gap $E8C8
+.endif
+.endmacro
+.macro SEG_PMWO
+.if ::BANKED
+.segment "PMB4"                   ; walkover firing: banked rides the
+.else                             ;  CODE tail; flat takes the USETAB-
+.segment "PMWK"                   ;  to-FB tail ($E9A8, after the MV_SS
+.endif                            ;  repack)
+.endmacro
 .macro SEG_PMSF
 .if ::BANKED
 .segment "CODE"                   ; silent-line fast-commit gate: banked
@@ -675,9 +689,9 @@ EPSILON_F = 12
 .if ::BANKED
 .segment "CODE"                   ; pm_column: banked stays in CODE (its
 .else                             ;  pre-physics home — moving it shifted
-.segment "PMOVE"                  ;  the render tail, +0.35% MEAN in pure
-.endif                            ;  alignment noise); flat CODE is at the
-.endmacro                         ;  $4E00 cap, so flat rides PMOVE slack
+.segment "PMEXT"                  ;  the render tail, +0.35% MEAN in pure
+.endif                            ;  alignment noise); flat rides PMEXT
+.endmacro                         ;  (PMOVE slack went to pm_walkover)
 .macro SEG_BANKC
 .if ::BANKED
 .segment "BANKC"
