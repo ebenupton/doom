@@ -485,6 +485,45 @@ ORG &1900
 .hpset
     STA hudbase
     STY hudbase+1
+    \ The version -> address map is an ASSUMPTION about each MOS (the
+    \ Compact was never verified), so CHECK the base against the glyphs
+    \ before the blitter draws MOS code as characters (2026-08-29, same
+    \ rule as src/hud.s): char 32 (space) must be 8 blank rows and char
+    \ 33 ('!') must have ink in row 2.  A failing base EORs to the other
+    \ candidate; if neither holds a font, &FFxx leaves the HUD dark.
+    JSR hpval
+    BCS hpdone
+    LDA hudbase+1
+    EOR #(HI(HUD_FONT_B) EOR HI(HUD_FONT_MASTER))
+    STA hudbase+1
+    JSR hpval
+    BCS hpdone
+    LDA #&FF
+    STA hudbase+1               \ neither candidate: stay dark
+.hpdone
+    RTS
+
+\ hpval — C=1 iff hudbase holds a real font.  Both candidates are page
+\ aligned, so SMC on the operand HIGH byte is the whole indexing.
+.hpval
+    LDA hudbase+1
+    STA hpv1+2
+    STA hpv2+2
+    LDY #7
+    LDA #0
+.hpv1
+    ORA &FF00,Y                 \ space: 8 blank rows (operand patched)
+    DEY
+    BPL hpv1
+    TAY                         \ Z from the ACCUMULATOR, not DEY
+    BNE hpvno
+.hpv2
+    LDA &FF0A                   \ '!' row 2 must have ink
+    BEQ hpvno
+    SEC
+    RTS
+.hpvno
+    CLC
     RTS
 
 \ ---- debug HUD (H toggles) --------------------------------------------

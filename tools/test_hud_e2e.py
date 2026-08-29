@@ -31,9 +31,13 @@ def run(osver, c02):
     for i,b in enumerate(DRV): bare[abi.DRV_ORG+i]=b
     bare.select(BANK_L0)
     bare[0xFFF4]=0xA2; bare[0xFFF5]=osver; bare[0xFFF6]=0x60      # OSBYTE stub
+    # hud_draw VALIDATES the base against the glyphs (space blank, '!'
+    # inked), so the synthetic fonts must look like fonts: blank space,
+    # then a distinguishable fill per candidate.
     for i in range(96*8):
-        bare[0xC000+i]=0xFF                                        # Model B font
-        bare[0xF900+i]=0xAA                                        # Master font
+        blank = i < 8
+        bare[0xC000+i]=0x00 if blank else 0xFF                     # Model B font
+        bare[0xF900+i]=0x00 if blank else 0xAA                     # Master font
     sc.mpu.memory=bare; mpu=sc.mpu
     mpu.pc=abi.DRV_ORG; mpu.sp=0xDD; mpu.p=0x34
     # boot + a few frames with the HUD forced on (H-key edge needs live HW)

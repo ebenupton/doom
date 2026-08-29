@@ -47,10 +47,21 @@ def assemble(src, defs, out, labels):
     return code, sym
 
 
-def probe(code, org, start, ver, stop_op=None):
+def seed_font(mem, base):
+    """A synthetic MOS font: space blank, every other glyph inked. The
+    probes VALIDATE the base against these two properties (2026-08-29),
+    so a stub with no font is now a legitimate 'absent' answer."""
+    for c in range(32, 128):
+        for i in range(8):
+            mem[base + (c - 32) * 8 + i] = 0 if c == 32 else c
+
+
+def probe(code, org, start, ver, stop_op=None, fonts=()):
     """Run one probe with OSBYTE 129 stubbed to return X = ver."""
     mem = ObservableMemory()
     mem[org:org + len(code)] = list(code)
+    for b in fonts:
+        seed_font(mem, b)
     mem[0xFFF4], mem[0xFFF5], mem[0xFFF6] = 0xA2, ver, 0x60   # LDX #ver : RTS
     mpu = MPU(memory=mem)
     mpu.pc, mpu.sp = start, 0xFD
@@ -84,7 +95,8 @@ def main():
     code, sym = assemble('tube/hostg.asm', [], 'HOSTT', 'build/hostt.labels')
     print('-- hostg (tube host) --')
     for ver, want, label in CASES:
-        mpu, mem = probe(code, sym['start'], sym['hudprobe'], ver)
+        mpu, mem = probe(code, sym['start'], sym['hudprobe'], ver,
+                         fonts=(B, M))          # both candidates real
         if mpu is None:
             print(f'   X=${ver:02X}: hudprobe never returned')
             ok = False
@@ -93,6 +105,19 @@ def main():
         good = got == want
         ok = ok and good
         print(f'   X=${ver:02X} {label:16s} -> ${got:04X} '
+              f'{"ok" if good else f"*** want ${want:04X} ***"}')
+    # hudprobe VALIDATES its guess against the glyphs (2026-08-29): a
+    # wrong version->address map must self-correct, and a machine with
+    # the font at NEITHER candidate must go dark, not blit MOS code.
+    for ver, real, want, label in ((0x01, M, M, 'guess $C000, font at $F900'),
+                                   (0x03, B, B, 'guess $F900, font at $C000'),
+                                   (0x03, None, 0xFF00, 'font at neither')):
+        mpu, mem = probe(code, sym['start'], sym['hudprobe'], ver,
+                         fonts=() if real is None else (real,))
+        got = mem[sym['hudbase']] | (mem[sym['hudbase'] + 1] << 8)
+        good = got == want
+        ok = ok and good
+        print(f'   {label:24s} -> ${got:04X} '
               f'{"ok" if good else f"*** want ${want:04X} ***"}')
 
     # The Master base is the one that cost hardware time, so pin the claim:
