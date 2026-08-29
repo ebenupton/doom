@@ -73,7 +73,7 @@ def render_ref_fb(px, py, ab):
 
 
 def main():
-    from bsp_render_6502 import BspRender6502
+    from banked_bsp import BankedBspRender as BspRender6502
     positions = [(1056, -3616, 128), (1056, -3328, 14), (1308, -3289, 252),
                  (994, -3291, 237), (845, -3084, 215), (1056, -3291, 34),
                  (1056, -3616, 0), (1056, -3616, 64), (800, -3400, 96),
@@ -87,7 +87,8 @@ def main():
     for (px, py, ab) in positions:
         fz = dw.player_floor(px, py)
         eng.render_frame(px, py, ab, fz)
-        eng_fb = bytes(eng.sc.mpu.memory[0xEA00:0xEA00 + 5120])
+        _fb = eng.sc.SCREEN_START      # banked reference (2026-08-29)
+        eng_fb = bytes(eng.sc.mpu.memory[_fb:_fb + 5120])
         ref_fb, clip_ok = render_ref_fb(px, py, ab)
         same = ref_fb == eng_fb
         ndiff = sum(1 for a, b in zip(ref_fb, eng_fb) if a != b)

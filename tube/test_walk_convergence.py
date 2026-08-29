@@ -26,7 +26,7 @@ os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()
 import doom_wireframe as dw
-from bsp_render_6502 import BspRender6502
+from banked_bsp import BankedBspRender, BANK_C
 import symmap
 from py65.devices.mpu6502 import MPU
 from py65.devices.mpu65c02 import MPU as MPU_C02
@@ -153,19 +153,29 @@ class HostRaster:
         return bytes(m[0x5800:0x6C00])
 
 
-class FlatRef:
+class BankedRef:
+    """The reference side: the BANKED build, driven entry-by-entry.
+
+    It used to be the flat build reading its harness FB at $EA00, but the
+    parasite is losing its framebuffer and rasterisers -- the flat image
+    can no longer say what a frame should look like (2026-08-29).  Bank C
+    is selected before each entry, which is the state banked_bsp's own
+    init() leaves behind, so the paging discipline matches the harness.
+    """
     def __init__(self):
-        self.r = BspRender6502(dw.packed_layout, dw.packed_rom_main,
-                               dw.packed_rom_detail, dw.packed_bbox_table,
-                               dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+        self.r = BankedBspRender(dw.packed_layout, dw.packed_rom_main,
+                                 dw.packed_rom_detail, dw.packed_bbox_table,
+                                 dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
         self.m = self.r.sc.mpu.memory
-        self.m[0x70] = 0xEA
-        self.entries = [symmap.sym('anim_tick'), symmap.sym('view_setup'),
-                        symmap.sym('span_init'), symmap.sym('render_frame')]
+        self.m[0x70] = 0x58
+        self.entries = [symmap.sym('anim_tick', banked=1),
+                        symmap.sym('view_setup', banked=1),
+                        symmap.sym('span_init', banked=1),
+                        symmap.sym('render_frame', banked=1)]
         import anim_sectors as an           # real CFG/TABL0/SSMASK — the
-        an.install_6502_tables(self.m, flat=True)   # copro image carries them
-        self.m[symmap.sym('ANIM_ENABLE')] = 1       # too, so movers animate
-        self._call(symmap.sym('anim_init'))         # in lockstep on both sides
+        an.install_6502_tables(self.m, flat=False)  # copro image carries them
+        self.m[symmap.sym('ANIM_ENABLE', banked=1)] = 1   # so movers animate
+        self._call(symmap.sym('anim_init', banked=1))     # on both sides
 
     def _call(self, e):
         # SpanClip6502._run's convention (NOT the old $1FF sentinel: S is
@@ -175,17 +185,18 @@ class FlatRef:
         # RTS lands at $FF00, which is the done marker.
         mpu = self.r.sc.mpu
         m = self.m
+        self.m.select(BANK_C)
         mpu.pc = e
         mpu.sp = 0xDD
         m[0x1DF] = 0xFE; m[0x1DE] = 0xFF
         n = 0
         while mpu.pc != 0xFF00 and n < 6_000_000:
             mpu.step(); n += 1
-        assert mpu.pc == 0xFF00, f"flat entry &{e:04X} wedged"
+        assert mpu.pc == 0xFF00, f"banked entry &{e:04X} wedged"
 
     def frame(self, zp):
         m = self.m
-        for i in range(0xEA00, 0xFE00):
+        for i in range(0x5800, 0x6C00):
             m[i] = 0
         for a, v in zp.items():
             if a == 'bca_ab':
@@ -194,7 +205,7 @@ class FlatRef:
                 m[a] = v
         for e in self.entries:
             self._call(e)
-        return bytes(m[0xEA00:0xFE00])
+        return bytes(m[0x5800:0x6C00])
 
 
 def movement_mirror():
@@ -246,7 +257,7 @@ def movement_mirror():
 def main():
     frames = copro_walk()
     host = HostRaster()
-    ref = FlatRef()
+    ref = BankedRef()
     mirror = movement_mirror()
     bad = 0
     for n, (cmds, zp, drv) in enumerate(frames):

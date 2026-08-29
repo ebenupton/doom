@@ -6,7 +6,7 @@ Stage 1 (copro): the real COPROT binary + parasite image run in py65 with
 a Tube model; frame-1 line commands are captured.
 Stage 2 (host): the real HOSTT binary runs in py65; each command is fed
 through its drawcmd entry (&1903) with scrstrt = $58.
-Stage 3: the $5800 framebuffer must equal BspRender6502's render of the
+Stage 3: the $5800 framebuffer must equal the BANKED build's render of the
 same spawn pose EXACTLY (0 differing bytes)."""
 import os, sys, subprocess
 
@@ -17,7 +17,7 @@ os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()
 import doom_wireframe as dw
-from bsp_render_6502 import BspRender6502
+from banked_bsp import BankedBspRender as BspRender6502
 import symmap
 from py65.devices.mpu6502 import MPU
 from py65.devices.mpu65c02 import MPU as MPU_C02
@@ -111,7 +111,11 @@ def main():
                       dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     px, py, ab = SPAWN
     r.render_frame(px, py, ab, dw.player_floor(px, py))
-    ref = bytes(r.sc.mpu.memory[0xEA00:0xFE00])
+    # The reference is the BANKED framebuffer (2026-08-29).  It used to be
+    # the flat build's harness FB at $EA00, but the parasite is losing its
+    # framebuffer and rasterisers, so the flat image can no longer answer
+    # "what should this frame look like".
+    ref = bytes(r.sc.mpu.memory[0x5800:0x6C00])
 
     cmds = copro_frame_commands()
     got = host_rasterize(cmds)
@@ -126,7 +130,7 @@ def main():
                 print(f"  &{0x5800+i:04X} x={i & 0xF8}+ y={y} ref={a:02x} got={b:02x}")
                 shown += 1
         sys.exit(1)
-    print("PIPELINE CONVERGED — tube FB == flat FB, bit-exact")
+    print("PIPELINE CONVERGED - tube FB == banked FB, bit-exact")
 
 
 if __name__ == '__main__':

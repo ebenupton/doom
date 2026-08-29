@@ -18,7 +18,7 @@ os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()
 import doom_wireframe as dw
 import pyref_render
-from bsp_render_6502 import BspRender6502
+from banked_bsp import BankedBspRender as BspRender6502  # the REFERENCE build
 from symmap import sym
 
 
@@ -35,7 +35,7 @@ def main():
     from bsp_render_6502 import disable_objects
     disable_objects(mem)                    # pyref has no billboards (the
                                             # documented OBJ_DRAW gap)
-    D_ENABLE, D_FWD = sym('D_ENABLE'), sym('D_FWD')
+    D_ENABLE, D_FWD = sym('D_ENABLE', banked=1), sym('D_FWD', banked=1)
     mem[D_ENABLE] = 1
 
     # sequence: (dx-steps, dy-steps are along facing), move kind per frame
