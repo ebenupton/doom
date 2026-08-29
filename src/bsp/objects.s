@@ -118,6 +118,7 @@ obj_bitmask:
 ; main-RAM home (see OBJ_ANYB). Called from anim_init (bank L2/WALK
 ; ambient); pages SEG for the read and restores. $11xx ships nothing,
 ; so hardware needs this; the py65 loaders poke the copy directly. ---
+SEG_OBJB
 ::obj_anyb_fill:
 .if OBJ_DRAW = 0
    RTS
@@ -132,6 +133,8 @@ oaf_lp:
    PAGE BANK_WALK
    RTS
 .endif
+SEG_CODE                                   ; back to the main area (the next
+                                           ; routine must NOT inherit OBJB)
 
 ; ============================================================================
 ; ::obj_subsector — draw every object whose home is subsector A.
@@ -481,6 +484,8 @@ obj_hok:
    LDA zp_prod_h
    ADC #0
    STA obj_a
+   JSR obj_occluded                        ; every column already solid?
+   BCC obj_dsr                             ; then this slot draws NOTHING
 ; b = (H + 8) / 16 ROUNDED (2026-08-25 rounding audit: the LSR chain
 ; truncated — a 1px-flatter lid on ~half of all sizes). The ADC's
 ; carry-out is bit 8 of H+8; ROR folds it back so the u9 sum shifts
@@ -723,6 +728,55 @@ obj_ds_hi:
    BEQ obj_dsx
    JSR fused_merge_range
 obj_dsx:
+   RTS
+
+SEG_OBJG
+; ============================================================================
+; obj_occluded — C=1 if any column of the billboard is still open, C=0 if
+; the walk has already closed every one of them.
+;
+; A billboard spans [cx-a, cx+a] — X[0]/X[5] are exactly those — so this
+; needs only cx and the half width, which is why it sits at the TOP of
+; obj_draw_slot: before the vertex build, the art walk and the tighten.
+; C=0 means invisible: every line would be clipped away, and tightening
+; columns that are already solid is a no-op, so the whole slot is skipped.
+;
+; Measured: 17 of 37 billboards stamped over the 19-pose suite are fully
+; occluded, and they were burning 53,816 cycles drawing nothing.
+;
+; span_has_gap wants NATIVE [lo, hi): zp_i_l = lo, A = hi EXCLUSIVE. The
+; +1 for the exclusive edge rides the SEC into the ADC. It preserves V
+; and lives in main RAM, so this is a plain JSR from either build.
+; A box wholly off screen is left to the clipper (rare, and the test
+; would cost more bytes than it saves).
+; ============================================================================
+obj_occluded:
+   LDX obj_cx_l
+   SEC                                     ; hi = cx + a + 1 (EXCLUSIVE)
+   TXA
+   ADC obj_a
+   TAY
+   LDA obj_cx_h
+   ADC #0
+   BEQ obj_oc_hs
+   LDY #255                                ; past the right edge: clamp
+obj_oc_hs:
+   STY zp_i_h                              ; (objects own zp_i_l/h — the
+   SEC                                     ;  merge pass uses them too)
+   TXA                                     ; lo = cx - a
+   SBC obj_a
+   TAY
+   LDA obj_cx_h
+   SBC #0
+   BEQ obj_oc_ls
+   BPL obj_oc_none                         ; wholly right of the screen
+   LDY #0                                  ; negative: clamp to column 0
+obj_oc_ls:
+   STY zp_i_l
+   LDA zp_i_h
+   JMP span_has_gap                        ; C = the verdict, straight out
+obj_oc_none:
+   CLC
    RTS
 
 SEG_OBJX

@@ -707,6 +707,20 @@ POOL_BDEN   = POOL + $1C0
 .segment "PMWK"                   ;  to-FB tail ($E9A8, after the MV_SS
 .endif                            ;  repack)
 .endmacro
+.macro SEG_OBJB
+.if ::BANKED
+.segment "CODE"                   ; obj_anyb_fill: BOOT ONLY, so flat parks
+.else                             ;  it out of the packed CODE area and
+.segment "OBJB"                   ;  spends the bytes on the early-out
+.endif
+.endmacro
+.macro SEG_OBJG
+.if ::BANKED
+.segment "CODE"                   ; occluded early-out: banked rides the
+.else                             ;  CODE tail; flat gets its own area
+.segment "OBJG"
+.endif
+.endmacro
 .macro SEG_OBJX
 .if ::BANKED
 .segment "CODE"                   ; billboard fast-path probe + direct
