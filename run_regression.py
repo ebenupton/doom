@@ -101,6 +101,12 @@ run('anim6502_check', ['tools/anim6502_check.py'], lambda o: 'ANIM6502: PASS' in
 # so a reintroduced call cycle fails the regression here.
 run('callgraph', ['tools/gen_callgraph.py'], lambda o: 'build/callgraph.pdf' in o and 'CYCLE' not in o)
 run('codescan', ['tools/codescan.py'], lambda o: 'CODESCAN: PASS' in o)
+# BAKED ADDRESSES (Eben, 2026-08-30: "forbidden to ever create a baked
+# address").  A literal address is a copy of a fact -- when the real thing
+# moves the copy does not, and it is a silent read/write, never a build
+# error.  This ratchets: the non-ZP count may fall, never rise.
+run('bakedscan', ['tools/bakedscan.py', '--gate'],
+    lambda o: 'BAKEDSCAN: PASS' in o or 'baseline written' in o)
 # project_y raw-body domain certificate: every (recip, h) pair, S=1..11,
 # vs fp_project_y — the proof behind the |h| <= 127 projection fence
 # (the HALF-UNIT mover tier lives on it, 2026-08-25)

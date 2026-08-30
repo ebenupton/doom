@@ -651,6 +651,16 @@ POOL_BXLO   = POOL + $1A0
 POOL_BDEN   = POOL + $1C0
 
 ; ============================================================================
+; SEG_WORK — THE data segment: writable scratch/workspace/scalars.
+; It exists so storage stops being written as literals.  A baked address
+; is a COPY OF A FACT: when the real thing moves the copy does not, and
+; nothing tells you -- obj_fused's first home sat INSIDE obj_sasp's array
+; and every armed stamp wrote asp=$01 over whichever object held slot 1.
+; Declare it here with .res and reference the LABEL; ld65 places it.
+; (Eben 2026-08-30: forbidden to ever create a baked address.)
+.macro SEG_WORK
+.segment "WORK"
+.endmacro
 .macro SEG_CODE
 .segment "CODE"
 .endmacro
