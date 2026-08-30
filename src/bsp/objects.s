@@ -646,8 +646,11 @@ obj_art_set:
    JSR obj_probe                           ; can this billboard skip the
                                            ; clipper entirely?
 obj_stamp:
-   PAGE BANK_SEG                           ; the art template lives with the
-   LDX obj_e                               ; object data (CODE is full)
+; NO PAGE (2026-08-29): the art templates moved into BANK C, so this loop
+; reads them and draws them under the one PAGE BANK_C the object prologue
+; already did.  It used to page BANK_SEG here and BANK_C again below, twice
+; per template line -- 22.4 ROMSEL stores/frame across the suite.
+   LDX obj_e
    LDY OBJ_ART+0,X
    CPY #OBJ_ART_ARM                        ; control entry? ($FE/$FF)
    BCS obj_ctl
@@ -670,8 +673,7 @@ obj_stamp:
    STA zp_line_yr_l
    LDA obj_Y+1,Y
    STA zp_line_yr_h
-   PAGE BANK_C
-   LDA obj_fused
+   LDA obj_fused                           ; (bank C held since the prologue)
    BEQ obj_plain
    JSR fused_below_raw                     ; authority line: clip + plot +
    JMP obj_st_next                         ; apply in one walk
@@ -692,8 +694,7 @@ obj_st_next:
 ; always the block's leading run.  PAGE eats A but not Y, so the second
 ; test costs one CPY rather than a saved flag.
 obj_ctl:
-   PAGE BANK_C
-   CPY #OBJ_ART_END
+   CPY #OBJ_ART_END                        ; (bank C held; Y survives)
    BEQ obj_art_done
    LDA #1                                  ; $FE: ARM the fused authority run
    STA obj_fused

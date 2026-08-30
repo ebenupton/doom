@@ -146,8 +146,19 @@ OBJ_ART_END     = $FF              ; entry: template finished
 ; past it (the old 25-entry blob ended at $B7FE by luck). Banked keeps
 ; the abutting home in the true 512-byte $A900-$AAFF hole.
 .if ::BANKED
-OBJ_ART  = OBJ_BITS + LAY_OBJ_BITS_LEN
-.assert OBJ_ART + 4*LAY_N_OBJ_ART <= ROM_VERTS_C, error, "banked art templates reach the vertex planes"
+; BANKED HOME IS IN BANK C (2026-08-29), abutting the driver's use vectors
+; ($9B00 + 256 = $9C00) and well clear of the HUD at $A400.  It used to sit
+; with the level data in BANK_SEG, which made obj_stamp thrash: PAGE
+; BANK_SEG to read four art bytes, PAGE BANK_C to draw, every template
+; line.  tools/pagecensus.py measured 22.4 ROMSEL stores/frame in that loop
+; -- ~134 cycles, since a store costs 6 whether or not the bank changes.
+; With the art in bank C the whole stamp loop runs under the one PAGE
+; BANK_C the object prologue already does, and the clipper never pages
+; (there is not a single PAGE in src/clip).
+; NOTE: this home is SEEDED BY PYTHON (banked_bsp.build_banked), so ld65
+; cannot see it -- the asserts here and there are the only guard.
+OBJ_ART  = $9C00
+.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $A400, error, "banked art templates reach the bank-C HUD at $A400"
 .else
 OBJ_ART  = $E830                        ; colmap gap: ss_vz ends $E82C,
                                         ; minpass at $E910 (inside DATA)

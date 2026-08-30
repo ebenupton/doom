@@ -153,6 +153,21 @@ def build_banked(flatr):
         _d = _csym(_nm, banked=1) - 0x8000
         assert _d + len(_blob) <= 0x2400, f'{_nm} runs into the records arenas'
         c[_d:_d + len(_blob)] = _blob
+    # Billboard art templates -> BANK C (2026-08-29), abutting USEVEC.  They
+    # lived with the level data in bank A, which made obj_stamp page BANK_SEG
+    # for four art bytes and BANK_C to draw, EVERY template line: 22.4 ROMSEL
+    # stores/frame (tools/pagecensus.py).  In bank C the loop needs no paging
+    # at all -- the object prologue's PAGE BANK_C covers it, and nothing in
+    # src/clip pages.  This home is Python-seeded, so ld65 cannot police it:
+    # the asserts below and the matching pair in layout.inc are the guard.
+    _art_off = layout['off_obj_art']
+    _art_n = 4 * layout['n_obj_art']
+    _art_d = _csym('OBJ_ART', banked=1) - 0x8000
+    assert _art_d == 0x1C00, f'OBJ_ART banked home moved to ${_art_d + 0x8000:04X}'
+    assert _art_d >= 0x1B00 + 256, 'object art overlaps the driver use vectors'
+    assert _art_d + _art_n <= 0x2400, 'object art runs into the bank-C HUD'
+    c[_art_d:_art_d + _art_n] = rom_main[_art_off:_art_off + _art_n]
+
     # (VXCODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
