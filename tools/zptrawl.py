@@ -86,6 +86,16 @@ def corpus_counts(limit=None):
             pc = mpu.pc
             op = MODES[mem[pc]]
             mnem, mode = op[0].split()[0].upper(), op[1]
+            if mnem == 'JMP' and mode in ('ind', 'iax'):
+                # an indirect JMP READS a pointer pair.  zp_bv_entry is
+                # reached ONLY this way; excluding JMP made the frame-class
+                # vector look untouched, and promoting onto it produced a
+                # wild indirect jump and a 45M-cycle frame (2026-08-30).
+                z = mem[(pc + 1) & 0xFFFF] | (mem[(pc + 2) & 0xFFFF] << 8)
+                if z < 0x100:
+                    hits[z] += 1; hits[(z + 1) & 0xFF] += 1
+                    modes[z]['ind'] += 1
+                mpu.step(); k += 1; continue
             if mnem not in DATA_OPS:
                 mpu.step(); k += 1; continue
             if mode in ZPG:
@@ -224,9 +234,19 @@ def main():
     # the swap list: coldest ZP occupants vs hottest absolute scalars
     cold = sorted(zp.items(), key=lambda kv: kv[1])
     hot = sorted(ab.items(), key=lambda kv: -kv[1])
-    untouched = [a for a in range(0x100) if a not in zp]
+    # NEVER OFFER A NAMED BYTE.  A symbol in $00-$FF means somebody owns
+    # that address, whether or not this corpus happens to touch it --
+    # bca_ab ($62) and zp_bv_entry ($63/$64) live in abi.inc, are written
+    # by the DRIVER, and are read through an indirect JMP.  They looked
+    # free here and they are not.  Constants that merely have small values
+    # (LAY_MAX_DIRS = 128) get excluded too; that is the conservative
+    # direction and costs only candidates, never correctness.
+    owned = set(names)
+    untouched = [a for a in range(0x100) if a not in zp and a not in owned]
+    named_but_cold = [a for a in range(0x100) if a not in zp and a in owned]
 
-    print(f'\n  ZP bytes NEVER touched this corpus: {len(untouched)}')
+    print(f'\n  ZP bytes untouched AND unnamed: {len(untouched)}'
+          f'   (+{len(named_but_cold)} untouched but OWNED -- not offered)')
     if untouched:
         print('    ' + ' '.join(f'${a:02X}' for a in untouched[:32])
               + (' ...' if len(untouched) > 32 else ''))
