@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Translation-coherence vertex cache exactness gate: with VXC_ENABLE=1,
+"""Translation-coherence vertex cache exactness gate: with VXCACHE_ENABLE=1,
 every frame must be byte-identical to the cache-off engine at the same
 (position, angle) — across forward/backward walks, strafes, diagonal and
 fractional-direction steps, interleaved rotations (cold-frame wipes), and
@@ -17,7 +17,7 @@ from bsp_render_6502 import BspRender6502
 from banked_bsp import BankedBspRender
 from symmap import sym
 
-EN = sym('VXC_ENABLE')
+EN = sym('VXCACHE_ENABLE')
 
 
 def mk(enable, cls=BspRender6502):
@@ -48,11 +48,11 @@ def main():
     # A -> B -> A revisit at fixed angle (stale-entry telescoping)
     seq += [(800, -3400, 96), (900, -3400, 96), (800, -3400, 96)]
     # turn-in-place at the spawn (the doom_walk right-turn that shipped
-    # broken 2026-07-10: vxc_ab was a stale banked address, so rotation
+    # broken 2026-07-10: vxcache_ab was a stale banked address, so rotation
     # never went cold and turns reused translated vertices)
     seq += [(1056, -3616, ab) for ab in range(64, 36, -4)]
     bad = 0
-    # BOTH builds: the vxc_ab skew was banked-only — flat-only checking
+    # BOTH builds: the vxcache_ab skew was banked-only — flat-only checking
     # cannot see a banked address twin going stale.
     # BANKED ONLY since 2026-08-30.  This gate compares FRAMEBUFFERS, and
     # the flat build no longer has one: it is the tube parasite, its plot

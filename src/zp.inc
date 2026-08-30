@@ -217,8 +217,8 @@
 .globalzp zp_dcl_out
 .globalzp plotq_n
 .globalzp plotq_mode
-.globalzp vxc_ref_x
-.globalzp vxc_ref_y
+.globalzp vxcache_ref_x
+.globalzp vxcache_ref_y
 .globalzp LC_QUOT_LO
 .globalzp LC_QUOT_HI
 .globalzp zp_line_xl_l
@@ -256,7 +256,7 @@
 .globalzp cp_vev
 .globalzp fw_ax0
 .globalzp LC_TMP_LO
-.globalzp zp_vxc_on
+.globalzp zp_vxcache_on
 .globalzp zp_bca_p1
 .globalzp zp_bca_p1_h
 .globalzp zp_tail_vec
@@ -438,11 +438,11 @@ zp_ox1:                     .res 1 ; [clip]
 RASTER_ZP_SCRSTRT:          .res 1 ; [clip]
    .res 6                               ; FREE $71-$76
 zp_seg_v_idx_l:             .res 1 ; [bsp]; cached: vertex index (u16)
-zp_seg_v_idx_b:             .res 1 ; [bsp]; B = idx>>3 (bitmap/VXC byte
+zp_seg_v_idx_b:             .res 1 ; [bsp]; B = idx>>3 (bitmap/VXCACHE byte
    .res 2                               ; FREE $79-$7A
-zp_vf_vec0:                 .res 1 ; [bsp]; VXC fetch vector, junior side —
-                                  ; vxc_frame aims it at sxv0_vfoff (off)
-                                  ; or sxv0_vxcon (on); bca VECTORED idiom.
+zp_vf_vec0:                 .res 1 ; [bsp]; VXCACHE fetch vector, junior side —
+                                  ; vxcache_frame aims it at sxv0_vfoff (off)
+                                  ; or sxv0_vxcache_on (on); bca VECTORED idiom.
                                   ; (Briefly deleted for TRUE16 always-on
                                   ; 2026-08-10, restored same day: the off
                                   ; arm is compute-only per the canonical
@@ -494,9 +494,9 @@ plotq_n:                    .res 1 ; [clip]; plot queue write index (bytes,
 plotq_mode:                 .res 1 ; [clip]; $80 = enqueue (driver arms per
                                   ; frame until the flip vsync passes),
                                   ; $00 = draw direct (harness default)
-vxc_ref_x:                  .res 1 ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
+vxcache_ref_x:                  .res 1 ; [bsp] s16 COUNT frame ref = rns(to_view(0,0),3)
    .res 1                               ; FREE $A3-$A3
-vxc_ref_y:                  .res 1 ; [bsp] s16 count ref (y); TRUE16 2026-08-10
+vxcache_ref_y:                  .res 1 ; [bsp] s16 count ref (y); TRUE16 2026-08-10
                                   ; ($A6-$A7 FREE — the s24 third bytes died)
                                   ; absolute — six warm-path ADCs per vertex
    .res 1                               ; FREE $A5-$A5
@@ -543,9 +543,9 @@ zp_i_h:                     .res 1 ; [clip+ang]; interval hi (= bca_ihi)
 cp_vev:                     .res 1 ; [clip]
 fw_ax0:                     .res 1 ; [clip]; apply range
 LC_TMP_LO:                  .res 1 ; [clip]
-zp_vxc_on:                  .res 1 ; [bsp]; VXC gate flag (vxc_frame sets it
-                                  ; from VXC_ENABLE; the vertex-fetch entry
-                                  ; branches — vxc_jsr_site SMC retired
+zp_vxcache_on:                  .res 1 ; [bsp]; VXCACHE gate flag (vxcache_frame sets it
+                                  ; from VXCACHE_ENABLE; the vertex-fetch entry
+                                  ; branches — vxcache_jsr_site SMC retired
                                   ; 2026-07-18)
 zp_bca_p1:                  .res 1 ; [ang]; s16 pair with $C9
 zp_bca_p1_h:                .res 1 ; [ang]
@@ -683,10 +683,10 @@ zp_seg_v2_r_s = VX2+12
 ; CROSS-UNIT: written by clip/dcl.s via the zp_dcl_rec_buf pointer,
 ; ARMED (hi byte + count reset) by bsp/seg_emit.s, read by clip/tfr.s.
 ; Registry home since 2026-08-09: the arm sites used to hardcode the
-; page numbers (clip-local equate) — the trap that bit the VXC move.
+; page numbers (clip-local equate) — the trap that bit the VXCACHE move.
 ; Records arenas moved UP 2026-08-14 (Eben: 'move the records up, keep
 ; the span state down for has_gap'): banked = the bank C free block left
-; by the VXC-planes-to-main move (all touchers run under the emit
+; by the VXCACHE-planes-to-main move (all touchers run under the emit
 ; cascade's PAGE BANK_C — the ONE seg-context count reset moved below
 ; the page); flat = the empty flat side of the driver-reservation zone.
 ; $0200-$03FF freed in the SHARED map (both builds) — the movement-code
@@ -747,7 +747,7 @@ bca_ab = BCA_AB                   ; [ang+bsp]; = $62 (zp_buf's slot, freed
                                   ; view angle byte (was BCA_WS+$2F). ONE
                                   ; truth: the value lives in the generated
                                   ; abi.inc (included above) — drivers
-                                  ; poke the same constant. vxc_ab aliases.
+                                  ; poke the same constant. vxcache_ab aliases.
                                   ; NOT $64: despite the old 'bca_vis $64
                                   ; free' note, $64 is zp_bv_entry's HI
                                   ; byte ($63/$64 pair, w=2) — the drivers
@@ -771,7 +771,7 @@ bca_ab = BCA_AB                   ; [ang+bsp]; = $62 (zp_buf's slot, freed
 ; RASTER_ENTRY writes it mid-frame; nothing may live here across draws)
 ; $7A free for bsp use (was zp_seg_v_cache_l; NB the NJ rasteriser
 ; scratches $7A as errs — phase-disjoint). $7B free (was _cache_h) —
-; the vcache is page-split SoA with baked senior arms, no pointer.
+; the vrcache is page-split SoA with baked senior arms, no pointer.
 ; FREE 2026-07-15 (cross-core unification): zp_seg_dxraw_l = $7C
 ; ($7D NOT free despite the old dxraw_h note: zp_vf_vec1 = $7D-$7E.)
 ; ($7E/$7F: zp_vf_vec1 hi byte — see the $7B block)
@@ -855,7 +855,7 @@ bca_ab = BCA_AB                   ; [ang+bsp]; = $62 (zp_buf's slot, freed
 ; NOT $E3+: that range sits INSIDE the VX1/VX2 endpoint structs
 ; ($E2-$FF, stride 15) — zpcheck's free list does not expand w= struct
 ; widths (the $64 trap, again). NOT $7E: zp_vf_vec1 spans $7D-$7E
-; (the dxraw_h 'free' note was stale — vector hi byte, VXC dispatch
+; (the dxraw_h 'free' note was stale — vector hi byte, VXCACHE dispatch
 ; corrupts). Homes: the ang module's registered free singles $89-$8C
 ; + the twice-audited $52/$53 pair.
 ; ($52/$53 FREE again 2026-08-10: the zp_cr ext bytes died with TRUE16
@@ -900,7 +900,7 @@ EPSILON_F = 12
 ; Content order within a segment = object order (slope_div, span_clip,
 ; bsp_render) then include order — ONE file to read for layout. The
 ; old 25-name zoo (MAIN/LO/B/D/W/ZC/RNSPG/RPAIR/ZZTAIL/SEL/LOX/ANG/
-; ANGX/ANIM*/RCCODE/VXCODE/.._BK twins) died here; so did its landmine
+; ANGX/ANIM*/RCCODE/VXCACHE_CODE/.._BK twins) died here; so did its landmine
 ; class (ZZTAIL fall-through, cfg-order region shifts).
 Y_BIAS = 48                             ; bias Y so visible [0,159] maps to [48,207] within u8
 VIS_YMAX = Y_BIAS + 159                 ; = 207: maximum biased visible Y
@@ -935,7 +935,7 @@ POOL_IB     = POOL + $180
 ; only one anchor pair — renamed so the two sides read symmetrically.) Each boundary is
 ; stored at its SOURCE line's own extent, so the sweep no longer has to
 ; interpolate both sources onto a common anchor when it emits a span —
-; see the note in clip/tfr.s flush_pending. (VXC_ENABLE/vxc_prev_ab
+; see the note in clip/tfr.s flush_pending. (VXCACHE_ENABLE/vxcache_prev_ab
 ; moved $19DB/DC -> $19DD/DE to clear the room.)
 POOL_BXLO   = POOL + $1A0
 POOL_BDEN   = POOL + $1C0

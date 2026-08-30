@@ -1,8 +1,8 @@
 
 ; ============================================================================
-; Translation-coherence vertex cache (VXC) — DATA + frame hook + cold-store
+; Translation-coherence vertex cache (VXCACHE) — DATA + frame hook + cold-store
 ; leaf. THE PER-VERTEX HOT PATH IS NOT HERE: it lives in seg_xform.s
-; (vxc_arm — coherence probe + inline warm reconstruction), so the whole
+; (vxcache_arm — coherence probe + inline warm reconstruction), so the whole
 ; vertex pipeline reads top-to-bottom in one file. This file keeps what
 ; is per-FRAME or storage.
 ;
@@ -15,19 +15,19 @@
 ;
 ; with L exactly linear. We store base' = total - ref = L(w) ONCE per
 ; vertex per angle epoch (the birth store, inlined per side in the
-; seg_xform.s vxcon islands), and every warm read is
-; base' + this frame's ref (two s24 adds, inline in seg_xform's vxc_arm)
+; seg_xform.s vxcache_on islands), and every warm read is
+; base' + this frame's ref (two s24 adds, inline in seg_xform's vxcache_arm)
 ; — bit-identical to br_to_view by the linearity, verified by
 ; tools/vxcache_check.py (both builds, warm + rotation legs). Staleness
 ; is structurally impossible within an epoch; an angle change wipes
-; VXC_VALID and that is the ONLY invalidation. (The earlier CACC/
+; VXCACHE_VALID and that is the ONLY invalidation. (The earlier CACC/
 ; ref_cold epoch-anchor formulation was equivalent; origin form needs no
 ; anchor state — $05E3-$05E8 freed.)
 ;
-; DISPATCH: vxc_frame (JSR'd from view_setup's tail, view.s) publishes
-; ref into vxc_ref_x/y and SMC-patches the operand of seg_xform's
-; vxc_jsr_site JSR between br_to_view_fetch (disabled — zero cost,
-; byte-identical path) and vxc_arm (enabled). VXC_ENABLE lives in low
+; DISPATCH: vxcache_frame (JSR'd from view_setup's tail, view.s) publishes
+; ref into vxcache_ref_x/y and SMC-patches the operand of seg_xform's
+; vxcache_jsr_site JSR between br_to_view_fetch (disabled — zero cost,
+; byte-identical path) and vxcache_arm (enabled). VXCACHE_ENABLE lives in low
 ; RAM ($05DB, abi.inc) so drivers set it without paging.
 ;
 ; MEMORY: valid bitmap + state $05A0-$05FF (unbanked, both builds).
@@ -41,18 +41,18 @@
 ; select = B & $20 (B = idx>>3, header key byte B; B >= 32 <=> idx >= 256).
 ; ============================================================================
 ; --- data equates (unbanked) ---
-VXC_VALID   = $0780                     ; 57 B — on THE bitmap page
-; (VXC_ENABLE comes from abi.inc)
-vxc_prev_ab = $0B5E                     ; moved with the scalars block, then
+VXCACHE_VALID   = $0780                     ; 57 B — on THE bitmap page
+; (VXCACHE_ENABLE comes from abi.inc)
+vxcache_prev_ab = $0B5E                     ; moved with the scalars block, then
                                         ; $19DC -> $19DE 2026-08-22 (with
-                                        ; VXC_ENABLE) to clear $19A0-$19DF for
+                                        ; VXCACHE_ENABLE) to clear $19A0-$19DF for
                                         ; the span pool's two new planes
                                         ; 2026-08-18 (the hard $05DC literal
                                         ; survived the sqr swap and wrote the
                                         ; frame angle into SQR2_HI[$DC] —
                                         ; found by the vxcache ON!=OFF gate
                                         ; via a 4-frame cold-strafe repro)
-; (vxc_ref_x/y promoted to ZP 2026-07-14 — defined in zp.inc so the
+; (vxcache_ref_x/y promoted to ZP 2026-07-14 — defined in zp.inc so the
 ; forward references in seg_xform.s assemble as zero-page: the warm
 ; path does six ADCs against them per vertex.)
 ;                                        ; s24 this frame's ref = to_view(0,0)
@@ -68,43 +68,43 @@ vxc_prev_ab = $0B5E                     ; moved with the scalars block, then
 ; are the below-line frees: $0200-$03FF (ex-SQRH), $0600-$07FF ($0600
 ; ex-flat-RC_P1L_0 + $0700 vacated by TOP_RECORDS -> $0B00), and the
 ; EV16 pages $1600-$19FF. This spends the LAST free below-line pages.
-; Payoff: the vxcon serve and cr_recover lose ALL bank-C paging
-; (VXC_VALID was already main), banked frees $9700-$9EFF -> with the
+; Payoff: the vxcache_on serve and cr_recover lose ALL bank-C paging
+; (VXCACHE_VALID was already main), banked frees $9700-$9EFF -> with the
 ; clipper tail gap a ~2.7KB contiguous bank-C block; flat frees
 ; $7500-$7CFF.
 ; BANKED: the planes moved into the BANK A window 2026-08-17, directly above
-; VCACHE (see bsp/header.s for the audit that says this costs nothing). FLAT
+; VRCACHE (see bsp/header.s for the audit that says this costs nothing). FLAT
 ; keeps them in main.
 .if ::BANKED
-VXC_BASE = $A000
+VXCACHE_BASE = $A000
 .else
-VXC_BASE = $A600                        ; REHOMED 2026-08-30 into the tail the
+VXCACHE_BASE = $A600                        ; REHOMED 2026-08-30 into the tail the
                                         ; flat vplot body vacated (VPLOTF used
                                         ; 1,279 B, now 158).  X pair only: it is
                                         ; what capped flat CODE at $4E00.  Y pair
                                         ; stays at $5200/$5400 -- CODE does not
                                         ; need to reach past $51FF.
 .endif
-VXC_XLO  = VXC_BASE + $000
-VXC_XHI  = VXC_BASE + $200
+VXCACHE_XLO  = VXCACHE_BASE + $000
+VXCACHE_XHI  = VXCACHE_BASE + $200
 .if ::BANKED
-VXC_YLO  = VXC_BASE + $400
-VXC_YHI  = VXC_BASE + $600
-.assert VXC_YHI + $200 <= $AB00, error,  "banked VXC must fit below the vertex planes"
+VXCACHE_YLO  = VXCACHE_BASE + $400
+VXCACHE_YHI  = VXCACHE_BASE + $600
+.assert VXCACHE_YHI + $200 <= $AB00, error,  "banked VXCACHE must fit below the vertex planes"
 .else
-VXC_YLO  = $5200                        ; flat: the CODE-tail cache run of the
-VXC_YHI  = $5400                        ; 2026-08-26 low-RAM map ($4E00 X pair,
+VXCACHE_YLO  = $5200                        ; flat: the CODE-tail cache run of the
+VXCACHE_YHI  = $5400                        ; 2026-08-26 low-RAM map ($4E00 X pair,
                                         ; $5200/$5400 Y pair); planes are
                                         ; self-contained 512 B, no cross-
                                         ; plane address arithmetic anywhere
 .endif
 
-; the frame angle byte: abi.inc's BCA_AB (the old private vxc_ab copy
+; the frame angle byte: abi.inc's BCA_AB (the old private vxcache_ab copy
 ; shipped the 2026-07-10 broken-turn disc)
-vxc_ab = BCA_AB
+vxcache_ab = BCA_AB
 
 ; ============================================================================
-; (vxc_to_view + vxc_warm_load flattened into seg_xform.s as vxc_arm,
+; (vxcache_to_view + vxcache_warm_load flattened into seg_xform.s as vxcache_arm,
 ; 2026-07-12 — the per-vertex hot path lives in ONE file now. This file
 ; keeps the data planes, the cold-store leaf and the per-frame hook.)
 ; ============================================================================
@@ -115,11 +115,11 @@ vxc_ab = BCA_AB
 SEG_HIGH
 ; --- birth store: base' = total - ref (= L(w), translation-invariant) ---
 ;   in : zp_br_vx/vy lo/hi/ext (totals just computed by br_to_view),
-;        zp_seg_v_idx_l/hi, vxc_ref_x/y
+;        zp_seg_v_idx_l/hi, vxcache_ref_x/y
 ;   out: this vertex's 6 plane bytes. base' + ANY later frame's ref
 ;        reconstructs that frame's exact totals (L is exactly linear), so
 ;        entries never go stale within an angle epoch.
-; (the store lives INLINE in seg_xform.s vxcon islands 2026-08-09,
+; (the store lives INLINE in seg_xform.s vxcache_on islands 2026-08-09,
 ; side baked; it was previously a macro expanded at its single
 ;  call site, 2026-07-17.)
 
@@ -129,11 +129,11 @@ SEG_HIGH
 ; only low RAM, ZP and resident MAIN (br_to_view, the SMC site).
 ; ============================================================================
 SEG_HIGH
-;   in : VXC_ENABLE; vxc_ab (this frame's angle byte — alias of bca_ab,
-;        written per frame by the caller); vxc_prev_ab; the frame view
+;   in : VXCACHE_ENABLE; vxcache_ab (this frame's angle byte — alias of bca_ab,
+;        written per frame by the caller); vxcache_prev_ab; the frame view
 ;        context (read by br_to_view)
-;   out: vxc_jsr_site operand patched; vxc_ref_x/y, vxc_refc_x/y,
-;        vxc_prev_ab and VXC_VALID maintained
+;   out: vxcache_jsr_site operand patched; vxcache_ref_x/y, vxcache_refc_x/y,
+;        vxcache_prev_ab and VXCACHE_VALID maintained
 ; pseudocode:
 ;   if not ENABLE: restore JSR br_to_view_fetch; return
 ;   ref = to_view(0,0)                      # this frame's reference shift
@@ -141,8 +141,8 @@ SEG_HIGH
 ;     prev_ab = ab; ref_cold = ref; CACC = 0; VALID[:] = 0
 ;   else:                                   # warm: same-angle translation
 ;     CACC = ref - ref_cold
-;   patch JSR -> vxc_to_view
-; (vxc_frame is a MACRO now — bsp/inline.s — expanded at its single
+;   patch JSR -> vxcache_to_view
+; (vxcache_frame is a MACRO now — bsp/inline.s — expanded at its single
 ;  call site, 2026-07-17.)
 
 ; restore the segment for subsequently-included parts (they inherit)

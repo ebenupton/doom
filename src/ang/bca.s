@@ -37,7 +37,7 @@
 RC_P1L_0 = $A900                        ; bank L2 CACHES group (2026-07-21
 RC_P1L_1 = $AA00                        ; regroup): CPM $A400, psi planes
 RC_P2L_0 = $AB00                        ; $A700-$ACFF, RCACHE_STATE $AD00,
-RC_P2L_1 = $AC00                        ; VWHC $AE00-$B2FF — every cache
+RC_P2L_1 = $AC00                        ; VYCACHE $AE00-$B2FF — every cache
 RC_PH_0  = $AD00                        ; beside its neighbours, free tail
 RC_PH_1  = $AE00                        ; $B500-$BFFF contiguous
 .else

@@ -20,7 +20,7 @@
 ; plus a per-subsector "has objects" bitmap so an ordinary subsector
 ; costs one bit test and nothing else.
 ;
-; BANK CONTRACT: pages BANK_SEG itself (table, recips and the VWHC memo
+; BANK CONTRACT: pages BANK_SEG itself (table, recips and the VYCACHE memo
 ; all live there), then BANK_C for the clipper.  Exits under BANK_C,
 ; exactly as an emit arc does.
 ; ============================================================================
@@ -272,17 +272,17 @@ obj_rwp:
 ; --- + the frame's translation ref (vertex pipeline's own ref add) ---
    CLC
    LDA zp_br_vx_l
-   ADC vxc_ref_x+0
+   ADC vxcache_ref_x+0
    STA zp_br_vx_l
    LDA zp_br_vx_h
-   ADC vxc_ref_x+1
+   ADC vxcache_ref_x+1
    STA zp_br_vx_h
    CLC
    LDA zp_br_vy_l
-   ADC vxc_ref_y+0
+   ADC vxcache_ref_y+0
    STA zp_br_vy_l
    LDA zp_br_vy_h
-   ADC vxc_ref_y+1
+   ADC vxcache_ref_y+1
    STA zp_br_vy_h
 ; --- near clip: behind iff vy < 16 counts (the seg pipeline's test) ---
    BMI obj_ret

@@ -136,7 +136,7 @@ class SubsectorDiffer:
         # state. Re-sync VDONE from the python done-set so the next
         # 6502 subsector sees the served-vertex history python does.
         # (By symbol since 2026-07-26 — VDONE moved from $0600 to the
-        # block adjacent to VCACHE_VALID; the hardcoded page was a
+        # block adjacent to VRCACHE_VALID; the hardcoded page was a
         # private address copy, exactly the forbidden kind.)
         vdone = _sym('VDONE')
         for i in range(64):

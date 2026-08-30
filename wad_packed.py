@@ -179,12 +179,12 @@ SF_APEDGE2 = 0x01  # emit aperture edge at v2 when NOVT2 suppresses the vertical
 
 # ── Vertex cache (RAM) ─────────────────────────────────────────────────
 
-VCACHE_ENTRY = 8    # shift 3
+VRCACHE_ENTRY = 8    # shift 3
 VC_VX = 0; VC_VY = 2; VC_VYIDX = 4; VC_SX = 6  # all s16/u16
 
 # ── VWH cache (RAM) ────────────────────────────────────────────────────
 
-VWHCACHE_ENTRY = 2  # s16 screen_y (needs 16-bit for off-screen)
+VYCACHE_ENTRY = 2  # s16 screen_y (needs 16-bit for off-screen)
 
 # ── Clip spans (RAM) ───────────────────────────────────────────────────
 #
@@ -307,7 +307,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # Everything else follows at NODE_SOA_SIZE.
     assert n_nodes <= 256 and n_ss <= 256
     assert n_verts <= 512, \
-        "VCACHE planes are page-split on the senior bit (B & 0x20)"
+        "VRCACHE planes are page-split on the senior bit (B & 0x20)"
 
     off_nodes = 0
     off_ss = NODE_SOA_PAGES * 256
@@ -603,7 +603,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # count rounding) = 833.98 units < 32767/32 = 1023.97. Update the
     # 320 if the walk clamp box ever grows.
     _PLAYER_MAX_HYPOT_UNITS = 320
-    # (the SQR_MIRROR-in-the-VXC-tail constraint died 2026-08-18: the
+    # (the SQR_MIRROR-in-the-VXCACHE-tail constraint died 2026-08-18: the
     #  mirror protrudes into the stack page at $01E0 now, so the senior
     #  vertex ceiling is the plain plane size again)
     assert len(fp_vertexes) <= 512, "vertex planes are page-split on 512"
@@ -850,8 +850,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             rom_main[off_dirs + 2 * MAX_DIRS + did] = \
                 ((0x80 if pdy < 0 else 0) | (0x40 if pdx < 0 else 0))
         # v1/v2 stored as (A = idx & 255, B = idx >> 3) — 2026-07-12: B is
-        # the valid-bitmap byte index AND the VXC_VALID index, consumed raw
-        # by the 6502; idx*8 (vcache) and idx*4 (verts) rebuild from A/B in
+        # the valid-bitmap byte index AND the VXCACHE_VALID index, consumed raw
+        # by the 6502; idx*8 (vrcache) and idx*4 (verts) rebuild from A/B in
         # pure A-register shifts. Bijective: idx = B*8 + (A & 7).
         _vk = lambda v: (v & 0xFF) | ((v >> 3) << 8)
         struct.pack_into('<HH', rom_main, o, _vk(s[0]), _vk(s[1]))
@@ -998,9 +998,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
 
     # ── RAM sizing ──────────────────────────────────────────────────────
 
-    vcache_size = n_verts * VCACHE_ENTRY
-    vcache_valid = (n_verts + 7) // 8
-    vwh_cache_size = n_vwh * VWHCACHE_ENTRY
+    vrcache_size = n_verts * VRCACHE_ENTRY
+    vrcache_valid = (n_verts + 7) // 8
+    vwh_cache_size = n_vwh * VYCACHE_ENTRY
     vwh_valid = (n_vwh + 7) // 8
     # Node general partitions -> DIR delta form (2026-07-15): repurpose
     # NODE_DXLO/DXHI as (dir id, sign byte) — the 6502 general arm shares
@@ -1077,7 +1077,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                 pg5 = off_nodes + 5 * 256 + c
                 rom_main[pg5] |= fl
 
-    spans_offset = vcache_size + vcache_valid + vwh_cache_size + vwh_valid
+    spans_offset = vrcache_size + vrcache_valid + vwh_cache_size + vwh_valid
     ram_size = spans_offset + SPAN_TOTAL
 
     # DBOUND: per-dir exactness bound, one pass over the FINAL dir table
@@ -1108,10 +1108,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'rom_recip_size': rom_recip_size,
         'off_sin_mag': off_sin_mag, 'off_sin_unity': off_sin_unity,
         'off_recip_m8': off_recip_m8,
-        'ram_vcache': 0,
-        'ram_vcache_valid': vcache_size,
-        'ram_vwh_cache': vcache_size + vcache_valid,
-        'ram_vwh_valid': vcache_size + vcache_valid + vwh_cache_size,
+        'ram_vrcache': 0,
+        'ram_vrcache_valid': vrcache_size,
+        'ram_vwh_cache': vrcache_size + vrcache_valid,
+        'ram_vwh_valid': vrcache_size + vrcache_valid + vwh_cache_size,
         'ram_spans': spans_offset,
         'ram_size': ram_size,
     }

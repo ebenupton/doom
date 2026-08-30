@@ -1647,7 +1647,7 @@ PLOTQ = $0600
 ; ($1100-$11FF is FREE in BOTH builds since 2026-08-17: it held the driver's
 ;  per-frame beam-phase cadence ring, retired with the $0A50 frame counter
 ;  that indexed it — $0A50 is VC_RLO+$50, so that INC was corrupting one
-;  cached vertex rotation per frame. Neighbours: PLOTQ below, VXC_XLO above.)
+;  cached vertex rotation per frame. Neighbours: PLOTQ below, VXCACHE_XLO above.)
 ; ============================================================================
 ; plotq_arm / plotq_off — retarget the dv_emit dispatch (dv_emit_op) and
 ; set the mode. The mode flips twice a frame; the site runs hundreds of

@@ -56,40 +56,40 @@ render_frame:
 ; --- Per-frame init (the standalone br_init_frame is retired).
 ; Records-pointer ground state: the lo byte is never written non-zero
 ; anywhere (record pages are page-aligned) and every draw site
-; arms/disarms the hi byte explicitly. Then the vcache valid-bitmap
+; arms/disarms the hi byte explicitly. Then the vrcache valid-bitmap
 ; clear — entries are player-relative, so every frame starts cold
 ; (the VWH projection cache, by contrast, is self-validating and
-; persists). 60-byte clear (59 used + 1 pad, inside the vcache
+; persists). 60-byte clear (59 used + 1 pad, inside the vrcache
 ; reservation up to $1B3F), four 15-byte stripes off one X. ---
    LDA #0                               ; A = 0 RIDES into the wipes below
                                         ; — NOT a C02/STZ candidate
                                         ; (the zp_dcl_rec_buf pair's clear
                                         ; died 2026-08-25: last reader gone
                                         ; with the records machinery)
-; VCACHE_VALID + VDONE wipe (re-striped 2026-08-13: 19 stores x 3
+; VRCACHE_VALID + VDONE wipe (re-striped 2026-08-13: 19 stores x 3
 ; iterations x 2 bitmaps = 114 B — the 57-byte EXACT extent for 455
 ; ids, and ~40 cyc cheaper than the old 24x5/120-byte shape).
    LDX #2
 bif_clr2:
-   STA VCACHE_VALID_BASE,X
-   STA VCACHE_VALID_BASE+3,X
-   STA VCACHE_VALID_BASE+6,X
-   STA VCACHE_VALID_BASE+9,X
-   STA VCACHE_VALID_BASE+12,X
-   STA VCACHE_VALID_BASE+15,X
-   STA VCACHE_VALID_BASE+18,X
-   STA VCACHE_VALID_BASE+21,X
-   STA VCACHE_VALID_BASE+24,X
-   STA VCACHE_VALID_BASE+27,X
-   STA VCACHE_VALID_BASE+30,X
-   STA VCACHE_VALID_BASE+33,X
-   STA VCACHE_VALID_BASE+36,X
-   STA VCACHE_VALID_BASE+39,X
-   STA VCACHE_VALID_BASE+42,X
-   STA VCACHE_VALID_BASE+45,X
-   STA VCACHE_VALID_BASE+48,X
-   STA VCACHE_VALID_BASE+51,X
-   STA VCACHE_VALID_BASE+54,X
+   STA VRCACHE_VALID_BASE,X
+   STA VRCACHE_VALID_BASE+3,X
+   STA VRCACHE_VALID_BASE+6,X
+   STA VRCACHE_VALID_BASE+9,X
+   STA VRCACHE_VALID_BASE+12,X
+   STA VRCACHE_VALID_BASE+15,X
+   STA VRCACHE_VALID_BASE+18,X
+   STA VRCACHE_VALID_BASE+21,X
+   STA VRCACHE_VALID_BASE+24,X
+   STA VRCACHE_VALID_BASE+27,X
+   STA VRCACHE_VALID_BASE+30,X
+   STA VRCACHE_VALID_BASE+33,X
+   STA VRCACHE_VALID_BASE+36,X
+   STA VRCACHE_VALID_BASE+39,X
+   STA VRCACHE_VALID_BASE+42,X
+   STA VRCACHE_VALID_BASE+45,X
+   STA VRCACHE_VALID_BASE+48,X
+   STA VRCACHE_VALID_BASE+51,X
+   STA VRCACHE_VALID_BASE+54,X
    STA VDONE,X
    STA VDONE+3,X
    STA VDONE+6,X
@@ -650,7 +650,7 @@ rc_ret1:
 ;   2. For each seg in [first_seg, first_seg + count):
 ;      a. Read seg header from ROM_SEG_HDR + i*12.
 ;      b. Back-face test (skip if behind).
-;      c. Transform vertices (use vcache).
+;      c. Transform vertices (use vrcache).
 ;      d. Project to screen.
 ;      e. Emit lines based on seg flags (solid/portal/step/aperture).
 ;      f. Tighten span list (or mark_solid for solids).

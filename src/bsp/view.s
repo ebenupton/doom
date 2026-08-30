@@ -19,7 +19,7 @@
 ;                 bca_afn ($3B/$3C) = ab<<4 + 512 fine angle (hoisted, biased);
 ;                 bca_pxs/pys ($8D/$8E, $9B/$9C) = player pos s16 copies;
 ;                 bca_check_op SMC-patched (cached vs original bbox check);
-;                 per-frame vertex-cache mode chosen (vxc_frame).
+;                 per-frame vertex-cache mode chosen (vxcache_frame).
 ;   Clobbers: A, X, Y, zp_br_t2/t3, zp_ft_* staging, mul workspace.
 ;
 ;   Python:
@@ -231,22 +231,22 @@ fq_y_ok:
    JSR bca_frame                           ; rcache epoch keeper (rcache.s);
                                            ; the D-cache classifier call is
                                            ; gone — D disabled 2026-07-20
-   vxc_frame                           ; translation-coherence vertex cache
+   vxcache_frame                           ; translation-coherence vertex cache
    RTS
 .endscope
 
 ; (VF_FETCH_ARM + the vf_plain0/1 standalone arms RETIRED 2026-08-09 —
 ;  the plain fetch lives inline in seg_xform.s SXV_BODY, both at the
-;  vfoff vector target and in the vxcon cold arms; single callers all.)
+;  vfoff vector target and in the vxcache_on cold arms; single callers all.)
 
 
-; (br_to_view_fetch fully retired 2026-07-27 round 2: the vxc cold
+; (br_to_view_fetch fully retired 2026-07-27 round 2: the vxcache cold
 ; arms JSR their side's vf_plain directly.)
 .assert <ROM_VERTS_C = 0, error, "vertex planes assume page-aligned ROM_VERTS_C"
 
 
 ; (br_to_view + ROT_CORE + tv_add_fracs ALL DELETED 2026-08-11: the
-;  position path rides rot_w_pages too — vxc_frame decomposes
+;  position path rides rot_w_pages too — vxcache_frame decomposes
 ;  -p_int - (frac != 0) into the same page/offset form (the off-by-one
 ;  borrow seed lives THERE now), so ONE rotate body serves everything
 ;  and the fused-pair/variant/thunk machinery died with its sites.)
@@ -271,7 +271,7 @@ fq_y_ok:
 ;   Out: zp_br_vx_l/h, zp_br_vy_l/h = s16 count base (rot5(w) EXACT —
 ;        python fp_to_view_totals_t16 over the signed w, identical by
 ;        linearity; the mirror's math never changed).
-;   Callers: seg_xform vxcon cold + vfoff (both sides), lo.s cr_plain.
+;   Callers: seg_xform vxcache_on cold + vfoff (both sides), lo.s cr_plain.
 ;   Clobbers: A, X, Y, zp_rs_l/h, zp_br_res_l/h.
 ; ============================================================================
 .macro RWP_MUL src, d1l, d1h, s1l, s1h, dstl, dsth
@@ -421,7 +421,7 @@ rwp_card_cu:                               ; cos unity: vx from -oy, vy from ox
 ; all negated when X != 0 (fold: swap the +/- roles).
 .include "sqd.inc"
 ; (the 2026-08-25 bank-7 eviction of SQD_H was REVERTED the same day:
-;  the VXC fat paths execute FROM bank C and ride rot_w_pages, so the
+;  the VXCACHE fat paths execute FROM bank C and ride rot_w_pages, so the
 ;  table must be in ALWAYS-MAPPED main — the far-pose banked frames
 ;  collapsed to a third of their lines. bankedcmp caught it.)
 

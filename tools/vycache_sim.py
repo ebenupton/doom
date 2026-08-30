@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""VWHC (project_y memo) capacity study -- would a bigger cache help?
+"""VYCACHE (project_y memo) capacity study -- would a bigger cache help?
 
 Captures the (rhi, rlo, h) key stream at every project_y entry and
 replays it through alternative cache organisations, in the THREE
 regimes that behave completely differently:
 
   CORPUS  the 19-position suite exactly as run_regression drives it --
-          ONE renderer instance, one frame per position, VWHC never
+          ONE renderer instance, one frame per position, VYCACHE never
           cleared (it is a pure function of its key, so it is warm but
           maximally incoherent: scattered positions share few keys).
   HEAVY   the heavy frame, entered with the cache warm from the suite.
@@ -19,7 +19,7 @@ cache is never cleared, and a fresh-per-frame model reports compulsory
 misses that hardware would not take.  Equally, render_frame is not
 re-enterable on its own -- the span pool still reads solid and the walk
 bails in ~199 steps -- so each frame gets init/clear_screen/
-poke_init_frame_state, which leave VWHC and VXC alone.
+poke_init_frame_state, which leave VYCACHE and VXCACHE alone.
 """
 import os, sys, statistics
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
@@ -32,6 +32,7 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 # by rule, so only CODE entries actually move -- but a stale flat entry in a
 # banked rig is a silent jump into the wrong build, so resolve it all here.
 import functools as _ft, os as _os
+import doom_wireframe as dw   # the single rig switch
 _BANKED = 0 if dw.FLAT_RIG else 1     # dw is the single switch
 from symmap import sym as _raw_sym
 sym = _ft.partial(_raw_sym, banked=_BANKED)
@@ -70,6 +71,14 @@ def sim(frames, idxfn, ways=1, skip=0):
             if k in w: w.remove(k); w.insert(0, k); h = 1
             else: w.insert(0, k); del w[ways:]; h = 0
             if i >= skip: H += h; R += 1
+    if not R:
+        # Not a rename casualty: the binaries are byte-identical across it.
+        # The probe collects NO requests -- it went quiet when the shared rig
+        # moved to banked (2026-08-30) and its hooks were never ported.  Say
+        # so instead of dividing by zero and looking like a crash.
+        raise SystemExit('vycache_sim: 0 cache requests collected -- the probe '
+                         'hooks are flat-rig shaped and need porting (this tool '
+                         'is a diagnostic, not a gate).')
     return H / R * 100, R / max(1, len(frames) - skip)
 
 

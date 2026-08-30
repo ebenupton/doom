@@ -26,7 +26,7 @@ bsp_d_end:
 
 
 ; ============================================================================
-; VWHC ARRAY EQUATES — the Y-projection memo's five parallel 256-byte
+; VYCACHE ARRAY EQUATES — the Y-projection memo's five parallel 256-byte
 ; arrays (the CODE lives with project_y in project.s; only the DATA
 ; addresses live here, historically, because this file owned the old W
 ; region). Flat: $D500-$D9FF, the BSS window between the bbox table
@@ -44,15 +44,15 @@ bsp_d_end:
 ; raw ~322 cycles, hit ~64).
 ; ============================================================================
 .if ::BANKED
-; (VWHC lives in the L2 CACHES group since the 2026-07-21 regroup.
+; (VYCACHE lives in the L2 CACHES group since the 2026-07-21 regroup.
 ; VALID retired earlier — RLO doubles as valid.)
-; (VWHC_R_M8 plane RETIRED 2026-07-26: the probe index is h ^ rhi, so
+; (VYCACHE_R_M8 plane RETIRED 2026-07-26: the probe index is h ^ rhi, so
 ; the KEY plane's h implies rhi = idx ^ h — the compare was redundant.
 ; $AE00 is a FREE L2 page.)
-VWHC_R_S = $B300
-VWHC_KEY = $B400
-VWHC_L = $B500
-VWHC_H = $B600
+VYCACHE_R_S = $B300
+VYCACHE_KEY = $B400
+VYCACHE_L = $B500
+VYCACHE_H = $B600
 SEG_CODE
 .else
 ; PAGE-ALIGNED 2026-07-12 (were $D5C0-$D9C0: the $C0 offset made ~75% of
@@ -60,10 +60,10 @@ SEG_CODE
 ; already aligned, so the harness metric overcharged the y-cache).
 ; BSS window $D4C0-$DABF: aligned tables span $D500-$D9FF, $D4C0-$D4FF
 ; and $DA00-$DABF free.
-; (VWHC_R_M8 retired 2026-07-26 — $8100 free; see the banked note.)
-VWHC_R_S = $8200
-VWHC_KEY = $8300
-VWHC_L = $8400
-VWHC_H = $8500
+; (VYCACHE_R_M8 retired 2026-07-26 — $8100 free; see the banked note.)
+VYCACHE_R_S = $8200
+VYCACHE_KEY = $8300
+VYCACHE_L = $8400
+VYCACHE_H = $8500
 SEG_HIGHX
 .endif

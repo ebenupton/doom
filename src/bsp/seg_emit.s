@@ -348,7 +348,7 @@ hg_pass:
 ; tail into stage 5); it enters with >= 1 back flag PROVEN, so each
 ; endpoint opens at the NEEDBT dispatch and a BT miss means BB fires.
 ; project_y ABI: h in A -> Y = sy lo, A = sy hi (Y_BIAS folded,
-; VWHC-memoised).  Each endpoint stages its recip + rns kernel select
+; VYCACHE-memoised).  Each endpoint stages its recip + rns kernel select
 ; (zp_br_r_m8/r_s + rns_go_op) before its projections.
 ; ============================================================================
    LDA zp_seg_flags
@@ -358,7 +358,7 @@ hg_pass:
 ys_noback:
 ; (bank note: solid arcs arrive L2 — the transform's exit contract —
 ; and nothing here pages.  THIS ARC IS the exit-L2 contract's consumer:
-; project_y's VWHC planes are $B100/$B200 = bank L2 in the banked
+; project_y's VYCACHE planes are $B100/$B200 = bank L2 in the banked
 ; build (poison bisect 2026-08-13).  The with-back island manages its
 ; own L0 excursion and restores L2 itself.)
    LDA zp_ys_v1ok
@@ -668,7 +668,7 @@ ysb_h2:
    SBC zp_vs_cfh
    STA zp_seg_bbot_dlt
 ysb_staged:
-                                        ; (projections read VWHC — bank SEG,
+                                        ; (projections read VYCACHE — bank SEG,
                                         ; still held from the header reads)
    ZERO zp_seg_ep                          ; v1 -> VX1: ONE staging block
    LDA zp_seg_v1_r_m8                      ; (the chained arm's duplicate
@@ -938,7 +938,7 @@ em_v_ok:
    BMI vsx_next
    BEQ vsx_next
    PAGE BANK_SEG                           ; project both ends vs eye height
-                                        ; (project_y reads VWHC, bank SEG)
+                                        ; (project_y reads VYCACHE, bank SEG)
    LDA zp_vs_hh
    SEC
    SBC zp_br_vz

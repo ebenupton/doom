@@ -28,6 +28,7 @@ import re, py65.devices.mpu6502 as M
 # by rule, so only CODE entries actually move -- but a stale flat entry in a
 # banked rig is a silent jump into the wrong build, so resolve it all here.
 import functools as _ft, os as _os
+import doom_wireframe as dw   # the single rig switch
 _BANKED = 0 if dw.FLAT_RIG else 1     # dw is the single switch
 from symmap import sym as _raw_sym
 sym = _ft.partial(_raw_sym, banked=_BANKED)

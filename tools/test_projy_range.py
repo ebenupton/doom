@@ -32,7 +32,7 @@ def main():
     S_ = symmap.sym
     pe = S_('project_y')
     M8, RS, T0 = S_('zp_br_r_m8'), S_('zp_br_r_s'), S_('zp_br_t0')
-    vwhc_rs = S_('VWHC_R_S')
+    vycache_rs = S_('VYCACHE_R_S')
     go_op, vec = S_('rns_go_op'), S_('rns_vec_l')
     mpu = sc.mpu
 
@@ -46,7 +46,7 @@ def main():
     bad = n = 0
     for (m8v, sv) in pairs:
         for h in range(-127, 128):
-            m[vwhc_rs + ((h & 0xFF) ^ m8v)] = 0    # force the raw body
+            m[vycache_rs + ((h & 0xFF) ^ m8v)] = 0    # force the raw body
             m[M8], m[RS], m[T0] = m8v, sv, h & 0xFF
             m[go_op] = m[vec - 1 + sv]     # caller contract: the kernel is
                                            # SMC-selected (RNS_SELECT)

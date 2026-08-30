@@ -296,7 +296,7 @@ _emitted = {}                     # vertex -> interval list already drawn (any
                                   # front): the cross-front dedup mode A gets
                                   # from _vert_covered_by_solid_ap yielding
 
-def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
+def _joint_pass(si, clips, ctx, vz, surface, vrcache, vwh_cache):
     """DESCRIPTOR runtime, serve-at-first-TRANSFORM: the first
     FRONT-FACING seg to touch a vertex serves it (the engine transform
     population — backfacing segs never transform endpoints, so they
@@ -314,19 +314,19 @@ def _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache):
             continue
         _done.add(vidx)
         dw.fp_module.mul_cat("view")
-        if vcache[vidx] is None:
-            vcache[vidx] = dw.fp_to_view(fpv[vidx][0], fpv[vidx][1], ctx)
-        evx_t, evx_r, evy, fvx, vy_idx = vcache[vidx][:5]
+        if vrcache[vidx] is None:
+            vrcache[vidx] = dw.fp_to_view(fpv[vidx][0], fpv[vidx][1], ctx)
+        evx_t, evx_r, evy, fvx, vy_idx = vrcache[vidx][:5]
         if evy < 1:
             continue
         dw.fp_module.mul_cat("proj")
         rxh, rxl = dw.fp_recip(vy_idx)
-        vc = vcache[vidx]
+        vc = vrcache[vidx]
         if len(vc) > 5:
             sx = vc[5]
         else:
             sx = dw.fp_project_x(evx_t, fvx, rxh, rxl)
-            vcache[vidx] = vc + (sx, rxh, rxl)
+            vrcache[vidx] = vc + (sx, rxh, rxl)
         if sx < 0 or sx > 255:
             continue
         H = _t_heights(si)
@@ -407,10 +407,10 @@ class ProtoClips(EndpointClipSpans):
         pygame.draw.line(surface, (0, 255, 0), p1, p2, 1)
 
 _orig_seg = dw.fp_render_seg
-def _seg_hook(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
+def _seg_hook(si, clips, ctx, vz, surface, vrcache, vwh_cache, deferred=None):
     if MODE_B[0]:
-        _joint_pass(si, clips, ctx, vz, surface, vcache, vwh_cache)
-    _orig_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred)
+        _joint_pass(si, clips, ctx, vz, surface, vrcache, vwh_cache)
+    _orig_seg(si, clips, ctx, vz, surface, vrcache, vwh_cache, deferred)
 dw.fp_render_seg = _seg_hook
 
 

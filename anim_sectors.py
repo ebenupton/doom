@@ -462,7 +462,7 @@ def gen_6502_tables(flat=True):
                  # BPAL is NOT header-relative in the banked map: the
                  # seg-header squeeze moved it to the top of bank A. The
                  # header-relative form silently pointed the mover back-
-                 # pair patches at $9Dxx — free space at first, VCACHE
+                 # pair patches at $9Dxx — free space at first, VRCACHE
                  # once the caches moved in: THE broken-doors bug
                  # (2026-08-19..21, census-invisible to every gate).
                  bpal=_sm.sym('BPAL_BASE', banked=1))

@@ -417,7 +417,7 @@ def fp_view_context(vx_88, vy_88, sc):
 
     # V16 (2026-08-09): the pipeline is total := widen(q64(rot(w))) + ref,
     # where ref = rot(N_int) + frac is the per-frame origin term (the
-    # 6502's vxc_ref, staged once by vxc_frame), N = -p_88.
+    # 6502's vxcache_ref, staged once by vxcache_frame), N = -p_88.
     #
     # OFF-BY-ONE FIX (2026-08-10, Eben's quantised-jumping report): the
     # frac bytes above are (N & 255) — the UNSIGNED low byte of the
@@ -470,7 +470,7 @@ def fp_to_view(wx, wy, ctx):
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
 
     # V16 base: pure rotation of the VERTEX (position-independent) —
-    # exactly what the 6502 VXC memoizes — quantized RN to 1/64
+    # exactly what the 6502 VXCACHE memoizes — quantized RN to 1/64
     # prescaled (s16 storage), then the per-frame ref carries ALL the
     # position terms (integer + fractional) at full precision.
     base_vx = (_rot_int(wx, s_mag, s_neg, s_unity)
@@ -491,7 +491,7 @@ def fp_to_view(wx, wy, ctx):
 def fp_to_view_totals(wx, wy, ctx):
     """EV16: the full s24 view totals only (position-independent V16
     pipeline — recomputation is bit-identical to the original fetch;
-    the 6502 recovers the same values through the VXC serve)."""
+    the 6502 recovers the same values through the VXCACHE serve)."""
     px_int, py_int, sc, frac_vx, frac_vy, ref_vx, ref_vy = ctx
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
     base_vx = (_rot_int(wx, s_mag, s_neg, s_unity)
@@ -530,7 +530,7 @@ def fp_to_view_totals_t16(wx, wy, ctx):
                - _rot_int(wy, c_mag, c_neg, c_unity))
     base_vy = (_rot_int(wx, c_mag, c_neg, c_unity)
                + _rot_int(wy, s_mag, s_neg, s_unity))
-    # per-epoch RN to counts (the VXC plane store); per-frame ref RN to
+    # per-epoch RN to counts (the VXCACHE plane store); per-frame ref RN to
     # counts (ctx ref already carries ints + fracs at full 8.8)
     bx = rns(base_vx, 3)
     by = rns(base_vy, 3)

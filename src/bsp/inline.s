@@ -32,11 +32,11 @@
 ; (ev_clamp_hi_nz macro RETIRED 2026-08-09 — inlined at its single use,
 ;  the ec_hi_nz island in seg_xform.s SXV_BODY.)
 
-; (vxc_cold_store macro RETIRED 2026-08-09 — the birth store is inlined
-;  per side in the seg_xform.s vxcon islands, side baked; the generic
+; (vxcache_cold_store macro RETIRED 2026-08-09 — the birth store is inlined
+;  per side in the seg_xform.s vxcache_on islands, side baked; the generic
 ;  senior-test form died with it.)
 
-.macro vxc_frame
+.macro vxcache_frame
 .scope
 ; ref = rot5(-p_int) + count fracs. The position rides rot_w_pages too
 ; (2026-08-11): d = -p_int - (frac != 0) per axis (the off-by-one
@@ -80,19 +80,19 @@
    CLC
    LDA zp_br_vx_l
    ADC zp_br_fvx_l
-   STA vxc_ref_x+0
+   STA vxcache_ref_x+0
    LDA zp_br_vx_h
    ADC zp_br_fvx_h
-   STA vxc_ref_x+1
+   STA vxcache_ref_x+1
    CLC
    LDA zp_br_vy_l
    ADC zp_br_fvy_l
-   STA vxc_ref_y+0
+   STA vxcache_ref_y+0
    LDA zp_br_vy_h
    ADC zp_br_fvy_h
-   STA vxc_ref_y+1
-   LDA VXC_ENABLE
-   STA zp_vxc_on                           ; kept for harness/tools AND
+   STA vxcache_ref_y+1
+   LDA VXCACHE_ENABLE
+   STA zp_vxcache_on                           ; kept for harness/tools AND
    BNE vf_on                               ; cr_recover's plain gate; the
                                            ; fetch dispatch is the VECTORS
 ; cache OFF: fetch vectors -> the plain compute-only arms (canonical
@@ -109,43 +109,43 @@
    JMP inl_end
 vf_on:
 ; cache ON: fetch vectors -> the serve stubs
-   LDA #<sxv0_vxcon
+   LDA #<sxv0_vxcache_on
    STA zp_vf_vec0
-   LDA #>sxv0_vxcon
+   LDA #>sxv0_vxcache_on
    STA zp_vf_vec0+1
-   LDA #<sxv1_vxcon
+   LDA #<sxv1_vxcache_on
    STA zp_vf_vec1
-   LDA #>sxv1_vxcon
+   LDA #>sxv1_vxcache_on
    STA zp_vf_vec1+1
-   LDA vxc_ab
-   CMP vxc_prev_ab
+   LDA vxcache_ab
+   CMP vxcache_prev_ab
    BEQ vf_patch
 ; --- angle changed: new epoch - wipe the valid bitmap ---
 ; STRIPED, 57 B (2026-08-13: the exact 455-id extent — 19 stores x 3
 ; iterations, ~300 cyc vs the old 12x5's ~325, every rotation frame).
-   STA vxc_prev_ab
+   STA vxcache_prev_ab
    LDA #0
    LDX #2
 vf_wl:
-   STA VXC_VALID,X
-   STA VXC_VALID+3,X
-   STA VXC_VALID+6,X
-   STA VXC_VALID+9,X
-   STA VXC_VALID+12,X
-   STA VXC_VALID+15,X
-   STA VXC_VALID+18,X
-   STA VXC_VALID+21,X
-   STA VXC_VALID+24,X
-   STA VXC_VALID+27,X
-   STA VXC_VALID+30,X
-   STA VXC_VALID+33,X
-   STA VXC_VALID+36,X
-   STA VXC_VALID+39,X
-   STA VXC_VALID+42,X
-   STA VXC_VALID+45,X
-   STA VXC_VALID+48,X
-   STA VXC_VALID+51,X
-   STA VXC_VALID+54,X
+   STA VXCACHE_VALID,X
+   STA VXCACHE_VALID+3,X
+   STA VXCACHE_VALID+6,X
+   STA VXCACHE_VALID+9,X
+   STA VXCACHE_VALID+12,X
+   STA VXCACHE_VALID+15,X
+   STA VXCACHE_VALID+18,X
+   STA VXCACHE_VALID+21,X
+   STA VXCACHE_VALID+24,X
+   STA VXCACHE_VALID+27,X
+   STA VXCACHE_VALID+30,X
+   STA VXCACHE_VALID+33,X
+   STA VXCACHE_VALID+36,X
+   STA VXCACHE_VALID+39,X
+   STA VXCACHE_VALID+42,X
+   STA VXCACHE_VALID+45,X
+   STA VXCACHE_VALID+48,X
+   STA VXCACHE_VALID+51,X
+   STA VXCACHE_VALID+54,X
    DEX
    BPL vf_wl
 vf_patch:

@@ -49,7 +49,7 @@ ORG &EA00                       \ the FB region: the copro never
                                 \ touches (the rasteriser IS what the
                                 \ Tube port removed). Everything below
                                 \ $2000 is claimed by runtime arenas —
-                                \ pool/records/TFS/LC/VCACHE planes
+                                \ pool/records/TFS/LC/VRCACHE planes
                                 \ ($0C00-$1AFF ate the first two homes)
                                 \ — and parasite PAGE ($800) gets OS
                                 \ scribbles during cross-Tube loads
@@ -172,11 +172,11 @@ ORG &EA00                       \ the FB region: the copro never
     BNE rcinit
     LDX #0
 .vxinit
-    STA T_VXC_STATE,X           \ whole bitmap page (VALID+VDONE+
-    INX                         \ VXC_VALID+RCACHE_COMPUTED)
+    STA T_VXCACHE_STATE,X           \ whole bitmap page (VALID+VDONE+
+    INX                         \ VXCACHE_VALID+RCACHE_COMPUTED)
     BNE vxinit
     LDA #1
-    STA T_VXC_ENABLE
+    STA T_VXCACHE_ENABLE
     LDA #1                      \ animated sectors (doors/lifts): engine
     STA T_ANIM_ENABLE           \ anim, no driver glue needed on the
     JSR T_ANIM_INIT             \ copro (flat build: no banking)

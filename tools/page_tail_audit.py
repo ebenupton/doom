@@ -39,7 +39,7 @@ def rows():
     for n in ('VP_OX', 'VP_OY', 'VP_PG'):
         out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'bank A/flat ROM'))
     try:
-        for n in ('VXC_XLO', 'VXC_XHI', 'VXC_YLO', 'VXC_YHI'):
+        for n in ('VXCACHE_XLO', 'VXCACHE_XHI', 'VXCACHE_YLO', 'VXCACHE_YHI'):
             out.append((n + ' (hi)', sym(n) + 0x100, NHI, 256, 'main runtime'))
     except KeyError:
         pass

@@ -62,12 +62,12 @@ loop; one 16-byte header cursor `zp_seg_hdr_p` rides the whole loop):
    shortcut first, u24 magnitude compare only when signs agree).
 2. **Vertex pipeline**, per endpoint (`bsp/seg_xform.s`, ONE file
    top-to-bottom): chain check (previous seg's v2 == this v1: reuse the
-   whole VX2 struct) → frame vertex-cache probe (VCACHE $0C00, valid
-   bitmap) → on miss, `vxc_jsr_site` dispatch: VXC translation cache
+   whole VX2 struct) → frame vertex-cache probe (VRCACHE $0C00, valid
+   bitmap) → on miss, `vxcache_jsr_site` dispatch: VXCACHE translation cache
    (warm: two s24 adds reconstruct view coords) or fetch+rotate
    (`br_to_view_fetch` → `br_to_view`, view.s) → evy/evx, near-clip,
    reciprocal, screen-X → results land in the endpoint struct (VX1/VX2)
-   AND the vcache entry.
+   AND the vrcache entry.
 3. **Near-plane crossing** (`bsp/resolve_crossing.s` via subsector.s):
    if exactly one endpoint is clipped, reproject from the vy=NEAR
    crossing point into that endpoint's struct slots.
@@ -75,7 +75,7 @@ loop; one 16-byte header cursor `zp_seg_hdr_p` rides the whole loop):
    in subsector.s; culled segs stop here — Y is never projected for them.
 5. **y_stage** (subsector.s): pages L2 once, projects the flag-gated sy
    pairs per endpoint via `do_project_y` (seg_project.s) through the
-   VWHC memo (project.s — front + inlined body, one routine). The chain
+   VYCACHE memo (project.s — front + inlined body, one routine). The chain
    donates the previous seg's front sy pair when valid (zp_ys_* flags).
 6. **apv_stage** (`bsp/lo.s`): aperture-vertical pairs for solid segs
    with APEDGE flags, projected post-visibility.
@@ -90,10 +90,10 @@ loop; one 16-byte header cursor `zp_seg_hdr_p` rides the whole loop):
 ## Vertex key encoding (2026-07-12) — pervasive, easy to trip on
 
 Header v1/v2 slots store **(A = idx & 255, B = idx >> 3)**, NOT (lo, hi).
-B is consumed RAW as both the VCACHE valid-bitmap byte index and the
-VXC_VALID index; the scaled forms rebuild in pure A-register shifts
+B is consumed RAW as both the VRCACHE valid-bitmap byte index and the
+VXCACHE_VALID index; the scaled forms rebuild in pure A-register shifts
 (idx*8: lo = A<<3 mod 256, hi = B>>2 · idx*4: lo = A<<2, hi = B>>3); the
-VXC page split is `B & $20` (idx >= 256 ⇔ B >= 32; B ≤ 58). Bijective:
+VXCACHE page split is `B & $20` (idx >= 256 ⇔ B >= 32; B ≤ 58). Bijective:
 idx = B*8 + (A & 7); the chain compare and the $FF-in-B invalidation work
 unchanged. Producers/consumers that MUST stay in lockstep: wad_packed.py
 `_vk` (pack), doom_wireframe.py packed_render_seg decode (~line 2176),
@@ -161,18 +161,18 @@ vxcache.s.
       bsp/bbox.s           br_bbox_visible -> angle module -> has_gap;
                            br_bbox_visible_d = forward-coherence D cache
       bsp/subsector.s      THE SEG LOOP (see pipeline above)
-      bsp/seg_xform.s      vertex pipeline: vcache probe + vxc_arm +
+      bsp/seg_xform.s      vertex pipeline: vrcache probe + vxcache_arm +
                            compute tail (one file, one flow)
       bsp/seg_project.s    do_project_y consumer gating (front always,
                            back pairs flag-gated, solids RTS)
       bsp/main_tail.s      end_code assert (flat $5000 = RCACHE carve
                            fence; banked $5800 = FB)
       bsp/defq.s           deferred solid/tighten op queue ($0600)
-      bsp/resolve_crossing.s  crossing resolver + VWHC array equates
+      bsp/resolve_crossing.s  crossing resolver + VYCACHE array equates
       bsp/lo.s             br_node_setup (SoA reads), chain_reuse_v1,
                            apv_stage, reproject_at_crossing,
                            ap-edge verticals
-      bsp/vxcache.s        VXC data planes + cold-store leaf + vxc_frame
+      bsp/vxcache.s        VXCACHE data planes + cold-store leaf + vxcache_frame
                            (the per-vertex hot path lives in seg_xform)
       bsp/anim.s           animated sectors: mover tick state machines +
                            lazy visibility-driven table patching
@@ -209,7 +209,7 @@ wrong rather than adding a second stale copy.
                  $0600 = RC_P1L_0 since the 2026-07-27 recovery)
     $0B00-$0BFF  RC_P1L_1 (2026-07-27; zp_ft args moved to $E4F8,
                  zp_rom_detail $0BF6/7 retired dead)
-    $0C00-$1B3F  VCACHE planes (7×512) + valid bitmap
+    $0C00-$1B3F  VRCACHE planes (7×512) + valid bitmap
     $1B40-$1B7F  BCA_WS (bca_ab $1B6F) — unforked with banked 2026-07-21
     $1C00-$1FFF  sqr quarter-square tables (unforked, one address)
     $2B00-$566C  ALL CODE, one segment (islands died in the 2026-07-21 map;
@@ -220,8 +220,8 @@ wrong rather than adding a second stale copy.
                  five psi planes shuffled down to $0600/$0B00/$8100/
                  $E800/$E900; flat-vplot candidate window)
     $7000-$85FF  CACHE block: RC_PH_1 $7000, RCACHE_STATE $7100
-                 (+$90-$FF free), CPM $7200, VXC planes $7500-$7F00,
-                 RC_P2L_0 $8100, VWHC $8200-$8500
+                 (+$90-$FF free), CPM $7200, VXCACHE planes $7500-$7F00,
+                 RC_P2L_0 $8100, VYCACHE $8200-$8500
     $8600-$D8FF  LEVEL block: seg hdrs+DIRs $8600, verts $B100, node SoA
                  $B900, bbox corners $C500, recip $D500
     $D900-$DBFF  L8_TAB / AE_LO / AE_HI
@@ -251,10 +251,10 @@ wrong rather than adding a second stale copy.
     $5800-$7FFF  screen (double-buffered $5800/$6C00)
     $8000-$BFFF  sideways window; banks 4/6/7 = L0/C/L2:
       L0: SoA $8000 / seg headers $9000 / TABL0 $BE90
-      C:  clipper $8000 / VXC planes $9700-$A2D3 / HUD $A400 window /
+      C:  clipper $8000 / VXCACHE planes $9700-$A2D3 / HUD $A400 window /
           rasteriser $A900
       L2: TA_LO $8000 / TA_HI $8400 / VATOX $8900 / bbox $8E00 / recip
-          $9D00 / verts $A200 / RCACHE $AD00-$B4E8 / VWHC $B500-$B9FF /
+          $9D00 / verts $A200 / RCACHE $AD00-$B4E8 / VYCACHE $B500-$B9FF /
           anim CFG $BA00
     SSMASK $1100 = documented main-RAM exception (read under any bank).
 
@@ -324,7 +324,7 @@ not worsened vs baseline.json, suite cycles within 0.25% of baseline.
   tools/walkseq_check.py → tools/rotcache_check.py → rebaseline → commit
   → rebuild discs → push. Driver or region changes ADD a jsbeeb boot.
 - Cold-vs-warm skew: the regression corpus renders isolated frame-1s
-  (all caches cold, VXC off). It over-weights the angle pipeline (~12%
+  (all caches cold, VXCACHE off). It over-weights the angle pipeline (~12%
   cold, RCACHE-served warm) and CANNOT see warm-path wins (the fetch
   push-down measured -0.00% cold and -5% warm). Track both numbers.
 - verify_6502_vs_python.py: float render_bsp is ground truth. Standing
@@ -361,10 +361,10 @@ not worsened vs baseline.json, suite cycles within 0.25% of baseline.
   buffers — the snapshot is load-bearing). DEFQ_OVF flags drops.
 - The BSP stack entry encoding requires node ids < $2000 and subsector
   hi-byte bit 6 clear (fine for E1M1).
-- **VWHC purity**: the y-cache key is the complete input tuple of a pure
+- **VYCACHE purity**: the y-cache key is the complete input tuple of a pure
   function — entries survive frames and positions by design; only boot
   scrubs it. RLO doubles as the valid flag (live S is never 0).
-- **RNS invariants**: S ∈ [1,10], never 0 (also the VWHC valid flag);
+- **RNS invariants**: S ∈ [1,10], never 0 (also the VYCACHE valid flag);
   the vector tables index `-1,X`; rns_select and the three INLINED
   selects in subsector.s all SMC `rns_go+1/+2` — a new rlo writer must
   re-vector or projections dispatch through a stale shifter.
@@ -376,12 +376,12 @@ not worsened vs baseline.json, suite cycles within 0.25% of baseline.
 Three caches, driver-enabled (harness default off, byte-identical when
 off):
 
-- **VXC** (translation-coherent vertex transforms): ORIGIN-NORMALIZED
+- **VXCACHE** (translation-coherent vertex transforms): ORIGIN-NORMALIZED
   (2026-07-12): stored base' = total − ref = L(w), exactly linear in
   integer arithmetic; warm read = base' + this frame's ref (published by
-  vxc_frame = to_view(0,0)); angle change wipes VXC_VALID. The per-vertex
-  path is IN seg_xform.s (vxc_arm); vxcache.s keeps planes + cold-store
-  leaf + vxc_frame. Warm frames -9.9% vs disabled (vxcache_check).
+  vxcache_frame = to_view(0,0)); angle change wipes VXCACHE_VALID. The per-vertex
+  path is IN seg_xform.s (vxcache_arm); vxcache.s keeps planes + cold-store
+  leaf + vxcache_frame. Warm frames -9.9% vs disabled (vxcache_check).
 - **RCACHE** (rotation-coherence bbox psi cache): position-keyed; caches
   RAW pre-clip p1/p2 per box; stable-position frames re-derive phi from
   cached psi (cp_havepsi). Flat data = the $5000 CODE-tail carve.
@@ -391,8 +391,8 @@ off):
   (projection RN + outward-rounded/inflated packed bbox corners).
   Walking -10..-19%.
 
-Also per-frame (not cross-frame): VCACHE (vertex results, $0C00, bitmap
-cleared per frame in br_init_frame) and VWHC (Y-projection memo, pure-
+Also per-frame (not cross-frame): VRCACHE (vertex results, $0C00, bitmap
+cleared per frame in br_init_frame) and VYCACHE (Y-projection memo, pure-
 function keyed, never cleared after boot).
 
 ## Known risks / open items
@@ -402,7 +402,7 @@ function keyed, never cleared after boot).
 - **Flat placement traps** (all found the hard way 2026-07-12): page 9
   tail holds live DEFQ vars ($09FB-$09FD); $A900-$B1EE is the NJ
   rasteriser, loaded by span_clip_6502.py and INVISIBLE to the cfg; the
-  VXC plane pairs need pages k,k+1 free per plane. Consult the memory
+  VXCACHE plane pairs need pages k,k+1 free per plane. Consult the memory
   map above before placing anything.
 - **Soak divergence backlog**: 272k-position soak found 2.67%
   engine-vs-reference fails, engine UNDER-draws at far-west positions;

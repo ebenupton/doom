@@ -10,13 +10,13 @@
 ;     1. Back-face test [backface.s] — tail-dispatched: JMPs to
 ;        ::bf_seg_front here or straight to ::s_advance on a back seg.
 ;     2. Vertex pipeline per endpoint [seg_xform.s]: chain reuse, frame
-;        vcache, VXC coherence cache, or full fetch+rotate; results land
+;        vrcache, VXCACHE coherence cache, or full fetch+rotate; results land
 ;        in the endpoint structs VX1/VX2 (zp.inc, stride 15).
 ;     3. Near-plane crossing resolution [resolve_crossing.s].
 ;     4. Fused has_gap range prelude + cull (clipper jt) — culled segs
 ;        stop HERE: Y is never projected for them (deferral, 2026-07-11).
 ;     5. y_stage below: PAGE L2 once, project flag-gated sy pairs via
-;        do_project_y [seg_project.s] through the VWHC memo [project.s];
+;        do_project_y [seg_project.s] through the VYCACHE memo [project.s];
 ;        chain donates the previous v2's front pair when valid.
 ;     6. apv_stage [lo.s]: aperture-vertical pairs, post-visibility.
 ;     7. Endpoint canonicalization: THE SEG LAYER OWNS LEFT-TO-RIGHT —
@@ -33,7 +33,7 @@
 ;   for si in range(first, first + count):
 ;     hdr = seg_hdr[si]                        # 16-byte header, ROM
 ;     if back_face(hdr): continue
-;     xform v1, v2 (vcache'd); near-clip; project sx1/sx2 (s16)
+;     xform v1, v2 (vrcache'd); near-clip; project sx1/sx2 (s16)
 ;     if both endpoints off one screen side: continue
 ;     if not has_gap(clamp8(sx), clamp8(sx')): continue
 ;     project sy pairs (deferred to here); swap endpoints if reversed
@@ -174,7 +174,7 @@ ssk_fb_live:
                                            ; BY CONSTRUCTION: {0,$40,$80}.
 ssk_ft_live:
    STY zp_ss_eskip
-   PAGE BANK_SEG                           ; headers / verts / VWHC bank —
+   PAGE BANK_SEG                           ; headers / verts / VYCACHE bank —
                                         ; held through seg stages 1-4
 ; FIRST-ITERATION ROTATION (2026-08-20): seg_proc's 4-op head is
 ; duplicated here so the prologue FALLS into the seg loop — the JMP

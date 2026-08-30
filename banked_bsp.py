@@ -9,7 +9,7 @@ copy its 64K into a BankedMemory, then patch the banked deltas:
   - clipper (span_clip_bankc.bin) + rasteriser -> bank C @ $8000/$A800
   - sqr tables -> low RAM $1C00 (banked clipper/bsp umul8 read them there)
   - bsp_render code -> the *_bk.bin variants (PAGE inserts + $80xx clip entries)
-Everything else (recip/bbox/angle subsystem/vcache) stays flat (above the
+Everything else (recip/bbox/angle subsystem/vrcache) stays flat (above the
 $8000-$BFFF window) — reachable in the model; real-HW relocation is a later step.
 """
 import os, math
@@ -55,7 +55,7 @@ def build_banked(flatr):
     # SSMASK -> MAIN $0A80 (rule exception, measured: hub reads it per
     # subsector under whatever bank; main = 0 paging. 237 B.)
     # --- bank A (BANK_SEG=4, two-bank re-cut 2026-08-13): seg headers+DIRs
-    # @ $8000, vertex planes @ ROM_VERTS_C, recip @ RECIP_M8/M8H, VWHC BSS
+    # @ $8000, vertex planes @ ROM_VERTS_C, recip @ RECIP_M8/M8H, VYCACHE BSS
     # (must ship ZERO — the key plane doubles as validity), TABL0 @ $BE90 ---
     la = bytearray(16384)
     off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
@@ -100,7 +100,7 @@ def build_banked(flatr):
     la[_od:_od + 0x200] = bytes(rom_main[_oo:_oo + 0x200])   # the hole only
                                                              # (K planes below)
     # EXACT recip lengths (256 + 128): a padded 1K copy here would drag
-    # flat-image garbage over the VWHC key plane at $B300 -> stale serves
+    # flat-image garbage over the VYCACHE key plane at $B300 -> stale serves
     la[bdst('RECIP_M8'):bdst('RECIP_M8') + 256] = bytes(fmem[_vsym('RECIP_M8'):_vsym('RECIP_M8') + 256])
     la[bdst('RECIP_M8H'):bdst('RECIP_M8H') + 128] = bytes(fmem[_vsym('RECIP_M8H'):_vsym('RECIP_M8H') + 128])
     # RECIP_S: the junior-page shift table, beside the mantissa tables it is
@@ -137,7 +137,7 @@ def build_banked(flatr):
     assert len(rast) <= RASTER_BUDGET, f'rasteriser {len(rast)} bytes overruns VPLOTC at $B400'
     roff = RASTER_OFF - 0x8000
     c[roff:roff + len(rast)] = rast
-    # VXC fat paths -> bank C @ $A300 (planes are BSS at $9700-$A2D3; the
+    # VXCACHE fat paths -> bank C @ $A300 (planes are BSS at $9700-$A2D3; the
     # clipper must stay below $9700 — guarded here). Must be seeded BEFORE
     # define_bank: it COPIES the image into a fresh buffer.
     assert len(clip) <= 0x1800, f'clipper {len(clip)} bytes reaches VEXPL_CONT at $9800'
@@ -168,7 +168,7 @@ def build_banked(flatr):
     assert _art_d + _art_n <= 0x2400, 'object art runs into the bank-C HUD'
     c[_art_d:_art_d + _art_n] = rom_main[_art_off:_art_off + _art_n]
 
-    # (VXCODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
+    # (VXCACHE_CODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
     if os.path.exists('bsp_render_hud_bk.bin'):
         hud = open('bsp_render_hud_bk.bin', 'rb').read()
         c[0x2400:0x2400 + len(hud)] = hud   # debug HUD @ $A400
@@ -290,7 +290,7 @@ def build_banked(flatr):
     from engine_load import _regions
     for addr, fn in _regions(banked=1):
         if fn.startswith('span_clip') or fn == 'bsp_render_hud_bk.bin':
-            continue    # clipper + HUD -> BANK_C (rc/anim/vxc/sel are main now)
+            continue    # clipper + HUD -> BANK_C (rc/anim/vxcache/sel are main now)
         if os.path.exists(fn):
             d = open(fn, 'rb').read()
             for i, b in enumerate(d):

@@ -65,7 +65,7 @@ def run(px, py, ab, tot, red):
     mpu = sc.mpu; mem = mpu.memory
     # THREE consecutive frames from one state; only the last two are
     # counted.  A single frame from a cold start makes every per-frame
-    # CLEAR look redundant (the VCACHE_VALID/VDONE wipe in walk.s is the
+    # CLEAR look redundant (the VRCACHE_VALID/VDONE wipe in walk.s is the
     # obvious one) because nothing has dirtied the bytes yet.  Frame 1
     # warms the state; frames 2-3 see it as the hardware would.
     # The viewpoint MOVES between the counted frames.  Re-rendering one
@@ -86,7 +86,7 @@ def run(px, py, ab, tot, red):
         # the span pool still reads fully solid from the previous frame,
         # so the BSP walk bails after ~199 steps.  init/clear_screen
         # rebuild the pool; poke_init_frame_state mirrors the inline
-        # records + vcache-valid ground state.  VWHC and VXC are
+        # records + vrcache-valid ground state.  VYCACHE and VXCACHE are
         # deliberately NOT touched -- they persist on hardware too.
         sc.init(); sc.clear_screen(); poke_init_frame_state(mem)
         mpu.pc = sym('render_frame', banked=BANKED); mpu.sp = 0xDD; mpu.p = 0x30

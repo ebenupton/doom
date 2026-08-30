@@ -896,7 +896,7 @@ print(f"Merged {_merge_count} colinear seg pair(s) "
 # subsector-level constant. Best-fit-decreasing bin packing (runs are
 # located purely through the SS pointer pages, so run order in the
 # header array is free): ~7 pads on E1M1 vs 38 sequential — the array
-# must stay clear of the flat VXC planes at $9800 (layout.inc asserts).
+# must stay clear of the flat VXCACHE planes at $9800 (layout.inc asserts).
 # Pads clone a neighbouring seg — valid data that no subsector run
 # references (DIR dedupe absorbs the duplicates). This runs BEFORE every
 # per-seg derivation (NOVT, anim, packing), so slot indices ARE the seg
@@ -2439,10 +2439,10 @@ def render_seg(si, clips, cos_a, sin_a, vx, vy, vz, surface, deferred=None):
 
 # ── Fixed-point BSP rendering (prescaled 8-bit) ──────────────────────────────
 
-def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
+def fp_render_seg(si, clips, ctx, vz, surface, vrcache, vwh_cache, deferred=None):
     """Render a seg from the stripped fp_segs table.
 
-    vcache: frame-global vertex transforms.
+    vrcache: frame-global vertex transforms.
     vwh_cache: frame-global Y projections indexed by VWH.
     """
     # Reset records buffers so a seg with no yt/yb edge draw (e.g.,
@@ -2494,16 +2494,16 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
             vm[vi] = [0, 0]
     v_before = fp_module.mul_counts["view"]
     _tv = fp_module.fp_to_view_t16 if _T16 else fp_to_view
-    if vcache[v1_idx] is None:
-        vcache[v1_idx] = _tv(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
+    if vrcache[v1_idx] is None:
+        vrcache[v1_idx] = _tv(fp_vertexes[v1_idx][0], fp_vertexes[v1_idx][1], ctx)
         vm[v1_idx][0] += fp_module.mul_counts["view"] - v_before
         v_before = fp_module.mul_counts["view"]
-    if vcache[v2_idx] is None:
-        vcache[v2_idx] = _tv(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
+    if vrcache[v2_idx] is None:
+        vrcache[v2_idx] = _tv(fp_vertexes[v2_idx][0], fp_vertexes[v2_idx][1], ctx)
         vm[v2_idx][0] += fp_module.mul_counts["view"] - v_before
-    vc1_full = vcache[v1_idx]
+    vc1_full = vrcache[v1_idx]
     evx1_t, evx1_r, evy1, fvx1, vy_idx1 = vc1_full[:5]
-    vc2_full = vcache[v2_idx]
+    vc2_full = vrcache[v2_idx]
     evx2_t, evx2_r, evy2, fvx2, vy_idx2 = vc2_full[:5]
     # Sub-pixel uses truncated vx (frac compensates); otherwise use rounded
     evx1 = evx1_t
@@ -2552,27 +2552,27 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
 
     fp_module.mul_cat("proj")
     p_before = fp_module.mul_counts["proj"]
-    # Cache key 'sx' in vcache: (sx, rxh, rxl) appended on first X projection.
+    # Cache key 'sx' in vrcache: (sx, rxh, rxl) appended on first X projection.
     # Near-clipped endpoints always recompute (different ex/ey).
-    vc1 = vcache[v1_idx]
+    vc1 = vrcache[v1_idx]
     if ey1 == evy1 and len(vc1) > 5:
         sx1, rxh1, rxl1 = vc1[5], vc1[6], vc1[7]
     else:
         fvx1_c = fvx1 if ey1 == evy1 else (cxf1 or 0)
         sx1 = fp_project_x(ex1, fvx1_c, rxh1, rxl1)
         if ey1 == evy1:
-            vcache[v1_idx] = vc1 + (sx1, rxh1, rxl1)
+            vrcache[v1_idx] = vc1 + (sx1, rxh1, rxl1)
     vm[v1_idx][1] += fp_module.mul_counts["proj"] - p_before
     p_before = fp_module.mul_counts["proj"]
 
-    vc2 = vcache[v2_idx]
+    vc2 = vrcache[v2_idx]
     if ey2 == evy2 and len(vc2) > 5:
         sx2, rxh2, rxl2 = vc2[5], vc2[6], vc2[7]
     else:
         fvx2_c = fvx2 if ey2 == evy2 else (cxf2 or 0)
         sx2 = fp_project_x(ex2, fvx2_c, rxh2, rxl2)
         if ey2 == evy2:
-            vcache[v2_idx] = vc2 + (sx2, rxh2, rxl2)
+            vrcache[v2_idx] = vc2 + (sx2, rxh2, rxl2)
     vm[v2_idx][1] += fp_module.mul_counts["proj"] - p_before
 
     if _USE_ANGLE_COL:
@@ -2789,7 +2789,7 @@ def fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None)
 _anim_ss_hook = None    # anim_sectors installs a per-subsector visibility
                         # hook here (lazy mover patching); None = no cost
 
-def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
+def render_subsector_fp(idx, clips, ctx, vz, surface, vrcache, vwh_cache):
     if _anim_ss_hook is not None:
         _anim_ss_hook(idx)
     """Render a subsector with frame-global vertex cache.
@@ -2799,15 +2799,15 @@ def render_subsector_fp(idx, clips, ctx, vz, surface, vcache, vwh_cache):
     ssec = fp_ssectors[idx]
 
     # Both caches are lazily populated by fp_render_seg:
-    # vcache (frame-global): view transforms, computed on first access per vertex
+    # vrcache (frame-global): view transforms, computed on first access per vertex
     # vwh_cache (frame-global): Y projections indexed by VWH
     # Deferral removed 2026-07-16: ops apply at seg end (deferred=None).
     for si in range(ssec[1], ssec[1] + ssec[0]):
-        fp_render_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, None)
+        fp_render_seg(si, clips, ctx, vz, surface, vrcache, vwh_cache, None)
 
 
 def render_bsp_fp(nid, clips, ctx, vz,
-                   wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache):
+                   wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache):
     """BSP traversal for the 8-bit fixed-point path."""
     if nid == len(nodes) - 1:
         vspan_frame_reset()                 # root call = new frame
@@ -2817,7 +2817,7 @@ def render_bsp_fp(nid, clips, ctx, vz,
         ssid = 0 if nid == 0xFFFF else nid & 0x7FFF
         map_trace["subsectors"].add(ssid)
         map_trace["ss_order"].append(ssid)
-        render_subsector_fp(ssid, clips, ctx, vz, surface, vcache, vwh_cache)
+        render_subsector_fp(ssid, clips, ctx, vz, surface, vrcache, vwh_cache)
         return
     map_trace["nodes_visited"].add(nid)
     node = nodes[nid]
@@ -2828,25 +2828,25 @@ def render_bsp_fp(nid, clips, ctx, vz,
     # entirely outside the frustum, nothing in the subtree is visible).
     if (nid, side) in ADESC:
         render_bsp_fp(ch[side], clips, ctx, vz,
-                      wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+                      wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache)
     else:
         br = fp_bbox_visible_fixed(node, side, ctx)
         if br is not None:
             if clips.has_gap(br[0], br[1]):
                 render_bsp_fp(ch[side], clips, ctx, vz,
-                              wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+                              wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache)
     if clips.is_full():
         return
     far = side ^ 1
     if (nid, far) in ADESC:
         render_bsp_fp(ch[far], clips, ctx, vz,
-                      wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+                      wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache)
         return
     br = fp_bbox_visible_fixed(node, far, ctx)
     if br is not None:
         if clips.has_gap(br[0], br[1]):
             render_bsp_fp(ch[far], clips, ctx, vz,
-                          wx_full, wy_full, cos_f, sin_f, surface, vcache, vwh_cache)
+                          wx_full, wy_full, cos_f, sin_f, surface, vrcache, vwh_cache)
 
 
 # ── Packed-ROM rendering (reads from byte arrays, writes cache to RAM) ────────
@@ -2861,13 +2861,13 @@ from wad_packed import (read_u8, read_s8, read_u16, read_s16, write_u16, write_s
                         VERTEX_SIZE, NODE_SIZE, SSECTOR_SIZE, SEG_HDR_SIZE, SEG_DTL_SIZE,
                         seg_hdr_off as _seg_hdr_off,
                         seg_hdr_slot as _seg_hdr_slot,
-                        VWH_SIZE, VCACHE_ENTRY,
+                        VWH_SIZE, VRCACHE_ENTRY,
                         SH_V1, SH_V2, SH_FORM, SH_C, SH_FLAGS, SH_DIAG,
                         SD_FH, SD_CH, SD_BFH, SD_BCH,
                         SD_VWH_FT1, SD_VWH_FB1, SD_VWH_FT2, SD_VWH_FB2,
                         SD_VWH_BT1, SD_VWH_BB1, SD_VWH_BT2, SD_VWH_BB2,
                         SF_SAMEDIR, SF_SOLID, SF_NEEDBT, SF_NEEDBB, SF_NOVT1, SF_NOVT2,
-                        VC_VX, VC_VY, VC_VYIDX, VC_SX, VWHCACHE_ENTRY)
+                        VC_VX, VC_VY, VC_VYIDX, VC_SX, VYCACHE_ENTRY)
 
 use_packed = True    # packed ROM path is now the sole FP renderer
 
@@ -2885,15 +2885,15 @@ def _packed_ram_new():
     return ram
 
 
-def _packed_read_vcache(ram, vi):
+def _packed_read_vrcache(ram, vi):
     """Read a vertex cache entry from RAM.
 
     Returns (evx_t, evy, vy_idx, sx, fvx) or None.
     VC_VX stores the 8.8 view-x as (evx_t << 8) | fvx.
     """
-    if not is_valid(ram, _p_layout['ram_vcache_valid'], vi):
+    if not is_valid(ram, _p_layout['ram_vrcache_valid'], vi):
         return None
-    base = _p_layout['ram_vcache'] + vi * VCACHE_ENTRY
+    base = _p_layout['ram_vrcache'] + vi * VRCACHE_ENTRY
     vx88 = read_s16(ram, base + VC_VX)
     vy   = read_s16(ram, base + VC_VY)
     vyi  = read_u16(ram, base + VC_VYIDX)
@@ -2903,31 +2903,31 @@ def _packed_read_vcache(ram, vi):
     return (evx_t, vy, vyi, sx, fvx)
 
 
-def _packed_write_vcache(ram, vi, evx_t, fvx, vy, vy_idx, sx):
+def _packed_write_vrcache(ram, vi, evx_t, fvx, vy, vy_idx, sx):
     """Write a vertex cache entry to RAM and set its valid bit.
 
     VC_VX stores the 8.8 view-x: (evx_t << 8) | fvx.
     """
-    base = _p_layout['ram_vcache'] + vi * VCACHE_ENTRY
+    base = _p_layout['ram_vrcache'] + vi * VRCACHE_ENTRY
     vx88 = ((evx_t & 0xFF) << 8) | (fvx & 0xFF)
     write_s16(ram, base + VC_VX, vx88 if vx88 < 0x8000 else vx88 - 0x10000)
     write_s16(ram, base + VC_VY, vy)
     write_u16(ram, base + VC_VYIDX, vy_idx)
     write_s16(ram, base + VC_SX, sx)
-    set_valid(ram, _p_layout['ram_vcache_valid'], vi)
+    set_valid(ram, _p_layout['ram_vrcache_valid'], vi)
 
 
 def _packed_read_vwh(ram, wi):
     """Read a VWH cache entry from RAM.  Returns screen Y (s16) or None."""
     if not is_valid(ram, _p_layout['ram_vwh_valid'], wi):
         return None
-    base = _p_layout['ram_vwh_cache'] + wi * VWHCACHE_ENTRY
+    base = _p_layout['ram_vwh_cache'] + wi * VYCACHE_ENTRY
     return read_s16(ram, base)
 
 
 def _packed_write_vwh(ram, wi, sy):
     """Write a VWH cache entry to RAM and set its valid bit."""
-    base = _p_layout['ram_vwh_cache'] + wi * VWHCACHE_ENTRY
+    base = _p_layout['ram_vwh_cache'] + wi * VYCACHE_ENTRY
     write_s16(ram, base, sy)
     set_valid(ram, _p_layout['ram_vwh_valid'], wi)
 
@@ -3031,13 +3031,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         (sx1, _depth1), (sx2, _depth2) = _r
         _py1 = lambda h: _AS.proj_y(h, _depth1, vz)
         _py2 = lambda h: _AS.proj_y(h, _depth2, vz)
-        # Force ey!=evy below so the vwh/vcache fast-paths are bypassed
+        # Force ey!=evy below so the vwh/vrcache fast-paths are bypassed
         # (depth is per-seg-endpoint here, recomputed via _py1/_py2).
         evy1, ey1, evy2, ey2 = 0, 1, 0, 1
     else:
-        # ── View transform with RAM vcache ──
+        # ── View transform with RAM vrcache ──
         fp_module.mul_cat("view")
-        vc1 = _packed_read_vcache(ram, v1_idx)
+        vc1 = _packed_read_vrcache(ram, v1_idx)
         if vc1 is not None and vc1[3] == 0:
             # sx-less partial entry: the 6502 has NO such state (sx_vert
             # fills transform+clip+sx atomically) — serving it here used
@@ -3048,7 +3048,7 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
         if vc1 is None:
             result = (fp_module.fp_to_view_t16 if _T16 else fp_to_view)(wx1, wy1, ctx)
             evx1_t, evx1_r, evy1, fvx1, vy_idx1 = result[:5]
-            _packed_write_vcache(ram, v1_idx, evx1_t, fvx1, evy1, vy_idx1, 0)
+            _packed_write_vrcache(ram, v1_idx, evx1_t, fvx1, evy1, vy_idx1, 0)
             _vc1_has_sx = False
         else:
             evx1_t = vc1[0]
@@ -3058,13 +3058,13 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
             evx1_r = evx1_t  # not used for projection, but set for consistency
             _vc1_has_sx = (vc1[3] != 0)
 
-        vc2 = _packed_read_vcache(ram, v2_idx)
+        vc2 = _packed_read_vrcache(ram, v2_idx)
         if vc2 is not None and vc2[3] == 0:
             vc2 = None                     # (mirror — see vc1)
         if vc2 is None:
             result = (fp_module.fp_to_view_t16 if _T16 else fp_to_view)(wx2, wy2, ctx)
             evx2_t, evx2_r, evy2, fvx2, vy_idx2 = result[:5]
-            _packed_write_vcache(ram, v2_idx, evx2_t, fvx2, evy2, vy_idx2, 0)
+            _packed_write_vrcache(ram, v2_idx, evx2_t, fvx2, evy2, vy_idx2, 0)
             _vc2_has_sx = False
         else:
             evx2_t = vc2[0]
@@ -3123,23 +3123,23 @@ def packed_render_seg(si, clips, ctx, vz, surface, ram, deferred=None):
 
         # sx1
         if ey1 == evy1 and _vc1_has_sx:
-            sx1 = _packed_read_vcache(ram, v1_idx)[3]
+            sx1 = _packed_read_vrcache(ram, v1_idx)[3]
         else:
             fvx1_c = fvx1 if ey1 == evy1 else (cxf1 or 0)
             sx1 = fp_project_x(ex1, fvx1_c, rxh1, rxl1)
             if ey1 == evy1:
-                # Update vcache with sx
-                base = _p_layout['ram_vcache'] + v1_idx * VCACHE_ENTRY
+                # Update vrcache with sx
+                base = _p_layout['ram_vrcache'] + v1_idx * VRCACHE_ENTRY
                 write_s16(ram, base + VC_SX, sx1)
 
         # sx2
         if ey2 == evy2 and _vc2_has_sx:
-            sx2 = _packed_read_vcache(ram, v2_idx)[3]
+            sx2 = _packed_read_vrcache(ram, v2_idx)[3]
         else:
             fvx2_c = fvx2 if ey2 == evy2 else (cxf2 or 0)
             sx2 = fp_project_x(ex2, fvx2_c, rxh2, rxl2)
             if ey2 == evy2:
-                base = _p_layout['ram_vcache'] + v2_idx * VCACHE_ENTRY
+                base = _p_layout['ram_vrcache'] + v2_idx * VRCACHE_ENTRY
                 write_s16(ram, base + VC_SX, sx2)
 
         if _USE_ANGLE_COL:
@@ -3886,9 +3886,9 @@ def _compare_draw_calls():
     cos_f, sin_f = cos_a, sin_a
 
     orig_fp_seg_fn = globals()['fp_render_seg']
-    def _fp_seg(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred=None):
+    def _fp_seg(si, clips, ctx, vz, surface, vrcache, vwh_cache, deferred=None):
         _current[0] = ('P', si)
-        orig_fp_seg_fn(si, clips, ctx, vz, surface, vcache, vwh_cache, deferred)
+        orig_fp_seg_fn(si, clips, ctx, vz, surface, vrcache, vwh_cache, deferred)
         _current[0] = None
     globals()['fp_render_seg'] = _fp_seg
     render_bsp_fp(len(nodes)-1, EndpointClipSpans(), ctx, vz_ps,

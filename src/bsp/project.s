@@ -44,7 +44,7 @@
 ; i.e. the EXISTING narrow body at net shift S-3 — and px_shrink's
 ; dispatch table already covers net in [-2, 7] (X = net+3 = S in
 ; [1,10]). The whole projection is a kernel select + fall-in: ZERO
-; bytes of operand staging. zp_br_r_s keeps the TRUE S (VWHC key /
+; bytes of operand staging. zp_br_r_s keeps the TRUE S (VYCACHE key /
 ; y-stage contract); only the selected kernel differs.
 ; --- M8 == 0 rare cell (2026-07-26, Eben: same mostly-taken BNE as the
 ; y-side; zero M8 = crossing recip / power-of-two depths only). Hoisted
@@ -248,7 +248,7 @@ pxm_nacc:
 
 
 ; ============================================================================
-; project_y — project height delta to screen Y, through the VWHC memo.
+; project_y — project height delta to screen Y, through the VYCACHE memo.
 ; (Consolidated 2026-07-12: the cache front moved here from the deleted
 ; ycache.s and the raw body below is INLINED — the miss path FALLS
 ; THROUGH into it, and the writeback rides the raw tail. One routine,
@@ -263,7 +263,7 @@ pxm_nacc:
 ;   Preserves the input set; clobbers X, Y, zp_pyc_idx + raw scratch on
 ;     a miss. CALLER pages BANK_L2 (y_stage/apv page once per run).
 ;
-; VWHC: direct-mapped, 256 entries, five parallel arrays (equates in
+; VYCACHE: direct-mapped, 256 entries, five parallel arrays (equates in
 ; resolve_crossing.s; flat $D500-$D9FF page-aligned, banked L2 $B500-).
 ; Probe = h ^ rhi (corpus-searched 2026-07-12: the ~140-key working set
 ; sits AT the birthday bound — S-boxes and 2-way associativity measured
@@ -271,7 +271,7 @@ pxm_nacc:
 ; (rhi, rlo, h) of a pure function, so entries survive frames/positions
 ; and a hit is bit-identical to the raw body by construction. RLO
 ; doubles as the valid flag (live S is never 0). Never cleared: the
-; bank/harness images arrive zeroed (the old boot-only vwhc_clear had
+; bank/harness images arrive zeroed (the old boot-only vycache_clear had
 ; no callers and was GC'd).
 ; ============================================================================
 ; --- M8 == 0 rare cell (2026-07-26, Eben's catch at :397: the BNE at
@@ -312,21 +312,21 @@ project_y:
 ; a real S is never 0) is still compared. Zero-filled fresh slots
 ; miss at the R_S stage exactly as before.
    LDA zp_br_r_s                                                          ;# |||||||    1.5
-   CMP VWHC_R_S,X                                                         ;# |||||||||| 2.0
+   CMP VYCACHE_R_S,X                                                         ;# |||||||||| 2.0
    BNE pym0                                                               ;# ||||||     1.3
    LDA zp_br_t0                                                           ;# |||        0.6
-   CMP VWHC_KEY,X                                                         ;# ||||       0.7
+   CMP VYCACHE_KEY,X                                                         ;# ||||       0.7
    BNE pym2                                                               ;# ||         0.4
-   LDY VWHC_L,X                           ; REG CONTRACT: Y = lo, A = hi  ;# |||        0.6
-   LDA VWHC_H,X                           ; (zp_br_res store-backs dropped ;# |||        0.6
+   LDY VYCACHE_L,X                           ; REG CONTRACT: Y = lo, A = hi  ;# |||        0.6
+   LDA VYCACHE_H,X                           ; (zp_br_res store-backs dropped ;# |||        0.6
    RTS                                     ; 2026-07-19: every engine caller ;# |||||      1.0
                                            ; consumes the registers; the unit
                                            ; test reads mpu.a/mpu.y now)
 pym0:
-   STA VWHC_R_S,X                                                         ;# ||||||||   1.6
+   STA VYCACHE_R_S,X                                                         ;# ||||||||   1.6
    LDA zp_br_t0                                                           ;# |||||      0.9
 pym2:
-   STA VWHC_KEY,X                                                         ;# ||||||||   1.7
+   STA VYCACHE_KEY,X                                                         ;# ||||||||   1.7
    STX zp_pyc_idx                          ; slot for the tail's VALUE stores; ;# |||||      1.0
 .endscope                                  ; FALLS THROUGH into the raw body
 
@@ -361,7 +361,7 @@ pym2:
 ; ============================================================================
 ; (label deleted 2026-07-12: NO ENTRY EXISTS — the body is reached only
 ; by falling through the cache front's miss path above, which set
-; zp_pyc_idx for the tail's VWHC writeback. A direct JSR here would
+; zp_pyc_idx for the tail's VYCACHE writeback. A direct JSR here would
 ; store the result into a stale cache slot: the label was a loaded gun.)
 .scope
 ; --- P24 = h*M8 + (h << 8), s24 in (t2, resl, resh) ---
@@ -498,13 +498,13 @@ py_stored:                                 ; (C02 ptail re-enters here past
    SEC                                                                    ;# |||        0.7
    SBC zp_br_res_l                                                        ;# |||||      1.0
    TAY                                     ; REG CONTRACT: Y = sy lo, A = sy hi ;# |||        0.7
-; --- VWHC writeback, VALUE half (the raw body is only ever entered
+; --- VYCACHE writeback, VALUE half (the raw body is only ever entered
 ; through the cache front's miss path above, which already wrote the
 ; key bytes via the staggered ladder) ---
-   STA VWHC_L,X                           ; A still = lo (TAY preserves)  ;# ||||||||   1.7
+   STA VYCACHE_L,X                           ; A still = lo (TAY preserves)  ;# ||||||||   1.7
    LDA #0                                                                 ;# |||        0.7
    SBC zp_br_res_h                                                        ;# |||||      1.0
-   STA VWHC_H,X                           ; (A = hi, Y = lo at RTS)       ;# ||||||||   1.7
+   STA VYCACHE_H,X                           ; (A = hi, Y = lo at RTS)       ;# ||||||||   1.7
    RTS                                                                    ;# |||||||||| 2.0
 .endscope
 
@@ -512,7 +512,7 @@ py_stored:                                 ; (C02 ptail re-enters here past
 ; RNS VECTORING — round-to-nearest shift dispatch for the projections.
 ;
 ; The shift S (zp_br_r_s, ALWAYS in [1,10], never 0 — it doubles as the
-; VWHC valid flag) is a per-vertex constant, so the shifter is selected
+; VYCACHE valid flag) is a per-vertex constant, so the shifter is selected
 ; ONCE per reciprocal and each projection dispatches with a single JSR:
 ;
 ;   rns dispatch: project_y's raw body carries it inline (br_project_x's

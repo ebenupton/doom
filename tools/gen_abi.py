@@ -3,7 +3,7 @@
 
 Every address that crosses a language boundary (ca65 engine <-> beebasm
 drivers <-> Python harness/builders) lives HERE and nowhere else. Private
-copies of these addresses have shipped three broken-disc bugs (vxc_ab,
+copies of these addresses have shipped three broken-disc bugs (vxcache_ab,
 the HUD var block, the test-harness pokes) — see project_bank_reshuffle.
 
 Outputs (all checked in; regenerate after editing the table):
@@ -19,7 +19,7 @@ os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 # (name, banked, flat_or_None_if_same_or_meaningless, comment)
 ABI = [
     ('BANK_L0',        4,      None, 'legacy alias for BANK_SEG (two-bank re-cut 2026-08-13)'),
-    ('BANK_SEG',       4,      None, 'sideways bank A: seg headers+DIRs, verts, recips, VWHC, TABL0 — held for seg stages 1-4'),
+    ('BANK_SEG',       4,      None, 'sideways bank A: seg headers+DIRs, verts, recips, VYCACHE, TABL0 — held for seg stages 1-4'),
     ('BANK_C',         6,      None, 'sideways bank: clipper + rasteriser + HUD'),
     ('BANK_L2',        7,      None, 'legacy alias for BANK_WALK'),
     ('BANK_WALK',      7,      None, 'sideways bank B: node SoA, L8/AE/VATOX, bbox, CPM, rcache, ANIM CFG — held for the whole BSP walk'),
@@ -35,7 +35,7 @@ ABI = [
     # val[] slots were engine-dead (the classify reads BBP planes; only
     # stale harness pokes touched them) and bca_ab moved to ZP. $1B40-
     # $1BFF is free in both builds and LOW now loads at $1C00.)
-    ('BCA_AB',         0x62,   None, 'view angle byte — ZP (zp_buf\'s slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry\'s HI byte, the drivers seed it); poked per frame by driver/harness; vxc_ab aliases it; zp.inc aliases bca_ab = BCA_AB'),
+    ('BCA_AB',         0x62,   None, 'view angle byte — ZP (zp_buf\'s slot, freed with span_read 2026-07-26; NOT $64 — that is zp_bv_entry\'s HI byte, the drivers seed it); poked per frame by driver/harness; vxcache_ab aliases it; zp.inc aliases bca_ab = BCA_AB'),
     ('SQR_BASE',       0x0200, None, 'quarter-square tables: lo,2lo then hi,2hi — one contiguous quad $0200-$05FF, one address, both builds. Moved from $1A00 2026-08-18: pure-function data belongs in the UNSHIPPABLE pages (OS-owned until takeover) — it is GENERATED at boot by the fill at the top of anim_init, never loaded, and the shippable pages it vacated took COLPORT and the pool, killing every boot copy-dance.'),
     # REORDERED 2026-07-12: lo pages CONTIGUOUS (f(0..510) linear), then
     # hi pages — rot_core's frame-constant-mag SMC bases index across the
@@ -46,8 +46,8 @@ ABI = [
     ('SQRH_BASE',      0x0400, None, 'quarter-square HI pages ($0400/$0500). The 2026-08-09 note about the $0200 staging dance dying is history twice over: the quad is back on the OS pages, but BOOT-GENERATED now, so there is no dance to die.'),
     ('SQR_HI',         'SQRH_BASE+$000', None, 'qsqr hi bytes (f 0..255)'),
     ('SQR2_HI',        'SQRH_BASE+$100', None, 'qsqr hi bytes (f 256..510)'),
-    ('DRV_ORG',        0x0F00, None, '$1A00 -> $0F00 2026-08-26 (low-RAM consolidation; the driver heads the ONE engine code area). walk/anim driver entry (!BOOT CALLs this). $1E00 -> $1A00 2026-08-19 (the -$400 window slide, bank-B code eviction): the exception window is $1A00-$25FF — banked walk_drv+PMOVE, flat VXC_YLO/YHI + CPM keys + records + PM_SCRATCH + PMH.'),
-    ('DRV_VARS',       0x0B10, None, 'UNIFIED both builds 2026-08-26: the 16-byte hole in the WORK segment between PM_FXW and the scalars ($0B10-$0B1F) — one address, no flat/tube fork (the $1180 flat home died with the map). walk driver variable block (layout below). Banked base $1B80 -> $1BF0 2026-08-24: the block sat in the MIDDLE of walk_drv\'s ORG\'d span, capping the code at 384 B, and the OSBYTE font probe did not fit. The span is code | glue (DRV_GLUE) | vars | input+flip (DRV_CLR), so the vars now occupy the 16 free bytes below DRV_CLR and the code\'s real limit is DRV_GLUE -- which is what walk_drv now asserts, at both ends. FLAT is $1180 because $1B00-$1BFF there is the SENIOR page of VXC_YLO: the seg pipeline cached vertices 384..396 straight over the old block -- vertex 387 landed on DV_PXL and the player X jumped mid-turn. Banked never saw it (VXC lives in bank A), so only the TUBE, which runs the flat engine with a driver, was corrupted. $1180 verified clear by poisoning $1100-$11FF and running render+anim_tick+pm_frame.'),
+    ('DRV_ORG',        0x0F00, None, '$1A00 -> $0F00 2026-08-26 (low-RAM consolidation; the driver heads the ONE engine code area). walk/anim driver entry (!BOOT CALLs this). $1E00 -> $1A00 2026-08-19 (the -$400 window slide, bank-B code eviction): the exception window is $1A00-$25FF — banked walk_drv+PMOVE, flat VXCACHE_YLO/YHI + CPM keys + records + PM_SCRATCH + PMH.'),
+    ('DRV_VARS',       0x0B10, None, 'UNIFIED both builds 2026-08-26: the 16-byte hole in the WORK segment between PM_FXW and the scalars ($0B10-$0B1F) — one address, no flat/tube fork (the $1180 flat home died with the map). walk driver variable block (layout below). Banked base $1B80 -> $1BF0 2026-08-24: the block sat in the MIDDLE of walk_drv\'s ORG\'d span, capping the code at 384 B, and the OSBYTE font probe did not fit. The span is code | glue (DRV_GLUE) | vars | input+flip (DRV_CLR), so the vars now occupy the 16 free bytes below DRV_CLR and the code\'s real limit is DRV_GLUE -- which is what walk_drv now asserts, at both ends. FLAT is $1180 because $1B00-$1BFF there is the SENIOR page of VXCACHE_YLO: the seg pipeline cached vertices 384..396 straight over the old block -- vertex 387 landed on DV_PXL and the player X jumped mid-turn. Banked never saw it (VXCACHE lives in bank A), so only the TUBE, which runs the flat engine with a driver, was corrupted. $1180 verified clear by poisoning $1100-$11FF and running render+anim_tick+pm_frame.'),
     ('DV_ANGIDX',      'DRV_VARS+0',  None, 'view angle index 0..63 (angle byte = idx*4)'),
     ('DV_BACKHI',      'DRV_VARS+1',  None, 'hidden-buffer page hi ($58/$6C)'),
     ('DV_PXF',         'DRV_VARS+2',  None, 'player x 8.8 prescaled, 24-bit: frac'),
@@ -70,9 +70,9 @@ ABI = [
     ('PM_FXW',         0x0B00, None, 'world-fraction bytes of the CANDIDATE/committed position, x at +0 / y at +2 (4-byte block $096B-$096E, freed by the u8 BSP child staging retirement). Staged by pmf_cand = (candidate 8.8-prescaled byte0) << 3; consumed by the EXACT node point-on-side (axis ties + node_band) and nowhere else. Harnesses that poke the $90-$93 raws directly MUST poke these too (zero for integer positions).'),
     ('D_ENABLE',       0x0B7E, None, 'forward-coherence bbox cache master switch'),
     ('D_FWD',          0x0B7F, None, 'per-frame flag: move was forward-only'),
-    ('VXC_STATE',      0x0700, None, 'THE BITMAP PAGE: VCACHE_VALID+VDONE+VXC_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
-    ('VXC_STATE_LEN',  0x100,  None, 'bytes to zero at boot (the whole bitmap page)'),
-    ('VXC_ENABLE',     0x0B5D, None, 'translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxc_prev_ab follows it)'),
+    ('VXCACHE_STATE',      0x0700, None, 'THE BITMAP PAGE: VRCACHE_VALID+VDONE+VXCACHE_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
+    ('VXCACHE_STATE_LEN',  0x100,  None, 'bytes to zero at boot (the whole bitmap page)'),
+    ('VXCACHE_ENABLE',     0x0B5D, None, 'translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxcache_prev_ab follows it)'),
     ('RCACHE_STATE',   0xAF00, 0x7268, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
     ('RCACHE_ENABLE',  0xAF88, 0x72F0, 'rotation-coherence bca cache switch (STATE+$88)'),

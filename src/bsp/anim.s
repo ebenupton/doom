@@ -6,7 +6,7 @@
 ;   LOGICAL heights advance every frame in anim_tick (per-mover state
 ;   machine over a 3-byte block: pos 8.8 prescaled + packed state/timer).
 ;   APPLIED heights (the bytes the renderer reads) update lazily: the
-;   render_subsector hook (anim_ss_hook, SMC like the vxc/bca hooks)
+;   render_subsector hook (anim_ss_hook, SMC like the vxcache/bca hooks)
 ;   consults a per-subsector mover bitmask and patches a dirty mover the
 ;   first time a frame visits any subsector containing one of its segs.
 ;   An invisible mover's stale bytes are never read, so lazy == eager.
@@ -67,7 +67,7 @@ ANIM_FIELDS = $0B68                     ; PAL fields this frame consumed —
                                         ; tick (2026-08-25); 0 (harness, no
                                         ; driver) ticks as 1 field. Byte
                                         ; below the anim block: the old
-                                        ; VXC senior-plane tail, free since
+                                        ; VXCACHE senior-plane tail, free since
                                         ; n_verts <= 480.
 ANIM_ENABLE = $0B69                     ; scalars block: $05xx -> $1Dxx (sqr
 ANIM_DIRTY  = $0B6A                     ; swap) -> $19xx (2026-08-19 window

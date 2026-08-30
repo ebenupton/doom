@@ -482,7 +482,7 @@ Each front-facing seg generates lines based on the height relationship between f
 
 ## 12. Vertex Caching
 
-### Frame-Global View Cache (`vcache`)
+### Frame-Global View Cache (`vrcache`)
 
 Maps `vertex_index` -> `(vx_trunc, vx_round, vy, vx_frac, vy_idx, [sx, rxh, rxl])`.
 
@@ -520,7 +520,7 @@ Keyed on actual height values (not sector index), so vertices shared between sec
 
 ### Caching Savings
 
-With frame-global vcache + ycache, shared vertices (appearing in 2-3 segs) pay the full cost once. Typical savings: 30-50% of total V+P muls.
+With frame-global vrcache + ycache, shared vertices (appearing in 2-3 segs) pay the full cost once. Typical savings: 30-50% of total V+P muls.
 
 ### Per-Line Clipping Cost
 

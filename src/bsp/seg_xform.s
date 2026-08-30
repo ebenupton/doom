@@ -3,7 +3,7 @@
 ; br_seg_xform_vertex — fetch vertex by index, transform to view, project X.
 ;
 ; One call per seg endpoint (subsector.s seg loop). Mirrors the "View
-; transform with RAM vcache" + reciprocal + X-projection phase of Python's
+; transform with RAM vrcache" + reciprocal + X-projection phase of Python's
 ; packed_render_seg (fp_to_view / fp_recip / fp_project_x_subpx), with a
 ; per-frame VERTEX CACHE so a vertex shared by several segs is transformed
 ; and X-projected only once per frame.
@@ -22,7 +22,7 @@
 ;   Uses:   br_to_view (view.s, s24 rotation), br_recip, br_project_x.
 ;
 ; Vertex cache: five 512-byte SoA planes (CLIP, SXL, SXH, RHI, RLO —
-; header.s) plus a 1-bit-per-vertex valid bitmap at VCACHE_VALID_BASE
+; header.s) plus a 1-bit-per-vertex valid bitmap at VRCACHE_VALID_BASE
 ; (cleared per frame). A clipped entry stores clip = 1 ONLY; the other
 ; planes stay undefined for that vertex (nothing reads them).
 ;
@@ -58,7 +58,7 @@
 ; (NC_FILL_ARM macro ABSORBED into SXV_BODY 2026-07-27 — the fills
 ; fused around one shared evy/evx tail per side.)
 
-; (VXC_WARM_ARM folded into the vxcon island 2026-08-09 — single use)
+; (VXCACHE_WARM_ARM folded into the vxcache_on island 2026-08-09 — single use)
 
 ; ============================================================================
 ; SXV_BODY — one full SIDE (senior page BAKED) of the vertex transform:
@@ -71,8 +71,8 @@
 ; ============================================================================
 ; SPLIT MACROS (2026-08-13): SXV_TOP = head/probe/hit-serve/vmiss up to
 ; the vectored fetch dispatch; SXV_BOT = everything the vectors enter
-; (vfoff plain fetch, near-clip, recip, fills, the vxcon island). The
-; halves only connect through JMP (vec) -> the ::-global vfoff/vxcon
+; (vfoff plain fetch, near-clip, recip, fills, the vxcache_on island). The
+; halves only connect through JMP (vec) -> the ::-global vfoff/vxcache_on
 ; labels, so the four expansions lay out top0, top1, bot0, bot1 — both
 ; tops fit under the entry's branch range and the hi trampoline died.
 .macro SXV_TOP pg, vec
@@ -83,7 +83,7 @@
 ; ABI (2026-08-13): callers enter via sx_vert with A = the just-loaded
 ; idx_b header byte; the entry stores zp_seg_v_idx_b, sets Y = idx_b
 ; and side-dispatches on bit 5. Y RIDES through the probe, vmiss and
-; into vxcon's VXC_VALID accesses.
+; into vxcache_on's VXCACHE_VALID accesses.
 ; BANK CONTRACT (flip 2026-08-13): callers PAGE_X BANK_L2 before the
 ; side dispatch (they finish their L0 header reads first), the body
 ; assumes L2 throughout and pages NOTHING; every exit leaves L2
@@ -94,9 +94,9 @@
    LDA vc_bit_mask,X                       ; bit mask = 1 << (idx_lo & 7)
    STA zp_seg_v_bitm
    LDX zp_seg_ep                           ; X = struct offset from here on
-   AND VCACHE_VALID_BASE,Y
+   AND VRCACHE_VALID_BASE,Y
    BEQ vmiss
-; --- vcache hit serve (was VC_HIT_ARM, absorbed 2026-08-09) ---
+; --- vrcache hit serve (was VC_HIT_ARM, absorbed 2026-08-09) ---
 ; EV16: the evy/evx serves DIED — clip is the whole near verdict, and
 ; the crossing recovers s24 totals itself (cr_recover).
    LDY zp_seg_v_idx_l
@@ -122,7 +122,7 @@ vh_pgx:
                                            ; POSTCONDITION is LOAD-BEARING:
                                            ; the consumer (found by poison
                                            ; bisect 2026-08-13) is
-                                           ; project_y's VWHC planes
+                                           ; project_y's VYCACHE planes
                                            ; ($B100/$B200 = bank L2), read
                                            ; by the y-stage's NO-BACK arc
                                            ; which pages nothing.
@@ -131,18 +131,18 @@ vh_clipped:
    STA VX1+0,X                             ; clip = nonzero; the other
    RTS                                     ; slots are undefined for a
                                            ; clipped vertex (unchanged)
-; (vxcon island lives at the BODY END — vector-entered and JMP-exited,
+; (vxcache_on island lives at the BODY END — vector-entered and JMP-exited,
 ;  so placement is free)
 vmiss:
 ; mark valid now (fill lands the bytes below; even a near-clipped
 ; path leaves a usable evy/evx entry; clip lands in the fills — both
 ; verdicts store plane+struct symmetrically, 2026-07-27)
-   LDA VCACHE_VALID_BASE,Y
+   LDA VRCACHE_VALID_BASE,Y
    ORA zp_seg_v_bitm
-   STA VCACHE_VALID_BASE,Y
+   STA VRCACHE_VALID_BASE,Y
 ; --- VECTORED fetch dispatch (Eben, 2026-07-27: the bca-cache idiom —
-; pointer, not flag; vxc_frame aims it once per frame). Cache off:
-; straight into the inline plain fetch below. Cache on: the vxcon
+; pointer, not flag; vxcache_frame aims it once per frame). Cache off:
+; straight into the inline plain fetch below. Cache on: the vxcache_on
 ; stub (island below) probes/serves the translation cache. (The off
 ; arm was briefly deleted for TRUE16 always-on 2026-08-10 and
 ; RESTORED same day: the canonical cache-off contract is compute-
@@ -153,7 +153,7 @@ vmiss:
 .endscope
 .endmacro
 
-.macro SXV_BOT pg, vfoff, vxcon, rwpa, rwpb
+.macro SXV_BOT pg, vfoff, vxcache_on, rwpa, rwpb
 .scope
 ::vfoff:
 ; TRUE16 plain fetch: stage the PAGE-DECOMPOSED vertex (unsigned u8
@@ -173,17 +173,17 @@ vmiss:
    JSR rot_w_pages                         ; SMC: rot_select picks the body
    CLC
    LDA zp_br_vx_l
-   ADC vxc_ref_x+0
+   ADC vxcache_ref_x+0
    STA zp_br_vx_l
    LDA zp_br_vx_h
-   ADC vxc_ref_x+1
+   ADC vxcache_ref_x+1
    STA zp_br_vx_h
    CLC
    LDA zp_br_vy_l
-   ADC vxc_ref_y+0
+   ADC vxcache_ref_y+0
    STA zp_br_vy_l
    LDA zp_br_vy_h
-   ADC vxc_ref_y+1
+   ADC vxcache_ref_y+1
    STA zp_br_vy_h                          ; A/N/Z = vy count hi — fetch_
                                            ; done RIDES these (STA is flag-
                                            ; transparent; falls straight in)
@@ -258,7 +258,7 @@ fill_tail:                                 ;  PLANE verdict is RLO != 0,
                                            ; wide zp_br_vx in place during
                                            ; projection — bases must
                                            ; snapshot PRE-projection, i.e.
-                                           ; in the vxc cold arm = birth)
+                                           ; in the vxcache cold arm = birth)
 nc_fail:
    LDX zp_seg_ep                           ; struct offset — ONLY this arm
                                            ; needs it before fill_tail; the
@@ -294,34 +294,34 @@ ncr_far:
    JMP ncr_done
 ; (the ec_clamp/ec_hi_nz s8-saturate islands DIED with the evy/evx
 ; tier — EV16 2026-08-09: no consumer treats anything as s8 any more)
-::vxcon:
-; --- VXC serve, TRUE16 (2026-08-10): the cache memoizes base counts =
+::vxcache_on:
+; --- VXCACHE serve, TRUE16 (2026-08-10): the cache memoizes base counts =
 ; rns(rot(w), 3) — a pure function of (vertex, angle epoch) — in FOUR
 ; s16 planes, main RAM. Counts ARE the working form: warm = 4 loads +
 ; the 16-bit ref add (the <<2 widen DIED); cold = birth: fetch + rot
 ; (counts out of the vq3 tail) + 4 plane stores DIRECT (the >>2/<<2
 ; dance DIED), same add. Every tier computes total := base_c +
 ; ref_c, so warm == birth == Python bit-exactly BY CONSTRUCTION.
-   LDA VXC_VALID,Y                         ; Y = B RIDES from the head
+   LDA VXCACHE_VALID,Y                         ; Y = B RIDES from the head
                                            ; (planes + VALID are main; the
                                            ; cold VP fetch uses the
                                            ; caller's L2)
    AND zp_seg_v_bitm                       ; (the X reload died — the
    BEQ vs_cold                             ;  X/Y roles flipped 2026-08-13)
    LDX zp_seg_v_idx_l
-   LDA VXC_XLO+pg,X                        ; warm: base counts -> the
+   LDA VXCACHE_XLO+pg,X                        ; warm: base counts -> the
    STA zp_br_vx_l                          ; working slots
-   LDA VXC_XHI+pg,X
+   LDA VXCACHE_XHI+pg,X
    STA zp_br_vx_h
-   LDA VXC_YLO+pg,X
+   LDA VXCACHE_YLO+pg,X
    STA zp_br_vy_l
-   LDA VXC_YHI+pg,X
+   LDA VXCACHE_YHI+pg,X
    STA zp_br_vy_h
    JMP vxq_add
 vs_cold:
-   LDA VXC_VALID,Y
+   LDA VXCACHE_VALID,Y
    ORA zp_seg_v_bitm
-   STA VXC_VALID,Y
+   STA VXCACHE_VALID,Y
 ; birth: page-decomposed fetch + the epoch-selected rotate body
    LDY zp_seg_v_idx_l
    LDA VP_OX+pg,Y
@@ -334,29 +334,29 @@ vs_cold:
    JSR rot_w_pages                         ; SMC: rot_select picks the body
    LDY zp_seg_v_idx_l
    LDA zp_br_vx_l
-   STA VXC_XLO+pg,Y                        ; birth store: counts verbatim
+   STA VXCACHE_XLO+pg,Y                        ; birth store: counts verbatim
    LDA zp_br_vx_h
-   STA VXC_XHI+pg,Y
+   STA VXCACHE_XHI+pg,Y
    LDA zp_br_vy_l
-   STA VXC_YLO+pg,Y
+   STA VXCACHE_YLO+pg,Y
    LDA zp_br_vy_h
-   STA VXC_YHI+pg,Y
+   STA VXCACHE_YHI+pg,Y
 vxq_add:
 ; shared tail: totals := base_c + ref_c, s16 (overflow impossible:
 ; the pack range assert bounds |total| <= 32767)
    CLC
    LDA zp_br_vx_l
-   ADC vxc_ref_x+0
+   ADC vxcache_ref_x+0
    STA zp_br_vx_l
    LDA zp_br_vx_h
-   ADC vxc_ref_x+1
+   ADC vxcache_ref_x+1
    STA zp_br_vx_h
    CLC
    LDA zp_br_vy_l
-   ADC vxc_ref_y+0
+   ADC vxcache_ref_y+0
    STA zp_br_vy_l
    LDA zp_br_vy_h
-   ADC vxc_ref_y+1
+   ADC vxcache_ref_y+1
    STA zp_br_vy_h                          ; A/N/Z = vy count hi —
    JMP fetch_done                          ; fetch_done's arrival contract
                                            ; (JMP is flag-transparent; the
@@ -385,25 +385,25 @@ vxq_add:
                                         ; (v1's lives in zp_v1i_b) — the v2
                                         ; call site banks it
 ; fall into the lo top — the side-baked halves below have NO internal
-; senior test anywhere (probe, fetch, VXC, fills all baked).
+; senior test anywhere (probe, fetch, VXCACHE, fills all baked).
 ::sx_vert_lo:
    SXV_TOP 0, zp_vf_vec0
 ::sx_vert_hi:
    SXV_TOP $100, zp_vf_vec1
-   SXV_BOT 0, sxv0_vfoff, sxv0_vxcon, sxv0_rwpa, sxv0_rwpb
-   SXV_BOT $100, sxv1_vfoff, sxv1_vxcon, sxv1_rwpa, sxv1_rwpb
+   SXV_BOT 0, sxv0_vfoff, sxv0_vxcache_on, sxv0_rwpa, sxv0_rwpb
+   SXV_BOT $100, sxv1_vfoff, sxv1_vxcache_on, sxv1_rwpa, sxv1_rwpb
 
-; (vxc_store_tail deleted 2026-08-09 — birth store inlined per side in
-;  the vxcon islands, side baked)
+; (vxcache_store_tail deleted 2026-08-09 — birth store inlined per side in
+;  the vxcache_on islands, side baked)
 
 
 
-; (VXC_WARM_ARM moved above SXV_BODY 2026-08-09 — it expands inside it now)
+; (VXCACHE_WARM_ARM moved above SXV_BODY 2026-08-09 — it expands inside it now)
 
 ; ============================================================================
-; (VXC serve INLINED into SXV_BODY's vxcon islands 2026-08-09 — the
-; VXC_SERVE_SIDE macro and the standalone vxc_serve_lo/hi bodies are
+; (VXCACHE serve INLINED into SXV_BODY's vxcache_on islands 2026-08-09 — the
+; VXCACHE_SERVE_SIDE macro and the standalone vxcache_serve_lo/hi bodies are
 ; gone. In/out contract unchanged: in zp_seg_v_idx_l/b + zp_seg_v_bitm
-; + vxc_ref_x/y; out zp_br_vx/vy lo/hi/ext, bit-identical to
+; + vxcache_ref_x/y; out zp_br_vx/vy lo/hi/ext, bit-identical to
 ; br_to_view — base' = L(w) is translation-invariant, see vxcache.s.)
 ; ============================================================================

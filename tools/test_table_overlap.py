@@ -35,15 +35,15 @@ import symmap, colmap, anim_sectors as an, doom_wireframe as dw
 # The rcache psi planes (length = node count) ...
 PLANES = ('RC_P1L_0', 'RC_P1L_1', 'RC_P2L_0', 'RC_P2L_1', 'RC_PH_0', 'RC_PH_1')
 # ...and every OTHER relocatable cache block, with its real length.  These
-# were missing, and the gate cheerfully passed a rehome that put four VXC
+# were missing, and the gate cheerfully passed a rehome that put four VXCACHE
 # planes inside the flat seg-header table (ROM_SEG_HDR_C $8600 + 5,884 B).
 # Only tube_walk caught it, four frames in.  A cache the gate does not know
 # about is a cache that can land anywhere.  2026-08-30.
-SIZED_PLANES = (('VXC_XLO', 0x200), ('VXC_XHI', 0x200),
-                ('VXC_YLO', 0x200), ('VXC_YHI', 0x200),
-                ('VCACHE_BASE', 0x200), ('RCACHE_STATE', 138),
-                ('VWHC_R_S', 0x100), ('VWHC_KEY', 0x100),
-                ('VWHC_L', 0x100), ('VWHC_H', 0x100))
+SIZED_PLANES = (('VXCACHE_XLO', 0x200), ('VXCACHE_XHI', 0x200),
+                ('VXCACHE_YLO', 0x200), ('VXCACHE_YHI', 0x200),
+                ('VRCACHE_BASE', 0x200), ('RCACHE_STATE', 138),
+                ('VYCACHE_R_S', 0x100), ('VYCACHE_KEY', 0x100),
+                ('VYCACHE_L', 0x100), ('VYCACHE_H', 0x100))
 
 
 def n_nodes():
@@ -103,7 +103,7 @@ def tables(flat):
         out.append(('wad:obj_art', art_a, 4 * L['n_obj_art']))
         # OBJ_ANYB bitmap (2026-08-29): python-placed, invisible to the
         # linker — register so future placements collide loudly (the
-        # byte-plane experiment landed on engine_pmbf/VXC senior pages)
+        # byte-plane experiment landed on engine_pmbf/VXCACHE senior pages)
         _anyb = symmap.sym('OBJ_ANYB', banked=0, c02=1)
         out.append(('obj_anyb', _anyb, L['obj_bits_len']))
         # angle-module tables (python-loaded; a PMEXT cut landed on
@@ -134,7 +134,7 @@ def main():
         planes = [(p, t[p], N) for p in PLANES if p in t]
         # FLAT ONLY: flat has no bank window, so an address collision there
         # is REAL.  Banked, two names at one window address are usually
-        # different PHYSICAL banks (VWHC is bank A, VPLOTC bank C) and
+        # different PHYSICAL banks (VYCACHE is bank A, VPLOTC bank C) and
         # comparing raw addresses just manufactures false positives.
         if not banked:
             planes += [(p, t[p], L) for p, L in SIZED_PLANES if p in t]

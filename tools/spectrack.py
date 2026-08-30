@@ -28,7 +28,7 @@ KNOWN NOISE CLASSES (triaged 2026-07-12 — check before believing):
   - SMC patches (rns_select -> rns_go+1, frame hooks): the patched
     byte is consumed by an operand FETCH, which the tracker must
     ignore for its own addressing -> SMC writers look 100% dead.
-  - Cache/coherence writes (hg cache, D-cache, VWHC keys) are
+  - Cache/coherence writes (hg cache, D-cache, VYCACHE keys) are
     cross-frame value stores; single-frame flush marks the last
     frame's tail dead.
   - VERDICT PRODUCERS (bbox_visible/_d, bca, is_full, has_gap):
@@ -51,7 +51,7 @@ DCL walks clip to nothing (~5k/frame warm, no pre-test cheaper than
 the walk found yet). umul_round_div/interp/tighten 'waste' is A-return
 noise.
 Usage: python3 tools/spectrack.py [n_positions] [warm]
-  warm: fixed-angle walk sequence, VXC+RCACHE+D enabled, warmup skipped.
+  warm: fixed-angle walk sequence, VXCACHE+RCACHE+D enabled, warmup skipped.
 """
 import os, sys, bisect, collections
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
@@ -214,11 +214,11 @@ def main():
     if warm:
         # fixed-angle walk with all three coherence caches enabled (the
         # flat build honors the enable bytes); track from frame 4 on so
-        # VXC/RCACHE/D and the VWHC are genuinely warm.
+        # VXCACHE/RCACHE/D and the VYCACHE are genuinely warm.
         import abi, pygame as pg
         mem = sc.mpu.memory
         list.__setitem__(m, abi.D_ENABLE, 1)
-        list.__setitem__(m, abi.VXC_ENABLE, 1)
+        list.__setitem__(m, abi.VXCACHE_ENABLE, 1)
         list.__setitem__(m, sym('RCACHE_ENABLE'), 1)
         D_FWD = sym('D_FWD')
         px, py, ab = 3000.0, -2900.0, 129     # walk INTO the zigzag depth
