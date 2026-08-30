@@ -78,7 +78,12 @@ vxc_prev_ab = $0B5E                     ; moved with the scalars block, then
 .if ::BANKED
 VXC_BASE = $A000
 .else
-VXC_BASE = $4E00
+VXC_BASE = $A600                        ; REHOMED 2026-08-30 into the tail the
+                                        ; flat vplot body vacated (VPLOTF used
+                                        ; 1,279 B, now 158).  X pair only: it is
+                                        ; what capped flat CODE at $4E00.  Y pair
+                                        ; stays at $5200/$5400 -- CODE does not
+                                        ; need to reach past $51FF.
 .endif
 VXC_XLO  = VXC_BASE + $000
 VXC_XHI  = VXC_BASE + $200

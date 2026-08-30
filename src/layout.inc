@@ -175,7 +175,8 @@ ROM_DBOUND_C = $B880                    ; the gap after the 3 DIR planes
 .else
 ROM_BKTLO_C = $0C10                     ; the shared $0C10 gap (scratch
 ROM_BKTHI_C = $D680                     ; ends $0C0E, COLPORT at $0D00);
-ROM_DBOUND_C = $4D00                    ; the RECIP_M8H-to-CPM_PSI half
+ROM_DBOUND_C = $7000                    ; REHOMED 2026-08-30 into the CLIPF tail
+                                        ; freed by dropping plot_axis (was $4D00,
                                         ; page; the page the flat CODE
                                         ; region SHRANK to wall off.
                                         ; (All three left $7080-$71FF

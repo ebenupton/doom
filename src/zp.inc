@@ -690,7 +690,7 @@ POOL_BDEN   = POOL + $1C0
 .segment "CODE"                   ; (was "PMB2" -- a separate NAME for the
 .endmacro
 .macro SEG_PMB3
-.segment "PMB3"                   ; banked $B348-$B3FF: packed trig+unit
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro
 .macro SEG_PMB4
 .segment "CODE"                   ; (was "PMB4" -- a separate NAME for the
@@ -699,79 +699,39 @@ POOL_BDEN   = POOL + $1C0
 .segment "PMH"                    ; pm single-step: banked = the
 .endmacro                        ;  PMOVE area, flat = PMBF
 .macro SEG_PMEXT
-.segment "PMEXT"                  ; pm helpers past the flat CODE cap
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro                         ;  (banked: CODE tail; flat: $DF80)
 .macro SEG_PMZ
-.if ::BANKED
-.segment "PMB4"                   ; pmove_try's zonly tail: banked rides
-.else                             ;  PMB4; flat takes the $4D80 half page
-.segment "PMZ"                    ;  (above the DBOUND plane, below the
-.endif                            ;  $4E00 VXC planes — ships zero,
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro                         ;  render-untouched, audited 2026-08-29)
 .macro SEG_PMMU
-.if ::BANKED
-.segment "PMOVE"                  ; pmf_mul24s: banked stays in the
-.else                             ;  PMOVE region; flat rides the
-.segment "PMMU"                   ;  OBJ_ART-to-minpass gap $E8C8
-.endif
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro
 .macro SEG_PMWO
-.if ::BANKED
-.segment "PMB4"                   ; walkover firing: banked rides the
-.else                             ;  CODE tail; flat takes the USETAB-
-.segment "PMWK"                   ;  to-FB tail ($E9A8, after the MV_SS
-.endif                            ;  repack)
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro
 .macro SEG_PQ
-.if ::BANKED
-.segment "CODE"                   ; plotq arm/off: cold (twice a frame),
-.else                             ;  so it leaves the packed clipper
-.segment "PQ"                     ;  segment; flat uses the VPLOTF tail
-.endif
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro
 .macro SEG_OBJB
-.if ::BANKED
-.segment "CODE"                   ; obj_anyb_fill: BOOT ONLY, so flat parks
-.else                             ;  it out of the packed CODE area and
-.segment "OBJB"                   ;  spends the bytes on the early-out
-.endif
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro
 .macro SEG_OBJG
-.if ::BANKED
-.segment "CODE"                   ; occluded early-out: banked rides the
-.else                             ;  CODE tail; flat gets its own area
-.segment "OBJG"
-.endif
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro
 .macro SEG_OBJX
-.if ::BANKED
-.segment "CODE"                   ; billboard fast-path probe + direct
-.else                             ;  emit: banked rides the CODE tail;
-.segment "OBJX"                   ;  flat CODE is at its $4D00 wall, so
-.endif                            ;  it takes the gap between CLIPF's
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro                         ;  walled tail and RCACHE_STATE
 .macro SEG_PMSF
-.if ::BANKED
-.segment "CODE"                   ; silent-line fast-commit gate: banked
-.else                             ;  rides the CODE tail; flat lives with
-.segment "PMSF"                   ;  its SIL table in the walled CLIPF
-.endif                            ;  tail ($71A4-$71FF)
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro
 .macro SEG_PMCND
-.if ::BANKED
-.segment "PMB4"                   ; pmf_cand: banked rides the CODE tail
-.else                             ;  with the rest of PMB4; flat moves to
-.segment "PMCND"                  ;  the VPLOTF hole so the CODE area stays
-.endif                            ;  walled at $4D00 (ROM_DBOUND_C page —
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro                         ;  the loader POKES dbound there and the
                                   ;  ang-module region reload would serve
                                   ;  code bytes as bounds; 2026-08-29)
 .macro SEG_PMCOL
-.if ::BANKED
-.segment "CODE"                   ; pm_column: banked stays in CODE (its
-.else                             ;  pre-physics home — moving it shifted
-.segment "PMEXT"                  ;  the render tail, +0.35% MEAN in pure
-.endif                            ;  alignment noise); flat rides PMEXT
+.segment "CODE"                   ; collapsed 2026-08-30
 .endmacro                         ;  (PMOVE slack went to pm_walkover)
 .macro SEG_BANKC
 .if ::BANKED
