@@ -1,5 +1,10 @@
 ; Auto-split into subsystem files — order matters (bytes are
 ; emitted in include order; segments are set inside the parts).
+; THIS unit owns the zero-page reservations (zp.inc is included by more
+; than one link unit; without a single owner each would reserve its own
+; copy and the page would multiply).  Every other unit sees the names
+; through .globalzp.
+ZP_OWNER = 1
 .include "zp.inc"
 .include "clip/header.s"
 .include "clip/arith.s"
