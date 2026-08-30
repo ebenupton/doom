@@ -294,7 +294,19 @@ nsg_dx0:
 nsg_dy0:
    LDX zp_br_dx_h
 nsg_mul:
-   JMP cross_products_banded               ; tail: C is the verdict
+; The DIR planes are BANK A ONLY (2026-08-30), and so is ROM_DBOUND_C --
+; which is the real story here.  cross_side_banded's band gate reads
+; ROM_DBOUND_C from whatever bank is live, and this path ran under WALK,
+; where $B880 holds 43 stray bytes of DIR-B stride shadow instead of the
+; table.  Comparing against ~zero means BCS csb_front is ALWAYS taken, so
+; THE EXACT-DESCENT BAND REFINE WAS DEAD on the node path in the banked
+; build.  Flat never saw it: one copy, no banks.  Paging SEG for the whole
+; chain fixes that and lets the bank-B DIR duplicate go; only node_band's
+; NODE_DSGN read wants WALK, and it pages for itself.
+   PAGE BANK_SEG
+   JSR cross_products_banded
+   PAGE BANK_WALK
+   RTS
 .endscope
 
 ; ============================================================================
@@ -401,14 +413,16 @@ nb_ipos:
    JSR umul8
    JSR bb_apply
 ; -+ ndx * fyw: subtract iff ndx > 0 (DSGN b6 = ndx NEGATIVE)
+   PAGE BANK_WALK                          ; the ONE bank-B read in the chain
    LDX z:zp_node_ch_l
    LDA NODE_DSGN,X
    AND #$40                                ; $40 = ndx neg -> ADD (t5 b7=0)
    EOR #$40
    ASL A                                   ; ndx pos -> $80 = subtract
    STA zp_br_t5
-   LDX zp_bf_dir
-   LDA ROM_DIRS_C,X                        ; |ndx|
+   PAGE BANK_SEG                           ; back for |ndx|.  node_band must
+   LDX zp_bf_dir                           ; EXIT under SEG: it is the chain
+   LDA ROM_DIRS_C,X                        ; tail for the backface caller too
    LDX PM_FXW+2
    STX zp_mul_b
    JSR umul8

@@ -54,7 +54,16 @@ def main():
     bad = 0
     # BOTH builds: the vxc_ab skew was banked-only — flat-only checking
     # cannot see a banked address twin going stale.
-    for label, cls in (('flat', BspRender6502), ('banked', BankedBspRender)):
+    # BANKED ONLY since 2026-08-30.  This gate compares FRAMEBUFFERS, and
+    # the flat build no longer has one: it is the tube parasite, its plot
+    # entries are JMP patch slots the tube builder fills, so a flat render
+    # draws nothing and runs into the stubs (~800M cycles for 20 frames,
+    # visible in this gate's own output long before it started failing).
+    # Comparing two empty framebuffers passed for the wrong reason.  The
+    # flat/banked skew this was born to catch -- a stale banked address
+    # twin -- is covered by tube_walk, which drives the FLAT engine and
+    # requires its drawcmds to reproduce the BANKED framebuffer exactly.
+    for label, cls in (('banked', BankedBspRender),):
         rc, ro = mk(1, cls), mk(0, cls)
         warm_c = warm_o = nwarm = 0
         prev_ab = None

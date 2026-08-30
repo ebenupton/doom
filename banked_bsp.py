@@ -253,7 +253,12 @@ def build_banked(flatr):
                 # $1100 main copy and the copy-down are gone)
                 assert len(blob) <= 256, f'SSMASK {len(blob)} B overflows its $B400 page'
                 lb[0x3400:0x3400 + len(blob)] = blob
-    lb[0x3700:0x3700 + len(dir_blob)] = dir_blob   # DIR planes, bank-B copy
+    # DIR planes: BANK A ONLY since 2026-08-30.  The bank-B duplicate served
+    # cross_products_banded and node_band when entered from WALK context;
+    # that whole chain pages SEG for itself now -- which it had to anyway,
+    # because ROM_DBOUND_C is bank A and reading it under WALK had silently
+    # DISABLED the exact-descent band refine.  $B700-$B87F is free in bank B.
+    # (Measured: the backface side reads DIR 25.8x/frame, this side 0.)
     # (PMB stitching DELETED 2026-08-19: bank B carries no code any more —
     #  the pm_frame slices ride the CODE region tail and load with the
     #  rest of main below.)
