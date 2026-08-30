@@ -38,6 +38,8 @@ CONSERVATISM, deliberately in this direction:
 """
 import re, os, sys, glob, collections
 
+STATE_ANYWHERE = set()
+
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 os.chdir(ROOT)
 sys.path.insert(0, ROOT)
@@ -239,10 +241,76 @@ def main():
     print(f'    scratch bytes, if each keeps its own: {total}')
     print(f'    overlay span after sharing          : {span}')
     print(f'    ZERO PAGE BYTES FREED               : {total - span}')
+    # ---- the looser model: self-contained scratch per routine ----------
+    global STATE_ANYWHERE
+    STATE_ANYWHERE = state_anywhere(routines, firstuse)
+    sc2 = selfcontained(routines, refs, reach, zps, firstuse, callers)
+    size2 = {r: len(v) for r, v in sc2.items()}
+    off2 = {}
+    def offset2(f, stack=()):
+        if f in off2: return off2[f]
+        if f in stack: return 0
+        o = 0
+        for g in callers.get(f, ()):
+            o = max(o, offset2(g, stack + (f,)) + size2.get(g, 0))
+        off2[f] = o
+        return o
+    for f in size2: offset2(f)
+    span2 = max((off2[f] + size2[f] for f in size2), default=0)
+    bytes2 = len(set().union(*sc2.values())) if sc2 else 0
+    print(f'\n  SELF-CONTAINED MODEL (write-before-read, nothing below uses it)')
+    print(f'    routines with private scratch : {len(sc2)}')
+    print(f'    distinct bytes so used        : {bytes2}')
+    print(f'    overlay span after sharing    : {span2}')
+    print(f'    ZERO PAGE BYTES FREED         : {max(0, bytes2 - span2)}')
+
     print(f'\n    deepest frames:')
     for f in sorted(size, key=lambda f: -(off[f] + size[f]))[:8]:
         print(f'      {f:<26} off {off[f]:3d} size {size[f]:2d}')
     print()
+
+
+def state_anywhere(routines, firstuse):
+    """Bytes some routine READS before writing -- they carry a value IN.
+
+    Closes the hole in the self-contained test.  That test only asks
+    whether anything BELOW r touches the byte; it never asks whether some
+    UNRELATED routine keeps long-lived state there.  Disjoint branches
+    cannot run at the same time, but state persists ACROSS calls, so a
+    byte that is scratch in r and an epoch/key/prev-angle somewhere else
+    is clobbered the moment r runs.  Any read-before-write anywhere
+    disqualifies the byte everywhere.
+    """
+    out = set()
+    for r, fu in firstuse.items():
+        for a, kind in fu.items():
+            if kind == 'R':
+                out.add(a)
+    return out
+
+
+def selfcontained(routines, refs, reach, zps, firstuse, callers):
+    """Per routine: bytes it writes-before-reads and never hands to a callee.
+
+    Looser than "private to one subtree", and sound for the SAME reason:
+    the stack discipline. If r's first touch of b is a write, and no
+    routine r can REACH also touches b, then b holds nothing on entry and
+    nothing anyone below needs. Whether an ANCESTOR uses b does not
+    matter -- the allocator puts r's frame above every caller's, so r
+    cannot land on a live caller slot. That is the whole point of
+    allocating by depth rather than by name.
+    """
+    out = {}
+    for r in routines:
+        below = set()
+        for g in reach[r] - {r}:
+            below |= refs.get(g, set())
+        own = {a for a in refs.get(r, set())
+               if firstuse.get(r, {}).get(a) == 'W' and a not in below
+               and a not in STATE_ANYWHERE}
+        if own:
+            out[r] = own
+    return out
 
 
 if __name__ == '__main__':
