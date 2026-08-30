@@ -658,6 +658,11 @@ POOL_BDEN   = POOL + $1C0
 ; and every armed stamp wrote asp=$01 over whichever object held slot 1.
 ; Declare it here with .res and reference the LABEL; ld65 places it.
 ; (Eben 2026-08-30: forbidden to ever create a baked address.)
+; SEGMENT COLLAPSE (2026-08-30): PMB1/PMB2/PMB4 were separate segment
+; NAMES that both cfgs loaded into the SAME region (CODE).  They bought
+; nothing and cost a name each to keep straight, so they are gone.  The
+; rest cannot follow until the flat build has room -- see the note on
+; SEG_OBJX.  Goal is ONE code segment (Eben 2026-08-30).
 .macro SEG_WORK
 .segment "WORK"
 .endmacro
@@ -679,16 +684,16 @@ POOL_BDEN   = POOL + $1C0
 ; entirely under that bank's paging); flat = one $2300-$28FF region.
 ; Fragmented by necessity: the windows are what the bank B census left.
 .macro SEG_PMB1
-.segment "PMB1"                   ; banked $B500-$B6FF: the frame flow
+.segment "CODE"                   ; (was "PMB1" -- a separate NAME for the
 .endmacro
 .macro SEG_PMB2
-.segment "PMB2"                   ; banked $B198-$B2FF: project/split
+.segment "CODE"                   ; (was "PMB2" -- a separate NAME for the
 .endmacro
 .macro SEG_PMB3
 .segment "PMB3"                   ; banked $B348-$B3FF: packed trig+unit
 .endmacro
 .macro SEG_PMB4
-.segment "PMB4"                   ; banked $B862-$B8BF: the DIR stride
+.segment "CODE"                   ; (was "PMB4" -- a separate NAME for the
 .endmacro                         ;  shadow (dirs<=118 asserted)
 .macro SEG_PMH
 .segment "PMH"                    ; pm single-step: banked = the

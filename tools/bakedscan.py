@@ -38,7 +38,16 @@ EQ = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\$([0-9A-Fa-f]{1,4})\s*(?:;(.*
 BASELINE = os.path.join(ROOT, 'build', 'bakedscan.json')
 
 
-def classify(path, addr):
+# NOT addresses: sizes, lengths, and offsets into the packed WAD blob.
+# LAY_OFF_VERTS = $0B00 is an offset into rom_main, not a location, and
+# counting it as a baked address makes the ratchet dishonest.
+NOT_ADDR = re.compile(r'(^LAY_)|(_OFF$)|(_LEN$)|(_BYTES$)|(_SIZE$)|'
+                      r'(_STRIDE$)|(_COUNT$)|(_MAX$)|(_BITS$)|(^OBJ_MAXSLOT$)')
+
+
+def classify(path, addr, name):
+    if NOT_ADDR.search(name):
+        return None
     base = os.path.basename(path)
     if addr < 0x100:
         return 'ZP'
@@ -64,9 +73,11 @@ def scan():
                 if not m:
                     continue
                 a = int(m.group(2), 16)
+                c = classify(p, a, m.group(1))
+                if c is None:
+                    continue
                 out.append(dict(file=rel, line=i, name=m.group(1), addr=a,
-                                cls=classify(p, a),
-                                comment=(m.group(3) or '').strip()))
+                                cls=c, comment=(m.group(3) or '').strip()))
     return out
 
 
