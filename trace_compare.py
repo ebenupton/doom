@@ -51,6 +51,19 @@ def load_angle_module(mem):
 
 
 def setup_wad(sc):
+    if getattr(sc, 'SCREEN_START', 0xEA00) == 0x5800:
+        # BANKED RIG: it arrives FULLY SEEDED -- BspRender6502._load_wad put
+        # the tables in, build_banked redistributed them into the banks and
+        # loaded every engine region.  The flat scatter below would spray
+        # flat-laid data over a banked image, and that does not fail, it
+        # HANGS: the engine walks garbage to the cycle cap on every call
+        # (test_bsp_render went 0.9s -> 180s+, one gate ran 40 minutes).
+        # The only thing this differential still owes is the objects-off
+        # state, since it has always run without billboards.
+        mem = sc.mpu.memory
+        for i in range(28):
+            mem[_sym('OBJ_ANYB') + i] = 0
+        return
     load_angle_module(sc.mpu.memory)
     layout = dw.packed_layout
     rom_main = dw.packed_rom_main

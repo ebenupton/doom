@@ -32,7 +32,7 @@ import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 # by rule, so only CODE entries actually move -- but a stale flat entry in a
 # banked rig is a silent jump into the wrong build, so resolve it all here.
 import functools as _ft, os as _os
-_BANKED = 1 if _os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+_BANKED = 0 if dw.FLAT_RIG else 1     # dw is the single switch
 from symmap import sym as _raw_sym
 sym = _ft.partial(_raw_sym, banked=_BANKED)
 

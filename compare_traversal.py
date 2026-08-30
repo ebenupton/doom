@@ -25,7 +25,14 @@ import fp
 from wad_packed import spans_init_full
 import trace_compare as tc
 
-from symmap import sym as _sym
+# Symbols resolve for the build the shared rig IS (banked since 2026-08-30).
+# These are CODE entries, and the rig is banked: resolving them flat put the
+# trace anchors on the wrong instructions, so the differential ran and
+# reported ZERO subsectors -- a VACUOUS PASS, which is worse than a failure.
+import functools as _ft, os as _os
+_BANKED = 0 if dw.FLAT_RIG else 1     # dw is the single switch
+from symmap import sym as _raw_sym
+_sym = _ft.partial(_raw_sym, banked=_BANKED)
 ENTRY_BR_RENDER_SUBSECTOR = _sym('render_subsector_entry')
 ENTRY_BR_RENDER_FRAME     = _sym('render_frame')
 _E_HAS_GAP = _sym('span_has_gap')

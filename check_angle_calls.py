@@ -4,7 +4,7 @@ code (<$C000). Also run a fresh standalone module per call as a control."""
 import os
 os.environ['SDL_VIDEODRIVER']='dummy'; os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
 import pygame; pygame.init(); pygame.display.set_mode((1,1))
-from span_clip_6502 import SpanClip6502
+import doom_wireframe as dw
 from py65.devices.mpu6502 import MPU
 import trace_compare as tc
 import angle_bbox as A
@@ -14,7 +14,7 @@ from engine_load import load_angle_module
 # by rule, so only CODE entries actually move -- but a stale flat entry in a
 # banked rig is a silent jump into the wrong build, so resolve it all here.
 import functools as _ft, os as _os
-_BANKED = 1 if _os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+_BANKED = 0 if dw.FLAT_RIG else 1     # dw is the single switch
 from symmap import sym as _raw_sym
 sym = _ft.partial(_raw_sym, banked=_BANKED)
 def s16(v): return v-0x10000 if v>=0x8000 else v
@@ -58,7 +58,7 @@ def standalone(top,bot,left,right,px,py,ab):
     return (m[B_ILO],m[B_IHI]) if _vis else None
 
 def check(px,py,ab):
-    sc=SpanClip6502(); tc.setup_wad(sc); tc.setup_view_zp(sc,px,py,ab)
+    sc=dw.make_span_rig(); tc.setup_wad(sc); tc.setup_view_zp(sc,px,py,ab)
     sc._run(tc.ENTRY_BR_VIEW_SETUP); sc.init(); sc.clear_screen()
     from bsp_render_6502 import poke_init_frame_state; poke_init_frame_state(sc.mpu.memory)
     mem=sc.mpu.memory; mpu=sc.mpu

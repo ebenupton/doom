@@ -46,14 +46,25 @@ ROM_BBOX_BASE   = 0xC500   # 16 corner planes $C500-$D4FF (page-split SoA)
                            # build/split the bbox pointer byte-at-a-time
 
 
+def _mem_banked(mem):
+    """Is this a banked rig's memory?  BankedMemory models the $8000-$BFFF
+    window; a plain list is the flat image.  Symbol lookups below MUST
+    follow it -- resolving flat addresses against a banked rig poked the
+    vcache-valid clear into the wrong place (the walk then saw stale
+    'done' state and visited ZERO subsectors) and left OBJ_ANYB non-zero
+    so objects drew into an objects-off differential.  2026-08-30."""
+    return type(mem).__name__ == 'BankedMemory'
+
+
 def poke_init_frame_state(mem):
     """Mirror render_frame's inline per-frame init for partial-flow
     harnesses (the standalone jt_br_init_frame entry retired 2026-07-15):
     records-pointer ground state + the 60-byte vcache valid clear."""
     # VCACHE_VALID + VDONE ride separate VXC plane tails since
     # 2026-08-13 (57 B each) — wipe both by symbol
+    _bk = 1 if _mem_banked(mem) else 0
     for name in ('VCACHE_VALID_BASE', 'VDONE'):
-        base = _sym(name)
+        base = _sym(name, banked=_bk)
         for i in range(57):
             mem[base + i] = 0
 
@@ -65,7 +76,7 @@ def disable_objects(mem):
     (the documented OBJ_DRAW reference gap). Call AFTER any init that runs
     obj_anyb_fill (anim_init refills the bitmap from OBJ_BITS)."""
     from symmap import sym as _sym2
-    _anyb = _sym2('OBJ_ANYB')
+    _anyb = _sym2('OBJ_ANYB', banked=1 if _mem_banked(mem) else 0)
     for i in range(28):
         mem[_anyb + i] = 0
 

@@ -78,20 +78,28 @@ from fp import (fp_mul8, fp_div8, s8,
 _span_clip_6502 = None  # lazy-loaded span rig (see make_span_rig)
 _span_rig_owner = None  # keeps the banked renderer (and its BankedMemory) alive
 
-# The shared span rig: FLAT for now, banked with DOOM_BANKED_RIG=1.
+# The shared span rig is BANKED (2026-08-30). DOOM_FLAT_RIG=1 for a bisect.
 #
-# The banked build is the reference (2026-08-29) and this rig should follow
-# it, but ONE THING BLOCKS THE SWITCH: trace_compare.setup_wad is a
-# flat-scatter WAD loader (headers $6C00, verts $9C00, node SoA $B600 --
-# see its own comment).  Every span-level tool -- compare_traversal,
-# compare_subsector, heatmap/callcost/zpheat/storescan, check_angle_calls --
-# seeds its rig through it.  Point those at a banked rig and they load
-# flat-laid data into a banked image: the engine then walks garbage until
-# the cycle cap, which reads as a HANG, not a failure (a 40-minute gate).
-# Retiring the flat rig means replacing setup_wad with banked seeding
-# (build_banked already does exactly this job) -- until then the switch is
-# opt-in so the fleet stays green.
-FLAT_RIG = os.environ.get('DOOM_BANKED_RIG') != '1' 
+# The banked build is the reference, and the flat one is being cut down to
+# the tube parasite -- it is losing its framebuffer and rasterisers, so it
+# cannot answer pixel questions at all.
+#
+# What used to block this: trace_compare.setup_wad is a flat-scatter WAD
+# loader, and every span-level tool seeded its rig through it.  Pointing
+# those at a banked rig loaded flat-laid data into a banked image, and that
+# does not fail -- it HANGS, the engine walking garbage to the cycle cap on
+# every call.  Cleared by making setup_wad SKIP the scatter for a banked
+# rig, which arrives fully seeded from _load_wad + build_banked anyway.
+# STILL OPT-IN (DOOM_BANKED_RIG=1).  A banked rig now SEEDS and RENDERS
+# correctly -- 93,965 cyc / 649 px, matching its owner's own render_frame --
+# but two consumers are still flat-shaped: compare_traversal and
+# compare_subsector diff the 6502 BSP walk against a PYTHON walk (and a
+# hybrid), and on a banked rig compare_subsector visits 0 subsectors while
+# compare_traversal's asm and hybrid sequences diverge.  Those need porting,
+# not reconfiguring.  WATCH FOR THE VACUOUS PASS: compare_subsector printing
+# "0/0 subsectors divergent, 0 pixel/span-affecting, 0 px" still satisfies
+# its own run_regression predicate, so a broken port reads as GREEN.
+FLAT_RIG = os.environ.get('DOOM_BANKED_RIG') != '1'
 
 
 def make_span_rig():

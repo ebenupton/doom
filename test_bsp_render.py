@@ -10,7 +10,7 @@ os.environ['SDL_VIDEODRIVER'] = 'dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 
-from span_clip_6502 import SpanClip6502
+import doom_wireframe as dw
 import fp
 import abi
 
@@ -19,7 +19,7 @@ import abi
 # by rule, so only CODE entries actually move -- but a stale flat entry in a
 # banked rig is a silent jump into the wrong build, so resolve it all here.
 import functools as _ft, os as _os
-_BANKED = 1 if _os.environ.get('DOOM_BANKED_RIG') == '1' else 0
+_BANKED = 0 if dw.FLAT_RIG else 1     # dw is the single switch
 from symmap import sym as _raw_sym
 _sym = _ft.partial(_raw_sym, banked=_BANKED)
 ENTRY_BR_UMUL8 = _sym('umul8_zp')
@@ -49,7 +49,7 @@ def s16_from_zp(mem, lo_addr):
 
 def test_umul8():
     """u8 × u8 → u16 — quarter-square table."""
-    sc = SpanClip6502()
+    sc = dw.make_span_rig()
     mem = sc.mpu.memory
     cases = [(0, 0), (1, 1), (255, 255), (128, 2), (17, 23), (200, 100)]
     fail = 0
@@ -74,7 +74,7 @@ def test_umul8():
 def test_recip():
     """Floating-mantissa reciprocal: (M8, S) for the FULL 9.1 index domain
     (every idx 2..1023) plus the clamp corners."""
-    sc = SpanClip6502()
+    sc = dw.make_span_rig()
     mem = sc.mpu.memory
     cases = list(range(2, 1024)) + [0, 1, 1024, 2048, 65535]
     fail = 0
@@ -147,7 +147,7 @@ def write_view_state(mem, vx_88, vy_88, sc_tuple):
 
 def test_view_setup():
     """Compare 6502 frac_vx/vy against fp_view_context."""
-    sc = SpanClip6502()
+    sc = dw.make_span_rig()
     mem = sc.mpu.memory
     cases = [
         (0x0100, 0x0200, 0),    # angle 0 (cos=1, sin=0)
@@ -184,7 +184,7 @@ def test_to_view():
     died — the ref is built by vxc_frame through the SAME page-
     decomposed rotate as vertices. Validate the staged vxc_ref
     against the mirror: ref_c = rns(ref_88, 3)."""
-    sc = SpanClip6502()
+    sc = dw.make_span_rig()
     mem = sc.mpu.memory
     cases = [(0x0500, -0x0300, 32), (0x1234, -0x0500, 64),
              (-0x0080, 0x0080, 200), (0x2F00, -0x1D00, 7)]
@@ -233,7 +233,7 @@ def test_project_x():
     res — the +128 tail moved into the callers with the px tail-call
     dispatch (2026-08-12), so this bench, as a caller, applies it in
     the reference instead. The entry selects its own net kernel."""
-    sc = SpanClip6502()
+    sc = dw.make_span_rig()
     mem = sc.mpu.memory
     cases = []
     for vy_idx in _IDX_SWEEP:
@@ -295,7 +295,7 @@ def test_project_y():
     |height - vz| <= 64, E1M1 worst is 54). h outside the fence is a packer
     bug by definition, so the sweep covers the fenced domain inclusive of
     both boundary values."""
-    sc = SpanClip6502()
+    sc = dw.make_span_rig()
     mem = sc.mpu.memory
     cases = []
     for vy_idx in _IDX_SWEEP:
