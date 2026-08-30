@@ -188,7 +188,10 @@ def main():
     # drop the OR blob (flat RASTER_ENTRY = $7500 since the 2026-08-09
     # cache-region map; $6200-$6B00 is LIVE CLIPF now — the old window
     # was the pre-shuffle blob home and zeroing it was the black-screen)
-    mem[0x7500:0x7E00] = bytes(0x7E00 - 0x7500)
+    # No blind zeroing any more: the flat build ships no rasteriser, so
+    # $7500 is empty and the emitters simply LAND there.  The old
+    # zero-then-write is what wiped a live region and produced the black
+    # screen (the comment above is its scar).  2026-08-30.
     mem[0x7500:0x7500 + len(emit)] = emit
     for name, target in (('plot_h', 0x7510), ('plot_v', 0x7520)):
         a = fsym(name)

@@ -28,6 +28,9 @@
 ; ============================================================================
 .if ::BANKED
 
+.if ::BANKED
+; The framebuffer clears are BANKED-ONLY: walk_drv is their only caller
+; and the flat parasite has no framebuffer to clear (2026-08-30).
 SEG_BANKC
 
 .macro FB_CLEAR_BODY base
@@ -84,4 +87,5 @@ cb_one:
    JMP fb_clr1
 .endscope
 
+.endif
 .endif

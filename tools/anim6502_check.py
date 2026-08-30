@@ -24,8 +24,12 @@ import pygame; pygame.init()
 import doom_wireframe as dw
 import anim_sectors as an
 import pyref_render
-from bsp_render_6502 import BspRender6502
-from symmap import sym
+from banked_bsp import BankedBspRender as BspRender6502  # flat ships no
+                                                        # framebuffer now
+# Symbols follow the rig, which is banked now (flat ships no framebuffer).
+import functools as _ft
+from symmap import sym as _raw_sym
+sym = _ft.partial(_raw_sym, banked=1)
 
 ANIM_WS, ANIM_DIRTY, ANIM_ENABLE = (sym('ANIM_WS'), sym('ANIM_DIRTY'),
                                     sym('ANIM_ENABLE'))  # BY THE MAP — the
@@ -57,7 +61,7 @@ def main():
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
                         dw.PRESCALE)
     mem = eng.sc.mpu.memory
-    an.install_6502_tables(mem, flat=True)
+    an.install_6502_tables(mem, flat=False)
     eng.sc._run(sym('anim_init'))
     assert mem[ANIM_ENABLE] == 1
     from bsp_render_6502 import disable_objects
@@ -112,8 +116,10 @@ def main():
     print(f'staleness: {"PASS" if bad == 0 else "FAIL"}')
 
     # ── 3. tick trajectory lockstep ──────────────────────────────────
-    tabs = an.gen_6502_tables(flat=True)
-    cfg = tabs[0xE700]
+    tabs = an.gen_6502_tables(flat=False)
+    # ANIM_CFG's home is per-build ($E700 flat, $B300 banked) -- ask the
+    # map, do not bake it (2026-08-30).
+    cfg = tabs[sym('ANIM_CFG')]
     # reset engine state machines to CFG start
     eng.sc._run(sym('anim_init'))
     sim = []

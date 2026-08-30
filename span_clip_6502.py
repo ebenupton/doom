@@ -182,16 +182,14 @@ class SpanClip6502:
         for i, b in enumerate(_wp.srecip_table()):
             mem[_s + i] = b
 
-        # Load NJ rasteriser at $A900 (for integrated line drawing)
-        raster_path = os.path.join(os.path.dirname(__file__) or '.', 'linedraw_or_flat.bin')
-        if os.path.exists(raster_path):
-            with open(raster_path, 'rb') as f:
-                raster_code = f.read()
-            for i, b in enumerate(raster_code):
-                mem[0x7500 + i] = b   # flat RASTER_ENTRY (above-line since 2026-08-09)
-            self._has_rasteriser = True
-        else:
-            self._has_rasteriser = False
+        # NO NJ RASTERISER (2026-08-30).  The flat image IS the tube
+        # parasite now: the copro runs the engine and EMITS draw commands,
+        # the host rasterises.  The blob used to be loaded here at $7500 and
+        # then blind-zeroed by tube/build_tube_game before the emitters were
+        # written over it -- surgery that once wiped a LIVE region and gave
+        # a black screen.  Not shipping it is the fix.  The flat rig is a
+        # bisect tool only (DOOM_FLAT_RIG=1) and cannot draw diagonals.
+        self._has_rasteriser = False
 
         # Screen buffer at $5800 (5120 bytes)
         self.SCREEN_START = 0xEA00

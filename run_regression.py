@@ -109,7 +109,15 @@ run('hud_draw', ['tools/test_hud_draw.py'], lambda o: 'HUDDRAW: PASS' in o)
 # of slide between tube-convergence and the first tube boot)
 run('walkseq_check', ['tools/walkseq_check.py'], lambda o: 'walkseq_check: OK' in o)
 run('hud_e2e', ['tools/test_hud_e2e.py'], lambda o: 'HUDFONT-E2E: PASS' in o)
-run('bankedcmp_check', ['tools/bankedcmp_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
+# bankedcmp_check RETIRED 2026-08-30.  It rendered the same frames on both
+# builds and byte-compared the framebuffers -- but the flat build no longer
+# HAS a framebuffer, and banked is the reference, so "check banked against
+# flat" is backwards now.  Its coverage survives intact in tube_walk: the
+# copro runs the FLAT engine and its draw commands must reproduce the
+# BANKED framebuffer bit-exactly across 30 walking frames, which is the
+# same flat-vs-banked divergence check done through the parasite.  The file
+# is kept for its history (the mask_done fall-through landmine it was born
+# from) but is no longer run.
 run('anim6502_check', ['tools/anim6502_check.py'], lambda o: 'ANIM6502: PASS' in o)
 # The call graph is a FIRST-CLASS OUTPUT (Eben, 2026-08-09): always
 # rebuilt with the gates — this also runs its file-DAG acyclicity check,

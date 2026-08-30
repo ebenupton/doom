@@ -64,6 +64,7 @@ plot_bmask:
 ; Y+=8 walks cease to exist. Middles walk DESCENDING (TXA keeps N set
 ; through STA, so BMI is an always-taken loop-back); write order is
 ; left, right, then middles right-to-left — OR-writes commute.
+.if ::BANKED
 plot_h:
 .scope
    LDA RASTER_ZP_Y0
@@ -176,3 +177,13 @@ ph_single:
 ; (plot_v loop body DELETED 2026-07-27: BOTH builds now use the
 ; unrolled-column dispatcher in clip/vplot.s — the flat copy landed in
 ; the recovered $6B00 window. plot_bmask above is its mask table.)
+.else
+; FLAT = THE TUBE PARASITE (2026-08-30).  It ships no framebuffer and no
+; rasterisers: the copro runs the engine and EMITS draw commands, and the
+; host draws them.  So plot_h is a 3-byte JMP PATCH SLOT here, filled by
+; tube/build_tube_game.py -- which used to poke it after the fact, over a
+; body it had just blind-zeroed.  That surgery is what produced the
+; black screen (see build_tube_game's own comment on the $7500 blob).
+::plot_h:
+   JMP $FFFF                               ; PATCHED by the tube builder
+.endif                                     ; ::BANKED

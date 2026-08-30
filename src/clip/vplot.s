@@ -128,29 +128,13 @@ vp_fb1:
    VPLOT_DISPATCH vptab1_hi, vpblk1
 
 .else
-; ============================================================================
-; FLAT build: ONE framebuffer ($EA00), ONE copy in the VPLOTF region
-; (moved to $A500 on 2026-08-21 — it had been squatting on CLIPF's
-; ceiling at $6E00, blocking the clipper from growing; $A400-$B0FF was
-; PROBE-VERIFIED empty in the live harness), tables and the single
-; dispatch CLIPF-resident. No copy select: plot_v IS the dispatch.
-; ============================================================================
-.segment "VPLOTF"
-.align $100
-vpblk0:
-   VPLOT_COL $EA00                         ; the flat/copro framebuffer
-.segment "CLIPF"                            ; flat-only support: lives with
-                                            ; the bank-C-equivalent ABOVE the
-                                            ; 22K line (bottom-22K identity)
-vptab_lo:                                   ; <(block addr - 1)
-.repeat 161, R
-   .byte <(vpblk0 + 7*R - 1)
-.endrepeat
-vptab0_hi:
-.repeat 161, R
-   .byte >(vpblk0 + 7*R - 1)
-.endrepeat
-plot_v:
-   VPLOT_DISPATCH vptab0_hi, vpblk0
-
+; FLAT = THE TUBE PARASITE (2026-08-30).  It ships no framebuffer and no
+; rasterisers: the copro runs the engine and EMITS draw commands, and the
+; host draws them.  So plot_v is a 3-byte JMP PATCH SLOT here, filled by
+; tube/build_tube_game.py -- which used to poke it after the fact, over a
+; body it had just blind-zeroed.  That surgery is what produced the
+; black screen (see build_tube_game's own comment on the $7500 blob).
+.segment "CLIPF"
+::plot_v:
+   JMP $FFFF                               ; PATCHED by the tube builder
 .endif                                     ; ::BANKED

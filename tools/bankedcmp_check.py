@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""banked-vs-FLAT framebuffer gate.
+"""RETIRED 2026-08-30 -- NOT RUN BY run_regression.
+
+The flat build no longer has a framebuffer (it is the tube parasite:
+no framebuffer, no rasterisers), so this gate cannot render its flat
+side.  And banked is the reference now, so "check banked against flat"
+is backwards.  The coverage lives in tube/test_walk_convergence.py: the
+copro runs the FLAT engine and its draw commands must reproduce the
+BANKED framebuffer bit-exactly over 30 walking frames -- the same
+flat-vs-banked divergence check, done through the parasite.
+
+Kept for the history below, which is why it existed.
+
+banked-vs-FLAT framebuffer gate.
 
 Every other banked gate compares the banked engine against ITSELF
 (lockstep = model vs bare machine, both banked; vxcache/rotcache = the
