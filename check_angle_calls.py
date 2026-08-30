@@ -34,28 +34,41 @@ ZNODE,ZSIDE=sym('zp_node_ch_l'),sym('zp_bbox_side')
 ZC_LO=sym('zc_corners'); ZC_HI=sym('zc_end')
 HG_LO=sym('span_has_gap'); HG_HI=HG_LO+0x60  # the fused exit runs INSIDE the probe window (B segment); A/C aren't the verdict until it returns
 
-# fresh standalone module
+# Fresh standalone module -- FLAT, deliberately.  It is a bare MPU with no
+# bank window, and it exists to check box_classify's ARITHMETIC against the
+# in-frame run, not the banked layout; the angle core is the same source in
+# both builds.  So it keeps flat symbols while everything above resolves for
+# the (banked) shared rig.  Mixing the two is what produced 20 phantom
+# "STATE-CORRUPT" divergences: the banked PC jumped into a flat image.
+_symf = _ft.partial(_raw_sym, banked=0)
 _st=MPU()
 load_angle_module(_st.memory)
+F_BCA = _symf('box_classify')
+F_PX, F_PY, F_AB = _symf('bca_px'), _symf('bca_py'), _symf('bca_ab')
+F_AFN, F_PXS, F_PYS = _symf('bca_afn'), _symf('bca_pxs'), _symf('bca_pys')
+F_ILO, F_IHI = _symf('bca_ilo'), _symf('bca_ihi')
+F_BBP=[_symf(n) for n in ('BBP_T_LO','BBP_T_HI','BBP_B_LO','BBP_B_HI',
+                          'BBP_L_LO','BBP_L_HI','BBP_R_LO','BBP_R_HI')]
+F_ZNODE, F_ZSIDE = _symf('zp_node_ch_l'), _symf('zp_bbox_side')
 def standalone(top,bot,left,right,px,py,ab):
     m=_st.memory
-    m[B_PX]=px&0xFF;m[B_PY]=py&0xFF;m[B_AB]=ab&0xFF
-    _afn=((ab<<4)+512+12)&0x0FFF; m[B_AFN]=_afn&0xFF; m[B_AFN+1]=(_afn>>8)&0xFF  # pre-biased +512+EPS (view.s hoist)
-    m[B_PXS]=px&0xFF; m[B_PXS+1]=(0xFF if px<0 else 0)^0x80  # offset-binned (view.s)
-    m[B_PYS]=py&0xFF; m[B_PYS+1]=(0xFF if py<0 else 0)^0x80
-    m[ZNODE]=0; m[ZSIDE]=0                 # box -> planes at node 0, side 0
-    _pr=sym('bca_tail_postrc')             # moving contract: tail vector
-    m[sym('zp_tail_vec')]=_pr&0xFF; m[sym('zp_tail_vec')+1]=_pr>>8
+    m[F_PX]=px&0xFF;m[F_PY]=py&0xFF;m[F_AB]=ab&0xFF
+    _afn=((ab<<4)+512+12)&0x0FFF; m[F_AFN]=_afn&0xFF; m[F_AFN+1]=(_afn>>8)&0xFF  # pre-biased +512+EPS (view.s hoist)
+    m[F_PXS]=px&0xFF; m[F_PXS+1]=(0xFF if px<0 else 0)^0x80  # offset-binned (view.s)
+    m[F_PYS]=py&0xFF; m[F_PYS+1]=(0xFF if py<0 else 0)^0x80
+    m[F_ZNODE]=0; m[F_ZSIDE]=0                 # box -> planes at node 0, side 0
+    _pr=_symf('bca_tail_postrc')             # moving contract: tail vector
+    m[_symf('zp_tail_vec')]=_pr&0xFF; m[_symf('zp_tail_vec')+1]=_pr>>8
     for f,val in enumerate((top,bot,left,right)):
-        m[BBP[2*f]]=val&0xFF; m[BBP[2*f+1]]=((val>>8)^0x80)&0xFF  # offset-binned hi
-    _st.pc=BCA;_st.sp=0xDD;m[0x1DF]=0xFF;m[0x1DE]=0xFF
+        m[F_BBP[2*f]]=val&0xFF; m[F_BBP[2*f+1]]=((val>>8)^0x80)&0xFF  # offset-binned hi
+    _st.pc=F_BCA;_st.sp=0xDD;m[0x1DF]=0xFF;m[0x1DE]=0xFF
     s=0
     while _st.pc!=0 and s<20000: _st.step();s+=1
     _vis = (_st.p & 0x40) == 0   # C/V signature (2026-07-26): V=1 = angle
                                  # cull; V=0 = extent valid (gap or no-gap).
                                  # V is defined here because standalone runs
                                  # are always the uncached classify path.
-    return (m[B_ILO],m[B_IHI]) if _vis else None
+    return (m[F_ILO],m[F_IHI]) if _vis else None
 
 def check(px,py,ab):
     sc=dw.make_span_rig(); tc.setup_wad(sc); tc.setup_view_zp(sc,px,py,ab)

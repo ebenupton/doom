@@ -322,6 +322,17 @@ class BankedBspRender(BspRender6502):
         # between builds -- everything else it names is zp or pool, and
         # $0000-$57FF is identical in both maps by rule.  Banked they live
         # in bank C (plot_h/plot_v in VPLOTC, RASTER_ENTRY at $A800).
+        for _n, _s in (('ENTRY_INIT', 'span_init'),
+                       ('ENTRY_MARK_SOLID', 'span_mark_solid'),
+                       ('ENTRY_HAS_GAP', 'span_has_gap'),
+                       ('ENTRY_INTERP_ST', 'interp_store'),
+                       ('ENTRY_DRAW_CLIP', 'draw_clipped_line'),
+                       ('ENTRY_DRAW_CLIP_S16', 'draw_clipped_line_s16'),
+                       ('ENTRY_FUSED_BEGIN', 'fused_begin'),
+                       ('ENTRY_FUSED_ABOVE', 'fused_above_raw'),
+                       ('ENTRY_FUSED_BELOW', 'fused_below_raw'),
+                       ('ENTRY_FUSED_MERGE', 'fused_merge_range')):
+            setattr(sc, _n, _sym(_s, banked=1))
         sc.PLOT_PCS = frozenset((_sym('plot_h', banked=1),
                                  _sym('plot_v', banked=1),
                                  abi_RASTER_ENTRY_BANKED))

@@ -21,6 +21,7 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 
 import doom_wireframe as dw
+from abi import BANK_C as _BANK_C
 import fp
 from wad_packed import spans_init_full
 import trace_compare as tc
@@ -61,14 +62,30 @@ def setup(sc, px, py, ab):
 
 
 def install_tracing(sc, trace_all):
-    # The BSP walk JSRs render_subsector's real address, not the jump
-    # table — read the JMP operand at $4819 to find it.
-    ss_real = (sc.mpu.memory[ENTRY_BR_RENDER_SUBSECTOR + 1]
-               | (sc.mpu.memory[ENTRY_BR_RENDER_SUBSECTOR + 2] << 8))
+    # The BSP walk JSRs render_subsector's real address, so read the JMP
+    # operand to find it.  Read it at ANIM_SS_HOOK, which IS that JMP in
+    # both builds -- not at render_subsector_entry, which is the same
+    # address only in the flat build.  Banked, the entry sits 5 bytes
+    # earlier (the PAGE BANK_WALK: LDA #imm + STA abs), so the "operand"
+    # there was two bytes of instruction and the trap never fired: the
+    # traversal reported asm 0 / hyb 0 on most poses while the frames
+    # themselves rendered identically (fb diff = 0 px).  2026-08-30.
+    _hook = _sym('anim_ss_hook')
+    ss_real = (sc.mpu.memory[_hook + 1]
+               | (sc.mpu.memory[_hook + 2] << 8))
 
     def traced_run(entry, max_cycles=30_000_000):
         mpu = sc.mpu
         mem = mpu.memory
+        # The tracer REPLACES sc._run, which discards the banked rig's
+        # bank-selection wrapper.  Every byte of code in the $8000-$BFFF
+        # window is bank C (banks A/B/L0/L2 are data only, by rule), so an
+        # entry in the window MUST be run with C paged -- the clipper
+        # entries (fused_below_raw, draw_clipped_line_s16) live there.
+        # Without this they executed another bank's DATA, wandered, and
+        # burned the whole step cap: one pose took 594 seconds.
+        if 0x8000 <= entry < 0xC000 and hasattr(mem, 'select'):
+            mem.select(_BANK_C)
         mpu.pc = entry
         mpu.sp = 0xDD
         mpu.p = 0x30

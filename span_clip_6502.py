@@ -126,6 +126,23 @@ class SpanClip6502:
         # between builds (everything else is zp/pool, and $0000-$57FF is
         # identical in both maps).  2026-08-29.
         self.PLOT_PCS = PLOT_PCS
+        # ...and so are the CODE ENTRIES.  These are the only other symbols
+        # this class names that MOVE between builds; zp/pool names do not
+        # ($0000-$57FF is identical in both maps by rule).  A banked rig
+        # left with the flat values jumps into unrelated code: has_gap came
+        # back with the wrong carry, so the Python walk pruned at the ROOT
+        # and the differential visited ZERO subsectors while reporting
+        # itself green.  2026-08-30.
+        self.ENTRY_INIT = ENTRY_INIT
+        self.ENTRY_MARK_SOLID = ENTRY_MARK_SOLID
+        self.ENTRY_HAS_GAP = ENTRY_HAS_GAP
+        self.ENTRY_INTERP_ST = ENTRY_INTERP_ST
+        self.ENTRY_DRAW_CLIP = ENTRY_DRAW_CLIP
+        self.ENTRY_FUSED_BEGIN = ENTRY_FUSED_BEGIN
+        self.ENTRY_FUSED_ABOVE = ENTRY_FUSED_ABOVE
+        self.ENTRY_FUSED_BELOW = ENTRY_FUSED_BELOW
+        self.ENTRY_FUSED_MERGE = ENTRY_FUSED_MERGE
+        self.ENTRY_DRAW_CLIP_S16 = ENTRY_DRAW_CLIP_S16
         mem = self.mpu.memory
 
         # Load quarter-square tables (base from the generated ABI — the flat
@@ -239,7 +256,7 @@ class SpanClip6502:
 
     def init(self):
         """Initialize: one full-screen span."""
-        self._run(ENTRY_INIT)
+        self._run(self.ENTRY_INIT)
         self.total_cycles = 0  # init cost doesn't count toward frame
 
     def mark_solid(self, lo, hi, sx1=None, sx2=None, yt1=None, yt2=None, yb1=None, yb2=None):
@@ -259,13 +276,13 @@ class SpanClip6502:
             return
         mem[ZP_ILO] = ilo & 0xFF
         mem[ZP_IHI] = ihi & 0xFF
-        self._run(ENTRY_MARK_SOLID)
+        self._run(self.ENTRY_MARK_SOLID)
         if self.capture is not None:
             self.capture.extend(self.last_lines)
 
     def fused_begin(self):
         """Per-seg / per-object: reset the walker's touch state."""
-        self._run(ENTRY_FUSED_BEGIN, max_cycles=100)
+        self._run(self.ENTRY_FUSED_BEGIN, max_cycles=100)
 
     def draw_fused_line(self, xl, yl, xr, yr, side):
         """FUSED (2026-08-25): clip + plot + APPLY one armed aperture
@@ -285,7 +302,7 @@ class SpanClip6502:
         mem[zp_line_yl_h] = (yl >> 8) & 0xFF
         mem[zp_line_xr_h] = (xr >> 8) & 0xFF
         mem[zp_line_yr_h] = (yr >> 8) & 0xFF
-        self._run(ENTRY_FUSED_ABOVE if side == 'top' else ENTRY_FUSED_BELOW)
+        self._run(self.ENTRY_FUSED_ABOVE if side == 'top' else self.ENTRY_FUSED_BELOW)
         lines = self.last_lines
         if self.capture is not None:
             self.capture.extend(lines)
@@ -306,7 +323,7 @@ class SpanClip6502:
         if mem[FW_TOUCH]:
             mem[ZP_ILO] = ilo & 0xFF
             mem[ZP_IHI] = ihi & 0xFF
-            self._run(ENTRY_FUSED_MERGE)
+            self._run(self.ENTRY_FUSED_MERGE)
             return
         if ((yb1 < 48 and yb2 < 48) or
                 (yt1 > 48 + 159 and yt2 > 48 + 159)):
@@ -372,7 +389,7 @@ class SpanClip6502:
         # bit — A comes back holding ihi, not a 0/1.
         mem[ZP_ILO] = ilo & 0xFF
         self.mpu.a = ihi & 0xFF
-        self._run(ENTRY_HAS_GAP)
+        self._run(self.ENTRY_HAS_GAP)
         return (self.mpu.p & 0x01) != 0
 
     def is_full(self):
@@ -529,7 +546,7 @@ class SpanClip6502:
         mem[zp_line_yl_h] = (yl >> 8) & 0xFF
         mem[zp_line_xr_h] = (xr >> 8) & 0xFF
         mem[zp_line_yr_h] = (yr >> 8) & 0xFF
-        self._run(ENTRY_DRAW_CLIP_S16)
+        self._run(self.ENTRY_DRAW_CLIP_S16)
         lines = self.last_lines
         if self.capture is not None:
             self.capture.extend(lines)
@@ -548,7 +565,7 @@ class SpanClip6502:
         mem[ZP_I_Y1] = y1 & 0xFF
         mem[ZP_DIV_DEN] = (x1 - x0) & 0xFF
         self.mpu.a = x & 0xFF
-        self._run(ENTRY_INTERP_ST)
+        self._run(self.ENTRY_INTERP_ST)
         r = self.mpu.a
         return r if r < 128 else r - 256
 

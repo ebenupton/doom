@@ -20,6 +20,8 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame; pygame.init(); pygame.display.set_mode((1, 1))
 
 import doom_wireframe as dw
+from abi import BANK_C as _BANK_C
+from abi import BANK_WALK as _BANK_WALK
 import fp
 from wad_packed import spans_init_full
 import trace_compare as tc
@@ -48,6 +50,15 @@ def install_tracing(sc, trace_all):
     def traced_run(entry, max_cycles=20_000_000):
         mpu = sc.mpu
         mem = mpu.memory
+        # The tracer REPLACES sc._run, which discards the banked rig's
+        # bank-selection wrapper.  Every byte of code in the $8000-$BFFF
+        # window is bank C (banks A/B/L0/L2 are data only, by rule), so an
+        # entry in the window MUST be run with C paged -- the clipper
+        # entries (fused_below_raw, draw_clipped_line_s16) live there.
+        # Without this they executed another bank's DATA, wandered, and
+        # burned the whole step cap: one pose took 594 seconds.
+        if 0x8000 <= entry < 0xC000 and hasattr(mem, 'select'):
+            mem.select(_BANK_C)
         mpu.pc = entry
         mpu.sp = 0xDD
         mpu.p = 0x30
@@ -85,17 +96,32 @@ class SubsectorDiffer:
         sc = self.sc
         mem = sc.mpu.memory
         ta = self.trace_all
-        snap = bytes(mem[0x0000:0x10000])
+        # bank-aware where the rig is banked: a raw 64K restore rewrites
+        # the window under a stale _cur and corrupts the outgoing bank.
+        snap = (mem.snapshot() if hasattr(mem, 'snapshot')
+                else bytes(mem[0x0000:0x10000]))
 
         # --- 6502 run ---
         a0 = len(ta)
         mem[0x58] = idx & 0xFF
+        # render_subsector expects to arrive WALK-PAGED -- its own anim-hook
+        # comment says so ("we arrive WALK-paged, and every SS read below is
+        # bank B now").  The real walk guarantees that; calling the entry
+        # directly does not, and sc.init() leaves BANK_C selected.  With the
+        # wrong bank every SS read is another bank's data, the routine never
+        # returns, and the traced run burns its whole 20M-step cap: ONE pose
+        # took 594 seconds.  2026-08-30.
+        if hasattr(mem, 'select'):
+            mem.select(_BANK_WALK)
         sc._run(ENTRY_BR_RENDER_SUBSECTOR)
         asm_trace = ta[a0:]
         del ta[a0:]
         asm_spans = sc.read_spans()
         asm_fb = bytes(mem[sc.SCREEN_START:sc.SCREEN_START + sc.SCREEN_SIZE])
-        mem[0x0000:0x10000] = snap
+        if hasattr(mem, 'restore'):
+            mem.restore(snap)
+        else:
+            mem[0x0000:0x10000] = snap
 
         # --- Python reference run (this is the state we continue from) ---
         p0 = len(ta)

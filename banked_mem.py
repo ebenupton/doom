@@ -111,3 +111,19 @@ class BankedMemory(list):
 
     def current_bank(self):
         return self._cur
+
+    # --- state snapshot for differentials -----------------------------------
+    # compare_subsector saves and restores the whole address space around each
+    # subsector.  Doing that with a raw `mem[0:0x10000] = snap` is wrong here:
+    # it rewrites the $8000-$BFFF window while `_cur` still names the old
+    # bank, so the NEXT select writes those bytes back into that bank's
+    # store and corrupts it.  These two keep the window and the paging state
+    # consistent with each other.  2026-08-30.
+    def snapshot(self):
+        return (bytes(list.__getitem__(self, slice(0, 0x10000))),
+                self._cur, self._dirty)
+
+    def restore(self, snap):
+        img, cur, dirty = snap
+        list.__setitem__(self, slice(0, 0x10000), list(img))
+        self._cur, self._dirty = cur, dirty

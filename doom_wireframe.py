@@ -90,16 +90,13 @@ _span_rig_owner = None  # keeps the banked renderer (and its BankedMemory) alive
 # does not fail -- it HANGS, the engine walking garbage to the cycle cap on
 # every call.  Cleared by making setup_wad SKIP the scatter for a banked
 # rig, which arrives fully seeded from _load_wad + build_banked anyway.
-# STILL OPT-IN (DOOM_BANKED_RIG=1).  A banked rig now SEEDS and RENDERS
-# correctly -- 93,965 cyc / 649 px, matching its owner's own render_frame --
-# but two consumers are still flat-shaped: compare_traversal and
-# compare_subsector diff the 6502 BSP walk against a PYTHON walk (and a
-# hybrid), and on a banked rig compare_subsector visits 0 subsectors while
-# compare_traversal's asm and hybrid sequences diverge.  Those need porting,
-# not reconfiguring.  WATCH FOR THE VACUOUS PASS: compare_subsector printing
-# "0/0 subsectors divergent, 0 pixel/span-affecting, 0 px" still satisfies
-# its own run_regression predicate, so a broken port reads as GREEN.
-FLAT_RIG = os.environ.get('DOOM_BANKED_RIG') != '1'
+# BANKED BY DEFAULT (2026-08-30).  DOOM_FLAT_RIG=1 restores flat for a
+# bisect.  The differentials that used to block this now agree with the
+# flat rig exactly: compare_subsector 168/242 subsectors and 0
+# pixel/span-affecting on both, compare_traversal ss-seq MATCH / 0 px diff
+# on both.  Their run_regression predicates were tightened first so a
+# differential that visits NOTHING can no longer report itself green.
+FLAT_RIG = os.environ.get('DOOM_FLAT_RIG') == '1'
 
 
 def make_span_rig():

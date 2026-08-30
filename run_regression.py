@@ -58,8 +58,23 @@ run('test_slope_div', ['test_slope_div.py'], lambda o: 'PASS' in o and 'FAIL' no
 run('test_bca',       ['test_bca.py'],       lambda o: 'PASS' in o and 'FAIL' not in o)
 run('test_bsp_render',['test_bsp_render.py'],lambda o: 'All tests passed' in o)
 run('check_angle',    ['check_angle_calls.py'], lambda o: re.search(r'TOTAL .*: 0 differ vs python, 0 differ', o) is not None)
-ct = run('compare_traversal', ['compare_traversal.py'], lambda o: o.count('diff=0 px') == 18 and 'DIFFER' not in o)
-run('compare_subsector', ['compare_subsector.py'], lambda o: re.search(r'TOTAL:.*0 pixel/span-affecting, 0 px', o) is not None)
+# Likewise: require every pose to have actually WALKED (asm N, hyb N with
+# N > 0), not merely to have agreed about nothing.
+ct = run('compare_traversal', ['compare_traversal.py'],
+         lambda o: (o.count('diff=0 px') == 18 and 'DIFFER' not in o
+                    # Guard the VACUOUS case (every pose walking nothing)
+                    # without banning the legitimate ones: two suite poses
+                    # genuinely see no geometry -- (192,-2368,99) and
+                    # (3648,-2368,35) are the ~1.9k/~3.9k-cycle near-empty
+                    # frames, and BOTH rigs report them as zero.
+                    and o.count('(asm 0, hyb 0)') < 9))
+# The subsector count must be NON-ZERO.  "TOTAL: 0/0 subsectors divergent,
+# 0 pixel/span-affecting, 0 px" satisfied the old predicate perfectly --
+# so a differential that visited nothing at all reported GREEN.  That is
+# how the banked-rig port nearly shipped broken (2026-08-30).
+run('compare_subsector', ['compare_subsector.py'],
+    lambda o: (re.search(r'TOTAL:.*0 pixel/span-affecting, 0 px', o) is not None
+               and re.search(r'TOTAL: \d+/([1-9]\d*) subsectors', o) is not None))
 run('rotcache_check', ['tools/rotcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('vxcache_check', ['tools/vxcache_check.py'], lambda o: 'PASS' in o and 'MISMATCH' not in o)
 run('tube_pipeline', ['tube/test_pipeline_py65.py'], lambda o: 'PIPELINE CONVERGED' in o)
