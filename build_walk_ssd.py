@@ -81,8 +81,12 @@ def _emit_variant_images():
     import asmbuild
     c02 = 1 if os.environ.get('DOOM_CPU', '').lower() in ('65c02', 'c02', '1') else 0
     asmbuild.build_all(banked=1, c02=c02)
-    asmbuild.gen_engine_syms()
-    subprocess.run(['./beebasm', '-i', 'walk_drv.asm', '-D', 'BANKED=1'], check=True)
+    # The driver is a ca65 LINK UNIT now (2026-08-30) -- no beebasm pass and
+    # no generated engine_syms.inc.  It used to be assembled separately
+    # against addresses scraped out of the ld65 map, which meant a moved
+    # engine entry produced a stale literal instead of an error; it imports
+    # the entries by name now, so the linker checks them.
+    open('WALKDRV', 'wb').write(open('engine_drv.bin', 'rb').read())
     orig = builtins.open
     def swap(path, *a, **k):
         if path == 'ANIMDRV':

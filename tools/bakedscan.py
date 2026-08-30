@@ -42,7 +42,10 @@ BASELINE = os.path.join(ROOT, 'build', 'bakedscan.json')
 # LAY_OFF_VERTS = $0B00 is an offset into rom_main, not a location, and
 # counting it as a baked address makes the ratchet dishonest.
 NOT_ADDR = re.compile(r'(^LAY_)|(_OFF$)|(_LEN$)|(_BYTES$)|(_SIZE$)|'
-                      r'(_STRIDE$)|(_COUNT$)|(_MAX$)|(_BITS$)|(^OBJ_MAXSLOT$)')
+                      r'(_STRIDE$)|(_COUNT$)|(_MAX$)|(_BITS$)|(^OBJ_MAXSLOT$)|'
+                      r'(_MIN$)')   # _MIN/_MAX are world-coordinate BOUNDS
+                                    # (RAWX_MIN = $F870 is -1936 as u16, not
+                                    # an address), same class as the offsets
 
 
 def classify(path, addr, name):

@@ -1,4 +1,36 @@
-.include "abi.inc"          ; cross-language ABI constants (generated)
+.include "abi.inc"
+; ============================================================================
+; ENGINE ENTRIES THE DRIVER LINKS AGAINST (2026-08-30).  walk_drv is a ca65
+; link unit now, so it IMPORTS these by name instead of reading addresses
+; out of a generated engine_syms.inc.  .global exports them from whichever
+; unit defines them -- and a moved or renamed entry becomes a LINK ERROR
+; rather than a stale literal in a generated file.
+; ============================================================================
+.global view_setup
+.global render_frame
+.global span_init
+.global anim_tick
+.global ANIM_FIELDS
+.global anim_init
+.global bca_tail_postrc
+.global box_classify
+.global pq_pump_op
+.global plotq_drain
+.global plotq_arm
+.global plotq_off
+.global sqr_fill_cold
+.global obj_anyb_fill
+.global fb_clr0
+.global fb_clr1
+.global fb_clr_back
+.global pmove_try
+.global pmove_use
+.global pm_oldx
+.global pm_vz
+.global pm_ux
+.global pmove_zonly
+.global pm_frame
+          ; cross-language ABI constants (generated)
 ; ============================================================================
 ; ZERO PAGE REGISTRY — single source of truth for every ZP assignment in the
 ; engine (span_clip + bsp_render + angle module). Included first by all three

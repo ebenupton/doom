@@ -34,7 +34,8 @@ _on_disk = {}    # banked -> c02 variant whose bins currently sit on disk.
 # fragment — placed first it aligns for free at the region head and the
 # unaligned slope_div/span_clip fragments ABUT behind it: no join pads,
 # all spare CODE space aggregated at the END (Eben's rule).
-_SOURCES = ['src/bsp_render.s', 'src/slope_div.s', 'src/span_clip.s']
+_SOURCES = ['src/bsp_render.s', 'src/slope_div.s', 'src/span_clip.s',
+            'src/drv/walk_drv.s']
 _CFGS = {0: 'src/engine_flat.cfg', 1: 'src/engine_banked.cfg'}
 _TARGETS = {'engine': None, 'slope_div': None, 'span_clip': None,
             'bsp_render': None}
