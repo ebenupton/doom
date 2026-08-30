@@ -80,8 +80,14 @@ def probe(code, org, start, ver, stop_op=None, fonts=()):
 def main():
     ok = True
     # ---- walk_drv: the probe is inline at the entry, ending at the SEI ----
-    code, sym = assemble('walk_drv.asm', ['-D', 'BANKED=1'],
-                         'WALKDRV', 'build/walkdrv.labels')
+    # walk_drv is a ca65 LINK UNIT since 749ba62 -- no beebasm pass and no
+    # generated labels file.  Take the bytes from the link and the symbols
+    # from the map.  (This gate still shelled out to beebasm after the
+    # conversion, so it broke the moment walk_drv.asm was retired.)
+    import asmbuild, symmap
+    asmbuild.build('engine', banked=1)
+    code = open(os.path.join(ROOT, 'engine_drv.bin'), 'rb').read()
+    sym = {'drv': symmap.sym('drv', banked=1)}
     print('-- walk_drv (host) --')
     for ver, want, label in CASES:
         _, mem = probe(code, abi.DRV_ORG, sym['drv'], ver, stop_op=0x78)

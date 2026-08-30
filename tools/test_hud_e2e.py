@@ -15,9 +15,10 @@ from span_clip_6502 import SpanClip6502
 def run(osver, c02):
     if c02: os.environ['DOOM_CPU']='65c02'
     else: os.environ.pop('DOOM_CPU', None)
-    asmbuild.build_all(banked=1, c02=c02); asmbuild.gen_engine_syms()
-    subprocess.run(['./beebasm','-i','walk_drv.asm','-D','BANKED=1'],check=True,capture_output=True)
-    DRV=open('WALKDRV','rb').read()
+    asmbuild.build_all(banked=1, c02=c02)
+    # walk_drv is a ca65 link unit since 749ba62: the driver bytes come from
+    # the link, not a beebasm pass against a generated engine_syms.inc.
+    DRV=open('engine_drv.bin','rb').read()
     src=BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     L0=bytes(src.bm._banks[BANK_L0]); C=bytes(src.bm._banks[BANK_C]); L2=bytes(src.bm._banks[BANK_L2])
