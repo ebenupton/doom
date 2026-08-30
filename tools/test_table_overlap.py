@@ -32,7 +32,18 @@ import symmap, colmap, anim_sectors as an, doom_wireframe as dw
 
 # node-indexed: the store is `STA <plane>,Y` with Y = node id, so each
 # plane is exactly n_nodes bytes
+# The rcache psi planes (length = node count) ...
 PLANES = ('RC_P1L_0', 'RC_P1L_1', 'RC_P2L_0', 'RC_P2L_1', 'RC_PH_0', 'RC_PH_1')
+# ...and every OTHER relocatable cache block, with its real length.  These
+# were missing, and the gate cheerfully passed a rehome that put four VXC
+# planes inside the flat seg-header table (ROM_SEG_HDR_C $8600 + 5,884 B).
+# Only tube_walk caught it, four frames in.  A cache the gate does not know
+# about is a cache that can land anywhere.  2026-08-30.
+SIZED_PLANES = (('VXC_XLO', 0x200), ('VXC_XHI', 0x200),
+                ('VXC_YLO', 0x200), ('VXC_YHI', 0x200),
+                ('VCACHE_BASE', 0x200), ('RCACHE_STATE', 138),
+                ('VWHC_R_S', 0x100), ('VWHC_KEY', 0x100),
+                ('VWHC_L', 0x100), ('VWHC_H', 0x100))
 
 
 def n_nodes():
@@ -75,6 +86,17 @@ def tables(flat):
     # blob against its real neighbour (the vertex planes) instead.
     if flat:
         L = dw.packed_layout
+        # THE BIG LEVEL BLOBS.  These were NOT registered, and the gate
+        # passed a rehome that put four cache planes straight inside the
+        # seg-header table (flat ROM_SEG_HDR_C $8600 + 5,884 B runs to
+        # $9D1B).  Only tube_walk caught it, four frames in.  2026-08-30.
+        for _nm, _len in (('ROM_SEG_HDR_C', L['off_ss_cnt'] - L['off_seg_hdr']),
+                          ('ROM_VERTS_C',   L['off_seg_hdr'] - L['off_verts']),
+                          ('NODE_SOA',      L['off_verts'])):
+            try:
+                out.append((f'wad:{_nm}', symmap.sym(_nm, banked=0, c02=1), _len))
+            except KeyError:
+                pass
         obj_a = symmap.sym('ROM_OBJ_C', banked=0, c02=1)
         art_a = symmap.sym('OBJ_ART', banked=0, c02=1)
         out.append(('wad:obj_planes', obj_a, L['off_obj_art'] - L['off_obj']))
@@ -110,6 +132,12 @@ def main():
         c02 = 1 if not banked else None          # the parasite is the C02 flat
         t, _ = symmap._load(0 if not banked else 1, c02)
         planes = [(p, t[p], N) for p in PLANES if p in t]
+        # FLAT ONLY: flat has no bank window, so an address collision there
+        # is REAL.  Banked, two names at one window address are usually
+        # different PHYSICAL banks (VWHC is bank A, VPLOTC bank C) and
+        # comparing raw addresses just manufactures false positives.
+        if not banked:
+            planes += [(p, t[p], L) for p, L in SIZED_PLANES if p in t]
         if not planes:
             print(f'  {tag}: no psi planes in the map -- check the names')
             ok = False
