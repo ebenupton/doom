@@ -224,9 +224,12 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   face anchored at the sprite's width the rear top edge is
   <code>(D−d)/(D+d)</code> of it: the top face is a <b>trapezoid</b>, and
   the diagonal slopes of its sides are real geometry, drawn and armed (they
-  are the topmost line outboard of the rear edge).  The painted cross is
-  kept as a two-line decal on the front face; a decal's four ends are
-  paint, not geometry.</p>
+  are the topmost line outboard of the rear edge).  The painted cross is a
+  <b>12-line outline</b> — a closed plus-sign polygon on the front face,
+  proportions measured off the red sprite pixels (both are 6×6 with 2-px
+  bars; the stimpack's sits low on the face, the medikit's high).  Closed
+  means no free ends: the potion's stem terminus is the only free end
+  left anywhere.</p>
   <p><b>The potion is a circle with a stem — literally.</b> The bulb is a
   sphere (r 7, sitting on the ground) and a sphere projects to a circle;
   the neck is a cylinder seen edge-on, which projects to a line.  The
@@ -247,7 +250,8 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   the object is real.</p>
   <div class="callout">
     <p><b>Engine cost, for when these land:</b> the boxes are the cheapest
-    templates yet — L1 is <b>7 lines, 3 armed, 3 x slots</b>.  The helmet
+    templates yet at distance — L1 is <b>7 lines, 3 armed, 3 x slots</b>;
+    the cross outline is an L0 luxury (19 lines with it).  The helmet
     is 8 lines at its single tier, the potion 9 at L1, the vest 15.
     <code>OBJ_ART</code> is full at 236 of 256 bytes, so nothing here fits
     until <code>obj_e</code> widens or another template retires.  Not
