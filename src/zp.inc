@@ -406,20 +406,17 @@ fwl_zx1:                    .res 1 ; [clip]
 obj_ss:                     .res 1 ; ROTATED IN (zprotate): 27.4
                                    ; accesses/frame vs fwl_leftf's 2.3
 zp_node_ch_l:               .res 1 ; [bsp]; current child (lo, hi: 16-bit id)
-zp_pm_p:                    .res 1 ; [bsp]; pmove: collision list pointer ; w=2
+zp_pm_p:                    .res 2 ; [bsp]; pmove: collision list pointer ; w=2
                                   ; SURVIVES DRAWS (the old $79 home was
                                   ; raster scratch — reads were only safe
                                   ; adjacent to the store); the vs2 serve
                                   ; site + vs_fresh2 now reuse it across
                                   ; the emit cascade ($47 = zp_vs_d's
                                   ; slot, freed 98fc1b3)
-   .res 1                               ; FREE $5A-$5A
 zp_hg_ihi:                  .res 1 ; [clip]; has_gap: stashed interval hi
 zp_seg_count:               .res 1 ; [bsp]; remaining segs in subsector
-zp_anim_p:                  .res 1 ; [bsp]; anim table cursor (2; was the
-   .res 1                               ; FREE $5E-$5E
-zp_anim_w:                  .res 1 ; [bsp]; anim write pointer (2; was $ED/$EE)
-   .res 1                               ; FREE $60-$60
+zp_anim_p:                  .res 2 ; [bsp]; anim table cursor (2; was the
+zp_anim_w:                  .res 2 ; [bsp]; anim write pointer (2; was $ED/$EE)
 zp_prev:                    .res 1 ; [clip]; pool-walk prev (from $E2 — structs)
    .res 1                               ; FREE $62-$62
 zp_bv_entry:                .res 1 ; [ang] 2-byte entry vector: bbox_visible
@@ -460,7 +457,7 @@ RASTER_ZP_SCRSTRT:          .res 1 ; [clip]
 zp_seg_v_idx_l:             .res 1 ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_b:             .res 1 ; [bsp]; B = idx>>3 (bitmap/VXCACHE byte
    .res 2                               ; FREE $79-$7A
-zp_vf_vec0:                 .res 1 ; [bsp]; VXCACHE fetch vector, junior side —
+zp_vf_vec0:                 .res 2 ; [bsp]; VXCACHE fetch vector, junior side —
                                   ; vxcache_frame aims it at sxv0_vfoff (off)
                                   ; or sxv0_vxcache_on (on); bca VECTORED idiom.
                                   ; (Briefly deleted for TRUE16 always-on
@@ -469,17 +466,15 @@ zp_vf_vec0:                 .res 1 ; [bsp]; VXCACHE fetch vector, junior side �
                                   ; cache contract.) $7B-$7E were the
                                   ; boot-time tube-detect scratch — phase-
                                   ; disjoint.
-   .res 1                               ; FREE $7C-$7C
-zp_vf_vec1:                 .res 1 ; [bsp]; senior-side twin ($7D/$7E)
-   .res 1                               ; FREE $7E-$7E
+zp_vf_vec1:                 .res 2 ; [bsp]; senior-side twin ($7D/$7E)
 obj_ctr_l:                 .res 1 ; ROTATED IN (zprotate): 17.9 vs zp_br_py2_l's 14.6
    .res 2                               ; FREE $80-$81
 RASTER_ZP_X0:               .res 1 ; [clip]
 RASTER_ZP_Y0:               .res 1 ; [clip]
 RASTER_ZP_X1:               .res 1 ; [clip]
 RASTER_ZP_Y1:               .res 1 ; [clip]
-bca_boxp:                   .res 1 ; [ang]; ROM box pointer: caller points this at the 8-byte box
-   .res 2                               ; FREE $87-$88
+bca_boxp:                   .res 2 ; [ang]; ROM box pointer: caller points this at the 8-byte box
+   .res 1                               ; FREE $88-$88
 zp_cr_vx_l:                 .res 1 ; [bsp]; clipped total vx (s16 counts)
 zp_cr_vx_h:                 .res 1 ; [bsp]
 zp_cr_vy_l:                 .res 1 ; [bsp]; clipped total vy (s16 counts)
@@ -570,16 +565,18 @@ LC_OX1_HI:                     .res 1 ; ROTATED IN (zprotate): 27.8 vs zp_vxcach
                                   ; 2026-07-18)
 zp_bca_p1:                  .res 1 ; [ang]; s16 pair with $C9
 zp_bca_p1_h:                .res 1 ; [ang]
-zp_tail_vec:                .res 1 ; [ang] 2-byte tail vector: the corner arms
+zp_tail_vec:                .res 2 ; [ang] 2-byte tail vector: the corner arms
                                   ; end JMP (zp_tail_vec) -> bt_store (armed:
                                   ; store psis + COMPUTED) or bca_tail_postrc
                                   ; (moving: nothing stored). Set per frame by
                                   ; bca_frame; REPLACES the zp_rc_moved flag
-   .res 1                               ; $CB = zp_tail_vec HIGH byte
+                                  ; ($CB is the high byte -- it was carried
+                                  ; as a FREE pad until 2026-08-31)
 LC_TGT_LO:                  .res 1 ; ROTATED IN (zprotate): 18.6 vs t0's 2.4
    .res 1                               ; $CD = t1 (hand-baked)
 fw_ax1:                     .res 1 ; [clip]
-   .res 1                               ; FREE $CF-$CF
+   .res 1                               ; $CF = val_hi (rc_bytehi),
+                                        ; hand-baked in ang/header_div.s
 zp_hg_cache:                .res 1 ; [clip]; has_gap coherence cache: last-matching span offset
 zp_i_x0:                    .res 1 ; [clip]
 zp_i_y0:                    .res 1 ; [clip]
@@ -642,6 +639,9 @@ zp_div_h = zp_prod_h ; [bsp+clip]
 ; PUSH/POP the segment -- leaving it set to WORK sends everything the
 ; including unit emits next into the wrong segment, which put flat code
 ; over the BKT planes on the first attempt.
+; A POINTER PAIR.  The high byte was carried as a FREE pad, which is
+; how three of them ended up on tools/zptrawl's free list; the width
+; is declared now so no rotation can take one.
 .pushseg
 .segment "WORK"
 fw_pol:      .res 1     ; 0.6 accesses/frame

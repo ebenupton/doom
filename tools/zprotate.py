@@ -83,9 +83,16 @@ def plan():
         if m.get('ind') or m.get('zpx') or m.get('zpy'):
             continue                      # indirect/indexed: must stay in ZP
         n = names.get(a)
-        if n and n in pinned:
+        if not n:
+            # NO NAME, NO MOVE.  An unnamed zero-page byte is one the map
+            # cannot see -- in practice the HIGH BYTE of a pointer whose
+            # reservation was declared .res 1 with the second byte carried
+            # as a "FREE" pad.  $5A read as free and 5.4 accesses/frame;
+            # it is zp_pm_p+1, and there is nothing to move.
+            continue
+        if n in pinned:
             continue                      # ABI contract
-        evict.append((hits.get(a, 0), a, n or f'(unnamed ${a:02X})'))
+        evict.append((hits.get(a, 0), a, n))
     evict.sort()
 
     # --- promotion candidates: hot absolute scalars (trawl's filters) ---
