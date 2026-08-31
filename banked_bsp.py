@@ -329,14 +329,18 @@ def limit_objects_legacy(r):
     mem.select(BANK_L0)                          # window = bank A
     base = _sy('ROM_OBJ_C', banked=1)
     bits = base + 7 * n
+    run8 = bits + L['obj_bits_len']
     for i in range(L['obj_bits_len']):
         mem[bits + i] = 0
+        mem[run8 + i] = 0xFF
     for i in range(n):
         if mem[base + 4 * n + i] > 1:            # the RC/ASP plane
             mem[base + 3 * n + i] = 0xFF         # the SS plane
         else:
             ss = mem[base + 3 * n + i]
             mem[bits + (ss >> 3)] |= 1 << (ss & 7)
+            if mem[run8 + (ss >> 3)] == 0xFF:
+                mem[run8 + (ss >> 3)] = i        # ascending: first wins
     anyb = _sy('OBJ_ANYB', banked=1)
     for i in range(L['obj_bits_len']):
         mem[anyb + i] = mem[bits + i]

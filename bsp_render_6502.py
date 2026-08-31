@@ -159,9 +159,14 @@ class BspRender6502:
                 mem[_ob + _pl * 16 + _j] = rom_main[off_obj + _pl * _n62 + _i]
         for _j in range(layout['obj_bits_len']):
             mem[_ob + 7 * 16 + _j] = 0
-        for _i in _keep:
+        for _j in range(layout['obj_bits_len']):
+            mem[_ob + 8 * 16 + _j] = 0xFF        # RUN8, subset-rebuilt
+        for _j, _i in enumerate(_keep):
             _ss = rom_main[off_obj + 3 * _n62 + _i]
             mem[_ob + 7 * 16 + (_ss >> 3)] |= 1 << (_ss & 7)
+            _oct = _ob + 8 * 16 + (_ss >> 3)
+            if mem[_oct] == 0xFF:
+                mem[_oct] = _j
         _oa = _sym2('OBJ_ART')
         _na = 4 * layout['n_obj_art']                # EXACT length: the flat
         for i in range(off_art, off_art + _na):      # home abuts colmap's

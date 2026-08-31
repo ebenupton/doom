@@ -130,16 +130,21 @@ OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-; THE ART IS TWO 256-BYTE WINDOWS (2026-08-31; three until the pillar
-; died the same day).  obj_e stayed a byte by becoming an offset WITHIN a
+OBJ_RUN8 = OBJ_BITS + LAY_OBJ_BITS_LEN  ; per-ss-OCTET first object index
+                                        ; ($FF when the octet is empty) --
+                                        ; the run-start table that killed
+                                        ; the exhaustive scan (2026-08-31)
+; THE ART IS THREE 256-BYTE WINDOWS (2026-08-31: A+B after the pillar
+; died; C returned the same day carrying the CLOSE-RANGE TIERS).  obj_e stayed a byte by becoming an offset WITHIN a
 ; window: the stamp walker's four abs,X reads get their window HIGH byte
 ; SMC'd per object (oa_rd0..3), and page alignment keeps them carry-free.
 ; Window A is byte-identical to the old whole table, so FLAT -- which
 ; still draws its legacy subset as hex barrels -- copies its 140 B
 ; exactly as before.
 ;   A: HEX 0, LAMP 52        B: BOX 0, POTION 28, HELMET 88, VEST 160
+;   C: OCT 0, BOXL0 76, POTL0 160  (the near tiers; obj_lodh picks)
 .if ::BANKED
-LAY_N_OBJ_ART = 121                ; 484 B / 4 -- both windows
+LAY_N_OBJ_ART = 185                ; 740 B / 4 -- all three windows
 .else
 LAY_N_OBJ_ART = 35                 ; hex + lamp only (window A's real 140)
 .endif
@@ -159,6 +164,9 @@ OBJ_ART_BOX    = 0                 ; window B
 OBJ_ART_POTION = 28                ; window B
 OBJ_ART_HELMET = 88                ; window B
 OBJ_ART_VEST   = 160               ; window B
+OBJ_ART_OCT    = 0                 ; window C -- barrel, close range
+OBJ_ART_BOXL0  = 76                ; window C -- trapezoid + cross
+OBJ_ART_POTL0  = 160               ; window C -- dodecagon + wide stem
 OBJ_ART_ARM = $FE                  ; entry: arm the FUSED authority run
 OBJ_ART_END     = $FF              ; entry: template finished
 ; The templates: 38 x (x1,y1,x2,y2) pre-doubled indices. They live in

@@ -36,7 +36,7 @@ def main():
     OE = sym('obj_e', banked=1)
     OASP = sym('obj_asp', banked=1)
     KINDS = ('HEX','LAMP','POTION','HELMET','BOXS','BOXM','VEST')
-    TPL_OFF = (0, 52, 28, 88, 0, 0, 160)
+    TPL_OFF = ({0}, {52}, {28, 160}, {88}, {0, 76}, {0, 76}, {160})
     n = collections.Counter(); last = [None]
     for (px, py, ab) in C.POSITIONS:
         r.render_frame(px, py, ab, dw.player_floor(px, py))
@@ -50,7 +50,7 @@ def main():
             if mpu.pc == STAMP:
                 e = mem[OE]; kind = mem[OASP]
                 key = (kind, e)
-                if e == TPL_OFF[kind] and key != last[0]:
+                if e in TPL_OFF[kind] and key != last[0]:
                     n[KINDS[kind]] += 1
                 last[0] = key
             mpu.step(); k += 1

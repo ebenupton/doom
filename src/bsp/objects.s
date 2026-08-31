@@ -67,6 +67,8 @@ obj_Y:       .res 36                       ; 18 x s16; MUST be obj_X + 12.
 obj_pu:      .res 1                       ; ladder-builder scratch: rounded
 obj_pb:      .res 5                       ;   product; magnitudes; loop
 obj_px:      .res 1                       ;   index across umul8
+obj_pn:      .res 1                       ; obj_mirror's -side offset latch
+obj_lod:     .res 1                       ; 0 = far tier, 1 = near tier
 obj_n:       .res 1
 obj_left:    .res 1
 obj_k:       .res 1
@@ -105,12 +107,33 @@ OBJ_MAXSLOT = 6                            ; most objects in one subsector
 obj_ktab:
    .byte 23, 15, 25, 34, 30, 47, 58        ; (the pillar's 10 died with it)
 .if ::BANKED
-obj_tpl_pg:                                ; art window high byte
-   .byte >OBJ_ART, >OBJ_ART, >(OBJ_ART+$100), >(OBJ_ART+$100)
-   .byte >(OBJ_ART+$100), >(OBJ_ART+$100), >(OBJ_ART+$100)
-obj_tpl_off:                               ; start offset within the window
-   .byte OBJ_ART_HEX, OBJ_ART_LAMP, OBJ_ART_POTION, OBJ_ART_HELMET
-   .byte OBJ_ART_BOX, OBJ_ART_BOX, OBJ_ART_VEST
+; TWO TIERS PER KIND (2026-08-31, "all objects appear to render at lowest
+; LOD"): the dispatch compares H against obj_lodh and indexes the tables
+; at kind*2 + tier.  Single-tier kinds duplicate their row and use $FF --
+; H clamps at 255, so a 255-vs-$FF fire is harmless by construction.
+; Near tiers: barrel -> OCT (H >= 33, the old a >= 12 rule), boxes -> the
+; trapezoid + cross (H >= 24: the bars are ~1.5 px there), potion -> the
+; dodecagon (H >= 8: a circle is DEEP -- b = a -- so the half-pixel rule
+; puts the switch far out).  The lamp's L0 wants 18 x slots against the
+; arrays' 10, so it stays single-tier; helmet and vest ARE their tier.
+obj_lodh:
+   .byte 33, $FF, 8, $FF, 24, 24, $FF
+obj_tpl_pg2:                               ; art window high byte, lo/hi tier
+   .byte >OBJ_ART,        >(OBJ_ART+$200)  ; hex / OCT
+   .byte >OBJ_ART,        >OBJ_ART         ; lamp
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; potion / dodecagon
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$100)  ; helmet
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-stim / trapezoid+cross
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$200)  ; box-medikit
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$100)  ; vest
+obj_tpl_off2:                              ; start offset within the window
+   .byte OBJ_ART_HEX,    OBJ_ART_OCT
+   .byte OBJ_ART_LAMP,   OBJ_ART_LAMP
+   .byte OBJ_ART_POTION, OBJ_ART_POTL0
+   .byte OBJ_ART_HELMET, OBJ_ART_HELMET
+   .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
+   .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
+   .byte OBJ_ART_VEST,   OBJ_ART_VEST
 .endif
 
 obj_bitmask:
@@ -161,21 +184,35 @@ SEG_CODE                                   ; back to the main area (the next
 ; in-here shift/mask bitmap probe cost 37 cycles per visited subsector).
    PAGE BANK_SEG                           ; pass 1 reads the OBJ_* planes
 ; PASS 1 -- project every object of this subsector into a slot.  The
-; table is sorted by subsector, but a linear sweep of 18 entries is
-; cheaper than any search and only runs for a subsector that HAS
-; objects.
+; table is ss-sorted, so the subsector's objects are ONE RUN; OBJ_RUN8
+; (packed beside the bitmap) holds the first object index per ss-OCTET,
+; so the walk starts at most seven objects early, skips forward, and
+; stops the moment the run passes.  (The exhaustive LAY_N_OBJ sweep died
+; 2026-08-31, Eben -- at 60 objects it was ~600 cycles per object-bearing
+; subsector; this is bounded by the octet's population.)
    LDA #0
    STA obj_n
-   LDX #LAY_N_OBJ-1
-obj_scan:
+   LDA obj_ss
+   LSR A
+   LSR A
+   LSR A
+   TAX
+   LDA OBJ_RUN8,X                          ; the octet is nonempty (the
+   TAX                                     ; caller's bitmap probe), so
+obj_scan:                                  ; this is a real index
    LDA OBJ_SS,X
    CMP obj_ss
-   BNE obj_next
+   BEQ obj_hit
+   BCS obj_run_end                         ; sorted: past the run -- done
+   BCC obj_skip                            ; before the run: skip forward
+obj_hit:
    JSR obj_project
    LDX obj_i                               ; obj_project clobbers X
-obj_next:
-   DEX
-   BPL obj_scan
+obj_skip:
+   INX
+   CPX #LAY_N_OBJ
+   BCC obj_scan
+obj_run_end:
 ; PASS 2 -- draw FRONT TO BACK.  Order matters now that each billboard
 ; tightens behind itself: the nearest must claim its columns first, or a
 ; farther one would tighten them and clip the nearer one away.  n <= 3,
@@ -617,13 +654,24 @@ obj_ycp:
 ; ::BANKED.
 .if ::BANKED
    LDX obj_asp
-   LDA obj_tpl_pg,X                        ; the window (SMC: 4 sites)
+   LDA #0
+   STA obj_lod
+   LDA obj_h
+   CMP obj_lodh,X                          ; C = 1 iff H >= the near switch
+   TXA
+   ROL A                                   ; kind*2 + tier
+   TAY
+   LDA obj_tpl_pg2,Y                       ; the window (SMC: 4 sites)
    STA oa_rd0+2
    STA oa_rd1+2
    STA oa_rd2+2
    STA oa_rd3+2
-   LDA obj_tpl_off,X
+   LDA obj_tpl_off2,Y
    STA obj_e
+   TYA
+   LSR A                                   ; tier back to C, kind to A
+   TAX
+   ROL obj_lod                             ; obj_lod = the tier bit
    CPX #OBJ_K_LAMP
    BCC obj_sel_hex                         ; 0 = barrel
    BNE onot_lamp
@@ -1059,7 +1107,72 @@ SEG_CODE
 ; because bank C is nearly full and these are banked-only anyway.
 ; ============================================================================
 .if ::BANKED
+; ---- obj_mirror: mag = round(a * A / 256); store cx - mag at obj_X+Y,
+; cx + mag at obj_X + obj_px.  zp_mul_b holds a; the spill slots are just
+; obj_X offsets 38..44, so ONE helper serves every builder's pairs. ------
+obj_mirror:
+   STY obj_pn                              ; umul8 EATS Y as well as X (the
+   JSR umul8                               ; quarter-square index pair)
+   LDA zp_prod_l                           ; C = 1 iff the dropped low byte
+   CMP #128                                ;     rounds up
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pu
+   LDY obj_pn
+   SEC
+   LDA obj_cx_l
+   SBC obj_pu
+   STA obj_X+0,Y
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+1,Y
+   LDY obj_px
+   CLC
+   LDA obj_cx_l
+   ADC obj_pu
+   STA obj_X+0,Y
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+1,Y
+   RTS
+
+; ---- obj_ymirror: mag = round(H * A / 256); store cy - mag at obj_Y+Y,
+; cy + mag at obj_Y + obj_px.  zp_mul_b holds H, obj_pb+0/1 hold cy. ------
+obj_ymirror:
+   STY obj_pn                              ; umul8 eats Y (see obj_mirror)
+   JSR umul8
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pu
+   LDY obj_pn
+   SEC
+   LDA obj_pb+0
+   SBC obj_pu
+   STA obj_Y+0,Y
+   LDA obj_pb+1
+   SBC #0
+   STA obj_Y+1,Y
+   LDY obj_px
+   CLC
+   LDA obj_pb+0
+   ADC obj_pu
+   STA obj_Y+0,Y
+   LDA obj_pb+1
+   ADC #0
+   STA obj_Y+1,Y
+   RTS
+
 obj_lidf:  .byte 51, 54                   ; box lid /256 of H: 3/15, 4/19
+; box L0 constants, /256 (stim, medikit): rear edge (D-d)/(D+d) of a;
+; cross half-width, bar half-thickness (of a); cross half-height, bar
+; half-thickness (of H) -- doc/billboard's lid-implied viewpoints
+obj_brf:   .byte 183, 201                 ; rear-edge ratio
+obj_bcw:   .byte 110, 55                  ; cross half-width /256 of a
+obj_btx:   .byte 37, 18                   ; cross bar half-thickness (x)
+obj_bch:   .byte 51, 40                   ; cross half-height /256 of H
+obj_btz:   .byte 17, 13                   ; cross bar half-thickness (y)
 obj_hgx:   .byte 192, 128, 96, 64         ; helmet x mags /256 of a
 obj_hnx:   .byte 2, 4, 6, 8               ; their -side obj_X byte offs
 obj_hpx:   .byte 44, 42, 40, 38           ; +side offs (obj_Y[13..16] spill,
@@ -1068,17 +1181,21 @@ obj_hpx:   .byte 44, 42, 40, 38           ; +side offs (obj_Y[13..16] spill,
 obj_vgy:   .byte 20, 89, 75, 52           ; vest y /256 of H: front shoulder,
                                           ; armpit, scoop front, scoop rear
 
-; ---- the boxes: y = {syt, syt + lid, syb}; x is the prologue's +-a ------
+; ---- the boxes: y = {syt, syt + lid, syb}; x is the prologue's +-a.
+; NEAR TIER (obj_lod = 1) adds the trapezoid's rear pair (obj_Y[13..14],
+; the spill convention: x byte offs 38/40) and the cross outline's 4 x
+; (offs 2/4/6/8) + 4 y (offs 6..12) values. ------------------------------
 obj_box_y:
    LDA obj_h
    STA zp_mul_b
-   LDY obj_asp                             ; 5 = stim, 6 = medikit: the lid
-   LDA obj_lidf-OBJ_K_BOXS,Y               ; fraction is the ONLY difference
+   LDY obj_asp                             ; 4 = stim, 5 = medikit: every
+   LDA obj_lidf-OBJ_K_BOXS,Y               ; fraction row is per-kind
    JSR umul8
    LDA zp_prod_l                           ; C = 1 iff the dropped low byte
    CMP #128                                ;     rounds up
    LDA zp_prod_h
    ADC #0
+   STA obj_pb+3                            ; lid px, kept for the L0 centre
    CLC
    ADC obj_yt_l
    STA obj_Y+2
@@ -1093,11 +1210,65 @@ obj_box_y:
    STA obj_Y+4
    LDA obj_yb_h
    STA obj_Y+5
+   LDA obj_lod
+   BNE obj_box_l0
+   RTS
+obj_box_l0:
+   LDA obj_a
+   STA zp_mul_b
+   LDA #40                                 ; rear pair -> the spill slots
+   STA obj_px
+   LDY #38
+   LDX obj_asp
+   LDA obj_brf-OBJ_K_BOXS,X
+   JSR obj_mirror
+   LDA #8                                  ; cross half-width -> obj_X 1/4
+   STA obj_px
+   LDY #2
+   LDX obj_asp
+   LDA obj_bcw-OBJ_K_BOXS,X
+   JSR obj_mirror
+   LDA #6                                  ; bar half-thickness -> obj_X 2/3
+   STA obj_px
+   LDY #4
+   LDX obj_asp
+   LDA obj_btx-OBJ_K_BOXS,X
+   JSR obj_mirror
+; the cross centre: yc = syt + (lid + H)/2 -- the 9-bit sum rides the
+; ADC carry through ROR
+   LDA obj_pb+3
+   CLC
+   ADC obj_h
+   ROR A
+   CLC
+   ADC obj_yt_l
+   STA obj_pb+0                            ; cy lo (s16)
+   LDA obj_yt_h
+   ADC #0
+   STA obj_pb+1                            ; cy hi
+   LDA obj_h
+   STA zp_mul_b
+   LDA #12                                 ; cross half-height -> y offs 3/6
+   STA obj_px
+   LDY obj_asp
+   LDA obj_bch-OBJ_K_BOXS,Y
+   LDY #6
+   JSR obj_ymirror
+   LDA #10                                 ; bar half-thickness -> y offs 4/5
+   STA obj_px
+   LDY obj_asp
+   LDA obj_btz-OBJ_K_BOXS,Y
+   LDY #8
+   JSR obj_ymirror
+   RTS
    RTS
 
-; ---- the potion: circle (3-seg arcs) + wide stem ------------------------
-; x: cx -+ {a, qa, wn} (a from the prologue); y from syb upward -- the
-; bulb is GROUNDED, centre qa above the floor line.
+; ---- the potion: circle + wide stem ------------------------------------
+; x: cx -+ {a, qa} always (a from the prologue); slots 2/3 are the stem
+; sides, which are wn at the far tier and SNAP to the a3 vertices at the
+; near one (the 12-gon corners: exact joins, no split arithmetic).  y from
+; syb upward -- the bulb is GROUNDED: far tier centre qa above the floor
+; line, near tier a above it.
 ; IN SEG_BANKC (with obj_lamp_xy): banked CODE ran 270 B over with all
 ; four builders there, and these two run under the prologue's PAGE BANK_C
 ; anyway.  umul8 is in the always-mapped bottom.
@@ -1111,53 +1282,39 @@ obj_potion_xy:
    CMP #128
    LDA zp_prod_h
    ADC #0
-   STA obj_pb                              ; qa
-   LDA #73                                 ; wn = 2/7 (the 4-px neck)
-   JSR umul8
-   LDA zp_prod_l
-   CMP #128
-   LDA zp_prod_h
-   ADC #0
-   STA obj_pb+1                            ; wn
+   STA obj_pb                              ; qa (the y ladder needs it)
    LDA #69                                 ; a3 = 0.2679
    JSR umul8
    LDA zp_prod_l
    CMP #128
    LDA zp_prod_h
    ADC #0
-   STA obj_pb+2                            ; a3*a
-   SEC
-   LDA obj_cx_l
-   SBC obj_pb
-   STA obj_X+2
-   LDA obj_cx_h
-   SBC #0
-   STA obj_X+3
-   CLC
-   LDA obj_cx_l
-   ADC obj_pb
-   STA obj_X+8
-   LDA obj_cx_h
-   ADC #0
-   STA obj_X+9
-   SEC
-   LDA obj_cx_l
-   SBC obj_pb+1
-   STA obj_X+4
-   LDA obj_cx_h
-   SBC #0
-   STA obj_X+5
-   CLC
-   LDA obj_cx_l
-   ADC obj_pb+1
-   STA obj_X+6
-   LDA obj_cx_h
-   ADC #0
-   STA obj_X+7
+   STA obj_pb+2                            ; a3*a (ditto)
+   LDA #8                                  ; cx -+ qa -> obj_X 1/4
+   STA obj_px
+   LDY #2
+   LDA #187
+   JSR obj_mirror
+   LDA #6                                  ; the stem sides -> obj_X 2/3:
+   STA obj_px                              ; wn far, a3 near (the vertex
+   LDY #4                                  ; snap -- exact joins)
+   LDX obj_lod
+   BEQ opt_wn
+   LDA #69
+   JSR obj_mirror
+   JMP opt_shared
+opt_wn:
+   LDA #73                                 ; wn = 2/7 (the 4-px neck)
+   JSR obj_mirror
+opt_shared:
    LDA obj_yt_l                            ; y0 = syt (the stem top)
    STA obj_Y+0
    LDA obj_yt_h
    STA obj_Y+1
+   LDA obj_lod
+   BEQ opt_far
+   JMP opt_near
+opt_far:
    LDA obj_yb_l                            ; y4 = syb (the bulb bottom)
    STA obj_Y+8
    LDA obj_yb_h
@@ -1194,6 +1351,68 @@ obj_potion_xy:
    LDA obj_yb_h
    SBC #0
    STA obj_Y+7
+   RTS
+opt_near:
+; the dodecagon's y ladder: cy -+ {a, qa, a3a} with cy = syb - a, all
+; expressed as syb minus a byte (the stem sides were mirrored above)
+   LDA obj_yb_l                            ; y6 (off 12) = syb
+   STA obj_Y+12
+   LDA obj_yb_h
+   STA obj_Y+13
+   LDA obj_a                               ; y1 (off 2) = syb - 2a
+   ASL A                                   ; a <= 99: no carry out
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+2
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+3
+   CLC
+   LDA obj_a                               ; y2 (off 4) = syb - (a + qa)
+   ADC obj_pb
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+4
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+5
+   CLC
+   LDA obj_a                               ; y3 (off 6) = syb - (a + a3a)
+   ADC obj_pb+2
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+6
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+7
+   SEC
+   LDA obj_a                               ; y4 (off 8) = syb - (a - a3a)
+   SBC obj_pb+2
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+8
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+9
+   SEC
+   LDA obj_a                               ; y5 (off 10) = syb - (a - qa)
+   SBC obj_pb
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+10
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+11
    RTS
 
 SEG_CODE
@@ -1271,53 +1490,21 @@ ohy_m:
 obj_hgy:   .byte 34, 85, 222              ; y /256 of H: dome z13, side top
                                           ; z10, notch roof z2
 
-; ---- the vest: 6-x / 6-y ----------------------------------------------
+; ---- the vest: 6-x / 6-y (bank C: the near tiers filled CODE) ----------
 SEG_BANKC
 obj_vest_xy:
    LDA obj_a
    STA zp_mul_b
-   LDA #91                                 ; waist = 5.5/15.5
-   JSR umul8
-   LDA zp_prod_l
-   CMP #128
-   LDA zp_prod_h
-   ADC #0
-   STA obj_pb
-   LDA #50                                 ; scoop = 3/15.5
-   JSR umul8
-   LDA zp_prod_l
-   CMP #128
-   LDA zp_prod_h
-   ADC #0
-   STA obj_pb+1
-   SEC
-   LDA obj_cx_l
-   SBC obj_pb
-   STA obj_X+2
-   LDA obj_cx_h
-   SBC #0
-   STA obj_X+3
-   CLC
-   LDA obj_cx_l
-   ADC obj_pb
-   STA obj_X+8
-   LDA obj_cx_h
-   ADC #0
-   STA obj_X+9
-   SEC
-   LDA obj_cx_l
-   SBC obj_pb+1
-   STA obj_X+4
-   LDA obj_cx_h
-   SBC #0
-   STA obj_X+5
-   CLC
-   LDA obj_cx_l
-   ADC obj_pb+1
-   STA obj_X+6
-   LDA obj_cx_h
-   ADC #0
-   STA obj_X+7
+   LDA #8                                  ; waist = 5.5/15.5 -> obj_X 1/4
+   STA obj_px
+   LDY #2
+   LDA #91
+   JSR obj_mirror
+   LDA #6                                  ; scoop = 3/15.5 -> obj_X 2/3
+   STA obj_px
+   LDY #4
+   LDA #50
+   JSR obj_mirror
    LDA obj_h                               ; y1..y4 = syt + H*{20,89,75,52}
    STA zp_mul_b
    LDX #3

@@ -382,8 +382,10 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # moved to their own region at the rom_main TAIL -- they outgrew the
     # hole (three 256-byte windows, see below), and they never belonged in
     # it: both loaders copy them to a bank C home anyway.
-    assert OBJ_N_PLANES * n_obj + obj_bits_len <= 0x200, \
-        f'obj planes+bitmap {OBJ_N_PLANES*n_obj + obj_bits_len} > the 512 hole'
+    # ... plus OBJ_RUN8: the per-ss-OCTET first-object index that replaced
+    # the engine's exhaustive scan (2026-08-31).
+    assert OBJ_N_PLANES * n_obj + 2 * obj_bits_len <= 0x200, \
+        f'obj planes+bitmap+run8 {OBJ_N_PLANES*n_obj + 2*obj_bits_len} > the 512 hole'
     import collections as _cl
     _sscount = _cl.Counter(_o['ss'] for _o in fp_objects)
     assert not _sscount or max(_sscount.values()) <= 6, \
@@ -687,7 +689,92 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [4, 8, 6, 8]                     # scoop bottom, rear
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_vest == 416, f'OBJ_ART_VEST drifted: {off_art_vest}'
-    assert len(obj_art) == 484, f'art blob is {len(obj_art)} B, expected 484'
+    obj_art += [0xFF] * (512 - len(obj_art))    # window B done
+
+    # -- WINDOW C: THE CLOSE-RANGE TIERS (2026-08-31, "all objects appear
+    # to render at lowest LOD").  The dispatch picks per kind by projected
+    # height (obj_lodh in objects.s); lamp/helmet/vest stay single-tier --
+    # the lamp's L0 wants 18 x slots and the arrays hold 10, and the other
+    # two ARE their tier.
+    #
+    # OCT: the twelve-sided barrel, back from its 2026-08-31 retirement,
+    # byte-identical to what shipped 08-25..08-31.  Vertices at 15 + 30k;
+    # x idx 0..5 -> cx -+ {a,a2,a3}; y idx 0..5 -> lid centre -+ {b,b2,b3},
+    # 6..11 the same + dy.  17 lines, far lid arc armed.  The prologue's
+    # obj_hex/obj_ycp ladder serves it unchanged.
+    _XI = {0:5, 1:4, 2:3, 3:2, 4:1, 5:0, 6:0, 7:1, 8:2, 9:3, 10:4, 11:5}
+    _YI = {0:3, 1:4, 2:5, 3:5, 4:4, 5:3, 6:2, 7:1, 8:0, 9:0, 10:1, 11:2}
+    def _edge(k, dy=0):
+        j = (k + 1) % 12
+        return _ln((_XI[k], _YI[k] + dy), (_XI[j], _YI[j] + dy))
+    off_art_oct = len(obj_art)
+    for k in (0, 1, 2, 3, 4):                   # near half of the lid
+        obj_art += _edge(k)
+    for k in (0, 1, 2, 3, 4):                   # near half of the base
+        obj_art += _edge(k, 6)
+    obj_art += _ln((0, 2), (0, 9))              # left side, lid edge included
+    obj_art += _ln((5, 2), (5, 9))              # right side
+    obj_art += _CTL(OBJ_ART_ARM)
+    for k in (6, 7, 8, 9, 10):                  # far half of the lid: FUSED
+        obj_art += _edge(k)
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_oct == 512, f'OBJ_ART_OCT drifted: {off_art_oct}'
+
+    # BOX L0: the trapezoid top (diagonals ARMED -- topmost outboard of
+    # the rear edge) + the 12-line cross outline, doc/billboard verbatim.
+    #   x offs: 0=-w 2=-cw 4=-t 6=+t 8=+cw 10=+w; spill 38=-rear 40=+rear
+    #   y offs: 0=syt(rear) 2=lid(front top) 4=syb 6=yc-ch 8=yc-t
+    #           10=yc+t 12=yc+ch
+    off_art_boxl0 = len(obj_art)
+    obj_art += [0, 2, 10, 2]                    # front top edge
+    obj_art += [0, 2, 0, 4]                     # front sides
+    obj_art += [10, 2, 10, 4]
+    obj_art += [0, 4, 10, 4]                    # bottom
+    obj_art += [4, 6, 6, 6]                     # the cross outline
+    obj_art += [6, 6, 6, 8]
+    obj_art += [6, 8, 8, 8]
+    obj_art += [8, 8, 8, 10]
+    obj_art += [6, 10, 8, 10]
+    obj_art += [6, 10, 6, 12]
+    obj_art += [4, 12, 6, 12]
+    obj_art += [4, 10, 4, 12]
+    obj_art += [2, 10, 4, 10]
+    obj_art += [2, 8, 2, 10]
+    obj_art += [2, 8, 4, 8]
+    obj_art += [4, 6, 4, 8]
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += [0, 2, 38, 0]                    # top-face diagonals
+    obj_art += [38, 0, 40, 0]                   # rear top edge
+    obj_art += [40, 0, 10, 2]
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_boxl0 == 588, f'OBJ_ART_BOXL0 drifted: {off_art_boxl0}'
+
+    # POTION L0: the dodecagon bulb + the wide stem, with the stem sides
+    # SNAPPED to the +-a3 vertices -- the feet land exactly on the 12-gon
+    # corners, so nothing splits and every join is a shared vertex (the
+    # neck narrows from 4 to 3.75 world px, sub-pixel at any drawn size).
+    #   x offs: 0=-a 2=-qa 4=-a3a 6=+a3a 8=+qa 10=+a
+    #   y offs: 0=syt 2=cy-a 4=cy-qa 6=cy-a3a 8=cy+a3a 10=cy+qa 12=syb
+    off_art_potl0 = len(obj_art)
+    obj_art += [4, 2, 6, 2]                     # top segment, under the stem
+    obj_art += [0, 8, 2, 10]                    # lower arc
+    obj_art += [2, 10, 4, 12]
+    obj_art += [4, 12, 6, 12]
+    obj_art += [6, 12, 8, 10]
+    obj_art += [8, 10, 10, 8]
+    obj_art += [0, 6, 0, 8]                     # sides
+    obj_art += [10, 6, 10, 8]
+    obj_art += [4, 0, 4, 2]                     # stem sides
+    obj_art += [6, 0, 6, 2]
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += [0, 6, 2, 4]                     # exposed upper arc
+    obj_art += [2, 4, 4, 2]
+    obj_art += [6, 2, 8, 4]
+    obj_art += [8, 4, 10, 6]
+    obj_art += [4, 0, 6, 0]                     # stem top
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_potl0 == 672, f'OBJ_ART_POTL0 drifted: {off_art_potl0}'
+    assert len(obj_art) == 740, f'art blob is {len(obj_art)} B, expected 740'
     # OBJ_E IS A BYTE -- but it is an offset WITHIN a 256-byte window now,
     # and the walker's four abs,X reads get their window high byte SMC'd
     # per object (oa_rd0..3 in objects.s).  Windows: A = HEX + LAMP
@@ -731,6 +818,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
                                   _o['zt'] & 0xFF, _o['zb'] & 0xFF)):
             rom_main[off_obj + _pl * n_obj + _i] = _v
         rom_main[off_obj_bits + (_o['ss'] >> 3)] |= 1 << (_o['ss'] & 7)
+        _oct = off_obj_bits + obj_bits_len + (_o['ss'] >> 3)
+        if rom_main[_oct] == 0 or rom_main[_oct] > _i + 1:
+            rom_main[_oct] = _i + 1          # provisional +1; fixed below
+    for _oc in range(obj_bits_len):
+        _v = rom_main[off_obj_bits + obj_bits_len + _oc]
+        rom_main[off_obj_bits + obj_bits_len + _oc] = (_v - 1) if _v else 0xFF
     rom_main[off_obj_art:off_obj_art + len(obj_art)] = bytes(obj_art)
 
     # Vertices — page-split SoA planes (OX/OY/PG, 512 bytes each;
