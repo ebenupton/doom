@@ -163,7 +163,7 @@ def setup_view_zp(sc, px, py, ab):
     mem[_sym('zp_br_py2_l')] = _py2 & 0xFF
     mem[_sym('zp_br_py2_h')] = (_py2 >> 8) & 0xFF
     mem[_sym('bca_ab')] = ab & 0xFF  # bca_ab: angle-space bbox view angle (u8)
-    sc_t = fp.fp_sincos5(ab)            # zp staging is COUNT-NATIVE mag5
+    sc_t = fp.fp_sincos(ab)            # zp staging is mag8 again (2026-08-31)
     mem[_sym('zp_br_smag')] = sc_t[0]     # (2026-08-10)
     mem[_sym('zp_br_sneg')] = 1 if sc_t[1] else 0
     mem[_sym('zp_br_sone')] = 1 if sc_t[2] else 0

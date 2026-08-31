@@ -104,11 +104,8 @@ view_setup:
 ; returns an s16 in zp_br_res_l/resh.
    LDA zp_br_t2
    STA zp_ft_lo
-   LDA zp_br_smag
-   ASL A
-   ASL A
-   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
-   STA zp_ft_mag
+   LDA zp_br_smag                          ; mag8 staged (2026-08-31): ft
+   STA zp_ft_mag                           ; wants 8.8 scale, which it IS
    LDA zp_br_sneg
    STA zp_ft_neg
    LDA zp_br_sone
@@ -121,10 +118,7 @@ view_setup:
 
    LDA zp_br_t3
    STA zp_ft_lo
-   LDA zp_br_cmag
-   ASL A
-   ASL A
-   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
+   LDA zp_br_cmag                          ; mag8 staged (2026-08-31)
    STA zp_ft_mag
    LDA zp_br_cneg
    STA zp_ft_neg
@@ -143,10 +137,7 @@ view_setup:
 ; --- frac_vy = ft(dx_lo, cos) + ft(dy_lo, sin) ---
    LDA zp_br_t2
    STA zp_ft_lo
-   LDA zp_br_cmag
-   ASL A
-   ASL A
-   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
+   LDA zp_br_cmag                          ; mag8 staged (2026-08-31)
    STA zp_ft_mag
    LDA zp_br_cneg
    STA zp_ft_neg
@@ -160,11 +151,8 @@ view_setup:
 
    LDA zp_br_t3
    STA zp_ft_lo
-   LDA zp_br_smag
-   ASL A
-   ASL A
-   ASL A                                   ; ft wants 8.8 scale: mag5 << 3
-   STA zp_ft_mag
+   LDA zp_br_smag                          ; mag8 staged (2026-08-31): ft
+   STA zp_ft_mag                           ; wants 8.8 scale, which it IS
    LDA zp_br_sneg
    STA zp_ft_neg
    LDA zp_br_sone
@@ -178,11 +166,11 @@ view_setup:
    ADC zp_br_res_h
    STA zp_br_fvy_h
 
-; --- fracs -> COUNTS (2026-08-10): fv_c = rns(fv_88, 3) per axis,
-; in place. EXACT vs the mirror's ref_c = rns(rot_88 + fv_88, 3):
-; rot_88 = 8*rot5 passes through the shift, so ref_c = rot5 +
-; rns(fv_88, 3) identically. Sign-rotate with the fused round bit
-; (the vq3 idiom); |fv| <= ~500 so the ripple INC can't overflow. ---
+; --- fracs -> COUNTS: fv_c = rns(fv_88, 3) per axis, in place.  The
+; mirror models THIS split exactly (2026-08-31, 8-bit trig restored):
+; ref_c = rns(rot_88(N_int), 3) + rns(fv_88, 3) -- two roundings, both
+; sides.  Sign-rotate with the fused round bit (the vq3 idiom);
+; |fv| <= ~500 so the ripple INC can't overflow. ---
    LDA zp_br_fvx_h
    CMP #$80
    ROR A
@@ -297,6 +285,7 @@ d1h: SBC SQD_H+32,X                        ; +1/+2 SMC = SQD_H+32-mag5    ;# |||
    STA dsth                                                               ;# |          1.4
 .endmacro
 
+
 ; rwp_stamp — the SMC-validity stamp, IN THE CODE IMAGE (Eben's
 ; testbench-tax catch, 2026-08-11): assembled 0, written $A5 when
 ; rot_select applies the mag/sign/dispatch patches. Any flow that
@@ -357,7 +346,94 @@ rot_w_pages:
 ::rwp_o4h:
    ADC zp_br_res_h                                                        ;# |          1.4
    STA zp_br_vy_h                                                         ;# |          1.4
-   RTS                                                                    ;# ||         2.9
+; --- FINE CORRECTIONS (2026-08-31, the smoothness fix).  The fast
+; products use mag5' = (mag8-1)>>3; these four use eps = mag8 - 8*mag5'
+; (1..8, so the RWP_MUL borrow invariant holds and unity = 31/8 rides
+; the general body).  8*(mag5' products) + eps products == the full
+; 8-bit-mag rotation, so after one rns(err,3) per axis the count totals
+; are BIT-EQUAL to rns(rot88(w),3) on the restored table -- which is
+; what re-staggers the per-vertex depth residues the 5-bit table had
+; collapsed into whole-scene 4-unit lumps (the corridor jerk Eben
+; bisected to TRIG5).  Signs ride the same patched op-pair scheme
+; (rwp_g*, copied from the o-sites at epoch patch), seeded from 0.
+   RWP_MUL zp_ri_d_l, ::rwp_f1l, ::rwp_f1h, ::rwp_fs1l, ::rwp_fs1h, zp_rs_l, zp_rs_h
+   RWP_MUL zp_br_dy_l, ::rwp_f2l, ::rwp_f2h, ::rwp_fs2l, ::rwp_fs2h, zp_br_res_l, zp_br_res_h
+   LDA #0
+::rwp_g1s:
+   CLC                                     ; SMC: sin sign (as rwp_o1s)
+::rwp_g1l:
+   ADC zp_rs_l
+   STA zp_rs_l                             ; rs = +-P1e in place
+   LDA #0
+::rwp_g1h:
+   ADC zp_rs_h
+   STA zp_rs_h
+   LDA zp_rs_l
+::rwp_g2s:
+   SEC                                     ; SMC: NOT cos sign (as rwp_o2s)
+::rwp_g2l:
+   SBC zp_br_res_l
+   STA zp_rs_l
+   LDA zp_rs_h
+::rwp_g2h:
+   SBC zp_br_res_h
+   STA zp_rs_h                             ; rs = err_x
+   LDX #zp_br_vx_l
+   JSR rwp_rnsadd                          ; vx += rns(err_x, 3)
+   RWP_MUL zp_ri_d_l, ::rwp_f3l, ::rwp_f3h, ::rwp_fs3l, ::rwp_fs3h, zp_rs_l, zp_rs_h
+   RWP_MUL zp_br_dy_l, ::rwp_f4l, ::rwp_f4h, ::rwp_fs4l, ::rwp_fs4h, zp_br_res_l, zp_br_res_h
+   LDA #0
+::rwp_g3s:
+   CLC                                     ; SMC: cos sign (as rwp_o3s)
+::rwp_g3l:
+   ADC zp_rs_l
+   STA zp_rs_l                             ; rs = +-P3e in place
+   LDA #0
+::rwp_g3h:
+   ADC zp_rs_h
+   STA zp_rs_h
+   LDA zp_rs_l
+::rwp_g4s:
+   CLC                                     ; SMC: sin sign (as rwp_o4s)
+::rwp_g4l:
+   ADC zp_br_res_l
+   STA zp_rs_l
+   LDA zp_rs_h
+::rwp_g4h:
+   ADC zp_br_res_h
+   STA zp_rs_h                             ; rs = err_y
+   LDX #zp_br_vy_l
+; FALL THROUGH into rwp_rnsadd: its RTS is the rotate's return
+; rwp_rnsadd — rns(zp_rs, 3) in place (the vq3 fused-round idiom), then
+; fold into the s16 at zp X.  ONE JSR level: the measured worst-case SP
+; on real banked frames is $A6, so the 2 bytes are safe (the earlier
+; leaf-only rule dated from the flat-corpse SP=$00 misreadings).
+rwp_rnsadd:
+   LDA zp_rs_h
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   STA zp_rs_h
+   LDA zp_rs_l                             ; C = the shifted-out round bit
+   ADC #0
+   STA zp_rs_l
+   BCC :+
+   INC zp_rs_h
+:  CLC
+   LDA $00,X
+   ADC zp_rs_l
+   STA $00,X
+   LDA $01,X
+   ADC zp_rs_h
+   STA $01,X
+   RTS
+
 
 ; ============================================================================
 ; rwp_card_su / rwp_card_cu — CARDINAL-frame twins of rot_w_pages
@@ -409,58 +485,112 @@ o2h: ADC zp_rs_h
    RTS
 .endmacro
 
+.pushseg
+.segment "RWCARD"
 rwp_card_su:                               ; sin unity: vx from ox, vy from oy
    RWP_CARD zp_ri_d_l, zp_br_dy_l, ::rwc_s1s, ::rwc_s1l, ::rwc_s1h, ::rwc_s2s, ::rwc_s2l, ::rwc_s2h
 rwp_card_cu:                               ; cos unity: vx from -oy, vy from ox
    RWP_CARD zp_br_dy_l, zp_ri_d_l, ::rwc_c1s, ::rwc_c1l, ::rwc_c1h, ::rwc_c2s, ::rwc_c2l, ::rwc_c2h
+.popseg
 
-; rwp_contrib — one 4-entry epoch contrib table T[k] = (k-2)*256*mag,
-; signed. In: A = mag5, X = neg flag, Y = dest offset (0 = PB_TS,
+; rwp_contrib — one 4-entry epoch contrib table T[k] = (k-2)*V,
+; signed, V 16-BIT (2026-08-31: V = mag8<<5 counts, full 8-bit trig).
+; In: zp_rs_l/h = V, X = neg flag, Y = dest offset (0 = PB_TS,
 ; 8 = PB_TC). Entries interleaved lo,hi at dest + k*2:
-;   T[2] = 0, T[3] = +V, T[1] = -V, T[0] = -2V   with V = mag<<8,
-; all negated when X != 0 (fold: swap the +/- roles).
+;   T[2] = 0, T[3] = +V, T[1] = -V, T[0] = -2V, all negated when
+; X != 0.  V <= $2000, so 2V <= $4000: s16 throughout.
 .include "sqd.inc"
 ; (the 2026-08-25 bank-7 eviction of SQD_H was REVERTED the same day:
 ;  the VXCACHE fat paths execute FROM bank C and ride rot_w_pages, so the
 ;  table must be in ALWAYS-MAPPED main — the far-pose banked frames
 ;  collapsed to a third of their lines. bankedcmp caught it.)
 
+.pushseg
+.segment "RWC"
+; rwsel_derive — the per-axis mag decomposition (rot_select calls it
+; twice).  A = staged mag8 (0 encodes unity-256; the mod-256 arithmetic
+; gives mag5' 31 / eps 8 there by construction).
+;   Out: zp_br_t2 = mag5' = (mag8-1)>>3, zp_br_t3 = eps = mag8 - 8*mag5'
+;        zp_rs_l = (-mag5')&255, zp_rs_h = (-eps)&255
+;        Y = >sqr_l - (mag5' >= 1)   (the diff-LO base hi byte)
+rwsel_derive:
+   STA zp_rs_h                             ; stash mag8
+   SEC
+   SBC #1
+   LSR A
+   LSR A
+   LSR A
+   STA zp_br_t2                            ; mag5'
+   TAX
+   ASL A
+   ASL A
+   ASL A
+   STA zp_br_t3                            ; 8*mag5'
+   LDA zp_rs_h
+   SEC
+   SBC zp_br_t3
+   STA zp_br_t3                            ; eps (1..8)
+   LDA #0
+   SEC
+   SBC zp_br_t2
+   STA zp_rs_l                             ; (-mag5') & 255
+   LDA #0
+   SEC
+   SBC zp_br_t3
+   STA zp_rs_h                             ; (-eps) & 255
+   LDY #>sqr_l
+   CPX #0
+   BEQ :+
+   LDY #>sqr_l - 1
+:  RTS
+
 rwp_contrib:
 .scope
-   STA zp_rs_h                             ; V = mag << 8: hi = mag, lo = 0
    LDA #0
-   STA zp_rs_l
    STA PB_TS+4,Y                           ; T[2] = 0
    STA PB_TS+5,Y
-   ; +V / -V / -2V with the sign fold: pos = V if !neg else -V
+   ; nv = -V (16-bit)
    SEC
-   SBC zp_rs_h                             ; A = (-V) hi (lo stays 0)
-   CPX #0
-   BEQ pos_up
-   ; negated table: T[3] = -V, T[1] = +V, T[0] = +2V
-   STA PB_TS+7,Y                           ; T[3] hi = -mag
-   LDA zp_rs_h
-   STA PB_TS+3,Y                           ; T[1] hi = +mag
-   ASL A
-   STA PB_TS+1,Y                           ; T[0] hi = +2*mag (mag<=32: fits)
-   BPL zlo                                 ; (always: 2*mag <= 64)
-pos_up:
-   STA PB_TS+3,Y                           ; T[1] hi = -mag
-   ASL zp_rs_h
-   SEC
+   SBC zp_rs_l
+   STA zp_br_t2                            ; nv lo
    LDA #0
    SBC zp_rs_h
-   STA PB_TS+1,Y                           ; T[0] hi = -(2*mag)
-   LSR zp_rs_h
-   LDA zp_rs_h
-   STA PB_TS+7,Y                           ; T[3] hi = +mag
-zlo:
-   LDA #0                                  ; all lo bytes are 0
-   STA PB_TS+0,Y
-   STA PB_TS+2,Y
+   STA zp_br_t3                            ; nv hi
+   CPX #0
+   BNE negged
+   ; positive trig: T[3] = +V, T[1] = -V, T[0] = -2V
+   LDA zp_rs_l
    STA PB_TS+6,Y
+   LDA zp_rs_h
+   STA PB_TS+7,Y
+   LDA zp_br_t3
+   STA PB_TS+3,Y                           ; T[1] hi
+   LDA zp_br_t2
+   STA PB_TS+2,Y                           ; T[1] lo
+   ASL A                                   ; -2V = 2*(-V) (s16 shift)
+   STA PB_TS+0,Y
+   LDA zp_br_t3
+   ROL A
+   STA PB_TS+1,Y
+   RTS
+negged:
+   ; negative trig: T[3] = -V, T[1] = +V, T[0] = +2V
+   LDA zp_br_t2
+   STA PB_TS+6,Y
+   LDA zp_br_t3
+   STA PB_TS+7,Y
+   LDA zp_rs_h
+   STA PB_TS+3,Y                           ; T[1] hi
+   LDA zp_rs_l
+   STA PB_TS+2,Y                           ; T[1] lo
+   ASL A
+   STA PB_TS+0,Y
+   LDA zp_rs_h
+   ROL A
+   STA PB_TS+1,Y
    RTS
 .endscope
+.popseg
 
 ; (br_smul_s8_u8 + its br_smul_am register entry deleted 2026-07-13:
 ; the py projector inlined the body 2026-07-12 and the wide X projector

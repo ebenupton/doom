@@ -275,7 +275,7 @@ class BspRender6502:
         mem[_sy('zp_br_py2_l')] = _py2 & 0xFF
         mem[_sy('zp_br_py2_h')] = (_py2 >> 8) & 0xFF
 
-        s_mag, s_neg, s_one, c_mag, c_neg, c_one = fp.fp_sincos5(angle_byte)
+        s_mag, s_neg, s_one, c_mag, c_neg, c_one = fp.fp_sincos(angle_byte)
         mem[ZP_SMAG] = s_mag
         mem[ZP_SNEG] = 1 if s_neg else 0
         mem[ZP_SONE] = 1 if s_one else 0

@@ -104,8 +104,11 @@ OBJ_MAXSLOT = 6                            ; most objects in one subsector
 ; lamp, potion, helmet, box-stim, box-medikit, vest -- and the
 ; k row MUST mirror doom_wireframe's _KTAB (it asserts its own copy).
 ; In CODE, not bank C: the prologue reads obj_ktab under BANK_WALK.
-obj_ktab:
+.pushseg
+.segment "RWC"                             ; rides the PMH -> CODE alignment
+obj_ktab:                                  ; gap on banked (main, any bank)
    .byte 23, 15, 25, 34, 30, 47, 58        ; (the pillar's 10 died with it)
+.popseg
 .if ::BANKED
 ; TWO TIERS PER KIND (2026-08-31, "all objects appear to render at lowest
 ; LOD"): the dispatch compares H against obj_lodh and indexes the tables
@@ -116,6 +119,8 @@ obj_ktab:
 ; dodecagon (H >= 8: a circle is DEEP -- b = a -- so the half-pixel rule
 ; puts the switch far out).  The lamp's L0 wants 18 x slots against the
 ; arrays' 10, so it stays single-tier; helmet and vest ARE their tier.
+.pushseg
+.segment "VPTAB"
 obj_lodh:
    .byte 33, $FF, 8, $FF, 24, 24, $FF
 obj_tpl_pg2:                               ; art window high byte, lo/hi tier
@@ -134,10 +139,14 @@ obj_tpl_off2:                              ; start offset within the window
    .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
    .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
    .byte OBJ_ART_VEST,   OBJ_ART_VEST
+.popseg
 .endif
 
+.pushseg
+.segment "RWC"
 obj_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
+.popseg
 
 
 ; (obj_edges DELETED 2026-08-25 grind: the table-driven rectangle edge
@@ -1018,6 +1027,19 @@ SEG_CODE
 ; linear in a / H -- the shape is RIGID, per the pillar's lesson above.
 .if ::BANKED
 SEG_BANKC
+; ---- obj_ends: syt -> obj_Y+0/1, syb -> obj_Y+Y (2026-08-31 de-lard:
+; every builder ended with these copies inline) -------------------------
+obj_ends:
+   LDA obj_yt_l
+   STA obj_Y+0
+   LDA obj_yt_h
+   STA obj_Y+1
+   LDA obj_yb_l
+   STA obj_Y+0,Y
+   LDA obj_yb_h
+   STA obj_Y+1,Y
+   RTS
+
 obj_lamp_xy:
    LDA obj_a
    STA obj_pb                              ; the 5th magnitude is a itself
@@ -1164,6 +1186,7 @@ obj_ymirror:
    STA obj_Y+1,Y
    RTS
 
+SEG_BANKC
 obj_lidf:  .byte 51, 54                   ; box lid /256 of H: 3/15, 4/19
 ; box L0 constants, /256 (stim, medikit): rear edge (D-d)/(D+d) of a;
 ; cross half-width, bar half-thickness (of a); cross half-height, bar
@@ -1173,11 +1196,15 @@ obj_bcw:   .byte 110, 55                  ; cross half-width /256 of a
 obj_btx:   .byte 37, 18                   ; cross bar half-thickness (x)
 obj_bch:   .byte 51, 40                   ; cross half-height /256 of H
 obj_btz:   .byte 17, 13                   ; cross bar half-thickness (y)
+SEG_CODE
+
+SEG_BANKC
 obj_hgx:   .byte 192, 128, 96, 64         ; helmet x mags /256 of a
 obj_hnx:   .byte 2, 4, 6, 8               ; their -side obj_X byte offs
 obj_hpx:   .byte 44, 42, 40, 38           ; +side offs (obj_Y[13..16] spill,
                                           ; the lamp's convention; +-a keep
                                           ; obj_X+0/+10 for obj_probe)
+SEG_CODE
 obj_vgy:   .byte 20, 89, 75, 52           ; vest y /256 of H: front shoulder,
                                           ; armpit, scoop front, scoop rear
 
@@ -1202,14 +1229,8 @@ obj_box_y:
    LDA obj_yt_h
    ADC #0
    STA obj_Y+3
-   LDA obj_yt_l
-   STA obj_Y+0
-   LDA obj_yt_h
-   STA obj_Y+1
-   LDA obj_yb_l
-   STA obj_Y+4
-   LDA obj_yb_h
-   STA obj_Y+5
+   LDY #4
+   JSR obj_ends                            ; syt -> Y0, syb -> Y2 (off 4)
    LDA obj_lod
    BNE obj_box_l0
    RTS
@@ -1307,18 +1328,12 @@ opt_wn:
    LDA #73                                 ; wn = 2/7 (the 4-px neck)
    JSR obj_mirror
 opt_shared:
-   LDA obj_yt_l                            ; y0 = syt (the stem top)
-   STA obj_Y+0
-   LDA obj_yt_h
-   STA obj_Y+1
    LDA obj_lod
    BEQ opt_far
    JMP opt_near
 opt_far:
-   LDA obj_yb_l                            ; y4 = syb (the bulb bottom)
-   STA obj_Y+8
-   LDA obj_yb_h
-   STA obj_Y+9
+   LDY #8                                  ; syt -> y0, syb -> y4 (off 8)
+   JSR obj_ends
    LDA obj_pb                              ; y1 = syb - 2qa (arc mid)
    ASL A                                   ; qa <= 72, no carry out
    STA obj_pu
@@ -1355,10 +1370,8 @@ opt_far:
 opt_near:
 ; the dodecagon's y ladder: cy -+ {a, qa, a3a} with cy = syb - a, all
 ; expressed as syb minus a byte (the stem sides were mirrored above)
-   LDA obj_yb_l                            ; y6 (off 12) = syb
-   STA obj_Y+12
-   LDA obj_yb_h
-   STA obj_Y+13
+   LDY #12                                 ; syt -> y0, syb -> y6 (off 12)
+   JSR obj_ends
    LDA obj_a                               ; y1 (off 2) = syb - 2a
    ASL A                                   ; a <= 99: no carry out
    STA obj_pu
@@ -1415,8 +1428,9 @@ opt_near:
    STA obj_Y+11
    RTS
 
-SEG_CODE
-; ---- the helmet: the 2D outline's 10-x / 5-y ladder ---------------------
+; ---- the helmet: the 2D outline's 10-x / 5-y ladder (bank C, with
+; the lamp/potion/vest builders: the 2026-08-31 trig restore needed
+; the CODE bytes back) ----------------------------------------------------
 obj_helmet_xy:
    LDA obj_a
    STA zp_mul_b
@@ -1478,17 +1492,12 @@ ohy_m:
    STA obj_Y+3,Y
    DEX
    BPL ohy_m
-   LDA obj_yt_l
-   STA obj_Y+0
-   LDA obj_yt_h
-   STA obj_Y+1
-   LDA obj_yb_l
-   STA obj_Y+8
-   LDA obj_yb_h
-   STA obj_Y+9
-   RTS
+   LDY #8
+   JMP obj_ends                            ; syt -> y0, syb -> y4 (off 8)
+SEG_BANKC
 obj_hgy:   .byte 34, 85, 222              ; y /256 of H: dome z13, side top
                                           ; z10, notch roof z2
+SEG_CODE
 
 ; ---- the vest: 6-x / 6-y (bank C: the near tiers filled CODE) ----------
 SEG_BANKC
@@ -1530,14 +1539,7 @@ ovy_m:
    STA obj_Y+3,Y
    DEX
    BPL ovy_m
-   LDA obj_yt_l                            ; y0 = syt (rear shoulders)
-   STA obj_Y+0
-   LDA obj_yt_h
-   STA obj_Y+1
-   LDA obj_yb_l                            ; y5 = syb (the ground line)
-   STA obj_Y+10
-   LDA obj_yb_h
-   STA obj_Y+11
-   RTS
+   LDY #10                                 ; syt -> y0 (rear shoulders),
+   JMP obj_ends                            ; syb -> y5 (the ground line)
 SEG_CODE
 .endif
