@@ -544,6 +544,57 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_hex == 100, f'OBJ_ART_HEX drifted: {off_art_hex} (layout.inc says 100)'
 
+    # -- techno pillar, thing 48 (2026-08-31) -----------------------------
+    # A STACK OF COAXIAL CYLINDERS, not a drum: plinth r=19 z 0..4.90, shaft
+    # r=a2*19 z 4.90..122.83, cap r=19 z 122.83..128, and FOUR drawn rims
+    # each with its own ellipse depth (b = a*|z-eye|/D, so the cap is over
+    # twice as open as the plinth against an eye 41 up).  obj_pillar_y builds
+    # the 18 y slots; obj_X is the barrel's own {a, a2, a3} unchanged, because
+    # the shaft's rims are covered top and bottom and it contributes only its
+    # two sides -- which sit at a2*19, already a vertex.
+    #
+    # GENERATED, then asserted: doc/billboard/tables.py emits these indices
+    # from the model and checks the y order against obj_pytab in objects.s
+    # and that every line runs left-to-right.  Geometry and the checks behind
+    # it are in doc/billboard.
+    _ln2 = lambda x1, y1, x2, y2: [x1*2, y1*2, x2*2, y2*2]
+    off_art_pillar = len(obj_art)
+    # plain: 19 lines
+    obj_art += _ln2(0, 10, 1,  9)
+    obj_art += _ln2(4,  9, 5, 10)
+    obj_art += _ln2(0, 12, 1, 13)
+    obj_art += _ln2(1, 13, 4, 13)
+    obj_art += _ln2(4, 13, 5, 12)
+    obj_art += _ln2(0, 15, 1, 16)
+    obj_art += _ln2(1, 16, 4, 16)
+    obj_art += _ln2(4, 16, 5, 15)
+    obj_art += _ln2(0, 10, 0, 15)
+    obj_art += _ln2(5, 10, 5, 15)
+    obj_art += _ln2(1,  6, 1, 11)
+    obj_art += _ln2(4,  6, 4, 11)
+    obj_art += _ln2(0,  5, 1,  4)
+    obj_art += _ln2(1,  4, 4,  4)
+    obj_art += _ln2(4,  4, 5,  5)
+    obj_art += _ln2(0,  7, 1,  8)
+    obj_art += _ln2(4,  8, 5,  7)
+    obj_art += _ln2(0,  2, 0,  7)
+    obj_art += _ln2(5,  2, 5,  7)
+    obj_art += _CTL(OBJ_ART_ARM)
+    # the armed run is the cap's top arc -- the TOPMOST line at every x, which
+    # is what the fused authority run has to be.  The plinth's top rim is
+    # exposed too, but the cap covers its whole width, so none of it is armed.
+    obj_art += _ln2(0,  2, 1,  1)
+    obj_art += _ln2(1,  1, 4,  1)
+    obj_art += _ln2(4,  1, 5,  2)
+    obj_art += _CTL(OBJ_ART_END)
+    # OBJ_E IS A BYTE.  The stamp walker indexes OBJ_ART with an 8-bit X, so
+    # the WHOLE table must stay under 256 bytes -- the 30-line L0 template
+    # ran 152..280 and its tail was simply unreachable, which showed up as
+    # the pillars stamping OCT.  This is the 22-line LOD tier, 152..248.
+    assert len(obj_art) <= 256, f'OBJ_ART is {len(obj_art)} B; obj_e is a byte'
+    assert off_art_pillar == 152, \
+        f'OBJ_ART_PILLAR drifted: {off_art_pillar} (layout.inc says 152)'
+
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4
     # LV1 BKT planes (2 x 128 B, s16 LE): the WHOLE K-residue term of the
@@ -572,8 +623,11 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             f"object {_i} {(_px, _py)} outside the page-decomposed range"
         assert 0 <= _o['ss'] < 256, "subsector id must fit u8"
         # k <= 63 keeps H*k/64 inside a u8 for any H (max 251), so the
-        # engine's half-width needs no clamp.
-        assert 0 < (_o['asp'] & 0x7F) < 64, "object width ratio must be 1..63"
+        # engine's half-width needs no clamp.  k is bits 0-5 since the
+        # aspect byte grew a second template bit (b7 = not-a-barrel,
+        # b6 = pillar) -- masking 0x7F here read the pillar's b6 as part
+        # of k and tripped this assert at 74.
+        assert 0 < (_o['asp'] & 0x3F) < 64, "object width ratio must be 1..63"
         for _pl, _v in enumerate((_px & 0xFF, _py & 0xFF,
                                   (((_px >> 8) + 2) & 3) | ((((_py >> 8) + 2) & 3) << 2),
                                   _o['ss'], _o['asp'],

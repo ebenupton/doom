@@ -1699,9 +1699,16 @@ print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
 # k = 64 * radius / height is exact -- no projection of the radius needed.
 # The barrel overrides to 23, the value matched against the DOOM sprite
 # (whose art is wider than its 10-unit collision radius).
-_ART_OCT, _ART_RECT = 0, 1
+# THE ASPECT BYTE: bits 0-5 = k (the width ratio in 64ths; the widest object
+# here is the barrel at 23), bits 6-7 = template, ENCODED SO ONE `BIT` STILL
+# DECODES IT: b7 = "not a barrel", b6 = "pillar".  The obvious two-bit field
+# at b5-6 needs LDA/AND/CMP and cost the flat build eight bytes of CODE it
+# does not have.  This way the flat dispatch is the same five bytes it was.
+_ART_OCT, _ART_RECT, _ART_PILLAR = 0x00, 0x80, 0xC0
 def _obj_kind(r, h, art=_ART_RECT, k=None):
-    return (r, h, art, k if k is not None else max(1, min(127, round(64 * r / h))))
+    kk = k if k is not None else max(1, round(64 * r / h))
+    assert kk <= 63, f'k={kk} does not fit the aspect byte\'s six bits'
+    return (r, h, art, kk)
 # NB `h` is the height the billboard is DRAWN at, which for the barrel is
 # NOT its mobjinfo height.  BAR1A0 is a 23x32 sprite; 42 is the collision
 # cylinder, 31% taller than the barrel anyone actually sees, and drawing at
@@ -1718,7 +1725,9 @@ def _obj_kind(r, h, art=_ART_RECT, k=None):
 # instances and the |x| magnitudes first.  (doc/billboard, 2026-08-31.)
 _LAMP = _obj_kind(16, 48)
 _OBJ_KINDS = {35:   _LAMP,                                  # Candelabra -> lamp
-              48:   _obj_kind(16, 128),                     # Tall techno pillar
+              # r = 19, not the 16 of the collision cylinder: ELECA0 is 38 px
+              # wide over 128 tall and the billboard is what you SEE.  k = 10.
+              48:   _obj_kind(19, 128, _ART_PILLAR),        # Tall techno pillar
               2028: _LAMP,                                  # Floor lamp
               2035: _obj_kind(10, 32, _ART_OCT, 23)}        # Barrel (BAR1A0 23x32)
 fp_objects = []
@@ -1736,7 +1745,7 @@ for _th in things:
         # ratio k.  This is the plane that used to hold the radius in
         # counts, which the draw stopped reading when the billboard became
         # a scaled stamp -- the width now falls out of H and k.
-        asp=(_art << 7) | _k,
+        asp=_art | _k,
         zb=_prescale_height(_fz),
         zt=_prescale_height(_fz + _h)))
 fp_objects.sort(key=lambda o: o['ss'])           # 6502 scans a run per ss

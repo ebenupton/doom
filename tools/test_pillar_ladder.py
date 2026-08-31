@@ -22,17 +22,19 @@ def mirror(H, syt):
     P = H * H
     Ph, Pl = P >> 8, P & 0xFF
     b = [(Ph * M + ((Pl * M) >> 8) + 128) >> 8 for M in RIMS_M]
-    cyA = syt + b[0]
-    cyD = syt + H - b[3]
+    b2 = [(bb * 47 + 32) >> 6 for bb in b]
+    # The shipped tier is L1, whose arc reaches only b*a2 -- so THAT is the
+    # inset, and slots 1 and 16 land exactly on syt and syb.
+    cyA = syt + b2[0]
+    cyD = syt + H - b2[3]
     S = cyD - cyA
     cy = [cyA,
           cyA + ((S * 10 + 128) >> 8),
           cyA + ((S * 246 + 128) >> 8),
           cyD]
     mag = []
-    for bb in b:
-        b2 = (bb * 47 + 32) >> 6
-        mag += [bb, b2, bb - b2, 0]
+    for bb, bb2 in zip(b, b2):
+        mag += [bb, bb2, bb - bb2, 0]
     TAB = [0x00,0x01,0x02, 0x04,0x05,0x06,0x07, 0x86,0x85,
            0x09,0x0A,0x0B, 0x8A,0x89,0x88, 0x8E,0x8D,0x8C]
     out = []
@@ -72,10 +74,12 @@ def main():
                 print(f'    got  {got}')
                 print(f'    want {want}')
                 continue
-            # the invariant that matters: the ladder spans exactly H
-            if got[17] - got[0] != H:
+            # THE invariant: the tier that ships spans exactly H.  Slot 1 is
+            # rim A's b2 offset and slot 16 rim D's, which are the extremes
+            # the 22-line template actually draws.
+            if got[16] - got[1] != H:
                 bad += 1
-                print(f'  H={H} syt={syt}: extent {got[17]-got[0]} != {H}')
+                print(f'  H={H} syt={syt}: L1 extent {got[16]-got[1]} != {H}')
             # Monotonic WITHIN each rim's group -- b >= b2 >= b3, or that
             # rim's arc edges cross (the trap obj_s7 documents).  NOT across
             # the whole ladder: different rims' arcs legitimately interleave,

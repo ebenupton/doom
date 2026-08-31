@@ -114,9 +114,24 @@ OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-LAY_N_OBJ_ART = 38                 ; billboard art entries, ALL templates
-                                   ; (19 barrel + 6 rectangle + 13 LOD
-                                   ;  hex, control entries included)
+; PER BUILD.  Banked carries all four templates; FLAT STOPS AT 38 and never
+; selects the pillar, because its art home has exactly 152 bytes: SS_VZ_BASE
+; runs up to $E82C below it and pmf_mul24s owns $E8C8 above, and there is no
+; 280-byte hole anywhere in the flat map to re-home it into.  The loader
+; copies LAY_N_OBJ_ART entries, so flat simply does not receive the pillar
+; block -- and obj_art_pillar is gated .if ::BANKED so it cannot be reached.
+; Re-cutting the flat art home belongs with slimming the flat build.
+.if ::BANKED
+LAY_N_OBJ_ART = 62                 ; 19 barrel + 6 rectangle + 13 LOD hex
+                                   ; + 24 techno pillar, control entries
+                                   ; included.  OBJ_E IS A BYTE, so the
+                                   ; whole table must stay under 256 --
+                                   ; the pillar ships its 22-line LOD tier,
+                                   ; not the 30-line one, which would run
+                                   ; to 280 and be partly unreachable.
+.else
+LAY_N_OBJ_ART = 38                 ; barrel + rectangle + hex only
+.endif
 OBJ_ART_OCT  = 0                   ; 12-sided barrel -- BARRELS ONLY: 17
                                    ; lines = 5 far lid arc (RECORDED) + 5
                                    ; near lid arc + 5 base arc + 2 sides,
@@ -124,6 +139,14 @@ OBJ_ART_OCT  = 0                   ; 12-sided barrel -- BARRELS ONLY: 17
                                    ; lid's vertical edge to the bottom of
                                    ; the base's (they are collinear)
 OBJ_ART_RECT = 76                  ; plain outline rectangle -- the rest
+OBJ_ART_PILLAR = 152               ; techno pillar (2026-08-31): a stack of
+                                   ; coaxial cylinders -- 30 lines, 5 of
+                                   ; them the cap's top arc as the armed
+                                   ; run.  Needs obj_pillar_y to have built
+                                   ; the 18-slot y ladder: its four rims
+                                   ; each carry their OWN ellipse depth,
+                                   ; which the barrel's single b cannot
+                                   ; express.  doc/billboard.
 OBJ_ART_HEX  = 100                 ; LOD barrel (2026-08-27): flat-top
                                    ; hexagonal lid, 11 lines. Best-fit
                                    ; top half-width = 9a/16 = a>>1+a>>4

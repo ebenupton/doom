@@ -23,7 +23,7 @@ from symmap import sym
 # 9 barrels in the hex LOD (no barrel in this corpus ever reaches OCT --
 # a never gets to OBJ_LOD_A = 12) and 14 rects: the lamps, and the two
 # candelabras that now borrow the lamp.
-EXPECT = {'HEX': 9, 'RECT': 14}
+EXPECT = {'HEX': 9, 'RECT': 12, 'PILLAR': 2}
 
 def main():
     r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
@@ -33,8 +33,8 @@ def main():
     entry = sym('render_frame', banked=1)
     STAMP = sym('obj_stamp', banked=1)
     OE = sym('obj_e', banked=1)
-    STARTS = {0: 'OCT', 76: 'RECT', 100: 'HEX'}
-    n = collections.Counter()
+    STARTS = {0: 'OCT', 76: 'RECT', 100: 'HEX', 152: 'PILLAR'}
+    n = collections.Counter(); last = [None]
     for (px, py, ab) in C.POSITIONS:
         r.render_frame(px, py, ab, dw.player_floor(px, py))
         r.sc.init(); r.sc.clear_screen()
@@ -42,8 +42,13 @@ def main():
         mem[0x01DF] = 0xFE; mem[0x01DE] = 0xFF
         k = 0
         while mpu.pc != 0xFF00 and k < 3_000_000:
-            if mpu.pc == STAMP and mem[OE] in STARTS:
-                n[STARTS[mem[OE]]] += 1
+            # obj_e ADVANCES through the template, so only count the first
+            # entry of each object -- and only when it is a template start.
+            if mpu.pc == STAMP:
+                e = mem[OE]
+                if e in STARTS and e != last[0]:
+                    n[STARTS[e]] += 1
+                last[0] = e
             mpu.step(); k += 1
     got = dict(n)
     print(f'  stamps: {got}  (expect {EXPECT})')

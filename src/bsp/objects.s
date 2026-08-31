@@ -470,8 +470,8 @@ obj_hok:
    LDA obj_h
    STA zp_mul_b
    LDA obj_asp
-   AND #$7F
-   JSR umul8
+   AND #$3F                                ; k is bits 0-5; 6-7 select the
+   JSR umul8                               ; template
    LDA zp_prod_l                           ; (H*k + 32) >> 6, ROUNDED:
    ASL A                                   ; << 2, then +128 into the hi byte
    ROL zp_prod_h
@@ -605,7 +605,14 @@ obj_ycp:
 ; best-fit top half-width is 9a/16. The two cx-+w values land in the
 ; DEAD Y slots 6/7, which the stamp walker addresses as x indices 12/13
 ; (obj_X and obj_Y are adjacent by the obj_hex contract).
+; ONE BIT TEST DECODES THE TEMPLATE: b7 = not-a-barrel, b6 = pillar.  Flat
+; has no pillar art (LAY_N_OBJ_ART stops at 38 -- its art home is 152 bytes
+; and there is no hole to re-home it into), so there b7 alone sends both
+; rect and pillar to the rectangle, in the same five bytes this always took.
    BIT obj_asp
+.if ::BANKED
+   BVS obj_sel_pillar
+.endif
    BMI obj_art_rect
    LDA obj_a
    CMP #OBJ_LOD_A
@@ -637,6 +644,18 @@ obj_ycp:
 obj_art_rect:
    LDA #OBJ_ART_RECT
    BNE obj_art_set                         ; (always)
+.if ::BANKED
+obj_sel_pillar:
+; THE TECHNO PILLAR.  Four drawn rims, each with its own ellipse depth, so it
+; needs its own 18-slot y ladder before the stamp can play the template.
+; obj_X is the barrel's {a, a2, a3} untouched: the shaft's rims are covered
+; top and bottom, so it contributes only its two sides, and those sit at
+; a2*19 -- already a vertex.  BANK C IS ALREADY PAGED here (the prologue
+; does it for OBJ_ART), which obj_pillar_y's tables rely on.
+   JSR obj_pillar_y
+   LDA #OBJ_ART_PILLAR
+   BNE obj_art_set                         ; (always)
+.endif
 obj_art_oct:
    LDA #OBJ_ART_OCT
 obj_art_set:
@@ -960,49 +979,6 @@ opy_b:
    STA obj_pb,X
    DEX                                     ; count DOWN: 1 byte cheaper, and
    BPL opy_b                               ; the four rims are independent
-; --- cy_A = syt + b_A,  cy_D = syb - b_D ---------------------------------
-   CLC
-   LDA obj_yt_l
-   ADC obj_pb+0
-   STA obj_pcy+0
-   LDA obj_yt_h
-   ADC #0
-   STA obj_pcy+1
-   SEC
-   LDA obj_yb_l
-   SBC obj_pb+3
-   STA obj_pcy+6
-   LDA obj_yb_h
-   SBC #0
-   STA obj_pcy+7
-; --- S = cy_D - cy_A  (u8: S <= H) ---------------------------------------
-   SEC
-   LDA obj_pcy+6
-   SBC obj_pcy+0
-   STA obj_pu
-; --- cy_B and cy_C -------------------------------------------------------
-   LDX #0
-opy_cy:
-   STX obj_px                              ; umul8 eats X
-   LDA opy_frac,X
-   STA zp_mul_b
-   LDA obj_pu
-   JSR umul8
-   LDX obj_px
-   LDA zp_prod_l                           ; (S*f + 128) >> 8
-   CMP #128
-   LDA zp_prod_h
-   ADC #0
-   CLC
-   ADC obj_pcy+0
-   STA obj_pcy+2,X
-   LDA obj_pcy+1
-   ADC #0
-   STA obj_pcy+3,X
-   INX
-   INX
-   CPX #4
-   BCC opy_cy
 ; --- the 18 slots: cy -+ b*{1, a2, a3} per rim ---------------------------
 ; Each rim's three magnitudes plus a zero, so one descriptor byte selects
 ; both the rim and the offset: bits 0-3 index obj_pmag (rim*4 + which),
@@ -1045,6 +1021,49 @@ opy_split:
    TAY
    CPX #4
    BCC opy_split
+; --- cy_A = syt + b_A*a2,  cy_D = syb - b_D*a2 ---------------------------
+   CLC
+   LDA obj_yt_l
+   ADC obj_pmag+1                          ; rim A's b2 -- the L1 tier's arc
+   STA obj_pcy+0                           ; only reaches b*a2, so THAT is
+   LDA obj_yt_h                            ; the inset, or the pillar stops
+   ADC #0                                  ; filling its projected height
+   STA obj_pcy+1
+   SEC
+   LDA obj_yb_l
+   SBC obj_pmag+13                         ; rim D's b2
+   STA obj_pcy+6
+   LDA obj_yb_h
+   SBC #0
+   STA obj_pcy+7
+; --- S = cy_D - cy_A  (u8: S <= H) ---------------------------------------
+   SEC
+   LDA obj_pcy+6
+   SBC obj_pcy+0
+   STA obj_pu
+; --- cy_B and cy_C -------------------------------------------------------
+   LDX #0
+opy_cy:
+   STX obj_px                              ; umul8 eats X
+   LDA opy_frac,X
+   STA zp_mul_b
+   LDA obj_pu
+   JSR umul8
+   LDX obj_px
+   LDA zp_prod_l                           ; (S*f + 128) >> 8
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   CLC
+   ADC obj_pcy+0
+   STA obj_pcy+2,X
+   LDA obj_pcy+1
+   ADC #0
+   STA obj_pcy+3,X
+   INX
+   INX
+   CPX #4
+   BCC opy_cy
 ; --- play the descriptors ------------------------------------------------
    LDA #0
    STA obj_pw                              ; slot index
