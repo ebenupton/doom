@@ -13,12 +13,6 @@ OBJ = {
      (11.5, 0.0, 5.0), (7.5, 5.0, 14.0), (5.5, 14.0, 48.0)]),
  'candelabra': dict(lump='CBRAA0', h=61.0, thing=35, n=2, bands=[
      (11.0, 0.0, 10.0), (2.5, 10.0, 41.0), (13.5, 41.0, 58.0), (2.5, 58.0, 61.0)]),
- # the small pickups (2026-08-31): both solids of revolution, so the
- # cylinder stack covers them as-is
- 'potion':  dict(lump='BON1A0', h=18.0, thing=2014, n=13, bands=[
-     (7.0, 0.0, 11.0), (2.0, 11.0, 18.0)]),
- 'helmet':  dict(lump='BON2A0', h=15.0, thing=2015, n=25, bands=[
-     (8.0, 0.0, 10.0), (6.5, 10.0, 13.0), (3.5, 13.0, 15.0)]),
 }
 def lines(name, D, ze=EYE):
     o = OBJ[name]

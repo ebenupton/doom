@@ -18,7 +18,7 @@ def topmost_ok(L, n=2000):
     return bad
 print(f'{"object":10s} {"tier":4s} {"lines":>5s} {"armed":>5s}  topmost-is-armed')
 ok=True
-for n in ('pillar','barrel','lamp','potion','helmet'):
+for n in ('pillar','barrel','lamp'):
     for lod in (0,1):
         for D in (128.,256.,512.):
             L,_=lod_lines(n,D,lod)

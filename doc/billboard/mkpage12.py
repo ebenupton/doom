@@ -94,11 +94,10 @@ for n in ('pillar','barrel','lamp','potion','helmet','stim','medikit','armour'):
 # ---- GEOMETRY TABLES -----------------------------------------------------
 exec(open(_D+'tables.py').read().split("if __name__")[0])
 BNAMES={'pillar':['cap','shaft','plinth'],'barrel':['body'],
-        'lamp':['column','step','base'],
-        'potion':['neck','body'],'helmet':['crown','dome','brim']}
+        'lamp':['column','step','base']}
 BANDS='<table><thead><tr><th>object</th><th>h</th><th>band</th><th>r</th>'\
       '<th>z₀</th><th>z₁</th></tr></thead><tbody>'
-for n in ('pillar','barrel','lamp','potion','helmet'):
+for n in ('pillar','barrel','lamp'):
     o=OBJ[n]
     for i,(r,z0,z1) in enumerate(reversed(o['bands'])):
         BANDS+=(f'<tr><td>{NAMES[n] if i==0 else ""}</td><td>{o["h"]:.0f}</td>'
@@ -107,13 +106,15 @@ for n in ('pillar','barrel','lamp','potion','helmet'):
 BANDS+='</tbody></table>'
 DIMS='<table><thead><tr><th>object</th><th>h</th><th>half-width</th>'\
      '<th>half-depth</th><th>detail</th></tr></thead><tbody>'
-for n,det in (('stim','front cross 7×7 (decal)'),
-              ('medikit','front cross 11×11 (decal)'),
-              ('armour','scoop ±3 to z 13; shoulders 3–13.5; sides 15.5')):
+for n,det in (('stim','front cross 7×7 (decal); rear edge ×(D−d)/(D+d)'),
+              ('medikit','front cross 11×11 (decal); rear edge ×(D−d)/(D+d)'),
+              ('armour','scoop ±3 to z 13; shoulders 3–13.5; sides 15.5'),
+              ('potion','a SPHERE: bulb r 7 on the ground + edge-on neck = circle + stem'),
+              ('helmet','flat 2D outline: base ±8, sides to z 10, dome via (6,13), top ±3 at 15')):
     o=POBJ[n]
-    w = o.get('w', o.get('arm',(0,0))[0])
+    w = o.get('w') or o.get('r') or (max(x for x,_ in o['prof']) if 'prof' in o else o['arm'][0])
     DIMS+=(f'<tr><td>{NAMES[n]}</td><td>{o["h"]:.0f}</td><td>{w:g}</td>'
-           f'<td>{o["d"]:g}</td><td>{det}</td></tr>')
+           f'<td>{o.get("d","—")}</td><td>{det}</td></tr>')
 DIMS+='</tbody></table>'
 
 GEO=''
@@ -215,22 +216,28 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   helmets and 2 vests</b> (green and blue share one geometry — they differ
   only in DOOM's palette), so the helmet and the potion are the most
   numerous billboards in the level by a distance.</p>
-  <p><b>The potion and the helmet are solids of revolution</b> and use the
-  cylinder stack unchanged: the potion a jar (r 7) with a tall neck (r 2),
-  the helmet a three-band dome (8, 6.5, 3.5).</p>
-  <p><b>The boxes are boxes.</b> A new solid joins the model for them: an
-  extruded profile, whose front copy drops by <code>b(z)</code> and rear
-  copy rises by it, with <code>b(z)&nbsp;=&nbsp;K·d·|z−41|/D²</code> — the
-  top face opens by <em>exactly the law that opens a rim ellipse</em>, so a
-  box under this projection is its silhouette rectangle, one interior line
-  where the front face meets the top, and an armed rear top edge.  At the
-  engine's eye the visible top-face depth is under two pixels at pickup
-  range — the DOOM sprites show deep top faces because they are drawn from
-  a much steeper viewpoint than the engine's, and physical reality under
-  <em>our</em> perspective is the shallow one.  The painted cross is kept
-  as a two-line decal on the front face; a decal's four ends are paint,
-  not geometry, and are the only free endpoints besides the stem termini.</p>
-  <p><b>The vest is the same extrusion with a shaped profile</b> — waist,
+  <p><b>The boxes are boxes, diagonals included.</b> An extruded profile
+  joins the model: the front copy of a profile point drops by
+  <code>b(z)&nbsp;=&nbsp;K·d·|z−41|/D²</code> and the rear copy rises by it
+  — the top face opens by <em>exactly the law that opens a rim ellipse</em>.
+  And true perspective scales x by <code>1/(D−t)</code>, so with the front
+  face anchored at the sprite's width the rear top edge is
+  <code>(D−d)/(D+d)</code> of it: the top face is a <b>trapezoid</b>, and
+  the diagonal slopes of its sides are real geometry, drawn and armed (they
+  are the topmost line outboard of the rear edge).  The painted cross is
+  kept as a two-line decal on the front face; a decal's four ends are
+  paint, not geometry.</p>
+  <p><b>The potion is a circle with a stem — literally.</b> The bulb is a
+  sphere (r 7, sitting on the ground) and a sphere projects to a circle;
+  the neck is a cylinder seen edge-on, which projects to a line.  The
+  circle is the dodecagon at L0 and its three-segment arcs at L1, with the
+  centre riding the tier's reach so the bulb always fills its share of the
+  extent; the stem joins the top arc's middle segment and its terminus is
+  the one free end the joins rule has always allowed.</p>
+  <p><b>The helmet is just its 2D outline</b> — base, sides, a two-segment
+  dome per side, flat top.  No ellipses, one tier, eight lines, and the
+  whole dome is the armed run.</p>
+  <p><b>The vest is the extrusion with a shaped profile</b> — waist,
   armpit flare, shoulders, and a neck scoop whose rear rim shows through
   the hole, raised by 2b: through a real vest's neck you see the back
   panel.  One deliberate deviation from the sprite: ARM1A0's alpha only
@@ -240,14 +247,11 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   the object is real.</p>
   <div class="callout">
     <p><b>Engine cost, for when these land:</b> the boxes are the cheapest
-    templates yet — L1 is <b>5 lines, 1 armed, 2 x slots, 3 y</b>, cheaper
-    than the rectangle they would replace was.  The vest's L1 is 15 lines /
-    5 |x|; the potion 20 and the helmet 27 at L1 (the dome pays the
-    three-band price the candelabra was refused for — but there are
-    twenty-five of them, against the candelabra's two).  <code>OBJ_ART</code>
-    is full at 236 of 256 bytes, so nothing here fits until
-    <code>obj_e</code> widens or another template retires.  Not landed;
-    artifact only.</p>
+    templates yet — L1 is <b>7 lines, 3 armed, 3 x slots</b>.  The helmet
+    is 8 lines at its single tier, the potion 9 at L1, the vest 15.
+    <code>OBJ_ART</code> is full at 236 of 256 bytes, so nothing here fits
+    until <code>obj_e</code> widens or another template retires.  Not
+    landed; artifact only.</p>
   </div>
 </section>
 
