@@ -58,7 +58,13 @@ obj_b2:      .res 1
 obj_b3:      .res 1
 obj_dy:      .res 1
 obj_X:       .res 12                       ; 6 x s16 — the art x table
-obj_Y:       .res 24                       ; 12 x s16 — the lid; MUST be obj_X + 12
+obj_Y:       .res 36                       ; 18 x s16; MUST be obj_X + 12.
+                                           ; 12 was the barrel's lid+base
+                                           ; ellipse ladder.  A stack of
+                                           ; cylinders needs one entry per
+                                           ; DRAWN RIM per arc depth, and
+                                           ; the techno pillar's four rims
+                                           ; want 18 (doc/billboard).
 obj_n:       .res 1
 obj_left:    .res 1
 obj_k:       .res 1
