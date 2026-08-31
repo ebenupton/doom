@@ -65,17 +65,19 @@ class _Flat:
 POBJ = {
  # BOX DESIGN VIEWPOINTS ARE LID-IMPLIED (Eben 2026-08-31: "fit the lids
  # better").  The lid is the light band in the sprite's luma: STIMA0 rows
- # 0-2 (rear edge 10 px of 14, bright front rim at row 2), MEDIA0 rows
- # 0-3 (rear 22 of 28, rim at row 3).  Two measurements, two unknowns:
+ # 0-2 with the bright front rim at row 2, MEDIA0 rows 0-3 with the rim
+ # at row 3 -- and the lid LINE sits one pixel below the rim row (Eben,
+ # second pass), so the depths are 3 and 4 px.  Rear edges 10 of 14 and
+ # 22 of 28.  Two measurements, two unknowns:
  #     taper = (D-d)/(D+d)          depth = 2*(d/D)*(ze-h)
- # with the physical d fixed, so stim: d/D = 1/6 -> D = 30, ze = 21;
- # medikit: d/D = 3/25 -> D = 58.3, ze = 31.5.  Same precedent as the
+ # with the physical d fixed, so stim: d/D = 1/6 -> D = 30, ze = 24;
+ # medikit: d/D = 3/25 -> D = 58.3, ze = 35.7.  Same precedent as the
  # pillar's ELECA0-implied viewpoint; at the engine eye the lid is a
  # two-pixel sliver and the box reads as a plain rectangle.
  'stim':    dict(lump='STIMA0', thing=2011, n=1, kind='box',
-                 h=15.0, w=7.0, d=5.0, crosspx=(3, 3, 1), view=(21.0, 30.0)),
+                 h=15.0, w=7.0, d=5.0, crosspx=(3, 3, 1), view=(24.0, 30.0)),
  'medikit': dict(lump='MEDIA0', thing=2012, n=3, kind='box',
-                 h=19.0, w=14.0, d=7.0, crosspx=(3, 3, 1), view=(31.5, 58.3)),
+                 h=19.0, w=14.0, d=7.0, crosspx=(3, 3, 1), view=(35.7, 58.3)),
  'potion':  dict(lump='BON1A0', thing=2014, n=13, kind='potion',
                  h=18.0, r=7.0),
  'helmet':  dict(lump='BON2A0', thing=2015, n=25, kind='helmet',
