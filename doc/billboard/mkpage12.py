@@ -109,8 +109,8 @@ DIMS='<table><thead><tr><th>object</th><th>h</th><th>half-width</th>'\
 for n,det in (('stim','front cross 7×7 (decal); rear edge ×(D−d)/(D+d)'),
               ('medikit','front cross 11×11 (decal); rear edge ×(D−d)/(D+d)'),
               ('armour','scoop ±3 to z 13; shoulders 3–13.5; sides 15.5'),
-              ('potion','a SPHERE: bulb r 7 on the ground + edge-on neck = circle + stem'),
-              ('helmet','flat 2D outline: base ±8, sides to z 10, dome via (6,13), top ±3 at 15')):
+              ('potion','bulb r 7 (sphere -> circle) + wide stem ±2, armed top'),
+              ('helmet','2D outline, base notched at ±[2,4]×2; dome via (6,13), top ±3 at 15')):
     o=POBJ[n]
     w = o.get('w') or o.get('r') or (max(x for x,_ in o['prof']) if 'prof' in o else o['arm'][0])
     DIMS+=(f'<tr><td>{NAMES[n]}</td><td>{o["h"]:.0f}</td><td>{w:g}</td>'
@@ -238,9 +238,11 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   centre riding the tier's reach so the bulb always fills its share of the
   extent; the stem joins the top arc's middle segment and its terminus is
   the one free end the joins rule has always allowed.</p>
-  <p><b>The helmet is just its 2D outline</b> — base, sides, a two-segment
-  dome per side, flat top.  No ellipses, one tier, eight lines, and the
-  whole dome is the armed run.</p>
+  <p><b>The helmet is just its 2D outline</b> — and its base conforms to
+  the rim's two indentations, read off the sprite's bottom rows: three
+  feet with drawn notch walls and roofs at x ±[2,4], two units deep.
+  Sides, a two-segment dome per side, flat top; no ellipses, one tier,
+  sixteen lines, the dome and top the armed run.</p>
   <p><b>The vest is the extrusion with a shaped profile</b> — waist,
   armpit flare, shoulders, and a neck scoop whose rear rim shows through
   the hole, raised by 2b: through a real vest's neck you see the back

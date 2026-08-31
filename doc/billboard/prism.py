@@ -79,9 +79,13 @@ POBJ = {
  'medikit': dict(lump='MEDIA0', thing=2012, n=3, kind='box',
                  h=19.0, w=14.0, d=7.0, crosspx=(3, 3, 1), view=(35.7, 58.3)),
  'potion':  dict(lump='BON1A0', thing=2014, n=13, kind='potion',
-                 h=18.0, r=7.0),
+                 h=18.0, r=7.0, wn=2.0),        # wn = neck half-width (the
+                                                # sprite's neck is 4 px)
  'helmet':  dict(lump='BON2A0', thing=2015, n=25, kind='helmet',
-                 h=15.0, prof=[(8.0, 0.0), (8.0, 10.0), (6.0, 13.0), (3.0, 15.0)]),
+                 h=15.0, prof=[(8.0, 0.0), (8.0, 10.0), (6.0, 13.0), (3.0, 15.0)],
+                 # the rim's two indentations, off BON2A0 rows 13-14: gaps
+                 # at cols 4-5 and 10-11 = x in +-[2,4], two rows deep
+                 notch=(2.0, 4.0, 2.0)),
  # The vest: an extruded shell, half-depth 3.5.  Profile off ARM1A0's
  # silhouette EXCEPT the neck scoop, deepened to 4 units: the sprite's
  # alpha only dips one pixel there (the neckline lives in its shading),
@@ -176,24 +180,65 @@ def potion_lines(o, ze, D, K2, lod):
         q = A2
         up = [(-a, cy - a*A3), (-q*a, cy - a*q), (q*a, cy - a*q), (a, cy - a*A3)]
         dn = [(u, 2*cy - v) for u, v in up]
-    L  = [(up[i], up[i+1], 'a') for i in range(len(up)-1)]
+    # The upper arc is armed ONLY where it is exposed: under the stem the
+    # topmost line is the stem's top edge, and an armed line that is not
+    # topmost would over-tighten if this ever lands (authority = the
+    # topmost silhouette, the lamp/pillar rule).  Split each segment at
+    # +-wn and classify the pieces; the stem feet land exactly on the
+    # split points.
+    wn = o['wn']*k
+    L = []
+    for p0, p1 in zip(up, up[1:]):
+        pieces, cur = [], (p0, p1)
+        for xc in (-wn, wn):
+            (u, v) = cur
+            if min(u[0], v[0]) + 1e-9 < xc < max(u[0], v[0]) - 1e-9:
+                t = (xc - u[0])/(v[0] - u[0])
+                m = (xc, u[1] + t*(v[1]-u[1]))
+                pieces.append((u, m)); cur = (m, v)
+        pieces.append(cur)
+        for u, v in pieces:
+            xm = (u[0] + v[0])/2.0
+            L.append((u, v, 'b' if abs(xm) < wn else 'a'))
     L += [(dn[i], dn[i+1], 'b') for i in range(len(dn)-1)]
     L += [((-a, cy - a*A3), (-a, cy + a*A3), 'b'),
-          (( a, cy - a*A3), ( a, cy + a*A3), 'b'),
-          ((0.0, cy - reach), (0.0, 0.0), 'a')]  # the stem: topmost at x=0,
-                                                 # its terminus the one
-                                                 # allowed free end
+          (( a, cy - a*A3), ( a, cy + a*A3), 'b')]
+    # The stem is WIDE (Eben, 2026-08-31): the neck drawn at its true
+    # half-width, two sides rooted ON the arc (interpolated along the
+    # polygon, so the joins audit holds at both tiers) and an armed top
+    # edge -- the topmost line across the neck's width.  No free ends
+    # remain anywhere in the object set.
+    def arc_y(x):
+        for (x0, y0), (x1, y1) in zip(up, up[1:]):
+            if min(x0, x1) - 1e-9 <= x <= max(x0, x1) + 1e-9 and abs(x1-x0) > 1e-12:
+                return y0 + (y1-y0)*(x-x0)/(x1-x0)
+        raise ValueError('stem foot off the arc')
+    L += [((-wn, 0.0), (-wn, arc_y(-wn)), 'b'),
+          (( wn, 0.0), ( wn, arc_y( wn)), 'b'),
+          ((-wn, 0.0), ( wn, 0.0), 'a')]
     return L
 
 def helmet_lines(o, ze, D, K2, lod):
     k = K2/D
     y = lambda z: (o['h'] - z)*k
     P = o['prof']
-    L = [((-P[0][0]*k, y(P[0][1])), (P[0][0]*k, y(P[0][1])), 'b')]   # base
-    for s in (-1, 1):
+    w0 = P[0][0]
+    # The base CONFORMS TO THE RIM'S INDENTATIONS (Eben, 2026-08-31): two
+    # square notches read off the sprite's bottom rows, so the bottom edge
+    # is three feet with the notch walls and roofs drawn.
+    xi, xo, nz = o['notch']
+    b0, bn = y(P[0][1]), y(P[0][1] + nz)
+    L = [((-w0*k, b0), (-xo*k, b0), 'b'),        # left foot
+         ((-xi*k, b0), ( xi*k, b0), 'b'),        # centre foot
+         (( xo*k, b0), ( w0*k, b0), 'b')]        # right foot
+    for sgn in (-1, 1):
+        L += [((sgn*xo*k, b0), (sgn*xo*k, bn), 'b'),   # notch walls
+              ((sgn*xi*k, b0), (sgn*xi*k, bn), 'b'),
+              ((sgn*xo*k, bn), (sgn*xi*k, bn), 'b')]   # notch roof
+    for sgn in (-1, 1):
         for i in range(len(P)-1):
             (x0, z0), (x1, z1) = P[i], P[i+1]
-            L.append(((s*x0*k, y(z0)), (s*x1*k, y(z1)),
+            L.append(((sgn*x0*k, y(z0)), (sgn*x1*k, y(z1)),
                       'b' if i == 0 else 'a'))   # sides plain, dome ARMED
     xt, zt = P[-1]
     L.append(((-xt*k, y(zt)), (xt*k, y(zt)), 'a'))                   # top
