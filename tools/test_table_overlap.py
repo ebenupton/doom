@@ -90,6 +90,22 @@ def tables(flat):
         # passed a rehome that put four cache planes straight inside the
         # seg-header table (flat ROM_SEG_HDR_C $8600 + 5,884 B runs to
         # $9D1B).  Only tube_walk caught it, four frames in.  2026-08-30.
+        # The LV1 K planes and DBOUND, and the WORK segment they can collide
+        # with.  Flat ROM_BKTLO_C sits at $0C10-$0C8F and the WORK region is
+        # $0C20-$0CFF: a 112-byte overlap this gate did not see, found only
+        # when a ZP rotation reordered WORK and moved which variable landed
+        # on bsp_render_6502's region-reload canary (2026-08-31).
+        for _nm, _len in (('ROM_BKTLO_C', 128), ('ROM_BKTHI_C', 128),
+                          ('ROM_DBOUND_C', 128)):
+            try:
+                out.append((f'wad:{_nm}', symmap.sym(_nm, banked=0, c02=1), _len))
+            except KeyError:
+                pass
+        import re as _re
+        _cfg = open(os.path.join(ROOT, 'src', 'engine_flat.cfg')).read()
+        for _m in _re.finditer(r'^\s*(WORK):\s*start = \$([0-9A-Fa-f]+), '
+                               r'size = \$([0-9A-Fa-f]+)', _cfg, _re.M):
+            out.append(('seg:WORK', int(_m.group(2), 16), int(_m.group(3), 16)))
         for _nm, _len in (('ROM_SEG_HDR_C', L['off_ss_cnt'] - L['off_seg_hdr']),
                           ('ROM_VERTS_C',   L['off_seg_hdr'] - L['off_verts']),
                           ('NODE_SOA',      L['off_verts'])):
@@ -158,6 +174,15 @@ def main():
             for i in range(len(T)):
                 for j in range(i + 1, len(T)):
                     (an_, aa, al), (bn, ba, bl) = T[i], T[j]
+                    # A SEGMENT does not collide with its own tenants: WORK
+                    # is $0C20-$0CFF and obj_anyb lives INSIDE it by design.
+                    # The segment entry is here to catch tables that stray
+                    # into it, not the variables it is supposed to hold.
+                    if an_.startswith('seg:') or bn.startswith('seg:'):
+                        inner = (aa >= ba and aa + al <= ba + bl) or \
+                                (ba >= aa and ba + bl <= aa + al)
+                        if inner:
+                            continue
                     lo, hi = max(aa, ba), min(aa + al, ba + bl)
                     if lo < hi:
                         hits.append(f'{an_} (${aa:04X}+{al}) over {bn} '

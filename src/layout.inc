@@ -173,7 +173,15 @@ ROM_BKTLO_C = $B900                     ; bank A free page (SS planes left
 ROM_BKTHI_C = $B980                     ; for bank B 2026-08-19)
 ROM_DBOUND_C = $B880                    ; the gap after the 3 DIR planes
 .else
-ROM_BKTLO_C = $0C10                     ; the shared $0C10 gap (scratch
+ROM_BKTLO_C = $7080                     ; REHOMED 2026-08-31: $0C10 put this
+                                        ; 128-byte plane at $0C10-$0C8F, straight
+                                        ; through the WORK segment ($0C20-$0CFF)
+                                        ; -- a 112-byte overlap no gate saw until
+                                        ; a ZP rotation reordered WORK and moved
+                                        ; which variable landed on the region-
+                                        ; reload canary.  $7080 is the CLIPF tail
+                                        ; below DBOUND at $7000. (was: the shared
+                                        ; $0C10 gap (scratch
 ROM_BKTHI_C = $D680                     ; ends $0C0E, COLPORT at $0D00);
 ROM_DBOUND_C = $7000                    ; REHOMED 2026-08-30 into the CLIPF tail
                                         ; freed by dropping plot_axis (was $4D00,
