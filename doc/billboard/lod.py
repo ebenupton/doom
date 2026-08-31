@@ -152,3 +152,4 @@ for name in ('pillar','barrel','lamp'):
             sw=f'{H:6.1f} px      {D:6.0f} u'
         print(f'{name:10s} {lbl:5s} {len(L):5d} {mags:4d} {2*mags:5d}   {sw}')
     print()
+exec(open(_D+'prism.py').read())

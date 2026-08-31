@@ -13,15 +13,27 @@ def png(n):
                 r,g,b=pal[p[y][x]]; q[x,y]=(r,g,b,255)
     bb=io.BytesIO(); im.save(bb,'PNG')
     return W,H,'data:image/png;base64,'+base64.b64encode(bb.getvalue()).decode()
-NAMES={'pillar':'Tall techno pillar','barrel':'Barrel','lamp':'Floor lamp'}
+NAMES={'pillar':'Tall techno pillar','barrel':'Barrel','lamp':'Floor lamp',
+       'potion':'Health potion','helmet':'Armour bonus (helmet)',
+       'stim':'Stimpack','medikit':'Medikit','armour':'Armour vest'}
 # ---- FROZEN viewpoints.  K = D so one pixel is one world unit. -----------
-OV={'pillar':(83.2,410.0),'barrel':(41.0,126.0),'lamp':(41.0,152.0)}
+OV={'pillar':(83.2,410.0),'barrel':(41.0,126.0),'lamp':(41.0,152.0),
+    'potion':(41.0,128.0),'helmet':(41.0,128.0),'stim':(41.0,128.0),
+    'medikit':(41.0,128.0),'armour':(41.0,128.0)}
 NOTE={'pillar':'the viewpoint ELECA0 implies',
       'barrel':"player eye 41 — BAR1A0's own fit puts the eye level with its "
                "middle, where no lid is visible",
-      'lamp':'player eye 41 — COLUA0 implies no usable viewpoint'}
+      'lamp':'player eye 41 — COLUA0 implies no usable viewpoint',
+      'potion':'player eye 41 at pickup range',
+      'helmet':'player eye 41 at pickup range',
+      'stim':'player eye 41 at pickup range',
+      'medikit':'player eye 41 at pickup range',
+      'armour':'player eye 41 at pickup range'}
 def ov_lines(n,lod):
-    ze,D = OV[n]; o=OBJ[n]
+    ze,D = OV[n]
+    if n in POBJ:
+        return prism_lines(n,D,lod,ze,K_=D)[0], None
+    o=OBJ[n]
     cfg(n)                                  # per-object L1 configuration
     return build_lod(Stack(o['bands'],o['h'],ze,D,D,lod),lod), None
 # ARMED LINES BOLD: twice the weight of a plain draw, as well as the colour.
@@ -50,13 +62,13 @@ def draw(L, sc, sprite=None, pad=3):
                  f'style="image-rendering:pixelated" opacity=".9"/>')
     emit(L,X,Y,o); o.append('</svg>'); return '\n'.join(o)
 
-SC={'pillar':4.2,'barrel':7.6,'lamp':5.6}
+SC={'pillar':4.2,'barrel':7.6,'lamp':5.6,'potion':8.0,'helmet':8.0,'stim':8.0,'medikit':6.0,'armour':5.4}
 def cell(svg,title,sub):
     return (f'<figure><div class="plate">{svg}</div><figcaption><b>{title}</b>'
             f'<span>{sub}</span></figcaption></figure>')
 ROWS=''
-for n in ('pillar','barrel','lamp'):
-    W,H,uri = png(OBJ[n]['lump']); sc=SC[n]; cells=''
+for n in ('pillar','barrel','lamp','potion','helmet','stim','medikit','armour'):
+    W,H,uri = png((OBJ|{k:v for k,v in POBJ.items()})[n]['lump']); sc=SC[n]; cells=''
     for lod in (0,1):
         L,_ = ov_lines(n,lod)
         mg=len({round(abs(p[0]),4) for l in L for p in l[:2]})
@@ -81,21 +93,33 @@ for n in ('pillar','barrel','lamp'):
 
 # ---- GEOMETRY TABLES -----------------------------------------------------
 exec(open(_D+'tables.py').read().split("if __name__")[0])
+BNAMES={'pillar':['cap','shaft','plinth'],'barrel':['body'],
+        'lamp':['column','step','base'],
+        'potion':['neck','body'],'helmet':['crown','dome','brim']}
 BANDS='<table><thead><tr><th>object</th><th>h</th><th>band</th><th>r</th>'\
       '<th>z₀</th><th>z₁</th></tr></thead><tbody>'
-for n in ('pillar','barrel','lamp'):
+for n in ('pillar','barrel','lamp','potion','helmet'):
     o=OBJ[n]
     for i,(r,z0,z1) in enumerate(reversed(o['bands'])):
-        BANDS+=(f'<tr><td>{NAMES[n] if i==0 else ""}</td>'
-                f'<td>{o["h"]:.0f if False else o["h"]:.0f}</td>' if False else
-                f'<tr><td>{NAMES[n] if i==0 else ""}</td><td>{o["h"]:.0f}</td>'
-                f'<td>{["cap","shaft","plinth"][i] if n=="pillar" else (["column","step","base"][i] if n=="lamp" else "body")}</td>'
+        BANDS+=(f'<tr><td>{NAMES[n] if i==0 else ""}</td><td>{o["h"]:.0f}</td>'
+                f'<td>{BNAMES[n][i]}</td>'
                 f'<td>{r:.3f}</td><td>{z0:g}</td><td>{z1:g}</td></tr>')
 BANDS+='</tbody></table>'
+DIMS='<table><thead><tr><th>object</th><th>h</th><th>half-width</th>'\
+     '<th>half-depth</th><th>detail</th></tr></thead><tbody>'
+for n,det in (('stim','front cross 7×7 (decal)'),
+              ('medikit','front cross 11×11 (decal)'),
+              ('armour','scoop ±3 to z 13; shoulders 3–13.5; sides 15.5')):
+    o=POBJ[n]
+    w = o.get('w', o.get('arm',(0,0))[0])
+    DIMS+=(f'<tr><td>{NAMES[n]}</td><td>{o["h"]:.0f}</td><td>{w:g}</td>'
+           f'<td>{o["d"]:g}</td><td>{det}</td></tr>')
+DIMS+='</tbody></table>'
+
 GEO=''
-for n in ('pillar','barrel','lamp'):
+for n in ('pillar','barrel','lamp','potion','helmet','stim','medikit','armour'):
     for lod in (0,1):
-        t=tables(n,lod)
+        t=tables_prism(n,lod) if n in POBJ else tables(n,lod)
         xr=' · '.join(f'<b>{i}</b> {sx}' for i,sx in t['XL'])
         yr=' · '.join(f'<b>{i}</b> {sy}' for i,sy in t['YL'])
         rows=''.join(f'<tr{" class=arm" if arm else ""}><td>{i+1}</td><td>{x1}</td>'
@@ -105,7 +129,7 @@ for n in ('pillar','barrel','lamp'):
         GEO+=(f'<h4 style="margin:1.4rem 0 .4rem">{NAMES[n]} — L{lod}</h4>'
               f'<p class="muted" style="font-size:.8rem;margin:0 0 .5rem">'
               f'{t["nline"]} lines · {len(t["XL"])} x slots · {len(t["YL"])} y slots'
-              f'{" · hexagon q = %.4g" % t["q"] if lod==1 else ""}'
+              f'{" · hexagon q = %.4g" % t["q"] if lod==1 and t["q"] else ""}'
               f'{" · flat rims " + str(t["flat"]) if lod==1 and t["flat"] else ""}</p>'
               f'<p style="font:.72rem/1.6 var(--mono);color:var(--muted);max-width:none">'
               f'<b>X</b> &nbsp; {xr}</p>'
@@ -114,7 +138,7 @@ for n in ('pillar','barrel','lamp'):
               f'<div class="scroll"><table><thead><tr><th>#</th><th>x₁</th><th>y₁</th>'
               f'<th>x₂</th><th>y₂</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>')
 
-CSS=open(_D+'pillar.html').read()
+CSS=open(_D+'billboard_art.html').read()
 CSS=CSS[CSS.index('<style>'):CSS.index('</style>')+8]
 HTML=f'''<title>Billboard art — overlays and bare geometry</title>
 {CSS}
@@ -127,7 +151,7 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   <p class="lede">Each object at both levels of detail, overlaid and bare, so
   the geometry can be read without the sprite interfering. Armed lines drawn
   bold. The barrel carries the two templates the engine ships today for
-  comparison.</p>
+  comparison. Now with the five pickups: three health, two armour.</p>
 </header>
 
 <section>
@@ -185,6 +209,49 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
 </section>
 
 <section>
+  <h2>The pickups (2026-08-31)</h2>
+  <p>Five new objects: the three health power-ups and both armour classes.
+  The map carries <b>13 potions, 1 stimpack, 3 medikits, 25 armour-bonus
+  helmets and 2 vests</b> (green and blue share one geometry — they differ
+  only in DOOM's palette), so the helmet and the potion are the most
+  numerous billboards in the level by a distance.</p>
+  <p><b>The potion and the helmet are solids of revolution</b> and use the
+  cylinder stack unchanged: the potion a jar (r 7) with a tall neck (r 2),
+  the helmet a three-band dome (8, 6.5, 3.5).</p>
+  <p><b>The boxes are boxes.</b> A new solid joins the model for them: an
+  extruded profile, whose front copy drops by <code>b(z)</code> and rear
+  copy rises by it, with <code>b(z)&nbsp;=&nbsp;K·d·|z−41|/D²</code> — the
+  top face opens by <em>exactly the law that opens a rim ellipse</em>, so a
+  box under this projection is its silhouette rectangle, one interior line
+  where the front face meets the top, and an armed rear top edge.  At the
+  engine's eye the visible top-face depth is under two pixels at pickup
+  range — the DOOM sprites show deep top faces because they are drawn from
+  a much steeper viewpoint than the engine's, and physical reality under
+  <em>our</em> perspective is the shallow one.  The painted cross is kept
+  as a two-line decal on the front face; a decal's four ends are paint,
+  not geometry, and are the only free endpoints besides the stem termini.</p>
+  <p><b>The vest is the same extrusion with a shaped profile</b> — waist,
+  armpit flare, shoulders, and a neck scoop whose rear rim shows through
+  the hole, raised by 2b: through a real vest's neck you see the back
+  panel.  One deliberate deviation from the sprite: ARM1A0's alpha only
+  dips one pixel at the neckline (the scoop lives in its shading), and a
+  one-unit scoop is not a physically reasonable vest, so the profile digs
+  it to <b>4 units</b>.  Same rule as ever: the sprite is designer intent,
+  the object is real.</p>
+  <div class="callout">
+    <p><b>Engine cost, for when these land:</b> the boxes are the cheapest
+    templates yet — L1 is <b>5 lines, 1 armed, 2 x slots, 3 y</b>, cheaper
+    than the rectangle they would replace was.  The vest's L1 is 15 lines /
+    5 |x|; the potion 20 and the helmet 27 at L1 (the dome pays the
+    three-band price the candelabra was refused for — but there are
+    twenty-five of them, against the candelabra's two).  <code>OBJ_ART</code>
+    is full at 236 of 256 bytes, so nothing here fits until
+    <code>obj_e</code> widens or another template retires.  Not landed;
+    artifact only.</p>
+  </div>
+</section>
+
+<section>
   <h2>The rows</h2>
   {ROWS}
   <div class="key">
@@ -230,9 +297,12 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
 <section>
   <h2>The geometry</h2>
   <h3>3D — the objects</h3>
-  <p>Each is a stack of coaxial cylinders, read off the sprite's flat runs at
-  one pixel per world unit. z measured up from the object's base.</p>
+  <p>Cylinder stacks, read off each sprite's flat runs at one pixel per
+  world unit. z measured up from the object's base.</p>
   <div class="scroll">{BANDS}</div>
+  <p style="margin-top:1rem">Extruded profiles (the boxes and the vest),
+  half-depth d perpendicular to the billboard plane.</p>
+  <div class="scroll">{DIMS}</div>
   <h3 style="margin-top:1.6rem">2D — the templates</h3>
   <p>Every rim's ellipse is <code>b = a·|z − 41|/D</code> with its own z, so
   the y ladder carries one entry per rim per arc depth. Offsets are in units
@@ -259,5 +329,5 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   Overlays at K = D. Engine templates evaluated at H = 32 with k = 23.
 </footer>
 </div>'''
-open(_D+'pillar.html','w').write(HTML)
+open(_D+'billboard_art.html','w').write(HTML)
 print('wrote',len(HTML))

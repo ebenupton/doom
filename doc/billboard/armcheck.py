@@ -18,10 +18,20 @@ def topmost_ok(L, n=2000):
     return bad
 print(f'{"object":10s} {"tier":4s} {"lines":>5s} {"armed":>5s}  topmost-is-armed')
 ok=True
-for n in ('pillar','barrel','lamp'):
+for n in ('pillar','barrel','lamp','potion','helmet'):
     for lod in (0,1):
         for D in (128.,256.,512.):
             L,_=lod_lines(n,D,lod)
+            bad=topmost_ok(L)
+            if D==128.:
+                na=sum(1 for l in L if l[2]=='a')
+                print(f'{n:10s} L{lod:<3d} {len(L):5d} {na:5d}  '
+                      f'{"OK" if not bad else "FAIL at x="+str(bad[:3])}')
+            if bad: ok=False
+for n in POBJ:
+    for lod in (0,1):
+        for D in (128.,256.,512.):
+            L,_=prism_lines(n,D,lod)
             bad=topmost_ok(L)
             if D==128.:
                 na=sum(1 for l in L if l[2]=='a')
