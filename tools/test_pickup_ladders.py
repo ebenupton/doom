@@ -17,7 +17,7 @@ from symmap import sym
 R = lambda p: (p + 128) >> 8
 
 def m_box(kind, H, a, cx, syt, syb):
-    lid = (H * (51 if kind == 5 else 54) + 128) >> 8
+    lid = (H * (51 if kind == 4 else 54) + 128) >> 8
     return {('Y',0): syt, ('Y',2): syt+lid, ('Y',4): syb}
 
 def m_potion(kind, H, a, cx, syt, syb):
@@ -41,10 +41,10 @@ def m_vest(kind, H, a, cx, syt, syb):
     for off, f in ((2,20),(4,89),(6,75),(8,52)): d[('Y',off)] = syt + R(H*f)
     return d
 
-CASES = [(5, 'obj_box_y', m_box), (6, 'obj_box_y', m_box),
-         (3, 'obj_potion_xy', m_potion), (4, 'obj_helmet_xy', m_helmet),
-         (7, 'obj_vest_xy', m_vest)]
-KTAB = [23, 15, 10, 25, 34, 30, 47, 58]
+CASES = [(4, 'obj_box_y', m_box), (5, 'obj_box_y', m_box),
+         (2, 'obj_potion_xy', m_potion), (3, 'obj_helmet_xy', m_helmet),
+         (6, 'obj_vest_xy', m_vest)]
+KTAB = [23, 15, 25, 34, 30, 47, 58]
 
 def main():
     r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,

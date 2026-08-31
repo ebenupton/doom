@@ -135,8 +135,6 @@ run('bakedscan', ['tools/bakedscan.py', '--gate'],
 # (the HALF-UNIT mover tier lives on it, 2026-08-25)
 run('projy_range', ['tools/test_projy_range.py'],
     lambda o: 'PROJY-RANGE: PASS' in o)
-run('pillar_ladder', ['tools/test_pillar_ladder.py'],
-    lambda o: 'PILLARLADDER: PASS' in o)
 run('lamp_ladder', ['tools/test_lamp_ladder.py'],
     lambda o: 'LAMPLADDER: PASS' in o)
 run('pickup_ladders', ['tools/test_pickup_ladders.py'],

@@ -60,20 +60,13 @@ obj_dy:      .res 1
 obj_X:       .res 12                       ; 6 x s16 — the art x table
 obj_Y:       .res 36                       ; 18 x s16; MUST be obj_X + 12.
                                            ; 12 was the barrel's lid+base
-                                           ; ellipse ladder.  A stack of
-                                           ; cylinders needs one entry per
-                                           ; DRAWN RIM per arc depth, and
-                                           ; the techno pillar's four rims
-                                           ; want 18 (doc/billboard).
-obj_ppl:     .res 1                       ; pillar ladder: H*H low byte
-obj_pph:     .res 1                       ;                H*H high byte
-obj_pu:      .res 1                       ;                (Pl*M) >> 8
-obj_pv:      .res 1                       ;                sum low
-obj_pw:      .res 1                       ;                sum high
-obj_pb:      .res 5                       ; pillar: the 4 rims' b; lamp: the 5 x magnitudes
-obj_pmag:    .res 16                      ; per rim: b, b2, b3, 0
-obj_px:      .res 1                       ; loop index across umul8
-obj_pcy:     .res 8                       ; the four rims' cy, s16
+                                           ; ellipse ladder; 18 since the
+                                           ; pillar era -- the lamp/helmet
+                                           ; use 13 y + 4 spilled x slots
+                                           ; (doc/billboard).
+obj_pu:      .res 1                       ; ladder-builder scratch: rounded
+obj_pb:      .res 5                       ;   product; magnitudes; loop
+obj_px:      .res 1                       ;   index across umul8
 obj_n:       .res 1
 obj_left:    .res 1
 obj_k:       .res 1
@@ -106,18 +99,18 @@ OBJ_MAXSLOT = 6                            ; most objects in one subsector
                                         ; (wad_packed asserts <= 6)
 
 ; --- per-kind constants (2026-08-31).  ORDER IS THE KIND INDEX: hex,
-; lamp, pillar, potion, helmet, box-stim, box-medikit, vest -- and the
+; lamp, potion, helmet, box-stim, box-medikit, vest -- and the
 ; k row MUST mirror doom_wireframe's _KTAB (it asserts its own copy).
 ; In CODE, not bank C: the prologue reads obj_ktab under BANK_WALK.
 obj_ktab:
-   .byte 23, 15, 10, 25, 34, 30, 47, 58
+   .byte 23, 15, 25, 34, 30, 47, 58        ; (the pillar's 10 died with it)
 .if ::BANKED
 obj_tpl_pg:                                ; art window high byte
    .byte >OBJ_ART, >OBJ_ART, >(OBJ_ART+$100), >(OBJ_ART+$100)
-   .byte >(OBJ_ART+$200), >(OBJ_ART+$100), >(OBJ_ART+$100), >(OBJ_ART+$200)
+   .byte >(OBJ_ART+$100), >(OBJ_ART+$100), >(OBJ_ART+$100)
 obj_tpl_off:                               ; start offset within the window
-   .byte OBJ_ART_HEX, OBJ_ART_LAMP, OBJ_ART_PILLAR, OBJ_ART_POTION
-   .byte OBJ_ART_HELMET, OBJ_ART_BOX, OBJ_ART_BOX, OBJ_ART_VEST
+   .byte OBJ_ART_HEX, OBJ_ART_LAMP, OBJ_ART_POTION, OBJ_ART_HELMET
+   .byte OBJ_ART_BOX, OBJ_ART_BOX, OBJ_ART_VEST
 .endif
 
 obj_bitmask:
@@ -640,20 +633,12 @@ obj_ycp:
    JSR obj_lamp_xy
    JMP obj_art_go
 onot_lamp:
-   CPX #OBJ_K_POTION
-   BCC obj_sel_pillar                      ; 2
-   BEQ obj_sel_potion                      ; 3
-   CPX #OBJ_K_BOXS
-   BCC obj_sel_helmet                      ; 4
+   CPX #OBJ_K_HELMET
+   BCC obj_sel_potion                      ; 2
+   BEQ obj_sel_helmet                      ; 3
    CPX #OBJ_K_VEST
-   BCC obj_sel_box                         ; 5, 6
-   JSR obj_vest_xy                         ; 7
-   JMP obj_art_go
-obj_sel_pillar:
-; THE TECHNO PILLAR.  obj_X is the barrel's {a, a2, a3} untouched: the
-; shaft's rims are covered top and bottom, so it contributes only its two
-; sides, and those sit at a2*19 -- already a vertex.
-   JSR obj_pillar_y
+   BCC obj_sel_box                         ; 4, 5
+   JSR obj_vest_xy                         ; 6
    JMP obj_art_go
 obj_sel_potion:
    JSR obj_potion_xy
@@ -936,40 +921,16 @@ SEG_CODE                                   ; RESTORE the segment: the next
 .endif
 
 ; ===========================================================================
-; PLACED AT THE END, ON PURPOSE.  Its first home was between the obj_ycp loop
-; and the stamp loop, which the object builder FALLS THROUGH -- so every
-; object ran obj_pillar_y over its obj_Y ladder and then hit the RTS, and
-; billboards stopped drawing entirely.  MEAN fell 1.8% and the suite stayed
-; green, which is the more useful half of that lesson.  Nothing falls into
-; this block; the caller JSRs.
-; ===========================================================================
-; obj_pillar_y — build obj_Y[0..17] for the techno pillar.
-;
-; FOUR DRAWN RIMS, EACH WITH ITS OWN ELLIPSE DEPTH.  b = a*|z - eye|/D and the
-; rims sit at z = 128, 122.83, 4.90 and 0 against an eye 41 above the object's
-; own floor, so the cap is over twice as open as the plinth and one shared b
-; -- what the barrel uses -- cannot express it.
-;
-; Every value is a function of H alone, because the eye height above the
-; floor never changes:
-;
-;     b_i  = (H^2 * M_i + 32768) >> 16        M = 46, 43, 19, 22
-;     cy_A = syt + b_A       cy_D = syb - b_D       S = cy_D - cy_A
-;     cy_B = cy_A + ((S*10  + 128) >> 8)      5.17/128  = 0.0404
-;     cy_C = cy_A + ((S*246 + 128) >> 8)    123.10/128  = 0.9617
-;
-; ROUND EVERY STEP.  This is the same trap the 47/64 split documents above:
-; a shift chain for S*0.0404 truncates three times over and lands the cap's
-; lower rim 1.7 px high at H = 101.  With rounding the whole ladder is within
-; 1.3 px of the ideal across H = 12..202, and the EXTENT is exact at every H,
-; which is the invariant that matters.  Derivation and checks: doc/billboard.
+; LADDER BUILDERS LIVE AT THE END, ON PURPOSE.  The techno pillar's builder
+; (retired 2026-08-31 with the pillar itself -- Eben: "it just doesn't
+; work") first landed between the obj_ycp loop and the stamp loop, which
+; the object builder FALLS THROUGH -- so every object ran it over its own
+; obj_Y ladder and hit the RTS, and billboards stopped drawing entirely.
+; MEAN fell 1.8% and the suite stayed green, which is the more useful half
+; of that lesson (test_object_draws exists because of it).  Nothing falls
+; into these blocks; the dispatch JSRs.
 ; ===========================================================================
 SEG_BANKC
-; THE TABLES LIVE WITH THE ART, not in CODE.  Flat CODE is at its ceiling --
-; 24 bytes over with these in it -- and $5200 above it is VXCACHE, not slack.
-; They are read under the same PAGE BANK_C the object prologue already does
-; for OBJ_ART, so this costs no extra paging.
-obj_pM:   .byte 87, 82, 36, 41            ; |z - 41| per rim, at D = 256
 .if ::BANKED
 ; THE FLOOR LAMP'S LADDERS -- doc/billboard's lamp L1, VERBATIM (three
 ; bands r 11.5 z 0-5 / r 7.5 z 5-14 / r 5.5 z 14-48, design D = 256,
@@ -988,18 +949,7 @@ obj_lgy:  .byte 174, 176, 177, 178, 180   ; y_1..y_11 /256 of H below syt
           .byte 218, 221, 224, 226, 229
           .byte 252
 .endif
-opy_frac: .byte 10, 0, 246, 0             ; 5.17/128 and 123.1/128, in 256ths
-obj_pytab:
-   .byte $00, $01, $02                     ; A - b, - b2, - b3
-   .byte $04, $05, $06, $07                ; B - b, - b2, - b3, centre
-   .byte $86, $85                          ; B + b3, + b2
-   .byte $09, $0A, $0B                     ; C - b2, - b3, centre
-   .byte $8A, $89, $88                     ; C + b3, + b2, + b
-   .byte $8E, $8D, $8C                     ; D + b3, + b2, + b
-SEG_CODE                                   ; RESTORE: the routine itself
-                                           ; stays in CODE -- flat CLIPF
-                                           ; grows into ROM_BKTLO_C at
-                                           ; \$7080 if it moves there
+SEG_CODE
 ; ============================================================================
 ; obj_lamp_xy -- the floor lamp's 10-x / 13-y ladder.
 ; ============================================================================
@@ -1073,7 +1023,7 @@ oly_m:
    CMP #128
    LDA zp_prod_h
    ADC #0
-   STA obj_pu                              ; (pillar scratch, free here)
+   STA obj_pu                              ; (builder scratch)
    TXA
    ASL A
    TAY
@@ -1097,159 +1047,6 @@ oly_m:
    RTS
 SEG_CODE
 .endif
-
-obj_pillar_y:
-; A STATIC BILLBOARD: b MUST be linear in a, or the shape morphs with
-; distance.  b = a*|z - eye|/D, and holding D at the DESIGN distance of 256
-; makes b_i = (a * |z_i - 41|) >> 8 -- so the constants above are just the
-; world offsets and b/a is fixed at 0.340, 0.320, 0.141, 0.160.
-;
-; The first cut made D the true per-frame distance, which is what a solid
-; object really does: b came out proportional to H^2 against a's H, so b/a
-; ran 0.15 at 21 px to 0.91 at 202 and the discs OPENED as you walked in.
-; Correct for a 3D pillar, wrong for a billboard, and Eben spotted it as
-; animation.  The shipped barrel has always held b/a = 0.174 flat.
-   LDA obj_a
-   STA zp_mul_b                            ; umul8 only READS this, so it
-   LDX #3                                  ; survives all four calls
-opy_b:
-   STX obj_px                              ; umul8 eats X
-   LDA obj_pM,X
-   JSR umul8                               ; a * dz
-   LDX obj_px
-   LDA zp_prod_l                           ; C = 1 iff the dropped low byte
-   CMP #128                                ;     rounds up
-   LDA zp_prod_h
-   ADC #0
-   STA obj_pb,X
-   DEX
-   BPL opy_b
-; --- the 18 slots: cy -+ b*{1, a2, a3} per rim ---------------------------
-; Each rim's three magnitudes plus a zero, so one descriptor byte selects
-; both the rim and the offset: bits 0-3 index obj_pmag (rim*4 + which),
-; bit 7 adds rather than subtracts.  The 47/64 split is ROUNDED for the
-; reason spelt out on obj_s7 -- truncating makes b2 < b3 for small odd b and
-; the arc's edges cross.
-obj_py_slots:
-   LDX #0                                  ; rim
-   LDY #0                                  ; obj_pmag offset
-opy_split:
-   LDA obj_pb,X
-   STA obj_pmag,Y
-   STA zp_mul_b
-   STX obj_pv                              ; umul8 eats X
-   STY obj_pw
-   LDA #47
-   JSR umul8
-   LDY obj_pw
-   LDA zp_prod_l                           ; (b*47 + 32) >> 6
-   ASL A
-   ROL zp_prod_h
-   ASL A
-   ROL zp_prod_h
-   CLC
-   ADC #128
-   LDA zp_prod_h
-   ADC #0
-   STA obj_pmag+1,Y
-   LDX obj_pv
-   SEC
-   LDA obj_pb,X
-   SBC obj_pmag+1,Y
-   STA obj_pmag+2,Y
-   LDA #0
-   STA obj_pmag+3,Y
-   INX
-   TYA
-   CLC
-   ADC #4
-   TAY
-   CPX #4
-   BCC opy_split
-; --- cy_A = syt + b_A*a2,  cy_D = syb - b_D*a2 ---------------------------
-   CLC
-   LDA obj_yt_l
-   ADC obj_pmag+1                          ; rim A's b2 -- the L1 tier's arc
-   STA obj_pcy+0                           ; only reaches b*a2, so THAT is
-   LDA obj_yt_h                            ; the inset, or the pillar stops
-   ADC #0                                  ; filling its projected height
-   STA obj_pcy+1
-   SEC
-   LDA obj_yb_l
-   SBC obj_pmag+13                         ; rim D's b2
-   STA obj_pcy+6
-   LDA obj_yb_h
-   SBC #0
-   STA obj_pcy+7
-; --- S = cy_D - cy_A  (u8: S <= H) ---------------------------------------
-   SEC
-   LDA obj_pcy+6
-   SBC obj_pcy+0
-   STA obj_pu
-; --- cy_B and cy_C -------------------------------------------------------
-   LDX #0
-opy_cy:
-   STX obj_px                              ; umul8 eats X
-   LDA opy_frac,X
-   STA zp_mul_b
-   LDA obj_pu
-   JSR umul8
-   LDX obj_px
-   LDA zp_prod_l                           ; (S*f + 128) >> 8
-   CMP #128
-   LDA zp_prod_h
-   ADC #0
-   CLC
-   ADC obj_pcy+0
-   STA obj_pcy+2,X
-   LDA obj_pcy+1
-   ADC #0
-   STA obj_pcy+3,X
-   INX
-   INX
-   CPX #4
-   BCC opy_cy
-; --- play the descriptors ------------------------------------------------
-   LDA #0
-   STA obj_pw                              ; slot index
-   LDX #0                                  ; byte offset into obj_Y
-opy_s:
-   LDY obj_pw
-   LDA obj_pytab,Y
-   STA obj_pv
-   AND #$0F
-   TAY
-   LDA obj_pmag,Y
-   STA obj_pu
-   LDA obj_pv
-   AND #$0C                                ; rim*4 -> rim*2, the s16 stride
-   LSR A
-   TAY
-   BIT obj_pv
-   BMI opy_add
-   SEC
-   LDA obj_pcy+0,Y
-   SBC obj_pu
-   STA obj_Y+0,X
-   LDA obj_pcy+1,Y
-   SBC #0
-   STA obj_Y+1,X
-   JMP opy_next
-opy_add:
-   CLC
-   LDA obj_pcy+0,Y
-   ADC obj_pu
-   STA obj_Y+0,X
-   LDA obj_pcy+1,Y
-   ADC #0
-   STA obj_Y+1,X
-opy_next:
-   INX
-   INX
-   INC obj_pw
-   CPX #36
-   BCC opy_s
-   RTS
 
 ; ============================================================================
 ; THE PICKUP LADDER BUILDERS (2026-08-31) -- banked only; flat carries no

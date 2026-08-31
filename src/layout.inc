@@ -98,17 +98,19 @@ OBJ_DRAW = 1                            ; static-object billboards.  ON
                                         ; single-line tightens only).
                                         ; Set 0 to get a green gate back.
 .if ::BANKED
-LAY_N_OBJ   = 62                   ; static objects (wad_packed):
-                                   ; 2026-08-31 the five pickups added
-                                   ; 44 (13 potions, 25 helmets, 3
-                                   ; medikits, stim, 2 vests)
+LAY_N_OBJ   = 60                   ; static objects (wad_packed):
+                                   ; 2026-08-31 the five pickups added 44
+                                   ; (13 potions, 25 helmets, 3 medikits,
+                                   ; stim, 2 vests); the 2 techno pillars
+                                   ; REMOVED the same day
 .else
-LAY_N_OBJ   = 18                   ; FLAT KEEPS THE ORIGINAL 18 (barrels,
-                                   ; lamps, pillars): 62 planes are 459 B
-                                   ; and no honest flat hole exists (the
-                                   ; probes found $A600 = VXCACHE_XLO and
-                                   ; $D700 live).  Its loader GATHERS the
-                                   ; kind<=2 subset into this stride.
+LAY_N_OBJ   = 16                   ; FLAT KEEPS THE LEGACY SUBSET (barrels
+                                   ; + lamps; the pillars are gone): 60
+                                   ; planes are 445 B and no honest flat
+                                   ; hole exists (the probes found $A600 =
+                                   ; VXCACHE_XLO and $D700 live).  Its
+                                   ; loader GATHERS the kind<=1 subset
+                                   ; into this stride.
 .endif
 LAY_OBJ_BITS_LEN   = 25            ; generated: (n_ss+7)//8 — the per-ss
                                    ; "has objects" bitmap length; the
@@ -128,17 +130,16 @@ OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-; THE ART IS THREE 256-BYTE WINDOWS (2026-08-31, the pickup landing).
-; obj_e stayed a byte by becoming an offset WITHIN a window: the stamp
-; walker's four abs,X reads get their window HIGH byte SMC'd per object
-; (oa_rd0..3), and page alignment keeps them carry-free.  Window A is
-; byte-identical to the old whole table, so FLAT -- which still draws
-; every object as the hex barrel and carries no pickup planes (its $B700
-; home died; see ROM_OBJ_C) -- copies its 140 B exactly as before.
-;   A: HEX 0, LAMP 52        B: PILLAR 0, BOX 96, POTION 124
-;   C: HELMET 0, VEST 72
+; THE ART IS TWO 256-BYTE WINDOWS (2026-08-31; three until the pillar
+; died the same day).  obj_e stayed a byte by becoming an offset WITHIN a
+; window: the stamp walker's four abs,X reads get their window HIGH byte
+; SMC'd per object (oa_rd0..3), and page alignment keeps them carry-free.
+; Window A is byte-identical to the old whole table, so FLAT -- which
+; still draws its legacy subset as hex barrels -- copies its 140 B
+; exactly as before.
+;   A: HEX 0, LAMP 52        B: BOX 0, POTION 28, HELMET 88, VEST 160
 .if ::BANKED
-LAY_N_OBJ_ART = 163                ; 652 B / 4 -- all three windows
+LAY_N_OBJ_ART = 121                ; 484 B / 4 -- both windows
 .else
 LAY_N_OBJ_ART = 35                 ; hex + lamp only (window A's real 140)
 .endif
@@ -146,20 +147,18 @@ LAY_N_OBJ_ART = 35                 ; hex + lamp only (window A's real 140)
 ; tables MUST stay in step with doom_wireframe's _KTAB/_OBJ_KINDS)
 OBJ_K_HEX    = 0
 OBJ_K_LAMP   = 1
-OBJ_K_PILLAR = 2
-OBJ_K_POTION = 3
-OBJ_K_HELMET = 4
-OBJ_K_BOXS   = 5
-OBJ_K_BOXM   = 6
-OBJ_K_VEST   = 7
-; per-template (window page offset from OBJ_ART, start offset within it)
+OBJ_K_POTION = 2
+OBJ_K_HELMET = 3
+OBJ_K_BOXS   = 4
+OBJ_K_BOXM   = 5
+OBJ_K_VEST   = 6
+; per-template (window, start offset within it)
 OBJ_ART_HEX    = 0                 ; window A
 OBJ_ART_LAMP   = 52                ; window A
-OBJ_ART_PILLAR = 0                 ; window B
-OBJ_ART_BOX    = 96                ; window B
-OBJ_ART_POTION = 124               ; window B
-OBJ_ART_HELMET = 0                 ; window C
-OBJ_ART_VEST   = 72                ; window C
+OBJ_ART_BOX    = 0                 ; window B
+OBJ_ART_POTION = 28                ; window B
+OBJ_ART_HELMET = 88                ; window B
+OBJ_ART_VEST   = 160               ; window B
 OBJ_ART_ARM = $FE                  ; entry: arm the FUSED authority run
 OBJ_ART_END     = $FF              ; entry: template finished
 ; The templates: 38 x (x1,y1,x2,y2) pre-doubled indices. They live in

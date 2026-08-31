@@ -576,7 +576,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_lamp == 52, \
         f'OBJ_ART_LAMP drifted: {off_art_lamp} (layout.inc says 52)'
-    # WINDOW A ends here (HEX + LAMP = 140 B): pad to 256.  The template
+    # WINDOW A ends here (HEX + LAMP = 140 B): pad to 256.  Window B
+    # holds all four pickup templates (228 B).  The template
     # walker's four reads are abs,X off a window base whose HIGH BYTE is
     # the per-object SMC patch -- offsets stay bytes, and a window must
     # never exceed 256 B (start+3+off <= 255 holds because the deepest
@@ -593,44 +594,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # the shaft's rims are covered top and bottom and it contributes only its
     # two sides -- which sit at a2*19, already a vertex.
     #
-    # GENERATED, then asserted: doc/billboard/tables.py emits these indices
-    # from the model and checks the y order against obj_pytab in objects.s
-    # and that every line runs left-to-right.  Geometry and the checks behind
-    # it are in doc/billboard.
-    _ln2 = lambda x1, y1, x2, y2: [x1*2, y1*2, x2*2, y2*2]
-    off_art_pillar = len(obj_art)
-    # plain: 19 lines
-    obj_art += _ln2(0, 10, 1,  9)
-    obj_art += _ln2(4,  9, 5, 10)
-    obj_art += _ln2(0, 12, 1, 13)
-    obj_art += _ln2(1, 13, 4, 13)
-    obj_art += _ln2(4, 13, 5, 12)
-    obj_art += _ln2(0, 15, 1, 16)
-    obj_art += _ln2(1, 16, 4, 16)
-    obj_art += _ln2(4, 16, 5, 15)
-    obj_art += _ln2(0, 10, 0, 15)
-    obj_art += _ln2(5, 10, 5, 15)
-    obj_art += _ln2(1,  6, 1, 11)
-    obj_art += _ln2(4,  6, 4, 11)
-    obj_art += _ln2(0,  5, 1,  4)
-    obj_art += _ln2(1,  4, 4,  4)
-    obj_art += _ln2(4,  4, 5,  5)
-    obj_art += _ln2(0,  7, 1,  8)
-    obj_art += _ln2(4,  8, 5,  7)
-    obj_art += _ln2(0,  2, 0,  7)
-    obj_art += _ln2(5,  2, 5,  7)
-    obj_art += _CTL(OBJ_ART_ARM)
-    # the armed run is the cap's top arc -- the TOPMOST line at every x, which
-    # is what the fused authority run has to be.  The plinth's top rim is
-    # exposed too, but the cap covers its whole width, so none of it is armed.
-    obj_art += _ln2(0,  2, 1,  1)
-    obj_art += _ln2(1,  1, 4,  1)
-    obj_art += _ln2(4,  1, 5,  2)
-    obj_art += _CTL(OBJ_ART_END)
+    # -- THE TECHNO PILLAR IS GONE (2026-08-31, Eben: "it just doesn't
+    # work").  Thing 48 packs nothing; window B starts with the box.
 
     # -- THE PICKUP TEMPLATES (2026-08-31) -- geometry doc/billboard's,
-    # ladder slots built by the obj_*_xy routines in objects.s.  Window B
-    # continues with the boxes and the potion; HELMET + VEST fill window C.
+    # ladder slots built by the obj_*_xy routines in objects.s.  All four
+    # fit ONE window (228 B) now the pillar is gone -- two windows total.
     #
     # BOX (stimpack AND medikit -- one template, two kinds: the lid
     # fraction is the only difference and it lives in the LADDER, not
@@ -645,7 +614,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _CTL(OBJ_ART_ARM)
     obj_art += [0, 0, 10, 0]                    # top edge: the authority
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_box == 352, f'OBJ_ART_BOX drifted: {off_art_box}'
+    assert off_art_box == 256, f'OBJ_ART_BOX drifted: {off_art_box} (window B head)'
 
     # POTION: the circle with the (wide) stem, L1 -- 3-segment arcs, the
     # upper arc armed ONLY where exposed (split at the stem feet).
@@ -667,8 +636,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [8, 2, 10, 4]
     obj_art += [4, 0, 6, 0]                     # stem top
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_potion == 380, f'OBJ_ART_POTION drifted: {off_art_potion}'
-    obj_art += [0xFF] * (512 - len(obj_art))    # window B done
+    assert off_art_potion == 284, f'OBJ_ART_POTION drifted: {off_art_potion}'
 
     # HELMET: the 2D outline with the notched base.
     #   x offs: 0=-a 2=-x6 4=-x4 6=-x3 8=-x2 10=+a; + spill 38=+x2 40=+x3
@@ -693,7 +661,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [40, 0, 44, 2]
     obj_art += [44, 2, 10, 4]
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_helmet == 512, f'OBJ_ART_HELMET drifted: {off_art_helmet}'
+    assert off_art_helmet == 344, f'OBJ_ART_HELMET drifted: {off_art_helmet}'
 
     # VEST: the extruded shell's L1.  Rear edges sit 2b above their front
     # copies; rear shoulders + scoop rear are the authority.
@@ -718,8 +686,8 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += [6, 0, 10, 0]
     obj_art += [4, 8, 6, 8]                     # scoop bottom, rear
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_vest == 584, f'OBJ_ART_VEST drifted: {off_art_vest}'
-    assert len(obj_art) == 652, f'art blob is {len(obj_art)} B, expected 652'
+    assert off_art_vest == 416, f'OBJ_ART_VEST drifted: {off_art_vest}'
+    assert len(obj_art) == 484, f'art blob is {len(obj_art)} B, expected 484'
     # OBJ_E IS A BYTE -- but it is an offset WITHIN a 256-byte window now,
     # and the walker's four abs,X reads get their window high byte SMC'd
     # per object (oa_rd0..3 in objects.s).  Windows: A = HEX + LAMP
@@ -756,7 +724,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         assert 0 <= _o['ss'] < 256, "subsector id must fit u8"
         # The aspect byte is a KIND INDEX now; k is per-kind, lives in
         # the engine's obj_ktab, and doom_wireframe asserts the two agree.
-        assert 0 <= _o['asp'] <= 7, "aspect byte must be a kind index"
+        assert 0 <= _o['asp'] <= 6, "aspect byte must be a kind index"
         for _pl, _v in enumerate((_px & 0xFF, _py & 0xFF,
                                   (((_px >> 8) + 2) & 3) | ((((_py >> 8) + 2) & 3) << 2),
                                   _o['ss'], _o['asp'],

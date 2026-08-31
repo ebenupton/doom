@@ -1702,8 +1702,10 @@ print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
 # CONSTANT the moment every kind had exactly one geometry, so it moved to
 # the engine's obj_ktab and the byte no longer packs bits.  Engine mirror:
 # obj_ktab in objects.s; the two MUST match (test_pickup_ladders gates it).
-K_HEX, K_LAMP, K_PILLAR, K_POTION, K_HELMET, K_BOXS, K_BOXM, K_VEST = range(8)
-_KTAB = [23, 15, 10, 25, 34, 30, 47, 58]
+# (the techno pillar was kind 2 until 2026-08-31 -- Eben: "it just
+# doesn't work" -- thing 48 packs nothing now and the kinds renumbered)
+K_HEX, K_LAMP, K_POTION, K_HELMET, K_BOXS, K_BOXM, K_VEST = range(7)
+_KTAB = [23, 15, 25, 34, 30, 47, 58]
 def _obj_kind(r, h, kind):
     kk = round(64 * r / h)
     assert kk == _KTAB[kind], f'kind {kind}: k={kk} != obj_ktab {_KTAB[kind]}'
@@ -1716,7 +1718,6 @@ def _obj_kind(r, h, kind):
 # its own -- not worth a template; doc/billboard 2026-08-31).
 _LAMP = _obj_kind(11.5, 48, K_LAMP)
 _OBJ_KINDS = {35:   _LAMP,                          # Candelabra -> lamp
-              48:   _obj_kind(19, 128, K_PILLAR),   # Tall techno pillar
               2011: _obj_kind(7, 15, K_BOXS),       # Stimpack
               2012: _obj_kind(14, 19, K_BOXM),      # Medikit
               2014: _obj_kind(7, 18, K_POTION),     # Health potion

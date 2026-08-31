@@ -306,7 +306,7 @@ def build_banked(flatr):
 
 
 def limit_objects_legacy(r):
-    """Restrict a BANKED renderer to the pre-pickup 18 objects (kind <= 2).
+    """Restrict a BANKED renderer to the legacy subset (kind <= 1).
 
     THE TUBE GATES NEED THIS (2026-08-31): their reference is the banked
     framebuffer, but the tube copro runs the FLAT engine, which gathers
@@ -332,7 +332,7 @@ def limit_objects_legacy(r):
     for i in range(L['obj_bits_len']):
         mem[bits + i] = 0
     for i in range(n):
-        if mem[base + 4 * n + i] > 2:            # the RC/ASP plane
+        if mem[base + 4 * n + i] > 1:            # the RC/ASP plane
             mem[base + 3 * n + i] = 0xFF         # the SS plane
         else:
             ss = mem[base + 3 * n + i]

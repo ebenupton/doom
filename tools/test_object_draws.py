@@ -23,7 +23,7 @@ from symmap import sym
 # Counted per template start, named by the KIND byte.  The pickup landing
 # (2026-08-31) put 44 more billboards in the map; EXPECT is the measured
 # corpus census at the landing commit -- any drop is a lost draw.
-EXPECT = {'HEX': 9, 'LAMP': 11, 'PILLAR': 2,
+EXPECT = {'HEX': 9, 'LAMP': 11,
           'POTION': 9, 'HELMET': 23, 'BOXS': 1, 'BOXM': 2, 'VEST': 1}
 
 def main():
@@ -35,8 +35,8 @@ def main():
     STAMP = sym('obj_stamp', banked=1)
     OE = sym('obj_e', banked=1)
     OASP = sym('obj_asp', banked=1)
-    KINDS = ('HEX','LAMP','PILLAR','POTION','HELMET','BOXS','BOXM','VEST')
-    TPL_OFF = (0, 52, 0, 124, 0, 96, 96, 72)
+    KINDS = ('HEX','LAMP','POTION','HELMET','BOXS','BOXM','VEST')
+    TPL_OFF = (0, 52, 28, 88, 0, 0, 160)
     n = collections.Counter(); last = [None]
     for (px, py, ab) in C.POSITIONS:
         r.render_frame(px, py, ab, dw.player_floor(px, py))
