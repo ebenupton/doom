@@ -159,14 +159,21 @@ class BspRender6502:
                 mem[_ob + _pl * 14 + _j] = rom_main[off_obj + _pl * _n62 + _i]
         for _j in range(layout['obj_bits_len']):
             mem[_ob + 7 * 14 + _j] = 0
+        # RUN8 sits AFTER the 25-byte bitmap (OBJ_RUN8 = OBJ_BITS +
+        # LAY_OBJ_BITS_LEN), NOT at 8*n_obj -- the original 8*n form
+        # overlapped the bitmap and left the engine reading garbage run
+        # starts, which sent obj_scan/obj_project off into the weeds and
+        # made EVERY flat render a silent 500k-step runaway (the 'flat
+        # harness is blind' mystery, the SQR_MIRROR BRK spray).  The
+        # stack guard caught it the day it was written.
+        _r8 = _ob + 7 * 14 + layout['obj_bits_len']
         for _j in range(layout['obj_bits_len']):
-            mem[_ob + 8 * 14 + _j] = 0xFF        # RUN8, subset-rebuilt
+            mem[_r8 + _j] = 0xFF                 # RUN8, subset-rebuilt
         for _j, _i in enumerate(_keep):
             _ss = rom_main[off_obj + 3 * _n62 + _i]
             mem[_ob + 7 * 14 + (_ss >> 3)] |= 1 << (_ss & 7)
-            _oct = _ob + 8 * 14 + (_ss >> 3)
-            if mem[_oct] == 0xFF:
-                mem[_oct] = _j
+            if mem[_r8 + (_ss >> 3)] == 0xFF:
+                mem[_r8 + (_ss >> 3)] = _j
         _oa = _sym2('OBJ_ART')
         _na = 4 * layout['n_obj_art']                # EXACT length: the flat
         for i in range(off_art, off_art + _na):      # home abuts colmap's

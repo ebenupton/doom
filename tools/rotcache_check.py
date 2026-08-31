@@ -15,16 +15,20 @@ os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 import pygame; pygame.init()
 import doom_wireframe as dw
-from bsp_render_6502 import BspRender6502
+# BANKED harness (2026-08-31): this gate still rendered through the FLAT
+# path, whose rasterisers were stripped on 08-29 (banked reference) --
+# every flat render has been a silent 10M-step runaway since, so this
+# gate's PASS was vacuous.  The stack guard exposed it the day it landed.
+from banked_bsp import BankedBspRender
 from symmap import sym
 
-EN = sym('RCACHE_ENABLE')
+EN = sym('RCACHE_ENABLE', banked=1)
 
 
 def mk(enable):
-    r = BspRender6502(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
-                      dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
-                      dw.PRESCALE)
+    r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
+                        dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
+                        dw.PRESCALE)
     r.sc.mpu.memory[EN] = enable
     return r
 

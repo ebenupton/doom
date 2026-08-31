@@ -200,7 +200,16 @@ class SpanClip6502:
         mem[0xFF00] = 0x00
 
     def _run(self, entry, max_cycles=500000):
-        """Run from entry point until BRK at $FF00."""
+        """Run from entry point until BRK at $FF00.
+
+        STACK GUARD (2026-08-31, Eben): FAULT on any push that would land
+        in $01E0-$01FF -- that range is SQR_MIRROR, the quarter-square
+        diff prefix, and the design contract says the stack never touches
+        it (SP is capped at $DD everywhere).  The trig8-restore hunt
+        found the mirror trashed mid-render, so the contract is enforced
+        at the simulator now: PHA/PHP with SP >= $E0, JSR with SP >= $E0
+        or SP == 0 (its second byte wraps to $01FF), BRK with SP >= $E0
+        or SP <= 1.  A fault here is an ENGINE bug, never noise."""
         mpu = self.mpu
         mem = mpu.memory
         mpu.pc = entry
@@ -215,6 +224,14 @@ class SpanClip6502:
             pc = mpu.pc
             if pc == 0xFF00:
                 break
+            op = mem[pc]
+            if op == 0x20 or op == 0x48 or op == 0x08 or op == 0x00:
+                sp = mpu.sp
+                if sp >= 0xE0 or (op == 0x20 and sp == 0) or (op == 0x00 and sp <= 1):
+                    raise RuntimeError(
+                        f'STACK GUARD: op ${op:02x} at ${pc:04x} would push '
+                        f'into SQR_MIRROR (SP=${sp:02x}, write at '
+                        f'${0x100 + sp:04x}) — entry ${entry:04x}')
             if pc in self.PLOT_PCS:
                 lines.append((mem[RZ_X0], mem[RZ_Y0], mem[RZ_X1], mem[RZ_Y1]))
             mpu.step()
