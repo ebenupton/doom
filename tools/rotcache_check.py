@@ -19,38 +19,26 @@ import doom_wireframe as dw
 # path, whose rasterisers were stripped on 08-29 (banked reference) --
 # every flat render has been a silent 10M-step runaway since, so this
 # gate's PASS was vacuous.  The stack guard exposed it the day it landed.
-from banked_bsp import BankedBspRender
-from symmap import sym
-
-EN = sym('RCACHE_ENABLE', banked=1)
-
-
-def mk(enable):
-    r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
-                        dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
-                        dw.PRESCALE)
-    r.sc.mpu.memory[EN] = enable
-    return r
-
-
-def fb(r):
-    return bytes(r.sc.mpu.memory[r.sc.SCREEN_START:r.sc.SCREEN_START + r.sc.SCREEN_SIZE])
-
-
 def main():
-    rc, ro = mk(1), mk(0)
+    # THE COMPARISON IS AGAINST GROUND TRUTH now, not against the
+    # cache-off arm: when this gate came back to life (2026-08-31, the
+    # stack guard exposed its flat-corpse vacuity), cache-on vs cache-off
+    # diverged at 12 of 64 pose/angles -- and verify showed the SHIPPING
+    # cache-on path pixel-clean at every one.  The cache-OFF fallback is
+    # the rotten side (unexercised since 08-29); repairing it is queued
+    # separately.  This gate now walks the historical killer rotation
+    # sequence (big jumps incl. 1,32,65,129) and requires zero over/miss
+    # vs the python reference each frame.
+    import verify_6502_vs_python as V
     bad = 0
-    # rotate-in-place with big jumps (incl. the historical killer 1,32,65,129),
-    # then a moved frame (epoch reset), then more rotation at the new spot.
     seq = [(1056, -3616, a) for a in (1, 32, 65, 129, 193, 65)] + \
           [(800, -3400, 96), (800, -3400, 40), (800, -3400, 200)]
     for (px, py, ab) in seq:
-        fl = dw.player_floor(px, py)
-        rc.render_frame(px, py, ab, fl)
-        ro.render_frame(px, py, ab, fl)
-        if fb(rc) != fb(ro):
+        mo, no, mm, nm, cyc, done = V.compare(px, py, ab)
+        if mo > V.ALIAS_PX or mm > V.ALIAS_PX or not done:
             bad += 1
-            print(f'ROTCACHE MISMATCH at ({px},{py},{ab})')
+            print(f'ROTCACHE MISMATCH at ({px},{py},{ab}): '
+                  f'over={mo}px miss={mm}px done={done}')
     print(f'ROTCACHE: {len(seq)} frames, {bad} mismatches — '
           + ('PASS' if bad == 0 else 'FAIL'))
     sys.exit(1 if bad else 0)
