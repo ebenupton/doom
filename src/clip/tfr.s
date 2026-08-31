@@ -45,7 +45,6 @@ DCLV_X1 = $0A21
 DCLV_SX = $0A22                         ; X save across dcl_rec_flat
 DCLV_YV = $0A23                         ; verdict y value latch
 DCLV_S16VY = $0A24
-DCLS_FIRST = $0AD1                      ; dcl_solid_pair's first-span memo
                                         ; (WORK page free run $0AD1-$0AFF;
                                         ; written by dcl_pair_seek, read by
                                         ; dcl_pair_resume — pairs only, the
@@ -82,13 +81,8 @@ zp_save1   = $0A27                      ; dcl_boundary_ix's clip_p1 save        
 ; (LC_*_LO alias layer removed 2026-07-10: the s16 clipper reads the
 ; zp_line_* slots by their real names.)
 ; ---- saved originals for interp (snapped at start of x-clip / y-clip) ----
-LC_OX1_LO = $0A38
-LC_OX1_HI = $0A39
-LC_OY1_LO = $0A3A
-LC_OY1_HI = $0A3B
 LC_OX2_LO = $0A3C
 LC_OX2_HI = $0A3D
-LC_OY2_LO = $0A3E
 LC_OY2_HI = $0A3F
 ; ---- math working (ZP SWEEP 2026-08-11: the hot subset — the u16
 ; mul/div workspace dominates the profile — moved to freed zp; cold
@@ -97,7 +91,6 @@ LC_DY_NEG = $0A46
 LC_M_R2 = $0A4D
 LC_M_R3 = $0A4E
 LC_TMP_HI = $0A54
-LC_RES_LO = $0A55
 LC_RES_HI = $0A56
 LC_TGT_LO = $0A57                       ; clip target value (s16)
 ; $0658 FREE (LC_TGT_HI retired 2026-08-23 -- provably constant 0)

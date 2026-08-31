@@ -113,13 +113,16 @@ def test_recip():
 
 ENTRY_BR_VIEW_SETUP = _sym('view_setup')
 
-# zp slots (linked equates; hi bytes are lo+1)
-ZP_PX    = _sym('zp_br_px');    ZP_PXH  = ZP_PX + 1
-ZP_PY    = _sym('zp_br_py');    ZP_PYH  = ZP_PY + 1
+# zp slots.  NAME BOTH HALVES: lo+1 is not the hi byte in general.  Zero
+# page is linker-allocated and tools/zprotate rotates cold bytes out of
+# it, so an adjacency that holds today is not a property of the pair --
+# zp_br_px moved to absolute on 2026-08-31 while zp_br_px_h stayed put.
+ZP_PX    = _sym('zp_br_px');    ZP_PXH  = _sym('zp_br_px_h')
+ZP_PY    = _sym('zp_br_py');    ZP_PYH  = _sym('zp_br_py_h')
 ZP_SMAG  = _sym('zp_br_smag');  ZP_SNEG = _sym('zp_br_sneg'); ZP_SONE = _sym('zp_br_sone')
 ZP_CMAG  = _sym('zp_br_cmag');  ZP_CNEG = _sym('zp_br_cneg'); ZP_CONE = _sym('zp_br_cone')
-ZP_FVXLO = _sym('zp_br_fvx_l'); ZP_FVXHI = ZP_FVXLO + 1
-ZP_FVYLO = _sym('zp_br_fvy_l'); ZP_FVYHI = ZP_FVYLO + 1
+ZP_FVXLO = _sym('zp_br_fvx_l'); ZP_FVXHI = _sym('zp_br_fvx_h')
+ZP_FVYLO = _sym('zp_br_fvy_l'); ZP_FVYHI = _sym('zp_br_fvy_h')
 ZP_DX    = _sym('zp_br_dx');    ZP_DY    = _sym('zp_br_dy')
 ZP_VXLO  = _sym('zp_br_vx_l');  ZP_VXHI  = _sym('zp_br_vx_h')
 ZP_VYLO  = _sym('zp_br_vy_l');  ZP_VYHI  = _sym('zp_br_vy_h')
@@ -246,10 +249,10 @@ def test_project_x():
     for c, rh, rl in cases:
         mem[ZP_CL] = c & 0xFF
         mem[ZP_CH] = (c >> 8) & 0xFF
-        mem[0x1A] = rh
-        mem[0x1B] = rl
+        mem[_sym('zp_br_r_m8')] = rh
+        mem[_sym('zp_br_r_s')] = rl
         sc._run(E_C)
-        got = mem[_sym('zp_br_res_l')] | (mem[_sym('zp_br_res_l')+1] << 8)
+        got = mem[_sym('zp_br_res_l')] | (mem[_sym('zp_br_res_h')] << 8)
         # EXACT reference (fp_project_x would take its SHRINK path for
         # wide X88 and truncate — _c never shrinks): b123 = floor(c*m9
         # / 256) by the narrow-body identity, then the net = S-3 kernel:
@@ -304,8 +307,8 @@ def test_project_y():
             cases.append((h, rh, rl))
     fail = 0
     for h, rh, rl in cases:
-        mem[0x1A] = rh
-        mem[0x1B] = rl
+        mem[_sym('zp_br_r_m8')] = rh
+        mem[_sym('zp_br_r_s')] = rl
         _rns_reselect(sc, mem)       # refresh the per-vertex shifter vector
         sc.mpu.a = h & 0xFF          # naked-entry REG contract: A = h (the
                                      # entry stores zp_br_t0 itself)

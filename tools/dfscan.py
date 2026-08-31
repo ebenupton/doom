@@ -394,8 +394,9 @@ def main():
     import pygame; pygame.init()
     import doom_wireframe as dw, compare_renders as CR, fp
     from bsp_render_6502 import (BspRender6502,
-                                 ZP_PX, ZP_PY, ZP_VZ, ZP_PXRAW_LO,
-                                 ZP_PYRAW_LO, ZP_SMAG, ZP_SNEG, ZP_SONE,
+                                 ZP_PX, ZP_PXH, ZP_PY, ZP_PYH, ZP_VZ,
+                                 ZP_PXRAW_LO, ZP_PXRAW_HI, ZP_PYRAW_LO,
+                                 ZP_PYRAW_HI, ZP_SMAG, ZP_SNEG, ZP_SONE,
                                  ZP_CMAG, ZP_CNEG, ZP_CONE)
     from symmap import sym as _sym0, _load
     BK = 1 if args.banked else 0
@@ -450,15 +451,15 @@ def main():
         fl = dw.player_floor(px, py)
         px88 = int((px - r.map_center_x) * 256 / r.prescale)
         py88 = int((py - r.map_center_y) * 256 / r.prescale)
-        mem[ZP_PX] = px88 & 0xFF; mem[ZP_PX+1] = (px88 >> 8) & 0xFF
-        mem[ZP_PY] = py88 & 0xFF; mem[ZP_PY+1] = (py88 >> 8) & 0xFF
+        mem[ZP_PX] = px88 & 0xFF; mem[ZP_PXH] = (px88 >> 8) & 0xFF
+        mem[ZP_PY] = py88 & 0xFF; mem[ZP_PYH] = (py88 >> 8) & 0xFF
         mem[sym('zp_br_px_x')] = (px88 >> 16) & 0xFF
         mem[sym('zp_br_py_x')] = (py88 >> 16) & 0xFF
         vz = ((fl + 41) * 6 + 2) // (r.prescale * 5)
         mem[ZP_VZ] = vz & 0xFF
         rpx = int(px) - r.map_center_x; rpy = int(py) - r.map_center_y
-        mem[ZP_PXRAW_LO] = rpx & 0xFF; mem[ZP_PXRAW_LO+1] = (rpx >> 8) & 0xFF
-        mem[ZP_PYRAW_LO] = rpy & 0xFF; mem[ZP_PYRAW_LO+1] = (rpy >> 8) & 0xFF
+        mem[ZP_PXRAW_LO] = rpx & 0xFF; mem[ZP_PXRAW_HI] = (rpx >> 8) & 0xFF
+        mem[ZP_PYRAW_LO] = rpy & 0xFF; mem[ZP_PYRAW_HI] = (rpy >> 8) & 0xFF
         sm, sn, so, cm, cn, co = fp.fp_sincos5(ab)
         mem[ZP_SMAG] = sm; mem[ZP_SNEG] = 1 if sn else 0
         mem[ZP_SONE] = 1 if so else 0

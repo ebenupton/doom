@@ -59,7 +59,6 @@ obj_b3:      .res 1
 obj_dy:      .res 1
 obj_ctr_l:   .res 1
 obj_ctr_h:   .res 1
-obj_hcnt:    .res 1
 obj_X:       .res 12                       ; 6 x s16 — the art x table
 obj_Y:       .res 24                       ; 12 x s16 — the lid; MUST be obj_X + 12
 obj_n:       .res 1

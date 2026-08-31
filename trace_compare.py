@@ -126,27 +126,36 @@ def setup_wad(sc):
 
 
 def setup_view_zp(sc, px, py, ab):
+    # EVERY SLOT BY NAME.  These were literal mem[0]..mem[$0A] and
+    # mem[$90]..mem[$93] -- the view block's addresses circa whenever the
+    # function was written.  Zero page is linker-allocated and
+    # tools/zprotate ROTATES cold bytes out of it, so those literals are
+    # a standing landmine: on 2026-08-31 zp_br_px moved to absolute and
+    # mem[0] started spraying the player position over the s16 clipper's
+    # LC_OY1_LO anchor.  compare_subsector went to 56 pixel-affecting
+    # subsectors and 6,889 px while the full-frame renders stayed CLEAN,
+    # because the engine was fine and only this seeder was wrong.
     mem = sc.mpu.memory
+    from symmap import sym as _sym
     px_88 = int((px - dw.MAP_CENTER_X) * 256 / dw.PRESCALE)
     py_88 = int((py - dw.MAP_CENTER_Y) * 256 / dw.PRESCALE)
-    mem[0]     = px_88 & 0xFF
-    mem[1]     = (px_88 >> 8) & 0xFF
-    mem[2]     = py_88 & 0xFF
-    mem[3]     = (py_88 >> 8) & 0xFF
-    from symmap import sym as _sym
+    mem[_sym('zp_br_px')]   = px_88 & 0xFF
+    mem[_sym('zp_br_px_h')] = (px_88 >> 8) & 0xFF
+    mem[_sym('zp_br_py')]   = py_88 & 0xFF
+    mem[_sym('zp_br_py_h')] = (py_88 >> 8) & 0xFF
     mem[_sym('zp_br_px_x')] = (px_88 >> 16) & 0xFF
     mem[_sym('zp_br_py_x')] = (py_88 >> 16) & 0xFF
     fz = dw.player_floor(px, py)
     vz = dw._prescale_height(fz + 41)
-    mem[4] = vz & 0xFF
+    mem[_sym('zp_br_vz')] = vz & 0xFF
     raw_px = px_88 >> 5                         # FLOOR, mirroring pmf_cand
     raw_py = py_88 >> 5                         # (round() was unfaithful at
     fxw = (px_88 << 3) & 0xFF                   # fractional poses)
     fyw = (py_88 << 3) & 0xFF
-    mem[0x90] = raw_px & 0xFF
-    mem[0x91] = (raw_px >> 8) & 0xFF
-    mem[0x92] = raw_py & 0xFF
-    mem[0x93] = (raw_py >> 8) & 0xFF
+    mem[_sym('zp_br_pxraw_l')] = raw_px & 0xFF
+    mem[_sym('zp_br_pxraw_h')] = (raw_px >> 8) & 0xFF
+    mem[_sym('zp_br_pyraw_l')] = raw_py & 0xFF
+    mem[_sym('zp_br_pyraw_h')] = (raw_py >> 8) & 0xFF
     mem[_sym('PM_FXW')], mem[_sym('PM_FXW') + 2] = fxw, fyw
     _px2 = (raw_px << 1) | (1 if fxw else 0)
     _py2 = (raw_py << 1) | (1 if fyw else 0)
@@ -157,12 +166,12 @@ def setup_view_zp(sc, px, py, ab):
     from symmap import sym as _s
     mem[_s('bca_ab')] = ab & 0xFF  # bca_ab: angle-space bbox view angle (u8)
     sc_t = fp.fp_sincos5(ab)            # zp staging is COUNT-NATIVE mag5
-    mem[5] = sc_t[0]                    # (2026-08-10)
-    mem[6] = 1 if sc_t[1] else 0
-    mem[7] = 1 if sc_t[2] else 0
-    mem[8] = sc_t[3]
-    mem[9] = 1 if sc_t[4] else 0
-    mem[0x0A] = 1 if sc_t[5] else 0
+    mem[_s('zp_br_smag')] = sc_t[0]     # (2026-08-10)
+    mem[_s('zp_br_sneg')] = 1 if sc_t[1] else 0
+    mem[_s('zp_br_sone')] = 1 if sc_t[2] else 0
+    mem[_s('zp_br_cmag')] = sc_t[3]
+    mem[_s('zp_br_cneg')] = 1 if sc_t[4] else 0
+    mem[_s('zp_br_cone')] = 1 if sc_t[5] else 0
 
 
 def s16(v):

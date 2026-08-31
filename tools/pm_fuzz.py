@@ -126,10 +126,10 @@ class Rig:
     # --- try suite -----------------------------------------------------
     def try_move(self, cx, cy, z):
         self.cold()
-        self.mem[0x90] = cx & 0xFF
-        self.mem[0x91] = (cx >> 8) & 0xFF
-        self.mem[0x92] = cy & 0xFF
-        self.mem[0x93] = (cy >> 8) & 0xFF
+        self.mem[sym('zp_br_pxraw_l')] = cx & 0xFF
+        self.mem[sym('zp_br_pxraw_h')] = (cx >> 8) & 0xFF
+        self.mem[sym('zp_br_pyraw_l')] = cy & 0xFF
+        self.mem[sym('zp_br_pyraw_h')] = (cy >> 8) & 0xFF
         # exact-descent state (integer candidates: fracs 0, px2 = raw*2)
         from symmap import sym as _sy
         self.mem[_sy('PM_FXW')] = 0

@@ -194,7 +194,7 @@ class SpanClip6502:
         # Screen buffer at $5800 (5120 bytes)
         self.SCREEN_START = 0xEA00
         self.SCREEN_SIZE = 5120
-        mem[0x70] = self.SCREEN_START >> 8  # rasteriser scrstrt ZP
+        mem[_sym('RASTER_ZP_SCRSTRT')] = self.SCREEN_START >> 8
 
         # BRK at halt address
         mem[0xFF00] = 0x00

@@ -77,10 +77,12 @@
 ; OVERLAYS are symbolic aliases now, not two literals that happen to match:
 ; the second name is defined as the first, so they cannot drift apart.
 ; ============================================================================
-.globalzp zp_br_px
+.globalzp LC_OY1_LO
+.global zp_br_px
 .globalzp zp_br_px_h
 .globalzp bca_px
-.globalzp zp_br_py
+.globalzp LC_OY1_HI
+.global zp_br_py
 .globalzp zp_br_py_h
 .globalzp bca_py
 .globalzp zp_br_vz
@@ -156,7 +158,8 @@
 .globalzp fwl_rend
 .globalzp zp_vs_i
 .globalzp zp_vs_hl
-.globalzp zp_vs_hh
+.globalzp LC_RES_LO
+.global zp_vs_hh
 .globalzp LC_REM_LO
 .globalzp LC_REM_HI
 .globalzp fwl_rendv
@@ -177,7 +180,8 @@
 .globalzp zp_seg_top_dlt
 .globalzp zp_seg_bot_dlt
 .globalzp zp_save0
-.globalzp fwl_pend
+.globalzp LC_OX1_LO
+.global fwl_pend
 .globalzp zp_save2
 .globalzp zp_new_tail
 .globalzp zp_old_cur
@@ -204,7 +208,8 @@
 .globalzp zp_br_pxraw_h
 .globalzp zp_br_pyraw_l
 .globalzp zp_br_pyraw_h
-.globalzp fw_top1
+.globalzp DCLS_FIRST
+.global fw_top1
 .globalzp zp_plot_i
 .globalzp zp_seg_hdr_p
 .globalzp zp_seg_hdr_p_h
@@ -240,12 +245,14 @@
 .globalzp zp_cb_cy2
 .globalzp zp_line_yr_h
 .globalzp zp_cb_top1
-.globalzp fw_top2
+.globalzp obj_hcnt
+.global fw_top2
 .globalzp zp_cb_bot1
 .globalzp cp_vx0
 .globalzp zp_br_py2_h
 .globalzp cp_vy0
-.globalzp zp_bf_lv1
+.globalzp LC_OY2_LO
+.global zp_bf_lv1
 .globalzp zp_ys_bs
 .globalzp zp_vs_cfh
 .globalzp cp_vx1
@@ -256,7 +263,8 @@
 .globalzp cp_vev
 .globalzp fw_ax0
 .globalzp LC_TMP_LO
-.globalzp zp_vxcache_on
+.globalzp LC_OX1_HI
+.global zp_vxcache_on
 .globalzp zp_bca_p1
 .globalzp zp_bca_p1_h
 .globalzp zp_tail_vec
@@ -292,9 +300,9 @@
 
 .ifdef ZP_OWNER
 .segment "ZEROPAGE"
-zp_br_px:                   .res 1 ; [bsp]; s16 player x_88 (8.8 fixed, prescaled)
+LC_OY1_LO:                 .res 1 ; ROTATED IN (zprotate): 27.9 vs zp_br_px's 0.1
 zp_br_px_h:                 .res 1 ; [bsp]
-zp_br_py:                   .res 1 ; [bsp]
+LC_OY1_HI:                 .res 1 ; ROTATED IN (zprotate): 27.8 vs zp_br_py's 0.1
 zp_br_py_h:                 .res 1 ; [bsp]
 zp_br_vz:                   .res 1 ; [bsp]; s8 eye-height (prescaled)
 zp_br_smag:                 .res 1 ; [bsp]; u8 sin magnitude
@@ -381,7 +389,7 @@ zp_vs_x:                    .res 1 ; [bsp]; vs_vertex: struct offset save
 fwl_rend:                   .res 1 ; [clip]
 zp_vs_i:                    .res 1 ; [bsp]; vs_vertex: explicit-table cursor
 zp_vs_hl:                   .res 1 ; [bsp]; vs_vertex: clamped span lo height
-zp_vs_hh:                   .res 1 ; [bsp]; vs_vertex: clamped span hi height
+LC_RES_LO:                 .res 1 ; ROTATED IN (zprotate): 20.4 vs zp_vs_hh's 8.3
 LC_REM_LO:                  .res 1 ; [clip]
 LC_REM_HI:                  .res 1 ; [clip]
 fwl_rendv:                  .res 1 ; [clip]; $80 = open end
@@ -434,7 +442,7 @@ zp_seg_ch:                  .res 1 ; [bsp]; s8 prescaled front ceiling height
 zp_seg_top_dlt:             .res 1 ; [bsp]; s8 ch - vz (height delta for top edge)
 zp_seg_bot_dlt:             .res 1 ; [bsp]; s8 fh - vz (height delta for bottom edge)
 zp_save0:                   .res 1 ; [clip]; DCL line-clip scratch (also
-fwl_pend:                   .res 1 ; [clip]; right-pend pol ($80 = none)
+LC_OX1_LO:                 .res 1 ; ROTATED IN (zprotate): 27.8 vs fwl_pend's 3.9
 zp_save2:                   .res 1 ; [clip]
 zp_old_cur:                 .res 1 ; [clip]; tighten cursor scratch (tfr.s)
 zp_ox0:                     .res 1 ; [clip]; subspan extent scratch (dcl+tfr)
@@ -476,7 +484,7 @@ zp_br_pxraw_l:              .res 1 ; [bsp]; s16 player x relative to map_center 
 zp_br_pxraw_h:              .res 1 ; [bsp]
 zp_br_pyraw_l:              .res 1 ; [bsp]
 zp_br_pyraw_h:              .res 1 ; [bsp]
-fw_top1:                    .res 1 ; [clip]; CB boundary values
+DCLS_FIRST:                .res 1 ; ROTATED IN (zprotate): 24.7 vs fw_top1's 4.8
 zp_plot_i:                  .res 1 ; [clip]; plot_h byte-index scratch
 zp_seg_hdr_p:               .res 1 ; [bsp]; persistent seg-header ptr (advances +12/seg)
 zp_seg_hdr_p_h:             .res 1 ; [bsp]
@@ -522,7 +530,7 @@ zp_cb_cy1:                  .res 1 ; [clip]; u8, clipped left Y (line Y at cx1)
 zp_cb_cx2:                  .res 1 ; [clip]; u8, clipped right X
 zp_cb_cy2:                  .res 1 ; [clip]; u8, clipped right Y (line Y at cx2)
 zp_cb_top1:                 .res 1 ; [clip]; u8, span top at cx1
-fw_top2:                    .res 1 ; [clip]
+obj_hcnt:                  .res 1 ; ROTATED IN (zprotate): 20.4 vs fw_top2's 4.8
 zp_cb_bot1:                 .res 1 ; [clip]; u8, span bot at cx1
 cp_vx0:                     .res 1 ; [clip]; visible piece staging
 zp_br_py2_h:                .res 1 ;   this against the baked 2*nx/2*ny
@@ -530,7 +538,7 @@ zp_br_py2_h:                .res 1 ;   this against the baked 2*nx/2*ny
                                  ;   rot: VX2+9/+10 live there — ysb
                                  ;   writes them every mover back pair)
 cp_vy0:                     .res 1 ; [clip]
-zp_bf_lv1:                  .res 1 ; [bsp]; diagonal backface LV1 record id
+LC_OY2_LO:                 .res 1 ; ROTATED IN (zprotate): 19.0 vs zp_bf_lv1's 8.6
                                   ; (stashed for bf_band's K-plane read;
                                   ; $BC was zp_dcl_rec_buf until the FUSED
                                   ; walker killed the records, 2026-08-25)
@@ -548,7 +556,7 @@ zp_i_h:                     .res 1 ; [clip+ang]; interval hi (= bca_ihi)
 cp_vev:                     .res 1 ; [clip]
 fw_ax0:                     .res 1 ; [clip]; apply range
 LC_TMP_LO:                  .res 1 ; [clip]
-zp_vxcache_on:                  .res 1 ; [bsp]; VXCACHE gate flag (vxcache_frame sets it
+LC_OX1_HI:                     .res 1 ; ROTATED IN (zprotate): 27.8 vs zp_vxcache_on's 3.3
                                   ; from VXCACHE_ENABLE; the vertex-fetch entry
                                   ; branches — vxcache_jsr_site SMC retired
                                   ; 2026-07-18)
@@ -609,15 +617,34 @@ zp_div_h = zp_prod_h ; [bsp+clip]
 ; ============================================================================
 
 ; --- ROTATED OUT to absolute by tools/zprotate (2026-08-31) ---------------
-; Cold occupants: fw_pol 0.6 accesses/frame, fwl_leftf 2.3.  They pay a
-; cycle and a byte per access now; their zero-page bytes hold obj_e (32.2)
-; and obj_ss (27.4).  Declared after every ZEROPAGE reservation so no zp
-; address shifts, and PUSH/POP the segment -- leaving it set to WORK sends
-; everything the including unit emits next into the wrong segment.
+; Zero page is 256 bytes, so its right occupants are simply the 256
+; most-accessed scalars.  Each name below was measured COLDER (accesses
+; per frame, render suite + movement) than the scalar that took its slot;
+; the incoming name is recorded on the .res line it replaced.  Evicting to
+; absolute is always sound -- absolute addressing reaches the byte from
+; anywhere, it just costs a cycle and a byte per access.
+;
+; THE RESERVATIONS ARE RENAMED IN PLACE, never deleted, so no other zp
+; address moves.  Several hand-baked equates elsewhere (t0 = $CC, val_hi =
+; $CF, bca_p1 = $C8) sit in the pads between them and would collide the
+; moment this block shifted.
+;
+; PUSH/POP the segment -- leaving it set to WORK sends everything the
+; including unit emits next into the wrong segment, which put flat code
+; over the BKT planes on the first attempt.
 .pushseg
 .segment "WORK"
-fw_pol:      .res 1
-fwl_leftf:   .res 1
+fw_pol:      .res 1     ; 0.6 accesses/frame
+fwl_leftf:   .res 1     ; 2.3
+zp_br_px:    .res 1     ; 0.1 -- the 8.8 FRACTION of the player x; the
+                        ;   hot half is zp_br_px_h (= bca_px), still in zp
+zp_br_py:    .res 1     ; 0.1
+zp_vxcache_on: .res 1   ; 3.3 -- a per-frame gate flag
+fwl_pend:    .res 1     ; 3.9
+fw_top1:     .res 1     ; 4.8
+fw_top2:     .res 1     ; 4.8
+zp_vs_hh:    .res 1     ; 8.3
+zp_bf_lv1:   .res 1     ; 8.6
 .popseg
 
 .endif                            ; ZP_OWNER

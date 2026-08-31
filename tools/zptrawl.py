@@ -31,7 +31,7 @@ linker-allocated since 24abd23, so promoting means moving a .res into the
 ZEROPAGE segment and letting ld65 place it; nothing needs hand-assigning.
 Hardware and ABI-pinned bytes are excluded by name.
 """
-import os, sys, collections
+import os, re, sys, collections
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.insert(0, ROOT)
@@ -164,13 +164,55 @@ def corpus_counts(limit=None):
     return hits, modes, len(poses), nmove
 
 
+def _storage_names():
+    """Names that DENOTE STORAGE, as opposed to values that happen to be
+    small integers.
+
+    The map is a flat name->number table, so a build flag (`-D C02=1`),
+    an enum member (REC_VERDICT_INSIDE = 1) and a real zero-page byte at
+    $01 are indistinguishable in it.  Left alone, the shortest-name rule
+    below reported the eviction candidate at $00 as "C02" -- a symbol
+    that is not an address at all and cannot be moved anywhere.
+
+    A name is storage if it is DECLARED as storage: a `label:` in the ZP
+    block or any `.res`/`.segment` unit, or an equate written with an
+    explicit `$` hex literal (enum members are written in decimal).
+    """
+    import glob
+    ok = {}
+    lab = re.compile(r'^\s*(\w+):')
+    eqh = re.compile(r'^\s*(\w+)\s*=\s*[\$\w]')
+    zpinc = os.path.join(ROOT, 'src', 'zp.inc')
+    for f in [zpinc] + \
+             glob.glob(os.path.join(ROOT, 'src', '**', '*.s'), recursive=True) + \
+             glob.glob(os.path.join(ROOT, 'src', '**', '*.inc'), recursive=True):
+        rank = 0 if f == zpinc else 1
+        for line in open(f):
+            m = lab.match(line)
+            r = rank if m else rank + 3
+            m = m or eqh.match(line)
+            if m:
+                ok[m.group(1)] = min(ok.get(m.group(1), 9), r)
+    return ok
+
+
 def symbols():
     from symmap import _load
     t, _ = _load(1, 0)
+    store = _storage_names()
     by = {}
     for n, a in t.items():
         by.setdefault(a, []).append(n)
-    return {a: sorted(ns, key=len)[0] for a, ns in by.items()}
+    out = {}
+    for a, ns in by.items():
+        # RANK, do not just filter.  Several names can share an address --
+        # a real byte, its aliases, and any build flag or enum member that
+        # happens to equal the same small number -- and the label the ZP
+        # block itself declares is the only one that names the STORAGE.
+        # Without the rank $00 reported as "TRIPWIRE", a tripwire constant.
+        real = sorted(ns, key=lambda n: (store.get(n, 9), len(n), n))
+        out[a] = real[0]
+    return out
 
 
 def code_spans():

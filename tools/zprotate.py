@@ -24,7 +24,7 @@ WHAT MAY NOT BE EVICTED, and why each is fatal:
   * indexed bases -- zp,X becomes abs,X, which is legal, but the whole
     BLOCK must move together and this tool moves single bytes.
 """
-import os, sys, collections
+import os, re, sys, collections
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 os.chdir(ROOT); sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, 'tools'))
@@ -37,11 +37,42 @@ def abi_names():
     return {n for n in dir(abi) if not n.startswith('_')}
 
 
+def unsafe_names():
+    """Names that MUST NOT leave zero page, found by reading the source.
+
+    The measured filter alone is not sound.  It excludes a byte only if
+    the CORPUS happened to execute an indirect or indexed access through
+    it, so a pointer whose only dereference sits on a path this corpus
+    never takes reads as a plain cold scalar.  zp_pm_p -- the collision
+    list pointer, dereferenced as (zp_pm_p),Y in pm_frame's straddle
+    arms -- was offered for eviction for exactly that reason, and moving
+    it would have assembled a wild pointer rather than failing.
+
+    So the source is the authority.  Three fatal patterns:
+      (name)      -- (zp),Y / (zp,X) exist ONLY in zero page.
+      name+N      -- somebody depends on what follows it; moving name
+                     alone silently re-aims the neighbour reference.
+      name,X/,Y   -- an indexed base: the whole block must move together.
+    """
+    import glob
+    pats = [re.compile(r'\(\s*(\w+)\s*[),]'),
+            re.compile(r'\b(\w+)\s*[+-]\s*[\$\d]'),
+            re.compile(r'\b(\w+)\s*,\s*[XY]\b')]
+    bad = set()
+    for f in glob.glob(os.path.join(ROOT, 'src', '**', '*.s'), recursive=True) + \
+             glob.glob(os.path.join(ROOT, 'src', '**', '*.inc'), recursive=True):
+        for line in open(f):
+            line = line.split(';')[0]
+            for pat in pats:
+                bad.update(m.group(1) for m in pat.finditer(line))
+    return bad
+
+
 def plan():
     import zptrawl as T
     hits, modes, nposes, nmove = T.corpus_counts(None)
     names = T.symbols()
-    pinned = abi_names()
+    pinned = abi_names() | unsafe_names()
 
     # --- eviction candidates: ZP bytes reached ONLY by direct zp access ---
     evict = []
@@ -59,7 +90,7 @@ def plan():
 
     # --- promotion candidates: hot absolute scalars (trawl's filters) ---
     promo = [(c, a, names.get(a, '')) for a, c in hits.items()
-             if T.promotable(a, modes)]
+             if T.promotable(a, modes) and names.get(a, '') not in pinned]
     promo.sort(reverse=True)
     return evict, promo, nposes
 

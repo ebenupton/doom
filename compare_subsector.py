@@ -103,7 +103,7 @@ class SubsectorDiffer:
 
         # --- 6502 run ---
         a0 = len(ta)
-        mem[0x58] = idx & 0xFF
+        mem[_sym('zp_node_ch_l')] = idx & 0xFF
         # render_subsector expects to arrive WALK-PAGED -- its own anim-hook
         # comment says so ("we arrive WALK-paged, and every SS read below is
         # bank B now").  The real walk guarantees that; calling the entry

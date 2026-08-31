@@ -15,7 +15,9 @@ from symmap import sym as _sym
 
 # ZP slots used by the engine — resolved from the linked symbol map.
 ZP_PX           = _sym('zp_br_px')
+ZP_PXH          = _sym('zp_br_px_h')
 ZP_PY           = _sym('zp_br_py')
+ZP_PYH          = _sym('zp_br_py_h')
 ZP_VZ           = _sym('zp_br_vz')
 ZP_SMAG         = _sym('zp_br_smag')
 ZP_SNEG         = _sym('zp_br_sneg')
@@ -26,7 +28,9 @@ ZP_CONE         = _sym('zp_br_cone')
 # Table base pointer slots (absolute RAM — the ZP scavenge moved most of
 # them out of ZP; the angle module owns the freed slots).
 ZP_PXRAW_LO     = _sym('zp_br_pxraw_l')
+ZP_PXRAW_HI     = _sym('zp_br_pxraw_h')
 ZP_PYRAW_LO     = _sym('zp_br_pyraw_l')
+ZP_PYRAW_HI     = _sym('zp_br_pyraw_h')
 
 ENTRY_BR_VIEW_SETUP   = _sym('view_setup')
 ENTRY_BR_RENDER_FRAME = _sym('render_frame')
@@ -205,9 +209,9 @@ class BspRender6502:
         px_88 = int((player_x - self.map_center_x) * 256 / self.prescale)
         py_88 = int((player_y - self.map_center_y) * 256 / self.prescale)
         mem[ZP_PX]     = px_88 & 0xFF
-        mem[ZP_PX + 1] = (px_88 >> 8) & 0xFF
+        mem[ZP_PXH] = (px_88 >> 8) & 0xFF
         mem[ZP_PY]     = py_88 & 0xFF
-        mem[ZP_PY + 1] = (py_88 >> 8) & 0xFF
+        mem[ZP_PYH] = (py_88 >> 8) & 0xFF
         # s16 integer position: high bytes (whole-map support, not just
         # +/-127 prescaled units around MAP_CENTER)
         mem[_sym('zp_br_px_x')] = (px_88 >> 16) & 0xFF
@@ -231,9 +235,9 @@ class BspRender6502:
         raw_px, raw_py = _px88 >> 5, _py88 >> 5
         _fx, _fy = (_px88 << 3) & 0xFF, (_py88 << 3) & 0xFF
         mem[ZP_PXRAW_LO]     = raw_px & 0xFF
-        mem[ZP_PXRAW_LO + 1] = (raw_px >> 8) & 0xFF
+        mem[ZP_PXRAW_HI] = (raw_px >> 8) & 0xFF
         mem[ZP_PYRAW_LO]     = raw_py & 0xFF
-        mem[ZP_PYRAW_LO + 1] = (raw_py >> 8) & 0xFF
+        mem[ZP_PYRAW_HI] = (raw_py >> 8) & 0xFF
         from symmap import sym as _sy
         mem[_sy('PM_FXW')], mem[_sy('PM_FXW') + 2] = _fx, _fy
         _px2 = (raw_px << 1) | (1 if _fx else 0)

@@ -130,7 +130,7 @@ def trace_hybrid(px, py, ab):
     def hybrid_ss(idx, clips, ctx, vz, surface, ram):
         # (the traced_run pc watch records the ss entry — no explicit append)
         mem = sc.mpu.memory
-        mem[0x58] = idx & 0xFF
+        mem[_sym('zp_node_ch_l')] = idx & 0xFF
         sc._run(ENTRY_BR_RENDER_SUBSECTOR)
 
     orig = dw.packed_render_subsector
