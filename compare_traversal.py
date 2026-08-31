@@ -98,9 +98,9 @@ def install_tracing(sc, trace_all):
             pc = mpu.pc
             if pc == _E_HAS_GAP:
                 # A-hi ABI: hi byte is in A at entry, not yet in $C3
-                trace_all.append(('has_gap', mem[0xC2], mpu.a))
+                trace_all.append(('has_gap', mem[_sym('zp_i_l')], mpu.a))
             elif pc == ss_real:
-                trace_all.append(('ss', mem[0x58]))
+                trace_all.append(('ss', mem[_sym('zp_node_ch_l')]))
             mpu.step()
         sc.last_cycles = mpu.processorCycles
         sc.total_cycles += sc.last_cycles

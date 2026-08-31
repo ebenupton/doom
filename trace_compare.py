@@ -136,7 +136,6 @@ def setup_view_zp(sc, px, py, ab):
     # subsectors and 6,889 px while the full-frame renders stayed CLEAN,
     # because the engine was fine and only this seeder was wrong.
     mem = sc.mpu.memory
-    from symmap import sym as _sym
     px_88 = int((px - dw.MAP_CENTER_X) * 256 / dw.PRESCALE)
     py_88 = int((py - dw.MAP_CENTER_Y) * 256 / dw.PRESCALE)
     mem[_sym('zp_br_px')]   = px_88 & 0xFF
@@ -163,30 +162,29 @@ def setup_view_zp(sc, px, py, ab):
     mem[_sym('zp_br_px2_h')] = (_px2 >> 8) & 0xFF
     mem[_sym('zp_br_py2_l')] = _py2 & 0xFF
     mem[_sym('zp_br_py2_h')] = (_py2 >> 8) & 0xFF
-    from symmap import sym as _s
-    mem[_s('bca_ab')] = ab & 0xFF  # bca_ab: angle-space bbox view angle (u8)
+    mem[_sym('bca_ab')] = ab & 0xFF  # bca_ab: angle-space bbox view angle (u8)
     sc_t = fp.fp_sincos5(ab)            # zp staging is COUNT-NATIVE mag5
-    mem[_s('zp_br_smag')] = sc_t[0]     # (2026-08-10)
-    mem[_s('zp_br_sneg')] = 1 if sc_t[1] else 0
-    mem[_s('zp_br_sone')] = 1 if sc_t[2] else 0
-    mem[_s('zp_br_cmag')] = sc_t[3]
-    mem[_s('zp_br_cneg')] = 1 if sc_t[4] else 0
-    mem[_s('zp_br_cone')] = 1 if sc_t[5] else 0
+    mem[_sym('zp_br_smag')] = sc_t[0]     # (2026-08-10)
+    mem[_sym('zp_br_sneg')] = 1 if sc_t[1] else 0
+    mem[_sym('zp_br_sone')] = 1 if sc_t[2] else 0
+    mem[_sym('zp_br_cmag')] = sc_t[3]
+    mem[_sym('zp_br_cneg')] = 1 if sc_t[4] else 0
+    mem[_sym('zp_br_cone')] = 1 if sc_t[5] else 0
 
 
 def s16(v):
     return v - 0x10000 if v >= 0x8000 else v
 
 
-def install_tracing_run(sc, trace, with_context=False):
+def install_tracing_run(sc, trace):
     """Replace sc._run with a stepping version that records clipper calls.
 
-    If with_context, each call tuple is (op, *args, ssid, seg_idx) where
-    ssid is zp_node_ch_l:hi (subsector id, with $80 flag). seg_idx —
-    NOTE (2026-07-10): zp_seg_first is RETIRED ($5A/$5B freed; the
-    prologue derives both cursors from the SS SoA directly), so $5A/$5B
-    read garbage. For per-seg attribution derive the offset from the
-    FHCH cursor: (zp_fhch_p - rom_fhch_base) / 6.
+    (The with_context option is GONE, 2026-08-31.  It appended (ssid,
+    seg_idx) read from literal $58/$59 and $5A/$5B; zp_seg_first had been
+    retired since 2026-07-10 so seg_idx was garbage, $59 now holds
+    zp_pm_p rather than an id high byte, and ids are u8 end to end
+    anyway.  No caller ever passed it.  For per-seg attribution derive
+    the offset from the FHCH cursor: (zp_fhch_p - rom_fhch_base) / 6.)
     """
     def traced_run(entry, max_cycles=20_000_000):
         mpu = sc.mpu
@@ -203,22 +201,18 @@ def install_tracing_run(sc, trace, with_context=False):
             pc = mpu.pc
             evt = None
             if pc == _E_MARK_SOLID:
-                evt = ('mark_solid', mem[0xC2], mem[0xC3])
+                evt = ('mark_solid', mem[_sym('zp_i_l')], mem[_sym('zp_i_h')])
             elif pc == _E_HAS_GAP:
                 # A-hi ABI: at entry the hi byte is still in A ($C3 is
                 # written by the routine itself)
-                evt = ('has_gap', mem[0xC2], mpu.a)
+                evt = ('has_gap', mem[_sym('zp_i_l')], mpu.a)
             elif pc == _E_DCL_S16:
-                xl = s16(mem[0xA8] | (mem[0xB2] << 8))
-                yl = s16(mem[0xA9] | (mem[0xB3] << 8))
-                xr = s16(mem[0xAA] | (mem[0xB4] << 8))
-                yr = s16(mem[0xAB] | (mem[0xB5] << 8))
+                xl = s16(mem[_sym('zp_line_xl_l')] | (mem[_sym('zp_line_xl_h')] << 8))
+                yl = s16(mem[_sym('zp_line_yl_l')] | (mem[_sym('zp_line_yl_h')] << 8))
+                xr = s16(mem[_sym('zp_line_xr_l')] | (mem[_sym('zp_line_xr_h')] << 8))
+                yr = s16(mem[_sym('zp_line_yr_l')] | (mem[_sym('zp_line_yr_h')] << 8))
                 evt = ('draw', xl, yl, xr, yr)
             if evt is not None:
-                if with_context:
-                    ssid = mem[0x58] | (mem[0x59] << 8)
-                    seg_idx = mem[0x5A] | (mem[0x5B] << 8)
-                    evt = evt + (ssid, seg_idx)
                 trace.append(evt)
             mpu.step()
         sc.last_cycles = mpu.processorCycles

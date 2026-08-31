@@ -10,6 +10,8 @@
 .global render_frame
 .global span_init
 .global anim_tick
+.globalzp LC_TGT_LO
+.global t0
 .global ANIM_FIELDS
 .global anim_init
 .global bca_tail_postrc
@@ -110,7 +112,8 @@
 .globalzp zp_br_r_m8
 .globalzp zp_br_r_s
 .globalzp zp_br_px2_l
-.globalzp zp_br_px2_h
+.globalzp DCLV_S16VY
+.global zp_br_px2_h
 .globalzp zp_rs_l
 .globalzp FW_SLOT
 .globalzp zp_br_t0
@@ -156,8 +159,10 @@
 .globalzp zp_ss_eskip
 .globalzp zp_vs_x
 .globalzp fwl_rend
-.globalzp zp_vs_i
-.globalzp zp_vs_hl
+.globalzp LC_OX2_LO
+.global zp_vs_i
+.globalzp LC_OX2_HI
+.global zp_vs_hl
 .globalzp LC_RES_LO
 .global zp_vs_hh
 .globalzp LC_REM_LO
@@ -192,7 +197,8 @@
 .globalzp zp_seg_v_idx_b
 .globalzp zp_vf_vec0
 .globalzp zp_vf_vec1
-.globalzp zp_br_py2_l
+.globalzp obj_ctr_l
+.global zp_br_py2_l
 .globalzp RASTER_ZP_X0
 .globalzp RASTER_ZP_Y0
 .globalzp RASTER_ZP_X1
@@ -247,9 +253,11 @@
 .globalzp zp_cb_top1
 .globalzp obj_hcnt
 .global fw_top2
-.globalzp zp_cb_bot1
+.globalzp LC_OY2_HI
+.global zp_cb_bot1
 .globalzp cp_vx0
-.globalzp zp_br_py2_h
+.globalzp obj_ctr_h
+.global zp_br_py2_h
 .globalzp cp_vy0
 .globalzp LC_OY2_LO
 .global zp_bf_lv1
@@ -329,7 +337,7 @@ zp_br_sign:                 .res 1 ; [bsp]; 0 = positive, non-0 = negative
 zp_br_r_m8:                 .res 1 ; [bsp]; u8 hi of reciprocal
 zp_br_r_s:                  .res 1 ; [bsp]; u8 lo
 zp_br_px2_l:                .res 1 ; [bsp]; tie-broken doubled raw x:
-zp_br_px2_h:                .res 1 ;   (raw<<1) | (world frac > 0) — the
+DCLV_S16VY:                .res 1 ; ROTATED IN (zprotate): 16.3 vs zp_br_px2_h's 15.5
 zp_rs_l:                    .res 1 ; [bsp] sin-side rotate result lo (res-slot
                                   ; split 2026-07-19: sin cores/variants write
                                   ; rs_*, cos keeps zp_br_res — the s1 res->vx
@@ -387,8 +395,8 @@ zp_ss_eskip:                .res 1 ; [bsp]; subsector eyeline edge-skip:
                                   ; BIT-tested at the ft/fb arm heads
 zp_vs_x:                    .res 1 ; [bsp]; vs_vertex: struct offset save
 fwl_rend:                   .res 1 ; [clip]
-zp_vs_i:                    .res 1 ; [bsp]; vs_vertex: explicit-table cursor
-zp_vs_hl:                   .res 1 ; [bsp]; vs_vertex: clamped span lo height
+LC_OX2_LO:                 .res 1 ; ROTATED IN (zprotate): 18.6 vs zp_vs_i's 13.2
+LC_OX2_HI:                 .res 1 ; ROTATED IN (zprotate): 18.6 vs zp_vs_hl's 12.7
 LC_RES_LO:                 .res 1 ; ROTATED IN (zprotate): 20.4 vs zp_vs_hh's 8.3
 LC_REM_LO:                  .res 1 ; [clip]
 LC_REM_HI:                  .res 1 ; [clip]
@@ -464,7 +472,7 @@ zp_vf_vec0:                 .res 1 ; [bsp]; VXCACHE fetch vector, junior side �
    .res 1                               ; FREE $7C-$7C
 zp_vf_vec1:                 .res 1 ; [bsp]; senior-side twin ($7D/$7E)
    .res 1                               ; FREE $7E-$7E
-zp_br_py2_l:                .res 1 ;   EXACT axis point-on-side compares
+obj_ctr_l:                 .res 1 ; ROTATED IN (zprotate): 17.9 vs zp_br_py2_l's 14.6
    .res 2                               ; FREE $80-$81
 RASTER_ZP_X0:               .res 1 ; [clip]
 RASTER_ZP_Y0:               .res 1 ; [clip]
@@ -531,9 +539,9 @@ zp_cb_cx2:                  .res 1 ; [clip]; u8, clipped right X
 zp_cb_cy2:                  .res 1 ; [clip]; u8, clipped right Y (line Y at cx2)
 zp_cb_top1:                 .res 1 ; [clip]; u8, span top at cx1
 obj_hcnt:                  .res 1 ; ROTATED IN (zprotate): 20.4 vs fw_top2's 4.8
-zp_cb_bot1:                 .res 1 ; [clip]; u8, span bot at cx1
+LC_OY2_HI:                 .res 1 ; ROTATED IN (zprotate): 18.6 vs zp_cb_bot1's 10.4
 cp_vx0:                     .res 1 ; [clip]; visible piece staging
-zp_br_py2_h:                .res 1 ;   this against the baked 2*nx/2*ny
+obj_ctr_h:                 .res 1 ; ROTATED IN (zprotate): 17.9 vs zp_br_py2_h's 14.4
                                  ;   ($F8/$F9 were the free-list's THIRD
                                  ;   rot: VX2+9/+10 live there — ysb
                                  ;   writes them every mover back pair)
@@ -567,7 +575,9 @@ zp_tail_vec:                .res 1 ; [ang] 2-byte tail vector: the corner arms
                                   ; store psis + COMPUTED) or bca_tail_postrc
                                   ; (moving: nothing stored). Set per frame by
                                   ; bca_frame; REPLACES the zp_rc_moved flag
-   .res 3                               ; FREE $CB-$CD
+   .res 1                               ; $CB = zp_tail_vec HIGH byte
+LC_TGT_LO:                  .res 1 ; ROTATED IN (zprotate): 18.6 vs t0's 2.4
+   .res 1                               ; $CD = t1 (hand-baked)
 fw_ax1:                     .res 1 ; [clip]
    .res 1                               ; FREE $CF-$CF
 zp_hg_cache:                .res 1 ; [clip]; has_gap coherence cache: last-matching span offset
@@ -645,6 +655,18 @@ fw_top1:     .res 1     ; 4.8
 fw_top2:     .res 1     ; 4.8
 zp_vs_hh:    .res 1     ; 8.3
 zp_bf_lv1:   .res 1     ; 8.6
+zp_cb_bot1:  .res 1     ; 10.4
+zp_vs_hl:    .res 1     ; 12.7
+zp_vs_i:     .res 1     ; 13.2
+; The tie-broken doubled raws.  px2_l stays in zero page -- it is the byte
+; the two-byte compare hits FIRST and the only one read on the fast arm.
+zp_br_py2_h: .res 1     ; 14.4
+zp_br_py2_l: .res 1     ; 14.6
+zp_br_px2_h: .res 1     ; 15.5
+; t0 was `t0 = $CC`, hand-baked in ang/header_div.s.  Its slot is a
+; linker-allocated .res now (LC_TGT_LO), so this is one baked address
+; fewer as well as a faster byte.
+t0:          .res 1     ; 2.4
 .popseg
 
 .endif                            ; ZP_OWNER

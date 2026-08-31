@@ -12,12 +12,17 @@
 \ path may leave x1 unstored — so the h-emitter sends y0 twice and the
 \ v-emitter sends x0 twice. The host re-derives the same h/v/diagonal
 \ routing from the equalities, so the SAME plot routines run there.
+INCLUDE "tube/tube_syms.inc"    \ generated: the raster ZP slots
 R1S=&FEF8
 R1D=&FEF9
-X0=&82
-Y0=&83
-X1=&84
-Y1=&85
+\ The line operands: GENERATED, not literal.  These were &82..&85 -- the
+\ rasteriser's zero-page slots as of whenever this file was written.  Zero
+\ page is linker-allocated and rotated, so a literal here is a copy of a
+\ fact that nothing keeps true.
+X0=T_RZP_X0
+Y0=T_RZP_Y0
+X1=T_RZP_X1
+Y1=T_RZP_Y1
 ORG &7500
 .entry_diag                     \ = RASTER_ENTRY (des_diag JMPs here)
     JMP diag

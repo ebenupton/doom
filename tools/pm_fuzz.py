@@ -104,7 +104,8 @@ class Rig:
         n = 0
         while mpu.pc != 0 and n < maxc:
             if mpu.pc == self.bvs:
-                p = self.mem[0x5D] | (self.mem[0x5E] << 8)   # zp_anim_p
+                _ap = sym('zp_anim_p')
+                p = self.mem[_ap] | (self.mem[_ap + 1] << 8)
                 assert any(p in r for r in self.rec_ok), \
                     f'pm_box_vs_seg handed an out-of-table record at ${p:04X}'
             mpu.step()

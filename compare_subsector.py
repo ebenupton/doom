@@ -70,12 +70,13 @@ def install_tracing(sc, trace_all):
                 break
             pc = mpu.pc
             if pc == _E_MARK_SOLID:
-                trace_all.append(('mark_solid', mem[0xC2], mem[0xC3]))
+                trace_all.append(('mark_solid', mem[_sym('zp_i_l')],
+                                  mem[_sym('zp_i_h')]))
             elif pc == _E_DCL_S16:
-                xl = s16(mem[0xA8] | (mem[0xB2] << 8))
-                yl = s16(mem[0xA9] | (mem[0xB3] << 8))
-                xr = s16(mem[0xAA] | (mem[0xB4] << 8))
-                yr = s16(mem[0xAB] | (mem[0xB5] << 8))
+                xl = s16(mem[_sym('zp_line_xl_l')] | (mem[_sym('zp_line_xl_h')] << 8))
+                yl = s16(mem[_sym('zp_line_yl_l')] | (mem[_sym('zp_line_yl_h')] << 8))
+                xr = s16(mem[_sym('zp_line_xr_l')] | (mem[_sym('zp_line_xr_h')] << 8))
+                yr = s16(mem[_sym('zp_line_yr_l')] | (mem[_sym('zp_line_yr_h')] << 8))
                 trace_all.append(('draw', xl, yl, xr, yr))
             mpu.step()
         sc.last_cycles = mpu.processorCycles

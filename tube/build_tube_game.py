@@ -114,8 +114,53 @@ def write_tube_syms():
                      # shut forever (anim_sectors: "shut until used"), which
                      # is not a rendering bug but a missing input path.
                      ('T_PMOVE_USE', 'pmove_use'),
-                     ('T_PM_UX', 'pm_ux')):
+                     ('T_PM_UX', 'pm_ux'),
+                     # THE VIEW BLOCK.  tubedrv hand-baked these as &00,
+                     # &01, &02, &03, &04, &05..&0A, &9D, &9E -- the zero
+                     # page addresses they happened to have.  Zero page is
+                     # linker-allocated and tools/zprotate rotates cold
+                     # bytes OUT of it, so those literals rotted silently:
+                     # zp_br_px and zp_br_py went absolute on 2026-08-31
+                     # and the driver started writing the pose fraction
+                     # into the s16 clipper's LC_OY1 anchors instead.
+                     # The fractions are read ~0.1 times a frame, so
+                     # nothing failed until the anchor corruption reached
+                     # a path that used it -- one rotation later.
+                     ('T_ZP_PX', 'zp_br_px'), ('T_ZP_PXH', 'zp_br_px_h'),
+                     ('T_ZP_PXX', 'zp_br_px_x'),
+                     ('T_ZP_PY', 'zp_br_py'), ('T_ZP_PYH', 'zp_br_py_h'),
+                     ('T_ZP_PYX', 'zp_br_py_x'),
+                     ('T_ZP_VZ', 'zp_br_vz'),
+                     ('T_ZP_SMAG', 'zp_br_smag'), ('T_ZP_SNEG', 'zp_br_sneg'),
+                     ('T_ZP_SONE', 'zp_br_sone'), ('T_ZP_CMAG', 'zp_br_cmag'),
+                     ('T_ZP_CNEG', 'zp_br_cneg'), ('T_ZP_CONE', 'zp_br_cone'),
+                     # the rasteriser's line operands, which emit.asm reads
+                     ('T_RZP_X0', 'RASTER_ZP_X0'), ('T_RZP_Y0', 'RASTER_ZP_Y0'),
+                     ('T_RZP_X1', 'RASTER_ZP_X1'), ('T_RZP_Y1', 'RASTER_ZP_Y1'),
+                     ('T_RZP_SCRSTRT', 'RASTER_ZP_SCRSTRT'),
+                     # frame-class vectors the driver aims, and the
+                     # pre-init clear pointer
+                     ('T_ZP_TAIL_VEC', 'zp_tail_vec'),
+                     ('T_ZP_BV_ENTRY', 'zp_bv_entry'),
+                     ('T_ZP_CLRP', 'zp_save2')):
             f.write(f"{t} = &{fsym(s):04X}\n")
+        # THE POINTERS MUST STAY IN ZERO PAGE, AND STAY PAIRED.  tubedrv
+        # aims two frame-class vectors and walks its clear loop through
+        # (T_ZP_CLRP),Y, all three as lo/hi at addr and addr+1.  A ZP
+        # rotation that moved one half, or moved a base out of zero page
+        # entirely, would assemble cleanly and produce a wild pointer --
+        # so fail the BUILD here instead, where the message is readable.
+        for _base, _hi in (('zp_tail_vec', None),
+                           ('zp_bv_entry', None),
+                           ('zp_save2', 'zp_old_cur')):
+            _a = fsym(_base)
+            assert _a < 0x100, (
+                f'{_base} is at ${_a:04X}: tubedrv dereferences it as a zero '
+                f'page pointer, and there is no absolute form of (zp),Y')
+            if _hi:
+                assert fsym(_hi) == _a + 1, (
+                    f'{_base}/{_hi} are no longer adjacent '
+                    f'(${_a:04X}/${fsym(_hi):04X}); tubedrv writes the pair')
         # pm_frame's driver-variable contract (abi constants, not map syms).
         # The parasite runs the FLAT build, so take the _FLAT value wherever
         # the symbol forked -- DRV_VARS did, and the DV_* derive from it.

@@ -226,8 +226,9 @@ _IDX_SWEEP = [2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32, 33, 48, 64, 65, 100,
 
 def _rns_reselect(sc, mem):
     """Mirror the RNS_SELECT macro (the rns_select subroutine is retired):
-    patch rns_go_op from rns_vec_l[S-1], S = zp_br_r_s ($1B)."""
-    mem[_sym('rns_go_op')] = mem[_sym('rns_vec_l') - 1 + mem[0x1B]]
+    patch rns_go_op from rns_vec_l[S-1], S = zp_br_r_s."""
+    mem[_sym('rns_go_op')] = mem[_sym('rns_vec_l') - 1
+                                 + mem[_sym('zp_br_r_s')]]
 
 def test_project_x():
     """project_x_c (the ONLY X projector since the classic entry +

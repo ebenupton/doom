@@ -82,24 +82,24 @@ ORG &EA00                       \ the FB region: the copro never
                                 \ tube MOS and never came back, so HOSTT was
                                 \ never RUN and the screen stayed black.
     LDA #0                      \ REAL-HW hardening: the engine's runtime
-    STA &6C                     \ arenas ($0400-$19FF: pool/records/
+    STA T_ZP_CLRP                     \ arenas ($0400-$19FF: pool/records/
     LDA #4                      \ scratch/bitmap page/cache planes)
     LDY #0                      \ assume the py65-zeros ground state;
-    STA &6D                     \ parasite RAM is only zeroed by luck on
+    STA T_ZP_CLRP+1                     \ parasite RAM is only zeroed by luck on
     TYA                         \ emulators. Zero them BEFORE the loads.
 .pz1                            \ STOP at $1A00: the sqr quad rides the
-    STA (&6C),Y                 \ CODE file from $1A00 (f34f835 map) —
+    STA (T_ZP_CLRP),Y                 \ CODE file from $1A00 (f34f835 map) —
     INY                         \ the old #&1B bound wiped its first page.
     BNE pz1
-    INC &6D
-    LDX &6D
+    INC T_ZP_CLRP+1
+    LDX T_ZP_CLRP+1
     CPX #&1A
     BNE pz1
     LDA #HI(T_CPM_KDXH)         \ CPM memo page (symbol-driven since the
-    STA &6D                     \ 2026-08-14 pmove arc moved flat CPM to
+    STA T_ZP_CLRP+1                     \ 2026-08-14 pmove arc moved flat CPM to
     LDA #0                      \ $2900); init $80-fills KDXH on top
 .pz2
-    STA (&6C),Y
+    STA (T_ZP_CLRP),Y
     INY
     BNE pz2
     LDX #0                      \ *LOAD every engine/data file: strings
@@ -192,13 +192,13 @@ ORG &EA00                       \ the FB region: the copro never
     DEX
     BPL cpms
     LDA #LO(T_TAIL_POSTRC)      \ frame-class vectors: moving targets
-    STA &CA
+    STA T_ZP_TAIL_VEC
     LDA #HI(T_TAIL_POSTRC)
-    STA &CB
+    STA T_ZP_TAIL_VEC+1
     LDA #LO(T_BOX_CLASSIFY)
-    STA &63
+    STA T_ZP_BV_ENTRY
     LDA #HI(T_BOX_CLASSIFY)
-    STA &64
+    STA T_ZP_BV_ENTRY+1
 \ ---- spawn state (constants from tube_syms.inc) ----
 \ Spawn lands in pm_frame's DRIVER-VARIABLE CONTRACT (DV_*, abi $1B80):
 \ the engine reads AND writes those, so the driver no longer keeps its
@@ -219,7 +219,7 @@ ORG &EA00                       \ the FB region: the copro never
     STA T_DV_PYH
     LDA #SPAWN_VZ
     STA T_PM_VZ                 \ pm_frame/pmove_zonly own vz
-    STA &04                     \ engine ZP eye height for frame 1
+    STA T_ZP_VZ                 \ engine ZP eye height for frame 1
     LDA #0
     STA T_PM_TURNREM            \ no carried sub-step rotation
 .rdrain
@@ -313,51 +313,56 @@ ORG &EA00                       \ the FB region: the copro never
     TW 3                        \ after the SPACE use / door sense
 \ ---- pose -> engine ZP (pm_frame wrote DV_* and the $90-$93 raws) ------
     LDA T_DV_PXF
-    STA &00
+    STA T_ZP_PX
     LDA T_DV_PXL
-    STA &01
+    STA T_ZP_PXH
     LDA T_DV_PXH
-    STA &9D
+    STA T_ZP_PXX
     LDA T_DV_PYF
-    STA &02
+    STA T_ZP_PY
     LDA T_DV_PYL
-    STA &03
+    STA T_ZP_PYH
     LDA T_DV_PYH
-    STA &9E
+    STA T_ZP_PYX
     TW 4                        \ after the pose copy to engine ZP
     JSR T_PMOVE_ZONLY           \ DOOM z: rides live lifts (walk_drv's
     LDA T_PM_VZ                 \ mv_reval).  derive_raw is gone: the
-    STA &04                     \ $90-$93 raws are pm_frame's exit contract
+    STA T_ZP_VZ                 \ $90-$93 raws are pm_frame's exit contract
+\ sincos <- sctab[angidx].  The pointer rides T_ZP_CLRP (the boot clear
+\ pointer's pair) rather than a hand-picked &EC/&ED: those two were an
+\ unregistered squat on whatever the engine keeps there, and the pair is
+\ asserted adjacent-and-in-zero-page by build_tube_game.  Safe to share:
+\ this runs before view_setup, and the clipper rewrites the pair.
     LDA T_DV_ANGIDX             \ sincos <- table[angidx] (entry = 8 bytes)
     ASL A
     ASL A
     ASL A
-    STA &EC
+    STA T_ZP_CLRP
     LDA #0
     ROL A
     CLC
     ADC #HI(sctab)
-    STA &ED
+    STA T_ZP_CLRP+1
     LDY #0
-    LDA (&EC),Y
-    STA &05
+    LDA (T_ZP_CLRP),Y
+    STA T_ZP_SMAG
     INY
-    LDA (&EC),Y
-    STA &06
+    LDA (T_ZP_CLRP),Y
+    STA T_ZP_SNEG
     INY
-    LDA (&EC),Y
-    STA &07
+    LDA (T_ZP_CLRP),Y
+    STA T_ZP_SONE
     INY
-    LDA (&EC),Y
-    STA &08
+    LDA (T_ZP_CLRP),Y
+    STA T_ZP_CMAG
     INY
-    LDA (&EC),Y
-    STA &09
+    LDA (T_ZP_CLRP),Y
+    STA T_ZP_CNEG
     INY
-    LDA (&EC),Y
-    STA &0A
+    LDA (T_ZP_CLRP),Y
+    STA T_ZP_CONE
     INY
-    LDA (&EC),Y
+    LDA (T_ZP_CLRP),Y
     STA T_BCA_AB                \ view angle byte
     TW 5                        \ after pmove_zonly + the sincos copy
     LDA fields                  \ summed mask-drain field count -> the

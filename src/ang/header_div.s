@@ -160,7 +160,6 @@ bca_p1 = $C8                            ; r1 = (phi1+512)&4095 u12 pair $C8/$C9 
 ; absolute-access tax across box_pos / corner_phi / sort / clip / clamp / VATOX.
 ; (top,bot,left,right s16) and we read via (bca_boxp),Y
 ; instead of copying it into a work area each check.
-t0 = $CC
 t1 = $CD
 ; $CE free (was val_lo — box_classify's lo bytes ride X now, 2026-07-11)
 val_hi = $CF                            ; only user: rcache's rc_bytehi alias

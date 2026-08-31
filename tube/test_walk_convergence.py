@@ -50,11 +50,30 @@ DRVVARS = _abi.DRV_VARS                      # T_DV_ANGIDX.. — BY THE ABI
 FIELDS = 4                                   # PAL fields ridden in each mask
                                              # byte's b4-6 (pm_frame scales
                                              # movement by this; 0 = frozen)
-ZPSET = (list(range(0x00, 0x0B)) + [0x90, 0x91, 0x92, 0x93, 0x9D, 0x9E]
-         # exact-descent state (2026-08-26): the tie-broken doubled raws
-         # + the PM_FXW world-frac block pmf_cand stages — the reference
-         # replays them like every other engine input
-         + [0x1C, 0x1D, 0x7F, 0xBA, 0x96B, 0x96C, 0x96D, 0x96E])
+# THE ENGINE INPUT SET the copro computes and the reference replays.
+# BY NAME, never by address.  This was a literal list -- $00-$0A, $90-$93,
+# $9D/$9E for the view block, $1C/$1D/$7F/$BA for the tie-broken doubled
+# raws, $96B-$96E for the world fracs -- and two thirds of it had rotted:
+# the world-frac block moved to PM_FXW $0B00 long ago, so the test was
+# replaying POOL_IT bytes into the reference, and a 2026-08-31 zero-page
+# rotation moved three of the four doubled raws to absolute, so the
+# reference started rendering the previous pose's descent state.  That
+# shows up as a framebuffer difference and reads exactly like an engine
+# bug.  The flat (copro) and banked (reference) sides resolve the names
+# independently, which is also what the bottom-22K identity rule needs.
+_ZPNAMES = ('zp_br_px', 'zp_br_px_h', 'zp_br_py', 'zp_br_py_h', 'zp_br_vz',
+            'zp_br_smag', 'zp_br_sneg', 'zp_br_sone',
+            'zp_br_cmag', 'zp_br_cneg', 'zp_br_cone',
+            'zp_br_pxraw_l', 'zp_br_pxraw_h',
+            'zp_br_pyraw_l', 'zp_br_pyraw_h',
+            'zp_br_px_x', 'zp_br_py_x',
+            # exact-descent state (2026-08-26): the tie-broken doubled raws
+            'zp_br_px2_l', 'zp_br_px2_h', 'zp_br_py2_l', 'zp_br_py2_h')
+_ZPFLAT = [symmap.sym(_n, banked=0) for _n in _ZPNAMES] + \
+          [symmap.sym('PM_FXW', banked=0) + _k for _k in range(4)]
+_ZPBANK = [symmap.sym(_n, banked=1) for _n in _ZPNAMES] + \
+          [symmap.sym('PM_FXW', banked=1) + _k for _k in range(4)]
+ZPSET = list(zip(_ZPFLAT, _ZPBANK))    # (copro address, reference address)
 
 
 def copro_walk():
@@ -99,7 +118,7 @@ def copro_walk():
                     skip = 3
                 else:
                     cmds.append(t)
-            zp = {a2: base[a2] for a2 in ZPSET}
+            zp = {_b: base[_f] for _f, _b in ZPSET}
             zp['bca_ab'] = base[symmap.sym('bca_ab')]
             drv = bytes(base[DRVVARS:DRVVARS + 8])
             st['frames'].append((cmds, zp, drv))
