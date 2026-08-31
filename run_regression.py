@@ -135,6 +135,10 @@ run('bakedscan', ['tools/bakedscan.py', '--gate'],
 # (the HALF-UNIT mover tier lives on it, 2026-08-25)
 run('projy_range', ['tools/test_projy_range.py'],
     lambda o: 'PROJY-RANGE: PASS' in o)
+run('pillar_ladder', ['tools/test_pillar_ladder.py'],
+    lambda o: 'PILLARLADDER: PASS' in o)
+run('object_draws', ['tools/test_object_draws.py'],
+    lambda o: 'OBJDRAWS: PASS' in o)
 
 baseline = None
 if os.path.exists(BASELINE_PATH):

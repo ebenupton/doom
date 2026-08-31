@@ -65,6 +65,15 @@ obj_Y:       .res 36                       ; 18 x s16; MUST be obj_X + 12.
                                            ; DRAWN RIM per arc depth, and
                                            ; the techno pillar's four rims
                                            ; want 18 (doc/billboard).
+obj_ppl:     .res 1                       ; pillar ladder: H*H low byte
+obj_pph:     .res 1                       ;                H*H high byte
+obj_pu:      .res 1                       ;                (Pl*M) >> 8
+obj_pv:      .res 1                       ;                sum low
+obj_pw:      .res 1                       ;                sum high
+obj_pb:      .res 4                       ; the four rims' b
+obj_pmag:    .res 16                      ; per rim: b, b2, b3, 0
+obj_px:      .res 1                       ; loop index across umul8
+obj_pcy:     .res 8                       ; the four rims' cy, s16
 obj_n:       .res 1
 obj_left:    .res 1
 obj_k:       .res 1
@@ -868,3 +877,212 @@ SEG_CODE                                   ; RESTORE the segment: the next
                                            ; CODE shrink in the map
 
 .endif
+
+; ===========================================================================
+; PLACED AT THE END, ON PURPOSE.  Its first home was between the obj_ycp loop
+; and the stamp loop, which the object builder FALLS THROUGH -- so every
+; object ran obj_pillar_y over its obj_Y ladder and then hit the RTS, and
+; billboards stopped drawing entirely.  MEAN fell 1.8% and the suite stayed
+; green, which is the more useful half of that lesson.  Nothing falls into
+; this block; the caller JSRs.
+; ===========================================================================
+; obj_pillar_y — build obj_Y[0..17] for the techno pillar.
+;
+; FOUR DRAWN RIMS, EACH WITH ITS OWN ELLIPSE DEPTH.  b = a*|z - eye|/D and the
+; rims sit at z = 128, 122.83, 4.90 and 0 against an eye 41 above the object's
+; own floor, so the cap is over twice as open as the plinth and one shared b
+; -- what the barrel uses -- cannot express it.
+;
+; Every value is a function of H alone, because the eye height above the
+; floor never changes:
+;
+;     b_i  = (H^2 * M_i + 32768) >> 16        M = 46, 43, 19, 22
+;     cy_A = syt + b_A       cy_D = syb - b_D       S = cy_D - cy_A
+;     cy_B = cy_A + ((S*10  + 128) >> 8)      5.17/128  = 0.0404
+;     cy_C = cy_A + ((S*246 + 128) >> 8)    123.10/128  = 0.9617
+;
+; ROUND EVERY STEP.  This is the same trap the 47/64 split documents above:
+; a shift chain for S*0.0404 truncates three times over and lands the cap's
+; lower rim 1.7 px high at H = 101.  With rounding the whole ladder is within
+; 1.3 px of the ideal across H = 12..202, and the EXTENT is exact at every H,
+; which is the invariant that matters.  Derivation and checks: doc/billboard.
+; ===========================================================================
+SEG_BANKC
+; THE TABLES LIVE WITH THE ART, not in CODE.  Flat CODE is at its ceiling --
+; 24 bytes over with these in it -- and $5200 above it is VXCACHE, not slack.
+; They are read under the same PAGE BANK_C the object prologue already does
+; for OBJ_ART, so this costs no extra paging.
+obj_pM:   .byte 46, 43, 19, 22            ; 65536*|z-41|*k / (64*h*K) per rim
+opy_frac: .byte 10, 0, 246, 0             ; 5.17/128 and 123.1/128, in 256ths
+obj_pytab:
+   .byte $00, $01, $02                     ; A - b, - b2, - b3
+   .byte $04, $05, $06, $07                ; B - b, - b2, - b3, centre
+   .byte $86, $85                          ; B + b3, + b2
+   .byte $09, $0A, $0B                     ; C - b2, - b3, centre
+   .byte $8A, $89, $88                     ; C + b3, + b2, + b
+   .byte $8E, $8D, $8C                     ; D + b3, + b2, + b
+SEG_CODE                                   ; RESTORE: the routine itself
+                                           ; stays in CODE -- flat CLIPF
+                                           ; grows into ROM_BKTLO_C at
+                                           ; \$7080 if it moves there
+obj_pillar_y:
+   LDA obj_h                               ; P = H*H
+   STA zp_mul_b
+   LDA obj_h
+   JSR umul8
+   LDA zp_prod_l
+   STA obj_ppl
+   LDA zp_prod_h
+   STA obj_pph
+   LDX #3
+opy_b:
+   STX obj_px                              ; UMUL8 EATS X (it stashes a there)
+   LDA obj_pM,X
+   STA zp_mul_b
+   LDA obj_ppl
+   JSR umul8                               ; Pl * M
+   LDA zp_prod_h
+   STA obj_pu                              ; (Pl*M) >> 8
+   LDA obj_pph
+   JSR umul8                               ; T = Ph * M.  zp_mul_b SURVIVES --
+   LDX obj_px                              ; umul8 only reads it
+   CLC
+   LDA zp_prod_l
+   ADC obj_pu
+   STA obj_pv
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pw
+   LDA obj_pv                              ; C = 1 iff the dropped low byte
+   CMP #128                                ;     rounds up
+   LDA obj_pw
+   ADC #0
+   STA obj_pb,X
+   DEX                                     ; count DOWN: 1 byte cheaper, and
+   BPL opy_b                               ; the four rims are independent
+; --- cy_A = syt + b_A,  cy_D = syb - b_D ---------------------------------
+   CLC
+   LDA obj_yt_l
+   ADC obj_pb+0
+   STA obj_pcy+0
+   LDA obj_yt_h
+   ADC #0
+   STA obj_pcy+1
+   SEC
+   LDA obj_yb_l
+   SBC obj_pb+3
+   STA obj_pcy+6
+   LDA obj_yb_h
+   SBC #0
+   STA obj_pcy+7
+; --- S = cy_D - cy_A  (u8: S <= H) ---------------------------------------
+   SEC
+   LDA obj_pcy+6
+   SBC obj_pcy+0
+   STA obj_pu
+; --- cy_B and cy_C -------------------------------------------------------
+   LDX #0
+opy_cy:
+   STX obj_px                              ; umul8 eats X
+   LDA opy_frac,X
+   STA zp_mul_b
+   LDA obj_pu
+   JSR umul8
+   LDX obj_px
+   LDA zp_prod_l                           ; (S*f + 128) >> 8
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   CLC
+   ADC obj_pcy+0
+   STA obj_pcy+2,X
+   LDA obj_pcy+1
+   ADC #0
+   STA obj_pcy+3,X
+   INX
+   INX
+   CPX #4
+   BCC opy_cy
+; --- the 18 slots: cy -+ b*{1, a2, a3} per rim ---------------------------
+; Each rim's three magnitudes plus a zero, so one descriptor byte selects
+; both the rim and the offset: bits 0-3 index obj_pmag (rim*4 + which),
+; bit 7 adds rather than subtracts.  The 47/64 split is ROUNDED for the
+; reason spelt out on obj_s7 -- truncating makes b2 < b3 for small odd b and
+; the arc's edges cross.
+obj_py_slots:
+   LDX #0                                  ; rim
+   LDY #0                                  ; obj_pmag offset
+opy_split:
+   LDA obj_pb,X
+   STA obj_pmag,Y
+   STA zp_mul_b
+   STX obj_pv                              ; umul8 eats X
+   STY obj_pw
+   LDA #47
+   JSR umul8
+   LDY obj_pw
+   LDA zp_prod_l                           ; (b*47 + 32) >> 6
+   ASL A
+   ROL zp_prod_h
+   ASL A
+   ROL zp_prod_h
+   CLC
+   ADC #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pmag+1,Y
+   LDX obj_pv
+   SEC
+   LDA obj_pb,X
+   SBC obj_pmag+1,Y
+   STA obj_pmag+2,Y
+   LDA #0
+   STA obj_pmag+3,Y
+   INX
+   TYA
+   CLC
+   ADC #4
+   TAY
+   CPX #4
+   BCC opy_split
+; --- play the descriptors ------------------------------------------------
+   LDA #0
+   STA obj_pw                              ; slot index
+   LDX #0                                  ; byte offset into obj_Y
+opy_s:
+   LDY obj_pw
+   LDA obj_pytab,Y
+   STA obj_pv
+   AND #$0F
+   TAY
+   LDA obj_pmag,Y
+   STA obj_pu
+   LDA obj_pv
+   AND #$0C                                ; rim*4 -> rim*2, the s16 stride
+   LSR A
+   TAY
+   BIT obj_pv
+   BMI opy_add
+   SEC
+   LDA obj_pcy+0,Y
+   SBC obj_pu
+   STA obj_Y+0,X
+   LDA obj_pcy+1,Y
+   SBC #0
+   STA obj_Y+1,X
+   JMP opy_next
+opy_add:
+   CLC
+   LDA obj_pcy+0,Y
+   ADC obj_pu
+   STA obj_Y+0,X
+   LDA obj_pcy+1,Y
+   ADC #0
+   STA obj_Y+1,X
+opy_next:
+   INX
+   INX
+   INC obj_pw
+   CPX #36
+   BCC opy_s
+   RTS
