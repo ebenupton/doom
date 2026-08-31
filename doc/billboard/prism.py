@@ -20,11 +20,13 @@ armed too.  The vest keeps xr = 1: at its depth the shave is sub-pixel
 and its armed set is built on aligned front/rear edges.
 
 The medikit and stimpack carry the painted cross as a 12-line OUTLINE
-(Eben, 2026-08-31), a closed plus-sign polygon on the front face with the
-proportions measured off the red-dominant sprite pixels: both are 6 x 6
-with 2-px bars, the stimpack's centred at sprite row 11 (low on the
-face), the medikit's at row 8 (high).  Closed means no free ends -- the
-potion's stem terminus is the only free end left anywhere.
+(Eben, 2026-08-31), a closed plus-sign polygon CENTRED on the front face
+(Eben again: the sprites park theirs off-centre -- row 11 of 15 on the
+stimpack, row 8 of 19 on the medikit -- but the box's face is the design
+surface, not the sprite's framing).  Proportions measured off the
+red-dominant sprite pixels: both are 6 x 6 with 2-px bars.  Closed means
+no free ends -- the potion's stem terminus is the only free end left
+anywhere.
 
 THE ICONS (Eben, 2026-08-31): the potion is a SPHERE (bulb r on the
 ground) plus its neck seen edge-on -- a sphere projects to a circle and
@@ -71,9 +73,9 @@ POBJ = {
  # pillar's ELECA0-implied viewpoint; at the engine eye the lid is a
  # two-pixel sliver and the box reads as a plain rectangle.
  'stim':    dict(lump='STIMA0', thing=2011, n=1, kind='box',
-                 h=15.0, w=7.0, d=5.0, crosspx=(11, 3, 3, 1), view=(21.0, 30.0)),
+                 h=15.0, w=7.0, d=5.0, crosspx=(3, 3, 1), view=(21.0, 30.0)),
  'medikit': dict(lump='MEDIA0', thing=2012, n=3, kind='box',
-                 h=19.0, w=14.0, d=7.0, crosspx=(8, 3, 3, 1), view=(31.5, 58.3)),
+                 h=19.0, w=14.0, d=7.0, crosspx=(3, 3, 1), view=(31.5, 58.3)),
  'potion':  dict(lump='BON1A0', thing=2014, n=13, kind='potion',
                  h=18.0, r=7.0),
  'helmet':  dict(lump='BON2A0', thing=2015, n=25, kind='helmet',
@@ -100,11 +102,13 @@ def box_lines(o, ze, D, K2, lod):
          (p.F( w, h), p.F( w, 0), 'b'),
          (p.F(-w, 0), p.F(w, 0), 'b')]          # bottom
     if lod == 0 and o.get('crosspx'):
-        # The cross outline, in SPRITE PIXELS (yc from the top, half-width,
-        # half-height, bar half-thickness) -- the drawing frame is sprite
-        # pixels at the design view (K = D), and other views scale the
-        # decal with the figure.
-        yc, cw, ch2, t = (v*p.H/h for v in o['crosspx'])
+        # The cross outline, sized in SPRITE PIXELS (half-width,
+        # half-height, bar half-thickness) and CENTRED on the front face:
+        # the face runs from the lid's front rim (bt) to the ground line
+        # (H), so its middle is their mean.  Other views scale the decal
+        # with the figure.
+        cw, ch2, t = (v*p.H/h for v in o['crosspx'])
+        yc = (p.bt + p.H)/2.0
         C = [(-t, -ch2), (t, -ch2), (t, -t), (cw, -t), (cw, t), (t, t),
              (t, ch2), (-t, ch2), (-t, t), (-cw, t), (-cw, -t), (-t, -t)]
         pts = [(x, yc + dy) for x, dy in C]

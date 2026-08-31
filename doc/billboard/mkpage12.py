@@ -227,7 +227,8 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   are the topmost line outboard of the rear edge).  The painted cross is a
   <b>12-line outline</b> — a closed plus-sign polygon on the front face,
   proportions measured off the red sprite pixels (both are 6×6 with 2-px
-  bars; the stimpack's sits low on the face, the medikit's high).  Closed
+  bars), centred on the front face — the sprites park theirs off-centre,
+  but the face is the design surface, not the sprite's framing.  Closed
   means no free ends: the potion's stem terminus is the only free end
   left anywhere.</p>
   <p><b>The potion is a circle with a stem — literally.</b> The bulb is a
