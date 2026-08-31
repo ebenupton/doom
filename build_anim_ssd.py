@@ -29,7 +29,7 @@ def sincos_table():
     t = bytearray(N_FRAMES * 8)
     for i in range(N_FRAMES):
         a = (i * ANGLE_STEP) & 0xFF
-        sm, sn, so, cm, cn, co = fp.fp_sincos5(a)   # 6502 staging: count-native mag5
+        sm, sn, so, cm, cn, co = fp.fp_sincos(a)   # 6502 staging: full mag8 (2026-08-31)
         e = i * 8
         t[e+0] = sm & 0xFF
         t[e+1] = 1 if sn else 0

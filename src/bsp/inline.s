@@ -196,28 +196,41 @@ rwp_repatch:
    LDA #$A5
    STA rwp_stamp
 ; mags: sin -> muls 1/4, cos -> muls 2/3 (operand + both table bases).
-; EFFECTIVE values: unity stages as (mag=0, one=1) but mag5 unity = 32
-; FITS the u8 quarter-square (sqr index <= 255+32) — the general body
-; handles unity through the mul (Eben's call), and the 5-BIT UNITY
-; BAND IS WIDE: near-cardinals (e.g. ab=252) have cos = unity with
-; sin NONZERO, so unity does NOT imply the partner is zero.
+; 8-BIT TRIG RESTORED (2026-08-31): the stagers put mag8 in zp and THIS
+; is where mag5' = (mag8-1)>>3 and eps = mag8 - 8*mag5' (1..8) are
+; derived — the fast products run at mag5', the rwp_f/fs correction
+; sites at eps, and 8*mag5' + eps == mag8 makes the body exact against
+; rns(rot88, 3) on the full table.  Unity encodes as (mag=0, one=1):
+; eff 256 gives mag5' 31 / eps 8 through the same mod-256 arithmetic
+; (255>>3 = 31; 0 - 248 = 8), so unity needs no special case — and
+; with the rich table unity only occurs at true cardinals, whose
+; epochs dispatch away from this body anyway.  mag5' CAN be 0 now
+; (mag8 <= 8), so the diff-LO base's hi byte is patched too (the
+; borrow only happens for mag5' >= 1).
    LDA zp_br_smag
-   LDX zp_br_sone
-   BEQ :+
-   LDA #32
-:  STA rwp_s1l+1                           ; sum bases (page-aligned trick)
+   JSR rwsel_derive                        ; -> zp_br_t2 = mag5',
+                                           ;    zp_br_t3 = eps,
+                                           ;    zp_rs_l = (-m5)&255,
+                                           ;    zp_rs_h = (-eps)&255,
+                                           ;    Y = diff-LO hi byte
+   LDA zp_br_t2
+   STA rwp_s1l+1                           ; sum bases (page-aligned trick)
    STA rwp_s1h+1
    STA rwp_s4l+1
    STA rwp_s4h+1
-   TAX                                     ; X = eff sin mag
-   LDA #0
-   SEC
-   SBC rwp_s1l+1                           ; A = (-mag) & 255: the diff-LO
-   STA rwp_d1l+1                           ; base lo (hi constant, mag>=1)
+   LDA zp_br_t3
+   STA rwp_fs1l+1                          ; eps bases
+   STA rwp_fs1h+1
+   STA rwp_fs4l+1
+   STA rwp_fs4h+1
+   LDA zp_rs_l                             ; (-mag5') & 255
+   STA rwp_d1l+1
    STA rwp_d4l+1
+   TYA
+   STA rwp_d1l+2                           ; diff-LO hi (borrow iff m5 >= 1)
+   STA rwp_d4l+2
    LDA #<(SQD_H+32)
    SEC
-   STX zp_br_t2
    SBC zp_br_t2
    STA rwp_d1h+1
    STA rwp_d4h+1
@@ -225,23 +238,38 @@ rwp_repatch:
    SBC #0
    STA rwp_d1h+2
    STA rwp_d4h+2
+   LDA zp_rs_h                             ; (-eps) & 255
+   STA rwp_f1l+1
+   STA rwp_f4l+1
+   LDA #<(SQD_H+32)
+   SEC
+   SBC zp_br_t3
+   STA rwp_f1h+1
+   STA rwp_f4h+1
+   LDA #>(SQD_H+32)
+   SBC #0
+   STA rwp_f1h+2
+   STA rwp_f4h+2
    LDA zp_br_cmag
-   LDX zp_br_cone
-   BEQ :+
-   LDA #32
-:  STA rwp_s2l+1
+   JSR rwsel_derive
+   LDA zp_br_t2
+   STA rwp_s2l+1
    STA rwp_s2h+1
    STA rwp_s3l+1
    STA rwp_s3h+1
-   TAX
-   LDA #0
-   SEC
-   SBC rwp_s2l+1
+   LDA zp_br_t3
+   STA rwp_fs2l+1
+   STA rwp_fs2h+1
+   STA rwp_fs3l+1
+   STA rwp_fs3h+1
+   LDA zp_rs_l
    STA rwp_d2l+1
    STA rwp_d3l+1
+   TYA
+   STA rwp_d2l+2
+   STA rwp_d3l+2
    LDA #<(SQD_H+32)
    SEC
-   STX zp_br_t2
    SBC zp_br_t2
    STA rwp_d2h+1
    STA rwp_d3h+1
@@ -249,6 +277,18 @@ rwp_repatch:
    SBC #0
    STA rwp_d2h+2
    STA rwp_d3h+2
+   LDA zp_rs_h
+   STA rwp_f2l+1
+   STA rwp_f3l+1
+   LDA #<(SQD_H+32)
+   SEC
+   SBC zp_br_t3
+   STA rwp_f2h+1
+   STA rwp_f3h+1
+   LDA #>(SQD_H+32)
+   SBC #0
+   STA rwp_f2h+2
+   STA rwp_f3h+2
 ; sign opcodes: terms 1/4 follow sin, term 3 follows cos, term 2 is
 ; INVERTED cos (the -cos in vx)
    LDX #$18
@@ -260,11 +300,17 @@ rwp_repatch:
 rwp_sp:
    STX rwp_o1s
    STX rwp_o4s
+   STX rwp_g1s                             ; the eps combines follow the
+   STX rwp_g4s                             ; same signs (2026-08-31)
    TYA
    STA rwp_o1l
    STA rwp_o1h
    STA rwp_o4l
    STA rwp_o4h
+   STA rwp_g1l
+   STA rwp_g1h
+   STA rwp_g4l
+   STA rwp_g4h
    LDX #$18
    LDY #$65
    LDA zp_br_cneg
@@ -273,9 +319,12 @@ rwp_sp:
    LDY #$E5
 rwp_cp:
    STX rwp_o3s
+   STX rwp_g3s
    TYA
    STA rwp_o3l
    STA rwp_o3h
+   STA rwp_g3l
+   STA rwp_g3h
 ; term 2 = inverted cos sign
    LDX #$38
    LDY #$E5
@@ -285,28 +334,61 @@ rwp_cp:
    LDY #$65
 rwp_ci:
    STX rwp_o2s
+   STX rwp_g2s
    TYA
    STA rwp_o2l
    STA rwp_o2h
+   STA rwp_g2l
+   STA rwp_g2h
 ; --- PB tables (same gate: a rebuild here is rare and cheap enough
 ; to ride the patch path even when only the code image was reloaded —
 ; the tables are recomputed from the same staged trig) ---
 ; --- contrib tables: Ts[k] = (k-2)*256*sin_signed, Tc[k] likewise ---
 ; entry layout: lo/hi interleaved (k*2). (k-2) in {-2,-1,0,+1}:
-; T[2]=0, T[3]=+m<<8, T[1]=-(m<<8), T[0]=-(m<<9); sign flips all.
-; EFFECTIVE mags: the stagers encode unity as (mag=0, one=1) — the
-; tables want 32 there (Eben's unity/zero catch, 2026-08-11).
-   LDA zp_br_smag
+; T[2]=0, T[3]=+V, T[1]=-V, T[0]=-2V with V = mag8<<5 COUNTS (16-bit
+; since 2026-08-31: PB carries the full 8-bit trig -- PX multiples of
+; 256 make PX*mag8/8 exact integers).  Unity (mag=0, one=1) -> $2000.
    LDX zp_br_sone
    BEQ :+
-   LDA #32
+   LDA #$20
+   STA zp_rs_h
+   LDA #0
+   STA zp_rs_l
+   BEQ :++
+:  LDA zp_br_smag                          ; V = mag8 << 5: hi = mag>>3,
+   LSR A                                   ; lo = mag << 5
+   LSR A
+   LSR A
+   STA zp_rs_h
+   LDA zp_br_smag
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   STA zp_rs_l
 :  LDX zp_br_sneg
    LDY #0
-   JSR rwp_contrib                         ; -> PB_TS (A=mag, X=neg, Y=off)
-   LDA zp_br_cmag
+   JSR rwp_contrib                         ; -> PB_TS (V=zp_rs, X=neg, Y=off)
    LDX zp_br_cone
    BEQ :+
-   LDA #32
+   LDA #$20
+   STA zp_rs_h
+   LDA #0
+   STA zp_rs_l
+   BEQ :++
+:  LDA zp_br_cmag
+   LSR A
+   LSR A
+   LSR A
+   STA zp_rs_h
+   LDA zp_br_cmag
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   ASL A
+   STA zp_rs_l
 :  LDX zp_br_cneg
    LDY #8                                  ; dest offset: PB_TC = PB_TS+8
    JSR rwp_contrib

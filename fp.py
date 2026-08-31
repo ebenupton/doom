@@ -108,24 +108,16 @@ for _i in range(1, 65):
 _SIN_QUADRANT[0] = 0
 _SIN_UNITY[0] = False
 
-# -- 5-BIT TRIG, CANONICAL (2026-08-10, Eben-approved after the
-# doom_walk_t5 prototype): quadrant magnitudes quantized to multiples
-# of 8 (5 significant bits), entries rounding to 256 promoted to
-# unity. The 8.8 mirror math is unchanged (mags are just multiples of
-# 8, and the t16 rns(rot,3) rounds NOTHING — exact count math); the
-# 6502 runs COUNT-NATIVE (mag5 = mag>>3 operands, products are
-# counts, no quantize). Measured: float-corpus divergence a wash
-# (-0.07%), rotation edges 0-4px, 2/6 corridors gain 1-3 walk
-# reversals — the accepted trade. Movement/driver step vectors keep
-# full precision (separate table by design).
-for _i in range(1, 65):
-    if not _SIN_UNITY[_i]:
-        _m5 = (_SIN_QUADRANT[_i] + 4) >> 3
-        if _m5 >= 32:
-            _SIN_QUADRANT[_i] = 0
-            _SIN_UNITY[_i] = True
-        else:
-            _SIN_QUADRANT[_i] = _m5 * 8
+# -- 8-BIT TRIG RESTORED (2026-08-31, the smoothness fix).  The 5-bit
+# quantisation that lived here 08-10..08-31 collapsed the per-vertex
+# depth residues: every rotation product became integer x (multiple of
+# 8), all vertices crossed the shared 16-count reciprocal-index
+# boundaries IN PHASE, and forward walks lumped every 4 world units
+# (the corridor jerk Eben bisected to TRIG5).  Full mags restore the
+# residue diversity -- and the accuracy.  The 6502 keeps its mag5
+# fast products and adds eps = mag & 7 correction products at VXC fill
+# (o*mag8 = 8*(o*mag5) + o*eps, so one rns per axis makes the count
+# total bit-equal to rns(rot88(w), 3) on THIS table).
 
 
 def _sin_mag_sign(a):
@@ -148,20 +140,31 @@ def _sin_mag_sign(a):
 
 def fp_sincos(angle_byte):
     """Returns (sin_mag, sin_neg, sin_unity, cos_mag, cos_neg, cos_unity).
-    Mags are 8.8-scale multiples of 8 (5-bit trig, canonical) — the
-    python mirror's representation."""
+    Mags are full 8-bit (0.8 scale) — 8-bit trig restored 2026-08-31;
+    the 6502 stages THESE and derives mag5/eps itself (rot_select)."""
     s_mag, s_neg, s_unity = _sin_mag_sign(angle_byte)
     c_mag, c_neg, c_unity = _sin_mag_sign(angle_byte + 64)
     return s_mag, s_neg, s_unity, c_mag, c_neg, c_unity
 
 def fp_sincos5(angle_byte):
-    """COUNT-NATIVE trig for 6502 staging: mags are mag5 = mag>>3
-    (0..31, unity flagged). The count-native rot core multiplies
-    |d| x mag5 so products ARE s16 view counts — rot5(w) ==
-    rns(rot_88(w), 3) exactly (mags are multiples of 8). Every site
-    that pokes zp_br_smag/cmag into a 6502 MUST use this form."""
+    """RETIRED AS A VIEW-STAGING FORM (2026-08-31): view zp staging is
+    mag8 again and the 6502 derives mag5 = mag>>3 / eps = mag&7 in
+    rot_select (floor semantics -- the exactness identity needs
+    mag8 = 8*mag5 + eps).  This function keeps the OLD canonical
+    round-and-promote 5-bit values because pm's movement table
+    (gen_pm_sincos / colmap._unit5) bakes them -- movement was never
+    part of the smoothness regression and must not move."""
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = fp_sincos(angle_byte)
-    return s_mag >> 3, s_neg, s_unity, c_mag >> 3, c_neg, c_unity
+    def _q(m, u):
+        if u:
+            return 0, True
+        m5 = (m + 4) >> 3
+        if m5 >= 32:
+            return 0, True
+        return m5, False
+    sm5, su = _q(s_mag, s_unity)
+    cm5, cu = _q(c_mag, c_unity)
+    return sm5, s_neg, su, cm5, c_neg, cu
 
 # Keep fp_sin/fp_cos for backward compatibility (back-face test doesn't need this)
 _SIN_TABLE_SIGNED = []
@@ -523,19 +526,25 @@ T16_NEAR_VERDICT = 16          # 0.5 unit, mirrors evy<=0 / vy_88<128
 T16_NEAR_CROSS = 32            # 1.0 unit, mirrors NEAR_88=256
 
 def fp_to_view_totals_t16(wx, wy, ctx):
-    """s16 count totals — the TRUE16 twin of fp_to_view_totals."""
+    """s16 count totals — the TRUE16 twin of fp_to_view_totals.
+
+    THE REF SPLIT (2026-08-31, 8-bit trig restored): the 6502 builds the
+    ref's INTEGER rotation through the corrected rot_w_pages body (an
+    exact rns of the full-mag 8.8 rotation) and rounds the summed FRACS
+    separately in view_setup — two roundings.  The mirror models that
+    split exactly: rns(int, 3) + rns(frac, 3), a shared ±1-count wash
+    against the single-rounding ideal."""
     px_int, py_int, sc, frac_vx, frac_vy, ref_vx, ref_vy = ctx
     s_mag, s_neg, s_unity, c_mag, c_neg, c_unity = sc
     base_vx = (_rot_int(wx, s_mag, s_neg, s_unity)
                - _rot_int(wy, c_mag, c_neg, c_unity))
     base_vy = (_rot_int(wx, c_mag, c_neg, c_unity)
                + _rot_int(wy, s_mag, s_neg, s_unity))
-    # per-epoch RN to counts (the VXCACHE plane store); per-frame ref RN to
-    # counts (ctx ref already carries ints + fracs at full 8.8)
+    # per-epoch RN to counts (the VXCACHE plane store); ref = the SPLIT
     bx = rns(base_vx, 3)
     by = rns(base_vy, 3)
-    rx = rns(ref_vx, 3)
-    ry = rns(ref_vy, 3)
+    rx = rns(ref_vx - frac_vx, 3) + rns(frac_vx, 3)
+    ry = rns(ref_vy - frac_vy, 3) + rns(frac_vy, 3)
     return bx + rx, by + ry
 
 def fp_to_view_t16(wx, wy, ctx):

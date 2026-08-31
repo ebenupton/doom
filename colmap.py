@@ -981,6 +981,9 @@ def _unit5(ang):
     """(cmag5, sneg-cos, smag5, sneg-sin) of a 64-grid angle: mag 0..32
     (unity folded to 32), matching the $BA00 table + cone/sone flags."""
     import fp
+    # MOVEMENT trig: stays on the canonical 5-bit grid (the $BA00 table
+    # bakes fp_sincos5's round-and-promote values) -- the 2026-08-31
+    # view-trig restore does NOT touch pm.
     sm, sn, so, cm, cn, co = fp.fp_sincos5((ang & 63) * 4)
     return (32 if co else cm), cn, (32 if so else sm), sn
 
