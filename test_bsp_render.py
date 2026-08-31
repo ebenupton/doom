@@ -131,9 +131,8 @@ ZP_VYLO  = _sym('zp_br_vy_l');  ZP_VYHI  = _sym('zp_br_vy_h')
 def write_view_state(mem, vx_88, vy_88, sc_tuple):
     """Write player view state into ZP."""
     s_mag, s_neg, s_one, c_mag, c_neg, c_one = sc_tuple
-    s_mag >>= 3                     # zp staging is COUNT-NATIVE mag5
-    c_mag >>= 3                     # (2026-08-10); the python ctx keeps
-                                    # the 8.8 tuple
+    # zp staging is mag8 again (2026-08-31, the trig8 restore) -- the
+    # engine derives mag5'/eps itself in rot_select
     mem[ZP_PX]  = vx_88 & 0xFF
     mem[ZP_PXH] = (vx_88 >> 8) & 0xFF
     mem[ZP_PY]  = vy_88 & 0xFF
@@ -201,8 +200,12 @@ def test_to_view():
         got_x = s16_from_zp(mem, rx)
         got_y = s16_from_zp(mem, ry)
         ctx = fp.fp_view_context(vx88, vy88, sc_tuple)
-        want_x = fp.rns(ctx[5], 3)
-        want_y = fp.rns(ctx[6], 3)
+        # THE REF SPLIT (2026-08-31): the engine rounds the integer
+        # rotation (through rot_w_pages) and the summed fracs separately
+        # -- rns(int,3) + rns(frac,3), exactly as fp_to_view_totals_t16
+        # models it.  Single-rounding differs by +-1 count.
+        want_x = fp.rns(ctx[5] - ctx[3], 3) + fp.rns(ctx[3], 3)
+        want_y = fp.rns(ctx[6] - ctx[4], 3) + fp.rns(ctx[4], 3)
         ok = got_x == want_x and got_y == want_y
         if not ok:
             fail += 1

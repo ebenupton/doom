@@ -26,4 +26,7 @@ SQD_H:
    .byte 36,36,36,37,37,37,38,38,39,39,39,40,40,41,41,41
    .byte 42,42,43,43,43,44,44,45,45,45,46,46,47,47,48,48
    .byte 49,49,49,50,50,51,51,52,52,53,53,53,54,54,55,55
-   .byte 56,56,57,57,58,58,59,59,60,60,61,61,62,62,63
+   .byte 56,56,57,57,58,58,59,59,60,60,61,61,62,62,63,63
+; entry 287 (logical index 255) ADDED 2026-08-31: the 8-bit trig restore
+; lets mag5' = 0 reach SQD_H+32+255 -- the old "never mag 0" dispatch
+; invariant was silently doubling as this table's bounds guard.

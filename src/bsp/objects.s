@@ -104,8 +104,11 @@ OBJ_MAXSLOT = 6                            ; most objects in one subsector
 ; lamp, potion, helmet, box-stim, box-medikit, vest -- and the
 ; k row MUST mirror doom_wireframe's _KTAB (it asserts its own copy).
 ; In CODE, not bank C: the prologue reads obj_ktab under BANK_WALK.
-obj_ktab:
+.pushseg
+.segment "RWC"                             ; rides the PMH -> CODE alignment
+obj_ktab:                                  ; gap on banked (main, any bank)
    .byte 23, 15, 25, 34, 30, 47, 58        ; (the pillar's 10 died with it)
+.popseg
 .if ::BANKED
 ; TWO TIERS PER KIND (2026-08-31, "all objects appear to render at lowest
 ; LOD"): the dispatch compares H against obj_lodh and indexes the tables
@@ -139,8 +142,11 @@ obj_tpl_off2:                              ; start offset within the window
 .popseg
 .endif
 
+.pushseg
+.segment "RWC"
 obj_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
+.popseg
 
 
 ; (obj_edges DELETED 2026-08-25 grind: the table-driven rectangle edge

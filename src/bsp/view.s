@@ -285,31 +285,6 @@ d1h: SBC SQD_H+32,X                        ; +1/+2 SMC = SQD_H+32-mag5    ;# |||
    STA dsth                                                               ;# |          1.4
 .endmacro
 
-; RWP_RNS3 — rns(zp_rs, 3) in place (the vq3 fused-round idiom: three
-; sign-rotates, the last carry is the round bit).  A MACRO, not a
-; subroutine: rot_w_pages was a LEAF, and the first cut's JSR chain
-; (rot -> addx -> rns3) wrapped the stack through $0100 -> $01FF on the
-; deepest frames and shredded the SQR_MIRROR prefix at $01E0 -- the
-; corruption showed up as garbage diff-side reads, not as a crash.
-.macro RWP_RNS3
-   LDA zp_rs_h
-   CMP #$80
-   ROR A
-   ROR zp_rs_l
-   CMP #$80
-   ROR A
-   ROR zp_rs_l
-   CMP #$80
-   ROR A
-   ROR zp_rs_l
-   STA zp_rs_h
-   LDA zp_rs_l                             ; C = the shifted-out round bit
-   ADC #0
-   STA zp_rs_l
-   BCC :+
-   INC zp_rs_h
-:
-.endmacro
 
 ; rwp_stamp — the SMC-validity stamp, IN THE CODE IMAGE (Eben's
 ; testbench-tax catch, 2026-08-11): assembled 0, written $A5 when
@@ -403,14 +378,8 @@ rot_w_pages:
 ::rwp_g2h:
    SBC zp_br_res_h
    STA zp_rs_h                             ; rs = err_x
-   RWP_RNS3                                ; vx += rns(err_x, 3)
-   CLC
-   LDA zp_br_vx_l
-   ADC zp_rs_l
-   STA zp_br_vx_l
-   LDA zp_br_vx_h
-   ADC zp_rs_h
-   STA zp_br_vx_h
+   LDX #zp_br_vx_l
+   JSR rwp_rnsadd                          ; vx += rns(err_x, 3)
    RWP_MUL zp_ri_d_l, ::rwp_f3l, ::rwp_f3h, ::rwp_fs3l, ::rwp_fs3h, zp_rs_l, zp_rs_h
    RWP_MUL zp_br_dy_l, ::rwp_f4l, ::rwp_f4h, ::rwp_fs4l, ::rwp_fs4h, zp_br_res_l, zp_br_res_h
    LDA #0
@@ -433,14 +402,36 @@ rot_w_pages:
 ::rwp_g4h:
    ADC zp_br_res_h
    STA zp_rs_h                             ; rs = err_y
-   RWP_RNS3                                ; vy += rns(err_y, 3)
-   CLC
-   LDA zp_br_vy_l
+   LDX #zp_br_vy_l
+; FALL THROUGH into rwp_rnsadd: its RTS is the rotate's return
+; rwp_rnsadd — rns(zp_rs, 3) in place (the vq3 fused-round idiom), then
+; fold into the s16 at zp X.  ONE JSR level: the measured worst-case SP
+; on real banked frames is $A6, so the 2 bytes are safe (the earlier
+; leaf-only rule dated from the flat-corpse SP=$00 misreadings).
+rwp_rnsadd:
+   LDA zp_rs_h
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   STA zp_rs_h
+   LDA zp_rs_l                             ; C = the shifted-out round bit
+   ADC #0
+   STA zp_rs_l
+   BCC :+
+   INC zp_rs_h
+:  CLC
+   LDA $00,X
    ADC zp_rs_l
-   STA zp_br_vy_l
-   LDA zp_br_vy_h
+   STA $00,X
+   LDA $01,X
    ADC zp_rs_h
-   STA zp_br_vy_h
+   STA $01,X
    RTS
 
 
