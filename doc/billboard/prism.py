@@ -36,13 +36,21 @@ class Prism:
         self.h, self.d, self.ze, self.D, self.K = h, d, ze, D, K
         self.xr = (D - d)/(D + d) if xpersp else 1.0
         self.H = K*h/D
-        self.bt, self.bb = self.b(h), self.b(0.0)
-        self.k = (self.H - self.bt - self.bb)/h
+        # GROUNDED, FRONT-ANCHORED (2026-08-31 lid-fit pass).  The bottom
+        # face sits ON the floor: the front-bottom edge IS the ground
+        # contact and the rear-bottom edge is self-occluded, so the frame
+        # anchors to the front face -- front points map z linearly from
+        # the contact, and the rear copy of a point sits 2*b(z) ABOVE its
+        # front copy (near drops b, far rises b, and only the difference
+        # is drawable).  The whole lid depth 2*b(h) is allocated at the
+        # top; the old symmetric-inset form wasted b(0) of the extent
+        # under the front face (3.5 of 15 px at the stimpack's viewpoint).
+        self.bt = 2.0*self.b(h)
+        self.k = (self.H - self.bt)/h
     def a(self, x):    return self.K*x/self.D
     def b(self, z):    return self.K*self.d*abs(z-self.ze)/(self.D*self.D)
-    def R(self, z):    return self.bt + (self.h - z)*self.k
-    def F(self, x, z): return (self.a(x), self.R(z) + self.b(z))
-    def B(self, x, z): return (self.a(x)*self.xr, self.R(z) - self.b(z))
+    def F(self, x, z): return (self.a(x), self.H - z*self.k)
+    def B(self, x, z): return (self.a(x)*self.xr, self.H - z*self.k - 2.0*self.b(z))
 
 class _Flat:
     """H-carrier for the icon objects (no depth model)."""
@@ -50,10 +58,19 @@ class _Flat:
 
 # ---- the objects ---------------------------------------------------------
 POBJ = {
+ # BOX DESIGN VIEWPOINTS ARE LID-IMPLIED (Eben 2026-08-31: "fit the lids
+ # better").  The lid is the light band in the sprite's luma: STIMA0 rows
+ # 0-2 (rear edge 10 px of 14, bright front rim at row 2), MEDIA0 rows
+ # 0-3 (rear 22 of 28, rim at row 3).  Two measurements, two unknowns:
+ #     taper = (D-d)/(D+d)          depth = 2*(d/D)*(ze-h)
+ # with the physical d fixed, so stim: d/D = 1/6 -> D = 30, ze = 21;
+ # medikit: d/D = 3/25 -> D = 58.3, ze = 31.5.  Same precedent as the
+ # pillar's ELECA0-implied viewpoint; at the engine eye the lid is a
+ # two-pixel sliver and the box reads as a plain rectangle.
  'stim':    dict(lump='STIMA0', thing=2011, n=1, kind='box',
-                 h=15.0, w=7.0, d=5.0, cross=(3.5, 3.5)),
+                 h=15.0, w=7.0, d=5.0, cross=(3.5, 3.5), view=(21.0, 30.0)),
  'medikit': dict(lump='MEDIA0', thing=2012, n=3, kind='box',
-                 h=19.0, w=14.0, d=7.0, cross=(5.5, 5.5)),
+                 h=19.0, w=14.0, d=7.0, cross=(5.5, 5.5), view=(31.5, 58.3)),
  'potion':  dict(lump='BON1A0', thing=2014, n=13, kind='potion',
                  h=18.0, r=7.0),
  'helmet':  dict(lump='BON2A0', thing=2015, n=25, kind='helmet',
@@ -189,9 +206,12 @@ def prism_check(name, D, lod):
         if not on: free.append(pt)
     return L, ext, want, free
 
-def tables_prism(name, lod, D=256.0):
-    """same dict shape as tables(): ladder-indexed lines for the page."""
-    L, p = prism_lines(name, D, lod)
+def tables_prism(name, lod, D=None):
+    """same dict shape as tables(): ladder-indexed lines for the page,
+    at the object's DESIGN viewpoint when it declares one."""
+    o0 = POBJ[name]
+    ze, D = o0.get('view', (EYE, D or 256.0))
+    L, p = prism_lines(name, D, lod, ze=ze, K_=D)
     o = POBJ[name]
     wmax = o.get('w') or o.get('r') or \
            (max(x for x, _ in o['prof']) if 'prof' in o else o['arm'][0])

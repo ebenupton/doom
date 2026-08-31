@@ -18,16 +18,16 @@ NAMES={'pillar':'Tall techno pillar','barrel':'Barrel','lamp':'Floor lamp',
        'stim':'Stimpack','medikit':'Medikit','armour':'Armour vest'}
 # ---- FROZEN viewpoints.  K = D so one pixel is one world unit. -----------
 OV={'pillar':(83.2,410.0),'barrel':(41.0,126.0),'lamp':(41.0,152.0),
-    'potion':(41.0,128.0),'helmet':(41.0,128.0),'stim':(41.0,128.0),
-    'medikit':(41.0,128.0),'armour':(41.0,128.0)}
+    'potion':(41.0,128.0),'helmet':(41.0,128.0),'stim':(21.0,30.0),
+    'medikit':(31.5,58.3),'armour':(41.0,128.0)}
 NOTE={'pillar':'the viewpoint ELECA0 implies',
       'barrel':"player eye 41 — BAR1A0's own fit puts the eye level with its "
                "middle, where no lid is visible",
       'lamp':'player eye 41 — COLUA0 implies no usable viewpoint',
       'potion':'player eye 41 at pickup range',
       'helmet':'player eye 41 at pickup range',
-      'stim':'player eye 41 at pickup range',
-      'medikit':'player eye 41 at pickup range',
+      'stim':'the viewpoint STIMA0\'s lid implies (taper + depth solve to eye 21, D 30)',
+      'medikit':'the viewpoint MEDIA0\'s lid implies (eye 31.5, D 58)',
       'armour':'player eye 41 at pickup range'}
 def ov_lines(n,lod):
     ze,D = OV[n]
