@@ -931,7 +931,7 @@ SEG_BANKC
 ; 24 bytes over with these in it -- and $5200 above it is VXCACHE, not slack.
 ; They are read under the same PAGE BANK_C the object prologue already does
 ; for OBJ_ART, so this costs no extra paging.
-obj_pM:   .byte 46, 43, 19, 22            ; 65536*|z-41|*k / (64*h*K) per rim
+obj_pM:   .byte 87, 82, 36, 41            ; |z - 41| per rim, at D = 256
 opy_frac: .byte 10, 0, 246, 0             ; 5.17/128 and 123.1/128, in 256ths
 obj_pytab:
    .byte $00, $01, $02                     ; A - b, - b2, - b3
@@ -945,40 +945,31 @@ SEG_CODE                                   ; RESTORE: the routine itself
                                            ; grows into ROM_BKTLO_C at
                                            ; \$7080 if it moves there
 obj_pillar_y:
-   LDA obj_h                               ; P = H*H
-   STA zp_mul_b
-   LDA obj_h
-   JSR umul8
-   LDA zp_prod_l
-   STA obj_ppl
-   LDA zp_prod_h
-   STA obj_pph
-   LDX #3
+; A STATIC BILLBOARD: b MUST be linear in a, or the shape morphs with
+; distance.  b = a*|z - eye|/D, and holding D at the DESIGN distance of 256
+; makes b_i = (a * |z_i - 41|) >> 8 -- so the constants above are just the
+; world offsets and b/a is fixed at 0.340, 0.320, 0.141, 0.160.
+;
+; The first cut made D the true per-frame distance, which is what a solid
+; object really does: b came out proportional to H^2 against a's H, so b/a
+; ran 0.15 at 21 px to 0.91 at 202 and the discs OPENED as you walked in.
+; Correct for a 3D pillar, wrong for a billboard, and Eben spotted it as
+; animation.  The shipped barrel has always held b/a = 0.174 flat.
+   LDA obj_a
+   STA zp_mul_b                            ; umul8 only READS this, so it
+   LDX #3                                  ; survives all four calls
 opy_b:
-   STX obj_px                              ; UMUL8 EATS X (it stashes a there)
+   STX obj_px                              ; umul8 eats X
    LDA obj_pM,X
-   STA zp_mul_b
-   LDA obj_ppl
-   JSR umul8                               ; Pl * M
-   LDA zp_prod_h
-   STA obj_pu                              ; (Pl*M) >> 8
-   LDA obj_pph
-   JSR umul8                               ; T = Ph * M.  zp_mul_b SURVIVES --
-   LDX obj_px                              ; umul8 only reads it
-   CLC
-   LDA zp_prod_l
-   ADC obj_pu
-   STA obj_pv
-   LDA zp_prod_h
-   ADC #0
-   STA obj_pw
-   LDA obj_pv                              ; C = 1 iff the dropped low byte
+   JSR umul8                               ; a * dz
+   LDX obj_px
+   LDA zp_prod_l                           ; C = 1 iff the dropped low byte
    CMP #128                                ;     rounds up
-   LDA obj_pw
+   LDA zp_prod_h
    ADC #0
    STA obj_pb,X
-   DEX                                     ; count DOWN: 1 byte cheaper, and
-   BPL opy_b                               ; the four rims are independent
+   DEX
+   BPL opy_b
 ; --- the 18 slots: cy -+ b*{1, a2, a3} per rim ---------------------------
 ; Each rim's three magnitudes plus a zero, so one descriptor byte selects
 ; both the rim and the offset: bits 0-3 index obj_pmag (rim*4 + which),

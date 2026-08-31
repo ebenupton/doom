@@ -16,12 +16,14 @@ import doom_wireframe as dw
 from banked_bsp import BankedBspRender, BANK_C
 from symmap import sym
 
-RIMS_M = (46, 43, 19, 22)          # 65536*|z-41| / (h*K/k*64), z = 128,122.83,4.9,0
+RIMS_DZ = (87, 82, 36, 41)         # |z - 41| for z = 128, 122.83, 4.90, 0
 
 def mirror(H, syt):
-    P = H * H
-    Ph, Pl = P >> 8, P & 0xFF
-    b = [(Ph * M + ((Pl * M) >> 8) + 128) >> 8 for M in RIMS_M]
+    # STATIC billboard: b linear in a, so b/a is fixed and the shape is
+    # rigid.  D is held at the design distance of 256, which makes the
+    # constants the plain world offsets.
+    a = (H * 10 + 32) >> 6
+    b = [(a * dz + 128) >> 8 for dz in RIMS_DZ]
     b2 = [(bb * 47 + 32) >> 6 for bb in b]
     # The shipped tier is L1, whose arc reaches only b*a2 -- so THAT is the
     # inset, and slots 1 and 16 land exactly on syt and syb.
@@ -53,11 +55,15 @@ def main():
     E = sym('obj_pillar_y', banked=1)
     OH = sym('obj_h', banked=1); OYT = sym('obj_yt_l', banked=1)
     OYB = sym('obj_yb_l', banked=1); OY = sym('obj_Y', banked=1)
+    OA = sym('obj_a', banked=1)
     def s16(v): return v - 0x10000 if v >= 0x8000 else v
     bad = 0
     for H in (202, 180, 152, 128, 101, 88, 76, 60, 50, 38, 30, 25, 19, 12, 6, 3):
         for syt in (0, 40, 200):
             mem[OH] = H
+            # b is linear in a now, so the routine READS obj_a -- which the
+            # prologue computes before the dispatch reaches it.
+            mem[OA] = (H * 10 + 32) >> 6
             mem[OYT] = syt & 0xFF; mem[OYT+1] = (syt >> 8) & 0xFF
             yb = syt + H
             mem[OYB] = yb & 0xFF; mem[OYB+1] = (yb >> 8) & 0xFF
