@@ -285,6 +285,18 @@ d1h: SBC SQD_H+32,X                        ; +1/+2 SMC = SQD_H+32-mag5    ;# |||
    STA dsth                                                               ;# |          1.4
 .endmacro
 
+; RWP_MULX -- RWP_MUL body with X pre-loaded (the interleaved corr muls
+; share the fast mul's LDX; same src, different SMC bases/dst).
+.macro RWP_MULX d1l, d1h, s1l, s1h, dstl, dsth
+s1l: LDA sqr_l,X
+   SEC
+d1l: SBC sqr_l-1,X
+   STA dstl
+s1h: LDA sqr_h,X
+d1h: SBC SQD_H+32,X
+   STA dsth
+.endmacro
+
 
 ; rwp_stamp — the SMC-validity stamp, IN THE CODE IMAGE (Eben's
 ; testbench-tax catch, 2026-08-11): assembled 0, written $A5 when
@@ -298,7 +310,9 @@ rwp_stamp:
 rot_w_pages:
 ; P1 = ox*|sin| -> rs, P2 = oy*|cos| -> res
    RWP_MUL zp_ri_d_l, ::rwp_d1l, ::rwp_d1h, ::rwp_s1l, ::rwp_s1h, zp_rs_l, zp_rs_h
-   RWP_MUL zp_br_dy_l, ::rwp_d2l, ::rwp_d2h, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h ;# ||||||||||11.6
+   RWP_MULX ::rwp_f1l, ::rwp_f1h, ::rwp_fs1l, ::rwp_fs1h, zp_rc1_l, zp_rc1_h
+   RWP_MUL zp_br_dy_l, ::rwp_d2l, ::rwp_d2h, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h
+   RWP_MULX ::rwp_f2l, ::rwp_f2h, ::rwp_fs2l, ::rwp_fs2h, zp_rc2_l, zp_rc2_h ;# ||||||||||11.6
 ; vx = PB_X[page] (+sin)P1 (-cos)P2 — op pairs SMC'd per frame
    LDX zp_ri_d_h                           ; page nibble                  ;# |          1.4
    LDA PB_XL,X                                                            ;# ||         1.9
@@ -321,9 +335,62 @@ rot_w_pages:
 ::rwp_o2h:
    SBC zp_br_res_h                                                        ;# |          1.4
    STA zp_br_vx_h                                                         ;# |          1.4
+; --- FINE CORRECTIONS (2026-08-31, the smoothness fix).  The fast
+; products use mag5' = (mag8-1)>>3; these four use eps = mag8 - 8*mag5'
+; (1..8, so the RWP_MUL borrow invariant holds and unity = 31/8 rides
+; the general body).  8*(mag5' products) + eps products == the full
+; 8-bit-mag rotation, so after one rns(err,3) per axis the count totals
+; are BIT-EQUAL to rns(rot88(w),3) on the restored table -- which is
+; what re-staggers the per-vertex depth residues the 5-bit table had
+; collapsed into whole-scene 4-unit lumps (the corridor jerk Eben
+; bisected to TRIG5).  Signs ride the same patched op-pair scheme
+; (rwp_g*, copied from the o-sites at epoch patch), seeded from 0.
+; Fused err combine + rns(,3) + fold, per axis.  The #4 seed pre-adds the
+; round bias (rns(e,3) == floor((e+4)/8), ties up), so the shift is a pure
+; floor and the fused-round carry tail dies; hi rides A end-to-end and the
+; fold writes the axis slots directly.  Signs are the same patched op
+; pairs (rwp_g*) rot_select already pokes -- operands unchanged.
+   LDA #4
+::rwp_g1s:
+   CLC                                     ; SMC: sin sign (as rwp_o1s)
+::rwp_g1l:
+   ADC zp_rc1_l
+   STA zp_rs_l                             ; lo(err_x + 4) part 1
+   LDA #0
+::rwp_g1h:
+   ADC zp_rc1_h                            ; hi rides A
+   TAY
+   LDA zp_rs_l
+::rwp_g2s:
+   SEC                                     ; SMC: NOT cos sign (as rwp_o2s)
+::rwp_g2l:
+   SBC zp_rc2_l
+   STA zp_rs_l
+   TYA
+::rwp_g2h:
+   SBC zp_rc2_h                            ; A:zp_rs_l = err_x + 4
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   CMP #$80
+   ROR A
+   ROR zp_rs_l
+   CMP #$80
+   ROR A
+   TAY                                     ; hi(rns) -> Y (C untouched)
+   ROR zp_rs_l
+   CLC
+   LDA zp_br_vx_l
+   ADC zp_rs_l
+   STA zp_br_vx_l
+   TYA
+   ADC zp_br_vx_h
+   STA zp_br_vx_h                          ; vx += rns(err_x, 3)
 ; P3 = ox*|cos| -> rs, P4 = oy*|sin| -> res
    RWP_MUL zp_ri_d_l, ::rwp_d3l, ::rwp_d3h, ::rwp_s3l, ::rwp_s3h, zp_rs_l, zp_rs_h ;# ||||||||||11.5
+   RWP_MULX ::rwp_f3l, ::rwp_f3h, ::rwp_fs3l, ::rwp_fs3h, zp_rc1_l, zp_rc1_h
    RWP_MUL zp_br_dy_l, ::rwp_d4l, ::rwp_d4h, ::rwp_s4l, ::rwp_s4h, zp_br_res_l, zp_br_res_h ;# ||||||     7.2
+   RWP_MULX ::rwp_f4l, ::rwp_f4h, ::rwp_fs4l, ::rwp_fs4h, zp_rc2_l, zp_rc2_h
 ; vy = PB_Y[page] (+cos)P3 (+sin)P4
    LDX zp_ri_d_h                                                          ;# |          1.4
    LDA PB_YL,X                                                            ;# ||         1.9
@@ -346,70 +413,25 @@ rot_w_pages:
 ::rwp_o4h:
    ADC zp_br_res_h                                                        ;# |          1.4
    STA zp_br_vy_h                                                         ;# |          1.4
-; --- FINE CORRECTIONS (2026-08-31, the smoothness fix).  The fast
-; products use mag5' = (mag8-1)>>3; these four use eps = mag8 - 8*mag5'
-; (1..8, so the RWP_MUL borrow invariant holds and unity = 31/8 rides
-; the general body).  8*(mag5' products) + eps products == the full
-; 8-bit-mag rotation, so after one rns(err,3) per axis the count totals
-; are BIT-EQUAL to rns(rot88(w),3) on the restored table -- which is
-; what re-staggers the per-vertex depth residues the 5-bit table had
-; collapsed into whole-scene 4-unit lumps (the corridor jerk Eben
-; bisected to TRIG5).  Signs ride the same patched op-pair scheme
-; (rwp_g*, copied from the o-sites at epoch patch), seeded from 0.
-   RWP_MUL zp_ri_d_l, ::rwp_f1l, ::rwp_f1h, ::rwp_fs1l, ::rwp_fs1h, zp_rs_l, zp_rs_h
-   RWP_MUL zp_br_dy_l, ::rwp_f2l, ::rwp_f2h, ::rwp_fs2l, ::rwp_fs2h, zp_br_res_l, zp_br_res_h
-   LDA #0
-::rwp_g1s:
-   CLC                                     ; SMC: sin sign (as rwp_o1s)
-::rwp_g1l:
-   ADC zp_rs_l
-   STA zp_rs_l                             ; rs = +-P1e in place
-   LDA #0
-::rwp_g1h:
-   ADC zp_rs_h
-   STA zp_rs_h
-   LDA zp_rs_l
-::rwp_g2s:
-   SEC                                     ; SMC: NOT cos sign (as rwp_o2s)
-::rwp_g2l:
-   SBC zp_br_res_l
-   STA zp_rs_l
-   LDA zp_rs_h
-::rwp_g2h:
-   SBC zp_br_res_h
-   STA zp_rs_h                             ; rs = err_x
-   LDX #zp_br_vx_l
-   JSR rwp_rnsadd                          ; vx += rns(err_x, 3)
-   RWP_MUL zp_ri_d_l, ::rwp_f3l, ::rwp_f3h, ::rwp_fs3l, ::rwp_fs3h, zp_rs_l, zp_rs_h
-   RWP_MUL zp_br_dy_l, ::rwp_f4l, ::rwp_f4h, ::rwp_fs4l, ::rwp_fs4h, zp_br_res_l, zp_br_res_h
-   LDA #0
+   LDA #4
 ::rwp_g3s:
    CLC                                     ; SMC: cos sign (as rwp_o3s)
 ::rwp_g3l:
-   ADC zp_rs_l
-   STA zp_rs_l                             ; rs = +-P3e in place
+   ADC zp_rc1_l
+   STA zp_rs_l
    LDA #0
 ::rwp_g3h:
-   ADC zp_rs_h
-   STA zp_rs_h
+   ADC zp_rc1_h
+   TAY
    LDA zp_rs_l
 ::rwp_g4s:
    CLC                                     ; SMC: sin sign (as rwp_o4s)
 ::rwp_g4l:
-   ADC zp_br_res_l
+   ADC zp_rc2_l
    STA zp_rs_l
-   LDA zp_rs_h
+   TYA
 ::rwp_g4h:
-   ADC zp_br_res_h
-   STA zp_rs_h                             ; rs = err_y
-   LDX #zp_br_vy_l
-; FALL THROUGH into rwp_rnsadd: its RTS is the rotate's return
-; rwp_rnsadd — rns(zp_rs, 3) in place (the vq3 fused-round idiom), then
-; fold into the s16 at zp X.  ONE JSR level: the measured worst-case SP
-; on real banked frames is $A6, so the 2 bytes are safe (the earlier
-; leaf-only rule dated from the flat-corpse SP=$00 misreadings).
-rwp_rnsadd:
-   LDA zp_rs_h
+   ADC zp_rc2_h                            ; A:zp_rs_l = err_y + 4
    CMP #$80
    ROR A
    ROR zp_rs_l
@@ -418,20 +440,15 @@ rwp_rnsadd:
    ROR zp_rs_l
    CMP #$80
    ROR A
+   TAY
    ROR zp_rs_l
-   STA zp_rs_h
-   LDA zp_rs_l                             ; C = the shifted-out round bit
-   ADC #0
-   STA zp_rs_l
-   BCC :+
-   INC zp_rs_h
-:  CLC
-   LDA $00,X
+   CLC
+   LDA zp_br_vy_l
    ADC zp_rs_l
-   STA $00,X
-   LDA $01,X
-   ADC zp_rs_h
-   STA $01,X
+   STA zp_br_vy_l
+   TYA
+   ADC zp_br_vy_h
+   STA zp_br_vy_h                          ; vy += rns(err_y, 3)
    RTS
 
 
