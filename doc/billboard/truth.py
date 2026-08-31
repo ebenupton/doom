@@ -1,4 +1,5 @@
 """GROUND TRUTH: the barrel art the engine really draws.
+import os; _D=os.path.dirname(os.path.abspath(__file__))+'/'
 
 Read OBJ_ART's bytes out of the built image and obj_X / obj_Y out of a live
 render at the moment a barrel is stamped, then decode exactly as the stamp
@@ -58,7 +59,7 @@ import json
 for off in sorted(seen):
     ex=max(seen[off], key=lambda h:h['a'])
     if off==100:
-        json.dump(ex, open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/hexcap.json','w'))
+        json.dump(ex, open(_D+'hexcap.json','w'))
     print(f'\n=== OBJ_ART offset {off}  ({len(seen[off])} stamps)  '
           f'best a={ex["a"]} b={ex["b"]} k={ex["asp"]&0x7F} '
           f'art_bit={(ex["asp"]>>7)&1}  {len(ex["art"])} entries')

@@ -1,4 +1,5 @@
 """LOD tiers, defined as reductions of the SAME dodecagon ladder.
+import os; _D=os.path.dirname(os.path.abspath(__file__))+'/'
 
 L0  5-segment arcs, vertices at ±a, ±a₂, ±a₃      3 |x| per cylinder
 L1  3-segment arcs, the ±a₃ pair dropped          2 |x| per cylinder
@@ -10,7 +11,7 @@ The error each tier introduces is the arc depth it throws away:
 so the switch points are where those fall below half a pixel.
 """
 import math
-exec(open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/objects.py').read())
+exec(open(_D+'objects.py').read())
 A3_=2-math.sqrt(3)
 
 # L1's inner vertex ratio, PER OBJECT.  The dodecagon's a2 = 0.7321 is the

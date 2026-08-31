@@ -47,8 +47,20 @@ player's floor.
   covers, which is not always the adjacent one.  The engine's own OCT and HEX
   pass this same check.
 
-## Not yet in the engine
+## In the engine (2026-08-31)
 
-The ladder sizes are the gate: `obj_X` is 6 and `obj_Y` is 12.  Barrel fits
-(6/9).  Pillar fits in x, wants 18 y.  Lamp wants 18 x / 20 y at L0 because its
-radii are off the vertex ladder so its occlusion cuts mint new x values.
+All three L1 tiers ship in the BANKED build; `wad_packed.py` carries the
+templates as ladder indices and `tools/test_pillar_ladder.py` /
+`tools/test_lamp_ladder.py` gate the 6502 ladder builders against these
+numbers.  `obj_Y` grew to 18 slots for the pillar; the lamp's 10-x/13-y
+ladder fits by spilling its four inner +side x values into `obj_Y[13..16]`
+(`obj_probe` requires +-a to stay at `obj_X+0`/`+10`).  OCT and RECT are
+retired -- `obj_e` is a byte, and HEX 52 + LAMP 88 + PILLAR 96 = 236 is the
+only cut of templates that fits 256.  Flat draws everything as the hex
+barrel until the tube-parasite re-cut.
+
+A shape-critical lesson learned landing the pillar: a billboard's every
+dimension must be LINEAR in the projected height -- evaluate `b = a*e/K`
+at the DESIGN distance, not per frame, or the discs open as the player
+approaches (b ~ H^2) and the object visibly morphs.  L0 remains unused:
+nothing selects tiers yet.

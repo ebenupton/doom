@@ -1,6 +1,7 @@
 """ASSERT the armed rule: at every x, the topmost line must be armed."""
+import os; _D=os.path.dirname(os.path.abspath(__file__))+'/'
 import math
-exec(open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/lod.py').read())
+exec(open(_D+'lod.py').read())
 def topmost_ok(L, n=2000):
     xs=[p[0] for l in L for p in l[:2]]
     lo,hi=min(xs),max(xs); bad=[]

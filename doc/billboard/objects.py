@@ -1,5 +1,6 @@
 import math
-exec(open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/stack.py').read())
+import os; _D=os.path.dirname(os.path.abspath(__file__))+'/'
+exec(open(_D+'stack.py').read())
 K, EYE = 152.0, 41.0
 A2_ = math.sqrt(3)-1
 # bands read off each sprite's flat runs: (r, z0, z1), bottom-to-top

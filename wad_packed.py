@@ -410,19 +410,15 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # until END.  The per-object aspect byte's bit 7 picks which.
     OBJ_ART_ARM, OBJ_ART_END = 0xFE, 0xFF
     _CTL = lambda b: [b, 0, 0, 0]
-    # -- twelve-sided barrel (BARRELS ONLY) -------------------------------
-    # Vertices at 15 + 30k, so EDGE midpoints land on 0/90/180/270: an edge
-    # faces the viewer, an edge faces away, and the +-x edges are VERTICAL --
-    # collinear with the body's silhouette, which is why each side is one
-    # line from the top of the lid's side edge to the bottom of the base's.
-    #   x index 0..5 -> cx - {a, a2, a3}, cx + {a3, a2, a}
-    #   y index 0..5 -> lid centre -+ {b, b2, b3};  6..11 = the same + dy
-    # a2/a3 are (sqrt3-1) and (2-sqrt3) of a, which sum to EXACTLY 1, so the
-    # engine computes one and takes the other as the complement.
-    # 17 lines: 5 top lid arc (RECORDED), 5 near lid arc, 5 base arc, 2 sides.
-    _XI = {0:5, 1:4, 2:3, 3:2, 4:1, 5:0, 6:0, 7:1, 8:2, 9:3, 10:4, 11:5}
-    _YI = {0:3, 1:4, 2:5, 3:5, 4:4, 5:3, 6:2, 7:1, 8:0, 9:0, 10:1, 11:2}
-
+    # -- THE 12-GON LID (OBJ_ART_OCT) IS RETIRED (2026-08-31) -------------
+    # It was the barrel's close-range tier, 17 lines / 76 B.  The floor
+    # lamp's exact L1 needs 88 B and obj_e is a byte, so the whole table
+    # must fit 256: HEX 52 + LAMP 88 + PILLAR 96 = 236 is the only cut that
+    # clears both that wall and the FLAT art home's 152 B.  The corpus never
+    # selected OCT (it needs a >= 12, i.e. within ~64 units of a barrel), and
+    # the lamp is drawn 12 times in the same corpus as a bare rectangle, so
+    # the trade buys far more than it costs.  To bring OCT back, obj_e has to
+    # widen -- see the note on the assert at the end of the block.
     def _ln(p, q):
         # LEFT-TO-RIGHT IS A HARD CONTRACT.  draw_clipped_line_s16 requires
         # x1 <= x2 -- the in-clipper swap died when the seg layer took over
@@ -432,44 +428,15 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
             p, q = q, p
         return [p[0]*2, p[1]*2, q[0]*2, q[1]*2]
 
-    def _edge(k, dy=0):
-        j = (k + 1) % 12
-        return _ln((_XI[k], _YI[k] + dy), (_XI[j], _YI[j] + dy))
-
-    # FUSED REORDER (2026-08-25): the outline draws FIRST (against the
-    # pre-tighten pool — the old flow drew the recorded arc first but the
-    # tighten only applied at object end, so the outline never saw it;
-    # order among plain draws is pixel-free), then $FE ARMS the fused
-    # walker and the AUTHORITY arc draws LAST, each line clipping,
-    # plotting and applying in one walk. Per-arc-line application equals
-    # the old batch because the arc lines abut in ascending x: a split at
-    # a piece edge never moves the next piece's clip evaluation range.
     obj_art = []
-    for k in (0, 1, 2, 3, 4):                   # near half of the lid
-        obj_art += _edge(k)
-    for k in (0, 1, 2, 3, 4):                   # near half of the base
-        obj_art += _edge(k, 6)
-    obj_art += _ln((0, 2), (0, 9))              # left side, lid edge included
-    obj_art += _ln((5, 2), (5, 9))              # right side
-    obj_art += _CTL(OBJ_ART_ARM)
-    for k in (6, 7, 8, 9, 10):                  # far half of the lid: FUSED
-        obj_art += _edge(k)
-    obj_art += _CTL(OBJ_ART_END)
-    off_art_oct = 0
 
-    # -- plain outline rectangle (everything that is not a barrel) --------
-    # Y index 11 is lid_centre + b + dy = syt + 2b + dy = syb, so the
-    # rectangle spans exactly the projected top and bottom.
-    off_art_rect = len(obj_art)
-    obj_art += _ln((0, 11), (5, 11))
-    obj_art += _ln((0, 0), (0, 11))
-    obj_art += _ln((5, 0), (5, 11))
-    obj_art += _CTL(OBJ_ART_ARM)
-    obj_art += _ln((0, 0), (5, 0))              # top edge: FUSED authority
-    obj_art += _CTL(OBJ_ART_END)
-
+    # -- THE OUTLINE RECTANGLE (OBJ_ART_RECT) IS RETIRED (2026-08-31) -----
+    # Nothing selects it any more: the lamps and candelabras that were its
+    # only users now have the lamp template, and on FLAT the pillar falls
+    # into the lamp too (a tall thin lamp reads far closer to a column than
+    # the barrel drum does).
     # -- LOD barrel: flat-top hexagonal lid (2026-08-27) ------------------
-    # Selected by the engine when the scaled half-width a < OBJ_LOD_A.
+    # THE BARREL'S ONLY TEMPLATE since OCT retired (2026-08-31).
     # Vertices (+-a, lidc+-~0) , (+-w, lidc+-b): the silhouette still
     # touches +-a (the body sides join there) and the lid top stays at
     # the 12-gon's bbox (the FUSED authority height is preserved).
@@ -524,7 +491,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         f'hex LOD best-fit drifted from 9a/16 (got {_best_w}, {_best_nm}) — retune objects.s'
     _dev = max(abs(a-b) for a, b in zip(_r12, [_poly_r([(1,0),(9/16,1),(-9/16,1),(-1,0),(-9/16,-1),(9/16,-1)], t) for t in _th]))
     assert _dev * 12 <= 1.75, \
-        f'hex LOD deviation {_dev:.3f}*a exceeds ~1.5px at OBJ_LOD_A=12 — retune the threshold'
+        f'hex LOD deviation {_dev:.3f}*a exceeds ~1.5px at a=12 (corpus max is 8; hex is ALL-RANGE now OCT is retired)'
     # template: x idx 0=-a, 5=+a, 12=-w, 13=+w; y idx 0=syt, 3=lidc+b3,
     # 5=lidc+b, 9/11 = the base twins. 11 lines, outline then ARM+authority.
     off_art_hex = len(obj_art)
@@ -542,7 +509,62 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _H(12,0, 13,0)                   # far lid, top edge: FUSED
     obj_art += _H(13,0, 5,3)                    # far lid, right slant: FUSED
     obj_art += _CTL(OBJ_ART_END)
-    assert off_art_hex == 100, f'OBJ_ART_HEX drifted: {off_art_hex} (layout.inc says 100)'
+    assert off_art_hex == 0, f'OBJ_ART_HEX drifted: {off_art_hex} (layout.inc says 0)'
+
+    # -- THE FLOOR LAMP (thing 2028, and thing 35 the candelabra) ---------
+    # doc/billboard's lamp L1, VERBATIM: 3 coaxial bands (r 11.5 z 0-5, r 7.5
+    # z 5-14, r 5.5 z 14-48), 20 lines, 5 |x| and 13 y.  Unlike the barrel and
+    # the pillar the lamp shows ALL THREE bands' rims, and its radii are off
+    # the dodecagon vertex ladder, so its occlusion cuts land on values the
+    # {a, a2, a3} triple does not contain -- that is why it needs 5 magnitudes
+    # where they need 3, and why obj_lamp_xy has to build the x table too.
+    #
+    # THE LADDER SLOTS.  10 signed x and 13 y is 23 s16, and obj_X + obj_Y is
+    # 24, so it just fits -- with the last 4 x values living in obj_Y[13..16],
+    # which the walker reaches as x byte offsets 38..44 exactly as the hex LOD
+    # reaches obj_Y[6..7] at 24/26.  _LP maps ladder index -> byte offset.
+    #   x idx 0..9 = cx -+ a*{256,167,166,122,109}/256, ascending.  +-a KEEP
+    #   the obj_X+0 / obj_X+10 slots -- obj_probe hardwires those as the
+    #   silhouette's leftmost/rightmost columns -- so the -side magnitudes
+    #   fill obj_X[1..4] and the +side ones spill to obj_Y[13..16]
+    #   y idx 0..12 = syt + H*{0,174,176,177,178,180,218,221,224,226,229,252,
+    #                          256}/256
+    # GENERATED by doc/billboard/tables.py, which asserts extent, joins and
+    # the armed rule on the same numbers.
+    _LXOFF = (0, 2, 4, 6, 8, 38, 40, 42, 44, 10)
+    def _LP(x1, y1, x2, y2):
+        if x1 > x2:                             # left-to-right, as for _ln
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        return [_LXOFF[x1], y1*2, _LXOFF[x2], y2*2]
+    off_art_lamp = len(obj_art)
+    obj_art += _LP( 0, 9,  2,10)                # base disc, near arc
+    obj_art += _LP( 2,10,  7,10)
+    obj_art += _LP( 7,10,  9, 9)
+    obj_art += _LP( 0,11,  2,12)                # base disc, bottom arc
+    obj_art += _LP( 2,12,  7,12)
+    obj_art += _LP( 7,12,  9,11)
+    obj_art += _LP( 0, 7,  0,11)                # base disc sides
+    obj_art += _LP( 9, 7,  9,11)
+    obj_art += _LP( 1, 4,  4, 5)                # collar, near arc
+    obj_art += _LP( 4, 5,  5, 5)
+    obj_art += _LP( 5, 5,  8, 4)
+    obj_art += _LP( 1, 2,  1, 8)                # collar sides
+    obj_art += _LP( 8, 2,  8, 8)
+    obj_art += _LP( 3, 0,  3, 3)                # stem sides
+    obj_art += _LP( 6, 0,  6, 3)
+    obj_art += _CTL(OBJ_ART_ARM)
+    # The armed run is the topmost line at every x, and for the lamp that is
+    # THREE bands' worth, not one: the stem's top rim over the middle, the
+    # collar's top rim on either side of it, and the base disc's top rim
+    # outboard of those.  Their union is exactly -a..+a.
+    obj_art += _LP( 0, 7,  1, 6)                # base disc top rim, left
+    obj_art += _LP( 8, 6,  9, 7)                #                    right
+    obj_art += _LP( 1, 2,  3, 1)                # collar top rim, left
+    obj_art += _LP( 6, 1,  8, 2)                #                 right
+    obj_art += _LP( 3, 0,  6, 0)                # stem top
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_lamp == 52, \
+        f'OBJ_ART_LAMP drifted: {off_art_lamp} (layout.inc says 52)'
 
     # -- techno pillar, thing 48 (2026-08-31) -----------------------------
     # A STACK OF COAXIAL CYLINDERS, not a drum: plinth r=19 z 0..4.90, shaft
@@ -590,10 +612,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # OBJ_E IS A BYTE.  The stamp walker indexes OBJ_ART with an 8-bit X, so
     # the WHOLE table must stay under 256 bytes -- the 30-line L0 template
     # ran 152..280 and its tail was simply unreachable, which showed up as
-    # the pillars stamping OCT.  This is the 22-line LOD tier, 152..248.
+    # the pillars stamping OCT.  This is the 22-line LOD tier, 140..236.
+    # THAT WALL is what retired OCT: HEX 52 + LAMP 88 + PILLAR 96 = 236 and
+    # there is no room for OCT's 76 on top.  Widening obj_e to a pointer buys
+    # the space back, at (zp),Y in the stamp walker's four reads per line.
     assert len(obj_art) <= 256, f'OBJ_ART is {len(obj_art)} B; obj_e is a byte'
-    assert off_art_pillar == 152, \
-        f'OBJ_ART_PILLAR drifted: {off_art_pillar} (layout.inc says 152)'
+    assert off_art_pillar == 140, \
+        f'OBJ_ART_PILLAR drifted: {off_art_pillar} (layout.inc says 140)'
+    # FLAT stops after the lamp: its art home is 152 B (SS_VZ_BASE below,
+    # pmf_mul24s above) and there is no hole to re-home it into, so HEX+LAMP
+    # = 140 is all it carries and its pillars are drawn as lamps.
+    assert off_art_pillar <= 152, 'FLAT art home is 152 B; HEX+LAMP must fit'
 
     off_obj_art = off_obj_bits + obj_bits_len
     n_obj_art = len(obj_art) // 4

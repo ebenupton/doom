@@ -1,7 +1,8 @@
 import sys, math, base64, io
+import os; _D=os.path.dirname(os.path.abspath(__file__))+'/'
 sys.path.insert(0,'/Users/ebenupton/doom/sil'); sys.path.insert(0,'/Users/ebenupton/doom')
-exec(open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/lod.py').read())
-exec(open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/engine_barrel.py').read())
+exec(open(_D+'lod.py').read())
+exec(open(_D+'engine_barrel.py').read())
 from PIL import Image
 def png(n):
     W,H,_,_,m,p=E.decode_picture(_d,_by[n]); pal=E.load_palette(_d,_by)
@@ -79,7 +80,7 @@ for n in ('pillar','barrel','lamp'):
              f'<div class="row">{cells}</div>')
 
 # ---- GEOMETRY TABLES -----------------------------------------------------
-exec(open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/tables.py').read().split("if __name__")[0])
+exec(open(_D+'tables.py').read().split("if __name__")[0])
 BANDS='<table><thead><tr><th>object</th><th>h</th><th>band</th><th>r</th>'\
       '<th>z₀</th><th>z₁</th></tr></thead><tbody>'
 for n in ('pillar','barrel','lamp'):
@@ -113,7 +114,7 @@ for n in ('pillar','barrel','lamp'):
               f'<div class="scroll"><table><thead><tr><th>#</th><th>x₁</th><th>y₁</th>'
               f'<th>x₂</th><th>y₂</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>')
 
-CSS=open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/pillar.html').read()
+CSS=open(_D+'pillar.html').read()
 CSS=CSS[CSS.index('<style>'):CSS.index('</style>')+8]
 HTML=f'''<title>Billboard art — overlays and bare geometry</title>
 {CSS}
@@ -258,5 +259,5 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   Overlays at K = D. Engine templates evaluated at H = 32 with k = 23.
 </footer>
 </div>'''
-open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/pillar.html','w').write(HTML)
+open(_D+'pillar.html','w').write(HTML)
 print('wrote',len(HTML))

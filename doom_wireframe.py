@@ -1704,8 +1704,8 @@ print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
 # DECODES IT: b7 = "not a barrel", b6 = "pillar".  The obvious two-bit field
 # at b5-6 needs LDA/AND/CMP and cost the flat build eight bytes of CODE it
 # does not have.  This way the flat dispatch is the same five bytes it was.
-_ART_OCT, _ART_RECT, _ART_PILLAR = 0x00, 0x80, 0xC0
-def _obj_kind(r, h, art=_ART_RECT, k=None):
+_ART_HEX, _ART_LAMP, _ART_PILLAR = 0x00, 0x80, 0xC0
+def _obj_kind(r, h, art=_ART_LAMP, k=None):
     kk = k if k is not None else max(1, round(64 * r / h))
     assert kk <= 63, f'k={kk} does not fit the aspect byte\'s six bits'
     return (r, h, art, kk)
@@ -1723,13 +1723,15 @@ def _obj_kind(r, h, art=_ART_RECT, k=None):
 # sort of size and reads correctly.  Run the same test on any comparable
 # one-off in a future level before spending a template on it: count the
 # instances and the |x| magnitudes first.  (doc/billboard, 2026-08-31.)
-_LAMP = _obj_kind(16, 48)
+# r = 11.5, the memo's rmax (the base disc), NOT the 16-unit collision
+# cylinder: the billboard is what you SEE.  k = 64*11.5/48 = 15.
+_LAMP = _obj_kind(11.5, 48)
 _OBJ_KINDS = {35:   _LAMP,                                  # Candelabra -> lamp
               # r = 19, not the 16 of the collision cylinder: ELECA0 is 38 px
               # wide over 128 tall and the billboard is what you SEE.  k = 10.
               48:   _obj_kind(19, 128, _ART_PILLAR),        # Tall techno pillar
               2028: _LAMP,                                  # Floor lamp
-              2035: _obj_kind(10, 32, _ART_OCT, 23)}        # Barrel (BAR1A0 23x32)
+              2035: _obj_kind(10, 32, _ART_HEX, 23)}        # Barrel (BAR1A0 23x32)
 fp_objects = []
 for _th in things:
     _tx, _ty_, _ta, _tt, _tfl = _th

@@ -114,51 +114,46 @@ OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-; PER BUILD.  Banked carries all four templates; FLAT STOPS AT 38 and never
-; selects the pillar, because its art home has exactly 152 bytes: SS_VZ_BASE
-; runs up to $E82C below it and pmf_mul24s owns $E8C8 above, and there is no
-; 280-byte hole anywhere in the flat map to re-home it into.  The loader
-; copies LAY_N_OBJ_ART entries, so flat simply does not receive the pillar
-; block -- and obj_art_pillar is gated .if ::BANKED so it cannot be reached.
+; PER BUILD.  Banked carries all three templates; FLAT STOPS AT 35 and never
+; receives the pillar block, because its art home has exactly 152 bytes:
+; SS_VZ_BASE runs up to $E82C below it and pmf_mul24s owns $E8C8 above, and
+; HEX + LAMP = 140 fills it.  The loader copies LAY_N_OBJ_ART entries, and
+; obj_art_pillar's selector falls through to the LAMP on flat.
 ; Re-cutting the flat art home belongs with slimming the flat build.
 .if ::BANKED
-LAY_N_OBJ_ART = 62                 ; 19 barrel + 6 rectangle + 13 LOD hex
-                                   ; + 24 techno pillar, control entries
-                                   ; included.  OBJ_E IS A BYTE, so the
-                                   ; whole table must stay under 256 --
-                                   ; the pillar ships its 22-line LOD tier,
-                                   ; not the 30-line one, which would run
-                                   ; to 280 and be partly unreachable.
+LAY_N_OBJ_ART = 59                 ; 13 LOD hex + 22 floor lamp + 24 techno
+                                   ; pillar, control entries included.
+                                   ; OBJ_E IS A BYTE, so the whole table
+                                   ; must stay under 256 -- WHICH IS WHAT
+                                   ; RETIRED OCT (2026-08-31): the lamp's
+                                   ; exact L1 is 88 B and 52+88+96 = 236
+                                   ; is the only cut that fits.  The
+                                   ; pillar likewise ships its 22-line
+                                   ; tier, not the 30-line one.
 .else
-LAY_N_OBJ_ART = 38                 ; barrel + rectangle + hex only
+LAY_N_OBJ_ART = 35                 ; hex + lamp only
 .endif
-OBJ_ART_OCT  = 0                   ; 12-sided barrel -- BARRELS ONLY: 17
-                                   ; lines = 5 far lid arc (RECORDED) + 5
-                                   ; near lid arc + 5 base arc + 2 sides,
-                                   ; each side running from the top of the
-                                   ; lid's vertical edge to the bottom of
-                                   ; the base's (they are collinear)
-OBJ_ART_RECT = 76                  ; plain outline rectangle -- the rest
-OBJ_ART_PILLAR = 152               ; techno pillar (2026-08-31): a stack of
-                                   ; coaxial cylinders -- 30 lines, 5 of
-                                   ; them the cap's top arc as the armed
-                                   ; run.  Needs obj_pillar_y to have built
-                                   ; the 18-slot y ladder: its four rims
-                                   ; each carry their OWN ellipse depth,
-                                   ; which the barrel's single b cannot
-                                   ; express.  doc/billboard.
-OBJ_ART_HEX  = 100                 ; LOD barrel (2026-08-27): flat-top
-                                   ; hexagonal lid, 11 lines. Best-fit
-                                   ; top half-width = 9a/16 = a>>1+a>>4
-                                   ; (packer-verified LSQ optimum among
-                                   ; shift ratios); mid vertices ride
+OBJ_ART_HEX  = 0                   ; THE barrel (2026-08-31, OCT retired):
+                                   ; flat-top hexagonal lid, 11 lines.
+                                   ; Best-fit top half-width = 9a/16 =
+                                   ; a>>1+a>>4 (packer-verified LSQ optimum
+                                   ; among shift ratios); mid vertices ride
                                    ; the existing +-b3 table heights
-                                   ; (<= 1px at LOD scale). Selected
-                                   ; when a < OBJ_LOD_A.
-OBJ_LOD_A    = 12                  ; hex when lid half-width < 12 px
-                                   ; (max outline deviation ~0.12a
-                                   ; <= ~1.3px; packer asserts the
-                                   ; ratio). Tune freely.
+                                   ; (<= 1px at the scales the corpus
+                                   ; reaches -- max a seen is 8).
+OBJ_ART_LAMP = 52                  ; floor lamp (2026-08-31): doc/billboard
+                                   ; lamp L1 VERBATIM -- 20 lines, 5 of
+                                   ; them armed (three bands' top rims:
+                                   ; the topmost line at every x spans
+                                   ; three cylinders, not one).  Needs
+                                   ; obj_lamp_xy's 10-x/13-y ladder.
+                                   ; Candelabras borrow it.
+OBJ_ART_PILLAR = 140               ; techno pillar: 22 lines, 3 of them
+                                   ; the cap's top arc as the armed run.
+                                   ; Needs obj_pillar_y's 18-slot y
+                                   ; ladder: its four rims each carry
+                                   ; their OWN ellipse depth.
+                                   ; doc/billboard.  BANKED ONLY.
 OBJ_ART_ARM = $FE                  ; entry: arm the FUSED authority run
 OBJ_ART_END     = $FF              ; entry: template finished
 ; The templates: 38 x (x1,y1,x2,y2) pre-doubled indices. They live in

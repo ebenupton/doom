@@ -20,10 +20,14 @@ import doom_wireframe as dw, compare_renders as C
 from banked_bsp import BankedBspRender
 from symmap import sym
 
-# 9 barrels in the hex LOD (no barrel in this corpus ever reaches OCT --
-# a never gets to OBJ_LOD_A = 12) and 14 rects: the lamps, and the two
-# candelabras that now borrow the lamp.
-EXPECT = {'HEX': 9, 'RECT': 12, 'PILLAR': 2}
+# 9 barrels (all HEX -- OCT is retired 2026-08-31) and 11 lamps: the floor
+# lamps plus the candelabras that borrow the template.  The old rectangle
+# count here was 12: the lamp's k is now the memo's exact 64*11.5/48 = 15,
+# not the collision cylinder's 21, and at (1500,-3700,0) one far lamp's
+# silhouette narrows from 5 columns to 3, all already solid, so
+# obj_occluded culls it -- verified by slot trace, a REAL occlusion of the
+# correct-width billboard, not a lost draw.
+EXPECT = {'HEX': 9, 'LAMP': 11, 'PILLAR': 2}
 
 def main():
     r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
@@ -33,7 +37,7 @@ def main():
     entry = sym('render_frame', banked=1)
     STAMP = sym('obj_stamp', banked=1)
     OE = sym('obj_e', banked=1)
-    STARTS = {0: 'OCT', 76: 'RECT', 100: 'HEX', 152: 'PILLAR'}
+    STARTS = {0: 'HEX', 52: 'LAMP', 140: 'PILLAR'}
     n = collections.Counter(); last = [None]
     for (px, py, ab) in C.POSITIONS:
         r.render_frame(px, py, ab, dw.player_floor(px, py))

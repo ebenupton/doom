@@ -1,4 +1,5 @@
 """Walk up to a barrel until it leaves LOD, and capture the OCT template."""
+import os; _D=os.path.dirname(os.path.abspath(__file__))+'/'
 import os, sys
 ROOT='/Users/ebenupton/doom'; sys.path.insert(0,ROOT); sys.path.insert(0,os.path.join(ROOT,'tools'))
 os.environ.setdefault('SDL_VIDEODRIVER','dummy'); os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
@@ -45,7 +46,7 @@ if best:
           f'H={best["yb"]-best["yt"]}, {len(best["art"])} entries')
     print('  X =',best['X']); print('  Y =',best['Y'])
     import json
-    json.dump(best, open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/hex.json','w'))
+    json.dump(best, open(_D+'hex.json','w'))
     for (a1,b1,c1,d1) in best['art']:
         if a1==0xFE: print('   -- ARM --'); continue
         print(f'   x{a1//2:<2d} y{b1//2:<2d} -> x{c1//2:<2d} y{d1//2:<2d}')

@@ -70,7 +70,7 @@ obj_pph:     .res 1                       ;                H*H high byte
 obj_pu:      .res 1                       ;                (Pl*M) >> 8
 obj_pv:      .res 1                       ;                sum low
 obj_pw:      .res 1                       ;                sum high
-obj_pb:      .res 4                       ; the four rims' b
+obj_pb:      .res 5                       ; pillar: the 4 rims' b; lamp: the 5 x magnitudes
 obj_pmag:    .res 16                      ; per rim: b, b2, b3, 0
 obj_px:      .res 1                       ; loop index across umul8
 obj_pcy:     .res 8                       ; the four rims' cy, s16
@@ -595,29 +595,42 @@ obj_ycp:
                                         ;  cycles; the routine survives as
                                         ;  the harness entry)
    ZERO obj_fused                          ; leading run: plain draws
-; Start at this object's template.  Bit 7 of the aspect byte IS the
-; selector: barrels get the dodecagonal prism, everything else the plain
-; outline rectangle it had before the prism existed -- a floor lamp drawn
-; as a squat eight-sided drum reads as a barrel, not a lamp.
-; LOD (2026-08-27): a distant barrel (lid half-width a < OBJ_LOD_A px)
-; swaps to the flat-top HEX lid — same bbox, same silhouette touch at
-; +-a, top edge at the same authority height; the packer's LSQ says the
-; best-fit top half-width is 9a/16. The two cx-+w values land in the
-; DEAD Y slots 6/7, which the stamp walker addresses as x indices 12/13
-; (obj_X and obj_Y are adjacent by the obj_hex contract).
-; ONE BIT TEST DECODES THE TEMPLATE: b7 = not-a-barrel, b6 = pillar.  Flat
-; has no pillar art (LAY_N_OBJ_ART stops at 38 -- its art home is 152 bytes
-; and there is no hole to re-home it into), so there b7 alone sends both
-; rect and pillar to the rectangle, in the same five bytes this always took.
+; Start at this object's template.  ONE BIT TEST DECODES THE ASPECT BYTE:
+; b7 = not-a-barrel, b6 = pillar; bits 0-5 are k, so the dispatch is the
+; same five bytes it has always been.
+; OCT IS RETIRED (2026-08-31): the barrel draws the flat-top HEX at every
+; range.  The floor lamp's exact L1 (doc/billboard) needs 88 B of OBJ_ART
+; and obj_e is a byte, so the whole table caps at 256: HEX 52 + LAMP 88 +
+; PILLAR 96 = 236 is the only cut that fits, and the corpus never gets a
+; barrel close enough to select OCT anyway (a >= OBJ_LOD_A was ~64 units).
+; Flat carries no pillar template (LAY_N_OBJ_ART stops at 35 -- its art
+; home is 152 bytes, and HEX + LAMP = 140 fills it), so there b7 alone
+; sends the pillar down the LAMP path: a tall thin lamp reads as a column,
+; far closer than the barrel drum ever was.
    BIT obj_asp
 .if ::BANKED
    BVS obj_sel_pillar
+   BPL obj_sel_hex
+; THE FLOOR LAMP (thing 2028, and the candelabras that borrow it).  Three
+; coaxial bands, ALL showing their rims, radii off the dodecagon ladder --
+; so it builds its own x table too: 10 x + 13 y slots via obj_lamp_xy.
+   JSR obj_lamp_xy
+   LDA #OBJ_ART_LAMP
+   BNE obj_art_set                         ; (always)
+obj_sel_pillar:
+; THE TECHNO PILLAR.  Four drawn rims, each with its own ellipse depth, so
+; it needs its own 18-slot y ladder before the stamp can play the template.
+; obj_X is the barrel's {a, a2, a3} untouched: the shaft's rims are covered
+; top and bottom, so it contributes only its two sides, and those sit at
+; a2*19 -- already a vertex.  BANK C IS ALREADY PAGED here (the prologue
+; does it for OBJ_ART), which the ladder builders' tables rely on.
+   JSR obj_pillar_y
+   LDA #OBJ_ART_PILLAR
+   BNE obj_art_set                         ; (always)
 .endif
-   BMI obj_art_rect
-   LDA obj_a
-   CMP #OBJ_LOD_A
-   BCS obj_art_oct
-   LSR A                                   ; w = 9a/16 = a>>1 + a>>4
+obj_sel_hex:
+   LDA obj_a                               ; w = 9a/16 = a>>1 + a>>4
+   LSR A
    STA obj_t
    LSR A
    LSR A
@@ -639,25 +652,7 @@ obj_ycp:
    LDA obj_cx_h
    ADC #0
    STA obj_Y+15
-   LDA #OBJ_ART_HEX
-   BNE obj_art_set                         ; (always)
-obj_art_rect:
-   LDA #OBJ_ART_RECT
-   BNE obj_art_set                         ; (always)
-.if ::BANKED
-obj_sel_pillar:
-; THE TECHNO PILLAR.  Four drawn rims, each with its own ellipse depth, so it
-; needs its own 18-slot y ladder before the stamp can play the template.
-; obj_X is the barrel's {a, a2, a3} untouched: the shaft's rims are covered
-; top and bottom, so it contributes only its two sides, and those sit at
-; a2*19 -- already a vertex.  BANK C IS ALREADY PAGED here (the prologue
-; does it for OBJ_ART), which obj_pillar_y's tables rely on.
-   JSR obj_pillar_y
-   LDA #OBJ_ART_PILLAR
-   BNE obj_art_set                         ; (always)
-.endif
-obj_art_oct:
-   LDA #OBJ_ART_OCT
+   LDA #OBJ_ART_HEX                        ; = 0: falls into the set
 obj_art_set:
    STA obj_e
    JSR obj_probe                           ; can this billboard skip the
@@ -932,6 +927,24 @@ SEG_BANKC
 ; They are read under the same PAGE BANK_C the object prologue already does
 ; for OBJ_ART, so this costs no extra paging.
 obj_pM:   .byte 87, 82, 36, 41            ; |z - 41| per rim, at D = 256
+.if ::BANKED
+; THE FLOOR LAMP'S LADDERS -- doc/billboard's lamp L1, VERBATIM (three
+; bands r 11.5 z 0-5 / r 7.5 z 5-14 / r 5.5 z 14-48, design D = 256,
+; eye = 41).  x is 5 magnitudes; y is 13 values, expressed as 256ths of
+; the projected height below syt.  y_0 = syt and y_12 = syb exactly, so
+; the extent invariant holds by construction.
+obj_lgx:  .byte 167, 166, 122, 109        ; x magnitudes /256 of a (the
+                                          ; 5th is a itself)
+obj_lpo:  .byte 10, 44, 42, 40, 38        ; +side byte offset per magnitude:
+                                          ; +-a keep obj_X+0/+10 (obj_probe
+                                          ; hardwires those as the
+                                          ; silhouette edges); the inner
+                                          ; +side values spill to
+                                          ; obj_Y[13..16]
+obj_lgy:  .byte 174, 176, 177, 178, 180   ; y_1..y_11 /256 of H below syt
+          .byte 218, 221, 224, 226, 229
+          .byte 252
+.endif
 opy_frac: .byte 10, 0, 246, 0             ; 5.17/128 and 123.1/128, in 256ths
 obj_pytab:
    .byte $00, $01, $02                     ; A - b, - b2, - b3
@@ -944,6 +957,104 @@ SEG_CODE                                   ; RESTORE: the routine itself
                                            ; stays in CODE -- flat CLIPF
                                            ; grows into ROM_BKTLO_C at
                                            ; \$7080 if it moves there
+; ============================================================================
+; obj_lamp_xy -- the floor lamp's 10-x / 13-y ladder.
+; ============================================================================
+; IN SEG_BANKC: this is the clipper's own bank -- the dispatch JSRs here
+; under the prologue's PAGE BANK_C, and umul8 lives at $14B9 in the
+; always-mapped bottom.  Being out of the object builder's fall-through
+; path comes free.
+; BANKED ONLY (Eben, 2026-08-31: "ignore flat").  Flat has no room for it
+; anywhere: CODE is 107 B over with it there, and flat's SEG_BANKC is
+; CLIPF, whose true wall is ROM_DBOUND_C at $7000 -- 153 B free, and this
+; is ~160.  So flat draws EVERY object as the hex barrel until the
+; tube-parasite re-cut (task #20) frees space.
+;
+; Unlike the barrel and the pillar, the lamp shows all three of its bands'
+; rims, and its radii are off the dodecagon vertex ladder, so its occlusion
+; cuts land on values the {a, a2, a3} triple cannot express: 5 x magnitudes
+; where they need 3, and the whole x table is rebuilt here.  Everything is
+; linear in a / H -- the shape is RIGID, per the pillar's lesson above.
+.if ::BANKED
+SEG_BANKC
+obj_lamp_xy:
+   LDA obj_a
+   STA obj_pb                              ; the 5th magnitude is a itself
+   STA zp_mul_b                            ; umul8 only READS this, so it
+   LDX #3                                  ; survives all four calls
+olx_m:
+   STX obj_px                              ; umul8 eats X
+   LDA obj_lgx,X
+   JSR umul8                               ; a * frac
+   LDX obj_px
+   LDA zp_prod_l                           ; C = 1 iff the dropped low byte
+   CMP #128                                ;     rounds up
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pb+1,X
+   DEX
+   BPL olx_m
+; the 5 mirror pairs: -side ascends obj_X[0..4], +side per obj_lpo
+   LDX #4
+olx_s:
+   TXA
+   ASL A
+   TAY
+   SEC
+   LDA obj_cx_l
+   SBC obj_pb,X
+   STA obj_X+0,Y
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+1,Y
+   LDY obj_lpo,X
+   CLC
+   LDA obj_cx_l
+   ADC obj_pb,X
+   STA obj_X+0,Y
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+1,Y
+   DEX
+   BPL olx_s
+; y_1..y_11 = syt + (H * frac + 128 >> 8); y_0/y_12 = syt/syb EXACTLY
+   LDA obj_h
+   STA zp_mul_b
+   LDX #10
+oly_m:
+   STX obj_px
+   LDA obj_lgy,X
+   JSR umul8
+   LDX obj_px
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pu                              ; (pillar scratch, free here)
+   TXA
+   ASL A
+   TAY
+   CLC
+   LDA obj_yt_l
+   ADC obj_pu
+   STA obj_Y+2,Y                           ; slot X+1
+   LDA obj_yt_h
+   ADC #0
+   STA obj_Y+3,Y
+   DEX
+   BPL oly_m
+   LDA obj_yt_l
+   STA obj_Y+0
+   LDA obj_yt_h
+   STA obj_Y+1
+   LDA obj_yb_l                            ; the drawn figure spans exactly
+   STA obj_Y+24                            ; the projected height -- the
+   LDA obj_yb_h                            ; extent invariant
+   STA obj_Y+25
+   RTS
+SEG_CODE
+.endif
+
 obj_pillar_y:
 ; A STATIC BILLBOARD: b MUST be linear in a, or the shape morphs with
 ; distance.  b = a*|z - eye|/D, and holding D at the DESIGN distance of 256

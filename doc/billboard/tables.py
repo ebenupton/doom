@@ -1,6 +1,7 @@
 """Emit each object's 3D bands and its 2D template as ladder indices."""
+import os; _D=os.path.dirname(os.path.abspath(__file__))+'/'
 import math
-exec(open('/private/tmp/claude-501/-Users-ebenupton-doom/8cb45dec-e81d-4776-b295-d7274ede90ff/scratchpad/armcheck.py').read())
+exec(open(_D+'armcheck.py').read())
 A3v = 2-math.sqrt(3)
 
 def tables(name, lod, D=256.0, ze=EYE):
