@@ -1707,9 +1707,19 @@ def _obj_kind(r, h, art=_ART_RECT, k=None):
 # cylinder, 31% taller than the barrel anyone actually sees, and drawing at
 # 42 made it 31% oversized in BOTH axes (k scales the width off H).  32 with
 # k=23 reproduces the sprite's box exactly: 64*11.5/32 = 23.
-_OBJ_KINDS = {35:   _obj_kind(16, 60),                      # Candelabra
+# THE CANDELABRA BORROWS THE FLOOR LAMP.  It gets no art of its own: as a
+# stack of cylinders it came out the most expensive of the four billboards
+# (38 lines, NINE distinct |x| magnitudes = 18 obj_X slots against the six
+# the engine has) for two instances in the whole map, and its silhouette has
+# no cylinder rim at the top -- those are candle tips -- so it also defeats
+# the viewpoint fit.  A floor lamp is the same family of object at the same
+# sort of size and reads correctly.  Run the same test on any comparable
+# one-off in a future level before spending a template on it: count the
+# instances and the |x| magnitudes first.  (doc/billboard, 2026-08-31.)
+_LAMP = _obj_kind(16, 48)
+_OBJ_KINDS = {35:   _LAMP,                                  # Candelabra -> lamp
               48:   _obj_kind(16, 128),                     # Tall techno pillar
-              2028: _obj_kind(16, 48),                      # Floor lamp
+              2028: _LAMP,                                  # Floor lamp
               2035: _obj_kind(10, 32, _ART_OCT, 23)}        # Barrel (BAR1A0 23x32)
 fp_objects = []
 for _th in things:
