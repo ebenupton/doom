@@ -93,6 +93,16 @@ POBJ = {
 def box_lines(o, ze, D, K2, lod):
     p = Prism(o['h'], o['d'], ze, D, K2, xpersp=True)
     w, h = o['w'], o['h']
+    if lod == 1:
+        # L1 (Eben, 2026-08-31): just the rectangle with the lid line.
+        # The trapezoid's diagonals are sub-pixel at L1 sizes; the lid
+        # line keeps the box reading as a box.  5 lines, 1 armed.
+        a, yl = p.a(w), 2.0*p.b(h)              # the lid's front rim
+        return [((-a, 0.0), (a, 0.0), 'a'),     # top edge -- ARMED
+                ((-a, yl),  (a, yl),  'r'),     # the lid line
+                ((-a, 0.0), (-a, p.H), 'b'),
+                (( a, 0.0), ( a, p.H), 'b'),
+                ((-a, p.H), (a, p.H), 'b')]
     L = [(p.B(-w, h), p.B(w, h), 'a'),          # rear top edge -- ARMED
          (p.F(-w, h), p.B(-w, h), 'a'),         # top-face diagonals: the
          (p.F( w, h), p.B( w, h), 'a'),         #   topmost line outboard of

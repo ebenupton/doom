@@ -251,8 +251,9 @@ HTML=f'''<title>Billboard art — overlays and bare geometry</title>
   the object is real.</p>
   <div class="callout">
     <p><b>Engine cost, for when these land:</b> the boxes are the cheapest
-    templates yet at distance — L1 is <b>7 lines, 3 armed, 3 x slots</b>;
-    the cross outline is an L0 luxury (19 lines with it).  The helmet
+    templates yet at distance — L1 is <b>the rectangle with its lid line:
+    5 lines, 1 armed, 1 x slot</b>; the trapezoid and the cross outline
+    are L0 luxuries (19 lines with them).  The helmet
     is 8 lines at its single tier, the potion 9 at L1, the vest 15.
     <code>OBJ_ART</code> is full at 236 of 256 bytes, so nothing here fits
     until <code>obj_e</code> widens or another template retires.  Not
