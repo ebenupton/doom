@@ -57,7 +57,6 @@ obj_b:       .res 1
 obj_b2:      .res 1
 obj_b3:      .res 1
 obj_dy:      .res 1
-obj_e:       .res 1
 obj_ctr_l:   .res 1
 obj_ctr_h:   .res 1
 obj_hcnt:    .res 1
@@ -67,7 +66,6 @@ obj_n:       .res 1
 obj_left:    .res 1
 obj_k:       .res 1
 obj_best:    .res 1
-obj_ss:      .res 1
 obj_fast:    .res 1                    ; 1 = every art line provably inside the aperture,
 obj_asp:     .res 1                     ; live object aspect byte (bit 7 = art, 0-6 = k)
 obj_sd_l:    .res 3                    ; [OBJ_MAXSLOT] staging triples

@@ -162,7 +162,7 @@
 .globalzp fwl_rendv
 .globalzp fwl_zx0
 .globalzp fwl_zx1
-.globalzp fwl_leftf
+.global fwl_leftf
 .globalzp zp_node_ch_l
 .globalzp zp_pm_p
 .globalzp zp_hg_ihi
@@ -199,7 +199,7 @@
 .globalzp zp_cr_vy_l
 .globalzp zp_cr_vy_h
 .globalzp bca_pxs
-.globalzp fw_pol
+.global fw_pol
 .globalzp zp_br_pxraw_l
 .globalzp zp_br_pxraw_h
 .globalzp zp_br_pyraw_l
@@ -286,6 +286,9 @@
 .globalzp LC_DY_HI
 .globalzp LC_OFF_LO
 .globalzp LC_OFF_HI
+
+.globalzp obj_e
+.globalzp obj_ss
 
 .ifdef ZP_OWNER
 .segment "ZEROPAGE"
@@ -384,7 +387,8 @@ LC_REM_HI:                  .res 1 ; [clip]
 fwl_rendv:                  .res 1 ; [clip]; $80 = open end
 fwl_zx0:                    .res 1 ; [clip]; current overlap
 fwl_zx1:                    .res 1 ; [clip]
-fwl_leftf:                  .res 1 ; [clip]; left-flat frontier
+obj_ss:                     .res 1 ; ROTATED IN (zprotate): 27.4
+                                   ; accesses/frame vs fwl_leftf's 2.3
 zp_node_ch_l:               .res 1 ; [bsp]; current child (lo, hi: 16-bit id)
 zp_pm_p:                    .res 1 ; [bsp]; pmove: collision list pointer ; w=2
                                   ; SURVIVES DRAWS (the old $79 home was
@@ -466,7 +470,8 @@ zp_cr_vy_l:                 .res 1 ; [bsp]; clipped total vy (s16 counts)
 zp_cr_vy_h:                 .res 1 ; [bsp]
 bca_pxs:                    .res 1 ; [ang]; px sign-extended (s16) ; w=2
    .res 1                               ; FREE $8E-$8E
-fw_pol:                     .res 1 ; [clip]; flat polarity
+obj_e:                      .res 1 ; ROTATED IN (zprotate): 32.2
+                                   ; accesses/frame vs fw_pol's 0.6
 zp_br_pxraw_l:              .res 1 ; [bsp]; s16 player x relative to map_center (raw)
 zp_br_pxraw_h:              .res 1 ; [bsp]
 zp_br_pyraw_l:              .res 1 ; [bsp]
@@ -602,6 +607,19 @@ zp_div_h = zp_prod_h ; [bsp+clip]
 ; restore brought the vectors back, and pyref caught it); $9F/$A0 left
 ; for the visibility hooks.
 ; ============================================================================
+
+; --- ROTATED OUT to absolute by tools/zprotate (2026-08-31) ---------------
+; Cold occupants: fw_pol 0.6 accesses/frame, fwl_leftf 2.3.  They pay a
+; cycle and a byte per access now; their zero-page bytes hold obj_e (32.2)
+; and obj_ss (27.4).  Declared after every ZEROPAGE reservation so no zp
+; address shifts, and PUSH/POP the segment -- leaving it set to WORK sends
+; everything the including unit emits next into the wrong segment.
+.pushseg
+.segment "WORK"
+fw_pol:      .res 1
+fwl_leftf:   .res 1
+.popseg
+
 .endif                            ; ZP_OWNER
 
 
