@@ -152,19 +152,19 @@ class BspRender6502:
         # ss-sorted.
         _n62 = layout['n_obj']
         _keep = [i for i in range(_n62)
-                 if rom_main[off_obj + 4 * _n62 + i] <= 1][:16]
-        assert len(_keep) == 16, f'flat expected 16 legacy objects, got {len(_keep)}'
+                 if rom_main[off_obj + 4 * _n62 + i] <= 1][:14]
+        assert len(_keep) == 14, f'flat expected 14 legacy objects, got {len(_keep)}'
         for _pl in range(7):
             for _j, _i in enumerate(_keep):
-                mem[_ob + _pl * 16 + _j] = rom_main[off_obj + _pl * _n62 + _i]
+                mem[_ob + _pl * 14 + _j] = rom_main[off_obj + _pl * _n62 + _i]
         for _j in range(layout['obj_bits_len']):
-            mem[_ob + 7 * 16 + _j] = 0
+            mem[_ob + 7 * 14 + _j] = 0
         for _j in range(layout['obj_bits_len']):
-            mem[_ob + 8 * 16 + _j] = 0xFF        # RUN8, subset-rebuilt
+            mem[_ob + 8 * 14 + _j] = 0xFF        # RUN8, subset-rebuilt
         for _j, _i in enumerate(_keep):
             _ss = rom_main[off_obj + 3 * _n62 + _i]
-            mem[_ob + 7 * 16 + (_ss >> 3)] |= 1 << (_ss & 7)
-            _oct = _ob + 8 * 16 + (_ss >> 3)
+            mem[_ob + 7 * 14 + (_ss >> 3)] |= 1 << (_ss & 7)
+            _oct = _ob + 8 * 14 + (_ss >> 3)
             if mem[_oct] == 0xFF:
                 mem[_oct] = _j
         _oa = _sym2('OBJ_ART')
@@ -187,7 +187,7 @@ class BspRender6502:
         _anyb = _sym2('OBJ_ANYB')
         # flat OBJ_ANYB mirrors the GATHERED bitmap at ROM_OBJ_C + 7*16
         for i in range(layout['obj_bits_len']):
-            mem[_anyb + i] = mem[_ob + 7 * 16 + i]
+            mem[_anyb + i] = mem[_ob + 7 * 14 + i]
 
         for i, b in enumerate(bbox):
             mem[ROM_BBOX_BASE + i] = b

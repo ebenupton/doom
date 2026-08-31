@@ -1714,11 +1714,10 @@ def _obj_kind(r, h, kind):
 # sprite box, not its 42-unit collision cylinder).  Radii are the DRAWN
 # rmax from doc/billboard, not collision radii: lamp 11.5 not 16, pillar
 # 19 not 16, stim/medikit/potion/helmet/vest off their sprites.
-# THE CANDELABRA BORROWS THE FLOOR LAMP (2 instances, 9 |x| magnitudes of
-# its own -- not worth a template; doc/billboard 2026-08-31).
+# THE CANDELABRA IS GONE (Eben, 2026-08-31): it borrowed the floor lamp
+# for a while, but thing 35 now packs nothing at all.
 _LAMP = _obj_kind(11.5, 48, K_LAMP)
-_OBJ_KINDS = {35:   _LAMP,                          # Candelabra -> lamp
-              2011: _obj_kind(7, 15, K_BOXS),       # Stimpack
+_OBJ_KINDS = {2011: _obj_kind(7, 15, K_BOXS),       # Stimpack
               2012: _obj_kind(14, 19, K_BOXM),      # Medikit
               2014: _obj_kind(7, 18, K_POTION),     # Health potion
               2015: _obj_kind(8, 15, K_HELMET),     # Armour bonus (helmet)

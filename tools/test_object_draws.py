@@ -22,8 +22,10 @@ from symmap import sym
 
 # Counted per template start, named by the KIND byte.  The pickup landing
 # (2026-08-31) put 44 more billboards in the map; EXPECT is the measured
-# corpus census at the landing commit -- any drop is a lost draw.
-EXPECT = {'HEX': 9, 'LAMP': 11,
+# corpus census -- any drop is a lost draw.  LAMP fell 11 -> 8 when the
+# candelabras were removed outright (they had borrowed the template and
+# accounted for three of the corpus's stamps).
+EXPECT = {'HEX': 9, 'LAMP': 8,
           'POTION': 9, 'HELMET': 23, 'BOXS': 1, 'BOXM': 2, 'VEST': 1}
 
 def main():
