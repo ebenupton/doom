@@ -1697,57 +1697,49 @@ print(f"PRESCALE={PRESCALE} (set DOOM_PRESCALE env var to override; 8 or 16)")
 # `k` is the width ratio, 64ths: half_width_screen = H * k / 64, where H is
 # the object's projected screen height.  Both scale by the same 1/depth, so
 # k = 64 * radius / height is exact -- no projection of the radius needed.
-# The barrel overrides to 23, the value matched against the DOOM sprite
-# (whose art is wider than its 10-unit collision radius).
-# THE ASPECT BYTE: bits 0-5 = k (the width ratio in 64ths; the widest object
-# here is the barrel at 23), bits 6-7 = template, ENCODED SO ONE `BIT` STILL
-# DECODES IT: b7 = "not a barrel", b6 = "pillar".  The obvious two-bit field
-# at b5-6 needs LDA/AND/CMP and cost the flat build eight bytes of CODE it
-# does not have.  This way the flat dispatch is the same five bytes it was.
-_ART_HEX, _ART_LAMP, _ART_PILLAR = 0x00, 0x80, 0xC0
-def _obj_kind(r, h, art=_ART_LAMP, k=None):
-    kk = k if k is not None else max(1, round(64 * r / h))
-    assert kk <= 63, f'k={kk} does not fit the aspect byte\'s six bits'
-    return (r, h, art, kk)
-# NB `h` is the height the billboard is DRAWN at, which for the barrel is
-# NOT its mobjinfo height.  BAR1A0 is a 23x32 sprite; 42 is the collision
-# cylinder, 31% taller than the barrel anyone actually sees, and drawing at
-# 42 made it 31% oversized in BOTH axes (k scales the width off H).  32 with
-# k=23 reproduces the sprite's box exactly: 64*11.5/32 = 23.
-# THE CANDELABRA BORROWS THE FLOOR LAMP.  It gets no art of its own: as a
-# stack of cylinders it came out the most expensive of the four billboards
-# (38 lines, NINE distinct |x| magnitudes = 18 obj_X slots against the six
-# the engine has) for two instances in the whole map, and its silhouette has
-# no cylinder rim at the top -- those are candle tips -- so it also defeats
-# the viewpoint fit.  A floor lamp is the same family of object at the same
-# sort of size and reads correctly.  Run the same test on any comparable
-# one-off in a future level before spending a template on it: count the
-# instances and the |x| magnitudes first.  (doc/billboard, 2026-08-31.)
-# r = 11.5, the memo's rmax (the base disc), NOT the 16-unit collision
-# cylinder: the billboard is what you SEE.  k = 64*11.5/48 = 15.
-_LAMP = _obj_kind(11.5, 48)
-_OBJ_KINDS = {35:   _LAMP,                                  # Candelabra -> lamp
-              # r = 19, not the 16 of the collision cylinder: ELECA0 is 38 px
-              # wide over 128 tall and the billboard is what you SEE.  k = 10.
-              48:   _obj_kind(19, 128, _ART_PILLAR),        # Tall techno pillar
-              2028: _LAMP,                                  # Floor lamp
-              2035: _obj_kind(10, 32, _ART_HEX, 23)}        # Barrel (BAR1A0 23x32)
+# THE ASPECT BYTE IS A KIND INDEX (2026-08-31, the pickup landing): eight
+# billboard kinds, and k -- the width ratio in 64ths -- became a PER-KIND
+# CONSTANT the moment every kind had exactly one geometry, so it moved to
+# the engine's obj_ktab and the byte no longer packs bits.  Engine mirror:
+# obj_ktab in objects.s; the two MUST match (test_pickup_ladders gates it).
+K_HEX, K_LAMP, K_PILLAR, K_POTION, K_HELMET, K_BOXS, K_BOXM, K_VEST = range(8)
+_KTAB = [23, 15, 10, 25, 34, 30, 47, 58]
+def _obj_kind(r, h, kind):
+    kk = round(64 * r / h)
+    assert kk == _KTAB[kind], f'kind {kind}: k={kk} != obj_ktab {_KTAB[kind]}'
+    return (r, h, kind)
+# NB `h` is the height the billboard is DRAWN at (the barrel's 32 is its
+# sprite box, not its 42-unit collision cylinder).  Radii are the DRAWN
+# rmax from doc/billboard, not collision radii: lamp 11.5 not 16, pillar
+# 19 not 16, stim/medikit/potion/helmet/vest off their sprites.
+# THE CANDELABRA BORROWS THE FLOOR LAMP (2 instances, 9 |x| magnitudes of
+# its own -- not worth a template; doc/billboard 2026-08-31).
+_LAMP = _obj_kind(11.5, 48, K_LAMP)
+_OBJ_KINDS = {35:   _LAMP,                          # Candelabra -> lamp
+              48:   _obj_kind(19, 128, K_PILLAR),   # Tall techno pillar
+              2011: _obj_kind(7, 15, K_BOXS),       # Stimpack
+              2012: _obj_kind(14, 19, K_BOXM),      # Medikit
+              2014: _obj_kind(7, 18, K_POTION),     # Health potion
+              2015: _obj_kind(8, 15, K_HELMET),     # Armour bonus (helmet)
+              2018: _obj_kind(15.5, 17, K_VEST),    # Green armour
+              2019: _obj_kind(15.5, 17, K_VEST),    # Blue armour (same art)
+              2028: _LAMP,                          # Floor lamp
+              2035: _obj_kind(11.5, 32, K_HEX)}     # Barrel (BAR1A0 23x32)
 fp_objects = []
 for _th in things:
     _tx, _ty_, _ta, _tt, _tfl = _th
     if _tt not in _OBJ_KINDS or (_tfl & 0x10):   # skip multiplayer-only
         continue
-    _r, _h, _art, _k = _OBJ_KINDS[_tt]
+    _r, _h, _kind = _OBJ_KINDS[_tt]
     _fz = player_floor(_tx, _ty_)
     fp_objects.append(dict(
         ss=find_subsector(_tx, _ty_),
         x=_prescale_round(_tx - MAP_CENTER_X, PRESCALE),
         y=_prescale_round(_ty_ - MAP_CENTER_Y, PRESCALE),
-        # ONE byte carries both: bit 7 = art template, bits 0-6 = the width
-        # ratio k.  This is the plane that used to hold the radius in
-        # counts, which the draw stopped reading when the billboard became
-        # a scaled stamp -- the width now falls out of H and k.
-        asp=_art | _k,
+        # The KIND INDEX, whole byte.  This is the plane that used to
+        # hold the radius in counts, then the art|k pack; k is per-kind
+        # now (obj_ktab), so the byte is just the kind.
+        asp=_kind,
         zb=_prescale_height(_fz),
         zt=_prescale_height(_fz + _h)))
 fp_objects.sort(key=lambda o: o['ss'])           # 6502 scans a run per ss

@@ -185,6 +185,8 @@ class BankedRef:
         self.r = BankedBspRender(dw.packed_layout, dw.packed_rom_main,
                                  dw.packed_rom_detail, dw.packed_bbox_table,
                                  dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+        from banked_bsp import limit_objects_legacy
+        limit_objects_legacy(self.r)     # the tube runs the FLAT 18-object subset
         self.m = self.r.sc.mpu.memory
         self.m[0x70] = 0x58
         self.entries = [symmap.sym('anim_tick', banked=1),

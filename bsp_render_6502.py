@@ -143,9 +143,24 @@ class BspRender6502:
         # colmap's USEVEC owns $B800 -- so flat art lives at $E830).
         from symmap import sym as _sym2
         _ob = _sym2('ROM_OBJ_C')
-        off_art = layout['off_obj_art']
-        for i in range(off_obj, off_art):            # planes + bitmap
-            mem[_ob + (i - off_obj)] = rom_main[i]
+        off_art = layout['off_obj_art']              # at the rom_main TAIL
+        # FLAT KEEPS THE ORIGINAL 18 OBJECTS (2026-08-31): the pickup
+        # landing took the pack to 62, whose planes are 459 B, and the old
+        # $B700 run is 256 -- no honest flat hole exists.  GATHER the
+        # kind<=2 subset (barrel/lamp/pillar) into an 18-wide SoA with a
+        # rebuilt bitmap; a subset of the ss-sorted pack stays ss-sorted.
+        _n62 = layout['n_obj']
+        _keep = [i for i in range(_n62)
+                 if rom_main[off_obj + 4 * _n62 + i] <= 2][:18]
+        assert len(_keep) == 18, f'flat expected 18 legacy objects, got {len(_keep)}'
+        for _pl in range(7):
+            for _j, _i in enumerate(_keep):
+                mem[_ob + _pl * 18 + _j] = rom_main[off_obj + _pl * _n62 + _i]
+        for _j in range(layout['obj_bits_len']):
+            mem[_ob + 7 * 18 + _j] = 0
+        for _i in _keep:
+            _ss = rom_main[off_obj + 3 * _n62 + _i]
+            mem[_ob + 7 * 18 + (_ss >> 3)] |= 1 << (_ss & 7)
         _oa = _sym2('OBJ_ART')
         _na = 4 * layout['n_obj_art']                # EXACT length: the flat
         for i in range(off_art, off_art + _na):      # home abuts colmap's
@@ -164,9 +179,9 @@ class BspRender6502:
         # (hardware fills it from anim_init; harness renders may never run
         # that, so poke it here — the sqr_fill dual-path pattern)
         _anyb = _sym2('OBJ_ANYB')
-        _bits = off_obj + 7 * 18            # OBJ_BITS = ROM_OBJ_C + 7*N_OBJ
+        # flat OBJ_ANYB mirrors the GATHERED bitmap at ROM_OBJ_C + 7*18
         for i in range(layout['obj_bits_len']):
-            mem[_anyb + i] = rom_main[_bits + i]
+            mem[_anyb + i] = mem[_ob + 7 * 18 + i]
 
         for i, b in enumerate(bbox):
             mem[ROM_BBOX_BASE + i] = b

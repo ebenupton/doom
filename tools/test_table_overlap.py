@@ -115,7 +115,8 @@ def tables(flat):
                 pass
         obj_a = symmap.sym('ROM_OBJ_C', banked=0, c02=1)
         art_a = symmap.sym('OBJ_ART', banked=0, c02=1)
-        out.append(('wad:obj_planes', obj_a, L['off_obj_art'] - L['off_obj']))
+        # FLAT gathers the 18-object legacy subset (see bsp_render_6502)
+        out.append(('wad:obj_planes', obj_a, 7 * 18 + L['obj_bits_len']))
         # PER BUILD.  The loader copies LAY_N_OBJ_ART entries, and flat stops
         # at 35 -- its art home is exactly 152 bytes, with SS_VZ_BASE below
         # and pmf_mul24s above, so it never receives the pillar block.

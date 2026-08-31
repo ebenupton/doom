@@ -377,6 +377,17 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     OBJ_N_PLANES = 7                       # OX OY PG SS RC ZT ZB
     off_obj_bits = off_obj + OBJ_N_PLANES * n_obj
     obj_bits_len = (n_ss + 7) // 8
+    # THE HOLE HOLDS PLANES + BITMAP ONLY (2026-08-31, the pickup landing):
+    # 62 objects x 7 planes + the bitmap = 459 of 512.  The art templates
+    # moved to their own region at the rom_main TAIL -- they outgrew the
+    # hole (three 256-byte windows, see below), and they never belonged in
+    # it: both loaders copy them to a bank C home anyway.
+    assert OBJ_N_PLANES * n_obj + obj_bits_len <= 0x200, \
+        f'obj planes+bitmap {OBJ_N_PLANES*n_obj + obj_bits_len} > the 512 hole'
+    import collections as _cl
+    _sscount = _cl.Counter(_o['ss'] for _o in fp_objects)
+    assert not _sscount or max(_sscount.values()) <= 6, \
+        f'a subsector holds {max(_sscount.values())} objects; OBJ_MAXSLOT is 6'
     # ---- billboard ART template ------------------------------------------
     # A billboard is a 2D SCALED stamp: the engine derives a base point and
     # ONE scale factor, then plays this table.  Nothing here is projected.
@@ -565,6 +576,13 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_lamp == 52, \
         f'OBJ_ART_LAMP drifted: {off_art_lamp} (layout.inc says 52)'
+    # WINDOW A ends here (HEX + LAMP = 140 B): pad to 256.  The template
+    # walker's four reads are abs,X off a window base whose HIGH BYTE is
+    # the per-object SMC patch -- offsets stay bytes, and a window must
+    # never exceed 256 B (start+3+off <= 255 holds because the deepest
+    # window is 252 used).  Window A is byte-identical to the whole art
+    # table the flat build has always copied, so flat is untouched.
+    obj_art += [0xFF] * (256 - len(obj_art))
 
     # -- techno pillar, thing 48 (2026-08-31) -----------------------------
     # A STACK OF COAXIAL CYLINDERS, not a drum: plinth r=19 z 0..4.90, shaft
@@ -609,23 +627,107 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _ln2(1,  1, 4,  1)
     obj_art += _ln2(4,  1, 5,  2)
     obj_art += _CTL(OBJ_ART_END)
-    # OBJ_E IS A BYTE.  The stamp walker indexes OBJ_ART with an 8-bit X, so
-    # the WHOLE table must stay under 256 bytes -- the 30-line L0 template
-    # ran 152..280 and its tail was simply unreachable, which showed up as
-    # the pillars stamping OCT.  This is the 22-line LOD tier, 140..236.
-    # THAT WALL is what retired OCT: HEX 52 + LAMP 88 + PILLAR 96 = 236 and
-    # there is no room for OCT's 76 on top.  Widening obj_e to a pointer buys
-    # the space back, at (zp),Y in the stamp walker's four reads per line.
-    assert len(obj_art) <= 256, f'OBJ_ART is {len(obj_art)} B; obj_e is a byte'
-    assert off_art_pillar == 140, \
-        f'OBJ_ART_PILLAR drifted: {off_art_pillar} (layout.inc says 140)'
-    # FLAT stops after the lamp: its art home is 152 B (SS_VZ_BASE below,
-    # pmf_mul24s above) and there is no hole to re-home it into, so HEX+LAMP
-    # = 140 is all it carries and its pillars are drawn as lamps.
-    assert off_art_pillar <= 152, 'FLAT art home is 152 B; HEX+LAMP must fit'
 
-    off_obj_art = off_obj_bits + obj_bits_len
-    n_obj_art = len(obj_art) // 4
+    # -- THE PICKUP TEMPLATES (2026-08-31) -- geometry doc/billboard's,
+    # ladder slots built by the obj_*_xy routines in objects.s.  Window B
+    # continues with the boxes and the potion; HELMET + VEST fill window C.
+    #
+    # BOX (stimpack AND medikit -- one template, two kinds: the lid
+    # fraction is the only difference and it lives in the LADDER, not
+    # here).  Eben's L1: the rectangle with its lid line, 5 lines.
+    #   x offs: 0 = cx-a, 10 = cx+a (the prologue's slots, probe-aligned)
+    #   y offs: 0 = syt, 2 = lid, 4 = syb
+    off_art_box = len(obj_art)
+    obj_art += [0, 2, 10, 2]                    # the lid line
+    obj_art += [0, 0, 0, 4]                     # left side
+    obj_art += [10, 0, 10, 4]                   # right side
+    obj_art += [0, 4, 10, 4]                    # bottom
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += [0, 0, 10, 0]                    # top edge: the authority
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_box == 352, f'OBJ_ART_BOX drifted: {off_art_box}'
+
+    # POTION: the circle with the (wide) stem, L1 -- 3-segment arcs, the
+    # upper arc armed ONLY where exposed (split at the stem feet).
+    #   x offs: 0=-a 2=-qa 4=-wn 6=+wn 8=+qa 10=+a
+    #   y offs: 0=syt 2=arc-mid/stem-foot 4=upper-end 6=lower-end 8=syb
+    off_art_potion = len(obj_art)
+    obj_art += [4, 2, 6, 2]                     # arc mid, under the stem
+    obj_art += [0, 6, 2, 8]                     # down arc
+    obj_art += [2, 8, 8, 8]
+    obj_art += [8, 8, 10, 6]
+    obj_art += [0, 4, 0, 6]                     # sides
+    obj_art += [10, 4, 10, 6]
+    obj_art += [4, 0, 4, 2]                     # stem sides
+    obj_art += [6, 0, 6, 2]
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += [0, 4, 2, 2]                     # exposed upper arc
+    obj_art += [2, 2, 4, 2]
+    obj_art += [6, 2, 8, 2]
+    obj_art += [8, 2, 10, 4]
+    obj_art += [4, 0, 6, 0]                     # stem top
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_potion == 380, f'OBJ_ART_POTION drifted: {off_art_potion}'
+    obj_art += [0xFF] * (512 - len(obj_art))    # window B done
+
+    # HELMET: the 2D outline with the notched base.
+    #   x offs: 0=-a 2=-x6 4=-x4 6=-x3 8=-x2 10=+a; + spill 38=+x2 40=+x3
+    #   42=+x4 44=+x6 (obj_Y[13..16], the lamp's spill convention)
+    #   y offs: 0=syt 2=dome(z13) 4=side-top(z10) 6=notch roof(z2) 8=syb
+    off_art_helmet = len(obj_art)
+    obj_art += [0, 8, 4, 8]                     # feet
+    obj_art += [8, 8, 38, 8]
+    obj_art += [42, 8, 10, 8]
+    obj_art += [4, 6, 4, 8]                     # notch walls
+    obj_art += [8, 6, 8, 8]
+    obj_art += [38, 6, 38, 8]
+    obj_art += [42, 6, 42, 8]
+    obj_art += [4, 6, 8, 6]                     # notch roofs
+    obj_art += [38, 6, 42, 6]
+    obj_art += [0, 4, 0, 8]                     # sides
+    obj_art += [10, 4, 10, 8]
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += [0, 4, 2, 2]                     # the dome: authority
+    obj_art += [2, 2, 6, 0]
+    obj_art += [6, 0, 40, 0]                    # flat top
+    obj_art += [40, 0, 44, 2]
+    obj_art += [44, 2, 10, 4]
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_helmet == 512, f'OBJ_ART_HELMET drifted: {off_art_helmet}'
+
+    # VEST: the extruded shell's L1.  Rear edges sit 2b above their front
+    # copies; rear shoulders + scoop rear are the authority.
+    #   x offs: 0=-a 2=-w 4=-s 6=+s 8=+w 10=+a
+    #   y offs: 0=syt(rear sh.) 2=front sh. 4=armpit 6=scoop-front
+    #           8=scoop-rear 10=syb
+    off_art_vest = len(obj_art)
+    obj_art += [2, 10, 8, 10]                   # bottom
+    obj_art += [0, 4, 2, 10]                    # waist slants
+    obj_art += [8, 10, 10, 4]
+    obj_art += [0, 0, 0, 4]                     # sides (to the rear top)
+    obj_art += [10, 0, 10, 4]
+    obj_art += [0, 2, 4, 2]                     # front shoulders
+    obj_art += [6, 2, 10, 2]
+    obj_art += [4, 2, 4, 6]                     # scoop sides, front
+    obj_art += [6, 2, 6, 6]
+    obj_art += [4, 0, 4, 8]                     # scoop rear stubs
+    obj_art += [6, 0, 6, 8]
+    obj_art += [4, 6, 6, 6]                     # scoop bottom, front
+    obj_art += _CTL(OBJ_ART_ARM)
+    obj_art += [0, 0, 4, 0]                     # rear shoulders: authority
+    obj_art += [6, 0, 10, 0]
+    obj_art += [4, 8, 6, 8]                     # scoop bottom, rear
+    obj_art += _CTL(OBJ_ART_END)
+    assert off_art_vest == 584, f'OBJ_ART_VEST drifted: {off_art_vest}'
+    assert len(obj_art) == 652, f'art blob is {len(obj_art)} B, expected 652'
+    # OBJ_E IS A BYTE -- but it is an offset WITHIN a 256-byte window now,
+    # and the walker's four abs,X reads get their window high byte SMC'd
+    # per object (oa_rd0..3 in objects.s).  Windows: A = HEX + LAMP
+    # (byte-identical to the old whole table, so flat needs nothing),
+    # B = PILLAR + BOX + POTION, C = HELMET + VEST.
+
+    n_obj_art = 35                          # FLAT's count: window A's real
+                                            # 140 B (hex + lamp), unchanged
     # LV1 BKT planes (2 x 128 B, s16 LE): the WHOLE K-residue term of the
     # banded backface, baked per record (2026-08-26 second cut — the
     # unpacked per-axis K planes lasted a day): BKT = -32*(cdy*kx - cdx*ky)
@@ -641,8 +743,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     off_bkthi = off_bktlo + 128             # the loaders copy the hole as
     off_dbound = off_bkthi + 128            # one piece and these planes
                                             # separately to their homes
-    assert off_obj_art + len(obj_art) <= off_bktlo, 'obj blob overran its hole'
-    rom_main_size = off_dbound + 128
+    off_obj_art = off_dbound + 128          # the art tail region
+    art_len = len(obj_art)
+    rom_main_size = off_obj_art + art_len
 
     rom_main = bytearray(rom_main_size)
 
@@ -651,12 +754,9 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         assert -512 <= _px < 512 and -512 <= _py < 512, \
             f"object {_i} {(_px, _py)} outside the page-decomposed range"
         assert 0 <= _o['ss'] < 256, "subsector id must fit u8"
-        # k <= 63 keeps H*k/64 inside a u8 for any H (max 251), so the
-        # engine's half-width needs no clamp.  k is bits 0-5 since the
-        # aspect byte grew a second template bit (b7 = not-a-barrel,
-        # b6 = pillar) -- masking 0x7F here read the pillar's b6 as part
-        # of k and tripped this assert at 74.
-        assert 0 < (_o['asp'] & 0x3F) < 64, "object width ratio must be 1..63"
+        # The aspect byte is a KIND INDEX now; k is per-kind, lives in
+        # the engine's obj_ktab, and doom_wireframe asserts the two agree.
+        assert 0 <= _o['asp'] <= 7, "aspect byte must be a kind index"
         for _pl, _v in enumerate((_px & 0xFF, _py & 0xFF,
                                   (((_px >> 8) + 2) & 3) | ((((_py >> 8) + 2) & 3) << 2),
                                   _o['ss'], _o['asp'],
@@ -1180,7 +1280,7 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
         'off_lv1': off_lv1, 'n_lv1': len(_lv1_ids),
         'off_obj': off_obj, 'n_obj': n_obj,
         'off_obj_bits': off_obj_bits, 'obj_bits_len': obj_bits_len,
-        'off_obj_art': off_obj_art, 'n_obj_art': n_obj_art,
+        'off_obj_art': off_obj_art, 'n_obj_art': n_obj_art, 'art_len': art_len,
         'off_bpal': off_bpal, 'n_bpal': len(_bpal_ids),
         'off_bktlo': off_bktlo, 'off_bkthi': off_bkthi,
         'off_dbound': off_dbound,

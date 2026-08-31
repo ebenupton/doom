@@ -161,11 +161,14 @@ def build_banked(flatr):
     # src/clip pages.  This home is Python-seeded, so ld65 cannot police it:
     # the asserts below and the matching pair in layout.inc are the guard.
     _art_off = layout['off_obj_art']
-    _art_n = 4 * layout['n_obj_art']
+    _art_n = layout['art_len']              # all three windows (652 B)
     _art_d = _csym('OBJ_ART', banked=1) - 0x8000
     assert _art_d == 0x1C00, f'OBJ_ART banked home moved to ${_art_d + 0x8000:04X}'
     assert _art_d >= 0x1B00 + 256, 'object art overlaps the driver use vectors'
     assert _art_d + _art_n <= 0x2400, 'object art runs into the bank-C HUD'
+    # window alignment is LOAD-BEARING: the walker's four abs,X reads only
+    # stay carry-free because every window head is 256-aligned
+    assert _art_d % 256 == 0, 'OBJ_ART windows must be page-aligned'
     c[_art_d:_art_d + _art_n] = rom_main[_art_off:_art_off + _art_n]
 
     # (VXCACHE_CODE moved to main $2B00 2026-07-10 — loads via the generic region loop)
@@ -206,7 +209,7 @@ def build_banked(flatr):
     #  columns. See project_rhs_bleed_2.)
     # OBJ_ANYB main-RAM bitmap copy (2026-08-25 grind): hardware fills it
     # via anim_init/obj_anyb_fill; model runs may skip init, so seed it
-    _bits = layout['off_obj'] + 7 * 18       # OBJ_BITS = ROM_OBJ_C+7*N_OBJ
+    _bits = layout['off_obj'] + 7 * layout['n_obj']   # OBJ_BITS = ROM_OBJ_C+7*N_OBJ
     from symmap import sym as _bsym
     _anyb = _bsym('OBJ_ANYB', banked=1)
     for i in range(layout['obj_bits_len']):
@@ -300,6 +303,45 @@ def build_banked(flatr):
     bm[0xFF00] = 0x00
     bm.select(BANK_L0)
     return bm
+
+
+def limit_objects_legacy(r):
+    """Restrict a BANKED renderer to the pre-pickup 18 objects (kind <= 2).
+
+    THE TUBE GATES NEED THIS (2026-08-31): their reference is the banked
+    framebuffer, but the tube copro runs the FLAT engine, which gathers
+    only the legacy subset (no honest flat hole holds 62 objects' planes).
+    Retire each pickup by pointing its OBJ_SS entry at $FF (no subsector),
+    rebuild the bitmap from the survivors, and mirror it into OBJ_ANYB.
+
+    PATCH THROUGH THE WINDOW, with bank A selected: banked_mem writes the
+    window back into the current bank's buffer on every select, so a
+    direct buffer patch is un-done by the next select whenever bank A is
+    the current bank -- which it is, right after construction.  (Both
+    wrong forms were tried; this is the write-back-trap survivor.)
+    """
+    import doom_wireframe as _dw
+    from symmap import sym as _sy
+    L = _dw.packed_layout
+    n = L['n_obj']
+    mem = r.sc.mpu.memory
+    _cur = mem._cur
+    mem.select(BANK_L0)                          # window = bank A
+    base = _sy('ROM_OBJ_C', banked=1)
+    bits = base + 7 * n
+    for i in range(L['obj_bits_len']):
+        mem[bits + i] = 0
+    for i in range(n):
+        if mem[base + 4 * n + i] > 2:            # the RC/ASP plane
+            mem[base + 3 * n + i] = 0xFF         # the SS plane
+        else:
+            ss = mem[base + 3 * n + i]
+            mem[bits + (ss >> 3)] |= 1 << (ss & 7)
+    anyb = _sy('OBJ_ANYB', banked=1)
+    for i in range(L['obj_bits_len']):
+        mem[anyb + i] = mem[bits + i]
+    if _cur is not None and _cur != BANK_L0:
+        mem.select(_cur)                         # write-back keeps the patch
 
 
 class BankedBspRender(BspRender6502):

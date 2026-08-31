@@ -80,15 +80,15 @@ obj_k:       .res 1
 obj_best:    .res 1
 obj_fast:    .res 1                    ; 1 = every art line provably inside the aperture,
 obj_asp:     .res 1                     ; live object aspect byte (bit 7 = art, 0-6 = k)
-obj_sd_l:    .res 3                    ; [OBJ_MAXSLOT] staging triples
-obj_sd_h:    .res 3
-obj_scx_l:   .res 3
-obj_scx_h:   .res 3
-obj_syt_l:   .res 3
-obj_syt_h:   .res 3
-obj_syb_l:   .res 3
-obj_syb_h:   .res 3
-obj_sasp:    .res 3
+obj_sd_l:    .res 6                    ; [OBJ_MAXSLOT] staging triples
+obj_sd_h:    .res 6
+obj_scx_l:   .res 6
+obj_scx_h:   .res 6
+obj_syt_l:   .res 6
+obj_syt_h:   .res 6
+obj_syb_l:   .res 6
+obj_syb_h:   .res 6
+obj_sasp:    .res 6
 obj_fused:   .res 1                   ; FUSED authority-run flag.  Its FIRST home was a
 OBJ_ANYB:    .res 25                    ; [25] per-ss billboard bitmap, boot-filled by
                                         ;  baked $1158, which sat INSIDE obj_sasp
@@ -101,8 +101,24 @@ SEG_CODE
 
 .assert obj_Y = obj_X + 12, error, "obj_hex addresses the lid as obj_X+12"
 
-OBJ_MAXSLOT = 3                            ; most objects in one subsector
-                                        ; is 3 (wad_packed asserts it)
+OBJ_MAXSLOT = 6                            ; most objects in one subsector
+                                        ; is 5 with the pickups landed
+                                        ; (wad_packed asserts <= 6)
+
+; --- per-kind constants (2026-08-31).  ORDER IS THE KIND INDEX: hex,
+; lamp, pillar, potion, helmet, box-stim, box-medikit, vest -- and the
+; k row MUST mirror doom_wireframe's _KTAB (it asserts its own copy).
+; In CODE, not bank C: the prologue reads obj_ktab under BANK_WALK.
+obj_ktab:
+   .byte 23, 15, 10, 25, 34, 30, 47, 58
+.if ::BANKED
+obj_tpl_pg:                                ; art window high byte
+   .byte >OBJ_ART, >OBJ_ART, >(OBJ_ART+$100), >(OBJ_ART+$100)
+   .byte >(OBJ_ART+$200), >(OBJ_ART+$100), >(OBJ_ART+$100), >(OBJ_ART+$200)
+obj_tpl_off:                               ; start offset within the window
+   .byte OBJ_ART_HEX, OBJ_ART_LAMP, OBJ_ART_PILLAR, OBJ_ART_POTION
+   .byte OBJ_ART_HELMET, OBJ_ART_BOX, OBJ_ART_BOX, OBJ_ART_VEST
+.endif
 
 obj_bitmask:
    .byte $01,$02,$04,$08,$10,$20,$40,$80
@@ -469,9 +485,9 @@ obj_hok:
 ;  zero-length line.)
    LDA obj_h
    STA zp_mul_b
-   LDA obj_asp
-   AND #$3F                                ; k is bits 0-5; 6-7 select the
-   JSR umul8                               ; template
+   LDY obj_asp                             ; the aspect byte IS the kind
+   LDA obj_ktab,Y                          ; index; k is a per-kind constant
+   JSR umul8                               ; (mirrors doom_wireframe _KTAB)
    LDA zp_prod_l                           ; (H*k + 32) >> 6, ROUNDED:
    ASL A                                   ; << 2, then +128 into the hi byte
    ROL zp_prod_h
@@ -595,38 +611,59 @@ obj_ycp:
                                         ;  cycles; the routine survives as
                                         ;  the harness entry)
    ZERO obj_fused                          ; leading run: plain draws
-; Start at this object's template.  ONE BIT TEST DECODES THE ASPECT BYTE:
-; b7 = not-a-barrel, b6 = pillar; bits 0-5 are k, so the dispatch is the
-; same five bytes it has always been.
-; OCT IS RETIRED (2026-08-31): the barrel draws the flat-top HEX at every
-; range.  The floor lamp's exact L1 (doc/billboard) needs 88 B of OBJ_ART
-; and obj_e is a byte, so the whole table caps at 256: HEX 52 + LAMP 88 +
-; PILLAR 96 = 236 is the only cut that fits, and the corpus never gets a
-; barrel close enough to select OCT anyway (a >= OBJ_LOD_A was ~64 units).
-; Flat carries no pillar template (LAY_N_OBJ_ART stops at 35 -- its art
-; home is 152 bytes, and HEX + LAMP = 140 fills it), so there b7 alone
-; sends the pillar down the LAMP path: a tall thin lamp reads as a column,
-; far closer than the barrel drum ever was.
-   BIT obj_asp
+; Start at this object's template.  THE ASPECT BYTE IS A KIND INDEX
+; (2026-08-31, the pickup landing): eight billboard kinds, dispatched by a
+; compare ladder, each selecting its ladder builder and its art template.
+; A template is (window page, start offset): obj_e stayed a byte by
+; becoming an offset WITHIN a 256-byte window, and the stamp walker's four
+; abs,X reads get the window HIGH byte SMC'd here (oa_rd0..3 -- page
+; alignment keeps the +0..+3 displacements carry-free).
+; FLAT (Eben: "ignore flat") never gets here: its planes re-homed to
+; $A600 (the $B700 run was 256 B, the planes are 459) and it draws every
+; object -- pickups included -- as the hex barrel; all paths below are
+; ::BANKED.
 .if ::BANKED
-   BVS obj_sel_pillar
-   BPL obj_sel_hex
-; THE FLOOR LAMP (thing 2028, and the candelabras that borrow it).  Three
-; coaxial bands, ALL showing their rims, radii off the dodecagon ladder --
-; so it builds its own x table too: 10 x + 13 y slots via obj_lamp_xy.
+   LDX obj_asp
+   LDA obj_tpl_pg,X                        ; the window (SMC: 4 sites)
+   STA oa_rd0+2
+   STA oa_rd1+2
+   STA oa_rd2+2
+   STA oa_rd3+2
+   LDA obj_tpl_off,X
+   STA obj_e
+   CPX #OBJ_K_LAMP
+   BCC obj_sel_hex                         ; 0 = barrel
+   BNE onot_lamp
+; THE FLOOR LAMP (thing 2028, and the candelabras that borrow it): 10 x +
+; 13 y slots via obj_lamp_xy.  BANK C IS ALREADY PAGED here (the prologue
+; does it for OBJ_ART), which the bank-C ladder tables rely on.
    JSR obj_lamp_xy
-   LDA #OBJ_ART_LAMP
-   BNE obj_art_set                         ; (always)
+   JMP obj_art_go
+onot_lamp:
+   CPX #OBJ_K_POTION
+   BCC obj_sel_pillar                      ; 2
+   BEQ obj_sel_potion                      ; 3
+   CPX #OBJ_K_BOXS
+   BCC obj_sel_helmet                      ; 4
+   CPX #OBJ_K_VEST
+   BCC obj_sel_box                         ; 5, 6
+   JSR obj_vest_xy                         ; 7
+   JMP obj_art_go
 obj_sel_pillar:
-; THE TECHNO PILLAR.  Four drawn rims, each with its own ellipse depth, so
-; it needs its own 18-slot y ladder before the stamp can play the template.
-; obj_X is the barrel's {a, a2, a3} untouched: the shaft's rims are covered
-; top and bottom, so it contributes only its two sides, and those sit at
-; a2*19 -- already a vertex.  BANK C IS ALREADY PAGED here (the prologue
-; does it for OBJ_ART), which the ladder builders' tables rely on.
+; THE TECHNO PILLAR.  obj_X is the barrel's {a, a2, a3} untouched: the
+; shaft's rims are covered top and bottom, so it contributes only its two
+; sides, and those sit at a2*19 -- already a vertex.
    JSR obj_pillar_y
-   LDA #OBJ_ART_PILLAR
-   BNE obj_art_set                         ; (always)
+   JMP obj_art_go
+obj_sel_potion:
+   JSR obj_potion_xy
+   JMP obj_art_go
+obj_sel_helmet:
+   JSR obj_helmet_xy
+   JMP obj_art_go
+obj_sel_box:
+   JSR obj_box_y                           ; (reads obj_asp for the lid)
+   JMP obj_art_go
 .endif
 obj_sel_hex:
    LDA obj_a                               ; w = 9a/16 = a>>1 + a>>4
@@ -652,9 +689,11 @@ obj_sel_hex:
    LDA obj_cx_h
    ADC #0
    STA obj_Y+15
-   LDA #OBJ_ART_HEX                        ; = 0: falls into the set
-obj_art_set:
-   STA obj_e
+.if .not ::BANKED
+   LDA #OBJ_ART_HEX
+   STA obj_e                               ; flat: template A0, always
+.endif
+obj_art_go:
    JSR obj_probe                           ; can this billboard skip the
                                            ; clipper entirely?
 obj_stamp:
@@ -663,6 +702,7 @@ obj_stamp:
 ; already did.  It used to page BANK_SEG here and BANK_C again below, twice
 ; per template line -- 22.4 ROMSEL stores/frame across the suite.
    LDX obj_e
+oa_rd0:
    LDY OBJ_ART+0,X
    CPY #OBJ_ART_ARM                        ; control entry? ($FE/$FF)
    BCS obj_ctl
@@ -670,16 +710,19 @@ obj_stamp:
    STA zp_line_xl_l
    LDA obj_X+1,Y
    STA zp_line_xl_h
+oa_rd1:
    LDY OBJ_ART+1,X
    LDA obj_Y+0,Y
    STA zp_line_yl_l
    LDA obj_Y+1,Y
    STA zp_line_yl_h
+oa_rd2:
    LDY OBJ_ART+2,X
    LDA obj_X+0,Y
    STA zp_line_xr_l
    LDA obj_X+1,Y
    STA zp_line_xr_h
+oa_rd3:
    LDY OBJ_ART+3,X
    LDA obj_Y+0,Y
    STA zp_line_yr_l
@@ -1207,3 +1250,310 @@ opy_next:
    CPX #36
    BCC opy_s
    RTS
+
+; ============================================================================
+; THE PICKUP LADDER BUILDERS (2026-08-31) -- banked only; flat carries no
+; pickup planes at all.  All AT THE END OF THE FILE, out of the object
+; builder's fall-through path (the obj_pillar_y lesson).  Everything is
+; LINEAR in a / H -- the shapes are RIGID billboards, per the pillar's
+; static-billboard rule; the fractions are doc/billboard's L1 geometry
+; verbatim (test_pickup_ladders gates them against integer mirrors).
+; All run under the prologue's PAGE BANK_C; tables live HERE in CODE
+; because bank C is nearly full and these are banked-only anyway.
+; ============================================================================
+.if ::BANKED
+obj_lidf:  .byte 51, 54                   ; box lid /256 of H: 3/15, 4/19
+obj_hgx:   .byte 192, 128, 96, 64         ; helmet x mags /256 of a
+obj_hnx:   .byte 2, 4, 6, 8               ; their -side obj_X byte offs
+obj_hpx:   .byte 44, 42, 40, 38           ; +side offs (obj_Y[13..16] spill,
+                                          ; the lamp's convention; +-a keep
+                                          ; obj_X+0/+10 for obj_probe)
+obj_vgy:   .byte 20, 89, 75, 52           ; vest y /256 of H: front shoulder,
+                                          ; armpit, scoop front, scoop rear
+
+; ---- the boxes: y = {syt, syt + lid, syb}; x is the prologue's +-a ------
+obj_box_y:
+   LDA obj_h
+   STA zp_mul_b
+   LDY obj_asp                             ; 5 = stim, 6 = medikit: the lid
+   LDA obj_lidf-OBJ_K_BOXS,Y               ; fraction is the ONLY difference
+   JSR umul8
+   LDA zp_prod_l                           ; C = 1 iff the dropped low byte
+   CMP #128                                ;     rounds up
+   LDA zp_prod_h
+   ADC #0
+   CLC
+   ADC obj_yt_l
+   STA obj_Y+2
+   LDA obj_yt_h
+   ADC #0
+   STA obj_Y+3
+   LDA obj_yt_l
+   STA obj_Y+0
+   LDA obj_yt_h
+   STA obj_Y+1
+   LDA obj_yb_l
+   STA obj_Y+4
+   LDA obj_yb_h
+   STA obj_Y+5
+   RTS
+
+; ---- the potion: circle (3-seg arcs) + wide stem ------------------------
+; x: cx -+ {a, qa, wn} (a from the prologue); y from syb upward -- the
+; bulb is GROUNDED, centre qa above the floor line.
+; IN SEG_BANKC (with obj_lamp_xy): banked CODE ran 270 B over with all
+; four builders there, and these two run under the prologue's PAGE BANK_C
+; anyway.  umul8 is in the always-mapped bottom.
+SEG_BANKC
+obj_potion_xy:
+   LDA obj_a
+   STA zp_mul_b
+   LDA #187                                ; q = a2 = 0.7321
+   JSR umul8
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pb                              ; qa
+   LDA #73                                 ; wn = 2/7 (the 4-px neck)
+   JSR umul8
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pb+1                            ; wn
+   LDA #69                                 ; a3 = 0.2679
+   JSR umul8
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pb+2                            ; a3*a
+   SEC
+   LDA obj_cx_l
+   SBC obj_pb
+   STA obj_X+2
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+3
+   CLC
+   LDA obj_cx_l
+   ADC obj_pb
+   STA obj_X+8
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+9
+   SEC
+   LDA obj_cx_l
+   SBC obj_pb+1
+   STA obj_X+4
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+5
+   CLC
+   LDA obj_cx_l
+   ADC obj_pb+1
+   STA obj_X+6
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+7
+   LDA obj_yt_l                            ; y0 = syt (the stem top)
+   STA obj_Y+0
+   LDA obj_yt_h
+   STA obj_Y+1
+   LDA obj_yb_l                            ; y4 = syb (the bulb bottom)
+   STA obj_Y+8
+   LDA obj_yb_h
+   STA obj_Y+9
+   LDA obj_pb                              ; y1 = syb - 2qa (arc mid)
+   ASL A                                   ; qa <= 72, no carry out
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+2
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+3
+   CLC
+   LDA obj_pb                              ; y2 = syb - (qa + a3a)
+   ADC obj_pb+2
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+4
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+5
+   SEC
+   LDA obj_pb                              ; y3 = syb - (qa - a3a)
+   SBC obj_pb+2
+   STA obj_pu
+   SEC
+   LDA obj_yb_l
+   SBC obj_pu
+   STA obj_Y+6
+   LDA obj_yb_h
+   SBC #0
+   STA obj_Y+7
+   RTS
+
+SEG_CODE
+; ---- the helmet: the 2D outline's 10-x / 5-y ladder ---------------------
+obj_helmet_xy:
+   LDA obj_a
+   STA zp_mul_b
+   LDX #3
+ohx_m:
+   STX obj_px                              ; umul8 eats X
+   LDA obj_hgx,X
+   JSR umul8
+   LDX obj_px
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pb,X
+   DEX
+   BPL ohx_m
+   LDX #3
+ohx_s:
+   LDY obj_hnx,X
+   SEC
+   LDA obj_cx_l
+   SBC obj_pb,X
+   STA obj_X+0,Y
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+1,Y
+   LDY obj_hpx,X
+   CLC
+   LDA obj_cx_l
+   ADC obj_pb,X
+   STA obj_X+0,Y
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+1,Y
+   DEX
+   BPL ohx_s
+   LDA obj_h                               ; y1..y3 = syt + H*{34,85,222}/256
+   STA zp_mul_b
+   LDX #2
+ohy_m:
+   STX obj_px
+   LDA obj_hgy,X
+   JSR umul8
+   LDX obj_px
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pu
+   TXA
+   ASL A
+   TAY
+   CLC
+   LDA obj_yt_l
+   ADC obj_pu
+   STA obj_Y+2,Y
+   LDA obj_yt_h
+   ADC #0
+   STA obj_Y+3,Y
+   DEX
+   BPL ohy_m
+   LDA obj_yt_l
+   STA obj_Y+0
+   LDA obj_yt_h
+   STA obj_Y+1
+   LDA obj_yb_l
+   STA obj_Y+8
+   LDA obj_yb_h
+   STA obj_Y+9
+   RTS
+obj_hgy:   .byte 34, 85, 222              ; y /256 of H: dome z13, side top
+                                          ; z10, notch roof z2
+
+; ---- the vest: 6-x / 6-y ----------------------------------------------
+SEG_BANKC
+obj_vest_xy:
+   LDA obj_a
+   STA zp_mul_b
+   LDA #91                                 ; waist = 5.5/15.5
+   JSR umul8
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pb
+   LDA #50                                 ; scoop = 3/15.5
+   JSR umul8
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pb+1
+   SEC
+   LDA obj_cx_l
+   SBC obj_pb
+   STA obj_X+2
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+3
+   CLC
+   LDA obj_cx_l
+   ADC obj_pb
+   STA obj_X+8
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+9
+   SEC
+   LDA obj_cx_l
+   SBC obj_pb+1
+   STA obj_X+4
+   LDA obj_cx_h
+   SBC #0
+   STA obj_X+5
+   CLC
+   LDA obj_cx_l
+   ADC obj_pb+1
+   STA obj_X+6
+   LDA obj_cx_h
+   ADC #0
+   STA obj_X+7
+   LDA obj_h                               ; y1..y4 = syt + H*{20,89,75,52}
+   STA zp_mul_b
+   LDX #3
+ovy_m:
+   STX obj_px
+   LDA obj_vgy,X
+   JSR umul8
+   LDX obj_px
+   LDA zp_prod_l
+   CMP #128
+   LDA zp_prod_h
+   ADC #0
+   STA obj_pu
+   TXA
+   ASL A
+   TAY
+   CLC
+   LDA obj_yt_l
+   ADC obj_pu
+   STA obj_Y+2,Y
+   LDA obj_yt_h
+   ADC #0
+   STA obj_Y+3,Y
+   DEX
+   BPL ovy_m
+   LDA obj_yt_l                            ; y0 = syt (rear shoulders)
+   STA obj_Y+0
+   LDA obj_yt_h
+   STA obj_Y+1
+   LDA obj_yb_l                            ; y5 = syb (the ground line)
+   STA obj_Y+10
+   LDA obj_yb_h
+   STA obj_Y+11
+   RTS
+SEG_CODE
+.endif

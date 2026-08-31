@@ -20,14 +20,11 @@ import doom_wireframe as dw, compare_renders as C
 from banked_bsp import BankedBspRender
 from symmap import sym
 
-# 9 barrels (all HEX -- OCT is retired 2026-08-31) and 11 lamps: the floor
-# lamps plus the candelabras that borrow the template.  The old rectangle
-# count here was 12: the lamp's k is now the memo's exact 64*11.5/48 = 15,
-# not the collision cylinder's 21, and at (1500,-3700,0) one far lamp's
-# silhouette narrows from 5 columns to 3, all already solid, so
-# obj_occluded culls it -- verified by slot trace, a REAL occlusion of the
-# correct-width billboard, not a lost draw.
-EXPECT = {'HEX': 9, 'LAMP': 11, 'PILLAR': 2}
+# Counted per template start, named by the KIND byte.  The pickup landing
+# (2026-08-31) put 44 more billboards in the map; EXPECT is the measured
+# corpus census at the landing commit -- any drop is a lost draw.
+EXPECT = {'HEX': 9, 'LAMP': 11, 'PILLAR': 2,
+          'POTION': 9, 'HELMET': 23, 'BOXS': 1, 'BOXM': 2, 'VEST': 1}
 
 def main():
     r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
@@ -37,7 +34,9 @@ def main():
     entry = sym('render_frame', banked=1)
     STAMP = sym('obj_stamp', banked=1)
     OE = sym('obj_e', banked=1)
-    STARTS = {0: 'HEX', 52: 'LAMP', 140: 'PILLAR'}
+    OASP = sym('obj_asp', banked=1)
+    KINDS = ('HEX','LAMP','PILLAR','POTION','HELMET','BOXS','BOXM','VEST')
+    TPL_OFF = (0, 52, 0, 124, 0, 96, 96, 72)
     n = collections.Counter(); last = [None]
     for (px, py, ab) in C.POSITIONS:
         r.render_frame(px, py, ab, dw.player_floor(px, py))
@@ -49,10 +48,11 @@ def main():
             # obj_e ADVANCES through the template, so only count the first
             # entry of each object -- and only when it is a template start.
             if mpu.pc == STAMP:
-                e = mem[OE]
-                if e in STARTS and e != last[0]:
-                    n[STARTS[e]] += 1
-                last[0] = e
+                e = mem[OE]; kind = mem[OASP]
+                key = (kind, e)
+                if e == TPL_OFF[kind] and key != last[0]:
+                    n[KINDS[kind]] += 1
+                last[0] = key
             mpu.step(); k += 1
     got = dict(n)
     print(f'  stamps: {got}  (expect {EXPECT})')

@@ -57,6 +57,8 @@ ROM_BBOX_C    = $C500                   ; all contiguous
 NODE_SOA_C    = $B900
 ROM_OBJ_C     = $B700                   ; static-object table, in the run
                                         ; the retired 4th vertex plane left
+                                        ; (18-object subset -- see
+                                        ; LAY_N_OBJ)
 ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
 .assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= ROM_VERTS_C, error, "DIR tables reach the vertex planes"
 .assert ROM_VERTS_C + $600 <= NODE_SOA_C, error, "flat vertex planes reach the node SoA"
@@ -95,7 +97,19 @@ OBJ_DRAW = 1                            ; static-object billboards.  ON
                                         ; cannot yet express (it speaks
                                         ; single-line tightens only).
                                         ; Set 0 to get a green gate back.
-LAY_N_OBJ   = 18                   ; static objects (wad_packed)
+.if ::BANKED
+LAY_N_OBJ   = 62                   ; static objects (wad_packed):
+                                   ; 2026-08-31 the five pickups added
+                                   ; 44 (13 potions, 25 helmets, 3
+                                   ; medikits, stim, 2 vests)
+.else
+LAY_N_OBJ   = 18                   ; FLAT KEEPS THE ORIGINAL 18 (barrels,
+                                   ; lamps, pillars): 62 planes are 459 B
+                                   ; and no honest flat hole exists (the
+                                   ; probes found $A600 = VXCACHE_XLO and
+                                   ; $D700 live).  Its loader GATHERS the
+                                   ; kind<=2 subset into this stride.
+.endif
 LAY_OBJ_BITS_LEN   = 25            ; generated: (n_ss+7)//8 — the per-ss
                                    ; "has objects" bitmap length; the
                                    ; OBJ_ART home abuts it (a hardcoded
@@ -114,46 +128,38 @@ OBJ_ASP  = ROM_OBJ_C + 4*LAY_N_OBJ      ; bit 7 = art template select,
 OBJ_ZT   = ROM_OBJ_C + 5*LAY_N_OBJ      ; prescaled top height (s8)
 OBJ_ZB   = ROM_OBJ_C + 6*LAY_N_OBJ      ; prescaled floor height (s8)
 OBJ_BITS = ROM_OBJ_C + 7*LAY_N_OBJ      ; per-subsector "has objects" bitmap
-; PER BUILD.  Banked carries all three templates; FLAT STOPS AT 35 and never
-; receives the pillar block, because its art home has exactly 152 bytes:
-; SS_VZ_BASE runs up to $E82C below it and pmf_mul24s owns $E8C8 above, and
-; HEX + LAMP = 140 fills it.  The loader copies LAY_N_OBJ_ART entries, and
-; obj_art_pillar's selector falls through to the LAMP on flat.
-; Re-cutting the flat art home belongs with slimming the flat build.
+; THE ART IS THREE 256-BYTE WINDOWS (2026-08-31, the pickup landing).
+; obj_e stayed a byte by becoming an offset WITHIN a window: the stamp
+; walker's four abs,X reads get their window HIGH byte SMC'd per object
+; (oa_rd0..3), and page alignment keeps them carry-free.  Window A is
+; byte-identical to the old whole table, so FLAT -- which still draws
+; every object as the hex barrel and carries no pickup planes (its $B700
+; home died; see ROM_OBJ_C) -- copies its 140 B exactly as before.
+;   A: HEX 0, LAMP 52        B: PILLAR 0, BOX 96, POTION 124
+;   C: HELMET 0, VEST 72
 .if ::BANKED
-LAY_N_OBJ_ART = 59                 ; 13 LOD hex + 22 floor lamp + 24 techno
-                                   ; pillar, control entries included.
-                                   ; OBJ_E IS A BYTE, so the whole table
-                                   ; must stay under 256 -- WHICH IS WHAT
-                                   ; RETIRED OCT (2026-08-31): the lamp's
-                                   ; exact L1 is 88 B and 52+88+96 = 236
-                                   ; is the only cut that fits.  The
-                                   ; pillar likewise ships its 22-line
-                                   ; tier, not the 30-line one.
+LAY_N_OBJ_ART = 163                ; 652 B / 4 -- all three windows
 .else
-LAY_N_OBJ_ART = 35                 ; hex + lamp only
+LAY_N_OBJ_ART = 35                 ; hex + lamp only (window A's real 140)
 .endif
-OBJ_ART_HEX  = 0                   ; THE barrel (2026-08-31, OCT retired):
-                                   ; flat-top hexagonal lid, 11 lines.
-                                   ; Best-fit top half-width = 9a/16 =
-                                   ; a>>1+a>>4 (packer-verified LSQ optimum
-                                   ; among shift ratios); mid vertices ride
-                                   ; the existing +-b3 table heights
-                                   ; (<= 1px at the scales the corpus
-                                   ; reaches -- max a seen is 8).
-OBJ_ART_LAMP = 52                  ; floor lamp (2026-08-31): doc/billboard
-                                   ; lamp L1 VERBATIM -- 20 lines, 5 of
-                                   ; them armed (three bands' top rims:
-                                   ; the topmost line at every x spans
-                                   ; three cylinders, not one).  Needs
-                                   ; obj_lamp_xy's 10-x/13-y ladder.
-                                   ; Candelabras borrow it.
-OBJ_ART_PILLAR = 140               ; techno pillar: 22 lines, 3 of them
-                                   ; the cap's top arc as the armed run.
-                                   ; Needs obj_pillar_y's 18-slot y
-                                   ; ladder: its four rims each carry
-                                   ; their OWN ellipse depth.
-                                   ; doc/billboard.  BANKED ONLY.
+; kind indices (the OBJ_ASP plane byte; k lives in obj_ktab -- the two
+; tables MUST stay in step with doom_wireframe's _KTAB/_OBJ_KINDS)
+OBJ_K_HEX    = 0
+OBJ_K_LAMP   = 1
+OBJ_K_PILLAR = 2
+OBJ_K_POTION = 3
+OBJ_K_HELMET = 4
+OBJ_K_BOXS   = 5
+OBJ_K_BOXM   = 6
+OBJ_K_VEST   = 7
+; per-template (window page offset from OBJ_ART, start offset within it)
+OBJ_ART_HEX    = 0                 ; window A
+OBJ_ART_LAMP   = 52                ; window A
+OBJ_ART_PILLAR = 0                 ; window B
+OBJ_ART_BOX    = 96                ; window B
+OBJ_ART_POTION = 124               ; window B
+OBJ_ART_HELMET = 0                 ; window C
+OBJ_ART_VEST   = 72                ; window C
 OBJ_ART_ARM = $FE                  ; entry: arm the FUSED authority run
 OBJ_ART_END     = $FF              ; entry: template finished
 ; The templates: 38 x (x1,y1,x2,y2) pre-doubled indices. They live in

@@ -106,9 +106,11 @@ def host_rasterize(cmds):
 
 
 def main():
+    from banked_bsp import limit_objects_legacy
     r = BspRender6502(dw.packed_layout, dw.packed_rom_main,
                       dw.packed_rom_detail, dw.packed_bbox_table,
                       dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
+    limit_objects_legacy(r)          # the tube runs the FLAT 18-object subset
     px, py, ab = SPAWN
     r.render_frame(px, py, ab, dw.player_floor(px, py))
     # The reference is the BANKED framebuffer (2026-08-29).  It used to be
