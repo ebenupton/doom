@@ -147,6 +147,8 @@ run('pickup_ladders', ['tools/test_pickup_ladders.py'],
     lambda o: 'PICKUPLADDERS: PASS' in o)
 run('object_draws', ['tools/test_object_draws.py'],
     lambda o: 'OBJDRAWS: PASS' in o)
+run('vert_col_guard', ['tools/test_vert_col_guard.py'],
+    lambda o: 'VERTCOLGUARD: PASS' in o)
 
 baseline = None
 if os.path.exists(BASELINE_PATH):

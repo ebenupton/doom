@@ -853,30 +853,8 @@ dv_bot_skip:
    CMP zp_cb_cy1
    BCC dv_clipped_away                     ; (C=1 rides into dv_emit)
 dv_emit:
-; Stage the rasteriser ZP args (x, cy1, x, cy2), un-biasing Y (biased
-; [48,207] -> screen [0,159]) and tail-call the vertical plotter.
-; (LINE_OUT capture RETIRED 2026-07-26: the harness PC-traps the plot
-; entries and reads RASTER_ZP_* directly — the engine no longer pays
-; a gate test per emitted line.)
-   LDA zp_line_xl_l
-   STA RASTER_ZP_X0
-   STA RASTER_ZP_X1
-   LDA zp_cb_cy1
-   SBC #Y_BIAS                             ; C=1 from the BCS dv_emit guard
-   STA RASTER_ZP_Y0
-   LDA zp_cb_cy2
-   SBC #Y_BIAS                             ; C=1 from the in-band SBC
-   STA RASTER_ZP_Y1
-; The queue used to be a per-LINE test here (BIT plotq_mode + BMI, 5
-; cycles every emitted line). It is a per-FRAME mode, so it is SMC now:
-; plotq_arm/plotq_off rewrite this JMP's operand between plot_v and
-; plot_enq. Zero bytes, zero cycles — the JMP was already here.
-; (The other gate, at des_axis, can NOT be done this way: its first
-;  instruction is CMP RASTER_ZP_Y0, and RASTER_ZP_* are ZERO PAGE, so
-;  it is 2 bytes where a JMP needs 3 — patching it in place would eat
-;  the following BNE's opcode.)
-::dv_emit_op:
-   JMP plot_v                              ; always vertical on this path
+   JMP dv_emit_band                        ; Y-band clip + stage island in
+                                           ; CODE (bank C is byte-full)
 dv_clipped_away:
    RTS                                     ; cy1 > cy2: clipped away (3.8%)
 
@@ -1675,6 +1653,50 @@ SEG_PQ
    STA dv_emit_op+2
    LDA #0
    STA plotq_mode
+   RTS
+
+; --- dv_emit_band: the vertical fastpath's Y-BAND SAFETY CLIP + stage.
+; TWIN of dcl_emit_segment's clip, for the same reason documented there:
+; the tighten's apertures extend off-screen, so cy1/cy2 arrive biased
+; out of [Y_BIAS, VIS_YMAX]. vplot indexes vptab by the RAW unbiased
+; row, so a biased-42 top wrapped to $FA, the PHA/PHA/RTS dispatch read
+; past vptab and executed the table until a KIL jammed the CPU (the
+; Model B state file, 2026-09-01: column 164, Y0=$FA, PC inside
+; vptab_lo). The vertical fastpath (2026-07-22) predates vplot and
+; never had the clip; the old row-address math merely stomped memory.
+; Stage order: Y first, X last (plot_enq reads all four from ZP).
+; In CODE: verticals run under ambient bank C and the JMP keeps the
+; mapping; the SMC dispatch site dv_emit_op moves here with it.
+dv_emit_band:
+   LDA zp_cb_cy2
+   CMP #Y_BIAS
+   BCC deb_rts                             ; entirely above the screen
+   CMP #(VIS_YMAX+1)
+   BCC deb_y1
+   LDA #VIS_YMAX                           ; bottom off-screen: clamp to
+                                           ; the last visible row
+deb_y1:
+   SEC
+   SBC #Y_BIAS
+   STA RASTER_ZP_Y1
+   LDA zp_cb_cy1
+   CMP #(VIS_YMAX+1)
+   BCS deb_rts                             ; entirely below the screen
+   CMP #Y_BIAS
+   BCS deb_y0
+   LDA #Y_BIAS                             ; top off-screen: clamp to row 0
+deb_y0:
+   SEC
+   SBC #Y_BIAS
+   STA RASTER_ZP_Y0
+   LDA zp_line_xl_l
+   STA RASTER_ZP_X0
+   STA RASTER_ZP_X1
+; SMC dispatch: plotq_arm/plotq_off rewrite the operand between plot_v
+; and plot_enq (a per-FRAME mode — zero cost at the site).
+::dv_emit_op:
+   JMP plot_v                              ; always vertical on this path
+deb_rts:
    RTS
 SEG_BANKC                                  ; back to the clipper's own
                                            ; segment (plot_enq and the
