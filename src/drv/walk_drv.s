@@ -608,10 +608,20 @@ fs_go:
     LDA #BANK_C
     STA $FE30   ; dv_emit_op lives in bank
     JSR ENG_PLOTQ_ARM                               ;  C — page it to patch.
-    LDA #0
-    STA $A0   ; (the next frame pages
-    RTS                                             ;  L0 itself, so leaving
-                                                    ;  C live is fine)
+    RTS                                             ; (the next frame pages
+                                                    ;  L0 itself, so leaving
+                                                    ;  C live is fine.
+                                                    ;  plotq_arm owns the
+                                                    ;  count-down home n=63:
+                                                    ;  the old LDA#0/STA $A0
+                                                    ;  "empty" reset here made
+                                                    ;  every frame's first
+                                                    ;  enqueue WRAP to FULL
+                                                    ;  and the pump drain
+                                                    ;  63 slots of stale
+                                                    ;  garbage -- the jsbeeb
+                                                    ;  static-line artefacts,
+                                                    ;  2026-09-01)
 
 ; --- pq_pump: poked into ENG_PQ_PUMP_OP at init; the engine calls it
 ; after every enqueue (all enqueue sites are in the emit cascade, bank C

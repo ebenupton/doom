@@ -95,7 +95,7 @@ ABI = [
     # (the replaced raster pocket $7600-$82FF + the high-table area).
     # colmap.blobs() asserts every blob against these homes.
     ('COLIDX_BASE',    0xAF8A, 0x7600, 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked: $B4A4 -> $AB00 -> $AF8A 2026-08-15 — off the SSMASK staging page, then off the rcache PSI PLANES $A900-$AEFF; now after RCACHE_STATE, ends $B197)'),
-    ('COLSEG_BASE',    0xB8C0, 0x7810, 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
+    ('COLSEG_BASE',    0xB8C4, 0x7810, 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
     ('CYMIN_BASE',     0xB200, 0x7F3C, 'per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: CPM_PSI planes + RECIP_S live there — that stomp garbled the tube copro 2026-08-29'),
     ('CYMAX_BASE',     0xB7F8, 0x8008, 'per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100'),
     ('CYPORT_BASE',    0xB2CC, 0x80D4, 'per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80CB, RC_P2L_0 walls $8100)'),

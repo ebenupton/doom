@@ -100,6 +100,10 @@ run('table_overlap', ['tools/test_table_overlap.py'],
     lambda o: 'TABLEOVERLAP: PASS' in o)
 run('bare_boot', ['test_bare_boot.py'],
     lambda o: 'PASS' in o and 'FAIL' not in o)
+run('walkdrv_loop', ['tools/test_walkdrv_loop.py'],
+    lambda o: 'WALKDRV LOOP: PASS' in o)
+run('pm_fuzz', ['tools/pm_fuzz.py'],
+    lambda o: 'TOTAL divergences: 44' in o)  # the standing-44 (known mom +-1vz class); growth = regression
 # The banked (non-copro) HUD has the same font search. The MOS font is not
 # at a fixed address -- OS 1.2 $C000, MOS 3.20 $F900 -- and hardwiring
 # $C000 is what corrupted the readout on a Master.

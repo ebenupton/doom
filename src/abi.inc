@@ -81,7 +81,7 @@ COLIDX_BASE = $AF8A        ; collision blockmap: 36 x (u16 list addr, u8 count) 
 COLIDX_BASE = $7600
 .endif
 .if ::BANKED
-COLSEG_BASE = $B8C0        ; collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
+COLSEG_BASE = $B8C4        ; collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)
 .else
 COLSEG_BASE = $7810
 .endif

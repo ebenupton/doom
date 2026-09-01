@@ -80,7 +80,7 @@ class Rig:
         A = colmap.blobs(flat=not banked)['addrs']
         self.bvs = sym('pm_box_vs_seg', banked=banked)
         self.rec_ok = (range(A['colseg'], A['colseg'] + len(m['colsegs']) * 9),
-                       range(abi.COLPORT_BASE, abi.COLPORT_BASE + len(m['ports']) * 12))
+                       range(A['colport'], A['colport'] + len(m['ports']) * 12))
         self.vz = sym('pm_vz', banked=banked)
         self.try_e = sym('pmove_try', banked=banked)
         self.frame_e = sym('pm_frame', banked=banked)

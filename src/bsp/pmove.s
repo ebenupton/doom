@@ -977,22 +977,27 @@ pmt_y1p   = PM_SCRATCH+$9B              ;  rejected EVERY record
 pmt_ok    = PM_SCRATCH+$9C              ; 1 = key valid (cold-init 0)
 pm_surv   = PM_SCRATCH+$9D              ; any record survived prescreen
 pmt_c0s   = PM_SCRATCH+$9E              ; staged c0 across the key check
-; survivor-replay slots (2026-08-29): PMH ends $57DE and the PMBF area
-; runs to $57FF in BOTH builds — real RAM, engine-owned, ld65 walls the
-; area at $60 so PMH growth trips a link error before a collision
-pmt_sv    = $57E0                       ; <=4 surviving collision idxes
-pm_svx    = $57E4                       ; replay cursor (X across testers)
-pm_stmv   = $57E5                       ; staged ss class this zonly (1 =
-pm_lmv    = $57E6                       ;  static) -> pm_lmv ON COMMIT: the
+; survivor-replay slots: REHOMED $57E0 -> $0ED0 (2026-09-01): SHTAB took
+; the $5600-$57FF tail and the old literals STOMPED SHL5 on every move —
+; sparse indexed writes at $57E5/E6/E9/EC, invisible to ld65 (baked
+; equates) and to the zero-RAM harness (the corpus never moves).  The
+; jsbeeb spawn artefacts + broken movement.  $0ED0-$0EFF is the WORK
+; arena free run, both builds; sqr_fill_cold zeroes it (the block used
+; to ship as LOW-tail zeros — junk-RAM boots need the explicit clear).
+PMT_BLK   = $0ED0
+pmt_sv    = PMT_BLK+$0                  ; <=4 surviving collision idxes
+pm_svx    = PMT_BLK+$4                       ; replay cursor (X across testers)
+pm_stmv   = PMT_BLK+$5                       ; staged ss class this zonly (1 =
+pm_lmv    = PMT_BLK+$6                       ;  static) -> pm_lmv ON COMMIT: the
                                         ;  committed position's ss class
                                         ;  (0 = mover/cold: no fast commit)
-pm_moved  = $57E9                       ; okf at entry, ASL'd by pf_move:
+pm_moved  = PMT_BLK+$9                       ; okf at entry, ASL'd by pf_move:
                                         ;  2 = moved AND origin raws valid
-pm_woy0   = $57EA                       ; pu_scan biased trace-y his
-pm_woy1   = $57EB                       ;  (survive pm_move_crosses_line)
-pm_woneed = $57EC                       ; a full zonly ran (a silent-line
+pm_woy0   = PMT_BLK+$A                       ; pu_scan biased trace-y his
+pm_woy1   = PMT_BLK+$B                       ;  (survive pm_move_crosses_line)
+pm_woneed = PMT_BLK+$C                       ; a full zonly ran (a silent-line
                                         ;  class crossing was possible)
-pm_pcross = $57E7                       ; per-TRY: a port line was CROSSED
+pm_pcross = PMT_BLK+$7                       ; per-TRY: a port line was CROSSED
                                         ;  (box_vs_seg C=1) — the move may
                                         ;  change subsector / bind tmob,
                                         ;  so no same-ss fast commit
