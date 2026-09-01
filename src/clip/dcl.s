@@ -3,7 +3,7 @@
 ; clip/dcl.s — clipper fragment 7 of 13 (module map: clip/header.s).
 ; Contents: draw_clipped_line + dcl_vertical, the CB
 ; trapezoid clip, dcl_boundary_ix, dcl_emit_segment (records writer +
-; plot dispatch), dcl_yband_clip, and line_interp_store.
+; plot dispatch) and line_interp_store.
 ; ============================================================================
 
 ; ======================================================================
@@ -853,8 +853,30 @@ dv_bot_skip:
    CMP zp_cb_cy1
    BCC dv_clipped_away                     ; (C=1 rides into dv_emit)
 dv_emit:
-   JMP dv_emit_band                        ; Y-band clip + stage island in
-                                           ; CODE (bank C is byte-full)
+; Stage the rasteriser ZP args (x, cy1, x, cy2), un-biasing Y (biased
+; [48,207] -> screen [0,159]) and tail-call the vertical plotter.
+; (LINE_OUT capture RETIRED 2026-07-26: the harness PC-traps the plot
+; entries and reads RASTER_ZP_* directly — the engine no longer pays
+; a gate test per emitted line.)
+   LDA zp_line_xl_l
+   STA RASTER_ZP_X0
+   STA RASTER_ZP_X1
+   LDA zp_cb_cy1
+   SBC #Y_BIAS                             ; C=1 from the BCS dv_emit guard
+   STA RASTER_ZP_Y0
+   LDA zp_cb_cy2
+   SBC #Y_BIAS                             ; C=1 from the in-band SBC
+   STA RASTER_ZP_Y1
+; The queue used to be a per-LINE test here (BIT plotq_mode + BMI, 5
+; cycles every emitted line). It is a per-FRAME mode, so it is SMC now:
+; plotq_arm/plotq_off rewrite this JMP's operand between plot_v and
+; plot_enq. Zero bytes, zero cycles — the JMP was already here.
+; (The other gate, at des_axis, can NOT be done this way: its first
+;  instruction is CMP RASTER_ZP_Y0, and RASTER_ZP_* are ZERO PAGE, so
+;  it is 2 bytes where a JMP needs 3 — patching it in place would eat
+;  the following BNE's opcode.)
+::dv_emit_op:
+   JMP plot_v                              ; always vertical on this path
 dv_clipped_away:
    RTS                                     ; cy1 > cy2: clipped away (3.8%)
 
@@ -1079,12 +1101,11 @@ dcl_cb_top_p2clip:
    LDA zp_cb_cy1
    SEC
    SBC zp_cb_top1
-   STA zp_tmp0
-; d1 = cy1 - top1 >= 0  (=> C=1: no SEC for the next subtract)
-   LDA zp_cb_cy2
-   SBC zp_cb_top2
-   STA zp_tmp1
-; d2 = cy2 - top2 < 0
+   STA zp_tmp0                             ; |d1| = cy1 - top1 (>= 0 here)
+   LDA zp_cb_top2
+   SEC
+   SBC zp_cb_cy2
+   STA zp_tmp1                             ; |d2| = top2 - cy2 (magnitude)
    LDA #0
    JSR dcl_boundary_ix
 ; A = ix (clip p2, round toward cx1)
@@ -1107,16 +1128,15 @@ dcl_cb_top_p2clip:
    JMP dcl_cb_top_done
 
 dcl_cb_top_clip:
-; cy1 < top1, cy2 >= top2: clip at p1 end (entered via BCS => C=1)
-   LDA zp_cb_cy1
-   SBC zp_cb_top1
-   STA zp_tmp0
-; d1 < 0
+; cy1 < top1, cy2 >= top2: clip at p1 end
+   LDA zp_cb_top1
+   SEC
+   SBC zp_cb_cy1
+   STA zp_tmp0                             ; |d1| = top1 - cy1 (magnitude)
    LDA zp_cb_cy2
    SEC
    SBC zp_cb_top2
-   STA zp_tmp1
-; d2 >= 0
+   STA zp_tmp1                             ; |d2| = cy2 - top2 (>= 0 here)
    LDA #1
    JSR dcl_boundary_ix
 ; A = ix (clip p1, round toward cx2)
@@ -1230,17 +1250,14 @@ dcl_cb_bot_p1_ok:
 ; cy2 > bot2, cy1 <= bot1: clip p2 end
 ; d1 = cy1 - bot1 (negative or zero, since cy1 <= bot1)
 dcl_cb_bot_p2clip:
-   LDA zp_cb_cy1
+   LDA zp_cb_bot1
    SEC
-   SBC zp_cb_bot1
-   STA zp_tmp0
-; d1 <= 0
-; d2 = cy2 - bot2 (positive, since cy2 > bot2)
+   SBC zp_cb_cy1
+   STA zp_tmp0                             ; |d1| = bot1 - cy1 (magnitude)
    LDA zp_cb_cy2
    SEC
    SBC zp_cb_bot2
-   STA zp_tmp1
-; d2 > 0
+   STA zp_tmp1                             ; |d2| = cy2 - bot2 (>= 0 here)
 ; boundary_ix with clip_p1=0 (clip p2, round toward cx1)
    LDA #0
    JSR dcl_boundary_ix
@@ -1252,15 +1269,15 @@ dcl_cb_bot_p2clip:
    JMP dcl_cb_bot_done
 
 dcl_cb_bot_clip:
-; bot1 < cy1, bot2 >= cy2: clip p1 end (entered via BCS => C=1)
+; bot1 < cy1, bot2 >= cy2: clip p1 end
    LDA zp_cb_cy1
+   SEC
    SBC zp_cb_bot1
-   STA zp_tmp0
-; d1 > 0  (=> C=1 again)
-   LDA zp_cb_cy2
-   SBC zp_cb_bot2
-   STA zp_tmp1
-; d2 <= 0
+   STA zp_tmp0                             ; |d1| = cy1 - bot1 (>= 0 here)
+   LDA zp_cb_bot2
+   SEC
+   SBC zp_cb_cy2
+   STA zp_tmp1                             ; |d2| = bot2 - cy2 (magnitude)
    LDA #1
    JSR dcl_boundary_ix
    STA zp_cb_cx1
@@ -1400,91 +1417,78 @@ dclwb_flush3:
 SEG_HIGH
 .endif
 ::dcl_boundary_ix:
-   STA zp_save1                            ; save clip_p1 flag
-
-; denom = d1 - d2 (s8 result, but could be s9 in theory)
-; Since d1 and d2 have opposite signs, |denom| = |d1| + |d2|
-; Compute |d1| and sign
-   LDA zp_tmp0
-   BPL dcl_bix_d1_pos
-; d1 negative: |d1| = -d1
-   EOR #$FF
-   BUMP
-dcl_bix_d1_pos:
-   STA zp_tmp2                             ; |d1|
-
-; |denom| = |d1| + |d2| (since opposite signs)
-   LDA zp_tmp1
-   BPL dcl_bix_d2_pos
-   EOR #$FF
-   BUMP
-dcl_bix_d2_pos:
-   CLC
-   ADC zp_tmp2
-   STA zp_div_den
-; |denom| = |d1| + |d2|
-; Handle overflow: if carry set, denom > 255 — shouldn't happen
-; for pixel-scale values, but guard just in case
-   BCS dcl_bix_mid                         ; denom overflow → use midpoint fallback
-
-; Check denom == 0 (shouldn't happen if signs differ, but guard)
-   BEQ dcl_bix_mid
-
-; num = (cx2 - cx1) * |d1|
+; Crossing column of a line against a span boundary over [cx1, cx2].
+; CONTRACT (2026-09-02 magnitude re-cut): zp_tmp0 = |d| at the cx1 end,
+; zp_tmp1 = |d| at the cx2 end — POSITIVE u8 magnitudes, computed at
+; the call sites, which each KNOW the sign of their arm's differences.
+; The old s8-signed form read bit 7: real |d| reaches 207 (a clamped
+; line end at biased 0 against a low boundary), so big magnitudes
+; mis-signed and the crossing landed anywhere.  A = 1 rounds the
+; quotient UP (clip-p1: the piece starts at the crossing), 0 DOWN
+; (clip-p2: the piece ends before it) — the directed rounding is what
+; keeps every emitted column on the visible side of the boundary, and
+; with it the whole span pool inside the screen band (no safety clips,
+; by Eben's ruling).
+   STA zp_save1                            ; rounding: 1 = ceil
    LDA zp_cb_cx2
    SEC
    SBC zp_cb_cx1
+   BEQ dcl_bix_cx1                         ; dx = 0 -> cx1
    STA zp_mul_b
-; dx = cx2 - cx1
-   BEQ dcl_bix_cx1                         ; dx=0 → return cx1
-
-   LDA zp_tmp2                             ; |d1|
-   JSR umul8                               ; prod = dx * |d1| → zp_prod_l:hi
-
-; Directed rounding: if clip_p1, add (denom-1) to numerator before divide
-; (ceiling division). If !clip_p1, just floor division.
+   LDA zp_tmp0
+   BEQ dcl_bix_cx1                         ; |d1| = 0: crossing AT cx1
+   JSR umul8                               ; prod = dx * |d1| (aliases div)
+; denom = |d1| + |d2| — 9-BIT SAFE (both can be near 208)
+   LDA zp_tmp0
+   CLC
+   ADC zp_tmp1
+   STA zp_div_den
+   BCC dcl_bix_norm
+; WIDE denom: halve num and den, biased INWARD per rounding direction —
+; p1 floors the den (quotient >= true, +1 after), p2 ceils it (quotient
+; <= true).  Both keep the boundary column on its old side: at most one
+; column of aperture stays LOOSE, never re-opened.
+   ROR zp_div_den                          ; C=1 in: den = den9 >> 1
    LDA zp_save1
-   BEQ dcl_bix_no_round
-; Add (denom - 1) in one pass: den + $FF with C=0 in (the guards above
-; fell through) = den-1 with C=1 out (den >= 1), then + prod_l.
+   BNE dcl_bix_whalf                       ; ceil arm: floored den
+   BCC dcl_bix_whalf                       ; dropped bit 0: exact half
+   INC zp_div_den                          ; floor arm: ceil the den
+dcl_bix_whalf:
+   LSR zp_prod_h
+   ROR zp_prod_l
+dcl_bix_norm:
+; Directed rounding, ONE convention (the spec's _crossover_x_dir):
+; clip-p1 = CEILING (num += den-1 — with C made EXPLICIT: the old
+; one-pass ADC #$FF trusted C=0 across the dx SBC and umul8, took +den,
+; and an exactly-grazed line divided to 256, wrapped the u8 quotient to
+; 0 and flipped its whole overlap visible — the Model B KIL's root),
+; clip-p2 = floor.  An exact crossing column sits ON the boundary and
+; evaluates to it — always in-band, so the pool invariant holds with no
+; emit clips.  (An open-boundary floor+1 variant was tried 2026-09-02
+; and rejected: its q=255 wrap needed its own guard and it traded the
+; float-reference deltas one-for-one — see test_span_band.)
+   LDA zp_save1
+   BEQ dcl_bix_div
+   SEC
    LDA zp_div_den
-   ADC #$FF
+   SBC #1
    CLC
    ADC zp_prod_l
-   STA zp_div_l
-   BCC dcl_bix_no_round
-   INC zp_div_h
-dcl_bix_no_round:
-; prod already in div_lo:hi (aliases — fall through to divide)
-   JSR udiv16_8                            ; A = quotient = num / denom
-
-; ix = cx1 + quotient
+   STA zp_prod_l
+   BCC dcl_bix_div
+   INC zp_prod_h
+dcl_bix_div:
+   JSR udiv16_8                            ; A = num / den (<= dx <= 255)
    CLC
-   ADC zp_cb_cx1
-; Clamp to [cx1, cx2]
-   CMP zp_cb_cx1
-   BCC dcl_bix_cx1
+   ADC zp_cb_cx1                           ; ix = cx1 + q (q <= dx: no wrap)
    CMP zp_cb_cx2
-   BCS dcl_bix_cx2                         ; == returns cx2 (same value)
+   BCC dcl_bix_ok
+   LDA zp_cb_cx2
+dcl_bix_ok:
    RTS
-
 dcl_bix_cx1:
    LDA zp_cb_cx1
    RTS
-dcl_bix_cx2:
-   LDA zp_cb_cx2
-   RTS
-dcl_bix_mid:
-; Fallback: return midpoint
-   LDA zp_cb_cx1
-   CLC
-   ADC zp_cb_cx2
-   ROR A
-   RTS
-.if ::BANKED
-SEG_BANKC
-.endif
-
 ; --- dcl_emit_segment: stage a segment to the rasteriser (plus the
 ;     optional tighten record) ---
 ; Input: zp_seg_start_x, zp_seg_start_y, zp_ox1 (end_x), zp_tmp0 (end_y)
@@ -1493,7 +1497,6 @@ SEG_BANKC
 ; Pipeline (pseudocode):
 ;   if start == end: return                       # degenerate point
 ;   if either Y outside [Y_BIAS, VIS_YMAX]:
-;       yband-clip segment; if fully off-screen: return
 ;   if records mode and xl < xr:                  # skip useless records
 ;       append record (xl, yl, xr, yr); records[0] += 1
 ;   stage (xl, yl-Y_BIAS, xr, yr-Y_BIAS) into the rasteriser ZP args
@@ -1503,7 +1506,7 @@ dcl_es_degen:
 ; maybe-degenerate: same x — degenerate iff same y too (rare: 2.6%)
    LDA zp_seg_start_y
    CMP zp_tmp0
-   BNE dcl_es_ok_noreload
+   BNE dcl_es_record
    RTS                                     ; degenerate
 ::dcl_emit_segment:
 ; Skip degenerate segments (zero-length). Common case falls through
@@ -1511,37 +1514,13 @@ dcl_es_degen:
    LDA zp_seg_start_x
    CMP zp_ox1
    BEQ dcl_es_degen
-dcl_es_ok:
-; --- Y-band safety clip: clamp biased Y to [Y_BIAS, VIS_YMAX] so the
-; un-bias below can't wrap an off-screen Y into a wild row address.  The
-; tighten can produce spans whose aperture extends off-screen (a floor/
-; ceil edge projecting beyond the screen, not clamped), so the DCL's
-; aperture clip can still hand us an off-screen segment (e.g. the BL=241
-; span at 1000,-3160,156).  Needed until the tighten clamps apertures to
-; [Y_BIAS,VIS_YMAX].  In-band segments are byte-identical (4 compares).
-   LDA zp_seg_start_y                      ; (x-differ path only: the y-differ
-dcl_es_ok_noreload:                        ; BNE arrives with start_y live)
-   CMP #Y_BIAS
-   BCC dcl_es_yband
-   CMP #(VIS_YMAX + 1)
-   BCS dcl_es_yband
-   LDA zp_tmp0
-   CMP #Y_BIAS
-   BCC dcl_es_yband
-   CMP #(VIS_YMAX + 1)
-   BCS dcl_es_yband                        ; RE-INVERTED 2026-08-22 (branch
-                                        ; census): the 2026-08-12 note
-                                        ; claimed "the rare yband clip
-                                        ; falls in", but it had the RARE
-                                        ; block in the fall-through and
-                                        ; made the COMMON in-band path
-                                        ; take a branch — measured 100%
-                                        ; taken over 20 frames, with the
-                                        ; yband arm never firing at all.
-                                        ; Now the common path falls
-                                        ; straight into the record hook
-                                        ; and the clip arm is an island
-                                        ; below (see dcl_es_yband).
+; (Y-BAND SAFETY CLIP REMOVED 2026-09-02, Eben's ruling: no clips —
+;  lean on the clipper.  dcl_boundary_ix's ceiling-rounding carry bug
+;  was the one producer of off-band segments (a boundary-grazing line
+;  flipped its whole overlap visible and re-opened spans above the
+;  screen); with it fixed, spans are inside the screen band by
+;  induction from the initial span, and every emit inherits that.
+;  test_span_band is the gate.)
 dcl_es_record:
 ; (the records hook died with the FUSED cutover 2026-08-25 — the armed
 ;  aperture lines never reach this core any more; the fused walker
@@ -1594,17 +1573,6 @@ des_diag:                                  ; FALLS THROUGH
 ; 'experiment: run-slice' commit to revive.)
    JMP RASTER_ENTRY                        ; tail-call rasteriser
 
-; --- rare-arm island: the Y-band safety clip (2026-08-22). Reached only
-;     when an emitted segment has an endpoint outside [Y_BIAS,VIS_YMAX];
-;     it did not fire once across the 20-frame census, so it costs the
-;     hot path nothing here. ---
-dcl_es_yband:
-   JSR dcl_yband_clip
-   BCC dcl_es_record_j                     ; clipped to something visible
-   RTS                                     ; fully off-screen -> drop segment
-dcl_es_record_j:
-   JMP dcl_es_record
-
 .endscope
 
 ; ============================================================================
@@ -1655,49 +1623,6 @@ SEG_PQ
    STA plotq_mode
    RTS
 
-; --- dv_emit_band: the vertical fastpath's Y-BAND SAFETY CLIP + stage.
-; TWIN of dcl_emit_segment's clip, for the same reason documented there:
-; the tighten's apertures extend off-screen, so cy1/cy2 arrive biased
-; out of [Y_BIAS, VIS_YMAX]. vplot indexes vptab by the RAW unbiased
-; row, so a biased-42 top wrapped to $FA, the PHA/PHA/RTS dispatch read
-; past vptab and executed the table until a KIL jammed the CPU (the
-; Model B state file, 2026-09-01: column 164, Y0=$FA, PC inside
-; vptab_lo). The vertical fastpath (2026-07-22) predates vplot and
-; never had the clip; the old row-address math merely stomped memory.
-; Stage order: Y first, X last (plot_enq reads all four from ZP).
-; In CODE: verticals run under ambient bank C and the JMP keeps the
-; mapping; the SMC dispatch site dv_emit_op moves here with it.
-dv_emit_band:
-   LDA zp_cb_cy2
-   CMP #Y_BIAS
-   BCC deb_rts                             ; entirely above the screen
-   CMP #(VIS_YMAX+1)
-   BCC deb_y1
-   LDA #VIS_YMAX                           ; bottom off-screen: clamp to
-                                           ; the last visible row
-deb_y1:
-   SEC
-   SBC #Y_BIAS
-   STA RASTER_ZP_Y1
-   LDA zp_cb_cy1
-   CMP #(VIS_YMAX+1)
-   BCS deb_rts                             ; entirely below the screen
-   CMP #Y_BIAS
-   BCS deb_y0
-   LDA #Y_BIAS                             ; top off-screen: clamp to row 0
-deb_y0:
-   SEC
-   SBC #Y_BIAS
-   STA RASTER_ZP_Y0
-   LDA zp_line_xl_l
-   STA RASTER_ZP_X0
-   STA RASTER_ZP_X1
-; SMC dispatch: plotq_arm/plotq_off rewrite the operand between plot_v
-; and plot_enq (a per-FRAME mode — zero cost at the site).
-::dv_emit_op:
-   JMP plot_v                              ; always vertical on this path
-deb_rts:
-   RTS
 SEG_BANKC                                  ; back to the clipper's own
                                            ; segment (plot_enq and the
                                            ; drain stay with the sites)
@@ -1778,118 +1703,6 @@ pqd_next:
    RTS
 pqd_y: .byte 0
 
-; --- dcl_yband_clip: clip emit segment to visible Y band [Y_BIAS,VIS_YMAX].
-; In: zp_seg_start_x/y, zp_ox1, zp_tmp0 (u8 biased). Out: clipped; C clear=keep,
-; C set=reject. Uses s16_interp axis-swapped (free=Y,target=X); LC_OX*/OY*
-; anchors preserved across the call so both ends clip against the ORIGINAL line.
-;
-; Cohen-Sutherland-style: count endpoints above the band (X reg) and
-; below it (Y reg); 2 on the same side = trivial reject; otherwise each
-; out-of-band endpoint is moved to its band edge with X recomputed by
-; interpolation along the original segment.
-; Pseudocode:
-;   if y1 < LO and y2 < LO: reject      # LO = Y_BIAS, HI = VIS_YMAX
-;   if y1 > HI and y2 > HI: reject
-;   for each endpoint (x, y):
-;       if y < LO: x = interp_x_at(LO); y = LO
-;       if y > HI: x = interp_x_at(HI); y = HI
-;   keep
-dcl_yband_clip:
-.scope
-; --- Load s16_interp anchors, axis-swapped: free axis (OX*) = Y,
-; target axis (OY*) = X.  Hi bytes zero — all values are u8. ---
-   LDA zp_seg_start_y
-   STA LC_OX1_LO
-   LDA zp_tmp0
-   STA LC_OX2_LO
-   LDA zp_seg_start_x
-   STA LC_OY1_LO
-   LDA zp_ox1
-   STA LC_OY2_LO
-   ZERO LC_OX1_HI, LC_OX2_HI, LC_OY1_HI, LC_OY2_HI                          ; hoisted from all 4 clip arms
-
-; --- Outcode census: X = #endpoints above band (y < Y_BIAS),
-; Y = #endpoints below band (y > VIS_YMAX) ---
-   LDX #0
-   LDY #0
-   LDA zp_seg_start_y
-   CMP #Y_BIAS
-   BCC yb_e1_lo
-   CMP #(VIS_YMAX + 1)
-   BCS yb_e1_hi
-   JMP yb_e2
-yb_e1_lo:
-   INX
-   JMP yb_e2
-yb_e1_hi:
-   INY
-yb_e2:
-   LDA zp_tmp0
-   CMP #Y_BIAS
-   BCC yb_e2_lo
-   CMP #(VIS_YMAX + 1)
-   BCS yb_e2_hi
-   JMP yb_decide
-yb_e2_lo:
-   INX
-   JMP yb_decide
-yb_e2_hi:
-   INY
-yb_decide:
-; Both endpoints on the same off-screen side -> trivial reject.
-   CPX #2
-   BEQ yb_reject
-   CPY #2
-   BEQ yb_reject
-; --- Endpoint 1 (seg_start): if out of band, interpolate X at the
-; band edge and clamp Y to that edge ---
-   LDA zp_seg_start_y
-   CMP #Y_BIAS
-   BCC yb_c1_lo
-   CMP #(VIS_YMAX + 1)
-   BCC yb_c1_done
-   LDA #VIS_YMAX
-   STA LC_TGT_LO
-   JSR s16_interp
-   STA zp_seg_start_x
-   LDA #VIS_YMAX
-   STA zp_seg_start_y
-   JMP yb_c1_done
-yb_c1_lo:
-   LDA #Y_BIAS
-   STA LC_TGT_LO
-   JSR s16_interp
-   STA zp_seg_start_x
-   LDA #Y_BIAS
-   STA zp_seg_start_y
-yb_c1_done:
-; --- Endpoint 2 (end_x/end_y in zp_ox1/zp_tmp0): same treatment ---
-   LDA zp_tmp0
-   CMP #Y_BIAS
-   BCC yb_c2_lo
-   CMP #(VIS_YMAX + 1)
-   BCC yb_c2_done
-   LDA #VIS_YMAX
-   STA LC_TGT_LO
-   JSR s16_interp
-   STA zp_ox1
-   LDA #VIS_YMAX
-   STA zp_tmp0
-   JMP yb_c2_done
-yb_c2_lo:
-   LDA #Y_BIAS
-   STA LC_TGT_LO
-   JSR s16_interp
-   STA zp_ox1
-   LDA #Y_BIAS
-   STA zp_tmp0
-yb_c2_done:
-   CLC
-   RTS
-yb_reject:
-   SEC
-   RTS
-.endscope
 
 ; --- line_interp_store: compute line Y at column A ---
 ; Reads directly from zp_line_xl_l/yl/yr/dx — no shuffle into the

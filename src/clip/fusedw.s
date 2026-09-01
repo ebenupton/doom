@@ -375,10 +375,11 @@ cb_top_p1_ok:
    LDA zp_cb_cy1                                                          ;#            0.0
    SEC                                                                    ;#            0.0
    SBC fw_top1                                                            ;#            0.0
-   STA zp_tmp0                             ; d1 >= 0                      ;#            0.0
-   LDA zp_cb_cy2                                                          ;#            0.0
-   SBC fw_top2                                                            ;#            0.0
-   STA zp_tmp1                             ; d2 < 0                       ;#            0.0
+   STA zp_tmp0                             ; |d1| = cy1 - top1 (>= 0)     ;#            0.0
+   LDA fw_top2                                                            ;#            0.0
+   SEC                                                                    ;#            0.0
+   SBC zp_cb_cy2                                                          ;#            0.0
+   STA zp_tmp1                             ; |d2| = top2 - cy2 (magnitude) ;#            0.0
    LDA #0                                                                 ;#            0.0
    JSR dcl_boundary_ix                                                    ;#            0.0
    STA zp_cb_cx2                                                          ;#            0.0
@@ -387,14 +388,15 @@ cb_top_p1_ok:
    LDA #0                                                                 ;#            0.0
    STA fwl_pend                            ; right-pend 'above'           ;#            0.0
    JMP cb_top_done                                                        ;#            0.0
-cb_top_clip_p1:                            ; cy1 < top1, cy2 >= top2 (C=1)
-   LDA zp_cb_cy1                                                          ;#            0.0
-   SBC fw_top1                                                            ;#            0.0
-   STA zp_tmp0                             ; d1 < 0                       ;#            0.0
+cb_top_clip_p1:                            ; cy1 < top1, cy2 >= top2
+   LDA fw_top1                                                            ;#            0.0
+   SEC                                                                    ;#            0.0
+   SBC zp_cb_cy1                                                          ;#            0.0
+   STA zp_tmp0                             ; |d1| = top1 - cy1 (magnitude) ;#            0.0
    LDA zp_cb_cy2                                                          ;#            0.0
    SEC                                                                    ;#            0.0
    SBC fw_top2                                                            ;#            0.0
-   STA zp_tmp1                             ; d2 >= 0                      ;#            0.0
+   STA zp_tmp1                             ; |d2| = cy2 - top2 (>= 0)     ;#            0.0
    LDA #1                                                                 ;#            0.0
    JSR dcl_boundary_ix                                                    ;#            0.0
    STA zp_cb_cx1                                                          ;#            0.0
@@ -468,14 +470,14 @@ cb_bot_p1_ok:
    CMP zp_cb_cy2                                                          ;#            0.0
    BCS cb_bot_done                         ; both inside                  ;#            0.0
 ; p2-clip (cy1 <= bot1, cy2 > bot2)
-   LDA zp_cb_cy1
+   LDA fw_top1
    SEC
-   SBC fw_top1
-   STA zp_tmp0                             ; d1 <= 0
+   SBC zp_cb_cy1
+   STA zp_tmp0                             ; |d1| = bot1 - cy1 (magnitude)
    LDA zp_cb_cy2
    SEC
    SBC fw_top2
-   STA zp_tmp1                             ; d2 > 0
+   STA zp_tmp1                             ; |d2| = cy2 - bot2 (> 0)
    LDA #0
    JSR dcl_boundary_ix
    STA zp_cb_cx2
@@ -484,13 +486,15 @@ cb_bot_p1_ok:
    LDA #$FF
    STA fwl_pend                            ; right-pend 'below' (overwrites)
    JMP cb_bot_done
-cb_bot_clip_p1:                            ; bot1 < cy1, bot2 >= cy2 (C=1)
+cb_bot_clip_p1:                            ; bot1 < cy1, bot2 >= cy2
    LDA zp_cb_cy1
+   SEC
    SBC fw_top1
-   STA zp_tmp0                             ; d1 > 0 (C=1 again)
-   LDA zp_cb_cy2
-   SBC fw_top2
-   STA zp_tmp1                             ; d2 <= 0
+   STA zp_tmp0                             ; |d1| = cy1 - bot1 (> 0)
+   LDA fw_top2
+   SEC
+   SBC zp_cb_cy2
+   STA zp_tmp1                             ; |d2| = bot2 - cy2 (magnitude)
    LDA #1
    JSR dcl_boundary_ix
    STA zp_cb_cx1

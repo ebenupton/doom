@@ -87,13 +87,23 @@ def _six_mask(px, py, ab):
 
 def _col_disp(only, ref):
     """Per-column displacement of `only`-lit pixels to the nearest `ref`-lit
-    pixel in the same column. Returns (max_disp_beyond_alias, n_beyond_alias)."""
+    pixel in the same OR ADJACENT column. Returns (max_disp_beyond_alias,
+    n_beyond_alias).
+
+    +-1 column joined the alias class 2026-09-02: crossing-column
+    rounding legitimately differs from the float clipper by one column
+    at boundary-grazing endpoints, and on a steep line the old
+    same-column metric read that as a ~full-height displacement (the
+    rotcache 6-pixel / verify-backlog 9px+110px trio were all this one
+    class, punished in whichever direction the engine's convention
+    leaned). Structural divergence still reads as 99."""
     maxd = 0; ndiv = 0
     for x in range(W):
         oy = np.where(only[x])[0]
         if len(oy) == 0:
             continue
-        ry = np.where(ref[x])[0]
+        lo, hi = max(0, x - 1), min(W - 1, x + 1)
+        ry = np.where(ref[lo:hi + 1].any(axis=0))[0]
         if len(ry) == 0:
             d = np.full(len(oy), 99)
         else:

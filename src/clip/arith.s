@@ -508,7 +508,7 @@ RASTER_ENTRY = $7500                    ; flat: above-line (2026-08-09 —
 
 ; ======================================================================
 ; s16_interp — moved here from clip/dcl_s16.s 2026-08-09 (call-graph
-; file DAG: both dcl.s (dcl_yband_clip, swapped axes) and dcl_s16.s call
+; file DAG: dcl_s16.s calls
 ; it, so it lives with the arithmetic primitives — no back edge).
 ; LC_* working-set addresses are declared in clip/tfr.s (forward refs:
 ; absolute $09xx, resolved at link). udiv16_8 lives above in this file.
