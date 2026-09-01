@@ -93,7 +93,7 @@ def scan_listing(path):
         is_decl = any(declared.startswith(d) or (':' in declared and
                       declared.split(':', 1)[1].lstrip().startswith(d))
                       for d in ('.byte', '.word', '.dbyt', '.addr', '.lobytes',
-                                '.hibytes'))
+                                '.hibytes', '.repeat'))   # .repeat-generated tables (SHR3)
         if not text:
             # continuation row of a multi-line emission: inherit the
             # declaring line's class (long zero .byte runs — e.g. the

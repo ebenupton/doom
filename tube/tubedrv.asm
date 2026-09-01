@@ -463,6 +463,9 @@ ASSERT drvend <= &F400          \ COLPORT rides this file at &F400
 SKIPTO &F400
 .colport_blob
 INCBIN "COLPORT.bin"            \ the 42 aggregation ports (colmap, flat home)
+SKIPTO &F600
+.shtab_blob
+INCBIN "engine_shtab.bin"       \ SHR3/SHL5 rotate shift-compose tables
 .shipend
 ASSERT shipend <= &F800         \ loads must stay below the client OS
 SAVE "COPROT", &EA00, shipend, &EA00

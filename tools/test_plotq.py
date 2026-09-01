@@ -62,7 +62,8 @@ def main():
         steps = 0
         while mpu.pc != 0xFF00 and steps < 2_000_000:
             mpu.step(); steps += 1
-    # pump stub: if plotq_n == 0 the queue just wrapped (FULL) -> drain.
+    # pump stub: if plotq_n is $FF the queue just wrapped (FULL) -> drain
+    # (count-down design 2026-09-01: 63 = empty, DEX past 0 = full).
     # The mode MUST drop to direct around the drain: the drain dispatches
     # through the same axis rules the emit sites use, so with the queue
     # still armed every drained line re-enqueues itself instead of being
@@ -75,7 +76,7 @@ def main():
     # are the frames that actually fill the queue and fire the pump.
     for i, b in enumerate([0xA9, abi.BANK_C, 0x8D, 0x30, 0xFE,   # LDA #C:STA ROMSEL
                            0xAD, n & 0xFF, n >> 8,      # LDA plotq_n
-                           0xF0, 0x01,                  # BEQ do
+                           0x30, 0x01,                  # BMI do (FULL = $FF)
                            0x60,                        # RTS
                            0x20, off & 0xFF, off >> 8,      # do: JSR plotq_off
                            0x20, drain & 0xFF, drain >> 8,  # JSR plotq_drain
@@ -96,11 +97,10 @@ def main():
         call(off)
         r.render_frame(px, py, ab, dw.player_floor(px, py))
         direct = fb(mem)
-        call(arm)
-        mem[n] = 0
+        call(arm)                                    # arm inits n = 63 (count-down)
         r.render_frame(px, py, ab, dw.player_floor(px, py))
         call(off)                                    # direct BEFORE draining
-        if mem[n]:                                   # drain the tail
+        if mem[n] != 63:                             # drain the tail (63 = empty)
             call(drain)
         queued = fb(mem)
         d = sum(1 for a, b in zip(direct, queued) if a != b)

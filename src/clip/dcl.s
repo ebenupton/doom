@@ -1663,6 +1663,8 @@ SEG_PQ
    STA dv_emit_op+1
    LDA #>plot_enq
    STA dv_emit_op+2
+   LDA #63
+   STA plotq_n                             ; count-down home: 63 = empty
    LDA #$80
    STA plotq_mode
    RTS
@@ -1678,21 +1680,21 @@ SEG_BANKC                                  ; back to the clipper's own
                                            ; segment (plot_enq and the
                                            ; drain stay with the sites)
 ::plot_enq:
+; COUNT-DOWN SoA (Eben's design, 2026-09-01): four 64-byte planes in the
+; ONE page (X0/Y0/X1/Y1 at +0/+64/+128/+192), entry index counts DOWN
+; from 63; DEX/STX replaces the old TXA/CLC/ADC#4/STA (-4 cyc/line) and
+; FULL is the sign bit (n == $FF after an append).
    LDX plotq_n
    LDA RASTER_ZP_X0
    STA PLOTQ+0,X
    LDA RASTER_ZP_Y0
-   STA PLOTQ+1,X
+   STA PLOTQ+64,X
    LDA RASTER_ZP_X1
-   STA PLOTQ+2,X
+   STA PLOTQ+128,X
    LDA RASTER_ZP_Y1
-   STA PLOTQ+3,X
-   TXA
-   CLC
-   ADC #4
-   STA plotq_n                             ; wraps to 0 at 64 entries: the
-                                        ; pump treats n==0 as FULL and
-                                        ; force-waits
+   STA PLOTQ+192,X
+   DEX
+   STX plotq_n
 ::pq_pump_op:
    JMP pq_pump_default                     ; SMC (named): the driver pokes
                                         ; its gated pump in here (operand
@@ -1709,21 +1711,18 @@ pq_pump_default:
 ; Caller guarantees the target buffer is cleared + off display and
 ; bank C is paged (banked).  Clobbers A/X/Y; resets plotq_n.
 ::plotq_drain:                             ; PRE: >= 1 entry queued
-   LDY #0                                  ; (n == 0 at entry means FULL —
-pqd_loop:                                  ;  the do-while drains all 64)
-   LDA PLOTQ+0,Y
-   STA RASTER_ZP_X0
-   LDA PLOTQ+1,Y
+   LDX #63                                 ; FIFO = written order 63 down
+pqd_loop:                                  ;  to n+1 (n == $FF at entry =
+   LDA PLOTQ+0,X                           ;  FULL: the do-while drains
+   STA RASTER_ZP_X0                        ;  all 64, DEX from 0 lands $FF)
+   LDA PLOTQ+64,X
    STA RASTER_ZP_Y0
-   LDA PLOTQ+2,Y
+   LDA PLOTQ+128,X
    STA RASTER_ZP_X1
-   LDA PLOTQ+3,Y
+   LDA PLOTQ+192,X
    STA RASTER_ZP_Y1
-   INY
-   INY
-   INY
-   INY
-   STY pqd_y
+   DEX
+   STX pqd_y
                                         ; (LDA RASTER_ZP_Y1 deleted: A still
                                         ;  holds it from the PLOTQ+3 load
                                         ;  above — INY/STY do not touch A,
@@ -1749,10 +1748,11 @@ pqd_v_ord:
 pqd_diag:
    JSR RASTER_ENTRY
 pqd_next:
-   LDY pqd_y
-   CPY plotq_n
+   LDX pqd_y
+   CPX plotq_n
    BNE pqd_loop
-   ZERO plotq_n
+   LDA #63
+   STA plotq_n                             ; count-down home: empty
    RTS
 pqd_y: .byte 0
 

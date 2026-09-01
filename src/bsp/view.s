@@ -273,13 +273,15 @@ fq_y_ok:
 ; rwsel_derive) died here — 4 wide walks + one 3-byte rns per axis
 ; measured 346 vs 472 cyc/call on the corpus call trace
 ; (tools/t16p_compare).
-.macro TP_WALK ssl, sdl, ssh, sdh, dstl, dsth
+.macro TP_WALK ssl, sdl, ssh, sdh, dstl, dsth, first
 ssl: LDA SQR_LO,X                          ; +2-byte SMC = SQR_LO + M
-   SEC
-sdl: SBC SQR_MIR_LO,X                      ; lo-byte SMC = (SQR_LO-M) & $FF
-   STA dstl                                ;   (hi byte CONSTANT $02: M >= 1)
-ssh: LDA SQR_HI,X                          ; +2-byte SMC = SQR_HI + M
-sdh: SBC SQR_MIR_HI,X                      ; lo-byte SMC (hi constant $05)
+.if first
+   SEC                                     ; walks 2-4 inherit C=1: the hi
+.endif                                     ;  SBC never borrows out (product
+sdl: SBC SQR_MIR_LO,X                      ;  >= 0 exactly)
+   STA dstl                                ; lo-byte SMC = (SQR_LO-M) & $FF
+ssh: LDA SQR_HI,X                          ;   (diff hi bytes CONSTANT)
+sdh: SBC SQR_MIR_HI,X
    STA dsth
 .endmacro
 
@@ -296,11 +298,11 @@ rot_w_pages:
 ; P1 = ox*Ms -> rs, P3 = ox*Mc -> rc1 (X shared),
 ; P2 = oy*Mc -> res, P4 = oy*Ms -> rc2 (X shared)
    LDX zp_ri_d_l
-   TP_WALK ::rwp_s1l, ::rwp_d1l, ::rwp_s1h, ::rwp_d1h, zp_rs_l, zp_rs_h
-   TP_WALK ::rwp_s3l, ::rwp_d3l, ::rwp_s3h, ::rwp_d3h, zp_rc1_l, zp_rc1_h
+   TP_WALK ::rwp_s1l, ::rwp_d1l, ::rwp_s1h, ::rwp_d1h, zp_rs_l, zp_rs_h, 1
+   TP_WALK ::rwp_s3l, ::rwp_d3l, ::rwp_s3h, ::rwp_d3h, zp_rc1_l, zp_rc1_h, 0
    LDX zp_br_dy_l
-   TP_WALK ::rwp_s2l, ::rwp_d2l, ::rwp_s2h, ::rwp_d2h, zp_br_res_l, zp_br_res_h
-   TP_WALK ::rwp_s4l, ::rwp_d4l, ::rwp_s4h, ::rwp_d4h, zp_rc2_l, zp_rc2_h
+   TP_WALK ::rwp_s2l, ::rwp_d2l, ::rwp_s2h, ::rwp_d2h, zp_br_res_l, zp_br_res_h, 0
+   TP_WALK ::rwp_s4l, ::rwp_d4l, ::rwp_s4h, ::rwp_d4h, zp_rc2_l, zp_rc2_h, 0
 ; x axis: S = 4 (+sin)P1 (-cos)P2 as 3 bytes (the #4 seed pre-adds the
 ; rns round bias; byte2 is carries/borrows only, stashed in Y), then a
 ; 3-byte floor >>3 and the PB fold.  Sign ops are the SMC pairs
@@ -332,25 +334,23 @@ rot_w_pages:
    TYA
 ::rwp_o2b:
    SBC #0                                  ; SMC: follows o2l
-   CMP #$80
-   ROR A
-   ROR zp_rws_m
-   ROR zp_rws_l
-   CMP #$80
-   ROR A
-   ROR zp_rws_m
-   ROR zp_rws_l
-   CMP #$80
-   ROR A
-   ROR zp_rws_m
-   ROR zp_rws_l
+; S>>3 by table compose (SHR3/SHL5, page-aligned $5600/$5700): result
+; is exact mod 2^16 -- the true vx-PB fits s16, so byte2's bits beyond
+; <<5 truncate away.  26 cyc/axis vs the 42-cyc triple-ROR ladder.
+   TAY                                     ; Y = byte2
+   LDX zp_rws_m
+   LDA SHR3,X
+   ORA SHL5,Y
+   TAY                                     ; Y = result mid
+   LDA SHL5,X                              ; (X still = mid)
+   LDX zp_rws_l
+   ORA SHR3,X                              ; A = result lo
    LDX zp_ri_d_h                           ; page nibble
    CLC
-   LDA PB_XL,X
-   ADC zp_rws_l
+   ADC PB_XL,X
    STA zp_br_vx_l
-   LDA PB_XH,X
-   ADC zp_rws_m
+   TYA
+   ADC PB_XH,X
    STA zp_br_vx_h
 ; y axis: S = 4 (+cos)P3 (+sin)P4 ; vy = PB_Y[pg] + S>>3 (X preserved)
    LDA #4
@@ -380,24 +380,20 @@ rot_w_pages:
    TYA
 ::rwp_o4b:
    ADC #0
-   CMP #$80
-   ROR A
-   ROR zp_rws_m
-   ROR zp_rws_l
-   CMP #$80
-   ROR A
-   ROR zp_rws_m
-   ROR zp_rws_l
-   CMP #$80
-   ROR A
-   ROR zp_rws_m
-   ROR zp_rws_l
+   TAY
+   LDX zp_rws_m
+   LDA SHR3,X
+   ORA SHL5,Y
+   TAY
+   LDA SHL5,X
+   LDX zp_rws_l
+   ORA SHR3,X
+   LDX zp_ri_d_h
    CLC
-   LDA PB_YL,X
-   ADC zp_rws_l
+   ADC PB_YL,X
    STA zp_br_vy_l
-   LDA PB_YH,X
-   ADC zp_rws_m
+   TYA
+   ADC PB_YH,X
    STA zp_br_vy_h
    RTS
 
@@ -559,3 +555,21 @@ SEG_HIGH
 ; (rot_select is a MACRO now — bsp/inline.s — expanded at its single
 ;  call site, 2026-07-17.)
 SEG_CODE
+
+; ============================================================================
+; SHR3 / SHL5 — the shift-compose tables for the rotate's 3-byte >>3
+; (page-aligned so the abs,X/abs,Y reads never pay a crossing; static
+; content, shipped, zero boot cost).
+; ============================================================================
+.pushseg
+.segment "SHTAB"
+.align 256
+SHR3:
+.repeat 256, i
+   .byte i >> 3
+.endrepeat
+SHL5:
+.repeat 256, i
+   .byte (i << 5) & $FF
+.endrepeat
+.popseg

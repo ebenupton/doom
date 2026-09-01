@@ -277,12 +277,14 @@ def main():
     for a in range(0x0400, 0xF7F0):
         if mem[a] and not (CODE_LO <= a < CODE_HI or DATA_LO <= a < DATA_HI
                            or 0x0400 <= a < CODE_LO or 0x7600 <= a < 0x8600
-                           or _abi.COLPORT_BASE_FLAT <= a < _abi.COLPORT_BASE_FLAT + 504):
+                           or _abi.COLPORT_BASE_FLAT <= a < _abi.COLPORT_BASE_FLAT + 504
+                           or 0xF600 <= a < 0xF800):
             raise AssertionError(f"unshipped nonzero byte at &{a:04X}")
     # (high check: VATOX now ends at $E701 — nothing above $E9FF but FB)
     for a in range(0xEA00, 0xF7F0):
-        if _abi.COLPORT_BASE_FLAT <= a < _abi.COLPORT_BASE_FLAT + 504:
-            continue                       # ships inside COPROT at &F400
+        if _abi.COLPORT_BASE_FLAT <= a < _abi.COLPORT_BASE_FLAT + 504 \
+                or 0xF600 <= a < 0xF800:
+            continue                       # ship inside COPROT (&F400 ports, &F600 SHTAB)
         assert not mem[a], f"nonzero in FB region &{a:04X}"
 
     runs = []                              # (census retired: two spans)
