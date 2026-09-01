@@ -300,6 +300,9 @@ def main():
     # ---- assemble the three programs ----
     detect = asm('tube/detect.asm', 'DETECT')
     coprot = asm('tube/tubedrv.asm', 'COPROT')
+    import abi as _abi_cp
+    assert 0xEA00 + len(coprot) <= _abi_cp.COLPORT_BASE, \
+        'COPROT grew into the flat COLPORT home at $F400'
     hostt = asm('tube/hostg.asm', 'HOSTT')
 
     # ---- assemble the ONE dual-mode disc (banked side built above) ----

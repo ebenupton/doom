@@ -110,10 +110,10 @@ SEG_CODE
 ; unity = cardinal angle (|sin| or |cos| rounds to 1.0): exact copy of
 ; lo, no multiply. Clobbers zp_mul_b, zp_prod_l/hi, zp_tmp0, X, Y.
 ; ============================================================================
-zp_ft_lo = $07FB                        ; bitmap-page tail — REAL RAM both
-zp_ft_mag = $07FC                       ; builds. WAS $E4F8-$E4FB (2026-07-27
-zp_ft_neg = $07FD                       ; flat recovery) = OS ROM on the
-zp_ft_one = $07FE                       ; REAL banked machine: the stores
+zp_ft_lo = $09FB                        ; bitmap-page tail — REAL RAM both
+zp_ft_mag = $09FC                       ; builds. WAS $E4F8-$E4FB (2026-07-27
+zp_ft_neg = $09FD                       ; flat recovery) = OS ROM on the
+zp_ft_one = $09FE                       ; REAL banked machine: the stores
                                         ; vanished, ft read constant ROM
                                         ; bytes, the fracs froze, and the
                                         ; viewpoint STAIRCASED a whole unit

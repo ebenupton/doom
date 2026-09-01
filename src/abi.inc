@@ -17,7 +17,7 @@ SQRH_BASE = $0400                       ; quarter-square HI pages ($0400/$0500).
 SQR_HI = SQRH_BASE+$000                 ; qsqr hi bytes (f 0..255)
 SQR2_HI = SQRH_BASE+$100                ; qsqr hi bytes (f 256..510)
 DRV_ORG = $0F00                         ; $1A00 -> $0F00 2026-08-26 (low-RAM consolidation; the driver heads the ONE engine code area). walk/anim driver entry (!BOOT CALLs this). $1E00 -> $1A00 2026-08-19 (the -$400 window slide, bank-B code eviction): the exception window is $1A00-$25FF — banked walk_drv+PMOVE, flat VXCACHE_YLO/YHI + CPM keys + records + PM_SCRATCH + PMH.
-DRV_VARS = $0B10                        ; UNIFIED both builds 2026-08-26: the 16-byte hole in the WORK segment between PM_FXW and the scalars ($0B10-$0B1F) — one address, no flat/tube fork (the $1180 flat home died with the map). walk driver variable block (layout below). Banked base $1B80 -> $1BF0 2026-08-24: the block sat in the MIDDLE of walk_drv's ORG'd span, capping the code at 384 B, and the OSBYTE font probe did not fit. The span is code | glue (DRV_GLUE) | vars | input+flip (DRV_CLR), so the vars now occupy the 16 free bytes below DRV_CLR and the code's real limit is DRV_GLUE -- which is what walk_drv now asserts, at both ends. FLAT is $1180 because $1B00-$1BFF there is the SENIOR page of VXCACHE_YLO: the seg pipeline cached vertices 384..396 straight over the old block -- vertex 387 landed on DV_PXL and the player X jumped mid-turn. Banked never saw it (VXCACHE lives in bank A), so only the TUBE, which runs the flat engine with a driver, was corrupted. $1180 verified clear by poisoning $1100-$11FF and running render+anim_tick+pm_frame.
+DRV_VARS = $0D10                        ; UNIFIED both builds 2026-08-26: the 16-byte hole in the WORK segment between PM_FXW and the scalars ($0B10-$0B1F) — one address, no flat/tube fork (the $1180 flat home died with the map). walk driver variable block (layout below). Banked base $1B80 -> $1BF0 2026-08-24: the block sat in the MIDDLE of walk_drv's ORG'd span, capping the code at 384 B, and the OSBYTE font probe did not fit. The span is code | glue (DRV_GLUE) | vars | input+flip (DRV_CLR), so the vars now occupy the 16 free bytes below DRV_CLR and the code's real limit is DRV_GLUE -- which is what walk_drv now asserts, at both ends. FLAT is $1180 because $1B00-$1BFF there is the SENIOR page of VXCACHE_YLO: the seg pipeline cached vertices 384..396 straight over the old block -- vertex 387 landed on DV_PXL and the player X jumped mid-turn. Banked never saw it (VXCACHE lives in bank A), so only the TUBE, which runs the flat engine with a driver, was corrupted. $1180 verified clear by poisoning $1100-$11FF and running render+anim_tick+pm_frame.
 DV_ANGIDX = DRV_VARS+0                  ; view angle index 0..63 (angle byte = idx*4)
 DV_BACKHI = DRV_VARS+1                  ; hidden-buffer page hi ($58/$6C)
 DV_PXF = DRV_VARS+2                     ; player x 8.8 prescaled, 24-bit: frac
@@ -37,12 +37,12 @@ DV_HUD_FONT = DRV_VARS+13               ; MOS font base found by hud_find (TWO b
 DV_FIELDS = DRV_VARS+15                 ; PAL fields consumed by the last frame, for the debug HUD (F=). Written by walk_drv's mv_frame from the field-clock search result -- the same count it hands pm_frame, so the readout is the number the movement actually used, not a second estimate of it. The tube build carries the equivalent in its HUD packet.
 DRV_GLUE = $10A0                        ; anim/HUD glue pocket
 DRV_CLR = $1100                         ; input block + flip scheduler; the unrolled framebuffer clears moved to BANK C 2026-08-16, and the whole driver slid $2200 -> $2100 with DRV_ORG 2026-08-17 (2026-08-14: the sincos overlay moved to bank A $BA00 with STEPTAB/USEVEC; the driver packs below the engine PMOVE region)
-PM_FXW = $0B00                          ; world-fraction bytes of the CANDIDATE/committed position, x at +0 / y at +2 (4-byte block $096B-$096E, freed by the u8 BSP child staging retirement). Staged by pmf_cand = (candidate 8.8-prescaled byte0) << 3; consumed by the EXACT node point-on-side (axis ties + node_band) and nowhere else. Harnesses that poke the $90-$93 raws directly MUST poke these too (zero for integer positions).
-D_ENABLE = $0B7E                        ; forward-coherence bbox cache master switch
-D_FWD = $0B7F                           ; per-frame flag: move was forward-only
-VXCACHE_STATE = $0700                       ; THE BITMAP PAGE: VRCACHE_VALID+VDONE+VXCACHE_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
-VXCACHE_STATE_LEN = $0100                   ; bytes to zero at boot (the whole bitmap page)
-VXCACHE_ENABLE = $0B5D                      ; translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxcache_prev_ab follows it)
+PM_FXW = $0D00                          ; world-fraction bytes of the CANDIDATE/committed position, x at +0 / y at +2 (4-byte block $096B-$096E, freed by the u8 BSP child staging retirement). Staged by pmf_cand = (candidate 8.8-prescaled byte0) << 3; consumed by the EXACT node point-on-side (axis ties + node_band) and nowhere else. Harnesses that poke the $90-$93 raws directly MUST poke these too (zero for integer positions).
+D_ENABLE = $0D7E                        ; forward-coherence bbox cache master switch
+D_FWD = $0D7F                           ; per-frame flag: move was forward-only
+VXCACHE_STATE = $0900                   ; THE BITMAP PAGE: VRCACHE_VALID+VDONE+VXCACHE_VALID+RCACHE_COMPUTED (boot zeroes the whole page)
+VXCACHE_STATE_LEN = $0100               ; bytes to zero at boot (the whole bitmap page)
+VXCACHE_ENABLE = $0D5D                  ; translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxcache_prev_ab follows it)
 .if ::BANKED
 RCACHE_STATE = $AF00       ; rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)
 .else
@@ -91,12 +91,12 @@ CYMIN_BASE = $B200         ; per-colseg min y cell ((ymin+1584)>>7 clamped u8), 
 CYMIN_BASE = $7F3C
 .endif
 .if ::BANKED
-CYMAX_BASE = $B600         ; per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100
+CYMAX_BASE = $B7F8         ; per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100
 .else
 CYMAX_BASE = $8008
 .endif
 .if ::BANKED
-CYPORT_BASE = $B6CC        ; per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80CB, RC_P2L_0 walls $8100)
+CYPORT_BASE = $B2CC        ; per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80CB, RC_P2L_0 walls $8100)
 .else
 CYPORT_BASE = $80D4
 .endif
@@ -125,12 +125,16 @@ MV_MINPASS = $B1BC         ; per-mover min passable door pos (fh + 56, prescaled
 .else
 MV_MINPASS = $E910
 .endif
-COLPORT_BASE = $0D00                    ; P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). Strip head since the 2026-08-19 window slide: LOW / the tube CODE file load from LOW_BASE = here, so the ports SHIP DIRECTLY.
-LOW_BASE = COLPORT_BASE+0               ; first shipped byte of the LOW disc image / tube CODE file / bare-boot copy (the strip head)
-SPAN_POOL = $0800                       ; clipper span pool block head (13 x $20 fields; arith.s POOL derives from this)
+.if ::BANKED
+COLPORT_BASE = $B600       ; P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). BANK B since 2026-09-01 (every reader runs under WALK by the pm_frame contract; runtime read-only, mover heights come via the mover id): banked $B600-$B7F7 (the $B700 window is bank-B free; DIR planes are bank A), flat $F400 in the dead SCREEN pages above COPROT (flat never renders; the copro draws via the host emitters) and below the tube client OS at $F800. The $0D00 pages joined the WORK arena; LOW_BASE is DRV_ORG now.
+.else
+COLPORT_BASE = $F400
+.endif
+LOW_BASE = $0F00                        ; first shipped byte of the LOW disc image / tube CODE file / bare-boot copy (the strip head = DRV_ORG since COLPORT moved to bank B 2026-09-01)
+SPAN_POOL = $0A00                       ; clipper span pool block head (13 x $20 fields; arith.s POOL derives from this)
 PMOVE_BASE = $1340                      ; PMOVE region head (banked cfg anchor; build_anim_ssd asserts driver_end <= this)
 COL_N_SOLID = $00CC                     ; collision indices >= this are ports (colmap asserts the count; 199 -> 204 2026-08-29: the phase-existential flood adopted s62 + the two-pass colinear merge)
-PM_TURNREM = $0B04                      ; sub-step rotation fraction, Q8 — carries the frame-rate-compensated turn across frames. Moved into the WORK segment 2026-08-26; the PM_MOMX/Y tombstone slots (and the pm_fuzz stay-zero assert) DIED with the old map.
+PM_TURNREM = $0D04                      ; sub-step rotation fraction, Q8 — carries the frame-rate-compensated turn across frames. Moved into the WORK segment 2026-08-26; the PM_MOMX/Y tombstone slots (and the pm_fuzz stay-zero assert) DIED with the old map.
 .if ::BANKED
 WALKTAB_BASE = $BE64       ; USETAB + 1 + n_use*11: the walk-over record section (n_walk byte, then 11-byte records — 9 + 2 biased hi-byte y bounds, SAME stride as use records). colmap asserts n_use == 9
 .else

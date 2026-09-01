@@ -147,10 +147,10 @@ VP_PG = ROM_VERTS_C + $400
 ; REBUILT PER ANGLE EPOCH by rot_select: PB_X = PX*sin - PY*cos,
 ; PB_Y = PX*cos + PY*sin in s16 counts (PX,PY in {-512,-256,0,+256}).
 ; $0680-$06BF: scratch-page run verified free by listing scan 2026-08-11.
-PB_XL = $0A80
-PB_XH = $0A90
-PB_YL = $0AA0
-PB_YH = $0AB0
+PB_XL = $0C80
+PB_XH = $0C90
+PB_YL = $0CA0
+PB_YH = $0CB0
 SQR_MIRROR = $01E0                      ; 32-byte even-mirror prefix BELOW
                                         ; sqr_l — protruding into the STACK
                                         ; PAGE since the quad moved to $0200
@@ -163,9 +163,9 @@ SQR_MIRROR = $01E0                      ; 32-byte even-mirror prefix BELOW
                                         ; code image (rwp_stamp), so boot
                                         ; scribbles self-heal. SQR_MIRROR+k
                                         ; = f(32-k) & 255.
-PB_TS = $0AC0                           ; epoch-build scratch: (k-2)*256*sin
-PB_TC = $0AC8                           ; (k-2)*256*cos — 4 s16 each
-PB_PREV_AB = $0AD0                      ; angle the tables were built for
+PB_TS = $0CC0                           ; epoch-build scratch: (k-2)*256*sin
+PB_TC = $0CC8                           ; (k-2)*256*cos — 4 s16 each
+PB_PREV_AB = $0CD0                      ; angle the tables were built for
 ; ($06D1 free again 2026-08-11: PB_VALID died — validity rides
 ;  rwp_stamp IN THE CODE IMAGE, so code reloads self-invalidate)
 
@@ -570,7 +570,7 @@ VC_SXH  = VRCACHE_BASE + $600
 .if ::BANKED
 .assert VRCACHE_BASE >= $8000 && VC_SXH + $200 <= $AB00, error,  "banked VRCACHE must sit inside bank A, below the vertex planes"
 .endif
-VRCACHE_VALID_BASE = $0700               ; THE BITMAP PAGE (relocation to
+VRCACHE_VALID_BASE = $0900               ; THE BITMAP PAGE (relocation to
                                         ; the VXCACHE plane tails tried and
                                         ; UNWOUND 2026-08-13 pending the
                                         ; two-bank layout plan; the

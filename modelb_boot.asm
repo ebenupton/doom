@@ -94,7 +94,7 @@ ORG &0900
     ; copy $3000.. down to $0D00-$57FF, ascending (dst < src throughout;
     ; MODE 7 screen at $7C00 clears the $3000-$7AFF staging)
     LDA #&00 : STA &80 : LDA #&30 : STA &81      ; src = $3000
-    LDA #&00 : STA &82 : LDA #&0D : STA &83      ; dst = $0D00
+    LDA #&00 : STA &82 : LDA #&0F : STA &83      ; dst = $0F00 (LOW_BASE)
     LDY #0
 .s_cp
     LDA (&80),Y
@@ -113,6 +113,6 @@ ORG &0900
 .s_lowc EQUS "LOAD LOWC 3000" : EQUB 13          ; 65C02 engine CODE image
 .s_end
 stub_len = s_end - stub
-ASSERT LOW_BASE = &0D00                          ; the copy loop above targets
+ASSERT LOW_BASE = &0F00                          ; the copy loop above targets
 COPYBLOCK &0900, s_end, stub_image
 SAVE "!BOOT", &1900, stub_image + stub_len, &1900

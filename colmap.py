@@ -514,7 +514,8 @@ def blobs(flat=True):
         A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
                  minpass=0xE910, mv_ss_id=0xE998, mv_ss_info=0xE9A0,
                  usetab=0xE918, usevec=USEVEC_FLAT,
-                 cymin=0x7F3C, cymax=0x8008, cyport=0x80D4, sil=0x7180)
+                 cymin=0x7F3C, cymax=0x8008, cyport=0x80D4, sil=0x7180,
+                 colport=0xF400)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -528,10 +529,10 @@ def blobs(flat=True):
         # ss_vz $8C00 -> $8D00 2026-08-19: fifth of the five adjacent SS
         # planes; ss_info died into SS_SI's top bits (MV_CEIL carries the
         # per-mover ceiling flag it used to hold in b7)
-        A = dict(idx=0xAF8A, colseg=0xB8C0, ss_vz=0x8D00,
+        A = dict(idx=0xAF8A, colseg=0xB8C4, ss_vz=0x8D00,
                  minpass=0xB1BC, mv_ss_id=0xB1C2, mv_ss_info=0xB1CA,
-                 usetab=0xBE00, cymin=0xB200, cymax=0xB600, cyport=0xB6CC,
-                 sil=0xB198)
+                 usetab=0xBE00, cymin=0xB200, cymax=0xB7F8, cyport=0xB2CC,
+                 sil=0xB198, colport=0xB600)
     import math
     seg_blob = bytearray()
     cymin = bytearray(); cymax = bytearray(); cyport = bytearray()
@@ -591,7 +592,7 @@ def blobs(flat=True):
         pb += struct.pack('<hhhhBBBB', p[0], p[1], p[2], p[3],
                           p[7], p[4], p[5], p[6])
     import abi as _abi0
-    assert _abi0.COLPORT_BASE + len(pb) <= _abi0.DRV_ORG, 'COLPORT overruns the driver'
+    assert A['colport'] in (0xB600, 0xF400) and _abi0.COLPORT_BASE == 0xB600, 'colport homes drifted from abi'
     # MV_SS probe list (2026-08-19 claw-back): the <=8 mover subsectors as
     # parallel id/info arrays, $FF-padded to 8 — pmove probes these twice
     # per MOVE instead of the render paying 8 cycles per visited subsector
@@ -638,7 +639,7 @@ def blobs(flat=True):
            A['minpass']: m['mv_minpass'],
            A['mv_ss_id']: _ids, A['mv_ss_info']: _inf,
            A['usetab']: bytes(ub),
-           _abi0.COLPORT_BASE: bytes(pb)}
+           A['colport']: bytes(pb)}
     if flat:
         # The tube driver's SPACE 'use' needs these; walk_drv reads the
         # bank-C copy banked_bsp seeds, which the parasite cannot page to.
@@ -674,11 +675,16 @@ def blobs(flat=True):
         assert A['mv_ss_info'] + 8 <= 0xE9A8, \
             'MV_SS lists reach the PMWK area (pm_walkover home, $E9A8)'
     else:
-        assert A['cymax'] + len(cymax) <= A['cyport'] and \
-            A['cyport'] + len(cyport) <= 0xB700, 'CY tables overrun the $B600 page'
+        assert A['cymax'] + len(cymax) <= A['colseg'], \
+            'CYMAX overruns into COLSEG (the $B7F8 pocket)'
+        assert A['cyport'] + len(cyport) <= 0xB300, \
+            'CYPORT overruns into ANIM CFG ($B2C7 after CYMIN)'
+        assert A['cymin'] + len(cymin) <= A['cyport'], 'CYMIN reaches CYPORT'
+        assert A['colport'] == 0xB600 and A['colport'] + 504 <= A['cymax'], \
+            'COLPORT ($B600, bank B) overruns into CYMAX'
         assert A['sil'] == 0xB198 and A['sil'] + len(sil_blob) <= 0xB200, \
             'SIL home moved: the banked slot is the COLIDX-to-CYMIN gap'
-        assert 0xB8C0 + len(seg_blob) <= 0xC000, \
+        assert A['colseg'] + len(seg_blob) <= 0xC000, \
             'COLSEG overruns the bank top (MV block moved to $B1BC 2026-08-29)'
         assert A['sil'] + 36 <= A['minpass'] and A['mv_ss_info'] + 8 <= 0xB200, \
             'the $B198 window packs SIL+MV_MINPASS+MV_SS lists exactly'

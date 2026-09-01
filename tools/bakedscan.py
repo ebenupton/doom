@@ -142,6 +142,8 @@ def scan_py():
     """Literal memory indices in the Python harnesses."""
     out = []
     for root, dirs, files in os.walk(ROOT):
+        if 't16p_compare' in root:          # measurement rigs, not engine
+            continue
         dirs[:] = [d for d in dirs
                    if d not in ('build', '.git', '__pycache__', 'wads')]
         for f in sorted(files):

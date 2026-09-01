@@ -35,7 +35,7 @@
 ; zp_bsp_stack_sp EVICTED FROM ZERO PAGE 2026-08-22: two accesses per
 ; frame (tools/zpheat.py), a plain scalar, and zero page is the binding
 ; constraint on bringing the TFS sweep state in.
-zp_bsp_stack_sp = $0A28
+zp_bsp_stack_sp = $0C28
 ; zp_bsp_stack_sp = the saved S for the is_full unwind. Ids are u8
 ; end to end (2026-07-15) — a child's subsector-ness lives in its
 ; PARENT's TYPE byte (NF_RLEAF/NF_LLEAF), not in the link.
@@ -661,13 +661,13 @@ rc_ret1:
 ; --- Per-seg working state ---
 ; Per-vertex helper outputs (set by br_seg_xform_vertex)
 ; Back-sector heights (s8 each) — only meaningful for portal segs.
-zp_seg_btop_dlt = $0A7A                 ; bch - vz
-zp_seg_bbot_dlt = $0A7B                 ; bfh - vz
+zp_seg_btop_dlt = $0C7A                 ; bch - vz
+zp_seg_bbot_dlt = $0C7B                 ; bfh - vz
 ; Output of bv_proj_one's back-step projection (transient).
-zp_seg_sy_btop_lo = $0A7C
-zp_seg_sy_btop_hi = $0A7D
-zp_seg_sy_bbot_lo = $0A7E
-zp_seg_sy_bbot_hi = $0A7F
+zp_seg_sy_btop_lo = $0C7C
+zp_seg_sy_btop_hi = $0C7D
+zp_seg_sy_bbot_lo = $0C7E
+zp_seg_sy_bbot_hi = $0C7F
 ; Per-seg saved vertex projections live in RAM (ZP $70+ is rasteriser
 ; territory: RASTER_ZP_SCRSTRT=$70, RASTER_ZP_X0..Y1=$82-$85). Use the
 ; gap left of the B-region code at $0AA0 ($0A00-$0A9F all free now).

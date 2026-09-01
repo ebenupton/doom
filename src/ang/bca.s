@@ -68,7 +68,7 @@ RC_PH_1  = $7300                        ; ($E402+219 = $E4DB — same page,
 .endif
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:
-RCACHE_COMPUTED = $07C0                 ; 59 bytes (bit per k>>3 group) —
+RCACHE_COMPUTED = $09C0                 ; 59 bytes (bit per k>>3 group) —
                                         ; on THE bitmap page (main, any
                                         ; bank) since 2026-08-09; the
                                         ; rest of RCACHE_STATE stays
@@ -307,7 +307,7 @@ rc_bit      = bca_ccsave                ; bit mask for (idx>>3)&7
 ; Boundary semantics: the box test is CLOSED. px == L joins the left
 ; column, px == R joins mid, py == T joins top, py >= B joins mid.
 ; The mid/mid case is the viewer inside-or-on the closed box: cx
-; publishes p1 = 0, p2 = $0800 (span exactly 2048), and the check's
+; publishes p1 = 0, p2 = $0A00 (span exactly 2048), and the check's
 ; ordinary span test reads that as full visibility — which is also
 ; geometrically exact for on-boundary viewers (a closed-boundary
 ; viewer sees the box subtend at least a half-plane). The routing

@@ -41,9 +41,9 @@
 ; select = B & $20 (B = idx>>3, header key byte B; B >= 32 <=> idx >= 256).
 ; ============================================================================
 ; --- data equates (unbanked) ---
-VXCACHE_VALID   = $0780                     ; 57 B — on THE bitmap page
+VXCACHE_VALID   = $0980                     ; 57 B — on THE bitmap page
 ; (VXCACHE_ENABLE comes from abi.inc)
-vxcache_prev_ab = $0B5E                     ; moved with the scalars block, then
+vxcache_prev_ab = $0D5E                     ; moved with the scalars block, then
                                         ; $19DC -> $19DE 2026-08-22 (with
                                         ; VXCACHE_ENABLE) to clear $19A0-$19DF for
                                         ; the span pool's two new planes

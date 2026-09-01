@@ -40,10 +40,10 @@ SEG_BANKC
 ; --- verdict-record support (2026-07-13 off-screen-aperture fix) ---
 ; $091C/$091D free (TFS_*_VERD retired — verdicts tested lazily at the
 ; consumption points, 2026-07-13)
-DCLV_X0 = $0A20                         ; dcl_rec_flat range args
-DCLV_X1 = $0A21
-DCLV_SX = $0A22                         ; X save across dcl_rec_flat
-DCLV_YV = $0A23                         ; verdict y value latch
+DCLV_X0 = $0C20                         ; dcl_rec_flat range args
+DCLV_X1 = $0C21
+DCLV_SX = $0C22                         ; X save across dcl_rec_flat
+DCLV_YV = $0C23                         ; verdict y value latch
                                         ; (WORK page free run $0AD1-$0AFF;
                                         ; written by dcl_pair_seek, read by
                                         ; dcl_pair_resume — pairs only, the
@@ -56,9 +56,9 @@ DCLV_YV = $0A23                         ; verdict y value latch
 ;   zp_cb_top2  18 accesses/frame     zp_cb_bot2  16
 ;   zp_save1     8
 ; 42 cycles a frame buys three of the 28 bytes the TFS sweep state needs.
-zp_cb_top2 = $0A25                      ; u8, span top at cx2
-zp_cb_bot2 = $0A26                      ; u8, span bot at cx2
-zp_save1   = $0A27                      ; dcl_boundary_ix's clip_p1 save                      ; s16-clip pending right verdict ($80 = none)
+zp_cb_top2 = $0C25                      ; u8, span top at cx2
+zp_cb_bot2 = $0C26                      ; u8, span bot at cx2
+zp_save1   = $0C27                      ; dcl_boundary_ix's clip_p1 save                      ; s16-clip pending right verdict ($80 = none)
 
 
 ; ===================================================================
@@ -83,11 +83,11 @@ zp_save1   = $0A27                      ; dcl_boundary_ix's clip_p1 save        
 ; ---- math working (ZP SWEEP 2026-08-11: the hot subset — the u16
 ; mul/div workspace dominates the profile — moved to freed zp; cold
 ; members stay $06xx) ----
-LC_DY_NEG = $0A46
-LC_M_R2 = $0A4D
-LC_M_R3 = $0A4E
-LC_TMP_HI = $0A54
-LC_RES_HI = $0A56
+LC_DY_NEG = $0C46
+LC_M_R2 = $0C4D
+LC_M_R3 = $0C4E
+LC_TMP_HI = $0C54
+LC_RES_HI = $0C56
 ; $0658 FREE (LC_TGT_HI retired 2026-08-23 -- provably constant 0)
 
 ; ---------------------------------------------------------------------------

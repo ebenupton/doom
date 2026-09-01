@@ -86,13 +86,12 @@ def main():
 
     # before RENDER: diff persistent low-RAM state ($00-$1B40). Both ran the same
     # VIEW+init, so any difference here is initial state bare lacks.
-    # exclude dead flat code blobs the banked build never calls: bsp_d $0900-$09FF,
-    # bsp_b $0A00-$0BE7 (BSP_STACK/visited live here too but are per-frame), focus
-    # on ZP and the ROM-pointer/data region.
-    def dead(a): return 0x0900 <= a < 0x0BE8
+    # exclude per-frame blobs (bitmap page/span pool/WORK arena, $0900-$0DE7
+    # after the 2026-09-01 +$200 strip shift), focus on ZP and the
+    # ROM-pointer/data region.
     diffs=[]
     for a in range(0x00, 0x1B40):
-        if a < 0x100 or (0x0BE8 <= a < 0x1B40 and not dead(a)):
+        if a < 0x100 or (0x0DE8 <= a < 0x1B40):
             if msc.mpu.memory[a] != bare[a]:
                 diffs.append((a, msc.mpu.memory[a], bare[a]))
     print(f"ZP + data diffs (excl dead flat blobs): {len(diffs)}")

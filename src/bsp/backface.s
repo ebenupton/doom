@@ -614,7 +614,7 @@ bb_zero:
 ; ($0C00 + 8x467 = $1A98) — so every bbox visibility check corrupted the
 ; cached transforms of vertices ~64-66. $0960-$0974 is free scratch
 ; (span_clip's LC_* scratch ends at $0958).
-BBOX_CORNERS = $0A20                    ; 4 x 8: vx16, vy16, front, vy24 (lo,hi,ext)
+BBOX_CORNERS = $0C20                    ; 4 x 8: vx16, vy16, front, vy24 (lo,hi,ext)
 ; (overlays the per-seg projection scratch — disjoint phases)
 
 ; Deferred per-subsector op queue (mirrors Python's packed_render_subsector
