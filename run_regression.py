@@ -98,6 +98,8 @@ run('tube_walk', ['tube/test_walk_convergence.py'],
     lambda o: 'WALK CONVERGENCE: PASS' in o)
 run('table_overlap', ['tools/test_table_overlap.py'],
     lambda o: 'TABLEOVERLAP: PASS' in o)
+run('bare_boot', ['test_bare_boot.py'],
+    lambda o: 'PASS' in o and 'FAIL' not in o)
 # The banked (non-copro) HUD has the same font search. The MOS font is not
 # at a fixed address -- OS 1.2 $C000, MOS 3.20 $F900 -- and hardwiring
 # $C000 is what corrupted the readout on a Master.
