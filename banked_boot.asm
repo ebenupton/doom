@@ -28,15 +28,15 @@ ORG &0900
     LDX #LO(cmd_b1): LDY #HI(cmd_b1): JSR &FFF7      ; SRLOAD BANK1 8000 6 (C)
     LDX #LO(cmd_b2): LDY #HI(cmd_b2): JSR &FFF7      ; SRLOAD BANK2 8000 7 (L2)
     ; --- LOW loads STAGED at $3000 and copies down (2026-08-26 low-RAM
-    ;     map): the strip now starts at $0D00 — under DFS a direct *LOAD
-    ;     there lands on the NMI workspace ($0D00) and the catalog
-    ;     ($0E00-$0FFF) while the transfer is USING them. Stage high
+    ;     map): the strip starts at LOW_BASE $0F00 (COLPORT left for
+    ;     bank B 2026-09-01) — under DFS a direct *LOAD there lands on
+    ;     the catalog workspace while the transfer is USING it. Stage high
     ;     (MODE 7 screen at $7C00 clears $3000-$7AFF), copy ascending
     ;     (dst < src throughout). The DRV file is GONE: the driver is
     ;     inside the LOW image ($0F00, LOW_BASE..$57FF is one span). ---
     LDX #LO(cmd_low):LDY #HI(cmd_low):JSR &FFF7      ; *LOAD LOW 3000
     LDA #&00 : STA &80 : LDA #&30 : STA &81          ; src = $3000
-    LDA #&00 : STA &82 : LDA #&0D : STA &83          ; dst = $0D00
+    LDA #&00 : STA &82 : LDA #&0F : STA &83          ; dst = $0F00 (LOW_BASE)
     LDY #0
 .lcp
     LDA (&80),Y
@@ -104,7 +104,7 @@ ORG DRV_ORG
     ; REAL RAM and must be stored, not assumed zero
     LDA #&E0:STA &1C  : LDA #&FE:STA &1D            ; px2 = -288
     LDA #&20:STA &7F  : LDA #&FD:STA &BA            ; py2 = -736
-    LDA #&00:STA &0B00: STA &0B02                   ; PM_FXW x/y = 0
+    LDA #&00:STA &0D00: STA &0D02                   ; PM_FXW x/y = 0 (WORK arena +$200, 2026-09-01)
     LDA #&80:STA BCA_AB                             ; view angle byte
     ; (ROM pointers retired 2026-07-10: layout.inc constants)
     LDA #&58:STA &70                                ; rasteriser scrstrt hi
