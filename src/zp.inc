@@ -651,6 +651,7 @@ zp_div_h = zp_prod_h ; [bsp+clip]
 ; is declared now so no rotation can take one.
 .pushseg
 .segment "WORK"
+.global zp_br_px, zp_br_py       ; the DRIVER stages these (2026-09-01)
 fw_pol:      .res 1     ; 0.6 accesses/frame
 fwl_leftf:   .res 1     ; 2.3
 zp_br_px:    .res 1     ; 0.1 -- the 8.8 FRACTION of the player x; the

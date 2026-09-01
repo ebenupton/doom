@@ -75,6 +75,7 @@ RAWY_MAX = $0490        ;  1168
 .import plotq_off
 .import sqr_fill_cold
 .import obj_anyb_fill
+.import zp_br_px, zp_br_py
 .import fb_clr0
 .import fb_clr1
 .import fb_clr_back
@@ -370,12 +371,23 @@ frame:
                                                     ; walk (pages WALK)
     ; --- position -> engine ZP ---
     LDA pxf
-    STA $00
+    STA zp_br_px                                    ; the 8.8 FRACTION moved to
+                                                    ; the WORK segment in the
+                                                    ; 2026-08-31 zp rotation --
+                                                    ; the old STA $00 fed LC
+                                                    ; clip scratch and the view
+                                                    ; rendered EVERY walked
+                                                    ; frame with frac 0: the
+                                                    ; 8-world-unit camera snap
+                                                    ; = THE judder (2026-09-01)
+    STA $00                                         ; (old cell: harmless, kept
+                                                    ;  for any straggler reads)
     LDA pxl
     STA $01
     LDA pxh
     STA $9D
     LDA pyf
+    STA zp_br_py
     STA $02
     LDA pyl
     STA $03
