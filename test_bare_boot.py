@@ -59,11 +59,20 @@ def main():
     _sp.run(['./beebasm', '-i', 'banked_boot.asm'], check=True)  # fresh DRV
     DRV = open('DRV', 'rb').read()
 
-    def build_and_run(zp_poison=None):
-        return _boot(L0, C, L2, LOW, DRV, zp_poison)
+    def build_and_run(zp_poison=None, ram_poison=None):
+        return _boot(L0, C, L2, LOW, DRV, zp_poison, ram_poison)
 
     bare, bare_fb = build_and_run()
     poisoned, pois_fb = build_and_run(0xA5)
+    # FULL-JUNK arm (2026-09-01, the jsbeeb spawn-artefact class): real
+    # hardware does not hand the engine zeroed RAM anywhere.  Junk-fill
+    # ALL non-shipped memory; the boot must produce the identical frame.
+    junk, junk_fb = build_and_run(0xA5, ram_poison=0xE5)
+    if junk_fb != bare_fb:
+        dj = sum(1 for a, b in zip(junk_fb, bare_fb) if a != b)
+        print(f"\nFAIL — {dj} FB bytes differ when ALL unshipped RAM is junk "
+              f"(the hardware-boot class the zero-RAM model hides)")
+        return 1
     ref_ok = bare_fb == ref_fb
     pois_ok = pois_fb == bare_fb
     print(f"bare frame: {sum(1 for b in bare_fb if b)} non-zero FB bytes")
@@ -87,12 +96,12 @@ def main():
     return
 
 
-def _boot(L0, C, L2, LOW, DRV, zp_poison):
+def _boot(L0, C, L2, LOW, DRV, zp_poison, ram_poison=None):
     # --- bare machine: banks + LOW + driver, nothing else.  RAM starts
     # zeroed, OR with zero page poisoned: hardware does NOT hand the
     # engine a zeroed ZP, so both must render identically.
     sc = SpanClip6502()
-    bare = BankedMemory([0] * 65536)
+    bare = BankedMemory([ram_poison if ram_poison is not None else 0] * 65536)
     bare.define_bank(BANK_L0, L0)
     bare.define_bank(BANK_C, C)
     bare.define_bank(BANK_L2, L2)

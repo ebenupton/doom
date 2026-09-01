@@ -102,8 +102,14 @@ ORG DRV_ORG
     ; exact-descent state (2026-08-26): tie-broken doubled raws (integer
     ; spawn: raw*2, frac bit 0) + the PM_FXW world-frac block, which is
     ; REAL RAM and must be stored, not assumed zero
-    LDA #&E0:STA &1C  : LDA #&FE:STA &1D            ; px2 = -288
-    LDA #&20:STA &7F  : LDA #&FD:STA &BA            ; py2 = -736
+    ; doubled raws + fraction bytes at their REAL homes (the 2026-08-31
+    ; zp rotation moved three of the four raws + both fracs to the WORK
+    ; segment; the old &1D/&7F/&BA pokes were landing on OTHER scalars)
+    LDA #&E0:STA &1C                                ; px2 lo (still zp)
+    LDA #&FE:STA ENG_BR_PX2H                        ; px2 = -288
+    LDA #&20:STA ENG_BR_PY2L
+    LDA #&FD:STA ENG_BR_PY2H                        ; py2 = -736
+    LDA #&00:STA ENG_BR_PXF : STA ENG_BR_PYF        ; integer spawn: fracs 0
     LDA #&00:STA &0D00: STA &0D02                   ; PM_FXW x/y = 0 (WORK arena +$200, 2026-09-01)
     LDA #&80:STA BCA_AB                             ; view angle byte
     ; (ROM pointers retired 2026-07-10: layout.inc constants)

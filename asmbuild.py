@@ -143,6 +143,11 @@ def gen_engine_syms():
                ('ENG_PMOVE_USE',    'pmove_use',      'SPACE use-trace (pm_ux staged)'),
                ('ENG_PM_OLDX',      'pm_oldx',        'committed raw pos (oldy = +2)'),
                ('ENG_PM_VZ',        'pm_vz',          'current vz in/out (prescaled s8)'),
+               ('ENG_BR_PXF',       'zp_br_px',       'player x FRACTION byte (WORK segment; boot must seed)'),
+               ('ENG_BR_PYF',       'zp_br_py',       'player y fraction byte'),
+               ('ENG_BR_PX2H',      'zp_br_px2_h',    'tie-broken doubled raw x HI (lo stays zp)'),
+               ('ENG_BR_PY2L',      'zp_br_py2_l',    'doubled raw y LO'),
+               ('ENG_BR_PY2H',      'zp_br_py2_h',    'doubled raw y HI'),
                ('ENG_PM_UX',        'pm_ux',          'use-trace delta (uy = +2)'),
                ('ENG_PMOVE_ZONLY',  'pmove_zonly',    'z-only revalidate (no box scan)'),
                ('ENG_PM_FRAME',     'pm_frame',       '35Hz momentum frame: A=fields, X=input bits')]
