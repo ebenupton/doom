@@ -347,7 +347,15 @@ def build():
             continue
         x1, y1 = dw.vertexes[v1][:2]
         x2, y2 = dw.vertexes[v2][:2]
-        ob = ps(max(fr[0], fl[0])) + EYE_PS
+        # ob in the EXACT vz domain (2026-09-01, the imp-niche walk-in):
+        # ps(fh)+EYE_PS understates ps(fh+41) by 1 for most fh (rounding
+        # is nonlinear), so touching a >24 step-up port lifted vz by a
+        # value that PASSED the step check (4 <= STEP_PS), and the next
+        # frame entered off the lifted z. DOOM refuses the touching move
+        # itself (tmfloorz - z > 24 -> P_TryMove fails: the classic
+        # ledge standoff). Baking ob = ps(fh+41) makes the port-touch
+        # step test bit-identical to dest_check's ss_vz test.
+        ob = ps(max(fr[0], fl[0]) + 41)
         ot = ps(min(fr[1], fl[1]))
         mv = 0xFF
         for sec in (sr, sl):
