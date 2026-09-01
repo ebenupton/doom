@@ -630,7 +630,7 @@ alw_ret:
 .endscope
 
 ; ============================================================================
-; sqr_fill — regenerate the quarter-square quad at $0200-$05FF.
+; sqr_fill — regenerate the quarter-square quad+mirrors at $0200-$07FF.
 ; The quad lives on OS-owned pages (vector page + workspace) that no disc
 ; file can load, and never needs loading: f(n) = n*n >> 2 falls out of the
 ; recurrence f(n+1) = f(n) + ((n+1) >> 1). 1,024 bytes in ~13k cycles,
@@ -688,6 +688,23 @@ sq2e:
 sq2c:
    INX
    BNE sq2
+; mirror tail (2026-09-01): the even-mirror pages below each plane —
+; MIR[k] = f(256-k), MIR[0] = f(256) — so a diff-side base+mag walk
+; serves any M in 0..256. ~6.4k boot cycles.
+   LDX #1
+   LDY #$FF
+sqm:
+   LDA SQR_LO,X
+   STA SQR_MIR_LO,Y
+   LDA SQR_HI,X
+   STA SQR_MIR_HI,Y
+   INX
+   DEY
+   BNE sqm
+   LDA #0
+   STA SQR_MIR_LO                          ; f(256) = 16384: lo 0
+   LDA #64
+   STA SQR_MIR_HI                          ; hi 64
    RTS
 .endscope
 

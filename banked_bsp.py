@@ -24,7 +24,6 @@ import abi
 BANK_L0, BANK_C, BANK_L2 = abi.BANK_L0, abi.BANK_C, abi.BANK_L2
 abi_RASTER_ENTRY_BANKED = 0xA800     # clip/arith.s, banked arm
 FHCH_LOW = 0x2400
-SQR_LOW = abi.SQR_BASE
 RASTER_OFF = 0xA800            # rasteriser window addr in bank C
 RASTER_BUDGET = 0x0C00         # $A800-$B3FF (VPLOTC at $B400)
 
@@ -198,9 +197,8 @@ def build_banked(flatr):
 
     # --- sqr tables: lo pages -> $1C00, HI pages -> $0200 (banked
     # SQRH_BASE, 2026-07-27 — $1E00 is the LCODE island now) ---
-    for i in range(0x200):
-        bm[SQR_LOW + i] = fmem[abi.SQR_BASE + i]
-        bm[abi.SQRH_BASE + i] = fmem[abi.SQR_BASE + 0x200 + i]
+    for i in range(0x600):
+        bm[abi.SQR_MIR_LO + i] = fmem[abi.SQR_MIR_LO + i]   # $0200-$07FF quad+mirrors, identical maps
     # (LV1 K planes + DBOUND moved ABOVE define_bank(BANK_L0) 2026-08-28:
     #  define_bank COPIES, so writes here were DEAD. DBOUND was shipping
     #  as ZEROS in every banked build/disc — the banded backface's bound

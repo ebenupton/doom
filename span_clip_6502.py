@@ -148,12 +148,18 @@ class SpanClip6502:
         # Load quarter-square tables (base from the generated ABI — the flat
         # base moved $A500 -> $A400 in the 2026-07-12 one-region merge)
         import abi as _abi
-        _sq = _abi.SQR_BASE          # unforked 2026-07-21
         sqr_l, sqr_h, sqr2_l, sqr2_h = _gen_quarter_square()
-        mem[_sq + 0x000:_sq + 0x100] = sqr_l    # lo pages contiguous
-        mem[_sq + 0x100:_sq + 0x200] = sqr2_l   # (2026-07-12 reorder —
-        mem[_sq + 0x200:_sq + 0x300] = sqr_h    #  keep in lockstep with
-        mem[_sq + 0x300:_sq + 0x400] = sqr2_h   #  gen_abi SQR_* offsets)
+        mem[_abi.SQR_LO:_abi.SQR_LO + 0x100] = sqr_l
+        mem[_abi.SQR2_LO:_abi.SQR2_LO + 0x100] = sqr2_l
+        mem[_abi.SQR_HI:_abi.SQR_HI + 0x100] = sqr_h
+        mem[_abi.SQR2_HI:_abi.SQR2_HI + 0x100] = sqr2_h
+        # even-mirror pages (what the boot fill tail writes): MIR[k] =
+        # f(256-k), MIR[0] = f(256) — the t16p2 diff-side reach
+        for k in range(1, 256):
+            mem[_abi.SQR_MIR_LO + k] = sqr_l[256 - k] if 256 - k < 256 else 0
+            mem[_abi.SQR_MIR_HI + k] = sqr_h[256 - k] if 256 - k < 256 else 0
+        mem[_abi.SQR_MIR_LO] = 0
+        mem[_abi.SQR_MIR_HI] = 64
 
         # Build + load every engine region (clipper, renderer regions, angle
         # module) at the addresses in the ld65 config — one loader, no

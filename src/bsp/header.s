@@ -151,7 +151,7 @@ PB_XL = $0C80
 PB_XH = $0C90
 PB_YL = $0CA0
 PB_YH = $0CB0
-SQR_MIRROR = $01E0                      ; 32-byte even-mirror prefix BELOW
+SQR_MIRROR = SQR_LO-32                  ; 32-byte even-mirror prefix BELOW
                                         ; sqr_l — protruding into the STACK
                                         ; PAGE since the quad moved to $0200
                                         ; (Eben, 2026-08-18). The stack is
