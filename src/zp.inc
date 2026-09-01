@@ -116,6 +116,7 @@
 .global zp_br_px2_h
 .globalzp zp_rs_l
 .globalzp zp_rc1_l, zp_rc1_h, zp_rc2_l, zp_rc2_h
+.globalzp zp_rws_l, zp_rws_m
 .globalzp FW_SLOT
 .globalzp zp_br_t0
 .globalzp zp_br_t1
@@ -454,11 +455,12 @@ zp_old_cur:                 .res 1 ; [clip]; tighten cursor scratch (tfr.s)
 zp_ox0:                     .res 1 ; [clip]; subspan extent scratch (dcl+tfr)
 zp_ox1:                     .res 1 ; [clip]
 RASTER_ZP_SCRSTRT:          .res 1 ; [clip]
-zp_rc1_l:                   .res 1 ; [bsp]; rot corr product C1 (eps staging)
+zp_rc1_l:                   .res 1 ; [bsp]; rotate product P3 (ox*Mc)
 zp_rc1_h:                   .res 1 ; [bsp]
-zp_rc2_l:                   .res 1 ; [bsp]; rot corr product C2
+zp_rc2_l:                   .res 1 ; [bsp]; rotate product P4 (oy*Ms)
 zp_rc2_h:                   .res 1 ; [bsp]
-   .res 2                               ; FREE $75-$76
+zp_rws_l:                   .res 1 ; [bsp]; rotate 3-byte sum workspace lo
+zp_rws_m:                   .res 1 ; [bsp]; rotate 3-byte sum workspace mid
 zp_seg_v_idx_l:             .res 1 ; [bsp]; cached: vertex index (u16)
 zp_seg_v_idx_b:             .res 1 ; [bsp]; B = idx>>3 (bitmap/VXCACHE byte
    .res 2                               ; FREE $79-$7A

@@ -179,116 +179,63 @@ inl_end:
    BNE rwp_repatch                         ; new epoch
    JMP inl_end
 rwp_fresh:
-; fresh image: ALSO (re)build the 32-byte SQR_MIRROR prefix below
-; sqr_l (boot zeroing / image reloads wipe it): SQR_MIRROR+k =
-; sqr_l[32-k] — f is even. Runs once per image, ~420 cyc.
-   LDX #31
-   LDY #1
-rwm_fill:
-   LDA sqr_l,Y
-   STA SQR_MIRROR,X
-   INY
-   DEX
-   BPL rwm_fill
+; (the fresh-image 32-byte mirror rebuild died 2026-09-01: the full
+; even-mirror pages are boot-generated DATA at $0200/$0500 — code
+; reloads do not touch them)
 rwp_repatch:
    LDA bca_ab
    STA PB_PREV_AB
    LDA #$A5
    STA rwp_stamp
-; mags: sin -> muls 1/4, cos -> muls 2/3 (operand + both table bases).
-; 8-BIT TRIG RESTORED (2026-08-31): the stagers put mag8 in zp and THIS
-; is where mag5' = (mag8-1)>>3 and eps = mag8 - 8*mag5' (1..8) are
-; derived — the fast products run at mag5', the rwp_f/fs correction
-; sites at eps, and 8*mag5' + eps == mag8 makes the body exact against
-; rns(rot88, 3) on the full table.  Unity encodes as (mag=0, one=1):
-; eff 256 gives mag5' 31 / eps 8 through the same mod-256 arithmetic
-; (255>>3 = 31; 0 - 248 = 8), so unity needs no special case — and
-; with the rich table unity only occurs at true cardinals, whose
-; epochs dispatch away from this body anyway.  mag5' CAN be 0 now
-; (mag8 <= 8), so the diff-LO base's hi byte is patched too (the
-; borrow only happens for mag5' >= 1).
+; mags (t16p2, 2026-09-01): full 8-bit M per trig, sum bases SQR_LO/
+; SQR_HI + M (2-byte pokes: lo = staged mag byte = M & 255 — unity
+; stages 0 — hi = base hi + one), diff-base LO bytes = (-M) & 255
+; (their hi bytes are ASSEMBLED constants: M in 1..256 always lands
+; $02xx/$05xx, the mirror pages).  No derivation, no eps, no SQD_H.
    LDA zp_br_smag
-   JSR rwsel_derive                        ; -> zp_br_t2 = mag5',
-                                           ;    zp_br_t3 = eps,
-                                           ;    zp_rs_l = (-m5)&255,
-                                           ;    zp_rs_h = (-eps)&255,
-                                           ;    Y = diff-LO hi byte
-   LDA zp_br_t2
-   STA rwp_s1l+1                           ; sum bases (page-aligned trick)
+   STA rwp_s1l+1
    STA rwp_s1h+1
    STA rwp_s4l+1
    STA rwp_s4h+1
-   LDA zp_br_t3
-   STA rwp_fs1l+1                          ; eps bases
-   STA rwp_fs1h+1
-   STA rwp_fs4l+1
-   STA rwp_fs4h+1
-   LDA zp_rs_l                             ; (-mag5') & 255
+   LDA #0
+   SEC
+   SBC zp_br_smag
    STA rwp_d1l+1
-   STA rwp_d4l+1
-   TYA
-   STA rwp_d1l+2                           ; diff-LO hi (borrow iff m5 >= 1)
-   STA rwp_d4l+2
-   LDA #<(SQD_H+32)
-   SEC
-   SBC zp_br_t2
    STA rwp_d1h+1
+   STA rwp_d4l+1
    STA rwp_d4h+1
-   LDA #>(SQD_H+32)
-   SBC #0
-   STA rwp_d1h+2
-   STA rwp_d4h+2
-   LDA zp_rs_h                             ; (-eps) & 255
-   STA rwp_f1l+1
-   STA rwp_f4l+1
-   LDA #<(SQD_H+32)
-   SEC
-   SBC zp_br_t3
-   STA rwp_f1h+1
-   STA rwp_f4h+1
-   LDA #>(SQD_H+32)
-   SBC #0
-   STA rwp_f1h+2
-   STA rwp_f4h+2
+   LDX #>SQR_LO
+   LDY #>SQR_HI
+   LDA zp_br_sone
+   BEQ :+
+   INX                                     ; unity: +$100 on the sum bases
+   INY
+:  STX rwp_s1l+2
+   STX rwp_s4l+2
+   STY rwp_s1h+2
+   STY rwp_s4h+2
    LDA zp_br_cmag
-   JSR rwsel_derive
-   LDA zp_br_t2
    STA rwp_s2l+1
    STA rwp_s2h+1
    STA rwp_s3l+1
    STA rwp_s3h+1
-   LDA zp_br_t3
-   STA rwp_fs2l+1
-   STA rwp_fs2h+1
-   STA rwp_fs3l+1
-   STA rwp_fs3h+1
-   LDA zp_rs_l
+   LDA #0
+   SEC
+   SBC zp_br_cmag
    STA rwp_d2l+1
-   STA rwp_d3l+1
-   TYA
-   STA rwp_d2l+2
-   STA rwp_d3l+2
-   LDA #<(SQD_H+32)
-   SEC
-   SBC zp_br_t2
    STA rwp_d2h+1
+   STA rwp_d3l+1
    STA rwp_d3h+1
-   LDA #>(SQD_H+32)
-   SBC #0
-   STA rwp_d2h+2
-   STA rwp_d3h+2
-   LDA zp_rs_h
-   STA rwp_f2l+1
-   STA rwp_f3l+1
-   LDA #<(SQD_H+32)
-   SEC
-   SBC zp_br_t3
-   STA rwp_f2h+1
-   STA rwp_f3h+1
-   LDA #>(SQD_H+32)
-   SBC #0
-   STA rwp_f2h+2
-   STA rwp_f3h+2
+   LDX #>SQR_LO
+   LDY #>SQR_HI
+   LDA zp_br_cone
+   BEQ :+
+   INX
+   INY
+:  STX rwp_s2l+2
+   STX rwp_s3l+2
+   STY rwp_s2h+2
+   STY rwp_s3h+2
 ; sign opcodes: terms 1/4 follow sin, term 3 follows cos, term 2 is
 ; INVERTED cos (the -cos in vx)
    LDX #$18
@@ -300,17 +247,14 @@ rwp_repatch:
 rwp_sp:
    STX rwp_o1s
    STX rwp_o4s
-   STX rwp_g1s                             ; the eps combines follow the
-   STX rwp_g4s                             ; same signs (2026-08-31)
    TYA
    STA rwp_o1l
    STA rwp_o1h
    STA rwp_o4l
    STA rwp_o4h
-   STA rwp_g1l
-   STA rwp_g1h
-   STA rwp_g4l
-   STA rwp_g4h
+   EOR #$0C                                ; $65->$69 / $E5->$E9 (imm twin)
+   STA rwp_o1b
+   STA rwp_o4b
    LDX #$18
    LDY #$65
    LDA zp_br_cneg
@@ -319,12 +263,11 @@ rwp_sp:
    LDY #$E5
 rwp_cp:
    STX rwp_o3s
-   STX rwp_g3s
    TYA
    STA rwp_o3l
    STA rwp_o3h
-   STA rwp_g3l
-   STA rwp_g3h
+   EOR #$0C
+   STA rwp_o3b
 ; term 2 = inverted cos sign
    LDX #$38
    LDY #$E5
@@ -334,12 +277,11 @@ rwp_cp:
    LDY #$65
 rwp_ci:
    STX rwp_o2s
-   STX rwp_g2s
    TYA
    STA rwp_o2l
    STA rwp_o2h
-   STA rwp_g2l
-   STA rwp_g2h
+   EOR #$0C
+   STA rwp_o2b
 ; --- PB tables (same gate: a rebuild here is rare and cheap enough
 ; to ride the patch path even when only the code image was reloaded —
 ; the tables are recomputed from the same staged trig) ---

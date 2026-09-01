@@ -459,5 +459,10 @@ FOR n, 0, 21
     EQUB HI(n * 36)
 NEXT
 .drvend
-ASSERT drvend <= &F800          \ loads must stay below the client OS
-SAVE "COPROT", &EA00, drvend, &EA00
+ASSERT drvend <= &F400          \ COLPORT rides this file at &F400
+SKIPTO &F400
+.colport_blob
+INCBIN "COLPORT.bin"            \ the 42 aggregation ports (colmap, flat home)
+.shipend
+ASSERT shipend <= &F800         \ loads must stay below the client OS
+SAVE "COPROT", &EA00, shipend, &EA00

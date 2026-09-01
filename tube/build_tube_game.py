@@ -276,10 +276,13 @@ def main():
     # CPM-era slack, boot-initialized)
     for a in range(0x0400, 0xF7F0):
         if mem[a] and not (CODE_LO <= a < CODE_HI or DATA_LO <= a < DATA_HI
-                           or 0x0400 <= a < CODE_LO or 0x7600 <= a < 0x8600):
+                           or 0x0400 <= a < CODE_LO or 0x7600 <= a < 0x8600
+                           or _abi.COLPORT_BASE_FLAT <= a < _abi.COLPORT_BASE_FLAT + 504):
             raise AssertionError(f"unshipped nonzero byte at &{a:04X}")
     # (high check: VATOX now ends at $E701 — nothing above $E9FF but FB)
     for a in range(0xEA00, 0xF7F0):
+        if _abi.COLPORT_BASE_FLAT <= a < _abi.COLPORT_BASE_FLAT + 504:
+            continue                       # ships inside COPROT at &F400
         assert not mem[a], f"nonzero in FB region &{a:04X}"
 
     runs = []                              # (census retired: two spans)
@@ -299,10 +302,11 @@ def main():
 
     # ---- assemble the three programs ----
     detect = asm('tube/detect.asm', 'DETECT')
-    coprot = asm('tube/tubedrv.asm', 'COPROT')
     import abi as _abi_cp
-    assert 0xEA00 + len(coprot) <= _abi_cp.COLPORT_BASE, \
-        'COPROT grew into the flat COLPORT home at $F400'
+    with open('COLPORT.bin','wb') as _f:
+        _f.write(bytes(mem[_abi_cp.COLPORT_BASE_FLAT:_abi_cp.COLPORT_BASE_FLAT + 504]))
+    coprot = asm('tube/tubedrv.asm', 'COPROT')   # carries COLPORT at &F400
+
     hostt = asm('tube/hostg.asm', 'HOSTT')
 
     # ---- assemble the ONE dual-mode disc (banked side built above) ----

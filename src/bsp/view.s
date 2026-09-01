@@ -262,41 +262,26 @@ fq_y_ok:
 ;   Callers: seg_xform vxcache_on cold + vfoff (both sides), lo.s cr_plain.
 ;   Clobbers: A, X, Y, zp_rs_l/h, zp_br_res_l/h.
 ; ============================================================================
-.macro RWP_MUL src, d1l, d1h, s1l, s1h, dstl, dsth
-; product = f(x+m) - f(x-m), BOTH sides single indexed loads (Eben's
-; <16 question flushed the |x-m| staging out; his reuse catch kept the
-; LO table shared, 2026-08-11): the sum side keeps the page-aligned
-; base+mag trick (1-byte poke). The diff LO side reads sqr_l ITSELF at
-; base sqr_l-mag — f is even and the 32-byte SQR_MIRROR prefix sits
-; directly below sqr_l, so negative differences land on mirrors; with
-; mag in 1..32 the operand hi byte is CONSTANT (>sqr_l - 1): 1-byte
-; poke. The diff HI side reads the dedicated SQD_H (sqr_h's prefix
-; bytes are live sqr_l entries): 2-byte poke. The SBC/branch/negate/
-; TAY staging died: ~-10 cyc/product. INVARIANT: the general body is
-; never dispatched with mag 0 (rot_select's cardinal classes own
-; those), so the borrow into the LO base's hi byte always happens.
-   LDX src                                                                ;# |          1.4
-s1l: LDA sqr_l,X                           ; +1 SMC = mag5 (base+mag trick) ;# ||         1.9
-   SEC                                                                    ;# |          1.0
-d1l: SBC sqr_l-1,X                         ; +1 SMC = (-mag5) & 255       ;# ||||       4.6
-   STA dstl                                                               ;# |          1.4
-s1h: LDA sqr_h,X                           ; +1 SMC = mag5                ;# |||        4.0
-d1h: SBC SQD_H+32,X                        ; +1/+2 SMC = SQD_H+32-mag5    ;# |||||||    8.3
-   STA dsth                                                               ;# |          1.4
-.endmacro
-
-; RWP_MULX -- RWP_MUL body with X pre-loaded (the interleaved corr muls
-; share the fast mul's LDX; same src, different SMC bases/dst).
-.macro RWP_MULX d1l, d1h, s1l, s1h, dstl, dsth
-s1l: LDA sqr_l,X
+; TP_WALK — one full-mag quarter-square product, BOTH sides single
+; indexed loads (t16p2, 2026-09-01): sum side base = SQR_LO/HI + M
+; (2-byte SMC), diff side base = SQR_LO/HI - M, which lands in the
+; even-mirror pages for o < M — f is even and the 255-byte mirrors sit
+; directly below each plane, so f(|o-M|) needs no abs staging for ANY
+; M in 0..256.  Unity (M=256) rides the same body: the staged mag byte
+; is M&255 = 0 and the sum-base hi bytes carry the +$100.  The mag5'
+; fast products + eps correction pyramid (8 walks, 2 rns tails, SQD_H,
+; rwsel_derive) died here — 4 wide walks + one 3-byte rns per axis
+; measured 346 vs 472 cyc/call on the corpus call trace
+; (tools/t16p_compare).
+.macro TP_WALK ssl, sdl, ssh, sdh, dstl, dsth
+ssl: LDA SQR_LO,X                          ; +2-byte SMC = SQR_LO + M
    SEC
-d1l: SBC sqr_l-1,X
-   STA dstl
-s1h: LDA sqr_h,X
-d1h: SBC SQD_H+32,X
+sdl: SBC SQR_MIR_LO,X                      ; lo-byte SMC = (SQR_LO-M) & $FF
+   STA dstl                                ;   (hi byte CONSTANT $02: M >= 1)
+ssh: LDA SQR_HI,X                          ; +2-byte SMC = SQR_HI + M
+sdh: SBC SQR_MIR_HI,X                      ; lo-byte SMC (hi constant $05)
    STA dsth
 .endmacro
-
 
 ; rwp_stamp — the SMC-validity stamp, IN THE CODE IMAGE (Eben's
 ; testbench-tax catch, 2026-08-11): assembled 0, written $A5 when
@@ -308,147 +293,112 @@ rwp_stamp:
    .byte 0
 
 rot_w_pages:
-; P1 = ox*|sin| -> rs, P2 = oy*|cos| -> res
-   RWP_MUL zp_ri_d_l, ::rwp_d1l, ::rwp_d1h, ::rwp_s1l, ::rwp_s1h, zp_rs_l, zp_rs_h
-   RWP_MULX ::rwp_f1l, ::rwp_f1h, ::rwp_fs1l, ::rwp_fs1h, zp_rc1_l, zp_rc1_h
-   RWP_MUL zp_br_dy_l, ::rwp_d2l, ::rwp_d2h, ::rwp_s2l, ::rwp_s2h, zp_br_res_l, zp_br_res_h
-   RWP_MULX ::rwp_f2l, ::rwp_f2h, ::rwp_fs2l, ::rwp_fs2h, zp_rc2_l, zp_rc2_h ;# ||||||||||11.6
-; vx = PB_X[page] (+sin)P1 (-cos)P2 — op pairs SMC'd per frame
-   LDX zp_ri_d_h                           ; page nibble                  ;# |          1.4
-   LDA PB_XL,X                                                            ;# ||         1.9
+; P1 = ox*Ms -> rs, P3 = ox*Mc -> rc1 (X shared),
+; P2 = oy*Mc -> res, P4 = oy*Ms -> rc2 (X shared)
+   LDX zp_ri_d_l
+   TP_WALK ::rwp_s1l, ::rwp_d1l, ::rwp_s1h, ::rwp_d1h, zp_rs_l, zp_rs_h
+   TP_WALK ::rwp_s3l, ::rwp_d3l, ::rwp_s3h, ::rwp_d3h, zp_rc1_l, zp_rc1_h
+   LDX zp_br_dy_l
+   TP_WALK ::rwp_s2l, ::rwp_d2l, ::rwp_s2h, ::rwp_d2h, zp_br_res_l, zp_br_res_h
+   TP_WALK ::rwp_s4l, ::rwp_d4l, ::rwp_s4h, ::rwp_d4h, zp_rc2_l, zp_rc2_h
+; x axis: S = 4 (+sin)P1 (-cos)P2 as 3 bytes (the #4 seed pre-adds the
+; rns round bias; byte2 is carries/borrows only, stashed in Y), then a
+; 3-byte floor >>3 and the PB fold.  Sign ops are the SMC pairs
+; rot_select pokes; the byte2 ops (o*b) are ADC#0/SBC#0 twins.
+   LDA #4
 ::rwp_o1s:
-   CLC                                     ; SMC: CLC/SEC = sin sign      ;# |          1.0
+   CLC                                     ; SMC: sin sign
 ::rwp_o1l:
-   ADC zp_rs_l                             ; SMC: ADC/SBC zp              ;# |          1.4
-   STA zp_br_vx_l                                                         ;# |          1.4
-   LDA PB_XH,X                                                            ;# ||         1.9
+   ADC zp_rs_l
+   STA zp_rws_l
+   LDA #0
 ::rwp_o1h:
-   ADC zp_rs_h                                                            ;# |          1.4
-   STA zp_br_vx_h                                                         ;# |          1.4
+   ADC zp_rs_h
+   STA zp_rws_m
+   LDA #0
+::rwp_o1b:
+   ADC #0                                  ; SMC: $69/$E9 follows o1l
+   TAY
+   LDA zp_rws_l
 ::rwp_o2s:
-   SEC                                     ; SMC: SEC/CLC = NOT cos sign  ;# |          1.0
-   LDA zp_br_vx_l                                                         ;# |          1.4
+   SEC                                     ; SMC: NOT cos sign
 ::rwp_o2l:
-   SBC zp_br_res_l                         ; SMC: SBC/ADC zp              ;# |          1.4
-   STA zp_br_vx_l                                                         ;# |          1.4
-   LDA zp_br_vx_h                                                         ;# |          1.4
+   SBC zp_br_res_l
+   STA zp_rws_l
+   LDA zp_rws_m
 ::rwp_o2h:
-   SBC zp_br_res_h                                                        ;# |          1.4
-   STA zp_br_vx_h                                                         ;# |          1.4
-; --- FINE CORRECTIONS (2026-08-31, the smoothness fix).  The fast
-; products use mag5' = (mag8-1)>>3; these four use eps = mag8 - 8*mag5'
-; (1..8, so the RWP_MUL borrow invariant holds and unity = 31/8 rides
-; the general body).  8*(mag5' products) + eps products == the full
-; 8-bit-mag rotation, so after one rns(err,3) per axis the count totals
-; are BIT-EQUAL to rns(rot88(w),3) on the restored table -- which is
-; what re-staggers the per-vertex depth residues the 5-bit table had
-; collapsed into whole-scene 4-unit lumps (the corridor jerk Eben
-; bisected to TRIG5).  Signs ride the same patched op-pair scheme
-; (rwp_g*, copied from the o-sites at epoch patch), seeded from 0.
-; Fused err combine + rns(,3) + fold, per axis.  The #4 seed pre-adds the
-; round bias (rns(e,3) == floor((e+4)/8), ties up), so the shift is a pure
-; floor and the fused-round carry tail dies; hi rides A end-to-end and the
-; fold writes the axis slots directly.  Signs are the same patched op
-; pairs (rwp_g*) rot_select already pokes -- operands unchanged.
-   LDA #4
-::rwp_g1s:
-   CLC                                     ; SMC: sin sign (as rwp_o1s)
-::rwp_g1l:
-   ADC zp_rc1_l
-   STA zp_rs_l                             ; lo(err_x + 4) part 1
-   LDA #0
-::rwp_g1h:
-   ADC zp_rc1_h                            ; hi rides A
-   TAY
-   LDA zp_rs_l
-::rwp_g2s:
-   SEC                                     ; SMC: NOT cos sign (as rwp_o2s)
-::rwp_g2l:
-   SBC zp_rc2_l
-   STA zp_rs_l
+   SBC zp_br_res_h
+   STA zp_rws_m
    TYA
-::rwp_g2h:
-   SBC zp_rc2_h                            ; A:zp_rs_l = err_x + 4
+::rwp_o2b:
+   SBC #0                                  ; SMC: follows o2l
    CMP #$80
    ROR A
-   ROR zp_rs_l
+   ROR zp_rws_m
+   ROR zp_rws_l
    CMP #$80
    ROR A
-   ROR zp_rs_l
+   ROR zp_rws_m
+   ROR zp_rws_l
    CMP #$80
    ROR A
-   TAY                                     ; hi(rns) -> Y (C untouched)
-   ROR zp_rs_l
+   ROR zp_rws_m
+   ROR zp_rws_l
+   LDX zp_ri_d_h                           ; page nibble
    CLC
-   LDA zp_br_vx_l
-   ADC zp_rs_l
+   LDA PB_XL,X
+   ADC zp_rws_l
    STA zp_br_vx_l
-   TYA
-   ADC zp_br_vx_h
-   STA zp_br_vx_h                          ; vx += rns(err_x, 3)
-; P3 = ox*|cos| -> rs, P4 = oy*|sin| -> res
-   RWP_MUL zp_ri_d_l, ::rwp_d3l, ::rwp_d3h, ::rwp_s3l, ::rwp_s3h, zp_rs_l, zp_rs_h ;# ||||||||||11.5
-   RWP_MULX ::rwp_f3l, ::rwp_f3h, ::rwp_fs3l, ::rwp_fs3h, zp_rc1_l, zp_rc1_h
-   RWP_MUL zp_br_dy_l, ::rwp_d4l, ::rwp_d4h, ::rwp_s4l, ::rwp_s4h, zp_br_res_l, zp_br_res_h ;# ||||||     7.2
-   RWP_MULX ::rwp_f4l, ::rwp_f4h, ::rwp_fs4l, ::rwp_fs4h, zp_rc2_l, zp_rc2_h
-; vy = PB_Y[page] (+cos)P3 (+sin)P4
-   LDX zp_ri_d_h                                                          ;# |          1.4
-   LDA PB_YL,X                                                            ;# ||         1.9
-::rwp_o3s:
-   CLC                                     ; SMC: CLC/SEC = cos sign      ;# |          1.0
-::rwp_o3l:
-   ADC zp_rs_l                                                            ;# |          1.4
-   STA zp_br_vy_l                                                         ;# |          1.4
-   LDA PB_YH,X                                                            ;# ||         1.9
-::rwp_o3h:
-   ADC zp_rs_h                                                            ;# |          1.4
-   STA zp_br_vy_h                                                         ;# |          1.4
-::rwp_o4s:
-   CLC                                     ; SMC: CLC/SEC = sin sign      ;# |          1.0
-   LDA zp_br_vy_l                                                         ;# |          1.4
-::rwp_o4l:
-   ADC zp_br_res_l                                                        ;# |          1.4
-   STA zp_br_vy_l                                                         ;# |          1.4
-   LDA zp_br_vy_h                                                         ;# |          1.4
-::rwp_o4h:
-   ADC zp_br_res_h                                                        ;# |          1.4
-   STA zp_br_vy_h                                                         ;# |          1.4
+   LDA PB_XH,X
+   ADC zp_rws_m
+   STA zp_br_vx_h
+; y axis: S = 4 (+cos)P3 (+sin)P4 ; vy = PB_Y[pg] + S>>3 (X preserved)
    LDA #4
-::rwp_g3s:
-   CLC                                     ; SMC: cos sign (as rwp_o3s)
-::rwp_g3l:
+::rwp_o3s:
+   CLC                                     ; SMC: cos sign
+::rwp_o3l:
    ADC zp_rc1_l
-   STA zp_rs_l
+   STA zp_rws_l
    LDA #0
-::rwp_g3h:
+::rwp_o3h:
    ADC zp_rc1_h
+   STA zp_rws_m
+   LDA #0
+::rwp_o3b:
+   ADC #0
    TAY
-   LDA zp_rs_l
-::rwp_g4s:
-   CLC                                     ; SMC: sin sign (as rwp_o4s)
-::rwp_g4l:
+   LDA zp_rws_l
+::rwp_o4s:
+   CLC                                     ; SMC: sin sign
+::rwp_o4l:
    ADC zp_rc2_l
-   STA zp_rs_l
+   STA zp_rws_l
+   LDA zp_rws_m
+::rwp_o4h:
+   ADC zp_rc2_h
+   STA zp_rws_m
    TYA
-::rwp_g4h:
-   ADC zp_rc2_h                            ; A:zp_rs_l = err_y + 4
+::rwp_o4b:
+   ADC #0
    CMP #$80
    ROR A
-   ROR zp_rs_l
+   ROR zp_rws_m
+   ROR zp_rws_l
    CMP #$80
    ROR A
-   ROR zp_rs_l
+   ROR zp_rws_m
+   ROR zp_rws_l
    CMP #$80
    ROR A
-   TAY
-   ROR zp_rs_l
+   ROR zp_rws_m
+   ROR zp_rws_l
    CLC
-   LDA zp_br_vy_l
-   ADC zp_rs_l
+   LDA PB_YL,X
+   ADC zp_rws_l
    STA zp_br_vy_l
-   TYA
-   ADC zp_br_vy_h
-   STA zp_br_vy_h                          ; vy += rns(err_y, 3)
+   LDA PB_YH,X
+   ADC zp_rws_m
+   STA zp_br_vy_h
    RTS
 
 
@@ -516,51 +466,9 @@ rwp_card_cu:                               ; cos unity: vx from -oy, vy from ox
 ; 8 = PB_TC). Entries interleaved lo,hi at dest + k*2:
 ;   T[2] = 0, T[3] = +V, T[1] = -V, T[0] = -2V, all negated when
 ; X != 0.  V <= $2000, so 2V <= $4000: s16 throughout.
-.include "sqd.inc"
-; (the 2026-08-25 bank-7 eviction of SQD_H was REVERTED the same day:
-;  the VXCACHE fat paths execute FROM bank C and ride rot_w_pages, so the
-;  table must be in ALWAYS-MAPPED main — the far-pose banked frames
-;  collapsed to a third of their lines. bankedcmp caught it.)
 
 .pushseg
 .segment "RWC"
-; rwsel_derive — the per-axis mag decomposition (rot_select calls it
-; twice).  A = staged mag8 (0 encodes unity-256; the mod-256 arithmetic
-; gives mag5' 31 / eps 8 there by construction).
-;   Out: zp_br_t2 = mag5' = (mag8-1)>>3, zp_br_t3 = eps = mag8 - 8*mag5'
-;        zp_rs_l = (-mag5')&255, zp_rs_h = (-eps)&255
-;        Y = >sqr_l - (mag5' >= 1)   (the diff-LO base hi byte)
-rwsel_derive:
-   STA zp_rs_h                             ; stash mag8
-   SEC
-   SBC #1
-   LSR A
-   LSR A
-   LSR A
-   STA zp_br_t2                            ; mag5'
-   TAX
-   ASL A
-   ASL A
-   ASL A
-   STA zp_br_t3                            ; 8*mag5'
-   LDA zp_rs_h
-   SEC
-   SBC zp_br_t3
-   STA zp_br_t3                            ; eps (1..8)
-   LDA #0
-   SEC
-   SBC zp_br_t2
-   STA zp_rs_l                             ; (-mag5') & 255
-   LDA #0
-   SEC
-   SBC zp_br_t3
-   STA zp_rs_h                             ; (-eps) & 255
-   LDY #>sqr_l
-   CPX #0
-   BEQ :+
-   LDY #>sqr_l - 1
-:  RTS
-
 rwp_contrib:
 .scope
    LDA #0
