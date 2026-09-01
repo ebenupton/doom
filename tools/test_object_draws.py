@@ -26,7 +26,10 @@ from symmap import sym
 # candelabras were removed outright (they had borrowed the template and
 # accounted for three of the corpus's stamps).
 EXPECT = {'HEX': 9, 'LAMP': 8,
-          'POTION': 9, 'HELMET': 23, 'BOXS': 1, 'BOXM': 2, 'VEST': 1}
+          'POTION': 7, 'HELMET': 23, 'BOXS': 1, 'BOXM': 2, 'VEST': 1}
+# (POTION 9 -> 7, 2026-09-01: the armour-room strip removed the only two
+#  zigzag-room potions the corpus ever had in view; the room's helmets
+#  never stamped from the corpus positions, so HELMET holds at 23.)
 
 def main():
     r = BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,

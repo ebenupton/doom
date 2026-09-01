@@ -98,16 +98,15 @@ OBJ_DRAW = 1                            ; static-object billboards.  ON
                                         ; single-line tightens only).
                                         ; Set 0 to get a green gate back.
 .if ::BANKED
-LAY_N_OBJ   = 58                   ; static objects (wad_packed):
-                                   ; 2026-08-31 the five pickups added 44
-                                   ; (13 potions, 25 helmets, 3 medikits,
-                                   ; stim, 2 vests); the 2 techno pillars
-                                   ; and the 2 candelabras REMOVED the
-                                   ; same day
+LAY_N_OBJ   = 52                   ; static objects (wad_packed):
+                                   ; 2026-09-01 the armour-room strip
+                                   ; took 58 -> 52 (4 potions + 2
+                                   ; helmets around the green armour;
+                                   ; the armour itself stays)
 .else
 LAY_N_OBJ   = 14                   ; FLAT KEEPS THE LEGACY SUBSET (barrels
                                    ; + lamps; pillars and candelabras are
-                                   ; gone): 58
+                                   ; gone): 52
                                    ; planes are 445 B and no honest flat
                                    ; hole exists (the probes found $A600 =
                                    ; VXCACHE_XLO and $D700 live).  Its

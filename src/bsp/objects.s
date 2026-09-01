@@ -115,14 +115,15 @@ obj_ktab:                                  ; gap on banked (main, any bank)
 ; at kind*2 + tier.  Single-tier kinds duplicate their row and use $FF --
 ; H clamps at 255, so a 255-vs-$FF fire is harmless by construction.
 ; Near tiers: barrel -> OCT (H >= 33, the old a >= 12 rule), boxes -> the
-; trapezoid + cross (H >= 24: the bars are ~1.5 px there), potion -> the
+; trapezoid + cross (medikit H >= 12 — Eben doubled the switch distance
+; 2026-09-01 — stim H >= 24), potion -> the
 ; dodecagon (H >= 8: a circle is DEEP -- b = a -- so the half-pixel rule
 ; puts the switch far out).  The lamp's L0 wants 18 x slots against the
 ; arrays' 10, so it stays single-tier; helmet and vest ARE their tier.
 .pushseg
 .segment "VPTAB"
 obj_lodh:
-   .byte 33, $FF, 8, $FF, 24, 24, $FF
+   .byte 33, $FF, 8, $FF, 24, 12, $FF
 obj_tpl_pg2:                               ; art window high byte, lo/hi tier
    .byte >OBJ_ART,        >(OBJ_ART+$200)  ; hex / OCT
    .byte >OBJ_ART,        >OBJ_ART         ; lamp

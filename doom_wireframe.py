@@ -1725,10 +1725,20 @@ _OBJ_KINDS = {2011: _obj_kind(7, 15, K_BOXS),       # Stimpack
               2019: _obj_kind(15.5, 17, K_VEST),    # Blue armour (same art)
               2028: _LAMP,                          # Floor lamp
               2035: _obj_kind(11.5, 32, K_HEX)}     # Barrel (BAR1A0 23x32)
+# THE ARMOUR ROOM IS THE ARMOUR'S (Eben, 2026-09-01): the green-armour
+# zigzag room kept its 4 potions + 2 helmets as clutter around the prize;
+# all six go, the armour stays.  Keyed by exact (thing, x, y) so a map
+# rebuild that moves them trips the census gate rather than silently
+# missing.
+_ARMOUR_ROOM_DROP = {(2014, 144, -3136), (2014, 144, -3328),
+                     (2014, 96, -3392), (2014, 96, -3072),
+                     (2015, 32, -3232), (2015, -32, -3232)}
 fp_objects = []
 for _th in things:
     _tx, _ty_, _ta, _tt, _tfl = _th
     if _tt not in _OBJ_KINDS or (_tfl & 0x10):   # skip multiplayer-only
+        continue
+    if (_tt, _tx, _ty_) in _ARMOUR_ROOM_DROP:
         continue
     _r, _h, _kind = _OBJ_KINDS[_tt]
     _fz = player_floor(_tx, _ty_)

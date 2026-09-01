@@ -457,10 +457,13 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     # least-squares the hex outline against the ACTUAL 12-gon template
     # polygon (engine ratios 1, 47/64, 17/64) over a dense angular
     # sweep, for w/a among the engine's shift-cheap candidates. The mid
-    # vertices ride the EXISTING +-b3 table heights instead of exact
-    # lid-centre (error b3 <= 1px at LOD scales), so the engine builds
-    # NO new y values — only cx -+ w into the two dead Y slots (which
-    # the walker reaches as x indices 12/13, the arrays being adjacent).
+    # vertices ride the EXISTING +-b3 table heights (lidc -+ b3, the top
+    # arc off Y[2] and the bottom off Y[3]) so the lid is SYMMETRIC in y
+    # — rise and drop are both b - b3 = b2 exactly — and the engine
+    # builds NO new y values: only cx -+ w into the two dead Y slots
+    # (which the walker reaches as x indices 12/13, the arrays being
+    # adjacent).  Until 2026-09-01 the top arc ALSO anchored at Y[3],
+    # making it b + b3 deep — Eben: "the weirdly bulging top".
     import math as _mm
     _th = [_mm.tau * _i / 720 for _i in range(720)]
     _v12 = [(_mm.cos(_mm.radians(15+30*k)), _mm.sin(_mm.radians(15+30*k))) for k in range(12)]
@@ -515,12 +518,12 @@ def build_packed(vertexes, fp_vertexes, nodes, fp_ssectors, fp_segs,
     obj_art += _H(0,9, 12,11)                   # near base, left slant
     obj_art += _H(12,11, 13,11)                 # near base, bottom edge
     obj_art += _H(13,11, 5,9)                   # near base, right slant
-    obj_art += _H(0,3, 0,9)                     # left side (silhouette)
-    obj_art += _H(5,3, 5,9)                     # right side
+    obj_art += _H(0,2, 0,9)                     # left side (silhouette)
+    obj_art += _H(5,2, 5,9)                     # right side
     obj_art += _CTL(OBJ_ART_ARM)
-    obj_art += _H(0,3, 12,0)                    # far lid, left slant: FUSED
+    obj_art += _H(0,2, 12,0)                    # far lid, left slant: FUSED
     obj_art += _H(12,0, 13,0)                   # far lid, top edge: FUSED
-    obj_art += _H(13,0, 5,3)                    # far lid, right slant: FUSED
+    obj_art += _H(13,0, 5,2)                    # far lid, right slant: FUSED
     obj_art += _CTL(OBJ_ART_END)
     assert off_art_hex == 0, f'OBJ_ART_HEX drifted: {off_art_hex} (layout.inc says 0)'
 
