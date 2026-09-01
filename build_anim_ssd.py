@@ -47,7 +47,11 @@ def build_images():
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     bm = r.bm
     L0 = bytes(bm._banks[BANK_L0]); C = bytes(bm._banks[BANK_C]); L2 = bytes(bm._banks[BANK_L2])
-    low_end = abi.MAIN_BASE + os.path.getsize('bsp_render_bk.bin')  # CODE region
+    low_end = 0x5800   # THE FRAMEBUFFER WALL: LOW ships $0F00-$57FF and
+                       # NOTHING above it -- the old MAIN_BASE+getsize
+                       # proxy drifted with bsp_render_bk.bin and sprayed
+                       # file tail over the top FB rows (the 2026-09-01
+                       # jsbeeb top-line -> full-breakage arc)
     low = bytearray(bm[abi.LOW_BASE:low_end])  # LOW base = the strip head (abi)
     def overlay(addr, data):
         off = addr - abi.LOW_BASE
