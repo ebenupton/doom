@@ -1543,3 +1543,43 @@ ovy_m:
    JMP obj_ends                            ; syb -> y5 (the ground line)
 SEG_CODE
 .endif
+
+; ============================================================================
+; obj_key — the driver's "O" toggle (2026-09-01, Eben's ask): scan the O
+; key (internal $36, manual-scan mode), edge-detect, and flip billboard
+; objects on/off.  OFF = zero OBJ_ANYB so the per-subsector probe
+; short-circuits at its existing LDA/BEQ — ZERO added hot-path cost.
+; ON = obj_anyb_fill (pages SEG, leaves WALK — same contract as boot).
+; State + edge bytes live in the CODE image (reload = objects back on).
+; ============================================================================
+SEG_CODE
+.global obj_key
+obj_key:
+   LDA #$36
+   STA $FE4F
+   BIT $FE4F
+   BMI ok_dn
+   LDA #0
+   STA ok_prev
+   RTS
+ok_dn:
+   LDA ok_prev
+   BNE ok_done
+   LDA #1
+   STA ok_prev
+   LDA ok_state
+   EOR #1
+   STA ok_state
+   BNE ok_off
+   JMP obj_anyb_fill                       ; ON: refill the bitmap (tail-call)
+ok_off:
+   LDA #0
+   LDX #24
+ok_z:
+   STA OBJ_ANYB,X
+   DEX
+   BPL ok_z
+ok_done:
+   RTS
+ok_prev:  .byte 0
+ok_state: .byte 0                          ; 0 = objects ON (default)

@@ -76,6 +76,7 @@ RAWY_MAX = $0490        ;  1168
 .import sqr_fill_cold
 .import obj_anyb_fill
 .import zp_br_px, zp_br_py
+.import obj_key
 .import fb_clr0
 .import fb_clr1
 .import fb_clr_back
@@ -491,6 +492,8 @@ anim_glue_tick:
     STA $FE30   ; (ANIM_FIELDS is stored by mv_frame -- the
     JMP ENG_ANIM_TICK           ;  glue pocket has no room for the copy)
 key_hud:
+    JSR obj_key                                     ; "O": billboard objects
+                                                    ;  on/off (engine-side)
     ; H key: toggle the debug HUD on the press edge only (hud_prev holds
     ; last frame's state, so holding the key flips it exactly once).
     LDA #$54
