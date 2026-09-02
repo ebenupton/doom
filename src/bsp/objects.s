@@ -163,6 +163,10 @@ SEG_OBJB
 .if OBJ_DRAW = 0
    RTS
 .else
+   LDA ok_state                            ; objects-off default: anim_init's
+   BEQ oaf_go                              ; boot call must leave the bitmap
+   RTS                                     ; zeroed (the O toggle flips state
+oaf_go:                                    ; BEFORE tail-calling here)
    PAGE BANK_SEG
    LDX #LAY_OBJ_BITS_LEN-1
 oaf_lp:
@@ -1583,4 +1587,5 @@ ok_z:
 ok_done:
    RTS
 ok_prev:  .byte 0
-ok_state: .byte 0                          ; 0 = objects ON (default)
+ok_state: .byte 1                          ; 1 = objects OFF (the default,
+                                           ; Eben 2026-09-02); press O for ON
