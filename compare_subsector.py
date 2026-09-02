@@ -146,6 +146,25 @@ class SubsectorDiffer:
             mem[vdone + (vi >> 3)] |= 1 << (vi & 7)
 
         self.n_compared += 1
+        # Coalesce value-equal abutting spans on BOTH sides before the
+        # compare (2026-09-02, the parasite re-cut).  The engine's
+        # fused_merge_range coalesces a span pair whose boundary FIELDS
+        # are byte-identical and whose x-ranges abut -- same trapezoid,
+        # 0px -- but packed_render_bsp's python span model does not.  The
+        # old FLAT build did not merge either, so this gate was green;
+        # now flat == banked (ORDER-EXACT line streams) and both merge.
+        # Normalising is representation-only: spans with DIFFERENT
+        # boundary values never coalesce, so a real divergence still trips.
+        def _coalesce(spans):
+            out = []
+            for sp in spans:
+                if out and out[-1][1] == sp[0] and out[-1][2:] == sp[2:]:
+                    out[-1] = (out[-1][0], sp[1]) + tuple(sp[2:])
+                else:
+                    out.append(tuple(sp))
+            return out
+        asm_spans = _coalesce(asm_spans)
+        py_spans = _coalesce(py_spans)
         spans_match = (asm_spans == py_spans)
         # Pixel diff: XOR popcount over the 1bpp framebuffer.
         px_diff = 0

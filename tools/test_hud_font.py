@@ -27,14 +27,22 @@ import abi
 
 B, M = abi.HUD_FONT_B, abi.HUD_FONT_MASTER
 
-# OSBYTE 129's documented returns, and the base each one must select.
-# The rule is "3..$7F is a Master-class MOS": 3 = MOS 3.20 (Master 128),
-# 4 = OS 3.50, 5 = MOS 5 (Master Compact -- ASSUMED, unverified). $FF is
-# OS 0.10, which is older than 1.2, not newer.
+# OSBYTE 129's returns, and the base each must select.  MEASURED on
+# jsbeeb (2026-09-02): Master 128 answers $FD, this B's OS 1.2 answers
+# $FF.  The rule is "[$F0,$FE] is the Master/ANDY family" — the old
+# '3..$7F is a Master' model here matched the driver's old bug, so the
+# gate was green while real Masters drew garbage.
 CASES = ((0x00, B, 'OS 1.00'), (0x01, B, 'OS 1.20'), (0x02, B, 'OS 2 (B+)'),
-         (0x03, M, 'MOS 3.20 Master'), (0x04, M, 'OS 3.50'),
-         (0x05, M, 'MOS 5 Compact'), (0x7F, M, 'high version'),
-         (0x80, B, 'reserved/neg'), (0xFF, B, 'OS 0.10'))
+         (0x03, B, 'OS 3-ish? unknown-low'), (0x7F, B, 'unknown-mid'),
+         (0xE0, B, 'Electron'), (0x80, B, 'reserved'),
+         (0xF5, M, 'MOS 5 Compact'), (0xFC, M, 'Master ET'),
+         (0xFD, M, 'Master 128 MOS 3.20'),
+         (0xFF, B, 'OS 0.10 (and jsbeeb OS 1.2 answers this)'))
+# THE MAPPING (validated live on jsbeeb 2026-09-02, commit 622ad83):
+# X in [$F0,$FE] = the Master/ANDY family; everything else including
+# $FF takes the $C000 MOS font.  The previous table here expected LOW
+# values (3..$7F) to be Masters — the same wrong model as the driver,
+# so the gate stayed green while every real Master drew garbage.
 
 
 def assemble(src, defs, out, labels):

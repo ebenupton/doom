@@ -163,10 +163,13 @@ SEG_OBJB
 .if OBJ_DRAW = 0
    RTS
 .else
-   LDA ok_state                            ; objects-off default: anim_init's
-   BEQ oaf_go                              ; boot call must leave the bitmap
-   RTS                                     ; zeroed (the O toggle flips state
-oaf_go:                                    ; BEFORE tail-calling here)
+   LDA ok_state                            ; objects-off default (ok_state=1):
+   BNE oaf_zero                            ; ZERO the bitmap, do NOT skip —
+                                           ; on junk hardware RAM OBJ_ANYB is
+                                           ; garbage and the per-ss probe
+                                           ; would draw billboards from noise
+                                           ; (bare_boot's 33-byte class).  ON
+                                           ; (ok_state=0) fills from OBJ_BITS.
    PAGE BANK_SEG
    LDX #LAY_OBJ_BITS_LEN-1
 oaf_lp:
@@ -174,6 +177,15 @@ oaf_lp:
    STA OBJ_ANYB,X
    DEX
    BPL oaf_lp
+   PAGE BANK_WALK                          ; anim_init's CFG copy reads bank B
+   RTS                                     ; right after -- leave WALK ambient
+oaf_zero:
+   LDA #0                                  ; objects OFF: clear the bitmap so
+   LDX #LAY_OBJ_BITS_LEN-1                 ; no subsector probes positive
+oaf_zlp:
+   STA OBJ_ANYB,X
+   DEX
+   BPL oaf_zlp
    PAGE BANK_WALK
    RTS
 .endif

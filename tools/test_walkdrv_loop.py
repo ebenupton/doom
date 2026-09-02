@@ -78,6 +78,11 @@ if len(set(poses))<2:
     sys.exit(1)
 mdl=BankedBspRender(dw.packed_layout,dw.packed_rom_main,dw.packed_rom_detail,
                     dw.packed_bbox_table,dw.MAP_CENTER_X,dw.MAP_CENTER_Y,dw.PRESCALE)
+# OBJECTS OFF BY DEFAULT (bb6491f): the shipped driver boots with
+# billboards off, so the reference must match — else every spawn frame
+# shows a ~40px barrel/helmet diff.
+from bsp_render_6502 import disable_objects as _disobj
+_disobj(mdl.sc.mpu.memory)
 PRE=8; ok=True
 def s16(v): return v-0x10000 if v&0x8000 else v
 for k,fb in enumerate(fbs):

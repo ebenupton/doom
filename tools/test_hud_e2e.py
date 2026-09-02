@@ -22,7 +22,10 @@ def run(osver, c02):
     src=BankedBspRender(dw.packed_layout, dw.packed_rom_main, dw.packed_rom_detail,
                         dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     L0=bytes(src.bm._banks[BANK_L0]); C=bytes(src.bm._banks[BANK_C]); L2=bytes(src.bm._banks[BANK_L2])
-    LOW=bytes(src.bm[abi.LOW_BASE:abi.MAIN_BASE+os.path.getsize('bsp_render_bk.bin')])
+    LOW=bytes(src.bm[abi.LOW_BASE:0x5800])   # THE FB WALL — the old
+                                             # MAIN_BASE+getsize proxy
+                                             # drifted with the bin and
+                                             # mangled the boot image
     sc=SpanClip6502()
     if c02:
         from py65.devices.mpu65c02 import MPU as M; sc.mpu=M()
@@ -62,30 +65,57 @@ def run(osver, c02):
     return (bare[abi.DV_HUD_FONT]|(bare[abi.DV_HUD_FONT+1]<<8),
             scan.count(0xAA), scan.count(0xFF), scan.count(0x99))
 
-res=[]
-for c02 in (0,1):
-    tag='C02 host (Master)' if c02 else 'NMOS host (Model B)'
-    for osver,want in ((0x01,abi.HUD_FONT_B),(0x03,abi.HUD_FONT_MASTER)):
-        base,n_aa,n_ff,n_99=run(osver,c02)
-        res.append((tag,osver,want,base,n_aa,n_ff,n_99))
-        print('%-20s OSver $%02X -> base $%04X, ANDY-glyphs=%d ROM-glyphs=%d decoy=%d'
-              %(tag,osver,base,n_aa,n_ff,n_99))
+# SUBPROCESS ISOLATION (2026-09-02): each (cpu,osver) case runs in a
+# FRESH interpreter.  The NMOS run leaves py65/module state that
+# corrupts a later C02 free-run in the SAME process (25M steps amplify
+# it) -- every case passes standalone but the in-process loop reported
+# base=$0000.  Isolation is the honest fix: the gate measures what a
+# real boot does, not the residue of the previous boot.  The child sets
+# E2E_CHILD, which gates the driver block below so only run() executes.
+def _run_isolated(osver, c02):
+    import json, runpy
+    env = dict(os.environ, E2E_CHILD='1', E2E_OSVER=str(osver), E2E_C02=str(c02))
+    out = subprocess.run([sys.executable, os.path.abspath(__file__)],
+                         cwd=_ROOT, capture_output=True, text=True, env=env)
+    for ln in out.stdout.splitlines():
+        if ln.startswith('RESULT '):
+            return tuple(json.loads(ln[7:]))
+    raise RuntimeError('isolated run produced no RESULT:\n'
+                       + out.stdout[-800:] + out.stderr[-800:])
 
-print()
-bad=0
-for i in (0,2):
-    tag=res[i][0]; b_aa=res[i][4]; m_aa=res[i+1][4]; b_ff=res[i][5]; m_ff=res[i+1][5]
-    base_ok = res[i][3]==res[i][2] and res[i+1][3]==res[i+1][2]
-    # the Master run must blit its ANDY glyphs, and must NOT blit the
-    # bank-C decoy sitting at the same addresses with ANDY paged out
-    # decoy: $99 also occurs naturally in engine code, so compare the two
-    # runs — a HUD that read bank C instead of ANDY would blit EXTRA $99
-    b_99, m_99 = res[i][6], res[i+1][6]
-    src_ok = m_aa > b_aa + 50 and b_ff > m_ff and m_99 <= b_99
-    print('%-20s base select %s ; Master glyphs came from ANDY %s  '
-          '(ANDY %d->%d, ROM %d->%d, decoy %d->%d)'
-          %(tag,'ok' if base_ok else 'FAIL','ok' if src_ok else 'FAIL',
-            b_aa,m_aa,b_ff,m_ff,b_99,m_99))
-    if not (base_ok and src_ok): bad+=1
-print('HUDFONT-E2E:', 'PASS' if not bad else 'FAIL')
-sys.exit(1 if bad else 0)
+
+if os.environ.get('E2E_CHILD'):
+    import json
+    _r = run(int(os.environ['E2E_OSVER']), int(os.environ['E2E_C02']))
+    print('RESULT', json.dumps(list(_r)))
+    sys.exit(0)
+
+
+if True:
+    res=[]
+    for c02 in (0,1):
+        tag='C02 host (Master)' if c02 else 'NMOS host (Model B)'
+        # measured OSBYTE-129 answers (622ad83): jsbeeb B = $FF, Master = $FD
+        for osver,want in ((0xFF,abi.HUD_FONT_B),(0xFD,abi.HUD_FONT_MASTER)):
+            base,n_aa,n_ff,n_99=_run_isolated(osver,c02)
+            res.append((tag,osver,want,base,n_aa,n_ff,n_99))
+            print('%-20s OSver $%02X -> base $%04X, ANDY-glyphs=%d ROM-glyphs=%d decoy=%d'
+                  %(tag,osver,base,n_aa,n_ff,n_99))
+
+    print()
+    bad=0
+    for i in (0,2):
+        tag=res[i][0]; b_aa=res[i][4]; m_aa=res[i+1][4]; b_ff=res[i][5]; m_ff=res[i+1][5]
+        base_ok = res[i][3]==res[i][2] and res[i+1][3]==res[i+1][2]
+        # the Master run must blit its ANDY glyphs, NOT the bank-C decoy
+        # at the same addresses with ANDY paged out.  $99 occurs naturally
+        # in engine code, so compare the two runs.
+        b_99, m_99 = res[i][6], res[i+1][6]
+        src_ok = m_aa > b_aa + 50 and b_ff > m_ff and m_99 <= b_99
+        print('%-20s base select %s ; Master glyphs came from ANDY %s  '
+              '(ANDY %d->%d, ROM %d->%d, decoy %d->%d)'
+              %(tag,'ok' if base_ok else 'FAIL','ok' if src_ok else 'FAIL',
+                b_aa,m_aa,b_ff,m_ff,b_99,m_99))
+        if not (base_ok and src_ok): bad+=1
+    print('HUDFONT-E2E:', 'PASS' if not bad else 'FAIL')
+    sys.exit(1 if bad else 0)

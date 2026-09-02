@@ -476,10 +476,12 @@ ORG &1900
     JSR &FFF4                   \ X = OS version
     LDA #LO(HUD_FONT_B)
     LDY #HI(HUD_FONT_B)
-    CPX #3
-    BCC hpset                   \ 0,1,2 = OS 1.x and older
-    CPX #&80
-    BCS hpset                   \ &FF = OS 0.10
+    \ measured on jsbeeb (622ad83): Master 128 = &FD, jsbeeb B = &FF;
+    \ [&F0,&FE] is the Master/ANDY family, everything else the &C000 font
+    CPX #&F0
+    BCC hpset                   \ 0-2, &E0 Electron... = &C000 classes
+    CPX #&FF
+    BEQ hpset                   \ &FF = OS 0.10 / jsbeeb B
     LDA #LO(HUD_FONT_MASTER)
     LDY #HI(HUD_FONT_MASTER)
 .hpset

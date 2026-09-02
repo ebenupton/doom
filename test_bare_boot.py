@@ -40,6 +40,10 @@ def main():
                           dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y, dw.PRESCALE)
     px, py, ab = SPAWN
     fz = dw.player_floor(px, py)
+    # OBJECTS OFF (bb6491f default): the hardware driver boots billboards
+    # off, so the reference frame must too.
+    from bsp_render_6502 import disable_objects
+    disable_objects(ref.sc.mpu.memory)
     ref.render_frame(px, py, ab, fz)
     ref_fb = fb_bytes(ref.bm)
     ref_nz = sum(1 for b in ref_fb if b)

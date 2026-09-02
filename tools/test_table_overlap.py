@@ -106,7 +106,12 @@ def tables(flat):
         for _m in _re.finditer(r'^\s*(WORK):\s*start = \$([0-9A-Fa-f]+), '
                                r'size = \$([0-9A-Fa-f]+)', _cfg, _re.M):
             out.append(('seg:WORK', int(_m.group(2), 16), int(_m.group(3), 16)))
-        for _nm, _len in (('ROM_SEG_HDR_C', L['off_ss_cnt'] - L['off_seg_hdr']),
+        # PARASITE MAP (2026-09-02): the loader places ONLY the header blob
+        # (off_seg_hdr..off_dirs) at ROM_SEG_HDR_C; the DIR planes, SS
+        # planes and SS_CNT have their own bank homes now, so the old
+        # off_ss_cnt extent over-reported the table and false-flagged
+        # VRCACHE (which sits just above the real blob end).
+        for _nm, _len in (('ROM_SEG_HDR_C', L['off_dirs'] - L['off_seg_hdr']),
                           ('ROM_VERTS_C',   L['off_seg_hdr'] - L['off_verts']),
                           ('NODE_SOA',      L['off_verts'])):
             try:

@@ -33,39 +33,12 @@
 ; keep base+219 inside one page, which is the property the odd-looking
 ; $E402 is protecting. tools/test_table_overlap.py now gates the whole
 ; cross-product, both builds.
-.if BANKED
-RC_P1L_0 = $A900                        ; bank L2 CACHES group (2026-07-21
-RC_P1L_1 = $AA00                        ; regroup): CPM $A400, psi planes
-RC_P2L_0 = $AB00                        ; $A700-$ACFF, RCACHE_STATE $AD00,
-RC_P2L_1 = $AC00                        ; VYCACHE $AE00-$B2FF — every cache
-RC_PH_0  = $AD00                        ; beside its neighbours, free tail
-RC_PH_1  = $AE00                        ; $B500-$BFFF contiguous
-.else
-RC_P1L_0 = $7400                        ; flat psi planes: NODE-indexed
-RC_P1L_1 = $E402                        ; (Y = node id <= 219 -> 220 B
-RC_P2L_0 = $8100                        ; each; _0/_1 = SIDE arms, not
-RC_P2L_1 = $5600                        ; senior halves). P1L_1 lives in
-RC_PH_0  = $A400                        ; the $E402-$E4F7 fragment
-RC_PH_1  = $7300                        ; ($E402+219 = $E4DB — same page,
-                                        ; clear of zp_ft $E4F8).
-; FLAT P2L_1 $E500 -> $2100 and PH_0 $E600 -> $A400, 2026-08-25: the
-; 2026-08-24 rehome (away from colmap's tables) landed them on the ANIM
-; flat homes — SSMASK $E500 and TABL0 $E600. Every armed standing frame
-; sprayed psi bytes over the mover PATCH LISTS, and the lazy worker then
-; STORED THROUGH the corrupted addresses — engine CODE hit at psi-valued
-; locations. On the tube (the only build running flat + driver + anim)
-; that was position/angle-dependent misrendering everywhere off spawn.
-; Same class, THIRD strike; test_table_overlap now includes the anim
-; table homes and the linked engine regions in its cross-product.
-; New homes, both probed untouched across renders AND clear in the maps:
-;   $2100 = the tighten-records page the FUSED walker freed (2026-08-25;
-;           exception-window tenant list in engine_flat.cfg)
-;   $A400 = the head of the probed $A400-$B0FF hole (VPLOTF $A500,
-;           PMOVE $AA00 are the other tenants)
-; NOTE: the old "$6B00-$6FFF is FREE contiguous" claim here was STALE —
-; CLIPF's declared region runs $5800-$6FFF and its content reaches
-; $6ECC today. Free notes rot; the overlap gate is the arbiter.
-.endif
+RC_P1L_0 = BANKB_ORG + $2900            ; rcache psi planes, bank WALK
+RC_P1L_1 = BANKB_ORG + $2A00            ; (banked window $A900-$AEFF):
+RC_P2L_0 = BANKB_ORG + $2B00            ; NODE-indexed (Y = node id <= 219
+RC_P2L_1 = BANKB_ORG + $2C00            ; -> 220 B each; _0/_1 = SIDE
+RC_PH_0  = BANKB_ORG + $2D00            ; arms, not senior halves).  ONE
+RC_PH_1  = BANKB_ORG + $2E00            ; set since the parasite re-cut.
 ; State block (bitmaps + wipe keys) via abi.inc — same internal layout,
 ; flat base moved $5760 -> $F100 with the carve release:
 RCACHE_COMPUTED = $09C0                 ; 59 bytes (bit per k>>3 group) —
