@@ -45,14 +45,16 @@ RAWY_MAX = &0492                \  1170
 \ shares its zero page with the whole flat engine, and $63/$64 are the
 \ zp_bv_entry vector — a driver var there would be a wild indirect JMP.
 \ Access count is ~30/frame; absolute vs zp is noise on a 3MHz copro.
-ORG &EA00                       \ the FB region: the copro never
-                                \ touches (the rasteriser IS what the
-                                \ Tube port removed). Everything below
-                                \ $2000 is claimed by runtime arenas —
-                                \ pool/records/TFS/LC/VRCACHE planes
-                                \ ($0C00-$1AFF ate the first two homes)
-                                \ — and parasite PAGE ($800) gets OS
-                                \ scribbles during cross-Tube loads
+ORG &7800                       \ THE GLUE GAP (parasite re-cut 2026-09-02):
+                                \ the copro image ships CODE $0F00-$77FF +
+                                \ this COPROT $7800-$7BFF + DATA $7C00-$F7FF,
+                                \ so COPROT rides a static hole its OWN
+                                \ CODE/DATA loads never touch (the old $EA00
+                                \ FB-region trick, relocated -- there is no
+                                \ FB gap under the parasite map).  571 B of
+                                \ genuine tube glue; movement/tables all live
+                                \ in the engine image now (Eben: the only
+                                \ tube-specific code is the Tube-ULA driver)
     JMP boot
     JMP init                    \ &F03: harness entry — py65 runs the
                                 \ driver with loads pre-applied (no OSCLI)
@@ -341,8 +343,8 @@ ORG &EA00                       \ the FB region: the copro never
     LDA #0
     ROL A
     CLC
-    ADC #HI(sctab)
-    STA T_ZP_CLRP+1
+    ADC #HI(T_DRV_SINCOS)       \ the ENGINE's driver sincos ($7E00, seeded
+    STA T_ZP_CLRP+1             \ by the image builder) -- no duplicate table
     LDY #0
     LDA (T_ZP_CLRP),Y
     STA T_ZP_SMAG
@@ -439,33 +441,56 @@ ENDIF
     EQUB 0
 .loads
 INCLUDE "tube/tube_loads.inc"   \ generated: EQUS "LOAD En":EQUB 13 ... EQUB 0
-\ ---- tables ----
-ALIGN &100
-.sctab
-INCBIN "SINCOS.bin"             \ 64 x 8: smag,sneg,sone,cmag,cneg,cone,ab,pad
-.step_tab
-FOR i, 0, 63
-    EQUW INT(SPEED * 32 * COS(i * PI / 32) + 65536.5) AND &FFFF
-    EQUW INT(SPEED * 32 * SIN(i * PI / 32) + 65536.5) AND &FFFF
-NEXT
-.floor_tab
-INCBIN "FLOORGRD.bin"
-.frow_lo
-FOR n, 0, 21
-    EQUB LO(n * 36)
-NEXT
-.frow_hi
-FOR n, 0, 21
-    EQUB HI(n * 36)
-NEXT
 .drvend
-ASSERT drvend <= &F400          \ COLPORT rides this file at &F400
-SKIPTO &F400
-.colport_blob
-INCBIN "COLPORT.bin"            \ the 42 aggregation ports (colmap, flat home)
-SKIPTO &F600
-.shtab_blob
-INCBIN "engine_shtab.bin"       \ SHR3/SHL5 rotate shift-compose tables
+ASSERT drvend <= &7B00          \ glue $7800-$7AFF; emit at $7B00 below
+
+\ ---- line-command emitters (folded in from emit.asm 2026-09-02) ----
+\ RASTER_ENTRY / plot_h / plot_v are RTS stubs in the flat engine; the
+\ image builder pokes them to JMP entry_diag/entry_h/entry_v here.  Each
+\ emitter sends exactly the operands its plotter consumes (the host
+\ re-derives h/v/diag routing from the equalities), sidestepping every
+\ "is this operand actually stored on this path" question.
+SKIPTO &7B00
+.entry_diag                     \ = RASTER_ENTRY target (des_diag JMPs here)
+    JMP ediag
+    EQUB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0    \ pad to $7B10
+.entry_h                        \ plot_h's poked JMP lands here
+    JMP eph
+    EQUB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0    \ pad to $7B20
+.entry_v                        \ plot_v's poked JMP lands here
+    LDA T_RZP_X0
+    JSR esend1
+    LDA T_RZP_Y0
+    JSR esend1
+    LDA T_RZP_X0
+    JSR esend1
+    LDA T_RZP_Y1
+    JMP esend1
+.ediag
+    LDA T_RZP_X0
+    JSR esend1
+    LDA T_RZP_Y0
+    JSR esend1
+    LDA T_RZP_X1
+    JSR esend1
+    LDA T_RZP_Y1
+    JMP esend1
+.eph
+    LDA T_RZP_X0
+    JSR esend1
+    LDA T_RZP_Y0
+    JSR esend1
+    LDA T_RZP_X1
+    JSR esend1
+    LDA T_RZP_Y0
+.esend1
+    BIT R1S                     \ V = space in the parasite->host FIFO
+    BVC esend1
+    STA R1D
+    RTS
 .shipend
-ASSERT shipend <= &F800         \ loads must stay below the client OS
-SAVE "COPROT", &EA00, shipend, &EA00
+ASSERT shipend <= &7C00         \ COPROT (glue + emitters) fits the
+                                \ $7800-$7BFF gap; CODE ends $77FF, DATA
+                                \ starts $7C00.  sincos/COLPORT/SHTAB are
+                                \ ENGINE data (seeded by build_tube_game).
+SAVE "COPROT", &7800, shipend, &7800

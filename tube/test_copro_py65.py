@@ -35,34 +35,27 @@ def build_image():
                       dw.packed_bbox_table, dw.MAP_CENTER_X, dw.MAP_CENTER_Y,
                       dw.PRESCALE)
     mem = bytearray(r.sc.mpu.memory[0:0x10000])
-    subprocess.run(['./beebasm', '-i', 'tube/emit.asm'], check=True,
-                   capture_output=True)
-    emit = open('EMIT', 'rb').read(); os.remove('EMIT')
-    mem[0x7500:0x7E00] = bytes(0x7E00 - 0x7500)   # drop the OR blob (the
-    mem[0x7500:0x7500 + len(emit)] = emit         # $7500 RASTER home since
-    for name, target in (('plot_h', 0x7510), ('plot_v', 0x7520)):   # 2026-08-09)
-        a = symmap.sym(name)
-        mem[a] = 0x4C; mem[a+1] = target & 0xFF; mem[a+2] = target >> 8
-    import importlib
+    import importlib, build_anim_ssd as _anim, anim_sectors as _an, colmap as _cm
     btg = importlib.import_module('build_tube_game')
     btg.write_tube_syms()               # tube_syms.inc from the CURRENT map
-                                        # (stale syms = the anim_tick crash)
-    import build_anim_ssd as _anim      # SINCOS.bin: count-native mag5
-    open('SINCOS.bin', 'wb').write(_anim.sincos_table())
-    import anim_sectors as _an          # anim CFG/TABL0/SSMASK (flat homes;
-    _an.install_6502_tables(mem, flat=True)   # zero tables = frozen movers)
-    import colmap as _cm                # collision/use tables (the tube map
-    _cm.install(mem, flat=True)         # owns the flat homes)
+    # THE PARASITE GEOMETRY (2026-09-02): emitters are folded into COPROT
+    # at $7B00; the flat engine's plot_h/plot_v/RASTER_ENTRY are RTS stubs
+    # poked to JMP them.  sincos is engine data at ROM_DRV_SINCOS_C.
+    _an.install_6502_tables(mem, flat=True)   # anim CFG/TABL0/SSMASK
+    _cm.install(mem, flat=True)               # collision/use tables
+    _sc = _anim.sincos_table()
+    _scb = symmap.sym('ROM_DRV_SINCOS_C')
+    mem[_scb:_scb + len(_sc)] = _sc
+    for name, target in (('RASTER_ENTRY', 0x7B00),
+                         ('plot_h', 0x7B10), ('plot_v', 0x7B20)):
+        a = symmap.sym(name)
+        mem[a] = 0x4C; mem[a+1] = target & 0xFF; mem[a+2] = target >> 8
     subprocess.run(['./beebasm', '-i', 'tube/tubedrv.asm'], check=True,
                    capture_output=True)
     cop = open('COPROT', 'rb').read(); os.remove('COPROT')
-    mem[0xEA00:0xEA00 + len(cop)] = cop
-    os.environ['DOOM_CPU'] = ''         # restore AFTER the symbol pokes —
-                                        # symmap must read the C02 map for
-                                        # the plot_h/plot_v addresses (they
-                                        # move between CPU variants); later
-                                        # NMOS builds in-process stay NMOS
-    return mem                            # (HITAB staging retired: 2026-07-21 map)
+    mem[0x7800:0x7800 + len(cop)] = cop       # COPROT rides the glue gap
+    os.environ['DOOM_CPU'] = ''
+    return mem
 
 
 def main():
@@ -121,7 +114,7 @@ def main():
     base.subscribe_to_write([0xFEF9], r1d_write)
 
     mpu = MPU(memory=base)
-    mpu.pc = 0xEA03                      # harness entry: init + frame loop
+    mpu.pc = 0x7803                      # harness entry: init + frame loop ($7800+3)
     mpu.sp = 0xDD
     steps = 0
     ring = [0] * 64
