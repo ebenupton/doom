@@ -43,10 +43,14 @@ ROM_MAIN_BASE   = 0x8600
                            # $E484-$E93F now hosts the flat ANIM tables + workers.
 ROM_DETAIL_BASE = 0xB900
 # flat bases (KEEP IN SYNC with src/layout.inc flat branch; 2026-07-21 map):
-ROM_SEG_HDR_BASE = 0x8600       # stride-18 headers, heights at +12..17
-ROM_VERTS_BASE   = 0xB100
-NODE_SOA_BASE    = 0xB900       # node/ss SoA pages
-ROM_BBOX_BASE   = 0xC500   # 16 corner planes $C500-$D4FF (page-split SoA)
+# THE PARASITE MAP (2026-09-02): flat homes = the banked bank images laid
+# flat (bank A at $5800, bank B at $9800) — every base comes from the flat
+# symbol map, which itself derives from the BANKx_ORG formulas in gen_abi
+# and layout.inc.  No hand-kept flat addresses survive here.
+ROM_SEG_HDR_BASE = _sym('ROM_SEG_HDR_C', banked=0)
+ROM_VERTS_BASE   = _sym('ROM_VERTS_C', banked=0)
+NODE_SOA_BASE    = _sym('NODE_SOA_C', banked=0)
+ROM_BBOX_BASE    = _sym('ROM_BBOX_C', banked=0)
                            # build/split the bbox pointer byte-at-a-time
 
 
@@ -112,122 +116,110 @@ class BspRender6502:
         bbox = self.bbox_table
         mem = self.sc.mpu.memory
 
-        # Flat placement (2026-07-11, heights inlined in the seg headers):
-        # headers $6C00-$9B8B, verts $9C00, node/ss SoA $B600 (the hole the
-        # retired FHCH stream vacated). The packer bakes the height bytes
-        # (former load-time FHCH synthesis) into the header at +10..13.
+        # THE PARASITE MAP LOADER (2026-09-02): the flat build IS the banked
+        # bank images laid flat — this mirrors banked_bsp's la/lb/c-data
+        # construction copy-for-copy, at the flat symbol homes (which are
+        # BANKx_ORG formulas of the SAME in-window offsets).  The legacy
+        # scatter map and the 14-object gather are gone.
+        from symmap import sym as _sy
+        F = lambda n: _sy(n, banked=0)
         off_verts = layout['off_verts']; off_hdr = layout['off_seg_hdr']
-        for i in range(off_verts):                       # SoA pages (14: 11 node + 3 ss)
-            mem[NODE_SOA_BASE + i] = rom_main[i]
-        # SS_PG rebase (2026-08-29): the loaded plane carries the FINAL
-        # header hi byte (+>ROM_SEG_HDR_BASE); rom_main keeps the raw page
-        for i in range(layout['n_ss']):
-            _pgoff = layout['off_ss'] + i
-            mem[NODE_SOA_BASE + _pgoff] = (rom_main[_pgoff] + (ROM_SEG_HDR_BASE >> 8)) & 0xFF
-        for i in range(off_verts, off_hdr):              # verts
-            mem[ROM_VERTS_BASE + (i - off_verts)] = rom_main[i]
-        off_obj = layout['off_obj']
-        # header blob ends at off_ss_cnt: the SS_CNT plane (PG/CNT split
-        # 2026-08-29) is the rom_main TAIL with its OWN home — the blob
-        # copy must NOT extend past $A3FF (RC_PH_0 owns flat $A400)
-        off_ss_cnt = layout['off_ss_cnt']
-        for i in range(off_hdr, off_ss_cnt):             # headers + DIRs
-            mem[ROM_SEG_HDR_BASE + (i - off_hdr)] = rom_main[i]
-        from symmap import sym as _symc
-        _cntb = _symc('ROM_SS_CNT_C')
-        for i in range(256):                             # SS_CNT plane
-            mem[_cntb + i] = rom_main[off_ss_cnt + i]
-        # static-object (billboard) table -- its own home, NOT part of the
-        # header blob (layout.inc ROM_OBJ_C). The art templates have a
-        # PER-BUILD home (2026-08-27: the flat hole is only 256 bytes --
-        # colmap's USEVEC owns $B800 -- so flat art lives at $E830).
-        from symmap import sym as _sym2
-        _ob = _sym2('ROM_OBJ_C')
-        off_art = layout['off_obj_art']              # at the rom_main TAIL
-        # FLAT KEEPS THE LEGACY SUBSET (2026-08-31): the pickup landing
-        # took the pack to 60+, whose planes outgrow the 256-byte $B700
-        # run, and no honest flat hole exists.  GATHER the kind<=1 subset
-        # (barrel/lamp; the pillar died 2026-08-31) into a 16-wide SoA
-        # with a rebuilt bitmap; a subset of the ss-sorted pack stays
-        # ss-sorted.
-        _n62 = layout['n_obj']
-        _keep = [i for i in range(_n62)
-                 if rom_main[off_obj + 4 * _n62 + i] <= 1][:14]
-        assert len(_keep) == 14, f'flat expected 14 legacy objects, got {len(_keep)}'
-        for _pl in range(7):
-            for _j, _i in enumerate(_keep):
-                mem[_ob + _pl * 14 + _j] = rom_main[off_obj + _pl * _n62 + _i]
-        for _j in range(layout['obj_bits_len']):
-            mem[_ob + 7 * 14 + _j] = 0
-        # RUN8 sits AFTER the 25-byte bitmap (OBJ_RUN8 = OBJ_BITS +
-        # LAY_OBJ_BITS_LEN), NOT at 8*n_obj -- the original 8*n form
-        # overlapped the bitmap and left the engine reading garbage run
-        # starts, which sent obj_scan/obj_project off into the weeds and
-        # made EVERY flat render a silent 500k-step runaway (the 'flat
-        # harness is blind' mystery, the SQR_MIRROR BRK spray).  The
-        # stack guard caught it the day it was written.
-        _r8 = _ob + 7 * 14 + layout['obj_bits_len']
-        for _j in range(layout['obj_bits_len']):
-            mem[_r8 + _j] = 0xFF                 # RUN8, subset-rebuilt
-        for _j, _i in enumerate(_keep):
-            _ss = rom_main[off_obj + 3 * _n62 + _i]
-            mem[_ob + 7 * 14 + (_ss >> 3)] |= 1 << (_ss & 7)
-            if mem[_r8 + (_ss >> 3)] == 0xFF:
-                mem[_r8 + (_ss >> 3)] = _j
-        _oa = _sym2('OBJ_ART')
-        _na = 4 * layout['n_obj_art']                # EXACT length: the flat
-        for i in range(off_art, off_art + _na):      # home abuts colmap's
-            mem[_oa + (i - off_art)] = rom_main[i]   # minpass/usetab -- the
-                                                     # hole's zero tail must
-                                                     # NOT be copied with it
-        # LV1 BKT planes + per-dir DBOUND — per-build homes, from the
-        # blob tail (see layout.inc ROM_BKTLO/HI_C, ROM_DBOUND_C)
-        for _nm, _off in (('ROM_BKTLO_C', layout['off_bktlo']),
+        off_dirs = layout['off_dirs']
+
+        # ---- bank A image content ----
+        hdr_bytes = off_dirs - off_hdr
+        _d = F('ROM_SEG_HDR_C')
+        for i in range(hdr_bytes):                       # seg headers
+            mem[_d + i] = rom_main[off_hdr + i]
+        for _nm, _off, _n in (('ROM_LV1X_LO_C', layout['off_lv1'], 512),
+                              ('ROM_BPAL_BFH_C', layout['off_bpal'], 256)):
+            _d = F(_nm)
+            for i in range(_n):
+                mem[_d + i] = rom_main[_off + i]
+        _d = F('ROM_DIRS_C')                             # DIR planes
+        for i in range(3 * layout['max_dirs']):
+            mem[_d + i] = rom_main[off_dirs + i]
+        _d = F('ROM_VERTS_C')                            # vertex planes
+        for i in range(off_verts, off_hdr):
+            mem[_d + (i - off_verts)] = rom_main[i]
+        off_obj = layout['off_obj']                      # FULL object planes
+        _d = F('ROM_OBJ_C')                              # (+BITS+RUN8: the
+        for i in range(0x200):                           # $200 hole, banked-
+            mem[_d + i] = rom_main[off_obj + i]          # identical copy)
+        import wad_packed as _wp                         # RECIP_S (M8/M8H are
+        _d = F('RECIP_S')                                # seeded by SpanClip)
+        for i, v in enumerate(_wp.srecip_table()):
+            mem[_d + i] = v
+        for _nm, _off in (('ROM_BKTLO_C', layout['off_bktlo']),   # K planes
                           ('ROM_BKTHI_C', layout['off_bkthi']),
                           ('ROM_DBOUND_C', layout['off_dbound'])):
-            _d = _sym2(_nm)
+            _d = F(_nm)
             for i in range(128):
                 mem[_d + i] = rom_main[_off + i]
-        # OBJ_ANYB: the main-RAM bitmap the inline per-subsector probe reads
-        # (hardware fills it from anim_init; harness renders may never run
-        # that, so poke it here — the sqr_fill dual-path pattern)
-        _anyb = _sym2('OBJ_ANYB')
-        # flat OBJ_ANYB mirrors the GATHERED bitmap at ROM_OBJ_C + 7*16
-        for i in range(layout['obj_bits_len']):
-            mem[_anyb + i] = mem[_ob + 7 * 14 + i]
 
-        for i, b in enumerate(bbox):
-            mem[ROM_BBOX_BASE + i] = b
+        # ---- bank B image content ----
+        _d = F('NODE_SOA_C')
+        for i in range(off_verts):                       # node/ss SoA pages
+            mem[_d + i] = rom_main[i]
+        _rb = F('ROM_SEG_HDR_C') >> 8                    # SS_PG rebase: the
+        for i in range(layout['n_ss']):                  # plane ships the
+            _pgoff = layout['off_ss'] + i                # FINAL header hi byte
+            mem[_d + _pgoff] = (rom_main[_pgoff] + _rb) & 0xFF
+        _nss = layout['n_ss']
+        for _nm, _off in (('ROM_SS_FH_C', layout['off_ss_fh']),
+                          ('ROM_SS_CH_C', layout['off_ss_ch']),
+                          ('ROM_SS_CNT_C', layout['off_ss_cnt'])):
+            _d = F(_nm)
+            for i in range(_nss):
+                mem[_d + i] = rom_main[_off + i]
+        for i, v in enumerate(bbox):                     # bbox corner planes
+            mem[ROM_BBOX_BASE + i] = v
+        import abi as _abi                               # CPM_KDXH validity:
+        _d = _abi.CPM_KDXH_FLAT if hasattr(_abi, 'CPM_KDXH_FLAT') else \
+            (_abi.CPM_BASE_FLAT + 0x80)                  # plane ships $80-filled
+        for i in range(128):
+            mem[_d + i] = 0x80
 
-        # vertex-span descriptor tables (flat homes: bsp/header.s equates)
+        # ---- bank C data (CBITS run + the bank A window hole) ----
         import doom_wireframe as dw
-        for i, d in enumerate(dw.vspan_desc):
-            mem[0xDC00 + i] = d
+        _d = F('VDESC')
+        for i, v in enumerate(dw.vspan_desc):
+            mem[_d + i] = v
+        _lo, _hi, _ct = F('VEXPL_LO'), F('VEXPL_HI'), F('VEXPL_CONT')
         for i, (lo, hi, cont) in enumerate(dw.vspan_expl):
-            _lo, _hi, _ct = dw.vexpl_bytes(i, lo, hi, cont)
-            mem[0xDE00 + i] = _lo            # H2 jamb entries bake half-unit
-            mem[0xDE80 + i] = _hi            # bounds + CONT bit 7 (2026-08-25)
-            mem[0xDF00 + i] = _ct
-
-        def w16(addr_lo, val):
-            mem[addr_lo]     = val & 0xFF
-            mem[addr_lo + 1] = (val >> 8) & 0xFF
+            _l, _h, _c = dw.vexpl_bytes(i, lo, hi, cont)
+            mem[_lo + i] = _l
+            mem[_hi + i] = _h
+            mem[_ct + i] = _c
+        _art_off = layout['off_obj_art']                 # ALL THREE art
+        _art_n = layout['art_len']                       # windows, verbatim
+        _d = F('OBJ_ART')
+        assert _d % 256 == 0, 'flat OBJ_ART windows must be page-aligned'
+        for i in range(_art_n):
+            mem[_d + i] = rom_main[_art_off + i]
+        _anyb = F('OBJ_ANYB')                            # model runs may skip
+        _bits = off_obj + 7 * layout['n_obj']            # anim_init: seed the
+        for i in range(layout['obj_bits_len']):          # bitmap directly
+            mem[_anyb + i] = rom_main[_bits + i]
 
         # Angle-space bbox module + tables (rebuilds first — a standalone run
         # after a source edit must not test a stale bin).
         from engine_load import load_angle_module
         load_angle_module(mem)
-        # CANARY (2026-08-29): load_angle_module RELOADS every flat region
-        # file — any poked table a region overlaps gets silently replaced
-        # by code bytes. The dbound stomp read as +0.35% MEAN and a
-        # walkseq pixel flip before this tripped anything.
+        # CANARY: load_angle_module RELOADS every flat region file — any
+        # poked table a region overlaps gets silently replaced by code
+        # bytes (the dbound stomp read as +0.35% MEAN before this tripped).
         for _nm, _off in (('ROM_BKTLO_C', layout['off_bktlo']),
                           ('ROM_BKTHI_C', layout['off_bkthi']),
                           ('ROM_DBOUND_C', layout['off_dbound'])):
-            _d = _sym2(_nm)
+            _d = F(_nm)
             for i in (0, 64, 127):
                 assert mem[_d + i] == rom_main[_off + i], \
                     f'{_nm} stomped by a region reload (engine code grew over it?)'
+        # re-plant the plot RTS stubs: the region reload above rewrote the
+        # patch slots (see SpanClip6502's plant for the contract)
+        for _n in ('plot_h', 'plot_v', 'RASTER_ENTRY'):
+            mem[F(_n)] = 0x60
 
     def render_frame(self, player_x, player_y, angle_byte, floor_z=0):
         import fp

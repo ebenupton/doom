@@ -1099,14 +1099,9 @@ POOL_BDEN   = POOL + $1C0
 .segment "CODE"                   ; collapsed 2026-08-30
 .endmacro                         ;  (PMOVE slack went to pm_walkover)
 .macro SEG_BANKC
-.if ::BANKED
-.segment "BANKC"
-.else
-.segment "CLIPF"                        ; flat: the bank-C-equivalent lives
-                                        ; ABOVE the 22K line ($5800 area) —
-                                        ; the bottom-22K map is IDENTICAL
-                                        ; between builds (Eben, 2026-08-09)
-.endif
+.segment "BANKC"                  ; banked: the $8000 bank C window; flat:
+                                  ; the CBITS region $D800+ (parasite map —
+                                  ; one segment name, the cfg re-homes it)
 .endmacro
 
 

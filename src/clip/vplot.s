@@ -134,7 +134,7 @@ vp_fb1:
 ; tube/build_tube_game.py -- which used to poke it after the fact, over a
 ; body it had just blind-zeroed.  That surgery is what produced the
 ; black screen (see build_tube_game's own comment on the $7500 blob).
-.segment "CLIPF"
+SEG_BANKC                                  ; (parasite re-cut: one segment name)
 ::plot_v:
    JMP $FFFF                               ; PATCHED by the tube builder
 .endif                                     ; ::BANKED

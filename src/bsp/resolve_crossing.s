@@ -43,27 +43,12 @@ bsp_d_end:
 ; corpus search (~24 recurring conflicts/frame = the birthday bound;
 ; raw ~322 cycles, hit ~64).
 ; ============================================================================
-.if ::BANKED
-; (VYCACHE lives in the L2 CACHES group since the 2026-07-21 regroup.
-; VALID retired earlier — RLO doubles as valid.)
-; (VYCACHE_R_M8 plane RETIRED 2026-07-26: the probe index is h ^ rhi, so
-; the KEY plane's h implies rhi = idx ^ h — the compare was redundant.
-; $AE00 is a FREE L2 page.)
-VYCACHE_R_S = $B300
-VYCACHE_KEY = $B400
-VYCACHE_L = $B500
-VYCACHE_H = $B600
+; (VYCACHE: bank A, $3300-$36FF in-window — the la builder's recip copy
+; guards against dragging garbage over the KEY plane.  VALID retired —
+; RLO doubles as valid.  R_M8 plane retired 2026-07-26: the probe index
+; is h ^ rhi, so the KEY plane's h implies rhi.)
+VYCACHE_R_S = BANKA_ORG + $3300
+VYCACHE_KEY = BANKA_ORG + $3400
+VYCACHE_L = BANKA_ORG + $3500
+VYCACHE_H = BANKA_ORG + $3600
 SEG_CODE
-.else
-; PAGE-ALIGNED 2026-07-12 (were $D5C0-$D9C0: the $C0 offset made ~75% of
-; abs,X probes pay the page-cross +1 — flat build only; banked was
-; already aligned, so the harness metric overcharged the y-cache).
-; BSS window $D4C0-$DABF: aligned tables span $D500-$D9FF, $D4C0-$D4FF
-; and $DA00-$DABF free.
-; (VYCACHE_R_M8 retired 2026-07-26 — $8100 free; see the banked note.)
-VYCACHE_R_S = $8200
-VYCACHE_KEY = $8300
-VYCACHE_L = $8400
-VYCACHE_H = $8500
-SEG_HIGHX
-.endif

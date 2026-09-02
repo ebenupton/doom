@@ -485,7 +485,7 @@ USE_TRACE = 60            # SPACE trace length (raw units; DOOM uses 64)
 # they ship in the DATA file.  $B800-$B8FF is the tail of the run the
 # vertex-block shrink freed ($B700-$B8FF) whose head the object table uses:
 # all-zero in the shipped image, and clear of NODE_SOA at $B900.
-USEVEC_FLAT = 0xB800
+USEVEC_FLAT = 0xF680                    # parasite CBITS data run (2026-09-02)
 
 
 def use_vectors():
@@ -518,12 +518,19 @@ def blobs(flat=True):
     # wall-angle byte (direction quantized to the 64-angle space) for the
     # slide projection. Banked: USETAB lives in BANK A ($BE00 — pmove_use
     # pages SEG for its list) so the widened COLSEG fits bank B.
+    import abi as _abi
     if flat:
-        A = dict(idx=0x7600, colseg=0x7810, ss_vz=0xE750,
-                 minpass=0xE910, mv_ss_id=0xE998, mv_ss_info=0xE9A0,
-                 usetab=0xE918, usevec=USEVEC_FLAT,
-                 cymin=0x7F3C, cymax=0x8008, cyport=0x80D4, sil=0x7180,
-                 colport=0xF400)
+        # THE PARASITE MAP (2026-09-02): flat homes are the banked homes
+        # laid flat — every value comes from abi.py's *_FLAT twins (the
+        # gen_abi formulas), so the two builds can never drift again.
+        A = dict(idx=_abi.COLIDX_BASE_FLAT, colseg=_abi.COLSEG_BASE_FLAT,
+                 ss_vz=_abi.SS_VZ_BASE_FLAT,
+                 minpass=_abi.MV_MINPASS_FLAT, mv_ss_id=_abi.MV_SS_ID_FLAT,
+                 mv_ss_info=_abi.MV_SS_INFO_FLAT,
+                 usetab=_abi.USETAB_BASE_FLAT, usevec=USEVEC_FLAT,
+                 cymin=_abi.CYMIN_BASE_FLAT, cymax=_abi.CYMAX_BASE_FLAT,
+                 cyport=_abi.CYPORT_BASE_FLAT, sil=_abi.SIL_BASE_FLAT,
+                 colport=_abi.COLPORT_BASE_FLAT)
     else:
         # idx $B4A4 -> $AB00 -> $AF8A (both 2026-08-15): the first home
         # overlapped the $B400-$B4FF SSMASK staging page (the 256B mask
@@ -537,10 +544,13 @@ def blobs(flat=True):
         # ss_vz $8C00 -> $8D00 2026-08-19: fifth of the five adjacent SS
         # planes; ss_info died into SS_SI's top bits (MV_CEIL carries the
         # per-mover ceiling flag it used to hold in b7)
-        A = dict(idx=0xAF8A, colseg=0xB8C4, ss_vz=0x8D00,
-                 minpass=0xB1BC, mv_ss_id=0xB1C2, mv_ss_info=0xB1CA,
-                 usetab=0xBE00, cymin=0xB200, cymax=0xB7F8, cyport=0xB2CC,
-                 sil=0xB198, colport=0xB600)
+        A = dict(idx=_abi.COLIDX_BASE, colseg=_abi.COLSEG_BASE,
+                 ss_vz=_abi.SS_VZ_BASE,
+                 minpass=_abi.MV_MINPASS, mv_ss_id=_abi.MV_SS_ID,
+                 mv_ss_info=_abi.MV_SS_INFO,
+                 usetab=_abi.USETAB_BASE, cymin=_abi.CYMIN_BASE,
+                 cymax=_abi.CYMAX_BASE, cyport=_abi.CYPORT_BASE,
+                 sil=_abi.SIL_BASE, colport=_abi.COLPORT_BASE)
     import math
     seg_blob = bytearray()
     cymin = bytearray(); cymax = bytearray(); cyport = bytearray()
@@ -600,7 +610,7 @@ def blobs(flat=True):
         pb += struct.pack('<hhhhBBBB', p[0], p[1], p[2], p[3],
                           p[7], p[4], p[5], p[6])
     import abi as _abi0
-    assert A['colport'] in (0xB600, 0xF400) and _abi0.COLPORT_BASE == 0xB600, 'colport homes drifted from abi'
+    assert A['colport'] in (_abi0.COLPORT_BASE, _abi0.COLPORT_BASE_FLAT), 'colport homes drifted from abi'
     # MV_SS probe list (2026-08-19 claw-back): the <=8 mover subsectors as
     # parallel id/info arrays, $FF-padded to 8 — pmove probes these twice
     # per MOVE instead of the render paying 8 cycles per visited subsector
@@ -652,7 +662,7 @@ def blobs(flat=True):
         # The tube driver's SPACE 'use' needs these; walk_drv reads the
         # bank-C copy banked_bsp seeds, which the parasite cannot page to.
         uv = use_vectors()
-        assert A['usevec'] + len(uv) <= 0xB900, 'USEVEC reaches NODE_SOA'
+        assert A['usevec'] + len(uv) <= 0xF780, 'USEVEC reaches the FW state'
         out[A['usevec']] = uv
     # (the bank-B $A900 / flat $8400 staging emits died 2026-08-18: at
     #  $1A00 the ports ship directly inside LOW / the tube CODE file,
@@ -665,41 +675,27 @@ def blobs(flat=True):
         f'COL_N_SOLID {_abi.COL_N_SOLID} != {len(m["colsegs"])} — update gen_abi'
     # home-range asserts (free-space windows audited 2026-08-14)
     assert len(cymin) <= 256 and len(cymax) <= 256, 'cy tables must stay one page (abs,Y prescreen)'
-    if flat:
-        assert A['idx'] + len(idx_blob) <= A['colseg']
-        assert A['cymin'] == 0x7F3C and A['cymax'] == 0x8008, 'cy home moved: re-audit (the $7810-$80FF pocket packs COLSEG+CY exactly; $D700/$D800 are CPM_PSI + RECIP_S)'
-        assert A['colseg'] + len(seg_blob) <= A['cymin'], \
-            'collision blob reaches the flat CY prescreen tables at $7F10'
-        assert A['cymin'] + len(cymin) <= A['cymax'], 'CYMIN reaches CYMAX'
-        assert A['cymax'] + len(cymax) <= A['cyport'], 'CYMAX reaches CYPORT'
-        assert A['cyport'] + len(cyport) <= 0x8100, 'CYPORT reaches RC_P2L_0 at $8100'
-        assert A['sil'] == 0x7180 and A['sil'] + len(sil_blob) <= 0x71A4, \
-            'SIL home moved: the flat slot is the walled CLIPF tail $7180-$71FF'
-        assert len(sil_blob) == 36
-        assert 0xE750 + len(m['ss_vz']) <= 0xE830
-        assert 0xE988 + 8 <= 0xEA00, 'MV_SS lists reach the flat FB'
-        assert A['usetab'] + len(ub) <= A['mv_ss_id'], \
-            'USETAB reaches the MV_SS lists (stride-11 records)'
-        assert A['mv_ss_info'] + 8 <= 0xE9A8, \
-            'MV_SS lists reach the PMWK area (pm_walkover home, $E9A8)'
-    else:
-        assert A['cymax'] + len(cymax) <= A['colseg'], \
-            'CYMAX overruns into COLSEG (the $B7F8 pocket)'
-        assert A['cyport'] + len(cyport) <= 0xB300, \
-            'CYPORT overruns into ANIM CFG ($B2C7 after CYMIN)'
-        assert A['cymin'] + len(cymin) <= A['cyport'], 'CYMIN reaches CYPORT'
-        assert A['colport'] == 0xB600 and A['colport'] + 504 <= A['cymax'], \
-            'COLPORT ($B600, bank B) overruns into CYMAX'
-        assert A['sil'] == 0xB198 and A['sil'] + len(sil_blob) <= 0xB200, \
-            'SIL home moved: the banked slot is the COLIDX-to-CYMIN gap'
-        assert A['colseg'] + len(seg_blob) <= 0xC000, \
-            'COLSEG overruns the bank top (MV block moved to $B1BC 2026-08-29)'
-        assert A['sil'] + 36 <= A['minpass'] and A['mv_ss_info'] + 8 <= 0xB200, \
-            'the $B198 window packs SIL+MV_MINPASS+MV_SS lists exactly'
-        assert 0xAF8A + len(idx_blob) <= 0xB300, \
-            'COLIDX blob reaches the ANIM CFG page at $B300'
-        assert len(m['ss_vz']) <= 0x100
-        assert A['usetab'] + len(ub) <= 0xBE8F, 'USETAB (bank A) reaches TABL0'
+    # ONE geometry since the parasite re-cut (2026-09-02): the flat homes
+    # are the banked homes laid flat, so the range asserts are org-relative
+    # and shared.  (The old per-build pocket asserts died with the maps.)
+    _borg = _abi.BANKB_ORG_FLAT if flat else _abi.BANKB_ORG
+    _aorg = _abi.BANKA_ORG_FLAT if flat else _abi.BANKA_ORG
+    assert A['idx'] + len(idx_blob) <= A['colseg'], 'COLIDX reaches COLSEG'
+    assert A['cymax'] + len(cymax) <= A['colseg'], 'CYMAX overruns into COLSEG'
+    assert A['cymin'] + len(cymin) <= A['cyport'], 'CYMIN reaches CYPORT'
+    assert A['cyport'] + len(cyport) <= _borg + 0x3300, 'CYPORT overruns into ANIM CFG'
+    assert A['colport'] + 504 <= A['cymax'], 'COLPORT overruns into CYMAX'
+    assert A['sil'] + len(sil_blob) <= _borg + 0x3200, 'SIL overruns into CYMIN'
+    assert len(sil_blob) == 36
+    assert A['colseg'] + len(seg_blob) <= _borg + 0x4000, 'COLSEG overruns the bank top'
+    assert A['ss_vz'] + len(m['ss_vz']) <= _borg + 0x0E00, 'SS_VZ overruns its plane'
+    assert A['mv_ss_info'] + 8 <= _borg + 0x3200, 'MV_SS lists reach CYMIN'
+    assert A['usetab'] + len(ub) <= _aorg + 0x3E8F, 'USETAB (bank A) reaches TABL0'
+    assert A['sil'] + 36 <= A['minpass'], \
+        'the SIL window packs SIL+MV_MINPASS+MV_SS lists exactly'
+    assert A['idx'] + len(idx_blob) <= _borg + 0x3300, \
+        'COLIDX blob reaches the ANIM CFG page'
+    assert len(m['ss_vz']) <= 0x100
     out['addrs'] = A
     return out
 

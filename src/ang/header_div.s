@@ -85,17 +85,10 @@ ang_head:
 ; F). Tables harness/loader-seeded from tools/atanexp_cert.py output.
 ; ($3B/$3C, $71/$72 freed: abs now writes the divide operands directly --
 ;  reused below for bca_afn / bca_cy)
-.if BANKED
-L8_TAB = $8E00                          ; bank WALK (two-bank re-cut:
-AE_LO  = $8F00                          ; L8/AE/VATOX ride behind the
-AE_HI  = $9000                          ; node SoA; recip moved to bank
-                                        ; tables contiguous ($8000-$8BFF).
-                                        ; ONE source: tools/atanexp_cert.py
-.else
-L8_TAB = $D900                          ; flat TABLES block (2026-07-21 map)
-AE_LO  = $DA00
-AE_HI  = $DB00
-.endif
+L8_TAB = BANKB_ORG + $0E00              ; bank WALK (two-bank re-cut):
+AE_LO  = BANKB_ORG + $0F00              ; L8/AE/VATOX ride behind the
+AE_HI  = BANKB_ORG + $1000              ; node SoA.  ONE source:
+                                        ; tools/atanexp_cert.py
 
 ; point_to_angle: INLINED into corner_phi (its sole caller); see below.
 
@@ -164,13 +157,6 @@ t1 = $CD
 ; $CE free (was val_lo — box_classify's lo bytes ride X now, 2026-07-11)
 val_hi = $CF                            ; only user: rcache's rc_bytehi alias
 bca_ccsave = $65                        ; sole owner (see zp.inc $65 note)
-.if BANKED
-VATOX  = $9100                          ; SEG with the verts)
-.else
-VATOX = $E000                           ; viewangletox, 1025 entries (phi+512),
-                                        ; $F600-$FA00 (moved down 1 into the
-                                        ; TA_HI gap byte 2026-07-16: page-
-                                        ; aligned so bca_tail rides the index
-                                        ; lo byte in Y; overlap with the dead
-                                        ; BCA_WS byte 0 shrinks to $FA00 only)
-.endif
+VATOX  = BANKB_ORG + $1100              ; viewangletox, 1025 entries
+                                        ; (phi+512), page-aligned so
+                                        ; bca_tail rides the index lo in Y

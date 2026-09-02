@@ -467,32 +467,15 @@ zp_br_dy = zp_br_dy_l
 ; $C000+ subsystems relocate to bank L2 for real HW. L2 window layout:
 ;   TA_LO $8000 TA_HI $8400 VATOX $8800 (angle tables, slope_div.asm)
 ;   bbox $8D00  recip $9C00  VWH $A100  VYCACHE cache $A600
-.if ::BANKED
-; L2 window (2026-07-21 regroup, no overlaps): TABLES $8000-$8BFF
-; (L8/AE/VATOX/recip) | LEVEL $8C00-$A3FF (bbox 16p, verts $800) |
-; CACHES $A400-$B2FF (CPM, rc psi planes, RCACHE_STATE, VYCACHE) |
-; ANIM $B300/$B400 | FREE $B500-$BFFF contiguous.
-RECIP_S  = $A800                        ; junior-page S table, PAGE-ALIGNED,
+RECIP_S  = BANKA_ORG + $2800            ; junior-page S table, PAGE-ALIGNED,
                                         ; in the run the vertex caches left
-                                        ; (2026-08-17: it came out of the LDATA
-                                        ; region at main $1E00 — every read was
-                                        ; already under bank 4, censused, and
-                                        ; $1E00 went to the driver so CODE could
-                                        ; drop a page). NOT $B300: that is
-                                        ; VYCACHE_R_S, which ships zero and so is
-                                        ; invisible in an occupancy dump — it
-                                        ; cost a bankedcmp failure to find.
-RECIP_M8 = $B100                        ; bank SEG (two-bank re-cut)
-RECIP_M8H = $B200                       ; far half-table [128,255],
-                                        ; unswapped ($8980-$8BFF FREE
-                                        ; 2026-08-13: far synthesis)
-L2_BBOX = $9600                         ; bank WALK (harness/loader points zp_rom_bbox here; = ROM_BBOX_C)
-.else
-RECIP_S  = $D800                        ; page-aligned, in the free run the
-                                        ; far half-table leaves
-RECIP_M8 = $D500                        ; flat LEVEL block (2026-07-21 map)
-RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)
-.endif
+                                        ; (bank SEG; NOT the $B300 window
+                                        ; page: that is VYCACHE_R_S, which
+                                        ; ships zero — cost a bankedcmp
+                                        ; failure to find)
+RECIP_M8 = BANKA_ORG + $3100            ; bank SEG (two-bank re-cut)
+RECIP_M8H = BANKA_ORG + $3200           ; far half-table [128,255]
+L2_BBOX = ROM_BBOX_C                    ; alias (harness/loader points zp_rom_bbox here)
 ; (SINCOS_BASE deleted 2026-07-21: no reader — the engine takes sincos
 ;  via the ZP contract ($05-$0A), the driver owns its own DRV_TAB.)
 
@@ -507,31 +490,18 @@ RECIP_M8H = $D600                       ; far half ($D680-$D8FF FREE)
 ; recip. VDONE = the once-per-frame first-touch bitmap (byte index =
 ; the header key's B byte = idx>>3, bit = vc_bit_mask[idx&7]).
 .if ::BANKED
-VDESC      = $A500                      ; bank C (verticals run under C;
-VEXPL_LO   = $A700                      ; moved from $B200/$B400 2026-07-27
-VEXPL_HI   = $A780                      ; — the vplot unrolled column owns
-VEXPL_CONT = $9800                      ; -> $9800 2026-08-25 (the ex-TOP
-                                        ; records page): the fused cluster's
-                                        ; move into BANKC grew the clipper
-                                        ; past $9680. Was $9680; before that
-                                        ; $9600 -> $9680 on 2026-08-22: it
-                                        ; is 128 slots and the rest of the
-                                        ; page was empty, so sitting at the
-                                        ; page HEAD wasted 128 bytes of the
-                                        ; clipper's ceiling. Now flush
-                                        ; against BOT_RECORDS $9700, and
-                                        ; the clipper may grow to $9680
-                                        ; (guarded in banked_bsp)
-                                        ; HI split widened $60->$80
-                                        ; 2026-08-14 (mover jamb entries
-                                        ; pushed the count past 96; 128
-                                        ; slots each, HI ends $A7FF flush
-                                        ; against the rasteriser blob)
+VDESC      = $A500                      ; bank C (verticals run under C);
+VEXPL_LO   = $A700                      ; CONT flush against BOT_RECORDS
+VEXPL_HI   = $A780                      ; $9700; clipper may grow to $9680
+VEXPL_CONT = $9800                      ; (guarded in banked_bsp)
 .else
-VDESC      = $DC00                      ; flat TABLES block
-VEXPL_LO   = $DE00
-VEXPL_HI   = $DE80                      ; widened with the banked split
-VEXPL_CONT = $DF00
+; FLAT: VDESC rides the bank A window hole (with the driver SINCOS);
+; the VEXPL cluster sits in the CBITS data run above the art windows.
+; All python-seeded like their banked twins.
+VDESC      = BANKA_ORG + $2400          ; 455 ids, 2 planes ($7C00-$7DC6)
+VEXPL_LO   = $F500
+VEXPL_HI   = $F580
+VEXPL_CONT = $F600
 .endif
 ; (VDONE moved next to VRCACHE_VALID 2026-07-26 — see below; $0600 is
 ; fully FREE again.)
@@ -556,20 +526,14 @@ VEXPL_CONT = $DF00
 ; 4 cycles it was in main. FLAT keeps them in main, so $0800-$0FFF and
 ; $1200-$19DF are free in the BANKED map ONLY — the one place the two builds'
 ; sub-$5800 maps diverge (Eben's call, banked-first).
-.if ::BANKED
-VRCACHE_BASE = $9800                     ; bank A, below the vertex planes
-.else
-VRCACHE_BASE = $0F00                     ; main (low-RAM consolidation 2026-08-26)
-.endif
+VRCACHE_BASE = BANKA_ORG + $1800        ; bank A, below the vertex planes
 VC_RHI  = VRCACHE_BASE + $000
 VC_RLO  = VRCACHE_BASE + $200
 VC_SXL  = VRCACHE_BASE + $400
 VC_SXH  = VRCACHE_BASE + $600
 ; (VC_CLIP folded into VC_RLO 2026-08-13 — S = 0 is the clipped sentinel, real
 ;  S is never 0. VRCACHE = 4 planes.)
-.if ::BANKED
-.assert VRCACHE_BASE >= $8000 && VC_SXH + $200 <= $AB00, error,  "banked VRCACHE must sit inside bank A, below the vertex planes"
-.endif
+.assert VC_SXH + $200 <= BANKA_ORG + $2B00, error, "VRCACHE must end below the vertex planes"
 VRCACHE_VALID_BASE = $0900               ; THE BITMAP PAGE (relocation to
                                         ; the VXCACHE plane tails tried and
                                         ; UNWOUND 2026-08-13 pending the

@@ -75,29 +75,12 @@ vxcache_prev_ab = $0D5E                     ; moved with the scalars block, then
 ; BANKED: the planes moved into the BANK A window 2026-08-17, directly above
 ; VRCACHE (see bsp/header.s for the audit that says this costs nothing). FLAT
 ; keeps them in main.
-.if ::BANKED
-VXCACHE_BASE = $A000
-.else
-VXCACHE_BASE = $A600                        ; REHOMED 2026-08-30 into the tail the
-                                        ; flat vplot body vacated (VPLOTF used
-                                        ; 1,279 B, now 158).  X pair only: it is
-                                        ; what capped flat CODE at $4E00.  Y pair
-                                        ; stays at $5200/$5400 -- CODE does not
-                                        ; need to reach past $51FF.
-.endif
+VXCACHE_BASE = BANKA_ORG + $2000        ; bank A (caches-to-bank-A 2026-08-31)
 VXCACHE_XLO  = VXCACHE_BASE + $000
 VXCACHE_XHI  = VXCACHE_BASE + $200
-.if ::BANKED
 VXCACHE_YLO  = VXCACHE_BASE + $400
 VXCACHE_YHI  = VXCACHE_BASE + $600
-.assert VXCACHE_YHI + $200 <= $AB00, error,  "banked VXCACHE must fit below the vertex planes"
-.else
-VXCACHE_YLO  = $5200                        ; flat: the CODE-tail cache run of the
-VXCACHE_YHI  = $5400                        ; 2026-08-26 low-RAM map ($4E00 X pair,
-                                        ; $5200/$5400 Y pair); planes are
-                                        ; self-contained 512 B, no cross-
-                                        ; plane address arithmetic anywhere
-.endif
+.assert VXCACHE_YHI + $200 <= BANKA_ORG + $2B00, error, "VXCACHE must fit below the vertex planes"
 
 ; the frame angle byte: abi.inc's BCA_AB (the old private vxcache_ab copy
 ; shipped the 2026-07-10 broken-turn disc)

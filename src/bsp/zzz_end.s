@@ -7,8 +7,4 @@
 ; ============================================================================
 SEG_CODE
 code_true_end:
-.if ::BANKED
-.assert code_true_end <= $5800, error, "CODE overflows into the FB (banked)"
-.else
-.assert code_true_end <= $6400, error, "flat CODE overflows into the NJ blob at $6200"
-.endif
+.assert code_true_end <= $5800, error, "CODE overflows into the FB / bank A image"

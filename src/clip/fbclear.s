@@ -88,4 +88,16 @@ cb_one:
 .endscope
 
 .endif
+.else
+; FLAT = THE TUBE PARASITE: no framebuffer, nothing to clear.  The
+; driver still links against the clear entries (its flip path calls
+; them); they are RTS stubs here and the tube glue owns the real flip
+; protocol.
+SEG_BANKC
+::fb_clr0:
+   RTS
+::fb_clr1:
+   RTS
+::fb_clr_back:
+   RTS
 .endif

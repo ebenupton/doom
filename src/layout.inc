@@ -36,33 +36,20 @@ LAY_SS_CNT_OFF   = $1E00                 ; generated: per-ss seg-count plane
 LAY_N_DIRS   = 120                   ; distinct diagonal primitives
 LAY_MAX_DIRS   = 128                   ; DIR table stride (3 arrays)
 
-.if ::BANKED
-ROM_SEG_HDR_C = $8000                   ; bank SEG window head: headers+DIRs
-ROM_VERTS_C   = $AB00                   ; bank SEG (2026-08-13 two-bank
-ROM_BBOX_C    = $9600                   ; re-cut: bbox lives in bank WALK)
-NODE_SOA_C    = $8000                   ; bank WALK window head
-ROM_OBJ_C     = $A900                   ; static-object (billboard) table,
+ROM_SEG_HDR_C = BANKA_ORG               ; bank SEG window head: headers+DIRs
+ROM_VERTS_C   = BANKA_ORG + $2B00       ; bank SEG (2026-08-13 two-bank
+ROM_BBOX_C    = BANKB_ORG + $1600       ; re-cut: bbox lives in bank WALK)
+NODE_SOA_C    = BANKB_ORG               ; bank WALK window head
+ROM_OBJ_C     = BANKA_ORG + $2900       ; static-object (billboard) table,
                                         ; between RECIP_S's page and the
-                                        ; vertex planes at $AB00
-ROM_DIRS_C    = $B700                   ; DIR planes ship in BOTH banks
+                                        ; vertex planes
+ROM_DIRS_C    = BANKA_ORG + $3700       ; DIR planes ship in BOTH banks
                                         ; (union consumer: node classify
                                         ; under bank WALK, seg backface
                                         ; under bank SEG — one shared
-                                        ; CROSS_MAG_DECIDE reads them)
-.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= $BE90, error, "DIR tables reach TABL0"
-.else
-ROM_SEG_HDR_C = $8600                   ; flat LEVEL block (2026-07-21 map):
-ROM_VERTS_C   = $B100                   ; hdrs+dirs, verts, SoA, bbox, recip
-ROM_BBOX_C    = $C500                   ; all contiguous
-NODE_SOA_C    = $B900
-ROM_OBJ_C     = $B700                   ; static-object table, in the run
-                                        ; the retired 4th vertex plane left
-                                        ; (18-object subset -- see
-                                        ; LAY_N_OBJ)
-ROM_DIRS_C    = ROM_SEG_HDR_C + LAY_HDR_BYTES
-.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= ROM_VERTS_C, error, "DIR tables reach the vertex planes"
-.assert ROM_VERTS_C + $600 <= NODE_SOA_C, error, "flat vertex planes reach the node SoA"
-.endif
+                                        ; CROSS_MAG_DECIDE reads them; the
+                                        ; flat map resolves to bank A's copy)
+.assert ROM_DIRS_C + 3*LAY_MAX_DIRS <= BANKA_ORG + $3E90, error, "DIR tables reach TABL0"
 ; --- static object (billboard) planes: SoA, one X indexes every field ---
 ; Positions use the SAME page-decomposed encoding as the vertex planes
 ; (u8 offset + page nibble), so an object stages exactly like a vertex.
@@ -97,22 +84,12 @@ OBJ_DRAW = 1                            ; static-object billboards.  ON
                                         ; cannot yet express (it speaks
                                         ; single-line tightens only).
                                         ; Set 0 to get a green gate back.
-.if ::BANKED
 LAY_N_OBJ   = 52                   ; static objects (wad_packed):
                                    ; 2026-09-01 the armour-room strip
-                                   ; took 58 -> 52 (4 potions + 2
-                                   ; helmets around the green armour;
-                                   ; the armour itself stays)
-.else
-LAY_N_OBJ   = 14                   ; FLAT KEEPS THE LEGACY SUBSET (barrels
-                                   ; + lamps; pillars and candelabras are
-                                   ; gone): 52
-                                   ; planes are 445 B and no honest flat
-                                   ; hole exists (the probes found $A600 =
-                                   ; VXCACHE_XLO and $D700 live).  Its
-                                   ; loader GATHERS the kind<=1 subset
-                                   ; into this stride.
-.endif
+                                   ; took 58 -> 52; ONE value since the
+                                   ; parasite re-cut — the flat legacy
+                                   ; 14-object gather is DEAD, both
+                                   ; builds ship the full planes
 LAY_OBJ_BITS_LEN   = 25            ; generated: (n_ss+7)//8 — the per-ss
                                    ; "has objects" bitmap length; the
                                    ; OBJ_ART home abuts it (a hardcoded
@@ -144,11 +121,7 @@ OBJ_RUN8 = OBJ_BITS + LAY_OBJ_BITS_LEN  ; per-ss-OCTET first object index
 ; exactly as before.
 ;   A: HEX 0, LAMP 52        B: BOX 0, POTION 28, HELMET 88, VEST 160
 ;   C: OCT 0, BOXL0 76, POTL0 160  (the near tiers; obj_lodh picks)
-.if ::BANKED
-LAY_N_OBJ_ART = 185                ; 740 B / 4 -- all three windows
-.else
-LAY_N_OBJ_ART = 35                 ; hex + lamp only (window A's real 140)
-.endif
+LAY_N_OBJ_ART = 185                ; 740 B / 4 -- all three windows, both builds
 ; kind indices (the OBJ_ASP plane byte; k lives in obj_ktab -- the two
 ; tables MUST stay in step with doom_wireframe's _KTAB/_OBJ_KINDS)
 OBJ_K_HEX    = 0
@@ -179,50 +152,24 @@ OBJ_ART_END     = $FF              ; entry: template finished
 ; the abutting home in the true 512-byte $A900-$AAFF hole.
 .if ::BANKED
 ; BANKED HOME IS IN BANK C (2026-08-29), abutting the driver's use vectors
-; ($9B00 + 256 = $9C00) and well clear of the HUD at $A400.  It used to sit
-; with the level data in BANK_SEG, which made obj_stamp thrash: PAGE
-; BANK_SEG to read four art bytes, PAGE BANK_C to draw, every template
-; line.  tools/pagecensus.py measured 22.4 ROMSEL stores/frame in that loop
-; -- ~134 cycles, since a store costs 6 whether or not the bank changes.
-; With the art in bank C the whole stamp loop runs under the one PAGE
-; BANK_C the object prologue already does, and the clipper never pages
-; (there is not a single PAGE in src/clip).
-; NOTE: this home is SEEDED BY PYTHON (banked_bsp.build_banked), so ld65
-; cannot see it -- the asserts here and there are the only guard.
+; and clear of the HUD at $A400: the whole stamp loop runs under the one
+; PAGE BANK_C the object prologue already does.  SEEDED BY PYTHON
+; (banked_bsp) — the asserts are the only guard.
 OBJ_ART  = $9C00
 .assert OBJ_ART + 4*LAY_N_OBJ_ART <= $A400, error, "banked art templates reach the bank-C HUD at $A400"
 .else
-OBJ_ART  = $E830                        ; colmap gap: ss_vz ends $E82C,
-                                        ; minpass at $E910 (inside DATA)
-.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $E8C8, error, "flat art templates reach the PMMU area (pmf_mul24s home, $E8C8)"
-.assert ROM_OBJ_C + 7*LAY_N_OBJ + LAY_OBJ_BITS_LEN <= $B800, error, "flat object planes reach colmap USEVEC"
+; FLAT: the CBITS data block (parasite map): three page-aligned windows
+; at the top of the bank-C-bits run, below VEXPL/VDESC.  Python-seeded,
+; like the banked home.
+OBJ_ART  = $F200
+.assert OBJ_ART + 4*LAY_N_OBJ_ART <= $F500, error, "flat art templates reach the VEXPL pages"
 .endif
 ; (vertex block $800 -> $600 2026-08-11: the 4th plane slot died with
 ;  page decomposition — flat frees $B700-$B7FF, banked frees
 ;  $A800-$A9FF in L2; the flat object table lives in that freed run)
-.if ::BANKED
-ROM_BKTLO_C = $B900                     ; bank A free page (SS planes left
-ROM_BKTHI_C = $B980                     ; for bank B 2026-08-19)
-ROM_DBOUND_C = $B880                    ; the gap after the 3 DIR planes
-.else
-ROM_BKTLO_C = $7080                     ; REHOMED 2026-08-31: $0C10 put this
-                                        ; 128-byte plane at $0C10-$0C8F, straight
-                                        ; through the WORK segment ($0C20-$0CFF)
-                                        ; -- a 112-byte overlap no gate saw until
-                                        ; a ZP rotation reordered WORK and moved
-                                        ; which variable landed on the region-
-                                        ; reload canary.  $7080 is the CLIPF tail
-                                        ; below DBOUND at $7000. (was: the shared
-                                        ; $0C10 gap (scratch
-ROM_BKTHI_C = $D680                     ; ends $0C0E, COLPORT at $0D00);
-ROM_DBOUND_C = $7000                    ; REHOMED 2026-08-30 into the CLIPF tail
-                                        ; freed by dropping plot_axis (was $4D00,
-                                        ; page; the page the flat CODE
-                                        ; region SHRANK to wall off.
-                                        ; (All three left $7080-$71FF
-                                        ; 2026-08-27 so CLIPF could take
-                                        ; the armed-pair entries.)
-.endif
+ROM_BKTLO_C = BANKA_ORG + $3900         ; bank A free page (SS planes left
+ROM_BKTHI_C = BANKA_ORG + $3980         ; for bank B 2026-08-19)
+ROM_DBOUND_C = BANKA_ORG + $3880        ; the gap after the 3 DIR planes
 ; LV1 BKT planes (2026-08-26 second cut — the per-axis K planes lasted
 ; a day): the record's WHOLE K-residue term, s16 LE split-plane,
 ; BKT = -32*(cdy*kx - cdx*ky) against the record's CANONICAL dir
@@ -237,21 +184,12 @@ ROM_DBOUND_C = $7000                    ; REHOMED 2026-08-30 into the CLIPF tail
 ; Per-SUBSECTOR front heights (2026-08-17): fh/ch are subsector-constant, so
 ; they ride two pages in the header blob instead of 2 bytes x every seg. Read
 ; under BANK_SEG with X = the subsector id (already live in the prologue).
-.if ::BANKED
-; SS_FH/SS_CH left bank A for bank B on 2026-08-19 (the SS consolidation:
-; all five per-subsector planes adjacent in one bank, read under WALK).
-; SS_CH MUST stay exactly one page above SS_FH — the anim worker reads ch
-; by incrementing the pointer's high byte. Bank A's $B900-$BAFF came free.
-ROM_SS_FH_C = $8B00                     ; 2026-08-19: planes 3+4 of the FIVE
-ROM_SS_CH_C = $8C00                     ; adjacent SS planes in BANK B
-                                        ; ($8900 PC, $8A00 SI, $8B00 FH,
-                                        ; $8C00 CH, $8D00 VZ) — read in the
-                                        ; prologue UNDER BANK_WALK, before
-                                        ; the PAGE to SEG
-.else
-ROM_SS_FH_C = ROM_SEG_HDR_C + LAY_SS_FH_OFF
+; SS_FH/SS_CH: planes 3+4 of the FIVE adjacent SS planes in BANK B
+; (+$0900 PC, +$0A00 SI, +$0B00 FH, +$0C00 CH, +$0D00 VZ) — read in the
+; prologue UNDER BANK_WALK, before the PAGE to SEG.  SS_CH MUST stay
+; exactly one page above SS_FH (the anim worker bumps the hi byte).
+ROM_SS_FH_C = BANKB_ORG + $0B00
 ROM_SS_CH_C = ROM_SS_FH_C + $100
-.endif
 ; Per-subsector seg-count plane (cnt-1, $FF = empty; the PG/CNT split
 ; 2026-08-29 — SS_PG went back to a plain page byte, killing the
 ; prologue's AND/AND/LSRx3 unpack and the +1 sentinel bias). The plane
@@ -265,23 +203,13 @@ ROM_SS_CH_C = ROM_SS_FH_C + $100
 ; vxcache reads caught it). Banked home: $B500 (free pair below the DIR
 ; planes), read under WALK with the other SS planes. Flat home: the free
 ; page between the node SoA end and the bbox planes.
-.if ::BANKED
-ROM_SS_CNT_C = $B500
-.assert ROM_SS_CNT_C + $100 <= $B700, error, "SS_CNT runs into the DIR planes"
-.else
-ROM_SS_CNT_C = $C400
-.assert NODE_SOA_C + $B00 <= ROM_SS_CNT_C, error, "node SoA reaches SS_CNT"
-.assert ROM_SS_CNT_C + $100 <= ROM_BBOX_C, error, "SS_CNT runs into the bbox planes"
-.endif
+ROM_SS_CNT_C = BANKB_ORG + $3500
+.assert ROM_SS_CNT_C + $100 <= BANKB_ORG + $3700, error, "SS_CNT runs into the DIR planes"
 .assert (ROM_SS_CNT_C & $FF) = 0, error, "SS_CNT plane must be page-aligned"
 ; Diagonal back-face reference points (2026-08-17): 4 planes, 2 per page at
 ; +$00/+$80, indexed by the u8 record id the header carries at +SH_DIAG. The
 ; 128-slot spacing keeps every indexed read inside one page.
-.if ::BANKED
-LV1_BASE = $BB00                        ; top of bank A (see above)
-.else
-LV1_BASE = ROM_SEG_HDR_C + LAY_LV1_OFF
-.endif
+LV1_BASE = BANKA_ORG + $3B00            ; top of bank A
 ROM_LV1X_LO_C = LV1_BASE + $000
 ROM_LV1X_HI_C = LV1_BASE + $080
 ROM_LV1Y_LO_C = LV1_BASE + $100
@@ -290,20 +218,20 @@ ROM_LV1Y_HI_C = LV1_BASE + $180
 ; Back-pair palette (2026-08-17): the seg header carries a u8 id here instead
 ; of two height bytes. 96 entries — 56 shared plus one private per
 ; mover-touching seg, so an anim patch cannot bleed into a neighbour.
-.if ::BANKED
-BPAL_BASE = $BD00                       ; top of bank A (see above)
-.else
-BPAL_BASE = ROM_SEG_HDR_C + LAY_BPAL_OFF
-.endif
+BPAL_BASE = BANKA_ORG + $3D00           ; top of bank A
 ROM_BPAL_BFH_C = BPAL_BASE + $00
 ROM_BPAL_BCH_C = BPAL_BASE + $80
-.assert ROM_BPAL_BCH_C + 128 <= $BE00, error, "BPAL runs into USETAB"
+.assert ROM_BPAL_BCH_C + 128 <= BANKA_ORG + $3E00, error, "BPAL runs into USETAB"
 ; Driver tables in BANK C (2026-08-17): read only by walk_drv, which pages this
 ; bank for them. They were in bank A until its bottom was wanted for the
 ; main-RAM caches. Banked only — the flat harness runs no driver.
 .if ::BANKED
-ROM_DRV_SINCOS_C = $9900
+ROM_DRV_SINCOS_C = $9900                ; bank C (walk_drv pages for them)
 ROM_DRV_USEVEC_C = $9B00
+.else
+ROM_DRV_SINCOS_C = BANKA_ORG + $2600    ; the bank A window hole ($A400-$A7FF
+                                        ; ships nothing banked): flat $7E00
+ROM_DRV_USEVEC_C = $F680                ; CBITS data run
 .endif
 .assert (ROM_BPAL_BFH_C & $FF) = 0, error, "BPAL page must be page-aligned"
 .assert (ROM_SS_FH_C & $FF) = 0, error, "SS height pages must be page-aligned"

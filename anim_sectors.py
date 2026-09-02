@@ -445,11 +445,15 @@ def gen_6502_tables(flat=True):
     """{address: bytes} for the flat harness or the banked window space."""
     import struct as _st
     if flat:
-        import bsp_render_6502 as br
-        A = dict(ssmask=0xE500, tabl0=0xE600, cfg=0xE700,
-                 hdr=br.ROM_SEG_HDR_BASE, vex_lo=0xDE00, vex_hi=0xDE80,
-                 ss_fh=br.ROM_SEG_HDR_BASE + _SS_FH_REL,
-                 ss_ch=br.ROM_SEG_HDR_BASE + _SS_CH_REL)
+        # THE PARASITE MAP (2026-09-02): flat homes = banked homes laid
+        # flat; every address comes from the flat symbol map, so the two
+        # builds cannot drift.
+        import symmap as _sm
+        _f = lambda n: _sm.sym(n, banked=0)
+        A = dict(ssmask=_f('ANIM_SSMASK'), tabl0=_f('ANIM_TABL0'),
+                 cfg=_f('ANIM_CFG'), hdr=_f('ROM_SEG_HDR_C'),
+                 vex_lo=_f('VEXPL_LO'), vex_hi=_f('VEXPL_HI'),
+                 ss_fh=_f('ROM_SS_FH_C'), ss_ch=_f('ROM_SS_CH_C'))
     else:
         # banked ss_fh/ss_ch BY THE MAP (the five SS planes live in bank B
         # since 2026-08-19, no longer header-relative) — today's five

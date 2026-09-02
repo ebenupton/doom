@@ -35,21 +35,11 @@
 ; mask reads IN PLACE from the bank-B page the disc ships — the old
 ; $1100 main copy and anim_init's page copy-down are DELETED, and $1100
 ; is free in BOTH builds (flat reads its own shipped page too).
-.if ::BANKED
-ANIM_TABL0  = $BE90                     ; L0: 6 u16 ptrs -> per-mover blocks
-ANIM_CFG    = $B300                     ; L2: 12 B per mover (bounds/speed/waits)
-ANIM_SSMASK = $B400                     ; L2 (=WALK): read by the hub under
+ANIM_TABL0  = BANKA_ORG + $3E90         ; bank A: 6 u16 ptrs -> per-mover blocks
+ANIM_CFG    = BANKB_ORG + $3300         ; bank B: 12 B per mover (bounds/speed/waits)
+ANIM_SSMASK = BANKB_ORG + $3400         ; bank B (=WALK): read by the hub under
                                         ; the bank it already holds — zero
-                                        ; paging, and the $B4DD-$B4FF tail
-                                        ; is genuinely free now (no page
-                                        ; copy drags it anywhere)
-.else
-ANIM_TABL0  = $E600
-ANIM_CFG    = $E700
-ANIM_SSMASK = $E500                     ; flat TABLES block page (shipped in
-                                        ; the copro DATA file) — the flat
-                                        ; runtime home again, as pre-unfork
-.endif
+                                        ; paging; the +$34DD-$34FF tail is free
 ; CFG record layout (12 B/mover, anim_sectors.gen_6502_tables; heights are
 ; prescaled 8.8 fixed point — hi byte = the packer's prescaled s8 height):
 ;   +0  min88  (s16: endpoint "A" — doors: closed, lifts: bottom)

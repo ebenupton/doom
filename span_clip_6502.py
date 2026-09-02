@@ -198,12 +198,24 @@ class SpanClip6502:
         self._has_rasteriser = False
 
         # Screen buffer at $5800 (5120 bytes)
-        self.SCREEN_START = 0xEA00
-        self.SCREEN_SIZE = 5120
-        mem[_sym('RASTER_ZP_SCRSTRT')] = self.SCREEN_START >> 8
+        # THE PARASITE MAP (2026-09-02): the flat build has NO framebuffer
+        # — $EA00+ is CBITS territory and the old FB clear was shredding
+        # the clipper.  SCREEN_START = None makes clear_screen and the
+        # surface reader inert; pixel harnesses run the BANKED build.
+        self.SCREEN_START = None
+        self.SCREEN_SIZE = 0
+        mem[_sym('RASTER_ZP_SCRSTRT')] = 0x58   # vestigial (banked FB hi)
 
         # BRK at halt address
         mem[0xFF00] = 0x00
+
+        # PLOT STUBS (2026-09-02): the parasite ships plot_h/plot_v as
+        # 3-byte patch slots and no rasteriser at RASTER_ENTRY — the tube
+        # builder writes the real emitters.  The bare rig plants RTS so a
+        # render runs to completion; _run's PLOT_PCS traps still record
+        # every emitted line from RASTER_ZP.
+        for _n in ('plot_h', 'plot_v', 'RASTER_ENTRY'):
+            mem[_sym(_n)] = 0x60
 
     def _run(self, entry, max_cycles=500000):
         """Run from entry point until BRK at $FF00.
@@ -246,7 +258,9 @@ class SpanClip6502:
         return self.last_cycles
 
     def clear_screen(self):
-        """Clear the framebuffer."""
+        """Clear the framebuffer (no-op on the FB-less parasite map)."""
+        if self.SCREEN_START is None:
+            return
         mem = self.mpu.memory
         start = self.SCREEN_START
         for i in range(self.SCREEN_SIZE):

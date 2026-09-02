@@ -147,10 +147,16 @@ drv:
     JSR $FFF4   ; X = OS version
     LDA #<(HUD_FONT_B)
     LDY #>(HUD_FONT_B)
-    CPX #3
-    BCC drv_fontset   ; 0,1,2 = OS 1.x and older
-    CPX #$80
-    BCS drv_fontset   ; $FF = OS 0.10
+    ; Known INKEY-256 answers: $FF = OS 0.10 (and jsbeeb's OS 1.2 image
+    ; answers $FF too — measured); 0/1/2 = OS 1.x / B+; $E0 = Electron.
+    ; The ANDY-font machines are the Master family: $FD = MOS 3.20,
+    ; $FC = Master ET, $F5 = Compact (MOS 5).  The old test (`>= $80 ->
+    ; B font`) swallowed ALL of those into the OS 0.10 arm and drew
+    ; Master HUDs from $C000 = filing-system workspace: the garbage HUD.
+    CPX #$F0
+    BCC drv_fontset   ; 0-2, $E0... = the $C000-font classes
+    CPX #$FF
+    BEQ drv_fontset   ; $FF = OS 0.10 / jsbeeb B
     LDA #<(HUD_FONT_MASTER)
     LDY #>(HUD_FONT_MASTER)
 drv_fontset:

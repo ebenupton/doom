@@ -168,7 +168,14 @@ def banked_files():
 
 def main():
     import subprocess as sp, sys
-    sp.run([sys.executable, 'tube/build_tube_game.py'], check=True)
+    # PHASE4-PENDING (parasite re-cut 2026-09-02): the tube builder still
+    # targets the OLD copro map and fails; the disc temporarily ships the
+    # host modes only.  Restore check=True when the tubedrv glue lands
+    # (task #34).
+    try:
+        sp.run([sys.executable, 'tube/build_tube_game.py'], check=True)
+    except sp.CalledProcessError:
+        print('WARNING: tube build FAILED (PHASE4-PENDING) — disc ships host modes only')
 
 
 if __name__ == '__main__':

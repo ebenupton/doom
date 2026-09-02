@@ -17,7 +17,18 @@ import os
 os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 # (name, banked, flat_or_None_if_same_or_meaningless, comment)
+# THE PARASITE MAP (Eben, 2026-09-01): flat lays the bank images whole —
+# bank A at $5800, bank B at $9800 (22K identical below, bank-C bits
+# above $D800).  Bank-resident homes are ONE offset expressed per-build
+# via these helpers; the generated literals stay consistent by
+# construction.
+BANKA_FLAT, BANKB_FLAT = 0x5800, 0x9800
+def _A(off): return (0x8000 + off, BANKA_FLAT + off)
+def _B(off): return (0x8000 + off, BANKB_FLAT + off)
+
 ABI = [
+    ('BANKA_ORG',      0x8000, BANKA_FLAT, "bank A ('seg group', image L0) org: sideways window banked, laid flat at $5800 on the parasite"),
+    ('BANKB_ORG',      0x8000, BANKB_FLAT, "bank B ('walk group', image L2) org: laid flat at $9800 on the parasite (22K identical below, bank-C bits above $D800)"),
     ('BANK_L0',        4,      None, 'legacy alias for BANK_SEG (two-bank re-cut 2026-08-13)'),
     ('BANK_SEG',       4,      None, 'sideways bank A: seg headers+DIRs, verts, recips, VYCACHE, TABL0 — held for seg stages 1-4'),
     ('BANK_C',         6,      None, 'sideways bank: clipper + rasteriser + HUD'),
@@ -69,24 +80,24 @@ ABI = [
     ('VXCACHE_STATE',      0x0900, None, 'THE BITMAP PAGE: VRCACHE_VALID+VDONE+VXCACHE_VALID+RCACHE_COMPUTED (boot zeroes the whole page)'),
     ('VXCACHE_STATE_LEN',  0x100,  None, 'bytes to zero at boot (the whole bitmap page)'),
     ('VXCACHE_ENABLE',     0x0D5D, None, 'translation vertex cache switch (scalars block $05xx -> $1Dxx sqr swap -> $19xx window slide -> $19DB->$19DD 2026-08-22 to clear the span pool 15th/16th planes; vxcache_prev_ab follows it)'),
-    ('RCACHE_STATE',   0xAF00, 0x7268, 'rotation cache header+bitmaps (flat: $F100; carve freed 2026-07-15)'),
+    ('RCACHE_STATE',   *_B(0x2F00), 'rotation cache header+bitmaps (bank WALK)'),
     ('RCACHE_STATE_LEN',0x89,  None, 'bytes to zero at boot'),
-    ('RCACHE_ENABLE',  0xAF88, 0x72F0, 'rotation-coherence bca cache switch (STATE+$88)'),
-    ('CPM_BASE',       0xA600, 0x1800, 'corner-phi memo: 128-slot xor hash, 6 planes. This is the KEY head — 4 key planes, $200 long (the value planes hang off CPM_PSI_BASE, split out flat-side 2026-08-17). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
+    ('RCACHE_ENABLE',  *_B(0x2F88), 'rotation-coherence bca cache switch (STATE+$88)'),
+    ('CPM_BASE',       *_B(0x2600), 'corner-phi memo: 128-slot xor hash, 6 planes. This is the KEY head — 4 key planes, $200 long (the value planes hang off CPM_PSI_BASE, split out flat-side 2026-08-17). Banked $A600 in bank WALK (two-bank re-cut 2026-08-13). SCAR: an earlier home sat ON ROM_BBOX_C and the memo stores SHREDDED the corner planes (black screen after walking; banked gates compare engine-vs-itself so both sides corrupted identically). Scan the MERGED map before claiming space.'),
     ('CPM_KDXL',       'CPM_BASE+$000', None, 'memo key: corner dx lo'),
     ('CPM_KDXH',       'CPM_BASE+$080', None, '... dx hi; DOUBLES as validity: plane ships $80-filled ($80 = impossible dx hi), so there is no EP plane'),
     # The dy key planes split out flat-side 2026-08-17 for the same reason
     # the psi planes did: CODE's head moved down again, to $2A00, and flat
     # has to clear the page. They land on the page RECIP_S vacated when it
     # left main for bank A. Banked keeps the memo contiguous.
-    ('CPM_KDY_BASE',   'CPM_BASE+$100', 0x1700, 'dy key planes head (banked: inline; flat: the page RECIP_S left)'),
+    ('CPM_KDY_BASE',   'CPM_BASE+$100', None, 'dy key planes head (inline after the keys, both builds)'),
     ('CPM_KDYL',       'CPM_KDY_BASE+$000', None, '... dy lo'),
     ('CPM_KDYH',       'CPM_KDY_BASE+$080', None, '... dy hi'),
     # The value planes are addressed independently of the key planes (bca.s
     # indexes each by X), so they need not abut the keys. Split out 2026-08-17
     # so the FLAT memo stops occupying $2B00-$2BFF: CODE's head moved down to
     # $2B00 and flat must match banked below $57FF. Banked keeps them inline.
-    ('CPM_PSI_BASE',   'CPM_BASE+$200', 0xD700, 'psi value planes head (banked: inline after the keys; flat: off the $2B00 page CODE took, into the free run above the recip tables)'),
+    ('CPM_PSI_BASE',   'CPM_BASE+$200', None, 'psi value planes head (inline after the keys, both builds)'),
     ('CPM_PSIL',       'CPM_PSI_BASE+$000', None, 'memo value: psi lo'),
     ('CPM_PSIH',       'CPM_PSI_BASE+$080', None, '... psi hi (last plane; the key planes end at CPM_BASE+$200)'),
     # Player-movement collision map (colmap.py, 2026-08-14). Banked =
@@ -94,29 +105,29 @@ ABI = [
     # context for the whole movement test); flat = the TUBE parasite map
     # (the replaced raster pocket $7600-$82FF + the high-table area).
     # colmap.blobs() asserts every blob against these homes.
-    ('COLIDX_BASE',    0xAF8A, 0x7600, 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked: $B4A4 -> $AB00 -> $AF8A 2026-08-15 — off the SSMASK staging page, then off the rcache PSI PLANES $A900-$AEFF; now after RCACHE_STATE, ends $B197)'),
-    ('COLSEG_BASE',    0xB8C4, 0x7810, 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
-    ('CYMIN_BASE',     0xB200, 0x7F3C, 'per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: CPM_PSI planes + RECIP_S live there — that stomp garbled the tube copro 2026-08-29'),
-    ('CYMAX_BASE',     0xB7F8, 0x8008, 'per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100'),
-    ('CYPORT_BASE',    0xB2CC, 0x80D4, 'per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80CB, RC_P2L_0 walls $8100)'),
-    ('SIL_BASE',       0xB198, 0x7180, 'silent-line tripwire: 36 per-column ((clear_lo256<<4)|(clear_hi256+1)) — the widest y band of 256-unit cells free of BOTH unrecorded sector lines and flooded void ($F0 = none). A box inside its columns bands proves a key-stable move cannot change subsector (the same-ss fast commit, 2026-08-29). Flat: the walled CLIPF tail $7180; banked: the COLIDX-to-CYMIN gap $B198'),
-    ('SS_VZ_BASE',     0x8D00, 0xE750, 'per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)'),
+    ('COLIDX_BASE',    *_B(0x2F8A), 'collision blockmap: 36 x (u16 list addr, u8 count) + the u8 lists (banked: $B4A4 -> $AB00 -> $AF8A 2026-08-15 — off the SSMASK staging page, then off the rcache PSI PLANES $A900-$AEFF; now after RCACHE_STATE, ends $B197)'),
+    ('COLSEG_BASE',    *_B(0x38C4), 'collision segments: n x 8 (x1,y1,dx,dy raw s16 LE, center-relative)'),
+    ('CYMIN_BASE',     *_B(0x3200), 'per-colseg min y cell ((ymin+1584)>>7 clamped u8), indexed by the raw collision index — the column scan prescreen (2026-08-29). Banked: the COLIDX-to-ANIM gap ($B198-$B2FF). Flat: the hole PMOVE vacated 2026-08-23 (COLSEG ends $7F0F, RC_P2L_0 owns $8100). NOT $D700/$D800: CPM_PSI planes + RECIP_S live there — that stomp garbled the tube copro 2026-08-29'),
+    ('CYMAX_BASE',     *_B(0x37F8), 'per-colseg max y cell — see CYMIN_BASE. Banked: the free page below the DIR planes (SS_CNT owns $B500). Flat: 199 entries end $80C6, clear of RC_P2L_0 $8100'),
+    ('CYPORT_BASE',    *_B(0x32CC), 'per-PORT packed y-cell nibbles ((ymaxcell<<4)|ymincell, 256-unit cells), indexed by idx-COL_N_SOLID — the port arm of the scan prescreen (2026-08-29). Rides the CYMAX page tail both builds (banked $B600 page is free below the DIR planes; flat CYMAX ends $80CB, RC_P2L_0 walls $8100)'),
+    ('SIL_BASE',       *_B(0x3198), 'silent-line tripwire: 36 per-column ((clear_lo256<<4)|(clear_hi256+1)) — the widest y band of 256-unit cells free of BOTH unrecorded sector lines and flooded void ($F0 = none). A box inside its columns bands proves a key-stable move cannot change subsector (the same-ss fast commit, 2026-08-29). Flat: the walled CLIPF tail $7180; banked: the COLIDX-to-CYMIN gap $B198'),
+    ('SS_VZ_BASE',     *_B(0x0D00), 'per-subsector prescale(floor+41) (s8). Banked $8D00 since 2026-08-19: the fifth of the five adjacent SS planes in bank B ($8900 PC, $8A00 SI, $8B00 FH, $8C00 CH, $8D00 VZ)'),
     # (SS_INFO_BASE retired 2026-08-19: the mover info rides SS_SI bits 5-7 —
     #  idx 0-5, 7 = none; the b7 ceiling flag it carried is per-mover constant
     #  and lives in MV_CEIL)
-    ('MV_SS_ID',       0xB1C2, 0xE998, 'mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)'),
-    ('MV_SS_INFO',     0xB1CA, 0xE9A0, 'parallel info bytes, classic SS_INFO format (mover idx, b7 = ceiling)'),
-    ('MV_MINPASS',     0xB1BC, 0xE910, 'per-mover min passable door pos (fh + 56, prescaled)'),
-    ('COLPORT_BASE',   0xB600, 0xF400, 'P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). BANK B since 2026-09-01 (every reader runs under WALK by the pm_frame contract; runtime read-only, mover heights come via the mover id): banked $B600-$B7F7 (the $B700 window is bank-B free; DIR planes are bank A), flat $F400 in the dead SCREEN pages above COPROT (flat never renders; the copro draws via the host emitters) and below the tube client OS at $F800. The $0D00 pages joined the WORK arena; LOW_BASE is DRV_ORG now.'),
+    ('MV_SS_ID',       *_B(0x31C2), 'mover-subsector probe list: <=8 ids, $FF-padded (pmove scans it twice per move — the 2026-08-19 claw-back that kept SS_PLO plain)'),
+    ('MV_SS_INFO',     *_B(0x31CA), 'parallel info bytes, classic SS_INFO format (mover idx, b7 = ceiling)'),
+    ('MV_MINPASS',     *_B(0x31BC), 'per-mover min passable door pos (fh + 56, prescaled)'),
+    ('COLPORT_BASE',   *_B(0x3600), 'P_CheckPosition aggregation ports: 42 x 12 (x1,y1,dx,dy s16 + ob_vz + ot_ps + mover + wall-angle). BANK B since 2026-09-01 (every reader runs under WALK by the pm_frame contract; runtime read-only, mover heights come via the mover id): banked $B600-$B7F7 (the $B700 window is bank-B free; DIR planes are bank A), flat $F400 in the dead SCREEN pages above COPROT (flat never renders; the copro draws via the host emitters) and below the tube client OS at $F800. The $0D00 pages joined the WORK arena; LOW_BASE is DRV_ORG now.'),
     ('LOW_BASE',       0x0F00, None, 'first shipped byte of the LOW disc image / tube CODE file / bare-boot copy (the strip head = DRV_ORG since COLPORT moved to bank B 2026-09-01)'),
     ('SPAN_POOL',      0x0A00, None, 'clipper span pool block head (13 x $20 fields; arith.s POOL derives from this)'),
     ('PMOVE_BASE',     0x1340, None, 'PMOVE region head (banked cfg anchor; build_anim_ssd asserts driver_end <= this)'),
     ('COL_N_SOLID',    204,    None,   'collision indices >= this are ports (colmap asserts the count; 199 -> 204 2026-08-29: the phase-existential flood adopted s62 + the two-pass colinear merge)'),
     ('PM_TURNREM',     0x0D04, None,   'sub-step rotation fraction, Q8 — carries the frame-rate-compensated turn across frames. Moved into the WORK segment 2026-08-26; the PM_MOMX/Y tombstone slots (and the pm_fuzz stay-zero assert) DIED with the old map.'),
-    ('WALKTAB_BASE',   0xBE64, 0xE97C, 'USETAB + 1 + n_use*11: the walk-over record section (n_walk byte, then 11-byte records — 9 + 2 biased hi-byte y bounds, SAME stride as use records). colmap asserts n_use == 9'),
-    ('USETAB_BASE',    0xBE00, 0xE918, 'use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads'),
-    ('SCREEN0',        0x5800, 0xEA00, 'framebuffer 0 (flat: harness FB $EA00-$FDFF)'),
-    ('SCREEN1',        0x6C00, 0xEA00, 'framebuffer 1 (flat: single buffer)'),
+    ('WALKTAB_BASE',   *_A(0x3E64), 'USETAB + 1 + n_use*11: the walk-over record section (n_walk byte, then 11-byte records — 9 + 2 biased hi-byte y bounds, SAME stride as use records). colmap asserts n_use == 9'),
+    ('USETAB_BASE',    *_A(0x3E00), 'use + walkover line tables (u8 n, n x 9: x1,y1,dx,dy s16 + action); banked home is BANK A since the slide arc — pmove_use pages SEG for the list reads'),
+    ('SCREEN0',        0x5800, None, 'framebuffer 0 (banked only: the flat/tube build never rasterises — clearers/plotters compiled out)'),
+    ('SCREEN1',        0x6C00, None, 'framebuffer 1 (see SCREEN0)'),
 ]
 
 

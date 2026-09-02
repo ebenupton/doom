@@ -485,10 +485,9 @@ REC_VERDICT_BELOW = 2
 .if ::BANKED
 RASTER_ENTRY = $A800                    ; bank C window (down a page 2026-08-11: unrolled steep)
 .else
-RASTER_ENTRY = $7500                    ; flat: above-line (2026-08-09 —
-                                        ; the $2000-$29FF exception DIED;
-                                        ; $2000-$2BFF is the shared driver
-                                        ; reservation in BOTH builds)
+RASTER_ENTRY = $F7C0                    ; parasite CBITS data run tail: the
+                                        ; tube glue's emit stubs land here
+                                        ; (the ex-$7500 home is bank A now)
 .endif
 
 ; === Zero-page workspace ===

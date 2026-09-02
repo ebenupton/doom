@@ -109,7 +109,8 @@ OBJ_MAXSLOT = 6                            ; most objects in one subsector
 obj_ktab:                                  ; gap on banked (main, any bank)
    .byte 23, 15, 25, 34, 30, 47, 58        ; (the pillar's 10 died with it)
 .popseg
-.if ::BANKED
+; (un-gated for the parasite re-cut 2026-09-02: flat draws the full
+;  object set — bank C code links into the CBITS region)
 ; TWO TIERS PER KIND (2026-08-31, "all objects appear to render at lowest
 ; LOD"): the dispatch compares H against obj_lodh and indexes the tables
 ; at kind*2 + tier.  Single-tier kinds duplicate their row and use $FF --
@@ -141,7 +142,6 @@ obj_tpl_off2:                              ; start offset within the window
    .byte OBJ_ART_BOX,    OBJ_ART_BOXL0
    .byte OBJ_ART_VEST,   OBJ_ART_VEST
 .popseg
-.endif
 
 .pushseg
 .segment "RWC"
@@ -666,7 +666,8 @@ obj_ycp:
 ; $A600 (the $B700 run was 256 B, the planes are 459) and it draws every
 ; object -- pickups included -- as the hex barrel; all paths below are
 ; ::BANKED.
-.if ::BANKED
+; (un-gated for the parasite re-cut 2026-09-02: flat draws the full
+;  object set — bank C code links into the CBITS region)
    LDX obj_asp
    LDA #0
    STA obj_lod
@@ -711,7 +712,6 @@ obj_sel_helmet:
 obj_sel_box:
    JSR obj_box_y                           ; (reads obj_asp for the lid)
    JMP obj_art_go
-.endif
 obj_sel_hex:
    LDA obj_a                               ; w = 9a/16 = a>>1 + a>>4
    LSR A
@@ -736,10 +736,7 @@ obj_sel_hex:
    LDA obj_cx_h
    ADC #0
    STA obj_Y+15
-.if .not ::BANKED
-   LDA #OBJ_ART_HEX
-   STA obj_e                               ; flat: template A0, always
-.endif
+; (flat all-HEX fallback DELETED 2026-09-02: the parasite re-cut)
 obj_art_go:
    JSR obj_probe                           ; can this billboard skip the
                                            ; clipper entirely?
@@ -993,7 +990,8 @@ SEG_CODE                                   ; RESTORE the segment: the next
 ; into these blocks; the dispatch JSRs.
 ; ===========================================================================
 SEG_BANKC
-.if ::BANKED
+; (un-gated for the parasite re-cut 2026-09-02: flat draws the full
+;  object set — bank C code links into the CBITS region)
 ; THE FLOOR LAMP'S LADDERS -- doc/billboard's lamp L1, VERBATIM (three
 ; bands r 11.5 z 0-5 / r 7.5 z 5-14 / r 5.5 z 14-48, design D = 256,
 ; eye = 41).  x is 5 magnitudes; y is 13 values, expressed as 256ths of
@@ -1010,7 +1008,6 @@ obj_lpo:  .byte 10, 44, 42, 40, 38        ; +side byte offset per magnitude:
 obj_lgy:  .byte 174, 176, 177, 178, 180   ; y_1..y_11 /256 of H below syt
           .byte 218, 221, 224, 226, 229
           .byte 252
-.endif
 SEG_CODE
 ; ============================================================================
 ; obj_lamp_xy -- the floor lamp's 10-x / 13-y ladder.
@@ -1030,7 +1027,8 @@ SEG_CODE
 ; cuts land on values the {a, a2, a3} triple cannot express: 5 x magnitudes
 ; where they need 3, and the whole x table is rebuilt here.  Everything is
 ; linear in a / H -- the shape is RIGID, per the pillar's lesson above.
-.if ::BANKED
+; (un-gated for the parasite re-cut 2026-09-02: flat draws the full
+;  object set — bank C code links into the CBITS region)
 SEG_BANKC
 ; ---- obj_ends: syt -> obj_Y+0/1, syb -> obj_Y+Y (2026-08-31 de-lard:
 ; every builder ended with these copies inline) -------------------------
@@ -1121,7 +1119,6 @@ oly_m:
    STA obj_Y+25
    RTS
 SEG_CODE
-.endif
 
 ; ============================================================================
 ; THE PICKUP LADDER BUILDERS (2026-08-31) -- banked only; flat carries no
@@ -1133,7 +1130,8 @@ SEG_CODE
 ; All run under the prologue's PAGE BANK_C; tables live HERE in CODE
 ; because bank C is nearly full and these are banked-only anyway.
 ; ============================================================================
-.if ::BANKED
+; (un-gated for the parasite re-cut 2026-09-02: flat draws the full
+;  object set — bank C code links into the CBITS region)
 ; ---- obj_mirror: mag = round(a * A / 256); store cx - mag at obj_X+Y,
 ; cx + mag at obj_X + obj_px.  zp_mul_b holds a; the spill slots are just
 ; obj_X offsets 38..44, so ONE helper serves every builder's pairs. ------
@@ -1547,7 +1545,6 @@ ovy_m:
    LDY #10                                 ; syt -> y0 (rear shoulders),
    JMP obj_ends                            ; syb -> y5 (the ground line)
 SEG_CODE
-.endif
 
 ; ============================================================================
 ; obj_key — the driver's "O" toggle (2026-09-01, Eben's ask): scan the O

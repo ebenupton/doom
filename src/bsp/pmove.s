@@ -44,12 +44,10 @@ pm_exy     = PM_SCRATCH+$26             ;  by pmove_use; oldx..exy runs)
 ; only; it tracks DRV_ORG, which slid a page down 2026-08-17); flat uses
 ; its free zone side. Adjacency is LOAD-BEARING throughout (indexed copy
 ; loops + the bounds/axis loops).
-.if ::BANKED
 PM_SCRATCH = DRV_ORG                    ; NOT a private copy: the overlay IS
-                                        ; the driver's init block (abi.inc)
-.else
-PM_SCRATCH = $5700
-.endif
+                                        ; the driver's init block (abi.inc);
+                                        ; ONE home since the parasite map —
+                                        ; flat carries the driver at $0F00 too
 pm_bx0     = PM_SCRATCH+$00             ; box bounds; ORDER LOAD-BEARING
 pm_by0     = PM_SCRATCH+$02             ;  (pm_bx0,X / pm_bx1,X, X=0/2)
 pm_bx1     = PM_SCRATCH+$04
